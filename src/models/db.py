@@ -1001,7 +1001,7 @@ class PodcastProcessingRecord(SQLModel, table=True):
         ),
         CheckConstraint(
             "input_artifact_kind IS NULL OR input_artifact_kind IN "
-            "('source_audio','publisher_transcript','normalized_transcript',"
+            "('source_media_snapshot','publisher_transcript','normalized_transcript',"
             "'transcript_zh','digest_blog_zh','narration_script_zh')",
             name="ck_podcast_processings_input_kind",
         ),
@@ -1816,8 +1816,75 @@ class MediaAssetRecord(SQLModel, table=True):
     updated_at: str = Field(description="最近一次状态变更时间")
 
 
+def _portable_lower_sha256_check(column: str) -> str:
+    stripped = column
+    for character in "0123456789abcdef":
+        stripped = f"replace({stripped}, '{character}', '')"
+    return (
+        f"length({column}) = 64 AND {column} = lower({column}) "
+        f"AND length({stripped}) = 0"
+    )
+
+
+class PodcastSourceMediaSnapshotRecord(SQLModel, table=True):
+    """Immutable verification metadata for one publisher enclosure.
+
+    The source bytes exist only in a locked staging file while the enclosure is
+    validated.  Persisted processing binds this row; the publisher URL itself
+    remains solely in ``ArticleRecord.extensions_json`` and is represented here
+    only by its exact raw-string SHA-256 digest.
+    """
+
+    __tablename__ = "podcast_source_media_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "episode_id",
+            "locator_hash",
+            "content_hash",
+            name="uq_podcast_source_media_snapshot_identity",
+        ),
+        Index(
+            "ix_podcast_source_media_snapshots_episode_created",
+            "episode_id",
+            "created_at",
+        ),
+        CheckConstraint(
+            _portable_lower_sha256_check("locator_hash"),
+            name="ck_podcast_source_media_snapshots_locator_hash",
+        ),
+        CheckConstraint(
+            _portable_lower_sha256_check("content_hash"),
+            name="ck_podcast_source_media_snapshots_content_hash",
+        ),
+        CheckConstraint(
+            "size_bytes > 0", name="ck_podcast_source_media_snapshots_size_bytes"
+        ),
+        CheckConstraint(
+            "duration_seconds > 0",
+            name="ck_podcast_source_media_snapshots_duration_seconds",
+        ),
+    )
+
+    id: str = Field(primary_key=True, description="Immutable snapshot identity")
+    episode_id: str = Field(
+        foreign_key="articles.id",
+        ondelete="CASCADE",
+        index=True,
+    )
+    locator_hash: str = Field(
+        index=True, description="SHA-256 of the exact publisher enclosure URL"
+    )
+    content_hash: str = Field(
+        index=True, description="SHA-256 of bytes observed during validation"
+    )
+    mime: str = Field(description="Canonical verified audio MIME")
+    size_bytes: int = Field(gt=0)
+    duration_seconds: float = Field(gt=0)
+    created_at: str
+
+
 class PodcastArtifactRecord(SQLModel, table=True):
-    """Immutable Podcast audio bytes plus mutable publication lifecycle.
+    """Immutable derived Podcast audio plus mutable publication lifecycle.
 
     Blob bytes live in the configured local CAS, never in ``extensions_json`` or
     this row. Multiple rows may reference one content hash; physical deletion is
@@ -1831,12 +1898,6 @@ class PodcastArtifactRecord(SQLModel, table=True):
             "episode_id",
             "kind",
             "created_at",
-        ),
-        Index(
-            "ix_podcast_artifacts_kind_status_expires",
-            "kind",
-            "status",
-            "expires_at",
         ),
         Index(
             "uq_podcast_artifacts_digest_processing",
@@ -1853,12 +1914,9 @@ class PodcastArtifactRecord(SQLModel, table=True):
             "producing_attempt_id",
             name="uq_podcast_artifacts_producing_attempt",
         ),
+        CheckConstraint("kind = 'digest_audio_zh'", name="ck_podcast_artifacts_kind"),
         CheckConstraint(
-            "kind IN ('source_audio','digest_audio_zh')",
-            name="ck_podcast_artifacts_kind",
-        ),
-        CheckConstraint(
-            "status IN ('ready','published','withdrawn','expired')",
+            "status IN ('ready','published','withdrawn')",
             name="ck_podcast_artifacts_status",
         ),
         CheckConstraint("size_bytes >= 0", name="ck_podcast_artifacts_size_bytes"),
@@ -1875,41 +1933,6 @@ class PodcastArtifactRecord(SQLModel, table=True):
             "(length(narration_content_hash) = 64 AND "
             "narration_content_hash = lower(narration_content_hash))",
             name="ck_podcast_artifacts_narration_hash",
-        ),
-        CheckConstraint(
-            "kind <> 'source_audio' OR "
-            "(narration_artifact_id IS NULL AND narration_content_hash IS NULL "
-            "AND processing_id IS NULL)",
-            name="ck_podcast_artifacts_source_has_no_narration",
-        ),
-        CheckConstraint(
-            "source_locator_hash IS NULL OR "
-            "(length(source_locator_hash) = 64 AND "
-            "source_locator_hash = lower(source_locator_hash))",
-            name="ck_podcast_artifacts_source_locator_hash",
-        ),
-        CheckConstraint(
-            "kind <> 'source_audio' OR expires_at IS NOT NULL",
-            name="ck_podcast_artifacts_source_expires",
-        ),
-        CheckConstraint(
-            "kind <> 'source_audio' OR status <> 'published'",
-            name="ck_podcast_artifacts_source_never_published",
-        ),
-        CheckConstraint(
-            "kind <> 'digest_audio_zh' OR "
-            "(source_locator_hash IS NULL AND expires_at IS NULL AND expired_at IS NULL)",
-            name="ck_podcast_artifacts_digest_is_durable",
-        ),
-        CheckConstraint(
-            "status <> 'expired' OR "
-            "(kind = 'source_audio' AND expired_at IS NOT NULL)",
-            name="ck_podcast_artifacts_expired_status",
-        ),
-        CheckConstraint(
-            "expired_at IS NULL OR "
-            "(kind = 'source_audio' AND status = 'expired')",
-            name="ck_podcast_artifacts_expired_at",
         ),
         CheckConstraint(
             "kind <> 'digest_audio_zh' OR status = 'withdrawn' OR "
@@ -1954,7 +1977,7 @@ class PodcastArtifactRecord(SQLModel, table=True):
         index=True,
         description="ArticleRecord id whose content_type is podcast_episode",
     )
-    kind: str = Field(index=True, description="source_audio/digest_audio_zh")
+    kind: str = Field(index=True, description="digest_audio_zh")
     content_hash: str = Field(index=True, description="SHA-256 of immutable bytes")
     mime: str = Field(description="Canonical verified audio MIME")
     ext: str = Field(description="CAS filename extension")
@@ -1963,7 +1986,7 @@ class PodcastArtifactRecord(SQLModel, table=True):
     status: str = Field(
         default="ready",
         index=True,
-        description="ready/published/withdrawn/expired",
+        description="ready/published/withdrawn",
     )
     provenance: str = Field(default="manual_upload", description="Origin/provider label")
     authority_id: str = Field(
@@ -1991,21 +2014,6 @@ class PodcastArtifactRecord(SQLModel, table=True):
         default=None,
         index=True,
         description="TTS attempt that produced an automatic digest audio artifact",
-    )
-    source_locator_hash: Optional[str] = Field(
-        default=None,
-        index=True,
-        description="SHA-256 of the publisher enclosure locator; the raw URL is not stored",
-    )
-    expires_at: Optional[str] = Field(
-        default=None,
-        index=True,
-        description="Temporary source-audio cache expiry; derived audio is durable",
-    )
-    expired_at: Optional[str] = Field(
-        default=None,
-        index=True,
-        description="When a source-audio cache row entered the expired lifecycle",
     )
     created_at: str
     updated_at: str
@@ -2477,7 +2485,7 @@ def _install_archive_sync_revision_schema(_metadata, connection, **_kwargs) -> N
         for statement in _podcast_processing_command_audit_sql():
             connection.exec_driver_sql(statement)
         for statement in _podcast_audio_dependency_trigger_sql(
-            include_attempt_binding=True
+            include_attempt_binding=True,
         ):
             connection.exec_driver_sql(statement)
     elif connection.dialect.name == "postgresql":
@@ -2493,7 +2501,7 @@ def _install_archive_sync_revision_schema(_metadata, connection, **_kwargs) -> N
         for statement in _podcast_processing_command_postgresql_sql():
             connection.exec_driver_sql(statement)
         for statement in _podcast_audio_dependency_postgresql_sql(
-            include_attempt_binding=True
+            include_attempt_binding=True,
         ):
             connection.exec_driver_sql(statement)
 
@@ -2501,7 +2509,6 @@ def _install_archive_sync_revision_schema(_metadata, connection, **_kwargs) -> N
 def _podcast_audio_dependency_trigger_sql(
     *,
     require_processing_narration: bool = True,
-    include_source_cache_fields: bool = True,
     include_attempt_binding: bool = False,
 ) -> tuple[str, ...]:
     """SQLite guards for exact script binding and publication invalidation."""
@@ -2587,15 +2594,6 @@ def _podcast_audio_dependency_trigger_sql(
         else ""
     )
     now = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
-    immutable_source_columns = (
-        ", source_locator_hash, expires_at" if include_source_cache_fields else ""
-    )
-    immutable_source_conditions = (
-        "\n          OR NEW.source_locator_hash IS NOT OLD.source_locator_hash"
-        "\n          OR NEW.expires_at IS NOT OLD.expires_at"
-        if include_source_cache_fields
-        else ""
-    )
     return (
         f"""
         CREATE TRIGGER IF NOT EXISTS podcast_audio_dependency_insert
@@ -2652,7 +2650,7 @@ def _podcast_audio_dependency_trigger_sql(
         f"""
         CREATE TRIGGER IF NOT EXISTS podcast_audio_binding_immutable
         BEFORE UPDATE OF episode_id, kind, content_hash, authority_id, narration_artifact_id,
-          narration_content_hash, processing_id{attempt_update_column}{immutable_source_columns}
+          narration_content_hash, processing_id{attempt_update_column}
           ON podcast_artifacts
         WHEN NEW.episode_id IS NOT OLD.episode_id
           OR NEW.kind IS NOT OLD.kind
@@ -2662,7 +2660,6 @@ def _podcast_audio_dependency_trigger_sql(
           OR NEW.narration_content_hash IS NOT OLD.narration_content_hash
           OR NEW.processing_id IS NOT OLD.processing_id
           {attempt_immutable_condition}
-          {immutable_source_conditions}
         BEGIN
           SELECT RAISE(ABORT, 'podcast audio binding is immutable');
         END
@@ -2700,7 +2697,6 @@ def _podcast_audio_dependency_trigger_sql(
 def _podcast_audio_dependency_postgresql_sql(
     *,
     require_processing_narration: bool = True,
-    include_source_cache_fields: bool = True,
     include_attempt_binding: bool = False,
 ) -> tuple[str, ...]:
     """PostgreSQL equivalents of the Podcast script/audio guards."""
@@ -2711,15 +2707,6 @@ def _podcast_audio_dependency_postgresql_sql(
                    AND processing.narration_content_hash = NEW.narration_content_hash"""
         if require_processing_narration
         else ""
-    )
-    immutable_source_conditions = (
-        "\n               OR NEW.source_locator_hash IS DISTINCT FROM OLD.source_locator_hash"
-        "\n               OR NEW.expires_at IS DISTINCT FROM OLD.expires_at"
-        if include_source_cache_fields
-        else ""
-    )
-    immutable_source_columns = (
-        ", source_locator_hash, expires_at" if include_source_cache_fields else ""
     )
     attempt_immutable_condition = (
         "\n               OR NEW.producing_attempt_id IS DISTINCT FROM OLD.producing_attempt_id"
@@ -2782,7 +2769,6 @@ def _podcast_audio_dependency_postgresql_sql(
                OR NEW.narration_content_hash IS DISTINCT FROM OLD.narration_content_hash
                OR NEW.processing_id IS DISTINCT FROM OLD.processing_id
                {attempt_immutable_condition}
-               {immutable_source_conditions}
              ) THEN
             RAISE EXCEPTION 'podcast audio binding is immutable';
           END IF;
@@ -2826,7 +2812,7 @@ def _podcast_audio_dependency_postgresql_sql(
         "DROP TRIGGER IF EXISTS podcast_audio_dependency_update ON podcast_artifacts",
         "CREATE TRIGGER podcast_audio_dependency_update BEFORE UPDATE OF episode_id, "
         "kind, status, content_hash, authority_id, narration_artifact_id, narration_content_hash, "
-        f"processing_id{attempt_update_column}{immutable_source_columns} ON "
+        f"processing_id{attempt_update_column} ON "
         "podcast_artifacts FOR EACH ROW EXECUTE FUNCTION "
         "podcast_audio_dependency_validate_fn()",
         """

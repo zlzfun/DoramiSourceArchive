@@ -39,6 +39,7 @@ def _client(handler, **config_updates):
     return AliyunIsiAsrClient(
         config,
         pop_client=AliyunPopClient(config, http_client=http),
+        file_url_resolver=lambda value: value,
     )
 
 
@@ -81,6 +82,103 @@ def test_submit_uses_pop_form_with_double_encoded_task_and_no_nls_token():
     assert "must-not-be-used" not in str(observed)
 
 
+def test_submit_resolves_public_redirect_chain_before_provider_request():
+    provider_forms: list[dict[str, list[str]]] = []
+    redirect_requests: list[str] = []
+    original = "https://pscrb.example/episode?token=do-not-persist"
+    final = "https://audio.transistor.example/final.mp3?delivery=signed"
+    redirects = {
+        "/episode": "https://pscrb.example/one",
+        "/one": "https://tracker.example/two",
+        "/two": "https://redirect.example/three",
+        "/three": final,
+    }
+
+    def redirect_handler(request: httpx.Request):
+        redirect_requests.append(str(request.url))
+        location = redirects.get(request.url.path)
+        if location is not None:
+            return httpx.Response(302, headers={"Location": location})
+        return httpx.Response(200, headers={"Content-Type": "audio/mpeg"})
+
+    def redirect_client_factory(**kwargs):
+        return httpx.Client(
+            transport=httpx.MockTransport(redirect_handler),
+            **kwargs,
+        )
+
+    def provider_handler(request: httpx.Request):
+        provider_forms.append(parse_qs(request.content.decode("utf-8")))
+        return httpx.Response(
+            200,
+            json={
+                "TaskId": "redirect-task",
+                "StatusCode": 21050000,
+                "StatusText": "SUCCESS",
+            },
+        )
+
+    config = _config(request_timeout_seconds=5)
+    provider_http = httpx.Client(transport=httpx.MockTransport(provider_handler))
+    client = AliyunIsiAsrClient(
+        config,
+        pop_client=AliyunPopClient(config, http_client=provider_http),
+        redirect_client_factory=redirect_client_factory,
+    )
+
+    result = client.submit(original)
+
+    assert result.task_id == "redirect-task"
+    assert redirect_requests == [
+        original,
+        "https://pscrb.example/one",
+        "https://tracker.example/two",
+        "https://redirect.example/three",
+        final,
+    ]
+    task = json.loads(provider_forms[0]["Task"][0])
+    assert task["file_link"] == final
+    assert original not in provider_forms[0]["Task"][0]
+
+
+def test_submit_rejects_unsafe_redirect_before_requesting_target_or_provider():
+    redirect_requests: list[str] = []
+    provider_requests = 0
+
+    def redirect_handler(request: httpx.Request):
+        redirect_requests.append(str(request.url))
+        return httpx.Response(
+            302,
+            headers={"Location": "http://127.0.0.1/private.mp3"},
+        )
+
+    def redirect_client_factory(**kwargs):
+        return httpx.Client(
+            transport=httpx.MockTransport(redirect_handler),
+            **kwargs,
+        )
+
+    def provider_handler(_request: httpx.Request):
+        nonlocal provider_requests
+        provider_requests += 1
+        pytest.fail("unsafe redirect must fail before provider submit")
+
+    config = _config(request_timeout_seconds=5)
+    provider_http = httpx.Client(transport=httpx.MockTransport(provider_handler))
+    client = AliyunIsiAsrClient(
+        config,
+        pop_client=AliyunPopClient(config, http_client=provider_http),
+        redirect_client_factory=redirect_client_factory,
+    )
+
+    with pytest.raises(AliyunAsrRejected) as caught:
+        client.submit("https://podcast.example/start.mp3")
+
+    assert caught.value.code == "source_url_resolution_failed"
+    assert redirect_requests == ["https://podcast.example/start.mp3"]
+    assert provider_requests == 0
+
+
 def test_poll_needs_no_app_key_but_submit_rejects_before_network():
     requests = []
 
@@ -113,7 +211,6 @@ def test_poll_needs_no_app_key_but_submit_rejects_before_network():
     "value",
     [
         "/tmp/audio.wav",
-        "http://audio.example.test/a.wav",
         "https://127.0.0.1/a.wav",
         "https://localhost/a.wav",
         "https://user:pass@audio.example.test/a.wav",
@@ -130,6 +227,12 @@ def test_poll_needs_no_app_key_but_submit_rejects_before_network():
 def test_submit_rejects_non_provider_fetchable_url_before_network(value):
     with pytest.raises(ValueError, match="provider-fetchable|IP literal"):
         validate_provider_fetch_url(value)
+
+
+@pytest.mark.parametrize("scheme", ["http", "https"])
+def test_provider_fetch_url_accepts_public_domain_and_preserves_exact_url(scheme):
+    value = f"{scheme}://audio.example.test/episode.mp3?token=a%2Bb&part=1"
+    assert validate_provider_fetch_url(value) == value
 
 
 def test_submit_timeout_is_unknown_and_is_never_retried():
@@ -388,7 +491,7 @@ def test_poll_pop_throttle_is_retryable_without_exposing_provider_code():
     assert "Throttling.User" not in str(caught.value)
 
 
-def test_poll_http_info_log_redacts_all_signed_query_identifiers(caplog):
+def test_poll_http_info_log_redacts_all_signed_query_identifiers(caplog, monkeypatch):
     config = _config(
         access_key_id="sensitive-ak-id",
         access_key_secret="sensitive-ak-secret",
@@ -410,6 +513,11 @@ def test_poll_http_info_log_redacts_all_signed_query_identifiers(caplog):
         config,
         pop_client=AliyunPopClient(config, http_client=http),
     )
+    httpx_logger = logging.getLogger("httpx")
+    # Alembic's logging setup may disable pre-existing loggers when migration
+    # tests run first. Keep this assertion independent of suite ordering.
+    monkeypatch.setattr(httpx_logger, "disabled", False)
+    monkeypatch.setattr(httpx_logger, "propagate", True)
     caplog.set_level(logging.INFO, logger="httpx")
 
     client.poll("sensitive-task-id")

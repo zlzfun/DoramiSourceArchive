@@ -1,5 +1,4 @@
 export const PODCAST_ARTIFACT_KIND_LABELS = Object.freeze({
-  source_audio: '原始音频',
   digest_audio_zh: '中文精简版',
 });
 
@@ -7,30 +6,14 @@ export const PODCAST_ARTIFACT_STATUS_META = Object.freeze({
   ready: { label: '待发布', tone: 'warn' },
   published: { label: '已发布', tone: 'ok' },
   withdrawn: { label: '已下架', tone: 'idle' },
-  expired: { label: '已过期', tone: 'idle' },
-});
-
-export const PODCAST_ARTIFACT_RETENTION_LABELS = Object.freeze({
-  durable: '永久保留',
-  temporary: '临时缓存',
-  protected: '到期·处理中保护',
-  due: '待安全回收',
-  expired: '已解除引用',
 });
 
 export function podcastArtifactKindLabel(kind) {
   return PODCAST_ARTIFACT_KIND_LABELS[kind] || kind || '未知类型';
 }
 
-export function podcastArtifactStatusMeta(status, kind = '') {
-  if (status === 'ready' && kind === 'source_audio') {
-    return { label: '可处理', tone: 'ok' };
-  }
+export function podcastArtifactStatusMeta(status) {
   return PODCAST_ARTIFACT_STATUS_META[status] || { label: status || '未知状态', tone: 'idle' };
-}
-
-export function podcastArtifactRetentionLabel(value) {
-  return PODCAST_ARTIFACT_RETENTION_LABELS[value] || value || '—';
 }
 
 export function formatPodcastArtifactBytes(bytes) {
@@ -55,4 +38,24 @@ export function formatPodcastArtifactTime(iso, locale = 'zh-CN') {
     minute: '2-digit',
     hour12: false,
   }).format(parsed);
+}
+
+function hasFixedQuota(value) {
+  const quota = Number(value);
+  return Number.isFinite(quota) && quota > 0;
+}
+
+export function podcastArtifactTotalStorageMeta(stats) {
+  if (hasFixedQuota(stats?.quota_bytes)) {
+    return {
+      value: formatPodcastArtifactBytes(stats.quota_remaining_bytes),
+      label: '配额余量',
+      sub: `总额 ${formatPodcastArtifactBytes(stats.quota_bytes)}`,
+    };
+  }
+  return {
+    value: formatPodcastArtifactBytes(stats?.disk_bytes),
+    label: '总存储占用',
+    sub: '不设固定上限 · 按磁盘余量保护',
+  };
 }

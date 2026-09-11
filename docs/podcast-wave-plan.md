@@ -36,7 +36,7 @@
 - ASR 默认采用低价托管模型以减少运维：国内首测阿里 Qwen-Audio 3.0，全球中英混合首测 AssemblyAI Universal-3.5 Pro + diarization，并以 OpenAI、自托管 faster-whisper/WhisperX 和 SenseVoice/FunASR作质量基准；达到稳定规模后再决定自托管。
 - 摘要沿用项目现有 OpenAI-compatible LLM 配置，但新增“带时间戳证据的结构化脚本”协议，不能直接复用普通文章摘要作为播音稿。
 - TTS 首版使用一个固定平台中文音色，按语义段落合成，禁止克隆主持人声音；全球首测 Azure Neural，国内并行盲测腾讯、阿里与自托管 CosyVoice。
-- 原始音频默认由客户端读取发布者 enclosure，不做永久镜像；ASR 临时下载有短保留期，生成音频进入对象存储。这样同时降低带宽、存储和版权风险。
+- 原始音频默认由客户端读取发布者 enclosure，不做永久镜像；ASR 默认把 RSS 原地址交给供应商，本地下载只用于临时 staging 校验，校验后删除并持久化轻量 `source_media_snapshot`。仅当供应商明确无法下载 RSS 音频时，才允许一次私有 OSS 短生命周期兜底；生成音频进入持久存储。这样同时降低带宽、存储和版权风险。
 - Podcast Index 用于开放播客发现和 RSS 定位，直接 RSS 永远是入库后的事实源；Listen Notes 只作为可插拔的商业备选。
 
 目前没有查到已核实竞品把“任意外部长播客 RSS → 完整转录 → 独立中文博客 → ≤15 分钟合成音频 → 新 RSS”完整串起来。最接近的是 Snipd 的原声精华、Podwise 的结构化知识、NotebookLM 的生成式 Audio Overview，以及 BestBlogs 曾上线但当前状态存在文档冲突的音频简报。Dorami 的差异化机会是：**可审计的时间戳引用、明确授权、博客与音频双产物、成本可控的异步流水线**。
@@ -66,7 +66,7 @@ Issue #7 的标题要求“新增播客专栏，收录优质播客；将外部�
 
 - 不做 Spotify/Apple Podcasts/小宇宙页面抓取，不绕过登录、DRM、付费墙或私有 feed 认证。
 - 不提供原主持人的声音克隆，不把合成音频伪装成原节目。
-- 不默认永久缓存或重新托管原始音频。
+- 不永久保存或重新托管原始音频。
 - 不承诺实时转录、直播播客或视频播客处理。
 - 不在未确认权利时公开完整逐字稿、精华博客或精华音频。
 - 不一次性把用户私人 Podcast OPML、公开目录和内部精选库混成一个权限模型。
@@ -462,7 +462,7 @@ Episode 元数据入库 ──► ArticleRecord(podcast_episode) + PodcastEpisod
 ### 8.4 对象存储与 Archive Sync（2026-09-03 修订：P3 前置）
 
 - 开发环境：本地 artifact store；生产：S3-compatible/MinIO provider 接口，数据库只存 URI、哈希、字节数和 MIME。
-- 原音频临时文件在 ASR 完成后按策略删除，默认 24 小时，失败排障最多 72 小时且仅管理员可访问。
+- 原音频只在当前处理尝试的 staging 中完成安全与媒体校验，校验结束即删除；排障依赖轻量 `source_media_snapshot` 和脱敏错误事实，不保留可播放原始字节。
 - 生成音频、VTT、章节 JSON 可长期保存，但支持权利撤销后的级联下架与物理删除任务。
 - Archive Sync v1 只有 Article JSONL，既不搬运分析/标签，也不搬运逐字稿和音频，无法支撑“外网预计算、内网消费”。Archive Bundle v2 是进入全文处理前的硬前置：单调 `change_seq`、签名 manifest、内容寻址 blob、tombstone、失败不推进 checkpoint、内网原子 materialize 和本地稳定媒体 API；不能把外网 storage URI 填进 `extensions` 后交给内网。
 
@@ -872,7 +872,7 @@ Podcast Index、外部 URL → RSS、内网博客批量导入和更大 provider/
 
 ### 17.2 Fallback Path
 
-- 无官方逐字稿的 61 分钟单集：只在 rights + budget 通过后下载，ASR 成功后删除临时原音频。
+- 无官方逐字稿的 61 分钟单集：只在 rights + budget 通过后临时下载校验，写入轻量 `source_media_snapshot` 后删除本地原始字节，再默认把 RSS 原地址交给 ASR；仅四类供应商下载失败允许一次私有 OSS 临时对象兜底，其他失败不自动补提。
 - 10、20、30、60 分钟样例都可因价值或编辑选择进入后续门控；改变时长只应改变成本估算/调度，不应改变精品资格。
 - duration 缺失：probe 后再判断；probe 失败不盲目下载全文件。
 - enclosure 302 到私网/超大文件/错误 MIME：拒绝并记录稳定错误码。
@@ -923,7 +923,7 @@ podcast_self_hosted_tts_enabled
 4. 用现有 OpenAI-compatible LLM 做“分段 map → 带证据 reduce → 播音稿 rewrite”，每个结论绑定原节目 segment/timecode。
 5. 文字精华先发布；只有编辑精选的精品在后台预生成 TTS，普通用户访问不触发生成。
 6. TTS 使用固定、获授权的中性中文声音，目标 12–14 分钟，实际时长 >15 分钟必须重写。
-7. 所有处理均可幂等、可重跑、可审计、可撤权；原音频不永久镜像，生成资产存私有对象存储。
+7. 所有处理均可幂等、可重跑、可审计、可撤权；原音频只做临时 staging 校验，持久层仅留轻量 `source_media_snapshot`，生成资产存私有对象存储。
 
 这条路线把昂贵和高风险的步骤推迟到确有价值的单集，同时保留未来自托管 ASR/TTS、公开精华 RSS 和 agent API 的扩展空间。
 

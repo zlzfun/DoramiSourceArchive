@@ -47,6 +47,7 @@ import SocialFlow from './SocialFlow';
 import AnnouncementBanner from './AnnouncementBanner';
 import { PodcastCover } from './PodcastAudioPanel';
 import PodcastExperiencePanel from './PodcastExperiencePanel';
+import PodcastTextPanel from './PodcastTextPanel';
 import PersonalBriefPage from './PersonalBriefPage';
 import InterestPage from './InterestPage';
 import AnalysisTagChip from './AnalysisTagChip';
@@ -55,14 +56,13 @@ import { highlightMatch } from '../utils/highlight';
 import { dayLabelOf } from '../utils/readerTime';
 import { buildListPlan } from '../utils/listPlan';
 import { formatRelativeTime, formatDateTime, formatPublishDate } from '../utils/datetime';
-import { formatPodcastDuration, podcastOf, podcastProcessingMeta } from '../utils/podcast';
+import { formatPodcastDuration, podcastListAvailabilityMeta, podcastOf } from '../utils/podcast';
 import {
   SCORE_DISCLAIMER,
   analysisStatusMeta,
   contentGenreLabel,
   displayAnalysisTags,
   podcastAssessmentMeta,
-  podcastFullProcessingMeta,
   primaryAnalysisLabel,
   qualityScoreText,
   scoreTierClass,
@@ -233,9 +233,7 @@ export const ArticleRow = memo(function ArticleRow({
     ? ''
     : excerptOf(article.summary_zh || article.content_preview || article.content);
   const podcast = entryPodcast ? podcastOf(article) : null;
-  const podcastFullStatus = entryPodcast ? podcastFullProcessingMeta(article) : null;
-  const podcastStatus = podcastFullStatus || podcastProcessingMeta(
-    podcast?.processing_status,
+  const podcastStatus = podcastListAvailabilityMeta(
     Boolean(podcast?.condensed_audio_url),
   );
   const analysisLabel = primaryAnalysisLabel(article);
@@ -279,6 +277,7 @@ export const ArticleRow = memo(function ArticleRow({
             <span className="reader-podcast-copy">
               <span className="reader-entry-top">
                 <span className="reader-entry-src">{podcast?.show_title || sourceName}</span>
+                {analysisLabel && <span className="reader-entry-tag">{analysisLabel}</span>}
                 {score && (
                   <span className={`reader-entry-score ai-grad-text ${scoreTier}`} title={SCORE_DISCLAIMER}>
                     {score}
@@ -301,11 +300,10 @@ export const ArticleRow = memo(function ArticleRow({
                 {formatPodcastDuration(podcast?.duration_seconds) && (
                   <span>{formatPodcastDuration(podcast.duration_seconds)}</span>
                 )}
-                <span className={`podcast-status is-${podcastStatus.tone}`} role={podcastFullStatus ? 'status' : undefined}>
+                <span className={`podcast-status is-${podcastStatus.tone}`}>
                   {podcastStatus.label}
                 </span>
                 {podcastAssessment && <span className="stamp stamp-idle" role="status">{podcastAssessment.label}</span>}
-                {analysisStatus && <span className={`stamp ${analysisStatus.cls}`} role="status">{analysisStatus.label}</span>}
               </span>
             </span>
           </span>
@@ -1424,6 +1422,12 @@ export default function ReaderTab({
                 podcastView
                   ? '该播客暂无文字内容，可收听上方原节目音频。'
                   : '该文章暂无正文内容，点击「查看原文」阅读完整内容。'
+              )}
+              {podcastView && !podcastGuideActive && !activeBodyLoading && (
+                <PodcastTextPanel
+                  episodeId={activeArticle.id}
+                  preferredTranscriptKind="publisher_transcript"
+                />
               )}
               {/* 正文尾部原文行(v3.40 自定源首创,v3.45 推全站):读完想看原文正是最自然的
                   时刻;摘要型源读完即达原文,全文源多一个出口也无碍。无 source_url 不画。 */}

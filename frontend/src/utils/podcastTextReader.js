@@ -1,19 +1,28 @@
 export const PODCAST_TEXT_LABELS = Object.freeze({
   digest_blog_zh: { title: '中文精华', note: 'AI 整理' },
-  transcript_zh: { title: '中文逐字稿', note: 'AI 整理' },
-  publisher_transcript: { title: '来源逐字稿', note: '来源方提供' },
+  transcript_zh: { title: '中文逐字稿', note: 'AI 翻译整理' },
+  publisher_transcript: { title: '节目方逐字稿', note: '节目方提供' },
+  normalized_transcript: { title: 'ASR 逐字稿', note: '语音识别稿' },
 });
+
+const TRANSCRIPT_PRIORITY = Object.freeze([
+  'transcript_zh',
+  'publisher_transcript',
+  'normalized_transcript',
+]);
 
 export function podcastTextView(response) {
   const items = Array.isArray(response?.items) ? response.items : [];
   const byKind = Object.fromEntries(items.map((item) => [item.kind, item]));
+  const transcripts = TRANSCRIPT_PRIORITY
+    .filter((kind) => byKind[kind])
+    .map((kind) => ({
+      item: byKind[kind],
+      label: PODCAST_TEXT_LABELS[kind],
+    }));
   return {
     digest: byKind.digest_blog_zh || null,
-    transcript: byKind.transcript_zh || byKind.publisher_transcript || null,
-    transcriptLabel: byKind.transcript_zh
-      ? PODCAST_TEXT_LABELS.transcript_zh
-      : PODCAST_TEXT_LABELS.publisher_transcript,
-    hasText: Boolean(byKind.digest_blog_zh || byKind.transcript_zh || byKind.publisher_transcript),
+    transcripts,
   };
 }
 

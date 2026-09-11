@@ -46,15 +46,7 @@ def test_compose_keeps_all_role_and_wires_persistent_podcast_runtime():
         "DORAMI_PODCAST_WORKER_MAX_STEPS_PER_TICK",
     ):
         assert f"{name}: ${{{name}:-}}" in compose
-    for name in (
-        "DORAMI_PODCAST_ASR_FETCH_PUBLIC_BASE_URL",
-        "DORAMI_PODCAST_ASR_FETCH_SIGNING_SECRET",
-        "DORAMI_PODCAST_ASR_FETCH_PREVIOUS_SIGNING_SECRET",
-        "DORAMI_PODCAST_ASR_FETCH_URL_TTL_SECONDS",
-        "DORAMI_PODCAST_ASR_FETCH_CLOCK_SKEW_SECONDS",
-        "DORAMI_PODCAST_ASR_FETCH_MIN_REMAINING_SECONDS",
-    ):
-        assert f"{name}: ${{{name}:-}}" in compose
+    assert "DORAMI_PODCAST_ASR_FETCH_" not in compose
     assert "- ./data:/app/data" in compose
     for name in (
         "ALIYUN_AK_ID",
@@ -74,6 +66,11 @@ def test_compose_keeps_all_role_and_wires_persistent_podcast_runtime():
         "DORAMI_ALIYUN_ISI_ASR_ENABLE_WORDS",
         "DORAMI_ALIYUN_ISI_ASR_AUTO_SPLIT",
         "DORAMI_ALIYUN_ISI_ASR_ENABLE_SAMPLE_RATE_ADAPTIVE",
+        "DORAMI_ALIYUN_ISI_ASR_OSS_ENDPOINT",
+        "DORAMI_ALIYUN_ISI_ASR_OSS_INTERNAL_ENDPOINT",
+        "DORAMI_ALIYUN_ISI_ASR_OSS_BUCKET",
+        "DORAMI_ALIYUN_ISI_ASR_OSS_PREFIX",
+        "DORAMI_ALIYUN_ISI_ASR_OSS_SIGNED_URL_TTL_SECONDS",
         "DORAMI_ALIYUN_ISI_ASR_POLL_INTERVAL_SECONDS",
         "DORAMI_ALIYUN_ISI_TOKEN_URL",
         "DORAMI_ALIYUN_ISI_TTS_URL",
@@ -87,6 +84,7 @@ def test_compose_keeps_all_role_and_wires_persistent_podcast_runtime():
         "DORAMI_ALIYUN_ISI_ASR_QUOTA_SCOPE",
         "DORAMI_ALIYUN_ISI_ASR_QUOTA_TIMEZONE",
         "DORAMI_ALIYUN_ISI_ASR_DAILY_AUDIO_SECONDS_LIMIT",
+        "DORAMI_ALIYUN_ISI_ASR_MAX_AUDIO_SECONDS_PER_FILE",
         "DORAMI_ALIYUN_ISI_ASR_ENTITLEMENT_ENDS_AT",
         "DORAMI_ALIYUN_ISI_ASR_PROVIDER_DEADLINE_SECONDS",
         "DORAMI_ALIYUN_ISI_ASR_PRICE_CNY_MINOR_PER_HOUR",

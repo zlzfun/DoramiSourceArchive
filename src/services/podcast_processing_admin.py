@@ -21,16 +21,15 @@ from config import PodcastConfig
 from models.db import (
     ArticleAnalysisRecord,
     ArticleRecord,
-    PodcastArtifactRecord,
     PodcastBudgetReservationRecord,
     PodcastCostLedgerRecord,
     PodcastProcessingCommandRecord,
     PodcastProcessingRecord,
+    PodcastSourceMediaSnapshotRecord,
     PodcastStageAttemptRecord,
     PodcastTextArtifactRecord,
     PodcastTextPublicationRecord,
 )
-from services.podcast_artifacts import PodcastArtifactStore
 from services.podcast_processing import (
     ACTIVE_ATTEMPT_STATES,
     PodcastProcessingConflict,
@@ -40,8 +39,9 @@ from services.podcast_processing import (
 )
 from services.podcast_processing_inputs import (
     processing_input_fingerprint,
-    source_audio_duration_ms,
+    source_media_duration_ms,
 )
+from services.podcast_source_media import SourceMediaError, enclosure_snapshot
 from services.podcast_stage_policy import PodcastStageDenied, PodcastStagePolicy
 from services.podcast_publisher_transcripts import (
     publisher_artifact_matches_current_locator,
@@ -53,6 +53,7 @@ ERROR_MESSAGES: Mapping[str, str] = {
     "podcast_selection_required": "当前没有已持久化候选结论，需要显式人工选择",
     "podcast_artifact_not_ready": "没有可用于处理的本地就绪音频或当前已发布文本",
     "podcast_provider_unavailable": "Podcast 处理能力尚未完成逻辑配置",
+    "podcast_source_media_too_long": "Podcast 单集音频超过 ASR 单任务时长上限",
     "podcast_budget_exceeded": "Podcast CNY 预算不足",
     "podcast_processing_conflict": "Podcast 处理命令与当前状态冲突",
     "podcast_input_changed": "Podcast 处理输入已变化，请重新发起请求",
@@ -278,6 +279,8 @@ class PodcastProcessingProviderRegistry:
                 value = worker_estimator(
                     session, dict(input_metadata), podcast_config
                 )
+            except PodcastAdminError:
+                raise
             except Exception as exc:
                 raise PodcastAdminError(
                     "podcast_provider_unavailable", status_code=503
@@ -453,7 +456,6 @@ def require_full_analysis_authority(
 
 def _select_external_input(
     session: Session,
-    store: PodcastArtifactStore,
     *,
     episode_id: str,
     target: str,
@@ -508,39 +510,39 @@ def _select_external_input(
                     else "translate"
                 )
                 return SelectedInput(stage, artifact.id, artifact.content_hash, kind, artifact.language)
-    audio_statement = (
-        select(PodcastArtifactRecord)
+    episode = session.get(ArticleRecord, episode_id)
+    try:
+        locator_hash = enclosure_snapshot(episode).locator_hash if episode else ""
+    except SourceMediaError:
+        locator_hash = ""
+    snapshot_statement = (
+        select(PodcastSourceMediaSnapshotRecord)
         .where(
-            PodcastArtifactRecord.episode_id == episode_id,
-            PodcastArtifactRecord.kind == "source_audio",
-            PodcastArtifactRecord.status == "ready",
-            PodcastArtifactRecord.expires_at
-            > dt.datetime.now(dt.timezone.utc).isoformat(timespec="microseconds"),
+            PodcastSourceMediaSnapshotRecord.episode_id == episode_id,
+            PodcastSourceMediaSnapshotRecord.locator_hash == locator_hash,
         )
         .order_by(
-            PodcastArtifactRecord.created_at.desc(),
-            PodcastArtifactRecord.id.desc(),
+            PodcastSourceMediaSnapshotRecord.created_at.desc(),
+            PodcastSourceMediaSnapshotRecord.id.desc(),
         )
     )
     if session.get_bind().dialect.name == "postgresql":
-        audio_statement = audio_statement.with_for_update()
-    audio_rows = list(session.exec(audio_statement).all())
-    for artifact in audio_rows:
-        if store.is_intact(artifact):
-            return SelectedInput(
-                "asr",
-                artifact.id,
-                artifact.content_hash,
-                artifact.kind,
-                "und",
-                source_audio_duration_ms(artifact.duration_seconds),
-            )
+        snapshot_statement = snapshot_statement.with_for_update()
+    snapshot = session.exec(snapshot_statement).first()
+    if snapshot is not None:
+        return SelectedInput(
+            "asr",
+            snapshot.id,
+            snapshot.content_hash,
+            "source_media_snapshot",
+            "und",
+            source_media_duration_ms(snapshot.duration_seconds),
+        )
     raise PodcastAdminError("podcast_artifact_not_ready", status_code=409)
 
 
 def select_full_analysis_input(
     engine: Engine,
-    store: PodcastArtifactStore,
     *,
     episode_id: str,
 ) -> SelectedInput:
@@ -548,7 +550,7 @@ def select_full_analysis_input(
 
     with Session(engine) as session:
         return _select_external_input(
-            session, store, episode_id=episode_id, target="full_analysis"
+            session, episode_id=episode_id, target="full_analysis"
         )
 
 
@@ -769,7 +771,6 @@ def _enqueue_locked(
 
 def request_processing(
     engine: Engine,
-    store: PodcastArtifactStore,
     registry: PodcastProcessingProviderRegistry,
     config: PodcastConfig,
     *,
@@ -809,7 +810,7 @@ def request_processing(
                 return replay
             _require_runtime(config, registry, target)
             require_full_analysis_llm(session, target)
-            selected = _select_external_input(session, store, episode_id=episode_id, target=target)
+            selected = _select_external_input(session, episode_id=episode_id, target=target)
             selection_source = "editor" if selection_override else "policy"
             if not selection_override:
                 analysis = session.get(ArticleAnalysisRecord, episode_id)

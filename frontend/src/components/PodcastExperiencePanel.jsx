@@ -36,7 +36,13 @@ function PodcastExperience({ article, variant: controlledVariant, onVariantChang
         variant={variant}
         onVariantChange={handleVariantChange}
       />
-      {guideVisible && <PodcastTextPanel episodeId={article.id} />}
+      {guideVisible && (
+        <PodcastTextPanel
+          episodeId={article.id}
+          showDigest
+          hiddenTranscriptKinds={['publisher_transcript']}
+        />
+      )}
     </div>
   );
 }

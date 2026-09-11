@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
 import logging
 import re
@@ -18,9 +19,16 @@ MAX_PUBLIC_REDIRECTS = 5
 
 PublicHostValidator = Callable[[str], None]
 AsyncClientFactory = Callable[..., httpx.AsyncClient]
+SyncClientFactory = Callable[..., httpx.Client]
+PublicUrlValidator = Callable[[str], str]
 
 _URL_QUERY_RE = re.compile(
     r"(?i)(https?://[^\s\"'<>?]+)\?[^\s\"'<>#]*"
+)
+_URL_FULL_RE = re.compile(r"(?i)https?://[^\s\"'<>]+")
+_REDACT_HTTP_URLS_COMPLETELY = contextvars.ContextVar(
+    "redact_http_urls_completely",
+    default=False,
 )
 _HTTP_LOGGER_NAMES = (
     "httpx",
@@ -45,7 +53,11 @@ class _HTTPQueryRedactionFilter(logging.Filter):
             rendered = record.getMessage()
         except Exception:  # pragma: no cover - defensive against custom records
             return True
-        redacted = _redact_url_queries(rendered)
+        redacted = (
+            _URL_FULL_RE.sub("[REDACTED_URL]", rendered)
+            if _REDACT_HTTP_URLS_COMPLETELY.get()
+            else _redact_url_queries(rendered)
+        )
         if redacted != rendered:
             record.msg = redacted
             record.args = ()
@@ -83,6 +95,133 @@ class PublicDownloadError(ValueError):
 
 class PublicDownloadTimeout(PublicDownloadError):
     """The connect/read/stream operation exceeded its configured deadline."""
+
+
+def _probe_without_body(
+    client: httpx.Client,
+    method: str,
+    url: str,
+    *,
+    timeout_seconds: float,
+) -> tuple[int, str, str]:
+    headers = {"Accept-Encoding": "identity"}
+    if method == "GET":
+        headers["Range"] = "bytes=0-0"
+    redaction_token = _REDACT_HTTP_URLS_COMPLETELY.set(True)
+    try:
+        with client.stream(
+            method,
+            url,
+            headers=headers,
+            follow_redirects=False,
+            timeout=httpx.Timeout(timeout_seconds),
+        ) as response:
+            # Deliberately do not iterate or read the response body. Even when
+            # a server ignores Range, closing the stream prevents local
+            # buffering of the publisher recording.
+            content_type = response.headers.get("Content-Type", "")
+            return (
+                response.status_code,
+                response.headers.get("Location", "").strip(),
+                content_type.split(";", 1)[0].strip().lower(),
+            )
+    finally:
+        _REDACT_HTTP_URLS_COMPLETELY.reset(redaction_token)
+
+
+def _is_audio_content_type(value: str) -> bool:
+    return value.startswith("audio/") or value in {
+        "application/octet-stream",
+        "application/ogg",
+    }
+
+
+def resolve_public_url_redirects(
+    url: str,
+    *,
+    url_validator: PublicUrlValidator,
+    max_redirects: int = MAX_PUBLIC_REDIRECTS,
+    timeout_seconds: float = 30.0,
+    client_factory: SyncClientFactory | None = None,
+) -> str:
+    """Resolve an HTTP(S) redirect chain without downloading its body.
+
+    HEAD is preferred. Servers that explicitly reject HEAD are probed with a
+    streaming one-byte Range GET. ``url_validator`` runs before every request,
+    so callers can enforce their existing hostname/IP/userinfo policy on every
+    redirect hop. Error messages never contain the source URL.
+    """
+
+    if not callable(url_validator):
+        raise TypeError("公开 URL 校验器必须可调用")
+    if max_redirects < 0:
+        raise ValueError("下载重定向次数上限不能为负数")
+    if timeout_seconds <= 0:
+        raise ValueError("下载请求超时必须为正数")
+    selected_client_factory = client_factory or httpx.Client
+    current = str(url or "")
+    deadline = time.monotonic() + timeout_seconds
+    request_failed = False
+    request_timed_out = False
+    try:
+        with selected_client_factory(
+            follow_redirects=False,
+            timeout=httpx.Timeout(timeout_seconds),
+        ) as client:
+            for hop in range(max_redirects + 1):
+                try:
+                    current = url_validator(current)
+                except (TypeError, ValueError):
+                    raise PublicDownloadError(
+                        "下载地址不是安全的公开 HTTP(S) 地址"
+                    ) from None
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise PublicDownloadTimeout("下载请求超过总超时上限")
+                status, location, content_type = _probe_without_body(
+                    client,
+                    "HEAD",
+                    current,
+                    timeout_seconds=remaining,
+                )
+                if status in {400, 403, 405, 406, 501} or (
+                    200 <= status < 300 and not _is_audio_content_type(content_type)
+                ):
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise PublicDownloadTimeout("下载请求超过总超时上限")
+                    status, location, _content_type = _probe_without_body(
+                        client,
+                        "GET",
+                        current,
+                        timeout_seconds=remaining,
+                    )
+                if status in _REDIRECT_STATUSES:
+                    if not location:
+                        raise PublicDownloadError("下载重定向缺少目标地址")
+                    if hop >= max_redirects:
+                        raise PublicDownloadError("下载重定向次数过多")
+                    try:
+                        current = urljoin(current, location)
+                    except ValueError:
+                        raise PublicDownloadError(
+                            "下载重定向目标地址无效"
+                        ) from None
+                    continue
+                if 200 <= status < 300:
+                    return current
+                raise PublicDownloadError(f"下载服务器返回异常状态码 {status}")
+    except PublicDownloadError:
+        raise
+    except httpx.TimeoutException:
+        request_timed_out = True
+    except httpx.HTTPError:
+        request_failed = True
+    if request_timed_out:
+        raise PublicDownloadTimeout("下载请求超时") from None
+    if request_failed:
+        raise PublicDownloadError("下载请求失败") from None
+    raise PublicDownloadError("下载重定向次数过多")
 
 
 @dataclass(frozen=True)

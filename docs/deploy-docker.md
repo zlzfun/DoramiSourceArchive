@@ -23,7 +23,7 @@ docker-compose.yml
                + docker/nginx.conf;对外唯一端口)
 ```
 
-- 数据全部在宿主 `./data`（SQLite / 图片媒体库 / Podcast 本地音频 CAS），卷挂载进 `/app/data`;
+- 数据全部在宿主 `./data`（SQLite / 图片媒体库 / Podcast 生成音频 CAS），卷挂载进 `/app/data`;
   容器无状态,可随意重建。
 - `config/production.ini` 只读挂载,不进镜像(`.dockerignore` 同时兜底)。
 - 批准的 Taxonomy catalog 是非机密运行时资产，随 backend 镜像复制；外网配置
@@ -62,14 +62,6 @@ docker compose ps                   # 状态与健康
 docker compose restart backend      # 仅重启后端
 docker compose down                 # 停站(数据在宿主目录,安全)
 ```
-
-Podcast ASR 服务商拉取原音频时，HMAC 授权位于固定路径
-`/api/public/podcast-asr/source-audio` 的 query 中。容器 Nginx 对该精确路径关闭
-access/error request log 并关闭代理缓冲；Uvicorn 在应用加载后再对同一路径
-清除查询参数，其他 API 的访问日志不受影响。若使用宿主 TLS Nginx，必须
-保留 [`docker/edge-nginx.conf.example`](../docker/edge-nginx.conf.example) 中的同名
-exact location；改成 LB/CDN 终止 TLS 时，也要在边缘访问日志中对该路径
-关闭 query 记录。
 
 对外监听默认 80,`DORAMI_HTTP_LISTEN` 可改端口(`8080`)或收进环回
 (`127.0.0.1:8080`,配合外层 TLS 反代);时区默认
@@ -127,19 +119,23 @@ EOF
 ```
 
 迁移收尾:老机 `docker compose down`(或 PM2 时代 `pm2 delete`),DNS 切到新机。
-数据只有 `data/` 一个目录 + `production.ini` 一个文件；`data/podcast-artifacts` 与数据库
-必须作为同一恢复点一起备份/迁移。仅恢复数据库会留下缺失音频，仅恢复 CAS 会产生孤儿文件。
+数据只有 `data/` 一个目录 + `production.ini` 一个文件；生成音频目录
+`data/podcast-artifacts` 与数据库必须作为同一恢复点一起备份/迁移。仅恢复数据库会留下
+缺失的中文精简音频，仅恢复 CAS 会产生孤儿文件；原节目音频不在这份备份中。
 
 ## Podcast 音频部署检查
 
 - backend 镜像通过 Debian `ffmpeg` 包同时提供 `ffmpeg`/`ffprobe`，并在同一 apt layer 清理索引。
 - Compose 将 `DORAMI_PODCAST_ARTIFACT_ROOT_DIR` 固定在持久卷内的
-  `/app/data/podcast-artifacts`；不要改到容器临时文件系统。
-- 上线前按卷容量设置 `total_quota_mb` 与 `minimum_free_mb`；默认分别为 10240 MiB 和
-  1024 MiB。启动会自动清理过期上传临时文件和无引用且过宽限期的孤儿 blob，绝不会
+  `/app/data/podcast-artifacts`；这里只持久保存生成的中文精简音频，不缓存原节目。
+- 默认 `total_quota_mb=0`，不人为设置固定业务硬上限；如需租户级容量边界，再按卷容量
+  配置正数。`minimum_free_mb` 默认 1024 MiB，始终作为磁盘安全余量。启动会自动清理
+  过期上传临时文件和无引用且过宽限期的孤儿 blob，绝不会
   删除数据库仍引用的音频；管理端统计中的 `storage_pressure` 必须保持为 false。
 - 外网默认开启完整 Podcast 处理链并注入 ASR/TTS secret；内网默认关闭处理且不注入
   供应商凭据；两端 role 都是 `all`。显式 `DORAMI_PODCAST_*` 覆盖优先。
+- 外网 ASR 把 RSS enclosure 原地址直接交给阿里云。后端仅在本地 staging 做媒体校验，
+  校验结束删除原始字节并持久化轻量 `source_media_snapshot`；无需原音频公网回源路由。
 - 升级前备份整个 `data/`，升级后至少验证 `ffmpeg -version`、`ffprobe -version`、
   artifact 管理统计和一条已发布音频的 `HEAD`/Range 请求。普通页面访问不得产生 provider 调用。
 

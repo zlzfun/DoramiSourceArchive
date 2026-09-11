@@ -1,11 +1,12 @@
 import asyncio
 import datetime as dt
+import hashlib
 import json
 import os
 import sys
 from dataclasses import replace
 from types import SimpleNamespace
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs
 
 import httpx
 import pytest
@@ -17,16 +18,15 @@ import services.podcast_asr_worker as asr_worker  # noqa: E402
 import services.podcast_processing as podcast_processing  # noqa: E402
 from config import (  # noqa: E402
     AliyunIsiConfig,
-    PodcastAsrFetchConfig,
     PodcastConfig,
     PodcastWorkerConfig,
 )
 from models.db import (  # noqa: E402
     ArticleRecord,
-    PodcastArtifactRecord,
     PodcastBudgetReservationRecord,
     PodcastCostLedgerRecord,
     PodcastProcessingRecord,
+    PodcastSourceMediaSnapshotRecord,
     PodcastStageAttemptRecord,
     PodcastTextArtifactRecord,
     SourceConfigRecord,
@@ -57,9 +57,6 @@ from services.aliyun_isi_asr_worker import (  # noqa: E402
     register_aliyun_isi_asr_worker,
 )
 from services.aliyun_isi_auth import AliyunPopClient  # noqa: E402
-from services.podcast_asr_fetch_signing import (  # noqa: E402
-    PodcastAsrFetchUrlSigner,
-)
 from services.podcast_processing import (  # noqa: E402
     PodcastProviderQuotaExceeded,
     deterministic_input_fingerprint,
@@ -94,6 +91,10 @@ from storage.impl.db_storage import DatabaseStorage  # noqa: E402
 
 
 START = dt.datetime(2026, 9, 5, 15, 59, 50, tzinfo=dt.timezone.utc)
+AUDIO_URLS = {
+    1: "https://cdn.example.test/episodes/1.mp3?token=raw-one",
+    2: "https://cdn.example.test/episodes/2.mp3",
+}
 TRANSCRIPT = {
     "audio_duration_ms": 60_000,
     "language": "zh-CN",
@@ -215,7 +216,7 @@ class FakeAsrProvider:
 
     def plan(self, input_artifact, *, audio_duration_ms, now):
         self.events.append("plan")
-        assert input_artifact.kind == "source_audio"
+        assert input_artifact.kind == "source_media_snapshot"
         assert audio_duration_ms == 60_000
         return AsrProviderPlan(
             identity=self.identity,
@@ -275,22 +276,23 @@ def worker_env(tmp_path):
                     publish_date=stamp,
                     fetched_date=stamp,
                     content="show notes",
+                    extensions_json=json.dumps(
+                        {"audio_url": AUDIO_URLS[number]}
+                    ),
                 )
             )
             session.add(
-                PodcastArtifactRecord(
-                    id=f"source-audio-{number}",
+                PodcastSourceMediaSnapshotRecord(
+                    id=f"source-media-{number}",
                     episode_id=episode_id,
-                    kind="source_audio",
                     content_hash=content_hash,
                     mime="audio/mpeg",
-                    ext="mp3",
                     size_bytes=1024,
                     duration_seconds=60,
-                    status="ready",
-                    expires_at="2099-01-01T00:00:00.000000+00:00",
+                    locator_hash=hashlib.sha256(
+                        AUDIO_URLS[number].encode("utf-8")
+                    ).hexdigest(),
                     created_at=stamp,
-                    updated_at=stamp,
                 )
             )
         session.commit()
@@ -334,7 +336,7 @@ def _enqueue(
     estimated_cost_minor: int = 0,
 ):
     content_hash = ("a" if episode_number == 1 else "b") * 64
-    bound_artifact_id = artifact_id or f"source-audio-{episode_number}"
+    bound_artifact_id = artifact_id or f"source-media-{episode_number}"
     aliyun = getattr(policy, "aliyun_isi", None)
     input_fingerprint = (
         processing_input_fingerprint(
@@ -342,7 +344,7 @@ def _enqueue(
             entry_stage=stage,
             artifact_id=bound_artifact_id,
             content_hash=content_hash,
-            kind="source_audio",
+            kind="source_media_snapshot",
             language="und",
             audio_duration_ms=60_000,
             admission_fingerprint=aliyun_asr_admission_fingerprint(aliyun),
@@ -367,7 +369,7 @@ def _enqueue(
         idempotency_key=f"worker:{episode_number}:{stage}:{bound_artifact_id}",
         estimated_cost_minor=estimated_cost_minor,
         input_artifact_id=bound_artifact_id,
-        input_artifact_kind="source_audio",
+        input_artifact_kind="source_media_snapshot",
         input_content_hash=content_hash,
         input_language="und",
         budget_scope="podcast-paid-processing",
@@ -522,7 +524,7 @@ def test_request_unknown_with_task_id_is_polled_then_reconciled(worker_env):
     assert adapter.events.count("submit") == 1
 
 
-def test_submitted_attempt_drains_after_input_is_revoked(worker_env):
+def test_submitted_attempt_with_missing_snapshot_requires_reconciliation(worker_env):
     engine, policy, config = worker_env
     adapter = FakeAsrProvider(
         submit_outcome=Accepted("fake-task-1"),
@@ -541,10 +543,11 @@ def test_submitted_attempt_drains_after_input_is_revoked(worker_env):
             ).action
             == "poll_scheduled"
         )
-        source_audio = session.get(PodcastArtifactRecord, "source-audio-1")
-        assert source_audio is not None
-        source_audio.status = "withdrawn"
-        session.add(source_audio)
+        source_media = session.get(
+            PodcastSourceMediaSnapshotRecord, "source-media-1"
+        )
+        assert source_media is not None
+        session.delete(source_media)
         session.commit()
     with Session(engine) as session:
         drained = run_asr_worker_step(
@@ -555,16 +558,15 @@ def test_submitted_attempt_drains_after_input_is_revoked(worker_env):
             policy=policy,
             now=START + dt.timedelta(seconds=10),
         )
-        assert drained.action == "not_required"
+        assert drained.action == "reconciliation_required"
         persisted = session.get(PodcastProcessingRecord, process.id)
         reservation = session.exec(select(PodcastBudgetReservationRecord)).one()
         assert persisted is not None
-        assert persisted.eligibility_status == "invalid_input"
-        assert persisted.processing_status == "not_required"
-        assert reservation.status == "settled"
+        assert persisted.processing_status == "reconciliation_required"
+        assert reservation.status == "reserved"
         assert session.exec(select(PodcastTextArtifactRecord)).all() == []
     assert adapter.events.count("submit") == 1
-    assert adapter.events.count("poll") == 1
+    assert adapter.events.count("poll") == 0
 
 
 def test_restart_replays_materialized_success_after_crash_before_settlement(
@@ -846,71 +848,6 @@ def test_expired_provider_deadline_parks_without_plan_or_poll(worker_env):
     assert adapter.events == ["plan", "submit"]
 
 
-def test_expiring_source_audio_fails_before_authorization_or_provider_io(
-    worker_env, monkeypatch
-):
-    engine, policy, config = worker_env
-    adapter = FakeAsrProvider(submit_outcome=Accepted("fake-task-1"))
-    authorization_calls = 0
-    real_authorize = asr_worker.authorize_provider_call
-
-    def recording_authorize(*args, **kwargs):
-        nonlocal authorization_calls
-        authorization_calls += 1
-        return real_authorize(*args, **kwargs)
-
-    monkeypatch.setattr(asr_worker, "authorize_provider_call", recording_authorize)
-    with Session(engine) as session:
-        stamp = START.isoformat(timespec="microseconds")
-        session.add(
-            PodcastArtifactRecord(
-                id="source-audio-expiring",
-                episode_id="episode-1",
-                kind="source_audio",
-                content_hash="a" * 64,
-                mime="audio/mpeg",
-                ext="mp3",
-                size_bytes=1024,
-                duration_seconds=60,
-                status="ready",
-                expires_at=(START + dt.timedelta(seconds=299)).isoformat(
-                    timespec="microseconds"
-                ),
-                created_at=stamp,
-                updated_at=stamp,
-            )
-        )
-        session.commit()
-        process = _enqueue(session, policy, artifact_id="source-audio-expiring")
-        result = run_asr_worker_step(
-            session,
-            adapter=adapter,
-            usage_planner=NoProviderUsage(),
-            config=config,
-            policy=policy,
-            now=START,
-        )
-        assert result.action == "failed"
-        persisted = session.get(PodcastProcessingRecord, process.id)
-        attempts = session.exec(
-            select(PodcastStageAttemptRecord).where(
-                PodcastStageAttemptRecord.processing_id == process.id
-            )
-        ).all()
-        reservations = session.exec(
-            select(PodcastBudgetReservationRecord).where(
-                PodcastBudgetReservationRecord.processing_id == process.id
-            )
-        ).all()
-        assert persisted is not None
-        assert persisted.error_code == "source_audio_expiry_insufficient"
-        assert persisted.attempt_count == 0
-        assert attempts == []
-        assert reservations == []
-    assert adapter.events == ["plan"]
-    assert authorization_calls == 0
-
-
 def test_task_failure_settlement_replays_after_crash_before_failure_commit(
     worker_env, monkeypatch
 ):
@@ -987,6 +924,578 @@ def test_task_failure_settlement_replays_after_crash_before_failure_commit(
     assert adapter.events.count("submit") == 1
     assert adapter.events.count("poll") == 2
     assert len(usage.calls) == 1
+
+
+def test_known_unprocessed_task_failure_releases_daily_audio_reservation(
+    worker_env,
+):
+    engine, policy, config = worker_env
+    failed_outcome = TaskFailed(
+        "fake-task-1",
+        Failure(
+            FailureKind.TERMINAL,
+            "aliyun_task_40270003",
+            "provider could not decode source media",
+            retryable=False,
+        ),
+        release_unused_reservation=True,
+    )
+    adapter = FakeAsrProvider(
+        submit_outcome=Accepted("fake-task-1"),
+        poll_outcomes=[failed_outcome],
+    )
+    usage = FrozenProviderUsage()
+    with Session(engine) as session:
+        process = _enqueue(session, policy)
+        run_asr_worker_step(
+            session,
+            adapter=adapter,
+            usage_planner=usage,
+            config=config,
+            policy=policy,
+            now=START,
+        )
+
+    with Session(engine) as session:
+        result = run_asr_worker_step(
+            session,
+            adapter=adapter,
+            usage_planner=usage,
+            config=config,
+            policy=policy,
+            now=START + dt.timedelta(seconds=10),
+        )
+        persisted = session.get(PodcastProcessingRecord, process.id)
+        attempt = session.exec(
+            select(PodcastStageAttemptRecord).where(
+                PodcastStageAttemptRecord.processing_id == process.id
+            )
+        ).one()
+        reservation = session.exec(
+            select(PodcastBudgetReservationRecord).where(
+                PodcastBudgetReservationRecord.attempt_id == attempt.id
+            )
+        ).one()
+        ledgers = session.exec(
+            select(PodcastCostLedgerRecord).where(
+                PodcastCostLedgerRecord.processing_id == process.id
+            )
+        ).all()
+
+        assert result.action == "failed"
+        assert persisted is not None
+        assert persisted.error_code == "aliyun_task_40270003"
+        assert attempt.submission_state == "failed_terminal"
+        assert reservation.status == "released"
+        assert reservation.actual_usage_units == 0
+        assert ledgers == []
+    assert adapter.events == ["plan", "submit", "poll"]
+    assert len(usage.calls) == 1
+
+
+def test_known_download_failure_uses_one_fallback_and_rebinds_task_id(worker_env):
+    engine, policy, config = worker_env
+    download_failure = TaskFailed(
+        "fake-task-1",
+        Failure(
+            FailureKind.TERMINAL,
+            "aliyun_task_41050024",
+            "publisher URL returned 404",
+            retryable=False,
+        ),
+        release_unused_reservation=True,
+    )
+
+    class FallbackProvider(FakeAsrProvider):
+        def __init__(self):
+            super().__init__(submit_outcome=Accepted("fake-task-1"))
+            self.fallback_calls = 0
+            self.cleanup_calls = 0
+
+        def poll(self, *, task_id, identity, audio_duration_ms, reserved_cost_minor):
+            self.events.append(f"poll:{task_id}")
+            if task_id == "fake-task-1":
+                return download_failure
+            assert task_id == "fallback-task-1"
+            return _success("fallback-task-1")
+
+        def can_fallback(self, outcome):
+            return outcome.failure.code == "aliyun_task_41050024"
+
+        def submit(self, context, *, provider_request_key):
+            if context.attempt_no == 1:
+                return super().submit(
+                    context, provider_request_key=provider_request_key
+                )
+            self.fallback_calls += 1
+            assert context.attempt_no == 2
+            return Accepted("fallback-task-1")
+
+        def cleanup_fallback(self, context):
+            self.cleanup_calls += 1
+
+    adapter = FallbackProvider()
+    with Session(engine) as session:
+        process = _enqueue(session, policy)
+        submitted = run_asr_worker_step(
+            session,
+            adapter=adapter,
+            usage_planner=NoProviderUsage(),
+            config=config,
+            policy=policy,
+            now=START,
+        )
+        assert submitted.provider_task_id == "fake-task-1"
+
+    with Session(engine) as session:
+        scheduled = run_asr_worker_step(
+            session,
+            adapter=adapter,
+            usage_planner=NoProviderUsage(),
+            config=config,
+            policy=policy,
+            now=START + dt.timedelta(seconds=10),
+        )
+        assert scheduled.action == "retry_wait"
+        assert scheduled.provider_task_id == "fake-task-1"
+        attempt = session.exec(
+            select(PodcastStageAttemptRecord).where(
+                PodcastStageAttemptRecord.processing_id == process.id
+            )
+        ).one()
+        assert attempt.provider_task_id == "fake-task-1"
+        assert attempt.error_code == asr_worker.PROVIDER_FALLBACK_MARKER
+        assert attempt.submission_state == "failed_retryable"
+
+    with Session(engine) as session:
+        submitted_fallback = run_asr_worker_step(
+            session,
+            adapter=adapter,
+            usage_planner=NoProviderUsage(),
+            config=config,
+            policy=policy,
+            now=START + dt.timedelta(seconds=25),
+        )
+        assert submitted_fallback.action == "poll_scheduled"
+        assert submitted_fallback.provider_task_id == "fallback-task-1"
+
+    with Session(engine) as session:
+        completed = run_asr_worker_step(
+            session,
+            adapter=adapter,
+            usage_planner=NoProviderUsage(),
+            config=config,
+            policy=policy,
+            now=START + dt.timedelta(seconds=40),
+        )
+        assert completed.action == "completed"
+    assert adapter.fallback_calls == 1
+    assert adapter.cleanup_calls == 1
+
+
+def test_fallback_intent_survives_provider_window_rejection_before_network_io(
+    worker_env, monkeypatch
+):
+    engine, policy, config = worker_env
+    download_failure = TaskFailed(
+        "direct-task-1",
+        Failure(
+            FailureKind.TERMINAL,
+            "aliyun_task_41050024",
+            "publisher URL returned 404",
+            retryable=False,
+        ),
+        release_unused_reservation=True,
+    )
+
+    class DeferredFallbackProvider(FakeAsrProvider):
+        def __init__(self):
+            super().__init__(submit_outcome=Accepted("direct-task-1"))
+            self.direct_calls = 0
+            self.fallback_calls = 0
+            self.cleanup_calls = 0
+
+        def submit(self, context, *, provider_request_key):
+            if context.attempt_no == 1:
+                self.direct_calls += 1
+                return Accepted("direct-task-1")
+            self.fallback_calls += 1
+            return Accepted("fallback-task-1")
+
+        def poll(self, *, task_id, identity, audio_duration_ms, reserved_cost_minor):
+            if task_id == "direct-task-1":
+                return download_failure
+            assert task_id == "fallback-task-1"
+            return _success("fallback-task-1")
+
+        def can_fallback(self, outcome):
+            return outcome.failure.code == "aliyun_task_41050024"
+
+        def cleanup_fallback(self, context):
+            self.cleanup_calls += 1
+
+    adapter = DeferredFallbackProvider()
+    real_authorize = asr_worker.authorize_provider_call
+    authorization_calls = 0
+
+    def close_window_for_first_fallback(*args, **kwargs):
+        nonlocal authorization_calls
+        authorization_calls += 1
+        if authorization_calls == 2:
+            raise PodcastProviderQuotaExceeded("window is closing")
+        return real_authorize(*args, **kwargs)
+
+    monkeypatch.setattr(
+        asr_worker, "authorize_provider_call", close_window_for_first_fallback
+    )
+
+    with Session(engine) as session:
+        process = _enqueue(session, policy)
+        assert run_asr_worker_step(
+            session,
+            adapter=adapter,
+            usage_planner=NoProviderUsage(),
+            config=config,
+            policy=policy,
+            now=START,
+        ).provider_task_id == "direct-task-1"
+
+    with Session(engine) as session:
+        assert run_asr_worker_step(
+            session,
+            adapter=adapter,
+            usage_planner=NoProviderUsage(),
+            config=config,
+            policy=policy,
+            now=START + dt.timedelta(seconds=10),
+        ).action == "retry_wait"
+
+    with Session(engine) as session:
+        deferred = run_asr_worker_step(
+            session,
+            adapter=adapter,
+            usage_planner=NoProviderUsage(),
+            config=config,
+            policy=policy,
+            now=START + dt.timedelta(seconds=25),
+        )
+        attempts = session.exec(
+            select(PodcastStageAttemptRecord)
+            .where(PodcastStageAttemptRecord.processing_id == process.id)
+            .order_by(PodcastStageAttemptRecord.attempt_no)
+        ).all()
+        assert deferred.action == "retry_wait"
+        assert [attempt.error_code for attempt in attempts] == [
+            asr_worker.PROVIDER_FALLBACK_MARKER,
+            asr_worker.PROVIDER_FALLBACK_MARKER,
+        ]
+        assert adapter.direct_calls == 1
+        assert adapter.fallback_calls == 0
+
+    with Session(engine) as session:
+        submitted = run_asr_worker_step(
+            session,
+            adapter=adapter,
+            usage_planner=NoProviderUsage(),
+            config=config,
+            policy=policy,
+            now=START + dt.timedelta(seconds=40),
+        )
+        assert submitted.action == "poll_scheduled"
+        assert submitted.provider_task_id == "fallback-task-1"
+
+    with Session(engine) as session:
+        assert run_asr_worker_step(
+            session,
+            adapter=adapter,
+            usage_planner=NoProviderUsage(),
+            config=config,
+            policy=policy,
+            now=START + dt.timedelta(seconds=55),
+        ).action == "completed"
+
+    assert adapter.direct_calls == 1
+    assert adapter.fallback_calls == 1
+    assert adapter.cleanup_calls == 1
+
+
+def test_fallback_rejection_is_terminal_and_deletes_relay_object(worker_env):
+    engine, policy, config = worker_env
+    download_failure = TaskFailed(
+        "fake-task-1",
+        Failure(
+            FailureKind.TERMINAL,
+            "aliyun_task_41050024",
+            "publisher URL returned 404",
+            retryable=False,
+        ),
+        release_unused_reservation=True,
+    )
+
+    class RejectedFallbackProvider(FakeAsrProvider):
+        def __init__(self):
+            super().__init__(submit_outcome=Accepted("fake-task-1"))
+            self.fallback_calls = 0
+            self.cleanup_contexts = []
+
+        def poll(self, *, task_id, identity, audio_duration_ms, reserved_cost_minor):
+            assert task_id == "fake-task-1"
+            return download_failure
+
+        def can_fallback(self, outcome):
+            return outcome.failure.code == "aliyun_task_41050024"
+
+        def submit(self, context, *, provider_request_key):
+            if context.attempt_no == 1:
+                return super().submit(
+                    context, provider_request_key=provider_request_key
+                )
+            self.fallback_calls += 1
+            return Rejected(
+                Failure(
+                    FailureKind.TRANSIENT,
+                    "aliyun_submit_throttled",
+                    "provider rejected fallback before assigning a TaskId",
+                    retryable=True,
+                    retry_after_seconds=10,
+                )
+            )
+
+        def cleanup_fallback(self, context):
+            self.cleanup_contexts.append(context)
+
+    adapter = RejectedFallbackProvider()
+    with Session(engine) as session:
+        process = _enqueue(session, policy)
+        run_asr_worker_step(
+            session,
+            adapter=adapter,
+            usage_planner=NoProviderUsage(),
+            config=config,
+            policy=policy,
+            now=START,
+        )
+    with Session(engine) as session:
+        run_asr_worker_step(
+            session,
+            adapter=adapter,
+            usage_planner=NoProviderUsage(),
+            config=config,
+            policy=policy,
+            now=START + dt.timedelta(seconds=10),
+        )
+    with Session(engine) as session:
+        rejected = run_asr_worker_step(
+            session,
+            adapter=adapter,
+            usage_planner=NoProviderUsage(),
+            config=config,
+            policy=policy,
+            now=START + dt.timedelta(seconds=25),
+        )
+        attempts = session.exec(
+            select(PodcastStageAttemptRecord)
+            .where(PodcastStageAttemptRecord.processing_id == process.id)
+            .order_by(PodcastStageAttemptRecord.attempt_no)
+        ).all()
+        persisted = session.get(PodcastProcessingRecord, process.id)
+        assert rejected.action == "failed"
+        assert persisted is not None
+        assert persisted.processing_status == "failed"
+        assert persisted.next_retry_at is None
+        assert [attempt.submission_state for attempt in attempts] == [
+            "failed_retryable",
+            "failed_terminal",
+        ]
+    with Session(engine) as session:
+        assert run_asr_worker_step(
+            session,
+            adapter=adapter,
+            usage_planner=NoProviderUsage(),
+            config=config,
+            policy=policy,
+            now=START + dt.timedelta(seconds=40),
+        ).action == "idle"
+    assert adapter.fallback_calls == 1
+    assert len(adapter.cleanup_contexts) == 1
+    assert adapter.cleanup_contexts[0].attempt_no == 2
+
+
+def test_unknown_fallback_submission_keeps_relay_for_lifecycle(worker_env):
+    engine, policy, config = worker_env
+    download_failure = TaskFailed(
+        "fake-task-1",
+        Failure(
+            FailureKind.TERMINAL,
+            "aliyun_task_41050002",
+            "provider could not download publisher URL",
+            retryable=False,
+        ),
+        release_unused_reservation=True,
+    )
+
+    class UnknownFallbackProvider(FakeAsrProvider):
+        def __init__(self):
+            super().__init__(submit_outcome=Accepted("fake-task-1"))
+            self.fallback_calls = 0
+            self.cleanup_calls = 0
+
+        def poll(self, *, task_id, identity, audio_duration_ms, reserved_cost_minor):
+            assert task_id == "fake-task-1"
+            return download_failure
+
+        def can_fallback(self, outcome):
+            return outcome.failure.code == "aliyun_task_41050002"
+
+        def submit(self, context, *, provider_request_key):
+            if context.attempt_no == 1:
+                return super().submit(
+                    context, provider_request_key=provider_request_key
+                )
+            self.fallback_calls += 1
+            return Unknown(
+                Failure(
+                    FailureKind.REQUEST_UNKNOWN,
+                    "aliyun_submit_read_timeout",
+                    "fallback submission outcome is unknown",
+                    retryable=False,
+                )
+            )
+
+        def cleanup_fallback(self, context):
+            self.cleanup_calls += 1
+
+    adapter = UnknownFallbackProvider()
+    with Session(engine) as session:
+        process = _enqueue(session, policy)
+        run_asr_worker_step(
+            session,
+            adapter=adapter,
+            usage_planner=NoProviderUsage(),
+            config=config,
+            policy=policy,
+            now=START,
+        )
+    with Session(engine) as session:
+        run_asr_worker_step(
+            session,
+            adapter=adapter,
+            usage_planner=NoProviderUsage(),
+            config=config,
+            policy=policy,
+            now=START + dt.timedelta(seconds=10),
+        )
+    with Session(engine) as session:
+        unknown = run_asr_worker_step(
+            session,
+            adapter=adapter,
+            usage_planner=NoProviderUsage(),
+            config=config,
+            policy=policy,
+            now=START + dt.timedelta(seconds=25),
+        )
+        attempts = session.exec(
+            select(PodcastStageAttemptRecord)
+            .where(PodcastStageAttemptRecord.processing_id == process.id)
+            .order_by(PodcastStageAttemptRecord.attempt_no)
+        ).all()
+        assert unknown.action == "reconciliation_required"
+        assert attempts[-1].submission_state == "reconciling"
+        assert attempts[-1].request_unknown is True
+    assert adapter.fallback_calls == 1
+    assert adapter.cleanup_calls == 0
+
+
+def test_accepted_fallback_failure_deletes_relay_object(worker_env):
+    engine, policy, config = worker_env
+    direct_failure = TaskFailed(
+        "fake-task-1",
+        Failure(
+            FailureKind.TERMINAL,
+            "aliyun_task_41050026",
+            "publisher returned a server error",
+            retryable=False,
+        ),
+        release_unused_reservation=True,
+    )
+    fallback_failure = TaskFailed(
+        "fallback-task-1",
+        Failure(
+            FailureKind.TRANSIENT,
+            "aliyun_task_41050003",
+            "fallback media was invalid",
+            retryable=True,
+            retry_after_seconds=10,
+        ),
+    )
+
+    class FailedFallbackProvider(FakeAsrProvider):
+        def __init__(self):
+            super().__init__(submit_outcome=Accepted("fake-task-1"))
+            self.fallback_calls = 0
+            self.cleanup_calls = 0
+
+        def poll(self, *, task_id, identity, audio_duration_ms, reserved_cost_minor):
+            return direct_failure if task_id == "fake-task-1" else fallback_failure
+
+        def can_fallback(self, outcome):
+            return outcome.failure.code == "aliyun_task_41050026"
+
+        def submit(self, context, *, provider_request_key):
+            if context.attempt_no == 1:
+                return super().submit(
+                    context, provider_request_key=provider_request_key
+                )
+            self.fallback_calls += 1
+            return Accepted("fallback-task-1")
+
+        def cleanup_fallback(self, context):
+            self.cleanup_calls += 1
+
+    adapter = FailedFallbackProvider()
+    with Session(engine) as session:
+        _enqueue(session, policy)
+        run_asr_worker_step(
+            session,
+            adapter=adapter,
+            usage_planner=NoProviderUsage(),
+            config=config,
+            policy=policy,
+            now=START,
+        )
+    with Session(engine) as session:
+        run_asr_worker_step(
+            session,
+            adapter=adapter,
+            usage_planner=NoProviderUsage(),
+            config=config,
+            policy=policy,
+            now=START + dt.timedelta(seconds=10),
+        )
+    with Session(engine) as session:
+        run_asr_worker_step(
+            session,
+            adapter=adapter,
+            usage_planner=NoProviderUsage(),
+            config=config,
+            policy=policy,
+            now=START + dt.timedelta(seconds=25),
+        )
+    with Session(engine) as session:
+        failed = run_asr_worker_step(
+            session,
+            adapter=adapter,
+            usage_planner=NoProviderUsage(),
+            config=config,
+            policy=policy,
+            now=START + dt.timedelta(seconds=35),
+        )
+        assert failed.action == "failed"
+        persisted = session.get(PodcastProcessingRecord, failed.processing_id)
+        assert persisted is not None
+        assert persisted.next_retry_at is None
+    assert adapter.fallback_calls == 1
+    assert adapter.cleanup_calls == 1
 
 
 def test_invalid_success_output_is_settled_then_parked_without_repoll(worker_env):
@@ -1536,23 +2045,7 @@ def _aliyun_config(**updates):
     return AliyunIsiConfig(**values)
 
 
-def _asr_signer(policy: PodcastStagePolicy):
-    return PodcastAsrFetchUrlSigner(
-        PodcastAsrFetchConfig(
-            public_base_url=(
-                "https://archive.example.test/api/public/podcast-asr/source-audio"
-            ),
-            signing_secret="test-only-signing-secret-at-least-32-bytes",
-            # Successful submit grants must cover the frozen 300-second
-            # provider deadline, not merely the 5-second HTTP timeout.
-            url_ttl_seconds=600,
-            min_remaining_seconds=30,
-        ),
-        authority_id=policy.config.authority_id,
-    )
-
-
-def test_aliyun_bundle_scheduler_mock_transport_runs_signed_asr_e2e(
+def test_aliyun_bundle_scheduler_mock_transport_runs_direct_url_asr_e2e(
     worker_env, monkeypatch
 ):
     import api.app as app_module
@@ -1561,12 +2054,27 @@ def test_aliyun_bundle_scheduler_mock_transport_runs_signed_asr_e2e(
     engine, base_policy, _config = worker_env
     aliyun = _aliyun_config()
     policy = PodcastStagePolicy(base_policy.config, aliyun)
-    signer = _asr_signer(policy)
     observed_urls: list[str] = []
     observed_configs: list[AliyunIsiConfig] = []
     usage_configs: list[AliyunIsiConfig] = []
     http_clients: list[httpx.Client] = []
     current = [START]
+    resolved_audio_url = (
+        "https://audio.transistor.example/episodes/1.mp3?delivery=signed"
+    )
+
+    def redirect_handler(request: httpx.Request):
+        if str(request.url) == AUDIO_URLS[1]:
+            return httpx.Response(302, headers={"Location": resolved_audio_url})
+        assert str(request.url) == resolved_audio_url
+        assert request.method == "HEAD"
+        return httpx.Response(200, headers={"Content-Type": "audio/mpeg"})
+
+    def redirect_client_factory(**kwargs):
+        return httpx.Client(
+            transport=httpx.MockTransport(redirect_handler),
+            **kwargs,
+        )
 
     def handler(request: httpx.Request):
         if request.method == "POST":
@@ -1629,16 +2137,8 @@ def test_aliyun_bundle_scheduler_mock_transport_runs_signed_asr_e2e(
                 nonce_factory=lambda: "test-nonce",
                 clock=lambda: current[0],
             ),
+            redirect_client_factory=redirect_client_factory,
         )
-
-    signer_calls = 0
-
-    def signer_resolver(session, *, podcast_config):
-        nonlocal signer_calls
-        signer_calls += 1
-        assert session.in_transaction() is False
-        assert podcast_config is policy.config
-        return signer
 
     real_usage_plan = aliyun_worker.asr_usage_plan
 
@@ -1648,7 +2148,6 @@ def test_aliyun_bundle_scheduler_mock_transport_runs_signed_asr_e2e(
 
     bundle = AliyunIsiAsrWorkerBundle(
         client_factory=client_factory,
-        signer_resolver=signer_resolver,
         clock=lambda: current[0],
         transcript_language="zh-CN",
     )
@@ -1692,12 +2191,8 @@ def test_aliyun_bundle_scheduler_mock_transport_runs_signed_asr_e2e(
 
     assert observed_configs == [aliyun, aliyun]
     assert usage_configs == [aliyun, aliyun]
-    assert signer_calls == 2
     assert len(observed_urls) == 1
-    assert observed_urls[0].startswith(
-        "https://archive.example.test/api/public/podcast-asr/source-audio?"
-    )
-    assert "payload=" in observed_urls[0] and "signature=" in observed_urls[0]
+    assert observed_urls[0] == resolved_audio_url
     with Session(engine) as session:
         persisted = session.get(PodcastProcessingRecord, process.id)
         attempt = session.exec(
@@ -1731,7 +2226,7 @@ def test_aliyun_bundle_scheduler_mock_transport_runs_signed_asr_e2e(
         assert observed_urls[0] not in persisted_text
 
 
-def test_aliyun_bundle_missing_signer_retries_without_provider_submit(worker_env):
+def test_aliyun_bundle_missing_audio_url_releases_without_provider_submit(worker_env):
     engine, base_policy, config = worker_env
     aliyun = _aliyun_config()
     policy = PodcastStagePolicy(base_policy.config, aliyun)
@@ -1741,7 +2236,7 @@ def test_aliyun_bundle_missing_signer_retries_without_provider_submit(worker_env
         def submit(self, _url):
             nonlocal submit_calls
             submit_calls += 1
-            pytest.fail("missing signer must reject before provider submit")
+            pytest.fail("missing audio URL must reject before provider submit")
 
         def poll(self, _task_id):
             pytest.fail("new attempt must not poll")
@@ -1751,12 +2246,13 @@ def test_aliyun_bundle_missing_signer_retries_without_provider_submit(worker_env
 
     bundle = AliyunIsiAsrWorkerBundle(
         client_factory=lambda _config: NoSubmitClient(),
-        signer_resolver=lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            ValueError("signing is not configured")
-        ),
         clock=lambda: START,
     )
     with Session(engine) as session:
+        episode = session.get(ArticleRecord, "episode-1")
+        episode.extensions_json = "{}"
+        session.add(episode)
+        session.commit()
         process = _enqueue(session, policy)
         result = bundle(session, config=config, policy=policy)
         persisted = session.get(PodcastProcessingRecord, process.id)
@@ -1770,35 +2266,30 @@ def test_aliyun_bundle_missing_signer_retries_without_provider_submit(worker_env
                 PodcastBudgetReservationRecord.attempt_id == attempt.id
             )
         ).one()
-        assert result.action == "retry_wait"
+        assert result.action == "failed"
         assert persisted is not None
-        assert persisted.processing_status == "retry_wait"
+        assert persisted.processing_status == "failed"
         assert persisted.lease_owner is None
-        assert dt.datetime.fromisoformat(persisted.next_retry_at) == (
-            START + dt.timedelta(seconds=aliyun.asr_poll_interval_seconds)
-        )
-        assert attempt.submission_state == "failed_retryable"
-        assert attempt.error_code == "aliyun_fetch_signer_unavailable"
+        assert attempt.submission_state == "failed_terminal"
+        assert attempt.error_code == "aliyun_source_media_url_unavailable"
         assert reservation.status == "released"
         assert submit_calls == 0
 
 
-def test_aliyun_bundle_signing_error_releases_without_unknown_submit(worker_env):
+def test_aliyun_bundle_locator_mismatch_releases_without_unknown_submit(
+    worker_env,
+):
     engine, base_policy, config = worker_env
     aliyun = _aliyun_config()
     policy = PodcastStagePolicy(base_policy.config, aliyun)
     submit_calls = 0
-    sensitive_error = "invalid local signing input secret=must-not-persist"
-
-    class BrokenSigner:
-        def issue(self, **_kwargs):
-            raise ValueError(sensitive_error)
+    sensitive_url = "https://cdn.example.test/private.mp3?secret=must-not-persist"
 
     class NoSubmitClient:
         def submit(self, _url):
             nonlocal submit_calls
             submit_calls += 1
-            pytest.fail("signing failure must reject before provider submit")
+            pytest.fail("changed locator must reject before provider submit")
 
         def poll(self, _task_id):
             pytest.fail("new attempt must not poll")
@@ -1808,10 +2299,13 @@ def test_aliyun_bundle_signing_error_releases_without_unknown_submit(worker_env)
 
     bundle = AliyunIsiAsrWorkerBundle(
         client_factory=lambda _config: NoSubmitClient(),
-        signer_resolver=lambda _session, **_kwargs: BrokenSigner(),
         clock=lambda: START,
     )
     with Session(engine) as session:
+        episode = session.get(ArticleRecord, "episode-1")
+        episode.extensions_json = json.dumps({"audio_url": sensitive_url})
+        session.add(episode)
+        session.commit()
         process = _enqueue(session, policy)
         result = bundle(session, config=config, policy=policy)
         persisted = session.get(PodcastProcessingRecord, process.id)
@@ -1825,14 +2319,14 @@ def test_aliyun_bundle_signing_error_releases_without_unknown_submit(worker_env)
                 PodcastBudgetReservationRecord.attempt_id == attempt.id
             )
         ).one()
-        assert result.action == "retry_wait"
+        assert result.action == "failed"
         assert persisted is not None
-        assert persisted.processing_status == "retry_wait"
-        assert attempt.submission_state == "failed_retryable"
+        assert persisted.processing_status == "failed"
+        assert attempt.submission_state == "failed_terminal"
         assert attempt.request_unknown is False
-        assert attempt.error_code == "aliyun_fetch_signing_failed"
+        assert attempt.error_code == "aliyun_source_media_binding_changed"
         assert reservation.status == "released"
-        assert sensitive_error not in "\n".join(
+        assert sensitive_url not in "\n".join(
             filter(
                 None,
                 (
@@ -1850,7 +2344,6 @@ def test_aliyun_bundle_missing_app_key_rejects_before_network(worker_env):
     engine, base_policy, config = worker_env
     aliyun = _aliyun_config(app_key="")
     policy = PodcastStagePolicy(base_policy.config, aliyun)
-    signer = _asr_signer(policy)
     submit_calls = 0
 
     class NoSubmitClient:
@@ -1867,7 +2360,6 @@ def test_aliyun_bundle_missing_app_key_rejects_before_network(worker_env):
 
     bundle = AliyunIsiAsrWorkerBundle(
         client_factory=lambda _config: NoSubmitClient(),
-        signer_resolver=lambda _session, **_kwargs: signer,
         clock=lambda: START,
     )
     assert aliyun_asr_worker_ready(aliyun) is True
@@ -1894,21 +2386,10 @@ def test_aliyun_bundle_missing_app_key_rejects_before_network(worker_env):
         assert submit_calls == 0
 
 
-def test_aliyun_submit_caps_fetch_url_to_shorter_source_expiry(worker_env):
+def test_aliyun_worker_passes_bound_enclosure_url_to_provider_client(worker_env):
     engine, base_policy, config = worker_env
     aliyun = _aliyun_config(asr_provider_deadline_seconds=300)
     policy = PodcastStagePolicy(base_policy.config, aliyun)
-    signer = PodcastAsrFetchUrlSigner(
-        PodcastAsrFetchConfig(
-            public_base_url=(
-                "https://archive.example.test/api/public/podcast-asr/source-audio"
-            ),
-            signing_secret="bounded-expiry-test-signing-secret-000000",
-            url_ttl_seconds=900,
-            min_remaining_seconds=30,
-        ),
-        authority_id=policy.config.authority_id,
-    )
     submitted_url = ""
 
     class CaptureClient:
@@ -1925,67 +2406,28 @@ def test_aliyun_submit_caps_fetch_url_to_shorter_source_expiry(worker_env):
 
     bundle = AliyunIsiAsrWorkerBundle(
         client_factory=lambda _config: CaptureClient(),
-        signer_resolver=lambda _session, **_kwargs: signer,
         clock=lambda: START,
     )
-    source_expiry = START + dt.timedelta(seconds=400)
     with Session(engine) as session:
-        stamp = START.isoformat(timespec="microseconds")
-        session.add(
-            PodcastArtifactRecord(
-                id="source-audio-bounded",
-                episode_id="episode-1",
-                kind="source_audio",
-                content_hash="a" * 64,
-                mime="audio/mpeg",
-                ext="mp3",
-                size_bytes=1024,
-                duration_seconds=60,
-                status="ready",
-                expires_at=source_expiry.isoformat(timespec="microseconds"),
-                created_at=stamp,
-                updated_at=stamp,
-            )
-        )
-        session.commit()
-        process = _enqueue(session, policy, artifact_id="source-audio-bounded")
+        process = _enqueue(session, policy)
         result = bundle(session, config=config, policy=policy)
         assert result.action == "poll_scheduled"
         assert result.processing_id == process.id
 
-    split = urlsplit(submitted_url)
-    claims = signer.verify(
-        method="GET",
-        canonical_path=split.path,
-        raw_query=split.query,
-        now=int(START.timestamp()),
-    )
-    assert claims.expires_at == int(source_expiry.timestamp())
-    assert claims.expires_at < int(START.timestamp()) + 900
+    assert submitted_url == AUDIO_URLS[1]
 
 
-def test_aliyun_bundle_short_fetch_ttl_rejects_before_network(worker_env):
+def test_aliyun_bundle_invalid_audio_url_releases_before_network(worker_env):
     engine, base_policy, config = worker_env
     aliyun = _aliyun_config(asr_provider_deadline_seconds=300)
     policy = PodcastStagePolicy(base_policy.config, aliyun)
-    short_signer = PodcastAsrFetchUrlSigner(
-        PodcastAsrFetchConfig(
-            public_base_url=(
-                "https://archive.example.test/api/public/podcast-asr/source-audio"
-            ),
-            signing_secret="short-ttl-test-signing-secret-000000",
-            url_ttl_seconds=299,
-            min_remaining_seconds=30,
-        ),
-        authority_id=policy.config.authority_id,
-    )
     submit_calls = 0
 
     class NoSubmitClient:
         def submit(self, _url):
             nonlocal submit_calls
             submit_calls += 1
-            pytest.fail("short capability lifetime must reject before submit")
+            pytest.fail("invalid direct URL must reject before submit")
 
         def poll(self, _task_id):
             pytest.fail("new attempt must not poll")
@@ -1995,10 +2437,29 @@ def test_aliyun_bundle_short_fetch_ttl_rejects_before_network(worker_env):
 
     bundle = AliyunIsiAsrWorkerBundle(
         client_factory=lambda _config: NoSubmitClient(),
-        signer_resolver=lambda _session, **_kwargs: short_signer,
         clock=lambda: START,
     )
     with Session(engine) as session:
+        invalid_url = "http://127.0.0.1/private.mp3?secret=must-not-persist"
+        episode = session.get(ArticleRecord, "episode-1")
+        episode.extensions_json = json.dumps({"audio_url": invalid_url})
+        prior = session.get(PodcastSourceMediaSnapshotRecord, "source-media-1")
+        session.delete(prior)
+        session.flush()
+        session.add(
+            PodcastSourceMediaSnapshotRecord(
+                id="source-media-1",
+                episode_id="episode-1",
+                locator_hash=hashlib.sha256(invalid_url.encode("utf-8")).hexdigest(),
+                content_hash="a" * 64,
+                mime="audio/mpeg",
+                size_bytes=1024,
+                duration_seconds=60,
+                created_at=START.isoformat(timespec="microseconds"),
+            )
+        )
+        session.add(episode)
+        session.commit()
         process = _enqueue(session, policy)
         result = bundle(session, config=config, policy=policy)
         attempt = session.exec(
@@ -2011,15 +2472,15 @@ def test_aliyun_bundle_short_fetch_ttl_rejects_before_network(worker_env):
                 PodcastBudgetReservationRecord.attempt_id == attempt.id
             )
         ).one()
-        assert result.action == "retry_wait"
-        assert attempt.submission_state == "failed_retryable"
+        assert result.action == "failed"
+        assert attempt.submission_state == "failed_terminal"
         assert attempt.request_unknown is False
-        assert attempt.error_code == "aliyun_fetch_url_lifetime_insufficient"
+        assert attempt.error_code == "aliyun_source_media_url_invalid"
         assert reservation.status == "released"
         assert submit_calls == 0
 
 
-def test_aliyun_bundle_polls_after_signer_and_price_rotation(worker_env):
+def test_aliyun_bundle_polls_after_audio_url_and_price_rotation(worker_env):
     engine, base_policy, config = worker_env
     original = _aliyun_config(
         asr_price_cny_minor_per_hour=60,
@@ -2034,8 +2495,6 @@ def test_aliyun_bundle_polls_after_signer_and_price_rotation(worker_env):
     )
     original_policy = PodcastStagePolicy(base_policy.config, original)
     rotated_policy = PodcastStagePolicy(base_policy.config, rotated)
-    signer = _asr_signer(original_policy)
-    sensitive_signer_error = "database parse failed: secret=test-signing-secret"
     submit_calls = 0
     poll_calls = 0
     transcript = AsrTranscript(
@@ -2080,7 +2539,6 @@ def test_aliyun_bundle_polls_after_signer_and_price_rotation(worker_env):
             if snapshot is original
             else pytest.fail("submit must use original config snapshot")
         ),
-        signer_resolver=lambda _session, **_kwargs: signer,
         clock=lambda: START,
     )
     poll_at = START + dt.timedelta(seconds=original.asr_poll_interval_seconds)
@@ -2089,9 +2547,6 @@ def test_aliyun_bundle_polls_after_signer_and_price_rotation(worker_env):
             PollClient()
             if snapshot is rotated
             else pytest.fail("poll must use rotated config snapshot")
-        ),
-        signer_resolver=lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            RuntimeError(sensitive_signer_error)
         ),
         clock=lambda: poll_at,
     )
@@ -2108,6 +2563,10 @@ def test_aliyun_bundle_polls_after_signer_and_price_rotation(worker_env):
         assert submitted.action == "poll_scheduled"
 
     with Session(engine) as session:
+        episode = session.get(ArticleRecord, "episode-1")
+        episode.extensions_json = "{}"
+        session.add(episode)
+        session.commit()
         completed = poll_bundle(session, config=config, policy=rotated_policy)
         assert completed.action == "completed"
         persisted = session.get(PodcastProcessingRecord, process.id)
@@ -2137,19 +2596,6 @@ def test_aliyun_bundle_polls_after_signer_and_price_rotation(worker_env):
         assert reservation.actual_cost_minor == 1
         assert ledger.actual_cost_minor == 1
         assert ledger.actual_usage_units == 60
-        persisted_text = "\n".join(
-            filter(
-                None,
-                (
-                    attempt.error_code,
-                    attempt.error_message,
-                    attempt.usage_json,
-                    persisted.error_code,
-                    persisted.error_message,
-                ),
-            )
-        )
-        assert sensitive_signer_error not in persisted_text
     assert submit_calls == 1
     assert poll_calls == 1
 
@@ -2181,7 +2627,6 @@ def test_aliyun_expired_accounting_plan_fails_before_attempt_or_network(
 
     bundle = AliyunIsiAsrWorkerBundle(
         client_factory=lambda _snapshot: NoNetworkClient(),
-        signer_resolver=lambda _session, **_kwargs: _asr_signer(original_policy),
         clock=lambda: START,
     )
     with Session(engine) as session:
@@ -2213,11 +2658,55 @@ def test_aliyun_expired_accounting_plan_fails_before_attempt_or_network(
     assert submit_calls == 0
 
 
+def test_aliyun_overlong_audio_fails_planning_before_attempt_or_network(
+    worker_env,
+):
+    engine, base_policy, config = worker_env
+    overlong_policy = PodcastStagePolicy(
+        base_policy.config,
+        _aliyun_config(asr_max_audio_seconds_per_file=1),
+    )
+    submit_calls = 0
+
+    class NoNetworkClient:
+        def submit(self, _url):
+            nonlocal submit_calls
+            submit_calls += 1
+            raise AssertionError("overlong planning must not submit")
+
+        def poll(self, _task_id):
+            raise AssertionError("overlong planning has no task to poll")
+
+        def close(self):
+            pass
+
+    bundle = AliyunIsiAsrWorkerBundle(
+        client_factory=lambda _snapshot: NoNetworkClient(),
+        clock=lambda: START,
+    )
+    with Session(engine) as session:
+        process = _enqueue(session, base_policy)
+        result = bundle(session, config=config, policy=overlong_policy)
+        persisted = session.get(PodcastProcessingRecord, process.id)
+        assert result.action == "failed"
+        assert persisted is not None
+        assert persisted.error_code == "provider_planning_unavailable"
+        assert persisted.attempt_count == 0
+        assert (
+            session.exec(
+                select(PodcastStageAttemptRecord).where(
+                    PodcastStageAttemptRecord.processing_id == process.id
+                )
+            ).all()
+            == []
+        )
+    assert submit_calls == 0
+
+
 def test_aliyun_bundle_maps_submit_timeout_to_request_unknown(worker_env):
     engine, base_policy, config = worker_env
     aliyun = _aliyun_config()
     policy = PodcastStagePolicy(base_policy.config, aliyun)
-    signer = _asr_signer(policy)
     submitted_url = ""
 
     class UnknownClient:
@@ -2234,7 +2723,6 @@ def test_aliyun_bundle_maps_submit_timeout_to_request_unknown(worker_env):
 
     bundle = AliyunIsiAsrWorkerBundle(
         client_factory=lambda _config: UnknownClient(),
-        signer_resolver=lambda _session, **_kwargs: signer,
         clock=lambda: START,
     )
     with Session(engine) as session:
@@ -2255,7 +2743,7 @@ def test_aliyun_bundle_maps_submit_timeout_to_request_unknown(worker_env):
         assert attempt.request_unknown is True
         assert attempt.error_code == "aliyun_submit_read_timeout"
         assert reservation.status == "reserved"
-        assert submitted_url.startswith("https://archive.example.test/")
+        assert submitted_url == AUDIO_URLS[1]
         persisted_text = "\n".join(
             filter(
                 None,
@@ -2305,7 +2793,6 @@ def test_aliyun_adapter_maps_poll_errors_without_resubmitting(worker_env):
 
     adapter = AliyunIsiAsrAdapter(
         aliyun,
-        signer=_asr_signer(policy),
         client=PollFailureClient(),
         clock=lambda: START,
         transcript_language="zh-CN",
@@ -2351,7 +2838,6 @@ def test_aliyun_adapter_maps_provider_poll_states(
 
     adapter = AliyunIsiAsrAdapter(
         aliyun,
-        signer=_asr_signer(policy),
         client=StateClient(),
         clock=lambda: START,
         transcript_language="zh-CN",
@@ -2366,6 +2852,141 @@ def test_aliyun_adapter_maps_provider_poll_states(
     if isinstance(outcome, TaskFailed):
         assert outcome.failure.retryable is retryable
         assert outcome.usage.audio_duration_ms == 60_000
+
+
+@pytest.mark.parametrize(
+    "status_code",
+    [
+        40_270_003,
+        41_050_002,
+        41_050_003,
+        41_050_004,
+        41_050_005,
+        41_050_006,
+        41_050_007,
+        41_050_008,
+        41_050_011,
+        41_050_023,
+        41_050_024,
+        41_050_025,
+        41_050_026,
+    ],
+)
+def test_aliyun_adapter_releases_usage_for_known_unprocessed_failures(
+    worker_env, status_code
+):
+    _engine, _base_policy, _config = worker_env
+    aliyun = _aliyun_config()
+
+    class FailedClient:
+        def submit(self, _url):
+            pytest.fail("poll mapping must not submit")
+
+        def poll(self, task_id):
+            return AsrPollResult(
+                task_id,
+                AsrState.FAILED_TERMINAL,
+                status_code,
+            )
+
+        def close(self):
+            pass
+
+    outcome = AliyunIsiAsrAdapter(
+        aliyun,
+        client=FailedClient(),
+        clock=lambda: START,
+        transcript_language="zh-CN",
+    ).poll(
+        task_id="aliyun-task-unprocessed",
+        identity=aliyun_asr_identity(aliyun),
+        audio_duration_ms=60_000,
+        reserved_cost_minor=1,
+    )
+
+    assert isinstance(outcome, TaskFailed)
+    assert outcome.failure.code == f"aliyun_task_{status_code}"
+    assert outcome.usage == NormalizedUsage()
+    assert outcome.release_unused_reservation is True
+
+
+@pytest.mark.parametrize(
+    ("failure_code", "expected"),
+    [
+        ("aliyun_task_41050002", True),
+        ("aliyun_task_41050024", True),
+        ("aliyun_task_41050025", True),
+        ("aliyun_task_41050026", True),
+        ("aliyun_task_40270003", False),
+        ("aliyun_task_41050003", False),
+        ("aliyun_task_41050023", False),
+        ("aliyun_task_not-a-number", False),
+        ("other_task_41050024", False),
+    ],
+)
+def test_aliyun_adapter_only_falls_back_for_provider_download_failures(
+    worker_env, failure_code, expected
+):
+    _engine, _base_policy, _config = worker_env
+    adapter = AliyunIsiAsrAdapter(
+        _aliyun_config(),
+        client=SimpleNamespace(),
+        clock=lambda: START,
+        transcript_language="zh-CN",
+        fallback_audio_url_resolver=lambda _context: "https://example.test/a.mp3",
+    )
+    outcome = TaskFailed(
+        "aliyun-task-1",
+        Failure(
+            FailureKind.TERMINAL,
+            failure_code,
+            "provider task failed",
+            retryable=False,
+        ),
+        release_unused_reservation=True,
+    )
+
+    assert adapter.can_fallback(outcome) is expected
+
+
+def test_aliyun_adapter_conservatively_settles_unknown_terminal_failure(
+    worker_env,
+):
+    _engine, _base_policy, _config = worker_env
+    aliyun = _aliyun_config()
+
+    class FailedClient:
+        def submit(self, _url):
+            pytest.fail("poll mapping must not submit")
+
+        def poll(self, task_id):
+            return AsrPollResult(
+                task_id,
+                AsrState.FAILED_TERMINAL,
+                41_059_999,
+            )
+
+        def close(self):
+            pass
+
+    outcome = AliyunIsiAsrAdapter(
+        aliyun,
+        client=FailedClient(),
+        clock=lambda: START,
+        transcript_language="zh-CN",
+    ).poll(
+        task_id="aliyun-task-unknown-failure",
+        identity=aliyun_asr_identity(aliyun),
+        audio_duration_ms=60_000,
+        reserved_cost_minor=1,
+    )
+
+    assert isinstance(outcome, TaskFailed)
+    assert outcome.usage == NormalizedUsage(
+        cost_minor=1,
+        audio_duration_ms=60_000,
+    )
+    assert outcome.release_unused_reservation is False
 
 
 def test_aliyun_adapter_normalizes_success_with_frozen_usage_duration(worker_env):
@@ -2394,7 +3015,6 @@ def test_aliyun_adapter_normalizes_success_with_frozen_usage_duration(worker_env
 
     adapter = AliyunIsiAsrAdapter(
         aliyun,
-        signer=_asr_signer(policy),
         client=SuccessClient(),
         clock=lambda: START,
         transcript_language="zh-CN",
@@ -2443,7 +3063,6 @@ def test_aliyun_adapter_folds_identical_stereo_and_uses_wall_clock_duration(
 
     adapter = AliyunIsiAsrAdapter(
         aliyun,
-        signer=_asr_signer(policy),
         client=SuccessClient(),
         clock=lambda: START,
         transcript_language="en",
@@ -2487,7 +3106,7 @@ def test_aliyun_normalizer_folds_offset_rechunked_mirror_but_keeps_distinct_chan
         _normalized_transcript(
             transcript,
             language="en",
-            source_audio_duration_ms=8_000,
+            source_media_duration_ms=8_000,
         )
     )
 

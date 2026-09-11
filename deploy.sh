@@ -188,12 +188,6 @@ server {
     listen ${NGINX_LISTEN_PORT}${NGINX_LISTEN_OPTIONS:+ ${NGINX_LISTEN_OPTIONS}};
     server_name ${NGINX_SERVER_NAME};
 
-    location = /api/public/podcast-asr/source-audio {
-        access_log off;
-        error_log /dev/null crit;
-        return 301 https://\$host\$request_uri;
-    }
-
     location / {
         return 301 https://\$host\$request_uri;
     }
@@ -218,21 +212,6 @@ ${hsts_header}
     root ${NGINX_HTML_DIR};
     index index.html;
     client_max_body_size 100m;
-
-    # ASR provider fetch 的 HMAC 凭据在 query 中，该精确路径禁止
-    # request-scoped Nginx 日志落盘，并直通上游音频流。
-    location = /api/public/podcast-asr/source-audio {
-        access_log off;
-        error_log /dev/null crit;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_read_timeout 300s;
-        proxy_buffering off;
-        proxy_pass ${backend_upstream};
-    }
 
     location /api/ {
         proxy_http_version 1.1;
@@ -302,21 +281,6 @@ server {
     index index.html;
     client_max_body_size 100m;
 
-    # ASR provider fetch 的 HMAC 凭据在 query 中，该精确路径禁止
-    # request-scoped Nginx 日志落盘，并直通上游音频流。
-    location = /api/public/podcast-asr/source-audio {
-        access_log off;
-        error_log /dev/null crit;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_read_timeout 300s;
-        proxy_buffering off;
-        proxy_pass ${backend_upstream};
-    }
-
     location /api/ {
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
@@ -373,21 +337,6 @@ server {
     root ${NGINX_HTML_DIR};
     index index.html;
     client_max_body_size 100m;
-
-    # ASR provider fetch 的 HMAC 凭据在 query 中，该精确路径禁止
-    # request-scoped Nginx 日志落盘，并直通上游音频流。
-    location = /api/public/podcast-asr/source-audio {
-        access_log off;
-        error_log /dev/null crit;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_read_timeout 300s;
-        proxy_buffering off;
-        proxy_pass ${backend_upstream};
-    }
 
     location /api/ {
         proxy_http_version 1.1;
@@ -495,8 +444,6 @@ validate_nginx_config() {
         || fail "Nginx site root is not ${NGINX_HTML_DIR} in ${NGINX_SITE_FILE}"
     $SUDO grep -F "location /api/" "$NGINX_SITE_FILE" >/dev/null \
         || fail "Nginx site config does not define location /api/"
-    $SUDO grep -F "location = /api/public/podcast-asr/source-audio" "$NGINX_SITE_FILE" >/dev/null \
-        || fail "Nginx site config does not protect the signed Podcast ASR fetch route"
     $SUDO grep -F "proxy_pass ${backend_upstream};" "$NGINX_SITE_FILE" >/dev/null \
         || fail "Nginx /api proxy does not point to ${backend_upstream}"
     if truthy "$NGINX_ENABLE_SSL"; then

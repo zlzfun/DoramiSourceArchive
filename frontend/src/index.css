@@ -9052,7 +9052,7 @@ input[type="radio"] {
     font-weight: 600;
   }
   .podcast-text-transcript {
-    margin-top: 12px;
+    margin-top: 20px;
     border: 1px solid var(--dorami-border);
     border-radius: var(--r-control);
     background: var(--dorami-soft);
@@ -9073,6 +9073,14 @@ input[type="radio"] {
   .podcast-text-toggle small { color: var(--dorami-muted); font-size: 11px; }
   .podcast-text-toggle svg { width: 16px; transition: transform var(--motion-fast) var(--motion-ease); }
   .podcast-text-toggle svg.is-open { transform: rotate(180deg); }
+  .podcast-text-sources {
+    width: fit-content;
+    max-width: calc(100% - 30px);
+    margin: -3px 15px 12px;
+  }
+  .podcast-text-sources .mini-seg-btn {
+    min-width: 0;
+  }
   .podcast-text-transcript-body {
     max-height: 560px;
     padding: 0 15px 16px;
@@ -9081,8 +9089,14 @@ input[type="radio"] {
     color: var(--dorami-ink-2);
     white-space: pre-wrap;
   }
-  .podcast-text-transcript-body p { margin: 14px 0 6px; }
-  .podcast-text-transcript-body small { color: var(--dorami-faint); }
+  .podcast-text-transcript-body:focus-visible {
+    outline: 2px solid var(--dorami-focus);
+    outline-offset: -2px;
+  }
+  .podcast-text-copy {
+    padding-top: 14px;
+    overflow-wrap: anywhere;
+  }
   .podcast-text-more {
     display: block;
     margin: 12px auto 8px;
@@ -11469,6 +11483,16 @@ input[type="radio"] {
   min-width: 0;
   margin-top: 5px;
 }
+.ledger-processing-error {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--state-bad);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ledger-processing-error.is-warn { color: var(--state-warn); }
 .reader-score-chip,
 .reader-tag-chip,
 .brief-tag {
@@ -12123,15 +12147,14 @@ input[type="radio"] {
 /* Issue #7：运维管理 → 内容的本地 Podcast 音频资产台账。 */
 .podcast-assets-head { margin-top: 18px; }
 .podcast-assets-card { margin-top: 12px; }
-.podcast-assets-table { min-width: 1120px; }
+.podcast-assets-table { min-width: 940px; }
 .podcast-assets-table th:nth-child(1) { width: 27%; }
 .podcast-assets-table th:nth-child(2) { width: 120px; }
 .podcast-assets-table th:nth-child(3) { width: 96px; }
 .podcast-assets-table th:nth-child(4) { width: 110px; }
 .podcast-assets-table th:nth-child(5) { width: 90px; }
 .podcast-assets-table th:nth-child(6) { width: 150px; }
-.podcast-assets-table th:nth-child(7) { width: 180px; }
-.podcast-assets-table th:nth-child(8) { width: 80px; }
+.podcast-assets-table th:nth-child(7) { width: 80px; }
 .podcast-assets-episode {
   display: block;
   font-family: var(--mono);

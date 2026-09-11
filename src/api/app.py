@@ -11,14 +11,14 @@ import time
 import httpx
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, Body, Response, Request
+from fastapi import FastAPI, HTTPException, Response, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field as PydanticField
+from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from sqlmodel import Session, select
-from sqlalchemy import func, case, delete
+from sqlalchemy import delete
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.schedulers.base import STATE_STOPPED
 from apscheduler.triggers.cron import CronTrigger
@@ -33,60 +33,34 @@ from models.db import (
     FetchRunRecord,
     JobRecord,
     ReaderSubscriptionRecord,
-    ReaderFeedTokenRecord,
-    ReaderFavoriteRecord,
-    ReaderReadRecord,
     SourceConfigRecord,
     SourceStateRecord,
     TagRetagJobRecord,
     AppSettingRecord,
-    UserRecord,
 )
-from models.content import BaseContent
 
 # 引入动态抓取器注册中心
-from fetchers.registry import fetcher_registry, DECOMMISSIONED_FETCHER_IDS
+from fetchers.registry import fetcher_registry
 from api.skill_router import router as skill_router
 from version import __version__
 from api.security_checks import enforce_security_config
-from api.serializers import serialize_user
-from api.textutils import (
-    _split_csv, _date_end_value, _now_iso, _json_loads, _json_dumps, _coerce_bool,
-    _model_dump, _model_to_clean_dict,
-)
+from api.textutils import _now_iso, _json_dumps
 from api.tokens import (
     AUTH_SECRET,
     normalize_delivery_policy,
     generate_subscription_token,
     hash_subscription_token,
     subscription_token_preview,
-    generate_feed_token,
-    read_bearer_or_query_token,
 )
 from api.feed_service import (
-    serialize_subscription,
-    resolve_subscription_by_token,
-    query_subscription_articles,
     resolve_subscribed_source_ids,
-    resolve_all_visible_source_ids,
+    resolve_all_visible_source_ids,  # noqa: F401 -- router compatibility export
     resolve_subscription_sources_by_token,
-    resolve_feed_token_owner,
-    feed_articles_for_owner,
 )
-from api.articles_view import (
-    GenericContent,
-    _record_to_content,
-    apply_article_query_filters,
-    article_recency_order,
-    serialize_feed_article,
-    serialize_article_list_item,
-    article_to_markdown,
-)
+from api.articles_view import apply_article_query_filters  # noqa: F401 -- compatibility export
 from api.sources import (
     DAILY_BRIEF_SOURCE_ID,
     DAILY_BRIEF_SOURCE_META,
-    subscription_source_ids,
-    _source_category,
     _registry_source_meta,
     _friendly_source_name,
 )
@@ -100,60 +74,25 @@ from api.routers import interests as interests_router
 from api.routers import personal_briefs as personal_briefs_router
 from api.routers import taxonomy as taxonomy_router
 from api.routers import analysis_ops as analysis_ops_router
-from api.routers.subscriptions import (
-    SubscriptionCreate,
-    SubscriptionUpdate,
-    SubscriptionFilters,
-    SubscriptionDeliveryPolicy,
-    PublicSubscriptionSearchBody,
-)
 from api.routers import articles as articles_router
-from api.routers.articles import ArticleUpdateParams, _maybe_rewind_daily_brief_cursor
-from api.schemas import BatchOpParams
-from api.collection_planning import (
-    normalize_fetcher_ids,
-    resolve_collection_job_fetcher_ids,
-    build_collection_job_items,
-    apply_run_param_overrides,
-    test_run_overrides,
-    resolve_delivery_source_ids,
-)
+from api.routers.articles import _maybe_rewind_daily_brief_cursor  # noqa: F401 -- compatibility export
+from api.collection_planning import build_collection_job_items
 from api.routers import monitoring as monitoring_router
-from api.routers.monitoring import (
-    derive_health_status,
-    build_fetcher_health,
-    build_fetcher_health_from_state,
-)
 from api.routers import x_api as x_api_router
 from api.routers import source_configs as source_configs_router
 from api.routers.source_configs import (
-    SourceConfigCreate,
-    SourceConfigUpdate,
-    SourceFetchParams,
-    serialize_source_config,
-    normalize_source_id,
-    parse_json_object,
-    resolve_source_fetcher_id,
-    build_source_fetch_params,
+    serialize_source_config,  # noqa: F401 -- compatibility export
+    resolve_source_fetcher_id,  # noqa: F401 -- compatibility export
+    build_source_fetch_params,  # noqa: F401 -- compatibility export
 )
 from api.routers import archive_sync as archive_sync_router
 from api.routers.archive_sync import (
-    ARCHIVE_SYNC_SCHEMA_VERSION,
-    _canonical_json,
-    archive_article_payload,
-    archive_article_checksum,
-    archive_sync_line,
-    archive_manifest_line,
-    build_import_article_record,
-    import_archive_sync_jsonl,
+    _canonical_json,  # noqa: F401 -- compatibility export
+    archive_sync_line,  # noqa: F401 -- compatibility export
+    archive_manifest_line,  # noqa: F401 -- compatibility export
+    import_archive_sync_jsonl,  # noqa: F401 -- compatibility export
 )
 from api.routers import collection as collection_router
-from api.routers.collection import (
-    CollectionJobCreate,
-    CollectionJobUpdate,
-    serialize_collection_job,
-    serialize_collection_job_run,
-)
 from api.routers import fetchers as fetchers_router
 from api.routers import stats as stats_router
 from api.routers import media as media_router
@@ -163,18 +102,14 @@ from api.routers import feedback as feedback_router
 from api.routers import announcements as announcements_router
 from api.routers import remote_sync as remote_sync_router
 from api.routers import share as share_router
-from api.routers.fetchers import FetchBatchItem, FetchBatchParams
 from services import daily_brief as daily_brief_service
 from services import remote_sync as remote_sync_service
 from services import sync_consumer_policy
 from services import accounts as accounts_service
 from services import admin_audit as admin_audit_service
 from services.collection_nodes import PODCAST_SOURCE_TYPES, resolve_collection_node
-from services import reader_ai as reader_ai_service
 from services import reader_state as reader_state_service
 from services import ai_usage as ai_usage_service
-from services import reader_activity as reader_activity_service
-from services import content_analytics as content_analytics_service
 from services import jobs as jobs_service
 from services import user_sources as user_sources_service
 from services import article_analysis as article_analysis_service
@@ -191,7 +126,7 @@ from services.podcast_artifacts import PodcastArtifactStore
 from services.podcast_asr_worker import AsrWorkerConfig, AsrWorkerStep
 from services import podcast_premium_guides as podcast_premium_guide_service
 from services import podcast_publisher_transcripts as podcast_publisher_transcript_service
-from services import podcast_source_audio as podcast_source_audio_service
+from services import podcast_source_media as podcast_source_media_service
 from services import podcast_processing_admin as podcast_processing_admin_service
 from services.podcast_premium_guide_providers import (
     AliyunIsiPremiumGuideTtsProvider,
@@ -199,12 +134,12 @@ from services.podcast_premium_guide_providers import (
 )
 from services.aliyun_isi_asr_worker import (
     AliyunIsiAsrAdmissionEstimator,
+    AliyunIsiAsrWorkerBundle,
     register_aliyun_isi_asr_worker,
 )
 from services import podcast_full_analysis as podcast_full_analysis_service
 from services.podcast_processing_admin import PodcastProcessingProviderRegistry
-from services.request_log_redaction import install_uvicorn_sensitive_request_filters
-from llm.client import LLMNotConfigured, LLMError, UsageMeta, ping as llm_ping
+from llm.client import UsageMeta
 from llm.client import set_usage_recorder as _set_llm_usage_recorder
 
 from starlette.responses import JSONResponse as StarletteJSONResponse
@@ -220,12 +155,6 @@ if not _dorami_logger.handlers:
     _dorami_logger.addHandler(_handler)
     _dorami_logger.setLevel(logging.INFO)
     _dorami_logger.propagate = False
-
-# Uvicorn applies its logging dictConfig before importing this module.  Install
-# the signed-route filter here so startup cannot reset it; also covers the
-# application-owned dorami.* handler created immediately above.
-install_uvicorn_sensitive_request_filters()
-
 
 settings.apply_process_environment()
 
@@ -554,9 +483,9 @@ def _is_podcast_text_reader_path(path: str) -> bool:
     return path.startswith("/api/podcasts/episodes/") and path.endswith("/texts")
 
 
-def _is_podcast_source_cache_path(path: str) -> bool:
+def _is_podcast_source_media_validation_path(path: str) -> bool:
     return path.startswith("/api/admin/podcast-episodes/") and path.endswith(
-        "/cache-source-audio"
+        "/validate-source-media"
     )
 
 
@@ -573,11 +502,11 @@ async def stable_podcast_reader_validation_error(
             status_code=422,
             headers={"Cache-Control": "private, no-store", "Vary": "Cookie"},
         )
-    if _is_podcast_source_cache_path(request.url.path):
+    if _is_podcast_source_media_validation_path(request.url.path):
         return StarletteJSONResponse(
             {
                 "code": "podcast_bad_request",
-                "message": "Podcast 原音频缓存请求无效",
+                "message": "Podcast 来源媒体校验请求无效",
             },
             status_code=422,
         )
@@ -649,8 +578,6 @@ podcast_artifact_store = PodcastArtifactStore(
     Path(settings.podcast_artifacts.root_dir),
     max_bytes=settings.podcast_artifacts.max_audio_mb * 1024 * 1024,
     total_quota_bytes=settings.podcast_artifacts.total_quota_bytes,
-    source_audio_quota_bytes=settings.podcast_artifacts.source_audio_quota_bytes,
-    source_audio_ttl_seconds=settings.podcast_artifacts.source_audio_ttl_seconds,
     minimum_free_bytes=settings.podcast_artifacts.minimum_free_bytes,
     staging_ttl_seconds=settings.podcast_artifacts.staging_ttl_seconds,
     allowed_mime_types=settings.podcast_artifacts.allowed_mime_types,
@@ -665,6 +592,10 @@ podcast_processing_providers = PodcastProcessingProviderRegistry()
 _podcast_asr_admission_estimator = AliyunIsiAsrAdmissionEstimator()
 register_aliyun_isi_asr_worker(
     podcast_processing_providers,
+    bundle=AliyunIsiAsrWorkerBundle(
+        artifact_store=podcast_artifact_store,
+        storage_config=settings.podcast_artifacts,
+    ),
     admission_estimator=_podcast_asr_admission_estimator,
 )
 podcast_full_analysis_service.register_full_analysis_worker(
@@ -754,7 +685,6 @@ async def enqueue_podcast_processing_with_input(
     def enqueue():
         return podcast_processing_admin_service.request_processing(
             db_sink.engine,
-            podcast_artifact_store,
             podcast_processing_providers,
             settings.podcast,
             episode_id=episode_id,
@@ -781,17 +711,8 @@ async def enqueue_podcast_processing_with_input(
                     config=settings.podcast,
                     client=client,
                 )
-        except podcast_publisher_transcript_service.PublisherTranscriptError as exc:
-            try:
-                stale_selected = (
-                    podcast_processing_admin_service.select_full_analysis_input(
-                        db_sink.engine,
-                        podcast_artifact_store,
-                        episode_id=episode_id,
-                    )
-                )
-            except podcast_processing_admin_service.PodcastAdminError:
-                stale_selected = None
+        except podcast_publisher_transcript_service.PublisherTranscriptError:
+            pass
     try:
         return enqueue()
     except podcast_processing_admin_service.PodcastAdminError as exc:
@@ -806,14 +727,26 @@ async def enqueue_podcast_processing_with_input(
                 client=client,
             )
     except podcast_publisher_transcript_service.PublisherTranscriptError:
-        await podcast_source_audio_service.cache_source_audio(
-            db_sink.engine,
-            podcast_artifact_store,
-            episode_id=episode_id,
-            podcast_config=settings.podcast,
-            storage_config=settings.podcast_artifacts,
-            client_factory=httpx.AsyncClient,
-        )
+        try:
+            with Session(db_sink.engine) as session:
+                max_audio_seconds_per_file = (
+                    aliyun_isi_config_service.resolve_config(
+                        session
+                    ).asr_max_audio_seconds_per_file
+                )
+            await podcast_source_media_service.validate_source_media(
+                db_sink.engine,
+                podcast_artifact_store,
+                episode_id=episode_id,
+                podcast_config=settings.podcast,
+                storage_config=settings.podcast_artifacts,
+                max_audio_seconds_per_file=max_audio_seconds_per_file,
+                client_factory=httpx.AsyncClient,
+            )
+        except podcast_source_media_service.SourceMediaTooLong as exc:
+            raise podcast_processing_admin_service.PodcastAdminError(
+                "podcast_source_media_too_long", status_code=422
+            ) from exc
     return enqueue()
 
 
@@ -848,7 +781,6 @@ def schedule_podcast_full_analysis(article_ids: List[str]) -> int:
             try:
                 selected = podcast_processing_admin_service.select_full_analysis_input(
                     db_sink.engine,
-                    podcast_artifact_store,
                     episode_id=article_id,
                 )
             except podcast_processing_admin_service.PodcastAdminError as exc:
@@ -1190,7 +1122,7 @@ async def require_admin_session(request: Request, call_next):
                         "Vary": "Cookie",
                     },
                 )
-            if _is_podcast_source_cache_path(path):
+            if _is_podcast_source_media_validation_path(path):
                 return StarletteJSONResponse(
                     {
                         "code": "podcast_auth_required",
@@ -1202,7 +1134,7 @@ async def require_admin_session(request: Request, call_next):
     disabled_surface = disabled_runtime_surface(path, auth_session)
     if disabled_surface is None and account_admin_required(path):
         if (auth_session or {}).get("role") != "admin":
-            if _is_podcast_source_cache_path(path):
+            if _is_podcast_source_media_validation_path(path):
                 return StarletteJSONResponse(
                     {
                         "code": "podcast_admin_required",

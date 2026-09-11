@@ -708,7 +708,7 @@ def test_poll_auth_rejection_refreshes_then_queries_only_original_task_id():
     ]
 
 
-def test_poll_http_logs_redact_complete_query(caplog):
+def test_poll_http_logs_redact_complete_query(caplog, monkeypatch):
     client = _client(
         lambda _request: httpx.Response(
             200,
@@ -720,6 +720,11 @@ def test_poll_http_logs_redact_complete_query(caplog):
             },
         )
     )
+    httpx_logger = logging.getLogger("httpx")
+    # Alembic's logging setup may disable pre-existing loggers when migration
+    # tests run first. Keep this assertion independent of suite ordering.
+    monkeypatch.setattr(httpx_logger, "disabled", False)
+    monkeypatch.setattr(httpx_logger, "propagate", True)
     caplog.set_level(logging.INFO, logger="httpx")
     client.poll("sensitive-task")
 

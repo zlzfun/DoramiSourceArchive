@@ -7,28 +7,28 @@ import math
 from services.podcast_processing import deterministic_input_fingerprint
 
 
-class SourceAudioDurationError(ValueError):
-    """Persisted source-audio duration is unsafe for accounting."""
+class SourceMediaDurationError(ValueError):
+    """Persisted source-media duration is unsafe for accounting."""
 
 
-def source_audio_duration_ms(duration_seconds: object) -> int:
+def source_media_duration_ms(duration_seconds: object) -> int:
     """Convert persisted probe seconds to exact positive milliseconds."""
 
     if isinstance(duration_seconds, bool) or not isinstance(
         duration_seconds, (int, float)
     ):
-        raise SourceAudioDurationError(
-            "source audio duration must be a finite number"
+        raise SourceMediaDurationError(
+            "source media duration must be a finite number"
         )
     seconds = float(duration_seconds)
     if not math.isfinite(seconds) or seconds <= 0:
-        raise SourceAudioDurationError(
-            "source audio duration must be finite and positive"
+        raise SourceMediaDurationError(
+            "source media duration must be finite and positive"
         )
     milliseconds = round(seconds * 1000)
     if milliseconds <= 0:
-        raise SourceAudioDurationError(
-            "source audio duration must be at least one millisecond"
+        raise SourceMediaDurationError(
+            "source media duration must be at least one millisecond"
         )
     return milliseconds
 
@@ -89,7 +89,7 @@ def processing_input_fingerprint(
 
 
 __all__ = [
-    "SourceAudioDurationError",
+    "SourceMediaDurationError",
     "processing_input_fingerprint",
-    "source_audio_duration_ms",
+    "source_media_duration_ms",
 ]

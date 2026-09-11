@@ -16,6 +16,7 @@ from services.http_safety import (
     PublicDownloadResult,
     PublicDownloadTimeout,
     host_suffix_validator,
+    resolve_public_url_redirects,
     stream_public_url_to_file,
 )
 
@@ -27,6 +28,132 @@ def _client_factory(handler, creations: list[dict] | None = None):
         return httpx.AsyncClient(transport=httpx.MockTransport(handler), **kwargs)
 
     return create
+
+
+def _sync_client_factory(handler):
+    def create(**kwargs):
+        return httpx.Client(transport=httpx.MockTransport(handler), **kwargs)
+
+    return create
+
+
+class _UnreadableBody(httpx.SyncByteStream):
+    def __iter__(self):
+        raise AssertionError("redirect resolution must not read response bodies")
+
+
+def test_resolve_public_redirects_uses_head_without_body_or_url_logs(caplog):
+    seen: list[tuple[str, str]] = []
+    redirects = {
+        "/start": "/one",
+        "/one": "https://tracker.example/two?token=secret",
+        "/two": "https://cdn.example/three",
+        "/three": "https://audio.example/final.mp3?delivery=signed",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, str(request.url)))
+        location = redirects.get(request.url.path)
+        if location is not None:
+            return httpx.Response(302, headers={"Location": location})
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "audio/mpeg"},
+            stream=_UnreadableBody(),
+        )
+
+    validated: list[str] = []
+
+    def validate(value: str) -> str:
+        validated.append(value)
+        return value
+
+    caplog.set_level(logging.INFO, logger="httpx")
+    result = resolve_public_url_redirects(
+        "https://podcast.example/start",
+        url_validator=validate,
+        max_redirects=4,
+        timeout_seconds=5,
+        client_factory=_sync_client_factory(handler),
+    )
+
+    assert result == "https://audio.example/final.mp3?delivery=signed"
+    assert [method for method, _url in seen] == ["HEAD"] * 5
+    assert validated == [url for _method, url in seen]
+    assert "podcast.example" not in caplog.text
+    assert "audio.example" not in caplog.text
+    assert "delivery=signed" not in caplog.text
+    # Another test or embedding process may intentionally disable the httpx
+    # logger. Silence cannot leak a URL; when a record is emitted, it must use
+    # the resolver's complete-URL redaction marker.
+    if caplog.text:
+        assert "[REDACTED_URL]" in caplog.text
+
+
+def test_resolve_public_redirects_falls_back_to_unread_range_get():
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.method == "HEAD":
+            return httpx.Response(405)
+        return httpx.Response(206, stream=_UnreadableBody())
+
+    result = resolve_public_url_redirects(
+        "https://audio.example/episode.mp3",
+        url_validator=lambda value: value,
+        client_factory=_sync_client_factory(handler),
+    )
+
+    assert result == "https://audio.example/episode.mp3"
+    assert [request.method for request in seen] == ["HEAD", "GET"]
+    assert seen[1].headers["Range"] == "bytes=0-0"
+    assert seen[1].headers["Accept-Encoding"] == "identity"
+
+
+def test_resolve_public_redirects_range_probes_ambiguous_head_response():
+    seen: list[tuple[str, str]] = []
+    final = "https://cdn.example/final.mp3"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, str(request.url)))
+        if request.url.host == "tracker.example" and request.method == "HEAD":
+            return httpx.Response(200, headers={"Content-Type": "text/html"})
+        if request.url.host == "tracker.example":
+            return httpx.Response(302, headers={"Location": final})
+        return httpx.Response(200, headers={"Content-Type": "audio/mpeg"})
+
+    result = resolve_public_url_redirects(
+        "https://tracker.example/episode",
+        url_validator=lambda value: value,
+        client_factory=_sync_client_factory(handler),
+    )
+
+    assert result == final
+    assert seen == [
+        ("HEAD", "https://tracker.example/episode"),
+        ("GET", "https://tracker.example/episode"),
+        ("HEAD", final),
+    ]
+
+
+def test_resolve_public_redirects_enforces_hop_limit():
+    requests = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        return httpx.Response(302, headers={"Location": "/again"})
+
+    with pytest.raises(PublicDownloadError, match="重定向次数过多"):
+        resolve_public_url_redirects(
+            "https://podcast.example/start",
+            url_validator=lambda value: value,
+            max_redirects=2,
+            client_factory=_sync_client_factory(handler),
+        )
+
+    assert requests == 3
 
 
 def test_public_download_result_repr_hides_signed_final_url():

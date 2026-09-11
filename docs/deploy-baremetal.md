@@ -71,12 +71,6 @@ pm2 restart dorami-backend-v2     # 重启后端
 pm2 save && pm2 startup           # 开机自启(脚本不做,必须手动执行一次)
 ```
 
-`deploy.sh` 生成的站点对 Podcast ASR 签名下载路径
-`/api/public/podcast-asr/source-audio` 使用 exact location：该路径的 HMAC 在
-query 中，因此路由级 access/error request log 不落盘，音频代理不缓冲；
-Uvicorn 也会再清除该路径的查询参数。其他 `/api/` 路由仍保留原有访问
-日志。不要在手工修改 Nginx 站点时删除该 exact location。
-
 七个步骤:装系统依赖 → 校验配置 → uv 装后端(+Playwright)+ **DB 备份** + 迁移预检 +
 `ensure_migrated` → 按显式 `[taxonomy] deployment` reconcile → npm 构建前端 →
 写并校验 Nginx 站点 → 发布 dist 到 `html_dir` →
@@ -119,7 +113,7 @@ role = all                   # 外网/内网均保持 all
 
 [podcast_artifacts]
 root_dir = data/podcast-artifacts
-total_quota_mb = 10240
+total_quota_mb = 0             # 0 = 不设固定业务硬上限
 minimum_free_mb = 1024
 staging_ttl_seconds = 3600
 
@@ -152,9 +146,12 @@ export DORAMI_PODCAST_INSTALLATION=internal
 export DORAMI_PODCAST_AUTHORITY_ID=<stable-internal-id>
 ```
 
-首次启动前确认 artifact root 所在分区至少保留 `minimum_free_mb`；启动会在跨进程 CAS
-锁内清理过期 `.incoming` 文件和无引用孤儿，不会删除数据库仍引用的音频。管理端
-`/api/admin/podcast-artifacts/stats` 会报告分区容量/可用空间、配额、临时文件和压力状态。
+首次启动前确认 artifact root 所在分区至少保留 `minimum_free_mb`；该目录只持久保存生成的
+中文精简音频。启动会在跨进程 CAS 锁内清理过期 `.incoming` 文件和无引用孤儿，不会删除
+数据库仍引用的生成音频。管理端 `/api/admin/podcast-artifacts/stats` 会报告实际占用、
+分区可用空间、总配额、临时文件和压力状态。外网 ASR 把 RSS enclosure 原地址直接交给
+阿里云；本地只在 staging 完成媒体校验，随后删除原始字节并持久化轻量
+`source_media_snapshot`，无需配置原音频公网回源路由。
 
 `pm2 start/reload --update-env` 会继承这些变量。不要把 provider secret 写入
 `production.ini`、shell history 或仓库；建议由主机 secret manager 注入。部署脚本会安装并

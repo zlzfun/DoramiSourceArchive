@@ -348,7 +348,6 @@ class StageContext:
     input_artifact: ArtifactRef
     identity: ExecutionIdentity
     plan: StagePlan
-    input_expires_at: dt.datetime | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "processing_id", _identifier(self.processing_id, "processing_id"))
@@ -368,18 +367,6 @@ class StageContext:
             raise ValueError("identity must be an ExecutionIdentity")
         if not isinstance(self.plan, StagePlan):
             raise ValueError("plan must be a StagePlan")
-        if self.input_expires_at is not None:
-            if (
-                not isinstance(self.input_expires_at, dt.datetime)
-                or self.input_expires_at.tzinfo is None
-                or self.input_expires_at.utcoffset() is None
-            ):
-                raise ValueError("input_expires_at must be timezone-aware")
-            object.__setattr__(
-                self,
-                "input_expires_at",
-                self.input_expires_at.astimezone(dt.timezone.utc),
-            )
         if (
             self.identity.execution_kind is ExecutionKind.LOCAL
             and self.plan.estimated_cost_minor != 0
@@ -601,6 +588,7 @@ class TaskFailed:
     task_id: str
     failure: Failure
     usage: NormalizedUsage = field(default_factory=NormalizedUsage)
+    release_unused_reservation: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "task_id", _identifier(self.task_id, "task_id"))
@@ -610,6 +598,17 @@ class TaskFailed:
             raise ValueError("TaskFailed cannot carry a request_unknown failure")
         if not isinstance(self.usage, NormalizedUsage):
             raise ValueError("usage must be NormalizedUsage")
+        if not isinstance(self.release_unused_reservation, bool):
+            raise ValueError("release_unused_reservation must be boolean")
+        if self.release_unused_reservation:
+            if self.failure.retryable or self.failure.kind is not FailureKind.TERMINAL:
+                raise ValueError(
+                    "unused reservation release requires a terminal failure"
+                )
+            if self.usage != NormalizedUsage():
+                raise ValueError(
+                    "unused reservation release requires zero normalized usage"
+                )
 
 
 @dataclass(frozen=True)

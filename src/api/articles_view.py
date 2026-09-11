@@ -7,6 +7,7 @@ app 级可变全局（db_sink 等），故可被任意 Router 安全 import、�
 """
 
 import json
+from collections.abc import Collection
 from typing import Any, Dict, Optional
 
 from sqlalchemy import literal_column
@@ -37,8 +38,15 @@ def _podcast_projection(
     extensions: Dict[str, Any],
     analysis: Any = None,
     processing: Any = None,
+    published_text_kinds: Collection[str] = (),
+    *,
+    premium_score_threshold: float = 8.5,
 ) -> Dict[str, Any]:
     """生成列表/详情共用的轻量播客对象，不透出 raw_data。"""
+    raw_premium_guide = extensions.get("premium_guide")
+    premium_guide = (
+        raw_premium_guide if isinstance(raw_premium_guide, dict) else {}
+    )
     duration_seconds = _podcast_optional_int(extensions.get("duration_seconds"))
     raw_transcripts = extensions.get("transcripts") or []
     if isinstance(raw_transcripts, dict):
@@ -95,12 +103,15 @@ def _podcast_projection(
             if input_kind == "publisher_transcript"
             else "asr_transcript"
             if input_kind == "normalized_transcript"
-            or (input_kind == "source_audio" and processing_stage == "analyze")
+            or (
+                input_kind == "source_media_snapshot"
+                and processing_stage == "analyze"
+            )
             else ""
         )
     )
     final_premium = (
-        float(getattr(analysis, "quality_score")) >= 8.0
+        float(getattr(analysis, "quality_score")) > premium_score_threshold
         if transcript_basis
         and analysis is not None
         and getattr(analysis, "quality_score", None) is not None
@@ -124,7 +135,12 @@ def _podcast_projection(
         # descriptive scheduling signal, never authorization for paid processing.
         "analysis_basis": analysis_basis,
         "is_long_form": duration_seconds is not None and duration_seconds > 1800,
-        "transcript_available": any(transcript["url"] for transcript in transcripts),
+        # RSS transcript entries are untrusted download candidates.  Reader
+        # visibility starts only after a validated artifact is published.
+        "transcript_available": bool(
+            {"publisher_transcript", "normalized_transcript", "transcript_zh"}
+            .intersection(published_text_kinds)
+        ),
         "id": str(getattr(processing, "id", "") or ""),
         "attempt_count": getattr(processing, "attempt_count", 0),
         "status": processing_status,
@@ -142,6 +158,12 @@ def _podcast_projection(
             and float(getattr(analysis, "quality_score")) >= 5.0
         ),
         "final_premium": final_premium,
+        "premium_guide": {
+            "status": str(premium_guide.get("status") or ""),
+            "failed_stage": str(premium_guide.get("failed_stage") or ""),
+            "error": str(premium_guide.get("error") or ""),
+            "audio_ready": bool(extensions.get("condensed_audio_url")),
+        },
         "condensed_audio_url": str(extensions.get("condensed_audio_url") or ""),
         "condensed_duration_seconds": _podcast_optional_int(
             extensions.get("condensed_duration_seconds")
@@ -267,6 +289,7 @@ def serialize_article_list_item(
     display_tags: Optional[list[Dict[str, Any]]] = None,
     premium_score_threshold: float = 8.5,
     processing: Any = None,
+    published_podcast_text_kinds: Collection[str] = (),
 ) -> Dict[str, Any]:
     content = record.content or ""
     # AI 要点摘要(extensions_json.summary_zh)作为轻字段随条目透出:
@@ -340,13 +363,19 @@ def serialize_article_list_item(
             and getattr(analysis, "analysis_basis", "")
             in {"publisher_transcript", "asr_transcript"}
             and getattr(analysis, "quality_score", None) is not None
-            and float(analysis.quality_score) >= 8.0
+            and float(analysis.quality_score) > premium_score_threshold
         ),
     }
     if include_content:
         item["content"] = content
     if record.content_type == "podcast_episode":
-        item["podcast"] = _podcast_projection(ext, analysis, processing)
+        item["podcast"] = _podcast_projection(
+            ext,
+            analysis,
+            processing,
+            published_podcast_text_kinds,
+            premium_score_threshold=premium_score_threshold,
+        )
     if include_content or include_extensions:
         item["extensions_json"] = record.extensions_json or "{}"
     return item

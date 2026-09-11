@@ -320,8 +320,10 @@ transaction, and checkpoint contract.
 `digest_audio_zh` is external-authority data generated from the matching published
 script and synchronized to internal. A remote tombstone withdraws its internal
 replica; physical CAS deletion may follow through garbage collection. Original
-Podcast audio remains a publisher link or bounded external ASR cache and is never
-added to the replication manifest.
+Podcast audio remains a publisher link and is never added to the replication
+manifest. ASR validation may download it only into ephemeral external staging;
+the bytes are deleted after validation, while a lightweight `source_media_snapshot`
+remains as local processing evidence and is not an audio artifact stream.
 
 After pulling, internal Dorami may upload minimized Candidate evidence containing
 only label, facet kind, confidence, an opaque article fingerprint, source

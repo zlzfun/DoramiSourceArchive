@@ -288,6 +288,12 @@ ALIYUN_ISI_NAMESPACE = CredentialNamespace(
             env_var="DORAMI_ALIYUN_ISI_ASR_DAILY_AUDIO_SECONDS_LIMIT",
         ),
         CredentialField(
+            "asr_max_audio_seconds_per_file",
+            "aliyun_isi_asr_max_audio_seconds_per_file",
+            kind="int",
+            env_var="DORAMI_ALIYUN_ISI_ASR_MAX_AUDIO_SECONDS_PER_FILE",
+        ),
+        CredentialField(
             "asr_entitlement_ends_at",
             "aliyun_isi_asr_entitlement_ends_at",
             env_var="DORAMI_ALIYUN_ISI_ASR_ENTITLEMENT_ENDS_AT",
@@ -360,51 +366,6 @@ ALIYUN_ISI_NAMESPACE = CredentialNamespace(
     ),
 )
 
-# The current/grace keys are deployment-held secret material. Generated URLs remain
-# ephemeral capabilities and are never stored in this credential namespace.
-PODCAST_ASR_FETCH_NAMESPACE = CredentialNamespace(
-    name="podcast_asr_fetch",
-    ini_section="podcast_asr_fetch",
-    clearable_secret_fields=frozenset({"previous_signing_secret"}),
-    fields=(
-        CredentialField(
-            "public_base_url",
-            "podcast_asr_fetch_public_base_url",
-            env_var="DORAMI_PODCAST_ASR_FETCH_PUBLIC_BASE_URL",
-        ),
-        CredentialField(
-            "signing_secret",
-            "podcast_asr_fetch_signing_secret",
-            secret=True,
-            env_var="DORAMI_PODCAST_ASR_FETCH_SIGNING_SECRET",
-        ),
-        CredentialField(
-            "previous_signing_secret",
-            "podcast_asr_fetch_previous_signing_secret",
-            secret=True,
-            env_var="DORAMI_PODCAST_ASR_FETCH_PREVIOUS_SIGNING_SECRET",
-        ),
-        CredentialField(
-            "url_ttl_seconds",
-            "podcast_asr_fetch_url_ttl_seconds",
-            kind="int",
-            env_var="DORAMI_PODCAST_ASR_FETCH_URL_TTL_SECONDS",
-        ),
-        CredentialField(
-            "clock_skew_seconds",
-            "podcast_asr_fetch_clock_skew_seconds",
-            kind="int",
-            env_var="DORAMI_PODCAST_ASR_FETCH_CLOCK_SKEW_SECONDS",
-        ),
-        CredentialField(
-            "min_remaining_seconds",
-            "podcast_asr_fetch_min_remaining_seconds",
-            kind="int",
-            env_var="DORAMI_PODCAST_ASR_FETCH_MIN_REMAINING_SECONDS",
-        ),
-    ),
-)
-
 # 新的外部凭据(内网 SSO、微信/微博等)在此登记命名空间即可获得整套契约。
 REGISTRY: Dict[str, CredentialNamespace] = {
     ns.name: ns
@@ -412,7 +373,6 @@ REGISTRY: Dict[str, CredentialNamespace] = {
         LLM_NAMESPACE,
         X_API_NAMESPACE,
         ALIYUN_ISI_NAMESPACE,
-        PODCAST_ASR_FETCH_NAMESPACE,
     )
 }
 

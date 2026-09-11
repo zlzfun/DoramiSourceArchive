@@ -180,13 +180,6 @@ export function fetchMediaStats() {
 }
 
 // ── Podcast 音频资产（本地存储管理）──
-export function fetchPodcastStageCapabilities(options = {}) {
-  return request('/admin/podcast-stages/capabilities', {
-    errorMsg: '获取播客节点能力失败',
-    ...options,
-  });
-}
-
 export function fetchPodcastArtifactStats(options = {}) {
   return request('/admin/podcast-artifacts/stats', {
     errorMsg: '获取播客音频存储统计失败',
@@ -200,13 +193,6 @@ export function fetchPodcastArtifacts(filters = {}, options = {}) {
   return request(`/admin/podcast-artifacts${query ? `?${query}` : ''}`, {
     errorMsg: '获取播客音频资产失败',
     ...options,
-  });
-}
-
-export function cachePodcastSourceAudio(episodeId) {
-  return request(`/admin/podcast-episodes/${enc(episodeId)}/cache-source-audio`, {
-    method: 'POST',
-    errorMsg: '缓存播客原始音频失败',
   });
 }
 
@@ -279,10 +265,13 @@ export function getPodcastAsrQuota() {
   });
 }
 
-export function savePodcastAsrQuota(dailyAudioSecondsLimit) {
+export function savePodcastAsrQuota(dailyAudioSecondsLimit, maxAudioSecondsPerFile) {
   return request('/admin/podcast-asr-quota', {
     method: 'PUT',
-    body: { daily_audio_seconds_limit: dailyAudioSecondsLimit },
+    body: {
+      daily_audio_seconds_limit: dailyAudioSecondsLimit,
+      max_audio_seconds_per_file: maxAudioSecondsPerFile,
+    },
     errorMsg: '保存 ASR 配额配置失败',
   });
 }
