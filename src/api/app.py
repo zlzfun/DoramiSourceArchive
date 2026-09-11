@@ -641,6 +641,11 @@ def schedule_podcast_premium_guide(episode_id: str) -> bool:
                 score_threshold=premium_threshold,
             )
         except Exception as exc:  # noqa: BLE001 - status is persisted by service
+            podcast_premium_guide_service.fail_premium_guide(
+                db_sink.engine,
+                episode_id,
+                exc,
+            )
             _dorami_logger.warning(
                 "Podcast 精品导读生成失败 episode=%s (%s)",
                 episode_id,
@@ -653,6 +658,106 @@ def schedule_podcast_premium_guide(episode_id: str) -> bool:
         lambda _task: _PODCAST_PREMIUM_GUIDE_TASKS.pop(episode_id, None)
     )
     return True
+
+
+def schedule_forced_podcast_premium_guide(
+    episode_id: str,
+    *,
+    idempotency_key: str,
+    reason: str,
+    actor: str,
+) -> dict[str, Any]:
+    """Validate, audit and schedule one score-threshold override."""
+
+    replay = podcast_premium_guide_service.lookup_forced_premium_guide_request(
+        db_sink.engine,
+        episode_id=episode_id,
+        idempotency_key=idempotency_key,
+        reason=reason,
+        actor=actor,
+    )
+    existing = _PODCAST_PREMIUM_GUIDE_TASKS.get(episode_id)
+    if replay is not None and (
+        (existing is not None and not existing.done())
+        or not replay["should_schedule"]
+    ):
+        return {**replay, "started": False}
+
+    with Session(db_sink.engine) as session:
+        premium_threshold = podcast_premium_service.get_threshold(session)
+    prepared = replay or podcast_premium_guide_service.prepare_forced_premium_guide(
+        db_sink.engine,
+        episode_id=episode_id,
+        config=settings.podcast,
+        score_threshold=premium_threshold,
+        idempotency_key=idempotency_key,
+        reason=reason,
+        actor=actor,
+    )
+    try:
+        with Session(db_sink.engine) as session:
+            llm_config = daily_brief_service.resolve_llm_config(session)
+            aliyun_config = aliyun_isi_config_service.resolve_config(session)
+        voice = settings.podcast.default_voice_profile
+        if not llm_config.configured or not aliyun_config.tts_configured or not voice:
+            raise podcast_premium_guide_service.PremiumGuideForceError(
+                "podcast_force_tts_provider_unavailable",
+                "强制 TTS 所需的 LLM、阿里云 TTS 或音色配置尚未就绪",
+                status_code=503,
+            )
+    except Exception as exc:
+        if replay is not None:
+            # The persisted command remains the idempotent source of truth.
+            # A retry must not mutate it merely because provider readiness
+            # changed after the original request was accepted.
+            return {**replay, "started": False}
+        podcast_premium_guide_service.fail_premium_guide(
+            db_sink.engine,
+            episode_id,
+            exc,
+            failed_stage="queued",
+        )
+        raise
+    existing = _PODCAST_PREMIUM_GUIDE_TASKS.get(episode_id)
+    if existing is not None and not existing.done():
+        return {**prepared, "started": False}
+    if not prepared["should_schedule"]:
+        return {**prepared, "started": False}
+
+    async def _run() -> None:
+        try:
+            await podcast_premium_guide_service.run_premium_guide(
+                db_sink.engine,
+                podcast_artifact_store,
+                episode_id=episode_id,
+                config=settings.podcast,
+                text_provider=OpenAiCompatiblePremiumGuideTextProvider(llm_config),
+                tts_provider=AliyunIsiPremiumGuideTtsProvider(
+                    aliyun_config,
+                    voice_profile=voice,
+                    max_audio_bytes=podcast_artifact_store.max_bytes,
+                ),
+                score_threshold=premium_threshold,
+                selection_override=True,
+            )
+        except Exception as exc:  # noqa: BLE001 - service persists failure detail
+            podcast_premium_guide_service.fail_premium_guide(
+                db_sink.engine,
+                episode_id,
+                exc,
+            )
+            _dorami_logger.warning(
+                "Podcast 强制 TTS 生成失败 episode=%s (%s)",
+                episode_id,
+                type(exc).__name__,
+            )
+
+    task = asyncio.create_task(_run())
+    _PODCAST_PREMIUM_GUIDE_TASKS[episode_id] = task
+    task.add_done_callback(
+        lambda _task: _PODCAST_PREMIUM_GUIDE_TASKS.pop(episode_id, None)
+    )
+    return {**prepared, "started": True}
 
 
 def schedule_podcast_premium_after_landing(article_ids: List[str]) -> int:

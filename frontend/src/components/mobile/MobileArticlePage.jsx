@@ -124,8 +124,8 @@ export default function MobileArticlePage({
             className={`m-iconbtn ${showTranslation ? 'is-ai' : ''}`}
             onClick={handleTranslate}
             disabled={translating || activeBodyLoading || !activeBody}
-            title={showTranslation ? '当前显示中文译文，点击切回原文' : '将正文译为中文'}
-            aria-label={showTranslation ? '显示原文' : '译为中文'}
+            title={showTranslation ? '当前显示中文译文，点击切回原文' : podcastView ? '将节目简介和逐字稿译为中文' : '将正文译为中文'}
+            aria-label={showTranslation ? '显示原文' : podcastView ? '将节目简介和逐字稿译为中文' : '译为中文'}
             aria-pressed={showTranslation}
           >
             {translating ? <Loader2 className="animate-spin" /> : <span className="reader-tr-glyph" aria-hidden="true">译</span>}
@@ -187,7 +187,7 @@ export default function MobileArticlePage({
             </div></div>
           )}
         </header>
-        <div className="m-read-body markdown-body">
+        <div className="m-read-body">
           {podcastView && (
             <PodcastExperiencePanel
               article={activeArticle}
@@ -217,22 +217,29 @@ export default function MobileArticlePage({
               <span>来源方提供</span>
             </div>
           )}
-          {podcastGuideActive ? null : activeBodyLoading ? (
-            <PaneBodySkeleton />
-          ) : (showTranslation && translatedBody) ? (
-            <ReaderMarkdown>{displayTranslatedBody}</ReaderMarkdown>
-          ) : activeBody ? (
-            <ReaderMarkdown>{displayBody}</ReaderMarkdown>
-          ) : (
-            podcastView
-              ? '该播客暂无文字内容，可收听上方原节目音频。'
-              : '该文章暂无正文内容，点击「查看原文」阅读完整内容。'
+          {!podcastGuideActive && (
+            <div className="reader-article-copy markdown-body" data-ai-translation-scope="article-body">
+              {activeBodyLoading ? (
+                <PaneBodySkeleton />
+              ) : (showTranslation && translatedBody) ? (
+                <ReaderMarkdown>{displayTranslatedBody}</ReaderMarkdown>
+              ) : activeBody ? (
+                <ReaderMarkdown>{displayBody}</ReaderMarkdown>
+              ) : (
+                podcastView
+                  ? '该播客暂无文字内容，可收听上方原节目音频。'
+                  : '该文章暂无正文内容，点击「查看原文」阅读完整内容。'
+              )}
+            </div>
           )}
           {podcastView && !podcastGuideActive && !activeBodyLoading && (
-            <PodcastTextPanel
-              episodeId={activeArticle.id}
-              preferredTranscriptKind="publisher_transcript"
-            />
+            <div data-ai-translation-excluded="true">
+              <PodcastTextPanel
+                episodeId={activeArticle.id}
+                preferredTranscriptKind="publisher_transcript"
+                showTranslation={showTranslation}
+              />
+            </div>
           )}
           {/* 正文尾部原文行(v3.45 推全站,与桌面阅读窗同口径):无 source_url 不画 */}
           {!podcastGuideActive && !activeBodyLoading && activeArticle.source_url && (

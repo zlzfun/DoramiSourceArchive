@@ -440,6 +440,25 @@ def build_translate_user_prompt(title: str, body: str) -> str:
     return "\n".join(parts)
 
 
+TRANSLATE_TRANSCRIPT_SYSTEM_PROMPT = """你是一位专业的播客逐字稿译者。请把给定逐字稿片段忠实、流畅地翻译成简体中文。
+
+翻译要求：
+- 保留说话者、时间戳、段落与列表等原有结构，不要总结、删减或补写内容。
+- 专有名词、产品名、公司名、模型名、人名按业界惯例处理，必要时首次使用中文（English）并列。
+- URL、代码、命令及无法可靠翻译的标识符原样保留。
+- 只输出译文，不要添加前言、总结或翻译说明。
+- 若内容本身已是中文，直接原样返回。"""
+
+
+def build_translate_transcript_user_prompt(title: str, transcript: str) -> str:
+    parts = []
+    if title:
+        parts.append(f"【播客节目】{title}")
+    parts.append("【待翻译逐字稿片段】")
+    parts.append(transcript or "（空）")
+    return "\n".join(parts)
+
+
 SUMMARIZE_SYSTEM_PROMPT = """你是一份面向中文 AI 从业者的阅读器里的摘要引擎。请为给定文章生成一段**简体中文摘要**，帮助读者在打开正文前快速判断「这篇讲了什么、关键信息是什么」。
 
 要求：

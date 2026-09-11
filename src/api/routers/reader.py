@@ -11,9 +11,11 @@
 """
 
 import datetime
+import hashlib
+import hmac
 import importlib
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -28,7 +30,12 @@ from api.routers.articles import (
     _podcast_text_publication_assets,
     content_shape_condition,
 )
-from api.tokens import generate_feed_token, hash_subscription_token, subscription_token_preview
+from api.tokens import (
+    AUTH_SECRET,
+    generate_feed_token,
+    hash_subscription_token,
+    subscription_token_preview,
+)
 from api.sources import (
     DAILY_BRIEF_SOURCE_ID,
     DAILY_BRIEF_SOURCE_META,
@@ -55,6 +62,8 @@ from models.db import (
 )
 from services import accounts as accounts_service
 from services import podcast_premium as podcast_premium_service
+from services import podcast_text_reader as podcast_text_reader_service
+from services import podcast_transcript_translation as podcast_transcript_translation_service
 from services import article_share as article_share_service
 from services.article_display_tags import article_ids_for_flexible_label, load_display_tags
 from services import daily_brief as daily_brief_service
@@ -1242,6 +1251,10 @@ class ReaderTranslateParams(BaseModel):
     article_id: str
 
 
+class ReaderPodcastTranscriptTranslateParams(BaseModel):
+    source_kind: Literal["publisher_transcript", "normalized_transcript"]
+
+
 class ReaderChatTurn(BaseModel):
     role: str  # user | assistant
     content: str
@@ -1376,6 +1389,69 @@ async def reader_ai_translate(params: ReaderTranslateParams, request: Request):
     with Session(db_sink.engine) as session:
         accounts_service.record_ai_usage(session, username, "translate")
     return {"status": "success", **result}
+
+
+@router.post("/ai/podcasts/{episode_id}/translate-transcript")
+async def reader_ai_translate_podcast_transcript(
+    episode_id: str,
+    params: ReaderPodcastTranscriptTranslateParams,
+    request: Request,
+):
+    """Translate one published Podcast transcript into ``transcript_zh``."""
+
+    username, llm_config = _require_reader_ai(request)
+    app = _app()
+    db_sink = deps.get_db_sink()
+    with Session(db_sink.engine) as session:
+        episode = session.get(ArticleRecord, episode_id)
+        if episode is None or episode.content_type != "podcast_episode":
+            raise HTTPException(status_code=404, detail="播客单集不存在")
+        if episode.source_id in source_visibility_service.reader_unavailable_source_ids(
+            session
+        ):
+            raise HTTPException(status_code=404, detail="播客单集不存在")
+        _deny_unsubscribed_user_source_article(session, username, episode)
+        _deny_nonexportable_article(session, episode)
+    try:
+        _artifact, cached = (
+            await podcast_transcript_translation_service.translate_transcript(
+                db_sink.engine,
+                episode_id=episode_id,
+                source_kind=params.source_kind,
+                config=app.settings.podcast,
+                llm_config=llm_config,
+                usage_meta=UsageMeta(purpose="translate", username=username),
+            )
+        )
+    except podcast_transcript_translation_service.PodcastTranscriptTranslationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    except LLMError as exc:
+        raise HTTPException(status_code=502, detail=f"逐字稿翻译失败：{exc}")
+
+    with Session(db_sink.engine) as session:
+        accounts_service.record_ai_usage(session, username, "translate")
+    cursor_secret = app.settings.podcast.reader_cursor_secret or hmac.new(
+        AUTH_SECRET.encode("utf-8"),
+        b"dorami-podcast-reader-cursor-v1",
+        hashlib.sha256,
+    ).hexdigest()
+    with Session(db_sink.engine) as session:
+        result = podcast_text_reader_service.read_episode_texts(
+            session,
+            episode_id=episode_id,
+            username=username,
+            config=app.settings.podcast,
+            cursor_secret=cursor_secret,
+            kind="transcript_zh",
+        )
+    if not result["items"]:
+        raise HTTPException(status_code=500, detail="逐字稿译文已生成但读取失败")
+    return {
+        "status": "success",
+        "kind": "transcript_zh",
+        "item": result["items"][0],
+        "cached": cached,
+    }
 
 
 @router.post("/ai/summarize")

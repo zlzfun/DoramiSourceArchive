@@ -66,6 +66,16 @@ class PremiumGuideError(RuntimeError):
     pass
 
 
+class PremiumGuideForceError(PremiumGuideError):
+    """Actionable rejection of an operator-requested TTS generation."""
+
+    def __init__(self, code: str, message: str, *, status_code: int = 409):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status_code = status_code
+
+
 def _now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat(timespec="microseconds")
 
@@ -84,6 +94,7 @@ def _set_episode_status(
     status: str,
     *,
     error: str = "",
+    failed_stage: str = "",
     audio: PodcastArtifactRecord | None = None,
 ) -> None:
     with Session(engine) as session:
@@ -98,13 +109,16 @@ def _set_episode_status(
         previous_status = str(guide.get("status") or "").strip()
         guide.update({"status": status, "updated_at": _now()})
         if status == "failed":
-            failed_stage = (
-                previous_status
-                if previous_status in {"summarizing", "synthesizing"}
-                else str(guide.get("failed_stage") or "").strip()
+            effective_failed_stage = (
+                str(failed_stage or "").strip()
+                or (
+                    previous_status
+                    if previous_status in {"queued", "summarizing", "synthesizing"}
+                    else str(guide.get("failed_stage") or "").strip()
+                )
             )
-            if failed_stage:
-                guide["failed_stage"] = failed_stage
+            if effective_failed_stage:
+                guide["failed_stage"] = effective_failed_stage
         else:
             guide.pop("failed_stage", None)
         if error:
@@ -123,6 +137,25 @@ def _set_episode_status(
         )
         session.add(episode)
         session.commit()
+
+
+def fail_premium_guide(
+    engine: Engine,
+    episode_id: str,
+    error: Exception | str,
+    *,
+    failed_stage: str = "",
+) -> None:
+    """Persist a terminal guide error so admin polling never loses failures."""
+
+    message = str(error).strip() or type(error).__name__
+    _set_episode_status(
+        engine,
+        episode_id,
+        "failed",
+        error=message,
+        failed_stage=failed_stage,
+    )
 
 
 def _publish_text(
@@ -248,22 +281,23 @@ async def run_premium_guide(
     text_provider: PremiumGuideTextProvider,
     tts_provider: PremiumGuideTtsProvider,
     score_threshold: float | None = None,
+    selection_override: bool = False,
 ) -> dict:
     """Publish a guide using, but never replacing, the authoritative assessment."""
 
-    policy = PodcastStagePolicy(config)
-    for stage in (
-        "translate",
-        "analyze",
-        "digest",
-        "script",
-        "tts",
-        "audio_qa",
-        "local_publish",
-    ):
-        policy.require_stage(stage, boundary="provider_submit")
-    _set_episode_status(engine, episode_id, "summarizing")
     try:
+        policy = PodcastStagePolicy(config)
+        for stage in (
+            "translate",
+            "analyze",
+            "digest",
+            "script",
+            "tts",
+            "audio_qa",
+            "local_publish",
+        ):
+            policy.require_stage(stage, boundary="provider_submit")
+        _set_episode_status(engine, episode_id, "summarizing")
         with Session(engine) as session:
             episode, transcript_artifact, transcript = _source_transcript(
                 session, episode_id, config
@@ -276,7 +310,7 @@ async def run_premium_guide(
                 raise PremiumGuideError("播客全文终评尚未完成")
             title = episode.title
             duration = float(_extensions(episode).get("duration_seconds") or 0)
-        if duration <= config.premium_min_duration_seconds:
+        if duration <= config.premium_min_duration_seconds and not selection_override:
             _set_episode_status(engine, episode_id, "not_required")
             return {
                 "episode_id": episode_id,
@@ -291,7 +325,7 @@ async def run_premium_guide(
             if score_threshold is None
             else float(score_threshold)
         )
-        if score < effective_threshold:
+        if score < effective_threshold and not selection_override:
             _set_episode_status(engine, episode_id, "not_required")
             return {"episode_id": episode_id, "is_premium": False, "score": score}
         draft = await text_provider.create_blog(
@@ -368,14 +402,192 @@ async def run_premium_guide(
         _set_episode_status(engine, episode_id, "ready", audio=audio)
         return {
             "episode_id": episode_id,
-            "is_premium": True,
+            "is_premium": score >= effective_threshold,
+            "selection_override": selection_override,
             "score": score,
             "audio_artifact_id": audio.id,
             "duration_seconds": audio.duration_seconds,
         }
     except Exception as exc:
-        _set_episode_status(engine, episode_id, "failed", error=str(exc))
+        fail_premium_guide(engine, episode_id, exc)
         raise
+
+
+def prepare_forced_premium_guide(
+    engine: Engine,
+    *,
+    episode_id: str,
+    config: PodcastConfig,
+    score_threshold: float,
+    idempotency_key: str,
+    reason: str,
+    actor: str,
+) -> dict:
+    """Validate and persist one idempotent operator override before scheduling.
+
+    The override changes only automatic selection (score and minimum duration).
+    Transcript, full-analysis and stage-policy boundaries remain identical.
+    The request metadata is kept with the episode so a process restart cannot
+    turn an HTTP retry into an untraceable duplicate synthesis.
+    """
+
+    key = str(idempotency_key or "").strip()
+    request_reason = str(reason or "").strip()
+    requested_by = str(actor or "").strip()
+    if not key or not request_reason or not requested_by:
+        raise PremiumGuideForceError(
+            "podcast_force_request_invalid",
+            "强制 TTS 请求缺少幂等键、原因或操作者",
+            status_code=422,
+        )
+
+    replay = lookup_forced_premium_guide_request(
+        engine,
+        episode_id=episode_id,
+        idempotency_key=key,
+        reason=request_reason,
+        actor=requested_by,
+    )
+    if replay is not None:
+        return replay
+
+    policy = PodcastStagePolicy(config)
+    try:
+        for stage in (
+            "translate",
+            "analyze",
+            "digest",
+            "script",
+            "tts",
+            "audio_qa",
+            "local_publish",
+        ):
+            policy.require_stage(stage, boundary="provider_submit")
+    except Exception as exc:
+        raise PremiumGuideForceError(
+            "podcast_force_tts_disabled",
+            f"强制 TTS 所需处理阶段未启用：{exc}",
+            status_code=503,
+        ) from exc
+
+    with Session(engine) as session:
+        try:
+            episode, _artifact, _transcript = _source_transcript(
+                session, episode_id, config
+            )
+        except PremiumGuideError as exc:
+            message = str(exc)
+            status_code = 404 if message == "播客单集不存在" else 409
+            raise PremiumGuideForceError(
+                "podcast_force_tts_not_ready", message, status_code=status_code
+            ) from exc
+
+        analysis = session.get(ArticleAnalysisRecord, episode_id)
+        score = podcast_premium.final_score(analysis)
+        if score is None:
+            raise PremiumGuideForceError(
+                "podcast_force_tts_not_ready", "播客全文终评尚未完成"
+            )
+        published_audio = session.exec(
+            select(PodcastArtifactRecord.id).where(
+                PodcastArtifactRecord.episode_id == episode_id,
+                PodcastArtifactRecord.kind == "digest_audio_zh",
+                PodcastArtifactRecord.status == "published",
+            )
+        ).first()
+        extensions = _extensions(episode)
+        guide = extensions.get("premium_guide")
+        if not isinstance(guide, dict):
+            guide = {}
+        status = str(guide.get("status") or "not_started")
+        if status in {"queued", "summarizing", "synthesizing"}:
+            raise PremiumGuideForceError(
+                "podcast_force_tts_in_progress", "该播客的 TTS 任务正在处理中"
+            )
+        if published_audio is not None:
+            raise PremiumGuideForceError(
+                "podcast_force_tts_already_ready", "该播客的 TTS 音频已经生成"
+            )
+
+        requested_at = _now()
+        guide.update(
+            {
+                "status": "queued",
+                "updated_at": requested_at,
+                "force_request": {
+                    "episode_id": episode_id,
+                    "idempotency_key": key,
+                    "reason": request_reason,
+                    "requested_by": requested_by,
+                    "requested_at": requested_at,
+                    "score": score,
+                    "score_threshold": float(score_threshold),
+                    "selection_override": True,
+                },
+            }
+        )
+        guide.pop("error", None)
+        guide.pop("failed_stage", None)
+        extensions["premium_guide"] = guide
+        extensions["processing_status"] = "queued"
+        episode.extensions_json = json.dumps(
+            extensions, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        session.add(episode)
+        session.commit()
+        return {
+            "episode_id": episode_id,
+            "status": "queued",
+            "forced": True,
+            "replayed": False,
+            "should_schedule": True,
+        }
+
+
+def lookup_forced_premium_guide_request(
+    engine: Engine,
+    *,
+    episode_id: str,
+    idempotency_key: str,
+    reason: str,
+    actor: str,
+) -> dict | None:
+    """Return an existing force request before mutable runtime checks.
+
+    HTTP idempotency describes the persisted command, so a replay remains a
+    replay even if credentials or stage toggles changed after acceptance.
+    """
+
+    key = str(idempotency_key or "").strip()
+    request_reason = str(reason or "").strip()
+    requested_by = str(actor or "").strip()
+    with Session(engine) as session:
+        episode = session.get(ArticleRecord, episode_id)
+        if episode is None or episode.content_type != "podcast_episode":
+            return None
+        guide = _extensions(episode).get("premium_guide")
+        if not isinstance(guide, dict):
+            return None
+        existing = guide.get("force_request")
+        if not isinstance(existing, dict) or str(existing.get("idempotency_key")) != key:
+            return None
+        if (
+            str(existing.get("reason") or "") != request_reason
+            or str(existing.get("requested_by") or "") != requested_by
+            or str(existing.get("episode_id") or "") != episode_id
+        ):
+            raise PremiumGuideForceError(
+                "podcast_force_tts_idempotency_conflict",
+                "幂等键已用于不同的强制 TTS 请求",
+            )
+        status = str(guide.get("status") or "not_started")
+        return {
+            "episode_id": episode_id,
+            "status": status,
+            "forced": True,
+            "replayed": True,
+            "should_schedule": status in {"queued", "summarizing", "synthesizing"},
+        }
 
 
 def list_premium_guide_tasks(
@@ -525,10 +737,14 @@ def pending_premium_guide_candidates(
 __all__ = [
     "PremiumGuideDraft",
     "PremiumGuideError",
+    "PremiumGuideForceError",
     "PremiumGuideTextProvider",
     "PremiumGuideTtsProvider",
     "SynthesizedAudio",
+    "fail_premium_guide",
     "list_premium_guide_tasks",
+    "lookup_forced_premium_guide_request",
     "pending_premium_guide_candidates",
+    "prepare_forced_premium_guide",
     "run_premium_guide",
 ]

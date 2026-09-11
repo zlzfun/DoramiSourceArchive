@@ -1,5 +1,6 @@
 import os
 import sys
+import hashlib
 
 from fastapi.testclient import TestClient
 from sqlmodel import Session
@@ -79,6 +80,53 @@ def _seed_credentialed_source(engine, source_id="rss_credentialed"):
         session.commit()
 
 
+def _seed_podcast_transcript(
+    engine,
+    *,
+    episode_id="podcast-translation",
+    source_id="podcast-source",
+    source_kind="publisher_transcript",
+    text="English transcript body",
+):
+    from models.db import (
+        ArticleRecord,
+        PodcastTextArtifactRecord,
+        PodcastTextPublicationRecord,
+    )
+
+    _seed_article(engine, episode_id, source_id, "Podcast title", "publisher show notes")
+    artifact_id = f"{episode_id}-{source_kind}-v1"
+    content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    with Session(engine) as session:
+        article = session.get(ArticleRecord, episode_id)
+        article.content_type = "podcast_episode"
+        session.add(article)
+        session.add(PodcastTextArtifactRecord(
+            id=artifact_id,
+            episode_id=episode_id,
+            kind=source_kind,
+            version=1,
+            content_hash=content_hash,
+            inline_text=text,
+            language="en",
+            authority_id="",
+            provenance_json='{"format":"text","source":"test"}',
+            created_at="2026-05-21T00:00:00+00:00",
+        ))
+        session.add(PodcastTextPublicationRecord(
+            identity=f"{episode_id}:{source_kind}",
+            episode_id=episode_id,
+            kind=source_kind,
+            artifact_id=artifact_id,
+            status="published",
+            authority_id="",
+            published_at="2026-05-21T00:00:00+00:00",
+            updated_at="2026-05-21T00:00:00+00:00",
+        ))
+        session.commit()
+    return artifact_id, content_hash
+
+
 def _configure_llm(engine):
     from services import daily_brief as db
 
@@ -110,6 +158,7 @@ def _patch_llm(monkeypatch):
     """
     import services.reader_ai as rai
     import services.reader_search as rsearch
+    import services.podcast_transcript_translation as transcript_translation
 
     calls = []
 
@@ -119,6 +168,7 @@ def _patch_llm(monkeypatch):
 
     monkeypatch.setattr(rai, "chat_completion", fake_chat_completion)
     monkeypatch.setattr(rsearch, "chat_completion", fake_chat_completion)
+    monkeypatch.setattr(transcript_translation, "chat_completion", fake_chat_completion)
     return calls
 
 
@@ -180,6 +230,240 @@ def test_translate_caches_result(monkeypatch, tmp_path):
         assert second.json()["title"] == "AI-MOCK-OUTPUT"
         # 命中缓存，不再二次调用 LLM
         assert len(calls) == 2
+
+
+def test_podcast_translation_scope_excludes_transcript_artifacts(monkeypatch, tmp_path):
+    """Reader translation is show notes only; transcripts have a separate panel."""
+
+    from models.db import ArticleRecord, PodcastTextArtifactRecord
+
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "podcast-translate-scope.db")
+    _configure_llm(sink.engine)
+    _enable_ai_beta(sink.engine)
+    _seed_article(
+        sink.engine,
+        "podcast-translation",
+        "podcast-source",
+        "Podcast title",
+        "publisher show notes only",
+    )
+    with Session(sink.engine) as session:
+        article = session.get(ArticleRecord, "podcast-translation")
+        article.content_type = "podcast_episode"
+        session.add(article)
+        session.add(PodcastTextArtifactRecord(
+            id="podcast-secret-transcript",
+            episode_id=article.id,
+            kind="publisher_transcript",
+            version=1,
+            content_hash="a" * 64,
+            inline_text="TRANSCRIPT_MUST_NEVER_BE_TRANSLATED",
+            language="en",
+            provenance_json='{"source":"publisher"}',
+            created_at="2026-05-21T00:00:00+00:00",
+        ))
+        session.commit()
+    calls = _patch_llm(monkeypatch)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        response = client.post(
+            "/api/reader/ai/translate", json={"article_id": "podcast-translation"}
+        )
+    assert response.status_code == 200
+    prompts = "\n".join(text for call in calls for text in call)
+    assert "publisher show notes only" in prompts
+    assert "TRANSCRIPT_MUST_NEVER_BE_TRANSLATED" not in prompts
+
+
+def test_translate_podcast_transcript_publishes_separate_cached_artifact(
+    monkeypatch, tmp_path
+):
+    from models.db import PodcastTextArtifactRecord, PodcastTextPublicationRecord
+
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "translate-transcript.db")
+    _configure_llm(sink.engine)
+    _enable_ai_beta(sink.engine)
+    source_id, source_hash = _seed_podcast_transcript(
+        sink.engine, text="First paragraph.\n\nSecond paragraph."
+    )
+    calls = _patch_llm(monkeypatch)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        first = client.post(
+            "/api/reader/ai/podcasts/podcast-translation/translate-transcript",
+            json={"source_kind": "publisher_transcript"},
+        )
+        assert first.status_code == 200, first.text
+        payload = first.json()
+        assert payload["kind"] == "transcript_zh"
+        assert payload["cached"] is False
+        assert payload["item"]["kind"] == "transcript_zh"
+        assert payload["item"]["text"] == "AI-MOCK-OUTPUT"
+        assert payload["item"]["source_artifact_id"] == source_id
+        assert payload["item"]["source_content_hash"] == source_hash
+        assert len(calls) == 1
+
+        again = client.post(
+            "/api/reader/ai/podcasts/podcast-translation/translate-transcript",
+            json={"source_kind": "publisher_transcript"},
+        )
+        assert again.status_code == 200
+        assert again.json()["cached"] is True
+        assert again.json()["item"]["artifact_id"] == payload["item"]["artifact_id"]
+        assert len(calls) == 1
+
+    with Session(sink.engine) as session:
+        publication = session.get(
+            PodcastTextPublicationRecord, "podcast-translation:transcript_zh"
+        )
+        artifact = session.get(PodcastTextArtifactRecord, publication.artifact_id)
+        assert artifact.source_artifact_id == source_id
+        assert artifact.source_content_hash == source_hash
+        assert artifact.processing_id is None
+        assert artifact.producing_attempt_id is None
+
+
+def test_translate_podcast_transcript_has_no_per_user_daily_call_limit(
+    monkeypatch, tmp_path
+):
+    """A long transcript may use more than the article translation daily quota."""
+
+    import datetime as _dt
+
+    from api.routers import reader as reader_router
+    from models.db import AiUsageRecord
+    from services import podcast_transcript_translation as transcript_translation
+
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "transcript-no-quota.db")
+    _configure_llm(sink.engine)
+    _enable_ai_beta(sink.engine)
+    _seed_podcast_transcript(sink.engine, text="Long English transcript")
+    calls = _patch_llm(monkeypatch)
+    segments = [f"segment-{index}" for index in range(51)]
+    monkeypatch.setattr(
+        transcript_translation, "_split_for_translation", lambda _text: segments
+    )
+
+    # The ordinary article translation quota is already full. Transcript translation
+    # remains available because its multiple calls are an implementation detail of one
+    # reader action, rather than 51 independent daily actions.
+    today = _dt.date.today().isoformat()
+    with Session(sink.engine) as session:
+        session.add(
+            AiUsageRecord(
+                day=today,
+                username="user",
+                purpose="translate",
+                model="test-model",
+                calls=reader_router._AI_DAILY_CALL_LIMITS["translate"],
+                total_tokens=1,
+                updated_at=today,
+            )
+        )
+        session.commit()
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        response = client.post(
+            "/api/reader/ai/podcasts/podcast-translation/translate-transcript",
+            json={"source_kind": "publisher_transcript"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["cached"] is False
+    assert len(calls) == 51
+
+
+def test_translate_podcast_transcript_ignores_global_daily_token_budget(
+    monkeypatch, tmp_path
+):
+    from services import accounts as accounts_service
+
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "transcript-budget.db")
+    _configure_llm(sink.engine)
+    _enable_ai_beta(sink.engine)
+    _seed_podcast_transcript(sink.engine)
+    calls = _patch_llm(monkeypatch)
+    monkeypatch.setattr(accounts_service, "reader_ai_budget_exhausted", lambda _s: True)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        response = client.post(
+            "/api/reader/ai/podcasts/podcast-translation/translate-transcript",
+            json={"source_kind": "publisher_transcript"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["cached"] is False
+    assert len(calls) == 1
+
+
+def test_translate_podcast_transcript_drops_echoed_prompt_headers():
+    from services.podcast_transcript_translation import _clean_translated_segment
+
+    assert _clean_translated_segment(
+        "【播客节目】示例节目\n【待翻译逐字稿片段】\n这是译文。"
+    ) == "这是译文。"
+    assert _clean_translated_segment("【待翻译逐字稿片段】\n这是译文。") == "这是译文。"
+    assert _clean_translated_segment("这是正常译文。") == "这是正常译文。"
+
+
+def test_translate_podcast_transcript_rejects_missing_or_oversize_source_before_llm(
+    monkeypatch, tmp_path
+):
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "translate-transcript-bounds.db")
+    _configure_llm(sink.engine)
+    _enable_ai_beta(sink.engine)
+    _seed_podcast_transcript(sink.engine, text="x" * 120_001)
+    calls = _patch_llm(monkeypatch)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        missing = client.post(
+            "/api/reader/ai/podcasts/podcast-translation/translate-transcript",
+            json={"source_kind": "normalized_transcript"},
+        )
+        assert missing.status_code == 409
+        assert "尚未就绪" in missing.json()["detail"]
+
+        oversized = client.post(
+            "/api/reader/ai/podcasts/podcast-translation/translate-transcript",
+            json={"source_kind": "publisher_transcript"},
+        )
+        assert oversized.status_code == 413
+        assert "120000" in oversized.json()["detail"]
+    assert calls == []
+
+
+def test_translate_podcast_transcript_honors_ai_and_export_gates(monkeypatch, tmp_path):
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "translate-transcript-gates.db")
+    _configure_llm(sink.engine)
+    _enable_ai_beta(sink.engine)
+    _seed_credentialed_source(sink.engine, "credentialed-podcast")
+    _seed_podcast_transcript(
+        sink.engine,
+        episode_id="private-podcast",
+        source_id="credentialed-podcast",
+    )
+    calls = _patch_llm(monkeypatch)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        blocked = client.post(
+            "/api/reader/ai/podcasts/private-podcast/translate-transcript",
+            json={"source_kind": "publisher_transcript"},
+        )
+        assert blocked.status_code == 403
+
+        _disable_ai_beta(sink.engine)
+        disabled = client.post(
+            "/api/reader/ai/podcasts/private-podcast/translate-transcript",
+            json={"source_kind": "publisher_transcript"},
+        )
+        assert disabled.status_code == 403
+    assert calls == []
 
 
 def test_translate_skips_chinese_title_and_backfills_legacy_cache(monkeypatch, tmp_path):

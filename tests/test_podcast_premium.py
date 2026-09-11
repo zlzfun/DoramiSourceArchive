@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import sys
 
@@ -206,6 +207,87 @@ def test_dashboard_uses_final_score_only_and_recalculates_without_changing_candi
     historical = next(item for item in raised["items"] if item["episode_id"] == "historical")
     assert historical["historical_generated"] is True
     assert historical["reason"] == "历史已生成，当前未达门槛"
+
+
+def test_dashboard_exposes_force_tts_only_for_ready_full_analysis(premium_engine):
+    with Session(premium_engine) as session:
+        episode = session.get(ArticleRecord, "low-final")
+        episode.extensions_json = '{"duration_seconds":1140}'
+        analysis = session.get(ArticleAnalysisRecord, "low-final")
+        analysis.transcript_artifact_id = "transcript-low-final"
+        session.add(episode)
+        session.add(analysis)
+        session.add(PodcastTextArtifactRecord(
+            id="transcript-low-final",
+            episode_id="low-final",
+            kind="publisher_transcript",
+            version=1,
+            content_hash=hashlib.sha256(b"full transcript").hexdigest(),
+            inline_text="full transcript",
+            language="en",
+            provenance_json='{"source":"publisher"}',
+            created_at=STAMP,
+        ))
+        session.commit()
+
+    items = {item["episode_id"]: item for item in dashboard(premium_engine)["items"]}
+    assert items["low-final"]["can_force_tts"] is True
+    assert items["low-final"]["tts_status"] == "not_started"
+    assert items["low-final"]["tts_status_label"] == "未开始"
+    assert items["low-final"]["tts_error"] == ""
+    assert items["low-final"]["tts_forced"] is False
+    assert items["exact-final"]["can_force_tts"] is False
+
+    with Session(premium_engine) as session:
+        episode = session.get(ArticleRecord, "low-final")
+        extensions = json.loads(episode.extensions_json)
+        extensions["premium_guide"] = {
+            "status": "queued",
+            "updated_at": STAMP,
+            "force_request": {"selection_override": True},
+        }
+        episode.extensions_json = json.dumps(extensions)
+        session.add(episode)
+        session.commit()
+    queued = {
+        item["episode_id"]: item
+        for item in dashboard(premium_engine, status_filter="processing")["items"]
+    }["low-final"]
+    assert queued["tts_status"] == "queued"
+    assert queued["tts_status_label"] == "已排队"
+    assert queued["tts_forced"] is True
+    assert queued["can_force_tts"] is False
+
+    with Session(premium_engine) as session:
+        episode = session.get(ArticleRecord, "low-final")
+        extensions = json.loads(episode.extensions_json)
+        extensions["premium_guide"].update({
+            "status": "failed",
+            "failed_stage": "synthesizing",
+            "error": "TTS provider timeout",
+        })
+        episode.extensions_json = json.dumps(extensions)
+        session.add(episode)
+        session.commit()
+    failed = {
+        item["episode_id"]: item
+        for item in dashboard(premium_engine, status_filter="failed")["items"]
+    }["low-final"]
+    assert failed["tts_status"] == "failed"
+    assert failed["tts_status_label"] == "生成失败"
+    assert failed["tts_failed_stage"] == "synthesizing"
+    assert failed["tts_error"] == "TTS provider timeout"
+    assert failed["can_force_tts"] is True
+
+    with Session(premium_engine) as session:
+        analysis = session.get(ArticleAnalysisRecord, "low-final")
+        analysis.analysis_basis = "asr_transcript"
+        session.add(analysis)
+        session.commit()
+    mismatched = {
+        item["episode_id"]: item for item in dashboard(premium_engine)["items"]
+    }
+    assert mismatched["low-final"]["can_force_tts"] is False
 
 
 def test_reader_badge_requires_transcript_score_and_uses_inclusive_current_threshold():

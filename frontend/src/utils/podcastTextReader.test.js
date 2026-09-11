@@ -7,6 +7,7 @@ import {
   isPodcastTextRequestCurrent,
   mergePodcastTextPage,
   podcastTextPageAction,
+  podcastTranscriptForLanguage,
   podcastTextView,
 } from './podcastTextReader.js';
 
@@ -45,6 +46,46 @@ test('normalized ASR transcript is visible and remains distinct from publisher t
     ],
   );
   assert.equal(view.transcripts[0].item.kind, 'publisher_transcript');
+});
+
+test('language mode keeps source transcript original and switches to cached Chinese transcript', () => {
+  const view = podcastTextView({ items: [
+    { kind: 'normalized_transcript', text: 'asr source' },
+    { kind: 'publisher_transcript', text: 'publisher source' },
+    { kind: 'transcript_zh', text: '中文逐字稿' },
+  ] });
+  const original = podcastTranscriptForLanguage({
+    view,
+    preferredKind: 'publisher_transcript',
+    selectedKind: 'normalized_transcript',
+  });
+  assert.equal(original.transcript.item.kind, 'normalized_transcript');
+  assert.deepEqual(
+    original.sourceTranscripts.map(({ item }) => item.kind),
+    ['publisher_transcript', 'normalized_transcript'],
+  );
+
+  const chinese = podcastTranscriptForLanguage({
+    view,
+    translated: true,
+    preferredKind: 'publisher_transcript',
+  });
+  assert.equal(chinese.transcript.item.kind, 'transcript_zh');
+  assert.equal(chinese.source.item.kind, 'publisher_transcript');
+});
+
+test('translated mode exposes its source while Chinese transcript is not cached yet', () => {
+  const view = podcastTextView({ items: [
+    { kind: 'publisher_transcript', text: 'publisher source' },
+  ] });
+  const result = podcastTranscriptForLanguage({
+    view,
+    translated: true,
+    preferredKind: 'publisher_transcript',
+  });
+  assert.equal(result.chinese, null);
+  assert.equal(result.source.item.kind, 'publisher_transcript');
+  assert.equal(result.transcript.item.kind, 'publisher_transcript');
 });
 
 test('digest and transcript pages append once and reject stale or duplicate pages', () => {
@@ -106,6 +147,9 @@ test('podcast text surfaces use semantic dark-theme tokens', async () => {
   assert.match(component, /tabIndex=\{0\}/);
   assert.match(component, /refreshFirstPage\(item\.kind, group\)/);
   assert.match(component, /isPodcastTextRequestCurrent\(group, requestGroup\.current, episodeId\)/);
+  assert.match(component, /translatePodcastTranscript\(episodeId, translationSourceKind/);
+  assert.match(component, /正在翻译逐字稿，完成后会自动显示/);
+  assert.match(component, /重新翻译/);
 });
 
 test('publisher transcript follows show notes on desktop and mobile reader surfaces', async () => {
@@ -124,11 +168,17 @@ test('publisher transcript follows show notes on desktop and mobile reader surfa
 
   for (const reader of [desktop, mobile]) {
     const introduction = reader.indexOf('<h2 className="section-title">节目简介</h2>');
+    const translationScope = reader.indexOf('data-ai-translation-scope="article-body"');
+    const transcriptScope = reader.indexOf('data-ai-translation-excluded="true"');
     const transcript = reader.indexOf('preferredTranscriptKind="publisher_transcript"');
     const origin = reader.indexOf('className="reader-pane-origin"', transcript);
     assert.ok(introduction >= 0);
+    assert.ok(translationScope > introduction);
+    assert.ok(transcriptScope > translationScope);
     assert.ok(transcript > introduction);
+    assert.ok(transcript > transcriptScope);
     assert.ok(origin > transcript);
+    assert.match(reader, /showTranslation=\{showTranslation\}/);
   }
   assert.match(experience, /hiddenTranscriptKinds=\{\['publisher_transcript'\]\}/);
 });
@@ -143,7 +193,9 @@ test('podcast lists reuse taxonomy tag styling and hide pipeline status', async 
     reader.indexOf(') : (', reader.indexOf('{entryPodcast ? (')),
   );
 
-  assert.match(podcastBranch, /className="reader-entry-tag"/);
+  assert.match(podcastBranch, /\{analysisTag\}/);
+  assert.match(reader, /const analysisTag =[\s\S]*className="reader-entry-tag"/);
   assert.match(reader, /podcastListAvailabilityMeta/);
   assert.doesNotMatch(podcastBranch, /podcastFullProcessingMeta|analysisStatus\.label/);
+  assert.equal(reader.match(/className="reader-entry-tag">\{analysisLabel\}/g)?.length, 1);
 });

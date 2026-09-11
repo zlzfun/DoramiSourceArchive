@@ -187,6 +187,15 @@ AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
     ),
     (
         "POST",
+        re.compile(
+            r"^/api/admin/podcast-premium-guides/(?P<target>[^/]+)/force$"
+        ),
+        lambda match, _body: _id_target(
+            match, None, noun="播客 TTS", action="强制生成"
+        ),
+    ),
+    (
+        "POST",
         re.compile(r"^/api/admin/cms-tags$"),
         lambda _m, body: (
             f"创建规范标签 {(body or {}).get('code') or (body or {}).get('name_zh') or ''}".rstrip(),
