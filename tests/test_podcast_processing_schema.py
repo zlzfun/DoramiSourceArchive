@@ -299,7 +299,8 @@ def test_processing_admin_migration_withdraws_audio_bound_to_historical_run(
 def test_processing_admin_empty_downgrade_restores_parent_audio_trigger(tmp_path):
     db_url = f"sqlite:///{tmp_path / 'processing-admin-downgrade.db'}"
     cfg = make_alembic_config(db_url)
-    command.upgrade(cfg, "head")
+    # Stop before the intentionally irreversible publisher-media retirement.
+    command.upgrade(cfg, "d6a3f9c2e714")
     command.downgrade(cfg, "8f3b2d1c7a90")
     engine = create_engine(db_url)
     try:

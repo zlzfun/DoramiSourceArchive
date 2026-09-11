@@ -14,7 +14,7 @@ import threading
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, BinaryIO, Callable, Iterable, Iterator, Optional
+from typing import BinaryIO, Callable, Iterable, Iterator, Optional
 
 from sqlalchemy import func, or_, text, update
 from sqlalchemy.engine import Engine
@@ -33,8 +33,8 @@ from models.db import (
 )
 
 
-ARTIFACT_KINDS = frozenset({"source_audio", "digest_audio_zh"})
-ARTIFACT_STATUSES = frozenset({"ready", "published", "withdrawn", "expired"})
+ARTIFACT_KINDS = frozenset({"digest_audio_zh"})
+ARTIFACT_STATUSES = frozenset({"ready", "published", "withdrawn"})
 ACTIVE_PROCESSING_STATUSES = frozenset(
     {
         "queued",
@@ -43,9 +43,6 @@ ACTIVE_PROCESSING_STATUSES = frozenset(
         "reconciliation_required",
         "awaiting_review",
     }
-)
-ACTIVE_PROVIDER_ATTEMPT_STATES = frozenset(
-    {"prepared", "submitted", "request_unknown", "reconciling"}
 )
 LAST_RECONCILED_SETTING = "podcast_artifacts:last_reconciled_at"
 _MIME_ALIASES = {
@@ -123,31 +120,6 @@ def sniff_audio_mime(data: bytes) -> str:
     return ""
 
 
-def _parse_timestamp(value: str | None) -> dt.datetime | None:
-    if not value:
-        return None
-    try:
-        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=dt.timezone.utc)
-    return parsed.astimezone(dt.timezone.utc)
-
-
-def _retention_state(
-    record: PodcastArtifactRecord, *, active_processing_refs: int = 0
-) -> str:
-    if record.kind != "source_audio":
-        return "durable"
-    if record.status == "expired" or record.expired_at:
-        return "expired"
-    expires = _parse_timestamp(record.expires_at)
-    if expires is not None and expires <= dt.datetime.now(dt.timezone.utc):
-        return "protected" if active_processing_refs else "due"
-    return "temporary"
-
-
 def serialize_artifact(
     record: PodcastArtifactRecord, *, active_processing_refs: int = 0
 ) -> dict:
@@ -163,13 +135,7 @@ def serialize_artifact(
         "producing_attempt_id": record.producing_attempt_id,
         "updated_at": record.updated_at, "published_at": record.published_at,
         "withdrawn_at": record.withdrawn_at,
-        "source_locator_hash": record.source_locator_hash,
-        "expires_at": record.expires_at,
-        "expired_at": record.expired_at,
         "active_processing_refs": int(active_processing_refs),
-        "retention_state": _retention_state(
-            record, active_processing_refs=active_processing_refs
-        ),
     }
 
 
@@ -249,8 +215,6 @@ class PodcastArtifactStore:
         *,
         max_bytes: int,
         total_quota_bytes: int,
-        source_audio_quota_bytes: int | None = None,
-        source_audio_ttl_seconds: int = 7 * 24 * 60 * 60,
         minimum_free_bytes: int,
         staging_ttl_seconds: int,
         allowed_mime_types: Iterable[str],
@@ -264,12 +228,6 @@ class PodcastArtifactStore:
         self.root = Path(root).expanduser().resolve()
         self.max_bytes = int(max_bytes)
         self.total_quota_bytes = int(total_quota_bytes)
-        self.source_audio_quota_bytes = int(
-            source_audio_quota_bytes
-            if source_audio_quota_bytes is not None
-            else total_quota_bytes
-        )
-        self.source_audio_ttl_seconds = int(source_audio_ttl_seconds)
         self.minimum_free_bytes = int(minimum_free_bytes)
         self.staging_ttl_seconds = int(staging_ttl_seconds)
         self.ffprobe_binary = ffprobe_binary.strip()
@@ -281,13 +239,11 @@ class PodcastArtifactStore:
         self.allowed_mime_types = tuple(sorted(value for value in allowed if value))
         if (
             self.max_bytes <= 0
-            or self.total_quota_bytes <= 0
-            or self.source_audio_quota_bytes <= 0
-            or self.source_audio_ttl_seconds <= 0
+            or self.total_quota_bytes < 0
             or self.probe_timeout_seconds <= 0
             or self.staging_ttl_seconds < 0
         ):
-            raise ValueError("Podcast artifact limits must be positive")
+            raise ValueError("Podcast artifact limits are invalid")
         if (
             self.minimum_free_bytes < 0
             or self.orphan_grace_seconds < 0
@@ -325,8 +281,8 @@ class PodcastArtifactStore:
             raise
         return fd, path
 
-    def _download_reservations(self) -> list[tuple[Path, str, int]]:
-        reservations: list[tuple[Path, str, int]] = []
+    def _download_reservations(self) -> list[tuple[Path, int]]:
+        reservations: list[tuple[Path, int]] = []
         for path in (self.root / ".incoming").glob("download-*.reserve"):
             if not path.is_file():
                 continue
@@ -335,47 +291,36 @@ class PodcastArtifactStore:
                 if isinstance(payload, bool):
                     raise ValueError("invalid reservation")
                 if isinstance(payload, int):
-                    # Backward compatibility for source-only markers written by
-                    # releases before reservation kinds were persisted.
-                    kind = "source_audio"
                     reserved = payload
                 elif (
                     isinstance(payload, dict)
-                    and set(payload) == {"bytes", "kind"}
-                    and payload.get("kind") in ARTIFACT_KINDS
+                    # Markers created before source validation became the only
+                    # download purpose carried an extra tag. It no longer has
+                    # runtime semantics but its reserved bytes remain binding.
+                    and set(payload) in ({"bytes"}, {"bytes", "kind"})
                     and isinstance(payload.get("bytes"), int)
                     and not isinstance(payload.get("bytes"), bool)
                 ):
-                    kind = str(payload["kind"])
                     reserved = int(payload["bytes"])
                 else:
                     raise ValueError("invalid reservation")
                 if reserved <= 0 or reserved > self.max_bytes:
                     raise ValueError("invalid reservation")
             except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
-                # A torn or unknown marker must fail safe for both the total and
-                # the source-audio sub-quota until reconciliation removes it.
-                kind = "source_audio"
+                # A torn or unknown marker fails safe against total capacity.
                 reserved = self.max_bytes
-            reservations.append((path, kind, reserved))
+            reservations.append((path, reserved))
         return reservations
 
     @contextmanager
-    def reserve_download(
-        self,
-        kind: str,
-        max_download_bytes: int,
-    ) -> Iterator[None]:
-        """Atomically reserve staging, artifact-kind, and free-disk capacity.
+    def reserve_validation_download(self, max_download_bytes: int) -> Iterator[None]:
+        """Atomically reserve source-validation staging and free-disk capacity.
 
         The marker remains exclusively locked for the whole download. A crashed
         worker leaves an unlocked marker that normal staging reconciliation can
         reclaim after the configured TTL; a live slow download is never reaped.
         """
 
-        normalized_kind = str(kind or "").strip()
-        if normalized_kind not in ARTIFACT_KINDS:
-            raise PodcastArtifactError("不支持的 Podcast artifact kind")
         requested = int(max_download_bytes)
         if requested <= 0 or requested > self.max_bytes:
             raise PodcastArtifactTooLarge(
@@ -385,42 +330,19 @@ class PodcastArtifactStore:
         marker_path: Path | None = None
         marker_locked = False
         try:
-            with self._cas_lock(), Session(self.engine) as session:
+            with self._cas_lock():
                 blobs = sum(path.stat().st_size for path in self._blob_files())
                 staging = sum(path.stat().st_size for path in self._staging_files())
                 reservations = self._download_reservations()
                 reserved_total = sum(
-                    size for _path, _kind, size in reservations
+                    size for _path, size in reservations
                 )
-                if (
+                if self.total_quota_bytes > 0 and (
                     blobs + staging + reserved_total + requested
                     > self.total_quota_bytes
                 ):
                     raise PodcastArtifactStorageFull(
                         "Podcast 音频存储配额不足，拒绝开始下载"
-                    )
-                source_rows = list(
-                    session.exec(
-                        select(PodcastArtifactRecord).where(
-                            PodcastArtifactRecord.kind == "source_audio",
-                            PodcastArtifactRecord.status != "expired",
-                        )
-                    ).all()
-                )
-                source_bytes = sum(
-                    {row.content_hash: row.size_bytes for row in source_rows}.values()
-                )
-                reserved_source = sum(
-                    size
-                    for _path, reservation_kind, size in reservations
-                    if reservation_kind == "source_audio"
-                )
-                if normalized_kind == "source_audio" and (
-                    source_bytes + reserved_source + requested
-                    > self.source_audio_quota_bytes
-                ):
-                    raise PodcastArtifactStorageFull(
-                        "Podcast 原始音频临时缓存配额不足，拒绝开始下载"
                     )
                 _capacity, _used, free = self._disk_usage()
                 if free - reserved_total - requested < self.minimum_free_bytes:
@@ -434,7 +356,7 @@ class PodcastArtifactStore:
                 )
                 marker_path = Path(raw)
                 marker = json.dumps(
-                    {"bytes": requested, "kind": normalized_kind},
+                    {"bytes": requested},
                     sort_keys=True,
                     separators=(",", ":"),
                 ).encode("ascii")
@@ -454,13 +376,6 @@ class PodcastArtifactStore:
             if marker_path is not None:
                 with self._cas_lock():
                     marker_path.unlink(missing_ok=True)
-
-    @contextmanager
-    def reserve_source_download(self, max_download_bytes: int) -> Iterator[None]:
-        """Backward-compatible source-audio reservation wrapper."""
-
-        with self.reserve_download("source_audio", max_download_bytes):
-            yield
 
     def _disk_usage(self) -> tuple[int, int, int]:
         usage = self._disk_usage_provider(self.root)
@@ -580,8 +495,6 @@ class PodcastArtifactStore:
         narration_content_hash: str | None = None,
         processing_id: str | None = None,
         producing_attempt_id: str | None = None,
-        source_locator_hash: str | None = None,
-        expires_at: str | None = None,
         commit_validator: Callable[[Session, ArticleRecord], None] | None = None,
     ) -> PodcastArtifactRecord:
         if kind not in ARTIFACT_KINDS:
@@ -598,26 +511,6 @@ class PodcastArtifactStore:
         duration = self.probe_audio(path)
         target = self.file_path_for_hash(content_hash, mime)
         now = _now()
-        normalized_locator_hash = str(source_locator_hash or "").strip().lower() or None
-        if normalized_locator_hash is not None and (
-            len(normalized_locator_hash) != 64
-            or any(char not in "0123456789abcdef" for char in normalized_locator_hash)
-        ):
-            raise PodcastArtifactError("无效的 source locator 哈希")
-        if kind == "source_audio":
-            parsed_expiry = _parse_timestamp(expires_at)
-            if parsed_expiry is None:
-                parsed_expiry = dt.datetime.now(dt.timezone.utc) + dt.timedelta(
-                    seconds=self.source_audio_ttl_seconds
-                )
-            if parsed_expiry <= dt.datetime.now(dt.timezone.utc):
-                raise PodcastArtifactConflict("source_audio 到期时间必须晚于登记时间")
-            normalized_expires_at = parsed_expiry.isoformat(timespec="microseconds")
-        else:
-            if normalized_locator_hash is not None or expires_at is not None:
-                raise PodcastArtifactConflict("精简音频不能绑定外部 locator 或缓存到期时间")
-            normalized_expires_at = None
-
         with self._cas_lock(), Session(self.engine) as session:
             if self.engine.dialect.name == "sqlite":
                 session.connection().exec_driver_sql("BEGIN IMMEDIATE")
@@ -645,55 +538,12 @@ class PodcastArtifactStore:
                     )
                 if commit_validator is not None:
                     commit_validator(session, episode)
-                if kind == "digest_audio_zh":
-                    narration_dependency = require_current_narration_dependency(
-                        session,
-                        episode_id=episode_id,
-                        narration_artifact_id=narration_artifact_id,
-                        narration_content_hash=narration_content_hash,
-                    )
-                elif (
-                    narration_artifact_id is not None
-                    or narration_content_hash is not None
-                    or processing_id is not None
-                ):
-                    raise PodcastArtifactConflict(
-                        "source_audio 不能绑定口播稿或处理任务依赖"
-                    )
-                repair_candidate: PodcastArtifactRecord | None = None
-                if kind == "source_audio" and normalized_locator_hash:
-                    existing_statement = (
-                        select(PodcastArtifactRecord)
-                        .where(
-                            PodcastArtifactRecord.episode_id == episode_id,
-                            PodcastArtifactRecord.kind == "source_audio",
-                            PodcastArtifactRecord.status == "ready",
-                            PodcastArtifactRecord.source_locator_hash
-                            == normalized_locator_hash,
-                            PodcastArtifactRecord.expires_at > now,
-                        )
-                        .order_by(
-                            PodcastArtifactRecord.created_at.desc(),
-                            PodcastArtifactRecord.id.desc(),
-                        )
-                    )
-                    if self.engine.dialect.name == "postgresql":
-                        existing_statement = existing_statement.with_for_update()
-                    existing_rows = list(
-                        session.exec(existing_statement).all()
-                    )
-                    for existing in existing_rows:
-                        if self.is_intact(existing):
-                            session.expunge(existing)
-                            session.commit()
-                            return existing
-                        if (
-                            repair_candidate is None
-                            and existing.content_hash == content_hash
-                            and existing.ext == _EXTENSIONS[mime]
-                            and existing.size_bytes == size_bytes
-                        ):
-                            repair_candidate = existing
+                narration_dependency = require_current_narration_dependency(
+                    session,
+                    episode_id=episode_id,
+                    narration_artifact_id=narration_artifact_id,
+                    narration_content_hash=narration_content_hash,
+                )
                 normalized_processing_id = str(processing_id or "").strip() or None
                 normalized_attempt_id = (
                     str(producing_attempt_id or "").strip() or None
@@ -701,10 +551,6 @@ class PodcastArtifactStore:
                 if normalized_attempt_id is not None and normalized_processing_id is None:
                     raise PodcastArtifactConflict(
                         "自动精简音频必须同时绑定 processing 与 TTS attempt"
-                    )
-                if normalized_attempt_id is not None and kind != "digest_audio_zh":
-                    raise PodcastArtifactConflict(
-                        "只有自动精简音频可以绑定 TTS attempt"
                     )
                 normalized_provenance = (provenance or "manual_upload").strip()[:200]
                 if normalized_provenance.casefold() == "tts":
@@ -812,7 +658,10 @@ class PodcastArtifactStore:
                         blob.stat().st_size for blob in self._blob_files()
                     )
                     projected_blob_bytes = current_blob_bytes - replaced_bytes + size_bytes
-                    if projected_blob_bytes > self.total_quota_bytes:
+                    if (
+                        self.total_quota_bytes > 0
+                        and projected_blob_bytes > self.total_quota_bytes
+                    ):
                         raise PodcastArtifactStorageFull(
                             "Podcast 音频存储配额不足，拒绝写入新的内容 blob"
                         )
@@ -826,35 +675,9 @@ class PodcastArtifactStore:
                         raise PodcastArtifactStorageFull(
                             "Podcast 音频磁盘可用空间不足，拒绝写入新的内容 blob"
                         )
-                if kind == "source_audio":
-                    active_source_rows = list(
-                        session.exec(
-                            select(PodcastArtifactRecord).where(
-                                PodcastArtifactRecord.kind == "source_audio",
-                                PodcastArtifactRecord.status != "expired",
-                            )
-                        ).all()
-                    )
-                    source_bytes_by_hash = {
-                        row.content_hash: row.size_bytes for row in active_source_rows
-                    }
-                    projected_source_bytes = sum(source_bytes_by_hash.values())
-                    if content_hash not in source_bytes_by_hash:
-                        projected_source_bytes += size_bytes
-                    if projected_source_bytes > self.source_audio_quota_bytes:
-                        raise PodcastArtifactStorageFull(
-                            "Podcast 原始音频临时缓存配额不足，拒绝写入"
-                        )
                 if not valid_existing:
                     os.replace(path, target)
                     self._fsync_parent(target)
-                if repair_candidate is not None:
-                    # The registry row is immutable audit metadata. Repair the
-                    # same-address CAS blob and reuse that row without extending
-                    # its TTL or manufacturing a duplicate record.
-                    session.expunge(repair_candidate)
-                    session.commit()
-                    return repair_candidate
                 record = PodcastArtifactRecord(
                     id=(
                         "podcast-tts-"
@@ -876,9 +699,6 @@ class PodcastArtifactStore:
                     ),
                     processing_id=normalized_processing_id,
                     producing_attempt_id=normalized_attempt_id,
-                    source_locator_hash=normalized_locator_hash,
-                    expires_at=normalized_expires_at,
-                    expired_at=None,
                     created_at=now, updated_at=now,
                 )
                 if producing_attempt is not None:
@@ -908,8 +728,6 @@ class PodcastArtifactStore:
         narration_artifact_id: str | None = None,
         narration_content_hash: str | None = None,
         processing_id: str | None = None,
-        source_locator_hash: str | None = None,
-        expires_at: str | None = None,
     ) -> PodcastArtifactRecord:
         """Compatibility helper for trusted callers; HTTP imports use streaming."""
         if status != "ready":
@@ -929,8 +747,6 @@ class PodcastArtifactStore:
                 narration_artifact_id=narration_artifact_id,
                 narration_content_hash=narration_content_hash,
                 processing_id=processing_id,
-                source_locator_hash=source_locator_hash,
-                expires_at=expires_at,
             )
         finally:
             os.close(fd)
@@ -1051,36 +867,6 @@ class PodcastArtifactStore:
             session.expunge(record)
             return record
 
-    def find_ready_source(
-        self, *, episode_id: str, source_locator_hash: str
-    ) -> Optional[PodcastArtifactRecord]:
-        """Return a still-live local enclosure cache, never an expired row."""
-
-        now = _now()
-        with self._cas_lock(), Session(self.engine) as session:
-            rows = list(
-                session.exec(
-                    select(PodcastArtifactRecord)
-                    .where(
-                        PodcastArtifactRecord.episode_id == episode_id,
-                        PodcastArtifactRecord.kind == "source_audio",
-                        PodcastArtifactRecord.status == "ready",
-                        PodcastArtifactRecord.source_locator_hash
-                        == source_locator_hash,
-                        PodcastArtifactRecord.expires_at > now,
-                    )
-                    .order_by(
-                        PodcastArtifactRecord.created_at.desc(),
-                        PodcastArtifactRecord.id.desc(),
-                    )
-                ).all()
-            )
-            for row in rows:
-                if self.is_intact(row):
-                    session.expunge(row)
-                    return row
-        return None
-
     @staticmethod
     def _get_readable_in_session(
         session: Session,
@@ -1111,12 +897,6 @@ class PodcastArtifactStore:
                     "Podcast 音频不存在或尚未发布"
                 ) from exc
         return record
-
-    def get_readable(self, artifact_id: str, *, admin: bool = False) -> PodcastArtifactRecord:
-        with Session(self.engine) as session:
-            return self._get_readable_in_session(
-                session, artifact_id, admin=admin
-            )
 
     def open_readable_audio(
         self,
@@ -1176,199 +956,6 @@ class PodcastArtifactStore:
                     handle.close()
                 raise
 
-    def open_asr_source_audio(
-        self,
-        *,
-        verify: Callable[[Session], Any],
-        authority_id: str,
-        authorize: Callable[
-            [Session, PodcastArtifactRecord, PodcastProcessingRecord, ArticleRecord],
-            None,
-        ],
-        opener: Callable[[PodcastArtifactRecord], BinaryIO] | None = None,
-    ) -> tuple[PodcastArtifactRecord, BinaryIO]:
-        """Verify, authorize and open one provider-fetchable source blob.
-
-        Signature verification deliberately happens before any serialization
-        lock, so unauthenticated traffic cannot occupy SQLite's writer slot.
-        Once verified, PostgreSQL acquires the episode audio lock; SQLite uses
-        one immediate transaction.  The
-        immutable provider capability, processing input, current provider
-        attempt and opened CAS file are rechecked in that serialized snapshot
-        before a byte can leave the deployment.
-        """
-
-        expected_authority = str(authority_id or "").strip()
-        open_file = opener or (lambda row: self.file_path_for(row).open("rb"))
-        handle: BinaryIO | None = None
-        with Session(self.engine) as session:
-            try:
-                # Verification may read a KV-overridden signing key.  End that
-                # read transaction before entering the serialized authorization
-                # snapshot; invalid capabilities never acquire a write lock.
-                claims = verify(session)
-                session.rollback()
-
-                if self.engine.dialect.name == "sqlite":
-                    session.connection().exec_driver_sql("BEGIN IMMEDIATE")
-
-                artifact_id = str(getattr(claims, "artifact_id", "") or "")
-                processing_id = str(getattr(claims, "processing_id", "") or "")
-                preliminary = session.get(PodcastArtifactRecord, artifact_id)
-                preliminary_episode = (
-                    session.get(ArticleRecord, preliminary.episode_id)
-                    if preliminary is not None
-                    else None
-                )
-                if preliminary is None or preliminary_episode is None:
-                    raise PodcastArtifactNotFound("Podcast ASR 音频不存在")
-                locked_episode_id = preliminary_episode.id
-                locked_source_id = preliminary_episode.source_id
-
-                if self.engine.dialect.name == "postgresql":
-                    session.execute(
-                        text(
-                            "SELECT pg_advisory_xact_lock("
-                            "hashtextextended(:lock_key, 0))"
-                        ),
-                        {
-                            "lock_key": (
-                                f"dorami:podcast-audio:{locked_episode_id}"
-                            )
-                        },
-                    )
-                    session.expire_all()
-
-                def load_authorized() -> PodcastArtifactRecord:
-                    record = session.exec(
-                        select(PodcastArtifactRecord)
-                        .where(PodcastArtifactRecord.id == artifact_id)
-                        .execution_options(populate_existing=True)
-                    ).first()
-                    process = session.exec(
-                        select(PodcastProcessingRecord)
-                        .where(PodcastProcessingRecord.id == processing_id)
-                        .execution_options(populate_existing=True)
-                    ).first()
-                    episode = (
-                        session.exec(
-                            select(ArticleRecord)
-                            .where(ArticleRecord.id == record.episode_id)
-                            .execution_options(populate_existing=True)
-                        ).first()
-                        if record is not None
-                        else None
-                    )
-                    attempts = list(
-                        session.exec(
-                            select(PodcastStageAttemptRecord)
-                            .where(
-                                PodcastStageAttemptRecord.processing_id
-                                == processing_id,
-                                PodcastStageAttemptRecord.submission_state.in_(
-                                    ACTIVE_PROVIDER_ATTEMPT_STATES
-                                ),
-                            )
-                            .order_by(
-                                PodcastStageAttemptRecord.attempt_no.desc(),
-                                PodcastStageAttemptRecord.id.desc(),
-                            )
-                            .execution_options(populate_existing=True)
-                        ).all()
-                    )
-                    claim_digest = str(
-                        getattr(claims, "content_sha256", "") or ""
-                    )
-                    claim_authority = str(
-                        getattr(claims, "authority_id", "") or ""
-                    )
-                    expires_at = (
-                        _parse_timestamp(record.expires_at)
-                        if record is not None
-                        else None
-                    )
-                    claim_expires_at_raw = getattr(claims, "expires_at", None)
-                    claim_expires_at = (
-                        dt.datetime.fromtimestamp(
-                            claim_expires_at_raw, tz=dt.timezone.utc
-                        )
-                        if isinstance(claim_expires_at_raw, int)
-                        and not isinstance(claim_expires_at_raw, bool)
-                        else None
-                    )
-                    if (
-                        not expected_authority
-                        or claim_authority != expected_authority
-                        or record is None
-                        or process is None
-                        or episode is None
-                        or episode.content_type != "podcast_episode"
-                        or episode.id != locked_episode_id
-                        or episode.source_id != locked_source_id
-                        or record.episode_id != episode.id
-                        or record.kind != "source_audio"
-                        or record.status != "ready"
-                        or record.authority_id != expected_authority
-                        or record.content_hash != claim_digest
-                        or record.size_bytes <= 0
-                        or expires_at is None
-                        or expires_at <= dt.datetime.now(dt.timezone.utc)
-                        or claim_expires_at is None
-                        or claim_expires_at > expires_at
-                        or process.episode_id != episode.id
-                        or process.stage != "asr"
-                        or process.processing_status
-                        not in {
-                            "running",
-                            "retry_wait",
-                            "reconciliation_required",
-                        }
-                        or process.input_artifact_id != record.id
-                        or process.input_artifact_kind != "source_audio"
-                        or process.input_content_hash != record.content_hash
-                        or len(attempts) != 1
-                        or attempts[0].stage != "asr"
-                        or attempts[0].execution_kind != "provider"
-                        or attempts[0].input_hash != record.content_hash
-                    ):
-                        raise PodcastArtifactNotFound("Podcast ASR 音频不存在")
-                    authorize(session, record, process, episode)
-                    return record
-
-                record = load_authorized()
-                try:
-                    handle = open_file(record)
-                    stat_result = os.fstat(handle.fileno())
-                    digest = hashlib.sha256()
-                    size = 0
-                    handle.seek(0)
-                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                        digest.update(chunk)
-                        size += len(chunk)
-                    handle.seek(0)
-                    if (
-                        size != record.size_bytes
-                        or stat_result.st_size != record.size_bytes
-                        or digest.hexdigest() != record.content_hash
-                    ):
-                        raise PodcastArtifactNotFound("Podcast ASR 音频不存在")
-                except (OSError, PodcastArtifactError) as exc:
-                    raise PodcastArtifactNotFound(
-                        "Podcast ASR 音频不存在"
-                    ) from exc
-
-                session.flush()
-                session.expire_all()
-                record = load_authorized()
-                session.expunge(record)
-                session.commit()
-                return record, handle
-            except Exception:
-                session.rollback()
-                if handle is not None:
-                    handle.close()
-                raise
-
     def list(self, *, episode_id: str = "", status: str = "", kind: str = "", limit: int = 100) -> list[PodcastArtifactRecord]:
         statement = select(PodcastArtifactRecord)
         if episode_id:
@@ -1389,13 +976,7 @@ class PodcastArtifactStore:
 
     def _referenced_paths(self) -> set[Path]:
         with Session(self.engine) as session:
-            rows = list(
-                session.exec(
-                    select(PodcastArtifactRecord).where(
-                        PodcastArtifactRecord.status != "expired"
-                    )
-                ).all()
-            )
+            rows = list(session.exec(select(PodcastArtifactRecord)).all())
         return {self.file_path_for(row) for row in rows}
 
     def active_processing_reference_counts(
@@ -1454,7 +1035,7 @@ class PodcastArtifactStore:
     def _reservation_stats(self) -> tuple[int, int]:
         reservations = self._download_reservations()
         return len(reservations), sum(
-            size for _path, _kind, size in reservations
+            size for _path, size in reservations
         )
 
     def _orphan_stats(self) -> tuple[int, int, int]:
@@ -1483,46 +1064,18 @@ class PodcastArtifactStore:
             missing_files = sum(
                 1
                 for row in rows
-                if row.status != "expired" and not self.file_path_for(row).is_file()
+                if not self.file_path_for(row).is_file()
             )
             orphan_count, orphan_bytes, reclaimable = self._orphan_stats()
             staging_count, staging_bytes, stale_count, stale_bytes = self._staging_stats()
             reservation_count, reservation_bytes = self._reservation_stats()
             capacity, used, free = self._disk_usage()
-            source_rows = [
-                row
-                for row in rows
-                if row.kind == "source_audio" and row.status != "expired"
-            ]
-            source_bytes = sum(
-                {row.content_hash: row.size_bytes for row in source_rows}.values()
-            )
-            active_counts = self.active_processing_reference_counts(
-                row.id for row in source_rows
-            )
-            now_dt = dt.datetime.now(dt.timezone.utc)
-            due_rows = [
-                row
-                for row in source_rows
-                if (_parse_timestamp(row.expires_at) or dt.datetime.max.replace(
-                    tzinfo=dt.timezone.utc
-                ))
-                <= now_dt
-            ]
-            future_expiries = sorted(
-                expiry
-                for row in source_rows
-                if (expiry := _parse_timestamp(row.expires_at)) is not None
-                and expiry > now_dt
-            )
             with Session(self.engine) as session:
                 reconciled = session.get(AppSettingRecord, LAST_RECONCILED_SETTING)
             quota_pressure = (
-                disk_bytes + staging_bytes + reservation_bytes
+                self.total_quota_bytes > 0
+                and disk_bytes + staging_bytes + reservation_bytes
                 >= self.total_quota_bytes
-            )
-            source_quota_pressure = (
-                source_bytes + reservation_bytes >= self.source_audio_quota_bytes
             )
             disk_pressure = (
                 free - reservation_bytes < self.minimum_free_bytes
@@ -1530,7 +1083,6 @@ class PodcastArtifactStore:
             return {
                 "artifacts": len(rows), "ready": counts["ready"],
                 "published": counts["published"], "withdrawn": counts["withdrawn"],
-                "expired": counts["expired"],
                 "logical_bytes": sum(row.size_bytes for row in rows),
                 "disk_bytes": disk_bytes,
                 "missing_files": missing_files,
@@ -1550,32 +1102,7 @@ class PodcastArtifactStore:
                 "disk_free_bytes": free,
                 "quota_pressure": quota_pressure,
                 "disk_pressure": disk_pressure,
-                "storage_pressure": (
-                    quota_pressure or source_quota_pressure or disk_pressure
-                ),
-                "source_audio_bytes": source_bytes,
-                "source_audio_quota_bytes": self.source_audio_quota_bytes,
-                "source_audio_quota_remaining_bytes": max(
-                    self.source_audio_quota_bytes
-                    - source_bytes
-                    - reservation_bytes,
-                    0,
-                ),
-                "source_audio_quota_pressure": source_quota_pressure,
-                "expired_source_audio": sum(
-                    1
-                    for row in rows
-                    if row.kind == "source_audio" and row.status == "expired"
-                ),
-                "expired_protected": sum(
-                    1 for row in due_rows if active_counts.get(row.id, 0) > 0
-                ),
-                "source_audio_due": len(due_rows),
-                "next_expiry_at": (
-                    future_expiries[0].isoformat(timespec="microseconds")
-                    if future_expiries
-                    else None
-                ),
+                "storage_pressure": quota_pressure or disk_pressure,
                 "last_reconciled_at": reconciled.value if reconciled else None,
                 "staging_ttl_seconds": self.staging_ttl_seconds,
                 "staging_files": staging_count,
@@ -1596,7 +1123,7 @@ class PodcastArtifactStore:
             if record.updated_at != expected_updated_at:
                 raise PodcastArtifactConflict("Podcast artifact 已被其他操作更新")
             if record.kind != "digest_audio_zh":
-                raise PodcastArtifactConflict("source_audio 永远不能发布到 Reader")
+                raise PodcastArtifactConflict("只有精简音频可以发布到 Reader")
             if record.status != "ready":
                 raise PodcastArtifactConflict("只有 ready 的精简音频可以发布")
             if not self.file_path_for(record).is_file():
@@ -1700,9 +1227,9 @@ class PodcastArtifactStore:
             record = session.exec(statement).first()
             if record is None:
                 raise PodcastArtifactNotFound("Podcast artifact 不存在")
-            allowed = {"withdrawn", "expired"}
+            allowed = {"withdrawn"}
             if record.status not in allowed:
-                raise PodcastArtifactConflict("必须先撤下或等待过期才能安全删除")
+                raise PodcastArtifactConflict("必须先撤下才能安全删除")
             active_reference = session.exec(
                 select(PodcastProcessingRecord.id).where(
                     PodcastProcessingRecord.input_artifact_id == artifact_id,
@@ -1712,7 +1239,7 @@ class PodcastArtifactStore:
                 )
             ).first()
             if active_reference is not None:
-                raise PodcastArtifactConflict("处理中任务仍在引用该缓存，不能删除")
+                raise PodcastArtifactConflict("处理中任务仍在引用该产物，不能删除")
             session.delete(record)
             session.commit()
         return False
@@ -1722,34 +1249,8 @@ class PodcastArtifactStore:
 
         deleted = deleted_bytes = 0
         deleted_staging = deleted_staging_bytes = 0
-        expired_records = expired_protected = 0
         with self._cas_lock():
             stamp = _now()
-            with Session(self.engine) as session:
-                if self.engine.dialect.name == "sqlite":
-                    session.connection().exec_driver_sql("BEGIN IMMEDIATE")
-                statement = select(PodcastArtifactRecord).where(
-                    PodcastArtifactRecord.kind == "source_audio",
-                    PodcastArtifactRecord.status != "expired",
-                    PodcastArtifactRecord.expires_at <= stamp,
-                )
-                if self.engine.dialect.name == "postgresql":
-                    statement = statement.with_for_update()
-                candidates = list(session.exec(statement).all())
-                refs = self._active_processing_reference_counts(
-                    session,
-                    (row.id for row in candidates),
-                )
-                for row in candidates:
-                    if refs.get(row.id, 0):
-                        expired_protected += 1
-                        continue
-                    row.status = "expired"
-                    row.expired_at = stamp
-                    row.updated_at = stamp
-                    session.add(row)
-                    expired_records += 1
-                session.commit()
             referenced = self._referenced_paths()
             now = dt.datetime.now(dt.timezone.utc).timestamp()
             for path in self._blob_files():
@@ -1784,7 +1285,7 @@ class PodcastArtifactStore:
                     deleted_staging_bytes += stat.st_size
                 finally:
                     os.close(fd)
-            for path, _kind, _reserved in self._download_reservations():
+            for path, _reserved in self._download_reservations():
                 try:
                     stat = path.stat()
                     if now - stat.st_mtime < self.staging_ttl_seconds:
@@ -1813,15 +1314,8 @@ class PodcastArtifactStore:
                 session.add(setting)
                 session.commit()
         return {
-            "expired_source_records": expired_records,
-            "expired_protected": expired_protected,
             "deleted_orphan_blobs": deleted,
             "deleted_bytes": deleted_bytes,
             "deleted_staging_files": deleted_staging,
             "deleted_staging_bytes": deleted_staging_bytes,
         }
-
-    def reconcile_orphans(self) -> dict[str, int]:
-        """Backward-compatible name for callers predating staging cleanup."""
-
-        return self.reconcile_storage()

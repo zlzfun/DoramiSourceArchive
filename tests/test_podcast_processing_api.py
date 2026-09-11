@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import hashlib
 import json
 import os
 import struct
@@ -22,7 +23,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from config import (  # noqa: E402
     AliyunIsiConfig,
-    PodcastAsrFetchConfig,
     PodcastConfig,
     PodcastWorkerConfig,
     RuntimeConfig,
@@ -33,6 +33,7 @@ from models.db import (  # noqa: E402
     PodcastCostLedgerRecord,
     PodcastProcessingCommandRecord,
     PodcastProcessingRecord,
+    PodcastSourceMediaSnapshotRecord,
     PodcastStageAttemptRecord,
     PodcastTextArtifactRecord,
     SourceConfigRecord,
@@ -47,9 +48,6 @@ from services.aliyun_isi_asr_worker import (  # noqa: E402
     register_aliyun_isi_asr_worker,
 )
 from services.aliyun_isi_auth import AliyunPopClient  # noqa: E402
-from services.podcast_asr_fetch_signing import (  # noqa: E402
-    PodcastAsrFetchUrlSigner,
-)
 from services.podcast_artifacts import PodcastArtifactStore  # noqa: E402
 from services.podcast_processing_admin import (  # noqa: E402
     PodcastAdminError,
@@ -57,7 +55,7 @@ from services.podcast_processing_admin import (  # noqa: E402
 )
 from services.podcast_processing_inputs import (  # noqa: E402
     processing_input_fingerprint,
-    source_audio_duration_ms,
+    source_media_duration_ms,
 )
 from services.podcast_processing import deterministic_input_fingerprint  # noqa: E402
 from storage.impl.db_storage import DatabaseStorage  # noqa: E402
@@ -131,19 +129,6 @@ def _aliyun_config(now: dt.datetime, **updates) -> AliyunIsiConfig:
     return AliyunIsiConfig(**values)
 
 
-def _signing_config(**updates) -> PodcastAsrFetchConfig:
-    values = {
-        "public_base_url": (
-            "https://archive.example.test/api/public/podcast-asr/source-audio"
-        ),
-        "signing_secret": "test-only-signing-secret-at-least-32-bytes",
-        "url_ttl_seconds": 600,
-        "min_remaining_seconds": 30,
-    }
-    values.update(updates)
-    return PodcastAsrFetchConfig(**values)
-
-
 def _registry(*targets: str) -> PodcastProcessingProviderRegistry:
     stages = {
         "transcript": {"asr"},
@@ -196,6 +181,9 @@ def api_env(monkeypatch, tmp_path):
                 publish_date=stamp,
                 fetched_date=stamp,
                 content="show notes",
+                extensions_json=json.dumps(
+                    {"audio_url": "https://cdn.example.test/episode-ok.mp3?token=raw"}
+                ),
             )
         )
         session.add(
@@ -223,14 +211,23 @@ def api_env(monkeypatch, tmp_path):
         orphan_grace_seconds=0,
         probe_runner=_probe,
     )
-    source_audio = store.import_bytes(
-        episode_id="episode-ok",
-        kind="source_audio",
-        data=_wav(),
-        declared_mime="audio/wav",
-        authority_id="podcast-external-test",
-        provenance="test",
-    )
+    with Session(sink.engine) as session:
+        source_media = PodcastSourceMediaSnapshotRecord(
+            id="source-media-episode-ok",
+            episode_id="episode-ok",
+            locator_hash=hashlib.sha256(
+                b"https://cdn.example.test/episode-ok.mp3?token=raw"
+            ).hexdigest(),
+            content_hash=hashlib.sha256(_wav()).hexdigest(),
+            mime="audio/wav",
+            size_bytes=len(_wav()),
+            duration_seconds=0.002,
+            created_at=stamp,
+        )
+        session.add(source_media)
+        session.commit()
+        session.refresh(source_media)
+        session.expunge(source_media)
     config = _external_config()
     monkeypatch.setattr(app_module, "db_sink", sink)
     monkeypatch.setattr(app_module, "podcast_artifact_store", store)
@@ -248,7 +245,7 @@ def api_env(monkeypatch, tmp_path):
             podcast=config,
         ),
     )
-    yield app_module, sink, store, source_audio, config
+    yield app_module, sink, store, source_media, config
     sink.engine.dispose()
 
 
@@ -314,13 +311,13 @@ def test_worker_backed_registry_is_distinct_and_duration_binding_is_strict():
             estimator=lambda _session, _metadata, _config: None,
         )
 
-    assert source_audio_duration_ms(0.002) == 2
+    assert source_media_duration_ms(0.002) == 2
     assert processing_input_fingerprint(
         episode_id="episode",
         entry_stage="asr",
         artifact_id="artifact",
         content_hash="a" * 64,
-        kind="source_audio",
+        kind="source_media_snapshot",
         language="und",
         audio_duration_ms=2,
         admission_fingerprint="",
@@ -331,14 +328,14 @@ def test_worker_backed_registry_is_distinct_and_duration_binding_is_strict():
             "entry_stage": "asr",
             "artifact_id": "artifact",
             "content_hash": "a" * 64,
-            "kind": "source_audio",
+            "kind": "source_media_snapshot",
             "language": "und",
             "voice_profile_id": "",
         }
     )
     for invalid in (True, 0, -1.0, float("nan"), float("inf"), "0.002"):
         with pytest.raises(ValueError):
-            source_audio_duration_ms(invalid)
+            source_media_duration_ms(invalid)
     now = dt.datetime.now(dt.timezone.utc)
     aliyun = _aliyun_config(now)
     assert aliyun_asr_admission_fingerprint(aliyun) == (
@@ -355,10 +352,15 @@ def test_worker_backed_registry_is_distinct_and_duration_binding_is_strict():
             replace(aliyun, app_key="different-submit-app-key")
         )
     )
+    assert aliyun_asr_admission_fingerprint(aliyun) != (
+        aliyun_asr_admission_fingerprint(
+            replace(aliyun, asr_max_audio_seconds_per_file=3_600)
+        )
+    )
 
 
 def test_external_process_is_bound_redacted_and_idempotent(api_env, monkeypatch):
-    app_module, _sink, _store, source_audio, config = api_env
+    app_module, _sink, _store, source_media, config = api_env
     body = {
         "target": "transcript",
         "selection_override": True,
@@ -380,8 +382,8 @@ def test_external_process_is_bound_redacted_and_idempotent(api_env, monkeypatch)
         payload = created.json()
         assert payload["status"] == "queued"
         assert payload["stage"] == "asr"
-        assert payload["input_artifact_id"] == source_audio.id
-        assert payload["input_content_hash"] == source_audio.content_hash
+        assert payload["input_artifact_id"] == source_media.id
+        assert payload["input_content_hash"] == source_media.content_hash
         assert payload["budget_limit_minor"] == 10_000
         assert payload["per_run_budget_minor"] == 1_000
         assert not (
@@ -416,7 +418,7 @@ def test_external_process_is_bound_redacted_and_idempotent(api_env, monkeypatch)
 def test_full_analysis_http_rejects_remote_authority_before_provider_work(
     api_env, monkeypatch
 ):
-    app_module, sink, _store, _source_audio, _config = api_env
+    app_module, sink, _store, _source_media, _config = api_env
     with Session(sink.engine) as session:
         episode = session.get(ArticleRecord, "episode-ok")
         episode.analysis_authority_id = "remote-analysis-producer"
@@ -456,11 +458,9 @@ def test_full_analysis_http_rejects_remote_authority_before_provider_work(
 
 
 def test_admin_transcript_enqueue_runs_worker_backed_aliyun_e2e(api_env, monkeypatch):
-    app_module, sink, _store, source_audio, podcast_config = api_env
+    app_module, sink, _store, source_media, podcast_config = api_env
     now = [dt.datetime.now(dt.timezone.utc).replace(microsecond=0)]
     aliyun = _aliyun_config(now[0])
-    signing = _signing_config()
-    signer = PodcastAsrFetchUrlSigner(signing, authority_id=podcast_config.authority_id)
     aliyun_resolutions = 0
     submit_calls = 0
     poll_calls = 0
@@ -476,8 +476,8 @@ def test_admin_transcript_enqueue_runs_worker_backed_aliyun_e2e(api_env, monkeyp
         if request.method == "POST":
             submit_calls += 1
             task = json.loads(parse_qs(request.content.decode("utf-8"))["Task"][0])
-            assert task["file_link"].startswith(
-                "https://archive.example.test/api/public/podcast-asr/source-audio?"
+            assert task["file_link"] == (
+                "https://cdn.example.test/episode-ok.mp3?token=raw"
             )
             return httpx.Response(
                 200,
@@ -521,16 +521,15 @@ def test_admin_transcript_enqueue_runs_worker_backed_aliyun_e2e(api_env, monkeyp
                 nonce_factory=lambda: "test-nonce",
                 clock=lambda: now[0],
             ),
+            file_url_resolver=lambda value: value,
         )
 
     bundle = AliyunIsiAsrWorkerBundle(
         client_factory=client_factory,
-        signer_resolver=lambda _session, **_kwargs: signer,
         clock=lambda: now[0],
     )
     estimator = AliyunIsiAsrAdmissionEstimator(
         config_resolver=resolve_aliyun,
-        signing_config_resolver=lambda _session: signing,
         clock=lambda: now[0],
     )
     registry = PodcastProcessingProviderRegistry()
@@ -581,7 +580,7 @@ def test_admin_transcript_enqueue_runs_worker_backed_aliyun_e2e(api_env, monkeyp
             assert created.status_code == 202
             payload = created.json()
             assert payload["estimated_cost_minor"] == 1
-            assert payload["input_artifact_id"] == source_audio.id
+            assert payload["input_artifact_id"] == source_media.id
             assert aliyun_resolutions == 1
             assert submit_calls == poll_calls == 0
 
@@ -643,29 +642,19 @@ def test_admin_transcript_enqueue_runs_worker_backed_aliyun_e2e(api_env, monkeyp
         "missing_ak",
         "missing_app_key",
         "missing_accounting",
-        "missing_signer",
-        "short_ttl",
-        "timeout_exceeds_ttl",
     ),
 )
 def test_worker_backed_transcript_admission_failure_is_503_without_record(
     api_env, monkeypatch, failure
 ):
-    app_module, sink, _store, _source_audio, podcast_config = api_env
+    app_module, sink, _store, _source_media, podcast_config = api_env
     now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
     aliyun_updates = {
         "missing_ak": {"access_key_id": "", "access_key_secret": ""},
         "missing_app_key": {"app_key": ""},
         "missing_accounting": {"asr_quota_scope": ""},
-        "timeout_exceeds_ttl": {"request_timeout_seconds": 600},
-    }.get(failure, {})
-    signing_updates = {
-        "missing_signer": {"signing_secret": ""},
-        "short_ttl": {"url_ttl_seconds": 100},
-        "timeout_exceeds_ttl": {"url_ttl_seconds": 400},
     }.get(failure, {})
     aliyun = _aliyun_config(now, **aliyun_updates)
-    signing = _signing_config(**signing_updates)
     client_factory_calls = 0
 
     def client_factory(_snapshot):
@@ -676,7 +665,6 @@ def test_worker_backed_transcript_admission_failure_is_503_without_record(
     bundle = AliyunIsiAsrWorkerBundle(client_factory=client_factory)
     estimator = AliyunIsiAsrAdmissionEstimator(
         config_resolver=lambda _session: aliyun,
-        signing_config_resolver=lambda _session: signing,
         clock=lambda: now,
     )
     registry = PodcastProcessingProviderRegistry()
@@ -704,10 +692,55 @@ def test_worker_backed_transcript_admission_failure_is_503_without_record(
         assert session.exec(select(PodcastProcessingRecord)).all() == []
 
 
+def test_worker_backed_transcript_rejects_overlong_audio_before_enqueue(
+    api_env, monkeypatch
+):
+    app_module, sink, _store, source_media, _podcast_config = api_env
+    now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+    with Session(sink.engine) as session:
+        record = session.get(PodcastSourceMediaSnapshotRecord, source_media.id)
+        record.duration_seconds = 2
+        session.add(record)
+        session.commit()
+
+    aliyun = _aliyun_config(now, asr_max_audio_seconds_per_file=1)
+    registry = PodcastProcessingProviderRegistry()
+    register_aliyun_isi_asr_worker(
+        registry,
+        bundle=AliyunIsiAsrWorkerBundle(
+            client_factory=lambda _snapshot: (_ for _ in ()).throw(
+                AssertionError("overlong admission must not construct a client")
+            )
+        ),
+        admission_estimator=AliyunIsiAsrAdmissionEstimator(
+            config_resolver=lambda _session: aliyun,
+            clock=lambda: now,
+        ),
+    )
+    monkeypatch.setattr(app_module, "podcast_processing_providers", registry)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        response = client.post(
+            "/api/admin/podcast-episodes/episode-ok/process",
+            json={
+                "target": "transcript",
+                "selection_override": True,
+                "reason": "reject overlong source media",
+                "idempotency_key": "reject-overlong-source-media-01",
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "podcast_source_media_too_long"
+    with Session(sink.engine) as session:
+        assert session.exec(select(PodcastProcessingRecord)).all() == []
+
+
 def test_aliyun_pricing_rotation_before_first_attempt_fails_without_network(
     api_env, monkeypatch
 ):
-    app_module, sink, _store, _source_audio, podcast_config = api_env
+    app_module, sink, _store, _source_media, podcast_config = api_env
     now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
     original = _aliyun_config(now)
     rotated = replace(
@@ -716,8 +749,6 @@ def test_aliyun_pricing_rotation_before_first_attempt_fails_without_network(
         asr_pricing_revision="test-two-minor-per-second-v2",
     )
     admission_snapshot = [original]
-    signing = _signing_config()
-    signer = PodcastAsrFetchUrlSigner(signing, authority_id=podcast_config.authority_id)
     submit_calls = 0
 
     class NoNetworkClient:
@@ -734,7 +765,6 @@ def test_aliyun_pricing_rotation_before_first_attempt_fails_without_network(
 
     bundle = AliyunIsiAsrWorkerBundle(
         client_factory=lambda _snapshot: NoNetworkClient(),
-        signer_resolver=lambda _session, **_kwargs: signer,
         clock=lambda: now,
     )
     registry = PodcastProcessingProviderRegistry()
@@ -743,7 +773,6 @@ def test_aliyun_pricing_rotation_before_first_attempt_fails_without_network(
         bundle=bundle,
         admission_estimator=AliyunIsiAsrAdmissionEstimator(
             config_resolver=lambda _session: admission_snapshot[0],
-            signing_config_resolver=lambda _session: signing,
             clock=lambda: now,
         ),
     )
@@ -820,7 +849,7 @@ def test_aliyun_pricing_rotation_before_first_attempt_fails_without_network(
 
 
 def test_retry_rejection_replays_original_status(api_env, monkeypatch):
-    app_module, sink, _store, _source_audio, _config = api_env
+    app_module, sink, _store, _source_media, _config = api_env
     process_body = {
         "target": "transcript",
         "selection_override": True,

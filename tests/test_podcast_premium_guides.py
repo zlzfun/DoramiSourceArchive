@@ -21,6 +21,7 @@ from services.podcast_artifacts import PodcastArtifactStore
 from services.podcast_premium_guides import (
     PremiumGuideDraft,
     SynthesizedAudio,
+    _set_episode_status,
     list_premium_guide_tasks,
     pending_premium_guide_candidates,
     run_premium_guide,
@@ -54,6 +55,39 @@ def _external_config() -> PodcastConfig:
 
 def test_premium_guide_run_endpoint_keeps_the_request_event_loop():
     assert inspect.iscoroutinefunction(run_premium_guide_endpoint)
+
+
+def test_premium_guide_failure_retains_the_actionable_stage(tmp_path):
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'premium-status.db'}")
+    with Session(sink.engine) as session:
+        session.add(
+            ArticleRecord(
+                id="episode-status",
+                title="Status episode",
+                content_type="podcast_episode",
+                source_id="podcast-status",
+                source_url="https://example.test/status",
+                publish_date=STAMP,
+                fetched_date=STAMP,
+                content="show notes",
+            )
+        )
+        session.commit()
+
+    _set_episode_status(sink.engine, "episode-status", "synthesizing")
+    _set_episode_status(
+        sink.engine,
+        "episode-status",
+        "failed",
+        error="TTS provider timeout",
+    )
+
+    with Session(sink.engine) as session:
+        episode = session.get(ArticleRecord, "episode-status")
+        guide = json.loads(episode.extensions_json)["premium_guide"]
+        assert guide["status"] == "failed"
+        assert guide["failed_stage"] == "synthesizing"
+        assert guide["error"] == "TTS provider timeout"
 
 
 def test_premium_guide_tasks_only_list_premium_episodes_and_paginate(tmp_path):
@@ -269,7 +303,10 @@ def test_premium_guide_runs_from_asr_to_published_blog_and_audio(tmp_path, kind)
     } == tasks["items"][0]
 
 
-def test_premium_guide_low_authoritative_score_never_calls_provider(tmp_path):
+@pytest.mark.parametrize("score", [7.5, 8.5])
+def test_premium_guide_score_not_over_threshold_never_calls_provider(
+    tmp_path, score
+):
     sink = DatabaseStorage(f"sqlite:///{tmp_path / 'premium-low.db'}")
     transcript = json.dumps({"text": "complete transcript"})
     with Session(sink.engine) as session:
@@ -286,7 +323,7 @@ def test_premium_guide_low_authoritative_score_never_calls_provider(tmp_path):
         ))
         session.commit()
         session.add(ArticleAnalysisRecord(
-            article_id="episode-low", status="succeeded", quality_score=7.5,
+            article_id="episode-low", status="succeeded", quality_score=score,
             score_reason="权威简介初评", analysis_basis="asr_transcript",
             transcript_artifact_id="transcript-low",
             created_at=STAMP, updated_at=STAMP,
@@ -317,14 +354,24 @@ def test_premium_guide_low_authoritative_score_never_calls_provider(tmp_path):
         staging_ttl_seconds=60, allowed_mime_types=("audio/wav",),
         probe_runner=lambda *_a, **_k: None,
     )
+    config = _external_config()
+    assert pending_premium_guide_candidates(
+        sink.engine,
+        minimum_duration_seconds=config.premium_min_duration_seconds,
+        score_threshold=config.premium_score_threshold,
+    ) == []
     result = asyncio.run(run_premium_guide(
-        sink.engine, store, episode_id="episode-low", config=_external_config(),
+        sink.engine, store, episode_id="episode-low", config=config,
         text_provider=provider, tts_provider=provider,
     ))
-    assert result == {"episode_id": "episode-low", "is_premium": False, "score": 7.5}
+    assert result == {
+        "episode_id": "episode-low",
+        "is_premium": False,
+        "score": score,
+    }
     with Session(sink.engine) as session:
         analysis = session.get(ArticleAnalysisRecord, "episode-low")
-        assert analysis.quality_score == 7.5
+        assert analysis.quality_score == score
         assert analysis.score_reason == "权威简介初评"
         assert analysis.analysis_basis == "asr_transcript"
 

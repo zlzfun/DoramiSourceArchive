@@ -255,6 +255,38 @@ export function podcastFullProcessingMeta(article) {
   return result('全文处理状态待确认', 'idle', error);
 }
 
+/** 管理台账使用的端到端播客状态：TTS 阶段优先，否则沿用全文处理投影。 */
+export function podcastLedgerProcessingMeta(article) {
+  if (article?.content_type !== 'podcast_episode') return null;
+  const podcast = podcastProjection(article);
+  const guide = podcast.premium_guide && typeof podcast.premium_guide === 'object'
+    ? podcast.premium_guide
+    : {};
+  const status = String(guide.status || '').trim().toLowerCase();
+  const failedStage = String(guide.failed_stage || '').trim().toLowerCase();
+  const error = String(guide.error || '').trim();
+  const result = (label, tone, detail = '') => ({ label, tone, detail });
+
+  if (status === 'synthesizing') {
+    return result('TTS 合成中…', 'run', '全文分析已完成，正在生成中文精华音频');
+  }
+  if (status === 'summarizing') {
+    return result('精华内容生成中…', 'run', '正在根据完整逐字稿生成精华与播音稿');
+  }
+  if (status === 'failed') {
+    const ttsFailed = failedStage === 'synthesizing';
+    return result(
+      ttsFailed ? 'TTS 合成失败' : '精华生成失败',
+      'bad',
+      `${error || (ttsFailed ? '语音合成未完成' : '精华内容未生成')}；可在播客任务中重试`,
+    );
+  }
+  if (status === 'ready' && (guide.audio_ready || podcast.condensed_audio_url)) {
+    return result('TTS 音频已就绪', 'ok', '中文精华音频已发布');
+  }
+  return podcastFullProcessingMeta(article);
+}
+
 /** 已落库分析不依赖本部署是否配置 LLM；aiEnabled 只决定能否现场生成。 */
 export function shouldShowAiReadingCard(article, { summary, aiEnabled, body } = {}) {
   return Boolean(

@@ -55,6 +55,7 @@ export default function CredentialsSection({ showToast, onNavigate }) {
   // ── 播客 ASR 配额 ──
   const [asrQuota, setAsrQuota] = useState(null);
   const [asrHours, setAsrHours] = useState('');
+  const [asrMaxHours, setAsrMaxHours] = useState('');
   const [savingAsr, setSavingAsr] = useState(false);
 
   // ── 只读回指:定时同步凭据 + 部署级 env 机密 ──
@@ -89,6 +90,7 @@ export default function CredentialsSection({ showToast, onNavigate }) {
   const loadAsrQuota = useCallback(() => getPodcastAsrQuota().then((d) => {
     setAsrQuota(d);
     setAsrHours(String(d.daily_audio_hours_limit ?? 0));
+    setAsrMaxHours(String(d.max_audio_hours_per_file ?? 12));
   }).catch(() => {}), []);
 
   useEffect(() => {
@@ -192,16 +194,25 @@ export default function CredentialsSection({ showToast, onNavigate }) {
 
   const handleSaveAsr = async () => {
     const hours = Number(asrHours);
-    if (!Number.isFinite(hours) || hours <= 0 || hours > 24) {
-      showToast('每日音频上限需大于 0 且不超过 24 小时', 'error');
+    if (!Number.isFinite(hours) || hours <= 0) {
+      showToast('每日累计音频上限需大于 0 小时', 'error');
+      return;
+    }
+    const maxHours = Number(asrMaxHours);
+    if (!Number.isFinite(maxHours) || maxHours <= 0 || maxHours > 12) {
+      showToast('单集音频上限需大于 0 且不超过 12 小时', 'error');
       return;
     }
     setSavingAsr(true);
     try {
-      const saved = await savePodcastAsrQuota(Math.round(hours * 3600));
+      const saved = await savePodcastAsrQuota(
+        Math.round(hours * 3600),
+        Math.round(maxHours * 3600),
+      );
       setAsrQuota(saved);
       setAsrHours(String(saved.daily_audio_hours_limit));
-      showToast('已保存 ASR 每日音频上限', 'success');
+      setAsrMaxHours(String(saved.max_audio_hours_per_file));
+      showToast('已保存 ASR 音频时长设置', 'success');
     } catch (error) {
       showToast(error.message || '保存失败', 'error');
     } finally {
@@ -342,19 +353,31 @@ export default function CredentialsSection({ showToast, onNavigate }) {
             <CredStamp ok={Boolean(asrQuota?.daily_audio_seconds_limit)} />
           </div>
         </div>
-        <p className="cred-sub">限制每天提交给语音识别服务的音频总时长，按配置时区自然日累计。</p>
+        <p className="cred-sub">每日累计量可大于 24 小时；单集上限是独立的供应商任务边界，不会缩减每日可处理总量。</p>
         <div className="cred-fields">
           <label className="sett-field">
-            <span className="sett-field-lbl">每日音频上限（小时）</span>
+            <span className="sett-field-lbl">每日累计音频上限（小时）</span>
             <input
               className="form-input font-mono"
               type="number"
               step="0.5"
               min="0.5"
-              max="24"
               value={asrHours}
               onChange={(e) => setAsrHours(e.target.value)}
             />
+          </label>
+          <label className="sett-field">
+            <span className="sett-field-lbl">单集音频上限（小时）</span>
+            <input
+              className="form-input font-mono"
+              type="number"
+              step="0.5"
+              min="0.5"
+              max="12"
+              value={asrMaxHours}
+              onChange={(e) => setAsrMaxHours(e.target.value)}
+            />
+            <span className="cred-ref-meta mt-2">阿里云单任务最长 12 小时，超限会在入队前拒绝</span>
           </label>
           <div className="sett-field">
             <span className="sett-field-lbl">累计周期</span>

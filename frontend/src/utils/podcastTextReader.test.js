@@ -17,19 +17,34 @@ test('podcast text view prioritizes Chinese digest and Chinese transcript', () =
     { kind: 'digest_blog_zh', text: '中文精华' },
   ] });
   assert.equal(view.digest.text, '中文精华');
-  assert.equal(view.transcript.text, '中文逐字稿');
-  assert.equal(view.transcriptLabel.note, 'AI 整理');
-  assert.equal(view.hasText, true);
+  assert.equal(view.transcripts[0].item.text, '中文逐字稿');
+  assert.equal(view.transcripts[0].label.note, 'AI 翻译整理');
 });
 
 test('podcast text view falls back to source transcript and has a true empty state', () => {
   const fallback = podcastTextView({ items: [
     { kind: 'publisher_transcript', text: 'publisher text' },
   ] });
-  assert.equal(fallback.transcript.text, 'publisher text');
-  assert.equal(fallback.transcriptLabel.note, '来源方提供');
-  assert.equal(podcastTextView({ items: [] }).hasText, false);
+  assert.equal(fallback.transcripts[0].item.text, 'publisher text');
+  assert.equal(fallback.transcripts[0].label.title, '节目方逐字稿');
+  assert.equal(fallback.transcripts[0].label.note, '节目方提供');
+  assert.deepEqual(podcastTextView({ items: [] }).transcripts, []);
   assert.equal(PODCAST_TEXT_LABELS.digest_blog_zh.title, '中文精华');
+});
+
+test('normalized ASR transcript is visible and remains distinct from publisher text', () => {
+  const view = podcastTextView({ items: [
+    { kind: 'normalized_transcript', text: '识别内容' },
+    { kind: 'publisher_transcript', text: '节目方内容' },
+  ] });
+  assert.deepEqual(
+    view.transcripts.map(({ item, label }) => [item.kind, label.title, label.note]),
+    [
+      ['publisher_transcript', '节目方逐字稿', '节目方提供'],
+      ['normalized_transcript', 'ASR 逐字稿', '语音识别稿'],
+    ],
+  );
+  assert.equal(view.transcripts[0].item.kind, 'publisher_transcript');
 });
 
 test('digest and transcript pages append once and reject stale or duplicate pages', () => {
@@ -86,6 +101,49 @@ test('podcast text surfaces use semantic dark-theme tokens', async () => {
   assert.match(css, /\.podcast-text-loading[\s\S]*color: var\(--dorami-muted\)/);
   assert.doesNotMatch(css, /\.podcast-text-(?:digest|transcript)[^{]*\{[^}]*color:\s*#000/);
   assert.match(component, /podcast-text-initial-error" role="alert"/);
+  assert.match(component, /aria-expanded=\{transcriptOpen\}/);
+  assert.match(component, /aria-label="逐字稿来源"/);
+  assert.match(component, /tabIndex=\{0\}/);
   assert.match(component, /refreshFirstPage\(item\.kind, group\)/);
   assert.match(component, /isPodcastTextRequestCurrent\(group, requestGroup\.current, episodeId\)/);
+});
+
+test('publisher transcript follows show notes on desktop and mobile reader surfaces', async () => {
+  const desktop = await readFile(
+    new URL('../components/ReaderTab.jsx', import.meta.url),
+    'utf8',
+  );
+  const mobile = await readFile(
+    new URL('../components/mobile/MobileArticlePage.jsx', import.meta.url),
+    'utf8',
+  );
+  const experience = await readFile(
+    new URL('../components/PodcastExperiencePanel.jsx', import.meta.url),
+    'utf8',
+  );
+
+  for (const reader of [desktop, mobile]) {
+    const introduction = reader.indexOf('<h2 className="section-title">节目简介</h2>');
+    const transcript = reader.indexOf('preferredTranscriptKind="publisher_transcript"');
+    const origin = reader.indexOf('className="reader-pane-origin"', transcript);
+    assert.ok(introduction >= 0);
+    assert.ok(transcript > introduction);
+    assert.ok(origin > transcript);
+  }
+  assert.match(experience, /hiddenTranscriptKinds=\{\['publisher_transcript'\]\}/);
+});
+
+test('podcast lists reuse taxonomy tag styling and hide pipeline status', async () => {
+  const reader = await readFile(
+    new URL('../components/ReaderTab.jsx', import.meta.url),
+    'utf8',
+  );
+  const podcastBranch = reader.slice(
+    reader.indexOf('{entryPodcast ? ('),
+    reader.indexOf(') : (', reader.indexOf('{entryPodcast ? (')),
+  );
+
+  assert.match(podcastBranch, /className="reader-entry-tag"/);
+  assert.match(reader, /podcastListAvailabilityMeta/);
+  assert.doesNotMatch(podcastBranch, /podcastFullProcessingMeta|analysisStatus\.label/);
 });

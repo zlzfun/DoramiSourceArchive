@@ -94,7 +94,18 @@ def _set_episode_status(
         guide = extensions.get("premium_guide")
         if not isinstance(guide, dict):
             guide = {}
+        previous_status = str(guide.get("status") or "").strip()
         guide.update({"status": status, "updated_at": _now()})
+        if status == "failed":
+            failed_stage = (
+                previous_status
+                if previous_status in {"summarizing", "synthesizing"}
+                else str(guide.get("failed_stage") or "").strip()
+            )
+            if failed_stage:
+                guide["failed_stage"] = failed_stage
+        else:
+            guide.pop("failed_stage", None)
         if error:
             guide["error"] = error[:300]
         else:

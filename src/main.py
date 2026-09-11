@@ -50,11 +50,6 @@ if __name__ == "__main__":
     if is_production and settings.server.reload:
         print("⚠️ 检测到 NODE_ENV=production，已强制关闭 uvicorn reload。")
 
-    # Podcast ASR 下载签名放在 query 中。保留其他 Uvicorn access log，
-    # 仅对该固定路径清除完整 query（含异常日志）。
-    from services.request_log_redaction import install_uvicorn_sensitive_request_filters
-    install_uvicorn_sensitive_request_filters()
-
     uvicorn.run(
         "api.app:app",
         host=settings.server.host,

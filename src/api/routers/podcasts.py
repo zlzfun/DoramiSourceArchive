@@ -33,14 +33,6 @@ from services.podcast_artifacts import (
     PodcastArtifactUnsupportedMedia,
     serialize_artifact,
 )
-from services.podcast_asr_fetch_signing import (
-    ASR_FETCH_PATH,
-    PodcastAsrFetchSignatureError,
-    clear_previous_signing_secret as clear_asr_fetch_previous_secret,
-    field_sources as asr_fetch_field_sources,
-    resolve_config as resolve_asr_fetch_config,
-    resolve_signer as resolve_asr_fetch_signer,
-)
 from services.podcast_stage_policy import PodcastStageDenied, PodcastStagePolicy
 from services.podcast_publisher_transcripts import (
     PublisherTranscriptConflict,
@@ -51,13 +43,14 @@ from services.podcast_publisher_transcripts import (
     PublisherTranscriptTooLarge,
     ingest_publisher_transcript,
 )
-from services.podcast_source_audio import (
-    SourceAudioConflict,
-    SourceAudioFetchFailed,
-    SourceAudioNotFound,
-    SourceAudioTimeout,
-    SourceAudioTooLarge,
-    cache_source_audio,
+from services.podcast_source_media import (
+    SourceMediaConflict,
+    SourceMediaFetchFailed,
+    SourceMediaNotFound,
+    SourceMediaTimeout,
+    SourceMediaTooLarge,
+    SourceMediaTooLong,
+    validate_source_media,
 )
 from services import source_visibility as source_visibility_service
 from services import user_sources as user_sources_service
@@ -69,16 +62,11 @@ from services import credentials as credentials_service
 
 router = APIRouter(tags=["podcasts"])
 _RANGE_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
-_PUBLIC_ASR_HEADERS = {
-    "Cache-Control": "no-store",
-    "Referrer-Policy": "no-referrer",
-    "X-Content-Type-Options": "nosniff",
-}
 
 
 class PodcastTextProvenanceResponse(BaseModel):
     label: str
-    origin: Literal["publisher", "ai"]
+    origin: Literal["publisher", "ai", "asr"]
     producer_authority_id: str | None = None
     pipeline_note: str | None = None
 
@@ -96,7 +84,12 @@ class PodcastReaderErrorResponse(BaseModel):
 class PodcastTextItemResponse(BaseModel):
     artifact_id: str
     content_hash: str
-    kind: Literal["digest_blog_zh", "transcript_zh", "publisher_transcript"]
+    kind: Literal[
+        "digest_blog_zh",
+        "transcript_zh",
+        "publisher_transcript",
+        "normalized_transcript",
+    ]
     language: str
     text_format: Literal["plain"]
     text: str
@@ -129,9 +122,10 @@ class PodcastDomainErrorResponse(BaseModel):
         "podcast_preview_expired",
         "podcast_processing_conflict",
         "podcast_provider_unavailable",
-        "podcast_source_audio_fetch_failed",
-        "podcast_source_audio_timeout",
-        "podcast_source_audio_too_large",
+        "podcast_source_media_fetch_failed",
+        "podcast_source_media_timeout",
+        "podcast_source_media_too_large",
+        "podcast_source_media_too_long",
         "podcast_source_blocked",
         "podcast_stage_denied",
         "podcast_storage_full",
@@ -142,52 +136,31 @@ class PodcastDomainErrorResponse(BaseModel):
     message: str
 
 
-class PodcastAsrFetchSecretStatusResponse(BaseModel):
-    previous_signing_secret_set: bool
-    previous_signing_secret_source: Literal[
-        "runtime_kv", "env", "ini", "default"
-    ]
-
-
 class PodcastAsrQuotaResponse(BaseModel):
     daily_audio_seconds_limit: int = Field(ge=0)
     daily_audio_hours_limit: float = Field(ge=0)
+    max_audio_seconds_per_file: int = Field(ge=1, le=43_200)
+    max_audio_hours_per_file: float = Field(gt=0, le=12)
     quota_scope: str
     quota_timezone: str
     source: Literal["runtime_kv", "env", "ini", "default"]
+    max_audio_per_file_source: Literal["runtime_kv", "env", "ini", "default"]
 
 
 class PodcastAsrQuotaUpdate(BaseModel):
-    daily_audio_seconds_limit: int = Field(ge=1, le=86_400)
+    daily_audio_seconds_limit: int = Field(ge=1)
+    max_audio_seconds_per_file: int | None = Field(default=None, ge=1, le=43_200)
 
 
-class PodcastAudioArtifactResponse(BaseModel):
+class PodcastSourceMediaSnapshotResponse(BaseModel):
     id: str
     episode_id: str
-    kind: Literal["source_audio", "digest_audio_zh"]
+    locator_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     content_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     mime: str
-    size_bytes: int = Field(ge=0)
-    duration_seconds: float | None = Field(default=None, ge=0)
-    status: Literal["ready", "published", "withdrawn", "expired"]
-    provenance: str
-    authority_id: str
-    narration_artifact_id: str | None = None
-    narration_content_hash: str | None = Field(
-        default=None, pattern=r"^[a-f0-9]{64}$"
-    )
-    processing_id: str | None = None
-    published_at: dt.datetime | None = None
-    withdrawn_at: dt.datetime | None = None
-    source_locator_hash: str | None = Field(
-        default=None, pattern=r"^[a-f0-9]{64}$"
-    )
-    expires_at: dt.datetime | None = None
-    expired_at: dt.datetime | None = None
-    active_processing_refs: int = Field(ge=0)
-    retention_state: Literal["temporary", "protected", "due", "expired", "durable"]
+    size_bytes: int = Field(gt=0)
+    duration_seconds: float = Field(gt=0)
     created_at: dt.datetime
-    updated_at: dt.datetime
 
 
 def _app():
@@ -200,9 +173,12 @@ def _asr_quota_response(session: Session) -> PodcastAsrQuotaResponse:
     return PodcastAsrQuotaResponse(
         daily_audio_seconds_limit=config.asr_daily_audio_seconds_limit,
         daily_audio_hours_limit=config.asr_daily_audio_seconds_limit / 3600,
+        max_audio_seconds_per_file=config.asr_max_audio_seconds_per_file,
+        max_audio_hours_per_file=config.asr_max_audio_seconds_per_file / 3600,
         quota_scope=config.asr_quota_scope,
         quota_timezone=config.asr_quota_timezone,
         source=sources["asr_daily_audio_seconds_limit"],
+        max_audio_per_file_source=sources["asr_max_audio_seconds_per_file"],
     )
 
 
@@ -234,7 +210,11 @@ def read_episode_texts(
     auth_session: dict = Depends(deps.require_reader),
     session: Session = Depends(deps.get_session),
     kind: Literal[
-        "", "digest_blog_zh", "transcript_zh", "publisher_transcript"
+        "",
+        "digest_blog_zh",
+        "transcript_zh",
+        "publisher_transcript",
+        "normalized_transcript",
     ] = Query(""),
     q: str = Query(""),
     cursor: str = Query(""),
@@ -303,11 +283,11 @@ def _podcast_error(status_code: int, code: str, exc: Exception) -> JSONResponse:
     )
 
 
-def _source_cache_artifact_error(exc: PodcastArtifactError) -> JSONResponse:
+def _source_validation_artifact_error(exc: PodcastArtifactError) -> JSONResponse:
     if isinstance(exc, PodcastArtifactStorageFull):
         return _podcast_error(507, "podcast_storage_full", exc)
     if isinstance(exc, PodcastArtifactTooLarge):
-        return _podcast_error(413, "podcast_source_audio_too_large", exc)
+        return _podcast_error(413, "podcast_source_media_too_large", exc)
     if isinstance(exc, PodcastArtifactProbeUnavailable):
         return _podcast_error(503, "podcast_provider_unavailable", exc)
     if isinstance(exc, PodcastArtifactUnsupportedMedia):
@@ -439,15 +419,15 @@ def list_artifacts(
 
 
 @router.post(
-    "/api/admin/podcast-episodes/{episode_id}/cache-source-audio",
-    response_model=PodcastAudioArtifactResponse,
+    "/api/admin/podcast-episodes/{episode_id}/validate-source-media",
+    response_model=PodcastSourceMediaSnapshotResponse,
     responses={
         status: {"model": PodcastDomainErrorResponse}
         for status in (400, 401, 403, 404, 409, 413, 415, 422, 502, 503, 504, 507)
     },
 )
-async def cache_episode_source_audio(episode_id: str, request: Request):
-    """Explicitly cache one publisher enclosure on the external installation."""
+async def validate_episode_source_media(episode_id: str, request: Request):
+    """Validate publisher media in ephemeral staging and persist metadata only."""
 
     app = _app()
     auth_session = deps.get_current_session(request)
@@ -466,29 +446,38 @@ async def cache_episode_source_audio(episode_id: str, request: Request):
             "podcast_storage_unavailable",
             RuntimeError("Podcast artifact storage 未配置"),
         )
+    with Session(app.db_sink.engine) as session:
+        max_audio_seconds_per_file = (
+            aliyun_isi_config_service.resolve_config(
+                session
+            ).asr_max_audio_seconds_per_file
+        )
     try:
-        return await cache_source_audio(
+        return await validate_source_media(
             app.db_sink.engine,
             store,
             episode_id=episode_id,
             podcast_config=app.settings.podcast,
             storage_config=app.settings.podcast_artifacts,
+            max_audio_seconds_per_file=max_audio_seconds_per_file,
             client_factory=httpx.AsyncClient,
         )
-    except SourceAudioNotFound as exc:
+    except SourceMediaNotFound as exc:
         return _podcast_error(404, "podcast_not_found", exc)
-    except SourceAudioTooLarge as exc:
-        return _podcast_error(413, "podcast_source_audio_too_large", exc)
-    except SourceAudioTimeout as exc:
-        return _podcast_error(504, "podcast_source_audio_timeout", exc)
-    except SourceAudioFetchFailed as exc:
-        return _podcast_error(502, "podcast_source_audio_fetch_failed", exc)
-    except SourceAudioConflict as exc:
+    except SourceMediaTooLarge as exc:
+        return _podcast_error(413, "podcast_source_media_too_large", exc)
+    except SourceMediaTooLong as exc:
+        return _podcast_error(422, "podcast_source_media_too_long", exc)
+    except SourceMediaTimeout as exc:
+        return _podcast_error(504, "podcast_source_media_timeout", exc)
+    except SourceMediaFetchFailed as exc:
+        return _podcast_error(502, "podcast_source_media_fetch_failed", exc)
+    except SourceMediaConflict as exc:
         return _podcast_error(409, "podcast_processing_conflict", exc)
     except PodcastStageDenied as exc:
         return _podcast_error(403, "podcast_stage_denied", exc)
     except PodcastArtifactError as exc:
-        return _source_cache_artifact_error(exc)
+        return _source_validation_artifact_error(exc)
 
 
 @router.post(
@@ -561,7 +550,7 @@ def publish_artifact(
         if artifact is None:
             raise PodcastArtifactNotFound("Podcast artifact 不存在")
         if artifact.kind != "digest_audio_zh":
-            raise PodcastArtifactConflict("source_audio 永远不能发布到 Reader")
+            raise PodcastArtifactConflict("只有精简音频可以发布到 Reader")
         return serialize_artifact(_store().publish(
             artifact_id,
             expected_updated_at=expected_updated_at,
@@ -731,127 +720,6 @@ def _audio_response(
     )
 
 
-def _public_asr_error(status_code: int) -> Response:
-    """Return a body-free, non-cacheable public capability failure."""
-
-    return Response(status_code=status_code, headers=_PUBLIC_ASR_HEADERS)
-
-
-def _public_asr_audio_response(request: Request):
-    """Serve one signed source-audio capability without an existence oracle."""
-
-    app = _app()
-    store = app.podcast_artifact_store
-    if store is None:
-        return _public_asr_error(404)
-    podcast_config = app.settings.podcast
-    raw_query = request.scope.get("query_string", b"")
-    canonical_path = str(request.scope.get("path", "") or "")
-
-    def verify(session: Session):
-        signer = resolve_asr_fetch_signer(
-            session,
-            podcast_config=podcast_config,
-        )
-        return signer.verify(
-            method=request.method,
-            canonical_path=canonical_path,
-            raw_query=raw_query,
-        )
-
-    def authorize_asr(
-        session: Session,
-        _record,
-        _processing,
-        episode: ArticleRecord,
-    ) -> None:
-        if not user_sources_service.source_content_may_leave_deployment(
-            session, episode.source_id
-        ):
-            raise PermissionError(
-                "Podcast source content may not leave this deployment"
-            )
-
-    try:
-        record, handle = store.open_asr_source_audio(
-            verify=verify,
-            authority_id=podcast_config.authority_id,
-            authorize=authorize_asr,
-        )
-    except PermissionError:
-        return _public_asr_error(403)
-    except (
-        PodcastAsrFetchSignatureError,
-        PodcastArtifactError,
-        TypeError,
-        ValueError,
-    ):
-        return _public_asr_error(404)
-
-    stat = os.fstat(handle.fileno())
-    size = stat.st_size
-    common_headers = {
-        **_PUBLIC_ASR_HEADERS,
-        "Accept-Ranges": "bytes",
-        "ETag": f'"{record.content_hash}"',
-        "Last-Modified": formatdate(stat.st_mtime, usegmt=True),
-    }
-    range_header = request.headers.get("range", "") if request.method == "GET" else ""
-    if range_header:
-        try:
-            start, end = _parse_range(range_header, size)
-        except (ValueError, OverflowError):
-            handle.close()
-            return Response(
-                status_code=416,
-                headers={**common_headers, "Content-Range": f"bytes */{size}"},
-            )
-        length = end - start + 1
-        return StreamingResponse(
-            _file_chunks(handle, start, length),
-            status_code=206,
-            media_type=record.mime,
-            headers={
-                **common_headers,
-                "Content-Range": f"bytes {start}-{end}/{size}",
-                "Content-Length": str(length),
-            },
-        )
-    if request.method == "HEAD":
-        handle.close()
-        return Response(
-            status_code=200,
-            media_type=record.mime,
-            headers={**common_headers, "Content-Length": str(size)},
-        )
-    return StreamingResponse(
-        _file_chunks(handle, 0, size),
-        status_code=200,
-        media_type=record.mime,
-        headers={**common_headers, "Content-Length": str(size)},
-    )
-
-
-@router.delete(
-    "/api/admin/podcast-asr-fetch/previous-signing-secret",
-    operation_id="clearPodcastAsrFetchPreviousSigningSecret",
-    response_model=PodcastAsrFetchSecretStatusResponse,
-    dependencies=[Depends(deps.require_admin)],
-)
-def clear_podcast_asr_fetch_previous_signing_secret(
-    session: Session = Depends(deps.get_session),
-):
-    """End the runtime-KV grace period without exposing either signing key."""
-
-    clear_asr_fetch_previous_secret(session)
-    resolved = resolve_asr_fetch_config(session)
-    sources = asr_fetch_field_sources(session)
-    return PodcastAsrFetchSecretStatusResponse(
-        previous_signing_secret_set=bool(resolved.previous_signing_secret),
-        previous_signing_secret_source=sources["previous_signing_secret"],
-    )
-
-
 @router.get(
     "/api/admin/podcast-asr-quota",
     response_model=PodcastAsrQuotaResponse,
@@ -870,18 +738,13 @@ def update_podcast_asr_quota(
     payload: PodcastAsrQuotaUpdate,
     session: Session = Depends(deps.get_session),
 ):
+    updates = {"asr_daily_audio_seconds_limit": payload.daily_audio_seconds_limit}
+    if payload.max_audio_seconds_per_file is not None:
+        updates["asr_max_audio_seconds_per_file"] = payload.max_audio_seconds_per_file
     credentials_service.save_updates(
-        session,
-        credentials_service.ALIYUN_ISI_NAMESPACE,
-        {"asr_daily_audio_seconds_limit": payload.daily_audio_seconds_limit},
+        session, credentials_service.ALIYUN_ISI_NAMESPACE, updates
     )
     return _asr_quota_response(session)
-
-
-@router.head(ASR_FETCH_PATH, include_in_schema=False)
-@router.get(ASR_FETCH_PATH, operation_id="fetchPodcastAsrSourceAudio")
-def public_asr_source_audio(request: Request):
-    return _public_asr_audio_response(request)
 
 
 @router.head(

@@ -1,5 +1,6 @@
 import asyncio
 import datetime as dt
+import hashlib
 import json
 import os
 import sys
@@ -21,7 +22,13 @@ from api.routers.source_configs import (
 from fetchers.impl.podcast_rss_fetcher import GenericPodcastRssFetcher
 from fetchers.registry import fetcher_registry
 from models.content import PodcastEpisodeContent, serialize_to_metadata
-from models.db import ArticleAnalysisRecord, ArticleRecord, SourceConfigRecord
+from models.db import (
+    ArticleAnalysisRecord,
+    ArticleRecord,
+    PodcastTextArtifactRecord,
+    PodcastTextPublicationRecord,
+    SourceConfigRecord,
+)
 
 
 def _seed_approved_podcast(sink, source_id: str) -> None:
@@ -589,7 +596,7 @@ def test_article_list_and_detail_serializer_project_lightweight_podcast_contract
         "chapters_mime": "application/json+chapters",
         "analysis_basis": "show_notes",
         "is_long_form": False,
-        "transcript_available": True,
+        "transcript_available": False,
         "id": "",
         "attempt_count": 0,
         "status": "",
@@ -600,9 +607,21 @@ def test_article_list_and_detail_serializer_project_lightweight_podcast_contract
         "transcript_source": "",
         "full_analysis_candidate": False,
         "final_premium": None,
+        "premium_guide": {
+            "status": "",
+            "failed_stage": "",
+            "error": "",
+            "audio_ready": False,
+        },
         "condensed_audio_url": "",
         "condensed_duration_seconds": None,
     }
+    published = serialize_article_list_item(
+        _podcast_record(1800),
+        include_content=False,
+        published_podcast_text_kinds={"normalized_transcript"},
+    )
+    assert published["podcast"]["transcript_available"] is True
     assert over_thirty["podcast"]["is_long_form"] is True
     assert "raw_data" not in over_thirty["podcast"]
 
@@ -952,6 +971,29 @@ def test_articles_list_and_detail_endpoints_expose_same_podcast_projection(monke
             analyzed_at="2026-09-02T00:10:00+00:00",
             created_at="2026-09-02T00:05:00+00:00",
             updated_at="2026-09-02T00:10:00+00:00",
+        ))
+        published_text = "A validated and published episode transcript."
+        session.add(PodcastTextArtifactRecord(
+            id="podcast-e2e-published-transcript",
+            episode_id=episode.id,
+            kind="publisher_transcript",
+            version=1,
+            content_hash=hashlib.sha256(published_text.encode("utf-8")).hexdigest(),
+            inline_text=published_text,
+            language="en",
+            authority_id="",
+            provenance_json='{"format":"text"}',
+            created_at="2026-09-02T00:09:00+00:00",
+        ))
+        session.add(PodcastTextPublicationRecord(
+            identity=f"{episode.id}:publisher_transcript",
+            episode_id=episode.id,
+            kind="publisher_transcript",
+            artifact_id="podcast-e2e-published-transcript",
+            status="published",
+            authority_id="",
+            published_at="2026-09-02T00:09:00+00:00",
+            updated_at="2026-09-02T00:09:00+00:00",
         ))
         session.commit()
 

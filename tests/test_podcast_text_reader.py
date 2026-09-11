@@ -24,6 +24,31 @@ from tests.conftest import seed_default_accounts
 
 STAMP = "2026-09-05T00:00:00+00:00"
 FUTURE = "2099-01-01T00:00:00+00:00"
+NORMALIZED_BODY = json.dumps(
+    {
+        "audio_duration_ms": 2_000,
+        "language": "zh-CN",
+        "text": "第一段。\n第二段。",
+        "segments": [
+            {
+                "channel": 0,
+                "start_ms": 0,
+                "end_ms": 1_000,
+                "text": "第一段。",
+                "words": [],
+            },
+            {
+                "channel": 0,
+                "start_ms": 1_000,
+                "end_ms": 2_000,
+                "text": "第二段。",
+                "words": [],
+            },
+        ],
+    },
+    ensure_ascii=False,
+    separators=(",", ":"),
+)
 
 
 def _artifact(
@@ -120,6 +145,9 @@ def _setup(monkeypatch, tmp_path):
                 "publisher_transcript",
                 "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello <b>world</b>.\n",
             ),
+            _artifact(
+                "episode-reader", "normalized_transcript", NORMALIZED_BODY
+            ),
             _artifact("episode-reader", "narration_script_zh", "绝不能发给 Reader。"),
         ]
         for artifact in artifacts:
@@ -168,6 +196,7 @@ def test_reader_returns_safe_current_publications_without_enqueuing(
             "digest_blog_zh",
             "transcript_zh",
             "publisher_transcript",
+            "normalized_transcript",
         ]
         assert "narration" not in response.text
         publisher = payload["items"][2]
@@ -178,6 +207,11 @@ def test_reader_returns_safe_current_publications_without_enqueuing(
         assert publisher["provenance"]["producer_authority_id"] == "remote-authority"
         assert publisher["provenance"]["pipeline_note"] == "podcast-v1"
         assert "forged-authority" not in response.text
+        normalized = payload["items"][3]
+        assert normalized["text"] == "第一段。\n第二段。"
+        assert normalized["text_format"] == "plain"
+        assert normalized["provenance"]["label"] == "ASR 逐字稿"
+        assert normalized["provenance"]["origin"] == "asr"
     with Session(sink.engine) as session:
         assert session.exec(select(PodcastProcessingRecord)).all() == []
         assert session.exec(select(PodcastStageAttemptRecord)).all() == []
@@ -314,6 +348,7 @@ def test_openapi_excludes_narration_script_from_reader_contract(monkeypatch, tmp
         "digest_blog_zh",
         "transcript_zh",
         "publisher_transcript",
+        "normalized_transcript",
     ]
     assert {"200", "400", "401", "403", "404", "422"}.issubset(operation["responses"])
     for status in ("400", "401", "403", "404", "422"):

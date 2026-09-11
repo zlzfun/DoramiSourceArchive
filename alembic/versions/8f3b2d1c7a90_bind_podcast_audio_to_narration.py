@@ -38,14 +38,12 @@ def _install_triggers() -> None:
 
         statements = _podcast_audio_dependency_trigger_sql(
             require_processing_narration=False,
-            include_source_cache_fields=False,
         )
     elif bind.dialect.name == "postgresql":
         from models.db import _podcast_audio_dependency_postgresql_sql
 
         statements = _podcast_audio_dependency_postgresql_sql(
             require_processing_narration=False,
-            include_source_cache_fields=False,
         )
     else:
         return

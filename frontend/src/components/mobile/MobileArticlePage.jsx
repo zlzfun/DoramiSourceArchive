@@ -10,6 +10,7 @@ import {
 import ReaderMarkdown from '../ReaderMarkdown';
 import ShareMenu from '../ShareMenu';
 import PodcastExperiencePanel from '../PodcastExperiencePanel';
+import PodcastTextPanel from '../PodcastTextPanel';
 import AnalysisTagChip from '../AnalysisTagChip';
 import { PaneBodySkeleton } from '../ReaderTab';
 import { formatDateTime, formatPublishDate } from '../../utils/datetime';
@@ -226,6 +227,12 @@ export default function MobileArticlePage({
             podcastView
               ? '该播客暂无文字内容，可收听上方原节目音频。'
               : '该文章暂无正文内容，点击「查看原文」阅读完整内容。'
+          )}
+          {podcastView && !podcastGuideActive && !activeBodyLoading && (
+            <PodcastTextPanel
+              episodeId={activeArticle.id}
+              preferredTranscriptKind="publisher_transcript"
+            />
           )}
           {/* 正文尾部原文行(v3.45 推全站,与桌面阅读窗同口径):无 source_url 不画 */}
           {!podcastGuideActive && !activeBodyLoading && activeArticle.source_url && (

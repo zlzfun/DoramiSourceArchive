@@ -23,6 +23,10 @@ from services.podcast_publisher_transcripts import (
     PublisherTranscriptMalformed,
     parse_transcript,
 )
+from services.podcast_normalized_transcripts import (
+    NormalizedTranscriptError,
+    canonical_normalized_transcript,
+)
 from services.podcast_text_limits import (
     PodcastTextLimitExceeded,
     validate_text_artifact,
@@ -33,11 +37,13 @@ READER_TEXT_KINDS = (
     "digest_blog_zh",
     "transcript_zh",
     "publisher_transcript",
+    "normalized_transcript",
 )
 _KIND_LABEL = {
     "digest_blog_zh": "AI 整理",
     "transcript_zh": "AI 整理的中文逐字稿",
     "publisher_transcript": "来源逐字稿",
+    "normalized_transcript": "ASR 逐字稿",
 }
 
 
@@ -86,7 +92,11 @@ def _provenance_summary(artifact: PodcastTextArtifactRecord) -> dict[str, str]:
     result = {
         "label": _KIND_LABEL[artifact.kind],
         "origin": (
-            "publisher" if artifact.kind == "publisher_transcript" else "ai"
+            "publisher"
+            if artifact.kind == "publisher_transcript"
+            else "asr"
+            if artifact.kind == "normalized_transcript"
+            else "ai"
         ),
     }
     if authority:
@@ -123,6 +133,28 @@ def _plain_text(artifact: PodcastTextArtifactRecord, config: PodcastConfig) -> s
         )
     except PodcastTextLimitExceeded as exc:
         raise PodcastTextReaderMalformed(str(exc)) from exc
+    if artifact.kind == "normalized_transcript":
+        try:
+            document = json.loads(artifact.inline_text)
+            canonical = canonical_normalized_transcript(document)
+            projected = json.loads(canonical)["text"]
+            validate_text_artifact(
+                projected,
+                max_chars=config.text_artifact_max_chars,
+                max_bytes=config.text_artifact_max_bytes,
+            )
+            return projected
+        except (
+            KeyError,
+            TypeError,
+            ValueError,
+            json.JSONDecodeError,
+            NormalizedTranscriptError,
+            PodcastTextLimitExceeded,
+        ) as exc:
+            raise PodcastTextReaderMalformed(
+                "已发布的 ASR 逐字稿无法生成安全纯文本投影"
+            ) from exc
     if artifact.kind != "publisher_transcript":
         return artifact.inline_text
     try:

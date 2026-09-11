@@ -91,96 +91,7 @@ def test_save_updates_all_noop_values_do_not_commit_caller_state(session):
     assert pending in session.new
 
 
-def test_save_updates_commits_namespace_rotation_once(session, monkeypatch):
-    commit_calls = 0
-    original_commit = session.commit
-
-    def recording_commit():
-        nonlocal commit_calls
-        commit_calls += 1
-        return original_commit()
-
-    monkeypatch.setattr(session, "commit", recording_commit)
-    credentials.save_updates(
-        session,
-        credentials.PODCAST_ASR_FETCH_NAMESPACE,
-        {
-            "signing_secret": "n" * 32,
-            "previous_signing_secret": "o" * 32,
-        },
-    )
-    assert commit_calls == 1
-    assert credentials.get_setting(
-        session, "podcast_asr_fetch_signing_secret"
-    ) == "n" * 32
-    assert credentials.get_setting(
-        session, "podcast_asr_fetch_previous_signing_secret"
-    ) == "o" * 32
-
-
-def test_save_updates_rotation_failure_rolls_back_every_field(
-    session, monkeypatch
-):
-    namespace = credentials.PODCAST_ASR_FETCH_NAMESPACE
-    credentials.save_updates(session, namespace, {"signing_secret": "o" * 32})
-    original_add = session.add
-    add_calls = 0
-
-    def fail_second_add(instance):
-        nonlocal add_calls
-        add_calls += 1
-        if add_calls == 2:
-            raise RuntimeError("simulated staging failure")
-        return original_add(instance)
-
-    monkeypatch.setattr(session, "add", fail_second_add)
-    with pytest.raises(RuntimeError, match="simulated staging failure"):
-        credentials.save_updates(
-            session,
-            namespace,
-            {
-                "signing_secret": "n" * 32,
-                "previous_signing_secret": "o" * 32,
-            },
-        )
-    monkeypatch.setattr(session, "add", original_add)
-    assert credentials.get_setting(
-        session, "podcast_asr_fetch_signing_secret"
-    ) == "o" * 32
-    assert credentials.get_setting(
-        session, "podcast_asr_fetch_previous_signing_secret"
-    ) == ""
-    effective = credentials.resolve_values(
-        session,
-        namespace,
-        credentials.config.PodcastAsrFetchConfig(
-            public_base_url=(
-                "https://audio.example.test/api/public/podcast-asr/source-audio"
-            ),
-            signing_secret="b" * 32,
-        ),
-    )
-    assert effective["signing_secret"] == "o" * 32
-    assert effective["previous_signing_secret"] == ""
-
-
 def test_clear_secret_fields_is_explicitly_allowlisted(session):
-    namespace = credentials.PODCAST_ASR_FETCH_NAMESPACE
-    credentials.save_updates(
-        session,
-        namespace,
-        {"previous_signing_secret": "p" * 32},
-    )
-    credentials.clear_secret_fields(
-        session, namespace, ("previous_signing_secret",)
-    )
-    assert credentials.get_setting(
-        session, "podcast_asr_fetch_previous_signing_secret"
-    ) == ""
-    with pytest.raises(ValueError, match="not clearable"):
-        credentials.clear_secret_fields(
-            session, namespace, ("signing_secret",)
-        )
     with pytest.raises(ValueError, match="not clearable"):
         credentials.clear_secret_fields(
             session, credentials.LLM_NAMESPACE, ("api_key",)
@@ -295,6 +206,7 @@ def test_registry_kv_keys_match_legacy_storage():
         "asr_quota_scope": "aliyun_isi_asr_quota_scope",
         "asr_quota_timezone": "aliyun_isi_asr_quota_timezone",
         "asr_daily_audio_seconds_limit": "aliyun_isi_asr_daily_audio_seconds_limit",
+        "asr_max_audio_seconds_per_file": "aliyun_isi_asr_max_audio_seconds_per_file",
         "asr_entitlement_ends_at": "aliyun_isi_asr_entitlement_ends_at",
         "asr_provider_deadline_seconds": "aliyun_isi_asr_provider_deadline_seconds",
         "asr_price_cny_minor_per_hour": "aliyun_isi_asr_price_cny_minor_per_hour",
@@ -309,22 +221,10 @@ def test_registry_kv_keys_match_legacy_storage():
         "tts_pricing_revision": "aliyun_isi_tts_pricing_revision",
         "tts_usage_settlement_mode": "aliyun_isi_tts_usage_settlement_mode",
     }
-    asr_fetch = {
-        f.name: f.kv_key for f in credentials.PODCAST_ASR_FETCH_NAMESPACE.fields
-    }
-    assert asr_fetch == {
-        "public_base_url": "podcast_asr_fetch_public_base_url",
-        "signing_secret": "podcast_asr_fetch_signing_secret",
-        "previous_signing_secret": "podcast_asr_fetch_previous_signing_secret",
-        "url_ttl_seconds": "podcast_asr_fetch_url_ttl_seconds",
-        "clock_skew_seconds": "podcast_asr_fetch_clock_skew_seconds",
-        "min_remaining_seconds": "podcast_asr_fetch_min_remaining_seconds",
-    }
     assert set(credentials.REGISTRY) == {
         "llm",
         "x_api",
         "aliyun_isi",
-        "podcast_asr_fetch",
     }
 
 

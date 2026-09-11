@@ -3,9 +3,9 @@
 
 This operator smoke test deliberately does not bill real providers. It seeds the
 published text and derived-audio outputs that an external provider run produces,
-caches one publisher-audio fixture through the external HTTP API, transfers the
+validates one publisher-audio fixture through the external HTTP API, transfers the
 published guide through the real Archive Sync v3 HTTP contract, then checks that
-the internal Reader can serve both text and audio. Source audio remains
+the internal Reader can serve both text and audio. Source media remains
 external-only across sync and process restarts.
 
 Every database, config, media directory, and Podcast CAS directory is created
@@ -16,7 +16,6 @@ prove that a repository/production path cannot be substituted accidentally.
 from __future__ import annotations
 
 import argparse
-import datetime as dt
 import hashlib
 import json
 import os
@@ -45,6 +44,7 @@ from models.db import (  # noqa: E402
     JobRecord,
     MediaAssetRecord,
     PodcastArtifactRecord,
+    PodcastSourceMediaSnapshotRecord,
     PodcastTextArtifactRecord,
     PodcastTextPublicationRecord,
     SourceConfigRecord,
@@ -63,7 +63,6 @@ SOURCE_ID = "podcast-text-e2e-show"
 EPISODE_ID = "podcast-text-e2e-episode"
 AUDIO_URL = "https://audio.example.test/podcast-text-e2e-original.mp3"
 DIGEST_AUDIO_ID = "podcast-text-e2e-digest-audio"
-SOURCE_AUDIO_TTL_SECONDS = 604800
 EXPECTED_STREAMS = (
     "sources",
     "taxonomy",
@@ -98,7 +97,7 @@ _CHILD_ENV_PASSTHROUGH = frozenset(
 )
 
 
-def _source_audio_fixture(samples: int = 80) -> bytes:
+def _source_media_fixture(samples: int = 80) -> bytes:
     """Return a tiny valid PCM WAV without requiring a fixture download."""
 
     pcm = b"\x00\x00" * samples
@@ -113,7 +112,7 @@ def _source_audio_fixture(samples: int = 80) -> bytes:
     )
 
 
-SOURCE_AUDIO_FIXTURE = _source_audio_fixture()
+SOURCE_MEDIA_FIXTURE = _source_media_fixture()
 
 
 _FIXTURE_SERVER_BOOTSTRAP = r"""
@@ -126,10 +125,10 @@ import httpx
 from api.routers import podcasts
 from services import http_safety
 
-payload = Path(os.environ["DORAMI_E2E_SOURCE_AUDIO_FIXTURE"]).read_bytes()
-request_log = Path(os.environ["DORAMI_E2E_SOURCE_AUDIO_REQUEST_LOG"])
+payload = Path(os.environ["DORAMI_E2E_SOURCE_MEDIA_FIXTURE"]).read_bytes()
+request_log = Path(os.environ["DORAMI_E2E_SOURCE_MEDIA_REQUEST_LOG"])
 real_async_client = httpx.AsyncClient
-real_cache_source_audio = podcasts.cache_source_audio
+real_validate_source_media = podcasts.validate_source_media
 
 
 async def fixture_resolver(host):
@@ -160,13 +159,13 @@ def fixture_client(*args, **kwargs):
     return real_async_client(*args, **kwargs)
 
 
-async def fixture_cache_source_audio(*args, **kwargs):
+async def fixture_validate_source_media(*args, **kwargs):
     kwargs["client_factory"] = fixture_client
-    return await real_cache_source_audio(*args, **kwargs)
+    return await real_validate_source_media(*args, **kwargs)
 
 
 http_safety._default_public_resolver = fixture_resolver
-podcasts.cache_source_audio = fixture_cache_source_audio
+podcasts.validate_source_media = fixture_validate_source_media
 runpy.run_path(os.environ["DORAMI_E2E_MAIN"], run_name="__main__")
 """
 
@@ -270,8 +269,6 @@ def _write_config(
                 "upload_timeout_seconds = 5",
                 "download_timeout_seconds = 5",
                 "download_max_redirects = 2",
-                f"source_audio_ttl_seconds = {SOURCE_AUDIO_TTL_SECONDS}",
-                "source_audio_quota_bytes = 16777216",
                 f"ffprobe_binary = {ffprobe_binary}",
                 "probe_timeout_seconds = 5",
                 "orphan_grace_seconds = 0",
@@ -331,7 +328,7 @@ def _episode() -> ArticleRecord:
                 "audio_url": AUDIO_URL,
                 "enclosure_url": AUDIO_URL,
                 "audio_mime": "audio/wav",
-                "audio_bytes": len(SOURCE_AUDIO_FIXTURE),
+                "audio_bytes": len(SOURCE_MEDIA_FIXTURE),
                 "duration_seconds": 3600,
             },
             ensure_ascii=False,
@@ -404,7 +401,7 @@ def _seed_external(db_path: Path, artifact_root: Path) -> None:
                 previous_id = artifact_id
                 previous_hash = content_hash
             session.flush()
-            digest_hash = hashlib.sha256(SOURCE_AUDIO_FIXTURE).hexdigest()
+            digest_hash = hashlib.sha256(SOURCE_MEDIA_FIXTURE).hexdigest()
             session.add(
                 PodcastArtifactRecord(
                     id=DIGEST_AUDIO_ID,
@@ -413,7 +410,7 @@ def _seed_external(db_path: Path, artifact_root: Path) -> None:
                     content_hash=digest_hash,
                     mime="audio/wav",
                     ext=".wav",
-                    size_bytes=len(SOURCE_AUDIO_FIXTURE),
+                    size_bytes=len(SOURCE_MEDIA_FIXTURE),
                     duration_seconds=0.01,
                     status="published",
                     provenance="premium_guide_tts",
@@ -428,11 +425,11 @@ def _seed_external(db_path: Path, artifact_root: Path) -> None:
             session.commit()
         digest_path = (
             artifact_root
-            / hashlib.sha256(SOURCE_AUDIO_FIXTURE).hexdigest()[:2]
-            / f"{hashlib.sha256(SOURCE_AUDIO_FIXTURE).hexdigest()}.wav"
+            / hashlib.sha256(SOURCE_MEDIA_FIXTURE).hexdigest()[:2]
+            / f"{hashlib.sha256(SOURCE_MEDIA_FIXTURE).hexdigest()}.wav"
         )
         digest_path.parent.mkdir(parents=True, exist_ok=True)
-        digest_path.write_bytes(SOURCE_AUDIO_FIXTURE)
+        digest_path.write_bytes(SOURCE_MEDIA_FIXTURE)
     finally:
         storage.engine.dispose()
 
@@ -460,8 +457,8 @@ def _child_environment(
     installation: str,
     stages: tuple[str, ...],
     artifact_root: Path,
-    source_audio_fixture: Path | None = None,
-    source_audio_request_log: Path | None = None,
+    source_media_fixture: Path | None = None,
+    source_media_request_log: Path | None = None,
 ) -> dict[str, str]:
     # Start from a small runtime allowlist. A denylist is unsafe here because a
     # newly added provider credential could silently flow into this zero-call
@@ -484,13 +481,13 @@ def _child_environment(
             "PYTHONPATH": str(SRC_DIR),
         }
     )
-    if source_audio_fixture is not None:
-        if source_audio_request_log is None:
-            raise ValueError("source audio fixture requires a request log")
+    if source_media_fixture is not None:
+        if source_media_request_log is None:
+            raise ValueError("source media fixture requires a request log")
         env.update(
             {
-                "DORAMI_E2E_SOURCE_AUDIO_FIXTURE": str(source_audio_fixture),
-                "DORAMI_E2E_SOURCE_AUDIO_REQUEST_LOG": str(source_audio_request_log),
+                "DORAMI_E2E_SOURCE_MEDIA_FIXTURE": str(source_media_fixture),
+                "DORAMI_E2E_SOURCE_MEDIA_REQUEST_LOG": str(source_media_request_log),
                 "DORAMI_E2E_MAIN": str(SRC_DIR / "main.py"),
             }
         )
@@ -507,14 +504,14 @@ def _start_server(
     installation: str,
     stages: tuple[str, ...],
     artifact_root: Path,
-    source_audio_fixture: Path | None = None,
-    source_audio_request_log: Path | None = None,
+    source_media_fixture: Path | None = None,
+    source_media_request_log: Path | None = None,
     attempt: int = 1,
 ) -> subprocess.Popen:
     log_path = root / f"{name}-{attempt}.log"
     with log_path.open("w", encoding="utf-8") as log:
         command = [sys.executable, str(SRC_DIR / "main.py")]
-        if source_audio_fixture is not None:
+        if source_media_fixture is not None:
             command = [sys.executable, "-c", _FIXTURE_SERVER_BOOTSTRAP]
         process = subprocess.Popen(
             command,
@@ -525,8 +522,8 @@ def _start_server(
                 installation=installation,
                 stages=stages,
                 artifact_root=artifact_root,
-                source_audio_fixture=source_audio_fixture,
-                source_audio_request_log=source_audio_request_log,
+                source_media_fixture=source_media_fixture,
+                source_media_request_log=source_media_request_log,
             ),
             stdout=log,
             stderr=subprocess.STDOUT,
@@ -633,87 +630,58 @@ def _checkpoint_identity(
     }
 
 
-def _cache_external_source_audio(
+def _validate_external_source_media(
     client: httpx.Client,
     *,
-    expected_artifact_id: str | None = None,
+    expected_snapshot_id: str | None = None,
 ) -> dict:
     response = client.post(
-        f"/api/admin/podcast-episodes/{EPISODE_ID}/cache-source-audio"
+        f"/api/admin/podcast-episodes/{EPISODE_ID}/validate-source-media"
     )
     response.raise_for_status()
-    artifact = response.json()
-    assert artifact["kind"] == "source_audio"
-    assert artifact["status"] == "ready"
-    assert artifact["retention_state"] == "temporary"
+    snapshot = response.json()
     assert (
-        artifact["source_locator_hash"]
+        snapshot["locator_hash"]
         == hashlib.sha256(AUDIO_URL.encode("utf-8")).hexdigest()
     )
-    assert artifact["content_hash"] == hashlib.sha256(SOURCE_AUDIO_FIXTURE).hexdigest()
-    created_at = dt.datetime.fromisoformat(artifact["created_at"])
-    expires_at = dt.datetime.fromisoformat(artifact["expires_at"])
-    assert expires_at > dt.datetime.now(dt.timezone.utc)
-    assert (
-        SOURCE_AUDIO_TTL_SECONDS
-        <= (expires_at - created_at).total_seconds()
-        <= (SOURCE_AUDIO_TTL_SECONDS + 1)
-    )
-    assert artifact["expired_at"] is None
-    if expected_artifact_id is not None:
-        assert artifact["id"] == expected_artifact_id
-
-    audio = client.get(f"/api/admin/podcast-artifacts/{artifact['id']}/audio")
-    audio.raise_for_status()
-    assert audio.content == SOURCE_AUDIO_FIXTURE
-    assert audio.headers["etag"] == f'"{artifact["content_hash"]}"'
-
-    stats = client.get("/api/admin/podcast-artifacts/stats")
-    stats.raise_for_status()
-    storage_status = stats.json()
-    assert storage_status["source_audio_bytes"] == len(SOURCE_AUDIO_FIXTURE)
-    assert storage_status["expired_source_audio"] == 0
-    assert storage_status["source_audio_due"] == 0
-    return artifact
+    assert snapshot["content_hash"] == hashlib.sha256(SOURCE_MEDIA_FIXTURE).hexdigest()
+    assert snapshot["mime"] == "audio/wav"
+    assert snapshot["size_bytes"] == len(SOURCE_MEDIA_FIXTURE)
+    assert snapshot["duration_seconds"] == 0.01
+    if expected_snapshot_id is not None:
+        assert snapshot["id"] == expected_snapshot_id
+    return snapshot
 
 
-def _assert_external_source_audio(
+def _assert_external_source_media_snapshot(
     db_path: Path,
     artifact_root: Path,
     *,
-    artifact_id: str,
+    snapshot_id: str,
 ) -> None:
-    expected_hash = hashlib.sha256(SOURCE_AUDIO_FIXTURE).hexdigest()
+    expected_hash = hashlib.sha256(SOURCE_MEDIA_FIXTURE).hexdigest()
     storage = DatabaseStorage(db_url=f"sqlite:///{db_path}")
     try:
         with Session(storage.engine) as session:
-            artifacts = session.exec(
-                select(PodcastArtifactRecord).where(
-                    PodcastArtifactRecord.kind == "source_audio"
+            snapshots = session.exec(
+                select(PodcastSourceMediaSnapshotRecord).where(
+                    PodcastSourceMediaSnapshotRecord.episode_id == EPISODE_ID
                 )
             ).all()
-            assert len(artifacts) == 1
-            artifact = artifacts[0]
-            assert artifact.id == artifact_id
-            assert artifact.episode_id == EPISODE_ID
-            assert artifact.kind == "source_audio"
-            assert artifact.status == "ready"
-            assert artifact.content_hash == expected_hash
-            assert artifact.mime == "audio/wav"
-            assert artifact.size_bytes == len(SOURCE_AUDIO_FIXTURE)
+            assert len(snapshots) == 1
+            snapshot = snapshots[0]
+            assert snapshot.id == snapshot_id
+            assert snapshot.episode_id == EPISODE_ID
+            assert snapshot.content_hash == expected_hash
+            assert snapshot.mime == "audio/wav"
+            assert snapshot.size_bytes == len(SOURCE_MEDIA_FIXTURE)
             assert (
-                artifact.source_locator_hash
+                snapshot.locator_hash
                 == hashlib.sha256(AUDIO_URL.encode("utf-8")).hexdigest()
             )
-            assert artifact.expires_at is not None
-            assert dt.datetime.fromisoformat(artifact.expires_at) > dt.datetime.now(
-                dt.timezone.utc
-            )
-            assert artifact.expired_at is None
-            assert artifact.provenance == "publisher_enclosure_cache"
-            assert artifact.authority_id == EXTERNAL_AUTHORITY
+            assert snapshot.duration_seconds == 0.01
         blob = artifact_root / expected_hash[:2] / f"{expected_hash}.wav"
-        assert blob.read_bytes() == SOURCE_AUDIO_FIXTURE
+        assert not blob.exists()
     finally:
         storage.engine.dispose()
 
@@ -756,7 +724,7 @@ def _assert_internal_database(db_path: Path, artifact_root: Path) -> None:
                 assert provenance["pipeline"] == "podcast-text-e2e-v1"
                 assert provenance["provider"] == "none"
 
-            # Publisher source audio remains an external-only temporary cache;
+            # Publisher source media validation metadata remains external-only;
             # the published Chinese guide audio is replicated into internal CAS.
             audio = session.get(PodcastArtifactRecord, DIGEST_AUDIO_ID)
             assert audio is not None
@@ -764,12 +732,12 @@ def _assert_internal_database(db_path: Path, artifact_root: Path) -> None:
             assert audio.status == "published"
             assert audio.authority_id == EXTERNAL_AUTHORITY
             assert (
-                audio.content_hash == hashlib.sha256(SOURCE_AUDIO_FIXTURE).hexdigest()
+                audio.content_hash == hashlib.sha256(SOURCE_MEDIA_FIXTURE).hexdigest()
             )
             assert (
                 session.exec(
-                    select(PodcastArtifactRecord).where(
-                        PodcastArtifactRecord.kind == "source_audio"
+                    select(PodcastSourceMediaSnapshotRecord).where(
+                        PodcastSourceMediaSnapshotRecord.episode_id == EPISODE_ID
                     )
                 ).all()
                 == []
@@ -785,7 +753,7 @@ def _assert_internal_database(db_path: Path, artifact_root: Path) -> None:
                 / audio.content_hash[:2]
                 / f"{audio.content_hash}{audio.ext}"
             )
-            assert digest_path.read_bytes() == SOURCE_AUDIO_FIXTURE
+            assert digest_path.read_bytes() == SOURCE_MEDIA_FIXTURE
 
             table_names = {
                 row[0]
@@ -827,8 +795,8 @@ def main(argv: list[str] | None = None) -> int:
     internal_artifacts = root / "internal-podcast-artifacts"
     external_config = root / "external.ini"
     internal_config = root / "internal.ini"
-    source_audio_fixture = root / "publisher-source-audio.wav"
-    source_audio_request_log = root / "publisher-source-audio.requests"
+    source_media_fixture = root / "publisher-source-media.wav"
+    source_media_request_log = root / "publisher-source-media.requests"
     ffprobe_binary = root / "ffprobe-fixture"
     assert_isolated_e2e_paths(
         root,
@@ -840,8 +808,8 @@ def main(argv: list[str] | None = None) -> int:
         internal_artifacts,
         external_config,
         internal_config,
-        source_audio_fixture,
-        source_audio_request_log,
+        source_media_fixture,
+        source_media_request_log,
         ffprobe_binary,
     )
 
@@ -866,7 +834,7 @@ def main(argv: list[str] | None = None) -> int:
     processes: list[subprocess.Popen] = []
     passed = False
     try:
-        source_audio_fixture.write_bytes(SOURCE_AUDIO_FIXTURE)
+        source_media_fixture.write_bytes(SOURCE_MEDIA_FIXTURE)
         ffprobe_binary.write_text(
             "#!/usr/bin/env python3\n"
             "import json\n"
@@ -909,8 +877,8 @@ def main(argv: list[str] | None = None) -> int:
             installation="external",
             stages=external_stages,
             artifact_root=external_artifacts,
-            source_audio_fixture=source_audio_fixture,
-            source_audio_request_log=source_audio_request_log,
+            source_media_fixture=source_media_fixture,
+            source_media_request_log=source_media_request_log,
         )
         processes.append(external_process)
         internal_process = _start_server(
@@ -927,22 +895,22 @@ def main(argv: list[str] | None = None) -> int:
 
         external_admin = _login(external_url)
         try:
-            source_artifact = _cache_external_source_audio(external_admin)
-            # A second request must reuse the live locator without another
-            # publisher transfer.
-            replay = _cache_external_source_audio(
-                external_admin, expected_artifact_id=source_artifact["id"]
+            source_snapshot = _validate_external_source_media(external_admin)
+            # Validation is idempotent in metadata, but deliberately downloads
+            # the current enclosure again rather than trusting cached bytes.
+            replay = _validate_external_source_media(
+                external_admin, expected_snapshot_id=source_snapshot["id"]
             )
-            assert replay["id"] == source_artifact["id"]
-            assert source_audio_request_log.read_text(
+            assert replay["id"] == source_snapshot["id"]
+            assert source_media_request_log.read_text(
                 encoding="ascii"
-            ).splitlines() == ["request"]
+            ).splitlines() == ["request", "request"]
         finally:
             external_admin.close()
-        _assert_external_source_audio(
+        _assert_external_source_media_snapshot(
             external_db,
             external_artifacts,
-            artifact_id=source_artifact["id"],
+            snapshot_id=source_snapshot["id"],
         )
 
         internal_admin = _login(internal_url)
@@ -995,7 +963,7 @@ def main(argv: list[str] | None = None) -> int:
                     f"/api/reader/podcast-artifacts/{DIGEST_AUDIO_ID}/audio"
                 )
                 audio.raise_for_status()
-                assert audio.content == SOURCE_AUDIO_FIXTURE
+                assert audio.content == SOURCE_MEDIA_FIXTURE
             finally:
                 reader.close()
 
@@ -1021,8 +989,8 @@ def main(argv: list[str] | None = None) -> int:
                 installation="external",
                 stages=external_stages,
                 artifact_root=external_artifacts,
-                source_audio_fixture=source_audio_fixture,
-                source_audio_request_log=source_audio_request_log,
+                source_media_fixture=source_media_fixture,
+                source_media_request_log=source_media_request_log,
                 attempt=2,
             )
             processes.append(external_process)
@@ -1040,20 +1008,20 @@ def main(argv: list[str] | None = None) -> int:
             processes.append(internal_process)
             external_admin = _login(external_url)
             try:
-                replay_after_restart = _cache_external_source_audio(
+                replay_after_restart = _validate_external_source_media(
                     external_admin,
-                    expected_artifact_id=source_artifact["id"],
+                    expected_snapshot_id=source_snapshot["id"],
                 )
-                assert replay_after_restart["id"] == source_artifact["id"]
-                assert source_audio_request_log.read_text(
+                assert replay_after_restart["id"] == source_snapshot["id"]
+                assert source_media_request_log.read_text(
                     encoding="ascii"
-                ).splitlines() == ["request"]
+                ).splitlines() == ["request", "request", "request"]
             finally:
                 external_admin.close()
-            _assert_external_source_audio(
+            _assert_external_source_media_snapshot(
                 external_db,
                 external_artifacts,
-                artifact_id=source_artifact["id"],
+                snapshot_id=source_snapshot["id"],
             )
             internal_admin = _login(internal_url)
             after_restart = _checkpoint_identity(
@@ -1117,15 +1085,12 @@ def main(argv: list[str] | None = None) -> int:
                         f"/api/articles/{EPISODE_ID}",
                     ],
                     "provider_attempts": 0,
-                    "original_audio": "external-temporary-cache-only",
-                    "source_audio": {
-                        "artifact_id": source_artifact["id"],
-                        "status": "ready",
-                        "retention": "temporary",
-                        "ttl_seconds": SOURCE_AUDIO_TTL_SECONDS,
-                        "external_cached": True,
+                    "original_audio": "external-validation-snapshot-only",
+                    "source_media": {
+                        "snapshot_id": source_snapshot["id"],
+                        "external_validated": True,
                         "internal_synchronized": False,
-                        "publisher_requests": 1,
+                        "publisher_requests": 3,
                         "stable_after_restart": True,
                     },
                     "digest_audio_zh": "external-generated-and-synchronized",

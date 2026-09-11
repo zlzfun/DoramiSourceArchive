@@ -38,7 +38,7 @@ ASR 可以标出 Host/Guest 或 A/B/C，用于回答“谁提出了什么观点�
 ## 3. 业界通用流水线
 
 ```text
-publisher transcript（优先） / source audio
+publisher transcript（优先） / RSS enclosure URL
   → 源语言 ASR
   → diarization（谁在何时说）
   → speaker identity mapping（可证实才绑定姓名）
@@ -179,5 +179,5 @@ TTS 记录：
 - `speaker_id`、`speaker_name` 只描述源内容；`voice_id` 只描述成品旁白，分字段保存。
 - 翻译与口播稿均保存 prompt/model/glossary/version 和源 segment IDs。
 - 每个声线登记 provider、model、voice、许可证据、区域、有效期和 AI disclosure。
-- 原始音频不永久镜像；处理临时文件短期删除，衍生音频私有存储并支持撤权。
+- 原始音频不永久镜像；ASR 优先使用 RSS enclosure 原地址，只有供应商明确无法下载/读取时才把同一地址临时中转到私有 OSS 并补提一次，终态主动删除且由短生命周期兜底。本地 staging 只做输入校验并在校验后删除，持久层仅留轻量 `source_media_snapshot`。衍生音频私有存储并支持撤权。
 - 播音稿按语义段落保存证据 manifest，保证每段内容可回溯且可局部重试。

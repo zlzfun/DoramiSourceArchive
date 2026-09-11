@@ -19,9 +19,9 @@ from typing import Mapping
 from sqlmodel import Session, select
 
 from models.db import (
-    PodcastArtifactRecord,
     PodcastBudgetReservationRecord,
     PodcastProcessingRecord,
+    PodcastSourceMediaSnapshotRecord,
     PodcastStageAttemptRecord,
 )
 from services.podcast_normalized_transcripts import (
@@ -50,13 +50,14 @@ from services.podcast_processing import (
     settle_attempt_cost,
 )
 from services.podcast_processing_inputs import (
-    SourceAudioDurationError,
+    SourceMediaDurationError,
     processing_input_fingerprint,
-    source_audio_duration_ms,
+    source_media_duration_ms,
 )
 from services.podcast_provider_ports import (
     AsrPlanningUnavailable,
     AsrProviderAdapter,
+    AsrProviderFallbackAdapter,
     AsrProviderPlan,
     AsrUsagePlanner,
 )
@@ -71,11 +72,15 @@ from services.podcast_worker_contracts import (
     ProviderUsagePlan,
     Rejected,
     StageContext,
+    StagePlan,
     Succeeded,
     TaskFailed,
     TextOutput,
     Unknown,
 )
+
+
+PROVIDER_FALLBACK_MARKER = "provider_fallback_required"
 
 
 @dataclass(frozen=True)
@@ -139,7 +144,6 @@ class _RunSnapshot:
     estimated_cost_minor: int
     artifact: ArtifactRef
     audio_duration_ms: int
-    source_expires_at: dt.datetime | None
     attempt_id: str | None
     attempt_no: int | None
     provider_name: str | None
@@ -150,6 +154,7 @@ class _RunSnapshot:
     submission_state: str | None
     provider_deadline_at: dt.datetime | None
     reservation_status: str | None
+    is_fallback_attempt: bool
 
 
 class _AsrClaimPolicy:
@@ -187,15 +192,27 @@ def _parse_deadline(value: str | None) -> dt.datetime | None:
     return _utc(parsed)
 
 
-def _parse_source_expiry(value: str | None) -> dt.datetime | None:
-    raw = str(value or "").strip()
-    if not raw:
-        return None
-    try:
-        parsed = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return _utc(parsed)
+def _attempt_is_provider_fallback(
+    session: Session,
+    *,
+    processing_id: str,
+    attempt_no: int,
+) -> bool:
+    """Return whether this attempt is the single OSS rescue attempt."""
+
+    if attempt_no <= 1:
+        return False
+    previous = session.exec(
+        select(PodcastStageAttemptRecord).where(
+            PodcastStageAttemptRecord.processing_id == processing_id,
+            PodcastStageAttemptRecord.attempt_no == attempt_no - 1,
+        )
+    ).first()
+    return bool(
+        previous is not None
+        and previous.submission_state == "failed_retryable"
+        and previous.error_code == PROVIDER_FALLBACK_MARKER
+    )
 
 
 def _load_snapshot(session: Session, claim: PodcastProcessingClaim) -> _RunSnapshot:
@@ -223,27 +240,36 @@ def _load_snapshot(session: Session, claim: PodcastProcessingClaim) -> _RunSnaps
     if active is not None and reservation is None:
         session.rollback()
         raise PodcastProcessingConflict("active ASR attempt reservation is missing")
-    artifact = session.get(PodcastArtifactRecord, str(process.input_artifact_id or ""))
-    artifact_is_current = (
-        artifact is not None
-        and artifact.episode_id == claim.episode_id
-        and artifact.kind == "source_audio"
-        and artifact.status == "ready"
-        and artifact.content_hash == process.input_content_hash
+    is_fallback_attempt = bool(
+        active is not None
+        and _attempt_is_provider_fallback(
+            session,
+            processing_id=process.id,
+            attempt_no=active.attempt_no,
+        )
     )
-    if not artifact_is_current and not (
+    media = session.get(
+        PodcastSourceMediaSnapshotRecord, str(process.input_artifact_id or "")
+    )
+    snapshot_is_current = (
+        media is not None
+        and media.episode_id == claim.episode_id
+        and process.input_artifact_kind == "source_media_snapshot"
+        and media.content_hash == process.input_content_hash
+    )
+    if not snapshot_is_current and not (
         claim.drain_only
         and active is not None
         and active.execution_kind == "provider"
     ):
         session.rollback()
-        raise PodcastProcessingConflict("ASR source-audio binding is not usable")
-    if artifact is not None:
+        raise PodcastProcessingConflict("ASR source-media snapshot binding is not usable")
+    if media is not None:
         try:
-            audio_duration_ms = source_audio_duration_ms(
-                artifact.duration_seconds
+            audio_duration_ms = source_media_duration_ms(
+                media.duration_seconds
             )
-        except SourceAudioDurationError:
+        except SourceMediaDurationError:
             audio_duration_ms = 0
     else:
         audio_duration_ms = 0
@@ -256,16 +282,16 @@ def _load_snapshot(session: Session, claim: PodcastProcessingClaim) -> _RunSnaps
             audio_duration_ms = reservation.reserved_usage_units * 1000
     if audio_duration_ms <= 0:
         session.rollback()
-        raise SourceAudioDurationError(
-            "ASR source-audio duration is unavailable for settlement"
+        raise SourceMediaDurationError(
+            "ASR source-media duration is unavailable for settlement"
         )
     immutable_artifact = ArtifactRef(
         artifact_id=str(process.input_artifact_id or ""),
         episode_id=claim.episode_id,
         kind=str(process.input_artifact_kind or ""),
         content_hash=str(process.input_content_hash or ""),
-        size_bytes=(artifact.size_bytes if artifact_is_current else 0),
-        mime_type=(artifact.mime if artifact_is_current else "application/octet-stream"),
+        size_bytes=(media.size_bytes if snapshot_is_current else 0),
+        mime_type=(media.mime if snapshot_is_current else "application/octet-stream"),
     )
     snapshot = _RunSnapshot(
         requested_target=process.requested_target,
@@ -277,11 +303,6 @@ def _load_snapshot(session: Session, claim: PodcastProcessingClaim) -> _RunSnaps
         estimated_cost_minor=int(active.estimated_cost_minor) if active else 0,
         artifact=immutable_artifact,
         audio_duration_ms=audio_duration_ms,
-        source_expires_at=(
-            _parse_source_expiry(artifact.expires_at)
-            if artifact_is_current
-            else None
-        ),
         attempt_id=active.id if active else None,
         attempt_no=active.attempt_no if active else None,
         provider_name=active.provider_name if active else None,
@@ -294,6 +315,7 @@ def _load_snapshot(session: Session, claim: PodcastProcessingClaim) -> _RunSnaps
             _parse_deadline(active.provider_deadline_at) if active else None
         ),
         reservation_status=reservation.status if reservation else None,
+        is_fallback_attempt=is_fallback_attempt,
     )
     session.rollback()
     return snapshot
@@ -328,7 +350,6 @@ def _context(
         input_artifact=snapshot.artifact,
         identity=plan.identity,
         plan=plan.stage,
-        input_expires_at=snapshot.source_expires_at,
     )
 
 
@@ -440,6 +461,41 @@ def _persisted_restart_identity(
     return snapshot.attempt_id, identity
 
 
+def _fallback_context(
+    claim: PodcastProcessingClaim,
+    snapshot: _RunSnapshot,
+    identity: ExecutionIdentity,
+    *,
+    config: AsrWorkerConfig,
+    now: dt.datetime,
+) -> StageContext:
+    if snapshot.attempt_id is None or snapshot.attempt_no is None:
+        raise PodcastProcessingConflict("active ASR attempt identity is incomplete")
+    deadline = snapshot.provider_deadline_at or (
+        now + dt.timedelta(seconds=config.fallback_retry_seconds)
+    )
+    remaining_seconds = max(
+        config.fallback_retry_seconds,
+        int((deadline - now).total_seconds()),
+    )
+    return StageContext(
+        processing_id=claim.processing_id,
+        episode_id=claim.episode_id,
+        target=snapshot.requested_target,
+        stage="asr",
+        attempt_id=snapshot.attempt_id,
+        attempt_no=snapshot.attempt_no,
+        fencing_token=claim.fencing_token,
+        input_artifact=snapshot.artifact,
+        identity=identity,
+        plan=StagePlan(
+            estimated_cost_minor=snapshot.estimated_cost_minor,
+            poll_interval_seconds=config.fallback_retry_seconds,
+            deadline_seconds=remaining_seconds,
+        ),
+    )
+
+
 def _document(output: TextOutput) -> Mapping[str, object]:
     if output.mime_type != "application/json":
         raise NormalizedTranscriptError(
@@ -486,7 +542,7 @@ def run_asr_worker_step(
 
     try:
         snapshot = _load_snapshot(session, claim)
-    except SourceAudioDurationError:
+    except SourceMediaDurationError:
         session.rollback()
         if claim.drain_only:
             active_attempt = session.exec(
@@ -513,7 +569,7 @@ def run_asr_worker_step(
                 session,
                 claim,
                 attempt_id=active_attempt_id,
-                reason_code="source_audio_duration_unavailable",
+                reason_code="source_media_duration_unavailable",
                 redacted_error_message=(
                     "ASR input duration is unavailable for safe settlement"
                 ),
@@ -529,9 +585,9 @@ def run_asr_worker_step(
         failed = resolve_claim_before_attempt(
             session,
             claim,
-            error_code="source_audio_duration_invalid",
+            error_code="source_media_duration_invalid",
             redacted_error_message=(
-                "persisted source audio duration is invalid for ASR"
+                "persisted source media duration is invalid for ASR"
             ),
             retryable=False,
             policy=policy,
@@ -581,7 +637,7 @@ def run_asr_worker_step(
                 or usage_plan.reserved_units != expected_seconds
             ):
                 raise ValueError(
-                    "ASR usage reservation must match persisted source-audio duration"
+                    "ASR usage reservation must match persisted source-media duration"
                 )
             if plan.stage.estimated_cost_minor != usage_plan.estimated_cost_minor:
                 raise ValueError(
@@ -615,23 +671,6 @@ def run_asr_worker_step(
                     now=current,
                 )
                 return AsrWorkerStep(failed.processing_status, failed.id)
-        source_valid_until = snapshot.source_expires_at
-        required_valid_until = current + dt.timedelta(
-            seconds=plan.required_input_lifetime_seconds
-        )
-        if source_valid_until is None or source_valid_until <= required_valid_until:
-            failed = resolve_claim_before_attempt(
-                session,
-                claim,
-                error_code="source_audio_expiry_insufficient",
-                redacted_error_message=(
-                    "source audio will expire before the required ASR input horizon"
-                ),
-                retryable=False,
-                policy=policy,
-                now=current,
-            )
-            return AsrWorkerStep(failed.processing_status, failed.id)
         provider_request_key = _idempotency_key("request", claim)
         try:
             attempt = begin_stage_attempt(
@@ -694,6 +733,17 @@ def run_asr_worker_step(
             attempt_id=attempt.id,
             attempt_no=attempt.attempt_no,
         )
+        fallback_submission = bool(
+            isinstance(adapter, AsrProviderFallbackAdapter)
+            and _attempt_is_provider_fallback(
+                session,
+                processing_id=claim.processing_id,
+                attempt_no=attempt.attempt_no,
+            )
+        )
+        # The provider authorization boundary requires a clean session; this
+        # read is only used to classify the already-durable attempt.
+        session.rollback()
         try:
             authorize_provider_call(
                 session,
@@ -708,14 +758,26 @@ def run_asr_worker_step(
             )
             if usage_plan is not None:
                 retry_at = max(retry_at, usage_plan.window_end_at)
+            # A fallback attempt has not performed OSS or provider I/O yet.
+            # Preserve its durable marker while the provider window is closed,
+            # otherwise the next attempt would silently return to the RSS URL
+            # and could later schedule a second OSS rescue.
+            error_code = (
+                PROVIDER_FALLBACK_MARKER
+                if fallback_submission
+                else "provider_call_window_unavailable"
+            )
+            error_message = (
+                "OSS fallback is waiting for provider call capacity"
+                if fallback_submission
+                else "provider call was not authorized before network I/O"
+            )
             failed = fail_stage_attempt(
                 session,
                 claim,
                 attempt_id=attempt.id,
-                error_code="provider_call_window_unavailable",
-                redacted_error_message=(
-                    "provider call was not authorized before network I/O"
-                ),
+                error_code=error_code,
+                redacted_error_message=error_message,
                 retryable=True,
                 retry_at=retry_at,
                 policy=policy,
@@ -764,13 +826,18 @@ def run_asr_worker_step(
                 "reconciliation_required", claim.processing_id, attempt.id
             )
         if isinstance(outcome, Rejected):
+            # A known provider rejection proves that no fallback TaskId exists.
+            # The OSS rescue is deliberately one-shot: make this attempt
+            # terminal even when the provider labels its refusal retryable, and
+            # delete the relay object instead of ever returning to RSS or OSS.
+            retryable = outcome.failure.retryable and not fallback_submission
             retry_at = (
                 _retry_at(
                     outcome.failure.retry_after_seconds,
                     config=config,
                     now=current,
                 )
-                if outcome.failure.retryable
+                if retryable
                 else None
             )
             failed = fail_stage_attempt(
@@ -779,11 +846,13 @@ def run_asr_worker_step(
                 attempt_id=attempt.id,
                 error_code=outcome.failure.code,
                 redacted_error_message="ASR provider rejected the submission",
-                retryable=outcome.failure.retryable,
+                retryable=retryable,
                 retry_at=retry_at,
                 policy=policy,
                 now=current,
             )
+            if fallback_submission:
+                adapter.cleanup_fallback(context)
             return AsrWorkerStep(failed.processing_status, failed.id, attempt.id)
         if isinstance(outcome, Unknown):
             mark_provider_submission(
@@ -1032,24 +1101,70 @@ def run_asr_worker_step(
             "poll_scheduled", claim.processing_id, attempt_id, task_id
         )
     if isinstance(outcome, TaskFailed):
-        settlement_issue = _settle_terminal_usage(
-            session,
-            claim,
-            attempt_id=attempt_id,
-            task_id=task_id,
-            usage=outcome.usage,
-            policy=policy,
-            now=current,
+        fallback_adapter = (
+            adapter if isinstance(adapter, AsrProviderFallbackAdapter) else None
         )
-        if settlement_issue is not None:
-            return settlement_issue
+        if (
+            fallback_adapter is not None
+            and outcome.release_unused_reservation
+            and not snapshot.is_fallback_attempt
+            and fallback_adapter.can_fallback(outcome)
+        ):
+            failed = fail_stage_attempt(
+                session,
+                claim,
+                attempt_id=attempt_id,
+                error_code=PROVIDER_FALLBACK_MARKER,
+                redacted_error_message=(
+                    "ASR provider could not download the publisher URL; "
+                    "one OSS fallback is scheduled"
+                ),
+                retryable=True,
+                retry_at=_retry_at(
+                    outcome.failure.retry_after_seconds,
+                    config=config,
+                    now=current,
+                ),
+                release_submitted_reservation=True,
+                policy=policy,
+                now=current,
+            )
+            return AsrWorkerStep(
+                failed.processing_status, failed.id, attempt_id, task_id
+            )
+        if snapshot.is_fallback_attempt and fallback_adapter is not None:
+            fallback_adapter.cleanup_fallback(
+                _fallback_context(
+                    claim,
+                    snapshot,
+                    persisted_identity,
+                    config=config,
+                    now=current,
+                )
+            )
+        if not outcome.release_unused_reservation:
+            settlement_issue = _settle_terminal_usage(
+                session,
+                claim,
+                attempt_id=attempt_id,
+                task_id=task_id,
+                usage=outcome.usage,
+                policy=policy,
+                now=current,
+            )
+            if settlement_issue is not None:
+                return settlement_issue
+        # A provider task is already terminal here. The one OSS submission may
+        # not spawn a third attempt even when the normalized provider failure
+        # would ordinarily permit resubmission.
+        retryable = outcome.failure.retryable and not snapshot.is_fallback_attempt
         retry_at = (
             _retry_at(
                 outcome.failure.retry_after_seconds,
                 config=config,
                 now=current,
             )
-            if outcome.failure.retryable
+            if retryable
             else None
         )
         failed = fail_stage_attempt(
@@ -1058,14 +1173,30 @@ def run_asr_worker_step(
             attempt_id=attempt_id,
             error_code=outcome.failure.code,
             redacted_error_message="ASR provider task failed",
-            retryable=outcome.failure.retryable,
+            retryable=retryable,
             retry_at=retry_at,
+            release_submitted_reservation=(
+                outcome.release_unused_reservation
+            ),
             policy=policy,
             now=current,
         )
         return AsrWorkerStep(failed.processing_status, failed.id, attempt_id, task_id)
 
     assert isinstance(outcome, Succeeded)
+    if (
+        snapshot.is_fallback_attempt
+        and isinstance(adapter, AsrProviderFallbackAdapter)
+    ):
+        adapter.cleanup_fallback(
+            _fallback_context(
+                claim,
+                snapshot,
+                persisted_identity,
+                config=config,
+                now=current,
+            )
+        )
     if claim.drain_only:
         settlement_issue = _settle_terminal_usage(
             session,

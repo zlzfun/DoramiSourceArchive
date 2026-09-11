@@ -30,6 +30,7 @@ from models.db import (
     PodcastCostLedgerRecord,
     PodcastProcessingCommandRecord,
     PodcastProcessingRecord,
+    PodcastSourceMediaSnapshotRecord,
     PodcastStageAttemptRecord,
     PodcastTextArtifactRecord,
     PodcastTextPublicationRecord,
@@ -218,18 +219,18 @@ def _evaluate_external_asr_export(
     stage: str,
     input_artifact_kind: str,
 ) -> tuple[str, list[str]]:
-    """Fail closed before source audio may cross the deployment boundary.
+    """Fail closed before publisher media may cross the deployment boundary.
 
     This privacy gate is deliberately limited to the third-party ASR boundary:
-    caching source audio locally, using a publisher transcript, and generating
-    digest audio do not export the source recording.
+    validating media locally, using a publisher transcript, and generating
+    digest audio do not export the publisher recording.
 
     Keep the persisted reason generic.  The source configuration may contain a
     signed feed URL or another credential and must never be copied into an audit
     or operator-facing error field.
     """
 
-    if stage != "asr" or input_artifact_kind != "source_audio":
+    if stage != "asr" or input_artifact_kind != "source_media_snapshot":
         return "eligible", []
 
     from services.user_sources import source_content_may_leave_deployment
@@ -237,7 +238,7 @@ def _evaluate_external_asr_export(
     if source_content_may_leave_deployment(session, article.source_id):
         return "eligible", []
     return "blocked_rights", [
-        "Podcast source audio may not leave this deployment for external ASR"
+        "Podcast publisher media may not leave this deployment for external ASR"
     ]
 
 
@@ -287,13 +288,13 @@ def _evaluate_input_binding(
     if not artifact_id or not artifact_kind or not content_hash:
         return "invalid_input", ["Podcast processing input binding is missing"]
     if (
-        artifact_kind == "source_audio"
+        artifact_kind == "source_media_snapshot"
         and process.requested_target == "full_analysis"
         and process.stage == "analyze"
     ):
         # Once ASR has committed, the durable normalized transcript is the
-        # analyze-stage input.  Source audio may expire after the paid call and
-        # must not strand a restart-safe local analysis.
+        # analyze-stage input. The source-media snapshot remains immutable, but
+        # local analysis should bind the ASR output after the paid call.
         predecessor = session.exec(
             select(PodcastStageAttemptRecord)
             .where(
@@ -321,17 +322,14 @@ def _evaluate_input_binding(
             return "invalid_input", [
                 "Podcast normalized transcript output is no longer usable"
             ]
-    elif artifact_kind == "source_audio":
-        source_audio = session.get(PodcastArtifactRecord, artifact_id)
+    elif artifact_kind == "source_media_snapshot":
+        source_media = session.get(PodcastSourceMediaSnapshotRecord, artifact_id)
         if (
-            source_audio is None
-            or source_audio.episode_id != process.episode_id
-            or source_audio.kind != "source_audio"
-            or source_audio.status != "ready"
-            or source_audio.content_hash != content_hash
-            or not source_audio.expires_at
+            source_media is None
+            or source_media.episode_id != process.episode_id
+            or source_media.content_hash != content_hash
         ):
-            return "invalid_input", ["Podcast source audio input is no longer current"]
+            return "invalid_input", ["Podcast source media input is no longer current"]
     else:
         text_artifact = session.get(PodcastTextArtifactRecord, artifact_id)
         publication = session.get(
@@ -566,7 +564,7 @@ def enqueue_processing(
         input_artifact_kind, "input_artifact_kind"
     ).lower()
     if bound_artifact_kind not in {
-        "source_audio",
+        "source_media_snapshot",
         "publisher_transcript",
         "normalized_transcript",
         "transcript_zh",
@@ -3006,12 +3004,15 @@ def fail_stage_attempt(
     redacted_error_message: str,
     retryable: bool,
     retry_at: Optional[dt.datetime] = None,
+    release_submitted_reservation: bool = False,
     policy: Optional[StagePolicyCheck] = None,
     now: Optional[dt.datetime] = None,
 ) -> PodcastProcessingRecord:
     """Persist a fenced failure and release only an unsettled reservation."""
 
     _require_stage(policy, claim.stage, boundary="commit")
+    if not isinstance(release_submitted_reservation, bool):
+        raise ValueError("release_submitted_reservation must be boolean")
     _require_clean_session(session, "stage failure")
     stamp = _iso(_as_utc(now))
     process = session.get(PodcastProcessingRecord, claim.processing_id)
@@ -3066,7 +3067,21 @@ def fail_stage_attempt(
         raise PodcastProcessingConflict(
             "local attempt must remain prepared before failure"
         )
-    if attempt.submission_state == "submitted" and reservation.status != "settled":
+    release_known_unprocessed = (
+        release_submitted_reservation
+        and attempt.execution_kind == "provider"
+        and attempt.submission_state == "submitted"
+        and reservation.status == "reserved"
+    )
+    if release_submitted_reservation and not release_known_unprocessed:
+        raise PodcastProcessingConflict(
+            "submitted reservation release requires a known-unprocessed provider task"
+        )
+    if (
+        attempt.submission_state == "submitted"
+        and reservation.status != "settled"
+        and not release_known_unprocessed
+    ):
         if eligibility != "eligible":
             _apply_denial(process, eligibility, eligibility_reasons, stamp=stamp)
             session.add(process)

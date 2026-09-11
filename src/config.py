@@ -465,7 +465,9 @@ class PodcastArtifactStorageConfig:
 
     root_dir: str = str(PROJECT_ROOT / "data" / "podcast-artifacts")
     max_audio_mb: int = 512
-    total_quota_bytes: int = 10_240 * 1024 * 1024
+    # Zero disables the fixed business quota. The per-file cap and
+    # minimum-free-disk reserve remain mandatory safety boundaries.
+    total_quota_bytes: int = 0
     minimum_free_bytes: int = 1_024 * 1024 * 1024
     allowed_mime_types: tuple[str, ...] = (
         "audio/mpeg",
@@ -477,8 +479,6 @@ class PodcastArtifactStorageConfig:
     upload_timeout_seconds: int = 120
     download_timeout_seconds: int = 120
     download_max_redirects: int = 5
-    source_audio_ttl_seconds: int = 7 * 24 * 60 * 60
-    source_audio_quota_bytes: int = 2_048 * 1024 * 1024
     ffprobe_binary: str = "ffprobe"
     probe_timeout_seconds: int = 15
     orphan_grace_seconds: int = 3600
@@ -487,8 +487,8 @@ class PodcastArtifactStorageConfig:
     def __post_init__(self) -> None:
         if self.max_audio_mb <= 0:
             raise ValueError("Podcast artifact max_audio_mb must be positive")
-        if self.total_quota_bytes <= 0:
-            raise ValueError("Podcast artifact total quota must be positive")
+        if self.total_quota_bytes < 0:
+            raise ValueError("Podcast artifact total quota cannot be negative")
         if self.minimum_free_bytes < 0:
             raise ValueError("Podcast artifact minimum free bytes cannot be negative")
         if self.upload_timeout_seconds <= 0 or self.download_timeout_seconds <= 0:
@@ -496,14 +496,6 @@ class PodcastArtifactStorageConfig:
         if self.download_max_redirects < 0:
             raise ValueError(
                 "Podcast artifact download_max_redirects cannot be negative"
-            )
-        if self.source_audio_ttl_seconds <= 0:
-            raise ValueError(
-                "Podcast artifact source_audio_ttl_seconds must be positive"
-            )
-        if self.source_audio_quota_bytes <= 0:
-            raise ValueError(
-                "Podcast artifact source_audio quota must be positive"
             )
         if not self.ffprobe_binary.strip():
             raise ValueError("Podcast artifact ffprobe_binary cannot be empty")
@@ -515,88 +507,6 @@ class PodcastArtifactStorageConfig:
             raise ValueError("Podcast artifact staging_ttl_seconds cannot be negative")
         if not self.allowed_mime_types:
             raise ValueError("Podcast artifact allowed_mime_types cannot be empty")
-
-
-@dataclass(frozen=True)
-class PodcastAsrFetchConfig:
-    """Short-lived public URL signing used only for provider ASR fetches.
-
-    The public base is deployment-owned and must never be inferred from an
-    inbound request Host header.  An empty startup baseline is valid because
-    the credential cabinet may provide a runtime KV override; signer creation
-    still fails closed until the effective config is complete.
-    """
-
-    public_base_url: str = ""
-    signing_secret: str = field(default="", repr=False)
-    previous_signing_secret: str = field(default="", repr=False)
-    url_ttl_seconds: int = 900
-    clock_skew_seconds: int = 30
-    min_remaining_seconds: int = 300
-
-    def __post_init__(self) -> None:
-        base_url = str(self.public_base_url or "").strip()
-        secret = str(self.signing_secret or "").strip()
-        previous_secret = str(self.previous_signing_secret or "").strip()
-        object.__setattr__(self, "public_base_url", base_url)
-        object.__setattr__(self, "signing_secret", secret)
-        object.__setattr__(self, "previous_signing_secret", previous_secret)
-        if base_url:
-            try:
-                parsed = urlsplit(base_url)
-                port = parsed.port
-            except ValueError:
-                raise ValueError(
-                    "Podcast ASR fetch public_base_url must be an HTTPS URL"
-                ) from None
-            path = parsed.path or "/"
-            if (
-                parsed.scheme != "https"
-                or not parsed.hostname
-                or not base_url.isascii()
-                or any(char.isspace() for char in base_url)
-                or "?" in base_url
-                or "#" in base_url
-                or parsed.username is not None
-                or parsed.password is not None
-                or parsed.query
-                or parsed.fragment
-                or parsed.netloc.rsplit("@", 1)[-1].endswith(":")
-                or port == 0
-                or not path.startswith("/")
-                or "//" in path
-                or any(part in {".", ".."} for part in path.split("/"))
-                or "%" in path
-                or not path.isascii()
-            ):
-                raise ValueError(
-                    "Podcast ASR fetch public_base_url must be an HTTPS URL "
-                    "with a canonical path and no credentials, query, or fragment"
-                )
-        if secret and len(secret.encode("utf-8")) < 32:
-            raise ValueError(
-                "Podcast ASR fetch signing_secret must contain at least 32 bytes"
-            )
-        if previous_secret and len(previous_secret.encode("utf-8")) < 32:
-            raise ValueError(
-                "Podcast ASR fetch previous_signing_secret must contain at least 32 bytes"
-            )
-        if self.url_ttl_seconds <= 0:
-            raise ValueError("Podcast ASR fetch URL TTL must be positive")
-        if self.clock_skew_seconds < 0:
-            raise ValueError("Podcast ASR fetch clock skew cannot be negative")
-        if self.min_remaining_seconds <= 0:
-            raise ValueError(
-                "Podcast ASR fetch minimum remaining lifetime must be positive"
-            )
-        if self.min_remaining_seconds > self.url_ttl_seconds:
-            raise ValueError(
-                "Podcast ASR fetch minimum remaining lifetime cannot exceed URL TTL"
-            )
-
-    @property
-    def configured(self) -> bool:
-        return bool(self.public_base_url and self.signing_secret)
 
 
 @dataclass(frozen=True)
@@ -623,6 +533,13 @@ class AliyunIsiConfig:
     asr_enable_words: bool = True
     asr_auto_split: bool = True
     asr_enable_sample_rate_adaptive: bool = True
+    # Opt-in rescue path for provider-side RSS download failures. The
+    # publisher URL remains the normal first submission.
+    asr_oss_endpoint: str = ""
+    asr_oss_internal_endpoint: str = ""
+    asr_oss_bucket: str = ""
+    asr_oss_prefix: str = "asr-relay"
+    asr_oss_signed_url_ttl_seconds: int = 86_400
     token_url: str = "https://nls-meta.cn-shanghai.aliyuncs.com/"
     tts_url: str = "https://nls-gateway-cn-shanghai.aliyuncs.com/rest/v1/tts/async"
     tts_product: str = "async-long-text-tts"
@@ -640,6 +557,9 @@ class AliyunIsiConfig:
     asr_quota_scope: str = ""
     asr_quota_timezone: str = "Asia/Shanghai"
     asr_daily_audio_seconds_limit: int = 0
+    # Recording-file recognition accepts at most one 12-hour input. This is
+    # an independent per-episode admission guard, not the daily usage quota.
+    asr_max_audio_seconds_per_file: int = 43_200
     asr_entitlement_ends_at: str = ""
     asr_provider_deadline_seconds: int = 0
     asr_price_cny_minor_per_hour: int = 0
@@ -671,6 +591,47 @@ class AliyunIsiConfig:
                 raise ValueError(f"Aliyun ISI {field_name} cannot be empty")
         if "://" in self.asr_domain or "/" in self.asr_domain:
             raise ValueError("Aliyun ISI asr_domain must be a hostname")
+        for field_name in ("asr_oss_endpoint", "asr_oss_internal_endpoint"):
+            value = str(getattr(self, field_name) or "").strip().rstrip("/")
+            object.__setattr__(self, field_name, value)
+            if not value:
+                continue
+            try:
+                parsed = urlsplit(value)
+                port = parsed.port
+            except ValueError:
+                raise ValueError(
+                    f"Aliyun ISI {field_name} must be an HTTPS endpoint"
+                ) from None
+            if (
+                parsed.scheme != "https"
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.path not in {"", "/"}
+                or parsed.query
+                or parsed.fragment
+                or port == 0
+            ):
+                raise ValueError(
+                    f"Aliyun ISI {field_name} must be an HTTPS endpoint"
+                )
+        bucket = str(self.asr_oss_bucket or "").strip()
+        object.__setattr__(self, "asr_oss_bucket", bucket)
+        if bucket and not re.fullmatch(
+            r"[a-z0-9][a-z0-9-]{1,61}[a-z0-9]", bucket
+        ):
+            raise ValueError("Aliyun ISI asr_oss_bucket is invalid")
+        prefix = str(self.asr_oss_prefix or "").strip().strip("/")
+        object.__setattr__(self, "asr_oss_prefix", prefix)
+        if (
+            not prefix
+            or len(prefix.encode("utf-8")) > 512
+            or "\\" in prefix
+            or any(part in {"", ".", ".."} for part in prefix.split("/"))
+            or any(ord(character) < 32 or ord(character) == 127 for character in prefix)
+        ):
+            raise ValueError("Aliyun ISI asr_oss_prefix is invalid")
         for field_name in ("token_url", "tts_url"):
             value = str(getattr(self, field_name) or "").strip()
             try:
@@ -740,8 +701,10 @@ class AliyunIsiConfig:
             raise ValueError("Aliyun ISI token refresh skew cannot be negative")
         for field_name in (
             "asr_daily_audio_seconds_limit",
+            "asr_max_audio_seconds_per_file",
             "asr_provider_deadline_seconds",
             "asr_price_cny_minor_per_hour",
+            "asr_oss_signed_url_ttl_seconds",
             "tts_campaign_character_limit",
             "tts_provider_deadline_seconds",
             "tts_price_cny_minor_per_10000_chars",
@@ -749,6 +712,18 @@ class AliyunIsiConfig:
             value = getattr(self, field_name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"Aliyun ISI {field_name} must be a nonnegative integer")
+        if not 1 <= self.asr_max_audio_seconds_per_file <= 12 * 60 * 60:
+            raise ValueError(
+                "Aliyun ISI asr_max_audio_seconds_per_file must be between 1 and 43200"
+            )
+        if self.asr_oss_signed_url_ttl_seconds > 7 * 24 * 60 * 60:
+            raise ValueError("Aliyun ISI OSS signed URL TTL cannot exceed 7 days")
+        if self.asr_oss_configured and (
+            self.asr_oss_signed_url_ttl_seconds < self.asr_provider_deadline_seconds
+        ):
+            raise ValueError(
+                "Aliyun ISI OSS signed URL TTL must cover the ASR provider deadline"
+            )
         try:
             ZoneInfo(self.asr_quota_timezone)
         except ZoneInfoNotFoundError as exc:
@@ -818,6 +793,19 @@ class AliyunIsiConfig:
         return bool(self.asr_poll_configured and self.app_key)
 
     @property
+    def asr_oss_configured(self) -> bool:
+        endpoints = (
+            self.asr_oss_endpoint,
+            self.asr_oss_internal_endpoint,
+            self.asr_oss_bucket,
+        )
+        return bool(
+            all(endpoints)
+            and self.ak_configured
+            and self.asr_oss_signed_url_ttl_seconds > 0
+        )
+
+    @property
     def asr_accounting_ready(self) -> bool:
         return bool(
             self.asr_quota_scope.strip()
@@ -875,7 +863,6 @@ class AppConfig:
     podcast: PodcastConfig
     podcast_worker: PodcastWorkerConfig
     podcast_artifacts: PodcastArtifactStorageConfig
-    podcast_asr_fetch: PodcastAsrFetchConfig
     aliyun_isi: AliyunIsiConfig
 
     def apply_process_environment(self) -> None:
@@ -1336,7 +1323,7 @@ def load_config() -> AppConfig:
                 mb_option="total_quota_mb",
                 bytes_env="DORAMI_PODCAST_ARTIFACT_TOTAL_QUOTA_BYTES",
                 mb_env="DORAMI_PODCAST_ARTIFACT_TOTAL_QUOTA_MB",
-                fallback_mb=10_240,
+                fallback_mb=0,
             ),
             minimum_free_bytes=_byte_limit(
                 parser,
@@ -1366,21 +1353,6 @@ def load_config() -> AppConfig:
                     "podcast_artifacts", "download_max_redirects", fallback=5
                 )
             ),
-            source_audio_ttl_seconds=int(
-                os.getenv("DORAMI_PODCAST_ARTIFACT_SOURCE_AUDIO_TTL_SECONDS")
-                or parser.getint(
-                    "podcast_artifacts", "source_audio_ttl_seconds", fallback=604800
-                )
-            ),
-            source_audio_quota_bytes=_byte_limit(
-                parser,
-                section="podcast_artifacts",
-                bytes_option="source_audio_quota_bytes",
-                mb_option="source_audio_quota_mb",
-                bytes_env="DORAMI_PODCAST_ARTIFACT_SOURCE_AUDIO_QUOTA_BYTES",
-                mb_env="DORAMI_PODCAST_ARTIFACT_SOURCE_AUDIO_QUOTA_MB",
-                fallback_mb=2_048,
-            ),
             ffprobe_binary=(
                 os.getenv("DORAMI_PODCAST_ARTIFACT_FFPROBE_BINARY")
                 or parser.get("podcast_artifacts", "ffprobe_binary", fallback="ffprobe")
@@ -1401,46 +1373,6 @@ def load_config() -> AppConfig:
                 os.getenv("DORAMI_PODCAST_ARTIFACT_STAGING_TTL_SECONDS")
                 or parser.getint(
                     "podcast_artifacts", "staging_ttl_seconds", fallback=3600
-                )
-            ),
-        ),
-        podcast_asr_fetch=PodcastAsrFetchConfig(
-            public_base_url=(
-                os.getenv("DORAMI_PODCAST_ASR_FETCH_PUBLIC_BASE_URL")
-                or parser.get(
-                    "podcast_asr_fetch", "public_base_url", fallback=""
-                )
-            ).strip(),
-            signing_secret=(
-                os.getenv("DORAMI_PODCAST_ASR_FETCH_SIGNING_SECRET")
-                or parser.get(
-                    "podcast_asr_fetch", "signing_secret", fallback=""
-                )
-            ),
-            previous_signing_secret=(
-                os.getenv("DORAMI_PODCAST_ASR_FETCH_PREVIOUS_SIGNING_SECRET")
-                or parser.get(
-                    "podcast_asr_fetch",
-                    "previous_signing_secret",
-                    fallback="",
-                )
-            ),
-            url_ttl_seconds=int(
-                os.getenv("DORAMI_PODCAST_ASR_FETCH_URL_TTL_SECONDS")
-                or parser.getint(
-                    "podcast_asr_fetch", "url_ttl_seconds", fallback=900
-                )
-            ),
-            clock_skew_seconds=int(
-                os.getenv("DORAMI_PODCAST_ASR_FETCH_CLOCK_SKEW_SECONDS")
-                or parser.getint(
-                    "podcast_asr_fetch", "clock_skew_seconds", fallback=30
-                )
-            ),
-            min_remaining_seconds=int(
-                os.getenv("DORAMI_PODCAST_ASR_FETCH_MIN_REMAINING_SECONDS")
-                or parser.getint(
-                    "podcast_asr_fetch", "min_remaining_seconds", fallback=300
                 )
             ),
         ),
@@ -1514,6 +1446,34 @@ def load_config() -> AppConfig:
                     "aliyun_isi",
                     "asr_enable_sample_rate_adaptive",
                     fallback=True,
+                )
+            ),
+            asr_oss_endpoint=(
+                os.getenv("DORAMI_ALIYUN_ISI_ASR_OSS_ENDPOINT")
+                or parser.get("aliyun_isi", "asr_oss_endpoint", fallback="")
+            ).strip(),
+            asr_oss_internal_endpoint=(
+                os.getenv("DORAMI_ALIYUN_ISI_ASR_OSS_INTERNAL_ENDPOINT")
+                or parser.get(
+                    "aliyun_isi", "asr_oss_internal_endpoint", fallback=""
+                )
+            ).strip(),
+            asr_oss_bucket=(
+                os.getenv("DORAMI_ALIYUN_ISI_ASR_OSS_BUCKET")
+                or parser.get("aliyun_isi", "asr_oss_bucket", fallback="")
+            ).strip(),
+            asr_oss_prefix=(
+                os.getenv("DORAMI_ALIYUN_ISI_ASR_OSS_PREFIX")
+                or parser.get(
+                    "aliyun_isi", "asr_oss_prefix", fallback="asr-relay"
+                )
+            ).strip(),
+            asr_oss_signed_url_ttl_seconds=int(
+                os.getenv("DORAMI_ALIYUN_ISI_ASR_OSS_SIGNED_URL_TTL_SECONDS")
+                or parser.getint(
+                    "aliyun_isi",
+                    "asr_oss_signed_url_ttl_seconds",
+                    fallback=86_400,
                 )
             ),
             token_url=(
@@ -1615,6 +1575,12 @@ def load_config() -> AppConfig:
                 os.getenv("DORAMI_ALIYUN_ISI_ASR_DAILY_AUDIO_SECONDS_LIMIT")
                 or parser.getint(
                     "aliyun_isi", "asr_daily_audio_seconds_limit", fallback=0
+                )
+            ),
+            asr_max_audio_seconds_per_file=int(
+                os.getenv("DORAMI_ALIYUN_ISI_ASR_MAX_AUDIO_SECONDS_PER_FILE")
+                or parser.getint(
+                    "aliyun_isi", "asr_max_audio_seconds_per_file", fallback=43_200
                 )
             ),
             asr_entitlement_ends_at=(

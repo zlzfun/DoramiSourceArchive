@@ -130,18 +130,6 @@ paths:
       responses:
         '200': {description: Effective stage ownership and provider readiness}
 
-  /api/admin/podcast-episodes/{episode_id}/cache-source-audio:
-    post:
-      tags: [Podcast artifacts]
-      operationId: cachePodcastSourceAudio
-      summary: Download one enclosure into the external installation's temporary CAS
-      parameters:
-        - $ref: '#/components/parameters/EpisodeId'
-      responses:
-        '200': {description: Cached source-audio artifact}
-        '413': {$ref: '#/components/responses/PodcastError'}
-        '502': {$ref: '#/components/responses/PodcastError'}
-
   /api/admin/podcast-artifacts/stats:
     get:
       tags: [Podcast artifacts]

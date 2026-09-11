@@ -46,7 +46,7 @@ Podcast 处理能力与 `runtime.role` 正交。安装类型决定默认处理�
 | `development` | 关闭 | `fetch,local_publish` | 空 |
 
 `processing_enabled`、`allowed_stages` 和 `provider_ready_targets` 仍可显式覆盖。
-外网默认开启只代表允许执行；缺少真实供应商凭据、计价/额度或回源签名时，运行时仍会
+外网默认开启只代表允许执行；缺少真实供应商凭据、计价/额度或可安全提交的媒体地址时，运行时仍会
 拒绝付费请求。
 
 ```bash
@@ -151,36 +151,19 @@ CNY 月度与单次预算均为正数，并且运行时的具体 provider 集成
 属于主机侧秘密配置，不进入本节或版本库。外网拥有全部 Podcast 处理阶段；内网不拥有任何
 Podcast 处理阶段，只接收已发布的中文博客和导读音频。两台服务的 `[runtime] role` 均保持 `all`。
 
-外网 ASR 需要让服务商短时拉取本地 CAS 中的源音频。公网地址与 HMAC 参数集中在
-`[podcast_asr_fetch]`；`public_base_url` 必须是固定 HTTPS 地址，不得根据请求的
-`Host` 动态构造。`signing_secret` 至少 32 bytes，生产应通过环境变量注入：
-
-```ini
-[podcast_asr_fetch]
-public_base_url = https://archive.example.com/api/public/podcast-asr/source-audio
-# signing_secret 留空，使用 DORAMI_PODCAST_ASR_FETCH_SIGNING_SECRET
-# 轮换时 previous_signing_secret 留空，并临时注入旧 key 对应的环境变量
-previous_signing_secret =
-url_ttl_seconds = 900
-clock_skew_seconds = 30
-min_remaining_seconds = 300
-```
-
-对应环境变量为 `DORAMI_PODCAST_ASR_FETCH_PUBLIC_BASE_URL`、
-`DORAMI_PODCAST_ASR_FETCH_SIGNING_SECRET`、
-`DORAMI_PODCAST_ASR_FETCH_PREVIOUS_SIGNING_SECRET`、`DORAMI_PODCAST_ASR_FETCH_URL_TTL_SECONDS`、
-`DORAMI_PODCAST_ASR_FETCH_CLOCK_SKEW_SECONDS` 与
-`DORAMI_PODCAST_ASR_FETCH_MIN_REMAINING_SECONDS`。内网同步节点可以留空；
-外网 ASR 实际签发/提交时必须解析到完整配置，否则 fail-closed。
-为保证云端异步任务在截止前始终能抓取音频，`url_ttl_seconds` 必须大于等于
-`asr_provider_deadline_seconds`；不满足时 worker 会在任何供应商网络请求前释放预留并重试。
-轮换时 current secret 只用于签发新 URL，previous secret 只用于验证在途旧 URL；至少保留
-一个完整 `url_ttl_seconds` 后再移除 previous secret。
-若 previous secret 由运行时 KV 提供，管理员在宽限期结束后调用
-`DELETE /api/admin/podcast-asr-fetch/previous-signing-secret` 显式清除；该接口仅允许管理员、
-会进入管理审计，且只能清除此临时字段。若环境变量或 INI 仍提供旧 key，需先从部署配置
-移除，再调用接口确认响应中的 `previous_signing_secret_set=false`。current 与 previous 的
-运行时轮换写入按同一数据库事务提交，不存在只更新其中一个字段的中间状态。
+外网 ASR 默认直接把 Podcast RSS 当前 `audio_url` 作为阿里云 `file_link`。请求处理/入队前
+会核对单集当前 enclosure，并把原音频下载到临时 staging
+完成大小、媒体格式与探测校验；校验结束即删除原始字节，不写入 Podcast artifact CAS。
+数据库只持久化轻量 `source_media_snapshot`，用于把本次处理绑定到经过校验的源媒体事实；
+原始签名 URL query 不进入快照、错误或响应。worker 提交前会再次核对当前 enclosure 与快照
+绑定，随后阿里云仍从 RSS 原地址读取 `file_link`；
+供应商 URL 护栏会拒绝非 HTTPS 域名、IP 字面量和本地地址。只有阿里云明确返回
+`FILE_DOWNLOAD_FAILED`、`FILE_404_NOT_FOUND`、`FILE_403_FORBIDDEN` 或
+`FILE_SERVER_ERROR` 时，才允许一次本地重下载并上传私有 OSS，再用同地域内网签名 URL
+重新提交；解码、格式、采样率、Content-Length 等错误不会走 OSS。Dorami 下载或上传失败
+也不会再次提交。OSS 对象在回退任务终态后 best-effort 立即删除，Bucket 生命周期规则负责
+异常兜底。已取得 TaskId 的任务只按持久化身份轮询；任何 `request_unknown` 都保持人工核对，
+不会自动重提。
 
 阿里云 ISI 的非秘密协议参数集中在 `[aliyun_isi]`，均可由对应
 `DORAMI_ALIYUN_ISI_*` 环境变量覆盖。ASR 与 TTS 鉴权不同，不能互换：
@@ -195,6 +178,12 @@ asr_task_version = 4.0
 asr_enable_words = true
 asr_auto_split = true
 asr_enable_sample_rate_adaptive = true
+# 可选 OSS 回退；上海 ASR 对应上海外网/内网 Endpoint。留空即禁用。
+asr_oss_endpoint = https://oss-cn-shanghai.aliyuncs.com
+asr_oss_internal_endpoint = https://oss-cn-shanghai-internal.aliyuncs.com
+asr_oss_bucket = dorami-asr-relay-cn-shanghai-<unique-suffix>
+asr_oss_prefix = asr-relay
+asr_oss_signed_url_ttl_seconds = 86400
 token_url = https://nls-meta.cn-shanghai.aliyuncs.com/
 tts_url = https://nls-gateway-cn-shanghai.aliyuncs.com/rest/v1/tts/async
 tts_product = async-long-text-tts
@@ -216,6 +205,8 @@ token_refresh_skew_seconds = 300
 asr_quota_scope =
 asr_quota_timezone = Asia/Shanghai
 asr_daily_audio_seconds_limit = 0
+# 单集 ASR 时长上限；独立于每日累计额度，阿里录音文件识别当前硬上限为 12 小时。
+asr_max_audio_seconds_per_file = 43200
 asr_entitlement_ends_at =
 asr_provider_deadline_seconds = 0
 asr_price_cny_minor_per_hour = 0
@@ -233,12 +224,25 @@ tts_pricing_revision =
 tts_usage_settlement_mode = manual
 ```
 
+OSS 回退复用 `ALIYUN_AK_ID` / `ALIYUN_AK_SECRET`（以及可选的
+`ALIYUN_SECURITY_TOKEN`），不增加另一套密钥。对应环境变量为
+`DORAMI_ALIYUN_ISI_ASR_OSS_ENDPOINT`、
+`DORAMI_ALIYUN_ISI_ASR_OSS_INTERNAL_ENDPOINT`、
+`DORAMI_ALIYUN_ISI_ASR_OSS_BUCKET`、`DORAMI_ALIYUN_ISI_ASR_OSS_PREFIX` 和
+`DORAMI_ALIYUN_ISI_ASR_OSS_SIGNED_URL_TTL_SECONDS`。签名使用 OSS V4，有效期最大
+7 天；配置值必须覆盖 ASR provider deadline。Bucket 应保持私有、关闭版本控制，并对
+`asr-relay/` 配置 1 天删除生命周期，正常路径仍由 worker 在任务终态主动删除。
+
 额度配置与 AK/SK/Appkey/Token 的“能否鉴权”是两套独立门槛：凭据齐全但额度配置
 不完整时仍禁止提交。ASR 在提交前按 `ceil(audio_duration_ms / 1000)` 预占当日秒数，
 日窗口以 `Asia/Shanghai` 的 `[00:00, 次日 00:00)` 为界且不越过 entitlement
 截止时刻；管理员可在“设置 → 凭据 → 播客 ASR”按小时调整每日上限，修改后同一
-scope/period 内已使用和已预占的时长继续累计。TTS 按实际送给供应商的计费字符数预占
-campaign 总量。价格全部用人民币分的整数配置，并以向上取整计算，避免浮点误差。
+scope/period 内已使用和已预占的时长继续累计。这里限制的是每日累计处理量，并非单日
+只有 24 小时的墙钟时长，因此可按并行处理能力配置大于 24 小时的正数。
+`asr_max_audio_seconds_per_file` 则是完全独立的单集准入边界，默认 43,200 秒（12 小时）；超过
+该边界的单集会在 API 入队前被拒绝，不占每日额度，也不会发起供应商请求。TTS 按实际
+送给供应商的计费字符数预占 campaign 总量。价格全部用人民币分的整数配置，并以向上
+取整计算，避免浮点误差。
 
 `request_unknown` / `reconciling` 会继续持有人民币预算与供应商额度；只有供应商明确
 确认 `not_submitted` 才释放。结算实际用量超过预占会写入 breach 审计并冻结同一
@@ -252,8 +256,9 @@ scope/period 的后续提交，必须人工核对供应商账单和配置后再�
 `submitted_characters`；该数不是供应商回传账单量。结算模式被纳入 admission fingerprint，
 排队后修改会 fail-closed，不会静默改变已有任务的财务语义。
 
-这 16 个非秘密字段均可由同名大写前缀环境变量覆盖，例如
+这些非秘密字段均可由同名大写前缀环境变量覆盖，例如
 `DORAMI_ALIYUN_ISI_ASR_DAILY_AUDIO_SECONDS_LIMIT` 与
+`DORAMI_ALIYUN_ISI_ASR_MAX_AUDIO_SECONDS_PER_FILE`、
 `DORAMI_ALIYUN_ISI_TTS_CAMPAIGN_CHARACTER_LIMIT`；完整名称见
 `config/production.example.ini` 和 `docker-compose.yml`。不要把真实凭据、供应商任务 ID
 或临时 Token 写进这些字段或提交到仓库。
@@ -398,29 +403,32 @@ prefetch_concurrency = 4  ; 抓取后预取/回填的并发数
 - 下载防护:仅 http(s)、SSRF 拦截(环回/私网/链路本地拒绝;豁免 Clash/Surge fake-ip 段
   `198.18.0.0/15`,否则本机代理环境整体误杀)、魔数嗅探确认图片、失败负缓存退避。
 
-## `[podcast_artifacts]`——Podcast 本地音频 CAS
+## `[podcast_artifacts]`——Podcast 生成音频 CAS
 
-首发只支持本地 content-addressed storage；S3-compatible provider 后置。原节目音频默认
-保持发布者外链，ASR 所需下载仅进入有期限的外网临时缓存；内网生成的中文导读长期保存
-在本地 CAS。Docker 镜像和裸机部署都必须提供 `ffmpeg` 与 `ffprobe`。
+首发只支持本地 content-addressed storage；S3-compatible provider 后置。CAS 只持久保存
+生成的中文导读音频；原节目保持发布者外链，ASR 校验下载只进入 staging，校验结束即删除，
+另以轻量 `source_media_snapshot` 固化处理输入事实。Docker 镜像和裸机部署都必须提供
+`ffmpeg` 与 `ffprobe`。
 
 ```ini
 [podcast_artifacts]
 root_dir = data/podcast-artifacts
 max_audio_mb = 512
-total_quota_mb = 10240
+total_quota_mb = 0
 minimum_free_mb = 1024
 allowed_mime_types = audio/mpeg,audio/wav,audio/mp4,audio/ogg,audio/webm
 upload_timeout_seconds = 120
 download_timeout_seconds = 120
 download_max_redirects = 5
-source_audio_ttl_seconds = 604800
-source_audio_quota_mb = 2048
 ffprobe_binary = ffprobe
 probe_timeout_seconds = 15
 orphan_grace_seconds = 3600
 staging_ttl_seconds = 3600
 ```
+
+`total_quota_mb` 设为 `0` 表示不设置固定业务硬上限，但统计仍按生成音频的实际占用量
+计算；显式正数继续作为硬上限。无论是否设置固定配额，`max_audio_mb` 单文件上限、
+`minimum_free_mb` 磁盘安全余量与 staging/孤儿文件清理流程始终生效。
 
 环境变量覆盖为 `DORAMI_PODCAST_ARTIFACT_ROOT_DIR`、
 `DORAMI_PODCAST_ARTIFACT_MAX_AUDIO_MB`、
@@ -429,18 +437,15 @@ staging_ttl_seconds = 3600
 `DORAMI_PODCAST_ARTIFACT_ALLOWED_MIME_TYPES`、
 `DORAMI_PODCAST_ARTIFACT_UPLOAD_TIMEOUT_SECONDS` 与
 `DORAMI_PODCAST_ARTIFACT_DOWNLOAD_TIMEOUT_SECONDS`、
-`DORAMI_PODCAST_ARTIFACT_DOWNLOAD_MAX_REDIRECTS`、
-`DORAMI_PODCAST_ARTIFACT_SOURCE_AUDIO_TTL_SECONDS` 与
-`DORAMI_PODCAST_ARTIFACT_SOURCE_AUDIO_QUOTA_MB`；需要精确字节值时可用
+`DORAMI_PODCAST_ARTIFACT_DOWNLOAD_MAX_REDIRECTS`；需要精确字节值时可用
 `DORAMI_PODCAST_ARTIFACT_TOTAL_QUOTA_BYTES` 与
-`DORAMI_PODCAST_ARTIFACT_MINIMUM_FREE_BYTES` 覆盖 MiB 配置，原音频缓存配额也可用
-`DORAMI_PODCAST_ARTIFACT_SOURCE_AUDIO_QUOTA_BYTES` 精确覆盖；临时上传 TTL 使用
+`DORAMI_PODCAST_ARTIFACT_MINIMUM_FREE_BYTES` 覆盖 MiB 配置；临时 staging TTL 使用
 `DORAMI_PODCAST_ARTIFACT_STAGING_TTL_SECONDS`。Docker Compose 把 root 固定为
 `/app/data/podcast-artifacts`，由宿主 `./data:/app/data` 持久化；裸机默认落在仓库
 `data/podcast-artifacts`。新 unique blob 在原子安装前同时检查 CAS 总配额和磁盘最低
 余量；已存在且哈希校验通过的 blob 去重登记不重复占用配额。每次 API 启动及管理员手动
 对账只会清理超过 TTL 且未被活跃上传/下载锁定的 `.incoming/*.part` 和失效预留标记，
-并仅清理宽限期已过、数据库已无任何引用的孤儿 blob。发布者音频由外网处理节点按原始
-http(s) 地址下载，不做 DNS/IP 段过滤并沿用系统代理，因此可兼容 Clash/Surge Fake-IP；
-下载仍受大小、总超时和重定向次数限制，且不会在日志或 artifact 响应中暴露签名 URL query。
+并仅清理宽限期已过、数据库已无任何引用的生成音频孤儿 blob。发布者音频由外网处理节点
+按原始 http(s) 地址下载到 staging 做校验；临时文件不登记为 artifact，并在校验结束后删除。
+下载仍受大小、总超时和重定向次数限制，且不会在日志、快照或 artifact 响应中暴露签名 URL query。
 迁移、备份和恢复时必须连同整个 `data/` 目录处理。

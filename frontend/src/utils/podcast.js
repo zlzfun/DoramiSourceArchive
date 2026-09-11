@@ -47,3 +47,8 @@ export function podcastProcessingMeta(status, hasCondensedAudio = false) {
     ? { label: '中文精华状态待确认', tone: 'idle' }
     : { label: '仅提供原节目', tone: 'idle' };
 }
+
+/** User lists show available listening modes, never background pipeline state. */
+export function podcastListAvailabilityMeta(hasCondensedAudio = false) {
+  return podcastProcessingMeta('', hasCondensedAudio);
+}

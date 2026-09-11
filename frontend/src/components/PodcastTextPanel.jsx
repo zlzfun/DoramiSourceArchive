@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { useEffect, useId, useRef, useState } from 'react';
+import { ChevronDown, Loader2 } from 'lucide-react';
 import { fetchPodcastEpisodeTexts } from '../api';
 import {
   isPodcastTextRequestCurrent,
@@ -9,12 +9,22 @@ import {
 } from '../utils/podcastTextReader';
 import ReaderMarkdown from './ReaderMarkdown';
 
-export default function PodcastTextPanel({ episodeId }) {
+const NO_HIDDEN_TRANSCRIPT_KINDS = Object.freeze([]);
+
+export default function PodcastTextPanel({
+  episodeId,
+  showDigest = false,
+  preferredTranscriptKind = '',
+  hiddenTranscriptKinds = NO_HIDDEN_TRANSCRIPT_KINDS,
+}) {
   const [state, setState] = useState({ loading: true, response: null, error: '' });
   const [reload, setReload] = useState(0);
   const [pages, setPages] = useState({});
   const [more, setMore] = useState({});
+  const [selection, setSelection] = useState({ episodeId: '', kind: '' });
+  const [disclosure, setDisclosure] = useState({ episodeId: '', open: true });
   const requestGroup = useRef({ episodeId: null, controllers: new Set() });
+  const transcriptBodyId = useId();
 
   useEffect(() => {
     const group = { episodeId, controllers: new Set() };
@@ -48,7 +58,10 @@ export default function PodcastTextPanel({ episodeId }) {
     };
   }, [episodeId, reload]);
 
-  const view = podcastTextView({ items: Object.values(pages) });
+  const hiddenKinds = new Set(hiddenTranscriptKinds);
+  const view = podcastTextView({
+    items: Object.values(pages).filter((item) => !hiddenKinds.has(item.kind)),
+  });
   const refreshFirstPage = (kind, group = requestGroup.current) => {
     if (!isPodcastTextRequestCurrent(group, requestGroup.current, episodeId)) {
       return Promise.resolve();
@@ -141,32 +154,98 @@ export default function PodcastTextPanel({ episodeId }) {
       </div>
     );
   }
-  // 精品导读由上方 Tab 控制显示；没有中文博客时不再渲染额外占位壳。
-  if (!view.digest) return null;
+  const transcript = view.transcripts.find(({ item }) => (
+    selection.episodeId === episodeId && item.kind === selection.kind
+  )) || view.transcripts.find(({ item }) => (
+    item.kind === preferredTranscriptKind
+  )) || view.transcripts[0] || null;
+  const transcriptOpen = disclosure.episodeId === episodeId ? disclosure.open : true;
+  const digestVisible = showDigest && view.digest;
+  if (!digestVisible && !transcript) return null;
 
   return (
-    <section className="podcast-text-panel" aria-label="精品导读中文博客">
-      <div className="podcast-text-digest">
-        <div className="podcast-text-heading">
-          <h2>精品导读</h2>
-          <span>中文博客 · AI 整理</span>
+    <section className="podcast-text-panel" aria-label="播客文字内容">
+      {digestVisible && (
+        <div className="podcast-text-digest">
+          <div className="podcast-text-heading">
+            <h2>精品导读</h2>
+            <span>中文博客 · AI 整理</span>
+          </div>
+          <div className="podcast-guide-body">
+            <ReaderMarkdown>{view.digest.text}</ReaderMarkdown>
+            {view.digest.next_cursor && (
+              <button
+                type="button"
+                className="podcast-text-more"
+                disabled={more[view.digest.kind]?.loading}
+                onClick={() => loadMore(view.digest)}
+              >
+                {more[view.digest.kind]?.loading ? '正在载入…' : '继续阅读精品导读'}
+              </button>
+            )}
+            {more[view.digest.kind]?.error && <p className="podcast-text-more-error" role="alert">{more[view.digest.kind].error}</p>}
+            {more[view.digest.kind]?.notice && <p className="podcast-text-refresh-notice" role="status">{more[view.digest.kind].notice}</p>}
+          </div>
         </div>
-        <div className="podcast-guide-body">
-          <ReaderMarkdown>{view.digest.text}</ReaderMarkdown>
-          {view.digest.next_cursor && (
-            <button
-              type="button"
-              className="podcast-text-more"
-              disabled={more[view.digest.kind]?.loading}
-              onClick={() => loadMore(view.digest)}
-            >
-              {more[view.digest.kind]?.loading ? '正在载入…' : '继续阅读精品导读'}
-            </button>
+      )}
+      {transcript && (
+        <div className="podcast-text-transcript">
+          <button
+            type="button"
+            className="podcast-text-toggle"
+            aria-expanded={transcriptOpen}
+            aria-controls={transcriptBodyId}
+            onClick={() => setDisclosure({ episodeId, open: !transcriptOpen })}
+          >
+            <span>
+              <strong>{transcript.label.title}</strong>
+              <small>{transcript.label.note}</small>
+            </span>
+            <ChevronDown className={transcriptOpen ? 'is-open' : ''} aria-hidden="true" />
+          </button>
+          {view.transcripts.length > 1 && (
+            <div className="mini-seg podcast-text-sources" role="group" aria-label="逐字稿来源">
+              {view.transcripts.map(({ item, label }) => (
+                <button
+                  key={item.kind}
+                  type="button"
+                  className={`mini-seg-btn ${item.kind === transcript.item.kind ? 'is-on' : ''}`}
+                  aria-pressed={item.kind === transcript.item.kind}
+                  onClick={() => setSelection({ episodeId, kind: item.kind })}
+                >
+                  {label.title}
+                </button>
+              ))}
+            </div>
           )}
-          {more[view.digest.kind]?.error && <p className="podcast-text-more-error" role="alert">{more[view.digest.kind].error}</p>}
-          {more[view.digest.kind]?.notice && <p className="podcast-text-refresh-notice" role="status">{more[view.digest.kind].notice}</p>}
+          {transcriptOpen && (
+            <div
+              id={transcriptBodyId}
+              className="podcast-text-transcript-body"
+              tabIndex={0}
+              aria-label={`${transcript.label.title}正文`}
+            >
+              <div className="podcast-text-copy body-text">{transcript.item.text}</div>
+              {transcript.item.next_cursor && (
+                <button
+                  type="button"
+                  className="podcast-text-more"
+                  disabled={more[transcript.item.kind]?.loading}
+                  onClick={() => loadMore(transcript.item)}
+                >
+                  {more[transcript.item.kind]?.loading ? '正在载入…' : '继续阅读逐字稿'}
+                </button>
+              )}
+              {more[transcript.item.kind]?.error && (
+                <p className="podcast-text-more-error" role="alert">{more[transcript.item.kind].error}</p>
+              )}
+              {more[transcript.item.kind]?.notice && (
+                <p className="podcast-text-refresh-notice" role="status">{more[transcript.item.kind].notice}</p>
+              )}
+            </div>
+          )}
         </div>
-      </div>
+      )}
     </section>
   );
 }

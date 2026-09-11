@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import sys
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -17,8 +18,8 @@ from config import LLMConfig, PodcastConfig  # noqa: E402
 from models.db import (  # noqa: E402
     ArticleAnalysisRecord,
     ArticleRecord,
-    PodcastArtifactRecord,
     PodcastProcessingRecord,
+    PodcastSourceMediaSnapshotRecord,
     PodcastStageAttemptRecord,
     PodcastTextArtifactRecord,
     PodcastTextPublicationRecord,
@@ -26,7 +27,6 @@ from models.db import (  # noqa: E402
 )
 from services.article_analysis import queue_article_analysis  # noqa: E402
 from services.podcast_full_analysis import (  # noqa: E402
-    FINAL_PREMIUM_THRESHOLD,
     FullAnalysisWorkerStep,
     FullAnalysisWorkerConfig,
     OpenAiFullAnalysisProvider,
@@ -52,7 +52,10 @@ from services.podcast_publisher_transcripts import (  # noqa: E402
     publisher_transcript_refresh_revision,
 )
 from storage.impl.db_storage import DatabaseStorage  # noqa: E402
-from api.articles_view import _podcast_projection  # noqa: E402
+from api.articles_view import (  # noqa: E402
+    _podcast_projection,
+    serialize_article_list_item,
+)
 
 
 NOW = dt.datetime.now(dt.timezone.utc)
@@ -225,7 +228,12 @@ def engine(tmp_path):
                 publish_date=stamp,
                 fetched_date=stamp,
                 content="show notes",
-                extensions_json=json.dumps({"duration_seconds": 60}),
+                extensions_json=json.dumps(
+                    {
+                        "duration_seconds": 60,
+                        "audio_url": "https://cdn.example.test/episode-asr.mp3",
+                    }
+                ),
             )
         )
         session.flush()
@@ -247,19 +255,17 @@ def engine(tmp_path):
             )
         )
         session.add(
-            PodcastArtifactRecord(
-                id="source-audio-asr",
+            PodcastSourceMediaSnapshotRecord(
+                id="source-media-asr",
                 episode_id="episode-asr",
-                kind="source_audio",
                 content_hash="e" * 64,
                 mime="audio/mpeg",
-                ext="mp3",
                 size_bytes=1024,
                 duration_seconds=60,
-                status="ready",
-                expires_at="2099-01-01T00:00:00.000000+00:00",
+                locator_hash=hashlib.sha256(
+                    b"https://cdn.example.test/episode-asr.mp3"
+                ).hexdigest(),
                 created_at=stamp,
-                updated_at=stamp,
             )
         )
         session.commit()
@@ -269,7 +275,6 @@ def engine(tmp_path):
 def _request(engine, episode_id: str, *, override: bool, key: str):
     return request_processing(
         engine,
-        _Store(),
         _registry(),
         _config(),
         episode_id=episode_id,
@@ -314,7 +319,7 @@ def test_same_full_analysis_request_is_idempotent(engine):
 
 def test_audio_only_candidate_enters_existing_asr_state_machine(engine):
     process = _request(engine, "episode-asr", override=False, key="asr-fallback")
-    assert process.input_artifact_kind == "source_audio"
+    assert process.input_artifact_kind == "source_media_snapshot"
     assert process.stage == "asr"
     assert process.processing_status == "queued"
 
@@ -477,12 +482,12 @@ def test_full_analysis_does_not_overwrite_authority_changed_during_llm(engine):
         assert pending.eligibility_status == "blocked_source"
 
 
-def test_map_reduce_covers_every_character_and_exact_eight_is_premium(engine):
+def test_map_reduce_covers_every_character_and_exact_threshold_is_not_premium(engine):
     process = _request(
         engine, "episode-50", override=False, key="worker-episode-50"
     )
-    provider = _Provider(score=FINAL_PREMIUM_THRESHOLD)
-    config = _config()
+    config = replace(_config(), premium_score_threshold=8.25)
+    provider = _Provider(score=config.premium_score_threshold)
     with Session(engine) as session:
         step = asyncio.run(
             run_full_analysis_worker_step(
@@ -513,11 +518,12 @@ def test_map_reduce_covers_every_character_and_exact_eight_is_premium(engine):
         analysis = session.get(ArticleAnalysisRecord, "episode-50")
         assert persisted.processing_status == "ready"
         assert analysis.analysis_basis == "publisher_transcript"
-        assert analysis.quality_score == 8.0
+        assert analysis.quality_score == config.premium_score_threshold
         diagnostics = json.loads(analysis.analysis_diagnostics_json)
         assert diagnostics["coverage"]["source_chars"] == len("".join(provider.chunks))
         assert diagnostics["coverage"]["chunk_count"] == len(provider.chunks)
-        assert diagnostics["final_premium"] is True
+        assert diagnostics["final_premium_threshold"] == config.premium_score_threshold
+        assert diagnostics["final_premium"] is False
 
 
 def test_split_and_reduce_never_drop_middle_or_end(engine):
@@ -838,8 +844,8 @@ def test_one_click_orchestration_ingests_publisher_before_audio(monkeypatch):
         fake_publisher,
     )
     monkeypatch.setattr(
-        app_module.podcast_source_audio_service,
-        "cache_source_audio",
+        app_module.podcast_source_media_service,
+        "validate_source_media",
         fake_audio,
     )
     result = asyncio.run(
@@ -884,20 +890,76 @@ def test_podcast_projection_exposes_durable_status_basis_and_thresholds():
     final = SimpleNamespace(
         status="succeeded",
         analysis_basis="asr_transcript",
-        quality_score=8.0,
+        quality_score=8.5,
     )
     completed = SimpleNamespace(
         id="processing-2",
         requested_target="full_analysis",
         processing_status="ready",
         stage="analyze",
-        input_artifact_kind="source_audio",
+        input_artifact_kind="source_media_snapshot",
         error_message="",
     )
-    projected = _podcast_projection({}, final, completed)
+    projected = _podcast_projection(
+        {}, final, completed, premium_score_threshold=8.5
+    )
     assert projected["transcript_source"] == "asr_transcript"
     assert projected["full_analysis_candidate"] is False
+    assert projected["final_premium"] is False
+
+    final.quality_score = 8.5001
+    projected = _podcast_projection(
+        {}, final, completed, premium_score_threshold=8.5
+    )
     assert projected["final_premium"] is True
+
+    record = ArticleRecord(
+        id="premium-boundary",
+        title="Premium boundary",
+        content_type="podcast_episode",
+        source_id="podcast-source",
+        source_url="https://example.test/premium-boundary",
+        publish_date=NOW.isoformat(),
+        fetched_date=NOW.isoformat(),
+        content="show notes",
+    )
+    final.quality_score = 8.5
+    item = serialize_article_list_item(
+        record,
+        include_content=False,
+        analysis=final,
+        premium_score_threshold=8.5,
+    )
+    assert item["is_premium_podcast"] is False
+    assert item["podcast"]["final_premium"] is False
+    final.quality_score = 8.5001
+    item = serialize_article_list_item(
+        record,
+        include_content=False,
+        analysis=final,
+        premium_score_threshold=8.5,
+    )
+    assert item["is_premium_podcast"] is True
+    assert item["podcast"]["final_premium"] is True
+
+    projected = _podcast_projection(
+        {
+            "premium_guide": {
+                "status": "failed",
+                "failed_stage": "synthesizing",
+                "error": "TTS provider timeout",
+                "internal_detail": "must not leak",
+            }
+        },
+        final,
+        completed,
+    )
+    assert projected["premium_guide"] == {
+        "status": "failed",
+        "failed_stage": "synthesizing",
+        "error": "TTS provider timeout",
+        "audio_ready": False,
+    }
 
 
 def test_changed_publisher_locator_is_detected_before_reusing_publication(engine):
@@ -939,13 +1001,16 @@ def test_changed_publisher_locator_is_detected_before_reusing_publication(engine
     ) == hashlib.sha256(new_url.encode()).hexdigest()
 
 
-def test_stale_publisher_locator_falls_back_to_source_audio_asr(engine):
+def test_stale_publisher_locator_falls_back_to_source_media_asr(engine):
     old_url = "https://publisher.example.test/old.vtt"
     new_url = "https://publisher.example.test/new.vtt"
     with Session(engine) as session:
         episode = session.get(ArticleRecord, "episode-asr")
         episode.extensions_json = json.dumps(
-            {"transcripts": [{"url": new_url, "type": "text/vtt"}]}
+            {
+                "audio_url": "https://cdn.example.test/episode-asr.mp3",
+                "transcripts": [{"url": new_url, "type": "text/vtt"}],
+            }
         )
         text = "stale publisher transcript"
         artifact = PodcastTextArtifactRecord(
@@ -982,7 +1047,7 @@ def test_stale_publisher_locator_falls_back_to_source_audio_asr(engine):
         )
         session.commit()
     process = _request(engine, "episode-asr", override=False, key="stale-to-asr")
-    assert process.input_artifact_kind == "source_audio"
+    assert process.input_artifact_kind == "source_media_snapshot"
     assert process.stage == "asr"
 
 
@@ -1037,7 +1102,11 @@ def test_full_analysis_requires_llm_before_any_input_preparation(engine, monkeyp
 
     monkeypatch.setattr(app_module.podcast_publisher_transcript_service, "ingest_publisher_transcript", forbidden)
     monkeypatch.setattr(app_module.podcast_publisher_transcript_service, "publisher_transcript_refresh_revision", forbidden)
-    monkeypatch.setattr(app_module.podcast_source_audio_service, "cache_source_audio", forbidden)
+    monkeypatch.setattr(
+        app_module.podcast_source_media_service,
+        "validate_source_media",
+        forbidden,
+    )
     with pytest.raises(PodcastAdminError, match="处理能力") as error:
         asyncio.run(app_module.enqueue_podcast_processing_with_input(
             episode_id=episode_id, target="full_analysis", selection_override=True,
