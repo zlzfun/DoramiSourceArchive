@@ -241,6 +241,9 @@ export const ArticleRow = memo(function ArticleRow({
   const scoreTier = scoreTierClass(article.quality_score);   // issue #54:按分值分档着色
   const analysisStatus = analysisStatusMeta(article, { podcast: entryPodcast });
   const podcastAssessment = entryPodcast ? podcastAssessmentMeta(article) : null;
+  const analysisTag = analysisLabel && analysisLabel !== interestHit && analysisLabel !== labelSuppress
+    ? <span className="reader-entry-tag">{analysisLabel}</span>
+    : null;
   const favoriteControl = (
     <span
       role="button"
@@ -277,7 +280,7 @@ export const ArticleRow = memo(function ArticleRow({
             <span className="reader-podcast-copy">
               <span className="reader-entry-top">
                 <span className="reader-entry-src">{podcast?.show_title || sourceName}</span>
-                {analysisLabel && <span className="reader-entry-tag">{analysisLabel}</span>}
+                {analysisTag}
                 {score && (
                   <span className={`reader-entry-score ai-grad-text ${scoreTier}`} title={SCORE_DISCLAIMER}>
                     {score}
@@ -335,7 +338,7 @@ export const ArticleRow = memo(function ArticleRow({
                   分数是衬线数字落在时间之前——不再独占一行,晚到只横向填字、标题不动;
                   没有可读结果且分析在途时,分数槽先以「分析中」占位,落地即换成数。 */}
               {/* 分析主签与命中胶囊同名时让位;单标签视图里与当前标签同名时也让位(每行都写同一个词是重复信息) */}
-              {analysisLabel && analysisLabel !== interestHit && analysisLabel !== labelSuppress && <span className="reader-entry-tag">{analysisLabel}</span>}
+              {analysisTag}
               {score
                 ? <span className={`reader-entry-score ai-grad-text ${scoreTier}`} title={SCORE_DISCLAIMER}>{score}</span>
                 : (analysisStatus && <span className="reader-entry-score is-pending" role="status">分析中</span>)}
@@ -548,7 +551,7 @@ export default function ReaderTab({
             className={`reader-tr-seg-btn ${showTranslation ? 'is-on is-ai' : ''}`}
             aria-pressed={showTranslation}
             disabled={translating || activeBodyLoading || !activeBody}
-            title={showTranslation ? '当前显示中文译文' : '将正文译为中文'}
+            title={showTranslation ? '当前显示中文译文' : podcastView ? '将节目简介和逐字稿译为中文' : '将正文译为中文'}
             onClick={() => { if (!showTranslation) handleTranslate(); }}
           >
             {translating
@@ -1383,7 +1386,7 @@ export default function ReaderTab({
                 </div>
               )}
             </header>
-            <div className="reader-pane-body markdown-body">
+            <div className="reader-pane-body">
               {podcastView && (
                 <PodcastExperiencePanel
                   article={activeArticle}
@@ -1412,22 +1415,29 @@ export default function ReaderTab({
                   <span>来源方提供</span>
                 </div>
               )}
-              {podcastGuideActive ? null : activeBodyLoading ? (
-                <PaneBodySkeleton />
-              ) : (showTranslation && translatedBody) ? (
-                <ReaderMarkdown>{displayTranslatedBody}</ReaderMarkdown>
-              ) : activeBody ? (
-                <ReaderMarkdown>{displayBody}</ReaderMarkdown>
-              ) : (
-                podcastView
-                  ? '该播客暂无文字内容，可收听上方原节目音频。'
-                  : '该文章暂无正文内容，点击「查看原文」阅读完整内容。'
+              {!podcastGuideActive && (
+                <div className="reader-article-copy markdown-body" data-ai-translation-scope="article-body">
+                  {activeBodyLoading ? (
+                    <PaneBodySkeleton />
+                  ) : (showTranslation && translatedBody) ? (
+                    <ReaderMarkdown>{displayTranslatedBody}</ReaderMarkdown>
+                  ) : activeBody ? (
+                    <ReaderMarkdown>{displayBody}</ReaderMarkdown>
+                  ) : (
+                    podcastView
+                      ? '该播客暂无文字内容，可收听上方原节目音频。'
+                      : '该文章暂无正文内容，点击「查看原文」阅读完整内容。'
+                  )}
+                </div>
               )}
               {podcastView && !podcastGuideActive && !activeBodyLoading && (
-                <PodcastTextPanel
-                  episodeId={activeArticle.id}
-                  preferredTranscriptKind="publisher_transcript"
-                />
+                <div data-ai-translation-excluded="true">
+                  <PodcastTextPanel
+                    episodeId={activeArticle.id}
+                    preferredTranscriptKind="publisher_transcript"
+                    showTranslation={showTranslation}
+                  />
+                </div>
               )}
               {/* 正文尾部原文行(v3.40 自定源首创,v3.45 推全站):读完想看原文正是最自然的
                   时刻;摘要型源读完即达原文,全文源多一个出口也无碍。无 source_url 不画。 */}

@@ -26,6 +26,36 @@ export function podcastTextView(response) {
   };
 }
 
+export function podcastSourceTranscript(view, preferredKind = '', selectedKind = '') {
+  const sourceTranscripts = (view?.transcripts || []).filter(
+    ({ item }) => item.kind !== 'transcript_zh',
+  );
+  return sourceTranscripts.find(({ item }) => item.kind === selectedKind)
+    || sourceTranscripts.find(({ item }) => item.kind === preferredKind)
+    || sourceTranscripts[0]
+    || null;
+}
+
+export function podcastTranscriptForLanguage({
+  view,
+  translated = false,
+  preferredKind = '',
+  selectedKind = '',
+}) {
+  const chinese = (view?.transcripts || []).find(
+    ({ item }) => item.kind === 'transcript_zh',
+  ) || null;
+  const source = podcastSourceTranscript(view, preferredKind, selectedKind);
+  return {
+    transcript: translated ? (chinese || source) : (source || chinese),
+    chinese,
+    source,
+    sourceTranscripts: (view?.transcripts || []).filter(
+      ({ item }) => item.kind !== 'transcript_zh',
+    ),
+  };
+}
+
 export function mergePodcastTextPage(current, next) {
   if (!current) return next || null;
   if (!next) return current;

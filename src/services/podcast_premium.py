@@ -7,6 +7,7 @@ this module so a show-notes score can never accidentally award premium status.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -20,6 +21,7 @@ from models.db import (
     ArticleRecord,
     PodcastArtifactRecord,
     PodcastProcessingRecord,
+    PodcastTextArtifactRecord,
     PodcastTextPublicationRecord,
     SourceConfigRecord,
 )
@@ -40,9 +42,23 @@ ACTIVE_PROCESSING_STATUSES = frozenset(
 FAILED_PROCESSING_STATUSES = frozenset(
     {"failed", "retry_wait", "reconciliation_required"}
 )
+ACTIVE_TTS_STATUSES = frozenset({"queued", "summarizing", "synthesizing"})
 VALID_FILTERS = frozenset(
     {"all", "pending_full", "processing", "premium", "below_threshold", "failed"}
 )
+
+
+def _episode_extensions(episode: ArticleRecord) -> dict[str, Any]:
+    try:
+        value = json.loads(episode.extensions_json or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _premium_guide(episode: ArticleRecord) -> dict[str, Any]:
+    guide = _episode_extensions(episode).get("premium_guide")
+    return guide if isinstance(guide, dict) else {}
 
 
 def normalize_threshold(value: Any) -> float:
@@ -119,6 +135,8 @@ class _EpisodeState:
     source_name: str
     blog_ready: bool
     audio_ready: bool
+    audio_artifact_id: str
+    transcript_ready: bool
 
 
 def _stage_and_reason(
@@ -163,14 +181,18 @@ def _matches_filter(
         return True
     score = final_score(state.analysis)
     process_status = str(state.processing.processing_status if state.processing else "")
+    tts_status = str(_premium_guide(state.episode).get("status") or "")
     if status_filter == "premium":
         return score is not None and score >= threshold
     if status_filter == "below_threshold":
         return score is not None and score < threshold
     if status_filter == "processing":
-        return process_status in ACTIVE_PROCESSING_STATUSES
+        return (
+            process_status in ACTIVE_PROCESSING_STATUSES
+            or tts_status in ACTIVE_TTS_STATUSES
+        )
     if status_filter == "failed":
-        return process_status in FAILED_PROCESSING_STATUSES
+        return process_status in FAILED_PROCESSING_STATUSES or tts_status == "failed"
     if status_filter == "pending_full":
         return (
             score is None
@@ -206,6 +228,19 @@ def dashboard(
                 select(ArticleAnalysisRecord).where(ArticleAnalysisRecord.article_id.in_(ids))
             ).all()
         } if ids else {}
+        transcript_ids = [
+            str(row.transcript_artifact_id)
+            for row in analyses.values()
+            if row.transcript_artifact_id
+        ]
+        transcript_artifacts = {
+            row.id: row
+            for row in session.exec(
+                select(PodcastTextArtifactRecord).where(
+                    PodcastTextArtifactRecord.id.in_(transcript_ids)
+                )
+            ).all()
+        } if transcript_ids else {}
         processing_rows = session.exec(
             select(PodcastProcessingRecord)
             .where(
@@ -227,23 +262,44 @@ def dashboard(
                 PodcastTextPublicationRecord.status == "published",
             )
         ).all())
-        audio_ids = set(session.exec(
-            select(PodcastArtifactRecord.episode_id).where(
+        audio_rows = session.exec(
+            select(PodcastArtifactRecord).where(
                 PodcastArtifactRecord.kind == "digest_audio_zh",
                 PodcastArtifactRecord.status == "published",
             )
-        ).all())
-        states = [
-            _EpisodeState(
+            .order_by(
+                PodcastArtifactRecord.published_at.desc(),
+                PodcastArtifactRecord.id.desc(),
+            )
+        ).all()
+        audio_artifact_ids: dict[str, str] = {}
+        for artifact in audio_rows:
+            audio_artifact_ids.setdefault(artifact.episode_id, artifact.id)
+        states = []
+        for row in episodes:
+            analysis = analyses.get(row.id)
+            artifact = transcript_artifacts.get(
+                str(analysis.transcript_artifact_id or "") if analysis else ""
+            )
+            expected_kind = (
+                "publisher_transcript"
+                if analysis and analysis.analysis_basis == "publisher_transcript"
+                else "normalized_transcript"
+            )
+            states.append(_EpisodeState(
                 episode=row,
-                analysis=analyses.get(row.id),
+                analysis=analysis,
                 processing=processings.get(row.id),
                 source_name=str(source_names.get(row.source_id) or row.source_id),
                 blog_ready=row.id in blog_ids,
-                audio_ready=row.id in audio_ids,
-            )
-            for row in episodes
-        ]
+                audio_ready=row.id in audio_artifact_ids,
+                audio_artifact_id=audio_artifact_ids.get(row.id, ""),
+                transcript_ready=(
+                    artifact is not None
+                    and artifact.episode_id == row.id
+                    and artifact.kind == expected_kind
+                ),
+            ))
         filtered = [
             row for row in states
             if _matches_filter(row, status_filter=status_filter, threshold=threshold)
@@ -265,6 +321,40 @@ def dashboard(
                 raw_basis,
                 raw_basis if raw_basis else "尚未分析",
             )
+            guide = _premium_guide(state.episode)
+            guide_status = str(guide.get("status") or "not_started")
+            if state.audio_ready:
+                # The published artifact is authoritative if a stale extension
+                # survived an interrupted status update.
+                guide_status = "ready"
+            elif guide_status not in {
+                "not_started",
+                "queued",
+                "summarizing",
+                "synthesizing",
+                "ready",
+                "failed",
+            }:
+                guide_status = "not_started"
+            guide_error = str(guide.get("error") or "")
+            if guide_status == "ready" and not state.audio_ready:
+                guide_status = "failed"
+                guide_error = guide_error or "TTS 标记完成，但已发布音频成品不存在"
+            force_request = guide.get("force_request")
+            if not isinstance(force_request, dict):
+                force_request = {}
+            tts_forced = force_request.get("selection_override") is True
+            tts_status_labels = {
+                "not_started": "未开始",
+                "queued": "已排队",
+                "summarizing": "正在生成导读",
+                "synthesizing": "正在合成音频",
+                "ready": "音频已生成",
+                "failed": "生成失败",
+            }
+            reason_text = reason
+            if tts_forced and guide_status == "ready" and not current_premium:
+                reason_text = "已强制生成 TTS；全文终评仍未达到当前优质门槛"
             return {
                 "episode_id": state.episode.id,
                 "title": state.episode.title,
@@ -282,11 +372,27 @@ def dashboard(
                 "processing_status": process_status,
                 "processing_id": str(process.id if process else ""),
                 "attempt_count": int(process.attempt_count if process else 0),
-                "reason": reason,
+                "reason": reason_text,
                 "blog_ready": state.blog_ready,
                 "audio_ready": state.audio_ready,
                 "historical_generated": historical_generated,
                 "pending_generation": current_premium and not historical_generated,
+                "tts_status": guide_status,
+                "tts_status_label": tts_status_labels[guide_status],
+                "tts_error": guide_error,
+                "tts_failed_stage": str(guide.get("failed_stage") or ""),
+                "tts_forced": tts_forced,
+                "tts_updated_at": str(guide.get("updated_at") or ""),
+                "tts_audio_artifact_id": (
+                    state.audio_artifact_id
+                    or str(guide.get("audio_artifact_id") or "")
+                ),
+                "can_force_tts": (
+                    score_final is not None
+                    and state.transcript_ready
+                    and not state.audio_ready
+                    and guide_status not in {"queued", "summarizing", "synthesizing"}
+                ),
                 "can_force": (
                     score_final is None
                     and process_status not in ACTIVE_PROCESSING_STATUSES
@@ -304,6 +410,10 @@ def dashboard(
             (
                 str(row.processing.processing_status if row.processing else "")
                 in ACTIVE_PROCESSING_STATUSES | FAILED_PROCESSING_STATUSES
+            )
+            or (
+                str(_premium_guide(row.episode).get("status") or "")
+                in ACTIVE_TTS_STATUSES | {"failed"}
             )
             or (
                 final_score(row.analysis) is None

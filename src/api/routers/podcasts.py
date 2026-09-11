@@ -11,11 +11,11 @@ import os
 import re
 from email.utils import formatdate
 from pathlib import Path
-from typing import BinaryIO, Iterator, Literal
+from typing import Annotated, Any, BinaryIO, Iterator, Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlmodel import Session
 
@@ -114,6 +114,15 @@ class PodcastPremiumThresholdRequest(BaseModel):
     threshold: float
 
 
+class PodcastPremiumGuideForceRequest(BaseModel):
+    reason: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=3, max_length=1000)
+    ]
+    idempotency_key: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=8, max_length=200)
+    ]
+
+
 class PodcastDomainErrorResponse(BaseModel):
     code: Literal[
         "podcast_admin_required",
@@ -170,6 +179,10 @@ class PodcastSourceMediaSnapshotResponse(BaseModel):
 
 def _app():
     return importlib.import_module("api.app")
+
+
+def _actor(auth: dict[str, Any]) -> str:
+    return str(auth.get("sub") or auth.get("username") or auth.get("user") or "admin")
 
 
 def _asr_quota_response(session: Session) -> PodcastAsrQuotaResponse:
@@ -824,7 +837,9 @@ def update_podcast_premium_threshold(body: PodcastPremiumThresholdRequest):
                 session, body.threshold
             )
         snapshot = podcast_premium_service.dashboard(
-            app.db_sink.engine, page=1, page_size=1
+            app.db_sink.engine,
+            page=1,
+            page_size=1,
         )
         return {
             "threshold": threshold,
@@ -874,3 +889,42 @@ async def run_podcast_premium_guide(episode_id: str):
             raise HTTPException(status_code=404, detail="播客单集不存在")
     started = app.schedule_podcast_premium_guide(episode_id)
     return {"episode_id": episode_id, "status": "queued", "started": started}
+
+
+@router.post(
+    "/api/admin/podcast-premium-guides/{episode_id}/force",
+    status_code=202,
+    dependencies=[Depends(deps.require_admin)],
+)
+async def force_podcast_premium_guide(
+    episode_id: str,
+    body: PodcastPremiumGuideForceRequest,
+    auth: dict[str, Any] = Depends(deps.require_admin),
+):
+    app = _app()
+    with Session(app.db_sink.engine) as session:
+        episode = session.get(ArticleRecord, episode_id)
+        if episode is None or episode.content_type != "podcast_episode":
+            return JSONResponse(
+                {
+                    "code": "podcast_force_tts_not_found",
+                    "message": "播客单集不存在",
+                },
+                status_code=404,
+                headers={"Cache-Control": "private, no-store", "Vary": "Cookie"},
+            )
+    try:
+        result = app.schedule_forced_podcast_premium_guide(
+            episode_id,
+            idempotency_key=body.idempotency_key,
+            reason=body.reason,
+            actor=_actor(auth),
+        )
+        result.pop("should_schedule", None)
+        return result
+    except podcast_premium_guide_service.PremiumGuideForceError as exc:
+        return JSONResponse(
+            {"code": exc.code, "message": exc.message},
+            status_code=exc.status_code,
+            headers={"Cache-Control": "private, no-store", "Vary": "Cookie"},
+        )

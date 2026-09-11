@@ -290,7 +290,9 @@
 .m-read-body .podcast-mode-switch .mini-seg-btn { padding-inline: 6px; }
 .m-read-body .podcast-audio-error { align-items: flex-start; flex-direction: column; }
 .m-read-body .podcast-text-transcript-body { max-height: 55vh; }
-.m-read-body .podcast-text-sources { width: calc(100% - 24px); max-width: none; margin-inline: 12px; }
+.m-read-body .podcast-text-panel { margin-top: 24px; padding-top: 18px; }
+.m-read-body .podcast-text-toggle strong { font-size: 17px; }
+.m-read-body .podcast-text-sources { width: 100%; max-width: none; margin-inline: 0; }
 .m-read-body .podcast-text-sources .mini-seg-btn { padding-inline: 6px; }
 /* 阅读进度线(scroll-timeline 渐进增强,与阅读窗同法同 keyframes;不支持则隐形) */
 @supports (animation-timeline: scroll()) {

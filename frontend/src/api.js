@@ -1,5 +1,6 @@
 import { API_BASE_URL } from './config';
 import { podcastFullAnalysisCommand } from './utils/podcastFullAnalysis';
+import { podcastPremiumTtsCommand } from './utils/podcastPremiumGuide';
 
 async function apiFetch(url, options = {}) {
   const response = await fetch(url, {
@@ -234,6 +235,15 @@ export function fetchPodcastEpisodeTexts(episodeId, filters = {}, options = {}) 
   });
 }
 
+export function translatePodcastTranscript(episodeId, sourceKind, options = {}) {
+  return request(`/reader/ai/podcasts/${enc(episodeId)}/translate-transcript`, {
+    method: 'POST',
+    body: { source_kind: sourceKind },
+    errorMsg: '逐字稿翻译失败，请稍后重试',
+    ...options,
+  });
+}
+
 export function forcePodcastFullAnalysis(episodeId, idempotencyKey = '', podcast = {}) {
   const command = podcastFullAnalysisCommand(episodeId, podcast, idempotencyKey);
   return request(command.path, {
@@ -273,6 +283,15 @@ export function runPodcastPremiumGuide(episodeId) {
   return request(`/admin/podcast-premium-guides/${enc(episodeId)}/run`, {
     method: 'POST',
     errorMsg: '启动精品导读失败',
+  });
+}
+
+export function forcePodcastPremiumTts(episodeId, idempotencyKey = '') {
+  const command = podcastPremiumTtsCommand(episodeId, idempotencyKey);
+  return request(command.path, {
+    method: 'POST',
+    body: command.body,
+    errorMsg: '启动强制 TTS 失败，请检查全文分析、TTS 配置或任务状态',
   });
 }
 

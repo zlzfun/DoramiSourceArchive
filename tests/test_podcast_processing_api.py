@@ -280,6 +280,94 @@ def test_premium_threshold_api_persists_and_returns_effective_value(api_env):
         ).status_code == 422
 
 
+def test_force_tts_api_requires_auditable_idempotent_command(api_env, monkeypatch):
+    app_module, _sink, _store, _source_audio, _config = api_env
+    calls = []
+
+    def schedule(episode_id, **kwargs):
+        calls.append((episode_id, kwargs))
+        return {
+            "episode_id": episode_id,
+            "status": "queued",
+            "forced": True,
+            "replayed": False,
+            "should_schedule": True,
+            "started": True,
+        }
+
+    monkeypatch.setattr(app_module, "schedule_forced_podcast_premium_guide", schedule)
+    with TestClient(app_module.app) as client:
+        _login(client)
+        invalid = client.post(
+            "/api/admin/podcast-premium-guides/episode-ok/force", json={}
+        )
+        assert invalid.status_code == 422
+        response = client.post(
+            "/api/admin/podcast-premium-guides/episode-ok/force",
+            json={
+                "idempotency_key": "force-episode-ok-0001",
+                "reason": "  管理员手动强制生成 TTS  ",
+            },
+        )
+    assert response.status_code == 202
+    assert response.json() == {
+        "episode_id": "episode-ok",
+        "status": "queued",
+        "forced": True,
+        "replayed": False,
+        "started": True,
+    }
+    assert calls == [(
+        "episode-ok",
+        {
+            "idempotency_key": "force-episode-ok-0001",
+            "reason": "管理员手动强制生成 TTS",
+            "actor": "admin",
+        },
+    )]
+
+
+@pytest.mark.parametrize("persisted_status", ["queued", "ready"])
+def test_force_tts_replay_precedes_current_provider_readiness(
+    api_env, persisted_status
+):
+    app_module, sink, _store, _source_audio, _config = api_env
+    with Session(sink.engine) as session:
+        episode = session.get(ArticleRecord, "episode-ok")
+        episode.extensions_json = json.dumps({
+            "premium_guide": {
+                "status": persisted_status,
+                "force_request": {
+                    "episode_id": "episode-ok",
+                    "idempotency_key": "force-provider-change-0001",
+                    "reason": "管理员手动强制生成 TTS",
+                    "requested_by": "admin",
+                    "selection_override": True,
+                },
+            }
+        })
+        session.add(episode)
+        session.commit()
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        response = client.post(
+            "/api/admin/podcast-premium-guides/episode-ok/force",
+            json={
+                "idempotency_key": "force-provider-change-0001",
+                "reason": "管理员手动强制生成 TTS",
+            },
+        )
+    assert response.status_code == 202
+    assert response.json() == {
+        "episode_id": "episode-ok",
+        "status": persisted_status,
+        "forced": True,
+        "replayed": True,
+        "started": False,
+    }
+
+
 def test_provider_registry_requires_the_complete_target_stage_chain():
     registry = PodcastProcessingProviderRegistry()
     with pytest.raises(ValueError, match="one executor per pipeline stage"):

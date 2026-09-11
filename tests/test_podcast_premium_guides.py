@@ -18,12 +18,15 @@ from models.db import (
     SourceConfigRecord,
 )
 from services.podcast_artifacts import PodcastArtifactStore
+from services.podcast_premium import dashboard
 from services.podcast_premium_guides import (
     PremiumGuideDraft,
+    PremiumGuideForceError,
     SynthesizedAudio,
     _set_episode_status,
     list_premium_guide_tasks,
     pending_premium_guide_candidates,
+    prepare_forced_premium_guide,
     run_premium_guide,
 )
 from storage.impl.db_storage import DatabaseStorage
@@ -177,6 +180,37 @@ class TtsProvider:
         return SynthesizedAudio(_wav(), "audio/wav", "provider-task")
 
 
+def _seed_force_candidate(sink: DatabaseStorage, *, duration: int = 19 * 60) -> None:
+    transcript = json.dumps({"text": "complete forced transcript"})
+    with Session(sink.engine) as session:
+        session.add(SourceConfigRecord(
+            source_id="podcast-force", name="Force", source_type="podcast",
+            url="https://example.test/force.xml", created_at=STAMP, updated_at=STAMP,
+        ))
+        session.commit()
+        session.add(ArticleRecord(
+            id="episode-force", title="Force", content_type="podcast_episode",
+            source_id="podcast-force", source_url="https://example.test/force",
+            publish_date=STAMP, fetched_date=STAMP, content="show notes",
+            extensions_json=json.dumps({"duration_seconds": duration}),
+        ))
+        session.commit()
+        session.add(ArticleAnalysisRecord(
+            article_id="episode-force", status="succeeded", quality_score=7.2,
+            podcast_final_score=7.2, analysis_basis="asr_transcript",
+            transcript_artifact_id="transcript-force",
+            created_at=STAMP, updated_at=STAMP,
+        ))
+        session.add(PodcastTextArtifactRecord(
+            id="transcript-force", episode_id="episode-force",
+            kind="normalized_transcript", version=1,
+            content_hash=hashlib.sha256(transcript.encode()).hexdigest(),
+            inline_text=transcript, language="en", authority_id="test-authority",
+            provenance_json='{"provider":"fake"}', created_at=STAMP,
+        ))
+        session.commit()
+
+
 @pytest.mark.parametrize("kind", ["normalized_transcript", "publisher_transcript"])
 def test_premium_guide_runs_from_asr_to_published_blog_and_audio(tmp_path, kind):
     sink = DatabaseStorage(f"sqlite:///{tmp_path / 'premium.db'}")
@@ -303,6 +337,112 @@ def test_premium_guide_runs_from_asr_to_published_blog_and_audio(tmp_path, kind)
         "audio_ready": True,
         "status": "ready",
     } == tasks["items"][0]
+
+
+def test_forced_premium_guide_bypasses_automatic_selection_and_records_status(tmp_path):
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'premium-force.db'}")
+    _seed_force_candidate(sink)
+    config = _external_config()
+
+    first = prepare_forced_premium_guide(
+        sink.engine,
+        episode_id="episode-force",
+        config=config,
+        score_threshold=8.5,
+        idempotency_key="force-episode-0001",
+        reason="管理员验收强制 TTS",
+        actor="admin",
+    )
+    replay = prepare_forced_premium_guide(
+        sink.engine,
+        episode_id="episode-force",
+        config=config,
+        score_threshold=8.5,
+        idempotency_key="force-episode-0001",
+        reason="管理员验收强制 TTS",
+        actor="admin",
+    )
+    assert first == {
+        "episode_id": "episode-force",
+        "status": "queued",
+        "forced": True,
+        "replayed": False,
+        "should_schedule": True,
+    }
+    assert replay["replayed"] is True
+    with pytest.raises(PremiumGuideForceError) as conflict:
+        prepare_forced_premium_guide(
+            sink.engine,
+            episode_id="episode-force",
+            config=config,
+            score_threshold=8.5,
+            idempotency_key="force-episode-0001",
+            reason="同一个键却改变原因",
+            actor="admin",
+        )
+    assert conflict.value.code == "podcast_force_tts_idempotency_conflict"
+
+    with Session(sink.engine) as session:
+        episode = session.get(ArticleRecord, "episode-force")
+        request = json.loads(episode.extensions_json)["premium_guide"]["force_request"]
+        assert request | {
+            "idempotency_key": "force-episode-0001",
+            "reason": "管理员验收强制 TTS",
+            "requested_by": "admin",
+            "score": 7.2,
+            "score_threshold": 8.5,
+            "selection_override": True,
+        } == request
+
+    store = PodcastArtifactStore(
+        sink.engine, tmp_path / "force-audio", max_bytes=1024 * 1024,
+        total_quota_bytes=10 * 1024 * 1024, minimum_free_bytes=0,
+        staging_ttl_seconds=60, allowed_mime_types=("audio/wav",),
+        probe_runner=lambda *_a, **_k: subprocess.CompletedProcess(
+            [], 0,
+            stdout='{"streams":[{"codec_type":"audio","duration":"1"}],"format":{"duration":"1"}}',
+            stderr="",
+        ),
+    )
+    result = asyncio.run(run_premium_guide(
+        sink.engine,
+        store,
+        episode_id="episode-force",
+        config=config,
+        text_provider=TextProvider(),
+        tts_provider=TtsProvider(),
+        score_threshold=8.5,
+        selection_override=True,
+    ))
+    assert result["is_premium"] is False
+    assert result["selection_override"] is True
+    assert result["audio_artifact_id"]
+    item = dashboard(sink.engine)["items"][0]
+    assert item["is_premium"] is False
+    assert item["tts_status"] == "ready"
+    assert item["tts_status_label"] == "音频已生成"
+    assert item["tts_forced"] is True
+    assert item["tts_audio_artifact_id"] == result["audio_artifact_id"]
+    assert item["tts_error"] == ""
+    assert item["can_force_tts"] is False
+    assert item["reason"] == "已强制生成 TTS；全文终评仍未达到当前优质门槛"
+
+
+def test_forced_premium_guide_still_requires_known_duration(tmp_path):
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'premium-force-no-duration.db'}")
+    _seed_force_candidate(sink, duration=0)
+    with pytest.raises(PremiumGuideForceError) as rejected:
+        prepare_forced_premium_guide(
+            sink.engine,
+            episode_id="episode-force",
+            config=_external_config(),
+            score_threshold=8.5,
+            idempotency_key="force-episode-no-duration-0001",
+            reason="管理员强制 TTS",
+            actor="admin",
+        )
+    assert rejected.value.code == "podcast_force_tts_not_ready"
+    assert "时长未知" in rejected.value.message
 
 
 @pytest.mark.parametrize("score", [7.5, 8.4])
