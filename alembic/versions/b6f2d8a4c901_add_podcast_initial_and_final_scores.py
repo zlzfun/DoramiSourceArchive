@@ -77,22 +77,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    bind = op.get_bind()
-    columns = _columns()
-    drop_archive_sync_revision_triggers(bind)
-    with op.batch_alter_table("article_analyses") as batch:
-        batch.drop_constraint(
-            "ck_article_analyses_podcast_final_score", type_="check"
-        )
-        batch.drop_constraint(
-            "ck_article_analyses_podcast_initial_score", type_="check"
-        )
-        if "podcast_final_score" in columns:
-            batch.drop_column("podcast_final_score")
-        if "podcast_initial_score" in columns:
-            batch.drop_column("podcast_initial_score")
-    install_archive_sync_revision_triggers(
-        bind,
-        include_podcast_integrity=True,
-        include_podcast_audio=True,
+    # The direct parent is itself an irreversible data-retirement boundary.
+    # Refuse before mutating this head so a request to cross that boundary does
+    # not first leave the database partially downgraded at f3c8a1d6e205.
+    raise RuntimeError(
+        "Podcast source audio blobs were intentionally retired; restore the "
+        "pre-upgrade database and CAS backup to downgrade"
     )

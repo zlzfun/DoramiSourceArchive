@@ -2297,8 +2297,6 @@ def test_archive_sync_v2_downgrade_refuses_to_reopen_live_writers(tmp_path, bloc
     from sqlalchemy import text
     from sqlmodel import Session
     from models.db import (
-        ArticleAnalysisRecord,
-        ArticleRecord,
         CmsTagCandidateRecord,
         PersonalDigestEditionRecord,
         RemoteCandidateEvidenceRecord,
@@ -2342,19 +2340,27 @@ def test_archive_sync_v2_downgrade_refuses_to_reopen_live_writers(tmp_path, bloc
                 ))
                 session.commit()
         elif blocker == "analysis_authority":
-            with Session(engine) as session:
-                session.add(ArticleRecord(
-                    id="remote-analysis", title="Remote", content_type="article",
-                    source_id="remote", source_url="", publish_date="now",
-                    fetched_date="now", has_content=True, content="body",
+            # This database intentionally stops at d6a3f9c2e714. Use that
+            # historical schema rather than the current ORM model, which has
+            # columns introduced by the later b6f2d8a4c901 revision.
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "INSERT INTO articles "
+                    "(id,title,content_type,source_id,source_url,publish_date,"
+                    "fetched_date,run_scope,has_content,content,extensions_json) "
+                    "VALUES ('remote-analysis','Remote','article','remote','',"
+                    "'now','now','',1,'body','{}')"
                 ))
-                session.add(ArticleAnalysisRecord(
-                    article_id="remote-analysis", status="succeeded",
-                    tagging_status="succeeded", content_hash="hash",
-                    authority_id="producer-a", authority_revision="rev-1",
-                    created_at="now", updated_at="now",
+                conn.execute(text(
+                    "INSERT INTO article_analyses "
+                    "(article_id,status,tagging_status,dimension_scores_json,"
+                    "score_reason,summary,content_features_json,entities_json,"
+                    "content_hash,model_name,prompt_version,scoring_version,"
+                    "taxonomy_version,attempt_count,authority_id,authority_revision,"
+                    "created_at,updated_at) VALUES "
+                    "('remote-analysis','succeeded','succeeded','{}','','','[]',"
+                    "'[]','hash','','','',0,0,'producer-a','rev-1','now','now')"
                 ))
-                session.commit()
         elif blocker == "remote_candidate":
             with Session(engine) as session:
                 candidate = CmsTagCandidateRecord(
