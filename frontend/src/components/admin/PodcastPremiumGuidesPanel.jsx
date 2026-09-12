@@ -93,7 +93,13 @@ export default function PodcastPremiumGuidesPanel({ showToast, refreshTick = 0 }
         processing_status: item.processing_status,
         attempt_count: item.attempt_count,
       });
-      showToast(item.can_retry ? '已重试全文处理' : '已启动全文处理', 'success');
+      const isAsr = item.processing_stage === 'asr' || item.processing_stage === 'fetch';
+      const isReconcile = item.processing_status === 'reconciliation_required';
+      const isAnalyze = item.processing_stage === 'analyze';
+      const retryMsg = isReconcile
+        ? (isAsr ? '已启动 ASR 对账恢复' : '已启动对账恢复')
+        : (isAsr ? '已重试 ASR 转录' : (isAnalyze ? '已重试全文分析' : '已重试全文处理'));
+      showToast(item.can_retry ? retryMsg : '已启动全文处理', 'success');
       await load(page, filter);
     } catch (error) {
       showToast(error.message || '启动失败：请检查逐字稿或原节目音频后重试', 'error');
@@ -169,7 +175,13 @@ export default function PodcastPremiumGuidesPanel({ showToast, refreshTick = 0 }
                 <tr key={item.episode_id} className="acct-row is-static">
                   <td><strong className="podcast-premium-title">{item.title}</strong><span className="tiny-meta block">{item.source_name}</span></td>
                   <td className="tabular-nums"><span className="podcast-premium-scoreline">简介 {score(item.initial_score)} · 全文 {score(item.final_score)}</span><span className="tiny-meta block">当前 {score(item.current_score)} · {item.current_basis}</span></td>
-                  <td><span className={`stamp ${item.stage === 'failed' ? 'stamp-bad' : item.stage === 'full_analyzed' ? 'stamp-ok' : ['asr_processing', 'full_analysis', 'processing'].includes(item.stage) ? 'stamp-run' : 'stamp-idle'}`}>{STAGE_LABELS[item.stage] || item.stage}</span></td>
+                  <td><span className={`stamp ${item.stage === 'failed' ? 'stamp-bad' : item.stage === 'full_analyzed' ? 'stamp-ok' : ['asr_processing', 'full_analysis', 'processing'].includes(item.stage) ? 'stamp-run' : 'stamp-idle'}`}>
+                    {item.stage === 'failed'
+                      ? (item.processing_stage === 'asr' || item.processing_stage === 'fetch'
+                          ? 'ASR 失败'
+                          : (item.processing_stage === 'analyze' ? '分析失败' : '处理失败'))
+                      : (STAGE_LABELS[item.stage] || item.stage)}
+                  </span></td>
                   <td><span className="tiny-meta block">简介线 {item.initial_eligible ? '已通过' : '未通过'}</span><span className="tiny-meta block">优质线 {item.is_premium ? '已达到' : '未达到'}</span></td>
                   <td><span className="podcast-premium-reason">{item.reason}</span></td>
                   <td><div className="podcast-premium-tts-state">
@@ -180,7 +192,27 @@ export default function PodcastPremiumGuidesPanel({ showToast, refreshTick = 0 }
                     {item.historical_generated && !item.is_premium && !tts.forced && <span className="stamp stamp-warn">历史已生成，当前未达门槛</span>}
                   </div></td>
                   <td><div className="podcast-premium-actions">
-                    {(item.can_retry || item.can_force) && <button type="button" className="podcast-premium-action" onClick={() => run(item)} disabled={running.episodeId === item.episode_id}>{running.episodeId === item.episode_id && running.action === 'full' ? <Loader2 className="animate-spin" /> : item.can_retry ? <RotateCcw /> : <Play />}{item.can_retry ? '失败重试' : '强制全文'}</button>}
+                    {(item.can_retry || item.can_force) && (
+                      <button
+                        type="button"
+                        className="podcast-premium-action"
+                        onClick={() => run(item)}
+                        disabled={running.episodeId === item.episode_id}
+                      >
+                        {running.episodeId === item.episode_id && running.action === 'full' ? (
+                          <Loader2 className="animate-spin" />
+                        ) : item.can_retry ? (
+                          <RotateCcw />
+                        ) : (
+                          <Play />
+                        )}
+                        {item.can_retry
+                          ? (item.processing_stage === 'asr' || item.processing_stage === 'fetch'
+                              ? '重试 ASR'
+                              : (item.processing_stage === 'analyze' ? '重试分析' : '失败重试'))
+                          : '强制全文'}
+                      </button>
+                    )}
                     {item.can_force_tts && <button type="button" className="podcast-premium-action is-tts" title="跳过自动优质筛选，使用已完成的全文分析生成 TTS 音频" onClick={() => forceTts(item)} disabled={running.episodeId === item.episode_id}>{running.episodeId === item.episode_id && running.action === 'tts' ? <Loader2 className="animate-spin" /> : <Headphones />}强制 TTS</button>}
                   </div></td>
                 </tr>

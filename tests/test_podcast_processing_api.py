@@ -1007,3 +1007,103 @@ def test_retry_rejection_replays_original_status(api_env, monkeypatch):
         with pytest.raises(IntegrityError, match="command is immutable"):
             session.commit()
         session.rollback()
+
+
+def test_reconcile_processing_api_resumes_to_retry_wait(api_env):
+    app_module, sink, _store, _source_media, _config = api_env
+    process_body = {
+        "target": "transcript",
+        "selection_override": True,
+        "reason": "reconcile fixture",
+        "idempotency_key": "reconcile-source-process-01",
+    }
+    with TestClient(app_module.app) as client:
+        _login(client)
+        created = client.post(
+            "/api/admin/podcast-episodes/episode-ok/process", json=process_body
+        ).json()
+        with Session(sink.engine) as session:
+            record = session.get(PodcastProcessingRecord, created["id"])
+            assert record is not None
+            record.processing_status = "reconciliation_required"
+            record.attempt_count = 1
+            record.fencing_token = 1
+            record.error_code = "provider_deadline_elapsed"
+            record.error_message = "provider deadline elapsed before polling"
+            session.add(record)
+            attempt = PodcastStageAttemptRecord(
+                id="attempt-reconcile-01",
+                processing_id=created["id"],
+                stage="asr",
+                attempt_no=1,
+                fencing_token=record.fencing_token,
+                lease_token="lease-01",
+                input_hash="hash-01",
+                output_hash="",
+                provider_name="aliyun-isi",
+                model_name="nls-filetrans",
+                provider_revision="2018-08-17",
+                provider_request_key="req-reconcile-01",
+                provider_task_id="task-reconcile-01",
+                submission_state="reconciling",
+                request_unknown=1,
+                retry_state="reconcile_required",
+                started_at="2026-09-06T00:00:00+00:00",
+                created_at="2026-09-06T00:00:00+00:00",
+                updated_at="2026-09-06T00:00:00+00:00",
+                execution_kind="provider",
+            )
+            session.add(attempt)
+            session.commit()
+            reservation = PodcastBudgetReservationRecord(
+                id="res-reconcile-01",
+                processing_id=created["id"],
+                attempt_id=attempt.id,
+                budget_scope="podcast-paid-processing",
+                budget_period="2026-09",
+                currency="CNY",
+                reserved_minor=100,
+                status="reserved",
+                idempotency_key="res-key-01",
+                created_at="2026-09-06T00:00:00+00:00",
+                updated_at="2026-09-06T00:00:00+00:00",
+            )
+            session.add(reservation)
+            session.commit()
+
+        reconcile_body = {
+            "idempotency_key": "reconcile-cmd-01",
+            "expected_attempt_count": 1,
+            "reason": "operator confirmed task on provider console",
+            "outcome": "submitted",
+        }
+        res = client.post(
+            f"/api/admin/podcast-processings/{created['id']}/reconcile",
+            json=reconcile_body,
+        )
+        assert res.status_code == 202
+        data = res.json()
+        assert data["status"] == "retry_wait"
+
+        # Test idempotency replay
+        replay = client.post(
+            f"/api/admin/podcast-processings/{created['id']}/reconcile",
+            json=reconcile_body,
+        )
+        assert replay.status_code == 202
+        assert replay.json()["status"] == "retry_wait"
+
+    with Session(sink.engine) as session:
+        commands = list(
+            session.exec(
+                select(PodcastProcessingCommandRecord).where(
+                    PodcastProcessingCommandRecord.command_type == "provider_reconcile"
+                )
+            ).all()
+        )
+        assert len(commands) == 1
+        assert commands[0].outcome == "accepted"
+        persisted_attempt = session.get(PodcastStageAttemptRecord, "attempt-reconcile-01")
+        assert persisted_attempt.submission_state == "submitted"
+        assert persisted_attempt.request_unknown is False
+        assert persisted_attempt.retry_state == "scheduled"

@@ -155,10 +155,31 @@ def _stage_and_reason(
             return "full_analyzed", "历史已生成，当前未达门槛"
         return "full_analyzed", f"全文终评 {score:.1f} 未达到当前优质门槛 {threshold:.1f}"
     if status == "reconciliation_required":
+        if stage in {"fetch", "asr"}:
+            reason = (
+                f"ASR 转录待对账（{process.error_message}），完成对账后重试 ASR"
+                if process.error_message
+                else "ASR 转录结果待对账，完成对账后重试 ASR"
+            )
+            return "failed", reason
         return "failed", str(
             process.error_message or "供应方结果待对账，完成对账后再重试"
         )
     if status in FAILED_PROCESSING_STATUSES:
+        if stage in {"fetch", "asr"}:
+            reason = (
+                f"ASR 转录失败（{process.error_message}），可重试 ASR"
+                if process.error_message
+                else "ASR 转录失败，可重试 ASR"
+            )
+            return "failed", reason
+        if stage == "analyze":
+            reason = (
+                f"全文分析失败（{process.error_message}），可重试"
+                if process.error_message
+                else "全文分析失败，可重试"
+            )
+            return "failed", reason
         return "failed", str(process.error_message or "全文处理失败，可重试")
     if status in ACTIVE_PROCESSING_STATUSES:
         if stage in {"fetch", "asr"}:
@@ -399,7 +420,7 @@ def dashboard(
                     and process_status != "reconciliation_required"
                 ),
                 "can_retry": (
-                    process_status in {"failed", "retry_wait"}
+                    process_status in {"failed", "retry_wait", "reconciliation_required"}
                     and process is not None
                 ),
             }

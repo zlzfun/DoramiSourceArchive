@@ -175,28 +175,43 @@ export function podcastFullProcessingMeta(article) {
     return result('全文评分完成', 'ok', sourceDetail);
   }
 
+  const isAsrStage = stage === 'asr' || stage === 'fetch';
+  const isAnalyzeStage = stage === 'analyze';
+
   if (status === 'failed') {
     const retryHint = retryable ? '，可重试' : '';
+    const label = isAsrStage ? 'ASR 转录失败' : (isAnalyzeStage ? '全文分析失败' : '全文处理失败');
+    const defaultDetail = isAsrStage
+      ? `ASR 语音转录未完成${retryHint}，请稍后重试 ASR`
+      : (isAnalyzeStage ? `全文分析未完成${retryHint}，请稍后再试` : `全文处理未完成${retryHint}，请稍后再试`);
     return result(
-      '全文处理失败',
+      label,
       'bad',
-      error ? `${error}${retryHint}` : `全文处理未完成${retryHint}，请稍后再试`,
+      error ? `${isAsrStage ? 'ASR 转录失败：' : ''}${error}${retryHint}` : defaultDetail,
     );
   }
 
   if (status === 'retry_wait') {
+    const label = isAsrStage ? 'ASR 等待重试' : (isAnalyzeStage ? '全文分析等待重试' : '全文处理等待重试');
+    const defaultDetail = isAsrStage
+      ? 'ASR 转录暂未完成，系统将自动重试 ASR'
+      : (isAnalyzeStage ? '全文分析暂未完成，系统将自动重试' : '暂未完成，系统将自动重试');
     return result(
-      '全文处理等待重试',
+      label,
       'warn',
-      error ? `${error}，系统将重试` : '暂未完成，系统将自动重试',
+      error ? `${isAsrStage ? 'ASR 转录异常：' : ''}${error}，系统将重试${isAsrStage ? ' ASR' : ''}` : defaultDetail,
     );
   }
 
   if (status === 'reconciliation_required') {
+    const label = isAsrStage ? 'ASR 待对账恢复' : (isAnalyzeStage ? '全文分析待对账恢复' : '全文处理恢复中…');
+    const defaultDetail = isAsrStage
+      ? '正在确认 ASR 云端转录结果，确认后将重试 ASR'
+      : '正在确认上次处理结果，确认后将继续';
     return result(
-      '全文处理恢复中…',
+      label,
       'warn',
-      error || '正在确认上次处理结果，确认后将继续',
+      error ? `${isAsrStage ? 'ASR 待对账：' : ''}${error}（确认后重试 ASR）` : defaultDetail,
     );
   }
 
