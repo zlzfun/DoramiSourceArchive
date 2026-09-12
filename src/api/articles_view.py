@@ -42,6 +42,7 @@ def _podcast_projection(
     published_text_kinds: Collection[str] = (),
     *,
     premium_score_threshold: float = podcast_premium.DEFAULT_PREMIUM_SCORE_THRESHOLD,
+    digest_audio: Any = None,
 ) -> Dict[str, Any]:
     """生成列表/详情共用的轻量播客对象，不透出 raw_data。"""
     raw_premium_guide = extensions.get("premium_guide")
@@ -117,6 +118,16 @@ def _podcast_projection(
         score_final >= premium_score_threshold if score_final is not None else None
     )
 
+    guide_status = str(premium_guide.get("status") or "")
+    if digest_audio is not None:
+        effective_guide_status = "ready"
+    elif guide_status:
+        effective_guide_status = guide_status
+    elif "digest_blog_zh" in published_text_kinds:
+        effective_guide_status = "ready"
+    else:
+        effective_guide_status = ""
+
     return {
         "show_title": str(extensions.get("show_title") or ""),
         "audio_url": str(extensions.get("audio_url") or ""),
@@ -158,14 +169,18 @@ def _podcast_projection(
         ),
         "final_premium": final_premium,
         "premium_guide": {
-            "status": str(premium_guide.get("status") or ""),
+            "status": effective_guide_status,
             "failed_stage": str(premium_guide.get("failed_stage") or ""),
             "error": str(premium_guide.get("error") or ""),
-            "audio_ready": bool(extensions.get("condensed_audio_url")),
+            "audio_ready": digest_audio is not None,
         },
-        "condensed_audio_url": str(extensions.get("condensed_audio_url") or ""),
+        "condensed_audio_url": (
+            f"/api/reader/podcast-artifacts/{digest_audio.id}/audio"
+            if digest_audio is not None
+            else ""
+        ),
         "condensed_duration_seconds": _podcast_optional_int(
-            extensions.get("condensed_duration_seconds")
+            getattr(digest_audio, "duration_seconds", None)
         ),
     }
 
@@ -289,6 +304,7 @@ def serialize_article_list_item(
     premium_score_threshold: float = podcast_premium.DEFAULT_PREMIUM_SCORE_THRESHOLD,
     processing: Any = None,
     published_podcast_text_kinds: Collection[str] = (),
+    digest_audio: Any = None,
 ) -> Dict[str, Any]:
     content = record.content or ""
     # AI 要点摘要(extensions_json.summary_zh)作为轻字段随条目透出:
@@ -370,6 +386,7 @@ def serialize_article_list_item(
             processing,
             published_podcast_text_kinds,
             premium_score_threshold=premium_score_threshold,
+            digest_audio=digest_audio,
         )
     if include_content or include_extensions:
         item["extensions_json"] = record.extensions_json or "{}"

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Podcast } from 'lucide-react';
 import { mediaProxyUrl } from '../api';
-import { formatPodcastDuration, podcastOf, podcastProcessingMeta } from '../utils/podcast';
+import { formatPodcastDuration, podcastOf } from '../utils/podcast';
 import { podcastFullProcessingMeta } from '../utils/analysis';
 import {
   readPodcastPosition,
@@ -51,13 +51,19 @@ export default function PodcastAudioPanel({ article, variant, onVariantChange })
 
 function PodcastAudioPlayer({ article, podcast, variant: controlledVariant, onVariantChange }) {
   const fullProcessing = podcastFullProcessingMeta(article);
-  const status = fullProcessing || podcastProcessingMeta(
-    podcast.processing_status,
-    Boolean(podcast.condensed_audio_url),
-  );
+  const hasDigest = Boolean(podcast.condensed_audio_url);
+  const isFailure = fullProcessing?.tone === 'bad'
+    || fullProcessing?.label === '全文处理失败'
+    || fullProcessing?.label === '全文处理等待重试'
+    || ['failed', 'retry_wait', 'reconciliation_required'].includes(
+      String(podcast.processing_status || '').toLowerCase()
+    );
+  const visibleProcessing = isFailure ? null : fullProcessing;
+  const status = hasDigest
+    ? { label: '单人速览已就绪', tone: 'ok' }
+    : (visibleProcessing || { label: '仅提供原节目', tone: 'idle' });
   const originalDuration = formatPodcastDuration(podcast.duration_seconds);
   const condensedDuration = formatPodcastDuration(podcast.condensed_duration_seconds);
-  const hasDigest = Boolean(podcast.condensed_audio_url);
   const [localVariant, setLocalVariant] = useState(() => (
     podcast.audio_url ? 'original' : 'digest'
   ));
@@ -127,9 +133,9 @@ function PodcastAudioPlayer({ article, podcast, variant: controlledVariant, onVa
           <span className={`podcast-status is-${status.tone}`}>{status.label}</span>
         </div>
       </div>
-      {fullProcessing?.detail && (
-        <p className={`podcast-full-state is-${fullProcessing.tone}`} role="status">
-          {fullProcessing.detail}
+      {visibleProcessing?.detail && (
+        <p className={`podcast-full-state is-${visibleProcessing.tone}`} role="status">
+          {visibleProcessing.detail}
         </p>
       )}
       {hasDigest && (

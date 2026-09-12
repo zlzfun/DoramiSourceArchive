@@ -50,6 +50,7 @@ from models.db import (
     ArticleRecord,
     ArticleTagAssignmentRecord,
     CmsTagRecord,
+    PodcastArtifactRecord,
     PodcastProcessingRecord,
     PodcastTextArtifactRecord,
     PodcastTextPublicationRecord,
@@ -157,14 +158,15 @@ def _podcast_processing_assets(
 def _podcast_text_publication_assets(
     session: Session, article_ids: list[str]
 ) -> dict[str, set[str]]:
-    """Batch-load Reader-visible transcript kinds for a page."""
+    """Batch-load Reader-visible text publication kinds for a page."""
 
     if not article_ids:
         return {}
-    transcript_kinds = (
+    publication_kinds = (
         "publisher_transcript",
         "normalized_transcript",
         "transcript_zh",
+        "digest_blog_zh",
     )
     rows = session.exec(
         select(
@@ -178,7 +180,7 @@ def _podcast_text_publication_assets(
         )
         .where(
             PodcastTextPublicationRecord.episode_id.in_(article_ids),
-            PodcastTextPublicationRecord.kind.in_(transcript_kinds),
+            PodcastTextPublicationRecord.kind.in_(publication_kinds),
             PodcastTextPublicationRecord.status == "published",
             PodcastTextPublicationRecord.published_at.is_not(None),
             PodcastTextArtifactRecord.episode_id
@@ -191,6 +193,31 @@ def _podcast_text_publication_assets(
     result: dict[str, set[str]] = {}
     for episode_id, kind in rows:
         result.setdefault(episode_id, set()).add(kind)
+    return result
+
+
+def _podcast_digest_audio_assets(
+    session: Session, article_ids: list[str]
+) -> dict[str, PodcastArtifactRecord]:
+    """Batch-load Reader-visible published digest audio artifacts for a page."""
+
+    if not article_ids:
+        return {}
+    rows = session.exec(
+        select(PodcastArtifactRecord)
+        .where(
+            PodcastArtifactRecord.episode_id.in_(article_ids),
+            PodcastArtifactRecord.kind == "digest_audio_zh",
+            PodcastArtifactRecord.status == "published",
+        )
+        .order_by(
+            PodcastArtifactRecord.published_at.desc(),
+            PodcastArtifactRecord.created_at.desc(),
+        )
+    ).all()
+    result: dict[str, PodcastArtifactRecord] = {}
+    for row in rows:
+        result.setdefault(row.episode_id, row)
     return result
 
 
@@ -454,6 +481,9 @@ def get_articles(
     text_publications = _podcast_text_publication_assets(
         session, [record.id for record in records]
     )
+    digest_audios = _podcast_digest_audio_assets(
+        session, [record.id for record in records]
+    )
     display_tags = load_display_tags(
         session,
         [record.id for record in records],
@@ -468,6 +498,7 @@ def get_articles(
             premium_score_threshold=podcast_premium_service.get_threshold(session),
             processing=processings.get(record.id),
             published_podcast_text_kinds=text_publications.get(record.id, set()),
+            digest_audio=digest_audios.get(record.id),
         )
         for record in records
     ]
@@ -641,6 +672,7 @@ async def get_article(article_id: str, request: Request):
         analyses, tags = _analysis_assets(session, [record.id])
         processings = _podcast_processing_assets(session, [record.id])
         text_publications = _podcast_text_publication_assets(session, [record.id])
+        digest_audios = _podcast_digest_audio_assets(session, [record.id])
         display_tags = load_display_tags(
             session,
             [record.id],
@@ -656,6 +688,7 @@ async def get_article(article_id: str, request: Request):
             premium_score_threshold=podcast_premium_service.get_threshold(session),
             processing=processings.get(record.id),
             published_podcast_text_kinds=text_publications.get(record.id, set()),
+            digest_audio=digest_audios.get(record.id),
         )
 
 

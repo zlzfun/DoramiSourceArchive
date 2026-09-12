@@ -102,11 +102,11 @@ budget_timezone = Asia/Shanghai
 # 旧精品导读流程的启动基线；管理面保存后以运行时 KV 为准
 premium_score_threshold = 8.0
 premium_min_duration_seconds = 1200
-premium_guide_mode = solo_preview
+premium_guide_mode = solo_deep
 premium_max_audio_minutes = 15
 premium_transcript_max_chars = 120000
 premium_blog_max_chars = 6000
-premium_narration_max_chars = 4200
+premium_narration_max_chars = 4500
 ```
 
 播客评分分两步但阅读面只展示一个当前分数：简介初评达到 `>= 5.0`（或管理员强制）

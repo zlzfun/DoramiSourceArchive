@@ -7,12 +7,13 @@ import subprocess
 import asyncio
 
 import pytest
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from config import PodcastConfig
 from models.db import (
     ArticleAnalysisRecord,
     ArticleRecord,
+    PodcastArtifactRecord,
     PodcastTextArtifactRecord,
     PodcastTextPublicationRecord,
     SourceConfigRecord,
@@ -531,12 +532,13 @@ def test_premium_guide_skips_episode_not_over_twenty_minutes(tmp_path):
             id="episode-short", title="Short", content_type="podcast_episode",
             source_id="podcast-short", source_url="https://example.test/short",
             publish_date=STAMP, fetched_date=STAMP, content="notes",
-            extensions_json='{"duration_seconds":1200}',
+            extensions_json='{"duration_seconds":1199}',
         ))
         session.commit()
         session.add(ArticleAnalysisRecord(
-            article_id="episode-short", status="succeeded", quality_score=5,
-            analysis_basis="asr_transcript", transcript_artifact_id="transcript-short",
+            article_id="episode-short", status="succeeded", quality_score=9.0,
+            podcast_final_score=9.0, analysis_basis="asr_transcript",
+            transcript_artifact_id="transcript-short",
             created_at=STAMP, updated_at=STAMP,
         ))
         session.add(PodcastTextArtifactRecord(
@@ -548,6 +550,11 @@ def test_premium_guide_skips_episode_not_over_twenty_minutes(tmp_path):
             created_at=STAMP,
         ))
         session.commit()
+
+    class FailIfTtsCalled(TtsProvider):
+        async def synthesize(self, _text):
+            raise AssertionError("TTS must not be called for episodes under 20 minutes")
+
     store = PodcastArtifactStore(
         sink.engine, tmp_path / "short-audio", max_bytes=1024 * 1024,
         total_quota_bytes=10 * 1024 * 1024, minimum_free_bytes=0,
@@ -556,8 +563,201 @@ def test_premium_guide_skips_episode_not_over_twenty_minutes(tmp_path):
     )
     result = asyncio.run(run_premium_guide(
         sink.engine, store, episode_id="episode-short", config=_external_config(),
-        text_provider=TextProvider(), tts_provider=TtsProvider(),
+        text_provider=TextProvider(), tts_provider=FailIfTtsCalled(),
     ))
     assert result["reason"] == "duration_not_over_minimum"
+    assert result["audio_artifact_id"] is None
+    assert result["is_premium"] is True
     with Session(sink.engine) as session:
-        assert session.get(ArticleAnalysisRecord, "episode-short").quality_score == 5
+        assert session.get(ArticleAnalysisRecord, "episode-short").quality_score == 9.0
+        assert session.get(PodcastTextPublicationRecord, "episode-short:digest_blog_zh") is not None
+        assert session.get(PodcastTextPublicationRecord, "episode-short:narration_script_zh") is None
+
+
+def test_premium_guide_twenty_minutes_exact_enters_audio_queue(tmp_path):
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'exact20.db'}")
+    transcript = json.dumps({"text": "twenty minute episode"})
+    with Session(sink.engine) as session:
+        session.add(SourceConfigRecord(
+            source_id="podcast-exact", name="Exact", source_type="podcast",
+            url="https://example.test/exact.xml", created_at=STAMP, updated_at=STAMP,
+        ))
+        session.commit()
+        session.add(ArticleRecord(
+            id="episode-exact-20", title="Exact 20m", content_type="podcast_episode",
+            source_id="podcast-exact", source_url="https://example.test/exact",
+            publish_date=STAMP, fetched_date=STAMP, content="notes",
+            extensions_json='{"duration_seconds":1200}',
+        ))
+        session.commit()
+        session.add(ArticleAnalysisRecord(
+            article_id="episode-exact-20", status="succeeded", quality_score=9.0,
+            podcast_final_score=9.0, analysis_basis="asr_transcript",
+            transcript_artifact_id="transcript-exact-20",
+            created_at=STAMP, updated_at=STAMP,
+        ))
+        session.add(PodcastTextArtifactRecord(
+            id="transcript-exact-20", episode_id="episode-exact-20",
+            kind="normalized_transcript", version=1,
+            content_hash=hashlib.sha256(transcript.encode()).hexdigest(),
+            inline_text=transcript, language="en", authority_id="test-authority",
+            provenance_json='{"provider":"fake"}',
+            created_at=STAMP,
+        ))
+        session.commit()
+
+    store = PodcastArtifactStore(
+        sink.engine, tmp_path / "exact-audio", max_bytes=1024 * 1024,
+        total_quota_bytes=10 * 1024 * 1024, minimum_free_bytes=0,
+        staging_ttl_seconds=60, allowed_mime_types=("audio/wav",),
+        probe_runner=lambda *_a, **_k: subprocess.CompletedProcess(
+            [], 0,
+            stdout='{"streams":[{"codec_type":"audio","duration":"360"}],"format":{"duration":"360"}}',
+            stderr="",
+        ),
+    )
+    result = asyncio.run(run_premium_guide(
+        sink.engine, store, episode_id="episode-exact-20", config=_external_config(),
+        text_provider=TextProvider(), tts_provider=TtsProvider(),
+    ))
+    assert result["audio_artifact_id"] is not None
+    assert result["is_premium"] is True
+    with Session(sink.engine) as session:
+        assert session.get(PodcastTextPublicationRecord, "episode-exact-20:digest_blog_zh") is not None
+        assert session.get(PodcastTextPublicationRecord, "episode-exact-20:narration_script_zh") is not None
+
+
+def test_solo_deep_duration_plan_tiers():
+    from services.podcast_premium_guides import calculate_solo_deep_plan
+
+    # Tier 1: < 20 min (< 1200s)
+    plan_short = calculate_solo_deep_plan(1199)
+    assert plan_short.tier == "short"
+    assert plan_short.should_synthesize_audio is False
+
+    # Forced override for short
+    plan_short_forced = calculate_solo_deep_plan(1199, selection_override=True)
+    assert plan_short_forced.tier == "tier_20_45"
+    assert plan_short_forced.should_synthesize_audio is True
+
+    # Tier 2: 20-45 min (1200s to 2700s)
+    plan_tier2 = calculate_solo_deep_plan(1200)
+    assert plan_tier2.tier == "tier_20_45"
+    assert plan_tier2.should_synthesize_audio is True
+    assert plan_tier2.min_audio_minutes == 5
+    assert plan_tier2.max_audio_minutes == 8
+    assert plan_tier2.min_chars == 1430
+    assert plan_tier2.max_chars == 2310
+
+    plan_tier2_upper = calculate_solo_deep_plan(2700)
+    assert plan_tier2_upper.tier == "tier_20_45"
+
+    # Tier 3: 45-90 min (2700s to 5400s)
+    plan_tier3 = calculate_solo_deep_plan(2701)
+    assert plan_tier3.tier == "tier_45_90"
+    assert plan_tier3.should_synthesize_audio is True
+    assert plan_tier3.min_audio_minutes == 8
+    assert plan_tier3.max_audio_minutes == 12
+    assert plan_tier3.min_chars == 2310
+    assert plan_tier3.max_chars == 3410
+
+    # Tier 4: > 90 min (> 5400s)
+    plan_tier4 = calculate_solo_deep_plan(5401)
+    assert plan_tier4.tier == "tier_gt_90"
+    assert plan_tier4.should_synthesize_audio is True
+    assert plan_tier4.min_audio_minutes == 12
+    assert plan_tier4.max_audio_minutes == 15
+    assert plan_tier4.min_chars == 3410
+    assert plan_tier4.max_chars == 4290
+
+
+def test_audio_qa_triggers_retry_and_succeeds(tmp_path):
+    from services.podcast_premium_guides import PremiumGuideError
+
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'qa-retry.db'}")
+    _seed_force_candidate(sink, duration=30 * 60)
+    config = _external_config()
+
+    call_count = {"probe": 0, "narration": 0, "synthesize": 0}
+
+    def fake_probe(*_a, **_k):
+        call_count["probe"] += 1
+        # First probe returns 600s (10 min, exceeding 8 min max for 30m episode)
+        # Second probe returns 420s (7 min, within 5-8 min)
+        dur = "600" if call_count["probe"] == 1 else "420"
+        return subprocess.CompletedProcess(
+            [], 0,
+            stdout=f'{{"streams":[{{"codec_type":"audio","duration":"{dur}"}}],"format":{{"duration":"{dur}"}}}}',
+            stderr="",
+        )
+
+    store = PodcastArtifactStore(
+        sink.engine, tmp_path / "qa-audio", max_bytes=1024 * 1024,
+        total_quota_bytes=10 * 1024 * 1024, minimum_free_bytes=0,
+        staging_ttl_seconds=60, allowed_mime_types=("audio/wav",),
+        probe_runner=fake_probe,
+    )
+
+    class CountingTextProvider(TextProvider):
+        async def create_narration(self, **kwargs):
+            call_count["narration"] += 1
+            if kwargs.get("retry_shorter"):
+                return "这是缩短后的中文播客导读口播稿。"
+            return "这是内部中文播客导读。"
+
+    class CountingTtsProvider:
+        async def synthesize(self, text):
+            call_count["synthesize"] += 1
+            return SynthesizedAudio(_wav(), "audio/wav", f"task-{call_count['synthesize']}")
+
+    result = asyncio.run(run_premium_guide(
+        sink.engine, store, episode_id="episode-force", config=config,
+        text_provider=CountingTextProvider(), tts_provider=CountingTtsProvider(),
+        selection_override=True,
+    ))
+    assert result["audio_artifact_id"]
+    assert call_count["narration"] == 2
+    assert call_count["synthesize"] == 2
+
+
+def test_audio_qa_fails_when_exceeding_hard_ceiling_and_keeps_blog(tmp_path):
+    from services.podcast_premium_guides import PremiumGuideError
+
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'qa-fail.db'}")
+    _seed_force_candidate(sink, duration=100 * 60)
+    config = _external_config()
+
+    # Always returns 960s (16 min), exceeding 15 min hard ceiling
+    fake_probe = lambda *_a, **_k: subprocess.CompletedProcess(
+        [], 0,
+        stdout='{"streams":[{"codec_type":"audio","duration":"960"}],"format":{"duration":"960"}}',
+        stderr="",
+    )
+
+    store = PodcastArtifactStore(
+        sink.engine, tmp_path / "qa-fail-audio", max_bytes=1024 * 1024,
+        total_quota_bytes=10 * 1024 * 1024, minimum_free_bytes=0,
+        staging_ttl_seconds=60, allowed_mime_types=("audio/wav",),
+        probe_runner=fake_probe,
+    )
+
+    with pytest.raises(PremiumGuideError, match="超过 .* 分钟限制"):
+        asyncio.run(run_premium_guide(
+            sink.engine, store, episode_id="episode-force", config=config,
+            text_provider=TextProvider(), tts_provider=TtsProvider(),
+            selection_override=True,
+        ))
+
+    with Session(sink.engine) as session:
+        # Blog was created and published before TTS failed
+        assert session.get(PodcastTextPublicationRecord, "episode-force:digest_blog_zh") is not None
+        # Audio was not published
+        audios = session.exec(
+            select(PodcastArtifactRecord).where(
+                PodcastArtifactRecord.episode_id == "episode-force",
+                PodcastArtifactRecord.kind == "digest_audio_zh",
+                PodcastArtifactRecord.status == "published",
+            )
+        ).all()
+        assert audios == []
+

@@ -13,7 +13,7 @@ import hashlib
 import json
 import uuid
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from sqlalchemy import func, or_
 from sqlalchemy.engine import Engine
@@ -48,13 +48,102 @@ class SynthesizedAudio:
     provider_task_id: str = ""
 
 
+@dataclass(frozen=True)
+class SoloDeepDurationPlan:
+    tier: str
+    should_synthesize_audio: bool
+    min_audio_minutes: int
+    max_audio_minutes: int
+    target_audio_minutes: float
+    min_chars: int
+    target_chars: int
+    max_chars: int
+
+
+def calculate_solo_deep_plan(
+    duration_seconds: float,
+    *,
+    selection_override: bool = False,
+    hard_max_audio_minutes: int = 15,
+) -> SoloDeepDurationPlan:
+    """Calculate the solo_deep tier, audio eligibility, and narration budget.
+
+    Four tiers:
+    1. < 20 min (< 1200s): blog only, no audio. (Unless selection_override is True)
+    2. 20-45 min (1200s to 2700s): 5-8 min audio, 1430-2310 chars (target ~1870).
+    3. 45-90 min (2700s to 5400s): 8-12 min audio, 2310-3410 chars (target ~2860).
+    4. > 90 min (> 5400s): 12-15 min audio, 3410-4290 chars (target ~3850, hard ceiling 15 min).
+    """
+    if duration_seconds < 20 * 60 and not selection_override:
+        return SoloDeepDurationPlan(
+            tier="short",
+            should_synthesize_audio=False,
+            min_audio_minutes=0,
+            max_audio_minutes=0,
+            target_audio_minutes=0.0,
+            min_chars=0,
+            target_chars=0,
+            max_chars=0,
+        )
+    if duration_seconds < 20 * 60 and selection_override:
+        return SoloDeepDurationPlan(
+            tier="tier_20_45",
+            should_synthesize_audio=True,
+            min_audio_minutes=5,
+            max_audio_minutes=8,
+            target_audio_minutes=6.5,
+            min_chars=1430,
+            target_chars=1870,
+            max_chars=2310,
+        )
+    if duration_seconds <= 45 * 60:
+        return SoloDeepDurationPlan(
+            tier="tier_20_45",
+            should_synthesize_audio=True,
+            min_audio_minutes=5,
+            max_audio_minutes=8,
+            target_audio_minutes=6.5,
+            min_chars=1430,
+            target_chars=1870,
+            max_chars=2310,
+        )
+    if duration_seconds <= 90 * 60:
+        return SoloDeepDurationPlan(
+            tier="tier_45_90",
+            should_synthesize_audio=True,
+            min_audio_minutes=8,
+            max_audio_minutes=12,
+            target_audio_minutes=10.0,
+            min_chars=2310,
+            target_chars=2860,
+            max_chars=3410,
+        )
+    max_minutes = min(15, hard_max_audio_minutes)
+    return SoloDeepDurationPlan(
+        tier="tier_gt_90",
+        should_synthesize_audio=True,
+        min_audio_minutes=12,
+        max_audio_minutes=max_minutes,
+        target_audio_minutes=13.5,
+        min_chars=3410,
+        target_chars=3850,
+        max_chars=min(4290, max_minutes * 286),
+    )
+
+
 class PremiumGuideTextProvider(Protocol):
     async def create_blog(
         self, *, title: str, transcript: str, max_chars: int
     ) -> PremiumGuideDraft: ...
 
     async def create_narration(
-        self, *, title: str, blog_markdown: str, max_chars: int, max_minutes: int
+        self,
+        *,
+        title: str,
+        blog_markdown: str,
+        max_chars: int,
+        max_minutes: int,
+        **kwargs: Any,
     ) -> str: ...
 
 
@@ -127,10 +216,8 @@ def _set_episode_status(
             guide.pop("error", None)
         if audio is not None:
             guide["audio_artifact_id"] = audio.id
-            extensions["condensed_audio_url"] = (
-                f"/api/reader/podcast-artifacts/{audio.id}/audio"
-            )
-            extensions["condensed_duration_seconds"] = audio.duration_seconds
+        extensions.pop("condensed_audio_url", None)
+        extensions.pop("condensed_duration_seconds", None)
         extensions["premium_guide"] = guide
         episode.extensions_json = json.dumps(
             extensions, ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -310,16 +397,12 @@ async def run_premium_guide(
                 raise PremiumGuideError("播客全文终评尚未完成")
             title = episode.title
             duration = float(_extensions(episode).get("duration_seconds") or 0)
-        if duration <= config.premium_min_duration_seconds and not selection_override:
-            _set_episode_status(engine, episode_id, "not_required")
-            return {
-                "episode_id": episode_id,
-                "is_premium": False,
-                "score": None,
-                "reason": "duration_not_over_minimum",
-            }
-        if config.premium_guide_mode != "solo_preview":
-            raise PremiumGuideError("当前原型仅开放单人速览模式")
+        if duration <= 0:
+            raise PremiumGuideError("播客时长未知，暂不触发精品导读")
+        if config.premium_guide_mode != "solo_deep":
+            raise PremiumGuideError(
+                f"当前仅开放 solo_deep 深度导读模式，当前模式为 '{config.premium_guide_mode}'"
+            )
         effective_threshold = (
             config.premium_score_threshold
             if score_threshold is None
@@ -328,6 +411,13 @@ async def run_premium_guide(
         if score < effective_threshold and not selection_override:
             _set_episode_status(engine, episode_id, "not_required")
             return {"episode_id": episode_id, "is_premium": False, "score": score}
+
+        plan = calculate_solo_deep_plan(
+            duration,
+            selection_override=selection_override,
+            hard_max_audio_minutes=config.premium_max_audio_minutes,
+        )
+
         draft = await text_provider.create_blog(
             title=title,
             transcript=transcript[: config.premium_transcript_max_chars],
@@ -349,11 +439,27 @@ async def run_premium_guide(
             blog_artifact_id = blog_artifact.id
             session.commit()
 
+        if not plan.should_synthesize_audio:
+            _set_episode_status(engine, episode_id, "ready")
+            return {
+                "episode_id": episode_id,
+                "is_premium": score >= effective_threshold,
+                "selection_override": selection_override,
+                "score": score,
+                "blog_artifact_id": blog_artifact_id,
+                "audio_artifact_id": None,
+                "duration_seconds": None,
+                "reason": "duration_not_over_minimum",
+            }
+
+        narration_char_budget = min(plan.max_chars, config.premium_narration_max_chars)
         narration = await text_provider.create_narration(
             title=title,
             blog_markdown=blog,
-            max_chars=config.premium_narration_max_chars,
-            max_minutes=config.premium_max_audio_minutes,
+            max_chars=narration_char_budget,
+            max_minutes=plan.max_audio_minutes,
+            min_minutes=plan.min_audio_minutes,
+            target_chars=plan.target_chars,
         )
         with Session(engine) as session:
             episode = session.get(ArticleRecord, episode_id)
@@ -388,14 +494,68 @@ async def run_premium_guide(
             narration_artifact_id=narration_id,
             narration_content_hash=narration_hash,
         )
-        if (
-            audio.duration_seconds is not None
-            and audio.duration_seconds > config.premium_max_audio_minutes * 60
-        ):
+        actual_duration = float(audio.duration_seconds or 0.0)
+        tier_limit_seconds = plan.max_audio_minutes * 60
+        hard_limit_seconds = min(config.premium_max_audio_minutes, 15) * 60
+        exceeded = (
+            actual_duration > tier_limit_seconds + 15.0
+            or actual_duration > hard_limit_seconds
+        )
+        if exceeded:
             await asyncio.to_thread(store.withdraw, audio.id)
-            raise PremiumGuideError(
-                f"单人速览音频超过 {config.premium_max_audio_minutes} 分钟"
+            shorter_chars = min(int(plan.target_chars * 0.8), plan.min_chars)
+            retry_narration = await text_provider.create_narration(
+                title=title,
+                blog_markdown=blog,
+                max_chars=shorter_chars,
+                max_minutes=plan.max_audio_minutes,
+                min_minutes=plan.min_audio_minutes,
+                target_chars=shorter_chars,
+                retry_shorter=True,
             )
+            with Session(engine) as session:
+                episode = session.get(ArticleRecord, episode_id)
+                blog_artifact = session.get(
+                    PodcastTextArtifactRecord, blog_artifact_id
+                )
+                if episode is None or blog_artifact is None:
+                    raise PremiumGuideError("播客在导读生成期间被删除")
+                retry_narration_artifact = _publish_text(
+                    session,
+                    episode=episode,
+                    kind="narration_script_zh",
+                    text=retry_narration[: config.premium_narration_max_chars],
+                    source_artifact=blog_artifact,
+                    pipeline_version=config.text_pipeline_version,
+                )
+                retry_id = retry_narration_artifact.id
+                retry_hash = retry_narration_artifact.content_hash
+                retry_text = retry_narration_artifact.inline_text
+                session.commit()
+
+            retry_synthesized = await tts_provider.synthesize(retry_text)
+            audio2 = await asyncio.to_thread(
+                store.import_bytes,
+                episode_id=episode_id,
+                kind="digest_audio_zh",
+                data=retry_synthesized.data,
+                declared_mime=retry_synthesized.mime,
+                provenance="premium_guide_tts",
+                authority_id="",
+                narration_artifact_id=retry_id,
+                narration_content_hash=retry_hash,
+            )
+            actual_duration2 = float(audio2.duration_seconds or 0.0)
+            if (
+                actual_duration2 > tier_limit_seconds + 15.0
+                or actual_duration2 > hard_limit_seconds
+            ):
+                await asyncio.to_thread(store.withdraw, audio2.id)
+                raise PremiumGuideError(
+                    f"单人深度导读音频超过 {plan.max_audio_minutes} 分钟限制 (实际 {actual_duration2:.1f} 秒)"
+                )
+            audio = audio2
+
         audio = await asyncio.to_thread(
             store.publish, audio.id, expected_updated_at=audio.updated_at
         )
@@ -594,7 +754,7 @@ def list_premium_guide_tasks(
     engine: Engine,
     *,
     threshold: float,
-    mode: str = "solo_preview",
+    mode: str = "solo_deep",
     page: int = 1,
     page_size: int = 100,
 ) -> dict:
@@ -690,7 +850,7 @@ def list_premium_guide_tasks(
 def pending_premium_guide_candidates(
     engine: Engine,
     *,
-    minimum_duration_seconds: int,
+    minimum_duration_seconds: int = 0,
     score_threshold: float = podcast_premium.DEFAULT_PREMIUM_SCORE_THRESHOLD,
 ) -> list[str]:
     """Return only episodes whose authoritative score requires guide generation."""
@@ -727,8 +887,9 @@ def pending_premium_guide_candidates(
             row.id
             for row, analysis in rows
             if has_authoritative_analysis(analysis)
+            and float(_extensions(row).get("duration_seconds") or 0) > 0
             and float(_extensions(row).get("duration_seconds") or 0)
-            > minimum_duration_seconds
+            >= minimum_duration_seconds
             and str(_extensions(row).get("processing_status") or "")
             not in {"summarizing", "synthesizing", "ready", "failed"}
         ]
@@ -740,7 +901,9 @@ __all__ = [
     "PremiumGuideForceError",
     "PremiumGuideTextProvider",
     "PremiumGuideTtsProvider",
+    "SoloDeepDurationPlan",
     "SynthesizedAudio",
+    "calculate_solo_deep_plan",
     "fail_premium_guide",
     "list_premium_guide_tasks",
     "lookup_forced_premium_guide_request",

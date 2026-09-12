@@ -26,6 +26,7 @@ from api import deps
 from api.articles_view import serialize_article_list_item
 from api.routers.articles import (
     _analysis_assets,
+    _podcast_digest_audio_assets,
     _podcast_processing_assets,
     _podcast_text_publication_assets,
     content_shape_condition,
@@ -895,6 +896,9 @@ def list_favorites(
     text_publications = _podcast_text_publication_assets(
         session, [record.id for record in records]
     )
+    digest_audios = _podcast_digest_audio_assets(
+        session, [record.id for record in records]
+    )
     display_tags = load_display_tags(
         session,
         [record.id for record in records],
@@ -911,6 +915,7 @@ def list_favorites(
             premium_score_threshold=podcast_premium_service.get_threshold(session),
             processing=processings.get(record.id),
             published_podcast_text_kinds=text_publications.get(record.id, set()),
+            digest_audio=digest_audios.get(record.id),
         )
         for record in records
     ]
