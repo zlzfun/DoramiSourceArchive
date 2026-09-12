@@ -574,6 +574,32 @@ def test_premium_guide_skips_episode_not_over_twenty_minutes(tmp_path):
         assert session.get(PodcastTextPublicationRecord, "episode-short:narration_script_zh") is None
 
 
+def test_short_episode_runs_without_tts_provider_or_tts_stages(tmp_path):
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'short-no-tts.db'}")
+    _seed_force_candidate(sink, duration=15 * 60)
+    config = PodcastConfig(
+        installation="external",
+        authority_id="podcast-external-test",
+        allowed_stages=("fetch", "asr", "translate", "analyze", "digest", "local_publish"),
+        premium_score_threshold=7.0,
+    )
+    store = PodcastArtifactStore(
+        sink.engine, tmp_path / "short-audio", max_bytes=1024 * 1024,
+        total_quota_bytes=10 * 1024 * 1024, minimum_free_bytes=0,
+        staging_ttl_seconds=60, allowed_mime_types=("audio/wav",),
+        probe_runner=lambda *_a, **_k: None,
+    )
+    result = asyncio.run(run_premium_guide(
+        sink.engine, store, episode_id="episode-force", config=config,
+        text_provider=TextProvider(), tts_provider=None,
+    ))
+    assert result["reason"] == "duration_not_over_minimum"
+    assert result["audio_artifact_id"] is None
+    with Session(sink.engine) as session:
+        assert session.get(PodcastTextPublicationRecord, "episode-force:digest_blog_zh") is not None
+        assert session.get(PodcastTextPublicationRecord, "episode-force:narration_script_zh") is None
+
+
 def test_premium_guide_twenty_minutes_exact_enters_audio_queue(tmp_path):
     sink = DatabaseStorage(f"sqlite:///{tmp_path / 'exact20.db'}")
     transcript = json.dumps({"text": "twenty minute episode"})

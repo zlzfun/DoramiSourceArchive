@@ -199,3 +199,27 @@ test('podcast lists reuse taxonomy tag styling and hide pipeline status', async 
   assert.doesNotMatch(podcastBranch, /podcastFullProcessingMeta|analysisStatus\.label/);
   assert.equal(reader.match(/className="reader-entry-tag">\{analysisLabel\}/g)?.length, 1);
 });
+
+test('blog-only guide without condensed audio is visible in experience panel and reader surfaces', async () => {
+  const desktop = await readFile(
+    new URL('../components/ReaderTab.jsx', import.meta.url),
+    'utf8',
+  );
+  const mobile = await readFile(
+    new URL('../components/mobile/MobileArticlePage.jsx', import.meta.url),
+    'utf8',
+  );
+  const experience = await readFile(
+    new URL('../components/PodcastExperiencePanel.jsx', import.meta.url),
+    'utf8',
+  );
+
+  for (const reader of [desktop, mobile]) {
+    assert.match(reader, /hasGuideBlog = Boolean\(activePodcast\?\.premium_guide\?\.blog_ready/);
+    assert.match(reader, /isBlogOnlyGuide = hasGuideBlog && !hasGuideAudio/);
+    assert.match(reader, /podcastGuideActive = podcastView\s*&&\s*\(isBlogOnlyGuide \|\| \(podcastVariant === 'digest' && hasGuideAudio\)\)/);
+  }
+  assert.match(experience, /isBlogOnlyGuide = hasGuideBlog && !hasGuideAudio/);
+  assert.match(experience, /guideVisible = isBlogOnlyGuide \|\| \(variant === 'digest' && hasGuideAudio\)/);
+});
+

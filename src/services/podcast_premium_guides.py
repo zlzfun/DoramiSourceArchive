@@ -60,6 +60,40 @@ class SoloDeepDurationPlan:
     max_chars: int
 
 
+def _capped_plan(
+    tier: str,
+    natural_min: int,
+    natural_max: int,
+    natural_target: float,
+    natural_min_chars: int,
+    natural_target_chars: int,
+    natural_max_chars: int,
+    hard_ceiling: int,
+) -> SoloDeepDurationPlan:
+    max_minutes = min(natural_max, hard_ceiling)
+    min_minutes = min(natural_min, max_minutes)
+    if max_minutes < natural_max:
+        target_minutes = round((min_minutes + max_minutes) / 2.0, 1)
+        max_chars = min(natural_max_chars, int(max_minutes * 286))
+        min_chars = min(natural_min_chars, int(min_minutes * 286))
+        target_chars = min(natural_target_chars, int(target_minutes * 286))
+    else:
+        target_minutes = natural_target
+        min_chars = natural_min_chars
+        target_chars = natural_target_chars
+        max_chars = natural_max_chars
+    return SoloDeepDurationPlan(
+        tier=tier,
+        should_synthesize_audio=True,
+        min_audio_minutes=min_minutes,
+        max_audio_minutes=max_minutes,
+        target_audio_minutes=target_minutes,
+        min_chars=min_chars,
+        target_chars=target_chars,
+        max_chars=max_chars,
+    )
+
+
 def calculate_solo_deep_plan(
     duration_seconds: float,
     *,
@@ -85,50 +119,14 @@ def calculate_solo_deep_plan(
             target_chars=0,
             max_chars=0,
         )
+    ceiling = max(1, min(15, hard_max_audio_minutes))
     if duration_seconds < 20 * 60 and selection_override:
-        return SoloDeepDurationPlan(
-            tier="tier_20_45",
-            should_synthesize_audio=True,
-            min_audio_minutes=5,
-            max_audio_minutes=8,
-            target_audio_minutes=6.5,
-            min_chars=1430,
-            target_chars=1870,
-            max_chars=2310,
-        )
+        return _capped_plan("tier_20_45", 5, 8, 6.5, 1430, 1870, 2310, ceiling)
     if duration_seconds <= 45 * 60:
-        return SoloDeepDurationPlan(
-            tier="tier_20_45",
-            should_synthesize_audio=True,
-            min_audio_minutes=5,
-            max_audio_minutes=8,
-            target_audio_minutes=6.5,
-            min_chars=1430,
-            target_chars=1870,
-            max_chars=2310,
-        )
+        return _capped_plan("tier_20_45", 5, 8, 6.5, 1430, 1870, 2310, ceiling)
     if duration_seconds <= 90 * 60:
-        return SoloDeepDurationPlan(
-            tier="tier_45_90",
-            should_synthesize_audio=True,
-            min_audio_minutes=8,
-            max_audio_minutes=12,
-            target_audio_minutes=10.0,
-            min_chars=2310,
-            target_chars=2860,
-            max_chars=3410,
-        )
-    max_minutes = min(15, hard_max_audio_minutes)
-    return SoloDeepDurationPlan(
-        tier="tier_gt_90",
-        should_synthesize_audio=True,
-        min_audio_minutes=12,
-        max_audio_minutes=max_minutes,
-        target_audio_minutes=13.5,
-        min_chars=3410,
-        target_chars=3850,
-        max_chars=min(4290, max_minutes * 286),
-    )
+        return _capped_plan("tier_45_90", 8, 12, 10.0, 2310, 2860, 3410, ceiling)
+    return _capped_plan("tier_gt_90", 12, 15, 13.5, 3410, 3850, 4290, ceiling)
 
 
 class PremiumGuideTextProvider(Protocol):
@@ -366,7 +364,7 @@ async def run_premium_guide(
     episode_id: str,
     config: PodcastConfig,
     text_provider: PremiumGuideTextProvider,
-    tts_provider: PremiumGuideTtsProvider,
+    tts_provider: PremiumGuideTtsProvider | None = None,
     score_threshold: float | None = None,
     selection_override: bool = False,
 ) -> dict:
@@ -378,9 +376,6 @@ async def run_premium_guide(
             "translate",
             "analyze",
             "digest",
-            "script",
-            "tts",
-            "audio_qa",
             "local_publish",
         ):
             policy.require_stage(stage, boundary="provider_submit")
@@ -417,6 +412,16 @@ async def run_premium_guide(
             selection_override=selection_override,
             hard_max_audio_minutes=config.premium_max_audio_minutes,
         )
+
+        if plan.should_synthesize_audio:
+            for stage in (
+                "script",
+                "tts",
+                "audio_qa",
+            ):
+                policy.require_stage(stage, boundary="provider_submit")
+            if tts_provider is None:
+                raise PremiumGuideError("精品导读音频合成所需的 TTS 提供者未配置")
 
         draft = await text_provider.create_blog(
             title=title,
