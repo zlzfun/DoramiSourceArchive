@@ -60,7 +60,7 @@ function PodcastAudioPlayer({ article, podcast, variant: controlledVariant, onVa
     );
   const visibleProcessing = isFailure ? null : fullProcessing;
   const status = hasDigest
-    ? { label: '单人速览已就绪', tone: 'ok' }
+    ? { label: '精品导读已就绪', tone: 'ok' }
     : (visibleProcessing || { label: '仅提供原节目', tone: 'idle' });
   const originalDuration = formatPodcastDuration(podcast.duration_seconds);
   const condensedDuration = formatPodcastDuration(podcast.condensed_duration_seconds);
@@ -120,7 +120,7 @@ function PodcastAudioPlayer({ article, podcast, variant: controlledVariant, onVa
   };
 
   const failureMessage = activeVariant === 'digest'
-    ? '中文精华音频加载失败，请切换到原节目或稍后重试'
+    ? '精品导读音频加载失败，请切换到原节目或稍后重试'
     : '原节目音频加载失败，请打开节目页面收听或稍后重试';
 
   return (

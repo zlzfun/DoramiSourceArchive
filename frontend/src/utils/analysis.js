@@ -125,7 +125,7 @@ export function podcastAssessmentMeta(article) {
 
 /**
  * Issue #44 的读者态投影。后端只给事实字段，文案与视觉 tone 由前端统一解释。
- * 返回 null 表示仍是普通「简介初评」或旧版单人速览状态，调用方应保留原显示。
+ * 返回 null 表示仍是普通「简介初评」或旧版精品导读状态，调用方应保留原显示。
  */
 export function podcastFullProcessingMeta(article) {
   if (article?.content_type !== 'podcast_episode') return null;
@@ -268,21 +268,21 @@ export function podcastLedgerProcessingMeta(article) {
   const result = (label, tone, detail = '') => ({ label, tone, detail });
 
   if (status === 'synthesizing') {
-    return result('TTS 合成中…', 'run', '全文分析已完成，正在生成中文精华音频');
+    return result('TTS 合成中…', 'run', '全文分析已完成，正在生成精品导读音频');
   }
   if (status === 'summarizing') {
-    return result('精华内容生成中…', 'run', '正在根据完整逐字稿生成精华与播音稿');
+    return result('精品导读生成中…', 'run', '正在根据完整逐字稿生成精品导读与口播稿');
   }
   if (status === 'failed') {
     const ttsFailed = failedStage === 'synthesizing';
     return result(
-      ttsFailed ? 'TTS 合成失败' : '精华生成失败',
+      ttsFailed ? 'TTS 合成失败' : '精品导读生成失败',
       'bad',
-      `${error || (ttsFailed ? '语音合成未完成' : '精华内容未生成')}；可在播客任务中重试`,
+      `${error || (ttsFailed ? '语音合成未完成' : '精品导读未生成')}；可在播客任务中重试`,
     );
   }
   if (status === 'ready' && (guide.audio_ready || podcast.condensed_audio_url)) {
-    return result('TTS 音频已就绪', 'ok', '中文精华音频已发布');
+    return result('TTS 音频已就绪', 'ok', '精品导读音频已发布');
   }
   return podcastFullProcessingMeta(article);
 }
