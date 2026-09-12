@@ -700,7 +700,7 @@ def test_existing_podcast_refreshes_feed_metadata_without_erasing_derived_fields
             {
                 "summary_zh": "平台生成的中文摘要",
                 "processing_status": "audio_ready",
-                "condensed_audio_url": "https://media.example.test/condensed.mp3",
+                "editorial_note": "preserved editorial note",
             }
         )
         record.extensions_json = json.dumps(extensions, ensure_ascii=False)
@@ -740,7 +740,7 @@ def test_existing_podcast_refreshes_feed_metadata_without_erasing_derived_fields
         assert extensions["image_url"] == "https://cdn.example.test/cover.jpg"
         assert extensions["summary_zh"] == "平台生成的中文摘要"
         assert extensions["processing_status"] == "audio_ready"
-        assert extensions["condensed_audio_url"].endswith("/condensed.mp3")
+        assert extensions["editorial_note"] == "preserved editorial note"
 
         session.add(AppSettingRecord(key="article_analysis_enabled", value="true"))
         session.add(ArticleAnalysisRecord(

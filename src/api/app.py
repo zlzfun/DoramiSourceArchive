@@ -760,16 +760,6 @@ def schedule_forced_podcast_premium_guide(
     return {**prepared, "started": True}
 
 
-def schedule_podcast_premium_after_landing(article_ids: List[str]) -> int:
-    """Legacy hook retained as an inert compatibility seam.
-
-    Issue #44 admits Podcast work only after the persisted show-notes score is
-    available; duration and article landing no longer enqueue ASR.
-    """
-
-    return 0
-
-
 async def enqueue_podcast_processing_with_input(
     *,
     episode_id: str,
@@ -2606,9 +2596,6 @@ async def run_fetcher_with_tracking(
         mark_source_state_finished(execution_fetcher_id, params, run_id, status="success", result=result)
         analysis_queued_count = queue_article_analysis_after_commit(result.saved_content_ids)
         schedule_media_prefetch(result.saved_content_ids)
-        premium_queued_count = schedule_podcast_premium_after_landing(
-            result.saved_content_ids
-        )
         return {
             "status": "success",
             "run_id": run_id,
@@ -2621,7 +2608,6 @@ async def run_fetcher_with_tracking(
             "skipped_count": result.skipped_count,
             "saved_content_ids": result.saved_content_ids,
             "analysis_queued_count": analysis_queued_count,
-            "premium_queued_count": premium_queued_count,
         }
     except Exception as e:
         with Session(db_sink.engine) as cleanup_session:
