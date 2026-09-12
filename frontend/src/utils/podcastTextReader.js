@@ -1,5 +1,5 @@
 export const PODCAST_TEXT_LABELS = Object.freeze({
-  digest_blog_zh: { title: '中文精华', note: 'AI 整理' },
+  digest_blog_zh: { title: '精品导读', note: 'AI 整理' },
   transcript_zh: { title: '中文逐字稿', note: 'AI 翻译整理' },
   publisher_transcript: { title: '节目方逐字稿', note: '节目方提供' },
   normalized_transcript: { title: 'ASR 逐字稿', note: '语音识别稿' },

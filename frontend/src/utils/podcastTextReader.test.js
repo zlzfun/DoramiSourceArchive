@@ -30,7 +30,7 @@ test('podcast text view falls back to source transcript and has a true empty sta
   assert.equal(fallback.transcripts[0].label.title, '节目方逐字稿');
   assert.equal(fallback.transcripts[0].label.note, '节目方提供');
   assert.deepEqual(podcastTextView({ items: [] }).transcripts, []);
-  assert.equal(PODCAST_TEXT_LABELS.digest_blog_zh.title, '中文精华');
+  assert.equal(PODCAST_TEXT_LABELS.digest_blog_zh.title, '精品导读');
 });
 
 test('normalized ASR transcript is visible and remains distinct from publisher text', () => {

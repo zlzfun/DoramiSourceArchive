@@ -9,7 +9,7 @@ test('podcast list availability never exposes background processing state', () =
     tone: 'idle',
   });
   assert.deepEqual(podcastListAvailabilityMeta(true), {
-    label: '单人速览已就绪',
+    label: '精品导读已就绪',
     tone: 'ok',
   });
 });
