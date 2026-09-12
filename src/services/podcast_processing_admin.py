@@ -37,6 +37,7 @@ from services.podcast_processing import (
     _evaluate_full_analysis_authority,
     _evaluate_processing_eligibility,
     enqueue_processing,
+    reconcile_parked_provider_request,
 )
 from services.podcast_processing_inputs import (
     processing_input_fingerprint,
@@ -1066,6 +1067,142 @@ def retry_processing(
         except IntegrityError as exc:
             session.rollback()
             raise PodcastAdminError("podcast_processing_conflict", status_code=409) from exc
+
+
+def reconcile_processing(
+    engine: Engine,
+    config: PodcastConfig,
+    *,
+    processing_id: str,
+    idempotency_key: str,
+    expected_attempt_count: int,
+    reason: str,
+    actor: str,
+    outcome: Optional[str] = None,
+    provider_task_id: Optional[str] = None,
+) -> PodcastProcessingRecord:
+    with Session(engine) as session:
+        try:
+            _begin_locked(session, engine, f"reconcile:{processing_id}")
+            statement = select(PodcastProcessingRecord).where(
+                PodcastProcessingRecord.id == processing_id
+            )
+            if engine.dialect.name == "postgresql":
+                statement = statement.with_for_update()
+            record = session.exec(statement).first()
+            if record is None:
+                raise PodcastAdminError("podcast_not_found", status_code=404)
+
+            existing = session.exec(
+                select(PodcastProcessingCommandRecord).where(
+                    PodcastProcessingCommandRecord.processing_id == processing_id,
+                    PodcastProcessingCommandRecord.command_type == "provider_reconcile",
+                    PodcastProcessingCommandRecord.idempotency_key == idempotency_key,
+                )
+            ).first()
+            if existing is not None:
+                if (
+                    existing.expected_attempt_count != expected_attempt_count
+                    or existing.requested_by != actor
+                ):
+                    raise PodcastAdminError(
+                        "podcast_processing_conflict", status_code=409
+                    )
+                if existing.outcome == "rejected":
+                    raise PodcastAdminError(
+                        existing.error_code or "podcast_processing_conflict",
+                        status_code=_status_for_code(
+                            existing.error_code or "podcast_processing_conflict"
+                        ),
+                        processing_id=processing_id,
+                        message=existing.error_message,
+                    )
+                session.expunge(record)
+                session.commit()
+                return record
+
+            if record.processing_status != "reconciliation_required":
+                raise PodcastAdminError(
+                    "podcast_processing_conflict",
+                    status_code=409,
+                    processing_id=processing_id,
+                    message="任务未处于等待对账恢复状态",
+                )
+            if record.attempt_count != expected_attempt_count:
+                raise PodcastAdminError(
+                    "podcast_processing_conflict",
+                    status_code=409,
+                    processing_id=processing_id,
+                    message="processing attempt count changed before reconciliation",
+                )
+
+            active_attempt = session.exec(
+                select(PodcastStageAttemptRecord)
+                .where(
+                    PodcastStageAttemptRecord.processing_id == processing_id,
+                    PodcastStageAttemptRecord.submission_state == "reconciling",
+                )
+                .order_by(PodcastStageAttemptRecord.attempt_no.desc())
+            ).first()
+            if active_attempt is None:
+                raise PodcastAdminError(
+                    "podcast_processing_conflict",
+                    status_code=409,
+                    processing_id=processing_id,
+                    message="未找到处于待对账状态的 attempt",
+                )
+
+            target_outcome = (outcome or "").strip().lower()
+            if not target_outcome:
+                target_outcome = (
+                    "submitted" if active_attempt.provider_task_id else "not_submitted"
+                )
+
+            resolved_task_id = (
+                provider_task_id or active_attempt.provider_task_id or ""
+            ).strip()
+            fencing_token = record.fencing_token
+            provider_request_key = active_attempt.provider_request_key
+            attempt_id = active_attempt.id
+
+            session.rollback()
+
+            now = dt.datetime.now(dt.timezone.utc)
+            retry_at = now + dt.timedelta(seconds=5)
+            resumed = reconcile_parked_provider_request(
+                session,
+                processing_id=processing_id,
+                attempt_id=attempt_id,
+                expected_attempt_count=expected_attempt_count,
+                expected_fencing_token=fencing_token,
+                expected_provider_request_key=provider_request_key,
+                outcome=target_outcome,
+                retry_at=retry_at,
+                idempotency_key=idempotency_key,
+                actor=actor,
+                reason=reason,
+                provider_task_id=resolved_task_id if target_outcome == "submitted" else None,
+                now=now,
+            )
+            return resumed
+        except PodcastAdminError:
+            if session.in_transaction():
+                session.rollback()
+            raise
+        except PodcastProcessingConflict as exc:
+            if session.in_transaction():
+                session.rollback()
+            raise PodcastAdminError(
+                "podcast_processing_conflict",
+                status_code=409,
+                processing_id=processing_id,
+                message=str(exc),
+            ) from exc
+        except IntegrityError as exc:
+            session.rollback()
+            raise PodcastAdminError(
+                "podcast_processing_conflict", status_code=409
+            ) from exc
 
 
 def serialize_processing(record: PodcastProcessingRecord) -> dict[str, Any]:

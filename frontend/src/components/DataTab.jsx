@@ -462,8 +462,16 @@ export default function DataTab({
       setDrawer((current) => current.article?.id === article.id
         ? { ...current, article: immediate }
         : current);
-      setArticles((current) => current.map((item) => item.id === article.id ? immediate : item));
-      showToast('已启动全文处理', 'success');
+      const priorStatus = String(article.podcast?.processing_status || article.podcast?.status || '');
+      const stage = String(article.podcast?.stage || article.podcast?.processing_stage || '').toLowerCase();
+      const isAsr = stage === 'asr' || stage === 'fetch';
+      const isAnalyze = stage === 'analyze';
+      const successMsg = priorStatus === 'reconciliation_required'
+        ? (isAsr ? '已启动 ASR 对账恢复' : '已启动对账恢复')
+        : (['failed', 'retry_wait'].includes(priorStatus)
+          ? (isAsr ? '已重试 ASR 转录' : (isAnalyze ? '已重试全文分析' : '已重试全文处理'))
+          : '已启动全文处理');
+      showToast(successMsg, 'success');
       try {
         const detail = await fetchArticle(article.id);
         setDrawer((current) => current.article?.id === article.id

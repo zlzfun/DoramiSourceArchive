@@ -20,6 +20,7 @@ from sqlmodel import Session, select
 
 from models.db import (
     PodcastBudgetReservationRecord,
+    PodcastProcessingCommandRecord,
     PodcastProcessingRecord,
     PodcastSourceMediaSnapshotRecord,
     PodcastStageAttemptRecord,
@@ -155,6 +156,7 @@ class _RunSnapshot:
     provider_deadline_at: dt.datetime | None
     reservation_status: str | None
     is_fallback_attempt: bool
+    reconciled: bool = False
 
 
 class _AsrClaimPolicy:
@@ -316,6 +318,16 @@ def _load_snapshot(session: Session, claim: PodcastProcessingClaim) -> _RunSnaps
         ),
         reservation_status=reservation.status if reservation else None,
         is_fallback_attempt=is_fallback_attempt,
+        reconciled=bool(
+            active
+            and session.exec(
+                select(PodcastProcessingCommandRecord.id).where(
+                    PodcastProcessingCommandRecord.processing_id == claim.processing_id,
+                    PodcastProcessingCommandRecord.command_type == "provider_reconcile",
+                    PodcastProcessingCommandRecord.outcome == "accepted",
+                )
+            ).first()
+        ),
     )
     session.rollback()
     return snapshot
@@ -990,7 +1002,7 @@ def run_asr_worker_step(
         raise PodcastProcessingConflict("active ASR attempt is not pollable")
     task_id = str(snapshot.provider_task_id or "").strip()
     deadline = snapshot.provider_deadline_at
-    if deadline is None or deadline <= current:
+    if (deadline is None or deadline <= current) and not snapshot.reconciled:
         park_for_reconciliation(
             session,
             claim,
