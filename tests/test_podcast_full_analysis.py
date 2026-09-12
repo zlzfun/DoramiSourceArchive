@@ -961,7 +961,16 @@ def test_podcast_projection_exposes_durable_status_basis_and_thresholds():
         "failed_stage": "synthesizing",
         "error": "TTS provider timeout",
         "audio_ready": False,
+        "blog_ready": False,
     }
+    with_blog = _podcast_projection(
+        {"premium_guide": {"status": "ready"}},
+        final,
+        completed,
+        published_text_kinds={"digest_blog_zh"},
+    )
+    assert with_blog["premium_guide"]["blog_ready"] is True
+    assert with_blog["premium_guide"]["audio_ready"] is False
 
 
 def test_changed_publisher_locator_is_detected_before_reusing_publication(engine):

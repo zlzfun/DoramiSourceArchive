@@ -624,20 +624,39 @@ def schedule_podcast_premium_guide(episode_id: str) -> bool:
                 llm_config = daily_brief_service.resolve_llm_config(session)
                 aliyun_config = aliyun_isi_config_service.resolve_config(session)
                 premium_threshold = podcast_premium_service.get_threshold(session)
+                episode = session.get(ArticleRecord, episode_id)
+                duration = 0.0
+                if episode and episode.extensions_json:
+                    try:
+                        ext = json.loads(episode.extensions_json)
+                        duration = float(ext.get("duration_seconds") or 0)
+                    except Exception:
+                        duration = 0.0
+            plan = podcast_premium_guide_service.calculate_solo_deep_plan(
+                duration,
+                hard_max_audio_minutes=settings.podcast.premium_max_audio_minutes,
+            )
             voice = settings.podcast.default_voice_profile
-            if not llm_config.configured or not aliyun_config.tts_configured or not voice:
-                raise RuntimeError("精品导读所需的 LLM 或 TTS 配置尚未就绪")
+            if not llm_config.configured:
+                raise RuntimeError("精品导读所需的 LLM 配置尚未就绪")
+            if plan.should_synthesize_audio and (not aliyun_config.tts_configured or not voice):
+                raise RuntimeError("精品导读所需的 TTS 配置尚未就绪")
+            tts_provider = (
+                AliyunIsiPremiumGuideTtsProvider(
+                    aliyun_config,
+                    voice_profile=voice,
+                    max_audio_bytes=podcast_artifact_store.max_bytes,
+                )
+                if plan.should_synthesize_audio
+                else None
+            )
             await podcast_premium_guide_service.run_premium_guide(
                 db_sink.engine,
                 podcast_artifact_store,
                 episode_id=episode_id,
                 config=settings.podcast,
                 text_provider=OpenAiCompatiblePremiumGuideTextProvider(llm_config),
-                tts_provider=AliyunIsiPremiumGuideTtsProvider(
-                    aliyun_config,
-                    voice_profile=voice,
-                    max_audio_bytes=podcast_artifact_store.max_bytes,
-                ),
+                tts_provider=tts_provider,
                 score_threshold=premium_threshold,
             )
         except Exception as exc:  # noqa: BLE001 - status is persisted by service

@@ -503,15 +503,17 @@ export default function ReaderTab({
 
   const [podcastSelection, setPodcastSelection] = useState({ articleId: '', variant: 'original' });
   const activePodcast = podcastOf(activeArticle);
+  const hasGuideAudio = Boolean(activePodcast?.condensed_audio_url);
+  const hasGuideBlog = Boolean(activePodcast?.premium_guide?.blog_ready || activePodcast?.premium_guide?.status === 'ready');
+  const isBlogOnlyGuide = hasGuideBlog && !hasGuideAudio;
   const defaultPodcastVariant = activePodcast?.audio_url
     ? 'original'
-    : activePodcast?.condensed_audio_url ? 'digest' : 'original';
+    : hasGuideAudio ? 'digest' : 'original';
   const podcastVariant = podcastSelection.articleId === activeArticle?.id
     ? podcastSelection.variant
     : defaultPodcastVariant;
   const podcastGuideActive = podcastView
-    && podcastVariant === 'digest'
-    && Boolean(activePodcast?.condensed_audio_url);
+    && (isBlogOnlyGuide || (podcastVariant === 'digest' && hasGuideAudio));
   const handlePodcastVariantChange = (variant) => {
     setPodcastSelection({ articleId: activeArticle?.id || '', variant });
   };

@@ -52,6 +52,7 @@ export default function PodcastAudioPanel({ article, variant, onVariantChange })
 function PodcastAudioPlayer({ article, podcast, variant: controlledVariant, onVariantChange }) {
   const fullProcessing = podcastFullProcessingMeta(article);
   const hasDigest = Boolean(podcast.condensed_audio_url);
+  const hasDigestBlog = Boolean(podcast.premium_guide?.blog_ready || podcast.premium_guide?.status === 'ready');
   const isFailure = fullProcessing?.tone === 'bad'
     || fullProcessing?.label === '全文处理失败'
     || fullProcessing?.label === '全文处理等待重试'
@@ -59,7 +60,7 @@ function PodcastAudioPlayer({ article, podcast, variant: controlledVariant, onVa
       String(podcast.processing_status || '').toLowerCase()
     );
   const visibleProcessing = isFailure ? null : fullProcessing;
-  const status = hasDigest
+  const status = (hasDigest || hasDigestBlog)
     ? { label: '精品导读已就绪', tone: 'ok' }
     : (visibleProcessing || { label: '仅提供原节目', tone: 'idle' });
   const originalDuration = formatPodcastDuration(podcast.duration_seconds);

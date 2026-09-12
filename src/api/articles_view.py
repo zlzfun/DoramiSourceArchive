@@ -173,6 +173,7 @@ def _podcast_projection(
             "failed_stage": str(premium_guide.get("failed_stage") or ""),
             "error": str(premium_guide.get("error") or ""),
             "audio_ready": digest_audio is not None,
+            "blog_ready": "digest_blog_zh" in published_text_kinds,
         },
         "condensed_audio_url": (
             f"/api/reader/podcast-artifacts/{digest_audio.id}/audio"
