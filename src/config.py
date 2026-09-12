@@ -274,10 +274,10 @@ class PodcastConfig:
     premium_score_threshold: float = 8.0
     premium_transcript_max_chars: int = 120_000
     premium_blog_max_chars: int = 6_000
-    premium_narration_max_chars: int = 4_200
+    premium_narration_max_chars: int = 4_500
     premium_min_duration_seconds: int = 20 * 60
     premium_max_audio_minutes: int = 15
-    premium_guide_mode: str = "solo_preview"
+    premium_guide_mode: str = "solo_deep"
 
     def __post_init__(self) -> None:
         installation = (self.installation or "").strip().lower()
@@ -348,12 +348,12 @@ class PodcastConfig:
             )
         ):
             raise ValueError("Podcast premium guide text limits must be positive")
-        if self.premium_guide_mode not in {
-            "solo_preview",
-            "solo_deep",
-            "dual_deep",
-        }:
-            raise ValueError("Podcast premium_guide_mode is invalid")
+        if self.premium_guide_mode == "dual_deep":
+            raise ValueError("Podcast premium_guide_mode 'dual_deep' 仅保留为未来能力标识，当前不可运行")
+        if self.premium_guide_mode != "solo_deep":
+            raise ValueError(
+                f"Podcast premium_guide_mode '{self.premium_guide_mode}' 无效，当前唯一可运行模式为 'solo_deep'"
+            )
         for value, label in (
             (self.text_pipeline_version, "text_pipeline_version"),
             (self.audio_pipeline_version, "audio_pipeline_version"),
@@ -1255,7 +1255,7 @@ def load_config() -> AppConfig:
             premium_narration_max_chars=int(
                 os.getenv("DORAMI_PODCAST_PREMIUM_NARRATION_MAX_CHARS")
                 or parser.getint(
-                    "podcast", "premium_narration_max_chars", fallback=4_200
+                    "podcast", "premium_narration_max_chars", fallback=4_500
                 )
             ),
             premium_min_duration_seconds=int(
@@ -1272,7 +1272,7 @@ def load_config() -> AppConfig:
             ),
             premium_guide_mode=(
                 os.getenv("DORAMI_PODCAST_PREMIUM_GUIDE_MODE")
-                or parser.get("podcast", "premium_guide_mode", fallback="solo_preview")
+                or parser.get("podcast", "premium_guide_mode", fallback="solo_deep")
             ).strip(),
         ),
         podcast_worker=PodcastWorkerConfig(

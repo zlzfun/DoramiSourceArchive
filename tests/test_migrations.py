@@ -2514,3 +2514,60 @@ def test_retired_podcast_asr_fetch_settings_are_purged(tmp_path):
         assert rows["unrelated-setting"] == "keep"
     finally:
         engine.dispose()
+
+
+def test_cleanup_podcast_extension_fields(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'cleanup-podcast-ext.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "b6f2d8a4c901")
+    engine = create_engine(db_url)
+    stamp = "2026-09-11T00:00:00.000000+00:00"
+    ext_data = {
+        "show_title": "Test Show",
+        "audio_url": "https://media.test/audio.mp3",
+        "duration_seconds": 1800,
+        "condensed_audio_url": "https://media.test/condensed.mp3",
+        "condensed_duration_seconds": 400,
+        "premium_guide": {
+            "status": "ready",
+            "audio_artifact_id": "art-1",
+            "condensed_audio_url": "https://media.test/condensed.mp3",
+            "condensed_duration_seconds": 400,
+        },
+    }
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO articles "
+                    "(id, title, content_type, source_id, source_url, publish_date, fetched_date, "
+                    "run_scope, has_content, content, extensions_json) VALUES "
+                    "('ep-clean-1', 'Title', 'podcast_episode', 'src-1', 'https://src.test/1', "
+                    ":stamp, :stamp, '', 1, 'show notes', :ext_json)"
+                ),
+                {"stamp": stamp, "ext_json": json.dumps(ext_data)},
+            )
+    finally:
+        engine.dispose()
+
+    command.upgrade(cfg, "head")
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT extensions_json FROM articles WHERE id = 'ep-clean-1'")
+            ).scalar_one()
+            loaded = json.loads(row)
+        assert "condensed_audio_url" not in loaded
+        assert "condensed_duration_seconds" not in loaded
+        assert loaded["show_title"] == "Test Show"
+        assert loaded["audio_url"] == "https://media.test/audio.mp3"
+        assert loaded["duration_seconds"] == 1800
+        guide = loaded["premium_guide"]
+        assert guide["status"] == "ready"
+        assert guide["audio_artifact_id"] == "art-1"
+        assert "condensed_audio_url" not in guide
+        assert "condensed_duration_seconds" not in guide
+    finally:
+        engine.dispose()
+
