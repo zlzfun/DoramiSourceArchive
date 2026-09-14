@@ -297,7 +297,7 @@ export default function InterestPage({
   // 主语、同从视图轨下半区进入、同占源栏槽位 + 整幅右栏,共享等宽 kicker + 衬线标题的报头家族;
   // 文章/社交/发现是内容容器与站内目录,用 14/600 栏名工具头。差异是「不同类」而非「不一致」。
   const kicker = onboarding ? '初始设置 · 欢迎来到哆啦美' : KINDS.map((k) => KIND_META[k].label).join(' / ');
-  const hint = onboarding ? '选几个感兴趣的方向，早报和阅读器会优先呈现。' : '兴趣决定早报和阅读器优先呈现什么。';
+  const hint = '兴趣决定早报和阅读器优先呈现什么。';
   const saveStateNode = saveState !== 'idle' && (
     <span className={`interest-save-state ${saveState === 'error' ? 'is-error' : ''}`} role="status" aria-live="polite">
       {saveState === 'saving' ? '保存中…' : saveState === 'saved' ? '已保存' : '保存失败'}
@@ -348,7 +348,7 @@ export default function InterestPage({
       <div className="interest-onb-main">
         <div className="brief-mast-kicker">欢迎来到哆啦美</div>
         <p className="interest-onb-text">
-          选几个<b>感兴趣的方向</b>，早报和阅读器会优先呈现相关内容。随时可改。
+          选几个<b>感兴趣的方向</b>，早报和阅读器会优先呈现相关内容。
         </p>
       </div>
       {onboardingBtn}

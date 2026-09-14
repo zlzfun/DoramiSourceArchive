@@ -549,18 +549,17 @@ export default function PersonalBriefPage({
     body = (
       <div className="brief-state">
         <span className="brief-state-title">还没有订阅来源，也没有设置兴趣</span>
-        <span className="brief-state-meta">订阅几个来源或设置兴趣，早报就有了</span>
-        <button type="button" className="action-button action-button-primary min-h-[32px] px-3 text-xs" onClick={onManageSubscriptions}>去发现来源</button>
-        {onManageInterests && <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={onManageInterests}>设置兴趣</button>}
-        {onBrowse && <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={onBrowse}>先去看文章</button>}
+        <span className="brief-state-meta">
+          <button type="button" className="brief-note-act" onClick={onManageSubscriptions}>订阅来源</button>
+          {onManageInterests && <> 或 <button type="button" className="brief-note-act" onClick={onManageInterests}>设置兴趣</button></>}
+        </span>
       </div>
     );
   } else if (live) {
     body = (
       <div className="brief-state" role="status" aria-live="polite">
         <Clock3 aria-hidden="true" />
-        <span className="brief-state-title">正在编排今日早报…</span>
-        <span className="brief-state-meta">稍后可点「重新编排」拿到更全的一版</span>
+        <span className="brief-state-title">早报编排中…</span>
         {edition?.rebuild_queued && <span className="brief-state-meta">期间的新变更已合并，本版完成后再编排一次</span>}
       </div>
     );
