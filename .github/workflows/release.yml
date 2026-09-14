@@ -11,6 +11,12 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # 手动补建:workflow 上线前已推的 tag(如 v3.56.0)不会自动触发,指定 tag 名跑一次即可
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 要建 Release 的已存在 tag(如 v3.56.0)
+        required: true
 
 permissions:
   contents: write
@@ -25,7 +31,7 @@ jobs:
 
       - name: Verify tag is a proper release
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           git fetch origin main --quiet
@@ -46,7 +52,7 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
