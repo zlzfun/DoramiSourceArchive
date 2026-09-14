@@ -45,6 +45,7 @@ import { healthMeta, errorTypeLabel, runStatusMeta } from '../statusMeta';
 import { usePolling } from '../hooks/usePolling';
 import { formatDateTime, formatRelativeTime } from '../utils/datetime';
 import { collectionRunMessage, TEST_RUN_LIMIT } from '../utils/collection';
+import { scrollBehavior } from '../motion';
 
 // 健康态 → 信号灯样式（后端 SourceStateRecord 只有四态，无独立「告警」态，故灯位取四态 + 全部）。
 const HEALTH_SIGNAL = { healthy: 'ok', failing: 'fail', running: 'running', never_run: 'idle' };
@@ -443,7 +444,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
   useEffect(() => {
     if (!highlightedFetcherId) return undefined;
     const raf = requestAnimationFrame(() => {
-      sourceRowRefs.current[highlightedFetcherId]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      sourceRowRefs.current[highlightedFetcherId]?.scrollIntoView({ behavior: scrollBehavior(), block: 'center' });
     });
     const timer = setTimeout(() => setHighlightedFetcherId(null), 2400);
     return () => {
