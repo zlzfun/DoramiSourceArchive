@@ -19,11 +19,18 @@ import Sparkline from './charts/Sparkline';
 import { runAction } from '../utils/runAction';
 import { excerptOf } from '../utils/readerText';
 import { contentTypeLabel, CONTENT_TYPE_GROUPS } from '../utils/contentType';
-import { SCORE_DISCLAIMER, analysisStatusMeta, primaryAnalysisLabel, qualityScoreText, scoreTierClass } from '../utils/analysis';
+import { SCORE_DISCLAIMER, analysisStatusMeta, podcastLedgerProcessingMeta, primaryAnalysisLabel, qualityScoreText, scoreTierClass } from '../utils/analysis';
 import { useConfirm } from '../hooks/useConfirm';
 import { useAbortableLoad } from '../hooks/useAbortableLoad';
 
 const ARTICLE_PAGE_SIZE = 30;
+const PODCAST_STATUS_CLASS = {
+  idle: 'stamp-idle',
+  run: 'stamp-run',
+  ok: 'stamp-ok',
+  warn: 'stamp-warn',
+  bad: 'stamp-bad',
+};
 
 // 总账条：三格收录量看板，点击即应用对应 fetched_date 快捷区间
 // （quick=setFetchedQuick 的键）。v3.31 向量索引维度随 RAG 退役移除。
@@ -455,8 +462,16 @@ export default function DataTab({
       setDrawer((current) => current.article?.id === article.id
         ? { ...current, article: immediate }
         : current);
-      setArticles((current) => current.map((item) => item.id === article.id ? immediate : item));
-      showToast('已启动全文处理', 'success');
+      const priorStatus = String(article.podcast?.processing_status || article.podcast?.status || '');
+      const stage = String(article.podcast?.stage || article.podcast?.processing_stage || '').toLowerCase();
+      const isAsr = stage === 'asr' || stage === 'fetch';
+      const isAnalyze = stage === 'analyze';
+      const successMsg = priorStatus === 'reconciliation_required'
+        ? (isAsr ? '已启动 ASR 对账恢复' : '已启动对账恢复')
+        : (['failed', 'retry_wait'].includes(priorStatus)
+          ? (isAsr ? '已重试 ASR 转录' : (isAnalyze ? '已重试全文分析' : '已重试全文处理'))
+          : '已启动全文处理');
+      showToast(successMsg, 'success');
       try {
         const detail = await fetchArticle(article.id);
         setDrawer((current) => current.article?.id === article.id
@@ -471,7 +486,7 @@ export default function DataTab({
     } catch (error) {
       showToast(
         error.code === 'podcast_artifact_not_ready'
-          ? '无法启动全文处理：请先在运维管理中缓存原节目音频后重试'
+          ? '无法启动全文处理：请确认节目 RSS 提供了可下载的音频地址后重试'
           : (error.message || '启动全文处理失败，请稍后重试'),
         'error',
       );
@@ -751,6 +766,7 @@ export default function DataTab({
                     includeTerminal: true,
                     podcast: String(article.content_type || '').startsWith('podcast'),
                   });
+                  const podcastProcessing = podcastLedgerProcessingMeta(article);
                   return (
                     <tr
                       key={article.id}
@@ -766,11 +782,28 @@ export default function DataTab({
                       )}
                       <td className="ledger-td-title px-4">
                         <div className="ledger-tt">{article.title}</div>
-                        {(analysisScore || analysisLabel || analysisStatus) && (
+                        {(analysisScore || analysisLabel || analysisStatus || podcastProcessing) && (
                           <div className="ledger-analysis-meta">
                             {analysisScore && <span className={`reader-score-chip ${scoreTierClass(article.quality_score)}`}>{analysisScore}</span>}
                             {analysisLabel && <span className="reader-tag-chip">{analysisLabel}</span>}
                             {analysisStatus && <span className={`stamp ${analysisStatus.cls}`} role="status">{analysisStatus.label}</span>}
+                            {podcastProcessing && (
+                              <span
+                                className={`stamp ${PODCAST_STATUS_CLASS[podcastProcessing.tone] || 'stamp-idle'}`}
+                                role="status"
+                                title={podcastProcessing.detail || podcastProcessing.label}
+                              >
+                                {podcastProcessing.label}
+                              </span>
+                            )}
+                            {['bad', 'warn'].includes(podcastProcessing?.tone) && podcastProcessing.detail && (
+                              <span
+                                className={`ledger-processing-error ${podcastProcessing.tone === 'warn' ? 'is-warn' : ''}`}
+                                title={podcastProcessing.detail}
+                              >
+                                {podcastProcessing.detail}
+                              </span>
+                            )}
                           </div>
                         )}
                         <div className="ledger-ex">{excerptOf(article.content_preview || article.content) || '暂无摘要内容'}</div>

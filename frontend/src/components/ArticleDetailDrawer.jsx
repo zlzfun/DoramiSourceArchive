@@ -1,4 +1,4 @@
-import { X, Edit2, FileAudio2, Trash2, ExternalLink } from 'lucide-react';
+import { X, Edit2, FileAudio2, Trash2, ExternalLink, RotateCcw } from 'lucide-react';
 import { contentTypeLabel } from '../utils/contentType';
 import { excerptOf } from '../utils/readerText';
 import {
@@ -16,7 +16,7 @@ import AnalysisTagChip from './AnalysisTagChip';
 
 const fmtTime = (value) => (value ? value.replace('T', ' ').substring(0, 16) : '—');
 const FULL_PROCESSING_LOCKED_STATUSES = new Set([
-  'not_started', 'queued', 'running', 'retry_wait', 'reconciliation_required', 'ready',
+  'not_started', 'queued', 'running', 'ready',
 ]);
 
 function prettyExtensions(raw, loading) {
@@ -54,16 +54,31 @@ export default function ArticleDetailDrawer({
   const podcastProcessingStatus = String(
     article?.podcast?.processing_status || article?.podcast?.status || '',
   ).toLowerCase();
+  const isRetryable = podcastProcessingStatus === 'failed'
+    || podcastProcessingStatus === 'retry_wait'
+    || podcastProcessingStatus === 'reconciliation_required';
   const forceFullLocked = Boolean(
     podcastFullProcessing && FULL_PROCESSING_LOCKED_STATUSES.has(podcastProcessingStatus),
   );
+  const podcastStage = String(
+    article?.podcast?.stage || article?.podcast?.processing_stage || '',
+  ).toLowerCase();
+  const isAsrStage = podcastStage === 'asr' || podcastStage === 'fetch';
+  const retryMainLabel = isAsrStage
+    ? '重试 ASR 转录'
+    : podcastStage === 'analyze'
+      ? '重试全文分析'
+      : '重试全文处理';
+  const retryInlineLabel = isAsrStage ? '重试 ASR' : '重试';
   const forceFullLabel = forcingFullAnalysis
-    ? '启动全文处理中…'
+    ? (isAsrStage ? '重试 ASR 转录中…' : '启动全文处理中…')
     : podcastProcessingStatus === 'ready'
       ? '全文处理已完成'
-      : forceFullLocked
-        ? '全文处理中…'
-        : '强制全文处理';
+      : isRetryable
+        ? retryMainLabel
+        : forceFullLocked
+          ? (isAsrStage ? 'ASR 转录中…' : '全文处理中…')
+          : '强制全文处理';
   const analysisStatus = analysisStatusMeta(article, {
     includeTerminal: true,
     podcast: article?.content_type === 'podcast_episode',
@@ -147,10 +162,22 @@ export default function ArticleDetailDrawer({
                 )}
                 {podcastFullProcessing && (
                   <div className="reader-analysis-summary mt-2">
-                    <div className="reader-analysis-top">
+                    <div className="reader-analysis-top flex items-center justify-between">
                       <span className={`podcast-status is-${podcastFullProcessing.tone}`} role="status">
                         {podcastFullProcessing.label}
                       </span>
+                      {isRetryable && canManage && (
+                        <button
+                          type="button"
+                          onClick={() => onForceFullAnalysis?.(article)}
+                          disabled={loading || forcingFullAnalysis}
+                          className="action-button action-button-quiet min-h-[24px] px-2 text-xs"
+                          aria-label={retryMainLabel}
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          {retryInlineLabel}
+                        </button>
+                      )}
                     </div>
                     {podcastFullProcessing.detail && <p>{podcastFullProcessing.detail}</p>}
                   </div>
@@ -186,7 +213,7 @@ export default function ArticleDetailDrawer({
                     disabled={loading || forcingFullAnalysis || forceFullLocked}
                     className="action-button action-button-secondary min-h-[32px] px-3 text-xs"
                   >
-                    <FileAudio2 className="h-3.5 w-3.5" />
+                    {isRetryable ? <RotateCcw className="h-3.5 w-3.5" /> : <FileAudio2 className="h-3.5 w-3.5" />}
                     {forceFullLabel}
                   </button>
                 )}

@@ -14,6 +14,7 @@
 import os
 import sys
 import json
+import hashlib
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -24,8 +25,18 @@ from alembic.runtime.migration import MigrationContext  # noqa: E402
 from sqlalchemy import create_engine, event, inspect, text  # noqa: E402
 from sqlalchemy.exc import IntegrityError  # noqa: E402
 from sqlalchemy.engine import Engine  # noqa: E402
+from sqlmodel import Session  # noqa: E402
 
-from models.db import SQLModel  # noqa: E402
+from models.db import (  # noqa: E402
+    ArticleRecord,
+    PodcastBudgetReservationRecord,
+    PodcastProcessingRecord,
+    PodcastSourceMediaSnapshotRecord,
+    PodcastStageAttemptRecord,
+    PodcastTextArtifactRecord,
+    PodcastTextPublicationRecord,
+    SQLModel,
+)
 from storage.fts import fts_include_object  # noqa: E402
 from storage.impl.db_storage import DatabaseStorage  # noqa: E402
 from storage.migrations import (  # noqa: E402
@@ -70,6 +81,413 @@ def _insert_legacy_podcast_attempt(
                     "completed_at": stamp if state == "succeeded" else None,
                 },
             )
+    finally:
+        engine.dispose()
+
+
+def _insert_source_audio_migration_case(
+    db_url: str,
+    *,
+    suffix: str,
+    locator_hash: str | None,
+) -> None:
+    engine = create_engine(db_url)
+    stamp = "2026-09-09T00:00:00.000000+00:00"
+    episode_id = f"snapshot-episode-{suffix}"
+    artifact_id = f"source-artifact-{suffix}"
+    processing_id = f"source-processing-{suffix}"
+    attempt_id = f"source-attempt-{suffix}"
+    content_hash = ("b" if suffix == "valid" else "d") * 64
+    try:
+        with Session(engine) as session:
+            session.add(ArticleRecord(
+                id=episode_id,
+                title="Snapshot migration",
+                content_type="podcast_episode",
+                source_id="migration-test",
+                source_url="https://example.com/episode",
+                publish_date=stamp,
+                fetched_date=stamp,
+                extensions_json="{}",
+            ))
+            session.commit()
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO podcast_artifacts "
+                "(id,episode_id,kind,content_hash,mime,ext,size_bytes,duration_seconds,"
+                "status,provenance,authority_id,narration_artifact_id,"
+                "narration_content_hash,processing_id,producing_attempt_id,created_at,"
+                "updated_at,published_at,withdrawn_at,source_locator_hash,expires_at,"
+                "expired_at) VALUES "
+                "(:id,:episode_id,'source_audio',:content_hash,'audio/mpeg','mp3',1024,"
+                "60.0,'ready','rss_enclosure','',NULL,NULL,NULL,NULL,:stamp,:stamp,NULL,"
+                "NULL,:locator_hash,:expires_at,NULL)"
+            ), {
+                "id": artifact_id,
+                "episode_id": episode_id,
+                "content_hash": content_hash,
+                "stamp": stamp,
+                "locator_hash": locator_hash,
+                "expires_at": "2026-09-10T00:00:00.000000+00:00",
+            })
+        with Session(engine) as session:
+            session.add(PodcastProcessingRecord(
+                id=processing_id,
+                episode_id=episode_id,
+                input_fingerprint="e" * 64,
+                pipeline_version="migration-v1",
+                policy_version="migration-v1",
+                requested_target="transcript",
+                selection_source="policy",
+                idempotency_key=f"source-processing-key-{suffix}",
+                input_artifact_id=artifact_id,
+                input_artifact_kind="source_audio",
+                input_content_hash=content_hash,
+                input_language="zh",
+                budget_scope="migration-test",
+                budget_period="2026-09",
+                budget_limit_minor=100,
+                per_run_budget_minor=10,
+                eligibility_status="eligible",
+                processing_status="reconciliation_required",
+                stage="asr",
+                attempt_count=1,
+                asr_provider="aliyun_isi",
+                asr_model="default",
+                queued_at=stamp,
+                updated_at=stamp,
+                created_at=stamp,
+            ))
+            session.commit()
+            session.add(PodcastStageAttemptRecord(
+                id=attempt_id,
+                processing_id=processing_id,
+                stage="asr",
+                attempt_no=1,
+                fencing_token=1,
+                lease_token="migration-lease",
+                input_hash=content_hash,
+                settings_fingerprint="f" * 64,
+                provider_name="aliyun_isi",
+                model_name="default",
+                provider_revision="migration-v1",
+                provider_request_key=f"source-request-key-{suffix}",
+                provider_task_id=f"provider-task-{suffix}",
+                execution_kind="provider",
+                submission_state="submitted",
+                started_at=stamp,
+                submitted_at=stamp,
+                provider_deadline_at="2026-09-10T00:00:00.000000+00:00",
+                created_at=stamp,
+                updated_at=stamp,
+            ))
+            session.commit()
+            session.add(PodcastBudgetReservationRecord(
+                id=f"source-reservation-{suffix}",
+                processing_id=processing_id,
+                attempt_id=attempt_id,
+                budget_scope="migration-test",
+                budget_period="2026-09",
+                reserved_minor=10,
+                status="reserved",
+                idempotency_key=f"source-reservation-key-{suffix}",
+                created_at=stamp,
+                updated_at=stamp,
+            ))
+            session.commit()
+    finally:
+        engine.dispose()
+
+
+def test_source_audio_cache_guard_is_historical_and_removed_at_head(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'source-audio-legacy-trigger.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "7c2e1a9b4d60")
+    engine = create_engine(db_url)
+    stamp = "2026-09-09T00:00:00.000000+00:00"
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO articles "
+                "(id,title,content_type,source_id,source_url,publish_date,fetched_date,"
+                "run_scope,has_content,extensions_json) VALUES "
+                "('legacy-source-episode','Legacy source','podcast_episode','migration',"
+                "'https://example.com/episode',:stamp,:stamp,'default',0,'{}')"
+            ), {"stamp": stamp})
+            conn.execute(text(
+                "INSERT INTO podcast_artifacts "
+                "(id,episode_id,kind,content_hash,mime,ext,size_bytes,duration_seconds,"
+                "status,provenance,created_at,updated_at,source_locator_hash,expires_at) "
+                "VALUES ('legacy-source','legacy-source-episode','source_audio',:digest,"
+                "'audio/mpeg','mp3',1024,60.0,'ready','rss_enclosure',:stamp,:stamp,"
+                ":locator_hash,:expires_at)"
+            ), {
+                "digest": "b" * 64,
+                "stamp": stamp,
+                "locator_hash": "a" * 64,
+                "expires_at": "2026-09-10T00:00:00.000000+00:00",
+            })
+        with pytest.raises(
+            IntegrityError,
+            match="podcast audio binding is immutable",
+        ):
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "UPDATE podcast_artifacts SET source_locator_hash=:digest "
+                    "WHERE id='legacy-source'"
+                ), {"digest": "c" * 64})
+        with engine.connect() as conn:
+            trigger_sql = conn.execute(text(
+                "SELECT sql FROM sqlite_master WHERE type='trigger' "
+                "AND name='podcast_audio_binding_immutable'"
+            )).scalar_one()
+        assert "source_locator_hash" in trigger_sql
+        assert "expires_at" in trigger_sql
+    finally:
+        engine.dispose()
+
+    command.upgrade(cfg, "head")
+    engine = create_engine(db_url)
+    try:
+        artifact_columns = {
+            column["name"]
+            for column in inspect(engine).get_columns("podcast_artifacts")
+        }
+        assert not {"source_locator_hash", "expires_at", "expired_at"} & artifact_columns
+        with engine.connect() as conn:
+            trigger_sql = conn.execute(text(
+                "SELECT sql FROM sqlite_master WHERE type='trigger' "
+                "AND name='podcast_audio_binding_immutable'"
+            )).scalar_one()
+        assert "source_locator_hash" not in trigger_sql
+        assert "expires_at" not in trigger_sql
+    finally:
+        engine.dispose()
+
+
+def test_source_audio_migration_preserves_proven_task_and_closes_invalid_hold(
+    tmp_path,
+):
+    db_url = f"sqlite:///{tmp_path / 'source-media-snapshot-backfill.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "d6a3f9c2e714")
+    valid_locator_hash = "a" * 64
+    _insert_source_audio_migration_case(
+        db_url,
+        suffix="valid",
+        locator_hash=valid_locator_hash,
+    )
+    _insert_source_audio_migration_case(
+        db_url,
+        suffix="invalid",
+        locator_hash=None,
+    )
+
+    command.upgrade(cfg, "head")
+
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            assert conn.execute(text(
+                "SELECT count(*) FROM podcast_artifacts WHERE kind='source_audio'"
+            )).scalar_one() == 0
+            valid_snapshot = conn.execute(text(
+                "SELECT id,episode_id,locator_hash,content_hash,size_bytes,duration_seconds "
+                "FROM podcast_source_media_snapshots WHERE id='source-artifact-valid'"
+            )).one()
+            assert tuple(valid_snapshot) == (
+                "source-artifact-valid",
+                "snapshot-episode-valid",
+                valid_locator_hash,
+                "b" * 64,
+                1024,
+                60.0,
+            )
+            assert conn.execute(text(
+                "SELECT input_artifact_kind FROM podcast_processings "
+                "WHERE id='source-processing-valid'"
+            )).scalar_one() == "source_media_snapshot"
+            valid_attempt = conn.execute(text(
+                "SELECT submission_state,provider_task_id FROM podcast_stage_attempts "
+                "WHERE id='source-attempt-valid'"
+            )).one()
+            assert tuple(valid_attempt) == ("submitted", "provider-task-valid")
+            assert conn.execute(text(
+                "SELECT status FROM podcast_budget_reservations "
+                "WHERE id='source-reservation-valid'"
+            )).scalar_one() == "reserved"
+
+            assert conn.execute(text(
+                "SELECT count(*) FROM podcast_source_media_snapshots "
+                "WHERE id='source-artifact-invalid'"
+            )).scalar_one() == 0
+            invalid_processing = conn.execute(text(
+                "SELECT processing_status,eligibility_status,input_artifact_id,"
+                "input_artifact_kind,error_code FROM podcast_processings "
+                "WHERE id='source-processing-invalid'"
+            )).one()
+            assert tuple(invalid_processing) == (
+                "not_required",
+                "invalid_input",
+                None,
+                None,
+                "source_media_snapshot_missing",
+            )
+            invalid_attempt = conn.execute(text(
+                "SELECT submission_state,retry_state,error_code FROM podcast_stage_attempts "
+                "WHERE id='source-attempt-invalid'"
+            )).one()
+            assert tuple(invalid_attempt) == (
+                "cancelled",
+                "exhausted",
+                "source_media_snapshot_missing",
+            )
+            invalid_reservation = conn.execute(text(
+                "SELECT status,released_at FROM podcast_budget_reservations "
+                "WHERE id='source-reservation-invalid'"
+            )).one()
+            assert invalid_reservation.status == "released"
+            assert invalid_reservation.released_at is not None
+    finally:
+        engine.dispose()
+
+
+def test_source_audio_retirement_migration_requires_backup_to_downgrade(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'source-audio-retirement-one-way.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "head")
+
+    with pytest.raises(RuntimeError, match="restore the pre-upgrade database"):
+        command.downgrade(cfg, "d6a3f9c2e714")
+
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            assert MigrationContext.configure(conn).get_current_revision() == _head_revision()
+    finally:
+        engine.dispose()
+
+
+def test_normalized_transcript_publication_migration_backfills_successful_output(
+    tmp_path,
+):
+    db_url = f"sqlite:///{tmp_path / 'normalized-publication-backfill.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "e1b7c4d9a260")
+    stamp = "2026-09-10T00:00:00.000000+00:00"
+    transcript = '{"text":"migration transcript"}'
+    content_hash = hashlib.sha256(transcript.encode("utf-8")).hexdigest()
+    engine = create_engine(db_url)
+    try:
+        with Session(engine) as session:
+            session.add(ArticleRecord(
+                id="normalized-publication-episode",
+                title="Normalized publication migration",
+                content_type="podcast_episode",
+                source_id="migration-test",
+                source_url="https://example.com/episode",
+                publish_date=stamp,
+                fetched_date=stamp,
+                extensions_json="{}",
+            ))
+            session.add(PodcastSourceMediaSnapshotRecord(
+                id="normalized-publication-source",
+                episode_id="normalized-publication-episode",
+                locator_hash="a" * 64,
+                content_hash="b" * 64,
+                mime="audio/mpeg",
+                size_bytes=1024,
+                duration_seconds=60,
+                created_at=stamp,
+            ))
+            session.add(PodcastProcessingRecord(
+                id="normalized-publication-processing",
+                episode_id="normalized-publication-episode",
+                input_fingerprint="c" * 64,
+                pipeline_version="migration-v1",
+                policy_version="migration-v1",
+                requested_target="transcript",
+                idempotency_key="normalized-publication-processing",
+                input_artifact_id="normalized-publication-source",
+                input_artifact_kind="source_media_snapshot",
+                input_content_hash="b" * 64,
+                input_language="und",
+                budget_scope="migration-test",
+                budget_period="2026-09",
+                budget_limit_minor=100,
+                per_run_budget_minor=100,
+                eligibility_status="eligible",
+                processing_status="ready",
+                stage="asr",
+                attempt_count=1,
+                fencing_token=1,
+                queued_at=stamp,
+                finished_at=stamp,
+                created_at=stamp,
+                updated_at=stamp,
+            ))
+            session.add(PodcastStageAttemptRecord(
+                id="normalized-publication-attempt",
+                processing_id="normalized-publication-processing",
+                stage="asr",
+                attempt_no=1,
+                fencing_token=1,
+                lease_token="migration-lease",
+                input_hash="b" * 64,
+                output_hash=content_hash,
+                settings_fingerprint="d" * 64,
+                output_artifact_id="normalized-publication-artifact",
+                output_artifact_kind="normalized_transcript",
+                provider_name="migration-provider",
+                model_name="migration-model",
+                provider_revision="migration-v1",
+                provider_request_key="normalized-publication-request",
+                provider_task_id="normalized-publication-task",
+                execution_kind="provider",
+                submission_state="succeeded",
+                started_at=stamp,
+                submitted_at=stamp,
+                completed_at=stamp,
+                created_at=stamp,
+                updated_at=stamp,
+            ))
+            session.add(PodcastTextArtifactRecord(
+                id="normalized-publication-artifact",
+                episode_id="normalized-publication-episode",
+                kind="normalized_transcript",
+                version=1,
+                content_hash=content_hash,
+                inline_text=transcript,
+                language="en",
+                authority_id="",
+                source_artifact_id="normalized-publication-source",
+                source_content_hash="b" * 64,
+                processing_id="normalized-publication-processing",
+                producing_attempt_id="normalized-publication-attempt",
+                provenance_json='{"source":"migration-test"}',
+                created_at=stamp,
+            ))
+            session.commit()
+            assert session.get(
+                PodcastTextPublicationRecord,
+                "normalized-publication-episode:normalized_transcript",
+            ) is None
+    finally:
+        engine.dispose()
+
+    command.upgrade(cfg, "head")
+
+    engine = create_engine(db_url)
+    try:
+        with Session(engine) as session:
+            publication = session.get(
+                PodcastTextPublicationRecord,
+                "normalized-publication-episode:normalized_transcript",
+            )
+            assert publication is not None
+            assert publication.artifact_id == "normalized-publication-artifact"
+            assert publication.status == "published"
+            assert publication.authority_id == ""
     finally:
         engine.dispose()
 
@@ -362,7 +780,7 @@ def test_provider_usage_quota_migration_round_trip(tmp_path):
     db_url = f"sqlite:///{tmp_path / 'provider-usage-roundtrip.db'}"
     cfg = make_alembic_config(db_url)
     command.upgrade(cfg, "6b8d2f4a9c70")
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "8c4e1a7b9d20")
     engine = create_engine(db_url)
     try:
         reservation_columns = {
@@ -403,7 +821,7 @@ def test_provider_usage_quota_migration_refuses_used_binding(tmp_path):
     cfg = make_alembic_config(db_url)
     command.upgrade(cfg, "6b8d2f4a9c70")
     _insert_legacy_podcast_attempt(db_url, state="succeeded")
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "8c4e1a7b9d20")
     engine = create_engine(db_url)
     stamp = "2026-09-06T00:00:00.000000+00:00"
     try:
@@ -668,7 +1086,7 @@ def test_podcast_polling_migration_backfills_and_round_trips(tmp_path):
 def test_podcast_polling_migration_refuses_to_discard_live_poll_state(tmp_path):
     db_url = f"sqlite:///{tmp_path / 'podcast-polling-live.db'}"
     cfg = make_alembic_config(db_url)
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "3f6b9d2a7c41")
     engine = create_engine(db_url)
     try:
         with engine.begin() as conn:
@@ -750,7 +1168,7 @@ def test_normalized_transcript_migration_preserves_terminal_legacy_attempt(tmp_p
 def test_normalized_transcript_migration_refuses_used_binding_downgrade(tmp_path):
     db_url = f"sqlite:///{tmp_path / 'normalized-used-binding.db'}"
     cfg = make_alembic_config(db_url)
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "6b8d2f4a9c70")
     engine = create_engine(db_url)
     stamp = "2026-09-06T00:00:00.000000+00:00"
     try:
@@ -1161,7 +1579,7 @@ def test_digest_intent_migration_coalesces_legacy_active_revisions(tmp_path):
     finally:
         engine.dispose()
 
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "a7d4e2f9c1b8")
 
     engine = create_engine(db_url)
     try:
@@ -1879,8 +2297,6 @@ def test_archive_sync_v2_downgrade_refuses_to_reopen_live_writers(tmp_path, bloc
     from sqlalchemy import text
     from sqlmodel import Session
     from models.db import (
-        ArticleAnalysisRecord,
-        ArticleRecord,
         CmsTagCandidateRecord,
         PersonalDigestEditionRecord,
         RemoteCandidateEvidenceRecord,
@@ -1889,7 +2305,7 @@ def test_archive_sync_v2_downgrade_refuses_to_reopen_live_writers(tmp_path, bloc
 
     db_url = f"sqlite:///{tmp_path / f'downgrade-{blocker}.db'}"
     cfg = make_alembic_config(db_url)
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "d6a3f9c2e714")
     engine = create_engine(db_url)
     try:
         with engine.begin() as conn:
@@ -1924,19 +2340,27 @@ def test_archive_sync_v2_downgrade_refuses_to_reopen_live_writers(tmp_path, bloc
                 ))
                 session.commit()
         elif blocker == "analysis_authority":
-            with Session(engine) as session:
-                session.add(ArticleRecord(
-                    id="remote-analysis", title="Remote", content_type="article",
-                    source_id="remote", source_url="", publish_date="now",
-                    fetched_date="now", has_content=True, content="body",
+            # This database intentionally stops at d6a3f9c2e714. Use that
+            # historical schema rather than the current ORM model, which has
+            # columns introduced by the later b6f2d8a4c901 revision.
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "INSERT INTO articles "
+                    "(id,title,content_type,source_id,source_url,publish_date,"
+                    "fetched_date,run_scope,has_content,content,extensions_json) "
+                    "VALUES ('remote-analysis','Remote','article','remote','',"
+                    "'now','now','',1,'body','{}')"
                 ))
-                session.add(ArticleAnalysisRecord(
-                    article_id="remote-analysis", status="succeeded",
-                    tagging_status="succeeded", content_hash="hash",
-                    authority_id="producer-a", authority_revision="rev-1",
-                    created_at="now", updated_at="now",
+                conn.execute(text(
+                    "INSERT INTO article_analyses "
+                    "(article_id,status,tagging_status,dimension_scores_json,"
+                    "score_reason,summary,content_features_json,entities_json,"
+                    "content_hash,model_name,prompt_version,scoring_version,"
+                    "taxonomy_version,attempt_count,authority_id,authority_revision,"
+                    "created_at,updated_at) VALUES "
+                    "('remote-analysis','succeeded','succeeded','{}','','','[]',"
+                    "'[]','hash','','','',0,0,'producer-a','rev-1','now','now')"
                 ))
-                session.commit()
         elif blocker == "remote_candidate":
             with Session(engine) as session:
                 candidate = CmsTagCandidateRecord(
@@ -1986,7 +2410,7 @@ def test_archive_sync_v2_downgrade_refuses_to_reopen_live_writers(tmp_path, bloc
 def test_archive_sync_v2_downgrade_allows_empty_non_consumer_database(tmp_path):
     db_url = f"sqlite:///{tmp_path / 'downgrade-clean.db'}"
     cfg = make_alembic_config(db_url)
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "d6a3f9c2e714")
     command.downgrade(cfg, "d8b3f1a6c9e2")
     engine = create_engine(db_url)
     try:
@@ -2021,14 +2445,15 @@ def test_podcast_initial_assessment_migration_preserves_legacy_basis(tmp_path):
                 ), {"id": article_id, "content_type": content_type, "extensions": extensions})
                 conn.execute(text(
                     "INSERT INTO article_analyses "
-                    "(article_id,status,tagging_status,dimension_scores_json,score_reason,"
+                    "(article_id,status,tagging_status,quality_score,dimension_scores_json,score_reason,"
                     "summary,content_features_json,entities_json,content_hash,model_name,"
                     "prompt_version,scoring_version,taxonomy_version,attempt_count,created_at,updated_at) "
-                    "VALUES (:id,'succeeded','succeeded','{}','reason','summary','[]','[]',"
+                    "VALUES (:id,'succeeded','succeeded',8.0,'{}','reason','summary','[]','[]',"
                     "'hash','model','old','old',0,1,'2026-09-01','2026-09-01')"
                 ), {"id": article_id})
     finally:
         engine.dispose()
+
 
     command.upgrade(cfg, "head")
     engine = create_engine(db_url)
@@ -2039,13 +2464,110 @@ def test_podcast_initial_assessment_migration_preserves_legacy_basis(tmp_path):
         }
         assert "ix_article_analyses_last_error_article_id" in indexes
         with engine.connect() as conn:
-            rows = dict(conn.execute(text(
-                "SELECT article_id, analysis_basis FROM article_analyses"
-            )).all())
+            rows = {
+                article_id: (basis, initial_score, final_score)
+                for article_id, basis, initial_score, final_score in conn.execute(text(
+                    "SELECT article_id, analysis_basis, podcast_initial_score, "
+                    "podcast_final_score FROM article_analyses"
+                )).all()
+            }
         assert rows == {
-            "article": "article_body",
-            "podcast-notes": "podcast_show_notes",
-            "podcast-asr": "asr_transcript",
+            "article": ("article_body", None, None),
+            "podcast-notes": ("podcast_show_notes", 8.0, None),
+            "podcast-asr": ("asr_transcript", None, 8.0),
         }
     finally:
         engine.dispose()
+
+
+def test_retired_podcast_asr_fetch_settings_are_purged(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'retired-podcast-asr-fetch.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "b2d8e4f6a9c1")
+    engine = create_engine(db_url)
+    retired = (
+        "podcast_asr_fetch_public_base_url",
+        "podcast_asr_fetch_signing_secret",
+        "podcast_asr_fetch_previous_signing_secret",
+        "podcast_asr_fetch_url_ttl_seconds",
+        "podcast_asr_fetch_clock_skew_seconds",
+        "podcast_asr_fetch_min_remaining_seconds",
+    )
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text("INSERT INTO app_settings (key, value) VALUES (:key, :value)"),
+                [{"key": key, "value": "retired"} for key in retired]
+                + [{"key": "unrelated-setting", "value": "keep"}],
+            )
+    finally:
+        engine.dispose()
+
+    command.upgrade(cfg, "head")
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            rows = dict(
+                conn.execute(text("SELECT key, value FROM app_settings")).all()
+            )
+        assert all(key not in rows for key in retired)
+        assert rows["unrelated-setting"] == "keep"
+    finally:
+        engine.dispose()
+
+
+def test_cleanup_podcast_extension_fields(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'cleanup-podcast-ext.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "b6f2d8a4c901")
+    engine = create_engine(db_url)
+    stamp = "2026-09-11T00:00:00.000000+00:00"
+    ext_data = {
+        "show_title": "Test Show",
+        "audio_url": "https://media.test/audio.mp3",
+        "duration_seconds": 1800,
+        "condensed_audio_url": "https://media.test/condensed.mp3",
+        "condensed_duration_seconds": 400,
+        "premium_guide": {
+            "status": "ready",
+            "audio_artifact_id": "art-1",
+            "condensed_audio_url": "https://media.test/condensed.mp3",
+            "condensed_duration_seconds": 400,
+        },
+    }
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO articles "
+                    "(id, title, content_type, source_id, source_url, publish_date, fetched_date, "
+                    "run_scope, has_content, content, extensions_json) VALUES "
+                    "('ep-clean-1', 'Title', 'podcast_episode', 'src-1', 'https://src.test/1', "
+                    ":stamp, :stamp, '', 1, 'show notes', :ext_json)"
+                ),
+                {"stamp": stamp, "ext_json": json.dumps(ext_data)},
+            )
+    finally:
+        engine.dispose()
+
+    command.upgrade(cfg, "head")
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT extensions_json FROM articles WHERE id = 'ep-clean-1'")
+            ).scalar_one()
+            loaded = json.loads(row)
+        assert "condensed_audio_url" not in loaded
+        assert "condensed_duration_seconds" not in loaded
+        assert loaded["show_title"] == "Test Show"
+        assert loaded["audio_url"] == "https://media.test/audio.mp3"
+        assert loaded["duration_seconds"] == 1800
+        guide = loaded["premium_guide"]
+        assert guide["status"] == "ready"
+        assert guide["audio_artifact_id"] == "art-1"
+        assert "condensed_audio_url" not in guide
+        assert "condensed_duration_seconds" not in guide
+    finally:
+        engine.dispose()
+

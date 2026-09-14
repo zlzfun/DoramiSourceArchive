@@ -14,12 +14,6 @@ server {
     listen 80 default_server;
     server_name your.domain.com;
 
-    location = /api/public/podcast-asr/source-audio {
-        access_log off;
-        error_log /dev/null crit;
-        return 301 https://$host$request_uri;
-    }
-
     location / {
         return 301 https://$host$request_uri;
     }
@@ -39,21 +33,6 @@ server {
     add_header Strict-Transport-Security "max-age=15552000" always;
 
     client_max_body_size 100m;
-
-    # The ASR fetch signature is in the query.  Suppress request-scoped edge
-    # logs for this one route; the inner proxy and Uvicorn repeat the guard.
-    location = /api/public/podcast-asr/source-audio {
-        access_log off;
-        error_log /dev/null crit;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 300s;
-        proxy_buffering off;
-        proxy_pass http://127.0.0.1:8080;
-    }
 
     location / {
         proxy_http_version 1.1;

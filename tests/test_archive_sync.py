@@ -108,7 +108,7 @@ def test_archive_sync_merges_newer_podcast_metadata_and_preserves_derived_fields
         "duration_seconds": 1200,
         "summary_zh": "读者侧生成的中文摘要",
         "processing_status": "audio_ready",
-        "condensed_audio_url": "https://media.example.test/short.mp3",
+        "editorial_note": "preserved editorial note",
     }
     existing = _article_record(
         id="podcast_sync_1",
@@ -150,7 +150,7 @@ def test_archive_sync_merges_newer_podcast_metadata_and_preserves_derived_fields
         assert extensions["duration_seconds"] == 2400
         assert extensions["summary_zh"] == "读者侧生成的中文摘要"
         assert extensions["processing_status"] == "audio_ready"
-        assert extensions["condensed_audio_url"].endswith("/short.mp3")
+        assert extensions["editorial_note"] == "preserved editorial note"
 
     # Replaying the boundary row is idempotent, as required by the >= cursor.
     repeated = import_archive_sync_jsonl(_jsonl(archive_sync_line(incoming)))

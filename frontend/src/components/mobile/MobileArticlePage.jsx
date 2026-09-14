@@ -10,6 +10,7 @@ import {
 import ReaderMarkdown from '../ReaderMarkdown';
 import ShareMenu from '../ShareMenu';
 import PodcastExperiencePanel from '../PodcastExperiencePanel';
+import PodcastTextPanel from '../PodcastTextPanel';
 import AnalysisTagChip from '../AnalysisTagChip';
 import { PaneBodySkeleton } from '../ReaderTab';
 import { formatDateTime, formatPublishDate } from '../../utils/datetime';
@@ -57,15 +58,17 @@ export default function MobileArticlePage({
   const isFav = favoriteIds.has(activeArticle.id);
   const analysisStatus = analysisStatusMeta(activeArticle, { podcast: podcastView });
   const activePodcast = podcastOf(activeArticle);
+  const hasGuideAudio = Boolean(activePodcast?.condensed_audio_url);
+  const hasGuideBlog = Boolean(activePodcast?.premium_guide?.blog_ready || activePodcast?.premium_guide?.status === 'ready');
+  const isBlogOnlyGuide = hasGuideBlog && !hasGuideAudio;
   const defaultPodcastVariant = activePodcast?.audio_url
     ? 'original'
-    : activePodcast?.condensed_audio_url ? 'digest' : 'original';
+    : hasGuideAudio ? 'digest' : 'original';
   const podcastVariant = podcastSelection.articleId === activeArticle.id
     ? podcastSelection.variant
     : defaultPodcastVariant;
   const podcastGuideActive = podcastView
-    && podcastVariant === 'digest'
-    && Boolean(activePodcast?.condensed_audio_url);
+    && (isBlogOnlyGuide || (podcastVariant === 'digest' && hasGuideAudio));
 
   return (
     <div className="m-read" role="region" aria-label="正文">
@@ -123,8 +126,8 @@ export default function MobileArticlePage({
             className={`m-iconbtn ${showTranslation ? 'is-ai' : ''}`}
             onClick={handleTranslate}
             disabled={translating || activeBodyLoading || !activeBody}
-            title={showTranslation ? '当前显示中文译文，点击切回原文' : '将正文译为中文'}
-            aria-label={showTranslation ? '显示原文' : '译为中文'}
+            title={showTranslation ? '当前显示中文译文，点击切回原文' : podcastView ? '将节目简介和逐字稿译为中文' : '将正文译为中文'}
+            aria-label={showTranslation ? '显示原文' : podcastView ? '将节目简介和逐字稿译为中文' : '译为中文'}
             aria-pressed={showTranslation}
           >
             {translating ? <Loader2 className="animate-spin" /> : <span className="reader-tr-glyph" aria-hidden="true">译</span>}
@@ -186,7 +189,7 @@ export default function MobileArticlePage({
             </div></div>
           )}
         </header>
-        <div className="m-read-body markdown-body">
+        <div className="m-read-body">
           {podcastView && (
             <PodcastExperiencePanel
               article={activeArticle}
@@ -216,16 +219,29 @@ export default function MobileArticlePage({
               <span>来源方提供</span>
             </div>
           )}
-          {podcastGuideActive ? null : activeBodyLoading ? (
-            <PaneBodySkeleton />
-          ) : (showTranslation && translatedBody) ? (
-            <ReaderMarkdown>{displayTranslatedBody}</ReaderMarkdown>
-          ) : activeBody ? (
-            <ReaderMarkdown>{displayBody}</ReaderMarkdown>
-          ) : (
-            podcastView
-              ? '该播客暂无文字内容，可收听上方原节目音频。'
-              : '该文章暂无正文内容，点击「查看原文」阅读完整内容。'
+          {!podcastGuideActive && (
+            <div className="reader-article-copy markdown-body" data-ai-translation-scope="article-body">
+              {activeBodyLoading ? (
+                <PaneBodySkeleton />
+              ) : (showTranslation && translatedBody) ? (
+                <ReaderMarkdown>{displayTranslatedBody}</ReaderMarkdown>
+              ) : activeBody ? (
+                <ReaderMarkdown>{displayBody}</ReaderMarkdown>
+              ) : (
+                podcastView
+                  ? '该播客暂无文字内容，可收听上方原节目音频。'
+                  : '该文章暂无正文内容，点击「查看原文」阅读完整内容。'
+              )}
+            </div>
+          )}
+          {podcastView && !podcastGuideActive && !activeBodyLoading && (
+            <div data-ai-translation-excluded="true">
+              <PodcastTextPanel
+                episodeId={activeArticle.id}
+                preferredTranscriptKind="publisher_transcript"
+                showTranslation={showTranslation}
+              />
+            </div>
           )}
           {/* 正文尾部原文行(v3.45 推全站,与桌面阅读窗同口径):无 source_url 不画 */}
           {!podcastGuideActive && !activeBodyLoading && activeArticle.source_url && (

@@ -363,6 +363,60 @@ def test_quota_counts_unique_blobs_and_allows_deduplicated_import(
         assert len(store._blob_files()) == 1
 
 
+def test_zero_business_quotas_allow_writes_but_keep_disk_reserve(
+    monkeypatch, tmp_path
+):
+    available = {"free": 10_000}
+
+    def disk_usage(_path):
+        return SimpleNamespace(total=20_000, used=10_000, free=available["free"])
+
+    app_module, _, store = _setup_app(
+        monkeypatch,
+        tmp_path,
+        max_bytes=1024,
+        total_quota_bytes=0,
+        minimum_free_bytes=100,
+        disk_usage_provider=disk_usage,
+    )
+
+    # Ephemeral validation reservations and finalized writes both treat zero as
+    # "no fixed business quota" while retaining the disk reserve.
+    with store.reserve_validation_download(len(WAV)):
+        markers = list((store.root / ".incoming").glob("download-*.reserve"))
+        assert len(markers) == 1
+        assert json.loads(markers[0].read_text(encoding="ascii")) == {
+            "bytes": len(WAV)
+        }
+    assert list((store.root / ".incoming").glob("download-*.reserve")) == []
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        digest = _import(
+            client,
+            "episode-2",
+            "digest_audio_zh",
+            body=_wav_bytes(samples=17),
+        )
+        assert digest.status_code == 201, digest.text
+
+        stats = client.get("/api/admin/podcast-artifacts/stats").json()
+        assert stats["disk_bytes"] == len(_wav_bytes(samples=17))
+        assert stats["quota_bytes"] == 0
+        assert stats["quota_pressure"] is False
+        assert stats["storage_pressure"] is False
+
+        available["free"] = 99
+        denied = _import(
+            client,
+            "episode-1",
+            "digest_audio_zh",
+            body=_wav_bytes(samples=18),
+        )
+        assert denied.status_code == 507
+        assert "磁盘可用空间" in denied.json()["detail"]
+
+
 def test_minimum_free_space_is_injected_and_dedup_does_not_consume_again(
     monkeypatch, tmp_path
 ):
@@ -444,8 +498,6 @@ def test_startup_reconcile_cleans_only_stale_staging_and_reports_it(
         os.utime(fresh_path, (old, old))
         cleaned = client.post("/api/admin/podcast-artifacts/reconcile").json()
         assert cleaned == {
-            "expired_source_records": 0,
-            "expired_protected": 0,
             "deleted_orphan_blobs": 0,
             "deleted_bytes": 0,
             "deleted_staging_files": 1,
@@ -480,7 +532,7 @@ def test_download_reservation_setup_failure_removes_marker(monkeypatch, tmp_path
 
     monkeypatch.setattr(artifact_service.os, "fsync", fail_fsync)
     with pytest.raises(OSError, match="simulated"):
-        with store.reserve_source_download(1024):
+        with store.reserve_validation_download(1024):
             pass
     assert list((store.root / ".incoming").glob("download-*.reserve")) == []
     sink.engine.dispose()
@@ -635,8 +687,6 @@ def test_audio_artifact_api_end_to_end_and_restart(monkeypatch, tmp_path):
         assert any(store.root.rglob("*.wav"))
         reconciled = client.post("/api/admin/podcast-artifacts/reconcile")
         assert reconciled.json() == {
-            "expired_source_records": 0,
-            "expired_protected": 0,
             "deleted_orphan_blobs": 1,
             "deleted_bytes": len(WAV),
             "deleted_staging_files": 0,
@@ -651,7 +701,7 @@ def test_ready_audio_is_admin_only_and_shared_blob_delete_is_reference_safe(
     app_module, _, store = _setup_app(monkeypatch, tmp_path)
     with TestClient(app_module.app) as client:
         _login(client, "admin", "admin")
-        first = _import(client, "episode-1", "source_audio").json()
+        first = _import(client, "episode-1", "digest_audio_zh").json()
         second = _import(client, "episode-2", "digest_audio_zh").json()
         path = store.file_path_for_hash(first["content_hash"], first["mime"])
         assert path.is_file()
@@ -663,16 +713,7 @@ def test_ready_audio_is_admin_only_and_shared_blob_delete_is_reference_safe(
             client.get(f"/api/admin/podcast-artifacts/{first['id']}/audio").content
             == WAV
         )
-        assert _publish(client, first).status_code == 409
-
-        # The registry itself refuses the legacy published source-audio state.
-        with Session(store.engine) as session:
-            row = session.get(PodcastArtifactRecord, first["id"])
-            row.status = "published"
-            session.add(row)
-            with pytest.raises(IntegrityError, match="source_never_published"):
-                session.commit()
-            session.rollback()
+        assert _publish(client, first).status_code == 200
 
         for artifact_id in (first["id"], second["id"]):
             assert (
@@ -837,12 +878,12 @@ def test_digest_audio_processing_binding_is_validated_immutable_and_unique(
             processing_id=first_run.id,
         )
         assert wrong_episode.status_code == 409
-        source_audio = _import(
+        source_media = _import(
             client,
-            kind="source_audio",
+            kind="source_media_snapshot",
             processing_id=first_run.id,
         )
-        assert source_audio.status_code == 409
+        assert source_media.status_code == 400
 
     with Session(sink.engine) as session:
         current_script = session.get(PodcastTextArtifactRecord, "script-episode-1")
@@ -1326,8 +1367,6 @@ def test_article_delete_cascades_registry_and_reconcile_reclaims_blob(
         assert stats["orphan_blobs"] == 1
         assert stats["orphan_bytes"] == len(WAV)
         assert client.post("/api/admin/podcast-artifacts/reconcile").json() == {
-            "expired_source_records": 0,
-            "expired_protected": 0,
             "deleted_orphan_blobs": 1,
             "deleted_bytes": len(WAV),
             "deleted_staging_files": 0,

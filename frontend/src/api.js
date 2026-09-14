@@ -1,5 +1,6 @@
 import { API_BASE_URL } from './config';
 import { podcastFullAnalysisCommand } from './utils/podcastFullAnalysis';
+import { podcastPremiumTtsCommand } from './utils/podcastPremiumGuide';
 
 async function apiFetch(url, options = {}) {
   const response = await fetch(url, {
@@ -145,6 +146,11 @@ export function fetchAdminAccounts(
   return request(`/admin/accounts?${params.toString()}`, { errorMsg: '获取账户列表失败' });
 }
 
+// 账户增长曲线(v3.55 issue #31):按创建日新增 + 现存总量分布,聚合口径、全体管理员可见。
+export function fetchAdminAccountGrowth() {
+  return request('/admin/account-growth', { errorMsg: '获取账户增长失败' });
+}
+
 export function fetchAccountActivity(username, days = 30) {
   return request(`/admin/accounts/${enc(username)}/activity?days=${enc(days)}`, { errorMsg: '获取用户活动详情失败' });
 }
@@ -180,13 +186,6 @@ export function fetchMediaStats() {
 }
 
 // ── Podcast 音频资产（本地存储管理）──
-export function fetchPodcastStageCapabilities(options = {}) {
-  return request('/admin/podcast-stages/capabilities', {
-    errorMsg: '获取播客节点能力失败',
-    ...options,
-  });
-}
-
 export function fetchPodcastArtifactStats(options = {}) {
   return request('/admin/podcast-artifacts/stats', {
     errorMsg: '获取播客音频存储统计失败',
@@ -200,13 +199,6 @@ export function fetchPodcastArtifacts(filters = {}, options = {}) {
   return request(`/admin/podcast-artifacts${query ? `?${query}` : ''}`, {
     errorMsg: '获取播客音频资产失败',
     ...options,
-  });
-}
-
-export function cachePodcastSourceAudio(episodeId) {
-  return request(`/admin/podcast-episodes/${enc(episodeId)}/cache-source-audio`, {
-    method: 'POST',
-    errorMsg: '缓存播客原始音频失败',
   });
 }
 
@@ -248,6 +240,15 @@ export function fetchPodcastEpisodeTexts(episodeId, filters = {}, options = {}) 
   });
 }
 
+export function translatePodcastTranscript(episodeId, sourceKind, options = {}) {
+  return request(`/reader/ai/podcasts/${enc(episodeId)}/translate-transcript`, {
+    method: 'POST',
+    body: { source_kind: sourceKind },
+    errorMsg: '逐字稿翻译失败，请稍后重试',
+    ...options,
+  });
+}
+
 export function forcePodcastFullAnalysis(episodeId, idempotencyKey = '', podcast = {}) {
   const command = podcastFullAnalysisCommand(episodeId, podcast, idempotencyKey);
   return request(command.path, {
@@ -266,10 +267,36 @@ export function fetchPodcastPremiumGuides(filters = {}, options = {}) {
   });
 }
 
+export function fetchPodcastPremiumTasks(filters = {}, options = {}) {
+  const params = withFilters(new URLSearchParams(), filters);
+  const query = params.toString();
+  return request(`/admin/podcast-premium-tasks${query ? `?${query}` : ''}`, {
+    errorMsg: '获取播客处理任务失败',
+    ...options,
+  });
+}
+
+export function updatePodcastPremiumThreshold(threshold) {
+  return request('/admin/podcast-premium-threshold', {
+    method: 'PUT',
+    body: { threshold },
+    errorMsg: '保存优质门槛失败',
+  });
+}
+
 export function runPodcastPremiumGuide(episodeId) {
   return request(`/admin/podcast-premium-guides/${enc(episodeId)}/run`, {
     method: 'POST',
     errorMsg: '启动精品导读失败',
+  });
+}
+
+export function forcePodcastPremiumTts(episodeId, idempotencyKey = '') {
+  const command = podcastPremiumTtsCommand(episodeId, idempotencyKey);
+  return request(command.path, {
+    method: 'POST',
+    body: command.body,
+    errorMsg: '启动强制 TTS 失败，请检查全文分析、TTS 配置或任务状态',
   });
 }
 
@@ -279,10 +306,13 @@ export function getPodcastAsrQuota() {
   });
 }
 
-export function savePodcastAsrQuota(dailyAudioSecondsLimit) {
+export function savePodcastAsrQuota(dailyAudioSecondsLimit, maxAudioSecondsPerFile) {
   return request('/admin/podcast-asr-quota', {
     method: 'PUT',
-    body: { daily_audio_seconds_limit: dailyAudioSecondsLimit },
+    body: {
+      daily_audio_seconds_limit: dailyAudioSecondsLimit,
+      max_audio_seconds_per_file: maxAudioSecondsPerFile,
+    },
     errorMsg: '保存 ASR 配额配置失败',
   });
 }

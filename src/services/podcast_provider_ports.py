@@ -16,6 +16,7 @@ from services.podcast_worker_contracts import (
     StageContext,
     StagePlan,
     SubmitOutcome,
+    TaskFailed,
 )
 
 
@@ -36,7 +37,6 @@ class AsrProviderPlan:
     identity: ExecutionIdentity
     stage: StagePlan
     admission_fingerprint: str = ""
-    required_input_lifetime_seconds: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.identity, ExecutionIdentity):
@@ -45,16 +45,6 @@ class AsrProviderPlan:
             raise ValueError("ASR identity must use provider execution")
         if not isinstance(self.stage, StagePlan):
             raise ValueError("ASR stage must be a StagePlan")
-        lifetime = self.required_input_lifetime_seconds
-        if lifetime is None:
-            lifetime = self.stage.deadline_seconds
-            object.__setattr__(self, "required_input_lifetime_seconds", lifetime)
-        if (
-            isinstance(lifetime, bool)
-            or not isinstance(lifetime, int)
-            or lifetime < self.stage.deadline_seconds
-        ):
-            raise ValueError("ASR input lifetime must cover the provider deadline")
         _fingerprint(self.admission_fingerprint, required=False)
 
 
@@ -145,6 +135,15 @@ class AsrProviderAdapter(Protocol):
 
 
 @runtime_checkable
+class AsrProviderFallbackAdapter(Protocol):
+    """Optional one-shot rescue after a known-unprocessed provider task."""
+
+    def can_fallback(self, outcome: TaskFailed) -> bool: ...
+
+    def cleanup_fallback(self, context: StageContext) -> None: ...
+
+
+@runtime_checkable
 class AsrUsagePlanner(Protocol):
     def plan_usage(
         self,
@@ -193,6 +192,7 @@ class TtsProviderAdapter(Protocol):
 __all__ = [
     "AsrPlanningUnavailable",
     "AsrProviderAdapter",
+    "AsrProviderFallbackAdapter",
     "AsrProviderPlan",
     "AsrUsagePlanner",
     "ProviderPlanningUnavailable",

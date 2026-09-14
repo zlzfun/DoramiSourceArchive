@@ -1,10 +1,10 @@
 """Aliyun ISI bridge for the durable provider-neutral Podcast ASR runner.
 
 The scheduler supplies one :class:`PodcastStagePolicy` containing the resolved
-Aliyun snapshot.  This module never resolves that provider config again.  The
-source-audio fetch signer is best-effort resolved before claiming work; a
-missing signer blocks only a new submit. Its signed URL is created only inside
-``submit`` and is never returned to persistence code.
+Aliyun snapshot. New submissions revalidate the current RSS enclosure against
+the immutable source-media snapshot immediately before provider I/O. The wire
+client safely resolves publisher redirects before handing the final CDN URL to
+Aliyun. Polling an existing task remains URL-independent.
 """
 
 from __future__ import annotations
@@ -15,10 +15,17 @@ import json
 from dataclasses import dataclass
 from typing import Callable, Protocol
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
-from config import AliyunIsiConfig, PodcastAsrFetchConfig, PodcastConfig
+from config import AliyunIsiConfig, PodcastArtifactStorageConfig, PodcastConfig
+from models.db import (
+    ArticleRecord,
+    PodcastProcessingRecord,
+    PodcastSourceMediaSnapshotRecord,
+    PodcastStageAttemptRecord,
+)
 from services import aliyun_isi_config as aliyun_isi_config_service
+from services import user_sources
 from services.aliyun_isi_asr import (
     AliyunAsrError,
     AliyunAsrPollError,
@@ -29,25 +36,28 @@ from services.aliyun_isi_asr import (
     AsrState,
     AsrSubmission,
     AsrTranscript,
+    validate_provider_fetch_url,
 )
 from services.aliyun_isi_usage import (
     AliyunIsiUsageConfigurationError,
     asr_usage_plan,
-)
-from services.podcast_asr_fetch_signing import (
-    PodcastAsrFetchUrlSigner,
-    resolve_config as resolve_signing_config,
-    resolve_signer,
 )
 from services.podcast_asr_worker import (
     AsrProviderPlan,
     AsrPlanningUnavailable,
     AsrWorkerConfig,
     AsrWorkerStep,
+    PROVIDER_FALLBACK_MARKER,
     run_asr_worker_step,
 )
+from services.podcast_artifacts import PodcastArtifactStore
+from services.aliyun_oss_asr_relay import AliyunOssAsrRelay, OssRelayError
 from services.podcast_processing import deterministic_input_fingerprint
-from services.podcast_processing_admin import AdmissionEstimate
+from services.podcast_processing_admin import AdmissionEstimate, PodcastAdminError
+from services.podcast_source_media import (
+    SourceMediaError,
+    enclosure_snapshot,
+)
 from services.podcast_stage_policy import PodcastStagePolicy
 from services.podcast_transcript_dedup import deduplicate_transcript_evidence
 from services.podcast_worker_contracts import (
@@ -75,9 +85,41 @@ from services.podcast_worker_contracts import (
 
 PROVIDER_NAME = "aliyun-isi"
 
+# These provider task failures happen before recording-file recognition starts:
+# Aliyun could not download, inspect, or decode the supplied media and therefore
+# produced no recognition result. They consume none of Dorami's local
+# audio-seconds allowance. Unknown provider failures remain conservatively
+# charged against the frozen source duration.
+UNPROCESSED_AUDIO_STATUS_CODES = frozenset(
+    {
+        40_270_003,
+        41_050_002,
+        41_050_003,
+        41_050_004,
+        41_050_005,
+        41_050_006,
+        41_050_007,
+        41_050_008,
+        41_050_011,
+        41_050_023,
+        41_050_024,
+        41_050_025,
+        41_050_026,
+    }
+)
+
+# Only failures that prove Aliyun could not retrieve the publisher URL qualify
+# for the one-shot OSS relay. Decoder/format/content-length failures are not
+# download transport failures and deliberately stay terminal.
+DOWNLOAD_FALLBACK_STATUS_CODES = frozenset(
+    {41_050_002, 41_050_024, 41_050_025, 41_050_026}
+)
+
 
 class _AsrClient(Protocol):
     def submit(self, file_url: str) -> AsrSubmission: ...
+
+    def submit_internal(self, file_url: str) -> AsrSubmission: ...
 
     def poll(self, task_id: str) -> AsrPollResult: ...
 
@@ -94,11 +136,90 @@ class _WorkerRegistry(Protocol):
     ) -> None: ...
 
 
-SignerResolver = Callable[..., PodcastAsrFetchUrlSigner]
 ClientFactory = Callable[[AliyunIsiConfig], _AsrClient]
 Clock = Callable[[], dt.datetime]
 ConfigResolver = Callable[[Session], AliyunIsiConfig]
-SigningConfigResolver = Callable[[Session], PodcastAsrFetchConfig]
+DirectAudioUrlResolver = Callable[[StageContext], str]
+FallbackAudioUrlResolver = Callable[[StageContext], str]
+FallbackCleanup = Callable[[StageContext], None]
+FallbackSubmissionSelector = Callable[[StageContext], bool]
+
+
+class _OssRelay(Protocol):
+    def prepare(
+        self,
+        context: StageContext,
+        *,
+        enclosure,
+        expected: PodcastSourceMediaSnapshotRecord,
+    ) -> str: ...
+
+    def delete(self, context: StageContext) -> None: ...
+
+
+RelayFactory = Callable[
+    [AliyunIsiConfig, PodcastArtifactStore, PodcastArtifactStorageConfig],
+    _OssRelay,
+]
+
+
+def _relay_factory(
+    config: AliyunIsiConfig,
+    store: PodcastArtifactStore,
+    storage_config: PodcastArtifactStorageConfig,
+) -> _OssRelay:
+    return AliyunOssAsrRelay(config, store, storage_config)
+
+
+class DirectAudioUrlError(ValueError):
+    """Safe provider-submit refusal that never includes the enclosure URL."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+def _direct_audio_url(session: Session, context: StageContext) -> str:
+    """Revalidate the RSS enclosure and immutable snapshot before submit."""
+
+    process = session.get(PodcastProcessingRecord, context.processing_id)
+    episode = session.get(ArticleRecord, context.episode_id)
+    snapshot = session.get(
+        PodcastSourceMediaSnapshotRecord, context.input_artifact.artifact_id
+    )
+    if episode is None:
+        raise DirectAudioUrlError("aliyun_source_media_url_unavailable")
+    if not user_sources.source_content_may_leave_deployment(
+        session, episode.source_id
+    ):
+        raise DirectAudioUrlError("aliyun_source_media_url_unavailable")
+    try:
+        enclosure = enclosure_snapshot(episode)
+    except SourceMediaError as exc:
+        raise DirectAudioUrlError(
+            "aliyun_source_media_url_unavailable"
+        ) from exc
+    expected_locator_hash = hashlib.sha256(
+        enclosure.url.encode("utf-8")
+    ).hexdigest()
+    if (
+        process is None
+        or process.episode_id != context.episode_id
+        or process.stage != "asr"
+        or process.input_artifact_id != context.input_artifact.artifact_id
+        or process.input_artifact_kind != "source_media_snapshot"
+        or process.input_content_hash != context.input_artifact.content_hash
+        or snapshot is None
+        or snapshot.episode_id != context.episode_id
+        or snapshot.content_hash != context.input_artifact.content_hash
+        or snapshot.locator_hash != expected_locator_hash
+    ):
+        raise DirectAudioUrlError("aliyun_source_media_binding_changed")
+    try:
+        validate_provider_fetch_url(enclosure.url)
+        return enclosure.url
+    except ValueError as exc:
+        raise DirectAudioUrlError("aliyun_source_media_url_invalid") from exc
 
 
 def _utc(value: dt.datetime) -> dt.datetime:
@@ -146,6 +267,7 @@ def aliyun_asr_admission_fingerprint(config: AliyunIsiConfig) -> str:
             "daily_audio_seconds_limit": (
                 config.asr_daily_audio_seconds_limit
             ),
+            "max_audio_seconds_per_file": config.asr_max_audio_seconds_per_file,
             "entitlement_ends_at": config.asr_entitlement_ends_at,
             "provider_deadline_seconds": (
                 config.asr_provider_deadline_seconds
@@ -163,16 +285,11 @@ def _resolve_aliyun_config(session: Session) -> AliyunIsiConfig:
     return aliyun_isi_config_service.resolve_config(session)
 
 
-def _resolve_signing_config(session: Session) -> PodcastAsrFetchConfig:
-    return resolve_signing_config(session)
-
-
 @dataclass(frozen=True)
 class AliyunIsiAsrAdmissionEstimator:
     """Resolve and freeze one submit-capable Aliyun admission snapshot."""
 
     config_resolver: ConfigResolver = _resolve_aliyun_config
-    signing_config_resolver: SigningConfigResolver = _resolve_signing_config
     clock: Clock = lambda: dt.datetime.now(dt.timezone.utc)
 
     def __call__(
@@ -189,32 +306,21 @@ class AliyunIsiAsrAdmissionEstimator:
             or not isinstance(duration, int)
             or duration <= 0
         ):
-            raise ValueError("positive source audio duration is required")
+            raise ValueError("positive source media duration is required")
         snapshot = self.config_resolver(session)
         if not isinstance(snapshot, AliyunIsiConfig):
             raise TypeError("Aliyun ASR config resolver returned invalid data")
         if not snapshot.asr_configured or not snapshot.asr_accounting_ready:
             raise ValueError("Aliyun ASR submit/accounting is unavailable")
+        if duration > snapshot.asr_max_audio_seconds_per_file * 1000:
+            raise PodcastAdminError(
+                "podcast_source_media_too_long", status_code=422
+            )
         plan = asr_usage_plan(
             snapshot,
             audio_duration_ms=duration,
             now=_utc(self.clock()),
         )
-        signing_config = self.signing_config_resolver(session)
-        signer = PodcastAsrFetchUrlSigner(
-            signing_config,
-            authority_id=podcast_config.authority_id,
-        )
-        if not isinstance(signer, PodcastAsrFetchUrlSigner):
-            raise TypeError("Podcast ASR fetch signer is unavailable")
-        required_lifetime = max(
-            plan.deadline_seconds,
-            snapshot.request_timeout_seconds,
-        )
-        if signing_config.url_ttl_seconds < required_lifetime:
-            raise ValueError(
-                "Podcast ASR fetch URL lifetime is shorter than submit horizon"
-            )
         return AdmissionEstimate(
             cost_minor=plan.estimated_cost_minor,
             admission_fingerprint=aliyun_asr_admission_fingerprint(snapshot),
@@ -281,13 +387,13 @@ def _error_code(prefix: str, value: object) -> str:
 def _wall_clock_duration_ms(
     transcript: AsrTranscript,
     *,
-    source_audio_duration_ms: int | None,
+    source_media_duration_ms: int | None,
 ) -> int:
     """Convert provider channel-duration accounting to playback wall time."""
 
-    if source_audio_duration_ms is None:
+    if source_media_duration_ms is None:
         return transcript.audio_duration_ms
-    expected = int(source_audio_duration_ms)
+    expected = int(source_media_duration_ms)
     channels = {segment.channel_id for segment in transcript.segments}
     channel_count = len(channels)
     if channel_count <= 1:
@@ -308,7 +414,7 @@ def _normalized_transcript(
     transcript: AsrTranscript,
     *,
     language: str,
-    source_audio_duration_ms: int | None = None,
+    source_media_duration_ms: int | None = None,
 ) -> str:
     """Map Aliyun sentence/word evidence to the canonical provider-neutral shape."""
 
@@ -342,7 +448,7 @@ def _normalized_transcript(
     document = {
         "audio_duration_ms": _wall_clock_duration_ms(
             transcript,
-            source_audio_duration_ms=source_audio_duration_ms,
+            source_media_duration_ms=source_media_duration_ms,
         ),
         "language": language,
         "segments": [
@@ -379,8 +485,12 @@ class AliyunIsiAsrUsagePlanner:
     ) -> ProviderUsagePlan:
         if identity != aliyun_asr_identity(self.config):
             raise ValueError("Aliyun ASR usage identity does not match config snapshot")
-        if input_artifact.kind != "source_audio":
-            raise ValueError("Aliyun ASR usage requires source audio")
+        if input_artifact.kind != "source_media_snapshot":
+            raise ValueError("Aliyun ASR usage requires a source media snapshot")
+        if audio_duration_ms > self.config.asr_max_audio_seconds_per_file * 1000:
+            raise AsrPlanningUnavailable(
+                "Aliyun ASR source media exceeds the per-task duration limit"
+            )
         try:
             return asr_usage_plan(
                 self.config,
@@ -398,13 +508,25 @@ class AliyunIsiAsrAdapter:
         self,
         config: AliyunIsiConfig,
         *,
-        signer: PodcastAsrFetchUrlSigner | None,
         client: _AsrClient,
         clock: Clock,
         transcript_language: str,
+        direct_audio_url_resolver: DirectAudioUrlResolver | None = None,
+        fallback_audio_url_resolver: FallbackAudioUrlResolver | None = None,
+        fallback_submission_selector: FallbackSubmissionSelector | None = None,
+        fallback_cleanup: FallbackCleanup | None = None,
     ) -> None:
         self._config = config
-        self._signer = signer
+        self._direct_audio_url_resolver = (
+            direct_audio_url_resolver
+            if direct_audio_url_resolver is not None
+            else lambda _context: (_ for _ in ()).throw(
+                DirectAudioUrlError("aliyun_source_media_url_unavailable")
+            )
+        )
+        self._fallback_audio_url_resolver = fallback_audio_url_resolver
+        self._fallback_submission_selector = fallback_submission_selector
+        self._fallback_cleanup = fallback_cleanup
         self._client = client
         self._clock = clock
         self._language = str(transcript_language or "").strip()
@@ -439,17 +561,6 @@ class AliyunIsiAsrAdapter:
             admission_fingerprint=aliyun_asr_admission_fingerprint(
                 self._config
             ),
-            required_input_lifetime_seconds=max(
-                usage.deadline_seconds,
-                self._config.request_timeout_seconds,
-                (
-                    self._signer.min_remaining_seconds
-                    if isinstance(
-                        self._signer, PodcastAsrFetchUrlSigner
-                    )
-                    else 0
-                ),
-            ),
         )
 
     def supports(self, identity: ExecutionIdentity) -> bool:
@@ -483,69 +594,81 @@ class AliyunIsiAsrAdapter:
                     retry_after_seconds=self._config.asr_poll_interval_seconds,
                 )
             )
-        if self._signer is None:
-            return Rejected(
-                _failure(
-                    kind=FailureKind.TRANSIENT,
-                    code="aliyun_fetch_signer_unavailable",
-                    retryable=True,
-                    retry_after_seconds=self._config.asr_poll_interval_seconds,
+        if (
+            self._fallback_audio_url_resolver is not None
+            and self._fallback_submission_selector is not None
+            and self._fallback_submission_selector(context)
+        ):
+            try:
+                fallback_url = self._fallback_audio_url_resolver(context)
+            except DirectAudioUrlError as exc:
+                return Rejected(
+                    _failure(
+                        kind=FailureKind.TERMINAL,
+                        code=exc.code,
+                        retryable=False,
+                    )
                 )
-            )
-        now = _utc(self._clock())
-        now_seconds = int(now.timestamp())
-        required_lifetime = max(
-            self._config.request_timeout_seconds,
-            context.plan.deadline_seconds,
-        )
-        source_expires_at = context.input_expires_at
-        if source_expires_at is None:
-            return Rejected(
-                _failure(
-                    kind=FailureKind.TRANSIENT,
-                    code="aliyun_fetch_url_lifetime_insufficient",
-                    retryable=True,
-                    retry_after_seconds=self._config.asr_poll_interval_seconds,
+            except Exception:
+                return Rejected(
+                    _failure(
+                        kind=FailureKind.TERMINAL,
+                        code="aliyun_oss_fallback_prepare_failed",
+                        retryable=False,
+                    )
                 )
-            )
-        source_expiry_cap = int(source_expires_at.timestamp())
-        if source_expiry_cap - now_seconds < required_lifetime:
-            return Rejected(
-                _failure(
-                    kind=FailureKind.TRANSIENT,
-                    code="aliyun_fetch_url_lifetime_insufficient",
-                    retryable=True,
-                    retry_after_seconds=self._config.asr_poll_interval_seconds,
-                )
-            )
+            return self._submit_url(fallback_url, internal=True)
         try:
-            signed = self._signer.issue(
-                processing_id=context.processing_id,
-                artifact_id=context.input_artifact.artifact_id,
-                content_sha256=context.input_artifact.content_hash,
-                now=now_seconds,
-                expires_at_cap=source_expiry_cap,
+            direct_audio_url = self._direct_audio_url_resolver(context)
+        except DirectAudioUrlError as exc:
+            return Rejected(
+                _failure(
+                    kind=FailureKind.TERMINAL,
+                    code=exc.code,
+                    retryable=False,
+                )
             )
         except Exception:
             return Rejected(
                 _failure(
-                    kind=FailureKind.TRANSIENT,
-                    code="aliyun_fetch_signing_failed",
-                    retryable=True,
-                    retry_after_seconds=self._config.asr_poll_interval_seconds,
+                    kind=FailureKind.TERMINAL,
+                    code="aliyun_source_media_url_invalid",
+                    retryable=False,
                 )
             )
-        if signed.expires_at - now_seconds < required_lifetime:
-            return Rejected(
-                _failure(
-                    kind=FailureKind.TRANSIENT,
-                    code="aliyun_fetch_url_lifetime_insufficient",
-                    retryable=True,
-                    retry_after_seconds=self._config.asr_poll_interval_seconds,
-                )
-            )
+        return self._submit_url(direct_audio_url, internal=False)
+
+    def can_fallback(self, outcome: TaskFailed) -> bool:
+        if self._fallback_audio_url_resolver is None:
+            return False
+        if not outcome.release_unused_reservation:
+            return False
+        prefix = "aliyun_task_"
+        code = outcome.failure.code
+        if not code.startswith(prefix):
+            return False
         try:
-            result = self._client.submit(signed.url)
+            status_code = int(code[len(prefix) :])
+        except ValueError:
+            return False
+        return status_code in DOWNLOAD_FALLBACK_STATUS_CODES
+
+    def cleanup_fallback(self, context: StageContext) -> None:
+        cleanup = self._fallback_cleanup
+        if cleanup is None:
+            return
+        try:
+            cleanup(context)
+        except Exception:
+            return
+
+    def _submit_url(self, audio_url: str, *, internal: bool) -> SubmitOutcome:
+        try:
+            result = (
+                self._client.submit_internal(audio_url)
+                if internal
+                else self._client.submit(audio_url)
+            )
         except AliyunAsrSubmissionUnknown as exc:
             return Unknown(
                 _failure(
@@ -657,7 +780,7 @@ class AliyunIsiAsrAdapter:
                 document = _normalized_transcript(
                     result.transcript,
                     language=self._language,
-                    source_audio_duration_ms=audio_duration_ms,
+                    source_media_duration_ms=audio_duration_ms,
                 )
             except ValueError:
                 return TaskFailed(
@@ -690,6 +813,10 @@ class AliyunIsiAsrAdapter:
                 usage,
             )
         if result.state in {AsrState.EMPTY, AsrState.FAILED_TERMINAL}:
+            unprocessed = (
+                result.state is AsrState.FAILED_TERMINAL
+                and result.status_code in UNPROCESSED_AUDIO_STATUS_CODES
+            )
             return TaskFailed(
                 result.task_id,
                 _failure(
@@ -697,7 +824,8 @@ class AliyunIsiAsrAdapter:
                     code=_error_code("task", result.status_code),
                     retryable=False,
                 ),
-                usage,
+                NormalizedUsage() if unprocessed else usage,
+                release_unused_reservation=unprocessed,
             )
         return Indeterminate(
             result.task_id,
@@ -714,8 +842,10 @@ class AliyunIsiAsrAdapter:
 @dataclass(frozen=True)
 class AliyunIsiAsrWorkerBundle:
     client_factory: ClientFactory = AliyunIsiAsrClient
-    signer_resolver: SignerResolver = resolve_signer
     clock: Clock = lambda: dt.datetime.now(dt.timezone.utc)
+    artifact_store: PodcastArtifactStore | None = None
+    storage_config: PodcastArtifactStorageConfig | None = None
+    relay_factory: RelayFactory = _relay_factory
     # ISI file transcription does not return a detected language.  Persisting
     # every result as Chinese made English Podcast source transcripts look
     # translated when they were not.  Keep the provider-neutral unknown marker
@@ -741,24 +871,86 @@ class AliyunIsiAsrWorkerBundle:
         if not aliyun_asr_worker_ready(aliyun):
             raise ValueError("Aliyun ASR worker cannot safely poll provider tasks")
 
-        # Resolve signing before the runner claims a row when possible, but do
-        # not make polling an already-paid task depend on the current signing
-        # configuration. A queued submit with no signer is rejected before any
-        # provider I/O, which releases its reservation and schedules a retry.
-        signer: PodcastAsrFetchUrlSigner | None = None
-        try:
-            signer = self.signer_resolver(
-                session, podcast_config=policy.config
-            )
-        except Exception:
-            pass
-        finally:
-            session.rollback()
         client = self.client_factory(aliyun)
         current = _utc(self.clock())
+        relay = (
+            self.relay_factory(aliyun, self.artifact_store, self.storage_config)
+            if (
+                aliyun.asr_oss_configured
+                and self.artifact_store is not None
+                and self.storage_config is not None
+            )
+            else None
+        )
+
+        def resolve_direct_audio_url(context: StageContext) -> str:
+            try:
+                return _direct_audio_url(session, context)
+            finally:
+                # Do not hold a database read transaction across provider I/O.
+                session.rollback()
+
+        def resolve_fallback_audio_url(context: StageContext) -> str:
+            if relay is None:
+                raise DirectAudioUrlError("aliyun_oss_fallback_unavailable")
+            try:
+                _direct_audio_url(session, context)
+                episode = session.get(ArticleRecord, context.episode_id)
+                snapshot = session.get(
+                    PodcastSourceMediaSnapshotRecord,
+                    context.input_artifact.artifact_id,
+                )
+                if episode is None or snapshot is None:
+                    raise DirectAudioUrlError(
+                        "aliyun_source_media_url_unavailable"
+                    )
+                enclosure = enclosure_snapshot(episode)
+                session.expunge(snapshot)
+                session.rollback()
+                return relay.prepare(
+                    context,
+                    enclosure=enclosure,
+                    expected=snapshot,
+                )
+            except DirectAudioUrlError:
+                raise
+            except (OssRelayError, SourceMediaError) as exc:
+                code = getattr(exc, "code", "aliyun_oss_fallback_source_download_failed")
+                raise DirectAudioUrlError(str(code)) from None
+            finally:
+                session.rollback()
+
+        def should_submit_fallback(context: StageContext) -> bool:
+            previous = session.exec(
+                select(PodcastStageAttemptRecord).where(
+                    PodcastStageAttemptRecord.processing_id
+                    == context.processing_id,
+                    PodcastStageAttemptRecord.attempt_no
+                    == context.attempt_no - 1,
+                )
+            ).first()
+            selected = bool(
+                previous is not None
+                and previous.submission_state == "failed_retryable"
+                and previous.error_code == PROVIDER_FALLBACK_MARKER
+            )
+            session.rollback()
+            return selected
+
+        def cleanup_fallback(context: StageContext) -> None:
+            if relay is not None:
+                relay.delete(context)
+
         adapter = AliyunIsiAsrAdapter(
             aliyun,
-            signer=signer,
+            direct_audio_url_resolver=resolve_direct_audio_url,
+            fallback_audio_url_resolver=(
+                resolve_fallback_audio_url if relay is not None else None
+            ),
+            fallback_submission_selector=(
+                should_submit_fallback if relay is not None else None
+            ),
+            fallback_cleanup=cleanup_fallback if relay is not None else None,
             client=client,
             clock=lambda: current,
             transcript_language=self.transcript_language,

@@ -102,6 +102,43 @@ def _guard_last_active_admin(session: Session, record: UserRecord, action: str) 
         raise AccountError(f"系统至少需保留一名活跃管理员，无法{action}最后一个管理员账户")
 
 
+# ==================== 根管理员（用户级明细的唯一接触者，v3.55 issue #31） ====================
+# 多管理员平权（v3.19）之上唯一的例外：账户名单、逐账户设置/启停/改角色、逐用户使用明细
+# 属于读者隐私，只有根管理员可见可操作；其它管理员只见聚合数字。
+# 判据（负责人 2026-09-14 拍板「仅 admin」的最简形态，不另设权限列）：活跃管理员里
+# 名为 ``admin``（首启播种的根管理员）者；若该账户不存在或已非活跃管理员（本版之前的库
+# 可能已把它删除/降级），回落为**创建最早的活跃管理员**——保证任何库都恰有一名根管理员，
+# 用户级明细面永不失联。将来若要转让/多根，再升级成账户列，判据入口只有 root_admin_username 一处。
+ROOT_ADMIN_USERNAME = "admin"
+
+
+def root_admin_username(session: Session) -> Optional[str]:
+    """当前根管理员用户名；无活跃管理员时 None（理论上不可达，末位保护兜底）。"""
+    row = session.exec(
+        select(UserRecord.username)
+        .where(UserRecord.role == "admin", UserRecord.is_active == True)  # noqa: E712
+        .order_by(
+            (UserRecord.username != ROOT_ADMIN_USERNAME),
+            UserRecord.created_at,
+            UserRecord.username,
+        )
+        .limit(1)
+    ).first()
+    return str(row) if row else None
+
+
+def is_root_admin(session: Session, username: Optional[str]) -> bool:
+    if not username:
+        return False
+    return root_admin_username(session) == str(username)
+
+
+def _guard_root_admin(session: Session, record: UserRecord, action: str) -> None:
+    """根管理员不可降级/停用/删除——否则用户级明细面将无人可达。"""
+    if is_root_admin(session, record.username):
+        raise AccountError(f"根管理员 '{record.username}' 不可{action}")
+
+
 # ==================== 密码哈希（PBKDF2-HMAC-SHA256） ====================
 def hash_password(plain: str, *, iterations: int = _PBKDF2_ITERATIONS) -> str:
     """返回编码串 pbkdf2_sha256$<iters>$<salt_b64>$<hash_b64>。"""
@@ -233,6 +270,7 @@ def set_role(session: Session, username: str, role: str) -> UserRecord:
         return record
     # admin → user 降级前守卫：不能降掉最后一个活跃管理员。
     if record.role == "admin" and role != "admin":
+        _guard_root_admin(session, record, "降级")
         _guard_last_active_admin(session, record, "降级")
     record.role = role
     record.updated_at = _now_iso()
@@ -248,6 +286,7 @@ def set_active(session: Session, username: str, is_active: bool) -> UserRecord:
         raise AccountError(f"账户 '{username}' 不存在")
     # 停用最后一个活跃管理员前守卫。
     if not is_active:
+        _guard_root_admin(session, record, "停用")
         _guard_last_active_admin(session, record, "停用")
     record.is_active = is_active
     record.updated_at = _now_iso()
@@ -313,9 +352,13 @@ def batch_update_users(
         for record in records:
             changed = False
             if role is not None and record.role != role:
+                if record.role == "admin":
+                    _guard_root_admin(session, record, "降级")
                 record.role = role
                 changed = True
             if is_active is not None and record.is_active != bool(is_active):
+                if not is_active:
+                    _guard_root_admin(session, record, "停用")
                 record.is_active = bool(is_active)
                 changed = True
             if ai_beta_enabled is not None and record.ai_beta_enabled != bool(ai_beta_enabled):
@@ -624,7 +667,8 @@ def delete_user(session: Session, username: str) -> None:
     record = get_user(session, username)
     if record is None:
         raise AccountError(f"账户 '{username}' 不存在")
-    # 删除最后一个活跃管理员前守卫（非活跃 admin 不计入活跃数，可删）。
+    # 删除最后一个活跃管理员前守卫（非活跃 admin 不计入活跃数，可删）；根管理员恒不可删。
+    _guard_root_admin(session, record, "删除")
     _guard_last_active_admin(session, record, "删除")
 
     tombstone = f"{DELETED_USER_PREFIX}{username}"
@@ -714,3 +758,32 @@ def seed_root_admin_if_empty(engine) -> bool:
         ))
         session.commit()
     return True
+
+
+def account_growth(session: Session) -> dict:
+    """账户增长曲线数据（v3.55 issue #31）：按创建日聚合的新增数 + 现存总量分布。
+
+    SQL 端 GROUP BY 创建日期（created_at 为 ISO 串，前 10 位即 YYYY-MM-DD），逐日行数
+    与账户数同阶（150 人级别几十行），前端按日/周/月自行折算并累加。**口径 = 现存账户**：
+    已删除账户不在 users 表里，其创建日不再计入——曲线画的是「今天还在的账户是何时加入的」，
+    而非历史开户总数（删号本身有审计日志可查）。所有管理员可见（聚合数字不含个人信息）。
+    """
+    day_expr = func.substr(UserRecord.created_at, 1, 10)
+    rows = session.exec(
+        select(day_expr, func.count())
+        .select_from(UserRecord)
+        .group_by(day_expr)
+        .order_by(day_expr)
+    ).all()
+    series = [{"day": str(day), "new": int(count)} for day, count in rows if day]
+    users = list(session.exec(select(UserRecord.role, UserRecord.is_active)).all())
+    total = len(users)
+    admins = sum(1 for role, _active in users if role == "admin")
+    disabled = sum(1 for _role, active in users if not active)
+    return {
+        "totals": {"accounts": total, "admins": admins, "readers": total - admins, "disabled": disabled},
+        "series": series,
+        # 服务端「今天」(与 created_at 同一时钟):前端视野与末端一律以它为准,
+        # 浏览器与服务端跨日时不会把当天的新增漏在视野之外(codex 检视 #4)。
+        "as_of_day": datetime.date.today().isoformat(),
+    }

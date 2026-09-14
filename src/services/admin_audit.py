@@ -157,13 +157,6 @@ AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
     ("POST", re.compile(r"^/api/x-api/config$"), lambda _m, _b: ("更新 X API 配置", None)),
     ("POST", re.compile(r"^/api/admin/ai-beta/global$"), _global_ai_beta),
     (
-        "DELETE",
-        re.compile(
-            r"^/api/admin/podcast-asr-fetch/previous-signing-secret$"
-        ),
-        lambda _m, _b: ("结束 Podcast ASR 签名密钥轮换宽限期", None),
-    ),
-    (
         "PUT",
         re.compile(r"^/api/admin/analysis/config$"),
         lambda _m, body: (
@@ -190,6 +183,15 @@ AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
         lambda match, _body: (
             f"{match.group('action')} full_analysis 回填 {match.group('target')}",
             match.group("target"),
+        ),
+    ),
+    (
+        "POST",
+        re.compile(
+            r"^/api/admin/podcast-premium-guides/(?P<target>[^/]+)/force$"
+        ),
+        lambda match, _body: _id_target(
+            match, None, noun="播客 TTS", action="强制生成"
         ),
     ),
     (

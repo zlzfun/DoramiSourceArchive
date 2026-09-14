@@ -64,7 +64,10 @@ export function MultiSeriesArea({
   namespace = 'default',
 }) {
   const [dim, setDim] = useState(defaultDim ?? dims[0][0]);
-  const ds = datasets[dim] || { data: [], keys: [] };
+  // dims 收窄后(如根身份转走、「按用户」档撤除)当前档不在其中时回落到首档。
+  const dimValid = dims.some(([k]) => k === dim);
+  useEffect(() => { if (!dimValid) setDim(dims[0][0]); }, [dimValid, dims]);
+  const ds = datasets[dimValid ? dim : dims[0][0]] || { data: [], keys: [] };
   const colorOf = (k) => colorForEntity(`${namespace}:${dim}`, k);
   // (末端直标已退役:两系列末端相近时文字互叠、右缘裁字,且与常备自绘图例信息重复。)
   return (

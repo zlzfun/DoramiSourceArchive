@@ -219,7 +219,6 @@ def test_collection_job_resolves_podcast_logical_id_and_limit_override(monkeypat
     monkeypatch.setattr(app_module, "require_podcast_stage", lambda *args, **kwargs: None)
     monkeypatch.setattr(app_module, "queue_article_analysis_after_commit", lambda _ids: 0)
     monkeypatch.setattr(app_module, "schedule_media_prefetch", lambda _ids: None)
-    monkeypatch.setattr(app_module, "schedule_podcast_premium_after_landing", lambda _ids: 0)
 
     result = asyncio.run(app_module.run_collection_items(
         items,

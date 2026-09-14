@@ -429,6 +429,8 @@ def mark_podcast_people_dirty(
 
 def _clear_authoritative_result(record: ArticleAnalysisRecord) -> None:
     record.quality_score = None
+    record.podcast_initial_score = None
+    record.podcast_final_score = None
     record.dimension_scores_json = "{}"
     record.analysis_basis = ""
     record.analysis_input_hash = ""
@@ -2171,6 +2173,8 @@ async def process_claimed_analysis(
         prompt_version, scoring_version = analysis_contract_versions(article.content_type)
         record.status = AnalysisStatus.SUCCEEDED.value
         record.quality_score = result.quality_score
+        if article_input.content_type == "podcast_episode":
+            record.podcast_initial_score = result.quality_score
         record.dimension_scores_json = json.dumps(
             {
                 "schema_version": "podcast-factors-v1",

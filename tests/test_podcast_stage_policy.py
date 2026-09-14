@@ -293,7 +293,6 @@ def test_admin_capabilities_endpoint_is_read_only_and_redacted(monkeypatch, tmp_
         tmp_path / "capabilities-cas",
         max_bytes=1024 * 1024,
         total_quota_bytes=2 * 1024 * 1024,
-        source_audio_quota_bytes=1024 * 1024,
         minimum_free_bytes=0,
         staging_ttl_seconds=0,
         allowed_mime_types=("audio/wav",),

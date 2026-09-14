@@ -483,7 +483,9 @@ def test_public_podcast_migration_removes_legacy_source_activation_gate(tmp_path
 
 def test_podcast_text_migration_empty_downgrade_upgrade_cycle(tmp_path):
     cfg = make_alembic_config(f"sqlite:///{tmp_path / 'migration-cycle.db'}")
-    command.upgrade(cfg, "head")
+    # The source-media snapshot migration after this revision is intentionally
+    # irreversible because it deletes persisted publisher media blobs.
+    command.upgrade(cfg, "d6a3f9c2e714")
     command.downgrade(cfg, "6c1f8a2d4e90")
     command.upgrade(cfg, "head")
 
@@ -574,51 +576,10 @@ def test_narration_dependency_migration_withdraws_unprovable_legacy_audio(tmp_pa
         engine.dispose()
 
 
-def test_audio_dependency_downgrade_allows_local_source_audio(tmp_path):
-    db_url = f"sqlite:///{tmp_path / 'downgrade-local-source-audio.db'}"
-    cfg = make_alembic_config(db_url)
-    command.upgrade(cfg, "head")
-    engine = create_engine(db_url)
-    try:
-        with Session(engine) as session:
-            session.add(_episode())
-            session.commit()
-            session.add(PodcastArtifactRecord(
-                id="local-source-audio",
-                episode_id="episode-1",
-                kind="source_audio",
-                content_hash="f" * 64,
-                mime="audio/mpeg",
-                ext=".mp3",
-                size_bytes=10,
-                status="ready",
-                provenance="feed",
-                authority_id="dev-local",
-                expires_at="2099-01-01T00:00:00.000000+00:00",
-                created_at=STAMP,
-                updated_at=STAMP,
-            ))
-            session.commit()
-    finally:
-        engine.dispose()
-
-    with pytest.raises(RuntimeError, match="仍[含有] source_audio"):
-        command.downgrade(cfg, "1d7c9a4e2b60")
-    engine = create_engine(db_url)
-    try:
-        with engine.connect() as connection:
-            assert (
-                MigrationContext.configure(connection).get_current_revision()
-                == "6b8d2f4a9c70"
-            )
-    finally:
-        engine.dispose()
-
-
 def test_audio_dependency_downgrade_refuses_lossy_digest_binding(tmp_path):
     db_url = f"sqlite:///{tmp_path / 'downgrade-digest-binding.db'}"
     cfg = make_alembic_config(db_url)
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "d6a3f9c2e714")
     engine = create_engine(db_url)
     try:
         script = _artifact(
@@ -671,7 +632,7 @@ def test_audio_dependency_downgrade_refuses_lossy_digest_binding(tmp_path):
 def test_podcast_text_migration_refuses_remote_authority_downgrade(tmp_path):
     db_url = f"sqlite:///{tmp_path / 'migration-fence.db'}"
     cfg = make_alembic_config(db_url)
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "d6a3f9c2e714")
     engine = create_engine(db_url)
     try:
         with Session(engine) as session:

@@ -1,33 +1,49 @@
-import { useEffect, useRef, useState } from 'react';
-import { Loader2 } from 'lucide-react';
-import { fetchPodcastEpisodeTexts } from '../api';
+import { useEffect, useId, useRef, useState } from 'react';
+import { ChevronDown, Loader2 } from 'lucide-react';
+import { fetchPodcastEpisodeTexts, translatePodcastTranscript } from '../api';
 import {
   isPodcastTextRequestCurrent,
   mergePodcastTextPage,
   podcastTextPageAction,
+  podcastTranscriptForLanguage,
   podcastTextView,
 } from '../utils/podcastTextReader';
 import ReaderMarkdown from './ReaderMarkdown';
 
-export default function PodcastTextPanel({ episodeId }) {
-  const [state, setState] = useState({ loading: true, response: null, error: '' });
+const NO_HIDDEN_TRANSCRIPT_KINDS = Object.freeze([]);
+
+export default function PodcastTextPanel({
+  episodeId,
+  showDigest = false,
+  preferredTranscriptKind = '',
+  hiddenTranscriptKinds = NO_HIDDEN_TRANSCRIPT_KINDS,
+  showTranslation = false,
+}) {
+  const [state, setState] = useState({ episodeId: '', loading: true, response: null, error: '' });
   const [reload, setReload] = useState(0);
   const [pages, setPages] = useState({});
   const [more, setMore] = useState({});
+  const [selection, setSelection] = useState({ episodeId: '', kind: '' });
+  const [disclosure, setDisclosure] = useState({ episodeId: '', open: true });
+  const [translation, setTranslation] = useState({
+    episodeId: '', sourceKind: '', status: 'idle', error: '', retry: 0,
+  });
   const requestGroup = useRef({ episodeId: null, controllers: new Set() });
+  const transcriptBodyId = useId();
 
   useEffect(() => {
     const group = { episodeId, controllers: new Set() };
     requestGroup.current = group;
     const controller = new AbortController();
     group.controllers.add(controller);
-    setState({ loading: true, response: null, error: '' });
+    setState({ episodeId, loading: true, response: null, error: '' });
     setPages({});
     setMore({});
+    setTranslation({ episodeId, sourceKind: '', status: 'idle', error: '', retry: 0 });
     fetchPodcastEpisodeTexts(episodeId, {}, { signal: controller.signal })
       .then((response) => {
         if (!isPodcastTextRequestCurrent(group, requestGroup.current, episodeId)) return;
-        setState({ loading: false, response, error: '' });
+        setState({ episodeId, loading: false, response, error: '' });
         setPages(Object.fromEntries((response.items || []).map((item) => [item.kind, item])));
       })
       .catch((error) => {
@@ -35,7 +51,7 @@ export default function PodcastTextPanel({ episodeId }) {
           isPodcastTextRequestCurrent(group, requestGroup.current, episodeId)
           && error?.name !== 'AbortError'
         ) {
-          setState({ loading: false, response: null, error: '播客文字载入失败，请重试' });
+          setState({ episodeId, loading: false, response: null, error: '播客文字载入失败，请重试' });
         }
       })
       .finally(() => group.controllers.delete(controller));
@@ -48,7 +64,88 @@ export default function PodcastTextPanel({ episodeId }) {
     };
   }, [episodeId, reload]);
 
-  const view = podcastTextView({ items: Object.values(pages) });
+  const hiddenKinds = new Set(hiddenTranscriptKinds);
+  const view = podcastTextView({
+    items: Object.values(pages).filter((item) => !hiddenKinds.has(item.kind)),
+  });
+  const selectedKind = selection.episodeId === episodeId ? selection.kind : '';
+  const transcriptView = podcastTranscriptForLanguage({
+    view,
+    translated: showTranslation,
+    preferredKind: preferredTranscriptKind,
+    selectedKind,
+  });
+  const translationSourceKind = transcriptView.source?.item.kind || '';
+
+  useEffect(() => {
+    if (
+      state.loading
+      || state.episodeId !== episodeId
+      || !showTranslation
+      || transcriptView.chinese
+      || !translationSourceKind
+    ) return undefined;
+    if (
+      translation.episodeId === episodeId
+      && translation.sourceKind === translationSourceKind
+      && ['loading', 'error'].includes(translation.status)
+    ) return undefined;
+
+    const group = requestGroup.current;
+    if (!isPodcastTextRequestCurrent(group, requestGroup.current, episodeId)) return undefined;
+    const controller = new AbortController();
+    group.controllers.add(controller);
+    setTranslation({
+      episodeId,
+      sourceKind: translationSourceKind,
+      status: 'loading',
+      error: '',
+      retry: translation.retry,
+    });
+    translatePodcastTranscript(episodeId, translationSourceKind, { signal: controller.signal })
+      .then((response) => {
+        if (!isPodcastTextRequestCurrent(group, requestGroup.current, episodeId)) return;
+        const item = response?.item || response?.transcript || response;
+        if (!item || item.kind !== 'transcript_zh' || typeof item.text !== 'string') {
+          throw new Error('逐字稿翻译结果尚未就绪');
+        }
+        setPages((current) => ({ ...current, transcript_zh: item }));
+        setTranslation({
+          episodeId,
+          sourceKind: translationSourceKind,
+          status: 'ready',
+          error: '',
+          retry: translation.retry,
+        });
+      })
+      .catch((error) => {
+        if (
+          isPodcastTextRequestCurrent(group, requestGroup.current, episodeId)
+          && error?.name !== 'AbortError'
+        ) {
+          setTranslation({
+            episodeId,
+            sourceKind: translationSourceKind,
+            status: 'error',
+            error: error?.message || '逐字稿翻译失败，请重试',
+            retry: translation.retry,
+          });
+        }
+      })
+      .finally(() => group.controllers.delete(controller));
+    return undefined;
+  }, [
+    episodeId,
+    showTranslation,
+    state.episodeId,
+    state.loading,
+    transcriptView.chinese,
+    translation.episodeId,
+    translation.retry,
+    translation.sourceKind,
+    translation.status,
+    translationSourceKind,
+  ]);
   const refreshFirstPage = (kind, group = requestGroup.current) => {
     if (!isPodcastTextRequestCurrent(group, requestGroup.current, episodeId)) {
       return Promise.resolve();
@@ -141,32 +238,117 @@ export default function PodcastTextPanel({ episodeId }) {
       </div>
     );
   }
-  // 精品导读由上方 Tab 控制显示；没有中文博客时不再渲染额外占位壳。
-  if (!view.digest) return null;
+  const transcript = transcriptView.transcript;
+  const transcriptOpen = disclosure.episodeId === episodeId ? disclosure.open : true;
+  const digestVisible = showDigest && view.digest;
+  if (!digestVisible && !transcript) return null;
 
   return (
-    <section className="podcast-text-panel" aria-label="精品导读中文博客">
-      <div className="podcast-text-digest">
-        <div className="podcast-text-heading">
-          <h2>精品导读</h2>
-          <span>中文博客 · AI 整理</span>
+    <section className="podcast-text-panel" aria-label="播客文字内容">
+      {digestVisible && (
+        <div className="podcast-text-digest">
+          <div className="podcast-text-heading">
+            <h2>精品导读</h2>
+            <span>中文博客 · AI 整理</span>
+          </div>
+          <div className="podcast-guide-body">
+            <ReaderMarkdown>{view.digest.text}</ReaderMarkdown>
+            {view.digest.next_cursor && (
+              <button
+                type="button"
+                className="podcast-text-more"
+                disabled={more[view.digest.kind]?.loading}
+                onClick={() => loadMore(view.digest)}
+              >
+                {more[view.digest.kind]?.loading ? '正在载入…' : '继续阅读精品导读'}
+              </button>
+            )}
+            {more[view.digest.kind]?.error && <p className="podcast-text-more-error" role="alert">{more[view.digest.kind].error}</p>}
+            {more[view.digest.kind]?.notice && <p className="podcast-text-refresh-notice" role="status">{more[view.digest.kind].notice}</p>}
+          </div>
         </div>
-        <div className="podcast-guide-body">
-          <ReaderMarkdown>{view.digest.text}</ReaderMarkdown>
-          {view.digest.next_cursor && (
-            <button
-              type="button"
-              className="podcast-text-more"
-              disabled={more[view.digest.kind]?.loading}
-              onClick={() => loadMore(view.digest)}
-            >
-              {more[view.digest.kind]?.loading ? '正在载入…' : '继续阅读精品导读'}
-            </button>
+      )}
+      {transcript && (
+        <div className="podcast-text-transcript">
+          <button
+            type="button"
+            className="podcast-text-toggle"
+            aria-expanded={transcriptOpen}
+            aria-controls={transcriptBodyId}
+            onClick={() => setDisclosure({ episodeId, open: !transcriptOpen })}
+          >
+            <span>
+              <strong>{showTranslation ? '中文逐字稿' : transcript.label.title}</strong>
+              <small>{showTranslation && !transcriptView.chinese ? 'AI 翻译整理' : transcript.label.note}</small>
+            </span>
+            <ChevronDown className={transcriptOpen ? 'is-open' : ''} aria-hidden="true" />
+          </button>
+          {!showTranslation && transcriptView.sourceTranscripts.length > 1 && (
+            <div className="mini-seg podcast-text-sources" role="group" aria-label="逐字稿来源">
+              {transcriptView.sourceTranscripts.map(({ item, label }) => (
+                <button
+                  key={item.kind}
+                  type="button"
+                  className={`mini-seg-btn ${item.kind === transcript.item.kind ? 'is-on' : ''}`}
+                  aria-pressed={item.kind === transcript.item.kind}
+                  onClick={() => setSelection({ episodeId, kind: item.kind })}
+                >
+                  {label.title}
+                </button>
+              ))}
+            </div>
           )}
-          {more[view.digest.kind]?.error && <p className="podcast-text-more-error" role="alert">{more[view.digest.kind].error}</p>}
-          {more[view.digest.kind]?.notice && <p className="podcast-text-refresh-notice" role="status">{more[view.digest.kind].notice}</p>}
+          {transcriptOpen && (
+            <div
+              id={transcriptBodyId}
+              className="podcast-text-transcript-body"
+              tabIndex={0}
+              aria-label={`${showTranslation ? '中文逐字稿' : transcript.label.title}正文`}
+            >
+              {showTranslation && !transcriptView.chinese ? (
+                <div className={`podcast-text-translation-state ${translation.status === 'error' ? 'is-error' : ''}`} role={translation.status === 'error' ? 'alert' : 'status'}>
+                  {translation.status === 'error' ? (
+                    <>
+                      <span>{translation.error || '逐字稿翻译失败，请重试'}</span>
+                      <button
+                        type="button"
+                        onClick={() => setTranslation((current) => ({
+                          ...current,
+                          status: 'idle',
+                          error: '',
+                          retry: current.retry + 1,
+                        }))}
+                      >
+                        重新翻译
+                      </button>
+                    </>
+                  ) : (
+                    <><Loader2 className="h-4 w-4 animate-spin" /> 正在翻译逐字稿，完成后会自动显示…</>
+                  )}
+                </div>
+              ) : (
+                <div className="podcast-text-copy body-text">{transcript.item.text}</div>
+              )}
+              {(!showTranslation || transcriptView.chinese) && transcript.item.next_cursor && (
+                <button
+                  type="button"
+                  className="podcast-text-more"
+                  disabled={more[transcript.item.kind]?.loading}
+                  onClick={() => loadMore(transcript.item)}
+                >
+                  {more[transcript.item.kind]?.loading ? '正在载入…' : '继续阅读逐字稿'}
+                </button>
+              )}
+              {more[transcript.item.kind]?.error && (
+                <p className="podcast-text-more-error" role="alert">{more[transcript.item.kind].error}</p>
+              )}
+              {more[transcript.item.kind]?.notice && (
+                <p className="podcast-text-refresh-notice" role="status">{more[transcript.item.kind].notice}</p>
+              )}
+            </div>
+          )}
         </div>
-      </div>
+      )}
     </section>
   );
 }

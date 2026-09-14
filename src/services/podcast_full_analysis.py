@@ -32,6 +32,7 @@ from models.db import (
     SourceConfigRecord,
 )
 from services import article_analysis
+from services import podcast_premium
 from services.podcast_processing import (
     PodcastProcessingClaim,
     begin_stage_attempt,
@@ -50,8 +51,8 @@ from services.podcast_publisher_transcripts import (
 )
 
 
-INITIAL_PROCESSING_THRESHOLD = 5.0
-FINAL_PREMIUM_THRESHOLD = 8.0
+INITIAL_PROCESSING_THRESHOLD = podcast_premium.INITIAL_PROCESSING_THRESHOLD
+FINAL_PREMIUM_THRESHOLD = podcast_premium.DEFAULT_PREMIUM_SCORE_THRESHOLD
 FULL_ANALYSIS_PROMPT_VERSION = "podcast-full-map-reduce-v2"
 DEFAULT_CHUNK_CHARS = 12_000
 REDUCE_EVIDENCE_MAX_CHARS = 16_000
@@ -481,6 +482,7 @@ def _persist_result(
     analysis_input_hash: str,
     chunks: Sequence[TranscriptChunk],
     model_name: str,
+    premium_score_threshold: float,
     now: dt.datetime,
 ) -> None:
     process = session.get(PodcastProcessingRecord, claim.processing_id)
@@ -512,8 +514,16 @@ def _persist_result(
             updated_at=stamp,
         )
     result = validated.result
+    effective_premium_threshold = podcast_premium.get_threshold(session)
+    if (
+        record.analysis_basis == "podcast_show_notes"
+        and record.quality_score is not None
+        and record.podcast_initial_score is None
+    ):
+        record.podcast_initial_score = record.quality_score
     record.status = "succeeded"
     record.quality_score = result.quality_score
+    record.podcast_final_score = result.quality_score
     record.dimension_scores_json = json.dumps(
         {
             "schema_version": "podcast-factors-v1",
@@ -573,9 +583,11 @@ def _persist_result(
                     separators=(",", ":"),
                 ).encode("utf-8")
             ).hexdigest(),
-            "final_premium_threshold": FINAL_PREMIUM_THRESHOLD,
+            # Diagnostic snapshot only. Runtime qualification always re-reads
+            # the current persisted threshold.
+            "final_premium_threshold": effective_premium_threshold,
             "final_premium": float(result.quality_score)
-            >= FINAL_PREMIUM_THRESHOLD,
+            >= effective_premium_threshold,
             "podcast_factors": validated.podcast_factors,
         },
         ensure_ascii=False,
@@ -632,6 +644,7 @@ def _finalize_result(
     analysis_input_hash: str,
     chunks: Sequence[TranscriptChunk],
     model_name: str,
+    premium_score_threshold: float,
     now: dt.datetime | None = None,
 ) -> None:
     """Atomically expose the transcript result and terminal processing state."""
@@ -674,6 +687,7 @@ def _finalize_result(
         analysis_input_hash=analysis_input_hash,
         chunks=chunks,
         model_name=model_name,
+        premium_score_threshold=premium_score_threshold,
         now=current,
     )
     attempt.submission_state = "succeeded"
@@ -907,6 +921,7 @@ async def run_full_analysis_worker_step(
                 "prompt": FULL_ANALYSIS_PROMPT_VERSION,
                 "model": config.llm_config.for_aux().model,
                 "chunk_chars": config.chunk_chars,
+                "premium_score_threshold": podcast_config.premium_score_threshold,
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -995,6 +1010,7 @@ async def run_full_analysis_worker_step(
             analysis_input_hash=analysis_hash,
             chunks=chunks,
             model_name=config.llm_config.for_aux().model,
+            premium_score_threshold=podcast_config.premium_score_threshold,
             now=operation_now(),
         )
         return FullAnalysisWorkerStep("completed", claim.processing_id, attempt_id)
@@ -1029,7 +1045,7 @@ def full_analysis_estimator(
         input_metadata: dict[str, object],
         config: PodcastConfig,
     ) -> AdmissionEstimate:
-        if input_metadata.get("kind") != "source_audio":
+        if input_metadata.get("kind") != "source_media_snapshot":
             return AdmissionEstimate(
                 cost_minor=0,
                 admission_fingerprint=hashlib.sha256(

@@ -31,8 +31,8 @@ export default defineConfig({
   },
   server: {
     port: appConfig.devServer?.port || 5173,
-    // Keep temporary preview hosts deployment-configured (for example ngrok)
-    // instead of committing a short-lived hostname.
+    // Keep preview hosts deployment-configured instead of committing a
+    // machine- or environment-specific hostname.
     allowedHosts,
     proxy: {
       '/api': {

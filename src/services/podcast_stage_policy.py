@@ -17,7 +17,7 @@ from services.podcast_worker_contracts import ProviderUsagePlan, ProviderUsageUn
 
 EXECUTION_BOUNDARIES = frozenset({"enqueue", "claim", "provider_submit", "commit"})
 ARTIFACT_STAGE_BY_KIND = {
-    "source_audio": "fetch",
+    "source_media_snapshot": "fetch",
     "publisher_transcript": "fetch",
     "normalized_transcript": "asr",
     "transcript_zh": "translate",

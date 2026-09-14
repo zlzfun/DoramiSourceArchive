@@ -95,6 +95,11 @@ def test_new_analysis_and_taxonomy_writes_have_semantic_audit_summaries(tmp_path
     writes = [
         ("PUT", "/api/admin/analysis/config", {"article_analysis_enabled": False}),
         ("POST", "/api/admin/analysis/backfills", {"days": 30, "selection": "all"}),
+        (
+            "POST",
+            "/api/admin/podcast-premium-guides/episode-42/force",
+            {"reason": "manual TTS", "idempotency_key": "force-episode-42"},
+        ),
         ("PATCH", "/api/admin/cms-tags/42", {"name_zh": "安全"}),
         ("POST", "/api/admin/cms-tag-candidates/7/reject", {"reason": "noise"}),
         ("POST", "/api/admin/taxonomy/v1/publish", {"confirmation": "publish"}),
@@ -112,6 +117,9 @@ def test_new_analysis_and_taxonomy_writes_have_semantic_audit_summaries(tmp_path
     rows = _audit_rows(sink.engine)
     assert len(rows) == len(writes)
     assert all(row.summary for row in rows)
+    force_row = next(row for row in rows if row.path.endswith("/force"))
+    assert force_row.summary == "强制生成播客 TTS episode-42"
+    assert force_row.target == "episode-42"
     assert should_audit("/api/admin/analysis/backfills/estimate", "POST") is False
 
 

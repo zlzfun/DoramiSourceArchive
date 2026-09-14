@@ -74,32 +74,90 @@ def _drop_audio_triggers() -> None:
         for name, table in (
             ("podcast_audio_dependency_insert", "podcast_artifacts"),
             ("podcast_audio_dependency_update", "podcast_artifacts"),
+            ("podcast_audio_binding_immutable", "podcast_artifacts"),
             ("podcast_script_audio_invalidate_update", "podcast_text_publications"),
             ("podcast_script_audio_invalidate_delete", "podcast_text_publications"),
         ):
             bind.exec_driver_sql(f'DROP TRIGGER IF EXISTS "{name}" ON "{table}"')
+        bind.exec_driver_sql(
+            "DROP FUNCTION IF EXISTS podcast_source_audio_binding_immutable_fn()"
+        )
 
 
-def _install_audio_triggers(*, include_source_cache_fields: bool = True) -> None:
-    """Install only trigger SQL valid at this revision's physical schema."""
+def _install_audio_triggers() -> None:
+    """Install the durable audio guards shared with the current schema."""
 
     bind = op.get_bind()
     if bind.dialect.name == "sqlite":
         from models.db import _podcast_audio_dependency_trigger_sql
 
-        statements = _podcast_audio_dependency_trigger_sql(
-            include_source_cache_fields=include_source_cache_fields
-        )
+        statements = _podcast_audio_dependency_trigger_sql()
     elif bind.dialect.name == "postgresql":
         from models.db import _podcast_audio_dependency_postgresql_sql
 
-        statements = _podcast_audio_dependency_postgresql_sql(
-            include_source_cache_fields=include_source_cache_fields
-        )
+        statements = _podcast_audio_dependency_postgresql_sql()
     else:
         return
     for statement in statements:
         bind.exec_driver_sql(statement)
+
+
+def _install_legacy_source_cache_immutability() -> None:
+    """Freeze the two cache identity fields that existed only at this revision.
+
+    Keep this historical guard local so the active model/trigger helpers never
+    need to know about the retired source-audio storage schema.
+    """
+
+    bind = op.get_bind()
+    if bind.dialect.name == "sqlite":
+        bind.exec_driver_sql(
+            'DROP TRIGGER IF EXISTS "podcast_audio_binding_immutable"'
+        )
+        bind.exec_driver_sql(
+            """
+            CREATE TRIGGER podcast_audio_binding_immutable
+            BEFORE UPDATE OF episode_id, kind, content_hash, authority_id,
+              narration_artifact_id, narration_content_hash, processing_id,
+              source_locator_hash, expires_at
+              ON podcast_artifacts
+            WHEN NEW.episode_id IS NOT OLD.episode_id
+              OR NEW.kind IS NOT OLD.kind
+              OR NEW.content_hash IS NOT OLD.content_hash
+              OR NEW.authority_id IS NOT OLD.authority_id
+              OR NEW.narration_artifact_id IS NOT OLD.narration_artifact_id
+              OR NEW.narration_content_hash IS NOT OLD.narration_content_hash
+              OR NEW.processing_id IS NOT OLD.processing_id
+              OR NEW.source_locator_hash IS NOT OLD.source_locator_hash
+              OR NEW.expires_at IS NOT OLD.expires_at
+            BEGIN
+              SELECT RAISE(ABORT, 'podcast audio binding is immutable');
+            END
+            """
+        )
+    elif bind.dialect.name == "postgresql":
+        bind.exec_driver_sql(
+            """
+            CREATE OR REPLACE FUNCTION podcast_source_audio_binding_immutable_fn()
+            RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+              IF NEW.source_locator_hash IS DISTINCT FROM OLD.source_locator_hash
+                 OR NEW.expires_at IS DISTINCT FROM OLD.expires_at THEN
+                RAISE EXCEPTION 'podcast audio binding is immutable';
+              END IF;
+              RETURN NEW;
+            END; $$
+            """
+        )
+        bind.exec_driver_sql(
+            "DROP TRIGGER IF EXISTS podcast_audio_binding_immutable "
+            "ON podcast_artifacts"
+        )
+        bind.exec_driver_sql(
+            "CREATE TRIGGER podcast_audio_binding_immutable BEFORE UPDATE OF "
+            "source_locator_hash, expires_at ON podcast_artifacts FOR EACH ROW "
+            "EXECUTE FUNCTION podcast_source_audio_binding_immutable_fn()"
+        )
 
 
 def _assert_parent_downgrade_safe() -> None:
@@ -129,6 +187,7 @@ def upgrade() -> None:
     if set(_CACHE_COLUMNS).issubset(columns):
         # Legacy create_all databases already contain the current model.
         _install_audio_triggers()
+        _install_legacy_source_cache_immutability()
         return
     if set(_CACHE_COLUMNS) & columns:
         raise RuntimeError(
@@ -208,13 +267,23 @@ def upgrade() -> None:
         ["kind", "status", "expires_at"],
         unique=False,
     )
-    op.create_index(
-        "ix_podcast_processings_input_status",
-        "podcast_processings",
-        ["input_artifact_id", "processing_status"],
-        unique=False,
-    )
+    # A versionless database may have been created from a newer SQLModel
+    # metadata snapshot.  In that adoption path this durable processing index
+    # already exists even though the retired cache columns do not; replaying
+    # this historical migration must not fail on the duplicate name.
+    processing_indexes = {
+        index["name"]
+        for index in sa.inspect(bind).get_indexes("podcast_processings")
+    }
+    if "ix_podcast_processings_input_status" not in processing_indexes:
+        op.create_index(
+            "ix_podcast_processings_input_status",
+            "podcast_processings",
+            ["input_artifact_id", "processing_status"],
+            unique=False,
+        )
     _install_audio_triggers()
+    _install_legacy_source_cache_immutability()
 
 
 def downgrade() -> None:
@@ -267,4 +336,4 @@ def downgrade() -> None:
         batch.drop_column("expired_at")
         batch.drop_column("expires_at")
         batch.drop_column("source_locator_hash")
-    _install_audio_triggers(include_source_cache_fields=False)
+    _install_audio_triggers()

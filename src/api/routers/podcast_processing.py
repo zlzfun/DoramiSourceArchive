@@ -46,6 +46,14 @@ class PodcastRetryRequest(BaseModel):
     reason: Reason
 
 
+class PodcastReconcileRequest(BaseModel):
+    idempotency_key: IdempotencyKey
+    expected_attempt_count: int = Field(ge=0)
+    reason: Reason
+    outcome: Literal["submitted", "not_submitted"] | None = None
+    provider_task_id: str | None = None
+
+
 def _response(record, *, status_code: int = 200) -> JSONResponse:
     return JSONResponse(
         admin.serialize_processing(record),
@@ -115,6 +123,30 @@ def retry_processing(
             expected_attempt_count=body.expected_attempt_count,
             reason=body.reason,
             actor=_actor(auth),
+        )
+        return _response(record, status_code=202)
+    except admin.PodcastAdminError as exc:
+        return _error(exc)
+
+
+@router.post("/podcast-processings/{processing_id}/reconcile", status_code=202)
+def reconcile_processing(
+    processing_id: str,
+    body: PodcastReconcileRequest,
+    auth: dict[str, Any] = Depends(deps.require_collector),
+):
+    app = _app()
+    try:
+        record = admin.reconcile_processing(
+            app.db_sink.engine,
+            app.settings.podcast,
+            processing_id=processing_id,
+            idempotency_key=body.idempotency_key,
+            expected_attempt_count=body.expected_attempt_count,
+            reason=body.reason,
+            actor=_actor(auth),
+            outcome=body.outcome,
+            provider_task_id=body.provider_task_id,
         )
         return _response(record, status_code=202)
     except admin.PodcastAdminError as exc:

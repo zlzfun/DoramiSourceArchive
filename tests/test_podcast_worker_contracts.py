@@ -49,7 +49,7 @@ def _artifact(**updates):
     values = {
         "artifact_id": "artifact-1",
         "episode_id": "episode-1",
-        "kind": "source_audio",
+        "kind": "source_media_snapshot",
         "content_hash": SHA,
         "size_bytes": 123,
         "mime_type": "audio/mpeg",
@@ -185,9 +185,13 @@ def test_execution_identity_factory_and_direct_constructor_are_strict():
 
 
 def test_artifact_ref_normalizes_safe_fields_and_is_frozen():
-    artifact = _artifact(kind="SOURCE_AUDIO", content_hash=SHA.upper(), mime_type="Audio/MPEG")
+    artifact = _artifact(
+        kind="SOURCE_MEDIA_SNAPSHOT",
+        content_hash=SHA.upper(),
+        mime_type="Audio/MPEG",
+    )
 
-    assert artifact.kind == "source_audio"
+    assert artifact.kind == "source_media_snapshot"
     assert artifact.content_hash == SHA
     assert artifact.mime_type == "audio/mpeg"
     with pytest.raises(dataclasses.FrozenInstanceError):
@@ -384,4 +388,33 @@ def test_poll_outcomes_capture_pending_success_failure_and_indeterminate():
                 retry_after_seconds=None,
             ),
             5,
+        )
+
+
+def test_task_failed_unused_reservation_requires_terminal_zero_usage():
+    terminal = _failure(
+        FailureKind.TERMINAL,
+        retryable=False,
+        retry_after_seconds=None,
+    )
+    outcome = TaskFailed(
+        "provider-task-1",
+        terminal,
+        release_unused_reservation=True,
+    )
+    assert outcome.usage == NormalizedUsage()
+    assert outcome.release_unused_reservation is True
+
+    with pytest.raises(ValueError, match="terminal failure"):
+        TaskFailed(
+            "provider-task-1",
+            _failure(),
+            release_unused_reservation=True,
+        )
+    with pytest.raises(ValueError, match="zero normalized usage"):
+        TaskFailed(
+            "provider-task-1",
+            terminal,
+            NormalizedUsage(audio_duration_ms=1),
+            release_unused_reservation=True,
         )

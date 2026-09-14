@@ -21,27 +21,29 @@ from config import PodcastConfig
 from models.db import (
     ArticleAnalysisRecord,
     ArticleRecord,
-    PodcastArtifactRecord,
     PodcastBudgetReservationRecord,
     PodcastCostLedgerRecord,
     PodcastProcessingCommandRecord,
     PodcastProcessingRecord,
+    PodcastSourceMediaSnapshotRecord,
     PodcastStageAttemptRecord,
     PodcastTextArtifactRecord,
     PodcastTextPublicationRecord,
 )
-from services.podcast_artifacts import PodcastArtifactStore
+from services import podcast_premium
 from services.podcast_processing import (
     ACTIVE_ATTEMPT_STATES,
     PodcastProcessingConflict,
     _evaluate_full_analysis_authority,
     _evaluate_processing_eligibility,
     enqueue_processing,
+    reconcile_parked_provider_request,
 )
 from services.podcast_processing_inputs import (
     processing_input_fingerprint,
-    source_audio_duration_ms,
+    source_media_duration_ms,
 )
+from services.podcast_source_media import SourceMediaError, enclosure_snapshot
 from services.podcast_stage_policy import PodcastStageDenied, PodcastStagePolicy
 from services.podcast_publisher_transcripts import (
     publisher_artifact_matches_current_locator,
@@ -53,6 +55,7 @@ ERROR_MESSAGES: Mapping[str, str] = {
     "podcast_selection_required": "当前没有已持久化候选结论，需要显式人工选择",
     "podcast_artifact_not_ready": "没有可用于处理的本地就绪音频或当前已发布文本",
     "podcast_provider_unavailable": "Podcast 处理能力尚未完成逻辑配置",
+    "podcast_source_media_too_long": "Podcast 单集音频超过 ASR 单任务时长上限",
     "podcast_budget_exceeded": "Podcast CNY 预算不足",
     "podcast_processing_conflict": "Podcast 处理命令与当前状态冲突",
     "podcast_input_changed": "Podcast 处理输入已变化，请重新发起请求",
@@ -278,6 +281,8 @@ class PodcastProcessingProviderRegistry:
                 value = worker_estimator(
                     session, dict(input_metadata), podcast_config
                 )
+            except PodcastAdminError:
+                raise
             except Exception as exc:
                 raise PodcastAdminError(
                     "podcast_provider_unavailable", status_code=503
@@ -453,7 +458,6 @@ def require_full_analysis_authority(
 
 def _select_external_input(
     session: Session,
-    store: PodcastArtifactStore,
     *,
     episode_id: str,
     target: str,
@@ -508,39 +512,39 @@ def _select_external_input(
                     else "translate"
                 )
                 return SelectedInput(stage, artifact.id, artifact.content_hash, kind, artifact.language)
-    audio_statement = (
-        select(PodcastArtifactRecord)
+    episode = session.get(ArticleRecord, episode_id)
+    try:
+        locator_hash = enclosure_snapshot(episode).locator_hash if episode else ""
+    except SourceMediaError:
+        locator_hash = ""
+    snapshot_statement = (
+        select(PodcastSourceMediaSnapshotRecord)
         .where(
-            PodcastArtifactRecord.episode_id == episode_id,
-            PodcastArtifactRecord.kind == "source_audio",
-            PodcastArtifactRecord.status == "ready",
-            PodcastArtifactRecord.expires_at
-            > dt.datetime.now(dt.timezone.utc).isoformat(timespec="microseconds"),
+            PodcastSourceMediaSnapshotRecord.episode_id == episode_id,
+            PodcastSourceMediaSnapshotRecord.locator_hash == locator_hash,
         )
         .order_by(
-            PodcastArtifactRecord.created_at.desc(),
-            PodcastArtifactRecord.id.desc(),
+            PodcastSourceMediaSnapshotRecord.created_at.desc(),
+            PodcastSourceMediaSnapshotRecord.id.desc(),
         )
     )
     if session.get_bind().dialect.name == "postgresql":
-        audio_statement = audio_statement.with_for_update()
-    audio_rows = list(session.exec(audio_statement).all())
-    for artifact in audio_rows:
-        if store.is_intact(artifact):
-            return SelectedInput(
-                "asr",
-                artifact.id,
-                artifact.content_hash,
-                artifact.kind,
-                "und",
-                source_audio_duration_ms(artifact.duration_seconds),
-            )
+        snapshot_statement = snapshot_statement.with_for_update()
+    snapshot = session.exec(snapshot_statement).first()
+    if snapshot is not None:
+        return SelectedInput(
+            "asr",
+            snapshot.id,
+            snapshot.content_hash,
+            "source_media_snapshot",
+            "und",
+            source_media_duration_ms(snapshot.duration_seconds),
+        )
     raise PodcastAdminError("podcast_artifact_not_ready", status_code=409)
 
 
 def select_full_analysis_input(
     engine: Engine,
-    store: PodcastArtifactStore,
     *,
     episode_id: str,
 ) -> SelectedInput:
@@ -548,7 +552,7 @@ def select_full_analysis_input(
 
     with Session(engine) as session:
         return _select_external_input(
-            session, store, episode_id=episode_id, target="full_analysis"
+            session, episode_id=episode_id, target="full_analysis"
         )
 
 
@@ -769,7 +773,6 @@ def _enqueue_locked(
 
 def request_processing(
     engine: Engine,
-    store: PodcastArtifactStore,
     registry: PodcastProcessingProviderRegistry,
     config: PodcastConfig,
     *,
@@ -809,7 +812,7 @@ def request_processing(
                 return replay
             _require_runtime(config, registry, target)
             require_full_analysis_llm(session, target)
-            selected = _select_external_input(session, store, episode_id=episode_id, target=target)
+            selected = _select_external_input(session, episode_id=episode_id, target=target)
             selection_source = "editor" if selection_override else "policy"
             if not selection_override:
                 analysis = session.get(ArticleAnalysisRecord, episode_id)
@@ -818,7 +821,8 @@ def request_processing(
                     and analysis.status == "succeeded"
                     and analysis.analysis_basis == "podcast_show_notes"
                     and analysis.quality_score is not None
-                    and float(analysis.quality_score) >= 5.0
+                    and float(analysis.quality_score)
+                    >= podcast_premium.INITIAL_PROCESSING_THRESHOLD
                 )
                 transcript_refresh = bool(
                     analysis is not None
@@ -1063,6 +1067,142 @@ def retry_processing(
         except IntegrityError as exc:
             session.rollback()
             raise PodcastAdminError("podcast_processing_conflict", status_code=409) from exc
+
+
+def reconcile_processing(
+    engine: Engine,
+    config: PodcastConfig,
+    *,
+    processing_id: str,
+    idempotency_key: str,
+    expected_attempt_count: int,
+    reason: str,
+    actor: str,
+    outcome: Optional[str] = None,
+    provider_task_id: Optional[str] = None,
+) -> PodcastProcessingRecord:
+    with Session(engine) as session:
+        try:
+            _begin_locked(session, engine, f"reconcile:{processing_id}")
+            statement = select(PodcastProcessingRecord).where(
+                PodcastProcessingRecord.id == processing_id
+            )
+            if engine.dialect.name == "postgresql":
+                statement = statement.with_for_update()
+            record = session.exec(statement).first()
+            if record is None:
+                raise PodcastAdminError("podcast_not_found", status_code=404)
+
+            existing = session.exec(
+                select(PodcastProcessingCommandRecord).where(
+                    PodcastProcessingCommandRecord.processing_id == processing_id,
+                    PodcastProcessingCommandRecord.command_type == "provider_reconcile",
+                    PodcastProcessingCommandRecord.idempotency_key == idempotency_key,
+                )
+            ).first()
+            if existing is not None:
+                if (
+                    existing.expected_attempt_count != expected_attempt_count
+                    or existing.requested_by != actor
+                ):
+                    raise PodcastAdminError(
+                        "podcast_processing_conflict", status_code=409
+                    )
+                if existing.outcome == "rejected":
+                    raise PodcastAdminError(
+                        existing.error_code or "podcast_processing_conflict",
+                        status_code=_status_for_code(
+                            existing.error_code or "podcast_processing_conflict"
+                        ),
+                        processing_id=processing_id,
+                        message=existing.error_message,
+                    )
+                session.expunge(record)
+                session.commit()
+                return record
+
+            if record.processing_status != "reconciliation_required":
+                raise PodcastAdminError(
+                    "podcast_processing_conflict",
+                    status_code=409,
+                    processing_id=processing_id,
+                    message="任务未处于等待对账恢复状态",
+                )
+            if record.attempt_count != expected_attempt_count:
+                raise PodcastAdminError(
+                    "podcast_processing_conflict",
+                    status_code=409,
+                    processing_id=processing_id,
+                    message="processing attempt count changed before reconciliation",
+                )
+
+            active_attempt = session.exec(
+                select(PodcastStageAttemptRecord)
+                .where(
+                    PodcastStageAttemptRecord.processing_id == processing_id,
+                    PodcastStageAttemptRecord.submission_state == "reconciling",
+                )
+                .order_by(PodcastStageAttemptRecord.attempt_no.desc())
+            ).first()
+            if active_attempt is None:
+                raise PodcastAdminError(
+                    "podcast_processing_conflict",
+                    status_code=409,
+                    processing_id=processing_id,
+                    message="未找到处于待对账状态的 attempt",
+                )
+
+            target_outcome = (outcome or "").strip().lower()
+            if not target_outcome:
+                target_outcome = (
+                    "submitted" if active_attempt.provider_task_id else "not_submitted"
+                )
+
+            resolved_task_id = (
+                provider_task_id or active_attempt.provider_task_id or ""
+            ).strip()
+            fencing_token = record.fencing_token
+            provider_request_key = active_attempt.provider_request_key
+            attempt_id = active_attempt.id
+
+            session.rollback()
+
+            now = dt.datetime.now(dt.timezone.utc)
+            retry_at = now + dt.timedelta(seconds=5)
+            resumed = reconcile_parked_provider_request(
+                session,
+                processing_id=processing_id,
+                attempt_id=attempt_id,
+                expected_attempt_count=expected_attempt_count,
+                expected_fencing_token=fencing_token,
+                expected_provider_request_key=provider_request_key,
+                outcome=target_outcome,
+                retry_at=retry_at,
+                idempotency_key=idempotency_key,
+                actor=actor,
+                reason=reason,
+                provider_task_id=resolved_task_id if target_outcome == "submitted" else None,
+                now=now,
+            )
+            return resumed
+        except PodcastAdminError:
+            if session.in_transaction():
+                session.rollback()
+            raise
+        except PodcastProcessingConflict as exc:
+            if session.in_transaction():
+                session.rollback()
+            raise PodcastAdminError(
+                "podcast_processing_conflict",
+                status_code=409,
+                processing_id=processing_id,
+                message=str(exc),
+            ) from exc
+        except IntegrityError as exc:
+            session.rollback()
+            raise PodcastAdminError(
+                "podcast_processing_conflict", status_code=409
+            ) from exc
 
 
 def serialize_processing(record: PodcastProcessingRecord) -> dict[str, Any]:

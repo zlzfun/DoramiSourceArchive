@@ -35,6 +35,40 @@ for (const status of ['failed', 'not_required', 'retry_wait']) {
   });
 }
 
+test('reconciliation_required full analysis reconciles the existing processing', () => {
+  assert.deepEqual(podcastFullAnalysisCommand('episode', {
+    id: 'processing/old', processing_status: 'reconciliation_required', attempt_count: 3,
+  }, 'reconcile-key-123'), {
+    path: '/admin/podcast-processings/processing%2Fold/reconcile',
+    body: {
+      expected_attempt_count: 3,
+      reason: '管理员核对并重试全文处理',
+      idempotency_key: 'reconcile-key-123',
+      outcome: 'submitted',
+    },
+  });
+
+  assert.equal(
+    podcastFullAnalysisCommand('episode', {
+      id: 'processing/old',
+      processing_status: 'reconciliation_required',
+      stage: 'asr',
+      attempt_count: 1,
+    }, 'reconcile-key-123').body.reason,
+    '管理员核对并重试 ASR 转录',
+  );
+
+  assert.equal(
+    podcastFullAnalysisCommand('episode', {
+      id: 'processing/old',
+      processing_status: 'failed',
+      stage: 'asr',
+      attempt_count: 1,
+    }, 'retry-key-123').body.reason,
+    '管理员重试 ASR 转录',
+  );
+});
+
 test('a first request creates full analysis and a zero-attempt failure can retry', () => {
   assert.deepEqual(podcastFullAnalysisCommand('episode/new', {}, 'create-key-123'), {
     path: '/admin/podcast-episodes/episode%2Fnew/process',

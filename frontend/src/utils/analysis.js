@@ -125,7 +125,7 @@ export function podcastAssessmentMeta(article) {
 
 /**
  * Issue #44 的读者态投影。后端只给事实字段，文案与视觉 tone 由前端统一解释。
- * 返回 null 表示仍是普通「简介初评」或旧版单人速览状态，调用方应保留原显示。
+ * 返回 null 表示仍是普通「简介初评」或旧版精品导读状态，调用方应保留原显示。
  */
 export function podcastFullProcessingMeta(article) {
   if (article?.content_type !== 'podcast_episode') return null;
@@ -175,28 +175,43 @@ export function podcastFullProcessingMeta(article) {
     return result('全文评分完成', 'ok', sourceDetail);
   }
 
+  const isAsrStage = stage === 'asr' || stage === 'fetch';
+  const isAnalyzeStage = stage === 'analyze';
+
   if (status === 'failed') {
     const retryHint = retryable ? '，可重试' : '';
+    const label = isAsrStage ? 'ASR 转录失败' : (isAnalyzeStage ? '全文分析失败' : '全文处理失败');
+    const defaultDetail = isAsrStage
+      ? `ASR 语音转录未完成${retryHint}，请稍后重试 ASR`
+      : (isAnalyzeStage ? `全文分析未完成${retryHint}，请稍后再试` : `全文处理未完成${retryHint}，请稍后再试`);
     return result(
-      '全文处理失败',
+      label,
       'bad',
-      error ? `${error}${retryHint}` : `全文处理未完成${retryHint}，请稍后再试`,
+      error ? `${isAsrStage ? 'ASR 转录失败：' : ''}${error}${retryHint}` : defaultDetail,
     );
   }
 
   if (status === 'retry_wait') {
+    const label = isAsrStage ? 'ASR 等待重试' : (isAnalyzeStage ? '全文分析等待重试' : '全文处理等待重试');
+    const defaultDetail = isAsrStage
+      ? 'ASR 转录暂未完成，系统将自动重试 ASR'
+      : (isAnalyzeStage ? '全文分析暂未完成，系统将自动重试' : '暂未完成，系统将自动重试');
     return result(
-      '全文处理等待重试',
+      label,
       'warn',
-      error ? `${error}，系统将重试` : '暂未完成，系统将自动重试',
+      error ? `${isAsrStage ? 'ASR 转录异常：' : ''}${error}，系统将重试${isAsrStage ? ' ASR' : ''}` : defaultDetail,
     );
   }
 
   if (status === 'reconciliation_required') {
+    const label = isAsrStage ? 'ASR 待对账恢复' : (isAnalyzeStage ? '全文分析待对账恢复' : '全文处理恢复中…');
+    const defaultDetail = isAsrStage
+      ? '正在确认 ASR 云端转录结果，确认后将重试 ASR'
+      : '正在确认上次处理结果，确认后将继续';
     return result(
-      '全文处理恢复中…',
+      label,
       'warn',
-      error || '正在确认上次处理结果，确认后将继续',
+      error ? `${isAsrStage ? 'ASR 待对账：' : ''}${error}（确认后重试 ASR）` : defaultDetail,
     );
   }
 
@@ -253,6 +268,38 @@ export function podcastFullProcessingMeta(article) {
   }
 
   return result('全文处理状态待确认', 'idle', error);
+}
+
+/** 管理台账使用的端到端播客状态：TTS 阶段优先，否则沿用全文处理投影。 */
+export function podcastLedgerProcessingMeta(article) {
+  if (article?.content_type !== 'podcast_episode') return null;
+  const podcast = podcastProjection(article);
+  const guide = podcast.premium_guide && typeof podcast.premium_guide === 'object'
+    ? podcast.premium_guide
+    : {};
+  const status = String(guide.status || '').trim().toLowerCase();
+  const failedStage = String(guide.failed_stage || '').trim().toLowerCase();
+  const error = String(guide.error || '').trim();
+  const result = (label, tone, detail = '') => ({ label, tone, detail });
+
+  if (status === 'synthesizing') {
+    return result('TTS 合成中…', 'run', '全文分析已完成，正在生成精品导读音频');
+  }
+  if (status === 'summarizing') {
+    return result('精品导读生成中…', 'run', '正在根据完整逐字稿生成精品导读与口播稿');
+  }
+  if (status === 'failed') {
+    const ttsFailed = failedStage === 'synthesizing';
+    return result(
+      ttsFailed ? 'TTS 合成失败' : '精品导读生成失败',
+      'bad',
+      `${error || (ttsFailed ? '语音合成未完成' : '精品导读未生成')}；可在播客任务中重试`,
+    );
+  }
+  if (status === 'ready' && (guide.audio_ready || podcast.condensed_audio_url)) {
+    return result('TTS 音频已就绪', 'ok', '精品导读音频已发布');
+  }
+  return podcastFullProcessingMeta(article);
 }
 
 /** 已落库分析不依赖本部署是否配置 LLM；aiEnabled 只决定能否现场生成。 */

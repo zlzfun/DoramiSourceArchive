@@ -16,6 +16,7 @@ ACCOUNTING_ENV = {
     "DORAMI_ALIYUN_ISI_ASR_QUOTA_SCOPE": "asr-trial",
     "DORAMI_ALIYUN_ISI_ASR_QUOTA_TIMEZONE": "Asia/Shanghai",
     "DORAMI_ALIYUN_ISI_ASR_DAILY_AUDIO_SECONDS_LIMIT": "7200",
+    "DORAMI_ALIYUN_ISI_ASR_MAX_AUDIO_SECONDS_PER_FILE": "36000",
     "DORAMI_ALIYUN_ISI_ASR_ENTITLEMENT_ENDS_AT": "2026-12-06T00:00:00+08:00",
     "DORAMI_ALIYUN_ISI_ASR_PROVIDER_DEADLINE_SECONDS": "7100",
     "DORAMI_ALIYUN_ISI_ASR_PRICE_CNY_MINOR_PER_HOUR": "125",
@@ -85,6 +86,7 @@ def test_loads_all_provider_accounting_environment_overrides(monkeypatch):
     assert loaded.asr_quota_scope == "asr-trial"
     assert loaded.asr_quota_timezone == "Asia/Shanghai"
     assert loaded.asr_daily_audio_seconds_limit == 7_200
+    assert loaded.asr_max_audio_seconds_per_file == 36_000
     assert loaded.asr_entitlement_ends_at == "2026-12-06T00:00:00+08:00"
     assert loaded.asr_provider_deadline_seconds == 7_100
     assert loaded.asr_price_cny_minor_per_hour == 125
@@ -112,6 +114,7 @@ def test_loads_all_provider_accounting_ini_values(tmp_path, monkeypatch):
 asr_quota_scope = ini-asr-trial
 asr_quota_timezone = Asia/Shanghai
 asr_daily_audio_seconds_limit = 7199
+asr_max_audio_seconds_per_file = 35999
 asr_entitlement_ends_at = 2026-12-05T23:59:59+08:00
 asr_provider_deadline_seconds = 7000
 asr_price_cny_minor_per_hour = 124
@@ -135,6 +138,7 @@ tts_usage_settlement_mode = submitted_characters
     assert loaded.asr_quota_scope == "ini-asr-trial"
     assert loaded.asr_quota_timezone == "Asia/Shanghai"
     assert loaded.asr_daily_audio_seconds_limit == 7_199
+    assert loaded.asr_max_audio_seconds_per_file == 35_999
     assert loaded.asr_entitlement_ends_at == "2026-12-05T23:59:59+08:00"
     assert loaded.asr_provider_deadline_seconds == 7_000
     assert loaded.asr_price_cny_minor_per_hour == 124
@@ -171,6 +175,10 @@ def test_rejects_insecure_endpoint_and_invalid_intervals():
         config.AliyunIsiConfig(tts_device_id="contains spaces")
     with pytest.raises(ValueError, match="tts_max_chars"):
         config.AliyunIsiConfig(tts_max_chars=100001)
+    with pytest.raises(ValueError, match="asr_max_audio_seconds_per_file"):
+        config.AliyunIsiConfig(asr_max_audio_seconds_per_file=0)
+    with pytest.raises(ValueError, match="asr_max_audio_seconds_per_file"):
+        config.AliyunIsiConfig(asr_max_audio_seconds_per_file=43_201)
     with pytest.raises(ValueError, match="host suffixes"):
         config.AliyunIsiConfig(tts_result_allowed_host_suffixes=("bad_suffix",))
     with pytest.raises(ValueError, match="host suffixes"):
@@ -183,6 +191,10 @@ def test_rejects_insecure_endpoint_and_invalid_intervals():
 
 def test_tts_usage_settlement_defaults_to_manual():
     assert config.AliyunIsiConfig().tts_usage_settlement_mode == "manual"
+
+
+def test_asr_single_audio_limit_defaults_to_twelve_hours():
+    assert config.AliyunIsiConfig().asr_max_audio_seconds_per_file == 12 * 60 * 60
 
 
 def test_compose_empty_asr_switches_keep_enabled_defaults(monkeypatch):

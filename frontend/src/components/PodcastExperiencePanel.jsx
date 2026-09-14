@@ -23,7 +23,10 @@ function PodcastExperience({ article, variant: controlledVariant, onVariantChang
   if (!podcast) return null;
 
   const variant = controlledVariant ?? localVariant;
-  const guideVisible = variant === 'digest' && Boolean(podcast.condensed_audio_url);
+  const hasGuideAudio = Boolean(podcast.condensed_audio_url);
+  const hasGuideBlog = Boolean(podcast.premium_guide?.blog_ready || podcast.premium_guide?.status === 'ready');
+  const isBlogOnlyGuide = hasGuideBlog && !hasGuideAudio;
+  const guideVisible = isBlogOnlyGuide || (variant === 'digest' && hasGuideAudio);
   const handleVariantChange = (nextVariant) => {
     if (controlledVariant === undefined) setLocalVariant(nextVariant);
     onVariantChange?.(nextVariant);
@@ -36,7 +39,13 @@ function PodcastExperience({ article, variant: controlledVariant, onVariantChang
         variant={variant}
         onVariantChange={handleVariantChange}
       />
-      {guideVisible && <PodcastTextPanel episodeId={article.id} />}
+      {guideVisible && (
+        <PodcastTextPanel
+          episodeId={article.id}
+          showDigest
+          hiddenTranscriptKinds={['publisher_transcript']}
+        />
+      )}
     </div>
   );
 }

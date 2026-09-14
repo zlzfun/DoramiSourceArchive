@@ -25,6 +25,7 @@ from models.db import (  # noqa: E402
     PodcastCostLedgerRecord,
     PodcastProcessingCommandRecord,
     PodcastProcessingRecord,
+    PodcastSourceMediaSnapshotRecord,
     PodcastStageAttemptRecord,
     PodcastTextArtifactRecord,
     PodcastTextPublicationRecord,
@@ -75,6 +76,7 @@ from services.podcast_normalized_transcripts import (  # noqa: E402
     canonical_normalized_transcript,
     materialize_normalized_transcript,
 )
+from services.podcast_text_reader import read_episode_texts  # noqa: E402
 from storage.impl.db_storage import DatabaseStorage  # noqa: E402
 
 
@@ -150,35 +152,27 @@ def engine(tmp_path):
             )
         )
         session.add(
-            PodcastArtifactRecord(
-                id="source-audio-1",
+            PodcastSourceMediaSnapshotRecord(
+                id="source-media-1",
                 episode_id="episode-1",
-                kind="source_audio",
                 content_hash="a" * 64,
                 mime="audio/mpeg",
-                ext="mp3",
                 size_bytes=1024,
                 duration_seconds=60,
-                status="ready",
-                expires_at="2099-01-01T00:00:00.000000+00:00",
+                locator_hash="1" * 64,
                 created_at=stamp,
-                updated_at=stamp,
             )
         )
         session.add(
-            PodcastArtifactRecord(
-                id="source-audio-2",
+            PodcastSourceMediaSnapshotRecord(
+                id="source-media-2",
                 episode_id="episode-2",
-                kind="source_audio",
                 content_hash="b" * 64,
                 mime="audio/mpeg",
-                ext="mp3",
                 size_bytes=1024,
                 duration_seconds=60,
-                status="ready",
-                expires_at="2099-01-01T00:00:00.000000+00:00",
+                locator_hash="2" * 64,
                 created_at=stamp,
-                updated_at=stamp,
             )
         )
         session.commit()
@@ -198,8 +192,8 @@ def _enqueue(session: Session, policy: RecordingPolicy, **overrides):
         "requested_target": "digest_blog",
         "idempotency_key": "process:episode-1:v1",
         "estimated_cost_minor": 80,
-        "input_artifact_id": "source-audio-1",
-        "input_artifact_kind": "source_audio",
+        "input_artifact_id": "source-media-1",
+        "input_artifact_kind": "source_media_snapshot",
         "input_content_hash": "a" * 64,
         "input_language": "und",
         "budget_scope": "podcast-paid-processing",
@@ -211,7 +205,7 @@ def _enqueue(session: Session, policy: RecordingPolicy, **overrides):
     }
     values.update(overrides)
     if values["episode_id"] == "episode-2" and "input_artifact_id" not in overrides:
-        values["input_artifact_id"] = "source-audio-2"
+        values["input_artifact_id"] = "source-media-2"
         values["input_content_hash"] = "b" * 64
     return enqueue_processing(session, **values)
 
@@ -544,20 +538,41 @@ def test_materialize_normalized_transcript_binds_attempt_and_exact_replay(engine
 
         persisted_attempt = session.get(PodcastStageAttemptRecord, attempt.id)
         persisted_artifact = session.get(PodcastTextArtifactRecord, artifact.id)
+        publication = session.get(
+            PodcastTextPublicationRecord, "episode-1:normalized_transcript"
+        )
         assert persisted_attempt is not None and persisted_artifact is not None
+        assert publication is not None
+        assert publication.artifact_id == artifact.id
+        assert publication.status == "published"
+        assert publication.authority_id == ""
         assert persisted_attempt.settings_fingerprint == "f" * 64
         assert persisted_attempt.output_hash == artifact.content_hash
         assert persisted_attempt.output_artifact_id == artifact.id
         assert persisted_attempt.output_artifact_kind == "normalized_transcript"
         assert persisted_artifact.processing_id == claim.processing_id
         assert persisted_artifact.producing_attempt_id == attempt.id
-        assert persisted_artifact.source_artifact_id == "source-audio-1"
+        assert persisted_artifact.source_artifact_id == "source-media-1"
         assert persisted_artifact.source_content_hash == "a" * 64
         assert "provider-task-normalized" not in persisted_artifact.provenance_json
         assert (
             json.loads(persisted_artifact.provenance_json)["provider_task_id_ref"]
             == hashlib.sha256(b"provider-task-normalized").hexdigest()[:12]
         )
+        session.rollback()
+        reader_result = read_episode_texts(
+            session,
+            episode_id="episode-1",
+            username="admin",
+            config=policy.config,
+            cursor_secret="test-reader-cursor-secret",
+        )
+        normalized_item = next(
+            item
+            for item in reader_result["items"]
+            if item["kind"] == "normalized_transcript"
+        )
+        assert normalized_item["text"] == NORMALIZED_TRANSCRIPT["text"]
         session.rollback()
         with pytest.raises(IntegrityError):
             session.exec(
@@ -570,25 +585,113 @@ def test_materialize_normalized_transcript_binds_attempt_and_exact_replay(engine
         session.rollback()
 
 
-def test_materialized_transcript_exact_replay_survives_source_ttl(engine):
+def test_materialize_normalized_transcript_replay_repairs_missing_publication(engine):
+    policy = RecordingPolicy({"asr"})
+    with Session(engine) as session:
+        claim, attempt = _submitted_asr_attempt(session, policy)
+        artifact = materialize_normalized_transcript(
+            session,
+            claim,
+            attempt_id=attempt.id,
+            document=NORMALIZED_TRANSCRIPT,
+            policy=policy,
+            now=NOW + dt.timedelta(seconds=3),
+        )
+        publication = session.get(
+            PodcastTextPublicationRecord, "episode-1:normalized_transcript"
+        )
+        assert publication is not None
+        session.delete(publication)
+        session.commit()
+
+        replay = materialize_normalized_transcript(
+            session,
+            claim,
+            attempt_id=attempt.id,
+            document=NORMALIZED_TRANSCRIPT,
+            policy=policy,
+            now=NOW + dt.timedelta(seconds=4),
+        )
+
+        repaired = session.get(
+            PodcastTextPublicationRecord, "episode-1:normalized_transcript"
+        )
+        assert replay.id == artifact.id
+        assert repaired is not None
+        assert repaired.artifact_id == artifact.id
+        assert repaired.status == "published"
+
+
+def test_materialize_normalized_transcript_refuses_remote_authority_slot(engine):
+    policy = RecordingPolicy({"asr"})
+    remote_text = canonical_normalized_transcript(NORMALIZED_TRANSCRIPT)
+    remote_hash = hashlib.sha256(remote_text.encode("utf-8")).hexdigest()
+    stamp = NOW.isoformat(timespec="microseconds")
+    with Session(engine) as session:
+        session.add(
+            PodcastTextArtifactRecord(
+                id="remote-normalized-transcript",
+                episode_id="episode-1",
+                kind="normalized_transcript",
+                version=1,
+                content_hash=remote_hash,
+                inline_text=remote_text,
+                language="zh-cn",
+                authority_id="remote-podcast-authority",
+                provenance_json='{"source":"archive-sync"}',
+                created_at=stamp,
+            )
+        )
+        session.add(
+            PodcastTextPublicationRecord(
+                identity="episode-1:normalized_transcript",
+                episode_id="episode-1",
+                kind="normalized_transcript",
+                artifact_id="remote-normalized-transcript",
+                status="published",
+                authority_id="remote-podcast-authority",
+                published_at=stamp,
+                updated_at=stamp,
+            )
+        )
+        session.commit()
+        claim, attempt = _submitted_asr_attempt(session, policy)
+
+        with pytest.raises(NormalizedTranscriptConflict, match="remote authority"):
+            materialize_normalized_transcript(
+                session,
+                claim,
+                attempt_id=attempt.id,
+                document=NORMALIZED_TRANSCRIPT,
+                policy=policy,
+                now=NOW + dt.timedelta(seconds=3),
+            )
+
+        publication = session.get(
+            PodcastTextPublicationRecord, "episode-1:normalized_transcript"
+        )
+        assert publication is not None
+        assert publication.artifact_id == "remote-normalized-transcript"
+        assert session.exec(
+            select(PodcastTextArtifactRecord).where(
+                PodcastTextArtifactRecord.producing_attempt_id == attempt.id
+            )
+        ).first() is None
+
+
+def test_materialized_transcript_exact_replay_survives_snapshot_reuse(engine):
     policy = RecordingPolicy({"asr"})
     with Session(engine) as session:
         session.add(
-            PodcastArtifactRecord(
-                id="source-audio-short-ttl",
+            PodcastSourceMediaSnapshotRecord(
+                id="source-media-replay",
                 episode_id="episode-1",
-                kind="source_audio",
                 content_hash="e" * 64,
                 mime="audio/mpeg",
-                ext="mp3",
                 size_bytes=1024,
                 duration_seconds=60,
-                status="ready",
-                expires_at=(NOW + dt.timedelta(seconds=3, milliseconds=500)).isoformat(
-                    timespec="microseconds"
-                ),
+                locator_hash="e" * 64,
                 created_at=NOW.isoformat(timespec="microseconds"),
-                updated_at=NOW.isoformat(timespec="microseconds"),
             )
         )
         session.commit()
@@ -598,7 +701,7 @@ def test_materialized_transcript_exact_replay_survives_source_ttl(engine):
             requested_target="transcript",
             input_fingerprint=deterministic_input_fingerprint("short-ttl"),
             idempotency_key="process:short-ttl",
-            input_artifact_id="source-audio-short-ttl",
+            input_artifact_id="source-media-replay",
             input_content_hash="e" * 64,
         )
         claim = claim_next_processing(
@@ -829,17 +932,17 @@ def test_external_asr_export_gate_has_fail_closed_source_semantics(engine):
             session,
             platform_episode,
             stage="asr",
-            input_artifact_kind="source_audio",
+            input_artifact_kind="source_media_snapshot",
         ) == ("eligible", [])
         eligibility, reasons = _evaluate_external_asr_export(
             session,
             orphan_episode,
             stage="asr",
-            input_artifact_kind="source_audio",
+            input_artifact_kind="source_media_snapshot",
         )
         assert eligibility == "blocked_rights"
         assert reasons == [
-            "Podcast source audio may not leave this deployment for external ASR"
+            "Podcast publisher media may not leave this deployment for external ASR"
         ]
 
 
@@ -858,7 +961,7 @@ def test_credentialed_source_is_persisted_blocked_before_asr_enqueue(engine):
         assert secret not in process.error_message
 
 
-def test_external_asr_gate_does_not_block_local_cache_or_non_asr_paths(engine):
+def test_external_asr_gate_does_not_block_local_validation_or_non_asr_paths(engine):
     policy = RecordingPolicy({"translate", "tts"})
     with Session(engine) as session:
         _mark_source_credentialed(session)
@@ -868,7 +971,7 @@ def test_external_asr_gate_does_not_block_local_cache_or_non_asr_paths(engine):
             session,
             episode,
             stage="fetch",
-            input_artifact_kind="source_audio",
+            input_artifact_kind="source_media_snapshot",
         ) == ("eligible", [])
         assert _evaluate_external_asr_export(
             session,
@@ -880,7 +983,7 @@ def test_external_asr_gate_does_not_block_local_cache_or_non_asr_paths(engine):
             session,
             episode,
             stage="tts",
-            input_artifact_kind="source_audio",
+            input_artifact_kind="source_media_snapshot",
         ) == ("eligible", [])
         session.rollback()
 
@@ -947,7 +1050,7 @@ def test_begin_reclassifies_running_asr_when_source_becomes_credentialed(engine)
         assert session.exec(select(func.count(PodcastStageAttemptRecord.id))).one() == 0
 
 
-def test_queued_source_audio_remains_pinned_after_cache_ttl(engine, monkeypatch):
+def test_queued_source_media_snapshot_remains_claimable(engine, monkeypatch):
     from services import podcast_processing as processing_service
 
     policy = RecordingPolicy({"asr"})
@@ -1015,8 +1118,8 @@ def test_claim_stage_filter_does_not_starve_allowed_work_after_many_denials(engi
                     pipeline_version="v1",
                     requested_target="digest_blog",
                     idempotency_key=f"denied:{index}",
-                    input_artifact_id="source-audio-1",
-                    input_artifact_kind="source_audio",
+                    input_artifact_id="source-media-1",
+                    input_artifact_kind="source_media_snapshot",
                     input_content_hash="a" * 64,
                     input_language="und",
                     budget_scope="podcast-paid-processing",
@@ -1041,8 +1144,8 @@ def test_claim_stage_filter_does_not_starve_allowed_work_after_many_denials(engi
                 pipeline_version="v1",
                 requested_target="digest_blog",
                 idempotency_key="allowed-after-64",
-                input_artifact_id="source-audio-1",
-                input_artifact_kind="source_audio",
+                input_artifact_id="source-media-1",
+                input_artifact_kind="source_media_snapshot",
                 input_content_hash="a" * 64,
                 input_language="und",
                 budget_scope="podcast-paid-processing",
@@ -1759,8 +1862,8 @@ def test_reconciliation_park_is_not_claimable_and_preserves_provider_hold(engine
         assert persisted_attempt.provider_task_id == "provider-task-deadline"
         assert reservation.status == "reserved"
         assert PodcastArtifactStore._active_processing_reference_counts(
-            session, ["source-audio-1"]
-        ) == {"source-audio-1": 1}
+            session, ["source-media-1"]
+        ) == {"source-media-1": 1}
         session.rollback()
         assert (
             claim_next_processing(

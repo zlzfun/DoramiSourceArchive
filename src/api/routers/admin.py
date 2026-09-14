@@ -116,9 +116,24 @@ def set_source_visibility(
     }
 
 
+def _is_root_admin(session: Session, auth: Optional[Dict[str, Any]]) -> bool:
+    return bool(auth) and accounts_service.is_root_admin(session, auth.get("sub"))
+
+
+@router.get("/account-growth")
+def admin_account_growth(session: Session = Depends(deps.get_session)):
+    """账户增长曲线（v3.55 issue #31）：按创建日新增数 + 现存总量分布。聚合口径、不含个人信息，
+    全体管理员可见（与 /api/admin/accounts 的逐账户名单不同，后者仅根管理员）。"""
+    return accounts_service.account_growth(session)
+
+
 @router.get("/overview")
-def admin_overview(session: Session = Depends(deps.get_session)):
-    """运维统计大盘：账户分布、归档/订阅规模、AI 用量累计与全局开关状态。"""
+def admin_overview(
+    session: Session = Depends(deps.get_session),
+    auth: Optional[Dict[str, Any]] = Depends(deps.get_current_session),
+):
+    """运维统计大盘：账户分布、归档/订阅规模、AI 用量累计与全局开关状态。
+    最近登录名单属用户级明细，非根管理员得到空列表（v3.55）。"""
     users = accounts_service.list_users(session)
     total_accounts = len(users)
     admin_count = sum(1 for u in users if u.role == "admin")
@@ -143,7 +158,7 @@ def admin_overview(session: Session = Depends(deps.get_session)):
             key=lambda u: u.last_login_at,
             reverse=True,
         )[:8]
-    ]
+    ] if _is_root_admin(session, auth) else []
 
     llm_configured = daily_brief_service.resolve_llm_config(session).configured
     global_ai_on = accounts_service.ai_beta_global_enabled(session)
@@ -380,9 +395,19 @@ def admin_account_activity(
 
 
 @router.get("/ai-usage")
-def admin_ai_usage(days: int = 30, session: Session = Depends(deps.get_session)):
-    """AI 用量看板：近 days 天按用途/用户/日期聚合的调用数与 token 消耗。"""
-    return ai_usage_service.summarize(session, days=days)
+def admin_ai_usage(
+    days: int = 30,
+    session: Session = Depends(deps.get_session),
+    auth: Optional[Dict[str, Any]] = Depends(deps.get_current_session),
+):
+    """AI 用量看板：近 days 天按用途/用户/日期聚合的调用数与 token 消耗。
+    按用户维度（by_user / by_day_user）是逐用户明细，非根管理员得到空列表（v3.55 issue #31）；
+    总量与按用途维度照常。"""
+    summary = ai_usage_service.summarize(session, days=days)
+    if not _is_root_admin(session, auth):
+        summary["by_user"] = []
+        summary["by_day_user"] = []
+    return summary
 
 
 @router.get("/audit-log")
@@ -394,8 +419,13 @@ def admin_audit_log(
     q: str | None = None,
     status: str | None = None,
     session: Session = Depends(deps.get_session),
+    auth: Optional[Dict[str, Any]] = Depends(deps.get_current_session),
 ):
     """读取近 days 天管理操作审计（留存清理由 retention 每日任务负责）。
+
+    账户操作审计行(path 前缀 /api/accounts)只有根管理员可见(v3.55 issue #31 检视返修):
+    逐账户管理自此只有根管理员能做,这些行记录的永远是根管理员的动作,普通管理员「互查」
+    它没有监督意义、只剩账户名单与逐账户设置的泄露;整行在 SQL 条件里排除,count/items/q 同一口径。
 
     检索(v3.42 M11)：`operator` 按操作者用户名子串、`q` 跨 摘要/目标/路径 子串、
     `status` ∈ ok(2xx/3xx)|denied(4xx/5xx，被拒绝的尝试)；全部 SQL 端生效并与
@@ -408,6 +438,8 @@ def admin_audit_log(
         datetime.date.today() - datetime.timedelta(days=safe_days - 1)
     ).isoformat()
     conditions = [AdminAuditRecord.at >= window_start]
+    if not _is_root_admin(session, auth):
+        conditions.append(~AdminAuditRecord.path.like("/api/accounts%"))
     if operator and operator.strip():
         conditions.append(AdminAuditRecord.username.contains(operator.strip(), autoescape=True))
     if q and q.strip():
@@ -572,9 +604,20 @@ def admin_set_public_share(
 
 
 @router.get("/user-sources")
-def admin_list_user_sources(session: Session = Depends(deps.get_session)):
-    """KPI + 全量用户源列表(含创建者/订阅人数/健康摘要)+ 当前配置。"""
-    return user_sources_service.admin_overview(session)
+def admin_list_user_sources(
+    session: Session = Depends(deps.get_session),
+    auth: Optional[Dict[str, Any]] = Depends(deps.get_current_session),
+):
+    """KPI + 全量用户源列表(含创建者/订阅人数/健康摘要)+ 当前配置。含凭证的私有 feed 地址是
+    读者的私密资产:非根管理员只见 ``scheme://host/…``(``feed_url_masked=true``,前端不挂 href),
+    根管理员原样(v3.55 issue #31 检视返修)。"""
+    overview = user_sources_service.admin_overview(session)
+    if not _is_root_admin(session, auth):
+        for item in overview.get("items", []):
+            if user_sources_service.feed_url_has_credentials(item.get("feed_url") or ""):
+                item["feed_url"] = user_sources_service.mask_credentialed_feed_url(item.get("feed_url") or "")
+                item["feed_url_masked"] = True
+    return overview
 
 
 @router.get("/user-sources/config")

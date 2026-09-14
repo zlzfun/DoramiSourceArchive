@@ -61,6 +61,9 @@
   兴趣半候选池扩到全站可见源(订阅外门槛 6.0 / 每源硬上限 2,管理面旋钮;订阅内命中排前;订阅空但有兴趣只出兴趣半);
   页面加编排说明行(哆啦美身份 + 「从 N 个来源和 K 个兴趣 · M 篇里选出 P 篇」,§5 三条提示并入尾句)、
   选篇理由四词进卡头右侧、订阅外卡挂「未订阅」;`selection_stats_json` 入库。
+- ◉ [admin-root-admin-and-account-growth.md](./admin-root-admin-and-account-growth.md) — **管理面:用户明细仅根管理员可见 + 账户增长曲线(issue #31,v3.55.0)**:
+  根管理员判据(活跃管理员里的 admin,缺则最早活跃管理员)与不可降级/停用/删除守卫;`/api/accounts`、`/api/admin/accounts` 仅根管理员,
+  ai-usage/overview 按会话剥用户维度;`/api/admin/account-growth` + 日/周/月累计与新增两图;有意保留给全体管理员的面。
 - ◉ [personal-brief-rebuild-entrypoints.md](./personal-brief-rebuild-entrypoints.md) — **个人早报重编入口收口(issue #33 §5,v3.51.1)**:
   兴趣/订阅变更只记录不触发重编,重编只剩手动与次日定时;今日端点 `interest_stale`/`scope_stale`
   驱动「下次编排生效 · 立即重编」提示;系统侧保留公共日报就绪与管理员下架两处维护性触发。

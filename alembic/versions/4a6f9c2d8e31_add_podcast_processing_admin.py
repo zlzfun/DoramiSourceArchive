@@ -97,16 +97,12 @@ def _install_all_audit() -> None:
 
         for statement in _podcast_processing_audit_trigger_sql():
             bind.exec_driver_sql(statement)
-        for statement in _podcast_audio_dependency_trigger_sql(
-            include_source_cache_fields=False
-        ):
+        for statement in _podcast_audio_dependency_trigger_sql():
             bind.exec_driver_sql(statement)
     elif bind.dialect.name == "postgresql":
         from models.db import _podcast_audio_dependency_postgresql_sql
 
-        for statement in _podcast_audio_dependency_postgresql_sql(
-            include_source_cache_fields=False
-        ):
+        for statement in _podcast_audio_dependency_postgresql_sql():
             bind.exec_driver_sql(statement)
     _install_audit()
 
@@ -540,7 +536,6 @@ def downgrade() -> None:
             bind.exec_driver_sql(statement)
         for statement in _podcast_audio_dependency_trigger_sql(
             require_processing_narration=False,
-            include_source_cache_fields=False,
         ):
             bind.exec_driver_sql(statement)
     elif bind.dialect.name == "postgresql":
@@ -548,6 +543,5 @@ def downgrade() -> None:
 
         for statement in _podcast_audio_dependency_postgresql_sql(
             require_processing_narration=False,
-            include_source_cache_fields=False,
         ):
             bind.exec_driver_sql(statement)

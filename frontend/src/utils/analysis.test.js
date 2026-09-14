@@ -9,6 +9,7 @@ import {
   podcastAnalysisBasis,
   podcastAssessmentMeta,
   podcastFullProcessingMeta,
+  podcastLedgerProcessingMeta,
   preferredAnalysisSummary,
   qualityScoreText,
   scoreTierClass,
@@ -233,7 +234,7 @@ test('podcast full-processing failures visibly retain the retry reason', () => {
     error: 'ASR 配额已用完',
     retryable: true,
   }));
-  assert.equal(failed.label, '全文处理失败');
+  assert.equal(failed.label, 'ASR 转录失败');
   assert.equal(failed.tone, 'bad');
   assert.match(failed.detail, /ASR 配额已用完/);
   assert.match(failed.detail, /可重试/);
@@ -244,8 +245,17 @@ test('podcast full-processing failures visibly retain the retry reason', () => {
     error: '模型暂时不可用',
     retryable: true,
   }));
-  assert.equal(retryWait.label, '全文处理等待重试');
+  assert.equal(retryWait.label, '全文分析等待重试');
   assert.match(retryWait.detail, /系统将重试/);
+
+  const asrReconcile = podcastFullProcessingMeta(podcastFixture({
+    processing_status: 'reconciliation_required',
+    stage: 'asr',
+    error: 'provider deadline elapsed before polling',
+  }));
+  assert.equal(asrReconcile.label, 'ASR 待对账恢复');
+  assert.match(asrReconcile.detail, /ASR 待对账/);
+  assert.match(asrReconcile.detail, /重试 ASR/);
 
   const notRequired = podcastFullProcessingMeta(podcastFixture({
     id: 'processing-low-score',
@@ -254,6 +264,45 @@ test('podcast full-processing failures visibly retain the retry reason', () => {
   }));
   assert.equal(notRequired.label, '暂未进入全文处理');
   assert.match(notRequired.detail, /管理员仍可强制全文处理/);
+});
+
+test('podcast ledger status covers ASR, analysis and TTS with actionable failures', () => {
+  assert.equal(
+    podcastLedgerProcessingMeta(podcastFixture({ processing_status: 'running', stage: 'asr' })).label,
+    'ASR 转录中…',
+  );
+  assert.equal(
+    podcastLedgerProcessingMeta(podcastFixture({ processing_status: 'running', stage: 'analyze' })).label,
+    '全文分析中…',
+  );
+
+  const synthesizing = podcastLedgerProcessingMeta(podcastFixture({
+    processing_status: 'ready',
+    stage: 'analyze',
+    premium_guide: { status: 'synthesizing', failed_stage: '', error: '', audio_ready: false },
+  }));
+  assert.equal(synthesizing.label, 'TTS 合成中…');
+  assert.equal(synthesizing.tone, 'run');
+
+  const failed = podcastLedgerProcessingMeta(podcastFixture({
+    processing_status: 'ready',
+    stage: 'analyze',
+    premium_guide: {
+      status: 'failed',
+      failed_stage: 'synthesizing',
+      error: '音色服务暂时不可用',
+      audio_ready: false,
+    },
+  }));
+  assert.equal(failed.label, 'TTS 合成失败');
+  assert.equal(failed.tone, 'bad');
+  assert.match(failed.detail, /音色服务暂时不可用/);
+  assert.match(failed.detail, /可在播客任务中重试/);
+
+  assert.equal(podcastLedgerProcessingMeta(podcastFixture({
+    processing_status: 'ready',
+    premium_guide: { status: 'ready', failed_stage: '', error: '', audio_ready: true },
+  })).label, 'TTS 音频已就绪');
 });
 
 test('legacy podcast states are not relabelled as full processing without the additive projection', () => {

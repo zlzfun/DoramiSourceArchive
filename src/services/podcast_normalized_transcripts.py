@@ -15,10 +15,11 @@ from sqlmodel import Session, select
 
 from models.db import (
     ArticleRecord,
-    PodcastArtifactRecord,
     PodcastProcessingRecord,
+    PodcastSourceMediaSnapshotRecord,
     PodcastStageAttemptRecord,
     PodcastTextArtifactRecord,
+    PodcastTextPublicationRecord,
 )
 from services.podcast_processing import (
     PodcastEligibilityDenied,
@@ -248,6 +249,56 @@ def _detach(session: Session, artifact: PodcastTextArtifactRecord) -> PodcastTex
     return artifact
 
 
+def _publish_local_transcript(
+    session: Session,
+    *,
+    artifact: PodcastTextArtifactRecord,
+    publication: PodcastTextPublicationRecord | None,
+    stamp: str,
+    replay: bool,
+) -> None:
+    """Publish local ASR output without taking over a remote authority slot.
+
+    A replay may be repairing data written by the pre-publication materializer.
+    It must not, however, move a pointer backwards after a newer local run has
+    already published another immutable version.
+    """
+
+    identity = f"{artifact.episode_id}:{KIND}"
+    if publication is not None and publication.authority_id:
+        raise NormalizedTranscriptConflict(
+            "remote authority occupies the normalized transcript publication slot"
+        )
+    if publication is None:
+        session.add(
+            PodcastTextPublicationRecord(
+                identity=identity,
+                episode_id=artifact.episode_id,
+                kind=KIND,
+                artifact_id=artifact.id,
+                status="published",
+                authority_id="",
+                published_at=stamp,
+                unpublished_at=None,
+                updated_at=stamp,
+            )
+        )
+        return
+    if publication.artifact_id == artifact.id and publication.status == "published":
+        return
+    if replay and publication.artifact_id != artifact.id:
+        current = session.get(PodcastTextArtifactRecord, publication.artifact_id)
+        if current is not None and current.version > artifact.version:
+            return
+    publication.artifact_id = artifact.id
+    publication.status = "published"
+    publication.authority_id = ""
+    publication.published_at = stamp
+    publication.unpublished_at = None
+    publication.updated_at = stamp
+    session.add(publication)
+
+
 def materialize_normalized_transcript(
     session: Session,
     claim: PodcastProcessingClaim,
@@ -308,38 +359,33 @@ def materialize_normalized_transcript(
         )
         if eligibility != "eligible":
             raise PodcastEligibilityDenied(reasons[0] if reasons else eligibility)
-        if process.input_artifact_kind != "source_audio":
+        if process.input_artifact_kind != "source_media_snapshot":
             raise NormalizedTranscriptConflict(
-                "ASR normalized transcript requires a source-audio input"
+                "ASR normalized transcript requires a source-media snapshot"
             )
-        source_audio = session.get(PodcastArtifactRecord, process.input_artifact_id)
-        if source_audio is None or source_audio.episode_id != episode.id:
-            raise NormalizedTranscriptConflict("source-audio input binding changed")
+        source_media = session.get(
+            PodcastSourceMediaSnapshotRecord, process.input_artifact_id
+        )
+        if (
+            source_media is None
+            or source_media.episode_id != episode.id
+            or source_media.content_hash != process.input_content_hash
+        ):
+            raise NormalizedTranscriptConflict("source-media input binding changed")
         config = getattr(policy, "config", None)
         if config is None:
             from config import settings
 
             config = settings.podcast
-        source_duration_ms = round(float(source_audio.duration_seconds or 0) * 1000)
+        source_duration_ms = round(float(source_media.duration_seconds) * 1000)
         transcript_duration_ms = int(document["audio_duration_ms"])
         tolerance_ms = int(config.transcript_duration_tolerance_seconds) * 1000
         if source_duration_ms > 0 and abs(
             transcript_duration_ms - source_duration_ms
         ) > tolerance_ms:
             raise NormalizedTranscriptConflict(
-                "normalized transcript duration does not match source audio"
+                "normalized transcript duration does not match source media"
             )
-        try:
-            expires_at = dt.datetime.fromisoformat(
-                str(source_audio.expires_at or "").replace("Z", "+00:00")
-            )
-            if expires_at.tzinfo is None:
-                expires_at = expires_at.replace(tzinfo=dt.timezone.utc)
-        except ValueError as exc:
-            raise NormalizedTranscriptConflict(
-                "source-audio input expiry is invalid"
-            ) from exc
-        source_audio_expired = expires_at <= current
 
         attempt = session.exec(
             select(PodcastStageAttemptRecord)
@@ -372,6 +418,18 @@ def materialize_normalized_transcript(
                 "ASR attempt is not the current fenced submitted attempt"
             )
 
+        identity = f"{episode.id}:{KIND}"
+        publication_query = select(PodcastTextPublicationRecord).where(
+            PodcastTextPublicationRecord.identity == identity
+        )
+        if connection.dialect.name == "postgresql":
+            publication_query = publication_query.with_for_update()
+        publication = session.exec(publication_query).first()
+        if publication is not None and publication.authority_id:
+            raise NormalizedTranscriptConflict(
+                "remote authority occupies the normalized transcript publication slot"
+            )
+
         existing = session.exec(
             select(PodcastTextArtifactRecord).where(
                 PodcastTextArtifactRecord.producing_attempt_id == attempt.id
@@ -393,11 +451,17 @@ def materialize_normalized_transcript(
                 raise NormalizedTranscriptConflict(
                     "attempt replay conflicts with its persisted transcript output"
                 )
+            _publish_local_transcript(
+                session,
+                artifact=existing,
+                publication=publication,
+                stamp=stamp,
+                replay=True,
+            )
+            session.flush()
             detached = _detach(session, existing)
             session.commit()
             return detached
-        if source_audio_expired:
-            raise NormalizedTranscriptConflict("source-audio input has expired")
         if attempt.output_hash or attempt.output_artifact_id or attempt.output_artifact_kind:
             raise NormalizedTranscriptConflict(
                 "attempt is already bound to a different output"
@@ -465,6 +529,13 @@ def materialize_normalized_transcript(
         attempt.output_artifact_kind = KIND
         attempt.updated_at = stamp
         session.add(attempt)
+        _publish_local_transcript(
+            session,
+            artifact=artifact,
+            publication=publication,
+            stamp=stamp,
+            replay=False,
+        )
         session.flush()
         session.refresh(artifact)
         detached = _detach(session, artifact)

@@ -48,7 +48,7 @@ P4 中文音频导读
 | ASR | Publisher transcript first; managed diarization benchmark first, with `faster-whisper` + WhisperX/FunASR as self-hosted candidates |
 | Translation | Source transcript and full Chinese transcript are separate evidence-linked artifacts; glossary/entity QA is mandatory |
 | TTS | One fixed licensed Chinese narrator; semantic segment synthesis behind a provider-neutral adapter |
-| Media | Original audio remains publisher enclosure; derived artifacts use content-addressed object/file storage |
+| Media | Original audio remains the publisher enclosure and is submitted directly to ASR; local bytes exist only in validation staging, are deleted immediately afterward, and leave a lightweight `source_media_snapshot`; only derived audio uses content-addressed object/file storage |
 | Rights | Default `link_only`; text/audio derivative permissions are independent and mandatory before publication |
 | Observability | Per-stage latency, retry, tokens/minutes/chars, provider and actual/estimated cost |
 | API compatibility | `/api/articles*` keeps the current additive top-level `podcast` projection |

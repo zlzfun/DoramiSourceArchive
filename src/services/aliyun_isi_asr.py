@@ -12,10 +12,11 @@ import json
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 from urllib.parse import urlsplit
 
 from config import AliyunIsiConfig
+from services import http_safety
 from services.aliyun_isi_auth import (
     AliyunIsiError,
     AliyunIsiProtocolError,
@@ -141,14 +142,17 @@ def _optional_task_id(payload: Mapping[str, Any]) -> str:
 
 
 def validate_provider_fetch_url(value: str) -> str:
-    """Require a provider-fetchable HTTPS domain URL, never a local path/IP."""
+    """Require a provider-fetchable HTTP(S) domain URL, never local/IP."""
 
-    url = str(value or "").strip()
+    raw = str(value or "")
+    url = raw.strip()
+    if url != raw:
+        raise ValueError("ASR file URL must be a valid provider-fetchable HTTP(S) URL")
     if len(url) > 8192 or any(
         character.isspace() or ord(character) < 32 or ord(character) == 127
         for character in url
     ):
-        raise ValueError("ASR file URL must be a valid provider-fetchable HTTPS URL")
+        raise ValueError("ASR file URL must be a valid provider-fetchable HTTP(S) URL")
     try:
         parsed = urlsplit(url)
         hostname = (parsed.hostname or "").rstrip(".").lower()
@@ -156,10 +160,10 @@ def validate_provider_fetch_url(value: str) -> str:
         ascii_hostname = hostname.encode("idna").decode("ascii")
     except (UnicodeError, ValueError):
         raise ValueError(
-            "ASR file URL must be a provider-fetchable HTTPS domain URL"
+            "ASR file URL must be a provider-fetchable HTTP(S) domain URL"
         ) from None
     if (
-        parsed.scheme != "https"
+        parsed.scheme not in {"http", "https"}
         or not hostname
         or parsed.username is not None
         or parsed.password is not None
@@ -174,7 +178,7 @@ def validate_provider_fetch_url(value: str) -> str:
             for label in ascii_hostname.split(".")
         )
     ):
-        raise ValueError("ASR file URL must be a provider-fetchable HTTPS domain URL")
+        raise ValueError("ASR file URL must be a provider-fetchable HTTP(S) domain URL")
     try:
         ipaddress.ip_address(ascii_hostname)
     except ValueError:
@@ -263,6 +267,8 @@ class AliyunIsiAsrClient:
         pop_client: AliyunPopClient | None = None,
         enable_words: bool | None = None,
         auto_split: bool | None = None,
+        file_url_resolver: Callable[[str], str] | None = None,
+        redirect_client_factory: http_safety.SyncClientFactory | None = None,
     ) -> None:
         if not config.asr_poll_configured:
             raise ValueError("Aliyun ISI ASR polling credentials are incomplete")
@@ -275,6 +281,22 @@ class AliyunIsiAsrClient:
         self._auto_split = (
             config.asr_auto_split if auto_split is None else bool(auto_split)
         )
+        if file_url_resolver is not None and redirect_client_factory is not None:
+            raise ValueError(
+                "file_url_resolver and redirect_client_factory are mutually exclusive"
+            )
+        if file_url_resolver is None:
+            self._file_url_resolver = lambda value: (
+                http_safety.resolve_public_url_redirects(
+                    value,
+                    url_validator=validate_provider_fetch_url,
+                    max_redirects=http_safety.MAX_PUBLIC_REDIRECTS,
+                    timeout_seconds=config.request_timeout_seconds,
+                    client_factory=redirect_client_factory,
+                )
+            )
+        else:
+            self._file_url_resolver = file_url_resolver
         self._url = f"https://{config.asr_domain}/"
 
     def close(self) -> None:
@@ -288,11 +310,43 @@ class AliyunIsiAsrClient:
         self.close()
 
     def submit(self, file_url: str) -> AsrSubmission:
+        return self._submit(file_url, resolve_redirects=True)
+
+    def submit_internal(self, file_url: str) -> AsrSubmission:
+        """Submit a same-region OSS URL that is unreachable from this host.
+
+        The URL is still syntactically validated, but redirect probing is left
+        to Aliyun because an OSS internal endpoint is intentionally accessible
+        only from Alibaba Cloud's regional network.
+        """
+
+        return self._submit(file_url, resolve_redirects=False)
+
+    def _submit(self, file_url: str, *, resolve_redirects: bool) -> AsrSubmission:
         if not self._config.app_key:
             raise AliyunAsrRejected("app_key_unavailable", retryable=True)
+        try:
+            validated = validate_provider_fetch_url(file_url)
+            resolved_file_url = (
+                validate_provider_fetch_url(self._file_url_resolver(validated))
+                if resolve_redirects
+                else validated
+            )
+        except http_safety.PublicDownloadTimeout:
+            raise AliyunAsrRejected(
+                "source_url_resolution_timeout", retryable=True
+            ) from None
+        except http_safety.PublicDownloadError:
+            raise AliyunAsrRejected(
+                "source_url_resolution_failed", retryable=True
+            ) from None
+        except (TypeError, ValueError):
+            raise AliyunAsrRejected(
+                "source_url_resolution_invalid", retryable=False
+            ) from None
         task = {
             "appkey": self._config.app_key,
-            "file_link": validate_provider_fetch_url(file_url),
+            "file_link": resolved_file_url,
             "version": self._config.asr_task_version,
             "enable_words": self._enable_words,
             "auto_split": self._auto_split,
