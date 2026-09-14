@@ -388,6 +388,25 @@ def _locked_episode(
     return episode
 
 
+def runtime_blocking_code(
+    config: PodcastConfig,
+    registry: PodcastProcessingProviderRegistry,
+    target: str,
+) -> str | None:
+    """Return the admin error code that would block ``target`` right now, else None.
+
+    Cheap round-level probe for schedulers (issue #68): the automatic landing
+    round asks this once instead of letting every episode discover
+    ``podcast_provider_unavailable`` on its own.
+    """
+
+    try:
+        _require_runtime(config, registry, target)
+    except PodcastAdminError as exc:
+        return exc.code
+    return None
+
+
 def _require_runtime(
     config: PodcastConfig,
     registry: PodcastProcessingProviderRegistry,

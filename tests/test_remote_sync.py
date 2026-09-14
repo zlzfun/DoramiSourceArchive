@@ -793,7 +793,7 @@ class _FakeScheduler:
     def __init__(self):
         self.jobs = {}
 
-    def add_job(self, callback, trigger, args, id, replace_existing):
+    def add_job(self, callback, trigger, args, id, replace_existing, **_kwargs):
         self.jobs[id] = callback
 
     def get_job(self, id):
