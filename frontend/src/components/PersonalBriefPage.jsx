@@ -697,7 +697,7 @@ export default function PersonalBriefPage({
       <div className="interest-onb-main">
         <div className="brief-mast-kicker">欢迎来到哆啦美</div>
         <p className="interest-onb-text">
-          这是按预置来源编排的第一份早报。<b>设置兴趣</b>，早报会更懂你。
+          这是你的第一份早报。<b>设置兴趣</b>，早报会更懂你。
         </p>
       </div>
       <div className="brief-onb-acts">
