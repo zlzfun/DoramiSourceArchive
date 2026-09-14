@@ -14,6 +14,13 @@ set -euo pipefail
 # Always run from the project root, no matter where the command is invoked.
 cd "$(dirname "$0")"
 
+# 「tag 即发布」:先站到要部署的版本上(默认最新 v* tag;./deploy.sh v3.55.0 指定;
+# --here 部署当前工作树)。切换时会以切换后的脚本重执行,见 scripts/deploy-lib.sh 文件头。
+# 导出 DORAMI_BUILD_REF/SHA,经 ecosystem.config.js 透传给后端进程,/api/runtime 透出。
+# shellcheck source=scripts/deploy-lib.sh
+source scripts/deploy-lib.sh
+resolve_deploy_ref "$@"
+
 # 手动安装的 nginx/node 常落在非默认 PATH:源码装的 nginx 在 /usr/local/nginx/sbin,
 # nvm 装的 node 只写进 ~/.bashrc(仅交互 shell 生效)。本脚本以非交互 shell 运行,
 # 先把常见位置并进 PATH,再探测 nvm 的最新版本 node。
@@ -507,7 +514,7 @@ warn_cookie_secure_if_needed() {
 }
 
 echo "=================================================="
-echo "  Dorami production deploy (bare-metal)"
+echo "  Dorami production deploy (bare-metal) — ${DORAMI_BUILD_REF}"
 echo "=================================================="
 echo ""
 
@@ -608,18 +615,10 @@ case "$DB_URL" in
         ;;
 esac
 
-# 迁移前自动备份数据库(分叉仓形态下合入 main 后的首次迁移风险最高,炸了可直接
-# 回滚到备份文件):保留最近 10 份,更早的自动清理。
+# 迁移前自动备份数据库(迁移不一定可逆;回滚 = ./deploy.sh <上一 tag> + 恢复备份):
+# 保留最近 10 份,更早的自动清理(实现在 scripts/deploy-lib.sh,与 Docker 路径共用)。
 case "$DB_URL" in
-    sqlite:///*)
-        if [ -f "$DB_PATH" ]; then
-            mkdir -p backups
-            BACKUP_FILE="backups/$(basename "$DB_PATH").$(date +%Y%m%d-%H%M%S)"
-            cp "$DB_PATH" "$BACKUP_FILE"
-            echo "    DB backup: $BACKUP_FILE"
-            ls -1t backups/"$(basename "$DB_PATH")".* 2>/dev/null | tail -n +11 | xargs -r rm -f
-        fi
-        ;;
+    sqlite:///*) backup_sqlite_db "$DB_PATH" ;;
 esac
 
 # 迁移预检观测:把库当前 revision 与迁移链 head 数打进部署日志——本分支自带迁移
@@ -698,4 +697,8 @@ fi
 ensure_nginx_running_or_reload
 
 echo ""
-echo "Deploy complete."
+if [ "${DORAMI_DEPLOY_MODE}" = "tag" ]; then
+    echo "Deploy complete. 发布版 ${DORAMI_BUILD_REF}(${DORAMI_BUILD_SHA:0:7})"
+else
+    echo "Deploy complete. ⚠️  非发布版:${DORAMI_BUILD_REF}(${DORAMI_BUILD_SHA:0:7})"
+fi

@@ -720,6 +720,15 @@ export async function fetchSharedArticle(token) {
   return res.json();
 }
 
+// 新账号默认订阅名单(issue #56):代码缺省 + KV 覆盖;source_ids=null 恢复代码缺省
+export function fetchReaderDefaults() {
+  return request('/admin/reader-defaults', { errorMsg: '获取默认订阅名单失败' });
+}
+
+export function updateReaderDefaults(sourceIds) {
+  return request('/admin/reader-defaults', { method: 'POST', body: { source_ids: sourceIds }, errorMsg: '更新默认订阅名单失败' });
+}
+
 export function fetchPublicShareGlobal() {
   return request('/admin/public-share', { errorMsg: '获取分享总闸失败' });
 }
@@ -785,6 +794,11 @@ export function fetchInterestCatalog(options = {}) {
 
 export function fetchInterests(options = {}) {
   return request('/reader/interests', { ...options, errorMsg: '获取我的兴趣失败' });
+}
+
+// 早报页横幅「稍后再说」:只做引导完成的条件迁移,不碰兴趣集合(响应带 brief_rebuild_status)
+export function completeInterestOnboarding() {
+  return request('/reader/interests/onboarding/complete', { method: 'POST', errorMsg: '操作失败，请重试' });
 }
 
 export function saveInterests(items, { completeOnboarding = false } = {}) {

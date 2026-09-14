@@ -303,7 +303,7 @@ export default function DiscoverPage({
                   {activeTab === 'collections'
                     ? '按主题策展的来源合集,一键整组订阅'
                     : activeTab === 'interests'
-                      ? '感兴趣的方向会把全站相关文章带进阅读器,并在早报里优先呈现'
+                      ? '兴趣决定早报和阅读器优先呈现什么'
                       : '浏览全站收录的来源,一键订阅到你的阅读器'}
                 </span>
               </div>

@@ -1010,6 +1010,45 @@ class PodcastArtifactStore:
         ).all()
         return {str(artifact_id): int(count) for artifact_id, count in rows}
 
+    def reservable_bytes(self) -> int:
+        """Bytes a validation download could still reserve right now.
+
+        Round-level probe for schedulers (issue #68): the minimum of the quota
+        headroom (unbounded when no quota is configured) and the disk headroom
+        above ``minimum_free_bytes``, both net of live reservations — the same
+        two lines ``has_capacity``/``reserve_validation_download`` enforce, so
+        the gate never admits an episode the reservation would refuse.
+        """
+
+        blobs = sum(path.stat().st_size for path in self._blob_files())
+        staging = sum(path.stat().st_size for path in self._staging_files())
+        reserved_total = sum(size for _path, size in self._download_reservations())
+        _capacity, _used, free = self._disk_usage()
+        disk_headroom = free - reserved_total - self.minimum_free_bytes
+        if self.total_quota_bytes > 0:
+            quota_headroom = self.total_quota_bytes - blobs - staging - reserved_total
+            return max(min(quota_headroom, disk_headroom), 0)
+        return max(disk_headroom, 0)
+
+    def has_capacity(self, requested_bytes: int = 0) -> bool:
+        """Whether a download of ``requested_bytes`` could be reserved right now.
+
+        Mirrors the quota and minimum-free checks of ``reserve_validation_download``
+        without taking the CAS lock or creating a marker, so a scheduler can ask
+        once per round instead of letting every episode fail with StorageFull.
+        """
+
+        requested = max(0, int(requested_bytes))
+        blobs = sum(path.stat().st_size for path in self._blob_files())
+        staging = sum(path.stat().st_size for path in self._staging_files())
+        reserved_total = sum(size for _path, size in self._download_reservations())
+        if self.total_quota_bytes > 0 and (
+            blobs + staging + reserved_total + requested > self.total_quota_bytes
+        ):
+            return False
+        _capacity, _used, free = self._disk_usage()
+        return free - reserved_total - requested >= self.minimum_free_bytes
+
     def _blob_files(self) -> list[Path]:
         suffixes = set(_EXTENSIONS.values())
         return [path for path in self.root.glob("*/*") if path.is_file() and path.suffix in suffixes]

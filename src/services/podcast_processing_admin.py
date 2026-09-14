@@ -152,6 +152,7 @@ class PodcastProcessingProviderRegistry:
             str, tuple[StageWorker, StageWorkerReadiness]
         ] = {}
         self._worker_targets: dict[str, WorkerBackedEstimator] = {}
+        self._stage_admission: dict[str, StageWorkerReadiness | None] = {}
 
     def register_target(
         self,
@@ -202,8 +203,16 @@ class PodcastProcessingProviderRegistry:
         worker: StageWorker,
         *,
         readiness: StageWorkerReadiness,
+        admission_readiness: StageWorkerReadiness | None = None,
     ) -> None:
-        """Register execution plus a pure pre-claim provider readiness gate."""
+        """Register execution plus a pure pre-claim provider readiness gate.
+
+        ``readiness`` is deliberately lenient (polling an already-paid task
+        must keep working with partial config); ``admission_readiness`` answers
+        the stricter question "could a *new* submission be admitted?" and is
+        what schedulers must consult before preparing inputs (issue #68).
+        Falls back to ``readiness`` when a bundle does not distinguish them.
+        """
 
         normalized = str(stage or "").strip().lower()
         known_stages = frozenset().union(*TARGET_STAGES.values())
@@ -213,7 +222,23 @@ class PodcastProcessingProviderRegistry:
             raise TypeError("Podcast stage worker must be callable")
         if not callable(readiness):
             raise TypeError("Podcast stage worker readiness must be callable")
+        if admission_readiness is not None and not callable(admission_readiness):
+            raise TypeError("Podcast stage admission readiness must be callable")
         self._stage_workers[normalized] = (worker, readiness)
+        self._stage_admission[normalized] = admission_readiness
+
+    def stage_admission_ready(self, stage: str, provider_config: object) -> bool:
+        """Whether a new submission for ``stage`` could be admitted right now."""
+
+        normalized = str(stage or "").strip().lower()
+        registered = self._stage_workers.get(normalized)
+        if registered is None:
+            return False
+        probe = self._stage_admission.get(normalized) or registered[1]
+        try:
+            return probe(provider_config) is True
+        except Exception:
+            return False
 
     def worker_for(self, stage: str) -> StageWorker | None:
         registered = self._stage_workers.get(str(stage or "").strip().lower())
@@ -386,6 +411,25 @@ def _locked_episode(
     if episode.source_id != source_id:
         raise PodcastAdminError("podcast_processing_conflict", status_code=409)
     return episode
+
+
+def runtime_blocking_code(
+    config: PodcastConfig,
+    registry: PodcastProcessingProviderRegistry,
+    target: str,
+) -> str | None:
+    """Return the admin error code that would block ``target`` right now, else None.
+
+    Cheap round-level probe for schedulers (issue #68): the automatic landing
+    round asks this once instead of letting every episode discover
+    ``podcast_provider_unavailable`` on its own.
+    """
+
+    try:
+        _require_runtime(config, registry, target)
+    except PodcastAdminError as exc:
+        return exc.code
+    return None
 
 
 def _require_runtime(
@@ -771,6 +815,12 @@ def _enqueue_locked(
     return record
 
 
+def derive_auto_idempotency_key(prefix: str, selected: SelectedInput) -> str:
+    """Stable per-input key for automatic requests: same input ⇒ same key across restarts."""
+
+    return f"{prefix}:{str(selected.content_hash or '')[:16]}"
+
+
 def request_processing(
     engine: Engine,
     registry: PodcastProcessingProviderRegistry,
@@ -779,12 +829,29 @@ def request_processing(
     episode_id: str,
     target: str,
     selection_override: bool,
-    idempotency_key: str,
+    idempotency_key: str | None = None,
     reason: str,
     actor: str,
+    idempotency_key_prefix: str | None = None,
 ) -> PodcastProcessingRecord:
+    """Durably enqueue one processing request.
+
+    Exactly one of ``idempotency_key`` (explicit, manual API) or
+    ``idempotency_key_prefix`` (automatic landing, issue #68) must be given.
+    With a prefix the key is derived *inside the lock* from the input the
+    request actually selects (``prefix:content_hash[:16]``), so a restart that
+    re-resolves the same input replays the same record instead of colliding
+    with it, and a changed input naturally yields a new key.
+    """
+
     if target not in {"transcript", "full_analysis", "digest_blog"}:
         raise PodcastAdminError("podcast_processing_conflict", status_code=422)
+    if bool(idempotency_key) == bool(idempotency_key_prefix):
+        raise PodcastAdminError(
+            "podcast_processing_conflict",
+            status_code=422,
+            message="idempotency_key 与 idempotency_key_prefix 必须二选一",
+        )
     if config.installation != "external":
         raise PodcastAdminError("podcast_stage_denied", status_code=403)
     policy = PodcastStagePolicy(config)
@@ -798,21 +865,38 @@ def request_processing(
                 target=target,
                 episode=episode,
             )
-            replay = _replay_request(
-                session,
-                episode_id=episode_id,
-                target=target,
-                idempotency_key=idempotency_key,
-                reason=reason,
-                actor=actor,
-            )
-            if replay is not None:
-                session.expunge(replay)
-                session.commit()
-                return replay
+            if idempotency_key:
+                replay = _replay_request(
+                    session,
+                    episode_id=episode_id,
+                    target=target,
+                    idempotency_key=idempotency_key,
+                    reason=reason,
+                    actor=actor,
+                )
+                if replay is not None:
+                    session.expunge(replay)
+                    session.commit()
+                    return replay
             _require_runtime(config, registry, target)
             require_full_analysis_llm(session, target)
             selected = _select_external_input(session, episode_id=episode_id, target=target)
+            if not idempotency_key:
+                idempotency_key = derive_auto_idempotency_key(
+                    idempotency_key_prefix or "", selected
+                )
+                replay = _replay_request(
+                    session,
+                    episode_id=episode_id,
+                    target=target,
+                    idempotency_key=idempotency_key,
+                    reason=reason,
+                    actor=actor,
+                )
+                if replay is not None:
+                    session.expunge(replay)
+                    session.commit()
+                    return replay
             selection_source = "editor" if selection_override else "policy"
             if not selection_override:
                 analysis = session.get(ArticleAnalysisRecord, episode_id)

@@ -35,6 +35,13 @@ COPY alembic.ini ./
 COPY config/taxonomy-v1-approved-catalog.json ./config/taxonomy-v1-approved-catalog.json
 COPY docker/entrypoint.py ./docker/entrypoint.py
 
+# 构建来源:镜像里没有 .git,tag/sha 由 deploy-docker.sh 经 compose build args 传入
+# (放在源码层之后,只改这两个值不会让依赖层失效);/api/runtime 透出,设置 → 关于 可核对。
+ARG GIT_REF=""
+ARG GIT_SHA=""
+ENV DORAMI_BUILD_REF=${GIT_REF} \
+    DORAMI_BUILD_SHA=${GIT_SHA}
+
 # PYTHONPATH 与 ecosystem.config.js 同语义;WORKDIR=/app 使 ini 里的相对路径
 # (data/cms_data.db、data/chroma_db、data/media)都落在挂载卷 /app/data 下。
 ENV PYTHONPATH=/app/src \

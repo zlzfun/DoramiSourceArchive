@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUpRight, ChevronDown, Clock3, Loader2, RefreshCw, Sparkles, Zap } from 'lucide-react';
 import {
+  completeInterestOnboarding,
   ensurePersonalBrief,
   fetchPersonalBrief,
   fetchPersonalBriefs,
   fetchTodayPersonalBrief,
   rebuildPersonalBrief,
 } from '../api';
+import { flushPendingInterestSaves } from '../utils/interestSaveQueue';
+import { rebuildToast } from '../utils/briefRebuild';
 import LogoMark from './LogoMark';
 import { resolveCompany } from '../sourceTaxonomy';
 import { formatDateTime, formatRelativeTime } from '../utils/datetime';
@@ -29,6 +32,10 @@ import { qualityScoreText, scoreTierClass, SCORE_DISCLAIMER } from '../utils/ana
 // 排队 > 未完成 > 已更新);② 选篇理由进卡头右侧,四个词回答「它为什么在这」(兴趣 · 标签 / 重大事件 ·
 // 官方一手|N 家来源 / 新闻价值入选 / 最新更新),脚部 chip 自此只剩主题标签(单轴);③ 同波「订阅 ∪ 兴趣」:
 // 订阅外命中的卡在源名后挂 faint「未订阅」悬停翻「+ 订阅」,订阅为空只按兴趣编排时报头与空态如实说明。
+// issue #56(落地页早报波,方案 B「早报前置、引导内嵌」):本页成为登录/刷新的**首屏**——
+// ① 首登引导横幅挂在报头之上(onboarding 时):新账号第一眼先看到按预置来源编排的早报,再被邀请
+//   「设置兴趣」;「稍后再说」= 与发现页兴趣段的跳过同语义(写 complete_onboarding,横幅与发现钮红点一起消失);
+// ② 空态/失败态按首屏标准补第二条路「去看文章」(onBrowse)——首屏不能是死胡同。
 
 const TERMINAL = new Set(['ready', 'degraded', 'failed', 'superseded']);
 const LIVE = new Set(['pending', 'generating']);
@@ -253,6 +260,11 @@ export default function PersonalBriefPage({
   sourceMap = {},
   interestVersion = 0,
   mobile = false,
+  // ── issue #56 首屏:首登引导横幅(onboarding)+ 设置兴趣/跳过回调 + 「去看文章」出口 ──
+  onboarding = false,
+  onSetupInterests = null,      // 「设置兴趣」→ 发现页兴趣段
+  onOnboardingCompleted = null, // 「稍后再说」写完 complete_onboarding 后通知父级更新账号快照
+  onBrowse = null,              // 「去看文章」→ 关早报页落文章容器
   // 从阅读窗「返回我的早报」回来时带的外出上下文 {date, revision, scrollTop, itemId};挂载时一次性读取
   restore = null,
 }) {
@@ -414,6 +426,31 @@ export default function PersonalBriefPage({
     }
   };
 
+  // 首登引导「稍后再说」:专用端点只做引导完成的条件迁移、不碰兴趣集合(此前 GET+整集 PUT 会把另一
+  // 标签页刚保存的兴趣整集覆盖——codex 检视 P2);发出前先等本标签页排队中的兴趣保存落定,否则先于
+  // 卸载时排入的 PUT 完成引导会永久错过首次兴趣重编。读者若已自动保存过兴趣,后端会就地重编,
+  // 响应 brief_rebuild_status 非空时立即重拉今日与历史,别让已挂载的早报停在旧版
+  const [skipping, setSkipping] = useState(false);
+  const handleSkipOnboarding = async () => {
+    setSkipping(true);
+    try {
+      await flushPendingInterestSaves();
+      const res = await completeInterestOnboarding();
+      onOnboardingCompleted?.();
+      const status = res?.brief_rebuild_status ?? null;
+      if (status) {
+        const toast = rebuildToast(status);
+        if (toast) showToast?.(toast.text, toast.kind);
+        setSel({ date: null, revision: null });
+        await Promise.all([loadToday(), loadHistory()]);
+      }
+    } catch (err) {
+      showToast?.(err.message || '操作失败，请重试', 'error');
+    } finally {
+      setSkipping(false);
+    }
+  };
+
   // 点卡片 → 站内原文;文章已不在库(article_id 空)时退到原链。
   // 随行交出外出上下文:所在版 + 卷动位置 + 本版可跳条目序列(阅读窗返回带据此「返回 / 下一条」)
   // 社交条目(codex 检视 P2):社交容器是整幅卡片流,没有「选中一条」的落点——openArticleById
@@ -521,17 +558,17 @@ export default function PersonalBriefPage({
     body = (
       <div className="brief-state">
         <span className="brief-state-title">还没有订阅来源，也没有设置兴趣</span>
-        <span className="brief-state-meta">早报按你订阅的来源和兴趣编排，先去发现页订阅几个来源或选几个兴趣</span>
-        <button type="button" className="action-button action-button-primary min-h-[32px] px-3 text-xs" onClick={onManageSubscriptions}>去发现来源</button>
-        {onManageInterests && <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={onManageInterests}>设置兴趣</button>}
+        <span className="brief-state-meta">
+          <button type="button" className="brief-note-act" onClick={onManageSubscriptions}>订阅来源</button>
+          {onManageInterests && <> 或 <button type="button" className="brief-note-act" onClick={onManageInterests}>设置兴趣</button></>}
+        </span>
       </div>
     );
   } else if (live) {
     body = (
       <div className="brief-state" role="status" aria-live="polite">
         <Clock3 aria-hidden="true" />
-        <span className="brief-state-title">正在编排今日早报…</span>
-        <span className="brief-state-meta">用现有内容立即编排，稍后想要更全的一版可再点「重新编排」</span>
+        <span className="brief-state-title">早报编排中…</span>
         {edition?.rebuild_queued && <span className="brief-state-meta">期间的新变更已合并，本版完成后再编排一次</span>}
       </div>
     );
@@ -547,6 +584,7 @@ export default function PersonalBriefPage({
         {isToday && (
           <button type="button" className="action-button action-button-primary min-h-[32px] px-3 text-xs" onClick={handleRebuild} disabled={working}>{working ? '重试中…' : '重试生成'}</button>
         )}
+        {onBrowse && <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={onBrowse}>先去看文章</button>}
       </div>
     );
   } else if (!edition) {
@@ -628,10 +666,11 @@ export default function PersonalBriefPage({
           <div className="brief-state">
             <span className="brief-state-meta">
               {interestOnly
-                ? (isToday ? '今天还没有命中你兴趣的内容，订阅几个来源会让早报更完整' : '这一天没有命中你兴趣的内容')
+                ? (isToday ? '今天还没有命中你兴趣的内容' : '这一天没有命中你兴趣的内容')
                 : (isToday ? '你的订阅源今天还没有可展示的更新' : '这一天的订阅源没有可展示的更新')}
             </span>
             <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={onManageSubscriptions}>{interestOnly ? '去发现来源' : '管理订阅'}</button>
+            {onBrowse && isToday && <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={onBrowse}>先去看文章</button>}
           </div>
         ) : grouped.map((group, groupIndex) => (
           <section key={group.key} className="brief-sec" aria-label={group.key}>
@@ -660,8 +699,26 @@ export default function PersonalBriefPage({
     );
   }
 
+  // 首登引导横幅(issue #56 方案 B):与发现页兴趣段的 .interest-onb 同一形制,挂在报头之上——
+  // 先给内容再邀请投入;不锁页,「稍后再说」即永久收起
+  const onboardingBanner = onboarding && (
+    <div className="interest-onb brief-onb" role="region" aria-label="初始设置">
+      <div className="interest-onb-main">
+        <div className="brief-mast-kicker">欢迎来到哆啦美</div>
+        <p className="interest-onb-text">
+          这是你的第一份早报。<b>设置兴趣</b>，早报会更懂你。
+        </p>
+      </div>
+      <div className="brief-onb-acts">
+        <button type="button" className="interest-btn" disabled={skipping} onClick={handleSkipOnboarding}>稍后再说</button>
+        {onSetupInterests && <button type="button" className="interest-btn is-primary" disabled={skipping} onClick={onSetupInterests}>设置兴趣</button>}
+      </div>
+    </div>
+  );
+
   const sheet = (
     <div className="brief-sheet-inner">
+      {onboardingBanner}
       <header className="brief-mast">
         <div className="brief-mast-main">
           <div className="brief-mast-kicker">{kicker}</div>

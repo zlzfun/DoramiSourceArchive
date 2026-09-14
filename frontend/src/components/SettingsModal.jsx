@@ -197,7 +197,7 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
               <FeedbackSection showToast={showToast} />
             )}
             {activeSection.id === 'about' && (
-              <AboutSection accountRoleLabel={accountRoleLabel} isAdmin={adminConsole} version={runtimeInfo?.version} />
+              <AboutSection accountRoleLabel={accountRoleLabel} isAdmin={adminConsole} version={runtimeInfo?.version} build={runtimeInfo?.build} />
             )}
           </div>
         </div>
