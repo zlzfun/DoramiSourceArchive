@@ -23,6 +23,9 @@
 - ◉ [deploy-baremetal.md](./deploy-baremetal.md) — **裸机部署(第二条官方路径,v3.39.0 扶正)**:
   `deploy.sh` = uv + PM2 + 宿主 Nginx;两条路径选型对照/前置软件/脚本七步与六道护栏/
   ini 两节/HTTPS 两趟部署(certbot certonly 而非 --nginx)/全新服务器与迁移。
+- ◉ [release-process.md](./release-process.md) — **发布流程:tag 即发布(2026-09-14)**:合入≠上线,
+  annotated tag 是唯一发布单元;`scripts/release.sh` 发版(版本号只在发版时改,PR 不 bump)/
+  两条部署脚本按 tag 部署(`--here` 显式例外)/CI 门禁与自动 Release/回滚=切 tag+恢复备份/分支保护清单。
 - ◉ [engage-sync-wave-plan.md](./engage-sync-wave-plan.md) — v3.18 互通波设计:读者反馈收件箱/
   管理员公告横幅(逐用户一次性 dismiss)/远程内容同步(接收方拉取,复用归档同步契约)。
 - ◉ [interest-lens-wave-plan.md](./interest-lens-wave-plan.md) — 兴趣即透镜波(v3.52.0 已实现,issue #27

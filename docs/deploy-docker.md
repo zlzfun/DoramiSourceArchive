@@ -53,8 +53,10 @@ EOF
 # 内网 all 只需改为 installation=internal 和 stable internal authority ID；
 # 处理开关、stage 和 target 会默认关闭，且内网不注入 ASR/TTS 凭据。
 
-# 部署 / 升级(构建 → 起容器 → 健康验证一条龙)
-./deploy-docker.sh
+# 部署 / 升级:站到发布版 tag → 备份 DB → 构建 → 起容器 → 健康验证(tag 即发布,见 docs/release-process.md)
+./deploy-docker.sh              # 版本号最新的发布版(一键)
+./deploy-docker.sh v3.56.0      # 指定版本;回滚也是这一句(+ 恢复 backups/ 里的库备份)
+./deploy-docker.sh --here       # 部署当前工作树(非发布版,联调/应急;设置 → 关于 会如实标注)
 
 # 常用运维
 docker compose logs -f backend      # 后端日志(uvicorn stdout,自动轮转 10m×3)

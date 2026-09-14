@@ -63,7 +63,9 @@
 
 ```bash
 cp config/production.example.ini config/production.ini   # 见下节「配置」
-./deploy.sh
+./deploy.sh                 # 版本号最新的发布版(一键;tag 即发布,见 docs/release-process.md)
+./deploy.sh v3.56.0         # 指定版本;回滚也是这一句(+ 恢复 backups/ 里的库备份)
+./deploy.sh --here          # 部署当前工作树(非发布版,联调/应急;设置 → 关于 会如实标注)
 
 # 常用运维
 pm2 logs dorami-backend-v2        # 后端日志
@@ -71,13 +73,17 @@ pm2 restart dorami-backend-v2     # 重启后端
 pm2 save && pm2 startup           # 开机自启(脚本不做,必须手动执行一次)
 ```
 
+先站到要部署的 tag 上(`scripts/deploy-lib.sh`,与 Docker 路径共用;切换后以新脚本重执行),再走
 七个步骤:装系统依赖 → 校验配置 → uv 装后端(+Playwright)+ **DB 备份** + 迁移预检 +
 `ensure_migrated` → 按显式 `[taxonomy] deployment` reconcile → npm 构建前端 →
 写并校验 Nginx 站点 → 发布 dist 到 `html_dir` →
 `pm2 reload` + `nginx -s reload`。
 
 脚本自带的护栏:
-- **迁移前自动备份 SQLite** 到 `backups/`(保留最近 10 份),迁移炸了可直接回滚文件;
+- **迁移前自动备份 SQLite** 到 `backups/`(保留最近 10 份;`sqlite3 .backup` 在线一致快照,
+  实现在 `scripts/deploy-lib.sh`),迁移炸了 = 切回上一 tag + 恢复备份(见 release-process.md「回滚」);
+- **构建来源透传**:`DORAMI_BUILD_REF/SHA` 经 `ecosystem.config.js` 进后端进程,`/api/runtime` 透出,
+  设置 → 关于 可核对生产跑的是哪一版;
 - **迁移预检观测**:打印库当前 revision 与迁移链 head 数——分叉仓合入后 DAG 双头时
   (`ensure_migrated` 自 v3.38.1 起并行全升)在部署日志里可追;
 - **Taxonomy 启动围栏**:迁移完成后、PM2 API/worker reload 前执行；外网 authority
