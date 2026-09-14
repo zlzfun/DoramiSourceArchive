@@ -51,6 +51,7 @@
 - ◉ [taxonomy-v1-deployment.md](./taxonomy-v1-deployment.md) — 已批准 Taxonomy v1 的发布资产与上线手册：
   外网 authority 启动自动 reconcile → 人工发布，内网 replica 通过 Archive Sync
   `taxonomy.jsonl` 原子导入最新已发布版本；无额外 taxonomy 安装脚本。
+- ◉ [bailian-singapore-deployment.md](./bailian-singapore-deployment.md) — 新加坡百炼 Fun-ASR / Qwen3-TTS 适配、预算与独立样本验证。
 - ◉ [aliyun-dual-node-deployment.md](./aliyun-dual-node-deployment.md) — 阿里云外网/内网双节点生产上线：
   验收 INI 替换清单、双端配置、Secret/RAM/NLS/OSS/安全组、发布顺序和 E2E 验收。
 - ◉ [unified-news-scoring-plan.md](./unified-news-scoring-plan.md) — **统一新闻价值评分波(issue #22,v3.48.0)**:
@@ -70,6 +71,10 @@
 - ◉ [admin-root-admin-and-account-growth.md](./admin-root-admin-and-account-growth.md) — **管理面:用户明细仅根管理员可见 + 账户增长曲线(issue #31,v3.55.0)**:
   根管理员判据(活跃管理员里的 admin,缺则最早活跃管理员)与不可降级/停用/删除守卫;`/api/accounts`、`/api/admin/accounts` 仅根管理员,
   ai-usage/overview 按会话剥用户维度;`/api/admin/account-growth` + 日/周/月累计与新增两图;有意保留给全体管理员的面。
+- ◉ [image-understanding-wave-plan.md](./image-understanding-wave-plan.md) — **图片理解波:可配置多模态能力 + 文章配图识别(issue #69)**:
+  `[llm] vision_model` 第三档(DeepSeek `deepseek-flash`,显式关思考)、客户端多模态分片、`image_insights` 表按图片字节哈希缓存;
+  配图 → 结构化文字说明并入入库分析 / 公共日报补评与编辑 / 问答显式档(缺则识)与检索档(cached-only)/ 速读兜底;
+  未配置视觉模型各链路与既有逐字一致;选图护栏(播客/不可外送源/小图/上限 4)、负缓存退避、预算超时转后台;真机验证记录。
 - ◉ [personal-brief-rebuild-entrypoints.md](./personal-brief-rebuild-entrypoints.md) — **个人早报重编入口收口(issue #33 §5,v3.51.1)**:
   兴趣/订阅变更只记录不触发重编,重编只剩手动与次日定时;今日端点 `interest_stale`/`scope_stale`
   驱动「下次编排生效 · 立即重编」提示;系统侧保留公共日报就绪与管理员下架两处维护性触发。

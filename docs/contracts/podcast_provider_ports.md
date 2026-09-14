@@ -35,6 +35,18 @@
 ## 当前实现
 
 - Aliyun ISI ASR/TTS 是上述 ports 的首个 adapter，不是状态机的默认类型。
+- Singapore 百炼 Fun-ASR 实现同一 ASR port；冻结账号、地域、模型、单声道和有理数价格，
+  复用源媒体绑定、claim/lease、额度、预算及转写入库，已提交的任务仅轮询原 TaskId。
+- 当前精品导读走 `PremiumGuideTtsProvider.synthesize`，独立于旧 `TtsProviderAdapter` worker。
+  Qwen3-TTS 在该现役接口内按句分段、合并 WAV；每段请求前持久化
+  `bailian_tts_calls` 授权记录，成功后下载并缓存音频。签名 URL 仅在本机受保护的回执目录，
+  不进入业务 API / Archive Sync；最终音频仍由精品导读服务执行媒体 QA 和 CAS 发布。
+  这条路径的 TTS 预算独立于通用 ASR 账本，不把两者合计伪装成一个总预算。
+  详见 [部署和恢复规则](../bailian-singapore-deployment.md)。
 - TTS 通用 Plan 只携带 `ProviderUsagePlan`；字符计数属于 Aliyun adapter 内部实现。
 - 当前持久化额度支持 ASR 秒数和 TTS 字符数。若新供应商按其他单位计费，应先扩展
   `ProviderUsageUnit`、数据库约束/迁移和账本测试，不能把 token 假装成字符。
+- ASR 的完整输入时长保留在 `NormalizedUsage.audio_duration_ms`；供应商单独报告有效语音
+  计费时长时，写入 `billed_audio_duration_ms`。只有可信 `ProviderUsagePlan.minimum_units`
+  显式允许、且对应下限已冻结进 reservation，才接受低于文件时长的用量。默认下限仍是
+  预占输入量；不能借新增字段绕过旧服务的少计费检查。

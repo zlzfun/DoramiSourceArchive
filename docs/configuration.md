@@ -169,6 +169,10 @@ Podcast 处理阶段，只接收已发布的中文博客和导读音频。两台
 异常兜底。已取得 TaskId 的任务只按持久化身份轮询；任何 `request_unknown` 都保持人工核对，
 不会自动重提。
 
+新加坡节点可以选择 `[bailian_speech] enabled=true`，接入 Fun-ASR 和分段 Qwen3-TTS。
+开通、凭据、价格及预算示例见 [新加坡百炼部署](./bailian-singapore-deployment.md)。
+默认 `enabled=false` 保留 ISI；两套配置、凭据和账本不能混用。切换选择器需要重启。
+
 阿里云 ISI 的非秘密协议参数集中在 `[aliyun_isi]`，均可由对应
 `DORAMI_ALIYUN_ISI_*` 环境变量覆盖。ASR 与 TTS 鉴权不同，不能互换：
 
@@ -378,9 +382,13 @@ aux_model =           ; 辅助轻模型(v3.34,可选):同端点同 api_key 下�
                       ; 主模型走旗舰/思考档时这些调用不必陪跑高延迟高成本;
                       ; 问答作答与翻译仍走主模型。留空=全部调用走主模型。
                       ; 辅助档不下发思考参数(轻任务输出短 JSON,思考反易截断)。
+vision_model =        ; 视觉模型(issue #69,可选):同端点同 api_key 下支持图片输入的模型名
+                      ; (DeepSeek 为 deepseek-flash),用于把文章配图识别成结构化文字说明,
+                      ; 并入入库分析 / 公共日报 / 读者问答的参考资料;留空 = 不识别配图,
+                      ; 所有链路只看正文,与未配置前逐字一致。需要媒体库开启([media] enabled)。
 ```
 
-- 环境变量覆盖:`DORAMI_LLM_BASE_URL` / `DORAMI_LLM_API_KEY` / `DORAMI_LLM_MODEL` / `DORAMI_LLM_THINKING_MODE` / `DORAMI_LLM_AUX_MODEL`。
+- 环境变量覆盖:`DORAMI_LLM_BASE_URL` / `DORAMI_LLM_API_KEY` / `DORAMI_LLM_MODEL` / `DORAMI_LLM_THINKING_MODE` / `DORAMI_LLM_AUX_MODEL` / `DORAMI_LLM_VISION_MODEL`。
 - **思考型模型注意**(2026-08 生产事故教训):DeepSeek V4 系默认开思考且努力档 high,
   思考 token 计入 `max_tokens`——日报 reduce 这类长输出任务可能被思考耗尽配额导致正文
   空产。对策:`thinking_mode = disabled`,或保留思考但把 `max_tokens` 调大(≥16384)。

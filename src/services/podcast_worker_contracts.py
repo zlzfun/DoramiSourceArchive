@@ -287,6 +287,7 @@ class ProviderUsagePlan:
     price_unit_count: int
     pricing_revision: str
     deadline_seconds: int
+    minimum_units: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "quota_scope", _identifier(self.quota_scope, "quota_scope"))
@@ -310,6 +311,16 @@ class ProviderUsagePlan:
         )
         if self.reserved_units > self.limit_units:
             raise ValueError("reserved_units cannot exceed limit_units")
+        if self.minimum_units is not None:
+            minimum = _nonnegative_integer(self.minimum_units, "minimum_units")
+            if (
+                self.unit is not ProviderUsageUnit.AUDIO_SECONDS
+                or minimum > self.reserved_units
+            ):
+                raise ValueError(
+                    "a separate settlement minimum requires audio seconds within the reservation"
+                )
+            object.__setattr__(self, "minimum_units", minimum)
         object.__setattr__(
             self,
             "unit_price_cny_minor",
@@ -412,6 +423,9 @@ class NormalizedUsage:
     tts_characters: int = 0
     input_bytes: int = 0
     output_bytes: int = 0
+    # Some ASR services bill detected speech, not the complete submitted file.
+    # None retains the existing full-input billing contract.
+    billed_audio_duration_ms: int | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -429,6 +443,15 @@ class NormalizedUsage:
                 field_name,
                 _nonnegative_integer(getattr(self, field_name), field_name),
             )
+        if self.billed_audio_duration_ms is not None:
+            billed = _nonnegative_integer(
+                self.billed_audio_duration_ms, "billed_audio_duration_ms"
+            )
+            if billed > ((self.audio_duration_ms + 999) // 1000) * 1000:
+                raise ValueError(
+                    "billed audio cannot exceed the submitted duration rounded to seconds"
+                )
+            object.__setattr__(self, "billed_audio_duration_ms", billed)
         if not isinstance(self.currency, str) or not re.fullmatch(
             r"[A-Z]{3}", self.currency
         ):

@@ -34,6 +34,7 @@ class _Baseline:
     max_tokens = 4096
     thinking_mode = ""
     aux_model = ""
+    vision_model = ""
 
 
 NS = credentials.LLM_NAMESPACE
@@ -166,6 +167,7 @@ def test_registry_kv_keys_match_legacy_storage():
         "max_tokens": "llm_max_tokens",
         "thinking_mode": "llm_thinking_mode",
         "aux_model": "llm_aux_model",
+        "vision_model": "llm_vision_model",
     }
     x = {f.name: f.kv_key for f in credentials.X_API_NAMESPACE.fields}
     assert x == {

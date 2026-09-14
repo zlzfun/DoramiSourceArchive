@@ -8,6 +8,7 @@
  * 口径是「现存账户」——已删除账户不在 users 表里,曲线画的是「今天还在的账户何时加入」。
  */
 import { useMemo } from 'react';
+import { useMotionReduced } from '../../motion';
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -83,6 +84,8 @@ function GrowthTooltip({ active, payload }) {
 const intFormatter = (v) => (v >= 1000 ? `${Math.round(v / 1000)}k` : v);
 
 export default function AccountGrowth({ growth, days = 30, height = 230 }) {
+  // 动效偏好显式传给 recharts(issue #73):不让其 'auto' 档自己读 OS 查询
+  const animate = !useMotionReduced();
   const asOf = useMemo(() => (growth?.as_of_day ? parseDay(growth.as_of_day) : new Date()), [growth]);
   const data = useMemo(() => dailyGrowth(growth?.series, days, asOf), [growth, days, asOf]);
   const windowNew = data.reduce((acc, r) => acc + r.new, 0);
@@ -108,9 +111,9 @@ export default function AccountGrowth({ growth, days = 30, height = 230 }) {
               <XAxis dataKey="label" tick={AXIS_TICK} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={40} />
               <YAxis yAxisId="new" tick={AXIS_TICK} axisLine={false} tickLine={false} width={40} tickCount={3} tickFormatter={intFormatter} allowDecimals={false} />
               <YAxis yAxisId="total" orientation="right" tick={AXIS_TICK} axisLine={false} tickLine={false} width={44} tickCount={3} tickFormatter={intFormatter} allowDecimals={false} />
-              <Tooltip cursor={{ fill: 'var(--dorami-wash)' }} content={<GrowthTooltip />} />
-              <Bar yAxisId="new" dataKey="new" name="新增账户" fill={C_NEW} radius={[4, 4, 0, 0]} maxBarSize={14} />
-              <Line yAxisId="total" type="monotone" dataKey="total" name="累计账户" stroke={C_TOTAL} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+              <Tooltip cursor={{ fill: 'var(--dorami-wash)' }} content={<GrowthTooltip />} isAnimationActive={animate} />
+              <Bar yAxisId="new" dataKey="new" name="新增账户" fill={C_NEW} radius={[4, 4, 0, 0]} maxBarSize={14} isAnimationActive={animate} />
+              <Line yAxisId="total" type="monotone" dataKey="total" name="累计账户" stroke={C_TOTAL} strokeWidth={2} dot={false} activeDot={{ r: 4 }} isAnimationActive={animate} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>

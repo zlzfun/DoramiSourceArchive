@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Loader2, Search, X } from 'lucide-react';
 import { fetchInterestCatalog, fetchInterests, saveInterests } from '../api';
 import { enqueueSave, flushPendingInterestSaves } from '../utils/interestSaveQueue';
+import { scrollBehavior } from '../motion';
 
 /* ── 我的兴趣(issue #23 第二项,弹窗改页面;样页 docs/design/dorami-interest-quiet.html)──
    定位(issue #27 分析):兴趣与合集是阅读偏好的两根正交轴——合集=看谁(源的成员关系,全站生效),
@@ -256,7 +257,7 @@ export default function InterestPage({
     const el = sectionRefs.current[kind];
     const sheet = sheetRef.current;
     if (!el || !sheet) return;
-    sheet.scrollTo({ top: el.offsetTop - 18, behavior: 'smooth' });
+    sheet.scrollTo({ top: el.offsetTop - 18, behavior: scrollBehavior() });
     setActiveKind(kind);
   };
   const handleSheetScroll = () => {

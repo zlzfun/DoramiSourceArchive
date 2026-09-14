@@ -1430,9 +1430,16 @@ class PodcastBudgetReservationRecord(SQLModel, table=True):
         ),
         CheckConstraint(
             "status <> 'settled' OR provider_quota_scope IS NULL OR "
-            "(actual_usage_units >= reserved_usage_units AND "
+            "(actual_usage_units >= COALESCE(minimum_usage_units, reserved_usage_units) AND "
             "provider_quota_breached = (actual_usage_units > reserved_usage_units))",
             name="ck_podcast_budget_reservations_provider_settlement_truth",
+        ),
+        CheckConstraint(
+            "minimum_usage_units IS NULL OR (provider_quota_unit IS NOT NULL AND "
+            "provider_quota_unit = 'audio_seconds' AND reserved_usage_units IS NOT NULL AND "
+            "minimum_usage_units >= 0 AND minimum_usage_units <= reserved_usage_units AND "
+            "minimum_usage_units = CAST(minimum_usage_units AS INTEGER))",
+            name="ck_podcast_budget_reservations_usage_minimum",
         ),
     )
 
@@ -1461,6 +1468,7 @@ class PodcastBudgetReservationRecord(SQLModel, table=True):
     provider_quota_window_end_at: Optional[str] = Field(default=None)
     provider_quota_limit_units: Optional[int] = Field(default=None, ge=0)
     reserved_usage_units: Optional[int] = Field(default=None, ge=0)
+    minimum_usage_units: Optional[int] = Field(default=None, ge=0)
     actual_usage_units: int = Field(default=0, ge=0)
     unit_price_cny_minor: Optional[int] = Field(default=None, ge=0)
     price_unit_count: Optional[int] = Field(default=None, ge=0)
@@ -1836,6 +1844,38 @@ class MediaAssetRecord(SQLModel, table=True):
     )
     created_at: str = Field(description="首次登记时间")
     fetched_at: Optional[str] = Field(default=None, description="最近一次成功下载时间")
+    updated_at: str = Field(description="最近一次状态变更时间")
+
+
+class ImageInsightRecord(SQLModel, table=True):
+    """图片理解结果(issue #69):视觉模型对一张图的结构化文字说明,一行 = 一份图片字节。
+
+    主键 content_hash = sha256(图片字节),与媒体库落盘的内容去重单元一致——同一张图
+    跨 URL、跨文章共用一份识别结果,零重复调用。**不设逐文章状态**:文章 → 图链 →
+    media_assets.url_hash → content_hash → 本表,三跳纯查询;正文改动图链自然变化。
+    status=failed 行是负缓存(fail_count 退避、next_attempt_at 冷却),坏图不反复付费。
+    """
+    __tablename__ = "image_insights"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('succeeded','failed')",
+            name="ck_image_insights_status",
+        ),
+    )
+
+    content_hash: str = Field(primary_key=True, description="sha256(图片字节)十六进制,与 media_assets.content_hash 同源")
+    status: str = Field(default="succeeded", index=True, description="succeeded/failed")
+    kind: str = Field(default="other", description="chart/table/screenshot/diagram/photo/logo/other")
+    relevant: bool = Field(default=True, description="是否承载信息(海报/头图/logo 为 false,不进上下文)")
+    caption: str = Field(default="", description="一两句:这是什么图、与文章的关系")
+    details: str = Field(default="", description="具体深入的转写:表格逐行/图表读数/截图文字/架构关系")
+    ocr_text: str = Field(default="", description="图内可见文字原样(原语言)")
+    model_name: str = Field(default="", description="产出该结果的视觉模型名")
+    prompt_version: str = Field(default="", index=True, description="识别提示词版本(image-insight-v1)")
+    fail_count: int = Field(default=0, description="累计识别失败次数")
+    last_error: Optional[str] = Field(default=None, description="最近一次失败原因摘要(已脱敏)")
+    next_attempt_at: Optional[str] = Field(default=None, description="失败冷却截止时间(ISO);为空即可重试")
+    created_at: str = Field(description="首次登记时间")
     updated_at: str = Field(description="最近一次状态变更时间")
 
 
@@ -2237,6 +2277,41 @@ class PodcastTextPublicationRecord(SQLModel, table=True):
     updated_at: str
 
 
+class BailianTtsCallRecord(SQLModel, table=True):
+    """Local-only paid speech receipt; retained when episodes are deleted.
+
+    No credential, script, URL or audio is stored in this accounting table.
+    Ambiguous calls keep their budget reservation until operator reconciliation.
+    """
+
+    __tablename__ = "bailian_tts_calls"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('reserved','authorized','generated','succeeded','rejected')",
+            name="ck_bailian_tts_status",
+        ),
+        CheckConstraint(
+            "reserved_characters > 0 AND actual_characters >= 0 AND cost_minor >= 0",
+            name="ck_bailian_tts_usage",
+        ),
+        Index("ix_bailian_tts_scope_period", "account_scope", "budget_period"),
+    )
+    id: str = Field(primary_key=True)
+    episode_id: str = Field(index=True)
+    account_scope: str
+    budget_period: str
+    created_at: str
+    status: str = "reserved"
+    reserved_characters: int
+    actual_characters: int = 0
+    cost_minor: int
+    price_minor: int
+    price_units: int
+    pricing_revision: str
+    request_id: str = ""
+    audio_hash: str = ""
+
+
 class AppSettingRecord(SQLModel, table=True):
     __tablename__ = "app_settings"
     key: str = Field(primary_key=True)
@@ -2503,6 +2578,7 @@ def _install_archive_sync_revision_schema(_metadata, connection, **_kwargs) -> N
             include_provider_usage=True,
             include_output_authority=True,
             include_usage_settlement_mode=True,
+            include_usage_minimum=True,
         ):
             connection.exec_driver_sql(statement)
         for statement in _podcast_processing_command_audit_sql():
@@ -2519,6 +2595,7 @@ def _install_archive_sync_revision_schema(_metadata, connection, **_kwargs) -> N
             include_provider_usage=True,
             include_output_authority=True,
             include_usage_settlement_mode=True,
+            include_usage_minimum=True,
         ):
             connection.exec_driver_sql(statement)
         for statement in _podcast_processing_command_postgresql_sql():
@@ -2891,6 +2968,7 @@ def _podcast_processing_audit_trigger_sql(
     include_provider_usage: bool = False,
     include_output_authority: bool = False,
     include_usage_settlement_mode: bool = False,
+    include_usage_minimum: bool = False,
 ) -> tuple[str, ...]:
     """SQLite audit guards shared by fresh/create_all databases.
 
@@ -2950,6 +3028,10 @@ def _podcast_processing_audit_trigger_sql(
         if include_provider_usage
         else ""
     )
+    if include_usage_minimum:
+        provider_usage_guard += (
+            "\n          OR NEW.minimum_usage_units IS NOT OLD.minimum_usage_units"
+        )
     provider_release_guard = (
         " OR NEW.actual_usage_units <> 0"
         " OR NEW.provider_quota_breached IS NOT FALSE"
@@ -2965,6 +3047,11 @@ def _podcast_processing_audit_trigger_sql(
         if include_provider_usage
         else ""
     )
+    if include_usage_minimum:
+        provider_settlement_guard = provider_settlement_guard.replace(
+            "NEW.actual_usage_units < NEW.reserved_usage_units",
+            "NEW.actual_usage_units < COALESCE(NEW.minimum_usage_units, NEW.reserved_usage_units)",
+        )
     provider_ledger_binding_guard = (
         "\n            AND NEW.provider_quota_scope IS r.provider_quota_scope"
         "\n            AND NEW.provider_quota_period IS r.provider_quota_period"
@@ -3087,6 +3174,7 @@ def _podcast_processing_postgresql_audit_sql(
     include_provider_usage: bool = False,
     include_output_authority: bool = False,
     include_usage_settlement_mode: bool = False,
+    include_usage_minimum: bool = False,
 ) -> tuple[str, ...]:
     """PostgreSQL equivalents of SQLite processing-audit triggers."""
 
@@ -3143,6 +3231,8 @@ def _podcast_processing_postgresql_audit_sql(
         if include_provider_usage
         else ""
     )
+    if include_usage_minimum:
+        provider_usage_guard += "\n             OR NEW.minimum_usage_units IS DISTINCT FROM OLD.minimum_usage_units"
     provider_release_guard = (
         " OR NEW.actual_usage_units <> 0"
         " OR NEW.provider_quota_breached IS NOT FALSE"
@@ -3158,6 +3248,11 @@ def _podcast_processing_postgresql_audit_sql(
         if include_provider_usage
         else ""
     )
+    if include_usage_minimum:
+        provider_settlement_guard = provider_settlement_guard.replace(
+            "NEW.actual_usage_units < NEW.reserved_usage_units",
+            "NEW.actual_usage_units < COALESCE(NEW.minimum_usage_units, NEW.reserved_usage_units)",
+        )
     provider_ledger_binding_guard = (
         "\n               AND NEW.provider_quota_scope IS NOT DISTINCT FROM r.provider_quota_scope"
         "\n               AND NEW.provider_quota_period IS NOT DISTINCT FROM r.provider_quota_period"

@@ -6,6 +6,7 @@ import {
   scoreTierClass,
   SCORE_DISCLAIMER,
 } from '../utils/analysis';
+import { motionReduced } from '../motion';
 
 /**
  * 哆啦美速读卡(issue #13 五轮):AI 渐变 wash 底 + 衬线渐变大数字是卡的身份。
@@ -105,14 +106,10 @@ export default function AiReadingCard({ article, summary, summarizing, canGenera
 
 const DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
 
-function prefersReducedMotion() {
-  return typeof window !== 'undefined'
-    && Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
-}
 
 /** 衬线渐变大数字:里程表式入场(每位数字在定宽格内滑到位),点按在摘要/评分依据间切换。 */
 function ScoreFigure({ score, tierClass = '', interactive, pressed, onToggle }) {
-  const reduced = prefersReducedMotion();
+  const reduced = motionReduced();
   // 先以 0 挂载,下一帧再落到目标值,让 CSS transition 接管滑动;减少动画时直落。
   const [armed, setArmed] = useState(reduced);
   useEffect(() => {

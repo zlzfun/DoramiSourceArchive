@@ -394,6 +394,20 @@ def _deny_unsubscribed_user_source_article(session: Session, username: str, arti
         raise HTTPException(status_code=404, detail="文章不存在")
 
 
+def _deny_hidden_source_article(session: Session, request: Request, article) -> None:
+    """读者面显式 AI 动作的隐藏源闸(issue #69 检视 F3):非 admin 会话对隐藏源文章一律与
+    「不存在」同形 404——与「读者面隐藏 = 内容交付全量排除」同口径;此前 translate / summarize /
+    ask 显式档只查凭证与私有源,已知 ID 即可把隐藏源正文(本波起还有配图)送出。admin 会话
+    只豁免隐藏这一层(全局契约:admin 内容权限不受隐藏影响),凭证 / 不可外送闸照常生效。"""
+    if article is None:
+        return
+    auth_session = _app().current_auth_session(request)
+    if auth_session and auth_session.get("role") == "admin":
+        return
+    if (getattr(article, "source_id", "") or "") in source_visibility_service.reader_unavailable_source_ids(session):
+        raise HTTPException(status_code=404, detail="文章不存在")
+
+
 def _deny_nonexportable_article(session: Session, article) -> None:
     """Block explicit reader-AI actions before source content reaches MaaS."""
 
@@ -1379,6 +1393,7 @@ async def reader_ai_translate(params: ReaderTranslateParams, request: Request):
     db_sink = deps.get_db_sink()
     with Session(db_sink.engine) as session:
         article = session.get(ArticleRecord, params.article_id)
+        _deny_hidden_source_article(session, request, article)
         _deny_unsubscribed_user_source_article(session, username, article)
         _deny_nonexportable_article(session, article)
     try:
@@ -1466,6 +1481,7 @@ async def reader_ai_summarize(params: ReaderTranslateParams, request: Request):
     db_sink = deps.get_db_sink()
     with Session(db_sink.engine) as session:
         article = session.get(ArticleRecord, params.article_id)
+        _deny_hidden_source_article(session, request, article)
         _deny_unsubscribed_user_source_article(session, username, article)
         _deny_nonexportable_article(session, article)
     try:
@@ -1522,6 +1538,7 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
             for aid in explicit_ids:
                 if aid:
                     article = session.get(ArticleRecord, aid)
+                    _deny_hidden_source_article(session, request, article)
                     _deny_unsubscribed_user_source_article(session, username, article)
                     _deny_nonexportable_article(session, article)
 
@@ -1561,16 +1578,24 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
                 username=username,
                 db_sink=db_sink,
                 search_fetch=_search_fetch,
+                # 显式篇目的配图识别(issue #69):缺则识,归属提问读者(只作成本可见,不限额)
+                llm_config=llm_config,
+                usage_meta=UsageMeta(purpose="image_insight", username=username),
             )
         except reader_ai_service.ReaderAIError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc))
 
         _ask_progress_update(ask_id, "answer", {"articles": len(sources)})
+        # 内部控制位只在服务端用一次,对外 sources 形状与 main 一致(读者面无「配图已识别」标记)
+        with_image_notes = reader_ai_service.sources_have_image_notes(sources)
+        sources = reader_ai_service.public_sources(sources)
         history = [{"role": t.role, "content": t.content} for t in (params.history or [])]
         try:
             answer = await reader_ai_service.answer_question(
                 params.question, context, scope=scope, llm_config=llm_config, history=history,
                 usage_meta=UsageMeta(purpose="ask", username=username),
+                # 图片说明使用边界只在上下文真的带了说明时追加(sources 的显式布尔元数据,不嗅探正文)
+                with_image_notes=with_image_notes,
             )
         except reader_ai_service.ReaderAIError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc))

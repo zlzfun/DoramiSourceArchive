@@ -20,6 +20,10 @@
           var dark = saved === 'dark' ||
             (saved === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
           document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+          // 减少动效(issue #73):应用内开关,默认完整;首帧先挂属性,降级规则才不会晚一拍
+          if (localStorage.getItem('dorami-motion') === 'reduce') {
+            document.documentElement.setAttribute('data-motion', 'reduce');
+          }
         } catch (e) {
           document.documentElement.setAttribute('data-theme', 'light');
         }

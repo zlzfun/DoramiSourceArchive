@@ -64,6 +64,11 @@ services:
       DORAMI_LLM_MODEL: ${DORAMI_LLM_MODEL:-}
       DORAMI_LLM_THINKING_MODE: ${DORAMI_LLM_THINKING_MODE:-}
       DORAMI_LLM_AUX_MODEL: ${DORAMI_LLM_AUX_MODEL:-}
+      DORAMI_LLM_VISION_MODEL: ${DORAMI_LLM_VISION_MODEL:-}
+      # 新加坡百炼参数读取挂载的 production.ini，密钥由宿主 .env 注入。
+      DORAMI_BAILIAN_API_KEY: ${DORAMI_BAILIAN_API_KEY:-}
+      # 请求回执包含临时签名 URL，必须随数据持久化，禁止放容器临时层。
+      DORAMI_BAILIAN_TTS_RECEIPT_ROOT: /app/data/bailian-speech
       ALIYUN_AK_ID: ${ALIYUN_AK_ID:-}
       ALIYUN_AK_SECRET: ${ALIYUN_AK_SECRET:-}
       ALIYUN_SECURITY_TOKEN: ${ALIYUN_SECURITY_TOKEN:-}
