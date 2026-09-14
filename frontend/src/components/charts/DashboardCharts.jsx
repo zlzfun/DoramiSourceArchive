@@ -15,6 +15,7 @@ import {
   Tooltip,
 } from 'recharts';
 import { C_PRIMARY, AXIS, GRID, colorForEntity, fmtNumLocale as fmt } from './chartUtils';
+import { useMotionReduced } from '../../motion';
 
 const AXIS_TICK = { fill: AXIS, fontSize: 11 };
 
@@ -64,6 +65,9 @@ export function MultiSeriesArea({
   namespace = 'default',
 }) {
   const [dim, setDim] = useState(defaultDim ?? dims[0][0]);
+  // 动效偏好显式传给 recharts(issue #73 codex F1):默认 'auto' 会自己读 OS prefers-reduced-motion,
+  // 与「不再信任 OS 查询、应用开关接管」相悖,显式布尔隔离其判定。
+  const animate = !useMotionReduced();
   // dims 收窄后(如根身份转走、「按用户」档撤除)当前档不在其中时回落到首档。
   const dimValid = dims.some(([k]) => k === dim);
   useEffect(() => { if (!dimValid) setDim(dims[0][0]); }, [dimValid, dims]);
@@ -101,10 +105,11 @@ export function MultiSeriesArea({
             <CartesianGrid stroke={GRID} vertical={false} />
             <XAxis dataKey="label" tick={AXIS_TICK} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={40} />
             <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} width={40} tickCount={3} tickFormatter={kFormatter} allowDecimals={false} />
-            <Tooltip cursor={{ stroke: GRID }} content={<ThemedTooltip titleKey="day" colorFor={colorOf} />} />
+            <Tooltip cursor={{ stroke: GRID }} content={<ThemedTooltip titleKey="day" colorFor={colorOf} />} isAnimationActive={animate} />
             {ds.keys.map((k) => (
               <Area
                 key={k}
+                isAnimationActive={animate}
                 type="monotone"
                 dataKey={k}
                 name={k}
@@ -129,6 +134,8 @@ export function MultiSeriesArea({
  *  单系列排行统一 C_PRIMARY。)
  */
 export function RankBars({ rows, labelKey, valueKey, name, color = C_PRIMARY, height = 200, emptyHint = '暂无数据', tickFormatter, labelWidth = 96 }) {
+  // hook 必须在空数据提前 return 之前(空 → 有数据时调用顺序不变)
+  const animate = !useMotionReduced();
   if (!rows || rows.length === 0) {
     return (
       <div className="flex items-center justify-center rounded-[var(--r-card)] border border-dashed border-[var(--dorami-border)] tiny-meta" style={{ height }}>
@@ -143,9 +150,9 @@ export function RankBars({ rows, labelKey, valueKey, name, color = C_PRIMARY, he
           <CartesianGrid stroke={GRID} horizontal={false} />
           <XAxis type="number" hide allowDecimals={false} />
           <YAxis type="category" dataKey={labelKey} tick={AXIS_TICK} axisLine={false} tickLine={false} width={labelWidth} interval={0} tickFormatter={tickFormatter} />
-          <Tooltip cursor={{ fill: 'var(--dorami-wash)' }} content={<ThemedTooltip titleKey={labelKey} />} />
+          <Tooltip cursor={{ fill: 'var(--dorami-wash)' }} content={<ThemedTooltip titleKey={labelKey} />} isAnimationActive={animate} />
           {/* 细标记纪律:排行柱厚 22→14(2026-07-24 拍板,原柱偏粗) */}
-          <Bar dataKey={valueKey} name={name} fill={color} radius={[0, 4, 4, 0]} maxBarSize={14} />
+          <Bar dataKey={valueKey} name={name} fill={color} radius={[0, 4, 4, 0]} maxBarSize={14} isAnimationActive={animate} />
         </BarChart>
       </ResponsiveContainer>
     </div>

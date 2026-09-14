@@ -639,7 +639,9 @@ input[type="radio"] {
   border-radius: var(--r-sm);
 }
 
-:root[data-motion="reduce"] .skeleton { animation: none; background: var(--dorami-soft); }
+/* :where() 不贡献特异性(codex F3):后面的 [data-theme="dark"] .skeleton 仍能接管 background,
+   暗色 + 减少动效 = 停走的白叠加渐变,而不是被压成 --dorami-soft 实色 */
+:where(:root[data-motion="reduce"]) .skeleton { animation: none; background: var(--dorami-soft); }
 
 @layer components {
 
