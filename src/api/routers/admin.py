@@ -34,6 +34,7 @@ from models.db import (
     ReaderFavoriteRecord,
     ReaderFeedTokenRecord,
     ReaderSubscriptionRecord,
+    SourceConfigRecord,
 )
 from services import accounts as accounts_service
 from services import ai_usage as ai_usage_service
@@ -42,6 +43,7 @@ from services import content_analytics as content_analytics_service
 from services import daily_brief as daily_brief_service
 from services import jobs as jobs_service
 from services import reader_activity as reader_activity_service
+from services import reader_defaults as reader_defaults_service
 from services import social_backfill as social_backfill_service
 from services import source_visibility as source_visibility_service
 from services import user_sources as user_sources_service
@@ -597,6 +599,77 @@ def admin_set_public_share(
     这正是总闸的意义：出事时不必逐条撤销，且不销毁签发记录，恢复即回归。"""
     article_share_service.set_public_share_enabled(session, params.enabled)
     return {"enabled": article_share_service.public_share_enabled(session)}
+
+
+# ==================== 新账号默认订阅名单(issue #56) ====================
+# 落地页改早报后,新用户第一份早报的观感由这份名单托底;公网/内网口径不同,故 KV 可配。
+# 运维管理 → 内容 →「新账号默认订阅」卡;/api/admin 前缀自动入审计。
+
+
+class ReaderDefaultsParams(BaseModel):
+    source_ids: Optional[List[str]] = None  # None = 删除覆盖,回落代码缺省;[] = 不播种
+
+
+def _reader_defaults_payload(session: Session) -> Dict[str, Any]:
+    registry_meta = _registry_source_meta()
+    stored = reader_defaults_service.stored_source_ids(session)
+    effective = reader_defaults_service.default_source_ids(session)
+    configured = {
+        row.source_id: row.name
+        for row in session.exec(
+            select(SourceConfigRecord).where(SourceConfigRecord.source_id.in_(effective or ["__none__"]))
+        ).all()
+    }
+    hidden = source_visibility_service.hidden_source_ids(session)
+    unknown = set(reader_defaults_service.unknown_source_ids(session, effective, registry_meta))
+
+    def _name(source_id: str) -> str:
+        if source_id == DAILY_BRIEF_SOURCE_ID:
+            return DAILY_BRIEF_SOURCE_META["name"]
+        if source_id in configured and configured[source_id]:
+            return configured[source_id]
+        return _friendly_source_name(source_id, registry_meta)
+
+    return {
+        "source_ids": effective,
+        "overridden": stored is not None,
+        "code_default": list(reader_defaults_service.DEFAULT_SUBSCRIPTION_SOURCE_IDS),
+        "sources": [
+            {
+                "source_id": source_id,
+                "name": _name(source_id),
+                "hidden": source_id in hidden,
+                "unknown": source_id in unknown,
+            }
+            for source_id in effective
+        ],
+        # 「加入来源」候选与 POST 校验同一合法域(codex 检视 P3:读者目录比允许域宽)
+        "candidates": reader_defaults_service.candidate_sources(session, registry_meta),
+    }
+
+
+@router.get("/reader-defaults")
+def admin_get_reader_defaults(session: Session = Depends(deps.get_session)):
+    """新账号默认订阅名单读数(生效名单 + 是否为 KV 覆盖 + 代码缺省)。"""
+    return _reader_defaults_payload(session)
+
+
+@router.post("/reader-defaults")
+def admin_set_reader_defaults(
+    params: ReaderDefaultsParams, session: Session = Depends(deps.get_session)
+):
+    """写名单。只影响此后新建账号的播种,存量账号不回填、退订过的不复活。"""
+    if params.source_ids is not None:
+        unknown = reader_defaults_service.unknown_source_ids(
+            session, params.source_ids, _registry_source_meta()
+        )
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail={"message": "名单里有系统不认识的来源", "unknown_source_ids": unknown},
+            )
+    reader_defaults_service.set_default_source_ids(session, params.source_ids)
+    return _reader_defaults_payload(session)
 
 
 # ==================== 用户自定源治理(v3.40) ====================

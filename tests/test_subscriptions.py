@@ -700,7 +700,11 @@ def test_reader_sources_includes_zero_article_registered_source(monkeypatch, tmp
     # 不应出现在读者目录（X 社交波「隐藏通用 XXX 源」契约）。
     meta = app_module.fetcher_registry.get_all_metadata()
     assert meta, "fetcher registry should expose at least one source"
-    fresh = next(m["id"] for m in meta if not m.get("is_template"))
+    # 默认播种名单里的源登录即已订阅,挑名单外的源才能断言「未订阅」
+    fresh = next(
+        m["id"] for m in meta
+        if not m.get("is_template") and m["id"] not in app_module.DEFAULT_SUBSCRIPTION_SOURCE_IDS
+    )
     template_ids = [m["id"] for m in meta if m.get("is_template")]
 
     with TestClient(app_module.app) as client:

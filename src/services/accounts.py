@@ -412,17 +412,25 @@ def touch_login(session: Session, username: str) -> None:
     session.commit()
 
 
-def complete_interest_onboarding(session: Session, username: str) -> UserRecord:
-    """幂等标记首次兴趣选择已完成。"""
-    record = get_user(session, username)
-    if record is None:
+def complete_interest_onboarding(session: Session, username: str) -> bool:
+    """幂等标记首次兴趣选择已完成;返回**本次调用是否完成了 None→有值 的迁移**。
+
+    单条条件 UPDATE(`WHERE interest_onboarding_completed_at IS NULL`)以 rowcount 判定抢占,
+    并发双请求只有一个拿到 True——issue #56 的「首登引导首次完成即重编一次」以它为唯一凭据,
+    不再先读后判(codex 检视 P2:先 SELECT 再 Python 判定,两个 Session 会同时自认首次)。
+    不 commit,由调用方与同事务的其它写一起提交。
+    """
+    if get_user(session, username) is None:
         raise AccountError(f"账户 '{username}' 不存在")
-    if not record.interest_onboarding_completed_at:
-        now = _now_iso()
-        record.interest_onboarding_completed_at = now
-        record.updated_at = now
-        session.add(record)
-    return record
+    now = _now_iso()
+    result = session.exec(
+        update(UserRecord)
+        .where(UserRecord.username == username)
+        .where(UserRecord.interest_onboarding_completed_at.is_(None))  # type: ignore[union-attr]
+        .values(interest_onboarding_completed_at=now, updated_at=now)
+    )
+    session.expire_all()
+    return int(getattr(result, "rowcount", 0) or 0) == 1
 
 
 def _since(days: int) -> str:
