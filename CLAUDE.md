@@ -69,7 +69,10 @@ Data is stored in the `data/` directory (SQLite `cms_data.db`,含 FTS5 全文索
   收到意见先逐条表态(接受 / 分歧 + 论据),分歧点与 codex 讨论到一致——**一致之前不改代码**;修复成批做完再请复检,
   复检只对照修复清单不重新开放全面检视。轮次由执行者控制,原则是两人合作检视、协商,避免「乒乓球」式来回传球与发散;
   再有新面先判严重性,非严重记观察期。分歧与结论写进方案文档的检视节。
-- **合入前必须用户本地端到端验收 + 目检放行**,codex 通过也不例外;拍板后 squash 合入 main、bump 版本、打 tag。
+- **合入前必须用户本地端到端验收 + 目检放行**,codex 通过也不例外;拍板后 squash 合入 main。
+- **tag 即发布(2026-09-14 拍板)**:PR 里不改 `src/version.py` / `pyproject.toml` / `uv.lock` 的版本号、不打 tag;
+  合入 main 的门禁 = PR + CI + 检视,发布 = 发版人在 main 上跑 `scripts/release.sh` 统一 bump 版本并打 annotated tag `vX.Y.Z`,
+  两条部署脚本按 tag 部署(`--here` 显式部署工作树)。波次叙述仍可写「vX.Y 某某波」,号以实际发版为准。见 `docs/release-process.md`。
 
 ## Versioning
 
