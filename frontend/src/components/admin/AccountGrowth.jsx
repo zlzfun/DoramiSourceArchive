@@ -129,7 +129,9 @@ const intFormatter = (v) => (v >= 1000 ? `${Math.round(v / 1000)}k` : v);
 
 export default function AccountGrowth({ growth, height = 200 }) {
   const [grain, setGrain] = useState('day');
-  const data = useMemo(() => bucketGrowth(growth?.series, grain), [growth, grain]);
+  // 「今天」取服务端 as_of_day(与 created_at 同一时钟),浏览器与服务端跨日时不漏当天新增。
+  const asOf = useMemo(() => (growth?.as_of_day ? parseDay(growth.as_of_day) : new Date()), [growth]);
+  const data = useMemo(() => bucketGrowth(growth?.series, grain, asOf), [growth, grain, asOf]);
   const windowNew = data.reduce((acc, r) => acc + r.new, 0);
   const grainNoun = grain === 'day' ? `近 ${DAY_SPAN} 天` : grain === 'week' ? `近 ${WEEK_SPAN} 周` : '全部';
   const seg = (
@@ -143,7 +145,7 @@ export default function AccountGrowth({ growth, height = 200 }) {
     <>
       <div className="zone-head">
         <span className="zone-title">账户增长</span>
-        <span className="zone-hint">{grainNoun} · 新增 {fmt(windowNew)}</span>
+        <span className="zone-hint">{grainNoun} · 新增 {fmt(windowNew)} · 现存账户按加入日回溯,已删除不计</span>
         <span className="zone-acts">{seg}</span>
       </div>
       <div className="admin-grid">

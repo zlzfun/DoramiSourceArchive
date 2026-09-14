@@ -419,8 +419,13 @@ def admin_audit_log(
     q: str | None = None,
     status: str | None = None,
     session: Session = Depends(deps.get_session),
+    auth: Optional[Dict[str, Any]] = Depends(deps.get_current_session),
 ):
     """读取近 days 天管理操作审计（留存清理由 retention 每日任务负责）。
+
+    账户操作审计行(path 前缀 /api/accounts)只有根管理员可见(v3.55 issue #31 检视返修):
+    逐账户管理自此只有根管理员能做,这些行记录的永远是根管理员的动作,普通管理员「互查」
+    它没有监督意义、只剩账户名单与逐账户设置的泄露;整行在 SQL 条件里排除,count/items/q 同一口径。
 
     检索(v3.42 M11)：`operator` 按操作者用户名子串、`q` 跨 摘要/目标/路径 子串、
     `status` ∈ ok(2xx/3xx)|denied(4xx/5xx，被拒绝的尝试)；全部 SQL 端生效并与
@@ -433,6 +438,8 @@ def admin_audit_log(
         datetime.date.today() - datetime.timedelta(days=safe_days - 1)
     ).isoformat()
     conditions = [AdminAuditRecord.at >= window_start]
+    if not _is_root_admin(session, auth):
+        conditions.append(~AdminAuditRecord.path.like("/api/accounts%"))
     if operator and operator.strip():
         conditions.append(AdminAuditRecord.username.contains(operator.strip(), autoescape=True))
     if q and q.strip():
@@ -597,9 +604,20 @@ def admin_set_public_share(
 
 
 @router.get("/user-sources")
-def admin_list_user_sources(session: Session = Depends(deps.get_session)):
-    """KPI + 全量用户源列表(含创建者/订阅人数/健康摘要)+ 当前配置。"""
-    return user_sources_service.admin_overview(session)
+def admin_list_user_sources(
+    session: Session = Depends(deps.get_session),
+    auth: Optional[Dict[str, Any]] = Depends(deps.get_current_session),
+):
+    """KPI + 全量用户源列表(含创建者/订阅人数/健康摘要)+ 当前配置。含凭证的私有 feed 地址是
+    读者的私密资产:非根管理员只见 ``scheme://host/…``(``feed_url_masked=true``,前端不挂 href),
+    根管理员原样(v3.55 issue #31 检视返修)。"""
+    overview = user_sources_service.admin_overview(session)
+    if not _is_root_admin(session, auth):
+        for item in overview.get("items", []):
+            if user_sources_service.feed_url_has_credentials(item.get("feed_url") or ""):
+                item["feed_url"] = user_sources_service.mask_credentialed_feed_url(item.get("feed_url") or "")
+                item["feed_url_masked"] = True
+    return overview
 
 
 @router.get("/user-sources/config")

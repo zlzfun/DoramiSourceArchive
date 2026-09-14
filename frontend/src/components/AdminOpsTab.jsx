@@ -84,7 +84,7 @@ function Kpi({ num, label, sub, tone }) {
   );
 }
 
-export default function AdminOpsTab({ showToast, active = true, currentUsername = '', rootAdmin = false, pendingFocus = null, onPendingFocusApplied, onOpenCredentials }) {
+export default function AdminOpsTab({ showToast, active = true, currentUsername = '', rootAdmin = false, onRefreshRuntime = null, pendingFocus = null, onPendingFocusApplied, onOpenCredentials }) {
   const confirm = useConfirm();
   const [sub, setSub] = useState('user'); // 子页：user | content | ai | engage | taxonomy
 
@@ -270,6 +270,16 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
     }
   }, [claimGen, rootAdmin, days, accountPage, acctQ, acctRole, acctStatus, acctAi, acctSort, acctOrder, showToast]);
 
+  // 账户写操作成功后的收尾(v3.55 issue #31 检视返修):先重取能力位——回落根把 admin 升回管理员
+  // 会让根身份立即转移,此时旧闭包里的 reloadAccounts 仍以为自己是根、再拉名单必 403;
+  // 只有最新能力位仍为根才重拉,否则交给 rootAdmin 变化的 effect 收拾界面。
+  const afterAccountMutation = useCallback(async () => {
+    const latest = onRefreshRuntime ? await onRefreshRuntime() : null;
+    if (latest && latest.root_admin === false) return false;
+    await reloadAccounts();
+    return true;
+  }, [onRefreshRuntime, reloadAccounts]);
+
   // 过滤/排序/搜索/时间窗变化:归位第一页并清空勾选(勾选集是当前结果集语境的)。
   useEffect(() => {
     setAccountPage(1);
@@ -378,7 +388,7 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
       setNewPassword('');
       setNewRole('user');
       setCreateModalOpen(false);
-      await reloadAccounts();
+      await afterAccountMutation();
     } catch (error) {
       showToast(error.message || '创建账户失败', 'error');
     } finally {
@@ -426,8 +436,7 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
     try {
       await updateAccount(acc.username, { role: toAdmin ? 'admin' : 'user' });
       showToast(toAdmin ? `已将 ${acc.username} 设为管理员` : `已取消 ${acc.username} 的管理员身份`, 'success');
-      await reloadAccounts();
-      await refreshDetailIfOpen(acc.username);
+      if (await afterAccountMutation()) await refreshDetailIfOpen(acc.username);
     } catch (error) {
       // 末位管理员保护等后端裁决文案直接透传
       showToast(error.message || '更新失败', 'error');
@@ -438,8 +447,7 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
     try {
       await updateAccount(acc.username, { is_active: !acc.is_active });
       showToast(acc.is_active ? `已停用 ${acc.username}` : `已启用 ${acc.username}`, 'success');
-      await reloadAccounts();
-      await refreshDetailIfOpen(acc.username);
+      if (await afterAccountMutation()) await refreshDetailIfOpen(acc.username);
     } catch (error) {
       showToast(error.message || '更新失败', 'error');
     }
@@ -449,8 +457,7 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
     try {
       await updateAccount(acc.username, { ai_beta_enabled: !acc.ai_beta_enabled });
       showToast(acc.ai_beta_enabled ? `已为 ${acc.username} 关闭 AI` : `已为 ${acc.username} 开启 AI`, 'success');
-      await reloadAccounts();
-      await refreshDetailIfOpen(acc.username);
+      if (await afterAccountMutation()) await refreshDetailIfOpen(acc.username);
     } catch (error) {
       showToast(error.message || '更新失败', 'error');
     }
@@ -489,7 +496,7 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
         if (!prev.has(acc.username)) return prev;
         const next = new Set(prev); next.delete(acc.username); return next;
       });
-      await reloadAccounts();
+      await afterAccountMutation();
     } catch (error) {
       showToast(error.message || '删除账户失败', 'error');
     }
@@ -526,7 +533,7 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
         'success',
       );
       setSelectedAccounts(new Set());
-      await reloadAccounts();
+      await afterAccountMutation();
     } catch (error) {
       // 原子语义:任一账户不存在/末位管理员保护 → 整批未生效,后端文案直接透传。
       showToast(error.message || '批量更新失败', 'error');
@@ -612,6 +619,20 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
     aiCalls: acctSummary?.ai_calls ?? 0,
     aiTokens: acctSummary?.ai_tokens ?? 0,
   }), [acctSummary]);
+  // 根身份被转走(true→false):收起根专属层、清逐用户态,并重取已剥掉按用户维度的 AI 用量。
+  const wasRoot = useRef(rootAdmin);
+  useEffect(() => {
+    if (wasRoot.current && !rootAdmin) {
+      closeDetail();
+      setCreateModalOpen(false);
+      setResetTarget(null); setResetPassword('');
+      setSelectedAccounts(new Set());
+      setAcctData({ items: [], total: 0, summary: null });
+      loadUsage(days);
+    }
+    wasRoot.current = rootAdmin;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- closeDetail 是普通函数,只在 rootAdmin 翻转时调用
+  }, [rootAdmin, loadUsage, days]);
   const perDay = (n) => (days > 0 ? (n / days).toFixed(1) : '0');
   // AI 用量「按用户」维度是逐用户明细:非根管理员端点已剥空,前端同步收起该档。
   const aiDims = useMemo(() => (rootAdmin ? [['purpose', '按用途'], ['user', '按用户']] : [['purpose', '按用途']]), [rootAdmin]);

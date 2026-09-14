@@ -834,3 +834,121 @@ def test_root_admin_falls_back_to_earliest_active_admin(tmp_path):
         # admin 升回管理员后按名字优先重新成为根。
         accounts_service.set_role(session, "admin", "admin")
         assert accounts_service.root_admin_username(session) == "admin"
+
+
+# ==================== v3.55 codex 检视返修:凭证 URL 遮罩 / 审计账户行 / 根身份转移 / as_of_day ====================
+def _seed_credentialed_user_source(app_module, owner="alice"):
+    from models.db import SourceConfigRecord
+
+    with Session(app_module.db_sink.engine) as session:
+        session.add(SourceConfigRecord(
+            source_id="user_rss_secret01",
+            name="Alice 私有源",
+            owner_username=owner,
+            source_type="rss",
+            url="https://alice:hunter2@feeds.example.invalid/private/feed?token=topsecret",
+            params_json='{"feed_url": "https://alice:hunter2@feeds.example.invalid/private/feed?token=topsecret", "credentialed_private": true}',
+            created_at="2026-09-01T00:00:00",
+            updated_at="2026-09-01T00:00:00",
+        ))
+        session.commit()
+
+
+def test_non_root_admin_never_sees_private_feed_credentials(monkeypatch, tmp_path):
+    """含凭证的自定源地址:非根管理员在 /api/admin/user-sources 与 /api/source-configs[/{id}] 的
+    整个响应文本里都看不到 userinfo/token;根管理员原样;非根对该行的通用写口 403。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    _seed_second_admin(app_module)
+    _seed_credentialed_user_source(app_module)
+    client = TestClient(app_module.app)
+    assert _login(client, "ops", "ops-pass").status_code == 200
+
+    for path in ("/api/admin/user-sources", "/api/source-configs", "/api/source-configs/user_rss_secret01"):
+        resp = client.get(path)
+        assert resp.status_code == 200, path
+        text = resp.text
+        assert "hunter2" not in text and "topsecret" not in text and "alice:" not in text, path
+        assert "https://feeds.example.invalid/…" in text, path
+    listed = [i for i in client.get("/api/admin/user-sources").json()["items"] if i["source_id"] == "user_rss_secret01"][0]
+    assert listed["feed_url_masked"] is True and listed["owner_username"] == "alice"
+    cfg = client.get("/api/source-configs/user_rss_secret01").json()
+    assert cfg["url_masked"] is True and cfg["params"]["feed_url"] == cfg["url"]
+    assert "topsecret" not in cfg["params_json"]
+    # 写口封死,遮罩值不可能回写
+    assert client.put("/api/source-configs/user_rss_secret01", json={"name": "x"}).status_code == 403
+    assert client.post("/api/source-configs/user_rss_secret01/toggle", json={"is_active": False}).status_code == 403
+    assert client.delete("/api/source-configs/user_rss_secret01").status_code == 403
+    with Session(app_module.db_sink.engine) as session:
+        from models.db import SourceConfigRecord
+        assert "topsecret" in session.get(SourceConfigRecord, "user_rss_secret01").url
+
+    client = TestClient(app_module.app)
+    assert _login(client, "admin", "admin").status_code == 200
+    assert "topsecret" in client.get("/api/admin/user-sources").text
+    cfg = client.get("/api/source-configs/user_rss_secret01").json()
+    assert "topsecret" in cfg["url"] and "url_masked" not in cfg
+
+
+def test_non_root_admin_audit_log_hides_account_operations(monkeypatch, tmp_path):
+    """账户操作审计行(五类)只有根管理员可见;非根的 total/items/q 检索三口径一致不见。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    _seed_second_admin(app_module)
+    root = TestClient(app_module.app)
+    assert _login(root, "admin", "admin").status_code == 200
+    assert root.post("/api/accounts", json={"username": "alice", "password": "pw", "role": "user"}).status_code == 200
+    assert root.put("/api/accounts/alice", json={"ai_beta_enabled": False}).status_code == 200
+    assert root.post("/api/accounts/batch", json={"usernames": ["alice"], "is_active": True}).status_code == 200
+    assert root.post("/api/accounts/alice/reset-password", json={"new_password": "pw2"}).status_code == 200
+    assert root.delete("/api/accounts/alice").status_code == 200
+    # 一条非账户类管理写操作,非根仍应看到
+    assert root.post("/api/admin/ai-beta/global", json={"enabled": True}).status_code == 200
+
+    root_log = root.get("/api/admin/audit-log?days=7").json()
+    assert sum(1 for i in root_log["items"] if i["path"].startswith("/api/accounts")) == 5
+    assert root.get("/api/admin/audit-log?days=7&q=alice").json()["total"] >= 4
+
+    ops = TestClient(app_module.app)
+    assert _login(ops, "ops", "ops-pass").status_code == 200
+    log = ops.get("/api/admin/audit-log?days=7").json()
+    assert log["total"] == len(log["items"])
+    assert all(not i["path"].startswith("/api/accounts") for i in log["items"])
+    assert "alice" not in ops.get("/api/admin/audit-log?days=7").text
+    assert ops.get("/api/admin/audit-log?days=7&q=alice").json() == {"items": [], "total": 0}
+    assert any(i["path"] == "/api/admin/ai-beta/global" for i in log["items"])
+
+
+def test_root_identity_transfer_on_admin_restore(monkeypatch, tmp_path):
+    """升级前形态:admin 是读者、ops 是最早活跃管理员(回落根)。ops 把 admin 升回管理员后,
+    根身份立即转给 admin:ops 下一请求 403、runtime.root_admin=false;admin 登录后为根。"""
+    app_module = _setup_app(monkeypatch, tmp_path, )
+    from services import accounts as accounts_service
+    with Session(app_module.db_sink.engine) as session:
+        accounts_service.create_user(session, "ops", "ops-pass", "admin")
+        # 先降 admin 需要绕根守卫:直接改列模拟旧库形态
+        from models.db import UserRecord
+        session.get(UserRecord, "admin").role = "user"
+        session.commit()
+        assert accounts_service.root_admin_username(session) == "ops"
+    ops = TestClient(app_module.app)
+    assert _login(ops, "ops", "ops-pass").status_code == 200
+    assert ops.get("/api/runtime").json()["root_admin"] is True
+    assert ops.get("/api/admin/accounts").status_code == 200
+    assert ops.put("/api/accounts/admin", json={"role": "admin"}).status_code == 200
+    assert ops.get("/api/runtime").json()["root_admin"] is False
+    assert ops.get("/api/admin/accounts").status_code == 403
+    admin = TestClient(app_module.app)
+    assert _login(admin, "admin", "admin").status_code == 200
+    assert admin.get("/api/runtime").json()["root_admin"] is True
+
+
+def test_account_growth_reports_server_as_of_day(tmp_path):
+    import datetime
+    from services import accounts as accounts_service
+    from storage.impl.db_storage import DatabaseStorage
+
+    sink = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'asof.db'}")
+    seed_default_accounts(sink.engine)
+    with Session(sink.engine) as session:
+        growth = accounts_service.account_growth(session)
+    assert growth["as_of_day"] == datetime.date.today().isoformat()
+    assert max(row["day"] for row in growth["series"]) <= growth["as_of_day"]

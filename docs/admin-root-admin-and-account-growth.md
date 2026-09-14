@@ -31,9 +31,10 @@
 
 ### 有意保留给全体管理员的面(不属读者隐私)
 
-- **操作审计**:记录的是管理员的管理写操作,v3.19 设它的目的就是管理员互查。
+- **操作审计**(账户操作行除外,见 §3.1 第 2 条):记录的是管理员的管理写操作,v3.19 设它的目的就是管理员互查。
 - **反馈收件箱**(带提交者名):是工单面,处理反馈需要知道是谁提的。
-- **用户自定源治理**的「创建者」列:溯源用,且源本身是读者主动登记到平台的资产。
+- **用户自定源治理**的「创建者」列:溯源用,且源本身是读者主动登记到平台的资产;含凭证的 feed 地址
+  本身对非根遮罩(§3.1 第 1 条)。
 - **内容看板**各源收藏/订阅排行:按源聚合,不含用户名。
 
 ## 2. 账户增长曲线
@@ -54,6 +55,40 @@
   根管理员不可降级停用删除(单账户 + 批量原子);回落判据(无 admin 时最早活跃管理员,admin 回归后优先级恢复);
   增长按日聚合。`tests/test_accounts.py` 三处既有用例按新语义改写(根守卫先命中;自我降级改为根降级他人吊销 cookie)。
 - 隔离栈 Playwright:根管理员 / 普通管理员各自的用户子页亮暗、周月粒度、AI 子页,pageerror = 0。
+
+## 3.1 codex 本地协商式检视(2026-09-14,新流程首次实践)
+
+codex(gpt-5.6-sol,Herdr 本地起)首轮 6 条(3 P1 + 3 P2),我方逐条表态后两条修法有分歧,codex 反驳成立,
+达成一致后一次性修复,复检一轮。记录如下(全部已落地):
+
+1. **自定源含凭证的 feed 地址对非根管理员泄露**(P1,codex 发现的既有面):`/api/admin/user-sources`
+   与 `/api/source-configs[/{id}]` 把 `https://user:pw@host/…?token=…` 原样给所有管理员。修法 =
+   `user_sources.mask_credentialed_feed_url` 收敛为 `scheme://host/…`(路径与 query 整体省略,不逐段猜),
+   非根管理员三处同一口径:顶层 url、解析后 params 的 feed_url/url、**原始 params_json 副本**(codex 反驳:
+   只遮 params 而留 params_json 等于没遮——由遮罩后的 params 重新序列化覆盖);写侧封口:非根对
+   `user_rss_` 行的通用 `PUT/toggle/DELETE /api/source-configs/{id}` 403,遮罩值不可能回写;
+   前端 `UserSourcesPanel` 遮罩值不挂 href。测试断言整个响应文本不含凭证片段。
+2. **审计日志重新暴露账户名单与逐账户设置**(P1):`新建账户 alice` / `关闭 alice 的 AI` 这类摘要对全体
+   管理员可见,等于把账户表移走后又在旁边留了一份历史明细。修法 = **整行隐藏**而非遮字:逐账户管理现在
+   只有根管理员能做,这些行记录的永远是根管理员的动作,普通管理员「互查」它没有监督意义;非根的
+   `/api/admin/audit-log` 在 SQL 条件里排除 `path LIKE '/api/accounts%'`,count/items/q 同一口径
+   (遮字会留 `q=alice` 命中数这个 oracle)。其余管理写操作审计照旧全员可见。
+3. **根身份转移后前端陈旧**(P1):旧库形态(`admin` 是读者、最早活跃管理员回落为根)下,回落根把 `admin`
+   升回管理员的瞬间根身份转移,但 `AdminOpsTab` 闭包里的 `rootAdmin` 仍为 true、再拉名单必 403 且根专属
+   UI 不收起。修法 = App 下传 `onRefreshRuntime`(只重取 runtime 并**返回结果**——codex 反驳:先 await
+   再无条件 reloadAccounts 仍会打一发 403,旧闭包拿不到新 prop),`afterAccountMutation` 按返回值决定
+   是否重拉;`rootAdmin` true→false 的 effect 关抽屉/弹层、清勾选与账户态、重取已剥维度的 AI 用量;
+   `MultiSeriesArea` 当前 dim 不在 dims 里时回落首档。后端测试覆盖转移本身,Playwright 烟测断言
+   转移后零 `/api/admin/accounts` 403、根专属 DOM 消失。
+4. **增长桶以浏览器「今天」截尾**(P2):服务端跨日先于浏览器时当天新增行永不被消费,末端累计 ≠ 总数。
+   修法 = 端点返回 `as_of_day`(服务端本地日期,与 created_at 同时钟),前端视野与末端一律以它为准。
+5. **口径说明**(P2):区头 hint 加「现存账户按加入日回溯,已删除不计」;卡片标题不改(零描述文本纪律,
+   一句 hint 足够)。
+6. **uv.lock 项目版本漂移**(P2):只改锁文件项目 stanza 的 version,不提交 `uv lock` 对镜像源的整文件改写。
+
+无问题面(codex 核过):`_path_matches` 前缀边界、匿名/读者仍先得原 401/403、非根前端不发账户请求且
+空态消费有保护、ai-usage/overview 剥字段、content/公告/播客治理无读者身份字段、根判据在 admin 为
+读者/停用、created_at 相同、删号后根不为空等场景自洽、批量 rollback、根查询不构成嵌套 checkout。
 
 ## 4. 不做(记 backlog)
 

@@ -252,15 +252,20 @@ export default function UserSourcesPanel({ showToast }) {
                         <tr key={item.source_id} className="acct-row is-static">
                           <td><span className="acct-name" title={item.name}>{item.name}</span></td>
                           <td>
-                            <a
-                              href={item.feed_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="acct-mono block truncate hover:underline"
-                              title={item.feed_url}
-                            >
-                              {item.feed_url}
-                            </a>
+                            {item.feed_url_masked ? (
+                              // 含凭证的私有地址对非根管理员只给 scheme://host/…(不可点、title 同文本)
+                              <span className="acct-mono block truncate" title={item.feed_url}>{item.feed_url}</span>
+                            ) : (
+                              <a
+                                href={item.feed_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="acct-mono block truncate hover:underline"
+                                title={item.feed_url}
+                              >
+                                {item.feed_url}
+                              </a>
+                            )}
                           </td>
                           <td><span className="tiny-meta">{item.owner_username || '—'}</span></td>
                           <td>

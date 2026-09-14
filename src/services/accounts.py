@@ -783,4 +783,7 @@ def account_growth(session: Session) -> dict:
     return {
         "totals": {"accounts": total, "admins": admins, "readers": total - admins, "disabled": disabled},
         "series": series,
+        # 服务端「今天」(与 created_at 同一时钟):前端视野与末端一律以它为准,
+        # 浏览器与服务端跨日时不会把当天的新增漏在视野之外(codex 检视 #4)。
+        "as_of_day": datetime.date.today().isoformat(),
     }
