@@ -371,7 +371,9 @@ export default function ReaderTab({
   onDeepLinkConsumed,
 }) {
   const [brandFailed, setBrandFailed] = useState(false); // 品牌 logo 加载失败 → 回退铃铛
-  const [briefOpen, setBriefOpen] = useState(false);
+  // issue #56 落地页早报波:登录 / 刷新落地 = 个人早报页(能力位开着且没带站内深链——深链压过落地页;
+  // admin 的 default_surface 只决定进管理台还是阅读器,进来同样落早报)。不记住上次停留,首屏恒为早报。
+  const [briefOpen, setBriefOpen] = useState(() => personalDigestEnabled && !initialArticleId);
   // 早报「外出」上下文(issue #23 三稿):从早报点卡片进原文后阅读窗顶部出返回带——
   // {date, revision, scrollTop, itemId, label, sequence[{id,article_id,title}], index}。
   // 用户主动改作用域(视图轨/源栏/发现页)即清;同列表内翻篇保留。restoreRef 把它交还早报页落位。
@@ -440,15 +442,8 @@ export default function ReaderTab({
     interestAxisEnabled: personalDigestEnabled,
   });
 
-  // 首登引导自动落到发现页兴趣段一次(不锁页;发现钮挂点直到完成或跳过)
-  const onboardingOpenedRef = useRef(false);
-  useEffect(() => {
-    if (!onboardingRequired || onboardingOpenedRef.current) return;
-    onboardingOpenedRef.current = true;
-    setBriefOpen(false);
-    setDiscoverTab('interests');
-    openDiscover({ shape: 'all' });
-  }, [onboardingRequired, openDiscover]);
+  // 首登引导(issue #56 方案 B「早报前置、引导内嵌」):不再强制落发现页兴趣段——新账号首屏就是早报,
+  // 引导横幅挂在早报页顶(PersonalBriefPage onboarding),发现钮红点照旧挂到完成或跳过
   // 「发现更多来源」类入口(源栏底 / 条目列与阅读窗空态):明说的是「来源」,段位必须落「源」——
   // 发现页段位是粘性的(首登引导落过兴趣段后会一直停在那),不切回会让「发现更多来源」开到标签清单;
   // 形态随 openDiscover 缺省取当前容器(issue #55)。视图轨 Compass 是全局入口,沿用上次段位不动。
@@ -865,6 +860,10 @@ export default function ReaderTab({
           supersedePendingOpen={supersedePendingOpen}
           onManageSubscriptions={() => { setBriefOpen(false); leaveBriefTrail(); openDiscoverSources({ shape: 'all' }); }}
           onManageInterests={openInterests}
+          onboarding={onboardingRequired}
+          onSetupInterests={openInterests}
+          onOnboardingCompleted={() => onUserUpdated?.({ interest_onboarding_completed: true })}
+          onBrowse={() => { setBriefOpen(false); leaveBriefTrail(); }}
           onSubscribeSource={onRowSubscribeSource}
           onOpenArticle={async (articleId, ctx) => {
             // 结果回传早报页:false=不在库(早报页退到原链),null=被更晚的点击盖过(不动)
@@ -906,11 +905,12 @@ export default function ReaderTab({
               embedded
               onboarding={onboardingRequired}
               showToast={showToast}
-              onSaved={({ onboardingCompleted } = {}) => {
+              onSaved={({ onboardingCompleted, briefRebuilt } = {}) => {
                 setInterestVersion((value) => value + 1);
                 refreshInterests();
                 if (onboardingCompleted) {
                   onUserUpdated?.({ interest_onboarding_completed: true });
+                  if (briefRebuilt) showToast?.('早报已按你的兴趣重新编排', 'success');
                   // 引导完成即落早报——读者立刻看到兴趣起了作用(在途时若已走开,只记完成)
                   if (!discoverRef.current) return;
                   closeDiscover();

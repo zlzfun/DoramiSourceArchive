@@ -32,6 +32,9 @@ import {
   setAiDailyTokenBudget,
   fetchPublicShareGlobal,
   updatePublicShareGlobal,
+  fetchReaderDefaults,
+  updateReaderDefaults,
+  fetchReaderSources,
   fetchAiUsage,
   getLLMConfig,
   createAccount,
@@ -103,6 +106,9 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
   const [newUserAiDefault, setNewUserAiDefault] = useState(null); // 新账号 AI 默认值(只影响此后新建账户)
   const [budgetDraft, setBudgetDraft] = useState(''); // 预算输入框草稿(失焦/回车提交)
   const [publicShare, setPublicShare] = useState(null);   // 公开分享总闸 + 存活链接盘点
+  const [readerDefaults, setReaderDefaults] = useState(null); // 新账号默认订阅名单(issue #56):{source_ids, overridden, sources, code_default}
+  const [defaultsCatalog, setDefaultsCatalog] = useState([]); // 可加入名单的公共源目录(读者目录,admin 会话可读)
+  const [defaultsPick, setDefaultsPick] = useState('');
   const [busy, setBusy] = useState(false);
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -224,7 +230,35 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
       const share = await fetchPublicShareGlobal();
       if (fresh()) setPublicShare(share);
     } catch { /* 读不到就保持 null,卡片显示「正在读取…」且开关禁用 */ }
+    try {
+      const defaults = await fetchReaderDefaults();
+      if (fresh()) setReaderDefaults(defaults);
+    } catch { /* 同上:名单卡显示读取中 */ }
+    try {
+      const catalog = await fetchReaderSources();
+      if (fresh()) setDefaultsCatalog((catalog.sources || []).filter((src) => !src.user_source));
+    } catch { /* 目录读不到只是不能新增,已有名单照常可删 */ }
   }, [claimGen, showToast]);
+
+  // 新账号默认订阅名单(issue #56):增删即写,null = 恢复代码缺省;只影响此后新建账号
+  const saveReaderDefaults = async (sourceIds, okMsg) => {
+    try {
+      const res = await updateReaderDefaults(sourceIds);
+      setReaderDefaults(res);
+      setDefaultsPick('');
+      showToast(okMsg, 'success');
+    } catch (error) {
+      showToast(error.message || '更新默认订阅名单失败', 'error');
+    }
+  };
+  const handleDefaultsRemove = (sourceId) => saveReaderDefaults(
+    (readerDefaults?.source_ids || []).filter((id) => id !== sourceId), '已从默认订阅名单移除',
+  );
+  const handleDefaultsAdd = (sourceId) => {
+    if (!sourceId || (readerDefaults?.source_ids || []).includes(sourceId)) return;
+    saveReaderDefaults([...(readerDefaults?.source_ids || []), sourceId], '已加入默认订阅名单');
+  };
+  const handleDefaultsReset = () => saveReaderDefaults(null, '已恢复代码缺省名单');
 
   const handleTogglePublicShare = async () => {
     const next = !publicShare?.enabled;
@@ -1026,6 +1060,47 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
                 : `当前有效 ${publicShare.live_count} 条 · 累计签发 ${publicShare.total_count} 条`}
               {' · '}读者可为单篇内容生成免登录只读链接，可设有效期并随时撤销
             </span>
+          </section>
+
+          {/* 新账号默认订阅名单(issue #56 落地页早报波):登录点播种的公共源集合,代码缺省 + KV 覆盖。
+              放「内容」——它决定新读者第一眼看到的内容面(首屏早报按它编排),与分享/自定源同属内容治理。 */}
+          <section className="surface-card ai-switchboard rdef-card rounded-[var(--r-card)] mb-4" aria-label="新账号默认订阅">
+            <div className="ai-switch-lbl" title="新读者账号登录时自动订阅的来源;只影响此后新建账号,存量账号不回填、退订过的不复活">
+              新账号默认订阅
+            </div>
+            <span className="ai-divider" />
+            {readerDefaults === null ? (
+              <span className="tiny-meta">正在读取…</span>
+            ) : (
+              <div className="rdef-body">
+                <div className="rdef-chips">
+                  {readerDefaults.sources.map((src) => (
+                    <span key={src.source_id} className={`interest-chip ${src.unknown ? 'is-bad' : ''}`} title={src.unknown ? `${src.source_id} · 系统不认识的来源` : src.hidden ? `${src.source_id} · 已在读者面隐藏` : src.source_id}>
+                      <span className="interest-chip-dot" aria-hidden="true" />
+                      <span className="interest-chip-name">{src.name}{src.hidden ? '（已隐藏）' : ''}</span>
+                      <button type="button" className="interest-chip-x" aria-label={`移出 ${src.name}`} title="移出" onClick={() => handleDefaultsRemove(src.source_id)}>×</button>
+                    </span>
+                  ))}
+                  {readerDefaults.sources.length === 0 && <span className="tiny-meta">名单为空：新账号不播种任何订阅</span>}
+                </div>
+                <div className="rdef-acts">
+                  <select
+                    className="rdef-select"
+                    value={defaultsPick}
+                    aria-label="加入默认订阅"
+                    onChange={(e) => { setDefaultsPick(e.target.value); handleDefaultsAdd(e.target.value); }}
+                  >
+                    <option value="">加入来源…</option>
+                    {defaultsCatalog
+                      .filter((src) => !readerDefaults.source_ids.includes(src.source_id))
+                      .map((src) => <option key={src.source_id} value={src.source_id}>{src.name}</option>)}
+                  </select>
+                  {readerDefaults.overridden && (
+                    <button type="button" className="action-button action-button-secondary min-h-[28px] px-2.5 text-xs" onClick={handleDefaultsReset} title={`代码缺省:${readerDefaults.code_default.join(', ')}`}>恢复缺省</button>
+                  )}
+                </div>
+              </div>
+            )}
           </section>
 
           {!content ? (

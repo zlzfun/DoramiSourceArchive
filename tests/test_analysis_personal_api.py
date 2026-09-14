@@ -1135,3 +1135,37 @@ def test_personal_brief_title_localization_failure_keeps_edition(monkeypatch, tm
         assert edition["status"] in {"ready", "degraded"}
         assert "title_zh" not in edition["items"][0]["snapshot"]
         assert client.get("/api/reader/briefs/today").json()["edition"]["id"] == edition["id"]
+
+
+def test_first_onboarding_completion_rebuilds_today_brief_once(monkeypatch, tmp_path):
+    """issue #56 方案 B:首登引导**首次**完成且选了兴趣 → PUT 就地重编今日早报(brief_rebuilt=True);
+    再次保存 / 跳过(空名单)都不触发——v3.51.1「兴趣变更只记录」的唯一显式例外。"""
+    app_module, _sink, tag_id = _setup(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as client:
+        _login(client, "bob")  # bob 没有订阅:跳过引导(空名单)不该生成任何东西
+        skipped = client.put("/api/reader/interests", json={"items": [], "complete_onboarding": True})
+        assert skipped.status_code == 200, skipped.text
+        assert skipped.json()["brief_rebuilt"] is False
+        assert client.get("/api/reader/briefs/today").json()["status"] == "not_started"
+
+        _login(client, "alice")
+        assert client.get("/api/reader/briefs/today").json()["status"] == "not_started"
+        first = client.put(
+            "/api/reader/interests",
+            json={"items": [{"tag_id": tag_id}], "complete_onboarding": True},
+        )
+        assert first.status_code == 200, first.text
+        assert first.json()["onboarding_completed"] is True
+        assert first.json()["brief_rebuilt"] is True
+        today = client.get("/api/reader/briefs/today").json()
+        assert today["status"] in {"ready", "degraded"}, today
+        assert today["edition"]["generation_reason"] == "interest_changed"
+        revision = today["edition"]["revision"]
+
+        # 已完成引导后再保存(哪怕带 complete_onboarding)不再重编
+        again = client.put(
+            "/api/reader/interests",
+            json={"items": [{"tag_id": tag_id}], "complete_onboarding": True},
+        )
+        assert again.json()["brief_rebuilt"] is False
+        assert client.get("/api/reader/briefs/today").json()["edition"]["revision"] == revision

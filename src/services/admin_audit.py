@@ -125,6 +125,17 @@ def _global_ai_beta(_: re.Match[str], body: dict | None) -> RenderResult:
     return f"{action}全局 AI Beta", None
 
 
+def _reader_defaults(_: re.Match[str], body: dict | None) -> RenderResult:
+    ids = (body or {}).get("source_ids")
+    if ids is None:
+        return "新账号默认订阅名单恢复代码缺省", None
+    if not isinstance(ids, list):
+        return "更新新账号默认订阅名单", None
+    names = [str(item) for item in ids if isinstance(item, str) and item.strip()]
+    head = "、".join(names[:3]) + ("…" if len(names) > 3 else "")
+    return f"更新新账号默认订阅名单({len(names)} 源{'：' + head if head else ''})", None
+
+
 def _id_target(
     match: re.Match[str], _body: dict | None, *, noun: str, action: str
 ) -> RenderResult:
@@ -156,6 +167,7 @@ AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
     ("POST", re.compile(r"^/api/x-api/config/test$"), lambda _m, _b: ("测试 X API 连通", None)),
     ("POST", re.compile(r"^/api/x-api/config$"), lambda _m, _b: ("更新 X API 配置", None)),
     ("POST", re.compile(r"^/api/admin/ai-beta/global$"), _global_ai_beta),
+    ("POST", re.compile(r"^/api/admin/reader-defaults$"), _reader_defaults),
     (
         "PUT",
         re.compile(r"^/api/admin/analysis/config$"),

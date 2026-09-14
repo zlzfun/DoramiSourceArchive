@@ -180,14 +180,15 @@ export default function InterestPage({
     setSaveState('saving');
     window.clearTimeout(stateTimerRef.current);
     try {
-      await saveInterests(itemsOf(selection), { completeOnboarding: complete });
+      const saved = await saveInterests(itemsOf(selection), { completeOnboarding: complete });
       savedRef.current = selection;
       if (latest()) {
         setSaveState('saved');
         stateTimerRef.current = window.setTimeout(() => setSaveState('idle'), 2200);
       }
       if (toast) showToastRef.current?.(toast, 'success');
-      onSavedRef.current?.({ onboardingCompleted: complete });
+      // brief_rebuilt(issue #56):首登引导首次完成且选了兴趣时后端已就地重编今日早报,父级据此 Toast
+      onSavedRef.current?.({ onboardingCompleted: complete, briefRebuilt: !!saved?.brief_rebuilt });
       return true;
     } catch (err) {
       setSaveState('error');

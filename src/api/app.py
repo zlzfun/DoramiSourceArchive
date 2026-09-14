@@ -112,6 +112,7 @@ from services import reader_state as reader_state_service
 from services import ai_usage as ai_usage_service
 from services import jobs as jobs_service
 from services import user_sources as user_sources_service
+from services import reader_defaults as reader_defaults_service
 from services import article_analysis as article_analysis_service
 from services import taxonomy as taxonomy_service
 from services import podcast_catalog as podcast_catalog_service
@@ -1347,6 +1348,10 @@ async def require_admin_session(request: Request, call_next):
         or (
             normalized_method == "POST"
             and path == "/api/admin/ai-beta/global"
+        )
+        or (
+            normalized_method == "POST"
+            and path == "/api/admin/reader-defaults"
         )
         or (
             normalized_method == "POST"
@@ -2830,19 +2835,9 @@ def _create_single_source_subscription(session: Session, username: str, source_i
     session.add(record)
 
 
-# 新读者账号默认自带的订阅源（可随时取消，且取消后不会被再次播种）。
-# 精选名单（2026-07-25 拍板 5 源均衡版；2026-07-26 补动态/社交各一）：日报聚合最适合首屏，
-# 再配中文媒体两家 + 头部官方两家，让新账号首次进入阅读器即有内容可读；动态与社交容器
-# 各播一源，避免新用户切换视图时面对空列表。名单刻意少而低噪，更多来源引导用户去「发现」页自选。
-DEFAULT_SUBSCRIPTION_SOURCE_IDS = [
-    DAILY_BRIEF_SOURCE_ID,          # 每日 AI 资讯日报（全站聚合）
-    "web_qbitai",                   # 量子位（中文媒体）
-    "web_ithome_ai",                # IT之家 AI（中文快讯）
-    "web_anthropic_news",           # Anthropic 官方
-    "rss_openai_news",              # OpenAI 官方
-    "docs_claude_code_changelog",   # Claude Code Changelog（动态容器）
-    "x_openai",                     # X · OpenAI（社交容器）
-]
+# 新账号默认订阅名单(issue #56 落地页早报波起改为「代码缺省 + KV 覆盖」,见 services/reader_defaults);
+# 这里保留同名再导出是测试与历史引用的兼容面,播种时以 reader_defaults.default_source_ids(session) 为准。
+DEFAULT_SUBSCRIPTION_SOURCE_IDS = reader_defaults_service.DEFAULT_SUBSCRIPTION_SOURCE_IDS
 DEFAULTS_SEEDED_KEY_PREFIX = "reader_defaults_seeded"
 
 
@@ -2862,7 +2857,7 @@ def ensure_default_subscriptions(username: str) -> None:
         # 幂等判定要用原始订阅并集（include_hidden）：默认减隐藏的解析结果会把
         # 已订阅但被临时隐藏的源误判为「未订阅」，导致重复播种。
         existing = set(resolve_subscribed_source_ids(session, username, include_hidden=True))
-        for source_id in DEFAULT_SUBSCRIPTION_SOURCE_IDS:
+        for source_id in reader_defaults_service.default_source_ids(session):
             if source_id in existing:
                 continue
             if source_id == DAILY_BRIEF_SOURCE_ID:

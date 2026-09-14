@@ -69,7 +69,8 @@ export default function MobileReader({
 }) {
   // Bottom-tab state must exist before the shared reader hook: deep links and
   // other programmatic article opens need to close the personal-brief surface.
-  const [tab, setTab] = useState('article');
+  // issue #56:落地 Tab = 早报(能力位开着且没带深链;深链压过落地页),与桌面同口径
+  const [tab, setTab] = useState(() => (personalDigestEnabled && !initialArticleId ? 'brief' : 'article'));
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sheet, setSheet] = useState(null); // { title, items, anchorKey }
   // 兴趣(issue #27 三稿):编辑面并入发现页第三段;首登引导自动落到发现页兴趣段一次(不锁层)
@@ -143,13 +144,7 @@ export default function MobileReader({
   const onboardingRequired = personalDigestEnabled
     && account?.role === 'user'
     && account?.interest_onboarding_completed === false;
-  const onboardingOpenedRef = useRef(false);
-  useEffect(() => {
-    if (!onboardingRequired || onboardingOpenedRef.current) return;
-    onboardingOpenedRef.current = true;
-    setDiscoverTab('interests');
-    openDiscover({ shape: 'all' });
-  }, [onboardingRequired, openDiscover]);
+  // 首登引导(issue #56 方案 B):不再强制落发现页兴趣段,横幅挂在早报页顶;「我的」的兴趣入口红点照旧
   const openInterests = useCallback(() => { setDiscoverTab('interests'); openDiscover({ shape: 'all' }); }, [openDiscover]);
   // 「发现更多来源」入口落「源」段(段位粘性,见桌面 ReaderTab 同名函数注释);形态:抽屉=当前容器,「我的」=全部
   const openDiscoverSources = useCallback((opts) => { setDiscoverTab('sources'); openDiscover(opts); }, [openDiscover]);
@@ -316,6 +311,10 @@ export default function MobileReader({
             supersedePendingOpen={supersedePendingOpen}
             onManageSubscriptions={() => openDiscoverSources({ shape: 'all' })}
             onManageInterests={openInterests}
+            onboarding={onboardingRequired}
+            onSetupInterests={openInterests}
+            onOnboardingCompleted={() => onUserUpdated?.({ interest_onboarding_completed: true })}
+            onBrowse={() => setTab(mode)}
             onSubscribeSource={subscribeSourceById}
             onOpenArticle={async (articleId, ctx) => {
               const opened = await openArticleById(articleId, { silent: true });
@@ -552,11 +551,12 @@ export default function MobileReader({
                   embedded
                   onboarding={onboardingRequired}
                   showToast={showToast}
-                  onSaved={({ onboardingCompleted } = {}) => {
+                  onSaved={({ onboardingCompleted, briefRebuilt } = {}) => {
                     setInterestVersion((value) => value + 1);
                     refreshInterests();
                     if (onboardingCompleted) {
                       onUserUpdated?.({ interest_onboarding_completed: true });
+                      if (briefRebuilt) showToast?.('早报已按你的兴趣重新编排', 'success');
                       if (!discoverRef.current) return;
                       closeDiscover();
                       setBriefRestore(null);

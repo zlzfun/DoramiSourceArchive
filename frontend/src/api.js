@@ -720,6 +720,15 @@ export async function fetchSharedArticle(token) {
   return res.json();
 }
 
+// 新账号默认订阅名单(issue #56):代码缺省 + KV 覆盖;source_ids=null 恢复代码缺省
+export function fetchReaderDefaults() {
+  return request('/admin/reader-defaults', { errorMsg: '获取默认订阅名单失败' });
+}
+
+export function updateReaderDefaults(sourceIds) {
+  return request('/admin/reader-defaults', { method: 'POST', body: { source_ids: sourceIds }, errorMsg: '更新默认订阅名单失败' });
+}
+
 export function fetchPublicShareGlobal() {
   return request('/admin/public-share', { errorMsg: '获取分享总闸失败' });
 }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,10 +12,13 @@ from sqlmodel import Session, select
 
 from api import deps
 from api.routers import personal_briefs
+from models.analysis_contracts import DigestGenerationReason
 from models.db import CmsTagRecord, UserInterestTagRecord
 from services import accounts as accounts_service
 from services import taxonomy as taxonomy_service
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/reader/interests",
@@ -164,13 +168,32 @@ def replace_interests(
             row.source = "explicit"
             row.updated_at = now
         session.add(row)
+    onboarding_transition = False
     if body.complete_onboarding:
+        record = accounts_service.get_user(session, username)
+        onboarding_transition = bool(record and not record.interest_onboarding_completed_at)
         accounts_service.complete_interest_onboarding(session, username)
     session.commit()
 
     # v3.51.1(issue #33 §5):兴趣变更只记录,不再触发当日早报重编排——早报重编只剩
     # 读者手动「重新编排」与次日定时两个入口,今日版面落后于当前兴趣时由
     # /api/reader/briefs/today 的 interest_stale 提示读者自行决定。
+    # 唯一显式例外(issue #56 方案 B「早报前置、引导内嵌」):首登引导**首次**完成且选了兴趣时,
+    # 就地重编一次——新账号首屏早报是按预置来源、无兴趣编排的,引导完成后必须立刻看到兴趣起作用,
+    # 否则「设置兴趣」的邀请没有兑现。跳过引导(空名单)或再次保存都不触发。失败不影响兴趣保存。
+    brief_rebuilt = False
+    if onboarding_transition and requested:
+        try:
+            outcome = personal_briefs._ensure(  # noqa: SLF001 - shared rebuild path
+                session,
+                username,
+                reason=DigestGenerationReason.INTEREST_CHANGED,
+                first_open=False,
+            )
+            brief_rebuilt = outcome.get("edition") is not None
+        except Exception:  # noqa: BLE001 - 重编是附带动作,不能让兴趣保存失败
+            logger.exception("首登引导完成后的早报重编失败(username=%s)", username)
     result = get_interests(auth=auth, session=session)
     result["onboarding_completed"] = bool(body.complete_onboarding)
+    result["brief_rebuilt"] = brief_rebuilt
     return result
