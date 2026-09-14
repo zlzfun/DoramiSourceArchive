@@ -12481,6 +12481,25 @@ input[type="radio"] {
   box-shadow: var(--sh-1), inset 0 1px 0 var(--dorami-edge);
 }
 .interest-onb-main { flex: 1; min-width: 0; }
+/* 运维 → 内容 →「新账号默认订阅」卡(issue #56):与总闸卡同形制,右侧是 chip 名单 + 加入下拉 */
+.rdef-card { align-items: flex-start; }
+.rdef-card .ai-switch-lbl { padding-top: 5px; }
+.rdef-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.rdef-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.rdef-chips .interest-chip.is-bad .interest-chip-dot { background: var(--state-bad); }
+.rdef-acts { display: flex; align-items: center; gap: 8px; }
+.rdef-select {
+  height: 28px; padding: 0 8px; max-width: 240px; font-size: 12px;
+  border-radius: var(--r-control); background: var(--dorami-surface); color: var(--dorami-ink-2);
+  box-shadow: inset 0 0 0 1px var(--dorami-hairline);
+}
+/* 早报首屏的引导横幅(issue #56):同一形制,报头之上;按钮组右对齐,窄屏折行到下方 */
+.brief-onb { margin: 0 0 22px; }
+.brief-onb-acts { display: inline-flex; gap: 8px; flex: none; }
+@media (max-width: 720px) {
+  .brief-onb { flex-direction: column; align-items: stretch; gap: 10px; }
+  .brief-onb-acts { justify-content: flex-end; }
+}
 .interest-onb-text { margin-top: 3px; font-size: 12.5px; line-height: 1.6; color: var(--dorami-ink-2); }
 .interest-onb-text b { font-weight: 600; }
 @media (hover: none) {

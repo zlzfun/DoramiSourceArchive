@@ -1135,3 +1135,171 @@ def test_personal_brief_title_localization_failure_keeps_edition(monkeypatch, tm
         assert edition["status"] in {"ready", "degraded"}
         assert "title_zh" not in edition["items"][0]["snapshot"]
         assert client.get("/api/reader/briefs/today").json()["edition"]["id"] == edition["id"]
+
+
+def test_first_onboarding_completion_rebuilds_today_brief_once(monkeypatch, tmp_path):
+    """issue #56 方案 B:首登引导**首次**完成且选了兴趣 → PUT 就地重编今日早报(brief_rebuilt=True);
+    再次保存 / 跳过(空名单)都不触发——v3.51.1「兴趣变更只记录」的唯一显式例外。"""
+    app_module, _sink, tag_id = _setup(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as client:
+        _login(client, "bob")  # bob 没有订阅:跳过引导(空名单)不该生成任何东西
+        skipped = client.put("/api/reader/interests", json={"items": [], "complete_onboarding": True})
+        assert skipped.status_code == 200, skipped.text
+        assert skipped.json()["brief_rebuilt"] is False
+        assert client.get("/api/reader/briefs/today").json()["status"] == "not_started"
+
+        _login(client, "alice")
+        assert client.get("/api/reader/briefs/today").json()["status"] == "not_started"
+        first = client.put(
+            "/api/reader/interests",
+            json={"items": [{"tag_id": tag_id}], "complete_onboarding": True},
+        )
+        assert first.status_code == 200, first.text
+        assert first.json()["onboarding_completed"] is True
+        assert first.json()["brief_rebuilt"] is True
+        assert first.json()["brief_rebuild_status"] in {"ready", "degraded"}
+        today = client.get("/api/reader/briefs/today").json()
+        assert today["status"] in {"ready", "degraded"}, today
+        assert today["edition"]["generation_reason"] == "interest_changed"
+        revision = today["edition"]["revision"]
+
+        # 已完成引导后再保存(哪怕带 complete_onboarding)不再重编
+        again = client.put(
+            "/api/reader/interests",
+            json={"items": [{"tag_id": tag_id}], "complete_onboarding": True},
+        )
+        assert again.json()["brief_rebuilt"] is False
+        assert again.json()["brief_rebuild_status"] is None
+        assert client.get("/api/reader/briefs/today").json()["edition"]["revision"] == revision
+
+
+def test_onboarding_rebuild_exception_is_only_for_readers_and_is_atomic(monkeypatch, tmp_path):
+    """codex 检视 P2:①admin 账号(登录态恒序列化为已完成引导)经 API 走不进这条例外;
+    ②首次迁移是单条条件 UPDATE——同账号第二次调用拿不到迁移权;③_ensure 抛异常 / 返回 failed
+    时 brief_rebuild_status=failed 且 brief_rebuilt=False(区分「未触发」与「触发失败」)。"""
+    from api.routers import interests as interests_router
+    from services import accounts as accounts_service
+    from sqlmodel import Session as _S
+
+    app_module, sink, tag_id = _setup(monkeypatch, tmp_path)
+    calls: list[str] = []
+    real_ensure = interests_router.personal_briefs._ensure
+
+    def spy(session, username, **kw):
+        calls.append(username)
+        return real_ensure(session, username, **kw)
+
+    monkeypatch.setattr(interests_router.personal_briefs, "_ensure", spy)
+    with TestClient(app_module.app) as client:
+        _login(client, "admin")
+        res = client.put("/api/reader/interests", json={"items": [{"tag_id": tag_id}], "complete_onboarding": True})
+        assert res.status_code == 200, res.text
+        assert res.json()["brief_rebuild_status"] is None and res.json()["brief_rebuilt"] is False
+        assert calls == []  # admin 不触发
+
+    # 条件迁移:先由「另一会话」完成,再走 PUT 的 complete_onboarding → 拿不到迁移权,不重编
+    with _S(sink.engine) as session:
+        assert accounts_service.complete_interest_onboarding(session, "alice") is True
+        assert accounts_service.complete_interest_onboarding(session, "alice") is False
+        session.commit()
+    with TestClient(app_module.app) as client:
+        _login(client, "alice")
+        res = client.put("/api/reader/interests", json={"items": [{"tag_id": tag_id}], "complete_onboarding": True})
+        assert res.json()["brief_rebuild_status"] is None
+        assert calls == []
+
+    # 触发失败 → failed
+    monkeypatch.setattr(interests_router.personal_briefs, "_ensure", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    with TestClient(app_module.app) as client:
+        _login(client, "bob")
+        # bob 还没完成引导:先给他一个兴趣以满足「选了兴趣」
+        res = client.put("/api/reader/interests", json={"items": [{"tag_id": tag_id}], "complete_onboarding": True})
+        assert res.status_code == 200, res.text
+        assert res.json()["brief_rebuild_status"] == "failed" and res.json()["brief_rebuilt"] is False
+        # 兴趣仍保存成功
+        assert [row["tag"]["id"] for row in client.get("/api/reader/interests").json()["items"]] == [tag_id]
+
+
+def test_onboarding_complete_endpoint_does_not_touch_interests(monkeypatch, tmp_path):
+    """早报横幅「稍后再说」专用端点(codex 检视 P2:GET+整集 PUT 会覆盖另一会话的兴趣):
+    只做条件迁移,不改兴趣行;已有关注兴趣时走同一条重编例外,没有则不重编;二次调用 no-op。"""
+    app_module, sink, tag_id = _setup(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as client:
+        # bob:零兴趣跳过 → 完成引导、不重编
+        _login(client, "bob")
+        res = client.post("/api/reader/interests/onboarding/complete")
+        assert res.status_code == 200, res.text
+        assert res.json() == {"onboarding_completed": True, "brief_rebuild_status": None, "brief_rebuilt": False}
+        assert client.get("/api/auth/session").json()["user"]["interest_onboarding_completed"] is True
+
+        # alice:先自动保存了一个兴趣(未完成引导),回早报点「稍后再说」→ 迁移 + 重编,兴趣原样
+        _login(client, "alice")
+        client.put("/api/reader/interests", json={"items": [{"tag_id": tag_id}], "complete_onboarding": False})
+        assert client.get("/api/auth/session").json()["user"]["interest_onboarding_completed"] is False
+        res = client.post("/api/reader/interests/onboarding/complete")
+        assert res.status_code == 200, res.text
+        assert res.json()["onboarding_completed"] is True
+        assert res.json()["brief_rebuild_status"] in {"ready", "degraded"} and res.json()["brief_rebuilt"] is True
+        assert [row["tag"]["id"] for row in client.get("/api/reader/interests").json()["items"]] == [tag_id]
+        edition = client.get("/api/reader/briefs/today").json()["edition"]
+        assert edition["generation_reason"] == "interest_changed"
+        # 二次调用:已完成,不再重编
+        again = client.post("/api/reader/interests/onboarding/complete").json()
+        assert again["brief_rebuild_status"] is None
+        assert client.get("/api/reader/briefs/today").json()["edition"]["revision"] == edition["revision"]
+
+
+def test_onboarding_rebuild_db_failure_rolls_back_and_still_returns_failed(monkeypatch, tmp_path):
+    """codex 复检 P2:_ensure 在同一 Session 里抛数据库异常(Session 进入 pending-rollback)时,
+    PUT 仍须 200 + brief_rebuild_status=failed,兴趣与引导完成已落库。"""
+    from api.routers import interests as interests_router
+    from models.db import UserRecord
+    from sqlmodel import Session as _S
+
+    app_module, sink, tag_id = _setup(monkeypatch, tmp_path)
+
+    def poison(session, username, **kw):
+        # 制造真实的 flush 异常:主键冲突
+        session.add(UserRecord(username="alice", password_hash="x", role="user", is_active=True,
+                               created_at="now", updated_at="now"))
+        session.flush()
+        return {"status": "ready", "edition": {}}
+
+    monkeypatch.setattr(interests_router.personal_briefs, "_ensure", poison)
+    with TestClient(app_module.app) as client:
+        _login(client, "alice")
+        res = client.put("/api/reader/interests", json={"items": [{"tag_id": tag_id}], "complete_onboarding": True})
+        assert res.status_code == 200, res.text
+        assert res.json()["brief_rebuild_status"] == "failed" and res.json()["brief_rebuilt"] is False
+        assert [row["tag"]["id"] for row in res.json()["items"]] == [tag_id]
+    with _S(sink.engine) as session:
+        user = session.get(UserRecord, "alice")
+        assert user.interest_onboarding_completed_at
+
+
+def test_onboarding_complete_ignores_inactive_interest_rows(monkeypatch, tmp_path):
+    """codex 复检 P2:遗留的失效标签兴趣行 + 零订阅不该触发重编——状态须为 None(封闭值域,
+    empty_subscriptions 不透传),今日早报保持 not_started。"""
+    from api.routers import interests as interests_router
+    from models.db import ReaderSubscriptionRecord
+    from sqlmodel import Session as _S, delete as _delete
+
+    app_module, sink, tag_id = _setup(monkeypatch, tmp_path)
+    calls = []
+    monkeypatch.setattr(interests_router.personal_briefs, "_ensure", lambda *a, **k: calls.append(1) or {"status": "empty_subscriptions", "edition": None})
+    with TestClient(app_module.app) as client:
+        _login(client, "alice")
+        client.put("/api/reader/interests", json={"items": [{"tag_id": tag_id}], "complete_onboarding": False})
+    with _S(sink.engine) as session:
+        session.exec(_delete(ReaderSubscriptionRecord).where(ReaderSubscriptionRecord.owner_username == "alice"))
+        tag = session.get(CmsTagRecord, tag_id)
+        tag.status = "deprecated"
+        session.add(tag)
+        session.commit()
+    with TestClient(app_module.app) as client:
+        _login(client, "alice")
+        res = client.post("/api/reader/interests/onboarding/complete")
+        assert res.status_code == 200, res.text
+        assert res.json() == {"onboarding_completed": True, "brief_rebuild_status": None, "brief_rebuilt": False}
+        assert calls == []  # 无有效兴趣,不空跑 _ensure
+        assert client.get("/api/reader/briefs/today").json()["status"] == "not_started"
