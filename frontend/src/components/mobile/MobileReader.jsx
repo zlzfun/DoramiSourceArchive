@@ -33,6 +33,7 @@ import MobileArticlePage from './MobileArticlePage';
 import MobileSourceDrawer from './MobileSourceDrawer';
 import MobileMePage from './MobileMePage';
 import ActionSheet from './ActionSheet';
+import { rebuildToast } from '../../utils/briefRebuild';
 import PersonalBriefPage from '../PersonalBriefPage';
 import InterestPage from '../InterestPage';
 
@@ -551,12 +552,13 @@ export default function MobileReader({
                   embedded
                   onboarding={onboardingRequired}
                   showToast={showToast}
-                  onSaved={({ onboardingCompleted, briefRebuilt } = {}) => {
+                  onSaved={({ onboardingCompleted, briefRebuildStatus } = {}) => {
                     setInterestVersion((value) => value + 1);
                     refreshInterests();
                     if (onboardingCompleted) {
                       onUserUpdated?.({ interest_onboarding_completed: true });
-                      if (briefRebuilt) showToast?.('早报已按你的兴趣重新编排', 'success');
+                      const toast = rebuildToast(briefRebuildStatus);
+                      if (toast) showToast?.(toast.text, toast.kind);
                       if (!discoverRef.current) return;
                       closeDiscover();
                       setBriefRestore(null);

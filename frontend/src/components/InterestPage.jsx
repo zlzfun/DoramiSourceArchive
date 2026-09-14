@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Loader2, Search, X } from 'lucide-react';
 import { fetchInterestCatalog, fetchInterests, saveInterests } from '../api';
+import { enqueueSave, flushPendingInterestSaves } from '../utils/interestSaveQueue';
 
 /* ── 我的兴趣(issue #23 第二项,弹窗改页面;样页 docs/design/dorami-interest-quiet.html)──
    定位(issue #27 分析):兴趣与合集是阅读偏好的两根正交轴——合集=看谁(源的成员关系,全站生效),
@@ -89,12 +90,6 @@ function TagCard({ tag, selected = false, onToggle, compact = false }) {
 
 // 保存链放模块级(codex 检视 P2):离开页面时的卸载冲刷若仍在途、读者随即重开,新实例的
 // 加载与保存都必须排在它之后——per-instance 的链跨不过重挂载,旧冲刷会后到覆盖新选择。
-let saveChain = Promise.resolve();
-const enqueueSave = (task) => {
-  const run = saveChain.then(task);
-  saveChain = run.then(() => undefined, () => undefined);
-  return run;
-};
 
 export default function InterestPage({
   mobile = false,
@@ -135,7 +130,7 @@ export default function InterestPage({
     setCatalog(null);
     setError('');
     // 先等在途的保存(含上一实例的卸载冲刷)落定,再读服务端选择集——否则读到冲刷前的旧集
-    saveChain.then(() => Promise.all([
+    flushPendingInterestSaves().then(() => Promise.all([
       fetchInterestCatalog({ signal: controller.signal }),
       fetchInterests({ signal: controller.signal }),
     ])).then(([catalogData, current]) => {
@@ -188,7 +183,7 @@ export default function InterestPage({
       }
       if (toast) showToastRef.current?.(toast, 'success');
       // brief_rebuilt(issue #56):首登引导首次完成且选了兴趣时后端已就地重编今日早报,父级据此 Toast
-      onSavedRef.current?.({ onboardingCompleted: complete, briefRebuilt: !!saved?.brief_rebuilt });
+      onSavedRef.current?.({ onboardingCompleted: complete, briefRebuildStatus: saved?.brief_rebuild_status ?? null });
       return true;
     } catch (err) {
       setSaveState('error');

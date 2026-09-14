@@ -107,6 +107,23 @@ def test_admin_endpoint_roundtrip_validation_and_gating(monkeypatch, tmp_path):
         assert bad.json()["detail"]["unknown_source_ids"] == ["nope_source", "user_rss_abc123def456"]
         assert client.get("/api/admin/reader-defaults").json()["overridden"] is False
 
+        # 模板源(generic_*)是执行基座不是来源:拒绝(codex 检视 P2)
+        tpl = client.post("/api/admin/reader-defaults", json={"source_ids": ["generic_rss"]})
+        assert tpl.status_code == 400, tpl.text
+        assert tpl.json()["detail"]["unknown_source_ids"] == ["generic_rss"]
+
+        # 候选目录与 POST 合法域同源:不含模板/私有源,每个候选都能写入
+        candidates = initial["candidates"]
+        cand_ids = [row["source_id"] for row in candidates]
+        assert cand_ids[0] == "dorami_daily_brief"
+        assert "podcast_demo" in cand_ids and "generic_rss" not in cand_ids
+        assert not any(cid.startswith("user_rss_") for cid in cand_ids)
+        assert all(row["name"] for row in candidates)
+        full = client.post("/api/admin/reader-defaults", json={"source_ids": cand_ids})
+        assert full.status_code == 200, full.text
+        assert full.json()["source_ids"] == cand_ids
+        client.post("/api/admin/reader-defaults", json={"source_ids": None})
+
         # 注册源 + 公共 source_config(播客目录)+ 日报 都合法
         ok = client.post("/api/admin/reader-defaults", json={"source_ids": ["dorami_daily_brief", "podcast_demo", "web_qbitai"]})
         assert ok.status_code == 200, ok.text
@@ -119,8 +136,8 @@ def test_admin_endpoint_roundtrip_validation_and_gating(monkeypatch, tmp_path):
         assert reset.status_code == 200
         assert reset.json()["overridden"] is False
 
-        # 写操作入审计,摘要带条数与前三个名字
-        client.post("/api/admin/reader-defaults", json={"source_ids": ["web_qbitai", "web_ithome_ai", "web_aiera", "rss_openai_news"]})
+        # 写操作入审计,摘要带条数与前三个名字;计数按实际落库口径(trim/去空/去重),codex 检视 P3
+        client.post("/api/admin/reader-defaults", json={"source_ids": ["web_qbitai", " web_qbitai ", "", "web_ithome_ai", "web_aiera", "rss_openai_news"]})
         log = client.get("/api/admin/audit-log?days=1").json()
         summaries = [row["summary"] for row in log["items"]]
         assert any("更新新账号默认订阅名单(4 源" in s and "web_qbitai" in s for s in summaries), summaries

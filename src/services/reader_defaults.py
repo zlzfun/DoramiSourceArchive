@@ -111,8 +111,38 @@ def unknown_source_ids(
             unknown.append(source_id)
         elif source_id == daily_brief_service.DAILY_BRIEF_SOURCE_ID:
             continue
-        elif source_id in registry_meta or source_id in configured:
+        elif source_id in registry_meta:
+            # 模板源(generic_*)是 source-config/builder 的执行基座,读者目录也不列;默认播种它
+            # 只会得到一条永远没内容的订阅(codex 检视 P2)
+            if registry_meta[source_id].get("is_template"):
+                unknown.append(source_id)
+        elif source_id in configured:
             continue
         else:
             unknown.append(source_id)
     return unknown
+
+
+def candidate_sources(
+    session: Session, registry_meta: Dict[str, Dict[str, Any]]
+) -> List[Dict[str, str]]:
+    """管理面「加入来源」下拉的候选:与 unknown_source_ids 的合法域**同源**——
+    公共日报 + 注册表非模板源 + 无 owner 的公共 source_config(含播客目录)。
+    读者目录(`GET /api/reader/sources`)还含只有归档文章的孤儿源,拿它当候选会「选得到但存不了」。
+    """
+    items: List[Dict[str, str]] = [
+        {"source_id": daily_brief_service.DAILY_BRIEF_SOURCE_ID, "name": "哆啦美·AI资讯日报"}
+    ]
+    seen = {daily_brief_service.DAILY_BRIEF_SOURCE_ID}
+    for source_id, meta in registry_meta.items():
+        if meta.get("is_template") or source_id in seen:
+            continue
+        seen.add(source_id)
+        items.append({"source_id": source_id, "name": str(meta.get("name") or source_id)})
+    for row in session.exec(select(SourceConfigRecord).order_by(SourceConfigRecord.source_id)).all():
+        if row.owner_username or row.source_id.startswith(PRIVATE_SOURCE_PREFIX) or row.source_id in seen:
+            continue
+        seen.add(row.source_id)
+        items.append({"source_id": row.source_id, "name": str(row.name or row.source_id)})
+    items[1:] = sorted(items[1:], key=lambda item: item["name"].lower())
+    return items

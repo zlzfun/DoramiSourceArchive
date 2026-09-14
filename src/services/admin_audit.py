@@ -131,7 +131,12 @@ def _reader_defaults(_: re.Match[str], body: dict | None) -> RenderResult:
         return "新账号默认订阅名单恢复代码缺省", None
     if not isinstance(ids, list):
         return "更新新账号默认订阅名单", None
-    names = [str(item) for item in ids if isinstance(item, str) and item.strip()]
+    # 与 reader_defaults.normalize_source_ids 同口径(trim/去空/去重/保序),摘要计数才等于实际落库数;
+    # 内联而不 import,避免 services 间新增依赖边
+    names: list[str] = []
+    for item in ids:
+        if isinstance(item, str) and item.strip() and item.strip() not in names:
+            names.append(item.strip())
     head = "、".join(names[:3]) + ("…" if len(names) > 3 else "")
     return f"更新新账号默认订阅名单({len(names)} 源{'：' + head if head else ''})", None
 

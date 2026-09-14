@@ -796,6 +796,11 @@ export function fetchInterests(options = {}) {
   return request('/reader/interests', { ...options, errorMsg: '获取我的兴趣失败' });
 }
 
+// 早报页横幅「稍后再说」:只做引导完成的条件迁移,不碰兴趣集合(响应带 brief_rebuild_status)
+export function completeInterestOnboarding() {
+  return request('/reader/interests/onboarding/complete', { method: 'POST', errorMsg: '操作失败，请重试' });
+}
+
 export function saveInterests(items, { completeOnboarding = false } = {}) {
   return request('/reader/interests', {
     method: 'PUT', body: { items, complete_onboarding: completeOnboarding }, errorMsg: '保存兴趣设置失败',

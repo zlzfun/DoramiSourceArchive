@@ -47,6 +47,7 @@ import AnnouncementBanner from './AnnouncementBanner';
 import { PodcastCover } from './PodcastAudioPanel';
 import PodcastExperiencePanel from './PodcastExperiencePanel';
 import PodcastTextPanel from './PodcastTextPanel';
+import { rebuildToast } from '../utils/briefRebuild';
 import PersonalBriefPage from './PersonalBriefPage';
 import InterestPage from './InterestPage';
 import AnalysisTagChip from './AnalysisTagChip';
@@ -905,12 +906,13 @@ export default function ReaderTab({
               embedded
               onboarding={onboardingRequired}
               showToast={showToast}
-              onSaved={({ onboardingCompleted, briefRebuilt } = {}) => {
+              onSaved={({ onboardingCompleted, briefRebuildStatus } = {}) => {
                 setInterestVersion((value) => value + 1);
                 refreshInterests();
                 if (onboardingCompleted) {
                   onUserUpdated?.({ interest_onboarding_completed: true });
-                  if (briefRebuilt) showToast?.('早报已按你的兴趣重新编排', 'success');
+                  const toast = rebuildToast(briefRebuildStatus);
+                  if (toast) showToast?.(toast.text, toast.kind);
                   // 引导完成即落早报——读者立刻看到兴趣起了作用(在途时若已走开,只记完成)
                   if (!discoverRef.current) return;
                   closeDiscover();

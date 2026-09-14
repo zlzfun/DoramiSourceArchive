@@ -643,6 +643,8 @@ def _reader_defaults_payload(session: Session) -> Dict[str, Any]:
             }
             for source_id in effective
         ],
+        # 「加入来源」候选与 POST 校验同一合法域(codex 检视 P3:读者目录比允许域宽)
+        "candidates": reader_defaults_service.candidate_sources(session, registry_meta),
     }
 
 

@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUpRight, ChevronDown, Clock3, Loader2, RefreshCw, Sparkles, Zap } from 'lucide-react';
 import {
+  completeInterestOnboarding,
   ensurePersonalBrief,
-  fetchInterests,
   fetchPersonalBrief,
   fetchPersonalBriefs,
   fetchTodayPersonalBrief,
   rebuildPersonalBrief,
-  saveInterests,
 } from '../api';
+import { flushPendingInterestSaves } from '../utils/interestSaveQueue';
+import { rebuildToast } from '../utils/briefRebuild';
 import LogoMark from './LogoMark';
 import { resolveCompany } from '../sourceTaxonomy';
 import { formatDateTime, formatRelativeTime } from '../utils/datetime';
@@ -425,16 +426,24 @@ export default function PersonalBriefPage({
     }
   };
 
-  // 首登引导「稍后再说」:把当前兴趣原样重存并标记引导完成(与兴趣页的跳过同一条 PUT,
-  // 不清空已选项);成功即通知父级刷新账号快照,横幅与发现钮红点一起消失
+  // 首登引导「稍后再说」:专用端点只做引导完成的条件迁移、不碰兴趣集合(此前 GET+整集 PUT 会把另一
+  // 标签页刚保存的兴趣整集覆盖——codex 检视 P2);发出前先等本标签页排队中的兴趣保存落定,否则先于
+  // 卸载时排入的 PUT 完成引导会永久错过首次兴趣重编。读者若已自动保存过兴趣,后端会就地重编,
+  // 响应 brief_rebuild_status 非空时立即重拉今日与历史,别让已挂载的早报停在旧版
   const [skipping, setSkipping] = useState(false);
   const handleSkipOnboarding = async () => {
     setSkipping(true);
     try {
-      const current = await fetchInterests();
-      const items = (current.items || []).filter((it) => it.tag?.id).map((it) => ({ tag_id: it.tag.id }));
-      await saveInterests(items, { completeOnboarding: true });
+      await flushPendingInterestSaves();
+      const res = await completeInterestOnboarding();
       onOnboardingCompleted?.();
+      const status = res?.brief_rebuild_status ?? null;
+      if (status) {
+        const toast = rebuildToast(status);
+        if (toast) showToast?.(toast.text, toast.kind);
+        setSel({ date: null, revision: null });
+        await Promise.all([loadToday(), loadHistory()]);
+      }
     } catch (err) {
       showToast?.(err.message || '操作失败，请重试', 'error');
     } finally {

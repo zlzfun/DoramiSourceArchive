@@ -34,7 +34,6 @@ import {
   updatePublicShareGlobal,
   fetchReaderDefaults,
   updateReaderDefaults,
-  fetchReaderSources,
   fetchAiUsage,
   getLLMConfig,
   createAccount,
@@ -106,9 +105,10 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
   const [newUserAiDefault, setNewUserAiDefault] = useState(null); // 新账号 AI 默认值(只影响此后新建账户)
   const [budgetDraft, setBudgetDraft] = useState(''); // 预算输入框草稿(失焦/回车提交)
   const [publicShare, setPublicShare] = useState(null);   // 公开分享总闸 + 存活链接盘点
-  const [readerDefaults, setReaderDefaults] = useState(null); // 新账号默认订阅名单(issue #56):{source_ids, overridden, sources, code_default}
-  const [defaultsCatalog, setDefaultsCatalog] = useState([]); // 可加入名单的公共源目录(读者目录,admin 会话可读)
+  const [readerDefaults, setReaderDefaults] = useState(null); // 新账号默认订阅名单(issue #56):{source_ids, overridden, sources, code_default, candidates}
   const [defaultsPick, setDefaultsPick] = useState('');
+  const [defaultsBusy, setDefaultsBusy] = useState(false); // 整集写请求在途:卡内全部控件禁用(快速增删会互相覆盖——codex 检视 P2)
+  const defaultsGenRef = useRef(0);                         // 迟到响应不覆盖新快照
   const [busy, setBusy] = useState(false);
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -234,21 +234,22 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
       const defaults = await fetchReaderDefaults();
       if (fresh()) setReaderDefaults(defaults);
     } catch { /* 同上:名单卡显示读取中 */ }
-    try {
-      const catalog = await fetchReaderSources();
-      if (fresh()) setDefaultsCatalog((catalog.sources || []).filter((src) => !src.user_source));
-    } catch { /* 目录读不到只是不能新增,已有名单照常可删 */ }
   }, [claimGen, showToast]);
 
   // 新账号默认订阅名单(issue #56):增删即写,null = 恢复代码缺省;只影响此后新建账号
   const saveReaderDefaults = async (sourceIds, okMsg) => {
+    if (defaultsBusy) return; // 一次只允许一项操作:整集替换语义下并发写会互相带回旧集合
+    const gen = ++defaultsGenRef.current;
+    setDefaultsBusy(true);
     try {
       const res = await updateReaderDefaults(sourceIds);
+      if (gen !== defaultsGenRef.current) return;
       setReaderDefaults(res);
-      setDefaultsPick('');
       showToast(okMsg, 'success');
     } catch (error) {
-      showToast(error.message || '更新默认订阅名单失败', 'error');
+      if (gen === defaultsGenRef.current) showToast(error.message || '更新默认订阅名单失败', 'error');
+    } finally {
+      if (gen === defaultsGenRef.current) { setDefaultsBusy(false); setDefaultsPick(''); } // 失败也复位 select,重选同项才会触发 change
     }
   };
   const handleDefaultsRemove = (sourceId) => saveReaderDefaults(
@@ -1078,7 +1079,7 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
                     <span key={src.source_id} className={`interest-chip ${src.unknown ? 'is-bad' : ''}`} title={src.unknown ? `${src.source_id} · 系统不认识的来源` : src.hidden ? `${src.source_id} · 已在读者面隐藏` : src.source_id}>
                       <span className="interest-chip-dot" aria-hidden="true" />
                       <span className="interest-chip-name">{src.name}{src.hidden ? '（已隐藏）' : ''}</span>
-                      <button type="button" className="interest-chip-x" aria-label={`移出 ${src.name}`} title="移出" onClick={() => handleDefaultsRemove(src.source_id)}>×</button>
+                      <button type="button" className="interest-chip-x" aria-label={`移出 ${src.name}`} title="移出" disabled={defaultsBusy} onClick={() => handleDefaultsRemove(src.source_id)}>×</button>
                     </span>
                   ))}
                   {readerDefaults.sources.length === 0 && <span className="tiny-meta">名单为空：新账号不播种任何订阅</span>}
@@ -1088,16 +1089,19 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
                     className="rdef-select"
                     value={defaultsPick}
                     aria-label="加入默认订阅"
+                    disabled={defaultsBusy}
                     onChange={(e) => { setDefaultsPick(e.target.value); handleDefaultsAdd(e.target.value); }}
                   >
                     <option value="">加入来源…</option>
-                    {defaultsCatalog
+                    {/* 候选与 POST 合法域同源(后端 candidates),不再借用读者目录(codex 检视 P3) */}
+                    {(readerDefaults.candidates || [])
                       .filter((src) => !readerDefaults.source_ids.includes(src.source_id))
                       .map((src) => <option key={src.source_id} value={src.source_id}>{src.name}</option>)}
                   </select>
                   {readerDefaults.overridden && (
-                    <button type="button" className="action-button action-button-secondary min-h-[28px] px-2.5 text-xs" onClick={handleDefaultsReset} title={`代码缺省:${readerDefaults.code_default.join(', ')}`}>恢复缺省</button>
+                    <button type="button" className="action-button action-button-secondary min-h-[28px] px-2.5 text-xs" disabled={defaultsBusy} onClick={handleDefaultsReset} title={`代码缺省:${readerDefaults.code_default.join(', ')}`}>恢复缺省</button>
                   )}
+                  {defaultsBusy && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-500" aria-label="保存中" />}
                 </div>
               </div>
             )}

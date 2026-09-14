@@ -107,6 +107,33 @@ def get_interests(
     }
 
 
+# brief_rebuild_status 契约(issue #56,codex 检视 P2「有 edition ≠ 重编成功」):
+# None = 未触发;否则为 _ensure 的 status(ready/degraded/pending/generating/failed/empty_subscriptions),
+# 异常也记 failed 以区分「未触发」与「触发失败」。brief_rebuilt 只在 ready/degraded 为真。
+REBUILT_STATUSES = frozenset({"ready", "degraded"})
+
+
+def _rebuild_after_onboarding(session: Session, auth: dict[str, Any], username: str) -> str | None:
+    """首登引导首次完成后的就地重编(v3.51.1「只记录不重编」的唯一显式例外)。
+
+    只面向 role=user——admin 的登录态恒序列化为「已完成引导」,不该经 API 走进这条例外
+    (codex 检视 P2)。失败吞异常记 failed,不影响兴趣保存。
+    """
+    if (auth or {}).get("role") != "user":
+        return None
+    try:
+        outcome = personal_briefs._ensure(  # noqa: SLF001 - shared rebuild path
+            session,
+            username,
+            reason=DigestGenerationReason.INTEREST_CHANGED,
+            first_open=False,
+        )
+        return str(outcome.get("status") or "failed")
+    except Exception:  # noqa: BLE001 - 重编是附带动作,不能让兴趣保存失败
+        logger.exception("首登引导完成后的早报重编失败(username=%s)", username)
+        return "failed"
+
+
 @router.put("")
 def replace_interests(
     body: InterestReplace,
@@ -170,30 +197,48 @@ def replace_interests(
         session.add(row)
     onboarding_transition = False
     if body.complete_onboarding:
-        record = accounts_service.get_user(session, username)
-        onboarding_transition = bool(record and not record.interest_onboarding_completed_at)
-        accounts_service.complete_interest_onboarding(session, username)
+        # 条件 UPDATE 与兴趣替换同一事务;rowcount 是「首次完成」的唯一凭据(并发双 PUT 只有一个为 True)
+        onboarding_transition = accounts_service.complete_interest_onboarding(session, username)
     session.commit()
 
     # v3.51.1(issue #33 §5):兴趣变更只记录,不再触发当日早报重编排——早报重编只剩
     # 读者手动「重新编排」与次日定时两个入口,今日版面落后于当前兴趣时由
     # /api/reader/briefs/today 的 interest_stale 提示读者自行决定。
-    # 唯一显式例外(issue #56 方案 B「早报前置、引导内嵌」):首登引导**首次**完成且选了兴趣时,
-    # 就地重编一次——新账号首屏早报是按预置来源、无兴趣编排的,引导完成后必须立刻看到兴趣起作用,
-    # 否则「设置兴趣」的邀请没有兑现。跳过引导(空名单)或再次保存都不触发。失败不影响兴趣保存。
-    brief_rebuilt = False
-    if onboarding_transition and requested:
-        try:
-            outcome = personal_briefs._ensure(  # noqa: SLF001 - shared rebuild path
-                session,
-                username,
-                reason=DigestGenerationReason.INTEREST_CHANGED,
-                first_open=False,
-            )
-            brief_rebuilt = outcome.get("edition") is not None
-        except Exception:  # noqa: BLE001 - 重编是附带动作,不能让兴趣保存失败
-            logger.exception("首登引导完成后的早报重编失败(username=%s)", username)
+    # 唯一显式例外(issue #56 方案 B):首登引导**首次**完成且选了兴趣时就地重编一次,见 _rebuild_after_onboarding。
+    rebuild_status = (
+        _rebuild_after_onboarding(session, auth, username) if onboarding_transition and requested else None
+    )
     result = get_interests(auth=auth, session=session)
     result["onboarding_completed"] = bool(body.complete_onboarding)
-    result["brief_rebuilt"] = brief_rebuilt
+    result["brief_rebuild_status"] = rebuild_status
+    result["brief_rebuilt"] = rebuild_status in REBUILT_STATUSES
     return result
+
+
+@router.post("/onboarding/complete")
+def complete_onboarding(
+    auth: dict[str, Any] = Depends(deps.require_reader),
+    session: Session = Depends(deps.get_session),
+):
+    """只做「首登引导完成」的条件迁移,不碰兴趣集合(早报页横幅「稍后再说」专用)。
+
+    此前「稍后再说」是 GET 兴趣 + 整集 PUT,两步之间另一标签页保存的兴趣会被整集替换掉
+    (codex 检视 P2);无 body 的专用端点根治覆盖。迁移成功且账号已有关注兴趣时,与 PUT 路径
+    共用同一条重编例外——读者可能先在兴趣页自动保存了几项再回早报点「稍后再说」。
+    """
+    personal_briefs._require_enabled(session)  # noqa: SLF001 - shared feature gate
+    username = _username(auth)
+    transitioned = accounts_service.complete_interest_onboarding(session, username)
+    session.commit()
+    rebuild_status = None
+    if transitioned:
+        has_interests = session.exec(
+            select(UserInterestTagRecord.tag_id).where(UserInterestTagRecord.owner_username == username).limit(1)
+        ).first() is not None
+        if has_interests:
+            rebuild_status = _rebuild_after_onboarding(session, auth, username)
+    return {
+        "onboarding_completed": True,
+        "brief_rebuild_status": rebuild_status,
+        "brief_rebuilt": rebuild_status in REBUILT_STATUSES,
+    }
