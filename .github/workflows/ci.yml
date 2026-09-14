@@ -1,0 +1,60 @@
+# 合入门禁:PR 与 main 上的每次 push 都跑后端测试 + 前端 lint/build。
+# 「tag 即发布」的前提是「合入 main 的东西已经过了测试」——发版只是给 main 上某个提交起名,
+# 不再做验证;所以验证必须前移到这里。分支保护里把这两个 job 设为 required(见
+# docs/release-process.md 的分支保护清单)。
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      # 依赖按入库的钉版清单装(与两条部署路径同一份版本事实来源),不现解 pyproject;
+      # tests/test_docker_requirements.py 守卫清单与 pyproject 一致。
+      - name: Install dependencies
+        run: |
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/bin/python -r docker/requirements.txt pytest
+
+      # 少数 Podcast 测试探测 ffmpeg/ffprobe 是否存在(存在时走真实封装路径)
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
+
+      - name: Run tests
+        run: .venv/bin/python -m pytest tests -q -p no:cacheprovider
+
+  frontend:
+    name: frontend (lint + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint
+      - run: npm run build

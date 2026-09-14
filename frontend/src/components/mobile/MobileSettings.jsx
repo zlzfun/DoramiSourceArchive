@@ -132,7 +132,7 @@ export default function MobileSettings({
             {active.id === 'skill' && <SkillSection />}
             {active.id === 'feedback' && <FeedbackSection showToast={showToast} />}
             {active.id === 'about' && (
-              <AboutSection accountRoleLabel={accountRoleLabel} isAdmin={false} version={runtimeInfo?.version} />
+              <AboutSection accountRoleLabel={accountRoleLabel} isAdmin={false} version={runtimeInfo?.version} build={runtimeInfo?.build} />
             )}
           </div>
         </>

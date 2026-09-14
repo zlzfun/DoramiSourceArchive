@@ -199,8 +199,17 @@ def test_analyze_url_rss(monkeypatch):
 
 # ---------- preview_config ----------
 
+# 预览走 SSRF 守卫(域名解析后判公网)。demo.test / x 这类占位域名在真实 DNS 下解析
+# 失败即被拒绝——本机代理的 fake-ip DNS 会把一切域名解析到豁免段而掩盖这一点,
+# CI(GitHub runner)上首次暴露。统一打桩 ensure_public_host,测试只关心解析/预览逻辑。
+async def _fake_public_host(_host):
+    return None
+
+
 def test_preview_config_web(monkeypatch):
     from fetchers.impl.configurable_web_fetcher import ConfigurableWebFetcher
+
+    monkeypatch.setattr(source_builder, "ensure_public_host", _fake_public_host)
 
     class _Resp:
         def __init__(self, text, url):
@@ -257,7 +266,8 @@ def test_preview_config_podcast_routes_to_podcast_fetcher(monkeypatch):
     assert result["entries"][0]["url"] == "https://demo.test/podcast/1"
 
 
-def test_preview_config_rejects_unknown_type():
+def test_preview_config_rejects_unknown_type(monkeypatch):
+    monkeypatch.setattr(source_builder, "ensure_public_host", _fake_public_host)
     result = _run(source_builder.preview_config({"source_type": "json", "url": "https://x"}))
     assert result["ok"] is False
 

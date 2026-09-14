@@ -1,5 +1,7 @@
 # Data files (large/generated)
 data/
+# 部署脚本迁移前的 SQLite 备份(scripts/deploy-lib.sh backup_sqlite_db)
+backups/
 .venv/
 **/__pycache__/
 *.pyc

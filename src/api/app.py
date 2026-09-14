@@ -42,7 +42,7 @@ from models.db import (
 # 引入动态抓取器注册中心
 from fetchers.registry import fetcher_registry
 from api.skill_router import router as skill_router
-from version import __version__
+from version import __version__, build_info
 from api.security_checks import enforce_security_config
 from api.textutils import _now_iso, _json_dumps
 from api.tokens import (
@@ -216,6 +216,8 @@ def runtime_capabilities(session: Optional[Dict[str, Any]] = None) -> Dict[str, 
     ai_beta_enabled, llm_configured, default_surface = _ai_capabilities(session)
     return {
         "version": __version__,
+        # 构建来源(tag/sha/来源):部署脚本按 tag 部署时导出,设置 → 关于 据此核对生产版本。
+        "build": build_info(),
         "role": runtime_role(),
         "account_role": session.get("role") if session else None,
         # 根管理员位（v3.55 issue #31）：账户名单/逐用户明细/逐账户管理只对它开放，

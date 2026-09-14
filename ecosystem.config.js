@@ -22,6 +22,10 @@ module.exports = {
         // 装系统 chromium 后 `export PLAYWRIGHT_CHROMIUM_EXECUTABLE=/usr/bin/chromium` 即可让
         // OpenAI News 渲染节点用它（空值时渲染器自动忽略，不影响默认行为）。
         PLAYWRIGHT_CHROMIUM_EXECUTABLE: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || '',
+        // 构建来源(deploy.sh 按 tag 部署时导出;/api/runtime 透出,设置 → 关于 可核对生产版本)。
+        // 空值时后端退回 git describe 自查,同样能得到结果。
+        DORAMI_BUILD_REF: process.env.DORAMI_BUILD_REF || '',
+        DORAMI_BUILD_SHA: process.env.DORAMI_BUILD_SHA || '',
       },
       error_file: './logs/pm2-error.log',
       out_file: './logs/pm2-out.log',

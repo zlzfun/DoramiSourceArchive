@@ -5,8 +5,12 @@ services:
     build:
       context: .
       dockerfile: docker/backend.Dockerfile
-      # 受限网络可换 PyPI 镜像,如:
-      # args: { PIP_INDEX: "https://pypi.tuna.tsinghua.edu.cn/simple" }
+      args:
+        # 构建来源(deploy-docker.sh 按 tag 部署时导出;手工 compose build 时为空,
+        # 运行时显示为未知)。受限网络可在此追加 PyPI 镜像:
+        #   PIP_INDEX: "https://pypi.tuna.tsinghua.edu.cn/simple"
+        GIT_REF: "${DORAMI_BUILD_REF:-}"
+        GIT_SHA: "${DORAMI_BUILD_SHA:-}"
     restart: unless-stopped
     environment:
       DORAMI_CONFIG_FILE: /app/config/production.ini

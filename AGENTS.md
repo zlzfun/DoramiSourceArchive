@@ -13,7 +13,8 @@
   React + Vite + Tailwind v4(前端,`frontend/`,`npm run dev|build|lint`);测试 `pytest tests/`。
 - **三条铁律**:① 每次模型改动配套 Alembic 迁移(drift 测试强制);② 改前端先读
   `docs/frontend/conventions.md`(token/角色类单一事实来源 = `frontend/src/index.css`);
-  ③ 版本单一事实来源 = `src/version.py`(与 `pyproject.toml` 同步,合 main 打 tag)。
+  ③ 版本单一事实来源 = `src/version.py`,但 **PR 不改版本号**——版本只在发版时由
+  `scripts/release.sh` 统一改并打 annotated tag,部署脚本按 tag 部署(`docs/release-process.md`)。
 - **勿提交** `uv.lock` 的本地镜像改动(开发者本机换源所致,长期停留在工作区)。
 
 ## 文档分层索引(每层概括下一层,无需逐篇 grep)
