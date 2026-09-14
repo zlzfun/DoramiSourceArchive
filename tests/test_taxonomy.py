@@ -730,7 +730,7 @@ def test_governance_state_requires_a_valid_review_receipt_and_auto_activation_of
         assert any("自动激活" in blocker for blocker in state["publish_blockers"])
 
 
-def test_merge_preserves_manual_assignment_mute_interest_and_old_name_alias(storage):
+def test_merge_preserves_manual_assignment_follow_interest_and_old_name_alias(storage):
     with Session(storage.engine) as session:
         session.add_all(
             [
@@ -779,7 +779,7 @@ def test_merge_preserves_manual_assignment_mute_interest_and_old_name_alias(stor
                 UserInterestTagRecord(
                     owner_username="reader",
                     tag_id=target.id,
-                    stance="mute",
+                    stance="follow",
                     priority="normal",
                     created_at=NOW_ISO,
                     updated_at=NOW_ISO,
@@ -801,7 +801,7 @@ def test_merge_preserves_manual_assignment_mute_interest_and_old_name_alias(stor
         assert assignment.assignment_source == "manual"
         assert assignment.is_primary is True
         interest = session.exec(select(UserInterestTagRecord)).one()
-        assert interest.tag_id == target.id and interest.stance == "mute"
+        assert interest.tag_id == target.id and interest.stance == "follow" and interest.priority == "high"
         old = session.get(CmsTagRecord, source.id)
         assert old.status == "merged" and old.replacement_id == target.id
         assert resolve_tag(session, "Old Agent", kind="topic").id == target.id

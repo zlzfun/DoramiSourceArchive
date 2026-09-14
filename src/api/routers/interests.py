@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -24,8 +24,9 @@ router = APIRouter(
 
 
 class InterestInput(BaseModel):
+    """v3.56(issue #27)起兴趣只有「关注」:不再接受 stance(旧客户端传来的 stance 字段被忽略)。"""
+
     tag_id: int = Field(gt=0)
-    stance: Literal["follow", "mute"] = "follow"
 
 
 class InterestReplace(BaseModel):
@@ -95,7 +96,6 @@ def get_interests(
         "items": [
             {
                 "tag": _tag_payload(tag),
-                "stance": interest.stance,
                 "updated_at": interest.updated_at,
             }
             for interest, tag in rows
@@ -148,18 +148,18 @@ def replace_interests(
             row = UserInterestTagRecord(
                 owner_username=username,
                 tag_id=tag_id,
-                stance=item.stance,
+                stance="follow",
                 priority="normal",
                 source="explicit",
                 created_at=now,
                 updated_at=now,
             )
-        elif row.stance == item.stance and row.priority == "normal" and row.source == "explicit":
+        elif row.stance == "follow" and row.priority == "normal" and row.source == "explicit":
             # 原样重存不算变更:兴趣版本(personal_digest._interest_version)混入 updated_at,
             # 无谓改写会让今日早报被误标「兴趣已更新」。
             continue
         else:
-            row.stance = item.stance
+            row.stance = "follow"
             row.priority = "normal"
             row.source = "explicit"
             row.updated_at = now

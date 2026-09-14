@@ -1766,12 +1766,8 @@ def deprecate_tag(
 
 
 def _merge_interest_rows(source: UserInterestTagRecord, target: UserInterestTagRecord) -> None:
-    if source.stance == "mute" or target.stance == "mute":
-        target.stance = "mute"
-        target.priority = "normal"
-    else:
-        target.stance = "follow"
-        target.priority = "high" if "high" in {source.priority, target.priority} else "normal"
+    target.stance = "follow"  # v3.56 起兴趣只有关注一极
+    target.priority = "high" if "high" in {source.priority, target.priority} else "normal"
     target.updated_at = max(source.updated_at, target.updated_at)
 
 
@@ -1784,7 +1780,7 @@ def merge_tags(
     reason: str,
     now: Optional[dt.datetime] = None,
 ) -> CmsTagRecord:
-    """Merge source into target, preserving manual assignments and mute interests."""
+    """Merge source into target, preserving manual assignments and follow interests."""
 
     source_tag = session.get(CmsTagRecord, source_tag_id)
     target_tag = session.get(CmsTagRecord, target_tag_id)

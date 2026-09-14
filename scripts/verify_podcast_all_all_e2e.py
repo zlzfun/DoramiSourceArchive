@@ -97,10 +97,14 @@ _CHILD_ENV_PASSTHROUGH = frozenset(
 )
 
 
-def _source_media_fixture(samples: int = 80) -> bytes:
+def _source_media_fixture(
+    samples: int = 80, *, pcm_sample: bytes = b"\x00\x00"
+) -> bytes:
     """Return a tiny valid PCM WAV without requiring a fixture download."""
 
-    pcm = b"\x00\x00" * samples
+    if len(pcm_sample) != 2:
+        raise ValueError("16-bit PCM fixture samples must be exactly two bytes")
+    pcm = pcm_sample * samples
     return (
         b"RIFF"
         + struct.pack("<I", 36 + len(pcm))
@@ -113,6 +117,7 @@ def _source_media_fixture(samples: int = 80) -> bytes:
 
 
 SOURCE_MEDIA_FIXTURE = _source_media_fixture()
+DIGEST_AUDIO_FIXTURE = _source_media_fixture(pcm_sample=b"\x01\x00")
 
 
 _FIXTURE_SERVER_BOOTSTRAP = r"""
@@ -401,7 +406,7 @@ def _seed_external(db_path: Path, artifact_root: Path) -> None:
                 previous_id = artifact_id
                 previous_hash = content_hash
             session.flush()
-            digest_hash = hashlib.sha256(SOURCE_MEDIA_FIXTURE).hexdigest()
+            digest_hash = hashlib.sha256(DIGEST_AUDIO_FIXTURE).hexdigest()
             session.add(
                 PodcastArtifactRecord(
                     id=DIGEST_AUDIO_ID,
@@ -410,7 +415,7 @@ def _seed_external(db_path: Path, artifact_root: Path) -> None:
                     content_hash=digest_hash,
                     mime="audio/wav",
                     ext=".wav",
-                    size_bytes=len(SOURCE_MEDIA_FIXTURE),
+                    size_bytes=len(DIGEST_AUDIO_FIXTURE),
                     duration_seconds=0.01,
                     status="published",
                     provenance="premium_guide_tts",
@@ -425,11 +430,11 @@ def _seed_external(db_path: Path, artifact_root: Path) -> None:
             session.commit()
         digest_path = (
             artifact_root
-            / hashlib.sha256(SOURCE_MEDIA_FIXTURE).hexdigest()[:2]
-            / f"{hashlib.sha256(SOURCE_MEDIA_FIXTURE).hexdigest()}.wav"
+            / hashlib.sha256(DIGEST_AUDIO_FIXTURE).hexdigest()[:2]
+            / f"{hashlib.sha256(DIGEST_AUDIO_FIXTURE).hexdigest()}.wav"
         )
         digest_path.parent.mkdir(parents=True, exist_ok=True)
-        digest_path.write_bytes(SOURCE_MEDIA_FIXTURE)
+        digest_path.write_bytes(DIGEST_AUDIO_FIXTURE)
     finally:
         storage.engine.dispose()
 
@@ -732,7 +737,7 @@ def _assert_internal_database(db_path: Path, artifact_root: Path) -> None:
             assert audio.status == "published"
             assert audio.authority_id == EXTERNAL_AUTHORITY
             assert (
-                audio.content_hash == hashlib.sha256(SOURCE_MEDIA_FIXTURE).hexdigest()
+                audio.content_hash == hashlib.sha256(DIGEST_AUDIO_FIXTURE).hexdigest()
             )
             assert (
                 session.exec(
@@ -753,7 +758,7 @@ def _assert_internal_database(db_path: Path, artifact_root: Path) -> None:
                 / audio.content_hash[:2]
                 / f"{audio.content_hash}{audio.ext}"
             )
-            assert digest_path.read_bytes() == SOURCE_MEDIA_FIXTURE
+            assert digest_path.read_bytes() == DIGEST_AUDIO_FIXTURE
 
             table_names = {
                 row[0]
@@ -817,6 +822,7 @@ def main(argv: list[str] | None = None) -> int:
     internal_port = _free_port()
     while internal_port == external_port:
         internal_port = _free_port()
+    assert external_port != internal_port
     external_url = f"http://127.0.0.1:{external_port}"
     internal_url = f"http://127.0.0.1:{internal_port}"
     external_stages = (
@@ -963,7 +969,7 @@ def main(argv: list[str] | None = None) -> int:
                     f"/api/reader/podcast-artifacts/{DIGEST_AUDIO_ID}/audio"
                 )
                 audio.raise_for_status()
-                assert audio.content == SOURCE_MEDIA_FIXTURE
+                assert audio.content == DIGEST_AUDIO_FIXTURE
             finally:
                 reader.close()
 
@@ -1057,6 +1063,9 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(
                 {
                     "status": "passed",
+                    "external": external_url,
+                    "internal": internal_url,
+                    "ports_distinct": external_port != internal_port,
                     "runtime_roles": {"external": "all", "internal": "all"},
                     "podcast_stages": {
                         "external": list(external_stages),

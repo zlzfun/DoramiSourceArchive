@@ -517,42 +517,33 @@ def test_interest_only_pool_reports_unfillable_ratio_and_keeps_fallback_lanes_ho
         assert all("不计入正式精选" in item.selection_reason for item in result.items)
 
 
-def test_mute_excludes_matches_and_unfinished_tagging_from_degraded_area(storage):
+def test_degraded_area_does_not_wait_for_tagging(storage):
+    """v3.56(issue #27)屏蔽退役后,「有屏蔽时等打标完成」的就绪依赖随之消失:
+    设了关注的读者,打标未完成的文章照常进入降级区。"""
     with Session(storage.engine) as session:
         user = _user()
-        tag = _tag("muted")
+        tag = _tag("agents")
         session.add_all([user, tag, _subscribe("alice", "rss_a")])
         session.flush()
-        muted = _seed_article(session, 1, score=4.5, tagging_status="succeeded")
         unfinished = _seed_article(session, 2, score=4.5, tagging_status="pending")
-        safe = _seed_article(session, 3, score=4.5, tagging_status="succeeded")
+        finished = _seed_article(session, 3, score=4.5, tagging_status="succeeded")
         session.flush()
-        session.add_all([
-            ArticleTagAssignmentRecord(
-                article_id=muted.id,
-                tag_id=tag.id,
-                tag_kind="topic",
-                relevance=0.9,
-                created_at=NOW_ISO,
-                updated_at=NOW_ISO,
-            ),
+        session.add(
             UserInterestTagRecord(
                 owner_username="alice",
                 tag_id=tag.id,
-                stance="mute",
+                stance="follow",
                 priority="normal",
                 created_at=NOW_ISO,
                 updated_at=NOW_ISO,
             ),
-        ])
+        )
         session.commit()
 
         result = generate_personal_digest(session, "alice", now=NOW)
 
         assert result.status == "degraded"
-        assert [item.article_id for item in result.items] == [safe.id]
-        assert muted.id not in {item.article_id for item in result.items}
-        assert unfinished.id not in {item.article_id for item in result.items}
+        assert {item.article_id for item in result.items} == {unfinished.id, finished.id}
 
 
 def test_interest_changed_creates_today_revision_and_history_is_immutable(storage):
@@ -903,9 +894,8 @@ def test_pending_edition_freezes_interests_before_later_preference_changes(stora
         frozen = json.loads(pending.edition.interest_snapshot_json)
         assert frozen == [{"tag_code": "agents", "stance": "follow", "priority": "normal"}]
 
-        interest.stance = "mute"
-        interest.updated_at = (NOW + dt.timedelta(minutes=1)).isoformat()
-        session.add(interest)
+        # 冻结之后取消关注:待生成的版本仍按冻结快照(agents 关注)编排
+        session.delete(interest)
         session.commit()
         result = generate_personal_digest(
             session,
