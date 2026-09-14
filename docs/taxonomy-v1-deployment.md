@@ -73,20 +73,10 @@ Archive Sync v3 的连接预检会读取 Taxonomy 原子快照并要求
 
 ## 人工验证与恢复工具
 
-正常部署不需要单独跑安装脚本。`scripts/install_taxonomy_v1.py` 是同一 runtime reconciler
-的薄封装，保留给发布前校验、SQLite 在线备份和明确的恢复操作：
-
-```bash
-# 只校验仓库资产，不连库、不写库
-.venv/bin/python scripts/install_taxonomy_v1.py
-
-# 明确恢复到一套兼容的空库/部分导入库；仍然不会发布
-.venv/bin/python scripts/install_taxonomy_v1.py \
-  --database-url sqlite:////var/lib/dorami/cms_data.db \
-  --backup /var/lib/dorami/backups/cms_data.before-taxonomy-v1.db \
-  --actor release-operator \
-  --apply
-```
+正常部署没有 taxonomy 手工安装步骤：外网 authority 的启动 reconciler
+自动安装/校验批准目录，内网 replica 随 Archive Sync 的 `taxonomy.jsonl`
+原子导入最新已发布版本。为避免运维误把恢复入口当作常规发布步骤，
+仓库不再提供额外的 taxonomy 安装包装脚本。
 
 已有 Candidate、审核/合并记录或复杂历史库不能用冷启动 reconciler 猜测处理。通用治理恢复
 能力仍由 `prepare_taxonomy_v1_review.py`（绑定目标库生成 review）与

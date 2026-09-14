@@ -78,10 +78,10 @@ cd frontend && npm install && npm run dev
 | `sources/` | 来源治理：分类标准、收录策略、准入流程、节点审计 playbook、节点目录与风险、`candidates/` 各厂商候选源 |
 | `backlog.md` | 跨波次待办总账（进行中/排队/展望） |
 | `archive/` | 历史/已落地的计划文档（如 `frontend-optimization-plan.md`） |
-| `taxonomy-v1-deployment.md` · `full-analysis-backfill.md` | Taxonomy 上线与历史文章分析回填手册 |
+| `taxonomy-v1-deployment.md` · `aliyun-dual-node-deployment.md` · `full-analysis-backfill.md` | Taxonomy、阿里云双节点上线与历史文章分析回填手册 |
 
 ### 脚本 `scripts/` — 见 [`scripts/README.md`](./scripts/README.md)
-独立于后端运行时的运维/导出脚本；其中 Taxonomy v1 的发现、审核、安装工具按阶段分组并标注生产写入边界。
+独立于后端运行时的运维/导出脚本；其中 Taxonomy v1 的发现、审核与恢复工具按阶段分组并标注生产写入边界。常规部署由启动 reconciler 和 Archive Sync JSONL 完成，不需要 taxonomy 安装脚本。
 
 ### 测试 `tests/`
 单测直接放在 `tests/test_*.py`（每个文件自举 `sys.path` 到 `src/`）。

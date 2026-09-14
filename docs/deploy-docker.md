@@ -28,10 +28,14 @@ docker-compose.yml
 - `config/production.ini` 只读挂载,不进镜像(`.dockerignore` 同时兜底)。
 - 批准的 Taxonomy catalog 是非机密运行时资产，随 backend 镜像复制；外网配置
   `[taxonomy] deployment = authority`，内网配置 `replica`，不可从 `role=all` 推断。
+- 不再单独运行 taxonomy 安装脚本：外网由 backend 入口在迁移后自动
+  reconcile，内网由 Archive Sync 从 `taxonomy.jsonl` 原子导入最新已发布版本。
 - 两端均显式保持 `DORAMI_RUNTIME_ROLE=all`；Podcast stage allowlist 与稳定 installation ID
   通过环境变量注入，不从 role/hostname/container ID 推断。
 - 机密经环境变量注入（`DORAMI_X_BEARER_TOKEN`、`ALIYUN_AK_*`、`NLS_*` 等），
   只放宿主环境或权限受控的项目根 `.env`，不写进 INI/镜像/版本库。
+  LLM 也可用 `DORAMI_LLM_BASE_URL` / `DORAMI_LLM_API_KEY` /
+  `DORAMI_LLM_MODEL` 注入，Compose 会显式传入 backend 容器。
 
 ## 用法
 
@@ -42,6 +46,7 @@ cp config/production.example.ini config/production.ini   # 改 secret / taxonomy
 # 二选一写入权限受控的 .env；installation ID 首次生成后须跨容器重建保持稳定
 # 外网 all:
 cat >> .env <<'EOF'
+DORAMI_ARCHIVE_AUTHORITY_ID=<stable-external-archive-id>
 DORAMI_PODCAST_INSTALLATION=external
 DORAMI_PODCAST_AUTHORITY_ID=<stable-external-id>
 ALIYUN_AK_ID=<secret>
@@ -50,7 +55,8 @@ NLS_APP_KEY=<secret>
 NLS_ACCESS_TOKEN=<secret>
 NLS_TOKEN_EXPIRES_AT=<provider-unix-seconds>
 EOF
-# 内网 all 只需改为 installation=internal 和 stable internal authority ID；
+# 内网 all 改为自己唯一且稳定的 Archive/Podcast authority ID，
+# 并改为 installation=internal；
 # 处理开关、stage 和 target 会默认关闭，且内网不注入 ASR/TTS 凭据。
 
 # 部署 / 升级(构建 → 起容器 → 健康验证一条龙)
@@ -103,6 +109,7 @@ cp config/production.example.ini config/production.ini
 
 # 4. 写 .env：先选择本机 Podcast 拓扑，再选择监听形态
 cat > .env <<'EOF'
+DORAMI_ARCHIVE_AUTHORITY_ID=<stable-external-or-internal-archive-id>
 DORAMI_PODCAST_INSTALLATION=<external-or-internal>
 DORAMI_PODCAST_AUTHORITY_ID=<stable-external-or-internal-id>
 # 只有 external 节点注入 ALIYUN_AK_ID / ALIYUN_AK_SECRET / NLS_*。
