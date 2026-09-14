@@ -18,6 +18,7 @@ from services.bailian_asr import (
     asr_identity,
     usage_plan,
     admission_fingerprint,
+    normalize_transcript,
 )
 from services.bailian_speech_client import (
     BailianSpeechClient,
@@ -246,6 +247,57 @@ def test_poll_normalization_actual_usage_key_rotation_and_scope_change():
     assert adapter.supports(asr_identity(replace(cfg, api_key="rotated")))
     assert not adapter.supports(asr_identity(replace(cfg, account_scope="other")))
     client.close()
+
+
+@pytest.mark.parametrize("blank_text", ["", " ", "\t\n"])
+def test_completed_asr_with_blank_word_tokens_is_materialized_without_resubmit(blank_text):
+    cfg = configuration()
+    payload = transcript()
+    sentence = payload["transcripts"][0]["sentences"][0]
+    sentence["text"] = "Hello world."
+    sentence["words"] = [
+        {"text": "Hello", "begin_time": 0, "end_time": 400},
+        {"text": blank_text, "punctuation": "", "begin_time": 400, "end_time": 450},
+        {"text": "world", "begin_time": 450, "end_time": 900},
+        {"text": "", "punctuation": ".", "begin_time": 900, "end_time": 1000},
+    ]
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(200, json=success())
+
+    async def download(*args, **kwargs):
+        return json.dumps(payload).encode()
+
+    client = BailianSpeechClient(cfg, transport=httpx.MockTransport(handle))
+    adapter = BailianAsrAdapter(
+        cfg, url_resolver=lambda _: None, client=client, downloader=download
+    )
+    result = adapter.poll(
+        task_id="task-1", identity=asr_identity(cfg),
+        audio_duration_ms=60000, reserved_cost_minor=2,
+    )
+    assert isinstance(result, Succeeded)
+    normalized = json.loads(result.output.text)
+    assert normalized["text"] == sentence["text"]
+    assert [w["text"] for w in normalized["segments"][0]["words"]] == [
+        "Hello", "world", ".",
+    ]
+    assert result.usage.billed_audio_duration_ms == 10000
+    assert [(r.method, r.url.path) for r in requests] == [
+        ("GET", "/api/v1/tasks/task-1")
+    ]
+    client.close()
+
+
+def test_blank_word_filter_keeps_strict_timecodes_for_real_words():
+    payload = transcript()
+    words = payload["transcripts"][0]["sentences"][0]["words"]
+    words.insert(0, {"text": " ", "begin_time": 0, "end_time": 1})
+    words[1]["end_time"] = 1001
+    with pytest.raises(ValueError, match="word timecodes"):
+        normalize_transcript(payload)
 
 
 @pytest.mark.parametrize(
