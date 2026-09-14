@@ -598,7 +598,8 @@ media_store: Optional[MediaStore] = (
 )
 
 # 图片理解(issue #69):配图 → 结构化文字说明,供分析 / 日报 / 问答当正文补充消费。
-# 与媒体库同处装配:媒体库关闭即整体关闭;视觉模型未配置时只读缓存、不发起识别。
+# 与媒体库同处装配:媒体库关闭 / 视觉模型未配置 / 旋钮 0 任一成立即整体关闭——读缓存与发起识别
+# 同一道门(关 = 关),各链路与未配置前逐字一致;并发上限 = [llm] map_concurrency。
 image_insights_service.configure(
     db_sink.engine, media_store, concurrency=max(1, settings.llm.map_concurrency)
 )

@@ -470,6 +470,14 @@ def test_numbered_context_combined_budget_keeps_article_count(monkeypatch):
     ctx, inc = reader_ai.build_numbered_context(arts, per_article_chars=2000, total_chars=14000, notes_by_id=notes)
     assert len(inc) == len(plain_inc) >= 5
     assert len(ctx) <= len(plain_ctx) + 8 * 40  # 每块只多标题/换行级别的开销,不再翻倍
+    # 精确硬预算(复检 R2):去掉块头行后,正文 + 分隔符 + 说明 ≤ per_article
+    for block in ctx.split("\n\n"):
+        _head, _, content = block.partition("\n")
+        assert len(content) <= 2000, len(content)
+    tight_ctx, _ = reader_ai.build_numbered_context(arts[:1], per_article_chars=400, total_chars=4000, notes_by_id=notes)
+    assert len(tight_ctx.partition("\n")[2]) <= 400
+    # 对外 sources 剥掉内部控制位
+    assert "has_image_notes" not in reader_ai.public_sources(reader_ai.build_sources_payload(inc, notes_by_id=notes))[0]
     # 单篇:说明拿满 6000(用户拍板下限),正文拿余额;sources 标出显式布尔元数据
     one = arts[:1]
     ctx1, inc1 = reader_ai.build_numbered_context(one, per_article_chars=12000, total_chars=12000, notes_by_id={"a0": "【图片内容】" + "图" * 9000})

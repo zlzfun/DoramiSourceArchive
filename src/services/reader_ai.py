@@ -402,6 +402,18 @@ def sources_have_image_notes(sources: Optional[List[dict]]) -> bool:
     return any(bool(s.get("has_image_notes")) for s in (sources or []) if isinstance(s, dict))
 
 
+_INTERNAL_SOURCE_FIELDS = ("has_image_notes",)
+
+
+def public_sources(sources: Optional[List[dict]]) -> List[dict]:
+    """对外响应用的 sources:剥掉服务端内部控制位(复检 R2:读者面不得出现「配图已识别」标记,
+    且视觉关闭时响应形状须与 main 一致)。"""
+    return [
+        {k: v for k, v in s.items() if k not in _INTERNAL_SOURCE_FIELDS} if isinstance(s, dict) else s
+        for s in (sources or [])
+    ]
+
+
 def build_numbered_context(
     articles: List[Any],
     *,
@@ -440,16 +452,18 @@ def build_numbered_context(
         notes = (notes_map.get(_art_field(art, "id")) or "").strip()
         if not body and not notes and not keep_empty:
             continue
-        body_budget = per_article_chars
         if notes:
+            # 有说明的新路径:正文 + 换行分隔 + 说明恒 ≤ per_article_chars(省略号计入预算,复检 R2 尾差返修)
             notes_limit = min(per_article_chars, max(1000, min(notes_chars, per_article_chars // 2)))
             if len(notes) > notes_limit:
                 notes = notes[: max(0, notes_limit - 1)] + "…"
-            body_budget = max(0, per_article_chars - len(notes))
-        if len(body) > body_budget:
-            body = body[:body_budget] + "…"
-        if notes:
+            body_budget = max(0, per_article_chars - len(notes) - (1 if body else 0))
+            if len(body) > body_budget:
+                body = (body[: body_budget - 1] + "…") if body_budget > 0 else ""
             body = f"{body}\n{notes}" if body else notes
+        elif len(body) > per_article_chars:
+            # 无说明:与 main 逐字一致
+            body = body[:per_article_chars] + "…"
         # 块头带来源名与发布日期(时效性场景的作答依据:「最近」类问题须能按日期
         # 甄别与标注;正文里往往没有自身的发布日期)。
         source_name = friendly_source_name(_art_field(art, "source_id") or "")
@@ -482,7 +496,7 @@ def assemble_articles_context(
 async def _explicit_image_notes(
     records: List[Any], llm_config: Optional[LLMConfig], usage_meta: Optional[UsageMeta],
 ) -> dict:
-    """显式篇目(≤12)的配图说明:有 LLM 配置就缺则识(问答档预算),否则只读缓存(issue #69)。
+    """显式篇目(≤12)的配图说明:能力启用时缺则识(问答档预算);未启用 / 未传配置恒空(issue #69)。
 
     新文章通常 worker 已识完,这里多为零成本命中;存量文章被显式打开时按需补识。
     任何失败都退回空 map——识图是补充,不能让问答 5xx。
@@ -509,8 +523,8 @@ async def assemble_reader_context(
 ) -> tuple:
     """按 scope 组装 reader 问答上下文，返回 ``(context, sources)``。
 
-    ``llm_config`` / ``usage_meta``(issue #69)只用于显式篇目的配图识别(缺则识);不传时
-    只读缓存。检索档的配图说明由 search_fetch 内部(reader_search)按 cached-only 附带。
+    ``llm_config`` / ``usage_meta``(issue #69)只用于显式篇目的配图识别(缺则识);不传或
+    能力未启用时恒无说明。检索档的配图说明由 search_fetch 内部(reader_search)按 cached-only 附带。
 
     - ``scope=article``：该文正文（显式名单 n=1 的特例，零检索依赖）；
     - ``scope=articles``：显式多篇 ``article_ids``（≤ EXPLICIT_ARTICLES_MAX，

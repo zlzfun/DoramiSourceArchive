@@ -171,3 +171,7 @@ issue #41 论文全文落地后方法图/实验表会成为正文主体。文本
 
 未列为 finding、经核对无问题的面:迁移守卫与单向 downgrade、媒体安全主路径复用、无缓存时的回退等价、
 `analysis_input_hash` 语义、计量归属、metrics 查询成本。
+
+**复检(R2)**:P1/P2 全部闭环、无新 P1/P2;三条 P3 当场修掉——F4 组合预算 1–2 字符尾差(分隔符与省略号计入预算,
+去掉块头后正文 + 分隔 + 说明 ≤ per_article,精确断言)、`has_image_notes` 曾随 `/api/reader/ai/ask` 的 sources 外露
+(改为服务端内部控制位,对外经 `public_sources` 剥掉,响应形状与 main 一致)、三处「未配置只读缓存」旧注释。终审通过。

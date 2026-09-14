@@ -1586,13 +1586,16 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
             raise HTTPException(status_code=exc.status_code, detail=str(exc))
 
         _ask_progress_update(ask_id, "answer", {"articles": len(sources)})
+        # 内部控制位只在服务端用一次,对外 sources 形状与 main 一致(读者面无「配图已识别」标记)
+        with_image_notes = reader_ai_service.sources_have_image_notes(sources)
+        sources = reader_ai_service.public_sources(sources)
         history = [{"role": t.role, "content": t.content} for t in (params.history or [])]
         try:
             answer = await reader_ai_service.answer_question(
                 params.question, context, scope=scope, llm_config=llm_config, history=history,
                 usage_meta=UsageMeta(purpose="ask", username=username),
                 # 图片说明使用边界只在上下文真的带了说明时追加(sources 的显式布尔元数据,不嗅探正文)
-                with_image_notes=reader_ai_service.sources_have_image_notes(sources),
+                with_image_notes=with_image_notes,
             )
         except reader_ai_service.ReaderAIError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc))
