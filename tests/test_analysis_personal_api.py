@@ -1247,3 +1247,60 @@ def test_onboarding_complete_endpoint_does_not_touch_interests(monkeypatch, tmp_
         again = client.post("/api/reader/interests/onboarding/complete").json()
         assert again["brief_rebuild_status"] is None
         assert client.get("/api/reader/briefs/today").json()["edition"]["revision"] == edition["revision"]
+
+
+def test_onboarding_rebuild_db_failure_rolls_back_and_still_returns_failed(monkeypatch, tmp_path):
+    """codex 复检 P2:_ensure 在同一 Session 里抛数据库异常(Session 进入 pending-rollback)时,
+    PUT 仍须 200 + brief_rebuild_status=failed,兴趣与引导完成已落库。"""
+    from api.routers import interests as interests_router
+    from models.db import UserRecord
+    from sqlmodel import Session as _S
+
+    app_module, sink, tag_id = _setup(monkeypatch, tmp_path)
+
+    def poison(session, username, **kw):
+        # 制造真实的 flush 异常:主键冲突
+        session.add(UserRecord(username="alice", password_hash="x", role="user", is_active=True,
+                               created_at="now", updated_at="now"))
+        session.flush()
+        return {"status": "ready", "edition": {}}
+
+    monkeypatch.setattr(interests_router.personal_briefs, "_ensure", poison)
+    with TestClient(app_module.app) as client:
+        _login(client, "alice")
+        res = client.put("/api/reader/interests", json={"items": [{"tag_id": tag_id}], "complete_onboarding": True})
+        assert res.status_code == 200, res.text
+        assert res.json()["brief_rebuild_status"] == "failed" and res.json()["brief_rebuilt"] is False
+        assert [row["tag"]["id"] for row in res.json()["items"]] == [tag_id]
+    with _S(sink.engine) as session:
+        user = session.get(UserRecord, "alice")
+        assert user.interest_onboarding_completed_at
+
+
+def test_onboarding_complete_ignores_inactive_interest_rows(monkeypatch, tmp_path):
+    """codex 复检 P2:遗留的失效标签兴趣行 + 零订阅不该触发重编——状态须为 None(封闭值域,
+    empty_subscriptions 不透传),今日早报保持 not_started。"""
+    from api.routers import interests as interests_router
+    from models.db import ReaderSubscriptionRecord
+    from sqlmodel import Session as _S, delete as _delete
+
+    app_module, sink, tag_id = _setup(monkeypatch, tmp_path)
+    calls = []
+    monkeypatch.setattr(interests_router.personal_briefs, "_ensure", lambda *a, **k: calls.append(1) or {"status": "empty_subscriptions", "edition": None})
+    with TestClient(app_module.app) as client:
+        _login(client, "alice")
+        client.put("/api/reader/interests", json={"items": [{"tag_id": tag_id}], "complete_onboarding": False})
+    with _S(sink.engine) as session:
+        session.exec(_delete(ReaderSubscriptionRecord).where(ReaderSubscriptionRecord.owner_username == "alice"))
+        tag = session.get(CmsTagRecord, tag_id)
+        tag.status = "deprecated"
+        session.add(tag)
+        session.commit()
+    with TestClient(app_module.app) as client:
+        _login(client, "alice")
+        res = client.post("/api/reader/interests/onboarding/complete")
+        assert res.status_code == 200, res.text
+        assert res.json() == {"onboarding_completed": True, "brief_rebuild_status": None, "brief_rebuilt": False}
+        assert calls == []  # 无有效兴趣,不空跑 _ensure
+        assert client.get("/api/reader/briefs/today").json()["status"] == "not_started"
+

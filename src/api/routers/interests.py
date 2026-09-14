@@ -108,9 +108,11 @@ def get_interests(
 
 
 # brief_rebuild_status 契约(issue #56,codex 检视 P2「有 edition ≠ 重编成功」):
-# None = 未触发;否则为 _ensure 的 status(ready/degraded/pending/generating/failed/empty_subscriptions),
-# 异常也记 failed 以区分「未触发」与「触发失败」。brief_rebuilt 只在 ready/degraded 为真。
+# None = 未触发(含触发了但无可编排内容);否则 ∈ {ready, degraded, pending, generating, failed}——
+# 封闭值域,_ensure 的其它内部状态不透传(empty_subscriptions → None,未知 → failed);
+# 异常记 failed 以区分「未触发」与「触发失败」。brief_rebuilt 只在 ready/degraded 为真。
 REBUILT_STATUSES = frozenset({"ready", "degraded"})
+REBUILD_STATUSES = frozenset({"ready", "degraded", "pending", "generating", "failed"})
 
 
 def _rebuild_after_onboarding(session: Session, auth: dict[str, Any], username: str) -> str | None:
@@ -128,8 +130,14 @@ def _rebuild_after_onboarding(session: Session, auth: dict[str, Any], username: 
             reason=DigestGenerationReason.INTEREST_CHANGED,
             first_open=False,
         )
-        return str(outcome.get("status") or "failed")
+        status = str(outcome.get("status") or "")
+        if status == "empty_subscriptions":
+            return None
+        return status if status in REBUILD_STATUSES else "failed"
     except Exception:  # noqa: BLE001 - 重编是附带动作,不能让兴趣保存失败
+        # 数据库型异常会让 Session 进入 pending-rollback,不回滚则后续 get_interests 直接 500
+        # (兴趣与引导完成在此之前已 commit,回滚不丢数据)
+        session.rollback()
         logger.exception("首登引导完成后的早报重编失败(username=%s)", username)
         return "failed"
 
@@ -232,8 +240,13 @@ def complete_onboarding(
     session.commit()
     rebuild_status = None
     if transitioned:
+        # 「已有兴趣」按个人早报同一口径:关联标签须 active——失效/废弃标签的遗留兴趣行不算,
+        # 否则会为一份注定 empty 的早报空跑一次 _ensure(codex 复检 P2)
         has_interests = session.exec(
-            select(UserInterestTagRecord.tag_id).where(UserInterestTagRecord.owner_username == username).limit(1)
+            select(UserInterestTagRecord.tag_id)
+            .join(CmsTagRecord, CmsTagRecord.id == UserInterestTagRecord.tag_id)
+            .where(UserInterestTagRecord.owner_username == username, CmsTagRecord.status == "active")
+            .limit(1)
         ).first() is not None
         if has_interests:
             rebuild_status = _rebuild_after_onboarding(session, auth, username)
