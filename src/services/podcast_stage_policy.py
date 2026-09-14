@@ -40,6 +40,7 @@ class PodcastStageDenied(PermissionError):
 class PodcastStagePolicy:
     config: PodcastConfig
     aliyun_isi: AliyunIsiConfig | None = None
+    bailian_speech: object | None = None
 
     def require_stage(self, stage: str, *, boundary: str) -> None:
         normalized_stage = (stage or "").strip().lower()
@@ -76,6 +77,26 @@ class PodcastStagePolicy:
     ) -> bool:
         """Verify an Aliyun plan against trusted resolved accounting config."""
 
+        if provider_name == "aliyun-bailian":
+            from services.bailian_asr import usage_plan
+
+            if (
+                self.bailian_speech is None
+                or stage != "asr"
+                or plan.unit is not ProviderUsageUnit.AUDIO_SECONDS
+            ):
+                return False
+            try:
+                return (
+                    usage_plan(
+                        self.bailian_speech,
+                        audio_duration_ms=plan.reserved_units * 1000,
+                        now=now,
+                    )
+                    == plan
+                )
+            except ValueError:
+                return False
         if (provider_name or "").strip().lower() != "aliyun-isi":
             return True
         if self.aliyun_isi is None:
@@ -107,6 +128,12 @@ class PodcastStagePolicy:
     def provider_call_guard_seconds(self, provider_name: str, stage: str) -> int | None:
         """Return the configured request horizon required before a paid call."""
 
+        if provider_name == "aliyun-bailian":
+            return (
+                self.bailian_speech.request_timeout_seconds
+                if self.bailian_speech is not None and stage == "asr"
+                else None
+            )
         if (provider_name or "").strip().lower() != "aliyun-isi":
             return 0
         if self.aliyun_isi is None or (stage or "").strip().lower() not in {"asr", "tts"}:

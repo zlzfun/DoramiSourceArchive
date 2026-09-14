@@ -1430,9 +1430,16 @@ class PodcastBudgetReservationRecord(SQLModel, table=True):
         ),
         CheckConstraint(
             "status <> 'settled' OR provider_quota_scope IS NULL OR "
-            "(actual_usage_units >= reserved_usage_units AND "
+            "(actual_usage_units >= COALESCE(minimum_usage_units, reserved_usage_units) AND "
             "provider_quota_breached = (actual_usage_units > reserved_usage_units))",
             name="ck_podcast_budget_reservations_provider_settlement_truth",
+        ),
+        CheckConstraint(
+            "minimum_usage_units IS NULL OR (provider_quota_unit IS NOT NULL AND "
+            "provider_quota_unit = 'audio_seconds' AND reserved_usage_units IS NOT NULL AND "
+            "minimum_usage_units >= 0 AND minimum_usage_units <= reserved_usage_units AND "
+            "minimum_usage_units = CAST(minimum_usage_units AS INTEGER))",
+            name="ck_podcast_budget_reservations_usage_minimum",
         ),
     )
 
@@ -1461,6 +1468,7 @@ class PodcastBudgetReservationRecord(SQLModel, table=True):
     provider_quota_window_end_at: Optional[str] = Field(default=None)
     provider_quota_limit_units: Optional[int] = Field(default=None, ge=0)
     reserved_usage_units: Optional[int] = Field(default=None, ge=0)
+    minimum_usage_units: Optional[int] = Field(default=None, ge=0)
     actual_usage_units: int = Field(default=0, ge=0)
     unit_price_cny_minor: Optional[int] = Field(default=None, ge=0)
     price_unit_count: Optional[int] = Field(default=None, ge=0)
@@ -2269,6 +2277,41 @@ class PodcastTextPublicationRecord(SQLModel, table=True):
     updated_at: str
 
 
+class BailianTtsCallRecord(SQLModel, table=True):
+    """Local-only paid speech receipt; retained when episodes are deleted.
+
+    No credential, script, URL or audio is stored in this accounting table.
+    Ambiguous calls keep their budget reservation until operator reconciliation.
+    """
+
+    __tablename__ = "bailian_tts_calls"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('reserved','authorized','generated','succeeded','rejected')",
+            name="ck_bailian_tts_status",
+        ),
+        CheckConstraint(
+            "reserved_characters > 0 AND actual_characters >= 0 AND cost_minor >= 0",
+            name="ck_bailian_tts_usage",
+        ),
+        Index("ix_bailian_tts_scope_period", "account_scope", "budget_period"),
+    )
+    id: str = Field(primary_key=True)
+    episode_id: str = Field(index=True)
+    account_scope: str
+    budget_period: str
+    created_at: str
+    status: str = "reserved"
+    reserved_characters: int
+    actual_characters: int = 0
+    cost_minor: int
+    price_minor: int
+    price_units: int
+    pricing_revision: str
+    request_id: str = ""
+    audio_hash: str = ""
+
+
 class AppSettingRecord(SQLModel, table=True):
     __tablename__ = "app_settings"
     key: str = Field(primary_key=True)
@@ -2535,6 +2578,7 @@ def _install_archive_sync_revision_schema(_metadata, connection, **_kwargs) -> N
             include_provider_usage=True,
             include_output_authority=True,
             include_usage_settlement_mode=True,
+            include_usage_minimum=True,
         ):
             connection.exec_driver_sql(statement)
         for statement in _podcast_processing_command_audit_sql():
@@ -2551,6 +2595,7 @@ def _install_archive_sync_revision_schema(_metadata, connection, **_kwargs) -> N
             include_provider_usage=True,
             include_output_authority=True,
             include_usage_settlement_mode=True,
+            include_usage_minimum=True,
         ):
             connection.exec_driver_sql(statement)
         for statement in _podcast_processing_command_postgresql_sql():
@@ -2923,6 +2968,7 @@ def _podcast_processing_audit_trigger_sql(
     include_provider_usage: bool = False,
     include_output_authority: bool = False,
     include_usage_settlement_mode: bool = False,
+    include_usage_minimum: bool = False,
 ) -> tuple[str, ...]:
     """SQLite audit guards shared by fresh/create_all databases.
 
@@ -2982,6 +3028,10 @@ def _podcast_processing_audit_trigger_sql(
         if include_provider_usage
         else ""
     )
+    if include_usage_minimum:
+        provider_usage_guard += (
+            "\n          OR NEW.minimum_usage_units IS NOT OLD.minimum_usage_units"
+        )
     provider_release_guard = (
         " OR NEW.actual_usage_units <> 0"
         " OR NEW.provider_quota_breached IS NOT FALSE"
@@ -2997,6 +3047,11 @@ def _podcast_processing_audit_trigger_sql(
         if include_provider_usage
         else ""
     )
+    if include_usage_minimum:
+        provider_settlement_guard = provider_settlement_guard.replace(
+            "NEW.actual_usage_units < NEW.reserved_usage_units",
+            "NEW.actual_usage_units < COALESCE(NEW.minimum_usage_units, NEW.reserved_usage_units)",
+        )
     provider_ledger_binding_guard = (
         "\n            AND NEW.provider_quota_scope IS r.provider_quota_scope"
         "\n            AND NEW.provider_quota_period IS r.provider_quota_period"
@@ -3119,6 +3174,7 @@ def _podcast_processing_postgresql_audit_sql(
     include_provider_usage: bool = False,
     include_output_authority: bool = False,
     include_usage_settlement_mode: bool = False,
+    include_usage_minimum: bool = False,
 ) -> tuple[str, ...]:
     """PostgreSQL equivalents of SQLite processing-audit triggers."""
 
@@ -3175,6 +3231,8 @@ def _podcast_processing_postgresql_audit_sql(
         if include_provider_usage
         else ""
     )
+    if include_usage_minimum:
+        provider_usage_guard += "\n             OR NEW.minimum_usage_units IS DISTINCT FROM OLD.minimum_usage_units"
     provider_release_guard = (
         " OR NEW.actual_usage_units <> 0"
         " OR NEW.provider_quota_breached IS NOT FALSE"
@@ -3190,6 +3248,11 @@ def _podcast_processing_postgresql_audit_sql(
         if include_provider_usage
         else ""
     )
+    if include_usage_minimum:
+        provider_settlement_guard = provider_settlement_guard.replace(
+            "NEW.actual_usage_units < NEW.reserved_usage_units",
+            "NEW.actual_usage_units < COALESCE(NEW.minimum_usage_units, NEW.reserved_usage_units)",
+        )
     provider_ledger_binding_guard = (
         "\n               AND NEW.provider_quota_scope IS NOT DISTINCT FROM r.provider_quota_scope"
         "\n               AND NEW.provider_quota_period IS NOT DISTINCT FROM r.provider_quota_period"

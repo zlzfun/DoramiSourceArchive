@@ -51,6 +51,7 @@
 - ◉ [taxonomy-v1-deployment.md](./taxonomy-v1-deployment.md) — 已批准 Taxonomy v1 的发布资产与上线手册：
   外网 authority 启动自动 reconcile → 人工发布，内网 replica 通过 Archive Sync
   `taxonomy.jsonl` 原子导入最新已发布版本；无额外 taxonomy 安装脚本。
+- ◉ [bailian-singapore-deployment.md](./bailian-singapore-deployment.md) — 新加坡百炼 Fun-ASR / Qwen3-TTS 适配、预算与独立样本验证。
 - ◉ [aliyun-dual-node-deployment.md](./aliyun-dual-node-deployment.md) — 阿里云外网/内网双节点生产上线：
   验收 INI 替换清单、双端配置、Secret/RAM/NLS/OSS/安全组、发布顺序和 E2E 验收。
 - ◉ [unified-news-scoring-plan.md](./unified-news-scoring-plan.md) — **统一新闻价值评分波(issue #22,v3.48.0)**:
