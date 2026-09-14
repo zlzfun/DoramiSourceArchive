@@ -254,13 +254,11 @@ def test_breaking_exclusions_are_hard_and_output_is_deterministic():
         _candidate(2, source="rss_nvidia_genai", role="official", score=9.5, tags=("entity.nvidia",)),
         _candidate(3, source="rss_deepmind_blog", role="official", score=9.5),
     ]
-    interests = [UserInterestDTO(tag_code="topic.agents")]
-
-    first = select_breaking_events(candidates, interests, excluded_article_ids={"a02"})
-    second = select_breaking_events(list(reversed(candidates)), interests, excluded_article_ids={"a02"})
+    first = select_breaking_events(candidates, excluded_article_ids={"a02"})
+    second = select_breaking_events(list(reversed(candidates)), excluded_article_ids={"a02"})
 
     assert first == second
-    assert [item.article_id for item in first] == ["a01", "a03"]  # a02 被排除;关注标签不改变头条准入
+    assert [item.article_id for item in first] == ["a01", "a03"]  # a02 被排除;头条准入与读者兴趣无关
     assert first[1].event_entity_codes == ()
 
 

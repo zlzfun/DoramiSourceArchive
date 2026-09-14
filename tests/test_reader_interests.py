@@ -151,7 +151,7 @@ def test_interest_scope_composes_with_subscribed_scope(monkeypatch, tmp_path):
     with TestClient(app_module.app) as client:
         _login(client)
         client.post("/api/reader/sources/web_anthropic_news/subscribe")
-        # 订阅 ∧ 兴趣:订阅源里过门槛的命中(低相关度不算;屏蔽项照常返回,由前端折叠)
+        # 订阅 ∧ 兴趣:订阅源里过门槛的命中(低相关度不算)
         ids, _ = _ids(client, subscribed_scope="only", interest_scope="only")
         assert ids == {"sub_hit", "sub_two"}
         # 兴趣 · 全站(订阅关掉):未订阅源的命中进来

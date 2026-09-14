@@ -39,7 +39,6 @@ from models.analysis_contracts import (
     PersonalDigestStatus,
     SelectionLane,
     TagStatus,
-    TaggingStatus,
     UserInterestDTO,
 )
 from models.db import (
@@ -757,7 +756,7 @@ def _qualifying_interest_codes(
     """article_id → codes whose assignment qualifies as an interest hit.
 
     v3.54:与阅读器兴趣透镜同一尺(``reader_interests``)——只认主标签或相关度 ≥
-    ``INTEREST_MATCH_MIN_RELEVANCE`` 的指派;屏蔽仍看全集(选篇层用 tag_codes)。
+    ``INTEREST_MATCH_MIN_RELEVANCE`` 的指派。
     """
 
     result: dict[str, tuple[str, ...]] = {}
@@ -1928,7 +1927,6 @@ def generate_personal_digest(
         if breaking_candidates:
             breaking_selections = select_breaking_events(
                 breaking_candidates,
-                interests,
                 policy=breaking_policy_value,
                 previous_breaking_entities=_previous_breaking_entities(
                     session, username, report_date

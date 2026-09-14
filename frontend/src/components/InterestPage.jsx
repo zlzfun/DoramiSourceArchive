@@ -41,11 +41,12 @@ const ONBOARDING_PREVIEW = 12;
 
 const keyOf = (tag) => String(tag.id);
 
-function sameStances(a, b) {
+// 选择集:{ [tagId]: true },只有「选中 / 未选中」两态(v3.55 屏蔽退役后不再有立场)
+function sameSelection(a, b) {
   const ka = Object.keys(a);
   const kb = Object.keys(b);
   if (ka.length !== kb.length) return false;
-  return ka.every((k) => a[k] === b[k]);
+  return ka.every((k) => k in b);
 }
 
 function matches(tag, needle) {
@@ -54,8 +55,8 @@ function matches(tag, needle) {
     .some((value) => String(value || '').toLocaleLowerCase().includes(needle));
 }
 
-function TagCard({ tag, stance, onToggle, compact = false }) {
-  const cls = `${compact ? 'interest-mrow' : 'interest-card'} ${stance === 'follow' ? 'is-follow' : ''}`;
+function TagCard({ tag, selected = false, onToggle, compact = false }) {
+  const cls = `${compact ? 'interest-mrow' : 'interest-card'} ${selected ? 'is-follow' : ''}`;
   const kindLabel = tag.kind === 'entity' ? ENTITY_TYPE[tag.entity_type] || '' : '';
   const handleKey = (event) => {
     if (event.key === 'Enter' || event.key === ' ') {
@@ -65,7 +66,7 @@ function TagCard({ tag, stance, onToggle, compact = false }) {
   };
   if (compact) {
     return (
-      <div className={cls} role="button" tabIndex={0} aria-pressed={stance === 'follow'} onClick={() => onToggle(tag)} onKeyDown={handleKey}>
+      <div className={cls} role="button" tabIndex={0} aria-pressed={selected} onClick={() => onToggle(tag)} onKeyDown={handleKey}>
         <span className="interest-mrow-body">
           <span className="interest-card-name">{tag.name_zh}</span>
           <span className="interest-card-desc">{tag.description}</span>
@@ -74,12 +75,14 @@ function TagCard({ tag, stance, onToggle, compact = false }) {
     );
   }
   return (
-    <div className={cls} role="button" tabIndex={0} aria-pressed={stance === 'follow'} onClick={() => onToggle(tag)} onKeyDown={handleKey}>
+    <div className={cls} role="button" tabIndex={0} aria-pressed={selected} onClick={() => onToggle(tag)} onKeyDown={handleKey}>
       <span className="interest-card-name">{tag.name_zh}</span>
       <span className="interest-card-desc">{tag.description}</span>
-      <span className="interest-card-foot">
-        {kindLabel && <span className="interest-card-kind">{kindLabel}</span>}
-      </span>
+      {kindLabel && (
+        <span className="interest-card-foot">
+          <span className="interest-card-kind">{kindLabel}</span>
+        </span>
+      )}
     </div>
   );
 }
@@ -144,7 +147,7 @@ export default function InterestPage({
       const next = {};
       (current.items || []).forEach(({ tag }) => {
         if (!known.has(keyOf(tag))) return;
-        next[keyOf(tag)] = 'follow';
+        next[keyOf(tag)] = true;
       });
       setDraft(next);
       savedRef.current = next;
@@ -161,24 +164,24 @@ export default function InterestPage({
     const follow = [];
     // 目录序(面 → 热度)而非点选序:台账是清单不是历史
     (catalog?.items || []).forEach((tag) => {
-      if (draft[keyOf(tag)] === 'follow') follow.push(tag);
+      if (draft[keyOf(tag)]) follow.push(tag);
     });
     return { follow };
   }, [catalog, draft]);
 
   const effectiveQuery = externalQuery != null ? externalQuery : query;
   const needle = effectiveQuery.trim().toLocaleLowerCase();
-  const itemsOf = (stances) => Object.keys(stances).map((id) => ({ tag_id: Number(id) }));
-  const performSave = async (seq, stances, { complete = false, toast = null }) => {
+  const itemsOf = (selection) => Object.keys(selection).map((id) => ({ tag_id: Number(id) }));
+  const performSave = async (seq, selection, { complete = false, toast = null }) => {
     const latest = () => seq === seqRef.current;
     // 过时的自动保存跳过(后面排着更新的一次);完成引导的那次不跳
     if (!complete && !latest()) return true;
-    if (!complete && sameStances(stances, savedRef.current)) return true;
+    if (!complete && sameSelection(selection, savedRef.current)) return true;
     setSaveState('saving');
     window.clearTimeout(stateTimerRef.current);
     try {
-      await saveInterests(itemsOf(stances), { completeOnboarding: complete });
-      savedRef.current = stances;
+      await saveInterests(itemsOf(selection), { completeOnboarding: complete });
+      savedRef.current = selection;
       if (latest()) {
         setSaveState('saved');
         stateTimerRef.current = window.setTimeout(() => setSaveState('idle'), 2200);
@@ -189,7 +192,7 @@ export default function InterestPage({
     } catch (err) {
       setSaveState('error');
       // 只在没有更新编辑在途时回滚草稿,否则会把用户后来的改动一起抹掉
-      if (latest() && timerRef.current == null && sameStances(draftRef.current, stances)) {
+      if (latest() && timerRef.current == null && sameSelection(draftRef.current, selection)) {
         setDraft(savedRef.current);
         showToastRef.current?.(err.message || '保存兴趣失败，已恢复上次保存的设置', 'error');
       } else {
@@ -198,9 +201,9 @@ export default function InterestPage({
       return false;
     }
   };
-  const commit = useCallback((stances, opts = {}) => {
+  const commit = useCallback((selection, opts = {}) => {
     const seq = ++seqRef.current;
-    return enqueueSave(() => performSave(seq, stances, opts));
+    return enqueueSave(() => performSave(seq, selection, opts));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const scheduleSave = useCallback(() => {
     window.clearTimeout(timerRef.current);
@@ -213,14 +216,14 @@ export default function InterestPage({
     // 卸载:未发出的合并保存立即发出(请求不随组件卸载取消)
     if (timerRef.current) {
       window.clearTimeout(timerRef.current);
-      const stances = draftRef.current;
+      const selection = draftRef.current;
       // 排在在途保存之后发出,保持整套替换的先后序
       // 成功后照样通知父级(codex 检视 P2):改完兴趣 600ms 内就切去早报时,这是唯一发出的 PUT,
       // 不通知则 interestVersion 不推进,早报页会停在旧版不去轮询新编排的版本
       enqueueSave(() => {
-        if (sameStances(stances, savedRef.current)) return undefined;
-        return saveInterests(itemsOf(stances), { completeOnboarding: false }).then(() => {
-          savedRef.current = stances;
+        if (sameSelection(selection, savedRef.current)) return undefined;
+        return saveInterests(itemsOf(selection), { completeOnboarding: false }).then(() => {
+          savedRef.current = selection;
           onSavedRef.current?.({ onboardingCompleted: false });
         });
       }).catch((err) => {
@@ -230,10 +233,10 @@ export default function InterestPage({
     }
     window.clearTimeout(stateTimerRef.current);
   }, []);
-  const setStance = useCallback((tag, stance) => {
+  const setSelected = useCallback((tag, on) => {
     setDraft((prev) => {
       const next = { ...prev };
-      if (stance) next[keyOf(tag)] = stance;
+      if (on) next[keyOf(tag)] = true;
       else delete next[keyOf(tag)];
       return next;
     });
@@ -241,15 +244,15 @@ export default function InterestPage({
   }, [scheduleSave]);
   // 一击:中立 → 关注;关注 → 中立。
   const toggleFollow = useCallback((tag) => {
-    setStance(tag, draft[keyOf(tag)] ? null : 'follow');
-  }, [draft, setStance]);
+    setSelected(tag, !draft[keyOf(tag)]);
+  }, [draft, setSelected]);
 
   // 引导态:完成 / 稍后再说 都写 complete_onboarding,已选项一并保留
   const finishOnboarding = async () => {
     window.clearTimeout(timerRef.current); timerRef.current = null;
-    const stances = draftRef.current;
-    const empty = Object.keys(stances).length === 0;
-    await commit(stances, { complete: true, toast: empty ? '已跳过，随时可从「兴趣」回来设置' : '兴趣已保存，今天的早报正在准备' });
+    const selection = draftRef.current;
+    const empty = Object.keys(selection).length === 0;
+    await commit(selection, { complete: true, toast: empty ? '已跳过，随时可从「兴趣」回来设置' : '兴趣已保存，今天的早报正在准备' });
   };
 
   // 目录跳转 + scrollspy:节头越过面顶 96px 即视为当前节
@@ -326,7 +329,7 @@ export default function InterestPage({
       <span className="interest-pick-name">{tag.name_zh}</span>
       <span className="interest-pick-end">
         <span className="interest-pick-facet" aria-hidden="true">{KIND_META[tag.kind]?.label}</span>
-        <button type="button" className="interest-pick-x" aria-label={`移出 ${tag.name_zh}`} title="移出" onClick={() => setStance(tag, null)}>×</button>
+        <button type="button" className="interest-pick-x" aria-label={`移出 ${tag.name_zh}`} title="移出" onClick={() => setSelected(tag, false)}>×</button>
       </span>
     </div>
   );
@@ -336,7 +339,7 @@ export default function InterestPage({
     <span key={keyOf(tag)} className="interest-chip">
       <span className="interest-chip-dot" aria-hidden="true" />
       <span className="interest-chip-name">{tag.name_zh}</span>
-      <button type="button" className="interest-chip-x" aria-label={`移出 ${tag.name_zh}`} title="移出" onClick={() => setStance(tag, null)}>×</button>
+      <button type="button" className="interest-chip-x" aria-label={`移出 ${tag.name_zh}`} title="移出" onClick={() => setSelected(tag, false)}>×</button>
     </span>
   );
   const onboardingBanner = onboarding && catalog && (
@@ -363,7 +366,7 @@ export default function InterestPage({
         </div>
         <div className="interest-grid">
           {sec.rows.map((tag) => (
-            <TagCard key={keyOf(tag)} tag={tag} stance={draft[keyOf(tag)]} onToggle={toggleFollow} />
+            <TagCard key={keyOf(tag)} tag={tag} selected={Boolean(draft[keyOf(tag)])} onToggle={toggleFollow} />
           ))}
         </div>
         {sec.capped && (
@@ -459,7 +462,7 @@ export default function InterestPage({
               <div key={kind} className="interest-mgroup">
                 {searching && <div className="brief-sec-head"><span className="brief-sec-title">{KIND_META[kind].label}</span><span className="brief-sec-count">{sec.filtered.length}</span><span className="brief-sec-rule" /></div>}
                 {sec.rows.map((tag) => (
-                  <TagCard key={keyOf(tag)} tag={tag} stance={draft[keyOf(tag)]} onToggle={toggleFollow} compact />
+                  <TagCard key={keyOf(tag)} tag={tag} selected={Boolean(draft[keyOf(tag)])} onToggle={toggleFollow} compact />
                 ))}
                 {sec.capped && (
                   <button type="button" className="interest-more" onClick={() => setExpanded((prev) => ({ ...prev, [kind]: true }))}>
@@ -526,7 +529,7 @@ export default function InterestPage({
                 </div>
                 <div className="interest-grid">
                   {sec.rows.map((tag) => (
-                    <TagCard key={keyOf(tag)} tag={tag} stance={draft[keyOf(tag)]} onToggle={toggleFollow} />
+                    <TagCard key={keyOf(tag)} tag={tag} selected={Boolean(draft[keyOf(tag)])} onToggle={toggleFollow} />
                   ))}
                 </div>
                 {sec.capped && (

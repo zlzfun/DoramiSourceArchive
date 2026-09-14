@@ -270,7 +270,7 @@ class DigestArticleCandidateDTO(ContractModel):
     # 另算;默认 True 保持既有构造与订阅域语义不变。
     subscribed: bool = True
     # 兴趣命中判据用的标签码(主标签或相关度过线的指派,与阅读器兴趣透镜同一尺);None = 回退到
-    # tag_codes 全集(旧调用方/纯策略测试)。屏蔽仍看 tag_codes 全集——宁漏放勿误放。
+    # tag_codes 全集(旧调用方/纯策略测试)。
     interest_tag_codes: Optional[tuple[str, ...]] = None
 
 

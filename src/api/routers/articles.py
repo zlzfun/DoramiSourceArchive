@@ -511,7 +511,7 @@ def get_articles(
         for item in items:
             item["unread"] = item.get("id") in unread_ids
     if with_interest:
-        # 逐条标注命中的关注 / 屏蔽标签名(与兴趣谓词同一把门槛尺子);无兴趣时两键为空列表
+        # 逐条标注命中的兴趣标签名(与兴趣谓词同一把门槛尺子);无兴趣时为空列表
         reader_interests_service.annotate_interest(items, tags, interests)
     if not include_total:
         return items
