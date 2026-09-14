@@ -1,19 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Ban, ChevronDown, Loader2, Search, X } from 'lucide-react';
+import { ChevronDown, Loader2, Search, X } from 'lucide-react';
 import { fetchInterestCatalog, fetchInterests, saveInterests } from '../api';
 
 /* ── 我的兴趣(issue #23 第二项,弹窗改页面;样页 docs/design/dorami-interest-quiet.html)──
    定位(issue #27 分析):兴趣与合集是阅读偏好的两根正交轴——合集=看谁(源的成员关系,全站生效),
-   兴趣=看什么(规范标签的关注/屏蔽,目前只影响个人早报选篇:关注最多占一半名额,屏蔽硬排除)。
+   兴趣=看什么(关注的规范标签;v3.55 issue #27 起屏蔽一极退役,兴趣只有关注:早报兴趣半 + 阅读器兴趣轴)。
    本页只回答两个问题:我能选什么、我选了什么。
 
-   布局与早报页同构:左槽(源栏位)= 选择台账(目录跳转 scrollspy + 关注 n + 屏蔽 n,行尾 × 就地移出);
+   布局与早报页同构:左槽(源栏位)= 选择台账(目录跳转 scrollspy + 兴趣 n,行尾 × 就地移出);
    右幅(3/-1)= 三面标签目录,报头沿早报报头语法。64 张卡分三节散在一整幅里,滚到实体节时早看不见
    主题节选了什么——台账让「我选了什么」始终在视野里,这是左槽的真实功能。
 
-   交互:整卡一击 = 关注(accent 描边高光,拍板去勾选框——勾选框让人错觉还要下一步);屏蔽是次动作
-   (悬停浮出「⊘ 屏蔽」幽灵钮),点了整卡降灰、名称划线、常显「屏蔽中」;不做三态轮转,已屏蔽卡再点主区
-   = 解除回中立。保存接口是整套替换并触发当日早报重编,逐点即存会点一下重编一次 → 草稿 + 显式保存:
+   交互:整卡一击 = 关注(accent 描边高光,拍板去勾选框——勾选框让人错觉还要下一步),再击 = 取消
+   (2026-09-14 拍板取消屏蔽:两态足以表达取向,负向维度的税每个新消费方都要交)。
+   保存接口是整套替换并触发当日早报重编,逐点即存会点一下重编一次 → 草稿 + 显式保存:
    任何改动后面底浮出保存条,无改动面底干净。
 
    首登引导 = 同一页换报头与保存条(不锁页:视图轨照常可走,轨钮挂点直到完成或跳过);引导态每面先取
@@ -54,8 +54,8 @@ function matches(tag, needle) {
     .some((value) => String(value || '').toLocaleLowerCase().includes(needle));
 }
 
-function TagCard({ tag, stance, onToggle, onMute, compact = false }) {
-  const cls = `${compact ? 'interest-mrow' : 'interest-card'} ${stance === 'follow' ? 'is-follow' : ''} ${stance === 'mute' ? 'is-mute' : ''}`;
+function TagCard({ tag, stance, onToggle, compact = false }) {
+  const cls = `${compact ? 'interest-mrow' : 'interest-card'} ${stance === 'follow' ? 'is-follow' : ''}`;
   const kindLabel = tag.kind === 'entity' ? ENTITY_TYPE[tag.entity_type] || '' : '';
   const handleKey = (event) => {
     if (event.key === 'Enter' || event.key === ' ') {
@@ -63,20 +63,6 @@ function TagCard({ tag, stance, onToggle, onMute, compact = false }) {
       onToggle(tag);
     }
   };
-  const banBtn = (
-    <button
-      type="button"
-      className={`interest-card-ban ${compact ? 'is-icon' : ''}`}
-      aria-pressed={stance === 'mute'}
-      aria-label={stance === 'mute' ? `解除屏蔽 ${tag.name_zh}` : `屏蔽 ${tag.name_zh}`}
-      title={stance === 'mute' ? '解除屏蔽' : '屏蔽:含此标签的内容不进早报'}
-      onClick={(event) => { event.stopPropagation(); onMute(tag); }}
-      onKeyDown={(event) => event.stopPropagation()}
-    >
-      <Ban aria-hidden="true" />
-      {!compact && <span>{stance === 'mute' ? '屏蔽中' : '屏蔽'}</span>}
-    </button>
-  );
   if (compact) {
     return (
       <div className={cls} role="button" tabIndex={0} aria-pressed={stance === 'follow'} onClick={() => onToggle(tag)} onKeyDown={handleKey}>
@@ -84,7 +70,6 @@ function TagCard({ tag, stance, onToggle, onMute, compact = false }) {
           <span className="interest-card-name">{tag.name_zh}</span>
           <span className="interest-card-desc">{tag.description}</span>
         </span>
-        {banBtn}
       </div>
     );
   }
@@ -94,7 +79,6 @@ function TagCard({ tag, stance, onToggle, onMute, compact = false }) {
       <span className="interest-card-desc">{tag.description}</span>
       <span className="interest-card-foot">
         {kindLabel && <span className="interest-card-kind">{kindLabel}</span>}
-        {banBtn}
       </span>
     </div>
   );
@@ -158,9 +142,9 @@ export default function InterestPage({
       // 目录对已选标签「落榜仍保留」,故不在目录里的只可能是失效项,静默剔除。
       const known = new Set((catalogData?.items || []).map((tag) => keyOf(tag)));
       const next = {};
-      (current.items || []).forEach(({ tag, stance }) => {
+      (current.items || []).forEach(({ tag }) => {
         if (!known.has(keyOf(tag))) return;
-        next[keyOf(tag)] = stance === 'mute' ? 'mute' : 'follow';
+        next[keyOf(tag)] = 'follow';
       });
       setDraft(next);
       savedRef.current = next;
@@ -175,19 +159,16 @@ export default function InterestPage({
 
   const picks = useMemo(() => {
     const follow = [];
-    const mute = [];
     // 目录序(面 → 热度)而非点选序:台账是清单不是历史
     (catalog?.items || []).forEach((tag) => {
-      const st = draft[keyOf(tag)];
-      if (st === 'follow') follow.push(tag);
-      else if (st === 'mute') mute.push(tag);
+      if (draft[keyOf(tag)] === 'follow') follow.push(tag);
     });
-    return { follow, mute };
+    return { follow };
   }, [catalog, draft]);
 
   const effectiveQuery = externalQuery != null ? externalQuery : query;
   const needle = effectiveQuery.trim().toLocaleLowerCase();
-  const itemsOf = (stances) => Object.entries(stances).map(([id, stance]) => ({ tag_id: Number(id), stance }));
+  const itemsOf = (stances) => Object.keys(stances).map((id) => ({ tag_id: Number(id) }));
   const performSave = async (seq, stances, { complete = false, toast = null }) => {
     const latest = () => seq === seqRef.current;
     // 过时的自动保存跳过(后面排着更新的一次);完成引导的那次不跳
@@ -258,12 +239,9 @@ export default function InterestPage({
     });
     scheduleSave();
   }, [scheduleSave]);
-  // 主区一击:中立 → 关注;关注 → 中立;屏蔽 → 中立(解除)。不做三态轮转。
+  // 一击:中立 → 关注;关注 → 中立。
   const toggleFollow = useCallback((tag) => {
     setStance(tag, draft[keyOf(tag)] ? null : 'follow');
-  }, [draft, setStance]);
-  const toggleMute = useCallback((tag) => {
-    setStance(tag, draft[keyOf(tag)] === 'mute' ? null : 'mute');
   }, [draft, setStance]);
 
   // 引导态:完成 / 稍后再说 都写 complete_onboarding,已选项一并保留
@@ -321,7 +299,7 @@ export default function InterestPage({
       {saveState === 'saving' ? '保存中…' : saveState === 'saved' ? '已保存' : '保存失败'}
     </span>
   );
-  const picksEmpty = picks.follow.length + picks.mute.length === 0;
+  const picksEmpty = picks.follow.length === 0;
   const onboardingBtn = onboarding && catalog && (
     <button type="button" className={`interest-btn ${picksEmpty ? '' : 'is-primary'}`} disabled={saveState === 'saving'} onClick={finishOnboarding}>
       {picksEmpty ? '稍后再说' : '完成'}
@@ -342,8 +320,8 @@ export default function InterestPage({
     </label>
   );
 
-  const pickRow = (tag, stance) => (
-    <div key={keyOf(tag)} className={`interest-pick ${stance === 'mute' ? 'is-mute' : ''}`}>
+  const pickRow = (tag) => (
+    <div key={keyOf(tag)} className="interest-pick">
       <span className="interest-pick-dot" aria-hidden="true" />
       <span className="interest-pick-name">{tag.name_zh}</span>
       <span className="interest-pick-end">
@@ -353,9 +331,9 @@ export default function InterestPage({
     </div>
   );
 
-  // 我的关注 chip 行(嵌入态顶替左槽台账):关注 accent 实点、屏蔽划线空心点,悬停浮出 ×;目录序排列
-  const pickChip = (tag, stance) => (
-    <span key={keyOf(tag)} className={`interest-chip ${stance === 'mute' ? 'is-mute' : ''}`}>
+  // 我的兴趣 chip 行(嵌入态顶替左槽台账):accent 实点,悬停浮出 ×;目录序排列
+  const pickChip = (tag) => (
+    <span key={keyOf(tag)} className="interest-chip">
       <span className="interest-chip-dot" aria-hidden="true" />
       <span className="interest-chip-name">{tag.name_zh}</span>
       <button type="button" className="interest-chip-x" aria-label={`移出 ${tag.name_zh}`} title="移出" onClick={() => setStance(tag, null)}>×</button>
@@ -385,7 +363,7 @@ export default function InterestPage({
         </div>
         <div className="interest-grid">
           {sec.rows.map((tag) => (
-            <TagCard key={keyOf(tag)} tag={tag} stance={draft[keyOf(tag)]} onToggle={toggleFollow} onMute={toggleMute} />
+            <TagCard key={keyOf(tag)} tag={tag} stance={draft[keyOf(tag)]} onToggle={toggleFollow} />
           ))}
         </div>
         {sec.capped && (
@@ -416,7 +394,7 @@ export default function InterestPage({
             <span className="interest-picks-label">我的兴趣</span>
             {picksEmpty
               ? <span className="interest-picks-empty">点击下方标签加入兴趣。</span>
-              : [...picks.follow.map((t) => pickChip(t, 'follow')), ...picks.mute.map((t) => pickChip(t, 'mute'))]}
+              : picks.follow.map((t) => pickChip(t))}
             {externalQuery != null && saveStateNode}
           </div>
         )}
@@ -448,7 +426,7 @@ export default function InterestPage({
           {catalog && (
             <div className="interest-m-row">
               <button type="button" className="interest-mpicks" aria-expanded={picksOpen} onClick={() => setPicksOpen((v) => !v)}>
-                兴趣 <b>{picks.follow.length}</b> · 屏蔽 <b>{picks.mute.length}</b>
+                兴趣 <b>{picks.follow.length}</b>
                 <ChevronDown aria-hidden="true" />
               </button>
               {saveStateNode}
@@ -458,9 +436,9 @@ export default function InterestPage({
           )}
           {picksOpen && catalog && (
             <div className="interest-mpicks-list">
-              {picks.follow.length + picks.mute.length === 0
+              {picks.follow.length === 0
                 ? <div className="interest-ledger-empty">点击下方标签加入兴趣。</div>
-                : [...picks.follow.map((t) => pickRow(t, 'follow')), ...picks.mute.map((t) => pickRow(t, 'mute'))]}
+                : picks.follow.map((t) => pickRow(t))}
             </div>
           )}
         </div>
@@ -481,7 +459,7 @@ export default function InterestPage({
               <div key={kind} className="interest-mgroup">
                 {searching && <div className="brief-sec-head"><span className="brief-sec-title">{KIND_META[kind].label}</span><span className="brief-sec-count">{sec.filtered.length}</span><span className="brief-sec-rule" /></div>}
                 {sec.rows.map((tag) => (
-                  <TagCard key={keyOf(tag)} tag={tag} stance={draft[keyOf(tag)]} onToggle={toggleFollow} onMute={toggleMute} compact />
+                  <TagCard key={keyOf(tag)} tag={tag} stance={draft[keyOf(tag)]} onToggle={toggleFollow} compact />
                 ))}
                 {sec.capped && (
                   <button type="button" className="interest-more" onClick={() => setExpanded((prev) => ({ ...prev, [kind]: true }))}>
@@ -518,13 +496,7 @@ export default function InterestPage({
               <div className="reader-src-label">兴趣<b>{picks.follow.length}</b></div>
               {picks.follow.length === 0
                 ? <div className="interest-ledger-empty">点击右侧标签加入兴趣。</div>
-                : picks.follow.map((t) => pickRow(t, 'follow'))}
-              {picks.mute.length > 0 && (
-                <>
-                  <div className="reader-src-label">屏蔽<b>{picks.mute.length}</b></div>
-                  {picks.mute.map((t) => pickRow(t, 'mute'))}
-                </>
-              )}
+                : picks.follow.map((t) => pickRow(t))}
             </>
           )}
         </div>
@@ -554,7 +526,7 @@ export default function InterestPage({
                 </div>
                 <div className="interest-grid">
                   {sec.rows.map((tag) => (
-                    <TagCard key={keyOf(tag)} tag={tag} stance={draft[keyOf(tag)]} onToggle={toggleFollow} onMute={toggleMute} />
+                    <TagCard key={keyOf(tag)} tag={tag} stance={draft[keyOf(tag)]} onToggle={toggleFollow} />
                   ))}
                 </div>
                 {sec.capped && (

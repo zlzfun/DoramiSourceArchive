@@ -128,8 +128,9 @@ class RetagJobStatus(StringEnum):
 
 
 class InterestStance(StringEnum):
+    """v3.55(issue #27)起只剩 follow:屏蔽一极整体退役,枚举保留供快照/契约字段取值。"""
+
     FOLLOW = "follow"
-    MUTE = "mute"
 
 
 class InterestPriority(StringEnum):
@@ -275,7 +276,7 @@ class DigestArticleCandidateDTO(ContractModel):
 
 class UserInterestDTO(ContractModel):
     tag_code: str = Field(min_length=1)
-    stance: InterestStance
+    stance: InterestStance = InterestStance.FOLLOW
     priority: InterestPriority = InterestPriority.NORMAL
 
 

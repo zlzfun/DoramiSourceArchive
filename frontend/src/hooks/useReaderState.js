@@ -94,7 +94,7 @@ function buildListFilters({ activeSourceId, activeTagId, mode, scope, displayTag
   if (displayTagQuery) filters.display_tag = displayTagQuery;
   else if (searchQuery) filters.search = searchQuery;
   filters.with_unread = 'true';    // 条目附页级未读标记(水位由 unread-counts 校准)
-  filters.with_interest = 'true';  // 条目附命中的关注 / 屏蔽标签名(胶囊与折叠行)
+  filters.with_interest = 'true';  // 条目附命中的兴趣标签名(命中胶囊)
   if (unreadOnly) filters.unread_only = 'true';
   return filters;
 }
@@ -119,9 +119,8 @@ const ANALYSIS_PROJECTION_KEYS = [
   'tags',
   'display_tags',
   'podcast',
-  // 兴趣标注随分析轮询刷新:pending 篇拿到标签后,命中胶囊 / 屏蔽折叠不必等整列重载(codex 检视 P2)
+  // 兴趣标注随分析轮询刷新:pending 篇拿到标签后,命中胶囊不必等整列重载(codex 检视 P2)
   'interest_hits',
-  'interest_muted',
 ];
 
 function withFreshAnalysis(article, incoming) {
@@ -184,7 +183,7 @@ export function useReaderState({
   const favOnly = scope.favorite;
   // 兴趣轴的下钻项(关注标签 id);与 activeSourceId 互斥(切轴即清)
   const [activeTagId, setActiveTagId] = useState(null);
-  // 关注的标签 = 兴趣轴的列表(仅 follow;屏蔽不进列表,只作折叠行透镜——拍板 3 另议);
+  // 关注的标签 = 兴趣轴的列表(v3.55 起兴趣只有关注一极);
   // 兴趣页保存后由 refreshInterests 刷新
   const [followedTags, setFollowedTags] = useState([]);
   const refreshInterests = useCallback(async () => {
@@ -192,7 +191,7 @@ export function useReaderState({
     try {
       const data = await fetchInterests();
       setFollowedTags((data.items || [])
-        .filter((it) => it.stance !== 'mute' && it.tag?.id)
+        .filter((it) => it.tag?.id)
         .map((it) => ({ id: it.tag.id, kind: it.tag.kind, name: it.tag.name_zh || it.tag.name_en || String(it.tag.id) })));
     } catch { /* 非关键路径:失败保持上次已知值 */ }
   }, [interestAxisEnabled]);

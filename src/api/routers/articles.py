@@ -301,7 +301,7 @@ def get_articles(
         interest_scope: str = "off",  # off | only
         interest_tag_id: Optional[int] = None,  # 兴趣轴下钻:只看命中这一个关注标签的(五稿,须与 interest_scope=only 同用)
         favorite_scope: str = "off",  # off | only
-        with_interest: bool = False,  # 给返回条目附 interest_hits / interest_muted(列表胶囊与折叠行)
+        with_interest: bool = False,  # 给返回条目附 interest_hits(列表命中胶囊)
         shape: Optional[str] = None,  # article | bulletin | social | podcast：阅读器内容形态分流
         unread_only: bool = False,  # 只看未读（按当前用户订阅源的水位+逐篇已读判定）
         with_unread: bool = False,  # 给返回条目附 unread 标记（页级，reader 列表用）

@@ -450,13 +450,8 @@ def _load_interests(session: Session, username: str) -> list[UserInterestDTO]:
             CmsTagRecord.status == TagStatus.ACTIVE.value,
         )
     ).all()
-    return [
-        UserInterestDTO(
-            tag_code=tag.code,
-            stance=InterestStance(interest.stance),
-        )
-        for interest, tag in rows
-    ]
+    # v3.55(issue #27):兴趣只剩「关注」一极;stance 列保留为旧库兼容字段(CHECK 收窄为 follow)。
+    return [UserInterestDTO(tag_code=tag.code) for interest, tag in rows]
 
 
 def _serialize_interests(interests: Sequence[UserInterestDTO]) -> str:
@@ -481,6 +476,8 @@ def _deserialize_interests(raw: str) -> list[UserInterestDTO]:
     for value in values:
         if not isinstance(value, dict):
             continue
+        if str(value.get("stance") or InterestStance.FOLLOW.value) != InterestStance.FOLLOW.value:
+            continue  # v3.55 前冻结的快照可能残留 mute 行:屏蔽已取消,按不存在处理
         try:
             result.append(UserInterestDTO.model_validate(value))
         except ValueError:
@@ -750,10 +747,7 @@ def _tag_maps(
 
 
 def _followed_codes(interests: Iterable[UserInterestDTO]) -> set[str]:
-    return {
-        item.tag_code for item in interests
-        if getattr(item.stance, "value", item.stance) == InterestStance.FOLLOW.value
-    }
+    return {item.tag_code for item in interests}
 
 
 def _qualifying_interest_codes(
@@ -806,7 +800,6 @@ def _query_candidate_rows(
     source_ids: Sequence[str] | None,
     cutoff_at: dt.datetime,
     window_hours: int,
-    require_tagging_complete: bool,
     min_score: float | None = None,
     interest_tag_codes: Sequence[str] | None = None,
     exclude_source_ids: Sequence[str] = (),
@@ -867,13 +860,6 @@ def _query_candidate_rows(
             )
         )
         query = query.where(exists(qualifying))
-    if require_tagging_complete:
-        query = query.where(
-            ArticleAnalysisRecord.tagging_status.in_((
-                TaggingStatus.SUCCEEDED.value,
-                TaggingStatus.PARTIAL.value,
-            ))
-        )
     return [
         row for row in session.exec(query).all()
         if in_time_window(row[0].publish_date, start=since, end=cutoff)
@@ -955,7 +941,6 @@ def load_digest_candidates(
     *,
     cutoff_at: dt.datetime,
     window_hours: int,
-    require_tagging_complete: bool = False,
     followed_codes: Iterable[str] | None = None,
 ) -> list[DigestArticleCandidateDTO]:
     """Bulk-load succeeded analyses inside the requested window(subscribed pool)."""
@@ -967,7 +952,6 @@ def load_digest_candidates(
         source_ids=source_ids,
         cutoff_at=cutoff_at,
         window_hours=window_hours,
-        require_tagging_complete=require_tagging_complete,
     )
     return _candidates_from_rows(session, rows, followed_codes=followed_codes)
 
@@ -980,7 +964,6 @@ def load_interest_candidates(
     cutoff_at: dt.datetime,
     window_hours: int,
     min_score: float,
-    require_tagging_complete: bool = False,
 ) -> list[DigestArticleCandidateDTO]:
     """v3.54「订阅 ∪ 兴趣」:the outside-subscription interest pool.
 
@@ -997,7 +980,6 @@ def load_interest_candidates(
         source_ids=None,
         cutoff_at=cutoff_at,
         window_hours=window_hours,
-        require_tagging_complete=require_tagging_complete,
         min_score=min_score,
         interest_tag_codes=codes,
         exclude_source_ids=tuple(exclude_source_ids),
@@ -1012,7 +994,6 @@ def load_breaking_candidates(
     cutoff_at: dt.datetime,
     window_hours: int = PERSONAL_DIGEST_BREAKING_WINDOW_HOURS,
     min_score: float,
-    require_tagging_complete: bool = False,
 ) -> list[DigestArticleCandidateDTO]:
     """Reader-visible, cross-subscription pool for the breaking lane.
 
@@ -1027,7 +1008,6 @@ def load_breaking_candidates(
         source_ids=None,
         cutoff_at=cutoff_at,
         window_hours=window_hours,
-        require_tagging_complete=require_tagging_complete,
         min_score=min_score,
     )
     rows = _reader_visible_rows(session, rows)
@@ -1312,39 +1292,18 @@ def _load_latest_fallback(
 ]:
     if not source_ids or limit < 1:
         return []
-    mute_codes = {
-        item.tag_code for item in interests
-        if getattr(item.stance, "value", item.stance) == InterestStance.MUTE.value
-    }
     query = (
         select(ArticleRecord, ArticleAnalysisRecord)
         .join(
             ArticleAnalysisRecord,
             ArticleAnalysisRecord.article_id == ArticleRecord.id,
-            isouter=not bool(mute_codes),
+            isouter=True,
         )
         .where(ArticleRecord.source_id.in_(source_ids))
     )
     excluded = sorted({str(value) for value in excluded_article_ids if str(value)})
     if excluded:
         query = query.where(ArticleRecord.id.notin_(excluded))
-    if mute_codes:
-        muted_assignment = (
-            select(ArticleTagAssignmentRecord.id)
-            .join(CmsTagRecord, CmsTagRecord.id == ArticleTagAssignmentRecord.tag_id)
-            .where(
-                ArticleTagAssignmentRecord.article_id == ArticleRecord.id,
-                CmsTagRecord.status == TagStatus.ACTIVE.value,
-                CmsTagRecord.code.in_(sorted(mute_codes)),
-            )
-        )
-        query = query.where(
-            ArticleAnalysisRecord.tagging_status.in_((
-                TaggingStatus.SUCCEEDED.value,
-                TaggingStatus.PARTIAL.value,
-            )),
-            ~exists(muted_assignment),
-        )
     rows = session.exec(
         query.order_by(ArticleRecord.publish_date.desc(), ArticleRecord.id.asc()).limit(limit)
     ).all()
@@ -1905,10 +1864,6 @@ def generate_personal_digest(
 
     tag_display_names = _interest_display_names(session, interests)
     previous_article_ids = _previous_edition_article_ids(session, username, report_date)
-    has_mutes = any(
-        getattr(item.stance, "value", item.stance) == InterestStance.MUTE.value
-        for item in interests
-    )
 
     def _load_union(window_hours: int) -> list[DigestArticleCandidateDTO]:
         """订阅池(兴趣 + 质量两通道)∪ 订阅外兴趣池(只进兴趣通道),排除前一日已用条目。"""
@@ -1918,7 +1873,6 @@ def generate_personal_digest(
             scope.expected_source_ids,
             cutoff_at=current,
             window_hours=window_hours,
-            require_tagging_complete=has_mutes,
             followed_codes=followed_codes,
         )
         if followed_codes:
@@ -1929,7 +1883,6 @@ def generate_personal_digest(
                 cutoff_at=current,
                 window_hours=window_hours,
                 min_score=policy.external_min_quality_score,
-                require_tagging_complete=has_mutes,
             ))
         return [candidate for candidate in pool if candidate.article_id not in previous_article_ids]
 
@@ -1971,7 +1924,6 @@ def generate_personal_digest(
             cutoff_at=current,
             window_hours=PERSONAL_DIGEST_BREAKING_WINDOW_HOURS,
             min_score=breaking_policy_value.min_score - breaking_policy_value.corroboration_slack,
-            require_tagging_complete=has_mutes,
         )
         if breaking_candidates:
             breaking_selections = select_breaking_events(
@@ -2011,13 +1963,9 @@ def generate_personal_digest(
     selection_degraded = not had_own_selections
     degraded_reason: str | None = None
     if selection_degraded:
-        muted_codes = {
-            item.tag_code for item in interests
-            if getattr(item.stance, "value", item.stance) == InterestStance.MUTE.value
-        }
         followed_map = {code: 1 for code in followed_codes}
         qualified_interest_exists = any(
-            eligible_for_selection(candidate, policy=policy, muted=muted_codes, followed=followed_map)
+            eligible_for_selection(candidate, policy=policy, followed=followed_map)
             and bool(followed_codes.intersection(interest_codes_of(candidate)))
             for candidate in candidates
         )
@@ -2036,10 +1984,6 @@ def generate_personal_digest(
         "external_candidate_count": sum(1 for candidate in candidates if not candidate.subscribed),
         "window_hours": candidate_window_hours,
         "followed_count": len(followed_codes),
-        "muted_count": sum(
-            1 for item in interests
-            if getattr(item.stance, "value", item.stance) == InterestStance.MUTE.value
-        ),
         "selected_count": len(own_selections),
         "interest_hits": sum(1 for selection in own_selections if selection.matched_interest_codes),
         "external_hits": sum(

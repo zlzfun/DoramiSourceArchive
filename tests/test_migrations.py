@@ -360,10 +360,19 @@ def test_source_audio_retirement_migration_requires_backup_to_downgrade(tmp_path
     with pytest.raises(RuntimeError, match="restore the pre-upgrade database"):
         command.downgrade(cfg, "d6a3f9c2e714")
 
+    # transaction_per_migration=True:守卫之上的后续迁移各自降级提交后才撞到守卫,
+    # 所以断言的是「停在守卫之上、没有越过它」,而非仍在 head(否则每加一个迁移就要改这里)。
+    from alembic.script import ScriptDirectory
+
+    above_target = {
+        rev.revision
+        for rev in ScriptDirectory.from_config(cfg).iterate_revisions(_head_revision(), "d6a3f9c2e714")
+    }
     engine = create_engine(db_url)
     try:
         with engine.connect() as conn:
-            assert MigrationContext.configure(conn).get_current_revision() == _head_revision()
+            stopped_at = MigrationContext.configure(conn).get_current_revision()
+            assert stopped_at in above_target and stopped_at != "d6a3f9c2e714"
     finally:
         engine.dispose()
 
@@ -2571,3 +2580,39 @@ def test_cleanup_podcast_extension_fields(tmp_path):
     finally:
         engine.dispose()
 
+
+
+def test_retire_interest_mute_stance_migration_deletes_mute_rows_and_narrows_check(tmp_path):
+    """v3.55(issue #27):存量屏蔽行被删,关注行原样保留,CHECK 收窄后再也写不进 mute。"""
+    db_url = f"sqlite:///{tmp_path / 'retire-mute.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "8be5beaf1307")
+    engine = create_engine(db_url)
+    stamp = "2026-09-14T00:00:00+08:00"
+    try:
+        with engine.begin() as conn:  # 迁移期 FK 不强制,直接写兴趣行即可
+            conn.execute(text(
+                "INSERT INTO user_interest_tags (owner_username, tag_id, stance, priority, source, created_at, updated_at) "
+                "VALUES ('alice', 1, 'follow', 'normal', 'explicit', :s, :s), "
+                "('alice', 2, 'mute', 'normal', 'explicit', :s, :s), "
+                "('bob', 2, 'mute', 'normal', 'explicit', :s, :s)"
+            ), {"s": stamp})
+        command.upgrade(cfg, "head")
+        with engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT owner_username, tag_id, stance FROM user_interest_tags ORDER BY owner_username, tag_id"
+            )).all()
+            assert [tuple(row) for row in rows] == [("alice", 1, "follow")]
+            checks = {
+                item["name"]: item["sqltext"]
+                for item in inspect(engine).get_check_constraints("user_interest_tags")
+            }
+            assert checks["ck_user_interest_tags_stance"].replace(" ", "") == "stance='follow'"
+        with pytest.raises(Exception, match="ck_user_interest_tags_stance"):
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "INSERT INTO user_interest_tags (owner_username, tag_id, stance, priority, source, created_at, updated_at) "
+                    "VALUES ('carol', 3, 'mute', 'normal', 'explicit', :s, :s)"
+                ), {"s": stamp})
+    finally:
+        engine.dispose()

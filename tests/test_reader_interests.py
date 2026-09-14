@@ -1,8 +1,8 @@
 """兴趣即透镜(issue #27 第一波):文章列表的三谓词面板 订阅 / 兴趣 / 收藏 与命中标注。
 
 订阅、兴趣、收藏是三个两两正交的谓词,`GET /api/articles` 按 AND 联合;三者全关 = 全站可见源。
-兴趣谓词只认「主标签 或 相关度 ≥ 门槛」的指派(它决定全站范围内「放什么进来」);屏蔽在列表里
-不是硬排除——条目照常返回并带 interest_muted,由前端折成一行。
+兴趣谓词只认「主标签 或 相关度 ≥ 门槛」的指派(它决定全站范围内「放什么进来」)。
+v3.55(issue #27)起兴趣只有「关注」一极,列表标注只剩 interest_hits。
 """
 import datetime
 import os
@@ -126,7 +126,7 @@ def _ids(client, **params):
 
 
 def _setup(monkeypatch, tmp_path):
-    """两个源(sub 已订阅 / other 未订阅),两枚标签(agents 关注 / robots 屏蔽),五篇文章。"""
+    """两个源(sub 已订阅 / other 未订阅),两枚关注标签(agents / robots),五篇文章。"""
     app_module, sink = _make_app(monkeypatch, tmp_path, "interest.db")
     e = sink.engine
     agents = _seed_tag(e, "ai-agents", "AI 智能体")
@@ -134,15 +134,15 @@ def _setup(monkeypatch, tmp_path):
     _seed_article(e, "sub_hit", "web_anthropic_news")       # 订阅源 · 主标签命中关注
     _seed_article(e, "sub_weak", "web_anthropic_news")      # 订阅源 · 低相关度命中(不过门槛)
     _seed_article(e, "sub_plain", "web_anthropic_news")     # 订阅源 · 无标签
-    _seed_article(e, "sub_muted", "web_anthropic_news")     # 订阅源 · 命中屏蔽 + 关注
+    _seed_article(e, "sub_two", "web_anthropic_news")       # 订阅源 · 命中两枚关注(robots 主签 + agents)
     _seed_article(e, "out_hit", "web_qbitai")               # 未订阅源 · 高相关度命中关注
     _assign(e, "sub_hit", agents, primary=True, relevance=0.95)
     _assign(e, "sub_weak", agents, primary=False, relevance=INTEREST_MATCH_MIN_RELEVANCE - 0.2)
-    _assign(e, "sub_muted", robots, primary=True, relevance=0.9)
-    _assign(e, "sub_muted", agents, primary=False, relevance=0.9)
+    _assign(e, "sub_two", robots, primary=True, relevance=0.9)
+    _assign(e, "sub_two", agents, primary=False, relevance=0.9)
     _assign(e, "out_hit", agents, primary=False, relevance=INTEREST_MATCH_MIN_RELEVANCE)
     _set_interest(e, "user", agents, "follow")
-    _set_interest(e, "user", robots, "mute")
+    _set_interest(e, "user", robots, "follow")
     return app_module, sink
 
 
@@ -153,16 +153,16 @@ def test_interest_scope_composes_with_subscribed_scope(monkeypatch, tmp_path):
         client.post("/api/reader/sources/web_anthropic_news/subscribe")
         # 订阅 ∧ 兴趣:订阅源里过门槛的命中(低相关度不算;屏蔽项照常返回,由前端折叠)
         ids, _ = _ids(client, subscribed_scope="only", interest_scope="only")
-        assert ids == {"sub_hit", "sub_muted"}
+        assert ids == {"sub_hit", "sub_two"}
         # 兴趣 · 全站(订阅关掉):未订阅源的命中进来
         ids, _ = _ids(client, subscribed_scope="off", interest_scope="only")
-        assert ids == {"sub_hit", "sub_muted", "out_hit"}
+        assert ids == {"sub_hit", "sub_two", "out_hit"}
         # 全关 = 全站可见源
         ids, _ = _ids(client)
-        assert ids == {"sub_hit", "sub_weak", "sub_plain", "sub_muted", "out_hit"}
+        assert ids == {"sub_hit", "sub_weak", "sub_plain", "sub_two", "out_hit"}
         # 只订阅:与今天的「全部文章」同义
         ids, _ = _ids(client, subscribed_scope="only")
-        assert ids == {"sub_hit", "sub_weak", "sub_plain", "sub_muted"}
+        assert ids == {"sub_hit", "sub_weak", "sub_plain", "sub_two"}
 
 
 def test_interest_tag_id_narrows_to_one_followed_tag(monkeypatch, tmp_path):
@@ -177,20 +177,24 @@ def test_interest_tag_id_narrows_to_one_followed_tag(monkeypatch, tmp_path):
         from models.db import CmsTagRecord
         agents_id = session.exec(select(CmsTagRecord.id).where(CmsTagRecord.code == "ai-agents")).one()
         robots_id = session.exec(select(CmsTagRecord.id).where(CmsTagRecord.code == "robotics")).one()
+    crypto_id = _seed_tag(e, "crypto", "加密货币")   # 目录里有、读者未关注
     with TestClient(app_module.app) as client:
         _login(client)
-        # 兴趣全集(全站):两枚关注标签的命中并集
+        # 兴趣全集(全站):三枚关注标签的命中并集
         ids, _ = _ids(client, interest_scope="only")
-        assert ids == {"sub_hit", "sub_muted", "out_hit", "out_llm"}
+        assert ids == {"sub_hit", "sub_two", "out_hit", "out_llm"}
         # 下钻到「AI 智能体」:大语言模型的命中不在
         ids, data = _ids(client, interest_scope="only", interest_tag_id=agents_id)
-        assert ids == {"sub_hit", "sub_muted", "out_hit"}
+        assert ids == {"sub_hit", "sub_two", "out_hit"}
         assert data["total"] == 3
         # 下钻到「大语言模型」
         ids, _ = _ids(client, interest_scope="only", interest_tag_id=llm)
         assert ids == {"out_llm"}
-        # 屏蔽标签不是关注标签:按它下钻是显式空集,不退化成全部兴趣
-        ids, data = _ids(client, interest_scope="only", interest_tag_id=robots_id)
+        # 下钻到「机器人技术」(第二枚关注标签):只有以它为主签的那篇
+        ids, _ = _ids(client, interest_scope="only", interest_tag_id=robots_id)
+        assert ids == {"sub_two"}
+        # 未关注的标签不是关注标签:按它下钻是显式空集,不退化成全部兴趣
+        ids, data = _ids(client, interest_scope="only", interest_tag_id=crypto_id)
         assert ids == set() and data["total"] == 0
         # 不带 interest_scope=only 时 interest_tag_id 无效(单独的 tag id 检索走 tag_ids)
         ids, _ = _ids(client, interest_tag_id=agents_id)
@@ -224,18 +228,17 @@ def test_favorite_scope_and_total_pairing(monkeypatch, tmp_path):
         assert ids == {"out_hit"}
 
 
-def test_with_interest_annotates_hits_and_muted(monkeypatch, tmp_path):
+def test_with_interest_annotates_hits(monkeypatch, tmp_path):
     app_module, _sink = _setup(monkeypatch, tmp_path)
     with TestClient(app_module.app) as client:
         _login(client)
         _, data = _ids(client, with_interest="true")
         by_id = {item["id"]: item for item in data["items"]}
         assert by_id["sub_hit"]["interest_hits"] == ["AI 智能体"]
-        assert by_id["sub_hit"]["interest_muted"] == []
+        assert "interest_muted" not in by_id["sub_hit"]          # 屏蔽退役:标注只剩命中
         assert by_id["sub_weak"]["interest_hits"] == []          # 低相关度不算命中
         assert by_id["sub_plain"]["interest_hits"] == []          # 未打标 = 未知,不是不命中
-        assert by_id["sub_muted"]["interest_muted"] == ["机器人技术"]
-        assert by_id["sub_muted"]["interest_hits"] == ["AI 智能体"]
+        assert by_id["sub_two"]["interest_hits"] == ["机器人技术", "AI 智能体"]  # 指派序,主签优先
         # 不带 with_interest 时不标注(形状不变)
         _, plain = _ids(client)
         assert "interest_hits" not in plain["items"][0]
