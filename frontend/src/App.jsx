@@ -402,6 +402,19 @@ export default function App() {
   // 防止「登录预热」与「authenticated 副作用」并发重复拉取
   const runtimeLoadingRef = useRef(false);
 
+  // 只重取能力位并返回本次结果(v3.55 issue #31 检视返修):账户写操作可能改变根管理员判据
+  // (回落根把 admin 升回管理员),运维台据返回值决定是否还该拉账户名单,不复用会顺带重取
+  // 全部 fetchers 的 loadRuntimeAndFetchers。
+  const refreshRuntime = useCallback(async () => {
+    try {
+      const runtime = await fetchRuntimeInfo();
+      setRuntimeInfo(runtime);
+      return runtime;
+    } catch {
+      return null;
+    }
+  }, []);
+
   const loadRuntimeAndFetchers = useCallback(async (quiet = false) => {
     if (runtimeLoadingRef.current) return;
     runtimeLoadingRef.current = true;
@@ -985,6 +998,8 @@ export default function App() {
                   showToast={showToast}
                   active={activeTab === 'admin' && !readerView}
                   currentUsername={authState.user?.username}
+                  rootAdmin={!!runtimeInfo.root_admin}
+                  onRefreshRuntime={refreshRuntime}
                   pendingFocus={pendingFocus?.tab === 'admin' ? pendingFocus.payload : null}
                   onPendingFocusApplied={clearPendingFocus}
                   onOpenCredentials={() => openSettings('credentials')}

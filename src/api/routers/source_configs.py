@@ -24,6 +24,7 @@ from api import deps
 from api.sources import configured_source_platform, configured_source_shape
 from api.textutils import _json_dumps, _now_iso
 from models.db import SourceConfigRecord
+from services import accounts as accounts_service
 from services import jobs
 from services import article_analysis as article_analysis_service
 from services import podcast_catalog as podcast_catalog_service
@@ -128,12 +129,40 @@ class PodcastCatalogImportParams(BaseModel):
 
 # ==================== 序列化 / 路由 helper ====================
 
-def serialize_source_config(record: SourceConfigRecord) -> Dict[str, Any]:
+def _viewer_is_root_admin(session: Session, auth: Optional[Dict[str, Any]]) -> bool:
+    return bool(auth) and accounts_service.is_root_admin(session, auth.get("sub"))
+
+
+def _require_root_for_user_source(session: Session, record: SourceConfigRecord, auth: Optional[Dict[str, Any]]) -> None:
+    """用户自定源的通用 source-config 写口仅根管理员(v3.55 issue #31 检视返修):非根管理员读到的
+    是遮罩后的地址,若允许经此回写会把「scheme://host/…」写进真实配置;治理动作本就走
+    /api/admin/user-sources/*(那边不回传 URL)。"""
+    if (record.owner_username or "").strip() and not _viewer_is_root_admin(session, auth):
+        raise HTTPException(status_code=403, detail="用户自定源的配置写入仅限根管理员")
+
+
+def serialize_source_config(record: SourceConfigRecord, *, mask_private_url: bool = False) -> Dict[str, Any]:
+    """``mask_private_url``:非根管理员读用户自定源时,含凭证的私有 feed 地址收敛为
+    ``scheme://host/…``——顶层 url、解析后 params 的 feed_url/url 键、以及原始 params_json
+    副本三处同一口径(params_json 由遮罩后的 params 重新序列化覆盖,避免原串泄露)。"""
     data = record.model_dump()
     try:
         data["params"] = json.loads(record.params_json or "{}")
     except json.JSONDecodeError:
         data["params"] = {}
+    if (
+        mask_private_url
+        and (record.owner_username or "").strip()
+        and user_sources_service.source_is_credentialed(record)
+    ):
+        masked = user_sources_service.mask_credentialed_feed_url(record.url or "")
+        data["url"] = masked
+        if isinstance(data["params"], dict):
+            for key in ("feed_url", "url"):
+                if data["params"].get(key):
+                    data["params"][key] = masked
+        data["params_json"] = _json_dumps(data["params"])
+        data["url_masked"] = True
     try:
         tags = json.loads(record.content_tags_json or "[]")
         data["content_tags"] = tags if isinstance(tags, list) else []
@@ -163,7 +192,9 @@ def get_source_configs(
         skip: int = 0,
         limit: int = 100,
         session: Session = Depends(deps.get_session),
+        auth: Optional[Dict[str, Any]] = Depends(deps.get_current_session),
 ):
+    mask = not _viewer_is_root_admin(session, auth)
     query = select(SourceConfigRecord)
     if source_type:
         query = query.where(SourceConfigRecord.source_type == source_type)
@@ -174,7 +205,7 @@ def get_source_configs(
     if search:
         query = query.where(SourceConfigRecord.name.contains(search))
     query = query.order_by(SourceConfigRecord.source_type, SourceConfigRecord.name).offset(skip).limit(limit)
-    return [serialize_source_config(record) for record in session.exec(query).all()]
+    return [serialize_source_config(record, mask_private_url=mask) for record in session.exec(query).all()]
 
 
 @router.get("/api/source-configs/podcast-catalog")
@@ -202,12 +233,16 @@ def import_podcast_catalog(
 
 
 @router.get("/api/source-configs/{source_id}")
-def get_source_config(source_id: str, session: Session = Depends(deps.get_session)):
+def get_source_config(
+    source_id: str,
+    session: Session = Depends(deps.get_session),
+    auth: Optional[Dict[str, Any]] = Depends(deps.get_current_session),
+):
     source_id = normalize_source_id(source_id)
     record = session.get(SourceConfigRecord, source_id)
     if not record:
         raise HTTPException(status_code=404, detail="数据源配置不存在")
-    return serialize_source_config(record)
+    return serialize_source_config(record, mask_private_url=not _viewer_is_root_admin(session, auth))
 
 
 @router.post("/api/source-configs")
@@ -259,11 +294,17 @@ def create_source_config(params: SourceConfigCreate, session: Session = Depends(
 
 
 @router.put("/api/source-configs/{source_id}")
-def update_source_config(source_id: str, params: SourceConfigUpdate, session: Session = Depends(deps.get_session)):
+def update_source_config(
+    source_id: str,
+    params: SourceConfigUpdate,
+    session: Session = Depends(deps.get_session),
+    auth: Optional[Dict[str, Any]] = Depends(deps.get_current_session),
+):
     source_id = normalize_source_id(source_id)
     record = session.get(SourceConfigRecord, source_id)
     if not record:
         raise HTTPException(status_code=404, detail="数据源配置不存在")
+    _require_root_for_user_source(session, record, auth)
     _require_local_source_governance(session, record)
     update_data = params.model_dump(exclude_unset=True)
     retired_public_podcast_fields = {"is_active", "fetch_interval_minutes"} & update_data.keys()
@@ -335,12 +376,16 @@ def update_source_config(source_id: str, params: SourceConfigUpdate, session: Se
 
 @router.post("/api/source-configs/{source_id}/toggle")
 def toggle_source_config(
-        source_id: str, is_active: bool = Body(..., embed=True), session: Session = Depends(deps.get_session)
+        source_id: str,
+        is_active: bool = Body(..., embed=True),
+        session: Session = Depends(deps.get_session),
+        auth: Optional[Dict[str, Any]] = Depends(deps.get_current_session),
 ):
     source_id = normalize_source_id(source_id)
     record = session.get(SourceConfigRecord, source_id)
     if not record:
         raise HTTPException(status_code=404, detail="数据源配置不存在")
+    _require_root_for_user_source(session, record, auth)
     _require_local_source_governance(session, record)
     if is_public_podcast_source(record):
         raise HTTPException(
@@ -356,11 +401,16 @@ def toggle_source_config(
 
 
 @router.delete("/api/source-configs/{source_id}")
-def delete_source_config(source_id: str, session: Session = Depends(deps.get_session)):
+def delete_source_config(
+    source_id: str,
+    session: Session = Depends(deps.get_session),
+    auth: Optional[Dict[str, Any]] = Depends(deps.get_current_session),
+):
     source_id = normalize_source_id(source_id)
     record = session.get(SourceConfigRecord, source_id)
     if not record:
         raise HTTPException(status_code=404, detail="数据源配置不存在")
+    _require_root_for_user_source(session, record, auth)
     _require_local_source_governance(session, record)
     if record.owner_username:
         # 用户自定源分流(v3.40 检视返修 F8):通用删除只删配置行会留下文章与订阅

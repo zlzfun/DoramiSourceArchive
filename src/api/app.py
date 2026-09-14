@@ -218,6 +218,9 @@ def runtime_capabilities(session: Optional[Dict[str, Any]] = None) -> Dict[str, 
         "version": __version__,
         "role": runtime_role(),
         "account_role": session.get("role") if session else None,
+        # 根管理员位（v3.55 issue #31）：账户名单/逐用户明细/逐账户管理只对它开放，
+        # 前端据此收起用户子页的账户表、活跃榜、AI 用量「按用户」维度。
+        "root_admin": root_admin_session(session),
         "collector_enabled": collector_role_enabled(session),
         "reader_enabled": reader_role_enabled(session),
         # 用户面 AI（阅读器内翻译/问答）：该账户开关 AND LLM 已配置才视为可用。
@@ -372,6 +375,25 @@ def archive_import_requires_admin(path: str, method: str) -> bool:
             "/api/archive/v2/presence",
         ),
     )
+
+
+def root_admin_required(path: str) -> bool:
+    """用户级明细面仅限根管理员（v3.55 issue #31）：账户名单与逐账户管理（/api/accounts）、
+    运维账户列表与单用户活动抽屉（/api/admin/accounts）。其它 admin 得到 403。
+
+    聚合口径的端点刻意不在此列：/api/admin/account-growth（增长曲线）对全体管理员开放；
+    /api/admin/ai-usage 与 /api/admin/overview 由 router 按会话剥掉按用户维度而非整体拒绝。
+    """
+    return _path_matches(path, ("/api/accounts", "/api/admin/accounts"))
+
+
+def root_admin_session(session: Optional[Dict[str, Any]]) -> bool:
+    """会话是否为根管理员（判据见 accounts.root_admin_username）。一次索引查询，只在
+    admin 会话上发生（读者/匿名短路为 False）。"""
+    if not session or session.get("role") != "admin":
+        return False
+    with Session(db_sink.engine) as db:
+        return accounts_service.is_root_admin(db, session.get("sub"))
 
 
 def account_admin_required(path: str) -> bool:
@@ -1266,6 +1288,14 @@ async def require_admin_session(request: Request, call_next):
                 },
                 status_code=403,
             )
+    if disabled_surface is None and root_admin_required(path) and not root_admin_session(auth_session):
+        return StarletteJSONResponse(
+            {
+                "detail": "该操作仅限根管理员",
+                **runtime_capabilities(auth_session),
+            },
+            status_code=403,
+        )
     if disabled_surface is None and article_write_requires_collector(path, request.method):
         disabled_surface = None if collector_role_enabled(auth_session) else "collector"
     if disabled_surface is None and archive_import_requires_admin(path, request.method):

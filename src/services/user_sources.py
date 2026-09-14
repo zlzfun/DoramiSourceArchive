@@ -161,6 +161,20 @@ def feed_url_has_credentials(url: str) -> bool:
     )
 
 
+def mask_credentialed_feed_url(url: str) -> str:
+    """把含凭证的私有 feed 地址收敛为 ``scheme://host/…``(v3.55 issue #31 检视返修)。
+
+    路径与 query 整体省略、不做逐段猜测——`feed_url_has_credentials` 的 path 段启发式说明
+    逐段遮罩会漏(签名可以藏在任意一段);userinfo 一并去掉。非根管理员在治理面看到的就是它。
+    """
+    parts = urlsplit(str(url or "").strip())
+    host = parts.hostname or ""
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    scheme = parts.scheme or "https"
+    return f"{scheme}://{host}/…" if host else "…"
+
+
 def source_is_credentialed(record: Optional[SourceConfigRecord]) -> bool:
     """Return the stored access classification, with URL inference for old rows."""
 
