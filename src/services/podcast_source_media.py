@@ -273,7 +273,8 @@ async def validate_source_media(
             declared_mime = _download_mime(result.content_type, enclosure.mime)
             with Path(path).open("rb") as source:
                 mime = store.validate_audio(source.read(64), declared_mime)
-            duration = store.probe_audio(Path(path))
+            # ffprobe is a blocking subprocess: keep it off the event loop.
+            duration = await asyncio.to_thread(store.probe_audio, Path(path))
             if duration is None or duration <= 0:
                 raise PodcastArtifactUnsupportedMedia("音频时长不可用")
             if (
