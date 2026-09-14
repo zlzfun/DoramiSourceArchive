@@ -549,7 +549,7 @@ export default function PersonalBriefPage({
     body = (
       <div className="brief-state">
         <span className="brief-state-title">还没有订阅来源，也没有设置兴趣</span>
-        <span className="brief-state-meta">早报按你订阅的来源和兴趣编排，先去发现页订阅几个来源或选几个兴趣</span>
+        <span className="brief-state-meta">订阅几个来源或设置兴趣，早报就有了</span>
         <button type="button" className="action-button action-button-primary min-h-[32px] px-3 text-xs" onClick={onManageSubscriptions}>去发现来源</button>
         {onManageInterests && <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={onManageInterests}>设置兴趣</button>}
         {onBrowse && <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={onBrowse}>先去看文章</button>}
@@ -560,7 +560,7 @@ export default function PersonalBriefPage({
       <div className="brief-state" role="status" aria-live="polite">
         <Clock3 aria-hidden="true" />
         <span className="brief-state-title">正在编排今日早报…</span>
-        <span className="brief-state-meta">用现有内容立即编排，稍后想要更全的一版可再点「重新编排」</span>
+        <span className="brief-state-meta">稍后可点「重新编排」拿到更全的一版</span>
         {edition?.rebuild_queued && <span className="brief-state-meta">期间的新变更已合并，本版完成后再编排一次</span>}
       </div>
     );
@@ -658,7 +658,7 @@ export default function PersonalBriefPage({
           <div className="brief-state">
             <span className="brief-state-meta">
               {interestOnly
-                ? (isToday ? '今天还没有命中你兴趣的内容，订阅几个来源会让早报更完整' : '这一天没有命中你兴趣的内容')
+                ? (isToday ? '今天还没有命中你兴趣的内容' : '这一天没有命中你兴趣的内容')
                 : (isToday ? '你的订阅源今天还没有可展示的更新' : '这一天的订阅源没有可展示的更新')}
             </span>
             <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={onManageSubscriptions}>{interestOnly ? '去发现来源' : '管理订阅'}</button>
@@ -698,7 +698,7 @@ export default function PersonalBriefPage({
       <div className="interest-onb-main">
         <div className="brief-mast-kicker">欢迎来到哆啦美</div>
         <p className="interest-onb-text">
-          这是按预置来源为你编排的第一份早报。选几个<b>感兴趣的方向</b>，早报会优先呈现相关内容，全站相关文章也会进入你的阅读器；现在跳过也可以，随时能在「发现」里设置。
+          这是按预置来源编排的第一份早报。<b>设置兴趣</b>，早报会更懂你。
         </p>
       </div>
       <div className="brief-onb-acts">
