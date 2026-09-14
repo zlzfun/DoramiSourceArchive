@@ -3,7 +3,8 @@
 This module is deliberately free of database and LLM dependencies.  It consumes
 the immutable WP-0 DTOs and returns the exact selection decisions that an edition
 persists.  Subscription/permission filtering happens before this boundary; the
-selector never invents candidates or relaxes the quality/mute/event boundaries.
+selector never invents candidates or relaxes the quality/event boundaries.
+(v3.55, issue #27: interests are follow-only — the mute stance was retired.)
 """
 
 from __future__ import annotations
@@ -17,7 +18,6 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from models.analysis_contracts import (
     DigestArticleCandidateDTO,
     DigestSelectionDTO,
-    InterestStance,
     PERSONAL_DIGEST_BREAKING_CORROBORATION_SLACK,
     PERSONAL_DIGEST_BREAKING_CORROBORATION_SOURCES,
     PERSONAL_DIGEST_BREAKING_MAX_ITEMS,
@@ -168,13 +168,10 @@ def eligible_for_selection(
     candidate: DigestArticleCandidateDTO,
     *,
     policy: DigestSelectionPolicy,
-    muted: set[str],
     followed: Mapping[str, int],
 ) -> bool:
-    """Hard admission: mute, score floor per subscription status, external = interest only."""
+    """Hard admission: score floor per subscription status, external = interest only."""
 
-    if muted.intersection(candidate.tag_codes):
-        return False
     if candidate.subscribed:
         return candidate.quality_score >= policy.min_quality_score
     if candidate.quality_score < policy.external_min_quality_score:
@@ -182,19 +179,8 @@ def eligible_for_selection(
     return any(code in followed for code in interest_codes_of(candidate))
 
 
-def _interest_maps(
-    interests: Iterable[UserInterestDTO],
-) -> tuple[set[str], dict[str, int]]:
-    muted: set[str] = set()
-    followed: dict[str, int] = {}
-    for interest in interests:
-        stance = getattr(interest.stance, "value", interest.stance)
-        if stance == InterestStance.MUTE.value:
-            muted.add(interest.tag_code)
-            followed.pop(interest.tag_code, None)
-        elif interest.tag_code not in muted:
-            followed[interest.tag_code] = 1
-    return muted, followed
+def _followed_map(interests: Iterable[UserInterestDTO]) -> dict[str, int]:
+    return {interest.tag_code: 1 for interest in interests}
 
 
 def _ranked(
@@ -361,7 +347,7 @@ def select_digest_articles(
 ) -> list[DigestSelectionDTO]:
     """Select one deterministic edition set.
 
-    Hard rules are never relaxed: mute, minimum score, same-event uniqueness and
+    Hard rules are never relaxed: minimum score, same-event uniqueness and
     the interest-share ceiling.  Only the per-source cap is relaxed, one step at a
     time, when it is the reason the target cannot otherwise be reached.
 
@@ -374,10 +360,10 @@ def select_digest_articles(
     """
 
     policy = policy or DigestSelectionPolicy()
-    muted, followed = _interest_maps(interests)
+    followed = _followed_map(interests)
     eligible = [
         candidate for candidate in candidates
-        if eligible_for_selection(candidate, policy=policy, muted=muted, followed=followed)
+        if eligible_for_selection(candidate, policy=policy, followed=followed)
     ]
     rows = _ranked(eligible, followed, topic_codes_by_article or {})
     interest_rows = sorted((row for row in rows if row.matched_codes), key=_sort_interest)
@@ -580,7 +566,6 @@ def _breaking_reason(
 
 def select_breaking_events(
     candidates: Iterable[DigestArticleCandidateDTO],
-    interests: Iterable[UserInterestDTO] = (),
     *,
     policy: BreakingSelectionPolicy | None = None,
     previous_breaking_entities: Iterable[Iterable[str]] = (),
@@ -591,7 +576,8 @@ def select_breaking_events(
     """Pick at most ``policy.max_items`` cross-subscription headline events.
 
     Candidates are expected to span every reader-visible source (the caller applies
-    hidden/private-source filtering).  Mute stays a hard exclusion; already-used
+    hidden/private-source filtering).  Reader interests play no part here(v3.55:
+    the mute stance was retired, follow never gated headlines); already-used
     article ids are skipped; an event sharing any entity with a recent breaking
     headline of the same reader is suppressed.  Deterministic for equal input.
     """
@@ -599,7 +585,6 @@ def select_breaking_events(
     policy = policy or BreakingSelectionPolicy()
     if policy.max_items <= 0:
         return []
-    muted, _followed = _interest_maps(interests)
     excluded = set(excluded_article_ids)
     subscribed = set(subscribed_source_ids)
     floor = policy.min_score - policy.corroboration_slack
@@ -607,7 +592,6 @@ def select_breaking_events(
         candidate for candidate in candidates
         if candidate.article_id not in excluded
         and candidate.quality_score >= floor - 1e-9
-        and not muted.intersection(candidate.tag_codes)
     ]
     if not eligible:
         return []

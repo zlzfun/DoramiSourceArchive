@@ -30,7 +30,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Rss,
-  Ban,
 } from 'lucide-react';
 import LogoMark from './LogoMark';
 import BrandLogoImage from './BrandLogoImage';
@@ -208,26 +207,12 @@ export function TagRows({ groups, activeTagId, onPick, hasInterests, onOpenInter
   ));
 }
 
-/* 屏蔽折叠行:「已屏蔽 · 机器人技术、具身智能 · 展开」——写屏蔽了什么,不写几篇 */
-export function MutedFoldRow({ tags, expanded, onToggle, showLabel = false, dayKey = '' }) {
-  return (
-    <>
-      {showLabel && <div className="reader-date-label">{dayLabelOf(dayKey)}</div>}
-      <button type="button" className={`reader-fold ${expanded ? 'is-open' : ''}`} onClick={onToggle} aria-expanded={expanded}>
-        <Ban className="h-3 w-3" aria-hidden="true" />
-        <span className="reader-fold-text">已屏蔽 · <b>{tags.join('、')}</b></span>
-        <span className="reader-fold-act">{expanded ? '收起' : '展开'}</span>
-      </button>
-    </>
-  );
-}
-
 export const ArticleRow = memo(function ArticleRow({
   article, active, isUnread, isFav, entryBulletin, entryPodcast, showLabel, dayKey, searchQuery,
   source, sourceName, onSelect, onPrefetchEnter, onPrefetchLeave, onToggleFavorite,
   onContextMenu, ctxAnchor,
-  // issue #27 兴趣即透镜:命中的兴趣标签名(顶行一枚胶囊)/ 订阅外标记(悬停翻「+ 订阅」)/ 屏蔽项展开态
-  interestHit = '', labelSuppress = '', unsubscribed = false, onSubscribeSource = null, muted = false,
+  // issue #27 兴趣即透镜:命中的兴趣标签名(顶行一枚胶囊)/ 订阅外标记(悬停翻「+ 订阅」)
+  interestHit = '', labelSuppress = '', unsubscribed = false, onSubscribeSource = null,
 }) {
   const excerpt = entryBulletin
     ? ''
@@ -272,7 +257,7 @@ export const ArticleRow = memo(function ArticleRow({
         onMouseEnter={() => onPrefetchEnter(article)}
         onMouseLeave={onPrefetchLeave}
         onContextMenu={(e) => onContextMenu(e, article, 'article')}
-        className={`reader-entry ${entryBulletin ? 'is-bulletin' : ''} ${entryPodcast ? 'is-podcast' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'} ${isFav ? 'is-fav' : ''} ${ctxAnchor ? 'is-ctx-anchor' : ''} ${muted ? 'is-muted' : ''}`}
+        className={`reader-entry ${entryBulletin ? 'is-bulletin' : ''} ${entryPodcast ? 'is-podcast' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'} ${isFav ? 'is-fav' : ''} ${ctxAnchor ? 'is-ctx-anchor' : ''}`}
       >
         {entryPodcast ? (
           <span className="reader-podcast-layout">
@@ -476,19 +461,9 @@ export default function ReaderTab({
     setDiscoverTab('interests');
     openDiscover({ shape: 'all' });
   }, [supersedePendingOpen, leaveBriefTrail, openDiscover]);
-  // 屏蔽折叠行的展开态:按日期组记(切作用域时随列表重挂载归零)
-  const [expandedMutedDays, setExpandedMutedDays] = useState(() => new Set());
-  const toggleMutedDay = useCallback((dayKey) => {
-    setExpandedMutedDays((prev) => {
-      const next = new Set(prev);
-      if (next.has(dayKey)) next.delete(dayKey); else next.add(dayKey);
-      return next;
-    });
-  }, []);
-  useEffect(() => { setExpandedMutedDays(new Set()); }, [activeSourceId, activeTagId, mode, scope, searchQuery]);
   const listPlan = useMemo(
-    () => buildListPlan(articles, grouping, expandedMutedDays),
-    [articles, grouping, expandedMutedDays],
+    () => buildListPlan(articles, grouping),
+    [articles, grouping],
   );
   // 栏头轴切换:社交容器没有标签不出;「个人早报」能力位关闭时兴趣端点不可用、也不出
   const showAxisSeg = !socialView && interestAxisEnabled;
@@ -1136,20 +1111,6 @@ export default function ReaderTab({
             /* key 按视图范围重挂载,切源/切容器时列表整体淡入(A1) */
             <div key={`${activeSourceId ?? '__all__'}|${activeTagId ?? ''}|${mode}|${scope.axis}${scope.favorite ? '+f' : ''}`} className="reader-list-enter">
               {listPlan.map((entry) => {
-                if (entry.type === 'fold') {
-                  /* 屏蔽折叠行(issue #27):同一日期组内命中屏蔽标签的条目折成一行——写屏蔽了什么,不写几篇;
-                     点开就地摊开(条目降调),再点收回。屏蔽是全局透镜,任何谓词组合都生效。 */
-                  return (
-                    <MutedFoldRow
-                      key={`fold:${entry.dayKey}`}
-                      tags={entry.tags}
-                      expanded={entry.expanded}
-                      showLabel={entry.showLabel}
-                      dayKey={entry.dayKey}
-                      onToggle={() => toggleMutedDay(entry.dayKey)}
-                    />
-                  );
-                }
                 const { article } = entry;
                 return (
                   <ArticleRow
@@ -1177,7 +1138,6 @@ export default function ReaderTab({
                     labelSuppress={activeTagName}
                     unsubscribed={showUnsubscribedMark && !subscribedIds.has(article.source_id)}
                     onSubscribeSource={onRowSubscribeSource}
-                    muted={entry.muted}
                   />
                 );
               })}

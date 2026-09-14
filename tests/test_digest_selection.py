@@ -100,15 +100,13 @@ def test_cross_lane_event_conflict_does_not_hide_a_larger_legal_set():
     assert [item.lane for item in selected] == ["quality", "interest"]
 
 
-def test_mute_and_quality_threshold_are_hard_boundaries():
+def test_quality_threshold_is_a_hard_boundary():
     candidates = [
-        _candidate(1, score=9.8, tags=("muted",)),
         _candidate(2, score=4.99),
         _candidate(3, score=5.0),
     ]
-    interests = [UserInterestDTO(tag_code="muted", stance=InterestStance.MUTE)]
 
-    selected = select_digest_articles(candidates, interests)
+    selected = select_digest_articles(candidates, [])
 
     assert [item.article_id for item in selected] == ["a03"]
 
@@ -250,20 +248,18 @@ def test_breaking_suppresses_entities_seen_in_recent_headlines_and_respects_cap(
     assert select_breaking_events(candidates, policy=BreakingSelectionPolicy(max_items=0)) == []
 
 
-def test_breaking_mute_and_exclusions_are_hard_and_output_is_deterministic():
+def test_breaking_exclusions_are_hard_and_output_is_deterministic():
     candidates = [
         _candidate(1, source="rss_openai_news", role="official", score=9.9, tags=("entity.openai", "topic.agents")),
         _candidate(2, source="rss_nvidia_genai", role="official", score=9.5, tags=("entity.nvidia",)),
         _candidate(3, source="rss_deepmind_blog", role="official", score=9.5),
     ]
-    interests = [UserInterestDTO(tag_code="topic.agents", stance=InterestStance.MUTE)]
-
-    first = select_breaking_events(candidates, interests, excluded_article_ids={"a02"})
-    second = select_breaking_events(list(reversed(candidates)), interests, excluded_article_ids={"a02"})
+    first = select_breaking_events(candidates, excluded_article_ids={"a02"})
+    second = select_breaking_events(list(reversed(candidates)), excluded_article_ids={"a02"})
 
     assert first == second
-    assert [item.article_id for item in first] == ["a03"]
-    assert first[0].event_entity_codes == ()
+    assert [item.article_id for item in first] == ["a01", "a03"]  # a02 被排除;头条准入与读者兴趣无关
+    assert first[1].event_entity_codes == ()
 
 
 # ── v3.54「订阅 ∪ 兴趣」(issue #33 §3 前置):订阅外候选只进兴趣通道、门槛更高、每源硬上限 ──
@@ -338,22 +334,16 @@ def test_external_cap_override_via_policy():
     assert [item.article_id for item in external] == ["a01"]
 
 
-def test_interest_tag_codes_drive_matching_but_mute_still_reads_the_full_set():
-    interests = [
-        UserInterestDTO(tag_code="agent", stance=InterestStance.FOLLOW),
-        UserInterestDTO(tag_code="crypto", stance=InterestStance.MUTE),
-    ]
+def test_interest_tag_codes_drive_matching():
+    interests = [UserInterestDTO(tag_code="agent", stance=InterestStance.FOLLOW)]
     weak_hit = _candidate(1, source="s1", score=8.0, tags=("agent",)).model_copy(
         update={"interest_tag_codes": ()}   # 指派相关度不过线:不算命中,但仍是合格的质量稿
-    )
-    muted_by_weak_tag = _candidate(2, source="s2", score=9.0, tags=("agent", "crypto")).model_copy(
-        update={"interest_tag_codes": ("agent",)}  # 屏蔽看全集:任一指派即排除
     )
     strong_hit = _candidate(3, source="s3", score=7.0, tags=("agent",)).model_copy(
         update={"interest_tag_codes": ("agent",)}
     )
 
-    selected = select_digest_articles([weak_hit, muted_by_weak_tag, strong_hit], interests)
+    selected = select_digest_articles([weak_hit, strong_hit], interests)
 
     lanes = {item.article_id: item.lane for item in selected}
     assert lanes == {"a01": "quality", "a03": "interest"}

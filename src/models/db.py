@@ -1558,12 +1558,13 @@ class PodcastCostLedgerRecord(SQLModel, table=True):
 
 
 class UserInterestTagRecord(SQLModel, table=True):
-    """用户对规范标签的显式关注/屏蔽。priority 仅保留为旧库兼容字段。"""
+    """用户对规范标签的显式关注。stance / priority 仅保留为旧库兼容字段
+    (v3.55 issue #27 取消屏蔽后 stance 恒为 follow,CHECK 同步收窄)。"""
     __tablename__ = "user_interest_tags"
     __table_args__ = (
         Index("ix_user_interest_tags_owner_stance", "owner_username", "stance"),
         Index("ix_user_interest_tags_tag_id", "tag_id"),
-        CheckConstraint("stance IN ('follow','mute')", name="ck_user_interest_tags_stance"),
+        CheckConstraint("stance = 'follow'", name="ck_user_interest_tags_stance"),
         CheckConstraint("priority IN ('normal','high')", name="ck_user_interest_tags_priority"),
         CheckConstraint("source = 'explicit'", name="ck_user_interest_tags_source"),
     )
@@ -1578,7 +1579,7 @@ class UserInterestTagRecord(SQLModel, table=True):
         foreign_key="cms_tags.id",
         ondelete="CASCADE",
     )
-    stance: str = Field(default="follow", description="follow/mute")
+    stance: str = Field(default="follow", description="恒 follow(v3.55 起屏蔽退役,列留作兼容)")
     priority: str = Field(default="normal", description="兼容旧数据；新写入固定 normal")
     source: str = Field(default="explicit", description="V1 固定 explicit")
     created_at: str

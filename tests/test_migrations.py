@@ -360,10 +360,17 @@ def test_source_audio_retirement_migration_requires_backup_to_downgrade(tmp_path
     with pytest.raises(RuntimeError, match="restore the pre-upgrade database"):
         command.downgrade(cfg, "d6a3f9c2e714")
 
+    # transaction_per_migration=True:单向边界之上的每个迁移都必须在自己的 DDL 之前拒绝,
+    # 否则会先提交逆操作再撞到父守卫——库离开 head 却报错。故断言仍在 head 且 v3.55 的 CHECK 未被放宽。
     engine = create_engine(db_url)
     try:
         with engine.connect() as conn:
             assert MigrationContext.configure(conn).get_current_revision() == _head_revision()
+            checks = {
+                item["name"]: item["sqltext"]
+                for item in inspect(engine).get_check_constraints("user_interest_tags")
+            }
+            assert checks["ck_user_interest_tags_stance"].replace(" ", "") == "stance='follow'"
     finally:
         engine.dispose()
 
@@ -2571,3 +2578,56 @@ def test_cleanup_podcast_extension_fields(tmp_path):
     finally:
         engine.dispose()
 
+
+
+def test_retire_interest_mute_stance_migration_deletes_mute_rows_and_narrows_check(tmp_path):
+    """v3.55(issue #27):存量屏蔽行被删,关注行原样保留,CHECK 收窄后再也写不进 mute。"""
+    db_url = f"sqlite:///{tmp_path / 'retire-mute.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "8be5beaf1307")
+    engine = create_engine(db_url)
+    stamp = "2026-09-14T00:00:00+08:00"
+    try:
+        with engine.begin() as conn:  # 迁移期 FK 不强制,直接写兴趣行即可
+            conn.execute(text(
+                "INSERT INTO user_interest_tags (owner_username, tag_id, stance, priority, source, created_at, updated_at) "
+                "VALUES ('alice', 1, 'follow', 'normal', 'explicit', :s, :s), "
+                "('alice', 2, 'mute', 'normal', 'explicit', :s, :s), "
+                "('bob', 2, 'mute', 'normal', 'explicit', :s, :s)"
+            ), {"s": stamp})
+        command.upgrade(cfg, "head")
+        with engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT owner_username, tag_id, stance FROM user_interest_tags ORDER BY owner_username, tag_id"
+            )).all()
+            assert [tuple(row) for row in rows] == [("alice", 1, "follow")]
+            checks = {
+                item["name"]: item["sqltext"]
+                for item in inspect(engine).get_check_constraints("user_interest_tags")
+            }
+            assert checks["ck_user_interest_tags_stance"].replace(" ", "") == "stance='follow'"
+        with pytest.raises(Exception, match="ck_user_interest_tags_stance"):
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "INSERT INTO user_interest_tags (owner_username, tag_id, stance, priority, source, created_at, updated_at) "
+                    "VALUES ('carol', 3, 'mute', 'normal', 'explicit', :s, :s)"
+                ), {"s": stamp})
+    finally:
+        engine.dispose()
+
+
+def test_retire_interest_mute_stance_migration_fails_closed_without_table(tmp_path):
+    """缺表 = 库不完整:不得静默把版本标成 head(codex 检视 R1-1)。"""
+    db_url = f"sqlite:///{tmp_path / 'retire-mute-no-table.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "8be5beaf1307")
+    engine = create_engine(db_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("DROP TABLE user_interest_tags"))
+        with pytest.raises(Exception):
+            command.upgrade(cfg, "head")
+        with engine.connect() as conn:
+            assert MigrationContext.configure(conn).get_current_revision() == "8be5beaf1307"
+    finally:
+        engine.dispose()

@@ -188,7 +188,8 @@ def test_interest_and_personal_brief_api_are_subscription_strict(monkeypatch, tm
             },
         )
         assert saved.status_code == 200
-        assert saved.json()["items"][0]["stance"] == "follow"
+        assert saved.json()["items"][0]["tag"]["id"] == tag_id
+        assert "stance" not in saved.json()["items"][0]   # v3.55:兴趣只有关注,响应不再带立场
         assert "priority" not in saved.json()["items"][0]
         assert saved.json()["onboarding_completed"] is True
         assert client.get("/api/auth/session").json()["user"]["interest_onboarding_completed"] is True
