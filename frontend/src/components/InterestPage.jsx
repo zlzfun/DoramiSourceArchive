@@ -119,7 +119,7 @@ export default function InterestPage({
   const sheetRef = useRef(null);
   const sectionRefs = useRef({});
   // ── 点击即保存:草稿变化后 600ms 无新动作即 PUT;卸载时冲刷未发出的那一次 ──
-  const savedRef = useRef({});      // 服务端已确认的立场(失败回滚用)
+  const savedRef = useRef({});      // 服务端已确认的选择集(失败回滚用)
   const draftRef = useRef(draft);   // 供 timer / 卸载冲刷读最新草稿
   const timerRef = useRef(null);
   // 保存串行化(codex 检视 P2):整套替换的 PUT 若并发,后发先至会被先发的旧集覆盖;
@@ -134,7 +134,7 @@ export default function InterestPage({
     const controller = new AbortController();
     setCatalog(null);
     setError('');
-    // 先等在途的保存(含上一实例的卸载冲刷)落定,再读服务端立场——否则读到冲刷前的旧集
+    // 先等在途的保存(含上一实例的卸载冲刷)落定,再读服务端选择集——否则读到冲刷前的旧集
     saveChain.then(() => Promise.all([
       fetchInterestCatalog({ signal: controller.signal }),
       fetchInterests({ signal: controller.signal }),
