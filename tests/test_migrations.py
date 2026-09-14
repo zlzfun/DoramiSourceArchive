@@ -182,7 +182,7 @@ def _insert_source_audio_migration_case(
                 updated_at=stamp,
             ))
             session.commit()
-            session.add(PodcastBudgetReservationRecord(
+            reservation = PodcastBudgetReservationRecord(
                 id=f"source-reservation-{suffix}",
                 processing_id=processing_id,
                 attempt_id=attempt_id,
@@ -193,7 +193,25 @@ def _insert_source_audio_migration_case(
                 idempotency_key=f"source-reservation-key-{suffix}",
                 created_at=stamp,
                 updated_at=stamp,
-            ))
+            )
+            # This fixture targets a historical revision, before later nullable
+            # accounting columns existed. Insert using that revision's columns.
+            from sqlalchemy import MetaData, Table
+
+            legacy_table = Table(
+                "podcast_budget_reservations",
+                MetaData(),
+                autoload_with=session.connection(),
+            )
+            session.execute(
+                legacy_table.insert().values(
+                    **{
+                        k: v
+                        for k, v in reservation.model_dump().items()
+                        if k in legacy_table.c
+                    }
+                )
+            )
             session.commit()
     finally:
         engine.dispose()
@@ -2577,7 +2595,6 @@ def test_cleanup_podcast_extension_fields(tmp_path):
         assert "condensed_duration_seconds" not in guide
     finally:
         engine.dispose()
-
 
 
 def test_retire_interest_mute_stance_migration_deletes_mute_rows_and_narrows_check(tmp_path):
