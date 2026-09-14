@@ -4,7 +4,7 @@ This module is deliberately free of database and LLM dependencies.  It consumes
 the immutable WP-0 DTOs and returns the exact selection decisions that an edition
 persists.  Subscription/permission filtering happens before this boundary; the
 selector never invents candidates or relaxes the quality/event boundaries.
-(v3.55, issue #27: interests are follow-only — the mute stance was retired.)
+(v3.56, issue #27: interests are follow-only — the mute stance was retired.)
 """
 
 from __future__ import annotations
@@ -576,7 +576,7 @@ def select_breaking_events(
     """Pick at most ``policy.max_items`` cross-subscription headline events.
 
     Candidates are expected to span every reader-visible source (the caller applies
-    hidden/private-source filtering).  Reader interests play no part here(v3.55:
+    hidden/private-source filtering).  Reader interests play no part here(v3.56:
     the mute stance was retired, follow never gated headlines); already-used
     article ids are skipped; an event sharing any entity with a recent breaking
     headline of the same reader is suppressed.  Deterministic for equal input.

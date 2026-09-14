@@ -183,7 +183,7 @@ export function useReaderState({
   const favOnly = scope.favorite;
   // 兴趣轴的下钻项(关注标签 id);与 activeSourceId 互斥(切轴即清)
   const [activeTagId, setActiveTagId] = useState(null);
-  // 关注的标签 = 兴趣轴的列表(v3.55 起兴趣只有关注一极);
+  // 关注的标签 = 兴趣轴的列表(v3.56 起兴趣只有关注一极);
   // 兴趣页保存后由 refreshInterests 刷新
   const [followedTags, setFollowedTags] = useState([]);
   const refreshInterests = useCallback(async () => {

@@ -1,4 +1,4 @@
-"""retire interest mute stance (issue #27, v3.55)
+"""retire interest mute stance (issue #27, v3.56)
 
 兴趣只剩「关注」一极:删除存量屏蔽行,并把 user_interest_tags.stance 的 CHECK 收窄为 follow。
 列本身保留(与 priority 同为旧库兼容字段),模型侧默认值恒 follow。
@@ -40,6 +40,6 @@ def downgrade() -> None:
     # 否则一步一提交下本迁移会先放宽 CHECK 并退版本号,再撞到父守卫——数据库离开 head 却报错
     # (codex 检视 R1-2)。
     raise RuntimeError(
-        "Interest mute rows were intentionally deleted in v3.55; restore the "
+        "Interest mute rows were intentionally deleted in v3.56; restore the "
         "pre-upgrade database to downgrade"
     )

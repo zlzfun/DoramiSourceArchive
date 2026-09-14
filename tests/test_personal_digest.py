@@ -518,7 +518,7 @@ def test_interest_only_pool_reports_unfillable_ratio_and_keeps_fallback_lanes_ho
 
 
 def test_degraded_area_does_not_wait_for_tagging(storage):
-    """v3.55(issue #27)屏蔽退役后,「有屏蔽时等打标完成」的就绪依赖随之消失:
+    """v3.56(issue #27)屏蔽退役后,「有屏蔽时等打标完成」的就绪依赖随之消失:
     设了关注的读者,打标未完成的文章照常进入降级区。"""
     with Session(storage.engine) as session:
         user = _user()

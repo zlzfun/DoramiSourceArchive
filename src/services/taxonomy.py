@@ -1766,7 +1766,7 @@ def deprecate_tag(
 
 
 def _merge_interest_rows(source: UserInterestTagRecord, target: UserInterestTagRecord) -> None:
-    target.stance = "follow"  # v3.55 起兴趣只有关注一极
+    target.stance = "follow"  # v3.56 起兴趣只有关注一极
     target.priority = "high" if "high" in {source.priority, target.priority} else "normal"
     target.updated_at = max(source.updated_at, target.updated_at)
 
