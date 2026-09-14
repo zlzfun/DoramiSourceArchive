@@ -6,6 +6,10 @@
 
 ## 进行中
 
+- ☐ **issue #69 图片理解波**(分支 `feat/issue-69-vision`,方案 `docs/image-understanding-wave-plan.md`):
+  首波已实现 `vision_model` 档位 + 配图识别并入分析 / 日报 / 问答;待用户本地验收与 codex 检视。
+  展望(未动工):Archive Sync 加 `image_insights` 流(内网检索档 cached-only 拿不到说明)、阅读窗图片下「图片文字」
+  可展开(读者面直接受益,含表格译文)、`ocr_text` 进 FTS(需评估索引噪声)、按源开关识图(推文截图多的源优先)。
 - ☐ **issue #33 个人早报产品优化波**(v3.50.x):§2 重大事件通道已落地(v3.50.0,方案
   `docs/personal-brief-breaking-lane-plan.md`,观察期看实体目录覆盖/月均头条数/同实体抑制误伤);
   §5 兴趣/订阅变更不触发重编已落地(v3.51.1,`docs/personal-brief-rebuild-entrypoints.md`);

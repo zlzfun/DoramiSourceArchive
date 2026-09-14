@@ -32,6 +32,7 @@ from llm import prompts
 from llm.client import ChatMessage, UsageMeta, chat_completion, parse_json_object
 from models.db import ArticleRecord
 from services.reader_ai import build_numbered_context, build_sources_payload
+from services import image_insights as image_insights_service
 from services import user_sources as user_sources_service
 from storage.fts import fts_search_ranked
 
@@ -422,9 +423,14 @@ async def subscription_context(
     # 单篇预算按选中篇数摊分(下限保底):选中少时长文能带出更多正文,
     # 不再固定每篇 2000 字符只喂开头(v3.34)。
     per_article = max(_CONTEXT_PER_ARTICLE, _CONTEXT_TOTAL // max(1, len(chosen)))
+    # 配图说明(issue #69)只读缓存:检索档 ≤8 篇不在请求路径上发起识别(最坏 32 次视觉调用)。
+    notes_by_id = image_insights_service.cached_notes_map(
+        [str(record.id) for record in chosen], llm_config,
+    )
     context, included = build_numbered_context(
-        chosen, per_article_chars=per_article, total_chars=_CONTEXT_TOTAL
+        chosen, per_article_chars=per_article, total_chars=_CONTEXT_TOTAL,
+        notes_by_id=notes_by_id,
     )
     if notice:
         context = f"{notice}\n\n{context}" if context else notice
-    return context, build_sources_payload(included)
+    return context, build_sources_payload(included, notes_by_id=notes_by_id)

@@ -64,6 +64,7 @@ def test_compose_keeps_all_role_and_wires_persistent_podcast_runtime():
         "DORAMI_LLM_MODEL",
         "DORAMI_LLM_THINKING_MODE",
         "DORAMI_LLM_AUX_MODEL",
+        "DORAMI_LLM_VISION_MODEL",  # issue #69:视觉模型档位,宿主 env 须透进容器
     ):
         assert f"{name}: ${{{name}:-}}" in compose
     for name in (

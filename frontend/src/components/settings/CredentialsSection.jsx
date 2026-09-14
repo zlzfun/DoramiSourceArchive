@@ -42,7 +42,7 @@ function CredStamp({ ok }) {
 export default function CredentialsSection({ showToast, onNavigate }) {
   // ── 大模型 ──
   const [llmStatus, setLlmStatus] = useState(null);
-  const [llmForm, setLlmForm] = useState({ base_url: '', model: '', api_key: '', temperature: 0.3, max_tokens: 4096, thinking_mode: '', aux_model: '' });
+  const [llmForm, setLlmForm] = useState({ base_url: '', model: '', api_key: '', temperature: 0.3, max_tokens: 4096, thinking_mode: '', aux_model: '', vision_model: '' });
   const [savingLlm, setSavingLlm] = useState(false);
   const [testingLlm, setTestingLlm] = useState(false);
 
@@ -72,6 +72,7 @@ export default function CredentialsSection({ showToast, onNavigate }) {
       max_tokens: d.max_tokens ?? 4096,
       thinking_mode: d.thinking_mode || '',
       aux_model: d.aux_model || '',
+      vision_model: d.vision_model || '',
       api_key: '', // 后端永不回显明文,输入框始终空值起步 = 不改
     }));
   }).catch(() => {}), []);
@@ -113,6 +114,7 @@ export default function CredentialsSection({ showToast, onNavigate }) {
       max_tokens: Number(llmForm.max_tokens),
       thinking_mode: llmForm.thinking_mode, // ''=不发送思考参数(回落基线)
       aux_model: llmForm.aux_model.trim(), // ''=清除覆盖(不启用辅助档)
+      vision_model: llmForm.vision_model.trim(), // ''=清除覆盖(配图识别关闭)
     };
     if (llmForm.api_key.trim()) payload.api_key = llmForm.api_key.trim();
     await saveLLMConfig(payload);
@@ -137,7 +139,14 @@ export default function CredentialsSection({ showToast, onNavigate }) {
       await persistLlm();
       const r = await testLLMConfig();
       await loadLlm();
-      showToast(`已连接 · ${r.model} · ${r.latency_ms}ms`, 'success');
+      // 视觉档单独探测(issue #69):主模型通、视觉不通时如实转述,不把整体报成失败
+      if (r.vision && !r.vision.ok) {
+        showToast(`已连接 · ${r.model} · ${r.latency_ms}ms;视觉模型 ${r.vision.model} 不可用:${r.vision.error || '未知错误'}`, 'info');
+      } else if (r.vision) {
+        showToast(`已连接 · ${r.model} · ${r.latency_ms}ms · 视觉 ${r.vision.model} · ${r.vision.latency_ms}ms`, 'success');
+      } else {
+        showToast(`已连接 · ${r.model} · ${r.latency_ms}ms`, 'success');
+      }
     } catch (error) {
       showToast(error.message || '连接失败', 'error');
     } finally {
@@ -264,6 +273,10 @@ export default function CredentialsSection({ showToast, onNavigate }) {
           <label className="sett-field" title="可选:同端点下的第二个模型名,供检索规划/选篇、日报单篇概括与去重聚类这类轻量调用使用——主模型走旗舰/思考档时它们不必陪跑高延迟高成本;问答作答与翻译仍走主模型。留空 = 全部调用走主模型">
             <span className="sett-field-lbl">辅助轻模型</span>
             <input className="form-input font-mono" value={llmForm.aux_model} onChange={(e) => updateLlm('aux_model', e.target.value)} placeholder="留空 = 不启用" />
+          </label>
+          <label className="sett-field" title="可选:同端点下支持图片输入的模型名(DeepSeek 为 deepseek-flash),用于识别文章配图并把图里的表格/图表/截图内容并入分析、日报与问答的参考资料。留空 = 不识别配图,所有链路只看正文">
+            <span className="sett-field-lbl">视觉模型</span>
+            <input className="form-input font-mono" value={llmForm.vision_model} onChange={(e) => updateLlm('vision_model', e.target.value)} placeholder="留空 = 不识别配图" />
           </label>
           <label className="sett-field" title="思考型模型(如 DeepSeek V4 系)默认开思考,长输出可能被思考耗尽 max_tokens;不支持该参数的端点请留「不发送」">
             <span className="sett-field-lbl">思考模式</span>

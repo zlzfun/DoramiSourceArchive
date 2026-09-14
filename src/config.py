@@ -186,10 +186,32 @@ class LLMConfig:
     # 日报 map/去重聚类这类「轻量结构化调用」使用——主模型走旗舰/思考档时,
     # 这些调用没必要陪跑高延迟高成本。空 = 不启用,全部调用走主模型。
     aux_model: str = ""
+    # 视觉模型(可选,issue #69):同端点同 api_key 下的第三个模型名,供文章配图识别
+    # (图片 → 结构化文字说明)使用;空 = 视觉能力整体关闭,所有理解链路退回纯文本、
+    # 与未配置前逐字一致。DeepSeek 取 deepseek-flash(V4.1-Flash 原生多模态)。
+    vision_model: str = ""
 
     @property
     def configured(self) -> bool:
         return bool(self.base_url and self.api_key and self.model)
+
+    @property
+    def vision_configured(self) -> bool:
+        """视觉能力是否可用:主配置齐备且填了视觉模型名。"""
+        return self.configured and bool((self.vision_model or "").strip())
+
+    def for_vision(self) -> "LLMConfig":
+        """识图调用的有效配置:换成视觉模型名并**显式关闭思考**。
+
+        与 for_aux「不发送思考参数」不同:deepseek-flash(V4.1-Flash)默认开思考,识图输出
+        是短 JSON,思考会先把 max_tokens 吃满、content 空产(2026-09-14 真机实测
+        finish_reason=length)——必须显式 disabled 而非沉默。不支持 thinking 参数的端点
+        由客户端 400 自动降级去掉重试,不受影响。未配置视觉模型时原样返回(调用方须先判
+        vision_configured,本方法不替它兜底)。"""
+        vision = (self.vision_model or "").strip()
+        if not vision:
+            return self
+        return replace(self, model=vision, thinking_mode="disabled")
 
     def for_aux(self) -> "LLMConfig":
         """轻量调用的有效配置:aux_model 已配置且异于主模型时换模型名,
@@ -1662,6 +1684,7 @@ def load_config() -> AppConfig:
             map_concurrency=parser.getint("llm", "map_concurrency", fallback=4),
             thinking_mode=(os.getenv("DORAMI_LLM_THINKING_MODE") or parser.get("llm", "thinking_mode", fallback="")).strip(),
             aux_model=(os.getenv("DORAMI_LLM_AUX_MODEL") or parser.get("llm", "aux_model", fallback="")).strip(),
+            vision_model=(os.getenv("DORAMI_LLM_VISION_MODEL") or parser.get("llm", "vision_model", fallback="")).strip(),
         ),
         x_api=XApiConfig(
             bearer_token=(

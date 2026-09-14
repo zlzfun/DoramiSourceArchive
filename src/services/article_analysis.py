@@ -32,7 +32,7 @@ import unicodedata
 import uuid
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Optional
 
 from pydantic import ValidationError
@@ -78,6 +78,8 @@ from models.db import (
 )
 from services.article_display_tags import extracted_tag_snapshot
 from services.article_time import in_time_window, parse_article_time
+from services import error_redaction
+from services import image_insights as image_insights_service
 from services import sync_consumer_policy
 
 
@@ -158,9 +160,6 @@ _DESCRIPTION_RECALL_PREFIXES = (
 )
 _DESCRIPTION_RECALL_SUFFIXES = ("时使用", "不使用", "使用", "以及", "或者", "或")
 _URL_RE = re.compile(r"(?i)\b(?:https?|feed)://[^\s<>\]\[)('\"]+")
-_SECRET_RE = re.compile(
-    r"(?i)(?:api[_-]?key|token|authorization|password|secret)\s*[=:]\s*[^\s,;]+"
-)
 
 
 @dataclass(frozen=True)
@@ -184,6 +183,9 @@ class AnalysisInput:
     people: tuple[dict[str, str], ...] = ()
     topic_heat: dict[str, Any] | None = None
     transcript_artifact_id: str | None = None
+    # 配图识别文本(issue #69,services/image_insights.render_notes 产出):有配图且视觉模型
+    # 识别成功时非空,随 user prompt 进入 <untrusted_article>;为空时提示词与既有逐字一致。
+    image_notes: str = ""
 
 
 @dataclass(frozen=True)
@@ -224,6 +226,18 @@ Analyzer = Callable[
     [AnalysisInput, Sequence[TaxonomyTagDTO], LLMConfig],
     Awaitable[dict[str, Any] | ArticleAnalysisResultDTO] | dict[str, Any] | ArticleAnalysisResultDTO,
 ]
+
+# 配图识别提供者(issue #69):(article_id, llm_config) → 说明文本;缺省走 image_insights 单例
+# (未装配 / 未配置视觉模型即空串)。测试可注入替身,或传 None 之外的 lambda 断言调用时机。
+ImageNotesProvider = Callable[[str, LLMConfig], Awaitable[str]]
+
+
+async def default_image_notes_provider(article_id: str, llm_config: LLMConfig) -> str:
+    """worker 侧的缺省识图入口:缺则识、受 ENSURE 预算保护、失败空串,归属 system。"""
+    return await image_insights_service.ensure_notes(
+        article_id, llm_config,
+        usage_meta=UsageMeta(purpose=image_insights_service.USAGE_PURPOSE, username=None),
+    )
 
 
 def _utc_now() -> dt.datetime:
@@ -285,7 +299,8 @@ def _analysis_messages(
         ChatMessage(
             role="system",
             content=analysis_system_prompt(
-                article.content_type, article.analysis_basis
+                article.content_type, article.analysis_basis,
+                with_image_notes=bool((article.image_notes or "").strip()),
             ),
         ),
         ChatMessage(
@@ -301,6 +316,7 @@ def _analysis_messages(
                 people=article.people,
                 topic_heat=article.topic_heat,
                 analysis_basis=article.analysis_basis,
+                image_notes=article.image_notes,
             ),
         ),
     ]
@@ -320,16 +336,15 @@ def compute_analysis_input_hash(
 
 
 def sanitize_error(error: BaseException | str) -> str:
-    """Return a bounded diagnostic with URLs and common secret forms removed."""
+    """Return a bounded diagnostic with URLs and common secret forms removed.
 
-    if isinstance(error, BaseException):
-        raw = f"{type(error).__name__}: {error}"
-    else:
-        raw = str(error)
-    raw = _URL_RE.sub("[redacted-url]", raw)
-    raw = _SECRET_RE.sub("[redacted-secret]", raw)
-    raw = " ".join(raw.split())
-    return raw[:MAX_ERROR_CHARS]
+    Delegates to the shared :mod:`services.error_redaction` implementation so the
+    analysis worker and the image-understanding service never drift apart
+    (issue #69 review F9: ``Incorrect API key provided: sk-…`` slipped past the
+    old ``key=value``-only regex; 401/403 bodies are now withheld entirely).
+    """
+
+    return error_redaction.sanitize_error(error, max_chars=MAX_ERROR_CHARS)
 
 
 def _source_params(source: SourceConfigRecord | None) -> dict[str, Any]:
@@ -1983,8 +1998,15 @@ async def process_claimed_analysis(
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     candidate_enabled: bool = False,
     now_fn: Callable[[], dt.datetime] = _utc_now,
+    image_notes_provider: ImageNotesProvider = default_image_notes_provider,
 ) -> ProcessResult:
-    """Run one lease without holding a DB connection during the LLM request."""
+    """Run one lease without holding a DB connection during the LLM request.
+
+    ``image_notes_provider``(issue #69)runs after the input is assembled and
+    before the scoring call, outside any DB session: it may spend its own time
+    budget on vision calls, and whatever it returns (possibly "") is attached
+    as ``AnalysisInput.image_notes``.  A provider failure never fails the lease.
+    """
 
     with Session(engine) as session:
         record = session.get(ArticleAnalysisRecord, task.article_id)
@@ -2024,7 +2046,6 @@ async def process_claimed_analysis(
                 max_attempts=max_attempts,
             )
         effective_model = llm_config.for_aux().model
-        analysis_input_hash = compute_analysis_input_hash(article_input, active_tags)
         taxonomy_version = _active_taxonomy_version(session)
         record.model_name = effective_model
         record.taxonomy_version = taxonomy_version
@@ -2053,15 +2074,49 @@ async def process_claimed_analysis(
             session.refresh(record)
             return ProcessResult(task.article_id, record.status, record.tagging_status)
 
+    # 整次处理的总上限(codex 检视 F6):识图 + 评分共享同一个 deadline,识图用掉的时间
+    # 从评分预算里扣;识图把预算耗尽则直接按 timeout 收口、不再调评分——租约 300s 的
+    # 安全余量不因多了一步识图而被吃掉。
     effective_timeout = min(
         float(ANALYSIS_LEASE_SECONDS),
         max(0.001, float(timeout_seconds)),
     )
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + effective_timeout
+
+    # 配图识别(issue #69):在 DB 会话之外、评分调用之前补上图片说明。提供者自带时间预算
+    # 与失败兜底(空串),这里再包一层硬上限——它是补充输入,任何异常都不能让租约失败。
+    if not article_input.image_notes:
+        provider_cap = min(
+            image_insights_service.ENSURE_BUDGET_SECONDS + 5.0,
+            max(0.001, deadline - loop.time()),
+        )
+        try:
+            notes = await asyncio.wait_for(
+                image_notes_provider(task.article_id, llm_config), timeout=provider_cap
+            )
+        except Exception as exc:  # noqa: BLE001 - includes TimeoutError
+            logger.warning("image notes provider failed (article_id=%s): %s", task.article_id, sanitize_error(exc))
+            notes = ""
+        if notes:
+            article_input = replace(article_input, image_notes=str(notes))
+    analysis_input_hash = compute_analysis_input_hash(article_input, active_tags)
+
+    remaining = deadline - loop.time()
+    if remaining <= 0:
+        return _mark_failure(
+            engine,
+            task,
+            status=AnalysisStatus.TIMEOUT.value,
+            error=f"analysis exceeded {effective_timeout:g} seconds (image notes consumed the budget)",
+            now=_as_utc(now_fn()),
+            max_attempts=max_attempts,
+        )
     try:
         call = analyzer(article_input, active_tags, llm_config)
         raw = await asyncio.wait_for(
             call if inspect.isawaitable(call) else _immediate(call),
-            timeout=effective_timeout,
+            timeout=remaining,
         )
         validated = validate_analysis_payload(raw, active_tags=active_tags)
     except TimeoutError:
@@ -2293,6 +2348,7 @@ async def run_analysis_cycle(
     max_batches: int = DEFAULT_MAX_BATCHES_PER_CYCLE,
     scan_limit: int = DEFAULT_SCAN_LIMIT,
     now_fn: Callable[[], dt.datetime] = _utc_now,
+    image_notes_provider: ImageNotesProvider = default_image_notes_provider,
 ) -> list[ProcessResult]:
     """Scheduler integration point for the all-in-one V1 runtime.
 
@@ -2359,6 +2415,7 @@ async def run_analysis_cycle(
                 analyzer=analyzer,
                 candidate_enabled=effective_candidates,
                 now_fn=now_fn,
+                image_notes_provider=image_notes_provider,
             )
 
     results: list[ProcessResult] = []

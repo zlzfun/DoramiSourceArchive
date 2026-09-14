@@ -30,6 +30,9 @@ VALID_PURPOSES = (
     "article_analysis",
     # v3.52.1(issue #33 §4):个人早报条目标题批量翻译(系统任务,不进读者预算三处)
     "personal_digest_title",
+    # issue #69:文章配图识别(视觉模型)。全站共享缓存,不进读者预算三处——worker 归
+    # system,日报归触发者,问答按需归提问读者(只作成本可见,不限额)
+    "image_insight",
     "source_config",
     "detail_profile",
 )

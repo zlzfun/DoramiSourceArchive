@@ -1839,6 +1839,38 @@ class MediaAssetRecord(SQLModel, table=True):
     updated_at: str = Field(description="最近一次状态变更时间")
 
 
+class ImageInsightRecord(SQLModel, table=True):
+    """图片理解结果(issue #69):视觉模型对一张图的结构化文字说明,一行 = 一份图片字节。
+
+    主键 content_hash = sha256(图片字节),与媒体库落盘的内容去重单元一致——同一张图
+    跨 URL、跨文章共用一份识别结果,零重复调用。**不设逐文章状态**:文章 → 图链 →
+    media_assets.url_hash → content_hash → 本表,三跳纯查询;正文改动图链自然变化。
+    status=failed 行是负缓存(fail_count 退避、next_attempt_at 冷却),坏图不反复付费。
+    """
+    __tablename__ = "image_insights"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('succeeded','failed')",
+            name="ck_image_insights_status",
+        ),
+    )
+
+    content_hash: str = Field(primary_key=True, description="sha256(图片字节)十六进制,与 media_assets.content_hash 同源")
+    status: str = Field(default="succeeded", index=True, description="succeeded/failed")
+    kind: str = Field(default="other", description="chart/table/screenshot/diagram/photo/logo/other")
+    relevant: bool = Field(default=True, description="是否承载信息(海报/头图/logo 为 false,不进上下文)")
+    caption: str = Field(default="", description="一两句:这是什么图、与文章的关系")
+    details: str = Field(default="", description="具体深入的转写:表格逐行/图表读数/截图文字/架构关系")
+    ocr_text: str = Field(default="", description="图内可见文字原样(原语言)")
+    model_name: str = Field(default="", description="产出该结果的视觉模型名")
+    prompt_version: str = Field(default="", index=True, description="识别提示词版本(image-insight-v1)")
+    fail_count: int = Field(default=0, description="累计识别失败次数")
+    last_error: Optional[str] = Field(default=None, description="最近一次失败原因摘要(已脱敏)")
+    next_attempt_at: Optional[str] = Field(default=None, description="失败冷却截止时间(ISO);为空即可重试")
+    created_at: str = Field(description="首次登记时间")
+    updated_at: str = Field(description="最近一次状态变更时间")
+
+
 def _portable_lower_sha256_check(column: str) -> str:
     stripped = column
     for character in "0123456789abcdef":
