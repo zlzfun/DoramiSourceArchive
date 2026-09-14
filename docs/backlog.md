@@ -6,6 +6,9 @@
 
 ## 进行中
 
+- ☐ **issue #74 个人早报三处**(分支 `feat/issue-74-brief-grid`,方案 `docs/personal-brief-grid-and-sections.md`):
+  公共日报剔出早报范围 + 板块固定顺序 / 板块内分数降序 + 分值驱动网格(策略 F,样页 `docs/design/dorami-brief-grid-quiet.html`)
+  已实现;待用户本地验收与 codex 检视。观察期:T = 9.0 / Δ = 1.0 两个常量在生产分布下的通栏频率与 2 + 2 出现率。
 - ☐ **issue #69 图片理解波**(分支 `feat/issue-69-vision`,方案 `docs/image-understanding-wave-plan.md`):
   首波已实现 `vision_model` 档位 + 配图识别并入分析 / 日报 / 问答;待用户本地验收与 codex 检视。
   展望(未动工):Archive Sync 加 `image_insights` 流(内网检索档 cached-only 拿不到说明)、阅读窗图片下「图片文字」

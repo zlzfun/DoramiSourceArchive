@@ -15,6 +15,7 @@ import { resolveCompany } from '../sourceTaxonomy';
 import { formatDateTime, formatRelativeTime } from '../utils/datetime';
 import { fmtDayKey, WEEKDAY_CHARS } from '../utils/readerTime';
 import { qualityScoreText, scoreTierClass, SCORE_DISCLAIMER } from '../utils/analysis';
+import { GRID_UNITS, gridColsFor, planSectionSpans, scoreOf, skeletonSpans } from '../utils/briefGrid';
 
 // ── 我的早报(issue #23 重做,二稿)──
 // 桌面 = 视图轨 · 日期栏(顶替源栏槽位) · 报纸面(占条目列 + 阅读窗整幅):一份卡片式日报——
@@ -36,6 +37,10 @@ import { qualityScoreText, scoreTierClass, SCORE_DISCLAIMER } from '../utils/ana
 // ① 首登引导横幅挂在报头之上(onboarding 时):新账号第一眼先看到按预置来源编排的早报,再被邀请
 //   「设置兴趣」;「稍后再说」= 与发现页兴趣段的跳过同语义(写 complete_onboarding,横幅与发现钮红点一起消失);
 // ② 空态/失败态按首屏标准补第二条路「去看文章」(onBrowse)——首屏不能是死胡同。
+// issue #74(样页 docs/design/dorami-brief-grid-quiet.html 策略 F「分值驱动」):板块网格改 6 等分单元,
+// 每张卡的宽度由 utils/briefGrid.planSectionSpans 按分数规划(≥ 9 通栏、并排分差 ≥ 1 用 ⅔ + ⅓、余 1 头卡
+// 够高才通栏否则 2 + 2),不再有「因为余数」而变宽或留白的卡;板块顺序由后端固定(SECTION_ORDER),
+// 板块内按分数降序;列数由 ResizeObserver 量报纸面内容宽给出(3 / 2 / 1),骨架屏固定版式。
 
 const TERMINAL = new Set(['ready', 'degraded', 'failed', 'superseded']);
 const LIVE = new Set(['pending', 'generating']);
@@ -90,7 +95,7 @@ function whyOf(item, snapshot, interest) {
   return { cls: '', text: '新闻价值入选', title: item.selection_reason || snapshot.selection_reason || '' };
 }
 
-function BriefCard({ item, lead, wide = false, source, onOpen, onSubscribeSource = null, flash = false }) {
+function BriefCard({ item, lead, span = 2, cols = 3, source, onOpen, onSubscribeSource = null, flash = false }) {
   const snapshot = item.snapshot || {};
   const score = qualityScoreText(item.quality_score ?? snapshot.quality_score);
   const scoreTier = scoreTierClass(item.quality_score ?? snapshot.quality_score);   // issue #54
@@ -163,15 +168,19 @@ function BriefCard({ item, lead, wide = false, source, onOpen, onSubscribeSource
       {unsubNode}
     </span>
   );
-  // 通栏双栏:头条(首节首张)与单卡分节(一张卡占三列网格的一格、旁边两格空着很怪)都通栏,
-  // 左栏来源/标题/摘要/时刻,右栏评分(大号 + 「新闻价值」注脚)与标签竖排;头条只多放大字号。
-  // 右栏有内容才双栏;无分无签(极少)退回普通卡形态。
-  const split = (lead || wide) && (score || chips.length > 0);
-  const cls = `brief-card ${lead ? 'is-lead' : ''} ${wide && !lead ? 'is-wide' : ''} ${split ? 'is-split' : ''} ${flash ? 'is-just-read' : ''}`;
+  // 宽度由板块规划给定(issue #74,utils/briefGrid):6 等分单元里 2 = 小卡、3 = 半宽、4 = ⅔、6 = 通栏;
+  // 头版(整报第一板块首张)恒通栏并放大字号。≥ ⅔ 宽才分栏——左栏来源/标题/摘要/时刻,右栏评分(大号 +
+  // 「新闻价值」注脚)与标签竖排;半宽不分栏(分栏后主栏只剩 277,标题会折成三行);单列容器只有头版分栏。
+  // 右栏有内容才分栏;无分无签(极少)退回普通卡形态。
+  const width = lead ? GRID_UNITS : span;
+  const widthCls = lead ? 'is-lead' : width >= GRID_UNITS ? 'is-wide' : width === 4 ? 'is-w4' : width === 3 ? 'is-half' : '';
+  const split = (lead || (cols >= 2 && width >= 4)) && (score || chips.length > 0);
+  const cls = `brief-card ${widthCls} ${split ? 'is-split' : ''} ${flash ? 'is-just-read' : ''}`;
+  const style = { '--span': width };
 
   if (split) {
     return (
-      <div className={cls}>
+      <div className={cls} style={style}>
         <span className="brief-card-main">
           <span className="brief-card-head">{srcNode}{whyNode}</span>
           {titleNode}
@@ -192,7 +201,7 @@ function BriefCard({ item, lead, wide = false, source, onOpen, onSubscribeSource
   }
 
   return (
-    <div className={cls}>
+    <div className={cls} style={style}>
       <span className="brief-card-head">
         <span className="brief-card-src">
           {srcNode}
@@ -211,16 +220,17 @@ function BriefCard({ item, lead, wide = false, source, onOpen, onSubscribeSource
   );
 }
 
-function CardsSkeleton() {
+function CardsSkeleton({ cols = 3 }) {
   const rows = [['w-3/4', 'w-full', 'w-5/6'], ['w-2/3', 'w-full', 'w-1/2'], ['w-4/5', 'w-11/12', 'w-2/3'], ['w-3/5', 'w-full', 'w-3/4']];
+  // 骨架屏没有分数可依,固定画「通栏 + 一行小卡」(issue #74)
   return (
     <div className="brief-grid skeleton-delay" aria-hidden="true">
-      {rows.map((r, i) => (
-        <div key={i} className="brief-card is-skel">
+      {skeletonSpans(cols).map((span, i) => (
+        <div key={i} className="brief-card is-skel" style={{ '--span': span }}>
           <div className="skeleton h-3 w-24" />
-          <div className={`skeleton mt-4 h-4 ${r[0]}`} />
-          <div className={`skeleton mt-3 h-3 ${r[1]}`} />
-          <div className={`skeleton mt-2 h-3 ${r[2]}`} />
+          <div className={`skeleton mt-4 h-4 ${rows[i % rows.length][0]}`} />
+          <div className={`skeleton mt-3 h-3 ${rows[i % rows.length][1]}`} />
+          <div className={`skeleton mt-2 h-3 ${rows[i % rows.length][2]}`} />
         </div>
       ))}
     </div>
@@ -282,6 +292,26 @@ export default function PersonalBriefPage({
   const [revOpen, setRevOpen] = useState(false);
   const cacheRef = useRef(new Map()); // 终态 edition 不可变,按 date#revision 缓存
   const sheetRef = useRef(null);
+  // 列数(issue #74):量报纸面内容宽 → 3 / 2 / 1 列(断点与旧 auto-fill minmax(320px) 一致)。版式规划要先知道
+  // 列数才能定每张卡的宽度,所以不再让 CSS 自适应;ResizeObserver 的 contentRect 是内容盒,已扣掉 44px 内距。
+  const innerRef = useRef(null);
+  const [cols, setCols] = useState(3);
+  useLayoutEffect(() => {
+    const el = innerRef.current;
+    if (!el) return undefined;
+    const apply = (width) => setCols((prev) => {
+      const next = gridColsFor(width);
+      return next === prev ? prev : next;
+    });
+    const computed = window.getComputedStyle(el);
+    apply(el.clientWidth - parseFloat(computed.paddingLeft || '0') - parseFloat(computed.paddingRight || '0'));
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver((entries) => {
+      entries.forEach((entry) => apply(entry.contentRect.width));
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const loadHistory = useCallback(() => (
     fetchPersonalBriefs(HISTORY_LIMIT)
@@ -497,7 +527,9 @@ export default function PersonalBriefPage({
     openExternal(snapshot);
   };
 
-  // ── 分组:按 section 保序 ──
+  // ── 分组:按 section 首次出现建组(后端自 issue #74 起按 SECTION_ORDER 落库,这里只是保序),
+  //    板块内按分数降序(新版本落库已如此;历史版本按快照分数就地补排,缺分殿后、同分保序)——
+  //    网格宽度跟分数走,前提是板块头卡恒是板块最高分 ──
   const grouped = useMemo(() => {
     const result = [];
     (edition?.items || []).forEach((item) => {
@@ -505,6 +537,17 @@ export default function PersonalBriefPage({
       const current = result.find((group) => group.key === key);
       if (current) current.items.push(item);
       else result.push({ key, items: [item] });
+    });
+    result.forEach((group) => {
+      group.items = group.items
+        .map((item, index) => ({ item, index, score: scoreOf(item) }))
+        .sort((a, b) => {
+          if (a.score == null && b.score == null) return a.index - b.index;
+          if (a.score == null) return 1;
+          if (b.score == null) return -1;
+          return (b.score - a.score) || (a.index - b.index);
+        })
+        .map((entry) => entry.item);
     });
     return result;
   }, [edition]);
@@ -546,7 +589,7 @@ export default function PersonalBriefPage({
   // ── 报体 ──
   let body;
   if (loading) {
-    body = <CardsSkeleton />;
+    body = <CardsSkeleton cols={cols} />;
   } else if (error && isToday) {
     body = (
       <div className="brief-state is-error" role="alert">
@@ -573,7 +616,7 @@ export default function PersonalBriefPage({
       </div>
     );
   } else if (detailLoading) {
-    body = <CardsSkeleton />;
+    body = <CardsSkeleton cols={cols} />;
   } else if (!usesToday && detail.error) {
     body = <div className="brief-state is-error" role="alert"><span>{detail.error}</span></div>;
   } else if (status === 'failed') {
@@ -672,29 +715,38 @@ export default function PersonalBriefPage({
             <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={onManageSubscriptions}>{interestOnly ? '去发现来源' : '管理订阅'}</button>
             {onBrowse && isToday && <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={onBrowse}>先去看文章</button>}
           </div>
-        ) : grouped.map((group, groupIndex) => (
-          <section key={group.key} className="brief-sec" aria-label={group.key}>
-            <div className="brief-sec-head">
-              <span className="brief-sec-title">{group.key}</span>
-              <span className="brief-sec-count">{group.items.length}</span>
-              <span className="brief-sec-rule" aria-hidden="true" />
-            </div>
-            <div className="brief-grid">
-              {group.items.map((item, index) => (
-                <BriefCard
-                  key={item.id || item.position}
-                  item={item}
-                  lead={groupIndex === 0 && index === 0 && !edition.degraded_reason}
-                  wide={group.items.length === 1}
-                  flash={flashId != null && (item.id ?? item.position) === flashId}
-                  source={sourceMap[item.snapshot?.source_id]}
-                  onOpen={openItem}
-                  onSubscribeSource={onSubscribeSource}
-                />
-              ))}
-            </div>
-          </section>
-        ))}
+        ) : grouped.map((group, groupIndex) => {
+          // 头版 = 第一板块首张(降级版面无头版);其余按分数规划宽度,头版板块规划的是它之后的那些卡
+          const lead = groupIndex === 0 && !edition.degraded_reason;
+          const scores = group.items.map(scoreOf);
+          const spans = lead
+            ? [GRID_UNITS, ...planSectionSpans(scores.slice(1), cols)]
+            : planSectionSpans(scores, cols);
+          return (
+            <section key={group.key} className="brief-sec" aria-label={group.key}>
+              <div className="brief-sec-head">
+                <span className="brief-sec-title">{group.key}</span>
+                <span className="brief-sec-count">{group.items.length}</span>
+                <span className="brief-sec-rule" aria-hidden="true" />
+              </div>
+              <div className="brief-grid">
+                {group.items.map((item, index) => (
+                  <BriefCard
+                    key={item.id || item.position}
+                    item={item}
+                    lead={lead && index === 0}
+                    span={spans[index]}
+                    cols={cols}
+                    flash={flashId != null && (item.id ?? item.position) === flashId}
+                    source={sourceMap[item.snapshot?.source_id]}
+                    onOpen={openItem}
+                    onSubscribeSource={onSubscribeSource}
+                  />
+                ))}
+              </div>
+            </section>
+          );
+        })}
       </>
     );
   }
@@ -717,7 +769,7 @@ export default function PersonalBriefPage({
   );
 
   const sheet = (
-    <div className="brief-sheet-inner">
+    <div className="brief-sheet-inner" ref={innerRef}>
       {onboardingBanner}
       <header className="brief-mast">
         <div className="brief-mast-main">

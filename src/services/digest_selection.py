@@ -55,6 +55,32 @@ GENRE_SECTIONS = {
     "aggregation": "资讯聚合",
     "other": "其它",
 }
+BREAKING_SECTION = "重大事件"
+# 板块固定顺序(issue #74):此前板块按条目首次出现建组,顺序随当天最高分条目的体裁漂移
+# (「论文排在模型发布前」只因当天最高分恰好是论文)。「发生了什么」在前,「怎么看」在后,
+# 社交与聚合殿后,降级版面的「订阅源最新更新」永远最后;未登记的板块名排在已登记之后、按名字稳定。
+SECTION_ORDER: tuple[str, ...] = (
+    BREAKING_SECTION,
+    "模型发布",
+    "行业资讯",
+    "开源动态",
+    "学术论文",
+    "工程实践",
+    "观点洞察",
+    "技术大会",
+    "社交动态",
+    "资讯聚合",
+    "其它",
+    "订阅源最新更新",
+)
+_SECTION_RANK = {name: index for index, name in enumerate(SECTION_ORDER)}
+
+
+def section_rank(section: object) -> tuple[int, str]:
+    """Sort key for a display section: registry order first, unknown names after."""
+
+    name = str(section or "")
+    return (_SECTION_RANK.get(name, len(SECTION_ORDER)), name)
 
 
 @dataclass(frozen=True)
@@ -465,7 +491,6 @@ def select_digest_articles(
 # 出一条代表:官方 > 非社交形态 > 分数 > 发布更早。同实体前几期已上过头条即抑制。
 
 ENTITY_TAG_PREFIX = "entity."
-BREAKING_SECTION = "重大事件"
 BREAKING_BASIS_OFFICIAL = "official"
 BREAKING_BASIS_CORROBORATED = "corroborated"
 
@@ -651,10 +676,12 @@ __all__ = [
     "BreakingSelectionPolicy",
     "DigestSelectionPolicy",
     "GENRE_SECTIONS",
+    "SECTION_ORDER",
     "eligible_for_selection",
     "interest_codes_of",
     "interest_only_policy",
     "section_for_genre",
+    "section_rank",
     "select_breaking_events",
     "select_digest_articles",
 ]
