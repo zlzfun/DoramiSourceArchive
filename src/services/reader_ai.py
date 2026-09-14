@@ -27,6 +27,7 @@ from llm import prompts
 from llm.client import ChatMessage, UsageMeta, chat_completion, client_session
 from sqlmodel import Session
 
+from services import image_insights as image_insights_service
 from services import user_sources as user_sources_service
 
 # 译文/摘要缓存在 ArticleRecord.extensions_json 下的键；只新增键，不触碰正文。
@@ -77,6 +78,8 @@ _TRANSLATE_SEGMENT_CHARS = 3500
 # 列表问答上下文：单篇正文截断与整体字符上限。
 _LIST_PER_ARTICLE_CHARS = 1500
 _LIST_TOTAL_CHARS = 12000
+# 配图识别文本在单篇上下文里的上限(issue #69);实际取 min(此值, 单篇预算/2)
+_NOTES_PER_ARTICLE_CHARS = 1500
 
 # 多轮对话：最多带入的历史消息条数（user/assistant 计）与单条字符上限，控制 token 预算。
 MAX_HISTORY_MESSAGES = 8
@@ -325,6 +328,10 @@ async def summarize_article(
 
     if len(body) > _SUMMARIZE_BODY_CHARS:
         body = body[:_SUMMARIZE_BODY_CHARS] + "\n...(正文已截断)"
+    # 配图说明(issue #69,cached-only):速读兜底只在没有分析结果时走到这里,不为它发起识别
+    image_notes = image_insights_service.cached_notes_map([article_id], max_chars=3000).get(article_id, "")
+    if image_notes:
+        body = f"{body}\n{image_notes}"
     raw = await chat_completion(
         messages=[
             ChatMessage(role="system", content=prompts.SUMMARIZE_SYSTEM_PROMPT),
@@ -386,6 +393,8 @@ def build_numbered_context(
     per_article_chars: int = _LIST_PER_ARTICLE_CHARS,
     total_chars: int = _LIST_TOTAL_CHARS,
     keep_empty: bool = False,
+    notes_by_id: Optional[dict] = None,
+    notes_chars: int = _NOTES_PER_ARTICLE_CHARS,
 ) -> tuple:
     """多篇文章 → 编号上下文，返回 ``(context, included)``。
 
@@ -394,10 +403,14 @@ def build_numbered_context(
     名单——sources 必须由它构建，否则回答里的 [n] 会指错文章。
     keep_empty=True 时空正文也保留条目（单篇场景标题本身就是信息）。
     articles 元素可为 dict（含 title/content）或带 .title/.content 属性的对象。
+    notes_by_id(issue #69):文章 id → 配图识别文本;有则追加在该篇正文之后,单篇上限
+    min(notes_chars, per_article_chars//2)——图里的表格/榜单进参考资料,正文预算不被挤光。
+    只有配图说明而无正文的条目(纯图推文)也算有内容,不会被 keep_empty=False 跳过。
     """
     blocks: List[str] = []
     included: List[Any] = []
     used = 0
+    notes_map = notes_by_id or {}
     from services.source_naming import friendly_source_name
 
     for art in articles:
@@ -406,10 +419,16 @@ def build_numbered_context(
             body = (art.get("content") or art.get("content_preview") or "").strip()
         else:
             body = (getattr(art, "content", None) or "").strip()
-        if not body and not keep_empty:
+        notes = (notes_map.get(_art_field(art, "id")) or "").strip()
+        if not body and not notes and not keep_empty:
             continue
         if len(body) > per_article_chars:
             body = body[:per_article_chars] + "…"
+        if notes:
+            limit = max(200, min(notes_chars, per_article_chars // 2))
+            if len(notes) > limit:
+                notes = notes[:limit] + "…"
+            body = f"{body}\n{notes}" if body else notes
         # 块头带来源名与发布日期(时效性场景的作答依据:「最近」类问题须能按日期
         # 甄别与标注;正文里往往没有自身的发布日期)。
         source_name = friendly_source_name(_art_field(art, "source_id") or "")
@@ -426,14 +445,33 @@ def build_numbered_context(
     return "\n\n".join(blocks), included
 
 
-def assemble_articles_context(records: List[Any], *, total_chars: int = _LIST_TOTAL_CHARS) -> tuple:
+def assemble_articles_context(
+    records: List[Any], *, total_chars: int = _LIST_TOTAL_CHARS,
+    notes_by_id: Optional[dict] = None,
+) -> tuple:
     """显式名单的上下文组装：单篇预算按篇数摊分（n=1 独享全额），返回 (context, sources)。"""
     per_article = max(_LIST_PER_ARTICLE_CHARS, total_chars // max(1, len(records)))
     context, included = build_numbered_context(
         records, per_article_chars=per_article, total_chars=total_chars,
-        keep_empty=(len(records) == 1),
+        keep_empty=(len(records) == 1), notes_by_id=notes_by_id,
     )
     return context, build_sources_payload(included)
+
+
+async def _explicit_image_notes(
+    records: List[Any], llm_config: Optional[LLMConfig], usage_meta: Optional[UsageMeta],
+) -> dict:
+    """显式篇目(≤12)的配图说明:有 LLM 配置就缺则识(问答档预算),否则只读缓存(issue #69)。
+
+    新文章通常 worker 已识完,这里多为零成本命中;存量文章被显式打开时按需补识。
+    任何失败都退回空 map——识图是补充,不能让问答 5xx。
+    """
+    ids = [str(_art_field(r, "id") or "") for r in records]
+    return await image_insights_service.ensure_notes_map(
+        ids, llm_config, usage_meta=usage_meta,
+        budget_seconds=image_insights_service.QA_ENSURE_BUDGET_SECONDS,
+        max_chars=_NOTES_PER_ARTICLE_CHARS,
+    )
 
 
 async def assemble_reader_context(
@@ -445,8 +483,13 @@ async def assemble_reader_context(
     db_sink: Any,
     search_fetch: Any,
     article_ids: Optional[List[str]] = None,
+    llm_config: Optional[LLMConfig] = None,
+    usage_meta: Optional[UsageMeta] = None,
 ) -> tuple:
     """按 scope 组装 reader 问答上下文，返回 ``(context, sources)``。
+
+    ``llm_config`` / ``usage_meta``(issue #69)只用于显式篇目的配图识别(缺则识);不传时
+    只读缓存。检索档的配图说明由 search_fetch 内部(reader_search)按 cached-only 附带。
 
     - ``scope=article``：该文正文（显式名单 n=1 的特例，零检索依赖）；
     - ``scope=articles``：显式多篇 ``article_ids``（≤ EXPLICIT_ARTICLES_MAX，
@@ -466,7 +509,8 @@ async def assemble_reader_context(
         if record is None:
             raise ReaderAIError("文章不存在", status_code=404)
         _ensure_articles_exportable(db_sink, [record])
-        return assemble_articles_context([record])
+        notes = await _explicit_image_notes([record], llm_config, usage_meta)
+        return assemble_articles_context([record], notes_by_id=notes)
 
     if scope == "articles":
         ids: List[str] = []
@@ -484,7 +528,8 @@ async def assemble_reader_context(
         if not records:
             raise ReaderAIError("文章不存在", status_code=404)
         _ensure_articles_exportable(db_sink, records)
-        return assemble_articles_context(records)
+        notes = await _explicit_image_notes(records, llm_config, usage_meta)
+        return assemble_articles_context(records, notes_by_id=notes)
 
     return await search_fetch(question, username)
 

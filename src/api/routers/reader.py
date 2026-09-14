@@ -1561,6 +1561,9 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
                 username=username,
                 db_sink=db_sink,
                 search_fetch=_search_fetch,
+                # 显式篇目的配图识别(issue #69):缺则识,归属提问读者(只作成本可见,不限额)
+                llm_config=llm_config,
+                usage_meta=UsageMeta(purpose="image_insight", username=username),
             )
         except reader_ai_service.ReaderAIError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc))

@@ -107,6 +107,8 @@ LLM_NAMESPACE = CredentialNamespace(
         CredentialField("thinking_mode", "llm_thinking_mode", env_var="DORAMI_LLM_THINKING_MODE"),
         # 辅助轻模型(同端点同 key 的第二模型名,轻量结构化调用用;空=不启用)
         CredentialField("aux_model", "llm_aux_model", env_var="DORAMI_LLM_AUX_MODEL"),
+        # 视觉模型(issue #69):同端点同 key 的第三模型名,文章配图识别用;空=视觉能力关闭
+        CredentialField("vision_model", "llm_vision_model", env_var="DORAMI_LLM_VISION_MODEL"),
     ),
 )
 

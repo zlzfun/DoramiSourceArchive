@@ -15,6 +15,7 @@ from models.analysis_contracts import (
 from models.db import AppSettingRecord, TagRetagJobRecord
 from services import analysis_backfill as backfill_service
 from services import daily_brief as daily_brief_service
+from services import image_insights as image_insights_service
 from services import personal_digest as personal_digest_service
 from services.analysis_observability import FEATURE_FLAG_KEYS, collect_release_metrics
 
@@ -148,9 +149,19 @@ def metrics(
     session: Session = Depends(deps.get_session),
 ):
     try:
-        return collect_release_metrics(session, days=days)
+        payload = collect_release_metrics(session, days=days)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # 图片理解观测(issue #69):配置态 + 缓存计数;未装配时给出 configured=false 的空块
+    service = image_insights_service.current()
+    if service is not None:
+        try:
+            payload["image_insights"] = service.stats(daily_brief_service.resolve_llm_config(session))
+        except Exception:  # noqa: BLE001 — 观测不阻断主指标
+            payload["image_insights"] = {"configured": False}
+    else:
+        payload["image_insights"] = {"configured": False}
+    return payload
 
 
 @router.post("/backfills/estimate")

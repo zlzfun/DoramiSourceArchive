@@ -32,7 +32,7 @@ import unicodedata
 import uuid
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Optional
 
 from pydantic import ValidationError
@@ -78,6 +78,7 @@ from models.db import (
 )
 from services.article_display_tags import extracted_tag_snapshot
 from services.article_time import in_time_window, parse_article_time
+from services import image_insights as image_insights_service
 from services import sync_consumer_policy
 
 
@@ -184,6 +185,9 @@ class AnalysisInput:
     people: tuple[dict[str, str], ...] = ()
     topic_heat: dict[str, Any] | None = None
     transcript_artifact_id: str | None = None
+    # 配图识别文本(issue #69,services/image_insights.render_notes 产出):有配图且视觉模型
+    # 识别成功时非空,随 user prompt 进入 <untrusted_article>;为空时提示词与既有逐字一致。
+    image_notes: str = ""
 
 
 @dataclass(frozen=True)
@@ -224,6 +228,18 @@ Analyzer = Callable[
     [AnalysisInput, Sequence[TaxonomyTagDTO], LLMConfig],
     Awaitable[dict[str, Any] | ArticleAnalysisResultDTO] | dict[str, Any] | ArticleAnalysisResultDTO,
 ]
+
+# 配图识别提供者(issue #69):(article_id, llm_config) → 说明文本;缺省走 image_insights 单例
+# (未装配 / 未配置视觉模型即空串)。测试可注入替身,或传 None 之外的 lambda 断言调用时机。
+ImageNotesProvider = Callable[[str, LLMConfig], Awaitable[str]]
+
+
+async def default_image_notes_provider(article_id: str, llm_config: LLMConfig) -> str:
+    """worker 侧的缺省识图入口:缺则识、受 ENSURE 预算保护、失败空串,归属 system。"""
+    return await image_insights_service.ensure_notes(
+        article_id, llm_config,
+        usage_meta=UsageMeta(purpose=image_insights_service.USAGE_PURPOSE, username=None),
+    )
 
 
 def _utc_now() -> dt.datetime:
@@ -285,7 +301,8 @@ def _analysis_messages(
         ChatMessage(
             role="system",
             content=analysis_system_prompt(
-                article.content_type, article.analysis_basis
+                article.content_type, article.analysis_basis,
+                with_image_notes=bool((article.image_notes or "").strip()),
             ),
         ),
         ChatMessage(
@@ -301,6 +318,7 @@ def _analysis_messages(
                 people=article.people,
                 topic_heat=article.topic_heat,
                 analysis_basis=article.analysis_basis,
+                image_notes=article.image_notes,
             ),
         ),
     ]
@@ -1983,8 +2001,15 @@ async def process_claimed_analysis(
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     candidate_enabled: bool = False,
     now_fn: Callable[[], dt.datetime] = _utc_now,
+    image_notes_provider: ImageNotesProvider = default_image_notes_provider,
 ) -> ProcessResult:
-    """Run one lease without holding a DB connection during the LLM request."""
+    """Run one lease without holding a DB connection during the LLM request.
+
+    ``image_notes_provider``(issue #69)runs after the input is assembled and
+    before the scoring call, outside any DB session: it may spend its own time
+    budget on vision calls, and whatever it returns (possibly "") is attached
+    as ``AnalysisInput.image_notes``.  A provider failure never fails the lease.
+    """
 
     with Session(engine) as session:
         record = session.get(ArticleAnalysisRecord, task.article_id)
@@ -2024,7 +2049,6 @@ async def process_claimed_analysis(
                 max_attempts=max_attempts,
             )
         effective_model = llm_config.for_aux().model
-        analysis_input_hash = compute_analysis_input_hash(article_input, active_tags)
         taxonomy_version = _active_taxonomy_version(session)
         record.model_name = effective_model
         record.taxonomy_version = taxonomy_version
@@ -2052,6 +2076,18 @@ async def process_claimed_analysis(
             session.commit()
             session.refresh(record)
             return ProcessResult(task.article_id, record.status, record.tagging_status)
+
+    # 配图识别(issue #69):在 DB 会话之外、评分调用之前补上图片说明。提供者自带时间预算
+    # 与失败兜底(空串),这里再包一层——它是补充输入,任何异常都不能让租约失败。
+    if not article_input.image_notes:
+        try:
+            notes = await image_notes_provider(task.article_id, llm_config)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("image notes provider failed (article_id=%s): %s", task.article_id, sanitize_error(exc))
+            notes = ""
+        if notes:
+            article_input = replace(article_input, image_notes=str(notes))
+    analysis_input_hash = compute_analysis_input_hash(article_input, active_tags)
 
     effective_timeout = min(
         float(ANALYSIS_LEASE_SECONDS),
@@ -2293,6 +2329,7 @@ async def run_analysis_cycle(
     max_batches: int = DEFAULT_MAX_BATCHES_PER_CYCLE,
     scan_limit: int = DEFAULT_SCAN_LIMIT,
     now_fn: Callable[[], dt.datetime] = _utc_now,
+    image_notes_provider: ImageNotesProvider = default_image_notes_provider,
 ) -> list[ProcessResult]:
     """Scheduler integration point for the all-in-one V1 runtime.
 
@@ -2359,6 +2396,7 @@ async def run_analysis_cycle(
                 analyzer=analyzer,
                 candidate_enabled=effective_candidates,
                 now_fn=now_fn,
+                image_notes_provider=image_notes_provider,
             )
 
     results: list[ProcessResult] = []

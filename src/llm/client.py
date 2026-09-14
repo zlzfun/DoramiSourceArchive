@@ -12,12 +12,15 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
+import struct
 import time
+import zlib
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import httpx
 
@@ -53,11 +56,43 @@ class LLMNotConfigured(LLMError):
 
 @dataclass
 class ChatMessage:
+    """一条对话消息。
+
+    ``content`` 通常是纯文本;多模态调用(issue #69)时是 OpenAI 兼容的内容分片数组
+    ``[{"type":"text",...},{"type":"image_url",...}]``,由 :func:`text_part` /
+    :func:`image_part` 组装。图片分片**只能出现在 user 消息**(DeepSeek 文档:system /
+    assistant 带图返回 400)。to_dict 对两种形态都原样透传。
+    """
     role: str  # system / user / assistant
-    content: str
+    content: Union[str, List[Dict[str, Any]]]
 
     def to_dict(self) -> dict:
         return {"role": self.role, "content": self.content}
+
+    @property
+    def text(self) -> str:
+        """内容的纯文本投影(数组形态只拼 text 分片),供哈希/日志/测试用。"""
+        if isinstance(self.content, str):
+            return self.content
+        return "\n".join(
+            str(part.get("text") or "") for part in self.content
+            if isinstance(part, dict) and part.get("type") == "text"
+        )
+
+
+def text_part(text: str) -> Dict[str, Any]:
+    return {"type": "text", "text": text}
+
+
+def image_part(data_url: str, *, detail: str = "high") -> Dict[str, Any]:
+    """图片分片。``data_url`` 是 ``data:image/png;base64,...`` 或公网 http(s) 链接;
+    项目内一律走 base64(内网 MaaS 端点拉不到公网图链,base64 在两种部署下都成立)。
+    detail:low=端侧缩到 512²;high/original=原图(DeepSeek 单图封顶 1024 token,不额外计费)。"""
+    return {"type": "image_url", "image_url": {"url": data_url, "detail": detail}}
+
+
+def image_data_url(data: bytes, mime: str) -> str:
+    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
 
 
 def _endpoint(config: LLMConfig) -> str:
@@ -290,6 +325,50 @@ async def ping(config: LLMConfig) -> dict:
     started = time.monotonic()
     content = await chat_completion(
         messages=[ChatMessage(role="user", content="ping，请只回复 pong")],
+        config=config,
+        max_tokens=16,
+        max_retries=1,
+    )
+    latency_ms = int((time.monotonic() - started) * 1000)
+    return {
+        "ok": True,
+        "model": config.model,
+        "latency_ms": latency_ms,
+        "sample": (content or "").strip()[:120],
+    }
+
+
+def _solid_png(width: int, height: int, rgb: tuple[int, int, int]) -> bytes:
+    """程序生成一张纯色 PNG(无 Pillow 依赖),供视觉连通性探针用。"""
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(payload)) + kind + payload
+            + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF)
+        )
+    row = b"\x00" + bytes(rgb) * width
+    raw = row * height
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw))
+        + chunk(b"IEND", b"")
+    )
+
+
+async def vision_ping(config: LLMConfig) -> dict:
+    """视觉档连通性探针(issue #69):发一张内置的 64×64 纯红 PNG 问主色。
+
+    调用方传入 ``config.for_vision()``。端点不认 image_url 分片会以 4xx 报错,
+    经 LLMError 冒出;返回形状与 :func:`ping` 同构,多一个 ``sample``。
+    """
+    if not config.configured:
+        raise LLMNotConfigured("LLM 未配置（需 base_url / api_key / model）")
+    started = time.monotonic()
+    content = await chat_completion(
+        messages=[ChatMessage(role="user", content=[
+            text_part("这张图的主色是什么?只回答一个颜色词。"),
+            image_part(image_data_url(_solid_png(64, 64, (220, 30, 30)), "image/png"), detail="low"),
+        ])],
         config=config,
         max_tokens=16,
         max_retries=1,

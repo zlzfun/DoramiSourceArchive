@@ -79,6 +79,7 @@ from models.db import (
     SourceConfigRecord,
 )
 from services import credentials
+from services import image_insights as image_insights_service
 from services.article_analysis import (
     AnalysisInput,
     analysis_input_from_article,
@@ -668,6 +669,14 @@ async def _score_one(
             source_name=friendly_source_name(candidate.source_id),
             source_role=candidate.source_role,
         )
+        # 配图识别(issue #69):补评与 worker 同一把尺子,也同一份输入——缺则识、
+        # 受预算保护、失败空串;有说明时 prompt 多一个 image_notes 字段。
+        if not article_input.image_notes:
+            notes = await image_insights_service.ensure_notes(
+                candidate.id, llm_config, usage_meta=usage_meta,
+            )
+            if notes:
+                article_input = replace(article_input, image_notes=notes)
         raw = await analyze_article_with_llm(
             article_input, active_tags, llm_config, usage_meta=usage_meta, http_client=http_client,
         )
@@ -980,12 +989,18 @@ async def _polish_one(
     usage_meta: Optional[UsageMeta] = None, http_client=None,
 ) -> Tuple[ScoredItem, bool]:
     try:
+        # 配图识别(issue #69):预选十几篇的编辑输入附图片说明,要点里的基准数字可来自图;
+        # 通常 worker / 补评阶段已识过,这里是零成本命中;缺则识仍受预算保护。
+        image_notes = await image_insights_service.ensure_notes(
+            item.candidate.id, llm_config, usage_meta=usage_meta, max_chars=3000,
+        )
         raw = await chat_completion(
             messages=[
                 ChatMessage(role="system", content=prompts.EDITORIAL_SYSTEM_PROMPT),
                 ChatMessage(role="user", content=prompts.build_editorial_user_prompt(
                     title=item.candidate.title, source_name=item.source, body=item.candidate.body,
                     analysis_summary="\n".join(item.summary), score_reason=item.score_reason,
+                    image_notes=image_notes,
                 )),
             ],
             config=llm_config,

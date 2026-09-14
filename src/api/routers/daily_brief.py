@@ -21,6 +21,7 @@ from api import deps
 from api.sources import DAILY_BRIEF_SOURCE_ID
 from llm.client import LLMError, LLMNotConfigured
 from llm.client import ping as llm_ping
+from llm.client import vision_ping as llm_vision_ping
 from models.db import ArticleRecord
 from services import credentials
 from services import daily_brief as daily_brief_service
@@ -45,6 +46,8 @@ def _llm_config_response(session: Session) -> Dict[str, Any]:
         "max_tokens": cfg.max_tokens,
         "thinking_mode": cfg.thinking_mode,
         "aux_model": cfg.aux_model,
+        "vision_model": cfg.vision_model,
+        "vision_configured": cfg.vision_configured,
         "configured": cfg.configured,
         "api_key_set": bool(cfg.api_key),
         "api_key_preview": credentials.mask_tail(cfg.api_key),
@@ -63,6 +66,8 @@ class LLMConfigUpdate(BaseModel):
     thinking_mode: Optional[str] = None
     # 辅助轻模型:"" = 清除覆盖(回落 ini/env,均无则不启用);非空 = 轻量调用换用该模型
     aux_model: Optional[str] = None
+    # 视觉模型(issue #69):"" = 清除覆盖(回落 ini/env,均无则视觉能力关闭);非空 = 配图识别换用该模型
+    vision_model: Optional[str] = None
 
 
 @router.get("/api/llm/config")
@@ -94,11 +99,19 @@ async def test_llm_config(session: Session = Depends(deps.get_session)):
     if not cfg.configured:
         raise HTTPException(status_code=400, detail="LLM 未配置（需 base_url / api_key / model）")
     try:
-        return await llm_ping(cfg)
+        result = await llm_ping(cfg)
     except LLMNotConfigured as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except LLMError as exc:
         raise HTTPException(status_code=502, detail=f"连接失败: {exc}")
+    if cfg.vision_configured:
+        # 视觉档单独探测(issue #69):「配了模型名但端点不认 image_url」不该只在 worker
+        # 日志里失败。主模型通、视觉不通时仍 200,把失败写进 vision 子结果由前端转述。
+        try:
+            result["vision"] = await llm_vision_ping(cfg.for_vision())
+        except LLMError as exc:
+            result["vision"] = {"ok": False, "model": cfg.vision_model, "error": str(exc)[:300]}
+    return result
 
 
 # ==================== 每日 AI 资讯日报 ====================
