@@ -179,14 +179,18 @@ semantics.
 
 ### Streams and readiness fence
 
-The receiver pulls the following independent streams in this exact order:
+The receiver pulls the following independent streams in this exact order when
+the producer advertises the Podcast capabilities (older compatible peers omit
+the two Podcast streams):
 
 1. `sources`
 2. `taxonomy`
 3. `articles`
 4. `analyses`
 5. `media`
-6. `source_states`
+6. `podcast_texts`
+7. `podcast_audio`
+8. `source_states`
 
 The `analyses` payload carries the complete authoritative single-score contract,
 including `analysis_basis`, the SHA-256 `analysis_input_hash` of the exact model

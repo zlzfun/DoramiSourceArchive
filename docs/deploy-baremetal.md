@@ -82,6 +82,8 @@ pm2 save && pm2 startup           # 开机自启(脚本不做,必须手动执行
   (`ensure_migrated` 自 v3.38.1 起并行全升)在部署日志里可追;
 - **Taxonomy 启动围栏**:迁移完成后、PM2 API/worker reload 前执行；外网 authority
   幂等安装批准目录，内网 replica 不做本地安装，任何 receipt/数据冲突终止部署;
+  两端都不需要额外 taxonomy 安装脚本，内网在 Archive Sync 中从
+  `taxonomy.jsonl` 原子导入最新已发布版本;
 - **站点 include 复核**:源码装的 nginx 默认什么都不 include,写了站点文件也不生效;
   脚本用 `nginx -T`(实际生效配置)复核,缺失则备份主配置后往 `http {}` 插一行 include;
 - **目录穿越位**:`html_dir` 各级父目录缺 others 的 `x` 位会让 worker stat 失败 →
@@ -133,6 +135,7 @@ ssl_key_file  = /etc/letsencrypt/live/your-domain.example.com/privkey.pem
 
 ```bash
 # 外网 all
+export DORAMI_ARCHIVE_AUTHORITY_ID=<stable-external-archive-id>
 export DORAMI_PODCAST_INSTALLATION=external
 export DORAMI_PODCAST_AUTHORITY_ID=<stable-external-id>
 export ALIYUN_AK_ID=<secret>
@@ -142,6 +145,7 @@ export NLS_ACCESS_TOKEN=<secret>
 export NLS_TOKEN_EXPIRES_AT=<provider-unix-seconds>
 
 # 内网 all（只同步和展示，不配置供应商凭据）
+export DORAMI_ARCHIVE_AUTHORITY_ID=<stable-internal-archive-id>
 export DORAMI_PODCAST_INSTALLATION=internal
 export DORAMI_PODCAST_AUTHORITY_ID=<stable-internal-id>
 ```

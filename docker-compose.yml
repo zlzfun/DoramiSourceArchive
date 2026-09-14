@@ -13,6 +13,8 @@ services:
       # 外网/内网都保持 all；空覆盖由 installation 自动派生：external
       # 开完整处理链，internal 关闭处理并只同步。
       DORAMI_RUNTIME_ROLE: "all"
+      # Archive Sync 生产者身份：每台节点唯一，且必须跨容器、主机和数据迁移保持稳定。
+      DORAMI_ARCHIVE_AUTHORITY_ID: ${DORAMI_ARCHIVE_AUTHORITY_ID:?set a stable Archive Sync authority id}
       DORAMI_PODCAST_INSTALLATION: ${DORAMI_PODCAST_INSTALLATION:?set external or internal}
       DORAMI_PODCAST_ALLOWED_STAGES: ${DORAMI_PODCAST_ALLOWED_STAGES-}
       # 跨重启/重建保持稳定,不要使用 hostname/container id。
@@ -53,6 +55,11 @@ services:
       DORAMI_PODCAST_ARTIFACT_DOWNLOAD_MAX_REDIRECTS: ${DORAMI_PODCAST_ARTIFACT_DOWNLOAD_MAX_REDIRECTS:-}
       # 机密只走环境变量注入(宿主 export 或 .env 文件),不进镜像不入库
       DORAMI_X_BEARER_TOKEN: ${DORAMI_X_BEARER_TOKEN:-}
+      DORAMI_LLM_BASE_URL: ${DORAMI_LLM_BASE_URL:-}
+      DORAMI_LLM_API_KEY: ${DORAMI_LLM_API_KEY:-}
+      DORAMI_LLM_MODEL: ${DORAMI_LLM_MODEL:-}
+      DORAMI_LLM_THINKING_MODE: ${DORAMI_LLM_THINKING_MODE:-}
+      DORAMI_LLM_AUX_MODEL: ${DORAMI_LLM_AUX_MODEL:-}
       ALIYUN_AK_ID: ${ALIYUN_AK_ID:-}
       ALIYUN_AK_SECRET: ${ALIYUN_AK_SECRET:-}
       ALIYUN_SECURITY_TOKEN: ${ALIYUN_SECURITY_TOKEN:-}

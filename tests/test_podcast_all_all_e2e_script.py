@@ -5,7 +5,9 @@ from pathlib import Path
 import pytest
 
 from scripts.verify_podcast_all_all_e2e import (
+    DIGEST_AUDIO_FIXTURE,
     PROJECT_ROOT,
+    SOURCE_MEDIA_FIXTURE,
     _CHILD_ENV_PASSTHROUGH,
     _child_environment,
     assert_isolated_e2e_paths,
@@ -37,6 +39,10 @@ def test_podcast_e2e_accepts_only_children_of_isolated_root(tmp_path):
         isolated_root / "internal.db",
         isolated_root / "internal-podcast-artifacts",
     )
+
+
+def test_podcast_e2e_uses_distinct_source_and_derived_audio_bytes():
+    assert SOURCE_MEDIA_FIXTURE != DIGEST_AUDIO_FIXTURE
 
 
 def test_podcast_e2e_refuses_symlinked_storage_target(tmp_path):
