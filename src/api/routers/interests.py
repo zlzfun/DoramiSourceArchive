@@ -24,7 +24,7 @@ router = APIRouter(
 
 
 class InterestInput(BaseModel):
-    """v3.55(issue #27)起兴趣只有「关注」:不再接受 stance(旧客户端传来的 stance 字段被忽略)。"""
+    """v3.56(issue #27)起兴趣只有「关注」:不再接受 stance(旧客户端传来的 stance 字段被忽略)。"""
 
     tag_id: int = Field(gt=0)
 

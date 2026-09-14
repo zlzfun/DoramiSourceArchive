@@ -2,7 +2,7 @@
 
 订阅、兴趣、收藏是三个两两正交的谓词,`GET /api/articles` 按 AND 联合;三者全关 = 全站可见源。
 兴趣谓词只认「主标签 或 相关度 ≥ 门槛」的指派(它决定全站范围内「放什么进来」)。
-v3.55(issue #27)起兴趣只有「关注」一极,列表标注只剩 interest_hits。
+v3.56(issue #27)起兴趣只有「关注」一极,列表标注只剩 interest_hits。
 """
 import datetime
 import os

@@ -128,7 +128,7 @@ class RetagJobStatus(StringEnum):
 
 
 class InterestStance(StringEnum):
-    """v3.55(issue #27)起只剩 follow:屏蔽一极整体退役,枚举保留供快照/契约字段取值。"""
+    """v3.56(issue #27)起只剩 follow:屏蔽一极整体退役,枚举保留供快照/契约字段取值。"""
 
     FOLLOW = "follow"
 

@@ -361,7 +361,7 @@ def test_source_audio_retirement_migration_requires_backup_to_downgrade(tmp_path
         command.downgrade(cfg, "d6a3f9c2e714")
 
     # transaction_per_migration=True:单向边界之上的每个迁移都必须在自己的 DDL 之前拒绝,
-    # 否则会先提交逆操作再撞到父守卫——库离开 head 却报错。故断言仍在 head 且 v3.55 的 CHECK 未被放宽。
+    # 否则会先提交逆操作再撞到父守卫——库离开 head 却报错。故断言仍在 head 且 v3.56 的 CHECK 未被放宽。
     engine = create_engine(db_url)
     try:
         with engine.connect() as conn:
@@ -2581,7 +2581,7 @@ def test_cleanup_podcast_extension_fields(tmp_path):
 
 
 def test_retire_interest_mute_stance_migration_deletes_mute_rows_and_narrows_check(tmp_path):
-    """v3.55(issue #27):存量屏蔽行被删,关注行原样保留,CHECK 收窄后再也写不进 mute。"""
+    """v3.56(issue #27):存量屏蔽行被删,关注行原样保留,CHECK 收窄后再也写不进 mute。"""
     db_url = f"sqlite:///{tmp_path / 'retire-mute.db'}"
     cfg = make_alembic_config(db_url)
     command.upgrade(cfg, "8be5beaf1307")

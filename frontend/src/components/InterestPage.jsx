@@ -4,7 +4,7 @@ import { fetchInterestCatalog, fetchInterests, saveInterests } from '../api';
 
 /* ── 我的兴趣(issue #23 第二项,弹窗改页面;样页 docs/design/dorami-interest-quiet.html)──
    定位(issue #27 分析):兴趣与合集是阅读偏好的两根正交轴——合集=看谁(源的成员关系,全站生效),
-   兴趣=看什么(关注的规范标签;v3.55 issue #27 起屏蔽一极退役,兴趣只有关注:早报兴趣半 + 阅读器兴趣轴)。
+   兴趣=看什么(关注的规范标签;v3.56 issue #27 起屏蔽一极退役,兴趣只有关注:早报兴趣半 + 阅读器兴趣轴)。
    本页只回答两个问题:我能选什么、我选了什么。
 
    布局与早报页同构:左槽(源栏位)= 选择台账(目录跳转 scrollspy + 兴趣 n,行尾 × 就地移出);
@@ -41,7 +41,7 @@ const ONBOARDING_PREVIEW = 12;
 
 const keyOf = (tag) => String(tag.id);
 
-// 选择集:{ [tagId]: true },只有「选中 / 未选中」两态(v3.55 屏蔽退役后不再有立场)
+// 选择集:{ [tagId]: true },只有「选中 / 未选中」两态(v3.56 屏蔽退役后不再有立场)
 function sameSelection(a, b) {
   const ka = Object.keys(a);
   const kb = Object.keys(b);

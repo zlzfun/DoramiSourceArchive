@@ -449,7 +449,7 @@ def _load_interests(session: Session, username: str) -> list[UserInterestDTO]:
             CmsTagRecord.status == TagStatus.ACTIVE.value,
         )
     ).all()
-    # v3.55(issue #27):兴趣只剩「关注」一极;stance 列保留为旧库兼容字段(CHECK 收窄为 follow)。
+    # v3.56(issue #27):兴趣只剩「关注」一极;stance 列保留为旧库兼容字段(CHECK 收窄为 follow)。
     return [UserInterestDTO(tag_code=tag.code) for interest, tag in rows]
 
 
@@ -476,7 +476,7 @@ def _deserialize_interests(raw: str) -> list[UserInterestDTO]:
         if not isinstance(value, dict):
             continue
         if str(value.get("stance") or InterestStance.FOLLOW.value) != InterestStance.FOLLOW.value:
-            continue  # v3.55 前冻结的快照可能残留 mute 行:屏蔽已取消,按不存在处理
+            continue  # v3.56 前冻结的快照可能残留 mute 行:屏蔽已取消,按不存在处理
         try:
             result.append(UserInterestDTO.model_validate(value))
         except ValueError:
