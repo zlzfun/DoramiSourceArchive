@@ -1303,4 +1303,3 @@ def test_onboarding_complete_ignores_inactive_interest_rows(monkeypatch, tmp_pat
         assert res.json() == {"onboarding_completed": True, "brief_rebuild_status": None, "brief_rebuilt": False}
         assert calls == []  # 无有效兴趣,不空跑 _ensure
         assert client.get("/api/reader/briefs/today").json()["status"] == "not_started"
-
