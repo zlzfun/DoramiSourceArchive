@@ -1010,6 +1010,26 @@ class PodcastArtifactStore:
         ).all()
         return {str(artifact_id): int(count) for artifact_id, count in rows}
 
+    def reservable_bytes(self) -> int:
+        """Bytes a validation download could still reserve right now.
+
+        Round-level probe for schedulers (issue #68): the minimum of the quota
+        headroom (unbounded when no quota is configured) and the disk headroom
+        above ``minimum_free_bytes``, both net of live reservations — the same
+        two lines ``has_capacity``/``reserve_validation_download`` enforce, so
+        the gate never admits an episode the reservation would refuse.
+        """
+
+        blobs = sum(path.stat().st_size for path in self._blob_files())
+        staging = sum(path.stat().st_size for path in self._staging_files())
+        reserved_total = sum(size for _path, size in self._download_reservations())
+        _capacity, _used, free = self._disk_usage()
+        disk_headroom = free - reserved_total - self.minimum_free_bytes
+        if self.total_quota_bytes > 0:
+            quota_headroom = self.total_quota_bytes - blobs - staging - reserved_total
+            return max(min(quota_headroom, disk_headroom), 0)
+        return max(disk_headroom, 0)
+
     def has_capacity(self, requested_bytes: int = 0) -> bool:
         """Whether a download of ``requested_bytes`` could be reserved right now.
 

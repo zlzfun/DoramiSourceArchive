@@ -327,6 +327,22 @@ class AliyunIsiAsrAdmissionEstimator:
         )
 
 
+def aliyun_asr_admission_ready(provider_config: object) -> bool:
+    """Whether a *new* ASR task could be submitted and accounted for.
+
+    Mirrors the estimator's admission condition (``asr_configured`` needs the
+    app key on top of AK/SK; ``asr_accounting_ready`` needs quota scope,
+    entitlement and deadlines) so schedulers can gate before downloading any
+    source audio (issue #68). Strictly stronger than ``aliyun_asr_worker_ready``.
+    """
+
+    return bool(
+        aliyun_asr_worker_ready(provider_config)
+        and provider_config.asr_configured
+        and provider_config.asr_accounting_ready
+    )
+
+
 def aliyun_asr_worker_ready(provider_config: object) -> bool:
     """Check only configuration required to safely poll an existing paid task."""
 
@@ -986,7 +1002,10 @@ def register_aliyun_isi_asr_worker(
         ),
     )
     registry.register_stage_worker(
-        "asr", resolved, readiness=resolved.readiness
+        "asr",
+        resolved,
+        readiness=resolved.readiness,
+        admission_readiness=aliyun_asr_admission_ready,
     )
     return resolved
 
@@ -994,6 +1013,7 @@ def register_aliyun_isi_asr_worker(
 __all__ = [
     "AliyunIsiAsrAdapter",
     "AliyunIsiAsrAdmissionEstimator",
+    "aliyun_asr_admission_ready",
     "AliyunIsiAsrUsagePlanner",
     "AliyunIsiAsrWorkerBundle",
     "PROVIDER_NAME",

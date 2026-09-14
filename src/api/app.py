@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import base64
 import hashlib
 import hmac
@@ -804,21 +804,46 @@ def schedule_forced_podcast_premium_guide(
     return {**prepared, "started": True}
 
 
+def _podcast_episode_download_limit(episode_id: str) -> int:
+    """Bytes a source-media validation of this episode may reserve (sync, off-loop)."""
+
+    with Session(db_sink.engine) as session:
+        episode = session.get(ArticleRecord, episode_id)
+    if episode is None:
+        return podcast_artifact_store.max_bytes
+    try:
+        enclosure = podcast_source_media_service.enclosure_snapshot(episode)
+    except podcast_source_media_service.SourceMediaError:
+        return podcast_artifact_store.max_bytes
+    return int(enclosure.declared_bytes or podcast_artifact_store.max_bytes)
+
+
+def _podcast_asr_admission_ready() -> bool:
+    """Whether a *new* ASR submission could be admitted (stricter than poll readiness)."""
+
+    with Session(db_sink.engine) as session:
+        effective_aliyun = aliyun_isi_config_service.resolve_config(session)
+    return podcast_processing_providers.stage_admission_ready("asr", effective_aliyun)
+
+
 async def enqueue_podcast_processing_with_input(
     *,
     episode_id: str,
     target: str,
     selection_override: bool,
-    idempotency_key: str,
+    idempotency_key: str | None = None,
     reason: str,
     actor: str,
+    idempotency_key_prefix: str | None = None,
 ):
     """Prepare a full-analysis input, then issue the durable admin command.
 
     Every synchronous SQLite step runs off the event loop: this coroutine is
     reached from the request path *and* from the per-minute landing round, and
     a burst of episodes must never stall the scheduler or the health check
-    (issue #68).
+    (issue #68). The publisher transcript is fetched at most once per call, and
+    the ASR source-audio fallback re-applies the admission/capacity gate before
+    any download.
     """
 
     if target == "full_analysis":
@@ -845,9 +870,23 @@ async def enqueue_podcast_processing_with_input(
             target=target,
             selection_override=selection_override,
             idempotency_key=idempotency_key,
+            idempotency_key_prefix=idempotency_key_prefix,
             reason=reason,
             actor=actor,
         )
+
+    async def _ingest_publisher_transcript() -> bool:
+        try:
+            async with httpx.AsyncClient() as client:
+                await podcast_publisher_transcript_service.ingest_publisher_transcript(
+                    db_sink.engine,
+                    episode_id=episode_id,
+                    config=settings.podcast,
+                    client=client,
+                )
+        except podcast_publisher_transcript_service.PublisherTranscriptError:
+            return False
+        return True
 
     locator_revision = (
         await asyncio.to_thread(
@@ -858,31 +897,27 @@ async def enqueue_podcast_processing_with_input(
         if target == "full_analysis"
         else None
     )
+    publisher_attempted = False
     if locator_revision:
-        try:
-            async with httpx.AsyncClient() as client:
-                await podcast_publisher_transcript_service.ingest_publisher_transcript(
-                    db_sink.engine,
-                    episode_id=episode_id,
-                    config=settings.podcast,
-                    client=client,
-                )
-        except podcast_publisher_transcript_service.PublisherTranscriptError:
-            pass
+        publisher_attempted = True
+        await _ingest_publisher_transcript()
     try:
         return await asyncio.to_thread(enqueue)
     except podcast_processing_admin_service.PodcastAdminError as exc:
         if target != "full_analysis" or exc.code != "podcast_artifact_not_ready":
             raise
-    try:
-        async with httpx.AsyncClient() as client:
-            await podcast_publisher_transcript_service.ingest_publisher_transcript(
-                db_sink.engine,
-                episode_id=episode_id,
-                config=settings.podcast,
-                client=client,
-            )
-    except podcast_publisher_transcript_service.PublisherTranscriptError:
+    publisher_ready = False
+    if not publisher_attempted:
+        publisher_ready = await _ingest_publisher_transcript()
+    if not publisher_ready:
+        # ASR fallback: re-apply the gate *before* touching the network or disk.
+        if not await asyncio.to_thread(_podcast_asr_admission_ready):
+            raise podcast_landing_service.PodcastLandingGated("asr_admission_not_ready")
+        download_limit = await asyncio.to_thread(
+            _podcast_episode_download_limit, episode_id
+        )
+        if not await asyncio.to_thread(podcast_artifact_store.has_capacity, download_limit):
+            raise podcast_landing_service.PodcastLandingGated("artifact_store_capacity")
         try:
 
             def _max_audio_seconds() -> int:
@@ -915,86 +950,131 @@ class PodcastLandingCandidate:
     # True when no local input exists and no publisher transcript locator is
     # known: landing would have to download the source audio for ASR.
     needs_source_media: bool
+    # Bytes a source-media validation would need to reserve.
+    download_limit: int
+
+
+@dataclass
+class PodcastLandingResolution:
+    """Explicit per-id outcome so the scheduler never leaves a stale due state behind."""
+
+    candidates: list[PodcastLandingCandidate] = field(default_factory=list)
+    settled: list[str] = field(default_factory=list)
+    failed: dict[str, BaseException] = field(default_factory=dict)
+
+
+def _resolve_podcast_landing_candidate(
+    session: Session, article_id: str
+) -> PodcastLandingCandidate | None:
+    analysis = session.get(ArticleAnalysisRecord, article_id)
+    initial_candidate = (
+        analysis is not None
+        and analysis.status == "succeeded"
+        and analysis.analysis_basis == "podcast_show_notes"
+        and podcast_premium_service.initial_score(analysis) is not None
+        and podcast_premium_service.initial_score(analysis)
+        >= podcast_full_analysis_service.INITIAL_PROCESSING_THRESHOLD
+    )
+    transcript_result = bool(
+        analysis is not None
+        and analysis.status == "succeeded"
+        and analysis.analysis_basis in {"publisher_transcript", "asr_transcript"}
+    )
+    if not initial_candidate and not transcript_result:
+        return None
+    locator_revision = (
+        podcast_publisher_transcript_service.publisher_transcript_refresh_revision(
+            db_sink.engine, episode_id=article_id
+        )
+    )
+    needs_source_media = False
+    try:
+        selected = podcast_processing_admin_service.select_full_analysis_input(
+            db_sink.engine,
+            episode_id=article_id,
+        )
+    except podcast_processing_admin_service.PodcastAdminError as exc:
+        if not initial_candidate or exc.code != "podcast_artifact_not_ready":
+            return None
+        # No local input yet: the revision must still move when the publisher
+        # locator (or the enclosure itself) changes, never a constant.
+        episode = session.get(ArticleRecord, article_id)
+        enclosure_hash = ""
+        if episode is not None:
+            try:
+                enclosure_hash = podcast_source_media_service.enclosure_snapshot(
+                    episode
+                ).locator_hash
+            except podcast_source_media_service.SourceMediaError:
+                enclosure_hash = ""
+        revision = "prepare:" + (locator_revision or enclosure_hash or "")[:16]
+        needs_source_media = not locator_revision
+    else:
+        if (
+            transcript_result
+            and not locator_revision
+            and selected.artifact_id == analysis.transcript_artifact_id
+        ):
+            return None
+        revision = (locator_revision or selected.content_hash)[:16]
+    return PodcastLandingCandidate(
+        article_id,
+        revision,
+        needs_source_media,
+        _podcast_episode_download_limit(article_id),
+    )
 
 
 def collect_podcast_landing_candidates(
     article_ids: List[str],
-) -> list[PodcastLandingCandidate]:
-    """Resolve which analyses qualify for automatic full analysis (sync, off-loop)."""
+) -> PodcastLandingResolution:
+    """Resolve every id to eligible / settled / failed (sync, off-loop)."""
 
-    eligible: list[PodcastLandingCandidate] = []
+    resolution = PodcastLandingResolution()
     with Session(db_sink.engine) as session:
         for article_id in article_ids:
-            analysis = session.get(ArticleAnalysisRecord, article_id)
-            initial_candidate = (
-                analysis is not None
-                and analysis.status == "succeeded"
-                and analysis.analysis_basis == "podcast_show_notes"
-                and podcast_premium_service.initial_score(analysis) is not None
-                and podcast_premium_service.initial_score(analysis)
-                >= podcast_full_analysis_service.INITIAL_PROCESSING_THRESHOLD
-            )
-            transcript_result = bool(
-                analysis is not None
-                and analysis.status == "succeeded"
-                and analysis.analysis_basis
-                in {"publisher_transcript", "asr_transcript"}
-            )
-            if not initial_candidate and not transcript_result:
-                continue
-            locator_revision = (
-                podcast_publisher_transcript_service.publisher_transcript_refresh_revision(
-                    db_sink.engine, episode_id=article_id
-                )
-            )
-            needs_source_media = False
             try:
-                selected = podcast_processing_admin_service.select_full_analysis_input(
-                    db_sink.engine,
-                    episode_id=article_id,
-                )
-            except podcast_processing_admin_service.PodcastAdminError as exc:
-                if not initial_candidate or exc.code != "podcast_artifact_not_ready":
-                    continue
-                revision = "prepare"
-                needs_source_media = not locator_revision
+                candidate = _resolve_podcast_landing_candidate(session, article_id)
+            except Exception as exc:  # noqa: BLE001 - one broken row must not stall the round
+                resolution.failed[article_id] = exc
+                continue
+            if candidate is None:
+                resolution.settled.append(article_id)
             else:
-                if (
-                    transcript_result
-                    and not locator_revision
-                    and selected.artifact_id == analysis.transcript_artifact_id
-                ):
-                    continue
-                revision = (locator_revision or selected.content_hash)[:16]
-            eligible.append(
-                PodcastLandingCandidate(article_id, revision, needs_source_media)
-            )
-    return eligible
+                resolution.candidates.append(candidate)
+    return resolution
 
 
-def podcast_landing_gate() -> tuple[str | None, bool]:
-    """Round-level gate: (blocking runtime code or None, source-media capacity).
+@dataclass(frozen=True)
+class PodcastLandingGate:
+    runtime_code: str | None
+    asr_admission_ready: bool
+    reservable_bytes: int  # min(quota headroom, disk headroom above minimum_free)
 
-    The first element is an admin error code when full analysis cannot be
+
+def podcast_landing_gate() -> PodcastLandingGate:
+    """Round-level gate, evaluated once per round.
+
+    ``runtime_code`` is an admin error code when full analysis cannot be
     enqueued at all (processing disabled, target/registry not ready); the round
-    then skips without touching per-episode state. The second says whether an
-    episode that still needs its source audio downloaded has any chance: the
-    ASR stage worker must be ready and the artifact store must have capacity.
+    then skips without touching per-episode state. The other two fields decide
+    whether an episode that still needs its source audio downloaded has any
+    chance: ASR *admission* (stricter than poll readiness) must be possible and
+    the artifact store must have room (quota *and* disk minimum-free line) for
+    that episode's download limit.
     """
 
     runtime_code = podcast_processing_admin_service.runtime_blocking_code(
         settings.podcast, podcast_processing_providers, "full_analysis"
     )
     if runtime_code is not None:
-        return runtime_code, False
-    with Session(db_sink.engine) as session:
-        effective_aliyun = aliyun_isi_config_service.resolve_config(session)
-    asr_ready = podcast_processing_providers.stage_worker_ready("asr", effective_aliyun)
+        return PodcastLandingGate(runtime_code, False, 0)
+    asr_ready = _podcast_asr_admission_ready()
     try:
-        capacity = podcast_artifact_store.has_capacity()
+        remaining = podcast_artifact_store.reservable_bytes()
     except Exception:  # noqa: BLE001 - a broken store must not crash the round
-        capacity = False
-    return None, bool(asr_ready and capacity)
+        remaining = 0
+    return PodcastLandingGate(None, bool(asr_ready), remaining)
 
 
 PODCAST_LANDING_JOB_ID = "podcast_landing"
@@ -1006,57 +1086,120 @@ def _podcast_landing_now() -> datetime.datetime:
     return datetime.datetime.now(datetime.timezone.utc)
 
 
+def _persist_podcast_landing_state(state: dict) -> None:
+    """Checkpoint the whole (small) state map; retried once on a transient DB error."""
+
+    for attempt in (1, 2):
+        try:
+            with Session(db_sink.engine) as session:
+                podcast_landing_service.save_state(session, state)
+                session.commit()
+            return
+        except Exception:  # noqa: BLE001 - second attempt decides
+            if attempt == 2:
+                raise
+            time.sleep(0.2)
+
+
 async def execute_podcast_landing_job() -> dict[str, int]:
     """One bounded landing round (issue #68).
 
-    Only analyses updated after the KV cursor plus due retries are considered;
-    each episode's outcome is remembered with backoff so a failing enqueue is
-    never replayed every minute. Everything synchronous runs in worker threads.
+    Considers analyses updated after the composite cursor, due retries from the
+    failure memory and one rotating sweep page; every id resolves to eligible /
+    settled / failed so no stale due-state survives; each outcome is
+    checkpointed immediately; everything synchronous runs in worker threads.
     """
 
-    stats = {"scanned": 0, "eligible": 0, "attempted": 0, "succeeded": 0, "failed": 0, "gated": 0, "skipped": 0}
+    stats = {
+        "scanned": 0, "swept": 0, "eligible": 0, "settled": 0, "resolve_failed": 0,
+        "attempted": 0, "succeeded": 0, "failed": 0, "gated": 0, "skipped": 0,
+    }
     try:
         with Session(db_sink.engine) as session:
             llm_config = daily_brief_service.resolve_llm_config(session)
         if not llm_config.configured:
             return stats
-        runtime_code, media_ready = await asyncio.to_thread(podcast_landing_gate)
-        if runtime_code is not None:
+        gate = await asyncio.to_thread(podcast_landing_gate)
+        if gate.runtime_code is not None:
             return stats
         now = _podcast_landing_now()
 
-        def _load() -> tuple[dict, str, list[str], str]:
+        def _load():
             with Session(db_sink.engine) as session:
                 state = podcast_landing_service.load_state(session)
                 cursor = podcast_landing_service.load_cursor(session)
+                sweep_after = podcast_landing_service.load_sweep_cursor(session)
                 new_ids, next_cursor = podcast_landing_service.scan_new_candidates(
                     session, cursor
                 )
-            return state, cursor, new_ids, next_cursor
+                sweep_ids, next_sweep = podcast_landing_service.scan_sweep_page(
+                    session, sweep_after
+                )
+            return state, new_ids, next_cursor, sweep_ids, next_sweep
 
-        state, _cursor, new_ids, next_cursor = await asyncio.to_thread(_load)
+        state, new_ids, next_cursor, sweep_ids, next_sweep = await asyncio.to_thread(_load)
         stats["scanned"] = len(new_ids)
+        stats["swept"] = len(sweep_ids)
         due_ids = podcast_landing_service.due_retries(state, now)
-        ids = podcast_landing_service.dedupe_preserving_order(new_ids, due_ids)
-        candidates = (
-            await asyncio.to_thread(collect_podcast_landing_candidates, ids) if ids else []
+        ids = podcast_landing_service.dedupe_preserving_order(new_ids, due_ids, sweep_ids)
+        resolution = (
+            await asyncio.to_thread(collect_podcast_landing_candidates, ids)
+            if ids
+            else PodcastLandingResolution()
         )
-        stats["eligible"] = len(candidates)
+        stats["eligible"] = len(resolution.candidates)
+        stats["settled"] = len(resolution.settled)
+        stats["resolve_failed"] = len(resolution.failed)
+
+        checkpoint_lock = asyncio.Lock()
+        dirty = False
+
+        async def _checkpoint() -> None:
+            async with checkpoint_lock:
+                await asyncio.to_thread(_persist_podcast_landing_state, dict(state))
+
+        for episode_id in resolution.settled:
+            if episode_id in state:
+                podcast_landing_service.record_settled(state, episode_id)
+                dirty = True
+        for episode_id, exc in resolution.failed.items():
+            podcast_landing_service.record_failure(
+                state,
+                episode_id,
+                str((state.get(episode_id) or {}).get("revision") or ""),
+                podcast_landing_service.FailureClass(
+                    podcast_landing_service.KIND_TRANSIENT, type(exc).__name__
+                ),
+                now,
+            )
+            dirty = True
+            _dorami_logger.warning(
+                "Podcast 全文处理候选解析失败 episode=%s (%s)", episode_id, type(exc).__name__
+            )
 
         runnable: list[PodcastLandingCandidate] = []
-        for candidate in candidates:
+        for candidate in resolution.candidates:
             if not podcast_landing_service.is_allowed(
                 state, candidate.episode_id, candidate.revision, now
             ):
                 stats["skipped"] += 1
                 continue
-            if candidate.needs_source_media and not media_ready:
-                podcast_landing_service.record_gated(
-                    state, candidate.episode_id, candidate.revision, "source_media_gate", now
-                )
-                stats["gated"] += 1
-                continue
+            if candidate.needs_source_media:
+                blocked = None
+                if not gate.asr_admission_ready:
+                    blocked = "asr_admission_not_ready"
+                elif candidate.download_limit > gate.reservable_bytes:
+                    blocked = "artifact_store_capacity"
+                if blocked is not None:
+                    podcast_landing_service.record_gated(
+                        state, candidate.episode_id, candidate.revision, blocked, now
+                    )
+                    stats["gated"] += 1
+                    dirty = True
+                    continue
             runnable.append(candidate)
+        if dirty:
+            await _checkpoint()
 
         semaphore = asyncio.Semaphore(podcast_landing_service.MAX_CONCURRENCY)
 
@@ -1067,9 +1210,11 @@ async def execute_podcast_landing_job() -> dict[str, int]:
                         episode_id=candidate.episode_id,
                         target="full_analysis",
                         selection_override=False,
-                        idempotency_key=(
-                            f"full-analysis:auto:{candidate.episode_id}:{candidate.revision}"
-                        ),
+                        # The key is derived inside request_processing's lock from
+                        # the input it actually selects (issue #68 round 2): a
+                        # restart re-resolving the same input replays the same
+                        # record instead of colliding with it.
+                        idempotency_key_prefix=f"full-analysis:auto:{candidate.episode_id}",
                         reason="简介初评达到全文处理线",
                         actor="system",
                     )
@@ -1088,8 +1233,32 @@ async def execute_podcast_landing_job() -> dict[str, int]:
                         entry["retry_at"],
                     )
                 else:
-                    podcast_landing_service.record_success(state, candidate.episode_id)
+                    # Re-resolve so the remembered revision equals what the next
+                    # sweep will compute (prepare:<loc> becomes the selected
+                    # input's hash once a transcript/snapshot exists).
+                    final = await asyncio.to_thread(
+                        collect_podcast_landing_candidates, [candidate.episode_id]
+                    )
+                    if final.candidates:
+                        podcast_landing_service.record_enqueued(
+                            state, candidate.episode_id, final.candidates[0].revision, now
+                        )
+                    elif final.failed:
+                        # A transient re-resolution failure must not erase the
+                        # memory; keep the candidate revision, the sweep will
+                        # re-resolve and the stable key makes replay harmless.
+                        podcast_landing_service.record_enqueued(
+                            state, candidate.episode_id, candidate.revision, now
+                        )
+                        _dorami_logger.warning(
+                            "Podcast 全文处理入队后重解析失败 episode=%s (%s)",
+                            candidate.episode_id,
+                            type(next(iter(final.failed.values()))).__name__,
+                        )
+                    else:
+                        podcast_landing_service.record_settled(state, candidate.episode_id)
                     stats["succeeded"] += 1
+                await _checkpoint()
 
         stats["attempted"] = len(runnable)
         if runnable:
@@ -1097,13 +1266,14 @@ async def execute_podcast_landing_job() -> dict[str, int]:
 
         podcast_landing_service.prune_state(state, now)
 
-        def _persist() -> None:
+        def _persist_cursors() -> None:
             with Session(db_sink.engine) as session:
                 podcast_landing_service.save_state(session, state)
                 podcast_landing_service.save_cursor(session, next_cursor)
+                podcast_landing_service.save_sweep_cursor(session, next_sweep)
                 session.commit()
 
-        await asyncio.to_thread(_persist)
+        await asyncio.to_thread(_persist_cursors)
         if stats["gated"]:
             _dorami_logger.info(
                 "Podcast 全文处理本轮守门跳过 %s 集(ASR 未就绪或产物库无余量),%ss 后再看",
