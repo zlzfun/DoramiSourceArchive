@@ -994,9 +994,12 @@ async def _polish_one(
         image_notes = await image_insights_service.ensure_notes(
             item.candidate.id, llm_config, usage_meta=usage_meta,
         )
+        system_prompt = prompts.EDITORIAL_SYSTEM_PROMPT
+        if image_notes:
+            system_prompt = system_prompt + prompts.IMAGE_NOTES_UNTRUSTED_RULE
         raw = await chat_completion(
             messages=[
-                ChatMessage(role="system", content=prompts.EDITORIAL_SYSTEM_PROMPT),
+                ChatMessage(role="system", content=system_prompt),
                 ChatMessage(role="user", content=prompts.build_editorial_user_prompt(
                     title=item.candidate.title, source_name=item.source, body=item.candidate.body,
                     analysis_summary="\n".join(item.summary), score_reason=item.score_reason,

@@ -331,13 +331,16 @@ async def summarize_article(
 
     if len(body) > _SUMMARIZE_BODY_CHARS:
         body = body[:_SUMMARIZE_BODY_CHARS] + "\n...(正文已截断)"
-    # 配图说明(issue #69,cached-only):速读兜底只在没有分析结果时走到这里,不为它发起识别
-    image_notes = image_insights_service.cached_notes_map([article_id]).get(article_id, "")
+    # 配图说明(issue #69,cached-only):速读兜底只在没有分析结果时走到这里,不为它发起识别;
+    # 带了说明才在 system 级追加使用边界规则,否则消息与 main 逐字一致。
+    image_notes = image_insights_service.cached_notes_map([article_id], llm_config).get(article_id, "")
+    system_prompt = prompts.SUMMARIZE_SYSTEM_PROMPT
     if image_notes:
         body = f"{body}\n{image_notes}"
+        system_prompt = system_prompt + prompts.IMAGE_NOTES_UNTRUSTED_RULE
     raw = await chat_completion(
         messages=[
-            ChatMessage(role="system", content=prompts.SUMMARIZE_SYSTEM_PROMPT),
+            ChatMessage(role="system", content=system_prompt),
             ChatMessage(role="user", content=prompts.build_summarize_user_prompt(record.title or "", body)),
         ],
         config=llm_config,
@@ -370,13 +373,17 @@ def _art_field(art: Any, key: str) -> Any:
     return getattr(art, key, None)
 
 
-def build_sources_payload(records: List[Any]) -> List[dict]:
+def build_sources_payload(records: List[Any], *, notes_by_id: Optional[dict] = None) -> List[dict]:
     """文章记录 → 问答响应的 sources 载荷（与编号上下文同序，序号即引用锚）。
 
     ``id`` 供前端行内引用 chip / 出处列表做站内跳转（v3.25 深链落地同路），
-    ``source_name``/``publish_date`` 供出处行展示。"""
+    ``source_name``/``publish_date`` 供出处行展示。
+    ``has_image_notes``(issue #69):该篇上下文里是否实际带了配图说明——显式布尔元数据,
+    作答侧据此决定是否追加图片说明的 system 规则,**不靠嗅探正文里的哨兵字符串**
+    (正文可被攻击者写入「【图片内容】」,codex 检视 F8)。"""
     from services.source_naming import friendly_source_name
 
+    notes = notes_by_id or {}
     return [
         {
             "id": _art_field(r, "id"),
@@ -385,9 +392,14 @@ def build_sources_payload(records: List[Any]) -> List[dict]:
             "source_name": friendly_source_name(_art_field(r, "source_id") or ""),
             "source_url": _art_field(r, "source_url"),
             "publish_date": (_art_field(r, "publish_date") or "")[:10],
+            "has_image_notes": bool((notes.get(_art_field(r, "id")) or "").strip()),
         }
         for r in records
     ]
+
+
+def sources_have_image_notes(sources: Optional[List[dict]]) -> bool:
+    return any(bool(s.get("has_image_notes")) for s in (sources or []) if isinstance(s, dict))
 
 
 def build_numbered_context(
@@ -406,8 +418,11 @@ def build_numbered_context(
     名单——sources 必须由它构建，否则回答里的 [n] 会指错文章。
     keep_empty=True 时空正文也保留条目（单篇场景标题本身就是信息）。
     articles 元素可为 dict（含 title/content）或带 .title/.content 属性的对象。
-    notes_by_id(issue #69):文章 id → 配图识别文本;有则追加在该篇正文之后,单篇上限
-    max(1000, min(notes_chars, per_article_chars))——图里的表格/榜单进参考资料,与正文同宽。
+    notes_by_id(issue #69):文章 id → 配图识别文本。``per_article_chars`` 是该篇**正文 + 说明的
+    组合内容预算**(codex 检视 F4:各占一份会撑爆 total_chars,8 篇只剩 2 篇):说明份额
+    = min(per_article, max(1000, min(notes_chars, per_article // 2))),正文拿扣除**实际渲染**说明后的
+    余额——短说明的空间还给正文;无说明时正文预算与 main 完全一致(字节不变)。
+    单篇问答 per_article=12000 → 说明仍拿到 6000(用户拍板下限);检索档 2000 → 1000。
     只有配图说明而无正文的条目(纯图推文)也算有内容,不会被 keep_empty=False 跳过。
     """
     blocks: List[str] = []
@@ -425,12 +440,15 @@ def build_numbered_context(
         notes = (notes_map.get(_art_field(art, "id")) or "").strip()
         if not body and not notes and not keep_empty:
             continue
-        if len(body) > per_article_chars:
-            body = body[:per_article_chars] + "…"
+        body_budget = per_article_chars
         if notes:
-            limit = max(1000, min(notes_chars, per_article_chars))
-            if len(notes) > limit:
-                notes = notes[:limit] + "…"
+            notes_limit = min(per_article_chars, max(1000, min(notes_chars, per_article_chars // 2)))
+            if len(notes) > notes_limit:
+                notes = notes[: max(0, notes_limit - 1)] + "…"
+            body_budget = max(0, per_article_chars - len(notes))
+        if len(body) > body_budget:
+            body = body[:body_budget] + "…"
+        if notes:
             body = f"{body}\n{notes}" if body else notes
         # 块头带来源名与发布日期(时效性场景的作答依据:「最近」类问题须能按日期
         # 甄别与标注;正文里往往没有自身的发布日期)。
@@ -458,7 +476,7 @@ def assemble_articles_context(
         records, per_article_chars=per_article, total_chars=total_chars,
         keep_empty=(len(records) == 1), notes_by_id=notes_by_id,
     )
-    return context, build_sources_payload(included)
+    return context, build_sources_payload(included, notes_by_id=notes_by_id)
 
 
 async def _explicit_image_notes(
@@ -575,16 +593,22 @@ async def answer_question(
     llm_config: LLMConfig,
     history: Optional[List[Any]] = None,
     usage_meta: Optional[UsageMeta] = None,
+    with_image_notes: bool = False,
 ) -> str:
     """基于给定上下文 + 多轮历史回答提问。上下文为空时仍调用，由提示词约束模型如实说明资料不足。
 
     消息结构：system → 历史轮次（纯文本问答）→ 当前问题（附本轮参考资料）。
     历史让模型支持「追问/指代」，参考资料只随当前问题刷新，token 预算可控。
+    ``with_image_notes``(issue #69)由调用方按 sources 的显式布尔元数据给出(见
+    :func:`sources_have_image_notes`),为 True 时 system 追加图片说明使用边界;不嗅探 context。
     """
     question = (question or "").strip()
     if not question:
         raise ReaderAIError("请输入你的问题", status_code=400)
-    messages = [ChatMessage(role="system", content=prompts.QA_SYSTEM_PROMPT)]
+    system_prompt = prompts.QA_SYSTEM_PROMPT
+    if with_image_notes:
+        system_prompt = system_prompt + prompts.IMAGE_NOTES_UNTRUSTED_RULE
+    messages = [ChatMessage(role="system", content=system_prompt)]
     messages.extend(_sanitize_history(history))
     messages.append(
         ChatMessage(

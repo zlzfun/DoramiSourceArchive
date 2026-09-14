@@ -46,6 +46,9 @@ def set_usage_recorder(fn: Optional[Callable[[UsageMeta, Dict[str, Any], str], N
     _usage_recorder = fn
 
 
+PING_MAX_TOKENS = 256
+
+
 class LLMError(Exception):
     """大模型调用或响应解析失败。"""
 
@@ -199,14 +202,19 @@ async def _chat_completion_on(
     want_thinking = bool(config.thinking_mode.strip())
     last_error: Optional[Exception] = None
 
-    for attempt in range(1, max_retries + 1):
+    # 两类**协议兼容降级**(response_format / thinking 参数不被端点支持 → 去掉重发)各自至多一次,
+    # 且不消耗传输/5xx 的重试预算:此前它们共用 attempt 计数,`max_retries=1` 的探针遇到 400 会
+    # 在降级后直接耗尽循环抛「LLM 请求失败: None」(issue #69 检视 F5;vision_ping 恒显式关思考,必现)。
+    attempt = 0
+    while True:
+        attempt += 1
         try:
             resp = await client.post(url, headers=headers, json=_build_payload(want_json, want_thinking))
         except httpx.HTTPError as exc:
             last_error = exc
             logger.warning("LLM 请求异常 (%s/%s) [%s | %s]: %s",
                            attempt, max_retries, config.base_url, config.model, exc)
-            if attempt == max_retries:
+            if attempt >= max_retries:
                 raise LLMError(f"LLM 请求失败: {exc}") from exc
             await asyncio.sleep(2 ** (attempt - 1))
             continue
@@ -220,33 +228,33 @@ async def _chat_completion_on(
             return content
 
         body_preview = resp.text[:500]
-        # response_format 不被支持时，去掉后重试一次
+        # response_format 不被支持时，去掉后重发一次(不计入重试次数)
         if resp.status_code == 400 and want_json:
             logger.info("端点疑似不支持 response_format，降级为普通模式重试 [%s | %s]",
                         config.base_url, config.model)
             want_json = False
+            attempt -= 1
             continue
 
-        # 思考模式参数不被支持时，去掉后重试一次(配置是 opt-in,但换端点后旧覆盖可能残留)
+        # 思考模式参数不被支持时，去掉后重发一次(配置是 opt-in,但换端点后旧覆盖可能残留;不计入重试次数)
         if resp.status_code == 400 and want_thinking:
             logger.warning("端点疑似不支持思考模式参数(thinking/reasoning_effort)，去掉后重试 [%s | %s]",
                            config.base_url, config.model)
             want_thinking = False
+            attempt -= 1
             continue
 
         if resp.status_code == 429 or resp.status_code >= 500:
             last_error = LLMError(f"HTTP {resp.status_code}: {body_preview}")
             logger.warning("LLM 响应可重试 (%s/%s) HTTP %s [%s | %s]",
                            attempt, max_retries, resp.status_code, config.base_url, config.model)
-            if attempt == max_retries:
+            if attempt >= max_retries:
                 raise last_error
             await asyncio.sleep(2 ** (attempt - 1))
             continue
 
         # 其它 4xx：不重试
         raise LLMError(f"LLM 调用失败 HTTP {resp.status_code}: {body_preview}")
-
-    raise LLMError(f"LLM 请求失败: {last_error}")
 
 
 def _extract_content_and_usage(resp: httpx.Response) -> tuple[str, Dict[str, Any], Optional[str]]:
@@ -323,13 +331,14 @@ async def ping(config: LLMConfig) -> dict:
     if not config.configured:
         raise LLMNotConfigured("LLM 未配置（需 base_url / api_key / model）")
     started = time.monotonic()
-    # max_tokens 给足:思考型模型(deepseek-flash 默认开思考)会先花几十 token 思考,
-    # 16 会被吃满后 content 空产、连通性探针误报「连接失败」(2026-09-14 验收实测);
-    # 512 仍是一次极便宜的调用,且思考残余够用。
+    # 独立兼容修复(与视觉无关,issue #69 验收中撞上):主模型设为默认开思考的现役模型
+    # (deepseek-flash)且未配 thinking_mode 时,思考先吃掉几十 token,16 的上限让 content 空产、
+    # 探针误报「连接失败」。256 是有界上限不是固定消费,实测足以越过默认思考回出正文;
+    # 探针不替主模型关思考——它要验证的正是当前主模型配置的真实可用性(codex 检视 F11 拍板)。
     content = await chat_completion(
         messages=[ChatMessage(role="user", content="ping，请只回复 pong")],
         config=config,
-        max_tokens=512,
+        max_tokens=PING_MAX_TOKENS,
         max_retries=1,
     )
     latency_ms = int((time.monotonic() - started) * 1000)

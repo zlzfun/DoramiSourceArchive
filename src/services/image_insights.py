@@ -57,6 +57,7 @@ from llm.client import (
 )
 from models.db import AppSettingRecord, ArticleRecord, ImageInsightRecord, MediaAssetRecord
 from services.media_store import extract_image_urls, url_hash_of
+from services import error_redaction
 from services import user_sources as user_sources_service
 
 logger = logging.getLogger("dorami.image_insights")
@@ -101,8 +102,8 @@ _SKIPPED_CONTENT_TYPES = frozenset({"podcast_episode"})
 _MD_IMAGE_WITH_ALT_RE = re.compile(r"!\[([^\]]*)\]\(\s*<?([^)\s>]+)>?(?:\s+[^)]*)?\)")
 _HTML_IMG_RE = re.compile(r"<img[^>]*>", re.IGNORECASE)
 _HTML_ATTR_RE = re.compile(r"(src|alt)=[\"']([^\"']*)[\"']", re.IGNORECASE)
-_URL_RE = re.compile(r"(?i)\b(?:https?|feed)://[^\s<>\]\[)('\"]+")
-_SECRET_RE = re.compile(r"(?i)(?:api[_-]?key|token|authorization|password|secret)\s*[=:]\s*[^\s,;]+")
+# 尺寸判定只读文件头(PNG/GIF/WebP 头几十字节;JPEG 的 SOF 段通常在前几 KB,256KB 足够覆盖大 EXIF)
+_HEADER_BYTES = 256 * 1024
 
 
 # ==================== 数据形状 ====================
@@ -141,10 +142,8 @@ def _iso(value: dt.datetime) -> str:
 
 
 def _sanitize(error: BaseException | str) -> str:
-    raw = f"{type(error).__name__}: {error}" if isinstance(error, BaseException) else str(error)
-    raw = _URL_RE.sub("[redacted-url]", raw)
-    raw = _SECRET_RE.sub("[redacted-secret]", raw)
-    return " ".join(raw.split())[:500]
+    """落库 / 落日志前的脱敏:与 article_analysis 共用同一实现(401/403 正文整体丢弃)。"""
+    return error_redaction.sanitize_error(error, max_chars=500)
 
 
 def image_dimensions(head: bytes) -> Optional[Tuple[int, int]]:
@@ -273,15 +272,21 @@ def render_notes(insights: Sequence[ImageInsight], *, max_chars: int = DEFAULT_N
     if budget <= 0:
         return ""
     if heads_len > budget:
-        # 连标题行都放不全:按顺序能放几张放几张(至少一张)
+        # 连标题行都放不全:按顺序能放几张放几张;首条也按剩余预算截断(留省略号),
+        # 不突破调用方给的硬上限(codex 检视 F12);连一行都放不下就返回空。
         kept: List[str] = []
         used = 0
         for head, _ in entries:
-            if kept and used + len(head) > budget:
+            room = budget - used
+            if room <= 0:
+                break
+            if len(head) > room:
+                if not kept and room > 8:
+                    kept.append(head[: room - 1].rstrip() + "…")
                 break
             kept.append(head)
             used += len(head) + 1
-        return "\n".join([header, *kept])
+        return "\n".join([header, *kept]) if kept else ""
     remaining = budget - heads_len
     blocks: List[str] = [header]
     for idx, (head, body) in enumerate(entries):
@@ -331,8 +336,15 @@ class ImageInsightService:
         self.engine = engine
         self.media_store = media_store
         self._concurrency = max(1, concurrency)
+        # 全局视觉并发上限(codex 检视 F2):读整图 + base64 + 调用全程受它约束,转后台的任务也一样;
+        # 装配用 [llm] map_concurrency,与日报 map / 分析 worker 同一档口径。
+        self._semaphore = asyncio.Semaphore(self._concurrency)
         self._locks: Dict[str, asyncio.Lock] = {}
         self._background: set = set()
+
+    @property
+    def concurrency(self) -> int:
+        return self._concurrency
 
     # ── 配置 ──
 
@@ -359,14 +371,19 @@ class ImageInsightService:
             session.commit()
         return value
 
-    def can_describe(self, llm_config: LLMConfig) -> bool:
-        """能否发起新的识别调用(缓存读取不受此限)。"""
+    def enabled(self, llm_config: Optional[LLMConfig]) -> bool:
+        """视觉能力是否启用——**读缓存与发起识别共用这一道门**(codex 检视 F1):
+        视觉模型未配置 / 旋钮 0 / 媒体库关闭,一律视为关闭,已缓存的说明也不再进入任何链路
+        (缓存行不删,重开即回归)。「关 = 关」才守得住「未配置时与 main 逐字一致」的契约。"""
         return (
             self.media_store is not None
             and llm_config is not None
             and llm_config.vision_configured
             and self.max_per_article() > 0
         )
+
+    # 兼容旧名
+    can_describe = enabled
 
     # ── 只读路径 ──
 
@@ -416,13 +433,15 @@ class ImageInsightService:
         return found
 
     def cached_notes_map(
-        self, article_ids: Iterable[str], *, max_chars: int = DEFAULT_NOTES_CHARS
+        self, article_ids: Iterable[str], llm_config: Optional[LLMConfig], *,
+        max_chars: int = DEFAULT_NOTES_CHARS,
     ) -> Dict[str, str]:
-        """同步、零 LLM:只读已缓存的识别结果,渲染成文本;没有的 id 不出现在结果里。"""
+        """同步、零 LLM:只读已缓存的识别结果,渲染成文本;没有的 id 不出现在结果里。
+        能力未启用(见 :meth:`enabled`)时恒空——缓存不是绕过开关的后门。"""
         ids = [str(i) for i in dict.fromkeys(article_ids) if i]
-        if not ids or self.media_store is None:
+        if not ids or not self.enabled(llm_config):
             return {}
-        limit = self.max_per_article() or DEFAULT_MAX_PER_ARTICLE
+        limit = self.max_per_article()
         out: Dict[str, str] = {}
         with Session(self.engine) as session:
             rows = session.exec(select(ArticleRecord).where(ArticleRecord.id.in_(ids))).all()
@@ -432,8 +451,10 @@ class ImageInsightService:
                     out[article.id] = text
         return out
 
-    def cached_notes(self, article_id: str, *, max_chars: int = DEFAULT_NOTES_CHARS) -> str:
-        return self.cached_notes_map([article_id], max_chars=max_chars).get(article_id, "")
+    def cached_notes(
+        self, article_id: str, llm_config: Optional[LLMConfig], *, max_chars: int = DEFAULT_NOTES_CHARS
+    ) -> str:
+        return self.cached_notes_map([article_id], llm_config, max_chars=max_chars).get(article_id, "")
 
     # ── 识别路径 ──
 
@@ -455,7 +476,7 @@ class ImageInsightService:
         except Exception as exc:  # noqa: BLE001 — 识图是补充,不能拖垮调用方
             logger.warning("图片理解失败,按无配图继续 (article=%s): %s", article_id, _sanitize(exc))
             try:
-                return self.cached_notes(article_id, max_chars=max_chars)
+                return self.cached_notes(article_id, llm_config, max_chars=max_chars)
             except Exception:  # noqa: BLE001
                 return ""
 
@@ -485,12 +506,9 @@ class ImageInsightService:
         self, article_id: str, llm_config: LLMConfig, *,
         usage_meta: Optional[UsageMeta], budget_seconds: float, max_chars: int,
     ) -> str:
-        if self.media_store is None:
+        if not self.enabled(llm_config):
             return ""
         limit = self.max_per_article()
-        if not self.can_describe(llm_config):
-            # 视觉未配置 / 关闭:缓存仍可用(之前识别过的结果是有效数据)
-            return self.cached_notes(article_id, max_chars=max_chars)
         with Session(self.engine) as session:
             article = session.get(ArticleRecord, article_id)
             if article is None or not self._eligible(session, article):
@@ -528,13 +546,13 @@ class ImageInsightService:
             if media.content_hash in seen_hashes:
                 continue
             path = self.media_store.file_path_for(media)
+            # 筛选阶段只读文件头做尺寸判定,不提前物化整图(codex 检视 F2:12 篇×4 图曾同时占 48 份原图)
             try:
-                if media.size_bytes and media.size_bytes > MAX_IMAGE_BYTES:
+                if path.stat().st_size > MAX_IMAGE_BYTES:
                     continue
-                head = path.read_bytes()
+                with path.open("rb") as fh:
+                    head = fh.read(_HEADER_BYTES)
             except OSError:
-                continue
-            if len(head) > MAX_IMAGE_BYTES:
                 continue
             dims = image_dimensions(head)
             if dims is not None and (dims[0] < MIN_EDGE_PX or dims[1] < MIN_EDGE_PX):
@@ -549,7 +567,7 @@ class ImageInsightService:
             work.append(asyncio.create_task(self._describe_one(
                 candidate=replace(candidate, index=accepted - 1),
                 content_hash=media.content_hash,
-                data=head,
+                path=path,
                 mime=media.mime or "image/png",
                 llm_config=llm_config,
                 usage_meta=usage_meta,
@@ -560,13 +578,29 @@ class ImageInsightService:
         if work:
             remaining = max(0.1, deadline - asyncio.get_running_loop().time())
             done, pending = await asyncio.wait(work, timeout=remaining)
+            for task in done:
+                # 消费已完成任务的异常(codex 检视 F10):_describe_one 内部已兜住 LLM 段,这里
+                # 兜的是持久化等意外异常,否则只会在 GC 时打「Task exception was never retrieved」
+                self._log_task_failure(task, article_id)
             for task in pending:
                 # 超预算的任务继续在后台跑完并写缓存(下一次触碰即命中);持引用防被 GC
                 self._background.add(task)
-                task.add_done_callback(self._background.discard)
+                task.add_done_callback(self._on_background_done)
             if pending:
                 logger.info("图片理解超出预算 %.0fs,%d 张转后台继续 (article=%s)", budget_seconds, len(pending), article_id)
-        return self.cached_notes(article_id, max_chars=max_chars)
+        return self.cached_notes(article_id, llm_config, max_chars=max_chars)
+
+    @staticmethod
+    def _log_task_failure(task: "asyncio.Task", article_id: str = "") -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.warning("图片识别任务异常 (article=%s): %s", article_id or "?", _sanitize(exc))
+
+    def _on_background_done(self, task: "asyncio.Task") -> None:
+        self._background.discard(task)
+        self._log_task_failure(task)
 
     @staticmethod
     def _is_current(record: ImageInsightRecord) -> bool:
@@ -588,38 +622,51 @@ class ImageInsightService:
         return lock
 
     async def _describe_one(
-        self, *, candidate: ImageCandidate, content_hash: str, data: bytes, mime: str,
+        self, *, candidate: ImageCandidate, content_hash: str, path: Any, mime: str,
         llm_config: LLMConfig, usage_meta: Optional[UsageMeta], title: str, source_name: str, total: int,
     ) -> None:
-        async with self._lock_for(content_hash):
-            with Session(self.engine) as session:
-                existing = session.get(ImageInsightRecord, content_hash)
-                if existing is not None and self._is_current(existing):
-                    return  # 等锁期间已被并发调用补全
-            vision_config = llm_config.for_vision()
-            meta = UsageMeta(purpose=USAGE_PURPOSE, username=usage_meta.username if usage_meta else None)
-            try:
-                raw = await chat_completion(
-                    messages=[
-                        ChatMessage(role="system", content=prompts.IMAGE_INSIGHT_SYSTEM_PROMPT),
-                        ChatMessage(role="user", content=[
-                            text_part(prompts.build_image_insight_user_prompt(
-                                title=title, source_name=source_name, index=candidate.index, total=total,
-                                alt_text=candidate.alt, nearby_text=candidate.nearby,
-                            )),
-                            image_part(image_data_url(data, mime), detail="high"),
-                        ]),
-                    ],
-                    config=vision_config,
-                    response_json=True,
-                    max_tokens=max(VISION_MIN_MAX_TOKENS, int(vision_config.max_tokens or 0)),
-                    usage_meta=meta,
-                )
-                payload = _clean_payload(parse_json_object(raw))
-            except (LLMError, Exception) as exc:  # noqa: BLE001
-                self._mark_failed(content_hash, vision_config.model, exc)
-                return
-            self._mark_succeeded(content_hash, vision_config.model, payload)
+        # 全局并发信号量在最外层:排队的任务不持有整图字节,读盘 / base64 / 调用都在名额内进行
+        async with self._semaphore:
+            async with self._lock_for(content_hash):
+                with Session(self.engine) as session:
+                    existing = session.get(ImageInsightRecord, content_hash)
+                    if existing is not None and self._is_current(existing):
+                        return  # 等锁期间已被并发调用补全
+                vision_config = llm_config.for_vision()
+                meta = UsageMeta(purpose=USAGE_PURPOSE, username=usage_meta.username if usage_meta else None)
+                try:
+                    data = path.read_bytes()
+                    if len(data) > MAX_IMAGE_BYTES:
+                        return
+                    raw = await chat_completion(
+                        messages=[
+                            ChatMessage(role="system", content=prompts.IMAGE_INSIGHT_SYSTEM_PROMPT),
+                            ChatMessage(role="user", content=[
+                                text_part(prompts.build_image_insight_user_prompt(
+                                    title=title, source_name=source_name, index=candidate.index, total=total,
+                                    alt_text=candidate.alt, nearby_text=candidate.nearby,
+                                )),
+                                image_part(image_data_url(data, mime), detail="high"),
+                            ]),
+                        ],
+                        config=vision_config,
+                        response_json=True,
+                        max_tokens=max(VISION_MIN_MAX_TOKENS, int(vision_config.max_tokens or 0)),
+                        usage_meta=meta,
+                    )
+                    payload = _clean_payload(parse_json_object(raw))
+                except (LLMError, Exception) as exc:  # noqa: BLE001
+                    self._persist_guarded(lambda: self._mark_failed(content_hash, vision_config.model, exc), content_hash)
+                    return
+                self._persist_guarded(lambda: self._mark_succeeded(content_hash, vision_config.model, payload), content_hash)
+
+    @staticmethod
+    def _persist_guarded(write: Any, content_hash: str) -> None:
+        """落库失败(SQLite 锁 / 磁盘)只记日志,不让任务异常逃逸(codex 检视 F10)。"""
+        try:
+            write()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("图片识别结果落库失败 (hash=%s…): %s", content_hash[:12], _sanitize(exc))
 
     def _mark_succeeded(self, content_hash: str, model: str, payload: Dict[str, Any]) -> None:
         now = _iso(_now())
@@ -674,7 +721,8 @@ class ImageInsightService:
         relevant = sum(int(c) for s, r, c in rows if s == "succeeded" and r)
         failed = sum(int(c) for s, _r, c in rows if s == "failed")
         return {
-            "configured": bool(llm_config is not None and self.can_describe(llm_config)),
+            "configured": self.enabled(llm_config),
+            "concurrency": self._concurrency,
             "vision_model": (llm_config.vision_model if llm_config is not None else ""),
             "media_enabled": self.media_store is not None,
             "max_per_article": self.max_per_article(),
@@ -707,12 +755,15 @@ def current() -> Optional[ImageInsightService]:
 
 # ==================== 消费方便捷入口(未装配 / 未配置一律空串) ====================
 
-def cached_notes_map(article_ids: Iterable[str], *, max_chars: int = DEFAULT_NOTES_CHARS) -> Dict[str, str]:
+def cached_notes_map(
+    article_ids: Iterable[str], llm_config: Optional[LLMConfig], *, max_chars: int = DEFAULT_NOTES_CHARS,
+) -> Dict[str, str]:
+    """cached-only 取法。``llm_config`` 必传:能力门(视觉配置 × 旋钮 × 媒体库)对读缓存同样生效。"""
     service = _service
-    if service is None:
+    if service is None or llm_config is None:
         return {}
     try:
-        return service.cached_notes_map(article_ids, max_chars=max_chars)
+        return service.cached_notes_map(article_ids, llm_config, max_chars=max_chars)
     except Exception as exc:  # noqa: BLE001
         logger.warning("读取图片说明缓存失败(忽略): %s", _sanitize(exc))
         return {}
@@ -725,10 +776,8 @@ async def ensure_notes(
     max_chars: int = DEFAULT_NOTES_CHARS,
 ) -> str:
     service = _service
-    if service is None or not article_id:
+    if service is None or not article_id or llm_config is None:
         return ""
-    if llm_config is None:
-        return service.cached_notes(article_id, max_chars=max_chars)
     return await service.ensure_notes(
         article_id, llm_config, usage_meta=usage_meta,
         budget_seconds=budget_seconds, max_chars=max_chars,
@@ -742,10 +791,8 @@ async def ensure_notes_map(
     max_chars: int = DEFAULT_NOTES_CHARS,
 ) -> Dict[str, str]:
     service = _service
-    if service is None:
+    if service is None or llm_config is None:
         return {}
-    if llm_config is None:
-        return cached_notes_map(article_ids, max_chars=max_chars)
     return await service.ensure_notes_map(
         article_ids, llm_config, usage_meta=usage_meta,
         budget_seconds=budget_seconds, max_chars=max_chars,

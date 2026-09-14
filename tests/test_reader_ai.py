@@ -1127,3 +1127,40 @@ def test_summarize_daily_quota_429(monkeypatch, tmp_path):
         _login(client)
         resp = client.post("/api/reader/ai/summarize", json={"article_id": "a1"})
         assert resp.status_code == 429
+
+
+def test_reader_ai_explicit_scopes_hide_hidden_sources_for_readers_not_admin(monkeypatch, tmp_path):
+    """隐藏源闸(issue #69 检视 F3):读者对隐藏源文章的显式 AI 动作(翻译/速读/问答单篇与混合名单)
+    一律与不存在同形 404,零 LLM 调用;admin 只豁免隐藏这一层(内容权限不受隐藏影响)。"""
+    from services import source_visibility
+
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "ai_hidden_explicit.db")
+    _configure_llm(sink.engine)
+    _enable_ai_beta(sink.engine)
+    _enable_ai_beta(sink.engine, "admin")
+    _seed_article(sink.engine, "vis", "rss_visible", "可见文章", "可见正文")
+    _seed_article(sink.engine, "hid", "rss_hidden", "隐藏文章", "HIDDEN-BODY")
+    with Session(sink.engine) as session:
+        source_visibility.set_source_hidden(session, "rss_hidden", True)
+    calls = _patch_llm(monkeypatch)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        for path, payload in (
+            ("/api/reader/ai/translate", {"article_id": "hid"}),
+            ("/api/reader/ai/summarize", {"article_id": "hid"}),
+            ("/api/reader/ai/ask", {"question": "讲了什么？", "scope": "article", "article_id": "hid"}),
+            ("/api/reader/ai/ask", {"question": "讲了什么？", "scope": "articles", "article_ids": ["vis", "hid"]}),
+        ):
+            response = client.post(path, json=payload)
+            assert response.status_code == 404, path
+            assert response.json()["detail"] == "文章不存在"
+        assert calls == []
+        # 可见文章照常
+        assert client.post("/api/reader/ai/ask", json={"question": "q", "scope": "article", "article_id": "vis"}).status_code == 200
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        response = client.post("/api/reader/ai/ask", json={"question": "q", "scope": "article", "article_id": "hid"})
+        assert response.status_code == 200
+        assert any("HIDDEN-BODY" in "".join(str(m) for m in call) for call in calls)

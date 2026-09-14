@@ -425,7 +425,7 @@ async def subscription_context(
     per_article = max(_CONTEXT_PER_ARTICLE, _CONTEXT_TOTAL // max(1, len(chosen)))
     # 配图说明(issue #69)只读缓存:检索档 ≤8 篇不在请求路径上发起识别(最坏 32 次视觉调用)。
     notes_by_id = image_insights_service.cached_notes_map(
-        [str(record.id) for record in chosen],
+        [str(record.id) for record in chosen], llm_config,
     )
     context, included = build_numbered_context(
         chosen, per_article_chars=per_article, total_chars=_CONTEXT_TOTAL,
@@ -433,4 +433,4 @@ async def subscription_context(
     )
     if notice:
         context = f"{notice}\n\n{context}" if context else notice
-    return context, build_sources_payload(included)
+    return context, build_sources_payload(included, notes_by_id=notes_by_id)

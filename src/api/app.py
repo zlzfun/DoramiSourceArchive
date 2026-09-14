@@ -600,7 +600,7 @@ media_store: Optional[MediaStore] = (
 # 图片理解(issue #69):配图 → 结构化文字说明,供分析 / 日报 / 问答当正文补充消费。
 # 与媒体库同处装配:媒体库关闭即整体关闭;视觉模型未配置时只读缓存、不发起识别。
 image_insights_service.configure(
-    db_sink.engine, media_store, concurrency=max(1, settings.media.prefetch_concurrency)
+    db_sink.engine, media_store, concurrency=max(1, settings.llm.map_concurrency)
 )
 
 # Podcast 音频不复用图片 MediaStore：它有独立大小/MIME/生命周期约束，按内容
