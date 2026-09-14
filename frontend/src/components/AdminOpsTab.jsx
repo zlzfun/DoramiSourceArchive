@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import {
   fetchAdminAccounts,
+  fetchAdminAccountGrowth,
   fetchAccountActivity,
   fetchAdminContent,
   fetchMediaStats,
@@ -50,6 +51,7 @@ import UserSourcesPanel from './admin/UserSourcesPanel';
 import FeedbackInboxPanel from './admin/FeedbackInboxPanel';
 import AnnouncementsPanel from './admin/AnnouncementsPanel';
 import AdminAuditPanel from './admin/AdminAuditPanel';
+import AccountGrowth from './admin/AccountGrowth';
 import Pager from './admin/Pager';
 import AdminTaxonomyPanel from './admin/AdminTaxonomyPanel';
 import PodcastArtifactsPanel from './admin/PodcastArtifactsPanel';
@@ -82,7 +84,7 @@ function Kpi({ num, label, sub, tone }) {
   );
 }
 
-export default function AdminOpsTab({ showToast, active = true, currentUsername = '', pendingFocus = null, onPendingFocusApplied, onOpenCredentials }) {
+export default function AdminOpsTab({ showToast, active = true, currentUsername = '', rootAdmin = false, pendingFocus = null, onPendingFocusApplied, onOpenCredentials }) {
   const confirm = useConfirm();
   const [sub, setSub] = useState('user'); // 子页：user | content | ai | engage | taxonomy
 
@@ -94,6 +96,8 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
   }, [pendingFocus, onPendingFocusApplied]);
   // 账户列表(规模化波):服务端分页 + 搜索,前端只持有当前页;summary 聚合全量供 KPI/排行。
   const [acctData, setAcctData] = useState(null); // {items,total,summary} | null = 加载中
+  // 账户增长(v3.55 issue #31):聚合口径,全体管理员可见;账户名单/逐用户明细只有根管理员(rootAdmin)。
+  const [growth, setGrowth] = useState(null);
   const [globalAi, setGlobalAi] = useState(null);
   const [aiBudget, setAiBudget] = useState(null);  // {daily_token_budget, tokens_used_today}(读者面 AI 日预算,0=不限)
   const [newUserAiDefault, setNewUserAiDefault] = useState(null); // 新账号 AI 默认值(只影响此后新建账户)
@@ -179,6 +183,11 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
     return fetchAiUsage(d).then((v) => { if (fresh()) setUsage(v); }).catch(() => {});
   }, [claimGen]);
 
+  const loadGrowth = useCallback(() => {
+    const fresh = claimGen('growth');
+    return fetchAdminAccountGrowth().then((v) => { if (fresh()) setGrowth(v); }).catch(() => {});
+  }, [claimGen]);
+
   const loadContent = useCallback(() => {
     const fresh = claimGen('content');
     return fetchAdminContent().then((v) => { if (fresh()) setContent(v); }).catch(() => {});
@@ -240,6 +249,8 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
 
   const reloadAccounts = useCallback(async () => {
     const fresh = claimGen('accounts');
+    // 非根管理员没有账户名单的接触权(端点 403),不发请求、直接落空态。
+    if (!rootAdmin) { setAcctData({ items: [], total: 0, summary: null }); return; }
     try {
       const data = await fetchAdminAccounts(days, {
         skip: (accountPage - 1) * ACCOUNTS_PAGE_SIZE,
@@ -257,7 +268,7 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
       showToast(error.message || '加载账户失败', 'error');
       setAcctData((prev) => prev ?? { items: [], total: 0, summary: null });
     }
-  }, [claimGen, days, accountPage, acctQ, acctRole, acctStatus, acctAi, acctSort, acctOrder, showToast]);
+  }, [claimGen, rootAdmin, days, accountPage, acctQ, acctRole, acctStatus, acctAi, acctSort, acctOrder, showToast]);
 
   // 过滤/排序/搜索/时间窗变化:归位第一页并清空勾选(勾选集是当前结果集语境的)。
   useEffect(() => {
@@ -265,7 +276,7 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
     setSelectedAccounts(new Set());
   }, [acctRole, acctStatus, acctAi, acctSort, acctOrder, acctQ, days]);
 
-  useEffect(() => { loadGlobals(); loadLlm(); loadContent(); loadMedia(); loadX(); }, [loadGlobals, loadLlm, loadContent, loadMedia, loadX]);
+  useEffect(() => { loadGlobals(); loadLlm(); loadContent(); loadMedia(); loadX(); loadGrowth(); }, [loadGlobals, loadLlm, loadContent, loadMedia, loadX, loadGrowth]);
   // 账户列表随时间窗口/页码/搜索词变化重载（窗口指标按 days 聚合）。
   useEffect(() => { reloadAccounts(); }, [reloadAccounts]);
   useEffect(() => { loadUsage(days); }, [loadUsage, days]);
@@ -283,11 +294,11 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
     wasActive.current = active;
   }, [active]);
   const refreshSub = useCallback((target) => {
-    if (target === 'user') { reloadAccounts(); }
+    if (target === 'user') { reloadAccounts(); loadGrowth(); }
     else if (target === 'content') { loadContent(); loadMedia(); loadX(); }
     else if (target === 'ai') { loadGlobals(); loadUsage(days); loadLlm(); }
     // engage:面板经 refreshTick prop 自行重取,无需在此显式调用。
-  }, [reloadAccounts, loadContent, loadMedia, loadX, loadGlobals, loadUsage, loadLlm, days]);
+  }, [reloadAccounts, loadGrowth, loadContent, loadMedia, loadX, loadGlobals, loadUsage, loadLlm, days]);
   useEffect(() => {
     if (refreshTick > 0) refreshSub(sub);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 只响应「切回 Tab」时机
@@ -602,6 +613,8 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
     aiTokens: acctSummary?.ai_tokens ?? 0,
   }), [acctSummary]);
   const perDay = (n) => (days > 0 ? (n / days).toFixed(1) : '0');
+  // AI 用量「按用户」维度是逐用户明细:非根管理员端点已剥空,前端同步收起该档。
+  const aiDims = useMemo(() => (rootAdmin ? [['purpose', '按用途'], ['user', '按用户']] : [['purpose', '按用途']]), [rootAdmin]);
   // 活跃用户 Top：按所选维度（阅读 / 登录）排行,服务端全量聚合。
   const activeUserRows = useMemo(() => {
     const rows = topMetric === 'reads' ? acctSummary?.top_reads : acctSummary?.top_logins;
@@ -673,6 +686,16 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
       {/* ══ 用户子页 ══════════════════════════════════════════════ */}
       {sub === 'user' && (
         <div>
+          {/* 非根管理员:只见聚合数字(账户分布 + 增长曲线),账户名单/活跃榜/逐用户抽屉不渲染(端点侧 403 兜底)。 */}
+          {!rootAdmin && (
+            <section className="surface-card kpi-strip" aria-label="账户概览">
+              <Kpi num={fmtNum(growth?.totals?.accounts ?? 0)} label="账户" sub="现存" />
+              <Kpi num={fmtNum(growth?.totals?.admins ?? 0)} label="管理员" sub="含根管理员" />
+              <Kpi num={fmtNum(growth?.totals?.readers ?? 0)} label="读者" sub="现存" />
+              <Kpi num={fmtNum(growth?.totals?.disabled ?? 0)} label="停用" sub="不计入活跃" tone={growth?.totals?.disabled > 0 ? 'is-warn' : undefined} />
+            </section>
+          )}
+          {rootAdmin && (
           <section className="surface-card kpi-strip" aria-label="窗口活跃概览">
             <Kpi
               num={fmtNum(userKpis.accounts)}
@@ -708,8 +731,11 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
             <Kpi num={fmtNum(userKpis.reads)} label="阅读次数" sub={`日均 ${perDay(userKpis.reads)}`} />
             <Kpi num={fmtNum(userKpis.aiCalls)} label="AI 调用" sub={`tokens ${fmtNum(userKpis.aiTokens)}`} />
           </section>
+          )}
 
-          {(userKpis.reads + userKpis.logins) > 0 && (
+          <AccountGrowth growth={growth} />
+
+          {rootAdmin && (userKpis.reads + userKpis.logins) > 0 && (
             <>
               <div className="zone-head">
                 <span className="zone-title">活跃用户 Top</span>
@@ -734,6 +760,8 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
             </>
           )}
 
+          {rootAdmin && (
+          <>
           <div className="zone-head">
             <span className="zone-title">账户管理</span>
             <span className="zone-acts">
@@ -943,7 +971,10 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
             )}
           </section>
 
-          {/* ── 操作审计(v3.19 多管理员):管理面写操作逐条落行,多管理员互相可查 ── */}
+          </>
+          )}
+
+          {/* ── 操作审计(v3.19 多管理员):管理面写操作逐条落行,多管理员互相可查;不属读者隐私,全体管理员可见 ── */}
           <AdminAuditPanel days={days} showToast={showToast} />
         </div>
       )}
@@ -1182,15 +1213,16 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
               </section>
               <div className="zone-head"><span className="zone-title">每日用量</span><span className="zone-hint">悬停看当日明细；系列色恒随实体，不随排位</span></div>
               <div className="admin-grid">
-                <MultiSeriesArea title="每日调用次数" datasets={callsDatasets} namespace="ai-calls" />
-                <MultiSeriesArea title="每日 tokens" datasets={tokensDatasets} namespace="ai-tokens" />
+                <MultiSeriesArea title="每日调用次数" datasets={callsDatasets} namespace="ai-calls" dims={aiDims} />
+                <MultiSeriesArea title="每日 tokens" datasets={tokensDatasets} namespace="ai-tokens" dims={aiDims} />
               </div>
             </>
           )}
         </div>
       )}
 
-      {/* ── 单用户活动详情抽屉（右缘滑入，ledger-drawer 语法） ── */}
+      {/* ── 单用户活动详情抽屉（右缘滑入，ledger-drawer 语法）;仅根管理员 ── */}
+      {rootAdmin && (<>
       <div className={`ledger-scrim ${detailUser ? 'is-open' : ''}`} onClick={closeDetail} aria-hidden="true" />
       <aside
         ref={detailPanelRef}
@@ -1314,6 +1346,7 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
           )}
         </div>
       </aside>
+      </>)}
 
       {/* ── 新建账户弹窗（Portal 到 body，避开变换祖先造成的 fixed 错位） ── */}
       {createModal.mounted && createPortal(

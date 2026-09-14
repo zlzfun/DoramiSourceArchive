@@ -96,14 +96,14 @@ def test_last_admin_guard_two_admins_act_on_one_then_last_blocked(tmp_path):
     seed_default_accounts(engine, (("a", "a-pw", "admin"), ("b", "b-pw", "admin")))
     with Session(engine) as session:
         assert accounts_service.count_active_admins(session) == 2
-        # 两个活跃 admin：降级其一成功。
-        accounts_service.set_role(session, "a", "user")
+        # 两个活跃 admin：降级非根的那一个成功（v3.55 起创建最早的 a 是根管理员回落，不可动）。
+        accounts_service.set_role(session, "b", "user")
         assert accounts_service.count_active_admins(session) == 1
-        # 现在只剩 b 一个活跃 admin：再动它被拒。
+        # 现在只剩 a 一个活跃 admin：再动它被拒。
         with pytest.raises(accounts_service.AccountError):
-            accounts_service.set_role(session, "b", "user")
+            accounts_service.set_role(session, "a", "user")
         with pytest.raises(accounts_service.AccountError):
-            accounts_service.delete_user(session, "b")
+            accounts_service.delete_user(session, "a")
 
 
 def test_last_admin_guard_disabled_admin_not_counted(tmp_path):
@@ -272,25 +272,45 @@ def test_last_admin_guard_via_api(monkeypatch, tmp_path):
     with TestClient(app_module.app) as client:
         _login(client, "admin", "admin")
         # 仅一个 admin：降级 / 停用 / 删除均被拒，且 400 detail 透传保护文案。
+        # v3.55 起 admin 同时是根管理员，根管理员守卫先于末位保护命中。
         demote = client.put("/api/accounts/admin", json={"role": "user"})
         assert demote.status_code == 400
-        assert "至少需保留一名活跃管理员" in demote.json()["detail"]
+        assert "根管理员" in demote.json()["detail"]
         assert client.put("/api/accounts/admin", json={"is_active": False}).status_code == 400
         assert client.delete("/api/accounts/admin").status_code == 400
 
 
-def test_admin_self_demote_revokes_cookie(monkeypatch, tmp_path):
-    """两个 admin 时，其一自我降级成功；降级后其旧 cookie 因角色不符在下一请求 401。"""
+def test_last_admin_guard_message_for_non_root_admin(tmp_path):
+    """末位活跃管理员保护仍在（服务层）：库里唯一的管理员即使不叫 admin，也是根管理员回落
+    （创建最早的活跃管理员），两层守卫都能拦；文案以先命中的根管理员守卫为准。"""
+    import pytest
+    from services import accounts as accounts_service
+    from storage.impl.db_storage import DatabaseStorage
+
+    sink = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'last_admin.db'}")
+    seed_default_accounts(sink.engine, accounts=(("boss", "boss", "admin"),))
+    with Session(sink.engine) as session:
+        assert accounts_service.root_admin_username(session) == "boss"
+        with pytest.raises(accounts_service.AccountError):
+            accounts_service.set_role(session, "boss", "user")
+        assert accounts_service.count_active_admins(session) == 1
+
+
+def test_admin_demote_revokes_cookie(monkeypatch, tmp_path):
+    """两个 admin 时，根管理员降级另一管理员成功；被降级者的旧 cookie 因角色不符在下一请求 401。
+    （v3.55 起逐账户管理仅根管理员可操作，非根管理员自我降级得到 403——见 test_admin_ops。）"""
     app_module = _setup_app(
         monkeypatch, tmp_path,
         accounts=(("admin", "admin", "admin"), ("admin2", "admin2", "admin")),
     )
+    victim = TestClient(app_module.app)
+    _login(victim, "admin2", "admin2")
+    assert victim.get("/api/runtime").status_code == 200
     with TestClient(app_module.app) as client:
-        _login(client, "admin2", "admin2")
-        # 自我降级为读者（另有 admin 兜底活跃数，允许）。
+        _login(client, "admin", "admin")
         assert client.put("/api/accounts/admin2", json={"role": "user"}).status_code == 200
-        # 旧 cookie 角色为 admin，与库中现角色 user 不符 → read_auth_token 回查吊销。
-        assert client.get("/api/runtime").status_code == 401
+    # 旧 cookie 角色为 admin，与库中现角色 user 不符 → read_auth_token 回查吊销。
+    assert victim.get("/api/runtime").status_code == 401
 
 
 def test_preferences_read_write_and_reject_invalid(monkeypatch, tmp_path):

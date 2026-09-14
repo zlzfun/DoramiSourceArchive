@@ -146,6 +146,11 @@ export function fetchAdminAccounts(
   return request(`/admin/accounts?${params.toString()}`, { errorMsg: '获取账户列表失败' });
 }
 
+// 账户增长曲线(v3.55 issue #31):按创建日新增 + 现存总量分布,聚合口径、全体管理员可见。
+export function fetchAdminAccountGrowth() {
+  return request('/admin/account-growth', { errorMsg: '获取账户增长失败' });
+}
+
 export function fetchAccountActivity(username, days = 30) {
   return request(`/admin/accounts/${enc(username)}/activity?days=${enc(days)}`, { errorMsg: '获取用户活动详情失败' });
 }

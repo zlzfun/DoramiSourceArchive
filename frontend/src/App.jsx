@@ -985,6 +985,7 @@ export default function App() {
                   showToast={showToast}
                   active={activeTab === 'admin' && !readerView}
                   currentUsername={authState.user?.username}
+                  rootAdmin={!!runtimeInfo.root_admin}
                   pendingFocus={pendingFocus?.tab === 'admin' ? pendingFocus.payload : null}
                   onPendingFocusApplied={clearPendingFocus}
                   onOpenCredentials={() => openSettings('credentials')}

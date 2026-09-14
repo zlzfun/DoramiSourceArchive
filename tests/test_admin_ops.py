@@ -692,3 +692,145 @@ def test_windowed_maps_exclude_tombstones(tmp_path):
         assert set(reader_activity.reads_by_user(session, days=7)) == set()
         # 成本看板口径（summarize）保留墓碑消耗——历史成本不消失。
         assert ai_usage.summarize(session, days=7)["totals"]["total_tokens"] == 100
+
+
+# ==================== 根管理员:用户级明细的唯一接触者 + 账户增长曲线(v3.55 issue #31) ====================
+def _seed_second_admin(app_module, username="ops", password="ops-pass"):
+    from services import accounts as accounts_service
+
+    with Session(app_module.db_sink.engine) as session:
+        accounts_service.create_user(session, username, password, "admin")
+
+
+def test_root_admin_gate_on_user_detail_surfaces(monkeypatch, tmp_path):
+    """非根管理员:账户名单/逐账户管理/单用户活动 403;增长曲线 200;AI 用量剥掉按用户维度;
+    overview 不给最近登录名单;runtime 透出 root_admin=false。根管理员一切照旧。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    _seed_second_admin(app_module)
+    client = TestClient(app_module.app)
+
+    assert _login(client, "ops", "ops-pass").status_code == 200
+    assert client.get("/api/runtime").json()["root_admin"] is False
+    for path in ("/api/accounts", "/api/admin/accounts?days=7", "/api/admin/accounts/user/activity"):
+        resp = client.get(path)
+        assert resp.status_code == 403, path
+        assert "根管理员" in resp.json()["detail"]
+    assert client.put("/api/accounts/user", json={"ai_beta_enabled": True}).status_code == 403
+    assert client.post("/api/accounts/batch", json={"usernames": ["user"], "ai_beta_enabled": True}).status_code == 403
+    growth = client.get("/api/admin/account-growth")
+    assert growth.status_code == 200
+    assert growth.json()["totals"] == {"accounts": 3, "admins": 2, "readers": 1, "disabled": 0}
+    assert sum(row["new"] for row in growth.json()["series"]) == 3
+    usage = client.get("/api/admin/ai-usage?days=7").json()
+    assert usage["by_user"] == [] and usage["by_day_user"] == []
+    assert "by_purpose" in usage and "totals" in usage
+    assert client.get("/api/admin/overview").json()["recent_logins"] == []
+    # 非用户级的管理面照常(审计属管理员互查,不是读者隐私)。
+    assert client.get("/api/admin/audit-log?days=7").status_code == 200
+
+    client = TestClient(app_module.app)
+    assert _login(client, "admin", "admin").status_code == 200
+    assert client.get("/api/runtime").json()["root_admin"] is True
+    assert client.get("/api/accounts").status_code == 200
+    assert client.get("/api/admin/accounts?days=7").status_code == 200
+    assert client.get("/api/admin/accounts/user/activity").status_code == 200
+    assert client.get("/api/admin/account-growth").status_code == 200
+    assert isinstance(client.get("/api/admin/ai-usage?days=7").json()["by_user"], list)
+    assert len(client.get("/api/admin/overview").json()["recent_logins"]) >= 1
+
+
+def test_root_admin_gate_ignores_readers_and_anonymous(monkeypatch, tmp_path):
+    """读者与未登录仍是原有的 403/401,不会被根管理员门误报成「仅限根管理员」。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    client = TestClient(app_module.app)
+    assert client.get("/api/admin/account-growth").status_code == 401
+    assert _login(client, "user", "user").status_code == 200
+    resp = client.get("/api/admin/accounts")
+    assert resp.status_code == 403 and "管理员账号" in resp.json()["detail"]
+    assert client.get("/api/admin/account-growth").status_code == 403
+    assert client.get("/api/runtime").json()["root_admin"] is False
+
+
+def test_root_admin_cannot_be_demoted_disabled_or_deleted(tmp_path):
+    """根管理员恒不可降级/停用/删除(单账户与批量两条路);其它管理员在有多名活跃管理员时照旧可动。"""
+    import pytest
+    from services import accounts as accounts_service
+    from storage.impl.db_storage import DatabaseStorage
+
+    sink = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'root_guard.db'}")
+    seed_default_accounts(sink.engine)
+    with Session(sink.engine) as session:
+        accounts_service.create_user(session, "ops", "ops-pass", "admin")
+        accounts_service.create_user(session, "ops2", "ops-pass", "admin")
+        assert accounts_service.root_admin_username(session) == "admin"
+        assert accounts_service.is_root_admin(session, "ops") is False
+        with pytest.raises(accounts_service.AccountError, match="根管理员"):
+            accounts_service.set_role(session, "admin", "user")
+        with pytest.raises(accounts_service.AccountError, match="根管理员"):
+            accounts_service.set_active(session, "admin", False)
+        with pytest.raises(accounts_service.AccountError, match="根管理员"):
+            accounts_service.delete_user(session, "admin")
+        with pytest.raises(accounts_service.AccountError, match="根管理员"):
+            accounts_service.batch_update_users(session, ["admin", "ops"], role="user")
+        with pytest.raises(accounts_service.AccountError, match="根管理员"):
+            accounts_service.batch_update_users(session, ["admin"], is_active=False)
+        # 批量拒绝是原子的:ops 未被顺带降级。
+        assert accounts_service.get_user(session, "ops").role == "admin"
+        assert accounts_service.get_user(session, "admin").is_active is True
+        # 幂等写不触发守卫;非根管理员照旧可降级/删除。
+        assert accounts_service.set_role(session, "admin", "admin").role == "admin"
+        assert accounts_service.set_role(session, "ops", "user").role == "user"
+        accounts_service.delete_user(session, "ops2")
+        assert accounts_service.get_user(session, "ops2") is None
+        # AI 开关等非身份字段对根管理员不受限。
+        flipped = not accounts_service.get_user(session, "admin").ai_beta_enabled
+        assert accounts_service.batch_update_users(session, ["admin"], ai_beta_enabled=flipped)["updated"] == 1
+
+
+def test_account_growth_groups_by_creation_day(tmp_path):
+    from models.db import UserRecord
+    from services import accounts as accounts_service
+    from storage.impl.db_storage import DatabaseStorage
+
+    sink = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'growth.db'}")
+    seed_default_accounts(sink.engine)
+    with Session(sink.engine) as session:
+        for name, day in (("a", "2026-09-01"), ("b", "2026-09-01"), ("c", "2026-09-03")):
+            accounts_service.create_user(session, name, "pw", "user")
+            record = session.get(UserRecord, name)
+            record.created_at = f"{day}T10:00:00"
+            session.add(record)
+        accounts_service.set_active(session, "c", False)
+        session.commit()
+        growth = accounts_service.account_growth(session)
+    by_day = {row["day"]: row["new"] for row in growth["series"]}
+    assert by_day["2026-09-01"] == 2 and by_day["2026-09-03"] == 1
+    assert [row["day"] for row in growth["series"]] == sorted(by_day)
+    assert growth["totals"] == {"accounts": 5, "admins": 1, "readers": 4, "disabled": 1}
+    assert sum(by_day.values()) == growth["totals"]["accounts"]
+
+
+def test_root_admin_falls_back_to_earliest_active_admin(tmp_path):
+    """库里没有名为 admin 的活跃管理员时（本版之前已删/已降级），根管理员回落为创建最早的
+    活跃管理员，用户级明细面永不失联;admin 重新成为活跃管理员时优先级恢复。"""
+    from models.db import UserRecord
+    from services import accounts as accounts_service
+    from storage.impl.db_storage import DatabaseStorage
+
+    sink = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'root_fallback.db'}")
+    seed_default_accounts(sink.engine, accounts=(("late", "pw", "admin"), ("early", "pw", "admin"), ("admin", "pw", "user")))
+    with Session(sink.engine) as session:
+        session.get(UserRecord, "early").created_at = "2026-01-01T00:00:00"
+        session.get(UserRecord, "late").created_at = "2026-06-01T00:00:00"
+        session.commit()
+        # admin 只是读者,不算根;最早的活跃管理员 early 顶上。
+        assert accounts_service.root_admin_username(session) == "early"
+        assert accounts_service.is_root_admin(session, "admin") is False
+        # early 作为根不可停用;late 可以。
+        import pytest
+        with pytest.raises(accounts_service.AccountError, match="根管理员"):
+            accounts_service.set_active(session, "early", False)
+        accounts_service.set_active(session, "late", False)
+        # admin 升回管理员后按名字优先重新成为根。
+        accounts_service.set_role(session, "admin", "admin")
+        assert accounts_service.root_admin_username(session) == "admin"
