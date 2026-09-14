@@ -26,6 +26,7 @@ def test_backend_image_installs_ffmpeg_and_cleans_apt_metadata():
 def test_compose_keeps_all_role_and_wires_persistent_podcast_runtime():
     compose = _read("docker-compose.yml")
     assert 'DORAMI_RUNTIME_ROLE: "all"' in compose
+    assert "DORAMI_ARCHIVE_AUTHORITY_ID: ${DORAMI_ARCHIVE_AUTHORITY_ID:?" in compose
     assert "DORAMI_PODCAST_INSTALLATION: ${DORAMI_PODCAST_INSTALLATION:?" in compose
     assert "DORAMI_PODCAST_ALLOWED_STAGES: ${DORAMI_PODCAST_ALLOWED_STAGES-}" in compose
     assert "DORAMI_PODCAST_AUTHORITY_ID: ${DORAMI_PODCAST_AUTHORITY_ID:?" in compose
@@ -55,6 +56,14 @@ def test_compose_keeps_all_role_and_wires_persistent_podcast_runtime():
         "NLS_APP_KEY",
         "NLS_ACCESS_TOKEN",
         "NLS_TOKEN_EXPIRES_AT",
+    ):
+        assert f"{name}: ${{{name}:-}}" in compose
+    for name in (
+        "DORAMI_LLM_BASE_URL",
+        "DORAMI_LLM_API_KEY",
+        "DORAMI_LLM_MODEL",
+        "DORAMI_LLM_THINKING_MODE",
+        "DORAMI_LLM_AUX_MODEL",
     ):
         assert f"{name}: ${{{name}:-}}" in compose
     for name in (

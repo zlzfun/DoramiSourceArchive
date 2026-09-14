@@ -27,7 +27,7 @@
   管理员公告横幅(逐用户一次性 dismiss)/远程内容同步(接收方拉取,复用归档同步契约)。
 - ◉ [interest-lens-wave-plan.md](./interest-lens-wave-plan.md) — 兴趣即透镜波(v3.52.0 已实现,issue #27
   第一波,含四稿设计取舍与宏观拍板):左栏改三谓词过滤面板(订阅 / 兴趣 / 收藏 多选 AND,全关 = 全站),
-  列头回显激活集,命中胶囊 / 屏蔽折叠行 / 订阅外就地订阅,兴趣编辑面并入发现页第三段;后续候选清单。
+  列头回显激活集,命中胶囊 / 屏蔽折叠行(v3.56 随屏蔽退役)/ 订阅外就地订阅,兴趣编辑面并入发现页第三段;后续候选清单。
 - ◉ [source-collections-wave-plan.md](./source-collections-wave-plan.md) — 源合集波(v3.38.0 已实现,
   含实施记录):发现页策展合集(「源 ⇄ 合集」seg + 合集卡/详情 + 一键批量订阅);定调=目录呈现层
   批量动作而非订阅实体,代码注册表策展,交付链路零感知。首发五枚:HN 博客 2025/前沿实验室官方/
@@ -46,7 +46,10 @@
 - ◉ [sources/podcast_catalog.md](./sources/podcast_catalog.md) — 内部「欧研观澜」36 个节目样本的
   RSS 可接入性验证、精选目录、幂等导入命令/API、观察期与权利边界。
 - ◉ [taxonomy-v1-deployment.md](./taxonomy-v1-deployment.md) — 已批准 Taxonomy v1 的发布资产与上线手册：
-  全新库 migration → validation-only → 导入回执 → 人工发布 → 开分析，以及已发布开发库的安全同步路径。
+  外网 authority 启动自动 reconcile → 人工发布，内网 replica 通过 Archive Sync
+  `taxonomy.jsonl` 原子导入最新已发布版本；无额外 taxonomy 安装脚本。
+- ◉ [aliyun-dual-node-deployment.md](./aliyun-dual-node-deployment.md) — 阿里云外网/内网双节点生产上线：
+  验收 INI 替换清单、双端配置、Secret/RAM/NLS/OSS/安全组、发布顺序和 E2E 验收。
 - ◉ [unified-news-scoring-plan.md](./unified-news-scoring-plan.md) — **统一新闻价值评分波(issue #22,v3.48.0)**:
   取缔阅读价值维度,文章级评分只剩一把「新闻价值」尺子(入库分析提示词以日报 MAP 锚点为底改写);
   公共日报复用该评分、缺分就地补评不写回(软依赖,分析全无也能出报)、门槛 pass、只为入选者写点评;

@@ -1,4 +1,4 @@
-"""Repository-approved Taxonomy v1 installs reproducibly on fresh and dev DBs."""
+"""Repository-approved Taxonomy v1 reconciles reproducibly on fresh and dev DBs."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import apply_taxonomy_v1_review as review_apply  # noqa: E402
-import install_taxonomy_v1 as installer  # noqa: E402
 import prepare_taxonomy_v1_review as review_prepare  # noqa: E402
 from config import TaxonomyDeploymentConfig  # noqa: E402
 from models.db import (  # noqa: E402
@@ -27,7 +26,9 @@ from models.db import (  # noqa: E402
 )
 from services import taxonomy  # noqa: E402
 from services.taxonomy_deployment import (  # noqa: E402
+    DEFAULT_CATALOG,
     TaxonomyDeploymentError,
+    load_catalog,
     reconcile_approved_taxonomy_v1,
     run_taxonomy_deployment,
 )
@@ -35,7 +36,7 @@ from storage.impl.db_storage import DatabaseStorage  # noqa: E402
 
 
 def test_repository_approved_catalog_is_complete_and_product_confirmed():
-    catalog = installer.load_catalog(installer.DEFAULT_CATALOG)
+    catalog = load_catalog(DEFAULT_CATALOG)
     assert len(catalog["entries"]) == 96
     assert sum(bool(row["user_selectable"]) for row in catalog["entries"]) == 94
     by_code = {row["code"]: row for row in catalog["entries"]}
@@ -94,7 +95,7 @@ def test_matching_receipt_remains_noop_after_human_publish():
 
 def test_authority_reconcile_recovers_a_compatible_partial_import():
     storage = DatabaseStorage(db_url="sqlite:///:memory:")
-    catalog = installer.load_catalog(installer.DEFAULT_CATALOG)
+    catalog = load_catalog(DEFAULT_CATALOG)
     first_entry = catalog["entries"][0]
     try:
         with Session(storage.engine) as session:
@@ -129,7 +130,7 @@ def test_authority_reconcile_recovers_a_compatible_partial_import():
 
 def test_authority_reconcile_fails_closed_on_catalog_conflict():
     storage = DatabaseStorage(db_url="sqlite:///:memory:")
-    catalog = installer.load_catalog(installer.DEFAULT_CATALOG)
+    catalog = load_catalog(DEFAULT_CATALOG)
     first_entry = catalog["entries"][0]
     try:
         with Session(storage.engine) as session:
@@ -183,7 +184,7 @@ def test_authority_reconcile_fails_closed_on_different_receipt():
 
 def test_authority_reconcile_rejects_incomplete_matching_receipt():
     storage = DatabaseStorage(db_url="sqlite:///:memory:")
-    catalog = installer.load_catalog(installer.DEFAULT_CATALOG)
+    catalog = load_catalog(DEFAULT_CATALOG)
     try:
         with Session(storage.engine) as session:
             session.add(
@@ -253,17 +254,17 @@ def test_official_startup_paths_reconcile_after_migration_before_api():
 
 
 def test_catalog_manifest_detects_content_tampering(tmp_path):
-    catalog = json.loads(installer.DEFAULT_CATALOG.read_text(encoding="utf-8"))
+    catalog = json.loads(DEFAULT_CATALOG.read_text(encoding="utf-8"))
     catalog["entries"][0]["name_zh"] = "被篡改"
     path = tmp_path / "tampered.json"
     path.write_text(json.dumps(catalog, ensure_ascii=False), encoding="utf-8")
 
     with pytest.raises(ValueError, match="manifest_sha256"):
-        installer.load_catalog(path)
+        load_catalog(path)
 
 
 def test_apply_review_rejects_content_tampering_even_with_original_manifest():
-    catalog = installer.load_catalog(installer.DEFAULT_CATALOG)
+    catalog = load_catalog(DEFAULT_CATALOG)
     storage = DatabaseStorage(db_url="sqlite:///:memory:")
     try:
         with Session(storage.engine) as session:
@@ -277,7 +278,7 @@ def test_apply_review_rejects_content_tampering_even_with_original_manifest():
 
 
 def test_apply_review_rejects_injected_target_derived_aliases():
-    catalog = installer.load_catalog(installer.DEFAULT_CATALOG)
+    catalog = load_catalog(DEFAULT_CATALOG)
     storage = DatabaseStorage(db_url="sqlite:///:memory:")
     try:
         with Session(storage.engine) as session:

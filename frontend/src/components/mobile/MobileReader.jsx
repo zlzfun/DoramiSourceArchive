@@ -24,7 +24,7 @@ import { useReaderState } from '../../hooks/useReaderState';
 import { useLongPress } from '../../hooks/useLongPress';
 import { useLayerHistory } from '../../hooks/useLayerHistory';
 import { articleDeepLink } from '../../utils/shareLink';
-import { ArticleRow, ArticleCardsSkeleton, MutedFoldRow } from '../ReaderTab';
+import { ArticleRow, ArticleCardsSkeleton } from '../ReaderTab';
 import { buildListPlan } from '../../utils/listPlan';
 import SocialFlow from '../SocialFlow';
 import DiscoverPage from '../DiscoverPage';
@@ -156,19 +156,9 @@ export default function MobileReader({
   // 兴趣页保存回调经 ref 读最新的 discover(PUT 在途时读者可能已走开,闭包值陈旧——codex 检视 P2)
   const discoverRef = useRef(discover);
   useEffect(() => { discoverRef.current = discover; }, [discover]);
-  // 屏蔽折叠行展开态(按日期组)
-  const [expandedMutedDays, setExpandedMutedDays] = useState(() => new Set());
-  const toggleMutedDay = useCallback((dayKey) => {
-    setExpandedMutedDays((prev) => {
-      const next = new Set(prev);
-      if (next.has(dayKey)) next.delete(dayKey); else next.add(dayKey);
-      return next;
-    });
-  }, []);
-  useEffect(() => { setExpandedMutedDays(new Set()); }, [activeSourceId, activeTagId, mode, scope, searchQuery]);
   const listPlan = useMemo(
-    () => buildListPlan(articles, grouping, expandedMutedDays),
-    [articles, grouping, expandedMutedDays],
+    () => buildListPlan(articles, grouping),
+    [articles, grouping],
   );
   const subscribeSourceById = (sid) => handleSubscribe(sourceMap[sid] || { source_id: sid, name: sourceNameMap[sid] || sid });
 
@@ -456,18 +446,6 @@ export default function MobileReader({
             ) : (
               <div key={`${activeSourceId ?? '__all__'}|${activeTagId ?? ''}|${mode}|${scope.axis}${scope.favorite ? '+f' : ''}`}>
                 {listPlan.map((entry) => {
-                  if (entry.type === 'fold') {
-                    return (
-                      <MutedFoldRow
-                        key={`fold:${entry.dayKey}`}
-                        tags={entry.tags}
-                        expanded={entry.expanded}
-                        showLabel={entry.showLabel}
-                        dayKey={entry.dayKey}
-                        onToggle={() => toggleMutedDay(entry.dayKey)}
-                      />
-                    );
-                  }
                   const { article } = entry;
                   return (
                     <div key={article.id} className="m-press" {...pressBind(article)}>
@@ -493,7 +471,6 @@ export default function MobileReader({
                         labelSuppress={activeTagName}
                         unsubscribed={showUnsubscribedMark && !subscribedIds.has(article.source_id)}
                         onSubscribeSource={subscribeSourceById}
-                        muted={entry.muted}
                       />
                     </div>
                   );

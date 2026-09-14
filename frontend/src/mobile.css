@@ -236,14 +236,8 @@
 }
 .interest-mrow-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .interest-mrow .interest-card-desc { -webkit-line-clamp: 1; }
-/* 触屏无悬停:屏蔽钮常显为图标钮 */
-.interest-mrow .interest-card-ban { flex: none; opacity: 1; margin-left: 0; width: 30px; height: 30px; padding: 0; justify-content: center; border-radius: 8px; }
-.interest-mrow .interest-card-ban svg { width: 14px; height: 14px; }
 .interest-mrow.is-follow { box-shadow: inset 0 0 0 1.5px var(--dorami-accent); }
 .interest-mrow.is-follow .interest-card-name { color: var(--dorami-accent-ink); }
-.interest-mrow.is-mute { background: color-mix(in srgb, var(--dorami-ink) 4%, var(--rd-list-bg)); box-shadow: none; }
-.interest-mrow.is-mute .interest-card-name { color: var(--dorami-muted); text-decoration: line-through; text-decoration-color: var(--dorami-faint); }
-.interest-mrow.is-mute .interest-card-ban { color: var(--dorami-muted); background: color-mix(in srgb, var(--dorami-ink) 7%, transparent); }
 .interest-m .interest-more { align-self: flex-start; }
 .m-page-scroll {
   flex: 1;

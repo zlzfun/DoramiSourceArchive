@@ -3,8 +3,8 @@
 
 This is an operator smoke test rather than a unit test.  It creates temporary
 producer/consumer databases and media roots, starts two uvicorn processes with
-``role=all``, triggers the consumer's public remote-sync API, and verifies the
-six v2 streams plus the reverse custom-RSS Candidate channel. It also starts a
+``role=all``, triggers the consumer's public remote-sync API, and verifies all
+eight v2 streams plus the reverse custom-RSS Candidate channel. It also starts a
 real ``main.py`` authority twice to verify deployment-time Taxonomy reconciliation
 is idempotent and does not auto-publish.
 """
@@ -67,6 +67,8 @@ EXPECTED_STREAMS = (
     "articles",
     "analyses",
     "media",
+    "podcast_texts",
+    "podcast_audio",
     "source_states",
 )
 PUBLIC_SOURCE = "rss_split_e2e"
@@ -824,6 +826,7 @@ def main(argv: list[str] | None = None) -> int:
     consumer_port = _free_port()
     while consumer_port == producer_port:
         consumer_port = _free_port()
+    assert producer_port != consumer_port
     producer_url = f"http://127.0.0.1:{producer_port}"
     consumer_url = f"http://127.0.0.1:{consumer_port}"
     producer_config = root / "producer.ini"
@@ -933,6 +936,7 @@ def main(argv: list[str] | None = None) -> int:
             "status": "passed",
             "producer": producer_url,
             "consumer": consumer_url,
+            "ports_distinct": producer_port != consumer_port,
             "streams": list(EXPECTED_STREAMS),
             "first_counts": {key: value["count"] for key, value in first["streams"].items()},
             "pending_counts": {key: value["count"] for key, value in pending["streams"].items()},

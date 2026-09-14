@@ -25,13 +25,12 @@
 
 治理脚本的默认输出位于已忽略的 `data/taxonomy-review/`，属于过程数据。只有经过产品批准并提升为发布资产的目录才进入版本控制。
 
-## Taxonomy v1 生产安装
+## Taxonomy v1 发布与恢复
 
-批准目录的唯一事实来源是 [`config/taxonomy-v1-approved-catalog.json`](../config/taxonomy-v1-approved-catalog.json)。正常 authority 部署会在迁移后、API/worker 前自动 reconcile；脚本保留用于校验和恢复。
+批准目录的唯一事实来源是 [`config/taxonomy-v1-approved-catalog.json`](../config/taxonomy-v1-approved-catalog.json)。正常 authority 部署会在迁移后、API/worker 前自动 reconcile；内网 replica 只通过 Archive Sync JSONL 接收最新已发布快照，两端都不需要额外安装命令。
 
 | 脚本 | 用途 | 数据边界 |
 |---|---|---|
-| [`install_taxonomy_v1.py`](./install_taxonomy_v1.py) | runtime reconciler 的薄封装：默认只校验批准目录，`--apply` 才迁移并 reconcile，可选 SQLite 备份；不会发布 taxonomy。 | 仅用于显式验证/恢复；正常部署无需另跑。 |
 | [`prepare_taxonomy_v1_review.py`](./prepare_taxonomy_v1_review.py) | 把批准目录绑定到目标数据库并生成完整审核回执。 | 读数据库、写回执文件。 |
 | [`apply_taxonomy_v1_review.py`](./apply_taxonomy_v1_review.py) | 校验审核回执；只有 `--apply` 才导入规范标签和审计记录。 | 保留给含 Candidate/审核历史的复杂数据库恢复。 |
 
@@ -41,7 +40,8 @@
 |---|---|---|
 | [`smoke_analysis_release.py`](./smoke_analysis_release.py) | 真实/合成 RSS、可选真实 LLM、租约重启恢复、SQLite 并发和个人早报 15 分钟降级。 | 强制使用非生产文件型 SQLite。 |
 | [`smoke_full_analysis_backfill.py`](./smoke_full_analysis_backfill.py) | 估算并可选调用真实模型执行小批量 `full_analysis`。 | 拒绝当前配置库并限制最大文章数。 |
-| [`verify_split_sync_e2e.py`](./verify_split_sync_e2e.py) | 启动两个隔离的 `role=all` 后端，经真实 HTTP 验证 Archive Sync v2 六流、权威接管、分析状态、媒体和自定 RSS Candidate 反向通道。 | 只写临时数据库和媒体目录；成功自动清理，失败保留现场供诊断。 |
+| [`verify_split_sync_e2e.py`](./verify_split_sync_e2e.py) | 启动两个隔离的 `role=all` 后端，经真实 HTTP 验证 Archive Sync v3 八流、权威接管、分析状态、媒体和自定 RSS Candidate 反向通道。 | 只写临时数据库和媒体目录；成功自动清理，失败保留现场供诊断。 |
+| [`verify_podcast_all_all_e2e.py`](./verify_podcast_all_all_e2e.py) | 启动外网/内网两个隔离的 `role=all` 后端，验证 Podcast 外网处理/内网只同步姿态、已发布转录与中文稿、精华音频、Reader 读取、重启及 checkpoint 幂等。 | 使用本地合成音频且剥离供应商密钥，不产生真实 ASR/TTS 调用；只写临时目录。 |
 
 已移除被完整 release smoke 取代且没有调用方的 `smoke_analysis_personal_digest.py`；持久化指标继续由管理 API 和 `services.analysis_observability` 提供，不保留两个含义重叠的命令入口。
 

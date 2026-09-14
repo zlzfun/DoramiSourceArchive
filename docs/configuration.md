@@ -33,7 +33,7 @@ role = all
 
 1. 外网 Dorami 采集并分析平台/公共源；内网 Dorami 同步并提供服务，两端配置 `role = all`。
 2. 内网 Dorami 自行采集用户自定 RSS，并可直接调用外部 MaaS；自定源正文不上传外网 Dorami。
-3. 内网配置远程同步，使用 v2 API 上的 Archive Sync v3 manifest 拉取 sources、taxonomy、articles、analyses、media、source_states。同步契约见 `docs/contracts/archive_sync.md`。
+3. 内网配置远程同步，使用 v2 API 上的 Archive Sync v3 manifest 依次拉取 `sources`、`taxonomy`、`articles`、`analyses`、`media`、`podcast_texts`、`podcast_audio`、`source_states`。其中 Podcast 两流只在对端声明相应 capability 时启用；同步契约见 `docs/contracts/archive_sync.md`。
 4. 下游应用优先访问分发层的个人聚合接口 `/api/public/feed/articles`（`dfeed_` 令牌，覆盖用户全部订阅源）；订阅源在前端“阅读器”左栏增删，聚合令牌在“接入集成”页面生成/轮换。（按源隔离的 `/api/public/subscriptions/{id}/...` + `dsub_` 令牌仍可用，属高级/自动化路径。）
 
 Podcast 处理能力与 `runtime.role` 正交。安装类型决定默认处理姿态，安装 ID 必须在
@@ -51,6 +51,7 @@ Podcast 处理能力与 `runtime.role` 正交。安装类型决定默认处理�
 
 ```bash
 # 外网 all：完成采集、ASR、中文博客、TTS 与发布
+export DORAMI_ARCHIVE_AUTHORITY_ID=<stable-external-archive-id>
 export DORAMI_PODCAST_INSTALLATION=external
 export DORAMI_PODCAST_AUTHORITY_ID=<stable-external-id>
 export ALIYUN_AK_ID=<secret>
@@ -60,6 +61,7 @@ export NLS_ACCESS_TOKEN=<secret>
 export NLS_TOKEN_EXPIRES_AT=<provider-unix-seconds>
 
 # 内网 all：不执行 Podcast 处理，只通过 Archive Sync 同步并展示
+export DORAMI_ARCHIVE_AUTHORITY_ID=<stable-internal-archive-id>
 export DORAMI_PODCAST_INSTALLATION=internal
 export DORAMI_PODCAST_AUTHORITY_ID=<stable-internal-id>
 ```
