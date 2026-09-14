@@ -754,7 +754,7 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
           </section>
           )}
 
-          <AccountGrowth growth={growth} />
+          <AccountGrowth growth={growth} days={days} />
 
           {rootAdmin && (userKpis.reads + userKpis.logins) > 0 && (
             <>
