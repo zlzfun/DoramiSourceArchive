@@ -130,6 +130,9 @@ def normalize_transcript(payload):
                     "start_ms": s["begin_time"],
                     "end_ms": s["end_time"],
                     "channel": 0,
+                    # Recorded speech may contain timed whitespace-only tokens.
+                    # They carry no lexical evidence; preserve sentence text and
+                    # keep strict timecode validation for every retained word.
                     "words": [
                         {
                             "text": w["text"] + w.get("punctuation", ""),
@@ -138,6 +141,7 @@ def normalize_transcript(payload):
                             "channel": 0,
                         }
                         for w in s.get("words", [])
+                        if (w["text"] + w.get("punctuation", "")).strip()
                     ],
                 }
             )
