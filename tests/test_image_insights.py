@@ -151,6 +151,23 @@ def test_render_notes_skips_decorative_and_respects_budget():
     long_details = ii.ImageInsight("h3", "u3", "chart", True, "曲线", "x" * 5000, "")
     clipped = ii.render_notes([long_details], max_chars=600)
     assert 0 < len(clipped) <= 600 and clipped.endswith("…")
+    # 公平截断:预算不够时每张图都保留标题行 + 一份均分的正文,文末的图不会整张消失
+    four = [
+        ii.ImageInsight(f"h{n}", f"u{n}", "screenshot", True, f"截图{n}", "z" * 900, "") for n in range(1, 4)
+    ] + [ii.ImageInsight("h4", "u4", "chart", True, "胜率对比", "| 模型 | 胜率 |\n| A | 75% |", "")]
+    fair = ii.render_notes(four, max_chars=1500)
+    assert len(fair) <= 1500 and "图4[图表] 胜率对比" in fair and "75%" in fair
+    assert all(f"图{n}[截图] 截图{n}" in fair for n in range(1, 4))
+    tiny = ii.render_notes(four, max_chars=len("【图片内容】") + 120)
+    assert tiny.startswith("【图片内容】") and "图1[截图] 截图1" in tiny
+
+
+def test_notes_budget_floor_is_pinned():
+    """验收拍板(2026-09-14):说明预算保持代码常量,但不得低于 6000——1500 曾把文末对比图整张截掉,
+    功能等于不可用。落库 details 上限与之同量级,长表格不在存储层被截。"""
+    assert ii.IMAGE_NOTES_MAX_CHARS >= 6000
+    assert ii._DETAILS_MAX_CHARS >= ii.IMAGE_NOTES_MAX_CHARS
+    assert ii.VISION_MIN_MAX_TOKENS >= 3072
 
 
 def test_clean_payload_closed_set_and_decorative_default():
@@ -174,6 +191,8 @@ def test_ensure_notes_describes_once_per_content_hash_and_skips_small_images(sta
     call = vision_calls[0]
     assert call["config"].model == "deepseek-flash" and call["config"].thinking_mode == "disabled"
     assert call["kwargs"]["response_json"] is True
+    # 单图输出上限跟着 [llm] max_tokens 走,但不低于 3072(密集表格转写的实测下限)
+    assert call["kwargs"]["max_tokens"] == max(ii.VISION_MIN_MAX_TOKENS, VISION.max_tokens)
     user = call["messages"][1]
     assert user.role == "user" and user.content[0]["type"] == "text" and "Qwen 发布" in user.content[0]["text"]
     assert user.content[1]["type"] == "image_url"
@@ -358,10 +377,12 @@ def test_numbered_context_appends_notes_and_keeps_notes_only_items():
     ctx, included = reader_ai.build_numbered_context(arts, per_article_chars=400, total_chars=4000, notes_by_id=notes)
     assert [a["id"] for a in included] == ["a", "b"]
     assert "[1] 有正文" in ctx and "图1[表格] 表" in ctx and "[2] 纯图推文 | s\n【图片内容】" in ctx
-    # 单篇说明上限 = min(notes_chars, per_article/2)
-    long_notes = {"a": "【图片内容】" + "y" * 5000}
+    # 单篇说明上限 = max(1000, min(notes_chars, per_article)):小预算下保底 1000、大预算下与正文同宽封顶 6000
+    long_notes = {"a": "【图片内容】" + "y" * 8000}
     ctx2, _ = reader_ai.build_numbered_context(arts[:1], per_article_chars=400, total_chars=4000, notes_by_id=long_notes)
-    assert ctx2.count("y") <= 200
+    assert ctx2.count("y") <= 1000
+    ctx3, _ = reader_ai.build_numbered_context(arts[:1], per_article_chars=12000, total_chars=12000, notes_by_id=long_notes)
+    assert 5000 < ctx3.count("y") <= 6000
     plain, _ = reader_ai.build_numbered_context(arts[:1], per_article_chars=400, total_chars=4000)
     assert "【图片内容】" not in plain
 

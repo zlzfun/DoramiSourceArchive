@@ -78,8 +78,11 @@ _TRANSLATE_SEGMENT_CHARS = 3500
 # 列表问答上下文：单篇正文截断与整体字符上限。
 _LIST_PER_ARTICLE_CHARS = 1500
 _LIST_TOTAL_CHARS = 12000
-# 配图识别文本在单篇上下文里的上限(issue #69);实际取 min(此值, 单篇预算/2)
-_NOTES_PER_ARTICLE_CHARS = 1500
+# 配图识别文本在单篇上下文里的上限(issue #69)= image_insights 的统一默认(6000);
+# 实际取 max(1000, min(此值, 单篇正文预算))——说明最多与正文同宽、保底 1000:
+# 单篇问答(正文预算 12000)给足 6000,检索档单篇 2000 时说明也有 2000。
+# 1500 会把文末的图整张截掉(验收实测),故不再取「正文预算的一半」。
+_NOTES_PER_ARTICLE_CHARS = image_insights_service.IMAGE_NOTES_MAX_CHARS
 
 # 多轮对话：最多带入的历史消息条数（user/assistant 计）与单条字符上限，控制 token 预算。
 MAX_HISTORY_MESSAGES = 8
@@ -329,7 +332,7 @@ async def summarize_article(
     if len(body) > _SUMMARIZE_BODY_CHARS:
         body = body[:_SUMMARIZE_BODY_CHARS] + "\n...(正文已截断)"
     # 配图说明(issue #69,cached-only):速读兜底只在没有分析结果时走到这里,不为它发起识别
-    image_notes = image_insights_service.cached_notes_map([article_id], max_chars=3000).get(article_id, "")
+    image_notes = image_insights_service.cached_notes_map([article_id]).get(article_id, "")
     if image_notes:
         body = f"{body}\n{image_notes}"
     raw = await chat_completion(
@@ -404,7 +407,7 @@ def build_numbered_context(
     keep_empty=True 时空正文也保留条目（单篇场景标题本身就是信息）。
     articles 元素可为 dict（含 title/content）或带 .title/.content 属性的对象。
     notes_by_id(issue #69):文章 id → 配图识别文本;有则追加在该篇正文之后,单篇上限
-    min(notes_chars, per_article_chars//2)——图里的表格/榜单进参考资料,正文预算不被挤光。
+    max(1000, min(notes_chars, per_article_chars))——图里的表格/榜单进参考资料,与正文同宽。
     只有配图说明而无正文的条目(纯图推文)也算有内容,不会被 keep_empty=False 跳过。
     """
     blocks: List[str] = []
@@ -425,7 +428,7 @@ def build_numbered_context(
         if len(body) > per_article_chars:
             body = body[:per_article_chars] + "…"
         if notes:
-            limit = max(200, min(notes_chars, per_article_chars // 2))
+            limit = max(1000, min(notes_chars, per_article_chars))
             if len(notes) > limit:
                 notes = notes[:limit] + "…"
             body = f"{body}\n{notes}" if body else notes

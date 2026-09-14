@@ -992,7 +992,7 @@ async def _polish_one(
         # 配图识别(issue #69):预选十几篇的编辑输入附图片说明,要点里的基准数字可来自图;
         # 通常 worker / 补评阶段已识过,这里是零成本命中;缺则识仍受预算保护。
         image_notes = await image_insights_service.ensure_notes(
-            item.candidate.id, llm_config, usage_meta=usage_meta, max_chars=3000,
+            item.candidate.id, llm_config, usage_meta=usage_meta,
         )
         raw = await chat_completion(
             messages=[

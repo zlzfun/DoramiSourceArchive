@@ -323,10 +323,13 @@ async def ping(config: LLMConfig) -> dict:
     if not config.configured:
         raise LLMNotConfigured("LLM 未配置（需 base_url / api_key / model）")
     started = time.monotonic()
+    # max_tokens 给足:思考型模型(deepseek-flash 默认开思考)会先花几十 token 思考,
+    # 16 会被吃满后 content 空产、连通性探针误报「连接失败」(2026-09-14 验收实测);
+    # 512 仍是一次极便宜的调用,且思考残余够用。
     content = await chat_completion(
         messages=[ChatMessage(role="user", content="ping，请只回复 pong")],
         config=config,
-        max_tokens=16,
+        max_tokens=512,
         max_retries=1,
     )
     latency_ms = int((time.monotonic() - started) * 1000)
