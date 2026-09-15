@@ -1722,8 +1722,8 @@ class AieraWebsiteFetcher(BaseWebPageListFetcher):
     WordPress REST `/wp-json/wp/v2/posts/{id}?_embed=1` 才有正文。旧的 HTML 列表解析
     (`aiera.com.cn/20yy/mm/dd/…` 文章链接)自此一条都对不上,连续十天「success 0 条」
     静默停产(issue #79)。现直接消费同一个 WP REST 列表接口:一次请求即得标题/时间/
-    摘要/正文/分类/头图,不再逐篇抓详情;`link` 字段就是新的单篇地址(`asi-post.html?id=`),
-    id 稳定,老文章重抓不会换身份。
+    摘要/正文/分类/头图,不再逐篇抓详情;`link`(`asi-post.html?id=N`)只作访问地址,内容身份按
+    `guid.rendered`(旧式永久链接)计算,与改版前归档的记录同 ID,老文章重抓不会换身份。
     """
     default_fetch_detail = True
     source_id = "web_aiera"
@@ -1737,8 +1737,10 @@ class AieraWebsiteFetcher(BaseWebPageListFetcher):
     source_section = "Website"
     article_url_patterns = ["aiera.com.cn/asi-post.html?id="]
     default_limit = 18
-    # WP REST 单页上限
+    # WP REST 单页上限;超过 per_page 的 limit 按 page=N 翻页补足(检视 F3:此前只请求一页,
+    # limit>100 会静默少取——正是本波在治理的「success 但数量不足」)
     api_page_size_max = 100
+    api_max_pages = 20
     # 正文随列表接口一起返回,不再走详情页/浏览器后端
     web_backend_enabled = False
     source_owner = "aiera"
@@ -1819,6 +1821,29 @@ class AieraWebsiteFetcher(BaseWebPageListFetcher):
                 return str(media["source_url"])
         return ""
 
+    def _identity_url(self, post: Dict[str, Any], link_url: str) -> str:
+        """内容身份用 `guid.rendered`(旧式永久链接 `/2026/09/15/other/admin/<id>/<slug>/`),
+        展示/访问地址才用 `link`(`asi-post.html?id=N`)。改版前采集器归档的 `source_url`
+        正是 guid 去尾斜杠的形状(`_normalize_article_url` 同样去尾斜杠),所以老文章重抓
+        算出的 ID 与库里一致,不会换身份重入库(检视 F4)。guid 缺失或不在本站域名时回落 link。"""
+        guid = post.get("guid")
+        raw = guid.get("rendered") if isinstance(guid, dict) else guid
+        raw = str(raw or "").strip()
+        if raw:
+            host = (urlparse(raw).hostname or "").lower()
+            if host == "aiera.com.cn" or host.endswith(".aiera.com.cn"):
+                return self._normalize_article_url(raw)
+        return link_url
+
+    @staticmethod
+    def _wp_total_pages(response: Any) -> int:
+        headers = getattr(response, "headers", None) or {}
+        raw = headers.get("X-WP-TotalPages") or headers.get("x-wp-totalpages") or ""
+        try:
+            return int(str(raw).strip() or 0)
+        except ValueError:
+            return 0
+
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         limit = self._entry_limit(kwargs.get("limit"))
         detail_max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
@@ -1826,74 +1851,89 @@ class AieraWebsiteFetcher(BaseWebPageListFetcher):
             return
 
         per_page = min(max(limit, 1), self.api_page_size_max)
-        request_url = f"{self.api_url}?per_page={per_page}&_embed=1&orderby=date&order=desc"
-        response = await self._safe_get(client, request_url)
-        if not response:
-            raise RuntimeError(f"新智元文章接口请求失败: {self.api_url}")
-        try:
-            posts = response.json()
-        except ValueError as exc:
-            raise RuntimeError(f"新智元文章接口返回不是 JSON: {self.api_url}") from exc
-        if not isinstance(posts, list):
-            raise RuntimeError(f"新智元文章接口返回形状异常(非数组): {self.api_url}")
-
         seen_urls: set[str] = set()
         yielded = 0
-        for post in posts:
-            if yielded >= limit:
-                break
-            if not isinstance(post, dict) or str(post.get("status") or "publish") != "publish":
-                continue
-            post_id = post.get("id")
-            link = str(post.get("link") or "").strip()
-            if not link and post_id is not None:
-                link = f"https://aiera.com.cn/asi-post.html?id={post_id}"
-            url = self._normalize_article_url(link) if link else ""
-            if not url or url in seen_urls:
-                continue
-            seen_urls.add(url)
-
-            title = self._wp_rendered_text(post.get("title")) or "未命名新智元条目"
-            summary = re.sub(r"\s*(…|\.\.\.)\s*$", "", self._wp_rendered_text(post.get("excerpt")))[:500]
-            publish_date = self._parse_wp_datetime(post.get("date_gmt"), post.get("date"))
-            body_html = ""
-            content_field = post.get("content")
-            if isinstance(content_field, dict):
-                body_html = str(content_field.get("rendered") or "")
-            text = self._render_wp_body(body_html, url, detail_max_chars)
-            categories = self._wp_embedded_terms(post, "category")
-            media_url = self._wp_featured_media_url(post)
-            content = text or summary
-
-            yield WebPageArticleContent(
-                id=self._content_id(url),
-                title=title,
-                source_url=url,
-                publish_date=publish_date,
-                content=content,
-                has_content=bool(content),
-                site_name=self.site_name,
-                source_section=self.source_section,
-                summary=summary,
-                tags=[self.category, "webpage", *self.content_tags, *categories],
-                raw_data={
-                    "listing_url": request_url,
-                    "url": url,
-                    "title": title,
-                    "summary": summary,
-                    "listing_source": "aiera_wp_rest_posts",
-                    "wp_post_id": post_id,
-                    "listing_publish_date": str(post.get("date") or ""),
-                    "listing_datetime": str(post.get("date_gmt") or ""),
-                    "modified_gmt": str(post.get("modified_gmt") or ""),
-                    "categories": categories,
-                    "media_url": media_url,
-                    # 正文随列表接口返回,这里的“详情已取”指正文来自接口而非详情页
-                    "detail_fetched": bool(text),
-                    "detail_title": title,
-                    "detail_text_length": len(text),
-                    "detail_extraction_method": "wp_rest_content_rendered" if text else "",
-                    "detail_source_url": url if text else "",
-                },
+        page = 1
+        while yielded < limit and page <= self.api_max_pages:
+            request_url = (
+                f"{self.api_url}?per_page={per_page}&page={page}&_embed=1&orderby=date&order=desc"
             )
-            yielded += 1
+            response = await self._safe_get(client, request_url)
+            if not response:
+                if page == 1:
+                    raise RuntimeError(f"新智元文章接口请求失败: {self.api_url}")
+                break
+            try:
+                posts = response.json()
+            except ValueError as exc:
+                raise RuntimeError(f"新智元文章接口返回不是 JSON: {self.api_url}") from exc
+            if not isinstance(posts, list):
+                raise RuntimeError(f"新智元文章接口返回形状异常(非数组): {self.api_url}")
+            if not posts:
+                break
+
+            for post in posts:
+                if yielded >= limit:
+                    break
+                if not isinstance(post, dict) or str(post.get("status") or "publish") != "publish":
+                    continue
+                post_id = post.get("id")
+                link = str(post.get("link") or "").strip()
+                if not link and post_id is not None:
+                    link = f"https://aiera.com.cn/asi-post.html?id={post_id}"
+                url = self._normalize_article_url(link) if link else ""
+                if not url or url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                identity_url = self._identity_url(post, url)
+
+                title = self._wp_rendered_text(post.get("title")) or "未命名新智元条目"
+                summary = re.sub(r"\s*(…|\.\.\.)\s*$", "", self._wp_rendered_text(post.get("excerpt")))[:500]
+                publish_date = self._parse_wp_datetime(post.get("date_gmt"), post.get("date"))
+                body_html = ""
+                content_field = post.get("content")
+                if isinstance(content_field, dict):
+                    body_html = str(content_field.get("rendered") or "")
+                text = self._render_wp_body(body_html, url, detail_max_chars)
+                categories = self._wp_embedded_terms(post, "category")
+                media_url = self._wp_featured_media_url(post)
+                content = text or summary
+
+                yield WebPageArticleContent(
+                    id=self._content_id(identity_url),
+                    title=title,
+                    source_url=url,
+                    publish_date=publish_date,
+                    content=content,
+                    has_content=bool(content),
+                    site_name=self.site_name,
+                    source_section=self.source_section,
+                    summary=summary,
+                    tags=[self.category, "webpage", *self.content_tags, *categories],
+                    raw_data={
+                        "listing_url": request_url,
+                        "url": url,
+                        "title": title,
+                        "summary": summary,
+                        "listing_source": "aiera_wp_rest_posts",
+                        "wp_post_id": post_id,
+                        "identity_url": identity_url,
+                        "listing_publish_date": str(post.get("date") or ""),
+                        "listing_datetime": str(post.get("date_gmt") or ""),
+                        "modified_gmt": str(post.get("modified_gmt") or ""),
+                        "categories": categories,
+                        "media_url": media_url,
+                        # 正文随列表接口返回,这里的“详情已取”指正文来自接口而非详情页
+                        "detail_fetched": bool(text),
+                        "detail_title": title,
+                        "detail_text_length": len(text),
+                        "detail_extraction_method": "wp_rest_content_rendered" if text else "",
+                        "detail_source_url": url if text else "",
+                    },
+                )
+                yielded += 1
+
+            total_pages = self._wp_total_pages(response)
+            if (total_pages and page >= total_pages) or len(posts) < per_page:
+                break
+            page += 1

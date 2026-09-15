@@ -633,17 +633,3 @@ def test_admin_backfill_api_estimate_create_and_lifecycle(monkeypatch, tmp_path)
         assert cancelled.json()["counts"]["skipped"] == 1
 
     sink.engine.dispose()
-
-
-def test_estimate_excludes_system_generated_daily_brief_records(storage):
-    """公共日报记录不进全量回填候选(issue #79),与入队钩子/补偿扫描同一份名单。"""
-    with Session(storage.engine) as session:
-        _seed_taxonomy(session)
-        normal = _article("normal", age_days=3)
-        brief = _article("daily_brief_2026-09-15", age_days=1, source_id="dorami_daily_brief")
-        session.add_all([normal, brief])
-        session.commit()
-
-        estimate = estimate_full_analysis_backfill(session, days=None, selection="all", now=NOW)
-
-    assert estimate["article_count"] == 1

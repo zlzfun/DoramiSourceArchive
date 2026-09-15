@@ -11,7 +11,7 @@ from fetchers.impl import playwright_renderer as pr
 class FakePage:
     def __init__(self, context, behaviour):
         self.context = context
-        self.behaviour = behaviour  # "challenge" | "pass"
+        self.behaviour = behaviour  # "challenge" | "pass" | "close-raises"
         self.closed = False
 
     async def goto(self, url, wait_until=None, timeout=None):
@@ -31,17 +31,21 @@ class FakePage:
 
     async def close(self):
         self.closed = True
+        if self.behaviour == "close-raises":
+            raise RuntimeError("page close exploded")
 
 
 class FakeContext:
     def __init__(self, browser, behaviour, user_agent):
         self.browser = browser
-        self.behaviour = behaviour
+        self.behaviour = behaviour  # 另有 "new-page-raises":new_page 直接抛错
         self.user_agent = user_agent
         self.closed = False
         self.pages = []
 
     async def new_page(self):
+        if self.behaviour == "new-page-raises":
+            raise RuntimeError("new_page exploded")
         page = FakePage(self, self.behaviour)
         self.pages.append(page)
         return page
@@ -150,3 +154,25 @@ def test_renderer_degrades_when_playwright_missing(monkeypatch):
             return await renderer.render("https://openai.com/index/example")
 
     assert asyncio.run(run()) == ""
+
+
+def test_context_is_closed_when_new_page_or_page_close_raise(monkeypatch):
+    """异常路径不泄漏上下文(检视 F6):new_page 抛错时 context 仍关闭并进入下一次尝试;
+    page.close 抛错也不阻断 context.close;最终渲染仍成功。"""
+    browser = FakeBrowser(["new-page-raises", "close-raises"])
+    _install_fake_playwright(monkeypatch, browser)
+
+    async def run():
+        async with pr.PlaywrightRenderer(
+            throttle_seconds=0, max_wait_ms=400, poll_interval_ms=400, retry_backoff_seconds=0, attempts=3
+        ) as renderer:
+            return await renderer.render("https://openai.com/index/example")
+
+    html = asyncio.run(run())
+
+    assert html == "<html><article>body</article></html>"
+    # 第一次 new_page 抛错 → 该上下文照关、进入第二次尝试;第二次渲染通过,page.close 抛错也不影响返回
+    assert [ctx.behaviour for ctx in browser.contexts] == ["new-page-raises", "close-raises"]
+    assert all(ctx.closed for ctx in browser.contexts)
+    assert browser.contexts[0].pages == []          # new_page 没成功,没有页面可关
+    assert browser.contexts[1].pages[0].closed is True  # close 抛错前已标记,context 照关

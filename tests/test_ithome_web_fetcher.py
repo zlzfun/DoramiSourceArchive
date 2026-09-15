@@ -192,3 +192,9 @@ def test_ithome_ai_fetcher_accepts_million_range_article_ids():
     assert items[0].publish_date == "2026-09-14T22:45:38.307000+00:00"
     assert not fetcher._matches_article_url("https://www.ithome.com/tags/AI/")
     assert not fetcher._matches_article_url("https://next.ithome.com/1/002/341.htm")
+    # 主机与路径分别精确校验:相似域名、路径带多余段、非 .htm 都不是文章
+    assert not fetcher._matches_article_url("https://evilithome.com/1/002/341.htm")
+    assert not fetcher._matches_article_url("https://www.ithome.com/redirect?to=/1/002/341.htm")
+    assert not fetcher._matches_article_url("https://www.ithome.com/1/002/341.htm/extra")
+    assert fetcher._matches_article_url("https://ithome.com/1/002/341.htm")
+    assert fetcher._matches_article_url("https://www.ithome.com/0/956/628.htm?from=list")

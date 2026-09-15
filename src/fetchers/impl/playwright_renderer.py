@@ -133,8 +133,9 @@ class PlaywrightRenderer:
         # 都直接 200(生产容器实测:共用上下文 1 过 3 卡,逐篇新上下文 4/4 秒过——issue #79)。
         # 代价只是每篇多一次 new_context(毫秒级),浏览器进程仍在一次抓取内复用。
         context = await self._browser.new_context(user_agent=self.user_agent)
-        page = await context.new_page()
+        page = None
         try:
+            page = await context.new_page()
             await page.goto(url, wait_until="domcontentloaded", timeout=self.nav_timeout_ms)
             waited = 0
             while waited < self.max_wait_ms:
@@ -147,8 +148,17 @@ class PlaywrightRenderer:
                 waited += self.poll_interval_ms
             return await page.content(), False
         finally:
-            await page.close()
-            await context.close()
+            # 上下文是最外层必关资源:new_page/goto/close 任一步抛错都不能让它泄漏,
+            # 否则按篇×重试次数累积到整轮浏览器退出(检视 F6);两个 close 各自吞异常互不阻断。
+            if page is not None:
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+            try:
+                await context.close()
+            except Exception:
+                pass
 
     async def render(self, url: str) -> str:
         """渲染单篇文章，返回挑战通过后的完整 HTML；全部尝试失败返回空串。

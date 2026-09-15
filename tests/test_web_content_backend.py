@@ -38,7 +38,9 @@ def test_profile_routing():
     assert resolve_profile("https://claude.com/blog/foo").name == "claude-blog"
     assert resolve_profile("https://cursor.com/changelog/06-18-26").name == "cursor-changelog"
     assert resolve_profile("https://www.qbitai.com/2026/xxx.html").name == "qbitai-article"
-    assert resolve_profile("https://aiera.com.cn/2026/06/23/x").name == "aiera-article"
+    assert resolve_profile("https://www.ithome.com/1/002/341.htm").name == "ithome-article"
+    # 新智元自 issue #79 改走 WP REST,不再经浏览器后端,专用 Profile 已删
+    assert resolve_profile("https://aiera.com.cn/2026/06/23/x").name == "default-pruning"
     # 未匹配站点回退默认 Profile
     assert resolve_profile("https://example.com/whatever").name == "default-pruning"
 

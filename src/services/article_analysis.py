@@ -367,17 +367,6 @@ def _is_credentialed_source(source: SourceConfigRecord | None) -> bool:
     return source_is_credentialed(source)
 
 
-# 系统自产的内容记录:公共日报本身就是「已分析文章」的汇编产物,再拿去评分/打标只会
-# 每天固定失败一次(issue #79 生产日志 `Article analysis failed (article_id=daily_brief_…)`),
-# 且即便成功也没有读者面语义(个人早报/检索/台账都单独排除它)。入队钩子直接判 ineligible
-# 不建行,补偿扫描与全量回填的候选查询同样排除,三处共用这一份名单。
-SYSTEM_GENERATED_SOURCE_IDS: frozenset[str] = frozenset({"dorami_daily_brief"})
-
-
-def is_system_generated_source(source_id: str | None) -> bool:
-    return (source_id or "").strip() in SYSTEM_GENERATED_SOURCE_IDS
-
-
 def _source_allows_analysis(
     source: SourceConfigRecord | None,
     *,
@@ -570,8 +559,6 @@ def queue_article_analysis(
         return "ineligible"
     article = session.get(ArticleRecord, article_id)
     if article is None or not article.has_content or not (article.content or "").strip():
-        return "ineligible"
-    if is_system_generated_source(article.source_id):
         return "ineligible"
     # Archive Sync v2 把平台源的分析权威铆在 producer；即使两端
     # 都是 role=all，接收端的入队、补偿扫描和手动 force 也不得重算。
@@ -807,7 +794,6 @@ def scan_analysis_backfill(
             ArticleRecord.has_content.is_(True),
             ArticleRecord.content.is_not(None),
             ArticleRecord.analysis_authority_id == "",
-            ArticleRecord.source_id.not_in(list(SYSTEM_GENERATED_SOURCE_IDS)),
             func.substr(ArticleRecord.fetched_date, 1, 10) >= coarse_start,
             func.substr(ArticleRecord.fetched_date, 1, 10) <= coarse_end,
             or_(

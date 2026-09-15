@@ -760,7 +760,10 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
     # 三位 + 三位 .htm,百万位再进位也不用再改。
     article_url_patterns = ["ithome.com/"]
     exclude_url_patterns = ["next.ithome.com", "m.ithome.com", "quan.ithome.com"]
-    _ARTICLE_URL_RE = re.compile(r"ithome\.com/\d/\d{3}/\d{3}\.htm")
+    # 主机与路径分别精确校验(检视 F5):宽松的子串 search 会把 evilithome.com 或带跳转参数的
+    # 相似链接也当文章;详情页只认 www.ithome.com(裸域一并接受),路径整体匹配文章形状。
+    _ARTICLE_HOSTS = frozenset({"www.ithome.com", "ithome.com"})
+    _ARTICLE_PATH_RE = re.compile(r"/\d/\d{3}/\d{3}\.htm")
     # 旁路验收：crawl4ai 详情与生产路径相似度 0.81（≥0.8 门槛），已迁移；未装 crawl4ai 时回退专用提取器
     web_backend_enabled = True
     default_limit = 18
@@ -789,7 +792,10 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
             return ""
 
     def _matches_article_url(self, url: str) -> bool:
-        if not self._ARTICLE_URL_RE.search(url):
+        parsed = urlparse(url)
+        if (parsed.hostname or "").lower() not in self._ARTICLE_HOSTS:
+            return False
+        if not self._ARTICLE_PATH_RE.fullmatch(parsed.path or ""):
             return False
         return super()._matches_article_url(url)
 
