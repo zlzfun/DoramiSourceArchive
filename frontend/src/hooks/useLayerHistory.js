@@ -13,6 +13,23 @@ import { useEffect, useRef } from 'react';
 const layerStack = [];       // 打开序的层登记(尾=栈顶)
 let suppressNextPop = 0;     // 程序性 history.back() 的自触发 popstate 计数
 let listening = false;
+const pendingUnmounts = new Map();
+
+function retireUnmountedLayers() {
+  let count = 0;
+  for (const [entry, mounted] of pendingUnmounts) {
+    if (mounted.current) continue; // StrictMode 的重新挂载仍复用这条历史
+    const index = layerStack.indexOf(entry);
+    if (index < 0) continue; // 已经由返回键消费
+    layerStack.splice(index, 1);
+    count += 1;
+  }
+  pendingUnmounts.clear();
+  if (count) {
+    suppressNextPop += 1;
+    try { window.history.go(-count); } catch { suppressNextPop -= 1; }
+  }
+}
 
 function ensureListener() {
   if (listening || typeof window === 'undefined') return;
@@ -55,13 +72,17 @@ export function useLayerHistory(open, onClose) {
     }
   }, [open]);
 
-  // 卸载兜底:层组件带 open 态卸载时清登记(不动历史,避免卸载竞态误退页面)
-  useEffect(() => () => {
-    const entry = entryRef.current;
-    if (entry) {
-      const idx = layerStack.indexOf(entry);
-      if (idx >= 0) layerStack.splice(idx, 1);
-      entryRef.current = null;
-    }
+  // 版式切换会卸载多个层；合并回退一次，避免留下空的返回步骤。
+  // 延迟到当前 commit 后，StrictMode 的清理/重挂载不应删除仍在使用的历史。
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      const entry = entryRef.current;
+      if (!entry) return;
+      if (pendingUnmounts.size === 0) queueMicrotask(retireUnmountedLayers);
+      pendingUnmounts.set(entry, mountedRef);
+    };
   }, []);
 }

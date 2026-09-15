@@ -312,7 +312,8 @@ export function useReaderState({
   const summaryCacheRef = useRef(new Map());
 
   const listRef = useRef(null);      // 列表滚动容器(切作用域 scrollTop 归零)
-  const sentinelRef = useRef(null);  // 无限滚动哨兵:进入视口即追加下一页
+  // 回调 ref 跟随视图替换的 DOM；缩放或切页后不会继续观察已卸载的哨兵。
+  const [sentinel, sentinelRef] = useState(null);
   // 正文缓存（id → content）+ 「最新选中 id」防竞态：快速连点时丢弃晚到的过期正文响应
   const bodyCacheRef = useRef(new Map());
   const activeIdRef = useRef(null);
@@ -841,8 +842,7 @@ export function useReaderState({
   // 依赖变化即重建 observer——追加后 articles.length 变、loadingMore 置真都会重新求值,
   // 天然防重入(loadingMore 时不触发)。
   useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el || !hasMore) return;
+    if (!sentinel || !hasMore) return;
     const io = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting && hasMore && !loadingMore && !articlesLoading) {
@@ -851,9 +851,9 @@ export function useReaderState({
       },
       { rootMargin: '400px' },
     );
-    io.observe(el);
+    io.observe(sentinel);
     return () => io.disconnect();
-  }, [hasMore, loadingMore, articlesLoading, articles.length, loadArticles]);
+  }, [sentinel, hasMore, loadingMore, articlesLoading, articles.length, loadArticles]);
 
   // ── 订阅 / 取消订阅 ──
   const applyResult = (result) => {

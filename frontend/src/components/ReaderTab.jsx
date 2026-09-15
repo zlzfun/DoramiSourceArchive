@@ -39,7 +39,6 @@ import ReaderAiPanel from './ReaderAiPanel';
 import ShareMenu from './ShareMenu';
 import ContextMenu from './ContextMenu';
 import { useContextMenu } from '../hooks/useContextMenu';
-import { useReaderState } from '../hooks/useReaderState';
 import { resolveCompany } from '../sourceTaxonomy';
 import DiscoverPage from './DiscoverPage';
 import SocialFlow from './SocialFlow';
@@ -72,10 +71,8 @@ import AiReadingCard from './AiReadingCard';
 import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
 import { mediaProxyUrl } from '../api';
 
-// 数据层逻辑(源目录/订阅/未读/收藏/列表/正文缓存/AI 缓存/深链/菜单 items)已抽入
-// hooks/useReaderState.js(移动波 Wave1)——本文件只余桌面四带式的 JSX 与视图胶水:
-// overlay 滚动条、memo 行的 latest-ref 稳定回调、右键弹层(useContextMenu)、品牌图回退。
-// 移动壳消费同一份 useReaderState,各写各的交互原语(hover/右键 vs 常显/长按)。
+// ReaderWorkspace 持有共享数据与阅读位置；这里仅负责桌面四栏与鼠标交互。
+// 条目、正文等内容组件继续供移动视图复用。
 
 // 日期分组 & 条目时刻的实现已上移 utils/readerTime.js —— 社交媒体流(SocialFlow)
 // 与条目列共用同一套组头语法,复制一份会漂移。
@@ -367,34 +364,19 @@ export default function ReaderTab({
   onExitReader = null,
   // 反馈有未读管理员回复(读者账号):轨底头像/设置钮挂轻通知点
   feedbackUnread = 0,
-  // ── 站内分享深链(#/reader/a/{id}):带 id 进来时直接开这篇,消费后回调清空 ──
-  initialArticleId = '',
-  onDeepLinkConsumed,
+  rs,
+  view,
 }) {
-  const [brandFailed, setBrandFailed] = useState(false); // 品牌 logo 加载失败 → 回退铃铛
-  // issue #56 落地页早报波:登录 / 刷新落地 = 个人早报页(能力位开着且没带站内深链——深链压过落地页;
-  // admin 的 default_surface 只决定进管理台还是阅读器,进来同样落早报)。不记住上次停留,首屏恒为早报。
-  const [briefOpen, setBriefOpen] = useState(() => personalDigestEnabled && !initialArticleId);
-  // 早报「外出」上下文(issue #23 三稿):从早报点卡片进原文后阅读窗顶部出返回带——
-  // {date, revision, scrollTop, itemId, label, sequence[{id,article_id,title}], index}。
-  // 用户主动改作用域(视图轨/源栏/发现页)即清;同列表内翻篇保留。restoreRef 把它交还早报页落位。
-  const [briefReturn, setBriefReturn] = useState(null);
-  const [briefRestore, setBriefRestore] = useState(null); // 返回时交还早报页落位的那份上下文
-  const leaveBriefTrail = useCallback(() => setBriefReturn(null), []);
-  // 兴趣(issue #27 三稿「兴趣不是地方」):编辑面并入发现页第三段「兴趣」,视图轨不再有兴趣钮;
-  // 读东西永远在容器里,兴趣以源栏过滤面板的「兴趣」开关作透镜。首登引导 = 发现页兴趣段顶部一条横幅
-  // (不锁页,视图轨照常可走),完成即落早报。发现页的段位提升到这里:引导/「我的」入口要能指定落到兴趣段。
-  const [discoverTab, setDiscoverTab] = useState('sources'); // sources | collections | interests
-  const [interestVersion, setInterestVersion] = useState(0);
+  const [brandFailed, setBrandFailed] = useState(false);
+  const {
+    briefOpen, setBriefOpen, briefReturn, setBriefReturn, briefRestore, setBriefRestore,
+    discoverTab, setDiscoverTab, interestVersion, setInterestVersion,
+  } = view;
+  const leaveBriefTrail = useCallback(() => setBriefReturn(null), [setBriefReturn]);
   const onboardingRequired = personalDigestEnabled
     && account?.role === 'user'
     && account?.interest_onboarding_completed === false;
   const pageOpen = briefOpen;
-
-  useEffect(() => {
-    if (!personalDigestEnabled) setBriefOpen(false);
-  }, [personalDigestEnabled]);
-  const closeBriefBeforeArticleOpen = useCallback(() => { setBriefOpen(false); }, []);
 
   const {
     // 源目录 / 订阅
@@ -434,21 +416,14 @@ export default function ReaderTab({
     activeSummary, summarizing, handleSummarize,
     // 上下文菜单 items(桌面右键在此装配弹层)
     buildArticleMenuItems, buildSourceMenuItems, buildSocialMenuItems,
-  } = useReaderState({
-    showToast,
-    account,
-    initialArticleId,
-    onDeepLinkConsumed,
-    onBeforeOpenArticle: closeBriefBeforeArticleOpen,
-    interestAxisEnabled: personalDigestEnabled,
-  });
+  } = rs;
 
   // 首登引导(issue #56 方案 B「早报前置、引导内嵌」):不再强制落发现页兴趣段——新账号首屏就是早报,
   // 引导横幅挂在早报页顶(PersonalBriefPage onboarding),发现钮红点照旧挂到完成或跳过
   // 「发现更多来源」类入口(源栏底 / 条目列与阅读窗空态):明说的是「来源」,段位必须落「源」——
   // 发现页段位是粘性的(首登引导落过兴趣段后会一直停在那),不切回会让「发现更多来源」开到标签清单;
   // 形态随 openDiscover 缺省取当前容器(issue #55)。视图轨 Compass 是全局入口,沿用上次段位不动。
-  const openDiscoverSources = useCallback((opts) => { setDiscoverTab('sources'); openDiscover(opts); }, [openDiscover]);
+  const openDiscoverSources = useCallback((opts) => { setDiscoverTab('sources'); openDiscover(opts); }, [openDiscover, setDiscoverTab]);
   // 「兴趣」的编辑入口(源栏开关灰态提示 / 引导):直落发现页兴趣段
   const openInterests = useCallback(() => {
     supersedePendingOpen();
@@ -456,7 +431,7 @@ export default function ReaderTab({
     leaveBriefTrail();
     setDiscoverTab('interests');
     openDiscover({ shape: 'all' });
-  }, [supersedePendingOpen, leaveBriefTrail, openDiscover]);
+  }, [supersedePendingOpen, leaveBriefTrail, openDiscover, setBriefOpen, setDiscoverTab]);
   const listPlan = useMemo(
     () => buildListPlan(articles, grouping),
     [articles, grouping],
