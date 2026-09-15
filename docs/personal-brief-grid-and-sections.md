@@ -1,6 +1,6 @@
 # 个人早报:板块顺序、分值驱动网格与公共日报排除(issue #74)
 
-> 状态:实现中(分支 `feat/issue-74-brief-grid`,2026-09-14)。样页 `docs/design/dorami-brief-grid-quiet.html`
+> 状态:PR #80 检视收口,待合入(分支 `feat/issue-74-brief-grid`,2026-09-14 实现,2026-09-15 检视)。样页 `docs/design/dorami-brief-grid-quiet.html`
 > (六种策略对照 + 「同一张数换分数」画板 + 整页节奏,策略 F 为拍板方案)。
 
 ## 0. 起因
@@ -54,6 +54,19 @@
 
 明确不做:板块间借条(破坏板块语义)、按运营旋钮联动阈值、后端算版式(版式是呈现层的事,快照里有分数就够)。
 
-## 4. 检视记录
+## 4. 检视记录(codex gpt-5.6-sol,本地 Herdr 协商式,2026-09-15)
 
-(待 codex 本地协商式检视后填写。)
+- **首轮**:无 P1/P2,3 条 P3,全部接受、无分歧:①活跃文档与 `generate_personal_digest()` docstring 仍把已退役的
+  `DAILY_BRIEF_READY` 写成现役入口(`personal-brief-rebuild-entrypoints.md` / `docs/README.md`)→ 改当前口径并明写退役;
+  ②排序集成用例三篇同源、依赖选篇层每源上限放宽才凑够 5 篇 → 改三源各 ≤ 2 篇,另加 `_assign_positions` 瞬态记录单测
+  (板块序 / 未登记殿后按名稳定 / 缺分殿后 / 同分保序 / 重大事件恒前);③规划器分支多却无可重复用例 → `node:test` 零依赖接入
+  `npm test` 与 CI(样页 22 组场景 + 阈值边界 + 缺分 + cols 1–3 × 0–6 张 × 6 种分数的穷举不变量)。
+  codex 看过没问题的面:日报排除的完备性(archive sync 收养 / admin / scheduled / authority due / 前日排除都过 resolver 谓词)、
+  `add_all` 论证(三段构建无其它 add / merge / relationship,pending 路径 delete+flush 后插入)、重大事件准入与代表选择未变、
+  两列下 `is-split` 与 720px 容器规则的交互、mobile `1 / -1` 特异性、升级当天 `scope_stale` 一次性提示。
+  保留 `personal_briefs._source_readiness()` 的日报特例:升级当天已有的旧 pending edition 靠它正确收尾。
+- **复检**:①②通过;③抓出我方一处期望值写错(阈值注入用例:gap 0.1 下余 1 头卡 8.2 − 8.0 = 0.2 已够相对通栏,正确 `[6,2,2,2]`,
+  `[4,2,4,2]` 对四张卡不可达)——红用例是随 `npm test | tail` 吞掉退出码推上去的,已修;另一条 P3:`scores` 缺省回落空数组的
+  防御分支未覆盖 → 补 `undefined / null → []` 断言。
+- **终审**:两项关闭,无 findings;`npm test` 7 passed,`briefGrid.js` 行 / 分支 / 函数覆盖 100%。三轮全程写文件往返
+  (`.review/` 下 prompt / reply / fixlist / report,不入库)。
