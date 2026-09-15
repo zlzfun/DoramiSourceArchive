@@ -17,11 +17,11 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field, StringConstraints
 from fastapi.responses import JSONResponse, StreamingResponse
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from api import deps
 from api.tokens import AUTH_SECRET
-from models.db import ArticleRecord
+from models.db import ArticleRecord, SourceConfigRecord
 from services.podcast_artifacts import (
     ARTIFACT_KINDS,
     PodcastArtifactConflict,
@@ -418,22 +418,45 @@ def list_artifacts(
     status: str = "",
     kind: str = "",
     limit: int = Query(100, ge=1, le=500),
+    # issue #76 接口卫生:分页 + 节目搜索 + 排序,响应带 total;每行补节目标题与来源名。
+    offset: int = Query(0, ge=0),
+    q: str = Query("", max_length=200),
+    sort: Literal["created", "size", "published"] = "created",
+    order: Literal["asc", "desc"] = "desc",
 ):
+    store = _store()
     try:
-        rows = _store().list(
-            episode_id=episode_id, status=status, kind=kind, limit=limit
+        rows = store.list(
+            episode_id=episode_id, status=status, kind=kind, limit=limit,
+            offset=offset, q=q, sort=sort, order=order,
         )
+        total = store.count(episode_id=episode_id, status=status, kind=kind, q=q)
     except PodcastArtifactError as exc:
         raise _as_http_error(exc) from exc
-    references = _store().active_processing_reference_counts(row.id for row in rows)
-    return {
-        "items": [
-            serialize_artifact(
-                row, active_processing_refs=references.get(row.id, 0)
-            )
-            for row in rows
-        ]
-    }
+    references = store.active_processing_reference_counts(row.id for row in rows)
+    titles: dict[str, tuple[str, str]] = {}
+    episode_ids = list({row.episode_id for row in rows})
+    if episode_ids:
+        with Session(_app().db_sink.engine) as session:
+            source_names = {
+                config.source_id: config.name
+                for config in session.exec(select(SourceConfigRecord)).all()
+            }
+            for article in session.exec(
+                select(ArticleRecord).where(ArticleRecord.id.in_(episode_ids))
+            ).all():
+                titles[article.id] = (
+                    str(article.title or ""),
+                    str(source_names.get(article.source_id) or article.source_id or ""),
+                )
+    items = []
+    for row in rows:
+        payload = serialize_artifact(row, active_processing_refs=references.get(row.id, 0))
+        title, source_name = titles.get(row.episode_id, ("", ""))
+        payload["episode_title"] = title
+        payload["source_name"] = source_name
+        items.append(payload)
+    return {"items": items, "total": total, "offset": offset, "limit": limit}
 
 
 @router.post(
@@ -812,6 +835,13 @@ def list_podcast_premium_tasks(
     ] = "all",
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1, le=100),
+    # issue #76:列头即操作——三根正交筛选轴 + 节目搜索 + 排序;旧 status 参数保留兼容。
+    q: str = Query("", max_length=200),
+    stage: str = Query(""),
+    verdict: str = Query(""),
+    tts: str = Query(""),
+    sort: str = Query("publish"),
+    order: Literal["asc", "desc"] = "desc",
 ):
     app = _app()
     try:
@@ -820,9 +850,29 @@ def list_podcast_premium_tasks(
             status_filter=status,
             page=page,
             page_size=page_size,
+            q=q,
+            stage=stage,
+            verdict=verdict,
+            tts=tts,
+            sort=sort,
+            order=order,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get(
+    "/api/admin/podcast-premium-tasks/{episode_id}",
+    dependencies=[Depends(deps.require_admin)],
+)
+def podcast_premium_task_detail(episode_id: str):
+    """单集抽屉载荷:任务行 + 处理时间线 + 文本产物 + 精简音频(issue #76)。"""
+
+    app = _app()
+    detail = podcast_premium_service.episode_detail(app.db_sink.engine, episode_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="播客单集不存在")
+    return detail
 
 
 @router.put(

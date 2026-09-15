@@ -15,6 +15,25 @@ function windowedPages(page, total) {
   return out;
 }
 
+// 表脚范式(issue #76 归并稿 P2 #15):「共 N 条 · 第 a–b 条」+ 页码,所有管理面表格
+// 同一句式;单页时只留计数(有 extra 时一并显示),不画页码。
+export function TableFoot({ total, page, pageSize, onPage, extra = null }) {
+  const safeTotal = Number(total || 0);
+  const totalPages = Math.max(1, Math.ceil(safeTotal / Math.max(1, pageSize)));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  if (safeTotal === 0 && !extra) return null;
+  const start = safeTotal === 0 ? 0 : (safePage - 1) * pageSize + 1;
+  const end = Math.min(safePage * pageSize, safeTotal);
+  return (
+    <div className="table-foot">
+      <span className="tiny-meta">
+        {extra}{extra ? ' · ' : ''}共 {safeTotal.toLocaleString()} 条{safeTotal > pageSize ? ` · 第 ${start}–${end} 条` : ''}
+      </span>
+      <Pager page={safePage} totalPages={totalPages} onPage={onPage} />
+    </div>
+  );
+}
+
 export default function Pager({ page, totalPages, onPage }) {
   if (totalPages <= 1) return null;
   const safePage = Math.min(Math.max(1, page), totalPages);

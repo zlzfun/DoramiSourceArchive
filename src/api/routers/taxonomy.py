@@ -15,6 +15,8 @@ from api import deps
 from config import settings
 from models.db import (
     AppSettingRecord,
+    ArticleRecord,
+    ArticleTagAssignmentRecord,
     CmsTagAliasRecord,
     CmsTagCandidateEvidenceRecord,
     CmsTagCandidateRecord,
@@ -544,6 +546,191 @@ def delete_candidate(
 @router.get("/api/admin/taxonomy/state")
 def taxonomy_state(session: Session = Depends(deps.get_session)):
     return taxonomy_service.taxonomy_governance_state(session)
+
+
+@router.get("/api/admin/cms-tags/{tag_id}")
+def get_tag(tag_id: int, session: Session = Depends(deps.get_session)):
+    tag = session.get(CmsTagRecord, tag_id)
+    if tag is None:
+        raise HTTPException(status_code=404, detail="标签不存在")
+    return _tag_payload(session, tag)
+
+
+@router.get("/api/admin/cms-tag-candidates/{candidate_id}")
+def get_candidate(candidate_id: int, session: Session = Depends(deps.get_session)):
+    candidate = session.get(CmsTagCandidateRecord, candidate_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="候选不存在")
+    return _candidate_payload(session, candidate)
+
+
+def _tag_hits_7d(session: Session, tag_ids: list[int]) -> dict[int, tuple[int, int]]:
+    """近 7 天按 fetched_date 的 (文章数, 来源数),供标签总账「近 7 天」列排序。"""
+
+    if not tag_ids:
+        return {}
+    since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=7)).date().isoformat()
+    rows = session.exec(
+        select(
+            ArticleTagAssignmentRecord.tag_id,
+            func.count(func.distinct(ArticleTagAssignmentRecord.article_id)),
+            func.count(func.distinct(ArticleRecord.source_id)),
+        )
+        .join(ArticleRecord, ArticleRecord.id == ArticleTagAssignmentRecord.article_id)
+        .where(
+            ArticleTagAssignmentRecord.tag_id.in_(tag_ids),
+            func.substr(ArticleRecord.fetched_date, 1, 10) >= since,
+        )
+        .group_by(ArticleTagAssignmentRecord.tag_id)
+    ).all()
+    return {int(tag_id): (int(articles), int(sources)) for tag_id, articles, sources in rows}
+
+
+@router.get("/api/admin/taxonomy/ledger")
+def taxonomy_ledger(
+    type: str = Query("all", pattern="^(all|tag|candidate)$"),
+    kind: Optional[str] = None,
+    status: Optional[str] = None,
+    q: str = "",
+    sort: str = Query("hits", pattern="^(hits|name|updated)$"),
+    order: str = Query("desc", pattern="^(asc|desc)$"),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=200),
+    session: Session = Depends(deps.get_session),
+):
+    """规范标签 ∪ 候选 的统一总账(issue #76 拍板②:一张表 + 抽屉)。
+
+    两种实体在同一张表里按「近 7 天」并排排序、服务端分页与搜索;行只带列表需要的
+    轻字段,详情(别名全量 / 证据)由抽屉按 id 另取。status 按实体各自的词表匹配——
+    传 ``candidate`` 只会命中候选,传 ``active`` 只会命中标签,不需要调用方分流。
+    """
+
+    needle = q.strip()
+    normalized = taxonomy_service.normalize_label(needle) if needle else ""
+    rows: list[dict[str, Any]] = []
+    tag_count = 0
+    candidate_count = 0
+    if type in {"all", "tag"}:
+        query = select(CmsTagRecord)
+        if kind:
+            query = query.where(CmsTagRecord.kind == kind)
+        if status:
+            query = query.where(CmsTagRecord.status == status)
+        if needle:
+            alias_tag_ids = set(
+                session.exec(
+                    select(CmsTagAliasRecord.tag_id).where(
+                        CmsTagAliasRecord.alias.contains(needle)
+                    )
+                ).all()
+            )
+            conditions = [
+                CmsTagRecord.name_zh.contains(needle),
+                CmsTagRecord.name_en.contains(needle),
+                CmsTagRecord.code.contains(needle),
+                CmsTagRecord.normalized_name.contains(normalized or needle),
+            ]
+            if alias_tag_ids:
+                conditions.append(CmsTagRecord.id.in_(alias_tag_ids))
+            query = query.where(or_(*conditions))
+        tags = list(session.exec(query).all())
+        tag_count = len(tags)
+        tag_ids = [int(tag.id) for tag in tags if tag.id is not None]
+        hits = _tag_hits_7d(session, tag_ids)
+        alias_counts: dict[int, int] = {}
+        if tag_ids:
+            for tag_id, count in session.exec(
+                select(CmsTagAliasRecord.tag_id, func.count(CmsTagAliasRecord.id))
+                .where(CmsTagAliasRecord.tag_id.in_(tag_ids))
+                .group_by(CmsTagAliasRecord.tag_id)
+            ).all():
+                alias_counts[int(tag_id)] = int(count)
+        for tag in tags:
+            articles, sources = hits.get(int(tag.id), (0, 0))
+            rows.append({
+                "type": "tag",
+                "id": tag.id,
+                "code": tag.code,
+                "kind": tag.kind,
+                "name_zh": tag.name_zh,
+                "name_en": tag.name_en,
+                "status": tag.status,
+                "user_selectable": bool(tag.user_selectable),
+                "entity_type": tag.entity_type,
+                "parent_id": tag.parent_id,
+                "replacement_id": tag.replacement_id,
+                "alias_count": alias_counts.get(int(tag.id), 0),
+                "hits_7d": articles,
+                "sources_7d": sources,
+                "updated_at": tag.updated_at,
+            })
+    if type in {"all", "candidate"}:
+        query = select(CmsTagCandidateRecord)
+        if kind:
+            query = query.where(CmsTagCandidateRecord.proposed_kind == kind)
+        if status:
+            query = query.where(CmsTagCandidateRecord.status == status)
+        if needle:
+            query = query.where(
+                or_(
+                    CmsTagCandidateRecord.normalized_label.contains(normalized or needle),
+                    CmsTagCandidateRecord.label.contains(needle),
+                )
+            )
+        candidates = list(session.exec(query).all())
+        candidate_count = len(candidates)
+        nearest_ids = [c.nearest_tag_id for c in candidates if c.nearest_tag_id]
+        nearest_names = {
+            tag.id: (tag.name_zh or tag.name_en or tag.code)
+            for tag in session.exec(select(CmsTagRecord).where(CmsTagRecord.id.in_(nearest_ids))).all()
+        } if nearest_ids else {}
+        for candidate in candidates:
+            rows.append({
+                "type": "candidate",
+                "id": candidate.id,
+                "label": candidate.label,
+                "kind": candidate.proposed_kind,
+                "status": candidate.status,
+                "hits_7d": int(candidate.support_article_count_7d or 0),
+                "sources_7d": int(candidate.distinct_source_count_7d or 0),
+                "mean_confidence": candidate.mean_confidence,
+                "nearest_tag_id": candidate.nearest_tag_id,
+                "nearest_tag_name": nearest_names.get(candidate.nearest_tag_id, ""),
+                "nearest_similarity": candidate.nearest_similarity,
+                "risk_flags": json.loads(candidate.risk_flags_json or "[]"),
+                "updated_at": candidate.last_seen_at,
+            })
+    if sort == "name":
+        key = lambda row: str(row.get("name_zh") or row.get("label") or row.get("name_en") or "")  # noqa: E731
+    elif sort == "updated":
+        key = lambda row: str(row.get("updated_at") or "")  # noqa: E731
+    else:
+        key = lambda row: (int(row.get("hits_7d") or 0), int(row.get("sources_7d") or 0))  # noqa: E731
+    rows.sort(key=key, reverse=(order == "desc"))
+    page = rows[offset:offset + limit]
+    candidate_page_ids = [row["id"] for row in page if row["type"] == "candidate"]
+    if candidate_page_ids:
+        evidence_counts = {
+            int(candidate_id): int(count)
+            for candidate_id, count in session.exec(
+                select(
+                    CmsTagCandidateEvidenceRecord.candidate_id,
+                    func.count(),
+                )
+                .where(CmsTagCandidateEvidenceRecord.candidate_id.in_(candidate_page_ids))
+                .group_by(CmsTagCandidateEvidenceRecord.candidate_id)
+            ).all()
+        }
+        for row in page:
+            if row["type"] == "candidate":
+                row["evidence_count"] = evidence_counts.get(int(row["id"]), 0)
+    return {
+        "items": page,
+        "total": len(rows),
+        "counts": {"tags": tag_count, "candidates": candidate_count},
+        "offset": offset,
+        "limit": limit,
+    }
 
 
 @router.get("/api/admin/taxonomy/interest-catalog-policy")

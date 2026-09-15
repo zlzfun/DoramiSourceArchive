@@ -16,6 +16,10 @@
   P1 账户治理规模化[批量+过滤排序两点名痛点] → P2 运维可靠性 → P3 优化/文档),含三项待负责人决策与整改分层。
   **P0(M01–M04)v3.40.4、账户管理 V2(M05/M06/M07/M19)v3.41.0、运维列表规模化(M08/M09/M11/M17)
   v3.42.0 已落地**,整改记录见文首;余项与裁剪注记见 backlog。
+- ◉ [admin-surface-refactor-plan.md](./admin-surface-refactor-plan.md) — **运维面「播客」与「分析与标签」重构(issue #76)**:
+  两波 codex 管理面拉齐到管理面纪律——拍板记录(信息架构 / 表格+抽屉 / 表单卡 / 回填默认档 / 内容页隐藏时间窗 /
+  单集抽屉)、前端落地面(PodcastZone / TaxonomyLedger / 归一层 / 共享 KPI+TableFoot)、后端接口卫生(任务三轴筛选 /
+  音频分页 / 标签统一总账 / 单集详情)、隔离栈 Playwright 验收与有意边界。
 - ◉ [configuration.md](./configuration.md) — `config/*.ini` 配置项逐节说明(runtime 角色/auth/RAG/LLM/
   网络代理),含生产 production.ini 与环境变量覆盖。
 - ◉ [deploy-docker.md](./deploy-docker.md) — **Docker 部署(推荐路径)**:compose 双容器形态/
