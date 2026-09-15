@@ -26,6 +26,9 @@
 - ◉ [release-process.md](./release-process.md) — **发布流程:tag 即发布(2026-09-14)**:合入≠上线,
   annotated tag 是唯一发布单元;`scripts/release.sh` 发版(版本号只在发版时改,PR 不 bump)/
   两条部署脚本按 tag 部署(`--here` 显式例外)/CI 门禁与自动 Release/回滚=切 tag+恢复备份/分支保护清单。
+- ◉ [version-history.md](./version-history.md) — **波次史(1.x→3.57.x 逐波详细记录)**:2026-09-15 自 CLAUDE.md
+  `## Versioning` 节整体迁出(L0 超 150k 字符上限);每波的设计取舍/目检返修/codex 检视返修/被否方案全文在此,
+  CLAUDE.md 年表每波只留一行。**新波次的详细记录追加于此**。
 - ◉ [engage-sync-wave-plan.md](./engage-sync-wave-plan.md) — v3.18 互通波设计:读者反馈收件箱/
   管理员公告横幅(逐用户一次性 dismiss)/远程内容同步(接收方拉取,复用归档同步契约)。
 - ◉ [interest-lens-wave-plan.md](./interest-lens-wave-plan.md) — 兴趣即透镜波(v3.52.0 已实现,issue #27
