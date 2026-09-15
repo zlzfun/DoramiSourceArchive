@@ -84,6 +84,11 @@
   `/retry` 路径审计 reason 恢复按阶段措辞,新增 `podcastProcessing.test.js`)。
   **观察期(记 backlog)**:`DataTab` 行章与阅读抽屉仍用 `utils/analysis.js` 两套投影(下一波让旧投影成为归一层适配器);
   `handleApiError` 对非 JSON HTTP 错误补状态类别与下一步;标签总账端点 Python 侧合并排序再切页(目录百级可接受,显著增长再评估)。
+- **R3–R5(同日,收口复检)**:R3 判 R2-P1-2 仍有两处缺口——播客 / 回填 / 总账 loader 未把 404 映射为「未接入」、回填卡按
+  `items` 非空而非「有过快照」挂载提示;两处接受并修(`ebc0845`:`useLoader` / `loadJobs` / `load` 统一 `404 → unavailable`,
+  无快照整块态经 `StaleNotice` 分「刷新失败(可重试)/ 未接入(不给重试)」,回填卡改 `jobs.loaded`)。R4 又判播客两表无快照态缺
+  `unavailable` 分支,与磁盘代码不符(是压缩前旧上下文),按协商式流程给证据请其从磁盘重读(R5)——两处确认已闭环,**结论「可合入」**。
+  合并 `origin/main`(v3.57.2 + CLAUDE.md 瘦身)时 CLAUDE.md 冲突按新纪律解决:年表只加一行 + KDD 一段,详细记录入 `docs/version-history.md`。
 
 ## 5. 有意边界
 
