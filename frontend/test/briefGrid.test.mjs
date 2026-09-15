@@ -57,6 +57,11 @@ test('两列只有通栏与各半,单列全通栏', () => {
   assert.deepEqual(planSectionSpans([], 1), []);
 });
 
+test('scores 缺省(undefined / null)回落为空数组', () => {
+  assert.deepEqual(planSectionSpans(undefined, 3), []);
+  assert.deepEqual(planSectionSpans(null, 2), []);
+});
+
 test('阈值可注入', () => {
   // gap 压到 0.1:余 1 时头卡 8.2 − 8.0 = 0.2 已够「相对通栏」;余 2 时头对拉开成 ⅔ + ⅓
   assert.deepEqual(planSectionSpans([8.2, 8.0, 7.4, 6.6], 3, { gap: 0.1 }), [6, 2, 2, 2]);
