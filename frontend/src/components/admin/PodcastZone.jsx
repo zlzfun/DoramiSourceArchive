@@ -46,12 +46,18 @@ function useLoader(fetcher) {
       if (gen === genRef.current) setState({ status: 'ok', data, error: '' });
       return data;
     } catch (error) {
-      if (gen === genRef.current) setState((prev) => ({ status: 'error', data: prev.data, error: error.message }));
+      // 404 = 当前后端没有该端点(未接入),与普通失败分形;两者都保留旧快照(codex R3)
+      if (gen === genRef.current) {
+        setState((prev) => ({ status: error.status === 404 ? 'unavailable' : 'error', data: prev.data, error: error.message }));
+      }
       return undefined;
     }
   }, [fetcher]);
   return [state, load];
 }
+
+const UNAVAILABLE_TEXT = '当前后端版本没有该端点';
+const stateError = (state) => (state.status === 'error' ? state.error : state.status === 'unavailable' ? UNAVAILABLE_TEXT : '');
 
 const fetchTasks = (filters) => fetchPodcastPremiumTasks({
   q: filters.q, stage: filters.stage, verdict: filters.verdict, tts: filters.tts,
@@ -284,7 +290,7 @@ export default function PodcastZone({ showToast, refreshTick = 0, onOpenCredenti
               />
             </>
           ) : (
-            <KpiState label="单集统计" error={tasks.status === 'error' ? tasks.error : ''} onRetry={() => loadTasks(taskQuery)} />
+            <KpiState label="单集统计" error={stateError(tasks)} onRetry={() => loadTasks(taskQuery)} />
           )}
           {statsData ? (
             <>
@@ -299,7 +305,7 @@ export default function PodcastZone({ showToast, refreshTick = 0, onOpenCredenti
               />
             </>
           ) : (
-            <KpiState label="音频统计" error={stats.status === 'error' ? stats.error : ''} onRetry={() => loadStats()} />
+            <KpiState label="音频统计" error={stateError(stats)} onRetry={() => loadStats()} />
           )}
         </section>
 

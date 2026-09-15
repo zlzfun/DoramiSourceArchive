@@ -51,7 +51,8 @@ export default function FullAnalysisBackfillCard({ showToast, refreshTick = 0 })
   const [selection, setSelection] = useState('missing_or_outdated');
   const [sourceFilter, setSourceFilter] = useState('');
   const [estimate, setEstimate] = useState(null);
-  const [jobs, setJobs] = useState({ status: 'loading', items: [], total: 0, error: '' });
+  // loaded = 已有过一次成功快照(哪怕是空列表);失败提示以它而非 items 非空决定挂载(codex R3)
+  const [jobs, setJobs] = useState({ status: 'loading', items: [], total: 0, error: '', loaded: false });
   const [statusScope, setStatusScope] = useState('');
   const [page, setPage] = useState(1);
   const [estimating, setEstimating] = useState(false);
@@ -70,9 +71,9 @@ export default function FullAnalysisBackfillCard({ showToast, refreshTick = 0 })
     if (!quiet) setJobs((prev) => ({ ...prev, status: 'loading', error: '' }));
     try {
       const data = await fetchFullAnalysisBackfills({ limit: 100 });
-      if (gen === genRef.current) setJobs({ status: 'ok', items: data.items || [], total: Number(data.total ?? (data.items || []).length), error: '' });
+      if (gen === genRef.current) setJobs({ status: 'ok', items: data.items || [], total: Number(data.total ?? (data.items || []).length), error: '', loaded: true });
     } catch (error) {
-      if (gen === genRef.current) setJobs((prev) => ({ ...prev, status: 'error', error: error.message }));
+      if (gen === genRef.current) setJobs((prev) => ({ ...prev, status: error.status === 404 ? 'unavailable' : 'error', error: error.message }));
     }
   }, []);
 
@@ -142,7 +143,7 @@ export default function FullAnalysisBackfillCard({ showToast, refreshTick = 0 })
       <div className="card-pad backfill-head">
         <div className="card-head">
           <span className="card-title">历史文章完整分析</span>
-          {jobs.items.length > 0 && <StaleNotice status={jobs.status} error={jobs.error} onRetry={() => loadJobs()} label="任务" />}
+          {jobs.loaded && <StaleNotice status={jobs.status} error={jobs.error} onRetry={() => loadJobs()} label="任务" />}
         </div>
         <div className="backfill-row">
           <select className="form-input form-input-inline" value={range} onChange={(event) => setRange(event.target.value)} aria-label="回填时间范围">
@@ -180,8 +181,8 @@ export default function FullAnalysisBackfillCard({ showToast, refreshTick = 0 })
           </button>
         </div>
       </div>
-      {jobs.status === 'error' && jobs.items.length === 0 ? (
-        <p className="acct-empty tiny-meta" role="alert">{jobs.error} · <button type="button" className="kpi-sub-link" onClick={() => loadJobs()}>重试</button></p>
+      {(jobs.status === 'error' || jobs.status === 'unavailable') && !jobs.loaded ? (
+        <p className="acct-empty"><StaleNotice status={jobs.status} error={jobs.status === 'unavailable' ? '当前后端版本没有该端点' : jobs.error} onRetry={jobs.status === 'error' ? () => loadJobs() : undefined} label="任务" /></p>
       ) : (
         <>
           <div className="acct-scroll">

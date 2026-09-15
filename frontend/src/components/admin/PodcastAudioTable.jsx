@@ -61,10 +61,8 @@ export default function PodcastAudioTable({
           </button>
         </span>
       </div>
-      {state.status === 'error' && !data ? (
-        <p className="acct-empty tiny-meta" role="alert">
-          {state.error} · <button type="button" className="kpi-sub-link" onClick={onRetryLoad}>重试</button>
-        </p>
+      {(state.status === 'error' || state.status === 'unavailable') && !data ? (
+        <p className="acct-empty"><StaleNotice status={state.status} error={state.status === 'unavailable' ? '当前后端版本没有该端点' : state.error} onRetry={state.status === 'error' ? onRetryLoad : undefined} label="中文精简音频" /></p>
       ) : state.status === 'loading' && !data ? (
         <p className="acct-empty tiny-meta" aria-busy="true"><Loader2 className="mx-auto mb-1 h-4 w-4 animate-spin" />正在加载音频…</p>
       ) : (
