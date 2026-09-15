@@ -135,8 +135,10 @@
 .brief-sheet.is-mobile .brief-sheet-inner { padding: 6px 14px calc(28px + env(safe-area-inset-bottom)); }
 .brief-sheet.is-mobile .brief-mast { padding-bottom: 14px; }
 .brief-sheet.is-mobile .brief-mast-title { font-size: 28px; }
+/* 单列:桌面网格的 --span 在这里一律铺满(6 等分单元遇到单列模板会撑出隐式列,故显式 1 / -1) */
 .brief-sheet.is-mobile .brief-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
-.brief-sheet.is-mobile .brief-card, .brief-sheet.is-mobile .brief-card.is-lead, .brief-sheet.is-mobile .brief-card.is-wide { padding: 16px 16px 14px; }
+.brief-sheet.is-mobile .brief-grid .brief-card { grid-column: 1 / -1; }
+.brief-sheet.is-mobile .brief-card, .brief-sheet.is-mobile .brief-card.is-lead, .brief-sheet.is-mobile .brief-card.is-wide, .brief-sheet.is-mobile .brief-card.is-w4 { padding: 16px 16px 14px; }
 .brief-sheet.is-mobile .brief-card.is-lead .brief-card-title { font-size: 19px; }
 .brief-sheet.is-mobile .brief-card.is-lead .brief-card-sum { font-size: 13.5px; }
 .brief-sheet.is-mobile .brief-card-aside .brief-card-score { font-size: 26px; }

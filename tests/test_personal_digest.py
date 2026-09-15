@@ -34,7 +34,6 @@ from services.personal_digest import (  # noqa: E402
     freeze_personal_digest_scope,
     generate_personal_digest,
     materialize_desired_personal_digest_revision,
-    notify_public_daily_brief_ready,
     resolve_personal_digest_source_ids,
     start_personal_digest_edition,
 )
@@ -88,6 +87,7 @@ def _article(
     published_at: dt.datetime | None = None,
     score: float | None = 8.0,
     tagging_status: str = "succeeded",
+    genre: str = "industry_news",
 ) -> tuple[ArticleRecord, ArticleAnalysisRecord | None]:
     article_id = f"article-{number:02d}"
     published_at = published_at or NOW - dt.timedelta(hours=number)
@@ -110,7 +110,7 @@ def _article(
         quality_score=score,
         score_reason=f"reason {number}",
         summary=f"summary {number}",
-        content_genre="industry_news",
+        content_genre=genre,
         created_at=NOW_ISO,
         updated_at=NOW_ISO,
     )
@@ -269,11 +269,19 @@ def test_expected_and_due_are_frozen_separately_with_private_freshness(storage):
     assert frozen.source_state_snapshot[fresh_private]["due"] is False
 
 
-def test_enabled_public_daily_brief_is_due_without_a_collection_job(storage):
+def test_public_daily_brief_is_neither_in_scope_nor_due(storage):
+    """issue #74:公共日报不是早报素材——范围解析剔除它,就绪等待集也不再给它特例。"""
+
     with Session(storage.engine) as session:
-        session.add(AppSettingRecord(key="daily_brief_enabled", value="true"))
+        session.add_all([
+            _user(),
+            _subscribe("alice", "dorami_daily_brief,rss_a"),
+            AppSettingRecord(key="daily_brief_enabled", value="true"),
+        ])
         session.commit()
 
+        assert resolve_personal_digest_source_ids(session, "alice") == ["rss_a"]
+        assert resolve_personal_digest_source_ids(session, "nobody") == []
         due = calculate_due_source_ids(
             session,
             ["dorami_daily_brief"],
@@ -281,7 +289,7 @@ def test_enabled_public_daily_brief_is_due_without_a_collection_job(storage):
             scheduled_source_ids=[],
         )
 
-    assert due == ["dorami_daily_brief"]
+    assert due == []
 
 
 def test_remote_authority_public_source_is_due_without_local_collection_job(storage):
@@ -800,59 +808,6 @@ def test_unrelated_visibility_fanout_reuses_same_frozen_subscription_scope(stora
         assert unchanged.edition.id == ready.edition.id
         assert unchanged.edition.revision == ready.edition.revision
 
-
-def test_public_daily_brief_persistence_creates_one_revision_for_subscribers(storage):
-    with Session(storage.engine) as session:
-        session.add_all([
-            _user(),
-            _subscribe("alice", "dorami_daily_brief"),
-            AppSettingRecord(key="daily_brief_enabled", value="true"),
-            AppSettingRecord(key="personal_digest_enabled", value="true"),
-        ])
-        _seed_article(
-            session,
-            30,
-            source="dorami_daily_brief",
-            score=8.0,
-            published_at=NOW - dt.timedelta(hours=24),
-        )
-        session.commit()
-        first = generate_personal_digest(
-            session,
-            "alice",
-            now=NOW,
-            policy=DigestSelectionPolicy(target_items=1),
-        )
-        assert first.status == "ready"
-
-        _seed_article(
-            session,
-            31,
-            source="dorami_daily_brief",
-            score=8.5,
-            published_at=NOW + dt.timedelta(minutes=5),
-        )
-        session.commit()
-
-    assert notify_public_daily_brief_ready(
-        storage.engine,
-        report_date=NOW.date().isoformat(),
-        now=NOW + dt.timedelta(minutes=5),
-    ) == 1
-    assert notify_public_daily_brief_ready(
-        storage.engine,
-        report_date=NOW.date().isoformat(),
-        now=NOW + dt.timedelta(minutes=6),
-    ) == 0
-    with Session(storage.engine) as session:
-        editions = list(session.exec(
-            select(PersonalDigestEditionRecord).order_by(PersonalDigestEditionRecord.revision)
-        ).all())
-        assert [(row.revision, row.status) for row in editions] == [
-            (1, "ready"),
-            (2, "pending"),
-        ]
-        assert json.loads(editions[1].due_source_ids_json) == ["dorami_daily_brief"]
 
 
 def test_pending_edition_freezes_interests_before_later_preference_changes(storage):
@@ -1503,3 +1458,114 @@ def test_external_knobs_are_read_from_kv(storage):
         policy = selection_policy(session)
         assert policy.external_min_quality_score == 7.5
         assert policy.external_per_source_max == 5
+
+
+def test_public_daily_brief_never_enters_subscribed_pool_or_fallback(storage):
+    """issue #74:订阅了日报的读者,早报里不能出现「哆啦美 · AI资讯日报」。
+
+    范围层剔除之外,候选查询与降级兜底各有一道机械双保险——直接喂含日报的 source_ids 也拿不到它。
+    """
+
+    from services.personal_digest import _load_latest_fallback, load_digest_candidates
+
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "dorami_daily_brief,rss_a")])
+        _seed_article(session, 1, source="dorami_daily_brief", score=9.5)
+        _seed_article(session, 2, source="rss_a", score=7.0)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert result.status == "ready"
+        assert [item.article_id for item in result.items] == ["article-02"]
+        assert json.loads(result.edition.expected_source_ids_json) == ["rss_a"]
+
+        pool = load_digest_candidates(
+            session, ["dorami_daily_brief", "rss_a"], cutoff_at=NOW, window_hours=48
+        )
+        assert [candidate.article_id for candidate in pool] == ["article-02"]
+        latest = _load_latest_fallback(session, ["dorami_daily_brief", "rss_a"], [], limit=5)
+        assert [article.id for article, *_rest in latest] == ["article-02"]
+
+    with Session(storage.engine) as session:
+        session.add_all([_user("bob"), _subscribe("bob", "dorami_daily_brief,rss_b")])
+        _seed_article(session, 3, source="dorami_daily_brief", score=9.0)
+        _seed_article(session, 4, source="rss_b", score=4.0)
+        session.commit()
+
+        result = generate_personal_digest(session, "bob", now=NOW)
+
+        assert result.status == "degraded"
+        assert [item.article_id for item in result.items] == ["article-04"]
+
+
+def test_positions_follow_section_order_then_score(storage):
+    """issue #74:板块按 SECTION_ORDER 固定,板块内按分数降序——不再随通道与首次出现漂移。"""
+
+    # 三个来源各 ≤ 2 篇:不依赖选篇层的每源上限放宽(codex 检视 P3),排序断言只考排序
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a,rss_b,rss_c")])
+        _seed_article(session, 1, source="rss_a", score=8.5, genre="research_paper")
+        _seed_article(session, 2, source="rss_b", score=7.0, genre="model_release")
+        _seed_article(session, 3, source="rss_c", score=7.8, genre="industry_news")
+        _seed_article(session, 4, source="rss_a", score=6.5, genre="model_release")
+        _seed_article(session, 5, source="rss_b", score=9.0, genre="tutorial")
+        session.commit()
+
+        result = generate_personal_digest(
+            session, "alice", now=NOW, policy=DigestSelectionPolicy(target_items=5)
+        )
+
+        assert result.status == "ready"
+        assert [
+            (item.position, item.section, item.quality_score_snapshot) for item in result.items
+        ] == [
+            (0, "模型发布", 7.0),
+            (1, "模型发布", 6.5),
+            (2, "行业资讯", 7.8),
+            (3, "学术论文", 8.5),
+            (4, "工程实践", 9.0),
+        ]
+        stored = session.exec(
+            select(PersonalDigestItemRecord)
+            .where(PersonalDigestItemRecord.edition_id == result.edition.id)
+            .order_by(PersonalDigestItemRecord.position)
+        ).all()
+        assert [item.article_id for item in stored] == [item.article_id for item in result.items]
+
+
+def test_assign_positions_section_order_score_desc_missing_last_ties_stable():
+    """issue #74:_assign_positions 的四条规则——板块按 SECTION_ORDER、板块内分数降序、缺分殿后、
+    同分保序;未登记板块殿后且按名字稳定;重大事件恒前。纯函数,瞬态记录不落库。"""
+
+    from services.personal_digest import _assign_positions
+
+    def record(section: str, score: float | None, article_id: str, lane: str = "quality"):
+        return PersonalDigestItemRecord(
+            edition_id=1, article_id=article_id, position=0, section=section, selection_lane=lane,
+            quality_score_snapshot=score, matched_interest_codes_json="[]", ranking_features_json="{}",
+            coverage_adjustments_json="[]", selection_reason="", snapshot_json="{}", created_at=NOW_ISO,
+        )
+
+    records = [
+        record("学术论文", 8.5, "paper"),
+        record("模型发布", 7.0, "model-first"),
+        record("Z 未登记", 9.0, "unknown-z"),
+        record("重大事件", 8.0, "breaking", lane="breaking"),
+        record("模型发布", 7.0, "model-second"),
+        record("A 未登记", 5.0, "unknown-a"),
+        record("模型发布", None, "model-unscored"),
+        record("订阅源最新更新", 9.9, "fallback"),
+    ]
+    _assign_positions(records)
+
+    assert [(r.position, r.article_id) for r in records] == [
+        (0, "breaking"),
+        (1, "model-first"),
+        (2, "model-second"),
+        (3, "model-unscored"),
+        (4, "paper"),
+        (5, "fallback"),
+        (6, "unknown-a"),
+        (7, "unknown-z"),
+    ]

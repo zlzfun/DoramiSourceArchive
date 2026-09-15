@@ -77,7 +77,10 @@
   未配置视觉模型各链路与既有逐字一致;选图护栏(播客/不可外送源/小图/上限 4)、负缓存退避、预算超时转后台;真机验证记录。
 - ◉ [personal-brief-rebuild-entrypoints.md](./personal-brief-rebuild-entrypoints.md) — **个人早报重编入口收口(issue #33 §5,v3.51.1)**:
   兴趣/订阅变更只记录不触发重编,重编只剩手动与次日定时;今日端点 `interest_stale`/`scope_stale`
-  驱动「下次编排生效 · 立即重编」提示;系统侧保留公共日报就绪与管理员下架两处维护性触发。
+  驱动「下次编排生效 · 立即重编」提示;系统侧保留管理员下架的维护性触发(公共日报就绪追加自 issue #74 退役)。
+- ◉ [personal-brief-grid-and-sections.md](./personal-brief-grid-and-sections.md) — **个人早报板块顺序 / 分值驱动网格 / 公共日报排除(issue #74)**:
+  日报剔出早报范围并退役 daily_brief_ready 触发链;板块按 SECTION_ORDER 固定、板块内分数降序;网格 6 等分单元,宽度跟分数走
+  (≥ 9 通栏、并排分差 ≥ 1 用 ⅔ + ⅓、余 1 头卡够高才通栏否则 2 + 2),样页 `design/dorami-brief-grid-quiet.html`。
 - ◉ [analysis-brief-review-plan.md](./analysis-brief-review-plan.md) — **入库分析与日报链路审视收口**(v3.48 同 PR):
   补评喂同一闭集、无正文候选按标题走同一把尺子、worker 轻列扫描 + 版本重跑慢滴、编辑喂分析事实、
   分数直方图与补评撞车读数、同事件机械预聚类、跨天对照物带要点;审视结论与明确不做见 §0/§5。

@@ -6,6 +6,9 @@
 
 ## 进行中
 
+- ☐ **issue #74 个人早报三处**(分支 `feat/issue-74-brief-grid`,方案 `docs/personal-brief-grid-and-sections.md`):
+  公共日报剔出早报范围 + 板块固定顺序 / 板块内分数降序 + 分值驱动网格(策略 F,样页 `docs/design/dorami-brief-grid-quiet.html`)
+  已实现;待用户本地验收与 codex 检视。观察期:T = 9.0 / Δ = 1.0 两个常量在生产分布下的通栏频率与 2 + 2 出现率。
 - ☐ **issue #69 图片理解波**(分支 `feat/issue-69-vision`,方案 `docs/image-understanding-wave-plan.md`):
   首波已实现 `vision_model` 档位 + 配图识别并入分析 / 日报 / 问答;待用户本地验收与 codex 检视。
   展望(未动工):Archive Sync 加 `image_insights` 流(内网检索档 cached-only 拿不到说明)、阅读窗图片下「图片文字」
@@ -125,6 +128,13 @@
   近期铺垫参考(2026-07-25 分析,均未立项):0 级 = 放开 `ENABLE_CUSTOM_NODE_BUILDER` +
   source-configs 管理列表(基建已齐,见 `CustomNodeBuilder.jsx` / `source_builder.py`);
   1 级 = RSSHub 可选容器 + `rsshub://` 路由识别;2 级 = 读者「推荐源」申请 → 管理员收件箱审核。
+
+### issue #79 源静默停产修复波遗留(2026-09-15)
+
+- **公共日报进入个人早报的专用投影**:目前订阅了公共日报的读者靠日报记录的通用文章分析行(候选查询内连接 + `DAILY_BRIEF_READY` 重编)把日报条目带进版面,所以日报记录必须被分析 worker 评一次分(首次尝试常瞬时失败、重试成功,每天多一次调用且分数无读者面语义)。若要停止分析日报,需要给早报候选查询、`_analysis_readiness` 与 `DAILY_BRIEF_READY` 判定做一条不依赖分析行的专用投影,并改写 `test_personal_brief_accepts_persisted_public_brief_without_source_state`。
+- **crawl4ai 主路的共用上下文**:dev 可选 extra 的 `Crawl4AIContentBackend` 复用单个 `AsyncWebCrawler`,是否同样撞上 openai.com「同一上下文第二次导航恒 403 挑战」未实测;生产未装 crawl4ai 故本波只修 Playwright 兜底。实测后若同病,让 OpenAI 详情绕过 crawl4ai 主路或逐篇新会话。
+- **OpenAI 摘要正文回填**:09-09 至修复上线期间入库的 ~18 篇 `rss_openai_news` 正文只有 RSS 摘要(`has_content=True`,不会自动重抓),需一次性重渲染回填脚本。
+- **日报 `per_source_cap=5` 是软配额**:`select_top` 的 overflow 补位可再加同源条目,淡日单源可能超过 5 篇(The Decoder 入名单后更可能出现);若运营要硬上限需改 overflow 语义。
 
 ## 已完结(近期,留档索引;执行记录与更早波次见 `docs/archive/README.md`)
 

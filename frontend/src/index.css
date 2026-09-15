@@ -11715,8 +11715,10 @@ input[type="radio"] {
 .brief-sec-count { font-family: var(--mono); font-size: 11px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
 .brief-sec-rule { flex: 1; height: 1px; background: var(--dorami-border); }
 
-/* 卡片网格:自适应列数(≥2 列时首节首张 lead 通栏);同行等高、脚部钉底(报纸排版,仍不截断) */
-.brief-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; align-items: stretch; }
+/* 卡片网格(issue #74「分值驱动」,样页 docs/design/dorami-brief-grid-quiet.html 策略 F):6 等分单元,每张卡
+   的宽度由 utils/briefGrid 按分数规划写进 --span(2 小卡 / 3 半宽 / 4 ⅔ / 6 通栏),列数由页面量报纸面内容宽给出——
+   此前 auto-fill minmax(320px) 让布局层不知道余数,4 张卡呈「3 + 1」留白。同行等高、脚部钉底(报纸排版,仍不截断) */
+.brief-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; align-items: stretch; }
 /* 作用域限定在 .brief-grid 之下(codex 检视):管理台日报面板也叫 surface-card.brief-card(280px 双栏),不可被读者卡规则覆盖 */
 .brief-grid .brief-card {
   position: relative; /* 标题按钮的拉伸覆盖层以卡片为定位基准(v3.54:卡片由 <button> 改为容器) */
@@ -11725,6 +11727,7 @@ input[type="radio"] {
   gap: 10px;
   width: 100%;
   min-width: 0;
+  grid-column: span var(--span, 2);
   padding: 18px 20px 16px;
   border: 1px solid var(--dorami-card-bd);
   border-radius: var(--r-card);
@@ -11741,6 +11744,10 @@ input[type="radio"] {
 /* 头条双栏(三稿):左栏正文流,右栏 200px 评分与标签栏,hairline 分隔——右侧不再留白也不放图 */
 .brief-grid .brief-card.is-wide { grid-column: 1 / -1; padding: 20px 24px 18px; }
 .brief-grid .brief-card.is-split { display: grid; grid-template-columns: minmax(0, 1fr) 200px; column-gap: 32px; }
+/* ⅔ 宽卡(与同行 ⅓ 小卡分差 ≥ 1 时):也分栏,右栏收窄到 150px;半宽卡(.is-half)不分栏、与小卡同形制 */
+.brief-grid .brief-card.is-w4 { padding: 20px 24px 18px; }
+.brief-grid .brief-card.is-w4.is-split { grid-template-columns: minmax(0, 1fr) 150px; column-gap: 24px; }
+.brief-grid .brief-card.is-w4 .brief-card-aside { padding-left: 22px; }
 .brief-card-main { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .brief-card-aside { display: flex; flex-direction: column; gap: 14px; min-width: 0; padding-left: 28px; border-left: 1px solid var(--dorami-border-soft); }
 .brief-card-aside-score { display: flex; flex-direction: column; gap: 6px; }

@@ -84,6 +84,27 @@ These recurred across the audit. Recognize the symptom, apply the known fix.
 | Empty `Description` on repo/model records | **Sparse upstream metadata** | Backfill from a secondary field (README excerpt, model card), dedup-gated so re-runs cost no extra quota |
 | Nav/footer links captured as articles | **Link-scan over-reach** | Declare a precise list container and `exclude_url_patterns`; set `drop_empty_content=True` to discard bodyless nav entries |
 
+### Silent outage: `status=success` but `fetched_count=0` for days(issue #79,2026-09-15)
+
+A node that keeps "succeeding" with zero items is the most expensive failure mode because nothing alerts:
+the listing request returns 200, the parser just matches nothing. Three real cases in one week, all site-side:
+
+| Node | What changed | Fix |
+|---|---|---|
+| `web_ithome_ai` | Article IDs crossed one million: `/0/956/628.htm` → `/1/002/341.htm`; the `ithome.com/0/` substring pattern matched nothing while the list DOM was unchanged | Match the shape (`ithome\.com/\d/\d{3}/\d{3}\.htm`) instead of a hard-coded directory |
+| `web_aiera` | Site rebuilt as a static SPA; list and article pages are shells that fetch WordPress REST | Consume `/wp-json/wp/v2/posts?_embed=1` directly (body, categories, cover in one call) |
+| `rss_openai_news` | Cloudflare challenges every navigation **after the first** in a reused browser context and never clears in headless; a fresh cookie-less context passes | Renderer opens a new context per attempt |
+
+Diagnosis recipe:
+
+1. `fetch_runs` first: `fetched_count=0` + `status=success` for a source that used to yield daily = silent outage. `daily_brief_last_run.score_histogram` tells you whether the brief is starving (few candidates) or the scorer is strict (many low scores).
+2. Fetch the listing page **once from your laptop and once from the production host** and compare byte size and the count of links matching the node's `article_url_patterns`. Identical pages with zero matches = site changed; different pages / 403 = IP or network block. Fetcher code diff across releases (`git diff vA vB -- src/fetchers`) rules out regressions in one command.
+3. For JS shells, read the inline scripts of the article page: the data endpoint is usually a `fetch(...)` a few hundred bytes from a "loading" placeholder (新智元 exposed its WP REST there).
+4. For browser-rendered detail, reproduce **inside the production container** (`docker compose exec -T backend python -`) with a small native Playwright script: load two article URLs in one shared `BrowserContext`, then the same URLs with a fresh context each. A first-pass/then-stuck pattern only in the shared context is a cookie-bound challenge, not an IP block (the project renderer now opens a fresh context per attempt, so use raw Playwright for the shared-context control). Then run the project's `PlaywrightRenderer` on the same URLs to confirm the fix path.
+5. Also check what is *not* in the daily-brief allowlist: `rss_the_decoder` was the most productive source (33/44 ≥ 6.0) and was never listed.
+
+Do not confuse "no new posts" with an outage: `web_anthropic_news` returned `fetched 10 / skipped 10` for two weeks because the newsroom published nothing after 09-01 (its RSC payload still carried 264 posts; sitemap `lastmod` values are edit times, not publish dates).
+
 ## Content-quality proofing(v3.22.4 文章质量校对波沉淀)
 
 推广前对 55 个源的全量抽查(每源 2–3 篇,查开头 800 字 + 中段 + 结尾 500 字)暴露的

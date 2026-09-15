@@ -66,7 +66,8 @@ PROFILES: Tuple[CrawlProfile, ...] = (
     CrawlProfile(
         name="ithome-article",
         domains=("ithome.com",),
-        path_pattern=r"^/0/",
+        # 2026-09-10 起文章 ID 跨过一百万,首段目录由 /0/ 变 /1/(issue #79),按形状放行
+        path_pattern=r"^/\d/\d{3}/\d{3}\.htm$",
         target_elements=("#paragraph.post_content", ".post_content"),
         excluded_selector="script, style, noscript, button, .tougao-user, .ad-tips",
         wait_for="css:.post_content",
@@ -121,20 +122,6 @@ PROFILES: Tuple[CrawlProfile, ...] = (
             ".article > .meta, .article > .info, .article > .source, "
             ".article > .subtitle, .article > .sub_title, "
             ".article > .article-subtitle, .article > .article_subtitle"
-        ),
-    ),
-    CrawlProfile(
-        name="aiera-article",
-        domains=("aiera.com.cn",),
-        path_pattern=r".*",
-        # WordPress：页面有 9 个 <article>（含相关文章），正文唯一容器是 article .entry-content。
-        # 服务端渲染，正文在初始 HTML 中，无需 wait_for（加了反而易误判超时）。
-        target_elements=("article .entry-content",),
-        # 编辑模板把固定头图包在首个 h3，紧邻的第二个 h3 是“新智元报道”。
-        excluded_selector=(
-            COMMON_EXCLUDED_SELECTOR
-            + ", article .entry-content > h3:first-child, "
-            "article .entry-content > h3:first-child + h3"
         ),
     ),
 )
