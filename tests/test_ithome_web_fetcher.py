@@ -134,3 +134,61 @@ def test_ithome_detail_uses_post_content_container_without_site_chrome():
     assert "广告声明" not in items[0].content
     assert "相关文章" not in items[0].content
     assert "软媒旗下网站" not in items[0].content
+
+
+def test_ithome_ai_fetcher_accepts_million_range_article_ids():
+    """2026-09-10 起文章 ID 跨过一百万,链接首段目录由 /0/ 变为 /1/(issue #79)。
+
+    旧的「ithome.com/0/」子串匹配会让整页一条都对不上而静默停产;新老两种形状
+    都要能进列表,导航区/专题页等非文章链接仍不进。
+    """
+    listing_html = """
+    <html>
+      <body>
+        <div id="list">
+          <ul class="bl">
+            <li>
+              <a href="https://www.ithome.com/1/002/341.htm" class="img"></a>
+              <div class="c" data-ot="2026-09-15T06:45:38.3070000+08:00">
+                <h2><a class="title" href="https://www.ithome.com/1/002/341.htm">OpenAI 联合创始人布罗克曼：人类已迈入通用人工智能时代</a></h2>
+                <div class="m">在接受 a16z 采访时，布罗克曼表示人类已经迈入通用人工智能时代。</div>
+                <div class="tags"><a>OpenAI</a></div>
+              </div>
+            </li>
+            <li>
+              <a href="https://www.ithome.com/0/999/999.htm" class="img"></a>
+              <div class="c" data-ot="2026-09-14T23:23:11.4670000+08:00">
+                <h2><a class="title" href="https://www.ithome.com/0/999/999.htm">旧 ID 形状仍可入列</a></h2>
+                <div class="m">摘要。</div>
+              </div>
+            </li>
+            <li>
+              <a href="https://www.ithome.com/tags/AI/" class="img"></a>
+              <div class="c" data-ot="2026-09-14T21:46:45.9600000+08:00">
+                <h2><a class="title" href="https://www.ithome.com/tags/AI/">标签页不是文章</a></h2>
+              </div>
+            </li>
+          </ul>
+        </div>
+      </body>
+    </html>
+    """
+    fetcher = IThomeAiWebFetcher()
+
+    async def fake_safe_get(client, url):
+        return DummyResponse(listing_html, url)
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [item async for item in fetcher._run(None, limit=5, fetch_detail=False)]
+
+    items = asyncio.run(collect_items())
+
+    assert [item.source_url for item in items] == [
+        "https://www.ithome.com/1/002/341.htm",
+        "https://www.ithome.com/0/999/999.htm",
+    ]
+    assert items[0].publish_date == "2026-09-14T22:45:38.307000+00:00"
+    assert not fetcher._matches_article_url("https://www.ithome.com/tags/AI/")
+    assert not fetcher._matches_article_url("https://next.ithome.com/1/002/341.htm")

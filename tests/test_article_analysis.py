@@ -1492,3 +1492,26 @@ def test_dirty_podcast_people_scan_is_bounded_and_advances_cursor(
         )
         assert second.invalidated == 1
         assert session.get(ArticleAnalysisRecord, "old-dirty-2").status == "pending"
+
+
+def test_system_generated_daily_brief_record_is_never_queued_or_scanned(storage):
+    """公共日报记录是「已分析文章」的汇编产物,不该再进评分/打标(issue #79:生产每天固定
+    一条 `Article analysis failed (article_id=daily_brief_…)`)。入库钩子判 ineligible 不建行,
+    补偿扫描也不把它当「无分析行」候选重新入队。"""
+    brief = _article("daily_brief_2026-09-15", source_id="dorami_daily_brief", content="# 日报正文")
+    brief.content_type = "daily_brief"
+    normal = _article("normal-article")
+    with Session(storage.engine) as session:
+        session.add_all([brief, normal, _tag()])
+        session.commit()
+
+        assert queue_article_analysis(session, brief.id, now=NOW) == "ineligible"
+        assert queue_article_analysis(session, brief.id, now=NOW, force=True) == "ineligible"
+        session.commit()
+        assert session.get(ArticleAnalysisRecord, brief.id) is None
+
+        stats = scan_analysis_backfill(session, now=NOW)
+        session.commit()
+        assert stats.scanned == 1 and stats.created == 1
+        assert session.get(ArticleAnalysisRecord, brief.id) is None
+        assert session.get(ArticleAnalysisRecord, normal.id) is not None

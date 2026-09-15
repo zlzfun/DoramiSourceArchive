@@ -1,5 +1,7 @@
 import asyncio
 import json
+
+import pytest
 import os
 import sys
 from urllib.parse import urljoin
@@ -735,119 +737,125 @@ def test_qbitai_fetcher_uses_main_article_list_only():
     assert "AI infra" in items[1].tags
 
 
-def test_aiera_fetcher_uses_main_article_list_dates_and_excludes_sidebar():
-    listing_html = """
-    <html>
-      <body>
-        <main id="main" class="site-main hfeed">
-          <div class="entries">
-            <article class="entry-card post type-post">
-              <a class="ct-media-container" href="https://aiera.com.cn/2026/05/29/other/admin/96253/latest/">
-                <img src="/latest.jpg" />
-              </a>
-              <div class="card-content">
-                <h2 class="entry-title">
-                  <a href="https://aiera.com.cn/2026/05/29/other/admin/96253/latest/" rel="bookmark">主列表较新篇</a>
-                </h2>
-                <ul class="entry-meta">
-                  <li class="meta-date">
-                    <span>发布于</span>
-                    <time datetime="2026-05-29T08:01:43+08:00">2026年5月29日</time>
-                  </li>
-                </ul>
-                <a class="entry-button" href="https://aiera.com.cn/2026/05/29/other/admin/96253/latest/">点我查看</a>
-              </div>
-            </article>
-            <article class="entry-card post type-post">
-              <div class="card-content">
-                <h2 class="entry-title">
-                  <a href="https://aiera.com.cn/2026/05/28/other/admin/96118/older/" rel="bookmark">主列表较旧篇</a>
-                </h2>
-                <ul class="entry-meta">
-                  <li class="meta-date">
-                    <span>发布于</span>
-                    <time datetime="2026-05-28T08:02:00+08:00">2026年5月28日</time>
-                  </li>
-                </ul>
-              </div>
-            </article>
-          </div>
+def test_aiera_fetcher_reads_wp_rest_posts_with_body_categories_and_utc_dates():
+    """2026-09-05 起新智元官网重建为静态 ASI 门户,列表/单篇都是客户端壳(issue #79)。
 
-          <aside class="sidebar">
-            <h3>爆款文章</h3>
-            <article class="wp-block-post">
-              <h2>
-                <a href="https://aiera.com.cn/2015/12/20/other/aiera-com-cn/14022/hot/">侧栏爆款旧文</a>
-              </h2>
-              <time datetime="2015-12-20T00:00:00+08:00">2015年12月20日</time>
-            </article>
-          </aside>
-          <nav class="ct-pagination">
-            <a class="next page-numbers" rel="next" href="https://aiera.com.cn/page/2/">下一个</a>
-          </nav>
-        </main>
-      </body>
-    </html>
+    现直接消费 WordPress REST `posts?_embed=1`:一次请求即得正文(HTML→markdown 并走
+    既有模板清洗)、分类、头图与 UTC 时间;`link`(asi-post.html?id=N)是稳定身份。
     """
-    page2_html = """
-    <html>
-      <body>
-        <main id="main" class="site-main hfeed">
-          <div class="entries">
-            <article class="entry-card post type-post">
-              <div class="card-content">
-                <h2 class="entry-title">
-                  <a href="https://aiera.com.cn/2026/05/28/other/admin/96118/older/" rel="bookmark">主列表较旧篇重复</a>
-                </h2>
-                <time datetime="2026-05-28T08:02:00+08:00">2026年5月28日</time>
-              </div>
-            </article>
-            <article class="entry-card post type-post">
-              <div class="card-content">
-                <h2 class="entry-title">
-                  <a href="https://aiera.com.cn/2026/05/27/other/admin/95967/page-two/" rel="bookmark">第二页主列表篇</a>
-                </h2>
-                <time datetime="2026-05-27T08:02:00+08:00">2026年5月27日</time>
-              </div>
-            </article>
-          </div>
-        </main>
-      </body>
-    </html>
-    """
+    payload = [
+        {
+            "id": 113764,
+            "date": "2026-09-15T08:03:19",
+            "date_gmt": "2026-09-15T00:03:19",
+            "modified_gmt": "2026-09-15T00:03:19",
+            "link": "https://aiera.com.cn/asi-post.html?id=113764",
+            "status": "publish",
+            "title": {"rendered": "刚刚，Dario紧急抛出AI全球共管计划！"},
+            "excerpt": {"rendered": "<p>最新消息，特朗普对「减速避险」计划大发雷霆！ 与此同时，惠誉发出了警告…</p>\n"},
+            "content": {
+                "rendered": (
+                    "<h3>新智元报道</h3>"
+                    "<p>编辑：<strong>桃子</strong></p>"
+                    "<p>第一段正文。</p>"
+                    "<p><img src=\"/wp-content/uploads/2026/09/pic.webp\" /></p>"
+                    "<p>第二段正文。</p>"
+                    "<p>秒追ASI</p><p>扫码关注</p>"
+                ),
+            },
+            "_embedded": {
+                "wp:term": [[{"taxonomy": "category", "name": "综合"}], [{"taxonomy": "post_tag", "name": "Dario"}]],
+                "wp:featuredmedia": [{"source_url": "https://aiera.com.cn/wp-content/uploads/2026/09/cover.webp"}],
+            },
+        },
+        {
+            "id": 113743,
+            "date": "2026-09-15T08:02:00",
+            "date_gmt": "2026-09-15T00:02:00",
+            "link": "https://aiera.com.cn/asi-post.html?id=113743",
+            "status": "publish",
+            "title": {"rendered": "iOS 27暗门被扒！Claude要给Siri换脑了"},
+            "excerpt": {"rendered": "<p>摘要二</p>"},
+            "content": {"rendered": ""},
+        },
+        {
+            "id": 1,
+            "date": "2026-09-14T00:00:00",
+            "date_gmt": "2026-09-13T16:00:00",
+            "link": "https://aiera.com.cn/asi-post.html?id=1",
+            "status": "draft",
+            "title": {"rendered": "草稿不入列"},
+            "excerpt": {"rendered": ""},
+            "content": {"rendered": "<p>草稿</p>"},
+        },
+    ]
     fetcher = AieraWebsiteFetcher()
     fetched_urls = []
 
     async def fake_safe_get(client, url):
         fetched_urls.append(url)
-        if url == "https://aiera.com.cn/":
-            return DummyResponse(listing_html, url)
-        if url == "https://aiera.com.cn/page/2/":
-            return DummyResponse(page2_html, url)
-        raise AssertionError(f"Unexpected URL fetched: {url}")
+        return DummyResponse(json.dumps(payload, ensure_ascii=False), url)
 
     fetcher._safe_get = fake_safe_get
 
     async def collect_items():
-        return [item async for item in fetcher._run(None, limit=3, fetch_detail=False)]
+        return [item async for item in fetcher._run(None, limit=5)]
 
     items = asyncio.run(collect_items())
 
-    assert fetched_urls == ["https://aiera.com.cn/", "https://aiera.com.cn/page/2/"]
-    assert [item.title for item in items] == ["主列表较新篇", "主列表较旧篇", "第二页主列表篇"]
-    assert [item.source_url for item in items] == [
-        "https://aiera.com.cn/2026/05/29/other/admin/96253/latest",
-        "https://aiera.com.cn/2026/05/28/other/admin/96118/older",
-        "https://aiera.com.cn/2026/05/27/other/admin/95967/page-two",
+    assert fetched_urls == ["https://aiera.com.cn/wp-json/wp/v2/posts?per_page=5&_embed=1&orderby=date&order=desc"]
+    assert [item.title for item in items] == [
+        "刚刚，Dario紧急抛出AI全球共管计划！",
+        "iOS 27暗门被扒！Claude要给Siri换脑了",
     ]
-    assert [item.publish_date for item in items] == [
-        "2026-05-29T08:01:43+08:00",
-        "2026-05-28T08:02:00+08:00",
-        "2026-05-27T08:02:00+08:00",
-    ]
-    assert all(item.raw_data["listing_source"] == "aiera_main_article_list" for item in items)
-    assert items[0].raw_data["listing_publish_date"] == "2026年5月29日"
-    assert "侧栏爆款旧文" not in [item.title for item in items]
+    first = items[0]
+    assert first.source_url == "https://aiera.com.cn/asi-post.html?id=113764"
+    assert first.id == fetcher._content_id(first.source_url)
+    assert first.publish_date == "2026-09-15T00:03:19+00:00"
+    assert first.summary == "最新消息，特朗普对「减速避险」计划大发雷霆！ 与此同时，惠誉发出了警告"
+    assert first.content.startswith("编辑：**桃子**\n\n第一段正文。")
+    assert "![](https://aiera.com.cn/wp-content/uploads/2026/09/pic.webp)" in first.content
+    assert "秒追ASI" not in first.content and "扫码关注" not in first.content
+    assert first.has_content is True
+    assert "综合" in first.tags and "Dario" not in first.tags
+    assert first.raw_data["listing_source"] == "aiera_wp_rest_posts"
+    assert first.raw_data["wp_post_id"] == 113764
+    assert first.raw_data["media_url"].endswith("cover.webp")
+    assert first.raw_data["detail_extraction_method"] == "wp_rest_content_rendered"
+    # 无正文的条目回退摘要,仍标记有内容;草稿被过滤
+    assert items[1].content == "摘要二" and items[1].raw_data["detail_fetched"] is False
+
+
+def test_aiera_detail_cleaner_handles_bold_heading_and_bold_promotion_tail():
+    """WP REST 正文里模板头是加粗 h3 + 编辑头像图,尾部推广行也加粗(issue #79 实抓形状)。"""
+    text = (
+        "### ![](https://aiera.com.cn/wp-content/uploads/2026/09/head.webp)\n\n"
+        "### **新智元报道**\n\n"
+        "![](https://aiera.com.cn/wp-content/uploads/2026/09/avatar.png)\n\n"
+        "最新消息，第一段。\n\n第二段。\n\n参考资料：\n\nhttps://example.com/a\n\n编辑：Aeneas\n\n"
+        "**秒追ASI**\n\n**⭐****点赞、转发、在看一键三连****⭐**\n\n**点亮星标，锁定新智元极速推送！**\n\n"
+        "![](https://aiera.com.cn/wp-content/uploads/2026/09/qr.jpg)"
+    )
+    cleaned = AieraWebsiteFetcher._clean_aiera_detail_text(text)
+    assert cleaned == (
+        "![](https://aiera.com.cn/wp-content/uploads/2026/09/avatar.png)\n\n"
+        "最新消息，第一段。\n\n第二段。\n\n参考资料：\n\nhttps://example.com/a\n\n编辑：Aeneas"
+    )
+
+
+def test_aiera_fetcher_raises_on_non_json_listing():
+    fetcher = AieraWebsiteFetcher()
+
+    async def fake_safe_get(client, url):
+        return DummyResponse("<html>维护中</html>", url)
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [item async for item in fetcher._run(None, limit=3)]
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(collect_items())
 
 
 def test_claude_code_changelog_splits_releases_by_version():

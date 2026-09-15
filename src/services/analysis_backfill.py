@@ -33,6 +33,7 @@ from models.db import (
     TagRetagJobRecord,
 )
 from services.article_analysis import (
+    SYSTEM_GENERATED_SOURCE_IDS,
     DEFAULT_MAX_ATTEMPTS,
     compute_content_hash,
     queue_article_analysis,
@@ -110,6 +111,7 @@ def _eligible_rows(
             ArticleRecord.content.is_not(None),
             ArticleRecord.content != "",
             ArticleRecord.analysis_authority_id == "",
+            ArticleRecord.source_id.not_in(list(SYSTEM_GENERATED_SOURCE_IDS)),
         )
         .order_by(ArticleRecord.fetched_date.desc(), ArticleRecord.id.desc())
     )

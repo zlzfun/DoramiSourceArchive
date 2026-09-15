@@ -1715,28 +1715,32 @@ class ArenaLeaderboardChangelogFetcher(SinglePageDocumentFetcher):
 
 
 class AieraWebsiteFetcher(BaseWebPageListFetcher):
+    """新智元官网(aiera.com.cn)。
+
+    2026-09-05 起官网整体重建为静态「ASI」门户:首页只剩秒追短讯的内联数组,深度大稿
+    列表(asi-articles.html)与单篇(asi-post.html?id=N)都是客户端壳——单篇页自己去拉
+    WordPress REST `/wp-json/wp/v2/posts/{id}?_embed=1` 才有正文。旧的 HTML 列表解析
+    (`aiera.com.cn/20yy/mm/dd/…` 文章链接)自此一条都对不上,连续十天「success 0 条」
+    静默停产(issue #79)。现直接消费同一个 WP REST 列表接口:一次请求即得标题/时间/
+    摘要/正文/分类/头图,不再逐篇抓详情;`link` 字段就是新的单篇地址(`asi-post.html?id=`),
+    id 稳定,老文章重抓不会换身份。
+    """
     default_fetch_detail = True
     source_id = "web_aiera"
     name = "新智元"
     description = "新智元官网的中文 AI 模型、产品、产业和研究资讯。"
     icon = "📰"
-    listing_url = "https://aiera.com.cn/"
-    source_url = listing_url
+    listing_url = "https://aiera.com.cn/asi-articles.html"
+    api_url = "https://aiera.com.cn/wp-json/wp/v2/posts"
+    source_url = "https://aiera.com.cn/"
     site_name = "新智元"
     source_section = "Website"
-    article_url_patterns = ["aiera.com.cn/20"]
-    exclude_url_patterns = [
-        "aiera.com.cn/feed",
-        "aiera.com.cn/comments/feed",
-        "aiera.com.cn/wp-",
-        "aiera.com.cn/search/",
-        "aiera.com.cn/category/",
-        "aiera.com.cn/tag/",
-        "aiera.com.cn/author/",
-    ]
+    article_url_patterns = ["aiera.com.cn/asi-post.html?id="]
     default_limit = 18
-    # 旁路验收：crawl4ai(article .entry-content 精确容器) 正文与生产路径一致(~1.1x，开头逐字相符)，已迁移
-    web_backend_enabled = True
+    # WP REST 单页上限
+    api_page_size_max = 100
+    # 正文随列表接口一起返回,不再走详情页/浏览器后端
+    web_backend_enabled = False
     source_owner = "aiera"
     source_brand = "新智元"
     source_scope = "ai_media"
@@ -1749,202 +1753,147 @@ class AieraWebsiteFetcher(BaseWebPageListFetcher):
 
     @staticmethod
     def _clean_aiera_detail_text(text: str) -> str:
-        """剔除编辑模板的固定头图/“新智元报道”标题与文末推广二维码块。"""
+        """剔除编辑模板的固定头图/“新智元报道”标题(WP 正文里现为加粗 h3),以及文末
+        「秒追ASI / 一键三连 / 点亮星标」推广块(现为加粗行 + 二维码图)。标题后紧随的
+        那张图刻意保留:老版式里它是文章题图,新版式里是编辑头像,形状上分不开。"""
         cleaned = compact_text(text or "")
         cleaned = re.sub(
-            r"\A### !\[[^\]]*\]\([^)]+\)\n\n### 新智元报道\n\n",
+            r"\A(?:### !\[[^\]]*\]\([^)]+\)\n\n)?### \**新智元报道\**\n\n",
             "",
             cleaned,
         )
-        cleaned = re.sub(r"\A### 新智元报道\n\n", "", cleaned)
-
-        trailer_positions = [
-            cleaned.find(marker)
-            for marker in (
-                "\n\n秒追ASI",
-                "\n\n点赞、转发、在看一键三连",
-                "\n\n点亮星标，锁定新智元极速推送",
-            )
-        ]
-        trailer_positions = [position for position in trailer_positions if position >= 0]
-        if trailer_positions:
-            cleaned = cleaned[: min(trailer_positions)].rstrip()
+        trailer = re.search(
+            r"\n\n[*⭐\s]*(秒追ASI|点赞、转发、在看一键三连|点亮星标，锁定新智元极速推送)",
+            cleaned,
+        )
+        if trailer:
+            cleaned = cleaned[: trailer.start()].rstrip()
         return cleaned
 
-    async def _detail_for_url(
-        self, client: httpx.AsyncClient, url: str, max_chars: int
-    ) -> Dict[str, str]:
-        detail = await super()._detail_for_url(client, url, max_chars)
-        detail["text"] = self._clean_aiera_detail_text(detail.get("text", ""))[:max_chars]
-        return detail
-
-    def _matches_article_url(self, url: str) -> bool:
-        if not super()._matches_article_url(url):
-            return False
-        path = urlparse(url).path.strip("/")
-        return bool(re.fullmatch(r"20\d{2}/\d{2}/\d{2}/.+", path))
-
-    def _list_items(self, soup: BeautifulSoup) -> List[Tag]:
-        items = soup.select("main#main .entries > article.entry-card")
-        if items:
-            return items
-        return soup.select("main#main article.entry-card")
-
-    def _parse_listing_datetime(self, raw_value: str) -> str:
-        raw_value = self._clean_text(raw_value)
-        if not raw_value:
+    @staticmethod
+    def _wp_rendered_text(value: Any) -> str:
+        """WP REST 的 `{"rendered": "<p>…</p>"}` 字段 → 纯文本(去标签、解实体、压空白)。"""
+        raw = value.get("rendered") if isinstance(value, dict) else value
+        if not raw:
             return ""
+        soup = BeautifulSoup(str(raw), "html.parser")
+        return " ".join(soup.get_text(" ", strip=True).split())
 
-        try:
-            parsed = datetime.fromisoformat(raw_value.replace("Z", "+00:00"))
+    @staticmethod
+    def _parse_wp_datetime(date_gmt: Any, date_local: Any) -> str:
+        """`date_gmt` 是无时区的 UTC 字符串,优先取它;缺失时用站点本地时间(北京)。"""
+        for raw, tz in ((date_gmt, timezone.utc), (date_local, ZoneInfo("Asia/Shanghai"))):
+            raw = (str(raw or "")).strip()
+            if not raw:
+                continue
+            try:
+                parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except ValueError:
+                continue
             if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=ZoneInfo("Asia/Shanghai"))
-            return parsed.isoformat()
-        except ValueError:
-            pass
+                parsed = parsed.replace(tzinfo=tz)
+            return parsed.astimezone(timezone.utc).isoformat()
+        return ""
 
-        chinese_match = re.search(r"(20\d{2})年(\d{1,2})月(\d{1,2})日", raw_value)
-        if chinese_match:
-            year, month, day = (int(part) for part in chinese_match.groups())
-            return datetime(year, month, day, tzinfo=ZoneInfo("Asia/Shanghai")).isoformat()
-
-        return self._extract_datetime_or_empty(raw_value)
-
-    def _date_from_article_url(self, url: str) -> str:
-        path = urlparse(url).path.strip("/")
-        match = re.match(r"(20\d{2})/(\d{1,2})/(\d{1,2})/", path)
-        if not match:
+    def _render_wp_body(self, body_html: str, base_url: str, max_chars: int) -> str:
+        if not body_html:
             return ""
-        year, month, day = (int(part) for part in match.groups())
-        return datetime(year, month, day, tzinfo=ZoneInfo("Asia/Shanghai")).isoformat()
+        soup = BeautifulSoup(f"<div>{body_html}</div>", "html.parser")
+        root = soup.div or soup
+        text = self._clean_aiera_detail_text(node_to_markdown(root, base_url))
+        return text[:max_chars]
 
-    def _next_page_url(self, soup: BeautifulSoup, current_url: str) -> str:
-        next_link = soup.select_one("nav.ct-pagination a.next[rel='next'][href], a.next.page-numbers[href]")
-        if not next_link:
-            return ""
-        return urljoin(current_url, str(next_link["href"]))
+    @staticmethod
+    def _wp_embedded_terms(post: Dict[str, Any], taxonomy: str) -> List[str]:
+        names: List[str] = []
+        for group in (post.get("_embedded") or {}).get("wp:term") or []:
+            for term in group or []:
+                if isinstance(term, dict) and term.get("taxonomy") == taxonomy and term.get("name"):
+                    names.append(" ".join(str(term["name"]).split()))
+        return names
+
+    @staticmethod
+    def _wp_featured_media_url(post: Dict[str, Any]) -> str:
+        for media in (post.get("_embedded") or {}).get("wp:featuredmedia") or []:
+            if isinstance(media, dict) and media.get("source_url"):
+                return str(media["source_url"])
+        return ""
 
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         limit = self._entry_limit(kwargs.get("limit"))
-        fetch_detail = self._bool_param(kwargs.get("fetch_detail"))
         detail_max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
         if limit <= 0:
             return
 
+        per_page = min(max(limit, 1), self.api_page_size_max)
+        request_url = f"{self.api_url}?per_page={per_page}&_embed=1&orderby=date&order=desc"
+        response = await self._safe_get(client, request_url)
+        if not response:
+            raise RuntimeError(f"新智元文章接口请求失败: {self.api_url}")
+        try:
+            posts = response.json()
+        except ValueError as exc:
+            raise RuntimeError(f"新智元文章接口返回不是 JSON: {self.api_url}") from exc
+        if not isinstance(posts, list):
+            raise RuntimeError(f"新智元文章接口返回形状异常(非数组): {self.api_url}")
+
         seen_urls: set[str] = set()
-        seen_pages: set[str] = set()
-        entries: List[Dict[str, Any]] = []
-        page_url = self.listing_url
-        page_index = 0
-        max_pages = 20
-        while page_url and page_url not in seen_pages and len(entries) < limit and page_index < max_pages:
-            seen_pages.add(page_url)
-            response = await self._safe_get(client, page_url)
-            if not response:
-                if page_index == 0:
-                    raise RuntimeError(f"新智元首页请求失败: {self.listing_url}")
+        yielded = 0
+        for post in posts:
+            if yielded >= limit:
                 break
+            if not isinstance(post, dict) or str(post.get("status") or "publish") != "publish":
+                continue
+            post_id = post.get("id")
+            link = str(post.get("link") or "").strip()
+            if not link and post_id is not None:
+                link = f"https://aiera.com.cn/asi-post.html?id={post_id}"
+            url = self._normalize_article_url(link) if link else ""
+            if not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
 
-            resolved_page_url = str(response.url)
-            soup = BeautifulSoup(response.text, "html.parser")
-            page_order_base = page_index * 1000
-            for order, item in enumerate(self._list_items(soup)):
-                title_link = item.select_one(".entry-title a[href], h1 a[href], h2 a[href], h3 a[href]")
-                if not title_link:
-                    continue
-
-                url = self._normalize_article_url(urljoin(resolved_page_url, str(title_link["href"])))
-                if not self._matches_article_url(url) or url in seen_urls:
-                    continue
-                seen_urls.add(url)
-
-                title = self._clean_text(title_link.get_text(" ", strip=True)) or "未命名新智元条目"
-                time_node = item.select_one("time[datetime], time")
-                raw_publish_date = ""
-                if time_node:
-                    raw_publish_date = self._clean_text(
-                        str(time_node.get("datetime") or "") or time_node.get_text(" ", strip=True)
-                    )
-                display_publish_date = self._clean_text(time_node.get_text(" ", strip=True) if time_node else "")
-                publish_date = (
-                    self._parse_listing_datetime(raw_publish_date)
-                    or self._parse_listing_datetime(display_publish_date)
-                    or self._date_from_article_url(url)
-                    or self._extract_datetime(title)
-                )
-
-                image_node = item.select_one("img")
-                media_url = ""
-                if image_node:
-                    media_url = str(image_node.get("src") or "")
-                    if media_url:
-                        media_url = urljoin(resolved_page_url, media_url)
-
-                summary = self._summary_from_container(title, item)
-                summary = re.sub(r"^发布于\s*[\d年月日:：+\-T ]+", "", summary).strip()
-                summary = re.sub(r"点我查看.*$", "", summary).strip()[:500]
-
-                entries.append({
-                    "url": url,
-                    "title": title,
-                    "summary": summary,
-                    "publish_date": publish_date,
-                    "raw_publish_date": display_publish_date or raw_publish_date,
-                    "listing_datetime": raw_publish_date,
-                    "media_url": media_url,
-                    "order": page_order_base + order,
-                    "listing_page_url": resolved_page_url,
-                })
-                if len(entries) >= limit:
-                    break
-
-            page_index += 1
-            page_url = self._next_page_url(soup, resolved_page_url)
-
-        entries = sorted(
-            entries,
-            key=lambda entry: (self._sort_datetime(entry["publish_date"]), -entry["order"]),
-            reverse=True,
-        )
-
-        for entry in entries[:limit]:
-            url = entry["url"]
-            title = entry["title"]
-            summary = entry["summary"]
-            content_id = self._content_id(url)
-            detail = {"title": "", "text": "", "method": "", "url": ""}
-            # 已入库且有正文则跳过详情请求，避免对重复条目重复抓取正文。
-            detail_fetched = fetch_detail and not await self._should_skip_detail_fetch(content_id)
-            if detail_fetched:
-                detail = await self._detail_for_url(client, url, detail_max_chars)
-                if detail["title"] and not title:
-                    title = detail["title"]
-            content = detail["text"] or summary
+            title = self._wp_rendered_text(post.get("title")) or "未命名新智元条目"
+            summary = re.sub(r"\s*(…|\.\.\.)\s*$", "", self._wp_rendered_text(post.get("excerpt")))[:500]
+            publish_date = self._parse_wp_datetime(post.get("date_gmt"), post.get("date"))
+            body_html = ""
+            content_field = post.get("content")
+            if isinstance(content_field, dict):
+                body_html = str(content_field.get("rendered") or "")
+            text = self._render_wp_body(body_html, url, detail_max_chars)
+            categories = self._wp_embedded_terms(post, "category")
+            media_url = self._wp_featured_media_url(post)
+            content = text or summary
 
             yield WebPageArticleContent(
-                id=content_id,
+                id=self._content_id(url),
                 title=title,
                 source_url=url,
-                publish_date=entry["publish_date"],
+                publish_date=publish_date,
                 content=content,
                 has_content=bool(content),
                 site_name=self.site_name,
                 source_section=self.source_section,
                 summary=summary,
-                tags=[self.category, "webpage", *self.content_tags],
+                tags=[self.category, "webpage", *self.content_tags, *categories],
                 raw_data={
-                    "listing_url": entry["listing_page_url"],
+                    "listing_url": request_url,
                     "url": url,
                     "title": title,
                     "summary": summary,
-                    "listing_source": "aiera_main_article_list",
-                    "listing_publish_date": entry["raw_publish_date"],
-                    "listing_datetime": entry["listing_datetime"],
-                    "media_url": entry["media_url"],
-                    "detail_fetched": detail_fetched,
-                    "detail_title": detail["title"],
-                    "detail_text_length": len(detail["text"]),
-                    "detail_extraction_method": detail.get("method", ""),
-                    "detail_source_url": detail.get("url", ""),
+                    "listing_source": "aiera_wp_rest_posts",
+                    "wp_post_id": post_id,
+                    "listing_publish_date": str(post.get("date") or ""),
+                    "listing_datetime": str(post.get("date_gmt") or ""),
+                    "modified_gmt": str(post.get("modified_gmt") or ""),
+                    "categories": categories,
+                    "media_url": media_url,
+                    # 正文随列表接口返回,这里的“详情已取”指正文来自接口而非详情页
+                    "detail_fetched": bool(text),
+                    "detail_title": title,
+                    "detail_text_length": len(text),
+                    "detail_extraction_method": "wp_rest_content_rendered" if text else "",
+                    "detail_source_url": url if text else "",
                 },
             )
+            yielded += 1

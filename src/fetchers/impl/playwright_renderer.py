@@ -12,6 +12,8 @@
 - 每篇新建 page（干净上下文）+ 请求间隔节流，否则连续快抓会触发 CF 频率拦截；
 - 不能用 networkidle（页面有持续后台请求，永不达成），改用 domcontentloaded + 轮询；
 - 轮询条件：标题不再是 "Just a moment" 且 body 文本超过阈值，视为挑战已过、正文已现。
+- 上下文策略：每次尝试新开一个空 cookie 的上下文（浏览器进程复用）——共用上下文会在
+  首篇通过后被 Cloudflare 持续挑战且永不放行（2026-09 openai.com 实测）。
 """
 
 import asyncio
@@ -63,7 +65,6 @@ class PlaywrightRenderer:
 
         self._playwright = None
         self._browser = None
-        self._context = None
         self._last_request_at: Optional[float] = None
         self.available = False
 
@@ -84,7 +85,6 @@ class PlaywrightRenderer:
                 launch_kwargs["executable_path"] = executable
                 logger.info(f"ℹ️ 使用系统 Chromium: {executable}")
             self._browser = await self._playwright.chromium.launch(**launch_kwargs)
-            self._context = await self._browser.new_context(user_agent=self.user_agent)
             self.available = True
         except Exception as e:
             logger.warning(f"⚠️ 启动 Chromium 失败，浏览器渲染降级: {e}")
@@ -97,7 +97,6 @@ class PlaywrightRenderer:
     async def _safe_close(self) -> None:
         self.available = False
         for closer in (
-            getattr(self._context, "close", None),
             getattr(self._browser, "close", None),
             getattr(self._playwright, "stop", None),
         ):
@@ -107,7 +106,7 @@ class PlaywrightRenderer:
                 await closer()
             except Exception:
                 pass
-        self._context = self._browser = self._playwright = None
+        self._browser = self._playwright = None
 
     async def _throttle(self) -> None:
         if self._last_request_at is None:
@@ -128,7 +127,13 @@ class PlaywrightRenderer:
         超时仍未过挑战时返回 ``(当前HTML, False)``——HTML 多半是过渡页/壳页，交给上层
         决定是否重试。区分这一点是关键：旧逻辑把超时返回的过渡页当成功，白白浪费了重试。
         """
-        page = await self._context.new_page()
+        # 每次尝试都开一个全新的浏览器上下文(空 cookie),而不是共用一个:2026-09-09 起
+        # openai.com 的 Cloudflare 对「同一上下文里已经通过过一次的访客」再次导航一律回 403
+        # 挑战页,且该挑战在 headless 里永远停在 "Just a moment...";而空上下文的首访几乎
+        # 都直接 200(生产容器实测:共用上下文 1 过 3 卡,逐篇新上下文 4/4 秒过——issue #79)。
+        # 代价只是每篇多一次 new_context(毫秒级),浏览器进程仍在一次抓取内复用。
+        context = await self._browser.new_context(user_agent=self.user_agent)
+        page = await context.new_page()
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=self.nav_timeout_ms)
             waited = 0
@@ -143,6 +148,7 @@ class PlaywrightRenderer:
             return await page.content(), False
         finally:
             await page.close()
+            await context.close()
 
     async def render(self, url: str) -> str:
         """渲染单篇文章，返回挑战通过后的完整 HTML；全部尝试失败返回空串。

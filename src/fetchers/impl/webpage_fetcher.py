@@ -754,8 +754,13 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
     site_name = "IT之家"
     source_section = "人工智能"
     category = "media"
-    article_url_patterns = ["ithome.com/0/"]
+    # 2026-09-10 起 IT之家文章 ID 跨过一百万,链接由 /0/956/628.htm 变成 /1/002/341.htm——
+    # 首段目录是 ID 的百万位,「ithome.com/0/」子串匹配自此一条都对不上,列表页结构其实
+    # 未变,却连续多日「success 0 条」静默停产(issue #79)。改按形状匹配:一位数字目录 +
+    # 三位 + 三位 .htm,百万位再进位也不用再改。
+    article_url_patterns = ["ithome.com/"]
     exclude_url_patterns = ["next.ithome.com", "m.ithome.com", "quan.ithome.com"]
+    _ARTICLE_URL_RE = re.compile(r"ithome\.com/\d/\d{3}/\d{3}\.htm")
     # 旁路验收：crawl4ai 详情与生产路径相似度 0.81（≥0.8 门槛），已迁移；未装 crawl4ai 时回退专用提取器
     web_backend_enabled = True
     default_limit = 18
@@ -782,6 +787,11 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
             return parsed.astimezone(timezone.utc).isoformat()
         except ValueError:
             return ""
+
+    def _matches_article_url(self, url: str) -> bool:
+        if not self._ARTICLE_URL_RE.search(url):
+            return False
+        return super()._matches_article_url(url)
 
     def _list_items(self, soup: BeautifulSoup) -> List[Tag]:
         items = soup.select("#list ul.bl > li")
