@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useReaderState } from '../hooks/useReaderState';
+import { compactLayoutMatches } from '../hooks/useCompactLayout';
 import ReaderTab from './ReaderTab';
 import MobileReader from './mobile/MobileReader';
 
@@ -51,6 +52,9 @@ export default function ReaderWorkspace({ mobile, ...props }) {
     const kind = el.matches('.reader-pane, .m-read-scroll') ? 'article'
       : el.matches('.reader-list-scroll, .m-list, .reader-social-scroll') ? 'list' : null;
     if (!kind) return;
+    // 浏览器可能先按新宽度重排旧视图、派发 scroll，再通知媒体查询切换。
+    // 这不是用户阅读进度；不能覆盖仍待恢复的旧版式快照。
+    if (mobile !== compactLayoutMatches()) return;
     scrollRef.current[kind] = {
       key: kind === 'article' ? articleKey : listKey,
       top: el.scrollTop,

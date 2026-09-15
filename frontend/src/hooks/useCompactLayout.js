@@ -9,10 +9,14 @@ function subscribe(onChange) {
   return () => media.removeEventListener('change', onChange);
 }
 
+export function compactLayoutMatches() {
+  return window.matchMedia(QUERY).matches;
+}
+
 export function useCompactLayout() {
   return useSyncExternalStore(
     subscribe,
-    () => window.matchMedia(QUERY).matches,
+    compactLayoutMatches,
     () => false,
   );
 }

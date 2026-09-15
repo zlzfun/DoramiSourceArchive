@@ -8,6 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "test": "node --test \"test/**/*.test.mjs\"",
+    "test:e2e": "../.venv/bin/python ../scripts/check_mobile_reader_e2e.py",
     "preview": "vite preview"
   },
   "dependencies": {

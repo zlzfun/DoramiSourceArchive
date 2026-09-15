@@ -109,6 +109,7 @@
 
 ## frontend/ —— 前端纪律(◉ 活跃)
 
+- ◉ [frontend/e2e.md](./frontend/e2e.md) — #90 移动读者真实 E2E：一条命令、自建 FastAPI/SQLite 沙箱、布局与阅读交互、失败 trace。
 - ◉ [frontend/mobile-navigation.md](./frontend/mobile-navigation.md) — Issue #86：响应式阅读器、贴底导航、共享阅读状态与浏览器回归入口；含验证边界。
 
 - ◉ [frontend/conventions.md](./frontend/conventions.md) — **改前端必读**:文案/可访问性/排版刻度/
