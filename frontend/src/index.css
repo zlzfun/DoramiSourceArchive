@@ -4411,7 +4411,8 @@ input[type="radio"] {
   .heat-tip b { font-family: var(--mono); font-weight: 600; }
 
   /* ── 用户活动抽屉:tiles / 登录卡 / 榜单(ledger-drawer 语法换肤) ── */
-  .drawer-sec-title { font-size: 12px; font-weight: 700; color: var(--dorami-ink-2); margin-bottom: 8px; }
+  /* 卡内小节刻度 12.5–13/700(conventions 字号表);issue #76 复检 P3 #27 自 12 上调 */
+  .drawer-sec-title { font-size: 12.5px; font-weight: 700; color: var(--dorami-ink-2); margin-bottom: 8px; }
   .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
   .tile { background: var(--dorami-soft); border-radius: var(--r-control); padding: 10px 12px; }
   .tile-num { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 24px; color: var(--dorami-ink); }
@@ -10732,25 +10733,6 @@ input[type="radio"] {
   }
   .reader-empty-link:hover { color: var(--dorami-accent-ink); text-decoration: underline; text-underline-offset: 3px; }
 
-  @media (max-width: 1024px) {
-    .reader-shell {
-      grid-template-columns: 1fr;
-      width: auto;
-      margin-inline: 0;
-      margin-top: 0;
-      margin-bottom: 0;
-      height: auto;
-      overflow: visible;
-      border-top: none;
-    }
-    .reader-col { border-right: none; border-bottom: 1px solid var(--dorami-border); }
-    /* 纵向堆叠时取消折叠相关的固定宽度/裁切与浮动把手 */
-    .reader-col-sources, .reader-col-list { overflow: visible; }
-    .reader-sources-inner, .reader-list-inner { width: 100%; }
-    .reader-source-scroll { max-height: 320px; }
-    .reader-list-scroll { max-height: 420px; }
-    .reader-pane { padding: 24px; }
-  }
 }
 
 /* ── Responsive ── */
@@ -12063,110 +12045,93 @@ input[type="radio"] {
   .interest-ledger-scroll { max-height: 320px; }
 }
 
-/* ── CMS taxonomy / Candidate 治理 ── */
-.taxonomy-flag {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 11px;
-  border-radius: var(--r-control);
-  background: var(--dorami-soft);
-  color: var(--dorami-muted);
-  text-align: left;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.45;
+/* ══════════════════════════════════════════════════════════════════════
+   运维管理 → 内容「播客」/「早报与兴趣」分区 + 「分析与标签」子页(issue #76,
+   样页 docs/design/dorami-admin-podcast-taxonomy-quiet.html)。
+   未分层区:含 input / button 字号的规则写在这里(@layer 内会被全局 button{font:inherit} 压掉)。
+   复用在册类:.ai-switchboard/.ledger-switch/.kpi-*/.acct-*/.rowact-btn/.stamp/.pager/.ledger-drawer*/.ledger-kv。
+   ══════════════════════════════════════════════════════════════════════ */
+.ai-switchboard.is-wrap { flex-wrap: wrap; row-gap: 10px; }
+.sw { display: inline-flex; align-items: center; gap: 9px; }
+.sw-group { display: inline-flex; align-items: center; gap: 14px; }
+/* 开关板里的旋钮:标签小字 + well 底等宽小输入(与 AI 面板 .model-field 同刻度) */
+.knob { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--dorami-faint); white-space: nowrap; }
+.knob input {
+  min-height: 28px; width: 58px; padding: 0 8px; border: none; border-radius: var(--r-sm);
+  background: var(--dorami-well); box-shadow: var(--dorami-inset-input);
+  font-family: var(--mono); font-size: 11px; color: var(--dorami-ink); text-align: center; font-variant-numeric: tabular-nums;
 }
-.taxonomy-flag:hover { background: var(--dorami-raised); }
-.taxonomy-flag-head { display: flex; align-items: center; gap: 7px; color: var(--dorami-ink); font-size: 12px; font-weight: 700; }
-.taxonomy-flag-head i { width: 8px; height: 8px; border-radius: var(--r-pill); background: var(--state-idle); }
-.taxonomy-flag.is-on .taxonomy-flag-head i { background: var(--state-ok); }
-.taxonomy-row { border-top: 1px solid var(--dorami-border); }
-.taxonomy-row:first-child { border-top: none; }
-.taxonomy-row-main {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
-  color: var(--dorami-ink);
-  text-align: left;
+.knob input:focus { outline: none; box-shadow: inset 0 0 0 1px var(--dorami-accent); }
+.knob input:disabled { opacity: 0.55; }
+.knob.is-fixed strong { font-family: var(--mono); font-size: 12px; color: var(--dorami-ink-2); }
+/* 表单卡(拍板③):三卡并排,卡内 2 列字段栅格,脚部一枚 secondary 保存 */
+.knob-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 4px; }
+.knob-span-2 { grid-column: span 2; }
+.knob-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.knob-field { display: grid; gap: 5px; min-width: 0; }
+.knob-field > span { font-size: 11px; font-weight: 600; color: var(--dorami-faint); }
+.knob-field .form-input { width: 100%; }
+.knob-field textarea.form-input { min-height: 68px; resize: vertical; }
+.card-foot { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+/* KPI 格的加载 / 失败态(一条统计失败只让这一格变脸) */
+.kpi.is-error { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* 旧快照仍在时的非阻断刷新失败提示(区头 / 卡头 / 表头就地,codex R2-P1-2) */
+.stale-notice { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.stale-notice .tiny-meta { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kpi-stamp { padding: 1px 7px; vertical-align: middle; }
+/* 表格:名称双行格(主名 + faint 副行)、章 + 原因两行格、卡头、表脚、评分对、类型小签、进度条 */
+.acct-table.is-fixed .acct-name { display: block; }
+.acct-sub { display: block; margin-top: 1px; font-size: 11px; font-weight: 500; color: var(--dorami-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cell-2 { display: block; line-height: 1.35; min-width: 0; }
+.cell-2 small { display: block; font-size: 11px; color: var(--dorami-faint); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tbl-head { display: flex; align-items: center; gap: 10px; padding: 12px 18px 10px; border-bottom: 1px solid var(--dorami-border); }
+.tbl-head .zone-acts { margin-left: auto; }
+.table-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; border-top: 1px solid var(--dorami-border); padding: 10px 16px; }
+.acct-empty { padding: 24px; text-align: center; }
+.score-pair { font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; color: var(--dorami-ink-2); }
+.score-pair small { color: var(--dorami-faint); font-size: 11px; margin-left: 4px; font-family: inherit; }
+.tag-kind { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 4px; border: 1px solid var(--dorami-border-strong); font-size: 10px; font-weight: 600; letter-spacing: 0.06em; color: var(--dorami-faint); }
+.prog { position: relative; height: 5px; border-radius: var(--r-pill); background: var(--dorami-well); overflow: hidden; min-width: 90px; flex: 1; }
+.prog > i { position: absolute; inset: 0 auto 0 0; background: var(--dorami-accent); border-radius: var(--r-pill); }
+.prog-cell { display: flex; align-items: center; gap: 8px; }
+.is-bad-ink { color: var(--state-bad); }
+.backfill-head { padding-bottom: 14px; }
+.backfill-head .card-head { margin-bottom: 12px; }
+.backfill-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.backfill-row select.form-input-inline { width: auto; flex: none; }
+.backfill-row .backfill-source { width: 260px; flex: none; }
+/* 单集抽屉:处理时间线 */
+.timeline { display: grid; }
+.tl-row { display: grid; grid-template-columns: 96px 1fr auto; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--dorami-border); font-size: 12px; }
+.tl-row:first-child { border-top: none; }
+.tl-row .tl-what { color: var(--dorami-ink-2); font-weight: 500; min-width: 0; }
+/* 抽屉头 / 体的小件(ledger-drawer 语法换肤) */
+.drawer-title-stamp { vertical-align: middle; margin-left: 6px; }
+.drawer-title-sub { display: block; font-size: 11px; font-weight: 500; color: var(--dorami-faint); }
+.drawer-kv-stamp { margin-left: 6px; vertical-align: middle; }
+.drawer-line { display: block; }
+.drawer-stack { display: grid; gap: 8px; }
+.drawer-evidence { border: 1px solid var(--dorami-border); border-radius: var(--r-control); padding: 8px 10px; font-size: 12px; }
+.drawer-evidence p { margin-top: 3px; color: var(--dorami-ink-2); font-weight: 500; line-height: 1.55; }
+/* 别名 chip(interest-chip 语法) */
+.alias-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.alias-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 6px 0 8px; border-radius: 7px; background: var(--dorami-surface); box-shadow: var(--sh-1); font-size: 12px; color: var(--dorami-ink); }
+.alias-chip small { color: var(--dorami-faint); font-size: 10.5px; font-weight: 500; }
+.alias-chip-x { width: 16px; height: 16px; border-radius: 4px; color: var(--dorami-faint); font-size: 13px; line-height: 1; display: grid; place-items: center; opacity: 0; }
+.alias-chip:hover .alias-chip-x, .alias-chip-x:focus-visible { opacity: 1; }
+.alias-chip-x:hover:not(:disabled) { background: color-mix(in srgb, var(--dorami-ink) 8%, transparent); color: var(--dorami-ink); }
+.alias-chip-x:disabled { opacity: 0.3; cursor: not-allowed; }
+[data-theme="dark"] .alias-chip { background: var(--dorami-raised); }
+.alias-add { display: grid; grid-template-columns: 1fr 110px auto; gap: 6px; margin-top: 8px; }
+.alias-add .form-input-inline { width: 100%; }
+/* 试听链接是 <a> 不是 button:全局焦点环只覆盖表单件,补同款可见焦点(归并稿 P2 #20) */
+a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-offset: 1px; opacity: 1; }
+@media (max-width: 1024px) {
+  .knob-cards { grid-template-columns: 1fr; }
+  .knob-span-2 { grid-column: auto; }
 }
-.taxonomy-row-main:hover { background: var(--dorami-soft); }
-.taxonomy-row-main strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
-.taxonomy-row-main small { display: block; margin-top: 2px; color: var(--dorami-faint); font-size: 11px; font-weight: 600; }
-.taxonomy-row-detail { display: grid; gap: 12px; padding: 2px 14px 14px 58px; }
-.taxonomy-alias-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 28px;
-  padding: 3px 5px 3px 9px;
-  border-radius: var(--r-control);
-  background: var(--dorami-soft);
-  color: var(--dorami-ink);
-  font-size: 12px;
-  font-weight: 650;
-}
-.taxonomy-alias-chip small { color: var(--dorami-faint); font-size: 11px; font-weight: 600; }
-.taxonomy-alias-chip button {
-  display: grid;
-  width: 22px;
-  height: 22px;
-  place-items: center;
-  border-radius: var(--r-sm);
-  color: var(--dorami-muted);
-}
-.taxonomy-alias-chip button:hover:not(:disabled) { background: var(--dorami-raised); color: var(--state-bad); }
-.taxonomy-alias-chip button:disabled { cursor: not-allowed; opacity: .42; }
-.taxonomy-version-stat {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: var(--r-control);
-  background: var(--dorami-soft);
-  color: var(--dorami-muted);
-  font-size: 12px;
-  font-weight: 600;
-}
-.taxonomy-version-stat strong { color: var(--dorami-ink); font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
-/* Issue #7：运维管理 → 内容的本地 Podcast 音频资产台账。 */
-.podcast-assets-head { margin-top: 18px; }
-.podcast-assets-card { margin-top: 12px; }
-.podcast-assets-table { min-width: 940px; }
-.podcast-assets-table th:nth-child(1) { width: 27%; }
-.podcast-assets-table th:nth-child(2) { width: 120px; }
-.podcast-assets-table th:nth-child(3) { width: 96px; }
-.podcast-assets-table th:nth-child(4) { width: 110px; }
-.podcast-assets-table th:nth-child(5) { width: 90px; }
-.podcast-assets-table th:nth-child(6) { width: 150px; }
-.podcast-assets-table th:nth-child(7) { width: 80px; }
-.podcast-assets-episode {
-  display: block;
-  font-family: var(--mono);
-  font-variant-numeric: tabular-nums;
-}
-.podcast-assets-kind { display: block; line-height: 1.35; }
-.podcast-assets-state {
-  min-height: 90px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 24px;
-  color: var(--dorami-faint);
-  text-align: center;
-}
-.podcast-assets-state.is-error { color: var(--state-bad); }
-.podcast-assets-actions { opacity: 1; }
-.podcast-assets-actions .rowact-btn { display: inline-grid; }
-@media (max-width: 900px) {
-  .taxonomy-row-detail { padding-left: 14px; }
-}
+
 .podcast-premium-badge {
   display: inline-flex;
   align-items: center;
@@ -12206,65 +12171,6 @@ input[type="radio"] {
 .podcast-guide-button small { color: var(--dorami-muted); font-weight: 400; }
 .podcast-guide-button .is-open { transform: rotate(180deg); }
 .podcast-guide-body { padding: 18px 4px 4px; }
-.podcast-premium-title { display: block; max-width: 560px; }
-.podcast-premium-settings {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 16px 18px;
-  margin-bottom: 12px;
-}
-.podcast-premium-threshold-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
-.podcast-premium-threshold-row .form-input { width: 92px; text-align: center; }
-.podcast-premium-readonly { display: grid; justify-items: end; gap: 3px; }
-.podcast-premium-readonly strong { color: var(--dorami-ink); font-size: 18px; }
-.podcast-premium-filterbar { display: flex; margin: 12px 0 8px; }
-.podcast-premium-filterbar .mini-seg { flex-wrap: wrap; }
-.podcast-premium-table { min-width: 1180px; }
-.podcast-premium-table th:nth-child(1) { width: 19%; }
-.podcast-premium-table th:nth-child(2) { width: 14%; }
-.podcast-premium-table th:nth-child(3) { width: 10%; }
-.podcast-premium-table th:nth-child(4) { width: 10%; }
-.podcast-premium-table th:nth-child(5) { width: 18%; }
-.podcast-premium-table th:nth-child(6) { width: 17%; }
-.podcast-premium-table th:nth-child(7) { width: 12%; }
-.podcast-premium-scoreline { display: block; color: var(--dorami-ink-2); font-weight: 650; }
-.podcast-premium-reason { color: var(--dorami-muted); font-size: 12px; line-height: 1.5; }
-.podcast-premium-tts-state { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
-.podcast-premium-tts-error {
-  display: -webkit-box;
-  max-width: 220px;
-  overflow: hidden;
-  color: var(--state-bad);
-  font-size: 11px;
-  line-height: 1.35;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-.podcast-premium-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
-.podcast-premium-action {
-  min-height: 26px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  border-radius: var(--r-control);
-  padding: 0 8px;
-  color: var(--dorami-muted);
-  background: var(--dorami-raised);
-  font-size: 11px;
-  font-weight: 650;
-  white-space: nowrap;
-}
-.podcast-premium-action.is-tts { color: var(--dorami-accent-ink); }
-.podcast-premium-action:hover { color: var(--dorami-ink); background: var(--dorami-soft); }
-.podcast-premium-action:disabled { opacity: 0.45; cursor: not-allowed; }
-.podcast-premium-action svg { width: 13px; height: 13px; }
-@media (max-width: 720px) {
-  .podcast-premium-settings { align-items: stretch; flex-direction: column; }
-  .podcast-premium-readonly { justify-items: start; }
-}
 
 /* ══════════════════════════════════════════════════════════════════════
    兴趣即透镜(issue #27 第一波,四稿 docs/design/dorami-interest-lens-quiet.html → 五稿 dorami-interest-axis-quiet.html)

@@ -20,7 +20,6 @@ import {
   Podcast,
   Newspaper,
 } from 'lucide-react';
-import { useReaderState } from '../../hooks/useReaderState';
 import { useLongPress } from '../../hooks/useLongPress';
 import { useLayerHistory } from '../../hooks/useLayerHistory';
 import { articleDeepLink } from '../../utils/shareLink';
@@ -50,8 +49,7 @@ const noopContextMenu = () => {};
  * 源栏 → 过滤抽屉(§4.1.2 选源是过滤器不是目的地);正文页 = push 全屏页;
  * 桌面右键菜单 → 长按底部动作单(items 与 useReaderState 三份构建器同源,
  * 跨端肌肉记忆);「发现」是低频目的地,从 我的/抽屉 进入、不占 Tab。
- * 数据层全部来自 useReaderState(与桌面 ReaderTab 同一 hook),本文件只写
- * 移动 JSX 与触屏交互原语。
+ * ReaderWorkspace 持有共享数据与阅读位置，本文件只写移动 JSX 与触屏交互。
  */
 export default function MobileReader({
   showToast,
@@ -65,32 +63,15 @@ export default function MobileReader({
   onOpenSettings,
   onLogout,
   feedbackUnread = 0,
-  initialArticleId = '',
-  onDeepLinkConsumed,
+  rs,
+  view,
 }) {
-  // Bottom-tab state must exist before the shared reader hook: deep links and
-  // other programmatic article opens need to close the personal-brief surface.
-  // issue #56:落地 Tab = 早报(能力位开着且没带深链;深链压过落地页),与桌面同口径
-  const [tab, setTab] = useState(() => (personalDigestEnabled && !initialArticleId ? 'brief' : 'article'));
+  const {
+    tab, setTab, briefReturn, setBriefReturn, briefRestore, setBriefRestore,
+    discoverTab, setDiscoverTab, interestVersion, setInterestVersion,
+  } = view;
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sheet, setSheet] = useState(null); // { title, items, anchorKey }
-  // 兴趣(issue #27 三稿):编辑面并入发现页第三段;首登引导自动落到发现页兴趣段一次(不锁层)
-  const [discoverTab, setDiscoverTab] = useState('sources');
-  const [interestVersion, setInterestVersion] = useState(0);
-  const closeBriefBeforeArticleOpen = useCallback(() => {
-    setTab((current) => (current === 'brief' ? 'article' : current));
-  }, []);
-  // 早报外出(issue #23 三稿):从早报进正文页,返回键/返回钮回早报 Tab 并落回原位,而非文章列表
-  const briefTrailRef = useRef(null);
-  const [briefRestore, setBriefRestore] = useState(null);
-  const rs = useReaderState({
-    showToast,
-    account,
-    initialArticleId,
-    onDeepLinkConsumed,
-    onBeforeOpenArticle: closeBriefBeforeArticleOpen,
-    interestAxisEnabled: personalDigestEnabled,
-  });
   const {
     // 源目录 / 订阅
     sourcesLoading, discoverSources, subscribedIds, sourceMap, sourceNameMap,
@@ -126,29 +107,29 @@ export default function MobileReader({
   } = rs;
   const closeArticle = useCallback(() => {
     supersedePendingOpen(); // 返回时作废在途的按 id 打开(早报卡 / 深链),迟到响应不再把页面拉回去
-    if (briefTrailRef.current) {
-      setBriefRestore(briefTrailRef.current);
-      briefTrailRef.current = null;
+    if (briefReturn) {
+      setBriefRestore(briefReturn);
+      setBriefReturn(null);
       setTab('brief');
     }
     selectArticle(null);
-  }, [selectArticle, supersedePendingOpen]);
+  }, [selectArticle, supersedePendingOpen, briefReturn, setBriefRestore, setBriefReturn, setTab]);
   // 正文页点标签检索(codex 检视 P2):目的地是过滤后的内容列表,不是早报——从早报进来的也丢掉
   // 返回带、落到所属容器 Tab,否则检索结果被早报页盖住看不见。
   const leaveArticleForSearch = useCallback(() => {
-    briefTrailRef.current = null;
+    setBriefReturn(null);
     setTab((cur) => (cur === 'brief' || cur === 'me' ? mode : cur));
     selectArticle(null);
-  }, [selectArticle, mode]);
+  }, [selectArticle, mode, setBriefReturn, setTab]);
 
   // 底部 Tab:article|podcast|bulletin|social 与容器 mode 一一对应,me 是移动端独有落点
   const onboardingRequired = personalDigestEnabled
     && account?.role === 'user'
     && account?.interest_onboarding_completed === false;
   // 首登引导(issue #56 方案 B):不再强制落发现页兴趣段,横幅挂在早报页顶;「我的」的兴趣入口红点照旧
-  const openInterests = useCallback(() => { setDiscoverTab('interests'); openDiscover({ shape: 'all' }); }, [openDiscover]);
+  const openInterests = useCallback(() => { setDiscoverTab('interests'); openDiscover({ shape: 'all' }); }, [openDiscover, setDiscoverTab]);
   // 「发现更多来源」入口落「源」段(段位粘性,见桌面 ReaderTab 同名函数注释);形态:抽屉=当前容器,「我的」=全部
-  const openDiscoverSources = useCallback((opts) => { setDiscoverTab('sources'); openDiscover(opts); }, [openDiscover]);
+  const openDiscoverSources = useCallback((opts) => { setDiscoverTab('sources'); openDiscover(opts); }, [openDiscover, setDiscoverTab]);
   // 兴趣页保存回调经 ref 读最新的 discover(PUT 在途时读者可能已走开,闭包值陈旧——codex 检视 P2)
   const discoverRef = useRef(discover);
   useEffect(() => { discoverRef.current = discover; }, [discover]);
@@ -158,18 +139,9 @@ export default function MobileReader({
   );
   const subscribeSourceById = (sid) => handleSubscribe(sourceMap[sid] || { source_id: sid, name: sourceNameMap[sid] || sid });
 
-  // mode 被深链/点源/发现页预览改变时,内容 Tab 跟随所属容器(停在「我的」则不动)
-  useEffect(() => {
-    setTab((cur) => (cur === 'me' || cur === 'brief' || cur === mode ? cur : mode));
-  }, [mode]);
-
-  useEffect(() => {
-    if (!personalDigestEnabled) setTab((current) => (current === 'brief' ? mode : current));
-  }, [mode, personalDigestEnabled]);
-
   const goTab = (t) => {
     supersedePendingOpen(); // 任何主动切 Tab(含「我的」/早报)都作废在途的按 id 打开,迟到响应不再把人拉走
-    briefTrailRef.current = null; // 主动切 Tab = 结束这一程外出
+    setBriefReturn(null); // 主动切 Tab = 结束这一程外出
     if (t === 'brief') setBriefRestore(null); // 点 Tab 进早报是新开,不落回旧位
     if (t === 'me' || t === 'brief') { setTab(t); return; }
     setTab(t);
@@ -320,7 +292,7 @@ export default function MobileReader({
             onOpenArticle={async (articleId, ctx) => {
               const opened = await openArticleById(articleId, { silent: true });
               if (!opened) return opened;
-              briefTrailRef.current = ctx || null;
+              setBriefReturn(ctx || null);
               setTab(mode);
               return true;
             }}

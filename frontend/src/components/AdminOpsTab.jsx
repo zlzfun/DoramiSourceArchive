@@ -56,8 +56,9 @@ import AdminAuditPanel from './admin/AdminAuditPanel';
 import AccountGrowth from './admin/AccountGrowth';
 import Pager from './admin/Pager';
 import AdminTaxonomyPanel from './admin/AdminTaxonomyPanel';
-import PodcastArtifactsPanel from './admin/PodcastArtifactsPanel';
-import PodcastPremiumGuidesPanel from './admin/PodcastPremiumGuidesPanel';
+import PodcastZone from './admin/PodcastZone';
+import BriefInterestZone from './admin/BriefInterestZone';
+import { Kpi, KpiState } from './admin/Kpi';
 import { pivotDaily, C_READ, C_FAVORITE, C_SUBSCRIBE } from './charts/chartUtils';
 import { PURPOSE_LABELS, formatStamp, fmtNum, truncLabel } from './admin/adminUtils';
 import { avatarInitial, avatarHue } from '../utils/avatarColor';
@@ -75,16 +76,7 @@ function fmtBytes(n) {
   return `${value >= 100 ? Math.round(value) : value.toFixed(1)} ${units[i]}`;
 }
 
-// KPI 总账条单格（被动读数，数字全 ink；tone 只给需要语义色的异常指标）。
-function Kpi({ num, label, sub, tone }) {
-  return (
-    <div className="kpi">
-      <span className={`kpi-num${tone ? ` ${tone}` : ''}`}>{num}</span>
-      <span className="kpi-lbl">{label}</span>
-      {sub != null && <span className="kpi-sub">{sub}</span>}
-    </div>
-  );
-}
+// KPI 总账条单格已收敛为共享 admin/Kpi.jsx(issue #76:四份私有复制合一)。
 
 export default function AdminOpsTab({ showToast, active = true, currentUsername = '', rootAdmin = false, onRefreshRuntime = null, pendingFocus = null, onPendingFocusApplied, onOpenCredentials }) {
   const confirm = useConfirm();
@@ -143,7 +135,9 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
   const [usage, setUsage] = useState(null);
 
   // ── 内容看板（各源内容健康 + 收藏热度榜）──
+  // 失败只让内容 KPI 那一条变成可重试错误态,不再把同页其它分区一起挡住(issue #76 P1 #1)。
   const [content, setContent] = useState(null);
+  const [contentError, setContentError] = useState('');
 
   // ── 媒体库（图床）：缓存统计 ──
   // 全量回填按钮已撤（2026-07-20 拍板：生产只做「随抓预取」,突发回填易触发反爬且
@@ -196,7 +190,9 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
 
   const loadContent = useCallback(() => {
     const fresh = claimGen('content');
-    return fetchAdminContent().then((v) => { if (fresh()) setContent(v); }).catch(() => {});
+    return fetchAdminContent()
+      .then((v) => { if (fresh()) { setContent(v); setContentError(''); } })
+      .catch((error) => { if (fresh()) setContentError(error.message); });
   }, [claimGen]);
 
   const loadMedia = useCallback(() => {
@@ -342,7 +338,8 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
     if (target === 'user') { reloadAccounts(); loadGrowth(); }
     else if (target === 'content') { loadContent(); loadMedia(); loadX(); }
     else if (target === 'ai') { loadGlobals(); loadUsage(days); loadLlm(); }
-    // engage:面板经 refreshTick prop 自行重取,无需在此显式调用。
+    // engage / taxonomy:面板经 refreshTick prop 自行重取,无需在此显式调用;
+    // 内容子页的播客 / 早报与兴趣 / 自定源分区同样吃 refreshTick。
   }, [reloadAccounts, loadGrowth, loadContent, loadMedia, loadX, loadGlobals, loadUsage, loadLlm, days]);
   useEffect(() => {
     if (refreshTick > 0) refreshSub(sub);
@@ -712,18 +709,28 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
       <div className="page-head">
         <h1 className="page-title">运维管理</h1>
         <div className="page-head-actions">
-          <span className="win-label">时间窗</span>
-          <div className="mini-seg" role="group" aria-label="时间窗">
-            {[7, 14, 30, 90].map((d) => (
-              <button key={d} type="button" onClick={() => setDays(d)} className={`mini-seg-btn ${days === d ? 'is-on' : ''}`}>{d} 天</button>
+          {/* 时间窗只驱动用户 / AI / 分析与标签三页;内容子页三个数据源都不接时间窗参数、
+              媒体热点图自带年份切换,页头时间窗在该页零作用——隐藏(issue #76 拍板⑤)。 */}
+          {sub !== 'content' && (
+            <>
+              <span className="win-label">时间窗</span>
+              <div className="mini-seg" role="group" aria-label="时间窗">
+                {[7, 14, 30, 90].map((d) => (
+                  <button key={d} type="button" onClick={() => setDays(d)} aria-pressed={days === d} className={`mini-seg-btn ${days === d ? 'is-on' : ''}`}>{d} 天</button>
+                ))}
+              </div>
+            </>
+          )}
+          <div className="segmented-control" role="tablist" aria-label="运维子页">
+            {[
+              ['user', '用户', Users],
+              ['content', '内容', Database],
+              ['ai', 'AI', Brain],
+              ['taxonomy', '分析与标签', Tags],
+              ['engage', '消息', MessageSquare],
+            ].map(([key, label, Icon]) => (
+              <button key={key} type="button" role="tab" aria-selected={sub === key} onClick={() => setSub(key)} className={`segmented-option ${sub === key ? 'segmented-option-active' : ''}`}><Icon /> {label}</button>
             ))}
-          </div>
-          <div className="segmented-control">
-            <button onClick={() => setSub('user')} className={`segmented-option ${sub === 'user' ? 'segmented-option-active' : ''}`}><Users /> 用户</button>
-            <button onClick={() => setSub('content')} className={`segmented-option ${sub === 'content' ? 'segmented-option-active' : ''}`}><Database /> 内容</button>
-            <button onClick={() => setSub('ai')} className={`segmented-option ${sub === 'ai' ? 'segmented-option-active' : ''}`}><Brain /> AI</button>
-            <button onClick={() => setSub('taxonomy')} className={`segmented-option ${sub === 'taxonomy' ? 'segmented-option-active' : ''}`}><Tags /> 标签</button>
-            <button onClick={() => setSub('engage')} className={`segmented-option ${sub === 'engage' ? 'segmented-option-active' : ''}`}><MessageSquare /> 消息</button>
           </div>
         </div>
       </div>
@@ -737,7 +744,8 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
         </div>
       )}
 
-      {sub === 'taxonomy' && <AdminTaxonomyPanel showToast={showToast} days={days} />}
+      {/* refreshTick:切回 Tab / 切子页时面板逐 loader 重取,不重挂(M15 回访刷新,issue #76 P1 #4) */}
+      {sub === 'taxonomy' && <AdminTaxonomyPanel showToast={showToast} days={days} refreshTick={refreshTick} />}
 
       {/* ══ 用户子页 ══════════════════════════════════════════════ */}
       {sub === 'user' && (
@@ -1107,22 +1115,23 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
             )}
           </section>
 
-          {!content ? (
-            <p className="surface-card card-pad rounded-[var(--r-card)] text-center tiny-meta">
-              <Loader2 className="mx-auto mb-1 h-4 w-4 animate-spin text-slate-500" /> 正在加载内容统计…
-            </p>
-          ) : (
-            <>
-              <section className="surface-card kpi-strip" aria-label="内容概览">
+          {/* 内容 KPI 独立持有错误态:统计请求失败只让这一条变脸,其余分区照常渲染(issue #76 P1 #1) */}
+          <section className="surface-card kpi-strip" aria-label="内容概览">
+            {content ? (
+              <>
                 <Kpi num={fmtNum(content.totals.sources)} label="内容源" sub="累计" />
                 <Kpi num={fmtNum(content.totals.articles)} label="归档文章" sub="累计" />
                 <Kpi num={fmtNum(content.totals.reads)} label="阅读总数" sub="累计" />
                 <Kpi num={fmtNum(content.totals.favorites)} label="收藏总数" sub="累计" />
-              </section>
+              </>
+            ) : (
+              <KpiState label="内容统计" error={contentError} onRetry={loadContent} />
+            )}
+          </section>
 
+          <>
               <div className="zone-head">
                 <span className="zone-title">各源热度</span>
-                <span className="zone-hint">阅读 / 收藏 / 订阅为累计口径，不随时间窗变化</span>
               </div>
               <div className="admin-grid">
                 <section className="surface-card card-pad rounded-[var(--r-card)]">
@@ -1166,7 +1175,6 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
               {/* ── X API(社交源采集):按量付费开销观测面;凭据编辑已收敛到 设置 → 凭据 ── */}
               <div className="zone-head">
                 <span className="zone-title">X API</span>
-                <span className="zone-hint">社交源采集的按量付费开销(按返回资源计费,非请求次数)</span>
                 {xQuota?.blocked && <span className="stamp stamp-bad">已达预算上限 · 停止抓取</span>}
                 <div className="zone-acts">
                   <button
@@ -1200,7 +1208,6 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
               {/* ── 媒体库（图床）：正文外链图片本地缓存 ── */}
               <div className="zone-head">
                 <span className="zone-title">媒体库</span>
-                <span className="zone-hint">正文外链图片的本地缓存：抓取入库时随文预取，逐日覆盖见下方热点图</span>
               </div>
               {media?.enabled === false ? (
                 <section className="surface-card card-pad rounded-[var(--r-card)]">
@@ -1224,13 +1231,15 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
                 </>
               )}
 
-              <PodcastPremiumGuidesPanel showToast={showToast} refreshTick={refreshTick} />
-              <PodcastArtifactsPanel showToast={showToast} refreshTick={refreshTick} />
+              {/* ── 早报与兴趣(issue #76 拍板①):个人早报分发策略旋钮自「标签」子页迁入 ── */}
+              <BriefInterestZone showToast={showToast} refreshTick={refreshTick} />
+
+              {/* ── 播客(issue #76):KPI + 处理参数 + 单集处理表 + 中文精简音频表 + 单集抽屉 ── */}
+              <PodcastZone showToast={showToast} refreshTick={refreshTick} onOpenCredentials={onOpenCredentials} />
 
               {/* ── 用户自定源(v3.40):读者自助 RSS 源的治理与观测 ── */}
-              <UserSourcesPanel showToast={showToast} />
-            </>
-          )}
+              <UserSourcesPanel showToast={showToast} refreshTick={refreshTick} />
+          </>
         </div>
       )}
 

@@ -1,96 +1,79 @@
-# DoramiSourceArchive · 哆啦美·归档中枢
+# 哆啦美 · DoramiSourceArchive
 
-一个 **AI 内容聚合 CMS**：从多源抓取内容 → 存入 SQLite（内建 FTS5 全文索引），按用户订阅做分发（Feed / MCP / 每日日报），并提供「LLM 计划检索 + FTS5」的问答助手。系统分为**采集/归档**（collector）与**阅读/分发**（reader）两层，由运行时角色与登录账号角色共同门控。
+**一个自托管的 AI 资讯阅读器**：把散落在官方博客、科技媒体、个人博客、X 时间线、播客里的 AI 动态收进同一个归档，交给大模型打分、摘要、打标，再按你的订阅和兴趣编成每天一份的个人早报。你只需要打开它，读今天值得读的东西。
 
-v3.44 起，资讯落盘后可异步完成新闻价值评分、摘要、受治理的 `Topic / Industry / Entity` 标签与最多 6 个灵活展示标签；读者首次登录或在发现页「兴趣」段选择关注的标签（v3.56 起不再有屏蔽），个人早报按「订阅 ∪ 兴趣」编排。规范标签、审核回执、历史 `full_analysis` 回填和公共日报 adapter 均有独立的发布与回滚边界。
+![阅读器:左侧订阅源，中间条目列，右侧带 AI 速读的阅读窗](docs/assets/readme/02-reader.png)
 
-Podcast RSS 现作为文章、动态、社交之外的第四种内容形态：采集 enclosure、时长、节目/单集元数据与 Podcasting 2.0 transcript/chapters 定位信息，桌面端和移动端均可在独立 Podcast 容器中播放原音频。长播客转录、精华博客和 `≤15min` 合成音频仍是后续受权利与预算门控的异步流水线，完整设计见 [`docs/podcast-wave-plan.md`](docs/podcast-wave-plan.md)。
+## 它能做什么
 
-> 本文件是**全仓导航地图**（鸟瞰 + 路径索引）。需要深入时按「渐进式披露」逐层下钻 ↓
+### 每天一份属于你的早报
 
-## 文档分层（按需下钻）
+每天早上 8:30，哆啦美从你订阅的来源和关注的兴趣里选出当天最值得读的十来篇，按「重大事件 / 模型发布 / 行业资讯 / 开源动态……」分板块排成一版报纸。每张卡片带一个**新闻价值分**和一句「为什么重要」；分数越高的卡片占的版面越大。全站范围内的头条大事会作为「重大事件」置顶，哪怕它不在你的订阅里。
 
-| 层级 | 文件 | 看什么 |
-|---|---|---|
-| ① 鸟瞰 / 导航 | **本 README** | 项目是什么、怎么跑、文件都在哪 |
-| ② 架构详解 | [`CLAUDE.md`](./CLAUDE.md) | 数据流、关键设计决策、各模块职责、端点清单（最权威、最详尽） |
-| ③ 契约与标准 | [`docs/`](./docs/README.md) | 下游集成契约、来源治理标准、配置说明 |
-| ④ 实现 | `src/` · `frontend/` · `tests/` | 源码 |
+![个人早报页](docs/assets/readme/01-brief.png)
 
-> 三层之间**不重复**：架构性的「为什么」只写在 `CLAUDE.md`，本 README 只做「在哪里」的索引。
+### 一个安静的阅读器
 
-## 快速上手
+- **订阅制**。左栏是你的订阅源，按官方 / 媒体 / 个人 / 榜单分组；文章、动态（changelog、发布说明）、社交（X 推文）、播客各是一个容器，形态不同就不混在一起。
+- **兴趣是一面透镜**。左栏可以切到「兴趣」轴，按你关注的主题、行业、公司横切全站内容，不受订阅范围限制。
+- **未读、收藏、标读、右键菜单、站内深链与公开分享链接**。桌面端的每一个动作在手机上都有对应的长按动作单。
+- **每篇文章都带 AI 速读**：新闻价值分、一段摘要、一句评分依据，点击分数可以在两层之间切换。
+
+### 问哆啦美
+
+阅读窗右下角的星标打开问答面板。可以只问当前这篇，也可以问「我的订阅」——哆啦美会先规划检索、在全文索引里找出相关文章，再给出带编号引用的回答，每个引用都能一键跳转到原文。文章页还提供一键中文翻译，标题与正文一起译。
+
+![问答面板:回答带编号引用，引用列表可跳转原文](docs/assets/readme/04-ask.png)
+
+### 发现来源
+
+发现页是全站来源目录：按角色分组、显示订阅人数与最近更新，一键订阅或先预览。策展合集（前沿实验室官方、国产开源模型动态、AI 编程工具……）可以整组订阅；也可以贴一个 RSS 地址添加只有自己可见的私有来源。
+
+![发现页:来源目录与一键订阅](docs/assets/readme/03-discover.png)
+
+### 手机上直接打开
+
+同一个地址在手机浏览器或微信里打开就是移动版阅读器：底部四个 Tab、全屏正文页、长按动作单、返回键与页面栈握手。不需要装 App。
+
+<p align="center">
+  <img src="docs/assets/readme/05-mobile.png" alt="移动端正文页" width="360">
+</p>
+
+## 内容从哪里来
+
+- **60 多个内置来源**：OpenAI、Anthropic、Google DeepMind、Qwen、Mistral 等官方博客，Claude Code、Codex、Cursor、DeepSeek API 等工具与平台的更新日志，量子位、IT之家、新智元、The Decoder 等媒体，Simon Willison、Import AI 与 HN 人气博客榜上的个人博客，Hugging Face Daily Papers、GitHub Trending、Arena 排行榜等榜单，以及 OpenAI、DeepSeek、Karpathy 等 X 账号的时间线；另有 36 个精选播客节目。每个来源都经过采集器适配与正文质检，抓下来的是干净的 Markdown 正文。
+- **入库即分析**：每篇文章落盘后由后台 worker 用大模型打新闻价值分、写摘要、按受治理的标签目录（主题 / 行业 / 实体）打标。文章配图可以交给视觉模型识别成文字说明，一并喂给摘要与问答。
+- **公共 AI 日报**：管理员可以按 cron 生成全站视角的每日资讯日报，同一把评分尺子，去重后确定性排版。
+- **对外交付**：每个读者都有一个聚合 Feed 令牌，可以用 JSON 或 Markdown 拉取自己订阅范围内的内容；同一范围也通过 MCP 暴露给 Claude、IM 机器人等 Agent，并提供可下载的 Claude 技能包。
+
+## 管理面
+
+管理员登录后是一个独立的管理台：节点管理（采集器目录、参数、运行、隐藏）、采集任务与运行历史、知识台账（全库文章的检索与编辑）、AI 日报、运维看板（AI 用量、读者活跃、内容热度、媒体缓存、操作审计）、账户与公告。管理员同时也是读者，一键切换到阅读器。支持任意数量的管理员，管理写操作全部入审计。
+
+## 本地启动
+
+后端 Python 3.12 + FastAPI，依赖用 [uv](https://docs.astral.sh/uv/) 管理；前端 React + Vite；数据落在 `data/` 目录的 SQLite 里，零外部服务。
 
 ```bash
-# 后端（http://127.0.0.1:8088，热重载；API 文档 /docs）
+# 后端:http://127.0.0.1:8088,热重载;API 文档在 /docs
 uv sync
 python src/main.py
 
-# 前端（端口 5173，/api 代理到后端）
+# 前端:http://127.0.0.1:5173,/api 代理到后端
 cd frontend && npm install && npm run dev
-
-# 测试（整套，排除 tests/rag/ 自有 harness）
-.venv/bin/python -m pytest tests/
-
-# 生产部署（Docker:构建镜像 + 起容器 + 健康验证,一键;详见 docs/deploy-docker.md）
-./deploy-docker.sh
 ```
 
-数据落在 `data/`（SQLite `cms_data.db`，已 gitignore）。
+首次启动会自动创建根管理员 `admin` / `admin`，登录后请立即改密。大模型走任意 OpenAI 兼容端点（DeepSeek、Kimi、智谱、通义、OpenRouter、Ollama、vLLM 均可），在「设置 → 凭据」里填 `base_url` / `api_key` / `model` 即可启用评分、早报、翻译与问答；不配置时采集与阅读照常工作。
 
-## 仓库地图
+```bash
+# 测试
+.venv/bin/python -m pytest tests/
 
-### 后端 `src/`
-| 路径 | 概述 |
-|---|---|
-| `main.py` | 入口：启动 uvicorn（reload=True），设置 HF 镜像 |
-| `config.py` | `load_config()` → settings 单例；读 `DORAMI_CONFIG_FILE`（否则 `config/backend.ini`） |
-| `api/app.py` | FastAPI 主体：全部 REST 端点 + APScheduler 初始化 + 双轴角色门控 |
-| `api/skill_router.py` | `GET /api/skill/daily-brief`：实时打包可下载的 Claude skill zip |
-| `llm/` | OpenAI 兼容 LLM 客户端（`client.py`，绝不记录 api_key）+ 日报 map/reduce 提示词（`prompts.py`） |
-| `services/daily_brief.py` | 每日 AI 资讯日报：对归档做 LLM map-reduce + 游标去重 + 内存进度 |
-| `services/article_analysis.py` · `services/article_display_tags.py` | 文章分析租约、模型结果落库、规范/灵活展示标签与 Candidate evidence |
-| `services/taxonomy.py` · `services/taxonomy_bootstrap.py` | Taxonomy 版本、Alias/层级、候选治理、发布与重标任务 |
-| `services/personal_digest.py` · `services/digest_selection.py` | 个人早报 revision、订阅范围冻结、兴趣最多 50% 与质量补齐 |
-| `models/content.py` · `models/db.py` | 内容数据类（`BaseContent` 及子类）/ SQLModel ORM 表 |
-| `fetchers/` | 插件式抓取器：`registry.py` 启动时自动扫描 `impl/`；基类见 `base.py`、`webpage_fetcher.py`、`github_release_fetcher.py` |
-| `fetchers/impl/` | 各来源实现（RSS / GitHub Releases / repo+model / 网页列表 / curated / Playwright 渲染等） |
-| `pipeline/` | `core.py` DataPipeline（fetcher → storages 广播）+ `progress.py` 内存进度 |
-| `storage/impl/` | `db_storage.py`（SQLite,含 FTS5 建表引导） |
-| `mcp_server.py` | `build_mcp_app()`：FastMCP streamable-HTTP，挂到 `/mcp` |
-| `skill_templates/` | 可下载 Claude skill 模板源（被 `skill_router` 打包） |
+# 生产部署:Docker(推荐)或裸机 PM2,均按发布 tag 部署
+./deploy-docker.sh          # 详见 docs/deploy-docker.md
+./deploy.sh                 # 详见 docs/deploy-baremetal.md
+```
 
-> 各模块的设计决策（双维内容身份、`extensions_json` 序列化、问答检索、双轴访问控制、Collection Jobs、Archive Sync 等）详见 [`CLAUDE.md`](./CLAUDE.md)。
+## 给开发者与 Agent
 
-### 前端 `frontend/src/`
-| 路径 | 概述 |
-|---|---|
-| `api.js` | 所有后端 `fetch()` 的唯一出口 |
-| `App.jsx` | 根：登录门控 + tab 路由（按运行时能力与账号角色过滤） |
-| `components/` | 各 tab 与弹窗：`ReaderTab`（阅读器，user 唯一主界面）+`DiscoverPage`（发现页）、`InterestManager`（个人兴趣）、`PersonalBriefTab`（个人早报）、`DataTab`（知识台账）、`FetchTab`/`FetchRunsTab`（采集）、`DailyBriefTab`（公共日报）、`AdminOpsTab`（含 Taxonomy/回填管理）等 |
-| `hooks/` · `utils/` · `config.js` · `sourceTaxonomy.js` | 复用 hook、工具函数、单点配置、来源分类表 |
-
-### 文档 `docs/` — 见 [`docs/README.md`](./docs/README.md)
-| 路径 | 概述 |
-|---|---|
-| `configuration.md` | `config/backend.ini`、运行时角色、两层部署 |
-| `contracts/` | 下游集成契约：`feed_delivery` / `archive_sync` / `reader_subscription` |
-| `sources/` | 来源治理：分类标准、收录策略、准入流程、节点审计 playbook、节点目录与风险、`candidates/` 各厂商候选源 |
-| `backlog.md` | 跨波次待办总账（进行中/排队/展望） |
-| `archive/` | 历史/已落地的计划文档（如 `frontend-optimization-plan.md`） |
-| `taxonomy-v1-deployment.md` · `aliyun-dual-node-deployment.md` · `full-analysis-backfill.md` | Taxonomy、阿里云双节点上线与历史文章分析回填手册 |
-
-### 脚本 `scripts/` — 见 [`scripts/README.md`](./scripts/README.md)
-独立于后端运行时的运维/导出脚本；其中 Taxonomy v1 的发现、审核与恢复工具按阶段分组并标注生产写入边界。常规部署由启动 reconciler 和 Archive Sync JSONL 完成，不需要 taxonomy 安装脚本。
-
-### 测试 `tests/`
-单测直接放在 `tests/test_*.py`（每个文件自举 `sys.path` 到 `src/`）。
-
-### 根目录配置 / 部署
-| 路径 | 概述 |
-|---|---|
-| `CLAUDE.md` | 架构详解 + 开发命令（最权威） |
-| `pyproject.toml` · `uv.lock` | Python 依赖(单一事实来源) |
-| `config/*.example.ini` | 配置模板（真实 `backend.ini`/`production.ini` 不入库） |
-| `config/taxonomy-v1-approved-catalog.json` | Taxonomy v1 冷启动所需的已批准产品目录 |
-| `deploy-docker.sh` · `docker-compose.yml` · `docker/` | 一键生产部署(Docker 双容器) |
+架构简报、开发命令与全部工程约定在 [`CLAUDE.md`](./CLAUDE.md)；通用 Agent 入口是 [`AGENTS.md`](./AGENTS.md)；文档总索引在 [`docs/README.md`](./docs/README.md)。

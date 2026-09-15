@@ -1,84 +1,38 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Loader2, Plus, RefreshCw } from 'lucide-react';
 import {
-  Check,
-  ChevronDown,
-  ChevronUp,
-  GitMerge,
-  Loader2,
-  Link2,
-  Plus,
-  RefreshCw,
-  RotateCcw,
-  Search,
-  ShieldAlert,
-  Trash2,
-  X,
-} from 'lucide-react';
-import {
-  activateCmsTagCandidate,
-  addCmsTagAlias,
   backfillCmsTagAliases,
-  createCmsTag,
-  deprecateCmsTag,
-  deleteCmsTagCandidate,
-  deleteCmsTagAlias,
   fetchAnalysisConfig,
   fetchAnalysisMetrics,
-  fetchCmsTagCandidates,
-  fetchCmsTags,
-  fetchInterestCatalogPolicy,
   fetchTaxonomyState,
-  mergeCmsTag,
   publishTaxonomyV1,
-  reclassifyCmsTagCandidate,
-  rejectCmsTagCandidate,
-  retagCmsTag,
-  resolveCmsTagCandidate,
   updateAnalysisConfig,
-  updateCmsTag,
-  updateInterestCatalogPolicy,
 } from '../../api';
 import { useConfirm } from '../../hooks/useConfirm';
+import { TAG_KIND_LABELS } from '../../utils/taxonomyLabels';
 import FullAnalysisBackfillCard from './FullAnalysisBackfillCard';
+import { Kpi, KpiState } from './Kpi';
+import StaleNotice from './StaleNotice';
+import TaxonomyLedger from './TaxonomyLedger';
+import { formatStamp } from './adminUtils';
 
-const KIND_LABELS = { topic: '主题', industry: '行业', entity: '实体' };
-const ENTITY_TYPE_LABELS = {
-  organization: '组织 / 公司 / 实验室',
-  product: '产品 / 服务',
-  model: '模型 / 模型家族',
-  protocol: '协议 / 标准',
-  project: '开源项目 / 框架',
-};
 const FLAG_META = {
-  article_analysis_enabled: ['文章分析', '创建并消费文章级分析任务'],
-  taxonomy_candidate_enabled: ['Candidate 证据', '记录公共内容中的未知概念'],
-  taxonomy_auto_activation_enabled: ['候选自动激活', '仅对满足组合阈值的低风险候选生效'],
-  personal_digest_enabled: ['个人早报', '开放读者早报 API、调度与页面'],
-  // 公共日报 adapter 开关随 v3.48 退役(日报直接复用分析评分,软依赖不需要开关)
+  article_analysis_enabled: ['文章分析', '关闭只停止创建与消费分析任务，不删已有结果'],
+  taxonomy_candidate_enabled: ['候选证据', '关闭后不再记录公共内容里的未知概念'],
+  taxonomy_auto_activation_enabled: ['候选自动激活', '开启前需目录 v1 已发布并结束引导期；开启时确认'],
+  personal_digest_enabled: ['个人早报', '关闭只停止早报 API 与调度，不删已有版本'],
 };
-
 const pct = (value) => `${(Number(value || 0) * 100).toFixed(1)}%`;
-const displayName = (tag) => tag?.name_zh || tag?.name_en || tag?.code || '—';
-const CANDIDATE_PAGE_SIZE = 100;
 
-function Metric({ value, label, sub }) {
-  return <div className="kpi"><span className="kpi-num">{value}</span><span className="kpi-lbl">{label}</span>{sub && <span className="kpi-sub">{sub}</span>}</div>;
-}
-
-// 新闻价值分整数档分布(v3.48 收口):日报门槛 6.0 / 早报门槛 5.0 的校准依据。
-// 手写 grid 不引图表库;数字只在 title 里,与运维看板「悬停见数」纪律一致。
-function ScoreHistogram({ histogram, windowDays, versionStale }) {
+// 新闻价值分整数档分布(v3.48 收口):手写 grid 不引图表库;数字只在 title 里。
+function ScoreHistogram({ histogram, windowDays, total }) {
   const buckets = Array.from({ length: 10 }, (_, i) => [String(i + 1), Number(histogram?.[String(i + 1)] || 0)]);
-  const total = buckets.reduce((acc, [, n]) => acc + n, 0);
   const max = Math.max(1, ...buckets.map(([, n]) => n));
-  const stale = Number(versionStale || 0);
   return (
     <section className="surface-card card-pad rounded-[var(--r-card)]">
       <div className="card-head">
-        <div>
-          <h2 className="card-title">新闻价值分布</h2>
-          <p className="tiny-meta mt-1">近 {windowDays} 天已分析 {total.toLocaleString()} 篇{stale > 0 ? ` · 旧尺子结果 ${stale.toLocaleString()} 篇待重跑` : ''}</p>
-        </div>
+        <span className="card-title">新闻价值分布</span>
+        <span className="tiny-meta ml-auto">近 {windowDays} 天 · {total.toLocaleString()} 篇</span>
       </div>
       {total === 0 ? (
         <p className="tiny-meta">窗口内还没有分析结果</p>
@@ -96,518 +50,235 @@ function ScoreHistogram({ histogram, windowDays, versionStale }) {
   );
 }
 
-function FeatureFlags({ config, onToggle, busy }) {
-  if (!config) return <p className="tiny-meta">分析开关尚未接入当前后端版本</p>;
-  return (
-    <div className="grid gap-2 lg:grid-cols-4">
-      {Object.entries(FLAG_META).map(([key, [label, hint]]) => {
-        const enabled = !!config[key];
-        return (
-          <button
-            key={key}
-            type="button"
-            role="switch"
-            aria-checked={enabled}
-            disabled={busy === key}
-            onClick={() => onToggle(key, !enabled)}
-            className={`taxonomy-flag ${enabled ? 'is-on' : ''}`}
-          >
-            <span className="taxonomy-flag-head"><i aria-hidden="true" />{label}</span>
-            <span>{hint}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-// 个人早报「重大事件」通道(v3.50,issue #33 §2):跨订阅范围的头条位。两枚旋钮走同一个分析配置端点,
-// 窗口(24h)/多源印证来源数(2)是常量不开放;条数 0 = 关闭通道。
-function BreakingLaneCard({ config, onSave, showToast }) {
-  const [form, setForm] = useState({ min_score: 9, max_items: 2 });
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    if (config) setForm({ min_score: config.min_score ?? 9, max_items: config.max_items ?? 2 });
-  }, [config]);
-  if (!config) return null;
-  const save = async () => {
-    setBusy(true);
+function useTracked(fetcher) {
+  const genRef = useRef(0);
+  const [state, setState] = useState({ status: 'loading', data: null, error: '' });
+  const load = useCallback(async (...args) => {
+    const gen = ++genRef.current;
+    setState((prev) => ({ status: 'loading', data: prev.data, error: '' }));
     try {
-      await onSave({ personal_digest_breaking_min_score: Number(form.min_score), personal_digest_breaking_max_items: Number(form.max_items) });
-      showToast?.('已更新重大事件通道', 'success');
-    } catch (error) { showToast?.(error.message || '更新重大事件通道失败', 'error'); }
-    finally { setBusy(false); }
-  };
-  return (
-    <section className="surface-card card-pad rounded-[var(--r-card)]">
-      <div className="card-head">
-        <div><h2 className="card-title">早报重大事件通道</h2><p className="tiny-meta mt-1">不看订阅范围的头条位：官方一手 ≥ 阈值，或 ≥2 个来源同事件 ≥ 阈值−0.5 且至少一条过线；近 24 小时、同实体前两期上过即不重复；额外加在精选之上</p></div>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-3">
-        <label><span className="form-label">新闻价值分阈值</span><input type="number" min="0" max="10" step="0.1" className="form-input" value={form.min_score} onChange={(e) => setForm({ ...form, min_score: e.target.value })} /><small className="tiny-meta">默认 9.0</small></label>
-        <label><span className="form-label">每期条数上限</span><input type="number" min="0" max={config.max_items_limit ?? 5} step="1" className="form-input" value={form.max_items} onChange={(e) => setForm({ ...form, max_items: e.target.value })} /><small className="tiny-meta">0 = 关闭通道，默认 2</small></label>
-      </div>
-      <div className="mt-3 flex justify-end"><button type="button" disabled={busy} className="action-button action-button-primary min-h-[32px] px-3 text-xs" onClick={save}>{busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />} 保存通道设置</button></div>
-    </section>
-  );
-}
-
-// 个人早报「订阅 ∪ 兴趣」(v3.54,issue #33 §3 前置):兴趣半的候选池扩到全站可见源。订阅外没有
-// 「读者明说信任」这层背书,门槛与每源上限另算;订阅内仍 5.0 / 软上限。两枚旋钮同走分析配置端点。
-function UnionLaneCard({ config, onSave, showToast }) {
-  const [form, setForm] = useState({ external_min_score: 6, external_per_source_max: 2 });
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    if (config) setForm({ external_min_score: config.external_min_score ?? 6, external_per_source_max: config.external_per_source_max ?? 2 });
-  }, [config]);
-  if (!config) return null;
-  const save = async () => {
-    setBusy(true);
-    try {
-      await onSave({ personal_digest_external_min_score: Number(form.external_min_score), personal_digest_external_per_source_max: Number(form.external_per_source_max) });
-      showToast?.('已更新早报订阅外兴趣设置', 'success');
-    } catch (error) { showToast?.(error.message || '更新早报订阅外兴趣设置失败', 'error'); }
-    finally { setBusy(false); }
-  };
-  return (
-    <section className="surface-card card-pad rounded-[var(--r-card)]">
-      <div className="card-head">
-        <div><h2 className="card-title">早报订阅外兴趣</h2><p className="tiny-meta mt-1">兴趣半（最多 {config.interest_slots ?? 5} 篇）从全站可见来源里取命中兴趣的文章：订阅内门槛 {config.min_score ?? 5}、订阅外门槛另设且每源每期硬上限；订阅内命中排前，质量半仍只从订阅来源选；订阅为空但设了兴趣时只出兴趣半</p></div>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-3">
-        <label><span className="form-label">订阅外新闻价值门槛</span><input type="number" min="0" max="10" step="0.1" className="form-input" value={form.external_min_score} onChange={(e) => setForm({ ...form, external_min_score: e.target.value })} /><small className="tiny-meta">默认 6.0（公共日报入选线）</small></label>
-        <label><span className="form-label">订阅外每源每期上限</span><input type="number" min="1" max={config.external_per_source_max_limit ?? 5} step="1" className="form-input" value={form.external_per_source_max} onChange={(e) => setForm({ ...form, external_per_source_max: e.target.value })} /><small className="tiny-meta">硬上限，不参与放宽；默认 2</small></label>
-      </div>
-      <div className="mt-3 flex justify-end"><button type="button" disabled={busy} className="action-button action-button-primary min-h-[32px] px-3 text-xs" onClick={save}>{busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />} 保存订阅外设置</button></div>
-    </section>
-  );
-}
-
-function InterestCatalogPolicyCard({ showToast }) {
-  const [data, setData] = useState(null);
-  const [limits, setLimits] = useState({ topic: 30, industry: 15, entity: 20 });
-  const [busy, setBusy] = useState(false);
-  const loadPolicy = useCallback(() => {
-    fetchInterestCatalogPolicy().then((result) => {
-      setData(result);
-      setLimits(result.policy?.limits || { topic: 30, industry: 15, entity: 20 });
-    }).catch((error) => showToast?.(error.message || '获取兴趣目录策略失败', 'error'));
-  }, [showToast]);
-  useEffect(loadPolicy, [loadPolicy]);
-  const save = async () => {
-    setBusy(true);
-    try {
-      const result = await updateInterestCatalogPolicy({ ...limits, reason: '管理台调整兴趣目录 Top N' });
-      setData(result);
-      setLimits(result.policy?.limits || limits);
-      showToast?.('已更新兴趣目录展示策略', 'success');
-    } catch (error) { showToast?.(error.message || '更新兴趣目录策略失败', 'error'); }
-    finally { setBusy(false); }
-  };
-  return (
-    <section className="surface-card card-pad rounded-[var(--r-card)]">
-      <div className="card-head">
-        <div><h2 className="card-title">用户兴趣目录</h2><p className="tiny-meta mt-1">首版接受的主题、行业、实体均默认可选，再按近 {data?.policy?.window_days || 30} 天文章覆盖量展示各分面 Top N；管理员可单独下架，已选标签跌出 Top N 仍会保留</p></div>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-3">
-        {Object.entries(KIND_LABELS).map(([key, label]) => {
-          const stats = data?.facet_stats?.[key];
-          return <label key={key}><span className="form-label">{label} Top N</span><input type="number" min="0" max="200" className="form-input" value={limits[key]} onChange={(e) => setLimits({ ...limits, [key]: Number(e.target.value) })} /><small className="tiny-meta">当前可展示 {stats?.top_n_count ?? '—'} / 具备资格 {stats?.eligible_count ?? '—'}</small></label>;
-        })}
-      </div>
-      <div className="mt-3 flex justify-end"><button type="button" disabled={busy} className="action-button action-button-primary min-h-[32px] px-3 text-xs" onClick={save}>{busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />} 保存展示策略</button></div>
-    </section>
-  );
-}
-
-function CreateTagForm({ tags, onCreated, showToast }) {
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const emptyForm = { code: '', kind: 'topic', name_zh: '', name_en: '', description: '', prompt_description: '', status: 'active', user_selectable: true, entity_type: '', external_key: '', parent_id: null };
-  const [form, setForm] = useState(emptyForm);
-  const submit = async (event) => {
-    event.preventDefault();
-    setBusy(true);
-    try {
-      await createCmsTag(form);
-      showToast?.(`已创建标签 ${form.name_zh || form.code}`, 'success');
-      setOpen(false);
-      setForm(emptyForm);
-      onCreated();
+      const data = await fetcher(...args);
+      if (gen === genRef.current) setState({ status: 'ok', data, error: '' });
+      return data;
     } catch (error) {
-      showToast?.(error.message || '创建标签失败', 'error');
-    } finally { setBusy(false); }
-  };
-  if (!open) return <button type="button" className="action-button action-button-primary min-h-[32px] px-3 text-xs" onClick={() => setOpen(true)}><Plus className="h-3.5 w-3.5" /> 新建标签</button>;
-  return (
-    <form className="surface-card card-pad w-full rounded-[var(--r-card)]" onSubmit={submit}>
-      <div className="card-head"><span className="card-title">新建规范标签</span><button type="button" className="icon-button" onClick={() => setOpen(false)} aria-label="取消新建"><X className="h-4 w-4" /></button></div>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <label><span className="form-label">稳定 code</span><input required className="form-input" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="topic.coding-agents" /></label>
-        <label><span className="form-label">分面</span><select className="form-input" value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value, entity_type: '', external_key: '', parent_id: null })}>{Object.entries(KIND_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
-        <label><span className="form-label">中文名</span><input className="form-input" value={form.name_zh} onChange={(e) => setForm({ ...form, name_zh: e.target.value })} /></label>
-        <label><span className="form-label">英文名</span><input className="form-input" value={form.name_en} onChange={(e) => setForm({ ...form, name_en: e.target.value })} /></label>
-        <label><span className="form-label">上位标签</span><select className="form-input" value={form.parent_id || ''} onChange={(e) => setForm({ ...form, parent_id: e.target.value ? Number(e.target.value) : null })}><option value="">无上位标签</option>{tags.filter((item) => item.kind === form.kind && item.status === 'active').map((item) => <option key={item.id} value={item.id}>{displayName(item)} · {item.code}</option>)}</select></label>
-        {form.kind === 'entity' && <label><span className="form-label">Entity 类型</span><select required className="form-input" value={form.entity_type} onChange={(e) => setForm({ ...form, entity_type: e.target.value })}><option value="">请选择</option>{Object.entries(ENTITY_TYPE_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>}
-        {form.kind === 'entity' && <label><span className="form-label">稳定 external key（可选）</span><input className="form-input" value={form.external_key} onChange={(e) => setForm({ ...form, external_key: e.target.value })} placeholder="例如 wikidata:Q24283660" /></label>}
-        <label className="sm:col-span-2"><span className="form-label">后台说明</span><input className="form-input" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="供管理员理解概念范围" /></label>
-        <label className="sm:col-span-2"><span className="form-label">模型判定说明</span><input className="form-input" value={form.prompt_description} onChange={(e) => setForm({ ...form, prompt_description: e.target.value })} placeholder="说明何时应该或不应该打此标签" /></label>
-        <label className="flex items-center gap-2 pt-6 tiny-meta"><input type="checkbox" checked={form.user_selectable} onChange={(e) => setForm({ ...form, user_selectable: e.target.checked })} />允许用户选择</label>
-      </div>
-      <div className="mt-3 flex justify-end"><button disabled={busy} className="action-button action-button-primary min-h-[32px] px-3 text-xs">{busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />} 创建标签</button></div>
-    </form>
-  );
-}
-
-function TagRow({ tag, tags, onChanged, showToast }) {
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [reason, setReason] = useState('');
-  const [target, setTarget] = useState('');
-  const [parent, setParent] = useState(tag.parent_id ? String(tag.parent_id) : '');
-  const [alias, setAlias] = useState('');
-  const [aliasType, setAliasType] = useState('synonym');
-  const [entityType, setEntityType] = useState(tag.entity_type || '');
-  const [externalKey, setExternalKey] = useState(tag.external_key || '');
-  const [nameZh, setNameZh] = useState(tag.name_zh || '');
-  const [nameEn, setNameEn] = useState(tag.name_en || '');
-  const [description, setDescription] = useState(tag.description || '');
-  const [promptDescription, setPromptDescription] = useState(tag.prompt_description || '');
-  const act = async (call, message) => {
-    setBusy(true);
-    try { await call(); showToast?.(message, 'success'); onChanged(); }
-    catch (error) { showToast?.(error.message || '更新标签失败', 'error'); }
-    finally { setBusy(false); }
-  };
-  return (
-    <div className="taxonomy-row">
-      <button type="button" className="taxonomy-row-main" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
-        <span className="brief-tag">{KIND_LABELS[tag.kind] || tag.kind}</span>
-        <span className="min-w-0 flex-1"><strong>{displayName(tag)}</strong><small>{tag.code}{tag.aliases?.length ? ` · ${tag.aliases.length} 个 Alias` : ''}</small></span>
-        <span className={`stamp ${tag.status === 'active' ? 'stamp-ok' : tag.status === 'deprecated' ? 'stamp-warn' : 'stamp-idle'}`}>{tag.status}</span>
-        {tag.user_selectable && <span className="brief-tag">用户可选</span>}
-        {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-      </button>
-      {open && (
-        <div className="taxonomy-row-detail">
-          <p className="tiny-meta">稳定 code：{tag.code} · code 与分面创建后不可修改；重命名会把旧规范名保留为 Alias。</p>
-          <label><span className="form-label">治理原因</span><input className="form-input form-input-inline" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="重命名、删除 Alias、合并或废弃前填写" aria-label="治理原因" /></label>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <label><span className="form-label">中文名</span><input className="form-input form-input-inline" value={nameZh} onChange={(e) => setNameZh(e.target.value)} /></label>
-            <label><span className="form-label">英文名</span><input className="form-input form-input-inline" value={nameEn} onChange={(e) => setNameEn(e.target.value)} /></label>
-            <label><span className="form-label">后台说明</span><textarea className="form-input min-h-20" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="供管理员理解概念范围" /></label>
-            <label><span className="form-label">模型判定说明</span><textarea className="form-input min-h-20" value={promptDescription} onChange={(e) => setPromptDescription(e.target.value)} placeholder="会进入文章分析提示词；说明何时应该或不应该打此标签" /></label>
-          </div>
-          <div className="flex justify-end">
-            <button type="button" disabled={busy || !reason.trim() || (!nameZh.trim() && !nameEn.trim()) || (nameZh === (tag.name_zh || '') && nameEn === (tag.name_en || '') && description === (tag.description || '') && promptDescription === (tag.prompt_description || ''))} className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={() => act(() => updateCmsTag(tag.id, { name_zh: nameZh, name_en: nameEn, description, prompt_description: promptDescription, reason: reason.trim() }), `已更新 ${nameZh || nameEn || tag.code} 的规范信息`)}>保存规范信息</button>
-          </div>
-          {tag.kind === 'entity' && (
-            <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
-              <select className="form-input form-input-inline" value={entityType} onChange={(e) => setEntityType(e.target.value)} aria-label="Entity 类型"><option value="">请选择 Entity 类型</option>{Object.entries(ENTITY_TYPE_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
-              <input className="form-input form-input-inline" value={externalKey} onChange={(e) => setExternalKey(e.target.value)} placeholder="稳定 external key（可选）" aria-label="Entity external key" />
-              <button type="button" disabled={busy || !entityType || (entityType === (tag.entity_type || '') && externalKey === (tag.external_key || ''))} className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={() => act(() => updateCmsTag(tag.id, { entity_type: entityType, external_key: externalKey || null, reason: reason.trim() || '管理台确认 Entity 类型' }), `已更新 ${displayName(tag)} 的 Entity 类型`)}>保存 Entity 类型</button>
-            </div>
-          )}
-          <div>
-            <h4 className="micro-label mb-2">Alias</h4>
-            <div className="flex flex-wrap gap-2">
-              {(tag.aliases || []).map((item) => {
-                const canonicalTranslation = item.alias_type === 'translation' && [tag.name_zh, tag.name_en].includes(item.alias);
-                return (
-                  <span key={item.id} className="taxonomy-alias-chip">
-                    <span>{item.alias}</span><small>{item.alias_type}{item.locale ? ` · ${item.locale}` : ''}</small>
-                    <button type="button" disabled={busy || canonicalTranslation || !reason.trim()} title={canonicalTranslation ? '规范中英文名由重命名维护' : !reason.trim() ? '请先填写治理原因' : '删除 Alias'} aria-label={`删除 Alias ${item.alias}`} onClick={() => act(() => deleteCmsTagAlias(tag.id, item.id, reason.trim()), `已删除 Alias ${item.alias}`)}><Trash2 className="h-3 w-3" /></button>
-                  </span>
-                );
-              })}
-              {!tag.aliases?.length && <span className="tiny-meta">还没有额外 Alias，规范中英文名仍作为解析入口。</span>}
-            </div>
-            <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_150px_auto]">
-              <input className="form-input form-input-inline" value={alias} onChange={(e) => setAlias(e.target.value)} placeholder="新增等价词、缩写或翻译" aria-label="新增 Alias" />
-              <select className="form-input form-input-inline" value={aliasType} onChange={(e) => setAliasType(e.target.value)} aria-label="Alias 类型"><option value="synonym">同义词</option><option value="abbreviation">缩写</option><option value="translation">翻译</option><option value="former_name">旧称</option><option value="misspelling">常见误写</option></select>
-              <button type="button" disabled={busy || !alias.trim()} className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={() => act(async () => { await addCmsTagAlias(tag.id, { alias: alias.trim(), alias_type: aliasType, reason: reason.trim() }); setAlias(''); }, `已新增 Alias ${alias.trim()}`)}><Link2 className="h-3.5 w-3.5" /> 新增 Alias</button>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button type="button" role="switch" aria-checked={!!tag.user_selectable} className={`action-button action-button-quiet min-h-[32px] px-3 text-xs ${tag.user_selectable ? 'is-on' : ''}`} disabled={busy} onClick={() => act(() => updateCmsTag(tag.id, { user_selectable: !tag.user_selectable, reason: '管理台调整用户可选状态' }), `已${tag.user_selectable ? '关闭' : '开启'}用户可选`)}>
-              <Check className="h-3.5 w-3.5" /> 用户可选
-            </button>
-            <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" disabled={busy} onClick={() => act(() => retagCmsTag(tag.id, 7), '已创建全部近 7 天文章的闭集重标任务')} title="使用完整 active Taxonomy 重新匹配全部近 7 天文章"><RotateCcw className="h-3.5 w-3.5" /> 重标近 7 天文章</button>
-          </div>
-          <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-            <select className="form-input form-input-inline" value={parent} onChange={(e) => setParent(e.target.value)} aria-label="上位标签"><option value="">无上位标签</option>{tags.filter((item) => item.id !== tag.id && item.kind === tag.kind && item.status === 'active').map((item) => <option key={item.id} value={item.id}>{displayName(item)} · {item.code}</option>)}</select>
-            <button type="button" disabled={busy || (parent || '') === (tag.parent_id ? String(tag.parent_id) : '')} className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={() => act(() => updateCmsTag(tag.id, { parent_id: parent ? Number(parent) : null, reason: reason.trim() || '管理台调整上位标签' }), `已更新 ${displayName(tag)} 的上位标签`)}>更新层级</button>
-          </div>
-          <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-            <select className="form-input form-input-inline" value={target} onChange={(e) => setTarget(e.target.value)} aria-label="替代或合并目标标签"><option value="">选择同分面目标标签</option>{tags.filter((item) => item.id !== tag.id && item.kind === tag.kind && item.status === 'active').map((item) => <option key={item.id} value={item.id}>{displayName(item)} · {item.code}</option>)}</select>
-            <span className="flex gap-2">
-              <button type="button" disabled={busy || !target || !reason.trim()} className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={() => act(() => mergeCmsTag(tag.id, Number(target), reason.trim()), `已合并标签 ${displayName(tag)}`)}><GitMerge className="h-3.5 w-3.5" /> 合并</button>
-              <button type="button" disabled={busy || !reason.trim()} className="action-button action-button-danger min-h-[32px] px-3 text-xs" onClick={() => act(() => deprecateCmsTag(tag.id, target ? Number(target) : null, reason.trim()), `已废弃标签 ${displayName(tag)}`)}><ShieldAlert className="h-3.5 w-3.5" /> 废弃</button>
-            </span>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function CandidateRow({ candidate, tags, onChanged, showToast, confirm }) {
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState({ code: '', kind: candidate.proposed_kind, name_zh: candidate.label || '', name_en: '', user_selectable: true, entity_type: '', external_key: '', reason: '' });
-  const [resolveTarget, setResolveTarget] = useState('');
-  const nearest = tags.find((tag) => tag.id === candidate.nearest_tag_id);
-  const canDelete = ['candidate', 'reviewing', 'rejected'].includes(candidate.status);
-  const act = async (call, message) => {
-    setBusy(true);
-    try { await call(); showToast?.(message, 'success'); onChanged(); }
-    catch (error) { showToast?.(error.message || '处理 Candidate 失败', 'error'); }
-    finally { setBusy(false); }
-  };
-  return (
-    <div className="taxonomy-row">
-      <button type="button" className="taxonomy-row-main" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
-        <span className="brief-tag">{KIND_LABELS[candidate.proposed_kind] || candidate.proposed_kind}</span>
-        <span className="min-w-0 flex-1"><strong>{candidate.label}</strong><small>7 天 {candidate.support_article_count_7d} 篇 · {candidate.distinct_source_count_7d} 源 · {candidate.distinct_day_count_7d} 天 · 置信 {(Number(candidate.mean_confidence || 0) * 100).toFixed(0)}%</small></span>
-        {candidate.risk_flags?.length > 0 && <span className="stamp stamp-warn">{candidate.risk_flags.length} 项风险</span>}
-        <span className="stamp stamp-idle">{candidate.status}</span>
-        {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-      </button>
-      {open && (
-        <div className="taxonomy-row-detail">
-          <div className="rounded-[var(--r-card)] bg-[var(--dorami-soft)] p-3 tiny-meta">
-            <strong>相似项：</strong>{nearest ? `${displayName(nearest)} · ${Math.round(Number(candidate.nearest_similarity || 0) * 100)}%` : '未命中现有规范标签'}
-            {candidate.risk_flags?.length > 0 && <span> · 风险：{candidate.risk_flags.join('、')}</span>}
-          </div>
-          <div>
-            <h4 className="micro-label mb-2">最近证据</h4>
-            {candidate.evidence?.length ? <div className="grid gap-2">{candidate.evidence.map((row) => (
-              <div key={`${row.article_id}-${row.source_id}`} className="rounded-[var(--r-control)] border border-[var(--dorami-border)] p-2 tiny-meta">
-                <span className="font-mono">{row.source_owner_or_domain || row.source_id}</span> · {row.published_date || '日期未知'} · 置信 {Math.round(Number(row.confidence || 0) * 100)}%
-                {row.context_excerpt && <p className="mt-1 body-text">{row.context_excerpt}</p>}
-              </div>
-            ))}</div> : <p className="tiny-meta">还没有可展示的证据样本</p>}
-          </div>
-          {candidate.remote_evidence?.length > 0 && (
-            <div>
-              <h4 className="micro-label mb-2">自定源远端证据</h4>
-              <div className="grid gap-2">{candidate.remote_evidence.map((row, index) => (
-                <div key={`${row.authority_id}-${row.created_at}-${index}`} className="rounded-[var(--r-control)] border border-[var(--dorami-border)] p-2 tiny-meta">
-                  <span className="font-mono">{row.authority_id}</span> · {row.source_provenance || '来源未标注'} · 置信 {Math.round(Number(row.confidence || 0) * 100)}%
-                  <p className="mt-1">{row.label}{row.prompt_version ? ` · ${row.prompt_version}` : ''}</p>
-                </div>
-              ))}</div>
-            </div>
-          )}
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            <input className="form-input form-input-inline" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="规范 code（可自动生成）" />
-            <select className="form-input form-input-inline" value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value, entity_type: '', external_key: '' })} aria-label="纠正 Candidate 分面">{Object.entries(KIND_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
-            <input className="form-input form-input-inline" value={form.name_zh} onChange={(e) => setForm({ ...form, name_zh: e.target.value })} placeholder="中文名" />
-            <input className="form-input form-input-inline" value={form.name_en} onChange={(e) => setForm({ ...form, name_en: e.target.value })} placeholder="英文名" />
-            <input className="form-input form-input-inline lg:col-span-4" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} placeholder="审核原因" />
-            {form.kind === 'entity' && <select className="form-input form-input-inline lg:col-span-2" value={form.entity_type} onChange={(e) => setForm({ ...form, entity_type: e.target.value })} aria-label="Candidate Entity 类型"><option value="">请选择 Entity 类型</option>{Object.entries(ENTITY_TYPE_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>}
-            {form.kind === 'entity' && <input className="form-input form-input-inline lg:col-span-2" value={form.external_key} onChange={(e) => setForm({ ...form, external_key: e.target.value })} placeholder="稳定 external key（可选）" />}
-          </div>
-          <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
-            <select className="form-input form-input-inline" value={resolveTarget} onChange={(e) => setResolveTarget(e.target.value)} aria-label="归并到已有标签"><option value="">选择同分面 active 标签</option>{tags.filter((tag) => tag.status === 'active' && tag.kind === form.kind).map((tag) => <option key={tag.id} value={tag.id}>{KIND_LABELS[tag.kind]} · {displayName(tag)} · {tag.code}</option>)}</select>
-            <button type="button" disabled={busy || form.kind === candidate.proposed_kind || !form.reason.trim()} className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={() => act(() => reclassifyCmsTagCandidate(candidate.id, form.kind, form.reason.trim()), `已将 ${candidate.label} 纠正为${KIND_LABELS[form.kind]}`)}>纠正分面</button>
-            <button type="button" disabled={busy || !resolveTarget || !form.reason.trim()} className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={() => act(() => resolveCmsTagCandidate(candidate.id, Number(resolveTarget), form.reason.trim()), `已归并 Candidate ${candidate.label}`)}><GitMerge className="h-3.5 w-3.5" /> 归并到标签</button>
-          </div>
-          <div className="flex flex-wrap justify-end gap-2">
-            <label className="mr-auto flex items-center gap-2 tiny-meta"><input type="checkbox" checked={form.user_selectable} onChange={(e) => setForm({ ...form, user_selectable: e.target.checked })} />同时开放用户选择</label>
-            <button type="button" disabled={busy || !form.reason.trim()} className="action-button action-button-danger min-h-[32px] px-3 text-xs" onClick={() => act(() => rejectCmsTagCandidate(candidate.id, form.reason.trim()), `已拒绝 Candidate ${candidate.label}`)}><X className="h-3.5 w-3.5" /> 拒绝</button>
-            {canDelete && <button type="button" disabled={busy || !form.reason.trim()} className="action-button action-button-danger min-h-[32px] px-3 text-xs" onClick={async () => {
-              if (!(await confirm(`删除 Candidate「${candidate.label}」及其 ${candidate.evidence?.length || 0} 条可见证据？删除后相同词可能被再次发现；若要长期屏蔽请使用“拒绝”。`))) return;
-              await act(() => deleteCmsTagCandidate(candidate.id, form.reason.trim()), `已删除 Candidate ${candidate.label}`);
-            }}><Trash2 className="h-3.5 w-3.5" /> 删除记录</button>}
-            <button type="button" disabled={busy || !form.reason.trim() || (form.kind === 'entity' && !form.entity_type)} className="action-button action-button-primary min-h-[32px] px-3 text-xs" onClick={() => act(() => activateCmsTagCandidate(candidate.id, { ...form, code: form.code || null, external_key: form.external_key || null }), `已激活 Candidate ${candidate.label}`)}>{busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />} 激活为标签</button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-export default function AdminTaxonomyPanel({ showToast, days = 7 }) {
-  const confirm = useConfirm();
-  const [view, setView] = useState('candidates');
-  const [tags, setTags] = useState(null);
-  const [candidates, setCandidates] = useState(null);
-  const [candidateTotal, setCandidateTotal] = useState(0);
-  const [candidatePage, setCandidatePage] = useState(0);
-  const [config, setConfig] = useState(null);
-  const [breaking, setBreaking] = useState(null);
-  const [selection, setSelection] = useState(null);
-  const [metrics, setMetrics] = useState(null);
-  const [taxonomyState, setTaxonomyState] = useState(null);
-  const [flagBusy, setFlagBusy] = useState('');
-  const [publishBusy, setPublishBusy] = useState(false);
-  const [query, setQuery] = useState('');
-  const [kind, setKind] = useState('');
-  const [candidateStatus, setCandidateStatus] = useState('');
-  const [loading, setLoading] = useState(true);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    const [tagResult, candidateResult, stateResult] = await Promise.allSettled([
-      fetchCmsTags(),
-      fetchCmsTagCandidates({ limit: CANDIDATE_PAGE_SIZE, offset: candidatePage * CANDIDATE_PAGE_SIZE, q: query, kind, status: candidateStatus }),
-      fetchTaxonomyState(),
-    ]);
-    if (tagResult.status === 'fulfilled') setTags(tagResult.value.items || []);
-    else showToast?.(tagResult.reason?.message || '获取 CMS 标签失败', 'error');
-    if (candidateResult.status === 'fulfilled') {
-      setCandidates(candidateResult.value.items || []);
-      setCandidateTotal(candidateResult.value.total || 0);
+      if (gen === genRef.current) {
+        setState((prev) => ({ status: error.status === 404 ? 'unavailable' : 'error', data: prev.data, error: error.message }));
+      }
+      return undefined;
     }
-    else showToast?.(candidateResult.reason?.message || '获取 Candidate 失败', 'error');
-    if (stateResult.status === 'fulfilled') setTaxonomyState(stateResult.value);
-    else setTaxonomyState(null);
-    setLoading(false);
-  }, [candidatePage, candidateStatus, kind, query, showToast]);
+  }, [fetcher]);
+  return [state, load, setState];
+}
 
-  useEffect(() => {
-    const timer = window.setTimeout(load, 180);
-    return () => window.clearTimeout(timer);
-  }, [load]);
-  useEffect(() => { setCandidatePage(0); }, [candidateStatus, kind, query]);
-  useEffect(() => {
-    fetchAnalysisConfig().then((data) => { setConfig(data.feature_flags || {}); setBreaking(data.personal_digest_breaking || null); setSelection(data.personal_digest_selection || null); }).catch(() => { setConfig(null); setBreaking(null); setSelection(null); });
-    fetchAnalysisMetrics(days).then(setMetrics).catch(() => setMetrics(null));
-  }, [days]);
-  const saveBreaking = async (payload) => {
-    const data = await updateAnalysisConfig(payload);
-    setBreaking(data.personal_digest_breaking || null);
-    setSelection(data.personal_digest_selection || null);
-  };
+function StateCard({ label, state, onRetry }) {
+  if (state.status === 'unavailable') {
+    return <section className="surface-card card-pad rounded-[var(--r-card)]"><span className="stamp stamp-warn">未接入</span><span className="tiny-meta ml-2">当前后端版本没有{label}端点</span></section>;
+  }
+  if (state.status === 'error') {
+    return <section className="surface-card card-pad rounded-[var(--r-card)]" role="alert"><span className="stamp stamp-bad">{label}读取失败</span><span className="tiny-meta ml-2">{state.error} · <button type="button" className="kpi-sub-link" onClick={onRetry}>重试</button></span></section>;
+  }
+  return <section className="surface-card card-pad rounded-[var(--r-card)]" aria-busy="true"><span className="stamp stamp-idle">加载中…</span></section>;
+}
 
+/**
+ * 运维管理 → 「分析与标签」子页(issue #76 拍板①):两区——
+ *   「分析链路」:发布开关板(4 枚 ledger-switch)→ 分析指标 KPI → 新闻价值分布 → 历史文章完整分析;
+ *   「标签治理」:区头动作(同步别名 / 新建标签 / 刷新)→ 目录版本 KPI → 规范标签 ∪ 候选 统一总账 + 抽屉。
+ * 早报两旋钮与兴趣目录 Top N 已迁至「内容」子页「早报与兴趣」区。四组数据各自
+ * loading / error / data,只有 404 才显示「未接入」,其余失败可重试并保留上次快照(P1 #7)。
+ */
+export default function AdminTaxonomyPanel({ showToast, days = 7, refreshTick = 0 }) {
+  const confirm = useConfirm();
+  const [config, loadConfig, setConfig] = useTracked(fetchAnalysisConfig);
+  const [metrics, loadMetrics] = useTracked(fetchAnalysisMetrics);
+  const [taxonomyState, loadTaxonomyState, setTaxonomyState] = useTracked(fetchTaxonomyState);
+  const [flagBusy, setFlagBusy] = useState('');
+  const [govBusy, setGovBusy] = useState('');
+  const [ledgerTick, setLedgerTick] = useState(0);
+  const [createOpen, setCreateOpen] = useState(false);
+
+  useEffect(() => { loadConfig(); loadTaxonomyState(); }, [loadConfig, loadTaxonomyState]);
+  useEffect(() => { loadMetrics(days); }, [loadMetrics, days]);
+  useEffect(() => {
+    if (refreshTick > 0) { loadConfig(); loadMetrics(days); loadTaxonomyState(); setLedgerTick((t) => t + 1); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只响应「切回 Tab / 切子页」刷新脉冲
+  }, [refreshTick]);
+
+  const flags = config.data?.feature_flags;
   const toggleFlag = async (key, enabled) => {
     if (key === 'taxonomy_auto_activation_enabled' && enabled
-      && !(await confirm('开启前请确认 taxonomy v1 已审核并结束 bootstrap。继续开启？'))) return;
+      && !(await confirm({ title: '开启候选自动激活', message: '开启前请确认目录 v1 已审核并结束引导期；满足组合阈值的低风险候选会自动成为规范标签。', confirmText: '开启', tone: 'primary' }))) return;
     setFlagBusy(key);
     try {
       const data = await updateAnalysisConfig({ [key]: enabled });
-      setConfig(data.feature_flags || {});
+      setConfig({ status: 'ok', data, error: '' });
       window.dispatchEvent(new CustomEvent('dorami-analysis-config-changed', { detail: data.feature_flags || {} }));
-      showToast?.(`已${enabled ? '开启' : '关闭'}${FLAG_META[key][0]}`, 'success');
-    } catch (error) { showToast?.(error.message || '更新分析开关失败', 'error'); }
+      showToast(`已${enabled ? '开启' : '关闭'}${FLAG_META[key][0]}`, 'success');
+    } catch (error) { showToast(error.message, 'error'); }
     finally { setFlagBusy(''); }
   };
 
+  const governanceChanged = () => { loadTaxonomyState(); loadMetrics(days); };
   const publishV1 = async () => {
-    if (!(await confirm('发布会激活 taxonomy v1，并创建最近 7 天闭集重标任务。继续发布？'))) return;
-    setPublishBusy(true);
+    if (!(await confirm({ title: '发布目录 v1', message: '发布会激活目录 v1，并创建最近 7 天文章的闭集重标任务。', confirmText: '发布', tone: 'primary' }))) return;
+    setGovBusy('publish');
     try {
       const result = await publishTaxonomyV1('产品审核通过 taxonomy-bootstrap-v1');
-      setTaxonomyState(result.state);
-      showToast?.(`已发布 taxonomy v${result.taxonomy_version}`, 'success');
-      await load();
-    } catch (error) { showToast?.(error.message || '发布 taxonomy v1 失败', 'error'); }
-    finally { setPublishBusy(false); }
+      setTaxonomyState({ status: 'ok', data: result.state, error: '' });
+      showToast(`已发布目录 v${result.taxonomy_version}`, 'success');
+      setLedgerTick((t) => t + 1);
+    } catch (error) { showToast(error.message, 'error'); }
+    finally { setGovBusy(''); }
   };
-
   const syncAliases = async () => {
-    setPublishBusy(true);
+    setGovBusy('alias');
     try {
       const result = await backfillCmsTagAliases('管理台同步规范中英文解析入口');
-      setTaxonomyState(result.state);
-      showToast?.(`已补齐 ${result.created} 个规范名 Alias`, 'success');
-      await load();
-    } catch (error) { showToast?.(error.message || '同步规范名 Alias 失败', 'error'); }
-    finally { setPublishBusy(false); }
+      setTaxonomyState({ status: 'ok', data: result.state, error: '' });
+      showToast(`已补齐 ${result.created} 个规范名别名`, 'success');
+      setLedgerTick((t) => t + 1);
+    } catch (error) { showToast(error.message, 'error'); }
+    finally { setGovBusy(''); }
   };
 
-  const filtered = useMemo(() => {
-    const rows = view === 'tags' ? (tags || []) : (candidates || []);
-    const needle = query.trim().toLocaleLowerCase();
-    return rows.filter((row) => {
-      const rowKind = row.kind || row.proposed_kind;
-      if (kind && rowKind !== kind) return false;
-      return !needle || [row.code, row.name_zh, row.name_en, row.label, row.normalized_label].some((value) => String(value || '').toLocaleLowerCase().includes(needle));
-    });
-  }, [candidates, kind, query, tags, view]);
+  const analysis = metrics.data?.article_analysis;
+  const taxonomyMetrics = metrics.data?.taxonomy;
+  const pending = Number(analysis?.status_counts?.pending || 0);
+  const running = Number(analysis?.status_counts?.running || 0);
+  const histogramTotal = Object.values(analysis?.score_histogram || {}).reduce((acc, n) => acc + Number(n || 0), 0);
+  const versionStale = Number(analysis?.version_stale || 0);
+  const gov = taxonomyState.data;
+  const activeVersion = gov?.versions?.find((item) => item.status === 'active');
+  const publishable = gov && gov.publish_ready && !(gov.active_version > 0);
+  const govLoading = taxonomyState.status === 'loading';
 
-  const analysis = metrics?.article_analysis;
-  const analysisPending = (analysis?.status_counts?.pending || 0) + (analysis?.status_counts?.running || 0);
-  const taxonomy = metrics?.taxonomy;
   return (
-    <div className="grid gap-4">
-      <section className="surface-card card-pad rounded-[var(--r-card)]">
-        <div className="card-head"><div><h2 className="card-title">发布开关</h2><p className="tiny-meta mt-1">关闭只停止消费方，不删除已有分析、标签或早报快照</p></div></div>
-        <FeatureFlags config={config} onToggle={toggleFlag} busy={flagBusy} />
-      </section>
-
-      {metrics && (
-        <section className="surface-card kpi-strip" aria-label="分析与 taxonomy 概览">
-          <Metric value={pct(analysis?.success_rate)} label="分析成功率" sub={`近 ${metrics.window_days} 天待处理 ${analysisPending.toLocaleString()} 篇`} />
-          <Metric value={analysis?.score_p50 ?? '—'} label="评分 P50" sub={`P90 ${analysis?.score_p90 ?? '—'}`} />
-          <Metric value={pct(analysis?.score_threshold_rates?.['7.0'])} label="7+ 占比" sub={`9+ ${pct(analysis?.score_threshold_rates?.['9.0'])}`} />
-          <Metric value={pct(taxonomy?.tagged_article_rate)} label="标签覆盖" sub={`缺主标签 ${pct(taxonomy?.primary_missing_rate)}`} />
-          <Metric value={taxonomy?.alias_count ?? 0} label="Alias" sub={`自动激活 ${taxonomy?.active_automatic_count ?? 0}`} />
-        </section>
-      )}
-
-      {metrics && analysis?.score_histogram && (
-        <ScoreHistogram histogram={analysis.score_histogram} windowDays={metrics.window_days} versionStale={analysis.version_stale} />
-      )}
-
-      <FullAnalysisBackfillCard showToast={showToast} />
-
-      {taxonomyState && (
-        <section className="surface-card card-pad rounded-[var(--r-card)]">
-          <div className="card-head">
-            <div><h2 className="card-title">Taxonomy 版本</h2><p className="tiny-meta mt-1">当前 active v{taxonomyState.active_version || 0} · 近 7 天覆盖 {pct(taxonomyState.coverage_7d?.coverage_rate)} · 未归并 Candidate {taxonomyState.unresolved_candidate_count}</p></div>
-            <span className={`stamp ${taxonomyState.active_version > 0 || taxonomyState.publish_ready ? 'stamp-ok' : 'stamp-warn'}`}>{taxonomyState.active_version > 0 ? '已发布' : taxonomyState.publish_ready ? '可发布' : '待治理'}</span>
-          </div>
-          <div className="grid gap-2 sm:grid-cols-3">
-            {Object.entries(KIND_LABELS).map(([key, label]) => <div key={key} className="taxonomy-version-stat"><strong>{taxonomyState.active_tags_by_kind?.[key] || 0}</strong><span>{label} active</span></div>)}
-          </div>
-          {taxonomyState.publish_blockers?.length > 0 && <div className="mt-3 rounded-[var(--r-control)] bg-[var(--dorami-soft)] p-3 tiny-meta"><strong>发布前处理：</strong>{taxonomyState.publish_blockers.join('；')}</div>}
-          <div className="mt-3 flex flex-wrap justify-end gap-2">
-            {taxonomyState.canonical_alias_gap_count > 0 && <button type="button" disabled={publishBusy} className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={syncAliases}>同步规范名 Alias</button>}
-            <button type="button" disabled={publishBusy || !taxonomyState.publish_ready || taxonomyState.active_version > 0} className="action-button action-button-primary min-h-[32px] px-3 text-xs" onClick={publishV1}>{publishBusy && <Loader2 className="h-3.5 w-3.5 animate-spin" />} 发布 taxonomy v1</button>
-          </div>
-        </section>
-      )}
-
-      <BreakingLaneCard config={breaking} onSave={saveBreaking} showToast={showToast} />
-      <UnionLaneCard config={selection} onSave={saveBreaking} showToast={showToast} />
-      <InterestCatalogPolicyCard showToast={showToast} />
-
-      <div className="zone-head">
-        <span className="zone-title">CMS 标签与 Candidate</span>
-        <span className="zone-hint">人工接受/新建默认用户可选，管理员仍可单独下架；合并、废弃和重标保留审计记录</span>
-        <span className="zone-acts flex flex-wrap gap-2">
-          <label className="relative"><Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" /><input className="form-input form-input-inline w-48 pl-8" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索标签 / Candidate" /></label>
-          <select className="form-input form-input-inline w-28" value={kind} onChange={(e) => setKind(e.target.value)} aria-label="筛选分面"><option value="">全部分面</option>{Object.entries(KIND_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
-          {view === 'candidates' && <select className="form-input form-input-inline w-28" value={candidateStatus} onChange={(e) => setCandidateStatus(e.target.value)} aria-label="筛选 Candidate 状态"><option value="">全部状态</option><option value="candidate">候选</option><option value="reviewing">审核中</option><option value="rejected">已拒绝</option><option value="merged">已归并</option><option value="activated">已激活</option></select>}
-          <button type="button" className="icon-button" onClick={load} disabled={loading} aria-label="刷新 taxonomy"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></button>
+    <div>
+      {/* ══ 分析链路 ══ */}
+      <div className="zone-head zone-head-first">
+        <span className="zone-title">分析链路</span>
+        <span className="zone-hint">近 {days} 天</span>
+        {config.data && <StaleNotice status={config.status} error={config.error} onRetry={loadConfig} label="分析配置" />}
+        {metrics.data && <StaleNotice status={metrics.status} error={metrics.error} onRetry={() => loadMetrics(days)} label="指标" />}
+        <span className="zone-acts">
+          <button type="button" className="action-button action-button-quiet min-h-[32px] px-3 text-xs" onClick={() => { loadConfig(); loadMetrics(days); }} disabled={config.status === 'loading' || metrics.status === 'loading'}>
+            {config.status === 'loading' || metrics.status === 'loading' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} 刷新
+          </button>
         </span>
       </div>
+      <div className="grid gap-3">
+        {flags ? (
+          <section className="surface-card ai-switchboard is-wrap rounded-[var(--r-card)]" aria-label="分析发布开关">
+            {Object.entries(FLAG_META).map(([key, [label, hint]], index) => {
+              const enabled = Boolean(flags[key]);
+              return (
+                <span key={key} className="sw-group">
+                  {index > 0 && <span className="ai-divider" />}
+                  <span className="sw">
+                    <span className={`ai-light ${enabled ? '' : 'is-off'}`} />
+                    <span className="ai-switch-lbl">{label}</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={enabled}
+                      aria-label={label}
+                      title={hint}
+                      disabled={flagBusy === key}
+                      onClick={() => toggleFlag(key, !enabled)}
+                      className={`ledger-switch ${enabled ? 'is-on' : ''}`}
+                    />
+                  </span>
+                </span>
+              );
+            })}
+          </section>
+        ) : <StateCard label="分析配置" state={config} onRetry={loadConfig} />}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="segmented-control" role="tablist" aria-label="CMS 治理视图">
-          <button type="button" role="tab" aria-selected={view === 'candidates'} className={`segmented-option ${view === 'candidates' ? 'segmented-option-active' : ''}`} onClick={() => setView('candidates')}>候选 {candidateTotal}</button>
-          <button type="button" role="tab" aria-selected={view === 'tags'} className={`segmented-option ${view === 'tags' ? 'segmented-option-active' : ''}`} onClick={() => setView('tags')}>规范标签 {tags?.length ?? '—'}</button>
-        </div>
-        <span className="flex-1" />
-        {view === 'tags' && <CreateTagForm tags={tags || []} onCreated={load} showToast={showToast} />}
+        <section className="surface-card kpi-strip" aria-label="分析指标">
+          {metrics.data ? (
+            <>
+              <Kpi num={pct(analysis?.success_rate)} label="分析成功率" sub={`待处理 ${pending.toLocaleString()} · 运行中 ${running.toLocaleString()}`} />
+              <Kpi num={analysis?.score_p50 ?? '—'} label="评分 P50" sub={`P90 ${analysis?.score_p90 ?? '—'}`} />
+              <Kpi num={pct(analysis?.score_threshold_rates?.['7.0'])} label="7+ 占比" sub={`9+ ${pct(analysis?.score_threshold_rates?.['9.0'])}`} />
+              <Kpi num={pct(taxonomyMetrics?.tagged_article_rate)} label="标签覆盖" sub={`缺主标签 ${pct(taxonomyMetrics?.primary_missing_rate)}`} />
+              <Kpi num={versionStale.toLocaleString()} label="旧尺子待重跑" sub="每轮 16 篇慢滴" tone={versionStale > 0 ? 'is-warn' : undefined} />
+            </>
+          ) : (
+            <KpiState label="分析指标" error={metrics.status === 'error' ? metrics.error : metrics.status === 'unavailable' ? '当前后端版本没有指标端点' : ''} onRetry={() => loadMetrics(days)} />
+          )}
+        </section>
+
+        {analysis?.score_histogram && (
+          <ScoreHistogram histogram={analysis.score_histogram} windowDays={metrics.data.window_days} total={histogramTotal} />
+        )}
+
+        <FullAnalysisBackfillCard showToast={showToast} refreshTick={refreshTick} />
       </div>
 
-      <section className="surface-card rounded-[var(--r-card)] overflow-hidden">
-        {loading && filtered.length === 0 ? <p className="p-8 text-center tiny-meta"><Loader2 className="mx-auto mb-2 h-4 w-4 animate-spin" />正在读取 taxonomy…</p>
-          : filtered.length === 0 ? <p className="p-8 text-center tiny-meta">{view === 'tags' ? '还没有规范标签，可以新建第一个。' : '当前筛选下没有 Candidate。'}</p>
-            : filtered.map((row) => view === 'tags'
-              ? <TagRow key={row.id} tag={row} tags={tags || []} onChanged={load} showToast={showToast} />
-              : <CandidateRow key={row.id} candidate={row} tags={tags || []} onChanged={load} showToast={showToast} confirm={confirm} />)}
-      </section>
-      {view === 'candidates' && candidateTotal > CANDIDATE_PAGE_SIZE && (
-        <nav className="pager" aria-label="Candidate 分页">
-          <button type="button" className="pager-btn" disabled={candidatePage === 0 || loading} onClick={() => setCandidatePage((value) => Math.max(0, value - 1))}>上一页</button>
-          <span className="pager-ellipsis">第 {candidatePage + 1} / {Math.ceil(candidateTotal / CANDIDATE_PAGE_SIZE)} 页</span>
-          <button type="button" className="pager-btn" disabled={(candidatePage + 1) * CANDIDATE_PAGE_SIZE >= candidateTotal || loading} onClick={() => setCandidatePage((value) => value + 1)}>下一页</button>
-        </nav>
-      )}
+      {/* ══ 标签治理 ══ */}
+      <div className="zone-head">
+        <span className="zone-title">标签治理</span>
+        {gov && <StaleNotice status={taxonomyState.status} error={taxonomyState.error} onRetry={loadTaxonomyState} label="目录版本" />}
+        {gov?.publish_blockers?.length > 0 && !(gov.active_version > 0) && (
+          <span className="stamp stamp-warn" title={gov.publish_blockers.join('；')}>发布前 {gov.publish_blockers.length} 项待处理</span>
+        )}
+        <span className="zone-acts">
+          {gov?.canonical_alias_gap_count > 0 && (
+            <button type="button" className="action-button action-button-quiet min-h-[32px] px-3 text-xs" disabled={Boolean(govBusy)} onClick={syncAliases} title="补齐规范中英文名的别名解析入口">
+              {govBusy === 'alias' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}同步别名 <span className="acct-mono">{gov.canonical_alias_gap_count}</span>
+            </button>
+          )}
+          {publishable && (
+            <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" disabled={Boolean(govBusy)} onClick={publishV1}>
+              {govBusy === 'publish' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}发布目录 v1
+            </button>
+          )}
+          <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={() => setCreateOpen(true)}>
+            <Plus className="h-3.5 w-3.5" /> 新建标签
+          </button>
+          <button type="button" className="action-button action-button-quiet min-h-[32px] px-3 text-xs" onClick={() => { loadTaxonomyState(); setLedgerTick((t) => t + 1); }} disabled={govLoading}>
+            {govLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} 刷新
+          </button>
+        </span>
+      </div>
+      <div className="grid gap-3">
+        <section className="surface-card kpi-strip" aria-label="目录版本">
+          {gov ? (
+            <>
+              <Kpi
+                num={gov.active_version > 0 ? `v${gov.active_version}` : '—'}
+                label="目录版本"
+                sub={gov.active_version > 0
+                  ? <><span className="stamp stamp-ok kpi-stamp">已发布</span>{activeVersion?.activated_at ? ` ${formatStamp(activeVersion.activated_at)}` : ''}</>
+                  : <span className={`stamp ${gov.publish_ready ? 'stamp-ok' : 'stamp-warn'} kpi-stamp`}>{gov.publish_ready ? '可发布' : '待治理'}</span>}
+              />
+              <Kpi
+                num={Number(gov.tag_count ?? 0).toLocaleString()}
+                label="规范标签"
+                sub={Object.entries(TAG_KIND_LABELS).map(([key, label]) => `${label} ${gov.active_tags_by_kind?.[key] ?? 0}`).join(' · ')}
+              />
+              <Kpi num={pct(gov.coverage_7d?.coverage_rate)} label="近 7 天覆盖" sub={`缺主标签 ${pct(gov.coverage_7d?.primary_missing_rate)}`} />
+              <Kpi
+                num={Number(gov.unresolved_candidate_count ?? 0).toLocaleString()}
+                label="未归并候选"
+                tone={Number(gov.unresolved_candidate_count) > 0 ? 'is-warn' : undefined}
+                sub={`候选记录 ${Number(gov.candidate_count ?? 0).toLocaleString()}`}
+              />
+              <Kpi num={Number(taxonomyMetrics?.alias_count ?? 0).toLocaleString()} label="别名" sub={`自动激活 ${Number(taxonomyMetrics?.active_automatic_count ?? 0).toLocaleString()}`} />
+            </>
+          ) : (
+            <KpiState label="目录版本" error={taxonomyState.status === 'error' ? taxonomyState.error : taxonomyState.status === 'unavailable' ? '当前后端版本没有目录状态端点' : ''} onRetry={loadTaxonomyState} />
+          )}
+        </section>
+
+        <TaxonomyLedger
+          showToast={showToast}
+          refreshTick={ledgerTick}
+          onChanged={governanceChanged}
+          createOpen={createOpen}
+          onCreateClose={() => setCreateOpen(false)}
+        />
+      </div>
     </div>
   );
 }

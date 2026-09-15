@@ -1,0 +1,962 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>运维管理 · 播客与分析标签 · 静默仪器样页(issue #76)</title>
+<style>
+/* ════════════════════════════════════════════════════════════════════
+   运维管理 → 「内容」播客分区 / 「早报与兴趣」区 / 「分析与标签」子页 · 样页
+   依据:issue #76 + .review/merged-r1.md(Claude × codex 归并稿)。
+   目标:把两波 codex 面板拉齐到 2026-09-01 拍板的管理面纪律——
+     列头即操作(ThSearch / ThFilter / ThSort)· 零常驻说明句 · rowact 小图标 ·
+     高危入抽屉/确认 · acct-table is-fixed 36px 定高表头 · 共享 Pager / KPI / stamp ·
+     中文状态文案 · 一屏 accent 预算 ≤2。
+   拍板(2026-09-15,用户):
+     ② 标签/候选列表 = 表格 + 抽屉;点整行任意位置开抽屉,不设独立编辑列
+     ③ 早报策略旋钮 = 表单卡(各卡一枚 secondary 保存;播客门槛行同取显式保存)
+     ⑤ 时间窗 = 内容子页隐藏(该页三个数据源都不接时间窗参数,媒体热点图自带年份切换);
+        其它子页照旧只写「时间窗」,不加「分析指标」引导语。
+     目检返修(同日):判定拆回「阶段(含 未入选 = 未过简介处理线)+ 阶段下一行原因」与「判定(优质线)」;
+        ⋯ 详情钮撤除,播客两表与标签表一样整行可点开抽屉;两表各加卡头(单集处理 / 中文精简音频)
+        标明职责,安全回收归音频卡头。
+   刻度 1:1 取自 frontend/src/index.css(令牌、.acct-*、.kpi-*、.stamp、.pager、
+   .ledger-switch、.ai-switchboard、.ledger-drawer),落码时直接复用在册类。
+   ════════════════════════════════════════════════════════════════════ */
+
+:root {
+  font-family: "PingFang SC", "SF Pro Display", "SF Pro Text", "Microsoft YaHei", system-ui, sans-serif;
+  color-scheme: light;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --dorami-blue: #5b54e8; --dorami-accent: #5b54e8; --dorami-accent-ink: #4a43d4;
+  --dorami-ink: #0b1220; --dorami-ink-2: #2b3445; --dorami-muted: #5b6678; --dorami-faint: #64748b;
+  --dorami-canvas: #eef1f6; --dorami-surface: #ffffff; --dorami-soft: #f8fafc; --dorami-raised: #ffffff;
+  --dorami-card: rgba(255, 255, 255, 0.96); --dorami-wash: rgba(91, 84, 232, 0.08);
+  --dorami-well: #f1f5f9; --dorami-inset-input: inset 0 1px 3px rgba(11, 18, 32, 0.08);
+  --dorami-border: rgba(11, 18, 32, 0.09); --dorami-border-strong: rgba(11, 18, 32, 0.15);
+  --dorami-card-bd: transparent; --dorami-edge: rgba(255, 255, 255, 0.62);
+  --sh-1: 0 1px 2px rgba(11, 18, 32, 0.05), 0 1px 2px rgba(11, 18, 32, 0.04);
+  --sh-2: 0 1px 3px rgba(11, 18, 32, 0.05), 0 6px 16px rgba(11, 18, 32, 0.07);
+  --sh-3: 0 4px 10px rgba(11, 18, 32, 0.08), 0 16px 36px rgba(11, 18, 32, 0.11);
+  --dorami-focus: rgba(91, 84, 232, 0.32);
+  --r-sm: 6px; --r-control: 10px; --r-card: 14px; --r-overlay: 16px; --r-pill: 9999px;
+  --state-ok: #059669;   --state-ok-bg: #ecfdf5;
+  --state-warn: #b45309; --state-warn-bg: #fffbeb;
+  --state-bad: #e11d48;  --state-bad-bg: #fff1f2;
+  --state-run: #0284c7;  --state-run-bg: #f0f9ff;
+  --state-idle: #64748b; --state-idle-bg: #f1f5f9;
+  --btn-secondary-bd: rgba(11, 18, 32, 0.13); --btn-secondary-bg: rgba(255, 255, 255, 0.86);
+  --btn-quiet-bd: rgba(11, 18, 32, 0.09); --btn-quiet-bg: rgba(247, 248, 250, 0.56); --btn-quiet-ink: #475569;
+  --dorami-scrollbar: rgba(11, 18, 32, 0.2);
+  --motion-fast: 150ms; --motion-medium: 240ms; --motion-slow: 300ms; --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --rail-w: 64px; --spec-h: 64px;
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --dorami-canvas: #0c0e13; --dorami-well: #15181f; --dorami-soft: #1a1e26;
+  --dorami-surface: #20252f; --dorami-card: rgba(32, 37, 47, 0.96); --dorami-raised: #2a313c;
+  --dorami-wash: rgba(124, 112, 235, 0.13); --dorami-inset-input: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+  --dorami-ink: #f2f4f7; --dorami-ink-2: #d2d7df; --dorami-muted: #99a1ad; --dorami-faint: #828b97;
+  --dorami-border: rgba(255, 255, 255, 0.10); --dorami-border-strong: rgba(255, 255, 255, 0.16);
+  --dorami-card-bd: rgba(255, 255, 255, 0.08); --dorami-edge: rgba(255, 255, 255, 0.05);
+  --state-ok: #34d399;   --state-ok-bg: #0f241b;
+  --state-warn: #fbbf24; --state-warn-bg: #281e10;
+  --state-bad: #fb7185;  --state-bad-bg: #2a151a;
+  --state-run: #38bdf8;  --state-run-bg: #0e1c27;
+  --state-idle: #99a1ad; --state-idle-bg: #15181f;
+  --dorami-blue: #4d45b5; --dorami-accent: #8b84f0; --dorami-accent-ink: #aaa4f6;
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sh-2: 0 1px 3px rgba(0, 0, 0, 0.4), 0 6px 16px rgba(0, 0, 0, 0.5);
+  --sh-3: 0 4px 10px rgba(0, 0, 0, 0.5), 0 16px 36px rgba(0, 0, 0, 0.6);
+  --dorami-focus: rgba(124, 112, 235, 0.5);
+  --btn-secondary-bd: rgba(255, 255, 255, 0.12); --btn-secondary-bg: #2a313c;
+  --btn-quiet-bd: rgba(255, 255, 255, 0.08); --btn-quiet-bg: #20252f; --btn-quiet-ink: #d2d7df;
+  --dorami-scrollbar: rgba(255, 255, 255, 0.2);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--dorami-canvas); color: var(--dorami-ink); font-size: 13px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+[data-theme="dark"] body { background: radial-gradient(ellipse 70% 50% at 12% -8%, rgba(124, 112, 235, 0.10), transparent 58%), linear-gradient(180deg, #11131a 0%, var(--dorami-canvas) 55%); }
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+input, select { font: inherit; color: inherit; }
+button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: 2px; }
+* { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+*:hover { scrollbar-color: var(--dorami-scrollbar) transparent; }
+svg { width: 14px; height: 14px; flex: none; }
+
+/* ── 样页控制条(不属于产品) ── */
+.spec-bar { position: sticky; top: 0; z-index: 70; min-height: var(--spec-h); display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px;
+  padding: 8px 20px; background: #0b1220; color: #cbd5e1; font-size: 11.5px; box-shadow: 0 2px 10px rgba(0,0,0,.25); }
+.spec-bar b { color: #fff; font-weight: 700; margin-right: 4px; }
+.spec-bar .grp { display: inline-flex; align-items: center; gap: 6px; }
+.spec-bar .seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 6px; background: rgba(255,255,255,.08); }
+.spec-bar .seg button { min-height: 20px; padding: 0 8px; border-radius: 4px; font-size: 11px; font-weight: 600; color: #94a3b8; }
+.spec-bar .seg button.is-on { background: #fff; color: #0b1220; }
+.spec-note { flex-basis: 100%; color: #64748b; pointer-events: none; }
+
+/* ── 导轨(现役 64px,只作环境) ── */
+.app-rail { position: fixed; top: var(--spec-h); bottom: 0; left: 0; width: var(--rail-w); z-index: 45; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 14px 0 16px;
+  background: var(--dorami-surface); border-right: 1px solid var(--dorami-card-bd); box-shadow: var(--sh-1); }
+.rail-brand { margin-bottom: 14px; width: 34px; height: 34px; border-radius: var(--r-control); background: var(--dorami-blue); display: grid; place-items: center; color: #fff; font-size: 15px; font-weight: 800; }
+.rail-btn { width: 52px; height: 46px; display: grid; place-items: center; border-radius: var(--r-control); color: var(--dorami-faint); }
+.rail-btn svg { width: 19px; height: 19px; }
+.rail-btn.is-on { background: var(--dorami-wash); color: var(--dorami-accent-ink); }
+
+/* ── 流式页 ── */
+.page { margin-left: var(--rail-w); padding: 22px 32px 64px; max-width: 1280px; }
+.page-head { display: flex; align-items: center; gap: 14px; min-height: 48px; margin-bottom: 24px; }
+.page-title { font-size: 24px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.15; }
+.page-head-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.win-label { font-size: 11px; font-weight: 600; color: var(--dorami-faint); margin-right: 2px; }
+.win { display: inline-flex; align-items: center; gap: 6px; }
+body[data-win="hide"][data-sub="content"] .win { display: none; }
+
+.segmented-control { display: inline-flex; align-items: center; gap: 3px; border: 1px solid rgba(11,18,32,.12); border-radius: var(--r-control);
+  background: rgba(240,242,246,.58); box-shadow: inset 0 1px 2px rgba(11,18,32,.04), 0 4px 14px rgba(11,18,32,.05); padding: 3px; font-size: 12.5px; font-weight: 650; }
+[data-theme="dark"] .segmented-control { border-color: var(--dorami-border); background: var(--dorami-well); box-shadow: none; }
+.segmented-option { display: inline-flex; min-height: 24px; align-items: center; gap: 6px; border-radius: 7px; padding: 0 14px; color: #64748b; line-height: 18px; white-space: nowrap; }
+.segmented-option-active { background: rgba(255,255,255,.98); color: var(--dorami-ink); box-shadow: var(--sh-1); }
+[data-theme="dark"] .segmented-option-active { background: var(--dorami-surface); }
+.segmented-option.is-ghost { opacity: .45; cursor: default; }
+
+.mini-seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r-sm); background: var(--dorami-well); font-size: 11px; }
+.mini-seg-btn { min-height: 22px; padding: 0 8px; border-radius: 4px; font-weight: 600; color: var(--dorami-muted); }
+.mini-seg-btn.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
+
+/* ── 卡片 / 区头 / 排版 ── */
+.surface-card { position: relative; border: 1px solid var(--dorami-card-bd); background: var(--dorami-card); border-radius: var(--r-card);
+  box-shadow: var(--sh-2), inset 0 1px 0 var(--dorami-edge); }
+.card-pad { padding: 18px 20px; }
+.card-head { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-bottom: 12px; }
+.card-title { font-size: 15px; font-weight: 700; line-height: 21px; color: var(--dorami-ink); }
+.tools-title { font-size: 13px; font-weight: 700; color: var(--dorami-ink); }
+.zone-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; margin: 26px 2px 12px; }
+.zone-head.zone-head-first { margin-top: 0; }
+.zone-title { font-size: 14px; font-weight: 700; color: var(--dorami-ink); }
+.zone-hint { font-size: 12px; font-weight: 500; color: var(--dorami-faint); }
+.zone-acts { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.tiny-meta { color: var(--dorami-faint); font-size: 12px; font-weight: 500; line-height: 18px; font-variant-numeric: tabular-nums; }
+.micro-label { font-size: 11px; font-weight: 700; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.stack { display: grid; gap: 12px; }
+.ghost-zone { border: 1px dashed var(--dorami-border-strong); border-radius: var(--r-card); padding: 10px 14px; color: var(--dorami-faint); font-size: 12px; font-weight: 500; }
+
+/* ── 按钮(M 档三件套 = min-h 32 / px-3 / 12px;S 档 rowact 26) ── */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 0 12px; border-radius: var(--r-control);
+  border: 1px solid transparent; font-size: 12px; font-weight: 700; line-height: 20px; white-space: nowrap; transition: background var(--motion-fast) var(--motion-ease), border-color var(--motion-fast) var(--motion-ease); }
+.btn svg { width: 14px; height: 14px; }
+.btn-primary { background: var(--dorami-blue); color: #fff; box-shadow: var(--sh-1); }
+.btn-primary:hover { background: var(--dorami-accent-ink); }
+.btn-secondary { border-color: var(--btn-secondary-bd); background: var(--btn-secondary-bg); color: var(--dorami-ink-2); box-shadow: 0 4px 14px rgba(11,18,32,.05); }
+.btn-secondary:hover { background: var(--dorami-soft); border-color: var(--dorami-border-strong); }
+.btn-quiet { border-color: var(--btn-quiet-bd); background: var(--btn-quiet-bg); color: var(--btn-quiet-ink); }
+.btn-quiet:hover { background: var(--dorami-soft); border-color: var(--dorami-border-strong); }
+.btn-danger { border-color: rgba(248,113,113,.18); background: var(--state-bad-bg); color: var(--state-bad); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.icon-button { display: inline-flex; width: 32px; height: 32px; align-items: center; justify-content: center; border: 1px solid var(--btn-secondary-bd); border-radius: var(--r-control); background: var(--btn-secondary-bg); color: var(--btn-quiet-ink); }
+.icon-button:hover { background: var(--dorami-soft); }
+.rowacts { display: flex; justify-content: flex-end; gap: 2px; opacity: 0; transition: opacity var(--motion-fast) var(--motion-ease); }
+.acct-row:hover .rowacts, .acct-row:focus-within .rowacts, .rowacts.is-shown { opacity: 1; }
+.rowact-btn { width: 26px; height: 26px; display: grid; place-items: center; border-radius: var(--r-sm); color: var(--dorami-faint); text-decoration: none; }
+.rowact-btn:hover { background: var(--dorami-well); color: var(--dorami-ink); }
+.rowact-btn svg { width: 13px; height: 13px; }
+.rowact-btn.is-danger:hover { background: var(--state-bad-bg); color: var(--state-bad); }
+.rowact-btn.is-on { color: var(--dorami-accent-ink); }
+.rowact-btn:disabled { opacity: .4; cursor: not-allowed; }
+.rowact-btn:disabled:hover { background: none; color: var(--dorami-faint); }
+
+/* ── 开关板(AI 面板同形制) ── */
+.ai-switchboard { display: flex; align-items: center; gap: 14px; flex-wrap: nowrap; padding: 13px 18px; }
+.ai-switchboard.is-wrap { flex-wrap: wrap; row-gap: 10px; }
+.ai-light { width: 8px; height: 8px; border-radius: var(--r-pill); background: var(--state-ok); flex: none; }
+.ai-light.is-off { background: var(--state-warn); }
+.ai-switch-lbl { font-size: 13px; font-weight: 700; color: var(--dorami-ink); white-space: nowrap; }
+.ai-divider { width: 1px; height: 26px; background: var(--dorami-border); flex: none; }
+.ledger-switch { position: relative; width: 34px; height: 19px; flex: none; border-radius: var(--r-pill); background: var(--dorami-well); box-shadow: var(--dorami-inset-input); transition: background var(--motion-fast) var(--motion-ease); }
+.ledger-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; background: #fff; border-radius: var(--r-pill); box-shadow: 0 1px 2px rgba(11,18,32,.3); transition: transform var(--motion-fast) var(--motion-ease); }
+.ledger-switch.is-on { background: var(--dorami-blue); }
+.ledger-switch.is-on::after { transform: translateX(15px); }
+.sw { display: inline-flex; align-items: center; gap: 9px; }
+.knob { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--dorami-faint); white-space: nowrap; }
+.knob input, .knob-input { min-height: 28px; width: 58px; padding: 0 8px; border: none; border-radius: var(--r-sm); background: var(--dorami-well); box-shadow: var(--dorami-inset-input);
+  font-family: var(--mono); font-size: 11px; color: var(--dorami-ink); text-align: center; font-variant-numeric: tabular-nums; }
+.knob input:focus { outline: none; box-shadow: inset 0 0 0 1px var(--dorami-accent); }
+.knob .unit { color: var(--dorami-faint); }
+.knob.is-fixed strong { font-family: var(--mono); font-size: 12px; color: var(--dorami-ink-2); }
+.model-chip { display: inline-flex; align-items: center; gap: 7px; min-height: 26px; padding: 0 10px; border-radius: var(--r-pill); background: var(--dorami-well); font-size: 11px; font-weight: 600; color: var(--dorami-muted); }
+.model-chip i { width: 7px; height: 7px; border-radius: var(--r-pill); background: var(--state-ok); }
+.model-chip b { font-family: var(--mono); font-weight: 600; color: var(--dorami-ink-2); }
+.saved-hint { font-size: 11px; color: var(--dorami-faint); font-weight: 500; }
+
+/* ── KPI ── */
+.kpi-strip { display: flex; align-items: stretch; flex-wrap: wrap; border-radius: var(--r-card); overflow: hidden; }
+.kpi { flex: 1; min-width: 130px; padding: 14px 18px 12px; }
+.kpi + .kpi { border-left: 1px solid var(--dorami-border); }
+.kpi-num { display: block; font-size: 28px; font-weight: 700; line-height: 32px; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: var(--dorami-ink); }
+.kpi-num.is-warn { color: var(--state-warn); }
+.kpi-num.is-bad { color: var(--state-bad); }
+.kpi-lbl { display: block; margin-top: 3px; font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
+.kpi-sub { display: block; margin-top: 1px; font-size: 11px; font-weight: 500; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.kpi-sub-link { color: inherit; text-decoration: underline dotted transparent; text-underline-offset: 2px; }
+.kpi-sub-link:hover { color: var(--dorami-muted); text-decoration-color: currentColor; }
+.kpi-sub-link.is-on { color: var(--dorami-accent-ink); text-decoration-color: currentColor; }
+.kpi.is-error { display: flex; align-items: center; gap: 10px; }
+
+/* ── 评分分布 ── */
+.score-hist { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 6px; height: 96px; align-items: end; }
+.score-hist-col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
+.score-hist-bar { display: block; width: 100%; max-width: 28px; border-radius: var(--r-control) var(--r-control) 0 0; background: var(--dorami-accent); opacity: .72; }
+.score-hist-col:hover .score-hist-bar { opacity: 1; }
+.score-hist-lbl { margin-top: 4px; font-size: 11px; font-weight: 600; color: var(--dorami-muted); font-variant-numeric: tabular-nums; }
+
+/* ── 状态章 ── */
+.stamp { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; padding: 2.5px 9px; border-radius: var(--r-pill); white-space: nowrap; }
+.stamp::before { content: ""; width: 6px; height: 6px; flex: none; border-radius: 1px; }
+.stamp-ok { color: var(--state-ok); background: var(--state-ok-bg); } .stamp-ok::before { background: var(--state-ok); }
+.stamp-idle { color: var(--state-idle); background: var(--state-idle-bg); } .stamp-idle::before { background: var(--dorami-faint); border-radius: 50%; }
+.stamp-run { color: var(--state-run); background: var(--state-run-bg); } .stamp-run::before { background: var(--state-run); border-radius: 50%; animation: stamp-pulse 1.6s infinite; }
+.stamp-bad { color: var(--state-bad); background: var(--state-bad-bg); } .stamp-bad::before { background: var(--state-bad); transform: rotate(45deg); }
+.stamp-warn { color: var(--state-warn); background: var(--state-warn-bg); } .stamp-warn::before { background: var(--state-warn); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+@keyframes stamp-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+
+/* ── 表格(acct-table is-fixed + 列头三件套) ── */
+.acct-scroll { overflow-x: auto; }
+.acct-table { width: 100%; border-collapse: collapse; }
+.acct-table.is-fixed { table-layout: fixed; min-width: 900px; }
+.acct-th { font-size: 10.5px; font-weight: 600; letter-spacing: .07em; color: var(--dorami-faint); text-align: left; padding: 0 10px; height: 36px; vertical-align: middle; border-bottom: 1px solid var(--dorami-border); white-space: nowrap; }
+.acct-th:first-child { padding-left: 18px; } .acct-th:last-child { padding-right: 14px; }
+.acct-th.is-num { text-align: right; }
+.acct-sortbtn { display: inline-flex; align-items: center; gap: 3px; padding: 0; letter-spacing: inherit; color: inherit; }
+.acct-th.is-num .acct-sortbtn { flex-direction: row-reverse; }
+.acct-th.is-sorted .acct-sortbtn, .acct-th.is-filtered .acct-sortbtn { color: var(--dorami-accent-ink); }
+.acct-sort-arrow { font-size: 8px; line-height: 1; min-width: 8px; }
+.acct-th-search { width: 132px; height: 22px; padding: 0 8px 0 22px; border: none; border-radius: var(--r-sm); background: var(--dorami-well); box-shadow: var(--dorami-inset-input); color: var(--dorami-ink); font-size: 11px; font-weight: 500; letter-spacing: normal; }
+.acct-th-search:focus { outline: none; box-shadow: inset 0 0 0 1px var(--dorami-accent); }
+.th-search-wrap { position: relative; display: inline-flex; align-items: center; }
+.th-search-wrap svg { position: absolute; left: 6px; width: 12px; height: 12px; color: var(--dorami-faint); pointer-events: none; }
+.acct-row td { height: 46px; vertical-align: middle; padding: 0 10px; border-top: 1px solid var(--dorami-border); }
+.acct-row td:first-child { padding-left: 18px; } .acct-row td:last-child { padding-right: 14px; }
+.acct-row:hover { background: var(--dorami-soft); }
+.acct-row.is-sel { background: var(--dorami-soft); box-shadow: inset 3px 0 0 var(--dorami-blue); }
+.acct-row.is-static { cursor: default; }
+.acct-name { font-size: 13px; font-weight: 600; color: var(--dorami-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+.acct-sub { display: block; margin-top: 1px; font-size: 11px; font-weight: 500; color: var(--dorami-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acct-mono { font-family: var(--mono); font-size: 11px; color: var(--dorami-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.acct-n { text-align: right; font-family: var(--mono); font-size: 12px; color: var(--dorami-muted); font-variant-numeric: tabular-nums; }
+.acct-n.is-main { font-weight: 700; color: var(--dorami-ink); }
+.acct-n.is-zero { opacity: .55; }
+.cell-2 { display: block; line-height: 1.35; }
+.cell-2 small { display: block; font-size: 11px; color: var(--dorami-faint); font-weight: 500; }
+.tbl-head { display: flex; align-items: center; gap: 10px; padding: 12px 18px 10px; border-bottom: 1px solid var(--dorami-border); }
+.tbl-head .zone-acts { margin-left: auto; }
+.timeline { display: grid; gap: 0; }
+.tl-row { display: grid; grid-template-columns: 112px 1fr auto; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--dorami-border); font-size: 12px; }
+.tl-row:first-child { border-top: none; }
+.tl-row .tl-what { color: var(--dorami-ink-2); font-weight: 500; }
+.tl-row .tl-what small { display: block; color: var(--dorami-faint); font-size: 11px; }
+.table-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; border-top: 1px solid var(--dorami-border); padding: 10px 16px; }
+.pager { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+.pager-btn { min-width: 26px; height: 26px; padding: 0 8px; border-radius: var(--r-sm); font-family: var(--mono); font-size: 11px; font-variant-numeric: tabular-nums; color: var(--dorami-muted); }
+.pager-btn:hover:not(:disabled):not(.is-on) { background: var(--dorami-well); color: var(--dorami-ink-2); }
+.pager-btn.is-on { background: var(--dorami-blue); color: #fff; font-weight: 700; }
+.pager-btn:disabled { opacity: .4; cursor: default; }
+.pager-ellipsis { color: var(--dorami-faint); font-size: 11px; padding: 0 2px; }
+.prog { position: relative; height: 5px; border-radius: var(--r-pill); background: var(--dorami-well); overflow: hidden; min-width: 90px; }
+.prog > i { position: absolute; inset: 0 auto 0 0; background: var(--dorami-accent); border-radius: var(--r-pill); }
+.prog-cell { display: flex; align-items: center; gap: 8px; }
+.score-pair { font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; color: var(--dorami-ink-2); }
+.score-pair small { color: var(--dorami-faint); font-size: 11px; margin-left: 4px; }
+.tag-kind { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 4px; border: 1px solid var(--dorami-border-strong); font-size: 10px; font-weight: 600; letter-spacing: .06em; color: var(--dorami-faint); }
+.acct-empty { padding: 24px; text-align: center; }
+
+/* ── 表单 ── */
+.form-label { display: block; margin-bottom: 6px; color: var(--dorami-faint); font-size: 13px; font-weight: 700; line-height: 18px; }
+.form-input { width: 100%; border: 1px solid var(--btn-secondary-bd); border-radius: var(--r-control); background: var(--dorami-surface); color: var(--dorami-ink); font-size: 13px; font-weight: 600; line-height: 20px; padding: 7px 10px; }
+.form-input-inline { min-height: 32px; padding: 5px 10px; font-size: 12px; width: auto; }
+.form-input:focus { outline: none; border-color: rgba(91,84,232,.42); box-shadow: 0 0 0 3px rgba(91,84,232,.08); }
+textarea.form-input { min-height: 68px; resize: vertical; }
+.form-grid { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+.form-grid .span2 { grid-column: span 2; }
+.field { display: grid; gap: 5px; }
+.field > span { font-size: 11px; font-weight: 600; color: var(--dorami-faint); }
+.card-foot { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+
+/* ── 别名 chip(interest-chip 语法) ── */
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 6px 0 8px; border-radius: 7px; background: var(--dorami-surface); box-shadow: var(--sh-1); font-size: 12px; color: var(--dorami-ink); }
+.chip small { color: var(--dorami-faint); font-size: 10.5px; font-weight: 500; }
+.chip-x { width: 16px; height: 16px; border-radius: 4px; color: var(--dorami-faint); font-size: 13px; line-height: 1; display: grid; place-items: center; opacity: 0; }
+.chip:hover .chip-x { opacity: 1; }
+.chip-x:hover { background: color-mix(in srgb, var(--dorami-ink) 8%, transparent); color: var(--dorami-ink); }
+[data-theme="dark"] .chip { background: var(--dorami-raised); }
+
+/* ── 抽屉(ledger-drawer 语法) ── */
+.scrim { position: fixed; inset: var(--spec-h) 0 0 0; z-index: 60; background: rgba(11,18,32,.28); opacity: 0; pointer-events: none; transition: opacity var(--motion-slow) var(--motion-ease); }
+.scrim.is-open { opacity: 1; pointer-events: auto; }
+.ledger-drawer { position: fixed; top: var(--spec-h); right: 0; bottom: 0; width: 470px; max-width: 92vw; z-index: 61; background: var(--dorami-surface); border-radius: var(--r-overlay) 0 0 var(--r-overlay); box-shadow: var(--sh-3);
+  transform: translateX(102%); transition: transform var(--motion-slow) var(--motion-ease); display: flex; flex-direction: column; }
+.ledger-drawer.is-open { transform: none; }
+.ledger-drawer-head { flex: none; display: flex; align-items: center; gap: 10px; padding: 18px 20px 13px; background: var(--dorami-soft); border-radius: var(--r-overlay) 0 0 0; }
+.ledger-drawer-title { flex: 1; min-width: 0; font-size: 15px; font-weight: 700; line-height: 1.45; color: var(--dorami-ink); }
+.ledger-drawer-title small { display: block; font-family: var(--mono); font-size: 11px; font-weight: 500; color: var(--dorami-faint); }
+.drawer-acts { display: flex; align-items: center; gap: 2px; }
+.drawer-acts .rowacts { opacity: 1; }
+.ledger-drawer-body { flex: 1; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 18px; }
+.drawer-sec-title { font-size: 12px; font-weight: 700; color: var(--dorami-ink-2); margin-bottom: 8px; }
+.ledger-drawer-foot { flex: none; display: flex; align-items: center; gap: 8px; padding: 12px 20px 16px; border-top: 1px solid var(--dorami-border); }
+.drawer-kv { display: grid; grid-template-columns: 76px 1fr; gap: 7px 12px; font-size: 12.5px; }
+.drawer-kv dt { color: var(--dorami-faint); font-size: 11px; font-weight: 600; padding-top: 1px; }
+.drawer-kv dd { color: var(--dorami-ink-2); font-weight: 500; min-width: 0; }
+.evidence { border: 1px solid var(--dorami-border); border-radius: var(--r-control); padding: 8px 10px; font-size: 12px; }
+.evidence p { margin-top: 3px; color: var(--dorami-ink-2); font-weight: 500; line-height: 1.55; }
+
+/* ── 确认框(form-sheet 三件套) ── */
+.sheet-wrap { position: fixed; inset: 0; z-index: 80; display: none; place-items: center; background: rgba(11,18,32,.38); }
+.sheet-wrap.is-open { display: grid; }
+.form-sheet { width: min(420px, 92vw); background: var(--dorami-surface); border-radius: var(--r-overlay); box-shadow: var(--sh-3); display: flex; flex-direction: column; }
+.form-sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 16px 20px 12px; border-bottom: 1px solid var(--dorami-border); }
+.form-sheet-body { padding: 16px 20px; font-size: 13px; color: var(--dorami-ink-2); font-weight: 500; line-height: 1.7; display: grid; gap: 10px; }
+.form-sheet-foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 12px 20px 16px; border-top: 1px solid var(--dorami-border); }
+
+/* ── 变体显隐 ── */
+[data-sub="content"] .sub-analysis { display: none; }
+[data-sub="analysis"] .sub-content { display: none; }
+.knob-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.hairline { height: 1px; background: var(--dorami-border); margin: 4px 0 0; }
+
+/* ── 状态示例条(样页说明:三种态必须可区分) ── */
+.state-demo { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.state-demo .surface-card { padding: 14px 16px; display: flex; align-items: center; gap: 10px; min-height: 60px; }
+</style>
+</head>
+<body data-theme="light" data-sub="content" data-win="hide">
+
+<div class="spec-bar">
+  <b>样页 · issue #76</b>
+  <span class="grp">主题 <span class="seg"><button data-set="theme:light" class="is-on">亮</button><button data-set="theme:dark">暗</button></span></span>
+  <span class="grp">子页 <span class="seg"><button data-set="sub:content" class="is-on">内容</button><button data-set="sub:analysis">分析与标签</button></span></span>
+  <span class="grp"><button class="seg" style="padding:2px 8px" id="openDrawer">示例:标签抽屉</button> <button class="seg" style="padding:2px 8px" id="openDrawerEp">示例:单集抽屉</button> <button class="seg" style="padding:2px 8px" id="openConfirm">示例:高危确认</button></span>
+  <span class="spec-note">已拍板:标签列表 = 表格 + 抽屉 · 早报策略 = 表单卡 · 时间窗内容页隐藏。三张表整行可点开抽屉;列头可点(轮换筛选 / 排序 / 就地搜索);行内 hover 出快捷动作;强制 / 废弃出确认框 · 类名 1:1 对应 index.css 在册类</span>
+</div>
+
+<nav class="app-rail" aria-hidden="true">
+  <div class="rail-brand">哆</div>
+  <span class="rail-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 5h18M3 12h18M3 19h18"/></svg></span>
+  <span class="rail-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+  <span class="rail-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19V5M10 19V9M16 19v-6M22 19H2"/></svg></span>
+  <span class="rail-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3 7h7l-5.5 4 2 7L12 16l-6.5 4 2-7L2 9h7z"/></svg></span>
+  <span class="rail-btn is-on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v6H4zM4 14h16v6H4z"/></svg></span>
+</nav>
+
+<main class="page">
+  <header class="page-head">
+    <h1 class="page-title">运维管理</h1>
+    <div class="page-head-actions">
+      <span class="win">
+        <span class="win-label" id="winLabel">时间窗</span>
+        <span class="mini-seg" role="group" aria-label="时间窗">
+          <button class="mini-seg-btn" aria-pressed="false">7 天</button><button class="mini-seg-btn" aria-pressed="false">14 天</button><button class="mini-seg-btn is-on" aria-pressed="true">30 天</button><button class="mini-seg-btn" aria-pressed="false">90 天</button>
+        </span>
+      </span>
+      <div class="segmented-control" role="tablist" aria-label="运维子页">
+        <button class="segmented-option is-ghost" role="tab" aria-selected="false">用户</button>
+        <button class="segmented-option" role="tab" data-set="sub:content" id="segContent">内容</button>
+        <button class="segmented-option is-ghost" role="tab" aria-selected="false">AI</button>
+        <button class="segmented-option" role="tab" data-set="sub:analysis" id="segAnalysis">分析与标签</button>
+        <button class="segmented-option is-ghost" role="tab" aria-selected="false">消息</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═══════════════════════ 内容子页 ═══════════════════════ -->
+  <section class="sub-content">
+    <div class="ghost-zone">↑ 公开分享总闸 · 新账号默认订阅 · 内容 KPI · 各源热度 · X API · 媒体库——现状不动(本样页只画新立的两个分区)。内容 KPI 请求失败时只让那一条 KPI 变成可重试错误态,下面各分区照常渲染:</div>
+    <section class="surface-card kpi-strip" style="margin-top:12px" aria-label="内容概览(故障隔离示例)">
+      <div class="kpi is-error"><span class="stamp stamp-bad">内容统计加载失败</span><span class="tiny-meta">后端未响应 · <button class="kpi-sub-link">重试</button></span></div>
+    </section>
+
+    <!-- ── 早报与兴趣(自「标签」子页迁入;拍板③两变体) ── -->
+    <div class="zone-head"><span class="zone-title">早报与兴趣</span><span class="zone-acts"><button class="btn btn-quiet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>刷新</button></span></div>
+
+    <!-- 拍板③(2026-09-15):表单卡——零说明句、无输入下小字、各卡一枚 secondary 保存 -->
+    <div class="knob-cards">
+      <section class="surface-card card-pad">
+        <div class="card-head"><span class="card-title">重大事件通道</span><span class="stamp stamp-ok" style="margin-left:auto">开启</span></div>
+        <div class="form-grid"><label class="field"><span>新闻价值分阈值</span><input class="form-input" value="9.0"></label><label class="field"><span>每期条数上限</span><input class="form-input" value="2"></label></div>
+        <div class="card-foot"><span class="tiny-meta">0 = 关闭</span><button class="btn btn-secondary" style="margin-left:auto">保存</button></div>
+      </section>
+      <section class="surface-card card-pad">
+        <div class="card-head"><span class="card-title">订阅外兴趣</span></div>
+        <div class="form-grid"><label class="field"><span>订阅外门槛</span><input class="form-input" value="6.0"></label><label class="field"><span>每源每期上限</span><input class="form-input" value="2"></label></div>
+        <div class="card-foot"><span class="tiny-meta">订阅内门槛 5.0</span><button class="btn btn-secondary" style="margin-left:auto">保存</button></div>
+      </section>
+      <section class="surface-card card-pad">
+        <div class="card-head"><span class="card-title">兴趣目录 Top N</span></div>
+        <div class="form-grid" style="grid-template-columns:repeat(3,1fr)"><label class="field"><span>主题 / 41</span><input class="form-input" value="30"></label><label class="field"><span>行业 / 19</span><input class="form-input" value="15"></label><label class="field"><span>实体 / 36</span><input class="form-input" value="20"></label></div>
+        <div class="card-foot"><button class="btn btn-secondary" style="margin-left:auto">保存</button></div>
+      </section>
+    </div>
+
+    <!-- ── 播客(独立分区:KPI + 门槛行 + 全文任务表 + 音频资产表) ── -->
+    <div class="zone-head"><span class="zone-title">播客</span>
+      <span class="zone-acts">
+        <button class="btn btn-quiet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>刷新</button>
+      </span>
+    </div>
+    <div class="stack">
+      <section class="surface-card kpi-strip" aria-label="播客概览">
+        <div class="kpi"><span class="kpi-num">128</span><span class="kpi-lbl">播客单集</span><span class="kpi-sub">36 个节目</span></div>
+        <div class="kpi"><span class="kpi-num">41</span><span class="kpi-lbl">全文分析完成</span><span class="kpi-sub"><button class="kpi-sub-link">简介初评 87</button></span></div>
+        <div class="kpi"><span class="kpi-num">17</span><span class="kpi-lbl">当前优质</span><span class="kpi-sub">≥ 8.0</span></div>
+        <div class="kpi"><span class="kpi-num is-warn">6</span><span class="kpi-lbl">待处理 / 失败</span><span class="kpi-sub"><button class="kpi-sub-link">失败 2</button> · <button class="kpi-sub-link">待对账 1</button></span></div>
+        <div class="kpi"><span class="kpi-num">14</span><span class="kpi-lbl">已发布音频</span><span class="kpi-sub">待发布 3 · 已下架 5</span></div>
+        <div class="kpi"><span class="kpi-num">1.8 GB</span><span class="kpi-lbl">本地占用</span><span class="kpi-sub">配额余 6.2 GB · 磁盘余 41 GB</span></div>
+      </section>
+
+      <section class="surface-card ai-switchboard is-wrap" aria-label="播客处理参数">
+        <span class="ai-switch-lbl">优质门槛</span>
+        <label class="knob">全文终评 ≥ <input value="8.0" aria-label="全文终评优质门槛"></label>
+        <span class="ai-divider"></span>
+        <span class="knob is-fixed">简介初评处理线 <strong>≥ 5.0</strong></span>
+        <span class="ai-divider"></span>
+        <span class="model-chip" title="设置 → 凭据 → 播客 ASR"><i></i>ASR 阿里 ISI · 日配额 <b>6h</b> / 已用 <b>2.4h</b></span>
+        <button class="btn btn-secondary" style="margin-left:auto">保存</button>
+      </section>
+
+      <!-- 单集处理表:每期播客从简介初评到导读 / TTS 的状态与动作;整行可点开单集抽屉 -->
+      <section class="surface-card" style="overflow:hidden">
+        <div class="tbl-head"><span class="tools-title">单集处理</span><span class="tiny-meta">128 期 · 待全文 23 · 处理中 4 · 待对账 1 · 失败 2</span></div>
+        <div class="acct-scroll"><table class="acct-table is-fixed">
+          <thead><tr>
+            <th class="acct-th" style="width:28%"><button class="acct-sortbtn th-search" title="搜索节目 / 来源">节目 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" style="width:10px;height:10px"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></button></th>
+            <th class="acct-th" style="width:190px"><button class="acct-sortbtn th-filter" data-cycle="阶段|未初评|未入选|待全文|处理中|全文完成|待对账|失败" data-idx="0" title="点击轮换筛选:阶段 → 未初评 → 未入选 → 待全文 → 处理中 → 全文完成 → 待对账 → 失败">阶段</button></th>
+            <th class="acct-th is-num is-sorted" style="width:150px"><button class="acct-sortbtn th-sort" title="按评分排序">评分<span class="acct-sort-arrow" aria-hidden="true">▼</span></button></th>
+            <th class="acct-th" style="width:110px"><button class="acct-sortbtn th-filter" data-cycle="判定|优质|未达门槛|未初评" data-idx="0" title="点击轮换筛选:判定 → 优质 → 未达门槛 → 未初评">判定</button></th>
+            <th class="acct-th" style="width:150px"><button class="acct-sortbtn th-filter" data-cycle="TTS|未生成|生成中|已生成|失败" data-idx="0" title="点击轮换筛选:TTS → 未生成 → 生成中 → 已生成 → 失败">TTS</button></th>
+            <th class="acct-th" style="width:120px"><button class="acct-sortbtn th-sort" title="按更新时间排序">更新</button></th>
+            <th class="acct-th" style="width:76px" aria-label="操作"></th>
+          </tr></thead>
+          <tbody>
+            <tr class="acct-row" data-open="drawer-ep" tabindex="0">
+              <td><span class="acct-name">The AI Engineer Podcast · Building Agents at Scale</span><span class="acct-sub">Latent Space</span></td>
+              <td><span class="cell-2"><span class="stamp stamp-warn">待对账恢复</span><small>ASR 结果待对账 · 对账后重试 ASR</small></span></td>
+              <td class="acct-n"><span class="score-pair">6.5<small>简介</small></span></td>
+              <td><span class="stamp stamp-idle">未达门槛</span></td>
+              <td><span class="tiny-meta">—</span></td>
+              <td><span class="acct-mono">09-14 08:31</span></td>
+              <td><span class="rowacts"><button class="rowact-btn" title="对账恢复 ASR" data-stop><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.3L3 16"/><path d="M3 21v-5h5"/></svg></button></span></td>
+            </tr>
+            <tr class="acct-row" data-open="drawer-ep" tabindex="0">
+              <td><span class="acct-name">Dwarkesh Podcast · Sholto Douglas & Trenton Bricken</span><span class="acct-sub">Dwarkesh Podcast</span></td>
+              <td><span class="cell-2"><span class="stamp stamp-run">ASR 转录中</span><small>阿里 ISI · 已 12 分钟</small></span></td>
+              <td class="acct-n"><span class="score-pair">7.5<small>简介</small></span></td>
+              <td><span class="stamp stamp-idle">未达门槛</span></td>
+              <td><span class="tiny-meta">—</span></td>
+              <td><span class="acct-mono">09-14 08:02</span></td>
+              <td><span class="rowacts"></span></td>
+            </tr>
+            <tr class="acct-row" data-open="drawer-ep" tabindex="0">
+              <td><span class="acct-name">No Priors · Anthropic's Mike Krieger on Claude Code</span><span class="acct-sub">No Priors</span></td>
+              <td><span class="cell-2"><span class="stamp stamp-ok">全文完成</span><small>ASR 逐字稿 · 8.7 ≥ 门槛 8.0</small></span></td>
+              <td class="acct-n"><span class="score-pair">8.7<small>全文 · 简介 7.0</small></span></td>
+              <td><span class="stamp stamp-ok">优质</span></td>
+              <td><span class="stamp stamp-run">合成音频中</span></td>
+              <td><span class="acct-mono">09-13 22:40</span></td>
+              <td><span class="rowacts"></span></td>
+            </tr>
+            <tr class="acct-row" data-open="drawer-ep" tabindex="0">
+              <td><span class="acct-name">硅谷101 · 从 GPT-6 到 Fable 5.1:前沿模型的定价战</span><span class="acct-sub">硅谷101</span></td>
+              <td><span class="cell-2"><span class="stamp stamp-ok">全文完成</span><small>发布方逐字稿 · 7.6 < 门槛 8.0</small></span></td>
+              <td class="acct-n"><span class="score-pair">7.6<small>全文 · 简介 8.0</small></span></td>
+              <td><span class="stamp stamp-idle">未达门槛</span></td>
+              <td><span class="stamp stamp-idle">未生成</span></td>
+              <td><span class="acct-mono">09-13 19:05</span></td>
+              <td><span class="rowacts"><button class="rowact-btn" title="强制生成 TTS(跳过优质筛选,消耗合成额度;需确认)" data-stop data-confirm="tts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg></button></span></td>
+            </tr>
+            <tr class="acct-row" data-open="drawer-ep" tabindex="0">
+              <td><span class="acct-name">Lex Fridman #447 · Cursor Team: Future of Programming</span><span class="acct-sub">Lex Fridman Podcast</span></td>
+              <td><span class="cell-2"><span class="stamp stamp-bad">ASR 转录失败</span><small>音频地址 403 · 可重试</small></span></td>
+              <td class="acct-n"><span class="score-pair">6.0<small>简介</small></span></td>
+              <td><span class="stamp stamp-idle">未达门槛</span></td>
+              <td><span class="tiny-meta">—</span></td>
+              <td><span class="acct-mono">09-13 11:20</span></td>
+              <td><span class="rowacts"><button class="rowact-btn" title="重试 ASR 转录" data-stop><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/><path d="M21 3v5h-5"/></svg></button></span></td>
+            </tr>
+            <tr class="acct-row" data-open="drawer-ep" tabindex="0">
+              <td><span class="acct-name">Practical AI · Vibe coding with agents, six months in</span><span class="acct-sub">Practical AI</span></td>
+              <td><span class="cell-2"><span class="stamp stamp-idle">待全文</span><small>已过处理线 5.0 · 等待逐字稿</small></span></td>
+              <td class="acct-n"><span class="score-pair">5.5<small>简介</small></span></td>
+              <td><span class="stamp stamp-idle">未达门槛</span></td>
+              <td><span class="tiny-meta">—</span></td>
+              <td><span class="acct-mono">09-12 07:15</span></td>
+              <td><span class="rowacts"><button class="rowact-btn" title="强制全文处理(音频准备 / ASR / 全文分析;需确认)" data-stop data-confirm="full"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 4l14 8-14 8z"/></svg></button></span></td>
+            </tr>
+            <tr class="acct-row" data-open="drawer-ep" tabindex="0">
+              <td><span class="acct-name">a16z Podcast · The State of Consumer AI</span><span class="acct-sub">a16z Podcast</span></td>
+              <td><span class="cell-2"><span class="stamp stamp-idle">未入选</span><small>简介初评 4.5 < 处理线 5.0</small></span></td>
+              <td class="acct-n"><span class="score-pair">4.5<small>简介</small></span></td>
+              <td><span class="stamp stamp-idle">未达门槛</span></td>
+              <td><span class="tiny-meta">—</span></td>
+              <td><span class="acct-mono">09-11 21:10</span></td>
+              <td><span class="rowacts"><button class="rowact-btn" title="强制全文处理(音频准备 / ASR / 全文分析;需确认)" data-stop data-confirm="full"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 4l14 8-14 8z"/></svg></button></span></td>
+            </tr>
+            <tr class="acct-row" data-open="drawer-ep" tabindex="0">
+              <td><span class="acct-name">Voices from DARPA · Episode 82</span><span class="acct-sub">Voices from DARPA</span></td>
+              <td><span class="cell-2"><span class="stamp stamp-idle">未初评</span><small>等待简介初评</small></span></td>
+              <td class="acct-n"><span class="acct-n is-zero">—</span></td>
+              <td><span class="stamp stamp-idle">未初评</span></td>
+              <td><span class="tiny-meta">—</span></td>
+              <td><span class="acct-mono">09-11 06:40</span></td>
+              <td><span class="rowacts"></span></td>
+            </tr>
+          </tbody>
+        </table></div>
+        <div class="table-foot"><span class="tiny-meta">共 128 条 · 第 1–20 条</span>
+          <div class="pager"><button class="pager-btn" disabled aria-label="上一页">‹</button><button class="pager-btn is-on">1</button><button class="pager-btn">2</button><span class="pager-ellipsis">…</span><button class="pager-btn">7</button><button class="pager-btn" aria-label="下一页">›</button></div></div>
+      </section>
+
+      <!-- 中文精简音频表:导读合成出的音频文件台账(发布 / 下架 / 删除 / 回收);整行可点开单集抽屉 -->
+      <section class="surface-card" style="overflow:hidden">
+        <div class="tbl-head"><span class="tools-title">中文精简音频</span><span class="tiny-meta">22 份 · 已发布 14 · 待发布 3 · 已下架 5 · 1.8 GB</span><span class="zone-acts"><button class="btn btn-quiet" title="清理过期临时校验文件与无引用音频"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>安全回收 <span class="mono">3</span></button></span></div>
+        <div class="acct-scroll"><table class="acct-table is-fixed">
+          <thead><tr>
+            <th class="acct-th" style="width:36%"><button class="acct-sortbtn th-search" title="搜索节目 / 节目 ID">节目 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" style="width:10px;height:10px"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></button></th>
+            <th class="acct-th" style="width:110px"><button class="acct-sortbtn th-filter" data-cycle="状态|待发布|已发布|已下架" data-idx="0" title="点击轮换筛选:状态 → 待发布 → 已发布 → 已下架">状态</button></th>
+            <th class="acct-th" style="width:120px">格式</th>
+            <th class="acct-th is-num" style="width:96px"><button class="acct-sortbtn th-sort" title="按大小排序">大小</button></th>
+            <th class="acct-th is-sorted" style="width:130px"><button class="acct-sortbtn th-sort" title="按创建时间排序">创建<span class="acct-sort-arrow" aria-hidden="true">▼</span></button></th>
+            <th class="acct-th" style="width:96px" aria-label="操作"></th>
+          </tr></thead>
+          <tbody>
+            <tr class="acct-row" data-open="drawer-ep" tabindex="0">
+              <td><span class="acct-name">No Priors · Anthropic's Mike Krieger on Claude Code</span><span class="acct-sub mono">ep_9f31c2a7 · 中文精简版</span></td>
+              <td><span class="stamp stamp-warn">待发布</span></td>
+              <td><span class="acct-mono">audio/mpeg</span></td>
+              <td class="acct-n">18.4 MB</td>
+              <td><span class="acct-mono">2026-09-13 23:02</span></td>
+              <td><span class="rowacts"><a class="rowact-btn" href="#" title="试听" data-stop><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg></a><button class="rowact-btn" title="发布(读者可见;需确认)" data-stop><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg></button></span></td>
+            </tr>
+            <tr class="acct-row" data-open="drawer-ep" tabindex="0">
+              <td><span class="acct-name">Latent Space · State of AI Engineering 2026</span><span class="acct-sub mono">ep_2b77d0e1 · 中文精简版</span></td>
+              <td><span class="stamp stamp-ok">已发布</span></td>
+              <td><span class="acct-mono">audio/mpeg</span></td>
+              <td class="acct-n">21.9 MB</td>
+              <td><span class="acct-mono">2026-09-12 21:48</span></td>
+              <td><span class="rowacts"><a class="rowact-btn" href="#" title="试听" data-stop><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg></a><button class="rowact-btn" title="下架(读者不可见,文件保留;需确认)" data-stop><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 4h18v4H3zM5 8v12h14V8"/><path d="m9 14 2 2 4-4"/></svg></button></span></td>
+            </tr>
+            <tr class="acct-row" data-open="drawer-ep" tabindex="0">
+              <td><span class="acct-name">Hard Fork · The Great AI Pricing Reset</span><span class="acct-sub mono">ep_77a0c4b9 · 中文精简版</span></td>
+              <td><span class="stamp stamp-idle">已下架</span></td>
+              <td><span class="acct-mono">audio/mpeg</span></td>
+              <td class="acct-n">16.1 MB</td>
+              <td><span class="acct-mono">2026-09-10 08:12</span></td>
+              <td><span class="rowacts"><a class="rowact-btn" href="#" title="试听" data-stop><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg></a><button class="rowact-btn is-danger" disabled title="仍被 1 个处理中任务引用,引用归零后可删除" data-stop><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></button></span></td>
+            </tr>
+            <tr class="acct-row" data-open="drawer-ep" tabindex="0">
+              <td><span class="acct-name">硅谷101 · 从 GPT-6 到 Fable 5.1:前沿模型的定价战</span><span class="acct-sub mono">ep_c01e9a55 · 中文精简版</span></td>
+              <td><span class="stamp stamp-idle">已下架</span></td>
+              <td><span class="acct-mono">audio/mpeg</span></td>
+              <td class="acct-n">12.7 MB</td>
+              <td><span class="acct-mono">2026-09-08 19:31</span></td>
+              <td><span class="rowacts"><a class="rowact-btn" href="#" title="试听" data-stop><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg></a><button class="rowact-btn is-danger" title="永久删除登记与文件(需确认)" data-stop><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></button></span></td>
+            </tr>
+          </tbody>
+        </table></div>
+        <div class="table-foot"><span class="tiny-meta">共 22 条 · 第 1–20 条</span>
+          <div class="pager"><button class="pager-btn" disabled aria-label="上一页">‹</button><button class="pager-btn is-on">1</button><button class="pager-btn">2</button><button class="pager-btn" aria-label="下一页">›</button></div></div>
+      </section>
+    </div>
+
+    <div class="zone-head"><span class="zone-title">用户自定源</span><span class="zone-hint">现状不动</span></div>
+    <div class="ghost-zone">…</div>
+  </section>
+
+  <!-- ═══════════════════════ 分析与标签 子页 ═══════════════════════ -->
+  <section class="sub-analysis">
+    <div class="zone-head zone-head-first"><span class="zone-title">分析链路</span><span class="zone-hint" id="analysisWinHint">近 30 天</span>
+      <span class="zone-acts"><button class="btn btn-quiet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>刷新</button></span></div>
+    <div class="stack">
+      <section class="surface-card ai-switchboard" aria-label="分析发布开关">
+        <span class="sw"><span class="ai-light"></span><span class="ai-switch-lbl">文章分析</span><button class="ledger-switch is-on" role="switch" aria-checked="true" aria-label="文章分析" title="关闭只停止创建与消费分析任务,不删已有结果"></button></span>
+        <span class="ai-divider"></span>
+        <span class="sw"><span class="ai-light"></span><span class="ai-switch-lbl">候选证据</span><button class="ledger-switch is-on" role="switch" aria-checked="true" aria-label="候选证据"></button></span>
+        <span class="ai-divider"></span>
+        <span class="sw"><span class="ai-light is-off"></span><span class="ai-switch-lbl">候选自动激活</span><button class="ledger-switch" role="switch" aria-checked="false" aria-label="候选自动激活" title="开启前需目录 v1 已发布并结束 bootstrap(开启时确认)"></button></span>
+        <span class="ai-divider"></span>
+        <span class="sw"><span class="ai-light"></span><span class="ai-switch-lbl">个人早报</span><button class="ledger-switch is-on" role="switch" aria-checked="true" aria-label="个人早报" title="关闭只停止早报 API 与调度,不删已有版本"></button></span>
+        
+      </section>
+
+      <section class="surface-card kpi-strip" aria-label="分析指标">
+        <div class="kpi"><span class="kpi-num">98.2%</span><span class="kpi-lbl">分析成功率</span><span class="kpi-sub">待处理 37 · 运行中 4</span></div>
+        <div class="kpi"><span class="kpi-num">6.1</span><span class="kpi-lbl">评分 P50</span><span class="kpi-sub">P90 8.2</span></div>
+        <div class="kpi"><span class="kpi-num">31.4%</span><span class="kpi-lbl">7+ 占比</span><span class="kpi-sub">9+ 2.1%</span></div>
+        <div class="kpi"><span class="kpi-num">92.4%</span><span class="kpi-lbl">标签覆盖</span><span class="kpi-sub">缺主标签 3.8%</span></div>
+        <div class="kpi"><span class="kpi-num is-warn">212</span><span class="kpi-lbl">旧尺子待重跑</span><span class="kpi-sub">每轮 16 篇慢滴</span></div>
+      </section>
+
+      <section class="surface-card card-pad">
+        <div class="card-head"><span class="card-title">新闻价值分布</span><span class="tiny-meta" style="margin-left:auto">近 30 天 · 4,812 篇</span></div>
+        <div class="score-hist">
+          <div class="score-hist-col"><i class="score-hist-bar" style="height:6%"></i><span class="score-hist-lbl">1</span></div>
+          <div class="score-hist-col"><i class="score-hist-bar" style="height:10%"></i><span class="score-hist-lbl">2</span></div>
+          <div class="score-hist-col"><i class="score-hist-bar" style="height:22%"></i><span class="score-hist-lbl">3</span></div>
+          <div class="score-hist-col"><i class="score-hist-bar" style="height:58%"></i><span class="score-hist-lbl">4</span></div>
+          <div class="score-hist-col"><i class="score-hist-bar" style="height:100%"></i><span class="score-hist-lbl">5</span></div>
+          <div class="score-hist-col"><i class="score-hist-bar" style="height:84%"></i><span class="score-hist-lbl">6</span></div>
+          <div class="score-hist-col"><i class="score-hist-bar" style="height:52%"></i><span class="score-hist-lbl">7</span></div>
+          <div class="score-hist-col"><i class="score-hist-bar" style="height:26%"></i><span class="score-hist-lbl">8</span></div>
+          <div class="score-hist-col"><i class="score-hist-bar" style="height:8%"></i><span class="score-hist-lbl">9</span></div>
+          <div class="score-hist-col"><i class="score-hist-bar" style="height:2%"></i><span class="score-hist-lbl">10</span></div>
+        </div>
+      </section>
+
+      <!-- 回填:一行参数 + 任务表(默认档 仅缺失或过期) -->
+      <section class="surface-card" style="overflow:hidden">
+        <div class="card-pad" style="padding-bottom:14px">
+          <div class="card-head" style="margin-bottom:12px"><span class="card-title">历史文章完整分析</span></div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <select class="form-input form-input-inline" aria-label="范围"><option>最近 30 天</option><option>最近 7 天</option><option>最近 90 天</option><option>最近 365 天</option><option>全部历史</option></select>
+            <select class="form-input form-input-inline" aria-label="策略"><option>仅缺失或版本过期</option><option>全部强制重分析</option></select>
+            <input class="form-input form-input-inline" style="width:260px" placeholder="限定来源 source_id,逗号分隔(可选)" aria-label="限定来源">
+            <button class="btn btn-quiet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 7h8M8 11h8M8 15h5"/></svg>估算</button>
+            <span class="tiny-meta">1,284 篇 · 12 个来源 · 约 1,290 次调用 · 目录 v1</span>
+            <button class="btn btn-primary" style="margin-left:auto">创建回填任务</button>
+          </div>
+        </div>
+        <div class="acct-scroll"><table class="acct-table is-fixed">
+          <thead><tr>
+            <th class="acct-th" style="width:90px">任务</th>
+            <th class="acct-th" style="width:160px">范围</th>
+            <th class="acct-th" style="width:150px">策略</th>
+            <th class="acct-th" style="width:110px"><button class="acct-sortbtn th-filter" data-cycle="状态|运行中|已暂停|已完成|部分失败" data-idx="0" title="点击轮换筛选">状态</button></th>
+            <th class="acct-th">进度</th>
+            <th class="acct-th" style="width:130px"><button class="acct-sortbtn th-sort" title="按创建时间排序">创建</button></th>
+            <th class="acct-th" style="width:112px" aria-label="操作"></th>
+          </tr></thead>
+          <tbody>
+            <tr class="acct-row is-static">
+              <td><span class="acct-mono">#42</span></td><td><span class="tiny-meta">最近 30 天 · 3 源</span></td><td><span class="tiny-meta">仅缺失或过期</span></td>
+              <td><span class="stamp stamp-run">分析中</span></td>
+              <td><span class="prog-cell"><span class="prog" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="64" aria-label="任务进度 64%"><i style="width:64%"></i></span><span class="acct-mono">821 / 1,284 · 失败 3</span></span></td>
+              <td><span class="acct-mono">09-14 09:10</span></td>
+              <td><span class="rowacts"><button class="rowact-btn" title="暂停"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 5v14M16 5v14"/></svg></button><button class="rowact-btn is-danger" title="取消(需确认;已开始的单篇正常收尾)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></span></td>
+            </tr>
+            <tr class="acct-row is-static">
+              <td><span class="acct-mono">#41</span></td><td><span class="tiny-meta">全部历史 · hf_daily_papers</span></td><td><span class="tiny-meta">全部强制重分析</span></td>
+              <td><span class="stamp stamp-warn">部分失败</span></td>
+              <td><span class="prog-cell"><span class="prog" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100" aria-label="任务进度 100%"><i style="width:100%"></i></span><span class="acct-mono">2,930 / 2,930 · 失败 <span style="color:var(--state-bad)">17</span></span></span></td>
+              <td><span class="acct-mono">09-12 22:31</span></td>
+              <td><span class="rowacts"><button class="rowact-btn" title="重试失败项"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/><path d="M21 3v5h-5"/></svg></button><button class="rowact-btn" title="详情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg></button></span></td>
+            </tr>
+            <tr class="acct-row is-static">
+              <td><span class="acct-mono">#40</span></td><td><span class="tiny-meta">最近 7 天</span></td><td><span class="tiny-meta">仅缺失或过期</span></td>
+              <td><span class="stamp stamp-ok">已完成</span></td>
+              <td><span class="prog-cell"><span class="prog" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100" aria-label="任务进度 100%"><i style="width:100%"></i></span><span class="acct-mono">412 / 412</span></span></td>
+              <td><span class="acct-mono">09-11 08:00</span></td>
+              <td><span class="rowacts"><button class="rowact-btn" title="详情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg></button></span></td>
+            </tr>
+          </tbody>
+        </table></div>
+        <div class="table-foot"><span class="tiny-meta">共 12 条 · 第 1–10 条</span><div class="pager"><button class="pager-btn" disabled aria-label="上一页">‹</button><button class="pager-btn is-on">1</button><button class="pager-btn">2</button><button class="pager-btn" aria-label="下一页">›</button></div></div>
+      </section>
+    </div>
+
+    <!-- ── 标签治理 ── -->
+    <div class="zone-head"><span class="zone-title">标签治理</span>
+      <span class="zone-acts">
+        <button class="btn btn-quiet" title="补齐规范中英文名的别名解析入口">同步别名 <span class="mono">4</span></button>
+        <button class="btn btn-secondary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>新建标签</button>
+        <button class="btn btn-quiet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>刷新</button>
+      </span>
+    </div>
+    <div class="stack">
+      <section class="surface-card kpi-strip" aria-label="目录版本">
+        <div class="kpi"><span class="kpi-num">v1</span><span class="kpi-lbl">目录版本</span><span class="kpi-sub"><span class="stamp stamp-ok" style="padding:1px 7px">已发布</span> 09-03</span></div>
+        <div class="kpi"><span class="kpi-num">96</span><span class="kpi-lbl">规范标签</span><span class="kpi-sub">主题 41 · 行业 19 · 实体 36</span></div>
+        <div class="kpi"><span class="kpi-num">92.4%</span><span class="kpi-lbl">近 7 天覆盖</span><span class="kpi-sub">09-08 – 09-14</span></div>
+        <div class="kpi"><span class="kpi-num is-warn">17</span><span class="kpi-lbl">未归并候选</span><span class="kpi-sub"><button class="kpi-sub-link">审核中 5</button> · <button class="kpi-sub-link">带风险 3</button></span></div>
+        <div class="kpi"><span class="kpi-num">128</span><span class="kpi-lbl">别名</span><span class="kpi-sub">自动激活 6</span></div>
+      </section>
+
+      <!-- 拍板②(2026-09-15):一张表 + 抽屉;整行任意位置点击开抽屉,不设独立编辑列 -->
+      <section class="surface-card" style="overflow:hidden">
+        <div class="acct-scroll"><table class="acct-table is-fixed">
+          <thead><tr>
+            <th class="acct-th is-filtered" style="width:96px"><button class="acct-sortbtn th-filter" data-cycle="类型|候选|规范标签" data-idx="0" title="点击轮换筛选:类型 → 候选 → 规范标签">类型</button></th>
+            <th class="acct-th" style="width:34%"><button class="acct-sortbtn th-search" title="搜索名称 / code / 别名">名称 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" style="width:10px;height:10px"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></button></th>
+            <th class="acct-th" style="width:86px"><button class="acct-sortbtn th-filter" data-cycle="分面|主题|行业|实体" data-idx="0" title="点击轮换筛选:分面 → 主题 → 行业 → 实体">分面</button></th>
+            <th class="acct-th" style="width:110px"><button class="acct-sortbtn th-filter" data-cycle="状态|候选|审核中|已拒绝|启用|已废弃" data-idx="0" title="点击轮换筛选">状态</button></th>
+            <th class="acct-th is-num is-sorted" style="width:118px"><button class="acct-sortbtn th-sort" title="按近 7 天命中排序">近 7 天<span class="acct-sort-arrow" aria-hidden="true">▼</span></button></th>
+            <th class="acct-th" style="width:130px">别名 · 证据</th>
+            <th class="acct-th" style="width:70px">可选</th>
+          </tr></thead>
+          <tbody>
+            <tr class="acct-row" data-open="drawer" tabindex="0">
+              <td><span class="tag-kind">候选</span></td>
+              <td><span class="acct-name">MCP 协议</span><span class="acct-sub">相似 「Agent 编排」 62% · 置信 88%</span></td>
+              <td><span class="tiny-meta">主题</span></td>
+              <td><span class="stamp stamp-warn" title="风险:与现有标签相似度过线">审核中 · 1 项风险</span></td>
+              <td class="acct-n is-main">37<small class="tiny-meta"> · 9 源</small></td>
+              <td><span class="tiny-meta">证据 12</span></td>
+              <td><span class="tiny-meta">—</span></td>
+            </tr>
+            <tr class="acct-row" data-open="drawer" tabindex="0">
+              <td><span class="tag-kind">候选</span></td>
+              <td><span class="acct-name">World Labs</span><span class="acct-sub">未命中现有规范标签 · 置信 91%</span></td>
+              <td><span class="tiny-meta">实体</span></td>
+              <td><span class="stamp stamp-idle">候选</span></td>
+              <td class="acct-n is-main">21<small class="tiny-meta"> · 6 源</small></td>
+              <td><span class="tiny-meta">证据 8</span></td>
+              <td><span class="tiny-meta">—</span></td>
+            </tr>
+            <tr class="acct-row is-sel" data-open="drawer" tabindex="0">
+              <td><span class="tag-kind">标签</span></td>
+              <td><span class="acct-name">Agent 编排</span><span class="acct-sub mono">topic.agent-orchestration</span></td>
+              <td><span class="tiny-meta">主题</span></td>
+              <td><span class="stamp stamp-ok">启用</span></td>
+              <td class="acct-n is-main">184<small class="tiny-meta"> · 23 源</small></td>
+              <td><span class="tiny-meta">别名 5</span></td>
+              <td><button class="rowact-btn is-on" title="用户可选(点击关闭)" data-stop><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg></button></td>
+            </tr>
+            <tr class="acct-row" data-open="drawer" tabindex="0">
+              <td><span class="tag-kind">标签</span></td>
+              <td><span class="acct-name">推理模型</span><span class="acct-sub mono">topic.reasoning-models</span></td>
+              <td><span class="tiny-meta">主题</span></td>
+              <td><span class="stamp stamp-ok">启用</span></td>
+              <td class="acct-n is-main">142<small class="tiny-meta"> · 19 源</small></td>
+              <td><span class="tiny-meta">别名 3</span></td>
+              <td><button class="rowact-btn is-on" title="用户可选(点击关闭)" data-stop><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg></button></td>
+            </tr>
+            <tr class="acct-row" data-open="drawer" tabindex="0">
+              <td><span class="tag-kind">标签</span></td>
+              <td><span class="acct-name">Anthropic</span><span class="acct-sub mono">entity.anthropic · 组织</span></td>
+              <td><span class="tiny-meta">实体</span></td>
+              <td><span class="stamp stamp-ok">启用</span></td>
+              <td class="acct-n is-main">96<small class="tiny-meta"> · 31 源</small></td>
+              <td><span class="tiny-meta">别名 4</span></td>
+              <td><button class="rowact-btn is-on" title="用户可选(点击关闭)" data-stop><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg></button></td>
+            </tr>
+            <tr class="acct-row" data-open="drawer" tabindex="0">
+              <td><span class="tag-kind">标签</span></td>
+              <td><span class="acct-name">向量数据库</span><span class="acct-sub mono">topic.vector-databases</span></td>
+              <td><span class="tiny-meta">主题</span></td>
+              <td><span class="stamp stamp-idle" title="已废弃,由「检索基础设施」替代">已废弃</span></td>
+              <td class="acct-n is-zero">0</td>
+              <td><span class="tiny-meta">别名 2</span></td>
+              <td><button class="rowact-btn" title="用户不可选" disabled data-stop><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg></button></td>
+            </tr>
+            <tr class="acct-row" data-open="drawer" tabindex="0">
+              <td><span class="tag-kind">候选</span></td>
+              <td><span class="acct-name">Vibe Coding</span><span class="acct-sub">相似 「AI 编程工具」 71% · 置信 79%</span></td>
+              <td><span class="tiny-meta">主题</span></td>
+              <td><span class="stamp stamp-bad">已拒绝</span></td>
+              <td class="acct-n">14<small class="tiny-meta"> · 5 源</small></td>
+              <td><span class="tiny-meta">证据 6</span></td>
+              <td><span class="tiny-meta">—</span></td>
+            </tr>
+          </tbody>
+        </table></div>
+        <div class="table-foot"><span class="tiny-meta">共 113 条(候选 17 · 规范标签 96)· 第 1–20 条</span>
+          <div class="pager"><button class="pager-btn" disabled aria-label="上一页">‹</button><button class="pager-btn is-on">1</button><button class="pager-btn">2</button><button class="pager-btn">3</button><span class="pager-ellipsis">…</span><button class="pager-btn">6</button><button class="pager-btn" aria-label="下一页">›</button></div></div>
+      </section>
+
+    </div>
+
+    <!-- 状态示例:三种态必须能区分(归并稿 P1 #7) -->
+    <div class="zone-head"><span class="zone-title">状态示例</span><span class="zone-hint">样页注:分析配置的三种态各有面孔,不再共用「尚未接入」一句</span></div>
+    <div class="state-demo">
+      <section class="surface-card"><span class="stamp stamp-idle">加载中…</span><span class="tiny-meta">首次进入 / 切回子页</span></section>
+      <section class="surface-card"><span class="stamp stamp-bad">配置读取失败</span><span class="tiny-meta">后端 502 · <button class="kpi-sub-link">重试</button> · 显示上次快照</span></section>
+      <section class="surface-card"><span class="stamp stamp-warn">未接入</span><span class="tiny-meta">后端 404 / 能力位缺失才显示</span></section>
+    </div>
+  </section>
+</main>
+
+<!-- ── 标签详情抽屉(拍板②甲:所有多字段编辑与高危治理收进抽屉) ── -->
+<div class="scrim" id="scrim"></div>
+<aside class="ledger-drawer" id="drawer" aria-label="标签详情">
+  <div class="ledger-drawer-head">
+    <div class="ledger-drawer-title">Agent 编排 <span class="stamp stamp-ok" style="vertical-align:middle;margin-left:6px">启用</span><small>topic.agent-orchestration · 主题 · 近 7 天 184 篇 / 23 源</small></div>
+    <div class="drawer-acts"><span class="rowacts"><button class="rowact-btn" title="重标近 7 天文章"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/><path d="M21 3v5h-5"/></svg></button><button class="rowact-btn" title="合并到其它标签…"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v6a6 6 0 0 0 6 6h6"/><path d="m15 12 3 3-3 3"/><path d="M6 21v-6"/></svg></button><button class="rowact-btn is-danger" title="废弃(需确认)" data-confirm="deprecate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 3 7v6c0 5 4 8 9 9 5-1 9-4 9-9V7z"/><path d="M12 8v4M12 16h.01"/></svg></button></span><span class="ai-divider" style="height:18px;margin-left:6px"></span><button class="rowact-btn" id="closeDrawer" title="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+  </div>
+  <div class="ledger-drawer-body">
+    <section>
+      <div class="drawer-sec-title">名称</div>
+      <div class="form-grid"><label class="field"><span>中文名</span><input class="form-input" value="Agent 编排"></label><label class="field"><span>英文名</span><input class="form-input" value="Agent orchestration"></label>
+        <label class="field span2"><span>后台说明</span><input class="form-input" value="多智能体 / 工具调用链路的编排与调度"></label>
+        <label class="field span2"><span>模型判定说明(进提示词)</span><textarea class="form-input">多智能体 / 工具调用链路的编排与调度;单纯的 prompt 技巧不算。</textarea></label></div>
+    </section>
+    <section>
+      <div class="drawer-sec-title">层级</div>
+      <div class="form-grid"><label class="field"><span>上位标签</span><select class="form-input"><option>无上位标签</option><option>AI 应用架构</option></select></label><label class="field"><span>外部键(实体专用)</span><input class="form-input" placeholder="wikidata:Q…" disabled></label></div>
+    </section>
+    <section>
+      <div class="drawer-sec-title">别名 · 5</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <span class="chip">agent orchestration<small>同义词</small><button class="chip-x" title="删除别名">×</button></span>
+        <span class="chip">多智能体编排<small>翻译</small><button class="chip-x" title="删除别名">×</button></span>
+        <span class="chip">agentic workflow<small>同义词</small><button class="chip-x" title="删除别名">×</button></span>
+        <span class="chip">AgentOps<small>缩写</small><button class="chip-x" title="删除别名">×</button></span>
+        <span class="chip">代理编排<small>旧称</small><button class="chip-x" title="删除别名">×</button></span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 110px auto;gap:6px;margin-top:8px"><input class="form-input form-input-inline" placeholder="新增别名" aria-label="新增别名"><select class="form-input form-input-inline" aria-label="别名类型"><option>同义词</option><option>缩写</option><option>翻译</option><option>旧称</option><option>常见误写</option></select><button class="btn btn-quiet">添加</button></div>
+    </section>
+    <section>
+      <div class="drawer-sec-title">最近证据 · 3 / 12</div>
+      <div class="stack" style="gap:8px">
+        <div class="evidence"><span class="acct-mono">latent.space</span> <span class="tiny-meta">· 09-13 · 置信 92%</span><p>…we orchestrate three specialist agents behind one planner, each with its own tool budget…</p></div>
+        <div class="evidence"><span class="acct-mono">qbitai.com</span> <span class="tiny-meta">· 09-12 · 置信 85%</span><p>…多智能体编排框架把规划器与执行器拆开,失败重试由编排层兜底…</p></div>
+      </div>
+    </section>
+    <section>
+      <div class="drawer-sec-title">治理原因</div>
+      <input class="form-input" placeholder="重命名 / 合并 / 废弃前填写,进审计记录" aria-label="治理原因">
+    </section>
+  </div>
+  <div class="ledger-drawer-foot">
+    <label class="sw"><span class="tiny-meta">用户可选</span><button class="ledger-switch is-on" role="switch" aria-checked="true" aria-label="用户可选"></button></label>
+    <span style="flex:1"></span>
+    <button class="btn btn-quiet" id="closeDrawer2">取消</button>
+    <button class="btn btn-primary">保存标签</button>
+  </div>
+</aside>
+
+
+<!-- ── 单集抽屉:三张表里播客行整行可点即开;评分与判定、处理时间线、原因、产物、动作都在这里 ── -->
+<aside class="ledger-drawer" id="drawerEp" aria-label="单集详情">
+  <div class="ledger-drawer-head">
+    <div class="ledger-drawer-title">No Priors · Anthropic's Mike Krieger on Claude Code <span class="stamp stamp-ok" style="vertical-align:middle;margin-left:6px">优质</span><small>No Priors · 2026-09-12 · 61 分钟 · ep_9f31c2a7</small></div>
+    <div class="drawer-acts"><span class="rowacts"><a class="rowact-btn" href="#" title="在阅读器打开"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3h7v7"/><path d="M21 3 10 14"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg></a></span><span class="ai-divider" style="height:18px;margin-left:6px"></span><button class="rowact-btn" id="closeDrawerEp" title="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+  </div>
+  <div class="ledger-drawer-body">
+    <section>
+      <div class="drawer-sec-title">评分与判定</div>
+      <dl class="drawer-kv">
+        <dt>简介初评</dt><dd><span class="mono">7.0</span> · 基于节目简介 · 处理线 5.0 <span class="stamp stamp-ok" style="margin-left:6px">已进入全文</span></dd>
+        <dt>全文终评</dt><dd><span class="mono">8.7</span> · 基于 ASR 逐字稿 · 优质门槛 8.0 <span class="stamp stamp-ok" style="margin-left:6px">优质</span></dd>
+        <dt>当前分</dt><dd><span class="mono">8.7</span> · 全文分已替换简介初评,读者面按此显示</dd>
+      </dl>
+    </section>
+    <section>
+      <div class="drawer-sec-title">处理时间线</div>
+      <div class="timeline">
+        <div class="tl-row"><span class="stamp stamp-ok">简介初评</span><span class="tl-what">7.0 · 过处理线,自动入队全文处理</span><span class="acct-mono">09-12 07:15</span></div>
+        <div class="tl-row"><span class="stamp stamp-ok">音频准备</span><span class="tl-what">发布方 enclosure 校验通过<small>无发布方逐字稿 → 走 ASR</small></span><span class="acct-mono">09-12 07:16</span></div>
+        <div class="tl-row"><span class="stamp stamp-ok">ASR 转录</span><span class="tl-what">阿里 ISI · 61 分钟<small>占当日配额 1.0h</small></span><span class="acct-mono">09-12 08:40</span></div>
+        <div class="tl-row"><span class="stamp stamp-ok">全文分析</span><span class="tl-what">全文终评 8.7 ≥ 门槛 8.0 → 优质</span><span class="acct-mono">09-12 08:52</span></div>
+        <div class="tl-row"><span class="stamp stamp-ok">精品导读</span><span class="tl-what">导读博客 + 口播稿 v2 已发布</span><span class="acct-mono">09-13 22:31</span></div>
+        <div class="tl-row"><span class="stamp stamp-run">TTS 合成</span><span class="tl-what">正在合成中文精简音频<small>完成后自动发布,读者可听</small></span><span class="acct-mono">09-13 22:40</span></div>
+      </div>
+    </section>
+    <section>
+      <div class="drawer-sec-title">产物</div>
+      <dl class="drawer-kv">
+        <dt>导读博客</dt><dd><span class="stamp stamp-ok">已发布</span> <a class="kpi-sub-link" href="#">查看</a></dd>
+        <dt>口播稿</dt><dd>v2 · 1,840 字 · <a class="kpi-sub-link" href="#">查看</a></dd>
+        <dt>精简音频</dt><dd><span class="stamp stamp-run">合成中</span> · 上一版 v1 已下架(口播稿变更)</dd>
+      </dl>
+    </section>
+    <section>
+      <div class="drawer-sec-title">逐字稿</div>
+      <dl class="drawer-kv">
+        <dt>来源</dt><dd>ASR(阿里 ISI)· 12,406 字 · <a class="kpi-sub-link" href="#">查看原文</a> · <a class="kpi-sub-link" href="#">中文译文</a></dd>
+      </dl>
+    </section>
+  </div>
+  <div class="ledger-drawer-foot">
+    <button class="btn btn-quiet" disabled title="全文分析已完成">强制全文</button>
+    <button class="btn btn-quiet" disabled title="TTS 正在合成中">强制 TTS</button>
+    <span style="flex:1"></span>
+    <button class="btn btn-quiet" id="closeDrawerEp2">关闭</button>
+  </div>
+</aside>
+
+<!-- ── 高危确认(form-sheet 三件套) ── -->
+<div class="sheet-wrap" id="sheet">
+  <div class="form-sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="form-sheet-head"><span class="card-title" id="sheetTitle">强制生成 TTS</span><button class="rowact-btn" id="closeSheet" title="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+    <div class="form-sheet-body" id="sheetBody">
+      <div>「硅谷101 · 从 GPT-6 到 Fable 5.1」全文终评 7.6,未达优质门槛 8.0。</div>
+      <div class="tiny-meta">跳过自动优质筛选,按已完成的全文分析合成中文精简音频;消耗 TTS 额度,不改变优质判定。</div>
+    </div>
+    <div class="form-sheet-foot"><button class="btn btn-quiet" id="closeSheet2">取消</button><button class="btn btn-primary" id="closeSheet3">生成 TTS</button></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const body = document.body;
+  const CONFIRMS = {
+    tts: ['强制生成 TTS', '「硅谷101 · 从 GPT-6 到 Fable 5.1」全文终评 7.6,未达优质门槛 8.0。', '跳过自动优质筛选,按已完成的全文分析合成中文精简音频;消耗 TTS 额度,不改变优质判定。', '生成 TTS'],
+    full: ['强制全文处理', '「Practical AI · Vibe coding with agents」简介初评 5.5,未过自动处理线。', '将准备原节目音频、提交 ASR 转录并进行全文分析;消耗 ASR 日配额(约 1.1h)。', '开始处理'],
+    deprecate: ['废弃标签「Agent 编排」', '标签将停止用于新分析;已打标文章不变,规范名保留为别名解析入口。', '不可自动恢复;需填写治理原因,进审计记录。', '废弃'],
+  };
+  function setState(key, val, btn) {
+    body.dataset[key.replace(/-([a-z])/g, (m, c) => c.toUpperCase())] = val;
+    if (key === 'theme') body.setAttribute('data-theme', val);
+    if (key === 'sub') {
+      document.getElementById('segContent').classList.toggle('segmented-option-active', val === 'content');
+      document.getElementById('segAnalysis').classList.toggle('segmented-option-active', val === 'analysis');
+    }
+    document.querySelectorAll('.spec-bar [data-set^="' + key + ':"]').forEach((b) => b.classList.toggle('is-on', b.dataset.set === key + ':' + val));
+  }
+  document.querySelectorAll('[data-set]').forEach((btn) => btn.addEventListener('click', () => {
+    const [k, v] = btn.dataset.set.split(':');
+    setState(k, v, btn);
+  }));
+  setState('sub', 'content');
+  // 列头筛选:点击轮换档位;列头文字即当前档
+  document.querySelectorAll('.th-filter').forEach((b) => b.addEventListener('click', () => {
+    const opts = b.dataset.cycle.split('|'); let i = (Number(b.dataset.idx || 0) + 1) % opts.length;
+    b.dataset.idx = i; b.textContent = opts[i]; b.closest('th').classList.toggle('is-filtered', i !== 0);
+  }));
+  // 列头排序:同列翻向
+  document.querySelectorAll('.th-sort').forEach((b) => b.addEventListener('click', () => {
+    const th = b.closest('th'); let arrow = b.querySelector('.acct-sort-arrow');
+    if (!arrow) { arrow = document.createElement('span'); arrow.className = 'acct-sort-arrow'; arrow.setAttribute('aria-hidden', 'true'); b.appendChild(arrow); }
+    th.classList.add('is-sorted'); arrow.textContent = arrow.textContent === '▼' ? '▲' : '▼';
+  }));
+  // 列头搜索:就地展开输入框顶替列名
+  document.querySelectorAll('.th-search').forEach((b) => b.addEventListener('click', () => {
+    const th = b.closest('th'); const wrap = document.createElement('span'); wrap.className = 'th-search-wrap';
+    wrap.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input class="acct-th-search" placeholder="' + (b.title || '搜索') + '" aria-label="' + (b.title || '搜索') + '">';
+    b.replaceWith(wrap); const input = wrap.querySelector('input'); input.focus();
+    input.addEventListener('keydown', (e) => { if (e.key === 'Escape') { input.value = ''; input.blur(); } });
+    input.addEventListener('blur', () => { if (!input.value.trim()) { wrap.replaceWith(b); th.classList.remove('is-filtered'); } else th.classList.add('is-filtered'); });
+  }));
+  // 抽屉
+  const drawer = document.getElementById('drawer'), scrim = document.getElementById('scrim');
+  const openDrawer = () => { drawer.classList.add('is-open'); scrim.classList.add('is-open'); };
+  const closeDrawer = () => { drawer.classList.remove('is-open'); scrim.classList.remove('is-open'); };
+  document.getElementById('openDrawer').addEventListener('click', openDrawer);
+  document.querySelectorAll('[data-open="drawer"]').forEach((b) => { b.addEventListener('click', openDrawer); b.addEventListener('keydown', (e) => { if (e.key === 'Enter') openDrawer(); }); });
+  document.querySelectorAll('[data-stop]').forEach((b) => b.addEventListener('click', (e) => e.stopPropagation()));
+  ['closeDrawer', 'closeDrawer2'].forEach((id) => document.getElementById(id).addEventListener('click', closeDrawer));
+  const drawerEp = document.getElementById('drawerEp');
+  const openDrawerEp = () => { drawerEp.classList.add('is-open'); scrim.classList.add('is-open'); };
+  const closeDrawerEp = () => { drawerEp.classList.remove('is-open'); if (!drawer.classList.contains('is-open')) scrim.classList.remove('is-open'); };
+  document.getElementById('openDrawerEp').addEventListener('click', openDrawerEp);
+  document.querySelectorAll('[data-open="drawer-ep"]').forEach((b) => { b.addEventListener('click', openDrawerEp); b.addEventListener('keydown', (e) => { if (e.key === 'Enter') openDrawerEp(); }); });
+  ['closeDrawerEp', 'closeDrawerEp2'].forEach((id) => document.getElementById(id).addEventListener('click', closeDrawerEp));
+  scrim.addEventListener('click', () => { closeDrawer(); closeDrawerEp(); });
+  // 确认框
+  const sheet = document.getElementById('sheet');
+  function openSheet(kind) {
+    const [t, l1, l2, ok] = CONFIRMS[kind] || CONFIRMS.tts;
+    document.getElementById('sheetTitle').textContent = t;
+    document.getElementById('sheetBody').innerHTML = '<div>' + l1 + '</div><div class="tiny-meta">' + l2 + '</div>';
+    const okBtn = document.getElementById('closeSheet3'); okBtn.textContent = ok; okBtn.className = 'btn ' + (kind === 'deprecate' ? 'btn-danger' : 'btn-primary');
+    sheet.classList.add('is-open');
+  }
+  const closeSheet = () => sheet.classList.remove('is-open');
+  document.getElementById('openConfirm').addEventListener('click', () => openSheet('tts'));
+  document.querySelectorAll('[data-confirm]').forEach((b) => b.addEventListener('click', (e) => { e.preventDefault(); openSheet(b.dataset.confirm); }));
+  ['closeSheet', 'closeSheet2', 'closeSheet3'].forEach((id) => document.getElementById(id).addEventListener('click', closeSheet));
+  sheet.addEventListener('click', (e) => { if (e.target === sheet) closeSheet(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeSheet(); closeDrawer(); closeDrawerEp(); } });
+  // 开关演示
+  document.querySelectorAll('.ledger-switch').forEach((s) => s.addEventListener('click', () => { const on = !s.classList.contains('is-on'); s.classList.toggle('is-on', on); s.setAttribute('aria-checked', String(on)); const light = s.parentElement && s.parentElement.querySelector('.ai-light'); if (light) light.classList.toggle('is-off', !on); }));
+})();
+</script>
+</body>
+</html>

@@ -16,6 +16,10 @@
   P1 账户治理规模化[批量+过滤排序两点名痛点] → P2 运维可靠性 → P3 优化/文档),含三项待负责人决策与整改分层。
   **P0(M01–M04)v3.40.4、账户管理 V2(M05/M06/M07/M19)v3.41.0、运维列表规模化(M08/M09/M11/M17)
   v3.42.0 已落地**,整改记录见文首;余项与裁剪注记见 backlog。
+- ◉ [admin-surface-refactor-plan.md](./admin-surface-refactor-plan.md) — **运维面「播客」与「分析与标签」重构(issue #76)**:
+  两波 codex 管理面拉齐到管理面纪律——拍板记录(信息架构 / 表格+抽屉 / 表单卡 / 回填默认档 / 内容页隐藏时间窗 /
+  单集抽屉)、前端落地面(PodcastZone / TaxonomyLedger / 归一层 / 共享 KPI+TableFoot)、后端接口卫生(任务三轴筛选 /
+  音频分页 / 标签统一总账 / 单集详情)、隔离栈 Playwright 验收与有意边界。
 - ◉ [configuration.md](./configuration.md) — `config/*.ini` 配置项逐节说明(runtime 角色/auth/RAG/LLM/
   网络代理),含生产 production.ini 与环境变量覆盖。
 - ◉ [deploy-docker.md](./deploy-docker.md) — **Docker 部署(推荐路径)**:compose 双容器形态/
@@ -26,6 +30,9 @@
 - ◉ [release-process.md](./release-process.md) — **发布流程:tag 即发布(2026-09-14)**:合入≠上线,
   annotated tag 是唯一发布单元;`scripts/release.sh` 发版(版本号只在发版时改,PR 不 bump)/
   两条部署脚本按 tag 部署(`--here` 显式例外)/CI 门禁与自动 Release/回滚=切 tag+恢复备份/分支保护清单。
+- ◉ [version-history.md](./version-history.md) — **波次史(1.x→3.57.x 逐波详细记录)**:2026-09-15 自 CLAUDE.md
+  `## Versioning` 节整体迁出(L0 超 150k 字符上限);每波的设计取舍/目检返修/codex 检视返修/被否方案全文在此,
+  CLAUDE.md 年表每波只留一行。**新波次的详细记录追加于此**。
 - ◉ [engage-sync-wave-plan.md](./engage-sync-wave-plan.md) — v3.18 互通波设计:读者反馈收件箱/
   管理员公告横幅(逐用户一次性 dismiss)/远程内容同步(接收方拉取,复用归档同步契约)。
 - ◉ [interest-lens-wave-plan.md](./interest-lens-wave-plan.md) — 兴趣即透镜波(v3.52.0 已实现,issue #27
@@ -118,6 +125,9 @@
   provider-neutral ports、供应商 adapter 责任边界、未知提交规则和新增供应商验收清单。
 
 ## frontend/ —— 前端纪律(◉ 活跃)
+
+- ◉ [frontend/e2e.md](./frontend/e2e.md) — #90 移动读者真实 E2E：一条命令、自建 FastAPI/SQLite 沙箱、布局与阅读交互、失败 trace。
+- ◉ [frontend/mobile-navigation.md](./frontend/mobile-navigation.md) — Issue #86：响应式阅读器、贴底导航、共享阅读状态与浏览器回归入口；含验证边界。
 
 - ◉ [frontend/conventions.md](./frontend/conventions.md) — **改前端必读**:文案/可访问性/排版刻度/
   颜色令牌四套/圆角/描边预算/动效/选中语法(轨=wash 块、工作区列表=accent 竖条)/暗色,

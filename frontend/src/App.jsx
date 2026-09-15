@@ -26,6 +26,7 @@ import { fetchAuthSession, fetchFeedbackUnreadCount, fetchFetchers, fetchRuntime
 import RunningWidget from './components/RunningWidget';
 import { useRunningProgress } from './hooks/useRunningProgress';
 import { usePolling } from './hooks/usePolling';
+import { useCompactLayout } from './hooks/useCompactLayout';
 import { deepLinkArticleId } from './utils/shareLink';
 
 // Tab 组件按路由惰性加载：各自独立 chunk，登录页与读者态不再下载用不到的重依赖
@@ -36,10 +37,7 @@ const FetchTab = lazy(() => import('./components/FetchTab'));
 const FetchRunsTab = lazy(() => import('./components/FetchRunsTab'));
 const DailyBriefTab = lazy(() => import('./components/DailyBriefTab'));
 const AdminOpsTab = lazy(() => import('./components/AdminOpsTab'));
-const ReaderTab = lazy(() => import('./components/ReaderTab'));
-// 移动壳(移动波 Wave2):≤767px 视口整站以「页面栈 + 底部 TabBar」形态呈现阅读器,
-// 桌面四带布局不下放;独立 chunk,桌面用户不下载。
-const MobileReader = lazy(() => import('./components/mobile/MobileReader'));
+const ReaderWorkspace = lazy(() => import('./components/ReaderWorkspace'));
 // 移动设置栈(Wave3):桌面 880×576 设置柜的页面栈翻译,分区组件同源(components/settings/)。
 const MobileSettings = lazy(() => import('./components/mobile/MobileSettings'));
 
@@ -159,11 +157,8 @@ function BrandLogo({ logoError, onLogoError, rail = false }) {
 }
 
 export default function App() {
-  // 移动分流(移动波 Wave2):首帧一次性判定,不做拖拽窗口热切换——两棵渲染树间的
-  // 状态迁移不值得为非真实场景买单;手机旋转横屏仍是触屏,保持移动壳。
-  const [isMobile] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches,
-  );
+  // 断点变化只换阅读器视图，共同父组件持续持有阅读状态。
+  const isMobile = useCompactLayout();
   const [nav, setNav] = useState(navFromHash);
   const navRef = useRef(nav);
   const activeTab = nav.tab;
@@ -176,13 +171,17 @@ export default function App() {
     setSettingsOpen(true);
   }, []);
   const [mountedTabs, setMountedTabs] = useState(() => {
-    const base = new Set([nav.tab]);
+    const base = new Set([isMobile ? 'reader' : nav.tab]);
     // 刷新恢复(v3.19 双界面):admin 上次停留在阅读器界面时,surfaceMode 由 sessionStorage
     // 恢复为 'reader',但 reader 面板只靠 enterReader() 挂载——刷新不经它,导致
     // readerView 下管理页签全部 is-off 而 reader 未挂载,整页空白。首帧即补挂载。
-    if (readStoredSurface() === 'reader') base.add('reader');
+    if (isMobile || readStoredSurface() === 'reader') base.add('reader');
     return base;
   });
+  useEffect(() => {
+    const tab = isMobile ? 'reader' : nav.tab;
+    setMountedTabs((current) => current.has(tab) ? current : new Set(current).add(tab));
+  }, [isMobile, nav.tab]);
   const [toast, setToast] = useState({ show: false, message: '', type: 'info' });
   const [logoError, setLogoError] = useState(false);
   const [availableFetchers, setAvailableFetchers] = useState([]);
@@ -290,9 +289,9 @@ export default function App() {
     } catch { /* 某些沙箱环境禁用 history，忽略即可 */ }
     navRef.current = next;
     setNav(next);
-    setMountedTabs(prev => (prev.has(next.tab) ? prev : new Set(prev).add(next.tab)));
+    if (!isMobile) setMountedTabs(prev => (prev.has(next.tab) ? prev : new Set(prev).add(next.tab)));
     applyFocus(next.focus);
-  }, [applyFocus]);
+  }, [applyFocus, isMobile]);
 
   const goTab = useCallback((tab, options = {}) => {
     const cur = navRef.current;
@@ -578,7 +577,8 @@ export default function App() {
   };
 
   // readerView:布局分叉(导轨隐藏/阅读器整页)。读者角色恒为阅读器;admin 由 surfaceMode 决定。
-  const readerView = isReaderRole || (isAdminRole && surfaceMode === 'reader');
+  const readerView = isMobile || isReaderRole || (isAdminRole && surfaceMode === 'reader');
+  const SettingsPanel = isMobile ? MobileSettings : SettingsModal;
   const tabs = useMemo(() => [
     // short = 导轨图标下的常显微标签(可发现性波 v3.45,两字短名);label 全名留 tooltip 与页头
     { id: 'reader', icon: BookOpen, label: '阅读器', short: '阅读', onlyReader: true },
@@ -672,53 +672,8 @@ export default function App() {
     );
   }
 
-  // ── 移动壳(≤767px):登录门/runtime/主题/设置柜等管道全部共用,仅渲染树分叉。
-  //    admin 在手机上同样落阅读器(管理台不下放移动端);设置柜按读者面观感呈现。
-  if (isMobile) {
-    return (
-      <div className={`m-root font-sans${arrival === 'fading' ? ' app-arriving' : ''}`}>
-        <AiGradientDefs />
-        {arrivalOverlay}
-        <Toast show={toast.show} message={toast.message} type={toast.type} onClose={hideToast} />
-        <TabBoundary>
-          <MobileReader
-            showToast={showToast}
-            aiEnabled={runtimeInfo.ai_beta_enabled && runtimeInfo.llm_configured}
-            userSourcesEnabled={runtimeInfo.user_sources_enabled !== false}
-            personalDigestEnabled={runtimeInfo.personal_digest_enabled === true}
-            account={authState.user}
-            onUserUpdated={handleUserUpdated}
-            themePref={theme}
-            onSetTheme={setTheme}
-            onOpenSettings={(section) => openSettings(section)}
-            onLogout={handleLogout}
-            feedbackUnread={feedbackUnread}
-            initialArticleId={deepLinkArticle}
-            onDeepLinkConsumed={clearDeepLink}
-          />
-          {/* 移动设置栈(Wave3,取代设置柜):页面栈两级,分区组件与桌面设置柜同源 */}
-          <MobileSettings
-            open={settingsOpen}
-            initialSection={settingsSection}
-            onClose={() => setSettingsOpen(false)}
-            theme={theme}
-            onThemeChange={setTheme}
-            runtimeInfo={runtimeInfo}
-            username={authState.user?.username}
-            avatar={authState.user?.avatar}
-            onUserUpdated={handleUserUpdated}
-            onLogout={() => { setSettingsOpen(false); handleLogout(); }}
-            showToast={showToast}
-            feedbackUnread={feedbackUnread}
-            onFeedbackSeen={handleFeedbackSeen}
-          />
-        </TabBoundary>
-      </div>
-    );
-  }
-
   return (
-    <div className={`app-shell font-sans${arrival === 'fading' ? ' app-arriving' : ''}`}>
+    <div className={`${isMobile ? 'm-root' : 'app-shell'} font-sans${arrival === 'fading' ? ' app-arriving' : ''}`}>
       <AiGradientDefs />
       {arrivalOverlay}
       {/* ── lg+:左侧固定导轨(管理面),形制向阅读器视图轨靠拢:
@@ -789,7 +744,7 @@ export default function App() {
       )}
 
       {/* ── lg 以下:保留移动顶栏(admin 的阅读器模式下隐藏,由阅读器视图轨承接) ── */}
-      <header className={`app-header ${readerView && !isReaderRole ? 'hidden' : 'flex'} items-center justify-between gap-4 px-5 sm:px-8 lg:hidden`}>
+      <header className={`app-header ${isMobile || (readerView && !isReaderRole) ? 'hidden' : 'flex'} items-center justify-between gap-4 px-5 sm:px-8 lg:hidden`}>
         <div className="flex min-w-0 items-center gap-3">
           <BrandLogo logoError={logoError} onLogoError={() => setLogoError(true)} />
         </div>
@@ -864,7 +819,7 @@ export default function App() {
 
       <Toast show={toast.show} message={toast.message} type={toast.type} onClose={hideToast} />
 
-      {globalRunningIds.size > 0 && (
+      {!isMobile && globalRunningIds.size > 0 && (
         <RunningWidget
           variant="floating"
           runningIds={globalRunningIds}
@@ -874,23 +829,25 @@ export default function App() {
         />
       )}
 
-      <SettingsModal
-        open={settingsOpen}
-        initialSection={settingsSection}
-        onClose={() => setSettingsOpen(false)}
-        theme={theme}
-        onThemeChange={setTheme}
-        runtimeInfo={runtimeInfo}
-        readerSurface={readerView}
-        username={authState.user?.username}
-        avatar={authState.user?.avatar}
-        onUserUpdated={handleUserUpdated}
-        onLogout={() => { setSettingsOpen(false); handleLogout(); }}
-        showToast={showToast}
-        onArticlesChanged={markArticlesDirty}
-        feedbackUnread={feedbackUnread}
-        onFeedbackSeen={handleFeedbackSeen}
-      />
+      <Suspense fallback={null}>
+        <SettingsPanel
+          open={settingsOpen}
+          initialSection={settingsSection}
+          onClose={() => setSettingsOpen(false)}
+          theme={theme}
+          onThemeChange={setTheme}
+          runtimeInfo={runtimeInfo}
+          readerSurface={readerView}
+          username={authState.user?.username}
+          avatar={authState.user?.avatar}
+          onUserUpdated={handleUserUpdated}
+          onLogout={() => { setSettingsOpen(false); handleLogout(); }}
+          showToast={showToast}
+          onArticlesChanged={markArticlesDirty}
+          feedbackUnread={feedbackUnread}
+          onFeedbackSeen={handleFeedbackSeen}
+        />
+      </Suspense>
 
       <main
         className={`${readerView ? '' : 'ml-[var(--rail-w)] '}px-5 pt-[22px] pb-9 sm:px-7`}
@@ -899,10 +856,13 @@ export default function App() {
         <div className="page-shell">
           {/* 阅读器:读者角色恒挂载;admin 经轨底切换钮进入(enterReader 挂载),退出后保持
               挂载但 is-off——阅读位置/订阅状态不丢。 */}
-          {mountedTabs.has('reader') && (
-            <div className={`tab-panel${readerView && (!isReaderRole || activeTab === 'reader') ? '' : ' is-off'}`}>
+          {(isMobile || mountedTabs.has('reader')) && (
+            <div className={`tab-panel${readerView && (isMobile || !isReaderRole || activeTab === 'reader') ? '' : ' is-off'}`}>
               <TabBoundary>
-                <ReaderTab
+                <ReaderWorkspace
+                  mobile={isMobile}
+                  themePref={theme}
+                  onSetTheme={setTheme}
                   showToast={showToast}
                   aiEnabled={runtimeInfo.ai_beta_enabled && runtimeInfo.llm_configured}
                   userSourcesEnabled={runtimeInfo.user_sources_enabled !== false}
@@ -910,7 +870,7 @@ export default function App() {
                   standalone
                   account={authState.user}
                   onUserUpdated={handleUserUpdated}
-                          themeDark={effective === 'dark'}
+                  themeDark={effective === 'dark'}
                   onToggleTheme={toggleTheme}
                   onOpenSettings={(section) => openSettings(section)}
                   onLogout={handleLogout}

@@ -221,9 +221,16 @@ def create_full_analysis_backfill(
 @router.get("/backfills")
 def list_full_analysis_backfills(
     limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     session: Session = Depends(deps.get_session),
 ):
-    return {"items": backfill_service.list_full_analysis_backfills(session, limit=limit)}
+    # issue #76:服务端分页 + total,面板表脚「共 N 条 · 第 a–b 条」按真实总量诚实呈现。
+    return {
+        "items": backfill_service.list_full_analysis_backfills(session, limit=limit, offset=offset),
+        "total": backfill_service.count_full_analysis_backfills(session),
+        "offset": offset,
+        "limit": limit,
+    }
 
 
 @router.get("/backfills/{job_id}")
