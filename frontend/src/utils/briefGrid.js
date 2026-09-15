@@ -35,7 +35,7 @@ const asNumber = (value) => (value == null ? -Infinity : value);
 
 export function planSectionSpans(scores, cols = 3, { solo = SOLO_SCORE, gap = PAIR_GAP } = {}) {
   const list = (scores || []).map((value) => {
-    if (value == null) return null;
+    if (value == null || (typeof value === 'string' && value.trim() === '')) return null;
     const number = Number(value);
     return Number.isFinite(number) ? number : null;
   });

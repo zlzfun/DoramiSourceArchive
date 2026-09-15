@@ -1722,9 +1722,10 @@ def generate_personal_digest(
 ) -> PersonalDigestGenerationResult:
     """Generate and persist one immutable personal-digest edition.
 
-    Normal ensure calls are idempotent.  Rebuild reasons (manual rebuild, public
-    brief ready, the admin source-takedown fan-out; the legacy interest/subscription
-    reasons are still accepted for the service contract) create a new same-day
+    Normal ensure calls are idempotent.  Rebuild reasons (manual rebuild, the admin
+    source-takedown fan-out; the legacy interest/subscription reasons are still
+    accepted for the service contract — ``daily_brief_ready`` was retired by issue #74
+    and is only kept as an enum value for historical rows) create a new same-day
     revision; an ``interest_changed`` request for a historical date is rejected so
     historical editions never move with today's preferences.  Since v3.51.1 reader
     interest/subscription edits no longer call in here at all — they surface as

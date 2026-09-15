@@ -1502,13 +1502,14 @@ def test_public_daily_brief_never_enters_subscribed_pool_or_fallback(storage):
 def test_positions_follow_section_order_then_score(storage):
     """issue #74:板块按 SECTION_ORDER 固定,板块内按分数降序——不再随通道与首次出现漂移。"""
 
+    # 三个来源各 ≤ 2 篇:不依赖选篇层的每源上限放宽(codex 检视 P3),排序断言只考排序
     with Session(storage.engine) as session:
-        session.add_all([_user(), _subscribe("alice", "rss_a,rss_b")])
+        session.add_all([_user(), _subscribe("alice", "rss_a,rss_b,rss_c")])
         _seed_article(session, 1, source="rss_a", score=8.5, genre="research_paper")
         _seed_article(session, 2, source="rss_b", score=7.0, genre="model_release")
-        _seed_article(session, 3, source="rss_a", score=7.8, genre="industry_news")
-        _seed_article(session, 4, source="rss_b", score=6.5, genre="model_release")
-        _seed_article(session, 5, source="rss_a", score=9.0, genre="tutorial")
+        _seed_article(session, 3, source="rss_c", score=7.8, genre="industry_news")
+        _seed_article(session, 4, source="rss_a", score=6.5, genre="model_release")
+        _seed_article(session, 5, source="rss_b", score=9.0, genre="tutorial")
         session.commit()
 
         result = generate_personal_digest(
@@ -1531,3 +1532,40 @@ def test_positions_follow_section_order_then_score(storage):
             .order_by(PersonalDigestItemRecord.position)
         ).all()
         assert [item.article_id for item in stored] == [item.article_id for item in result.items]
+
+
+def test_assign_positions_section_order_score_desc_missing_last_ties_stable():
+    """issue #74:_assign_positions 的四条规则——板块按 SECTION_ORDER、板块内分数降序、缺分殿后、
+    同分保序;未登记板块殿后且按名字稳定;重大事件恒前。纯函数,瞬态记录不落库。"""
+
+    from services.personal_digest import _assign_positions
+
+    def record(section: str, score: float | None, article_id: str, lane: str = "quality"):
+        return PersonalDigestItemRecord(
+            edition_id=1, article_id=article_id, position=0, section=section, selection_lane=lane,
+            quality_score_snapshot=score, matched_interest_codes_json="[]", ranking_features_json="{}",
+            coverage_adjustments_json="[]", selection_reason="", snapshot_json="{}", created_at=NOW_ISO,
+        )
+
+    records = [
+        record("学术论文", 8.5, "paper"),
+        record("模型发布", 7.0, "model-first"),
+        record("Z 未登记", 9.0, "unknown-z"),
+        record("重大事件", 8.0, "breaking", lane="breaking"),
+        record("模型发布", 7.0, "model-second"),
+        record("A 未登记", 5.0, "unknown-a"),
+        record("模型发布", None, "model-unscored"),
+        record("订阅源最新更新", 9.9, "fallback"),
+    ]
+    _assign_positions(records)
+
+    assert [(r.position, r.article_id) for r in records] == [
+        (0, "breaking"),
+        (1, "model-first"),
+        (2, "model-second"),
+        (3, "model-unscored"),
+        (4, "paper"),
+        (5, "fallback"),
+        (6, "unknown-a"),
+        (7, "unknown-z"),
+    ]
