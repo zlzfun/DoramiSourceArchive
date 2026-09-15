@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Ban, GitMerge, Loader2, RotateCcw, ShieldAlert, Trash2, X, Zap } from 'lucide-react';
+import { Ban, GitMerge, Loader2, RotateCcw, ShieldAlert, Trash2, X, Zap, ZapOff } from 'lucide-react';
 
 import {
   activateCmsTagCandidate,
@@ -39,6 +39,7 @@ import {
   tagStatusMeta,
 } from '../../utils/taxonomyLabels';
 import { TableFoot } from './Pager';
+import StaleNotice from './StaleNotice';
 import { ThFilter, ThSearch, ThSort } from './TableTh';
 
 export const LEDGER_PAGE_SIZE = 20;
@@ -654,6 +655,9 @@ export default function TaxonomyLedger({ showToast, refreshTick = 0, onChanged, 
           <p className="acct-empty tiny-meta" aria-busy="true"><Loader2 className="mx-auto mb-1 h-4 w-4 animate-spin" />正在读取标签总账…</p>
         ) : (
           <>
+            {(state.status === 'error' || state.status === 'unavailable') && (
+              <div className="tbl-head"><StaleNotice status={state.status} error={state.error} onRetry={() => load(query)} label="标签总账" /></div>
+            )}
             <div className="acct-scroll">
               <table className="acct-table is-fixed">
                 <thead>
@@ -718,7 +722,8 @@ export default function TaxonomyLedger({ showToast, refreshTick = 0, onChanged, 
                               disabled={row.status !== 'active' || selectableBusy === row.id}
                               onClick={() => toggleSelectable(row)}
                             >
-                              {selectableBusy === row.id ? <Loader2 className="animate-spin" /> : <Zap />}
+                              {/* 形状 + 色两通道(账户表 AI 列同法,codex R2-P1-1):开 Zap / 关 ZapOff,不靠颜色单独传达 */}
+                              {selectableBusy === row.id ? <Loader2 className="animate-spin" /> : (row.user_selectable ? <Zap /> : <ZapOff />)}
                             </button>
                           ) : <span className="tiny-meta">—</span>}
                         </td>

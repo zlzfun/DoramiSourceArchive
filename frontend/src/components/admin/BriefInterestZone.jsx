@@ -8,6 +8,7 @@ import {
   updateInterestCatalogPolicy,
 } from '../../api';
 import { TAG_KIND_LABELS } from '../../utils/taxonomyLabels';
+import StaleNotice from './StaleNotice';
 
 // 表单卡(拍板③):零说明句、字段名即语义、一枚 secondary 保存;数值取自后端,保存后回填。
 function KnobCard({ title, stamp, fields, form, onChange, meta, onSave, busy, dirty, disabled }) {
@@ -176,6 +177,8 @@ export default function BriefInterestZone({ showToast, refreshTick = 0 }) {
     <>
       <div className="zone-head">
         <span className="zone-title">早报与兴趣</span>
+        {config.data && <StaleNotice status={config.status} error={config.error} onRetry={loadConfig} label="早报策略" />}
+        {policy.data && <StaleNotice status={policy.status} error={policy.error} onRetry={loadPolicy} label="兴趣目录" />}
         <span className="zone-acts">
           <button type="button" className="action-button action-button-quiet min-h-[32px] px-3 text-xs" onClick={() => { loadConfig(); loadPolicy(); }} disabled={loading}>
             {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} 刷新

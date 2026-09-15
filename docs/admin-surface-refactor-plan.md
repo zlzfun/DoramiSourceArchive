@@ -72,7 +72,18 @@
 
 ## 4. 检视记录
 
-(codex 本地协商式复检待补:逐条表态 / 分歧与结论写在这里。)
+- **R1(2026-09-15,落码前)**:Claude 与 codex(gpt-5.6-sol)各自独立检视两波前端(21 / 20 条),一轮沟通即收敛为
+  31 条(P1×10 / P2×12 / P3×9)+ 撤回 2(全局 CustomEvent 是仓内既有模式;阶段章不加 `role=status`)+ 拍板 7;
+  信息架构采纳 codex 修正版(早报策略归内容子页),多 primary 定性改为 §4 accent 预算。
+- **R2(同日,落码后复检,PR #88)**:codex 逐条核对 31 条 + 拍板记录,无契约不兼容;2 条 P1 返修全部接受并修——
+  ① 总账「可选」开关只靠颜色 → 沿账户表 AI 列先例改 `Zap / ZapOff` 形状对 + 色(不改行内 switch:样页拍板为小图标,46px 行里
+  34×19 开关重一档);② loader 保留旧快照后刷新失败被静默 → 新增共享 `admin/StaleNotice.jsx`,旧快照存在时在区头 / 卡头 /
+  表头就地显示「刷新失败 · 原因 · 重试」(404 同形「未接入」),覆盖播客两表、播客区头、分析链路与标签治理区头、标签总账、
+  早报与兴趣、回填卡。观察期项顺手做掉:音频表副行改「来源名 · 节目 ID」(拍板⑥收口)、错误 / 确认文案去 `Alias / taxonomy v1 / bootstrap`、
+  `.drawer-sec-title` 12 → 12.5px、前端 `node:test` 卫生(删读取已退役面板的用例,`podcastTtsStatusMeta` 随之退役,
+  `/retry` 路径审计 reason 恢复按阶段措辞,新增 `podcastProcessing.test.js`)。
+  **观察期(记 backlog)**:`DataTab` 行章与阅读抽屉仍用 `utils/analysis.js` 两套投影(下一波让旧投影成为归一层适配器);
+  `handleApiError` 对非 JSON HTTP 错误补状态类别与下一步;标签总账端点 Python 侧合并排序再切页(目录百级可接受,显著增长再评估)。
 
 ## 5. 有意边界
 

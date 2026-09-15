@@ -2,6 +2,7 @@ import { ArchiveX, CheckCircle2, Loader2, Trash2, Volume2 } from 'lucide-react';
 
 import { podcastArtifactAdminAudioUrl } from '../../api';
 import { TableFoot } from './Pager';
+import StaleNotice from './StaleNotice';
 import { ThFilter, ThSearch, ThSort } from './TableTh';
 import { formatStamp } from './adminUtils';
 import {
@@ -46,6 +47,7 @@ export default function PodcastAudioTable({
       <div className="tbl-head">
         <span className="tools-title">中文精简音频</span>
         {headMeta && <span className="tiny-meta">{headMeta}</span>}
+        {data && <StaleNotice status={state.status} error={state.error} onRetry={onRetryLoad} />}
         <span className="zone-acts">
           <button
             type="button"
@@ -104,7 +106,7 @@ export default function PodcastAudioTable({
                     >
                       <td>
                         <span className="acct-name" title={artifact.episode_title || artifact.episode_id}>{artifact.episode_title || artifact.episode_id || '—'}</span>
-                        <span className="acct-sub acct-mono">{artifact.episode_id} · {kindLabel}</span>
+                        <span className="acct-sub">{artifact.source_name ? `${artifact.source_name} · ` : ''}<span className="acct-mono">{artifact.episode_id}</span></span>
                       </td>
                       <td><span className={`stamp stamp-${status.tone}`}>{status.label}</span></td>
                       <td><span className="acct-mono">{artifact.mime || '—'}</span></td>

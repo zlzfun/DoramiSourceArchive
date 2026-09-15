@@ -110,16 +110,20 @@ function isAsrStage(podcast = {}) {
   return stage === 'asr' || stage === 'fetch';
 }
 
-/** 审计 reason(命令 body):由重试种类机械推导,展示层不持有 API 字符串。 */
-export function podcastProcessingReason(podcast = {}) {
-  const kind = podcastRetryKind(podcast);
+/**
+ * 审计 reason(命令 body):由重试种类机械推导,展示层不持有 API 字符串。
+ * kind 缺省按 processing_status 推导;命令层走 /retry 路径时显式传 'retry'(not_required 也走该路径,
+ * 措辞按阶段而非按状态)。
+ */
+export function podcastProcessingReason(podcast = {}, kind = podcastRetryKind(podcast)) {
+  const asr = isAsrStage(podcast);
+  const analyze = processingStageOf(podcast) === 'analyze';
   if (kind === 'reconcile') {
-    return isAsrStage(podcast) ? '管理员核对并重试 ASR 转录'
-      : processingStageOf(podcast) === 'analyze' ? '管理员核对并重试全文分析' : '管理员核对并重试全文处理';
+    return asr ? '管理员核对并重试 ASR 转录' : analyze ? '管理员核对并重试全文分析' : '管理员核对并重试全文处理';
   }
-  if (kind === 'asr') return '管理员重试 ASR 转录';
-  if (kind === 'analyze') return '管理员重试全文分析';
-  if (kind === 'full') return '管理员重试全文处理';
+  if (kind === 'retry' || kind === 'asr' || kind === 'analyze' || kind === 'full') {
+    return asr ? '管理员重试 ASR 转录' : analyze ? '管理员重试全文分析' : '管理员重试全文处理';
+  }
   return '管理员强制全文处理';
 }
 

@@ -12,13 +12,14 @@ import { useConfirm } from '../../hooks/useConfirm';
 import { TAG_KIND_LABELS } from '../../utils/taxonomyLabels';
 import FullAnalysisBackfillCard from './FullAnalysisBackfillCard';
 import { Kpi, KpiState } from './Kpi';
+import StaleNotice from './StaleNotice';
 import TaxonomyLedger from './TaxonomyLedger';
 import { formatStamp } from './adminUtils';
 
 const FLAG_META = {
   article_analysis_enabled: ['文章分析', '关闭只停止创建与消费分析任务，不删已有结果'],
   taxonomy_candidate_enabled: ['候选证据', '关闭后不再记录公共内容里的未知概念'],
-  taxonomy_auto_activation_enabled: ['候选自动激活', '开启前需目录 v1 已发布并结束 bootstrap；开启时确认'],
+  taxonomy_auto_activation_enabled: ['候选自动激活', '开启前需目录 v1 已发布并结束引导期；开启时确认'],
   personal_digest_enabled: ['个人早报', '关闭只停止早报 API 与调度，不删已有版本'],
 };
 const pct = (value) => `${(Number(value || 0) * 100).toFixed(1)}%`;
@@ -106,7 +107,7 @@ export default function AdminTaxonomyPanel({ showToast, days = 7, refreshTick = 
   const flags = config.data?.feature_flags;
   const toggleFlag = async (key, enabled) => {
     if (key === 'taxonomy_auto_activation_enabled' && enabled
-      && !(await confirm({ title: '开启候选自动激活', message: '开启前请确认目录 v1 已审核并结束 bootstrap；满足组合阈值的低风险候选会自动成为规范标签。', confirmText: '开启', tone: 'primary' }))) return;
+      && !(await confirm({ title: '开启候选自动激活', message: '开启前请确认目录 v1 已审核并结束引导期；满足组合阈值的低风险候选会自动成为规范标签。', confirmText: '开启', tone: 'primary' }))) return;
     setFlagBusy(key);
     try {
       const data = await updateAnalysisConfig({ [key]: enabled });
@@ -157,6 +158,8 @@ export default function AdminTaxonomyPanel({ showToast, days = 7, refreshTick = 
       <div className="zone-head zone-head-first">
         <span className="zone-title">分析链路</span>
         <span className="zone-hint">近 {days} 天</span>
+        {config.data && <StaleNotice status={config.status} error={config.error} onRetry={loadConfig} label="分析配置" />}
+        {metrics.data && <StaleNotice status={metrics.status} error={metrics.error} onRetry={() => loadMetrics(days)} label="指标" />}
         <span className="zone-acts">
           <button type="button" className="action-button action-button-quiet min-h-[32px] px-3 text-xs" onClick={() => { loadConfig(); loadMetrics(days); }} disabled={config.status === 'loading' || metrics.status === 'loading'}>
             {config.status === 'loading' || metrics.status === 'loading' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} 刷新
@@ -215,6 +218,7 @@ export default function AdminTaxonomyPanel({ showToast, days = 7, refreshTick = 
       {/* ══ 标签治理 ══ */}
       <div className="zone-head">
         <span className="zone-title">标签治理</span>
+        {gov && <StaleNotice status={taxonomyState.status} error={taxonomyState.error} onRetry={loadTaxonomyState} label="目录版本" />}
         {gov?.publish_blockers?.length > 0 && !(gov.active_version > 0) && (
           <span className="stamp stamp-warn" title={gov.publish_blockers.join('；')}>发布前 {gov.publish_blockers.length} 项待处理</span>
         )}

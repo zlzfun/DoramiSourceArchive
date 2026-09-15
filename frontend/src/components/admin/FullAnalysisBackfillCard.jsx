@@ -12,6 +12,7 @@ import {
 import { useConfirm } from '../../hooks/useConfirm';
 import { usePolling } from '../../hooks/usePolling';
 import { TableFoot } from './Pager';
+import StaleNotice from './StaleNotice';
 import { ThFilter } from './TableTh';
 import { formatStamp } from './adminUtils';
 
@@ -139,7 +140,10 @@ export default function FullAnalysisBackfillCard({ showToast, refreshTick = 0 })
   return (
     <section className="surface-card rounded-[var(--r-card)] overflow-hidden">
       <div className="card-pad backfill-head">
-        <div className="card-head"><span className="card-title">历史文章完整分析</span></div>
+        <div className="card-head">
+          <span className="card-title">历史文章完整分析</span>
+          {jobs.items.length > 0 && <StaleNotice status={jobs.status} error={jobs.error} onRetry={() => loadJobs()} label="任务" />}
+        </div>
         <div className="backfill-row">
           <select className="form-input form-input-inline" value={range} onChange={(event) => setRange(event.target.value)} aria-label="回填时间范围">
             {RANGE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}

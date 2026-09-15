@@ -1,6 +1,7 @@
 import { Headphones, Loader2, Play, RefreshCcw, RotateCcw } from 'lucide-react';
 
 import { TableFoot } from './Pager';
+import StaleNotice from './StaleNotice';
 import { ThFilter, ThSearch, ThSort } from './TableTh';
 import { formatStamp } from './adminUtils';
 import {
@@ -45,6 +46,7 @@ export default function PodcastTasksTable({
       <div className="tbl-head">
         <span className="tools-title">单集处理</span>
         {headMeta && <span className="tiny-meta">{headMeta}</span>}
+        {data && <StaleNotice status={state.status} error={state.error} onRetry={onRetryLoad} />}
       </div>
       {state.status === 'error' && !data ? (
         <p className="acct-empty tiny-meta" role="alert">

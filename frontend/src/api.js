@@ -851,13 +851,13 @@ export function updateCmsTag(tagId, payload) {
 
 export function addCmsTagAlias(tagId, payload) {
   return request(`/admin/cms-tags/${enc(tagId)}/aliases`, {
-    method: 'POST', body: payload, errorMsg: '新增标签 Alias 失败',
+    method: 'POST', body: payload, errorMsg: '新增别名失败',
   });
 }
 
 export function deleteCmsTagAlias(tagId, aliasId, reason = '') {
   return request(`/admin/cms-tags/${enc(tagId)}/aliases/${enc(aliasId)}?reason=${enc(reason)}`, {
-    method: 'DELETE', errorMsg: '删除标签 Alias 失败',
+    method: 'DELETE', errorMsg: '删除别名失败',
   });
 }
 
@@ -921,7 +921,7 @@ export function updateInterestCatalogPolicy(payload) {
 
 export function backfillCmsTagAliases(reason) {
   return request('/admin/taxonomy/aliases/backfill', {
-    method: 'POST', body: { reason }, errorMsg: '同步规范名 Alias 失败',
+    method: 'POST', body: { reason }, errorMsg: '同步规范名别名失败',
   });
 }
 
@@ -929,7 +929,7 @@ export function publishTaxonomyV1(changeSummary) {
   return request('/admin/taxonomy/v1/publish', {
     method: 'POST',
     body: { confirmation: 'PUBLISH TAXONOMY V1', change_summary: changeSummary },
-    errorMsg: '发布 taxonomy v1 失败',
+    errorMsg: '发布目录 v1 失败',
   });
 }
 

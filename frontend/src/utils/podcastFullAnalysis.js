@@ -1,4 +1,4 @@
-import { podcastProcessingReason, podcastRetryKind } from './podcastProcessing';
+import { podcastProcessingReason, podcastRetryKind } from './podcastProcessing.js';
 
 function podcastFullAnalysisIdempotencyKey() {
   const randomId = globalThis.crypto?.randomUUID?.();
@@ -36,7 +36,7 @@ export function podcastFullAnalysisCommand(episodeId, podcast = {}, idempotencyK
       path: `/admin/podcast-processings/${encodeURIComponent(processingId)}/retry`,
       body: {
         expected_attempt_count: podcast.attempt_count,
-        reason: podcastProcessingReason(podcast),
+        reason: podcastProcessingReason(podcast, 'retry'),
         idempotency_key: idempotencyKey || podcastFullAnalysisIdempotencyKey(),
       },
     };

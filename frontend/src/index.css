@@ -4413,7 +4413,8 @@ input[type="radio"] {
   .heat-tip b { font-family: var(--mono); font-weight: 600; }
 
   /* ── 用户活动抽屉:tiles / 登录卡 / 榜单(ledger-drawer 语法换肤) ── */
-  .drawer-sec-title { font-size: 12px; font-weight: 700; color: var(--dorami-ink-2); margin-bottom: 8px; }
+  /* 卡内小节刻度 12.5–13/700(conventions 字号表);issue #76 复检 P3 #27 自 12 上调 */
+  .drawer-sec-title { font-size: 12.5px; font-weight: 700; color: var(--dorami-ink-2); margin-bottom: 8px; }
   .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
   .tile { background: var(--dorami-soft); border-radius: var(--r-control); padding: 10px 12px; }
   .tile-num { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 24px; color: var(--dorami-ink); }
@@ -12103,6 +12104,9 @@ input[type="radio"] {
 .card-foot { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
 /* KPI 格的加载 / 失败态(一条统计失败只让这一格变脸) */
 .kpi.is-error { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* 旧快照仍在时的非阻断刷新失败提示(区头 / 卡头 / 表头就地,codex R2-P1-2) */
+.stale-notice { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.stale-notice .tiny-meta { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kpi-stamp { padding: 1px 7px; vertical-align: middle; }
 /* 表格:名称双行格(主名 + faint 副行)、章 + 原因两行格、卡头、表脚、评分对、类型小签、进度条 */
 .acct-table.is-fixed .acct-name { display: block; }
