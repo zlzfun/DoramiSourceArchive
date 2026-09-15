@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import {
   ChevronLeft,
   ExternalLink,
@@ -45,12 +45,6 @@ export default function MobileArticlePage({
     activeSummary, summarizing, handleSummarize,
     prevArticle, nextArticle, activeIndex, selectArticle, searchForLabel,
   } = rs;
-
-  // 换篇即回顶(push 页语义:每篇都是新页)
-  const scrollRef = useRef(null);
-  useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = 0;
-  }, [activeArticle?.id]);
 
   const [podcastSelection, setPodcastSelection] = useState({ articleId: '', variant: 'original' });
 
@@ -141,7 +135,8 @@ export default function MobileArticlePage({
       {/* 阅读进度线(scroll-timeline 渐进增强,同阅读窗;不支持的浏览器隐形) */}
       {!activeBodyLoading && activeBody ? <div className="m-read-progress" aria-hidden="true" /> : null}
 
-      <div className="m-read-scroll" ref={scrollRef} key={activeArticle.id}>
+      {/* 换篇由 key 重建滚动区域；跨版式同篇的进度由 ReaderWorkspace 恢复。 */}
+      <div className="m-read-scroll" key={activeArticle.id}>
         <header className="reader-pane-head">
           {/* 标题区与桌面同源(眉头「源 · 体裁」/ 标题 / 署名行 / 标签小签);动作行不渲染,顶栏译钮承担 */}
           <div className="reader-kicker">

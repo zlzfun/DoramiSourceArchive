@@ -34,6 +34,12 @@
   overflow: hidden;
 }
 
+/* 提示浮在底栏上方：收藏/请求失败后的反馈仍可见，也不挡住中间的导航按钮。
+   底栏约 64px，额外留 16px；仅作用移动壳，桌面提示位置不变。 */
+.m-root .toast-pop {
+  bottom: calc(80px + env(safe-area-inset-bottom));
+}
+
 /* ── 顶栏(48px):抽屉入口 / 标题 / 过滤器带(全部|未读 seg + 标读 + 搜索) ── */
 .m-topbar {
   flex: none;
@@ -59,6 +65,8 @@
 }
 .m-title-solo { margin-left: 8px; }
 .m-topbar-sp { flex: 1; }
+/* 长来源名优先省略，不能把「全部 / 未读」挤成两行。 */
+.m-topbar .mini-seg { flex: none; white-space: nowrap; }
 .m-iconbtn {
   flex: none;
   width: 36px;
