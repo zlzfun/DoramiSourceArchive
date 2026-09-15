@@ -35,14 +35,26 @@ async function handleApiError(response, defaultMsg) {
 // - path 需含查询串；非 JSON 响应（text/ndjson）、fire-and-forget、失败静默返回默认值的
 //   接口不走本封装，见文件末尾各定制实现。
 async function request(path, { method = 'GET', body, errorMsg, ...opts } = {}) {
-  const res = await apiFetch(`${API_BASE_URL}${path}`, {
-    method,
-    ...(body !== undefined && {
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }),
-    ...opts,
-  });
+  let res;
+  try {
+    res = await apiFetch(`${API_BASE_URL}${path}`, {
+      method,
+      ...(body !== undefined && {
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+      ...opts,
+    });
+  } catch (error) {
+    // 网络层失败(后端未启动 / 断网 / 代理拒绝)不再裸露「Failed to fetch」(issue #76
+    // 归并稿 P2 #16):统一成对象 + 原因 + 下一步;AbortError 原样抛出交给调用方静默。
+    if (error?.name === 'AbortError') throw error;
+    const wrapped = new Error(`${errorMsg || '请求失败'}：后端未响应，请确认服务已启动后重试`);
+    wrapped.status = 0;
+    wrapped.code = 'network';
+    wrapped.cause = error;
+    throw wrapped;
+  }
   if (!res.ok) await handleApiError(res, errorMsg);
   return res.json();
 }
@@ -258,20 +270,21 @@ export function forcePodcastFullAnalysis(episodeId, idempotencyKey = '', podcast
   });
 }
 
-export function fetchPodcastPremiumGuides(filters = {}, options = {}) {
-  const params = withFilters(new URLSearchParams(), filters);
-  const query = params.toString();
-  return request(`/admin/podcast-premium-guides${query ? `?${query}` : ''}`, {
-    errorMsg: '获取精品导读任务失败',
-    ...options,
-  });
-}
-
+// 单集处理台账(issue #76):filters = { q, stage, verdict, tts, sort, order, page, page_size }
+// 三根正交筛选轴 + 节目搜索 + 排序全部服务端生效;旧 status 档位仍可传。
 export function fetchPodcastPremiumTasks(filters = {}, options = {}) {
   const params = withFilters(new URLSearchParams(), filters);
   const query = params.toString();
   return request(`/admin/podcast-premium-tasks${query ? `?${query}` : ''}`, {
     errorMsg: '获取播客处理任务失败',
+    ...options,
+  });
+}
+
+// 单集抽屉:任务行 + 处理时间线 + 文本产物 + 精简音频。
+export function fetchPodcastPremiumTaskDetail(episodeId, options = {}) {
+  return request(`/admin/podcast-premium-tasks/${enc(episodeId)}`, {
+    errorMsg: '获取播客单集详情失败',
     ...options,
   });
 }
@@ -284,13 +297,6 @@ export function updatePodcastPremiumThreshold(threshold) {
   });
 }
 
-export function runPodcastPremiumGuide(episodeId) {
-  return request(`/admin/podcast-premium-guides/${enc(episodeId)}/run`, {
-    method: 'POST',
-    errorMsg: '启动精品导读失败',
-  });
-}
-
 export function forcePodcastPremiumTts(episodeId, idempotencyKey = '') {
   const command = podcastPremiumTtsCommand(episodeId, idempotencyKey);
   return request(command.path, {
@@ -300,13 +306,14 @@ export function forcePodcastPremiumTts(episodeId, idempotencyKey = '') {
   });
 }
 
-export function getPodcastAsrQuota() {
+export function fetchPodcastAsrQuota(options = {}) {
   return request('/admin/podcast-asr-quota', {
     errorMsg: '获取 ASR 配额配置失败',
+    ...options,
   });
 }
 
-export function savePodcastAsrQuota(dailyAudioSecondsLimit, maxAudioSecondsPerFile) {
+export function updatePodcastAsrQuota(dailyAudioSecondsLimit, maxAudioSecondsPerFile) {
   return request('/admin/podcast-asr-quota', {
     method: 'PUT',
     body: {
@@ -831,26 +838,26 @@ export function fetchPersonalBriefs(limit = 30, options = {}) {
 // ==================== CMS taxonomy 治理（仅管理员） ====================
 export function fetchCmsTags(filters = {}, options = {}) {
   const query = withFilters(new URLSearchParams(), filters).toString();
-  return request(`/admin/cms-tags${query ? `?${query}` : ''}`, { ...options, errorMsg: '获取 CMS 标签失败' });
+  return request(`/admin/cms-tags${query ? `?${query}` : ''}`, { ...options, errorMsg: '获取规范标签失败' });
 }
 
 export function createCmsTag(payload) {
-  return request('/admin/cms-tags', { method: 'POST', body: payload, errorMsg: '创建 CMS 标签失败' });
+  return request('/admin/cms-tags', { method: 'POST', body: payload, errorMsg: '创建标签失败' });
 }
 
 export function updateCmsTag(tagId, payload) {
-  return request(`/admin/cms-tags/${enc(tagId)}`, { method: 'PATCH', body: payload, errorMsg: '更新 CMS 标签失败' });
+  return request(`/admin/cms-tags/${enc(tagId)}`, { method: 'PATCH', body: payload, errorMsg: '更新标签失败' });
 }
 
 export function addCmsTagAlias(tagId, payload) {
   return request(`/admin/cms-tags/${enc(tagId)}/aliases`, {
-    method: 'POST', body: payload, errorMsg: '新增标签 Alias 失败',
+    method: 'POST', body: payload, errorMsg: '新增别名失败',
   });
 }
 
 export function deleteCmsTagAlias(tagId, aliasId, reason = '') {
   return request(`/admin/cms-tags/${enc(tagId)}/aliases/${enc(aliasId)}?reason=${enc(reason)}`, {
-    method: 'DELETE', errorMsg: '删除标签 Alias 失败',
+    method: 'DELETE', errorMsg: '删除别名失败',
   });
 }
 
@@ -873,18 +880,33 @@ export function activateCmsTagCandidate(candidateId, payload) {
 
 export function reclassifyCmsTagCandidate(candidateId, kind, reason) {
   return request(`/admin/cms-tag-candidates/${enc(candidateId)}`, {
-    method: 'PATCH', body: { kind, reason }, errorMsg: '纠正 Candidate 分面失败',
+    method: 'PATCH', body: { kind, reason }, errorMsg: '纠正候选分面失败',
   });
 }
 
 export function resolveCmsTagCandidate(candidateId, targetTagId, reason) {
   return request(`/admin/cms-tag-candidates/${enc(candidateId)}/resolve`, {
-    method: 'POST', body: { target_tag_id: targetTagId, reason }, errorMsg: '归并 Candidate 失败',
+    method: 'POST', body: { target_tag_id: targetTagId, reason }, errorMsg: '归并候选失败',
   });
 }
 
 export function fetchTaxonomyState(options = {}) {
-  return request('/admin/taxonomy/state', { ...options, errorMsg: '获取 taxonomy 发布状态失败' });
+  return request('/admin/taxonomy/state', { ...options, errorMsg: '获取目录发布状态失败' });
+}
+
+// 规范标签 ∪ 候选 统一总账(issue #76 拍板②):服务端分页 / 搜索 / 按近 7 天排序。
+// filters = { type, kind, status, q, sort, order, offset, limit }
+export function fetchTaxonomyLedger(filters = {}, options = {}) {
+  const query = withFilters(new URLSearchParams(), filters).toString();
+  return request(`/admin/taxonomy/ledger${query ? `?${query}` : ''}`, { ...options, errorMsg: '获取标签总账失败' });
+}
+
+export function fetchCmsTag(tagId, options = {}) {
+  return request(`/admin/cms-tags/${enc(tagId)}`, { ...options, errorMsg: '获取标签详情失败' });
+}
+
+export function fetchCmsTagCandidate(candidateId, options = {}) {
+  return request(`/admin/cms-tag-candidates/${enc(candidateId)}`, { ...options, errorMsg: '获取候选详情失败' });
 }
 
 export function fetchInterestCatalogPolicy(options = {}) {
@@ -899,7 +921,7 @@ export function updateInterestCatalogPolicy(payload) {
 
 export function backfillCmsTagAliases(reason) {
   return request('/admin/taxonomy/aliases/backfill', {
-    method: 'POST', body: { reason }, errorMsg: '同步规范名 Alias 失败',
+    method: 'POST', body: { reason }, errorMsg: '同步规范名别名失败',
   });
 }
 
@@ -907,7 +929,7 @@ export function publishTaxonomyV1(changeSummary) {
   return request('/admin/taxonomy/v1/publish', {
     method: 'POST',
     body: { confirmation: 'PUBLISH TAXONOMY V1', change_summary: changeSummary },
-    errorMsg: '发布 taxonomy v1 失败',
+    errorMsg: '发布目录 v1 失败',
   });
 }
 
@@ -919,13 +941,13 @@ export function rejectCmsTagCandidate(candidateId, reason) {
 
 export function mergeCmsTag(tagId, targetTagId, reason) {
   return request(`/admin/cms-tags/${enc(tagId)}/merge`, {
-    method: 'POST', body: { target_tag_id: targetTagId, reason }, errorMsg: '合并 CMS 标签失败',
+    method: 'POST', body: { target_tag_id: targetTagId, reason }, errorMsg: '合并标签失败',
   });
 }
 
 export function deprecateCmsTag(tagId, replacementId, reason) {
   return request(`/admin/cms-tags/${enc(tagId)}/deprecate`, {
-    method: 'POST', body: { replacement_id: replacementId || null, reason }, errorMsg: '废弃 CMS 标签失败',
+    method: 'POST', body: { replacement_id: replacementId || null, reason }, errorMsg: '废弃标签失败',
   });
 }
 
@@ -959,8 +981,10 @@ export function createFullAnalysisBackfill(payload) {
   });
 }
 
-export function fetchFullAnalysisBackfills(options = {}) {
-  return request('/admin/analysis/backfills', { ...options, errorMsg: '获取历史分析任务失败' });
+// filters = { limit, offset }(issue #76:服务端分页 + total)
+export function fetchFullAnalysisBackfills(filters = {}, options = {}) {
+  const query = withFilters(new URLSearchParams(), filters).toString();
+  return request(`/admin/analysis/backfills${query ? `?${query}` : ''}`, { ...options, errorMsg: '获取历史分析任务失败' });
 }
 
 export function pauseFullAnalysisBackfill(jobId) {

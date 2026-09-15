@@ -4,9 +4,9 @@ import {
   fetchCredentialsOverview,
   fetchRemoteSyncSchedule,
   getLLMConfig,
-  getPodcastAsrQuota,
+  fetchPodcastAsrQuota,
   getXApiConfig,
-  savePodcastAsrQuota,
+  updatePodcastAsrQuota,
   saveLLMConfig,
   saveXApiConfig,
   testLLMConfig,
@@ -88,7 +88,7 @@ export default function CredentialsSection({ showToast, onNavigate }) {
     }));
   }).catch(() => {}), []);
 
-  const loadAsrQuota = useCallback(() => getPodcastAsrQuota().then((d) => {
+  const loadAsrQuota = useCallback(() => fetchPodcastAsrQuota().then((d) => {
     setAsrQuota(d);
     setAsrHours(String(d.daily_audio_hours_limit ?? 0));
     setAsrMaxHours(String(d.max_audio_hours_per_file ?? 12));
@@ -214,7 +214,7 @@ export default function CredentialsSection({ showToast, onNavigate }) {
     }
     setSavingAsr(true);
     try {
-      const saved = await savePodcastAsrQuota(
+      const saved = await updatePodcastAsrQuota(
         Math.round(hours * 3600),
         Math.round(maxHours * 3600),
       );

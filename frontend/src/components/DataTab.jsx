@@ -20,6 +20,7 @@ import { runAction } from '../utils/runAction';
 import { excerptOf } from '../utils/readerText';
 import { contentTypeLabel, CONTENT_TYPE_GROUPS } from '../utils/contentType';
 import { SCORE_DISCLAIMER, analysisStatusMeta, podcastLedgerProcessingMeta, primaryAnalysisLabel, qualityScoreText, scoreTierClass } from '../utils/analysis';
+import { podcastProcessingSuccessMessage } from '../utils/podcastProcessing';
 import { useConfirm } from '../hooks/useConfirm';
 import { useAbortableLoad } from '../hooks/useAbortableLoad';
 
@@ -462,16 +463,8 @@ export default function DataTab({
       setDrawer((current) => current.article?.id === article.id
         ? { ...current, article: immediate }
         : current);
-      const priorStatus = String(article.podcast?.processing_status || article.podcast?.status || '');
-      const stage = String(article.podcast?.stage || article.podcast?.processing_stage || '').toLowerCase();
-      const isAsr = stage === 'asr' || stage === 'fetch';
-      const isAnalyze = stage === 'analyze';
-      const successMsg = priorStatus === 'reconciliation_required'
-        ? (isAsr ? '已启动 ASR 对账恢复' : '已启动对账恢复')
-        : (['failed', 'retry_wait'].includes(priorStatus)
-          ? (isAsr ? '已重试 ASR 转录' : (isAnalyze ? '已重试全文分析' : '已重试全文处理'))
-          : '已启动全文处理');
-      showToast(successMsg, 'success');
+      // 成功提示与运维面播客分区同源(utils/podcastProcessing,issue #76 归一层)
+      showToast(podcastProcessingSuccessMessage(article.podcast || {}), 'success');
       try {
         const detail = await fetchArticle(article.id);
         setDrawer((current) => current.article?.id === article.id

@@ -732,14 +732,28 @@ def serialize_full_analysis_backfill(
     return result
 
 
-def list_full_analysis_backfills(session: Session, *, limit: int = 20) -> list[dict[str, Any]]:
+def list_full_analysis_backfills(
+    session: Session, *, limit: int = 20, offset: int = 0
+) -> list[dict[str, Any]]:
     jobs = session.exec(
         select(TagRetagJobRecord)
         .where(TagRetagJobRecord.operation == AnalysisOperation.FULL_ANALYSIS.value)
         .order_by(TagRetagJobRecord.id.desc())
+        .offset(max(0, int(offset)))
         .limit(max(1, min(limit, 100)))
     ).all()
     return [serialize_full_analysis_backfill(session, job) for job in jobs]
+
+
+def count_full_analysis_backfills(session: Session) -> int:
+    return int(
+        session.exec(
+            select(func.count(TagRetagJobRecord.id)).where(
+                TagRetagJobRecord.operation == AnalysisOperation.FULL_ANALYSIS.value
+            )
+        ).one()
+        or 0
+    )
 
 
 def get_full_analysis_backfill(session: Session, job_id: int) -> Optional[TagRetagJobRecord]:

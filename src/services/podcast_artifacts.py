@@ -956,8 +956,10 @@ class PodcastArtifactStore:
                     handle.close()
                 raise
 
-    def list(self, *, episode_id: str = "", status: str = "", kind: str = "", limit: int = 100) -> list[PodcastArtifactRecord]:
-        statement = select(PodcastArtifactRecord)
+    @staticmethod
+    def _list_filters(
+        statement, *, episode_id: str, status: str, kind: str, q: str
+    ):
         if episode_id:
             statement = statement.where(PodcastArtifactRecord.episode_id == episode_id)
         if status:
@@ -968,11 +970,63 @@ class PodcastArtifactStore:
             if kind not in ARTIFACT_KINDS:
                 raise PodcastArtifactError("无效的 artifact kind")
             statement = statement.where(PodcastArtifactRecord.kind == kind)
-        statement = statement.order_by(
-            PodcastArtifactRecord.created_at.desc(), PodcastArtifactRecord.id.desc()
-        ).limit(min(max(int(limit), 1), 500))
+        needle = str(q or "").strip()
+        if needle:
+            # 节目搜索(issue #76):标题走 articles 左连接,节目 ID 直接子串——
+            # 音频台账的主语是文件,但管理员找文件靠的是节目名。
+            statement = statement.join(
+                ArticleRecord, ArticleRecord.id == PodcastArtifactRecord.episode_id, isouter=True
+            ).where(
+                or_(
+                    ArticleRecord.title.contains(needle),
+                    PodcastArtifactRecord.episode_id.contains(needle),
+                )
+            )
+        return statement
+
+    def list(
+        self,
+        *,
+        episode_id: str = "",
+        status: str = "",
+        kind: str = "",
+        limit: int = 100,
+        offset: int = 0,
+        q: str = "",
+        sort: str = "created",
+        order: str = "desc",
+    ) -> list[PodcastArtifactRecord]:
+        statement = self._list_filters(
+            select(PodcastArtifactRecord), episode_id=episode_id, status=status, kind=kind, q=q
+        )
+        sort_column = {
+            "created": PodcastArtifactRecord.created_at,
+            "size": PodcastArtifactRecord.size_bytes,
+            "published": PodcastArtifactRecord.published_at,
+        }.get(sort)
+        if sort_column is None or order not in {"asc", "desc"}:
+            raise PodcastArtifactError("无效的 artifact 排序")
+        primary = sort_column.asc() if order == "asc" else sort_column.desc()
+        tiebreak = (
+            PodcastArtifactRecord.id.asc() if order == "asc" else PodcastArtifactRecord.id.desc()
+        )
+        statement = (
+            statement.order_by(primary, tiebreak)
+            .offset(max(int(offset), 0))
+            .limit(min(max(int(limit), 1), 500))
+        )
         with Session(self.engine) as session:
             return list(session.exec(statement).all())
+
+    def count(
+        self, *, episode_id: str = "", status: str = "", kind: str = "", q: str = ""
+    ) -> int:
+        statement = self._list_filters(
+            select(func.count(PodcastArtifactRecord.id)),
+            episode_id=episode_id, status=status, kind=kind, q=q,
+        )
+        with Session(self.engine) as session:
+            return int(session.exec(statement).one() or 0)
 
     def _referenced_paths(self) -> set[Path]:
         with Session(self.engine) as session:

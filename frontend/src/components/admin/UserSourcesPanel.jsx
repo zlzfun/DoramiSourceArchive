@@ -30,7 +30,7 @@ function sourceState(item) {
  * 所有订阅者并删除文章)。「在读者面隐藏」沿源可见性通道(阅读器右键/节点管理),
  * 此处不重复入口。
  */
-export default function UserSourcesPanel({ showToast }) {
+export default function UserSourcesPanel({ showToast, refreshTick = 0 }) {
   const confirm = useConfirm();
   const [data, setData] = useState(null);      // admin_overview 载荷
   const [minutesInput, setMinutesInput] = useState('');
@@ -49,6 +49,10 @@ export default function UserSourcesPanel({ showToast }) {
   }, [showToast]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (refreshTick > 0) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只响应「切回 Tab / 切子页」刷新脉冲(M15)
+  }, [refreshTick]);
 
   const handleToggleEnabled = async () => {
     const next = !data?.config?.enabled;
