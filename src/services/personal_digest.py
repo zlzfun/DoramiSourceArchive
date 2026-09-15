@@ -56,7 +56,6 @@ from models.db import (
     SourceStateRecord,
     TaxonomyVersionRecord,
     UserInterestTagRecord,
-    UserRecord,
 )
 from services import source_visibility
 from services.article_display_tags import load_display_tags
@@ -70,6 +69,7 @@ from services.digest_selection import (
     interest_codes_of,
     interest_only_policy,
     section_for_genre,
+    section_rank,
     select_breaking_events,
     select_digest_articles,
 )
@@ -83,7 +83,6 @@ PRIVATE_SOURCE_PREFIX = "user_rss_"
 DEFAULT_PRIVATE_FRESHNESS_MINUTES = 60
 GENERATION_LEASE_SECONDS = 300
 PUBLIC_DAILY_BRIEF_SOURCE_ID = "dorami_daily_brief"
-DAILY_BRIEF_ENABLED_KEY = "daily_brief_enabled"
 PERSONAL_DIGEST_ENABLED_KEY = "personal_digest_enabled"
 # 「重大事件」通道旋钮(v3.50):阈值与条数存 KV,0 条 = 关闭通道;窗口/印证来源数是常量。
 BREAKING_MIN_SCORE_KEY = "personal_digest_breaking_min_score"
@@ -93,12 +92,12 @@ EXTERNAL_MIN_SCORE_KEY = "personal_digest_external_min_score"
 EXTERNAL_PER_SOURCE_MAX_KEY = "personal_digest_external_per_source_max"
 # 会开新同日 revision 的原因。interest_changed/subscription_changed 自 v3.51.1 起不再由
 # 读者面写入(兴趣/订阅变更只记录,下次编排生效),保留是为历史版本与服务契约兼容;
-# subscription_changed 仍用于管理员下架来源的全员重编。
+# subscription_changed 仍用于管理员下架来源的全员重编。daily_brief_ready 自 issue #74 起退役
+# (公共日报不再进个人早报的范围,落盘也就没有「追加一版」可做),枚举值只为历史行保留。
 REBUILD_REASON_VALUES = frozenset({
     DigestGenerationReason.INTEREST_CHANGED.value,
     DigestGenerationReason.SUBSCRIPTION_CHANGED.value,
     DigestGenerationReason.MANUAL_REBUILD.value,
-    DigestGenerationReason.DAILY_BRIEF_READY.value,
 })
 
 
@@ -169,12 +168,6 @@ def _parse_datetime(value: str | None) -> dt.datetime | None:
         parsed = parsed.replace(tzinfo=SHANGHAI)
     return parsed.astimezone(SHANGHAI)
 
-
-def _setting_enabled(session: Session, key: str) -> bool:
-    row = session.get(AppSettingRecord, key)
-    return bool(
-        row and str(row.value or "").strip().casefold() in {"1", "true", "yes", "on"}
-    )
 
 
 def _setting_value(session: Session, key: str) -> str | None:
@@ -277,6 +270,10 @@ def resolve_personal_digest_source_ids(session: Session, username: str) -> list[
             membership.setdefault(source_id, set()).add(subscription.owner_username)
 
     explicit -= source_visibility.reader_unavailable_source_ids(session)
+    # 公共日报是文章容器的主菜,不是早报的素材(issue #74):它本身就是当天几十条资讯的聚合稿,
+    # 在新闻价值尺子下分数不低,若留在范围里会稳进质量通道;报头「订阅的 N 个来源」也不该数它。
+    # 范围层一刀切,候选查询与兜底列表另有机械双保险。
+    explicit.discard(PUBLIC_DAILY_BRIEF_SOURCE_ID)
     if not explicit:
         return []
 
@@ -384,12 +381,6 @@ def calculate_due_source_ids(
             # A v2 receiver has no local CollectionJob for producer-managed
             # public sources.  Their authoritative SourceState is nevertheless
             # a real readiness boundary, so the daily edition must wait for it.
-            due.append(source_id)
-            continue
-        if (
-            source_id == PUBLIC_DAILY_BRIEF_SOURCE_ID
-            and _setting_enabled(session, DAILY_BRIEF_ENABLED_KEY)
-        ):
             due.append(source_id)
             continue
         if source_id in scheduled:
@@ -829,13 +820,15 @@ def _query_candidate_rows(
             ArticleAnalysisRecord.quality_score.is_not(None),
         )
     )
+    # 公共日报记录在两个分支都排除:范围解析已把它剔出订阅池,这里是机械双保险(issue #74 之前
+    # 只有全站分支排除,订阅了日报的读者会在订阅池里吃到它)。
+    query = query.where(ArticleRecord.source_id != PUBLIC_DAILY_BRIEF_SOURCE_ID)
     if source_ids is not None:
         query = query.where(ArticleRecord.source_id.in_(source_ids))
     else:
         query = query.where(
             ArticleRecord.source_id.is_not(None),
             ArticleRecord.source_id.not_like(f"{PRIVATE_SOURCE_PREFIX}%"),
-            ArticleRecord.source_id != PUBLIC_DAILY_BRIEF_SOURCE_ID,
         )
     if exclude_source_ids:
         query = query.where(ArticleRecord.source_id.notin_(sorted(set(exclude_source_ids))))
@@ -1199,20 +1192,6 @@ def _items_for_edition(
     ).all())
 
 
-def _edition_contains_article(
-    session: Session,
-    edition: PersonalDigestEditionRecord,
-    article_id: str,
-) -> bool:
-    if edition.id is None:
-        return False
-    return session.exec(
-        select(PersonalDigestItemRecord.id).where(
-            PersonalDigestItemRecord.edition_id == edition.id,
-            PersonalDigestItemRecord.article_id == article_id,
-        )
-    ).first() is not None
-
 
 def _reuse_edition(
     session: Session,
@@ -1273,6 +1252,26 @@ def _snapshot(
     }
 
 
+def _assign_positions(records: list[PersonalDigestItemRecord]) -> None:
+    """板块固定顺序 + 板块内分数降序(issue #74),原地重排并重写 ``position``。
+
+    此前 position 是通道顺序的副产品(重大事件 → 兴趣 → 质量),前端按首次出现建组,板块顺序随
+    当天最高分条目的体裁漂移,板块内命中兴趣的 6.6 也会排在质量通道的 8.0 之前。现在板块按
+    ``SECTION_ORDER``,板块内按分数降序、缺分殿后、同分保持原序——前端网格的宽度跟分数走,
+    要求板块头卡恒是板块最高分;重大事件板块此前按事件分 / 官方优先排,重排后同样分数降序。
+    """
+
+    def key(pair: tuple[int, PersonalDigestItemRecord]) -> tuple[object, ...]:
+        index, record = pair
+        score = record.quality_score_snapshot
+        return (section_rank(record.section), score is None, -(score or 0.0), index)
+
+    ordered = [record for _index, record in sorted(enumerate(records), key=key)]
+    for position, record in enumerate(ordered):
+        record.position = position
+    records[:] = ordered
+
+
 def _load_latest_fallback(
     session: Session,
     source_ids: Sequence[str],
@@ -1298,7 +1297,10 @@ def _load_latest_fallback(
             ArticleAnalysisRecord.article_id == ArticleRecord.id,
             isouter=True,
         )
-        .where(ArticleRecord.source_id.in_(source_ids))
+        .where(
+            ArticleRecord.source_id.in_(source_ids),
+            ArticleRecord.source_id != PUBLIC_DAILY_BRIEF_SOURCE_ID,
+        )
     )
     excluded = sorted({str(value) for value in excluded_article_ids if str(value)})
     if excluded:
@@ -1418,23 +1420,6 @@ def start_personal_digest_edition(
             first_open_at=first_open_at,
             current=current,
         )
-    if reason == DigestGenerationReason.DAILY_BRIEF_READY.value and existing is not None:
-        public_brief_id = f"daily_brief_{report_date}"
-        if (
-            PUBLIC_DAILY_BRIEF_SOURCE_ID not in scope.expected_source_ids
-            or existing.status in {
-                PersonalDigestStatus.PENDING.value,
-                PersonalDigestStatus.GENERATING.value,
-            }
-            or _edition_contains_article(session, existing, public_brief_id)
-        ):
-            return _reuse_edition(
-                session,
-                existing,
-                first_open_at=first_open_at,
-                current=current,
-            )
-
     if reason in REBUILD_REASON_VALUES and existing is not None:
         if existing.status == PersonalDigestStatus.GENERATING.value:
             edition, merged = _coalesce_generating_intent(
@@ -1658,47 +1643,6 @@ def materialize_desired_personal_digest_revision(
     return result
 
 
-def notify_public_daily_brief_ready(
-    engine,
-    *,
-    report_date: str,
-    now: dt.datetime | None = None,
-) -> int:
-    """Wake subscribed users when today's synthetic public brief is persisted.
-
-    Existing pending editions already wait on this source and are left in place;
-    completed editions that predate it get one new immutable revision.
-    """
-
-    current = _as_shanghai(now)
-    if report_date != current.date().isoformat():
-        return 0
-    with Session(engine) as session:
-        if not _setting_enabled(session, PERSONAL_DIGEST_ENABLED_KEY):
-            return 0
-        usernames = list(session.exec(
-            select(UserRecord.username).where(UserRecord.is_active.is_(True))
-        ).all())
-
-    created = 0
-    for username in usernames:
-        with Session(engine) as session:
-            if PUBLIC_DAILY_BRIEF_SOURCE_ID not in resolve_personal_digest_source_ids(
-                session, username
-            ):
-                continue
-            previous_revision = _latest_revision(session, username, report_date)
-            result = start_personal_digest_edition(
-                session,
-                username,
-                report_date=report_date,
-                now=current,
-                generation_reason=DigestGenerationReason.DAILY_BRIEF_READY,
-            )
-            if result.edition is not None and result.edition.revision > previous_revision:
-                created += 1
-    return created
-
 
 def mark_personal_digest_failed(
     session: Session,
@@ -1778,9 +1722,10 @@ def generate_personal_digest(
 ) -> PersonalDigestGenerationResult:
     """Generate and persist one immutable personal-digest edition.
 
-    Normal ensure calls are idempotent.  Rebuild reasons (manual rebuild, public
-    brief ready, the admin source-takedown fan-out; the legacy interest/subscription
-    reasons are still accepted for the service contract) create a new same-day
+    Normal ensure calls are idempotent.  Rebuild reasons (manual rebuild, the admin
+    source-takedown fan-out; the legacy interest/subscription reasons are still
+    accepted for the service contract — ``daily_brief_ready`` was retired by issue #74
+    and is only kept as an enum value for historical rows) create a new same-day
     revision; an ``interest_changed`` request for a historical date is rejected so
     historical editions never move with today's preferences.  Since v3.51.1 reader
     interest/subscription edits no longer call in here at all — they surface as
@@ -2150,7 +2095,6 @@ def generate_personal_digest(
                 )),
                 created_at=generated_at,
             )
-            session.add(record)
             item_records.append(record)
     if had_own_selections:
         selection_by_id = {selection.article_id: selection for selection in selections}
@@ -2204,7 +2148,6 @@ def generate_personal_digest(
                 )),
                 created_at=generated_at,
             )
-            session.add(record)
             item_records.append(record)
     else:
         latest = _load_latest_fallback(
@@ -2257,8 +2200,12 @@ def generate_personal_digest(
                 )),
                 created_at=generated_at,
             )
-            session.add(record)
             item_records.append(record)
+    # 落库前统一定位:板块固定顺序 + 板块内分数降序(issue #74)。记录在此之前刻意不 add 进
+    # session——三段构建之间的查询会触发 autoflush,先按临时 position 写入再改写会在
+    # (edition_id, position) 唯一键上互撞;集中添加让 INSERT 只带最终 position。
+    _assign_positions(item_records)
+    session.add_all(item_records)
     try:
         session.commit()
     except IntegrityError:

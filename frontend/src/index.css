@@ -621,12 +621,10 @@ input[type="radio"] {
    切页与列表渲染即时呈现,动效只留状态反馈(modal/toast/进度/骨架/开关)。
    .tab-panel / .row-stagger / .stagger 类名保留为无动效锚点,JSX 逐步清理。 */
 
-@media (prefers-reduced-motion: reduce) {
-  .modal-overlay,
-  .modal-overlay.is-closing,
-  .modal-panel,
-  .modal-overlay.is-closing .modal-panel { animation: none; }
-}
+:root[data-motion="reduce"] .modal-overlay,
+:root[data-motion="reduce"] .modal-overlay.is-closing,
+:root[data-motion="reduce"] .modal-panel,
+:root[data-motion="reduce"] .modal-overlay.is-closing .modal-panel { animation: none; }
 
 /* Skeleton shimmer utility */
 .skeleton {
@@ -641,9 +639,9 @@ input[type="radio"] {
   border-radius: var(--r-sm);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .skeleton { animation: none; background: var(--dorami-soft); }
-}
+/* :where() 不贡献特异性(codex F3):后面的 [data-theme="dark"] .skeleton 仍能接管 background,
+   暗色 + 减少动效 = 停走的白叠加渐变,而不是被压成 --dorami-soft 实色 */
+:where(:root[data-motion="reduce"]) .skeleton { animation: none; background: var(--dorami-soft); }
 
 @layer components {
 
@@ -7172,9 +7170,8 @@ input[type="radio"] {
     .reader-vrail-btn > svg, .reader-vrail-btn .vrail-btn-dot { transform: translateY(-7px); }
     .reader-vrail-label { opacity: 1; transform: none; }
   }
-  @media (prefers-reduced-motion: reduce) {
-    .reader-vrail-btn > svg, .reader-vrail-btn .vrail-btn-dot, .reader-vrail-label { transition: none; }
-  }
+  /* 减少动效(应用内开关,issue #73):揭示直接切换;OS 的 prefers-reduced-motion 不再参与 */
+  :root[data-motion="reduce"] .reader-vrail-btn > svg, :root[data-motion="reduce"] .reader-vrail-btn .vrail-btn-dot, :root[data-motion="reduce"] .reader-vrail-label { transition: none; }
 
   /* 微标签(v3.45):10px/500——它是图标的注脚,不是名字更不是徽标:目检 11px/600 与源栏
      组头(10.5px/700 加字距)几乎同一分量,像同层级文字;降到 10/500 才退到图标之下、
@@ -7320,10 +7317,8 @@ input[type="radio"] {
     0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--state-bad) 35%, transparent); }
     50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--state-bad) 0%, transparent); }
   }
-  @media (prefers-reduced-motion: reduce) {
-    .rail-avatar-face, .rail-avatar-power { transition: none; }
-    .rail-logout.is-armed { animation: none; }
-  }
+  :root[data-motion="reduce"] .rail-avatar-face, :root[data-motion="reduce"] .rail-avatar-power { transition: none; }
+  :root[data-motion="reduce"] .rail-logout.is-armed { animation: none; }
 
   /* 可折叠栏内层固定宽度：列轨收缩到 0 时由外层 overflow 裁切，内容不回流 */
   .reader-sources-inner,
@@ -7989,18 +7984,16 @@ input[type="radio"] {
     color: transparent;
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .reader-enter,
-    .reader-list-enter,
-    .reader-search-inline,
-    .skeleton-delay { animation: none; opacity: 1; }
-    .reader-search-inline { clip-path: none; }
-    .reader-unread-dot,
-    .markdown-img-button img,
-    .reader-vrail-btn,
-    .reader-entry .reader-entry-title { transition: none; }
-    .markdown-img-button img { opacity: 1; }
-  }
+  :root[data-motion="reduce"] .reader-enter,
+  :root[data-motion="reduce"] .reader-list-enter,
+  :root[data-motion="reduce"] .reader-search-inline,
+  :root[data-motion="reduce"] .skeleton-delay { animation: none; opacity: 1; }
+  :root[data-motion="reduce"] .reader-search-inline { clip-path: none; }
+  :root[data-motion="reduce"] .reader-unread-dot,
+  :root[data-motion="reduce"] .markdown-img-button img,
+  :root[data-motion="reduce"] .reader-vrail-btn,
+  :root[data-motion="reduce"] .reader-entry .reader-entry-title { transition: none; }
+  :root[data-motion="reduce"] .markdown-img-button img { opacity: 1; }
 
   /* ── 哆啦美速读卡(issue #13 三轮,从零设计):AI 渐变 wash 底是唯一身份标记,不写字样。
      两栏:左「统计位」= 小星 + 衬线大数字(新闻价值分,与阅读窗大标题同字系,数字才是
@@ -8639,9 +8632,7 @@ input[type="radio"] {
   .is-ctx-anchor,
   .is-ctx-anchor:hover { background: var(--dorami-wash); }
 
-  @media (prefers-reduced-motion: reduce) {
-    .ctx-menu { animation: none; }
-  }
+  :root[data-motion="reduce"] .ctx-menu { animation: none; }
 
   /* ── 初版方案(数轮重设计后用户拍板回归):wash 主行 + 虚线分隔的公开链接区。 ── */
 
@@ -10087,15 +10078,13 @@ input[type="radio"] {
     transition-delay: 200ms;
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .reader-ai-fab { animation: none; transition: none; }
-    .reader-ai-fab-label { transition: none; }
-    .reader-ai-panel,
-    .reader-ai-turn,
-    .reader-ai-a,
-    .reader-ai-wait-row,
-    .reader-ai-suggest-btn { animation: none; transition: none; }
-  }
+  :root[data-motion="reduce"] .reader-ai-fab { animation: none; transition: none; }
+  :root[data-motion="reduce"] .reader-ai-fab-label { transition: none; }
+  :root[data-motion="reduce"] .reader-ai-panel,
+  :root[data-motion="reduce"] .reader-ai-turn,
+  :root[data-motion="reduce"] .reader-ai-a,
+  :root[data-motion="reduce"] .reader-ai-wait-row,
+  :root[data-motion="reduce"] .reader-ai-suggest-btn { animation: none; transition: none; }
 
   .reader-ai-panel {
     position: absolute;
@@ -10651,10 +10640,8 @@ input[type="radio"] {
     from { opacity: 0; transform: scale(0.94); }
     to { opacity: 1; transform: scale(1); }
   }
-  @media (prefers-reduced-motion: reduce) {
-    .reader-lightbox,
-    .reader-lightbox-img { animation: none; }
-  }
+  :root[data-motion="reduce"] .reader-lightbox,
+  :root[data-motion="reduce"] .reader-lightbox-img { animation: none; }
 
   .markdown-body a {
     color: var(--dorami-accent, #2563eb);
@@ -10800,17 +10787,19 @@ input[type="radio"] {
 
 /* 全局减动画收敛,但放行品牌演出子树(品牌豁免,2026-07-25 拍板):
    .auth-stage(登录页)/.app-arrive(跃迁抵达幕)/.app-arriving(主界面显影)是刻意的
-   品牌表达,不随 OS「减少动画」降级——Windows「关闭动画效果」即命中此查询,
-   此前登录页因此只剩静止一帧。工作区(其余一切)仍全面尊重该设置。 */
-@media (prefers-reduced-motion: reduce) {
-  *:not(.auth-stage, .auth-stage *, .app-arrive, .app-arrive *, .app-arriving),
-  *:not(.auth-stage, .auth-stage *, .app-arrive, .app-arrive *, .app-arriving)::before,
-  *:not(.auth-stage, .auth-stage *, .app-arrive, .app-arrive *, .app-arriving)::after {
-    animation-duration: 1ms !important;
-    animation-iteration-count: 1 !important;
-    scroll-behavior: auto !important;
-    transition-duration: 1ms !important;
-  }
+   品牌表达,不随「减少动效」降级。
+   触发条件 issue #73 起改为应用内开关 <html data-motion="reduce">(设置 → 外观),
+   不再读 OS 的 prefers-reduced-motion:Windows「关闭动画效果」(远程桌面常为性能默认)
+   与 macOS「减少动态效果」在 CSS 里分不清,内网读者以 Windows 为主,该查询多数是误报
+   (登录页 v3.22.2、轨面揭示 #73 先后中招)。默认全员完整动画;本文件所有降级规则
+   (含各处局部块)一律挂在该属性上,首帧由 index.html 内联脚本先行设置。 */
+:root[data-motion="reduce"] *:not(.auth-stage, .auth-stage *, .app-arrive, .app-arrive *, .app-arriving),
+:root[data-motion="reduce"] *:not(.auth-stage, .auth-stage *, .app-arrive, .app-arrive *, .app-arriving)::before,
+:root[data-motion="reduce"] *:not(.auth-stage, .auth-stage *, .app-arrive, .app-arrive *, .app-arriving)::after {
+  animation-duration: 1ms !important;
+  animation-iteration-count: 1 !important;
+  scroll-behavior: auto !important;
+  transition-duration: 1ms !important;
 }
 
 /* ── Responsive: 公司部门栅格 ── */
@@ -11318,9 +11307,7 @@ input[type="radio"] {
   from { opacity: 1; transform: none; }
   to   { opacity: 0; transform: translateY(-12px) scale(0.97); }
 }
-@media (prefers-reduced-motion: reduce) {
-  .reader-ann-band.is-entering .ann-card, .reader-ann-band.is-leaving .ann-card { animation-duration: 1ms; }
-}
+:root[data-motion="reduce"] .reader-ann-band.is-entering .ann-card, :root[data-motion="reduce"] .reader-ann-band.is-leaving .ann-card { animation-duration: 1ms; }
 
 /* 单条公告卡:彩色玻璃胶囊卡(overlay 级大圆角)+ 档位图标 + 标题/正文同段流式 + 关闭钮。
    透明度显著压低(surface 42%)——玻璃感 = 底下内容透出 + tint 变色的双重证据;
@@ -11729,8 +11716,10 @@ input[type="radio"] {
 .brief-sec-count { font-family: var(--mono); font-size: 11px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
 .brief-sec-rule { flex: 1; height: 1px; background: var(--dorami-border); }
 
-/* 卡片网格:自适应列数(≥2 列时首节首张 lead 通栏);同行等高、脚部钉底(报纸排版,仍不截断) */
-.brief-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; align-items: stretch; }
+/* 卡片网格(issue #74「分值驱动」,样页 docs/design/dorami-brief-grid-quiet.html 策略 F):6 等分单元,每张卡
+   的宽度由 utils/briefGrid 按分数规划写进 --span(2 小卡 / 3 半宽 / 4 ⅔ / 6 通栏),列数由页面量报纸面内容宽给出——
+   此前 auto-fill minmax(320px) 让布局层不知道余数,4 张卡呈「3 + 1」留白。同行等高、脚部钉底(报纸排版,仍不截断) */
+.brief-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; align-items: stretch; }
 /* 作用域限定在 .brief-grid 之下(codex 检视):管理台日报面板也叫 surface-card.brief-card(280px 双栏),不可被读者卡规则覆盖 */
 .brief-grid .brief-card {
   position: relative; /* 标题按钮的拉伸覆盖层以卡片为定位基准(v3.54:卡片由 <button> 改为容器) */
@@ -11739,6 +11728,7 @@ input[type="radio"] {
   gap: 10px;
   width: 100%;
   min-width: 0;
+  grid-column: span var(--span, 2);
   padding: 18px 20px 16px;
   border: 1px solid var(--dorami-card-bd);
   border-radius: var(--r-card);
@@ -11755,6 +11745,10 @@ input[type="radio"] {
 /* 头条双栏(三稿):左栏正文流,右栏 200px 评分与标签栏,hairline 分隔——右侧不再留白也不放图 */
 .brief-grid .brief-card.is-wide { grid-column: 1 / -1; padding: 20px 24px 18px; }
 .brief-grid .brief-card.is-split { display: grid; grid-template-columns: minmax(0, 1fr) 200px; column-gap: 32px; }
+/* ⅔ 宽卡(与同行 ⅓ 小卡分差 ≥ 1 时):也分栏,右栏收窄到 150px;半宽卡(.is-half)不分栏、与小卡同形制 */
+.brief-grid .brief-card.is-w4 { padding: 20px 24px 18px; }
+.brief-grid .brief-card.is-w4.is-split { grid-template-columns: minmax(0, 1fr) 150px; column-gap: 24px; }
+.brief-grid .brief-card.is-w4 .brief-card-aside { padding-left: 22px; }
 .brief-card-main { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .brief-card-aside { display: flex; flex-direction: column; gap: 14px; min-width: 0; padding-left: 28px; border-left: 1px solid var(--dorami-border-soft); }
 .brief-card-aside-score { display: flex; flex-direction: column; gap: 6px; }
@@ -11901,10 +11895,8 @@ input[type="radio"] {
 .brief-state.is-error .brief-state-title { color: var(--state-bad); }
 .brief-state-meta { font-size: 12px; line-height: 1.6; color: var(--dorami-faint); }
 .brief-state .action-button { margin-top: 6px; }
-@media (prefers-reduced-motion: reduce) {
-  .brief-grid .brief-card, .brief-card-go { transition: none; }
-  .brief-grid .brief-card.is-just-read { animation: none; box-shadow: 0 0 0 2px var(--dorami-accent), var(--sh-1); }
-}
+:root[data-motion="reduce"] .brief-grid .brief-card, :root[data-motion="reduce"] .brief-card-go { transition: none; }
+:root[data-motion="reduce"] .brief-grid .brief-card.is-just-read { animation: none; box-shadow: 0 0 0 2px var(--dorami-accent), var(--sh-1); }
 /* 报纸面窄于 720 时头条退回单栏,评分与标签栏横排落在摘要之下 */
 .brief-sheet { container-type: inline-size; }
 @container (max-width: 720px) {
@@ -12065,8 +12057,6 @@ input[type="radio"] {
 .interest-btn svg { width: 14px; height: 14px; }
 .interest-btn.is-primary { background: var(--dorami-accent); color: #fff; box-shadow: var(--sh-1); }
 .interest-btn.is-primary:hover { background: var(--dorami-accent-ink); color: #fff; }
-@media (prefers-reduced-motion: reduce) {
-}
 /* ≤1024 单列堆叠(同 .brief-sheet 的理由) */
 @media (max-width: 1024px) {
   .interest-ledger, .interest-sheet { grid-column: auto; }

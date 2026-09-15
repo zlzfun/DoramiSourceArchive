@@ -119,6 +119,13 @@ from services import article_analysis as article_analysis_service
 from services import taxonomy as taxonomy_service
 from services import podcast_catalog as podcast_catalog_service
 from services import aliyun_isi_config as aliyun_isi_config_service
+from services import bailian_speech_config as podcast_speech_config_service
+from config_bailian import BailianSpeechConfig
+from services.bailian_asr import (
+    BailianAsrAdmissionEstimator,
+    register_bailian_asr_worker,
+)
+from services.bailian_tts import make_premium_tts_provider
 from services.podcast_stage_policy import (
     PodcastStageDenied,
     PodcastStagePolicy,
@@ -625,15 +632,21 @@ podcast_artifact_store = PodcastArtifactStore(
 # The durable processing state machine is used for resumable ASR. Premium-guide
 # text and TTS use their smaller provider-neutral workflow below.
 podcast_processing_providers = PodcastProcessingProviderRegistry()
-_podcast_asr_admission_estimator = AliyunIsiAsrAdmissionEstimator()
-register_aliyun_isi_asr_worker(
-    podcast_processing_providers,
-    bundle=AliyunIsiAsrWorkerBundle(
-        artifact_store=podcast_artifact_store,
-        storage_config=settings.podcast_artifacts,
-    ),
-    admission_estimator=_podcast_asr_admission_estimator,
-)
+if settings.bailian_speech.enabled:
+    _podcast_asr_admission_estimator = BailianAsrAdmissionEstimator()
+    register_bailian_asr_worker(
+        podcast_processing_providers, estimator=_podcast_asr_admission_estimator
+    )
+else:
+    _podcast_asr_admission_estimator = AliyunIsiAsrAdmissionEstimator()
+    register_aliyun_isi_asr_worker(
+        podcast_processing_providers,
+        bundle=AliyunIsiAsrWorkerBundle(
+            artifact_store=podcast_artifact_store,
+            storage_config=settings.podcast_artifacts,
+        ),
+        admission_estimator=_podcast_asr_admission_estimator,
+    )
 podcast_full_analysis_service.register_full_analysis_worker(
     podcast_processing_providers,
     asr_estimator=_podcast_asr_admission_estimator,
@@ -656,7 +669,7 @@ def schedule_podcast_premium_guide(episode_id: str) -> bool:
         try:
             with Session(db_sink.engine) as session:
                 llm_config = daily_brief_service.resolve_llm_config(session)
-                aliyun_config = aliyun_isi_config_service.resolve_config(session)
+                aliyun_config = podcast_speech_config_service.resolve_config(session)
                 premium_threshold = podcast_premium_service.get_threshold(session)
                 episode = session.get(ArticleRecord, episode_id)
                 duration = 0.0
@@ -676,8 +689,10 @@ def schedule_podcast_premium_guide(episode_id: str) -> bool:
             if plan.should_synthesize_audio and (not aliyun_config.tts_configured or not voice):
                 raise RuntimeError("精品导读所需的 TTS 配置尚未就绪")
             tts_provider = (
-                AliyunIsiPremiumGuideTtsProvider(
+                make_premium_tts_provider(
                     aliyun_config,
+                    engine=db_sink.engine,
+                    episode_id=episode_id,
                     voice_profile=voice,
                     max_audio_bytes=podcast_artifact_store.max_bytes,
                 )
@@ -750,7 +765,7 @@ def schedule_forced_podcast_premium_guide(
     try:
         with Session(db_sink.engine) as session:
             llm_config = daily_brief_service.resolve_llm_config(session)
-            aliyun_config = aliyun_isi_config_service.resolve_config(session)
+            aliyun_config = podcast_speech_config_service.resolve_config(session)
         voice = settings.podcast.default_voice_profile
         if not llm_config.configured or not aliyun_config.tts_configured or not voice:
             raise podcast_premium_guide_service.PremiumGuideForceError(
@@ -785,8 +800,10 @@ def schedule_forced_podcast_premium_guide(
                 episode_id=episode_id,
                 config=settings.podcast,
                 text_provider=OpenAiCompatiblePremiumGuideTextProvider(llm_config),
-                tts_provider=AliyunIsiPremiumGuideTtsProvider(
+                tts_provider=make_premium_tts_provider(
                     aliyun_config,
+                    engine=db_sink.engine,
+                    episode_id=episode_id,
                     voice_profile=voice,
                     max_audio_bytes=podcast_artifact_store.max_bytes,
                 ),
@@ -831,7 +848,7 @@ def _podcast_asr_admission_ready() -> bool:
     """Whether a *new* ASR submission could be admitted (stricter than poll readiness)."""
 
     with Session(db_sink.engine) as session:
-        effective_aliyun = aliyun_isi_config_service.resolve_config(session)
+        effective_aliyun = podcast_speech_config_service.resolve_config(session)
     return podcast_processing_providers.stage_admission_ready("asr", effective_aliyun)
 
 
@@ -931,7 +948,7 @@ async def enqueue_podcast_processing_with_input(
 
             def _max_audio_seconds() -> int:
                 with Session(db_sink.engine) as session:
-                    return aliyun_isi_config_service.resolve_config(
+                    return podcast_speech_config_service.resolve_config(
                         session
                     ).asr_max_audio_seconds_per_file
 
@@ -2446,7 +2463,7 @@ async def execute_podcast_asr_worker_job() -> tuple[str, ...]:
                     # runner's accounting authority.  A concrete provider bundle
                     # must build its adapter/planner from policy.aliyun_isi rather
                     # than resolving KV a second time.
-                    effective_aliyun = aliyun_isi_config_service.resolve_config(
+                    effective_aliyun = podcast_speech_config_service.resolve_config(
                         session
                     )
                     session.rollback()
@@ -2455,7 +2472,17 @@ async def execute_podcast_asr_worker_job() -> tuple[str, ...]:
                     ):
                         break
                     policy = PodcastStagePolicy(
-                        settings.podcast, effective_aliyun
+                        settings.podcast,
+                        aliyun_isi=(
+                            effective_aliyun
+                            if not isinstance(effective_aliyun, BailianSpeechConfig)
+                            else None
+                        ),
+                        bailian_speech=(
+                            effective_aliyun
+                            if isinstance(effective_aliyun, BailianSpeechConfig)
+                            else None
+                        ),
                     )
                     step = worker(session, config=worker_config, policy=policy)
                 if not isinstance(step, AsrWorkerStep):
@@ -3211,7 +3238,7 @@ def ensure_default_subscriptions(username: str) -> None:
 
 # ==================== 阅读器 AI（用户面：翻译 / 问答）====================
 # translate/ask 已迁出至 api/routers/reader.py
-#（_require_reader_ai / _recent_subscribed_articles 随迁）。
+# （_require_reader_ai / _recent_subscribed_articles 随迁）。
 # 订阅生命周期（/api/subscriptions/*）、单订阅令牌拉取/检索
 # （/api/public/subscriptions/{id}/articles）、个人聚合拉取
 # （/api/public/feed/articles[.md]）已迁出至 api/routers/subscriptions.py

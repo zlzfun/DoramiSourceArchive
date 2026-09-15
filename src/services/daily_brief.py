@@ -1784,19 +1784,6 @@ async def generate_daily_brief(
             "near_miss_appendix": len(near_miss_appendix),
         })
 
-    # The synthetic brief is not produced by a collection job, so its successful
-    # persistence is the readiness signal.  Wake only users who subscribe to it;
-    # failures here must never roll back an already-published public brief.
-    try:
-        from services.personal_digest import notify_public_daily_brief_ready
-
-        await asyncio.to_thread(
-            notify_public_daily_brief_ready,
-            engine,
-            report_date=report_date,
-        )
-    except Exception as exc:  # noqa: BLE001 - personal fan-out is independent
-        logger.warning("日报[%s]：触发个人早报 revision 失败，等待巡检恢复: %s", report_date, exc)
 
     logger.info("日报[%s]：生成完成，收录 %d 条", report_date, content_obj.articles_count)
     set_progress("done", f"完成 · 收录 {content_obj.articles_count} 条")

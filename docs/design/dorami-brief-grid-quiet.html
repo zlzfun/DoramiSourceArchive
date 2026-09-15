@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>早报板块网格 · 1–8 张卡的版式候选 · 静默仪器样页</title>
+<style>
+/* ════════════════════════════════════════════════════════════════════
+   早报板块网格 · 余数怎么排(issue #74 第 3 点)· 静默仪器样页 · 2026-09-14 · 一稿
+
+   问题:板块网格是 repeat(auto-fill, minmax(320px, 1fr)),布局层不知道余数——4 张卡在三列容器下呈
+   「3 + 1」,右下角留白;骨架屏同病。现行只有两条规则:整报第一板块首张 is-lead 通栏、板块只有 1 张 is-wide 通栏。
+
+   本页把 1–8 张卡在五种策略下的结果并排,同一张数下结果相同的策略合并成一行,只看差异:
+     A 现状        auto-fill,余数留白。
+     B 尾行拉伸    按列数整行排,末行余 1 通栏、余 2 各半。
+     C 首行拉伸    余数放板块开头——板块内条目按分数降序,头卡恒是板块最高分,横跨有含义。
+     D 均分行      余 1 时向上一行借一张,末两行各 2;板块内只有整 / 半两种宽,永不通栏(1 张除外)。
+     E 错落        余数不通栏,用 ⅔ + ⅓ 配对(余 1 再镜像一行 ⅓ + ⅔),板块内出现三种宽度。
+     F 分值驱动    宽度跟着分数走(二稿,用户 idea):① 分数 ≥ T 的卡独占一行(绝对通栏);② 两卡并排时,分差 ≥ Δ 用
+                   ⅔ + ⅓,否则各半;③ 余 1 时头卡比第二张高 ≥ Δ 才通栏(相对通栏),否则头两行改 2 + 2 各按 ② 定;
+                   ④ 余 2 时头两张按 ② 配对;整行恒三小卡;两列容器不用 ⅔ + ⅓(⅓ 只有 246 宽)。板块内按分数降序。
+                   默认 T = 9.0(与「9+ 完整渐变」同档)、Δ = 1.0(一个整数档)。每一处横跨都有一个可说出口的理由。
+   实现口径(五种共通):网格改 6 等分单元 + 容器查询定列数(≥1000px 三列,否则两列),卡片 grid-column: span n;
+   ≥ ⅔ 宽的卡走 is-split(分数进右栏),半宽卡保持竖排。整报头版 is-lead 与板块策略正交:第一板块 = 头版通栏 +
+   策略(N−1)。骨架屏同规则。纪律:卡片内部零改动,只动 span;token 化,暗色自动翻转;动效零新增。
+   ════════════════════════════════════════════════════════════════════ */
+
+:root {
+  font-family: "PingFang SC", "SF Pro Display", "SF Pro Text", "Microsoft YaHei", system-ui, sans-serif;
+  color-scheme: light;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-serif: Georgia, "Times New Roman", "Songti SC", "Noto Serif CJK SC", serif;
+  --serif-num: Charter, Cambria, Baskerville, var(--font-serif);
+  --dorami-blue: #5b54e8; --dorami-blue-2: #7b6cf0;
+  --dorami-accent: #5b54e8; --dorami-accent-ink: #4a43d4;
+  --dorami-ink: #0b1220; --dorami-ink-2: #2b3445;
+  --dorami-muted: #5b6678; --dorami-faint: #64748b;
+  --dorami-canvas: #eef1f6; --dorami-surface: #ffffff; --dorami-soft: #f8fafc;
+  --dorami-wash: rgba(91, 84, 232, 0.08); --dorami-well: #f1f5f9;
+  --dorami-border: rgba(11, 18, 32, 0.09); --dorami-border-soft: rgba(11, 18, 32, 0.06);
+  --dorami-card-bd: transparent; --dorami-edge: rgba(255, 255, 255, 0.62);
+  --sh-1: 0 1px 2px rgba(11, 18, 32, 0.05), 0 1px 2px rgba(11, 18, 32, 0.04);
+  --sh-2: 0 1px 3px rgba(11, 18, 32, 0.05), 0 6px 16px rgba(11, 18, 32, 0.07);
+  --dorami-focus: rgba(91, 84, 232, 0.32);
+  --r-sm: 6px; --r-control: 10px; --r-card: 14px; --r-pill: 9999px;
+  --state-warn: #b45309; --state-bad: #e11d48;
+  --motion-fast: 150ms; --motion-medium: 240ms; --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ai-g1: #3f7bf6; --ai-g2: #8b52f4;
+  --rd-list-bg: var(--dorami-soft);
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --dorami-canvas: #0c0e13; --dorami-well: #15181f; --dorami-soft: #1a1e26;
+  --dorami-surface: #20252f; --dorami-wash: rgba(124, 112, 235, 0.13);
+  --dorami-ink: #f2f4f7; --dorami-ink-2: #d2d7df; --dorami-muted: #99a1ad; --dorami-faint: #828b97;
+  --dorami-border: rgba(255, 255, 255, 0.10); --dorami-border-soft: rgba(255, 255, 255, 0.07);
+  --dorami-card-bd: rgba(255, 255, 255, 0.08); --dorami-edge: rgba(255, 255, 255, 0.05);
+  --state-warn: #fbbf24; --state-bad: #fb7185;
+  --dorami-accent: #8b84f0; --dorami-accent-ink: #aaa4f6;
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sh-2: 0 1px 3px rgba(0, 0, 0, 0.4), 0 6px 16px rgba(0, 0, 0, 0.5);
+  --dorami-focus: rgba(124, 112, 235, 0.5);
+  --ai-g1: #6ea3ff; --ai-g2: #ab86ff;
+  --rd-list-bg: var(--dorami-well);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--dorami-canvas); color: var(--dorami-ink); font-size: 13px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: -2px; }
+svg { flex: none; }
+
+.page { padding: 26px 36px 72px; max-width: 1560px; margin: 0 auto; }
+.page-head { display: flex; align-items: center; gap: 14px; min-height: 48px; margin-bottom: 8px; }
+.page-title { font-size: 24px; font-weight: 800; letter-spacing: -0.01em; }
+.page-sub { font-size: 12.5px; color: var(--dorami-muted); max-width: 980px; line-height: 1.7; margin-bottom: 18px; }
+.page-sub b { color: var(--dorami-ink-2); font-weight: 600; }
+.head-tools { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.head-tool { width: 36px; height: 36px; display: grid; place-items: center; border-radius: var(--r-control); color: var(--dorami-faint); border: 1px solid var(--dorami-border); background: var(--dorami-surface); }
+.head-tool svg { width: 17px; height: 17px; }
+.seg { display: inline-flex; align-items: center; height: 32px; padding: 3px; border-radius: var(--r-control); background: color-mix(in srgb, var(--dorami-ink) 6%, transparent); gap: 2px; }
+.seg button { height: 26px; padding: 0 10px; border-radius: 8px; font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
+.seg button.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
+.seg-cap { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em; color: var(--dorami-faint); margin-right: 6px; }
+
+.legend { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin: 0 0 30px; }
+.legend-item { padding: 12px 14px; border-radius: var(--r-card); background: var(--dorami-surface); box-shadow: var(--sh-1), inset 0 1px 0 var(--dorami-edge); border: 1px solid var(--dorami-card-bd); }
+.legend-k { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.legend-k b { font-family: var(--serif-num); font-size: 18px; font-weight: 700; color: var(--dorami-accent-ink); }
+.legend-k span { font-size: 13px; font-weight: 700; }
+.legend p { font-size: 11.5px; color: var(--dorami-muted); line-height: 1.6; }
+
+.zone-head { display: flex; align-items: baseline; gap: 10px; margin: 38px 2px 12px; }
+.zone-title { font-size: 14px; font-weight: 700; }
+.zone-title b { font-family: var(--serif-num); font-size: 20px; font-weight: 700; color: var(--dorami-accent-ink); margin-right: 4px; }
+.zone-sub { font-size: 12px; color: var(--dorami-muted); }
+.row { display: grid; gap: 22px; align-items: start; grid-template-columns: minmax(0, 1fr) 300px; }
+.shell-note { font-size: 11.5px; font-weight: 500; line-height: 1.65; color: var(--dorami-faint); position: sticky; top: 18px; }
+.shell-note b { color: var(--dorami-ink-2); font-weight: 600; }
+.shell-note p + p { margin-top: 10px; }
+.variants { display: flex; flex-direction: column; gap: 16px; }
+
+/* 缩微报纸面 */
+.frame { border-radius: var(--r-card); overflow: hidden; border: 1px solid var(--dorami-border); box-shadow: var(--sh-2); background: var(--rd-list-bg); width: 1120px; max-width: 100%; }
+.page[data-cols="2"] .frame { width: 840px; }
+.brief-sheet-inner { padding: 22px 44px 30px; }
+.frame-cap { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em; color: var(--dorami-faint); }
+.frame-cap b { font-family: var(--serif-num); font-size: 15px; letter-spacing: 0; color: var(--dorami-accent-ink); font-weight: 700; }
+.frame-cap .names { color: var(--dorami-ink-2); letter-spacing: 0.04em; }
+.frame-cap .pat { margin-left: auto; letter-spacing: 0.04em; }
+.frame-cap .same { color: var(--dorami-faint); }
+
+.brief-sec { margin-top: 30px; }
+.brief-sec:first-of-type { margin-top: 0; }
+.brief-sec-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.brief-sec-title { font-size: 13px; font-weight: 700; letter-spacing: 0.04em; }
+.brief-sec-count { font-family: var(--mono); font-size: 11px; color: var(--dorami-faint); }
+.brief-sec-rule { flex: 1; height: 1px; background: var(--dorami-border); }
+
+/* 网格:6 等分单元,卡片按 span 落位(容器查询定列数在生产由 @container 承担,样页由 data-cols 模拟) */
+.brief-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; align-items: stretch; }
+.brief-card { display: flex; flex-direction: column; gap: 10px; width: 100%; padding: 18px 20px 16px; border: 1px solid var(--dorami-card-bd); border-radius: var(--r-card); background: var(--dorami-surface); box-shadow: var(--sh-1), inset 0 1px 0 var(--dorami-edge); text-align: left; transition: box-shadow var(--motion-medium) var(--motion-ease); grid-column: span var(--span, 2); }
+.brief-card:hover { border-color: var(--dorami-border); }
+.brief-card.is-wide { padding: 20px 24px 18px; }
+.brief-card.is-w4 { padding: 20px 24px 18px; }
+.brief-card.is-lead { padding: 24px 28px 20px; }
+.brief-card.is-blank { visibility: hidden; }
+.brief-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.brief-card-src { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.logo { width: 17px; height: 17px; border-radius: 5.5px; display: grid; place-items: center; font-size: 8px; font-weight: 700; color: #fff; }
+.brief-card-srcname { font-size: 12px; font-weight: 500; color: var(--dorami-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.brief-card-why-sep { width: 1px; height: 10px; background: var(--dorami-border); margin: 0 1px; }
+.brief-card-why { flex: none; overflow: hidden; text-overflow: ellipsis; display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 500; color: var(--dorami-faint); white-space: nowrap; letter-spacing: 0.01em; }
+.brief-card-why.is-interest, .brief-card-why.is-breaking { color: var(--dorami-accent-ink); font-weight: 600; }
+.brief-card-why.is-interest::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.brief-card-score { flex: none; font-family: var(--serif-num); font-size: 22px; font-weight: 700; line-height: 1; font-variant-numeric: lining-nums tabular-nums; background: linear-gradient(118deg, var(--ai-g1), var(--ai-g2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.brief-card-score.is-low { background: none; color: var(--dorami-faint); -webkit-text-fill-color: currentColor; }
+.brief-card-title { display: block; font-family: var(--font-serif); font-size: 17px; font-weight: 700; line-height: 1.4; }
+.brief-card-title-orig { display: block; margin-top: 3px; font-family: var(--font-serif); font-size: 12.5px; line-height: 1.45; color: var(--dorami-muted); font-weight: 400; }
+.brief-card-sum { display: block; font-size: 13.5px; line-height: 1.75; color: var(--dorami-ink-2); }
+.brief-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 2px; }
+.brief-card-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.brief-card-tags.is-stack { flex-direction: column; align-items: flex-start; gap: 6px; }
+.chip { display: inline-flex; align-items: center; min-height: 20px; padding: 0 7px; border-radius: var(--r-pill); background: var(--dorami-wash); color: var(--dorami-accent-ink); font-size: 11px; font-weight: 700; line-height: 1; white-space: nowrap; }
+.brief-card-time { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; font-size: 11.5px; color: var(--dorami-faint); white-space: nowrap; }
+.brief-card-time svg { width: 13px; height: 13px; opacity: 0; transform: translate(-2px, 2px); transition: opacity var(--motion-fast) ease, transform var(--motion-fast) var(--motion-ease); }
+.brief-card:hover .brief-card-time svg { opacity: 1; transform: none; color: var(--dorami-accent-ink); }
+/* 分栏卡(≥ ⅔ 宽):分数进右栏 */
+.brief-card.is-split { display: grid; grid-template-columns: minmax(0, 1fr) 200px; column-gap: 32px; }
+.brief-card.is-w4.is-split { grid-template-columns: minmax(0, 1fr) 150px; column-gap: 24px; }
+.brief-card-main { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.brief-card-aside { display: flex; flex-direction: column; gap: 14px; min-width: 0; padding-left: 28px; border-left: 1px solid var(--dorami-border-soft); }
+.brief-card.is-w4 .brief-card-aside { padding-left: 22px; }
+.brief-card-aside-score { display: flex; flex-direction: column; gap: 6px; }
+.brief-card-aside .brief-card-score { font-size: 32px; }
+.brief-card.is-lead .brief-card-aside .brief-card-score { font-size: 40px; }
+.brief-card-aside-cap { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; color: var(--dorami-faint); }
+.brief-card.is-lead .brief-card-title { font-size: 24px; line-height: 1.3; }
+.brief-card.is-lead .brief-card-title-orig { font-size: 13.5px; margin-top: 4px; }
+.brief-card.is-lead .brief-card-sum { font-size: 14.5px; line-height: 1.8; }
+
+/* 报头(整页节奏画板) */
+.brief-mast { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; padding-bottom: 20px; margin-bottom: 26px; border-bottom: 1px solid var(--dorami-border); }
+.brief-mast-kicker { font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; color: var(--dorami-accent-ink); }
+.brief-mast-title { margin-top: 10px; font-family: var(--serif-num); font-size: 36px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.1; font-variant-numeric: lining-nums tabular-nums; }
+.brief-mast-title small { margin-left: 12px; font-size: 16px; font-weight: 400; letter-spacing: 0; color: var(--dorami-muted); }
+.brief-mast-sub { margin-top: 10px; font-size: 13px; font-weight: 500; color: var(--dorami-muted); }
+.toolbar { display: flex; align-items: center; gap: 18px; margin: 0 0 14px; flex-wrap: wrap; }
+.param { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: var(--dorami-ink-2); }
+.param input { width: 64px; height: 28px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--dorami-border); background: var(--dorami-surface); color: var(--dorami-ink); font: inherit; font-variant-numeric: tabular-nums; }
+.param-hint { font-size: 11.5px; color: var(--dorami-faint); }
+.frame-notes { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: -4px 0 14px; font-family: var(--mono); font-size: 10.5px; color: var(--dorami-faint); letter-spacing: 0.02em; }
+.frame-notes span::before { content: '·'; margin-right: 6px; color: var(--dorami-border); }
+</style>
+</head>
+<body>
+<div class="page" id="page" data-cols="3">
+  <div class="page-head">
+    <h1 class="page-title">早报板块网格 · 1–8 张卡的版式候选</h1>
+    <div class="head-tools">
+      <span class="seg-cap">列数</span>
+      <div class="seg" id="colseg"><button data-cols="3" class="is-on">三列 · 1120</button><button data-cols="2">两列 · 840</button></div>
+      <button class="head-tool" id="theme" title="切换亮暗"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/></svg></button>
+    </div>
+  </div>
+  <p class="page-sub">板块内条目已按分数降序(重大事件恒前 → 兴趣 → 质量)。同一张数下结果相同的策略合并显示,只看差异;每帧右上角是行模式简写。<b>三列</b>对应生产 1120 宽报纸面(内容 1032,每小卡 335);<b>两列</b>对应窗口收窄。整报头版通栏与板块策略正交,只在最后一块画板里出现。</p>
+  <div class="toolbar" style="margin-bottom:18px"><span class="seg-cap">F 参数</span><label class="param">通栏阈值 T <input id="pSolo" type="number" step="0.1" min="6" max="10" value="9.0"></label><label class="param">分差 Δ <input id="pGap" type="number" step="0.1" min="0" max="3" value="1.0"></label><span class="param-hint">改了即时重排全页;板块内一律按分数降序(F 的前提,也是 issue #74 板块重排时顺手定的口径)</span></div>
+  <div class="legend">
+    <div class="legend-item"><div class="legend-k"><b>A</b><span>现状</span></div><p>auto-fill,余数留白。第一板块首张通栏、板块 1 张通栏,其余全小卡。</p></div>
+    <div class="legend-item"><div class="legend-k"><b>B</b><span>尾行拉伸</span></div><p>整行排满,末行余 1 通栏、余 2 各半。余数在尾,读者读到最后才见宽卡。</p></div>
+    <div class="legend-item"><div class="legend-k"><b>C</b><span>首行拉伸</span></div><p>余数放板块开头。头卡恒是板块最高分,横跨有含义,与整报头版同一语法。</p></div>
+    <div class="legend-item"><div class="legend-k"><b>D</b><span>均分行</span></div><p>余 1 时向上一行借一张,末两行各 2。板块内只有整 / 半两种宽,永不通栏。</p></div>
+    <div class="legend-item"><div class="legend-k"><b>E</b><span>错落</span></div><p>余数用 ⅔ + ⅓ 配对,余 1 再镜像一行。三种宽度,节奏最活,也最不安静。</p></div>
+    <div class="legend-item"><div class="legend-k"><b>F</b><span>分值驱动</span></div><p>≥ T 独占一行;并排两卡分差 ≥ Δ 用 ⅔ + ⅓,否则各半;余 1 时头卡够高才通栏,否则 2 + 2。</p></div>
+  </div>
+
+  <div id="zones"></div>
+
+  <div class="zone-head"><span class="zone-title">F · 同一张数换分数</span><span class="zone-sub">规则对分数的反应;每帧上方一行是它做每个决定的理由</span></div>
+  <div class="row">
+    <div class="variants" id="scenarios"></div>
+    <div class="shell-note">
+      <p><b>四条规则,两个数</b>:T(绝对通栏线,默认 9.0,与「9+ 完整渐变」同档——见渐变即值得看,通栏也是同一个信号)与 Δ(「显著高于」的分差,默认 1.0,一个整数档;评分复评本身有 ±0.5 摆动,1.0 以下的差异不该驱动版式)。</p>
+      <p><b>每一处横跨都有理由</b>:通栏 = 过线或比第二张高一档;⅔ = 比同行那张高一档;各半 = 咬得紧。没有「因为余数」而变宽的卡。</p>
+      <p><b>代价</b>:板块内顺序必须是分数降序(现状是 兴趣通道 → 质量通道 再各按分数,命中的 6.6 会排在 8.0 前面);同一天重编后分数快照不变,版式稳定;跨天则随分数自然变化——这是想要的「灵活」,不是抖动。</p>
+      <p><b>两列容器</b>:⅓ 只有 246 宽,放不下衬线标题,故只保留 通栏 / 各半 两种,余 1 通栏落板块头。</p>
+    </div>
+  </div>
+
+  <div class="zone-head"><span class="zone-title">整页节奏</span><span class="zone-sub">同一份早报换策略看整体;第一板块 = 头版通栏 + 策略(N−1)</span></div>
+  <div class="row">
+    <div>
+      <div class="toolbar">
+        <span class="seg-cap">策略</span><div class="seg" id="polseg"></div>
+        <span class="seg-cap">分布</span><div class="seg" id="preseg"></div>
+      </div>
+      <div class="frame" id="fullframe"></div>
+    </div>
+    <div class="shell-note">
+      <p><b>典型日</b>:2 条重大事件 + 10 篇精选,落成 5 个板块(2 / 4 / 3 / 1 / 2)。<b>清淡日</b>:无重大事件,8 篇落 4 个板块(1 / 4 / 2 / 1)。<b>忙日</b>:2 + 10 落 3 个板块(2 / 7 / 3)——板块少而长,余数问题最显。</p>
+      <p><b>看什么</b>:一页里通栏卡出现几次、在哪;板块之间的节奏是否重复(每个板块都以通栏开头会变成「标题 + 大卡」的固定套路);半宽卡与小卡混排时视线是否跳。</p>
+      <p><b>头版</b>:现状 = 第一板块首张;板块固定顺序后它恒落「重大事件」或「模型发布」。是否改成「全报最高分那张」另议,本页按现状画。</p>
+    </div>
+  </div>
+</div>
+
+<script>
+const UNIT = 6;
+const ARTICLES = [
+  { src: 'OpenAI', bg: '#0f172a', lt: 'O', why: '', score: 9.1, title: 'OpenAI 发布 GPT-5.6 Turbo:推理成本再降一半,同步开放批处理 API', orig: 'Introducing GPT-5.6 Turbo', sum: 'OpenAI 今日发布 GPT-5.6 Turbo,在保持 GPT-5.6 推理质量的前提下把输出价格降至一半,批处理 API 同步上线;官方博客与 X 账号同时发布,多家媒体跟进。', tags: ['OpenAI', 'GPT-5.6'], time: '3 小时前' },
+  { src: 'Anthropic 博客', bg: '#d97757', lt: 'A', why: 'interest:兴趣 · Claude', score: 8.8, title: 'Claude Code 新增后台代理:任务可离线继续执行并回传结果', orig: 'Background agents in Claude Code', sum: 'Anthropic 为 Claude Code 加入后台代理,长任务可脱离终端继续跑并在完成后回传摘要,面向 Pro 与 Team 用户开放。', tags: ['Anthropic', 'Claude Code'], time: '4 小时前' },
+  { src: '量子位', bg: '#0ea5e9', lt: '量', why: 'interest:兴趣 · 开源模型', score: 8.2, title: '智谱开源 GLM-5.3 全系权重,Agent 基准超越闭源对手', orig: '', sum: '智谱一次性开源 GLM-5.3 全系权重与推理框架,在 AgentBench 与 SWE-bench 上超过同级闭源模型,并提供本地部署工具链。', tags: ['智谱', '开源模型'], time: '2 小时前' },
+  { src: 'DeepMind', bg: '#2563eb', lt: 'D', why: '', score: 8.0, title: 'Gemini 3.8 Pro 向所有开发者开放百万上下文 API,定价不变', orig: 'Gemini 3.8 Pro: 1M context for everyone', sum: 'Google DeepMind 宣布 Gemini 3.8 Pro 的百万 token 上下文窗口对全部 API 用户开放,价格维持现状。', tags: ['Google', 'Gemini'], time: '5 小时前' },
+  { src: 'The Decoder', bg: '#7c3aed', lt: 'TD', why: '', score: 7.4, title: 'Mistral 发布 Medium 4,主打欧洲企业本地部署与合规', orig: 'Mistral launches Medium 4 with on-prem focus', sum: 'Mistral 发布 Medium 4,强调可在企业自有 GPU 上部署,并附带面向欧盟 AI 法案的合规文档;基准与 GPT-5.6 mini 持平。', tags: ['Mistral'], time: '6 小时前' },
+  { src: 'Hugging Face Daily Papers', bg: '#f59e0b', lt: 'HF', why: 'interest:兴趣 · Agent', score: 6.6, title: '面向长程 Agent 的记忆压缩:一种可验证的检索预算方法', orig: 'Memory Compression for Long-Horizon Agents with Verifiable Retrieval Budgets', sum: '论文把 Agent 记忆检索预算显式化并可验证,在 GAIA 长程任务上以 40% 检索开销取得持平效果。', tags: ['Agent', '论文'], time: '8 小时前' },
+  { src: 'IT之家 AI', bg: '#d9232e', lt: 'IT', why: '', score: 6.3, title: '字节豆包 2.5 上线视频理解,支持 10 分钟长视频问答', orig: '', sum: '豆包 2.5 在网页端与 App 同步上线视频理解,可对 10 分钟以内视频逐段提问。', tags: ['字节', '豆包'], time: '7 小时前' },
+  { src: '新智元', bg: '#111827', lt: '新', why: '', score: 5.8, title: '消息称 xAI 正在训练 Grok 5,参数规模较 Grok 4.6 翻倍', orig: '', sum: '据知情人士,xAI 已启动 Grok 5 训练,目标年内发布;官方未回应。', tags: ['xAI', 'Grok'], time: '9 小时前' },
+  { src: '机器之心', bg: '#1d4ed8', lt: '机', why: '', score: 7.9, title: 'Meta 开源 Llama 5 中等尺寸系列,首次原生支持工具调用与结构化输出', orig: '', sum: 'Meta 发布 Llama 5 8B / 34B 两档开源权重,原生支持函数调用与 JSON 约束输出,许可证与 Llama 4 一致。', tags: ['Meta', 'Llama'], time: '4 小时前' },
+  { src: 'X · OpenAI', bg: '#000000', lt: 'X', why: '', score: 7.2, title: 'OpenAI:Codex 云端代理本周起对 Plus 用户开放,每日额度提升至 300 次', orig: '', sum: 'OpenAI 官方账号宣布 Codex 云端代理向 Plus 用户开放,并把每日任务额度从 100 次提到 300 次。', tags: ['OpenAI', 'Codex'], time: '1 小时前' },
+  { src: 'Simon Willison', bg: '#475569', lt: 'S', why: 'interest:兴趣 · Claude Code', score: 6.9, title: '用 Claude Code 一夜重写我的博客构建链:三次失败与最终可用的提示词结构', orig: 'Rewriting my blog build pipeline overnight with Claude Code', sum: '作者记录了把十年老构建脚本迁到新工具链的完整过程,对 Agent 工程实践有直接参考价值。', tags: ['Claude Code', '工程实践'], time: '11 小时前' },
+  { src: 'Import AI', bg: '#0f766e', lt: 'IA', why: '', score: 6.1, title: 'Jack Clark:算力管制之外,前沿实验室正在用「评估协议」互相牵制', orig: 'Import AI 412: evaluation protocols as soft governance', sum: '本期 Import AI 讨论前沿实验室之间以共享评估协议形成的软性治理,附三篇论文速评。', tags: ['治理', 'Newsletter'], time: '12 小时前' },
+];
+const P = { solo: 9.0, gap: 1.0 };
+const f1 = (x) => Number(x).toFixed(1);
+function policyF(n, cols, items) {
+  const s = items.slice(0, n).map((a) => a.score);
+  const rows = [], notes = [];
+  let i = 0;
+  while (i < n && s[i] >= P.solo) { rows.push([6]); notes.push(`${f1(s[i])} ≥ ${f1(P.solo)} 通栏`); i++; }
+  let rest = s.slice(i);
+  const pair = (a, b) => {
+    if (cols === 3 && a - b >= P.gap) { notes.push(`${f1(a)} − ${f1(b)} = ${f1(a - b)} ≥ ${f1(P.gap)} ⅔ + ⅓`); return [4, 2]; }
+    notes.push(`${f1(a)} − ${f1(b)} = ${f1(a - b)} 各半`); return [3, 3];
+  };
+  if (rest.length === 1) { rows.push([6]); notes.push(`${f1(rest[0])} 单卡通栏`); rest = []; }
+  if (cols === 3) {
+    const r = rest.length % 3;
+    if (rest.length && r === 1) {
+      if (rest[0] - rest[1] >= P.gap) { rows.push([6]); notes.push(`${f1(rest[0])} − ${f1(rest[1])} = ${f1(rest[0] - rest[1])} ≥ ${f1(P.gap)} 头卡通栏`); rest = rest.slice(1); }
+      else { notes.push(`${f1(rest[0])} − ${f1(rest[1])} = ${f1(rest[0] - rest[1])} < ${f1(P.gap)} 头两行 2 + 2`); rows.push(pair(rest[0], rest[1])); rows.push(pair(rest[2], rest[3])); rest = rest.slice(4); }
+    } else if (rest.length && r === 2) { rows.push(pair(rest[0], rest[1])); rest = rest.slice(2); }
+    while (rest.length) { rows.push([2, 2, 2]); rest = rest.slice(3); }
+  } else {
+    if (rest.length % 2 === 1) { rows.push([6]); notes.push(`${f1(rest[0])} 余 1 头卡通栏`); rest = rest.slice(1); }
+    while (rest.length) { rows.push([3, 3]); rest = rest.slice(2); }
+  }
+  return { spans: rows.flat(), notes };
+}
+const POLICIES = {
+  A: { name: '现状', fn: (n, cols) => n === 1 ? [UNIT] : Array(n).fill(UNIT / cols) },
+  B: { name: '尾行拉伸', fn: (n, cols) => { const s = UNIT / cols, full = Math.floor(n / cols), r = n % cols; const out = Array(full * cols).fill(s); if (r) out.push(...Array(r).fill(UNIT / r)); return out; } },
+  C: { name: '首行拉伸', fn: (n, cols) => { const s = UNIT / cols, full = Math.floor(n / cols), r = n % cols; const out = r ? Array(r).fill(UNIT / r) : []; out.push(...Array(full * cols).fill(s)); return out; } },
+  D: { name: '均分行', fn: (n, cols) => { if (!n) return []; const rows = Math.ceil(n / cols), base = Math.floor(n / rows), extra = n % rows; const out = []; for (let i = 0; i < rows; i++) { const k = base + (i < extra ? 1 : 0); out.push(...Array(k).fill(UNIT / k)); } return out; } },
+  E: { name: '错落', fn: (n, cols) => { if (cols !== 3) return POLICIES.C.fn(n, cols); if (n === 1) return [6]; if (n === 2) return [3, 3]; const r = n % 3; if (r === 0) return Array(n).fill(2); if (r === 1) return [4, 2, 2, 4, ...Array(n - 4).fill(2)]; return [4, 2, ...Array(n - 2).fill(2)]; } },
+  F: { name: '分值驱动', fn: policyF },
+};
+function layout(k, n, cols, items) { const out = POLICIES[k].fn(n, cols, items); return Array.isArray(out) ? { spans: out, notes: [] } : out; }
+const bySc = (arr) => [...arr].sort((a, b) => b.score - a.score);
+const SCENARIOS = [
+  { n: 2, scores: [9.2, 8.8], cap: '两张都够高' },
+  { n: 2, scores: [8.4, 7.1], cap: '分差够大' },
+  { n: 2, scores: [8.0, 7.8], cap: '分差不够' },
+  { n: 4, scores: [9.1, 7.4, 7.2, 6.8], cap: '头卡过绝对线' },
+  { n: 4, scores: [8.4, 7.1, 6.9, 6.2], cap: '头卡相对够高' },
+  { n: 4, scores: [8.2, 8.0, 7.4, 6.6], cap: '前两张咬得紧 → 2 + 2 各半' },
+  { n: 4, scores: [8.0, 7.6, 7.5, 6.3], cap: '2 + 2,第二行拉开' },
+  { n: 5, scores: [8.6, 7.2, 7.0, 6.8, 6.5], cap: '余 2,头对拉开' },
+  { n: 5, scores: [7.9, 7.6, 7.2, 6.9, 6.4], cap: '余 2,头对咬紧' },
+  { n: 7, scores: [8.9, 7.7, 7.5, 7.1, 6.8, 6.6, 6.2], cap: '余 1,头卡相对够高' },
+];
+const PRESETS = {
+  典型日: [['重大事件', 2], ['模型发布', 4], ['行业资讯', 3], ['开源动态', 1], ['学术论文', 2]],
+  清淡日: [['模型发布', 1], ['行业资讯', 4], ['学术论文', 2], ['工程实践', 1]],
+  忙日: [['重大事件', 2], ['模型发布', 7], ['行业资讯', 3]],
+};
+const GO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg>';
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function whyNode(a, breaking) {
+  if (breaking) return '<span class="brief-card-why is-breaking">重大事件 · 官方一手</span>';
+  if (a.why) { const [cls, txt] = a.why.split(':'); return `<span class="brief-card-why is-${cls}">${esc(txt)}</span>`; }
+  return '<span class="brief-card-why">新闻价值入选</span>';
+}
+function card(a, span, opts = {}) {
+  const lead = !!opts.lead; const split = span >= 4 || lead;
+  const cls = ['brief-card', lead ? 'is-lead' : '', !lead && span === 6 ? 'is-wide' : '', span === 4 ? 'is-w4' : '', span === 3 ? 'is-half' : '', split ? 'is-split' : ''].filter(Boolean).join(' ');
+  const scoreCls = a.score < 6 ? 'brief-card-score is-low' : 'brief-card-score';
+  const src = `<span class="brief-card-src"><span class="logo" style="background:${a.bg}">${a.lt}</span><span class="brief-card-srcname">${esc(a.src)}</span>${split ? '' : '<span class="brief-card-why-sep"></span>' + whyNode(a, opts.breaking)}</span>`;
+  const title = `<span class="brief-card-title">${esc(a.title)}</span>${a.orig ? `<span class="brief-card-title-orig">${esc(a.orig)}</span>` : ''}`;
+  const chips = a.tags.map((t) => `<span class="chip">${esc(t)}</span>`).join('');
+  const time = `<span class="brief-card-time">${a.time} ${GO}</span>`;
+  const style = `style="--span:${lead ? 6 : span}"`;
+  if (split) {
+    return `<button class="${cls}" ${style}><span class="brief-card-main"><span class="brief-card-head">${src}${whyNode(a, opts.breaking)}</span>${title}<span class="brief-card-sum">${esc(a.sum)}</span><span class="brief-card-foot">${time}</span></span><span class="brief-card-aside"><span class="brief-card-aside-score"><span class="${scoreCls}">${a.score.toFixed(1)}</span><span class="brief-card-aside-cap">新闻价值</span></span><span class="brief-card-tags is-stack">${chips}</span></span></button>`;
+  }
+  return `<button class="${cls}" ${style}><span class="brief-card-head">${src}<span class="${scoreCls}">${a.score.toFixed(1)}</span></span>${title}<span class="brief-card-sum">${esc(a.sum)}</span><span class="brief-card-foot"><span class="brief-card-tags">${chips}</span>${time}</span></button>`;
+}
+function pattern(spans, cols) {
+  const small = UNIT / cols; const rows = []; let row = [], acc = 0;
+  spans.forEach((s) => { row.push(s); acc += s; if (acc >= UNIT) { rows.push(row); row = []; acc = 0; } });
+  if (row.length) rows.push(row);
+  const lab = { 2: '⅓', 3: '½', 4: '⅔', 6: '通栏' };
+  return rows.map((r) => {
+    if (r.every((s) => s === r[0])) { const w = r[0]; if (w === 6) return '通栏'; if (w === small) return `${r.length} 小`; return `${r.length} 半`; }
+    return r.map((s) => lab[s]).join(' + ');
+  }).join('  /  ');
+}
+function section(title, n, spans, opts = {}) {
+  const pool = opts.items || ARTICLES.slice(0, n);
+  const cards = spans.map((s, i) => card(pool[i], s, { lead: opts.lead && i === 0, breaking: opts.breaking }));
+  return `<section class="brief-sec"><div class="brief-sec-head"><span class="brief-sec-title">${title}</span><span class="brief-sec-count">${n}</span><span class="brief-sec-rule"></span></div><div class="brief-grid">${cards.join('')}</div></section>`;
+}
+function notesNode(notes) { return notes.length ? `<div class="frame-notes">${notes.map((t) => `<span>${t}</span>`).join('')}</div>` : ''; }
+function renderZones() {
+  const cols = Number(document.getElementById('page').dataset.cols);
+  const host = document.getElementById('zones'); host.innerHTML = '';
+  for (let n = 1; n <= 8; n++) {
+    const groups = new Map();
+    const items = ARTICLES.slice(0, n);
+    Object.keys(POLICIES).forEach((k) => { const { spans, notes } = layout(k, n, cols, items); const key = JSON.stringify(spans); if (!groups.has(key)) groups.set(key, { spans, keys: [], notes: [] }); const g = groups.get(key); g.keys.push(k); if (k === 'F') g.notes = notes; });
+    const variants = [...groups.values()].map((g) => `<div class="frame"><div class="brief-sheet-inner"><div class="frame-cap"><b>${g.keys.join(' = ')}</b><span class="names">${g.keys.map((k) => POLICIES[k].name).join(' = ')}</span>${g.keys.length > 1 ? '<span class="same">结果相同</span>' : ''}<span class="pat">${pattern(g.spans, cols)}</span></div>${notesNode(g.notes)}${section('模型发布', n, g.spans, { items })}</div></div>`).join('');
+    const note = NOTES[n] || '';
+    host.insertAdjacentHTML('beforeend', `<div class="zone-head"><span class="zone-title"><b>${n}</b>张卡</span><span class="zone-sub">${groups.size} 种不同结果</span></div><div class="row"><div class="variants">${variants}</div><div class="shell-note">${note}</div></div>`);
+  }
+}
+const NOTES = {
+  1: '<p>五种策略同解:单卡通栏、分数进右栏。现状已如此。</p>',
+  2: '<p>只有「留白」与「各半」两解。各半时两张卡 509 宽,分数仍在卡头右缘(半宽不分栏——分栏后主栏只剩 277,标题会折成三行)。</p>',
+  3: '<p>三列下五种策略同解;两列下出现余 1,B 与 C 只差通栏在尾还是在头。</p>',
+  4: '<p><b>分歧最大的一档</b>。B「3 + 通栏」把最低分做成最大的卡,语义倒置;C「通栏 + 3」头卡是板块最高分,顺;D「2 + 2」四张等权,你担心的「笨」就在这里——请看两行半宽卡是否像四块砖;E 错落把 ⅔ 卡与 ⅓ 卡配对,节奏最活,但板块里三种宽度。</p>',
+  5: '<p>B 与 D 同解(3 + 2 半),C 是 2 半 + 3,E 是 ⅔⅓ + 3。余 2 时没有通栏,分歧只剩「宽的在头还是在尾」。</p>',
+  6: '<p>整除,五种策略同解。三列两行整齐;这是网格最好看的状态,也是设计目标的参照。</p>',
+  7: '<p>与 4 张同型(余 1),多一行整行。D 的「3 + 2 + 2」是否比 B/C 的两行整 + 一张通栏更平,在这里比 4 张更看得出。</p>',
+  8: '<p>与 5 张同型(余 2)。板块到 8 张已是忙日的极限(target 10 + 头条 2 落在 3 个板块里)。</p>',
+};
+function renderScenarios() {
+  const cols = Number(document.getElementById('page').dataset.cols);
+  const host = document.getElementById('scenarios');
+  host.innerHTML = SCENARIOS.map((sc) => {
+    const items = sc.scores.map((score, i) => ({ ...ARTICLES[(i * 3 + sc.n) % ARTICLES.length], score }));
+    const { spans, notes } = layout('F', sc.n, cols, items);
+    return `<div class="frame"><div class="brief-sheet-inner"><div class="frame-cap"><b>${sc.n}</b><span class="names">${sc.scores.map(f1).join(' / ')}</span><span class="same">${sc.cap}</span><span class="pat">${pattern(spans, cols)}</span></div>${notesNode(notes)}${section('模型发布', sc.n, spans, { items })}</div></div>`;
+  }).join('');
+}
+function renderFull() {
+  const cols = Number(document.getElementById('page').dataset.cols);
+  const pol = document.querySelector('#polseg .is-on').dataset.k; const pre = document.querySelector('#preseg .is-on').dataset.k;
+  const secs = PRESETS[pre]; let offset = 0; const total = secs.reduce((s, x) => s + x[1], 0);
+  const html = secs.map(([title, n], i) => {
+    const breaking = title === '重大事件';
+    const items = bySc(Array.from({ length: n }, (_, j) => ARTICLES[(offset + j) % ARTICLES.length]));
+    let spans; let lead = false;
+    if (i === 0) { lead = true; spans = [6, ...layout(pol, n - 1, cols, items.slice(1)).spans]; } else spans = layout(pol, n, cols, items).spans;
+    const out = section(title, n, spans, { lead, breaking, items });
+    offset = (offset + n) % ARTICLES.length; return out;
+  }).join('');
+  const breakingN = secs.filter((s) => s[0] === '重大事件').reduce((s, x) => s + x[1], 0);
+  document.getElementById('fullframe').innerHTML = `<div class="brief-sheet-inner" style="padding-top:34px"><header class="brief-mast"><div><div class="brief-mast-kicker">我的早报 · 第 1 版 · 09:01 生成</div><h1 class="brief-mast-title">9月14日<small>周一 · 今天</small></h1><p class="brief-mast-sub">${breakingN ? breakingN + ' 条重大事件 · ' : ''}${total - breakingN} 篇精选 · 3 篇命中你的兴趣 · 来自 8 个来源</p></div></header>${html}</div>`;
+}
+function seg(id, keys, names, onchange, initial) {
+  const el = document.getElementById(id);
+  el.innerHTML = keys.map((k, i) => `<button data-k="${k}" class="${k === initial ? 'is-on' : ''}">${names[i]}</button>`).join('');
+  el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; el.querySelectorAll('button').forEach((x) => x.classList.toggle('is-on', x === b)); onchange(); });
+}
+seg('polseg', Object.keys(POLICIES), Object.entries(POLICIES).map(([k, p]) => `${k} · ${p.name}`), renderFull, 'F');
+seg('preseg', Object.keys(PRESETS), Object.keys(PRESETS), renderFull, '典型日');
+document.getElementById('colseg').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; document.querySelectorAll('#colseg button').forEach((x) => x.classList.toggle('is-on', x === b)); document.getElementById('page').dataset.cols = b.dataset.cols; renderAll(); });
+function renderAll() { renderZones(); renderScenarios(); renderFull(); }
+['pSolo', 'pGap'].forEach((id) => document.getElementById(id).addEventListener('input', (e) => { const v = Number(e.target.value); if (!Number.isFinite(v)) return; if (id === 'pSolo') P.solo = v; else P.gap = v; renderAll(); }));
+document.getElementById('theme').addEventListener('click', () => { const r = document.documentElement; r.dataset.theme = r.dataset.theme === 'dark' ? '' : 'dark'; });
+renderAll();
+</script>
+</body>
+</html>

@@ -228,7 +228,9 @@ def test_interest_and_personal_brief_api_are_subscription_strict(monkeypatch, tm
         ).status_code == 404
 
 
-def test_personal_brief_accepts_persisted_public_brief_without_source_state(monkeypatch, tmp_path):
+def test_personal_brief_ignores_subscribed_public_brief(monkeypatch, tmp_path):
+    """issue #74:公共日报是文章容器的主菜,不是早报素材——订阅了它也不进范围、不进条目。"""
+
     app_module, sink, tag_id = _setup(monkeypatch, tmp_path)
     local_now = dt.datetime.now(dt.timezone(dt.timedelta(hours=8)))
     now = local_now.isoformat()
@@ -284,11 +286,8 @@ def test_personal_brief_accepts_persisted_public_brief_without_source_state(monk
         _login(client, "alice")
         edition = client.post("/api/reader/briefs/today/ensure").json()["edition"]
         assert edition["status"] == "ready", edition.get("error")
-        assert "dorami_daily_brief" in edition["expected_source_ids"]
-        assert {item["article_id"] for item in edition["items"]} == {
-            "article-a",
-            f"daily_brief_{report_date}",
-        }
+        assert "dorami_daily_brief" not in edition["expected_source_ids"]
+        assert {item["article_id"] for item in edition["items"]} == {"article-a"}
 
 
 def test_admin_can_configure_interest_top_n_and_must_classify_entities(monkeypatch, tmp_path):
@@ -751,68 +750,6 @@ def test_source_staleness_marks_sync_stale_separately_from_content_fallback(monk
             .where(PersonalDigestItemRecord.edition_id == completed.id)
         ).all() == ["article-a"]
 
-
-def test_public_daily_brief_missing_today_marks_sync_stale(monkeypatch, tmp_path):
-    _app_module, sink, _tag_id = _setup(monkeypatch, tmp_path)
-    from api.routers import personal_briefs
-    from models.analysis_contracts import DigestGenerationReason
-    from services import personal_digest
-
-    current = dt.datetime.combine(
-        dt.datetime.now(personal_digest.SHANGHAI).date(),
-        dt.time(8, 31),
-        personal_digest.SHANGHAI,
-    )
-    with Session(sink.engine) as session:
-        session.add(AppSettingRecord(key="daily_brief_enabled", value="true"))
-        session.add(ReaderSubscriptionRecord(
-            owner_username="alice",
-            name="Public brief",
-            filters_json='{"source_ids":"dorami_daily_brief"}',
-            delivery_policy_json="{}",
-            token_hash="hash-daily",
-            token_preview="hash-daily",
-            is_active=True,
-            created_at=current.isoformat(),
-            updated_at=current.isoformat(),
-        ))
-        old = ArticleRecord(
-            id="daily_brief_yesterday",
-            title="Yesterday",
-            content_type="daily_brief",
-            source_id="dorami_daily_brief",
-            source_url="",
-            publish_date=(current.date() - dt.timedelta(days=1)).isoformat(),
-            fetched_date=(current - dt.timedelta(hours=12)).isoformat(),
-            has_content=True,
-            content="old brief",
-        )
-        session.add(old)
-        session.flush()
-        session.add(ArticleAnalysisRecord(
-            article_id=old.id,
-            status="succeeded",
-            tagging_status="succeeded",
-            quality_score=8.0,
-            created_at=current.isoformat(),
-            updated_at=current.isoformat(),
-        ))
-        session.commit()
-        pending = personal_digest.start_personal_digest_edition(
-            session,
-            "alice",
-            now=current,
-            generation_reason=DigestGenerationReason.FIRST_OPEN,
-            first_open_at=current,
-        ).edition
-        assert pending is not None
-        assert "dorami_daily_brief" in json.loads(pending.due_source_ids_json)
-
-        generated = personal_briefs.process_pending_edition(session, pending, now=current)
-
-        # 昨天的日报不算今天的就绪:立即生成,但标 sync_stale 而非干等
-        assert generated.status == "degraded"
-        assert generated.sync_stale is True
 
 
 def test_generation_exception_after_terminal_cas_rolls_back_before_marking_failed(monkeypatch, tmp_path):

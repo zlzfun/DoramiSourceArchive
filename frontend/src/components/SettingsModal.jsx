@@ -21,7 +21,7 @@ import AboutSection from './settings/AboutSection';
 // initialSection 供深链(读者轨底/头像入口直落对应分区)。
 const HINTS = {
   account: '身份、头像与登录凭据',
-  appearance: '亮暗主题偏好',
+  appearance: '主题与动效',
   feed: '一枚 dfeed_ 令牌与聚合拉取接口', // 角色差异(订阅范围/全库)在分区文案内分支
   mcp: '把内容接进你的 Agent 工具',
   skill: '装进 Agent 的每日资讯技能',

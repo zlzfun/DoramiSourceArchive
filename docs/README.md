@@ -30,6 +30,9 @@
 - ◉ [release-process.md](./release-process.md) — **发布流程:tag 即发布(2026-09-14)**:合入≠上线,
   annotated tag 是唯一发布单元;`scripts/release.sh` 发版(版本号只在发版时改,PR 不 bump)/
   两条部署脚本按 tag 部署(`--here` 显式例外)/CI 门禁与自动 Release/回滚=切 tag+恢复备份/分支保护清单。
+- ◉ [version-history.md](./version-history.md) — **波次史(1.x→3.57.x 逐波详细记录)**:2026-09-15 自 CLAUDE.md
+  `## Versioning` 节整体迁出(L0 超 150k 字符上限);每波的设计取舍/目检返修/codex 检视返修/被否方案全文在此,
+  CLAUDE.md 年表每波只留一行。**新波次的详细记录追加于此**。
 - ◉ [engage-sync-wave-plan.md](./engage-sync-wave-plan.md) — v3.18 互通波设计:读者反馈收件箱/
   管理员公告横幅(逐用户一次性 dismiss)/远程内容同步(接收方拉取,复用归档同步契约)。
 - ◉ [interest-lens-wave-plan.md](./interest-lens-wave-plan.md) — 兴趣即透镜波(v3.52.0 已实现,issue #27
@@ -55,6 +58,7 @@
 - ◉ [taxonomy-v1-deployment.md](./taxonomy-v1-deployment.md) — 已批准 Taxonomy v1 的发布资产与上线手册：
   外网 authority 启动自动 reconcile → 人工发布，内网 replica 通过 Archive Sync
   `taxonomy.jsonl` 原子导入最新已发布版本；无额外 taxonomy 安装脚本。
+- ◉ [bailian-singapore-deployment.md](./bailian-singapore-deployment.md) — 新加坡百炼 Fun-ASR / Qwen3-TTS 适配、预算与独立样本验证。
 - ◉ [aliyun-dual-node-deployment.md](./aliyun-dual-node-deployment.md) — 阿里云外网/内网双节点生产上线：
   验收 INI 替换清单、双端配置、Secret/RAM/NLS/OSS/安全组、发布顺序和 E2E 验收。
 - ◉ [unified-news-scoring-plan.md](./unified-news-scoring-plan.md) — **统一新闻价值评分波(issue #22,v3.48.0)**:
@@ -80,7 +84,10 @@
   未配置视觉模型各链路与既有逐字一致;选图护栏(播客/不可外送源/小图/上限 4)、负缓存退避、预算超时转后台;真机验证记录。
 - ◉ [personal-brief-rebuild-entrypoints.md](./personal-brief-rebuild-entrypoints.md) — **个人早报重编入口收口(issue #33 §5,v3.51.1)**:
   兴趣/订阅变更只记录不触发重编,重编只剩手动与次日定时;今日端点 `interest_stale`/`scope_stale`
-  驱动「下次编排生效 · 立即重编」提示;系统侧保留公共日报就绪与管理员下架两处维护性触发。
+  驱动「下次编排生效 · 立即重编」提示;系统侧保留管理员下架的维护性触发(公共日报就绪追加自 issue #74 退役)。
+- ◉ [personal-brief-grid-and-sections.md](./personal-brief-grid-and-sections.md) — **个人早报板块顺序 / 分值驱动网格 / 公共日报排除(issue #74)**:
+  日报剔出早报范围并退役 daily_brief_ready 触发链;板块按 SECTION_ORDER 固定、板块内分数降序;网格 6 等分单元,宽度跟分数走
+  (≥ 9 通栏、并排分差 ≥ 1 用 ⅔ + ⅓、余 1 头卡够高才通栏否则 2 + 2),样页 `design/dorami-brief-grid-quiet.html`。
 - ◉ [analysis-brief-review-plan.md](./analysis-brief-review-plan.md) — **入库分析与日报链路审视收口**(v3.48 同 PR):
   补评喂同一闭集、无正文候选按标题走同一把尺子、worker 轻列扫描 + 版本重跑慢滴、编辑喂分析事实、
   分数直方图与补评撞车读数、同事件机械预聚类、跨天对照物带要点;审视结论与明确不做见 §0/§5。

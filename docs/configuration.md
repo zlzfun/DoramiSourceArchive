@@ -169,6 +169,10 @@ Podcast 处理阶段，只接收已发布的中文博客和导读音频。两台
 异常兜底。已取得 TaskId 的任务只按持久化身份轮询；任何 `request_unknown` 都保持人工核对，
 不会自动重提。
 
+新加坡节点可以选择 `[bailian_speech] enabled=true`，接入 Fun-ASR 和分段 Qwen3-TTS。
+开通、凭据、价格及预算示例见 [新加坡百炼部署](./bailian-singapore-deployment.md)。
+默认 `enabled=false` 保留 ISI；两套配置、凭据和账本不能混用。切换选择器需要重启。
+
 阿里云 ISI 的非秘密协议参数集中在 `[aliyun_isi]`，均可由对应
 `DORAMI_ALIYUN_ISI_*` 环境变量覆盖。ASR 与 TTS 鉴权不同，不能互换：
 

@@ -58,6 +58,7 @@ from services import podcast_text_reader as podcast_text_reader_service
 from services import podcast_premium_guides as podcast_premium_guide_service
 from services import podcast_premium as podcast_premium_service
 from services import aliyun_isi_config as aliyun_isi_config_service
+from services import bailian_speech_config as podcast_speech_config_service
 from services import credentials as credentials_service
 
 
@@ -186,8 +187,8 @@ def _actor(auth: dict[str, Any]) -> str:
 
 
 def _asr_quota_response(session: Session) -> PodcastAsrQuotaResponse:
-    config = aliyun_isi_config_service.resolve_config(session)
-    sources = aliyun_isi_config_service.field_sources(session)
+    config = podcast_speech_config_service.resolve_config(session)
+    sources = podcast_speech_config_service.field_sources(session)
     return PodcastAsrQuotaResponse(
         daily_audio_seconds_limit=config.asr_daily_audio_seconds_limit,
         daily_audio_hours_limit=config.asr_daily_audio_seconds_limit / 3600,
@@ -489,7 +490,7 @@ async def validate_episode_source_media(episode_id: str, request: Request):
         )
     with Session(app.db_sink.engine) as session:
         max_audio_seconds_per_file = (
-            aliyun_isi_config_service.resolve_config(
+            podcast_speech_config_service.resolve_config(
                 session
             ).asr_max_audio_seconds_per_file
         )
@@ -783,7 +784,7 @@ def update_podcast_asr_quota(
     if payload.max_audio_seconds_per_file is not None:
         updates["asr_max_audio_seconds_per_file"] = payload.max_audio_seconds_per_file
     credentials_service.save_updates(
-        session, credentials_service.ALIYUN_ISI_NAMESPACE, updates
+        session, podcast_speech_config_service.namespace(), updates
     )
     return _asr_quota_response(session)
 

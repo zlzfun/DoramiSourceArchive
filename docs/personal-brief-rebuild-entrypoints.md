@@ -20,10 +20,13 @@ revision——版本列表长成流水账,读者感受是「早报自己变了�
   但对读者而言同样是「我改了设置,早报什么时候跟上」的问题,两者一个口径最不费解。
 - **早报重编只剩两个读者可感知的入口**:手动「重新编排」(`POST /api/reader/briefs/today/rebuild`,
   `MANUAL_REBUILD`)与次日 08:30 定时(`SCHEDULED`),两者都按当时最新的兴趣与订阅编排。
-- **系统侧保留两处维护性触发**,不属读者偏好:公共日报就绪追加(`DAILY_BRIEF_READY`,
-  把当日公共日报补进已订阅它的读者版面)与管理员下架来源的全员重编
+  issue #56 起唯一的显式例外:首登兴趣引导**首次**完成且已有有效兴趣时就地重编一次(`INTEREST_CHANGED`)。
+- **系统侧保留一处维护性触发**,不属读者偏好:管理员下架来源的全员重编
   (`/api/admin/source-visibility/*` → `trigger_all_today_revisions(SUBSCRIPTION_CHANGED)`,
   内容交付层的止损动作,被下架源的条目不该继续挂在任何人的今日版面上)。
+  此前还有「公共日报就绪追加」(`DAILY_BRIEF_READY`,把当日公共日报补进已订阅它的读者版面),
+  **自 issue #74 起退役**——公共日报不再进个人早报的范围(见 `personal-brief-grid-and-sections.md` §1),
+  枚举值与 CHECK 只为历史行保留。
 - **枚举值保留**:`INTEREST_CHANGED`/`SUBSCRIPTION_CHANGED` 仍在 `DigestGenerationReason`
   与 CHECK 约束里(历史 edition 的 `generation_reason` 在用;服务层 `start_personal_digest_edition`
   仍接受它们,服务层测试沿用),只是读者面不再有新的写入。

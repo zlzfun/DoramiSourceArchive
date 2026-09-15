@@ -754,8 +754,16 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
     site_name = "IT之家"
     source_section = "人工智能"
     category = "media"
-    article_url_patterns = ["ithome.com/0/"]
+    # 2026-09-10 起 IT之家文章 ID 跨过一百万,链接由 /0/956/628.htm 变成 /1/002/341.htm——
+    # 首段目录是 ID 的百万位,「ithome.com/0/」子串匹配自此一条都对不上,列表页结构其实
+    # 未变,却连续多日「success 0 条」静默停产(issue #79)。改按形状匹配:一位数字目录 +
+    # 三位 + 三位 .htm,百万位再进位也不用再改。
+    article_url_patterns = ["ithome.com/"]
     exclude_url_patterns = ["next.ithome.com", "m.ithome.com", "quan.ithome.com"]
+    # 主机与路径分别精确校验(检视 F5):宽松的子串 search 会把 evilithome.com 或带跳转参数的
+    # 相似链接也当文章;详情页只认 www.ithome.com(裸域一并接受),路径整体匹配文章形状。
+    _ARTICLE_HOSTS = frozenset({"www.ithome.com", "ithome.com"})
+    _ARTICLE_PATH_RE = re.compile(r"/\d/\d{3}/\d{3}\.htm")
     # 旁路验收：crawl4ai 详情与生产路径相似度 0.81（≥0.8 门槛），已迁移；未装 crawl4ai 时回退专用提取器
     web_backend_enabled = True
     default_limit = 18
@@ -782,6 +790,14 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
             return parsed.astimezone(timezone.utc).isoformat()
         except ValueError:
             return ""
+
+    def _matches_article_url(self, url: str) -> bool:
+        parsed = urlparse(url)
+        if (parsed.hostname or "").lower() not in self._ARTICLE_HOSTS:
+            return False
+        if not self._ARTICLE_PATH_RE.fullmatch(parsed.path or ""):
+            return False
+        return super()._matches_article_url(url)
 
     def _list_items(self, soup: BeautifulSoup) -> List[Tag]:
         items = soup.select("#list ul.bl > li")

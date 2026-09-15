@@ -16,7 +16,7 @@ import AboutSection from '../settings/AboutSection';
 // 不出现——admin 手机上与读者同观感,管理面回桌面操作;反馈仅读者账号(同柜)。
 const HINTS = {
   account: '身份、头像与登录凭据',
-  appearance: '亮暗主题偏好',
+  appearance: '主题与动效',
   feed: '一枚 dfeed_ 令牌与聚合拉取接口',
   mcp: '把内容接进你的 Agent 工具',
   skill: '装进 Agent 的每日资讯技能',

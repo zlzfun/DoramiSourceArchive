@@ -268,7 +268,16 @@
   分数滚上来是这个触点仅有的一处「呼吸」。护栏：定宽格保证零布局变化（实测连拍卡高/栏宽零位移）、
   减少动画直落终值、切换评分依据的 480ms 淡切另属交互反馈。同样不作为新增动效的先例。
 - **品牌/登录页**：电影感动画（秒级、硬编码）保留，不引用上述 token，不收敛。
-- 所有动画都要在 `@media (prefers-reduced-motion: reduce)` 下降级（已有兜底，新增动画须遵守）。
+- **减少动效是应用内开关，不读 OS 查询（issue #73，2026-09-14 拍板）**：`设置 → 外观 → 减少动效`
+  在 `<html>` 上挂 `data-motion="reduce"`（`frontend/src/motion.js`，首帧由 `index.html` 内联脚本设置），
+  默认全员完整动画。理由：Windows「关闭动画效果」（远程桌面/虚拟机常为性能默认）与 macOS「减少动态效果」
+  （刻意的无障碍选择）在 `prefers-reduced-motion` 里分不清，内网读者以 Windows 为主，该查询多数是误报
+  （登录页 v3.22.2、轨面揭示 #73 先后中招）；而全站幅度最大的登录演出早已无条件播放，门控保护的反倒是
+  最低风险的工作区反馈。所以：**新增动效不再写 `@media (prefers-reduced-motion)`**，降级规则一律写成
+  `:root[data-motion="reduce"] .x { … }`；文件尾已有全局兜底（transition/animation 压 1ms、循环压 1 次，
+  放行 `.auth-stage`/`.app-arrive`/`.app-arriving` 品牌子树），局部规则只在需要指定终态时补写。
+  JS 编排的动画（速读卡里程表、`scrollIntoView`/`scrollTo` 平滑滚动）经 `motionReduced()`/`scrollBehavior()` 判定。
+  登录/跃迁演出连这个开关也不认（品牌豁免不变）。
 
 ## 8. 组件层级与一致性
 
@@ -369,6 +378,6 @@
 - [ ] 新增可点元素有焦点环？文本对比度达 AA？状态不靠纯色？（§2）
 - [ ] 没有手写 `text-[Npx]` / `rounded-[Npx]` / 阴影硬编码？都引用了 token/角色类？（§3/§5/§6）
 - [ ] 强调色只用于状态与唯一 CTA？一个视图一个主按钮？（§4/§8）
-- [ ] 工作区动效时长在区间内、有 reduced-motion 兜底；品牌区未被误伤？（§7）
+- [ ] 工作区动效时长在区间内；降级挂在 `:root[data-motion="reduce"]` 而非 OS 媒体查询；品牌区未被误伤？（§7）
 - [ ] 暗色下没有「亮色残块 / 黑字黑底」？硬编码原子类（尤其 `bg-white`、双角色 slate）已就地补 `dark:` 变体？（§9）
 - [ ] 输入框复用了 `.form-input`，或手搓串里背景 token 与 `text-`/`placeholder:text-` token 成对？（§9）

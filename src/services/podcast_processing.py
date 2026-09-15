@@ -1294,6 +1294,7 @@ def _reservation_matches_usage_plan(
         and reservation.unit_price_cny_minor == plan.unit_price_cny_minor
         and reservation.price_unit_count == plan.price_unit_count
         and reservation.pricing_revision == plan.pricing_revision
+        and reservation.minimum_usage_units == plan.minimum_units
     )
 
 
@@ -1399,12 +1400,12 @@ def begin_stage_attempt(
         raise ValueError("local execution cannot reserve provider usage")
     if (
         execution == "provider"
-        and str(provider_name or "").strip().lower() == "aliyun-isi"
+        and str(provider_name or "").strip().lower() in {"aliyun-isi", "aliyun-bailian"}
         and claim.stage in {"asr", "tts"}
         and provider_usage_plan is None
     ):
         raise PodcastProviderQuotaExceeded(
-            "Aliyun ISI ASR/TTS submission requires a provider usage plan"
+            "Speech provider submission requires a provider usage plan"
         )
     if (
         provider_usage_plan is not None
@@ -1435,18 +1436,18 @@ def begin_stage_attempt(
     stamp = _iso(current)
     if (
         execution == "provider"
-        and str(provider_name or "").strip().lower() == "aliyun-isi"
+        and str(provider_name or "").strip().lower() in {"aliyun-isi", "aliyun-bailian"}
         and provider_usage_plan is not None
         and not _provider_usage_plan_is_trusted(
             policy,
-            provider_name="aliyun-isi",
+            provider_name=str(provider_name).strip().lower(),
             stage=claim.stage,
             plan=provider_usage_plan,
             now=current,
         )
     ):
         raise PodcastProviderQuotaExceeded(
-            "Aliyun ISI provider usage plan does not match trusted configuration"
+            "Speech provider usage plan does not match trusted configuration"
         )
 
     _begin_budget_transaction(
@@ -1708,6 +1709,9 @@ def begin_stage_attempt(
         ),
         reserved_usage_units=(
             provider_usage_plan.reserved_units if provider_usage_plan else None
+        ),
+        minimum_usage_units=(
+            provider_usage_plan.minimum_units if provider_usage_plan else None
         ),
         unit_price_cny_minor=(
             provider_usage_plan.unit_price_cny_minor if provider_usage_plan else None
@@ -2490,6 +2494,11 @@ def _normalized_usage_dict(
             "tts_characters": usage.tts_characters,
             "input_bytes": usage.input_bytes,
             "output_bytes": usage.output_bytes,
+            **(
+                {"billed_audio_duration_ms": usage.billed_audio_duration_ms}
+                if usage.billed_audio_duration_ms is not None
+                else {}
+            ),
         }
     if not isinstance(usage, dict):
         raise ValueError("usage must be a NormalizedUsage or dictionary")
@@ -2507,6 +2516,13 @@ def _normalized_usage_for_reservation(
             raise ValueError(
                 "provider-quota settlement requires trusted NormalizedUsage"
             )
+        if (
+            usage.billed_audio_duration_ms is not None
+            and reservation.provider_quota_unit != ProviderUsageUnit.AUDIO_SECONDS.value
+        ):
+            raise PodcastProcessingConflict(
+                "billed audio is only valid for audio-second reservations"
+            )
         if usage.currency != "CNY" or usage.cost_minor != actual_cost_minor:
             raise PodcastProcessingConflict(
                 "provider usage cost must match the CNY settlement"
@@ -2523,7 +2539,9 @@ def _actual_provider_usage_units(
         return 0
     if unit == ProviderUsageUnit.AUDIO_SECONDS.value:
         if "audio_duration_ms" in usage:
-            milliseconds = usage["audio_duration_ms"]
+            milliseconds = usage.get(
+                "billed_audio_duration_ms", usage["audio_duration_ms"]
+            )
             if (
                 isinstance(milliseconds, bool)
                 or not isinstance(milliseconds, int)
@@ -2678,9 +2696,22 @@ def settle_attempt_cost(
         actual_cost_minor=actual,
     )
     actual_usage_units = _actual_provider_usage_units(reservation, normalized_usage)
+    # The immutable input must still cover the reserved duration. Explicit
+    # provider-reported billing can exclude silence while preserving that fact.
+    submitted_units = actual_usage_units
     if (
-        reservation.reserved_usage_units is not None
-        and actual_usage_units < reservation.reserved_usage_units
+        reservation.provider_quota_unit == ProviderUsageUnit.AUDIO_SECONDS.value
+        and "billed_audio_duration_ms" in normalized_usage
+    ):
+        submitted_units = (normalized_usage["audio_duration_ms"] + 999) // 1000
+    if reservation.reserved_usage_units is not None and (
+        submitted_units < reservation.reserved_usage_units
+        or actual_usage_units
+        < (
+            reservation.minimum_usage_units
+            if reservation.minimum_usage_units is not None
+            else reservation.reserved_usage_units
+        )
     ):
         raise PodcastProviderReconciliationRequired(
             "provider usage cannot be lower than the immutable submitted input"
