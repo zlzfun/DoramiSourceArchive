@@ -58,7 +58,9 @@ test('两列只有通栏与各半,单列全通栏', () => {
 });
 
 test('阈值可注入', () => {
-  assert.deepEqual(planSectionSpans([8.2, 8.0, 7.4, 6.6], 3, { gap: 0.1 }), [4, 2, 4, 2]);
+  // gap 压到 0.1:余 1 时头卡 8.2 − 8.0 = 0.2 已够「相对通栏」;余 2 时头对拉开成 ⅔ + ⅓
+  assert.deepEqual(planSectionSpans([8.2, 8.0, 7.4, 6.6], 3, { gap: 0.1 }), [6, 2, 2, 2]);
+  assert.deepEqual(planSectionSpans([8.2, 8.0, 7.4, 6.6, 6.0], 3, { gap: 0.1 }), [4, 2, 2, 2, 2]);
   assert.deepEqual(planSectionSpans([8.2, 8.0, 7.4, 6.6], 3, { solo: 8.0 }), [6, 6, 3, 3]);
 });
 
