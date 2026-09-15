@@ -498,35 +498,6 @@ export default function PersonalBriefPage({
     if (afterAwait) window.location.assign(url);
     else window.open(url, '_blank', 'noopener,noreferrer');
   };
-  const openItem = async (item) => {
-    const snapshot = item.snapshot || {};
-    if (isSocialRow(item) && snapshot.source_url) {
-      supersedePendingOpen?.(); // 之前点的内链卡若仍在途,作废它,别让迟到响应把早报换成那篇
-      window.open(snapshot.source_url, '_blank', 'noopener,noreferrer');
-      return;
-    }
-    if (item.article_id && onOpenArticle) {
-      const sequence = (edition?.items || [])
-        .filter((row) => row.article_id && !isSocialRow(row))
-        .map((row) => ({ id: row.id ?? row.position, article_id: row.article_id, title: row.snapshot?.title || '', source_url: row.snapshot?.source_url || '' }));
-      const opened = await onOpenArticle(item.article_id, {
-        date: selDate,
-        revision: edition?.revision ?? null,
-        scrollTop: sheetRef.current?.scrollTop || 0,
-        itemId: item.id ?? item.position,
-        label: `${dateTextOf(selDate)}${isToday ? ' · 今天' : ''}`,
-        sequence,
-        index: sequence.findIndex((row) => row.article_id === item.article_id),
-      });
-      // false=站内已取不到(退订自定源 / 源被隐藏后 404),退到快照原链(codex 检视 P2);
-      // null=被更晚的点击盖过,什么都不做
-      if (opened === false) openExternal(snapshot, { afterAwait: true });
-      return;
-    }
-    supersedePendingOpen?.();
-    openExternal(snapshot);
-  };
-
   // ── 分组:按 section 首次出现建组(后端自 issue #74 起按 SECTION_ORDER 落库,这里只是保序),
   //    板块内按分数降序(新版本落库已如此;历史版本按快照分数就地补排,缺分殿后、同分保序)——
   //    网格宽度跟分数走,前提是板块头卡恒是板块最高分 ──
@@ -551,6 +522,38 @@ export default function PersonalBriefPage({
     });
     return result;
   }, [edition]);
+
+  const openItem = async (item) => {
+    const snapshot = item.snapshot || {};
+    if (isSocialRow(item) && snapshot.source_url) {
+      supersedePendingOpen?.(); // 之前点的内链卡若仍在途,作废它,别让迟到响应把早报换成那篇
+      window.open(snapshot.source_url, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    if (item.article_id && onOpenArticle) {
+      // 序列按页面显示序(板块顺序 + 板块内分数序),「早报下一条」才与读者眼前的顺序一致;
+      // 新版本后端落库已是此序,历史版本经前端分组重排后与 edition.items 原序可能不同
+      const sequence = grouped.flatMap((group) => group.items)
+        .filter((row) => row.article_id && !isSocialRow(row))
+        .map((row) => ({ id: row.id ?? row.position, article_id: row.article_id, title: row.snapshot?.title || '', source_url: row.snapshot?.source_url || '' }));
+      const opened = await onOpenArticle(item.article_id, {
+        date: selDate,
+        revision: edition?.revision ?? null,
+        scrollTop: sheetRef.current?.scrollTop || 0,
+        itemId: item.id ?? item.position,
+        label: `${dateTextOf(selDate)}${isToday ? ' · 今天' : ''}`,
+        sequence,
+        index: sequence.findIndex((row) => row.article_id === item.article_id),
+      });
+      // false=站内已取不到(退订自定源 / 源被隐藏后 404),退到快照原链(codex 检视 P2);
+      // null=被更晚的点击盖过,什么都不做
+      if (opened === false) openExternal(snapshot, { afterAwait: true });
+      return;
+    }
+    supersedePendingOpen?.();
+    openExternal(snapshot);
+  };
+
 
   const items = edition?.items || [];
   // 重大事件条目额外于精选之上、可能来自订阅外,报头统计只数用户自己那份精选
