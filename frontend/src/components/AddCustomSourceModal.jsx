@@ -14,9 +14,10 @@ import Modal from './Modal';
  * 外壳(遮罩关闭判定 / Esc / 焦点陷阱 / 退场动画)走共用 Modal(issue #104):
  * 面板内拖选文字松手落到遮罩不再误关。
  */
-export default function AddCustomSourceModal({ open, onClose, onAdd }) {
+export default function AddCustomSourceModal({ open, onClose, onAdd, expectedKind = null }) {
   const [url, setUrl] = useState('');
   const [name, setName] = useState('');
+  const [kind, setKind] = useState(expectedKind || 'article');
   const [preview, setPreview] = useState(null);   // 预览成功的载荷(entries/quota)
   const [existing, setExisting] = useState(null); // 撞中系统源/既有自定源的引导载荷
   const [error, setError] = useState('');
@@ -26,8 +27,10 @@ export default function AddCustomSourceModal({ open, onClose, onAdd }) {
   useEffect(() => {
     if (!open) {
       setUrl(''); setName(''); setPreview(null); setExisting(null); setError(''); setBusy(false);
+    } else {
+      setKind(expectedKind || 'article');
     }
-  }, [open]);
+  }, [open, expectedKind]);
 
   const handlePreview = async () => {
     const trimmed = url.trim();
@@ -37,9 +40,11 @@ export default function AddCustomSourceModal({ open, onClose, onAdd }) {
       const data = await previewCustomSource(trimmed);
       if (data.status === 'exists') {
         setExisting(data.existing || null);
+        setKind(data.existing?.content_kind || expectedKind || 'article');
       } else {
         setPreview(data);
         setName(data.feed_title || '');
+        setKind(data.detected_kind || expectedKind || 'article');
       }
     } catch (err) {
       setError(err.message || '预览失败,请检查地址后重试');
@@ -53,7 +58,7 @@ export default function AddCustomSourceModal({ open, onClose, onAdd }) {
     if (!preview && !existing) { handlePreview(); return; }
     setBusy(true); setError('');
     try {
-      await onAdd(url.trim(), name.trim());
+      await onAdd(url.trim(), name.trim(), existing?.content_kind || kind);
       onClose();
     } catch (err) {
       setError(err.message || '添加失败,请稍后重试');
@@ -63,10 +68,11 @@ export default function AddCustomSourceModal({ open, onClose, onAdd }) {
 
   const previewing = busy && !preview && !existing;
   const readyToAdd = Boolean(preview) || (existing && !existing.subscribed);
+  const title = expectedKind === 'podcast' ? '添加播客' : expectedKind === 'article' ? '添加文章源' : '添加自定源';
   return (
     <Modal
       open={open} onClose={onClose} closeOnOverlay portal size="none"
-      as="form" panelClassName="csrc-sheet" ariaLabel="添加自定源"
+      as="form" panelClassName="csrc-sheet" ariaLabel={title}
       panelProps={{ onSubmit: handleSubmit }}
     >
       <button type="button" onClick={onClose} className="icon-button csrc-close" aria-label="关闭">
@@ -74,15 +80,18 @@ export default function AddCustomSourceModal({ open, onClose, onAdd }) {
       </button>
 
       <div className="csrc-head">
-        <h3 className="csrc-title">添加自定源</h3>
-        <p className="csrc-sub">贴入 RSS/Atom 地址，来源与内容只有你自己可见</p>
+        <h3 className="csrc-title">{title}</h3>
+        <p className="csrc-sub">贴入 RSS/Atom 地址，系统会自动识别文章或播客</p>
       </div>
 
       <div className={`csrc-urlbox ${error ? 'is-bad' : ''}`}>
         <Rss className="csrc-urlbox-ico" aria-hidden="true" />
         <input
           id="csrc-url" type="url" value={url}
-          onChange={(e) => { setUrl(e.target.value); setPreview(null); setExisting(null); setError(''); }}
+          onChange={(e) => {
+            setUrl(e.target.value); setPreview(null); setExisting(null); setError('');
+            setKind(expectedKind || 'article');
+          }}
           onKeyDown={(e) => {
             // CTA 未预览时 disabled,Enter 的默认 submit 不会发生——就地触发预览保键盘流
             if (e.key === 'Enter' && !preview && !existing) { e.preventDefault(); handlePreview(); }
@@ -101,7 +110,7 @@ export default function AddCustomSourceModal({ open, onClose, onAdd }) {
 
       {existing && (
         <div className="csrc-exists">
-          该来源已收录为「{existing.name || existing.source_id}」
+          该{existing.content_kind === 'podcast' ? '播客' : '文章源'}已收录为「{existing.name || existing.source_id}」
           {existing.subscribed ? '，你已订阅' : '，确认后将为你订阅'}
         </div>
       )}
@@ -116,12 +125,32 @@ export default function AddCustomSourceModal({ open, onClose, onAdd }) {
             />
             <span className="csrc-feedcount tabular-nums">{preview.entry_count} 条</span>
           </div>
+          <div className="csrc-kind-row">
+            <span className="csrc-kind-note">
+              自动识别为{preview.detected_kind === 'podcast' ? '播客' : '文章'}，识别不准可手动调整
+            </span>
+            <span className="mini-seg" role="group" aria-label="内容类型">
+              {[['article', '文章'], ['podcast', '播客']].map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={`mini-seg-btn ${kind === value ? 'is-on' : ''}`}
+                  aria-pressed={kind === value}
+                  onClick={() => setKind(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </span>
+          </div>
           <ul className="csrc-entries">
             {(preview.entries || []).map((entry, i) => (
               <li key={i} className="csrc-entry">
                 <span className="csrc-entry-title">{entry.title || '（无标题）'}</span>
                 <span className="csrc-entry-meta tabular-nums">
-                  {entry.content_chars > 0 ? `${entry.content_chars.toLocaleString()} 字符` : '仅标题'}
+                  {entry.has_audio
+                    ? '可播放'
+                    : entry.content_chars > 0 ? `${entry.content_chars.toLocaleString()} 字符` : '仅标题'}
                 </span>
               </li>
             ))}

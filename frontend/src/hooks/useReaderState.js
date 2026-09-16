@@ -918,8 +918,8 @@ export function useReaderState({
 
   // ── 用户自定源(v3.40):添加(建源+订阅+首抓)与移除(退订+无人订阅即清) ──
   // 添加错误直接上抛:AddCustomSourceModal 就地渲染错误文案(比 toast 更贴近表单)。
-  const handleAddCustomSource = async (url, name) => {
-    const result = await createCustomSource(url, name);
+  const handleAddCustomSource = async (url, name, kind) => {
+    const result = await createCustomSource(url, name, kind);
     if (result.status === 'exists') {
       // 撞中已收录的系统源:转普通订阅引导(该来源已在目录里)
       const existing = result.existing || {};
@@ -935,7 +935,7 @@ export function useReaderState({
       showToast(
         result.first_fetch === 'failed'
           ? `已添加自定源 ${result.name},首次抓取失败,稍后自动重试`
-          : `已添加自定源 ${result.name},收录 ${result.saved_count ?? 0} 篇`,
+          : `已添加自定源 ${result.name},收录 ${result.saved_count ?? 0} ${result.content_kind === 'podcast' ? '期' : '篇'}`,
         'success',
       );
     }

@@ -9781,6 +9781,16 @@ input[type="radio"] {
   .csrc-name-input:focus { border-bottom-color: var(--dorami-accent); }
   .csrc-feedcount { flex-shrink: 0; font-family: var(--mono); font-size: 10.5px; color: var(--dorami-faint); }
 
+  .csrc-kind-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 10px 2px 4px;
+  }
+  .csrc-kind-note { font-size: 11.5px; color: var(--dorami-muted); }
+  .csrc-kind-row .mini-seg { flex-shrink: 0; }
+
   .csrc-entries { display: flex; flex-direction: column; margin: 6px 2px 0; }
   .csrc-entry {
     display: flex;

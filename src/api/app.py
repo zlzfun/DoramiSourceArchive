@@ -2662,7 +2662,7 @@ async def execute_user_rss_refresh_job():
             select(SourceConfigRecord)
             .where(SourceConfigRecord.owner_username != "")
             .where(SourceConfigRecord.is_active == True)  # noqa: E712
-            .where(SourceConfigRecord.source_type.in_(["rss", "atom"]))
+            .where(SourceConfigRecord.source_type.in_(["rss", "atom", "podcast", "podcast_rss"]))
             .order_by(SourceConfigRecord.source_id)
         ).all()
         items = []
@@ -2697,7 +2697,7 @@ async def execute_user_rss_refresh_job():
                     if state is None:
                         # 从未成功抓过的源也要累计(三轮收口:否则永远达不到停用阈值)
                         state = SourceStateRecord(
-                            source_id=item["source_id"], fetcher_id="generic_rss",
+                            source_id=item["source_id"], fetcher_id=item["fetcher_id"],
                             updated_at=datetime.datetime.now().isoformat(),
                         )
                     now_iso = datetime.datetime.now().isoformat()
