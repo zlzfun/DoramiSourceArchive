@@ -286,29 +286,38 @@ def test_subscribe_all_podcast_sources_and_reject_other_shapes(monkeypatch, tmp_
         ).status_code == 422
 
 
-def test_subscribe_by_shape_reports_hidden_sources_as_unavailable(monkeypatch, tmp_path):
+def test_subscribe_by_shape_does_not_enumerate_unknown_hidden_sources(monkeypatch, tmp_path):
     from api.sources import _registry_source_meta
     from services import source_visibility as source_visibility_service
 
     app_module, sink = _bootstrap(monkeypatch, tmp_path, "shape_hidden.db")
-    hidden_id = next(
+    article_ids = [
         source_id for source_id, meta in _registry_source_meta().items()
         if not meta.get("is_template") and (meta.get("shape") or "article") == "article"
-    )
-    with Session(sink.engine) as session:
-        source_visibility_service.set_source_hidden(session, hidden_id, True)
+    ]
+    assert len(article_ids) >= 2
+    known_hidden_id, unknown_hidden_id = article_ids[:2]
 
     with TestClient(app_module.app) as client:
         _login(client)
-        assert hidden_id not in {
-            row["source_id"] for row in client.get("/api/reader/sources").json()["sources"]
+        assert client.post(f"/api/reader/sources/{known_hidden_id}/subscribe").status_code == 200
+        with Session(sink.engine) as session:
+            source_visibility_service.set_source_hidden(session, known_hidden_id, True)
+            source_visibility_service.set_source_hidden(session, unknown_hidden_id, True)
+
+        catalog_by_id = {
+            row["source_id"]: row
+            for row in client.get("/api/reader/sources").json()["sources"]
         }
+        assert catalog_by_id[known_hidden_id]["hidden"] is True
+        assert unknown_hidden_id not in catalog_by_id
         data = client.post(
             "/api/reader/sources/subscribe-batch", json={"shape": "article"}
         ).json()
-        assert hidden_id in data["unavailable"]
-        assert hidden_id not in data["added"]
-        assert hidden_id not in data["subscribed_source_ids"]
+        assert known_hidden_id in data["unavailable"]
+        assert unknown_hidden_id not in data["unavailable"]
+        assert unknown_hidden_id not in data["added"]
+        assert known_hidden_id in data["subscribed_source_ids"]
 
 
 def test_subscribe_by_shape_rolls_back_the_whole_batch_on_failure(monkeypatch, tmp_path):

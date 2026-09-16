@@ -33,3 +33,9 @@ test('非文章/播客筛选不显示批量入口，提交中锁定入口', () =
   assert.equal(busy.text, '订阅中…');
   assert.equal(busy.disabled, true);
 });
+
+test('加载中或该形态没有候选源时不误报已全部订阅', () => {
+  assert.equal(bulkSubscribeModel('article', sources, new Set(), null, true), null);
+  assert.equal(bulkSubscribeModel('article', [], new Set()), null);
+  assert.equal(bulkSubscribeModel('podcast', sources.filter((source) => source.hidden), new Set()), null);
+});

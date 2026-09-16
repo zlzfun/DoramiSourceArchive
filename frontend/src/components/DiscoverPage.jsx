@@ -153,7 +153,7 @@ export default function DiscoverPage({
   const [confirmingId, setConfirmingId] = useState(null);
   const confirmTimerRef = useRef(null);
   useEffect(() => () => clearTimeout(confirmTimerRef.current), []);
-  const bulkSubscribe = bulkSubscribeModel(activeShape, sources, subscribedIds, shapePinning);
+  const bulkSubscribe = bulkSubscribeModel(activeShape, sources, subscribedIds, shapePinning, loading);
 
   // 分组统一「信息角色」单轴;内容形态交给上方过滤条,不作分组维度。
   const groups = useMemo(() => {

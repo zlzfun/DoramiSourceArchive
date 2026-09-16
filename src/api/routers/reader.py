@@ -1135,8 +1135,6 @@ def rotate_feed_token(request: Request, session: Session = Depends(deps.get_sess
 def _reader_sources_catalog(
     request: Request,
     session: Session,
-    *,
-    include_unavailable: bool = False,
 ):
     """读者层内容源目录：可订阅来源 = 所有已注册抓取源 ∪ 已归档来源 ∪ 已订阅来源。
 
@@ -1271,8 +1269,7 @@ def _reader_sources_catalog(
             }
             for entry in by_source.values()
             if (
-                include_unavailable
-                or entry["source_id"] not in unavailable_ids
+                entry["source_id"] not in unavailable_ids
                 or entry["source_id"] in subscribed_ids
             )
             and (entry["source_id"] not in all_user_source_ids or entry["source_id"] in subscribed_ids)
@@ -1312,11 +1309,7 @@ def subscribe_sources_by_shape(
     """
     app = _app()
     username = app.current_username(request)
-    catalog = _reader_sources_catalog(
-        request,
-        session,
-        include_unavailable=True,
-    )
+    catalog = _reader_sources_catalog(request, session)
     registry_meta = _registry_source_meta()
     existing = set(catalog["subscribed_source_ids"])
     added: List[str] = []

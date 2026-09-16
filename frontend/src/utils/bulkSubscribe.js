@@ -3,13 +3,14 @@ const SHAPE_LABELS = Object.freeze({
   podcast: '播客源',
 });
 
-export function bulkSubscribeModel(shape, sources, subscribedIds, busyShape = null) {
+export function bulkSubscribeModel(shape, sources, subscribedIds, busyShape = null, loading = false) {
   const sourceLabel = SHAPE_LABELS[shape];
-  if (!sourceLabel) return null;
+  if (!sourceLabel || loading) return null;
 
   const sourceIds = (sources || [])
     .filter((source) => !source.hidden && (source.shape || 'article') === shape)
     .map((source) => source.source_id);
+  if (sourceIds.length === 0) return null;
   const remainingCount = sourceIds.filter((sourceId) => !subscribedIds.has(sourceId)).length;
   const busy = busyShape === shape;
   const complete = remainingCount === 0;
