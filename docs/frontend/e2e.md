@@ -17,7 +17,7 @@ cd frontend
 npm run test:e2e
 ```
 
-可选 `npm run test:e2e -- --headed` 显示浏览器，或 `--channel chrome` 使用已安装的 Google Chrome。当前进程组清理按 macOS/Linux 实现；Windows 未验证。
+可选 `npm run test:e2e -- --headed` 显示浏览器，或 `--channel chrome` 使用已安装的 Google Chrome。`--flows mobile,pwa,focus` 选择流程子集（默认全跑；例如只回归聚焦环：`--flows focus`），沙箱、构建与清理不变。当前进程组清理按 macOS/Linux 实现；Windows 未验证。
 
 ## 测什么
 
@@ -33,6 +33,7 @@ npm run test:e2e
 - Android／iOS PWA 指引的取消／失败／已安装状态，浮层完整可见与关闭命中、暗色和短横屏、宽屏内联步骤。
 - HarmonyOS／OpenHarmony／华为兼容 UA 及 UA-CH 平台的范围判断：反复注入安装事件也不展示移动／平板安装入口，网页阅读与 SW 仍可用。
 - 实际替换本次沙箱 SW 后提示刷新且不自动重载；离线导航恢复页、API 失败、完整路径／query／hash 重试并打开真实目标文章、退出后 CacheStorage 为空。
+- 聚焦环（#108）：结构性守卫——全局 `input:focus-visible` 兜底环必须落在 `@layer base`（读 CSSOM 断言）；登录账号框、发现页筛选框、条目列头搜索、移动端顶栏搜索鼠标点入后 input 自身 `outline: none`，且环宿主的 box-shadow／描边／outline 在聚焦前后必须变化。Tab 启发式烟测——发现页与文章容器按元素身份 Tab 遍历到回绕首元素为止，每个停靠点须命中 `:focus-visible` 并在自身／子元素／祖先／伪元素的采样样式上有变化，文本控件不叠双环；只比较计算样式，不判对比度与裁切。
 
 PWA 安装事件、上述 UA 输入与独立显示模式由浏览器脚本模拟，仅验证应用反应；更新使用实际新 SW，业务请求仍走真实服务。设备能力另行真机验收。
 
