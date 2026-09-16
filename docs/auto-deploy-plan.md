@@ -1,6 +1,6 @@
 # 自动部署流水线方案(issue #102)
 
-> 状态:R5 已拍板(2026-09-16),单 PR(#111)落地中——后端 / 脚本 / 工作流三个增量,检视记录见 §7。
+> 状态:R5 已拍板(2026-09-16),单 PR(#111)三个增量(后端 / 脚本 / 工作流与文档)均已实现并经 codex 检视收口,待用户验收合入;检视记录见 §7。
 > 使用面文档:`docs/release-process.md`(流程 / 审批纪律 / 降级入口 / Environment 配置)与 `docs/deploy-docker.md`(生产机侧安装)。
 
 ## 1. 背景
@@ -389,6 +389,19 @@ dispatch 的两个布尔位未跨 SSH 传到生产机 → 四 token;新 `--pipel
   不同 target 自动关闭;崩溃收口依赖挂钟 → 改 `txn_id`;原子写未提目录 fsync → 补上。
 
 检视到此收束(首轮 + 三轮复检)。后续实现阶段的检视按 PR 逐个进行,不再重开设计面。
+
+**脚本增量复检(两轮)**:复检 1 剩 5 △ + 新引入 P1(compose stderr 原文回显可泄 .env 密钥)/ P2(stderr 警告被当容器 id)→
+launcher 单次快照读 rc、子进程独立会话整组终止、无构建身份视 last-success 不可验证、docker 查询 stdout / stderr 分离且只回白名单
+短语;复检 2 剩 2 △ → 正常退出仍有后代一律 rc 24、快照竞争测试改真实覆盖;最后一轮全 ✓。踩坑两处记入实现:bash 动态作用域下
+helper 的 `local out rc` 会遮住调用方变量;变量后紧跟中文标点须加花括号(macOS bash 3.2)。
+
+**工作流与文档增量检视(PR #111 增量三,同日)**:首轮 2 P1 / 4 P2 / 1 P3 全部成立并返修——恢复备份代际(撤销失败升级读
+in-progress 的 prev,回退上次成功才读 last-success 的)、draft Release 能进部署(`gh release view` 对 draft 也成功)、被调用方按
+event_name 分支丢 caller sha(release 手动 dispatch 时 callee 也是 workflow_dispatch)、公网健康无时间预算、安装手册缺取模板 /
+建目录 / 绝对路径、known_hosts 无带外核验、发版提示指向不存在的 Deploy run;最后一轮剩「保存同一份已核验的扫描结果」一处文档
+措辞,已改。CI 观察期:`actionlint -shellcheck` 保持关闭(本机无 shellcheck,盲开会让 CI 因风格规则变红),首次上线后逐条开。
+
+**三个增量至此全部收口(2026-09-16 深夜)**,进入用户验收。
 
 **脚本增量检视(PR #111 增量二,同日,codex gpt-6-astra ultra)**:首轮 9 P1 / 4 P2 / 1 P3,全部附隔离复现、全部成立并返修
 (`.review/{prompt,report-codex,response}-scripts-r1.md`)。改变实现形状的结论:

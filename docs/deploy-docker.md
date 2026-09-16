@@ -109,10 +109,12 @@ printf 'restrict,command="/root/bin/dorami-deploy" %s\n' "$(cat /root/deploy_key
 rm /root/deploy_key                # 私钥只留在 GitHub Secret 里
 
 # 3. 主机公钥 → GitHub Environment variable PROD_KNOWN_HOSTS(一行)。ssh-keyscan 只采集网络对端给的 key,
-#    保存前在这个已验证的 SSH 会话里核对指纹一致:
-ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub                       # 主机自己的指纹
-ssh-keygen -lf <(ssh-keyscan -t ed25519 <host> 2>/dev/null)             # 扫描结果的指纹,两者须相同
-ssh-keyscan -t ed25519 <host> 2>/dev/null                               # 相同才把这一行存进变量
+#    只扫描**一次**存成文件,在这个已验证的 SSH 会话里核对该文件的指纹与主机自己的指纹一致,然后保存**同一份**文件内容
+#    (核验后不要再扫一次:第二次结果不一定还是核验过的那份)
+ssh-keyscan -t ed25519 <host> 2>/dev/null > /root/prod_known_hosts.txt   # 只扫这一次
+ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub                         # 主机自己的指纹
+ssh-keygen -lf /root/prod_known_hosts.txt                                # 扫描文件的指纹,两者须相同
+cat /root/prod_known_hosts.txt                                           # 相同才把这一行原样存进变量;之后 rm 该文件
 ```
 
 - `restrict` 一并关掉 pty / 端口与 agent 转发 / user-rc;`from=` 不设(GitHub 托管 runner 的 IP 段数千条且每周变)。

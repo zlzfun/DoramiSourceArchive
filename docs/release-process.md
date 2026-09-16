@@ -134,9 +134,9 @@ Environment(一次性,自动部署用,见 `docs/auto-deploy-plan.md` §4.2):Sett
 - Deployment branches and tags:Selected → 加 Tag 规则 `v*` 与 Branch 规则 `main`;
 - Environment secrets:`PROD_SSH_KEY`(部署专用 ed25519 私钥,与日常运维密钥分开);
 - Environment variables:`PROD_HOST`、`PROD_USER`(root)、`PROD_KNOWN_HOSTS`(`ssh-keyscan -t ed25519 <host>` 的一行,
-  **保存前须带外核验**:在已验证的运维 SSH 会话里 `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` 取指纹,与
-  `ssh-keygen -lf <(ssh-keyscan -t ed25519 <host>)` 比对一致才存;扫描只采集网络对端给的 key,不证明它属于目标主机)、
-  `PROD_PUBLIC_URL`(缺省 https://www.dorami.cloud)。
+  **只扫描一次存成文件、带外核验后保存同一份内容**:在已验证的运维 SSH 会话里 `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`
+  取主机指纹,与 `ssh-keygen -lf <扫描文件>` 比对一致才把该文件内容存进变量;扫描只采集网络对端给的 key,不证明它属于目标主机,
+  核验后重新扫描保存的也不再是核验过的那份;步骤见 `docs/deploy-docker.md`)、`PROD_PUBLIC_URL`(缺省 https://www.dorami.cloud)。
 生产机侧的安装(launcher / worker / conf / authorized_keys)见 `docs/deploy-docker.md`「自动部署流水线」。
 
 ## 边界与不做
