@@ -176,26 +176,75 @@ def ensure_migrated(db_url: str) -> None:
 PLAN_DEPLOYABLE_STATUSES = frozenset({"fresh", "legacy_adoption_required", "compatible"})
 
 
-def _sqlite_file_path(db_url: str) -> Optional[Path]:
-    """sqlite 文件 URL → 路径;内存库或非 sqlite 返回 None。"""
-    if not db_url.startswith("sqlite:///") or ":memory:" in db_url:
-        return None
-    raw = db_url[len("sqlite:///"):]
-    raw = raw.split("?", 1)[0]
-    return Path(raw)
+class SqliteTarget:
+    """`_sqlite_target` 的结果:是否 sqlite / 文件路径(内存库为 None)/ 是否内存库。"""
+
+    __slots__ = ("is_sqlite", "path", "is_memory")
+
+    def __init__(self, is_sqlite: bool, path: Optional[Path], is_memory: bool) -> None:
+        self.is_sqlite = is_sqlite
+        self.path = path
+        self.is_memory = is_memory
+
+
+def _sqlite_target(db_url: str) -> SqliteTarget:
+    """用 SQLAlchemy 自己的 URL 解析判断 sqlite 目标文件,与实际连接指向同一路径。
+
+    覆盖四种写法:普通文件 `sqlite:///rel/or/abs.db`、显式驱动 `sqlite+pysqlite:////abs.db`、
+    `file:` URI(`sqlite:///file:/abs.db?mode=ro&uri=true`)、内存库(无 database / `:memory:` /
+    `file::memory:` / `mode=memory`)。字符串切割会把显式驱动与 URI 判错(codex PR #111 R1 P1-2)。
+    """
+    from urllib.parse import parse_qs, unquote, urlsplit
+
+    from sqlalchemy.engine import make_url
+
+    url = make_url(db_url)
+    if url.get_backend_name() != "sqlite":
+        return SqliteTarget(False, None, False)
+    database = url.database or ""
+    if database in ("", ":memory:"):
+        return SqliteTarget(True, None, True)
+    uri_flag = str(url.query.get("uri", "")).strip().lower() in {"1", "true", "yes", "on"}
+    if uri_flag and database.startswith("file:"):
+        parts = urlsplit(database)
+        params = parse_qs(parts.query)
+        path = unquote(parts.path)
+        if not path or path == ":memory:" or params.get("mode", [""])[0] == "memory":
+            return SqliteTarget(True, None, True)
+        return SqliteTarget(True, Path(path), False)
+    return SqliteTarget(True, Path(database), False)
 
 
 def readonly_engine(db_url: str):
-    """只读引擎:SQLite 连接一律 PRAGMA query_only=ON,任何写都会被 sqlite 拒绝。"""
-    from sqlalchemy import event
+    """只读引擎。
 
-    engine = create_engine(db_url)
-    if db_url.startswith("sqlite"):
-        @event.listens_for(engine, "connect")
-        def _query_only(dbapi_connection, _record):  # pragma: no cover - trivial
-            cursor = dbapi_connection.cursor()
-            cursor.execute("PRAGMA query_only=ON")
-            cursor.close()
+    已存在的 SQLite 文件用 URI 连接 `sqlite:///file:<path>?mode=ro&uri=true`:`mode=ro` 让底层文件
+    连接本身只读——关闭最后一个连接时 sqlite 不会 checkpoint WAL、不会改写主库或删 `-wal/-shm`
+    (`PRAGMA query_only` 只挡 SQL 写,挡不住这一步;codex PR #111 R1 P1-1 实测主库 sha 会变)。
+    不用 `immutable=1`:它会让 sqlite 忽略 WAL 里尚未 checkpoint 的数据。每连接再加 `query_only`
+    作第二道约束。内存库无可保护;非 sqlite 后端原样建引擎(本项目生产即 sqlite)。
+    """
+    from urllib.parse import quote
+
+    from sqlalchemy import event
+    from sqlalchemy.engine import URL
+
+    target = _sqlite_target(db_url)
+    if not target.is_sqlite or target.is_memory:
+        return create_engine(db_url)
+    ro_url = URL.create(
+        "sqlite",
+        database=f"file:{quote(str(target.path), safe='/')}",
+        query={"mode": "ro", "uri": "true"},
+    )
+    engine = create_engine(ro_url)
+
+    @event.listens_for(engine, "connect")
+    def _query_only(dbapi_connection, _record):  # pragma: no cover - trivial
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA query_only=ON")
+        cursor.close()
+
     return engine
 
 
@@ -246,8 +295,8 @@ def plan_migrations(db_url: str, *, script_location: Optional[str] = None) -> di
         plan["extra"] = sorted(extra or [])
         return plan
 
-    file_path = _sqlite_file_path(db_url)
-    if ":memory:" in db_url or (file_path is not None and not file_path.exists()):
+    target = _sqlite_target(db_url)
+    if target.is_sqlite and (target.is_memory or not target.path.exists()):
         plan["database_exists"] = False
         return finish("fresh", "数据库不存在:目标链将从头建立(是否放行由部署侧首装门决定)",
                       pending=_ordered(script, required))

@@ -5,8 +5,10 @@
 四种状态各一例(fresh / legacy / compatible / incompatible)、pending 拓扑序、多头按集合、以及「只读」——不建库文件、不给老库加 alembic_version。
 """
 
+import hashlib
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -181,6 +183,64 @@ def test_multi_head_target_treats_heads_as_a_set(tmp_path):
     assert sorted(plan["target_heads"]) == sorted([real_head, "feedfacefeed"])
     assert plan["current_heads"] == [real_head]
     assert plan["pending"] == ["feedfacefeed"]
+
+
+def _leave_uncheckpointed_wal(db_path: Path) -> None:
+    """子进程写入基线 revision 后 os._exit,留下未 checkpoint 的 WAL(codex PR #111 R1 P1-1 的复现方式)。"""
+    script = (
+        "import os, sqlite3, sys\n"
+        f"con = sqlite3.connect({str(db_path)!r})\n"
+        "con.execute('PRAGMA journal_mode=WAL')\n"
+        "con.execute('PRAGMA wal_autocheckpoint=0')\n"
+        "con.execute('CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY)')\n"
+        "con.execute('CREATE TABLE articles (id INTEGER PRIMARY KEY)')\n"
+        f"con.execute('INSERT INTO alembic_version VALUES (?)', ({BASELINE_REVISION!r},))\n"
+        "con.commit()\n"
+        "sys.stdout.flush(); os._exit(0)\n"
+    )
+    subprocess.run([sys.executable, "-c", script], check=True, timeout=60)
+
+
+def test_plan_reads_uncheckpointed_wal_without_touching_the_database_files(tmp_path):
+    """只读连接不得在关闭时 checkpoint WAL:主库 sha 不变、-wal 仍在,且能读到 WAL 里的 revision。"""
+    db_path = tmp_path / "wal.db"
+    _leave_uncheckpointed_wal(db_path)
+    wal_path = Path(str(db_path) + "-wal")
+    assert wal_path.exists() and wal_path.stat().st_size > 0, "前置:应留下未 checkpoint 的 WAL"
+    main_sha_before = hashlib.sha256(db_path.read_bytes()).hexdigest()
+    wal_sha_before = hashlib.sha256(wal_path.read_bytes()).hexdigest()
+
+    plan = plan_migrations(f"sqlite:///{db_path}")
+
+    assert plan["status"] == "compatible"
+    assert plan["current_heads"] == [BASELINE_REVISION], "必须读到 WAL 里尚未 checkpoint 的 revision"
+    assert hashlib.sha256(db_path.read_bytes()).hexdigest() == main_sha_before, "主库被改写(WAL 被 checkpoint)"
+    assert wal_path.exists(), "-wal 被删除(WAL 被 checkpoint)"
+    assert hashlib.sha256(wal_path.read_bytes()).hexdigest() == wal_sha_before
+
+
+def test_explicit_driver_url_to_missing_file_is_fresh_and_creates_nothing(tmp_path):
+    db_file = tmp_path / "missing.db"
+    plan = plan_migrations(f"sqlite+pysqlite:///{db_file}")
+    assert plan["status"] == "fresh"
+    assert plan["database_exists"] is False
+    assert not db_file.exists(), "显式驱动 URL 也不得把库文件建出来"
+
+
+def test_file_uri_url_to_existing_database_is_recognised(tmp_path):
+    db_path = tmp_path / "uri.db"
+    _upgrade(f"sqlite:///{db_path}", BASELINE_REVISION)
+    plan = plan_migrations(f"sqlite:///file:{db_path}?mode=ro&uri=true")
+    assert plan["status"] == "compatible"
+    assert plan["database_exists"] is True
+    assert plan["current_heads"] == [BASELINE_REVISION]
+
+
+def test_memory_uri_forms_are_fresh():
+    for url in ("sqlite://", "sqlite:///file::memory:?uri=true", "sqlite:///file:x?mode=memory&uri=true"):
+        plan = plan_migrations(url)
+        assert plan["status"] == "fresh", url
+        assert plan["database_exists"] is False, url
 
 
 def test_deployable_statuses_constant_matches_semantics():

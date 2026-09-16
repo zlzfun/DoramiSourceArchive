@@ -181,3 +181,8 @@
 - ☑ 源扩容 wave1–3(v3.2.0 → v3.5.0)—— `docs/archive/source-expansion-plan.md` 及 wave3 篇。
 - ☑ 静默仪器全站重构(v3.0.0)—— `docs/archive/quiet-instrument-restyle-plan.md`;
   耐久规范沉淀于 `docs/frontend/conventions.md`。
+
+- **迁移层两处既有边界(codex 检视 PR #111 时指出,2026-09-16,非本波范围)**:① `storage.migrations._has_user_tables`
+  只以 `articles` 判「有业务表」,不含 articles 的库会被当空库;② `ensure_migrated` 经 `_current_revision` 调单数
+  `get_current_revision()`,库里已有多个 heads(下游分叉仓形态)时会抛错,而同文件的 `plan_migrations` 已用复数
+  `get_current_heads()`。两处改成复数 / 多表判定即可,顺手时做。

@@ -211,6 +211,104 @@ def test_entrypoint_plan_migrations_mode_reports_incompatible_with_exit_one(tmp_
     assert json.loads(result.stdout)["status"] == "incompatible"
 
 
+SENTINEL = "FAKE_LLM_SECRET_SENTINEL"
+
+
+def test_config_parse_error_never_echoes_the_offending_line(tmp_path):
+    """漏个等号的 `api_key …` 行:configparser 的 ParsingError 自带整行原文,不得进报告。"""
+    ini = tmp_path / "leak.ini"
+    ini.write_text(
+        "[storage]\n"
+        f"database_url = sqlite:///{tmp_path / 'leak.db'}\n"
+        "[llm]\n"
+        f"api_key {SENTINEL}\n",
+        encoding="utf-8",
+    )
+    report = check_config(config_path=str(ini))
+    assert report["status"] == "error"
+    dumped = json.dumps(report, ensure_ascii=False)
+    assert SENTINEL not in dumped
+    assert any("ParsingError" in m and "第 4 行" in m for m in report["errors"]), report["errors"]
+
+    for mode in ("--check-config", "--plan-migrations"):
+        result = _run_entrypoint(tmp_path, ini, mode)
+        assert result.returncode in (1, 2), result
+        assert SENTINEL not in result.stdout + result.stderr, mode
+        assert json.loads(result.stdout)["status"] == "error", mode
+
+
+def test_database_url_errors_never_echo_the_connection_string(tmp_path):
+    """带 % 与密码的 URL:alembic/sqlalchemy 的异常常含完整连接串,不得进报告。"""
+    ini = tmp_path / "url.ini"
+    ini.write_text(
+        "[storage]\n"
+        f"database_url = postgresql://user:{SENTINEL}%40@localhost/db\n",
+        encoding="utf-8",
+    )
+    report = check_config(config_path=str(ini))
+    assert report["status"] == "error", report
+    dumped = json.dumps(report, ensure_ascii=False)
+    assert SENTINEL not in dumped
+    assert report["checks"]["database"]["url"].count("***") >= 1
+
+    for mode in ("--check-config", "--plan-migrations"):
+        result = _run_entrypoint(tmp_path, ini, mode)
+        assert result.returncode in (1, 2), result
+        assert SENTINEL not in result.stdout + result.stderr, mode
+        assert json.loads(result.stdout)["status"] == "error", mode
+
+
+def test_redact_url_masks_password_and_secret_query_params():
+    from services.deploy_checks import _redact_url
+
+    masked = _redact_url("postgresql://user:hunter2@localhost/db?password=hunter2&sslmode=require&token=abc")
+    assert "hunter2" not in masked
+    assert "abc" not in masked
+    assert "sslmode=require" in masked
+
+
+def test_authority_database_query_failure_still_yields_json_report(tmp_path):
+    """只有 alembic_version 表(schema 漂移 / 缺表):状态校验的 OperationalError 也要收成结构化报告。"""
+    ini = _write_ini(tmp_path, db_name="drift.db")
+    ini.write_text(ini.read_text(encoding="utf-8").replace("deployment = manual", "deployment = authority"), encoding="utf-8")
+    db_path = tmp_path / "drift.db"
+    from alembic.script import ScriptDirectory
+
+    head = ScriptDirectory.from_config(make_alembic_config()).get_current_head()
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as conn:
+            from sqlalchemy import text
+
+            conn.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY)"))
+            conn.execute(text("CREATE TABLE articles (id INTEGER PRIMARY KEY)"))
+            conn.execute(text("INSERT INTO alembic_version VALUES (:v)"), {"v": head})
+    finally:
+        engine.dispose()
+
+    report = check_config(config_path=str(ini))
+    assert report["status"] == "error"
+    assert report["checks"]["taxonomy"]["database_state"]["status"] == "error"
+    assert any(m.startswith("taxonomy: 数据库状态校验失败") for m in report["errors"]), report["errors"]
+
+    result = _run_entrypoint(tmp_path, ini, "--check-config")
+    assert result.returncode == 1, result
+    assert json.loads(result.stdout)["status"] == "error"
+    assert "Traceback" not in result.stderr
+
+
+def test_tilde_config_path_is_expanded_like_the_loader(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    ini = _write_ini(home, db_name="tilde.db")
+    report = check_config(config_path="~/check.ini")
+    assert report["status"] == "ok", report
+    missing = check_config(config_path="~/nope.ini")
+    assert missing["status"] == "error"
+    assert any("不存在" in m for m in missing["errors"])
+
+
 def test_check_config_never_imports_the_api_app(tmp_path):
     """纪律:自检只 import 无副作用模块——api.app 装配阶段会建 storage、种账号。"""
     ini = _write_ini(tmp_path, db_name="noapp.db")
