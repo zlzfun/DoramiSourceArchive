@@ -2251,6 +2251,17 @@ def test_ensure_migrated_tolerates_forked_heads(tmp_path, monkeypatch):
         with engine.connect() as conn:
             heads = set(MigrationContext.configure(conn).get_current_heads())
         assert heads == {"aaaafork0001", main_head}
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO intranet_only (id) VALUES (7)"))
+
+        def unexpected_adoption(_db_url):
+            pytest.fail("An already migrated multi-head database must not re-enter legacy adoption")
+
+        monkeypatch.setattr(migrations_module, "_align_legacy_to_baseline", unexpected_adoption)
+        ensure_migrated(db_url)  # 数据库现有两条版本行，重复启动仍必须幂等。
+        with engine.connect() as conn:
+            assert set(MigrationContext.configure(conn).get_current_heads()) == heads
+            assert conn.execute(text("SELECT id FROM intranet_only")).scalars().all() == [7]
     finally:
         engine.dispose()
 
