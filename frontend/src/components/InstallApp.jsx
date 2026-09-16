@@ -6,7 +6,6 @@ import { installGuide, promptInstall, usePwa } from '../pwa';
 
 const GUIDES = {
   ios: { steps: ['在 Safari 中打开哆啦美。', '打开分享菜单，选择「添加到主屏幕」。', '若有「作为 Web App 打开」开关，请开启，再点「添加」。'], note: '从主屏幕图标打开后，可能需要重新登录。' },
-  huawei: { steps: ['在华为浏览器中打开哆啦美。', '打开浏览器菜单，选择「添加至桌面」。', '确认名称后添加，再从桌面图标打开。'], note: '部分系统仅提供桌面快捷方式，打开后仍在浏览器中。独立窗口能力取决于系统与浏览器版本。' },
   chromium: { steps: ['打开浏览器菜单。', '选择「安装应用」或「添加到主屏幕」，按提示确认。'], note: '菜单名称和安装能力因设备而异；没有这个选项时，可以继续在浏览器中阅读。' },
   generic: { steps: ['在浏览器菜单中查找「安装应用」「添加至桌面」或「添加到主屏幕」。'], note: '如果没有这些选项，当前浏览器可能不支持安装，可以收藏网址继续阅读。' },
   embedded: { steps: ['先通过右上角菜单，在系统浏览器中打开哆啦美。', '再从浏览器菜单添加到主屏幕。'], note: '应用内置浏览器通常不提供完整安装能力。' },
@@ -26,7 +25,6 @@ function InstallDetails({ error }) {
         <label className="pwa-platform">其他设备的指引
           <select value={platform} onChange={(event) => setPlatform(event.target.value)} aria-label="安装指引平台">
             <option value="ios">iPhone / iPad</option>
-            <option value="huawei">华为浏览器</option>
             <option value="chromium">Chrome / Edge</option>
             <option value="generic">其他浏览器</option>
           </select>
@@ -38,11 +36,11 @@ function InstallDetails({ error }) {
 
 // Settings uses an inline disclosure, avoiding nested modal focus traps on desktop/tablet.
 export default function InstallApp({ settings = false }) {
-  const { installed, canPrompt } = usePwa();
+  const { installed, canPrompt, installEnabled } = usePwa();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
-  if (installed) return null;
+  if (installed || !installEnabled) return null;
   const activate = async () => {
     if (!canPrompt) { setError(false); setOpen(!open); return; }
     setBusy(true);

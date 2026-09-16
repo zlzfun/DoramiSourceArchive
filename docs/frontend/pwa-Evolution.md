@@ -36,3 +36,12 @@
 - 免登录 Quick Tunnel 实跑成功，公网无 Cookie 进入普通读者并打开正文，SW 控制页面且构建哈希一致；管理员请求 403、伪造 Cookie 不能改变角色、恶意 Host 被拒、直接后端仍要求登录。检查产物在 `tmp/pwa-preview/session-j1cnyi0k/`，包含实看截图与 `guest-verification.json`。第一张正文图处于加载中，保留原图并补看 `guest-reading-settled.png`，不把列表摘要命中当正文已完成。
 - 本轮 14 项 `tests/test_pwa_support.py` 通过，包含 URL／通配符／坏域名、缺失参数及凭据文件的反向检查；连同隔离与部署库测试合计 29 项通过。旧有密码的 Quick Tunnel 已停止；这轮仍未取得 Huawei 真机结论。
 - 随后用户将认证域名更换为 `babelgo.cn`。同账户复用上述命名隧道，新建 `pwa-preview.babelgo.cn` CNAME；公网构建哈希、免登录普通读者、管理员 403、伪造 Cookie／Host 拒绝及直接后端认证均通过。实际查看平板尺寸阅读列表与正文截图，证据在 `tmp/pwa-preview/session-derem_2y/`（含哈希清单）。仅此命名预览继续运行，两条 Quick Tunnel 均停止；旧域名专用 CNAME 因新证书看不到旧 zone 而保留，命名隧道的精确 ingress 不向它提供内容。
+
+## 2026-09-16 · 鸿蒙回到网页阅读，PWA 聚焦 Android／iOS
+
+- 发生：用户在 MatePad mini / 鸿蒙 7 / 华为浏览器 6.1.7.303 上看到安装按钮，但点击仅短暂显示「正在打开」后复原、没有系统窗口。随后明确决定本期 PWA 只面向 Android／iOS，鸿蒙以后采用原生套壳。
+- 分析：现有安装事件只是浏览器发出的信号，不足以证明系统安装通道能完成；本次未抓到该真机的 `prompt()`／`userChoice` 返回值，不将无弹窗归因为用户取消。用户提供的 ArkWeb／Chromium 对应版本和第三方支持声明未独立核验，当前按明确产品范围决策收口，停止继续排查鸿蒙安装通道。
+- 改变：HarmonyOS／OpenHarmony／华为浏览器标识命中后隐藏移动和设置安装入口，忽略安装事件；移除华为安装指引，保留网页阅读、SW 恢复与更新。兼容 UA 不一定披露真实系统，所以华为浏览器暂统一排除（含 Android 标识），不宣称所有版本都没有安装能力。后续原生套壳记入 `docs/backlog.md` 展望，不在本轮实现。
+- 验证：前端 lint、13 项 Node 测试及原样 `npm run test:e2e` 通过。四组构造的 UA／UA-CH 输入分别反复注入三次安装事件，移动与平板入口都保持隐藏、网页与 SW 可用；这是产品门控反向验证，不是真机系统能力认证。最终结果目录 `tmp/e2e/reader-nhotd9m1/`，18 项阅读／PWA 检查。
+- 产物审阅：第一轮 Android 指引截图仍在进场动画中，保留在 `tmp/e2e/reader-408kfntu/`；补充浮层与遮罩 opacity 就绪断言后重新跑入口，直接查看最终 Android 指引、暗色 iOS 指引和鸿蒙设置页。鸿蒙页面不新增不支持警告或原生 App 占位按钮。
+- 公网更新：同一自有域名免登录预览已换成本次构建；HTTP 三个构建哈希一致，公网 Chromium 下复验鸿蒙 UA 隐藏入口、普通 Chromium 保留入口、普通读者可访问。证据在 `tmp/pwa-preview/session-4uw5r1hb/scope-verification.json` 及配对哈希清单。此处仍为 UA 模拟，不替代用户真机反馈。

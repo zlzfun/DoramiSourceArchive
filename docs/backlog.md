@@ -6,6 +6,8 @@
 
 ## 进行中
 
+- ☐ **issue #85 移动端 PWA**（分支 `feat/issue-85-mobile-pwa`，方案 [frontend/pwa.md](./frontend/pwa.md)）：
+  Android／iOS 安装入口与最小联网恢复已实现，待真机安装验收；鸿蒙保留网页阅读，原生套壳另列展望。
 - ☐ **issue #74 个人早报三处**(分支 `feat/issue-74-brief-grid`,方案 `docs/personal-brief-grid-and-sections.md`):
   公共日报剔出早报范围 + 板块固定顺序 / 板块内分数降序 + 分值驱动网格(策略 F,样页 `docs/design/dorami-brief-grid-quiet.html`)
   已实现;待用户本地验收与 codex 检视。观察期:T = 9.0 / Δ = 1.0 两个常量在生产分布下的通栏频率与 2 + 2 出现率。
@@ -74,6 +76,8 @@
 
 ## 展望(用户表态、未立项)
 
+- ◇ **鸿蒙原生应用套壳**（#85 用户确认的后续方向）：保留现有 Web 阅读器，以鸿蒙原生应用承载。
+  本轮不设计桥接、打包或分发，也不将鸿蒙 PWA 安装作为 #85 验收要求；背景见 [PWA Evolution](./frontend/pwa-Evolution.md)。
 - ◇ **兴趣走出早报 · 后续波次**(issue #27 第一波 v3.52.0 已落地,方案 `docs/interest-lens-wave-plan.md`):
   已做=左栏一根轴(栏头「订阅 | 兴趣」互斥切换,其下列源或列关注标签,点行下钻;兴趣轴 = 全站)+ 列头收藏星
   + 命中胶囊 / 订阅外就地订阅 + 兴趣编辑面并入发现页第三段。**v3.56.0(2026-09-14)取消屏蔽**:兴趣只剩关注一极

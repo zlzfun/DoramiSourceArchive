@@ -7,7 +7,10 @@ from e2e.mobile_reader import login
 
 
 def assert_install_visible(page):
-    metrics = page.get_by_role("dialog", name="添加到主屏幕").evaluate("""el => {
+    dialog = page.get_by_role("dialog", name="添加到主屏幕")
+    expect(dialog).to_have_css("opacity", "1")
+    expect(dialog.locator("..")).to_have_css("opacity", "1")
+    metrics = dialog.evaluate("""el => {
         const box = el.getBoundingClientRect();
         const close = el.querySelector('button').getBoundingClientRect();
         return {inside: box.top >= 0 && box.left >= 0 && box.bottom <= innerHeight && box.right <= innerWidth,
@@ -74,9 +77,10 @@ def run_pwa_flows(browser, base_url: str, site: Path, artifacts: Path, result: d
         finally:
             dialog.evaluate("el => el.style.removeProperty('transform')")
         select = dialog.get_by_label("安装指引平台")
-        select.select_option("huawei")
-        expect(dialog).to_contain_text("仅提供桌面快捷方式")
-        page.screenshot(path=str(artifacts / "pwa-huawei-guide.png"), animations="disabled")
+        select.select_option("chromium")
+        expect(dialog).to_contain_text("安装应用")
+        expect(select.locator('option[value="huawei"]')).to_have_count(0)
+        page.screenshot(path=str(artifacts / "pwa-android-guide.png"), animations="disabled")
         select.select_option("ios")
         expect(dialog).to_contain_text("作为 Web App 打开")
         page.emulate_media(color_scheme="dark")
@@ -97,7 +101,7 @@ def run_pwa_flows(browser, base_url: str, site: Path, artifacts: Path, result: d
         assert page.get_by_role("dialog").count() == 1
         page.screenshot(path=str(artifacts / "pwa-tablet-settings.png"), animations="disabled")
         page.get_by_role("button", name="关闭设置").click()
-        checks.append("manual Huawei/iOS guidance, dark mode, short landscape, tablet inline guide (no nested modal)")
+        checks.append("manual Android/iOS guidance, dark mode, short landscape, tablet inline guide (no nested modal)")
 
         # Changing the actually served worker models a deployment; do not mutate source/evidence.
         page.evaluate("window.__sameDocument = true")
@@ -150,6 +154,48 @@ def run_pwa_flows(browser, base_url: str, site: Path, artifacts: Path, result: d
             checks.append("simulated standalone launch: persisted session, installation entry hidden")
         finally:
             standalone.close()
+        # Synthetic UA inputs test the product gate, not Huawei system capabilities.
+        for index, (ua, platform) in enumerate([
+            ("Mozilla/5.0 (OpenHarmony 7.0) Chrome/144.0.0.0 HuaweiBrowser/6.1.7.303", None),
+            ("Mozilla/5.0 (Linux; Android 12; wv) Chrome/132.0.0.0 HuaweiBrowser/6.1.7.303", None),
+            ("Mozilla/5.0 (HarmonyOS 7.0) Chrome/144.0.0.0", None),
+            ("Mozilla/5.0 Chrome/144.0.0.0", "HarmonyOS"),
+        ]):
+            excluded = browser.new_context(storage_state=storage, user_agent=ua, viewport={"width": 390, "height": 844})
+            try:
+                if platform:
+                    excluded.add_init_script("Object.defineProperty(navigator, 'userAgentData', {value:{platform:'HarmonyOS'}})")
+                app = excluded.new_page()
+                app.on("pageerror", lambda error: errors.append(str(error)))
+                app.goto(base_url)
+                expect(app.locator(".m-tabbar")).to_be_visible(timeout=30000)
+                app.wait_for_function("navigator.serviceWorker.controller !== null")
+                app.get_by_role("button", name="我的", exact=True).click()
+                assert app.evaluate("""() => {
+                    window.__promptCalls = 0;
+                    for (let i = 0; i < 3; i++) {
+                        const event = new Event('beforeinstallprompt', {cancelable:true});
+                        event.prompt = () => { window.__promptCalls++; return Promise.resolve(); };
+                        event.userChoice = Promise.resolve({outcome:'accepted'});
+                        window.dispatchEvent(event);
+                        if (!event.defaultPrevented) return false;
+                    }
+                    return true;
+                }""")
+                expect(app.get_by_role("button", name="添加到主屏幕", exact=False)).to_have_count(0)
+                app.set_viewport_size({"width": 1365, "height": 900})
+                app.get_by_role("button", name="设置", exact=True).click()
+                drawer = app.get_by_role("dialog", name="设置", exact=True)
+                drawer.get_by_role("button", name="外观", exact=False).click()
+                expect(drawer).not_to_contain_text("添加到主屏幕")
+                if index == 0:
+                    app.screenshot(path=str(artifacts / "pwa-harmony-reading-only.png"), animations="disabled")
+                app.get_by_role("button", name="关闭设置").click()
+                expect(app.locator(".reader-vrail")).to_be_visible()
+                assert app.evaluate("window.__promptCalls") == 0
+            finally:
+                excluded.close()
+        checks.append("HarmonyOS/Huawei policy: repeated install events cannot expose mobile/tablet entry; reading and SW remain available (synthetic UA)")
         assert not errors, errors
         passed = True
     finally:
