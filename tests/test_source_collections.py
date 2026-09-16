@@ -287,10 +287,17 @@ def test_subscribe_all_podcast_sources_and_reject_other_shapes(monkeypatch, tmp_
 
 
 def test_subscribe_by_shape_rejects_overlap_and_reports_status(monkeypatch, tmp_path):
-    from api.routers import reader as reader_router
+    from services import subscription_mutations as subscription_mutations_service
 
     app_module, _sink = _bootstrap(monkeypatch, tmp_path, "shape_overlap.db")
-    assert reader_router._begin_batch_source_subscription("user", "article") is True
+    operation = "batch:article"
+    assert subscription_mutations_service.begin(
+        "user", operation, shape="article"
+    ) is True
+    assert subscription_mutations_service.begin(
+        "other-user", "single:subscribe"
+    ) is True
+    subscription_mutations_service.finish("other-user", "single:subscribe")
     try:
         with TestClient(app_module.app) as client:
             _login(client)
@@ -302,9 +309,27 @@ def test_subscribe_by_shape_rejects_overlap_and_reports_status(monkeypatch, tmp_
                 "/api/reader/sources/subscribe-batch", json={"shape": "podcast"}
             )
             assert overlap.status_code == 409
-            assert overlap.json()["detail"] == "已有批量订阅正在处理中"
+            assert overlap.json()["detail"] == "已有订阅操作正在处理中"
+
+            conflicting_requests = (
+                ("post", "/api/reader/sources/rss_openai_news/subscribe", None),
+                ("delete", "/api/reader/sources/rss_openai_news/subscribe", None),
+                ("post", "/api/reader/collections/frontier-labs-official/subscribe", None),
+                ("delete", "/api/reader/collections/frontier-labs-official/subscribe", None),
+                ("post", "/api/reader/custom-sources", {"url": "https://example.com/feed.xml"}),
+                ("delete", "/api/reader/custom-sources/user_rss_missing", None),
+                ("post", "/api/subscriptions", {"name": "并发订阅"}),
+                ("put", "/api/subscriptions/1", {"name": "并发更新"}),
+                ("post", "/api/subscriptions/1/rotate-token", None),
+                ("delete", "/api/subscriptions/1", None),
+            )
+            for method, path, payload in conflicting_requests:
+                kwargs = {"json": payload} if payload is not None else {}
+                response = getattr(client, method)(path, **kwargs)
+                assert response.status_code == 409, (method, path, response.text)
+                assert response.json()["detail"] == "已有订阅操作正在处理中"
     finally:
-        reader_router._finish_batch_source_subscription("user", "article")
+        subscription_mutations_service.finish("user", operation)
 
     with TestClient(app_module.app) as client:
         _login(client)

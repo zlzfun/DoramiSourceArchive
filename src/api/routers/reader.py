@@ -15,7 +15,6 @@ import hashlib
 import hmac
 import importlib
 import json
-import threading
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -75,34 +74,23 @@ from services import reader_search as reader_search_service
 from services import reader_interests as reader_interests_service
 from services import reader_state as reader_state_service
 from services import source_collections as source_collections_service
+from services import subscription_mutations as subscription_mutations_service
 from services import source_visibility as source_visibility_service
 from services import user_sources as user_sources_service
 from services import x_api_config as x_api_config_service
 
 router = APIRouter(prefix="/api/reader", tags=["reader"])
 
-_BATCH_SOURCE_SUBSCRIBE_STATE_LOCK = threading.Lock()
-_BATCH_SOURCE_SUBSCRIBE_ACTIVE: Dict[str, str] = {}
-
-
-def _begin_batch_source_subscription(username: str, shape: str) -> bool:
-    """同一用户只允许一笔形态批量订阅在服务端执行。"""
-    with _BATCH_SOURCE_SUBSCRIBE_STATE_LOCK:
-        if username in _BATCH_SOURCE_SUBSCRIBE_ACTIVE:
-            return False
-        _BATCH_SOURCE_SUBSCRIBE_ACTIVE[username] = shape
-        return True
-
-
-def _finish_batch_source_subscription(username: str, shape: str) -> None:
-    with _BATCH_SOURCE_SUBSCRIBE_STATE_LOCK:
-        if _BATCH_SOURCE_SUBSCRIBE_ACTIVE.get(username) == shape:
-            _BATCH_SOURCE_SUBSCRIBE_ACTIVE.pop(username, None)
-
-
-def _batch_source_subscription_status(username: str) -> Optional[str]:
-    with _BATCH_SOURCE_SUBSCRIBE_STATE_LOCK:
-        return _BATCH_SOURCE_SUBSCRIBE_ACTIVE.get(username)
+def _guard_source_subscription_mutation(request: Request):
+    """给单源、合集和自定源写入口复用同一用户级互斥状态。"""
+    username = _app().current_username(request)
+    operation = f"{request.method} {request.url.path}"
+    if not subscription_mutations_service.begin(username, operation):
+        raise HTTPException(status_code=409, detail="已有订阅操作正在处理中")
+    try:
+        yield
+    finally:
+        subscription_mutations_service.finish(username, operation)
 
 
 def _app():
@@ -173,7 +161,12 @@ def resolve_favorite_article_ids(session: Session, username: str) -> List[str]:
 # ==================== 一键订阅 / 退订 ====================
 
 @router.post("/sources/{source_id}/subscribe")
-def subscribe_source(source_id: str, request: Request, session: Session = Depends(deps.get_session)):
+def subscribe_source(
+    source_id: str,
+    request: Request,
+    session: Session = Depends(deps.get_session),
+    _mutation_guard: None = Depends(_guard_source_subscription_mutation),
+):
     """一键订阅单个内容源：尚未订阅则创建一个仅含该源的订阅，已订阅则幂等返回。
 
     交付令牌、限额等高级设置使用默认值，留待用户在「我的订阅」中按需编辑。
@@ -224,7 +217,12 @@ def subscribe_source(source_id: str, request: Request, session: Session = Depend
 
 
 @router.delete("/sources/{source_id}/subscribe")
-def unsubscribe_source(source_id: str, request: Request, session: Session = Depends(deps.get_session)):
+def unsubscribe_source(
+    source_id: str,
+    request: Request,
+    session: Session = Depends(deps.get_session),
+    _mutation_guard: None = Depends(_guard_source_subscription_mutation),
+):
     """一键取消订阅：从当前用户的所有订阅范围内移除该源，因此清空的订阅会被删除。"""
     app = _app()
     username = app.current_username(request)
@@ -298,7 +296,12 @@ def list_source_collections():
 
 
 @router.post("/collections/{collection_id}/subscribe")
-def subscribe_collection(collection_id: str, request: Request, session: Session = Depends(deps.get_session)):
+def subscribe_collection(
+    collection_id: str,
+    request: Request,
+    session: Session = Depends(deps.get_session),
+    _mutation_guard: None = Depends(_guard_source_subscription_mutation),
+):
     """一键订阅合集 = 批量订阅其当前成员(批量动作,非持久绑定)。
 
     逐成员沿用单源订阅的两条纪律:隐藏源与注册表外成员跳过(不整体 404,
@@ -346,7 +349,12 @@ def subscribe_collection(collection_id: str, request: Request, session: Session 
 
 
 @router.delete("/collections/{collection_id}/subscribe")
-def unsubscribe_collection(collection_id: str, request: Request, session: Session = Depends(deps.get_session)):
+def unsubscribe_collection(
+    collection_id: str,
+    request: Request,
+    session: Session = Depends(deps.get_session),
+    _mutation_guard: None = Depends(_guard_source_subscription_mutation),
+):
     """取消订阅合集 = 批量退订其当前成员。
 
     无绑定记录的诚实推论:同属其它合集的成员也会被退订(前端确认框如实列出)。
@@ -496,7 +504,10 @@ async def preview_custom_source(
 
 @router.post("/custom-sources")
 async def create_custom_source(
-        params: CustomSourceParams, request: Request, session: Session = Depends(deps.get_session)
+        params: CustomSourceParams,
+        request: Request,
+        session: Session = Depends(deps.get_session),
+        _mutation_guard: None = Depends(_guard_source_subscription_mutation),
 ):
     """添加自定源:守门 → 撞库 → 建/复用配置行 → 订阅本人 → 提交首抓后台 job。"""
     app = _app()
@@ -659,7 +670,12 @@ def update_custom_source_ai_analysis(
 
 
 @router.delete("/custom-sources/{source_id}")
-def remove_custom_source(source_id: str, request: Request, session: Session = Depends(deps.get_session)):
+def remove_custom_source(
+    source_id: str,
+    request: Request,
+    session: Session = Depends(deps.get_session),
+    _mutation_guard: None = Depends(_guard_source_subscription_mutation),
+):
     """移除自定源:退订本人;无其他活跃订阅者时物理删除(配置行+文章)。"""
     app = _app()
     username = app.current_username(request)
@@ -1323,8 +1339,11 @@ class BatchSourceSubscribeParams(BaseModel):
 @router.get("/sources/subscribe-batch/status")
 def get_source_batch_subscription_status(request: Request):
     username = _app().current_username(request)
-    active_shape = _batch_source_subscription_status(username)
-    return {"processing": active_shape is not None, "shape": active_shape}
+    active = subscription_mutations_service.status(username)
+    return {
+        "processing": active is not None,
+        "shape": active.get("shape") if active else None,
+    }
 
 
 @router.post("/sources/subscribe-batch")
@@ -1340,8 +1359,13 @@ def subscribe_sources_by_shape(
     """
     app = _app()
     username = app.current_username(request)
-    if not _begin_batch_source_subscription(username, params.shape):
-        raise HTTPException(status_code=409, detail="已有批量订阅正在处理中")
+    operation = f"batch:{params.shape}"
+    if not subscription_mutations_service.begin(
+        username,
+        operation,
+        shape=params.shape,
+    ):
+        raise HTTPException(status_code=409, detail="已有订阅操作正在处理中")
     try:
         catalog = _reader_sources_catalog(request, session)
         registry_meta = _registry_source_meta()
@@ -1387,7 +1411,7 @@ def subscribe_sources_by_shape(
             "subscribed_source_ids": subscribed_ids,
         }
     finally:
-        _finish_batch_source_subscription(username, params.shape)
+        subscription_mutations_service.finish(username, operation)
 
 
 # ==================== 阅读器 AI（用户面：翻译 / 问答）====================
