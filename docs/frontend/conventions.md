@@ -321,6 +321,19 @@
 旧「well 标题条 + soft 脚条 + indigo 图标」三段横条语法退役;新小弹窗一律用此三件套
 (在册消费者:运维新建读者/重置密码)。
 
+**弹窗外壳与遮罩关闭(2026-09,issue #104)**:业务弹窗一律 `<Modal>`(`components/Modal.jsx`;
+表单弹窗传 `as="form"` + `panelProps={{ onSubmit }}`,确认框 `role="alertdialog"`,需避开变换祖先
+时 `portal`,面板自带宽度[`.sett-cab` / `.csrc-sheet`]时 `size="none"`——utilities 层的 `max-w-*`
+会压过组件层宽度)。**遮罩关闭判定只在外壳一处**:`closeOnOverlay` 按「按下与松开同在遮罩」核对
+(`utils/overlayClose.js`,pointer 事件,鼠标 / 触屏一套):面板内拖选文字松手落到遮罩、遮罩按下
+拖进面板松手都不关,面板不需要 `stopPropagation`(弹窗内嵌靠 document mousedown 点外关闭的浮层
+照常)。业务代码不得自写 `.modal-overlay` 元素——那意味着又一套 onClick 关闭判定,lint
+`dorami/no-raw-modal-overlay` 拦增量;移动壳 `.m-dim` 是面板的兄弟节点,不在此列。**body 滚动锁
+只用 `hooks/useBodyScrollLock`**(全站一把引用计数锁,外壳与抽屉共用):自写「存旧值 → 还旧值」
+的锁在多层浮层关闭顺序不对称时会把 `hidden` 留在 body 上。**Esc / 焦点陷阱只用 `hooks/useModalA11y`**,
+它带模块级层栈:多层浮层同时激活(抽屉上开确认框 / 表单弹窗)时 Esc 与 Tab 只由最上层消费,上层关闭后
+焦点回到下层触发控件、下层保持打开;业务代码不要再挂自己的 document / window 级 Esc 监听去关模态层。
+
 ## 9. 暗色主题（已落地）
 
 暗色主题通过 `[data-theme=dark]`（挂在 `<html>`，由 `src/theme.js` 的主题控制器写入）实现，三态偏好

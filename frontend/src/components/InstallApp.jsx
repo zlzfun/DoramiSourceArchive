@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { createPortal } from 'react-dom';
 import { ChevronRight, Download, X } from 'lucide-react';
 import Modal from './Modal';
 import { installGuide, promptInstall, usePwa } from '../pwa';
@@ -63,15 +62,15 @@ export default function InstallApp({ settings = false }) {
           <span className="m-row-chev" aria-hidden="true"><ChevronRight /></span>
         </button>
       )}
-      {settings ? open && <InstallDetails error={error} /> : createPortal(
-        <Modal open={open} onClose={() => setOpen(false)} size="md" centered closeOnOverlay overlayClassName="pwa-overlay" panelClassName="pwa-panel" ariaLabel="添加到主屏幕">
+      {settings ? open && <InstallDetails error={error} /> : (
+        <Modal open={open} onClose={() => setOpen(false)} size="md" centered closeOnOverlay portal overlayClassName="pwa-overlay" panelClassName="pwa-panel" ariaLabel="添加到主屏幕">
           <header className="pwa-heading">
             <img src="/brand/dorami-logo-48.png" alt="" width="40" height="40" />
             <h2>添加到主屏幕</h2>
             <button type="button" className="icon-button" onClick={() => setOpen(false)} aria-label="关闭安装指引"><X size={20} /></button>
           </header>
           <InstallDetails error={error} />
-        </Modal>, document.body,
+        </Modal>
       )}
     </>
   );
