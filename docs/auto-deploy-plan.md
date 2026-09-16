@@ -381,6 +381,18 @@ dispatch 的两个布尔位未跨 SSH 传到生产机 → 四 token;新 `--pipel
 
 检视到此收束(首轮 + 三轮复检)。后续实现阶段的检视按 PR 逐个进行,不再重开设计面。
 
+**PR-1 实现检视(PR #111,同日,codex gpt-6-astra ultra)**:首轮 3 P1 + 2 P2 全部成立,三轮定向复检 5 → 2 → 1 → 0 收口,
+产出 `.review/{prompt,report-codex,response}-pr1-r1.md` 与 `recheck{,2,3}-codex-pr1.md`。改变实现形状的结论:
+
+- **`PRAGMA query_only` 不是文件级只读**:关最后一个连接时 sqlite 仍 checkpoint WAL、改写主库、删 `-wal/-shm`;
+  只读引擎改用 `sqlite:///file:<path>?mode=ro&uri=true`(不用 `immutable=1`,它会忽略未 checkpoint 的 WAL)。
+- **SQLite URL 必须用 `make_url` 解析**:字符串切 `sqlite:///` 会把 `sqlite+pysqlite:////` 与 `file:` URI 判错甚至建出空文件;
+  `?mode=memory` 被 make_url 挪进 `url.query`,且只在 `uri=true` 时对驱动生效。
+- **错误描述不得回显原文**:configparser 的 ParsingError 自带整行(漏等号的 `api_key` 行),config 自己的 ValueError 也会整段
+  带原值(误缩进让 secret 行并进 role 值);统一「类别 + 行号 / 安全前缀」,脱敏函数零导入(import 链在 except 里会再抛一次)。
+- CLI 总是输出 JSON(兜底退出 2);配置路径 `expanduser`;`downgrade_incompatible` 状态经推演不可达,codex 独立核实成立后删除。
+- 两条既有边界记入 backlog:`_has_user_tables` 只看 `articles`;`ensure_migrated` 单数 `get_current_revision` 在多 head 库会抛。
+
 已核实并保留的正确决策:`GITHUB_TOKEN` 建 Release 不触发 `on: release`,同 run `needs: release` 串联正确;Environment
 required reviewers 在 public 仓库可用;launcher / worker 必须在仓库外;`/api/health` exact 白名单会在鉴权与 surface 判断前短路;
 `build.source` 真实值是 `env`(issue 原稿写 `tag`,以 `env` 验收);已拍板边界(不自动回滚 / 不接通知 / 单一 tag /
