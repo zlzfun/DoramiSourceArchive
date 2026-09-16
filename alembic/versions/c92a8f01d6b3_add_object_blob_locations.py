@@ -27,4 +27,17 @@ def upgrade():
 
 
 def downgrade():
-    raise RuntimeError("restore the pre-upgrade database and all media before downgrading")
+    bind = op.get_bind()
+    if "object_blobs" not in sa.inspect(bind).get_table_names():
+        return
+    if bind.dialect.name == "postgresql":
+        bind.exec_driver_sql("LOCK TABLE object_blobs IN ACCESS EXCLUSIVE MODE")
+    elif bind.dialect.name == "sqlite":
+        bind.exec_driver_sql("UPDATE object_blobs SET id=id WHERE 0")
+    if bind.execute(sa.text("SELECT 1 FROM object_blobs LIMIT 1")).first() is not None:
+        raise RuntimeError(
+            "restore and verify all media, then finalize-local before downgrading; "
+            "or restore the pre-upgrade database and all media"
+        )
+    op.drop_index("ix_object_blobs_namespace", table_name="object_blobs")
+    op.drop_table("object_blobs")

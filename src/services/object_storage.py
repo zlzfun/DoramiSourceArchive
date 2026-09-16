@@ -3,14 +3,19 @@
 The database stores object locations, not URLs or credentials. Uploads finish
 before business metadata may become visible. Downloads use atomic replacement
 and verify SHA-256, keeping FileResponse, ffprobe and image analysis compatible.
-Cache eviction and remote garbage collection are explicit offline operations:
-runtime readers must never lose a pathname before opening it.
+Online cache eviction shares process-independent leases with runtime readers.
+Remote garbage collection remains an explicit offline operation.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import fcntl
+import json
+import time
+from contextlib import contextmanager
+from functools import wraps
 import os
 from pathlib import Path
 import re
@@ -41,6 +46,19 @@ def hash_file(path: Path) -> tuple[str, int]:
     return digest.hexdigest(), size
 
 
+def _cloud_operation(method):
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        try:
+            value = method(self, *args, **kwargs)
+        except ObjectStorageError as exc:
+            if self.enabled:
+                self._state_update("storage_health", last_error=str(exc), last_error_at=self._now())
+            raise
+        return value
+    return wrapped
+
+
 class ObjectStorage:
     def __init__(self, engine, root: Path, namespace: str, config: OssConfig, *, bucket_factory=None):
         if namespace not in {"media", "podcast"}:
@@ -54,6 +72,73 @@ class ObjectStorage:
         self._role_provider = EcsRoleCredentialsProvider(config.ecs_role_name)
         # Stripes bound memory and serialize same-content downloads in this process.
         self._locks = [threading.RLock() for _ in range(64)]
+
+    @staticmethod
+    def _now():
+        return dt.datetime.now(dt.timezone.utc).isoformat()
+
+    @contextmanager
+    def pin(self, content_hash: str, *, exclusive=False, blocking=True):
+        """Cross-process lease; hold until pathname consumers finish or open an fd.
+
+        Fixed 256 stripes avoid unbounded lock files. Lock files are never removed:
+        unlinking one would let a new worker lock a different inode.
+        """
+        if not self.enabled:
+            yield True
+            return
+        self.identity(content_hash, ".bin")
+        directory = self.root / ".oss-locks"
+        directory.mkdir(parents=True, exist_ok=True)
+        with (directory / content_hash[:2]).open("a+b") as handle:
+            operation = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+            try:
+                fcntl.flock(handle.fileno(), operation | (0 if blocking else fcntl.LOCK_NB))
+            except BlockingIOError:
+                yield False
+                return
+            try:
+                yield True
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+    def _state(self):
+        try:
+            state = json.loads((self.root / ".oss-status.json").read_text())
+            return {key: value for key, value in state.items() if isinstance(value, dict)} if isinstance(state, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _state_update(self, section, **values):
+        # Diagnostics must never turn a successful storage operation into a failure.
+        try:
+            self.root.mkdir(parents=True, exist_ok=True)
+            with (self.root / ".oss-status.lock").open("a+b") as lock:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+                state = self._state()
+                state.setdefault(section, {}).update(values)
+                fd, name = tempfile.mkstemp(prefix=".oss-status-", dir=self.root)
+                try:
+                    with os.fdopen(fd, "w") as output:
+                        json.dump(state, output)
+                    os.replace(name, self.root / ".oss-status.json")
+                finally:
+                    Path(name).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    def _healthy(self):
+        self._state_update("storage_health", last_error=None, last_success_at=self._now())
+
+    def local_bytes(self):
+        total = 0
+        for path in self.root.glob("[0-9a-f][0-9a-f]/*"):
+            try:
+                if path.is_file() and not path.is_symlink() and not path.name.endswith(".part"):
+                    total += path.stat().st_size
+            except FileNotFoundError:
+                pass
+        return total
 
     def identity(self, content_hash: str, ext: str) -> str:
         if not re.fullmatch(r"[0-9a-f]{64}", content_hash) or not re.fullmatch(r"\.[a-z0-9]{1,8}", ext):
@@ -78,9 +163,12 @@ class ObjectStorage:
         provider = self._role_provider if self.config.credential_provider == "ecs_role" else oss2.credentials.StaticCredentialsProvider(
             self.config.access_key_id, self.config.access_key_secret, self.config.security_token,
         )
+        session = oss2.Session()
+        session.session.trust_env = False
+        session.session.max_redirects = 0
         return oss2.Bucket(
             oss2.ProviderAuthV4(provider), self.config.endpoint, record.bucket,
-            region=record.region, connect_timeout=self.config.timeout_seconds,
+            region=record.region, connect_timeout=self.config.timeout_seconds, session=session,
         )
 
     def _head(self, bucket, record: ObjectBlobRecord) -> bool:
@@ -96,12 +184,13 @@ class ObjectStorage:
             raise ObjectStorageError("object_storage_remote_identity_mismatch")
         return True
 
+    @_cloud_operation
     def persist(self, path: Path, content_hash: str, ext: str, size: int, mime: str) -> None:
         """Write through to OSS. Safe to repeat after a process/DB failure."""
         if not self.enabled:
             return
         identity = self.identity(content_hash, ext)
-        with self._lock(content_hash):
+        with self.pin(content_hash), self._lock(content_hash):
             if hash_file(path) != (content_hash, size):
                 raise ObjectStorageError("object_storage_local_checksum_mismatch")
             record = self.location(content_hash, ext)
@@ -142,15 +231,22 @@ class ObjectStorage:
                         if previous is None or previous.object_key != record.object_key or previous.bucket != record.bucket:
                             raise ObjectStorageError("object_storage_registry_conflict") from None
 
+            self._healthy()
+
+    @_cloud_operation
     def materialize(self, path: Path, content_hash: str, ext: str, size: int) -> Path:
         """Restore a cold working copy. Never refetch a mutable origin URL."""
         self.identity(content_hash, ext)
-        with self._lock(content_hash):
+        with self.pin(content_hash), self._lock(content_hash):
             if path.is_file() and path.stat().st_size == size:
+                if self.enabled and time.time() - path.stat().st_mtime > 60:
+                    os.utime(path, None)
                 return path
             record = self.location(content_hash, ext)
             if record is None:
                 return path
+            if not self.enabled:
+                raise ObjectStorageError("object_storage_local_copy_missing")
             if record.size_bytes != size:
                 raise ObjectStorageError("object_storage_registry_conflict")
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -190,17 +286,24 @@ class ObjectStorage:
                 if fd >= 0:
                     os.close(fd)
                 temporary.unlink(missing_ok=True)
+            self._healthy()
             return path
 
     def stats(self) -> dict:
         with Session(self.engine) as session:
             rows = session.exec(select(ObjectBlobRecord).where(ObjectBlobRecord.namespace == self.namespace)).all()
+        state = self._state()
         return {
+            "cache": {**state.get("cache", {}), "enabled": self.enabled and self.config.cache_enabled,
+                      "max_bytes": getattr(self.config, f"{self.namespace}_cache_max_mb") * 1024 * 1024,
+                      "local_bytes": self.local_bytes()},
+            "storage_health": state.get("storage_health", {}),
             "storage_backend": self.config.backend(self.namespace),
             "remote_objects": len(rows),
             "remote_bytes": sum(row.size_bytes for row in rows),
         }
 
+    @_cloud_operation
     def verify_remote(self, record: ObjectBlobRecord) -> None:
         """Read every remote byte before permitting local eviction or reporting recovery success."""
         try:
@@ -222,15 +325,77 @@ class ObjectStorage:
                 response.close()
             if size != record.size_bytes or digest.hexdigest() != record.content_hash:
                 raise ObjectStorageError("object_storage_download_checksum_mismatch")
+            self._healthy()
         except ObjectStorageError:
             raise
         except Exception:
             raise ObjectStorageError("object_storage_verify_failed") from None
+
+    def evict_cache(self):
+        """Best-effort target, never a quota: active/new/unverified files stay local."""
+        if not self.enabled or not self.config.cache_enabled:
+            return {"evicted_files": 0, "evicted_bytes": 0, "skipped": 0}
+        result = {"evicted_files": 0, "evicted_bytes": 0, "skipped": 0}
+        limit = getattr(self.config, f"{self.namespace}_cache_max_mb") * 1024 * 1024
+        total = self.local_bytes()
+        with Session(self.engine) as session:
+            rows = session.exec(select(ObjectBlobRecord).where(ObjectBlobRecord.namespace == self.namespace)).all()
+        candidates = []
+        for row in rows:
+            self.identity(row.content_hash, row.ext)
+            path = self.root / row.content_hash[:2] / f"{row.content_hash}{row.ext}"
+            try:
+                if not path.is_symlink():
+                    candidates.append((path.stat().st_mtime, row, path))
+            except FileNotFoundError:
+                continue
+        last_error = None
+        for touched, row, path in sorted(candidates, key=lambda value: value[0]):
+            if total <= limit:
+                break
+            if time.time() - touched < self.config.cache_min_age_seconds:
+                result["skipped"] += 1
+                continue
+            try:
+                # Snapshot under a short exclusive lease, verify remotely with
+                # no reader blocked, then recheck identity/access time to evict.
+                with self.pin(row.content_hash, exclusive=True, blocking=False) as acquired:
+                    if not acquired:
+                        result["skipped"] += 1
+                        continue
+                    if not path.is_file() or path.is_symlink() or not path.resolve().is_relative_to(self.root):
+                        continue
+                    before = path.stat()
+                    if time.time() - before.st_mtime < self.config.cache_min_age_seconds:
+                        continue
+                    if hash_file(path) != (row.content_hash, row.size_bytes):
+                        raise ObjectStorageError("object_storage_local_checksum_mismatch")
+                self.verify_remote(row)
+                with self.pin(row.content_hash, exclusive=True, blocking=False) as acquired:
+                    if not acquired:
+                        result["skipped"] += 1
+                        continue
+                    after = path.stat()
+                    if (before.st_ino, before.st_mtime_ns, before.st_size) != (after.st_ino, after.st_mtime_ns, after.st_size):
+                        continue
+                    path.unlink()
+                    total -= row.size_bytes
+                    result["evicted_files"] += 1
+                    result["evicted_bytes"] += row.size_bytes
+            except (ObjectStorageError, OSError) as exc:
+                last_error = str(exc) if isinstance(exc, ObjectStorageError) else "object_storage_cache_failed"
+                # Outages must not turn into a request storm over the entire cache.
+                break
+        self._state_update("cache", **result, last_run_at=self._now(), last_error=last_error)
+        return result
 
     def durable_bytes(self, paths) -> int:
         with Session(self.engine) as session:
             rows = session.exec(select(ObjectBlobRecord).where(ObjectBlobRecord.namespace == self.namespace)).all()
         objects = {f"{row.content_hash}{row.ext}": row.size_bytes for row in rows}
         for path in paths:
-            objects[path.name] = max(objects.get(path.name, 0), path.stat().st_size)
+            try:
+                objects[path.name] = max(objects.get(path.name, 0), path.stat().st_size)
+            except FileNotFoundError:
+                pass
         return sum(objects.values())

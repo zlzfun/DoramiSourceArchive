@@ -197,6 +197,10 @@ export function fetchMediaStats() {
   return request('/admin/media/stats', { errorMsg: '获取媒体库统计失败' });
 }
 
+export function fetchStorageStatus(options = {}) {
+  return request('/admin/storage/status', { ...options, errorMsg: '获取存储状态失败' });
+}
+
 // ── Podcast 音频资产（本地存储管理）──
 export function fetchPodcastArtifactStats(options = {}) {
   return request('/admin/podcast-artifacts/stats', {

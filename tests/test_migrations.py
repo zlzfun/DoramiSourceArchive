@@ -373,17 +373,19 @@ def test_source_audio_migration_preserves_proven_task_and_closes_invalid_hold(
 def test_source_audio_retirement_migration_requires_backup_to_downgrade(tmp_path):
     db_url = f"sqlite:///{tmp_path / 'source-audio-retirement-one-way.db'}"
     cfg = make_alembic_config(db_url)
-    command.upgrade(cfg, "head")
+    # The later OSS registry is reversible when empty. Exercise the original
+    # one-way boundary directly; OSS downgrade has its own registry tests.
+    command.upgrade(cfg, "b715a91c4e02")
 
     with pytest.raises(RuntimeError, match="restore the pre-upgrade database"):
         command.downgrade(cfg, "d6a3f9c2e714")
 
-    # transaction_per_migration=True:单向边界之上的每个迁移都必须在自己的 DDL 之前拒绝,
-    # 否则会先提交逆操作再撞到父守卫——库离开 head 却报错。故断言仍在 head 且 v3.56 的 CHECK 未被放宽。
+    # transaction_per_migration=True:原有单向边界必须在自身 DDL 之前拒绝，
+    # 保持在这次指定的 b715 revision，且 v3.56 的 CHECK 未被放宽。
     engine = create_engine(db_url)
     try:
         with engine.connect() as conn:
-            assert MigrationContext.configure(conn).get_current_revision() == _head_revision()
+            assert MigrationContext.configure(conn).get_current_revision() == "b715a91c4e02"
             checks = {
                 item["name"]: item["sqltext"]
                 for item in inspect(engine).get_check_constraints("user_interest_tags")

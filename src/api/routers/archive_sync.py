@@ -10,6 +10,7 @@
 deps.get_db_sink()。
 """
 
+from api.storage_response import StorageFileResponse
 import hashlib
 import hmac
 import importlib
@@ -21,7 +22,6 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from sqlalchemy import func, or_
 from sqlmodel import Session, select
 from starlette.responses import JSONResponse as StarletteJSONResponse
-from starlette.responses import FileResponse
 
 from api import deps
 from api.articles_view import apply_article_query_filters
@@ -539,11 +539,11 @@ def export_archive_v2_media(url_hash: str):
     store = getattr(app_module, "media_store", None)
     if store is None:
         raise HTTPException(status_code=404, detail="media store disabled")
-    path = store.readable_path(record)
-    if not path.is_file():
+    path = store.file_path_for(record)
+    if not getattr(getattr(store, "object_storage", None), "enabled", False) and not path.is_file():
         raise HTTPException(status_code=404, detail="media file missing")
-    return FileResponse(
-        path,
+    return StorageFileResponse(
+        store, record,
         media_type=record.mime or "application/octet-stream",
         headers={"X-Content-Type-Options": "nosniff"},
     )
@@ -565,11 +565,11 @@ def export_archive_v2_podcast_audio(artifact_id: str):
     store = getattr(importlib.import_module("api.app"), "podcast_artifact_store", None)
     if store is None:
         raise HTTPException(status_code=404, detail="podcast artifact store disabled")
-    path = store.readable_path(record)
-    if not path.is_file():
+    path = store.file_path_for(record)
+    if not getattr(getattr(store, "object_storage", None), "enabled", False) and not path.is_file():
         raise HTTPException(status_code=404, detail="podcast audio file missing")
-    return FileResponse(
-        path,
+    return StorageFileResponse(
+        store, record,
         media_type=record.mime or "application/octet-stream",
         headers={"X-Content-Type-Options": "nosniff"},
     )

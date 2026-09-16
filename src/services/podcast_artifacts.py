@@ -12,7 +12,8 @@ import subprocess
 import tempfile
 import threading
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
+from functools import wraps
 from pathlib import Path
 from typing import BinaryIO, Callable, Iterable, Iterator, Optional
 
@@ -206,6 +207,33 @@ def withdraw_digest_audio_for_script_change(
         .execution_options(synchronize_session=False)
     )
     return max(int(getattr(result, "rowcount", 0) or 0), 0)
+
+
+def _pin_storage(method):
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        if not self.object_storage or not self.object_storage.enabled:
+            return method(self, *args, **kwargs)
+        hashes = []
+        if method.__name__ == "import_file":
+            hashes = [kwargs["content_hash"]]
+        elif method.__name__ == "is_intact":
+            hashes = [(args[0] if args else kwargs["record"]).content_hash]
+        elif method.__name__ == "find_digest_audio_by_processing_id":
+            with Session(self.engine) as session:
+                rows = session.exec(select(PodcastArtifactRecord).where(
+                    PodcastArtifactRecord.processing_id == str(kwargs.get("processing_id") or "").strip()
+                )).all()
+                hashes = [row.content_hash for row in rows]
+        else:
+            row = self.get(args[0] if args else kwargs["artifact_id"])
+            if row is not None:
+                hashes = [row.content_hash]
+        with ExitStack() as leases:
+            for content_hash in sorted(set(hashes)):
+                leases.enter_context(self.object_storage.pin(content_hash))
+            return method(self, *args, **kwargs)
+    return wrapped
 
 
 class PodcastArtifactStore:
@@ -463,6 +491,7 @@ class PodcastArtifactStore:
             return self.object_storage.materialize(path, record.content_hash, record.ext, record.size_bytes)
         return path
 
+    @_pin_storage
     def is_intact(self, record: PodcastArtifactRecord, *, restore: bool = True) -> bool:
         """Verify that a registry row still resolves to its exact immutable blob."""
 
@@ -496,6 +525,7 @@ class PodcastArtifactStore:
         except OSError:
             pass
 
+    @_pin_storage
     def import_file(
         self, *, episode_id: str, kind: str, path: Path,
         content_hash: str, size_bytes: int, declared_mime: str,
@@ -781,6 +811,7 @@ class PodcastArtifactStore:
         with Session(self.engine) as session:
             return session.get(PodcastArtifactRecord, artifact_id)
 
+    @_pin_storage
     def find_digest_audio_by_processing_id(
         self,
         *,
@@ -930,6 +961,7 @@ class PodcastArtifactStore:
                 ) from exc
         return record
 
+    @_pin_storage
     def open_readable_audio(
         self,
         artifact_id: str,
@@ -1184,7 +1216,10 @@ class PodcastArtifactStore:
         for path in self._blob_files():
             if path in referenced:
                 continue
-            stat = path.stat()
+            try:
+                stat = path.stat()
+            except FileNotFoundError:
+                continue
             orphan_count += 1
             orphan_bytes += stat.st_size
             if now - stat.st_mtime >= self.orphan_grace_seconds:
@@ -1199,7 +1234,7 @@ class PodcastArtifactStore:
             for row in rows:
                 counts[row.status] = counts.get(row.status, 0) + 1
             files = self._blob_files()
-            disk_bytes = sum(path.stat().st_size for path in files)
+            disk_bytes = self.object_storage.local_bytes() if self.object_storage else sum(path.stat().st_size for path in files)
             missing_files = sum(
                 1
                 for row in rows
@@ -1261,6 +1296,7 @@ class PodcastArtifactStore:
                 result["missing_files"] -= result["cold_cached_files"]
             return result
 
+    @_pin_storage
     def publish(self, artifact_id: str, *, expected_updated_at: str) -> PodcastArtifactRecord:
         if self.object_storage:
             candidate = self.get(artifact_id)

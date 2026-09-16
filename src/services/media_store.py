@@ -301,6 +301,16 @@ class MediaStore:
             return self.object_storage.materialize(path, record.content_hash, record.ext, record.size_bytes)
         return path
 
+    def open_readable(self, record):
+        if self.object_storage:
+            with self.object_storage.pin(record.content_hash):
+                return self.readable_path(record).open("rb")
+        return self.file_path_for(record).open("rb")
+
+    def read_bytes(self, record, limit):
+        with self.open_readable(record) as handle:
+            return handle.read(limit)
+
     async def _restore_cached(self, record: MediaAssetRecord) -> bool:
         try:
             path = await asyncio.to_thread(self.readable_path, record)
@@ -652,5 +662,5 @@ class MediaStore:
         }
         if self.object_storage:
             result.update(self.object_storage.stats())
-            result["disk_bytes"] = sum(p.stat().st_size for p in self.root.glob("*/*") if p.is_file() and not p.name.endswith(".part"))
+            result["disk_bytes"] = self.object_storage.local_bytes()
         return result

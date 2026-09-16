@@ -133,6 +133,8 @@ from services.podcast_stage_policy import (
 )
 from services.media_store import MediaStore
 from services.object_storage import ObjectStorage, ObjectStorageError
+from services.storage_backup import BackupService
+from services.storage_runtime import maintain_storage
 from services.podcast_artifacts import PodcastArtifactStore
 from services.podcast_asr_worker import AsrWorkerConfig, AsrWorkerStep
 from services import podcast_premium_guides as podcast_premium_guide_service
@@ -490,6 +492,7 @@ async def lifespan(app: FastAPI):
         # Both production hosts may run role=all while only the external host is
         # allowed to register ASR. The first tick is deliberately delayed.
         reload_podcast_asr_worker_schedule()
+        reload_storage_schedule()
         if collector_on:
             # 远程内容同步定时任务(启用且 cron 合法时注册,否则移除既有 job)。
             reload_remote_sync_schedule()
@@ -636,6 +639,27 @@ podcast_artifact_store = PodcastArtifactStore(
     orphan_grace_seconds=settings.podcast_artifacts.orphan_grace_seconds,
     object_storage=ObjectStorage(db_sink.engine, Path(settings.podcast_artifacts.root_dir), "podcast", settings.oss),
 )
+
+storage_backup_service = BackupService(
+    settings.backup, settings.storage.database_url, settings.bailian_speech.tts_receipt_root,
+    media_root=settings.media.media_dir, podcast_root=settings.podcast_artifacts.root_dir,
+    object_stores={"media": media_store.object_storage if media_store else None,
+                   "podcast": podcast_artifact_store.object_storage},
+)
+
+
+def _object_stores():
+    return [store.object_storage for store in (media_store, podcast_artifact_store)
+            if store is not None and store.engine is db_sink.engine and getattr(store, "object_storage", None)]
+
+
+@app.get("/api/admin/storage/status")
+def admin_storage_status():
+    result = {"media": {"storage_backend": "local"}, "podcast": {"storage_backend": "local"}}
+    for store in _object_stores():
+        result[store.namespace] = store.stats()
+    result["backup"] = storage_backup_service.status()
+    return result
 
 # The durable processing state machine is used for resumable ASR. Premium-guide
 # text and TTS use their smaller provider-neutral workflow below.
@@ -1436,6 +1460,21 @@ app.include_router(remote_sync_router.router)
 app.include_router(share_router.router)
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
+
+
+async def execute_storage_maintenance_job():
+    # Avoid touching a different database when embedded hosts/tests replace it.
+    backup = storage_backup_service if str(db_sink.engine.url) == storage_backup_service.database_url else None
+    await asyncio.to_thread(maintain_storage, _object_stores(), backup)
+
+
+def reload_storage_schedule():
+    enabled = any(store.enabled and store.config.cache_enabled for store in _object_stores())
+    if enabled or settings.backup.enabled:
+        scheduler.add_job(execute_storage_maintenance_job, "interval", seconds=60,
+                          id="storage_maintenance", replace_existing=True, max_instances=1, coalesce=True)
+    elif scheduler.get_job("storage_maintenance"):
+        scheduler.remove_job("storage_maintenance")
 COLLECTION_FETCH_CONCURRENCY = 4
 PODCAST_ASR_WORKER_JOB_ID = "podcast_asr_worker"
 
@@ -2191,6 +2230,7 @@ def add_cron_job(job_id: str, callback, cron_expr: str, args: List[Any]):
 
 def load_tasks_to_scheduler():
     scheduler.remove_all_jobs()
+    reload_storage_schedule()
     with Session(db_sink.engine) as session:
         jobs = session.exec(
             select(CollectionJobRecord)

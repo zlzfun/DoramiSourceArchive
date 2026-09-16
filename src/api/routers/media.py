@@ -12,6 +12,7 @@
 （兼容测试 monkeypatch）。
 """
 
+from api.storage_response import StorageFileResponse
 import datetime
 import importlib
 import logging
@@ -20,7 +21,7 @@ from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from sqlmodel import Session, func, select
 
 from models.db import ArticleRecord
@@ -56,11 +57,11 @@ async def media_proxy(url: str = Query(..., description="原始图片 URL")):
     if record is None:
         return _redirect_to_origin(target)
     path = store.file_path_for(record)
-    if not path.is_file():  # 极端竞态（返回后文件被清理）——降级回源
+    if not getattr(getattr(store, "object_storage", None), "enabled", False) and not path.is_file():
         return _redirect_to_origin(target)
     # 缓存按 URL 内容冻结（归档语义），可长缓存;url_hash 寻址天然免疫参数注入
-    return FileResponse(
-        path,
+    return StorageFileResponse(
+        store, record,
         media_type=record.mime or "application/octet-stream",
         headers={
             "Cache-Control": "public, max-age=31536000, immutable",

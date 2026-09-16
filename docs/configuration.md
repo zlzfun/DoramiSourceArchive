@@ -402,8 +402,42 @@ vision_model =        ; 视觉模型(issue #69,可选):同端点同 api_key 下�
 默认关闭（两个 backend 均为 `local`），独立于 ASR 临时中转。启用前阅读
 [OSS 存储与迁移方案](./oss-storage.md)，按 `config/production.example.ini` 配置桶、地域、
 同地域内网 Endpoint、专属前缀和 ECS 角色。图片与最终生成音频放 OSS；SQLite、TTS 回执留在磁盘。
-凭据只支持 ECS IMDSv2 临时身份或专用环境变量，不能保存在 INI。迁移、校验、恢复和本地缓存回收
-由 `scripts/migrate_media_oss.py` 执行，默认 dry-run；首版没有自动在线缓存淘汰。
+凭据只支持 ECS IMDSv2 临时身份或专用环境变量，不能保存在 INI。未启用 OSS 时，不解析无关的云端参数，
+外网、内网及非阿里云机器均可维持本地部署。迁移、校验、恢复和手动缓存回收由
+`scripts/migrate_media_oss.py` 执行，默认 dry-run；真实操作须停机并显式传 `--apply --offline`。
+
+启用 OSS 后，`cache_enabled=true` 允许后台自动回收本地副本；默认图片目标 `media_cache_max_mb=2048`、
+音频目标 `podcast_cache_max_mb=4096`，每 `cache_interval_seconds=300` 秒检查一次，
+`cache_min_age_seconds=300` 秒内访问过的文件保留。回收前校验完整远端副本，并跳过正在读取的文件；
+目标容量不是硬上限，唯一副本、热文件或故障期间的文件可能使缓存暂时超出目标。不会删除 OSS 对象或 TTS 回执。
+`运维管理 → 内容 → 存储与备份` 展示云端登记量、本地缓存、维护与备份状态；云端登记量不代表账单。
+
+## `[backup]`——自动备份与离线恢复
+
+独立于 `[oss]`，默认 `enabled=false`。开启后按间隔备份 SQLite、付费 TTS 回执及尚未迁移到 OSS 的图片/音频，
+支持本地私有目录或私有 OSS；所有运行角色均可执行，文件锁避免多 worker 重复备份。
+完整覆盖范围、独立权限与恢复步骤见 [自动备份与离线恢复](./storage-backups.md)。
+
+| 参数 | 默认值 | 含义 |
+|---|---|---|
+| `enabled` | `false` | 显式开启；关闭时其余备份参数不影响启动 |
+| `destination` | `local` | `local` 或 `oss`；本地备份不需要云端凭据 |
+| `interval_hours` | `24` | 成功备份间隔；失败十分钟后重试 |
+| `local_dir` | `data/backups` | 私有持久目录；云端备份也使用它暂存并保留本地快照 |
+| `retain_local` | `7` | 保留本工具生成的本地归档份数，不影响云端保留期 |
+| `minimum_free_mb` | `1024` | 保留的磁盘余量；还需容纳暂存文件与压缩归档 |
+| `timeout_seconds` | `60` | OSS 连接超时 |
+
+生产示例保持关闭，并预填 `destination=oss`、`credential_provider=ecs_role`、
+`prefix=backups/production` 与同地域内网 Endpoint；实际桶和角色名必须由部署者填写。
+这些配置与媒体桶/身份独立，媒体前缀权限不会自动覆盖备份前缀。所有字段支持
+`DORAMI_BACKUP_<大写字段名>` 覆盖；静态秘密仅从 `DORAMI_BACKUP_ACCESS_KEY_ID`、
+`DORAMI_BACKUP_ACCESS_KEY_SECRET`、`DORAMI_BACKUP_SECURITY_TOKEN` 读取。
+Docker 已透传这些变量，`local_dir` 应保持在 `/app/data` 持久卷内，或另行挂载私有持久目录。
+
+`scripts/storage_backup.py` 提供 `create`、`status`、`verify`、`download`、`restore`；
+恢复要求已知 SHA-256、空目标目录及 `--offline`，不会自动覆盖生产路径。
+备份清单中 `external_objects > 0` 时，恢复仍依赖原 OSS 对象；同盘本地备份不能应对整盘丢失。
 
 ## `[media]`——媒体库(图床)
 

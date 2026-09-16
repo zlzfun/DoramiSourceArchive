@@ -28,23 +28,27 @@ class Blob:
 
 def inventory(engine) -> list[Blob]:
     """Include withdrawn audio and every referenced hash; only byte copies are deduplicated."""
-    blobs = {}
     with Session(engine) as session:
-        for namespace, model in (("media", MediaAssetRecord), ("podcast", PodcastArtifactRecord)):
-            for row in session.exec(select(model)).all():
-                if not row.content_hash or not row.ext or not row.size_bytes:
-                    continue
-                item = Blob(namespace, row.content_hash, row.ext, row.size_bytes, row.mime)
-                previous = blobs.setdefault(item.identity, item)
-                if (previous.size, previous.mime) != (item.size, item.mime):
-                    raise ObjectStorageError("object_storage_reference_conflict")
-                previous.references += 1
-        for row in session.exec(select(ObjectBlobRecord)).all():
-            item = Blob(row.namespace, row.content_hash, row.ext, row.size_bytes, row.mime)
+        return _inventory(session)
+
+
+def _inventory(session) -> list[Blob]:
+    blobs = {}
+    for namespace, model in (("media", MediaAssetRecord), ("podcast", PodcastArtifactRecord)):
+        for row in session.exec(select(model)).all():
+            if not row.content_hash or not row.ext or not row.size_bytes:
+                continue
+            item = Blob(namespace, row.content_hash, row.ext, row.size_bytes, row.mime)
             previous = blobs.setdefault(item.identity, item)
             if (previous.size, previous.mime) != (item.size, item.mime):
-                raise ObjectStorageError("object_storage_registry_conflict")
-            previous.remote = row
+                raise ObjectStorageError("object_storage_reference_conflict")
+            previous.references += 1
+    for row in session.exec(select(ObjectBlobRecord)).all():
+        item = Blob(row.namespace, row.content_hash, row.ext, row.size_bytes, row.mime)
+        previous = blobs.setdefault(item.identity, item)
+        if (previous.size, previous.mime) != (item.size, item.mime):
+            raise ObjectStorageError("object_storage_registry_conflict")
+        previous.remote = row
     return sorted(blobs.values(), key=lambda item: item.identity)
 
 
@@ -58,7 +62,7 @@ def local_path(store: ObjectStorage, item: Blob) -> Path:
 
 def execute(engine, stores, *, action="upload", apply=False, offline=False,
             cache_target_bytes=0, prune_before=None, emit=lambda row: None):
-    if action not in {"upload", "verify", "restore", "evict", "gc"}:
+    if action not in {"upload", "verify", "restore", "evict", "gc", "check-local", "finalize-local"}:
         raise ValueError("unknown action")
     if apply and not offline:
         raise ValueError("stop all API/workers and pass --offline before --apply")
@@ -66,6 +70,10 @@ def execute(engine, stores, *, action="upload", apply=False, offline=False,
         raise ValueError("cache target must be nonnegative")
     if action == "gc" and apply and prune_before is None:
         raise ValueError("GC requires --prune-before after checking retained backups")
+    if action in {"check-local", "finalize-local"}:
+        if action == "check-local" and apply:
+            raise ValueError("check-local is read-only; use finalize-local --apply --offline to finish")
+        return _local_fallback(engine, stores, action=action, apply=apply, emit=emit)
     # Snapshot-only, no transaction survives cloud I/O. Operator must stop writers.
     items = [item for item in inventory(engine) if item.namespace in stores]
     paths = {item.identity: local_path(stores[item.namespace], item) for item in items}
@@ -161,4 +169,67 @@ def execute(engine, stores, *, action="upload", apply=False, offline=False,
             report["result"] = "error"
             report["error"] = str(exc) if isinstance(exc, ObjectStorageError) else type(exc).__name__
         emit(report)
+    return result
+
+
+def _local_fallback(engine, stores, *, action, apply, emit):
+    """Verify local independence, then atomically forget remote locations.
+
+    Restore while OSS is enabled first. This path never calls a bucket/provider,
+    downloads missing bytes, edits configuration, or deletes remote objects.
+    API/workers and automatic cache eviction must remain stopped through config
+    switch and restart; --offline is the operator's acknowledgement of that.
+    """
+    result = {"objects": 0, "completed": 0, "skipped": 0, "errors": 0,
+              "bytes": 0, "dry_run": not apply, "local_ready": False,
+              "removed_registry_records": 0, "remote_objects_retained": 0}
+    with Session(engine) as session:
+        if apply:
+            # Keep references and registry rows stable until all file hashes have
+            # passed. File writers are excluded by the explicit offline gate.
+            if engine.dialect.name == "sqlite":
+                session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            elif engine.dialect.name == "postgresql":
+                session.connection().exec_driver_sql(
+                    "LOCK TABLE media_assets, podcast_artifacts, object_blobs IN SHARE ROW EXCLUSIVE MODE"
+                )
+        items = [item for item in _inventory(session) if item.namespace in stores]
+        result["objects"] = len(items)
+        for item in items:
+            report = {"id": item.identity, "references": item.references,
+                      "size_bytes": item.size, "registered": item.remote is not None,
+                      "action": action}
+            if item.remote:
+                # Retain this JSONL alongside the pre-change DB snapshot for an
+                # auditable list of cloud objects, including unreferenced ones.
+                report["remote_location"] = {"bucket": item.remote.bucket,
+                                             "region": item.remote.region,
+                                             "object_key": item.remote.object_key}
+                result["remote_objects_retained"] += 1
+            try:
+                path = local_path(stores[item.namespace], item)
+                report["local"] = path.is_file()
+                if not item.references:
+                    report["result"] = "unreferenced_remote_retained"
+                    result["skipped"] += 1
+                else:
+                    if not path.is_file():
+                        raise ObjectStorageError("object_storage_local_file_missing")
+                    if hash_file(path) != (item.content_hash, item.size):
+                        raise ObjectStorageError("object_storage_local_checksum_mismatch")
+                    report["result"] = "local_verified"
+                    result["completed"] += 1
+                    result["bytes"] += item.size
+            except (ObjectStorageError, OSError, ValueError) as exc:
+                result["errors"] += 1
+                report["result"] = "error"
+                report["error"] = str(exc) if isinstance(exc, ObjectStorageError) else type(exc).__name__
+            emit(report)
+        result["local_ready"] = result["errors"] == 0
+        if apply and result["local_ready"]:
+            for item in items:
+                if item.remote is not None:
+                    session.delete(item.remote)
+                    result["removed_registry_records"] += 1
+            session.commit()
     return result

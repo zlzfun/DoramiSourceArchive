@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inventory, migrate, verify, restore or evict media. Dry-run by default.
+"""Migrate, verify, restore, evict media or prepare local fallback. Dry-run by default.
 
 Run against an already-migrated DB with API/workers stopped before --apply.
 Does not import api.app, initialize schema or start background jobs.
@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["upload", "verify", "restore", "evict", "gc"])
+    parser.add_argument("action", choices=["upload", "verify", "restore", "evict", "gc", "check-local", "finalize-local"])
     parser.add_argument("--namespace", choices=["all", "media", "podcast"], default="all")
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--offline", action="store_true", help="confirm ALL API/workers are stopped")

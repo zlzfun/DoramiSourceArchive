@@ -23,14 +23,29 @@ class OssConfig:
     security_token: str = field(default="", repr=False)
     timeout_seconds: int = 30
     minimum_free_mb: int = 1024
+    cache_enabled: bool = True
+    media_cache_max_mb: int = 2048
+    podcast_cache_max_mb: int = 4096
+    cache_interval_seconds: int = 300
+    cache_min_age_seconds: int = 300
 
     def __post_init__(self):
         if self.media_backend not in {"local", "oss"} or self.podcast_backend not in {"local", "oss"}:
             raise ValueError("OSS storage backend must be local or oss")
+        # A deployment which never opts in must not depend on valid cloud
+        # settings. The loader also skips parsing unused numeric/bool values.
+        if not self.enabled:
+            return
         if self.timeout_seconds <= 0 or self.minimum_free_mb < 0:
             raise ValueError("Invalid OSS timeout or disk reserve")
         if self.credential_provider not in {"static", "ecs_role"}:
             raise ValueError("OSS credential provider must be static or ecs_role")
+        if not isinstance(self.cache_enabled, bool):
+            raise ValueError("OSS cache_enabled must be true or false")
+        if self.media_cache_max_mb < 0 or self.podcast_cache_max_mb < 0:
+            raise ValueError("OSS cache size must be nonnegative")
+        if self.cache_interval_seconds <= 0 or self.cache_min_age_seconds < 0:
+            raise ValueError("Invalid OSS cache interval or minimum age")
         if self.enabled:
             if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,61}[a-z0-9]", self.bucket):
                 raise ValueError("OSS bucket is required")
@@ -58,13 +73,41 @@ class OssConfig:
 
 def load_oss_config(parser: configparser.ConfigParser) -> OssConfig:
     defaults = OssConfig()
-    values = {}
     secrets = {"access_key_id", "access_key_secret", "security_token"}
-    for item in fields(defaults):
-        default = getattr(defaults, item.name)
-        raw = os.getenv(f"DORAMI_OSS_{item.name.upper()}")
+
+    def raw_value(name, default):
+        raw = os.getenv(f"DORAMI_OSS_{name.upper()}")
         if raw is None or not raw.strip():
             # Credentials never come from tracked INI examples or application KV.
-            raw = "" if item.name in secrets else parser.get("oss", item.name, fallback=str(default))
-        values[item.name] = int(raw) if isinstance(default, int) else raw.strip()
+            raw = "" if name in secrets else parser.get("oss", name, fallback=str(default), raw=True)
+        return raw.strip()
+
+    values = {name: raw_value(name, "local") for name in ("media_backend", "podcast_backend")}
+    # Validate the activation switches even when both would otherwise be inert:
+    # a typo must never silently select a different persistence contract.
+    if any(value not in {"local", "oss"} for value in values.values()):
+        raise ValueError("OSS storage backend must be local or oss")
+    if "oss" not in values.values():
+        # Preserve secret presence for compatibility while making every unused
+        # cloud setting inert, including invalid INI interpolation/numeric text.
+        values.update({name: raw_value(name, "") for name in secrets})
+        return OssConfig(**values)
+
+    for item in fields(defaults):
+        if item.name in values:
+            continue
+        default = getattr(defaults, item.name)
+        raw = raw_value(item.name, default)
+        if isinstance(default, bool):
+            normalized = raw.lower()
+            if normalized not in configparser.ConfigParser.BOOLEAN_STATES:
+                raise ValueError(f"OSS {item.name} must be true or false")
+            values[item.name] = configparser.ConfigParser.BOOLEAN_STATES[normalized]
+        elif isinstance(default, int):
+            try:
+                values[item.name] = int(raw)
+            except ValueError:
+                raise ValueError(f"OSS {item.name} must be an integer") from None
+        else:
+            values[item.name] = raw
     return OssConfig(**values)
