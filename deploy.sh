@@ -168,6 +168,18 @@ write_nginx_site_config() {
     local backend_upstream="http://${backend_host}:${backend_port}"
     local ssl_enabled="false"
     local hsts_header=""
+    # Exact paths: a missing worker/manifest must be 404, never the SPA HTML.
+    # expires preserves inherited security headers (unlike location add_header).
+    local pwa_locations='    location = /sw.js {
+        default_type application/javascript;
+        expires -1;
+        try_files $uri =404;
+    }
+    location = /manifest.webmanifest {
+        types { application/manifest+json webmanifest; }
+        expires -1;
+        try_files $uri =404;
+    }'
 
     if truthy "$NGINX_ENABLE_SSL"; then
         ssl_enabled="true"
@@ -261,6 +273,7 @@ ${hsts_header}
         expires -1;
     }
 
+${pwa_locations}
     location / {
         try_files \$uri \$uri/ /index.html;
     }
@@ -329,6 +342,7 @@ server {
         expires -1;
     }
 
+${pwa_locations}
     location / {
         try_files \$uri \$uri/ /index.html;
     }
@@ -386,6 +400,7 @@ server {
         expires -1;
     }
 
+${pwa_locations}
     location / {
         try_files \$uri \$uri/ /index.html;
     }
