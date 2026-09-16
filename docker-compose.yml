@@ -125,8 +125,8 @@ services:
     # Chromium 渲染需要:Docker 默认 /dev/shm 只有 64MB,页面渲染会崩
     shm_size: "1gb"
     healthcheck:
-      # /api/auth/session 是免鉴权端点(全局鉴权中间件的白名单);/api/runtime 未登录会 401
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8088/api/auth/session"]
+      # /api/health 是免鉴权部署探针(issue #102;回 status/version/build);/api/runtime 未登录会 401
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8088/api/health"]
       interval: 30s
       timeout: 5s
       retries: 3

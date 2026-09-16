@@ -155,3 +155,140 @@ def ensure_migrated(db_url: str) -> None:
     if len(heads) > 1:
         print(f"⚠️ 迁移链存在 {len(heads)} 个 head(分叉仓形态),并行全升: {', '.join(heads)}")
     command.upgrade(cfg, "heads" if len(heads) > 1 else "head")
+
+
+# ── 只读迁移计划(issue #102 自动部署,部署前在目标镜像里执行) ──
+#
+# 部署脚本要在切换之前知道「这个库对目标代码来说是领先 / 落后 / 全新 / 待收养」,
+# 但 **不能** shell `alembic current`:在线 alembic 命令会加载 alembic/env.py,其 online
+# 路径在 begin_transaction 内先 drop 再 reinstall Archive Sync 触发器且 BEGIN IMMEDIATE——
+# 不是只读。本函数只用 MigrationContext 读 alembic_version(复数 heads)与 ScriptDirectory
+# 的 revision 图做 DAG 闭包比较,SQLite 连接 PRAGMA query_only,库文件不存在时不连接(否则
+# sqlite 会把它建出来)。状态语义(与 docs/auto-deploy-plan.md §4.6 一致):
+#   fresh                    无库文件 / 无业务表:pending 为完整目标链;是否放行由部署侧首装门决定
+#   legacy_adoption_required 有业务表无 alembic_version:ensure_migrated 会对齐基线并收养
+#   compatible               DB 当前 heads 都在目标图里:pending = 目标闭包 − 已应用闭包(拓扑序;多头/merge 自然成立)
+#   incompatible             DB 当前 head 不在目标脚本图里:典型是「DB 领先于目标代码」(降级撞迁移——旧 tag 的脚本
+#                            目录没有新 revision 文件),也可能是目标缺支线或迁移文件损坏,不武断断言具体原因
+# 注:没有单独的「已知 head 但闭包不是目标闭包子集」状态——目标图里的每个 revision 必是某个 head 的祖先
+#(叶子本身就是 head),所以 heads 全部已知即蕴含子集关系,该状态不可达。
+
+PLAN_DEPLOYABLE_STATUSES = frozenset({"fresh", "legacy_adoption_required", "compatible"})
+
+
+def _sqlite_file_path(db_url: str) -> Optional[Path]:
+    """sqlite 文件 URL → 路径;内存库或非 sqlite 返回 None。"""
+    if not db_url.startswith("sqlite:///") or ":memory:" in db_url:
+        return None
+    raw = db_url[len("sqlite:///"):]
+    raw = raw.split("?", 1)[0]
+    return Path(raw)
+
+
+def readonly_engine(db_url: str):
+    """只读引擎:SQLite 连接一律 PRAGMA query_only=ON,任何写都会被 sqlite 拒绝。"""
+    from sqlalchemy import event
+
+    engine = create_engine(db_url)
+    if db_url.startswith("sqlite"):
+        @event.listens_for(engine, "connect")
+        def _query_only(dbapi_connection, _record):  # pragma: no cover - trivial
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA query_only=ON")
+            cursor.close()
+    return engine
+
+
+def _revision_closure(script: ScriptDirectory, heads) -> set:
+    """给定若干 revision,返回它们及全部祖先的 revision id 集合。"""
+    closure: set = set()
+    for head in heads:
+        for rev in script.walk_revisions(base="base", head=head):
+            closure.add(rev.revision)
+    return closure
+
+
+def _ordered(script: ScriptDirectory, wanted: set) -> list:
+    """按脚本图拓扑序(base → heads)排列 wanted 中的 revision。"""
+    descending = list(script.walk_revisions(base="base", head="heads"))
+    return [rev.revision for rev in reversed(descending) if rev.revision in wanted]
+
+
+def plan_migrations(db_url: str, *, script_location: Optional[str] = None) -> dict:
+    """只读地算出「目标代码 vs 当前库」的迁移计划,返回可 JSON 化的字典。
+
+    script_location 仅供测试注入另一份脚本目录(模拟目标 tag 缺 / 多支线)。
+    """
+    from alembic.script.revision import ResolutionError
+
+    cfg = make_alembic_config(db_url)
+    if script_location:
+        cfg.set_main_option("script_location", script_location)
+    script = ScriptDirectory.from_config(cfg)
+    target_heads = sorted(script.get_heads())
+    required = _revision_closure(script, target_heads)
+    plan = {
+        "status": "",
+        "detail": "",
+        "current_heads": [],
+        "target_heads": target_heads,
+        "pending": [],
+        "pending_count": 0,
+        "extra": [],
+        "database_exists": True,
+    }
+
+    def finish(status: str, detail: str, *, pending=None, extra=None) -> dict:
+        plan["status"] = status
+        plan["detail"] = detail
+        plan["pending"] = list(pending or [])
+        plan["pending_count"] = len(plan["pending"])
+        plan["extra"] = sorted(extra or [])
+        return plan
+
+    file_path = _sqlite_file_path(db_url)
+    if ":memory:" in db_url or (file_path is not None and not file_path.exists()):
+        plan["database_exists"] = False
+        return finish("fresh", "数据库不存在:目标链将从头建立(是否放行由部署侧首装门决定)",
+                      pending=_ordered(script, required))
+
+    engine = readonly_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            current_heads = sorted(MigrationContext.configure(conn).get_current_heads())
+            has_tables = "articles" in inspect(conn).get_table_names()
+    finally:
+        engine.dispose()
+    plan["current_heads"] = current_heads
+
+    if not current_heads:
+        if has_tables:
+            baseline_closure = _revision_closure(script, [BASELINE_REVISION])
+            return finish(
+                "legacy_adoption_required",
+                "有业务表但无 alembic_version:启动时 ensure_migrated 会对齐基线并收养后升级",
+                pending=_ordered(script, required - baseline_closure),
+            )
+        return finish("fresh", "库文件存在但无业务表:目标链将从头建立(是否放行由部署侧首装门决定)",
+                      pending=_ordered(script, required))
+
+    unknown = []
+    for head in current_heads:
+        try:
+            script.revision_map.get_revision(head)
+        except ResolutionError:
+            unknown.append(head)
+    if unknown:
+        return finish(
+            "incompatible",
+            f"数据库当前 revision 不在目标代码的迁移图里: {unknown}——可能是 DB 领先于目标代码、"
+            "目标缺少支线或迁移文件损坏;按 docs/release-process.md 恢复对应备份后重跑",
+            extra=unknown,
+        )
+    applied = _revision_closure(script, current_heads)
+    pending = _ordered(script, required - applied)
+    return finish(
+        "compatible",
+        "已在目标 revision 集合" if not pending else f"待执行 {len(pending)} 个迁移",
+        pending=pending,
+    )

@@ -1568,6 +1568,15 @@ def is_public_auth_path(path: str) -> bool:
     return path in {"/api/auth/login", "/api/auth/logout", "/api/auth/session"}
 
 
+PUBLIC_HEALTH_PATH = "/api/health"
+
+
+def is_public_health_path(path: str) -> bool:
+    """部署探针(issue #102):免鉴权、exact 路径、与 auth 公开路径同级短路——不用前缀,
+    `/api/healthz`、`/api/health/x` 照旧 401;也不受 runtime role 的 surface 门控影响。"""
+    return path == PUBLIC_HEALTH_PATH
+
+
 def is_public_subscription_path(path: str) -> bool:
     # 所有 /api/public/* 消费端（按订阅令牌 / 个人聚合令牌鉴权）均无需登录会话。
     return path == "/api/public" or path.startswith("/api/public/")
@@ -1576,7 +1585,7 @@ def is_public_subscription_path(path: str) -> bool:
 @app.middleware("http")
 async def require_admin_session(request: Request, call_next):
     path = request.url.path
-    if request.method == "OPTIONS" or is_public_auth_path(path):
+    if request.method == "OPTIONS" or is_public_auth_path(path) or is_public_health_path(path):
         return await call_next(request)
     if is_public_subscription_path(path):
         disabled_surface = disabled_runtime_surface(path)
@@ -1827,6 +1836,18 @@ def get_auth_session(request: Request):
 @app.get("/api/runtime")
 def get_runtime(request: Request):
     return runtime_capabilities(current_auth_session(request))
+
+
+@app.get(PUBLIC_HEALTH_PATH)
+def get_health(response: Response):
+    """部署探针(issue #102 自动部署):免鉴权,只回 status / version / build 三项。
+
+    流水线没有账号,`/api/runtime` 匿名 401,故另开此端点核对「生产现在跑的是哪个 tag / 哪个提交」。
+    版本号对匿名可见可接受(它已出现在 Release 页与前端构建产物里);不透出配置、能力位、账号。
+    `no-store` 让部署核对永远读到当前容器,不被任何一层缓存。
+    """
+    response.headers["Cache-Control"] = "no-store"
+    return {"status": "ok", "version": __version__, "build": build_info()}
 
 
 @app.post("/api/auth/logout")

@@ -216,7 +216,7 @@ in-progress / last-success 事务(含 prev 镜像采样与 worker 自己做的 D
    (目标镜像;见 §4.6)。覆盖「新增 ini 节 / 安全检查 / taxonomy 姿态与目录」类失败,避免新容器起不来的停机窗;
    **不承诺**覆盖迁移之后才暴露的 reconcile 失败(那需要快照演练,二期可选)。
 4. **迁移计划**:`docker compose run --rm --no-deps backend python docker/entrypoint.py --plan-migrations`(目标镜像,只读,见 §4.6)。
-   `compatible(pending=[…])` 继续并把 pending 数写元数据;`downgrade_incompatible` / `incompatible` → fail closed,打印「先按
+   `compatible(pending=[…])` 继续并把 pending 数写元数据;`incompatible` → fail closed,打印「先按
    release-process 恢复对应备份再重跑」;`legacy_adoption_required` → 提示并继续(entrypoint 的 `ensure_migrated` 会收养);
    `fresh` → 只有 worker 经首装门放行(`DORAMI_DEPLOY_FRESH_OK=1` 随环境传入)时继续,否则 fail closed。
 5. **备份 DB**:**仅手工来源执行**(已有逻辑,按 mtime 留 10 份)。`DORAMI_DEPLOY_ORIGIN=pipeline` 时**跳过**——worker 已做权威的
@@ -244,14 +244,15 @@ in-progress / last-success 事务(含 prev 镜像采样与 worker 自己做的 D
   (在线命令会加载 `alembic/env.py`,其 online 路径在 `begin_transaction` 内 drop / reinstall Archive Sync 触发器且
   `BEGIN IMMEDIATE`,不是只读)。实现:query-only 连接上 `MigrationContext.configure(conn).get_current_heads()`(复数)
   + `ScriptDirectory.from_config(cfg)` 的 revision graph:
-  - 任一 DB head 不在目标脚本图 → `incompatible`(可能是 DB 领先、目标缺支线或文件损坏,不武断断言);
-  - DB 已应用 revision 闭包不是目标 heads 所需闭包的子集 → `downgrade_incompatible`;
-  - 子集 → `compatible`,`pending = 目标闭包 − 已应用`(拓扑序;多头 / merge revision 自然成立,执行时与
-    `ensure_migrated` 一样 upgrade `heads`);
+  - 任一 DB head 不在目标脚本图 → `incompatible`(典型是 DB 领先于目标代码——旧 tag 的脚本目录没有新 revision
+    文件;也可能是目标缺支线或文件损坏,不武断断言具体原因);
+  - heads 全部已知 → `compatible`,`pending = 目标闭包 − 已应用闭包`(拓扑序;多头 / merge revision 自然成立,执行时与
+    `ensure_migrated` 一样 upgrade `heads`)。**没有**单独的「已知 head 但不在目标闭包」状态:目标图里每个 revision
+    必是某个 head 的祖先(叶子本身就是 head),PR-1 实现时推演证实该状态不可达,故不设;
   - 有业务表无 `alembic_version` → `legacy_adoption_required`;无业务表 → `fresh`(是否放行由 worker 的首装门决定);
   输出 JSON,供部署脚本与 Job Summary 消费。
 - 测试:`tests/test_health_endpoint.py`、`tests/test_entrypoint_check_config.py`(校验段只读、不 import app)、
-  `tests/test_migration_plan.py`(五种状态各一例,含多头与 legacy)。
+  `tests/test_migration_plan.py`(四种状态各一例,含多头与 legacy)。
 
 ### 4.7 安全边界
 
@@ -308,7 +309,7 @@ in-progress / last-success 事务(含 prev 镜像采样与 worker 自己做的 D
 - [ ] `actionlint` 通过;environment 只声明在被调用 job;批准前拿不到 Environment secret;非 `main` / 非 `v*` ref 与 fork PR
       进不了 `production`;远端日志里人为放入的 `::error::fake` 不产生注解(stop-commands 生效且事后恢复)。
 - [ ] `.env` 缺一个 `:?` 项时在构建前失败,且日志中不存在 `.env` 里的哨兵 secret;目标版本 `--check-config` 失败发生在 `up` 之前。
-- [ ] 迁移计划:基线 unknown 输出 `unknown` 而不是 0;`incompatible` 与 `downgrade_incompatible` 各演练一次并 fail closed;
+- [ ] 迁移计划:基线 unknown 输出 `unknown` 而不是 0;`incompatible`(DB 领先于旧 tag)演练一次并 fail closed;
       向前部署时 M / D fail closed;已确认降级时反向 diff 的 D 放行、由计划判定;有部署证据(含 stopped 容器 / 备份 / managed tag /
       库文件)却 `fresh` 时 fail closed,首次安装持一次性令牌时放行且令牌被消费。
 - [ ] `allow_downgrade` / `force_redeploy` 经 SSH token 到达生产机并生效:旧 tag 不带前者被单调护栏拦下、带则放行;
@@ -344,7 +345,7 @@ in-progress / last-success 事务(含 prev 镜像采样与 worker 自己做的 D
 - **配置自检**(分歧 D2):`--check-config` 只 import 无副作用模块、只读 DB、只在 DB 已在目标 revision 集合时跑 taxonomy
   状态校验;称为「配置与当前状态预检」,不承诺覆盖迁移后的 reconcile 失败(快照演练记二期)。
 - **迁移判定**(分歧 D3):不 shell `alembic current`(`env.py` 在线路径动触发器);用 `MigrationContext.get_current_heads()`
-  + 脚本图做 DAG 闭包比较,五种状态;pending=0 不等于降级安全。
+  + 脚本图做 DAG 闭包比较(PR-1 落地时收为四种状态,见 §4.6);pending=0 不等于降级安全。
 - **备份与测试分界**(分歧 D4):备份保留数不改、可配、manifest 引用者 pin 住;锁 / attach / `.rc` / 自举场景做进程级 CI 测试,
   真实断网与完整新旧 tag 部署留上线前演练。
 - 其余:environment 声明在被调用 job(`on.workflow_call` 不支持 `environment`,Environment secrets 不经 `secrets: inherit`);
