@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bulkSubscribeModel } from '../src/utils/bulkSubscribe.js';
+import {
+  BULK_SUBSCRIBE_TIMEOUT_MS,
+  bulkSubscribeModel,
+  createBulkSubscribeDeadline,
+} from '../src/utils/bulkSubscribe.js';
 
 const sources = [
   { source_id: 'article_a', shape: 'article' },
@@ -32,10 +36,24 @@ test('非文章/播客筛选不显示批量入口，提交中锁定入口', () =
   const busy = bulkSubscribeModel('article', sources, new Set(), 'article');
   assert.equal(busy.text, '订阅中…');
   assert.equal(busy.disabled, true);
+
+  const otherShape = bulkSubscribeModel('podcast', sources, new Set(), 'article');
+  assert.equal(otherShape.busy, false);
+  assert.equal(otherShape.disabled, true);
+  assert.equal(otherShape.text, '订阅全部播客源（剩余 1 个）');
 });
 
 test('加载中或该形态没有候选源时不误报已全部订阅', () => {
   assert.equal(bulkSubscribeModel('article', sources, new Set(), null, true), null);
   assert.equal(bulkSubscribeModel('article', [], new Set()), null);
   assert.equal(bulkSubscribeModel('podcast', sources.filter((source) => source.hidden), new Set()), null);
+});
+
+test('批量订阅默认十秒超时，截止器到时中止请求', async () => {
+  assert.equal(BULK_SUBSCRIBE_TIMEOUT_MS, 10_000);
+  const deadline = createBulkSubscribeDeadline(5);
+  await new Promise((resolve) => deadline.signal.addEventListener('abort', resolve, { once: true }));
+  assert.equal(deadline.signal.aborted, true);
+  assert.equal(deadline.didTimeout(), true);
+  deadline.clear();
 });

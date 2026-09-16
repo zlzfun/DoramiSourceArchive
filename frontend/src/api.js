@@ -760,8 +760,9 @@ export function unsubscribeSource(sourceId) {
   return request(`/reader/sources/${enc(sourceId)}/subscribe`, { method: 'DELETE', errorMsg: '取消订阅失败' });
 }
 
-export function subscribeSourcesByShape(shape) {
+export function subscribeSourcesByShape(shape, options = {}) {
   return request('/reader/sources/subscribe-batch', {
+    ...options,
     method: 'POST', body: { shape }, errorMsg: '批量订阅失败',
   });
 }

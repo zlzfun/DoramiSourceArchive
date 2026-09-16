@@ -15,6 +15,7 @@ import {
 import { copyText } from '../utils/clipboard';
 import { articleDeepLink } from '../utils/shareLink';
 import { stripDuplicateLeadingHeading } from '../utils/markdownTitle';
+import { createBulkSubscribeDeadline } from '../utils/bulkSubscribe';
 import {
   analysisItemsFromResponse,
   analysisNeedsPolling,
@@ -242,6 +243,7 @@ export function useReaderState({
   const [discoverCollectionId, setDiscoverCollectionId] = useState(null);
   const [collectionPinningId, setCollectionPinningId] = useState(null);
   const [shapePinning, setShapePinning] = useState(null);
+  const shapePinningRef = useRef(null);
 
   const [searchInput, setSearchInputState] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -1003,10 +1005,12 @@ export function useReaderState({
 
   // ── 按形态批量订阅:文章/播客共用一个服务端事务,前端不逐源发请求 ──
   const handleSubscribeShape = async (shape) => {
-    if (!['article', 'podcast'].includes(shape)) return;
+    if (!['article', 'podcast'].includes(shape) || shapePinningRef.current !== null) return;
+    shapePinningRef.current = shape;
     setShapePinning(shape);
+    const deadline = createBulkSubscribeDeadline();
     try {
-      const result = await subscribeSourcesByShape(shape);
+      const result = await subscribeSourcesByShape(shape, { signal: deadline.signal });
       setSubscribedIds(new Set(result.subscribed_source_ids || []));
       loadSources();
       refreshAggregateIfActive();
@@ -1015,8 +1019,17 @@ export function useReaderState({
       const label = shape === 'podcast' ? '播客源' : '文章源';
       showToast(n > 0 ? `已订阅 ${n} 个${label}` : `${label}已全部订阅`, 'success');
     } catch (error) {
-      showToast(error.message || '批量订阅失败', 'error');
+      if (error?.name === 'AbortError' && deadline.didTimeout()) {
+        loadSources();
+        refreshAggregateIfActive();
+        loadUnreadCounts();
+        showToast('批量订阅响应超时，结果可能已生效，正在刷新订阅状态', 'info');
+      } else {
+        showToast(error.message || '批量订阅失败', 'error');
+      }
     } finally {
+      deadline.clear();
+      shapePinningRef.current = null;
       setShapePinning(null);
     }
   };
