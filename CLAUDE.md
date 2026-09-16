@@ -158,7 +158,11 @@ Three fetcher base classes cover the major source types:
 
 **媒体库（图床，media store）**: 正文外链图片的本地缓存层（2026-07 图床波，推翻早前「外链直连、不代理」决策）。**归档正文里的原始图链从不改写**（档案忠实性、导出契约不变）——显示层统一经 `GET /api/media/proxy?url=` 取图，`src/services/media_store.py` 负责「URL → 本地缓存文件」：`MediaAssetRecord` 一行一 URL（主键 `url_hash=sha256(url)`），落盘按 `content_hash=sha256(字节)` **跨 URL 内容去重**（`data/media/{hash[:2]}/{hash}{ext}`，删除文件前需查引用）。供给三径共用 `get_or_fetch`：代理端点命中即回文件（`Cache-Control: immutable`）、未命中**即时下载**、抓取入库后 `schedule_media_prefetch`（挂在 `run_fetcher_with_tracking`，fire-and-forget）**随文预取**新文章图链。下载一律带**推导的站内 Referer**（`_referer_for`：`i.qbitai.com` → `https://qbitai.com/`，剥 i./img./cdn./mmbiz 等子域前缀）——防盗链 CDN 无 Referer 即 403，2026-07-20 实测 qbitai 403→200、一举消掉当时失败量的大头。防护：仅 http(s) + SSRF 拦截（环回/私网/链路本地拒绝；**豁免 198.18.0.0/15 fake-ip 段**——本机代理 DNS 接管时一切域名解析到该段，实测误杀后修正）+ 流式大小上限 + **魔数嗅探**（防把 CF 挑战页缓存成图）；失败行是负缓存（`status=failed`，退避窗口随 fail_count 放大，封顶一天；`force=True` 绕过冷却供定点重抓）。降级三层：后端失败 302 回源 → 前端 `ReaderMarkdown` onError 回退原链直连 → 裂图占位；`[media] enabled=false` 时 `media_store` 为 None，全链路退回外链直连。
 
-**存量策略（2026-07-20 拍板）**：生产**只做随文预取，不跑全量回填**——回填对同批域名突发易触发反爬，且死链各吃满超时导致极慢；`POST /api/admin/media/backfill` 端点保留作脚本化应急通道，**前端入口已撤**。存量补录改走**媒体热点图**（运维管理 → 内容 → 媒体库，`MediaHeatmap.jsx`）：GitHub 式 53×7 逐日格阵，格子深浅 = 当日图片缓存覆盖率（`--heat-0…4`，取 accent 靛明度阶，不引第二饱和色系），右上角三角 = 当日有失败（深浅与异常两条正交通道）；点格开抽屉（`ledger-drawer` 语法）看当日逐篇明细 + 失败 URL 与原因（据此区分反爬 / 死链），每篇可**单篇定点重抓**（无突发压力）。数据现算不落表（`GET /api/admin/media/heatmap|days/{date}`：正文提图链 → 按 `url_hash` 批查 → cached/failed/pending 三态），当前归档规模亚秒级，规模涨了再加物化列。注意 archive sync 尚不携带媒体文件（内网 reader 吃到图需未来的媒体伴随包，见 backlog）。
+**OSS 持久媒体（issue #92）**：`[oss]` 为图片和生成音频分别选择 local/oss，默认 local；未启用时无关云参数不影响部署。OSS 上传核验后才登记业务状态，冷文件从私有桶恢复并验 SHA-256；Archive Sync 仍走 ECS 鉴权 API，`object_blobs` 是节点私有位置索引。自动缓存回收按容量目标/最短驻留时间执行，跨进程读取租约保护在途响应，完整远端校验后才删本地副本，不删云端对象。生产使用同地域内网 Endpoint 与 ECS IMDSv2；SQLite、TTS 回执留本地。`scripts/migrate_media_oss.py` 默认 dry-run，真实迁移/恢复/手动回收需 `--apply --offline`。见 [`docs/oss-storage.md`](docs/oss-storage.md)。
+
+**自动备份（默认关闭）**：独立 `[backup]` 将 SQLite 一致性快照、付费 TTS 回执与本地媒体打包到私有目录或 OSS `backups/*`；已有远端媒体列为显式恢复依赖。后台维护不依赖 collector 角色，多 worker 文件锁防重；管理面「存储与备份」显示状态。`scripts/storage_backup.py` 提供创建/校验/下载/离线恢复，恢复需已知哈希和空目录；不自动授予备份权限、不自动清理云端。配置与演练见 [`docs/storage-backups.md`](docs/storage-backups.md)。
+
+**存量策略（2026-07-20 拍板）**：生产**只做随文预取，不跑全量回填**——回填对同批域名突发易触发反爬，且死链各吃满超时导致极慢；`POST /api/admin/media/backfill` 端点保留作脚本化应急通道，**前端入口已撤**。存量补录改走**媒体热点图**（运维管理 → 内容 → 媒体库，`MediaHeatmap.jsx`）：GitHub 式 53×7 逐日格阵，格子深浅 = 当日图片缓存覆盖率（`--heat-0…4`，取 accent 靛明度阶，不引第二饱和色系），右上角三角 = 当日有失败（深浅与异常两条正交通道）；点格开抽屉（`ledger-drawer` 语法）看当日逐篇明细 + 失败 URL 与原因（据此区分反爬 / 死链），每篇可**单篇定点重抓**（无突发压力）。数据现算不落表（`GET /api/admin/media/heatmap|days/{date}`：正文提图链 → 按 `url_hash` 批查 → cached/failed/pending 三态），当前归档规模亚秒级，规模涨了再加物化列。Archive Sync v2 已支持媒体 manifest 与鉴权二进制传输；接收节点按哈希验证并落本地副本。
 
 **社交媒体流(X 社交波,v3.12)**: 阅读器的**第三容器**。`content_shape` 从 `article|bulletin` 扩为 **`article | bulletin | social`** —— 「动态」装的是 changelog/release notes/GitHub trending(短条目扫读形态),推文是卡片流直读形态,渲染差异大到要在容器内再分叉,就说明本不该是同一个容器(2026-07-20 用户目检后拍板)。全链路:fetcher 类属性 `content_shape` → `registry` → `api/sources.py:source_shape()`(三态互斥,`social_post` 兜底为 `social`;注意**不可再按「非 bulletin 即 article」二分**,那会把社交源误归文章容器)→ `GET /api/articles?shape=` → 阅读器 `mode`/视图轨/源栏分组。
 
@@ -397,6 +401,7 @@ frontend/src/
 **Media（图床）** (see *媒体库*)
 - `GET /api/media/proxy?url=` — 正文外链图片代理（reader surface）：命中本地缓存回文件（长缓存头），未命中即时下载入库，失败/停用 302 回源降级
 - `GET /api/admin/media/stats` — 缓存统计（按 URL 计数 / 内容去重文件数 / 落盘字节 / 失败数，admin）
+- `GET /api/admin/storage/status` — 图片/音频云端登记量、本地缓存和自动备份状态（admin；不返回存储凭据）
 - `GET /api/admin/media/heatmap?days=` — 逐日缓存覆盖聚合（热点图数据；现算不落表，admin）
 - `GET /api/admin/media/days/{date}` — 当日逐篇明细 + 逐图链状态与失败原因（格子抽屉，admin）
 - `POST /api/admin/media/articles/{id}/prefetch` — 单篇定点重抓（`force` 绕过失败退避冷却，admin）

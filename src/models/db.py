@@ -14,6 +14,21 @@ from sqlalchemy import (
 )
 
 
+class ObjectBlobRecord(SQLModel, table=True):
+    """Local-only OSS location registry; never exported by Archive Sync."""
+    __tablename__ = "object_blobs"
+    id: str = Field(primary_key=True)
+    namespace: str = Field(index=True)
+    content_hash: str
+    ext: str
+    size_bytes: int
+    mime: str
+    bucket: str
+    region: str
+    object_key: str
+    created_at: str
+
+
 class ArticleRecord(SQLModel, table=True):
     """关系型数据库表结构：用于 CMS 后端管理系统"""
     __tablename__ = "articles"

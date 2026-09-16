@@ -58,6 +58,7 @@ import Pager from './admin/Pager';
 import AdminTaxonomyPanel from './admin/AdminTaxonomyPanel';
 import PodcastZone from './admin/PodcastZone';
 import BriefInterestZone from './admin/BriefInterestZone';
+import StorageStatusPanel from './admin/StorageStatusPanel';
 import { Kpi, KpiState } from './admin/Kpi';
 import { pivotDaily, C_READ, C_FAVORITE, C_SUBSCRIBE } from './charts/chartUtils';
 import { PURPOSE_LABELS, formatStamp, fmtNum, truncLabel } from './admin/adminUtils';
@@ -1036,6 +1037,7 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
       {/* ══ 内容子页 ══════════════════════════════════════════════ */}
       {sub === 'content' && (
         <div>
+          <StorageStatusPanel refreshTick={refreshTick} />
           {/* 公开分享总闸:与 AI 总闸同形制。放「内容」而非「用户」——它管的是内容能否
               被摊到登录之外,和媒体库、X 接入同类(对外的内容出口)。 */}
           <section className="surface-card ai-switchboard rounded-[var(--r-card)] mb-4">
