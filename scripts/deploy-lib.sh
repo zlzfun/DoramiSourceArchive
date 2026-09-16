@@ -51,11 +51,34 @@ _deploy_lib_flock() { python3 -c 'import fcntl, sys; fcntl.flock(int(sys.argv[1]
 # 唯一部署锁:手工路径与流水线共用同一把(默认 /run/lock/dorami-deploy.lock,DORAMI_DEPLOY_LOCK_FILE 可覆盖)。
 # 由 worker 起的子进程带 DORAMI_DEPLOY_LOCK_FD(FD 随 exec 重执行继承)→ 只校验描述符仍打开,不二次抢;
 # 手工来源自己打开 FD 9 并 flock -n,抢不到即报「另一部署进行中」。
+# 继承的锁 FD 不能只看「打开了」:它必须指向配置的锁文件(dev/inode 相同)且本进程经它持锁——同一 open file
+# description 上再 flock 是无操作,别的 OFD 未持锁则会失败(codex 脚本层检视 P2-10)。
+_deploy_lib_verify_lock_fd() {  # fd lock_file
+    python3 - "$1" "$2" <<'PY'
+import fcntl, os, sys
+fd, lock = int(sys.argv[1]), sys.argv[2]
+try:
+    a, b = os.fstat(fd), os.stat(lock)
+except OSError as exc:
+    print(f"fd/lock stat failed: {exc}"); sys.exit(1)
+if (a.st_dev, a.st_ino) != (b.st_dev, b.st_ino):
+    print("fd does not refer to the configured lock file"); sys.exit(1)
+try:
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except OSError:
+    print("lock is not held on this fd"); sys.exit(1)
+PY
+}
+
 acquire_deploy_lock() {
     local lock_file="${DORAMI_DEPLOY_LOCK_FILE:-/run/lock/dorami-deploy.lock}"
     if [ -n "${DORAMI_DEPLOY_LOCK_FD:-}" ]; then
+        [[ "$DORAMI_DEPLOY_LOCK_FD" =~ ^[0-9]+$ ]] || _deploy_lib_fail "DORAMI_DEPLOY_LOCK_FD 须为数字: ${DORAMI_DEPLOY_LOCK_FD}"
         [ -e "/dev/fd/${DORAMI_DEPLOY_LOCK_FD}" ] \
             || _deploy_lib_fail "DORAMI_DEPLOY_LOCK_FD=${DORAMI_DEPLOY_LOCK_FD} 不是打开的描述符(锁应由 worker 持有并继承)"
+        local why
+        why="$(_deploy_lib_verify_lock_fd "$DORAMI_DEPLOY_LOCK_FD" "$lock_file")" \
+            || _deploy_lib_fail "继承的锁 FD ${DORAMI_DEPLOY_LOCK_FD} 校验失败(${why});拒绝继续"
         return 0
     fi
     mkdir -p "$(dirname "$lock_file")" 2>/dev/null || true
@@ -206,10 +229,62 @@ PYEOF
         [ -f "${db_path}-wal" ] && cp "${db_path}-wal" "${backup_file}-wal"
     fi
     echo "    DB backup: $backup_file"
-    # 保留数可配(DORAMI_DEPLOY_BACKUP_KEEP,默认 10)。流水线来源下本函数不被调用:worker 做事务备份并按
-    # manifest pin 清理,这里的纯计数清理不认识 manifest,若在流水线下跑会把仍被引用的原始备份删掉。
-    local keep="${DORAMI_DEPLOY_BACKUP_KEEP:-10}"
-    ls -1t backups/"$(basename "$db_path")".* 2>/dev/null | grep -v -- '-wal$' | tail -n +"$((keep + 1))" | xargs -r rm -f
+    # 保留数可配(DORAMI_DEPLOY_BACKUP_KEEP,默认 10)。流水线来源下本函数不被调用(worker 做事务备份);
+    # 手工来源下计数清理必须**排除 manifest 引用的备份**——流水线失败留下的 in-progress 事务备份是恢复材料,
+    # 手工多跑几次不能把它删掉(codex 脚本层检视 P1-6)。
+    local keep="${DORAMI_DEPLOY_BACKUP_KEEP:-10}" referenced n=0 f
+    referenced="$(_deploy_lib_referenced_backups)"
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        if printf '%s\n' "$referenced" | grep -qxF "$f" || printf '%s\n' "$referenced" | grep -qxF "$PWD/$f"; then
+            continue
+        fi
+        n=$((n + 1))
+        [ "$n" -le "$keep" ] && continue
+        rm -f "$f"
+    done < <(ls -1t backups/"$(basename "$db_path")".* 2>/dev/null | grep -v -- '-wal$')
+}
+
+# 仓库外状态目录(/etc/dorami-deploy.conf 的 STATE_DIR);没有 conf 的开发机返回空串。
+deploy_state_dir() {
+    local conf="${DORAMI_DEPLOY_CONF:-/etc/dorami-deploy.conf}"
+    [ -r "$conf" ] || return 0
+    ( set +u; STATE_DIR=""; source "$conf" >/dev/null 2>&1; printf '%s' "${STATE_DIR:-}" )
+}
+
+# in-progress / last-success 引用的备份文件(绝对路径,一行一个)
+_deploy_lib_referenced_backups() {
+    local state_dir; state_dir="$(deploy_state_dir)"
+    [ -n "$state_dir" ] || return 0
+    python3 - "$state_dir" <<'PY'
+import json, os, sys
+d = sys.argv[1]
+for name in ("in-progress.json", "last-success.json"):
+    try:
+        v = json.load(open(os.path.join(d, name), encoding="utf-8")).get("prev", {}).get("db_backup")
+        if v:
+            print(v)
+    except Exception:
+        pass
+PY
+}
+
+# 手工来源在切换(up)之前、同一锁内留下标记:仓库外 worker 据此知道 last-success 已被手工越过,
+# 不再回放、基线改读容器(codex 脚本层检视 P1-5)。没有 conf 的开发机是空操作。
+note_manual_switch() {  # ref sha
+    local state_dir; state_dir="$(deploy_state_dir)"
+    [ -n "$state_dir" ] && [ -d "$state_dir" ] || return 0
+    python3 - "$state_dir/manual-switch.json" "$1" "$2" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" <<'PY' || _deploy_lib_fail "写 manual-switch.json 失败"
+import json, os, sys, tempfile
+path, ref, sha, at = sys.argv[1:5]
+d = os.path.dirname(path) or "."
+fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp-")
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    json.dump({"ref": ref, "sha": sha, "at": at}, f, ensure_ascii=False, indent=2, sort_keys=True); f.flush(); os.fsync(f.fileno())
+os.replace(tmp, path)
+dfd = os.open(d, os.O_RDONLY); os.fsync(dfd); os.close(dfd)
+PY
+    echo "    已记录手工切换(manual-switch.json):流水线的 last-success 自此失效,下次从容器读基线"
 }
 
 # 从 ini 读 [storage] database_url 里的 sqlite 文件路径;非 sqlite 或读不到时输出空串。

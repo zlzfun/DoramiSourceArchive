@@ -1,19 +1,24 @@
 #!/bin/bash
 # /root/bin/dorami-deploy-worker —— 部署的唯一 owner:锁、跨版本状态与门禁(issue #102 方案 §4.4)。
-# DORAMI_DEPLOY_WORKER_VERSION=1
+# DORAMI_DEPLOY_WORKER_VERSION=2
 #
 # 在仓库外、与 SSH 会话脱离(launcher 用 setsid 起它),不随目标 tag 切换而变。承担一切**跨版本**的事:
 #   token / ref / 协议核验、锁、in-progress / last-success 事务(含 prev 镜像采样与自做 DB 备份)、方向判定与
 #   单调护栏、首装门、清理与晋升、退出码。目标 tag 里的 ./deploy-docker.sh 只做它自己那一版的构建与验证。
 #
 # 子命令:
-#   run <vX.Y.Z> <sha40> <downgrade 0|1> <redeploy 0|1>   由 launcher 调用;stdio 重定向到 $LOG_DIR/<tag>-<sha7>.log
-#   --close-in-progress                                   人工关闭未收口事务(恢复备份 / 放弃失败部署之后)
-#   status                                                打印 state / in-progress / last-success
+#   run <vX.Y.Z> <sha40> <downgrade 0|1> <redeploy 0|1> [run_id]   由 launcher 调用;stdio 重定向到 $LOG_DIR/<tag>-<sha7>.log
+#   --close-in-progress                                             人工关闭未收口事务(恢复备份 / 放弃失败部署之后)
+#   status                                                          打印 state / in-progress / last-success / manual-switch
 #
-# 退出码(写进 $STATE_DIR/<tag>-<sha7>.rc,launcher 以它退出):
-#   0 成功(含回放)  2 用法  4 锁被占  10 ref 核验失败  11 协议不支持  20 in-progress 冲突
-#   21 单调护栏     22 迁移文件变化  23 首装门  24 事务准备失败  其它 = 目标脚本 deploy-docker.sh 的退出码
+# 退出码(记进 state.rc,并写 $STATE_DIR/<tag>-<sha7>.rc 留审计;launcher 以 state.rc 退出):
+#   0 成功(含回放)  2 用法  4 锁被占  10 ref 核验失败  11 协议不支持  20 in-progress 冲突  21 单调护栏
+#   22 迁移文件变化  23 首装门  24 事务准备 / 现状读取失败  25 晋升失败(事务保留)  129/130/143 收到信号
+#   其它 = 目标脚本 deploy-docker.sh 的退出码
+#
+# 失败路径纪律:所有关键持久化都显式检查退出码——开事务失败不消费令牌不起子进程;晋升失败保留 in-progress
+# 与 managed 镜像 / 备份、不 cleanup;写不出退出码时 phase 记 finalize-failed 而不是 complete。
+# 容器现状读不到(docker compose ps / inspect 非零)一律 fail closed,不把「读不到」当「没有」。
 #
 # 支持的目标脚本协议(目标 tag 的 scripts/deploy-lib.sh 须宣告 DORAMI_DEPLOY_PROTOCOL=<n>):
 WORKER_MAX_PROTOCOL=1
@@ -33,10 +38,11 @@ BACKUP_KEEP="${DORAMI_DEPLOY_BACKUP_KEEP:-10}"
 
 IN_PROGRESS="$STATE_DIR/in-progress.json"
 LAST_SUCCESS="$STATE_DIR/last-success.json"
+MANUAL_SWITCH="$STATE_DIR/manual-switch.json"
 STATE="$STATE_DIR/state.json"
 TOKEN="$STATE_DIR/first-install.token"
 
-# ── JSON 助手(python3;所有写都是 tmp + fsync + rename + fsync 目录)──
+# ── JSON 助手(python3;所有写都是 tmp + fsync + rename + fsync 目录,失败返回非零)──
 json_get() {  # file key [default]
     python3 - "$1" "$2" "${3-}" <<'PY'
 import json, sys
@@ -71,19 +77,7 @@ for item in (cur or []):
     print(item)
 PY
 }
-_json_dump_atomic() {  # path ; data via stdin(python 内部用)
-    python3 - "$1" <<'PY'
-import json, os, sys, tempfile
-path = sys.argv[1]; data = json.load(sys.stdin)
-d = os.path.dirname(path) or "."
-fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp-")
-with os.fdopen(fd, "w", encoding="utf-8") as f:
-    json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True); f.flush(); os.fsync(f.fileno())
-os.replace(tmp, path)
-dfd = os.open(d, os.O_RDONLY); os.fsync(dfd); os.close(dfd)
-PY
-}
-json_set() {  # file key value [json]  —— 第 4 参为 json 时 value 按 JSON 字面量解析
+json_set() {  # file key value [json]  —— 第 4 参为 json 时 value 按 JSON 字面量解析;失败返回非零
     python3 - "$1" "$2" "$3" "${4-}" <<'PY'
 import json, os, sys, tempfile
 path, key, raw, kind = sys.argv[1:5]
@@ -140,9 +134,33 @@ PY
     fi
 }
 
+# ── docker 现状读取:非零一律 fail closed(不在 $() 里 die——那只会退出子 shell)──
+compose_ids_into() {  # var [service] [-a]
+    local __var="$1" svc="${2-}" all="${3-}" out rc
+    if [ -n "$svc" ]; then
+        out="$(docker compose ps ${all:+-a} -q "$svc" 2>&1)"; rc=$?
+    else
+        out="$(docker compose ps ${all:+-a} -q 2>&1)"; rc=$?
+    fi
+    [ "$rc" = 0 ] || die 24 "docker compose ps 失败(rc=$rc),无法读取容器现状,fail closed:$(printf '%s' "$out" | head -1)"
+    printf -v "$__var" '%s' "$(printf '%s\n' "$out" | grep -v '^$' | head -1)"
+}
+inspect_image_into() {  # var cid
+    local out rc
+    out="$(docker inspect --format '{{.Image}}' "$2" 2>&1)"; rc=$?
+    [ "$rc" = 0 ] && [ -n "$out" ] || die 24 "docker inspect $2 失败(rc=$rc):$(printf '%s' "$out" | head -1)"
+    printf -v "$1" '%s' "$out"
+}
+container_env_into() {  # var cid key
+    local out rc
+    out="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$2" 2>&1)"; rc=$?
+    [ "$rc" = 0 ] || die 24 "docker inspect $2 失败(rc=$rc):$(printf '%s' "$out" | head -1)"
+    printf -v "$1" '%s' "$(printf '%s\n' "$out" | grep "^$3=" | head -1 | cut -d= -f2-)"
+}
+
 # ── 子命令:status / --close-in-progress ──
 cmd_status() {
-    for f in "$STATE" "$IN_PROGRESS" "$LAST_SUCCESS"; do
+    for f in "$STATE" "$IN_PROGRESS" "$LAST_SUCCESS" "$MANUAL_SWITCH"; do
         echo "== $f =="; [ -f "$f" ] && cat "$f" || echo "(无)"
     done
 }
@@ -153,21 +171,22 @@ cmd_close_in_progress() {
         || { echo "ERROR: 有部署正在进行(锁被占),不能关闭事务" >&2; exit 4; }
     [ -f "$IN_PROGRESS" ] || { echo "没有未收口的 in-progress 事务"; exit 0; }
     local txn; txn="$(json_get "$IN_PROGRESS" txn_id unknown)"
-    mv "$IN_PROGRESS" "$STATE_DIR/closed-${txn}.json"
+    mv "$IN_PROGRESS" "$STATE_DIR/closed-${txn}.json" || { echo "ERROR: 归档事务失败" >&2; exit 24; }
     rm -f "$STATE_DIR/${txn}.switch"
     echo "已关闭事务 ${txn} → $STATE_DIR/closed-${txn}.json(managed 镜像与备份留给下次成功部署的清理)"
 }
 
 # ── run ──
-RC_FILE=""; FINALIZED=""
+RC_FILE=""; FINALIZED=""; CHILD_PID=""
 finalize() {
     local code=$?
     [ -n "$FINALIZED" ] && return
     FINALIZED=1
     [ -f "$STATE" ] || return
-    json_set "$STATE" phase finalizing
+    json_set "$STATE" phase finalizing || true
+    local rc_ok=1
     if [ -n "$RC_FILE" ]; then
-        python3 - "$RC_FILE" "$code" <<'PY'
+        python3 - "$RC_FILE" "$code" <<'PY' || rc_ok=0
 import os, sys, tempfile
 path, code = sys.argv[1], sys.argv[2]
 d = os.path.dirname(path) or "."
@@ -177,20 +196,38 @@ with os.fdopen(fd, "w") as f:
 os.replace(tmp, path)
 dfd = os.open(d, os.O_RDONLY); os.fsync(dfd); os.close(dfd)
 PY
-        json_set "$STATE" rc_file "$RC_FILE"
     fi
-    json_set "$STATE" rc "$code" json
-    json_set "$STATE" finished_at "$(now_iso)"
-    json_set "$STATE" phase complete
-    echo "dorami-deploy-worker: 结束,退出码 $code($(now_iso))"
+    json_set "$STATE" rc_file "$RC_FILE" || rc_ok=0
+    json_set "$STATE" rc "$code" json || rc_ok=0
+    json_set "$STATE" finished_at "$(now_iso)" || true
+    if [ "$rc_ok" = 1 ]; then
+        json_set "$STATE" phase complete || echo "ERROR: 写 complete 失败"
+        echo "dorami-deploy-worker: 结束,退出码 $code($(now_iso))"
+    else
+        json_set "$STATE" phase finalize-failed || true
+        echo "ERROR: 写退出码失败(磁盘 / 权限?),phase=finalize-failed;launcher 按失败处理,需人工检查 $STATE_DIR"
+    fi
 }
 die() { local code="$1"; shift; echo "ERROR: $*"; exit "$code"; }
+on_signal() {
+    local sig="$1" code
+    case "$sig" in TERM) code=143 ;; INT) code=130 ;; *) code=129 ;; esac
+    echo "ERROR: worker 收到 SIG${sig}:终止部署子进程并以失败收口(退出码 $code);in-progress 事务保留"
+    if [ -n "$CHILD_PID" ] && kill -0 "$CHILD_PID" 2>/dev/null; then
+        pkill -TERM -P "$CHILD_PID" 2>/dev/null || true
+        kill -TERM "$CHILD_PID" 2>/dev/null || true
+        wait "$CHILD_PID" 2>/dev/null || true
+    fi
+    exit "$code"
+}
 
 cmd_run() {
-    [ $# -eq 4 ] || { echo "用法: $0 run <vX.Y.Z> <sha40> <0|1> <0|1>" >&2; exit 2; }
-    TAG="$1"; SHA="$2"; DOWNGRADE="$3"; REDEPLOY="$4"
+    [ $# -ge 4 ] && [ $# -le 5 ] || { echo "用法: $0 run <vX.Y.Z> <sha40> <0|1> <0|1> [run_id]" >&2; exit 2; }
+    TAG="$1"; SHA="$2"; DOWNGRADE="$3"; REDEPLOY="$4"; RUN_ID="${5:-}"
     [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ && "$SHA" =~ ^[0-9a-f]{40}$ && "$DOWNGRADE" =~ ^[01]$ && "$REDEPLOY" =~ ^[01]$ ]] \
         || { echo "ERROR: 参数格式错误" >&2; exit 2; }
+    [ -z "$RUN_ID" ] && RUN_ID="$(python3 -c 'import uuid; print(uuid.uuid4().hex[:16])')"
+    [[ "$RUN_ID" =~ ^[0-9a-f]{8,32}$ ]] || { echo "ERROR: run_id 格式错误" >&2; exit 2; }
 
     mkdir -p "$STATE_DIR" "$LOG_DIR" "$(dirname "$LOCK_FILE")" 2>/dev/null || true
     # 锁先于一切状态写入:抢不到就退出,绝不覆盖正在跑的 worker 的 state
@@ -200,10 +237,11 @@ cmd_run() {
     LOG="$LOG_DIR/${TAG}-${SHA:0:7}.log"
     RC_FILE="$STATE_DIR/${TAG}-${SHA:0:7}.rc"
     rm -f "$RC_FILE"
-    python3 - "$STATE" "$TAG" "$SHA" "$DOWNGRADE" "$REDEPLOY" "$$" "$(proc_start_id $$)" "$LOG" "$(now_iso)" <<'PY'
+    python3 - "$STATE" "$TAG" "$SHA" "$DOWNGRADE" "$REDEPLOY" "$$" "$(proc_start_id $$)" "$LOG" "$(now_iso)" "$RUN_ID" <<'PY' || exit 24
 import json, os, sys, tempfile
 path = sys.argv[1]
 data = {
+    "run_id": sys.argv[10],
     "tag": sys.argv[2], "target_sha": sys.argv[3], "downgrade": sys.argv[4] == "1", "redeploy": sys.argv[5] == "1",
     "worker_pid": int(sys.argv[6]), "worker_start_id": sys.argv[7], "child_pid": None, "child_start_id": None,
     "phase": "starting", "log": sys.argv[8], "started_at": sys.argv[9], "rc_file": None, "rc": None,
@@ -217,17 +255,20 @@ dfd = os.open(d, os.O_RDONLY); os.fsync(dfd); os.close(dfd)
 PY
     exec >>"$LOG" 2>&1
     trap finalize EXIT
+    trap 'on_signal TERM' TERM
+    trap 'on_signal INT' INT
+    trap 'on_signal HUP' HUP
     echo "=================================================="
-    echo "  dorami-deploy-worker v${WORKER_MAX_PROTOCOL} — ${TAG} ${SHA:0:7} downgrade=${DOWNGRADE} redeploy=${REDEPLOY} ($(now_iso))"
+    echo "  dorami-deploy-worker v${WORKER_MAX_PROTOCOL} — ${TAG} ${SHA:0:7} downgrade=${DOWNGRADE} redeploy=${REDEPLOY} run=${RUN_ID} ($(now_iso))"
     echo "=================================================="
-    meta target_tag "$TAG"; meta target_sha "$SHA"
+    meta target_tag "$TAG"; meta target_sha "$SHA"; meta run_id "$RUN_ID"
 
     step_reconcile_crash_window
     step_verify_ref
     step_verify_protocol
     step_in_progress
-    step_replay
     step_baseline
+    step_replay
     step_guard
     step_migration_diff
     step_first_install
@@ -241,11 +282,14 @@ step_reconcile_crash_window() {
     if [ -f "$IN_PROGRESS" ] && [ -f "$LAST_SUCCESS" ] \
        && [ "$(json_get "$IN_PROGRESS" txn_id a)" = "$(json_get "$LAST_SUCCESS" txn_id b)" ]; then
         echo "[0/13] 上次已晋升但事务未删(崩溃窗口):幂等收口 $(json_get "$IN_PROGRESS" txn_id)"
-        rm -f "$IN_PROGRESS"
+        rm -f "$IN_PROGRESS" || die 24 "删除已晋升的 in-progress 失败"
     fi
     if [ -f "$IN_PROGRESS" ] && [ -f "$TOKEN" ]; then
         local want; want="$(json_get "$IN_PROGRESS" token_digest "")"
-        [ -n "$want" ] && [ "$(sha256_file "$TOKEN")" = "$want" ] && { echo "[0/13] 首装令牌已被事务消费但文件仍在:幂等删除"; rm -f "$TOKEN"; }
+        if [ -n "$want" ] && [ "$(sha256_file "$TOKEN")" = "$want" ]; then
+            echo "[0/13] 首装令牌已被事务消费但文件仍在:幂等删除"
+            rm -f "$TOKEN" || die 24 "删除已消费的首装令牌失败"
+        fi
     fi
 }
 
@@ -255,21 +299,33 @@ step_verify_ref() {
     git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die 10 "$REPO_DIR 不是 git 仓库"
     git fetch --tags --quiet origin || die 10 "git fetch --tags origin 失败(流水线模式不回落到本地 tag)"
     git fetch --quiet origin main || die 10 "git fetch origin main 失败"
+    # 远端此刻必须仍有这个 tag(fetch 不会删本地陈旧 tag;远端删 tag = 撤销发布)
+    local remote peeled
+    remote="$(git ls-remote origin "refs/tags/${TAG}" "refs/tags/${TAG}^{}" 2>/dev/null)" || die 10 "git ls-remote origin 失败"
+    [ -n "$remote" ] || die 10 "origin 上不存在 tag $TAG(已被删除?撤销发布不部署)"
+    peeled="$(printf '%s\n' "$remote" | awk '$2 ~ /\^\{\}$/ {print $1}' | head -1)"
+    [ -n "$peeled" ] || peeled="$(printf '%s\n' "$remote" | awk '{print $1}' | head -1)"
+    [ "$peeled" = "$SHA" ] || die 10 "origin 上 tag $TAG 指向 ${peeled:0:7},与 Actions 核验的 ${SHA:0:7} 不一致"
     local tag_sha
-    tag_sha="$(git rev-parse -q --verify "refs/tags/${TAG}^{commit}" 2>/dev/null)" || die 10 "tag 不存在: $TAG"
-    [ "$tag_sha" = "$SHA" ] || die 10 "tag $TAG 指向 ${tag_sha:0:7},与 Actions 核验的 ${SHA:0:7} 不一致(tag 被移动?)"
+    tag_sha="$(git rev-parse -q --verify "refs/tags/${TAG}^{commit}" 2>/dev/null)" || die 10 "本地没有 tag $TAG"
+    [ "$tag_sha" = "$SHA" ] || die 10 "本地 tag $TAG 指向 ${tag_sha:0:7},与 Actions 核验的 ${SHA:0:7} 不一致(tag 被移动?)"
     git merge-base --is-ancestor "$SHA" origin/main || die 10 "${SHA:0:7} 不在 origin/main 线上"
     local version
     version="$(git show "${SHA}:src/version.py" 2>/dev/null | grep -o '__version__ = "[^"]*"' | head -1 | sed 's/.*"\(.*\)"/\1/')"
     [ "v${version}" = "$TAG" ] || die 10 "目标提交的版本号 ${version:-?} 与 tag $TAG 不一致"
-    echo "    OK: $TAG → ${SHA:0:7},在 origin/main 上,版本号 $version"
+    echo "    OK: $TAG → ${SHA:0:7},远端存在,在 origin/main 上,版本号 $version"
 }
 
 step_verify_protocol() {
     echo "[2/13] 核验部署协议..."
-    local proto
-    proto="$(git show "${SHA}:scripts/deploy-lib.sh" 2>/dev/null | grep -E '^DORAMI_DEPLOY_PROTOCOL=[0-9]+' | head -1 | cut -d= -f2)"
-    [ -n "$proto" ] || die 11 "目标 tag 未宣告 DORAMI_DEPLOY_PROTOCOL(早于流水线协议的版本):流水线拒绝,请在生产机手工 ./deploy-docker.sh $TAG"
+    local line proto
+    line="$(git show "${SHA}:scripts/deploy-lib.sh" 2>/dev/null | grep -E '^DORAMI_DEPLOY_PROTOCOL=' | head -1)"
+    [ -n "$line" ] || die 11 "目标 tag 未宣告 DORAMI_DEPLOY_PROTOCOL(早于流水线协议的版本):流水线拒绝,请在生产机手工 ./deploy-docker.sh $TAG"
+    if [[ "$line" =~ ^DORAMI_DEPLOY_PROTOCOL=([0-9]+)[[:space:]]*(#.*)?$ ]]; then
+        proto="${BASH_REMATCH[1]}"
+    else
+        die 11 "目标 tag 的协议宣告格式不合法(须为 DORAMI_DEPLOY_PROTOCOL=<整数>,可带尾注释):${line}"
+    fi
     if [ "$proto" -lt 1 ] || [ "$proto" -gt "$WORKER_MAX_PROTOCOL" ]; then
         die 11 "目标协议 $proto 超出本 worker 支持范围(1..$WORKER_MAX_PROTOCOL):先升级 /root/bin/dorami-deploy-worker"
     fi
@@ -289,39 +345,37 @@ step_in_progress() {
     switched="$(json_get "$IN_PROGRESS" switched_at "")"
     if [ -z "$switched" ] && [ ! -e "$STATE_DIR/${txn}.switch" ]; then
         echo "    上次目标 $t_tag ${t_sha:0:7} 在 up 之前就失败,系统未被改动:自动关闭事务 $txn"
-        mv "$IN_PROGRESS" "$STATE_DIR/closed-${txn}.json"
+        mv "$IN_PROGRESS" "$STATE_DIR/closed-${txn}.json" || die 24 "归档事务 $txn 失败"
         return 0
     fi
     die 20 "存在已切换未收口的事务 $txn(target $t_tag ${t_sha:0:7}):先按 docs/release-process.md 恢复,再 dorami-deploy-worker --close-in-progress"
 }
 
-step_replay() {
-    echo "[4/13] 回放判定..."
-    [ "$REUSE" = 0 ] || { echo "    复用事务,不回放"; return 0; }
-    [ -f "$LAST_SUCCESS" ] || { echo "    无 last-success"; return 0; }
-    if [ "$(json_get "$LAST_SUCCESS" target.tag)" = "$TAG" ] && [ "$(json_get "$LAST_SUCCESS" target.sha)" = "$SHA" ]; then
-        if [ "$REDEPLOY" = 1 ]; then echo "    redeploy=1:忽略 last-success,重新完整部署"; return 0; fi
-        echo "    last-success 已是 $TAG ${SHA:0:7}(deployed_at $(json_get "$LAST_SUCCESS" deployed_at)):回放成功,不重新部署"
-        meta replay 1
-        exit 0
-    fi
-    echo "    last-success 是 $(json_get "$LAST_SUCCESS" target.tag),继续"
-}
-
-BASE_SHA=""; BASE_REF=""; DIRECTION="unknown"
+BASE_SHA=""; BASE_REF=""; DIRECTION="unknown"; LS_STALE=0; CUR_BACKEND_CID=""; CUR_NGINX_CID=""
 step_baseline() {
-    echo "[5/13] 基线与方向..."
-    local src="unknown" cid
+    echo "[5/13] 基线与方向(先读容器现状)..."
+    local src="unknown" cont_sha="" cont_ref=""
+    compose_ids_into CUR_BACKEND_CID backend
+    [ -n "$CUR_BACKEND_CID" ] || compose_ids_into CUR_BACKEND_CID backend -a
+    compose_ids_into CUR_NGINX_CID nginx
+    [ -n "$CUR_NGINX_CID" ] || compose_ids_into CUR_NGINX_CID nginx -a
+    if [ -n "$CUR_BACKEND_CID" ]; then
+        container_env_into cont_sha "$CUR_BACKEND_CID" DORAMI_BUILD_SHA
+        container_env_into cont_ref "$CUR_BACKEND_CID" DORAMI_BUILD_REF
+    fi
     if [ -f "$LAST_SUCCESS" ]; then
         BASE_SHA="$(json_get "$LAST_SUCCESS" target.sha)"; BASE_REF="$(json_get "$LAST_SUCCESS" target.tag)"; src="last-success"
-    else
-        cid="$(docker compose ps -q backend 2>/dev/null | head -1 || true)"
-        if [ -n "$cid" ]; then
-            local envs; envs="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$cid" 2>/dev/null || true)"
-            BASE_SHA="$(printf '%s\n' "$envs" | grep '^DORAMI_BUILD_SHA=' | head -1 | cut -d= -f2-)"
-            BASE_REF="$(printf '%s\n' "$envs" | grep '^DORAMI_BUILD_REF=' | head -1 | cut -d= -f2-)"
-            [ -n "$BASE_SHA" ] && src="container"
+        # 手工部署过(新脚本会留 manual-switch.json;旧脚本没有,但容器里的构建 sha 会露馅)→ last-success 不可信
+        if [ -f "$MANUAL_SWITCH" ]; then
+            LS_STALE=1; echo "    发现 manual-switch.json($(json_get "$MANUAL_SWITCH" ref ?) $(json_get "$MANUAL_SWITCH" at ?)):last-success 已被手工部署越过"
+        elif [ -n "$cont_sha" ] && [ "$cont_sha" != "$BASE_SHA" ]; then
+            LS_STALE=1; echo "    运行容器的构建 sha ${cont_sha:0:7} ≠ last-success ${BASE_SHA:0:7}:last-success 已被手工部署越过"
         fi
+        if [ "$LS_STALE" = 1 ]; then
+            BASE_SHA="$cont_sha"; BASE_REF="$cont_ref"; src="container(last-success 失效)"
+        fi
+    elif [ -n "$cont_sha" ]; then
+        BASE_SHA="$cont_sha"; BASE_REF="$cont_ref"; src="container"
     fi
     if [ -n "$BASE_SHA" ] && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
         if [ "$BASE_SHA" = "$SHA" ]; then DIRECTION="same"
@@ -331,6 +385,20 @@ step_baseline() {
     fi
     echo "    基线 ${BASE_REF:-unknown} ${BASE_SHA:0:7}(来源 $src),方向 $DIRECTION"
     meta baseline_ref "${BASE_REF:-unknown}"; meta baseline_sha "${BASE_SHA:-unknown}"; meta direction "$DIRECTION"
+}
+
+step_replay() {
+    echo "[4/13] 回放判定..."
+    [ "$REUSE" = 0 ] || { echo "    复用事务,不回放"; return 0; }
+    [ -f "$LAST_SUCCESS" ] || { echo "    无 last-success"; return 0; }
+    [ "$LS_STALE" = 0 ] || { echo "    last-success 已失效,不回放"; return 0; }
+    if [ "$(json_get "$LAST_SUCCESS" target.tag)" = "$TAG" ] && [ "$(json_get "$LAST_SUCCESS" target.sha)" = "$SHA" ]; then
+        if [ "$REDEPLOY" = 1 ]; then echo "    redeploy=1:忽略 last-success,重新完整部署"; return 0; fi
+        echo "    last-success 已是 $TAG ${SHA:0:7}(deployed_at $(json_get "$LAST_SUCCESS" deployed_at)):回放成功,不重新部署"
+        meta replay 1
+        exit 0
+    fi
+    echo "    last-success 是 $(json_get "$LAST_SUCCESS" target.tag),继续"
 }
 
 step_guard() {
@@ -344,25 +412,27 @@ step_guard() {
 }
 
 step_migration_diff() {
-    echo "[7/13] 迁移文件变化提示(按方向解释)..."
+    echo "[7/13] 迁移文件变化提示(按方向解释;不做改名检测)..."
     if [ -z "$BASE_SHA" ] || [ "$DIRECTION" = "same" ]; then
         meta migration_files "${BASE_SHA:+none}${BASE_SHA:-unknown}"
         [ -z "$BASE_SHA" ] && echo "    ⚠️  基线未知,无法比较迁移文件(不显示 0)"
         return 0
     fi
-    local diff a m d
-    diff="$(git diff --name-status "$BASE_SHA" "$SHA" -- alembic/versions 2>/dev/null || true)"
-    a="$(printf '%s\n' "$diff" | grep -c '^A' || true)"; m="$(printf '%s\n' "$diff" | grep -c '^M' || true)"; d="$(printf '%s\n' "$diff" | grep -c '^D' || true)"
-    echo "    A=$a M=$m D=$d(基线 ${BASE_SHA:0:7} → 目标 ${SHA:0:7})"
-    meta migration_files_added "$a"; meta migration_files_modified "$m"; meta migration_files_deleted "$d"
+    local diff a d other
+    diff="$(git diff --no-renames --name-status "$BASE_SHA" "$SHA" -- alembic/versions 2>&1)" || die 22 "git diff 失败:$(printf '%s' "$diff" | head -1)"
+    a="$(printf '%s\n' "$diff" | grep -c '^A' || true)"
+    d="$(printf '%s\n' "$diff" | grep -c '^D' || true)"
+    other="$(printf '%s\n' "$diff" | grep -vE '^(A|D)' | grep -c . || true)"
+    echo "    A=$a D=$d 其它(M/R/C/T/U)=$other(基线 ${BASE_SHA:0:7} → 目标 ${SHA:0:7})"
+    meta migration_files_added "$a"; meta migration_files_deleted "$d"; meta migration_files_modified "$other"
     case "$DIRECTION" in
         forward)
-            [ "$m" = 0 ] && [ "$d" = 0 ] || die 22 "向前部署却有迁移文件被改写 / 删除(M=$m D=$d):迁移历史被篡改,fail closed" ;;
+            [ "$d" = 0 ] && [ "$other" = 0 ] || die 22 "向前部署却有迁移文件被改写 / 删除 / 改名(D=$d 其它=$other):迁移历史被篡改,fail closed" ;;
         downgrade)
-            [ "$m" = 0 ] || die 22 "降级时两边共有的迁移文件被改写(M=$m):fail closed"
+            [ "$other" = 0 ] || die 22 "降级时两边共有的迁移文件被改写 / 改名(其它=$other):fail closed"
             [ "$d" = 0 ] || echo "    降级:目标尚无后续 revision(D=$d 为预期),兼容性由目标镜像的迁移计划判定" ;;
         *)
-            [ "$m" = 0 ] && [ "$d" = 0 ] || die 22 "方向 $DIRECTION 下有迁移文件 M/D(M=$m D=$d):fail closed" ;;
+            [ "$d" = 0 ] && [ "$other" = 0 ] || die 22 "方向 $DIRECTION 下有迁移文件 D / 改写(D=$d 其它=$other):fail closed" ;;
     esac
 }
 
@@ -373,13 +443,20 @@ step_first_install() {
         [ "$(json_get "$IN_PROGRESS" fresh_authorized false)" = "true" ] && FRESH_OK=1
         echo "    复用事务:沿用事务内 fresh_authorized=$FRESH_OK(不重新按证据推翻)"; meta fresh_ok "$FRESH_OK"; return 0
     fi
-    local evidence="" db
-    [ -n "$(docker compose ps -a -q 2>/dev/null || true)" ] && evidence="$evidence containers"
+    local evidence="" any db out rc
+    out="$(docker compose ps -a -q 2>&1)"; rc=$?
+    [ "$rc" = 0 ] || die 23 "docker compose ps -a 失败(rc=$rc),无法判断部署证据:$(printf '%s' "$out" | head -1)"
+    [ -n "$(printf '%s' "$out" | tr -d '[:space:]')" ] && evidence="$evidence containers"
     [ -n "$(ls -A "$REPO_DIR/backups" 2>/dev/null || true)" ] && evidence="$evidence backups"
-    docker image ls --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -qE '^dorami-(backend|nginx)-(managed|rollback):' && evidence="$evidence images"
+    out="$(docker image ls --format '{{.Repository}}:{{.Tag}}' 2>&1)"; rc=$?
+    [ "$rc" = 0 ] || die 23 "docker image ls 失败(rc=$rc):$(printf '%s' "$out" | head -1)"
+    printf '%s\n' "$out" | grep -qE '^dorami-(backend|nginx)-(managed|rollback):' && evidence="$evidence images"
     [ -f "$LAST_SUCCESS" ] && evidence="$evidence last-success"
+    # 库文件证据:ini 当前指向的路径、固定的 data/cms_data.db、data/ 下任何 .db——各自独立,防 ini 路径误配
     db="$(sqlite_path_from_ini "$REPO_DIR/config/production.ini")"
-    [ -n "$db" ] && [ -f "$db" ] && evidence="$evidence database"
+    [ -n "$db" ] && [ -f "$db" ] && evidence="$evidence database(ini)"
+    [ -f "$REPO_DIR/data/cms_data.db" ] && evidence="$evidence database(data/cms_data.db)"
+    for any in "$REPO_DIR"/data/*.db; do [ -f "$any" ] && { evidence="$evidence database(data/*.db)"; break; }; done
     if [ -n "$evidence" ]; then
         echo "    有部署证据($evidence):目标镜像若报 fresh 将 fail closed(库路径 / 卷 / 文件丢失,绝不起空站)"
     elif [ -f "$TOKEN" ]; then
@@ -401,29 +478,37 @@ step_open_txn() {
     fi
     TXN="$(python3 -c 'import uuid,time; print(f"{int(time.time())}-{uuid.uuid4().hex[:8]}")')"
     local from_ref="${BASE_REF:-unknown}"; from_ref="${from_ref//\//_}"
-    local b_cid n_cid b_img="" n_img="" managed_b="" managed_n="" backup="" db
-    b_cid="$(docker compose ps -q backend 2>/dev/null | head -1 || true)"
-    n_cid="$(docker compose ps -q nginx 2>/dev/null | head -1 || true)"
-    if [ -n "$b_cid" ]; then
-        b_img="$(docker inspect --format '{{.Image}}' "$b_cid" 2>/dev/null || true)"
-        [ -n "$b_img" ] || die 24 "无法 inspect backend 容器 $b_cid 的镜像"
+    local b_img="" n_img="" managed_b="" managed_n="" backup="" db
+    if [ -n "$CUR_BACKEND_CID" ]; then
+        inspect_image_into b_img "$CUR_BACKEND_CID"
+    elif [ -f "$LAST_SUCCESS" ] && [ "$LS_STALE" = 0 ]; then
+        b_img="$(json_get "$LAST_SUCCESS" target.backend_image_id "")"
+        [ -n "$b_img" ] && echo "    没有 backend 容器,prev 取 last-success 记录的目标镜像 $b_img"
+    fi
+    if [ -n "$CUR_NGINX_CID" ]; then
+        inspect_image_into n_img "$CUR_NGINX_CID"
+    elif [ -f "$LAST_SUCCESS" ] && [ "$LS_STALE" = 0 ]; then
+        n_img="$(json_get "$LAST_SUCCESS" target.nginx_image_id "")"
+    fi
+    if [ -z "$b_img" ] && [ "$FRESH_OK" = 0 ]; then
+        die 24 "无法确定回滚点:既没有 backend 容器(含 stopped)也没有 last-success 记录的镜像,而本机不是首装;人工检查 docker compose ps -a"
+    fi
+    if [ -n "$b_img" ]; then
         managed_b="dorami-backend-managed:${from_ref}-${TXN}"
         docker tag "$b_img" "$managed_b" || die 24 "docker tag $managed_b 失败"
     fi
-    if [ -n "$n_cid" ]; then
-        n_img="$(docker inspect --format '{{.Image}}' "$n_cid" 2>/dev/null || true)"
-        [ -n "$n_img" ] || die 24 "无法 inspect nginx 容器 $n_cid 的镜像"
+    if [ -n "$n_img" ]; then
         managed_n="dorami-nginx-managed:${from_ref}-${TXN}"
         docker tag "$n_img" "$managed_n" || die 24 "docker tag $managed_n 失败"
     fi
     db="$(sqlite_path_from_ini "$REPO_DIR/config/production.ini")"
     if [ -n "$db" ] && [ -f "$db" ]; then
-        mkdir -p "$REPO_DIR/backups"
+        mkdir -p "$REPO_DIR/backups" || die 24 "建 backups/ 失败"
         backup="$REPO_DIR/backups/$(basename "$db").$(date +%Y%m%d-%H%M%S).pre-${TAG}"
         backup_sqlite "$db" "$backup" || die 24 "DB 备份失败: $backup"
         [ -s "$backup" ] || die 24 "DB 备份为空: $backup"
     fi
-    python3 - "$IN_PROGRESS" "$TXN" "$TAG" "$SHA" "$BASE_REF" "$BASE_SHA" "$b_img" "$n_img" "$managed_b" "$managed_n" "$backup" "$FRESH_OK" "$TOKEN_DIGEST" "$(now_iso)" <<'PY'
+    python3 - "$IN_PROGRESS" "$TXN" "$TAG" "$SHA" "$BASE_REF" "$BASE_SHA" "$b_img" "$n_img" "$managed_b" "$managed_n" "$backup" "$FRESH_OK" "$TOKEN_DIGEST" "$(now_iso)" <<'PY' || die 24 "写 in-progress.json 失败(磁盘 / 权限?),事务未落盘,不起子进程、不消费令牌"
 import json, os, sys, tempfile
 (path, txn, tag, sha, base_ref, base_sha, b_img, n_img, managed_b, managed_n, backup, fresh_ok, token_digest, opened) = sys.argv[1:15]
 data = {
@@ -445,7 +530,10 @@ with os.fdopen(fd, "w", encoding="utf-8") as f:
 os.replace(tmp, path)
 dfd = os.open(d, os.O_RDONLY); os.fsync(dfd); os.close(dfd)
 PY
-    [ -n "$TOKEN_DIGEST" ] && rm -f "$TOKEN" && echo "    首装令牌已消费"
+    if [ -n "$TOKEN_DIGEST" ]; then
+        rm -f "$TOKEN" || die 24 "消费首装令牌失败"
+        echo "    首装令牌已消费"
+    fi
     echo "    事务 $TXN 已落盘:prev backend ${b_img:-无} / nginx ${n_img:-无},备份 ${backup:-无}"
     meta txn_id "$TXN"; meta db_backup "${backup:-none}"
 }
@@ -454,21 +542,23 @@ CHILD_RC=1; SWITCH_MARK=""
 step_child() {
     echo "[10/13] 执行目标脚本 ./deploy-docker.sh $TAG(origin=pipeline,expected ${SHA:0:7})..."
     SWITCH_MARK="$STATE_DIR/${TXN}.switch"
-    json_set "$STATE" phase running
+    json_set "$STATE" phase running || die 24 "写 state 失败"
     (
         cd "$REPO_DIR" && exec env \
             DORAMI_DEPLOY_ORIGIN=pipeline DORAMI_EXPECTED_SHA="$SHA" DORAMI_DEPLOY_LOCK_FD=9 \
             DORAMI_DEPLOY_SWITCH_MARK="$SWITCH_MARK" DORAMI_DEPLOY_FRESH_OK="$FRESH_OK" DORAMI_DEPLOY_TAG="$TAG" \
             DORAMI_DEPLOY_MIN_FREE_GB="${DORAMI_DEPLOY_MIN_FREE_GB:-5}" DORAMI_DEPLOY_BACKUP_KEEP="$BACKUP_KEEP" \
-            DORAMI_DEPLOY_LOCK_FILE="$LOCK_FILE" ${DORAMI_HTTP_LISTEN:+DORAMI_HTTP_LISTEN="$DORAMI_HTTP_LISTEN"} \
+            DORAMI_DEPLOY_LOCK_FILE="$LOCK_FILE" DORAMI_DEPLOY_CONF="$CONF" \
+            ${DORAMI_HTTP_LISTEN:+DORAMI_HTTP_LISTEN="$DORAMI_HTTP_LISTEN"} \
             ./deploy-docker.sh "$TAG"
     ) &
-    local child=$!
-    json_set "$STATE" child_pid "$child" json
-    json_set "$STATE" child_start_id "$(proc_start_id "$child")"
-    wait "$child"; CHILD_RC=$?
+    CHILD_PID=$!
+    json_set "$STATE" child_pid "$CHILD_PID" json || true
+    json_set "$STATE" child_start_id "$(proc_start_id "$CHILD_PID")" || true
+    wait "$CHILD_PID"; CHILD_RC=$?
+    CHILD_PID=""
     if [ -e "$SWITCH_MARK" ]; then
-        json_set "$IN_PROGRESS" switched_at "$(now_iso)"
+        json_set "$IN_PROGRESS" switched_at "$(now_iso)" || echo "    ⚠️  写 switched_at 失败(切换标记文件仍在,判定以文件为准)"
         echo "    目标脚本已越过切换点(up)"
     fi
     echo "    目标脚本退出码 $CHILD_RC"
@@ -481,11 +571,19 @@ step_finish() {
         exit "$CHILD_RC"
     fi
     echo "[11/13] 晋升 last-success..."
-    python3 - "$IN_PROGRESS" "$LAST_SUCCESS" "$(now_iso)" <<'PY'
+    # 记录本次部署后的目标镜像 id:下次容器缺失时可作 prev;采样失败视同晋升失败(事务保留)
+    local new_b="" new_n="" cid
+    compose_ids_into cid backend
+    [ -n "$cid" ] && inspect_image_into new_b "$cid"
+    compose_ids_into cid nginx
+    [ -n "$cid" ] && inspect_image_into new_n "$cid"
+    if ! python3 - "$IN_PROGRESS" "$LAST_SUCCESS" "$(now_iso)" "$new_b" "$new_n" <<'PY'
 import json, os, sys, tempfile
-src, dst, deployed_at = sys.argv[1:4]
+src, dst, deployed_at, new_b, new_n = sys.argv[1:6]
 data = json.load(open(src, encoding="utf-8"))
 data["deployed_at"] = deployed_at
+data["target"]["backend_image_id"] = new_b
+data["target"]["nginx_image_id"] = new_n
 d = os.path.dirname(dst) or "."
 fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp-")
 with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -493,11 +591,15 @@ with os.fdopen(fd, "w", encoding="utf-8") as f:
 os.replace(tmp, dst)
 dfd = os.open(d, os.O_RDONLY); os.fsync(dfd); os.close(dfd)
 PY
-    rm -f "$IN_PROGRESS" "$SWITCH_MARK"
+    then
+        echo "ERROR: 写 last-success.json 失败(磁盘 / 权限?):in-progress 事务 ${TXN}、managed 镜像与备份全部保留,不清理;人工检查 $STATE_DIR 后重跑同 target 即复用事务"
+        exit 25
+    fi
+    rm -f "$IN_PROGRESS" "$SWITCH_MARK" "$MANUAL_SWITCH" || echo "    ⚠️  删除 in-progress / 标记失败(下次启动按 txn_id 幂等收口)"
     local b n
     b="$(json_get "$LAST_SUCCESS" prev.backend_image_id "")"; n="$(json_get "$LAST_SUCCESS" prev.nginx_image_id "")"
-    [ -n "$b" ] && docker tag "$b" dorami-backend-rollback:auto >/dev/null 2>&1 || true
-    [ -n "$n" ] && docker tag "$n" dorami-nginx-rollback:auto >/dev/null 2>&1 || true
+    [ -n "$b" ] && { docker tag "$b" dorami-backend-rollback:auto >/dev/null 2>&1 || true; }
+    [ -n "$n" ] && { docker tag "$n" dorami-nginx-rollback:auto >/dev/null 2>&1 || true; }
     echo "    last-success = $TAG ${SHA:0:7}(txn $TXN);:auto alias 指向 prev"
     step_cleanup
     echo "[13/13] 完成"
@@ -505,9 +607,10 @@ PY
 
 step_cleanup() {
     echo "[12/13] 清理(只删不被 last-success 引用的 managed 镜像与超保留数的备份;不跑 builder prune)..."
-    local referenced tag
+    local referenced tag out
     referenced="$(json_list "$LAST_SUCCESS" prev.managed_tags)"
-    for tag in $(docker image ls --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -E '^dorami-(backend|nginx)-managed:' || true); do
+    out="$(docker image ls --format '{{.Repository}}:{{.Tag}}' 2>/dev/null || true)"
+    for tag in $(printf '%s\n' "$out" | grep -E '^dorami-(backend|nginx)-managed:' || true); do
         if printf '%s\n' "$referenced" | grep -qxF "$tag"; then continue; fi
         docker rmi "$tag" >/dev/null 2>&1 && echo "    rmi $tag" || true
     done
@@ -530,5 +633,5 @@ case "${1:-}" in
     run) shift; cmd_run "$@" ;;
     --close-in-progress) cmd_close_in_progress ;;
     status) cmd_status ;;
-    *) echo "用法: $0 run <vX.Y.Z> <sha40> <0|1> <0|1> | --close-in-progress | status" >&2; exit 2 ;;
+    *) echo "用法: $0 run <vX.Y.Z> <sha40> <0|1> <0|1> [run_id] | --close-in-progress | status" >&2; exit 2 ;;
 esac

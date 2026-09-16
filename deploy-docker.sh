@@ -46,7 +46,8 @@ preflight_disk() {
         case " $checked " in *" $fs "*) continue ;; esac
         checked="$checked $fs"
         avail="$(df -Pk "$p" | awk 'NR==2{print $4}')"
-        iavail="$(df -Pi "$p" 2>/dev/null | awk 'NR==2{print $4}')"
+        # inode 空闲列按表头名定位(GNU 是第 4 列 IFree,macOS 是第 7 列 ifree);找不到就跳过 inode 检查
+        iavail="$(df -Pi "$p" 2>/dev/null | awk 'NR==1{for(i=1;i<=NF;i++) if(tolower($i)=="ifree") c=i} NR==2 && c {print $c}')"
         [[ "$iavail" =~ ^[0-9]+$ ]] || iavail=""
         echo "    $fs($p): 可用 $((avail / 1024 / 1024)) GB${iavail:+, 空闲 inode $iavail}"
         [ "$avail" -ge "$min_kb" ] \
@@ -172,6 +173,10 @@ if [ -n "${DORAMI_DEPLOY_SWITCH_MARK:-}" ]; then
     # 向 worker 表明「系统即将被改动」:此后失败的事务不再被别的目标自动关闭
     touch "$DORAMI_DEPLOY_SWITCH_MARK"
 fi
+if [ "$ORIGIN" != "pipeline" ]; then
+    # 手工越过切换点:同一锁内先让流水线的 last-success 失效(worker 下次从容器读基线、不回放)
+    note_manual_switch "$DORAMI_BUILD_REF" "$DORAMI_BUILD_SHA"
+fi
 docker compose up -d --remove-orphans
 
 # ── [7/7] 健康 + 版本核对 ──
@@ -183,11 +188,20 @@ case "$LISTEN" in
     *)   PROBE="http://127.0.0.1:${LISTEN}" ;;
 esac
 EXPECT_VERSION="$(_deploy_lib_source_version)"
-ATTEMPTS="${DORAMI_DEPLOY_HEALTH_ATTEMPTS:-90}"   # × 2s = 180s 预算(1.6GB 机冷启动带 Chromium 的容器不一定 90 秒就绪)
+# 时间预算(默认 180s:1.6GB 机冷启动带 Chromium 的容器不一定 90 秒就绪);每次 curl 都带连接 / 总超时,
+# 连接建立后后端不答也不能吃掉整个预算(容器 nginx 的 upstream 读超时是 300s)。次数只作额外上限。
+BUDGET="${DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS:-180}"
+ATTEMPTS="${DORAMI_DEPLOY_HEALTH_ATTEMPTS:-90}"
+deadline=$(( $(date +%s) + BUDGET ))
 health_ok=""
 last_verdict=""
-for _ in $(seq 1 "$ATTEMPTS"); do
-    body="$(curl -fsS -H 'Cache-Control: no-cache' "${PROBE}/api/health?_=$(date +%s)" 2>/dev/null || true)"
+attempt=0
+while [ "$attempt" -lt "$ATTEMPTS" ]; do
+    attempt=$((attempt + 1))
+    remaining=$(( deadline - $(date +%s) ))
+    [ "$remaining" -gt 0 ] || break
+    max_time=$(( remaining < 15 ? remaining : 15 ))
+    body="$(curl -fsS --connect-timeout 5 --max-time "$max_time" -H 'Cache-Control: no-cache' "${PROBE}/api/health?_=$(date +%s)" 2>/dev/null || true)"
     if [ -n "$body" ]; then
         verdict="$(printf '%s' "$body" | python3 -c '
 import json, sys
@@ -205,6 +219,7 @@ print("ok" if not bad else "mismatch " + ",".join(f"{k}={got.get(k)}" for k in b
         if [ "$verdict" = "ok" ]; then health_ok=1; break; fi
         last_verdict="$verdict"
     fi
+    [ $(( deadline - $(date +%s) )) -gt 2 ] || break
     sleep 2
 done
 
@@ -220,7 +235,7 @@ if [ -n "$health_ok" ]; then
 fi
 
 deploy_meta health failed
-echo "健康检查未通过(${ATTEMPTS}×2s):${last_verdict:-无响应};当前容器状态:" >&2
+echo "健康检查未通过(预算 ${BUDGET}s,尝试 ${attempt} 次):${last_verdict:-无响应};当前容器状态:" >&2
 docker compose ps >&2
 docker compose logs --tail 50 backend >&2
 fail "部署未通过健康验证(不自动回滚:流水线来源下 in-progress 事务保留,可重试或按 docs/release-process.md 恢复)"

@@ -16,8 +16,15 @@ TAG="${1:-}"
 [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::tag 格式错误: '${TAG}'(期望 vX.Y.Z)" >&2; exit 1; }
 
 git fetch --quiet origin main --tags
+# fetch 不会删除远端已删的本地 tag:远端此刻必须仍有它,且剥离后的提交与本地一致(远端删 tag = 撤销发布)
+remote="$(git ls-remote origin "refs/tags/${TAG}" "refs/tags/${TAG}^{}" 2>/dev/null)" \
+    || { echo "::error::git ls-remote origin 失败" >&2; exit 1; }
+[ -n "$remote" ] || { echo "::error::tag ${TAG} 不存在于 origin(已删除 = 撤销发布)" >&2; exit 1; }
+peeled="$(printf '%s\n' "$remote" | awk '$2 ~ /\^\{\}$/ {print $1}' | head -1)"
+[ -n "$peeled" ] || peeled="$(printf '%s\n' "$remote" | awk '{print $1}' | head -1)"
 sha="$(git rev-parse -q --verify "refs/tags/${TAG}^{commit}" 2>/dev/null)" \
-    || { echo "::error::tag ${TAG} 不存在于 origin" >&2; exit 1; }
+    || { echo "::error::本地没有 tag ${TAG}" >&2; exit 1; }
+[ "$peeled" = "$sha" ] || { echo "::error::origin 上 ${TAG} 指向 ${peeled:0:7},本地是 ${sha:0:7}(tag 被移动?)" >&2; exit 1; }
 if ! git merge-base --is-ancestor "$sha" origin/main; then
     echo "::error::${TAG}(${sha:0:7})不在 main 线上,不是合格发布版。" >&2
     exit 1

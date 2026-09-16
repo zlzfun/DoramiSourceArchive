@@ -1,7 +1,7 @@
 # 自动部署流水线方案(issue #102)
 
-> 状态:方案稿 R5(2026-09-16,codex 首轮 15 条 + 三轮复检 13 条全部收口,另 3 条观察项一并并入,见 §7),待用户拍板后开工。
-> 落地后本文档进 `docs/README.md` 索引;`docs/release-process.md` 的「边界与不做」同步删去「不做自动部署」一条。
+> 状态:R5 已拍板(2026-09-16),单 PR(#111)落地中——后端 / 脚本 / 工作流三个增量,检视记录见 §7。
+> 使用面文档:`docs/release-process.md`(流程 / 审批纪律 / 降级入口 / Environment 配置)与 `docs/deploy-docker.md`(生产机侧安装)。
 
 ## 1. 背景
 
@@ -144,8 +144,9 @@ in-progress / last-success 事务(含 prev 镜像采样与 worker 自己做的 D
   `phase ∈ starting | verifying | running | finalizing | complete`;`start_id` 取 `/proc/<pid>/stat` 的 starttime 防 PID 复用。
   worker 流程按序:
   1. **ref 核验(fail closed)**:`git fetch --tags origin` 失败即退出(现有 deploy-lib 拉取失败会警告后用本地 tag,流水线来源
-     不允许);`git rev-parse "refs/tags/<tag>^{commit}" == sha` ∧ sha 在新鲜 `origin/main` 上 ∧ `git show sha:src/version.py`
-     与 tag 一致。这样部署私钥泄露 / 误用 / 本地 tag 陈旧或被移动都不会部署错提交。
+     不允许);**远端此刻必须仍有该 tag**(`git ls-remote origin refs/tags/<tag>`;fetch 不删本地陈旧 tag,远端删 tag = 撤销发布,
+     `verify-release-ref.sh` 同样核)且剥离 sha 等于本地;`git rev-parse "refs/tags/<tag>^{commit}" == sha` ∧ sha 在新鲜
+     `origin/main` 上 ∧ `git show sha:src/version.py` 与 tag 一致。这样部署私钥泄露 / 误用 / 本地 tag 陈旧或被移动都不会部署错提交。
   2. **协议核验**:`git show sha:scripts/deploy-lib.sh` 必须宣告 `DORAMI_DEPLOY_PROTOCOL=<n>` 且 `n` 在 worker 支持范围内;
      没有宣告(早于 PR-2 的 tag)或高于 worker 支持(worker 需先手工升级)→ fail closed,提示走手工路径或升级 worker。
   3. **in-progress 冲突判定(先于一切回放)**:存在 `in-progress.json` 且 target ≠ 本次——若其 `switched_at` 为空且切换标记文件
@@ -196,7 +197,15 @@ in-progress / last-success 事务(含 prev 镜像采样与 worker 自己做的 D
 - 手工兜底 `./deploy-docker.sh` 也走同一把锁:仓库内脚本在**没有** `DORAMI_DEPLOY_LOCK_FD` 时自行打开同一锁文件
   `flock -n`(拿不到即报正在跑的部署),有则只校验该 FD 持锁、不二次抢。手工来源保留离线语义(fetch 失败可用本地 tag),
   由 `DORAMI_DEPLOY_ORIGIN` 缺席 = `manual` 决定;流水线来源必须显式 `pipeline`。手工路径不开 in-progress 事务,
-  但会让 last-success 失效(worker 下次以容器读基线并警告「上次为手工部署」)。
+  但会让 last-success 失效——两道:① 新脚本在 `up` 前(同一锁内)写 `manual-switch.json`;② worker 基线步在锁内读运行容器的
+  `DORAMI_BUILD_SHA`,与 last-success.target.sha 不等即视为已被手工越过(覆盖旧 tag 的手工脚本)。失效后不回放、基线取容器,
+  流水线成功晋升时清除标记。手工路径的备份计数清理同样排除 manifest 引用的文件。
+- **容器现状读不到即 fail closed**:`docker compose ps` / `docker inspect` 非零一律 rc 24,不把「读不到」当「没有」;prev 采样先 running
+  再 stopped(`ps -a`);晋升时把部署后的目标镜像 id 记进 last-success(`target.backend_image_id/nginx_image_id`),下次容器缺失时以它作
+  prev;既无容器也无记录且非首装 → rc 24「无法确定回滚点」。首装证据里库文件按 ini 路径、固定 `data/cms_data.db`、`data/*.db` 各自独立。
+- **失败路径纪律**:所有关键持久化显式检查退出码——开事务失败不消费令牌不起子进程;晋升失败(rc 25)保留 in-progress、managed 镜像
+  与备份、不 cleanup;写不出退出码时 phase 记 `finalize-failed`。worker 捕获 TERM / INT / HUP:终止并等待子进程后以 143 / 130 / 129
+  收口。launcher 与 worker 以 `run_id` 握手,只认本次 run 的 starting / complete,rc 从 state 读。
 
 ### 4.5 部署脚本改动(`deploy-docker.sh` / `scripts/deploy-lib.sh`,随 tag)
 
@@ -380,6 +389,20 @@ dispatch 的两个布尔位未跨 SSH 传到生产机 → 四 token;新 `--pipel
   不同 target 自动关闭;崩溃收口依赖挂钟 → 改 `txn_id`;原子写未提目录 fsync → 补上。
 
 检视到此收束(首轮 + 三轮复检)。后续实现阶段的检视按 PR 逐个进行,不再重开设计面。
+
+**脚本增量检视(PR #111 增量二,同日,codex gpt-6-astra ultra)**:首轮 9 P1 / 4 P2 / 1 P3,全部附隔离复现、全部成立并返修
+(`.review/{prompt,report-codex,response}-scripts-r1.md`)。改变实现形状的结论:
+
+- **失败路径**:worker 原以 `set -uo pipefail` 跑、持久化失败不检查退出码,晋升失败会删事务并报成功 → 全部显式检查,晋升失败
+  rc 25 保留一切;SIGTERM 原写 rc=0 → trap 信号收口 143。
+- **容器现状**:`compose ps` 出错被当成没有容器,留下空回滚点并被重试永久复用 → 读取失败 fail closed,last-success 记目标镜像作后备。
+- **launcher 竞争**:同目标重跑会读到上次的 complete / rc → `run_id` 握手,rc 从 state 读。
+- **手工部署**:不使 last-success 失效,流水线会错误回放 / 用错基线 → `manual-switch.json` + 容器构建 sha 交叉核对;手工计数清理
+  会删钉住的事务备份 → 排除 manifest 引用。
+- **门禁绕过**:`git diff` 默认改名检测让「改名 + 改写迁移文件」以 R 状态通过 → `--no-renames`,A 以外按方向全拒;协议声明
+  `=2 # 注释` 因整数比较报错而放行 → 严格正则只取纯数字;首装证据漏固定库路径 → ini 路径 / `data/cms_data.db` / `data/*.db` 各自独立。
+- **P2**:继承锁 FD 只查存在 → 校验 dev/inode 与持锁;90 次尝试 ≠ 180s → 时间预算 + curl 超时;fetch 不证明远端仍有 tag →
+  `ls-remote` 存在性(方案 §4.4 步骤 1 同步);测试补失败路径与竞争窗口 18 例;macOS `df` inode 列按表头定位。
 
 **PR-1 实现检视(PR #111,同日,codex gpt-6-astra ultra)**:首轮 3 P1 + 2 P2 全部成立,三轮定向复检 5 → 2 → 1 → 0 收口,
 产出 `.review/{prompt,report-codex,response}-pr1-r1.md` 与 `recheck{,2,3}-codex-pr1.md`。改变实现形状的结论:

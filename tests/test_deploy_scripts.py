@@ -63,10 +63,18 @@ if args[:2] == ["compose", "run"]:
 if args[:2] == ["compose", "up"]:
     sys.exit(rc("up_rc"))
 if args[:2] == ["compose", "ps"]:
+    code = rc("ps_rc")
+    if code:
+        sys.stderr.write("fake compose ps failure\n"); sys.exit(code)
+    svc = args[-1] if not args[-1].startswith("-") and args[-1] != "ps" else ""
+    if svc:
+        if "-a" in args and os.path.exists(os.path.join(d, "ps_" + svc + "_all")):
+            sys.stdout.write(rd("ps_" + svc + "_all")); sys.exit(0)
+        sys.stdout.write(rd("ps_" + svc)); sys.exit(0)
     if "-a" in args:
         sys.stdout.write(rd("ps_all")); sys.exit(0)
     if "-q" in args:
-        sys.stdout.write(rd("ps_" + args[-1])); sys.exit(0)
+        sys.exit(0)
     print("NAME STATUS"); sys.exit(0)
 if args[:2] == ["compose", "logs"]:
     print("(fake logs)"); sys.exit(0)
@@ -248,7 +256,13 @@ class Env:
         return f"{tag} {self.repo.sha_of(tag)} downgrade={downgrade} redeploy={redeploy}"
 
     def launch(self, cmd: str, timeout: int = 90, **extra: str) -> subprocess.CompletedProcess:
-        return subprocess.run([str(LAUNCHER), cmd], env=self.base_env(**extra), capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run([str(LAUNCHER), cmd], env=self.base_env(**extra), capture_output=True,
+                           text=True, errors="replace", timeout=timeout)
+        if r.returncode == 0 and (self.fake / "ps_backend").exists():
+            # 成功部署后容器已是目标版本(真实系统里 up 之后容器 env 的构建 sha 就是目标):假容器同步
+            tag, sha = cmd.split()[0], cmd.split()[1]
+            self.fake_write("env_of_cid-backend", f"DORAMI_BUILD_SHA={sha}\nDORAMI_BUILD_REF={tag}\nOTHER=1\n")
+        return r
 
     def state_json(self, name: str) -> dict | None:
         p = self.state / name
@@ -295,7 +309,8 @@ def test_happy_path_writes_transaction_last_success_and_rc(env: Env):
     assert rc_file.read_text().strip() == "0"
     assert env.state_json("in-progress.json") is None
     ls = env.state_json("last-success.json")
-    assert ls["target"] == {"tag": "v1.1.0", "sha": env.repo.sha_of("v1.1.0")}
+    assert ls["target"]["tag"] == "v1.1.0" and ls["target"]["sha"] == env.repo.sha_of("v1.1.0")
+    assert ls["target"]["backend_image_id"] == "sha256:backendimg1", "晋升时记录目标镜像,供下次容器缺失时作 prev"
     assert ls["prev"]["sha"] == env.repo.sha_of("v1.0.0") and ls["prev"]["ref"] == "v1.0.0"
     assert ls["prev"]["backend_image_id"] == "sha256:backendimg1"
     assert len(ls["prev"]["managed_tags"]) == 2 and all(t.startswith("dorami-") and "-managed:" in t for t in ls["prev"]["managed_tags"])
@@ -317,7 +332,7 @@ def test_replay_then_force_redeploy(env: Env):
     r = env.launch(env.cmd("v1.1.0"))
     assert r.returncode == 0
     assert "回放成功" in r.stdout and "STUB:" not in env.worker_log("v1.1.0").split("回放成功")[-1]
-    assert not any(c.startswith("compose ps -q") for c in env.calls()), "回放不得采样容器"
+    assert not any(c.startswith("tag ") for c in env.calls()), "回放不得打 managed tag(读容器现状做交叉核对是允许的)"
     r = env.launch(env.cmd("v1.1.0", redeploy=1))
     assert r.returncode == 0
     assert "redeploy=1" in r.stdout
@@ -326,10 +341,10 @@ def test_replay_then_force_redeploy(env: Env):
 
 def test_launcher_killed_worker_continues_and_second_launcher_attaches(env: Env):
     first = subprocess.Popen([str(LAUNCHER), env.cmd("v1.1.0")], env=env.base_env(STUB_SLEEP="6"),
-                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace")
     time.sleep(2.5)
     second = subprocess.Popen([str(LAUNCHER), env.cmd("v1.1.0")], env=env.base_env(STUB_SLEEP="6"),
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace")
     time.sleep(1)
     first.kill(); first.wait()
     out, err = second.communicate(timeout=60)
@@ -342,7 +357,7 @@ def test_launcher_killed_worker_continues_and_second_launcher_attaches(env: Env)
 
 def test_other_target_while_running_is_rejected(env: Env):
     first = subprocess.Popen([str(LAUNCHER), env.cmd("v1.1.0")], env=env.base_env(STUB_SLEEP="5"),
-                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace")
     time.sleep(2.5)
     r = env.launch(env.cmd("v1.2.0"))
     assert r.returncode == 3, r.stdout + r.stderr
@@ -433,11 +448,11 @@ def test_first_install_gate_token_flow(tmp_path: Path):
     e = Env(tmp_path, repo)  # 无容器、无备份、无库、无 last-success
     e.state.mkdir()
     out = tmp_path / "stub-env.txt"
-    # 无令牌:FRESH_OK=0,方向 unknown 需 downgrade=1 才放行
+    # 无令牌、无容器、无 last-success:既不是首装也没有回滚点 → fail closed(24),不起子进程
     r = e.launch(e.cmd("v1.1.0", downgrade=1), STUB_ENV_OUT=str(out))
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert "DORAMI_DEPLOY_FRESH_OK=0" in out.read_text()
-    (e.state / "last-success.json").unlink()
+    assert r.returncode == 24, r.stdout + r.stderr
+    assert "无法确定回滚点" in e.worker_log("v1.1.0")
+    assert not out.exists()
     # 有令牌:FRESH_OK=1,令牌被消费;失败后重试仍沿用事务内授权
     token = e.state / "first-install.token"; token.write_text("first\n")
     r = e.launch(e.cmd("v1.1.0", downgrade=1), STUB_ENV_OUT=str(out), STUB_RC="5")
@@ -527,9 +542,12 @@ def _health(e: Env, tag: str) -> Path:
 
 
 def _run_deploy(e: Env, *args: str, timeout: int = 120, **extra: str) -> subprocess.CompletedProcess:
-    env = e.base_env(DORAMI_DEPLOY_LOCK_FILE=str(e.lock), DORAMI_DEPLOY_HEALTH_ATTEMPTS="2",
-                     FAKE_HEALTH_FILE=str(e.fake / "health.json"), DORAMI_HTTP_LISTEN="127.0.0.1:8080", **extra)
-    return subprocess.run(["./deploy-docker.sh", *args], cwd=str(e.repo.clone), env=env, capture_output=True, text=True, timeout=timeout)
+    defaults = dict(DORAMI_DEPLOY_LOCK_FILE=str(e.lock), DORAMI_DEPLOY_HEALTH_ATTEMPTS="2",
+                    FAKE_HEALTH_FILE=str(e.fake / "health.json"), DORAMI_HTTP_LISTEN="127.0.0.1:8080")
+    defaults.update(extra)
+    env = e.base_env(**defaults)
+    return subprocess.run(["./deploy-docker.sh", *args], cwd=str(e.repo.clone), env=env, capture_output=True,
+                          text=True, errors="replace", timeout=timeout)
 
 
 def test_deploy_docker_manual_happy_path_runs_steps_in_order(real: Env):
@@ -682,3 +700,228 @@ def test_verify_release_ref(tmp_path: Path):
     assert run("v1.9.9").returncode == 1 and "版本号" in run("v1.9.9").stderr
     assert run("v2.0.0").returncode == 1 and "不在 main 线上" in run("v2.0.0").stderr
     assert run("nope").returncode == 1
+
+
+# ══════════════ 脚本层检视 R1 返修(codex 14 条)对应的失败路径 / 竞争窗口 ══════════════
+
+def _worker_pid(e: Env) -> int:
+    for _ in range(50):
+        st = e.state_json("state.json")
+        if st and st.get("phase") in ("running", "starting", "verifying") and st.get("worker_pid"):
+            return int(st["worker_pid"])
+        time.sleep(0.2)
+    raise AssertionError("worker 未起来")
+
+
+def test_launcher_ignores_stale_complete_and_waits_for_its_own_run(env: Env, tmp_path: Path):
+    """上次同目标已 complete 且 rc=0;这次 worker 延迟 3 秒才起——launcher 不得读旧 complete 提前返回成功。"""
+    assert env.launch(env.cmd("v1.1.0")).returncode == 0
+    slow = tmp_path / "slow-worker"
+    slow.write_text(f'#!/bin/bash\nsleep 3\nexec "{WORKER}" "$@"\n'); slow.chmod(0o755)
+    env.conf.write_text(env.conf.read_text().replace(f"DEPLOY_WORKER={WORKER}", f"DEPLOY_WORKER={slow}"))
+    (env.fake / "calls.log").unlink()
+    t0 = time.time()
+    r = env.launch(env.cmd("v1.1.0", redeploy=1))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert time.time() - t0 >= 3, "launcher 提前返回了旧结果"
+    assert any(c.startswith("tag ") for c in env.calls()), "本次 worker 应真的跑了(redeploy=1)"
+    st = env.state_json("state.json")
+    assert st["run_id"] in r.stdout
+
+
+def test_sigterm_finalizes_nonzero_and_stops_child(env: Env):
+    first = subprocess.Popen([str(LAUNCHER), env.cmd("v1.1.0")], env=env.base_env(STUB_SLEEP="8", STUB_SWITCH="1"),
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace")
+    pid = _worker_pid(env)
+    time.sleep(1.5)
+    os.kill(pid, 15)
+    out, err = first.communicate(timeout=60)
+    assert first.returncode == 143, out + err
+    st = env.state_json("state.json")
+    assert st["phase"] == "complete" and st["rc"] == 143
+    assert env.state_json("in-progress.json") is not None, "信号中断后事务保留"
+    txn = env.state_json("in-progress.json")["txn_id"]
+    time.sleep(1)
+    assert not (env.state / f"{txn}.switch").exists(), "子进程应被终止,不得继续切换"
+    assert env.state_json("last-success.json") is None
+
+
+def test_compose_ps_failure_fails_closed_before_transaction(env: Env):
+    env.fake_write("ps_rc", "1")
+    r = env.launch(env.cmd("v1.1.0"))
+    assert r.returncode == 24, r.stdout + r.stderr
+    assert env.state_json("in-progress.json") is None
+    assert "docker compose ps 失败" in env.worker_log("v1.1.0")
+
+
+def test_promote_failure_keeps_transaction_and_resources(env: Env):
+    env.state.mkdir(exist_ok=True)
+    (env.state / "last-success.json").mkdir()  # rename 到目录上会失败 → 晋升失败
+    r = env.launch(env.cmd("v1.1.0"), STUB_SWITCH="1")
+    assert r.returncode == 25, r.stdout + r.stderr
+    ip = env.state_json("in-progress.json")
+    assert ip is not None and ip["target"]["tag"] == "v1.1.0"
+    images = (env.fake / "images").read_text().splitlines()
+    for t in ip["prev"]["managed_tags"]:
+        assert t in images, "晋升失败不得清理 managed 镜像"
+    assert Path(ip["prev"]["db_backup"]).exists()
+    assert not any(c.startswith(("rmi ", "image prune")) for c in env.calls())
+
+
+def test_manual_deploy_invalidates_last_success_via_container_and_marker(env: Env):
+    assert env.launch(env.cmd("v1.1.0")).returncode == 0
+    # ① 旧脚本手工部署了 v1.2.0:容器里的构建 sha 变了,但没有 marker
+    env.fake_write("env_of_cid-backend", f"DORAMI_BUILD_SHA={env.repo.sha_of('v1.2.0')}\nDORAMI_BUILD_REF=v1.2.0\n")
+    r = env.launch(env.cmd("v1.1.0"))
+    assert r.returncode == 21, r.stdout + r.stderr  # 不回放;基线取容器 v1.2.0 → 降级被护栏拦
+    assert "已被手工部署越过" in env.worker_log("v1.1.0")
+    r = env.launch(env.cmd("v1.1.0", downgrade=1))
+    assert r.returncode == 0 and "STUB:" in env.worker_log("v1.1.0")
+    # ② 新脚本手工部署留下 marker(容器 sha 恰好等于 last-success 也不回放)
+    (env.state / "manual-switch.json").write_text(json.dumps({"ref": "v1.1.0", "sha": env.repo.sha_of("v1.1.0"), "at": "x"}))
+    env.fake_write("env_of_cid-backend", f"DORAMI_BUILD_SHA={env.repo.sha_of('v1.1.0')}\nDORAMI_BUILD_REF=v1.1.0\n")
+    (env.fake / "calls.log").unlink()
+    r = env.launch(env.cmd("v1.1.0"))
+    assert r.returncode == 0 and "replay=1" not in r.stdout
+    assert any(c.startswith("tag ") for c in env.calls())
+    assert not (env.state / "manual-switch.json").exists(), "成功晋升后清除标记"
+
+
+def test_pinned_backup_survives_manual_count_cleanup(tmp_path: Path):
+    repo = Repo(tmp_path)
+    repo.commit(_real_repo_files("9.9.8", old=True), tag="v9.9.8")
+    repo.commit(_real_repo_files("9.9.9"), tag="v9.9.9")
+    repo.make_clone(tmp_path, checkout="v9.9.8")
+    e = Env(tmp_path, repo, keep=1)
+    e.create_db()
+    e.running_container(repo.sha_of("v9.9.8"), "v9.9.8")
+    health = _health(e, "v9.9.9")
+    e.fake_write("up_rc", "1")   # 流水线在 up 失败:已切换事务 + 事务备份留下
+    r = e.launch(e.cmd("v9.9.9"), FAKE_HEALTH_FILE=str(health), DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS="3")
+    assert r.returncode != 0
+    ip = e.state_json("in-progress.json"); pinned = Path(ip["prev"]["db_backup"])
+    assert pinned.exists() and ip["switched_at"]
+    os.utime(pinned, (time.time() - 100, time.time() - 100))
+    e.fake_write("up_rc", "0")
+    r = _run_deploy(e, "v9.9.9", DORAMI_DEPLOY_BACKUP_KEEP="1")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert pinned.exists(), "手工路径的计数清理不得删掉事务引用的备份"
+    assert (e.state / "manual-switch.json").exists()
+
+
+def test_renamed_and_modified_migration_file_is_rejected(env: Env):
+    files = worker_repo_files("1.3.0", migrations=())
+    files["alembic/versions/0001_renamed.py"] = 'revision = "0001"\nsql = "changed"\n'
+    env.repo.commit(files, tag="v1.3.0")
+    assert env.launch(env.cmd("v1.1.0")).returncode == 0
+    r = env.launch(env.cmd("v1.3.0"))
+    assert r.returncode == 22, r.stdout + r.stderr
+    assert "改名" in env.worker_log("v1.3.0")
+
+
+def test_protocol_declaration_parsing_is_strict(env: Env):
+    files = worker_repo_files("1.3.0", migrations=("0001", "0002"))
+    files["scripts/deploy-lib.sh"] = "# lib\nDORAMI_DEPLOY_PROTOCOL=2 # next protocol\n"
+    env.repo.commit(files, tag="v1.3.0")
+    assert env.launch(env.cmd("v1.2.0")).returncode == 0
+    r = env.launch(env.cmd("v1.3.0"))
+    assert r.returncode == 11, r.stdout + r.stderr
+    files["src/version.py"] = '__version__ = "1.4.0"\n'
+    files["scripts/deploy-lib.sh"] = "# lib\nDORAMI_DEPLOY_PROTOCOL=1 # ok\n"
+    env.repo.commit(files, tag="v1.4.0")
+    assert env.launch(env.cmd("v1.4.0")).returncode == 0
+    files["src/version.py"] = '__version__ = "1.5.0"\n'
+    files["scripts/deploy-lib.sh"] = "# lib\nDORAMI_DEPLOY_PROTOCOL=$((1))\n"
+    env.repo.commit(files, tag="v1.5.0")
+    assert env.launch(env.cmd("v1.5.0")).returncode == 11
+
+
+def test_fixed_db_path_counts_as_first_install_evidence(tmp_path: Path):
+    repo = Repo(tmp_path)
+    files = worker_repo_files("1.1.0")
+    files["config/production.ini"] = "[storage]\ndatabase_url = sqlite:///data/wrong.db\n"
+    repo.commit(files, tag="v1.1.0")
+    repo.make_clone(tmp_path)
+    e = Env(tmp_path, repo)
+    e.create_db()  # 真正的旧库在 data/cms_data.db,ini 指错了
+    e.state.mkdir(); (e.state / "first-install.token").write_text("x")
+    out = tmp_path / "stub-env.txt"
+    r = e.launch(e.cmd("v1.1.0", downgrade=1), STUB_ENV_OUT=str(out))
+    assert r.returncode == 24, r.stdout + r.stderr  # 有证据 → 不是首装;又没有容器 / 记录可作回滚点 → fail closed
+    assert (e.state / "first-install.token").exists(), "有证据时令牌不消费"
+    assert "database(data/cms_data.db)" in e.worker_log("v1.1.0")
+    assert "无法确定回滚点" in e.worker_log("v1.1.0")
+
+
+@pytest.mark.parametrize("kind", ["containers", "backups", "images", "database"])
+def test_each_evidence_kind_blocks_first_install(tmp_path: Path, kind: str):
+    repo = Repo(tmp_path); repo.commit(worker_repo_files("1.1.0"), tag="v1.1.0"); repo.make_clone(tmp_path)
+    e = Env(tmp_path, repo)
+    e.state.mkdir(); (e.state / "first-install.token").write_text("x")
+    if kind == "containers":
+        e.fake_write("ps_all", "cid-stopped\n")   # 只有 stopped 容器
+    elif kind == "backups":
+        (repo.clone / "backups").mkdir(); (repo.clone / "backups" / "cms_data.db.20260101-000000").write_text("x")
+    elif kind == "images":
+        e.fake_write("images", "dorami-backend-rollback:v3.57.0\n")
+    else:
+        e.create_db()
+    out = tmp_path / "stub-env.txt"
+    r = e.launch(e.cmd("v1.1.0", downgrade=1), STUB_ENV_OUT=str(out))
+    assert r.returncode == 24, kind + ": " + r.stdout + r.stderr  # 有证据 → 非首装;无回滚点 → fail closed
+    log = e.worker_log("v1.1.0")
+    assert f"有部署证据( {kind}" in log or f" {kind}" in log.split("有部署证据(")[1].split(")")[0], kind
+    assert "无法确定回滚点" in log
+    assert (e.state / "first-install.token").exists(), kind + ": 有证据时令牌不消费"
+    assert not out.exists(), kind + ": 不得起子进程"
+
+
+def test_inherited_lock_fd_must_refer_to_lock_file_and_hold_it(real: Env):
+    _health(real, "v9.9.9")
+    holder = subprocess.Popen([sys.executable, "-c",
+        "import fcntl, sys, time; f = open(sys.argv[1], 'a'); fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB); time.sleep(30)",
+        str(real.lock)])
+    try:
+        time.sleep(0.5)
+        wrong = ("exec 9>>/dev/null; export DORAMI_DEPLOY_LOCK_FD=9; exec ./deploy-docker.sh \"$2\"")
+        env = real.base_env(DORAMI_DEPLOY_LOCK_FILE=str(real.lock), DORAMI_DEPLOY_ORIGIN="pipeline",
+                            DORAMI_EXPECTED_SHA=real.repo.sha_of("v9.9.9"), FAKE_HEALTH_FILE=str(real.fake / "health.json"))
+        r = subprocess.run(["bash", "-c", wrong, "_", str(real.lock), "v9.9.9"], cwd=str(real.repo.clone), env=env, capture_output=True, text=True, timeout=60)
+        assert r.returncode != 0 and "锁 FD" in r.stderr and "校验失败" in r.stderr
+        assert not real.calls(), "checkout 前就应拒绝,不碰 docker"
+    finally:
+        holder.kill(); holder.wait()
+
+
+def test_remote_tag_deletion_is_treated_as_unpublished(env: Env, tmp_path: Path):
+    git(env.repo.work, "push", "-q", "origin", ":refs/tags/v1.1.0", env=env.repo.env)
+    r = env.launch(env.cmd("v1.1.0"))
+    assert r.returncode == 10, r.stdout + r.stderr
+    assert "origin 上不存在 tag v1.1.0" in env.worker_log("v1.1.0")
+    clone = env.repo.clone
+    e = dict(env.repo.env)
+    r = subprocess.run([str(VERIFY_REF), "v1.1.0"], cwd=str(clone), env=e, capture_output=True, text=True)
+    assert r.returncode == 1 and "不存在于 origin" in r.stderr
+
+
+def test_launcher_reads_ssh_original_command(env: Env):
+    r = subprocess.run([str(LAUNCHER)], env=env.base_env(SSH_ORIGINAL_COMMAND=env.cmd("v1.1.0")), capture_output=True, text=True, timeout=90)
+    assert r.returncode == 0, r.stdout + r.stderr
+    r = subprocess.run([str(LAUNCHER)], env=env.base_env(SSH_ORIGINAL_COMMAND="v1.1.0 && id"), capture_output=True, text=True, timeout=30)
+    assert r.returncode == 2
+
+
+def test_health_check_respects_time_budget(real: Env):
+    (real.fake / "health.json").unlink(missing_ok=True)  # curl 一直失败
+    t0 = time.time()
+    r = _run_deploy(real, "v9.9.9", DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS="3", DORAMI_DEPLOY_HEALTH_ATTEMPTS="90")
+    assert r.returncode != 0 and "预算 3s" in r.stderr
+    assert time.time() - t0 < 20
+
+
+def test_switched_in_progress_conflict_wins_over_replay(env: Env):
+    assert env.launch(env.cmd("v1.1.0")).returncode == 0
+    assert env.launch(env.cmd("v1.2.0"), STUB_RC="9", STUB_SWITCH="1").returncode == 9
+    # last-success 仍是 v1.1.0;再请求 v1.1.0 不得回放成功——v1.2.0 的已切换事务优先拒绝
+    r = env.launch(env.cmd("v1.1.0", downgrade=1))
+    assert r.returncode == 20, r.stdout + r.stderr
