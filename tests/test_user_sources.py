@@ -583,6 +583,52 @@ def _seed_article(engine, article_id, source_id, fetched="2026-08-27T10:00:00"):
         session.commit()
 
 
+def _seed_podcast_processing(engine, article_id, source_id, *, status="ready"):
+    from models.db import ArticleRecord, PodcastProcessingRecord
+
+    with Session(engine) as session:
+        session.add(ArticleRecord(
+            id=article_id,
+            title=f"播客 {article_id}",
+            content="show notes",
+            content_type="podcast_episode",
+            source_id=source_id,
+            source_url=f"https://podcast.example.com/{article_id}",
+            publish_date="2026-09-16T00:00:00Z",
+            fetched_date="2026-09-16T00:00:00Z",
+        ))
+        session.flush()
+        session.add(PodcastProcessingRecord(
+            id=f"processing-{article_id}",
+            episode_id=article_id,
+            input_fingerprint="a" * 64,
+            pipeline_version="test-v1",
+            policy_version="test-v1",
+            requested_target="full_analysis",
+            selection_source="policy",
+            requested_by="system",
+            request_reason="custom source retirement regression",
+            idempotency_key=f"processing-key-{article_id}",
+            input_artifact_id=f"audio-{article_id}",
+            input_artifact_kind="source_media_snapshot",
+            input_content_hash="b" * 64,
+            input_language="und",
+            budget_scope="custom-source-test",
+            budget_period="2026-09",
+            budget_limit_minor=1000,
+            per_run_budget_minor=100,
+            eligibility_status="eligible",
+            processing_status=status,
+            stage="asr",
+            attempt_count=0,
+            queued_at="2026-09-16T00:00:00Z",
+            updated_at="2026-09-16T00:00:00Z",
+            finished_at=("2026-09-16T00:00:00Z" if status == "ready" else None),
+            created_at="2026-09-16T00:00:00Z",
+        ))
+        session.commit()
+
+
 def test_catalog_hides_user_source_from_non_subscriber(monkeypatch, tmp_path):
     app_module = _setup_app(monkeypatch, tmp_path)
     with TestClient(app_module.app) as client:
@@ -746,6 +792,164 @@ def test_remove_with_other_subscriber_keeps_source(monkeypatch, tmp_path):
     from services import user_sources
     with Session(app_module.db_sink.engine) as session:
         assert user_sources.active_subscriber_usernames(session, source_id) == ["bob"]
+
+
+def test_shared_podcast_retires_only_after_last_subscriber_and_can_reactivate(
+    monkeypatch, tmp_path
+):
+    app_module = _setup_app(monkeypatch, tmp_path, "shared_podcast_retirement.db")
+    from models.db import ArticleRecord, PodcastProcessingRecord, SourceConfigRecord
+    from services import user_sources
+
+    async def _podcast_preview(url, **kwargs):
+        return {
+            "canonical_url": url,
+            "feed_title": "Shared Podcast",
+            "entry_count": 1,
+            "entries": [{"title": "Episode", "has_audio": True}],
+            "detected_kind": "podcast",
+            "detection_confidence": "high",
+            "detection_reasons": ["audio_enclosure"],
+            "audio_entry_count": 1,
+            "enclosure_entry_count": 1,
+            "playable_entry_count": 1,
+        }
+
+    monkeypatch.setattr(user_sources, "fetch_feed_preview", _podcast_preview)
+    feed_url = "https://podcast.example.com/shared.xml"
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        source_id = _add(client, feed_url, kind="podcast").json()["source_id"]
+    with TestClient(app_module.app) as client:
+        _login(client, "bob", "bob")
+        assert _add(client, feed_url, kind="article").json()["source_id"] == source_id
+
+    _seed_podcast_processing(app_module.db_sink.engine, "shared-episode", source_id)
+    _seed_article(app_module.db_sink.engine, "unprocessed-episode", source_id)
+
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        first = client.delete(f"/api/reader/custom-sources/{source_id}")
+        assert first.status_code == 200
+        assert first.json()["disposition"] == "kept"
+        assert first.json()["purged"] is False
+        assert first.json()["retired"] is False
+
+    with Session(app_module.db_sink.engine) as session:
+        source = session.get(SourceConfigRecord, source_id)
+        assert source is not None and source.is_active is True
+        assert source.retired_at is None
+        assert user_sources.active_subscriber_usernames(session, source_id) == ["bob"]
+
+    with TestClient(app_module.app) as client:
+        _login(client, "bob", "bob")
+        last = client.delete(f"/api/reader/custom-sources/{source_id}")
+        assert last.status_code == 200
+        assert last.json()["disposition"] == "retired"
+        assert last.json()["purged"] is False
+        assert last.json()["retired"] is True
+        assert last.json()["protected_episodes"] == 1
+        assert last.json()["articles_deleted"] == 1
+
+    with Session(app_module.db_sink.engine) as session:
+        source = session.get(SourceConfigRecord, source_id)
+        assert source is not None and source.is_active is False
+        assert source.retired_at
+        assert session.get(ArticleRecord, "shared-episode") is not None
+        assert session.get(ArticleRecord, "unprocessed-episode") is None
+        assert session.get(PodcastProcessingRecord, "processing-shared-episode") is not None
+        assert user_sources.active_subscriber_usernames(session, source_id) == []
+
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        revived = _add(client, feed_url, kind="article")
+        assert revived.status_code == 200
+        assert revived.json()["source_id"] == source_id
+        assert revived.json()["created"] is False
+        assert revived.json()["content_kind"] == "podcast"
+
+    with Session(app_module.db_sink.engine) as session:
+        source = session.get(SourceConfigRecord, source_id)
+        assert source is not None and source.is_active is True
+        assert source.retired_at is None
+        assert user_sources.active_subscriber_usernames(session, source_id) == ["alice"]
+
+
+def test_retired_podcast_processing_is_denied_before_worker_claim(monkeypatch, tmp_path):
+    app_module = _setup_app(monkeypatch, tmp_path, "retired_podcast_claim.db")
+    from models.db import PodcastProcessingRecord
+    from services import podcast_processing, user_sources
+
+    async def _podcast_preview(url, **kwargs):
+        return {
+            "canonical_url": url,
+            "feed_title": "Retiring Podcast",
+            "entry_count": 1,
+            "entries": [{"title": "Episode", "has_audio": True}],
+            "detected_kind": "podcast",
+            "detection_confidence": "high",
+            "detection_reasons": ["audio_enclosure"],
+            "audio_entry_count": 1,
+            "enclosure_entry_count": 1,
+            "playable_entry_count": 1,
+        }
+
+    monkeypatch.setattr(user_sources, "fetch_feed_preview", _podcast_preview)
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        source_id = _add(
+            client, "https://podcast.example.com/retiring.xml", kind="podcast"
+        ).json()["source_id"]
+    _seed_podcast_processing(
+        app_module.db_sink.engine, "retiring-episode", source_id, status="queued"
+    )
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        assert client.delete(
+            f"/api/reader/custom-sources/{source_id}"
+        ).json()["retired"] is True
+
+    with Session(app_module.db_sink.engine) as session:
+        claim = podcast_processing.claim_next_processing(
+            session, worker_id="retirement-test", lease_seconds=60
+        )
+        assert claim is None
+        processing = session.get(
+            PodcastProcessingRecord, "processing-retiring-episode"
+        )
+        assert processing.processing_status == "not_required"
+        assert processing.eligibility_status == "blocked_source"
+        assert processing.error_code == "blocked_source"
+
+    with pytest.raises(ValueError, match="已移除或退役"):
+        asyncio.run(app_module.run_fetcher_with_tracking(
+            "generic_podcast_rss",
+            {
+                "source_id": source_id,
+                "feed_url": "https://podcast.example.com/retiring.xml",
+            },
+        ))
+
+
+def test_last_subscriber_removal_rolls_back_when_disposal_fails(monkeypatch, tmp_path):
+    app_module = _setup_app(monkeypatch, tmp_path, "atomic_source_removal.db")
+    from services import user_sources
+
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        source_id = _add(client).json()["source_id"]
+
+    def _fail_disposal(session, target_source_id):
+        raise RuntimeError("injected disposal failure")
+
+    monkeypatch.setattr(user_sources, "dispose_user_source", _fail_disposal)
+    with TestClient(app_module.app, raise_server_exceptions=False) as client:
+        _login(client, "alice", "alice")
+        response = client.delete(f"/api/reader/custom-sources/{source_id}")
+        assert response.status_code == 500
+
+    with Session(app_module.db_sink.engine) as session:
+        assert user_sources.active_subscriber_usernames(session, source_id) == ["alice"]
 
 
 def test_admin_force_delete_cascades_subscriptions(monkeypatch, tmp_path):
