@@ -286,6 +286,34 @@ def test_subscribe_all_podcast_sources_and_reject_other_shapes(monkeypatch, tmp_
         ).status_code == 422
 
 
+def test_subscribe_by_shape_rejects_overlap_and_reports_status(monkeypatch, tmp_path):
+    from api.routers import reader as reader_router
+
+    app_module, _sink = _bootstrap(monkeypatch, tmp_path, "shape_overlap.db")
+    assert reader_router._begin_batch_source_subscription("user", "article") is True
+    try:
+        with TestClient(app_module.app) as client:
+            _login(client)
+            status = client.get("/api/reader/sources/subscribe-batch/status")
+            assert status.status_code == 200
+            assert status.json() == {"processing": True, "shape": "article"}
+
+            overlap = client.post(
+                "/api/reader/sources/subscribe-batch", json={"shape": "podcast"}
+            )
+            assert overlap.status_code == 409
+            assert overlap.json()["detail"] == "已有批量订阅正在处理中"
+    finally:
+        reader_router._finish_batch_source_subscription("user", "article")
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        assert client.get("/api/reader/sources/subscribe-batch/status").json() == {
+            "processing": False,
+            "shape": None,
+        }
+
+
 def test_subscribe_by_shape_does_not_enumerate_unknown_hidden_sources(monkeypatch, tmp_path):
     from api.sources import _registry_source_meta
     from services import source_visibility as source_visibility_service

@@ -4,6 +4,7 @@ import {
   BULK_SUBSCRIBE_TIMEOUT_MS,
   bulkSubscribeModel,
   createBulkSubscribeDeadline,
+  waitForBulkSubscribeSettlement,
 } from '../src/utils/bulkSubscribe.js';
 
 const sources = [
@@ -56,4 +57,21 @@ test('批量订阅默认十秒超时，截止器到时中止请求', async () =>
   assert.equal(deadline.signal.aborted, true);
   assert.equal(deadline.didTimeout(), true);
   deadline.clear();
+});
+
+test('超时后轮询服务端状态，确认事务结束才刷新', async () => {
+  const states = [true, true, false];
+  let waits = 0;
+  const settled = await waitForBulkSubscribeSettlement(
+    async () => ({ processing: states.shift() }),
+    { attempts: 5, intervalMs: 1, wait: async () => { waits += 1; } },
+  );
+  assert.equal(settled, true);
+  assert.equal(waits, 2);
+
+  const stillRunning = await waitForBulkSubscribeSettlement(
+    async () => ({ processing: true }),
+    { attempts: 2, intervalMs: 1, wait: async () => {} },
+  );
+  assert.equal(stillRunning, false);
 });

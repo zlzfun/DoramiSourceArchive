@@ -15,6 +15,7 @@ import hashlib
 import hmac
 import importlib
 import json
+import threading
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -79,6 +80,29 @@ from services import user_sources as user_sources_service
 from services import x_api_config as x_api_config_service
 
 router = APIRouter(prefix="/api/reader", tags=["reader"])
+
+_BATCH_SOURCE_SUBSCRIBE_STATE_LOCK = threading.Lock()
+_BATCH_SOURCE_SUBSCRIBE_ACTIVE: Dict[str, str] = {}
+
+
+def _begin_batch_source_subscription(username: str, shape: str) -> bool:
+    """同一用户只允许一笔形态批量订阅在服务端执行。"""
+    with _BATCH_SOURCE_SUBSCRIBE_STATE_LOCK:
+        if username in _BATCH_SOURCE_SUBSCRIBE_ACTIVE:
+            return False
+        _BATCH_SOURCE_SUBSCRIBE_ACTIVE[username] = shape
+        return True
+
+
+def _finish_batch_source_subscription(username: str, shape: str) -> None:
+    with _BATCH_SOURCE_SUBSCRIBE_STATE_LOCK:
+        if _BATCH_SOURCE_SUBSCRIBE_ACTIVE.get(username) == shape:
+            _BATCH_SOURCE_SUBSCRIBE_ACTIVE.pop(username, None)
+
+
+def _batch_source_subscription_status(username: str) -> Optional[str]:
+    with _BATCH_SOURCE_SUBSCRIBE_STATE_LOCK:
+        return _BATCH_SOURCE_SUBSCRIBE_ACTIVE.get(username)
 
 
 def _app():
@@ -1296,6 +1320,13 @@ class BatchSourceSubscribeParams(BaseModel):
     shape: Literal["article", "podcast"]
 
 
+@router.get("/sources/subscribe-batch/status")
+def get_source_batch_subscription_status(request: Request):
+    username = _app().current_username(request)
+    active_shape = _batch_source_subscription_status(username)
+    return {"processing": active_shape is not None, "shape": active_shape}
+
+
 @router.post("/sources/subscribe-batch")
 def subscribe_sources_by_shape(
     params: BatchSourceSubscribeParams,
@@ -1309,49 +1340,54 @@ def subscribe_sources_by_shape(
     """
     app = _app()
     username = app.current_username(request)
-    catalog = _reader_sources_catalog(request, session)
-    registry_meta = _registry_source_meta()
-    existing = set(catalog["subscribed_source_ids"])
-    added: List[str] = []
-    already_subscribed: List[str] = []
-    unavailable: List[str] = []
+    if not _begin_batch_source_subscription(username, params.shape):
+        raise HTTPException(status_code=409, detail="已有批量订阅正在处理中")
+    try:
+        catalog = _reader_sources_catalog(request, session)
+        registry_meta = _registry_source_meta()
+        existing = set(catalog["subscribed_source_ids"])
+        added: List[str] = []
+        already_subscribed: List[str] = []
+        unavailable: List[str] = []
 
-    for source in catalog["sources"]:
-        if source.get("shape") != params.shape:
-            continue
-        source_id = source["source_id"]
-        if source.get("hidden"):
-            unavailable.append(source_id)
-            continue
-        if source_id in existing:
-            already_subscribed.append(source_id)
-            continue
-        app._create_single_source_subscription(
-            session,
-            username,
-            source_id,
-            source.get("name") or _friendly_source_name(source_id, registry_meta),
-        )
-        reader_state_service.init_cursor_with_backlog(
-            session,
-            username=username,
-            source_id=source_id,
-        )
-        added.append(source_id)
+        for source in catalog["sources"]:
+            if source.get("shape") != params.shape:
+                continue
+            source_id = source["source_id"]
+            if source.get("hidden"):
+                unavailable.append(source_id)
+                continue
+            if source_id in existing:
+                already_subscribed.append(source_id)
+                continue
+            app._create_single_source_subscription(
+                session,
+                username,
+                source_id,
+                source.get("name") or _friendly_source_name(source_id, registry_meta),
+            )
+            reader_state_service.init_cursor_with_backlog(
+                session,
+                username=username,
+                source_id=source_id,
+            )
+            added.append(source_id)
 
-    if added:
-        session.commit()
-    subscribed_ids = sorted(set(
-        app.resolve_subscribed_source_ids(session, username, include_hidden=True)
-    ))
-    return {
-        "status": "success",
-        "shape": params.shape,
-        "added": added,
-        "already_subscribed": already_subscribed,
-        "unavailable": unavailable,
-        "subscribed_source_ids": subscribed_ids,
-    }
+        if added:
+            session.commit()
+        subscribed_ids = sorted(set(
+            app.resolve_subscribed_source_ids(session, username, include_hidden=True)
+        ))
+        return {
+            "status": "success",
+            "shape": params.shape,
+            "added": added,
+            "already_subscribed": already_subscribed,
+            "unavailable": unavailable,
+            "subscribed_source_ids": subscribed_ids,
+        }
+    finally:
+        _finish_batch_source_subscription(username, params.shape)
 
 
 # ==================== 阅读器 AI（用户面：翻译 / 问答）====================

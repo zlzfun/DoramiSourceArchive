@@ -767,6 +767,12 @@ export function subscribeSourcesByShape(shape, options = {}) {
   });
 }
 
+export function fetchSourceBatchSubscriptionStatus() {
+  return request('/reader/sources/subscribe-batch/status', {
+    errorMsg: '获取批量订阅状态失败',
+  });
+}
+
 // ==================== 源合集(策展合集) ====================
 
 export function fetchReaderCollections() {

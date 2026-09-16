@@ -15,7 +15,7 @@ import {
 import { copyText } from '../utils/clipboard';
 import { articleDeepLink } from '../utils/shareLink';
 import { stripDuplicateLeadingHeading } from '../utils/markdownTitle';
-import { createBulkSubscribeDeadline } from '../utils/bulkSubscribe';
+import { createBulkSubscribeDeadline, waitForBulkSubscribeSettlement } from '../utils/bulkSubscribe';
 import {
   analysisItemsFromResponse,
   analysisNeedsPolling,
@@ -34,6 +34,7 @@ import {
   fetchArticle,
   subscribeSource,
   subscribeSourcesByShape,
+  fetchSourceBatchSubscriptionStatus,
   unsubscribeSource,
   fetchFavorites,
   fetchInterests,
@@ -1009,6 +1010,16 @@ export function useReaderState({
     shapePinningRef.current = shape;
     setShapePinning(shape);
     const deadline = createBulkSubscribeDeadline();
+    const refreshWhenSettled = () => {
+      void waitForBulkSubscribeSettlement(fetchSourceBatchSubscriptionStatus)
+        .then((settled) => {
+          if (!settled) return;
+          loadSources();
+          refreshAggregateIfActive();
+          loadUnreadCounts();
+        })
+        .catch(() => { /* 后台校准失败留给下一次普通刷新 */ });
+    };
     try {
       const result = await subscribeSourcesByShape(shape, { signal: deadline.signal });
       setSubscribedIds(new Set(result.subscribed_source_ids || []));
@@ -1020,10 +1031,11 @@ export function useReaderState({
       showToast(n > 0 ? `已订阅 ${n} 个${label}` : `${label}已全部订阅`, 'success');
     } catch (error) {
       if (error?.name === 'AbortError' && deadline.didTimeout()) {
-        loadSources();
-        refreshAggregateIfActive();
-        loadUnreadCounts();
+        refreshWhenSettled();
         showToast('批量订阅响应超时，结果可能已生效，正在刷新订阅状态', 'info');
+      } else if (error?.status === 409) {
+        refreshWhenSettled();
+        showToast('上一批订阅仍在服务器处理中，完成后将自动刷新', 'info');
       } else {
         showToast(error.message || '批量订阅失败', 'error');
       }

@@ -19,6 +19,18 @@ export function createBulkSubscribeDeadline(timeoutMs = BULK_SUBSCRIBE_TIMEOUT_M
   };
 }
 
+export async function waitForBulkSubscribeSettlement(
+  readStatus,
+  { attempts = 60, intervalMs = 1_000, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {},
+) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const status = await readStatus();
+    if (!status?.processing) return true;
+    if (attempt + 1 < attempts) await wait(intervalMs);
+  }
+  return false;
+}
+
 export function bulkSubscribeModel(shape, sources, subscribedIds, busyShape = null, loading = false) {
   const sourceLabel = SHAPE_LABELS[shape];
   if (!sourceLabel || loading) return null;
