@@ -1055,15 +1055,61 @@ def test_compose_error_output_is_not_echoed_into_logs(env: Env):
 
 
 def test_launcher_final_rc_comes_from_the_same_snapshot(env: Env, tmp_path: Path):
-    """complete 之后另一轮把 state 顶成 rc=0:launcher 必须报本轮快照里的 rc。"""
-    r = env.launch(env.cmd("v1.1.0"), STUB_RC="7", STUB_SWITCH="1")
-    assert r.returncode == 7
-    # 直接验证 launcher 的读取路径:预置本轮 complete/rc=7 的 state,起一个替身 worker 在 0.2s 后把 state 改成别的 run 的 rc=0
-    st = env.state_json("state.json"); st["rc"] = 7; st["phase"] = "complete"
-    replacer = tmp_path / "replacer"
-    replacer.write_text(f'#!/bin/bash\nsleep 0.3\npython3 - <<PY\nimport json\np="{env.state}/state.json"\nd=json.load(open(p)); d["run_id"]="ffffffffffffffff"; d["rc"]=0\njson.dump(d, open(p,"w"))\nPY\n'); replacer.chmod(0o755)
-    # 用旧 run 的 launcher 路径不可直接注入;改为断言 launcher 输出的退出码来自其自报的 run_id,且不等于被顶替后的 0
+    """假 worker:先写本轮 complete/rc=7,0.3 秒后把 state 覆盖成另一 run 的 rc=0(落在 launcher 取到快照后的等待窗口里);
+    launcher 必须报 7。"""
+    fake_worker = tmp_path / "fake-worker"
+    fake_worker.write_text(f'''#!/bin/bash
+# $1=run $2=tag $3=sha $4=dg $5=rd $6=run_id
+mkdir -p "{env.state}" "{env.logs}"
+LOG="{env.logs}/fake.log"; : > "$LOG"
+python3 - "$6" "$$" "$(ps -o lstart= -p $$ | tr -s ' ' | sed 's/^ *//;s/ *$//')" "$LOG" <<'PY'
+import json, sys
+json.dump({{"run_id": sys.argv[1], "tag": "v1.1.0", "target_sha": "x", "worker_pid": int(sys.argv[2]), "worker_start_id": sys.argv[3],
+           "phase": "complete", "rc": 7, "log": sys.argv[4]}}, open("{env.state}/state.json", "w"))
+PY
+sleep 0.3
+python3 - <<'PY'
+import json
+json.dump({{"run_id": "ffffffffffffffff", "phase": "complete", "rc": 0, "worker_pid": 1, "worker_start_id": "x", "log": "{env.logs}/fake.log"}},
+          open("{env.state}/state.json", "w"))
+PY
+sleep 1
+''')
+    fake_worker.chmod(0o755)
+    env.conf.write_text(env.conf.read_text().replace(f"DEPLOY_WORKER={WORKER}", f"DEPLOY_WORKER={fake_worker}"))
+    r = env.launch(env.cmd("v1.1.0"))
+    assert r.returncode == 7, r.stdout + r.stderr
+    assert env.state_json("state.json")["run_id"] == "ffffffffffffffff", "前置:state 确实已被另一轮覆盖"
     assert "worker 退出码 7(run " in r.stdout
+
+
+def test_normal_exit_with_lingering_descendants_is_not_success(env: Env):
+    r = env.launch(env.cmd("v1.1.0"), STUB_DESCENDANT="5")   # 桩本身立即退出 0,但留了个 5 秒后写 switch 的后代
+    assert r.returncode == 24, r.stdout + r.stderr
+    assert env.state_json("in-progress.json") is not None and env.state_json("last-success.json") is None
+    txn = env.state_json("in-progress.json")["txn_id"]
+    time.sleep(6)
+    assert not (env.state / f"{txn}.switch").exists(), "后代应已被整组终止"
+    assert "视为未干净收口" in env.worker_log("v1.1.0")
+
+
+def test_unrelated_baseline_with_extra_migration_is_rejected(env: Env):
+    git(env.repo.work, "checkout", "-qb", "side2", "v1.1.0", env=env.repo.env)
+    side = worker_repo_files("9.1.0", migrations=("0001", "9999"))
+    side_sha = env.repo.commit(side, tag="v9.1.0", branch="side2")
+    git(env.repo.work, "checkout", "-q", "main", env=env.repo.env)
+    env.fake_write("env_of_cid-backend", f"DORAMI_BUILD_SHA={side_sha}\nDORAMI_BUILD_REF=v9.1.0\n")
+    r = env.launch(env.cmd("v1.2.0", downgrade=1))
+    assert r.returncode == 22, r.stdout + r.stderr
+    log = env.worker_log("v1.2.0")
+    assert "方向 unrelated" in log and "D=1" in log
+
+
+def test_multiple_container_ids_use_the_first(env: Env):
+    env.fake_write("ps_backend", "cid-backend\ncid-backend-old\n")
+    r = env.launch(env.cmd("v1.1.0"))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert env.state_json("last-success.json")["prev"]["backend_image_id"] == "sha256:backendimg1"
 
 
 def test_descendant_processes_are_terminated_with_the_group(env: Env):

@@ -597,8 +597,11 @@ step_child() {
     json_set "$STATE" child_start_id "$(proc_start_id "$CHILD_PID")" || true
     wait "$CHILD_PID"; CHILD_RC=$?
     if pgrep -g "$CHILD_PID" >/dev/null 2>&1; then
-        echo "    目标脚本已退出但其进程组仍有后代在跑,等待最多 10 秒..."
-        _kill_child_group TERM || { echo "ERROR: 部署进程组残留,拒绝把本次记为成功"; _kill_child_group KILL || true; CHILD_RC=24; }
+        # 目标脚本退出后进程组不该还有人:docker compose up -d 早已把容器交给 daemon,不在本组。留有后代意味着
+        # 脚本没有干净收口(可能还在切换),无论清理成不成功都按异常处理——事务保留,不晋升。
+        echo "ERROR: 目标脚本已退出但其进程组仍有后代在跑:视为未干净收口,拒绝记为成功(终止进程组,事务保留)"
+        _kill_child_group TERM || { _kill_child_group KILL || true; }
+        [ "$CHILD_RC" = 0 ] && CHILD_RC=24
     fi
     CHILD_PID=""
     if [ -e "$SWITCH_MARK" ]; then
