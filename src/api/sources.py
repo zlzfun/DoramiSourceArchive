@@ -84,7 +84,7 @@ CONTENT_TYPES_BY_SHAPE = {
     "podcast": PODCAST_CONTENT_TYPES,
 }
 X_SOURCE_TYPES = frozenset({"x", "x_timeline"})
-PODCAST_SOURCE_TYPES = frozenset({"podcast"})
+PODCAST_SOURCE_TYPES = frozenset({"podcast", "podcast_rss"})
 
 
 def source_shape(

@@ -21,6 +21,7 @@
 import datetime
 import hashlib
 import json
+import mimetypes
 import threading
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import parse_qsl, urlsplit, urlunsplit
@@ -63,6 +64,11 @@ MIN_REFRESH_MINUTES = 15       # 下限保护:对目标站与本机负载都别�
 FEED_MAX_BYTES = 5 * 1024 * 1024
 FEED_TIMEOUT_SECONDS = 20
 PREVIEW_ENTRY_COUNT = 5
+USER_SOURCE_KINDS = frozenset({"article", "podcast"})
+PODCAST_SOURCE_TYPES = frozenset({"podcast", "podcast_rss"})
+_AUDIO_EXTENSIONS = frozenset({
+    ".aac", ".flac", ".m4a", ".m4b", ".mp3", ".oga", ".ogg", ".opus", ".wav",
+})
 
 # Query-string credentials are common in signed/private feed URLs. They remain valid
 # fetch targets, but their contents must not be sent to MaaS or public sharing.
@@ -107,6 +113,17 @@ def _now_iso() -> str:
 
 def is_user_source(source_id: str) -> bool:
     return bool(source_id) and str(source_id).startswith(USER_SOURCE_PREFIX)
+
+
+def source_content_kind(record: SourceConfigRecord) -> str:
+    """Return the persisted content shape for a custom/configured feed."""
+    source_type = (record.source_type or "").strip().lower()
+    fetcher_id = (record.fetcher_id or "").strip().lower()
+    return (
+        "podcast"
+        if source_type in PODCAST_SOURCE_TYPES or fetcher_id == "generic_podcast_rss"
+        else "article"
+    )
 
 
 # ==================== URL 规范化与身份 ====================
@@ -441,6 +458,11 @@ def system_feed_urls(session: Session) -> Dict[str, Dict[str, str]]:
                 result[canonical_feed_url(feed_url)] = {
                     "source_id": source_id,
                     "name": getattr(fetcher_class, "name", source_id),
+                    "content_kind": (
+                        "podcast"
+                        if str(getattr(fetcher_class, "content_shape", "article")).lower() == "podcast"
+                        else "article"
+                    ),
                 }
             except ValueError:
                 continue
@@ -449,7 +471,7 @@ def system_feed_urls(session: Session) -> Dict[str, Dict[str, str]]:
     for record in session.exec(
         select(SourceConfigRecord).where(
             SourceConfigRecord.owner_username == "",
-            SourceConfigRecord.source_type.in_(["rss", "atom"]),
+            SourceConfigRecord.source_type.in_(["rss", "atom", "podcast", "podcast_rss"]),
         )
     ).all():
         if not record.url:
@@ -458,6 +480,7 @@ def system_feed_urls(session: Session) -> Dict[str, Dict[str, str]]:
             result[canonical_feed_url(record.url)] = {
                 "source_id": record.source_id,
                 "name": record.name,
+                "content_kind": source_content_kind(record),
             }
         except ValueError:
             continue
@@ -465,6 +488,72 @@ def system_feed_urls(session: Session) -> Dict[str, Dict[str, str]]:
 
 
 # ==================== feed 拉取与解析(preview 守门) ====================
+
+def _entry_audio_enclosure(entry: Any) -> tuple[bool, bool]:
+    """Return ``(has_enclosure, has_audio_enclosure)`` for a feedparser entry."""
+    enclosures = list(entry.get("enclosures") or [])
+    enclosures.extend(
+        link for link in (entry.get("links") or [])
+        if str(link.get("rel") or "").strip().lower() == "enclosure"
+    )
+    seen: Set[tuple[str, str]] = set()
+    has_enclosure = False
+    for enclosure in enclosures:
+        href = str(enclosure.get("href") or enclosure.get("url") or "").strip()
+        media_type = str(enclosure.get("type") or "").strip().lower()
+        key = (href, media_type)
+        if not href or key in seen:
+            continue
+        seen.add(key)
+        has_enclosure = True
+        filename = urlsplit(href).path.rsplit("/", 1)[-1].lower()
+        extension = f".{filename.rsplit('.', 1)[-1]}" if "." in filename else ""
+        guessed_type = mimetypes.guess_type(href)[0] or ""
+        if (
+            media_type.startswith("audio/")
+            or guessed_type.startswith("audio/")
+            or extension in _AUDIO_EXTENSIONS
+        ):
+            return True, True
+    return has_enclosure, False
+
+
+def _feed_has_podcast_metadata(parsed: Any) -> bool:
+    feed = getattr(parsed, "feed", None) or {}
+    keys = {str(key).lower() for key in feed.keys()}
+    namespaces = {
+        str(key).lower() for key in (getattr(parsed, "namespaces", None) or {}).keys()
+    }
+    return any(key.startswith(("itunes_", "podcast_")) for key in keys) or bool(
+        namespaces & {"itunes", "podcast"}
+    )
+
+
+def detect_feed_content_kind(parsed: Any) -> Dict[str, Any]:
+    """Classify a parsed feed without treating arbitrary media RSS as a podcast."""
+    entries = getattr(parsed, "entries", None) or []
+    audio_entry_count = 0
+    enclosure_entry_count = 0
+    for entry in entries:
+        has_enclosure, has_audio = _entry_audio_enclosure(entry)
+        enclosure_entry_count += int(has_enclosure)
+        audio_entry_count += int(has_audio)
+    podcast_metadata = _feed_has_podcast_metadata(parsed)
+    playable_entry_count = enclosure_entry_count if podcast_metadata else audio_entry_count
+    reasons = []
+    if audio_entry_count:
+        reasons.append("audio_enclosure")
+    if podcast_metadata:
+        reasons.append("podcast_metadata")
+    return {
+        "detected_kind": "podcast" if playable_entry_count else "article",
+        "detection_confidence": "high" if audio_entry_count else "medium",
+        "detection_reasons": reasons,
+        "audio_entry_count": audio_entry_count,
+        "enclosure_entry_count": enclosure_entry_count,
+        "playable_entry_count": playable_entry_count,
+    }
+
 
 async def fetch_feed_preview(
     url: str, *, transport: Optional[httpx.AsyncBaseTransport] = None
@@ -492,8 +581,10 @@ async def fetch_feed_preview(
         raise ValueError("无法从该地址解析出任何条目,请确认这是一个 RSS/Atom feed")
 
     feed_title = str((getattr(parsed, "feed", None) or {}).get("title") or "").strip()
+    podcast_metadata = _feed_has_podcast_metadata(parsed)
     preview_entries: List[Dict[str, Any]] = []
     for entry in entries[:PREVIEW_ENTRY_COUNT]:
+        has_enclosure, has_audio = _entry_audio_enclosure(entry)
         content_text = ""
         content_list = entry.get("content") or []
         if content_list:
@@ -504,12 +595,14 @@ async def fetch_feed_preview(
             "title": str(entry.get("title") or "").strip(),
             "publish_date": str(entry.get("published") or entry.get("updated") or ""),
             "content_chars": len(content_text),
+            "has_audio": has_audio or (has_enclosure and podcast_metadata),
         })
     return {
         "canonical_url": canonical,
         "feed_title": feed_title,
         "entry_count": len(entries),
         "entries": preview_entries,
+        **detect_feed_content_kind(parsed),
     }
 
 
@@ -558,7 +651,12 @@ def prepare_check(session: Session, url: str) -> Dict[str, Any]:
         if not record.is_active and not _auto_disabled(session, record.source_id):
             # admin 手动停用(计数未达自动阈值)不可经再次添加复活
             return {"blocked": True}
-        return {"existing": {"source_id": record.source_id, "name": record.name, "kind": "user"}}
+        return {"existing": {
+            "source_id": record.source_id,
+            "name": record.name,
+            "kind": "user",
+            "content_kind": source_content_kind(record),
+        }}
     return {}
 
 
@@ -596,7 +694,7 @@ class UserSourceQuotaError(ValueError):
 
 
 def prepare_user_source(
-    session: Session, username: str, url: str, name: str = ""
+    session: Session, username: str, url: str, name: str = "", content_kind: str = "article"
 ) -> Dict[str, Any]:
     """撞库检测 + 配额 + 建/复用配置行(不 commit,订阅动作由 router 编排)。
 
@@ -606,6 +704,9 @@ def prepare_user_source(
     - ``{"source_id", "created": bool, "record"}``:用户源就绪(新建或复用)
     """
     canonical = canonical_feed_url(url)
+    normalized_kind = (content_kind or "article").strip().lower()
+    if normalized_kind not in USER_SOURCE_KINDS:
+        raise ValueError("自定源类型仅支持文章或播客")
 
     conflict = system_feed_urls(session).get(canonical)
     if conflict:
@@ -654,10 +755,10 @@ def prepare_user_source(
     record = SourceConfigRecord(
         source_id=source_id,
         name=(name or "").strip()[:80] or canonical,
-        source_type="rss",
+        source_type="podcast" if normalized_kind == "podcast" else "rss",
         url=canonical,
         category="user",
-        fetcher_id="",  # resolve_source_fetcher_id 按 source_type 路由 generic_rss
+        fetcher_id="",  # resolve_source_fetcher_id 按 source_type 路由 RSS / Podcast 抓取器
         description="",
         owner_username=username,
         # Public custom feeds are analyzed once on the internal authority.  A
@@ -665,10 +766,10 @@ def prepare_user_source(
         ai_analysis_enabled=not credentialed_private,
         is_active=True,
         # 最简正文拍板:feed 给什么存什么,不触发详情页补抓。ssrf_guard 与响应上限
-        # 由 generic_rss 执行层承接(检视返修 D2/D3:首抓/调度/手工抓取全通道生效)。
+        # 由对应 RSS / Podcast 执行层承接(检视返修 D2/D3:全抓取通道生效)。
         params_json=json.dumps({
             "fetch_detail_if_missing": False,
-            "limit": 12,
+            "limit": 20 if normalized_kind == "podcast" else 12,
             "ssrf_guard": True,
             "max_response_bytes": FEED_MAX_BYTES,
             "credentialed_private": credentialed_private,
@@ -712,6 +813,7 @@ def list_user_sources(session: Session, username: Optional[str] = None) -> List[
             "status": state.status if state else "never_run",
             "consecutive_failures": state.consecutive_failures if state else 0,
             "last_success_at": (state.last_success_at or "") if state else "",
+            "content_kind": source_content_kind(record),
         })
     return items
 
