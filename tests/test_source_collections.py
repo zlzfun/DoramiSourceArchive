@@ -210,3 +210,141 @@ def test_unsubscribe_collection_removes_members_and_spares_others(monkeypatch, t
         for source_id in collection.source_ids:
             assert source_id not in cursors  # 水位清空
         assert "web_qbitai" in cursors
+
+
+# ==================== 按形态批量订阅 ====================
+
+def test_subscribe_all_article_sources_is_partial_and_idempotent(monkeypatch, tmp_path):
+    app_module, sink = _bootstrap(monkeypatch, tmp_path, "shape_article.db")
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        catalog = client.get("/api/reader/sources").json()["sources"]
+        article_ids = [
+            row["source_id"] for row in catalog
+            if row["shape"] == "article" and not row["hidden"]
+        ]
+        assert len(article_ids) > 1
+
+        first = article_ids[0]
+        assert client.post(f"/api/reader/sources/{first}/subscribe").status_code == 200
+        response = client.post(
+            "/api/reader/sources/subscribe-batch", json={"shape": "article"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["shape"] == "article"
+        assert data["already_subscribed"] == [first]
+        assert set(data["added"]) == set(article_ids) - {first}
+        assert data["unavailable"] == []
+        assert set(article_ids) <= set(data["subscribed_source_ids"])
+
+        replay = client.post(
+            "/api/reader/sources/subscribe-batch", json={"shape": "article"}
+        ).json()
+        assert replay["added"] == []
+        assert set(replay["already_subscribed"]) == set(article_ids)
+
+    with Session(sink.engine) as session:
+        from services import reader_state as reader_state_service
+
+        cursors = reader_state_service.load_cursors(session, username="user")
+        assert set(article_ids) <= set(cursors)
+
+
+def test_subscribe_all_podcast_sources_and_reject_other_shapes(monkeypatch, tmp_path):
+    from models.db import SourceConfigRecord
+
+    app_module, sink = _bootstrap(monkeypatch, tmp_path, "shape_podcast.db")
+    with Session(sink.engine) as session:
+        session.add(SourceConfigRecord(
+            source_id="podcast_batch_test",
+            name="Batch Test Podcast",
+            source_type="podcast",
+            url="https://example.test/podcast.xml",
+            created_at="2026-09-16T00:00:00",
+            updated_at="2026-09-16T00:00:00",
+        ))
+        session.commit()
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        catalog = client.get("/api/reader/sources").json()["sources"]
+        podcast_ids = [
+            row["source_id"] for row in catalog
+            if row["shape"] == "podcast" and not row["hidden"]
+        ]
+        assert podcast_ids
+
+        response = client.post(
+            "/api/reader/sources/subscribe-batch", json={"shape": "podcast"}
+        )
+        assert response.status_code == 200
+        assert set(response.json()["added"]) == set(podcast_ids)
+        assert client.post(
+            "/api/reader/sources/subscribe-batch", json={"shape": "social"}
+        ).status_code == 422
+
+
+def test_subscribe_by_shape_reports_hidden_sources_as_unavailable(monkeypatch, tmp_path):
+    from api.sources import _registry_source_meta
+    from services import source_visibility as source_visibility_service
+
+    app_module, sink = _bootstrap(monkeypatch, tmp_path, "shape_hidden.db")
+    hidden_id = next(
+        source_id for source_id, meta in _registry_source_meta().items()
+        if not meta.get("is_template") and (meta.get("shape") or "article") == "article"
+    )
+    with Session(sink.engine) as session:
+        source_visibility_service.set_source_hidden(session, hidden_id, True)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        assert hidden_id not in {
+            row["source_id"] for row in client.get("/api/reader/sources").json()["sources"]
+        }
+        data = client.post(
+            "/api/reader/sources/subscribe-batch", json={"shape": "article"}
+        ).json()
+        assert hidden_id in data["unavailable"]
+        assert hidden_id not in data["added"]
+        assert hidden_id not in data["subscribed_source_ids"]
+
+
+def test_subscribe_by_shape_rolls_back_the_whole_batch_on_failure(monkeypatch, tmp_path):
+    from api.routers import reader as reader_router
+    from models.db import ReaderSubscriptionRecord
+    from services import reader_state as reader_state_service
+
+    app_module, sink = _bootstrap(monkeypatch, tmp_path, "shape_atomic.db")
+    monkeypatch.setattr(reader_router, "_reader_sources_catalog", lambda *_args, **_kwargs: {
+        "sources": [
+            {"source_id": "batch_article_a", "name": "A", "shape": "article", "hidden": False},
+            {"source_id": "batch_article_b", "name": "B", "shape": "article", "hidden": False},
+        ],
+        "subscribed_source_ids": [],
+        "total_sources": 2,
+    })
+    original_init = reader_state_service.init_cursor_with_backlog
+
+    def fail_second(session, *, username, source_id):
+        if source_id == "batch_article_b":
+            raise RuntimeError("simulated cursor failure")
+        return original_init(session, username=username, source_id=source_id)
+
+    monkeypatch.setattr(reader_state_service, "init_cursor_with_backlog", fail_second)
+    with TestClient(app_module.app, raise_server_exceptions=False) as client:
+        _login(client)
+        response = client.post(
+            "/api/reader/sources/subscribe-batch", json={"shape": "article"}
+        )
+        assert response.status_code == 500
+
+    with Session(sink.engine) as session:
+        records = session.exec(
+            select(ReaderSubscriptionRecord).where(
+                ReaderSubscriptionRecord.owner_username == "user"
+            )
+        ).all()
+        assert records == []
+        assert reader_state_service.load_cursors(session, username="user") == {}

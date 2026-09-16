@@ -32,6 +32,7 @@ import {
   fetchArticles,
   fetchArticle,
   subscribeSource,
+  subscribeSourcesByShape,
   unsubscribeSource,
   fetchFavorites,
   fetchInterests,
@@ -240,6 +241,7 @@ export function useReaderState({
   const [collections, setCollections] = useState([]);
   const [discoverCollectionId, setDiscoverCollectionId] = useState(null);
   const [collectionPinningId, setCollectionPinningId] = useState(null);
+  const [shapePinning, setShapePinning] = useState(null);
 
   const [searchInput, setSearchInputState] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -999,6 +1001,26 @@ export function useReaderState({
     }
   };
 
+  // ── 按形态批量订阅:文章/播客共用一个服务端事务,前端不逐源发请求 ──
+  const handleSubscribeShape = async (shape) => {
+    if (!['article', 'podcast'].includes(shape)) return;
+    setShapePinning(shape);
+    try {
+      const result = await subscribeSourcesByShape(shape);
+      setSubscribedIds(new Set(result.subscribed_source_ids || []));
+      loadSources();
+      refreshAggregateIfActive();
+      loadUnreadCounts();
+      const n = (result.added || []).length;
+      const label = shape === 'podcast' ? '播客源' : '文章源';
+      showToast(n > 0 ? `已订阅 ${n} 个${label}` : `${label}已全部订阅`, 'success');
+    } catch (error) {
+      showToast(error.message || '批量订阅失败', 'error');
+    } finally {
+      setShapePinning(null);
+    }
+  };
+
   // ── 在读者面隐藏/恢复源(admin 会话的右键菜单入口;与节点管理检视器同一 API)──
   // 操作后重拉源目录:hidden 标记驱动源栏灰显与内容门控,不做本地乐观改。
   const handleToggleSourceHidden = async (source) => {
@@ -1437,6 +1459,7 @@ export function useReaderState({
     // 源合集
     collections, discoverCollectionId, setDiscoverCollectionId,
     collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
+    shapePinning, handleSubscribeShape,
     // 视图 / 导航
     mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover, discoverShape, setDiscoverShape,
     bulletinView, socialView, podcastView, railActive, listTitle, listSubtitle,

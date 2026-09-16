@@ -1132,8 +1132,12 @@ def rotate_feed_token(request: Request, session: Session = Depends(deps.get_sess
 
 # ==================== 内容源目录 ====================
 
-@router.get("/sources")
-def get_reader_sources(request: Request, session: Session = Depends(deps.get_session)):
+def _reader_sources_catalog(
+    request: Request,
+    session: Session,
+    *,
+    include_unavailable: bool = False,
+):
     """读者层内容源目录：可订阅来源 = 所有已注册抓取源 ∪ 已归档来源 ∪ 已订阅来源。
 
     即便某个源历史产出为 0，它仍会出现在目录里，用户可提前订阅以接收其后续产出。
@@ -1267,7 +1271,8 @@ def get_reader_sources(request: Request, session: Session = Depends(deps.get_ses
             }
             for entry in by_source.values()
             if (
-                entry["source_id"] not in unavailable_ids
+                include_unavailable
+                or entry["source_id"] not in unavailable_ids
                 or entry["source_id"] in subscribed_ids
             )
             and (entry["source_id"] not in all_user_source_ids or entry["source_id"] in subscribed_ids)
@@ -1278,6 +1283,81 @@ def get_reader_sources(request: Request, session: Session = Depends(deps.get_ses
         "sources": sources,
         "subscribed_source_ids": sorted(subscribed_ids),
         "total_sources": len(sources),
+    }
+
+
+@router.get("/sources")
+def get_reader_sources(request: Request, session: Session = Depends(deps.get_session)):
+    """读者层内容源目录：可订阅来源 = 所有已注册抓取源 ∪ 已归档来源 ∪ 已订阅来源。
+
+    即便某个源历史产出为 0，它仍会出现在目录里，用户可提前订阅以接收其后续产出。
+    """
+    return _reader_sources_catalog(request, session)
+
+
+class BatchSourceSubscribeParams(BaseModel):
+    shape: Literal["article", "podcast"]
+
+
+@router.post("/sources/subscribe-batch")
+def subscribe_sources_by_shape(
+    params: BatchSourceSubscribeParams,
+    request: Request,
+    session: Session = Depends(deps.get_session),
+):
+    """按内容形态订阅当前目录内全部来源，一次请求、一次事务。
+
+    候选集合与发现页目录同源；隐藏源会回报在 unavailable，自定源仍遵守
+    当前用户私有可见边界。已订阅源幂等跳过，新订阅与单源入口一样初始化未读积压。
+    """
+    app = _app()
+    username = app.current_username(request)
+    catalog = _reader_sources_catalog(
+        request,
+        session,
+        include_unavailable=True,
+    )
+    registry_meta = _registry_source_meta()
+    existing = set(catalog["subscribed_source_ids"])
+    added: List[str] = []
+    already_subscribed: List[str] = []
+    unavailable: List[str] = []
+
+    for source in catalog["sources"]:
+        if source.get("shape") != params.shape:
+            continue
+        source_id = source["source_id"]
+        if source.get("hidden"):
+            unavailable.append(source_id)
+            continue
+        if source_id in existing:
+            already_subscribed.append(source_id)
+            continue
+        app._create_single_source_subscription(
+            session,
+            username,
+            source_id,
+            source.get("name") or _friendly_source_name(source_id, registry_meta),
+        )
+        reader_state_service.init_cursor_with_backlog(
+            session,
+            username=username,
+            source_id=source_id,
+        )
+        added.append(source_id)
+
+    if added:
+        session.commit()
+    subscribed_ids = sorted(set(
+        app.resolve_subscribed_source_ids(session, username, include_hidden=True)
+    ))
+    return {
+        "status": "success",
+        "shape": params.shape,
+        "added": added,
+        "already_subscribed": already_subscribed,
+        "unavailable": unavailable,
+        "subscribed_source_ids": subscribed_ids,
     }
 
 

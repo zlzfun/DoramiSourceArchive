@@ -385,6 +385,7 @@ export default function ReaderTab({
     handleSubscribe, handleUnsubscribe, handleAddCustomSource,
     collections, discoverCollectionId, setDiscoverCollectionId,
     collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
+    shapePinning, handleSubscribeShape,
     // 视图 / 导航
     mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover, discoverShape, setDiscoverShape,
     bulletinView, socialView, podcastView, railActive, listTitle, listSubtitle,
@@ -870,6 +871,8 @@ export default function ReaderTab({
           collectionPinningId={collectionPinningId}
           onSubscribeCollection={handleSubscribeCollection}
           onUnsubscribeCollection={handleUnsubscribeCollection}
+          shapePinning={shapePinning}
+          onSubscribeShape={handleSubscribeShape}
           userSourcesEnabled={userSourcesEnabled}
           onAddCustomSource={handleAddCustomSource}
           tab={discoverTab}

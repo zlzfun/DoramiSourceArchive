@@ -760,6 +760,12 @@ export function unsubscribeSource(sourceId) {
   return request(`/reader/sources/${enc(sourceId)}/subscribe`, { method: 'DELETE', errorMsg: '取消订阅失败' });
 }
 
+export function subscribeSourcesByShape(shape) {
+  return request('/reader/sources/subscribe-batch', {
+    method: 'POST', body: { shape }, errorMsg: '批量订阅失败',
+  });
+}
+
 // ==================== 源合集(策展合集) ====================
 
 export function fetchReaderCollections() {
