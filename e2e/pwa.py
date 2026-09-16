@@ -4,6 +4,7 @@ from pathlib import Path
 from playwright.sync_api import expect
 
 from e2e.mobile_reader import login
+from e2e.reader_fixture import SOURCE_A
 
 
 def assert_install_visible(page):
@@ -26,6 +27,7 @@ def run_pwa_flows(browser, base_url: str, site: Path, artifacts: Path, result: d
     context.tracing.start(screenshots=True, snapshots=True, sources=True)
     errors = []
     page = context.new_page()
+    page.add_init_script("window.__launchURL = location.href")
     page.on("pageerror", lambda error: errors.append(str(error)))
     passed = False
     worker_path = site / "sw.js"
@@ -127,19 +129,31 @@ def run_pwa_flows(browser, base_url: str, site: Path, artifacts: Path, result: d
         context.set_offline(True)
         expect(page.get_by_role("status", name="网络状态")).to_be_visible()
         assert page.evaluate("async () => { try { await fetch('/api/auth/session'); return false; } catch { return true; } }")
-        page.goto(base_url + "/pwa-navigation-probe#offline")
+        retry_url = base_url + "/pwa-navigation-probe?from=offline#offline"
+        page.goto(retry_url)
         expect(page.get_by_role("heading", name="暂时无法连接")).to_be_visible()
         page.screenshot(path=str(artifacts / "pwa-offline.png"))
         assert page.evaluate("async () => (await caches.keys()).length") == 0
         context.set_offline(False)
-        page.get_by_role("link", name="重新连接").click()
+        with page.expect_navigation(wait_until="domcontentloaded"):
+            page.get_by_role("button", name="重新连接").click()
         expect(page.locator(".m-tabbar")).to_be_visible(timeout=30000)
-        assert "/pwa-navigation-probe" in page.url
+        assert page.evaluate("window.__launchURL") == retry_url
+        # Real article hash routing must survive the same offline/retry flow.
+        article_url = f"{base_url}/?from=offline#/reader/a/{SOURCE_A}-00"
+        context.set_offline(True)
+        page.goto(article_url)
+        expect(page.get_by_role("heading", name="暂时无法连接")).to_be_visible()
+        context.set_offline(False)
+        with page.expect_navigation(wait_until="domcontentloaded"):
+            page.get_by_role("button", name="重新连接").click()
+        expect(page.get_by_role("region", name="正文", exact=True).get_by_role("heading", level=1)).to_have_text("连续阅读 00：移动阅读端到端样例", timeout=30000)
+        assert page.evaluate("window.__launchURL") == article_url
         assert page.evaluate("async () => (await fetch('/api/auth/logout', {method:'POST'})).status") == 200
         page.reload()
         expect(page.get_by_placeholder("输入登录账号")).to_be_visible()
         assert page.evaluate("async () => (await caches.keys()).length") == 0
-        checks.append("offline API fails closed; navigation fallback retries deep path; no CacheStorage before/after logout")
+        checks.append("offline API fails closed; retry preserves full path/query/hash and opens real article; no CacheStorage before/after logout")
 
         standalone = browser.new_context(storage_state=storage, viewport={"width": 390, "height": 844})
         try:

@@ -30,8 +30,22 @@ test('offline navigation gets a standalone, no-store fallback', async () => {
   assert.equal(response.headers.get('cache-control'), 'no-store');
   const html = await response.text();
   assert.match(html, /暂时无法连接/);
-  assert.match(html, /href=""/);
-  assert.doesNotMatch(html, /<script|<link|<img/); // no secondary network dependency
+  assert.match(html, /<button type="button" id="retry">/);
+  assert.doesNotMatch(html, /<script[^>]+src\s*=|<link|<img/); // no secondary network dependency
+});
+test('offline retry reloads the current document instead of resolving an empty link', () => {
+  let onClick;
+  let reloads = 0;
+  runInNewContext(offline.match(/<script>([\s\S]+?)<\/script>/)[1], {
+    document: { getElementById: (id) => {
+      assert.equal(id, 'retry');
+      return { addEventListener: (name, handler) => { assert.equal(name, 'click'); onClick = handler; } };
+    } },
+    window: { location: { reload: () => { reloads++; } } },
+  });
+  assert.equal(reloads, 0);
+  onClick();
+  assert.equal(reloads, 1);
 });
 test('worker never intercepts private/API/MCP, resources, writes or other origins', () => {
   const dispatch = worker(() => { throw new Error('must not fetch'); });

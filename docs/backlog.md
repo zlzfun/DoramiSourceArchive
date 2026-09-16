@@ -6,8 +6,6 @@
 
 ## 进行中
 
-- ☐ **issue #85 移动端 PWA**（分支 `feat/issue-85-mobile-pwa`，方案 [frontend/pwa.md](./frontend/pwa.md)）：
-  Android／iOS 安装入口与最小联网恢复已实现，用户确认两平台真机可用，进入 PR 检视；鸿蒙保留网页阅读，原生套壳另列展望。
 - ☐ **issue #74 个人早报三处**(分支 `feat/issue-74-brief-grid`,方案 `docs/personal-brief-grid-and-sections.md`):
   公共日报剔出早报范围 + 板块固定顺序 / 板块内分数降序 + 分值驱动网格(策略 F,样页 `docs/design/dorami-brief-grid-quiet.html`)
   已实现;待用户本地验收与 codex 检视。观察期:T = 9.0 / Δ = 1.0 两个常量在生产分布下的通栏频率与 2 + 2 出现率。
@@ -141,6 +139,8 @@
 - **日报 `per_source_cap=5` 是软配额**:`select_top` 的 overflow 补位可再加同源条目,淡日单源可能超过 5 篇(The Decoder 入名单后更可能出现);若运营要硬上限需改 overflow 语义。
 
 ## 已完结(近期,留档索引;执行记录与更早波次见 `docs/archive/README.md`)
+
+- ✅ **issue #85 移动端 PWA**（PR #100，方案 [frontend/pwa.md](./frontend/pwa.md)）：Android／iOS 主屏幕安装与联网恢复，用户两平台真机放行，本地检视通过；鸿蒙保留网页阅读，原生套壳另列展望。
 
 - ☑ **阅读面小特性波(v3.53.0,issue #54 + #55)**:新闻价值分按分值分档着色(灰线 6.0 = 评分尺子档界、固定刻度,
   其上四档渐变递鲜明,灰线以下与元信息同灰;样页 `docs/design/dorami-score-tiers-quiet.html`)+

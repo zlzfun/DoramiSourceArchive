@@ -51,3 +51,10 @@
 - 发生：用户明确确认 Android 与 iOS 真机均可用，要求提交 PR 并附截图；未提供具体型号／版本、真机截图或逐项验收表，不据此补造明细。
 - 改变：更新当前方案与待办状态。分支 rebase 到最新 `origin/main`（`f742a23`），未修改版本号或合并；本地协商式检视及 CI 仍是合入门禁。
 - 验证：rebase 后重跑 `npm run lint`、13 项 Node 测试、29 项隔离／部署 pytest、`bash -n deploy.sh` 及原样 `npm run test:e2e`，全部通过。E2E 本次产物在 `tmp/e2e/reader-g08jlc9u/`；PR 使用直接查看过的 Android 安装指引、暗色 iOS 指引和断网页截图，明确标注为 Chromium 自动化渲染，不冒充真机系统窗口。
+
+## 2026-09-16 · 合入检视：离线重试保留完整深链
+
+- 发生：用户批准合并后，通过 Herdr 发起本地 Codex 协商式检视，发现一个 P2：恢复页的 `href=""` 会移除 hash，原测试仅验证 pathname，无法发现文章／分享深链丢失。
+- 分析与共识：先接受问题并与检视者确认最小方案，再修改实现。原恢复页在 Chromium 隔离渲染中复现路径／query 保留而 hash 丢失（`tmp/pr/issue-85/review-reproduction.json`）；采用同样式按钮和内嵌 `window.location.reload()`，保留完整 URL，不增加网络依赖。
+- 修复与验证：新增 Node 点击监听器测试，E2E 精确校验入口 URL 的路径／query／hash，并恢复到真实文章正文。首次新增断言误用了桌面专属 selector，改为正文 region 内 h1 后原样入口通过。前端 lint、14 项 Node 测试、18 项阅读／PWA 检查通过，结果在 `tmp/e2e/reader-uos0qobl/`；直接查看修复后断网页并更新 PR 截图。
+- 检视结论：Codex 仅复检该 P2 后确认关闭、检视通过，可提交修复并合入；未扩大二轮检视范围。完整检视记录保存在 `tmp/pr/issue-85/local-review.txt`，合入仍以新提交 CI 为门禁。

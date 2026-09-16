@@ -15,8 +15,8 @@
     svg { width: 32px; height: 32px; color: var(--muted); }
     h1 { font-size: 24px; letter-spacing: -.03em; margin: 20px 0 12px; }
     p { font-size: 15px; line-height: 1.8; color: var(--muted); }
-    a { display: inline-flex; align-items: center; min-height: 44px; margin-top: 12px; padding: 0 18px; color: var(--accent); border: 1px solid var(--border); border-radius: 10px; text-decoration: none; font-weight: 600; }
-    a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+    button { display: inline-flex; align-items: center; min-height: 44px; margin-top: 12px; padding: 0 18px; color: var(--accent); background: transparent; border: 1px solid var(--border); border-radius: 10px; font: inherit; font-weight: 600; cursor: pointer; }
+    button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
   </style>
 </head>
 <body>
@@ -25,8 +25,11 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="m2 2 20 20M8.5 8.5a10 10 0 0 1 10.8 2.8M2 8.8a16 16 0 0 1 2.2-1.6M9.5 3.2A16 16 0 0 1 22 8.8M5 12a10 10 0 0 1 1.5-1.1M8.5 15.5a5 5 0 0 1 7 0M12 20h.01"/></svg>
     <h1>暂时无法连接</h1>
     <p>请检查网络后重试。哆啦美需要联网阅读，文章不会保存在离线缓存中。</p>
-    <!-- An empty relative URL retries the original path and hash, including shared links. -->
-    <a href="">重新连接</a>
+    <button type="button" id="retry">重新连接</button>
   </main>
+  <script>
+    // Reload preserves the full URL, including article and share-token fragments.
+    document.getElementById('retry').addEventListener('click', () => window.location.reload());
+  </script>
 </body>
 </html>
