@@ -582,8 +582,9 @@ async def create_custom_source(
     # 防与「另一用户同 URL 重建」竞态误删刚建的新源(三轮收口)。
     with user_sources_service._WRITE_LOCK:  # noqa: SLF001
         with Session(deps.get_db_sink().engine) as check_session:
-            if user_sources_service.get_user_source(check_session, source_id) is None:
-                user_sources_service.purge_user_source(check_session, source_id)
+            current = user_sources_service.get_user_source(check_session, source_id)
+            if current is None or current.retired_at:
+                user_sources_service.dispose_user_source(check_session, source_id)
                 check_session.commit()
                 raise HTTPException(status_code=404, detail="该来源已被移除")
     return {

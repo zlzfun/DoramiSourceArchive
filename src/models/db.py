@@ -868,6 +868,11 @@ class SourceConfigRecord(SQLModel, table=True):
     )
 
     is_active: bool = Field(default=True, index=True, description="是否启用该数据源")
+    retired_at: Optional[str] = Field(
+        default=None,
+        index=True,
+        description="用户共享源无人订阅后的退役时间；保留受审计保护的 Podcast 数据",
+    )
     fetch_interval_minutes: Optional[int] = Field(
         default=None,
         description="用户自定源的新鲜度参考间隔，分钟；公共源调度统一由 CollectionJob 管理",
