@@ -121,6 +121,10 @@
   `docs/rag-retirement-plan.md`。
 - ◇ **Newsletter 三批候补**(见 `docs/archive/source-expansion-wave3-plan.md` 候补名单)。
 - ◇ **暗色 / 登录 / 动效三区扩审**(静默仪器重构收官时留下的截图立项项)。
+- ◇ **`button/input { font: inherit }` 未分层陷阱同法收口**(issue #108 聚焦环入 base 层后的遗留):`index.css` 顶部这条
+  全局 `font` 简写仍未分层,压掉 `@layer components` 里按钮 / 输入框类的 `font-size`,文件尾未分层区因此攒了十几条字号钉法
+  (conventions §3)。同一手法(移入 `@layer base`)可让层内字号按本意生效并删掉尾区钉法,但涉及全站按钮 / 输入框字号的
+  逐处目检,单独立波;做之前先盘点层内所有写了 `font-size` 却被压掉的按钮类,以免降层后字号集体变化。
 - ◇ **Agentic 源接入(长期愿景,2026-07-25 用户表态)**:产品差异化 = **开箱即用的策展源**——
   最好的源已事先备好,用户不需要像 Folo 那样自己发现和收集。权限形态**永久维持**:仅管理员侧添加源,
   用户侧只提建议/申请,管理侧审核。长期演进方向是**类 OpenClaw 的 Agentic 后端**:接入模型智能 +

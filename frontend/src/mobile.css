@@ -103,6 +103,9 @@
   font-weight: 600;
 }
 .m-search-inline input::placeholder { color: var(--dorami-faint); font-weight: 500; }
+/* 聚焦指示(issue #108):mobile.css 是未分层 @import,其 outline:none 自全局环入 base 层起生效,
+   顶栏里的裸输入没有 well 可画外环,改画一条 accent 底线(inset 阴影,零布局影响)。 */
+.m-search-inline input:focus { box-shadow: inset 0 -1px 0 var(--dorami-accent); }
 
 /* ── 内容区 / 条目流 ── */
 .m-content {

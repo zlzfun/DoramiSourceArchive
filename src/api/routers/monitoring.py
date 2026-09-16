@@ -19,6 +19,7 @@ from sqlalchemy import case, func, or_
 from sqlmodel import Session, select
 
 from api import deps
+from api.sources import configured_source_content_type, configured_source_shape
 from models.db import ArticleRecord, FetchRunRecord, SourceStateRecord
 from pipeline.progress import get_all_progress
 from services.collection_nodes import collection_node_catalog
@@ -132,8 +133,8 @@ def get_source_health(session: Session = Depends(deps.get_session)):
             "icon": "",
             "desc": record.url,
             "category": "user",
-            "content_type": "rss_article",
-            "shape": "article",
+            "content_type": configured_source_content_type(record.source_type, record.fetcher_id),
+            "shape": configured_source_shape(record.source_type, record.fetcher_id),
             "user_source": True,
             "owner_username": record.owner_username,
             "is_active": record.is_active,

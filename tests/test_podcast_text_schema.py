@@ -11,7 +11,7 @@ from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, text
+from sqlalchemy import MetaData, Table, create_engine, text
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
@@ -440,8 +440,11 @@ def test_public_podcast_migration_removes_legacy_source_activation_gate(tmp_path
     command.upgrade(cfg, "a34c7e2f91d0")
     engine = create_engine(cfg.get_main_option("sqlalchemy.url"))
     try:
-        with Session(engine) as session:
-            session.add(SourceConfigRecord(
+        # This fixture intentionally targets a historical revision. Populate
+        # current model defaults, but only insert columns that existed there.
+        historical_table = Table("source_configs", MetaData(), autoload_with=engine)
+        sources = [
+            SourceConfigRecord(
                 source_id="podcast_legacy_inactive",
                 name="Legacy public podcast",
                 source_type="podcast",
@@ -451,8 +454,8 @@ def test_public_podcast_migration_removes_legacy_source_activation_gate(tmp_path
                 fetch_interval_minutes=60,
                 created_at=STAMP,
                 updated_at=STAMP,
-            ))
-            session.add(SourceConfigRecord(
+            ),
+            SourceConfigRecord(
                 source_id="user_rss_legacy_inactive",
                 name="Private source",
                 source_type="rss",
@@ -462,8 +465,20 @@ def test_public_podcast_migration_removes_legacy_source_activation_gate(tmp_path
                 fetch_interval_minutes=60,
                 created_at=STAMP,
                 updated_at=STAMP,
-            ))
-            session.commit()
+            ),
+        ]
+        with engine.begin() as conn:
+            conn.execute(
+                historical_table.insert(),
+                [
+                    {
+                        key: value
+                        for key, value in source.model_dump().items()
+                        if key in historical_table.c
+                    }
+                    for source in sources
+                ],
+            )
     finally:
         engine.dispose()
 

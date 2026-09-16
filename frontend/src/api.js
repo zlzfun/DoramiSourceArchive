@@ -784,9 +784,9 @@ export function previewCustomSource(url) {
   return request('/reader/custom-sources/preview', { method: 'POST', body: { url }, errorMsg: '预览失败' });
 }
 
-export function createCustomSource(url, name) {
+export function createCustomSource(url, name, kind) {
   return request('/reader/custom-sources', {
-    method: 'POST', body: name ? { url, name } : { url }, errorMsg: '添加自定源失败',
+    method: 'POST', body: { url, ...(name ? { name } : {}), ...(kind ? { kind } : {}) }, errorMsg: '添加自定源失败',
   });
 }
 

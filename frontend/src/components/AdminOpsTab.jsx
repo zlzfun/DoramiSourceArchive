@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import {
   Users,
   Database,
@@ -45,7 +44,8 @@ import {
 import { useConfirm } from '../hooks/useConfirm';
 import { ThFilter, ThSearch, ThSort } from './admin/TableTh';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
-import { useModalTransition } from '../hooks/useModalTransition';
+import Modal from './Modal';
+import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { MultiSeriesArea, RankBars, BarList } from './charts/DashboardCharts';
 import MediaHeatmap from './admin/MediaHeatmap';
@@ -147,21 +147,15 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
 
   // ── 新建账户弹窗 ──
   const [createModalOpen, setCreateModalOpen] = useState(false);
-  const createModal = useModalTransition(createModalOpen);
 
   // ── 重置密码弹窗（取代 window.prompt：不回显明文、与全站 Modal 体系一致）──
   const [resetTarget, setResetTarget] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
   const [resetBusy, setResetBusy] = useState(false);
-  const resetModal = useModalTransition(Boolean(resetTarget));
 
-  // 弹窗/抽屉可访问性（Esc 关闭 / 焦点陷阱 / 焦点归还）：各挂一个 panelRef。
-  const createPanelRef = useRef(null);
-  const resetPanelRef = useRef(null);
+  // 两个弹窗走共用 Modal 外壳(Esc / 焦点陷阱 / 遮罩关闭判定,issue #104);
+  // 详情抽屉的可访问性仍自挂 panelRef,其 useModalA11y 在 closeDetail 定义之后挂(见下方,Esc 关闭须作废在途请求)。
   const detailPanelRef = useRef(null);
-  useModalA11y(createModalOpen && createModal.mounted, () => setCreateModalOpen(false), createPanelRef);
-  useModalA11y(Boolean(resetTarget) && resetModal.mounted, () => setResetTarget(null), resetPanelRef);
-  // 详情抽屉的 useModalA11y 在 closeDetail 定义之后挂(见下方,Esc 关闭须作废在途请求)。
 
   // 每组 loader 的请求代次守卫(v3.43.1 codex 交叉检视):M15 加了多个刷新时机后,
   // 同组请求可能并发在途——旧响应后到会覆盖新快照。发起时领代次,异步返回后校验
@@ -353,13 +347,9 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 只响应子页切换时机
   }, [sub]);
 
-  // 新建 / 详情 / 重置密码打开时锁定页面滚动。
-  useEffect(() => {
-    if (!createModalOpen && !detailUser && !resetTarget) return undefined;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = prev; };
-  }, [createModalOpen, detailUser, resetTarget]);
+  // 详情抽屉打开时锁定页面滚动(新建 / 重置密码弹窗的锁由 Modal 外壳承担);全站共用引用计数锁,
+  // 抽屉上再叠确认框 / 表单弹窗、Esc 一次关两层也不会把 hidden 留在 body 上。
+  useBodyScrollLock(Boolean(detailUser));
 
   const handleToggleGlobalAi = async () => {
     const next = !globalAi;
@@ -1459,87 +1449,83 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
       </aside>
       </>)}
 
-      {/* ── 新建账户弹窗（Portal 到 body，避开变换祖先造成的 fixed 错位） ── */}
-      {createModal.mounted && createPortal(
-        <div className={`modal-overlay ${createModal.closing ? 'is-closing' : ''}`} onClick={() => setCreateModalOpen(false)}>
-          <form ref={createPanelRef} role="dialog" aria-modal="true" aria-label="新建账户" tabIndex={-1} className="modal-panel max-w-md form-sheet" onClick={(e) => e.stopPropagation()} onSubmit={handleCreate}>
-            <div className="form-sheet-head">
-              <h3 className="card-title">新建账户</h3>
-              <button type="button" onClick={() => setCreateModalOpen(false)} className="icon-button" aria-label="关闭"><X className="w-4 h-4" /></button>
+      {/* ── 新建账户弹窗(portal 到 body,避开变换祖先造成的 fixed 错位) ── */}
+      <Modal
+        open={createModalOpen} onClose={() => setCreateModalOpen(false)} closeOnOverlay portal size="md"
+        as="form" panelClassName="form-sheet" ariaLabel="新建账户" panelProps={{ onSubmit: handleCreate }}
+      >
+        <div className="form-sheet-head">
+          <h3 className="card-title">新建账户</h3>
+          <button type="button" onClick={() => setCreateModalOpen(false)} className="icon-button" aria-label="关闭"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="form-sheet-body">
+          <div className="form-sheet-field">
+            <label className="form-label" htmlFor="acct-new-name">用户名</label>
+            <input id="acct-new-name" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} placeholder="用户名" autoComplete="off" className="form-input w-full" />
+          </div>
+          <div className="form-sheet-field">
+            <label className="form-label" htmlFor="acct-new-pw">初始密码</label>
+            <input id="acct-new-pw" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="至少 6 位" autoComplete="new-password" className="form-input w-full" />
+          </div>
+          <div className="form-sheet-field">
+            <span className="form-label">角色</span>
+            <div className="mini-seg" role="group" aria-label="账户角色">
+              {[['user', '读者'], ['admin', '管理员']].map(([role, label]) => (
+                <button
+                  key={role}
+                  type="button"
+                  onClick={() => setNewRole(role)}
+                  className={`mini-seg-btn ${newRole === role ? 'is-on' : ''}`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
-            <div className="form-sheet-body">
-              <div className="form-sheet-field">
-                <label className="form-label" htmlFor="acct-new-name">用户名</label>
-                <input id="acct-new-name" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} placeholder="用户名" autoComplete="off" className="form-input w-full" />
-              </div>
-              <div className="form-sheet-field">
-                <label className="form-label" htmlFor="acct-new-pw">初始密码</label>
-                <input id="acct-new-pw" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="至少 6 位" autoComplete="new-password" className="form-input w-full" />
-              </div>
-              <div className="form-sheet-field">
-                <span className="form-label">角色</span>
-                <div className="mini-seg" role="group" aria-label="账户角色">
-                  {[['user', '读者'], ['admin', '管理员']].map(([role, label]) => (
-                    <button
-                      key={role}
-                      type="button"
-                      onClick={() => setNewRole(role)}
-                      className={`mini-seg-btn ${newRole === role ? 'is-on' : ''}`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                {newRole === 'admin' && (
-                  <p className="tiny-meta" style={{ marginTop: 6 }}>管理员拥有采集、归档、账户与系统配置的全部权限。</p>
-                )}
-              </div>
-            </div>
-            <div className="form-sheet-foot">
-              <button type="button" onClick={() => setCreateModalOpen(false)} className="action-button action-button-quiet min-h-[32px] px-3 text-xs">取消</button>
-              <button type="submit" disabled={busy} className="action-button action-button-primary min-h-[32px] px-3 text-xs">
-                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />} 创建{newRole === 'admin' ? '管理员' : '读者'}账户
-              </button>
-            </div>
-          </form>
-        </div>,
-        document.body,
-      )}
+            {newRole === 'admin' && (
+              <p className="tiny-meta" style={{ marginTop: 6 }}>管理员拥有采集、归档、账户与系统配置的全部权限。</p>
+            )}
+          </div>
+        </div>
+        <div className="form-sheet-foot">
+          <button type="button" onClick={() => setCreateModalOpen(false)} className="action-button action-button-quiet min-h-[32px] px-3 text-xs">取消</button>
+          <button type="submit" disabled={busy} className="action-button action-button-primary min-h-[32px] px-3 text-xs">
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />} 创建{newRole === 'admin' ? '管理员' : '读者'}账户
+          </button>
+        </div>
+      </Modal>
 
-      {/* ── 重置密码弹窗（Portal 到 body） ── */}
-      {resetModal.mounted && createPortal(
-        <div className={`modal-overlay ${resetModal.closing ? 'is-closing' : ''}`} onClick={() => setResetTarget(null)}>
-          <form ref={resetPanelRef} role="dialog" aria-modal="true" aria-label="重置密码" tabIndex={-1} className="modal-panel max-w-md form-sheet" onClick={(e) => e.stopPropagation()} onSubmit={handleResetSubmit}>
-            <div className="form-sheet-head">
-              <h3 className="card-title">重置密码</h3>
-              <button type="button" onClick={() => setResetTarget(null)} className="icon-button" aria-label="关闭"><X className="w-4 h-4" /></button>
-            </div>
-            <div className="form-sheet-body">
-              <p className="tiny-meta">为账户「{resetTarget?.username}」设置新密码，设置后该账户需用新密码登录。</p>
-              <div className="form-sheet-field">
-                <label className="form-label" htmlFor="acct-reset-pw">新密码</label>
-                <input
-                  id="acct-reset-pw"
-                  type="password"
-                  value={resetPassword}
-                  onChange={(e) => setResetPassword(e.target.value)}
-                  placeholder="至少 6 位"
-                  autoComplete="new-password"
-                  autoFocus
-                  className="form-input w-full"
-                />
-              </div>
-            </div>
-            <div className="form-sheet-foot">
-              <button type="button" onClick={() => setResetTarget(null)} className="action-button action-button-quiet min-h-[32px] px-3 text-xs">取消</button>
-              <button type="submit" disabled={resetBusy} className="action-button action-button-primary min-h-[32px] px-3 text-xs">
-                {resetBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />} 保存新密码
-              </button>
-            </div>
-          </form>
-        </div>,
-        document.body,
-      )}
+      {/* ── 重置密码弹窗(portal 到 body) ── */}
+      <Modal
+        open={Boolean(resetTarget)} onClose={() => setResetTarget(null)} closeOnOverlay portal size="md"
+        as="form" panelClassName="form-sheet" ariaLabel="重置密码" panelProps={{ onSubmit: handleResetSubmit }}
+      >
+        <div className="form-sheet-head">
+          <h3 className="card-title">重置密码</h3>
+          <button type="button" onClick={() => setResetTarget(null)} className="icon-button" aria-label="关闭"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="form-sheet-body">
+          <p className="tiny-meta">为账户「{resetTarget?.username}」设置新密码，设置后该账户需用新密码登录。</p>
+          <div className="form-sheet-field">
+            <label className="form-label" htmlFor="acct-reset-pw">新密码</label>
+            <input
+              id="acct-reset-pw"
+              type="password"
+              value={resetPassword}
+              onChange={(e) => setResetPassword(e.target.value)}
+              placeholder="至少 6 位"
+              autoComplete="new-password"
+              autoFocus
+              className="form-input w-full"
+            />
+          </div>
+        </div>
+        <div className="form-sheet-foot">
+          <button type="button" onClick={() => setResetTarget(null)} className="action-button action-button-quiet min-h-[32px] px-3 text-xs">取消</button>
+          <button type="submit" disabled={resetBusy} className="action-button action-button-primary min-h-[32px] px-3 text-xs">
+            {resetBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />} 保存新密码
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }

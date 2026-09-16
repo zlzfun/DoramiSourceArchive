@@ -1024,6 +1024,16 @@ class PodcastLandingResolution:
 def _resolve_podcast_landing_candidate(
     session: Session, article_id: str
 ) -> PodcastLandingCandidate | None:
+    episode = session.get(ArticleRecord, article_id)
+    if episode is None or episode.content_type != "podcast_episode":
+        return None
+    source = session.get(SourceConfigRecord, episode.source_id)
+    if (
+        source is not None
+        and bool((source.owner_username or "").strip())
+        and (source.retired_at is not None or not source.is_active)
+    ):
+        return None
     analysis = session.get(ArticleAnalysisRecord, article_id)
     initial_candidate = (
         analysis is not None
@@ -1056,15 +1066,13 @@ def _resolve_podcast_landing_candidate(
             return None
         # No local input yet: the revision must still move when the publisher
         # locator (or the enclosure itself) changes, never a constant.
-        episode = session.get(ArticleRecord, article_id)
         enclosure_hash = ""
-        if episode is not None:
-            try:
-                enclosure_hash = podcast_source_media_service.enclosure_snapshot(
-                    episode
-                ).locator_hash
-            except podcast_source_media_service.SourceMediaError:
-                enclosure_hash = ""
+        try:
+            enclosure_hash = podcast_source_media_service.enclosure_snapshot(
+                episode
+            ).locator_hash
+        except podcast_source_media_service.SourceMediaError:
+            enclosure_hash = ""
         revision = "prepare:" + (locator_revision or enclosure_hash or "")[:16]
         needs_source_media = not locator_revision
     else:
@@ -2710,7 +2718,7 @@ async def execute_user_rss_refresh_job():
             select(SourceConfigRecord)
             .where(SourceConfigRecord.owner_username != "")
             .where(SourceConfigRecord.is_active == True)  # noqa: E712
-            .where(SourceConfigRecord.source_type.in_(["rss", "atom"]))
+            .where(SourceConfigRecord.source_type.in_(["rss", "atom", "podcast", "podcast_rss"]))
             .order_by(SourceConfigRecord.source_id)
         ).all()
         items = []
@@ -2745,7 +2753,7 @@ async def execute_user_rss_refresh_job():
                     if state is None:
                         # 从未成功抓过的源也要累计(三轮收口:否则永远达不到停用阈值)
                         state = SourceStateRecord(
-                            source_id=item["source_id"], fetcher_id="generic_rss",
+                            source_id=item["source_id"], fetcher_id=item["fetcher_id"],
                             updated_at=datetime.datetime.now().isoformat(),
                         )
                     now_iso = datetime.datetime.now().isoformat()
@@ -2849,10 +2857,33 @@ def classify_error(error: Exception | str | None) -> str:
     return error.__class__.__name__ if isinstance(error, Exception) else "runtime_error"
 
 
+def _user_source_collection_blocked(
+    session: Session,
+    source_id: str,
+    source: SourceConfigRecord | None = None,
+) -> bool:
+    """Fence deleted/retired custom sources at collection transaction edges."""
+
+    record = source if source is not None else session.get(SourceConfigRecord, source_id)
+    is_custom = user_sources_service.is_user_source(source_id) or bool(
+        record is not None and (record.owner_username or "").strip()
+    )
+    return bool(
+        is_custom
+        and (
+            record is None
+            or record.retired_at is not None
+            or not record.is_active
+        )
+    )
+
+
 def mark_source_state_started(fetcher_id: str, params: Dict[str, Any], run_id: int):
     source_id = resolve_state_source_id(fetcher_id, params)
     now = _now_iso()
     with Session(db_sink.engine) as session:
+        if _user_source_collection_blocked(session, source_id):
+            return
         if not sync_consumer_policy.local_source_operation_allowed(
             session, source_id, operation="collection"
         ):
@@ -2888,6 +2919,8 @@ def mark_source_state_finished(
     source_id = resolve_state_source_id(fetcher_id, params, result)
     now = _now_iso()
     with Session(db_sink.engine) as session:
+        if _user_source_collection_blocked(session, source_id):
+            return
         if not sync_consumer_policy.local_source_operation_allowed(
             session, source_id, operation="collection"
         ):
@@ -2962,6 +2995,12 @@ async def run_fetcher_with_tracking(
         )
         source_id = resolve_state_source_id(execution_fetcher_id, params)
         source = authority_session.get(SourceConfigRecord, source_id)
+        if _user_source_collection_blocked(authority_session, source_id, source):
+            raise ValueError(f"用户自定源 {source_id} 已移除或退役，拒绝采集")
+        is_user_source_run = bool(
+            user_sources_service.is_user_source(source_id)
+            or (source is not None and (source.owner_username or "").strip())
+        )
         is_podcast_run = bool(
             execution_fetcher_id == "generic_podcast_rss"
             or (
@@ -3025,10 +3064,16 @@ async def run_fetcher_with_tracking(
             authority_taken = not sync_consumer_policy.local_source_operation_allowed(
                 authority_session, source_id, operation="collection"
             )
+            current_source = authority_session.get(SourceConfigRecord, source_id)
+            user_source_revoked = bool(
+                is_user_source_run
+                and _user_source_collection_blocked(
+                    authority_session, source_id, current_source
+                )
+            )
             podcast_revoked = False
             podcast_revoke_reason = ""
             if is_podcast_run:
-                current_source = authority_session.get(SourceConfigRecord, source_id)
                 if (
                     current_source is None
                     or (current_source.source_type or "").strip().lower() not in PODCAST_SOURCE_TYPES
@@ -3041,7 +3086,7 @@ async def run_fetcher_with_tracking(
                     except PodcastStageDenied as exc:
                         podcast_revoked = True
                         podcast_revoke_reason = str(exc)
-        if authority_taken or podcast_revoked:
+        if authority_taken or user_source_revoked or podcast_revoked:
             # The run began locally but lost authority while network work was in
             # flight. DatabaseStorage fenced every late article commit; do not
             # recreate local readiness or enqueue analysis after handoff.
@@ -3053,7 +3098,11 @@ async def run_fetcher_with_tracking(
             reason = (
                 f"数据源 {source_id} 已由远端权威接管"
                 if authority_taken
-                else podcast_revoke_reason
+                else (
+                    f"用户自定源 {source_id} 已移除或退役"
+                    if user_source_revoked
+                    else podcast_revoke_reason
+                )
             )
             raise RuntimeError(f"{reason}，本次本地采集作废")
         finish_fetch_run(run_id, status="success", result=result)
@@ -3078,6 +3127,10 @@ async def run_fetcher_with_tracking(
             cleanup_required = not sync_consumer_policy.local_source_operation_allowed(
                 cleanup_session, source_id, operation="collection"
             )
+            if is_user_source_run:
+                cleanup_required = cleanup_required or _user_source_collection_blocked(
+                    cleanup_session, source_id
+                )
             if is_podcast_run:
                 current_source = cleanup_session.get(SourceConfigRecord, source_id)
                 cleanup_required = cleanup_required or bool(

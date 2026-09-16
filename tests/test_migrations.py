@@ -2357,15 +2357,32 @@ def test_archive_sync_v2_downgrade_refuses_to_reopen_live_writers(tmp_path, bloc
                     },
                 )
         if blocker == "source_authority":
-            with Session(engine) as session:
-                session.add(SourceConfigRecord(
-                    source_id="remote",
-                    name="Remote",
-                    collection_authority_id="producer-a",
-                    created_at="2026-09-04",
-                    updated_at="2026-09-04",
-                ))
-                session.commit()
+            # This database intentionally stops before the current source schema.
+            # Build current defaults, then insert only columns present at this
+            # historical revision so later nullable fields are not referenced.
+            from sqlalchemy import MetaData, Table
+
+            source = SourceConfigRecord(
+                source_id="remote",
+                name="Remote",
+                collection_authority_id="producer-a",
+                created_at="2026-09-04",
+                updated_at="2026-09-04",
+            )
+            historical_table = Table(
+                "source_configs", MetaData(), autoload_with=engine
+            )
+            payload = source.model_dump()
+            with engine.begin() as conn:
+                conn.execute(
+                    historical_table.insert().values(
+                        **{
+                            key: value
+                            for key, value in payload.items()
+                            if key in historical_table.c
+                        }
+                    )
+                )
         elif blocker == "analysis_authority":
             # This database intentionally stops at d6a3f9c2e714. Use that
             # historical schema rather than the current ORM model, which has

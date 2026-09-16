@@ -30,9 +30,10 @@
 ## 2. 可访问性（Accessibility）
 
 - **每个交互元素都要有 `:focus-visible` 焦点环**。原生 `button/input/select/textarea`
-  已有全局焦点环（`index.css` 顶部）；自定义可点元素（裸 `div`、容器内 `outline:none` 的输入）
-  必须自带替代焦点指示（参考 `.field-box:focus-within`、`.node-param-input:focus`）。
-  **绝不移除 outline 而不给可见替代。**
+  已有全局兜底焦点环（`index.css` 顶部，**自 issue #108 起放在 `@layer base`**）；自定义可点元素（裸 `div`、
+  容器内 `outline:none` 的输入）必须自带替代焦点指示（参考 `.field-box:focus-within`、`.node-param-input:focus`），
+  有了替代指示就在 `@layer components` 里写 `outline: none` 关掉兜底环——两环叠画（容器外环之内再一圈矩形亮光）
+  与没有环同样是缺陷。**绝不移除 outline 而不给可见替代。**
 - **文本对比度达 WCAG AA（4.5:1）**：最弱文字用 `--dorami-faint`(#64748b) 或 `text-slate-500`，
   **不要用 `text-slate-400` / #94a3b8 作正文**（仅 ~2.7:1，不达标）。
 - **状态不靠颜色单独传达**：色块必须配图标或文字标签（参考 Toast、运行状态徽标）。
@@ -132,6 +133,11 @@
 > 定字号要么写在**容器**上靠继承穿透(实例:`.ledger-scope`/`.sett-nav`),要么写进文件尾的**未分层修复区**
 > (实例:`.reader-seg-btn`/`.reader-disc-search input`)。排查「字号怎么改都不生效」先想到这条。
 > 已知踩坑记录:分段钮(弹窗波)、阅读器 全部/未读 分段(v3.6)、发现页搜索框(v3.10)。
+>
+> **聚焦环已不在此列(issue #108)**:全局 `:focus-visible` 兜底环已移入 `@layer base`(层序 theme → base →
+> components → utilities),容器 / 自身另画聚焦指示的输入框在层内写 `outline: none` 即生效,**不再需要**尾区钉
+> `.xxx:focus-visible { outline: none }`(v3.32 AI 问答框 / v3.42 账户表列头搜索 / 自定源浮层三处旧钉已删)。
+> `mobile.css` 是未分层 `@import`,同样压得住 base 层。`font: inherit` 仍是未分层规则,字号陷阱照旧。
 
 ## 4. 颜色令牌（语义四套，互不混用）
 
@@ -320,6 +326,19 @@
 身(`-body` + `-field`)/脚(`-foot`:取消 quiet + 主钮,右对齐),hairline 分隔、无色底条——
 旧「well 标题条 + soft 脚条 + indigo 图标」三段横条语法退役;新小弹窗一律用此三件套
 (在册消费者:运维新建读者/重置密码)。
+
+**弹窗外壳与遮罩关闭(2026-09,issue #104)**:业务弹窗一律 `<Modal>`(`components/Modal.jsx`;
+表单弹窗传 `as="form"` + `panelProps={{ onSubmit }}`,确认框 `role="alertdialog"`,需避开变换祖先
+时 `portal`,面板自带宽度[`.sett-cab` / `.csrc-sheet`]时 `size="none"`——utilities 层的 `max-w-*`
+会压过组件层宽度)。**遮罩关闭判定只在外壳一处**:`closeOnOverlay` 按「按下与松开同在遮罩」核对
+(`utils/overlayClose.js`,pointer 事件,鼠标 / 触屏一套):面板内拖选文字松手落到遮罩、遮罩按下
+拖进面板松手都不关,面板不需要 `stopPropagation`(弹窗内嵌靠 document mousedown 点外关闭的浮层
+照常)。业务代码不得自写 `.modal-overlay` 元素——那意味着又一套 onClick 关闭判定,lint
+`dorami/no-raw-modal-overlay` 拦增量;移动壳 `.m-dim` 是面板的兄弟节点,不在此列。**body 滚动锁
+只用 `hooks/useBodyScrollLock`**(全站一把引用计数锁,外壳与抽屉共用):自写「存旧值 → 还旧值」
+的锁在多层浮层关闭顺序不对称时会把 `hidden` 留在 body 上。**Esc / 焦点陷阱只用 `hooks/useModalA11y`**,
+它带模块级层栈:多层浮层同时激活(抽屉上开确认框 / 表单弹窗)时 Esc 与 Tab 只由最上层消费,上层关闭后
+焦点回到下层触发控件、下层保持打开;业务代码不要再挂自己的 document / window 级 Esc 监听去关模态层。
 
 ## 9. 暗色主题（已落地）
 
