@@ -1067,7 +1067,9 @@ def parse_page(
         validate_podcast_page_envelope()
 
     parsed: list[dict[str, Any]] = []
-    for number, raw in enumerate(raw_text.splitlines(), start=1):
+    # JSONL records end at LF (or CRLF). splitlines() also splits U+0085,
+    # U+2028 and U+2029, which are legal characters inside JSON strings.
+    for number, raw in enumerate(raw_text.split("\n"), start=1):
         if not raw.strip():
             continue
         try:
@@ -3345,7 +3347,8 @@ def parse_candidate_evidence_page(
     raw_text: str,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     try:
-        parsed = [json.loads(line) for line in raw_text.splitlines() if line.strip()]
+        # Keep Unicode separators inside labels; only LF delimits JSONL records.
+        parsed = [json.loads(line) for line in raw_text.split("\n") if line.strip()]
     except json.JSONDecodeError as exc:
         raise SyncV2Error("candidate evidence contains invalid JSON") from exc
     if not parsed or parsed[0].get("kind") != "manifest":

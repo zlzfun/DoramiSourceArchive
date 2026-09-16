@@ -47,6 +47,10 @@ delivery where possible:
 
 ## JSONL Shape
 
+Both protocol versions delimit records with LF (`\n`); CRLF is also accepted.
+Unicode separators U+0085, U+2028 and U+2029 inside JSON strings are content,
+not record boundaries. Parsers must preserve them rather than use `str.splitlines()`.
+
 The first line is a manifest:
 
 ```json

@@ -331,7 +331,8 @@ def _parse_export_page(raw_text: str) -> Dict[str, Any]:
     manifest: Optional[Dict[str, Any]] = None
     article_count = 0
     max_fetched_date = ""
-    for line in raw_text.splitlines():
+    # Match the importer: LF delimits records, Unicode separators remain content.
+    for line in raw_text.split("\n"):
         line = line.strip()
         if not line:
             continue
