@@ -61,8 +61,50 @@ function checkCeremony(context, raw, node) {
   }
 }
 
-const doramiPlugin = {
+// ── 弹窗遮罩护栏(issue #104) ──
+// 遮罩关闭判定只在 components/Modal.jsx 一处(按下与松开同在遮罩才关,见 utils/overlayClose.js);
+// 业务弹窗不得再自写 .modal-overlay 元素——那意味着又一套 onClick / onMouseDown 关闭判定,
+// 面板内拖选文字松手落到遮罩就会把弹窗关掉。规则只看 JSX className 属性里的字符串片段
+// (字面量 / 模板字面量 / 三元 / 逻辑与拼接),Modal.jsx 本体在配置末尾单独豁免;
+// 移动壳 .m-dim 是面板的兄弟节点、不叫 modal-overlay,不在此列。
+const MODAL_OVERLAY_RE = /\bmodal-overlay\b/
+
+function classNameHasModalOverlay(node) {
+  if (!node || typeof node !== 'object') return false
+  switch (node.type) {
+    case 'Literal': return typeof node.value === 'string' && MODAL_OVERLAY_RE.test(node.value)
+    case 'TemplateElement': return MODAL_OVERLAY_RE.test(node.value.raw)
+    case 'TemplateLiteral': return node.quasis.some(classNameHasModalOverlay)
+    case 'JSXExpressionContainer': return classNameHasModalOverlay(node.expression)
+    case 'ConditionalExpression': return classNameHasModalOverlay(node.consequent) || classNameHasModalOverlay(node.alternate)
+    case 'LogicalExpression':
+    case 'BinaryExpression': return classNameHasModalOverlay(node.left) || classNameHasModalOverlay(node.right)
+    case 'CallExpression': return node.arguments.some(classNameHasModalOverlay)
+    case 'ArrayExpression': return node.elements.some(classNameHasModalOverlay)
+    default: return false
+  }
+}
+
+// 测试 frontend/test/modalOverlay.test.mjs 用真实配置跑 Linter 证明护栏拦得住,故插件具名导出;ESLint 只读 default。
+export const doramiPlugin = {
   rules: {
+    'no-raw-modal-overlay': {
+      meta: {
+        type: 'problem',
+        docs: { description: '弹窗遮罩只在 components/Modal.jsx 一处:业务弹窗用 <Modal closeOnOverlay>,不得自写 .modal-overlay 元素(issue #104)' },
+        schema: [],
+      },
+      create(context) {
+        return {
+          JSXAttribute(node) {
+            if (node.name?.name !== 'className') return
+            if (classNameHasModalOverlay(node.value)) {
+              context.report({ node, message: '不要自写 .modal-overlay 元素:遮罩关闭判定只在 components/Modal.jsx(按下与松开同在遮罩才关),请改用 <Modal closeOnOverlay>(docs/frontend/conventions.md §8 弹窗外壳)' })
+            }
+          },
+        }
+      },
+    },
     'no-ceremonial-entrance': {
       meta: {
         type: 'suggestion',
@@ -143,6 +185,13 @@ export default defineConfig([
       'dorami/no-legacy-bridge-class': 'error',
       // 静默仪器防回潮:字重/入场编排增量拦截(B 残债清尾)
       'dorami/no-ceremonial-entrance': 'error',
+      // 弹窗遮罩护栏(issue #104):业务弹窗不得自写 .modal-overlay 元素
+      'dorami/no-raw-modal-overlay': 'error',
     },
+  },
+  {
+    // 共用外壳是遮罩元素的唯一合法出处
+    files: ['src/components/Modal.jsx'],
+    rules: { 'dorami/no-raw-modal-overlay': 'off' },
   },
 ])

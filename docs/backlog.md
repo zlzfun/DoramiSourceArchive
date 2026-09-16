@@ -138,6 +138,10 @@
 - **OpenAI 摘要正文回填**:09-09 至修复上线期间入库的 ~18 篇 `rss_openai_news` 正文只有 RSS 摘要(`has_content=True`,不会自动重抓),需一次性重渲染回填脚本。
 - **日报 `per_source_cap=5` 是软配额**:`select_top` 的 overflow 补位可再加同源条目,淡日单源可能超过 5 篇(The Decoder 入名单后更可能出现);若运营要硬上限需改 overflow 语义。
 
+### issue #104 弹窗遮罩关闭判定收口遗留(2026-09-16)
+
+- **`useModalA11y` 层栈**:多层弹窗 / 抽屉同时激活时(抽屉上开确认框、总账上开新建标签 sheet),Esc 与 Tab 陷阱由每一层的 document 捕获监听各自处理,Esc 会把两层一起关。改前确认框用 window 冒泡监听,被底层 `stopPropagation` 拦掉后反而悬空(抽屉没了、确认框还在);本波迁上外壳后变成「双关」,是改善但不是终态。终态是模块级层栈:Esc / Tab 只由最上层消费。issue 划定 `useModalA11y` 不动,记观察期。
+
 ## 已完结(近期,留档索引;执行记录与更早波次见 `docs/archive/README.md`)
 
 - ✅ **issue #85 移动端 PWA**（PR #100，方案 [frontend/pwa.md](./frontend/pwa.md)）：Android／iOS 主屏幕安装与联网恢复，用户两平台真机放行，本地检视通过；鸿蒙保留网页阅读，原生套壳另列展望。
