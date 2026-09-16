@@ -213,6 +213,12 @@ class BackupService:
                 result.update({key: value for key, value in saved.items() if key in allowed})
             except (OSError, ValueError, AttributeError):
                 pass
+            if self._memory_state and round(_epoch(result.get("last_success_at")), 6) > round(_epoch(self._memory_state.get("last_success_at")), 6):
+                # A competing attempt can start before our busy error and finish
+                # afterwards. Its new successful snapshot supersedes that error,
+                # even though its last_attempt_at is older than ours. Normalize to
+                # ISO's microsecond precision before comparing with raw JSON floats.
+                self._memory_state = None
             if self._memory_state and _epoch(self._memory_state.get("last_attempt_at")) >= _epoch(result.get("last_attempt_at")):
                 result.update({key: value for key, value in self._memory_state.items() if key in allowed})
         for field in ("last_success_at", "last_attempt_at", "snapshot_at"):
@@ -282,7 +288,15 @@ class BackupService:
                 def progress(_status, _remaining, _total):
                     if time.monotonic() > deadline:
                         raise BackupError("backup_snapshot_timeout")
-                source.backup(target, pages=256, sleep=0.01, progress=progress)
+                try:
+                    # Pin one main-database read snapshot. Without it, commits on
+                    # other connections can restart every incremental backup step.
+                    # WAL writers can continue; bounded steps retain the deadline.
+                    source.execute("BEGIN")
+                    source.execute("SELECT name FROM main.sqlite_master LIMIT 1").fetchone()
+                    source.backup(target, pages=256, sleep=0.01, progress=progress)
+                finally:
+                    source.rollback()
             os.chmod(staging / "database.sqlite3", 0o600)
             with _connect(staging / "database.sqlite3") as snapshot:
                 _integrity(snapshot)

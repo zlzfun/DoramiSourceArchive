@@ -426,7 +426,7 @@ vision_model =        ; 视觉模型(issue #69,可选):同端点同 api_key 下�
 | `local_dir` | `data/backups` | 私有持久目录；云端备份也使用它暂存并保留本地快照 |
 | `retain_local` | `7` | 保留本工具生成的本地归档份数，不影响云端保留期 |
 | `minimum_free_mb` | `1024` | 保留的磁盘余量；还需容纳暂存文件与压缩归档 |
-| `timeout_seconds` | `60` | OSS 连接超时 |
+| `timeout_seconds` | `60` | OSS 连接超时及数据库快照复制阶段的超时检查；不是整份备份的总时限 |
 
 生产示例保持关闭，并预填 `destination=oss`、`credential_provider=ecs_role`、
 `prefix=backups/production` 与同地域内网 Endpoint；实际桶和角色名必须由部署者填写。

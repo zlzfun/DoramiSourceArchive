@@ -1,5 +1,6 @@
 """Actual SQLite/tar restore drills plus cloud and hostile archive boundaries."""
 import configparser
+from concurrent.futures import ThreadPoolExecutor
 import datetime as dt
 from dataclasses import replace
 import fcntl
@@ -11,6 +12,7 @@ import sqlite3
 import subprocess
 import sys
 import tarfile
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -333,7 +335,9 @@ def test_failed_upload_retries_preserve_daily_points_and_snapshot_age(service, m
 
 
 def test_unwritable_status_keeps_ui_failure_and_retry_backoff(service, monkeypatch):
-    now = [1_800_000_000]
+    # Persisted Unix floats may contain finer precision than status()'s ISO text.
+    # The same successful snapshot must not clear a later in-memory write failure.
+    now = [1_800_000_000.1234562]
     service.clock = lambda: now[0]
     original = service.run_if_due()
     assert original["status"] == "succeeded"
@@ -412,3 +416,139 @@ def test_upload_response_loss_recovers_same_remote_object(service):
     second = service.run()
     assert second["status"] == "succeeded" and second["archive"] == first["archive"]
     assert len(bucket.items) == 1 and second["pending_upload"] is False
+
+
+def _observe_concurrent_snapshot(service, monkeypatch):
+    """A multi-step real WAL backup with external commits at step boundaries."""
+    database = service._database()
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE backup_pages(id INTEGER PRIMARY KEY, body BLOB)")
+        connection.executemany("INSERT INTO backup_pages(body) VALUES (?)", [(b"x" * 3900,)] * 900)
+        connection.execute("CREATE TABLE backup_events(id INTEGER PRIMARY KEY)")
+        connection.execute("INSERT INTO backup_events VALUES (0)")
+    trace = {"remaining": [], "sources": [], "external_commits": 0, "target_started_in_transaction": None}
+    original_connect = backup_module._connect
+    class ObservedConnection(sqlite3.Connection):
+        def backup(self, target, *, pages=-1, progress=None, name="main", sleep=0.250):
+            trace["sources"].append(self)
+            trace["target_started_in_transaction"] = target.in_transaction
+            with sqlite3.connect(database, timeout=0.1) as writer:
+                # The production source transaction has already established its
+                # snapshot. This committed row must never enter the backup.
+                writer.execute("INSERT INTO backup_events VALUES (1)")
+                writer.commit()
+                trace["external_commits"] += 1
+                def observed_progress(status, remaining, total):
+                    if trace["remaining"]:
+                        assert remaining < trace["remaining"][-1], "backup restarted after an external commit"
+                    trace["remaining"].append(remaining)
+                    writer.execute("INSERT INTO backup_events VALUES (?)", (trace["external_commits"] + 1,))
+                    writer.commit()
+                    trace["external_commits"] += 1
+                    progress(status, remaining, total)
+                return super().backup(target, pages=pages, progress=observed_progress, name=name, sleep=sleep)
+    def connect(path):
+        if Path(path).resolve() != database:
+            return original_connect(path)
+        connection = sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, factory=ObservedConnection)
+        connection.row_factory = sqlite3.Row
+        return connection
+    monkeypatch.setattr(backup_module, "_connect", connect)
+    return trace
+
+
+def test_snapshot_keeps_one_wal_view_while_other_connection_commits(service, monkeypatch, tmp_path):
+    trace = _observe_concurrent_snapshot(service, monkeypatch)
+    staging = tmp_path / "snapshot"
+    staging.mkdir()
+    service._snapshot(staging)
+    assert trace["target_started_in_transaction"] is False
+    assert len(trace["remaining"]) > 2 and trace["remaining"][-1] == 0
+    assert all(earlier > later for earlier, later in zip(trace["remaining"], trace["remaining"][1:]))
+    assert trace["external_commits"] > 2  # WAL writes succeeded during the pinned read.
+    with sqlite3.connect(staging / "database.sqlite3") as snapshot:
+        assert snapshot.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert snapshot.execute("SELECT id FROM backup_events").fetchall() == [(0,)]
+    with sqlite3.connect(service._database()) as live:
+        assert live.execute("SELECT COUNT(*) FROM backup_events").fetchone()[0] == trace["external_commits"] + 1
+    for source in trace["sources"]:
+        assert source.in_transaction is False
+        source.close()
+
+
+def test_snapshot_deadline_interrupts_steps_and_releases_read_transaction(service, monkeypatch):
+    trace = _observe_concurrent_snapshot(service, monkeypatch)
+    service.config = replace(service.config, timeout_seconds=1)
+    ticks = iter([0.0, 0.4, 0.8, 1.2])
+    # Advance only the snapshot's cooperative deadline, without changing global
+    # wall clocks or adding sleeps to SQLite's actual backup operation.
+    monkeypatch.setattr(backup_module, "time", SimpleNamespace(monotonic=lambda: next(ticks)))
+    state = service.run()
+    assert state["status"] == "failed" and state["last_error"] == "backup_snapshot_timeout"
+    assert len(trace["remaining"]) == 3 and trace["remaining"][-1] > 0
+    assert not list(service.directory.glob("*.tar.gz"))
+    assert not list(service.directory.glob(".backup-*"))
+    for source in trace["sources"]:
+        assert source.in_transaction is False
+        source.close()
+    with sqlite3.connect(service._database(), timeout=0.1) as writer:
+        # No abandoned read snapshot prevents the WAL from being fully reset.
+        assert writer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone() == (0, 0, 0)
+    with (service.receipt_root / ".lock").open("wb") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def test_other_instances_new_success_supersedes_later_busy_attempt(service, monkeypatch):
+    now = [1_800_000_000]
+    service.clock = lambda: now[0]
+    previous = service.run()
+    contender = BackupService(service.config, service.database_url, service.receipt_root,
+                              media_root=service.roots["media"], podcast_root=service.roots["podcast"],
+                              clock=lambda: now[0])
+    now[0] += 86401
+    held, release = threading.Event(), threading.Event()
+    create = service._create_archive
+    def delayed_create():
+        held.set()
+        assert release.wait(10)
+        return create()
+    monkeypatch.setattr(service, "_create_archive", delayed_create)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        running = executor.submit(service.run)
+        try:
+            assert held.wait(10)
+            now[0] += 1
+            busy = contender.run()
+            assert busy["last_error"] == "backup_busy"
+            assert busy["last_success_at"] == previous["last_success_at"]
+        finally:
+            release.set()
+        completed = running.result(timeout=10)
+    assert completed["status"] == "succeeded"
+    assert completed["last_success_at"] < busy["last_attempt_at"]
+    observed = contender.status()
+    assert observed["status"] == "succeeded"
+    assert observed["archive"] == completed["archive"]
+    assert observed["last_success_at"] == completed["last_success_at"]
+    assert observed["pending_upload"] is False
+    archives = set(service.directory.glob("*.tar.gz"))
+    now[0] += 601
+    assert contender.run_if_due()["archive"] == completed["archive"]
+    assert set(service.directory.glob("*.tar.gz")) == archives
+
+
+def test_newer_file_success_also_retains_current_pending_upload_metadata(service):
+    # A sibling worker may already have started the following backup by the time
+    # we observe its newer completed snapshot. Keep that file's pending state too.
+    service.directory.mkdir()
+    service._memory_state = {"status": "failed", "last_attempt_at": 300,
+                             "last_success_at": 100, "error": "backup_busy", "pending_upload": False}
+    backup_module._write_json(service.directory / "status.json", {
+        "status": "failed", "last_attempt_at": 250, "last_success_at": 200,
+        "error": "backup_upload_failed", "pending_upload": True,
+        "archive": "current-pending.tar.gz", "sha256": "a" * 64, "size_bytes": 123,
+    })
+    state = service.status()
+    assert service._memory_state is None
+    assert state["pending_upload"] is True and state["archive"] == "current-pending.tar.gz"
+    assert state["sha256"] == "a" * 64 and state["last_error"] == "backup_upload_failed"

@@ -2986,9 +2986,14 @@ def install_media_bytes(
             )
         except ValueError as exc:
             raise SyncV2Error(str(exc)) from exc
-        record.mime = mime
-        record.ext = normalized_ext
-        ext = str(record.ext or "")
+        # Compare the producer's original declaration after I/O, not our normalized
+        # representation. Include authority/revision so an in-flight handoff cannot
+        # make an older binary visible under a newer manifest.
+        expected = {field: getattr(record, field) for field in (
+            "url_hash", "url", "status", "content_hash", "size_bytes", "ext", "mime",
+            "sync_authority_id", "sync_authority_revision", "updated_at",
+        )}
+        ext = normalized_ext
         if ext and _SAFE_MEDIA_EXT.fullmatch(ext) is None:
             raise SyncV2Error("media extension is unsafe")
         root = media_root.resolve()
@@ -3002,21 +3007,21 @@ def install_media_bytes(
             temporary = target.with_suffix(target.suffix + ".part")
             temporary.write_bytes(body)
             temporary.replace(target)
+        session.rollback()
         if object_storage:
-            # Release the read transaction before network I/O and recheck the
-            # manifest identity on return, before making the resource visible.
-            expected = (record.content_hash, record.ext, record.size_bytes)
-            session.rollback()
-            object_storage.persist(target, expected[0], expected[1], expected[2], mime)
-            record = session.get(MediaAssetRecord, url_hash)
-            if record is None or (record.content_hash, record.ext, record.size_bytes) != expected:
-                raise SyncV2Error("media manifest changed during object upload")
-        record.status = "cached"
-        record.fetched_at = _now_iso()
+            object_storage.persist(target, expected["content_hash"], normalized_ext, expected["size_bytes"], mime)
+        # One conditional write combines the final identity check with publication;
+        # there is no gap between checking a row and committing different metadata.
+        result = session.exec(update(MediaAssetRecord).where(
+            *(getattr(MediaAssetRecord, field) == value for field, value in expected.items())
+        ).values(status="cached", mime=mime, ext=normalized_ext,
+                 fetched_at=_now_iso()).execution_options(synchronize_session=False))
+        if result.rowcount != 1:
+            raise SyncV2Error("media manifest changed during object upload")
         # Keep the producer revision in updated_at. Using the consumer clock here
         # would make a later producer update look older under clock skew.
-        session.add(record)
         session.commit()
+        record = session.get(MediaAssetRecord, url_hash)
         session.refresh(record)
         return record
 

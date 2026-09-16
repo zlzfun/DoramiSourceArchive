@@ -6,9 +6,10 @@ from starlette.concurrency import run_in_threadpool
 
 
 class StorageFileResponse(FileResponse):
-    def __init__(self, store, record, **kwargs):
+    def __init__(self, store, record, *, missing_response=None, **kwargs):
         self.store = store
         self.record = record
+        self.missing_response = missing_response
         super().__init__(store.file_path_for(record), **kwargs)
 
     async def __call__(self, scope, receive, send):
@@ -20,12 +21,22 @@ class StorageFileResponse(FileResponse):
         try:
             # A cache worker may have run after the route prepared this response.
             try:
-                await run_in_threadpool(self.store.readable_path, self.record)
+                path = await run_in_threadpool(self.store.readable_path, self.record)
             except ObjectStorageError:
                 return await JSONResponse(
                     {"detail": "媒体暂时不可用，请稍后重试"},
                     status_code=503, headers={"Retry-After": "30", "Cache-Control": "no-store"},
                 )(scope, receive, send)
+            # Legacy cached rows may have neither a registered remote object
+            # nor a local file. Authentication has already happened in the
+            # route; keep its missing-file contract instead of FileResponse's
+            # deferred RuntimeError. Cloud failures above remain retryable 503s.
+            if not await run_in_threadpool(path.is_file):
+                response = self.missing_response() if self.missing_response else JSONResponse(
+                    {"detail": "media file missing"}, status_code=404,
+                    headers={"Cache-Control": "no-store"},
+                )
+                return await response(scope, receive, send)
             # pathsend may outlive this call in the server; use Starlette's own
             # chunked file path while the lease is held, including Range/HEAD.
             scope = {**scope, "extensions": {key: value for key, value in scope.get("extensions", {}).items()

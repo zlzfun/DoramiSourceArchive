@@ -62,6 +62,7 @@ async def media_proxy(url: str = Query(..., description="原始图片 URL")):
     # 缓存按 URL 内容冻结（归档语义），可长缓存;url_hash 寻址天然免疫参数注入
     return StorageFileResponse(
         store, record,
+        missing_response=lambda: _redirect_to_origin(target),
         media_type=record.mime or "application/octet-stream",
         headers={
             "Cache-Control": "public, max-age=31536000, immutable",

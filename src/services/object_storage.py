@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import tempfile
 import threading
 
@@ -136,7 +137,9 @@ class ObjectStorage:
             try:
                 if path.is_file() and not path.is_symlink() and not path.name.endswith(".part"):
                     total += path.stat().st_size
-            except FileNotFoundError:
+            except OSError:
+                # Best-effort occupancy; maintenance records inaccessible
+                # candidates separately and still reclaims readable files.
                 pass
         return total
 
@@ -340,21 +343,42 @@ class ObjectStorage:
         total = self.local_bytes()
         with Session(self.engine) as session:
             rows = session.exec(select(ObjectBlobRecord).where(ObjectBlobRecord.namespace == self.namespace)).all()
-        candidates = []
-        for row in rows:
-            self.identity(row.content_hash, row.ext)
-            path = self.root / row.content_hash[:2] / f"{row.content_hash}{row.ext}"
+
+        def file_stat(path):
             try:
-                if not path.is_symlink():
-                    candidates.append((path.stat().st_mtime, row, path))
+                value = path.lstat()
             except FileNotFoundError:
-                continue
+                return None
+            if not stat.S_ISREG(value.st_mode) or not path.resolve().is_relative_to(self.root):
+                return None
+            return value
+
+        def unchanged(before, after):
+            return before is not None and after is not None and (
+                before.st_ino, before.st_mtime_ns, before.st_size
+            ) == (after.st_ino, after.st_mtime_ns, after.st_size)
+
+        candidates = []
         last_error = None
-        for touched, row, path in sorted(candidates, key=lambda value: value[0]):
-            if total <= limit:
-                break
-            if time.time() - touched < self.config.cache_min_age_seconds:
-                result["skipped"] += 1
+        for row in rows:
+            try:
+                self.identity(row.content_hash, row.ext)
+                path = self.root / row.content_hash[:2] / f"{row.content_hash}{row.ext}"
+                # A non-media suffix keeps diagnostic copies out of Podcast's
+                # blob quota and orphan GC, while local_bytes still counts them.
+                quarantine = path.with_name(path.name + ".corrupt")
+                before, quarantined = file_stat(path), file_stat(quarantine)
+                existing = [value for value in (before, quarantined) if value is not None]
+                if existing:
+                    candidates.append((min(value.st_mtime for value in existing), row, path, quarantine,
+                                       quarantined is not None))
+            except OSError:
+                last_error = "object_storage_cache_failed"
+                continue
+        for _, row, path, quarantine, had_quarantine in sorted(candidates, key=lambda value: value[0]):
+            # Quarantine cleanup must also run below the target and when the
+            # canonical path is absent or freshly restored; otherwise it leaks.
+            if total <= limit and not had_quarantine:
                 continue
             try:
                 # Snapshot under a short exclusive lease, verify remotely with
@@ -363,29 +387,43 @@ class ObjectStorage:
                     if not acquired:
                         result["skipped"] += 1
                         continue
-                    if not path.is_file() or path.is_symlink() or not path.resolve().is_relative_to(self.root):
+                    before, quarantined = file_stat(path), file_stat(quarantine)
+                    evict = (total > limit and before is not None
+                             and time.time() - before.st_mtime >= self.config.cache_min_age_seconds)
+                    if evict and hash_file(path) != (row.content_hash, row.size_bytes):
+                        # Never upgrade a reader's shared lease. Only this EX
+                        # maintenance path isolates known-bad bytes, atomically
+                        # replacing at most one diagnostic copy per identity.
+                        os.replace(path, quarantine)
+                        last_error = "object_storage_local_checksum_mismatch"
+                        continue  # Renaming is not reclaimed space.
+                    if not evict and quarantined is None:
+                        if before is not None and total > limit:
+                            result["skipped"] += 1
                         continue
-                    before = path.stat()
-                    if time.time() - before.st_mtime < self.config.cache_min_age_seconds:
-                        continue
-                    if hash_file(path) != (row.content_hash, row.size_bytes):
-                        raise ObjectStorageError("object_storage_local_checksum_mismatch")
+            except OSError as exc:
+                last_error = str(exc) if isinstance(exc, ObjectStorageError) else "object_storage_cache_failed"
+                continue  # One unreadable local file must not pin the whole cache.
+            try:
                 self.verify_remote(row)
+            except OSError as exc:
+                last_error = str(exc) if isinstance(exc, ObjectStorageError) else "object_storage_cache_failed"
+                # Outages must not turn into a request storm over the entire cache.
+                break
+            try:
                 with self.pin(row.content_hash, exclusive=True, blocking=False) as acquired:
                     if not acquired:
                         result["skipped"] += 1
                         continue
-                    after = path.stat()
-                    if (before.st_ino, before.st_mtime_ns, before.st_size) != (after.st_ino, after.st_mtime_ns, after.st_size):
-                        continue
-                    path.unlink()
-                    total -= row.size_bytes
-                    result["evicted_files"] += 1
-                    result["evicted_bytes"] += row.size_bytes
-            except (ObjectStorageError, OSError) as exc:
+                    for candidate, snapshot in ((path, before if evict else None), (quarantine, quarantined)):
+                        if unchanged(snapshot, file_stat(candidate)):
+                            candidate.unlink()
+                            total -= snapshot.st_size
+                            result["evicted_files"] += 1
+                            result["evicted_bytes"] += snapshot.st_size
+            except OSError as exc:
                 last_error = str(exc) if isinstance(exc, ObjectStorageError) else "object_storage_cache_failed"
-                # Outages must not turn into a request storm over the entire cache.
-                break
+                continue
         self._state_update("cache", **result, last_run_at=self._now(), last_error=last_error)
         return result
 

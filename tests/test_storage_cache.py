@@ -224,3 +224,195 @@ def test_open_audio_descriptor_remains_readable_after_cache_eviction(monkeypatch
         assert not store.file_path_for(artifact).exists()
         assert handle.read() == WAV
     assert len(bucket.objects) == 1
+
+
+def _additional_cache_file(remote, body=b"newer healthy cached file"):
+    digest = hashlib.sha256(body).hexdigest()
+    path = remote.root / digest[:2] / f"{digest}.png"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(body)
+    remote.persist(path, digest, ".png", len(body), "image/png")
+    touched = time.time() - 300
+    os.utime(path, (touched, touched))
+    return path, body
+
+
+def test_corrupt_oldest_file_is_isolated_without_blocking_newer_eviction(cached_media):
+    remote, _, record, path, body, bucket = cached_media
+    newer, newer_body = _additional_cache_file(remote)
+    corrupt = b"x" * len(body)
+    path.write_bytes(corrupt)
+    touched = time.time() - 600
+    os.utime(path, (touched, touched))
+    quarantine = path.with_name(path.name + ".corrupt")
+
+    result = remote.evict_cache()
+    assert result == {"evicted_files": 1, "evicted_bytes": len(newer_body), "skipped": 0}
+    assert not path.exists() and not newer.exists()
+    assert quarantine.read_bytes() == corrupt
+    assert remote.local_bytes() == len(body)  # Renaming reclaimed no disk space.
+    assert remote.stats()["cache"]["last_error"] == "object_storage_local_checksum_mismatch"
+
+    bucket.unavailable = True
+    with pytest.raises(ObjectStorageError, match="download_failed"):
+        remote.materialize(path, record.content_hash, record.ext, len(body))
+    assert not path.exists() and quarantine.read_bytes() == corrupt
+    bucket.unavailable = False
+    assert remote.materialize(path, record.content_hash, record.ext, len(body)).read_bytes() == body
+
+    # Recovery makes the canonical file hot and brings the cache under target;
+    # neither condition may indefinitely retain the diagnostic duplicate.
+    remote.config = replace(remote.config, media_cache_max_mb=8, cache_min_age_seconds=3600)
+    assert remote.local_bytes() == 2 * len(body)
+    assert remote.evict_cache()["evicted_bytes"] == len(body)
+    assert not quarantine.exists() and path.read_bytes() == body
+    assert remote.local_bytes() == len(body)
+    assert remote.stats()["cache"]["last_error"] is None
+
+
+def test_quarantine_only_cleanup_requires_full_remote_verification(cached_media):
+    remote, _, record, path, body, bucket = cached_media
+    quarantine = path.with_name(path.name + ".corrupt")
+    path.write_bytes(b"x" * len(body))
+    assert remote.evict_cache()["evicted_files"] == 0
+    remote.config = replace(remote.config, media_cache_max_mb=8)
+    location = remote.location(record.content_hash, record.ext)
+    original = bucket.objects[location.object_key]
+    # Matching HEAD metadata is insufficient to discard the diagnostic copy.
+    bucket.objects[location.object_key] = (b"y" * len(body), original[1])
+    assert remote.evict_cache()["evicted_files"] == 0
+    assert quarantine.exists() and not path.exists()
+    bucket.objects[location.object_key] = original
+    assert remote.evict_cache()["evicted_bytes"] == len(body)
+    assert not quarantine.exists() and remote.local_bytes() == 0
+    assert remote.materialize(path, record.content_hash, record.ext, len(body)).read_bytes() == body
+
+
+def test_quarantine_uses_one_non_media_name_and_respects_busy_readers(cached_media):
+    remote, _, record, path, body, bucket = cached_media
+    quarantine = path.with_name(path.name + ".corrupt")
+    quarantine.write_bytes(b"older diagnostic copy")
+    path.write_bytes(b"x" * len(body))
+    with remote.pin(record.content_hash):
+        assert remote.evict_cache()["evicted_files"] == 0
+        assert path.exists() and quarantine.read_bytes() == b"older diagnostic copy"
+        assert bucket.reads == 0
+    assert remote.evict_cache()["evicted_files"] == 0
+    assert not path.exists() and quarantine.read_bytes() == b"x" * len(body)
+    assert list(path.parent.glob("*.corrupt")) == [quarantine]
+    assert remote.local_bytes() == len(body)
+    with remote.pin(record.content_hash):
+        assert remote.evict_cache()["evicted_files"] == 0
+        assert quarantine.exists() and bucket.reads == 0
+    assert remote.evict_cache()["evicted_files"] == 1
+
+
+def test_reader_arriving_during_remote_verification_defers_quarantine_cleanup(monkeypatch, cached_media):
+    remote, _, record, path, body, _ = cached_media
+    path.write_bytes(b"x" * len(body))
+    assert remote.evict_cache()["evicted_files"] == 0
+    quarantine = path.with_name(path.name + ".corrupt")
+    original = remote.verify_remote
+    lease = remote.pin(record.content_hash)
+
+    def verify_with_reader(row):
+        original(row)
+        lease.__enter__()
+
+    monkeypatch.setattr(remote, "verify_remote", verify_with_reader)
+    try:
+        assert remote.evict_cache() == {"evicted_files": 0, "evicted_bytes": 0, "skipped": 1}
+        assert quarantine.exists()
+    finally:
+        lease.__exit__(None, None, None)
+    monkeypatch.setattr(remote, "verify_remote", original)
+    assert remote.evict_cache()["evicted_files"] == 1
+
+
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+def test_quarantined_bytes_are_never_served_when_remote_is_unavailable(cached_media, method):
+    remote, store, record, path, body, bucket = cached_media
+    path.write_bytes(b"x" * len(body))
+    assert remote.evict_cache()["evicted_files"] == 0
+    bucket.unavailable = True
+    messages = []
+
+    async def send(message):
+        messages.append(message)
+
+    asyncio.run(StorageFileResponse(store, record, media_type=record.mime)(_scope(method), _receive, send))
+    assert messages[0]["status"] == 503
+    assert dict(messages[0]["headers"])[b"cache-control"] == b"no-store"
+    assert not path.exists()
+    assert path.with_name(path.name + ".corrupt").read_bytes() == b"x" * len(body)
+    with remote.pin(record.content_hash, exclusive=True, blocking=False) as acquired:
+        assert acquired
+
+
+@pytest.mark.parametrize("failure_phase", ["stat", "hash", "unlink"])
+def test_local_candidate_errors_do_not_stop_other_files(monkeypatch, cached_media, failure_phase):
+    import services.object_storage as object_module
+
+    remote, _, _, path, body, _ = cached_media
+    newer, newer_body = _additional_cache_file(remote)
+    touched = time.time() - 600
+    os.utime(path, (touched, touched))
+    if failure_phase == "hash":
+        owner, name = object_module, "hash_file"
+    else:
+        owner, name = Path, "lstat" if failure_phase == "stat" else "unlink"
+    original = getattr(owner, name)
+
+    def unreadable(candidate, *args, **kwargs):
+        if candidate == path:
+            raise PermissionError("local diagnostic details must not escape")
+        return original(candidate, *args, **kwargs)
+
+    monkeypatch.setattr(owner, name, unreadable)
+    assert remote.evict_cache()["evicted_bytes"] == len(newer_body)
+    assert path.read_bytes() == body and not newer.exists()
+    assert remote.stats()["cache"]["last_error"] == "object_storage_cache_failed"
+
+
+def test_remote_failure_still_stops_the_round_without_fanout(monkeypatch, cached_media):
+    remote, _, _, path, _, bucket = cached_media
+    newer, _ = _additional_cache_file(remote)
+    calls = []
+    original = remote.verify_remote
+
+    def verify(record):
+        calls.append(record.id)
+        return original(record)
+
+    monkeypatch.setattr(remote, "verify_remote", verify)
+    bucket.unavailable = True
+    assert remote.evict_cache()["evicted_files"] == 0
+    assert len(calls) == 1
+    assert path.exists() and newer.exists()
+
+
+def test_podcast_quarantine_does_not_change_quota_or_get_orphan_collected(monkeypatch, tmp_path):
+    from tests.test_podcast_artifacts import WAV, _setup_app
+
+    _, sink, store = _setup_app(monkeypatch, tmp_path)
+    bucket = FakeBucket()
+    remote = ObjectStorage(sink.engine, store.root, "podcast", replace(
+        oss_config(), podcast_cache_max_mb=0, cache_min_age_seconds=0,
+    ), bucket_factory=lambda _: bucket)
+    store.object_storage = remote
+    artifact = store.import_bytes(
+        episode_id="episode-1", kind="digest_audio_zh", data=WAV, declared_mime="audio/wav",
+        provenance="premium_guide_tts", authority_id="", narration_artifact_id="script-episode-1",
+        narration_content_hash=hashlib.sha256("episode-1 的中文口播稿。".encode()).hexdigest(),
+    )
+    path = store.file_path_for(artifact)
+    before = store._durable_blob_bytes()
+    path.write_bytes(b"x" * len(WAV))
+    assert remote.evict_cache()["evicted_files"] == 0
+    quarantine = path.with_name(path.name + ".corrupt")
+    assert quarantine.exists() and not path.exists()
+    assert store._blob_files() == []
+    assert store._durable_blob_bytes() == before == len(WAV)
+    assert remote.local_bytes() == len(WAV)
+    assert store.reconcile_storage()["deleted_orphan_blobs"] == 0
+    assert quarantine.exists()
