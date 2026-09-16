@@ -1,0 +1,684 @@
+"""自动部署脚本的进程级测试(issue #102,方案 §5 第 2 项)。
+
+对象:仓库外 launcher(docker/dorami-deploy.example)与 worker(docker/dorami-deploy-worker.example)、
+scripts/deploy-lib.sh 的协议 / 锁 / expected sha、deploy-docker.sh 的七步流程、scripts/verify-release-ref.sh。
+手法:真 git(临时 bare origin + clone)、假 docker / curl / df 放临时 PATH、目标脚本用桩(worker 状态机测试)或真脚本
+(deploy-docker.sh 测试)。不碰真实 docker / 网络。
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import sqlite3
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+LAUNCHER = ROOT / "docker" / "dorami-deploy.example"
+WORKER = ROOT / "docker" / "dorami-deploy-worker.example"
+VERIFY_REF = ROOT / "scripts" / "verify-release-ref.sh"
+OLD_SCRIPTS_COMMIT = "8996f82"  # 本波之前的 deploy-docker.sh / deploy-lib.sh(自举测试用)
+
+pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="需要 git")
+
+FAKE_DOCKER = r'''#!/usr/bin/env python3
+import os, sys
+d = os.environ["FAKE_DOCKER_DIR"]
+args = sys.argv[1:]
+def rd(name, default=""):
+    p = os.path.join(d, name)
+    return open(p).read() if os.path.exists(p) else default
+def rc(name):
+    return int((rd(name, "0").strip() or "0"))
+extra = ""
+if args[:2] == ["compose", "up"]:
+    mark = os.environ.get("DORAMI_DEPLOY_SWITCH_MARK", "")
+    extra = " switch_mark_present=" + ("1" if mark and os.path.exists(mark) else "0")
+with open(os.path.join(d, "calls.log"), "a") as f:
+    f.write(" ".join(args) + extra + "\n")
+if args[:2] == ["compose", "version"]:
+    sys.exit(0)
+if args[:1] == ["info"]:
+    print(rd("docker_root", "/var/lib/docker").strip() or "/var/lib/docker"); sys.exit(0)
+if args[:2] == ["compose", "config"]:
+    code = rc("config_rc")
+    if code:
+        sys.stderr.write("required variable DORAMI_PODCAST_AUTHORITY_ID is missing a value: set a stable id\n")
+    sys.exit(code)
+if args[:2] == ["compose", "build"]:
+    sys.exit(rc("build_rc"))
+if args[:2] == ["compose", "run"]:
+    mode = args[-1]
+    if mode == "--check-config":
+        sys.stdout.write(rd("check.json", '{"status": "ok", "errors": [], "warnings": []}')); sys.exit(0)
+    if mode == "--plan-migrations":
+        sys.stdout.write(rd("plan.json", '{"status": "compatible", "pending": [], "pending_count": 0}')); sys.exit(0)
+    sys.exit(1)
+if args[:2] == ["compose", "up"]:
+    sys.exit(rc("up_rc"))
+if args[:2] == ["compose", "ps"]:
+    if "-a" in args:
+        sys.stdout.write(rd("ps_all")); sys.exit(0)
+    if "-q" in args:
+        sys.stdout.write(rd("ps_" + args[-1])); sys.exit(0)
+    print("NAME STATUS"); sys.exit(0)
+if args[:2] == ["compose", "logs"]:
+    print("(fake logs)"); sys.exit(0)
+if args[:1] == ["inspect"]:
+    cid = args[-1]
+    fmt = " ".join(args)
+    if "Config.Env" in fmt:
+        sys.stdout.write(rd("env_of_" + cid)); sys.exit(0)
+    sys.stdout.write(rd("image_of_" + cid).strip() + "\n"); sys.exit(0)
+if args[:1] == ["tag"]:
+    with open(os.path.join(d, "images"), "a") as f:
+        f.write(args[2] + "\n")
+    sys.exit(0)
+if args[:2] == ["image", "ls"]:
+    sys.stdout.write(rd("images")); sys.exit(0)
+if args[:1] == ["rmi"]:
+    lines = [l for l in rd("images").splitlines() if l and l != args[1]]
+    open(os.path.join(d, "images"), "w").write("".join(l + "\n" for l in lines))
+    sys.exit(0)
+if args[:2] == ["image", "prune"]:
+    sys.exit(0)
+sys.stderr.write("fake docker: unhandled " + " ".join(args) + "\n")
+sys.exit(1)
+'''
+
+FAKE_CURL = r'''#!/usr/bin/env python3
+import os, sys
+p = os.environ.get("FAKE_HEALTH_FILE", "")
+if p and os.path.exists(p):
+    sys.stdout.write(open(p).read()); sys.exit(0)
+sys.exit(7)
+'''
+
+FAKE_DF = r'''#!/usr/bin/env python3
+import os, sys
+avail = os.environ.get("FAKE_DF_AVAIL_KB", str(100 * 1024 * 1024))
+if "-Pi" in sys.argv:
+    print("Filesystem Inodes IUsed IFree IUse% Mounted on"); print("fakefs 1000000 1000 999000 1% /")
+else:
+    print("Filesystem 1024-blocks Used Available Capacity Mounted on"); print(f"fakefs 1000000000 1000 {avail} 1% /")
+'''
+
+STUB_DEPLOY = r'''#!/bin/bash
+# 桩:记录 worker 传来的环境,按 STUB_* 决定行为
+echo "STUB: origin=${DORAMI_DEPLOY_ORIGIN:-} expected=${DORAMI_EXPECTED_SHA:-} fresh_ok=${DORAMI_DEPLOY_FRESH_OK:-} lock_fd=${DORAMI_DEPLOY_LOCK_FD:-} tag=$1"
+if [ -n "${STUB_ENV_OUT:-}" ]; then env | grep '^DORAMI_' | sort > "$STUB_ENV_OUT"; fi
+[ -n "${DORAMI_DEPLOY_LOCK_FD:-}" ] && [ -e "/dev/fd/${DORAMI_DEPLOY_LOCK_FD}" ] && echo "STUB: lock fd inherited"
+[ -n "${STUB_SLEEP:-}" ] && sleep "$STUB_SLEEP"
+[ "${STUB_SWITCH:-0}" = 1 ] && touch "$DORAMI_DEPLOY_SWITCH_MARK"
+echo "DORAMI_DEPLOY_META stub=1"
+exit "${STUB_RC:-0}"
+'''
+
+
+# ── git 工具 ──
+def _git_env(home: Path) -> dict:
+    env = dict(os.environ)
+    env.update({
+        "HOME": str(home),
+        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com",
+        "GIT_CONFIG_NOSYSTEM": "1",
+    })
+    return env
+
+
+def git(cwd: Path, *args: str, env: dict, check: bool = True) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", *args], cwd=str(cwd), env=env, check=check, capture_output=True, text=True)
+
+
+class Repo:
+    """临时 bare origin + 工作克隆(模拟生产机上的 git clone)。"""
+
+    def __init__(self, tmp_path: Path):
+        self.home = tmp_path / "home"; self.home.mkdir()
+        self.env = _git_env(self.home)
+        self.origin = tmp_path / "origin.git"
+        self.work = tmp_path / "work"
+        git(tmp_path, "init", "--bare", "-b", "main", str(self.origin), env=self.env)
+        git(tmp_path, "init", "-b", "main", str(self.work), env=self.env)
+        git(self.work, "remote", "add", "origin", str(self.origin), env=self.env)
+        self.clone: Path | None = None
+
+    def commit(self, files: dict[str, str], tag: str | None = None, message: str = "c", branch: str | None = None) -> str:
+        for item in self.work.iterdir():
+            if item.name == ".git":
+                continue
+            shutil.rmtree(item) if item.is_dir() else item.unlink()
+        for rel, content in files.items():
+            p = self.work / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content, encoding="utf-8")
+            if rel.endswith(".sh"):
+                p.chmod(0o755)
+        git(self.work, "add", "-A", env=self.env)
+        git(self.work, "commit", "-qm", message, env=self.env)
+        sha = git(self.work, "rev-parse", "HEAD", env=self.env).stdout.strip()
+        if tag:
+            git(self.work, "tag", "-a", tag, "-m", tag, env=self.env)
+        git(self.work, "push", "-q", "origin", branch or "main", "--tags", env=self.env)
+        return sha
+
+    def make_clone(self, tmp_path: Path, checkout: str | None = None) -> Path:
+        self.clone = tmp_path / "repo"
+        git(tmp_path, "clone", "-q", str(self.origin), str(self.clone), env=self.env)
+        if checkout:
+            git(self.clone, "checkout", "-q", "--detach", checkout, env=self.env)
+        return self.clone
+
+    def sha_of(self, ref: str) -> str:
+        return git(self.work, "rev-parse", f"{ref}^{{commit}}", env=self.env).stdout.strip()
+
+
+def worker_repo_files(version: str, *, protocol: bool = True, migrations=("0001",)) -> dict[str, str]:
+    files = {
+        "src/version.py": f'__version__ = "{version}"\n',
+        "config/production.ini": "[storage]\ndatabase_url = sqlite:///data/cms_data.db\n",
+        "deploy-docker.sh": STUB_DEPLOY,
+        "scripts/deploy-lib.sh": "# lib\nDORAMI_DEPLOY_PROTOCOL=1\n" if protocol else "# lib without protocol\n",
+    }
+    for m in migrations:
+        files[f"alembic/versions/{m}_m.py"] = f'revision = "{m}"\n'
+    return files
+
+
+# ── 环境搭建 ──
+class Env:
+    def __init__(self, tmp_path: Path, repo: Repo, *, keep: int = 2):
+        self.tmp = tmp_path
+        self.repo = repo
+        self.fakebin = tmp_path / "fakebin"; self.fakebin.mkdir()
+        for name, body in (("docker", FAKE_DOCKER), ("curl", FAKE_CURL), ("df", FAKE_DF)):
+            p = self.fakebin / name; p.write_text(body); p.chmod(0o755)
+        self.fake = tmp_path / "fake"; self.fake.mkdir()
+        self.state = tmp_path / "state"
+        self.logs = tmp_path / "logs"
+        self.lock = tmp_path / "deploy.lock"
+        self.conf = tmp_path / "deploy.conf"
+        path = f"{self.fakebin}:{Path(sys.executable).parent}:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"
+        self.conf.write_text(
+            f"REPO_DIR={repo.clone}\nSTATE_DIR={self.state}\nLOG_DIR={self.logs}\nLOCK_FILE={self.lock}\n"
+            f"DEPLOY_WORKER={WORKER}\nDEPLOY_PATH={path}\nDORAMI_DEPLOY_MIN_FREE_GB=1\n"
+            f"DORAMI_DEPLOY_BACKUP_KEEP={keep}\nDORAMI_HTTP_LISTEN=127.0.0.1:8080\n",
+            encoding="utf-8",
+        )
+        self.path = path
+
+    def base_env(self, **extra: str) -> dict:
+        env = dict(os.environ)
+        env.update({
+            "DORAMI_DEPLOY_CONF": str(self.conf), "FAKE_DOCKER_DIR": str(self.fake),
+            "PATH": self.path, "HOME": str(self.repo.home),
+        })
+        for k in list(env):
+            if k.startswith("STUB_") or k.startswith("DORAMI_DEPLOY_"):
+                if k not in ("DORAMI_DEPLOY_CONF",):
+                    env.pop(k)
+        env.update(extra)
+        return env
+
+    def fake_write(self, name: str, content: str) -> None:
+        (self.fake / name).write_text(content)
+
+    def running_container(self, base_sha: str, base_ref: str, image: str = "sha256:backendimg1") -> None:
+        self.fake_write("ps_backend", "cid-backend\n")
+        self.fake_write("ps_nginx", "cid-nginx\n")
+        self.fake_write("ps_all", "cid-backend\ncid-nginx\n")
+        self.fake_write("image_of_cid-backend", image + "\n")
+        self.fake_write("image_of_cid-nginx", "sha256:nginximg1\n")
+        self.fake_write("env_of_cid-backend", f"DORAMI_BUILD_SHA={base_sha}\nDORAMI_BUILD_REF={base_ref}\nOTHER=1\n")
+
+    def create_db(self) -> Path:
+        db = self.repo.clone / "data" / "cms_data.db"
+        db.parent.mkdir(exist_ok=True)
+        con = sqlite3.connect(db); con.execute("CREATE TABLE IF NOT EXISTS articles (id INTEGER PRIMARY KEY)"); con.commit(); con.close()
+        return db
+
+    def cmd(self, tag: str, downgrade: int = 0, redeploy: int = 0) -> str:
+        return f"{tag} {self.repo.sha_of(tag)} downgrade={downgrade} redeploy={redeploy}"
+
+    def launch(self, cmd: str, timeout: int = 90, **extra: str) -> subprocess.CompletedProcess:
+        return subprocess.run([str(LAUNCHER), cmd], env=self.base_env(**extra), capture_output=True, text=True, timeout=timeout)
+
+    def state_json(self, name: str) -> dict | None:
+        p = self.state / name
+        return json.loads(p.read_text()) if p.exists() else None
+
+    def calls(self) -> list[str]:
+        p = self.fake / "calls.log"
+        return p.read_text().splitlines() if p.exists() else []
+
+    def worker_log(self, tag: str, sha: str | None = None) -> str:
+        sha = sha or self.repo.sha_of(tag)
+        p = self.logs / f"{tag}-{sha[:7]}.log"
+        return p.read_text() if p.exists() else ""
+
+
+@pytest.fixture
+def env(tmp_path: Path) -> Env:
+    repo = Repo(tmp_path)
+    repo.commit(worker_repo_files("1.0.0", protocol=False), tag="v1.0.0")
+    repo.commit(worker_repo_files("1.1.0"), tag="v1.1.0")
+    repo.commit(worker_repo_files("1.2.0", migrations=("0001", "0002")), tag="v1.2.0")
+    repo.make_clone(tmp_path)
+    e = Env(tmp_path, repo)
+    e.running_container(repo.sha_of("v1.0.0"), "v1.0.0")
+    e.create_db()
+    return e
+
+
+# ══════════════ launcher / worker 状态机 ══════════════
+
+def test_launcher_rejects_malformed_commands(env: Env):
+    for bad in ("v1.1.0", "v1.1.0 deadbeef downgrade=0 redeploy=0", f"{env.cmd('v1.1.0')} extra", env.cmd("v1.1.0").replace("downgrade=0", "downgrade=2")):
+        r = env.launch(bad)
+        assert r.returncode == 2, bad
+    assert not env.state.exists() or not (env.state / "state.json").exists()
+
+
+def test_happy_path_writes_transaction_last_success_and_rc(env: Env):
+    r = env.launch(env.cmd("v1.1.0"), STUB_SWITCH="1")
+    assert r.returncode == 0, r.stdout + r.stderr
+    state = env.state_json("state.json")
+    assert state["phase"] == "complete" and state["rc"] == 0
+    rc_file = env.state / f"v1.1.0-{env.repo.sha_of('v1.1.0')[:7]}.rc"
+    assert rc_file.read_text().strip() == "0"
+    assert env.state_json("in-progress.json") is None
+    ls = env.state_json("last-success.json")
+    assert ls["target"] == {"tag": "v1.1.0", "sha": env.repo.sha_of("v1.1.0")}
+    assert ls["prev"]["sha"] == env.repo.sha_of("v1.0.0") and ls["prev"]["ref"] == "v1.0.0"
+    assert ls["prev"]["backend_image_id"] == "sha256:backendimg1"
+    assert len(ls["prev"]["managed_tags"]) == 2 and all(t.startswith("dorami-") and "-managed:" in t for t in ls["prev"]["managed_tags"])
+    assert Path(ls["prev"]["db_backup"]).exists() and Path(ls["prev"]["db_backup"]).stat().st_size > 0
+    assert ls["txn_id"] and ls["deployed_at"] and ls["switched_at"]
+    log = env.worker_log("v1.1.0")
+    assert "STUB: origin=pipeline expected=" + env.repo.sha_of("v1.1.0") in log
+    assert "lock fd inherited" in log
+    assert "方向 forward" in log
+    calls = env.calls()
+    assert any(c.startswith("tag sha256:backendimg1 dorami-backend-managed:v1.0.0-") for c in calls)
+    assert "tag sha256:backendimg1 dorami-backend-rollback:auto" in calls
+    assert "DORAMI_DEPLOY_META target_tag=v1.1.0" in r.stdout
+
+
+def test_replay_then_force_redeploy(env: Env):
+    assert env.launch(env.cmd("v1.1.0")).returncode == 0
+    (env.fake / "calls.log").unlink()
+    r = env.launch(env.cmd("v1.1.0"))
+    assert r.returncode == 0
+    assert "回放成功" in r.stdout and "STUB:" not in env.worker_log("v1.1.0").split("回放成功")[-1]
+    assert not any(c.startswith("compose ps -q") for c in env.calls()), "回放不得采样容器"
+    r = env.launch(env.cmd("v1.1.0", redeploy=1))
+    assert r.returncode == 0
+    assert "redeploy=1" in r.stdout
+    assert any(c.startswith("tag ") for c in env.calls()), "强制重部署要重新走事务"
+
+
+def test_launcher_killed_worker_continues_and_second_launcher_attaches(env: Env):
+    first = subprocess.Popen([str(LAUNCHER), env.cmd("v1.1.0")], env=env.base_env(STUB_SLEEP="6"),
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    time.sleep(2.5)
+    second = subprocess.Popen([str(LAUNCHER), env.cmd("v1.1.0")], env=env.base_env(STUB_SLEEP="6"),
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    time.sleep(1)
+    first.kill(); first.wait()
+    out, err = second.communicate(timeout=60)
+    assert second.returncode == 0, out + err
+    assert "attach 已有日志" in out
+    assert env.state_json("state.json")["phase"] == "complete"
+    assert env.state_json("last-success.json")["target"]["tag"] == "v1.1.0"
+    assert (env.state / f"v1.1.0-{env.repo.sha_of('v1.1.0')[:7]}.rc").read_text().strip() == "0"
+
+
+def test_other_target_while_running_is_rejected(env: Env):
+    first = subprocess.Popen([str(LAUNCHER), env.cmd("v1.1.0")], env=env.base_env(STUB_SLEEP="5"),
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    time.sleep(2.5)
+    r = env.launch(env.cmd("v1.2.0"))
+    assert r.returncode == 3, r.stdout + r.stderr
+    assert "另一部署正在进行: v1.1.0" in r.stderr
+    out, _ = first.communicate(timeout=60)
+    assert first.returncode == 0
+
+
+def test_child_failure_keeps_transaction_and_retry_reuses_original_prev(env: Env):
+    r = env.launch(env.cmd("v1.1.0"), STUB_RC="7", STUB_SWITCH="1")
+    assert r.returncode == 7
+    ip = env.state_json("in-progress.json")
+    assert ip is not None and ip["target"]["tag"] == "v1.1.0" and ip["switched_at"]
+    assert env.state_json("last-success.json") is None
+    original_backup = ip["prev"]["db_backup"]
+    # 失败后容器已是新版本:再采样会得到不同镜像;重试必须复用原 prev
+    env.fake_write("image_of_cid-backend", "sha256:backendimg-AFTER-FAILURE\n")
+    r = env.launch(env.cmd("v1.1.0"))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "复用未收口事务" in env.worker_log("v1.1.0")
+    ls = env.state_json("last-success.json")
+    assert ls["txn_id"] == ip["txn_id"]
+    assert ls["prev"]["backend_image_id"] == "sha256:backendimg1"
+    assert ls["prev"]["db_backup"] == original_backup
+    assert env.state_json("in-progress.json") is None
+
+
+def test_unswitched_transaction_is_auto_closed_but_switched_one_blocks_other_target(env: Env):
+    # 未切换(up 前失败)→ 别的目标自动关闭它
+    assert env.launch(env.cmd("v1.1.0"), STUB_RC="9").returncode == 9
+    txn1 = env.state_json("in-progress.json")["txn_id"]
+    r = env.launch(env.cmd("v1.2.0"))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (env.state / f"closed-{txn1}.json").exists()
+    assert "自动关闭事务" in env.worker_log("v1.2.0")
+    # 已切换 → 别的目标 fail closed(20),--close-in-progress 后放行
+    (env.state / "last-success.json").unlink()
+    assert env.launch(env.cmd("v1.1.0", downgrade=1), STUB_RC="9", STUB_SWITCH="1").returncode == 9
+    r = env.launch(env.cmd("v1.2.0"))
+    assert r.returncode == 20, r.stdout + r.stderr
+    close = subprocess.run([str(WORKER), "--close-in-progress"], env=env.base_env(), capture_output=True, text=True)
+    assert close.returncode == 0, close.stdout + close.stderr
+    assert env.state_json("in-progress.json") is None
+    assert env.launch(env.cmd("v1.2.0")).returncode == 0
+
+
+def test_monotonic_guard_blocks_downgrade_unless_flagged_and_allows_deleted_migrations(env: Env):
+    assert env.launch(env.cmd("v1.2.0")).returncode == 0
+    r = env.launch(env.cmd("v1.1.0"))
+    assert r.returncode == 21, r.stdout + r.stderr
+    assert "方向 downgrade" in env.worker_log("v1.1.0")
+    r = env.launch(env.cmd("v1.1.0", downgrade=1))
+    assert r.returncode == 0, r.stdout + r.stderr
+    log = env.worker_log("v1.1.0")
+    assert "downgrade=1:人为确认放行" in log and "D=1 为预期" in log
+
+
+def test_forward_deploy_with_deleted_migration_file_fails_closed(env: Env):
+    env.repo.commit(worker_repo_files("1.3.0", migrations=("0001",)), tag="v1.3.0")  # 删掉了 0002
+    assert env.launch(env.cmd("v1.2.0")).returncode == 0
+    r = env.launch(env.cmd("v1.3.0"))
+    assert r.returncode == 22, r.stdout + r.stderr
+    assert "迁移历史被篡改" in env.worker_log("v1.3.0")
+
+
+def test_target_without_protocol_is_rejected(env: Env):
+    r = env.launch(env.cmd("v1.0.0", downgrade=1))
+    assert r.returncode == 11, r.stdout + r.stderr
+    assert "未宣告 DORAMI_DEPLOY_PROTOCOL" in env.worker_log("v1.0.0")
+
+
+def test_ref_verification_fails_closed(env: Env, tmp_path: Path):
+    wrong = env.cmd("v1.1.0").replace(env.repo.sha_of("v1.1.0"), env.repo.sha_of("v1.2.0"))
+    r = env.launch(wrong)
+    assert r.returncode == 10, r.stdout + r.stderr
+    assert "不一致" in env.worker_log("v1.1.0", env.repo.sha_of("v1.2.0"))  # 日志按命令里的 sha 命名
+    # origin 消失 → fetch 失败即停,不回落到本地 tag
+    shutil.rmtree(env.repo.origin)
+    r = env.launch(env.cmd("v1.1.0"))
+    assert r.returncode == 10
+    assert "git fetch --tags origin 失败" in env.worker_log("v1.1.0")
+
+
+def test_first_install_gate_token_flow(tmp_path: Path):
+    repo = Repo(tmp_path)
+    repo.commit(worker_repo_files("1.1.0"), tag="v1.1.0")
+    repo.make_clone(tmp_path)
+    e = Env(tmp_path, repo)  # 无容器、无备份、无库、无 last-success
+    e.state.mkdir()
+    out = tmp_path / "stub-env.txt"
+    # 无令牌:FRESH_OK=0,方向 unknown 需 downgrade=1 才放行
+    r = e.launch(e.cmd("v1.1.0", downgrade=1), STUB_ENV_OUT=str(out))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "DORAMI_DEPLOY_FRESH_OK=0" in out.read_text()
+    (e.state / "last-success.json").unlink()
+    # 有令牌:FRESH_OK=1,令牌被消费;失败后重试仍沿用事务内授权
+    token = e.state / "first-install.token"; token.write_text("first\n")
+    r = e.launch(e.cmd("v1.1.0", downgrade=1), STUB_ENV_OUT=str(out), STUB_RC="5")
+    assert r.returncode == 5
+    assert "DORAMI_DEPLOY_FRESH_OK=1" in out.read_text()
+    assert not token.exists(), "令牌应在事务落盘后立即消费"
+    assert e.state_json("in-progress.json")["fresh_authorized"] is True
+    r = e.launch(e.cmd("v1.1.0", downgrade=1), STUB_ENV_OUT=str(out))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "DORAMI_DEPLOY_FRESH_OK=1" in out.read_text()
+    assert "沿用事务内 fresh_authorized=1" in e.worker_log("v1.1.0")
+
+
+def test_evidence_blocks_first_install_even_with_token(env: Env):
+    token = env.state / "first-install.token"; env.state.mkdir(exist_ok=True); token.write_text("x")
+    out = env.tmp / "stub-env.txt"
+    r = env.launch(env.cmd("v1.1.0"), STUB_ENV_OUT=str(out))
+    assert r.returncode == 0
+    assert "DORAMI_DEPLOY_FRESH_OK=0" in out.read_text()
+    assert token.exists(), "有证据时令牌不消费"
+    assert "有部署证据" in env.worker_log("v1.1.0")
+
+
+def test_crash_window_same_txn_is_reconciled_idempotently(env: Env):
+    assert env.launch(env.cmd("v1.1.0")).returncode == 0
+    ls = env.state_json("last-success.json")
+    stale = {k: v for k, v in ls.items() if k != "deployed_at"}
+    (env.state / "in-progress.json").write_text(json.dumps(stale))
+    r = env.launch(env.cmd("v1.2.0"))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "崩溃窗口" in env.worker_log("v1.2.0")
+    assert env.state_json("in-progress.json") is None
+
+
+def test_cleanup_keeps_referenced_backup_and_managed_tags(env: Env):
+    assert env.launch(env.cmd("v1.1.0")).returncode == 0
+    ls1 = env.state_json("last-success.json")
+    # 模拟部署后容器换成了新镜像
+    env.fake_write("image_of_cid-backend", "sha256:backendimg2\n"); env.fake_write("image_of_cid-nginx", "sha256:nginximg2\n")
+    assert env.launch(env.cmd("v1.2.0")).returncode == 0
+    ls2 = env.state_json("last-success.json")
+    images = (env.fake / "images").read_text().splitlines()
+    for t in ls2["prev"]["managed_tags"]:
+        assert t in images
+    for t in ls1["prev"]["managed_tags"]:
+        assert t not in images, "不被 last-success 引用的旧 managed tag 应被清理"
+    backups = sorted((env.repo.clone / "backups").glob("cms_data.db.*"))
+    assert Path(ls2["prev"]["db_backup"]) in backups
+    assert len(backups) <= 2 + 1  # keep=2 + 被引用的那份不计数
+
+
+# ══════════════ deploy-docker.sh(真脚本 + 假 docker / curl / df)══════════════
+
+def _real_repo_files(version: str, *, old: bool = False, worktree: Path = ROOT) -> dict[str, str]:
+    if old:
+        env = _git_env(worktree)
+        lib = git(worktree, "show", f"{OLD_SCRIPTS_COMMIT}:scripts/deploy-lib.sh", env=dict(os.environ)).stdout
+        dd = git(worktree, "show", f"{OLD_SCRIPTS_COMMIT}:deploy-docker.sh", env=dict(os.environ)).stdout
+    else:
+        lib = (worktree / "scripts" / "deploy-lib.sh").read_text(encoding="utf-8")
+        dd = (worktree / "deploy-docker.sh").read_text(encoding="utf-8")
+    return {
+        "src/version.py": f'__version__ = "{version}"\n',
+        "config/production.ini": "[storage]\ndatabase_url = sqlite:///data/cms_data.db\n",
+        "docker-compose.yml": "services: {}\n",
+        "deploy-docker.sh": dd,
+        "scripts/deploy-lib.sh": lib,
+        "alembic/versions/0001_m.py": 'revision = "0001"\n',
+    }
+
+
+@pytest.fixture
+def real(tmp_path: Path) -> Env:
+    repo = Repo(tmp_path)
+    repo.commit(_real_repo_files("9.9.8", old=True), tag="v9.9.8")
+    repo.commit(_real_repo_files("9.9.9"), tag="v9.9.9")
+    repo.make_clone(tmp_path)
+    e = Env(tmp_path, repo)
+    e.create_db()
+    e.running_container(repo.sha_of("v9.9.8"), "v9.9.8")
+    return e
+
+
+def _health(e: Env, tag: str) -> Path:
+    body = {"status": "ok", "version": tag[1:], "build": {"ref": tag, "sha": e.repo.sha_of(tag), "source": "env"}}
+    p = e.fake / "health.json"; p.write_text(json.dumps(body)); return p
+
+
+def _run_deploy(e: Env, *args: str, timeout: int = 120, **extra: str) -> subprocess.CompletedProcess:
+    env = e.base_env(DORAMI_DEPLOY_LOCK_FILE=str(e.lock), DORAMI_DEPLOY_HEALTH_ATTEMPTS="2",
+                     FAKE_HEALTH_FILE=str(e.fake / "health.json"), DORAMI_HTTP_LISTEN="127.0.0.1:8080", **extra)
+    return subprocess.run(["./deploy-docker.sh", *args], cwd=str(e.repo.clone), env=env, capture_output=True, text=True, timeout=timeout)
+
+
+def test_deploy_docker_manual_happy_path_runs_steps_in_order(real: Env):
+    _health(real, "v9.9.9")
+    r = _run_deploy(real, "v9.9.9")
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = real.calls()
+    order = [c for c in calls if c.startswith(("compose config", "compose build", "compose run", "compose up"))]
+    assert order == [
+        "compose config -q", "compose build",
+        "compose run --rm --no-deps -T backend python docker/entrypoint.py --check-config",
+        "compose run --rm --no-deps -T backend python docker/entrypoint.py --plan-migrations",
+        "compose up -d --remove-orphans switch_mark_present=0",
+    ]
+    backups = list((real.repo.clone / "backups").glob("cms_data.db.*"))
+    assert len(backups) == 1, "手工来源做备份"
+    assert "DORAMI_DEPLOY_META origin=manual" in r.stdout and "DORAMI_DEPLOY_META health=ok" in r.stdout
+    assert "Deploy complete. 发布版 v9.9.9" in r.stdout
+
+
+# 像 worker 那样由 bash 打开 FD 9 持锁,再 exec 目标脚本(不在 pytest 进程里动 fd 9——那会撞上 pytest 自己的描述符)
+_AS_WORKER = (
+    "exec 9>>\"$1\"; python3 -c 'import fcntl,sys; fcntl.flock(9, fcntl.LOCK_EX|fcntl.LOCK_NB)' "
+    "|| { echo lock-busy >&2; exit 99; }; export DORAMI_DEPLOY_LOCK_FD=9; exec ./deploy-docker.sh \"$2\""
+)
+
+
+def _run_deploy_as_worker(e: Env, tag: str, **extra: str) -> subprocess.CompletedProcess:
+    env = e.base_env(DORAMI_DEPLOY_LOCK_FILE=str(e.lock), DORAMI_DEPLOY_HEALTH_ATTEMPTS="2",
+                     FAKE_HEALTH_FILE=str(e.fake / "health.json"), DORAMI_DEPLOY_ORIGIN="pipeline", **extra)
+    return subprocess.run(["bash", "-c", _AS_WORKER, "_", str(e.lock), tag], cwd=str(e.repo.clone), env=env,
+                          capture_output=True, text=True, timeout=120)
+
+
+def test_deploy_docker_pipeline_origin_skips_backup_touches_switch_mark_and_checks_expected_sha(real: Env):
+    _health(real, "v9.9.9")
+    mark = real.tmp / "txn.switch"
+    r = _run_deploy_as_worker(real, "v9.9.9", DORAMI_EXPECTED_SHA=real.repo.sha_of("v9.9.9"), DORAMI_DEPLOY_SWITCH_MARK=str(mark))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not list((real.repo.clone / "backups").glob("cms_data.db.*")), "流水线来源不自做备份"
+    assert "DORAMI_DEPLOY_META db_backup=worker" in r.stdout
+    assert any(c.endswith("switch_mark_present=1") for c in real.calls())
+    # expected sha 不一致 → 构建之前失败
+    (real.fake / "calls.log").unlink()
+    r = _run_deploy_as_worker(real, "v9.9.9", DORAMI_EXPECTED_SHA=real.repo.sha_of("v9.9.8"), DORAMI_DEPLOY_SWITCH_MARK=str(mark))
+    assert r.returncode != 0 and "不一致" in r.stderr
+    assert not any(c.startswith("compose build") for c in real.calls())
+    # 流水线来源缺 expected sha 也拒绝
+    r = _run_deploy_as_worker(real, "v9.9.9", DORAMI_DEPLOY_SWITCH_MARK=str(mark))
+    assert r.returncode != 0 and "缺 DORAMI_EXPECTED_SHA" in r.stderr
+
+
+def test_deploy_docker_preflight_failures_stop_before_build(real: Env):
+    _health(real, "v9.9.9")
+    r = _run_deploy(real, "v9.9.9", FAKE_DF_AVAIL_KB=str(100 * 1024))  # 100MB
+    assert r.returncode != 0 and "磁盘不足" in r.stderr
+    assert not any(c.startswith("compose build") for c in real.calls())
+    real.fake_write("config_rc", "1")
+    r = _run_deploy(real, "v9.9.9")
+    assert r.returncode != 0 and "docker compose config 校验失败" in r.stderr
+    assert "required variable DORAMI_PODCAST_AUTHORITY_ID is missing" in r.stdout
+    assert not any(c.startswith("compose build") for c in real.calls())
+
+
+def test_deploy_docker_check_config_and_plan_gate_before_up(real: Env):
+    _health(real, "v9.9.9")
+    real.fake_write("check.json", '{"status": "error", "errors": ["security: [auth] secret 未设置"], "warnings": []}')
+    r = _run_deploy(real, "v9.9.9")
+    assert r.returncode != 0 and "配置自检未通过" in r.stderr and "secret 未设置" in r.stdout
+    assert not any(c.startswith("compose up") for c in real.calls())
+    real.fake_write("check.json", '{"status": "ok", "errors": [], "warnings": ["w1"]}')
+    real.fake_write("plan.json", '{"status": "fresh", "pending": ["a"], "pending_count": 1}')
+    r = _run_deploy(real, "v9.9.9")
+    assert r.returncode != 0 and "首装门未放行" in r.stderr
+    assert not any(c.startswith("compose up") for c in real.calls())
+    r = _run_deploy(real, "v9.9.9", DORAMI_DEPLOY_FRESH_OK="1")
+    assert r.returncode == 0, r.stdout + r.stderr
+    real.fake_write("plan.json", '{"status": "incompatible", "pending": [], "pending_count": 0, "detail": "DB 领先"}')
+    r = _run_deploy(real, "v9.9.9")
+    assert r.returncode != 0 and "不兼容" in r.stderr
+
+
+def test_deploy_docker_health_mismatch_fails_without_rollback(real: Env):
+    body = {"status": "ok", "version": "9.9.9", "build": {"ref": "v9.9.9", "sha": "0" * 40, "source": "env"}}
+    (real.fake / "health.json").write_text(json.dumps(body))
+    r = _run_deploy(real, "v9.9.9")
+    assert r.returncode != 0
+    assert "mismatch sha=" in r.stderr and "DORAMI_DEPLOY_META health=failed" in r.stdout
+    assert "不自动回滚" in r.stderr
+
+
+def test_deploy_docker_manual_lock_conflict(real: Env):
+    _health(real, "v9.9.9")
+    holder = subprocess.Popen([sys.executable, "-c",
+        "import fcntl, sys, time; f = open(sys.argv[1], 'a'); fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB); time.sleep(30)",
+        str(real.lock)])
+    try:
+        time.sleep(0.5)
+        r = _run_deploy(real, "v9.9.9")
+        assert r.returncode != 0 and "另一个部署正在进行" in r.stderr
+        assert not real.calls()
+    finally:
+        holder.kill(); holder.wait()
+
+
+def test_old_tag_bootstraps_to_new_tag_through_worker(tmp_path: Path):
+    """生产站在旧 tag(本波之前的脚本)上,worker 部署新 tag:旧 deploy-lib checkout 后 exec 新脚本,新脚本核对 ORIGIN / expected sha,锁 FD 仍在。"""
+    repo = Repo(tmp_path)
+    repo.commit(_real_repo_files("9.9.8", old=True), tag="v9.9.8")
+    repo.commit(_real_repo_files("9.9.9"), tag="v9.9.9")
+    repo.make_clone(tmp_path, checkout="v9.9.8")
+    e = Env(tmp_path, repo)
+    e.create_db()
+    e.running_container(repo.sha_of("v9.9.8"), "v9.9.8")
+    health = _health(e, "v9.9.9")
+    r = e.launch(e.cmd("v9.9.9"), FAKE_HEALTH_FILE=str(health), DORAMI_DEPLOY_HEALTH_ATTEMPTS="2")
+    assert r.returncode == 0, r.stdout + r.stderr
+    log = e.worker_log("v9.9.9")
+    assert "切换到发布版 v9.9.9" in log, "旧 deploy-lib 应先 checkout 目标 tag"
+    assert "来源 pipeline" in log and "Deploy complete. 发布版 v9.9.9" in log
+    assert "流水线来源:跳过" in log
+    assert git(repo.clone, "rev-parse", "HEAD", env=repo.env).stdout.strip() == repo.sha_of("v9.9.9")
+    ls = e.state_json("last-success.json")
+    assert ls["target"]["tag"] == "v9.9.9" and ls["prev"]["ref"] == "v9.9.8"
+
+
+# ══════════════ verify-release-ref.sh ══════════════
+
+def test_verify_release_ref(tmp_path: Path):
+    repo = Repo(tmp_path)
+    repo.commit(worker_repo_files("1.1.0"), tag="v1.1.0")
+    good_sha = repo.sha_of("v1.1.0")
+    # 版本号不匹配的 tag(打在 main 上但代码版本是 1.1.0)
+    git(repo.work, "tag", "-a", "v1.9.9", "-m", "bad", env=repo.env)
+    # 不在 main 线上的 tag
+    git(repo.work, "checkout", "-qb", "side", env=repo.env)
+    repo.commit(worker_repo_files("2.0.0"), tag="v2.0.0", branch="side")
+    git(repo.work, "checkout", "-q", "main", env=repo.env)
+    git(repo.work, "push", "-q", "origin", "--tags", env=repo.env)
+    clone = repo.make_clone(tmp_path)
+    out = tmp_path / "gh_output"
+
+    def run(tag: str) -> subprocess.CompletedProcess:
+        env = dict(repo.env); env["GITHUB_OUTPUT"] = str(out)
+        return subprocess.run([str(VERIFY_REF), tag], cwd=str(clone), env=env, capture_output=True, text=True)
+
+    r = run("v1.1.0")
+    assert r.returncode == 0 and r.stdout.strip() == good_sha
+    assert f"target_sha={good_sha}" in out.read_text()
+    assert run("v1.9.9").returncode == 1 and "版本号" in run("v1.9.9").stderr
+    assert run("v2.0.0").returncode == 1 and "不在 main 线上" in run("v2.0.0").stderr
+    assert run("nope").returncode == 1

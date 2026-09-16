@@ -19,12 +19,50 @@
 # 导出(供后续步骤把「构建来源」烤进镜像 / 传给 PM2 进程,运行时 /api/runtime 透出):
 #   DORAMI_BUILD_REF    tag 名(tag 模式)或 `git describe --tags --always --dirty`(here 模式)
 #   DORAMI_BUILD_SHA    HEAD 完整 sha
-#   DORAMI_DEPLOY_MODE  tag | here
+#   DORAMI_DEPLOY_MODE  tag | here(版本选择方式;与 DORAMI_DEPLOY_ORIGIN=pipeline|manual 的「来源」正交)
 #
 # 切换实现细节:bash 是边读边执行脚本文件的,checkout 换掉正在执行的 deploy 脚本本身会让
 # 后半段读到另一个版本的字节——所以切换后立即 `exec` 重新执行「切换后的那份脚本」
 # (带 --here 与 DORAMI_DEPLOY_REEXEC=1),由新进程从头跑完整流程;HEAD 已在目标 tag 上时
 # 文件没变,无需重执行。
+
+# ── 部署协议版本(issue #102 自动部署,docs/auto-deploy-plan.md §4.4 / §4.5)──
+# 仓库外 worker(docker/dorami-deploy-worker.example)用 `git show <sha>:scripts/deploy-lib.sh | grep '^DORAMI_DEPLOY_PROTOCOL='`
+# 读取目标 tag 的协议号,没有宣告或高于它支持的版本一律拒绝经流水线部署(那些 tag 走手工路径)。
+# 协议 = worker ↔ 本脚本之间的契约:
+#   环境变量  DORAMI_DEPLOY_ORIGIN=pipeline|manual  DORAMI_EXPECTED_SHA  DORAMI_DEPLOY_LOCK_FD  DORAMI_DEPLOY_SWITCH_MARK
+#             DORAMI_DEPLOY_FRESH_OK  DORAMI_DEPLOY_TAG  DORAMI_DEPLOY_LOCK_FILE  DORAMI_DEPLOY_MIN_FREE_GB  DORAMI_DEPLOY_BACKUP_KEEP
+#   输出行    `DORAMI_DEPLOY_META key=value`(值限 [A-Za-z0-9._:/=-])
+#   步骤      流水线来源下本脚本不自做 DB 备份(worker 已做事务备份)、`up` 前 touch 切换标记、健康核对五项
+# 改任一契约即 bump 本号,并同步 worker 的 WORKER_MAX_PROTOCOL。
+DORAMI_DEPLOY_PROTOCOL=1
+
+# 部署来源:pipeline(仓库外 worker 起的)| manual(人手工跑)。手工来源保留离线语义(fetch 失败可用本地 tag);
+# 流水线来源 fail closed。由 DORAMI_DEPLOY_ORIGIN 显式决定,不由别的变量缺席隐式推断。
+deploy_origin() { echo "${DORAMI_DEPLOY_ORIGIN:-manual}"; }
+
+# 元数据行:worker / runner 按 allowlist 解析进 Job Summary;值字符集受限,别的字符替换成 _。
+deploy_meta() { printf 'DORAMI_DEPLOY_META %s=%s\n' "$1" "$(printf '%s' "$2" | tr -c 'A-Za-z0-9._:/=-' '_')"; }
+
+# flock 的可移植实现(macOS 没有 flock(1)):锁挂在 FD 的 open file description 上,python 子进程退出后
+# 本 shell 仍持有该 FD,锁保持——与 flock(1) 的机制相同。
+_deploy_lib_flock() { python3 -c 'import fcntl, sys; fcntl.flock(int(sys.argv[1]), fcntl.LOCK_EX | fcntl.LOCK_NB)' "$1" 2>/dev/null; }
+
+# 唯一部署锁:手工路径与流水线共用同一把(默认 /run/lock/dorami-deploy.lock,DORAMI_DEPLOY_LOCK_FILE 可覆盖)。
+# 由 worker 起的子进程带 DORAMI_DEPLOY_LOCK_FD(FD 随 exec 重执行继承)→ 只校验描述符仍打开,不二次抢;
+# 手工来源自己打开 FD 9 并 flock -n,抢不到即报「另一部署进行中」。
+acquire_deploy_lock() {
+    local lock_file="${DORAMI_DEPLOY_LOCK_FILE:-/run/lock/dorami-deploy.lock}"
+    if [ -n "${DORAMI_DEPLOY_LOCK_FD:-}" ]; then
+        [ -e "/dev/fd/${DORAMI_DEPLOY_LOCK_FD}" ] \
+            || _deploy_lib_fail "DORAMI_DEPLOY_LOCK_FD=${DORAMI_DEPLOY_LOCK_FD} 不是打开的描述符(锁应由 worker 持有并继承)"
+        return 0
+    fi
+    mkdir -p "$(dirname "$lock_file")" 2>/dev/null || true
+    exec 9>>"$lock_file" || _deploy_lib_fail "打不开锁文件 $lock_file"
+    _deploy_lib_flock 9 || _deploy_lib_fail "另一个部署正在进行(锁 $lock_file 被占);等它结束或检查 dorami-deploy-worker status"
+    export DORAMI_DEPLOY_LOCK_FD=9
+}
 
 _deploy_lib_usage() {
     local self
@@ -86,6 +124,8 @@ resolve_deploy_ref() {
     # 拉最新 tag。离线/受限网络拉不到时只警告——本地已有的 tag 照样能部署
     # (内网机常见:代码由人工搬入,tag 随 clone 一起带过来)。
     if ! git fetch --tags --quiet origin 2>/dev/null; then
+        [ "$(deploy_origin)" != "pipeline" ] \
+            || _deploy_lib_fail "git fetch --tags 失败:流水线来源不回落到本地 tag(fail closed)"
         echo "⚠️  git fetch --tags 失败(离线或无 origin),按本地已有 tag 选择。"
     fi
 
@@ -126,10 +166,19 @@ resolve_deploy_ref() {
 
 # tag 名必须与代码里的版本号一致(tag 是用 scripts/release.sh 打的才会一致),核对后播报。
 _deploy_lib_verify_tag() {
-    local tag="$1" tag_sha="$2" src_version
+    local tag="$1" tag_sha="$2" src_version head_sha
     src_version="$(_deploy_lib_source_version)"
     [ "v${src_version}" = "$tag" ] \
         || _deploy_lib_fail "tag ${tag} 指向的代码版本号是 ${src_version},二者不一致——tag 不是用 scripts/release.sh 打的?"
+    # 最终执行的目标与核验值闭环(issue #102):checkout + exec 重执行之后再核一次 HEAD;
+    # 流水线来源还要等于 Actions / worker 核验过的 DORAMI_EXPECTED_SHA。
+    head_sha="$(git rev-parse HEAD)"
+    [ "$head_sha" = "$tag_sha" ] || _deploy_lib_fail "HEAD ${head_sha:0:7} 不等于 tag ${tag} 的提交 ${tag_sha:0:7}"
+    if [ "$(deploy_origin)" = "pipeline" ]; then
+        [ -n "${DORAMI_EXPECTED_SHA:-}" ] || _deploy_lib_fail "流水线来源缺 DORAMI_EXPECTED_SHA"
+        [ "$head_sha" = "$DORAMI_EXPECTED_SHA" ] \
+            || _deploy_lib_fail "HEAD ${head_sha:0:7} 与流水线核验的 ${DORAMI_EXPECTED_SHA:0:7} 不一致,拒绝继续"
+    fi
     echo "部署版本: ${tag}(${tag_sha:0:7},打标 $(git tag -l --format='%(taggerdate:short)' "$tag" 2>/dev/null || echo '?'))"
 }
 
@@ -157,7 +206,10 @@ PYEOF
         [ -f "${db_path}-wal" ] && cp "${db_path}-wal" "${backup_file}-wal"
     fi
     echo "    DB backup: $backup_file"
-    ls -1t backups/"$(basename "$db_path")".* 2>/dev/null | grep -v -- '-wal$' | tail -n +11 | xargs -r rm -f
+    # 保留数可配(DORAMI_DEPLOY_BACKUP_KEEP,默认 10)。流水线来源下本函数不被调用:worker 做事务备份并按
+    # manifest pin 清理,这里的纯计数清理不认识 manifest,若在流水线下跑会把仍被引用的原始备份删掉。
+    local keep="${DORAMI_DEPLOY_BACKUP_KEEP:-10}"
+    ls -1t backups/"$(basename "$db_path")".* 2>/dev/null | grep -v -- '-wal$' | tail -n +"$((keep + 1))" | xargs -r rm -f
 }
 
 # 从 ini 读 [storage] database_url 里的 sqlite 文件路径;非 sqlite 或读不到时输出空串。

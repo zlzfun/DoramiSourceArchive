@@ -1,0 +1,128 @@
+#!/bin/bash
+# /root/bin/dorami-deploy —— GitHub Actions 部署的 forced command 入口(launcher / attacher)。
+# DORAMI_DEPLOY_LAUNCHER_VERSION=1
+#
+# 职责只有三件(issue #102 方案 §4.4):
+#   1. 解析 $SSH_ORIGINAL_COMMAND,必须恰为 "<vX.Y.Z> <sha40> downgrade=<0|1> redeploy=<0|1>";
+#   2. 没有存活的 worker 就用 setsid 起一个(worker 才是锁与状态的 owner,与本 SSH 会话脱离);
+#   3. tail worker 日志直到 state 为 complete,以 .rc 文件内容退出。
+# SSH 断线只杀本进程;worker、锁、状态、.rc 都不受影响;重跑的 launcher 依据 worker 的 pid + start_id attach。
+#
+# 退出码:0 部署成功;2 命令格式错;3 另一目标的部署正在进行;5 等 worker 起动超时;6 状态不一致需人工;
+#         其余 = worker 写进 .rc 的退出码(见 worker 头部)。
+#
+# 安装见 docker/dorami-deploy.conf.example。本文件 **必须放仓库外**:deploy-lib.sh 会 checkout 目标 tag 换掉仓库内文件。
+set -uo pipefail
+umask 077
+
+CONF="${DORAMI_DEPLOY_CONF:-/etc/dorami-deploy.conf}"
+[ -r "$CONF" ] || { echo "ERROR: 配置不存在或不可读: $CONF" >&2; exit 6; }
+# shellcheck disable=SC1090
+source "$CONF"
+: "${STATE_DIR:?conf 缺 STATE_DIR}" "${LOG_DIR:?conf 缺 LOG_DIR}" "${DEPLOY_WORKER:?conf 缺 DEPLOY_WORKER}"
+export PATH="${DEPLOY_PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+
+STATE="$STATE_DIR/state.json"
+
+json_get() {  # file key [default]
+    python3 - "$1" "$2" "${3-}" <<'PY'
+import json, sys
+path, key, default = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    cur = json.load(open(path, encoding="utf-8"))
+except Exception:
+    print(default); sys.exit(0)
+for part in key.split("."):
+    if isinstance(cur, dict) and part in cur:
+        cur = cur[part]
+    else:
+        print(default); sys.exit(0)
+if cur is None:
+    print(default)
+elif isinstance(cur, bool):
+    print("true" if cur else "false")
+else:
+    print(cur)
+PY
+}
+
+proc_start_id() { ps -o lstart= -p "$1" 2>/dev/null | tr -s ' ' | sed 's/^ *//;s/ *$//'; }
+
+worker_alive() {  # 状态里记录的 worker 是否仍活着(pid + start_id 双核对,防 PID 复用)
+    local pid start
+    pid="$(json_get "$STATE" worker_pid "")"
+    start="$(json_get "$STATE" worker_start_id "")"
+    [ -n "$pid" ] && [ -n "$start" ] && [ "$(proc_start_id "$pid")" = "$start" ]
+}
+
+# ── 1. 解析命令 ──
+CMD="${SSH_ORIGINAL_COMMAND:-$*}"
+RE='^(v[0-9]+\.[0-9]+\.[0-9]+) ([0-9a-f]{40}) downgrade=([01]) redeploy=([01])$'
+if [[ ! "$CMD" =~ $RE ]]; then
+    echo "ERROR: 命令格式错误。期望: <vX.Y.Z> <sha40> downgrade=<0|1> redeploy=<0|1>" >&2
+    exit 2
+fi
+TAG="${BASH_REMATCH[1]}"; SHA="${BASH_REMATCH[2]}"; DOWNGRADE="${BASH_REMATCH[3]}"; REDEPLOY="${BASH_REMATCH[4]}"
+echo "dorami-deploy: target ${TAG} ${SHA:0:7} downgrade=${DOWNGRADE} redeploy=${REDEPLOY}"
+
+mkdir -p "$STATE_DIR" "$LOG_DIR"
+
+# ── 2. 有活着的 worker 就 attach,否则起一个 ──
+if [ -f "$STATE" ] && [ "$(json_get "$STATE" phase "")" != "complete" ] && worker_alive; then
+    running_tag="$(json_get "$STATE" tag "")"; running_sha="$(json_get "$STATE" target_sha "")"
+    if [ "$running_tag" != "$TAG" ] || [ "$running_sha" != "$SHA" ]; then
+        echo "ERROR: 另一部署正在进行: ${running_tag} ${running_sha:0:7}(Actions 队列会等待;勿手工干预 worker)" >&2
+        exit 3
+    fi
+    echo "dorami-deploy: 同一目标的 worker 仍在运行(pid $(json_get "$STATE" worker_pid "")),attach 已有日志"
+elif [ -f "$STATE" ] && [ "$(json_get "$STATE" phase "")" != "complete" ]; then
+    echo "ERROR: 状态不一致——state.json 记录的 worker 已不存活但部署未 complete。请登机器检查 $STATE 与锁 $LOCK_FILE 后人工处理。" >&2
+    exit 6
+else
+    if command -v setsid >/dev/null 2>&1; then
+        setsid "$DEPLOY_WORKER" run "$TAG" "$SHA" "$DOWNGRADE" "$REDEPLOY" </dev/null >/dev/null 2>&1 &
+    else
+        nohup "$DEPLOY_WORKER" run "$TAG" "$SHA" "$DOWNGRADE" "$REDEPLOY" </dev/null >/dev/null 2>&1 &
+    fi
+    disown 2>/dev/null || true
+    # 等 worker 写出本次目标的 state(它一起来先写 starting)
+    for _ in $(seq 1 100); do
+        if [ -f "$STATE" ] && [ "$(json_get "$STATE" tag "")" = "$TAG" ] && [ "$(json_get "$STATE" target_sha "")" = "$SHA" ] \
+           && [ "$(json_get "$STATE" phase "")" != "" ]; then
+            break
+        fi
+        sleep 0.2
+    done
+    if [ ! -f "$STATE" ] || [ "$(json_get "$STATE" target_sha "")" != "$SHA" ]; then
+        echo "ERROR: worker 20 秒内未写出状态;检查 $DEPLOY_WORKER 与 $LOG_DIR" >&2
+        exit 5
+    fi
+fi
+
+# ── 3. 流式回传日志,直到 complete ──
+LOG="$(json_get "$STATE" log "")"
+[ -n "$LOG" ] || { echo "ERROR: state 缺 log 路径" >&2; exit 6; }
+touch "$LOG"
+tail -n +1 -f "$LOG" &
+TAIL_PID=$!
+trap 'kill "$TAIL_PID" 2>/dev/null' EXIT
+while :; do
+    phase="$(json_get "$STATE" phase "")"
+    if [ "$phase" = "complete" ]; then break; fi
+    if ! worker_alive; then
+        sleep 1
+        [ "$(json_get "$STATE" phase "")" = "complete" ] && break
+        echo "ERROR: worker 意外退出(phase=${phase}),未写 complete;检查 $LOG" >&2
+        exit 6
+    fi
+    sleep 1
+done
+sleep 0.5  # 让 tail 把最后几行吐完
+RC_FILE="$(json_get "$STATE" rc_file "")"
+if [ -n "$RC_FILE" ] && [ -f "$RC_FILE" ]; then
+    rc="$(tr -dc '0-9' < "$RC_FILE")"
+    echo "dorami-deploy: worker 退出码 ${rc:-?}"
+    exit "${rc:-6}"
+fi
+echo "ERROR: 未找到退出码文件 ${RC_FILE:-?}" >&2
+exit 6
