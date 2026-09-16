@@ -26,3 +26,13 @@
 
 - [Apple：将网站变成 iPhone 上的 App](https://support.apple.com/guide/iphone/open-as-web-app-iphea86e5236/ios)：分享 → 添加到主屏幕，新版可开启 Open as Web App。
 - [华为：浏览器设置网站桌面快捷方式](https://consumer.huawei.com/cn/support/content/zh-cn16032141/)：HarmonyOS 5.0 及以上的官方快捷方式步骤；它不证明本次设备的独立窗口能力。
+
+## 2026-09-16 · 复用域名与免登录验收
+
+- 发生：用户指出 cloudflared 已认证自己的域名，并要求预览免填账号密码。
+- 分析：合成内容的安装／阅读测试无需增加登录操作；独立预览代理可以持有普通读者会话，不必给正式应用引入认证旁路。稳定子域名比每次 Quick Tunnel 更适合持续 PWA 验收。
+- 改变：预览入口增加显式命名隧道参数和 `--no-login`，临时私有配置仅作用于 Vite preview 的 `/api` 代理；生产源码、构建与后端认证不变。文档明确优先复用认证域名，免登录测试与登录恢复分开。
+- 域名实测：认证 zone 为 `codestable.dev`；新建专用 `dorami-pwa-preview` 隧道和 `pwa-preview.codestable.dev` CNAME，未改其余记录或旧隧道。连接器成功连通，但公开请求被 301 跳转到 `https://github.com/codestable/CodeStable`；规则 API 返回 403。命名预览因此未放行并自动清理本地进程，等待域名管理者排除该子域名。
+- 免登录 Quick Tunnel 实跑成功，公网无 Cookie 进入普通读者并打开正文，SW 控制页面且构建哈希一致；管理员请求 403、伪造 Cookie 不能改变角色、恶意 Host 被拒、直接后端仍要求登录。检查产物在 `tmp/pwa-preview/session-j1cnyi0k/`，包含实看截图与 `guest-verification.json`。第一张正文图处于加载中，保留原图并补看 `guest-reading-settled.png`，不把列表摘要命中当正文已完成。
+- 本轮 14 项 `tests/test_pwa_support.py` 通过，包含 URL／通配符／坏域名、缺失参数及凭据文件的反向检查；连同隔离与部署库测试合计 29 项通过。旧有密码的 Quick Tunnel 已停止；这轮仍未取得 Huawei 真机结论。
+- 随后用户将认证域名更换为 `babelgo.cn`。同账户复用上述命名隧道，新建 `pwa-preview.babelgo.cn` CNAME；公网构建哈希、免登录普通读者、管理员 403、伪造 Cookie／Host 拒绝及直接后端认证均通过。实际查看平板尺寸阅读列表与正文截图，证据在 `tmp/pwa-preview/session-derem_2y/`（含哈希清单）。仅此命名预览继续运行，两条 Quick Tunnel 均停止；旧域名专用 CNAME 因新证书看不到旧 zone 而保留，命名隧道的精确 ingress 不向它提供内容。

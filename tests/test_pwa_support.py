@@ -8,7 +8,7 @@ import subprocess
 import pytest
 
 from scripts.check_mobile_reader_e2e import configure
-from scripts.preview_pwa import run
+from scripts.preview_pwa import run, validate_named_tunnel, write_guest_config
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -17,6 +17,35 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_public_preview_rejects_unbounded_lifetime(minutes):
     with pytest.raises(ValueError, match="lifetime"):
         run(minutes)
+
+
+@pytest.mark.parametrize("hostname", ["https://preview.example.com", "*.example.com", "example.com/path", "-bad.example.com"])
+def test_named_preview_rejects_non_exact_hosts(tmp_path, hostname):
+    credentials = tmp_path / "tunnel.json"
+    credentials.touch()
+    with pytest.raises(ValueError, match="exact DNS hostname"):
+        validate_named_tunnel(hostname, "preview", credentials)
+
+
+def test_named_preview_requires_complete_explicit_configuration(tmp_path):
+    with pytest.raises(ValueError, match="supplied together"):
+        validate_named_tunnel("preview.example.com", None, None)
+    credentials = tmp_path / "missing.json"
+    with pytest.raises(ValueError, match="does not exist"):
+        validate_named_tunnel("preview.example.com", "preview", credentials)
+    credentials.touch()
+    validate_named_tunnel("preview.example.com", "preview", credentials)
+    validate_named_tunnel(None, None, None)
+
+
+def test_guest_proxy_configuration_is_private_and_preview_only(tmp_path):
+    config = write_guest_config(tmp_path, 'session="test"')
+    assert config.parent == tmp_path
+    assert config.stat().st_mode & 0o777 == 0o600
+    assert "preview:" in config.read_text()
+    assert "'/api':" in config.read_text()
+    assert 'session=\\"test\\"' in config.read_text()
+    assert "cookie" not in (ROOT / "frontend/vite.config.js").read_text()
 
 
 def test_sandbox_signing_keys_are_random_per_run(tmp_path):
