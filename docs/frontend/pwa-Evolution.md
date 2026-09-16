@@ -45,3 +45,9 @@
 - 验证：前端 lint、13 项 Node 测试及原样 `npm run test:e2e` 通过。四组构造的 UA／UA-CH 输入分别反复注入三次安装事件，移动与平板入口都保持隐藏、网页与 SW 可用；这是产品门控反向验证，不是真机系统能力认证。最终结果目录 `tmp/e2e/reader-nhotd9m1/`，18 项阅读／PWA 检查。
 - 产物审阅：第一轮 Android 指引截图仍在进场动画中，保留在 `tmp/e2e/reader-408kfntu/`；补充浮层与遮罩 opacity 就绪断言后重新跑入口，直接查看最终 Android 指引、暗色 iOS 指引和鸿蒙设置页。鸿蒙页面不新增不支持警告或原生 App 占位按钮。
 - 公网更新：同一自有域名免登录预览已换成本次构建；HTTP 三个构建哈希一致，公网 Chromium 下复验鸿蒙 UA 隐藏入口、普通 Chromium 保留入口、普通读者可访问。证据在 `tmp/pwa-preview/session-4uw5r1hb/scope-verification.json` 及配对哈希清单。此处仍为 UA 模拟，不替代用户真机反馈。
+
+## 2026-09-16 · 真机放行与 PR
+
+- 发生：用户明确确认 Android 与 iOS 真机均可用，要求提交 PR 并附截图；未提供具体型号／版本、真机截图或逐项验收表，不据此补造明细。
+- 改变：更新当前方案与待办状态。分支 rebase 到最新 `origin/main`（`f742a23`），未修改版本号或合并；本地协商式检视及 CI 仍是合入门禁。
+- 验证：rebase 后重跑 `npm run lint`、13 项 Node 测试、29 项隔离／部署 pytest、`bash -n deploy.sh` 及原样 `npm run test:e2e`，全部通过。E2E 本次产物在 `tmp/e2e/reader-g08jlc9u/`；PR 使用直接查看过的 Android 安装指引、暗色 iOS 指引和断网页截图，明确标注为 Chromium 自动化渲染，不冒充真机系统窗口。

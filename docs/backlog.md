@@ -7,7 +7,7 @@
 ## 进行中
 
 - ☐ **issue #85 移动端 PWA**（分支 `feat/issue-85-mobile-pwa`，方案 [frontend/pwa.md](./frontend/pwa.md)）：
-  Android／iOS 安装入口与最小联网恢复已实现，待真机安装验收；鸿蒙保留网页阅读，原生套壳另列展望。
+  Android／iOS 安装入口与最小联网恢复已实现，用户确认两平台真机可用，进入 PR 检视；鸿蒙保留网页阅读，原生套壳另列展望。
 - ☐ **issue #74 个人早报三处**(分支 `feat/issue-74-brief-grid`,方案 `docs/personal-brief-grid-and-sections.md`):
   公共日报剔出早报范围 + 板块固定顺序 / 板块内分数降序 + 分值驱动网格(策略 F,样页 `docs/design/dorami-brief-grid-quiet.html`)
   已实现;待用户本地验收与 codex 检视。观察期:T = 9.0 / Δ = 1.0 两个常量在生产分布下的通栏频率与 2 + 2 出现率。
