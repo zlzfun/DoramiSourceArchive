@@ -28,6 +28,7 @@
   `deploy.sh` = uv + PM2 + 宿主 Nginx;两条路径选型对照/前置软件/脚本七步与六道护栏/
   ini 两节/HTTPS 两趟部署(certbot certonly 而非 --nginx)/全新服务器与迁移。
 - ◉ [release-process.md](./release-process.md) — **发布流程:tag 即发布(2026-09-14)**:合入≠上线,
+- ◉ [auto-deploy-plan.md](./auto-deploy-plan.md) — **自动部署流水线(issue #102,2026-09-16)**:tag → Release → Environment 批准 → SSH forced command → 仓库外 launcher / worker(事务 / 护栏 / 首装门)→ 目标 tag 的 deploy-docker.sh;§7 codex 检视记录。
   annotated tag 是唯一发布单元;`scripts/release.sh` 发版(版本号只在发版时改,PR 不 bump)/
   两条部署脚本按 tag 部署(`--here` 显式例外)/CI 门禁与自动 Release/回滚=切 tag+恢复备份/分支保护清单。
 - ◉ [version-history.md](./version-history.md) — **波次史(1.x→3.57.x 逐波详细记录)**:2026-09-15 自 CLAUDE.md

@@ -1,22 +1,27 @@
-# 版本 tag 推上来 → 自动建 GitHub Release(说明由两个 tag 之间的 PR 标题自动生成,
-# tag 自身的 annotated 说明放在最前)。与 sync-master.yml 同一触发点、各管一事。
+# 版本 tag 推上来 → 自动建 GitHub Release → 串联部署(deploy.yml,等 Environment production 批准)。
+# 与 sync-master.yml 同一触发点、各管一事。
 #
-# 任何人都能打 tag(2026-09-14 拍板,不设 tag 保护),所以这里做两道核对,不过就不建
-# Release 并把任务标红——tag 已经推上去了没法撤,但至少「这个 tag 不是合格发布版」会被看见:
-#   1. tag 指向的提交必须在 main 线上(与 sync-master 同一条规则);
-#   2. tag 名必须等于 v + src/version.py 的 __version__(用 scripts/release.sh 打的 tag 天然满足;
-#      手工 git tag 打在没 bump 版本的提交上就会在这里被拦下)。
+# 任何人都能打 tag(2026-09-14 拍板,不设 tag 保护),所以先做核对,不过就不建 Release、不部署,并把任务标红——
+# tag 已经推上去了没法撤,但至少「这个 tag 不是合格发布版」会被看见。核对由 scripts/verify-release-ref.sh 承担
+# (tag 在 main 线上;**目标 tag 里的** src/version.py 版本号 = tag 名;轻量 tag 只告警),三条入口共用同一份核验。
+#
+# 部署(issue #102):GITHUB_TOKEN 建的 Release 不会触发 `on: release`,故部署作为同一次 run 里 `needs: release` 的
+# 后续 job 串联,核对与部署可追溯。Environment secrets 由被调用 job 自己的 `environment` 声明获得,这里不传 secrets。
+# 手动补建 Release(workflow_dispatch)默认不顺带部署,勾 deploy 才部署。
 name: Release
 
 on:
   push:
     tags: ['v*']
-  # 手动补建:workflow 上线前已推的 tag(如 v3.56.0)不会自动触发,指定 tag 名跑一次即可
   workflow_dispatch:
     inputs:
       tag:
         description: 要建 Release 的已存在 tag(如 v3.56.0)
         required: true
+      deploy:
+        description: 建完 Release 后是否顺带部署到生产(默认否)
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -24,35 +29,24 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.verify.outputs.tag }}
+      target_sha: ${{ steps.verify.outputs.target_sha }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Verify tag is a proper release
+        id: verify
         env:
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
-        run: |
-          set -euo pipefail
-          git fetch origin main --quiet
-          sha="$(git rev-parse "${TAG}^{commit}")"
-          if ! git merge-base --is-ancestor "$sha" origin/main; then
-            echo "::error::${TAG}(${sha:0:7})不在 main 线上,不建 Release。"
-            exit 1
-          fi
-          version="$(grep -o '__version__ = "[^"]*"' src/version.py | sed 's/.*"\(.*\)"/\1/')"
-          if [ "v${version}" != "$TAG" ]; then
-            echo "::error::tag ${TAG} 与代码版本号 ${version} 不一致——请用 scripts/release.sh 发版。"
-            exit 1
-          fi
-          if [ "$(git cat-file -t "$TAG")" != "tag" ]; then
-            echo "::warning::${TAG} 是轻量 tag(无说明);发版请用 scripts/release.sh 打 annotated tag。"
-          fi
+        run: scripts/verify-release-ref.sh "$TAG"
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          TAG: ${{ steps.verify.outputs.tag }}
         run: |
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -64,3 +58,11 @@ jobs:
           notes="$(git tag -l --format='%(contents:body)' "$TAG")"
           gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes --notes "$notes"
           echo "### ✅ 已发布 Release ${TAG}" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    needs: release
+    if: ${{ github.event_name == 'push' || inputs.deploy == true }}
+    uses: ./.github/workflows/deploy.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
+      target_sha: ${{ needs.release.outputs.target_sha }}

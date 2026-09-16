@@ -1,7 +1,8 @@
 #!/bin/bash
 # 发版:在 main 上 bump 版本号 → 提交 → 打 annotated tag → 推送。tag 一推,
-# GitHub Actions 自动建 Release(release.yml)并把版本节点同步到内网 master(sync-master.yml);
-# 生产机随后 ./deploy-docker.sh 或 ./deploy.sh 即部署这一版。流程全文见 docs/release-process.md。
+# GitHub Actions 自动建 Release(release.yml)、把版本节点同步到内网 master(sync-master.yml),并串联 deploy.yml
+# 经 Environment production 批准后自动部署到生产(issue #102);裸机 ./deploy.sh 与手工 ./deploy-docker.sh 仍可兜底。
+# 流程全文见 docs/release-process.md,流水线见 docs/auto-deploy-plan.md。
 #
 # 用法:scripts/release.sh <X.Y.Z> [-m "一句话说明"] [--no-push] [--yes]
 #   X.Y.Z      新版本号(SemVer:MINOR=功能波 / PATCH=修复;必须大于最近的 tag)
@@ -106,7 +107,7 @@ echo "已提交 $(git rev-parse --short HEAD) 并打 tag ${TAG}"
 
 if [ "$PUSH" = 1 ]; then
     git push --quiet origin main "$TAG"
-    echo "已推送。GitHub Actions 会自动建 Release 并同步 master;生产机执行 ./deploy-docker.sh(或 ./deploy.sh)部署 ${TAG}。"
+    echo "已推送。GitHub Actions 会自动建 Release、同步 master,并把 ${TAG} 排进生产部署队列——到 Actions 的 Deploy run 批准即上线(手工兜底:生产机 ./deploy-docker.sh ${TAG})。"
 else
     echo "未推送(--no-push)。确认后执行:git push origin main ${TAG}"
 fi

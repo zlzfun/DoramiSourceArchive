@@ -59,7 +59,8 @@ EOF
 # 并改为 installation=internal；
 # 处理开关、stage 和 target 会默认关闭，且内网不注入 ASR/TTS 凭据。
 
-# 部署 / 升级:站到发布版 tag → 备份 DB → 构建 → 起容器 → 健康验证(tag 即发布,见 docs/release-process.md)
+# 部署 / 升级:默认由 GitHub Actions 流水线在批准后经 SSH 触发(见下方「自动部署流水线」);以下是手工兜底,
+# 与流水线共用同一把锁。流程:站到发布版 tag → 预检 → 构建 → 目标镜像只读自检 / 迁移计划 → 备份 DB → 起容器 → 健康核对
 ./deploy-docker.sh              # 版本号最新的发布版(一键)
 ./deploy-docker.sh v3.56.0      # 指定版本;回滚也是这一句(+ 恢复 backups/ 里的库备份)
 ./deploy-docker.sh --here       # 部署当前工作树(非发布版,联调/应急;设置 → 关于 会如实标注)
@@ -82,6 +83,38 @@ docker compose down                 # 停站(数据在宿主目录,安全)
 | `[server] host/port` | **不生效**。入口固定监听 `0.0.0.0:8088`(nginx 容器经服务名 `backend` 访问);对外端口由 compose 端口映射决定 |
 | `[nginx] *` | **不生效**。站点配置在 `docker/nginx.conf`(与 deploy.sh 生成版同构) |
 | 其余各节 | 照常生效。`[storage]`/`[media]` 的相对路径以 `/app` 为基准；Podcast artifact root 由 Compose 显式固定为 `/app/data/podcast-artifacts`，全部落在宿主持久卷 `data/` 下 |
+
+## 自动部署流水线(生产机侧安装,issue #102)
+
+设计与协议见 `docs/auto-deploy-plan.md`;GitHub 侧的 Environment 配置见 `docs/release-process.md`「分支保护」。
+生产机上要装三样东西,**都在仓库外**(`deploy-lib.sh` 会 checkout 目标 tag 换掉仓库内文件,forced command 指向的入口
+与跨版本状态不能随之被换掉):
+
+```bash
+# 1. launcher / worker / 配置(模板在仓库,复制出去后按需改 REPO_DIR 等)
+cp docker/dorami-deploy.example        /root/bin/dorami-deploy        && chmod 700 /root/bin/dorami-deploy
+cp docker/dorami-deploy-worker.example /root/bin/dorami-deploy-worker && chmod 700 /root/bin/dorami-deploy-worker
+cp docker/dorami-deploy.conf.example   /etc/dorami-deploy.conf        && chmod 600 /etc/dorami-deploy.conf
+mkdir -p /var/lib/dorami-deploy /var/log/dorami-deploy && chmod 700 /var/lib/dorami-deploy /var/log/dorami-deploy
+
+# 2. 部署专用密钥(与日常运维密钥分开);私钥进 GitHub Environment secret PROD_SSH_KEY,公钥装成 forced command
+ssh-keygen -t ed25519 -N '' -C deploy@github-actions -f /root/deploy_key
+printf 'restrict,command="/root/bin/dorami-deploy" %s\n' "$(cat /root/deploy_key.pub)" >> /root/.ssh/authorized_keys
+ssh-keyscan -t ed25519 <host>      # 一行 → GitHub Environment variable PROD_KNOWN_HOSTS
+rm /root/deploy_key                # 私钥只留在 GitHub Secret 里
+```
+
+- `restrict` 一并关掉 pty / 端口与 agent 转发 / user-rc;`from=` 不设(GitHub 托管 runner 的 IP 段数千条且每周变)。
+- runner 传来的命令恰为 `<vX.Y.Z> <sha40> downgrade=<0|1> redeploy=<0|1>`,launcher 只认这个形状。
+- 状态目录 `/var/lib/dorami-deploy/`:`state.json`(当前 / 上次 worker)、`in-progress.json`(切换前落盘的回滚点:上一版
+  镜像的 managed tag + 事务备份)、`last-success.json`(最近一次成功,同 schema 多 `deployed_at`)、`<tag>-<sha7>.rc`、
+  `closed-<txn>.json`(人工或自动关闭的事务)。日志在 `/var/log/dorami-deploy/<tag>-<sha7>.log`。
+- 手工命令:`dorami-deploy-worker status` 看三份状态;`dorami-deploy-worker --close-in-progress` 关闭未收口事务
+  (恢复备份 / 放弃失败部署之后);首次安装的空机器 `touch /var/lib/dorami-deploy/first-install.token` 才允许起空库,
+  有任何部署证据(容器 / 备份 / managed 镜像 / 库文件)的机器绝不起空站。
+- 升级 launcher / worker 是显式手工步骤(重新 cp);目标 tag 的 `scripts/deploy-lib.sh` 用 `DORAMI_DEPLOY_PROTOCOL` 宣告
+  契约版本,worker 不认识的版本拒绝部署。
+- 手工 `./deploy-docker.sh` 与流水线共用锁 `/run/lock/dorami-deploy.lock`,互斥。
 
 ## HTTPS
 
