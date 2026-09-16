@@ -128,10 +128,11 @@ def assert_tab_stops_visible(page, name, checks, limit=200):
     count = page.evaluate("window.__focusStops.length")
     assert reason in ("cycle", "left-document-cycle"), (name, f"sweep ended by {reason or 'limit'} after {count} stops")
     problems = page.evaluate("""() => window.__focusStops.flatMap(stop => {
-        if (!stop.el.isConnected) return [];
         const who = stop.tag + ' ' + stop.label;
         const out = [];
+        // focusVisible 是聚焦当刻的快照,不依赖元素此刻是否仍在文档里;只有要重读样式的检查才受 isConnected 保护
         if (!stop.focusVisible) out.push('keyboard stop not :focus-visible: ' + who);
+        if (!stop.el.isConnected) return out;
         const selfChanged = window.__any(stop.el) !== stop.self;
         const kidsChanged = stop.kids.some((el, i) => window.__any(el) !== stop.kidsAny[i]);
         const ancChanged = stop.ancestors.some((el, i) => window.__any(el) !== stop.ancAny[i]);
