@@ -204,18 +204,20 @@ def _sqlite_target(db_url: str) -> SqliteTarget:
     database = url.database or ""
     if database in ("", ":memory:"):
         return SqliteTarget(True, None, True)
-    # make_url 会把 `?mode=memory&uri=true` 整段挪到 url.query,database 里只剩 `file:...`——内存判定必须
-    # 同时看 url.query,否则同名磁盘文件存在时会被当成目标(codex PR #111 复检 P2)。
-    if str(url.query.get("mode", "")).strip().lower() == "memory":
-        return SqliteTarget(True, None, True)
     uri_flag = str(url.query.get("uri", "")).strip().lower() in {"1", "true", "yes", "on"}
-    if uri_flag and database.startswith("file:"):
-        parts = urlsplit(database)
-        params = parse_qs(parts.query)
-        path = unquote(parts.path)
-        if not path or path == ":memory:" or params.get("mode", [""])[0] == "memory":
+    if uri_flag:
+        # make_url 会把 `?mode=memory&uri=true` 整段挪到 url.query,database 里只剩 `file:...`——内存判定要
+        # 同时看 url.query(codex PR #111 复检 P2);但只有 uri 生效时驱动才会把 mode 交给 sqlite,
+        # 没有 `uri=true` 的 `?mode=memory` 会被忽略、仍连磁盘文件(复检 2 新增 P2),故这段必须在 uri 分支内。
+        if str(url.query.get("mode", "")).strip().lower() == "memory":
             return SqliteTarget(True, None, True)
-        return SqliteTarget(True, Path(path), False)
+        if database.startswith("file:"):
+            parts = urlsplit(database)
+            params = parse_qs(parts.query)
+            path = unquote(parts.path)
+            if not path or path == ":memory:" or params.get("mode", [""])[0] == "memory":
+                return SqliteTarget(True, None, True)
+            return SqliteTarget(True, Path(path), False)
     return SqliteTarget(True, Path(database), False)
 
 

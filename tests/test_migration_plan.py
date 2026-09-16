@@ -259,5 +259,22 @@ def test_memory_mode_query_wins_over_a_same_named_disk_file(tmp_path):
     assert plan["current_heads"] == []
 
 
+def test_memory_mode_without_uri_is_ignored_like_the_driver_does(tmp_path):
+    """没有 `uri=true` 时驱动会忽略 `?mode=memory`、仍连磁盘文件——计划不得把现存(不兼容)库误判成 fresh。"""
+    db_path = tmp_path / "existing.db"
+    _upgrade(f"sqlite:///{db_path}", "head")
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE alembic_version SET version_num = 'deadbeefcafe'"))
+    finally:
+        engine.dispose()
+    for url in (f"sqlite:///{db_path}?mode=memory", f"sqlite:///{db_path}?mode=memory&uri=false"):
+        plan = plan_migrations(url)
+        assert plan["status"] == "incompatible", url
+        assert plan["database_exists"] is True, url
+        assert plan["current_heads"] == ["deadbeefcafe"], url
+
+
 def test_deployable_statuses_constant_matches_semantics():
     assert PLAN_DEPLOYABLE_STATUSES == {"fresh", "legacy_adoption_required", "compatible"}
