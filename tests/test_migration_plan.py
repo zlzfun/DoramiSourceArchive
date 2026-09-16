@@ -243,5 +243,21 @@ def test_memory_uri_forms_are_fresh():
         assert plan["database_exists"] is False, url
 
 
+def test_memory_mode_query_wins_over_a_same_named_disk_file(tmp_path):
+    """`?mode=memory` 被 make_url 挪进 url.query:即使同名磁盘文件存在,SQLAlchemy 实际连的是空内存库,计划也必须如此。"""
+    db_path = tmp_path / "named.db"
+    _upgrade(f"sqlite:///{db_path}", BASELINE_REVISION)
+    url = f"sqlite:///file:{db_path}?mode=memory&cache=shared&uri=true"
+    engine = create_engine(url)
+    try:
+        assert inspect(engine).get_table_names() == [], "前置:SQLAlchemy 实际连接的是空内存库"
+    finally:
+        engine.dispose()
+    plan = plan_migrations(url)
+    assert plan["status"] == "fresh"
+    assert plan["database_exists"] is False
+    assert plan["current_heads"] == []
+
+
 def test_deployable_statuses_constant_matches_semantics():
     assert PLAN_DEPLOYABLE_STATUSES == {"fresh", "legacy_adoption_required", "compatible"}

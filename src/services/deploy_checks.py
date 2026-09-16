@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Optional, Sequence
@@ -80,13 +81,20 @@ def _describe_error(exc: BaseException) -> str:
     if is_taxonomy_error:
         return f"{type(exc).__name__}: {exc}"
     if isinstance(exc, ValueError):
-        tb = exc.__traceback__
-        while tb is not None and tb.tb_next is not None:
-            tb = tb.tb_next
-        origin = tb.tb_frame.f_globals.get("__name__", "") if tb is not None else ""
-        if origin == "config":
-            return f"ValueError: {exc}"
+        # 不按来源模块放行(codex PR #111 复检 P1):config 自己的报错也会把原值整段带出——误缩进的 ini 会让
+        # configparser 把后续行(含 secret)并进 role 值,`_runtime_role` 再原样回显;`int()` 的报错同理。
+        # 只保留消息里第一个引号 / 冒号之前的「安全前缀」(如 "Invalid taxonomy deployment mode"、
+        # "invalid literal for int() with base 10"),原值一律不出现。
+        prefix = _safe_prefix(str(exc))
+        return f"ValueError: {prefix}(具体取值已脱敏)" if prefix else "ValueError: 配置取值非法(已脱敏)"
     return f"{type(exc).__name__}: 详情已脱敏(可能含配置原文或连接串);请在生产机上直接加载配置定位"
+
+
+def _safe_prefix(message: str, limit: int = 80) -> str:
+    """异常消息中第一个引号 / 冒号之前的部分,再过滤成只含字母数字空格与少量标点——原值总在引号或冒号之后。"""
+    head = re.split(r"""['"`:]""", message, maxsplit=1)[0]
+    cleaned = re.sub(r"[^A-Za-z0-9 _.()/-]", "", head).strip()
+    return cleaned[:limit]
 
 
 def check_config(

@@ -204,6 +204,10 @@ def _sqlite_target(db_url: str) -> SqliteTarget:
     database = url.database or ""
     if database in ("", ":memory:"):
         return SqliteTarget(True, None, True)
+    # make_url 会把 `?mode=memory&uri=true` 整段挪到 url.query,database 里只剩 `file:...`——内存判定必须
+    # 同时看 url.query,否则同名磁盘文件存在时会被当成目标(codex PR #111 复检 P2)。
+    if str(url.query.get("mode", "")).strip().lower() == "memory":
+        return SqliteTarget(True, None, True)
     uri_flag = str(url.query.get("uri", "")).strip().lower() in {"1", "true", "yes", "on"}
     if uri_flag and database.startswith("file:"):
         parts = urlsplit(database)

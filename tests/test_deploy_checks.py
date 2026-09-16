@@ -258,6 +258,38 @@ def test_database_url_errors_never_echo_the_connection_string(tmp_path):
         assert json.loads(result.stdout)["status"] == "error", mode
 
 
+def test_config_value_errors_never_echo_the_raw_value(tmp_path, monkeypatch):
+    """config 自己抛的 ValueError 也可能整段带原值:误缩进让 configparser 把 secret 行并进 role 值。"""
+    ini = tmp_path / "indent.ini"
+    ini.write_text(
+        "[storage]\n"
+        f"database_url = sqlite:///{tmp_path / 'indent.db'}\n"
+        "[runtime]\n"
+        "role = all\n"
+        " [auth]\n"
+        f" secret = {SENTINEL}\n",
+        encoding="utf-8",
+    )
+    report = check_config(config_path=str(ini))
+    assert report["status"] == "error"
+    dumped = json.dumps(report, ensure_ascii=False)
+    assert SENTINEL not in dumped
+    assert any("ValueError" in m and "runtime role" in m for m in report["errors"]), report["errors"]
+    for mode in ("--check-config", "--plan-migrations"):
+        result = _run_entrypoint(tmp_path, ini, mode)
+        assert result.returncode in (1, 2), result
+        assert SENTINEL not in result.stdout + result.stderr, mode
+        assert json.loads(result.stdout)["status"] == "error", mode
+
+    # 环境变量转换失败(int())同样只回前缀
+    clean = _write_ini(tmp_path, db_name="envval.db")
+    env_sentinel = "FAKE_ENV_SECRET_SENTINEL"
+    monkeypatch.setenv("DORAMI_PODCAST_FEED_MAX_BYTES", env_sentinel)
+    report = check_config(config_path=str(clean))
+    assert report["status"] == "error", report
+    assert env_sentinel not in json.dumps(report, ensure_ascii=False)
+
+
 def test_redact_url_masks_password_and_secret_query_params():
     from services.deploy_checks import _redact_url
 
