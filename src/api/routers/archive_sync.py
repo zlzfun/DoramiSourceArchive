@@ -165,7 +165,8 @@ def import_archive_sync_jsonl(raw_text: str) -> Dict[str, Any]:
     changed_article_ids: list[str] = []
 
     with Session(deps.get_db_sink().engine) as session:
-        for line_number, raw_line in enumerate(raw_text.splitlines(), start=1):
+        # Unicode separators inside article text are not JSONL record boundaries.
+        for line_number, raw_line in enumerate(raw_text.split("\n"), start=1):
             line = raw_line.strip()
             if not line:
                 continue

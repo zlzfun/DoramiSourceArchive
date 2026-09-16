@@ -2,6 +2,7 @@ import json
 import os
 import sys
 
+import pytest
 from sqlmodel import Session
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -199,7 +200,9 @@ def test_archive_sync_rejects_checksum_mismatch(monkeypatch):
     assert "checksum mismatch" in result["errors"][0]["error"]
 
 
-def test_archive_sync_checksum_survives_json_roundtrip(monkeypatch):
+@pytest.mark.parametrize("separator", ["\u0085", "\u2028", "\u2029"])
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_archive_sync_checksum_survives_json_roundtrip(monkeypatch, separator, newline):
     from api.app import _canonical_json, archive_sync_line, import_archive_sync_jsonl
     from models.db import ArticleRecord
     from storage.impl.db_storage import DatabaseStorage
@@ -210,7 +213,7 @@ def test_archive_sync_checksum_survives_json_roundtrip(monkeypatch):
     source_record = _article_record(
         id="sync_article_unicode",
         title="中文标题",
-        content="正文包含中文和 symbols.",
+        content=f"正文包含中文{separator}和 symbols.\n下一段。",
         extensions_json=json.dumps(
             {
                 "z": ["后", "先"],
@@ -223,13 +226,19 @@ def test_archive_sync_checksum_survives_json_roundtrip(monkeypatch):
 
     # Simulate a real JSONL producer/consumer boundary.
     reparsed_line = json.loads(_canonical_json(exported_line))
-    result = import_archive_sync_jsonl(_jsonl(reparsed_line))
+    wire = _jsonl(reparsed_line).replace("\n", newline)
+    from services.remote_sync import _parse_export_page
+
+    progress = _parse_export_page(wire)
+    assert progress["article_count"] == 1
+    result = import_archive_sync_jsonl(wire)
 
     assert result["status"] == "success"
     assert result["imported_count"] == 1
     with Session(sink.engine) as session:
         record = session.get(ArticleRecord, "sync_article_unicode")
         assert record.title == "中文标题"
+        assert record.content == source_record.content
         assert json.loads(record.extensions_json) == {
             "z": ["后", "先"],
             "nested": {"b": True, "a": 1},

@@ -91,6 +91,35 @@ def _copy_stream(producer, consumer, stream, *, limit=1000):
     return raw, result
 
 
+@pytest.mark.parametrize("separator", ["\u0085", "\u2028", "\u2029"])
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_article_jsonl_preserves_unicode_line_separators(tmp_path, separator, newline):
+    producer = _sink(tmp_path, "producer-unicode.db")
+    consumer = _sink(tmp_path, "consumer-unicode.db")
+    body = f"First paragraph{separator}第二段\nThird paragraph\r\nFourth paragraph"
+    with Session(producer.engine) as session:
+        session.add(_article("article-1"))
+        session.commit()
+        session.add(_article("article-2", content=body))
+        session.commit()
+
+    raw = archive_sync_v2.export_page(producer.engine, "articles")
+    wire = raw.replace("\n", newline)
+    result = archive_sync_v2.import_page(consumer.engine, wire, expected_stream="articles")
+    assert result["inserted"] == 2
+    with Session(consumer.engine) as session:
+        assert session.get(ArticleRecord, "article-2").content == body
+
+    # A genuinely broken JSON record must still reject the whole page before writing.
+    broken_consumer = _sink(tmp_path, "consumer-broken-json.db")
+    with pytest.raises(archive_sync_v2.SyncV2Error, match="line 3: invalid JSON"):
+        archive_sync_v2.import_page(
+            broken_consumer.engine, wire.rstrip()[:-1], expected_stream="articles",
+        )
+    with Session(broken_consumer.engine) as session:
+        assert session.exec(select(ArticleRecord)).all() == []
+
+
 def test_sources_remain_reader_visible_but_become_remote_managed(tmp_path, monkeypatch):
     producer = _sink(tmp_path, "producer-source.db")
     consumer = _sink(tmp_path, "consumer-source.db")
@@ -1073,10 +1102,11 @@ def test_media_manifest_rejects_path_traversal_extension(tmp_path):
     assert not (tmp_path / "escaped.py").exists()
 
 
-def test_candidate_evidence_is_minimized_and_review_only(tmp_path):
+@pytest.mark.parametrize("separator", [" ", "\u0085", "\u2028", "\u2029"])
+def test_candidate_evidence_is_minimized_and_review_only(tmp_path, separator):
     sink = _sink(tmp_path, "candidate-inbound.db")
     payload = {
-        "label": "Agent Memory",
+        "label": f"Agent{separator}Memory",
         "kind": "topic",
         "confidence": 0.8,
         "article_fingerprint": "a" * 64,
@@ -1108,7 +1138,7 @@ def test_candidate_evidence_is_minimized_and_review_only(tmp_path):
             "authority_id": "inner-stable",
             "source_provenance": "user_rss_example",
             "confidence": 0.8,
-            "label": "Agent Memory",
+            "label": payload["label"],
             "prompt_version": "p1",
             "created_at": evidence.created_at,
         }]
