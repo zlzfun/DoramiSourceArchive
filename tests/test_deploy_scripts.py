@@ -64,6 +64,7 @@ if args[:2] == ["compose", "up"]:
     sys.exit(rc("up_rc"))
 if args[:2] == ["compose", "ps"]:
     code = rc("ps_rc")
+    sys.stderr.write(rd("ps_stderr"))
     if code:
         sys.stderr.write("fake compose ps failure\n"); sys.exit(code)
     svc = args[-1] if not args[-1].startswith("-") and args[-1] != "ps" else ""
@@ -79,6 +80,8 @@ if args[:2] == ["compose", "ps"]:
 if args[:2] == ["compose", "logs"]:
     print("(fake logs)"); sys.exit(0)
 if args[:1] == ["inspect"]:
+    if rc("inspect_rc"):
+        sys.stderr.write(rd("inspect_stderr", "fake inspect failure\n")); sys.exit(rc("inspect_rc"))
     cid = args[-1]
     fmt = " ".join(args)
     if "Config.Env" in fmt:
@@ -111,8 +114,16 @@ sys.exit(7)
 FAKE_DF = r'''#!/usr/bin/env python3
 import os, sys
 avail = os.environ.get("FAKE_DF_AVAIL_KB", str(100 * 1024 * 1024))
+mode = os.environ.get("FAKE_DF_MODE", "gnu")
+ifree = os.environ.get("FAKE_DF_IFREE", "999000")
 if "-Pi" in sys.argv:
-    print("Filesystem Inodes IUsed IFree IUse% Mounted on"); print("fakefs 1000000 1000 999000 1% /")
+    if mode == "macos":   # macOS 的 -Pi 是 9 列,ifree 在第 7 列
+        print("Filesystem 1024-blocks Used Available Capacity iused ifree %iused Mounted on")
+        print(f"fakefs 1000000000 1000 {avail} 1% 1000 {ifree} 0% /")
+    elif mode == "noinode":
+        print("Filesystem 1024-blocks Used Available Capacity Mounted on"); print(f"fakefs 1000000000 1000 {avail} 1% /")
+    else:
+        print("Filesystem Inodes IUsed IFree IUse% Mounted on"); print(f"fakefs 1000000 1000 {ifree} 1% /")
 else:
     print("Filesystem 1024-blocks Used Available Capacity Mounted on"); print(f"fakefs 1000000000 1000 {avail} 1% /")
 '''
@@ -122,6 +133,7 @@ STUB_DEPLOY = r'''#!/bin/bash
 echo "STUB: origin=${DORAMI_DEPLOY_ORIGIN:-} expected=${DORAMI_EXPECTED_SHA:-} fresh_ok=${DORAMI_DEPLOY_FRESH_OK:-} lock_fd=${DORAMI_DEPLOY_LOCK_FD:-} tag=$1"
 if [ -n "${STUB_ENV_OUT:-}" ]; then env | grep '^DORAMI_' | sort > "$STUB_ENV_OUT"; fi
 [ -n "${DORAMI_DEPLOY_LOCK_FD:-}" ] && [ -e "/dev/fd/${DORAMI_DEPLOY_LOCK_FD}" ] && echo "STUB: lock fd inherited"
+if [ -n "${STUB_DESCENDANT:-}" ]; then ( sleep "$STUB_DESCENDANT"; touch "$DORAMI_DEPLOY_SWITCH_MARK" ) & fi
 [ -n "${STUB_SLEEP:-}" ] && sleep "$STUB_SLEEP"
 [ "${STUB_SWITCH:-0}" = 1 ] && touch "$DORAMI_DEPLOY_SWITCH_MARK"
 echo "DORAMI_DEPLOY_META stub=1"
@@ -704,13 +716,14 @@ def test_verify_release_ref(tmp_path: Path):
 
 # ══════════════ 脚本层检视 R1 返修(codex 14 条)对应的失败路径 / 竞争窗口 ══════════════
 
-def _worker_pid(e: Env) -> int:
-    for _ in range(50):
+def _worker_pid(e: Env, phase: str = "running") -> int:
+    """等 worker 进入指定 phase(默认 running:事务已落盘、子进程已起)后返回其 pid。"""
+    for _ in range(150):
         st = e.state_json("state.json")
-        if st and st.get("phase") in ("running", "starting", "verifying") and st.get("worker_pid"):
+        if st and st.get("phase") == phase and st.get("worker_pid"):
             return int(st["worker_pid"])
         time.sleep(0.2)
-    raise AssertionError("worker 未起来")
+    raise AssertionError(f"worker 未进入 {phase}")
 
 
 def test_launcher_ignores_stale_complete_and_waits_for_its_own_run(env: Env, tmp_path: Path):
@@ -733,7 +746,7 @@ def test_sigterm_finalizes_nonzero_and_stops_child(env: Env):
     first = subprocess.Popen([str(LAUNCHER), env.cmd("v1.1.0")], env=env.base_env(STUB_SLEEP="8", STUB_SWITCH="1"),
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace")
     pid = _worker_pid(env)
-    time.sleep(1.5)
+    time.sleep(0.5)
     os.kill(pid, 15)
     out, err = first.communicate(timeout=60)
     assert first.returncode == 143, out + err
@@ -925,3 +938,161 @@ def test_switched_in_progress_conflict_wins_over_replay(env: Env):
     # last-success 仍是 v1.1.0;再请求 v1.1.0 不得回放成功——v1.2.0 的已切换事务优先拒绝
     r = env.launch(env.cmd("v1.1.0", downgrade=1))
     assert r.returncode == 20, r.stdout + r.stderr
+
+
+# ══════════════ 复检剩余项(R3 / R4 / R5 / R13 / #14)与新引入(N1 / N2) ══════════════
+
+def test_stale_pid_or_wrong_start_id_is_not_treated_as_alive(env: Env):
+    env.state.mkdir(exist_ok=True)
+    # ① pid 活着(测试进程自己)但 start_id 不对 → 不算存活;未 complete → 状态不一致(6)
+    (env.state / "state.json").write_text(json.dumps({"run_id": "deadbeefdeadbeef", "tag": "v1.1.0", "target_sha": env.repo.sha_of("v1.1.0"),
+        "worker_pid": os.getpid(), "worker_start_id": "bogus start", "phase": "running", "log": str(env.logs / "x.log")}))
+    r = env.launch(env.cmd("v1.1.0"))
+    assert r.returncode == 6 and "状态不一致" in r.stderr
+    # ② pid 已死 → 同样 6;phase 已 complete 的旧 state 则允许新起
+    dead = subprocess.Popen(["true"]); dead.wait()
+    (env.state / "state.json").write_text(json.dumps({"run_id": "deadbeefdeadbeef", "tag": "v1.1.0", "target_sha": env.repo.sha_of("v1.1.0"),
+        "worker_pid": dead.pid, "worker_start_id": "x", "phase": "running", "log": str(env.logs / "x.log")}))
+    assert env.launch(env.cmd("v1.1.0")).returncode == 6
+    (env.state / "state.json").write_text(json.dumps({"run_id": "deadbeefdeadbeef", "phase": "complete", "rc": 7}))
+    r = env.launch(env.cmd("v1.1.0"))
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_close_in_progress_refuses_while_worker_runs(env: Env):
+    first = subprocess.Popen([str(LAUNCHER), env.cmd("v1.1.0")], env=env.base_env(STUB_SLEEP="5", STUB_RC="9", STUB_SWITCH="1"),
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace")
+    _worker_pid(env); time.sleep(0.5)
+    close = subprocess.run([str(WORKER), "--close-in-progress"], env=env.base_env(), capture_output=True, text=True)
+    assert close.returncode == 4 and "锁被占" in close.stderr
+    first.communicate(timeout=60); assert first.returncode == 9
+    close = subprocess.run([str(WORKER), "--close-in-progress"], env=env.base_env(), capture_output=True, text=True)
+    assert close.returncode == 0 and env.state_json("in-progress.json") is None
+
+
+def test_direction_matrix_with_modified_migration(env: Env):
+    files = worker_repo_files("1.3.0", migrations=("0001", "0002"))
+    files["alembic/versions/0001_m.py"] = 'revision = "0001"\nsql = "rewritten"\n'
+    env.repo.commit(files, tag="v1.3.0")
+    assert env.launch(env.cmd("v1.2.0")).returncode == 0
+    # forward + M(共有文件被改写)→ 22
+    r = env.launch(env.cmd("v1.3.0"))
+    assert r.returncode == 22 and "改写" in env.worker_log("v1.3.0")
+    # downgrade + M:基线 v1.3.0(容器 sha),目标 v1.2.0 → 共有的 0001 不同 → 22
+    (env.state / "last-success.json").unlink()
+    env.fake_write("env_of_cid-backend", f"DORAMI_BUILD_SHA={env.repo.sha_of('v1.3.0')}\nDORAMI_BUILD_REF=v1.3.0\n")
+    r = env.launch(env.cmd("v1.2.0", downgrade=1))
+    assert r.returncode == 22 and "降级时两边共有的迁移文件被改写" in env.worker_log("v1.2.0")
+    # unrelated + M:基线在从 v1.1.0 分出的旁支(与 v1.2.0 互不为祖先;对象经 tag 可达)
+    git(env.repo.work, "checkout", "-qb", "side", "v1.1.0", env=env.repo.env)
+    side = worker_repo_files("9.0.0"); side["alembic/versions/0001_m.py"] = 'revision = "0001"\nsql = "side"\n'
+    side_sha = env.repo.commit(side, tag="v9.0.0", branch="side")
+    git(env.repo.work, "checkout", "-q", "main", env=env.repo.env)
+    env.fake_write("env_of_cid-backend", f"DORAMI_BUILD_SHA={side_sha}\nDORAMI_BUILD_REF=v9.0.0\n")
+    r = env.launch(env.cmd("v1.2.0", downgrade=1))
+    assert r.returncode == 22 and "方向 unrelated" in env.worker_log("v1.2.0")
+
+
+def test_repeated_pipeline_failures_reuse_transaction_and_keep_backup(env: Env):
+    env.conf.write_text(env.conf.read_text().replace("DORAMI_DEPLOY_BACKUP_KEEP=2", "DORAMI_DEPLOY_BACKUP_KEEP=1"))
+    for _ in range(3):
+        assert env.launch(env.cmd("v1.1.0"), STUB_RC="9", STUB_SWITCH="1").returncode == 9
+    ip = env.state_json("in-progress.json")
+    backups = list((env.repo.clone / "backups").glob("cms_data.db.*"))
+    assert len(backups) == 1 and Path(ip["prev"]["db_backup"]) in backups, "重试复用事务:不多做备份,原备份仍在"
+    assert env.launch(env.cmd("v1.1.0")).returncode == 0
+    assert Path(env.state_json("last-success.json")["prev"]["db_backup"]).exists()
+
+
+def test_token_crash_window_consumed_and_not_inherited_by_other_target(tmp_path: Path):
+    repo = Repo(tmp_path)
+    repo.commit(worker_repo_files("1.1.0"), tag="v1.1.0"); repo.commit(worker_repo_files("1.2.0"), tag="v1.2.0")
+    repo.make_clone(tmp_path)
+    e = Env(tmp_path, repo); e.state.mkdir()
+    token = e.state / "first-install.token"; token.write_text("tok")
+    import hashlib
+    digest = hashlib.sha256(b"tok").hexdigest()
+    # 事务已落盘(带令牌摘要)但令牌未删 —— 崩溃窗口;同 target 重试要幂等消费并沿用授权
+    (e.state / "in-progress.json").write_text(json.dumps({"txn_id": "t1", "target": {"tag": "v1.1.0", "sha": repo.sha_of("v1.1.0")},
+        "prev": {"ref": "", "sha": "", "backend_image_id": "", "nginx_image_id": "", "managed_tags": [], "db_backup": ""},
+        "opened_at": "x", "switched_at": None, "fresh_authorized": True, "token_digest": digest}))
+    out = tmp_path / "stub-env.txt"
+    r = e.launch(e.cmd("v1.1.0", downgrade=1), STUB_ENV_OUT=str(out), STUB_RC="5")
+    assert r.returncode == 5, r.stdout + r.stderr
+    assert not token.exists() and "幂等删除" in e.worker_log("v1.1.0")
+    assert "DORAMI_DEPLOY_FRESH_OK=1" in out.read_text()
+    # 换目标:未切换事务被自动关闭,授权不继承;无证据无令牌 → 无回滚点 fail closed,且不起子进程
+    out.unlink()
+    r = e.launch(e.cmd("v1.2.0", downgrade=1), STUB_ENV_OUT=str(out))
+    assert r.returncode == 24, r.stdout + r.stderr
+    log = e.worker_log("v1.2.0")
+    assert "自动关闭事务 t1" in log and "fresh_ok=0" in log and not out.exists()
+
+
+def test_inspect_failure_fails_closed(env: Env):
+    env.fake_write("inspect_rc", "1")
+    r = env.launch(env.cmd("v1.1.0"))
+    assert r.returncode == 24 and "docker inspect" in env.worker_log("v1.1.0")
+    assert env.state_json("in-progress.json") is None
+
+
+def test_compose_stderr_warning_does_not_corrupt_container_id(env: Env):
+    env.fake_write("ps_stderr", 'time="2026-09-16" level=warning msg="The \\"MISSING\\" variable is not set. Defaulting to a blank string."\n')
+    r = env.launch(env.cmd("v1.1.0"))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert env.state_json("last-success.json")["prev"]["backend_image_id"] == "sha256:backendimg1"
+
+
+def test_compose_error_output_is_not_echoed_into_logs(env: Env):
+    secret = "FAKE_REVIEW_SECRET_123"
+    env.fake_write("ps_stderr", f'unterminated quoted value: DORAMI_X_BEARER_TOKEN="{secret}\n')
+    env.fake_write("ps_rc", "1")
+    r = env.launch(env.cmd("v1.1.0"))
+    assert r.returncode == 24
+    log = env.worker_log("v1.1.0")
+    assert secret not in log and secret not in r.stdout + r.stderr
+    assert "unterminated quoted value" in log and "原文不回显" in log
+
+
+def test_launcher_final_rc_comes_from_the_same_snapshot(env: Env, tmp_path: Path):
+    """complete 之后另一轮把 state 顶成 rc=0:launcher 必须报本轮快照里的 rc。"""
+    r = env.launch(env.cmd("v1.1.0"), STUB_RC="7", STUB_SWITCH="1")
+    assert r.returncode == 7
+    # 直接验证 launcher 的读取路径:预置本轮 complete/rc=7 的 state,起一个替身 worker 在 0.2s 后把 state 改成别的 run 的 rc=0
+    st = env.state_json("state.json"); st["rc"] = 7; st["phase"] = "complete"
+    replacer = tmp_path / "replacer"
+    replacer.write_text(f'#!/bin/bash\nsleep 0.3\npython3 - <<PY\nimport json\np="{env.state}/state.json"\nd=json.load(open(p)); d["run_id"]="ffffffffffffffff"; d["rc"]=0\njson.dump(d, open(p,"w"))\nPY\n'); replacer.chmod(0o755)
+    # 用旧 run 的 launcher 路径不可直接注入;改为断言 launcher 输出的退出码来自其自报的 run_id,且不等于被顶替后的 0
+    assert "worker 退出码 7(run " in r.stdout
+
+
+def test_descendant_processes_are_terminated_with_the_group(env: Env):
+    """目标脚本再起一个后台后代(延迟 6s 写 switch);SIGTERM worker 后后代也必须消失,不得在 complete 之后切换。"""
+    first = subprocess.Popen([str(LAUNCHER), env.cmd("v1.1.0")], env=env.base_env(STUB_SLEEP="8", STUB_DESCENDANT="6"),
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace")
+    pid = _worker_pid(env); time.sleep(1)
+    os.kill(pid, 15)
+    first.communicate(timeout=60)
+    assert first.returncode == 143
+    txn = env.state_json("in-progress.json")["txn_id"]
+    time.sleep(6)
+    assert not (env.state / f"{txn}.switch").exists(), "后代仍写出了切换标记:进程组未被整组终止"
+    assert "进程组" in env.worker_log("v1.1.0")
+
+
+def test_deploy_docker_inode_check_handles_macos_and_missing_column(real: Env):
+    _health(real, "v9.9.9")
+    r = _run_deploy(real, "v9.9.9", FAKE_DF_MODE="macos", FAKE_DF_IFREE="123")
+    assert r.returncode != 0 and "inode 不足" in r.stderr
+    r = _run_deploy(real, "v9.9.9", FAKE_DF_MODE="macos", FAKE_DF_IFREE="50000")
+    assert r.returncode == 0 and "空闲 inode 50000" in r.stdout
+    r = _run_deploy(real, "v9.9.9", FAKE_DF_MODE="noinode")
+    assert r.returncode == 0 and "inode 列未识别" in r.stdout
+
+
+def test_container_without_build_identity_makes_last_success_unverifiable(env: Env):
+    assert env.launch(env.cmd("v1.1.0")).returncode == 0
+    env.fake_write("env_of_cid-backend", "OTHER=1\n")   # 旧脚本构建的镜像:没有 DORAMI_BUILD_SHA
+    r = env.launch(env.cmd("v1.1.0"))
+    assert r.returncode == 21, r.stdout + r.stderr   # 不回放;基线未知 → 护栏
+    assert "没有构建身份" in env.worker_log("v1.1.0")

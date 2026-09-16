@@ -135,26 +135,47 @@ PY
 }
 
 # ── docker 现状读取:非零一律 fail closed(不在 $() 里 die——那只会退出子 shell)──
+# stdout 与 stderr 分开收:容器 id 只从 stdout 解析(compose 的警告走 stderr,可能先于 id 出现);
+# 错误**不回显原文**——compose 解析 .env 出错时 stderr 会带上原始行(含密钥),只回退出码与白名单短语。
+_docker_err_summary() {  # ← stderr 文本;只输出可安全回显的固定短语
+    printf '%s\n' "$1" | grep -oE 'required variable [A-Za-z_][A-Za-z0-9_]* is missing|unterminated quoted value|Cannot connect to the Docker daemon|permission denied|no such service|no configuration file provided|not found|No such container|is not running' | head -3 | tr '\n' ';'
+}
+_docker_run_split() {  # out_var err_var rc_var -- cmd...  (stdout→out_var, stderr→err_var)
+    # 内部变量名带 _dr 前缀:bash 是动态作用域,若这里也叫 out / rc,printf -v 会写进自己的局部变量而不是调用方的
+    local _dr_o="$1" _dr_e="$2" _dr_r="$3"; shift 3
+    local _dr_errf _dr_out _dr_rc
+    _dr_errf="$(mktemp "${TMPDIR:-/tmp}/dorami-deploy.XXXXXX")" || die 24 "mktemp 失败"
+    _dr_out="$("$@" 2>"$_dr_errf")"; _dr_rc=$?
+    printf -v "$_dr_o" '%s' "$_dr_out"
+    printf -v "$_dr_e" '%s' "$(cat "$_dr_errf" 2>/dev/null)"
+    printf -v "$_dr_r" '%s' "$_dr_rc"
+    rm -f "$_dr_errf"
+}
 compose_ids_into() {  # var [service] [-a]
-    local __var="$1" svc="${2-}" all="${3-}" out rc
+    local __var="$1" svc="${2-}" all="${3-}" out err rc id
     if [ -n "$svc" ]; then
-        out="$(docker compose ps ${all:+-a} -q "$svc" 2>&1)"; rc=$?
+        _docker_run_split out err rc docker compose ps ${all:+-a} -q "$svc"
     else
-        out="$(docker compose ps ${all:+-a} -q 2>&1)"; rc=$?
+        _docker_run_split out err rc docker compose ps ${all:+-a} -q
     fi
-    [ "$rc" = 0 ] || die 24 "docker compose ps 失败(rc=$rc),无法读取容器现状,fail closed:$(printf '%s' "$out" | head -1)"
-    printf -v "$__var" '%s' "$(printf '%s\n' "$out" | grep -v '^$' | head -1)"
+    [ "$rc" = 0 ] || die 24 "docker compose ps 失败(rc=$rc),无法读取容器现状,fail closed;诊断:$(_docker_err_summary "$err")(原文不回显)"
+    id="$(printf '%s\n' "$out" | grep -v '^$' | head -1)"
+    # 真实 compose 打印 64 位十六进制;这里只拒绝明显不是 id 的行(含空白 / 引号 / 等号的警告文本),不假定长度
+    if [ -n "$id" ] && ! [[ "$id" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ ]]; then
+        die 24 "docker compose ps 的 stdout 首行不是容器 id 形状,拒绝解析(原文不回显)"
+    fi
+    printf -v "$__var" '%s' "$id"
 }
 inspect_image_into() {  # var cid
-    local out rc
-    out="$(docker inspect --format '{{.Image}}' "$2" 2>&1)"; rc=$?
-    [ "$rc" = 0 ] && [ -n "$out" ] || die 24 "docker inspect $2 失败(rc=$rc):$(printf '%s' "$out" | head -1)"
-    printf -v "$1" '%s' "$out"
+    local out err rc
+    _docker_run_split out err rc docker inspect --format '{{.Image}}' "$2"
+    [ "$rc" = 0 ] && [ -n "$out" ] || die 24 "docker inspect $2 失败(rc=$rc);诊断:$(_docker_err_summary "$err")(原文不回显)"
+    printf -v "$1" '%s' "$(printf '%s\n' "$out" | head -1)"
 }
 container_env_into() {  # var cid key
-    local out rc
-    out="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$2" 2>&1)"; rc=$?
-    [ "$rc" = 0 ] || die 24 "docker inspect $2 失败(rc=$rc):$(printf '%s' "$out" | head -1)"
+    local out err rc
+    _docker_run_split out err rc docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$2"
+    [ "$rc" = 0 ] || die 24 "docker inspect $2 失败(rc=$rc);诊断:$(_docker_err_summary "$err")(原文不回显)"
     printf -v "$1" '%s' "$(printf '%s\n' "$out" | grep "^$3=" | head -1 | cut -d= -f2-)"
 }
 
@@ -209,13 +230,27 @@ PY
     fi
 }
 die() { local code="$1"; shift; echo "ERROR: $*"; exit "$code"; }
+# 部署子进程跑在自己的会话 / 进程组里(CHILD_PID 即 pgid),信号时对整组 TERM,等它们全部消失
+# (pgrep -g)才收口;10 秒不退再 KILL。只杀一层 PPID 会漏掉更深的后代(codex 复检 R4)。
+_kill_child_group() {
+    local sig="$1" i
+    [ -n "$CHILD_PID" ] || return 0
+    kill "-$sig" -- "-$CHILD_PID" 2>/dev/null || kill "-$sig" "$CHILD_PID" 2>/dev/null || true
+    for i in $(seq 1 50); do
+        pgrep -g "$CHILD_PID" >/dev/null 2>&1 || return 0
+        sleep 0.2
+    done
+    return 1
+}
 on_signal() {
     local sig="$1" code
     case "$sig" in TERM) code=143 ;; INT) code=130 ;; *) code=129 ;; esac
-    echo "ERROR: worker 收到 SIG${sig}:终止部署子进程并以失败收口(退出码 $code);in-progress 事务保留"
-    if [ -n "$CHILD_PID" ] && kill -0 "$CHILD_PID" 2>/dev/null; then
-        pkill -TERM -P "$CHILD_PID" 2>/dev/null || true
-        kill -TERM "$CHILD_PID" 2>/dev/null || true
+    echo "ERROR: worker 收到 SIG${sig}:终止部署进程组并以失败收口(退出码 $code);in-progress 事务保留"
+    if [ -n "$CHILD_PID" ]; then
+        if ! _kill_child_group TERM; then
+            echo "    进程组 $CHILD_PID 10 秒内未退出,改发 KILL"
+            _kill_child_group KILL || echo "    ⚠️  进程组 $CHILD_PID 仍有残留,请人工检查(pgrep -g $CHILD_PID)"
+        fi
         wait "$CHILD_PID" 2>/dev/null || true
     fi
     exit "$code"
@@ -368,6 +403,9 @@ step_baseline() {
         # 手工部署过(新脚本会留 manual-switch.json;旧脚本没有,但容器里的构建 sha 会露馅)→ last-success 不可信
         if [ -f "$MANUAL_SWITCH" ]; then
             LS_STALE=1; echo "    发现 manual-switch.json($(json_get "$MANUAL_SWITCH" ref ?) $(json_get "$MANUAL_SWITCH" at ?)):last-success 已被手工部署越过"
+        elif [ -n "$CUR_BACKEND_CID" ] && [ -z "$cont_sha" ]; then
+            # 旧脚本(v3.56 之前)构建的镜像没有 DORAMI_BUILD_SHA:无法证明容器就是 last-success 那一版,按不可验证处理
+            LS_STALE=1; echo "    运行容器没有构建身份(无 DORAMI_BUILD_SHA):last-success 不可验证,按未知基线处理"
         elif [ -n "$cont_sha" ] && [ "$cont_sha" != "$BASE_SHA" ]; then
             LS_STALE=1; echo "    运行容器的构建 sha ${cont_sha:0:7} ≠ last-success ${BASE_SHA:0:7}:last-success 已被手工部署越过"
         fi
@@ -443,13 +481,13 @@ step_first_install() {
         [ "$(json_get "$IN_PROGRESS" fresh_authorized false)" = "true" ] && FRESH_OK=1
         echo "    复用事务:沿用事务内 fresh_authorized=$FRESH_OK(不重新按证据推翻)"; meta fresh_ok "$FRESH_OK"; return 0
     fi
-    local evidence="" any db out rc
-    out="$(docker compose ps -a -q 2>&1)"; rc=$?
-    [ "$rc" = 0 ] || die 23 "docker compose ps -a 失败(rc=$rc),无法判断部署证据:$(printf '%s' "$out" | head -1)"
+    local evidence="" any db out err rc
+    _docker_run_split out err rc docker compose ps -a -q
+    [ "$rc" = 0 ] || die 23 "docker compose ps -a 失败(rc=$rc),无法判断部署证据;诊断:$(_docker_err_summary "$err")(原文不回显)"
     [ -n "$(printf '%s' "$out" | tr -d '[:space:]')" ] && evidence="$evidence containers"
     [ -n "$(ls -A "$REPO_DIR/backups" 2>/dev/null || true)" ] && evidence="$evidence backups"
-    out="$(docker image ls --format '{{.Repository}}:{{.Tag}}' 2>&1)"; rc=$?
-    [ "$rc" = 0 ] || die 23 "docker image ls 失败(rc=$rc):$(printf '%s' "$out" | head -1)"
+    _docker_run_split out err rc docker image ls --format '{{.Repository}}:{{.Tag}}'
+    [ "$rc" = 0 ] || die 23 "docker image ls 失败(rc=$rc);诊断:$(_docker_err_summary "$err")(原文不回显)"
     printf '%s\n' "$out" | grep -qE '^dorami-(backend|nginx)-(managed|rollback):' && evidence="$evidence images"
     [ -f "$LAST_SUCCESS" ] && evidence="$evidence last-success"
     # 库文件证据:ini 当前指向的路径、固定的 data/cms_data.db、data/ 下任何 .db——各自独立,防 ini 路径误配
@@ -543,6 +581,8 @@ step_child() {
     echo "[10/13] 执行目标脚本 ./deploy-docker.sh $TAG(origin=pipeline,expected ${SHA:0:7})..."
     SWITCH_MARK="$STATE_DIR/${TXN}.switch"
     json_set "$STATE" phase running || die 24 "写 state 失败"
+    # python3 os.setsid 后 exec:子进程成为自己会话 / 进程组的组长(pgid == CHILD_PID),整组可一次终止;
+    # FD 9(锁)随 exec 继承。
     (
         cd "$REPO_DIR" && exec env \
             DORAMI_DEPLOY_ORIGIN=pipeline DORAMI_EXPECTED_SHA="$SHA" DORAMI_DEPLOY_LOCK_FD=9 \
@@ -550,12 +590,16 @@ step_child() {
             DORAMI_DEPLOY_MIN_FREE_GB="${DORAMI_DEPLOY_MIN_FREE_GB:-5}" DORAMI_DEPLOY_BACKUP_KEEP="$BACKUP_KEEP" \
             DORAMI_DEPLOY_LOCK_FILE="$LOCK_FILE" DORAMI_DEPLOY_CONF="$CONF" \
             ${DORAMI_HTTP_LISTEN:+DORAMI_HTTP_LISTEN="$DORAMI_HTTP_LISTEN"} \
-            ./deploy-docker.sh "$TAG"
+            python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' ./deploy-docker.sh "$TAG"
     ) &
     CHILD_PID=$!
     json_set "$STATE" child_pid "$CHILD_PID" json || true
     json_set "$STATE" child_start_id "$(proc_start_id "$CHILD_PID")" || true
     wait "$CHILD_PID"; CHILD_RC=$?
+    if pgrep -g "$CHILD_PID" >/dev/null 2>&1; then
+        echo "    目标脚本已退出但其进程组仍有后代在跑,等待最多 10 秒..."
+        _kill_child_group TERM || { echo "ERROR: 部署进程组残留,拒绝把本次记为成功"; _kill_child_group KILL || true; CHILD_RC=24; }
+    fi
     CHILD_PID=""
     if [ -e "$SWITCH_MARK" ]; then
         json_set "$IN_PROGRESS" switched_at "$(now_iso)" || echo "    ⚠️  写 switched_at 失败(切换标记文件仍在,判定以文件为准)"

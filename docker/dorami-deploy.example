@@ -47,6 +47,18 @@ else:
 PY
 }
 
+state_snapshot() {  # 一次读取:打印 "run_id<TAB>phase<TAB>rc"(三者来自同一份 JSON,避免两次读取之间被另一轮覆盖)
+    python3 - "$STATE" <<'PY'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    print("\t\t"); sys.exit(0)
+rc = d.get("rc")
+print("%s\t%s\t%s" % (d.get("run_id") or "", d.get("phase") or "", "" if rc is None else rc))
+PY
+}
+
 proc_start_id() { ps -o lstart= -p "$1" 2>/dev/null | tr -s ' ' | sed 's/^ *//;s/ *$//'; }
 
 worker_alive() {  # 状态里记录的 worker 是否仍活着(pid + start_id 双核对,防 PID 复用)
@@ -110,30 +122,34 @@ touch "$LOG"
 tail -n +1 -f "$LOG" &
 TAIL_PID=$!
 trap 'kill "$TAIL_PID" 2>/dev/null' EXIT
+FINAL_RC=""
 while :; do
-    if [ "$(json_get "$STATE" run_id "")" != "$RUN_ID" ]; then
-        echo "ERROR: state 已被另一次运行覆盖(run $(json_get "$STATE" run_id "")),本次结果不可判定" >&2
+    IFS=$'\t' read -r snap_run snap_phase snap_rc <<< "$(state_snapshot)"
+    if [ "$snap_run" != "$RUN_ID" ]; then
+        echo "ERROR: state 已被另一次运行覆盖(run ${snap_run:-?}),本次结果不可判定" >&2
         exit 6
     fi
-    phase="$(json_get "$STATE" phase "")"
-    if [ "$phase" = "complete" ]; then break; fi
-    if [ "$phase" = "finalize-failed" ]; then
+    if [ "$snap_phase" = "complete" ]; then
+        # run_id / phase / rc 来自同一份快照:之后不再读全局 state,避免被下一轮的 complete 顶替
+        FINAL_RC="$snap_rc"; break
+    fi
+    if [ "$snap_phase" = "finalize-failed" ]; then
         echo "ERROR: worker 无法写出退出码(finalize-failed),按失败处理并需人工检查 $STATE_DIR" >&2
         exit 6
     fi
     if ! worker_alive; then
         sleep 1
-        [ "$(json_get "$STATE" run_id "")" = "$RUN_ID" ] && [ "$(json_get "$STATE" phase "")" = "complete" ] && break
-        echo "ERROR: worker 意外退出(phase=${phase}),未写 complete;检查 $LOG" >&2
+        IFS=$'\t' read -r snap_run snap_phase snap_rc <<< "$(state_snapshot)"
+        if [ "$snap_run" = "$RUN_ID" ] && [ "$snap_phase" = "complete" ]; then FINAL_RC="$snap_rc"; break; fi
+        echo "ERROR: worker 意外退出(phase=${snap_phase}),未写 complete;检查 $LOG" >&2
         exit 6
     fi
     sleep 1
 done
 sleep 0.5  # 让 tail 把最后几行吐完
-rc="$(json_get "$STATE" rc "")"
-if [[ "$rc" =~ ^[0-9]+$ ]]; then
-    echo "dorami-deploy: worker 退出码 ${rc}(run ${RUN_ID})"
-    exit "$rc"
+if [[ "$FINAL_RC" =~ ^[0-9]+$ ]]; then
+    echo "dorami-deploy: worker 退出码 ${FINAL_RC}(run ${RUN_ID})"
+    exit "$FINAL_RC"
 fi
-echo "ERROR: state 里没有本次退出码" >&2
+echo "ERROR: 本次 run 的 complete 快照里没有退出码" >&2
 exit 6

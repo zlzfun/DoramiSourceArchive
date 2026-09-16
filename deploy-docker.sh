@@ -49,7 +49,7 @@ preflight_disk() {
         # inode 空闲列按表头名定位(GNU 是第 4 列 IFree,macOS 是第 7 列 ifree);找不到就跳过 inode 检查
         iavail="$(df -Pi "$p" 2>/dev/null | awk 'NR==1{for(i=1;i<=NF;i++) if(tolower($i)=="ifree") c=i} NR==2 && c {print $c}')"
         [[ "$iavail" =~ ^[0-9]+$ ]] || iavail=""
-        echo "    $fs($p): 可用 $((avail / 1024 / 1024)) GB${iavail:+, 空闲 inode $iavail}"
+        echo "    $fs($p): 可用 $((avail / 1024 / 1024)) GB${iavail:+, 空闲 inode $iavail}${iavail:-, inode 列未识别(跳过 inode 检查)}"
         [ "$avail" -ge "$min_kb" ] \
             || fail "磁盘不足:$p 所在文件系统可用 $((avail / 1024 / 1024)) GB < ${min_gb} GB(DORAMI_DEPLOY_MIN_FREE_GB);先清理(docker image prune / 旧备份)再部署"
         if [ -n "$iavail" ] && [ "$iavail" -lt 10000 ]; then
