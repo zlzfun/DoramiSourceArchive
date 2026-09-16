@@ -1,5 +1,6 @@
 
 from config_bailian import BailianSpeechConfig, load_bailian_config
+from config_oss import OssConfig, load_oss_config
 import configparser
 import datetime as dt
 import os
@@ -889,6 +890,7 @@ class AppConfig:
     podcast_artifacts: PodcastArtifactStorageConfig
     aliyun_isi: AliyunIsiConfig
     bailian_speech: BailianSpeechConfig = field(default_factory=BailianSpeechConfig)
+    oss: OssConfig = field(default_factory=OssConfig)
 
     def apply_process_environment(self) -> None:
         if self.network.disable_ca_bundle:
@@ -1402,6 +1404,7 @@ def load_config() -> AppConfig:
             ),
         ),
         bailian_speech=load_bailian_config(parser),
+        oss=load_oss_config(parser),
         aliyun_isi=AliyunIsiConfig(
             access_key_id=(
                 os.getenv("ALIYUN_AK_ID")

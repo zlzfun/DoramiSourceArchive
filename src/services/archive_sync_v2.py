@@ -2960,6 +2960,7 @@ def install_media_bytes(
     body: bytes,
     *,
     max_bytes: int = 20 * 1024 * 1024,
+    object_storage=None,
 ) -> MediaAssetRecord:
     """Install one manifest-declared binary only after size/hash verification."""
 
@@ -3001,6 +3002,15 @@ def install_media_bytes(
             temporary = target.with_suffix(target.suffix + ".part")
             temporary.write_bytes(body)
             temporary.replace(target)
+        if object_storage:
+            # Release the read transaction before network I/O and recheck the
+            # manifest identity on return, before making the resource visible.
+            expected = (record.content_hash, record.ext, record.size_bytes)
+            session.rollback()
+            object_storage.persist(target, expected[0], expected[1], expected[2], mime)
+            record = session.get(MediaAssetRecord, url_hash)
+            if record is None or (record.content_hash, record.ext, record.size_bytes) != expected:
+                raise SyncV2Error("media manifest changed during object upload")
         record.status = "cached"
         record.fetched_at = _now_iso()
         # Keep the producer revision in updated_at. Using the consumer clock here
@@ -3074,6 +3084,13 @@ def install_podcast_audio_bytes(
                 os.replace(temporary, target)
             finally:
                 temporary.unlink(missing_ok=True)
+        if getattr(store, "object_storage", None):
+            expected = (record.content_hash, record.ext, record.size_bytes, record.updated_at)
+            session.rollback()
+            store.object_storage.persist(target, expected[0], expected[1], expected[2], canonical_mime)
+            record = session.get(PodcastArtifactRecord, artifact_id)
+            if record is None or (record.content_hash, record.ext, record.size_bytes, record.updated_at) != expected:
+                raise SyncV2Error("podcast audio manifest changed during object upload")
         record.status = "published"
         record.withdrawn_at = None
         session.add(record)

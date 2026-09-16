@@ -397,6 +397,14 @@ vision_model =        ; 视觉模型(issue #69,可选):同端点同 api_key 下�
   三者(base_url+api_key+model)齐备才算已配置,前端各 AI 入口据此显隐。
 - 兼容 OpenAI/DeepSeek/Kimi/智谱/通义/火山方舟/OpenRouter/Ollama/vLLM 等任意 `/chat/completions` 端点。
 
+## `[oss]`——图片与生成音频的持久对象
+
+默认关闭（两个 backend 均为 `local`），独立于 ASR 临时中转。启用前阅读
+[OSS 存储与迁移方案](./oss-storage.md)，按 `config/production.example.ini` 配置桶、地域、
+同地域内网 Endpoint、专属前缀和 ECS 角色。图片与最终生成音频放 OSS；SQLite、TTS 回执留在磁盘。
+凭据只支持 ECS IMDSv2 临时身份或专用环境变量，不能保存在 INI。迁移、校验、恢复和本地缓存回收
+由 `scripts/migrate_media_oss.py` 执行，默认 dry-run；首版没有自动在线缓存淘汰。
+
 ## `[media]`——媒体库(图床)
 
 正文外链图片的本地缓存:抓取入库后自动预取、阅读器经 `/api/media/proxy` 取图、
@@ -417,7 +425,7 @@ prefetch_concurrency = 4  ; 抓取后预取/回填的并发数
 
 ## `[podcast_artifacts]`——Podcast 生成音频 CAS
 
-首发只支持本地 content-addressed storage；S3-compatible provider 后置。CAS 只持久保存
+默认使用本地 content-addressed storage，可通过独立的 `[oss]` 节启用 OSS 持久对象。CAS 只持久保存
 生成的中文导读音频；原节目保持发布者外链，ASR 校验下载只进入 staging，校验结束即删除，
 另以轻量 `source_media_snapshot` 固化处理输入事实。Docker 镜像和裸机部署都必须提供
 `ffmpeg` 与 `ffprobe`。

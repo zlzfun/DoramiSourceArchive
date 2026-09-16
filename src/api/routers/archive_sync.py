@@ -539,7 +539,7 @@ def export_archive_v2_media(url_hash: str):
     store = getattr(app_module, "media_store", None)
     if store is None:
         raise HTTPException(status_code=404, detail="media store disabled")
-    path = store.file_path_for(record)
+    path = store.readable_path(record)
     if not path.is_file():
         raise HTTPException(status_code=404, detail="media file missing")
     return FileResponse(
@@ -565,7 +565,7 @@ def export_archive_v2_podcast_audio(artifact_id: str):
     store = getattr(importlib.import_module("api.app"), "podcast_artifact_store", None)
     if store is None:
         raise HTTPException(status_code=404, detail="podcast artifact store disabled")
-    path = store.file_path_for(record)
+    path = store.readable_path(record)
     if not path.is_file():
         raise HTTPException(status_code=404, detail="podcast audio file missing")
     return FileResponse(

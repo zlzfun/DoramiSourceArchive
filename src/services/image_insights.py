@@ -545,9 +545,9 @@ class ImageInsightService:
                 continue
             if media.content_hash in seen_hashes:
                 continue
-            path = self.media_store.file_path_for(media)
             # 筛选阶段只读文件头做尺寸判定,不提前物化整图(codex 检视 F2:12 篇×4 图曾同时占 48 份原图)
             try:
+                path = await asyncio.to_thread(self.media_store.readable_path, media)
                 if path.stat().st_size > MAX_IMAGE_BYTES:
                     continue
                 with path.open("rb") as fh:

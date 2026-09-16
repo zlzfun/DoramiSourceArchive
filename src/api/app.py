@@ -132,6 +132,7 @@ from services.podcast_stage_policy import (
     require_stage as require_podcast_stage,
 )
 from services.media_store import MediaStore
+from services.object_storage import ObjectStorage, ObjectStorageError
 from services.podcast_artifacts import PodcastArtifactStore
 from services.podcast_asr_worker import AsrWorkerConfig, AsrWorkerStep
 from services import podcast_premium_guides as podcast_premium_guide_service
@@ -515,6 +516,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Dorami 数据归档中枢 API", lifespan=lifespan)
 
 
+@app.exception_handler(ObjectStorageError)
+async def object_storage_unavailable(request: Request, exc: ObjectStorageError):
+    return StarletteJSONResponse({"code": str(exc), "detail": "媒体存储暂时不可用，请稍后重试"}, status_code=503)
+
+
 def _is_podcast_text_reader_path(path: str) -> bool:
     return path.startswith("/api/podcasts/episodes/") and path.endswith("/texts")
 
@@ -603,6 +609,7 @@ media_store: Optional[MediaStore] = (
         Path(settings.media.media_dir),
         max_bytes=settings.media.max_file_mb * 1024 * 1024,
         timeout_seconds=settings.media.timeout_seconds,
+        object_storage=ObjectStorage(db_sink.engine, Path(settings.media.media_dir), "media", settings.oss),
     )
     if settings.media.enabled else None
 )
@@ -627,6 +634,7 @@ podcast_artifact_store = PodcastArtifactStore(
     ffprobe_binary=settings.podcast_artifacts.ffprobe_binary,
     probe_timeout_seconds=settings.podcast_artifacts.probe_timeout_seconds,
     orphan_grace_seconds=settings.podcast_artifacts.orphan_grace_seconds,
+    object_storage=ObjectStorage(db_sink.engine, Path(settings.podcast_artifacts.root_dir), "podcast", settings.oss),
 )
 
 # The durable processing state machine is used for resumable ASR. Premium-guide
