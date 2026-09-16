@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import secrets
 import socket
 import subprocess
 import sys
@@ -27,6 +28,7 @@ from playwright.sync_api import sync_playwright
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from e2e.mobile_reader import run_flows  # noqa: E402
+from e2e.pwa import run_pwa_flows  # noqa: E402
 
 
 def isolated_environment(sandbox: Path) -> dict[str, str]:
@@ -57,7 +59,7 @@ deployment = manual
 [storage]
 database_url = sqlite:///{sandbox / 'reader.db'}
 [auth]
-secret = e2e-disposable-session-secret-not-a-deployment-secret
+secret = {secrets.token_urlsafe(32)}
 [cors]
 allow_origins = http://127.0.0.1
 [network]
@@ -132,7 +134,7 @@ def run(args) -> int:
     args.output.mkdir(parents=True, exist_ok=True)
     artifacts = Path(tempfile.mkdtemp(prefix="reader-", dir=args.output)).resolve()
     result = {"status": "failed", "started_at": datetime.now(timezone.utc).isoformat(),
-              "browser": args.channel or "chromium", "issues": [86, 90],
+              "browser": args.channel or "chromium", "issues": [85, 86, 90],
               "scope": "Built frontend + real FastAPI + disposable SQLite; no API response mocks.",
               "artifacts": str(artifacts)}
     started = time.monotonic()
@@ -171,6 +173,7 @@ def run(args) -> int:
                 browser = playwright.chromium.launch(channel=args.channel, headless=not args.headed)
                 try:
                     run_flows(browser, base_url, sandbox / "reader.db", artifacts, result)
+                    run_pwa_flows(browser, base_url, sandbox / "site", artifacts, result)
                 finally:
                     browser.close()
         result["status"] = "passed"
