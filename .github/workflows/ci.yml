@@ -45,13 +45,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # 官方下载脚本取最新 actionlint 二进制;工作流一改就静态检查(issue #102 起 release.yml / deploy.yml 承担部署)
+      # 官方下载脚本取钉版的 actionlint 二进制(结果可重现);工作流一改就静态检查(issue #102 起 release.yml / deploy.yml 承担部署)
       - name: Run actionlint
         run: |
           set -euo pipefail
-          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) latest . >/dev/null
-          # concurrency.queue 是 GitHub 2025 年新增的官方键(deploy.yml 用 queue: max 保留所有等待项),
-          # actionlint 1.7.x 的 schema 尚未收录,单独忽略这一条,其余照查。
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) 1.7.12 . >/dev/null
+          # concurrency.queue 是 GitHub 2026-05-07 公告的官方键(deploy.yml 用 queue: max,最多保留 100 个等待项),
+          # actionlint 1.7.12 的 schema 尚未收录,单独忽略这一条,其余照查。
           ./actionlint -color -shellcheck= -pyflakes= -ignore 'unexpected key "queue" for "concurrency" section'
 
   frontend:

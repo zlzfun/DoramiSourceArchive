@@ -107,7 +107,7 @@ echo "已提交 $(git rev-parse --short HEAD) 并打 tag ${TAG}"
 
 if [ "$PUSH" = 1 ]; then
     git push --quiet origin main "$TAG"
-    echo "已推送。GitHub Actions 会自动建 Release、同步 master,并把 ${TAG} 排进生产部署队列——到 Actions 的 Deploy run 批准即上线(手工兜底:生产机 ./deploy-docker.sh ${TAG})。"
+    echo "已推送。GitHub Actions 会自动建 Release、同步 master,并在**本次 Release run** 里排上生产部署——进入该 run,批准 production 的待审批部署即上线(手工兜底:生产机 ./deploy-docker.sh ${TAG})。"
 else
     echo "未推送(--no-push)。确认后执行:git push origin main ${TAG}"
 fi

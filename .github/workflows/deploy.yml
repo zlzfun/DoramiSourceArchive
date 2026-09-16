@@ -63,23 +63,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CALLER_SHA: ${{ inputs.target_sha }}
-          EVENT: ${{ github.event_name }}
           ALLOW_DOWNGRADE: ${{ inputs.allow_downgrade }}
           FORCE_REDEPLOY: ${{ inputs.force_redeploy }}
         run: |
           set -euo pipefail
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            # 手动入口自己核验(tag 在 main 线上、目标 tag 里的版本号 = tag 名),并要求已有非 draft Release
-            sha="$(scripts/verify-release-ref.sh "$TAG")"
-            draft="$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null || echo missing)"
-            if [ "$draft" != "false" ]; then
-              echo "::error::${TAG} 没有已发布(非 draft)的 GitHub Release——部署单元必须是经 release 流程核对的 tag。"
-              exit 1
-            fi
-          else
-            sha="$CALLER_SHA"
-            [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::caller 传来的 target_sha 不合法"; exit 1; }
-            [ "$(git rev-parse "refs/tags/${TAG}^{commit}")" = "$sha" ] || { echo "::error::tag ${TAG} 与 target_sha 不一致"; exit 1; }
+          # 两条入口同一套核验:总是跑 verify-release-ref(远端存在 / main 祖先 / 目标 tag 里的版本号),
+          # caller 传了 target_sha 就必须与之相等(不按 event_name 分支——release.yml 手动 dispatch 时被调用方的
+          # event_name 也是 workflow_dispatch,按事件分支会丢掉 caller 核过的 sha),且所有入口都要求已有非 draft Release。
+          sha="$(scripts/verify-release-ref.sh "$TAG")"
+          if [ -n "$CALLER_SHA" ]; then
+            [[ "$CALLER_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::caller 传来的 target_sha 不合法"; exit 1; }
+            [ "$sha" = "$CALLER_SHA" ] || { echo "::error::tag ${TAG} 现在指向 ${sha:0:7},与 caller 核验的 ${CALLER_SHA:0:7} 不一致(审批期间 tag 被移动?)"; exit 1; }
+          fi
+          draft="$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null || echo missing)"
+          if [ "$draft" != "false" ]; then
+            echo "::error::${TAG} 没有已发布(非 draft)的 GitHub Release(状态: ${draft})——部署单元必须是经 release 流程核对并发布的 tag。"
+            exit 1
           fi
           downgrade=0; redeploy=0
           [ "$ALLOW_DOWNGRADE" = "true" ] && downgrade=1
@@ -136,8 +135,15 @@ jobs:
         run: |
           set -uo pipefail
           version="$(git show "${SHA}:src/version.py" | grep -o '__version__ = "[^"]*"' | sed 's/.*"\(.*\)"/\1/')"
-          for _ in $(seq 1 90); do
-            body="$(curl -fsS -H 'Cache-Control: no-cache' "${PUBLIC_URL}/api/health?_=$(date +%s)" 2>/dev/null || true)"
+          # 时间预算 180s(与 deploy-docker.sh 本机探针同语义):每次 curl 带连接 / 总超时,连接建立后不答也不能吃掉整个预算
+          deadline=$(( $(date +%s) + 180 ))
+          attempt=0
+          while [ "$attempt" -lt 90 ]; do
+            attempt=$((attempt + 1))
+            remaining=$(( deadline - $(date +%s) ))
+            [ "$remaining" -gt 0 ] || break
+            max_time=$(( remaining < 15 ? remaining : 15 ))
+            body="$(curl -fsS --connect-timeout 5 --max-time "$max_time" -H 'Cache-Control: no-cache' "${PUBLIC_URL}/api/health?_=$(date +%s)" 2>/dev/null || true)"
             if [ -n "$body" ]; then
               verdict="$(printf '%s' "$body" | python3 -c '
           import json, sys
@@ -158,9 +164,10 @@ jobs:
               fi
               last="$verdict"
             fi
+            [ $(( deadline - $(date +%s) )) -gt 2 ] || break
             sleep 2
           done
-          echo "::error::公网健康核对未通过(180s):${last:-无响应}"
+          echo "::error::公网健康核对未通过(预算 180s,尝试 ${attempt} 次):${last:-无响应}"
           exit 1
 
       - name: Job summary

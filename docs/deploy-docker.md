@@ -91,17 +91,28 @@ docker compose down                 # 停站(数据在宿主目录,安全)
 与跨版本状态不能随之被换掉):
 
 ```bash
-# 1. launcher / worker / 配置(模板在仓库,复制出去后按需改 REPO_DIR 等)
-cp docker/dorami-deploy.example        /root/bin/dorami-deploy        && chmod 700 /root/bin/dorami-deploy
-cp docker/dorami-deploy-worker.example /root/bin/dorami-deploy-worker && chmod 700 /root/bin/dorami-deploy-worker
-cp docker/dorami-deploy.conf.example   /etc/dorami-deploy.conf        && chmod 600 /etc/dorami-deploy.conf
-mkdir -p /var/lib/dorami-deploy /var/log/dorami-deploy && chmod 700 /var/lib/dorami-deploy /var/log/dorami-deploy
+# 0. 取模板:生产工作树可能还站在没有这些文件的旧 tag 上(v3.58.2 及之前),直接从 Git 对象里取指定发布版的模板
+cd /root/DoramiSourceArchive && git fetch --tags origin
+REL=vX.Y.Z                                   # 第一个带流水线脚本的发布版
+mkdir -p /root/bin /root/.ssh /var/lib/dorami-deploy /var/log/dorami-deploy
+chmod 700 /root/bin /root/.ssh /var/lib/dorami-deploy /var/log/dorami-deploy
+
+# 1. launcher / worker / 配置(复制出去后按需改 REPO_DIR 等;/root/bin 不必进 PATH,所有调用都用绝对路径)
+git show "$REL:docker/dorami-deploy.example"        > /root/bin/dorami-deploy        && chmod 700 /root/bin/dorami-deploy
+git show "$REL:docker/dorami-deploy-worker.example" > /root/bin/dorami-deploy-worker && chmod 700 /root/bin/dorami-deploy-worker
+git show "$REL:docker/dorami-deploy.conf.example"   > /etc/dorami-deploy.conf        && chmod 600 /etc/dorami-deploy.conf
+/root/bin/dorami-deploy-worker status                # 能读 conf、打印三份状态(全是「无」)即安装成功
 
 # 2. 部署专用密钥(与日常运维密钥分开);私钥进 GitHub Environment secret PROD_SSH_KEY,公钥装成 forced command
 ssh-keygen -t ed25519 -N '' -C deploy@github-actions -f /root/deploy_key
 printf 'restrict,command="/root/bin/dorami-deploy" %s\n' "$(cat /root/deploy_key.pub)" >> /root/.ssh/authorized_keys
-ssh-keyscan -t ed25519 <host>      # 一行 → GitHub Environment variable PROD_KNOWN_HOSTS
 rm /root/deploy_key                # 私钥只留在 GitHub Secret 里
+
+# 3. 主机公钥 → GitHub Environment variable PROD_KNOWN_HOSTS(一行)。ssh-keyscan 只采集网络对端给的 key,
+#    保存前在这个已验证的 SSH 会话里核对指纹一致:
+ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub                       # 主机自己的指纹
+ssh-keygen -lf <(ssh-keyscan -t ed25519 <host> 2>/dev/null)             # 扫描结果的指纹,两者须相同
+ssh-keyscan -t ed25519 <host> 2>/dev/null                               # 相同才把这一行存进变量
 ```
 
 - `restrict` 一并关掉 pty / 端口与 agent 转发 / user-rc;`from=` 不设(GitHub 托管 runner 的 IP 段数千条且每周变)。
@@ -109,9 +120,11 @@ rm /root/deploy_key                # 私钥只留在 GitHub Secret 里
 - 状态目录 `/var/lib/dorami-deploy/`:`state.json`(当前 / 上次 worker)、`in-progress.json`(切换前落盘的回滚点:上一版
   镜像的 managed tag + 事务备份)、`last-success.json`(最近一次成功,同 schema 多 `deployed_at`)、`<tag>-<sha7>.rc`、
   `closed-<txn>.json`(人工或自动关闭的事务)。日志在 `/var/log/dorami-deploy/<tag>-<sha7>.log`。
-- 手工命令:`dorami-deploy-worker status` 看三份状态;`dorami-deploy-worker --close-in-progress` 关闭未收口事务
-  (恢复备份 / 放弃失败部署之后);首次安装的空机器 `touch /var/lib/dorami-deploy/first-install.token` 才允许起空库,
-  有任何部署证据(容器 / 备份 / managed 镜像 / 库文件)的机器绝不起空站。
+- 手工命令(绝对路径):`/root/bin/dorami-deploy-worker status` 看三份状态;`/root/bin/dorami-deploy-worker --close-in-progress`
+  关闭未收口事务(恢复备份 / 放弃失败部署之后)。
+- **首次安装的空机器**:`touch /var/lib/dorami-deploy/first-install.token` 才允许起空库,有任何部署证据(容器 / 备份 / managed 镜像 /
+  库文件)的机器绝不起空站;首次经流水线部署时基线未知,Run workflow 要勾 `allow_downgrade`(人为确认);令牌在事务落盘后自动消费。
+- 恢复哪份备份看代际(`in-progress` 撤销失败升级 / `last-success` 回退上次成功),见 `docs/release-process.md`「回滚」。
 - 升级 launcher / worker 是显式手工步骤(重新 cp);目标 tag 的 `scripts/deploy-lib.sh` 用 `DORAMI_DEPLOY_PROTOCOL` 宣告
   契约版本,worker 不认识的版本拒绝部署。
 - 手工 `./deploy-docker.sh` 与流水线共用锁 `/run/lock/dorami-deploy.lock`,互斥。

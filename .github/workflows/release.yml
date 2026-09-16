@@ -49,9 +49,14 @@ jobs:
           TAG: ${{ steps.verify.outputs.tag }}
         run: |
           set -euo pipefail
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release ${TAG} 已存在,跳过。"
+          # gh release view 对 draft 也成功:已存在的 Release 必须是已发布的,否则不能让后面的 deploy job 拿它当发布单元
+          existing="$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null || echo missing)"
+          if [ "$existing" = "false" ]; then
+            echo "Release ${TAG} 已存在(已发布),跳过。"
             exit 0
+          elif [ "$existing" = "true" ]; then
+            echo "::error::Release ${TAG} 已存在但仍是 draft:请在 GitHub 上发布或删除它后重跑,不自动覆盖。"
+            exit 1
           fi
           # annotated tag 的正文(release.sh 写入的本版内容清单)作为说明开头;
           # --generate-notes 会把自动生成的 PR 清单追加在后面。

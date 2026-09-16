@@ -65,8 +65,12 @@ in-progress 事务、方向与单调护栏、首装门),worker 再跑目标 tag 
   对已成功的同 tag 重新部署须勾 `force_redeploy`(默认回放成功、不重跑)。
 - **只部署宣告了部署协议的 tag**:目标 tag 的 `scripts/deploy-lib.sh` 须有 `DORAMI_DEPLOY_PROTOCOL=<n>`(v3.59 起);
   更早的 tag 流水线拒绝,走下面的手工路径。
-- 失败不自动回滚:job 标红、Deployment 标红,生产机上 in-progress 事务保留(暂存的上一版镜像 + 事务备份),
-  同一 tag 重跑会复用该事务;要换目标须先在生产机 `dorami-deploy-worker --close-in-progress`。
+- **首装 / 基线未知也要勾 `allow_downgrade`**:全新机器(或运行容器没有构建身份)时 worker 读不到基线,单调护栏按「未知」拒绝;
+  这属于人为确认的范围,首次经流水线部署一台机器用 Run workflow 并勾选它。
+- 失败不自动回滚:job 标红、Deployment 标红。**看失败发生在哪一步**:SSH 那一步失败 → 生产机上 in-progress 事务保留
+  (暂存的上一版镜像 + 事务备份),同一 tag 重跑会复用该事务,要换目标须先在生产机 `/root/bin/dorami-deploy-worker --close-in-progress`;
+  SSH 已成功、只是**公网核对**那一步失败 → worker 已晋升 last-success、事务已收口,这时是站点对外不可达之类的问题,不是半部署。
+- 手动 Run workflow 时 ref 选 `main`(checkout 的是所选 ref,核验脚本从那里来)。
 
 **手工兜底**(生产机上直接跑,与流水线共用同一把锁,互斥):
 
@@ -102,9 +106,17 @@ cp backups/cms_data.db.20260914-110000 data/cms_data.db && rm -f data/cms_data.d
 备份不含 `data/media` 与 `data/podcast-artifacts`(可再生 / 体量大),按需另备。
 
 **经流水线降级**是「代码降级入口」,不是完整回滚:Actions → Deploy → Run workflow 填旧 tag 并勾 `allow_downgrade`;
-生产机 worker 会先让目标镜像算迁移计划,数据库已走过目标代码不认识的迁移时判 `incompatible` 并 fail closed——
-此时按上面的步骤恢复对应备份(流水线的事务备份在 `backups/…pre-<tag>`,`/var/lib/dorami-deploy/last-success.json`
-的 `prev.db_backup` 指着它),`dorami-deploy-worker --close-in-progress` 关闭未收口事务,再重跑。
+生产机 worker 会先让目标镜像算迁移计划,数据库已走过目标代码不认识的迁移时判 `incompatible` 并 fail closed——此时先恢复备份。
+
+**恢复哪一份备份,按代际分两种情况**(流水线的事务备份都在 `backups/…pre-<tag>`,manifest 在 `/var/lib/dorami-deploy/`):
+
+- **撤销一次失败的升级**(B 部署失败,要回到 B 之前):读 **`in-progress.json` 的 `prev.db_backup`**(已用 `--close-in-progress`
+  关闭则读对应的 `closed-<txn>.json`)。它是部署 B **之前**、含 A 运行期间全部数据的快照。`last-success.json` 的 `prev` 是部署 A
+  之前的快照,用它会多丢一段数据。
+- **回退最近一次成功的部署**(A 已成功运行、要回到 A 之前):才读 `last-success.json` 的 `prev.db_backup`。
+
+恢复前核对 manifest 里的 `target` / `prev.ref` / `prev.sha` / 备份路径,记下当前状态,再停后端、覆盖库文件、
+`/root/bin/dorami-deploy-worker --close-in-progress` 关闭未收口事务,最后重跑目标 tag。
 
 ## 分支保护(GitHub 仓库设置,手动开一次)
 
@@ -121,7 +133,9 @@ Environment(一次性,自动部署用,见 `docs/auto-deploy-plan.md` §4.2):Sett
 - Required reviewers:只写发版人(「Prevent self-review」按需);
 - Deployment branches and tags:Selected → 加 Tag 规则 `v*` 与 Branch 规则 `main`;
 - Environment secrets:`PROD_SSH_KEY`(部署专用 ed25519 私钥,与日常运维密钥分开);
-- Environment variables:`PROD_HOST`、`PROD_USER`(root)、`PROD_KNOWN_HOSTS`(`ssh-keyscan -t ed25519 <host>` 的一行)、
+- Environment variables:`PROD_HOST`、`PROD_USER`(root)、`PROD_KNOWN_HOSTS`(`ssh-keyscan -t ed25519 <host>` 的一行,
+  **保存前须带外核验**:在已验证的运维 SSH 会话里 `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` 取指纹,与
+  `ssh-keygen -lf <(ssh-keyscan -t ed25519 <host>)` 比对一致才存;扫描只采集网络对端给的 key,不证明它属于目标主机)、
   `PROD_PUBLIC_URL`(缺省 https://www.dorami.cloud)。
 生产机侧的安装(launcher / worker / conf / authorized_keys)见 `docs/deploy-docker.md`「自动部署流水线」。
 
