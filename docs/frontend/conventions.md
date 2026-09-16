@@ -330,7 +330,9 @@
 照常)。业务代码不得自写 `.modal-overlay` 元素——那意味着又一套 onClick 关闭判定,lint
 `dorami/no-raw-modal-overlay` 拦增量;移动壳 `.m-dim` 是面板的兄弟节点,不在此列。**body 滚动锁
 只用 `hooks/useBodyScrollLock`**(全站一把引用计数锁,外壳与抽屉共用):自写「存旧值 → 还旧值」
-的锁在多层浮层关闭顺序不对称时(Esc 一次关两层)会把 `hidden` 留在 body 上。
+的锁在多层浮层关闭顺序不对称时会把 `hidden` 留在 body 上。**Esc / 焦点陷阱只用 `hooks/useModalA11y`**,
+它带模块级层栈:多层浮层同时激活(抽屉上开确认框 / 表单弹窗)时 Esc 与 Tab 只由最上层消费,上层关闭后
+焦点回到下层触发控件、下层保持打开;业务代码不要再挂自己的 document / window 级 Esc 监听去关模态层。
 
 ## 9. 暗色主题（已落地）
 

@@ -73,16 +73,22 @@ const lintRuleHits = (code, file = 'src/components/Foo.jsx') => linter
   .verify(code, eslintConfig, { filename: path.join(frontendDir, file) })
   .filter((m) => m.ruleId === RULE).length;
 
-test('护栏:裸 .modal-overlay 元素被拦(字面量 / 模板字面量 / 三元 / 拼接)', () => {
-  assert.equal(lintRuleHits('export const A = ({ close }) => <div className="modal-overlay" onClick={close} />;'), 1);
-  assert.equal(lintRuleHits('export const A = ({ closing }) => <div className={`modal-overlay ${closing ? "is-closing" : ""}`} />;'), 1);
-  assert.equal(lintRuleHits('export const A = ({ x }) => <div className={x ? "modal-overlay" : "other"} />;'), 1);
-  assert.equal(lintRuleHits('export const A = ({ x }) => <div className={"modal-overlay " + x} />;'), 1);
+test('护栏:裸 .modal-overlay 被拦——含 codex R1 指出的间接写法(常量 / clsx 对象键 / 数组 join / 选择器)', () => {
+  for (const code of [
+    'export const A = ({ close }) => <div className="modal-overlay" onClick={close} />;',
+    'export const A = ({ closing }) => <div className={`modal-overlay ${closing ? "is-closing" : ""}`} />;',
+    'export const A = ({ x }) => <div className={x ? "modal-overlay" : "other"} />;',
+    'export const A = ({ x }) => <div className={"modal-overlay " + x} />;',
+    'const OVERLAY = "modal-overlay"; export const A = () => <div className={OVERLAY} />;',
+    'export const A = ({ open, clsx }) => <div className={clsx({ "modal-overlay": open })} />;',
+    'export const A = ({ x }) => <div className={["modal-overlay", x].join(" ")} />;',
+    'export const A = () => document.querySelector(".modal-overlay");',
+  ]) assert.equal(lintRuleHits(code), 1, code);
 });
 
 test('护栏:共用外壳本体豁免,<Modal> 调用方与其它类名不报', () => {
   assert.equal(lintRuleHits('export const A = () => <div className="modal-overlay" />;', 'src/components/Modal.jsx'), 0);
   assert.equal(lintRuleHits('export const A = () => <div className="modal-panel form-sheet" />;'), 0);
   assert.equal(lintRuleHits('export const A = ({ close }) => <div className="m-dim" onClick={close} />;'), 0);
-  assert.equal(lintRuleHits('export const A = () => <div overlayClassName="modal-overlay" />;'), 0);
+  assert.equal(lintRuleHits('export const A = ({ Modal }) => <Modal closeOnOverlay overlayClassName="py-6 pwa-overlay" />;'), 0);
 });

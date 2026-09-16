@@ -64,24 +64,16 @@ function checkCeremony(context, raw, node) {
 // ── 弹窗遮罩护栏(issue #104) ──
 // 遮罩关闭判定只在 components/Modal.jsx 一处(按下与松开同在遮罩才关,见 utils/overlayClose.js);
 // 业务弹窗不得再自写 .modal-overlay 元素——那意味着又一套 onClick / onMouseDown 关闭判定,
-// 面板内拖选文字松手落到遮罩就会把弹窗关掉。规则只看 JSX className 属性里的字符串片段
-// (字面量 / 模板字面量 / 三元 / 逻辑与拼接),Modal.jsx 本体在配置末尾单独豁免;
-// 移动壳 .m-dim 是面板的兄弟节点、不叫 modal-overlay,不在此列。
+// 面板内拖选文字松手落到遮罩就会把弹窗关掉。这个 token 在业务代码里没有任何合法出处(元素类名 /
+// 选择器 / 常量 / clsx 键都不该出现),故与另外三条 dorami 规则同一扫描面:所有字符串与模板字面量
+// (codex R1:只看 className 属性会被 `className={CONST}` / `clsx({ 'modal-overlay': x })` / `join()` 绕过)。
+// Modal.jsx 本体在配置末尾按文件豁免;移动壳 .m-dim 是面板的兄弟节点、不叫 modal-overlay,不在此列。
 const MODAL_OVERLAY_RE = /\bmodal-overlay\b/
 
-function classNameHasModalOverlay(node) {
-  if (!node || typeof node !== 'object') return false
-  switch (node.type) {
-    case 'Literal': return typeof node.value === 'string' && MODAL_OVERLAY_RE.test(node.value)
-    case 'TemplateElement': return MODAL_OVERLAY_RE.test(node.value.raw)
-    case 'TemplateLiteral': return node.quasis.some(classNameHasModalOverlay)
-    case 'JSXExpressionContainer': return classNameHasModalOverlay(node.expression)
-    case 'ConditionalExpression': return classNameHasModalOverlay(node.consequent) || classNameHasModalOverlay(node.alternate)
-    case 'LogicalExpression':
-    case 'BinaryExpression': return classNameHasModalOverlay(node.left) || classNameHasModalOverlay(node.right)
-    case 'CallExpression': return node.arguments.some(classNameHasModalOverlay)
-    case 'ArrayExpression': return node.elements.some(classNameHasModalOverlay)
-    default: return false
+function checkModalOverlay(context, raw, node) {
+  if (typeof raw !== 'string') return
+  if (MODAL_OVERLAY_RE.test(raw)) {
+    context.report({ node, message: '不要自写 .modal-overlay 元素:遮罩关闭判定只在 components/Modal.jsx(按下与松开同在遮罩才关),请改用 <Modal closeOnOverlay>(docs/frontend/conventions.md §8 弹窗外壳)' })
   }
 }
 
@@ -96,11 +88,11 @@ export const doramiPlugin = {
       },
       create(context) {
         return {
-          JSXAttribute(node) {
-            if (node.name?.name !== 'className') return
-            if (classNameHasModalOverlay(node.value)) {
-              context.report({ node, message: '不要自写 .modal-overlay 元素:遮罩关闭判定只在 components/Modal.jsx(按下与松开同在遮罩才关),请改用 <Modal closeOnOverlay>(docs/frontend/conventions.md §8 弹窗外壳)' })
-            }
+          Literal(node) {
+            if (typeof node.value === 'string') checkModalOverlay(context, node.value, node)
+          },
+          TemplateElement(node) {
+            checkModalOverlay(context, node.value.raw, node)
           },
         }
       },
