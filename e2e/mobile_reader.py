@@ -56,7 +56,7 @@ def observed_page(browser, base_url, artifacts, name, result):
     context.tracing.start(screenshots=True, snapshots=True, sources=True)
     page = context.new_page()
     audit = {"reject_login": False, "offline": False, "offline_requests": set(),
-             "page_errors": [], "unexpected": [], "requests": Counter()}
+             "page_errors": [], "unexpected": [], "requests": Counter(), "cancelled_brand_images": []}
     page.on("pageerror", lambda error: audit["page_errors"].append(str(error)))
 
     def response_seen(response):
@@ -66,6 +66,12 @@ def observed_page(browser, base_url, artifacts, name, result):
             audit["unexpected"].append(f"HTTP {response.status} {path}")
 
     def request_failed(request):
+        # A fast session response unmounts the loading logo during reload; Chromium
+        # aborts that image. Retain evidence and check it is not a visible broken image.
+        if (request.failure == "net::ERR_ABORTED" and request.resource_type == "image"
+                and urlsplit(request.url).path.startswith("/brand/")):
+            audit["cancelled_brand_images"].append(request.url)
+            return
         if request not in audit["offline_requests"] or request.failure != "net::ERR_INTERNET_DISCONNECTED":
             audit["unexpected"].append(f"Request failed: {request.url} {request.failure}")
 
@@ -83,6 +89,9 @@ def observed_page(browser, base_url, artifacts, name, result):
     passed = False
     try:
         yield page, audit
+        assert page.evaluate("""urls => [...document.images].every(img =>
+            !urls.includes(img.currentSrc || img.src) || !img.getClientRects().length || img.naturalWidth > 0)
+        """, audit["cancelled_brand_images"]), audit["cancelled_brand_images"]
         assert not audit["page_errors"], audit["page_errors"]
         assert not audit["unexpected"], audit["unexpected"]
         passed = True
@@ -100,6 +109,7 @@ def observed_page(browser, base_url, artifacts, name, result):
     finally:
         result.setdefault("browser_audits", {})[name] = {
             "page_errors": audit["page_errors"], "unexpected": audit["unexpected"],
+            "cancelled_brand_images": audit["cancelled_brand_images"],
             "requests": {f"{method} {path}": count for (method, path), count in audit["requests"].items()},
             "injected_offline_requests": sorted({urlsplit(request.url).path for request in audit["offline_requests"]}),
         }

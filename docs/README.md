@@ -22,6 +22,10 @@
   音频分页 / 标签统一总账 / 单集详情)、隔离栈 Playwright 验收与有意边界。
 - ◉ [configuration.md](./configuration.md) — `config/*.ini` 配置项逐节说明(runtime 角色/auth/RAG/LLM/
   网络代理),含生产 production.ini 与环境变量覆盖。
+- ◉ [oss-storage.md](./oss-storage.md) — **OSS 媒体存储（issue #92，开发中）**：同地域内网读取与 Archive Sync 路径、
+  OSS/ECS/内网副本的数据分工、自动缓存回收与读写租约、迁移恢复和验收；尚未部署。
+- ◉ [storage-backups.md](./storage-backups.md) — **自动备份与离线恢复（默认关闭）**：SQLite 一致性快照、
+  付费回执与本地媒体打包、OSS 依赖清单、独立备份权限、本地保留及 SHA-256 恢复演练。
 - ◉ [deploy-docker.md](./deploy-docker.md) — **Docker 部署(推荐路径)**:compose 双容器形态/
   用法与运维/ini 容器内语义差异/HTTPS/全新服务器部署与迁移/受限网络镜像源。
 - ◉ [deploy-baremetal.md](./deploy-baremetal.md) — **裸机部署(第二条官方路径,v3.39.0 扶正)**:
@@ -126,7 +130,8 @@
 
 ## frontend/ —— 前端纪律(◉ 活跃)
 
-- ◉ [frontend/e2e.md](./frontend/e2e.md) — #90 移动读者真实 E2E：一条命令、自建 FastAPI/SQLite 沙箱、布局与阅读交互、失败 trace。
+- ◉ [frontend/e2e.md](./frontend/e2e.md) — #90 移动读者与 #85 PWA 真实 E2E：一条命令、自建 FastAPI/SQLite 沙箱、阅读交互与 SW 生命周期。
+- ◉ [frontend/pwa.md](./frontend/pwa.md) — #85 主屏幕安装入口、最小离线恢复、更新边界与 cloudflared 隔离真机预览。
 - ◉ [frontend/mobile-navigation.md](./frontend/mobile-navigation.md) — Issue #86：响应式阅读器、贴底导航、共享阅读状态与浏览器回归入口；含验证边界。
 
 - ◉ [frontend/conventions.md](./frontend/conventions.md) — **改前端必读**:文案/可访问性/排版刻度/

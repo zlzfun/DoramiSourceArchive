@@ -142,6 +142,7 @@ export default function DiscoverPage({
   const setShape = (next) => { setLocalShape(next); onShapeChange?.(next); };
   const activeTab = interestsPanel || tab !== 'interests' ? tab : 'sources';
   const activeShape = shape;
+  const addSourceKind = activeShape === 'article' || activeShape === 'podcast' ? activeShape : null;
   const [query, setQuery] = useState('');
   // 排序小开关:默认(收录量降序,原有秩序)⇄ 订阅降序(全站订阅人数,选源社会证明)
   const [sortBySubs, setSortBySubs] = useState(false);
@@ -343,7 +344,7 @@ export default function DiscoverPage({
                         onClick={() => setAddOpen(true)}
                       >
                         <Plus className="h-[13px] w-[13px]" aria-hidden="true" />
-                        添加源
+                        {addSourceKind === 'article' ? '添加文章源' : addSourceKind === 'podcast' ? '添加播客' : '添加源'}
                       </button>
                     )}
                     <span className="reader-seg reader-disc-seg" role="group" aria-label="形态筛选">
@@ -480,6 +481,7 @@ export default function DiscoverPage({
           open={addOpen}
           onClose={() => setAddOpen(false)}
           onAdd={onAddCustomSource}
+          expectedKind={addSourceKind}
         />
       )}
     </main>

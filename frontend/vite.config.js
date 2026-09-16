@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { readFileSync } from 'node:fs'
 import process from 'node:process'
+import { pwaBuild } from './pwa/build.mjs'
 
 const appConfig = JSON.parse(readFileSync(new URL('./app.config.json', import.meta.url), 'utf-8'))
 const allowedHosts = (process.env.DORAMI_VITE_ALLOWED_HOSTS || '')
@@ -11,7 +12,7 @@ const allowedHosts = (process.env.DORAMI_VITE_ALLOWED_HOSTS || '')
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), pwaBuild()],
   build: {
     rollupOptions: {
       output: {

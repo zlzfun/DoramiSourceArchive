@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { FileText, Info, KeyRound, MessageSquare, Package, Palette, Plug2, Rss, User, X } from 'lucide-react';
-import { useModalTransition } from '../hooks/useModalTransition';
-import { useModalA11y } from '../hooks/useModalA11y';
+import Modal from './Modal';
 import { markFeedbackSeen } from '../api';
 import AccountSection from './settings/AccountSection';
 import AppearanceSection from './settings/AppearanceSection';
@@ -19,6 +18,7 @@ import AboutSection from './settings/AboutSection';
 // 管理员文案)只在**管理台界面**出现——admin 经轨底切换进入阅读器时,设置柜与读者同观感,
 // 不露管理面细节;「反馈与建议」只给读者账号(admin 不向自己反馈,两界面均不显)。
 // initialSection 供深链(读者轨底/头像入口直落对应分区)。
+// 外壳(遮罩关闭判定 / Esc / 焦点陷阱 / 滚动锁 / 退场动画)走共用 Modal(issue #104)。
 const HINTS = {
   account: '身份、头像与登录凭据',
   appearance: '主题与动效',
@@ -32,7 +32,6 @@ const HINTS = {
 };
 
 export default function SettingsModal({ open, initialSection, onClose, theme, onThemeChange, runtimeInfo, readerSurface = false, username, avatar, onUserUpdated, onLogout, showToast, onArticlesChanged, feedbackUnread = 0, onFeedbackSeen }) {
-  const { mounted, closing } = useModalTransition(open);
   const collectorEnabled = Boolean(runtimeInfo?.collector_enabled);
   const readerEnabled = Boolean(runtimeInfo?.reader_enabled);
   const accountRole = runtimeInfo?.account_role;
@@ -84,15 +83,10 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
   );
 
   const [active, setActive] = useState('account');
-  const panelRef = useRef(null);
-  useModalA11y(open && mounted, onClose, panelRef);
 
+  // 打开时落到深链分区。
   useEffect(() => {
-    if (!open) return undefined;
-    setActive(initialSection || 'account');
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = previousOverflow; };
+    if (open) setActive(initialSection || 'account');
   }, [open, initialSection]);
 
   // 打开反馈分区即视为已读:上报 mark-seen(fire-and-forget)+ 通知 App 清角标。
@@ -102,8 +96,6 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
       onFeedbackSeen?.();
     }
   }, [open, active, feedbackUnread, onFeedbackSeen]);
-
-  if (!mounted) return null;
 
   const activeSection = sections.find(s => s.id === active) || sections[0];
 
@@ -123,16 +115,7 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
   );
 
   return (
-    <div className={`modal-overlay ${closing ? 'is-closing' : ''}`} onMouseDown={onClose}>
-      <div
-        ref={panelRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label="设置"
-        tabIndex={-1}
-        className="modal-panel sett-cab"
-        onMouseDown={e => e.stopPropagation()}
-      >
+    <Modal open={open} onClose={onClose} closeOnOverlay size="none" panelClassName="sett-cab" ariaLabel="设置">
         <nav className="sett-nav" aria-label="设置分区">
           <div className="sett-nav-title">设置</div>
           {navGroups.map(group => (
@@ -201,7 +184,6 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
             )}
           </div>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

@@ -197,6 +197,10 @@ export function fetchMediaStats() {
   return request('/admin/media/stats', { errorMsg: '获取媒体库统计失败' });
 }
 
+export function fetchStorageStatus(options = {}) {
+  return request('/admin/storage/status', { ...options, errorMsg: '获取存储状态失败' });
+}
+
 // ── Podcast 音频资产（本地存储管理）──
 export function fetchPodcastArtifactStats(options = {}) {
   return request('/admin/podcast-artifacts/stats', {
@@ -780,9 +784,9 @@ export function previewCustomSource(url) {
   return request('/reader/custom-sources/preview', { method: 'POST', body: { url }, errorMsg: '预览失败' });
 }
 
-export function createCustomSource(url, name) {
+export function createCustomSource(url, name, kind) {
   return request('/reader/custom-sources', {
-    method: 'POST', body: name ? { url, name } : { url }, errorMsg: '添加自定源失败',
+    method: 'POST', body: { url, ...(name ? { name } : {}), ...(kind ? { kind } : {}) }, errorMsg: '添加自定源失败',
   });
 }
 

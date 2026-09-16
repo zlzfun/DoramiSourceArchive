@@ -864,6 +864,7 @@ async def run_pull_v2(
     username: str,
     password: str,
     media_root=None,
+    media_object_storage=None,
     media_max_bytes: int = 20 * 1024 * 1024,
     podcast_artifact_store=None,
     page_size: int = DEFAULT_PAGE_SIZE,
@@ -1050,6 +1051,7 @@ async def run_pull_v2(
                             key,
                             body,
                             max_bytes=media_max_bytes,
+                            object_storage=media_object_storage,
                         )
                         stats["media_downloaded"] += 1
                 if stream == "podcast_audio" and rows:

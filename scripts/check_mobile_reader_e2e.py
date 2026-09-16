@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import secrets
 import socket
 import subprocess
 import sys
@@ -27,6 +28,10 @@ from playwright.sync_api import sync_playwright
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from e2e.mobile_reader import run_flows  # noqa: E402
+from e2e.focus_ring import run_focus_flows  # noqa: E402
+from e2e.pwa import run_pwa_flows  # noqa: E402
+
+FLOWS = ("mobile", "pwa", "focus")
 
 
 def isolated_environment(sandbox: Path) -> dict[str, str]:
@@ -57,7 +62,7 @@ deployment = manual
 [storage]
 database_url = sqlite:///{sandbox / 'reader.db'}
 [auth]
-secret = e2e-disposable-session-secret-not-a-deployment-secret
+secret = {secrets.token_urlsafe(32)}
 [cors]
 allow_origins = http://127.0.0.1
 [network]
@@ -131,8 +136,12 @@ def wait_ready(url: str, process: subprocess.Popen, log_path: Path, marker: str,
 def run(args) -> int:
     args.output.mkdir(parents=True, exist_ok=True)
     artifacts = Path(tempfile.mkdtemp(prefix="reader-", dir=args.output)).resolve()
+    flows = [flow.strip() for flow in args.flows.split(",") if flow.strip()]
+    unknown = sorted(set(flows) - set(FLOWS))
+    if unknown or not flows:
+        raise SystemExit(f"--flows accepts a comma-separated subset of {','.join(FLOWS)}; got {args.flows!r}")
     result = {"status": "failed", "started_at": datetime.now(timezone.utc).isoformat(),
-              "browser": args.channel or "chromium", "issues": [86, 90],
+              "browser": args.channel or "chromium", "issues": [85, 86, 90, 108], "flows": flows,
               "scope": "Built frontend + real FastAPI + disposable SQLite; no API response mocks.",
               "artifacts": str(artifacts)}
     started = time.monotonic()
@@ -170,7 +179,12 @@ def run(args) -> int:
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(channel=args.channel, headless=not args.headed)
                 try:
-                    run_flows(browser, base_url, sandbox / "reader.db", artifacts, result)
+                    if "mobile" in flows:
+                        run_flows(browser, base_url, sandbox / "reader.db", artifacts, result)
+                    if "pwa" in flows:
+                        run_pwa_flows(browser, base_url, sandbox / "site", artifacts, result)
+                    if "focus" in flows:
+                        run_focus_flows(browser, base_url, artifacts, result)
                 finally:
                     browser.close()
         result["status"] = "passed"
@@ -192,4 +206,6 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, default=ROOT / "tmp/e2e")
     parser.add_argument("--channel", default=None, help="Optional installed Chromium channel, e.g. chrome")
     parser.add_argument("--headed", action="store_true")
+    parser.add_argument("--flows", default=",".join(FLOWS),
+                        help=f"comma-separated subset of {','.join(FLOWS)} (default: all)")
     raise SystemExit(run(parser.parse_args()))

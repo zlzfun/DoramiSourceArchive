@@ -379,6 +379,7 @@ def unsubscribe_collection(collection_id: str, request: Request, session: Sessio
 class CustomSourceParams(BaseModel):
     url: str
     name: Optional[str] = None
+    kind: Optional[Literal["article", "podcast"]] = None
 
 
 class CustomSourceAiAnalysisParams(BaseModel):
@@ -484,7 +485,7 @@ async def create_custom_source(
     if existing and existing.get("kind") == "system":
         # 撞中可见系统源:不建用户源,前端引导走普通订阅(该来源已收录)。
         return {"status": "exists", "existing": existing}
-    preview = {"feed_title": ""}
+    preview = {"feed_title": "", "detected_kind": "article", "playable_entry_count": 0}
     if not existing:
         # 新 feed 才重跑守门(不能信任前端一定先走了 preview);顺带拿 feed_title 作默认名。
         # 既有用户源(去重共享:第二人添加同 URL)跳过网络校验,直接进复用+订阅。
@@ -494,6 +495,14 @@ async def create_custom_source(
             raise HTTPException(status_code=400, detail=str(exc))
         except Exception:  # noqa: BLE001
             raise HTTPException(status_code=400, detail="无法访问该地址,请检查 URL 或稍后再试")
+    content_kind = (
+        existing.get("content_kind", "article")
+        if existing
+        else (params.kind or preview.get("detected_kind") or "article")
+    )
+    playable_count = preview.get("playable_entry_count", preview.get("audio_entry_count", 0))
+    if not existing and content_kind == "podcast" and not playable_count:
+        raise HTTPException(status_code=400, detail="该 feed 未检测到可播放的音频条目,请改为文章源或检查地址")
     # 建行→订阅→commit 是 check-then-write 段,以 service 写锁串行化(检视返修 F7;
     # 段内全同步无 await,锁窗口极短)。prepared 的 blocked(隐藏/admin 停用的既有
     # 用户源)统一按「暂不可用」处理。
@@ -502,7 +511,11 @@ async def create_custom_source(
     with user_sources_service._WRITE_LOCK:  # noqa: SLF001 - 与 service 写路径同一把锁
         try:
             prepared = user_sources_service.prepare_user_source(
-                session, username, params.url, name=(params.name or preview["feed_title"] or "")
+                session,
+                username,
+                params.url,
+                name=(params.name or preview["feed_title"] or ""),
+                content_kind=content_kind,
             )
         except user_sources_service.UserSourceQuotaError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc))
@@ -542,19 +555,21 @@ async def create_custom_source(
         return {
             "status": "success", "source_id": source_id, "name": record.name,
             "created": False, "first_fetch": "skipped", "saved_count": 0,
+            "content_kind": user_sources_service.source_content_kind(record),
         }
 
     # 首抓同步等待(2026-08-28 返修:原后台 job 形态下,添加后立即点开该源列表为空,
     # 像「没文章」,刷新才出现——单 feed 首抓仅数秒,同步等完再返回,modal 的 busy 态
     # 自然覆盖,关闭浮层即一切就绪)。失败不阻断:源已建成,随定时调度重试。
-    from api.routers.source_configs import build_source_fetch_params
+    from api.routers.source_configs import build_source_fetch_params, resolve_source_fetcher_id
 
     fetch_params = build_source_fetch_params(record, {})
+    fetcher_id = resolve_source_fetcher_id(record)
     first_fetch = "ok"
     saved_count = 0
     try:
         fetch_result = await app.run_single_fetch_as_collection(
-            "generic_rss", fetch_params,
+            fetcher_id, fetch_params,
             name=f"自定源首抓: {record.name}", trigger_type="manual", run_scope="ad_hoc",
         )
         saved_count = int(fetch_result.get("saved_count")
@@ -567,8 +582,9 @@ async def create_custom_source(
     # 防与「另一用户同 URL 重建」竞态误删刚建的新源(三轮收口)。
     with user_sources_service._WRITE_LOCK:  # noqa: SLF001
         with Session(deps.get_db_sink().engine) as check_session:
-            if user_sources_service.get_user_source(check_session, source_id) is None:
-                user_sources_service.purge_user_source(check_session, source_id)
+            current = user_sources_service.get_user_source(check_session, source_id)
+            if current is None or current.retired_at:
+                user_sources_service.dispose_user_source(check_session, source_id)
                 check_session.commit()
                 raise HTTPException(status_code=404, detail="该来源已被移除")
     return {
@@ -578,6 +594,7 @@ async def create_custom_source(
         "created": prepared["created"],
         "first_fetch": first_fetch,
         "saved_count": saved_count,
+        "content_kind": user_sources_service.source_content_kind(record),
     }
 
 

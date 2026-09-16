@@ -177,6 +177,7 @@ def launch_remote_sync_job(
                 username=username,
                 password=password,
                 media_root=getattr(store, "root", None),
+                media_object_storage=getattr(store, "object_storage", None),
                 media_max_bytes=getattr(store, "max_bytes", 20 * 1024 * 1024),
                 podcast_artifact_store=podcast_store,
                 page_size=page_size,
