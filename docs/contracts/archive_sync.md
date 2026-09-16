@@ -202,6 +202,13 @@ messages, optional `transcript_artifact_id`, `analysis_diagnostics_json`, and th
 prompt/scoring versions. `content_hash` remains the separate article-version guard
 used during import; receivers must not recompute or overwrite a producer score.
 
+An analysis whose `content_hash` no longer matches the producer's current article
+is exported as a tombstone, and is absent from analysis presence checks. This
+withdraws an outdated authoritative result without blocking valid scores in the
+same page. The producer's stored analysis is unchanged; once a matching analysis
+is written, its new revision is exported normally. Receiver hash validation and
+whole-page rollback remain mandatory for invalid incoming upserts.
+
 `source_states` is last by design. All non-Taxonomy streams use the same committed
 transaction-revision snapshot, so publishing terminal readiness cannot outrun
 the matching article, analysis, or media generation. A stream checkpoint advances

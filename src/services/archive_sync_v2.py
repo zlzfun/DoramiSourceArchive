@@ -647,6 +647,11 @@ def _upsert_payload(
             source.owner_username or source.collection_authority_id
         ):
             return None
+        # Article updates can precede re-analysis (or re-analysis may be
+        # disabled). Withdraw the old result through the existing tombstone
+        # protocol instead of exporting a score for a different article body.
+        if record.content_hash != compute_content_hash(article):
+            return None
         return _analysis_payload(session, record)
     if stream == "source_states":
         record = session.get(SourceStateRecord, identity)
@@ -2801,14 +2806,21 @@ def authority_present_identities(
         ).all()
         present = {row.id for row in articles}
         if stream == "analyses":
-            present &= set(
-                session.exec(
-                select(ArticleAnalysisRecord.article_id).where(
+            articles_by_id = {row.id: row for row in articles}
+            analyses = session.exec(
+                select(ArticleAnalysisRecord).where(
                     ArticleAnalysisRecord.article_id.in_(present),
                     ArticleAnalysisRecord.authority_id == "",
                 )
-                ).all()
-            )
+            ).all()
+            # Presence must agree with export eligibility, including when a
+            # full rebase still has a reader's legacy local analysis to prune.
+            present = {
+                row.article_id
+                for row in analyses
+                if row.content_hash
+                == compute_content_hash(articles_by_id[row.article_id])
+            }
     return sorted(present)
 
 
