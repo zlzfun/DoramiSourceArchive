@@ -43,7 +43,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > `verify=settings.network.tls_verify` 接线**(main 新增 httpx client 时也要顺手接上);
 > 本文件/AGENTS.md 冲突 = 保留须知块 + 采纳 main 的其余更新。
 >
-> **内网部署**:`./deploy.sh`(用法见 `docs/deploy-baremetal.md`,该文档以公网姿态为默认);
+> **内网部署**:同步最新 master 后执行 `./deploy.sh --here`,保留当前分支的内网适配。
+> 默认部署或指定版本 tag 会切到 main 发布版(不含内网适配);通用用法见 `docs/deploy-baremetal.md`。
 > 内网姿态需在 `production.ini` 反转两处:`[network] disable_tls_verify = true`(公网默认 false)、
 > `[auth] cookie_secure = false`(纯 HTTP + IP 访问,公网走 HTTPS 时应为 true)。
 
