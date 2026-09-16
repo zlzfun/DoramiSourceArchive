@@ -30,9 +30,10 @@
 ## 2. 可访问性（Accessibility）
 
 - **每个交互元素都要有 `:focus-visible` 焦点环**。原生 `button/input/select/textarea`
-  已有全局焦点环（`index.css` 顶部）；自定义可点元素（裸 `div`、容器内 `outline:none` 的输入）
-  必须自带替代焦点指示（参考 `.field-box:focus-within`、`.node-param-input:focus`）。
-  **绝不移除 outline 而不给可见替代。**
+  已有全局兜底焦点环（`index.css` 顶部，**自 issue #108 起放在 `@layer base`**）；自定义可点元素（裸 `div`、
+  容器内 `outline:none` 的输入）必须自带替代焦点指示（参考 `.field-box:focus-within`、`.node-param-input:focus`），
+  有了替代指示就在 `@layer components` 里写 `outline: none` 关掉兜底环——两环叠画（容器外环之内再一圈矩形亮光）
+  与没有环同样是缺陷。**绝不移除 outline 而不给可见替代。**
 - **文本对比度达 WCAG AA（4.5:1）**：最弱文字用 `--dorami-faint`(#64748b) 或 `text-slate-500`，
   **不要用 `text-slate-400` / #94a3b8 作正文**（仅 ~2.7:1，不达标）。
 - **状态不靠颜色单独传达**：色块必须配图标或文字标签（参考 Toast、运行状态徽标）。
@@ -132,6 +133,11 @@
 > 定字号要么写在**容器**上靠继承穿透(实例:`.ledger-scope`/`.sett-nav`),要么写进文件尾的**未分层修复区**
 > (实例:`.reader-seg-btn`/`.reader-disc-search input`)。排查「字号怎么改都不生效」先想到这条。
 > 已知踩坑记录:分段钮(弹窗波)、阅读器 全部/未读 分段(v3.6)、发现页搜索框(v3.10)。
+>
+> **聚焦环已不在此列(issue #108)**:全局 `:focus-visible` 兜底环已移入 `@layer base`(层序 theme → base →
+> components → utilities),容器 / 自身另画聚焦指示的输入框在层内写 `outline: none` 即生效,**不再需要**尾区钉
+> `.xxx:focus-visible { outline: none }`(v3.32 AI 问答框 / v3.42 账户表列头搜索 / 自定源浮层三处旧钉已删)。
+> `mobile.css` 是未分层 `@import`,同样压得住 base 层。`font: inherit` 仍是未分层规则,字号陷阱照旧。
 
 ## 4. 颜色令牌（语义四套，互不混用）
 
