@@ -1,0 +1,196 @@
+# 生产部署(issue #102 自动部署流水线,docs/auto-deploy-plan.md §4.1–§4.3)。
+#
+# 两个入口共用同一个 job:
+#   · workflow_call —— release.yml 建完 Release 后 `needs: release` 串联调用,带核验过的 tag + target_sha;
+#   · workflow_dispatch —— 手动部署 / 代码降级入口:填一个**已发布**的 tag,可勾 allow_downgrade / force_redeploy。
+# 人工闸门在 Environment `production`(required reviewers);Environment 只允许 tag v* 与分支 main 引用。
+# 所有等待项保留(queue: max),审批人只批最新合格版本、对被取代的 run 点 Reject;GitHub 不保证执行顺序,
+# 乱序造成的无意降级由生产机 worker 的单调护栏兜住。
+#
+# runner 只做四件事:核验 ref → 用部署专用私钥 ssh 到生产机传四个 token → 公网核对 /api/health 五项 → 写 Job Summary。
+# 生产机侧的 forced command(/root/bin/dorami-deploy)与 worker 决定跑什么;runner 上没有任何生产机密。
+# 远端日志经 ::stop-commands:: 包裹,里面的 ::error:: 之类不会被 Actions 当 workflow command。
+name: Deploy
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      target_sha:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 要部署的已发布 tag(如 v3.60.0;须已有非 draft 的 GitHub Release)
+        required: true
+        type: string
+      allow_downgrade:
+        description: 允许目标低于当前基线或基线未知(代码降级入口;迁移不兼容仍会 fail closed,先按 release-process 恢复备份)
+        type: boolean
+        default: false
+      force_redeploy:
+        description: 对已成功部署的同一 tag 重新完整部署(默认回放成功、不重跑)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: deploy ${{ inputs.tag }}
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.PROD_PUBLIC_URL || 'https://www.dorami.cloud' }}
+    concurrency:
+      group: production
+      cancel-in-progress: false
+      queue: max
+    timeout-minutes: 40
+    env:
+      TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify release ref
+        id: ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CALLER_SHA: ${{ inputs.target_sha }}
+          ALLOW_DOWNGRADE: ${{ inputs.allow_downgrade }}
+          FORCE_REDEPLOY: ${{ inputs.force_redeploy }}
+        run: |
+          set -euo pipefail
+          # 两条入口同一套核验:总是跑 verify-release-ref(远端存在 / main 祖先 / 目标 tag 里的版本号),
+          # caller 传了 target_sha 就必须与之相等(不按 event_name 分支——release.yml 手动 dispatch 时被调用方的
+          # event_name 也是 workflow_dispatch,按事件分支会丢掉 caller 核过的 sha),且所有入口都要求已有非 draft Release。
+          sha="$(scripts/verify-release-ref.sh "$TAG")"
+          if [ -n "$CALLER_SHA" ]; then
+            [[ "$CALLER_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::caller 传来的 target_sha 不合法"; exit 1; }
+            [ "$sha" = "$CALLER_SHA" ] || { echo "::error::tag ${TAG} 现在指向 ${sha:0:7},与 caller 核验的 ${CALLER_SHA:0:7} 不一致(审批期间 tag 被移动?)"; exit 1; }
+          fi
+          draft="$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null || echo missing)"
+          if [ "$draft" != "false" ]; then
+            echo "::error::${TAG} 没有已发布(非 draft)的 GitHub Release(状态: ${draft})——部署单元必须是经 release 流程核对并发布的 tag。"
+            exit 1
+          fi
+          downgrade=0; redeploy=0
+          [ "$ALLOW_DOWNGRADE" = "true" ] && downgrade=1
+          [ "$FORCE_REDEPLOY" = "true" ] && redeploy=1
+          {
+            echo "target_sha=${sha}"
+            echo "downgrade=${downgrade}"
+            echo "redeploy=${redeploy}"
+          } >> "$GITHUB_OUTPUT"
+          echo "target ${TAG} ${sha:0:7} downgrade=${downgrade} redeploy=${redeploy}"
+
+      - name: Prepare SSH
+        env:
+          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          PROD_KNOWN_HOSTS: ${{ vars.PROD_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [ -n "$PROD_SSH_KEY" ] || { echo "::error::Environment secret PROD_SSH_KEY 未设置"; exit 1; }
+          [ -n "$PROD_KNOWN_HOSTS" ] || { echo "::error::Environment variable PROD_KNOWN_HOSTS 未设置"; exit 1; }
+          install -m 700 -d "$RUNNER_TEMP/ssh"
+          umask 077
+          printf '%s\n' "$PROD_SSH_KEY" > "$RUNNER_TEMP/ssh/deploy_key"
+          printf '%s\n' "$PROD_KNOWN_HOSTS" > "$RUNNER_TEMP/ssh/known_hosts"
+
+      - name: Deploy over SSH
+        id: ssh
+        env:
+          PROD_HOST: ${{ vars.PROD_HOST }}
+          PROD_USER: ${{ vars.PROD_USER || 'root' }}
+          SHA: ${{ steps.ref.outputs.target_sha }}
+          DOWNGRADE: ${{ steps.ref.outputs.downgrade }}
+          REDEPLOY: ${{ steps.ref.outputs.redeploy }}
+        run: |
+          set -uo pipefail
+          [ -n "$PROD_HOST" ] || { echo "::error::Environment variable PROD_HOST 未设置"; exit 1; }
+          # 远端日志不能被 Actions 当 workflow command:随机 token 停掉命令解析,结束时恢复(trap 保证)
+          token="$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)"
+          echo "::stop-commands::${token}"
+          trap 'echo "::${token}::"' EXIT
+          ssh -i "$RUNNER_TEMP/ssh/deploy_key" \
+              -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts" -o StrictHostKeyChecking=yes \
+              -o IdentitiesOnly=yes -o BatchMode=yes \
+              -o ServerAliveInterval=30 -o ServerAliveCountMax=6 -o ConnectTimeout=30 \
+              "${PROD_USER}@${PROD_HOST}" "${TAG} ${SHA} downgrade=${DOWNGRADE} redeploy=${REDEPLOY}" \
+              2>&1 | tee "$RUNNER_TEMP/deploy.log"
+          rc=${PIPESTATUS[0]}
+          echo "ssh exit code: ${rc}"
+          exit "$rc"
+
+      - name: Verify public health
+        env:
+          PUBLIC_URL: ${{ vars.PROD_PUBLIC_URL || 'https://www.dorami.cloud' }}
+          SHA: ${{ steps.ref.outputs.target_sha }}
+        run: |
+          set -uo pipefail
+          version="$(git show "${SHA}:src/version.py" | grep -o '__version__ = "[^"]*"' | sed 's/.*"\(.*\)"/\1/')"
+          # 时间预算 180s(与 deploy-docker.sh 本机探针同语义):每次 curl 带连接 / 总超时,连接建立后不答也不能吃掉整个预算
+          deadline=$(( $(date +%s) + 180 ))
+          attempt=0
+          while [ "$attempt" -lt 90 ]; do
+            attempt=$((attempt + 1))
+            remaining=$(( deadline - $(date +%s) ))
+            [ "$remaining" -gt 0 ] || break
+            max_time=$(( remaining < 15 ? remaining : 15 ))
+            body="$(curl -fsS --connect-timeout 5 --max-time "$max_time" -H 'Cache-Control: no-cache' "${PUBLIC_URL}/api/health?_=$(date +%s)" 2>/dev/null || true)"
+            if [ -n "$body" ]; then
+              verdict="$(printf '%s' "$body" | python3 -c '
+          import json, sys
+          version, tag, sha = sys.argv[1:4]
+          try:
+              d = json.load(sys.stdin)
+          except Exception:
+              print("bad-json"); sys.exit(0)
+          b = d.get("build") or {}
+          expect = {"status": "ok", "version": version, "ref": tag, "sha": sha, "source": "env"}
+          got = {"status": d.get("status"), "version": d.get("version"), "ref": b.get("ref"), "sha": b.get("sha"), "source": b.get("source")}
+          bad = [k for k in expect if got.get(k) != expect[k]]
+          print("ok" if not bad else "mismatch " + ",".join(f"{k}={got.get(k)}" for k in bad))
+          ' "$version" "$TAG" "$SHA")"
+              if [ "$verdict" = "ok" ]; then
+                echo "public health OK: ${TAG} ${SHA:0:7} (${PUBLIC_URL})"
+                exit 0
+              fi
+              last="$verdict"
+            fi
+            [ $(( deadline - $(date +%s) )) -gt 2 ] || break
+            sleep 2
+          done
+          echo "::error::公网健康核对未通过(预算 180s,尝试 ${attempt} 次):${last:-无响应}"
+          exit 1
+
+      - name: Job summary
+        if: always()
+        env:
+          SHA: ${{ steps.ref.outputs.target_sha }}
+          SSH_OUTCOME: ${{ steps.ssh.outcome }}
+        run: |
+          set -uo pipefail
+          {
+            echo "### 部署 ${TAG} (${SHA:0:7}) — ssh step: ${SSH_OUTCOME}"
+            echo
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            if [ -f "$RUNNER_TEMP/deploy.log" ]; then
+              # 只解析 allowlist 里的元数据键,值字符集在远端已受限
+              grep -oE '^DORAMI_DEPLOY_META (target_tag|target_sha|protocol|baseline_ref|direction|migration_files_(added|modified|deleted)|migrations_status|migrations_pending|fresh_ok|txn_id|db_backup|child_rc|replay|health|build_ref|build_sha|origin)=[A-Za-z0-9._:/=-]*' "$RUNNER_TEMP/deploy.log" \
+                | sed 's/^DORAMI_DEPLOY_META //' | awk -F= '{printf "| %s | `%s` |\n", $1, $2}'
+            else
+              echo "| deploy.log | (无) |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Cleanup SSH material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/ssh" "$RUNNER_TEMP/deploy.log"

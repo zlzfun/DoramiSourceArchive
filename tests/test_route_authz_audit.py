@@ -2,7 +2,7 @@
 
 阶段1 把上百个端点从 app.py 迁到按域拆分的 APIRouter，鉴权仍由 app.py 的中间件
 ``require_admin_session`` 统一强制——它对每条 ``/api/*`` 路由依次套用：
-  ① 公开白名单（登录/登出/会话、/api/public/* 令牌消费端）→ 放行；
+  ① 公开白名单（登录/登出/会话、/api/public/* 令牌消费端、/api/health 部署探针）→ 放行；
   ② 其余一律要求登录会话（401）；
   ③ collector/reader surface 前缀表（disabled_runtime_surface）；
   ④ account_admin_required（/api/accounts、/api/admin → 仅 admin）；
@@ -42,8 +42,12 @@ def _all_api_paths() -> set[str]:
 
 def _classify(path: str) -> str | None:
     """把一条 /api 路由归入唯一鉴权类别；无法归类返回 None。"""
-    # ① 公开（无需登录）。
-    if app_module.is_public_auth_path(path) or app_module.is_public_subscription_path(path):
+    # ① 公开（无需登录）：登录/登出/会话、令牌消费端、部署探针 /api/health（issue #102，exact path）。
+    if (
+        app_module.is_public_auth_path(path)
+        or app_module.is_public_subscription_path(path)
+        or app_module.is_public_health_path(path)
+    ):
         return "public"
     # ④ admin-only（账号管理 / 运维看板）。
     if app_module.account_admin_required(path):
@@ -80,7 +84,11 @@ def test_non_public_api_routes_require_login():
 
     with TestClient(app_module.app) as client:
         for path in sorted(_all_api_paths()):
-            if app_module.is_public_auth_path(path) or app_module.is_public_subscription_path(path):
+            if (
+                app_module.is_public_auth_path(path)
+                or app_module.is_public_subscription_path(path)
+                or app_module.is_public_health_path(path)
+            ):
                 continue
             # 用具体路径替换路径参数占位，避免 404 早于鉴权返回。
             probe = (
