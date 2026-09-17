@@ -15,6 +15,7 @@ import {
 import { copyText } from '../utils/clipboard';
 import { articleDeepLink } from '../utils/shareLink';
 import { stripDuplicateLeadingHeading } from '../utils/markdownTitle';
+import { createBulkSubscribeDeadline, waitForBulkSubscribeSettlement } from '../utils/bulkSubscribe';
 import {
   analysisItemsFromResponse,
   analysisNeedsPolling,
@@ -32,6 +33,8 @@ import {
   fetchArticles,
   fetchArticle,
   subscribeSource,
+  subscribeSourcesByShape,
+  fetchSourceBatchSubscriptionStatus,
   unsubscribeSource,
   fetchFavorites,
   fetchInterests,
@@ -240,6 +243,8 @@ export function useReaderState({
   const [collections, setCollections] = useState([]);
   const [discoverCollectionId, setDiscoverCollectionId] = useState(null);
   const [collectionPinningId, setCollectionPinningId] = useState(null);
+  const [shapePinning, setShapePinning] = useState(null);
+  const shapePinningRef = useRef(null);
 
   const [searchInput, setSearchInputState] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -918,8 +923,8 @@ export function useReaderState({
 
   // ── 用户自定源(v3.40):添加(建源+订阅+首抓)与移除(退订+无人订阅即清) ──
   // 添加错误直接上抛:AddCustomSourceModal 就地渲染错误文案(比 toast 更贴近表单)。
-  const handleAddCustomSource = async (url, name) => {
-    const result = await createCustomSource(url, name);
+  const handleAddCustomSource = async (url, name, kind) => {
+    const result = await createCustomSource(url, name, kind);
     if (result.status === 'exists') {
       // 撞中已收录的系统源:转普通订阅引导(该来源已在目录里)
       const existing = result.existing || {};
@@ -935,7 +940,7 @@ export function useReaderState({
       showToast(
         result.first_fetch === 'failed'
           ? `已添加自定源 ${result.name},首次抓取失败,稍后自动重试`
-          : `已添加自定源 ${result.name},收录 ${result.saved_count ?? 0} 篇`,
+          : `已添加自定源 ${result.name},收录 ${result.saved_count ?? 0} ${result.content_kind === 'podcast' ? '期' : '篇'}`,
         'success',
       );
     }
@@ -996,6 +1001,48 @@ export function useReaderState({
       showToast(error.message || '退订合集失败', 'error');
     } finally {
       setCollectionPinningId(null);
+    }
+  };
+
+  // ── 按形态批量订阅:文章/播客共用一个服务端事务,前端不逐源发请求 ──
+  const handleSubscribeShape = async (shape) => {
+    if (!['article', 'podcast'].includes(shape) || shapePinningRef.current !== null) return;
+    shapePinningRef.current = shape;
+    setShapePinning(shape);
+    const deadline = createBulkSubscribeDeadline();
+    const refreshWhenSettled = () => {
+      void waitForBulkSubscribeSettlement(fetchSourceBatchSubscriptionStatus)
+        .then((settled) => {
+          if (!settled) return;
+          loadSources();
+          refreshAggregateIfActive();
+          loadUnreadCounts();
+        })
+        .catch(() => { /* 后台校准失败留给下一次普通刷新 */ });
+    };
+    try {
+      const result = await subscribeSourcesByShape(shape, { signal: deadline.signal });
+      setSubscribedIds(new Set(result.subscribed_source_ids || []));
+      loadSources();
+      refreshAggregateIfActive();
+      loadUnreadCounts();
+      const n = (result.added || []).length;
+      const label = shape === 'podcast' ? '播客源' : '文章源';
+      showToast(n > 0 ? `已订阅 ${n} 个${label}` : `${label}已全部订阅`, 'success');
+    } catch (error) {
+      if (error?.name === 'AbortError' && deadline.didTimeout()) {
+        refreshWhenSettled();
+        showToast('批量订阅响应超时，结果可能已生效，正在刷新订阅状态', 'info');
+      } else if (error?.status === 409) {
+        refreshWhenSettled();
+        showToast('上一批订阅仍在服务器处理中，完成后将自动刷新', 'info');
+      } else {
+        showToast(error.message || '批量订阅失败', 'error');
+      }
+    } finally {
+      deadline.clear();
+      shapePinningRef.current = null;
+      setShapePinning(null);
     }
   };
 
@@ -1437,6 +1484,7 @@ export function useReaderState({
     // 源合集
     collections, discoverCollectionId, setDiscoverCollectionId,
     collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
+    shapePinning, handleSubscribeShape,
     // 视图 / 导航
     mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover, discoverShape, setDiscoverShape,
     bulletinView, socialView, podcastView, railActive, listTitle, listSubtitle,

@@ -22,20 +22,26 @@ import ipaddress
 import json
 import logging
 import re
+import tempfile
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlparse
 
 import httpx
+from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select, func
 
 from models.db import ArticleRecord, MediaAssetRecord
+from services.object_storage import ObjectStorage, ObjectStorageError, hash_file
 
 logger = logging.getLogger("dorami.media")
 
 # 负缓存退避：失败行在该窗口内不重试（窗口随失败次数线性放大，封顶一天）。
 _RETRY_BASE_SECONDS = 6 * 3600
 _RETRY_MAX_SECONDS = 24 * 3600
+_UPLOAD_RETRY_SECONDS = 30
 
 # 正文图链提取：markdown ![alt](url "title") 与内嵌 HTML <img src="...">。
 # markdown URL 截断于空白或右括号（title 段自然剥离），支持 <url> 尖括号包裹。
@@ -262,12 +268,14 @@ class MediaStore:
         max_bytes: int = 20 * 1024 * 1024,
         timeout_seconds: int = 20,
         transport: Optional[httpx.AsyncBaseTransport] = None,
+        object_storage: ObjectStorage | None = None,
     ) -> None:
         self.engine = engine
         self.root = Path(root)
         self.max_bytes = max_bytes
         self.timeout_seconds = timeout_seconds
         self._transport = transport
+        self.object_storage = object_storage
         self._client: Optional[httpx.AsyncClient] = None
         # 同一 URL 的并发请求串行化（首个下载，其余命中缓存）
         self._locks: Dict[str, asyncio.Lock] = {}
@@ -291,6 +299,30 @@ class MediaStore:
     def file_path_for(self, record: MediaAssetRecord) -> Path:
         return self.root / record.content_hash[:2] / f"{record.content_hash}{record.ext}"
 
+    def readable_path(self, record: MediaAssetRecord) -> Path:
+        path = self.file_path_for(record)
+        if self.object_storage:
+            return self.object_storage.materialize(path, record.content_hash, record.ext, record.size_bytes)
+        return path
+
+    def open_readable(self, record):
+        if self.object_storage:
+            with self.object_storage.pin(record.content_hash):
+                return self.readable_path(record).open("rb")
+        return self.file_path_for(record).open("rb")
+
+    def read_bytes(self, record, limit):
+        with self.open_readable(record) as handle:
+            return handle.read(limit)
+
+    async def _restore_cached(self, record: MediaAssetRecord) -> bool:
+        try:
+            path = await asyncio.to_thread(self.readable_path, record)
+            return path.is_file()
+        except ObjectStorageError as exc:
+            logger.warning("媒体对象读取失败: %s", exc)
+            return False
+
     def _lock_for(self, key: str) -> asyncio.Lock:
         lock = self._locks.get(key)
         if lock is None:
@@ -313,13 +345,77 @@ class MediaStore:
         elapsed = (datetime.datetime.now() - updated).total_seconds()
         return elapsed < self._retry_window(record.fail_count)
 
+    @staticmethod
+    def _upload_still_cooling(record: MediaAssetRecord) -> bool:
+        try:
+            updated = datetime.datetime.fromisoformat(record.updated_at)
+        except (ValueError, TypeError):
+            return False
+        return (datetime.datetime.now(updated.tzinfo) - updated).total_seconds() < _UPLOAD_RETRY_SECONDS
+
+    def _replace_record(self, previous, url, key, **values):
+        """Publish a local transition only if the URL's owner and identity still match.
+
+        The conditional write also claims upload attempts across worker processes;
+        no database transaction is held while contacting the origin or OSS.
+        """
+        with Session(self.engine) as session:
+            if previous is None:
+                record = MediaAssetRecord(url_hash=key, url=url, created_at=_now(), **values)
+                session.add(record)
+                published = record.model_dump()
+            else:
+                expected = previous.model_dump()
+                result = session.exec(update(MediaAssetRecord).where(
+                    *(getattr(MediaAssetRecord, field) == value for field, value in expected.items())
+                ).values(**values).execution_options(synchronize_session=False))
+                if result.rowcount != 1:
+                    session.rollback()
+                    return None
+                published = {**expected, **values}
+            try:
+                session.commit()
+            except IntegrityError:
+                session.rollback()
+                return None
+            # Return precisely our transition, never a reloaded row another worker
+            # may already have handed to a sync authority after this commit.
+            return MediaAssetRecord.model_validate(published)
+
+    async def _persist_pending_upload(self, record: MediaAssetRecord):
+        def persist():
+            path = self.file_path_for(record)
+            lease = self.object_storage.pin(record.content_hash) if self.object_storage else nullcontext()
+            with lease:
+                if hash_file(path) != (record.content_hash, record.size_bytes):
+                    raise ObjectStorageError("object_storage_local_checksum_mismatch")
+                if self.object_storage:
+                    self.object_storage.persist(path, record.content_hash, record.ext, record.size_bytes, record.mime)
+
+        try:
+            await asyncio.to_thread(persist)
+        except OSError as exc:
+            error = str(exc) if isinstance(exc, ObjectStorageError) else "object_storage_local_file_unavailable"
+            self._replace_record(record, record.url, record.url_hash, last_error=error, updated_at=_now())
+            return None
+        now = _now()
+        return self._replace_record(record, record.url, record.url_hash,
+                                    status="cached", last_error=None, fetched_at=now, updated_at=now)
+
+    async def _retry_pending_upload(self, record: MediaAssetRecord):
+        # Even explicit source retries respect the separate cloud cooldown.
+        if record.sync_authority_id or self._upload_still_cooling(record):
+            return None
+        claimed = self._replace_record(record, record.url, record.url_hash, updated_at=_now())
+        return await self._persist_pending_upload(claimed) if claimed is not None else None
+
     # ── 供给主径 ──────────────────────────────────────────────
 
     async def get_or_fetch(self, url: str, *, force: bool = False) -> Optional[MediaAssetRecord]:
         """命中缓存或即时下载；成功返回 cached 记录（文件已在盘上），失败 None。
 
-        失败路径会登记/累加负缓存行；冷却窗口内的既有失败直接返回 None 不重试
-        （``force=True`` 绕过冷却，供管理面「定点重试」使用）。
+        源站失败进入负缓存，``force=True`` 可绕过源站冷却。云上传失败保留
+        pending_upload 元数据和本地字节，以独立 30 秒冷却重试，不计源站失败。
         """
         url = (url or "").strip()
         if not url.lower().startswith(("http://", "https://")):
@@ -327,9 +423,17 @@ class MediaStore:
         key = url_hash_of(url)
 
         record = self._get_record(key)
+        if record is not None and record.status == "pending_upload" and (
+            record.sync_authority_id or self._upload_still_cooling(record)
+        ):
+            return None
         if record is not None and record.status == "cached":
-            if self.file_path_for(record).is_file():
+            if await self._restore_cached(record):
                 return record
+            if self.object_storage and self.object_storage.location(record.content_hash, record.ext):
+                # The archived bytes are authoritative; a cloud outage must not
+                # replace them with whatever a mutable origin serves today.
+                return None
             # 库有行但盘上文件丢失（手工清理/迁移）→ 当未缓存重下
         if (
             not force
@@ -345,12 +449,20 @@ class MediaStore:
             if record is not None and (record.sync_authority_id or "").strip():
                 # A v2 manifest owns this row. Never race its staged binary by
                 # downloading the mutable origin URL on the receiving node.
-                return record if record.status == "cached" and self.file_path_for(record).is_file() else None
-            if record is not None and record.status == "cached" and self.file_path_for(record).is_file():
+                return record if record.status == "cached" and await self._restore_cached(record) else None
+            if record is not None and record.status == "pending_upload":
+                return await self._retry_pending_upload(record)
+            if record is not None and record.status == "cached" and await self._restore_cached(record):
                 return record
+            if (record is not None and record.status == "cached" and self.object_storage
+                    and self.object_storage.location(record.content_hash, record.ext)):
+                return None
             return await self._download(url, key)
 
     async def _download(self, url: str, key: str) -> Optional[MediaAssetRecord]:
+        previous = self._get_record(key)
+        if previous is not None and (previous.sync_authority_id or previous.status == "pending_upload"):
+            return None
         host = urlparse(url).hostname or ""
         if not host or not await _resolve_is_public(host):
             return self._mark_failed(url, key, "非公网主机（SSRF 防护拒绝）")
@@ -383,26 +495,22 @@ class MediaStore:
         target = self.root / content_hash[:2] / f"{content_hash}{ext}"
         if not target.is_file():
             target.parent.mkdir(parents=True, exist_ok=True)
-            tmp = target.with_suffix(target.suffix + ".part")
-            tmp.write_bytes(body)
-            tmp.replace(target)  # 原子落盘，避免半截文件被当缓存命中
+            with tempfile.NamedTemporaryFile(dir=target.parent, suffix=".part", delete=False) as stream:
+                tmp = Path(stream.name)
+                stream.write(body)
+            try:
+                tmp.replace(target)
+            finally:
+                tmp.unlink(missing_ok=True)
 
         now = _now()
-        with Session(self.engine) as session:
-            record = session.get(MediaAssetRecord, key)
-            if record is None:
-                record = MediaAssetRecord(url_hash=key, url=url, created_at=now)
-            record.status = "cached"
-            record.content_hash = content_hash
-            record.mime = mime
-            record.ext = ext
-            record.size_bytes = len(body)
-            record.last_error = None
-            record.fetched_at = now
-            record.updated_at = now
-            session.add(record)
-            session.commit()
-            session.refresh(record)
+        needs_upload = self.object_storage is not None and self.object_storage.enabled
+        record = self._replace_record(previous, url, key,
+                                      status="pending_upload" if needs_upload else "cached",
+                                      content_hash=content_hash, mime=mime, ext=ext, size_bytes=len(body),
+                                      last_error=None, fetched_at=now, updated_at=now)
+        if needs_upload and record is not None:
+            return await self._persist_pending_upload(record)
         return record
 
     def _mark_failed(self, url: str, key: str, reason: str) -> None:
@@ -410,6 +518,8 @@ class MediaStore:
         now = _now()
         with Session(self.engine) as session:
             record = session.get(MediaAssetRecord, key)
+            if record is not None and (record.sync_authority_id or record.status == "pending_upload"):
+                return None
             if record is None:
                 record = MediaAssetRecord(url_hash=key, url=url, created_at=now)
             record.status = "failed"
@@ -488,7 +598,7 @@ class MediaStore:
                     select(MediaAssetRecord).where(MediaAssetRecord.url_hash.in_(chunk))
                 ).all():
                     result[hash_to_url[record.url_hash]] = {
-                        "status": record.status,
+                        "status": record.status if record.status in {"cached", "failed"} else "pending",
                         "error": record.last_error if record.status == "failed" else None,
                     }
         return result
@@ -608,10 +718,14 @@ class MediaStore:
             distinct_files, disk_bytes = session.exec(
                 select(func.count(), func.coalesce(func.sum(per_file.c.size_bytes), 0)).select_from(per_file)
             ).one()
-        return {
+        result = {
             "cached_count": int(cached_count or 0),
             "failed_count": int(failed_count or 0),
             "cached_bytes": int(cached_bytes or 0),
             "distinct_files": int(distinct_files or 0),
             "disk_bytes": int(disk_bytes or 0),
         }
+        if self.object_storage:
+            result.update(self.object_storage.stats())
+            result["disk_bytes"] = self.object_storage.local_bytes()
+        return result

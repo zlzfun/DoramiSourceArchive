@@ -1,0 +1,11 @@
+{
+  "Version": "1",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["oss:GetObject", "oss:PutObject"],
+      "Resource": ["acs:oss:*:*:YOUR_BUCKET/backups/production/*"],
+      "Condition": {"Bool": {"acs:SecureTransport": "true"}}
+    }
+  ]
+}

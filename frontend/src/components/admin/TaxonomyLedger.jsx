@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { Ban, GitMerge, Loader2, RotateCcw, ShieldAlert, Trash2, X, Zap, ZapOff } from 'lucide-react';
 
 import {
@@ -23,7 +22,7 @@ import {
 import { useConfirm } from '../../hooks/useConfirm';
 import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 import { useModalA11y } from '../../hooks/useModalA11y';
-import { useModalTransition } from '../../hooks/useModalTransition';
+import Modal from '../Modal';
 import {
   ALIAS_TYPE_LABELS,
   ENTITY_TYPE_LABELS,
@@ -500,15 +499,11 @@ const EMPTY_TAG_FORM = Object.freeze({
   user_selectable: true, entity_type: '', external_key: '', parent_id: '',
 });
 
-// ── 新建标签:form-sheet 模态(自 zone-head「新建标签」打开) ──
+// ── 新建标签:form-sheet 模态(自 zone-head「新建标签」打开;外壳走共用 Modal,issue #104) ──
 export function CreateTagSheet({ open, onClose, onCreated, showToast, activeTags }) {
-  const { mounted, closing } = useModalTransition(open);
-  const panelRef = useRef(null);
   const [form, setForm] = useState(EMPTY_TAG_FORM);
   const [busy, setBusy] = useState(false);
-  useModalA11y(open && mounted, onClose, panelRef);
   useEffect(() => { if (open) setForm(EMPTY_TAG_FORM); }, [open]);
-  if (!mounted) return null;
   const setField = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
   const submit = async (event) => {
     event.preventDefault();
@@ -531,58 +526,58 @@ export function CreateTagSheet({ open, onClose, onCreated, showToast, activeTags
       showToast(error.message, 'error');
     } finally { setBusy(false); }
   };
-  return createPortal(
-    <div className={`modal-overlay ${closing ? 'is-closing' : ''}`} onClick={onClose}>
-      <form ref={panelRef} role="dialog" aria-modal="true" aria-label="新建规范标签" tabIndex={-1} className="modal-panel max-w-2xl form-sheet" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
-        <div className="form-sheet-head">
-          <h3 className="card-title">新建规范标签</h3>
-          <button type="button" onClick={onClose} className="icon-button" aria-label="关闭"><X className="w-4 h-4" /></button>
-        </div>
-        <div className="form-sheet-body">
-          <div className="knob-grid">
-            <label className="knob-field"><span>稳定 code</span><input required className="form-input" value={form.code} onChange={setField('code')} placeholder="topic.coding-agents" autoFocus /></label>
-            <label className="knob-field">
-              <span>分面</span>
-              <select className="form-input" value={form.kind} onChange={(e) => setForm((f) => ({ ...f, kind: e.target.value, entity_type: '', external_key: '', parent_id: '' }))}>
-                {Object.entries(TAG_KIND_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-              </select>
-            </label>
-            <label className="knob-field"><span>中文名</span><input className="form-input" value={form.name_zh} onChange={setField('name_zh')} /></label>
-            <label className="knob-field"><span>英文名</span><input className="form-input" value={form.name_en} onChange={setField('name_en')} /></label>
-            <label className="knob-field">
-              <span>上位标签</span>
-              <select className="form-input" value={form.parent_id} onChange={setField('parent_id')}>
-                <option value="">无上位标签</option>
-                <TagOptions tags={activeTags} kind={form.kind} />
-              </select>
-            </label>
-            {form.kind === 'entity' ? (
-              <label className="knob-field">
-                <span>实体类型</span>
-                <select required className="form-input" value={form.entity_type} onChange={setField('entity_type')}>
-                  <option value="">请选择</option>
-                  {Object.entries(ENTITY_TYPE_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-                </select>
-              </label>
-            ) : <span />}
-            {form.kind === 'entity' && <label className="knob-field knob-span-2"><span>外部键</span><input className="form-input" value={form.external_key} onChange={setField('external_key')} placeholder="wikidata:Q24283660" /></label>}
-            <label className="knob-field knob-span-2"><span>后台说明</span><input className="form-input" value={form.description} onChange={setField('description')} /></label>
-            <label className="knob-field knob-span-2"><span>模型判定说明（进提示词）</span><textarea className="form-input" value={form.prompt_description} onChange={setField('prompt_description')} /></label>
-          </div>
-        </div>
-        <div className="form-sheet-foot">
-          <label className="sw mr-auto">
-            <span className="tiny-meta">用户可选</span>
-            <button type="button" role="switch" aria-checked={form.user_selectable} aria-label="用户可选" className={`ledger-switch ${form.user_selectable ? 'is-on' : ''}`} onClick={() => setForm((f) => ({ ...f, user_selectable: !f.user_selectable }))} />
+  return (
+    <Modal
+      open={open} onClose={onClose} closeOnOverlay portal size="2xl"
+      as="form" panelClassName="form-sheet" ariaLabel="新建规范标签" panelProps={{ onSubmit: submit }}
+    >
+      <div className="form-sheet-head">
+        <h3 className="card-title">新建规范标签</h3>
+        <button type="button" onClick={onClose} className="icon-button" aria-label="关闭"><X className="w-4 h-4" /></button>
+      </div>
+      <div className="form-sheet-body">
+        <div className="knob-grid">
+          <label className="knob-field"><span>稳定 code</span><input required className="form-input" value={form.code} onChange={setField('code')} placeholder="topic.coding-agents" autoFocus /></label>
+          <label className="knob-field">
+            <span>分面</span>
+            <select className="form-input" value={form.kind} onChange={(e) => setForm((f) => ({ ...f, kind: e.target.value, entity_type: '', external_key: '', parent_id: '' }))}>
+              {Object.entries(TAG_KIND_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+            </select>
           </label>
-          <button type="button" onClick={onClose} className="action-button action-button-quiet min-h-[32px] px-3 text-xs">取消</button>
-          <button type="submit" disabled={busy} className="action-button action-button-primary min-h-[32px] px-3 text-xs">
-            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} 创建标签
-          </button>
+          <label className="knob-field"><span>中文名</span><input className="form-input" value={form.name_zh} onChange={setField('name_zh')} /></label>
+          <label className="knob-field"><span>英文名</span><input className="form-input" value={form.name_en} onChange={setField('name_en')} /></label>
+          <label className="knob-field">
+            <span>上位标签</span>
+            <select className="form-input" value={form.parent_id} onChange={setField('parent_id')}>
+              <option value="">无上位标签</option>
+              <TagOptions tags={activeTags} kind={form.kind} />
+            </select>
+          </label>
+          {form.kind === 'entity' ? (
+            <label className="knob-field">
+              <span>实体类型</span>
+              <select required className="form-input" value={form.entity_type} onChange={setField('entity_type')}>
+                <option value="">请选择</option>
+                {Object.entries(ENTITY_TYPE_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+              </select>
+            </label>
+          ) : <span />}
+          {form.kind === 'entity' && <label className="knob-field knob-span-2"><span>外部键</span><input className="form-input" value={form.external_key} onChange={setField('external_key')} placeholder="wikidata:Q24283660" /></label>}
+          <label className="knob-field knob-span-2"><span>后台说明</span><input className="form-input" value={form.description} onChange={setField('description')} /></label>
+          <label className="knob-field knob-span-2"><span>模型判定说明（进提示词）</span><textarea className="form-input" value={form.prompt_description} onChange={setField('prompt_description')} /></label>
         </div>
-      </form>
-    </div>,
-    document.body,
+      </div>
+      <div className="form-sheet-foot">
+        <label className="sw mr-auto">
+          <span className="tiny-meta">用户可选</span>
+          <button type="button" role="switch" aria-checked={form.user_selectable} aria-label="用户可选" className={`ledger-switch ${form.user_selectable ? 'is-on' : ''}`} onClick={() => setForm((f) => ({ ...f, user_selectable: !f.user_selectable }))} />
+        </label>
+        <button type="button" onClick={onClose} className="action-button action-button-quiet min-h-[32px] px-3 text-xs">取消</button>
+        <button type="submit" disabled={busy} className="action-button action-button-primary min-h-[32px] px-3 text-xs">
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} 创建标签
+        </button>
+      </div>
+    </Modal>
   );
 }
 

@@ -44,11 +44,11 @@ def make_alembic_config(db_url: Optional[str] = None) -> Config:
     return cfg
 
 
-def _current_revision(db_url: str) -> Optional[str]:
+def _current_heads(db_url: str) -> tuple[str, ...]:
     engine = create_engine(db_url)
     try:
         with engine.connect() as conn:
-            return MigrationContext.configure(conn).get_current_revision()
+            return MigrationContext.configure(conn).get_current_heads()
     finally:
         engine.dispose()
 
@@ -137,14 +137,14 @@ def ensure_migrated(db_url: str) -> None:
     if ":memory:" in db_url:
         return
     cfg = make_alembic_config(db_url)
-    current = _current_revision(db_url)
-    if _has_user_tables(db_url) and current in (None, BASELINE_REVISION):
+    current = _current_heads(db_url)
+    if _has_user_tables(db_url) and (not current or current == (BASELINE_REVISION,)):
         # 老库(无版本)或停在基线的库(如上次收养后升级中途失败):断面可能早于
         # 基线(缺表缺列),先对齐到基线 schema 再继续——对已对齐库是幂等零操作。
         # revision 已越过基线的库禁止再对齐:后续迁移可能已删除基线列
         # (如 d41acead77b0 删 per_fetcher_cron_json),对齐会把它们错误加回。
         _align_legacy_to_baseline(db_url)
-        if current is None:
+        if not current:
             command.stamp(cfg, BASELINE_REVISION)
     # 多头容忍(下游分叉仓形态):内网 master(曾名 intranet)类分叉仓自带迁移支线时,合入 main 的
     # 新迁移后 DAG 出现两个 head——git 零冲突,但 upgrade("head") 会无条件报错

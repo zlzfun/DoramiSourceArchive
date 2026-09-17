@@ -33,6 +33,24 @@ _FEED_XML = b"""<?xml version="1.0" encoding="utf-8"?>
 <pubDate>Tue, 25 Aug 2026 08:00:00 GMT</pubDate><link>https://blog.example.com/p2</link></item>
 </channel></rss>"""
 
+_PODCAST_XML = b"""<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+<channel><title>Test Podcast</title><itunes:author>Dorami</itunes:author>
+<item><title>Episode One</title><description>first episode</description>
+<enclosure url="https://cdn.example.com/episode-1.mp3" length="12345" type="audio/mpeg" />
+<pubDate>Mon, 24 Aug 2026 08:00:00 GMT</pubDate></item>
+<item><title>Episode Two</title><description>second episode</description>
+<enclosure url="https://cdn.example.com/episode-2.m4a" length="23456" type="audio/mp4" />
+<pubDate>Tue, 25 Aug 2026 08:00:00 GMT</pubDate></item>
+</channel></rss>"""
+
+_SIGNED_PODCAST_XML = b"""<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+<channel><title>Signed Podcast</title><itunes:author>Dorami</itunes:author>
+<item><title>Signed Episode</title>
+<enclosure url="https://cdn.example.com/download?episode=1" type="application/octet-stream" />
+</item></channel></rss>"""
+
 
 # ==================== 单元:规范化 / 身份 / 撞库 ====================
 
@@ -142,6 +160,36 @@ def test_fetch_feed_preview_parses_entries(monkeypatch):
     assert preview["entry_count"] == 2
     assert preview["entries"][0]["title"] == "Post One"
     assert preview["entries"][0]["content_chars"] > 0
+    assert preview["detected_kind"] == "article"
+    assert preview["audio_entry_count"] == 0
+
+
+def test_fetch_feed_preview_detects_podcast_audio(monkeypatch):
+    from services import media_store, user_sources
+
+    monkeypatch.setattr(media_store, "ensure_public_host", _noop_public_host)
+    preview = asyncio.run(user_sources.fetch_feed_preview(
+        "https://podcast.example.com/feed", transport=_feed_transport(_PODCAST_XML)
+    ))
+    assert preview["feed_title"] == "Test Podcast"
+    assert preview["detected_kind"] == "podcast"
+    assert preview["detection_confidence"] == "high"
+    assert preview["audio_entry_count"] == 2
+    assert preview["entries"][0]["has_audio"] is True
+
+
+def test_fetch_feed_preview_accepts_podcast_metadata_with_signed_enclosure(monkeypatch):
+    from services import media_store, user_sources
+
+    monkeypatch.setattr(media_store, "ensure_public_host", _noop_public_host)
+    preview = asyncio.run(user_sources.fetch_feed_preview(
+        "https://podcast.example.com/private", transport=_feed_transport(_SIGNED_PODCAST_XML)
+    ))
+    assert preview["detected_kind"] == "podcast"
+    assert preview["detection_confidence"] == "medium"
+    assert preview["audio_entry_count"] == 0
+    assert preview["playable_entry_count"] == 1
+    assert preview["entries"][0]["has_audio"] is True
 
 
 def test_fetch_feed_preview_rejects_non_feed(monkeypatch):
@@ -206,6 +254,8 @@ def _setup_app(monkeypatch, tmp_path, db_name="app_user_sources.db"):
         return {
             "canonical_url": url, "feed_title": "Test Blog", "entry_count": 2,
             "entries": [{"title": "Post One", "publish_date": "", "content_chars": 20}],
+            "detected_kind": "article", "detection_confidence": "medium",
+            "detection_reasons": [], "audio_entry_count": 0, "enclosure_entry_count": 0,
         }
 
     from services import user_sources as user_sources_service
@@ -226,10 +276,12 @@ def _login(client, username, password):
     return res
 
 
-def _add(client, url="https://blog.example.com/feed", name=None):
+def _add(client, url="https://blog.example.com/feed", name=None, kind=None):
     payload = {"url": url}
     if name is not None:
         payload["name"] = name
+    if kind is not None:
+        payload["kind"] = kind
     return client.post("/api/reader/custom-sources", json=payload)
 
 
@@ -346,6 +398,76 @@ def test_dedup_share_same_url_two_users(monkeypatch, tmp_path):
             session, first["source_id"]) == ["alice", "bob"]
 
 
+def test_add_podcast_routes_fetcher_and_deduplicates(monkeypatch, tmp_path):
+    app_module = _setup_app(monkeypatch, tmp_path)
+    from models.db import SourceConfigRecord
+    from services import user_sources
+    from services.collection_nodes import resolve_source_fetcher_id
+
+    async def _podcast_preview(url, **kwargs):
+        return {
+            "canonical_url": url, "feed_title": "Test Podcast", "entry_count": 2,
+            "entries": [{
+                "title": "Episode One", "publish_date": "", "content_chars": 20,
+                "has_audio": True,
+            }],
+            "detected_kind": "podcast", "detection_confidence": "high",
+            "detection_reasons": ["audio_enclosure"], "audio_entry_count": 2,
+            "enclosure_entry_count": 2,
+        }
+
+    fetcher_calls = []
+
+    async def _record_fetch(fetcher_id, params, **kwargs):
+        fetcher_calls.append((fetcher_id, params))
+        return {"status": "success", "results": []}
+
+    monkeypatch.setattr(user_sources, "fetch_feed_preview", _podcast_preview)
+    monkeypatch.setattr(app_module, "run_single_fetch_as_collection", _record_fetch)
+    feed_url = "https://podcast.example.com/feed"
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        first = _add(client, feed_url, kind="podcast")
+        assert first.status_code == 200
+        first_body = first.json()
+        assert first_body["content_kind"] == "podcast"
+        source_id = first_body["source_id"]
+        catalog = client.get("/api/reader/sources").json()["sources"]
+        assert next(row for row in catalog if row["source_id"] == source_id)["shape"] == "podcast"
+        listing = client.get("/api/reader/custom-sources").json()["items"]
+        assert listing[0]["content_kind"] == "podcast"
+    with TestClient(app_module.app) as client:
+        _login(client, "bob", "bob")
+        second_body = _add(client, feed_url, kind="article").json()
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        health = client.get("/api/source-health").json()
+        health_row = next(row for row in health if row["fetcher_id"] == source_id)
+        assert health_row["shape"] == "podcast"
+        assert health_row["content_type"] == "podcast_episode"
+
+    assert second_body["source_id"] == source_id
+    assert second_body["created"] is False
+    assert second_body["content_kind"] == "podcast"  # 已有 URL 的持久化类型优先
+    assert all(fetcher_id == "generic_podcast_rss" for fetcher_id, _ in fetcher_calls)
+    with Session(app_module.db_sink.engine) as session:
+        rows = session.exec(select(SourceConfigRecord).where(
+            SourceConfigRecord.owner_username != "")).all()
+        assert len(rows) == 1
+        assert rows[0].source_type == "podcast"
+        assert resolve_source_fetcher_id(rows[0]) == "generic_podcast_rss"
+        assert user_sources.active_subscriber_usernames(session, source_id) == ["alice", "bob"]
+
+
+def test_explicit_podcast_requires_audio_entries(monkeypatch, tmp_path):
+    app_module = _setup_app(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        res = _add(client, kind="podcast")
+    assert res.status_code == 400
+    assert "未检测到可播放的音频" in res.json()["detail"]
+
+
 def test_quota_max_sources(monkeypatch, tmp_path):
     app_module = _setup_app(monkeypatch, tmp_path)
     from services import user_sources
@@ -393,6 +515,40 @@ def test_conflict_with_preset_feed_redirects_to_subscribe(monkeypatch, tmp_path)
         assert pv["status"] == "exists" and pv["existing"]["source_id"] == preset_id
 
 
+def test_conflict_with_configured_podcast_redirects_to_subscribe(monkeypatch, tmp_path):
+    """平台 podcast 配置同样参与 URL 撞库，不能生成平行的用户源。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    from models.db import SourceConfigRecord
+
+    podcast_url = "https://platform.example.com/podcast.xml"
+    with Session(app_module.db_sink.engine) as session:
+        session.add(SourceConfigRecord(
+            source_id="podcast_platform_test",
+            name="Platform Podcast",
+            source_type="podcast",
+            url=podcast_url,
+            owner_username="",
+            is_active=True,
+            created_at="2026-09-16T00:00:00",
+            updated_at="2026-09-16T00:00:00",
+        ))
+        session.commit()
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        preview = client.post(
+            "/api/reader/custom-sources/preview", json={"url": podcast_url}
+        ).json()
+        created = _add(client, podcast_url, kind="podcast").json()
+    assert preview["status"] == "exists"
+    assert preview["existing"]["content_kind"] == "podcast"
+    assert created["status"] == "exists"
+    assert created["existing"]["source_id"] == "podcast_platform_test"
+    with Session(app_module.db_sink.engine) as session:
+        custom_rows = session.exec(select(SourceConfigRecord).where(
+            SourceConfigRecord.owner_username != "")).all()
+        assert custom_rows == []
+
+
 def test_conflict_with_hidden_system_source_is_404(monkeypatch, tmp_path):
     """撞中被隐藏系统源:统一「暂不可用」,不泄露隐藏细节、不造影子源。"""
     app_module = _setup_app(monkeypatch, tmp_path)
@@ -423,6 +579,52 @@ def _seed_article(engine, article_id, source_id, fetched="2026-08-27T10:00:00"):
             content_type="rss_article", source_id=source_id,
             source_url=f"https://x.example.com/{article_id}",
             publish_date="2026-08-27", fetched_date=fetched,
+        ))
+        session.commit()
+
+
+def _seed_podcast_processing(engine, article_id, source_id, *, status="ready"):
+    from models.db import ArticleRecord, PodcastProcessingRecord
+
+    with Session(engine) as session:
+        session.add(ArticleRecord(
+            id=article_id,
+            title=f"播客 {article_id}",
+            content="show notes",
+            content_type="podcast_episode",
+            source_id=source_id,
+            source_url=f"https://podcast.example.com/{article_id}",
+            publish_date="2026-09-16T00:00:00Z",
+            fetched_date="2026-09-16T00:00:00Z",
+        ))
+        session.flush()
+        session.add(PodcastProcessingRecord(
+            id=f"processing-{article_id}",
+            episode_id=article_id,
+            input_fingerprint="a" * 64,
+            pipeline_version="test-v1",
+            policy_version="test-v1",
+            requested_target="full_analysis",
+            selection_source="policy",
+            requested_by="system",
+            request_reason="custom source retirement regression",
+            idempotency_key=f"processing-key-{article_id}",
+            input_artifact_id=f"audio-{article_id}",
+            input_artifact_kind="source_media_snapshot",
+            input_content_hash="b" * 64,
+            input_language="und",
+            budget_scope="custom-source-test",
+            budget_period="2026-09",
+            budget_limit_minor=1000,
+            per_run_budget_minor=100,
+            eligibility_status="eligible",
+            processing_status=status,
+            stage="asr",
+            attempt_count=0,
+            queued_at="2026-09-16T00:00:00Z",
+            updated_at="2026-09-16T00:00:00Z",
+            finished_at=("2026-09-16T00:00:00Z" if status == "ready" else None),
+            created_at="2026-09-16T00:00:00Z",
         ))
         session.commit()
 
@@ -514,6 +716,45 @@ def test_source_health_includes_user_sources(monkeypatch, tmp_path):
         assert all("user_source" not in i for i in items if i["fetcher_id"] != source_id)
 
 
+def test_scheduled_refresh_includes_article_and_podcast_custom_sources(monkeypatch, tmp_path):
+    app_module = _setup_app(monkeypatch, tmp_path)
+    from services import media_store, user_sources
+
+    async def _preview(url, **kwargs):
+        podcast = "podcast" in url
+        return {
+            "canonical_url": url,
+            "feed_title": "Test Podcast" if podcast else "Test Blog",
+            "entry_count": 1,
+            "entries": [{"title": "One", "publish_date": "", "content_chars": 10,
+                         "has_audio": podcast}],
+            "detected_kind": "podcast" if podcast else "article",
+            "detection_confidence": "high" if podcast else "medium",
+            "detection_reasons": ["audio_enclosure"] if podcast else [],
+            "audio_entry_count": 1 if podcast else 0,
+            "enclosure_entry_count": 1 if podcast else 0,
+        }
+
+    scheduled_items = []
+
+    async def _record_collection(items, **kwargs):
+        scheduled_items.extend(items)
+        return {"status": "success"}
+
+    monkeypatch.setattr(user_sources, "fetch_feed_preview", _preview)
+    monkeypatch.setattr(media_store, "ensure_public_host", _noop_public_host)
+    monkeypatch.setattr(app_module, "run_collection_items", _record_collection)
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        assert _add(client, "https://blog.example.com/feed", kind="article").status_code == 200
+        assert _add(client, "https://podcast.example.com/feed", kind="podcast").status_code == 200
+
+    asyncio.run(app_module.execute_user_rss_refresh_job())
+    assert {item["fetcher_id"] for item in scheduled_items} == {
+        "generic_rss", "generic_podcast_rss",
+    }
+
+
 # ==================== 删除级联 ====================
 
 def test_remove_sole_subscriber_purges_source(monkeypatch, tmp_path):
@@ -551,6 +792,164 @@ def test_remove_with_other_subscriber_keeps_source(monkeypatch, tmp_path):
     from services import user_sources
     with Session(app_module.db_sink.engine) as session:
         assert user_sources.active_subscriber_usernames(session, source_id) == ["bob"]
+
+
+def test_shared_podcast_retires_only_after_last_subscriber_and_can_reactivate(
+    monkeypatch, tmp_path
+):
+    app_module = _setup_app(monkeypatch, tmp_path, "shared_podcast_retirement.db")
+    from models.db import ArticleRecord, PodcastProcessingRecord, SourceConfigRecord
+    from services import user_sources
+
+    async def _podcast_preview(url, **kwargs):
+        return {
+            "canonical_url": url,
+            "feed_title": "Shared Podcast",
+            "entry_count": 1,
+            "entries": [{"title": "Episode", "has_audio": True}],
+            "detected_kind": "podcast",
+            "detection_confidence": "high",
+            "detection_reasons": ["audio_enclosure"],
+            "audio_entry_count": 1,
+            "enclosure_entry_count": 1,
+            "playable_entry_count": 1,
+        }
+
+    monkeypatch.setattr(user_sources, "fetch_feed_preview", _podcast_preview)
+    feed_url = "https://podcast.example.com/shared.xml"
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        source_id = _add(client, feed_url, kind="podcast").json()["source_id"]
+    with TestClient(app_module.app) as client:
+        _login(client, "bob", "bob")
+        assert _add(client, feed_url, kind="article").json()["source_id"] == source_id
+
+    _seed_podcast_processing(app_module.db_sink.engine, "shared-episode", source_id)
+    _seed_article(app_module.db_sink.engine, "unprocessed-episode", source_id)
+
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        first = client.delete(f"/api/reader/custom-sources/{source_id}")
+        assert first.status_code == 200
+        assert first.json()["disposition"] == "kept"
+        assert first.json()["purged"] is False
+        assert first.json()["retired"] is False
+
+    with Session(app_module.db_sink.engine) as session:
+        source = session.get(SourceConfigRecord, source_id)
+        assert source is not None and source.is_active is True
+        assert source.retired_at is None
+        assert user_sources.active_subscriber_usernames(session, source_id) == ["bob"]
+
+    with TestClient(app_module.app) as client:
+        _login(client, "bob", "bob")
+        last = client.delete(f"/api/reader/custom-sources/{source_id}")
+        assert last.status_code == 200
+        assert last.json()["disposition"] == "retired"
+        assert last.json()["purged"] is False
+        assert last.json()["retired"] is True
+        assert last.json()["protected_episodes"] == 1
+        assert last.json()["articles_deleted"] == 1
+
+    with Session(app_module.db_sink.engine) as session:
+        source = session.get(SourceConfigRecord, source_id)
+        assert source is not None and source.is_active is False
+        assert source.retired_at
+        assert session.get(ArticleRecord, "shared-episode") is not None
+        assert session.get(ArticleRecord, "unprocessed-episode") is None
+        assert session.get(PodcastProcessingRecord, "processing-shared-episode") is not None
+        assert user_sources.active_subscriber_usernames(session, source_id) == []
+
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        revived = _add(client, feed_url, kind="article")
+        assert revived.status_code == 200
+        assert revived.json()["source_id"] == source_id
+        assert revived.json()["created"] is False
+        assert revived.json()["content_kind"] == "podcast"
+
+    with Session(app_module.db_sink.engine) as session:
+        source = session.get(SourceConfigRecord, source_id)
+        assert source is not None and source.is_active is True
+        assert source.retired_at is None
+        assert user_sources.active_subscriber_usernames(session, source_id) == ["alice"]
+
+
+def test_retired_podcast_processing_is_denied_before_worker_claim(monkeypatch, tmp_path):
+    app_module = _setup_app(monkeypatch, tmp_path, "retired_podcast_claim.db")
+    from models.db import PodcastProcessingRecord
+    from services import podcast_processing, user_sources
+
+    async def _podcast_preview(url, **kwargs):
+        return {
+            "canonical_url": url,
+            "feed_title": "Retiring Podcast",
+            "entry_count": 1,
+            "entries": [{"title": "Episode", "has_audio": True}],
+            "detected_kind": "podcast",
+            "detection_confidence": "high",
+            "detection_reasons": ["audio_enclosure"],
+            "audio_entry_count": 1,
+            "enclosure_entry_count": 1,
+            "playable_entry_count": 1,
+        }
+
+    monkeypatch.setattr(user_sources, "fetch_feed_preview", _podcast_preview)
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        source_id = _add(
+            client, "https://podcast.example.com/retiring.xml", kind="podcast"
+        ).json()["source_id"]
+    _seed_podcast_processing(
+        app_module.db_sink.engine, "retiring-episode", source_id, status="queued"
+    )
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        assert client.delete(
+            f"/api/reader/custom-sources/{source_id}"
+        ).json()["retired"] is True
+
+    with Session(app_module.db_sink.engine) as session:
+        claim = podcast_processing.claim_next_processing(
+            session, worker_id="retirement-test", lease_seconds=60
+        )
+        assert claim is None
+        processing = session.get(
+            PodcastProcessingRecord, "processing-retiring-episode"
+        )
+        assert processing.processing_status == "not_required"
+        assert processing.eligibility_status == "blocked_source"
+        assert processing.error_code == "blocked_source"
+
+    with pytest.raises(ValueError, match="已移除或退役"):
+        asyncio.run(app_module.run_fetcher_with_tracking(
+            "generic_podcast_rss",
+            {
+                "source_id": source_id,
+                "feed_url": "https://podcast.example.com/retiring.xml",
+            },
+        ))
+
+
+def test_last_subscriber_removal_rolls_back_when_disposal_fails(monkeypatch, tmp_path):
+    app_module = _setup_app(monkeypatch, tmp_path, "atomic_source_removal.db")
+    from services import user_sources
+
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        source_id = _add(client).json()["source_id"]
+
+    def _fail_disposal(session, target_source_id):
+        raise RuntimeError("injected disposal failure")
+
+    monkeypatch.setattr(user_sources, "dispose_user_source", _fail_disposal)
+    with TestClient(app_module.app, raise_server_exceptions=False) as client:
+        _login(client, "alice", "alice")
+        response = client.delete(f"/api/reader/custom-sources/{source_id}")
+        assert response.status_code == 500
+
+    with Session(app_module.db_sink.engine) as session:
+        assert user_sources.active_subscriber_usernames(session, source_id) == ["alice"]
 
 
 def test_admin_force_delete_cascades_subscriptions(monkeypatch, tmp_path):

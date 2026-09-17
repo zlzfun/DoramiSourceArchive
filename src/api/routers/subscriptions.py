@@ -39,6 +39,7 @@ from api.tokens import (
     subscription_token_preview,
 )
 from models.db import ReaderSubscriptionRecord
+from services import subscription_mutations as subscription_mutations_service
 
 router = APIRouter(tags=["subscriptions"])
 
@@ -50,6 +51,17 @@ ET.register_namespace("", ATOM_NAMESPACE)
 def _app():
     """延迟取 api.app（避免导入环；动态调用其留守的 current_username 等）。"""
     return importlib.import_module("api.app")
+
+
+def _guard_subscription_mutation(request: Request):
+    username = _app().current_username(request)
+    operation = f"{request.method} {request.url.path}"
+    if not subscription_mutations_service.begin(username, operation):
+        raise HTTPException(status_code=409, detail="已有订阅操作正在处理中")
+    try:
+        yield
+    finally:
+        subscription_mutations_service.finish(username, operation)
 
 
 # ==================== 请求模型 ====================
@@ -351,7 +363,10 @@ def _guard_filter_user_sources(session: Session, username: str, filters: dict) -
 
 @router.post("/api/subscriptions")
 def create_subscription(
-        params: SubscriptionCreate, request: Request, session: Session = Depends(deps.get_session)
+        params: SubscriptionCreate,
+        request: Request,
+        session: Session = Depends(deps.get_session),
+        _mutation_guard: None = Depends(_guard_subscription_mutation),
 ):
     name = params.name.strip()
     if not name:
@@ -387,6 +402,7 @@ def create_subscription(
 def update_subscription(
         subscription_id: int, params: SubscriptionUpdate, request: Request,
         session: Session = Depends(deps.get_session),
+        _mutation_guard: None = Depends(_guard_subscription_mutation),
 ):
     record = _owned_subscription_or_404(session, subscription_id, _app().current_username(request))
     update_data = _model_dump(params, exclude_unset=True)
@@ -417,7 +433,10 @@ def update_subscription(
 
 @router.post("/api/subscriptions/{subscription_id}/rotate-token")
 def rotate_subscription_token(
-        subscription_id: int, request: Request, session: Session = Depends(deps.get_session)
+        subscription_id: int,
+        request: Request,
+        session: Session = Depends(deps.get_session),
+        _mutation_guard: None = Depends(_guard_subscription_mutation),
 ):
     token = generate_subscription_token()
     record = _owned_subscription_or_404(session, subscription_id, _app().current_username(request))
@@ -431,7 +450,12 @@ def rotate_subscription_token(
 
 
 @router.delete("/api/subscriptions/{subscription_id}")
-def delete_subscription(subscription_id: int, request: Request, session: Session = Depends(deps.get_session)):
+def delete_subscription(
+    subscription_id: int,
+    request: Request,
+    session: Session = Depends(deps.get_session),
+    _mutation_guard: None = Depends(_guard_subscription_mutation),
+):
     record = _owned_subscription_or_404(session, subscription_id, _app().current_username(request))
     session.delete(record)
     session.commit()

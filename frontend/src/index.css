@@ -308,12 +308,20 @@ button {
   cursor: pointer;
 }
 
-button:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible {
-  outline: 2px solid var(--dorami-focus);
-  outline-offset: 2px;
+/* 原生控件的兜底聚焦环放在 base 层(Tailwind v4 层序 theme → base → components → utilities,
+   preflight 也在 base):未分层时它恒胜 @layer components 里的 outline:none,容器自画聚焦环的
+   输入框(登录页 / 发现页筛选 / 列头搜索 / 表单字段盒…)会在外环之内再叠一圈矩形亮光,
+   仓库曾为此在文件尾未分层区逐个钉 outline:none(issue #108 根治,补丁已删)。
+   规则:控件自带替代指示(容器 :focus-within / 自身 :focus 环)时在层内写 outline:none 即可;
+   没有替代指示的裸控件仍由这一条兜底——绝不移除 outline 而不给可见替代(conventions §2)。 */
+@layer base {
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid var(--dorami-focus);
+    outline-offset: 2px;
+  }
 }
 
 button:disabled {
@@ -9627,6 +9635,12 @@ input[type="radio"] {
     color: var(--dorami-faint);
   }
 
+  /* 容器画聚焦环(issue #108):与条目列头 .reader-search-inline:focus-within 同款——
+     内部 input 的 outline:none 自全局环入 base 层起真正生效,没有这一条就没有任何聚焦指示 */
+  .reader-disc-search:focus-within {
+    box-shadow: var(--dorami-inset-input), 0 0 0 3px var(--dorami-wash);
+  }
+
   .reader-disc-search input {
     flex: 1;
     min-width: 0;
@@ -9686,6 +9700,15 @@ input[type="radio"] {
   .reader-disc-add:hover {
     background: var(--dorami-soft);
     border-color: var(--dorami-border-strong);
+  }
+  .reader-disc-add:disabled {
+    color: var(--dorami-faint);
+    cursor: default;
+    opacity: 0.72;
+  }
+  .reader-disc-add:disabled:hover {
+    background: transparent;
+    border-color: var(--dorami-border);
   }
 
   /* ── 添加自定源浮层(阅读器 quiet 浮层语法,自持类族)──
@@ -9780,6 +9803,16 @@ input[type="radio"] {
   .csrc-name-input:hover { border-bottom-color: var(--dorami-border); }
   .csrc-name-input:focus { border-bottom-color: var(--dorami-accent); }
   .csrc-feedcount { flex-shrink: 0; font-family: var(--mono); font-size: 10.5px; color: var(--dorami-faint); }
+
+  .csrc-kind-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 10px 2px 4px;
+  }
+  .csrc-kind-note { font-size: 11.5px; color: var(--dorami-muted); }
+  .csrc-kind-row .mini-seg { flex-shrink: 0; }
 
   .csrc-entries { display: flex; flex-direction: column; margin: 6px 2px 0; }
   .csrc-entry {
@@ -10480,8 +10513,9 @@ input[type="radio"] {
     line-height: 1.5;
     color: var(--dorami-ink-2);
   }
+  /* 聚焦态由 .reader-ai-composer:focus-within 的容器 accent 圆角描边统一表达;
+     全局 textarea 环在 base 层,此处 outline:none 生效(issue #108,尾区钉法已退役) */
   .reader-ai-input:focus { outline: none; }
-  /* 全局 textarea:focus-visible 矩形外环的压制在文件尾未分层区(层内写压不过) */
   .reader-ai-toolbar {
     display: flex;
     align-items: center;
@@ -11156,12 +11190,10 @@ input[type="radio"] {
 .reader-disc-prev { font-size: 11px; font-weight: 400; }
 .reader-disc-back { font-size: 11px; font-weight: 400; font-family: var(--mono); }
 .reader-disc-add { font-size: 12px; font-weight: 600; }
-/* 添加自定源浮层:input/button 字号同陷阱,unlayered 区钉住;
-   输入自身的全局 focus 矩形环压掉——焦点指示由容器 .csrc-urlbox:focus-within
-   (整条 accent 描边)与 .csrc-name-input:focus(底线)承担,@layer 内压不动(§3)。 */
+/* 添加自定源浮层:input/button 字号同陷阱,unlayered 区钉住(聚焦外环的钉法已随
+   issue #108 全局环入 base 层退役——焦点指示由容器 .csrc-urlbox:focus-within 与
+   .csrc-name-input:focus 的底线承担,层内 outline:none 生效)。 */
 .csrc-urlbox input { font-size: 13px; font-weight: 500; }
-.csrc-urlbox input:focus, .csrc-urlbox input:focus-visible { outline: none; box-shadow: none; }
-.csrc-name-input:focus, .csrc-name-input:focus-visible { outline: none; box-shadow: none; }
 .csrc-urlbox-btn { font-size: 12px; font-weight: 600; }
 .csrc-name-input { font-size: 14.5px; font-weight: 650; }
 .csrc-btn-quiet { font-size: 12.5px; font-weight: 500; }
@@ -11226,16 +11258,6 @@ input[type="radio"] {
 /* ── 账户表用户列头就地搜索(v3.42 目检返修):input{font:inherit}(未分层)会让
    表头内输入框继承 th 的 10.5px——搜索词可读性不够,在此未分层区钉回 12px。 ── */
 .acct-th-search { font-size: 12px; }
-
-/* ── AI 问答输入框聚焦外环(v3.32 二轮返修):全局 textarea:focus-visible 的矩形
-   外环是未分层规则,@layer 内写 outline:none 压不过(未分层恒胜层内)——在此钉住。
-   聚焦态由 .reader-ai-composer:focus-within 的容器 accent 圆角描边统一表达。 ── */
-.reader-ai-input:focus-visible { outline: none; }
-
-/* ── 账户表列头搜索框聚焦外环(v3.42 目检返修):同上陷阱——全局 input:focus-visible
-   的 2px+offset 外环溢出表头行界,视觉上像行高变了(几何 36px 恒定);在此钉掉,
-   聚焦指示由 .acct-th-search:focus 的 1px accent 内描边承担。 ── */
-.acct-th-search:focus-visible { outline: none; }
 
 /* ── 运行浮窗(坞内双形态)= accent 实底 ──
    它是「运行中」活动态的全站唯一持续运动元素,主题色实底作醒目标识
@@ -11779,7 +11801,7 @@ input[type="radio"] {
    聚焦环画在卡片上而不是标题文字上(:has 由 Chrome 105+/Safari 15.4+ 支持,项目基线之内)。 */
 .brief-card-open { display: block; width: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .brief-card-open::after { content: ''; position: absolute; inset: 0; border-radius: inherit; }
-.brief-card-open:focus-visible { outline: none; } /* 本区未分层,压得住全局 button:focus-visible;环由下一条画在卡片上 */
+.brief-card-open:focus-visible { outline: none; } /* 环由下一条画在卡片上(全局 button 环在 base 层,写在哪都压得住) */
 .brief-grid .brief-card:has(.brief-card-open:focus-visible) { box-shadow: 0 0 0 2px var(--dorami-focus), var(--sh-1), inset 0 1px 0 var(--dorami-edge); }
 .brief-card-title { display: block; font-family: var(--font-serif); font-size: 17px; font-weight: 700; line-height: 1.4; color: var(--dorami-ink); }
 .brief-grid .brief-card.is-lead .brief-card-title { font-size: 24px; line-height: 1.3; }
