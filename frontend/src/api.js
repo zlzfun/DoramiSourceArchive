@@ -764,6 +764,19 @@ export function unsubscribeSource(sourceId) {
   return request(`/reader/sources/${enc(sourceId)}/subscribe`, { method: 'DELETE', errorMsg: '取消订阅失败' });
 }
 
+export function subscribeSourcesByShape(shape, options = {}) {
+  return request('/reader/sources/subscribe-batch', {
+    ...options,
+    method: 'POST', body: { shape }, errorMsg: '批量订阅失败',
+  });
+}
+
+export function fetchSourceBatchSubscriptionStatus() {
+  return request('/reader/sources/subscribe-batch/status', {
+    errorMsg: '获取批量订阅状态失败',
+  });
+}
+
 // ==================== 源合集(策展合集) ====================
 
 export function fetchReaderCollections() {

@@ -9,9 +9,18 @@ nginx 容器访问,对外端口由 compose 的端口映射决定;[nginx] 节同�
 (ensure_migrated,失败即退出)→ 显式 Taxonomy 姿态 reconcile(冲突即退出)→
 uvicorn(无 reload)。
 """
+import sys
 import warnings
 
-from config import settings
+# 部署前只读自检模式(issue #102 自动部署):`--check-config` / `--plan-migrations` 由部署脚本在
+# 目标镜像里、切换容器之前调用——只 import 无副作用模块,不迁移不写库,处理完直接退出,
+# 不进入下面的正式启动序(配置无效时也要报 JSON,故放在 `from config import settings` 之前)。
+if len(sys.argv) > 1 and sys.argv[1] in ("--check-config", "--plan-migrations"):
+    from services.deploy_checks import run_cli
+
+    sys.exit(run_cli(sys.argv[1:]))
+
+from config import settings  # noqa: E402
 
 try:
     # urllib3 非项目直接依赖(HTTP 栈是 httpx),v3.31 退役 chromadb 后不再被

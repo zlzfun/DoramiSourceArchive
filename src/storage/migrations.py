@@ -155,3 +155,195 @@ def ensure_migrated(db_url: str) -> None:
     if len(heads) > 1:
         print(f"⚠️ 迁移链存在 {len(heads)} 个 head(分叉仓形态),并行全升: {', '.join(heads)}")
     command.upgrade(cfg, "heads" if len(heads) > 1 else "head")
+
+
+# ── 只读迁移计划(issue #102 自动部署,部署前在目标镜像里执行) ──
+#
+# 部署脚本要在切换之前知道「这个库对目标代码来说是领先 / 落后 / 全新 / 待收养」,
+# 但 **不能** shell `alembic current`:在线 alembic 命令会加载 alembic/env.py,其 online
+# 路径在 begin_transaction 内先 drop 再 reinstall Archive Sync 触发器且 BEGIN IMMEDIATE——
+# 不是只读。本函数只用 MigrationContext 读 alembic_version(复数 heads)与 ScriptDirectory
+# 的 revision 图做 DAG 闭包比较,SQLite 连接 PRAGMA query_only,库文件不存在时不连接(否则
+# sqlite 会把它建出来)。状态语义(与 docs/auto-deploy-plan.md §4.6 一致):
+#   fresh                    无库文件 / 无业务表:pending 为完整目标链;是否放行由部署侧首装门决定
+#   legacy_adoption_required 有业务表无 alembic_version:ensure_migrated 会对齐基线并收养
+#   compatible               DB 当前 heads 都在目标图里:pending = 目标闭包 − 已应用闭包(拓扑序;多头/merge 自然成立)
+#   incompatible             DB 当前 head 不在目标脚本图里:典型是「DB 领先于目标代码」(降级撞迁移——旧 tag 的脚本
+#                            目录没有新 revision 文件),也可能是目标缺支线或迁移文件损坏,不武断断言具体原因
+# 注:没有单独的「已知 head 但闭包不是目标闭包子集」状态——目标图里的每个 revision 必是某个 head 的祖先
+#(叶子本身就是 head),所以 heads 全部已知即蕴含子集关系,该状态不可达。
+
+PLAN_DEPLOYABLE_STATUSES = frozenset({"fresh", "legacy_adoption_required", "compatible"})
+
+
+class SqliteTarget:
+    """`_sqlite_target` 的结果:是否 sqlite / 文件路径(内存库为 None)/ 是否内存库。"""
+
+    __slots__ = ("is_sqlite", "path", "is_memory")
+
+    def __init__(self, is_sqlite: bool, path: Optional[Path], is_memory: bool) -> None:
+        self.is_sqlite = is_sqlite
+        self.path = path
+        self.is_memory = is_memory
+
+
+def _sqlite_target(db_url: str) -> SqliteTarget:
+    """用 SQLAlchemy 自己的 URL 解析判断 sqlite 目标文件,与实际连接指向同一路径。
+
+    覆盖四种写法:普通文件 `sqlite:///rel/or/abs.db`、显式驱动 `sqlite+pysqlite:////abs.db`、
+    `file:` URI(`sqlite:///file:/abs.db?mode=ro&uri=true`)、内存库(无 database / `:memory:` /
+    `file::memory:` / `mode=memory`)。字符串切割会把显式驱动与 URI 判错(codex PR #111 R1 P1-2)。
+    """
+    from urllib.parse import parse_qs, unquote, urlsplit
+
+    from sqlalchemy.engine import make_url
+
+    url = make_url(db_url)
+    if url.get_backend_name() != "sqlite":
+        return SqliteTarget(False, None, False)
+    database = url.database or ""
+    if database in ("", ":memory:"):
+        return SqliteTarget(True, None, True)
+    uri_flag = str(url.query.get("uri", "")).strip().lower() in {"1", "true", "yes", "on"}
+    if uri_flag:
+        # make_url 会把 `?mode=memory&uri=true` 整段挪到 url.query,database 里只剩 `file:...`——内存判定要
+        # 同时看 url.query(codex PR #111 复检 P2);但只有 uri 生效时驱动才会把 mode 交给 sqlite,
+        # 没有 `uri=true` 的 `?mode=memory` 会被忽略、仍连磁盘文件(复检 2 新增 P2),故这段必须在 uri 分支内。
+        if str(url.query.get("mode", "")).strip().lower() == "memory":
+            return SqliteTarget(True, None, True)
+        if database.startswith("file:"):
+            parts = urlsplit(database)
+            params = parse_qs(parts.query)
+            path = unquote(parts.path)
+            if not path or path == ":memory:" or params.get("mode", [""])[0] == "memory":
+                return SqliteTarget(True, None, True)
+            return SqliteTarget(True, Path(path), False)
+    return SqliteTarget(True, Path(database), False)
+
+
+def readonly_engine(db_url: str):
+    """只读引擎。
+
+    已存在的 SQLite 文件用 URI 连接 `sqlite:///file:<path>?mode=ro&uri=true`:`mode=ro` 让底层文件
+    连接本身只读——关闭最后一个连接时 sqlite 不会 checkpoint WAL、不会改写主库或删 `-wal/-shm`
+    (`PRAGMA query_only` 只挡 SQL 写,挡不住这一步;codex PR #111 R1 P1-1 实测主库 sha 会变)。
+    不用 `immutable=1`:它会让 sqlite 忽略 WAL 里尚未 checkpoint 的数据。每连接再加 `query_only`
+    作第二道约束。内存库无可保护;非 sqlite 后端原样建引擎(本项目生产即 sqlite)。
+    """
+    from urllib.parse import quote
+
+    from sqlalchemy import event
+    from sqlalchemy.engine import URL
+
+    target = _sqlite_target(db_url)
+    if not target.is_sqlite or target.is_memory:
+        return create_engine(db_url)
+    ro_url = URL.create(
+        "sqlite",
+        database=f"file:{quote(str(target.path), safe='/')}",
+        query={"mode": "ro", "uri": "true"},
+    )
+    engine = create_engine(ro_url)
+
+    @event.listens_for(engine, "connect")
+    def _query_only(dbapi_connection, _record):  # pragma: no cover - trivial
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA query_only=ON")
+        cursor.close()
+
+    return engine
+
+
+def _revision_closure(script: ScriptDirectory, heads) -> set:
+    """给定若干 revision,返回它们及全部祖先的 revision id 集合。"""
+    closure: set = set()
+    for head in heads:
+        for rev in script.walk_revisions(base="base", head=head):
+            closure.add(rev.revision)
+    return closure
+
+
+def _ordered(script: ScriptDirectory, wanted: set) -> list:
+    """按脚本图拓扑序(base → heads)排列 wanted 中的 revision。"""
+    descending = list(script.walk_revisions(base="base", head="heads"))
+    return [rev.revision for rev in reversed(descending) if rev.revision in wanted]
+
+
+def plan_migrations(db_url: str, *, script_location: Optional[str] = None) -> dict:
+    """只读地算出「目标代码 vs 当前库」的迁移计划,返回可 JSON 化的字典。
+
+    script_location 仅供测试注入另一份脚本目录(模拟目标 tag 缺 / 多支线)。
+    """
+    from alembic.script.revision import ResolutionError
+
+    cfg = make_alembic_config(db_url)
+    if script_location:
+        cfg.set_main_option("script_location", script_location)
+    script = ScriptDirectory.from_config(cfg)
+    target_heads = sorted(script.get_heads())
+    required = _revision_closure(script, target_heads)
+    plan = {
+        "status": "",
+        "detail": "",
+        "current_heads": [],
+        "target_heads": target_heads,
+        "pending": [],
+        "pending_count": 0,
+        "extra": [],
+        "database_exists": True,
+    }
+
+    def finish(status: str, detail: str, *, pending=None, extra=None) -> dict:
+        plan["status"] = status
+        plan["detail"] = detail
+        plan["pending"] = list(pending or [])
+        plan["pending_count"] = len(plan["pending"])
+        plan["extra"] = sorted(extra or [])
+        return plan
+
+    target = _sqlite_target(db_url)
+    if target.is_sqlite and (target.is_memory or not target.path.exists()):
+        plan["database_exists"] = False
+        return finish("fresh", "数据库不存在:目标链将从头建立(是否放行由部署侧首装门决定)",
+                      pending=_ordered(script, required))
+
+    engine = readonly_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            current_heads = sorted(MigrationContext.configure(conn).get_current_heads())
+            has_tables = "articles" in inspect(conn).get_table_names()
+    finally:
+        engine.dispose()
+    plan["current_heads"] = current_heads
+
+    if not current_heads:
+        if has_tables:
+            baseline_closure = _revision_closure(script, [BASELINE_REVISION])
+            return finish(
+                "legacy_adoption_required",
+                "有业务表但无 alembic_version:启动时 ensure_migrated 会对齐基线并收养后升级",
+                pending=_ordered(script, required - baseline_closure),
+            )
+        return finish("fresh", "库文件存在但无业务表:目标链将从头建立(是否放行由部署侧首装门决定)",
+                      pending=_ordered(script, required))
+
+    unknown = []
+    for head in current_heads:
+        try:
+            script.revision_map.get_revision(head)
+        except ResolutionError:
+            unknown.append(head)
+    if unknown:
+        return finish(
+            "incompatible",
+            f"数据库当前 revision 不在目标代码的迁移图里: {unknown}——可能是 DB 领先于目标代码、"
+            "目标缺少支线或迁移文件损坏;按 docs/release-process.md 恢复对应备份后重跑",
+            extra=unknown,
+        )
+    applied = _revision_closure(script, current_heads)
+    pending = _ordered(script, required - applied)
+    return finish(
+        "compatible",
+        "已在目标 revision 集合" if not pending else f"待执行 {len(pending)} 个迁移",
+        pending=pending,
+    )
