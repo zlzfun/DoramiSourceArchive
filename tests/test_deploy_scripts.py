@@ -23,7 +23,9 @@ ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = ROOT / "docker" / "dorami-deploy.example"
 WORKER = ROOT / "docker" / "dorami-deploy-worker.example"
 VERIFY_REF = ROOT / "scripts" / "verify-release-ref.sh"
-OLD_SCRIPTS_COMMIT = "8996f82"  # 本波之前的 deploy-docker.sh / deploy-lib.sh(自举测试用)
+# 本波之前(8996f82,v3.58.2 时代)的 deploy-docker.sh / deploy-lib.sh 原文固化为 fixture:自举测试要模拟
+# 「生产机还停在旧 tag、旧脚本 checkout 新 tag 后以新脚本重执行」;不用 git show 取,CI 浅克隆拿不到那个提交。
+OLD_SCRIPTS_DIR = ROOT / "tests" / "fixtures" / "deploy_scripts_pre_issue_102"
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="需要 git")
 
@@ -520,9 +522,8 @@ def test_cleanup_keeps_referenced_backup_and_managed_tags(env: Env):
 
 def _real_repo_files(version: str, *, old: bool = False, worktree: Path = ROOT) -> dict[str, str]:
     if old:
-        env = _git_env(worktree)
-        lib = git(worktree, "show", f"{OLD_SCRIPTS_COMMIT}:scripts/deploy-lib.sh", env=dict(os.environ)).stdout
-        dd = git(worktree, "show", f"{OLD_SCRIPTS_COMMIT}:deploy-docker.sh", env=dict(os.environ)).stdout
+        lib = (OLD_SCRIPTS_DIR / "deploy-lib.sh").read_text(encoding="utf-8")
+        dd = (OLD_SCRIPTS_DIR / "deploy-docker.sh").read_text(encoding="utf-8")
     else:
         lib = (worktree / "scripts" / "deploy-lib.sh").read_text(encoding="utf-8")
         dd = (worktree / "deploy-docker.sh").read_text(encoding="utf-8")

@@ -141,6 +141,8 @@ def test_database_ahead_of_target_scripts_is_incompatible(tmp_path):
 
     对目标图而言 DB 的 head 是未知 revision → `incompatible`(fail closed)。没有单独的
     downgrade 状态:目标图认识的 revision 必是某个 head 的祖先,不存在「已知但不在目标闭包」。
+    真实 head 可能是一个合并 revision(如 d17e9a4c2b61),删掉它后旧目录会露出多个 head,
+    所以目标 head 按集合比较,不假定只有一个。
     """
     db_url = f"sqlite:///{tmp_path / 'ahead.db'}"
     _upgrade(db_url, "head")
@@ -149,12 +151,12 @@ def test_database_ahead_of_target_scripts_is_incompatible(tmp_path):
     older_scripts = _copy_alembic(tmp_path)
     head_file = Path(_script(older_scripts).get_revision(real_head).path)
     head_file.unlink()
-    older_head = _script(older_scripts).get_current_head()
-    assert older_head != real_head
+    older_heads = sorted(_script(older_scripts).get_heads())
+    assert older_heads and real_head not in older_heads
 
     plan = plan_migrations(db_url, script_location=str(older_scripts))
     assert plan["status"] == "incompatible"
-    assert plan["target_heads"] == [older_head]
+    assert plan["target_heads"] == older_heads
     assert plan["current_heads"] == [real_head]
     assert plan["extra"] == [real_head]
     assert plan["status"] not in PLAN_DEPLOYABLE_STATUSES

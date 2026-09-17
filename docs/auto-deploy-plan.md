@@ -433,3 +433,12 @@ event_name 分支丢 caller sha(release 手动 dispatch 时 callee 也是 workfl
 required reviewers 在 public 仓库可用;launcher / worker 必须在仓库外;`/api/health` exact 白名单会在鉴权与 surface 判断前短路;
 `build.source` 真实值是 `env`(issue 原稿写 `tag`,以 `env` 验收);已拍板边界(不自动回滚 / 不接通知 / 单一 tag /
 `--here` 不进流水线 / A 首期 B 二期)全部保留。
+
+**合入前同步(2026-09-17)**:origin/main 在 PR 基线之后前进 7 个提交(v3.59.0、OSS 存储 #109 等),合进分支零冲突;
+#109 的自动备份落 `data/backups/`(tar.gz,默认关闭),与部署备份 `backups/cms_data.db.<时间戳>` 目录与命名互不干扰。
+GitHub CI 后端首跑失败并非代码回归:脚本自举测试用 `git show 8996f82:…` 取旧版脚本,Actions 浅克隆里没有那个提交——
+旧脚本原文固化为 `tests/fixtures/deploy_scripts_pre_issue_102/`,测试不再依赖 git 历史深度(本机全量套件此前通过,
+正是「本地全绿 ≠ CI 全绿」的又一例)。main 已把 `ensure_migrated` 改为 `get_current_heads()`,PR-1 记入 backlog 的
+多 head 边界随之关闭,另一条(`_has_user_tables` 只看 `articles`)仍留。同步后本机全量套件另暴露一例测试假设失效:
+`test_database_ahead_of_target_scripts_is_incompatible` 删掉真实 head 文件模拟旧 tag,而 main 的 head 现在是合并 revision
+`d17e9a4c2b61`,删掉后旧目录露出两个 head——测试改按 head 集合比较,`plan_migrations` 本身对多 head 目标本就按集合处理。
