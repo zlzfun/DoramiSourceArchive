@@ -447,6 +447,7 @@ GitHub CI 后端首跑失败并非代码回归:脚本自举测试用 `git show 8
 真因:`actions/checkout` 对 tag 事件在全量 fetch 之后再做一次 `fetch +<commit>:refs/tags/<tag>`,把 runner 上的本地 tag 引用改写成指向提交的
 轻量 tag;`verify-release-ref.sh` 随后 `git fetch --quiet origin main --tags` 撞上「would clobber existing tag」被拒,`--quiet` 把拒绝原因也吞掉。
 本机与「干净克隆 + checkout tag」的模拟都过,因为都没做那第二次 fetch;v3.59.0 没事是旧 `release.yml` 不跑这个脚本。
-分支 checkout(`workflow_dispatch`)不受影响——用 dispatch 为 v3.60.0 补建了 Release 并走 `allow_downgrade` 完成首次流水线部署。
+分支 checkout(`workflow_dispatch`)不受影响——用 dispatch 为 v3.60.0 补建了 Release 并完成首次流水线部署(勾了 `allow_downgrade`,
+但 worker 从运行容器的构建身份读到基线 v3.59.0、方向 forward,护栏本就放行;runner 侧 3 分 26 秒,生产机事务 1789636725-6ccc02f1)。
 修法:刷新 `origin/main` 用 `--no-tags`,tag 只在本地缺失时单独取,fetch 失败显式报错;轻量 tag 判定改看 `ls-remote` 的剥离行而非本地对象类型
 (runner 上本地对象已被改写成 commit,会误报);回归测试模拟 checkout 的改写。修复随下一个发布版进入 tag 里的脚本后,tag 推送路径才真正闭环。
