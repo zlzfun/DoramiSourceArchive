@@ -9701,6 +9701,15 @@ input[type="radio"] {
     background: var(--dorami-soft);
     border-color: var(--dorami-border-strong);
   }
+  .reader-disc-add:disabled {
+    color: var(--dorami-faint);
+    cursor: default;
+    opacity: 0.72;
+  }
+  .reader-disc-add:disabled:hover {
+    background: transparent;
+    border-color: var(--dorami-border);
+  }
 
   /* ── 添加自定源浮层(阅读器 quiet 浮层语法,自持类族)──
      留白分层而非横线分层;一体化输入条(内嵌图标+就地预览钮);hairline 条目样例;

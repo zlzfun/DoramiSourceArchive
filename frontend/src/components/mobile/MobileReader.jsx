@@ -79,6 +79,7 @@ export default function MobileReader({
     handleSubscribe, handleUnsubscribe, handleAddCustomSource,
     collections, discoverCollectionId, setDiscoverCollectionId,
     collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
+    shapePinning, handleSubscribeShape,
     // 视图 / 导航
     mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover, discoverShape, setDiscoverShape,
     bulletinView, socialView, podcastView, listTitle, listSubtitle,
@@ -512,6 +513,8 @@ export default function MobileReader({
               collectionPinningId={collectionPinningId}
               onSubscribeCollection={handleSubscribeCollection}
               onUnsubscribeCollection={handleUnsubscribeCollection}
+              shapePinning={shapePinning}
+              onSubscribeShape={handleSubscribeShape}
               userSourcesEnabled={userSourcesEnabled}
               onAddCustomSource={handleAddCustomSource}
               tab={discoverTab}
