@@ -442,3 +442,11 @@ GitHub CI 后端首跑失败并非代码回归:脚本自举测试用 `git show 8
 多 head 边界随之关闭,另一条(`_has_user_tables` 只看 `articles`)仍留。同步后本机全量套件另暴露一例测试假设失效:
 `test_database_ahead_of_target_scripts_is_incompatible` 删掉真实 head 文件模拟旧 tag,而 main 的 head 现在是合并 revision
 `d17e9a4c2b61`,删掉后旧目录露出两个 head——测试改按 head 集合比较,`plan_migrations` 本身对多 head 目标本就按集合处理。
+
+**首次真实发版(v3.60.0,2026-09-17)暴露的流水线缺陷**:tag 推上去后 `release.yml` 的核验步半秒内静默退出 1,Release 未建、部署跳过。
+真因:`actions/checkout` 对 tag 事件在全量 fetch 之后再做一次 `fetch +<commit>:refs/tags/<tag>`,把 runner 上的本地 tag 引用改写成指向提交的
+轻量 tag;`verify-release-ref.sh` 随后 `git fetch --quiet origin main --tags` 撞上「would clobber existing tag」被拒,`--quiet` 把拒绝原因也吞掉。
+本机与「干净克隆 + checkout tag」的模拟都过,因为都没做那第二次 fetch;v3.59.0 没事是旧 `release.yml` 不跑这个脚本。
+分支 checkout(`workflow_dispatch`)不受影响——用 dispatch 为 v3.60.0 补建了 Release 并走 `allow_downgrade` 完成首次流水线部署。
+修法:刷新 `origin/main` 用 `--no-tags`,tag 只在本地缺失时单独取,fetch 失败显式报错;轻量 tag 判定改看 `ls-remote` 的剥离行而非本地对象类型
+(runner 上本地对象已被改写成 commit,会误报);回归测试模拟 checkout 的改写。修复随下一个发布版进入 tag 里的脚本后,tag 推送路径才真正闭环。
