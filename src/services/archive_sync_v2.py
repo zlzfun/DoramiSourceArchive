@@ -2990,6 +2990,30 @@ def _verified_local_header(target: Path, size: int, digest: str) -> bytes | None
     return None
 
 
+def _registered_cold_copy(storage, target: Path, digest: str, ext: str,
+                          size: int, mime: str) -> bool:
+    """A missing working copy must not unpublish an already archived OSS blob.
+
+    This preserves existing availability only; it does not verify or count a
+    local reuse. Present but invalid files still require repair before serving.
+    """
+    if storage is None or not storage.enabled:
+        return False
+    try:
+        target.lstat()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    else:
+        return False
+    location = storage.location(digest, ext)
+    return bool(location and location.size_bytes == size
+                and location.mime == mime.split(";", 1)[0].strip().lower()
+                and location.bucket == storage.config.bucket
+                and location.region == storage.config.region)
+
+
 def _atomic_install(target: Path, body: bytes) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.part")
@@ -3060,6 +3084,10 @@ def _install_media_file(
         if body is None:
             header = _verified_local_header(target, size, digest)
             if header is None:
+                if expected["status"] == "cached" and _registered_cold_copy(
+                    object_storage, target, digest, target.suffix, size, expected["mime"],
+                ):
+                    return None
                 _commit_binary_state(engine, MediaAssetRecord, expected,
                                      {"status": "pending_sync", "fetched_at": None})
                 return None
@@ -3155,6 +3183,10 @@ def _install_podcast_audio_file(
         if body is None:
             header = _verified_local_header(target, size, digest)
             if header is None:
+                if expected["status"] == "published" and _registered_cold_copy(
+                    storage, target, digest, expected["ext"], size, expected["mime"],
+                ):
+                    return None
                 _commit_binary_state(engine, PodcastArtifactRecord, expected, {"status": "ready"})
                 return None
         else:

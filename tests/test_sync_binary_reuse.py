@@ -333,6 +333,50 @@ def test_oss_failure_leaves_stream_unfinished_and_retry_reuses_file(env):
     assert bucket.uploads == 2
 
 
+@pytest.mark.parametrize("case", ["cold_failure", "cold_success", "corrupt_failure"])
+def test_oss_cold_cache_preserves_availability_but_corrupt_copy_requires_repair(env, case):
+    from tests.test_object_storage import FakeBucket, remote_store
+    bucket = FakeBucket()
+    storage = remote_store(env.consumer.engine, env.root,
+                           "media" if env.stream == "media" else "podcast", bucket)
+    env.object_storage = env.store.object_storage = storage
+    env.pull()
+    env.checkpoints.clear()
+    env.downloads.clear()
+    for body in env.bodies.values():
+        if case == "corrupt_failure":
+            _write(env.path(body), b"X" * len(body))
+        else:
+            env.path(body).unlink()
+    if case.endswith("failure"):
+        env.response = lambda key: httpx.Response(500)
+        with pytest.raises(remote_sync.RemoteSyncError):
+            env.pull(on_progress=env.progress.append)
+        assert env.stream not in env.checkpoints
+        assert env.progress[-1]["stream_processed"] == 0
+    else:
+        result = env.pull()
+        stats = result["streams"][env.stream]
+        assert stats[f"{env.stream}_downloaded"] == 2
+        assert stats[f"{env.stream}_reused"] == 0
+        for body in env.bodies.values():
+            assert env.path(body).read_bytes() == body
+    model = MediaAssetRecord if env.stream == "media" else PodcastArtifactRecord
+    with Session(env.consumer.engine) as session:
+        key = env.downloads[-1]
+        row = session.get(model, key)
+        location = storage.location(row.content_hash, row.ext)
+        storage.verify_remote(location)
+        expected_status = ("pending_sync" if env.stream == "media" else "ready") if (
+            case == "corrupt_failure") else ("cached" if env.stream == "media" else "published")
+        assert row.status == expected_status
+        if case == "cold_failure":
+            # Existing reader paths can still recover the previously archived blob.
+            path = storage.materialize(env.path(env.bodies[key]), row.content_hash,
+                                       row.ext, row.size_bytes)
+            assert hashlib.sha256(path.read_bytes()).hexdigest() == row.content_hash
+
+
 def test_concurrent_handoff_or_withdrawal_during_reuse_cannot_publish(env, monkeypatch):
     from config_oss import OssConfig
     from services.object_storage import ObjectStorage

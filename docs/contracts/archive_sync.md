@@ -223,6 +223,10 @@ from an interrupted stream. Reuse still completes the authority-owned metadata
 and publication transition. Missing or corrupt files are downloaded, verified,
 and atomically replaced; an existing pathname alone never establishes availability.
 Configured object-storage persistence and cache leases also apply to reuse.
+An already available OSS archive whose local working copy was evicted keeps its
+availability if a retry's producer download fails; the matching OSS registration
+alone is not counted as local reuse and does not advance progress or checkpoints.
+An existing but corrupt local file still requires repair before being marked available.
 The final metadata write compares the original authority, identity and state so
 concurrent manifest changes or audio withdrawal cannot be overwritten.
 
