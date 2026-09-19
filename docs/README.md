@@ -93,6 +93,11 @@
 - ◉ [personal-brief-grid-and-sections.md](./personal-brief-grid-and-sections.md) — **个人早报板块顺序 / 分值驱动网格 / 公共日报排除(issue #74)**:
   日报剔出早报范围并退役 daily_brief_ready 触发链;板块按 SECTION_ORDER 固定、板块内分数降序;网格 6 等分单元,宽度跟分数走
   (≥ 9 通栏、并排分差 ≥ 1 用 ⅔ + ⅓、余 1 头卡够高才通栏否则 2 + 2),样页 `design/dorami-brief-grid-quiet.html`。
+- ◇ [node-watchdog-layer1-plan.md](./node-watchdog-layer1-plan.md) — **节点看护第一层:抓取失败判定升级(issue #82 L1,R2 方案稿,codex 检视一致,2026-09-19 拍板)**:
+  执行轴不动、新增独立**产出轴** `yield_status`(S1 两个不同日显式零候选 / S2 严格新增数 + 源自身历史最长间隔 ×2 + 观察世代与指纹,产出日不足即「未分类」);
+  抓取器上报 `discovered_count` + `discovery_mode` 默认 unknown 显式 opt-in;正文偏薄按源级 `body_expectation` 显式声明;调度「收据先行 + 对账」(`guarded_schedule` / `schedule_receipts`)、`watch_events` occurrence 模型;
+  日报运行史改表 + 50% 基线;运维「看护」子页;生产库回放实证(issue 原案误报 74 源 → 护栏版只命中 3 源且比人工早 3–9 天;OpenAI 正文 7 月中起即退化);
+  检视中发现现役 bug:编辑采集任务会把留存清理 / 远程同步 / 用户源刷新 / 播客 ASR worker 从调度器删掉(PR-0 先修)。
 - ◉ [analysis-brief-review-plan.md](./analysis-brief-review-plan.md) — **入库分析与日报链路审视收口**(v3.48 同 PR):
   补评喂同一闭集、无正文候选按标题走同一把尺子、worker 轻列扫描 + 版本重跑慢滴、编辑喂分析事实、
   分数直方图与补评撞车读数、同事件机械预聚类、跨天对照物带要点;审视结论与明确不做见 §0/§5。

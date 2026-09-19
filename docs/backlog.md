@@ -21,6 +21,11 @@
 
 ## 排队中(用户拍板、未动工)
 
+- ☐ **issue #82 节点看护机制**(三层:判定升级 → 异常通知 → 自主自愈):第一层方案 `docs/node-watchdog-layer1-plan.md` R2 稿
+  (2026-09-15 codex 检视一致;**2026-09-19 用户拍板「全按推荐」**,§5 七点定案;PR-0 已开工);落地拆 **PR-0 调度重载现役 bug 先修**(`load_tasks_to_scheduler` 全量 `remove_all_jobs()` 被采集任务 CRUD 调用,
+  留存清理 / 远程同步 / 用户源刷新 / 播客 ASR worker 编辑一次任务即消失到重启)→ PR-A schema 与上报通道(判定 feature-gated 关)→ PR-B 开判定 → PR-C 收据对账 / Q1 / 日报运行表 / 看护页。
+  第二层通道待拍板(SMTP / IM / Bark·ntfy / 站内告警条),凭据进 credentials 层;第三层与「系统自主化」大波次合并立项。
+  L1 明确不做:持久时间改 UTC(独立波次)、interval 任务收据、`silent` 影响早报选篇。
 - ☐ **管理面看板余项**(issue #31,v3.55.0 只做了两点:用户明细仅根管理员 + 账户增长曲线,
   方案 `docs/admin-root-admin-and-account-growth.md`):曲线上标注版本发布等关键节点(需启动时登记版本首见日期
   或手工标注表)、文章量/采集量/分析量统一为「当前值 + 增长趋势 + 历史曲线」、根管理员转让/多根(升级为账户列)。
@@ -139,7 +144,7 @@
 
 - **公共日报进入个人早报的专用投影**:目前订阅了公共日报的读者靠日报记录的通用文章分析行(候选查询内连接 + `DAILY_BRIEF_READY` 重编)把日报条目带进版面,所以日报记录必须被分析 worker 评一次分(首次尝试常瞬时失败、重试成功,每天多一次调用且分数无读者面语义)。若要停止分析日报,需要给早报候选查询、`_analysis_readiness` 与 `DAILY_BRIEF_READY` 判定做一条不依赖分析行的专用投影,并改写 `test_personal_brief_accepts_persisted_public_brief_without_source_state`。
 - **crawl4ai 主路的共用上下文**:dev 可选 extra 的 `Crawl4AIContentBackend` 复用单个 `AsyncWebCrawler`,是否同样撞上 openai.com「同一上下文第二次导航恒 403 挑战」未实测;生产未装 crawl4ai 故本波只修 Playwright 兜底。实测后若同病,让 OpenAI 详情绕过 crawl4ai 主路或逐篇新会话。
-- **OpenAI 摘要正文回填**:09-09 至修复上线期间入库的 ~18 篇 `rss_openai_news` 正文只有 RSS 摘要(`has_content=True`,不会自动重抓),需一次性重渲染回填脚本。
+- **OpenAI 摘要正文回填**:09-09 至修复上线期间入库的 ~18 篇 `rss_openai_news` 正文只有 RSS 摘要(`has_content=True`,不会自动重抓),需一次性重渲染回填脚本。**2026-09-15 回放补正**:退化自 07-15 起就存在(每次运行首篇过、其余被 CF 拦回退摘要,近 5 周 <400 字占比 64%),09-15 只回填了 09-09 起的 14 篇,7 月中至 9 月初的摘要正文仍待同一脚本回填(见 `docs/node-watchdog-layer1-plan.md` §2.5)。
 - **日报 `per_source_cap=5` 是软配额**:`select_top` 的 overflow 补位可再加同源条目,淡日单源可能超过 5 篇(The Decoder 入名单后更可能出现);若运营要硬上限需改 overflow 语义。
 
 ## 已完结(近期,留档索引;执行记录与更早波次见 `docs/archive/README.md`)
