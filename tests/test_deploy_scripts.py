@@ -713,6 +713,21 @@ def test_verify_release_ref(tmp_path: Path):
     assert run("v1.9.9").returncode == 1 and "版本号" in run("v1.9.9").stderr
     assert run("v2.0.0").returncode == 1 and "不在 main 线上" in run("v2.0.0").stderr
     assert run("nope").returncode == 1
+    # actions/checkout 对 tag 事件会把本地 tag 引用改写成指向提交的轻量 tag(fetch +<sha>:refs/tags/<tag>);
+    # 核验不得因此失败(2026-09-17 v3.60.0:--tags 撞「would clobber existing tag」静默退出 1),
+    # 也不得把它误报成轻量 tag(轻量与否以 origin 为准)
+    git(clone, "fetch", "--no-tags", "origin", f"+{good_sha}:refs/tags/v1.1.0", env=repo.env)
+    assert git(clone, "cat-file", "-t", "refs/tags/v1.1.0", env=repo.env).stdout.strip() == "commit"
+    r = run("v1.1.0")
+    assert r.returncode == 0 and r.stdout.strip() == good_sha, r.stderr
+    assert "轻量" not in r.stderr
+    # 本地没有 tag 时单独取回;origin 删了 tag 则拒绝
+    git(clone, "tag", "-d", "v1.1.0", env=repo.env)
+    r = run("v1.1.0")
+    assert r.returncode == 0 and r.stdout.strip() == good_sha, r.stderr
+    git(repo.work, "push", "-q", "--delete", "origin", "v1.1.0", env=repo.env)
+    r = run("v1.1.0")
+    assert r.returncode == 1 and "不存在于 origin" in r.stderr
 
 
 # ══════════════ 脚本层检视 R1 返修(codex 14 条)对应的失败路径 / 竞争窗口 ══════════════
