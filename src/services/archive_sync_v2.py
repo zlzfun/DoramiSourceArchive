@@ -17,7 +17,9 @@ import hashlib
 import json
 import os
 import re
+import stat
 import uuid
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -2167,7 +2169,7 @@ def _apply_media(
             record.size_bytes = int(data.get("size_bytes") or 0)
             record.sync_authority_id = authority_id
             record.sync_authority_revision = incoming_revision
-            if binary_changed:
+            if binary_changed or record.status != "cached":
                 record.status = "pending_sync"
                 record.fetched_at = None
             record.updated_at = str(
@@ -2953,77 +2955,150 @@ def finalize_full_authority_stream(
         return pruned
 
 
-def install_media_bytes(
-    engine: Engine,
-    media_root: Path,
-    url_hash: str,
-    body: bytes,
-    *,
-    max_bytes: int = 20 * 1024 * 1024,
-    object_storage=None,
-) -> MediaAssetRecord:
-    """Install one manifest-declared binary only after size/hash verification."""
+def _binary_target(root: Path, content_hash: str, ext: str) -> Path:
+    _validate_sha256(content_hash, field="content_hash")
+    if _SAFE_MEDIA_EXT.fullmatch(ext) is None:
+        raise SyncV2Error("media extension is unsafe")
+    root = root.resolve()
+    target = root / content_hash[:2] / f"{content_hash}{ext}"
+    if not target.parent.resolve().is_relative_to(root):
+        raise SyncV2Error("media target escapes configured root")
+    return target
 
+
+def _verified_local_header(target: Path, size: int, digest: str) -> bytes | None:
+    """Read a bounded header while hashing the entire regular file in chunks."""
+    try:
+        info = target.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_size != size:
+            return None
+        actual = hashlib.sha256()
+        received = 0
+        header = b""
+        with target.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                if not header:
+                    header = chunk[:512]
+                received += len(chunk)
+                if received > size:
+                    return None
+                actual.update(chunk)
+        if received == size and actual.hexdigest() == digest:
+            return header
+    except OSError:
+        pass
+    return None
+
+
+def _atomic_install(target: Path, body: bytes) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.part")
+    try:
+        temporary.write_bytes(body)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _check_binary_declaration(record, declaration, authority_id, *, audio=False):
+    if declaration is None:
+        return
+    fields = _PODCAST_AUDIO_IMMUTABLE_FIELDS if audio else (
+        "url_hash", "url", "content_hash", "size_bytes", "mime", "ext",
+    )
+    for field in fields:
+        actual, expected = getattr(record, field), declaration.get(field)
+        # Successful image installs normalize MIME/extension without changing the
+        # producer revision; a replay still carries its original declaration.
+        if field == "mime":
+            actual = str(actual).split(";", 1)[0].strip().lower()
+            expected = str(expected).split(";", 1)[0].strip().lower()
+        elif field == "ext":
+            actual, expected = str(actual).lower(), str(expected).lower()
+        if actual != expected:
+            raise SyncV2Error("binary manifest does not match current record")
+    owner = record.authority_id if audio else record.sync_authority_id
+    if not authority_id or owner != authority_id:
+        raise SyncV2Error("binary belongs to another authority")
+
+
+def _commit_binary_state(engine, model, expected, values):
+    # Identity comparison and publication are one conditional write, including
+    # status/authority/version so concurrent withdrawal or handoff cannot lose.
+    with Session(engine) as session:
+        result = session.exec(update(model).where(
+            *(getattr(model, field) == value for field, value in expected.items())
+        ).values(**values).execution_options(synchronize_session=False))
+        if result.rowcount != 1:
+            raise SyncV2Error("binary manifest changed during file verification or object upload")
+        session.commit()
+        key = expected["url_hash"] if model is MediaAssetRecord else expected["id"]
+        record = session.get(model, key)
+        session.expunge(record)
+        return record
+
+
+def _install_media_file(
+    engine, media_root, url_hash, body, *, max_bytes=20 * 1024 * 1024,
+    object_storage=None, declaration=None, authority_id="",
+):
     with Session(engine) as session:
         record = session.get(MediaAssetRecord, url_hash)
-        if (
-            record is None
-            or record.status not in {"pending_sync", "cached"}
-            or not record.content_hash
-        ):
+        if record is None or record.status not in {"pending_sync", "cached"}:
             raise SyncV2Error("media asset was not declared by a v2 manifest")
-        if (
-            len(body) != record.size_bytes
-            or hashlib.sha256(body).hexdigest() != record.content_hash
-        ):
-            raise SyncV2Error("media binary checksum/size mismatch")
-        try:
-            mime, normalized_ext = validate_synced_image(
-                body,
-                declared_mime=record.mime,
-                declared_ext=record.ext,
-                max_bytes=max_bytes,
-            )
-        except ValueError as exc:
-            raise SyncV2Error(str(exc)) from exc
-        # Compare the producer's original declaration after I/O, not our normalized
-        # representation. Include authority/revision so an in-flight handoff cannot
-        # make an older binary visible under a newer manifest.
+        _check_binary_declaration(record, declaration, authority_id)
         expected = {field: getattr(record, field) for field in (
             "url_hash", "url", "status", "content_hash", "size_bytes", "ext", "mime",
             "sync_authority_id", "sync_authority_revision", "updated_at",
         )}
-        ext = normalized_ext
-        if ext and _SAFE_MEDIA_EXT.fullmatch(ext) is None:
-            raise SyncV2Error("media extension is unsafe")
-        root = media_root.resolve()
-        target = (
-            root / record.content_hash[:2] / f"{record.content_hash}{ext}"
-        ).resolve()
-        if not target.is_relative_to(root):
-            raise SyncV2Error("media target escapes configured root")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if not target.exists():
-            temporary = target.with_suffix(target.suffix + ".part")
-            temporary.write_bytes(body)
-            temporary.replace(target)
-        session.rollback()
+    size, digest = expected["size_bytes"], expected["content_hash"]
+    if size <= 0 or size > max_bytes:
+        raise SyncV2Error("media binary declared size exceeds limit")
+    target = _binary_target(media_root, digest, str(expected["ext"]).lower())
+    lease = object_storage.pin(digest) if object_storage else nullcontext()
+    with lease:
+        if body is None:
+            header = _verified_local_header(target, size, digest)
+            if header is None:
+                _commit_binary_state(engine, MediaAssetRecord, expected,
+                                     {"status": "pending_sync", "fetched_at": None})
+                return None
+        else:
+            if len(body) != size or hashlib.sha256(body).hexdigest() != digest:
+                raise SyncV2Error("media binary checksum/size mismatch")
+            header = body[:512]
+        try:
+            mime, ext = validate_synced_image(header, declared_mime=expected["mime"],
+                declared_ext=expected["ext"], max_bytes=max_bytes)
+        except ValueError as exc:
+            if body is None:
+                _commit_binary_state(engine, MediaAssetRecord, expected,
+                                     {"status": "pending_sync", "fetched_at": None})
+                return None
+            raise SyncV2Error(str(exc)) from exc
+        if body is not None:
+            _atomic_install(target, body)
         if object_storage:
-            object_storage.persist(target, expected["content_hash"], normalized_ext, expected["size_bytes"], mime)
-        # One conditional write combines the final identity check with publication;
-        # there is no gap between checking a row and committing different metadata.
-        result = session.exec(update(MediaAssetRecord).where(
-            *(getattr(MediaAssetRecord, field) == value for field, value in expected.items())
-        ).values(status="cached", mime=mime, ext=normalized_ext,
-                 fetched_at=_now_iso()).execution_options(synchronize_session=False))
-        if result.rowcount != 1:
-            raise SyncV2Error("media manifest changed during object upload")
-        # Keep the producer revision in updated_at. Using the consumer clock here
-        # would make a later producer update look older under clock skew.
-        session.commit()
-        record = session.get(MediaAssetRecord, url_hash)
-        session.refresh(record)
-        return record
+            object_storage.persist(target, digest, ext, size, mime)
+        return _commit_binary_state(engine, MediaAssetRecord, expected, {
+            "status": "cached", "mime": mime, "ext": ext, "fetched_at": _now_iso(),
+        })
+
+
+def reuse_media_file(engine, media_root, url_hash, **kwargs) -> bool:
+    """Verify the declared CAS file and finish metadata without a binary GET."""
+    return _install_media_file(engine, media_root, url_hash, None, **kwargs) is not None
+
+
+def install_media_bytes(
+    engine: Engine, media_root: Path, url_hash: str, body: bytes, *,
+    max_bytes: int = 20 * 1024 * 1024, object_storage=None,
+    declaration=None, authority_id="",
+) -> MediaAssetRecord:
+    """Verify downloaded bytes and atomically replace even a corrupt CAS file."""
+    return _install_media_file(engine, media_root, url_hash, body,
+        max_bytes=max_bytes, object_storage=object_storage,
+        declaration=declaration, authority_id=authority_id)
 
 
 def is_public_podcast_audio_reference(session: Session, artifact_id: str) -> bool:
@@ -3052,56 +3127,66 @@ def is_public_podcast_audio_reference(session: Session, artifact_id: str) -> boo
     )
 
 
-def install_podcast_audio_bytes(
-    engine: Engine,
-    store: Any,
-    artifact_id: str,
-    body: bytes,
-) -> PodcastArtifactRecord:
-    """Verify one declared digest-audio blob, install it in CAS, then publish it."""
-
+def _install_podcast_audio_file(
+    engine, store, artifact_id, body, *, declaration=None, authority_id="",
+):
     with Session(engine) as session:
         record = session.get(PodcastArtifactRecord, artifact_id)
-        if (
-            record is None
-            or record.kind != "digest_audio_zh"
-            or record.status not in {"ready", "published"}
-            or not record.authority_id
-        ):
+        if (record is None or record.kind != "digest_audio_zh"
+                or record.status not in {"ready", "published"} or not record.authority_id):
             raise SyncV2Error("podcast audio was not declared by a v2 manifest")
-        if (
-            len(body) != record.size_bytes
-            or hashlib.sha256(body).hexdigest() != record.content_hash
-        ):
-            raise SyncV2Error("podcast audio binary checksum/size mismatch")
+        _check_binary_declaration(record, declaration, authority_id, audio=True)
+        expected = {field: getattr(record, field) for field in (
+            "id", *_PODCAST_AUDIO_IMMUTABLE_FIELDS, "status", "authority_id",
+            "updated_at", "withdrawn_at",
+        )}
+    size, digest = expected["size_bytes"], expected["content_hash"]
+    if size <= 0 or size > store.max_bytes:
+        raise SyncV2Error("podcast audio declared size exceeds limit")
+    try:
+        target = store.file_path_for_hash(digest, expected["mime"])
+    except ValueError as exc:
+        raise SyncV2Error(str(exc)) from exc
+    if target.suffix != expected["ext"]:
+        raise SyncV2Error("podcast audio CAS extension mismatch")
+    target = _binary_target(store.root, digest, expected["ext"])
+    storage = getattr(store, "object_storage", None)
+    with storage.pin(digest) if storage else nullcontext():
+        if body is None:
+            header = _verified_local_header(target, size, digest)
+            if header is None:
+                _commit_binary_state(engine, PodcastArtifactRecord, expected, {"status": "ready"})
+                return None
+        else:
+            if len(body) != size or hashlib.sha256(body).hexdigest() != digest:
+                raise SyncV2Error("podcast audio binary checksum/size mismatch")
+            header = body[:512]
         try:
-            canonical_mime = store.validate_audio(body, record.mime)
-            target = store.file_path_for_hash(record.content_hash, canonical_mime)
+            mime = store.validate_audio(header, expected["mime"])
         except ValueError as exc:
+            if body is None:
+                _commit_binary_state(engine, PodcastArtifactRecord, expected, {"status": "ready"})
+                return None
             raise SyncV2Error(str(exc)) from exc
-        if target.suffix != record.ext:
-            raise SyncV2Error("podcast audio CAS extension mismatch")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if not target.is_file() or target.read_bytes() != body:
-            temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.part")
-            try:
-                temporary.write_bytes(body)
-                os.replace(temporary, target)
-            finally:
-                temporary.unlink(missing_ok=True)
-        if getattr(store, "object_storage", None):
-            expected = (record.content_hash, record.ext, record.size_bytes, record.updated_at)
-            session.rollback()
-            store.object_storage.persist(target, expected[0], expected[1], expected[2], canonical_mime)
-            record = session.get(PodcastArtifactRecord, artifact_id)
-            if record is None or (record.content_hash, record.ext, record.size_bytes, record.updated_at) != expected:
-                raise SyncV2Error("podcast audio manifest changed during object upload")
-        record.status = "published"
-        record.withdrawn_at = None
-        session.add(record)
-        session.commit()
-        session.refresh(record)
-        return record
+        if body is not None:
+            _atomic_install(target, body)
+        if storage:
+            storage.persist(target, digest, expected["ext"], size, mime)
+        return _commit_binary_state(engine, PodcastArtifactRecord, expected,
+                                    {"status": "published", "withdrawn_at": None})
+
+
+def reuse_podcast_audio_file(engine, store, artifact_id, **kwargs) -> bool:
+    """Verify existing digest audio and publish only after the shared checks."""
+    return _install_podcast_audio_file(engine, store, artifact_id, None, **kwargs) is not None
+
+
+def install_podcast_audio_bytes(
+    engine: Engine, store: Any, artifact_id: str, body: bytes, *,
+    declaration=None, authority_id="",
+) -> PodcastArtifactRecord:
+    return _install_podcast_audio_file(engine, store, artifact_id, body,
+                                      declaration=declaration, authority_id=authority_id)
 
 
 def import_candidate_evidence_page(engine: Engine, raw_text: str) -> dict[str, Any]:

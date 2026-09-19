@@ -215,6 +215,29 @@ the matching article, analysis, or media generation. A stream checkpoint advance
 only after its terminal page has committed; the media checkpoint additionally
 waits for every declared binary to pass byte-size and SHA-256 verification.
 
+Before requesting an image or generated Podcast audio binary, the receiver checks
+the manifest's content-addressed local file: regular file, exact size, full
+SHA-256, and matching MIME/signature and extension. A matching file is reused
+without a binary GET, including historical local caches and completed downloads
+from an interrupted stream. Reuse still completes the authority-owned metadata
+and publication transition. Missing or corrupt files are downloaded, verified,
+and atomically replaced; an existing pathname alone never establishes availability.
+Configured object-storage persistence and cache leases also apply to reuse.
+The final metadata write compares the original authority, identity and state so
+concurrent manifest changes or audio withdrawal cannot be overwritten.
+
+`GET /api/jobs/{job_id}` adds nullable `progress` independently of terminal
+`result`. V2 progress includes `stream`, cumulative `processed`, the current
+`stream_processed`, `reused`, `downloaded`, `reused_bytes` and `downloaded_bytes`.
+File counters advance after verification, durable installation and metadata
+publication. Tombstones count as processed records, not files. Stage transitions
+and the first completed record are persisted immediately; subsequent updates are
+throttled and terminal states flush the latest snapshot, including on failure.
+Counters are per attempt; stream file/byte counters reset at stage transitions.
+Stream results retain `media_reused`/`podcast_audio_reused`, the corresponding
+`*_downloaded` counts and `reused_bytes`/`downloaded_bytes` for the final summary.
+Progress is observational and never advances a replication checkpoint.
+
 Endpoints:
 
 ```http

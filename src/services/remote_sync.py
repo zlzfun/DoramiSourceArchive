@@ -868,6 +868,7 @@ async def run_pull_v2(
     page_size: int = DEFAULT_PAGE_SIZE,
     checkpoints: Optional[Dict[str, Dict[str, str]]] = None,
     on_advance: Optional[Callable[[int], None]] = None,
+    on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
     on_stream_complete: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     transport: Optional[httpx.AsyncBaseTransport] = None,
     push_candidate_evidence: bool = True,
@@ -911,6 +912,7 @@ async def run_pull_v2(
     # Sources is the first transaction-revision stream and pins one committed
     # generation for every dependent stream. Taxonomy keeps its own governed
     # version counter and is the only exception.
+    processed = 0
     generation_snapshot = ""
     negotiated_stream_order: Optional[tuple[str, ...]] = None
     async with _make_client(transport) as client:
@@ -936,7 +938,37 @@ async def run_pull_v2(
                 "pruned": 0,
                 "media_downloaded": 0,
                 "podcast_audio_downloaded": 0,
+                "media_reused": 0,
+                "podcast_audio_reused": 0,
+                "reused_bytes": 0,
+                "downloaded_bytes": 0,
             }
+            stream_processed = 0
+
+            def report_progress():
+                if on_progress is not None:
+                    on_progress({
+                        "stream": stream, "processed": processed,
+                        "stream_processed": stream_processed,
+                        "reused": stats["media_reused"] + stats["podcast_audio_reused"],
+                        "downloaded": stats["media_downloaded"] + stats["podcast_audio_downloaded"],
+                        "reused_bytes": stats["reused_bytes"],
+                        "downloaded_bytes": stats["downloaded_bytes"],
+                    })
+
+            def advance(count, *, reused=None, size=0):
+                nonlocal processed, stream_processed
+                processed += count
+                stream_processed += count
+                if reused is not None:
+                    outcome = "reused" if reused else "downloaded"
+                    stats[f"{stream}_{outcome}"] += 1
+                    stats[f"{outcome}_bytes"] += size
+                if on_advance is not None:
+                    on_advance(count)
+                report_progress()
+
+            report_progress()
             for _ in range(MAX_PAGES):
                 request_limit = (
                     min(page_size, podcast_text_page_max_rows)
@@ -1026,60 +1058,44 @@ async def run_pull_v2(
                 stats["updated"] += int(applied["updated"])
                 stats["deleted"] += int(applied.get("deleted") or 0)
 
-                if stream == "media" and rows:
-                    if media_root is None:
-                        raise RemoteSyncError(
-                            "本地媒体库未配置，不能完成 v2 media stream"
-                        )
+                if stream in {"media", "podcast_audio"} and rows:
+                    if stream == "media" and media_root is None:
+                        raise RemoteSyncError("本地媒体库未配置，不能完成 v2 media stream")
+                    if stream == "podcast_audio" and podcast_artifact_store is None:
+                        raise RemoteSyncError("本地 Podcast artifact store 未配置，不能完成音频同步")
                     for item in rows:
-                        key = str(item["payload"]["url_hash"])
-                        expected_size = int(item["payload"].get("size_bytes") or 0)
-                        body = await _fetch_v2_media_bytes(
-                            client,
-                            base,
-                            cookie_header,
-                            key,
-                            expected_size=expected_size,
-                            max_bytes=media_max_bytes,
-                        )
-                        await asyncio.to_thread(
-                            archive_sync_v2.install_media_bytes,
-                            engine,
-                            media_root,
-                            key,
-                            body,
-                            max_bytes=media_max_bytes,
-                            object_storage=media_object_storage,
-                        )
-                        stats["media_downloaded"] += 1
-                if stream == "podcast_audio" and rows:
-                    if podcast_artifact_store is None:
-                        raise RemoteSyncError(
-                            "本地 Podcast artifact store 未配置，不能完成音频同步"
-                        )
-                    for item in rows:
-                        if item.get("operation") != "upsert":
+                        if item.get("operation") == "tombstone":
+                            advance(1)
                             continue
-                        artifact_id = str(item["payload"]["id"])
-                        expected_size = int(item["payload"].get("size_bytes") or 0)
-                        body = await _fetch_v2_podcast_audio_bytes(
-                            client,
-                            base,
-                            cookie_header,
-                            artifact_id,
-                            expected_size=expected_size,
-                            max_bytes=int(podcast_artifact_store.max_bytes),
-                        )
-                        await asyncio.to_thread(
-                            archive_sync_v2.install_podcast_audio_bytes,
-                            engine,
-                            podcast_artifact_store,
-                            artifact_id,
-                            body,
-                        )
-                        stats["podcast_audio_downloaded"] += 1
-                if on_advance is not None:
-                    on_advance(int(applied["count"]))
+                        payload = item["payload"]
+                        expected_size = int(payload.get("size_bytes") or 0)
+                        options = {"declaration": payload, "authority_id": authority}
+                        if stream == "media":
+                            key = str(payload["url_hash"])
+                            args = (engine, media_root, key)
+                            options.update(max_bytes=media_max_bytes,
+                                           object_storage=media_object_storage)
+                            reuse = archive_sync_v2.reuse_media_file
+                            install = archive_sync_v2.install_media_bytes
+                            fetch = _fetch_v2_media_bytes
+                            max_bytes = media_max_bytes
+                        else:
+                            key = str(payload["id"])
+                            args = (engine, podcast_artifact_store, key)
+                            reuse = archive_sync_v2.reuse_podcast_audio_file
+                            install = archive_sync_v2.install_podcast_audio_bytes
+                            fetch = _fetch_v2_podcast_audio_bytes
+                            max_bytes = int(podcast_artifact_store.max_bytes)
+                        reused = await asyncio.to_thread(reuse, *args, **options)
+                        if not reused:
+                            body = await fetch(client, base, cookie_header, key,
+                                expected_size=expected_size, max_bytes=max_bytes)
+                            await asyncio.to_thread(install, *args, body, **options)
+                        # Count only after verification, durable installation and
+                        # metadata publication; never also count the page below.
+                        advance(1, reused=reused, size=expected_size)
+                else:
+                    advance(int(applied["count"]))
                 after = str(manifest.get("next_cursor") or after)
                 if bool(manifest.get("complete")):
                     if not since and stream in {

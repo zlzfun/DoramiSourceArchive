@@ -2397,6 +2397,7 @@ class JobRecord(SQLModel, table=True):
     total: Optional[int] = Field(default=None, description="总步数，未知则空")
     processed: int = Field(default=0, description="已处理步数")
     payload_json: str = Field(default="{}", description="提交时的入参快照 JSON")
+    progress_json: Optional[str] = Field(default=None, description="运行中的进度快照 JSON")
     result_json: Optional[str] = Field(default=None, description="成功结果 JSON")
     error: Optional[str] = Field(default=None, description="失败原因摘要")
     created_by: Optional[str] = Field(default=None, index=True, description="触发账户；系统任务为空")
