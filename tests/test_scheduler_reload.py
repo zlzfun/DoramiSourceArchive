@@ -140,22 +140,78 @@ def test_reload_removes_deactivated_deleted_and_stale_entries(sandbox):
         assert scheduler.get_job(other) is not None
 
 
-def test_broken_cron_drops_previous_registration(sandbox):
+@pytest.mark.parametrize("broken", ["every-morning", "61 8 * * *", "0 25 * * *", "0 8 * nope *"])
+def test_broken_cron_drops_previous_registration_without_raising(sandbox, broken):
+    """非 5 段与五段字段越界一视同仁:不抛、不注册、摘除旧注册(历史脏行的容错路径)。"""
     sink, scheduler = sandbox
     with Session(sink.engine) as session:
         job_id = _make_job(session, "0 8 * * *")
+        good_id = _make_job(session, "0 7 * * *", name="好的")
     app_module.load_tasks_to_scheduler()
     assert scheduler.get_job(f"collection_job_{job_id}") is not None
 
     with Session(sink.engine) as session:
         record = session.get(CollectionJobRecord, job_id)
-        record.cron_expr = "every-morning"  # 非 5 段:add_cron_job 返回 False
+        record.cron_expr = broken
         session.add(record)
         session.commit()
-    assert app_module.add_cron_job("probe", lambda: None, "every-morning", []) is False
-    app_module.load_tasks_to_scheduler()
+    assert app_module.add_cron_job("probe", lambda: None, broken, []) is False
+    app_module.load_tasks_to_scheduler()  # 不抛
     assert scheduler.get_job(f"collection_job_{job_id}") is None
     assert scheduler.get_job("probe") is None
+    assert scheduler.get_job(f"collection_job_{good_id}") is not None
+    for other in OTHER_JOB_IDS:
+        assert scheduler.get_job(other) is not None
+
+
+def _snapshot(scheduler, job_id):
+    job = scheduler.get_job(job_id)
+    assert job is not None, job_id
+    return (str(job.trigger), tuple(job.args or ()), job.next_run_time)
+
+
+def test_unrelated_reload_does_not_reschedule_untouched_jobs(sandbox):
+    """replace_existing 会把 next_run_time 重置为现在起算;未变化的任务必须原样保留(检视 F2)。"""
+    sink, scheduler = sandbox
+    with Session(sink.engine) as session:
+        keep_id = _make_job(session, "0 8 * * *", name="未改动")
+    app_module.load_tasks_to_scheduler()
+    watched = ("article_analysis", "taxonomy_retag", app_module.PODCAST_LANDING_JOB_ID,
+               "personal_digest_pending", "personal_digest_schedule", f"collection_job_{keep_id}", *OTHER_JOB_IDS)
+    before = {job_id: _snapshot(scheduler, job_id) for job_id in watched}
+
+    with Session(sink.engine) as session:
+        new_id = _make_job(session, "0 9 * * *", name="新任务")
+    app_module.load_tasks_to_scheduler()
+    assert scheduler.get_job(f"collection_job_{new_id}") is not None
+    assert {job_id: _snapshot(scheduler, job_id) for job_id in watched} == before
+
+    with Session(sink.engine) as session:
+        session.delete(session.get(CollectionJobRecord, new_id))
+        session.commit()
+    app_module.load_tasks_to_scheduler()
+    assert scheduler.get_job(f"collection_job_{new_id}") is None
+    assert {job_id: _snapshot(scheduler, job_id) for job_id in watched} == before
+
+
+def test_load_before_start_then_start_registers_each_job_once(monkeypatch, tmp_path):
+    """lifespan 首启路径:未 start 时装载(pending)再 start,每个任务恰一份。"""
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'boot.db'}")
+    scheduler = BackgroundScheduler(timezone="Asia/Shanghai")
+    monkeypatch.setattr(app_module, "db_sink", sink)
+    monkeypatch.setattr(app_module, "scheduler", scheduler)
+    with Session(sink.engine) as session:
+        job_id = _make_job(session, "0 8 * * *")
+    app_module.load_tasks_to_scheduler()
+    app_module.load_tasks_to_scheduler()  # 启动前重复装载也不该堆出重复的 pending 项
+    scheduler.start(paused=True)
+    try:
+        ids = _ids(scheduler)
+        for expected in (f"collection_job_{job_id}", "article_analysis", "taxonomy_retag",
+                         app_module.PODCAST_LANDING_JOB_ID, "personal_digest_schedule", "personal_digest_pending"):
+            assert ids.count(expected) == 1, (expected, ids)
+    finally:
+        scheduler.shutdown(wait=False)
 
 
 def test_daily_brief_job_follows_enable_flag(sandbox):
