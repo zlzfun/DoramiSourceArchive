@@ -6,7 +6,7 @@
 # (tag 在 main 线上;**目标 tag 里的** src/version.py 版本号 = tag 名;轻量 tag 只告警),三条入口共用同一份核验。
 #
 # 部署(issue #102):GITHUB_TOKEN 建的 Release 不会触发 `on: release`,故部署作为同一次 run 里 `needs: release` 的
-# 后续 job 串联,核对与部署可追溯。Environment secrets 由被调用 job 自己的 `environment` 声明获得,这里不传 secrets。
+# 后续 job 串联,核对与部署可追溯。Environment secrets 要靠 `secrets: inherit` 透传给被调用 job(它自己声明 environment 只拿得到 vars、拿不到 secrets,v3.60.1 实证)。
 # 手动补建 Release(workflow_dispatch)默认不顺带部署,勾 deploy 才部署。
 name: Release
 
@@ -71,3 +71,7 @@ jobs:
     with:
       tag: ${{ needs.release.outputs.tag }}
       target_sha: ${{ needs.release.outputs.target_sha }}
+    # Environment secrets 不会自动进被调用工作流:被调用 job 声明了 environment 后 vars 能拿到,secrets 上下文却是空的
+    # (v3.60.1 首次 tag 推送串联部署实证:PROD_KNOWN_HOSTS 有值、PROD_SSH_KEY 为空,Prepare SSH 步失败)。
+    # secrets: inherit 把调用方可见的 secrets(含该 environment 的)透传过去;真正的门仍是 Environment 的 required reviewers。
+    secrets: inherit
