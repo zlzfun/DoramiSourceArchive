@@ -273,6 +273,14 @@ export function requestPodcastOndemand(episodeId, options = {}) {
   });
 }
 
+export function requestArticleOndemand(articleId, options = {}) {
+  return request(`/reader/ai/articles/${enc(articleId)}/ondemand`, {
+    method: 'POST',
+    errorMsg: '点播失败，请稍后重试',
+    ...options,
+  });
+}
+
 export function forcePodcastFullAnalysis(episodeId, idempotencyKey = '', podcast = {}) {
   const command = podcastFullAnalysisCommand(episodeId, podcast, idempotencyKey);
   return request(command.path, {

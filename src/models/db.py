@@ -2411,7 +2411,7 @@ class AiUsageRecord(SQLModel, table=True):
 
     username 为登录账户名；系统级任务（定时日报等）记为 "system"。
     purpose ∈ translate / ask / summarize / podcast_ondemand /
-    daily_brief_editorial / daily_brief_dedup /
+    article_ondemand / daily_brief_editorial / daily_brief_dedup /
     daily_brief_reduce / article_analysis / source_config / detail_profile。
     """
     __tablename__ = "ai_usage"

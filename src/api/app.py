@@ -139,6 +139,11 @@ from services.storage_runtime import maintain_storage
 from services.podcast_artifacts import PodcastArtifactStore
 from services.podcast_asr_worker import AsrWorkerConfig, AsrWorkerStep
 from services import podcast_premium_guides as podcast_premium_guide_service
+from services import article_listen_guides as article_listen_guide_service
+from services.article_listen_guides import (
+    ArticleListenStore,
+    OpenAiCompatibleArticleListenTextProvider,
+)
 from services import podcast_premium as podcast_premium_service
 from services import podcast_publisher_transcripts as podcast_publisher_transcript_service
 from services import podcast_source_media as podcast_source_media_service
@@ -640,6 +645,14 @@ podcast_artifact_store = PodcastArtifactStore(
     orphan_grace_seconds=settings.podcast_artifacts.orphan_grace_seconds,
     object_storage=ObjectStorage(db_sink.engine, Path(settings.podcast_artifacts.root_dir), "podcast", settings.oss),
 )
+# 文章点播旁白：挂在 podcast-artifacts/article-listen 下的本地 CAS，不扩 OSS namespace。
+article_listen_store = ArticleListenStore(
+    Path(settings.podcast_artifacts.root_dir) / "article-listen",
+    max_bytes=min(
+        article_listen_guide_service.MAX_AUDIO_BYTES,
+        settings.podcast_artifacts.max_audio_mb * 1024 * 1024,
+    ),
+)
 
 storage_backup_service = BackupService(
     settings.backup, settings.storage.database_url, settings.bailian_speech.tts_receipt_root,
@@ -689,6 +702,7 @@ podcast_full_analysis_service.register_full_analysis_worker(
 _MEDIA_PREFETCH_TASKS: set = set()
 _PERSONAL_DIGEST_TRIGGER_TASKS: set = set()
 _PODCAST_PREMIUM_GUIDE_TASKS: dict[str, asyncio.Task] = {}
+_ARTICLE_LISTEN_GUIDE_TASKS: dict[str, asyncio.Task] = {}
 
 
 def schedule_podcast_premium_guide(episode_id: str) -> bool:
@@ -859,6 +873,90 @@ def schedule_forced_podcast_premium_guide(
     _PODCAST_PREMIUM_GUIDE_TASKS[episode_id] = task
     task.add_done_callback(
         lambda _task: _PODCAST_PREMIUM_GUIDE_TASKS.pop(episode_id, None)
+    )
+    return {**prepared, "started": True}
+
+
+def schedule_article_listen_guide(article_id: str, *, actor: str) -> dict[str, Any]:
+    """落库排队并异步跑文章点播旁白（LLM → TTS）；产物全站共享。"""
+
+    existing = _ARTICLE_LISTEN_GUIDE_TASKS.get(article_id)
+    if existing is not None and not existing.done():
+        return {
+            "outcome": "in_progress",
+            "status": "queued",
+            "should_schedule": False,
+            "started": False,
+        }
+
+    prepared = article_listen_guide_service.prepare_ondemand(
+        db_sink.engine,
+        article_id=article_id,
+        actor=actor,
+    )
+    if not prepared.get("should_schedule"):
+        return {**prepared, "started": False}
+
+    try:
+        with Session(db_sink.engine) as session:
+            llm_config = daily_brief_service.resolve_llm_config(session)
+            aliyun_config = podcast_speech_config_service.resolve_config(session)
+        voice = settings.podcast.default_voice_profile
+        if not llm_config.configured or not aliyun_config.tts_configured or not voice:
+            raise article_listen_guide_service.ArticleListenError(
+                "article_ondemand_provider_unavailable",
+                "点播所需的 LLM、TTS 或音色配置尚未就绪",
+                status_code=503,
+            )
+    except Exception as exc:
+        article_listen_guide_service.fail_listen_guide(
+            db_sink.engine,
+            article_id,
+            exc,
+            failed_stage="queued",
+        )
+        raise
+
+    existing = _ARTICLE_LISTEN_GUIDE_TASKS.get(article_id)
+    if existing is not None and not existing.done():
+        return {
+            "outcome": "in_progress",
+            "status": "queued",
+            "should_schedule": False,
+            "started": False,
+        }
+
+    async def _run() -> None:
+        try:
+            await article_listen_guide_service.run_listen_guide(
+                db_sink.engine,
+                article_listen_store,
+                article_id=article_id,
+                text_provider=OpenAiCompatibleArticleListenTextProvider(llm_config),
+                tts_provider=make_premium_tts_provider(
+                    aliyun_config,
+                    engine=db_sink.engine,
+                    episode_id=article_id,
+                    voice_profile=voice,
+                    max_audio_bytes=article_listen_store.max_bytes,
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - service persists failure
+            article_listen_guide_service.fail_listen_guide(
+                db_sink.engine,
+                article_id,
+                exc,
+            )
+            _dorami_logger.warning(
+                "文章点播旁白生成失败 article=%s (%s)",
+                article_id,
+                type(exc).__name__,
+            )
+
+    task = asyncio.create_task(_run())
+    _ARTICLE_LISTEN_GUIDE_TASKS[article_id] = task
+    task.add_done_callback(
+        lambda _task: _ARTICLE_LISTEN_GUIDE_TASKS.pop(article_id, None)
     )
     return {**prepared, "started": True}
 

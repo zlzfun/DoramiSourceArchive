@@ -389,6 +389,11 @@ def serialize_article_list_item(
             premium_score_threshold=premium_score_threshold,
             digest_audio=digest_audio,
         )
+    else:
+        # 文章点播精简旁白（issue #124）：轻量投影，不透出 content_hash。
+        from services.article_listen_guides import projection_from_extensions
+
+        item["listen_guide"] = projection_from_extensions(record.id, ext)
     if include_content or include_extensions:
         item["extensions_json"] = record.extensions_json or "{}"
     return item
