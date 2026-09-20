@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Headphones, Loader2 } from 'lucide-react';
 import {
   podcastAnalysisBasis,
   podcastAssessmentMeta,
@@ -29,7 +30,7 @@ const LISTEN_POLL_MS = 4000;
  * 层(一句理由 + 免责小字)。点数字在两层间慢速淡切,卡高由较高者撑住不跳;
  * 再点/Esc/换篇回摘要。无分数时右栏承接骨架与生成入口。桌面与移动壳共用。
  *
- * 文章点播(issue #124):非播客时，可点播/生成中/失败重试作为卡内轻量文字动作；
+ * 文章点播(issue #124):非播客时，可点播/生成中/失败重试用卡内小胶囊（耳机图标 + 文案）；
  * 音频就绪后的播放条由 ArticleListenBar 承接，不挤进本卡。
  */
 export default function AiReadingCard({
@@ -163,8 +164,9 @@ export default function AiReadingCard({
         {showListenAction && (
           <div className="reader-ai-listen-action">
             {listenActive || listenBusy ? (
-              <span className="reader-ai-listen-status" role="status">
-                {listenBusy ? '提交中…' : '导读音频生成中…'}
+              <span className="reader-ai-listen-pill is-busy" role="status" aria-live="polite">
+                <Loader2 className="reader-ai-listen-icon animate-spin" aria-hidden="true" />
+                {listenBusy ? '提交中…' : '生成中…'}
               </span>
             ) : listenFailed ? (
               <>
@@ -173,20 +175,22 @@ export default function AiReadingCard({
                 </span>
                 <button
                   type="button"
-                  className="reader-ai-summary-generate"
+                  className="reader-ai-listen-pill"
                   onClick={handleListenOndemand}
                   disabled={listenBusy}
                 >
+                  <Headphones className="reader-ai-listen-icon" aria-hidden="true" />
                   重新点播
                 </button>
               </>
             ) : (
               <button
                 type="button"
-                className="reader-ai-summary-generate"
+                className="reader-ai-listen-pill"
                 onClick={handleListenOndemand}
               >
-                点播听导读
+                <Headphones className="reader-ai-listen-icon" aria-hidden="true" />
+                听导读
               </button>
             )}
           </div>

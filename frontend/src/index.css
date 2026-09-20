@@ -8119,13 +8119,44 @@ input[type="radio"] {
   .reader-ai-summary-generate:hover:not(:disabled) { color: var(--dorami-blue); }
   .reader-ai-summary-generate:disabled { cursor: default; opacity: 0.7; }
 
-  /* 文章点播：可点播/生成中收在速读卡内；就绪播放条对齐播客 audio-track。 */
+  /* 文章点播：可点播/生成中收在速读卡内（小胶囊，像控件不像纯文字）；
+     就绪播放条对齐播客 audio-track。 */
   .reader-ai-listen-action {
     display: flex;
     flex-wrap: wrap;
-    align-items: baseline;
-    gap: 8px 12px;
+    align-items: center;
+    gap: 8px 10px;
     margin-top: 10px;
+  }
+  .reader-ai-listen-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 28px;
+    padding: 0 11px 0 9px;
+    border-radius: var(--r-pill);
+    border: 1px solid var(--dorami-border);
+    background: var(--dorami-well);
+    color: var(--dorami-ink-2);
+    font-size: 12px;
+    font-weight: 650;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .reader-ai-listen-pill:hover:not(:disabled):not(.is-busy) {
+    border-color: var(--dorami-border-strong);
+    color: var(--dorami-ink);
+    background: var(--dorami-surface);
+  }
+  .reader-ai-listen-pill:disabled,
+  .reader-ai-listen-pill.is-busy {
+    cursor: default;
+    opacity: 0.85;
+  }
+  .reader-ai-listen-icon {
+    width: 14px;
+    height: 14px;
+    flex: none;
   }
   .reader-ai-listen-status {
     color: var(--dorami-muted);
