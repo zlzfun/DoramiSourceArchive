@@ -52,8 +52,9 @@ AI_BETA_NEW_USER_DEFAULT_KEY = "ai_beta_new_user_default"
 # 与逐用户日调用限额(routers/reader._AI_DAILY_CALL_LIMITS)互补——那是防单账户
 # 刷爆,这是护全站总成本(多账户/IM bot 代答渠道的放大器);范式同 x_api 月预算。
 AI_DAILY_TOKEN_BUDGET_KEY = "ai_beta_daily_token_budget"
-# 计入日预算的用途:读者面三件套。日报等系统任务是 admin 排程的,不受此闸。
-READER_AI_BUDGET_PURPOSES = ("translate", "ask", "summarize")
+# 计入日预算的用途:读者面 AI。日报等系统任务是 admin 排程的,不受此闸。
+# podcast_ondemand 发起记账通常为 0 token，但仍纳入预算用途集合，避免漏登记。
+READER_AI_BUDGET_PURPOSES = ("translate", "ask", "summarize", "podcast_ondemand")
 
 # PBKDF2 参数
 _PBKDF2_ALGO = "pbkdf2_sha256"

@@ -9021,6 +9021,28 @@ input[type="radio"] {
     font-variant-numeric: tabular-nums;
   }
 
+  .podcast-ondemand {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--dorami-border);
+  }
+  .podcast-ondemand-btn {
+    width: 100%;
+    min-height: 36px;
+    justify-content: center;
+  }
+  .podcast-ondemand-hint {
+    margin: 0;
+    color: var(--dorami-muted);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.5;
+  }
+
   .podcast-show-notes-head {
     display: flex;
     align-items: baseline;

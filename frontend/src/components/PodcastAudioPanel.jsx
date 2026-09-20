@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Podcast } from 'lucide-react';
-import { mediaProxyUrl } from '../api';
+import { mediaProxyUrl, requestPodcastOndemand } from '../api';
 import { formatPodcastDuration, podcastOf } from '../utils/podcast';
 import { podcastFullProcessingMeta } from '../utils/analysis';
 import {
@@ -10,6 +10,7 @@ import {
 } from '../utils/podcastPlayback';
 
 const PROGRESS_SAVE_INTERVAL_MS = 3000;
+const GUIDE_ACTIVE_STATUSES = new Set(['queued', 'summarizing', 'synthesizing']);
 
 export function PodcastCover({ src, className = '' }) {
   const [failedSrc, setFailedSrc] = useState('');
@@ -32,7 +33,14 @@ export function PodcastCover({ src, className = '' }) {
   );
 }
 
-export default function PodcastAudioPanel({ article, variant, onVariantChange }) {
+export default function PodcastAudioPanel({
+  article,
+  variant,
+  onVariantChange,
+  aiEnabled = false,
+  showToast,
+  onArticleRefresh,
+}) {
   const podcast = podcastOf(article);
   if (!podcast) return null;
 
@@ -45,14 +53,27 @@ export default function PodcastAudioPanel({ article, variant, onVariantChange })
       podcast={podcast}
       variant={variant}
       onVariantChange={onVariantChange}
+      aiEnabled={aiEnabled}
+      showToast={showToast}
+      onArticleRefresh={onArticleRefresh}
     />
   );
 }
 
-function PodcastAudioPlayer({ article, podcast, variant: controlledVariant, onVariantChange }) {
+function PodcastAudioPlayer({
+  article,
+  podcast,
+  variant: controlledVariant,
+  onVariantChange,
+  aiEnabled,
+  showToast,
+  onArticleRefresh,
+}) {
   const fullProcessing = podcastFullProcessingMeta(article);
   const hasDigest = Boolean(podcast.condensed_audio_url);
   const hasDigestBlog = Boolean(podcast.premium_guide?.blog_ready || podcast.premium_guide?.status === 'ready');
+  const guideStatus = String(podcast.premium_guide?.status || '').trim().toLowerCase();
+  const guideActive = !hasDigest && GUIDE_ACTIVE_STATUSES.has(guideStatus);
   const isFailure = fullProcessing?.tone === 'bad'
     || fullProcessing?.label === '全文处理失败'
     || fullProcessing?.label === '全文处理等待重试'
@@ -62,13 +83,16 @@ function PodcastAudioPlayer({ article, podcast, variant: controlledVariant, onVa
   const visibleProcessing = isFailure ? null : fullProcessing;
   const status = (hasDigest || hasDigestBlog)
     ? { label: '精品导读已就绪', tone: 'ok' }
-    : (visibleProcessing || { label: '仅提供原节目', tone: 'idle' });
+    : guideActive
+      ? { label: '精品导读生成中…', tone: 'run' }
+      : (visibleProcessing || { label: '仅提供原节目', tone: 'idle' });
   const originalDuration = formatPodcastDuration(podcast.duration_seconds);
   const condensedDuration = formatPodcastDuration(podcast.condensed_duration_seconds);
   const [localVariant, setLocalVariant] = useState(() => (
     podcast.audio_url ? 'original' : 'digest'
   ));
   const [audioError, setAudioError] = useState('');
+  const [ondemandBusy, setOndemandBusy] = useState(false);
   const audioRef = useRef(null);
   const lastSavedAtRef = useRef(0);
   const preferredVariant = controlledVariant ?? localVariant;
@@ -76,6 +100,9 @@ function PodcastAudioPlayer({ article, podcast, variant: controlledVariant, onVa
     ? 'digest'
     : podcast.audio_url ? 'original' : hasDigest ? 'digest' : 'original';
   const playbackIdentityRef = useRef({ articleId: article?.id, variant: activeVariant });
+  const canRequestOndemand = Boolean(
+    aiEnabled && article?.id && !hasDigest && !guideActive && !ondemandBusy,
+  );
 
   const activeTrack = activeVariant === 'digest'
     ? { label: '精品导读', duration: condensedDuration, src: podcast.condensed_audio_url, generated: true }
@@ -117,6 +144,27 @@ function PodcastAudioPlayer({ article, podcast, variant: controlledVariant, onVa
       audio.currentTime = position;
     } catch {
       // Some browsers reject a seek until metadata/ranges settle. Playback still works from zero.
+    }
+  };
+
+  const handleOndemand = async () => {
+    if (!canRequestOndemand) return;
+    setOndemandBusy(true);
+    try {
+      const result = await requestPodcastOndemand(article.id);
+      const outcome = String(result?.outcome || '');
+      if (outcome === 'ready') {
+        showToast?.('精品导读已就绪', 'success');
+      } else if (outcome === 'in_progress') {
+        showToast?.('精品导读正在生成中', 'info');
+      } else {
+        showToast?.('已开始生成精品导读', 'success');
+      }
+      await onArticleRefresh?.();
+    } catch (error) {
+      showToast?.(error?.message || '点播失败，请稍后重试', 'error');
+    } finally {
+      setOndemandBusy(false);
     }
   };
 
@@ -184,6 +232,24 @@ function PodcastAudioPlayer({ article, podcast, variant: controlledVariant, onVa
         </div>
       ) : (
         <p className="podcast-audio-unavailable">{activeTrack.label}音频暂不可播放</p>
+      )}
+      {aiEnabled && !hasDigest && (
+        <div className="podcast-ondemand">
+          {guideActive ? (
+            <p className="podcast-ondemand-hint" role="status">
+              点播后正在生成精品导读，完成后可在此收听
+            </p>
+          ) : (
+            <button
+              type="button"
+              className="action-button action-button-secondary podcast-ondemand-btn"
+              disabled={!canRequestOndemand}
+              onClick={handleOndemand}
+            >
+              {ondemandBusy ? '提交中…' : '点播精品导读'}
+            </button>
+          )}
+        </div>
       )}
       {audioError && (
         <div className="podcast-audio-error" role="alert">

@@ -343,6 +343,38 @@ test('reader polling follows active full processing but stops at terminal result
   }, { analysis_basis: 'publisher_transcript' })), false);
 });
 
+test('reader polling follows on-demand premium guide until digest audio appears', () => {
+  assert.equal(analysisNeedsPolling(podcastFixture({
+    processing_status: 'ready',
+    stage: 'analyze',
+    analysis_basis: 'publisher_transcript',
+    final_premium: true,
+    premium_guide: { status: 'queued' },
+  }, { analysis_basis: 'publisher_transcript' })), true);
+  assert.equal(analysisNeedsPolling(podcastFixture({
+    processing_status: 'ready',
+    stage: 'analyze',
+    analysis_basis: 'publisher_transcript',
+    final_premium: true,
+    premium_guide: { status: 'synthesizing' },
+  }, { analysis_basis: 'publisher_transcript' })), true);
+  assert.equal(analysisNeedsPolling(podcastFixture({
+    processing_status: 'ready',
+    stage: 'analyze',
+    analysis_basis: 'publisher_transcript',
+    final_premium: true,
+    premium_guide: { status: 'synthesizing' },
+    condensed_audio_url: '/media/digest.mp3',
+  }, { analysis_basis: 'publisher_transcript' })), false);
+  assert.equal(analysisNeedsPolling(podcastFixture({
+    processing_status: 'ready',
+    stage: 'analyze',
+    analysis_basis: 'publisher_transcript',
+    final_premium: true,
+    premium_guide: { status: 'ready' },
+  }, { analysis_basis: 'publisher_transcript' })), false);
+});
+
 test('persisted analysis card remains visible without a local LLM', () => {
   assert.equal(shouldShowAiReadingCard(
     { quality_score: 8.4, score_reason: '包含一手信息。' },

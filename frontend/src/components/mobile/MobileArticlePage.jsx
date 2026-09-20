@@ -44,6 +44,7 @@ export default function MobileArticlePage({
     showTranslation, translating, translatedBody, translatedTitle, activeIsChinese, handleTranslate,
     activeSummary, summarizing, handleSummarize,
     prevArticle, nextArticle, activeIndex, selectArticle, searchForLabel,
+    refreshActiveArticle,
   } = rs;
 
   const [podcastSelection, setPodcastSelection] = useState({ articleId: '', variant: 'original' });
@@ -192,6 +193,9 @@ export default function MobileArticlePage({
               onVariantChange={(variant) => {
                 setPodcastSelection({ articleId: activeArticle.id, variant });
               }}
+              aiEnabled={aiEnabled}
+              showToast={showToast}
+              onArticleRefresh={refreshActiveArticle}
             />
           )}
           {!podcastGuideActive && !activeBodyLoading && shouldShowAiReadingCard(activeArticle, {
