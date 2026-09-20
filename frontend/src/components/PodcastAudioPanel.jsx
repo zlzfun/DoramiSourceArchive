@@ -187,24 +187,36 @@ function PodcastAudioPlayer({
           {visibleProcessing.detail}
         </p>
       )}
-      {hasDigest && (
+      {(hasDigest || aiEnabled) && (
         <div className="mini-seg podcast-mode-switch" role="group" aria-label="播客播放模式">
           <button
             type="button"
-            className={`mini-seg-btn ${activeVariant === 'original' ? 'is-on' : ''}`}
-            aria-pressed={activeVariant === 'original'}
+            className={`mini-seg-btn ${activeVariant === 'original' || !hasDigest ? 'is-on' : ''}`}
+            aria-pressed={activeVariant === 'original' || !hasDigest}
             onClick={() => switchVariant('original')}
           >
             原节目{originalDuration ? ` · ${originalDuration}` : ''}
           </button>
-          <button
-            type="button"
-            className={`mini-seg-btn ${activeVariant === 'digest' ? 'is-on' : ''}`}
-            aria-pressed={activeVariant === 'digest'}
-            onClick={() => switchVariant('digest')}
-          >
-            精品导读{condensedDuration ? ` · ${condensedDuration}` : ''}
-          </button>
+          {hasDigest ? (
+            <button
+              type="button"
+              className={`mini-seg-btn ${activeVariant === 'digest' ? 'is-on' : ''}`}
+              aria-pressed={activeVariant === 'digest'}
+              onClick={() => switchVariant('digest')}
+            >
+              精品导读{condensedDuration ? ` · ${condensedDuration}` : ''}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="mini-seg-btn podcast-ondemand-seg"
+              disabled={!canRequestOndemand}
+              aria-busy={ondemandBusy || guideActive}
+              onClick={handleOndemand}
+            >
+              {ondemandBusy ? '提交中…' : guideActive ? '生成中…' : '点播精品导读'}
+            </button>
+          )}
         </div>
       )}
       {activeTrack.src ? (
@@ -232,24 +244,6 @@ function PodcastAudioPlayer({
         </div>
       ) : (
         <p className="podcast-audio-unavailable">{activeTrack.label}音频暂不可播放</p>
-      )}
-      {aiEnabled && !hasDigest && (
-        <div className="podcast-ondemand">
-          {guideActive ? (
-            <p className="podcast-ondemand-hint" role="status">
-              点播后正在生成精品导读，完成后可在此收听
-            </p>
-          ) : (
-            <button
-              type="button"
-              className="action-button action-button-secondary podcast-ondemand-btn"
-              disabled={!canRequestOndemand}
-              onClick={handleOndemand}
-            >
-              {ondemandBusy ? '提交中…' : '点播精品导读'}
-            </button>
-          )}
-        </div>
       )}
       {audioError && (
         <div className="podcast-audio-error" role="alert">

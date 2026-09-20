@@ -9020,27 +9020,10 @@ input[type="radio"] {
     min-width: 0;
     font-variant-numeric: tabular-nums;
   }
-
-  .podcast-ondemand {
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 8px;
-    margin-top: 12px;
-    padding-top: 12px;
-    border-top: 1px solid var(--dorami-border);
-  }
-  .podcast-ondemand-btn {
-    width: 100%;
-    min-height: 36px;
-    justify-content: center;
-  }
-  .podcast-ondemand-hint {
-    margin: 0;
-    color: var(--dorami-muted);
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 1.5;
+  /* 无精品音频时，点播占用「精品导读」分段位，不另开大按钮。 */
+  .podcast-mode-switch .podcast-ondemand-seg:disabled {
+    cursor: default;
+    opacity: 0.72;
   }
 
   .podcast-show-notes-head {
