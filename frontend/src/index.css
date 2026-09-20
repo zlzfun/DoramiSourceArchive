@@ -8119,73 +8119,50 @@ input[type="radio"] {
   .reader-ai-summary-generate:hover:not(:disabled) { color: var(--dorami-blue); }
   .reader-ai-summary-generate:disabled { cursor: default; opacity: 0.7; }
 
-  /* 文章点播听入口：速读卡附近的轻量条，不另开整宽次按钮。 */
-  .article-listen-bar {
-    margin: 0 0 12px;
-  }
-  .article-listen-actions {
+  /* 文章点播：可点播/生成中收在速读卡内；就绪播放条对齐播客 audio-track。 */
+  .reader-ai-listen-action {
     display: flex;
-    align-items: center;
-    gap: 10px;
-    min-height: 28px;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px 12px;
+    margin-top: 10px;
   }
-  .article-listen-request {
-    appearance: none;
-    border: 0;
-    background: transparent;
-    color: var(--dorami-muted);
-    font: inherit;
-    font-size: 12px;
-    font-weight: 650;
-    padding: 0;
-    cursor: pointer;
-  }
-  .article-listen-request:hover:not(:disabled) { color: var(--dorami-blue); }
-  .article-listen-request:disabled { cursor: default; opacity: 0.7; }
-  .article-listen-hint {
-    margin: 0;
+  .reader-ai-listen-status {
     color: var(--dorami-muted);
     font-size: 12px;
     font-weight: 600;
     line-height: 1.4;
   }
-  .article-listen-failed {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 10px;
+  .article-listen-track {
+    margin: 0 0 14px;
+    padding-top: 11px;
+    border-top: 1px solid var(--dorami-border);
   }
-  .article-listen-player {
-    display: grid;
-    gap: 6px;
-    padding: 10px 12px;
-    border: 1px solid var(--dorami-border);
-    border-radius: var(--r-card, 12px);
-    background: color-mix(in srgb, var(--dorami-surface) 92%, transparent);
-  }
-  .article-listen-player-head {
+  .article-listen-track-head {
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: 12px;
-    font-weight: 650;
-    color: var(--dorami-muted);
-  }
-  .article-listen-label { color: var(--dorami-fg); }
-  .article-listen-duration { font-variant-numeric: tabular-nums; }
-  .article-listen-ai {
-    margin-left: auto;
+    gap: 6px 10px;
+    margin-bottom: 7px;
     font-size: 11px;
-    font-weight: 600;
-    color: var(--dorami-blue);
+    font-weight: 500;
+    color: var(--dorami-faint);
+    font-variant-numeric: tabular-nums;
   }
-  .article-listen-player audio {
+  .article-listen-label {
+    font-weight: 700;
+    color: var(--dorami-ink-2);
+  }
+  .article-listen-duration { font-variant-numeric: tabular-nums; }
+  .article-listen-ai { color: var(--dorami-accent-ink); }
+  .article-listen-track audio {
+    display: block;
     width: 100%;
-    height: 32px;
+    height: 40px;
+    color-scheme: light dark;
   }
   .article-listen-error {
-    margin: 0;
-    color: var(--dorami-danger, #b42318);
+    margin: 8px 0 0;
+    color: var(--state-bad, #b42318);
     font-size: 12px;
     font-weight: 600;
   }

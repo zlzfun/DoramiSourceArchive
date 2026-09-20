@@ -199,14 +199,6 @@ export default function MobileArticlePage({
               onArticleRefresh={refreshActiveArticle}
             />
           )}
-          {!podcastView && !activeBodyLoading && (
-            <ArticleListenBar
-              article={activeArticle}
-              aiEnabled={aiEnabled}
-              showToast={showToast}
-              onArticleRefresh={refreshActiveArticle}
-            />
-          )}
           {!podcastGuideActive && !activeBodyLoading && shouldShowAiReadingCard(activeArticle, {
             summary: activeSummary,
             aiEnabled,
@@ -219,7 +211,13 @@ export default function MobileArticlePage({
               canGenerate={aiEnabled && Boolean(activeBody)}
               onGenerate={handleSummarize}
               podcast={podcastView}
+              aiEnabled={aiEnabled}
+              showToast={showToast}
+              onArticleRefresh={refreshActiveArticle}
             />
+          )}
+          {!podcastView && !activeBodyLoading && (
+            <ArticleListenBar article={activeArticle} />
           )}
           {podcastView && !podcastGuideActive && !activeBodyLoading && activeBody && (
             <div className="podcast-show-notes-head">
