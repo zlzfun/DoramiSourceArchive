@@ -9020,6 +9020,11 @@ input[type="radio"] {
     min-width: 0;
     font-variant-numeric: tabular-nums;
   }
+  /* 无精品音频时，点播占用「精品导读」分段位，不另开大按钮。 */
+  .podcast-mode-switch .podcast-ondemand-seg:disabled {
+    cursor: default;
+    opacity: 0.72;
+  }
 
   .podcast-show-notes-head {
     display: flex;

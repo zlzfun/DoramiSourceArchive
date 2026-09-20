@@ -324,12 +324,20 @@ export function hasReadableAnalysis(article) {
   );
 }
 
+const PODCAST_GUIDE_ACTIVE = new Set(['queued', 'summarizing', 'synthesizing']);
+
 export function analysisNeedsPolling(article) {
   const status = article?.analysis_status;
   if (status === 'pending' || status === 'running' || (
     (status === 'failed' || status === 'timeout')
     && Boolean(article?.analysis_next_attempt_at)
   )) return true;
+  const guideStatus = String(
+    article?.podcast?.premium_guide?.status || '',
+  ).trim().toLowerCase();
+  if (PODCAST_GUIDE_ACTIVE.has(guideStatus) && !article?.podcast?.condensed_audio_url) {
+    return true;
+  }
   const processing = podcastFullProcessingMeta(article);
   return Boolean(processing && PODCAST_PROCESSING_ACTIVE.has(
     String(article?.podcast?.processing_status || article?.podcast?.status || '').trim().toLowerCase(),

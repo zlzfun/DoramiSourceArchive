@@ -24,6 +24,7 @@ from models.db import (
     ArticleAnalysisRecord,
     ArticleRecord,
     PodcastArtifactRecord,
+    PodcastProcessingRecord,
     PodcastTextArtifactRecord,
     PodcastTextPublicationRecord,
 )
@@ -578,6 +579,149 @@ async def run_premium_guide(
         raise
 
 
+READER_ONDEMAND_REASON = "读者点播精品导读音频"
+READER_ONDEMAND_SCORE_TOO_LOW_MESSAGE = "评分过低，不值得点播哟～"
+READER_ONDEMAND_FINAL_PENDING_MESSAGE = "全文终评还在进行中，稍后再试～"
+
+
+def _latest_full_analysis_processing(
+    session: Session, episode_id: str
+) -> PodcastProcessingRecord | None:
+    return session.exec(
+        select(PodcastProcessingRecord)
+        .where(
+            PodcastProcessingRecord.episode_id == episode_id,
+            PodcastProcessingRecord.requested_target == "full_analysis",
+        )
+        .order_by(
+            PodcastProcessingRecord.created_at.desc(),
+            PodcastProcessingRecord.id.desc(),
+        )
+    ).first()
+
+
+def evaluate_reader_ondemand_premium_guide(
+    engine: Engine,
+    *,
+    episode_id: str,
+    config: PodcastConfig,
+    actor: str,
+) -> dict:
+    """Inspect reader on-demand eligibility without mutating episode state.
+
+    Outcomes:
+    - ``ready`` / ``in_progress`` → reuse, do not charge
+    - ``can_queue`` → caller must enforce quota, then schedule via force path
+    """
+
+    requested_by = str(actor or "").strip()
+    if not requested_by:
+        raise PremiumGuideForceError(
+            "podcast_ondemand_request_invalid",
+            "点播请求缺少读者身份",
+            status_code=422,
+        )
+
+    policy = PodcastStagePolicy(config)
+    try:
+        for stage in (
+            "translate",
+            "analyze",
+            "digest",
+            "script",
+            "tts",
+            "audio_qa",
+            "local_publish",
+        ):
+            policy.require_stage(stage, boundary="provider_submit")
+    except Exception as exc:
+        raise PremiumGuideForceError(
+            "podcast_ondemand_disabled",
+            f"点播所需处理阶段未启用：{exc}",
+            status_code=503,
+        ) from exc
+
+    with Session(engine) as session:
+        episode = session.get(ArticleRecord, episode_id)
+        if episode is None or episode.content_type != "podcast_episode":
+            raise PremiumGuideForceError(
+                "podcast_ondemand_not_found",
+                "播客单集不存在",
+                status_code=404,
+            )
+
+        analysis = session.get(ArticleAnalysisRecord, episode_id)
+        score = podcast_premium.final_score(analysis)
+        if score is None:
+            processing = _latest_full_analysis_processing(session, episode_id)
+            process_status = str(
+                getattr(processing, "processing_status", "") or ""
+            ).strip()
+            if process_status in podcast_premium.ACTIVE_PROCESSING_STATUSES:
+                raise PremiumGuideForceError(
+                    "podcast_ondemand_final_pending",
+                    READER_ONDEMAND_FINAL_PENDING_MESSAGE,
+                    status_code=409,
+                )
+            raise PremiumGuideForceError(
+                "podcast_ondemand_score_too_low",
+                READER_ONDEMAND_SCORE_TOO_LOW_MESSAGE,
+                status_code=409,
+            )
+
+        published_audio = session.exec(
+            select(PodcastArtifactRecord.id).where(
+                PodcastArtifactRecord.episode_id == episode_id,
+                PodcastArtifactRecord.kind == "digest_audio_zh",
+                PodcastArtifactRecord.status == "published",
+            )
+        ).first()
+        extensions = _extensions(episode)
+        guide = extensions.get("premium_guide")
+        if not isinstance(guide, dict):
+            guide = {}
+        status = str(guide.get("status") or "not_started")
+        if published_audio is not None:
+            return {
+                "episode_id": episode_id,
+                "status": "ready",
+                "outcome": "ready",
+                "forced": True,
+                "charged": False,
+                "should_schedule": False,
+            }
+        if status in {"queued", "summarizing", "synthesizing"}:
+            return {
+                "episode_id": episode_id,
+                "status": status,
+                "outcome": "in_progress",
+                "forced": True,
+                "charged": False,
+                "should_schedule": False,
+            }
+
+        try:
+            _source_transcript(session, episode_id, config)
+        except PremiumGuideError as exc:
+            message = str(exc)
+            status_code = 404 if message == "播客单集不存在" else 409
+            raise PremiumGuideForceError(
+                "podcast_ondemand_not_ready",
+                message,
+                status_code=status_code,
+            ) from exc
+
+    return {
+        "episode_id": episode_id,
+        "status": "not_started",
+        "outcome": "can_queue",
+        "forced": True,
+        "charged": False,
+        "should_schedule": True,
+        "actor": requested_by,
+    }
+
+
 def prepare_forced_premium_guide(
     engine: Engine,
     *,
@@ -906,12 +1050,16 @@ __all__ = [
     "PremiumGuideForceError",
     "PremiumGuideTextProvider",
     "PremiumGuideTtsProvider",
+    "READER_ONDEMAND_FINAL_PENDING_MESSAGE",
+    "READER_ONDEMAND_REASON",
+    "READER_ONDEMAND_SCORE_TOO_LOW_MESSAGE",
     "SoloDeepDurationPlan",
     "SynthesizedAudio",
     "calculate_solo_deep_plan",
     "fail_premium_guide",
     "list_premium_guide_tasks",
     "lookup_forced_premium_guide_request",
+    "evaluate_reader_ondemand_premium_guide",
     "pending_premium_guide_candidates",
     "prepare_forced_premium_guide",
     "run_premium_guide",
