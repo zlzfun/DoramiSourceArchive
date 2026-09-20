@@ -68,6 +68,7 @@ import {
   shouldShowAiReadingCard,
 } from '../utils/analysis';
 import AiReadingCard from './AiReadingCard';
+import ArticleListenBar from './ArticleListenBar';
 import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
 import { mediaProxyUrl } from '../api';
 
@@ -1334,6 +1335,14 @@ export default function ReaderTab({
                   article={activeArticle}
                   variant={podcastVariant}
                   onVariantChange={handlePodcastVariantChange}
+                  aiEnabled={aiEnabled}
+                  showToast={showToast}
+                  onArticleRefresh={refreshActiveArticle}
+                />
+              )}
+              {!podcastView && !activeBodyLoading && (
+                <ArticleListenBar
+                  article={activeArticle}
                   aiEnabled={aiEnabled}
                   showToast={showToast}
                   onArticleRefresh={refreshActiveArticle}
