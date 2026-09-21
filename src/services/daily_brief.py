@@ -128,6 +128,8 @@ TOP_N_MAX = 50
 # AppSettingRecord 键
 KEY_CURSOR = "daily_brief_cursor"
 KEY_SELECTION_REVISION = "daily_brief_selection_revision"
+# 高频媒体与 HN 日间补采后，15 篇/源不足以消化日增量；总预算仍为 120。
+DEFAULT_CANDIDATE_PER_SOURCE_CAP = 60
 KEY_ENABLED = "daily_brief_enabled"
 KEY_CRON = "daily_brief_cron"
 KEY_TOP_N = "daily_brief_top_n"
@@ -516,7 +518,7 @@ def collect_candidates(
     *,
     cursor: str,
     max_total: int = 120,
-    per_source_cap: int = 15,
+    per_source_cap: int = DEFAULT_CANDIDATE_PER_SOURCE_CAP,
     source_ids: Optional[List[str]] = None,
 ) -> Tuple[List[BriefCandidate], str, int]:
     """Read one bounded batch; deferred rows remain eligible after the cursor."""
@@ -525,7 +527,7 @@ def collect_candidates(
     return batch[0], batch[1], len(batch[2])
 
 
-def _collect_candidate_batch(session, *, cursor, max_total=120, per_source_cap=15, source_ids=None):
+def _collect_candidate_batch(session, *, cursor, max_total=120, per_source_cap=DEFAULT_CANDIDATE_PER_SOURCE_CAP, source_ids=None):
     if max_total < 1 or per_source_cap < 1:
         raise ValueError("日报候选上限必须为正数")
     effective_cursor = cursor or ""
@@ -1483,7 +1485,7 @@ async def _generate_daily_brief(
     triggered_by: Optional[str] = None,
     dry_run: bool = False,
     max_total: int = 120,
-    per_source_cap: int = 15,
+    per_source_cap: int = DEFAULT_CANDIDATE_PER_SOURCE_CAP,
     top_n: Optional[int] = None,
     recent_brief_days: int = 3,
 ) -> Dict[str, Any]:

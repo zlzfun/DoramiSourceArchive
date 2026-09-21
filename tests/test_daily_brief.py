@@ -1732,3 +1732,15 @@ def test_file_generation_guard_covers_independent_engines(tmp_path):
             with db._generation_guard(second): pass
     with db._generation_guard(second): pass
     second.dispose()
+
+
+def test_default_candidate_budget_can_drain_daytime_media_volume(tmp_path):
+    sink = _make_sink(tmp_path)
+    for source, count in [('web_ithome_ai', 40), ('rss_hn_ai', 30), ('other', 30)]:
+        for i in range(count):
+            _seed(sink.engine, f'{source}-{i}', source, '2026-06-05T10:00:00')
+    with Session(sink.engine) as session:
+        candidates, _, scanned = collect_candidates(session, cursor='')
+        assert len(candidates) == scanned == 100  # no perpetual 15/day bottleneck
+        bounded, _, _ = collect_candidates(session, cursor='', max_total=80)
+        assert len(bounded) == 80
