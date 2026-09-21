@@ -1,8 +1,16 @@
 # Data files (large/generated)
 data/
-# 部署脚本迁移前的 SQLite 备份(scripts/deploy-lib.sh backup_sqlite_db)
+# 部署脚本迁移前的 SQLite 备份(scripts/deploy-lib.sh backup_sqlite_db)与裸机事务快照(backups/baremetal/)
 backups/
 .venv/
+# 裸机部署的运行副本版本化布局(issue #126,docs/baremetal-rollback-plan.md §3.2):release / 版本化 venv / 事务状态 /
+# 旧形态 venv 与 PM2 日志。dirty --here 固化时的排除集合独立于本文件(§4.4),这里只防误提交。
+releases/
+venvs/
+deploy-state/
+venv/
+logs/
+current
 **/__pycache__/
 *.pyc
 .wechat_auth/
