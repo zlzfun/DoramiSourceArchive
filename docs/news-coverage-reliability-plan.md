@@ -1,6 +1,6 @@
 # 新闻覆盖可靠性修复（issue #127）
 
-状态：实现与首轮检视返修完成，定向复检及最终 CI 中；未合入、未部署。Issue：<https://github.com/zlzfun/DoramiSourceArchive/issues/127>。
+状态：实现与检视返修完成；合入及上线须满足 [PR #128](https://github.com/zlzfun/DoramiSourceArchive/pull/128) 门禁和用户本地验收。尚未部署。Issue：<https://github.com/zlzfun/DoramiSourceArchive/issues/127>。
 实现方：Codex（GPT-6）；检视方：本机 Claude Code 2.1.278，模型 `claude-fable-5-1`。
 
 ## 1. 证据与问题边界
@@ -77,9 +77,9 @@ python3 scripts/configure_news_coverage.py --database data/cms_data.db \
 - IT之家 `limit=45`：45 条、45 个唯一 ID，跨过首页 30 条；首条为今天 ZCode 道歉开源报道。
 - 模拟 hnrss 故障、Algolia 保持真实：88 条、88 个唯一 ID，包含两条品牌新闻：“ZCode, the GLM coding agent, silently uploads your Git history”（261 分）和 “Inside ZCode: Silently uploading your Git history to the cloud”（331 分）。
 - 175 项抓取、日报及端点回归与 4 项运维应用/幂等/回滚/冲突测试通过；提高单源容量后日报 85 项（含新增容量场景）通过。
-- 全量 2,302 项中首次沙箱运行 2,250 通过，52 项因系统 Git/Xcode 选择及本地进程/端口限制失败；指定 Command Line Tools 并允许本地端口后，相关两组共 63 项全部通过，覆盖全部 52 个失败。迁移及元数据一致性测试通过。另新增容量用例通过（最终总数 2,303）。
-- 前端 lint、34 项测试、build 通过；无前端源码修改。最终提交的 Linux CI 状态待补录。
-- 返修后 195 项关联测试通过；11:31 再次真实源验证：IT之家仍取得45条唯一新闻，收窄品牌匹配后 HN 为87条，仍包含两篇 ZCode 原始报道。
+- 全量 2,302 项中首次沙箱运行 2,250 通过，52 项因系统 Git/Xcode 选择及本地进程/端口限制失败；指定 Command Line Tools 并允许本地端口后，相关两组共 63 项全部通过，覆盖全部 52 个失败。迁移及元数据一致性测试通过。另新增容量用例通过（返修前总数 2,303）。
+- 前端 lint、34 项测试、build 通过；无前端源码修改。返修前 `fc7be49` 的 Linux 后端、前端、工作流门禁均通过；最终提交的 CI 收据见 [PR 检查](https://github.com/zlzfun/DoramiSourceArchive/pull/128/checks)。
+- 返修后 195 项关联测试通过，删报守卫加原子事务后98项日报/端点再次通过；11:31 再次真实源验证：IT之家仍取得45条唯一新闻，收窄品牌匹配后 HN 为87条，仍包含两篇 ZCode 原始报道。
 - 生产数据库只读预览通过：新增一个专用任务，公共日报显式名单 29 → 30（追加 HN），没有应用任何配置或触发生产 LLM。
 
 ## 5. 交叉检视及上线门禁
@@ -89,6 +89,6 @@ python3 scripts/configure_news_coverage.py --database data/cms_data.db \
 - 接受并修复 P1：bootstrap 历史积压；删报回退误清旧 pending。额外覆盖同时间戳历史批次和同水位跨日报的最新一期守卫。
 - 接受 P2：同值配置导致无谓失败、首页条数假设、后页失败前已部分入库、品牌正文/URL 噪声、可编辑说明作幂等标记、页尾非文章时间影响游标。
 - 吞吐项协商：不接受按龄期把未评估文章标 processed（会重新造成永久丢失）；双方同意 40 积压 / 80 新候选、空缺互补、每源 60、最老候选时间观测及状态不变不执行 UPDATE。总上限仍为 120，持续高于预算的输入仍需增加运行频次或调整预算。
-- 所有确认记录来自同一检视会话，修复后只对照上述清单复检，结果待补录。
+- 所有确认记录来自同一检视会话，修复后只对照上述清单复检，最终结论及完整测试收据集中记录在 [PR #128](https://github.com/zlzfun/DoramiSourceArchive/pull/128)，避免重复维护运行状态。
 
 合入前仍需用户本地端到端验收和目检放行；PR 内不改版本，不合入、不发版、不改生产配置。
