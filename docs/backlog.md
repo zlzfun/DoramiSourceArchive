@@ -6,6 +6,10 @@
 
 ## 进行中
 
+- ☐ **issue #126 裸机部署回滚**(分支 `feat/issue-126-baremetal-rollback`,方案 `docs/baremetal-rollback-plan.md`;2026-09-21 用户拍板 §7 七项全按推荐后实现):
+  运行副本版本化 release 形态 + 事务阶段 + 两级健康门告警(不自动回滚)+ `--rollback`(DB 按迁移计划分流,`--restore-db` 显式恢复)+ 收养 + `--code` / `--status` / `--discard-txn`,
+  `docker/requirements-crawl4ai.txt` extras 钉版,锁与 Docker 同一把;桩测试 `tests/test_deploy_baremetal.py`。待 codex 检视、用户本地(内网)实机验收:收养一次 → 部署新版 → 故意起不来的提交告警 → `--rollback` → 机器重启 resurrect 起当前 release → 带迁移版本回滚被拒 / `--restore-db`。
+  观察期:内网 `--here` 场景的收养(旧 `/api/health` 须透出构建身份)、`[nginx] releases_dir` 是否需要(仓库在 /root 下时)。
 - ☐ **issue #74 个人早报三处**(分支 `feat/issue-74-brief-grid`,方案 `docs/personal-brief-grid-and-sections.md`):
   公共日报剔出早报范围 + 板块固定顺序 / 板块内分数降序 + 分值驱动网格(策略 F,样页 `docs/design/dorami-brief-grid-quiet.html`)
   已实现;待用户本地验收与 codex 检视。观察期:T = 9.0 / Δ = 1.0 两个常量在生产分布下的通栏频率与 2 + 2 出现率。

@@ -105,6 +105,10 @@ cp backups/cms_data.db.20260914-110000 data/cms_data.db && rm -f data/cms_data.d
 
 备份不含 `data/media` 与 `data/podcast-artifacts`(可再生 / 体量大),按需另备。
 
+**裸机路径(issue #126 起)不走上面三行**:`./deploy.sh --rollback` 一键回到上次成功部署的 release(不 checkout、不出网、不构建;
+有迁移差异时默认拒绝并打印快照时刻与丢失窗口,`--restore-db` 显式恢复事务快照);`./deploy.sh --status` 先看回滚目标与 DB 预判;
+只回一代,更早的版本 `./deploy.sh --code <sha>` 正向部署。健康门失败只告警不自动回滚。见 [`deploy-baremetal.md`](./deploy-baremetal.md)「回滚」。
+
 **经流水线降级**是「代码降级入口」,不是完整回滚:Actions → Deploy → Run workflow 填旧 tag 并勾 `allow_downgrade`;
 生产机 worker 会先让目标镜像算迁移计划,数据库已走过目标代码不认识的迁移时判 `incompatible` 并 fail closed——此时先恢复备份。
 

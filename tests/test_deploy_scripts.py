@@ -1158,3 +1158,24 @@ def test_container_without_build_identity_makes_last_success_unverifiable(env: E
     r = env.launch(env.cmd("v1.1.0"))
     assert r.returncode == 21, r.stdout + r.stderr   # 不回放;基线未知 → 护栏
     assert "没有构建身份" in env.worker_log("v1.1.0")
+
+
+# ══════════════ issue #126 裸机回滚波的 Docker 等价守卫(docs/baremetal-rollback-plan.md §4.14 / §6.6)══════════════
+
+def test_deploy_docker_default_health_budget_unchanged():
+    """健康轮询抽到 deploy-lib 共用后,Docker 路径的默认预算仍是 180 s / 90 次,由本脚本传入(不在库里定默认)。"""
+    text = (ROOT / "deploy-docker.sh").read_text(encoding="utf-8")
+    assert 'BUDGET="${DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS:-180}"' in text
+    assert 'ATTEMPTS="${DORAMI_DEPLOY_HEALTH_ATTEMPTS:-90}"' in text
+    assert "deploy_wait_healthy" in text
+    lib = (ROOT / "scripts" / "deploy-lib.sh").read_text(encoding="utf-8")
+    assert "HEALTH_BUDGET_SECONDS:-" not in lib, "预算默认值只能在调用方"
+
+
+@pytest.mark.parametrize("arg", ["--rollback", "--status", "--code", "--adopt", "--discard-txn", "--restore-db"])
+def test_deploy_docker_rejects_baremetal_only_arguments(real: Env, arg: str):
+    """裸机专属参数只在 deploy.sh 装配;deploy-docker.sh 对它们仍按未知参数拒绝(不改 Docker 路径行为)。"""
+    _health(real, "v9.9.9")
+    r = _run_deploy(real, arg)
+    assert r.returncode != 0 and "未知参数" in r.stderr
+    assert not real.calls(), "参数错误须在任何 docker 调用之前"

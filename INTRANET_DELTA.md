@@ -9,8 +9,8 @@
 
 | 字段 | 值 |
 |---|---|
-| `UPSTREAM_BASE` | `v3.58.2`(main `f742a23`) |
-| 本清单最近核对 | 2026-09-16(GitHub 侧 master,内网侧差异待内网 Agent 补登,见 §4) |
+| `UPSTREAM_BASE` | `v3.60.1`(main `ad049bb`;自动同步工作流合入,本清单 2026-09-21 补记) |
+| 本清单最近核对 | 2026-09-21(GitHub 侧 master,内网侧差异待内网 Agent 补登,见 §4) |
 | 同步方式 | GitHub `Sync main → master` 工作流,**按 main 的版本 tag(`v*`)触发**,`--no-ff` 合并;冲突时任务失败、人工处理 |
 
 每次合入上游版本后:更新 `UPSTREAM_BASE`,逐条复核 §2/§3 里「冲突原则」栏是否仍成立,
@@ -22,6 +22,16 @@
 内网接收最新 master 后运行 `./deploy.sh --here` 部署当前适配分支;默认部署或指定
 `v3.58.2` 会切到 main 的发布 tag,不含本分支适配。
 本次评分修复在外网导出端生效,内网 `v3.58.1` 接收端已兼容撤回协议,可先直接重试 v2 同步。
+
+2026-09-21 **预合入 issue #126(裸机部署回滚,PR #129,main 尚未合入)**:按拍板先把分支
+`feat/issue-126-baremetal-rollback` 相对其基点 `5fd4fe9` 的差异整体应用到本分支做内网实机验收;
+**不含** main 上 `v3.60.1` 之后的其它未发布提交(#116 / #120 / #123–#125 / #128 等,含两条新迁移),
+内网仍停在 `v3.60.1` 的应用代码。带进来的全是部署面文件(`deploy.sh`、`scripts/deploy-baremetal.sh`、
+`scripts/deploy-lib.sh`、`deploy-docker.sh` 等价重构、`docker/requirements-crawl4ai.txt`、`.gitignore`、
+ini 示例)与测试、文档,部署面仍以 main 为准,**不构成新的内网差异条目**。
+验收用法:`./deploy.sh --here`(首次运行会把现有旧形态安装自动收养成 release 形态,有一次 PM2 重启,放维护窗;
+新脚本不带参数会因发布 tag 未宣告 `DORAMI_BAREMETAL_TXN` 能力而 exit 11,内网一律 `--here`)。
+PR #129 合入 main 并随下一个版本 tag 同步下来时内容相同,应干净合并;届时删除本段。
 
 ## 1. 维护规则
 

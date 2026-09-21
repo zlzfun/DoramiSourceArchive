@@ -74,18 +74,17 @@ def assert_pwa_locations(config):
 @pytest.mark.parametrize("ssl,redirect", [("false", "false"), ("true", "false"), ("true", "true")])
 def test_deploy_renders_pwa_locations_in_all_modes(tmp_path, ssl, redirect):
     source = (ROOT / "deploy.sh").read_text()
-    # Execute the real writer only. Stub machine paths/inclusion; never source the deployment entry.
-    function = source[source.index("write_nginx_site_config() {"):source.index("resolve_nginx_main_conf() {")]
+    # Execute the real renderer only (issue #126: rendering and the online write are split — the writer lives in
+    # scripts/deploy-baremetal.sh's change-set flow); never source the deployment entry.
+    function = source[source.index("render_nginx_site_config() {"):source.index("check_nginx_ssl_inputs() {")]
     cert = tmp_path / "test.pem"
     cert.touch()
     destination = tmp_path / "site.conf"
     script = f'''set -eu
 truthy() {{ [ "$1" = true ]; }}
 fail() {{ echo "$*" >&2; exit 1; }}
-resolve_nginx_site_file() {{ NGINX_SITE_FILE="$OUTPUT"; NGINX_SITE_ENABLED_FILE="$OUTPUT"; }}
-ensure_site_included() {{ :; }}
 {function}
-write_nginx_site_config 127.0.0.1 8088
+render_nginx_site_config 127.0.0.1 8088 > "$OUTPUT"
 '''
     env = {**os.environ, "OUTPUT": str(destination), "SUDO": "", "NGINX_ENABLE_SSL": ssl,
            "NGINX_SSL_REDIRECT": redirect, "NGINX_SERVER_NAME": "reader.example", "NGINX_ENABLE_HSTS": "true",
