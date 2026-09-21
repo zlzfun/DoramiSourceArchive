@@ -988,3 +988,156 @@ def test_status_before_adoption_points_to_adopt(bm: BM):
     _setup_old_form(bm, bm.head())
     r = bm.run("--status")
     assert r.returncode == 0 and "尚未收养" in r.stdout and "未发布" in r.stdout
+
+
+# ══════════════ 回滚(§4.8 / §4.10)══════════════
+
+def _deploy_v2(bm: BM, *, broken: bool = False, migrations=("0001",), version: str = "1.1.0") -> subprocess.CompletedProcess:
+    _commit_and_pull(bm, mini_project(version, migrations=migrations, broken=broken))
+    return bm.run("--here")
+
+
+def test_rollback_after_failed_deploy_restores_previous_release(bm: BM):
+    _deploy_v1(bm)
+    v1 = bm.state("last-success.json")
+    r = _deploy_v2(bm, broken=True)
+    assert r.returncode == 1
+    v2_txn = bm.state("in-progress.json")["txn_id"]
+    r = bm.run("--rollback")
+    assert r.returncode == 2 and "--yes" in r.stderr and bm.state("in-progress.json")["txn_id"] == v2_txn, "非交互无 --yes:不改现场"
+    r = bm.run("--rollback", "--yes")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Rollback complete" in r.stdout
+    ls = bm.state("last-success.json")
+    assert ls["kind"] == "rollback" and ls["target"]["txn_id"] == v1["txn_id"] and ls["prev"]["txn_id"] == v2_txn and ls["recover_from"] == v2_txn
+    assert not bm.state("in-progress.json")
+    assert bm.health_json()["version"] == "1.0.0" and bm.health_json()["build"]["sha"] == v1["target"]["code_sha"]
+    assert os.path.realpath(bm.html_dir) == os.path.realpath(Path(v1["target"]["release"]) / "dist")
+    assert os.path.realpath(bm.clone / "current") == os.path.realpath(Path(v1["target"]["release"]) / "app")
+    assert os.path.realpath(bm.pm2()[APP]["cwd"]) == os.path.realpath(Path(v1["target"]["release"]) / "app")
+    rescue = Path(ls["db"]["rescue_snapshot"]); assert rescue.is_file() and rescue.name.endswith(".rescue.sqlite")
+    assert Path(v1["target"]["release"]).is_dir() and (bm.clone / "releases" / v2_txn).is_dir(), "两代材料都保留"
+    assert (bm.clone / "deploy-state" / "txns" / ls["txn_id"] / "manifest.json").is_file()
+    assert json.loads((Path(v1["target"]["release"]) / "manifest.json").read_text())["kind"] == "deploy", "目标 release 原 manifest 不被覆盖"
+    # 再回滚:上一版是刚被回滚掉的 → 拒绝并给精确命令
+    r = bm.run("--rollback", "--yes")
+    assert r.returncode == 30 and f"--code {ls['prev']['code_sha']}" in r.stderr and f"--to {v2_txn}" in r.stderr
+    s = bm.run("--status")
+    assert s.returncode == 0 and "回滚预判" in s.stdout and "刚被回滚掉" in s.stdout
+
+
+def test_rollback_with_migration_requires_restore_db_and_restores_snapshot(bm: BM):
+    _deploy_v1(bm)
+    bm.db_insert(3)
+    r = _deploy_v2(bm, migrations=("0001", "0002"))
+    assert r.returncode == 0, r.stdout + r.stderr
+    v2 = bm.state("last-success.json")
+    bm.db_insert(2)
+    assert bm.db_heads() == ["0002"] and bm.db_rows() == 5
+    s = bm.run("--status")
+    assert "需要 --restore-db" in s.stdout
+    r = bm.run("--rollback", "--yes")
+    assert r.returncode == 32 and "--restore-db" in r.stderr and v2["db"]["snapshot"] in r.stderr and "丢失窗口" in r.stderr
+    assert bm.health_json()["version"] == "1.1.0" and bm.db_rows() == 5, "默认拒绝,确认前不改现场"
+    r = bm.run("--rollback", "--yes", "--restore-db")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert bm.health_json()["version"] == "1.0.0"
+    assert bm.db_heads() == ["0001"] and bm.db_rows() == 3, "库回到快照点(快照后的 2 行丢失,已明示)"
+    ls = bm.state("last-success.json")
+    rescue = Path(ls["db"]["rescue_snapshot"]); assert rescue.is_file()
+    con = sqlite3.connect(rescue); assert con.execute("select count(*) from articles").fetchone()[0] == 5; con.close()
+    assert ls["db"]["restore_source"] == v2["db"]["snapshot"] and ls["db"]["action"] == "restore"
+    # 库已在 0001:再部署 v2 走正向补迁移
+    r = bm.run("--code", v2["target"]["code_sha"])
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert bm.db_heads() == ["0002"] and bm.db_rows() == 3
+
+
+def test_restore_db_is_refused_when_target_understands_current_db(bm: BM):
+    _deploy_v1(bm)
+    assert _deploy_v2(bm).returncode == 0
+    r = bm.run("--rollback", "--yes", "--restore-db")
+    assert r.returncode == 2 and "不需要 --restore-db" in r.stderr
+
+
+def test_interrupted_rollback_resumes_same_target(bm: BM):
+    _deploy_v1(bm)
+    v1 = bm.state("last-success.json")
+    assert _deploy_v2(bm).returncode == 0
+    r = bm.run("--rollback", "--yes", FAKE_PM2_SAVE_FAIL="1")
+    assert r.returncode == 1 and "pm2 save 失败" in r.stderr
+    ip = bm.state("in-progress.json")
+    assert ip["kind"] == "rollback" and ip["stage"]["intent"] == "process_started" and ip["target"]["txn_id"] == v1["txn_id"]
+    r = bm.run("--here")
+    assert r.returncode == 20 and "未完成的回滚事务" in r.stderr
+    r = bm.run("--rollback", "--yes")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "续做回滚事务" in r.stdout and bm.state("last-success.json")["target"]["txn_id"] == v1["txn_id"]
+    assert bm.health_json()["version"] == "1.0.0"
+
+
+def test_rollback_to_adjacent_txn_goes_forward_and_code_redeploys(bm: BM):
+    _deploy_v1(bm)
+    assert _deploy_v2(bm).returncode == 0
+    v2 = bm.state("last-success.json")
+    assert bm.run("--rollback", "--yes").returncode == 0
+    r = bm.run("--rollback", "--to", "bogus-txn", "--yes")
+    assert r.returncode == 30 and "只接受相邻" in r.stderr
+    r = bm.run("--rollback", "--to", v2["txn_id"], "--yes")
+    assert r.returncode == 0, r.stdout + r.stderr
+    ls = bm.state("last-success.json")
+    assert ls["kind"] == "rollback" and ls["target"]["txn_id"] == v2["txn_id"] and bm.health_json()["version"] == "1.1.0"
+    # 被回滚掉的版本也可以用 --code 正向重部署(新 release、新事务)
+    r = bm.run("--code", v2["target"]["code_sha"])
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert bm.state("last-success.json")["kind"] == "deploy" and bm.state("last-success.json")["target"]["code_sha"] == v2["target"]["code_sha"]
+
+
+def test_rollback_on_untouched_failed_deploy_archives_and_does_nothing(bm: BM):
+    _deploy_v1(bm)
+    _commit_and_pull(bm, mini_project("1.1.0"))
+    assert bm.run("--here", FAKE_NPM_BUILD_FAIL="1").returncode == 1
+    r = bm.run("--rollback", "--yes")
+    assert r.returncode == 0 and "无需回滚" in r.stdout and len(bm.closed()) == 1
+    assert bm.health_json()["version"] == "1.0.0"
+    r = bm.run("--rollback", "--yes")
+    assert r.returncode == 30 and "prev=null" in r.stderr, "首装没有回滚点"
+
+
+def test_rollback_undoes_nginx_files_added_by_failed_deploy(bm: BM):
+    """§6.5 真实文件:B 新增站点文件 / enabled 链接并删除 default 站点后失败,回滚 A 后新增项消失、default 恢复。"""
+    (bm.etc / "sites-available").mkdir(); (bm.etc / "sites-enabled").mkdir()
+    default = bm.etc / "sites-enabled" / "default"; default.write_text("server { listen 80 default_server; }\n")
+    r = bm.run("--here", DORAMI_DEPLOY_FRESH_OK="1", NGINX_DISABLE_DEFAULT_SITE="false")
+    assert r.returncode == 0, r.stdout + r.stderr
+    site_a = bm.etc / "sites-available" / "dorami"
+    assert site_a.is_file() and (bm.etc / "sites-enabled" / "dorami").is_symlink() and default.exists()
+    a_content = site_a.read_text()
+    _commit_and_pull(bm, mini_project("1.1.0", broken=True))
+    r = bm.run("--here", NGINX_SITE_NAME="dorami2")
+    assert r.returncode == 1
+    assert (bm.etc / "sites-available" / "dorami2").is_file() and (bm.etc / "sites-enabled" / "dorami2").is_symlink()
+    assert not default.exists(), "B 删掉了 default 站点"
+    changes = json.loads((Path(bm.state("in-progress.json")["target"]["release"]) / "nginx" / "changes.json").read_text())["changes"]
+    kinds = {c["path"]: c["kind"] for c in changes}
+    assert kinds[str(bm.etc / "sites-available" / "dorami2")] == "absent" and kinds[str(default)] == "file"
+    r = bm.run("--rollback", "--yes")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not (bm.etc / "sites-available" / "dorami2").exists() and not (bm.etc / "sites-enabled" / "dorami2").exists(), "新增项消失"
+    assert default.exists() and default.read_text() == "server { listen 80 default_server; }\n", "default 恢复"
+    assert site_a.read_text() == a_content and (bm.etc / "sites-enabled" / "dorami").is_symlink()
+    assert bm.health_json()["version"] == "1.0.0"
+
+
+def test_cleanup_keeps_referenced_releases_and_prunes_by_count(bm: BM):
+    _deploy_v1(bm)
+    txns = [bm.state("last-success.json")["txn_id"]]
+    for v in ("1.1.0", "1.2.0", "1.3.0"):
+        _commit_and_pull(bm, mini_project(v))
+        r = bm.run("--here", DORAMI_DEPLOY_KEEP_RELEASES="1")
+        assert r.returncode == 0, r.stdout + r.stderr
+        txns.append(bm.state("last-success.json")["txn_id"])
+    names = [p.name for p in bm.releases()]
+    assert txns[3] in names and txns[2] in names, "target 与 prev 永远保留"
+    assert txns[1] in names and txns[0] not in names, "引用集合之外按数量保留 1 个"
+    assert "清理 release" in r.stdout

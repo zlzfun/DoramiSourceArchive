@@ -92,13 +92,6 @@ ini_get() {
     ' "$CONFIG_FILE"
 }
 
-truthy() {
-    case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
-        1|true|yes|on) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
 usage() {
     cat <<EOF
 用法: ./deploy.sh [vX.Y.Z | --here | --code <sha|tag>]
@@ -481,42 +474,6 @@ validate_nginx_config() {
     fi
 
     $SUDO "$NGINX_BIN" -t
-}
-
-ensure_nginx_running_or_reload() {
-    # 手动安装的 nginx 可能没有 systemd 单元;已在跑就 reload,没在跑则
-    # 优先 systemd 起,退回直接执行二进制(sudo 全程用绝对路径,绕开 secure_path)。
-    if pgrep -x nginx >/dev/null 2>&1; then
-        $SUDO "$NGINX_BIN" -s reload
-        return
-    fi
-    if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files 2>/dev/null | grep -q '^nginx\.service'; then
-        $SUDO systemctl start nginx
-    elif command -v service >/dev/null 2>&1 && service nginx status >/dev/null 2>&1; then
-        $SUDO service nginx start
-    else
-        $SUDO "$NGINX_BIN"
-    fi
-}
-
-# nginx worker(源码装默认 nobody)必须能逐级穿越 html_dir 的每个父目录,
-# 任何一级缺 others 的 x 位(如 /var/www 是 700)都会 stat Permission denied →
-# try_files 内部重定向循环 → 500。只补穿越位 o+x,不动读写等其它权限。
-ensure_traversal_bits() {  # dir
-    local dir="$1" perms
-    while [ "$dir" != "/" ] && [ -n "$dir" ]; do
-        perms="$($SUDO python3 -c 'import os, stat, sys; print(stat.filemode(os.stat(sys.argv[1]).st_mode))' "$dir" 2>/dev/null || echo "")"
-        case "$perms" in
-            "") ;;            # stat 不到就跳过
-            *x|*t) ;;         # others 已有穿越位
-            *)
-                echo "Adding o+x to $dir (nginx worker needs directory traversal)"
-                $SUDO chmod o+x "$dir" \
-                    || echo "    ⚠️  无法给 $dir 加穿越位;若 nginx 读不到站点文件,把 dist 放到宿主目录:[nginx] releases_dir = /var/www/dorami-releases"
-                ;;
-        esac
-        dir="$(dirname "$dir")"
-    done
 }
 
 warn_cookie_secure_if_needed() {

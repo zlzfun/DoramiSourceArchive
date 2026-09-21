@@ -381,6 +381,11 @@ bm_txn_promote() {
     release="$(bm_manifest_get target.release "")"
     deploy_json_set "$BM_IN_PROGRESS" deployed_at "$(bm_now)" || bm_fail "$BM_RC_STEP" "写 deployed_at 失败,事务保留"
     bm_stage_done promoted
+    # release 事务的 manifest 副本进 release 目录;rollback 事务没有自己的 release,副本进材料目录(不覆盖目标 release 的原 manifest)
+    if [ "$(bm_manifest_get kind "")" = "rollback" ]; then
+        release="$(bm_manifest_get materials "$BM_STATE_DIR/txns/$txn")"
+        mkdir -p "$release"
+    fi
     if [ -n "$release" ] && [ -d "$release" ]; then
         cp "$BM_IN_PROGRESS" "$release/manifest.json.tmp" && mv -f "$release/manifest.json.tmp" "$release/manifest.json" \
             || bm_fail "$BM_RC_STEP" "写 $release/manifest.json 失败,事务保留"
@@ -1526,9 +1531,9 @@ PY
 
 # ── 清理与引用集合(§4.12)──
 bm_referenced_releases() {  # → 一行一个 release 目录(realpath)
-    python3 - "$BM_STATE_DIR" "$BM_CLOSED_DIR" "$BM_CURRENT_LINK" "${NGINX_HTML_DIR:-}" "${BM_PM2_CWD:-}" "$HOME/.pm2/dump.pm2" "${DORAMI_DEPLOY_CLOSED_KEEP_DAYS:-7}" <<'PY'
+    python3 - "$BM_STATE_DIR" "$BM_CLOSED_DIR" "$BM_CURRENT_LINK" "${NGINX_HTML_DIR:-}" "${BM_PM2_CWD:-}" "$HOME/.pm2/dump.pm2" "${DORAMI_DEPLOY_CLOSED_KEEP_DAYS:-7}" "$BM_RELEASES_DIR" <<'PY'
 import glob, json, os, sys, time
-state, closed, current, html, pm2_cwd, dump, keep_days = sys.argv[1:8]
+state, closed, current, html, pm2_cwd, dump, keep_days, releases_dir = sys.argv[1:9]
 refs = set()
 def add_release(p):
     if p:
@@ -1549,8 +1554,8 @@ def scan(m):
         v = m.get(key) or {}
         add_release(v.get("release"))
     rf = m.get("recover_from")
-    if rf:
-        add_release(os.path.join(os.path.dirname(os.path.dirname(m.get("controller") or "")), rf) if False else None)
+    if rf and os.path.isdir(os.path.join(releases_dir, rf)):
+        add_release(os.path.join(releases_dir, rf))
     c = m.get("controller")
     if c:
         add_release(os.path.dirname(c))
@@ -1638,6 +1643,483 @@ PY
             *) echo "$line" ;;
         esac
     done <<<"$out"
+}
+
+# ══════════════════════ 回滚(§4.8 / §4.10;第 5 层)══════════════════════
+# 回滚只在固化执行体里跑(controller/rollback.sh → bm_controller_main → bm_rollback_main):不 checkout、不出网、不构建。
+# 站点参数一律取自目标 release 的 manifest.site(部署当时的值),不读工作树 ini。
+
+# 事务 id 对应的材料目录:release 事务 = releases/<txn>;rollback 事务 = deploy-state/txns/<txn>
+bm_txn_dir() {  # txn_id
+    if [ -d "$BM_RELEASES_DIR/$1" ]; then echo "$BM_RELEASES_DIR/$1"; else echo "$BM_STATE_DIR/txns/$1"; fi
+}
+# 按 manifest.site 装配站点变量(回滚 / --status 的目标上下文)
+bm_apply_site_from_manifest() {  # manifest_file
+    local m="$1"
+    NGINX_HTML_DIR="$(deploy_json_get "$m" site.html_dir "${NGINX_HTML_DIR:-}")"
+    NGINX_SITE_FILE="$(deploy_json_get "$m" site.site_file "${NGINX_SITE_FILE:-}")"
+    NGINX_SITE_ENABLED_FILE="$(deploy_json_get "$m" site.enabled_file "${NGINX_SITE_ENABLED_FILE:-}")"
+    NGINX_DEFAULT_SITE_FILE="$(deploy_json_get "$m" site.default_site_file "${NGINX_DEFAULT_SITE_FILE:-}")"
+    NGINX_SERVER_NAME="$(deploy_json_get "$m" site.server_name "${NGINX_SERVER_NAME:-_}")"
+    NGINX_LISTEN_PORT="$(deploy_json_get "$m" site.listen_port "${NGINX_LISTEN_PORT:-80}")"
+    NGINX_ENABLE_SSL="$(deploy_json_get "$m" site.enable_ssl "${NGINX_ENABLE_SSL:-false}")"
+    NGINX_SSL_LISTEN_PORT="$(deploy_json_get "$m" site.ssl_listen_port "${NGINX_SSL_LISTEN_PORT:-443}")"
+    NGINX_SSL_REDIRECT="$(deploy_json_get "$m" site.ssl_redirect "${NGINX_SSL_REDIRECT:-true}")"
+    BACKEND_PROXY_HOST="$(deploy_json_get "$m" site.backend_host "${BACKEND_PROXY_HOST:-127.0.0.1}")"
+    BACKEND_PROXY_PORT="$(deploy_json_get "$m" site.backend_port "${BACKEND_PROXY_PORT:-8088}")"
+    NGINX_BIN="$(deploy_json_get "$m" site.nginx_bin "${NGINX_BIN:-}")"
+    [ -x "$NGINX_BIN" ] || NGINX_BIN="$(command -v nginx || echo "${NGINX_BIN:-nginx}")"
+    NGINX_RELEASES_DIR="$(deploy_json_get "$m" site.releases_dir "${NGINX_RELEASES_DIR:-}")"
+    BM_RB_CONFIG_FILE="$(deploy_json_get "$m" site.config_file "${CONFIG_FILE:-$BM_REPO/config/production.ini}")"
+    export NGINX_HTML_DIR NGINX_SITE_FILE NGINX_SITE_ENABLED_FILE NGINX_DEFAULT_SITE_FILE NGINX_SERVER_NAME NGINX_LISTEN_PORT \
+        NGINX_ENABLE_SSL NGINX_SSL_LISTEN_PORT NGINX_SSL_REDIRECT BACKEND_PROXY_HOST BACKEND_PROXY_PORT NGINX_BIN NGINX_RELEASES_DIR
+}
+
+# 目标选择(§4.10,与 --status 共用;只读):
+#   ① 未完成的 kind=rollback 事务 → 续做同一 target;② 已改宿主的 in-progress deploy → 目标 = 其 prev,recover_from = 该事务;
+#   ③ 否则 last-success.prev,recover_from = last-success;④ last-success 本身是 rollback 的结果 → 默认拒绝,--to 只接受相邻的那个。
+# 输出 BM_RB_MODE(resume|failed-deploy|last-success|forward)、BM_RB_TARGET_MANIFEST、BM_RB_TARGET_RELEASE、BM_RB_RECOVER_FROM、
+# BM_RB_RECOVER_DIR、BM_RB_ROLLED_BACK_JSON、BM_RB_RESTORE_SOURCE、BM_RB_RESTORE_AT;失败返回非零并设 BM_RB_REASON。
+bm_select_rollback_target() {  # [--to txn]
+    local to="${1:-}" src kind
+    BM_RB_MODE=""; BM_RB_TARGET_MANIFEST=""; BM_RB_TARGET_RELEASE=""; BM_RB_RECOVER_FROM=""; BM_RB_RECOVER_DIR=""
+    BM_RB_ROLLED_BACK_JSON="null"; BM_RB_RESTORE_SOURCE=""; BM_RB_RESTORE_AT=""; BM_RB_REASON=""
+    if [ -f "$BM_IN_PROGRESS" ]; then
+        kind="$(bm_manifest_get kind "")"
+        case "$kind" in
+            rollback)
+                BM_RB_MODE="resume"
+                BM_RB_TARGET_RELEASE="$(bm_manifest_get target.release "")"
+                BM_RB_TARGET_MANIFEST="$BM_RB_TARGET_RELEASE/manifest.json"
+                BM_RB_RECOVER_FROM="$(bm_manifest_get recover_from "")"
+                BM_RB_RECOVER_DIR="$(bm_txn_dir "$BM_RB_RECOVER_FROM")"
+                BM_RB_ROLLED_BACK_JSON="$(bm_manifest_get prev null)"
+                BM_RB_RESTORE_SOURCE="$(bm_manifest_get db.restore_source "")"
+                return 0 ;;
+            adopt)
+                BM_RB_REASON="收养事务 $(bm_manifest_get txn_id ?) 未完成:先 ./deploy.sh --adopt 续做(收养完成前没有回滚点)"; return 1 ;;
+            deploy)
+                if bm_txn_host_untouched; then
+                    BM_RB_REASON="untouched"; return 2
+                fi
+                src="$BM_IN_PROGRESS"; BM_RB_MODE="failed-deploy" ;;
+            *) BM_RB_REASON="in-progress.json 的 kind 不可识别"; return 1 ;;
+        esac
+    else
+        [ -f "$BM_LAST_SUCCESS" ] || { BM_RB_REASON="没有 last-success:真首装或尚未收养,无回滚点"; return 1; }
+        src="$BM_LAST_SUCCESS"; BM_RB_MODE="last-success"
+        if [ "$(deploy_json_get "$src" kind "")" = "rollback" ]; then
+            local prev_txn; prev_txn="$(deploy_json_get "$src" prev.txn_id "")"
+            if [ -z "$to" ]; then
+                BM_RB_REASON="上一版是刚被回滚掉的 $(deploy_json_get "$src" prev.ref ?)($(deploy_json_get "$src" prev.code_sha - | cut -c1-7));要回去请  ./deploy.sh --code $(deploy_json_get "$src" prev.code_sha ?)  或  ./deploy.sh --rollback --to ${prev_txn:-?}"
+                return 1
+            fi
+            [ "$to" = "$prev_txn" ] || { BM_RB_REASON="--to 只接受相邻的那个事务(${prev_txn:-无});更早的版本用 ./deploy.sh --code <sha>"; return 1; }
+            BM_RB_MODE="forward"
+        elif [ -n "$to" ]; then
+            [ "$to" = "$(deploy_json_get "$src" prev.txn_id "")" ] || { BM_RB_REASON="--to 只接受相邻的那个事务($(deploy_json_get "$src" prev.txn_id 无))"; return 1; }
+        fi
+    fi
+    # 目标 = src.prev;recover_from = src 自己
+    local prev_release; prev_release="$(deploy_json_get "$src" prev.release "")"
+    if [ -z "$prev_release" ] || [ "$(deploy_json_get "$src" prev "null")" = "null" ]; then
+        BM_RB_REASON="事务 $(deploy_json_get "$src" txn_id ?) 没有回滚点(prev=null:首装或放弃了回滚保证);更早的版本用 ./deploy.sh --code <sha>"
+        return 1
+    fi
+    BM_RB_TARGET_RELEASE="$prev_release"
+    BM_RB_TARGET_MANIFEST="$prev_release/manifest.json"
+    BM_RB_RECOVER_FROM="$(deploy_json_get "$src" txn_id "")"
+    BM_RB_RECOVER_DIR="$(bm_txn_dir "$BM_RB_RECOVER_FROM")"
+    BM_RB_ROLLED_BACK_JSON="$(python3 - "$src" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1], encoding="utf-8"))
+t = m.get("target") or {}
+print(json.dumps({"txn_id": m.get("txn_id"), "kind": m.get("kind"), "ref": t.get("ref"), "code_sha": t.get("code_sha"),
+                  "release": t.get("release"), "venv": t.get("venv"), "dist": t.get("dist")}, ensure_ascii=False))
+PY
+)"
+    BM_RB_RESTORE_SOURCE="$(deploy_json_get "$src" db.snapshot "")"
+    BM_RB_RESTORE_AT="$(deploy_json_get "$src" db.snapshot_at "")"
+    return 0
+}
+
+# 材料门(§4.10):目标 release 的代码 / dist / venv 凭据 / nginx 快照全部在
+bm_rollback_material_check() {  # target_release target_manifest
+    local rel="$1" m="$2" dist venv
+    [ -f "$m" ] || { BM_RB_REASON="目标 release 没有 manifest.json($m)"; return 1; }
+    [ -f "$rel/app.sha256" ] && bm_verify_sha256 "$rel/app" "$rel/app.sha256" || { BM_RB_REASON="目标代码副本与 app.sha256 不符或缺失($rel)"; return 1; }
+    dist="$(deploy_json_get "$m" target.dist "$rel/dist")"
+    [ -d "$dist" ] && [ -f "$rel/dist.sha256" ] && bm_verify_sha256 "$dist" "$rel/dist.sha256" || { BM_RB_REASON="目标 dist 与 dist.sha256 不符或缺失($dist)"; return 1; }
+    venv="$(deploy_json_get "$m" target.venv "")"
+    [ -n "$venv" ] && [ -f "$venv/.dorami-complete" ] && [ -x "$venv/bin/python" ] || { BM_RB_REASON="目标 venv 缺完成凭据或不可用($venv)"; return 1; }
+    [ -f "$rel/nginx/snapshot.json" ] || { BM_RB_REASON="目标 release 没有 nginx 配置集合快照($rel/nginx/snapshot.json)"; return 1; }
+    return 0
+}
+
+# DB 处置(§4.8 分流表):输出 BM_RB_DB_ACTION(none|migrate|restore|rescue-only)与 BM_RB_DB_PLAN_JSON;返回非零 = 拒绝(BM_RB_REASON,
+# BM_RB_RC 为退出码)
+bm_rollback_db_decide() {  # target_manifest db_path restore_db(0/1) no_rescue(0/1)
+    local m="$1" db="$2" restore="$3" no_rescue="$4" rel app venv plan status kind pending
+    rel="$(deploy_json_get "$m" target.release "")"; app="$rel/app"; venv="$(deploy_json_get "$m" target.venv "")"
+    BM_RB_DB_ACTION="none"; BM_RB_RC=1
+    if [ -z "$db" ]; then
+        BM_RB_DB_PLAN_JSON='{"status": "n/a", "detail": "非 SQLite 库:回滚不处置数据库", "pending_count": 0}'
+        return 0
+    fi
+    plan="$(bm_db_plan "$app" "$venv" "$BM_RB_CONFIG_FILE" "$db")" || { BM_RB_REASON="迁移计划执行失败"; return 1; }
+    BM_RB_DB_PLAN_JSON="$plan"
+    status="$(printf '%s' "$plan" | python3 -c 'import json, sys; print(json.load(sys.stdin)["status"])')"
+    pending="$(printf '%s' "$plan" | python3 -c 'import json, sys; print(json.load(sys.stdin)["pending_count"])')"
+    kind="$(printf '%s' "$plan" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("error_kind", ""))')"
+    case "$status" in
+        compatible)
+            if [ "$pending" -gt 0 ]; then BM_RB_DB_ACTION="migrate"; else BM_RB_DB_ACTION="none"; fi
+            if [ "$restore" = 1 ]; then
+                BM_RB_REASON="目标代码认识当前库(compatible),不需要 --restore-db;去掉该参数重试"; BM_RB_RC="$BM_RC_USAGE"; return 1
+            fi
+            return 0 ;;
+        incompatible)
+            if [ "$restore" = 1 ]; then
+                [ -n "$BM_RB_RESTORE_SOURCE" ] && [ -f "$BM_RB_RESTORE_SOURCE" ] \
+                    || { BM_RB_REASON="需要恢复库,但记录的快照不存在($BM_RB_RESTORE_SOURCE)"; BM_RB_RC="$BM_RC_NO_TARGET"; return 1; }
+                BM_RB_DB_ACTION="restore"; return 0
+            fi
+            BM_RB_REASON="当前库领先于目标代码的迁移图($(printf '%s' "$plan" | python3 -c 'import json, sys; print(json.load(sys.stdin)["detail"])'));回滚需要恢复快照:
+    快照文件:${BM_RB_RESTORE_SOURCE:-<无>}
+    快照时刻:${BM_RB_RESTORE_AT:-?}    现在:$(bm_now)
+    丢失窗口:快照时刻之后写入的数据在恢复后不存在
+  确认后加 --restore-db 执行(默认拒绝,确认前不改现场)"
+            BM_RB_RC="$BM_RC_NEED_RESTORE_DB"; return 1 ;;
+        fresh|legacy_adoption_required)
+            BM_RB_REASON="迁移计划报 ${status}(库缺失 / 老库形态):现场异常,请人工核对 $db"; BM_RB_RC="$BM_RC_NO_TARGET"; return 1 ;;
+        error)
+            if [ "$kind" = "db_unreadable" ]; then
+                if [ "$restore" = 1 ] && [ "$no_rescue" = 1 ]; then
+                    [ -n "$BM_RB_RESTORE_SOURCE" ] && [ -f "$BM_RB_RESTORE_SOURCE" ] \
+                        || { BM_RB_REASON="当前库不可读且记录的快照不存在($BM_RB_RESTORE_SOURCE)"; BM_RB_RC="$BM_RC_NO_TARGET"; return 1; }
+                    BM_RB_DB_ACTION="restore"; return 0
+                fi
+                BM_RB_REASON="当前库无法读取($(printf '%s' "$plan" | python3 -c 'import json, sys; print(json.load(sys.stdin)["detail"])')):受控路径 = --restore-db --no-rescue-snapshot(跳过救援快照,用记录的快照 ${BM_RB_RESTORE_SOURCE:-<无>} 恢复);磁盘满 / 权限错误不属此例"
+                BM_RB_RC="$BM_RC_NEED_RESTORE_DB"; return 1
+            fi
+            BM_RB_REASON="目标迁移图读取失败:$(printf '%s' "$plan" | python3 -c 'import json, sys; print(json.load(sys.stdin)["detail"])')"; BM_RB_RC="$BM_RC_NO_TARGET"; return 1 ;;
+        *) BM_RB_REASON="迁移计划状态不可识别: $status"; return 1 ;;
+    esac
+}
+
+# --rollback 主流程(controller 内,已 cd BM_REPO、已 init paths)
+bm_rollback_main() {  # [--restore-db] [--yes] [--no-rescue-snapshot] [--to txn]
+    local restore=0 yes=0 no_rescue=0 to=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --restore-db) restore=1 ;;
+            --yes) yes=1 ;;
+            --no-rescue-snapshot) no_rescue=1 ;;
+            --to) [ $# -ge 2 ] || bm_fail "$BM_RC_USAGE" "--to 需要 <txn>"; to="$2"; shift ;;
+            *) bm_fail "$BM_RC_USAGE" "未知参数: $1" ;;
+        esac
+        shift
+    done
+    export DORAMI_DEPLOY_LOCK_BUSY_RC="$BM_RC_LOCK"
+    acquire_deploy_lock
+    bm_install_traps
+    bm_reconcile_crash_window
+    # 现场采样需要站点参数:先用 last-success / in-progress 的 site 块装配
+    local site_src=""
+    [ -f "$BM_IN_PROGRESS" ] && site_src="$BM_IN_PROGRESS"
+    [ -z "$site_src" ] && [ -f "$BM_LAST_SUCCESS" ] && site_src="$BM_LAST_SUCCESS"
+    [ -n "$site_src" ] && bm_apply_site_from_manifest "$site_src"
+    bm_sample_running
+    local rc=0
+    bm_select_rollback_target "$to" || rc=$?
+    if [ "$rc" = 2 ]; then
+        echo "    上次部署 $(bm_manifest_get txn_id ?) 在改动宿主之前就失败,现场等于 last-success:归档,无需回滚"
+        bm_txn_archive "auto-closed by --rollback: host untouched"
+        echo "当前运行的仍是 last-success $(deploy_json_get "$BM_LAST_SUCCESS" target.ref ?);要回到更早一版请再次 ./deploy.sh --rollback"
+        exit 0
+    fi
+    [ "$rc" = 0 ] || bm_fail "$BM_RC_NO_TARGET" "$BM_RB_REASON"
+    bm_apply_site_from_manifest "$BM_RB_TARGET_MANIFEST"
+    bm_rollback_material_check "$BM_RB_TARGET_RELEASE" "$BM_RB_TARGET_MANIFEST" || bm_fail "$BM_RC_NO_TARGET" "回滚材料门未通过:$BM_RB_REASON"
+    local t_ref t_sha db_path
+    t_ref="$(deploy_json_get "$BM_RB_TARGET_MANIFEST" target.ref ?)"; t_sha="$(deploy_json_get "$BM_RB_TARGET_MANIFEST" target.code_sha "")"
+    if [ "$BM_RB_MODE" = "resume" ]; then
+        db_path="$(bm_manifest_get db.target "")"
+        BM_RB_DB_ACTION="$(bm_manifest_get db.action none)"
+        echo "    续做回滚事务 $(bm_manifest_get txn_id ?) → ${t_ref}(${t_sha:0:7});completed=$(bm_manifest_get stage.completed ?) intent=$(bm_manifest_get stage.intent ?)"
+        BM_TXN_OPEN=1
+        bm_rollback_run
+        return 0
+    fi
+    # DB 目标:被回滚事务记录的 db.target(与快照 / 计划共用同一个值,§4.7)
+    db_path="$(deploy_json_get "$BM_RB_RECOVER_DIR/manifest.json" db.target "")"
+    [ -n "$db_path" ] || db_path="$(deploy_json_get "$([ -f "$BM_IN_PROGRESS" ] && echo "$BM_IN_PROGRESS" || echo "$BM_LAST_SUCCESS")" db.target "")"
+    [ -n "$db_path" ] || db_path="$(deploy_json_get "$BM_RB_TARGET_MANIFEST" db.target "")"
+    if ! bm_rollback_db_decide "$BM_RB_TARGET_MANIFEST" "$db_path" "$restore" "$no_rescue"; then
+        bm_fail "${BM_RB_RC:-1}" "$BM_RB_REASON"
+    fi
+    local rb_ref rb_sha
+    rb_ref="$(printf '%s' "$BM_RB_ROLLED_BACK_JSON" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("ref") or "?")')"
+    rb_sha="$(printf '%s' "$BM_RB_ROLLED_BACK_JSON" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("code_sha") or "")')"
+    echo "=================================================="
+    echo "  回滚:${rb_ref}(${rb_sha:0:7},事务 ${BM_RB_RECOVER_FROM})  →  ${t_ref}(${t_sha:0:7})"
+    echo "  模式:${BM_RB_MODE};目标 release:${BM_RB_TARGET_RELEASE}"
+    case "$BM_RB_DB_ACTION" in
+        none) echo "  数据库:目标代码认识当前库,不覆盖(先做救援快照)" ;;
+        migrate) echo "  数据库:目标代码认识当前库,回滚将向前补 $(printf '%s' "$BM_RB_DB_PLAN_JSON" | python3 -c 'import json, sys; print(json.load(sys.stdin)["pending_count"])') 个迁移(先做救援快照)" ;;
+        restore) echo "  数据库:--restore-db,用快照 ${BM_RB_RESTORE_SOURCE}(${BM_RB_RESTORE_AT:-?})覆盖当前库$( [ "$no_rescue" = 1 ] && echo '(不做救援快照)' || echo '(先做救援快照)')" ;;
+    esac
+    echo "  动作:撤销 ${BM_RB_RECOVER_FROM} 的 nginx 变更集 → 恢复目标 nginx 集合 → pm2 delete → 救援快照 → DB 处置 → 切链接 → pm2 start → pm2 save → nginx reload → 两级健康门"
+    echo "=================================================="
+    if [ "$yes" != 1 ]; then
+        if [ -t 0 ]; then
+            printf '输入 yes 确认回滚: '
+            local answer; read -r answer
+            [ "$answer" = "yes" ] || bm_fail "$BM_RC_USAGE" "未确认,回滚取消(现场未改动)"
+        else
+            bm_fail "$BM_RC_USAGE" "非交互环境需要 --yes 确认回滚(现场未改动)"
+        fi
+    fi
+    # 开回滚事务(kind=rollback;无新 release,材料目录 deploy-state/txns/<txn>)。失败部署的 in-progress 先归档到
+    # closed/(其 release 材料与 nginx 变更集留在 releases/<txn>,回滚事务以 recover_from 引用它)
+    local txn; txn="rb-$(bm_txn_id "${t_sha:0:7}")"
+    if [ "$BM_RB_MODE" = "failed-deploy" ]; then
+        bm_txn_archive "superseded by rollback $txn"
+    fi
+    mkdir -p "$BM_STATE_DIR/txns/$txn/nginx"
+    BM_TXN_KIND="rollback"; BM_TXN_MODE="rollback"
+    BM_TXN_TARGET_JSON="$(python3 - "$BM_RB_TARGET_MANIFEST" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1], encoding="utf-8"))
+t = dict(m.get("target") or {})
+t["txn_id"] = m.get("txn_id")
+print(json.dumps(t, ensure_ascii=False))
+PY
+)"
+    BM_TXN_PREV_JSON="$BM_RB_ROLLED_BACK_JSON"
+    BM_TXN_CAPS_JSON="$(deploy_json_get "$BM_RB_TARGET_MANIFEST" capabilities '{}')"
+    BM_TXN_SITE_JSON="$(deploy_json_get "$BM_RB_TARGET_MANIFEST" site '{}')"
+    BM_TXN_RECOVER_FROM="$BM_RB_RECOVER_FROM"
+    BM_TXN_DB_JSON="$(python3 -c 'import json, sys; print(json.dumps({"target": sys.argv[1], "snapshot": None, "snapshot_at": None, "rescue_snapshot": None, "restore_source": sys.argv[2] or None, "restore_source_at": sys.argv[3] or None, "action": sys.argv[4], "no_rescue": sys.argv[5] == "1", "plan": json.loads(sys.argv[6]), "heads_before": []}))' \
+        "$db_path" "$BM_RB_RESTORE_SOURCE" "$BM_RB_RESTORE_AT" "$BM_RB_DB_ACTION" "$no_rescue" "$BM_RB_DB_PLAN_JSON")"
+    BM_CONTROLLER_DIR="${BM_CONTROLLER_DIR:-$BM_LIB_DIR}"
+    bm_txn_open "$txn"
+    deploy_json_set "$BM_IN_PROGRESS" materials "$BM_STATE_DIR/txns/$txn" || true
+    bm_rollback_run
+}
+
+# 回滚阶段主体(首次与续做共用)
+bm_rollback_run() {
+    local seq="$BM_STAGES_ROLLBACK" target_rel app venv dist t_ref t_sha recover_dir db action no_rescue txn materials
+    txn="$(bm_manifest_get txn_id ?)"; materials="$(bm_manifest_get materials "$BM_STATE_DIR/txns/$txn")"
+    target_rel="$(bm_manifest_get target.release "")"; app="$target_rel/app"; venv="$(bm_manifest_get target.venv "")"
+    dist="$(bm_manifest_get target.dist "$target_rel/dist")"
+    t_ref="$(bm_manifest_get target.ref "")"; t_sha="$(bm_manifest_get target.code_sha "")"
+    recover_dir="$(bm_txn_dir "$(bm_manifest_get recover_from "")")"
+    db="$(bm_manifest_get db.target "")"; action="$(bm_manifest_get db.action none)"; no_rescue="$(bm_manifest_get db.no_rescue false)"
+    bm_apply_site_from_manifest "$BM_IN_PROGRESS"
+
+    if bm_stage_needed "$seq" nginx_reverted; then
+        bm_stage_intent nginx_reverted
+        # 回滚自身的 nginx 动作也记变更集(受影响集合 = 目标快照与 recover_from 变更集的并集)
+        python3 - "$recover_dir/nginx/changes.json" "$target_rel/nginx/snapshot.json" <<'PY' | sort -u >"$materials/nginx/affected"
+import json, sys
+for p in sys.argv[1:]:
+    try:
+        for row in json.load(open(p, encoding="utf-8")).get("changes", []):
+            print(row["path"])
+    except Exception:
+        pass
+PY
+        local affected=()
+        while IFS= read -r line; do [ -n "$line" ] && affected+=("$line"); done <"$materials/nginx/affected"
+        [ -f "$materials/nginx/changes.json" ] || bm_nginx_record_state "$materials/nginx/changes.json" ${affected[@]+"${affected[@]}"} \
+            || bm_fail "$BM_RC_STEP" "记录回滚的 nginx 变更集失败"
+        if [ -f "$recover_dir/nginx/changes.json" ]; then
+            echo "    nginx:撤销 $(basename "$recover_dir") 的变更集"
+            bm_nginx_apply_state "$recover_dir/nginx/changes.json" || bm_fail "$BM_RC_STEP" "撤销 nginx 变更集失败"
+        fi
+        bm_stage_done nginx_reverted
+    fi
+    if bm_stage_needed "$seq" nginx_restored; then
+        bm_stage_intent nginx_restored
+        echo "    nginx:恢复目标 release 的配置集合快照"
+        bm_nginx_apply_state "$target_rel/nginx/snapshot.json" || bm_fail "$BM_RC_STEP" "恢复 nginx 快照失败"
+        ${SUDO:-} "$NGINX_BIN" -t || bm_fail "$BM_RC_STEP" "恢复后 nginx -t 未通过"
+        bm_stage_done nginx_restored
+    fi
+    if bm_stage_needed "$seq" process_stopped; then
+        bm_stage_intent process_stopped
+        bm_pm2_stop
+        bm_stage_done process_stopped
+    fi
+    if bm_stage_needed "$seq" db_rescued; then
+        bm_stage_intent db_rescued
+        if [ -n "$db" ] && [ -f "$db" ] && [ "$no_rescue" != "true" ] && [ -z "$(bm_manifest_get db.rescue_snapshot "")" ]; then
+            local rescue="$BM_SNAPSHOT_DIR/$txn/$(basename "$db" | sed 's/\.[^.]*$//').rescue.sqlite"
+            sqlite_snapshot "$db" "$rescue" || bm_fail "$BM_RC_STEP" "救援快照失败: $rescue"
+            deploy_json_set "$BM_IN_PROGRESS" db.rescue_snapshot "$rescue" && deploy_json_set "$BM_IN_PROGRESS" db.snapshot "$rescue" \
+                && deploy_json_set "$BM_IN_PROGRESS" db.snapshot_at "$(bm_now)" || bm_fail "$BM_RC_STEP" "记录救援快照失败"
+            echo "    救援快照:$rescue(只创建一次)"
+        elif [ "$no_rescue" = "true" ]; then
+            echo "    救援快照:--no-rescue-snapshot 显式跳过(当前库不可读)"
+        fi
+        bm_stage_done db_rescued
+    fi
+    if bm_stage_needed "$seq" db_restored; then
+        bm_stage_intent db_restored
+        case "$action" in
+            restore) bm_db_restore "$(bm_manifest_get db.restore_source "")" "$db" "$app" "$venv" ;;
+            migrate)
+                echo "    数据库:向前补迁移(目标上下文)"
+                bm_db_migrate "$app" "$venv" "$BM_RB_CONFIG_FILE" ;;
+            *) echo "    数据库:不覆盖" ;;
+        esac
+        bm_stage_done db_restored
+    fi
+    if bm_stage_needed "$seq" links_switched; then
+        bm_stage_intent links_switched
+        bm_switch_links "$app" "$dist"
+        bm_stage_done links_switched
+    fi
+    if bm_stage_needed "$seq" process_started; then
+        bm_stage_intent process_started
+        bm_pm2_start "$target_rel" "$t_ref" "$t_sha" "$BM_RB_CONFIG_FILE"
+        bm_stage_done process_started
+    fi
+    ensure_nginx_running_or_reload
+    if bm_stage_needed "$seq" health_ok; then
+        bm_stage_intent health_ok
+        local version
+        version="$(grep -o '__version__ = "[^"]*"' "$app/src/version.py" 2>/dev/null | head -1 | sed 's/.*"\(.*\)"/\1/')"
+        if ! bm_health_gates "$dist" "$version" "$t_ref" "$t_sha"; then
+            bm_alert_health_failed "$t_ref" "$t_sha" "回滚后健康门未通过:$BM_GATE_REASON"
+            bm_fail "$BM_RC_STEP" "回滚未完成(事务保留;再次 ./deploy.sh --rollback 续做同一目标,或 pm2 logs $BM_APP_NAME 排查)"
+        fi
+        bm_stage_done health_ok
+    fi
+    bm_stage_intent promoted
+    bm_txn_promote
+    bm_cleanup
+    echo ""
+    echo "Rollback complete. 现在运行 ${t_ref}(${t_sha:0:7});被回滚掉的版本可用 ./deploy.sh --code <sha> 重新部署"
+}
+
+# 恢复协议(§4.8 --restore-db):校验恢复源(可打开、integrity_check、alembic_version 在目标图内)→ 同目录临时文件写入 + fsync →
+# 记录「即将替换」→ 删 -wal/-shm → rename → 核对库身份。写进程已在 process_stopped 阶段退出。
+bm_db_restore() {  # source db app venv
+    local src="$1" db="$2" app="$3" venv="$4" plan status
+    [ -f "$src" ] || bm_fail "$BM_RC_NO_TARGET" "恢复源不存在: $src"
+    python3 - "$src" <<'PY' || bm_fail "$BM_RC_STEP" "恢复源 integrity_check 未通过: $src"
+import sqlite3, sys
+con = sqlite3.connect(sys.argv[1])
+row = con.execute("PRAGMA integrity_check").fetchone(); con.close()
+sys.exit(0 if row and row[0] == "ok" else 1)
+PY
+    plan="$(bm_db_plan "$app" "$venv" "$BM_RB_CONFIG_FILE" "$src")" || bm_fail "$BM_RC_STEP" "恢复源的迁移计划失败"
+    status="$(printf '%s' "$plan" | python3 -c 'import json, sys; print(json.load(sys.stdin)["status"])')"
+    case "$status" in
+        compatible|legacy_adoption_required) ;;
+        *) bm_fail "$BM_RC_NO_TARGET" "恢复源 $src 的 alembic_version 不在目标图内(${status}),拒绝用它覆盖" ;;
+    esac
+    if pm2 describe "$BM_APP_NAME" >/dev/null 2>&1; then
+        bm_fail "$BM_RC_STEP" "写进程 $BM_APP_NAME 仍在,拒绝替换库文件"
+    fi
+    echo "    数据库:用快照 $src 覆盖 $db"
+    deploy_json_set "$BM_IN_PROGRESS" db.replacing true json || bm_fail "$BM_RC_STEP" "记录「即将替换」失败"
+    python3 - "$src" "$db" <<'PY' || bm_fail "$BM_RC_STEP" "替换库文件失败"
+import os, shutil, sys
+src, db = sys.argv[1], sys.argv[2]
+d = os.path.dirname(db) or "."
+os.makedirs(d, exist_ok=True)
+tmp = os.path.join(d, ".restore-" + os.path.basename(db) + ".tmp")
+with open(src, "rb") as fi, open(tmp, "wb") as fo:
+    shutil.copyfileobj(fi, fo, 1 << 20); fo.flush(); os.fsync(fo.fileno())
+for suffix in ("-wal", "-shm"):
+    try:
+        os.unlink(db + suffix)
+    except FileNotFoundError:
+        pass
+os.replace(tmp, db)
+dfd = os.open(d, os.O_RDONLY); os.fsync(dfd); os.close(dfd)
+PY
+    deploy_json_set "$BM_IN_PROGRESS" db.replacing false json || true
+    deploy_json_set "$BM_IN_PROGRESS" db.restored_at "$(bm_now)" || true
+    plan="$(bm_db_plan "$app" "$venv" "$BM_RB_CONFIG_FILE" "$db")" || bm_fail "$BM_RC_STEP" "替换后迁移计划失败"
+    status="$(printf '%s' "$plan" | python3 -c 'import json, sys; print(json.load(sys.stdin)["status"])')"
+    case "$status" in compatible|legacy_adoption_required) ;; *) bm_fail "$BM_RC_STEP" "替换后库身份核对失败(${status})" ;; esac
+    if [ "$(printf '%s' "$plan" | python3 -c 'import json, sys; print(json.load(sys.stdin)["pending_count"])')" -gt 0 ]; then
+        echo "    恢复源落后于目标代码,补迁移(目标上下文)"
+        bm_db_migrate "$app" "$venv" "$BM_RB_CONFIG_FILE"
+    fi
+}
+
+# --status 的回滚段(与 --rollback 同一目标选择与计划段,只读)
+bm_status_rollback_section() {
+    echo "== 回滚预判 =="
+    local site_src="" rc=0
+    [ -f "$BM_IN_PROGRESS" ] && site_src="$BM_IN_PROGRESS"
+    [ -z "$site_src" ] && [ -f "$BM_LAST_SUCCESS" ] && site_src="$BM_LAST_SUCCESS"
+    [ -n "$site_src" ] && bm_apply_site_from_manifest "$site_src"
+    bm_select_rollback_target "" || rc=$?
+    if [ "$rc" = 2 ]; then
+        echo "   未收口的部署未改动宿主:--rollback 会归档它,无需回滚"; return 0
+    fi
+    if [ "$rc" != 0 ]; then
+        echo "   无回滚目标:$BM_RB_REASON"; return 0
+    fi
+    echo "   模式 ${BM_RB_MODE};目标 $(deploy_json_get "$BM_RB_TARGET_MANIFEST" target.ref ?) ($(deploy_json_get "$BM_RB_TARGET_MANIFEST" target.code_sha - | cut -c1-7)) release=$BM_RB_TARGET_RELEASE;recover_from=$BM_RB_RECOVER_FROM"
+    if ! bm_rollback_material_check "$BM_RB_TARGET_RELEASE" "$BM_RB_TARGET_MANIFEST"; then
+        echo "   ⚠️  材料门:$BM_RB_REASON"; return 0
+    fi
+    bm_apply_site_from_manifest "$BM_RB_TARGET_MANIFEST"
+    local db; db="$(deploy_json_get "$BM_RB_RECOVER_DIR/manifest.json" db.target "$(deploy_json_get "$BM_RB_TARGET_MANIFEST" db.target "")")"
+    if bm_rollback_db_decide "$BM_RB_TARGET_MANIFEST" "$db" 0 0; then
+        case "$BM_RB_DB_ACTION" in
+            none) echo "   DB:目标认识当前库,不覆盖" ;;
+            migrate) echo "   DB:目标认识当前库,回滚将向前补迁移" ;;
+        esac
+    else
+        echo "   DB:$(printf '%s' "$BM_RB_REASON" | head -1)"
+        [ "${BM_RB_RC:-}" = "$BM_RC_NEED_RESTORE_DB" ] && echo "       (需要 --restore-db;快照 ${BM_RB_RESTORE_SOURCE:-<无>} @ ${BM_RB_RESTORE_AT:-?})"
+    fi
+}
+
+# ── 共用小助手(controller 里没有 deploy.sh,这些在库里)──
+truthy() {
+    case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+        1|true|yes|on) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+ensure_nginx_running_or_reload() {
+    if pgrep -x nginx >/dev/null 2>&1; then
+        ${SUDO:-} "$NGINX_BIN" -s reload
+        return
+    fi
+    if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files 2>/dev/null | grep -q '^nginx\.service'; then
+        ${SUDO:-} systemctl start nginx
+    elif command -v service >/dev/null 2>&1 && service nginx status >/dev/null 2>&1; then
+        ${SUDO:-} service nginx start
+    else
+        ${SUDO:-} "$NGINX_BIN"
+    fi
+}
+ensure_traversal_bits() {  # dir:逐级补 others 的 x 位(只补穿越位);补不上只告警
+    local dir="$1" perms
+    while [ "$dir" != "/" ] && [ -n "$dir" ]; do
+        perms="$(${SUDO:-} python3 -c 'import os, stat, sys; print(stat.filemode(os.stat(sys.argv[1]).st_mode))' "$dir" 2>/dev/null || echo "")"
+        case "$perms" in
+            "") ;;
+            *x|*t) ;;
+            *)
+                echo "Adding o+x to $dir (nginx worker needs directory traversal)"
+                ${SUDO:-} chmod o+x "$dir" \
+                    || echo "    ⚠️  无法给 $dir 加穿越位;若 nginx 读不到站点文件,把 dist 放到宿主目录:[nginx] releases_dir = /var/www/dorami-releases"
+                ;;
+        esac
+        dir="$(dirname "$dir")"
+    done
 }
 
 # ── 告警(§4.9 ④):健康门不通过 = 部署失败;红字横幅 + pm2 现状 + 日志尾 + 精确的回滚命令;不自动回滚 ──
