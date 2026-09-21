@@ -30,9 +30,9 @@
   付费回执与本地媒体打包、OSS 依赖清单、独立备份权限、本地保留及 SHA-256 恢复演练。
 - ◉ [deploy-docker.md](./deploy-docker.md) — **Docker 部署(推荐路径)**:compose 双容器形态/
   用法与运维/ini 容器内语义差异/HTTPS/全新服务器部署与迁移/受限网络镜像源。
-- ◉ [deploy-baremetal.md](./deploy-baremetal.md) — **裸机部署(第二条官方路径,v3.39.0 扶正)**:
-  `deploy.sh` = uv + PM2 + 宿主 Nginx;两条路径选型对照/前置软件/脚本七步与六道护栏/
-  ini 两节/HTTPS 两趟部署(certbot certonly 而非 --nginx)/全新服务器与迁移。
+- ◉ [deploy-baremetal.md](./deploy-baremetal.md) — **裸机部署(第二条官方路径,v3.39.0 扶正;issue #126 起 release 形态)**:
+  `deploy.sh` = uv + PM2 + 宿主 Nginx;两条路径选型对照/release 布局/前置软件/流程与护栏/退出码/**回滚**(`--rollback` /
+  `--restore-db` / `--to` / `--code`)/**收养**/ini 两节与环境变量/HTTPS 两趟部署(certbot certonly 而非 --nginx)/全新服务器与迁移。
 - ◉ [release-process.md](./release-process.md) — **发布流程:tag 即发布(2026-09-14)**:合入≠上线,
   annotated tag 是唯一发布单元;`scripts/release.sh` 发版(版本号只在发版时改,PR 不 bump)/
   两条部署脚本按 tag 部署(`--here` 显式例外)/CI 门禁与自动 Release/回滚=切 tag+恢复备份/分支保护清单。

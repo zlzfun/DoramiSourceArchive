@@ -145,6 +145,9 @@ fi
 if [ "$BM_ACTION" != "adopt" ] && [ -n "$BM_ADOPT_SHA" ]; then
     usage >&2; bm_fail "$BM_RC_USAGE" "--adopt-sha 只能与 --adopt 同用"
 fi
+if [ "$BM_NO_RESCUE" = 1 ] && [ "$BM_RESTORE_DB" != 1 ]; then
+    usage >&2; bm_fail "$BM_RC_USAGE" "--no-rescue-snapshot 只能与 --restore-db 同用(且只对已损坏的库生效)"
+fi
 if [ -n "$BM_CODE" ] && { [ "$BM_ACTION" != "deploy" ] || [ ${#BM_DEPLOY_ARGS[@]} -gt 0 ]; }; then
     usage >&2; bm_fail "$BM_RC_USAGE" "--code 不能与版本号 / --here / 其它动作同用"
 fi
@@ -320,13 +323,16 @@ EOF
 
     if [ "$ssl_enabled" = "true" ]; then
         if truthy "$NGINX_SSL_REDIRECT"; then
+            # 非 443 的 TLS 端口跳转要带端口,否则用户从 HTTP 入口落到不存在的 443(站点链路门同样按此核对)
+            local redirect_port=""
+            [ "${NGINX_SSL_LISTEN_PORT:-443}" = "443" ] || redirect_port=":${NGINX_SSL_LISTEN_PORT}"
             cat <<EOF
 server {
     listen ${NGINX_LISTEN_PORT}${NGINX_LISTEN_OPTIONS:+ ${NGINX_LISTEN_OPTIONS}};
     server_name ${NGINX_SERVER_NAME};
 
     location / {
-        return 301 https://\$host\$request_uri;
+        return 301 https://\$host${redirect_port}\$request_uri;
     }
 }
 
@@ -453,7 +459,7 @@ validate_nginx_config() {
         $SUDO grep -F "ssl_certificate_key ${NGINX_SSL_KEY_FILE};" "$NGINX_SITE_FILE" >/dev/null \
             || fail "Nginx SSL key path is not ${NGINX_SSL_KEY_FILE}"
         if truthy "$NGINX_SSL_REDIRECT"; then
-            $SUDO grep -F 'return 301 https://$host$request_uri;' "$NGINX_SITE_FILE" >/dev/null \
+            $SUDO grep -F 'return 301 https://$host' "$NGINX_SITE_FILE" >/dev/null \
                 || fail "Nginx HTTP to HTTPS redirect is not configured"
         fi
     fi
@@ -613,6 +619,26 @@ bm_determine_prev
 # ── 开事务(§4.3):release 目录 → controller → in-progress → 恢复入口;此后任何宿主改动都有发现入口 ──
 TXN_ID="$(bm_txn_id "${DORAMI_BUILD_SHA:0:7}")"
 RELEASE="$BM_RELEASES_DIR/$TXN_ID"
+# dirty 固化的排除集合里由有效配置(ini + 与 config.py 同语义的环境覆盖)生成的项:可变存储的相对根(§4.4)
+DB_DIR_FOR_EXCLUDE=""
+case "$DB_URL" in sqlite:///*) DB_DIR_FOR_EXCLUDE="$(dirname "${DB_URL#sqlite:///}")" ;; esac
+BM_EXTRA_EXCLUDES="$(python3 - "$(ini_get media media_dir data/media)" \
+    "${DORAMI_PODCAST_ARTIFACT_ROOT_DIR:-$(ini_get podcast_artifacts root_dir data/podcast-artifacts)}" \
+    "${DORAMI_BACKUP_LOCAL_DIR:-$(ini_get backup local_dir data/backups)}" \
+    "$DB_DIR_FOR_EXCLUDE" <<'PY'
+import os, sys
+roots = []
+for raw in sys.argv[1:]:
+    raw = (raw or "").strip()
+    if not raw or os.path.isabs(os.path.expanduser(raw)):
+        continue
+    first = os.path.normpath(raw).split(os.sep)[0]
+    if first and first not in (".", "..") and first not in roots:
+        roots.append(first)
+print(" ".join(roots))
+PY
+)"
+export BM_EXTRA_EXCLUDES
 bm_freeze_worktree "$TXN_ID"   # dirty --here 固化成快照(BM_CODE_SHA / BM_DIRTY / BM_PIN_REF)
 BM_TXN_KIND="deploy"; BM_TXN_MODE="$DORAMI_DEPLOY_MODE"
 BM_TXN_TARGET_JSON="$(python3 -c 'import json, sys; print(json.dumps({"ref": sys.argv[1], "code_sha": sys.argv[2], "head_sha": sys.argv[3], "dirty": sys.argv[4] == "true", "release": sys.argv[5], "venv": None, "dist": sys.argv[5] + "/dist", "pin_ref": sys.argv[6] or None}))' \
@@ -643,43 +669,62 @@ bm_stage_done venv_ready
 
 echo "    目标上下文检查(requires-python / 路径探针 / 迁移计划 / 首装门)..."
 bm_check_requires_python "$RELEASE/app" "$BM_VENV_DIR"
-BASELINE_PROBE=""; LS_RELEASE=""
+# 路径基准 = last-success **持久化**的探针结果(paths.mutable),不用当前 ini 重算(§4.7;codex R1 P1-02);
+# 旧 manifest 没有 paths 时无法证明历史布局 → 只能显式重设基准
+BASELINE_PROBE=""; PATHS_FORCED_REBASE=0
 if [ -f "$BM_LAST_SUCCESS" ] && [ "$BM_PREV_JSON" != "null" ]; then
-    LS_RELEASE="$(deploy_json_get "$BM_LAST_SUCCESS" target.release "")"
-    LS_APP="$LS_RELEASE/app"
-    LS_VENV="$(deploy_json_get "$BM_LAST_SUCCESS" target.venv "")"
-    if [ -d "$LS_APP" ] && [ -x "$LS_VENV/bin/python" ]; then
-        BASELINE_PROBE="$(bm_path_probe "$LS_APP" "$LS_VENV" "$CONFIG_FILE" 2>/dev/null || true)"
-        [ -n "$BASELINE_PROBE" ] || echo "    ⚠️  当前运行 release 的路径探针失败,本次不做基准比对"
+    BASELINE_PROBE="$(deploy_json_get "$BM_LAST_SUCCESS" paths "")"
+    if [ -z "$BASELINE_PROBE" ] || [ "$BASELINE_PROBE" = "null" ]; then
+        if [ "${DORAMI_DEPLOY_ACCEPT_PATH_CHANGE:-0}" = 1 ] && [ "$BM_NO_ROLLBACK_GUARANTEE" = 1 ]; then
+            echo "    ⚠️  last-success 没有持久化的路径基准(paths):按显式重设基准处理(prev=null,没有跨存储布局的回滚保证)"
+            BASELINE_PROBE=""; PATHS_FORCED_REBASE=1
+        else
+            bm_fail "$BM_RC_PATH_PROBE" "last-success 没有持久化的路径基准(paths 字段缺失或损坏),无法证明历史存储布局;核对 $BM_LAST_SUCCESS,或显式重设基准:DORAMI_DEPLOY_ACCEPT_PATH_CHANGE=1 ./deploy.sh … --no-rollback-guarantee"
+        fi
     fi
 fi
-bm_check_paths "$RELEASE" "$RELEASE/app" "$BM_VENV_DIR" "$CONFIG_FILE" "$BASELINE_PROBE" "$LS_RELEASE"
+bm_check_paths "$RELEASE" "$RELEASE/app" "$BM_VENV_DIR" "$CONFIG_FILE" "$BASELINE_PROBE"
+if [ "${BM_PATHS_REBASED:-0}" = 1 ] || [ "$PATHS_FORCED_REBASE" = 1 ]; then
+    # 重设存储基准:本次没有回滚点(prev=null / rollback=false),新布局成为之后部署的基准
+    deploy_json_set "$BM_IN_PROGRESS" prev null json && deploy_json_set "$BM_IN_PROGRESS" capabilities.rollback false json \
+        || fail "记录重设基准失败"
+    BM_PREV_JSON="null"; BM_CAP_ROLLBACK=false
+    bm_persist_paths "$BM_PROBE_JSON" "${BM_PATHS_REBASED_FROM:-$(deploy_json_get "$BM_LAST_SUCCESS" paths '{}')}"
+else
+    bm_persist_paths "$BM_PROBE_JSON"
+fi
 if [ "$BM_DB_IS_SQLITE" != 1 ]; then
-    if [ "$BM_NO_ROLLBACK_GUARANTEE" = 1 ]; then
-        echo "    ⚠️  数据库不是 SQLite:--no-rollback-guarantee 显式继续,capabilities.db_restore=false(回滚不恢复库)"
-        deploy_json_set "$BM_IN_PROGRESS" capabilities.db_restore false json || true
-    else
-        bm_fail "$BM_RC_IDENTITY" "数据库不是 SQLite(快照 / 恢复协议只覆盖 SQLite):确认放弃库恢复能力可加 --no-rollback-guarantee 继续"
-    fi
+    # 非 SQLite(§4.1 / codex R1 P2-03):显式放弃库恢复能力后完整继续——不做快照 / 计划 / 恢复,迁移与 taxonomy 照常在目标上下文执行
+    [ "$BM_NO_ROLLBACK_GUARANTEE" = 1 ] \
+        || bm_fail "$BM_RC_IDENTITY" "数据库不是 SQLite(${BM_DB_BACKEND:-unknown};快照 / 恢复协议只覆盖 SQLite):确认放弃库恢复能力可加 --no-rollback-guarantee 继续"
+    echo "    ⚠️  数据库不是 SQLite(${BM_DB_BACKEND}):--no-rollback-guarantee 显式继续,capabilities.db_restore=false(回滚不处置库,迁移照常)"
+    deploy_json_set "$BM_IN_PROGRESS" capabilities.db_restore false json \
+        && deploy_json_set "$BM_IN_PROGRESS" db.target null json \
+        && deploy_json_set "$BM_IN_PROGRESS" db.backend "$BM_DB_BACKEND" \
+        && deploy_json_set "$BM_IN_PROGRESS" db.url_summary "$BM_DB_URL_SUMMARY" \
+        && deploy_json_set "$BM_IN_PROGRESS" db.plan "{\"status\": \"n/a\", \"detail\": \"非 SQLite 库(${BM_DB_BACKEND}):不做计划 / 快照 / 恢复\", \"pending_count\": 0}" json \
+        || fail "记录非 SQLite 库信息失败"
+    PLAN_STATUS="n/a"
+else
+    deploy_json_set "$BM_IN_PROGRESS" db.target "$BM_DB_TARGET" && deploy_json_set "$BM_IN_PROGRESS" db.backend sqlite || fail "记录 DB 目标失败"
+    PLAN_JSON="$(bm_db_plan "$RELEASE/app" "$BM_VENV_DIR" "$CONFIG_FILE" "$BM_DB_TARGET")" || fail "迁移计划执行失败"
+    PLAN_STATUS="$(printf '%s' "$PLAN_JSON" | python3 -c 'import json, sys; print(json.load(sys.stdin)["status"])')"
+    PLAN_PENDING="$(printf '%s' "$PLAN_JSON" | python3 -c 'import json, sys; print(json.load(sys.stdin)["pending_count"])')"
+    PLAN_DETAIL="$(printf '%s' "$PLAN_JSON" | python3 -c 'import json, sys; print(json.load(sys.stdin)["detail"])')"
+    deploy_json_set "$BM_IN_PROGRESS" db.plan "$PLAN_JSON" json || fail "记录迁移计划失败"
+    deploy_json_set "$BM_IN_PROGRESS" db.heads_before "$(printf '%s' "$PLAN_JSON" | python3 -c 'import json, sys; print(json.dumps(json.load(sys.stdin)["current_heads"]))')" json || true
+    case "$PLAN_STATUS" in
+        compatible) echo "    迁移计划:compatible,待执行 ${PLAN_PENDING} 个" ;;
+        legacy_adoption_required) echo "    迁移计划:有业务表无 alembic_version,ensure_migrated 会对齐基线并收养(待执行 ${PLAN_PENDING})" ;;
+        fresh)
+            bm_fresh_gate fresh
+            deploy_json_set "$BM_IN_PROGRESS" capabilities.rollback "$BM_CAP_ROLLBACK" json || true ;;
+        incompatible)
+            bm_fail "$BM_RC_STEP" "数据库与目标代码的迁移图不兼容(${PLAN_DETAIL});先按 docs/deploy-baremetal.md「回滚」恢复对应快照再重试" ;;
+        *)
+            bm_fail "$BM_RC_STEP" "迁移计划失败:${PLAN_DETAIL}" ;;
+    esac
 fi
-deploy_json_set "$BM_IN_PROGRESS" db.target "$BM_DB_TARGET" || fail "记录 DB 目标失败"
-PLAN_JSON="$(bm_db_plan "$RELEASE/app" "$BM_VENV_DIR" "$CONFIG_FILE" "$BM_DB_TARGET")" || fail "迁移计划执行失败"
-PLAN_STATUS="$(printf '%s' "$PLAN_JSON" | python3 -c 'import json, sys; print(json.load(sys.stdin)["status"])')"
-PLAN_PENDING="$(printf '%s' "$PLAN_JSON" | python3 -c 'import json, sys; print(json.load(sys.stdin)["pending_count"])')"
-PLAN_DETAIL="$(printf '%s' "$PLAN_JSON" | python3 -c 'import json, sys; print(json.load(sys.stdin)["detail"])')"
-deploy_json_set "$BM_IN_PROGRESS" db.plan "$PLAN_JSON" json || fail "记录迁移计划失败"
-deploy_json_set "$BM_IN_PROGRESS" db.heads_before "$(printf '%s' "$PLAN_JSON" | python3 -c 'import json, sys; print(json.dumps(json.load(sys.stdin)["current_heads"]))')" json || true
-case "$PLAN_STATUS" in
-    compatible) echo "    迁移计划:compatible,待执行 ${PLAN_PENDING} 个" ;;
-    legacy_adoption_required) echo "    迁移计划:有业务表无 alembic_version,ensure_migrated 会对齐基线并收养(待执行 ${PLAN_PENDING})" ;;
-    fresh)
-        bm_fresh_gate fresh
-        deploy_json_set "$BM_IN_PROGRESS" capabilities.rollback "$BM_CAP_ROLLBACK" json || true ;;
-    incompatible)
-        bm_fail "$BM_RC_STEP" "数据库与目标代码的迁移图不兼容(${PLAN_DETAIL});先按 docs/deploy-baremetal.md「回滚」恢复对应快照再重试" ;;
-    *)
-        bm_fail "$BM_RC_STEP" "迁移计划失败:${PLAN_DETAIL}" ;;
-esac
 
 echo "[4/7] Building frontend(在 release 副本上构建)..."
 bm_stage_intent dist_built
@@ -694,7 +739,11 @@ bm_stage_done nginx_prepared
 
 echo "[6/7] 切换(快照 → 迁移 → taxonomy → 停旧进程 → 切链接 → 起新进程 → pm2 save → nginx reload)..."
 bm_stage_intent db_snapshotted
-bm_db_snapshot "$TXN_ID" "$BM_DB_TARGET"
+if [ "$BM_DB_IS_SQLITE" = 1 ]; then
+    bm_db_snapshot "$TXN_ID" "$BM_DB_TARGET"
+else
+    echo "    DB 快照:非 SQLite 库(${BM_DB_BACKEND}),不做"
+fi
 bm_stage_done db_snapshotted
 
 bm_stage_intent db_migrated

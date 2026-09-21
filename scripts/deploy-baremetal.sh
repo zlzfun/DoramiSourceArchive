@@ -110,14 +110,19 @@ bm_install_traps() {
 # BM_PM2_CWD / BM_PM2_SHA / BM_PM2_REF / BM_PM2_PID;BM_CURRENT_TARGET(current → realpath)/ BM_HTML_TARGET
 # (html_dir 是 symlink → realpath;真实目录 → dir:<realpath>;不存在 → 空);BM_RUN_SHA / BM_RUN_REF / BM_RUN_SRC(health|pm2|none)。
 bm_sample_running() {
-    local host="${BACKEND_PROXY_HOST:-127.0.0.1}" port="${BACKEND_PROXY_PORT:-8088}" health jlist
+    local host="${BACKEND_PROXY_HOST:-127.0.0.1}" port="${BACKEND_PROXY_PORT:-8088}" health jlist jlist_rc=0
     health="$(curl -fsS --connect-timeout 3 --max-time 8 -H 'Cache-Control: no-cache' "http://${host}:${port}/api/health?_=$(date +%s)" 2>/dev/null || true)"
-    jlist="$(pm2 jlist 2>/dev/null || true)"
-    eval "$(python3 - "$BM_APP_NAME" "$health" "$jlist" <<'PY'
+    if command -v pm2 >/dev/null 2>&1; then
+        jlist="$(pm2 jlist 2>/dev/null)" || jlist_rc=$?
+    else
+        jlist=""; jlist_rc=127
+    fi
+    eval "$(python3 - "$BM_APP_NAME" "$health" "$jlist" "$jlist_rc" <<'PY'
 import json, shlex, sys
-app, health, jlist = sys.argv[1], sys.argv[2], sys.argv[3]
+app, health, jlist, jlist_rc = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 out = {"BM_HEALTH_JSON": "", "BM_HEALTH_SHA": "", "BM_HEALTH_REF": "", "BM_HEALTH_VERSION": "",
-       "BM_PM2_PRESENT": "0", "BM_PM2_STATUS": "", "BM_PM2_CWD": "", "BM_PM2_SHA": "", "BM_PM2_REF": "", "BM_PM2_PID": ""}
+       "BM_PM2_PRESENT": "0", "BM_PM2_STATUS": "", "BM_PM2_CWD": "", "BM_PM2_SHA": "", "BM_PM2_REF": "", "BM_PM2_PID": "",
+       "BM_PM2_QUERY": "failed"}
 try:
     h = json.loads(health)
     b = h.get("build") or {}
@@ -127,12 +132,17 @@ try:
     out["BM_HEALTH_VERSION"] = str(h.get("version") or "")
 except Exception:
     pass
-try:
-    # pm2 jlist 偶尔在 JSON 前打印一行升级提示:从第一个 '[' 起解析
-    start = jlist.find("[")
-    procs = json.loads(jlist[start:]) if start >= 0 else []
-except Exception:
-    procs = []
+# pm2 查询结果分三态:ok(拿到有效列表)/ failed(命令失败、坏 JSON、非列表)——「查询失败」不等于「确认没在跑」(§4.1 停机例外)
+procs = []
+if jlist_rc == "0":
+    try:
+        start = jlist.find("[")  # pm2 jlist 偶尔在 JSON 前打印一行升级提示:从第一个 '[' 起解析
+        parsed = json.loads(jlist[start:]) if start >= 0 else None
+        if isinstance(parsed, list):
+            procs = parsed
+            out["BM_PM2_QUERY"] = "ok"
+    except Exception:
+        pass
 for p in procs:
     if p.get("name") != app:
         continue
@@ -160,7 +170,7 @@ PY
         BM_RUN_SHA=""; BM_RUN_REF=""; BM_RUN_SRC="none"
     fi
     export BM_HEALTH_JSON BM_HEALTH_SHA BM_HEALTH_REF BM_HEALTH_VERSION BM_PM2_PRESENT BM_PM2_STATUS BM_PM2_CWD \
-        BM_PM2_SHA BM_PM2_REF BM_PM2_PID BM_CURRENT_TARGET BM_HTML_TARGET BM_RUN_SHA BM_RUN_REF BM_RUN_SRC
+        BM_PM2_SHA BM_PM2_REF BM_PM2_PID BM_PM2_QUERY BM_CURRENT_TARGET BM_HTML_TARGET BM_RUN_SHA BM_RUN_REF BM_RUN_SRC
 }
 
 # 既有部署证据(§4.1 首装门):输出空格分隔的证据名;空 = 真首装候选
@@ -217,22 +227,45 @@ bm_determine_prev() {
         echo "    prev:无 last-success(首装候选),本次部署没有回滚点"
         return 0
     fi
-    local ls_release ls_sha ls_ref ls_app cur_ok=1 run_ok=1 why=""
+    local ls_release ls_sha ls_ref ls_app ls_dist why="" verdict=""
     ls_release="$(deploy_json_get "$BM_LAST_SUCCESS" target.release "")"
     ls_sha="$(deploy_json_get "$BM_LAST_SUCCESS" target.code_sha "")"
     ls_ref="$(deploy_json_get "$BM_LAST_SUCCESS" target.ref "")"
+    ls_dist="$(deploy_json_get "$BM_LAST_SUCCESS" target.dist "$ls_release/dist")"
     ls_app="$(bm_realpath "$ls_release/app")"
     [ -d "$ls_release" ] || why="last-success 的 release 目录不存在($ls_release)"
     if [ -z "$why" ] && [ "$BM_CURRENT_TARGET" != "$ls_app" ]; then
-        cur_ok=0; why="current 指向 ${BM_CURRENT_TARGET:-<无>},不是 last-success 的 $ls_app"
+        why="current 指向 ${BM_CURRENT_TARGET:-<无>},不是 last-success 的 $ls_app"
     fi
+    if [ -z "$why" ] && [ -n "${NGINX_HTML_DIR:-}" ] && [ "$BM_HTML_TARGET" != "$(bm_realpath "$ls_dist")" ]; then
+        why="html_dir 指向 ${BM_HTML_TARGET:-<无>},不是 last-success 的 $ls_dist"
+    fi
+    # 运行身份(§4.1):pm2 进程存在时无论身份来源都核 cwd;pm2 来源还核 sha;health 有响应但身份缺失 / 冲突也是冲突;
+    # 两者都没有 = 「pm2 查询成功且有效列表里没有受管 app」且 health 不可达 → 停机例外:材料门代替运行身份(codex R1 P1-07)
     if [ -z "$why" ]; then
-        if [ -n "$BM_RUN_SHA" ]; then
-            [ "$BM_RUN_SHA" = "$ls_sha" ] || { run_ok=0; why="运行中的构建 sha ${BM_RUN_SHA:0:7}(来源 $BM_RUN_SRC)≠ last-success ${ls_sha:0:7}"; }
-        elif [ "${BM_PM2_PRESENT:-0}" = 1 ]; then
-            [ "$(bm_realpath "$BM_PM2_CWD")" = "$ls_app" ] || { run_ok=0; why="pm2 进程 cwd $BM_PM2_CWD 不是 last-success 的 $ls_app 且无构建 sha 可核"; }
+        if [ "${BM_PM2_PRESENT:-0}" = 1 ]; then
+            if [ "$(bm_realpath "$BM_PM2_CWD")" != "$ls_app" ]; then
+                why="pm2 进程 cwd $BM_PM2_CWD 不是 last-success 的 $ls_app"
+            elif [ -n "$BM_HEALTH_SHA" ] && [ "$BM_HEALTH_SHA" != "$ls_sha" ]; then
+                why="运行中的构建 sha ${BM_HEALTH_SHA:0:7}(来源 health)≠ last-success ${ls_sha:0:7}"
+            elif [ -n "$BM_HEALTH_JSON" ] && [ -z "$BM_HEALTH_SHA" ]; then
+                why="/api/health 有响应但没有构建身份(build.sha 缺失)"
+            elif [ -z "$BM_HEALTH_SHA" ] && [ "$BM_PM2_SHA" != "$ls_sha" ]; then
+                why="pm2 进程的构建 sha ${BM_PM2_SHA:0:7}(来源 pm2)≠ last-success ${ls_sha:0:7}"
+            else
+                verdict="运行身份已核对(pm2 cwd + sha,来源 ${BM_RUN_SRC})"
+            fi
+        elif [ -n "$BM_HEALTH_JSON" ]; then
+            why="/api/health 有响应但 pm2 没有受管进程 ${BM_APP_NAME}(查询 ${BM_PM2_QUERY}):有别的进程在服务端口上"
+        elif [ "${BM_PM2_QUERY:-failed}" != "ok" ]; then
+            why="pm2 查询失败(命令失败 / 输出不是有效列表),无法确认服务是否在运行"
         else
-            echo "    ⚠️  后端未运行(无 /api/health、无 pm2 进程):按 last-success 记录采样 prev"
+            # 停机例外:pm2 有效列表里没有 app、health 不可达 → 复用回滚材料门证明 last-success 仍可恢复
+            if bm_rollback_material_check "$ls_release" "$ls_release/manifest.json"; then
+                verdict="受管服务未运行(pm2 有效列表无 ${BM_APP_NAME}、/api/health 不可达),依据 last-success 及材料门确认回滚点"
+            else
+                why="受管服务未运行且 last-success 的材料不完整($BM_RB_REASON)"
+            fi
         fi
     fi
     if [ -n "$why" ]; then
@@ -241,7 +274,7 @@ bm_determine_prev() {
             BM_CAP_ROLLBACK=false
             return 0
         fi
-        bm_fail "$BM_RC_IDENTITY" "既有部署的身份证据冲突:$why。默认停止(last-success 与材料保留);人工核对 ./deploy.sh --status 后,确认放弃回滚保证可加 --no-rollback-guarantee 继续"
+        bm_fail "$BM_RC_IDENTITY" "既有部署的身份证据冲突:${why}。默认停止(last-success 与材料保留);人工核对 ./deploy.sh --status 后,确认放弃回滚保证可加 --no-rollback-guarantee 继续"
     fi
     BM_PREV_JSON="$(python3 - "$BM_LAST_SUCCESS" <<'PY'
 import json, sys
@@ -251,7 +284,7 @@ print(json.dumps({"txn_id": m.get("txn_id"), "kind": m.get("kind"), "ref": t.get
                   "release": t.get("release"), "venv": t.get("venv"), "dist": t.get("dist")}, ensure_ascii=False))
 PY
 )"
-    echo "    prev:${ls_ref}(${ls_sha:0:7},txn $(deploy_json_get "$BM_LAST_SUCCESS" txn_id ?))——current / 运行身份一致"
+    echo "    prev:${ls_ref}(${ls_sha:0:7},txn $(deploy_json_get "$BM_LAST_SUCCESS" txn_id ?))——current / html_dir 一致;${verdict}"
 }
 
 # ── 事务(§4.3)──
@@ -339,8 +372,8 @@ EOF
 # 开事务:BM_TXN_KIND / BM_TXN_MODE / BM_TXN_TARGET_JSON / BM_TXN_PREV_JSON / BM_TXN_CAPS_JSON / BM_TXN_SITE_JSON /
 # BM_TXN_RECOVER_FROM / BM_TXN_DB_JSON 由调用方设好;deploy / adopt 事务先 mkdir releases/<txn>(排他),rollback 事务无新 release。
 # 落盘顺序:release 目录 → controller → in-progress(stage=opened)→ 分派入口。此后任何宿主改动都有发现入口。
-bm_txn_open() {  # txn_id [release_dir]
-    local txn="$1" release="${2-}" controller
+bm_txn_open() {  # txn_id [release_dir] [replace]  —— replace:允许原子覆盖已存在的 in-progress(只给失败部署 → 回滚事务的交接用)
+    local txn="$1" release="${2-}" mode="${3-}" controller
     if [ -n "$release" ]; then
         mkdir -p "$BM_RELEASES_DIR"
         mkdir "$release" 2>/dev/null || bm_fail "$BM_RC_STEP" "release 目录已存在,拒绝复用: $release"
@@ -351,7 +384,9 @@ bm_txn_open() {  # txn_id [release_dir]
         [ -n "$controller" ] || bm_fail "$BM_RC_STEP" "rollback 事务需要 BM_CONTROLLER_DIR(当前执行体所在目录)"
     fi
     mkdir -p "$BM_STATE_DIR" "$BM_CLOSED_DIR"
-    [ -f "$BM_IN_PROGRESS" ] && bm_fail "$BM_RC_UNCLOSED" "开事务时发现 in-progress 仍在($(bm_manifest_get txn_id ?)),拒绝覆盖"
+    if [ -f "$BM_IN_PROGRESS" ] && [ "$mode" != "replace" ]; then
+        bm_fail "$BM_RC_UNCLOSED" "开事务时发现 in-progress 仍在($(bm_manifest_get txn_id ?)),拒绝覆盖"
+    fi
     python3 - "$txn" "$BM_TXN_KIND" "$BM_TXN_MODE" "${BM_ORCHESTRATOR_SHA:-}" "$controller" \
         "${BM_TXN_TARGET_JSON:-null}" "${BM_TXN_PREV_JSON:-null}" "${BM_TXN_CAPS_JSON:-{\}}" "${BM_TXN_SITE_JSON:-{\}}" \
         "${BM_TXN_RECOVER_FROM:-}" "${BM_TXN_DB_JSON:-{\}}" "$(bm_now)" <<'PY' | deploy_json_write "$BM_IN_PROGRESS" \
@@ -370,7 +405,7 @@ print(json.dumps({
 PY
     BM_TXN_OPEN=1
     bm_publish_entry
-    echo "    事务 $txn(kind=$BM_TXN_KIND)已落盘:$BM_IN_PROGRESS;恢复入口 $BM_ENTRY"
+    echo "    事务 ${txn}(kind=$BM_TXN_KIND)已落盘:$BM_IN_PROGRESS;恢复入口 $BM_ENTRY"
 }
 
 # 晋升(§4.9 ⑤):in-progress + deployed_at → last-success;manifest 副本进 release;先核对入口再删 in-progress
@@ -410,10 +445,27 @@ PY
 # 归档未收口事务到 closed/(材料不删)
 bm_txn_archive() {  # reason
     local txn; txn="$(bm_manifest_get txn_id unknown)"
-    mkdir -p "$BM_CLOSED_DIR"
-    deploy_json_set "$BM_IN_PROGRESS" closed "{\"at\": \"$(bm_now)\", \"reason\": $(bm_json_str "$1")}" json || true
-    mv -f "$BM_IN_PROGRESS" "$BM_CLOSED_DIR/${txn}.json" || bm_fail "$BM_RC_STEP" "归档事务 $txn 失败"
+    bm_txn_archive_copy "$1"
+    rm -f "$BM_IN_PROGRESS" || bm_fail "$BM_RC_STEP" "归档事务 $txn 失败"
     echo "    事务 $txn 已归档 → $BM_CLOSED_DIR/${txn}.json(材料保留)"
+}
+# 只写 closed/ 副本、不动 in-progress(原子交接的第一步,幂等;codex R1 P1-03):失败部署 → 回滚事务之间任一中断点,
+# in-progress 仍是可被重选的失败部署
+bm_txn_archive_copy() {  # reason
+    local txn; txn="$(bm_manifest_get txn_id unknown)"
+    mkdir -p "$BM_CLOSED_DIR"
+    python3 - "$BM_IN_PROGRESS" "$BM_CLOSED_DIR/${txn}.json" "$(bm_now)" "$1" <<'PY' || bm_fail "$BM_RC_STEP" "写 closed/${txn}.json 失败"
+import json, os, sys, tempfile
+src, dst, at, reason = sys.argv[1:5]
+data = json.load(open(src, encoding="utf-8"))
+data.setdefault("closed", {"at": at, "reason": reason})
+d = os.path.dirname(dst) or "."
+fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp-")
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True); f.flush(); os.fsync(f.fileno())
+os.replace(tmp, dst)
+dfd = os.open(d, os.O_RDONLY); os.fsync(dfd); os.close(dfd)
+PY
 }
 
 # 「last-success 已写、in-progress 未删」的崩溃窗口:先核对 / 修复入口,再幂等删除
@@ -470,16 +522,21 @@ bm_dispatch_unclosed() {
     kind="$(bm_manifest_get kind "")"; txn="$(bm_manifest_get txn_id ?)"
     case "$kind" in
         adopt)
-            echo "    发现未完成的收养事务 $txn(completed=$(bm_manifest_get stage.completed ?) intent=$(bm_manifest_get stage.intent ?)):先续做"
+            echo "    发现未完成的收养事务 ${txn}(completed=$(bm_manifest_get stage.completed ?) intent=$(bm_manifest_get stage.intent ?)):先续做"
             bm_adopt_resume ;;
         rollback)
-            bm_fail "$BM_RC_UNCLOSED" "存在未完成的回滚事务 $txn(completed=$(bm_manifest_get stage.completed ?) intent=$(bm_manifest_get stage.intent ?)):先 ./deploy.sh --rollback 续做同一目标,或 ./deploy.sh --status 查看" ;;
+            # §4.3:rollback 一律续做——在同一把锁内(FD 9 继承)经稳定入口跑固化执行体,回滚开始时已由人确认过 yes;
+            # 续做永不翻转目标;成功后重新采样现场再进入正向流程,失败则事务保留、本次退出
+            echo "    发现未完成的回滚事务 ${txn}(completed=$(bm_manifest_get stage.completed ?) intent=$(bm_manifest_get stage.intent ?)):先经 $BM_ENTRY 续做同一目标"
+            [ -x "$BM_ENTRY" ] || bm_fail "$BM_RC_UNCLOSED" "未完成的回滚事务 $txn 但恢复入口 $BM_ENTRY 不存在,人工检查"
+            "$BM_ENTRY" --rollback --yes || bm_fail "$BM_RC_UNCLOSED" "续做回滚事务 $txn 未完成(事务保留;排查后 ./deploy.sh --rollback 再续做)"
+            bm_sample_running ;;
         deploy)
             if bm_txn_host_untouched; then
                 echo "    上次部署 $txn 在改动宿主之前就失败(completed=$(bm_manifest_get stage.completed ?) intent=$(bm_manifest_get stage.intent ?)),现场等于 prev:自动归档"
                 bm_txn_archive "auto-closed: host untouched"
             else
-                bm_fail "$BM_RC_UNCLOSED" "存在已改动宿主的未收口部署事务 $txn(completed=$(bm_manifest_get stage.completed ?) intent=$(bm_manifest_get stage.intent ?) error=$(bm_manifest_get stage.error 无)):先 ./deploy.sh --rollback 回到上一版,或人工处理后 ./deploy.sh --discard-txn 归档"
+                bm_fail "$BM_RC_UNCLOSED" "存在已改动宿主的未收口部署事务 ${txn}(completed=$(bm_manifest_get stage.completed ?) intent=$(bm_manifest_get stage.intent ?) error=$(bm_manifest_get stage.error 无)):先 ./deploy.sh --rollback 回到上一版,或人工处理后 ./deploy.sh --discard-txn 归档"
             fi ;;
         *)
             bm_fail "$BM_RC_UNCLOSED" "in-progress.json 的 kind 不可识别(${kind:-空}),拒绝继续;人工检查 $BM_IN_PROGRESS" ;;
@@ -492,7 +549,7 @@ bm_discard_txn() {
     [ -f "$BM_IN_PROGRESS" ] || { echo "没有未收口的事务"; return 0; }
     local txn; txn="$(bm_manifest_get txn_id ?)"
     if ! bm_txn_host_untouched && [ "${BM_YES:-0}" != 1 ]; then
-        bm_fail "$BM_RC_USAGE" "事务 $txn(kind=$(bm_manifest_get kind ?))已改动宿主或无法证明未改动:确认已人工恢复现场后加 --yes 再归档,或先 ./deploy.sh --rollback"
+        bm_fail "$BM_RC_USAGE" "事务 ${txn}(kind=$(bm_manifest_get kind ?))已改动宿主或无法证明未改动:确认已人工恢复现场后加 --yes 再归档,或先 ./deploy.sh --rollback"
     fi
     bm_txn_archive "discarded by operator"
 }
@@ -502,7 +559,7 @@ bm_discard_txn() {
 bm_pre_exec_check() {  # tag tag_sha(由 resolve_deploy_ref 在 checkout 前调用)
     local tag="$1" sha="$2"
     if ! git show "${sha}:scripts/deploy-lib.sh" 2>/dev/null | grep -qE '^DORAMI_BAREMETAL_TXN=[0-9]+'; then
-        bm_fail "$BM_RC_NO_TXN_CAP" "目标 $tag(${sha:0:7})的部署脚本没有裸机事务能力(scripts/deploy-lib.sh 未宣告 DORAMI_BAREMETAL_TXN):以 tag 模式切换会换掉本脚本并失去回滚入口。改用当前编排器部署那份代码:  ./deploy.sh --code $tag"
+        bm_fail "$BM_RC_NO_TXN_CAP" "目标 ${tag}(${sha:0:7})的部署脚本没有裸机事务能力(scripts/deploy-lib.sh 未宣告 DORAMI_BAREMETAL_TXN):以 tag 模式切换会换掉本脚本并失去回滚入口。改用当前编排器部署那份代码:  ./deploy.sh --code $tag"
     fi
     bm_pre_deploy_checks
 }
@@ -519,6 +576,12 @@ bm_ensure_adopted() {
     [ -f "$BM_LAST_SUCCESS" ] && return 0
     local ev; ev="$(bm_evidence_for_gate)"
     [ -n "$ev" ] || return 0
+    # 证据来自 release 形态自己(首装事务失败后被 --discard-txn:current / html_dir 已是 symlink)而不是旧形态安装(仓库内 venv)时,
+    # 没有可收养的对象:按首装候选继续(prev=null),不进收养
+    if [ ! -x "$BM_REPO/${VENV_DIR:-venv}/bin/python" ] && { [ -L "$BM_CURRENT_LINK" ] || { [ -n "${NGINX_HTML_DIR:-}" ] && [ -L "$NGINX_HTML_DIR" ]; }; }; then
+        echo "    无 last-success,证据(${ev})来自 release 形态的未晋升事务而非旧形态安装:不收养,按首装候选继续(本次没有回滚点)"
+        return 0
+    fi
     echo "    无 last-success 但有既有部署证据(${ev}):先收养旧形态安装(一次 PM2 重启的维护窗)"
     bm_adopt_main
     # 收养重启了服务、建了 release:证据快照与现场采样都要刷新
@@ -612,6 +675,14 @@ bm_adopt_run() {
         ln -sfn "$venv_real" "$app/venv"
         bm_legacy_venv_detach "$venv_real" "$app"
         bm_mount_points "$release" "$venv_real" "$CONFIG_FILE"
+        # 路径基准 = 原安装上下文(cwd=<repo>、PYTHONPATH=<repo>/src、<repo>/venv)的探针(§4.7 收养基准;codex R1 P1-01):
+        # legacy release 补齐动态挂点并逐项相等,否则在维护窗开始前拒绝;探针结果与 DB 目标持久化进收养 manifest
+        local baseline
+        baseline="$(bm_path_probe "$BM_REPO" "$venv_real" "$CONFIG_FILE")" || bm_fail "$BM_RC_PATH_PROBE" "原安装上下文的路径探针失败(旧代码的 config 无法加载?)"
+        bm_check_paths "$release" "$app" "$venv_real" "$CONFIG_FILE" "$baseline"
+        bm_persist_paths "$BM_PROBE_JSON"
+        deploy_json_set "$BM_IN_PROGRESS" db.target "$BM_DB_TARGET" && deploy_json_set "$BM_IN_PROGRESS" db.backend "${BM_DB_BACKEND:-sqlite}" \
+            || bm_fail "$BM_RC_STEP" "记录 DB 目标失败"
         bm_stage_done venv_ready
     fi
     if bm_stage_needed "$seq" dist_copied; then
@@ -734,7 +805,7 @@ for dp, _, fns in os.walk(sys.argv[1]):
 print(n, b)' "$dist")"
     [ "$want" = "$got" ] || bm_fail "$BM_RC_STEP" "复制后的 dist 文件数 / 字节数不符(源 $want,副本 $got)"
     bm_tree_sha256 "$dist" >"$release/dist.sha256"
-    echo "    dist:复制 $src → $dist($got)"
+    echo "    dist:复制 $src → ${dist}($got)"
 }
 # html_dir 真实目录 → mv 到 <html_dir>.adopt-<txn> + 建 symlink(两步;断电后按现场补建);跨文件系统只复制不 mv
 bm_adopt_switch_html() {  # dist moved
@@ -776,20 +847,29 @@ bm_freeze_worktree() {  # txn_id
     # tag / --code 模式的代码身份 = resolve 出来的目标对象(--code 时 ≠ HEAD);只有 --here 才看工作树
     BM_PIN_REF=""; BM_DIRTY=false; BM_CODE_SHA="${DORAMI_BUILD_SHA:-$head_sha}"
     [ "${DORAMI_DEPLOY_MODE}" = "here" ] || return 0
-    # 排除集合 = 固定项 + 由配置 / 环境 / 挂点映射生成的项(相对仓库根;不依赖目标 .gitignore)
+    # 排除集合 = 固定项 + 由有效配置(含环境覆盖)/ 挂点映射生成的项(BM_EXTRA_EXCLUDES 由 deploy.sh 按 ini + 环境算出;
+    # 相对仓库根;不依赖目标 .gitignore,codex R1 P2-01)
     local excludes="venv venvs releases deploy-state logs data backups .venv frontend/node_modules frontend/dist current config/production.ini config/backend.ini .env"
     local extra p
-    for p in "${VENV_DIR:-venv}" "$BM_RELEASES_DIR" "$BM_VENVS_DIR" "$BM_STATE_DIR" "${NGINX_HTML_DIR:-}" "${BM_EXTRA_EXCLUDES:-}"; do
+    for p in "${VENV_DIR:-venv}" "$BM_RELEASES_DIR" "$BM_VENVS_DIR" "$BM_STATE_DIR" "$BM_SNAPSHOT_DIR" "${NGINX_HTML_DIR:-}" "${NGINX_RELEASES_DIR:-}" ${BM_EXTRA_EXCLUDES:-}; do
         [ -n "$p" ] || continue
         case "$p" in
             "$BM_REPO"/*) extra="${p#"$BM_REPO"/}" ;;
             /*) continue ;;
-            *) extra="$p" ;;
+            .|./) continue ;;
+            *) extra="${p#./}" ;;
         esac
+        extra="${extra%%/}"
+        [ -n "$extra" ] || continue
+        # 配置把可变存储指进了已入库的源码路径(如 media_dir = src/media):不能把源码排除出快照——留给挂点冲突检查拒绝(exit 33)
+        if git cat-file -e "HEAD:$extra" 2>/dev/null; then
+            echo "    ⚠️  排除集合里的 $extra 是已入库的源码路径,不排除(挂点冲突会在目标上下文检查里拒绝)"
+            continue
+        fi
         excludes="$excludes $extra"
     done
-    # 排除集合经临时 excludes 文件生效(显式 pathspec 点名已 ignore 的路径会被 git 拒绝);已跟踪却落在排除集合里的
-    # 文件再从临时 index 里移除——两步合起来才是「独立于目标 .gitignore」的排除
+    # 三步:① 临时 excludes 文件挡未跟踪文件(显式 pathspec 点名已 ignore 的路径会被 git 拒绝);② 目录项从临时 index 显式移除
+    # (已跟踪的也一并移除);③ 数据库通配项按 ls-files 逐个显式移除——不依赖 ignore 优先级,`!` 否定规则也挡不住
     local tmp_index="$BM_STATE_DIR/.tmp-index-$$" excl_file="$BM_STATE_DIR/.tmp-excludes-$$"
     mkdir -p "$BM_STATE_DIR"
     { for p in $excludes; do printf '/%s\n' "$p"; done; printf '*.db\n*.sqlite\n*.db-wal\n*.db-shm\n'; } >"$excl_file"
@@ -797,6 +877,13 @@ bm_freeze_worktree() {  # txn_id
               git read-tree HEAD \
               && git -c core.excludesFile="$excl_file" add -A . >/dev/null \
               && git rm -r -q --cached --ignore-unmatch -- $excludes >/dev/null \
+              && git ls-files -z --cached | python3 -c '
+import subprocess, sys
+paths = [p for p in sys.stdin.buffer.read().split(b"\0") if p]
+hits = [p for p in paths if p.lower().endswith((b".db", b".sqlite", b".db-wal", b".db-shm"))]
+for i in range(0, len(hits), 200):
+    subprocess.run([b"git", b"rm", b"-q", b"--cached", b"--"] + hits[i:i + 200], check=True)
+' \
               && git write-tree) )" \
         || { rm -f "$tmp_index" "$excl_file"; bm_fail "$BM_RC_STEP" "固化工作树失败(git add -A / write-tree)"; }
     rm -f "$tmp_index" "$excl_file"
@@ -831,7 +918,7 @@ bm_archive_code() {  # code_sha release_dir
         [ -e "$app/$m" ] && bm_fail "$BM_RC_STEP" "代码归档里已存在挂点路径 app/$m,与共享挂点冲突;从源码树移除后重试"
     done
     bm_tree_sha256 "$app" >"$2/app.sha256" || bm_fail "$BM_RC_STEP" "写 app.sha256 失败"
-    echo "    代码副本:$app($(wc -l <"$2/app.sha256" | tr -d ' ') 个文件,sha ${sha:0:7})"
+    echo "    代码副本:${app}($(wc -l <"$2/app.sha256" | tr -d ' ') 个文件,sha ${sha:0:7})"
 }
 # 目录内全部普通文件的 sha256 清单(跳过 symlink;相对路径排序)
 bm_tree_sha256() {  # dir
@@ -923,14 +1010,14 @@ PY
     mkdir -p "$BM_VENVS_DIR"
     if [ -f "$BM_VENV_DIR/.dorami-complete" ] && [ -f "$BM_VENV_DIR/inputs.json" ] \
         && [ "$(python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); d.pop("playwright", None); d.pop("built_at", None); print(json.dumps(d, sort_keys=True))' "$BM_VENV_DIR/inputs.json")" = "$(printf '%s' "$inputs_json" | python3 -c 'import json, sys; print(json.dumps(json.load(sys.stdin), sort_keys=True))')" ]; then
-        echo "    venv:复用 $BM_VENV_DIR(指纹 $fp,inputs 一致)"
+        echo "    venv:复用 ${BM_VENV_DIR}(指纹 $fp,inputs 一致)"
         return 0
     fi
     if [ -d "$BM_VENV_DIR" ]; then
         echo "    venv:$BM_VENV_DIR 是半成品或 inputs 不一致,删除重建"
         rm -rf "$BM_VENV_DIR"
     fi
-    echo "    venv:新建 $BM_VENV_DIR(指纹 $fp)"
+    echo "    venv:新建 ${BM_VENV_DIR}(指纹 $fp)"
     if ! uv venv --python "$base_py" "$BM_VENV_DIR"; then
         rm -rf "$BM_VENV_DIR"; bm_fail "$BM_RC_STEP" "uv venv 失败"
     fi
@@ -1043,16 +1130,21 @@ def g(obj, *names, default=""):
             return default
     return obj
 url = g(cfg, "storage", "database_url")
-is_sqlite, db_path = False, ""
+is_sqlite, db_path, backend, url_summary = False, "", "", ""
 try:
     from sqlalchemy.engine import make_url
     u = make_url(url)
-    is_sqlite = u.get_backend_name() == "sqlite"
+    backend = u.get_backend_name()
+    is_sqlite = backend == "sqlite"
     if is_sqlite and u.database and u.database != ":memory:" and not u.database.startswith("file:"):
         db_path = rp(u.database)
+    url_summary = u.render_as_string(hide_password=True) if not is_sqlite else ""
 except Exception:
     if url.startswith("sqlite:///"):
-        is_sqlite, db_path = True, rp(url[len("sqlite:///"):])
+        is_sqlite, db_path, backend = True, rp(url[len("sqlite:///"):]), "sqlite"
+    else:
+        backend = url.split(":", 1)[0] if ":" in url else "unknown"
+        url_summary = backend + "://<unparsed>"
 mutable = {
     "database": db_path,
     "media_dir": rp(g(cfg, "media", "media_dir")),
@@ -1060,18 +1152,21 @@ mutable = {
     "backup_local_dir": rp(g(cfg, "backup", "local_dir")),
 }
 code_bound = {"catalog_path": rp(g(cfg, "taxonomy", "catalog_path"))}
-print(json.dumps({"project_root": os.path.realpath(root), "is_sqlite": is_sqlite, "mutable": mutable, "code_bound": code_bound}, sort_keys=True))
+print(json.dumps({"project_root": os.path.realpath(root), "is_sqlite": is_sqlite, "backend": backend, "url_summary": url_summary,
+                  "mutable": mutable, "code_bound": code_bound}, sort_keys=True))
 PY
 }
 
 # 目标上下文检查(§4.7):可变存储必须解析到 release 之外(靠挂点承接),缺挂点则按探针结果动态补建(仅当归档里无同名路径),
 # 有基准时逐项相等才放行(exit 33)。输出 BM_PROBE_JSON、BM_DB_TARGET、BM_DB_IS_SQLITE。
-bm_check_paths() {  # release app venv config_file baseline_json(空=无基准) [baseline_release]
-    local release="$1" app="$2" venv="$3" cfg="$4" baseline="$5" base_release="${6:-}" probe rel_real pass=0 fix
+bm_check_paths() {  # release app venv config_file baseline_json(空=无基准;{"mutable":…})
+    local release="$1" app="$2" venv="$3" cfg="$4" baseline="$5" probe rel_real pass=0 fix
     rel_real="$(bm_realpath "$release")"
-    [ -n "$base_release" ] && base_release="$(bm_realpath "$base_release")"
-    while [ "$pass" -lt 3 ]; do
+    BM_PATHS_REBASED=0
+    # 有进展就继续补挂点,每轮之后必须重新探测;上限只防死循环(codex R1 P2-02)
+    while :; do
         pass=$((pass + 1))
+        [ "$pass" -le 8 ] || bm_fail "$BM_RC_PATH_PROBE" "路径探针:补建挂点超过 8 轮仍有可变存储解析到 release 内($fix)"
         probe="$(bm_path_probe "$app" "$venv" "$cfg")" || bm_fail "$BM_RC_PATH_PROBE" "目标上下文路径探针失败(目标代码的 config 无法加载?)"
         fix="$(printf '%s' "$probe" | python3 -c '
 import json, os, sys
@@ -1092,33 +1187,65 @@ for key, p in d["mutable"].items():
         mkdir -p "$BM_REPO/$fix"
         ln -sfn "$BM_REPO/$fix" "$app/$fix"
     done
-    [ -z "$fix" ] || bm_fail "$BM_RC_PATH_PROBE" "路径探针:补建挂点后可变存储仍解析到 release 内($fix)"
     if [ -n "$baseline" ]; then
-        python3 - "$probe" "$baseline" "$base_release" <<'PY' || bm_fail "$BM_RC_PATH_PROBE" "路径探针与基准不一致(见上):目标代码在 release 上下文里会读写另一份存储;核对配置后重试"
-import json, os, sys
-probe, base, base_release = json.loads(sys.argv[1]), json.loads(sys.argv[2]), sys.argv[3]
+        # 基准 = 上次成功部署 / 收养时**持久化**的探针结果(§4.7;codex R1 P1-02:不用当前 ini 重算,不跳过任何已知键);
+        # 两边都有的键不等 → exit 33。运维确要迁移存储(换盘)的显式出口:DORAMI_DEPLOY_ACCEPT_PATH_CHANGE=1 且
+        # --no-rollback-guarantee 同用——本次记 prev=null / rollback=false(跨存储布局没有回滚保证),新布局成为之后的基准。
+        local diff
+        if ! diff="$(python3 - "$probe" "$baseline" <<'PY'
+import json, sys
+probe, base = json.loads(sys.argv[1]), json.loads(sys.argv[2])
 bad = []
 for key, p in probe["mutable"].items():
-    b = base.get("mutable", {}).get(key)
+    b = (base.get("mutable") or {}).get(key)
     if b is None or b == "":
         continue  # 基准上下文的代码不认识该配置(更老的版本):不比较
-    if base_release and (b == base_release or b.startswith(base_release + os.sep)):
-        continue  # 基准 release 自己没有这个挂点(配置新增的存储根),它的值落在自己的 release 内,不是有效基准
     if p != b:
         bad.append(f"{key}: 目标={p} 基准={b}")
-if probe.get("is_sqlite") != base.get("is_sqlite"):
-    bad.append(f"数据库后端: 目标 sqlite={probe.get('is_sqlite')} 基准 sqlite={base.get('is_sqlite')}")
+if "backend" in base and probe.get("backend") != base.get("backend"):
+    bad.append(f"数据库后端: 目标={probe.get('backend')} 基准={base.get('backend')}")
 if bad:
-    print("\n".join("    ✗ " + b for b in bad), file=sys.stderr); sys.exit(1)
+    print("\n".join("    ✗ " + b for b in bad)); sys.exit(1)
 PY
-        echo "    路径探针:与基准一致"
+)"; then
+            if [ "${DORAMI_DEPLOY_ACCEPT_PATH_CHANGE:-0}" = 1 ] && [ "${BM_NO_ROLLBACK_GUARANTEE:-0}" = 1 ]; then
+                echo "$diff"
+                echo "    ⚠️  路径基准变化已由 DORAMI_DEPLOY_ACCEPT_PATH_CHANGE=1 + --no-rollback-guarantee 显式接受:此次重设存储基准,没有跨存储布局的回滚保证(prev=null);搬数据是运维自己的事"
+                BM_PATHS_REBASED=1
+                BM_PATHS_REBASED_FROM="$baseline"
+            elif [ "${DORAMI_DEPLOY_ACCEPT_PATH_CHANGE:-0}" = 1 ]; then
+                echo "$diff" >&2
+                bm_fail "$BM_RC_PATH_PROBE" "路径基准变化:DORAMI_DEPLOY_ACCEPT_PATH_CHANGE=1 必须与 --no-rollback-guarantee 同用(跨存储布局的回滚点不成立)"
+            else
+                echo "$diff" >&2
+                bm_fail "$BM_RC_PATH_PROBE" "路径探针与基准不一致(见上):目标代码在 release 上下文里会读写另一份存储。核对配置;确要迁移存储位置请先自行搬数据,再 DORAMI_DEPLOY_ACCEPT_PATH_CHANGE=1 ./deploy.sh … --no-rollback-guarantee 显式重设基准"
+            fi
+        else
+            echo "    路径探针:与基准一致"
+        fi
     else
         echo "    路径探针:无基准(首装),可变存储均在 release 之外"
     fi
     BM_PROBE_JSON="$probe"
     BM_DB_TARGET="$(printf '%s' "$probe" | python3 -c 'import json, sys; print(json.load(sys.stdin)["mutable"]["database"])')"
     BM_DB_IS_SQLITE="$(printf '%s' "$probe" | python3 -c 'import json, sys; print("1" if json.load(sys.stdin)["is_sqlite"] else "0")')"
-    export BM_PROBE_JSON BM_DB_TARGET BM_DB_IS_SQLITE
+    BM_DB_BACKEND="$(printf '%s' "$probe" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("backend") or "")')"
+    BM_DB_URL_SUMMARY="$(printf '%s' "$probe" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("url_summary") or "")')"
+    export BM_PROBE_JSON BM_DB_TARGET BM_DB_IS_SQLITE BM_DB_BACKEND BM_DB_URL_SUMMARY BM_PATHS_REBASED
+}
+# 把探针结果持久化进事务 manifest(paths.mutable 是之后部署的基准;codex R1 P1-02)
+bm_persist_paths() {  # probe_json [rebased_from_json]
+    python3 - "$1" "${2:-}" <<'PY' | deploy_json_write "$BM_STATE_DIR/.tmp-paths-$$.json" || bm_fail "$BM_RC_STEP" "序列化 paths 失败"
+import json, sys
+probe = json.loads(sys.argv[1])
+out = {"mutable": probe.get("mutable") or {}, "code_bound": probe.get("code_bound") or {}, "project_root": probe.get("project_root"),
+       "backend": probe.get("backend"), "url_summary": probe.get("url_summary")}
+if sys.argv[2]:
+    out["rebased_from"] = json.loads(sys.argv[2]).get("mutable")
+print(json.dumps(out, ensure_ascii=False))
+PY
+    deploy_json_set "$BM_IN_PROGRESS" paths "$(cat "$BM_STATE_DIR/.tmp-paths-$$.json")" json || bm_fail "$BM_RC_STEP" "记录 paths 失败"
+    rm -f "$BM_STATE_DIR/.tmp-paths-$$.json"
 }
 
 # ── 迁移计划(§4.8):算法自持,在目标上下文运行(目标 venv + PYTHONPATH + script_location=app/alembic)──
@@ -1161,6 +1288,19 @@ if not db_path:
     finish("error", "数据库不是 SQLite 文件(非 sqlite 后端由 --no-rollback-guarantee 显式处理)", error_kind="not_sqlite")
 if not os.path.exists(db_path):
     finish("fresh", "数据库不存在:目标链将从头建立(是否放行由首装门决定)", pending=ordered(required))
+# 错误分类(§4.8 error 行;codex R1 P1-04):只有「损坏」才是契约例外——SQLITE_CORRUPT(11)/ SQLITE_NOTADB(26)或
+# integrity_check 明确非 ok 记 db_corrupt;权限 / 磁盘 / I/O / 无法归类一律 db_access,不放行跳过救援
+def classify(exc):
+    import sqlite3
+    orig = getattr(exc, "orig", exc)
+    code = getattr(orig, "sqlite_errorcode", None)
+    msg = str(orig).lower()
+    if isinstance(orig, sqlite3.DatabaseError) and not isinstance(orig, sqlite3.OperationalError):
+        if code in (11, 26) or "not a database" in msg or "malformed" in msg:
+            return "db_corrupt"
+    if code in (11, 26) or "file is not a database" in msg or "database disk image is malformed" in msg:
+        return "db_corrupt"
+    return "db_access"
 try:
     url = URL.create("sqlite", database=f"file:{quote(db_path, safe='/')}", query={"mode": "ro", "uri": "true"})
     engine = create_engine(url)
@@ -1168,14 +1308,14 @@ try:
     def _ro(conn, _rec):
         cur = conn.cursor(); cur.execute("PRAGMA query_only=ON"); cur.close()
     with engine.connect() as conn:
+        integrity = conn.exec_driver_sql("PRAGMA integrity_check").scalar()
         current_heads = sorted(MigrationContext.configure(conn).get_current_heads())
         has_tables = "articles" in inspect(conn).get_table_names()
-        integrity = conn.exec_driver_sql("PRAGMA integrity_check").scalar()
     engine.dispose()
 except Exception as exc:
-    finish("error", f"当前库无法读取: {type(exc).__name__}: {exc}", error_kind="db_unreadable")
+    finish("error", f"当前库无法读取: {type(getattr(exc, 'orig', exc)).__name__}: {getattr(exc, 'orig', exc)}", error_kind=classify(exc))
 if integrity != "ok":
-    finish("error", f"当前库 integrity_check 未通过: {integrity}", error_kind="db_unreadable")
+    finish("error", f"当前库 integrity_check 未通过: {integrity}", error_kind="db_corrupt")
 out["current_heads"] = current_heads
 if not current_heads:
     if has_tables:
@@ -1250,7 +1390,7 @@ bm_build_dist() {  # release_dir txn_id  → BM_DIST_DIR
         bm_verify_sha256 "$host_dist" "$release/dist.sha256" || bm_fail "$BM_RC_STEP" "宿主目录 dist 与 dist.sha256 不符"
         BM_DIST_DIR="$host_dist"
     fi
-    echo "    dist:$BM_DIST_DIR($(wc -l <"$release/dist.sha256" | tr -d ' ') 个文件)"
+    echo "    dist:${BM_DIST_DIR}($(wc -l <"$release/dist.sha256" | tr -d ' ') 个文件)"
 }
 
 # ── nginx 变更集(§4.6)──
@@ -1395,20 +1535,25 @@ bm_pm2_start() {  # release_dir ref sha config_file
 bm_health_gates() {  # dist_dir version ref sha  → BM_GATE_REASON
     local dist="$1" version="$2" ref="$3" sha="$4"
     local budget="${DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS:-180}" attempts="${DORAMI_DEPLOY_HEALTH_ATTEMPTS:-90}"
+    local deadline remaining; deadline=$(( $(date +%s) + budget ))   # 三道门共用一个 deadline(codex R1 P2-06)
     BM_GATE_REASON=""
     echo "    健康门 ①:后端身份(http://${BACKEND_PROXY_HOST}:${BACKEND_PROXY_PORT}/api/health 五项)..."
     if ! deploy_wait_healthy "http://${BACKEND_PROXY_HOST}:${BACKEND_PROXY_PORT}/api/health" "$version" "$ref" "$sha" "$budget" "$attempts"; then
         BM_GATE_REASON="后端身份门:${DEPLOY_HEALTH_LAST_VERDICT:-无响应}(预算 ${budget}s,尝试 ${DEPLOY_HEALTH_ATTEMPT} 次)"
         return 1
     fi
-    echo "    健康门 ②:站点链路(经 nginx:index + 主资产摘要 + /api/health)..."
+    remaining=$(( deadline - $(date +%s) ))
+    [ "$remaining" -gt 0 ] || { BM_GATE_REASON="后端身份门通过时预算(${budget}s)已耗尽,站点链路门未执行"; return 1; }
+    echo "    健康门 ②:站点链路(经 nginx:index + 主资产摘要 + /api/health;剩余预算 ${remaining}s)..."
     local out
-    if ! out="$(bm_site_probe "$dist" "$version" "$ref" "$sha" 2>&1)"; then
+    if ! out="$(DORAMI_DEPLOY_PROBE_MAX_TIME="$remaining" bm_site_probe "$dist" "$version" "$ref" "$sha" 2>&1)"; then
         BM_GATE_REASON="站点链路门:${out}"
         return 1
     fi
     local stable="${DORAMI_DEPLOY_STABLE_SECONDS:-10}" pid0 pid1 t0 body verdict
     if [ "$stable" -gt 0 ]; then
+        remaining=$(( deadline - $(date +%s) ))
+        [ "$remaining" -ge "$stable" ] || { BM_GATE_REASON="预算剩余 ${remaining}s 不足以完成 ${stable}s 稳定窗(DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS=${budget})"; return 1; }
         echo "    健康门 ③:稳定窗 ${stable}s(PID 不变、/api/health 持续一致)..."
         pid0="$(bm_pm2_pid)"
         t0=$(date +%s)
@@ -1459,10 +1604,16 @@ else:
     base = f"http://127.0.0.1:{http_port}"
     if name:
         host_header = ["-H", f"Host: {name}"]
+import time
+deadline = time.time() + float(os.environ.get("DORAMI_DEPLOY_PROBE_MAX_TIME") or 60)
 def fetch(url, extra=()):
     fd, tmp = tempfile.mkstemp(prefix="dorami-probe-"); os.close(fd)
     try:
-        r = subprocess.run(["curl", "-sS", "--connect-timeout", "5", "--max-time", "20", "-o", tmp, "-w", "%{http_code}\t%{content_type}\t%{redirect_url}",
+        left = deadline - time.time()
+        if left <= 0:
+            return None, "", "", "预算耗尽"
+        max_time = str(max(1, int(min(20, left))))
+        r = subprocess.run(["curl", "-sS", "--connect-timeout", "5", "--max-time", max_time, "-o", tmp, "-w", "%{http_code}\t%{content_type}\t%{redirect_url}",
                             *resolve, *host_header, *extra, url], capture_output=True, text=True)
         if r.returncode != 0:
             return None, "", "", f"curl 失败 rc={r.returncode}: {r.stderr.strip()[:200]}"
@@ -1520,11 +1671,17 @@ bad = [k for k in exp if got.get(k) != exp[k]]
 if bad:
     fail("经站点的 /api/health 不一致: " + ",".join(f"{k}={got.get(k)}" for k in bad))
 if truthy(ssl) and truthy(ssl_redirect):
+    # 跳转必须落到前面验证过的 HTTPS 入口(origin + 同一路径),不是「随便一个 https」(codex R1 P2-05)
+    from urllib.parse import urlsplit
     b, code, ctype, loc = fetch(http_base + "/")
     if b is None or code not in ("301", "308"):
         fail(f"HTTP 入口未 301 到 https(得到 {code or '不可达'})")
-    if not loc.startswith("https://"):
-        fail(f"HTTP 入口的 Location 不是 https({loc!r})")
+    want_host = name or "127.0.0.1"
+    want_port = int(ssl_port) if str(ssl_port).isdigit() else 443
+    parts = urlsplit(loc)
+    got_port = parts.port or (443 if parts.scheme == "https" else None)
+    if parts.scheme != "https" or (parts.hostname or "").lower() != want_host.lower() or got_port != want_port or (parts.path or "/") != "/":
+        fail(f"HTTP 入口的 Location {loc!r} 不是本站 HTTPS 入口 https://{want_host}{'' if want_port == 443 else ':' + str(want_port)}/")
 print("ok")
 PY
 }
@@ -1580,14 +1737,45 @@ for r in sorted(refs):
     print(r)
 PY
 }
+# 快照引用集合(codex R1 P1-05):in-progress / last-success / 保留期内 closed 与 txns / 引用 release 的 manifest 里
+# db.snapshot / db.rescue_snapshot / db.restore_source 所在目录一律保留;数量策略只作用于集合之外
+bm_referenced_snapshot_dirs() {  # referenced_releases(一行一个) → 一行一个目录
+    python3 - "$BM_STATE_DIR" "$BM_CLOSED_DIR" "$BM_STATE_DIR/txns" "${DORAMI_DEPLOY_CLOSED_KEEP_DAYS:-7}" "$1" <<'PY'
+import glob, json, os, sys, time
+state, closed, txns, keep_days, referenced = sys.argv[1:6]
+files = [os.path.join(state, n) for n in ("in-progress.json", "last-success.json")]
+now = time.time()
+for pattern in (os.path.join(closed, "*.json"), os.path.join(txns, "*", "manifest.json")):
+    for p in glob.glob(pattern):
+        if now - os.path.getmtime(p) <= float(keep_days) * 86400:
+            files.append(p)
+for rel in referenced.split("\n"):
+    if rel:
+        files.append(os.path.join(rel, "manifest.json"))
+dirs = set()
+for p in files:
+    try:
+        db = json.load(open(p, encoding="utf-8")).get("db") or {}
+    except Exception:
+        continue
+    for key in ("snapshot", "rescue_snapshot", "restore_source"):
+        v = db.get(key)
+        if v:
+            dirs.add(os.path.dirname(os.path.realpath(v)))
+for d in sorted(dirs):
+    print(d)
+PY
+}
 bm_cleanup() {  # 按数量清理引用集合之外的 release(3)/ venv(2)/ 快照(10);失败非致命
     local keep_rel="${DORAMI_DEPLOY_KEEP_RELEASES:-3}" keep_venv="${DORAMI_DEPLOY_KEEP_VENVS:-2}" keep_snap="${DORAMI_DEPLOY_KEEP_SNAPSHOTS:-10}"
-    local referenced out line txn
+    local referenced snap_refs out line txn
     referenced="$(bm_referenced_releases)"
-    out="$(python3 - "$BM_RELEASES_DIR" "$BM_VENVS_DIR" "$BM_SNAPSHOT_DIR" "$keep_rel" "$keep_venv" "$keep_snap" "$referenced" "$BM_REPO" <<'PY' || echo "    ⚠️  清理未完成(maintenance_failed),下次重试"
+    snap_refs="$(bm_referenced_snapshot_dirs "$referenced")"
+    out="$(python3 - "$BM_RELEASES_DIR" "$BM_VENVS_DIR" "$BM_SNAPSHOT_DIR" "$keep_rel" "$keep_venv" "$keep_snap" "$referenced" "$BM_REPO" "$snap_refs" <<'PY' || echo "    ⚠️  清理未完成(maintenance_failed),下次重试"
 import json, os, shutil, subprocess, sys
-releases, venvs, snaps, keep_rel, keep_venv, keep_snap, referenced, repo = sys.argv[1:9]
+releases, venvs, snaps, keep_rel, keep_venv, keep_snap, referenced, repo, snap_refs = sys.argv[1:10]
 refs = set(l for l in referenced.split("\n") if l)
+snap_keep = set(l for l in snap_refs.split("\n") if l)
 def opened_at(path):
     for name in ("manifest.json",):
         try:
@@ -1621,11 +1809,12 @@ if os.path.isdir(venvs):
     for d in others[int(keep_venv):]:
         shutil.rmtree(d, ignore_errors=True)
         print(f"    清理 venv {os.path.basename(d)}")
-# 快照目录(按 txn):引用集合里的事务快照不删
+# 快照目录(按 txn):被任何事务 manifest 的 db 字段引用的目录不删(独立于 release 引用集合)
 ref_txns = set(os.path.basename(r) for r in refs)
 if os.path.isdir(snaps):
     sd = [os.path.join(snaps, d) for d in os.listdir(snaps) if os.path.isdir(os.path.join(snaps, d))]
-    others = sorted([d for d in sd if os.path.basename(d) not in ref_txns], key=os.path.getmtime, reverse=True)
+    others = sorted([d for d in sd if os.path.basename(d) not in ref_txns and os.path.realpath(d) not in snap_keep],
+                    key=os.path.getmtime, reverse=True)
     for d in others[int(keep_snap):]:
         shutil.rmtree(d, ignore_errors=True)
         print(f"    清理快照 {os.path.basename(d)}")
@@ -1697,7 +1886,7 @@ bm_select_rollback_target() {  # [--to txn]
                 BM_RB_RESTORE_SOURCE="$(bm_manifest_get db.restore_source "")"
                 return 0 ;;
             adopt)
-                BM_RB_REASON="收养事务 $(bm_manifest_get txn_id ?) 未完成:先 ./deploy.sh --adopt 续做(收养完成前没有回滚点)"; return 1 ;;
+                BM_RB_REASON="收养事务 $(bm_manifest_get txn_id ?) 未完成:./deploy.sh --rollback 或恢复入口会先续做收养(完成前没有回滚点)"; return 1 ;;
             deploy)
                 if bm_txn_host_untouched; then
                     BM_RB_REASON="untouched"; return 2
@@ -1709,9 +1898,14 @@ bm_select_rollback_target() {  # [--to txn]
         [ -f "$BM_LAST_SUCCESS" ] || { BM_RB_REASON="没有 last-success:真首装或尚未收养,无回滚点"; return 1; }
         src="$BM_LAST_SUCCESS"; BM_RB_MODE="last-success"
         if [ "$(deploy_json_get "$src" kind "")" = "rollback" ]; then
-            local prev_txn; prev_txn="$(deploy_json_get "$src" prev.txn_id "")"
+            local prev_txn prev_rel; prev_txn="$(deploy_json_get "$src" prev.txn_id "")"; prev_rel="$(deploy_json_get "$src" prev.release "")"
             if [ -z "$to" ]; then
-                BM_RB_REASON="上一版是刚被回滚掉的 $(deploy_json_get "$src" prev.ref ?)($(deploy_json_get "$src" prev.code_sha - | cut -c1-7));要回去请  ./deploy.sh --code $(deploy_json_get "$src" prev.code_sha ?)  或  ./deploy.sh --rollback --to ${prev_txn:-?}"
+                # 只有晋升过的相邻事务(release 里有 manifest.json)才可 --to;失败过的部署只给 --code(codex R1 P2-04)
+                if [ -n "$prev_rel" ] && [ -f "$prev_rel/manifest.json" ]; then
+                    BM_RB_REASON="上一版是刚被回滚掉的 $(deploy_json_get "$src" prev.ref ?)($(deploy_json_get "$src" prev.code_sha - | cut -c1-7));要回去请  ./deploy.sh --code $(deploy_json_get "$src" prev.code_sha ?)  或  ./deploy.sh --rollback --to ${prev_txn:-?}"
+                else
+                    BM_RB_REASON="上一版是刚被回滚掉的 $(deploy_json_get "$src" prev.ref ?)($(deploy_json_get "$src" prev.code_sha - | cut -c1-7),该事务未曾晋升);要回去请  ./deploy.sh --code $(deploy_json_get "$src" prev.code_sha ?)"
+                fi
                 return 1
             fi
             [ "$to" = "$prev_txn" ] || { BM_RB_REASON="--to 只接受相邻的那个事务(${prev_txn:-无});更早的版本用 ./deploy.sh --code <sha>"; return 1; }
@@ -1746,7 +1940,8 @@ PY
 # 材料门(§4.10):目标 release 的代码 / dist / venv 凭据 / nginx 快照全部在
 bm_rollback_material_check() {  # target_release target_manifest
     local rel="$1" m="$2" dist venv
-    [ -f "$m" ] || { BM_RB_REASON="目标 release 没有 manifest.json($m)"; return 1; }
+    [ -f "$m" ] || { BM_RB_REASON="目标 release 没有 manifest.json($m):该事务未曾晋升,不能作回滚目标(用 ./deploy.sh --code <sha> 正向部署)"; return 1; }
+    [ -f "$rel/controller/rollback.sh" ] || { BM_RB_REASON="目标 release 缺固化执行体($rel/controller/rollback.sh)"; return 1; }
     [ -f "$rel/app.sha256" ] && bm_verify_sha256 "$rel/app" "$rel/app.sha256" || { BM_RB_REASON="目标代码副本与 app.sha256 不符或缺失($rel)"; return 1; }
     dist="$(deploy_json_get "$m" target.dist "$rel/dist")"
     [ -d "$dist" ] && [ -f "$rel/dist.sha256" ] && bm_verify_sha256 "$dist" "$rel/dist.sha256" || { BM_RB_REASON="目标 dist 与 dist.sha256 不符或缺失($dist)"; return 1; }
@@ -1756,21 +1951,30 @@ bm_rollback_material_check() {  # target_release target_manifest
     return 0
 }
 
-# DB 处置(§4.8 分流表):输出 BM_RB_DB_ACTION(none|migrate|restore|rescue-only)与 BM_RB_DB_PLAN_JSON;返回非零 = 拒绝(BM_RB_REASON,
-# BM_RB_RC 为退出码)
-bm_rollback_db_decide() {  # target_manifest db_path restore_db(0/1) no_rescue(0/1)
-    local m="$1" db="$2" restore="$3" no_rescue="$4" rel app venv plan status kind pending
+# DB 处置(§4.8 分流表):输出 BM_RB_DB_ACTION(none|migrate|restore)与 BM_RB_DB_PLAN_JSON、BM_RB_SKIP_RESCUE_REASON;
+# 返回非零 = 拒绝(BM_RB_REASON,BM_RB_RC 为退出码)。跳过救援快照只允许「--restore-db 且当前库属损坏类」(codex R1 P1-04)。
+bm_rollback_db_decide() {  # target_manifest db_path restore_db(0/1) no_rescue(0/1) [backend]
+    local m="$1" db="$2" restore="$3" no_rescue="$4" backend="${5:-sqlite}" rel app venv plan status kind pending
     rel="$(deploy_json_get "$m" target.release "")"; app="$rel/app"; venv="$(deploy_json_get "$m" target.venv "")"
-    BM_RB_DB_ACTION="none"; BM_RB_RC=1
-    if [ -z "$db" ]; then
-        BM_RB_DB_PLAN_JSON='{"status": "n/a", "detail": "非 SQLite 库:回滚不处置数据库", "pending_count": 0}'
+    BM_RB_DB_ACTION="none"; BM_RB_RC=1; BM_RB_SKIP_RESCUE_REASON=""
+    if [ "$backend" != "sqlite" ] || [ -z "$db" ]; then
+        BM_RB_DB_PLAN_JSON="{\"status\": \"n/a\", \"detail\": \"非 SQLite 库(${backend:-unknown}):回滚不处置数据库\", \"pending_count\": 0}"
+        if [ "$restore" = 1 ] || [ "$no_rescue" = 1 ]; then
+            BM_RB_REASON="数据库不是 SQLite(${backend:-unknown}):--restore-db / --no-rescue-snapshot 不适用,本形态不处置外部库"; BM_RB_RC="$BM_RC_USAGE"; return 1
+        fi
         return 0
+    fi
+    if [ "$no_rescue" = 1 ] && [ "$restore" != 1 ]; then
+        BM_RB_REASON="--no-rescue-snapshot 只能与 --restore-db 同用"; BM_RB_RC="$BM_RC_USAGE"; return 1
     fi
     plan="$(bm_db_plan "$app" "$venv" "$BM_RB_CONFIG_FILE" "$db")" || { BM_RB_REASON="迁移计划执行失败"; return 1; }
     BM_RB_DB_PLAN_JSON="$plan"
     status="$(printf '%s' "$plan" | python3 -c 'import json, sys; print(json.load(sys.stdin)["status"])')"
     pending="$(printf '%s' "$plan" | python3 -c 'import json, sys; print(json.load(sys.stdin)["pending_count"])')"
     kind="$(printf '%s' "$plan" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("error_kind", ""))')"
+    if [ "$no_rescue" = 1 ] && [ "$status" != "error" ]; then
+        BM_RB_REASON="当前库可读(${status}):健康库必须做救援快照,--no-rescue-snapshot 只给 integrity_check 失败 / 文件不是数据库的损坏库"; BM_RB_RC="$BM_RC_USAGE"; return 1
+    fi
     case "$status" in
         compatible)
             if [ "$pending" -gt 0 ]; then BM_RB_DB_ACTION="migrate"; else BM_RB_DB_ACTION="none"; fi
@@ -1793,16 +1997,22 @@ bm_rollback_db_decide() {  # target_manifest db_path restore_db(0/1) no_rescue(0
         fresh|legacy_adoption_required)
             BM_RB_REASON="迁移计划报 ${status}(库缺失 / 老库形态):现场异常,请人工核对 $db"; BM_RB_RC="$BM_RC_NO_TARGET"; return 1 ;;
         error)
-            if [ "$kind" = "db_unreadable" ]; then
-                if [ "$restore" = 1 ] && [ "$no_rescue" = 1 ]; then
-                    [ -n "$BM_RB_RESTORE_SOURCE" ] && [ -f "$BM_RB_RESTORE_SOURCE" ] \
-                        || { BM_RB_REASON="当前库不可读且记录的快照不存在($BM_RB_RESTORE_SOURCE)"; BM_RB_RC="$BM_RC_NO_TARGET"; return 1; }
-                    BM_RB_DB_ACTION="restore"; return 0
-                fi
-                BM_RB_REASON="当前库无法读取($(printf '%s' "$plan" | python3 -c 'import json, sys; print(json.load(sys.stdin)["detail"])')):受控路径 = --restore-db --no-rescue-snapshot(跳过救援快照,用记录的快照 ${BM_RB_RESTORE_SOURCE:-<无>} 恢复);磁盘满 / 权限错误不属此例"
-                BM_RB_RC="$BM_RC_NEED_RESTORE_DB"; return 1
-            fi
-            BM_RB_REASON="目标迁移图读取失败:$(printf '%s' "$plan" | python3 -c 'import json, sys; print(json.load(sys.stdin)["detail"])')"; BM_RB_RC="$BM_RC_NO_TARGET"; return 1 ;;
+            local detail; detail="$(printf '%s' "$plan" | python3 -c 'import json, sys; print(json.load(sys.stdin)["detail"])')"
+            case "$kind" in
+                db_corrupt)
+                    if [ "$restore" = 1 ] && [ "$no_rescue" = 1 ]; then
+                        [ -n "$BM_RB_RESTORE_SOURCE" ] && [ -f "$BM_RB_RESTORE_SOURCE" ] \
+                            || { BM_RB_REASON="当前库已损坏且记录的快照不存在($BM_RB_RESTORE_SOURCE)"; BM_RB_RC="$BM_RC_NO_TARGET"; return 1; }
+                        BM_RB_DB_ACTION="restore"; BM_RB_SKIP_RESCUE_REASON="db_corrupt"; return 0
+                    fi
+                    BM_RB_REASON="当前库已损坏(${detail}):受控路径 = --restore-db --no-rescue-snapshot(跳过救援快照,用记录的快照 ${BM_RB_RESTORE_SOURCE:-<无>} 恢复)"
+                    BM_RB_RC="$BM_RC_NEED_RESTORE_DB"; return 1 ;;
+                db_access)
+                    BM_RB_REASON="当前库无法访问(${detail}):权限 / 磁盘 / I/O 错误不属契约例外,先修复环境再回滚(不提供跳过救援的路径)"
+                    BM_RB_RC="$BM_RC_NO_TARGET"; return 1 ;;
+                *)
+                    BM_RB_REASON="目标迁移图读取失败:${detail}"; BM_RB_RC="$BM_RC_NO_TARGET"; return 1 ;;
+            esac ;;
         *) BM_RB_REASON="迁移计划状态不可识别: $status"; return 1 ;;
     esac
 }
@@ -1851,11 +2061,12 @@ bm_rollback_main() {  # [--restore-db] [--yes] [--no-rescue-snapshot] [--to txn]
         bm_rollback_run
         return 0
     fi
-    # DB 目标:被回滚事务记录的 db.target(与快照 / 计划共用同一个值,§4.7)
-    db_path="$(deploy_json_get "$BM_RB_RECOVER_DIR/manifest.json" db.target "")"
-    [ -n "$db_path" ] || db_path="$(deploy_json_get "$([ -f "$BM_IN_PROGRESS" ] && echo "$BM_IN_PROGRESS" || echo "$BM_LAST_SUCCESS")" db.target "")"
+    # DB 目标与后端:被回滚事务记录的 db.target / db.backend(与快照 / 计划共用同一个值,§4.7)
+    local src_manifest; src_manifest="$([ -f "$BM_IN_PROGRESS" ] && echo "$BM_IN_PROGRESS" || echo "$BM_LAST_SUCCESS")"
+    local db_backend; db_backend="$(deploy_json_get "$src_manifest" db.backend "$(deploy_json_get "$BM_RB_TARGET_MANIFEST" db.backend sqlite)")"
+    db_path="$(deploy_json_get "$src_manifest" db.target "")"
     [ -n "$db_path" ] || db_path="$(deploy_json_get "$BM_RB_TARGET_MANIFEST" db.target "")"
-    if ! bm_rollback_db_decide "$BM_RB_TARGET_MANIFEST" "$db_path" "$restore" "$no_rescue"; then
+    if ! bm_rollback_db_decide "$BM_RB_TARGET_MANIFEST" "$db_path" "$restore" "$no_rescue" "$db_backend"; then
         bm_fail "${BM_RB_RC:-1}" "$BM_RB_REASON"
     fi
     local rb_ref rb_sha
@@ -1880,12 +2091,9 @@ bm_rollback_main() {  # [--restore-db] [--yes] [--no-rescue-snapshot] [--to txn]
             bm_fail "$BM_RC_USAGE" "非交互环境需要 --yes 确认回滚(现场未改动)"
         fi
     fi
-    # 开回滚事务(kind=rollback;无新 release,材料目录 deploy-state/txns/<txn>)。失败部署的 in-progress 先归档到
-    # closed/(其 release 材料与 nginx 变更集留在 releases/<txn>,回滚事务以 recover_from 引用它)
+    # 开回滚事务(kind=rollback;无新 release,材料目录 deploy-state/txns/<txn>);失败部署的 release 材料与 nginx 变更集
+    # 留在 releases/<txn>,回滚事务以 recover_from 引用它
     local txn; txn="rb-$(bm_txn_id "${t_sha:0:7}")"
-    if [ "$BM_RB_MODE" = "failed-deploy" ]; then
-        bm_txn_archive "superseded by rollback $txn"
-    fi
     mkdir -p "$BM_STATE_DIR/txns/$txn/nginx"
     BM_TXN_KIND="rollback"; BM_TXN_MODE="rollback"
     BM_TXN_TARGET_JSON="$(python3 - "$BM_RB_TARGET_MANIFEST" <<'PY'
@@ -1900,11 +2108,20 @@ PY
     BM_TXN_CAPS_JSON="$(deploy_json_get "$BM_RB_TARGET_MANIFEST" capabilities '{}')"
     BM_TXN_SITE_JSON="$(deploy_json_get "$BM_RB_TARGET_MANIFEST" site '{}')"
     BM_TXN_RECOVER_FROM="$BM_RB_RECOVER_FROM"
-    BM_TXN_DB_JSON="$(python3 -c 'import json, sys; print(json.dumps({"target": sys.argv[1], "snapshot": None, "snapshot_at": None, "rescue_snapshot": None, "restore_source": sys.argv[2] or None, "restore_source_at": sys.argv[3] or None, "action": sys.argv[4], "no_rescue": sys.argv[5] == "1", "plan": json.loads(sys.argv[6]), "heads_before": []}))' \
-        "$db_path" "$BM_RB_RESTORE_SOURCE" "$BM_RB_RESTORE_AT" "$BM_RB_DB_ACTION" "$no_rescue" "$BM_RB_DB_PLAN_JSON")"
+    BM_TXN_DB_JSON="$(python3 -c 'import json, sys; print(json.dumps({"target": sys.argv[1] or None, "backend": sys.argv[7] or "sqlite", "snapshot": None, "snapshot_at": None, "rescue_snapshot": None, "restore_source": sys.argv[2] or None, "restore_source_at": sys.argv[3] or None, "action": sys.argv[4], "no_rescue": sys.argv[5] == "1", "skip_rescue_reason": sys.argv[8] or None, "plan": json.loads(sys.argv[6]), "heads_before": []}))' \
+        "$db_path" "$BM_RB_RESTORE_SOURCE" "$BM_RB_RESTORE_AT" "$BM_RB_DB_ACTION" "$no_rescue" "$BM_RB_DB_PLAN_JSON" "$db_backend" "${BM_RB_SKIP_RESCUE_REASON:-}")"
     BM_CONTROLLER_DIR="${BM_CONTROLLER_DIR:-$BM_LIB_DIR}"
-    bm_txn_open "$txn"
+    # 原子交接(codex R1 P1-03):失败部署的 manifest 先复制到 closed/(幂等),回滚事务再原子覆盖 in-progress.json——
+    # 任一中断点 in-progress 都还能被重选(B 未收口 → 目标仍是 A)或已是回滚事务
+    if [ "$BM_RB_MODE" = "failed-deploy" ]; then
+        bm_txn_archive_copy "superseded by rollback $txn"
+        bm_txn_open "$txn" "" replace
+    else
+        bm_txn_open "$txn"
+    fi
     deploy_json_set "$BM_IN_PROGRESS" materials "$BM_STATE_DIR/txns/$txn" || true
+    # 回滚事务晋升后是之后部署的基准:把目标 release 持久化的 paths 一并带上
+    deploy_json_set "$BM_IN_PROGRESS" paths "$(deploy_json_get "$BM_RB_TARGET_MANIFEST" paths 'null')" json || true
     bm_rollback_run
 }
 
@@ -1955,14 +2172,25 @@ PY
     fi
     if bm_stage_needed "$seq" db_rescued; then
         bm_stage_intent db_rescued
-        if [ -n "$db" ] && [ -f "$db" ] && [ "$no_rescue" != "true" ] && [ -z "$(bm_manifest_get db.rescue_snapshot "")" ]; then
+        local backend; backend="$(bm_manifest_get db.backend sqlite)"
+        if [ "$backend" != "sqlite" ] || [ -z "$db" ]; then
+            echo "    救援快照:非 SQLite 库(${backend}),不处置"
+        elif [ "$no_rescue" = "true" ]; then
+            # 跳过救援只在「落盘的允许理由仍成立」时执行(codex R1 P1-04):此刻再算一次计划,必须仍是 db_corrupt
+            local recheck rk
+            recheck="$(bm_db_plan "$app" "$venv" "$BM_RB_CONFIG_FILE" "$db")" || bm_fail "$BM_RC_STEP" "重核当前库失败"
+            rk="$(printf '%s' "$recheck" | python3 -c 'import json, sys; d = json.load(sys.stdin); print(d.get("error_kind") if d["status"] == "error" else d["status"])')"
+            [ "$rk" = "db_corrupt" ] && [ "$(bm_manifest_get db.skip_rescue_reason "")" = "db_corrupt" ] \
+                || bm_fail "$BM_RC_STEP" "跳过救援快照的前提不再成立(当前库此刻状态:${rk}):拒绝覆盖;去掉 --no-rescue-snapshot 重试(健康库必须做救援快照)"
+            echo "    救援快照:--no-rescue-snapshot 显式跳过(当前库损坏,重核仍为 db_corrupt)"
+        elif [ -f "$db" ] && [ -z "$(bm_manifest_get db.rescue_snapshot "")" ]; then
             local rescue="$BM_SNAPSHOT_DIR/$txn/$(basename "$db" | sed 's/\.[^.]*$//').rescue.sqlite"
             sqlite_snapshot "$db" "$rescue" || bm_fail "$BM_RC_STEP" "救援快照失败: $rescue"
             deploy_json_set "$BM_IN_PROGRESS" db.rescue_snapshot "$rescue" && deploy_json_set "$BM_IN_PROGRESS" db.snapshot "$rescue" \
                 && deploy_json_set "$BM_IN_PROGRESS" db.snapshot_at "$(bm_now)" || bm_fail "$BM_RC_STEP" "记录救援快照失败"
-            echo "    救援快照:$rescue(只创建一次)"
-        elif [ "$no_rescue" = "true" ]; then
-            echo "    救援快照:--no-rescue-snapshot 显式跳过(当前库不可读)"
+            echo "    救援快照:${rescue}(只创建一次)"
+        elif [ -n "$(bm_manifest_get db.rescue_snapshot "")" ]; then
+            echo "    救援快照:已存在 $(bm_manifest_get db.rescue_snapshot),不重复创建"
         fi
         bm_stage_done db_rescued
     fi
@@ -2073,10 +2301,13 @@ bm_status_rollback_section() {
         echo "   ⚠️  材料门:$BM_RB_REASON"; return 0
     fi
     bm_apply_site_from_manifest "$BM_RB_TARGET_MANIFEST"
-    local db; db="$(deploy_json_get "$BM_RB_RECOVER_DIR/manifest.json" db.target "$(deploy_json_get "$BM_RB_TARGET_MANIFEST" db.target "")")"
-    if bm_rollback_db_decide "$BM_RB_TARGET_MANIFEST" "$db" 0 0; then
+    local db backend src_m
+    src_m="$([ -f "$BM_IN_PROGRESS" ] && echo "$BM_IN_PROGRESS" || echo "$BM_LAST_SUCCESS")"
+    db="$(deploy_json_get "$src_m" db.target "$(deploy_json_get "$BM_RB_TARGET_MANIFEST" db.target "")")"
+    backend="$(deploy_json_get "$src_m" db.backend "$(deploy_json_get "$BM_RB_TARGET_MANIFEST" db.backend sqlite)")"
+    if bm_rollback_db_decide "$BM_RB_TARGET_MANIFEST" "$db" 0 0 "$backend"; then
         case "$BM_RB_DB_ACTION" in
-            none) echo "   DB:目标认识当前库,不覆盖" ;;
+            none) [ "$backend" = "sqlite" ] && echo "   DB:目标认识当前库,不覆盖" || echo "   DB:非 SQLite 库(${backend}),回滚不处置" ;;
             migrate) echo "   DB:目标认识当前库,回滚将向前补迁移" ;;
         esac
     else
@@ -2178,6 +2409,8 @@ bm_status() {
             [ "$BM_RUN_SHA" = "$ls_sha" ] && echo "   运行身份与 last-success 一致(来源 $BM_RUN_SRC)" || echo "   ⚠️  运行身份 ${BM_RUN_SHA:0:7}(来源 $BM_RUN_SRC)≠ last-success ${ls_sha:0:7}"
         fi
         echo "   能力位: rollback=$(deploy_json_get "$BM_LAST_SUCCESS" capabilities.rollback ?) db_restore=$(deploy_json_get "$BM_LAST_SUCCESS" capabilities.db_restore ?) reproducible=$(deploy_json_get "$BM_LAST_SUCCESS" capabilities.reproducible ?)"
+        echo "   数据库: backend=$(deploy_json_get "$BM_LAST_SUCCESS" db.backend ?) target=$(deploy_json_get "$BM_LAST_SUCCESS" db.target -)"
+        [ "$(deploy_json_get "$BM_LAST_SUCCESS" paths.rebased_from "")" != "" ] && echo "   ⚠️  该次部署显式重设了存储基准(paths.rebased_from),跨存储布局没有回滚保证"
     else
         echo "   (无)——真首装或尚未收养(./deploy.sh --adopt)"
     fi
@@ -2195,10 +2428,10 @@ bm_status() {
         bm_status_rollback_section
     fi
     echo "== 入口 =="
-    [ -x "$BM_ENTRY" ] && echo "   $BM_ENTRY(已发布)" || echo "   $BM_ENTRY(未发布)"
+    [ -x "$BM_ENTRY" ] && echo "   ${BM_ENTRY}(已发布)" || echo "   ${BM_ENTRY}(未发布)"
 }
 
-# controller/rollback.sh 的入口(第 5 层装配 --rollback;此处先提供 --status)
+# controller/rollback.sh 的入口:--status / --rollback;in-progress 是 kind=adopt 时按 §4.2 续做收养(codex R1 P1-06)
 bm_controller_main() {
     BM_CONTROLLER_DIR="$BM_LIB_DIR"
     cd "$BM_REPO" || bm_fail "$BM_RC_STEP" "仓库目录不存在: $BM_REPO"
@@ -2208,8 +2441,22 @@ bm_controller_main() {
         --status) bm_status; exit 0 ;;
         --rollback)
             shift
-            declare -F bm_rollback_main >/dev/null || bm_fail "$BM_RC_USAGE" "本执行体没有 --rollback(第 5 层装配)"
+            if [ -f "$BM_IN_PROGRESS" ] && [ "$(bm_manifest_get kind "")" = "adopt" ]; then
+                echo "    未完成的收养事务 $(bm_manifest_get txn_id ?):先由固化执行体续做(完成前没有回滚点)"
+                bm_controller_adopt_resume
+                exit 0
+            fi
             bm_rollback_main "$@" ;;
         *) bm_fail "$BM_RC_USAGE" "用法: $0 --rollback [--restore-db] [--yes] [--to <txn>] [--no-rescue-snapshot] | --status" ;;
     esac
+}
+# 在 controller 上下文续做收养:站点参数 / CONFIG_FILE / venv 都取自 manifest,不读工作树 ini
+bm_controller_adopt_resume() {
+    export DORAMI_DEPLOY_LOCK_BUSY_RC="$BM_RC_LOCK"
+    acquire_deploy_lock
+    bm_install_traps
+    bm_apply_site_from_manifest "$BM_IN_PROGRESS"
+    CONFIG_FILE="$BM_RB_CONFIG_FILE"; export CONFIG_FILE
+    VENV_DIR="$(bm_manifest_get target.venv "${VENV_DIR:-venv}")"
+    bm_adopt_resume
 }

@@ -128,6 +128,10 @@
   2. 无 last-success(收养场景):由 `/api/health` 或 pm2 env 的构建 sha + 现场 symlink 目标得出,进收养流程(§4.11);
   3. **既有部署但证据冲突或缺失 → 默认停止(exit 24)**,保留 last-success 与材料;`--no-rollback-guarantee` 显式继续时
      `prev=null`,manifest `capabilities.rollback=false`,`--status` 持续显示。
+  4. **停机例外**(实现检视 R1 P1-07 认可):pm2 查询**成功且有效列表里没有受管 app**、`/api/health` 不可达、`current` / `html_dir`
+     与 last-success 一致、且 last-success 的 release 通过完整回滚材料门(代码 / dist 摘要、venv 凭据、nginx 快照、固化执行体)→ 保留
+     last-success 为回滚点并明示「受管服务未运行,依据 last-success 及材料确认」;pm2 查询失败 / 坏 JSON、health 有响应但身份缺失、
+     pm2 进程 cwd 或 sha 不符、材料不完整 → 仍是冲突(exit 24)。pm2 进程存在时无论身份来源都核 cwd,pm2 来源还核 sha。
 - **首装门**:`plan.status=fresh`(库文件不存在)时,有既有部署证据(last-success / pm2 app / `html_dir` 非空 / `data/` 有媒体或播客目录 /
   `backups/` 非空)→ **一律拒绝(exit 23)**,这是数据目录配错,不提供覆盖;无证据的真首装才需要 `DORAMI_DEPLOY_FRESH_OK=1` 授权,
   `prev=null`、`capabilities.rollback=false`,文档写明首装无回滚点。
@@ -223,8 +227,12 @@
   `[backup]` / `[oss]` 本地目录等(探针清单随 config.py 演进,由测试守卫)。
 - 规则:**可变存储**必须解析到 release 之外的共享位置——默认相对路径 `data/…` 由 `app/data -> <repo>/data` 挂点承接;探针发现其它
   相对根(如 `state/`、`media-store`)则同法建 `app/<component> -> <repo>/<component>`;解析结果须与**基准**逐项相等才放行,否则
-  **切换前拒绝(exit 33)**;基准分三种:已有 release → 当前运行 release 的探针结果;收养 → 原安装的运行上下文(cwd=`<repo>`、
-  `PYTHONPATH=<repo>/src`、`<repo>/venv`);真首装 → 声明并核实存在的共享绝对路径,不与不存在的旧 release 比较。
+  **切换前拒绝(exit 33)**;基准分三种:已有 release → **上次成功部署 / 收养时持久化的探针结果**(manifest `paths.mutable`,不用当前 ini
+  重算——实现检视 R1 P1-02:重算会把运维改 ini 换库放过去);收养 → 原安装的运行上下文(cwd=`<repo>`、`PYTHONPATH=<repo>/src`、
+  `<repo>/venv`)的探针,同样持久化;真首装 → 无基准,只要求可变存储在 release 之外。旧 manifest 缺 `paths` 时无法证明历史布局,
+  不回退成重算后视为可信。**显式出口**(运维确要迁移存储,如换盘):`DORAMI_DEPLOY_ACCEPT_PATH_CHANGE=1` 且 `--no-rollback-guarantee`
+  同用——本次记 `prev=null` / `capabilities.rollback=false` / `paths.rebased_from`,`--status` 明示「此次重设存储基准,没有跨存储布局的
+  回滚保证」;新布局成为之后部署的基准;搬数据是运维自己的事,开关不绕过首装门 / release 外存储要求 / 迁移计划。
   探针在候选事务的代码、venv、挂点就绪之后、在线 nginx 写入与迁移之前运行(§3.3);「只准备材料」不等于「已修改在线服务」。
   随代码发布的资源(如内置 taxonomy catalog)绑定目标 release。
 - DB 目标路径以目标上下文的探针值为准并持久化进 manifest,备份 / 计划 / 恢复共用同一个值(消除「两份库」)。
@@ -246,12 +254,12 @@
 | `compatible`,pending > 0 | 放行,明示「回滚将向前补 N 个迁移」;先快照 |
 | `incompatible` | **默认拒绝(exit 32)**,打印快照文件、时刻、现在、丢失窗口;`--restore-db` 才执行恢复 |
 | `fresh` / `legacy_adoption_required` | 拒绝,打印原因(库缺失 / 老库形态 = 现场异常,人看) |
-| `error` | **目标图读取失败** → 拒绝;**当前库打不开 / `integrity_check` 失败导致无法规划** → 允许 `--restore-db --no-rescue-snapshot` 的受控路径:恢复源已记录、校验有效且其 `alembic_version` 在目标图内,先确认写进程退出,救援快照规则不变;磁盘满 / 权限错误不属此例外 |
+| `error` | **目标图读取失败**(`target_graph`)→ 拒绝;**当前库损坏**(`db_corrupt`:`SQLITE_CORRUPT` / `SQLITE_NOTADB` 或 `integrity_check` 明确非 ok)→ 允许 `--restore-db --no-rescue-snapshot` 的受控路径:恢复源已记录、校验有效且其 `alembic_version` 在目标图内,先确认写进程退出,允许理由 `db.skip_rescue_reason=db_corrupt` 落盘,`db_rescued` 阶段再核一次仍是 `db_corrupt` 才跳过;**权限 / 磁盘 / I/O / 无法归类**(`db_access`)→ 拒绝,不属契约例外;非 SQLite(`db.backend≠sqlite`)→ 不处置,`--restore-db` / `--no-rescue-snapshot` 明确拒绝 |
 
+- `--no-rescue-snapshot` 只能与 `--restore-db` 同用,且只对 `db_corrupt` 生效;`compatible`(含 pending>0)/ `incompatible` 的健康库必须做救援快照(实现检视 R1 P1-04)。
 - **恢复协议**(`--restore-db`,固定顺序、每步落盘):确认本部署管理的写进程已退出(pm2 delete + 进程消失)→ 救援快照**只创建一次**
   (路径进 manifest,重试不得覆盖)→ 校验恢复源(可打开、`integrity_check`、其 `alembic_version` 在目标图内)→ 同文件系统临时文件
-  写入 + fsync → 记录「即将替换」→ 删 `-wal/-shm` → rename → 核对库身份(revision 集合)→ 允许启动。当前库不可读
-  (打不开 / `integrity_check` 失败)时,`--no-rescue-snapshot` 显式跳过救援快照;磁盘满 / 权限错误不属此例外,照常失败。
+  写入 + fsync → 记录「即将替换」→ 删 `-wal/-shm` → rename → 核对库身份(revision 集合)→ 允许启动。
 
 ### 4.9 切换序与两级健康门
 
@@ -441,6 +449,30 @@ codex 逐条判「已落实」(落点行号见 `.review/recheck-codex-r2.md`),**
 四轮全程:R1 全面检视(25 条)→ 改形 B 答复(13 条)→ R2 对照复检(8 条)→ R3 终审(0 条);全部采纳、无分歧遗留。
 方案自此进入**待用户拍板 §7 七项**状态;拍板后按 §5 六层提交开实现分支,实现后另起代码检视。
 
+### 实现检视 R1(2026-09-21,codex gpt-6-astra ultra,对象 PR #129 代码;`.review/report-codex-impl-r1.md`)
+
+首轮 14 条(P1×7 / P2×6 / P3×1)**全部成立**;我方表态(`.review/response-impl-r1.md`)12 条接受、P1-07 一处分歧、P1-02 一点请其拍板,codex 答复
+(`.review/reply-codex-impl-r1.md`)接受分歧处的替代判据并给出三条修法约束,一致后成批修复。落点:
+
+| finding | 结论落点 |
+|---|---|
+| P1-01 收养漏动态挂点与原上下文基准 | §4.7 / §4.11:收养 `venv_ready` 末尾在原安装上下文探针作基准,对 legacy 跑路径检查(补挂点、逐项相等,维护窗之前),`paths` 与 `db.target` 持久化 |
+| P1-02 基准用当前 ini 重算 + 跳过缺挂点键能放过换库 | §4.7:基准 = 持久化 `paths.mutable`,不重算、不跳过;缺字段即停止;显式出口 `DORAMI_DEPLOY_ACCEPT_PATH_CHANGE=1` 须与 `--no-rollback-guarantee` 同用(codex 拍板:跨存储布局没有回滚保证,`prev=null`) |
+| P1-03 失败部署 → 回滚事务交接窗口 | §4.3 / §4.10:先复制 closed 副本(幂等、不动 in-progress),回滚 manifest 再原子覆盖 in-progress;任一中断点可重选 |
+| P1-04 健康库 / 权限错误能跳过救援 | §4.8:`db_corrupt` / `db_access` 分类(sqlite 原始错误码 / integrity_check),`--no-rescue-snapshot` 只与 `--restore-db` 同用且只对损坏库,执行阶段再核 |
+| P1-05 快照清理不保护回滚事务引用 | §4.12:快照引用集合独立计算(全部事务 manifest 的 `db.snapshot` / `rescue_snapshot` / `restore_source`) |
+| P1-06 树外入口不能续做已停机的收养 | §4.2:controller 按 in-progress 的 kind 分派,`adopt` 由固化库在 controller 上下文续做(站点 / 配置 / venv 取自 manifest) |
+| P1-07 pm2 SHA 相符掩盖 cwd 冲突;无证据直接采纳 | §4.1 第 4 条:pm2 存在一律核 cwd(+pm2 来源核 sha);停机例外以 pm2 有效空列表 + 材料门代替运行身份(我方替代判据,codex 接受并收口条件) |
+| P2-01 dirty 排除不独立于 `.gitignore`、缺动态根 | §4.4:排除集合由 deploy.sh 按 ini + 与 config.py 同语义的环境覆盖生成(`DORAMI_PODCAST_ARTIFACT_ROOT_DIR` / `DORAMI_BACKUP_LOCAL_DIR` / `NGINX_RELEASES_DIR`),临时 index 里显式移除目录项与数据库通配项;指进已入库源码路径的不排除、交挂点冲突检查拒绝 |
+| P2-02 三个存储根退出 33 | §4.7:有进展就继续、最后一轮重新探测 |
+| P2-03 非 SQLite 显式继续不可达 | §4.1 / §4.8:`db.target=null` + `db.backend` + `db.url_summary`(脱敏),按后端分流;正向跳过计划 / 快照,迁移照常;回滚不处置,`--restore-db` 明确拒绝 |
+| P2-04 `--to` 提示指向未晋升事务 | §4.10:未晋升(无 `manifest.json`)只给 `--code`;材料门文案「未曾晋升」 |
+| P2-05 HTTPS 跳转只看协议 | §4.9:Location 的 origin 与路径须等于本站 HTTPS 入口;生成器非 443 端口带端口 |
+| P2-06 站点门与稳定窗不计入预算 | §4.9:三道门一个 deadline,站点探针 `--max-time` 取剩余,剩余不足稳定窗即失败 |
+| P3-01 未完成回滚不自动续做 | §4.3:正向入口在同一把锁内经稳定入口续做(`--rollback --yes`,已由人确认过),成功后重新采样继续 |
+
+codex 沙箱禁 `/bin/ps` 导致 `test_deploy_scripts.py` 31 例失败,与实现无关(本机全绿,CI 待跑);其对测试覆盖表述的意见按实修订 §9。
+
 ## 9. 实现记录(2026-09-21,分支 `feat/issue-126-baremetal-rollback`)
 
 §7 七项全按推荐拍板后,按 §5 六层提交实现(Claude Code 实现)。落点:`deploy.sh`(裸机专属参数与流程)、`scripts/deploy-baremetal.sh`
@@ -456,24 +488,39 @@ SQLite 快照、checkout 前钩子、`DORAMI_BAREMETAL_TXN` 宣告)、`deploy-do
 |---|---|---|
 | controller 内容 | `controller/{deploy-lib.sh,rollback.sh}` | `controller/{deploy-lib.sh,deploy-baremetal.sh,rollback.sh,env.sh}`:执行体是三份原样副本 + 入口 + 开事务时的环境(仓库 / 状态目录 / 锁 / PATH),不做函数导出拼接 |
 | rollback 事务的材料 | 未定 | 无新 release;`deploy-state/txns/<txn>/{nginx/changes.json,manifest.json}`;晋升时不覆盖目标 release 的原 `manifest.json` |
-| 失败部署的 in-progress | 回滚以它为 recover_from | 开回滚事务前先归档到 `closed/`(材料仍在 `releases/<txn>`),recover_from 按 txn id 解析材料目录 |
-| 收养事务的首次宿主写入 | 未定 | `process_stopped`(pm2 delete);adopt 事务永不自动归档,只影响 `--discard-txn` 是否要 `--yes` |
-| 首装门的证据 | 列表 | 在脚本建任何目录 / 开事务**之前**采样一次(自己建的 `data/podcast-artifacts`、事务目录不能当证据);媒体 / 播客目录须非空;`releases/` 只有含 `manifest.json` 的(已晋升)算 |
-| 路径探针基准 | 逐项相等 | 基准 release 自己没有该挂点(值落在基准 release 内)的键跳过比较——那是配置新增的存储根,不是漂移;运维改 ini 把库指到别处由首装门(有证据 + fresh → 23)兜住 |
+| 失败部署的 in-progress | 回滚以它为 recover_from | 原子交接:先把 manifest **复制**到 `closed/`(幂等、不动 in-progress),回滚事务 manifest 再原子覆盖 in-progress(材料仍在 `releases/<txn>`),recover_from 按 txn id 解析材料目录 |
+| 收养事务的首次宿主写入 | 未定 | `process_stopped`(pm2 delete);adopt 事务永不自动归档,只影响 `--discard-txn` 是否要 `--yes`;固化 controller 也能续做收养 |
+| 首装门的证据 | 列表 | 在脚本建任何目录 / 开事务**之前**采样一次(自己建的 `data/podcast-artifacts`、事务目录不能当证据);媒体 / 播客目录须非空;`releases/` 只有含 `manifest.json` 的(已晋升)算;证据只来自 release 形态自己(首装事务失败后 `--discard-txn`,`current` / `html_dir` 已是 symlink 而无仓库内 venv)时不进收养,按首装候选继续 |
+| 路径探针基准 | 逐项相等 | 基准 = 持久化的 `paths.mutable`(deploy / adopt / rollback 事务都带),不重算、不跳过;显式重设基准 `DORAMI_DEPLOY_ACCEPT_PATH_CHANGE=1` + `--no-rollback-guarantee`(§4.7) |
+| 停机时的 prev | 缺失 → 停止 | §4.1 第 4 条停机例外(pm2 有效空列表 + 材料门) |
 | dist 位置 | `dist/`(或 `NGINX_RELEASES_DIR/<txn>`) | 两者都实现:`[nginx] releases_dir` / `NGINX_RELEASES_DIR` 非空时 dist 复制到宿主目录(sudo 归属、校验清单),清理时同删;穿越位补不上只告警并提示该项 |
-| 迁移计划自持段 | 与 `plan_migrations` 同语义 | 同语义,另加 `PRAGMA integrity_check` 与 `error_kind`(target_graph / db_unreadable / not_sqlite)供分流表 `error` 行区分;legacy 的 pending 计整链 |
+| 迁移计划自持段 | 与 `plan_migrations` 同语义 | 同语义,另加 `PRAGMA integrity_check` 与 `error_kind`(target_graph / db_corrupt / db_access / not_sqlite)供分流表 `error` 行区分;legacy 的 pending 计整链 |
+| 非 SQLite | `capabilities.db_restore=false` | 另记 `db.target=null` / `db.backend` / `db.url_summary`(脱敏);正向跳过计划 / 快照,迁移 / taxonomy 照常;回滚不处置库 |
+| 未完成的回滚在正向入口 | 一律续做 | 同(经稳定入口 `--rollback --yes`,同一把锁 FD 继承),成功后重新采样继续正向流程 |
+| `--to` 提示 | 相邻事务 | 只有晋升过的相邻事务才提示 `--to`;失败过的部署只给 `--code` |
+| HTTPS 跳转 | Location 指向 https | Location 的 origin + 路径 == 本站 HTTPS 入口;生成器非 443 端口带端口 |
+| 健康预算 | 计入总预算 | 三道门一个 deadline:站点探针每个请求 `--max-time = min(20, 剩余)`,剩余不足稳定窗即失败 |
+| 快照清理 | 引用集合 | 快照引用集合独立于 release 引用(所有事务 manifest 的 db 字段,含 `txns/` 与 `closed/` 保留期内) |
 | 阶段 `db_migrated` | 切换序内、快照后 | 同;迁移与 taxonomy reconcile 在目标上下文(目标 venv + cwd=app + PYTHONPATH=app/src)执行,旧进程仍在跑(与旧脚本时序一致) |
 | 健康门 ② 的资产选择 | index 引用的主 JS / CSS | 第一个 `type=module` 脚本(无则第一个脚本)+ 第一个 stylesheet;外链资产跳过 |
 | 退出码 | §4.13 | 同;另 `--discard-txn` 需 `--yes` 与非交互 `--rollback` 缺 `--yes` 都是 2 |
 | 收养前提 | 未写 | 运行中的代码须透出构建身份(`/api/health` `build.*`,v3.56+),否则健康门过不了;身份取不到时 `--adopt-sha` |
-| dirty 固化的排除集合 | 固定项 + 生成项 | 固定项另含 `config/production.ini` / `config/backend.ini` / `.env`;经临时 excludes 文件生效(显式 pathspec 点名已 ignore 的路径会被 git 拒绝),已跟踪但落在集合里的再从临时 index 移除 |
+| dirty 固化的排除集合 | 固定项 + 生成项 | 固定项另含 `config/production.ini` / `config/backend.ini` / `.env`;生成项由 deploy.sh 按 ini + 环境覆盖算出(库目录 / 媒体 / 播客产物 / 备份目录 / `NGINX_RELEASES_DIR`);临时 excludes 文件只挡未跟踪文件,目录项与 `*.db` `*.sqlite` `*-wal` `*-shm` 在临时 index 里显式移除(`!` 否定与已跟踪都挡不住);指进已入库源码路径的项不排除,交挂点冲突检查拒绝 |
 | `--status` | §4.13 | 同;回滚预判段与 `--rollback` 共用目标选择、材料门与计划段(只读) |
 
 **验收矩阵覆盖**(`tests/test_deploy_baremetal.py`,macOS / Linux 都跑——脚本刻意不用 GNU 专属命令,文件改写经 python):
 §6.1 身份(首装门两向、prev 与运行身份、dirty 固化、`--code`、能力检查 exit 11、旧脚本自举 fixture、`--adopt-sha`);§6.2 中断
 (构建期失败自动归档、nginx 校验失败整体恢复且判「已改宿主」、健康门失败事务保留 + `--status` 描述阶段 + 再部署 exit 20、收养 / 回滚中断续做同一目标不翻转);
-§6.3 DB(compatible / pending>0 补迁移 / incompatible 默认 32 + `--restore-db` 回到快照点 + 救援快照只一次 / `--restore-db` 在 compatible 时被拒);
-§6.4 材料(venv 指纹复用与新建、extras 进指纹、KEEP 边界、被回滚掉的版本 `--code` 重部署、`--to` 相邻事务);
-§6.5 副作用隔离(构建期失败在线零改动;B 新增站点文件 / enabled 链接并删除 default 后失败,回滚 A 后新增项消失、default 恢复——真实文件);
-§6.6 Docker 等价(既有 64 例全绿 + 默认预算守卫 + 裸机参数被拒);§6.7 旧脚本 fixture。未覆盖、留实机:TLS `--resolve` 探针、`pm2 startup` resurrect、
+§6.3 DB(compatible / incompatible 默认 32 + `--restore-db` 回到快照点 / `--restore-db` 在 compatible 时被拒 / 健康库与权限错误不得跳过救援 /
+损坏库走受控路径且理由落盘 / 救援快照只一次——回滚中断续做后路径与 mtime 不变;pending>0 的补迁移只在 `--to` 前进后的目标上验证,
+真实回滚分支的 `migrate` 动作目前由 `--code` 正向补迁移用例间接覆盖);
+§6.4 材料(venv 指纹复用与新建、extras 进指纹、KEEP 边界、被回滚掉的版本 `--code` 重部署、`--to` 相邻事务、回滚事务引用的救援快照不被数量清理删);
+§6.5 副作用隔离(构建期失败在线零改动;B 新增站点文件 / enabled 链接并删除 default 后失败,回滚 A 后新增项消失、default 恢复——真实文件;
+交接中断点 closed 副本已写 + in-progress 仍为 B 时重选幂等);
+§6.6 Docker 等价(既有 64 例全绿 + 默认预算守卫 + 裸机参数被拒);§6.7 旧脚本 fixture;实现检视 R1 补:持久化基准拦换库 / 显式重设基准 /
+停机例外四向(有效空列表放行、查询失败 / 坏 JSON / cwd 冲突 / 材料缺失拒绝)/ 收养原上下文基准与动态挂点 / 三根存储根 / `!` 否定与已跟踪 sqlite
+与环境覆盖根不进快照 / 非 SQLite 完整分支 / HTTPS 跳转 origin / 预算不足稳定窗 / 树外入口续做收养 / 正向入口自动续做回滚。
+**未逐点注入的中断矩阵**(SIGKILL 在两个链接之间、救援写入与记账之间、库替换前后、晋升各步之间):靠阶段 intent / completed 的重入判据 +
+现有中断注入(pm2 save 失败、npm 构建失败、nginx -t 失败、健康门失败)覆盖,§6.2 如实记为未逐点注入。桩的边界:pm2 桩不跑真实 ecosystem、
+nginx 桩把 conf.d / sites-enabled 都视为已包含、curl 桩忽略 Host / TLS 参数。留实机:TLS `--resolve` 探针、`pm2 startup` resurrect、
 Playwright 浏览器保留、`releases_dir` 的 sudo 归属、源码装 nginx 的主配置 include 插入(桩只验 include 行被 -T 识别)。

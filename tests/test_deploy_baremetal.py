@@ -100,6 +100,8 @@ def _current_revision(db_url):
 def ensure_migrated(db_url):
     if ":memory:" in db_url:
         return
+    if not db_url.startswith("sqlite"):
+        return  # 迷你项目:外部库(如 PostgreSQL)只验证编排分支,不真连
     cfg = make_alembic_config(db_url)
     heads = ScriptDirectory.from_config(cfg).get_heads()
     command.upgrade(cfg, "heads" if len(heads) > 1 else "head")
@@ -257,6 +259,10 @@ s = load()
 cmd = args[0] if args else ""
 if cmd == "describe":
     sys.exit(0 if args[1] in s else 1)
+if cmd == "jlist" and os.environ.get("FAKE_PM2_JLIST_FAIL"):
+    sys.stderr.write("pm2: connection refused\n"); sys.exit(1)
+if cmd == "jlist" and os.environ.get("FAKE_PM2_JLIST_GARBAGE"):
+    print("[PM2] daemon offline"); sys.exit(0)
 if cmd == "jlist":
     print(json.dumps([{"name": n, "pid": v["pid"], "pm2_env": {"status": v["status"], "pm_cwd": v["cwd"], "env": v["env"],
                        "DORAMI_BUILD_SHA": v["env"].get("DORAMI_BUILD_SHA", ""), "DORAMI_BUILD_REF": v["env"].get("DORAMI_BUILD_REF", "")}}
@@ -353,7 +359,7 @@ if path == "/api/health":
 else:
     root = os.environ.get("FAKE_SITE_ROOT", "")
     if path == "/" and os.environ.get("FAKE_SSL_REDIRECT"):
-        code, redirect = "301", "https://example.test/"
+        code, redirect = "301", os.environ["FAKE_SSL_REDIRECT"]
     else:
         f = os.path.join(root, path.lstrip("/")) if root else ""
         if f and os.path.isfile(f):
@@ -826,16 +832,45 @@ def test_old_script_bootstraps_to_new_tag(tmp_path: Path):
 # ══════════════ 目标上下文检查 ══════════════
 
 def test_path_probe_mounts_extra_storage_root_and_rejects_conflicts(bm: BM):
+    """配置把媒体目录改到新根:挂点能补,但与持久化基准不等 → 33;显式重设基准(两个开关同用)才放行且本次无回滚点。"""
     _deploy_v1(bm)
+    first = bm.state("last-success.json")
+    assert first["paths"]["mutable"]["database"] == os.path.realpath(bm.clone / "data" / "cms_data.db")
     bm.write_ini(media="media_dir = state/media")
     r = bm.run("--here")
+    assert r.returncode == 33 and "补建挂点 app/state" in r.stdout and "media_dir" in r.stderr and "DORAMI_DEPLOY_ACCEPT_PATH_CHANGE" in r.stderr
+    assert bm.health_json()["version"] == "1.0.0" and bm.state("last-success.json") == first
+    r = bm.run("--here", DORAMI_DEPLOY_ACCEPT_PATH_CHANGE="1")
+    assert r.returncode == 33 and "--no-rollback-guarantee" in r.stderr, "单独一个开关不放行"
+    r = bm.run("--here", "--no-rollback-guarantee", DORAMI_DEPLOY_ACCEPT_PATH_CHANGE="1")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "补建挂点 app/state" in r.stdout
-    app = Path(bm.state("last-success.json")["target"]["release"]) / "app"
+    ls = bm.state("last-success.json")
+    assert ls["prev"] is None and ls["capabilities"]["rollback"] is False and ls["paths"]["rebased_from"]["media_dir"] == first["paths"]["mutable"]["media_dir"]
+    app = Path(ls["target"]["release"]) / "app"
     assert (app / "state").is_symlink() and os.path.realpath(app / "state") == os.path.realpath(bm.clone / "state")
+    assert "重设了存储基准" in bm.run("--status").stdout
+    # 新布局成为之后的基准:再部署一次正常建立回滚点
+    _commit_and_pull(bm, mini_project("1.0.2"))
+    r = bm.run("--here")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert bm.state("last-success.json")["prev"]["txn_id"] == ls["txn_id"]
     bm.write_ini(media="media_dir = src/media")
     r = bm.run("--here")
     assert r.returncode == 33 and "挂点冲突" in r.stderr
+
+
+def test_switching_config_to_another_existing_database_is_refused(bm: BM):
+    """codex R1 P1-02:同迁移版本的另一份库(空)——不是 fresh,靠持久化基准的 db 路径核对拦下,不能静默换库。"""
+    _deploy_v1(bm)
+    bm.db_insert(1)
+    other_dir = bm.clone / "state-db"; other_dir.mkdir()
+    shutil.copy(bm.clone / "data" / "cms_data.db", other_dir / "other.db")
+    con = sqlite3.connect(other_dir / "other.db"); con.execute("delete from articles"); con.commit(); con.close()
+    bm.write_ini(storage="database_url = sqlite:///state-db/other.db")
+    r = bm.run("--here")
+    assert r.returncode == 33 and "database" in r.stderr and "与基准不一致" in r.stderr
+    assert bm.state("last-success.json")["db"]["target"] == os.path.realpath(bm.clone / "data" / "cms_data.db")
+    assert bm.db_rows() == 1 and bm.health_json()["version"] == "1.0.0"
 
 
 def test_path_probe_rejects_baseline_drift_between_code_versions(bm: BM):
@@ -848,13 +883,13 @@ def test_path_probe_rejects_baseline_drift_between_code_versions(bm: BM):
     assert bm.health_json()["version"] == "1.0.0", "切换前拒绝,现场不变"
 
 
-def test_database_moved_in_config_is_caught_by_fresh_gate(bm: BM):
-    """运维把 [storage] database_url 改到一个不存在的库:迁移计划报 fresh 而本机有部署证据 → 首装门拒绝,不起空站。"""
+def test_database_moved_in_config_is_caught_before_fresh_gate(bm: BM):
+    """运维把 [storage] database_url 改到一个不存在的库:持久化基准先拦(33),不起空站。"""
     _deploy_v1(bm)
     other = bm.tmp / "elsewhere"; other.mkdir()
     bm.write_ini(storage=f"database_url = sqlite:///{other}/cms.db")
     r = bm.run("--here")
-    assert r.returncode == 23 and "既有部署证据" in r.stderr
+    assert r.returncode == 33 and "database" in r.stderr
     assert not (other / "cms.db").exists()
 
 
@@ -875,11 +910,29 @@ def test_incompatible_database_blocks_forward_deploy(bm: BM):
     assert bm.health_json()["version"] == "1.1.0", "切换前拒绝,现场不变"
 
 
-def test_non_sqlite_database_needs_explicit_no_rollback_guarantee(bm: BM):
-    _deploy_v1(bm)
-    bm.write_ini(storage="database_url = postgresql://u:p@localhost/db")
+def test_non_sqlite_database_needs_explicit_no_rollback_guarantee_and_then_fully_works(bm: BM):
+    """codex R1 P2-03:外部库(迷你 ensure_migrated 对非 sqlite no-op,只验编排分支):默认 24;显式放弃后完整走通,回滚不处置库,
+    --restore-db / --no-rescue-snapshot 明确拒绝。"""
+    bm.write_ini(storage="database_url = postgresql://u:secret@localhost/db")
     r = bm.run("--here")
     assert r.returncode == 24 and "--no-rollback-guarantee" in r.stderr
+    r = bm.run("--here", "--no-rollback-guarantee")
+    assert r.returncode == 0, r.stdout + r.stderr
+    ls = bm.state("last-success.json")
+    assert ls["db"]["backend"] == "postgresql" and ls["db"]["target"] is None and ls["capabilities"]["db_restore"] is False
+    assert "secret" not in json.dumps(ls) and ls["db"]["plan"]["status"] == "n/a" and ls["db"]["snapshot"] is None
+    _commit_and_pull(bm, mini_project("1.1.0"))
+    r = bm.run("--here", "--no-rollback-guarantee")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert bm.state("last-success.json")["prev"]["txn_id"] == ls["txn_id"]
+    s = bm.run("--status")
+    assert "非 SQLite 库" in s.stdout
+    r = bm.run("--rollback", "--yes", "--restore-db")
+    assert r.returncode == 2 and "不是 SQLite" in r.stderr
+    r = bm.run("--rollback", "--yes")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "非 SQLite 库" in r.stdout and bm.health_json()["version"] == "1.0.0"
+    assert bm.state("last-success.json")["db"]["rescue_snapshot"] is None
 
 
 # ══════════════ 收养(§4.11)══════════════
@@ -1019,11 +1072,31 @@ def test_rollback_after_failed_deploy_restores_previous_release(bm: BM):
     assert Path(v1["target"]["release"]).is_dir() and (bm.clone / "releases" / v2_txn).is_dir(), "两代材料都保留"
     assert (bm.clone / "deploy-state" / "txns" / ls["txn_id"] / "manifest.json").is_file()
     assert json.loads((Path(v1["target"]["release"]) / "manifest.json").read_text())["kind"] == "deploy", "目标 release 原 manifest 不被覆盖"
-    # 再回滚:上一版是刚被回滚掉的 → 拒绝并给精确命令
+    # 再回滚:上一版是刚被回滚掉的 → 拒绝并给精确命令;B 未曾晋升,只给 --code 不给 --to(codex R1 P2-04)
     r = bm.run("--rollback", "--yes")
-    assert r.returncode == 30 and f"--code {ls['prev']['code_sha']}" in r.stderr and f"--to {v2_txn}" in r.stderr
+    assert r.returncode == 30 and f"--code {ls['prev']['code_sha']}" in r.stderr and "--to" not in r.stderr and "未曾晋升" in r.stderr
+    r = bm.run("--rollback", "--yes", "--to", v2_txn)
+    assert r.returncode == 30 and "未曾晋升" in r.stderr
     s = bm.run("--status")
     assert s.returncode == 0 and "回滚预判" in s.stdout and "刚被回滚掉" in s.stdout
+    # 交接副本:失败部署的 manifest 在 closed/,回滚事务的材料在 txns/
+    assert (bm.clone / "deploy-state" / "closed" / f"{v2_txn}.json").is_file()
+
+
+def test_handoff_intermediate_state_is_reselected_idempotently(bm: BM):
+    """codex R1 P1-03:closed 副本已写、in-progress 仍是失败部署(交接中断点)——重选仍是 failed-deploy,回滚照常完成。"""
+    _deploy_v1(bm)
+    v1 = bm.state("last-success.json")
+    assert _deploy_v2(bm, broken=True).returncode == 1
+    ip = bm.state("in-progress.json")
+    closed = bm.clone / "deploy-state" / "closed"; closed.mkdir(exist_ok=True)
+    (closed / f"{ip['txn_id']}.json").write_text(json.dumps({**ip, "closed": {"at": "x", "reason": "simulated"}}))
+    s = bm.run("--status")
+    assert "failed-deploy" in s.stdout
+    r = bm.run("--rollback", "--yes")
+    assert r.returncode == 0, r.stdout + r.stderr
+    ls = bm.state("last-success.json")
+    assert ls["target"]["txn_id"] == v1["txn_id"] and ls["recover_from"] == ip["txn_id"]
 
 
 def test_rollback_with_migration_requires_restore_db_and_restores_snapshot(bm: BM):
@@ -1068,12 +1141,18 @@ def test_interrupted_rollback_resumes_same_target(bm: BM):
     assert r.returncode == 1 and "pm2 save 失败" in r.stderr
     ip = bm.state("in-progress.json")
     assert ip["kind"] == "rollback" and ip["stage"]["intent"] == "process_started" and ip["target"]["txn_id"] == v1["txn_id"]
+    rescue = ip["db"]["rescue_snapshot"]; mtime = os.path.getmtime(rescue)
+    # 正向入口按契约先续做未完成的回滚(同一目标,不翻转),再继续正向部署(codex R1 P3-01)
+    _commit_and_pull(bm, mini_project("1.2.0"))
     r = bm.run("--here")
-    assert r.returncode == 20 and "未完成的回滚事务" in r.stderr
-    r = bm.run("--rollback", "--yes")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "续做回滚事务" in r.stdout and bm.state("last-success.json")["target"]["txn_id"] == v1["txn_id"]
-    assert bm.health_json()["version"] == "1.0.0"
+    assert "续做同一目标" in r.stdout and "续做回滚事务" in r.stdout and "Rollback complete" in r.stdout and "Deploy complete" in r.stdout
+    assert bm.health_json()["version"] == "1.2.0"
+    ls = bm.state("last-success.json")
+    assert ls["kind"] == "deploy" and ls["prev"]["txn_id"] == ip["txn_id"] and ls["prev"]["code_sha"] == v1["target"]["code_sha"], \
+        "回滚续做完成后正向部署的 prev 是那次回滚(其 target 是 v1)"
+    rb = json.loads((bm.clone / "deploy-state" / "txns" / ip["txn_id"] / "manifest.json").read_text())
+    assert rb["db"]["rescue_snapshot"] == rescue and os.path.getmtime(rescue) == mtime, "救援快照只创建一次(续做不重做)"
 
 
 def test_rollback_to_adjacent_txn_goes_forward_and_code_redeploys(bm: BM):
@@ -1141,3 +1220,166 @@ def test_cleanup_keeps_referenced_releases_and_prunes_by_count(bm: BM):
     assert txns[3] in names and txns[2] in names, "target 与 prev 永远保留"
     assert txns[1] in names and txns[0] not in names, "引用集合之外按数量保留 1 个"
     assert "清理 release" in r.stdout
+
+
+# ══════════════ codex 实现检视 R1 修复用例 ══════════════
+
+def test_rescue_snapshot_cannot_be_skipped_for_healthy_or_inaccessible_db(bm: BM):
+    """codex R1 P1-04:健康库不允许 --no-rescue-snapshot;权限错误不是契约例外;只有损坏库走受控路径且执行阶段再核一次。"""
+    _deploy_v1(bm)
+    bm.db_insert(2)
+    assert _deploy_v2(bm, migrations=("0001", "0002")).returncode == 0
+    v2 = bm.state("last-success.json")
+    db = bm.clone / "data" / "cms_data.db"
+    r = bm.run("--rollback", "--yes", "--no-rescue-snapshot")
+    assert r.returncode == 2 and "只能与 --restore-db 同用" in r.stderr
+    r = bm.run("--rollback", "--yes", "--restore-db", "--no-rescue-snapshot")
+    assert r.returncode == 2 and "健康库必须做救援快照" in r.stderr
+    assert bm.db_rows() == 2, "现场未改动"
+    # 权限错误 → db_access,不放行
+    db.chmod(0)
+    try:
+        r = bm.run("--rollback", "--yes", "--restore-db", "--no-rescue-snapshot")
+        assert r.returncode == 30 and "无法访问" in r.stderr and "不属契约例外" in r.stderr
+        r = bm.run("--rollback", "--yes")
+        assert r.returncode == 30 and "无法访问" in r.stderr
+    finally:
+        db.chmod(0o644)
+    # 损坏库 → db_corrupt:默认 32 给受控路径;走受控路径恢复到快照点,救援快照为空且理由落盘
+    db.write_bytes(b"this is not a sqlite database at all" * 64)
+    r = bm.run("--rollback", "--yes")
+    assert r.returncode == 32 and "已损坏" in r.stderr and "--restore-db --no-rescue-snapshot" in r.stderr
+    r = bm.run("--rollback", "--yes", "--restore-db", "--no-rescue-snapshot")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert bm.db_heads() == ["0001"] and bm.db_rows() == 2
+    ls = bm.state("last-success.json")
+    assert ls["db"]["rescue_snapshot"] is None and ls["db"]["skip_rescue_reason"] == "db_corrupt" and ls["db"]["restore_source"] == v2["db"]["snapshot"]
+    assert bm.health_json()["version"] == "1.0.0"
+
+
+def test_cleanup_protects_rescue_snapshots_referenced_by_rollback_txn(bm: BM):
+    """codex R1 P1-05:回滚事务(无 release)的救援快照被 manifest 引用,数量清理不得删它。"""
+    _deploy_v1(bm)
+    assert _deploy_v2(bm).returncode == 0
+    assert bm.run("--rollback", "--yes").returncode == 0
+    rescue = Path(bm.state("last-success.json")["db"]["rescue_snapshot"])
+    assert rescue.is_file()
+    _commit_and_pull(bm, mini_project("1.2.0"))
+    r = bm.run("--here", DORAMI_DEPLOY_KEEP_SNAPSHOTS="0")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert rescue.is_file(), "回滚事务引用的救援快照被保护"
+    # 无引用的旧快照目录才按数量清理:再部署两次后 KEEP=0 会清掉最早那个 deploy 事务的快照(若无引用)
+    assert "清理快照" not in r.stdout or rescue.parent.name not in r.stdout
+
+
+def test_stable_entry_resumes_interrupted_adoption(bm: BM):
+    """codex R1 P1-06:收养在维护窗内中断,树外恢复入口(--rollback 转发)按 kind=adopt 续做而不是拒绝。"""
+    sha = bm.head()
+    _setup_old_form(bm, sha)
+    r = bm.run("--adopt", FAKE_PM2_SAVE_FAIL="1")
+    assert r.returncode == 1 and bm.state("in-progress.json")["kind"] == "adopt"
+    r = bm.run("--rollback")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "先由固化执行体续做" in r.stdout and "收养完成" in r.stdout
+    assert bm.state("last-success.json")["kind"] == "adopt" and not bm.state("in-progress.json")
+    assert bm.health_json()["build"]["sha"] == sha
+
+
+def test_adoption_probes_original_context_and_mounts_dynamic_roots(bm: BM):
+    """codex R1 P1-01:旧安装把库放在 state/cms.db、媒体在 media-store:收养以原安装上下文为基准给 legacy 补挂点,DB 目标持久化。"""
+    sha = bm.head()
+    _setup_old_form(bm, sha)
+    (bm.clone / "state").mkdir(); shutil.move(str(bm.clone / "data" / "cms_data.db"), str(bm.clone / "state" / "cms.db"))
+    (bm.clone / "media-store").mkdir(); (bm.clone / "media-store" / "img.bin").write_bytes(b"\1")
+    bm.write_ini(storage="database_url = sqlite:///state/cms.db", media="media_dir = media-store")
+    r = bm.run("--here")
+    assert r.returncode == 0, r.stdout + r.stderr
+    legacy = [p for p in bm.releases() if p.name.startswith("legacy-")][0]
+    lm = json.loads((legacy / "manifest.json").read_text())
+    assert lm["db"]["target"] == os.path.realpath(bm.clone / "state" / "cms.db")
+    assert lm["paths"]["mutable"]["media_dir"] == os.path.realpath(bm.clone / "media-store")
+    assert (legacy / "app" / "state").is_symlink() and (legacy / "app" / "media-store").is_symlink()
+    con = sqlite3.connect(bm.clone / "state" / "cms.db"); assert con.execute("select count(*) from articles").fetchone()[0] == 1; con.close()
+    ls = bm.state("last-success.json")
+    assert ls["db"]["target"] == lm["db"]["target"] and ls["paths"]["mutable"] == lm["paths"]["mutable"]
+
+
+def test_stopped_service_keeps_rollback_point_only_with_valid_pm2_list_and_materials(bm: BM):
+    """codex R1 P1-07:停机例外——pm2 有效空列表 + 材料门通过才保留 prev;查询失败 / 坏 JSON / cwd 冲突 / 材料缺失 → 24。"""
+    _deploy_v1(bm)
+    v1 = bm.state("last-success.json")
+    _commit_and_pull(bm, mini_project("1.1.0"))
+    # 服务停了(pm2 有效空列表、health 不可达)→ 依据材料门放行,prev 保留
+    (bm.pm2dir / "state.json").write_text("{}"); bm.health.unlink()
+    r = bm.run("--here")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "受管服务未运行" in r.stdout and bm.state("last-success.json")["prev"]["txn_id"] == v1["txn_id"]
+    v2 = bm.state("last-success.json")
+    _commit_and_pull(bm, mini_project("1.2.0"))
+    # pm2 查询失败 → 24
+    (bm.pm2dir / "state.json").write_text("{}"); bm.health.unlink()
+    r = bm.run("--here", FAKE_PM2_JLIST_FAIL="1")
+    assert r.returncode == 24 and "pm2 查询失败" in r.stderr
+    r = bm.run("--here", FAKE_PM2_JLIST_GARBAGE="1")
+    assert r.returncode == 24 and "pm2 查询失败" in r.stderr
+    # pm2 进程在跑但 cwd 是工作树(健康不可达、sha 相符)→ 24
+    (bm.pm2dir / "state.json").write_text(json.dumps({APP: {"cwd": str(bm.clone), "pid": 1, "status": "online",
+        "env": {"DORAMI_BUILD_SHA": v2["target"]["code_sha"], "DORAMI_BUILD_REF": v2["target"]["ref"]}}}))
+    r = bm.run("--here")
+    assert r.returncode == 24 and "cwd" in r.stderr
+    # 服务停了但材料缺失 → 24
+    (bm.pm2dir / "state.json").write_text("{}")
+    shutil.rmtree(Path(v2["target"]["release"]) / "dist")
+    r = bm.run("--here")
+    assert r.returncode == 24 and "材料不完整" in r.stderr
+
+
+def test_dirty_freeze_excludes_env_overridden_roots_negated_ignores_and_tracked_dbs(bm: BM):
+    """codex R1 P2-01:排除集合按有效配置(含环境覆盖)生成;`!` 否定规则与已跟踪的 sqlite 都挡不住显式移除。"""
+    _commit_and_pull(bm, mini_project("1.0.1", extra_files={"tracked.sqlite": "not-really\n", ".gitignore": "data/\nbackups/\n*.log\n!private.db\n"}))
+    _deploy_v1(bm)
+    (bm.clone / "private.db").write_bytes(b"x" * 10)
+    (bm.clone / "podcast-store").mkdir(); (bm.clone / "podcast-store" / "a.mp3").write_bytes(b"\0" * 10)
+    (bm.clone / "web-assets").mkdir(); (bm.clone / "web-assets" / "build.js").write_text("x")
+    (bm.clone / "src" / "hotfix.py").write_text("HOTFIX = True\n")
+    r = bm.run("--here", DORAMI_PODCAST_ARTIFACT_ROOT_DIR="podcast-store", NGINX_RELEASES_DIR=str(bm.clone / "web-assets"))
+    assert r.returncode == 0, r.stdout + r.stderr
+    ls = bm.state("last-success.json")
+    assert ls["target"]["dirty"] is True
+    tree = git(bm.clone, "ls-tree", "-r", "--name-only", ls["target"]["code_sha"], env=bm.repo.env).stdout.split()
+    assert "src/hotfix.py" in tree
+    for bad in ("private.db", "tracked.sqlite", "podcast-store/a.mp3", "web-assets/build.js"):
+        assert bad not in tree, f"{bad} 不该进快照"
+
+
+def test_three_extra_storage_roots_are_all_mounted(bm: BM):
+    """codex R1 P2-02:三个额外存储根都要补挂点,不能受轮数限制。"""
+    _deploy_v1(bm)
+    bm.write_ini(storage="database_url = sqlite:///state/cms.db", media="media_dir = media-store", podcast_artifacts="root_dir = podcast-store")
+    shutil.copy(bm.clone / "data" / "cms_data.db", bm.tmp / "keep.db")
+    (bm.clone / "state").mkdir(); shutil.copy(bm.tmp / "keep.db", bm.clone / "state" / "cms.db")
+    r = bm.run("--here", "--no-rollback-guarantee", DORAMI_DEPLOY_ACCEPT_PATH_CHANGE="1")
+    assert r.returncode == 0, r.stdout + r.stderr
+    app = Path(bm.state("last-success.json")["target"]["release"]) / "app"
+    for root in ("state", "media-store", "podcast-store"):
+        assert (app / root).is_symlink(), root
+
+
+def test_https_redirect_must_point_to_this_site(bm: BM):
+    """codex R1 P2-05:HTTP 入口的 301 必须落到本站 HTTPS origin;非 443 端口生成器带端口。"""
+    (bm.etc / "ssl").mkdir(); (bm.etc / "ssl" / "example.test.pem").write_text("cert"); (bm.etc / "ssl" / "example.test.key").write_text("key")
+    bm.write_ini(nginx=(f"html_dir = {bm.html_dir}\nsite_name = dorami\nserver_name = example.test\nlisten_port = 8080\n"
+                        "backend_proxy_host = 127.0.0.1\nbackend_proxy_port = 8088\nenable_ssl = true\nssl_listen_port = 9443\nssl_redirect = true"))
+    r = bm.run("--here", DORAMI_DEPLOY_FRESH_OK="1", FAKE_SSL_REDIRECT="https://wrong.invalid:9443/elsewhere")
+    assert r.returncode == 1 and "不是本站 HTTPS 入口" in r.stderr
+    assert bm.state("in-progress.json")["stage"]["intent"] == "health_ok"
+    assert "return 301 https://$host:9443$request_uri;" in (bm.etc / "conf.d" / "dorami.conf").read_text()
+    assert bm.run("--discard-txn", "--yes").returncode == 0
+    r = bm.run("--here", DORAMI_DEPLOY_FRESH_OK="1", FAKE_SSL_REDIRECT="https://example.test:9443/")
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_health_budget_covers_site_gate_and_stability_window(bm: BM):
+    """codex R1 P2-06:三道门共用一个预算;剩余不足以完成稳定窗即判失败而不是另起计时。"""
+    r = bm.run("--here", DORAMI_DEPLOY_FRESH_OK="1", DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS="1", DORAMI_DEPLOY_STABLE_SECONDS="5")
+    assert r.returncode == 1 and "不足以完成 5s 稳定窗" in r.stderr

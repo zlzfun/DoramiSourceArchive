@@ -110,7 +110,9 @@ pm2 startup                       # 开机自启注册,手动跑一次(pm2 save 
 两级健康门:① 后端身份(直连 `backend_proxy_host:port` 的 `/api/health` 五项:status / version / build.ref / build.sha /
 build.source=env);② 站点链路(经真实 nginx 入口取 `index.html`、index 引用的主 JS / CSS 内容摘要、经站点的 `/api/health`;
 TLS 用 `--resolve` + 系统 CA 或 `DORAMI_DEPLOY_PROBE_CACERT`,不提供 `-k`;`ssl_redirect` 时核对 HTTP 入口 301);
-③ 连续 `DORAMI_DEPLOY_STABLE_SECONDS`(默认 10)秒读数一致且 PID 不变。预算 `DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS`(默认 180)。
+③ 连续 `DORAMI_DEPLOY_STABLE_SECONDS`(默认 10)秒读数一致且 PID 不变。三道门共用一个预算 `DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS`
+(默认 180):后端就绪太晚以致剩余时间不够跑稳定窗,同样判失败。`ssl_redirect` 时 HTTP 入口的 301 必须落到本站 HTTPS 入口
+(`server_name` + `ssl_listen_port`,非 443 端口生成器会把端口写进跳转)。
 
 脚本自带的护栏:
 - **锁先于一切**:与 Docker 路径同一把(默认 `/run/lock/dorami-deploy.lock`),抢不到 exit 4;
@@ -167,8 +169,15 @@ TLS 用 `--resolve` + 系统 CA 或 `DORAMI_DEPLOY_PROBE_CACERT`,不提供 `-k`;
   → `pm2 start <目标 release>` → `pm2 save` → reload → 两级健康门 → 晋升(last-success 记 `kind=rollback`,prev = 被回滚掉的那版)。
 - **DB 分流**(目标上下文的迁移计划):目标认识当前库且无待执行 → 不覆盖;有待执行 → 回滚将向前补迁移;当前库领先(incompatible)
   → 默认拒绝(exit 32),`--restore-db` 用**被回滚事务部署前的快照**覆盖——快照之后写入的数据丢失,命令会打印快照时刻与现在;
-  当前库打不开 / `integrity_check` 失败 → `--restore-db --no-rescue-snapshot` 的受控路径(磁盘满 / 权限错误不属此例)。
-- 回滚失败同样只告警、事务保留;再次 `--rollback` 续做同一目标。被回滚掉的版本可以 `--code <sha>` 重新部署。
+  任何一种都先做**救援快照**(只创建一次)。`--no-rescue-snapshot` 只能与 `--restore-db` 同用,且只对**已损坏**的库(文件不是数据库 /
+  `integrity_check` 失败)生效;健康库不允许跳过,权限 / 磁盘 / I/O 错误也不属此例(先修环境)。非 SQLite 库回滚不处置,
+  `--restore-db` 直接拒绝。
+- 回滚失败同样只告警、事务保留;再次 `--rollback` 续做同一目标;下一次正向 `./deploy.sh …` 也会先在同一把锁内自动续做它(已由人确认过),
+  完成后再继续部署。被回滚掉的版本可以 `--code <sha>` 重新部署;只有晋升过的相邻事务才会被提示 `--to`。
+- **服务没在跑时**(机器重启但 `pm2 startup` 没配等):pm2 查询成功且列表里没有受管 app、`/api/health` 不可达、`current` / `html_dir`
+  仍指向 last-success、其材料完整 → 部署照常进行并保留回滚点(日志明示「受管服务未运行,依据 last-success 及材料确认」);
+  pm2 查询失败 / 进程从别的目录跑 / 材料缺失 → exit 24。
+- **收养中断**(维护窗内):`./deploy.sh --rollback`(或直接跑 `deploy-state/rollback`)会先由固化执行体续做收养,不需要工作树。
 - 材料寿命:引用集合(last-success / in-progress 的 target / prev / recover_from、当前入口的 controller、`current` /
   `html_dir` 指向、pm2 进程与 `dump.pm2` 的 cwd、7 天内的 closed 事务)之外按数量清理:release 3、venv 2、快照 10
   (`DORAMI_DEPLOY_KEEP_RELEASES` / `_VENVS` / `_SNAPSHOTS`);pin ref 随 release 一起删。
@@ -220,6 +229,10 @@ ssl_key_file  = /etc/letsencrypt/live/your-domain.example.com/privkey.pem
 - **`html_dir` 在 release 形态下是 symlink**(指向当前 release 的 dist),不要往里手工放文件;
 - **路径型配置必须指向共享位置**:相对路径按代码根(release 的 `app/`)解析,`data/…` 由挂点承接;别的相对根(如 `state/media`)
   会被探针发现并自动建挂点 `app/state -> <repo>/state`;若与源码路径冲突(如 `src/media`)部署被拒绝;
+- **改了存储位置会被拦**(exit 33):每次成功部署把库 / 媒体 / 播客产物 / 备份目录的最终路径记进 manifest 作基准,下次部署逐项相等才放行——
+  把 `database_url` 指到另一份库(哪怕迁移版本相同)会被当作换库拒绝;确要迁移存储,先自行搬数据,再
+  `DORAMI_DEPLOY_ACCEPT_PATH_CHANGE=1 ./deploy.sh … --no-rollback-guarantee` 显式重设基准(本次没有回滚点);
+- **非 SQLite 库**(外部 PostgreSQL 等):加 `--no-rollback-guarantee` 显式放弃库恢复能力后完整部署(迁移照常),回滚不处置库;
 - `[server] reload` 必须为 `false`(`config.py` 的 fallback 是 `true`,`ecosystem.config.js` 的 `NODE_ENV=production`
   另有守卫兜底,显式写上更稳)。
 
@@ -265,6 +278,7 @@ export DORAMI_PODCAST_AUTHORITY_ID=<stable-internal-id>
 | `DORAMI_DEPLOY_STABLE_SECONDS` | 稳定窗(默认 10) |
 | `DORAMI_DEPLOY_PROBE_CACERT` | 站点链路门的 TLS CA 文件(默认系统 CA;不提供 `-k`) |
 | `DORAMI_DEPLOY_FRESH_OK=1` | 真首装授权(无任何部署证据时才生效) |
+| `DORAMI_DEPLOY_ACCEPT_PATH_CHANGE=1` | 运维确要迁移存储位置(换盘)时显式重设路径基准;**必须与 `--no-rollback-guarantee` 同用**(本次 prev=null,跨存储布局没有回滚保证);先自行搬数据 |
 | `DORAMI_DEPLOY_MIN_FREE_GB` | 磁盘预算(默认 2) |
 | `DORAMI_DEPLOY_SNAPSHOT_MAX_MB` | dirty `--here` 固化快照的体积阈值(默认 64) |
 | `DORAMI_DEPLOY_KEEP_RELEASES` / `_VENVS` / `_SNAPSHOTS` / `_CLOSED_KEEP_DAYS` | 清理保留数(默认 3 / 2 / 10 / 7 天) |
