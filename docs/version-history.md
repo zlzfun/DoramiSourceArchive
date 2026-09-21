@@ -70,3 +70,20 @@
 ZCode 排查确认 IT之家首页截断、公共日报评分前裁剪后推进全量游标、HN 网关失败与仅 AI 关键词发现三项风险。补上 IT之家 72h 分页、已知条目不占新额度及先发现后写入；日报以节点本地消费表保留暂缓候选，与正文/游标/运行统计同事务提交，默认40积压+80新候选并互补、每源60；HN保留RSS同时直连Algolia，品牌只匹配标题，ID与发现源语义不变。提供默认只读、固定任务ID、离线应用与快照回滚脚本。
 
 Claude Code (`claude-fable-5-1`) 交叉检视先协商后返修：限定空游标 bootstrap，保留删报回退时的旧 pending，同值配置不打断生成，消除首页条数与全页时间游标假设；拒绝按龄期丢弃未评估文章，改用新旧池配额及积压最老时间观测。详细证据、测试、验收和上线边界见 [方案](./news-coverage-reliability-plan.md)。
+
+
+## 裸机部署回滚:运行副本版本化(issue #126,待发布)
+
+内网 master 用 `./deploy.sh --here` 一键部署,用户 2026-09-21 立项:「部署完成之后发现部署本身的问题(版本起不来等),能立刻回撤到可用状态」;
+范围收窄为**只做健康门失败告警 + 手动 `--rollback`,不自动回滚**。方案经 codex(gpt-6-astra ultra)四轮设计检视(R1 25 条全部成立,
+根因是运行时绑在 git 工作树上;改形为「运行副本版本化」后 13 条答复、R2 复检 8 条全部采纳、R3 终审 0 条),§7 七项全按推荐拍板。
+
+落地(`deploy.sh` + `scripts/deploy-baremetal.sh` + `scripts/deploy-lib.sh` 共用抽取;Docker 路径只做等价重构,`DORAMI_DEPLOY_PROTOCOL` 不 bump):
+每次部署生成不可变的 release(`git archive` 代码副本 + 按输入指纹版本化的私有 venv 指针 + 在副本上构建的 dist + nginx 配置集合快照 + 固化的回滚执行体),
+PM2 从 release 实路径启动,`html_dir` / `current` 是 symlink;部署是锁内事务(intent / completed / error 三字段阶段落盘,「首次宿主写入」之前失败的事务自动归档,
+之后的要求 `--rollback` / `--discard-txn`);两级健康门(后端身份五项 + 经真实 nginx 入口的 index / 主资产摘要 / `/api/health`)+ 稳定窗,不通过红字告警 + 精确回滚命令 + exit 1;
+`--rollback` 在树外固化执行体里跑:撤销失败部署的 nginx 变更集 → 恢复目标快照 → 救援快照(只一次)→ DB 按目标上下文迁移计划分流(compatible 不覆盖 / 补迁移;incompatible 默认拒绝 exit 32,`--restore-db` 用被回滚事务部署前的快照覆盖并打印丢失窗口)→ 切链接 → `pm2 start` 目标 release → `pm2 save` → 健康门;只回一代,`--to` 只接受相邻事务,更早的 `--code <sha>` 正向部署;
+tag 模式在 checkout 前核对目标 tag 宣告 `DORAMI_BAREMETAL_TXN`,否则 exit 11 提示 `--code`;旧形态安装首次运行自动**收养**(venv 不移动 + 移除 editable finder,dist 复制,一次 PM2 重启);
+dirty `--here` 固化成快照 commit(pin ref)可原样重放;路径探针在目标上下文核对可变存储都在 release 之外且与基准一致;extras 钉版导出 `docker/requirements-crawl4ai.txt`(守卫与基础清单同锁);
+锁默认与 Docker 同一把、不可写即失败。桩测试 `tests/test_deploy_baremetal.py`(迷你项目 + PATH 桩,真 git / symlink / SQLite / Alembic;35 例覆盖用法 / 锁 / 首装门 / 布局 / 健康告警 / 未收口纪律 / nginx 变更集真实文件 / dirty 固化 / 能力检查 / 旧脚本自举 / 路径探针 / 迁移矩阵 / 收养 / 回滚各模式 / 清理),
+`tests/fixtures/deploy_scripts_pre_issue_126/` 固化本波之前的脚本。实现记录与偏差见方案 §9。

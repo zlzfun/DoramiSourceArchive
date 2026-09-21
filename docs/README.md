@@ -37,7 +37,7 @@
   annotated tag 是唯一发布单元;`scripts/release.sh` 发版(版本号只在发版时改,PR 不 bump)/
   两条部署脚本按 tag 部署(`--here` 显式例外)/CI 门禁与自动 Release/回滚=切 tag+恢复备份/分支保护清单。
 - ◉ [auto-deploy-plan.md](./auto-deploy-plan.md) — **自动部署流水线(issue #102,2026-09-16)**:tag → Release → Environment 批准 → SSH forced command → 仓库外 launcher / worker(事务 / 护栏 / 首装门)→ 目标 tag 的 deploy-docker.sh;§7 codex 检视记录。
-- ◉ [baremetal-rollback-plan.md](./baremetal-rollback-plan.md) — **裸机部署回滚方案(issue #126,2026-09-21,R3 待拍板)**:两级健康门失败告警(不自动回滚)+ `./deploy.sh --rollback` 不 checkout / 不出网 / 不构建回到上一 release;**运行副本版本化**(release = 代码副本 + venv 指针 + dist + nginx 配置集合 + 固化回滚执行体,PM2 从 release 实路径起)/ 事务阶段 / DB 按迁移计划分流(`--restore-db` 显式恢复)/ 收养 / `--code`;§8 codex 检视记录(R1 25 条 + 改形答复 13 条 + 复检 8 条全部采纳)。
+- ◉ [baremetal-rollback-plan.md](./baremetal-rollback-plan.md) — **裸机部署回滚方案(issue #126,2026-09-21,R3 拍板后已实现)**:两级健康门失败告警(不自动回滚)+ `./deploy.sh --rollback` 不 checkout / 不出网 / 不构建回到上一 release;**运行副本版本化**(release = 代码副本 + venv 指针 + dist + nginx 配置集合 + 固化回滚执行体,PM2 从 release 实路径起)/ 事务阶段 / DB 按迁移计划分流(`--restore-db` 显式恢复)/ 收养 / `--code`;§8 codex 设计检视记录(R1 25 条 + 改形答复 13 条 + 复检 8 条全部采纳)、§9 实现记录(与方案的偏差 / 测试矩阵覆盖)。运维手册见 [`deploy-baremetal.md`](./deploy-baremetal.md)。
 - ◉ [version-history.md](./version-history.md) — **波次史(1.x→3.57.x 逐波详细记录)**:2026-09-15 自 CLAUDE.md
   `## Versioning` 节整体迁出(L0 超 150k 字符上限);每波的设计取舍/目检返修/codex 检视返修/被否方案全文在此,
   CLAUDE.md 年表每波只留一行。**新波次的详细记录追加于此**。

@@ -1,6 +1,6 @@
 # 裸机部署回滚方案(issue #126)
 
-> 状态:**R3 稿,2026-09-21**。R1 经 codex(gpt-6-astra ultra)检视 25 条全部成立,结构性改形为「运行副本版本化」(§3.1);
+> 状态:**R3 稿 → 2026-09-21 用户拍板 §7 七项全按推荐 → 已实现**(分支 `feat/issue-126-baremetal-rollback`,实现记录见 §9)。原 R3 状态:R1 经 codex(gpt-6-astra ultra)检视 25 条全部成立,结构性改形为「运行副本版本化」(§3.1);
 > codex 对改形的 13 条答复、对 R2 的复检(7 处形状缺口 + 1 条新引入 P1)亦全部采纳(记录见 §8)。**待用户拍板 §7、codex 终审。**
 > 范围由用户收窄:只做「健康门失败告警 + 手动一键回滚」,**不做自动回滚**(2026-09-21 拍板)。
 > 分支 `docs/issue-126-baremetal-rollback`;实现分支另开。实现方 / 检视方:Claude Code 实现,Codex 检视(gpt-6-astra ultra)。
@@ -440,3 +440,40 @@ codex 对改形 B 的答复 13 条(风险 A1–A5 / 不够 B1–B4 / 矛盾 C1�
 codex 逐条判「已落实」(落点行号见 `.review/recheck-codex-r2.md`),**未发现新引入 P1,限定范围终审通过**。
 四轮全程:R1 全面检视(25 条)→ 改形 B 答复(13 条)→ R2 对照复检(8 条)→ R3 终审(0 条);全部采纳、无分歧遗留。
 方案自此进入**待用户拍板 §7 七项**状态;拍板后按 §5 六层提交开实现分支,实现后另起代码检视。
+
+## 9. 实现记录(2026-09-21,分支 `feat/issue-126-baremetal-rollback`)
+
+§7 七项全按推荐拍板后,按 §5 六层提交实现(Claude Code 实现)。落点:`deploy.sh`(裸机专属参数与流程)、`scripts/deploy-baremetal.sh`
+(事务 / release / 收养 / 回滚库,随 release 固化进 `controller/`)、`scripts/deploy-lib.sh`(共用:健康核对、JSON 原子写、原子 symlink、
+SQLite 快照、checkout 前钩子、`DORAMI_BAREMETAL_TXN` 宣告)、`deploy-docker.sh`(只改调共用健康轮询,默认预算与输出不变)、
+`docker/requirements-crawl4ai.txt`、`.gitignore`、`config/production.example.ini`、`docs/deploy-baremetal.md`、
+`tests/test_deploy_baremetal.py`(+ `tests/fixtures/deploy_scripts_pre_issue_126/`)、`tests/test_docker_requirements.py`、
+`tests/test_deploy_scripts.py`(两条 Docker 等价守卫)。
+
+**与方案的偏差 / 细化**(检视时请对照):
+
+| 项 | 方案 | 实现 |
+|---|---|---|
+| controller 内容 | `controller/{deploy-lib.sh,rollback.sh}` | `controller/{deploy-lib.sh,deploy-baremetal.sh,rollback.sh,env.sh}`:执行体是三份原样副本 + 入口 + 开事务时的环境(仓库 / 状态目录 / 锁 / PATH),不做函数导出拼接 |
+| rollback 事务的材料 | 未定 | 无新 release;`deploy-state/txns/<txn>/{nginx/changes.json,manifest.json}`;晋升时不覆盖目标 release 的原 `manifest.json` |
+| 失败部署的 in-progress | 回滚以它为 recover_from | 开回滚事务前先归档到 `closed/`(材料仍在 `releases/<txn>`),recover_from 按 txn id 解析材料目录 |
+| 收养事务的首次宿主写入 | 未定 | `process_stopped`(pm2 delete);adopt 事务永不自动归档,只影响 `--discard-txn` 是否要 `--yes` |
+| 首装门的证据 | 列表 | 在脚本建任何目录 / 开事务**之前**采样一次(自己建的 `data/podcast-artifacts`、事务目录不能当证据);媒体 / 播客目录须非空;`releases/` 只有含 `manifest.json` 的(已晋升)算 |
+| 路径探针基准 | 逐项相等 | 基准 release 自己没有该挂点(值落在基准 release 内)的键跳过比较——那是配置新增的存储根,不是漂移;运维改 ini 把库指到别处由首装门(有证据 + fresh → 23)兜住 |
+| dist 位置 | `dist/`(或 `NGINX_RELEASES_DIR/<txn>`) | 两者都实现:`[nginx] releases_dir` / `NGINX_RELEASES_DIR` 非空时 dist 复制到宿主目录(sudo 归属、校验清单),清理时同删;穿越位补不上只告警并提示该项 |
+| 迁移计划自持段 | 与 `plan_migrations` 同语义 | 同语义,另加 `PRAGMA integrity_check` 与 `error_kind`(target_graph / db_unreadable / not_sqlite)供分流表 `error` 行区分;legacy 的 pending 计整链 |
+| 阶段 `db_migrated` | 切换序内、快照后 | 同;迁移与 taxonomy reconcile 在目标上下文(目标 venv + cwd=app + PYTHONPATH=app/src)执行,旧进程仍在跑(与旧脚本时序一致) |
+| 健康门 ② 的资产选择 | index 引用的主 JS / CSS | 第一个 `type=module` 脚本(无则第一个脚本)+ 第一个 stylesheet;外链资产跳过 |
+| 退出码 | §4.13 | 同;另 `--discard-txn` 需 `--yes` 与非交互 `--rollback` 缺 `--yes` 都是 2 |
+| 收养前提 | 未写 | 运行中的代码须透出构建身份(`/api/health` `build.*`,v3.56+),否则健康门过不了;身份取不到时 `--adopt-sha` |
+| dirty 固化的排除集合 | 固定项 + 生成项 | 固定项另含 `config/production.ini` / `config/backend.ini` / `.env`;经临时 excludes 文件生效(显式 pathspec 点名已 ignore 的路径会被 git 拒绝),已跟踪但落在集合里的再从临时 index 移除 |
+| `--status` | §4.13 | 同;回滚预判段与 `--rollback` 共用目标选择、材料门与计划段(只读) |
+
+**验收矩阵覆盖**(`tests/test_deploy_baremetal.py`,macOS / Linux 都跑——脚本刻意不用 GNU 专属命令,文件改写经 python):
+§6.1 身份(首装门两向、prev 与运行身份、dirty 固化、`--code`、能力检查 exit 11、旧脚本自举 fixture、`--adopt-sha`);§6.2 中断
+(构建期失败自动归档、nginx 校验失败整体恢复且判「已改宿主」、健康门失败事务保留 + `--status` 描述阶段 + 再部署 exit 20、收养 / 回滚中断续做同一目标不翻转);
+§6.3 DB(compatible / pending>0 补迁移 / incompatible 默认 32 + `--restore-db` 回到快照点 + 救援快照只一次 / `--restore-db` 在 compatible 时被拒);
+§6.4 材料(venv 指纹复用与新建、extras 进指纹、KEEP 边界、被回滚掉的版本 `--code` 重部署、`--to` 相邻事务);
+§6.5 副作用隔离(构建期失败在线零改动;B 新增站点文件 / enabled 链接并删除 default 后失败,回滚 A 后新增项消失、default 恢复——真实文件);
+§6.6 Docker 等价(既有 64 例全绿 + 默认预算守卫 + 裸机参数被拒);§6.7 旧脚本 fixture。未覆盖、留实机:TLS `--resolve` 探针、`pm2 startup` resurrect、
+Playwright 浏览器保留、`releases_dir` 的 sudo 归属、源码装 nginx 的主配置 include 插入(桩只验 include 行被 -T 识别)。
