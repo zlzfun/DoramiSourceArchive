@@ -483,6 +483,13 @@ P2-06 残留(入窗后不受 deadline 约束)→ 每轮 sleep / `--max-time` 取
 新观察 P3(§9 的 pending>0 覆盖表述)→ 补真实回滚 `migrate` 分支用例(`--to` 前进到目标比库新的 release)。
 另修:开事务记录现场 `scene`(current / html_dir / pm2 cwd),「未改宿主」证明与 scene 比对,prev=null(首装 / 放弃保证)也能证明。
 
+**复检 2**(`.review/recheck2-codex-impl-r1.md`,只对照上面 6 条 + 附带修复):**通过**——4 条残留、2 条观察、附带修复(scene / 未晋升证据不收养 /
+快照 commit 固定身份 / 两个守卫测试)全部判「已落实」,无 P1;codex 在固定提交上重跑裸机 52 例全绿,另做 26 组路径基准 / HTTP 身份定向补验。
+新增 1 条非阻断 P2(接受并修,不再请复检):续做时去掉 `--no-rescue-snapshot` 的收紧逻辑没核 `db_rescued` 是否已完成——救援阶段已按跳过决策
+结束(例如中断在 `pm2 save`)再续做,会把 `db.no_rescue` 改成 false、清掉理由并宣称「先做救援快照」,但阶段重入实际跳过,记录不再反映已发生的动作。
+修法按其建议:只在救援阶段尚未完成时改写决策;阶段已结束的保留当时的跳过记录与理由、提示「已按当时的跳过决策结束,不补做」,不回退阶段补造救援。
+用例拆成三条:救援前中断(`pm2 delete` 失败)→ 库修好后续做真实创建救援快照;救援阶段已结束 → 记录原样、无快照;反向事后加跳过 → exit 2。
+
 ## 9. 实现记录(2026-09-21,分支 `feat/issue-126-baremetal-rollback`)
 
 §7 七项全按推荐拍板后,按 §5 六层提交实现(Claude Code 实现)。落点:`deploy.sh`(裸机专属参数与流程)、`scripts/deploy-baremetal.sh`
@@ -524,7 +531,7 @@ SQLite 快照、checkout 前钩子、`DORAMI_BAREMETAL_TXN` 宣告)、`deploy-do
 (构建期失败自动归档、nginx 校验失败整体恢复且判「已改宿主」、健康门失败事务保留 + `--status` 描述阶段 + 再部署 exit 20、收养 / 回滚中断续做同一目标不翻转);
 §6.3 DB(compatible / incompatible 默认 32 + `--restore-db` 回到快照点 / `--restore-db` 在 compatible 时被拒 / 健康库与权限错误不得跳过救援 /
 损坏库走受控路径且理由落盘 / 救援快照只一次——回滚中断续做后路径与 mtime 不变 / 真实回滚 `migrate` 分支:`--restore-db` 回到 0001 后
-`--to` 前进到含 0002 的目标,回滚事务向前补迁移 / 续做时去掉 `--no-rescue-snapshot` 改为做救援);
+`--to` 前进到含 0002 的目标,回滚事务向前补迁移 / 续做时去掉 `--no-rescue-snapshot` 只在救援阶段未完成时改为做救援、阶段已结束保留记录);
 §6.4 材料(venv 指纹复用与新建、extras 进指纹、KEEP 边界、被回滚掉的版本 `--code` 重部署、`--to` 相邻事务、回滚事务引用的救援快照不被数量清理删);
 §6.5 副作用隔离(构建期失败在线零改动;B 新增站点文件 / enabled 链接并删除 default 后失败,回滚 A 后新增项消失、default 恢复——真实文件;
 交接中断点 closed 副本已写 + in-progress 仍为 B 时重选幂等);

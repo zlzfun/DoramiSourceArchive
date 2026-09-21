@@ -282,6 +282,8 @@ if cmd == "reload":
         save(s)
     sys.exit(0)
 if cmd == "delete":
+    if os.environ.get("FAKE_PM2_DELETE_FAIL"):
+        sys.stderr.write("pm2: delete failed\n"); sys.exit(1)
     s.pop(args[1], None); save(s)
     if health and os.path.exists(health):
         os.unlink(health)
@@ -1469,17 +1471,59 @@ def test_stability_window_is_bounded_by_the_shared_deadline(bm: BM):
     assert r.returncode == 1 and "稳定窗未能在预算内完成" in r.stderr, r.stdout + r.stderr
 
 
-def test_resumed_rollback_can_drop_no_rescue_snapshot(bm: BM):
-    """新观察 P2:跳过救援的回滚中断后,续做时不带 --no-rescue-snapshot 会改为做救援快照;反向不允许。"""
+def test_resumed_rollback_drops_no_rescue_snapshot_only_before_the_rescue_stage(bm: BM):
+    """新观察 P2:跳过救援的回滚在救援阶段之前中断,续做不带 --no-rescue-snapshot → 改为先做救援快照(真实创建快照文件)。"""
+    _deploy_v1(bm)
+    bm.db_insert(1)
+    assert _deploy_v2(bm, migrations=("0001", "0002")).returncode == 0
+    db = bm.clone / "data" / "cms_data.db"
+    healthy = db.read_bytes()
+    db.write_bytes(b"corrupt" * 100)
+    r = bm.run("--rollback", "--yes", "--restore-db", "--no-rescue-snapshot", FAKE_PM2_DELETE_FAIL="1")
+    ip = bm.state("in-progress.json")
+    assert r.returncode == 1 and ip["db"]["no_rescue"] is True and ip["db"]["skip_rescue_reason"] == "db_corrupt"
+    assert ip["stage"]["completed"] == "nginx_restored" and ip["stage"]["intent"] == "process_stopped"
+    # 库修好之后(重核不再是 db_corrupt,与失败提示一致)不带 --no-rescue-snapshot 续做:先做救援快照再恢复
+    db.write_bytes(healthy)
+    r = bm.run("--rollback", "--yes", "--restore-db")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "续做改为先做救援快照" in r.stdout
+    ls = bm.state("last-success.json")
+    assert ls["db"]["no_rescue"] is False and ls["db"]["skip_rescue_reason"] is None
+    assert ls["db"]["rescue_snapshot"] and Path(ls["db"]["rescue_snapshot"]).is_file()
+    assert bm.db_heads() == ["0001"]
+
+
+def test_resumed_rollback_keeps_the_skip_decision_once_the_rescue_stage_is_over(bm: BM):
+    """复检 2 新 P2:救援阶段已按跳过决策结束、随后中断,续做不带 --no-rescue-snapshot 不得改写记录、不补造救援。"""
     _deploy_v1(bm)
     bm.db_insert(1)
     assert _deploy_v2(bm, migrations=("0001", "0002")).returncode == 0
     db = bm.clone / "data" / "cms_data.db"
     db.write_bytes(b"corrupt" * 100)
     r = bm.run("--rollback", "--yes", "--restore-db", "--no-rescue-snapshot", FAKE_PM2_SAVE_FAIL="1")
-    assert r.returncode == 1 and bm.state("in-progress.json")["db"]["no_rescue"] is True
+    ip = bm.state("in-progress.json")
+    assert r.returncode == 1 and ip["db"]["no_rescue"] is True and ip["db"]["skip_rescue_reason"] == "db_corrupt"
+    assert ip["stage"]["completed"] in ("links_switched", "process_started")
     r = bm.run("--rollback", "--yes", "--restore-db")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "续做改为先做救援快照" in r.stdout
+    assert "救援阶段已按当时的跳过决策结束" in r.stdout and "续做改为先做救援快照" not in r.stdout
     ls = bm.state("last-success.json")
-    assert ls["db"]["no_rescue"] is False and bm.db_heads() == ["0001"]
+    assert ls["db"]["no_rescue"] is True and ls["db"]["skip_rescue_reason"] == "db_corrupt" and ls["db"]["rescue_snapshot"] is None
+    assert bm.db_heads() == ["0001"]
+
+
+def test_resumed_rollback_cannot_add_no_rescue_snapshot_afterwards(bm: BM):
+    """反向不允许:开始时做了救援的回滚,续做不能事后加上 --no-rescue-snapshot(exit 2),去掉后照常续做。"""
+    _deploy_v1(bm)
+    bm.db_insert(1)
+    assert _deploy_v2(bm, migrations=("0001", "0002")).returncode == 0
+    r = bm.run("--rollback", "--yes", "--restore-db", FAKE_PM2_SAVE_FAIL="1")
+    ip = bm.state("in-progress.json")
+    assert r.returncode == 1 and ip["db"]["no_rescue"] is False and ip["db"]["rescue_snapshot"]
+    r = bm.run("--rollback", "--yes", "--restore-db", "--no-rescue-snapshot")
+    assert r.returncode == 2 and "不能事后加上" in r.stdout + r.stderr
+    assert bm.state("in-progress.json")["db"]["no_rescue"] is False
+    r = bm.run("--rollback", "--yes", "--restore-db")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert bm.state("last-success.json")["db"]["rescue_snapshot"] == ip["db"]["rescue_snapshot"]

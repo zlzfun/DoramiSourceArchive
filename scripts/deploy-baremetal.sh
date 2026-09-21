@@ -2100,11 +2100,16 @@ bm_rollback_main() {  # [--restore-db] [--yes] [--no-rescue-snapshot] [--to txn]
         db_path="$(bm_manifest_get db.target "")"
         BM_RB_DB_ACTION="$(bm_manifest_get db.action none)"
         echo "    续做回滚事务 $(bm_manifest_get txn_id ?) → ${t_ref}(${t_sha:0:7});completed=$(bm_manifest_get stage.completed ?) intent=$(bm_manifest_get stage.intent ?)"
-        # 续做时去掉 --no-rescue-snapshot = 改为做救援快照(只能收紧,不能事后加上跳过);救援阶段尚未完成时才有意义
+        # 续做时去掉 --no-rescue-snapshot = 改为做救援快照(只能收紧,不能事后加上跳过);
+        # 只在救援阶段尚未完成时改写决策——阶段已结束的,记录必须如实反映当时发生的动作(复检 2 新 P2),不回退阶段补造救援
         if [ "$(bm_manifest_get db.no_rescue false)" = "true" ] && [ "$no_rescue" != 1 ]; then
-            deploy_json_set "$BM_IN_PROGRESS" db.no_rescue false json && deploy_json_set "$BM_IN_PROGRESS" db.skip_rescue_reason null json \
-                || bm_fail "$BM_RC_STEP" "更新救援选项失败"
-            echo "    本次未传 --no-rescue-snapshot:续做改为先做救援快照"
+            if bm_stage_needed "$BM_STAGES_ROLLBACK" db_rescued; then
+                deploy_json_set "$BM_IN_PROGRESS" db.no_rescue false json && deploy_json_set "$BM_IN_PROGRESS" db.skip_rescue_reason null json \
+                    || bm_fail "$BM_RC_STEP" "更新救援选项失败"
+                echo "    本次未传 --no-rescue-snapshot:续做改为先做救援快照"
+            else
+                echo "    本次未传 --no-rescue-snapshot,但救援阶段已按当时的跳过决策结束(理由:$(bm_manifest_get db.skip_rescue_reason ?)):保留记录,不补做救援"
+            fi
         elif [ "$no_rescue" = 1 ] && [ "$(bm_manifest_get db.no_rescue false)" != "true" ]; then
             bm_fail "$BM_RC_USAGE" "该回滚事务开始时没有跳过救援,续做不能事后加上 --no-rescue-snapshot"
         fi
