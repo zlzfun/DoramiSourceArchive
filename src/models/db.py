@@ -85,6 +85,14 @@ class ArticleRecord(SQLModel, table=True):
     read_count: int = Field(default=0, description="全站累计阅读次数")
 
 
+class DailyBriefCandidateRecord(SQLModel, table=True):
+    """Node-local consumption ledger. Pending rows survive cursor advancement."""
+    __tablename__ = "daily_brief_candidates"
+    __table_args__ = (CheckConstraint("status IN ('pending','processed')", name="ck_daily_brief_candidate_status"),)
+    article_id: str = Field(primary_key=True, foreign_key="articles.id", ondelete="CASCADE")
+    status: str = Field(default="pending", index=True)
+
+
 # Fields that make up the faithfully replicated article archive. Reader-local
 # counters and the analysis authority fence deliberately do not advance this
 # watermark.
