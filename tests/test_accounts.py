@@ -561,3 +561,15 @@ def test_password_login_capability_defaults_true_and_gates_login_and_change_pass
         assert _login(client, "user", "user").status_code == 403
         assert _login(client, "admin", "admin").status_code == 200
         assert client.get("/api/runtime").json()["password_login_enabled"] is True
+
+    # 匿名全局姿态为 False(登录页默认不呈现密码表单)时,本地 admin 按账号仍可密码登录(codex R1 P3)
+    monkeypatch.setattr(
+        auth_policy, "password_login_enabled",
+        lambda record=None: record is not None and record.username == "admin",
+    )
+    with TestClient(app_module.app) as client:
+        assert client.get("/api/auth/session").json()["password_login_enabled"] is False
+        assert _login(client, "user", "user").status_code == 403
+        assert _login(client, "admin", "admin").status_code == 200
+        assert client.get("/api/runtime").json()["password_login_enabled"] is True
+        assert client.get("/api/auth/session").json()["password_login_enabled"] is True

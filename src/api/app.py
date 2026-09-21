@@ -261,17 +261,25 @@ def runtime_capabilities(session: Optional[Dict[str, Any]] = None) -> Dict[str, 
     }
 
 
+def _password_login_allows(record: Any) -> bool:
+    """能力位透出用的策略调用:策略异常按 True 降级(main 默认),只影响展示;登录 / 改密端点直接调策略,不降级。"""
+    try:
+        return bool(auth_policy.password_login_enabled(record))
+    except Exception:
+        return True
+
+
 def _password_login_capability(session: Optional[Dict[str, Any]] = None) -> bool:
     """密码登录能力位(runtime 透出用):有会话按该账号判定,无会话取全局姿态;异常按 True 降级(main 默认)。"""
     username = str(session.get("sub")) if session else ""
     if not username or db_sink is None:
-        return bool(auth_policy.password_login_enabled(None))
+        return _password_login_allows(None)
     try:
         with Session(db_sink.engine) as db:
             record = accounts_service.get_user(db, username)
-        return bool(auth_policy.password_login_enabled(record))
     except Exception:  # 能力探测不应阻断 runtime 接口
         return True
+    return _password_login_allows(record)
 
 
 def _user_sources_capability() -> bool:
@@ -1993,7 +2001,7 @@ def get_auth_session(request: Request):
         return {
             "authenticated": False,
             "user": None,
-            "password_login_enabled": bool(auth_policy.password_login_enabled(None)),
+            "password_login_enabled": _password_login_allows(None),
         }
     with Session(db_sink.engine) as db_session:
         record = accounts_service.get_user(db_session, session["sub"])
@@ -2001,7 +2009,7 @@ def get_auth_session(request: Request):
         interest_onboarding_completed_at = (
             record.interest_onboarding_completed_at if record else None
         )
-        password_login = bool(auth_policy.password_login_enabled(record))
+        password_login = _password_login_allows(record)
     return {
         "authenticated": True,
         "user": _auth_user_payload(
