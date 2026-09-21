@@ -2,9 +2,19 @@ import asyncio
 import os
 import sys
 
+import httpx
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from fetchers.impl.webpage_fetcher import IThomeAiWebFetcher
+
+
+@pytest.fixture(autouse=True)
+def empty_next_page(monkeypatch):
+    async def post(self, client, url, **kwargs):
+        return httpx.Response(200, json={'success': True, 'content': {'count': 0, 'html': ''}}, request=httpx.Request('POST', url))
+    monkeypatch.setattr(IThomeAiWebFetcher, '_safe_post', post)
 
 
 class DummyResponse:
@@ -227,12 +237,12 @@ def test_ithome_paginates_past_known_items_and_does_not_spend_new_budget():
     assert len(calls) == 1 and 'domain=next&subdomain=ai&ot=' in calls[0]
 
 
-def test_ithome_short_known_page_ends_without_detail_or_pagination():
+def test_ithome_short_known_page_ends_on_empty_api_page_without_detail():
     f = IThomeAiWebFetcher()
     async def lookup(ids): return {i: True for i in ids}
     async def get(client, url): return DummyResponse(_page(0, 1))
     async def unexpected(*args, **kwargs): raise AssertionError('unnecessary request')
-    f.dedup_lookup = lookup; f._safe_get = get; f._safe_post = unexpected; f._detail_for_url = unexpected
+    f.dedup_lookup = lookup; f._safe_get = get; f._detail_for_url = unexpected
     async def run(): return [x async for x in f._run(None, limit=18)]
     assert asyncio.run(run()) == []
 
@@ -243,9 +253,12 @@ def test_ithome_pagination_failure_is_not_successful_partial_coverage():
     async def get(client, url): return DummyResponse(_page(0))
     async def post(*args, **kwargs): return None
     f._safe_get = get; f._safe_post = post
-    async def run(): return [x async for x in f._run(None, limit=40, fetch_detail=False)]
+    emitted = []
+    async def run():
+        async for item in f._run(None, limit=40, fetch_detail=False): emitted.append(item)
     with pytest.raises(RuntimeError, match='第 2 页请求失败'):
         asyncio.run(run())
+    assert emitted == []
 
 
 def test_ithome_known_empty_article_is_retried_for_body():
@@ -283,3 +296,39 @@ def test_ithome_repeated_page_fails_instead_of_looping():
     async def run(): return [x async for x in f._run(None, limit=60, fetch_detail=False)]
     with pytest.raises(RuntimeError, match='没有新的有效文章链接'):
         asyncio.run(run())
+
+
+def test_ithome_short_homepage_and_ad_timestamp_do_not_hide_next_page():
+    f = IThomeAiWebFetcher()
+    calls = []
+    async def get(client, url):
+        return DummyResponse(_page(0, 1) + '<div class="c" data-ot="2000-01-01T00:00:00+08:00"></div>')
+    async def post(client, url, **kwargs):
+        calls.append(url)
+        return httpx.Response(200, json={'success': True, 'content': {'count': 1, 'html': _page(30, 1)}}, request=httpx.Request('POST', url))
+    f._safe_get = get; f._safe_post = post
+    async def run(): return [x async for x in f._run(None, limit=2, fetch_detail=False)]
+    assert [x.title for x in asyncio.run(run())] == ['新闻 0', '新闻 30']
+    from datetime import datetime
+    expected = int(datetime.fromisoformat('2026-09-20T12:00:00+08:00').timestamp()*1000)
+    assert calls == [f'https://next.ithome.com/category/domainpage?domain=next&subdomain=ai&ot={expected}']
+
+
+def test_ithome_window_stops_without_emitting_old_articles():
+    f = IThomeAiWebFetcher()
+    async def get(client, url): return DummyResponse(_page(0, 1) + _page(150, 1))
+    async def unexpected(*args, **kwargs): raise AssertionError('outside coverage window')
+    f._safe_get = get; f._safe_post = unexpected
+    async def run(): return [x async for x in f._run(None, limit=10, fetch_detail=False)]
+    assert [x.title for x in asyncio.run(run())] == ['新闻 0']
+
+
+def test_ithome_page_limit_failure_emits_nothing():
+    f = IThomeAiWebFetcher(); f.max_listing_pages = 1
+    async def get(client, url): return DummyResponse(_page(0))
+    f._safe_get = get
+    emitted = []
+    async def run():
+        async for item in f._run(None, limit=60, fetch_detail=False): emitted.append(item)
+    with pytest.raises(RuntimeError, match='安全上限'): asyncio.run(run())
+    assert emitted == []

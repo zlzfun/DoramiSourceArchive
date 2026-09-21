@@ -1134,3 +1134,9 @@ def test_hn_algolia_filters_threshold_age_and_invalid_links():
     assert f._algolia_entry(_hn_api_hit(url='javascript:alert(1)'), 0) is None
     own = f._algolia_entry(_hn_api_hit(url=None, story_text='<p>Ask about ZCode</p>'), 0)
     assert own['link'] == own['comments'] and 'Ask about' in own['summary']
+
+
+def test_hn_ambiguous_brand_words_in_body_or_url_are_not_discovery_signals():
+    f = HackerNewsAiRssFetcher(); f._active_min_points = 10; f._active_min_comments = 0
+    assert f._algolia_entry(_hn_api_hit(title='Working with databases', story_text='move the cursor', url='https://example.test/codex'), 0) is None
+    assert f._algolia_entry(_hn_api_hit(title='zcode uploads source history'), 0) is not None

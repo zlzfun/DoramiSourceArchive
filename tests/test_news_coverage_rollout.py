@@ -87,3 +87,29 @@ def test_apply_requires_offline_and_snapshot_failure_rolls_back(database, tmp_pa
         rollout.main(['--database', str(database), '--apply', '--offline', '--snapshot', str(tmp_path / 'missing' / 'snap.json')])
     with connect(database) as conn:
         assert conn.execute('SELECT COUNT(*) FROM collection_jobs').fetchone()[0] == 1
+
+
+def test_managed_job_identity_survives_description_edit_and_json_reformat(database, tmp_path):
+    snapshot = tmp_path / 'first.json'
+    rollout.main(['--database', str(database), '--apply', '--offline', '--snapshot', str(snapshot)])
+    with connect(database) as conn:
+        job_id = int(rollout.setting(conn, rollout.JOB_ID))
+        conn.execute('UPDATE collection_jobs SET per_fetcher_params_json=? WHERE id=?',
+            (json.dumps(json.loads(rollout.JOB['per_fetcher_params_json']), indent=2, sort_keys=True), job_id))
+        assert rollout.plan(conn)['job_before']['id'] == job_id
+        conn.execute('UPDATE collection_jobs SET description=? WHERE id=?', ('operator note', job_id))
+        with pytest.raises(ValueError, match='拒绝覆盖'): rollout.plan(conn)
+        assert conn.execute('SELECT COUNT(*) FROM collection_jobs').fetchone()[0] == 2
+
+
+def test_deleted_managed_job_can_be_reinstalled_and_receipt_rolled_back(database, tmp_path):
+    rollout.main(['--database', str(database), '--apply', '--offline', '--snapshot', str(tmp_path/'first.json')])
+    with connect(database) as conn:
+        old_id = rollout.setting(conn, rollout.JOB_ID)
+        conn.execute('DELETE FROM collection_jobs WHERE id=?', (int(old_id),))
+    receipt = tmp_path/'second.json'
+    rollout.main(['--database', str(database), '--apply', '--offline', '--snapshot', str(receipt)])
+    rollout.main(['--database', str(database), '--apply', '--offline', '--rollback', str(receipt)])
+    with connect(database) as conn:
+        assert rollout.setting(conn, rollout.JOB_ID) == old_id
+        assert conn.execute('SELECT COUNT(*) FROM collection_jobs').fetchone()[0] == 1

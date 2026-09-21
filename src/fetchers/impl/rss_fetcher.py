@@ -694,9 +694,11 @@ class HackerNewsAiRssFetcher(PresetRssFetcher):
     api_window_hours = 72
     _ai_topic = re.compile(
         r"\b(?:AI|LLMs?|artificial intelligence|machine learning|deep learning|"
-        r"neural networks?|generative|OpenAI|Anthropic|ChatGPT|Claude|Codex|Gemini|"
-        r"DeepSeek|Qwen|ZCode|Zhipu|GLM[ -]?\d*|Kimi|MiniMax|Grok|Llama|Mistral|"
-        r"Hugging ?Face|Cursor|Copilot|MCP)\b", re.I)
+        r"neural networks?|generative AI)\b", re.I)
+    _ai_brand = re.compile(
+        r"\b(?:OpenAI|Anthropic|ChatGPT|Claude|Codex|Gemini|DeepSeek|Qwen|ZCode|"
+        r"Zhipu|GLM[ -]?\d*|Kimi|MiniMax|Grok|Llama|Mistral|Hugging ?Face|"
+        r"Cursor|Copilot|MCP)\b", re.I)
 
     async def _fetch_parsed_feed(self, client, feed_url, max_response_bytes=0):
         rss = None
@@ -765,7 +767,7 @@ class HackerNewsAiRssFetcher(PresetRssFetcher):
             link = str(hit.get("url") or "")
             if (not item_id.isdigit() or stamp <= since or points < self._active_min_points
                     or comments < self._active_min_comments or not title
-                    or not self._ai_topic.search(f"{title} {story_text} {link}")):
+                    or not (self._ai_brand.search(title) or self._ai_topic.search(f"{title} {story_text} {link}"))):
                 return None
             discussion = f"https://news.ycombinator.com/item?id={item_id}"
             if link and not link.startswith(("https://", "http://")):

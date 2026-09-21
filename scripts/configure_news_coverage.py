@@ -18,6 +18,8 @@ from uuid import uuid4
 MARKER = 'news-coverage-issue-127'
 SCOPE = 'daily_brief_source_ids'
 REVISION = 'daily_brief_selection_revision'
+JOB_ID = 'news_coverage_issue_127_job_id'
+SETTING_KEYS = (SCOPE, REVISION, JOB_ID)
 JOB = {
     'name': 'AI 新闻日间补采',
     'description': MARKER,
@@ -46,20 +48,29 @@ def write_setting(conn, key, value):
 def plan(conn):
     if setting(conn, 'remote_sync:v2_consumer_mode') is not None:
         raise ValueError('只能在外部采集节点执行，当前数据库有同步接收标记')
-    jobs = [dict(row) for row in conn.execute('SELECT * FROM collection_jobs WHERE description=?', (MARKER,))]
-    if len(jobs) > 1 or (jobs and any(jobs[0][k] != v for k, v in JOB.items())):
+    managed_id = setting(conn, JOB_ID)
+    if managed_id is not None:
+        if not managed_id.isdigit():
+            raise ValueError('专用任务 ID 格式异常，拒绝覆盖')
+        jobs = [dict(row) for row in conn.execute('SELECT * FROM collection_jobs WHERE id=?', (int(managed_id),))]
+    else:
+        jobs = [dict(row) for row in conn.execute('SELECT * FROM collection_jobs WHERE description=?', (MARKER,))]
+    def equivalent(key, actual, expected):
+        return json.loads(actual) == json.loads(expected) if key.endswith('_json') else actual == expected
+    if len(jobs) > 1 or (jobs and any(not equivalent(k, jobs[0][k], v) for k, v in JOB.items())):
         raise ValueError('专用任务已被修改或重复，拒绝覆盖，请在管理面核对')
     for source in ('web_ithome_ai', 'rss_hn_ai'):
         row = conn.execute('SELECT is_active, collection_authority_id FROM source_configs WHERE source_id=?', (source,)).fetchone()
         # Both IDs are built-in fetchers. Missing overrides mean enabled defaults.
         if row is not None and (not row['is_active'] or row['collection_authority_id']):
             raise ValueError(f'{source} 被停用或由远端管理，请先核对节点')
-    before = {key: setting(conn, key) for key in (SCOPE, REVISION)}
+    before = {key: setting(conn, key) for key in SETTING_KEYS}
     raw = before[SCOPE]
     scope = json.loads(raw) if raw else None
     if scope is not None and (not isinstance(scope, list) or not all(isinstance(s, str) for s in scope)):
         raise ValueError('公共日报来源名单格式异常，拒绝覆盖')
     after = dict(before)
+    after[JOB_ID] = str(jobs[0]["id"]) if jobs else None
     if scope and 'rss_hn_ai' not in scope:
         after[SCOPE] = json.dumps([*scope, 'rss_hn_ai'], ensure_ascii=False)
         after[REVISION] = str(uuid4())
@@ -86,6 +97,7 @@ def apply_plan(conn, changes, snapshot_path, database):
         placeholders = ','.join('?' for _ in row)
         result = conn.execute(f'INSERT INTO collection_jobs({fields}) VALUES ({placeholders})', list(row.values()))
         changes['job_after'] = dict(conn.execute('SELECT * FROM collection_jobs WHERE id=?', (result.lastrowid,)).fetchone())
+    changes['settings_after'][JOB_ID] = str(changes['job_after']['id'])
     for key, value in changes['settings_after'].items():
         write_setting(conn, key, value)
     save_snapshot(snapshot_path, {'version': 1, 'database': str(database), **changes})
@@ -97,7 +109,7 @@ def rollback(conn, snapshot):
     row = conn.execute('SELECT * FROM collection_jobs WHERE id=?', (job['id'],)).fetchone()
     current = dict(row) if row is not None else None
     expected = snapshot['job_before']
-    current_settings = {key: setting(conn, key) for key in (SCOPE, REVISION)}
+    current_settings = {key: setting(conn, key) for key in SETTING_KEYS}
     if current == expected and current_settings == snapshot['settings_before']:
         return False
     if current != job or current_settings != snapshot['settings_after']:

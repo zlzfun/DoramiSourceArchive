@@ -51,7 +51,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
-from sqlalchemy import and_, case, delete, or_, text
+from sqlalchemy import and_, case, delete, or_, text, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from contextlib import contextmanager
 from pathlib import Path
@@ -394,19 +394,46 @@ def get_setting(session: Session, key: str, default: str = "") -> str:
     return record.value if record is not None else default
 
 
+def _scope_value(raw):
+    try:
+        value = json.loads(raw or "null")
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(value, list):
+        return None
+    return sorted({str(v).strip() for v in value if str(v).strip()}) or None
+
+
 def set_setting(session: Session, key: str, value: str) -> None:
+    record = session.get(AppSettingRecord, key)
+    previous = record.value if record is not None else ""
+    unchanged = (_scope_value(previous) == _scope_value(value)) if key == KEY_SOURCE_IDS else (
+        previous == value and (record is not None or key == KEY_CURSOR)
+    )
+    if unchanged:
+        session.commit()
+        return
     if key in {KEY_CURSOR, KEY_SOURCE_IDS}:
-        revision = session.get(AppSettingRecord, KEY_SELECTION_REVISION) or AppSettingRecord(key=KEY_SELECTION_REVISION, value="")
-        revision.value = uuid4().hex
-        session.add(revision)
+        _stage_setting(session, KEY_SELECTION_REVISION, uuid4().hex)
         if key == KEY_CURSOR:
             session.exec(delete(DailyBriefCandidateRecord))
-    record = session.get(AppSettingRecord, key)
-    if record is None:
-        record = AppSettingRecord(key=key, value=value)
-    else:
-        record.value = value
-    session.add(record)
+    _stage_setting(session, key, value)
+    session.commit()
+
+
+def rewind_cursor(session: Session, cursor: str, included_article_ids=None) -> None:
+    """Undo a deleted latest brief without erasing older deferred candidates."""
+    ids = included_article_ids if isinstance(included_article_ids, list) else []
+    ids = [item for item in ids if isinstance(item, str)]
+    replay = ArticleRecord.id.in_(ids)
+    if cursor:
+        replay = or_(replay, ArticleRecord.fetched_date >= cursor)
+    session.exec(update(DailyBriefCandidateRecord)
+        .where(DailyBriefCandidateRecord.status == "processed")
+        .where(DailyBriefCandidateRecord.article_id.in_(select(ArticleRecord.id).where(replay)))
+        .values(status="pending"))
+    _stage_setting(session, KEY_CURSOR, cursor)
+    _stage_setting(session, KEY_SELECTION_REVISION, uuid4().hex)
     session.commit()
 
 
@@ -530,49 +557,55 @@ def collect_candidates(
 def _collect_candidate_batch(session, *, cursor, max_total=120, per_source_cap=DEFAULT_CANDIDATE_PER_SOURCE_CAP, source_ids=None):
     if max_total < 1 or per_source_cap < 1:
         raise ValueError("日报候选上限必须为正数")
-    effective_cursor = cursor or ""
-    # 两段式取数(v3.35):先只取轻列做扫描/裁剪(游标重置或长停摆恢复时,旧实现会把
-    # 游标后**全部行连正文**载入内存只为数 scanned_total),再按入选名单载全文。
     from services.user_sources import USER_SOURCE_PREFIX
 
-    light_statement = (
-        select(ArticleRecord.id, ArticleRecord.source_id, ArticleRecord.fetched_date)
+    base = (select(ArticleRecord.id, ArticleRecord.source_id, ArticleRecord.fetched_date,
+                   DailyBriefCandidateRecord.status)
         .outerjoin(DailyBriefCandidateRecord, DailyBriefCandidateRecord.article_id == ArticleRecord.id)
-        .where(or_(
-            DailyBriefCandidateRecord.status == "pending",
-            and_(DailyBriefCandidateRecord.article_id.is_(None), ArticleRecord.fetched_date >= effective_cursor),
-        ))
-        .where(ArticleRecord.source_id != DAILY_BRIEF_SOURCE_ID)  # 防自我递归
-        # 用户自定源机械排除(v3.40):日报名单是手工 allowlist 本就不会勾用户源,
-        # 此处是「全部来源」档(名单未设)下的双保险——私有源绝不进公共日报。
-        .where(~ArticleRecord.source_id.startswith(USER_SOURCE_PREFIX, autoescape=True))
-        .order_by(
-            # Drain old deferred rows first so a busy source cannot starve them.
-            case((DailyBriefCandidateRecord.status == "pending", 0), else_=1),
-            case((DailyBriefCandidateRecord.status == "pending", ArticleRecord.fetched_date), else_="").asc(),
-            ArticleRecord.fetched_date.desc(), ArticleRecord.id.asc(),
-        )
-    )
+        .where(ArticleRecord.source_id != DAILY_BRIEF_SOURCE_ID)
+        .where(~ArticleRecord.source_id.startswith(USER_SOURCE_PREFIX, autoescape=True)))
     if source_ids:
-        light_statement = light_statement.where(ArticleRecord.source_id.in_(list(source_ids)))
-    light_rows = session.exec(light_statement).all()
-
-    max_fetched_seen = cursor
-    for _rid, _rsrc, fetched in light_rows:
-        if fetched and fetched > max_fetched_seen:
-            max_fetched_seen = fetched
-
-    # 先消化积压，再取新候选；两个上限只控制本轮预算，不丢弃剩余候选。
+        base = base.where(ArticleRecord.source_id.in_(list(source_ids)))
+    unseen = DailyBriefCandidateRecord.article_id.is_(None)
+    if cursor:
+        fresh = and_(unseen, ArticleRecord.fetched_date >= cursor)
+    else:
+        # Bootstrap/reset means one recent bounded window, not the whole archive.
+        recent_ids = (base.with_only_columns(ArticleRecord.id).where(unseen)
+            .order_by(ArticleRecord.fetched_date.desc(), ArticleRecord.id.asc()).limit(max_total))
+        fresh = and_(unseen, ArticleRecord.id.in_(recent_ids))
+    light_rows = session.exec(base.where(or_(DailyBriefCandidateRecord.status == "pending", fresh))
+        .order_by(ArticleRecord.fetched_date.desc(), ArticleRecord.id.asc())).all()
+    max_fetched_seen = max([cursor, *(r[2] for r in light_rows if r[2])])
+    pending = sorted((r for r in light_rows if r[3] == "pending"), key=lambda r: (r[2], r[0]))
+    fresh_rows = [r for r in light_rows if r[3] is None]
     per_source_count: Dict[str, int] = {}
     chosen_ids: List[str] = []
-    for rid, rsrc, _fetched in light_rows:
-        count = per_source_count.get(rsrc, 0)
-        if count >= per_source_cap:
-            continue
-        per_source_count[rsrc] = count + 1
-        chosen_ids.append(rid)
-        if len(chosen_ids) >= max_total:
-            break
+    chosen_set = set()
+
+    def take(rows, budget):
+        for rid, source, _stamp, _status in rows:
+            if len(chosen_ids) >= budget:
+                break
+            if rid in chosen_set or per_source_count.get(source, 0) >= per_source_cap:
+                continue
+            chosen_ids.append(rid)
+            chosen_set.add(rid)
+            per_source_count[source] = per_source_count.get(source, 0) + 1
+
+    # Reserve up to a third for backlog, then fresh stories, then unused backlog.
+    # At the default 120 this provides 40 pending + up to 80 new without wasting slots.
+    take(pending, max_total // 3)
+    take(fresh_rows, max_total)
+    take(pending, max_total)
+    bootstrap_skipped = []
+    if not cursor and max_fetched_seen:
+        # A large historical import can have one timestamp. Fence only the IDs
+        # already present outside this bootstrap snapshot; later equal-time IDs
+        # remain eligible through the normal >= cursor rule.
+        bootstrap_skipped = [row[0] for row in session.exec(base.with_only_columns(ArticleRecord.id)
+            .where(unseen, ArticleRecord.fetched_date == max_fetched_seen,
+                   ArticleRecord.id.not_in([r[0] for r in fresh_rows]))).all()]
 
     candidates: List[BriefCandidate] = []
     if chosen_ids:
@@ -619,7 +652,7 @@ def _collect_candidate_batch(session, *, cursor, max_total=120, per_source_cap=D
                 )
             )
 
-    return candidates, (max_fetched_seen or effective_cursor), light_rows
+    return candidates, max_fetched_seen, light_rows, bootstrap_skipped
 
 
 # ==========================================
@@ -1507,14 +1540,15 @@ async def _generate_daily_brief(
         set_progress("error", "LLM 未配置")
         raise LLMNotConfigured("LLM 未配置（需在设置中填写 base_url / api_key / model）")
 
-    # 2. 取候选（top_n 未显式指定时读配置）
+    # 2. 配置、候选和 bootstrap 同时间戳边界取自同一个只读快照。
     with Session(engine) as session:
+        session.exec(text("BEGIN"))
         if top_n is None:
             top_n = daily_brief_top_n(session)
         cursor_before = read_cursor(session)
         source_scope = read_source_scope(session)
         selection_revision = get_setting(session, KEY_SELECTION_REVISION)
-        candidates, max_fetched_seen, scanned_rows = _collect_candidate_batch(
+        candidates, max_fetched_seen, scanned_rows, bootstrap_skipped = _collect_candidate_batch(
             session, cursor=cursor_before, max_total=max_total,
             per_source_cap=per_source_cap, source_ids=source_scope,
         )
@@ -1814,14 +1848,17 @@ async def _generate_daily_brief(
             raise RuntimeError("日报来源范围或游标在生成期间已变更，请重新生成")
         await _persist_brief(storage, content_obj, session=session)
         chosen_ids = {c.id for c in candidates}
-        for offset in range(0, len(scanned_rows), 200):
-            chunk = scanned_rows[offset:offset + 200]
+        skipped_ids = set(bootstrap_skipped)
+        ledger_rows = [*scanned_rows, *((rid, "", "", None) for rid in bootstrap_skipped)]
+        for offset in range(0, len(ledger_rows), 200):
+            chunk = ledger_rows[offset:offset + 200]
             alive = set(session.exec(select(ArticleRecord.id).where(ArticleRecord.id.in_([r[0] for r in chunk]))).all())
-            values = [{"article_id": rid, "status": "processed" if rid in chosen_ids else "pending"}
-                      for rid, _source, _stamp in chunk if rid in alive]
+            values = [{"article_id": rid, "status": "processed" if rid in chosen_ids or rid in skipped_ids else "pending"}
+                      for rid, _source, _stamp, _status in chunk if rid in alive]
             if values:
                 statement = sqlite_insert(DailyBriefCandidateRecord).values(values)
-                session.exec(statement.on_conflict_do_update(index_elements=["article_id"], set_={"status": statement.excluded.status}))
+                session.exec(statement.on_conflict_do_update(index_elements=["article_id"], set_={"status": statement.excluded.status},
+                    where=DailyBriefCandidateRecord.status != statement.excluded.status))
         _stage_setting(session, KEY_CURSOR, max_fetched_seen)
         last_run = {
             "status": "success", "started_at": started_at,
@@ -1831,6 +1868,7 @@ async def _generate_daily_brief(
             # 本轮暂缓量：后续运行优先消化；持续增长说明处理预算跟不上入库。
             "candidates_scanned": scanned_total, "candidates_used": len(candidates),
             "candidates_deferred": scanned_total - len(candidates),
+            "oldest_deferred_fetched_at": min((r[2] for r in scanned_rows if r[0] not in chosen_ids), default=None),
             # 评分来源观测(v3.48):复用分析 vs 就地补评 vs 门槛 pass——补评常态化说明
             # worker 没跟上(或总闸没开),门槛 pass 过多说明阈值偏高;scored_inline_pending
             # 是补评里正在 worker 队列的篇数(随后会再算一次,cron 该往后挪);
@@ -1867,7 +1905,7 @@ def _stage_setting(session, key, value):
     session.add(record)
 
 
-async def _persist_brief(storage, content_obj: DailyBriefContent, *, session=None) -> None:
+async def _persist_brief(storage, content_obj: DailyBriefContent, *, session) -> None:
     """写日报。db_storage.save() 不覆盖已有 has_content 记录，故同日重跑走 update。"""
     from models.content import serialize_to_metadata
 
@@ -1877,38 +1915,20 @@ async def _persist_brief(storage, content_obj: DailyBriefContent, *, session=Non
     if not (content_obj.content or "").strip():
         raise RuntimeError("日报正文为空,拒绝写库(疑似 LLM 输出被思考/截断耗尽,检查 max_tokens 与思考模式)")
 
-    if session is not None:
-        from services import sync_consumer_policy
-        if not sync_consumer_policy.local_source_operation_allowed(session, content_obj.source_id, operation="collection"):
-            raise RuntimeError("当前节点不允许写入公共日报")
-        metadata = serialize_to_metadata(content_obj)
-        record = session.get(ArticleRecord, content_obj.id)
-        if record is None:
-            record = ArticleRecord(id=content_obj.id, title=content_obj.title,
-                source_id=content_obj.source_id, source_url=content_obj.source_url,
-                content_type=content_obj.content_type, publish_date=content_obj.publish_date,
-                fetched_date=content_obj.fetched_date, archive_updated_at=content_obj.fetched_date)
-        for key in ("title", "content_type", "source_id", "source_url", "publish_date", "fetched_date", "content"):
-            setattr(record, key, getattr(content_obj, key))
-        record.has_content = True
-        record.extensions_json = json.dumps(metadata.get("extensions", {}), ensure_ascii=False)
-        session.add(record)
-        session.flush()
-        return
-    existing = await storage.get(content_obj.id)
-    if existing is None:
-        ok = await storage.save(content_obj)
-        if not ok:
-            raise RuntimeError(f"日报写库失败 (id={content_obj.id})")
-        return
+    from services import sync_consumer_policy
+    if not sync_consumer_policy.local_source_operation_allowed(session, content_obj.source_id, operation="collection"):
+        raise RuntimeError("当前节点不允许写入公共日报")
     metadata = serialize_to_metadata(content_obj)
-    await storage.update(content_obj.id, {
-        "title": content_obj.title,
-        "content_type": DAILY_BRIEF_CONTENT_TYPE,
-        "source_id": DAILY_BRIEF_SOURCE_ID,
-        "publish_date": content_obj.publish_date,
-        "fetched_date": content_obj.fetched_date,
-        "has_content": True,
-        "content": content_obj.content,
-        "extensions_json": json.dumps(metadata.get("extensions", {}), ensure_ascii=False),
-    })
+    record = session.get(ArticleRecord, content_obj.id)
+    if record is None:
+        record = ArticleRecord(id=content_obj.id, title=content_obj.title,
+            source_id=content_obj.source_id, source_url=content_obj.source_url,
+            content_type=content_obj.content_type, publish_date=content_obj.publish_date,
+            fetched_date=content_obj.fetched_date, archive_updated_at=content_obj.fetched_date)
+    for key in ("title", "content_type", "source_id", "source_url", "publish_date", "fetched_date", "content"):
+        setattr(record, key, getattr(content_obj, key))
+    record.has_content = True
+    record.extensions_json = json.dumps(metadata.get("extensions", {}), ensure_ascii=False)
+    session.add(record)
+    session.flush()
+    return

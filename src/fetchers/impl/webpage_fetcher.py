@@ -836,6 +836,17 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
             return {**detail, "url": str(response.url)}
         return await super()._detail_for_url(client, url, max_chars)
 
+    def _article_entries(self, items, page_url):
+        entries = []
+        for item in items:
+            title_link = item.select_one("a.title[href]")
+            if title_link is None:
+                continue
+            url = self._normalize_article_url(urljoin(page_url, str(title_link["href"])))
+            if self._matches_article_url(url):
+                entries.append((item, title_link, url))
+        return entries
+
     max_listing_pages = 10
     coverage_window_hours = 72
 
@@ -852,7 +863,8 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
             yield items, str(response.url)
             # The site's own load-more contract uses the last item's timestamp.
             dated = [self._parse_listing_datetime(str(node.get("data-ot") or ""))
-                     for node in soup.select(".c[data-ot]")]
+                     for item, _, _ in self._article_entries(items, str(response.url))
+                     for node in item.select(".c[data-ot]")]
             dated = [value for value in dated if value]
             if not dated:
                 raise RuntimeError("IT之家 AI 分页缺少时间游标")
@@ -879,27 +891,17 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
                 return
             soup = BeautifulSoup(f'<ul class="bl">{html_text}</ul>', "html.parser")
 
-    async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
-        limit = self._entry_limit(kwargs.get("limit"))
-        fetch_detail = self._bool_param(kwargs.get("fetch_detail"))
-        detail_max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
-        if limit <= 0:
-            return
-        emitted = 0
+    async def _discover_listing_entries(self, client, limit):
+        chosen = []
         discovered = 0
         cutoff = None
-        seen_urls: set[str] = set()
+        seen_urls = set()
         async for items, page_url in self._listing_pages(client):
             entries = []
-            for item in items:
-                title_link = item.select_one("a.title[href]")
-                if not title_link:
-                    continue
-                url = self._normalize_article_url(urljoin(page_url, str(title_link["href"])))
-                if not self._matches_article_url(url) or url in seen_urls:
-                    continue
-                seen_urls.add(url)
-                entries.append((item, title_link, url))
+            for entry in self._article_entries(items, page_url):
+                if entry[2] not in seen_urls:
+                    seen_urls.add(entry[2])
+                    entries.append(entry)
             if not entries:
                 raise RuntimeError("IT之家 AI 分页没有新的有效文章链接")
             discovered += len(entries)
@@ -910,71 +912,80 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
             if cutoff is None and dates:
                 cutoff = max(dates) - timedelta(hours=self.coverage_window_hours)
             reached_window = bool(cutoff and dates and min(dates) < cutoff)
-            # Scan across fully known pages too: an earlier run may have stopped
-            # at its new-item budget halfway through a later page.
             for item, title_link, url in entries:
                 date_node = item.select_one(".c[data-ot]")
                 item_date = self._parse_listing_datetime(str(date_node.get("data-ot") or "")) if date_node else ""
                 if (cutoff and item_date and datetime.fromisoformat(item_date) < cutoff) or existing.get(self._content_id(url), False):
                     continue
-                title = self._clean_text(title_link.get_text(" ", strip=True)) or str(title_link.get("title") or "")
-                summary_node = item.select_one(".m")
-                summary = self._clean_text(summary_node.get_text(" ", strip=True) if summary_node else "")[:500]
-                content_node = item.select_one(".c")
-                raw_publish_date = str(content_node.get("data-ot") or "") if content_node else ""
-                publish_date = self._parse_listing_datetime(raw_publish_date) or self._extract_datetime(f"{title} {summary}")
-                tags = [self._clean_text(tag.get_text(" ", strip=True)) for tag in item.select(".tags a")]
-                tags = [tag for tag in tags if tag]
-                image_node = item.select_one("a.img img")
-                media_url = ""
-                if image_node:
-                    media_url = str(image_node.get("data-original") or image_node.get("src") or "")
+                chosen.append((item, title_link, url))
+                if len(chosen) >= limit:
+                    self.logger.info("IT之家 AI 达到本轮新增上限: discovered=%d selected=%d; 后续轮次继续扫描", discovered, len(chosen))
+                    return chosen
+            if reached_window:
+                break
+        self.logger.info("IT之家 AI 已覆盖列表窗口: discovered=%d selected=%d", discovered, len(chosen))
+        return chosen
 
-                content_id = self._content_id(url)
-                detail = {"title": "", "text": "", "method": "", "url": ""}
-                # 已入库且有正文则跳过详情请求，避免对重复条目重复抓取正文。
-                detail_fetched = fetch_detail and not await self._should_skip_detail_fetch(content_id)
-                if detail_fetched:
-                    detail = await self._detail_for_url(client, url, detail_max_chars)
-                    if detail["title"] and not title:
-                        title = detail["title"]
-                content = detail["text"] or summary
+    async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
+        limit = self._entry_limit(kwargs.get("limit"))
+        fetch_detail = self._bool_param(kwargs.get("fetch_detail"))
+        detail_max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
+        if limit <= 0:
+            return
+        # Complete discovery before yielding: a later list failure must not leave
+        # already-saved rows outside the pipeline's successful analysis hooks.
+        entries = await self._discover_listing_entries(client, limit)
+        for item, title_link, url in entries:
+            title = self._clean_text(title_link.get_text(" ", strip=True)) or str(title_link.get("title") or "")
+            summary_node = item.select_one(".m")
+            summary = self._clean_text(summary_node.get_text(" ", strip=True) if summary_node else "")[:500]
+            content_node = item.select_one(".c")
+            raw_publish_date = str(content_node.get("data-ot") or "") if content_node else ""
+            publish_date = self._parse_listing_datetime(raw_publish_date) or self._extract_datetime(f"{title} {summary}")
+            tags = [self._clean_text(tag.get_text(" ", strip=True)) for tag in item.select(".tags a")]
+            tags = [tag for tag in tags if tag]
+            image_node = item.select_one("a.img img")
+            media_url = ""
+            if image_node:
+                media_url = str(image_node.get("data-original") or image_node.get("src") or "")
 
-                yield WebPageArticleContent(
-                    id=content_id,
-                    title=title or "未命名 IT之家 AI 条目",
-                    source_url=url,
-                    publish_date=publish_date,
-                    content=content,
-                    has_content=bool(content),
-                    site_name=self.site_name,
-                    source_section=self.source_section,
-                    summary=summary,
-                    tags=[self.category, "webpage", *tags],
-                    raw_data={
-                        "listing_url": self.listing_url,
-                        "url": url,
-                        "title": title,
-                        "summary": summary,
-                        "listing_source": "ithome_ai_category_html",
-                        "listing_publish_date": raw_publish_date,
-                        "tags": tags,
-                        "media_url": media_url,
-                        "detail_fetched": detail_fetched,
-                        "detail_title": detail["title"],
-                        "detail_text_length": len(detail["text"]),
-                        "detail_extraction_method": detail.get("method", ""),
-                        "detail_source_url": detail.get("url", ""),
-                    },
-                )
-                emitted += 1
-                if emitted >= limit:
-                    self.logger.info("IT之家 AI 达到本轮新增上限: discovered=%d emitted=%d; 后续轮次继续扫描未归档条目", discovered, emitted)
-                    return
-            # The source returns full pages of 30 until the final short page.
-            if reached_window or len(items) < 30:
-                self.logger.info("IT之家 AI 已覆盖列表窗口: discovered=%d emitted=%d", discovered, emitted)
-                return
+            content_id = self._content_id(url)
+            detail = {"title": "", "text": "", "method": "", "url": ""}
+            # 已入库且有正文则跳过详情请求，避免对重复条目重复抓取正文。
+            detail_fetched = fetch_detail and not await self._should_skip_detail_fetch(content_id)
+            if detail_fetched:
+                detail = await self._detail_for_url(client, url, detail_max_chars)
+                if detail["title"] and not title:
+                    title = detail["title"]
+            content = detail["text"] or summary
+
+            yield WebPageArticleContent(
+                id=content_id,
+                title=title or "未命名 IT之家 AI 条目",
+                source_url=url,
+                publish_date=publish_date,
+                content=content,
+                has_content=bool(content),
+                site_name=self.site_name,
+                source_section=self.source_section,
+                summary=summary,
+                tags=[self.category, "webpage", *tags],
+                raw_data={
+                    "listing_url": self.listing_url,
+                    "url": url,
+                    "title": title,
+                    "summary": summary,
+                    "listing_source": "ithome_ai_category_html",
+                    "listing_publish_date": raw_publish_date,
+                    "tags": tags,
+                    "media_url": media_url,
+                    "detail_fetched": detail_fetched,
+                    "detail_title": detail["title"],
+                    "detail_text_length": len(detail["text"]),
+                    "detail_extraction_method": detail.get("method", ""),
+                    "detail_source_url": detail.get("url", ""),
+                },
+            )
 
 
 class QwenBlogWebFetcher(BaseWebPageListFetcher):
