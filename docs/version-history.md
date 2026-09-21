@@ -70,3 +70,13 @@
 ZCode 排查确认 IT之家首页截断、公共日报评分前裁剪后推进全量游标、HN 网关失败与仅 AI 关键词发现三项风险。补上 IT之家 72h 分页、已知条目不占新额度及先发现后写入；日报以节点本地消费表保留暂缓候选，与正文/游标/运行统计同事务提交，默认40积压+80新候选并互补、每源60；HN保留RSS同时直连Algolia，品牌只匹配标题，ID与发现源语义不变。提供默认只读、固定任务ID、离线应用与快照回滚脚本。
 
 Claude Code (`claude-fable-5-1`) 交叉检视先协商后返修：限定空游标 bootstrap，保留删报回退时的旧 pending，同值配置不打断生成，消除首页条数与全页时间游标假设；拒绝按龄期丢弃未评估文章，改用新旧池配额及积压最老时间观测。详细证据、测试、验收和上线边界见 [方案](./news-coverage-reliability-plan.md)。
+
+
+## 下游身份源接入点:password_login_enabled 能力位 + alembic heads 口径(issue #130,待发布)
+
+内网适配分支在 main 之上接 SSO,把「账号能否密码登录」当 prop 从 `App.jsx` 穿到 `SettingsModal.jsx` 签名行,main 每改签名就撞冲突;
+内网自带迁移支线,main 每加一条迁移就双 head,内网每次手工 `alembic merge` 下次照样双头。按 `INTRANET_DELTA` 上游优先:
+main 提供 `services/auth_policy.password_login_enabled(record)` 单一覆盖点(main 恒 True),`runtime` / `GET /api/auth/session` 透出,
+登录与改密端点 `false` 时 403,设置柜账户区据能力位隐藏改密表单,登录页不动;下游拆掉 prop 穿线、只改这一个函数。
+迁移口径统一 `upgrade heads`(单链等价),新增守卫「未带 branch label 的 head 至多一个」,下游带 label 的支线可并存、不再合并。
+
