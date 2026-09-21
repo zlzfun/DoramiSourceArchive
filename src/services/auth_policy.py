@@ -1,6 +1,6 @@
 """登录方式策略:密码登录是否可用——下游外部身份源的唯一覆盖点(issue #130)。
 
-公网主线只有密码登录,``password_login_enabled`` 恒为 True,main 的行为逐字不变。
+公网主线只有密码登录,``password_login_enabled`` 恒为 True:main 既有行为不变,只是响应多一个能力位、runtime 多一次账号查询。
 下游接入外部身份源(内网 SSO / OIDC)时**只改这一个函数**,按账号判定(例如由外部身份源
 供给的账号返回 False、本地管理员仍可密码登录),不要再把信号当 prop 穿过共享组件签名
 (``App.jsx`` / ``SettingsModal.jsx``),那是 main 每次改签名都撞冲突的根源。
