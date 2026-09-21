@@ -78,3 +78,13 @@ tag 模式在 checkout 前核对目标 tag 宣告 `DORAMI_BAREMETAL_TXN`,否则 
 dirty `--here` 固化成快照 commit(pin ref)可原样重放;路径探针在目标上下文核对可变存储都在 release 之外且与基准一致;extras 钉版导出 `docker/requirements-crawl4ai.txt`(守卫与基础清单同锁);
 锁默认与 Docker 同一把、不可写即失败。桩测试 `tests/test_deploy_baremetal.py`(迷你项目 + PATH 桩,真 git / symlink / SQLite / Alembic;35 例覆盖用法 / 锁 / 首装门 / 布局 / 健康告警 / 未收口纪律 / nginx 变更集真实文件 / dirty 固化 / 能力检查 / 旧脚本自举 / 路径探针 / 迁移矩阵 / 收养 / 回滚各模式 / 清理),
 `tests/fixtures/deploy_scripts_pre_issue_126/` 固化本波之前的脚本。实现记录与偏差见方案 §9。
+
+
+## 下游身份源接入点:password_login_enabled 能力位 + alembic heads 口径(issue #130,待发布)
+
+内网适配分支在 main 之上接 SSO,把「账号能否密码登录」当 prop 从 `App.jsx` 穿到 `SettingsModal.jsx` 签名行,main 每改签名就撞冲突;
+内网自带迁移支线,main 每加一条迁移就双 head,内网每次手工 `alembic merge` 下次照样双头。按 `INTRANET_DELTA` 上游优先:
+main 提供 `services/auth_policy.password_login_enabled(record)` 单一覆盖点(main 恒 True),`runtime` / `GET /api/auth/session` 透出,
+登录与改密端点 `false` 时 403,设置柜账户区据能力位隐藏改密表单,登录页不动;下游拆掉 prop 穿线、只改这一个函数。
+迁移口径统一 `upgrade heads`(单链等价)、版本表读 `get_current_heads()`;新增守卫 `main_chain_heads`(去掉声明了 branch label 的 revision 及其后代后主线恰好一个叶子),下游带 label 的支线无论分叉还是延伸主线末端都可并存、不再合并。codex R1 三条 P2 一条 P3 全部接受并修:移动端设置同样传能力位、单头读取器改 heads 集合、守卫改按声明的 label 判定、匿名 False 用例。复检:四条均落实、通过,无阻断;codex 另在仓库外用两种下游拓扑副本跑完整迁移测试各 58 例通过。
+

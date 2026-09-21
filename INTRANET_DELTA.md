@@ -33,6 +33,13 @@ ini 示例)与测试、文档,部署面仍以 main 为准,**不构成新的内�
 新脚本不带参数会因发布 tag 未宣告 `DORAMI_BAREMETAL_TXN` 能力而 exit 11,内网一律 `--here`)。
 PR #129 合入 main 并随下一个版本 tag 同步下来时内容相同,应干净合并;届时删除本段。
 
+2026-09-22 **预合入 issue #130(下游身份源接入点,PR #131,main 尚未合入)**:同上手法只应用分支相对基点 `5fd4fe9` 的差异。
+内容:`src/services/auth_policy.password_login_enabled(record)`(main 恒 True)是内网 SSO 的**唯一覆盖点**,
+`runtime` / `GET /api/auth/session` 透出 `password_login_enabled`,登录 / 改密端点 False 时 403,设置柜(桌面 + 移动壳)据此隐藏改密表单;
+`storage.migrations.main_chain_heads` + 迁移测试口径 `heads`。**内网配套**(见 §4 待补登):给 SSO 迁移加 `branch_labels = ("intranet",)`、
+一律 `alembic upgrade heads`、停止 `alembic merge`;删掉 `App.jsx` / `SettingsModal.jsx` 的 `passwordLoginable` prop 穿线,
+只覆盖 `auth_policy.password_login_enabled`(按账号:SSO 供给账号 False、本地管理员 True)。PR #131 合入 main 随 tag 同步后删除本段。
+
 ## 1. 维护规则
 
 1. **上游优先**:凡是通用能力(不含内网机密、不含内网环境专属妥协)一律先提 main,
