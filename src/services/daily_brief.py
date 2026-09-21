@@ -1,7 +1,7 @@
 """每日 AI 资讯日报编排 (src/services/daily_brief.py)
 
 流程(v3.48 统一新闻价值评分波):
-     collect_candidates(游标/名单/裁剪)
+     collect_candidates(游标/名单/有界批次，暂缓候选下轮继续)
      → load_stored_scores + score_candidates(复用文章级分析的新闻价值分;缺分的候选
        就地调用**同一个评分函数**补评——喂同一套规范标签闭集,结果只用于本次生成、
        不写回分析表;无正文候选按标题走同一把尺子)
@@ -35,7 +35,7 @@ v3.35 权威机械层(生产实录:近 10 期日报头部名次官方源仅 1/30
   ② dedup_clusters 同日同事件聚类合并；
   ③ cross_day_dedup 对照近期日报条目跨天去重（纯重复剔除/后续进展标注增量）。
 
-运行记录走 AppSettingRecord（KV），不新建 ORM 表。
+运行配置/最近运行走 AppSettingRecord（KV）；候选消费状态走 daily_brief_candidates。
 """
 
 from __future__ import annotations
@@ -51,7 +51,14 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
-from sqlalchemy import or_
+from sqlalchemy import and_, case, delete, or_, text, update
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from contextlib import contextmanager
+from pathlib import Path
+from uuid import uuid4
+import fcntl
+import threading
+from weakref import WeakKeyDictionary
 from sqlmodel import Session, select
 
 import config
@@ -72,6 +79,7 @@ from models.analysis_contracts import TaxonomyTagDTO
 from models.content import DailyBriefContent
 from models.db import (
     AppSettingRecord,
+    DailyBriefCandidateRecord,
     ArticleAnalysisRecord,
     ArticleRecord,
     ArticleTagAssignmentRecord,
@@ -119,6 +127,9 @@ TOP_N_MAX = 50
 
 # AppSettingRecord 键
 KEY_CURSOR = "daily_brief_cursor"
+KEY_SELECTION_REVISION = "daily_brief_selection_revision"
+# 高频媒体与 HN 日间补采后，15 篇/源不足以消化日增量；总预算仍为 120。
+DEFAULT_CANDIDATE_PER_SOURCE_CAP = 60
 KEY_ENABLED = "daily_brief_enabled"
 KEY_CRON = "daily_brief_cron"
 KEY_TOP_N = "daily_brief_top_n"
@@ -383,13 +394,46 @@ def get_setting(session: Session, key: str, default: str = "") -> str:
     return record.value if record is not None else default
 
 
+def _scope_value(raw):
+    try:
+        value = json.loads(raw or "null")
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(value, list):
+        return None
+    return sorted({str(v).strip() for v in value if str(v).strip()}) or None
+
+
 def set_setting(session: Session, key: str, value: str) -> None:
     record = session.get(AppSettingRecord, key)
-    if record is None:
-        record = AppSettingRecord(key=key, value=value)
-    else:
-        record.value = value
-    session.add(record)
+    previous = record.value if record is not None else ""
+    unchanged = (_scope_value(previous) == _scope_value(value)) if key == KEY_SOURCE_IDS else (
+        previous == value and (record is not None or key == KEY_CURSOR)
+    )
+    if unchanged:
+        session.commit()
+        return
+    if key in {KEY_CURSOR, KEY_SOURCE_IDS}:
+        _stage_setting(session, KEY_SELECTION_REVISION, uuid4().hex)
+        if key == KEY_CURSOR:
+            session.exec(delete(DailyBriefCandidateRecord))
+    _stage_setting(session, key, value)
+    session.commit()
+
+
+def rewind_cursor(session: Session, cursor: str, included_article_ids=None) -> None:
+    """Undo a deleted latest brief without erasing older deferred candidates."""
+    ids = included_article_ids if isinstance(included_article_ids, list) else []
+    ids = [item for item in ids if isinstance(item, str)]
+    replay = ArticleRecord.id.in_(ids)
+    if cursor:
+        replay = or_(replay, ArticleRecord.fetched_date >= cursor)
+    session.exec(update(DailyBriefCandidateRecord)
+        .where(DailyBriefCandidateRecord.status == "processed")
+        .where(DailyBriefCandidateRecord.article_id.in_(select(ArticleRecord.id).where(replay)))
+        .values(status="pending"))
+    _stage_setting(session, KEY_CURSOR, cursor)
+    _stage_setting(session, KEY_SELECTION_REVISION, uuid4().hex)
     session.commit()
 
 
@@ -501,58 +545,67 @@ def collect_candidates(
     *,
     cursor: str,
     max_total: int = 120,
-    per_source_cap: int = 15,
+    per_source_cap: int = DEFAULT_CANDIDATE_PER_SOURCE_CAP,
     source_ids: Optional[List[str]] = None,
 ) -> Tuple[List[BriefCandidate], str, int]:
-    """取游标之后新入库的文章作为候选。
+    """Read one bounded batch; deferred rows remain eligible after the cursor."""
+    batch = _collect_candidate_batch(session, cursor=cursor, max_total=max_total,
+                                     per_source_cap=per_source_cap, source_ids=source_ids)
+    return batch[0], batch[1], len(batch[2])
 
-    返回 (candidates, max_fetched_seen, scanned_total)。max_fetched_seen 是裁剪前
-    扫描到的最大 fetched_date，用于推进游标（避免下次重复处理已看过但被裁剪的
-    条目）。scanned_total 是裁剪前的扫描总数——per_source_cap/max_total 裁掉的
-    条目会随游标永久跳过，扫描/取用两个读数写进日志与 last_run，裁剪不再静默。
-    游标为空（首次或手动重置）时不设时间地板，按 fetched_date 倒序取最新
-    max_total 篇重做——成本由 max_total 上限兜住，不会全库进 LLM。
 
-    source_ids 非空时只扫描名单内的源(read_source_scope 的手工名单):范围外
-    文章不进扫描、也不推进游标——之后把某源加入名单,其游标后的积压会一次性
-    进入候选(由 per_source_cap/max_total 兜住),新纳入源立刻有内容,符合预期。
-    """
-    # 空游标 → "" ，fetched_date > "" 命中全部，靠下方倒序 + max_total 截断取最新批
-    effective_cursor = cursor or ""
-
-    # 两段式取数(v3.35):先只取轻列做扫描/裁剪(游标重置或长停摆恢复时,旧实现会把
-    # 游标后**全部行连正文**载入内存只为数 scanned_total),再按入选名单载全文。
+def _collect_candidate_batch(session, *, cursor, max_total=120, per_source_cap=DEFAULT_CANDIDATE_PER_SOURCE_CAP, source_ids=None):
+    if max_total < 1 or per_source_cap < 1:
+        raise ValueError("日报候选上限必须为正数")
     from services.user_sources import USER_SOURCE_PREFIX
 
-    light_statement = (
-        select(ArticleRecord.id, ArticleRecord.source_id, ArticleRecord.fetched_date)
-        .where(ArticleRecord.fetched_date > effective_cursor)
-        .where(ArticleRecord.source_id != DAILY_BRIEF_SOURCE_ID)  # 防自我递归
-        # 用户自定源机械排除(v3.40):日报名单是手工 allowlist 本就不会勾用户源,
-        # 此处是「全部来源」档(名单未设)下的双保险——私有源绝不进公共日报。
-        .where(~ArticleRecord.source_id.startswith(USER_SOURCE_PREFIX, autoescape=True))
-        .order_by(ArticleRecord.fetched_date.desc())
-    )
+    base = (select(ArticleRecord.id, ArticleRecord.source_id, ArticleRecord.fetched_date,
+                   DailyBriefCandidateRecord.status)
+        .outerjoin(DailyBriefCandidateRecord, DailyBriefCandidateRecord.article_id == ArticleRecord.id)
+        .where(ArticleRecord.source_id != DAILY_BRIEF_SOURCE_ID)
+        .where(~ArticleRecord.source_id.startswith(USER_SOURCE_PREFIX, autoescape=True)))
     if source_ids:
-        light_statement = light_statement.where(ArticleRecord.source_id.in_(list(source_ids)))
-    light_rows = session.exec(light_statement).all()
-
-    max_fetched_seen = cursor
-    for _rid, _rsrc, fetched in light_rows:
-        if fetched and fetched > max_fetched_seen:
-            max_fetched_seen = fetched
-
-    # per-source 裁剪 + 总量裁剪（light_rows 已按 fetched_date 倒序，保留较新）
+        base = base.where(ArticleRecord.source_id.in_(list(source_ids)))
+    unseen = DailyBriefCandidateRecord.article_id.is_(None)
+    if cursor:
+        fresh = and_(unseen, ArticleRecord.fetched_date >= cursor)
+    else:
+        # Bootstrap/reset means one recent bounded window, not the whole archive.
+        recent_ids = (base.with_only_columns(ArticleRecord.id).where(unseen)
+            .order_by(ArticleRecord.fetched_date.desc(), ArticleRecord.id.asc()).limit(max_total))
+        fresh = and_(unseen, ArticleRecord.id.in_(recent_ids))
+    light_rows = session.exec(base.where(or_(DailyBriefCandidateRecord.status == "pending", fresh))
+        .order_by(ArticleRecord.fetched_date.desc(), ArticleRecord.id.asc())).all()
+    max_fetched_seen = max([cursor, *(r[2] for r in light_rows if r[2])])
+    pending = sorted((r for r in light_rows if r[3] == "pending"), key=lambda r: (r[2], r[0]))
+    fresh_rows = [r for r in light_rows if r[3] is None]
     per_source_count: Dict[str, int] = {}
     chosen_ids: List[str] = []
-    for rid, rsrc, _fetched in light_rows:
-        count = per_source_count.get(rsrc, 0)
-        if count >= per_source_cap:
-            continue
-        per_source_count[rsrc] = count + 1
-        chosen_ids.append(rid)
-        if len(chosen_ids) >= max_total:
-            break
+    chosen_set = set()
+
+    def take(rows, budget):
+        for rid, source, _stamp, _status in rows:
+            if len(chosen_ids) >= budget:
+                break
+            if rid in chosen_set or per_source_count.get(source, 0) >= per_source_cap:
+                continue
+            chosen_ids.append(rid)
+            chosen_set.add(rid)
+            per_source_count[source] = per_source_count.get(source, 0) + 1
+
+    # Reserve up to a third for backlog, then fresh stories, then unused backlog.
+    # At the default 120 this provides 40 pending + up to 80 new without wasting slots.
+    take(pending, max_total // 3)
+    take(fresh_rows, max_total)
+    take(pending, max_total)
+    bootstrap_skipped = []
+    if not cursor and max_fetched_seen:
+        # A large historical import can have one timestamp. Fence only the IDs
+        # already present outside this bootstrap snapshot; later equal-time IDs
+        # remain eligible through the normal >= cursor rule.
+        bootstrap_skipped = [row[0] for row in session.exec(base.with_only_columns(ArticleRecord.id)
+            .where(unseen, ArticleRecord.fetched_date == max_fetched_seen,
+                   ArticleRecord.id.not_in([r[0] for r in fresh_rows]))).all()]
 
     candidates: List[BriefCandidate] = []
     if chosen_ids:
@@ -599,7 +652,7 @@ def collect_candidates(
                 )
             )
 
-    return candidates, (max_fetched_seen or effective_cursor), len(light_rows)
+    return candidates, max_fetched_seen, light_rows, bootstrap_skipped
 
 
 # ==========================================
@@ -1427,7 +1480,36 @@ def _record_last_run(session: Session, payload: Dict[str, Any]) -> None:
     set_json_setting(session, KEY_LAST_RUN, payload)
 
 
-async def generate_daily_brief(
+_GENERATION_LOCKS = WeakKeyDictionary()
+
+
+@contextmanager
+def _generation_guard(engine):
+    lock = _GENERATION_LOCKS.setdefault(engine, threading.Lock())
+    if not lock.acquire(blocking=False):
+        raise RuntimeError("日报正在生成，请等待当前任务结束")
+    stream = None
+    try:
+        database = engine.url.database
+        if database and database != ":memory:":
+            stream = Path(database + ".daily-brief.lock").open("a+b")
+            try:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise RuntimeError("日报正在生成，请等待当前任务结束") from exc
+        yield
+    finally:
+        if stream is not None:
+            stream.close()
+        lock.release()
+
+
+async def generate_daily_brief(*, storage, **kwargs):
+    with _generation_guard(storage.engine):
+        return await _generate_daily_brief(storage=storage, **kwargs)
+
+
+async def _generate_daily_brief(
     *,
     storage,
     llm_config: Optional[config.LLMConfig] = None,
@@ -1436,7 +1518,7 @@ async def generate_daily_brief(
     triggered_by: Optional[str] = None,
     dry_run: bool = False,
     max_total: int = 120,
-    per_source_cap: int = 15,
+    per_source_cap: int = DEFAULT_CANDIDATE_PER_SOURCE_CAP,
     top_n: Optional[int] = None,
     recent_brief_days: int = 3,
 ) -> Dict[str, Any]:
@@ -1458,19 +1540,22 @@ async def generate_daily_brief(
         set_progress("error", "LLM 未配置")
         raise LLMNotConfigured("LLM 未配置（需在设置中填写 base_url / api_key / model）")
 
-    # 2. 取候选（top_n 未显式指定时读配置）
+    # 2. 配置、候选和 bootstrap 同时间戳边界取自同一个只读快照。
     with Session(engine) as session:
+        session.exec(text("BEGIN"))
         if top_n is None:
             top_n = daily_brief_top_n(session)
         cursor_before = read_cursor(session)
         source_scope = read_source_scope(session)
-        candidates, max_fetched_seen, scanned_total = collect_candidates(
+        selection_revision = get_setting(session, KEY_SELECTION_REVISION)
+        candidates, max_fetched_seen, scanned_rows, bootstrap_skipped = _collect_candidate_batch(
             session, cursor=cursor_before, max_total=max_total,
             per_source_cap=per_source_cap, source_ids=source_scope,
         )
+    scanned_total = len(scanned_rows)
     n_body = sum(1 for c in candidates if c.has_content)
     logger.info(
-        "日报[%s]：扫描 %d 篇 → 取用候选 %d 篇（有正文 %d，per_source_cap/max_total 裁剪 %d——被裁条目随游标跳过）",
+        "日报[%s]：扫描 %d 篇 → 取用候选 %d 篇（有正文 %d，本轮暂缓 %d——保留到下次处理）",
         report_date, scanned_total, len(candidates), n_body, scanned_total - len(candidates),
     )
 
@@ -1756,20 +1841,34 @@ async def generate_daily_brief(
     )
     content_obj.source_id = DAILY_BRIEF_SOURCE_ID
 
-    # 6. 写库（幂等：已存在则 update 覆盖，否则 save）
-    await _persist_brief(storage, content_obj)
-
-    # 7. 写库成功后推进游标
+    # Brief, consumption ledger, cursor and run statistics commit together.
     with Session(engine) as session:
-        set_setting(session, KEY_CURSOR, max_fetched_seen)
-        _record_last_run(session, {
+        session.exec(text("BEGIN IMMEDIATE"))
+        if get_setting(session, KEY_SELECTION_REVISION) != selection_revision:
+            raise RuntimeError("日报来源范围或游标在生成期间已变更，请重新生成")
+        await _persist_brief(storage, content_obj, session=session)
+        chosen_ids = {c.id for c in candidates}
+        skipped_ids = set(bootstrap_skipped)
+        ledger_rows = [*scanned_rows, *((rid, "", "", None) for rid in bootstrap_skipped)]
+        for offset in range(0, len(ledger_rows), 200):
+            chunk = ledger_rows[offset:offset + 200]
+            alive = set(session.exec(select(ArticleRecord.id).where(ArticleRecord.id.in_([r[0] for r in chunk]))).all())
+            values = [{"article_id": rid, "status": "processed" if rid in chosen_ids or rid in skipped_ids else "pending"}
+                      for rid, _source, _stamp, _status in chunk if rid in alive]
+            if values:
+                statement = sqlite_insert(DailyBriefCandidateRecord).values(values)
+                session.exec(statement.on_conflict_do_update(index_elements=["article_id"], set_={"status": statement.excluded.status},
+                    where=DailyBriefCandidateRecord.status != statement.excluded.status))
+        _stage_setting(session, KEY_CURSOR, max_fetched_seen)
+        last_run = {
             "status": "success", "started_at": started_at,
             "ended_at": datetime.now().isoformat(), "report_date": report_date,
             "article_id": article_id, "articles_count": content_obj.articles_count,
             "error_message": None,
-            # 候选裁剪观测(v3.34):扫描≫取用 说明 max_total/per_source_cap 在裁,
-            # 被裁条目随游标永久跳过——涨不涨上限看这两个数。
+            # 本轮暂缓量：后续运行优先消化；持续增长说明处理预算跟不上入库。
             "candidates_scanned": scanned_total, "candidates_used": len(candidates),
+            "candidates_deferred": scanned_total - len(candidates),
+            "oldest_deferred_fetched_at": min((r[2] for r in scanned_rows if r[0] not in chosen_ids), default=None),
             # 评分来源观测(v3.48):复用分析 vs 就地补评 vs 门槛 pass——补评常态化说明
             # worker 没跟上(或总闸没开),门槛 pass 过多说明阈值偏高;scored_inline_pending
             # 是补评里正在 worker 队列的篇数(随后会再算一次,cron 该往后挪);
@@ -1782,7 +1881,9 @@ async def generate_daily_brief(
             # 门槛偏高或名单过窄;全为零说明保底从未介入。
             "min_items": min_items, "threshold_backfilled": backfilled_in_brief,
             "near_miss_appendix": len(near_miss_appendix),
-        })
+        }
+        _stage_setting(session, KEY_LAST_RUN, json.dumps(last_run, ensure_ascii=False))
+        session.commit()
 
 
     logger.info("日报[%s]：生成完成，收录 %d 条", report_date, content_obj.articles_count)
@@ -1798,7 +1899,13 @@ async def generate_daily_brief(
     }
 
 
-async def _persist_brief(storage, content_obj: DailyBriefContent) -> None:
+def _stage_setting(session, key, value):
+    record = session.get(AppSettingRecord, key) or AppSettingRecord(key=key, value=value)
+    record.value = value
+    session.add(record)
+
+
+async def _persist_brief(storage, content_obj: DailyBriefContent, *, session) -> None:
     """写日报。db_storage.save() 不覆盖已有 has_content 记录，故同日重跑走 update。"""
     from models.content import serialize_to_metadata
 
@@ -1808,20 +1915,20 @@ async def _persist_brief(storage, content_obj: DailyBriefContent) -> None:
     if not (content_obj.content or "").strip():
         raise RuntimeError("日报正文为空,拒绝写库(疑似 LLM 输出被思考/截断耗尽,检查 max_tokens 与思考模式)")
 
-    existing = await storage.get(content_obj.id)
-    if existing is None:
-        ok = await storage.save(content_obj)
-        if not ok:
-            raise RuntimeError(f"日报写库失败 (id={content_obj.id})")
-        return
+    from services import sync_consumer_policy
+    if not sync_consumer_policy.local_source_operation_allowed(session, content_obj.source_id, operation="collection"):
+        raise RuntimeError("当前节点不允许写入公共日报")
     metadata = serialize_to_metadata(content_obj)
-    await storage.update(content_obj.id, {
-        "title": content_obj.title,
-        "content_type": DAILY_BRIEF_CONTENT_TYPE,
-        "source_id": DAILY_BRIEF_SOURCE_ID,
-        "publish_date": content_obj.publish_date,
-        "fetched_date": content_obj.fetched_date,
-        "has_content": True,
-        "content": content_obj.content,
-        "extensions_json": json.dumps(metadata.get("extensions", {}), ensure_ascii=False),
-    })
+    record = session.get(ArticleRecord, content_obj.id)
+    if record is None:
+        record = ArticleRecord(id=content_obj.id, title=content_obj.title,
+            source_id=content_obj.source_id, source_url=content_obj.source_url,
+            content_type=content_obj.content_type, publish_date=content_obj.publish_date,
+            fetched_date=content_obj.fetched_date, archive_updated_at=content_obj.fetched_date)
+    for key in ("title", "content_type", "source_id", "source_url", "publish_date", "fetched_date", "content"):
+        setattr(record, key, getattr(content_obj, key))
+    record.has_content = True
+    record.extensions_json = json.dumps(metadata.get("extensions", {}), ensure_ascii=False)
+    session.add(record)
+    session.flush()
+    return

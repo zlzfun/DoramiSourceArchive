@@ -245,12 +245,15 @@ class BaseFetcher(abc.ABC):
         基类提供的安全网络请求工具，内置重试机制。
         子类在 _run 中应当优先调用此方法而不是原生的 client.get
         """
+        self.last_request_error = ""
         for attempt in range(1, self.max_retries + 1):
             try:
                 response = await client.get(url, **kwargs)
                 response.raise_for_status()
                 return response
             except httpx.HTTPError as e:
+                status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
+                self.last_request_error = f"{type(e).__name__}" + (f" HTTP {status}" if status else "")
                 self.logger.warning(f"⚠️ 请求失败 ({attempt}/{self.max_retries}) [{url}]: {e}")
                 if attempt == self.max_retries:
                     self.logger.error(f"❌ 达到最大重试次数，放弃请求: {url}")
@@ -265,6 +268,7 @@ class BaseFetcher(abc.ABC):
         基类提供的安全POST请求工具，内置重试机制。
         子类在 _run 中应当优先调用此方法而不是原生的 client.post
         """
+        self.last_request_error = ""
         for attempt in range(1, self.max_retries + 1):
             try:
                 if json_data is not None:
@@ -276,6 +280,8 @@ class BaseFetcher(abc.ABC):
                 response.raise_for_status()
                 return response
             except httpx.HTTPError as e:
+                status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
+                self.last_request_error = f"{type(e).__name__}" + (f" HTTP {status}" if status else "")
                 self.logger.warning(f"⚠️ POST请求失败 ({attempt}/{self.max_retries}) [{url}]: {e}")
                 if attempt == self.max_retries:
                     self.logger.error(f"❌ 达到最大重试次数，放弃POST请求: {url}")

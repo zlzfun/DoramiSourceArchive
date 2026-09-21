@@ -9,6 +9,8 @@
 
 ## 顶层(活跃)
 
+- ◉ [news-coverage-reliability-plan.md](./news-coverage-reliability-plan.md) — **新闻漏采修复(issue #127)**：IT之家有界分页、公共日报候选持久积压、HN 备用发现入口；真实源验证、日间采集配置预览与回滚。
+
 - ◉ [backlog.md](./backlog.md) — **跨波次待办总账**(进行中/排队中/展望三档 + 近期已完结索引)。
   找「下一步做什么/哪些方向被搁置及原因」看这里。
 - ◉ [admin-usability-audit.md](./admin-usability-audit.md) — **管理面/运维面可用性审计与共识清单(v3.40.3,
