@@ -7,6 +7,10 @@
 # 沿革:本路径曾于 v3.15.1 随生产切 Docker 退役删除,v3.39.0 因「公网机不便装
 # Docker」的真实场景扶正回归,并清理了当年的 RAG 形态判定(向量子系统已于 v3.31 退役)。
 #
+# issue #126(docs/baremetal-rollback-plan.md):部署是**事务**(锁 → 只读预检 → 开事务 → 阶段落盘 → 两级健康门 → 晋升),
+# 健康门不通过只**告警**、不自动回滚;`--rollback` 一键回到上次成功部署的可用状态;`--status` 只读查看;
+# 裸机专属参数与事务函数在 scripts/deploy-baremetal.sh 装配,Docker 路径不受影响。
+#
 # 受限网络/镜像加速:uv 走环境变量 UV_DEFAULT_INDEX=<PyPI 镜像>;
 # npm 走 NPM_REGISTRY=<npm 镜像>(离线内网源与国内加速源同一开关)。
 set -euo pipefail
@@ -14,12 +18,11 @@ set -euo pipefail
 # Always run from the project root, no matter where the command is invoked.
 cd "$(dirname "$0")"
 
-# 「tag 即发布」:先站到要部署的版本上(默认最新 v* tag;./deploy.sh v3.55.0 指定;
-# --here 部署当前工作树)。切换时会以切换后的脚本重执行,见 scripts/deploy-lib.sh 文件头。
-# 导出 DORAMI_BUILD_REF/SHA,经 ecosystem.config.js 透传给后端进程,/api/runtime 透出。
 # shellcheck source=scripts/deploy-lib.sh
 source scripts/deploy-lib.sh
-resolve_deploy_ref "$@"
+# shellcheck source=scripts/deploy-baremetal.sh
+source scripts/deploy-baremetal.sh
+bm_init_paths "$PWD"
 
 # 手动安装的 nginx/node 常落在非默认 PATH:源码装的 nginx 在 /usr/local/nginx/sbin,
 # nvm 装的 node 只写进 ~/.bashrc(仅交互 shell 生效)。本脚本以非交互 shell 运行,
@@ -33,7 +36,7 @@ if ! command -v node >/dev/null 2>&1 && [ -d "${NVM_DIR:-$HOME/.nvm}/versions/no
     fi
 fi
 
-APP_NAME="${PM2_APP_NAME:-dorami-backend-v2}"
+APP_NAME="$BM_APP_NAME"
 VENV_DIR="${VENV_DIR:-venv}"
 CONFIG_FILE="${DORAMI_CONFIG_FILE:-$(pwd)/config/production.ini}"
 
@@ -44,6 +47,7 @@ else
 fi
 
 fail() {
+    BM_LAST_ERROR="$*"
     echo "ERROR: $*" >&2
     exit 1
 }
@@ -91,6 +95,63 @@ truthy() {
         *) return 1 ;;
     esac
 }
+
+usage() {
+    cat <<EOF
+用法: ./deploy.sh [vX.Y.Z | --here | --code <sha|tag>]
+      ./deploy.sh --rollback [--restore-db] [--yes] [--to <txn>] [--no-rescue-snapshot]
+      ./deploy.sh --status | --discard-txn [--yes] | --adopt [--adopt-sha <sha>]
+
+  (无参数)          拉取 tag,部署版本号最新的发布版(一键部署;目标 tag 须有裸机事务能力,否则提示 --code)
+  vX.Y.Z            部署指定版本
+  --here            部署当前工作树(dirty 也固化成快照;内网适配分支用这个;输出会标注非发布版)
+  --code <sha|tag>  由当前编排器部署任意代码对象,不 checkout 工作树(回到更早版本 / 部署无事务能力的旧 tag)
+  --rollback        回到上次成功部署(不 checkout、不出网、不构建;有迁移差异时默认拒绝,--restore-db 显式恢复库快照)
+  --status          只读:当前跑什么、上次成功是什么、未收口事务、回滚目标与 DB 预判、能力位
+  --discard-txn     人已手工处理,归档未收口事务(材料保留;已改宿主时要求 --yes)
+  --adopt           收养旧形态安装为第一个 release(首次运行本脚本时也会自动触发)
+  --no-rollback-guarantee   身份证据冲突 / 非 SQLite 库时显式放弃回滚保证继续部署
+
+方案 docs/baremetal-rollback-plan.md;发布流程 docs/release-process.md。
+EOF
+}
+
+# ── 参数(裸机专属参数只在这里装配;版本 / --here 透传给 resolve_deploy_ref)──
+BM_ACTION="deploy"; BM_DEPLOY_ARGS=(); BM_PASS_ARGS=(); BM_CODE=""
+BM_YES=0; BM_NO_ROLLBACK_GUARANTEE=0; BM_ADOPT_SHA=""; BM_RESTORE_DB=0; BM_TO=""; BM_NO_RESCUE=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -h|--help) usage; exit 0 ;;
+        --status) BM_ACTION="status" ;;
+        --rollback) BM_ACTION="rollback" ;;
+        --discard-txn) BM_ACTION="discard" ;;
+        --adopt) BM_ACTION="adopt" ;;
+        --adopt-sha) [ $# -ge 2 ] || { usage >&2; bm_fail "$BM_RC_USAGE" "--adopt-sha 需要一个 sha"; }; BM_ADOPT_SHA="$2"; shift ;;
+        --code) [ $# -ge 2 ] || { usage >&2; bm_fail "$BM_RC_USAGE" "--code 需要 <sha|tag>"; }; BM_CODE="$2"; shift ;;
+        --restore-db) BM_RESTORE_DB=1; BM_PASS_ARGS+=(--restore-db) ;;
+        --no-rescue-snapshot) BM_NO_RESCUE=1; BM_PASS_ARGS+=(--no-rescue-snapshot) ;;
+        --to) [ $# -ge 2 ] || { usage >&2; bm_fail "$BM_RC_USAGE" "--to 需要 <txn>"; }; BM_TO="$2"; BM_PASS_ARGS+=(--to "$2"); shift ;;
+        --yes) BM_YES=1; BM_PASS_ARGS+=(--yes) ;;
+        --no-rollback-guarantee) BM_NO_ROLLBACK_GUARANTEE=1 ;;
+        --here) BM_DEPLOY_ARGS+=(--here) ;;
+        --*) usage >&2; bm_fail "$BM_RC_USAGE" "未知参数: $1" ;;
+        *) BM_DEPLOY_ARGS+=("$1") ;;
+    esac
+    shift
+done
+export BM_YES BM_NO_ROLLBACK_GUARANTEE BM_ADOPT_SHA BM_RESTORE_DB BM_TO BM_NO_RESCUE
+if [ "$BM_ACTION" != "rollback" ] && { [ "$BM_RESTORE_DB" = 1 ] || [ -n "$BM_TO" ] || [ "$BM_NO_RESCUE" = 1 ]; }; then
+    usage >&2; bm_fail "$BM_RC_USAGE" "--restore-db / --to / --no-rescue-snapshot 只能与 --rollback 同用"
+fi
+if [ "$BM_ACTION" != "adopt" ] && [ -n "$BM_ADOPT_SHA" ]; then
+    usage >&2; bm_fail "$BM_RC_USAGE" "--adopt-sha 只能与 --adopt 同用"
+fi
+if [ -n "$BM_CODE" ] && { [ "$BM_ACTION" != "deploy" ] || [ ${#BM_DEPLOY_ARGS[@]} -gt 0 ]; }; then
+    usage >&2; bm_fail "$BM_RC_USAGE" "--code 不能与版本号 / --here / 其它动作同用"
+fi
+if [ "$BM_ACTION" != "deploy" ] && [ ${#BM_DEPLOY_ARGS[@]} -gt 0 ]; then
+    usage >&2; bm_fail "$BM_RC_USAGE" "--$BM_ACTION 不接受版本号 / --here"
+fi
 
 install_system_packages() {
     # 逐个探测,只装缺失的;包管理器装不上(受限源没有该包)不再直接打断——
@@ -152,17 +213,22 @@ install_pm2() {
     need_command pm2 "npm global bin directory is not on PATH, or PM2 installation failed."
 }
 
+# nginx 配置根(默认 /etc/nginx;测试与非常规安装可用 DORAMI_NGINX_ETC_DIR 整体改指)
+NGINX_ETC_DIR="${DORAMI_NGINX_ETC_DIR:-/etc/nginx}"
+
 resolve_nginx_site_file() {
-    if [ -d /etc/nginx/sites-available ] && [ -d /etc/nginx/sites-enabled ]; then
-        NGINX_SITE_FILE="/etc/nginx/sites-available/${NGINX_SITE_NAME}"
-        NGINX_SITE_ENABLED_FILE="/etc/nginx/sites-enabled/${NGINX_SITE_NAME}"
+    if [ -d "$NGINX_ETC_DIR/sites-available" ] && [ -d "$NGINX_ETC_DIR/sites-enabled" ]; then
+        NGINX_SITE_FILE="$NGINX_ETC_DIR/sites-available/${NGINX_SITE_NAME}"
+        NGINX_SITE_ENABLED_FILE="$NGINX_ETC_DIR/sites-enabled/${NGINX_SITE_NAME}"
     else
-        NGINX_SITE_FILE="/etc/nginx/conf.d/${NGINX_SITE_NAME}.conf"
+        NGINX_SITE_FILE="$NGINX_ETC_DIR/conf.d/${NGINX_SITE_NAME}.conf"
         NGINX_SITE_ENABLED_FILE="$NGINX_SITE_FILE"
     fi
+    NGINX_DEFAULT_SITE_FILE="$NGINX_ETC_DIR/sites-enabled/default"
 }
 
-write_nginx_site_config() {
+# 站点配置正文渲染到 stdout(不落盘;写入由调用方决定——第 3 层起先写 release 候选再落在线路径)
+render_nginx_site_config() {
     local backend_host="$1"
     local backend_port="$2"
     local backend_upstream="http://${backend_host}:${backend_port}"
@@ -183,26 +249,79 @@ write_nginx_site_config() {
 
     if truthy "$NGINX_ENABLE_SSL"; then
         ssl_enabled="true"
-        if [ "$NGINX_SERVER_NAME" = "_" ] || [ -z "$NGINX_SERVER_NAME" ]; then
-            fail "NGINX_ENABLE_SSL=true requires NGINX_SERVER_NAME to be your HTTPS domain."
-        fi
-        NGINX_SSL_CERT_FILE="${NGINX_SSL_CERT_FILE:-/etc/nginx/ssl/${NGINX_SERVER_NAME}.pem}"
-        NGINX_SSL_KEY_FILE="${NGINX_SSL_KEY_FILE:-/etc/nginx/ssl/${NGINX_SERVER_NAME}.key}"
-        $SUDO test -f "$NGINX_SSL_CERT_FILE" || fail "SSL certificate file not found: $NGINX_SSL_CERT_FILE"
-        $SUDO test -f "$NGINX_SSL_KEY_FILE" || fail "SSL private key file not found: $NGINX_SSL_KEY_FILE"
         if truthy "$NGINX_ENABLE_HSTS"; then
             hsts_header='    add_header Strict-Transport-Security "max-age=15552000" always;'
         fi
     fi
 
-    resolve_nginx_site_file
-    echo "Writing Nginx site config: $NGINX_SITE_FILE"
+    # 三种形态共用的 location 集合(/api 反代 + /mcp Host 改写 + SPA 入口禁缓存 + PWA 精确路径 + try_files)
+    local common_locations
+    common_locations="$(cat <<EOF
+    location /api/ {
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 300s;
+        # 关闭代理缓冲:默认缓冲下超过内存缓冲(~64KB)的响应要落 proxy_temp 临时
+        # 目录,源码装 nginx 的 worker(nobody)对该目录无写权限时会静默截断大响应
+        # (上游 200、浏览器 Failed to fetch);直通转发同时也是 /mcp SSE 流的正确形态。
+        proxy_buffering off;
+        proxy_pass ${backend_upstream};
+    }
 
-    $SUDO mkdir -p "$(dirname "$NGINX_SITE_FILE")"
+    location /mcp {
+        proxy_http_version 1.1;
+        # MCP python SDK 的 DNS-rebinding 防护只认 localhost 形态的 Host,
+        # 经域名/EIP 反代进来会被 421 Invalid Host header 拒绝(2026-08-19 内网
+        # bot 接入实锤);服务端对服务端的可信反代在边缘改写 Host 即可,与
+        # proxy_pass 同源取值。/api 仍透传 \$host,不受影响。
+        proxy_set_header Host ${backend_host}:${backend_port};
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 300s;
+        # 关闭代理缓冲:默认缓冲下超过内存缓冲(~64KB)的响应要落 proxy_temp 临时
+        # 目录,源码装 nginx 的 worker(nobody)对该目录无写权限时会静默截断大响应
+        # (上游 200、浏览器 Failed to fetch);直通转发同时也是 /mcp SSE 流的正确形态。
+        proxy_buffering off;
+        proxy_pass ${backend_upstream};
+    }
+
+    # SPA 入口禁启发式缓存:资产文件名带内容哈希天然免疫,但 index.html 若被浏览器
+    # 启发式缓存,部署后用户会继续引用旧 bundle——「推了修复却没生效」的经典成因。
+    # 用 expires 而非 add_header,避免 location 级 add_header 清空 server 级安全头继承。
+    location = /index.html {
+        expires -1;
+    }
+
+${pwa_locations}
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+EOF
+)"
+    local ssl_block
+    ssl_block="$(cat <<EOF
+    ssl_certificate ${NGINX_SSL_CERT_FILE};
+    ssl_certificate_key ${NGINX_SSL_KEY_FILE};
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+EOF
+)"
 
     if [ "$ssl_enabled" = "true" ]; then
         if truthy "$NGINX_SSL_REDIRECT"; then
-            $SUDO tee "$NGINX_SITE_FILE" >/dev/null <<EOF
+            cat <<EOF
 server {
     listen ${NGINX_LISTEN_PORT}${NGINX_LISTEN_OPTIONS:+ ${NGINX_LISTEN_OPTIONS}};
     server_name ${NGINX_SERVER_NAME};
@@ -216,141 +335,35 @@ server {
     listen ${NGINX_SSL_LISTEN_PORT} ssl${NGINX_LISTEN_OPTIONS:+ ${NGINX_LISTEN_OPTIONS}};
     server_name ${NGINX_SERVER_NAME};
 
-    ssl_certificate ${NGINX_SSL_CERT_FILE};
-    ssl_certificate_key ${NGINX_SSL_KEY_FILE};
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_session_cache shared:SSL:10m;
-    ssl_session_timeout 1d;
-    ssl_session_tickets off;
-
-    add_header X-Content-Type-Options nosniff always;
-    add_header X-Frame-Options SAMEORIGIN always;
-    add_header Referrer-Policy strict-origin-when-cross-origin always;
+${ssl_block}
 ${hsts_header}
 
     root ${NGINX_HTML_DIR};
     index index.html;
     client_max_body_size 100m;
 
-    location /api/ {
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 300s;
-        # 关闭代理缓冲:默认缓冲下超过内存缓冲(~64KB)的响应要落 proxy_temp 临时
-        # 目录,源码装 nginx 的 worker(nobody)对该目录无写权限时会静默截断大响应
-        # (上游 200、浏览器 Failed to fetch);直通转发同时也是 /mcp SSE 流的正确形态。
-        proxy_buffering off;
-        proxy_pass ${backend_upstream};
-    }
-
-    location /mcp {
-        proxy_http_version 1.1;
-        # MCP python SDK 的 DNS-rebinding 防护只认 localhost 形态的 Host,
-        # 经域名/EIP 反代进来会被 421 Invalid Host header 拒绝(2026-08-19 内网
-        # bot 接入实锤);服务端对服务端的可信反代在边缘改写 Host 即可,与
-        # proxy_pass 同源取值。/api 仍透传 \$host,不受影响。
-        proxy_set_header Host ${backend_host}:${backend_port};
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_read_timeout 300s;
-        # 关闭代理缓冲:默认缓冲下超过内存缓冲(~64KB)的响应要落 proxy_temp 临时
-        # 目录,源码装 nginx 的 worker(nobody)对该目录无写权限时会静默截断大响应
-        # (上游 200、浏览器 Failed to fetch);直通转发同时也是 /mcp SSE 流的正确形态。
-        proxy_buffering off;
-        proxy_pass ${backend_upstream};
-    }
-
-    # SPA 入口禁启发式缓存:资产文件名带内容哈希天然免疫,但 index.html 若被浏览器
-    # 启发式缓存,部署后用户会继续引用旧 bundle——「推了修复却没生效」的经典成因。
-    # 用 expires 而非 add_header,避免 location 级 add_header 清空 server 级安全头继承。
-    location = /index.html {
-        expires -1;
-    }
-
-${pwa_locations}
-    location / {
-        try_files \$uri \$uri/ /index.html;
-    }
+${common_locations}
 }
 EOF
         else
-            $SUDO tee "$NGINX_SITE_FILE" >/dev/null <<EOF
+            cat <<EOF
 server {
     listen ${NGINX_LISTEN_PORT}${NGINX_LISTEN_OPTIONS:+ ${NGINX_LISTEN_OPTIONS}};
     listen ${NGINX_SSL_LISTEN_PORT} ssl${NGINX_LISTEN_OPTIONS:+ ${NGINX_LISTEN_OPTIONS}};
     server_name ${NGINX_SERVER_NAME};
 
-    ssl_certificate ${NGINX_SSL_CERT_FILE};
-    ssl_certificate_key ${NGINX_SSL_KEY_FILE};
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_session_cache shared:SSL:10m;
-    ssl_session_timeout 1d;
-    ssl_session_tickets off;
-
-    add_header X-Content-Type-Options nosniff always;
-    add_header X-Frame-Options SAMEORIGIN always;
-    add_header Referrer-Policy strict-origin-when-cross-origin always;
+${ssl_block}
 
     root ${NGINX_HTML_DIR};
     index index.html;
     client_max_body_size 100m;
 
-    location /api/ {
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 300s;
-        # 关闭代理缓冲:默认缓冲下超过内存缓冲(~64KB)的响应要落 proxy_temp 临时
-        # 目录,源码装 nginx 的 worker(nobody)对该目录无写权限时会静默截断大响应
-        # (上游 200、浏览器 Failed to fetch);直通转发同时也是 /mcp SSE 流的正确形态。
-        proxy_buffering off;
-        proxy_pass ${backend_upstream};
-    }
-
-    location /mcp {
-        proxy_http_version 1.1;
-        # MCP python SDK 的 DNS-rebinding 防护只认 localhost 形态的 Host,
-        # 经域名/EIP 反代进来会被 421 Invalid Host header 拒绝(2026-08-19 内网
-        # bot 接入实锤);服务端对服务端的可信反代在边缘改写 Host 即可,与
-        # proxy_pass 同源取值。/api 仍透传 \$host,不受影响。
-        proxy_set_header Host ${backend_host}:${backend_port};
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_read_timeout 300s;
-        # 关闭代理缓冲:默认缓冲下超过内存缓冲(~64KB)的响应要落 proxy_temp 临时
-        # 目录,源码装 nginx 的 worker(nobody)对该目录无写权限时会静默截断大响应
-        # (上游 200、浏览器 Failed to fetch);直通转发同时也是 /mcp SSE 流的正确形态。
-        proxy_buffering off;
-        proxy_pass ${backend_upstream};
-    }
-
-    # SPA 入口禁启发式缓存:资产文件名带内容哈希天然免疫,但 index.html 若被浏览器
-    # 启发式缓存,部署后用户会继续引用旧 bundle——「推了修复却没生效」的经典成因。
-    # 用 expires 而非 add_header,避免 location 级 add_header 清空 server 级安全头继承。
-    location = /index.html {
-        expires -1;
-    }
-
-${pwa_locations}
-    location / {
-        try_files \$uri \$uri/ /index.html;
-    }
+${common_locations}
 }
 EOF
         fi
     else
-        $SUDO tee "$NGINX_SITE_FILE" >/dev/null <<EOF
+        cat <<EOF
 server {
     listen ${NGINX_LISTEN_PORT}${NGINX_LISTEN_OPTIONS:+ ${NGINX_LISTEN_OPTIONS}};
     server_name ${NGINX_SERVER_NAME};
@@ -359,60 +372,38 @@ server {
     index index.html;
     client_max_body_size 100m;
 
-    location /api/ {
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 300s;
-        # 关闭代理缓冲:默认缓冲下超过内存缓冲(~64KB)的响应要落 proxy_temp 临时
-        # 目录,源码装 nginx 的 worker(nobody)对该目录无写权限时会静默截断大响应
-        # (上游 200、浏览器 Failed to fetch);直通转发同时也是 /mcp SSE 流的正确形态。
-        proxy_buffering off;
-        proxy_pass ${backend_upstream};
-    }
-
-    location /mcp {
-        proxy_http_version 1.1;
-        # MCP python SDK 的 DNS-rebinding 防护只认 localhost 形态的 Host,
-        # 经域名/EIP 反代进来会被 421 Invalid Host header 拒绝(2026-08-19 内网
-        # bot 接入实锤);服务端对服务端的可信反代在边缘改写 Host 即可,与
-        # proxy_pass 同源取值。/api 仍透传 \$host,不受影响。
-        proxy_set_header Host ${backend_host}:${backend_port};
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_read_timeout 300s;
-        # 关闭代理缓冲:默认缓冲下超过内存缓冲(~64KB)的响应要落 proxy_temp 临时
-        # 目录,源码装 nginx 的 worker(nobody)对该目录无写权限时会静默截断大响应
-        # (上游 200、浏览器 Failed to fetch);直通转发同时也是 /mcp SSE 流的正确形态。
-        proxy_buffering off;
-        proxy_pass ${backend_upstream};
-    }
-
-    # SPA 入口禁启发式缓存:资产文件名带内容哈希天然免疫,但 index.html 若被浏览器
-    # 启发式缓存,部署后用户会继续引用旧 bundle——「推了修复却没生效」的经典成因。
-    # 用 expires 而非 add_header,避免 location 级 add_header 清空 server 级安全头继承。
-    location = /index.html {
-        expires -1;
-    }
-
-${pwa_locations}
-    location / {
-        try_files \$uri \$uri/ /index.html;
-    }
+${common_locations}
 }
 EOF
     fi
+}
+
+check_nginx_ssl_inputs() {
+    if truthy "$NGINX_ENABLE_SSL"; then
+        if [ "$NGINX_SERVER_NAME" = "_" ] || [ -z "$NGINX_SERVER_NAME" ]; then
+            fail "NGINX_ENABLE_SSL=true requires NGINX_SERVER_NAME to be your HTTPS domain."
+        fi
+        NGINX_SSL_CERT_FILE="${NGINX_SSL_CERT_FILE:-$NGINX_ETC_DIR/ssl/${NGINX_SERVER_NAME}.pem}"
+        NGINX_SSL_KEY_FILE="${NGINX_SSL_KEY_FILE:-$NGINX_ETC_DIR/ssl/${NGINX_SERVER_NAME}.key}"
+        $SUDO test -f "$NGINX_SSL_CERT_FILE" || fail "SSL certificate file not found: $NGINX_SSL_CERT_FILE"
+        $SUDO test -f "$NGINX_SSL_KEY_FILE" || fail "SSL private key file not found: $NGINX_SSL_KEY_FILE"
+    fi
+}
+
+write_nginx_site_config() {
+    local backend_host="$1"
+    local backend_port="$2"
+    check_nginx_ssl_inputs
+    resolve_nginx_site_file
+    echo "Writing Nginx site config: $NGINX_SITE_FILE"
+    $SUDO mkdir -p "$(dirname "$NGINX_SITE_FILE")"
+    render_nginx_site_config "$backend_host" "$backend_port" | $SUDO tee "$NGINX_SITE_FILE" >/dev/null
 
     if [ "$NGINX_SITE_ENABLED_FILE" != "$NGINX_SITE_FILE" ]; then
         $SUDO ln -sfn "$NGINX_SITE_FILE" "$NGINX_SITE_ENABLED_FILE"
-        if truthy "$NGINX_DISABLE_DEFAULT_SITE" && [ -e /etc/nginx/sites-enabled/default ]; then
-            echo "Disabling default Nginx site: /etc/nginx/sites-enabled/default"
-            $SUDO rm -f /etc/nginx/sites-enabled/default
+        if truthy "$NGINX_DISABLE_DEFAULT_SITE" && [ -e "$NGINX_DEFAULT_SITE_FILE" ]; then
+            echo "Disabling default Nginx site: $NGINX_DEFAULT_SITE_FILE"
+            $SUDO rm -f "$NGINX_DEFAULT_SITE_FILE"
         fi
     fi
 
@@ -425,7 +416,7 @@ resolve_nginx_main_conf() {
     NGINX_MAIN_CONF="$("$NGINX_BIN" -V 2>&1 | tr ' ' '\n' | sed -n 's/^--conf-path=//p')"
     if [ -z "$NGINX_MAIN_CONF" ] || ! $SUDO test -f "$NGINX_MAIN_CONF"; then
         local candidate
-        for candidate in /etc/nginx/nginx.conf /usr/local/nginx/conf/nginx.conf; do
+        for candidate in "$NGINX_ETC_DIR/nginx.conf" /usr/local/nginx/conf/nginx.conf; do
             if $SUDO test -f "$candidate"; then
                 NGINX_MAIN_CONF="$candidate"
                 break
@@ -447,7 +438,14 @@ ensure_site_included() {
     echo "Main nginx config ($NGINX_MAIN_CONF) does not include ${NGINX_SITE_FILE}; adding include..."
     if ! $SUDO grep -qE "include[[:space:]]+${NGINX_SITE_FILE}[[:space:]]*;" "$NGINX_MAIN_CONF"; then
         $SUDO cp "$NGINX_MAIN_CONF" "${NGINX_MAIN_CONF}.dorami-bak"
-        $SUDO sed -i "s|^\([[:space:]]*\)http[[:space:]]*{|&\n    include ${NGINX_SITE_FILE};|" "$NGINX_MAIN_CONF"
+        # 在 http { 之后插一行 include(python 就地改写,GNU / BSD 通用)
+        $SUDO python3 - "$NGINX_MAIN_CONF" "$NGINX_SITE_FILE" <<'PY'
+import re, sys
+path, site = sys.argv[1], sys.argv[2]
+text = open(path, encoding="utf-8").read()
+new = re.sub(r"^(\s*)http\s*{", lambda m: f"{m.group(0)}\n    include {site};", text, count=1, flags=re.M)
+open(path, "w", encoding="utf-8").write(new)
+PY
         echo "Backed up original config to ${NGINX_MAIN_CONF}.dorami-bak"
     fi
 
@@ -515,6 +513,25 @@ ensure_nginx_running_or_reload() {
     fi
 }
 
+# nginx worker(源码装默认 nobody)必须能逐级穿越 html_dir 的每个父目录,
+# 任何一级缺 others 的 x 位(如 /var/www 是 700)都会 stat Permission denied →
+# try_files 内部重定向循环 → 500。只补穿越位 o+x,不动读写等其它权限。
+ensure_traversal_bits() {  # dir
+    local dir="$1" perms
+    while [ "$dir" != "/" ] && [ -n "$dir" ]; do
+        perms="$($SUDO python3 -c 'import os, stat, sys; print(stat.filemode(os.stat(sys.argv[1]).st_mode))' "$dir" 2>/dev/null || echo "")"
+        case "$perms" in
+            "") ;;            # stat 不到就跳过
+            *x|*t) ;;         # others 已有穿越位
+            *)
+                echo "Adding o+x to $dir (nginx worker needs directory traversal)"
+                $SUDO chmod o+x "$dir"
+                ;;
+        esac
+        dir="$(dirname "$dir")"
+    done
+}
+
 warn_cookie_secure_if_needed() {
     if ! truthy "$NGINX_ENABLE_SSL"; then
         return
@@ -528,6 +545,75 @@ warn_cookie_secure_if_needed() {
     fi
 }
 
+# ── 站点参数(现场采样与 --status 也要用,先于动作分派读入;ini 缺失时只有 deploy 动作报错)──
+if [ -f "$CONFIG_FILE" ]; then
+    NGINX_HTML_DIR="${NGINX_HTML_DIR:-$(ini_get nginx html_dir /var/www/my_site)}"
+    NGINX_SITE_NAME="${NGINX_SITE_NAME:-$(ini_get nginx site_name dorami)}"
+    NGINX_SERVER_NAME="${NGINX_SERVER_NAME:-$(ini_get nginx server_name _)}"
+    NGINX_LISTEN_PORT="${NGINX_LISTEN_PORT:-$(ini_get nginx listen_port 80)}"
+    NGINX_LISTEN_OPTIONS="${NGINX_LISTEN_OPTIONS:-$(ini_get nginx listen_options default_server)}"
+    NGINX_DISABLE_DEFAULT_SITE="${NGINX_DISABLE_DEFAULT_SITE:-$(ini_get nginx disable_default_site true)}"
+    NGINX_ENABLE_SSL="${NGINX_ENABLE_SSL:-$(ini_get nginx enable_ssl false)}"
+    NGINX_SSL_LISTEN_PORT="${NGINX_SSL_LISTEN_PORT:-$(ini_get nginx ssl_listen_port 443)}"
+    NGINX_SSL_REDIRECT="${NGINX_SSL_REDIRECT:-$(ini_get nginx ssl_redirect true)}"
+    NGINX_SSL_CERT_FILE="${NGINX_SSL_CERT_FILE:-$(ini_get nginx ssl_cert_file "")}"
+    NGINX_SSL_KEY_FILE="${NGINX_SSL_KEY_FILE:-$(ini_get nginx ssl_key_file "")}"
+    NGINX_ENABLE_HSTS="${NGINX_ENABLE_HSTS:-$(ini_get nginx enable_hsts false)}"
+    BACKEND_PROXY_HOST="${BACKEND_PROXY_HOST:-$(ini_get nginx backend_proxy_host 127.0.0.1)}"
+    SERVER_PORT="$(ini_get server port 8088)"
+    BACKEND_PROXY_PORT="${BACKEND_PROXY_PORT:-$(ini_get nginx backend_proxy_port "$SERVER_PORT")}"
+    DB_URL="$(ini_get storage database_url "sqlite:///data/cms_data.db")"
+    case "$DB_URL" in
+        sqlite:///*) BM_DB_PATH="$(bm_realpath "${DB_URL#sqlite:///}")" ;;
+        *) BM_DB_PATH="" ;;
+    esac
+else
+    NGINX_HTML_DIR="${NGINX_HTML_DIR:-}"; BACKEND_PROXY_HOST="${BACKEND_PROXY_HOST:-127.0.0.1}"; BACKEND_PROXY_PORT="${BACKEND_PROXY_PORT:-8088}"
+    DB_URL=""; BM_DB_PATH=""
+fi
+export NGINX_HTML_DIR BACKEND_PROXY_HOST BACKEND_PROXY_PORT BM_DB_PATH
+
+# ── 动作分派 ──
+case "$BM_ACTION" in
+    status)
+        bm_status
+        exit 0 ;;
+    rollback)
+        # 只转发到稳定恢复入口(树外固化执行体),本脚本不参与回滚逻辑(§4.2)
+        if [ ! -x "$BM_ENTRY" ]; then
+            bm_fail "$BM_RC_NO_TARGET" "没有回滚入口 $BM_ENTRY:本机从未用本形态部署过(真首装或尚未收养)。先 ./deploy.sh --status 查看;旧形态安装请 ./deploy.sh --adopt"
+        fi
+        exec "$BM_ENTRY" --rollback ${BM_PASS_ARGS[@]+"${BM_PASS_ARGS[@]}"} ;;
+esac
+
+# 锁先于一切(§4.2):与 Docker 路径同一把;抢不到 exit 4
+export DORAMI_DEPLOY_LOCK_BUSY_RC="$BM_RC_LOCK"
+acquire_deploy_lock
+bm_install_traps
+
+case "$BM_ACTION" in
+    discard)
+        bm_sample_running
+        bm_discard_txn
+        exit 0 ;;
+    adopt)
+        declare -F bm_adopt_main >/dev/null || bm_fail "$BM_RC_USAGE" "--adopt 尚未装配"
+        [ -f "$CONFIG_FILE" ] || fail "config file not found: $CONFIG_FILE. Create it from config/production.example.ini before deploying."
+        bm_adopt_main
+        exit 0 ;;
+esac
+
+# ── 正向部署:解析目标(tag 模式在 checkout 前经钩子做能力检查 / 未收口事务分派 / 收养)──
+export DORAMI_DEPLOY_PRE_EXEC_CHECK=bm_pre_exec_check
+if [ -n "$BM_CODE" ]; then
+    declare -F bm_resolve_code >/dev/null || bm_fail "$BM_RC_USAGE" "--code 尚未装配"
+    bm_resolve_code "$BM_CODE"
+else
+    resolve_deploy_ref ${BM_DEPLOY_ARGS[@]+"${BM_DEPLOY_ARGS[@]}"}
+fi
+bm_pre_deploy_checks
+BM_ORCHESTRATOR_SHA="$(git rev-parse HEAD)"
+
 echo "=================================================="
 echo "  Dorami production deploy (bare-metal) — ${DORAMI_BUILD_REF}"
 echo "=================================================="
@@ -538,23 +624,6 @@ if [ ! -f "$CONFIG_FILE" ]; then
 fi
 
 need_command uv "uv is assumed to be configured on this server."
-
-NGINX_HTML_DIR="${NGINX_HTML_DIR:-$(ini_get nginx html_dir /var/www/my_site)}"
-NGINX_SITE_NAME="${NGINX_SITE_NAME:-$(ini_get nginx site_name dorami)}"
-NGINX_SERVER_NAME="${NGINX_SERVER_NAME:-$(ini_get nginx server_name _)}"
-NGINX_LISTEN_PORT="${NGINX_LISTEN_PORT:-$(ini_get nginx listen_port 80)}"
-NGINX_LISTEN_OPTIONS="${NGINX_LISTEN_OPTIONS:-$(ini_get nginx listen_options default_server)}"
-NGINX_DISABLE_DEFAULT_SITE="${NGINX_DISABLE_DEFAULT_SITE:-$(ini_get nginx disable_default_site true)}"
-NGINX_ENABLE_SSL="${NGINX_ENABLE_SSL:-$(ini_get nginx enable_ssl false)}"
-NGINX_SSL_LISTEN_PORT="${NGINX_SSL_LISTEN_PORT:-$(ini_get nginx ssl_listen_port 443)}"
-NGINX_SSL_REDIRECT="${NGINX_SSL_REDIRECT:-$(ini_get nginx ssl_redirect true)}"
-NGINX_SSL_CERT_FILE="${NGINX_SSL_CERT_FILE:-$(ini_get nginx ssl_cert_file "")}"
-NGINX_SSL_KEY_FILE="${NGINX_SSL_KEY_FILE:-$(ini_get nginx ssl_key_file "")}"
-NGINX_ENABLE_HSTS="${NGINX_ENABLE_HSTS:-$(ini_get nginx enable_hsts false)}"
-BACKEND_PROXY_HOST="${BACKEND_PROXY_HOST:-$(ini_get nginx backend_proxy_host 127.0.0.1)}"
-
-SERVER_PORT="$(ini_get server port 8088)"
-BACKEND_PROXY_PORT="${BACKEND_PROXY_PORT:-$(ini_get nginx backend_proxy_port "$SERVER_PORT")}"
 
 echo "[1/7] Installing system dependencies..."
 install_system_packages
@@ -622,7 +691,6 @@ mkdir -p logs data "$PODCAST_ARTIFACT_ROOT"
 # SQLite 只会创建库文件、不会创建父目录:全新 clone 没有 data/,迁移会直接
 # "unable to open database file"。从 ini 解析库路径并确保父目录存在
 # (sqlite:///relative 与 sqlite:////absolute 两种形式都覆盖;非 sqlite URL 跳过)。
-DB_URL="$(ini_get storage database_url "sqlite:///data/cms_data.db")"
 case "$DB_URL" in
     sqlite:///*)
         DB_PATH="${DB_URL#sqlite:///}"
@@ -661,8 +729,8 @@ echo "    Applying database migrations (alembic upgrade head)..."
 DORAMI_CONFIG_FILE="$CONFIG_FILE" PYTHONPATH=src "$VENV_DIR/bin/python" -c \
     "from config import settings; from storage.migrations import ensure_migrated; ensure_migrated(settings.storage.database_url)"
 
-# 与容器/dev 入口同序：schema 迁移成功后、PM2 API/worker reload 前执行。
-# authority 幂等安装批准目录；replica/manual 为显式 no-op；冲突由 set -e 阻止发布。
+# 与容器/dev 入口同序:schema 迁移成功后、PM2 API/worker reload 前执行。
+# authority 幂等安装批准目录;replica/manual 为显式 no-op;冲突由 set -e 阻止发布。
 echo "    Reconciling configured Taxonomy deployment posture..."
 DORAMI_CONFIG_FILE="$CONFIG_FILE" PYTHONPATH=src "$VENV_DIR/bin/python" -c \
     "from config import settings; from services.taxonomy_deployment import run_taxonomy_deployment; print(run_taxonomy_deployment(settings.storage.database_url, settings.taxonomy))"
@@ -682,23 +750,7 @@ $SUDO mkdir -p "$NGINX_HTML_DIR"
 $SUDO rm -rf "${NGINX_HTML_DIR:?}/"*
 $SUDO cp -r frontend/dist/* "$NGINX_HTML_DIR"/
 $SUDO chmod -R 755 "$NGINX_HTML_DIR"
-
-# nginx worker(源码装默认 nobody)必须能逐级穿越 html_dir 的每个父目录,
-# 任何一级缺 others 的 x 位(如 /var/www 是 700)都会 stat Permission denied →
-# try_files 内部重定向循环 → 500。只补穿越位 o+x,不动读写等其它权限。
-dir="$NGINX_HTML_DIR"
-while [ "$dir" != "/" ] && [ -n "$dir" ]; do
-    perms="$($SUDO stat -c '%A' "$dir" 2>/dev/null || echo "")"
-    case "$perms" in
-        "") ;;            # stat 不到就跳过
-        *x|*t) ;;         # others 已有穿越位
-        *)
-            echo "Adding o+x to $dir (nginx worker needs directory traversal)"
-            $SUDO chmod o+x "$dir"
-            ;;
-    esac
-    dir="$(dirname "$dir")"
-done
+ensure_traversal_bits "$NGINX_HTML_DIR"
 
 echo "[7/7] Reloading backend and Nginx..."
 export DORAMI_CONFIG_FILE="$CONFIG_FILE"
@@ -710,6 +762,15 @@ else
 fi
 
 ensure_nginx_running_or_reload
+
+# 后端身份门(§4.9 ①;第 3 层起再加站点链路门与稳定窗):不通过只告警,不自动回滚
+echo "    健康核对(/api/health 五项)..."
+EXPECT_VERSION="$(_deploy_lib_source_version)"
+if ! deploy_wait_healthy "http://${BACKEND_PROXY_HOST}:${BACKEND_PROXY_PORT}/api/health" "$EXPECT_VERSION" "$DORAMI_BUILD_REF" "$DORAMI_BUILD_SHA" \
+        "${DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS:-180}" "${DORAMI_DEPLOY_HEALTH_ATTEMPTS:-90}"; then
+    bm_alert_health_failed "$DORAMI_BUILD_REF" "$DORAMI_BUILD_SHA" "后端身份门:${DEPLOY_HEALTH_LAST_VERDICT:-无响应}(预算 ${DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS:-180}s,尝试 ${DEPLOY_HEALTH_ATTEMPT} 次)"
+    exit 1
+fi
 
 echo ""
 if [ "${DORAMI_DEPLOY_MODE}" = "tag" ]; then
