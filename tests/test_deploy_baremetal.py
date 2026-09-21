@@ -880,3 +880,111 @@ def test_non_sqlite_database_needs_explicit_no_rollback_guarantee(bm: BM):
     bm.write_ini(storage="database_url = postgresql://u:p@localhost/db")
     r = bm.run("--here")
     assert r.returncode == 24 and "--no-rollback-guarantee" in r.stderr
+
+
+# ══════════════ 收养(§4.11)══════════════
+
+def _setup_old_form(bm: BM, sha: str, version: str = "1.0.0", *, running: bool = True) -> None:
+    """把「裸机」摆成本波之前的形态:仓库内 venv/(带 editable finder)、html_dir 真实目录、conf.d 站点、库文件、PM2 进程从仓库根起。"""
+    venv = bm.clone / "venv"
+    (venv / "bin").mkdir(parents=True)
+    py = venv / "bin" / "python"; py.write_text('#!/bin/sh\nexec "%s" "$@"\n' % sys.executable); py.chmod(0o755)
+    sp = venv / "lib" / "python3.12" / "site-packages"; sp.mkdir(parents=True)
+    (sp / "__editable___doramisourcearchive_3_0_0_finder.py").write_text("MAPPING = {}\n")
+    (sp / "__editable__.doramisourcearchive-3.0.0.pth").write_text(f"{bm.clone}/src\n")
+    (sp / "_virtualenv.pth").write_text("import _virtualenv\n")
+    di = sp / "doramisourcearchive-3.0.0.dist-info"; di.mkdir()
+    (di / "direct_url.json").write_text('{"url": "file:///x", "dir_info": {"editable": true}}')
+    bm.html_dir.mkdir(parents=True)
+    (bm.html_dir / "assets").mkdir()
+    (bm.html_dir / "index.html").write_text('<!doctype html><html><head><link rel="stylesheet" href="/assets/index-old.css"></head>'
+                                           '<body><script type="module" src="/assets/index-old.js"></script></body></html>\n')
+    (bm.html_dir / "assets" / "index-old.js").write_text("console.log('old');\n")
+    (bm.html_dir / "assets" / "index-old.css").write_text("body{}\n")
+    (bm.etc / "conf.d" / "dorami.conf").write_text(f"server {{\n    listen 8080;\n    root {bm.html_dir};\n    location /api/ {{ proxy_pass http://127.0.0.1:8088; }}\n}}\n")
+    (bm.clone / "data").mkdir(exist_ok=True)
+    con = sqlite3.connect(bm.clone / "data" / "cms_data.db")
+    con.execute("CREATE TABLE articles (id INTEGER PRIMARY KEY, body VARCHAR)")
+    con.execute("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY)")
+    con.execute("INSERT INTO alembic_version VALUES ('0001')")
+    con.execute("INSERT INTO articles (body) VALUES ('legacy-row')")
+    con.commit(); con.close()
+    if running:
+        env = {"DORAMI_BUILD_REF": f"v{version}", "DORAMI_BUILD_SHA": sha, "DORAMI_CONFIG_FILE": str(bm.clone / "config" / "production.ini")}
+        (bm.pm2dir / "state.json").write_text(json.dumps({APP: {"cwd": str(bm.clone), "pid": 4242, "status": "online", "env": env}}))
+        bm.health.write_text(json.dumps({"status": "ok", "version": version, "build": {"ref": f"v{version}", "sha": sha, "source": "env"}}))
+
+
+def test_first_run_of_new_script_adopts_old_form_then_deploys(bm: BM):
+    sha = bm.head()
+    _setup_old_form(bm, sha)
+    old_index = (bm.html_dir / "index.html").read_text()
+    r = bm.run("--here")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "先收养旧形态安装" in r.stdout and "收养完成" in r.stdout and "Deploy complete" in r.stdout
+    rels = bm.releases()
+    legacy = [p for p in rels if p.name.startswith("legacy-")]
+    assert len(legacy) == 1 and len(rels) == 2
+    legacy = legacy[0]
+    ls = bm.state("last-success.json")
+    assert ls["kind"] == "deploy" and ls["prev"]["txn_id"] == legacy.name and ls["prev"]["release"] == str(legacy)
+    assert ls["prev"]["kind"] == "adopt" and ls["capabilities"]["rollback"] is True
+    lm = json.loads((legacy / "manifest.json").read_text())
+    assert lm["kind"] == "adopt" and lm["prev"] is None and lm["target"]["code_sha"] == sha and lm["capabilities"]["reproducible"] is True
+    assert lm["target"]["adopt_sha_source"] == "health"
+    # venv 不移动、editable 痕迹移除、legacy 完成凭据
+    app = legacy / "app"
+    assert os.path.realpath(app / "venv") == os.path.realpath(bm.clone / "venv")
+    sp = bm.clone / "venv" / "lib" / "python3.12" / "site-packages"
+    assert not list(sp.glob("__editable__*")) and (sp / "_virtualenv.pth").exists() and not (sp / "doramisourcearchive-3.0.0.dist-info").exists()
+    assert (bm.clone / "venv" / ".dorami-complete").read_text().strip() == "kind=legacy"
+    assert (app / "src" / "version.py").is_file() and (app / "data").is_symlink()
+    # dist 复制、旧目录挪走、nginx 快照
+    assert (legacy / "dist" / "index.html").read_text() == old_index and (legacy / "dist.sha256").is_file()
+    moved = Path(lm["target"]["html_dir_moved_to"])
+    assert moved.is_dir() and (moved / "index.html").read_text() == old_index
+    assert bm.html_dir.is_symlink() and os.path.realpath(bm.html_dir) == os.path.realpath(Path(ls["target"]["release"]) / "dist")
+    assert (legacy / "nginx" / "snapshot.json").is_file() and json.loads((legacy / "nginx" / "changes.json").read_text()) == {"changes": []}
+    # 一次收养重启 + 一次部署重启
+    calls = [c.split()[0] for c in bm.pm2_calls() if c.split()[0] in ("delete", "start", "save")]
+    assert calls == ["delete", "start", "save", "delete", "start", "save"]
+    assert bm.db_rows() == 1 and bm.db_heads() == ["0001"]
+
+
+def test_explicit_adopt_requires_sha_when_identity_unknown(bm: BM):
+    sha = bm.head()
+    _setup_old_form(bm, sha, running=False)
+    r = bm.run("--adopt")
+    assert r.returncode == 24 and "--adopt-sha" in r.stderr
+    assert not bm.state("in-progress.json")
+    r = bm.run("--adopt", "--adopt-sha", sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    ls = bm.state("last-success.json")
+    assert ls["kind"] == "adopt" and ls["target"]["adopt_sha_source"] == "operator" and ls["capabilities"]["reproducible"] is False
+    assert bm.health_json()["build"]["sha"] == sha
+    r = bm.run("--adopt", "--adopt-sha", sha)
+    assert r.returncode == 2 and "不需要收养" in r.stderr
+
+
+def test_interrupted_adoption_is_resumed_not_archived(bm: BM):
+    sha = bm.head()
+    _setup_old_form(bm, sha)
+    r = bm.run("--adopt", FAKE_PM2_SAVE_FAIL="1")
+    assert r.returncode == 1 and "pm2 save 失败" in r.stderr
+    ip = bm.state("in-progress.json")
+    assert ip["kind"] == "adopt" and ip["stage"]["intent"] == "process_started" and ip["stage"]["completed"] == "links_switched"
+    assert bm.html_dir.is_symlink(), "已挪走旧目录、建了链接"
+    r = bm.run("--here")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "续做收养事务" in r.stdout and "收养完成" in r.stdout and "Deploy complete" in r.stdout
+    assert not bm.closed(), "收养事务只续做不归档"
+    ls = bm.state("last-success.json")
+    assert ls["kind"] == "deploy" and ls["prev"]["kind"] == "adopt"
+    # 续做没有重复复制 dist / 重新挪目录
+    assert len([p for p in bm.www.iterdir() if p.name.startswith("site.adopt-")]) == 1
+
+
+def test_status_before_adoption_points_to_adopt(bm: BM):
+    _setup_old_form(bm, bm.head())
+    r = bm.run("--status")
+    assert r.returncode == 0 and "尚未收养" in r.stdout and "未发布" in r.stdout

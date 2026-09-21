@@ -23,7 +23,7 @@ BM_STAGES_ROLLBACK="opened nginx_reverted nginx_restored process_stopped db_resc
 BM_STAGES_ADOPT="opened code_archived venv_ready dist_copied nginx_snapshotted process_stopped links_switched process_started health_ok promoted"
 # deploy 事务的「首次宿主写入」intent:在此之前失败的事务可被证明未改现场(§4.3)
 BM_FIRST_HOST_WRITE_DEPLOY="nginx_prepared"
-BM_FIRST_HOST_WRITE_ADOPT="dist_copied"
+BM_FIRST_HOST_WRITE_ADOPT="process_stopped"
 
 BM_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 BM_LAST_ERROR=""
@@ -426,6 +426,7 @@ bm_txn_host_untouched() {
     kind="$(bm_manifest_get kind "")"
     case "$kind" in
         deploy) seq="$BM_STAGES_DEPLOY"; first="$BM_FIRST_HOST_WRITE_DEPLOY" ;;
+        adopt) seq="$BM_STAGES_ADOPT"; first="$BM_FIRST_HOST_WRITE_ADOPT" ;;
         *) return 1 ;;
     esac
     completed="$(bm_manifest_get stage.completed "")"; intent="$(bm_manifest_get stage.intent "")"
@@ -508,19 +509,243 @@ bm_pre_deploy_checks() {
     bm_ensure_adopted
     export BM_PRE_CHECKS_DONE=1
 }
-# 收养检测:无 last-success 且有既有部署证据 → 自动进入收养(第 4 层实现);此处先占位
+# 收养检测(§4.11):无 last-success 且有既有部署证据 → 先收养旧形态安装,完成之前不进入任何正向部署
 bm_ensure_adopted() {
     [ -f "$BM_LAST_SUCCESS" ] && return 0
     local ev; ev="$(bm_evidence_for_gate)"
     [ -n "$ev" ] || return 0
-    if declare -F bm_adopt_main >/dev/null; then
-        echo "    无 last-success 但有既有部署证据(${ev}):先收养旧形态安装(一次 PM2 重启的维护窗)"
-        bm_adopt_main
-    else
-        echo "    ⚠️  无 last-success 但有既有部署证据(${ev}):收养尚未装配,按旧形态继续"
-    fi
+    echo "    无 last-success 但有既有部署证据(${ev}):先收养旧形态安装(一次 PM2 重启的维护窗)"
+    bm_adopt_main
+    # 收养重启了服务、建了 release:证据快照与现场采样都要刷新
+    bm_sample_running
+    bm_snapshot_evidence
 }
-bm_adopt_resume() { bm_fail "$BM_RC_IDENTITY" "收养续做尚未装配"; }
+
+# ══════════════════════ 收养(§4.11;第 4 层)══════════════════════
+# kind=adopt 事务,锁内、可重入、每步阶段落盘;完成判据 = 旧服务已从 legacy release 启动并过两级健康门。
+# venv 不移动(app/venv -> <repo>/venv,并移除 editable finder);dist 复制;nginx 当前生效集合快照作日后恢复源。
+bm_adopt_prepare_env() {
+    NGINX_BIN="${NGINX_BIN:-$(command -v nginx || true)}"
+    [ -n "$NGINX_BIN" ] || bm_fail "$BM_RC_STEP" "收养需要 nginx 可执行文件在 PATH 里"
+    command -v pm2 >/dev/null 2>&1 || { declare -F install_pm2 >/dev/null && install_pm2; }
+    command -v pm2 >/dev/null 2>&1 || bm_fail "$BM_RC_STEP" "收养需要 pm2"
+    [ -n "${NGINX_SITE_FILE:-}" ] || { declare -F resolve_nginx_site_file >/dev/null && resolve_nginx_site_file; }
+    declare -F check_nginx_ssl_inputs >/dev/null && check_nginx_ssl_inputs
+    [ -n "${CONFIG_FILE:-}" ] || bm_fail "$BM_RC_STEP" "收养需要 CONFIG_FILE"
+    return 0
+}
+bm_adopt_main() {
+    bm_adopt_prepare_env
+    bm_sample_running
+    if [ -f "$BM_IN_PROGRESS" ]; then
+        [ "$(bm_manifest_get kind "")" = "adopt" ] || bm_fail "$BM_RC_UNCLOSED" "存在非收养的未收口事务 $(bm_manifest_get txn_id ?),先处理它"
+        bm_adopt_resume
+        return 0
+    fi
+    [ -f "$BM_LAST_SUCCESS" ] && bm_fail "$BM_RC_USAGE" "本机已是 release 形态(last-success 存在),不需要收养"
+    # ① 身份:运行中 sha(/api/health 或 pm2 env);取不到 → 要求 --adopt-sha
+    local sha="" ref="" src="" reproducible=true
+    if [ -n "$BM_RUN_SHA" ]; then
+        sha="$BM_RUN_SHA"; ref="$BM_RUN_REF"; src="$BM_RUN_SRC"
+        if [ -n "${BM_ADOPT_SHA:-}" ] && [ "$BM_ADOPT_SHA" != "$sha" ]; then
+            bm_fail "$BM_RC_IDENTITY" "--adopt-sha ${BM_ADOPT_SHA:0:7} 与运行中的构建 sha ${sha:0:7}(来源 $src)不一致,拒绝"
+        fi
+    elif [ -n "${BM_ADOPT_SHA:-}" ]; then
+        sha="$BM_ADOPT_SHA"; src="operator"; reproducible=false
+    else
+        bm_fail "$BM_RC_IDENTITY" "无法确定运行中代码的 sha(/api/health 无 build.sha、pm2 进程无 DORAMI_BUILD_SHA):请人工核对后 ./deploy.sh --adopt --adopt-sha <sha>"
+    fi
+    sha="$(git rev-parse -q --verify "${sha}^{commit}" 2>/dev/null)" || bm_fail "$BM_RC_IDENTITY" "运行中的 sha ${sha:0:7} 不在本地仓库(先 git fetch)"
+    [ -n "$ref" ] || ref="$(git describe --tags --always "$sha" 2>/dev/null || echo "${sha:0:7}")"
+    case "$ref" in *-dirty) reproducible=false ;; esac
+    local venv_real; venv_real="$(bm_realpath "$BM_REPO/${VENV_DIR:-venv}")"
+    [ -x "$venv_real/bin/python" ] || bm_fail "$BM_RC_IDENTITY" "旧形态 venv 不存在或无 python($venv_real):没有可收养的运行环境"
+    echo "    收养身份:${ref}(${sha:0:7},来源 ${src});venv $venv_real;reproducible=$reproducible"
+    # ② 开事务
+    local txn release
+    txn="legacy-$(bm_txn_id "${sha:0:7}")"
+    release="$BM_RELEASES_DIR/$txn"
+    BM_TXN_KIND="adopt"; BM_TXN_MODE="adopt"
+    BM_TXN_TARGET_JSON="$(python3 -c 'import json, sys; print(json.dumps({"ref": sys.argv[1], "code_sha": sys.argv[2], "head_sha": sys.argv[3], "dirty": False, "release": sys.argv[4], "venv": sys.argv[5], "dist": sys.argv[4] + "/dist", "adopt_sha_source": sys.argv[6], "html_dir_moved_to": sys.argv[7]}))' \
+        "$ref" "$sha" "$(git rev-parse HEAD)" "$release" "$venv_real" "$src" "${NGINX_HTML_DIR}.adopt-${txn}")"
+    BM_TXN_PREV_JSON="null"
+    BM_TXN_CAPS_JSON="$(python3 -c 'import json, sys; print(json.dumps({"rollback": True, "db_restore": True, "reproducible": sys.argv[1] == "true"}))' "$reproducible")"
+    BM_TXN_SITE_JSON="$(python3 - "${NGINX_HTML_DIR:-}" "${NGINX_SITE_FILE:-}" "${NGINX_SITE_ENABLED_FILE:-}" "${NGINX_DEFAULT_SITE_FILE:-}" "${NGINX_SERVER_NAME:-_}" \
+        "${NGINX_LISTEN_PORT:-80}" "${NGINX_ENABLE_SSL:-false}" "${NGINX_SSL_LISTEN_PORT:-443}" "${NGINX_SSL_REDIRECT:-true}" "${BACKEND_PROXY_HOST:-127.0.0.1}" "${BACKEND_PROXY_PORT:-8088}" "$BM_APP_NAME" "$NGINX_BIN" "$CONFIG_FILE" "${NGINX_RELEASES_DIR:-}" <<'PY'
+import json, sys
+k = ["html_dir", "site_file", "enabled_file", "default_site_file", "server_name", "listen_port", "enable_ssl", "ssl_listen_port",
+     "ssl_redirect", "backend_host", "backend_port", "app_name", "nginx_bin", "config_file", "releases_dir"]
+print(json.dumps(dict(zip(k, sys.argv[1:]))))
+PY
+)"
+    BM_TXN_DB_JSON="{\"target\": $(bm_json_str "${BM_DB_PATH:-}"), \"snapshot\": null, \"snapshot_at\": null, \"rescue_snapshot\": null, \"heads_before\": [], \"plan\": null}"
+    bm_txn_open "$txn" "$release"
+    bm_adopt_run
+}
+bm_adopt_resume() {
+    bm_adopt_prepare_env
+    echo "    续做收养事务 $(bm_manifest_get txn_id ?)(completed=$(bm_manifest_get stage.completed ?) intent=$(bm_manifest_get stage.intent ?))"
+    BM_TXN_OPEN=1
+    bm_adopt_run
+}
+# 收养的阶段主体(首次与续做共用;每步按 completed 判定是否需要做)
+bm_adopt_run() {
+    local seq="$BM_STAGES_ADOPT" release app sha ref venv_real dist moved
+    release="$(bm_manifest_get target.release "")"; app="$release/app"
+    sha="$(bm_manifest_get target.code_sha "")"; ref="$(bm_manifest_get target.ref "")"
+    venv_real="$(bm_manifest_get target.venv "")"; dist="$release/dist"
+    moved="$(bm_manifest_get target.html_dir_moved_to "")"
+    [ -n "$release" ] && [ -n "$sha" ] || bm_fail "$BM_RC_STEP" "收养事务 manifest 不完整"
+
+    if bm_stage_needed "$seq" code_archived; then
+        bm_stage_intent code_archived
+        rm -rf "$app"; bm_archive_code "$sha" "$release"
+        bm_stage_done code_archived
+    fi
+    if bm_stage_needed "$seq" venv_ready; then
+        bm_stage_intent venv_ready
+        ln -sfn "$venv_real" "$app/venv"
+        bm_legacy_venv_detach "$venv_real" "$app"
+        bm_mount_points "$release" "$venv_real" "$CONFIG_FILE"
+        bm_stage_done venv_ready
+    fi
+    if bm_stage_needed "$seq" dist_copied; then
+        bm_stage_intent dist_copied
+        bm_adopt_copy_dist "$dist" "$release" "$moved"
+        bm_stage_done dist_copied
+    fi
+    if bm_stage_needed "$seq" nginx_snapshotted; then
+        bm_stage_intent nginx_snapshotted
+        mkdir -p "$release/nginx"
+        local affected=("$NGINX_SITE_FILE")
+        [ "${NGINX_SITE_ENABLED_FILE:-}" != "$NGINX_SITE_FILE" ] && [ -n "${NGINX_SITE_ENABLED_FILE:-}" ] && affected+=("$NGINX_SITE_ENABLED_FILE")
+        [ -n "${NGINX_DEFAULT_SITE_FILE:-}" ] && affected+=("$NGINX_DEFAULT_SITE_FILE")
+        bm_nginx_record_state "$release/nginx/snapshot.json" "${affected[@]}" || bm_fail "$BM_RC_STEP" "记录 nginx 快照失败"
+        printf '{"changes": []}\n' >"$release/nginx/changes.json"
+        printf '%s\n' "${affected[@]}" >"$release/nginx/managed-paths"
+        ${SUDO:-} "$NGINX_BIN" -T 2>/dev/null >"$release/nginx/effective.conf" || true
+        bm_stage_done nginx_snapshotted
+    fi
+    if bm_stage_needed "$seq" process_stopped; then
+        bm_stage_intent process_stopped        # 首次宿主改动(维护窗开始)
+        bm_pm2_stop
+        bm_stage_done process_stopped
+    fi
+    if bm_stage_needed "$seq" links_switched; then
+        bm_stage_intent links_switched
+        bm_adopt_switch_html "$dist" "$moved"
+        deploy_atomic_symlink "$app" "$BM_CURRENT_LINK" || bm_fail "$BM_RC_STEP" "切换 current symlink 失败"
+        bm_stage_done links_switched
+    fi
+    if bm_stage_needed "$seq" process_started; then
+        bm_stage_intent process_started
+        bm_pm2_start "$release" "$ref" "$sha" "$CONFIG_FILE"
+        bm_stage_done process_started
+    fi
+    if bm_stage_needed "$seq" health_ok; then
+        bm_stage_intent health_ok
+        local version
+        version="$(grep -o '__version__ = "[^"]*"' "$app/src/version.py" 2>/dev/null | head -1 | sed 's/.*"\(.*\)"/\1/')"
+        if ! bm_health_gates "$dist" "$version" "$ref" "$sha"; then
+            bm_alert_health_failed "$ref" "$sha" "收养后从 legacy release 启动未通过:$BM_GATE_REASON"
+            bm_fail "$BM_RC_STEP" "收养未完成(事务保留,下次运行会续做;排查后可 ./deploy.sh --adopt 重试)"
+        fi
+        bm_stage_done health_ok
+    fi
+    # 完成序:核对 pm2 进程 cwd = legacy app → 发布入口 → last-success(kind=adopt, prev=null)
+    bm_sample_running
+    if [ "${BM_PM2_PRESENT:-0}" = 1 ] && [ "$(bm_realpath "$BM_PM2_CWD")" != "$(bm_realpath "$app")" ]; then
+        bm_fail "$BM_RC_IDENTITY" "收养后 pm2 进程 cwd($BM_PM2_CWD)不是 legacy release($app),拒绝晋升"
+    fi
+    bm_stage_intent promoted
+    bm_txn_promote
+    echo "    收养完成:${ref}(${sha:0:7})现从 $app 运行;旧 html_dir 内容留在 ${moved:-<无>}"
+}
+# 从旧 venv 移除 editable finder(§4.11 ②):__editable__* / 指向 <repo>/src 或本项目的 .pth / 对应 dist-info;
+# 之后在 legacy 上下文核对 sys.path 不含 <repo>/src
+bm_legacy_venv_detach() {  # venv_real app
+    local venv="$1" app="$2"
+    python3 - "$venv" "$BM_REPO" <<'PY' || bm_fail "$BM_RC_STEP" "移除旧 venv 的 editable finder 失败"
+import glob, os, re, shutil, sys
+venv, repo = sys.argv[1], os.path.realpath(sys.argv[2])
+removed = []
+for sp in glob.glob(os.path.join(venv, "lib", "python*", "site-packages")):
+    for p in glob.glob(os.path.join(sp, "__editable__*")):
+        (shutil.rmtree if os.path.isdir(p) else os.unlink)(p); removed.append(p)
+    for p in glob.glob(os.path.join(sp, "*.pth")):
+        try:
+            text = open(p, encoding="utf-8", errors="replace").read()
+        except OSError:
+            continue
+        if "__editable__" in text or repo + "/src" in text or repo in text.replace("\\", "/") or "dorami" in os.path.basename(p).lower():
+            os.unlink(p); removed.append(p)
+    for p in glob.glob(os.path.join(sp, "*.dist-info")):
+        name = os.path.basename(p).lower()
+        if name.startswith("doramisourcearchive-") or name.startswith("mini-"):
+            direct = os.path.join(p, "direct_url.json")
+            if os.path.exists(direct) and "editable" in open(direct, encoding="utf-8", errors="replace").read():
+                shutil.rmtree(p); removed.append(p)
+for p in removed:
+    print(f"    移除 editable 痕迹: {p}")
+PY
+    # 核对:legacy 上下文的 sys.path 不含工作树的 src(realpath 比较)
+    (cd "$app" && PYTHONPATH="$app/src" "$venv/bin/python" - "$BM_REPO" <<'PY') || bm_fail "$BM_RC_IDENTITY" "legacy 上下文的 sys.path 仍指向工作树 src,收养不能保证运行副本独立"
+import os, sys
+bad = [p for p in sys.path if p and os.path.realpath(p) == os.path.realpath(os.path.join(sys.argv[1], "src"))]
+if bad:
+    print("sys.path 含工作树 src: " + ", ".join(bad), file=sys.stderr); sys.exit(1)
+PY
+    printf '{"kind": "legacy", "venv": %s, "interpreter": %s}\n' "$(bm_json_str "$venv")" "$(bm_json_str "$(bm_interpreter_identity "$venv/bin/python")")" >"$venv/inputs.json"
+    echo "kind=legacy" >"$venv/.dorami-complete"
+}
+# dist:复制 html_dir/* → legacy dist(校验清单);html_dir 已是 symlink(上次中断后)则从其目标复制
+bm_adopt_copy_dist() {  # dist release moved
+    local dist="$1" release="$2" moved="$3" src="$NGINX_HTML_DIR"
+    if [ -L "$NGINX_HTML_DIR" ]; then
+        [ -f "$release/dist.sha256" ] && [ -d "$dist" ] && bm_verify_sha256 "$dist" "$release/dist.sha256" && return 0
+        src="$(bm_realpath "$NGINX_HTML_DIR")"
+    elif [ ! -d "$NGINX_HTML_DIR" ] && [ -d "$moved" ]; then
+        src="$moved"
+    fi
+    [ -d "$src" ] || bm_fail "$BM_RC_IDENTITY" "旧形态发布目录不存在($NGINX_HTML_DIR):没有可收养的前端产物"
+    rm -rf "$dist"; mkdir -p "$dist"
+    ${SUDO:-} cp -R "$src/." "$dist/" || bm_fail "$BM_RC_STEP" "复制 $src 到 $dist 失败"
+    ${SUDO:-} chown -R "$(id -u):$(id -g)" "$dist" 2>/dev/null || true
+    chmod -R o+rX "$dist" 2>/dev/null || true
+    local want got
+    want="$(${SUDO:-} python3 -c 'import os, sys
+n = b = 0
+for dp, _, fns in os.walk(sys.argv[1]):
+    for f in fns:
+        p = os.path.join(dp, f)
+        if not os.path.islink(p): n += 1; b += os.path.getsize(p)
+print(n, b)' "$src")"
+    got="$(python3 -c 'import os, sys
+n = b = 0
+for dp, _, fns in os.walk(sys.argv[1]):
+    for f in fns:
+        p = os.path.join(dp, f)
+        if not os.path.islink(p): n += 1; b += os.path.getsize(p)
+print(n, b)' "$dist")"
+    [ "$want" = "$got" ] || bm_fail "$BM_RC_STEP" "复制后的 dist 文件数 / 字节数不符(源 $want,副本 $got)"
+    bm_tree_sha256 "$dist" >"$release/dist.sha256"
+    echo "    dist:复制 $src → $dist($got)"
+}
+# html_dir 真实目录 → mv 到 <html_dir>.adopt-<txn> + 建 symlink(两步;断电后按现场补建);跨文件系统只复制不 mv
+bm_adopt_switch_html() {  # dist moved
+    local dist="$1" moved="$2"
+    if [ -L "$NGINX_HTML_DIR" ]; then
+        [ "$(bm_realpath "$NGINX_HTML_DIR")" = "$(bm_realpath "$dist")" ] && return 0
+    elif [ -d "$NGINX_HTML_DIR" ]; then
+        if [ -e "$moved" ]; then
+            bm_fail "$BM_RC_STEP" "$moved 已存在,无法挪走旧 html_dir;人工检查后重试"
+        fi
+        ${SUDO:-} mv "$NGINX_HTML_DIR" "$moved" || bm_fail "$BM_RC_STEP" "挪走旧 html_dir 失败(跨文件系统?人工 mv 后重跑)"
+    fi
+    ${SUDO:-} mkdir -p "$(dirname "$NGINX_HTML_DIR")"
+    deploy_atomic_symlink "$dist" "$NGINX_HTML_DIR" ${SUDO:-} || bm_fail "$BM_RC_STEP" "建 html_dir symlink 失败"
+    ensure_traversal_bits "$(bm_realpath "$dist")"
+}
 
 # ══════════════════════ release 形态(§3 / §4.4–§4.9;第 3 层)══════════════════════
 
