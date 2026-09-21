@@ -21,6 +21,7 @@
 
 ## 排队中(用户拍板、未动工)
 
+- ☐ **issue #126 裸机部署回滚**(方案 `docs/baremetal-rollback-plan.md` R3 稿,2026-09-21;用户已收窄:只做健康门失败告警 + 手动 `--rollback`,**不自动回滚**;codex gpt-6-astra ultra 三轮检视一致):**运行副本版本化**(release 形态,PM2 从 release 实路径起,回滚不 checkout / 不出网 / 不构建)+ 事务阶段 + 两级健康门 + DB 按迁移计划分流 + 收养 + `--code` / `--status`;待拍板 §7 七项(形状 B / 有迁移默认拒绝 / 只回一代与 nginx 恢复记录集合 / 迁移在切换序 / 单 PR / extras 钉版导出 / 锁与 Docker 同一把)。
 - ☐ **issue #82 节点看护机制**(三层:判定升级 → 异常通知 → 自主自愈):第一层方案 `docs/node-watchdog-layer1-plan.md` R2 稿
   (2026-09-15 codex 检视一致;**2026-09-19 用户拍板「全按推荐」**,§5 七点定案;PR-0 已开工);落地拆 **PR-0 调度重载现役 bug 先修**(`load_tasks_to_scheduler` 全量 `remove_all_jobs()` 被采集任务 CRUD 调用,
   留存清理 / 远程同步 / 用户源刷新 / 播客 ASR worker 编辑一次任务即消失到重启)→ PR-A schema 与上报通道(判定 feature-gated 关)→ PR-B 开判定 → PR-C 收据对账 / Q1 / 日报运行表 / 看护页。
