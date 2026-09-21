@@ -110,8 +110,12 @@ bm_install_traps() {
 # BM_PM2_CWD / BM_PM2_SHA / BM_PM2_REF / BM_PM2_PID;BM_CURRENT_TARGET(current → realpath)/ BM_HTML_TARGET
 # (html_dir 是 symlink → realpath;真实目录 → dir:<realpath>;不存在 → 空);BM_RUN_SHA / BM_RUN_REF / BM_RUN_SRC(health|pm2|none)。
 bm_sample_running() {
-    local host="${BACKEND_PROXY_HOST:-127.0.0.1}" port="${BACKEND_PROXY_PORT:-8088}" health jlist jlist_rc=0
-    health="$(curl -fsS --connect-timeout 3 --max-time 8 -H 'Cache-Control: no-cache' "http://${host}:${port}/api/health?_=$(date +%s)" 2>/dev/null || true)"
+    local host="${BACKEND_PROXY_HOST:-127.0.0.1}" port="${BACKEND_PROXY_PORT:-8088}" health jlist jlist_rc=0 health_tmp health_code
+    # 「端口有没有响应」与「响应是不是有效身份」分开记(codex R1 P1-07 复检):不带 -f,HTTP 4xx/5xx / 非 JSON / 空响应都算有响应
+    health_tmp="$(mktemp "${TMPDIR:-/tmp}/dorami-health.XXXXXX")"
+    health_code="$(curl -sS -o "$health_tmp" -w '%{http_code}' --connect-timeout 3 --max-time 8 -H 'Cache-Control: no-cache' "http://${host}:${port}/api/health?_=$(date +%s)" 2>/dev/null || true)"
+    health="$(cat "$health_tmp" 2>/dev/null || true)"; rm -f "$health_tmp"
+    case "$health_code" in ""|000) BM_HEALTH_HTTP="none" ;; *) BM_HEALTH_HTTP="$health_code" ;; esac
     if command -v pm2 >/dev/null 2>&1; then
         jlist="$(pm2 jlist 2>/dev/null)" || jlist_rc=$?
     else
@@ -169,7 +173,7 @@ PY
     else
         BM_RUN_SHA=""; BM_RUN_REF=""; BM_RUN_SRC="none"
     fi
-    export BM_HEALTH_JSON BM_HEALTH_SHA BM_HEALTH_REF BM_HEALTH_VERSION BM_PM2_PRESENT BM_PM2_STATUS BM_PM2_CWD \
+    export BM_HEALTH_JSON BM_HEALTH_SHA BM_HEALTH_REF BM_HEALTH_VERSION BM_HEALTH_HTTP BM_PM2_PRESENT BM_PM2_STATUS BM_PM2_CWD \
         BM_PM2_SHA BM_PM2_REF BM_PM2_PID BM_PM2_QUERY BM_CURRENT_TARGET BM_HTML_TARGET BM_RUN_SHA BM_RUN_REF BM_RUN_SRC
 }
 
@@ -248,15 +252,15 @@ bm_determine_prev() {
                 why="pm2 进程 cwd $BM_PM2_CWD 不是 last-success 的 $ls_app"
             elif [ -n "$BM_HEALTH_SHA" ] && [ "$BM_HEALTH_SHA" != "$ls_sha" ]; then
                 why="运行中的构建 sha ${BM_HEALTH_SHA:0:7}(来源 health)≠ last-success ${ls_sha:0:7}"
-            elif [ -n "$BM_HEALTH_JSON" ] && [ -z "$BM_HEALTH_SHA" ]; then
-                why="/api/health 有响应但没有构建身份(build.sha 缺失)"
+            elif [ "${BM_HEALTH_HTTP:-none}" != "none" ] && [ -z "$BM_HEALTH_SHA" ]; then
+                why="/api/health 有响应(HTTP ${BM_HEALTH_HTTP})但没有有效的构建身份(非 JSON / build.sha 缺失)"
             elif [ -z "$BM_HEALTH_SHA" ] && [ "$BM_PM2_SHA" != "$ls_sha" ]; then
                 why="pm2 进程的构建 sha ${BM_PM2_SHA:0:7}(来源 pm2)≠ last-success ${ls_sha:0:7}"
             else
                 verdict="运行身份已核对(pm2 cwd + sha,来源 ${BM_RUN_SRC})"
             fi
-        elif [ -n "$BM_HEALTH_JSON" ]; then
-            why="/api/health 有响应但 pm2 没有受管进程 ${BM_APP_NAME}(查询 ${BM_PM2_QUERY}):有别的进程在服务端口上"
+        elif [ "${BM_HEALTH_HTTP:-none}" != "none" ]; then
+            why="/api/health 有响应(HTTP ${BM_HEALTH_HTTP})但 pm2 没有受管进程 ${BM_APP_NAME}(查询 ${BM_PM2_QUERY}):端口上有别的进程或响应无有效身份,不能视为停机"
         elif [ "${BM_PM2_QUERY:-failed}" != "ok" ]; then
             why="pm2 查询失败(命令失败 / 输出不是有效列表),无法确认服务是否在运行"
         else
@@ -389,10 +393,11 @@ bm_txn_open() {  # txn_id [release_dir] [replace]  —— replace:允许原子�
     fi
     python3 - "$txn" "$BM_TXN_KIND" "$BM_TXN_MODE" "${BM_ORCHESTRATOR_SHA:-}" "$controller" \
         "${BM_TXN_TARGET_JSON:-null}" "${BM_TXN_PREV_JSON:-null}" "${BM_TXN_CAPS_JSON:-{\}}" "${BM_TXN_SITE_JSON:-{\}}" \
-        "${BM_TXN_RECOVER_FROM:-}" "${BM_TXN_DB_JSON:-{\}}" "$(bm_now)" <<'PY' | deploy_json_write "$BM_IN_PROGRESS" \
+        "${BM_TXN_RECOVER_FROM:-}" "${BM_TXN_DB_JSON:-{\}}" "$(bm_now)" \
+        "${BM_CURRENT_TARGET:-}" "${BM_HTML_TARGET:-}" "${BM_PM2_CWD:-}" <<'PY' | deploy_json_write "$BM_IN_PROGRESS" \
         || bm_fail "$BM_RC_STEP" "写 in-progress.json 失败(磁盘 / 权限?),事务未落盘"
-import json, sys
-(txn, kind, mode, orch, controller, target, prev, caps, site, recover_from, db, opened) = sys.argv[1:13]
+import json, os, sys
+(txn, kind, mode, orch, controller, target, prev, caps, site, recover_from, db, opened, cur, html, pm2_cwd) = sys.argv[1:16]
 caps_d = {"rollback": True, "db_restore": True, "reproducible": True}
 caps_d.update(json.loads(caps or "{}"))
 print(json.dumps({
@@ -400,6 +405,8 @@ print(json.dumps({
     "target": json.loads(target or "null"), "prev": json.loads(prev or "null"),
     "db": json.loads(db or "{}"), "site": json.loads(site or "{}"), "capabilities": caps_d,
     "stage": {"completed": "opened", "intent": "opened", "error": None},
+    # 开事务时的现场(§4.3「现场证明」的对照值;prev=null 的首装 / 放弃保证也能据此证明未改宿主)
+    "scene": {"current": cur, "html_dir": html, "pm2_cwd": os.path.realpath(pm2_cwd) if pm2_cwd else ""},
     "recover_from": recover_from or None, "opened_at": opened, "deployed_at": None,
 }, ensure_ascii=False))
 PY
@@ -495,7 +502,18 @@ bm_txn_host_untouched() {
     if [ -f "$changes" ] && [ "$(deploy_json_get "$changes" changes "[]")" != "[]" ]; then
         return 1
     fi
-    # 现场证明:current / html_dir / pm2 cwd 等于 prev 记录(prev=null 时须都为空)
+    # 现场证明:current / html_dir / pm2 cwd 等于开事务时记录的 scene(旧 manifest 无 scene 时退回 prev 记录)
+    if [ "$(bm_manifest_get scene "")" != "" ]; then
+        [ "${BM_CURRENT_TARGET:-}" = "$(bm_manifest_get scene.current "")" ] || return 1
+        [ -z "${NGINX_HTML_DIR:-}" ] || [ "${BM_HTML_TARGET:-}" = "$(bm_manifest_get scene.html_dir "")" ] || return 1
+        local scene_pm2; scene_pm2="$(bm_manifest_get scene.pm2_cwd "")"
+        if [ "${BM_PM2_PRESENT:-0}" = 1 ]; then
+            [ "$(bm_realpath "$BM_PM2_CWD")" = "$scene_pm2" ] || return 1
+        else
+            [ -z "$scene_pm2" ] || return 1
+        fi
+        return 0
+    fi
     prev_app="$(bm_manifest_get prev.release "")"; prev_dist="$(bm_manifest_get prev.dist "")"
     [ -n "$prev_app" ] && prev_app="$(bm_realpath "$prev_app/app")"
     [ -n "$prev_dist" ] && prev_dist="$(bm_realpath "$prev_dist")"
@@ -872,7 +890,7 @@ bm_freeze_worktree() {  # txn_id
     # (已跟踪的也一并移除);③ 数据库通配项按 ls-files 逐个显式移除——不依赖 ignore 优先级,`!` 否定规则也挡不住
     local tmp_index="$BM_STATE_DIR/.tmp-index-$$" excl_file="$BM_STATE_DIR/.tmp-excludes-$$"
     mkdir -p "$BM_STATE_DIR"
-    { for p in $excludes; do printf '/%s\n' "$p"; done; printf '*.db\n*.sqlite\n*.db-wal\n*.db-shm\n'; } >"$excl_file"
+    { for p in $excludes; do printf '/%s\n' "$p"; done; printf '*.db\n*.sqlite\n*.sqlite3\n*-wal\n*-shm\n*-journal\n'; } >"$excl_file"
     tree="$( (export GIT_INDEX_FILE="$tmp_index"
               git read-tree HEAD \
               && git -c core.excludesFile="$excl_file" add -A . >/dev/null \
@@ -880,7 +898,7 @@ bm_freeze_worktree() {  # txn_id
               && git ls-files -z --cached | python3 -c '
 import subprocess, sys
 paths = [p for p in sys.stdin.buffer.read().split(b"\0") if p]
-hits = [p for p in paths if p.lower().endswith((b".db", b".sqlite", b".db-wal", b".db-shm"))]
+hits = [p for p in paths if p.lower().endswith((b".db", b".sqlite", b".sqlite3", b"-wal", b"-shm", b"-journal"))]
 for i in range(0, len(hits), 200):
     subprocess.run([b"git", b"rm", b"-q", b"--cached", b"--"] + hits[i:i + 200], check=True)
 ' \
@@ -897,7 +915,11 @@ for i in range(0, len(hits), 200):
     size_mb="$(git ls-tree -r -l "$tree" | awk '{s += $4} END {printf "%d", s / 1024 / 1024}')"
     [ "$size_mb" -le "$limit_mb" ] \
         || bm_fail "$BM_RC_STEP" "dirty 工作树快照 ${size_mb} MiB 超过阈值 ${limit_mb} MiB(DORAMI_DEPLOY_SNAPSHOT_MAX_MB):有大文件混进工作树?git status 查看后清理或加入排除"
-    snap="$(echo "dorami-deploy: dirty worktree snapshot for ${txn}" | git commit-tree "$tree" -p "$head_sha")" \
+    # 快照 commit 是机器生成的:固定身份,不依赖生产机 / CI 的 git user 配置(否则 commit-tree 报 empty ident)
+    snap="$(echo "dorami-deploy: dirty worktree snapshot for ${txn}" \
+        | GIT_AUTHOR_NAME="dorami-deploy" GIT_AUTHOR_EMAIL="dorami-deploy@localhost" \
+          GIT_COMMITTER_NAME="dorami-deploy" GIT_COMMITTER_EMAIL="dorami-deploy@localhost" \
+          git commit-tree "$tree" -p "$head_sha")" \
         || bm_fail "$BM_RC_STEP" "commit-tree 失败"
     BM_PIN_REF="refs/dorami-deploy/${txn}"
     git update-ref "$BM_PIN_REF" "$snap" || bm_fail "$BM_RC_STEP" "写 pin ref $BM_PIN_REF 失败"
@@ -1193,17 +1215,31 @@ for key, p in d["mutable"].items():
         # --no-rollback-guarantee 同用——本次记 prev=null / rollback=false(跨存储布局没有回滚保证),新布局成为之后的基准。
         local diff
         if ! diff="$(python3 - "$probe" "$baseline" <<'PY'
-import json, sys
+import json, os, sys
 probe, base = json.loads(sys.argv[1]), json.loads(sys.argv[2])
+db_target = os.environ.get("BM_BASELINE_DB_TARGET") or ""
 bad = []
+base_m = base.get("mutable")
+if not isinstance(base_m, dict) or not base_m:
+    bad.append("历史基准缺 mutable(无法确认历史存储布局)")
+    base_m = {}
+base_backend = base.get("backend") or "sqlite"
 for key, p in probe["mutable"].items():
-    b = (base.get("mutable") or {}).get(key)
-    if b is None or b == "":
-        continue  # 基准上下文的代码不认识该配置(更老的版本):不比较
+    if key not in base_m:
+        # 缺字段 = 无法确认历史布局,不能当作一致(codex R1 P1-02 复检);显式空串才是「已知禁用 / 未启用」
+        bad.append(f"{key}: 历史基准无此字段,无法确认(目标={p})")
+        continue
+    b = base_m[key]
+    if b == "":
+        if key == "database" and base_backend == "sqlite":
+            bad.append("database: 历史基准的 SQLite 路径为空,无法确认")
+        continue
     if p != b:
         bad.append(f"{key}: 目标={p} 基准={b}")
-if "backend" in base and probe.get("backend") != base.get("backend"):
-    bad.append(f"数据库后端: 目标={probe.get('backend')} 基准={base.get('backend')}")
+if db_target and probe["mutable"].get("database", "") != db_target:
+    bad.append(f"database: 目标={probe['mutable'].get('database')} last-success.db.target={db_target}")
+if probe.get("backend") != base_backend:
+    bad.append(f"数据库后端: 目标={probe.get('backend')} 基准={base_backend}")
 if bad:
     print("\n".join("    ✗ " + b for b in bad)); sys.exit(1)
 PY
@@ -1557,14 +1593,21 @@ bm_health_gates() {  # dist_dir version ref sha  → BM_GATE_REASON
         echo "    健康门 ③:稳定窗 ${stable}s(PID 不变、/api/health 持续一致)..."
         pid0="$(bm_pm2_pid)"
         t0=$(date +%s)
+        local nap max_time
         while [ $(( $(date +%s) - t0 )) -lt "$stable" ]; do
-            sleep 2
-            body="$(curl -fsS --connect-timeout 3 --max-time 8 -H 'Cache-Control: no-cache' "http://${BACKEND_PROXY_HOST}:${BACKEND_PROXY_PORT}/api/health?_=$(date +%s)" 2>/dev/null || true)"
+            remaining=$(( deadline - $(date +%s) ))
+            [ "$remaining" -gt 0 ] || { BM_GATE_REASON="稳定窗未能在预算内完成(DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS=${budget})"; return 1; }
+            nap=$(( remaining < 2 ? remaining : 2 )); sleep "$nap"
+            remaining=$(( deadline - $(date +%s) ))
+            [ "$remaining" -gt 0 ] || { BM_GATE_REASON="稳定窗未能在预算内完成(DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS=${budget})"; return 1; }
+            max_time=$(( remaining < 8 ? remaining : 8 ))
+            body="$(curl -fsS --connect-timeout 3 --max-time "$max_time" -H 'Cache-Control: no-cache' "http://${BACKEND_PROXY_HOST}:${BACKEND_PROXY_PORT}/api/health?_=$(date +%s)" 2>/dev/null || true)"
             verdict="$(printf '%s' "$body" | deploy_health_verdict "$version" "$ref" "$sha")"
             [ "$verdict" = "ok" ] || { BM_GATE_REASON="稳定窗内 /api/health 变化:${verdict}"; return 1; }
             pid1="$(bm_pm2_pid)"
             [ "$pid1" = "$pid0" ] || { BM_GATE_REASON="稳定窗内进程重启(pid ${pid0:-?} → ${pid1:-?})"; return 1; }
         done
+        [ $(date +%s) -le "$deadline" ] || { BM_GATE_REASON="稳定窗未能在预算内完成(DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS=${budget})"; return 1; }
     fi
     return 0
 }
@@ -2057,6 +2100,14 @@ bm_rollback_main() {  # [--restore-db] [--yes] [--no-rescue-snapshot] [--to txn]
         db_path="$(bm_manifest_get db.target "")"
         BM_RB_DB_ACTION="$(bm_manifest_get db.action none)"
         echo "    续做回滚事务 $(bm_manifest_get txn_id ?) → ${t_ref}(${t_sha:0:7});completed=$(bm_manifest_get stage.completed ?) intent=$(bm_manifest_get stage.intent ?)"
+        # 续做时去掉 --no-rescue-snapshot = 改为做救援快照(只能收紧,不能事后加上跳过);救援阶段尚未完成时才有意义
+        if [ "$(bm_manifest_get db.no_rescue false)" = "true" ] && [ "$no_rescue" != 1 ]; then
+            deploy_json_set "$BM_IN_PROGRESS" db.no_rescue false json && deploy_json_set "$BM_IN_PROGRESS" db.skip_rescue_reason null json \
+                || bm_fail "$BM_RC_STEP" "更新救援选项失败"
+            echo "    本次未传 --no-rescue-snapshot:续做改为先做救援快照"
+        elif [ "$no_rescue" = 1 ] && [ "$(bm_manifest_get db.no_rescue false)" != "true" ]; then
+            bm_fail "$BM_RC_USAGE" "该回滚事务开始时没有跳过救援,续做不能事后加上 --no-rescue-snapshot"
+        fi
         BM_TXN_OPEN=1
         bm_rollback_run
         return 0
@@ -2181,7 +2232,7 @@ PY
             recheck="$(bm_db_plan "$app" "$venv" "$BM_RB_CONFIG_FILE" "$db")" || bm_fail "$BM_RC_STEP" "重核当前库失败"
             rk="$(printf '%s' "$recheck" | python3 -c 'import json, sys; d = json.load(sys.stdin); print(d.get("error_kind") if d["status"] == "error" else d["status"])')"
             [ "$rk" = "db_corrupt" ] && [ "$(bm_manifest_get db.skip_rescue_reason "")" = "db_corrupt" ] \
-                || bm_fail "$BM_RC_STEP" "跳过救援快照的前提不再成立(当前库此刻状态:${rk}):拒绝覆盖;去掉 --no-rescue-snapshot 重试(健康库必须做救援快照)"
+                || bm_fail "$BM_RC_STEP" "跳过救援快照的前提不再成立(当前库此刻状态:${rk}):拒绝覆盖;不带 --no-rescue-snapshot 再次 ./deploy.sh --rollback --yes --restore-db 续做,会先做救援快照"
             echo "    救援快照:--no-rescue-snapshot 显式跳过(当前库损坏,重核仍为 db_corrupt)"
         elif [ -f "$db" ] && [ -z "$(bm_manifest_get db.rescue_snapshot "")" ]; then
             local rescue="$BM_SNAPSHOT_DIR/$txn/$(basename "$db" | sed 's/\.[^.]*$//').rescue.sqlite"

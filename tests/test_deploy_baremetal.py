@@ -351,8 +351,18 @@ path = url.split("://", 1)[-1].split("/", 1)[1] if "/" in url.split("://", 1)[-1
 path = "/" + path.split("?")[0]
 code, ctype, body, redirect = "404", "", b"", ""
 if path == "/api/health":
+    d = os.environ.get("FAKE_HEALTH_DELAY_AFTER", "")
+    if d:
+        cnt_file = os.environ.get("FAKE_HEALTH_FILE", "") + ".calls"
+        n = int(open(cnt_file).read() or "0") + 1 if os.path.exists(cnt_file) else 1
+        open(cnt_file, "w").write(str(n))
+        if n > int(d):
+            import time; time.sleep(float(os.environ.get("FAKE_HEALTH_DELAY", "3")))
+    raw = os.environ.get("FAKE_HEALTH_RAW")
     p = os.environ.get("FAKE_HEALTH_FILE", "")
-    if p and os.path.exists(p):
+    if raw is not None:
+        code, ctype, body = os.environ.get("FAKE_HEALTH_CODE", "200"), "text/html", raw.encode()
+    elif p and os.path.exists(p):
         code, ctype, body = "200", "application/json", open(p, "rb").read()
     else:
         sys.exit(7)
@@ -1120,10 +1130,12 @@ def test_rollback_with_migration_requires_restore_db_and_restores_snapshot(bm: B
     rescue = Path(ls["db"]["rescue_snapshot"]); assert rescue.is_file()
     con = sqlite3.connect(rescue); assert con.execute("select count(*) from articles").fetchone()[0] == 5; con.close()
     assert ls["db"]["restore_source"] == v2["db"]["snapshot"] and ls["db"]["action"] == "restore"
-    # 库已在 0001:再部署 v2 走正向补迁移
-    r = bm.run("--code", v2["target"]["code_sha"])
+    # 库已在 0001:--to 回到 v2(目标比库新)→ 回滚事务走 migrate 分支向前补迁移
+    r = bm.run("--rollback", "--yes", "--to", v2["txn_id"])
     assert r.returncode == 0, r.stdout + r.stderr
-    assert bm.db_heads() == ["0002"] and bm.db_rows() == 3
+    assert "向前补迁移" in r.stdout and bm.db_heads() == ["0002"] and bm.db_rows() == 3
+    ls = bm.state("last-success.json")
+    assert ls["db"]["action"] == "migrate" and ls["target"]["txn_id"] == v2["txn_id"] and bm.health_json()["version"] == "1.1.0"
 
 
 def test_restore_db_is_refused_when_target_understands_current_db(bm: BM):
@@ -1383,3 +1395,91 @@ def test_health_budget_covers_site_gate_and_stability_window(bm: BM):
     """codex R1 P2-06:三道门共用一个预算;剩余不足以完成稳定窗即判失败而不是另起计时。"""
     r = bm.run("--here", DORAMI_DEPLOY_FRESH_OK="1", DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS="1", DORAMI_DEPLOY_STABLE_SECONDS="5")
     assert r.returncode == 1 and "不足以完成 5s 稳定窗" in r.stderr
+
+
+def test_identity_override_does_not_bypass_path_baseline(bm: BM):
+    """身份冲突用 --no-rollback-guarantee 放行(prev=null)时,存储布局基准照样核:改了库路径仍是 33,除非同时显式重设基准。"""
+    _deploy_v1(bm)
+    pm2 = bm.pm2(); pm2[APP]["cwd"] = str(bm.clone); (bm.pm2dir / "state.json").write_text(json.dumps(pm2))
+    bm.health.unlink()
+    (bm.clone / "next-state").mkdir(); shutil.copy(bm.clone / "data" / "cms_data.db", bm.clone / "next-state" / "cms.db")
+    bm.write_ini(storage="database_url = sqlite:///next-state/cms.db")
+    r = bm.run("--here")
+    assert r.returncode == 24, r.stderr
+    r = bm.run("--here", "--no-rollback-guarantee")
+    assert r.returncode == 33 and "database" in r.stderr, "放弃回滚保证不等于放弃路径基准"
+    r = bm.run("--here", "--no-rollback-guarantee", DORAMI_DEPLOY_ACCEPT_PATH_CHANGE="1")
+    assert r.returncode == 0, r.stdout + r.stderr
+    ls = bm.state("last-success.json")
+    assert ls["prev"] is None and ls["db"]["target"] == os.path.realpath(bm.clone / "next-state" / "cms.db") and "rebased_from" in ls["paths"]
+
+
+# ══════════════ 实现检视 R1 复检残留 ══════════════
+
+def test_health_response_without_valid_identity_is_a_conflict_not_downtime(bm: BM):
+    """P1-07 复检:端口有响应(HTML / 空 200 / {} / 500)但没有有效身份 → 冲突(24),不能走停机例外。"""
+    _deploy_v1(bm)
+    _commit_and_pull(bm, mini_project("1.1.0"))
+    (bm.pm2dir / "state.json").write_text("{}"); bm.health.unlink()
+    for raw, code in (("<html>oops</html>", "200"), ("", "200"), ("{}", "200"), ("Internal Server Error", "500")):
+        r = bm.run("--here", FAKE_HEALTH_RAW=raw, FAKE_HEALTH_CODE=code)
+        assert r.returncode == 24 and "有响应" in r.stderr, (raw, code, r.stderr)
+    r = bm.run("--here")
+    assert r.returncode == 0 and "受管服务未运行" in r.stdout, r.stdout + r.stderr
+
+
+def test_partial_or_missing_baseline_fields_cannot_pass_as_consistent(bm: BM):
+    """P1-02 复检:历史基准缺 mutable.database(或整个 mutable)时无法确认历史布局 → 33;db.target 也参与核对。"""
+    _deploy_v1(bm)
+    ls_path = bm.clone / "deploy-state" / "last-success.json"
+    ls = json.loads(ls_path.read_text())
+    (bm.clone / "state-db").mkdir(); shutil.copy(bm.clone / "data" / "cms_data.db", bm.clone / "state-db" / "other.db")
+    bm.write_ini(storage="database_url = sqlite:///state-db/other.db")
+    del ls["paths"]["mutable"]["database"]
+    ls_path.write_text(json.dumps(ls))
+    r = bm.run("--here")
+    assert r.returncode == 33 and "无法确认" in r.stderr and "last-success.db.target" in r.stderr
+    ls["paths"]["mutable"] = {}
+    ls_path.write_text(json.dumps(ls))
+    r = bm.run("--here")
+    assert r.returncode == 33 and "缺 mutable" in r.stderr
+    assert bm.state("last-success.json")["db"]["target"] == os.path.realpath(bm.clone / "data" / "cms_data.db")
+
+
+def test_absolute_in_repo_storage_roots_and_sqlite_sidecars_stay_out_of_snapshot(bm: BM):
+    """P2-01 复检:工作树内的绝对存储根(环境覆盖)也排除;已跟踪的 *.sqlite-wal / -shm 也不进快照。"""
+    _commit_and_pull(bm, mini_project("1.0.1", extra_files={"tracked.sqlite-wal": "w\n", "tracked.sqlite-shm": "s\n", "notes.db-journal": "j\n"}))
+    _deploy_v1(bm)
+    (bm.clone / "podcast-store").mkdir(); (bm.clone / "podcast-store" / "audio.mp3").write_bytes(b"\0" * 8)
+    (bm.clone / "src" / "hotfix.py").write_text("HOTFIX = True\n")
+    r = bm.run("--here", DORAMI_PODCAST_ARTIFACT_ROOT_DIR=str(bm.clone / "podcast-store"))
+    assert r.returncode == 0, r.stdout + r.stderr
+    ls = bm.state("last-success.json")
+    tree = git(bm.clone, "ls-tree", "-r", "--name-only", ls["target"]["code_sha"], env=bm.repo.env).stdout.split()
+    assert "src/hotfix.py" in tree
+    for bad in ("podcast-store/audio.mp3", "tracked.sqlite-wal", "tracked.sqlite-shm", "notes.db-journal"):
+        assert bad not in tree, bad
+
+
+def test_stability_window_is_bounded_by_the_shared_deadline(bm: BM):
+    """P2-06 复检:入窗时余额够,但窗内请求变慢 → 超出总预算即判失败,不宣告成功。"""
+    # /api/health 调用序:预检采样 ×2 → 门① → 门②(经站点)→ 稳定窗;从第 5 次起变慢
+    r = bm.run("--here", DORAMI_DEPLOY_FRESH_OK="1", DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS="3", DORAMI_DEPLOY_STABLE_SECONDS="1",
+               FAKE_HEALTH_DELAY_AFTER="4", FAKE_HEALTH_DELAY="4")
+    assert r.returncode == 1 and "稳定窗未能在预算内完成" in r.stderr, r.stdout + r.stderr
+
+
+def test_resumed_rollback_can_drop_no_rescue_snapshot(bm: BM):
+    """新观察 P2:跳过救援的回滚中断后,续做时不带 --no-rescue-snapshot 会改为做救援快照;反向不允许。"""
+    _deploy_v1(bm)
+    bm.db_insert(1)
+    assert _deploy_v2(bm, migrations=("0001", "0002")).returncode == 0
+    db = bm.clone / "data" / "cms_data.db"
+    db.write_bytes(b"corrupt" * 100)
+    r = bm.run("--rollback", "--yes", "--restore-db", "--no-rescue-snapshot", FAKE_PM2_SAVE_FAIL="1")
+    assert r.returncode == 1 and bm.state("in-progress.json")["db"]["no_rescue"] is True
+    r = bm.run("--rollback", "--yes", "--restore-db")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "续做改为先做救援快照" in r.stdout
+    ls = bm.state("last-success.json")
+    assert ls["db"]["no_rescue"] is False and bm.db_heads() == ["0001"]

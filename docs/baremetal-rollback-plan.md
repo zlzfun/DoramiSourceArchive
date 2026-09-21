@@ -473,6 +473,16 @@ codex 逐条判「已落实」(落点行号见 `.review/recheck-codex-r2.md`),**
 
 codex 沙箱禁 `/bin/ps` 导致 `test_deploy_scripts.py` 31 例失败,与实现无关(本机全绿,CI 待跑);其对测试覆盖表述的意见按实修订 §9。
 
+**复检 R1**(`.review/recheck-codex-impl-r1.md`):14 条里 10 条判「已落实」,4 条残留 + 2 条新观察,全部接受并修:
+P1-02 残留(基准装配曾受 prev 非空限制——身份冲突用 `--no-rollback-guarantee` 放行就绕过了双开关;缺字段被 continue)→ 基准只取决于
+last-success 是否存在,`mutable` 缺字段 / 缺 `database` = 无法确认历史布局(33),显式空串才是已知未启用,另核 `last-success.db.target`;
+P1-07 残留(有 HTTP 响应但非 JSON / 空 / 4xx-5xx 被当成不可达)→ 采样不带 `-f`,分记 `BM_HEALTH_HTTP`(响应码 / none)与身份,有响应无身份一律冲突;
+P2-01 残留(工作树内的绝对存储根被跳过;只匹配 `.db-wal/.db-shm`)→ 绝对路径归一化后判包含关系,通配统一 `*.db *.sqlite *.sqlite3 *-wal *-shm *-journal`;
+P2-06 残留(入窗后不受 deadline 约束)→ 每轮 sleep / `--max-time` 取剩余、成功前再核余额;
+新观察 P2(重核失败的提示不可执行)→ 续做时不带 `--no-rescue-snapshot` 即改为做救援快照(只能收紧),提示改成可执行命令;
+新观察 P3(§9 的 pending>0 覆盖表述)→ 补真实回滚 `migrate` 分支用例(`--to` 前进到目标比库新的 release)。
+另修:开事务记录现场 `scene`(current / html_dir / pm2 cwd),「未改宿主」证明与 scene 比对,prev=null(首装 / 放弃保证)也能证明。
+
 ## 9. 实现记录(2026-09-21,分支 `feat/issue-126-baremetal-rollback`)
 
 §7 七项全按推荐拍板后,按 §5 六层提交实现(Claude Code 实现)。落点:`deploy.sh`(裸机专属参数与流程)、`scripts/deploy-baremetal.sh`
@@ -492,7 +502,8 @@ SQLite 快照、checkout 前钩子、`DORAMI_BAREMETAL_TXN` 宣告)、`deploy-do
 | 收养事务的首次宿主写入 | 未定 | `process_stopped`(pm2 delete);adopt 事务永不自动归档,只影响 `--discard-txn` 是否要 `--yes`;固化 controller 也能续做收养 |
 | 首装门的证据 | 列表 | 在脚本建任何目录 / 开事务**之前**采样一次(自己建的 `data/podcast-artifacts`、事务目录不能当证据);媒体 / 播客目录须非空;`releases/` 只有含 `manifest.json` 的(已晋升)算;证据只来自 release 形态自己(首装事务失败后 `--discard-txn`,`current` / `html_dir` 已是 symlink 而无仓库内 venv)时不进收养,按首装候选继续 |
 | 路径探针基准 | 逐项相等 | 基准 = 持久化的 `paths.mutable`(deploy / adopt / rollback 事务都带),不重算、不跳过;显式重设基准 `DORAMI_DEPLOY_ACCEPT_PATH_CHANGE=1` + `--no-rollback-guarantee`(§4.7) |
-| 停机时的 prev | 缺失 → 停止 | §4.1 第 4 条停机例外(pm2 有效空列表 + 材料门) |
+| 停机时的 prev | 缺失 → 停止 | §4.1 第 4 条停机例外(pm2 有效空列表 + health 无任何 HTTP 响应 + 材料门);health 有响应(任何状态码 / 非 JSON)而无有效身份 = 冲突 |
+| 「未改宿主」的现场证明 | 等于 prev 记录 | 等于开事务时记录的 `scene`(current / html_dir / pm2 cwd),prev=null 也能证明;旧 manifest 无 scene 才退回 prev |
 | dist 位置 | `dist/`(或 `NGINX_RELEASES_DIR/<txn>`) | 两者都实现:`[nginx] releases_dir` / `NGINX_RELEASES_DIR` 非空时 dist 复制到宿主目录(sudo 归属、校验清单),清理时同删;穿越位补不上只告警并提示该项 |
 | 迁移计划自持段 | 与 `plan_migrations` 同语义 | 同语义,另加 `PRAGMA integrity_check` 与 `error_kind`(target_graph / db_corrupt / db_access / not_sqlite)供分流表 `error` 行区分;legacy 的 pending 计整链 |
 | 非 SQLite | `capabilities.db_restore=false` | 另记 `db.target=null` / `db.backend` / `db.url_summary`(脱敏);正向跳过计划 / 快照,迁移 / taxonomy 照常;回滚不处置库 |
@@ -512,14 +523,16 @@ SQLite 快照、checkout 前钩子、`DORAMI_BAREMETAL_TXN` 宣告)、`deploy-do
 §6.1 身份(首装门两向、prev 与运行身份、dirty 固化、`--code`、能力检查 exit 11、旧脚本自举 fixture、`--adopt-sha`);§6.2 中断
 (构建期失败自动归档、nginx 校验失败整体恢复且判「已改宿主」、健康门失败事务保留 + `--status` 描述阶段 + 再部署 exit 20、收养 / 回滚中断续做同一目标不翻转);
 §6.3 DB(compatible / incompatible 默认 32 + `--restore-db` 回到快照点 / `--restore-db` 在 compatible 时被拒 / 健康库与权限错误不得跳过救援 /
-损坏库走受控路径且理由落盘 / 救援快照只一次——回滚中断续做后路径与 mtime 不变;pending>0 的补迁移只在 `--to` 前进后的目标上验证,
-真实回滚分支的 `migrate` 动作目前由 `--code` 正向补迁移用例间接覆盖);
+损坏库走受控路径且理由落盘 / 救援快照只一次——回滚中断续做后路径与 mtime 不变 / 真实回滚 `migrate` 分支:`--restore-db` 回到 0001 后
+`--to` 前进到含 0002 的目标,回滚事务向前补迁移 / 续做时去掉 `--no-rescue-snapshot` 改为做救援);
 §6.4 材料(venv 指纹复用与新建、extras 进指纹、KEEP 边界、被回滚掉的版本 `--code` 重部署、`--to` 相邻事务、回滚事务引用的救援快照不被数量清理删);
 §6.5 副作用隔离(构建期失败在线零改动;B 新增站点文件 / enabled 链接并删除 default 后失败,回滚 A 后新增项消失、default 恢复——真实文件;
 交接中断点 closed 副本已写 + in-progress 仍为 B 时重选幂等);
 §6.6 Docker 等价(既有 64 例全绿 + 默认预算守卫 + 裸机参数被拒);§6.7 旧脚本 fixture;实现检视 R1 补:持久化基准拦换库 / 显式重设基准 /
-停机例外四向(有效空列表放行、查询失败 / 坏 JSON / cwd 冲突 / 材料缺失拒绝)/ 收养原上下文基准与动态挂点 / 三根存储根 / `!` 否定与已跟踪 sqlite
-与环境覆盖根不进快照 / 非 SQLite 完整分支 / HTTPS 跳转 origin / 预算不足稳定窗 / 树外入口续做收养 / 正向入口自动续做回滚。
+停机例外四向(有效空列表放行、查询失败 / 坏 JSON / cwd 冲突 / 材料缺失拒绝)/ 有响应无身份(HTML / 空 200 / `{}` / 500)一律冲突 /
+历史基准缺字段无法确认 + `db.target` 核对 / 身份覆盖不绕过路径基准 / 收养原上下文基准与动态挂点 / 三根存储根 / `!` 否定与已跟踪 sqlite
+与环境覆盖根(含工作树内绝对路径)与 `-wal/-shm/-journal` 不进快照 / 非 SQLite 完整分支 / HTTPS 跳转 origin / 预算不足稳定窗 /
+入窗后请求变慢超预算判失败 / 树外入口续做收养 / 正向入口自动续做回滚。
 **未逐点注入的中断矩阵**(SIGKILL 在两个链接之间、救援写入与记账之间、库替换前后、晋升各步之间):靠阶段 intent / completed 的重入判据 +
 现有中断注入(pm2 save 失败、npm 构建失败、nginx -t 失败、健康门失败)覆盖,§6.2 如实记为未逐点注入。桩的边界:pm2 桩不跑真实 ecosystem、
 nginx 桩把 conf.d / sites-enabled 都视为已包含、curl 桩忽略 Host / TLS 参数。留实机:TLS `--resolve` 探针、`pm2 startup` resurrect、

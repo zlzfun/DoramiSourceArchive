@@ -622,17 +622,27 @@ RELEASE="$BM_RELEASES_DIR/$TXN_ID"
 # dirty 固化的排除集合里由有效配置(ini + 与 config.py 同语义的环境覆盖)生成的项:可变存储的相对根(§4.4)
 DB_DIR_FOR_EXCLUDE=""
 case "$DB_URL" in sqlite:///*) DB_DIR_FOR_EXCLUDE="$(dirname "${DB_URL#sqlite:///}")" ;; esac
-BM_EXTRA_EXCLUDES="$(python3 - "$(ini_get media media_dir data/media)" \
+BM_EXTRA_EXCLUDES="$(python3 - "$BM_REPO" "$(ini_get media media_dir data/media)" \
     "${DORAMI_PODCAST_ARTIFACT_ROOT_DIR:-$(ini_get podcast_artifacts root_dir data/podcast-artifacts)}" \
     "${DORAMI_BACKUP_LOCAL_DIR:-$(ini_get backup local_dir data/backups)}" \
     "$DB_DIR_FOR_EXCLUDE" <<'PY'
 import os, sys
+repo = os.path.realpath(sys.argv[1])
 roots = []
-for raw in sys.argv[1:]:
+for raw in sys.argv[2:]:
     raw = (raw or "").strip()
-    if not raw or os.path.isabs(os.path.expanduser(raw)):
+    if not raw:
         continue
-    first = os.path.normpath(raw).split(os.sep)[0]
+    p = os.path.expanduser(raw)
+    if os.path.isabs(p):
+        # 绝对路径但落在工作树内(如 DORAMI_PODCAST_ARTIFACT_ROOT_DIR=<repo>/podcast-store)同样是可变存储根
+        rp = os.path.realpath(p)
+        if rp == repo or not rp.startswith(repo + os.sep):
+            continue
+        rel = os.path.relpath(rp, repo)
+    else:
+        rel = os.path.normpath(raw)
+    first = rel.split(os.sep)[0]
     if first and first not in (".", "..") and first not in roots:
         roots.append(first)
 print(" ".join(roots))
@@ -672,7 +682,8 @@ bm_check_requires_python "$RELEASE/app" "$BM_VENV_DIR"
 # 路径基准 = last-success **持久化**的探针结果(paths.mutable),不用当前 ini 重算(§4.7;codex R1 P1-02);
 # 旧 manifest 没有 paths 时无法证明历史布局 → 只能显式重设基准
 BASELINE_PROBE=""; PATHS_FORCED_REBASE=0
-if [ -f "$BM_LAST_SUCCESS" ] && [ "$BM_PREV_JSON" != "null" ]; then
+# 基准来自 last-success 本身,与本次有没有回滚点(prev)无关:身份冲突用 --no-rollback-guarantee 放行时,存储布局照样要核
+if [ -f "$BM_LAST_SUCCESS" ]; then
     BASELINE_PROBE="$(deploy_json_get "$BM_LAST_SUCCESS" paths "")"
     if [ -z "$BASELINE_PROBE" ] || [ "$BASELINE_PROBE" = "null" ]; then
         if [ "${DORAMI_DEPLOY_ACCEPT_PATH_CHANGE:-0}" = 1 ] && [ "$BM_NO_ROLLBACK_GUARANTEE" = 1 ]; then
@@ -683,6 +694,9 @@ if [ -f "$BM_LAST_SUCCESS" ] && [ "$BM_PREV_JSON" != "null" ]; then
         fi
     fi
 fi
+BM_BASELINE_DB_TARGET=""
+[ -n "$BASELINE_PROBE" ] && BM_BASELINE_DB_TARGET="$(deploy_json_get "$BM_LAST_SUCCESS" db.target "")"
+export BM_BASELINE_DB_TARGET
 bm_check_paths "$RELEASE" "$RELEASE/app" "$BM_VENV_DIR" "$CONFIG_FILE" "$BASELINE_PROBE"
 if [ "${BM_PATHS_REBASED:-0}" = 1 ] || [ "$PATHS_FORCED_REBASE" = 1 ]; then
     # 重设存储基准:本次没有回滚点(prev=null / rollback=false),新布局成为之后部署的基准
