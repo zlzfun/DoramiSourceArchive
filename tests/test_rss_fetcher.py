@@ -993,6 +993,8 @@ def _run_hn_capturing_url(**run_kwargs):
     captured = {}
 
     async def fake_safe_get(client, url, **kwargs):
+        if "hn.algolia.com" in url:
+            return None
         captured["url"] = url
         return DummyResponse(_hn_feed_xml(), url=url)
 
@@ -1074,3 +1076,61 @@ def test_hn_ai_parameter_schema_is_limit_only():
     assert fields == {"limit"}
     assert HackerNewsAiRssFetcher.default_min_points == 10
     assert HackerNewsAiRssFetcher.default_min_comments == 0
+
+
+def _hn_api_hit(item='99', title='ZCode uploads your whole Git history', **updates):
+    from datetime import datetime, timezone
+    hit = dict(objectID=item, title=title, created_at_i=int(datetime.now(timezone.utc).timestamp())-60,
+        points=150, num_comments=42, url='https://example.test/zcode', author='reporter')
+    hit.update(updates)
+    return hit
+
+
+def test_hn_algolia_recovers_rss_failure_and_brand_only_title():
+    import httpx
+    f = HackerNewsAiRssFetcher()
+    async def get(client, url, **kwargs):
+        if 'hnrss.org' in url: return None
+        return httpx.Response(200, json={'hits': [_hn_api_hit(), _hn_api_hit('100', 'My gardening tips', url='https://example.test/garden')], 'nbPages': 1})
+    f._safe_get = get
+    async def run(): return [x async for x in f._run(None)]
+    items = asyncio.run(run())
+    assert len(items) == 1 and items[0].title.startswith('ZCode')
+    assert not items[0].has_content
+    assert items[0].raw_data['hn_points'] == 150
+    assert items[0].raw_data['discovery_backend'] == 'algolia'
+    assert items[0].id == f._entry_id(f.source_id, {'id': 'https://news.ycombinator.com/item?id=99'})
+
+
+def test_hn_both_backends_failing_is_not_empty_success():
+    import pytest
+    f = HackerNewsAiRssFetcher()
+    async def get(*args, **kwargs): return None
+    f._safe_get = get
+    async def run(): return [x async for x in f._run(None)]
+    with pytest.raises(RuntimeError, match='均失败'): asyncio.run(run())
+
+
+def test_hn_supplement_deduplicates_rss_guid_and_known_discovery_items():
+    import httpx
+    f = HackerNewsAiRssFetcher()
+    xml = _hn_feed_xml().replace('<item>', '<item><guid>https://news.ycombinator.com/item?id=99</guid>', 1)
+    async def get(client, url, **kwargs):
+        if 'hnrss.org' in url: return DummyResponse(xml, url=url)
+        return httpx.Response(200, json={'hits': [_hn_api_hit()], 'nbPages': 1})
+    f._safe_get = get
+    async def run(): return [x async for x in f._run(None)]
+    assert len(asyncio.run(run())) == 2
+    seen_id = f._entry_id(f.source_id, {'id': 'https://news.ycombinator.com/item?id=99'})
+    async def lookup(ids): return {seen_id: False}  # empty body is intentional for HN
+    f.dedup_lookup = lookup
+    assert len(asyncio.run(run())) == 1
+
+
+def test_hn_algolia_filters_threshold_age_and_invalid_links():
+    f = HackerNewsAiRssFetcher(); f._active_min_points = 10; f._active_min_comments = 0
+    assert f._algolia_entry(_hn_api_hit(points=9), 0) is None
+    assert f._algolia_entry(_hn_api_hit(created_at_i=1), 2) is None
+    assert f._algolia_entry(_hn_api_hit(url='javascript:alert(1)'), 0) is None
+    own = f._algolia_entry(_hn_api_hit(url=None, story_text='<p>Ask about ZCode</p>'), 0)
+    assert own['link'] == own['comments'] and 'Ask about' in own['summary']
