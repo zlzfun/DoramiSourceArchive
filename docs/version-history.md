@@ -76,7 +76,10 @@ Claude Code (`claude-fable-5-1`) 交叉检视先协商后返修：限定空游�
 
 内网 agent 在 Windows 开发机跑测试:六处顶层裸 `import fcntl`(播客产物、TTS 回执、对象存储、日报生成、备份、存储维护)导入即
 `ModuleNotFoundError`,连带 `api.app` 导入链整片测试无法收集。它建议改成空实现 shim,未采纳:六处都是跨进程互斥,空实现会让锁静默失效。
-新增 `services/file_lock.py`:POSIX 委托 `fcntl.flock`;Windows 用 `msvcrt.locking` 锁文件首字节,`LOCK_NB` 争用与阻塞重试用尽都映射为
-`BlockingIOError`,与调用点既有的 `except BlockingIOError` 一致;语义差异(无共享锁、阻塞约 10 s 放弃)写在模块说明。六处调用点与
-`tests/test_storage_backup.py` 改名接入;Windows 分支用假 `msvcrt` 单测争用映射、解锁、位置还原。生产平台不变(仅 Linux)。
+新增 `services/file_lock.py`:POSIX 委托 `fcntl.flock`;Windows 经 ctypes 调 `LockFileEx` / `UnlockFileEx`——真共享锁、真阻塞无超时,
+锁区固定在偏移 2^62 处 1 字节永不与数据相交(Windows 字节锁是强制锁),`LOCK_NB` 争用 `ERROR_LOCK_VIOLATION` 映射 `BlockingIOError`,
+与调用点既有的 `except BlockingIOError` 一致。六处调用点与 `tests/test_storage_backup.py` 改名接入;Windows 分支用假 Win32 API 单测
+flags 组合、锁区偏移、错误映射、解锁静默。codex R1 两条 P2 全部接受(首版用 `msvcrt.locking`:首字节强制锁会挡住播客上传 fd 持锁期间
+另一句柄的读取;阻塞模式约 10 s 放弃后调用方进入未获锁的临界区、共享锁降独占自争用)→ 改走 `LockFileEx` 一并解决。
+Windows 分支未实机验证;生产平台不变(仅 Linux)。
 

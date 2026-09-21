@@ -1,12 +1,18 @@
-"""跨平台文件锁(issue #133):POSIX 委托 ``fcntl.flock``,Windows 用 ``msvcrt.locking`` 锁文件首字节。
+"""跨平台文件锁(issue #133):POSIX 委托 ``fcntl.flock``,Windows 经 ctypes 调 ``LockFileEx`` / ``UnlockFileEx``。
 
 生产只有 Linux(Docker / 裸机 PM2),Windows 只是开发机跑测试;但六处调用点(播客产物 CAS 与预留标记、
 TTS 回执池、对象存储缓存与状态文件、日报生成、备份、存储维护)都是**跨进程互斥**,所以 Windows 也给真锁,
 不做空实现——空实现会让锁静默失效。
 
-语义差异(只在 Windows):无共享锁,``LOCK_SH`` 按独占处理;阻塞模式由 CRT 重试约 10 s 后放弃,同样抛
-``BlockingIOError``;锁的是文件偏移 0 的一个字节(允许超出文件末尾),调用后文件位置原样还原。
-调用点统一 ``except BlockingIOError`` 判争用,两个平台一致。**仓库内不要再裸 ``import fcntl``。**
+Windows 为什么不用 ``msvcrt.locking``(codex R1 两条 P2):它只有强制字节锁——锁在数据文件首字节会挡住
+同进程另一个句柄读数据(播客上传 fd 持锁期间 ``_hash_file`` 重开读取会炸);没有共享锁;阻塞模式 CRT 重试
+约 10 s 就放弃,调用方会在未获锁时进入临界区。``LockFileEx`` 三者都有:``LOCK_SH`` 是真共享锁,
+不带 ``LOCKFILE_FAIL_IMMEDIATELY`` 即真阻塞、无超时;锁区固定为偏移 2^62 处 1 字节(允许锁超出 EOF 的区间),
+数据读写永不与锁区相交,所以强制锁不会影响任何句柄的数据 I/O。``LOCK_NB`` 争用 = ``ERROR_LOCK_VIOLATION``
+→ ``BlockingIOError``,与调用点既有的 ``except BlockingIOError`` 一致;其它 Win32 错误原样成 ``OSError``。
+
+Windows 分支未在真实 Windows 上执行过,契约由假 API 单测守住(``tests/test_file_lock.py``)。
+**仓库内不要再裸 ``import fcntl``。**
 """
 from __future__ import annotations
 
@@ -24,35 +30,91 @@ if _fcntl is not None:
 else:
     LOCK_SH, LOCK_EX, LOCK_NB, LOCK_UN = 1, 2, 4, 8
 
-# msvcrt.locking 争用时:LK_NBLCK 抛 EACCES,LK_LOCK 重试用尽抛 EDEADLOCK
-_CONTENTION_ERRNOS = {errno.EACCES, errno.EAGAIN, errno.EDEADLK, getattr(errno, "EDEADLOCK", errno.EDEADLK)}
+# Win32 常量(与平台无关的数值,便于在 POSIX 上测试映射)
+LOCKFILE_FAIL_IMMEDIATELY = 0x00000001
+LOCKFILE_EXCLUSIVE_LOCK = 0x00000002
+ERROR_LOCK_VIOLATION = 33
+ERROR_IO_PENDING = 997
+# 锁区:偏移 2^62 处 1 字节,永不与真实数据相交(Windows 字节锁是强制锁)
+LOCK_OFFSET = 1 << 62
+LOCK_LENGTH = 1
 
 
 def _fileno(fd: Any) -> int:
     return fd if isinstance(fd, int) else fd.fileno()
 
 
-def _flock_msvcrt(msvcrt: Any, fd: Any, operation: int) -> None:
-    """Windows 实现(msvcrt 以参数传入,便于在 POSIX 上用假模块测试)。"""
-    fileno = _fileno(fd)
-    position = os.lseek(fileno, 0, os.SEEK_CUR)
-    os.lseek(fileno, 0, os.SEEK_SET)
-    try:
-        if operation & LOCK_UN:
-            try:
-                msvcrt.locking(fileno, msvcrt.LK_UNLCK, 1)
-            except OSError:
-                pass  # 未持锁时解锁:与 flock(LOCK_UN) 一样静默
-            return
-        mode = msvcrt.LK_NBLCK if operation & LOCK_NB else msvcrt.LK_LOCK
-        try:
-            msvcrt.locking(fileno, mode, 1)
-        except OSError as exc:
-            if exc.errno in _CONTENTION_ERRNOS:
-                raise BlockingIOError(errno.EAGAIN, "file lock is held by another process") from exc
-            raise
-    finally:
-        os.lseek(fileno, position, os.SEEK_SET)
+class _Win32LockApi:
+    """LockFileEx / UnlockFileEx 的薄封装;测试用同接口的假对象替换。"""
+
+    def __init__(self) -> None:
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        class OVERLAPPED(ctypes.Structure):
+            _fields_ = [
+                ("Internal", ctypes.c_void_p),
+                ("InternalHigh", ctypes.c_void_p),
+                ("Offset", wintypes.DWORD),
+                ("OffsetHigh", wintypes.DWORD),
+                ("hEvent", wintypes.HANDLE),
+            ]
+
+        self._ctypes = ctypes
+        self._overlapped_type = OVERLAPPED
+        self._get_osfhandle = msvcrt.get_osfhandle
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.LockFileEx.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(OVERLAPPED)]
+        kernel32.LockFileEx.restype = wintypes.BOOL
+        kernel32.UnlockFileEx.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(OVERLAPPED)]
+        kernel32.UnlockFileEx.restype = wintypes.BOOL
+        self._kernel32 = kernel32
+
+    def _overlapped(self, offset: int):
+        ov = self._overlapped_type()
+        ov.Offset = offset & 0xFFFFFFFF
+        ov.OffsetHigh = (offset >> 32) & 0xFFFFFFFF
+        return ov
+
+    def handle_of(self, fileno: int) -> int:
+        return self._get_osfhandle(fileno)
+
+    def lock(self, handle: int, flags: int, offset: int, length: int) -> bool:
+        ov = self._overlapped(offset)
+        return bool(self._kernel32.LockFileEx(handle, flags, 0, length, 0, self._ctypes.byref(ov)))
+
+    def unlock(self, handle: int, offset: int, length: int) -> bool:
+        ov = self._overlapped(offset)
+        return bool(self._kernel32.UnlockFileEx(handle, 0, length, 0, self._ctypes.byref(ov)))
+
+    def last_error(self) -> int:
+        return self._ctypes.get_last_error()
+
+    def os_error(self, code: int) -> OSError:
+        return self._ctypes.WinError(code)
+
+
+_win32_api: Any = None
+
+
+def _flock_win32(api: Any, fd: Any, operation: int) -> None:
+    """Windows 实现(api 以参数传入,便于在 POSIX 上用假对象测试)。"""
+    handle = api.handle_of(_fileno(fd))
+    if operation & LOCK_UN:
+        api.unlock(handle, LOCK_OFFSET, LOCK_LENGTH)  # 未持锁时失败:与 flock(LOCK_UN) 一样静默
+        return
+    flags = 0
+    if operation & LOCK_EX:
+        flags |= LOCKFILE_EXCLUSIVE_LOCK
+    if operation & LOCK_NB:
+        flags |= LOCKFILE_FAIL_IMMEDIATELY
+    if api.lock(handle, flags, LOCK_OFFSET, LOCK_LENGTH):
+        return
+    code = api.last_error()
+    if code in (ERROR_LOCK_VIOLATION, ERROR_IO_PENDING):
+        raise BlockingIOError(errno.EAGAIN, "file lock is held by another process")
+    raise api.os_error(code)
 
 
 def flock(fd: Any, operation: int) -> None:
@@ -60,6 +122,7 @@ def flock(fd: Any, operation: int) -> None:
     if _fcntl is not None:
         _fcntl.flock(fd, operation)
         return
-    import msvcrt  # noqa: WPS433  Windows-only
-
-    _flock_msvcrt(msvcrt, fd, operation)
+    global _win32_api
+    if _win32_api is None:
+        _win32_api = _Win32LockApi()
+    _flock_win32(_win32_api, fd, operation)
