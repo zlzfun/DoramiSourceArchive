@@ -37,6 +37,12 @@
 # 改任一契约即 bump 本号,并同步 worker 的 WORKER_MAX_PROTOCOL。
 DORAMI_DEPLOY_PROTOCOL=1
 
+# ── 裸机事务能力宣告(issue #126,docs/baremetal-rollback-plan.md §4.2)──
+# 裸机 `./deploy.sh <tag>` 在 checkout **之前** `git show <tag>:scripts/deploy-lib.sh | grep '^DORAMI_BAREMETAL_TXN='`:
+# 目标 tag 的脚本没有这一行 = 它不认识 release 事务 / 回滚入口,一律拒绝以 tag 模式部署(exit 11),
+# 改用 `./deploy.sh --code <tag>` 由当前编排器部署那份代码。与 DORAMI_DEPLOY_PROTOCOL 正交(那是 Docker worker 的契约)。
+DORAMI_BAREMETAL_TXN=1
+
 # 部署来源:pipeline(仓库外 worker 起的)| manual(人手工跑)。手工来源保留离线语义(fetch 失败可用本地 tag);
 # 流水线来源 fail closed。由 DORAMI_DEPLOY_ORIGIN 显式决定,不由别的变量缺席隐式推断。
 deploy_origin() { echo "${DORAMI_DEPLOY_ORIGIN:-manual}"; }
@@ -82,8 +88,12 @@ acquire_deploy_lock() {
         return 0
     fi
     mkdir -p "$(dirname "$lock_file")" 2>/dev/null || true
-    exec 9>>"$lock_file" || _deploy_lib_fail "打不开锁文件 $lock_file"
-    _deploy_lib_flock 9 || _deploy_lib_fail "另一个部署正在进行(锁 $lock_file 被占);等它结束或检查 dorami-deploy-worker status"
+    # 锁目录不存在 / 不可写即失败并要求显式配置,不静默回退到别的路径:两条部署路径同机时必须是同一把锁,
+    # 各自回退会造出两把互不相知的锁(docs/baremetal-rollback-plan.md §4.2)。
+    exec 9>>"$lock_file" \
+        || _deploy_lib_fail "打不开锁文件 $lock_file(目录不存在或不可写);请显式设置 DORAMI_DEPLOY_LOCK_FILE=<可写路径>,两条部署路径须指向同一个文件"
+    _deploy_lib_flock 9 || _deploy_lib_fail_rc "${DORAMI_DEPLOY_LOCK_BUSY_RC:-1}" \
+        "另一个部署正在进行(锁 $lock_file 被占);等它结束或检查 dorami-deploy-worker status / ./deploy.sh --status"
     export DORAMI_DEPLOY_LOCK_FD=9
 }
 
@@ -102,6 +112,165 @@ EOF
 }
 
 _deploy_lib_fail() { echo "ERROR: $*" >&2; exit 1; }
+_deploy_lib_fail_rc() { local rc="$1"; shift; echo "ERROR: $*" >&2; exit "$rc"; }
+
+# ── /api/health 五项核对(两条路径共用;docs/baremetal-rollback-plan.md §4.9 / §4.14)──
+# deploy_health_verdict <version> <ref> <sha>:stdin 为响应体,输出 `ok` / `mismatch k=v,…` / `bad-json`。
+deploy_health_verdict() {
+    python3 -c '
+import json, sys
+want_version, want_ref, want_sha = sys.argv[1:4]
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("bad-json"); sys.exit(0)
+b = d.get("build") or {}
+got = {"status": d.get("status"), "version": d.get("version"), "ref": b.get("ref"), "sha": b.get("sha"), "source": b.get("source")}
+expect = {"status": "ok", "version": want_version, "ref": want_ref, "sha": want_sha, "source": "env"}
+bad = [k for k in expect if got.get(k) != expect[k]]
+print("ok" if not bad else "mismatch " + ",".join(f"{k}={got.get(k)}" for k in bad))
+' "$1" "$2" "$3"
+}
+
+# deploy_wait_healthy <url> <version> <ref> <sha> <budget_seconds> <max_attempts> [curl 额外参数…]
+# 在时间预算内轮询 <url>,五项全对即返回 0;否则返回 1。预算由调用方传入(Docker 路径 180 s / 90 次不变)。
+# 每次 curl 都带连接 / 总超时:连接建立后后端不答也不能吃掉整个预算;次数只作额外上限。
+# 结果变量:DEPLOY_HEALTH_ATTEMPT(已尝试次数)、DEPLOY_HEALTH_LAST_VERDICT(最后一次非 ok 的判定,无响应时为空)、
+# DEPLOY_HEALTH_BODY(最后一次响应体)。
+deploy_wait_healthy() {
+    local url="$1" want_version="$2" want_ref="$3" want_sha="$4" budget="$5" attempts="$6"
+    shift 6
+    local deadline remaining max_time body verdict
+    deadline=$(( $(date +%s) + budget ))
+    DEPLOY_HEALTH_ATTEMPT=0; DEPLOY_HEALTH_LAST_VERDICT=""; DEPLOY_HEALTH_BODY=""
+    while [ "$DEPLOY_HEALTH_ATTEMPT" -lt "$attempts" ]; do
+        DEPLOY_HEALTH_ATTEMPT=$((DEPLOY_HEALTH_ATTEMPT + 1))
+        remaining=$(( deadline - $(date +%s) ))
+        [ "$remaining" -gt 0 ] || break
+        max_time=$(( remaining < 15 ? remaining : 15 ))
+        body="$(curl -fsS --connect-timeout 5 --max-time "$max_time" -H 'Cache-Control: no-cache' "$@" "${url}?_=$(date +%s)" 2>/dev/null || true)"
+        if [ -n "$body" ]; then
+            DEPLOY_HEALTH_BODY="$body"
+            verdict="$(printf '%s' "$body" | deploy_health_verdict "$want_version" "$want_ref" "$want_sha")"
+            [ "$verdict" = "ok" ] && return 0
+            DEPLOY_HEALTH_LAST_VERDICT="$verdict"
+        fi
+        [ $(( deadline - $(date +%s) )) -gt 2 ] || break
+        sleep 2
+    done
+    return 1
+}
+
+# ── JSON / 原子写助手(与 docker/dorami-deploy-worker.example 同法:同目录 tmp → fsync → rename → 父目录 fsync)──
+deploy_json_get() {  # file key [default]  —— 点路径;bool 输出 true/false;dict/list 输出 JSON;缺则 default
+    python3 - "$1" "$2" "${3-}" <<'PY'
+import json, sys
+path, key, default = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    cur = json.load(open(path, encoding="utf-8"))
+except Exception:
+    print(default); sys.exit(0)
+for part in key.split("."):
+    if isinstance(cur, dict) and part in cur:
+        cur = cur[part]
+    else:
+        print(default); sys.exit(0)
+if cur is None:
+    print(default)
+elif isinstance(cur, bool):
+    print("true" if cur else "false")
+elif isinstance(cur, (dict, list)):
+    print(json.dumps(cur, ensure_ascii=False, sort_keys=True))
+else:
+    print(cur)
+PY
+}
+deploy_json_set() {  # file key value [json]  —— 第 4 参为 json 时 value 按 JSON 字面量解析;失败返回非零
+    python3 - "$1" "$2" "$3" "${4-}" <<'PY'
+import json, os, sys, tempfile
+path, key, raw, kind = sys.argv[1:5]
+try:
+    data = json.load(open(path, encoding="utf-8"))
+except Exception:
+    data = {}
+value = json.loads(raw) if kind == "json" else raw
+cur = data
+parts = key.split(".")
+for part in parts[:-1]:
+    cur = cur.setdefault(part, {})
+cur[parts[-1]] = value
+d = os.path.dirname(path) or "."
+os.makedirs(d, exist_ok=True)
+fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp-")
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True); f.flush(); os.fsync(f.fileno())
+os.replace(tmp, path)
+dfd = os.open(d, os.O_RDONLY); os.fsync(dfd); os.close(dfd)
+PY
+}
+deploy_json_write() {  # file  ← stdin 为完整 JSON 文本;原子落盘
+    python3 - "$1" <<'PY'
+import json, os, sys, tempfile
+path = sys.argv[1]
+data = json.load(sys.stdin)
+d = os.path.dirname(path) or "."
+os.makedirs(d, exist_ok=True)
+fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp-")
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True); f.flush(); os.fsync(f.fileno())
+os.replace(tmp, path)
+dfd = os.open(d, os.O_RDONLY); os.fsync(dfd); os.close(dfd)
+PY
+}
+
+# deploy_atomic_symlink <target> <link> [sudo 前缀…]:同目录临时 symlink + rename 原子替换(link 已是真实目录时拒绝),
+# 父目录 fsync。sudo 前缀用于 nginx html_dir 这类 root 属主的位置。
+deploy_atomic_symlink() {
+    local target="$1" link="$2"; shift 2
+    "$@" python3 - "$target" "$link" <<'PY'
+import os, sys, tempfile
+target, link = sys.argv[1], sys.argv[2]
+d = os.path.dirname(link) or "."
+if os.path.isdir(link) and not os.path.islink(link):
+    print(f"{link} 是真实目录而不是 symlink,拒绝替换", file=sys.stderr); sys.exit(1)
+os.makedirs(d, exist_ok=True)
+tmp = tempfile.mktemp(dir=d, prefix=".tmp-link-")
+os.symlink(target, tmp)
+try:
+    os.rename(tmp, link)
+except Exception:
+    os.unlink(tmp); raise
+dfd = os.open(d, os.O_RDONLY); os.fsync(dfd); os.close(dfd)
+PY
+}
+
+# sqlite_snapshot <src> <dst>:在线一致快照(优先 sqlite3 .backup,退回 python backup API)+ 快照文件 integrity_check;
+# 任一步失败返回非零(快照文件留下供人看)。裸机事务快照与两条路径的部署前备份共用同一实现。
+sqlite_snapshot() {
+    local src="$1" dst="$2"
+    mkdir -p "$(dirname "$dst")" || return 1
+    if command -v sqlite3 >/dev/null 2>&1; then
+        sqlite3 "$src" ".backup '${dst}'" || return 1
+    else
+        python3 - "$src" "$dst" <<'PYEOF' || return 1
+import sqlite3, sys
+src, dst = sys.argv[1], sys.argv[2]
+with sqlite3.connect(src) as a, sqlite3.connect(dst) as b:
+    a.backup(b)
+PYEOF
+    fi
+    [ -s "$dst" ] || { echo "快照为空: $dst" >&2; return 1; }
+    python3 - "$dst" <<'PYEOF' || return 1
+import sqlite3, sys
+con = sqlite3.connect(sys.argv[1])
+try:
+    row = con.execute("PRAGMA integrity_check").fetchone()
+finally:
+    con.close()
+if not row or row[0] != "ok":
+    print(f"integrity_check 未通过: {row}", file=sys.stderr); sys.exit(1)
+PYEOF
+}
 
 # 当前版本号(src/version.py 的 __version__),部署前用它与 tag 名核对。
 _deploy_lib_source_version() {
@@ -177,6 +346,14 @@ resolve_deploy_ref() {
     export DORAMI_BUILD_REF="$tag"
     export DORAMI_BUILD_SHA="$tag_sha"
 
+    # checkout 前钩子(裸机路径注入,Docker 路径不设):目标已确定、工作树尚未改动时做能力检查 / 未收口事务分派 /
+    # 收养等跨版本的事——它们必须在换掉脚本自身之前完成(docs/baremetal-rollback-plan.md §3.3 / §4.2)。
+    if [ -n "${DORAMI_DEPLOY_PRE_EXEC_CHECK:-}" ]; then
+        declare -F "$DORAMI_DEPLOY_PRE_EXEC_CHECK" >/dev/null \
+            || _deploy_lib_fail "DORAMI_DEPLOY_PRE_EXEC_CHECK=$DORAMI_DEPLOY_PRE_EXEC_CHECK 不是已定义的函数"
+        "$DORAMI_DEPLOY_PRE_EXEC_CHECK" "$tag" "$tag_sha"
+    fi
+
     if [ "$head_sha" != "$tag_sha" ]; then
         echo "切换到发布版 ${tag}(${tag_sha:0:7};当前 ${head_sha:0:7})..."
         git checkout --quiet --detach "refs/tags/${tag}"
@@ -215,15 +392,8 @@ backup_sqlite_db() {
     mkdir -p backups
     local backup_file
     backup_file="backups/$(basename "$db_path").$(date +%Y%m%d-%H%M%S)"
-    if command -v sqlite3 >/dev/null 2>&1; then
-        sqlite3 "$db_path" ".backup '${backup_file}'"
-    elif command -v python3 >/dev/null 2>&1; then
-        python3 - "$db_path" "$backup_file" <<'PYEOF'
-import sqlite3, sys
-src, dst = sys.argv[1], sys.argv[2]
-with sqlite3.connect(src) as a, sqlite3.connect(dst) as b:
-    a.backup(b)
-PYEOF
+    if command -v sqlite3 >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1; then
+        sqlite_snapshot "$db_path" "$backup_file" || _deploy_lib_fail "DB 备份失败: $backup_file"
     else
         cp "$db_path" "$backup_file"
         [ -f "${db_path}-wal" ] && cp "${db_path}-wal" "${backup_file}-wal"
@@ -252,20 +422,34 @@ deploy_state_dir() {
     ( set +u; STATE_DIR=""; source "$conf" >/dev/null 2>&1; printf '%s' "${STATE_DIR:-}" )
 }
 
-# in-progress / last-success 引用的备份文件(绝对路径,一行一个)
+# in-progress / last-success 引用的备份文件(绝对路径,一行一个)。分别读 Docker worker 的状态目录
+# (/etc/dorami-deploy.conf 的 STATE_DIR,`prev.db_backup`)与裸机事务的状态目录(`deploy-state/`,`db.snapshot` /
+# `db.rescue_snapshot`);缺哪个跳哪个,不早退(docs/baremetal-rollback-plan.md §4.14)。
 _deploy_lib_referenced_backups() {
-    local state_dir; state_dir="$(deploy_state_dir)"
-    [ -n "$state_dir" ] || return 0
-    python3 - "$state_dir" <<'PY'
-import json, os, sys
-d = sys.argv[1]
-for name in ("in-progress.json", "last-success.json"):
+    local worker_dir baremetal_dir
+    worker_dir="$(deploy_state_dir)"
+    baremetal_dir="${DORAMI_DEPLOY_STATE_DIR:-$PWD/deploy-state}"
+    python3 - "$worker_dir" "$baremetal_dir" <<'PY'
+import glob, json, os, sys
+worker_dir, baremetal_dir = sys.argv[1], sys.argv[2]
+def load(path):
     try:
-        v = json.load(open(os.path.join(d, name), encoding="utf-8")).get("prev", {}).get("db_backup")
+        return json.load(open(path, encoding="utf-8"))
+    except Exception:
+        return {}
+if worker_dir:
+    for name in ("in-progress.json", "last-success.json"):
+        v = (load(os.path.join(worker_dir, name)).get("prev") or {}).get("db_backup")
         if v:
             print(v)
-    except Exception:
-        pass
+if baremetal_dir and os.path.isdir(baremetal_dir):
+    files = [os.path.join(baremetal_dir, n) for n in ("in-progress.json", "last-success.json")]
+    files += glob.glob(os.path.join(baremetal_dir, "closed", "*.json"))
+    for path in files:
+        db = load(path).get("db") or {}
+        for key in ("snapshot", "rescue_snapshot"):
+            if db.get(key):
+                print(db[key])
 PY
 }
 
