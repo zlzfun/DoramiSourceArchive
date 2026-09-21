@@ -113,7 +113,10 @@ def _atomic_write(path, data):
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(tmp, path)
-    fd = os.open(path.parent, os.O_RDONLY)
+    try:  # 目录 fsync:Windows 打不开目录句柄(PermissionError),跳过即可,rename 本身已落盘
+        fd = os.open(path.parent, os.O_RDONLY)
+    except OSError:
+        return
     try:
         os.fsync(fd)
     finally:

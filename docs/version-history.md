@@ -81,5 +81,9 @@ Claude Code (`claude-fable-5-1`) 交叉检视先协商后返修：限定空游�
 与调用点既有的 `except BlockingIOError` 一致。六处调用点与 `tests/test_storage_backup.py` 改名接入;Windows 分支用假 Win32 API 单测
 flags 组合、锁区偏移、错误映射、解锁静默。codex R1 两条 P2 全部接受(首版用 `msvcrt.locking`:首字节强制锁会挡住播客上传 fd 持锁期间
 另一句柄的读取;阻塞模式约 10 s 放弃后调用方进入未获锁的临界区、共享锁降独占自争用)→ 改走 `LockFileEx` 一并解决。
-Windows 分支未实机验证;生产平台不变(仅 Linux)。
+内网 Windows 实测:`file_lock` 用例通过,但播客产物 30 例挂在 `os.replace`(WinError 32)——不是锁的问题,Windows 上任何打开的句柄
+都挡住改名 / 删除(`os.open` 不带 `FILE_SHARE_DELETE`),内网 agent 提的「不上锁」治不了。修法:`import_bytes` 与 HTTP 流式导入写完即关
+暂存 fd(锁随之释放,关到 rename 之间由 staging_ttl 保护),reconcile 的过期暂存清理改「拿锁 → 关句柄 → 删」(`_unlink_stale_if_unlocked`);
+`bailian_tts._atomic_write` / `storage_backup._sync_directory` 的目录 fsync 在 Windows 打不开目录句柄,吞 OSError。POSIX 上用「能否再拿到锁」
+代替「句柄是否已关」写回归用例。生产平台不变(仅 Linux)。
 

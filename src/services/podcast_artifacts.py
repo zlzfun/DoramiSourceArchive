@@ -302,6 +302,10 @@ class PodcastArtifactStore:
                 os.close(lock_fd)
 
     def create_upload_temp(self) -> tuple[int, Path]:
+        """暂存文件 + 持锁的 fd:锁让 reconcile 的暂存清理绕开正在写入的文件。
+
+        调用方必须在 import_file(内部 os.replace)之前 os.close(fd):Windows 上任何打开的句柄都会挡住
+        改名 / 删除,与锁无关;关闭到 rename 之间由 staging_ttl(mtime 刚更新)保护。"""
         fd, raw = tempfile.mkstemp(prefix="upload-", suffix=".part", dir=self.root / ".incoming")
         path = Path(raw)
         try:
@@ -311,6 +315,21 @@ class PodcastArtifactStore:
             path.unlink(missing_ok=True)
             raise
         return fd, path
+
+    @staticmethod
+    def _unlink_stale_if_unlocked(fd: int, path: Path) -> bool:
+        """过期暂存文件:能拿到锁 = 没人在用 → 先关句柄再删(Windows 上打开的句柄会挡住 unlink)。
+
+        关到删之间没有争用:暂存名由 mkstemp 唯一生成,不会有新写入方拿到同一路径。"""
+        try:
+            try:
+                flock(fd, LOCK_EX | LOCK_NB)
+            except BlockingIOError:
+                return False
+        finally:
+            os.close(fd)
+        path.unlink(missing_ok=True)
+        return True
 
     def _download_reservations(self) -> list[tuple[Path, int]]:
         reservations: list[tuple[Path, int]] = []
@@ -790,7 +809,9 @@ class PodcastArtifactStore:
         self.validate_audio(data, declared_mime)
         fd, path = self.create_upload_temp()
         try:
-            with os.fdopen(fd, "wb", closefd=False) as handle:
+            # 写完即关 fd(同时释放暂存锁)再导入:Windows 上任何打开的句柄都会挡住 os.replace(WinError 32);
+            # 关到 rename 之间靠 staging_ttl 保护(mtime 刚更新,清理不会碰它)
+            with os.fdopen(fd, "wb") as handle:
                 handle.write(data)
                 handle.flush()
                 os.fsync(handle.fileno())
@@ -804,7 +825,6 @@ class PodcastArtifactStore:
                 processing_id=processing_id,
             )
         finally:
-            os.close(fd)
             path.unlink(missing_ok=True)
 
     def get(self, artifact_id: str) -> Optional[PodcastArtifactRecord]:
@@ -1463,16 +1483,10 @@ class PodcastArtifactStore:
                     fd = os.open(path, os.O_RDWR)
                 except FileNotFoundError:
                     continue
-                try:
-                    try:
-                        flock(fd, LOCK_EX | LOCK_NB)
-                    except BlockingIOError:
-                        continue
-                    path.unlink(missing_ok=True)
-                    deleted_staging += 1
-                    deleted_staging_bytes += stat.st_size
-                finally:
-                    os.close(fd)
+                if not self._unlink_stale_if_unlocked(fd, path):
+                    continue
+                deleted_staging += 1
+                deleted_staging_bytes += stat.st_size
             for path, _reserved in self._download_reservations():
                 try:
                     stat = path.stat()
@@ -1481,16 +1495,10 @@ class PodcastArtifactStore:
                     fd = os.open(path, os.O_RDWR)
                 except FileNotFoundError:
                     continue
-                try:
-                    try:
-                        flock(fd, LOCK_EX | LOCK_NB)
-                    except BlockingIOError:
-                        continue
-                    path.unlink(missing_ok=True)
-                    deleted_staging += 1
-                    deleted_staging_bytes += stat.st_size
-                finally:
-                    os.close(fd)
+                if not self._unlink_stale_if_unlocked(fd, path):
+                    continue
+                deleted_staging += 1
+                deleted_staging_bytes += stat.st_size
             with Session(self.engine) as session:
                 setting = session.get(AppSettingRecord, LAST_RECONCILED_SETTING)
                 if setting is None:

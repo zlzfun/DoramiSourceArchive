@@ -86,7 +86,10 @@ def _open_source(source, root):
 
 
 def _sync_directory(path):
-    fd = os.open(path, os.O_RDONLY)
+    try:  # Windows 打不开目录句柄(PermissionError):跳过目录 fsync
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
     try:
         os.fsync(fd)
     finally:
