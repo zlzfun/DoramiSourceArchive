@@ -70,3 +70,13 @@
 ZCode 排查确认 IT之家首页截断、公共日报评分前裁剪后推进全量游标、HN 网关失败与仅 AI 关键词发现三项风险。补上 IT之家 72h 分页、已知条目不占新额度及先发现后写入；日报以节点本地消费表保留暂缓候选，与正文/游标/运行统计同事务提交，默认40积压+80新候选并互补、每源60；HN保留RSS同时直连Algolia，品牌只匹配标题，ID与发现源语义不变。提供默认只读、固定任务ID、离线应用与快照回滚脚本。
 
 Claude Code (`claude-fable-5-1`) 交叉检视先协商后返修：限定空游标 bootstrap，保留删报回退时的旧 pending，同值配置不打断生成，消除首页条数与全页时间游标假设；拒绝按龄期丢弃未评估文章，改用新旧池配额及积压最老时间观测。详细证据、测试、验收和上线边界见 [方案](./news-coverage-reliability-plan.md)。
+
+
+## 跨平台文件锁(issue #133,待发布)
+
+内网 agent 在 Windows 开发机跑测试:六处顶层裸 `import fcntl`(播客产物、TTS 回执、对象存储、日报生成、备份、存储维护)导入即
+`ModuleNotFoundError`,连带 `api.app` 导入链整片测试无法收集。它建议改成空实现 shim,未采纳:六处都是跨进程互斥,空实现会让锁静默失效。
+新增 `services/file_lock.py`:POSIX 委托 `fcntl.flock`;Windows 用 `msvcrt.locking` 锁文件首字节,`LOCK_NB` 争用与阻塞重试用尽都映射为
+`BlockingIOError`,与调用点既有的 `except BlockingIOError` 一致;语义差异(无共享锁、阻塞约 10 s 放弃)写在模块说明。六处调用点与
+`tests/test_storage_backup.py` 改名接入;Windows 分支用假 `msvcrt` 单测争用映射、解锁、位置还原。生产平台不变(仅 Linux)。
+

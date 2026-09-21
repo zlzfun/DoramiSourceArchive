@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager, nullcontext
 import datetime as dt
-import fcntl
+from services.file_lock import LOCK_EX, LOCK_NB, flock
 import hashlib
 import io
 import json
@@ -98,7 +98,7 @@ def _lock(path):
     fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "wb") as stream:
         try:
-            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            flock(stream, LOCK_EX | LOCK_NB)
         except BlockingIOError:
             raise BackupError("backup_busy") from None
         yield

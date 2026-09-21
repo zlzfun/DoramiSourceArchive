@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
-import fcntl
+from services.file_lock import LOCK_EX, LOCK_NB, LOCK_UN, flock
 import hashlib
 import json
 import os
@@ -295,17 +295,17 @@ class PodcastArtifactStore:
         with self._lock:
             lock_fd = os.open(self.root / ".cas.lock", os.O_CREAT | os.O_RDWR, 0o600)
             try:
-                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                flock(lock_fd, LOCK_EX)
                 yield
             finally:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                flock(lock_fd, LOCK_UN)
                 os.close(lock_fd)
 
     def create_upload_temp(self) -> tuple[int, Path]:
         fd, raw = tempfile.mkstemp(prefix="upload-", suffix=".part", dir=self.root / ".incoming")
         path = Path(raw)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            flock(fd, LOCK_EX | LOCK_NB)
         except BaseException:
             os.close(fd)
             path.unlink(missing_ok=True)
@@ -394,14 +394,14 @@ class PodcastArtifactStore:
                 if os.write(marker_fd, marker) != len(marker):
                     raise OSError("short reservation marker write")
                 os.fsync(marker_fd)
-                fcntl.flock(marker_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                flock(marker_fd, LOCK_EX | LOCK_NB)
                 marker_locked = True
             yield
         finally:
             if marker_fd is not None:
                 try:
                     if marker_locked:
-                        fcntl.flock(marker_fd, fcntl.LOCK_UN)
+                        flock(marker_fd, LOCK_UN)
                 finally:
                     os.close(marker_fd)
             if marker_path is not None:
@@ -1465,7 +1465,7 @@ class PodcastArtifactStore:
                     continue
                 try:
                     try:
-                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        flock(fd, LOCK_EX | LOCK_NB)
                     except BlockingIOError:
                         continue
                     path.unlink(missing_ok=True)
@@ -1483,7 +1483,7 @@ class PodcastArtifactStore:
                     continue
                 try:
                     try:
-                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        flock(fd, LOCK_EX | LOCK_NB)
                     except BlockingIOError:
                         continue
                     path.unlink(missing_ok=True)
