@@ -13,7 +13,7 @@
 3.0.0 = 静默仪器全站重构 + 实体简化/阶段3 收官(style/quiet-instrument 合入 main)。
 """
 
-__version__ = "3.60.1"
+__version__ = "3.61.0"
 
 
 def build_info() -> dict:
