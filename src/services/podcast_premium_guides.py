@@ -11,6 +11,7 @@ import asyncio
 import datetime as dt
 import hashlib
 import json
+import logging
 import uuid
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -33,8 +34,10 @@ from services.podcast_artifacts import (
     withdraw_digest_audio_for_script_change,
 )
 from services.podcast_stage_policy import PodcastStagePolicy
-from services import podcast_premium
+from services import podcast_premium, reader_ondemand
 from services.article_analysis import has_authoritative_analysis
+
+logger = logging.getLogger("dorami.podcast_premium_guides")
 
 
 @dataclass(frozen=True)
@@ -622,24 +625,21 @@ def evaluate_reader_ondemand_premium_guide(
             status_code=422,
         )
 
-    policy = PodcastStagePolicy(config)
-    try:
-        for stage in (
-            "translate",
-            "analyze",
-            "digest",
-            "script",
-            "tts",
-            "audio_qa",
-            "local_publish",
-        ):
-            policy.require_stage(stage, boundary="provider_submit")
-    except Exception as exc:
+    # 阶段授权是部署边界,不是读者能处理的事:读者只看到「本部署不提供」,
+    # installation / authority_id / 缺哪几个阶段留在服务端日志与管理面(issue #137)。
+    missing_stages = reader_ondemand.missing_podcast_stages(config)
+    if missing_stages:
+        logger.warning(
+            "reader on-demand premium guide denied: installation=%s authority_id=%s missing_stages=%s",
+            config.installation,
+            config.authority_id,
+            ",".join(missing_stages),
+        )
         raise PremiumGuideForceError(
             "podcast_ondemand_disabled",
-            f"点播所需处理阶段未启用：{exc}",
+            reader_ondemand.PODCAST_DISABLED_MESSAGE,
             status_code=503,
-        ) from exc
+        )
 
     with Session(engine) as session:
         episode = session.get(ArticleRecord, episode_id)

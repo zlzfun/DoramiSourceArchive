@@ -8138,9 +8138,6 @@ input[type="radio"] {
     border: 1px solid var(--dorami-border);
     background: var(--dorami-well);
     color: var(--dorami-ink-2);
-    font-size: 12px;
-    font-weight: 650;
-    line-height: 1;
     cursor: pointer;
   }
   .reader-ai-listen-pill:hover:not(:disabled):not(.is-busy) {
@@ -11255,6 +11252,7 @@ input[type="radio"] {
 .reader-src-more { font-size: 12.5px; font-weight: 400; }
 .reader-load-more { font-size: 12px; font-weight: 500; }
 .reader-ai-summary-generate { font-size: 12px; font-weight: 600; }
+.reader-ai-listen-pill { font-size: 12px; font-weight: 650; line-height: 1; }
 /* 速读卡大数字的排印同样钉在未分层区(全局 button{font:inherit} 未分层,@layer 内恒败) */
 .reader-ai-score-btn {
   /* 数字专用衬线栈:要齐线数字——Georgia 只有老式数字,7/5 带降部让小数点看着像居中点
@@ -12183,6 +12181,7 @@ input[type="radio"] {
    复用在册类:.ai-switchboard/.ledger-switch/.kpi-*/.acct-*/.rowact-btn/.stamp/.pager/.ledger-drawer*/.ledger-kv。
    ══════════════════════════════════════════════════════════════════════ */
 .ai-switchboard.is-wrap { flex-wrap: wrap; row-gap: 10px; }
+.ai-switchboard.is-wrap > .tiny-meta { flex: 1 1 16rem; min-width: 0; white-space: normal; }
 .sw { display: inline-flex; align-items: center; gap: 9px; }
 .sw-group { display: inline-flex; align-items: center; gap: 14px; }
 /* 开关板里的旋钮:标签小字 + well 底等宽小输入(与 AI 面板 .model-field 同刻度) */

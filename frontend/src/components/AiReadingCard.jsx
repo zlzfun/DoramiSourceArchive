@@ -41,6 +41,7 @@ export default function AiReadingCard({
   onGenerate,
   podcast = false,
   aiEnabled = false,
+  ondemandEnabled = false,   // 文章点播能力位(issue #137):总闸 ∧ 本部署真能跑
   showToast,
   onArticleRefresh,
 }) {
@@ -67,10 +68,15 @@ export default function AiReadingCard({
   const listenActive = !listenReady && LISTEN_ACTIVE.has(listenStatus);
   const listenFailed = !listenReady && listenStatus === 'failed';
   const canRequestListen = Boolean(
-    !podcast && aiEnabled && article?.id && !listenReady && !listenActive && !listenBusy,
+    !podcast && aiEnabled && ondemandEnabled
+      && article?.id && !listenReady && !listenActive && !listenBusy,
   );
+  // 不可点播时不画胶囊;已在生成 / 刚失败的仍给状态与重试,不让读者的请求凭空消失。
   const showListenAction = Boolean(
-    !podcast && (canRequestListen || listenActive || listenBusy || (listenFailed && aiEnabled)),
+    !podcast && (
+      canRequestListen || listenActive || listenBusy
+      || (listenFailed && aiEnabled && ondemandEnabled)
+    ),
   );
 
   useEffect(() => { setShowReason(false); }, [article?.id]);
@@ -90,7 +96,7 @@ export default function AiReadingCard({
   }, [listenActive, article?.id, onArticleRefresh]);
 
   const handleListenOndemand = async () => {
-    if (!canRequestListen && !(listenFailed && aiEnabled && !listenBusy)) return;
+    if (!canRequestListen && !(listenFailed && aiEnabled && ondemandEnabled && !listenBusy)) return;
     setListenBusy(true);
     try {
       const result = await requestArticleOndemand(article.id);
