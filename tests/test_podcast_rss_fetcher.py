@@ -601,6 +601,7 @@ def test_article_list_and_detail_serializer_project_lightweight_podcast_contract
         "attempt_count": 0,
         "status": "",
         "processing_status": "",
+        "next_retry_at": "",
         "stage": "",
         "error": "",
         "retryable": False,

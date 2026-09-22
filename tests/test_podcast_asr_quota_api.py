@@ -60,6 +60,12 @@ def test_admin_can_read_and_update_independent_asr_audio_limits(monkeypatch, tmp
             "quota_timezone",
             "source",
             "max_audio_per_file_source",
+            "quota_period",
+            "used_audio_seconds",
+            "reserved_audio_seconds",
+            "remaining_audio_seconds",
+            "usage_status",
+            "usage_reason",
         }
         assert initial.json()["max_audio_seconds_per_file"] == 43_200
         assert initial.json()["max_audio_hours_per_file"] == 12
