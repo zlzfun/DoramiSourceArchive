@@ -613,6 +613,7 @@ def test_article_list_and_detail_serializer_project_lightweight_podcast_contract
             "error": "",
             "audio_ready": False,
             "blog_ready": False,
+            "script_ready": False,
         },
         "condensed_audio_url": "",
         "condensed_duration_seconds": None,
