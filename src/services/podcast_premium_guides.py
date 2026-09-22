@@ -36,6 +36,7 @@ from services.podcast_artifacts import (
 from services.podcast_stage_policy import PodcastStagePolicy
 from services import podcast_premium, reader_ondemand
 from services.article_analysis import has_authoritative_analysis
+from services.bailian_speech_client import BailianSpeechError
 
 logger = logging.getLogger("dorami.podcast_premium_guides")
 
@@ -238,6 +239,11 @@ def fail_premium_guide(
     """Persist a terminal guide error so admin polling never loses failures."""
 
     message = str(error).strip() or type(error).__name__
+    if isinstance(error, BailianSpeechError):
+        message = {
+            "tts_receipt_cache_full": "TTS 回执缓存不足，请在播客管理台检查缺口并安全归档已完成回执",
+            "tts_receipt_disk_full": "TTS 回执所在磁盘空间不足，请在播客管理台检查磁盘缺口",
+        }.get(error.code, message)
     _set_episode_status(
         engine,
         episode_id,
@@ -460,8 +466,12 @@ async def run_premium_guide(
             # Capacity is checked before any paid text generation. The provider
             # performs the locked final check immediately before TTS submission.
             if plan.should_synthesize_audio and callable(getattr(tts_provider, "ensure_capacity", None)):
-                await asyncio.to_thread(tts_provider.ensure_capacity,
-                    min(plan.max_chars, config.premium_narration_max_chars))
+                try:
+                    await asyncio.to_thread(tts_provider.ensure_capacity,
+                        min(plan.max_chars, config.premium_narration_max_chars))
+                except BailianSpeechError:
+                    _set_episode_status(engine, episode_id, "synthesizing")
+                    raise
             draft = await text_provider.create_blog(
                 title=title,
                 transcript=transcript[: config.premium_transcript_max_chars],
@@ -499,7 +509,11 @@ async def run_premium_guide(
         narration_char_budget = min(plan.max_chars, config.premium_narration_max_chars)
         if reusable_narration is None:
             if callable(getattr(tts_provider, "ensure_capacity", None)):
-                await asyncio.to_thread(tts_provider.ensure_capacity, narration_char_budget)
+                try:
+                    await asyncio.to_thread(tts_provider.ensure_capacity, narration_char_budget)
+                except BailianSpeechError:
+                    _set_episode_status(engine, episode_id, "synthesizing")
+                    raise
             narration = await text_provider.create_narration(
                 title=title, blog_markdown=blog, max_chars=narration_char_budget,
                 max_minutes=plan.max_audio_minutes, min_minutes=plan.min_audio_minutes,

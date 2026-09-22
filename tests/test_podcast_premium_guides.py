@@ -136,6 +136,35 @@ def test_tts_retry_reuses_valid_published_text_without_llm_regeneration(tmp_path
         assert session.get(PodcastTextPublicationRecord, "episode-force:narration_script_zh").artifact_id == script
 
 
+def test_tts_cache_preflight_blocks_before_text_generation(tmp_path):
+    from services.bailian_speech_client import BailianSpeechError
+
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'preflight.db'}")
+    _seed_force_candidate(sink)
+
+    class NoText(TextProvider):
+        async def create_blog(self, **_kwargs):
+            pytest.fail("LLM must not run when the TTS cache is blocked")
+
+    class NoTts(TtsProvider):
+        def ensure_capacity(self, _characters):
+            raise BailianSpeechError("tts_receipt_cache_full")
+
+        async def synthesize(self, _text):
+            pytest.fail("TTS must not be submitted")
+
+    with pytest.raises(BailianSpeechError, match="tts_receipt_cache_full"):
+        asyncio.run(run_premium_guide(
+            sink.engine, None, episode_id="episode-force", config=_external_config(),
+            text_provider=NoText(), tts_provider=NoTts(), selection_override=True,
+        ))
+    with Session(sink.engine) as session:
+        guide = json.loads(session.get(ArticleRecord, "episode-force").extensions_json)["premium_guide"]
+        assert guide["failed_stage"] == "synthesizing"
+        assert "回执缓存不足" in guide["error"]
+        assert session.get(PodcastTextPublicationRecord, "episode-force:digest_blog_zh") is None
+
+
 def test_premium_guide_tasks_only_list_premium_episodes_and_paginate(tmp_path):
     sink = DatabaseStorage(f"sqlite:///{tmp_path / 'premium-list.db'}")
     with Session(sink.engine) as session:
