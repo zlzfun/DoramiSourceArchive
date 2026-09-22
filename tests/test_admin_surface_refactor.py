@@ -160,7 +160,7 @@ def test_dashboard_axes_filters_sort_and_breakdown(refactor_engine):
     assert by_id["broken"]["processing_error"] == "音频地址 403"
     assert result["breakdown"]["stage"] == {
         "not_processed": 1, "not_selected": 1, "awaiting_transcript": 1, "processing": 1,
-        "full_analyzed": 2, "reconciliation": 1, "failed": 1,
+        "full_analyzed": 2, "reconciliation": 1, "retry_wait": 0, "failed": 1,
     }
     assert result["breakdown"]["verdict"] == {"premium": 1, "below_threshold": 1, "unscored": 6}
     assert result["breakdown"]["tts"] == {"not_started": 7, "active": 0, "ready": 0, "failed": 1}
