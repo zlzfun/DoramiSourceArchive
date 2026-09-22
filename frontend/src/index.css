@@ -12183,6 +12183,7 @@ input[type="radio"] {
    复用在册类:.ai-switchboard/.ledger-switch/.kpi-*/.acct-*/.rowact-btn/.stamp/.pager/.ledger-drawer*/.ledger-kv。
    ══════════════════════════════════════════════════════════════════════ */
 .ai-switchboard.is-wrap { flex-wrap: wrap; row-gap: 10px; }
+.ai-switchboard.is-wrap > .tiny-meta { flex: 1 1 16rem; min-width: 0; white-space: normal; }
 .sw { display: inline-flex; align-items: center; gap: 9px; }
 .sw-group { display: inline-flex; align-items: center; gap: 14px; }
 /* 开关板里的旋钮:标签小字 + well 底等宽小输入(与 AI 面板 .model-field 同刻度) */

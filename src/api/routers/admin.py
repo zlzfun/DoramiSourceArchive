@@ -44,6 +44,7 @@ from services import daily_brief as daily_brief_service
 from services import jobs as jobs_service
 from services import reader_activity as reader_activity_service
 from services import reader_defaults as reader_defaults_service
+from services import reader_ondemand as reader_ondemand_service
 from services import social_backfill as social_backfill_service
 from services import source_visibility as source_visibility_service
 from services import user_sources as user_sources_service
@@ -58,6 +59,10 @@ class AiBetaGlobalParams(BaseModel):
 
 
 class PublicShareGlobalParams(BaseModel):
+    enabled: bool
+
+
+class ReaderOndemandParams(BaseModel):
     enabled: bool
 
 
@@ -599,6 +604,41 @@ def admin_set_public_share(
     这正是总闸的意义：出事时不必逐条撤销，且不销毁签发记录，恢复即回归。"""
     article_share_service.set_public_share_enabled(session, params.enabled)
     return {"enabled": article_share_service.public_share_enabled(session)}
+
+
+# ==================== 读者点播总闸(issue #137) ====================
+# 点播是读者侧唯一会主动烧 LLM + TTS 的动作(播客精品导读 + 文章精简旁白,
+# 共用每人每日 5 次的额度池)。这里只管「要不要对读者开放」;能不能跑由部署决定,
+# blockers 把差什么列给管理员。管理面自己的强制生成入口不受本总闸影响。
+
+
+def _reader_ondemand_payload(session: Session) -> Dict[str, Any]:
+    settings = importlib.import_module("api.app").settings
+    availability = reader_ondemand_service.availability(
+        session, podcast_config=settings.podcast
+    )
+    return {
+        "enabled": availability.enabled,
+        "podcast_available": availability.podcast,
+        "article_available": availability.article,
+        "blockers": list(availability.blockers),
+    }
+
+
+@router.get("/reader-ondemand")
+def admin_get_reader_ondemand(session: Session = Depends(deps.get_session)):
+    """点播总闸读数 + 本部署实际可用性（开着却跑不了时给出缺什么）。"""
+    return _reader_ondemand_payload(session)
+
+
+@router.post("/reader-ondemand")
+def admin_set_reader_ondemand(
+    params: ReaderOndemandParams, session: Session = Depends(deps.get_session)
+):
+    """开关读者点播。关闭立即收走读者端入口并谢绝新请求；已生成的音频、
+    排队中的任务和配额记账都不动，重开即回归。"""
+    reader_ondemand_service.set_feature_enabled(session, params.enabled)
+    return _reader_ondemand_payload(session)
 
 
 # ==================== 新账号默认订阅名单(issue #56) ====================

@@ -401,6 +401,7 @@ frontend/src/
 - `POST /api/reader/ai/translate` — translate an article body to 简体中文 (cached in `extensions_json`)
 - `POST /api/reader/ai/ask` — multi-turn QA,scope 四档 `article|articles|subscription|all`(v3.32:显式名单 vs 检索圈定;检索档走「LLM 计划检索 + FTS5」两段式);响应 `sources` 与上下文编号 [n] 同源同序(行内引用锚);可带 `ask_id` 登记阶段进度
 - `GET /api/reader/ai/ask/progress?ask_id=` — ask 阶段进度轮询(plan→search→select→answer,内存瞬时态,完成即清;阶段化等待态数据源)
+- `POST /api/reader/ai/podcasts/{episode_id}/ondemand`、`POST /api/reader/ai/articles/{article_id}/ondemand` — 读者点播精品导读 / 文章精简旁白，共用每日额度。总闸 `GET`/`POST /api/admin/reader-ondemand`（KV `reader_ondemand_enabled`，缺省开）在运维管理 → 内容；关闭只收读者入口并 403 新请求，已有音频与排队不动。能不能跑不由这个开关改：`/api/runtime` 的 `ondemand.podcast` / `ondemand.article` 还要求 LLM、TTS 和默认音色，播客侧另要求处理阶段授权。缺阶段时读者只看到「当前部署未开启播客点播」，缺什么列在管理面 `blockers`。
 
 **Media（图床）** (see *媒体库*)
 - `GET /api/media/proxy?url=` — 正文外链图片代理（reader surface）：命中本地缓存回文件（长缓存头），未命中即时下载入库，失败/停用 302 回源降级

@@ -31,6 +31,8 @@ import {
   setAiDailyTokenBudget,
   fetchPublicShareGlobal,
   updatePublicShareGlobal,
+  fetchReaderOndemandGlobal,
+  updateReaderOndemandGlobal,
   fetchReaderDefaults,
   updateReaderDefaults,
   fetchAiUsage,
@@ -98,6 +100,7 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
   const [newUserAiDefault, setNewUserAiDefault] = useState(null); // 新账号 AI 默认值(只影响此后新建账户)
   const [budgetDraft, setBudgetDraft] = useState(''); // 预算输入框草稿(失焦/回车提交)
   const [publicShare, setPublicShare] = useState(null);   // 公开分享总闸 + 存活链接盘点
+  const [ondemand, setOndemand] = useState(null);         // 读者点播总闸(issue #137):{enabled, podcast_available, article_available, blockers}
   const [readerDefaults, setReaderDefaults] = useState(null); // 新账号默认订阅名单(issue #56):{source_ids, overridden, sources, code_default, candidates}
   const [defaultsPick, setDefaultsPick] = useState('');
   const [defaultsBusy, setDefaultsBusy] = useState(false); // 整集写请求在途:卡内全部控件禁用(快速增删会互相覆盖——codex 检视 P2)
@@ -225,6 +228,10 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
       const defaults = await fetchReaderDefaults();
       if (fresh()) setReaderDefaults(defaults);
     } catch { /* 同上:名单卡显示读取中 */ }
+    try {
+      const ondemandGlobal = await fetchReaderOndemandGlobal();
+      if (fresh()) setOndemand(ondemandGlobal);
+    } catch { /* 同上:点播卡显示读取中且开关禁用 */ }
   }, [claimGen, showToast]);
 
   // 新账号默认订阅名单(issue #56):增删即写,null = 恢复代码缺省;只影响此后新建账号
@@ -251,6 +258,17 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
     saveReaderDefaults([...(readerDefaults?.source_ids || []), sourceId], '已加入默认订阅名单');
   };
   const handleDefaultsReset = () => saveReaderDefaults(null, '已恢复代码缺省名单');
+
+  const handleToggleOndemand = async () => {
+    const next = !ondemand?.enabled;
+    try {
+      const res = await updateReaderOndemandGlobal(next);
+      setOndemand(res);
+      showToast(res.enabled ? '已开启读者点播' : '已关闭读者点播', 'success');
+    } catch (error) {
+      showToast(error.message || '更新点播总闸失败', 'error');
+    }
+  };
 
   const handleTogglePublicShare = async () => {
     const next = !publicShare?.enabled;
@@ -1060,6 +1078,35 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
                 ? '正在读取…'
                 : `当前有效 ${publicShare.live_count} 条 · 累计签发 ${publicShare.total_count} 条`}
               {' · '}读者可为单篇内容生成免登录只读链接，可设有效期并随时撤销
+            </span>
+          </section>
+
+          {/* 读者点播总闸(issue #137):播客精品导读 + 文章精简旁白共一枚开关——
+              二者是读者侧仅有的主动烧 LLM + TTS 的动作,共用同一日额度池。
+              开着却跑不了时把缺什么列出来,管理员据此决定改部署还是关总闸。 */}
+          <section className="surface-card ai-switchboard is-wrap rounded-[var(--r-card)] mb-4">
+            <span className={`ai-light ${ondemand?.enabled ? '' : 'is-off'}`} />
+            <div className="ai-switch-lbl" title="总闸:关闭后读者面不再出现点播入口,端点一并谢绝;已生成的音频与排队中的任务不动,重开即回归。管理面的强制生成不受影响">
+              读者点播
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!!ondemand?.enabled}
+              aria-label="读者点播总闸"
+              disabled={ondemand === null}
+              onClick={handleToggleOndemand}
+              className={`ledger-switch ${ondemand?.enabled ? 'is-on' : ''}`}
+            />
+            <span className="ai-divider" />
+            <span className="tiny-meta">
+              {ondemand === null
+                ? '正在读取…'
+                : !ondemand.enabled
+                  ? '已关闭：读者不再看到点播入口，已生成的音频照常播放'
+                  : (ondemand.blockers || []).length === 0
+                    ? '读者可按需生成播客精品导读与文章精简旁白（两者共用每日额度池）'
+                    : `${ondemand.article_available ? '仅文章精简旁白可点播' : '本部署当前跑不了点播'}，入口不对读者露出 · 缺：${ondemand.blockers.join('；')}`}
             </span>
           </section>
 

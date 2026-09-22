@@ -117,6 +117,7 @@ from services import ai_usage as ai_usage_service
 from services import jobs as jobs_service
 from services import user_sources as user_sources_service
 from services import reader_defaults as reader_defaults_service
+from services import reader_ondemand as reader_ondemand_service
 from services import article_analysis as article_analysis_service
 from services import taxonomy as taxonomy_service
 from services import podcast_catalog as podcast_catalog_service
@@ -255,6 +256,9 @@ def runtime_capabilities(session: Optional[Dict[str, Any]] = None) -> Dict[str, 
         "user_sources_enabled": _user_sources_capability(),
         # 个人早报发布闸：关闭时读者端隐藏页面入口，端点侧继续以 404 防守。
         "personal_digest_enabled": _personal_digest_capability(),
+        # 读者点播能力位(issue #137)：总闸 ∧ 本部署真能跑；为假则不画入口，
+        # 端点侧另有 403 / 503 防守。
+        "ondemand": _ondemand_capabilities(),
         # 密码登录能力位(issue #130):main 恒 True;下游外部身份源只覆盖 services/auth_policy,
         # 前端设置柜据此隐藏改密表单,登录 / 改密端点据此 403。
         "password_login_enabled": _password_login_capability(session),
@@ -280,6 +284,25 @@ def _password_login_capability(session: Optional[Dict[str, Any]] = None) -> bool
     except Exception:  # 能力探测不应阻断 runtime 接口
         return True
     return _password_login_allows(record)
+
+
+def _ondemand_capabilities() -> Dict[str, bool]:
+    """读者点播两条链路的能力位（runtime 透出用）。
+
+    判定在 ``services/reader_ondemand``：总闸 ∧ LLM/TTS/音色就绪，播客侧另需
+    Podcast 处理阶段授权。无 DB / 异常一律按「不可用」：点播烧真钱，探测不准时
+    宁可不画入口，也不该画个点下去必失败的按钮。
+    """
+    unavailable = {"podcast": False, "article": False}
+    if db_sink is None:
+        return unavailable
+    try:
+        with Session(db_sink.engine) as session:
+            return reader_ondemand_service.availability(
+                session, podcast_config=settings.podcast
+            ).as_runtime()
+    except Exception:  # noqa: BLE001 - 能力探测不阻断 runtime 接口
+        return unavailable
 
 
 def _user_sources_capability() -> bool:

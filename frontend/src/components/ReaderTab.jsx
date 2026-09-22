@@ -353,6 +353,7 @@ export default function ReaderTab({
   aiEnabled = false,
   userSourcesEnabled = false,
   personalDigestEnabled = false,
+  ondemand = {},   // 点播能力位(issue #137):{podcast, article};不可用即不画入口
   // ── standalone(读者账号):应用导轨已隐藏,视图轨独占——轨底并入用户菜单 ──
   standalone = false,
   account = null,
@@ -1336,6 +1337,7 @@ export default function ReaderTab({
                   variant={podcastVariant}
                   onVariantChange={handlePodcastVariantChange}
                   aiEnabled={aiEnabled}
+                  ondemandEnabled={ondemand.podcast === true}
                   showToast={showToast}
                   onArticleRefresh={refreshActiveArticle}
                 />
@@ -1355,6 +1357,7 @@ export default function ReaderTab({
                   onGenerate={handleSummarize}
                   podcast={podcastView}
                   aiEnabled={aiEnabled}
+                  ondemandEnabled={ondemand.article === true}
                   showToast={showToast}
                   onArticleRefresh={refreshActiveArticle}
                 />

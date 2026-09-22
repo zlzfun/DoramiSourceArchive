@@ -38,6 +38,7 @@ export default function PodcastAudioPanel({
   variant,
   onVariantChange,
   aiEnabled = false,
+  ondemandEnabled = false,
   showToast,
   onArticleRefresh,
 }) {
@@ -54,6 +55,7 @@ export default function PodcastAudioPanel({
       variant={variant}
       onVariantChange={onVariantChange}
       aiEnabled={aiEnabled}
+      ondemandEnabled={ondemandEnabled}
       showToast={showToast}
       onArticleRefresh={onArticleRefresh}
     />
@@ -66,6 +68,7 @@ function PodcastAudioPlayer({
   variant: controlledVariant,
   onVariantChange,
   aiEnabled,
+  ondemandEnabled,
   showToast,
   onArticleRefresh,
 }) {
@@ -101,8 +104,11 @@ function PodcastAudioPlayer({
     : podcast.audio_url ? 'original' : hasDigest ? 'digest' : 'original';
   const playbackIdentityRef = useRef({ articleId: article?.id, variant: activeVariant });
   const canRequestOndemand = Boolean(
-    aiEnabled && article?.id && !hasDigest && !guideActive && !ondemandBusy,
+    aiEnabled && ondemandEnabled && article?.id && !hasDigest && !guideActive && !ondemandBusy,
   );
+  // 点播不可用(总闸关 / 本部署跑不了)就不画按钮。已在生成的仍要看得见进度——
+  // 开关中途被关掉时,读者不该以为自己的生成请求凭空消失。
+  const ondemandVisible = Boolean(aiEnabled && (ondemandEnabled || guideActive));
 
   const activeTrack = activeVariant === 'digest'
     ? { label: '精品导读', duration: condensedDuration, src: podcast.condensed_audio_url, generated: true }
@@ -187,7 +193,7 @@ function PodcastAudioPlayer({
           {visibleProcessing.detail}
         </p>
       )}
-      {(hasDigest || aiEnabled) && (
+      {(hasDigest || ondemandVisible) && (
         <div className="mini-seg podcast-mode-switch" role="group" aria-label="播客播放模式">
           <button
             type="button"

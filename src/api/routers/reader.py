@@ -75,6 +75,7 @@ from services.article_display_tags import article_ids_for_flexible_label, load_d
 from services import daily_brief as daily_brief_service
 from services import reader_activity as reader_activity_service
 from services import reader_ai as reader_ai_service
+from services import reader_ondemand as reader_ondemand_service
 from services import reader_search as reader_search_service
 from services import reader_interests as reader_interests_service
 from services import reader_state as reader_state_service
@@ -1644,16 +1645,33 @@ async def reader_ai_translate_podcast_transcript(
     }
 
 
+def _require_ondemand_enabled() -> None:
+    """点播总闸(issue #137)：关闭时两条链路一并谢绝。
+
+    前端同步收入口（runtime 能力位），这里是端点侧防守——旧页面、直调、
+    开关在页面打开后被关掉，三种情形都落到这里。
+    """
+    with Session(deps.get_db_sink().engine) as session:
+        if not reader_ondemand_service.feature_enabled(session):
+            raise HTTPException(
+                status_code=403,
+                detail=reader_ondemand_service.FEATURE_DISABLED_MESSAGE,
+            )
+
+
 @router.post("/ai/podcasts/{episode_id}/ondemand")
 async def reader_ai_podcast_ondemand(episode_id: str, request: Request):
     """读者点播精品导读音频：复用强制 TTS 流水线，跳过优质分门槛。
 
+    总闸关闭时直接 403，不评估、不扣额度。
     资格：必须已有全文终评；无终评且非进行中 → 评分过低文案。
+    本部署未授权播客点播阶段时返回「当前部署未开启播客点播」，不向读者列出阶段名。
     配额：仅「真正新开一次生成」扣 1（日限额 5）；复用已有/进行中不扣。
-    顺序：先只读评估 → 成本闸 → 再落库调度 → 成功后记账。
+    顺序：总闸 → 只读评估 → 成本闸 → 再落库调度 → 成功后记账。
     """
 
     username, _llm_config = _require_reader_ai(request)
+    _require_ondemand_enabled()
     app = _app()
     db_sink = deps.get_db_sink()
     with Session(db_sink.engine) as session:
@@ -1754,11 +1772,13 @@ async def reader_ai_podcast_ondemand(episode_id: str, request: Request):
 async def reader_ai_article_ondemand(article_id: str, request: Request):
     """读者点播文章精简旁白音频：无新闻价值分门槛，有正文即可。
 
+    总闸关闭时直接 403，不评估、不扣额度。
     配额：与播客点播共用日额度池；仅「真正新开一次生成」扣 1；复用已有/进行中不扣。
-    顺序：先只读评估 → 成本闸 → 再落库调度 → 成功后记账。
+    顺序：总闸 → 只读评估 → 成本闸 → 再落库调度 → 成功后记账。
     """
 
     username, _llm_config = _require_reader_ai(request)
+    _require_ondemand_enabled()
     app = _app()
     db_sink = deps.get_db_sink()
     with Session(db_sink.engine) as session:
