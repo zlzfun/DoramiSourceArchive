@@ -28,8 +28,8 @@ from models.db import (
 )
 
 
-INITIAL_PROCESSING_THRESHOLD = 5.0
-DEFAULT_PREMIUM_SCORE_THRESHOLD = 8.0
+INITIAL_PROCESSING_THRESHOLD = 6.0
+DEFAULT_PREMIUM_SCORE_THRESHOLD = 7.5
 PREMIUM_SCORE_THRESHOLD_KEY = "podcast_premium_score_threshold"
 TRANSCRIPT_BASES = frozenset({"publisher_transcript", "asr_transcript"})
 ANALYSIS_BASIS_LABELS = {
@@ -656,9 +656,9 @@ def _timeline(
             "label": _TIMELINE_LABELS["initial"],
             "state": "done",
             "note": (
-                f"{score_initial:.1f} · 过处理线 {INITIAL_PROCESSING_THRESHOLD:.1f}，自动进入全文处理"
+                f"{score_initial:.1f} · 过付费 ASR 线 {INITIAL_PROCESSING_THRESHOLD:.1f}，自动进入全文处理"
                 if passed
-                else f"{score_initial:.1f} · 未过处理线 {INITIAL_PROCESSING_THRESHOLD:.1f}，可强制全文"
+                else f"{score_initial:.1f} · 未过付费 ASR 线 {INITIAL_PROCESSING_THRESHOLD:.1f}，可强制全文"
             ),
             "at": analysis_at,
         })

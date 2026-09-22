@@ -142,12 +142,12 @@ def premium_engine(tmp_path):
         for episode_id in ids:
             session.add(_episode(episode_id))
         session.commit()
-        session.add(_analysis("low-initial", initial=4.9))
-        session.add(_analysis("exact-initial", initial=5.0))
-        session.add(_analysis("low-final", initial=5.0, final=7.9))
-        session.add(_analysis("exact-final", initial=5.0, final=8.0))
-        session.add(_analysis("historical", initial=5.0, final=8.1))
-        session.add(_analysis("failed", initial=5.0))
+        session.add(_analysis("low-initial", initial=5.9))
+        session.add(_analysis("exact-initial", initial=6.0))
+        session.add(_analysis("low-final", initial=6.0, final=7.4))
+        session.add(_analysis("exact-final", initial=6.0, final=7.5))
+        session.add(_analysis("historical", initial=6.0, final=7.6))
+        session.add(_analysis("failed", initial=6.0))
         session.add(_analysis("high-initial", initial=9.9))
         session.add(_failed_processing("failed"))
         blog, publication = _published_blog("historical")
@@ -160,10 +160,10 @@ def premium_engine(tmp_path):
 
 
 def test_threshold_validation_and_persistence(premium_engine):
-    assert INITIAL_PROCESSING_THRESHOLD == 5.0
-    assert DEFAULT_PREMIUM_SCORE_THRESHOLD == 8.0
+    assert INITIAL_PROCESSING_THRESHOLD == 6.0
+    assert DEFAULT_PREMIUM_SCORE_THRESHOLD == 7.5
     with Session(premium_engine) as session:
-        assert get_threshold(session) == 8.0
+        assert get_threshold(session) == 7.5
         assert set_threshold(session, 10.0) == 10.0
     with Session(premium_engine) as session:
         assert get_threshold(session) == 10.0
@@ -189,13 +189,13 @@ def test_dashboard_uses_final_score_only_and_recalculates_without_changing_candi
     assert [item["episode_id"] for item in dashboard(premium_engine, status_filter="failed")["items"]] == ["failed"]
 
     with Session(premium_engine) as session:
-        set_threshold(session, 7.5)
+        set_threshold(session, 7.0)
     lowered = dashboard(premium_engine, status_filter="premium")
     assert lowered["stats"]["premium"] == 3
     low_final = next(item for item in lowered["items"] if item["episode_id"] == "low-final")
     assert low_final["pending_generation"] is True
-    # Changing the final threshold must not pull the 4.9 show-notes item into
-    # the fixed >=5.0 full-processing candidate set.
+    # Changing the final threshold must not pull the 5.9 show-notes item into
+    # the fixed >=6.0 paid-ASR candidate set.
     assert "low-initial" not in {
         item["episode_id"]
         for item in dashboard(premium_engine, status_filter="pending_full")["items"]

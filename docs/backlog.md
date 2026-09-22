@@ -6,6 +6,11 @@
 
 ## 进行中
 
+- ☐ **issue #97 Podcast 成本门控与评分标定**（分支 `feat/issue-97-podcast-cost-gates`，方案
+  `docs/podcast-cost-and-scoring-calibration-plan.md`）：P0 已实现——简介付费 ASR 线 `>= 6.0`；
+  发布方逐字稿不看简介分直达全文分析，失败后低于 6.0 严禁回退 ASR；全文优质/TTS 代码
+  默认线 `>= 7.5`，KV 存量不覆盖；边界与零 ASR 旁路回归已补。待合入、生产 KV 核对和 7 天
+  观察。P1 六组 32 输入黄金集尚未启动；通过前不改评分提示词、不 bump 评分版本、不批量重评。
 - ☐ **issue #126 裸机部署回滚**(分支 `feat/issue-126-baremetal-rollback`,方案 `docs/baremetal-rollback-plan.md`;2026-09-21 用户拍板 §7 七项全按推荐后实现):
   运行副本版本化 release 形态 + 事务阶段 + 两级健康门告警(不自动回滚)+ `--rollback`(DB 按迁移计划分流,`--restore-db` 显式恢复)+ 收养 + `--code` / `--status` / `--discard-txn`,
   `docker/requirements-crawl4ai.txt` extras 钉版,锁与 Docker 同一把;桩测试 `tests/test_deploy_baremetal.py`。待 codex 检视、用户本地(内网)实机验收:收养一次 → 部署新版 → 故意起不来的提交告警 → `--rollback` → 机器重启 resurrect 起当前 release → 带迁移版本回滚被拒 / `--restore-db`。

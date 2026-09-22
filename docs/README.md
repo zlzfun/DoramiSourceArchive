@@ -57,6 +57,9 @@
 - ◉ [podcast-wave-plan.md](./podcast-wave-plan.md) — Podcast 专栏与长播客精华设计:博客/播客 RSS
   分轨治理、竞品与 Podcasting 2.0 调研、`>30min` 权利/质量/预算门控、带时间戳证据的中文博客、
   `≤15min` AI 精华音频、数据/API/状态机/成本/安全以及分期与端到端验收。
+- ◉ [podcast-cost-and-scoring-calibration-plan.md](./podcast-cost-and-scoring-calibration-plan.md) — **Podcast 成本门控与评分标定(issue #97)**:
+  开发任务优先——简介 ASR 线改 6.0、发布方逐字稿零 ASR 旁路、全文优质/TTS 默认线改 7.5；
+  评分调整后置为六组 32 输入黄金集，含名气/深度、原创/转述和 7.5 档界对照及验收门禁。
 - ◉ [podcast-transcript-dedup.md](./podcast-transcript-dedup.md) — Provider 无关的逐段逐字稿
   去重策略：同源片段时间覆盖与连续 token 双判定、部分镜像保留独有内容、真实多声道验收矩阵。
 - ◉ [Issue #7 可执行规格](../specs/007-podcast-intelligence/spec.md) — Podcast Intelligence 的

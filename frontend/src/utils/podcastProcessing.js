@@ -11,7 +11,7 @@
 const ACTIVE_PROCESSING = new Set(['queued', 'running', 'awaiting_review']);
 const FAILED_PROCESSING = new Set(['failed', 'retry_wait', 'reconciliation_required']);
 
-export const PODCAST_INITIAL_THRESHOLD = 5.0;
+export const PODCAST_INITIAL_THRESHOLD = 6.0;
 
 export const PODCAST_STAGE_META = Object.freeze({
   not_processed: { label: '未初评', tone: 'idle' },
@@ -177,7 +177,7 @@ function deriveVerdict(item = {}) {
 
 /**
  * 阶段章下的一行原因(原「未处理 / 未入选原因」列的内容,压成一句短语);后端 reason
- * 全文进 title。thresholds 由面板传入(简介处理线固定、优质门槛可调)。
+ * 全文进 title。thresholds 由面板传入(简介付费 ASR 线固定、优质门槛可调)。
  */
 function stageReason(item, stageCode, thresholds) {
   const initialLine = podcastScoreText(thresholds.initial ?? PODCAST_INITIAL_THRESHOLD);
@@ -189,9 +189,9 @@ function stageReason(item, stageCode, thresholds) {
     case 'not_processed':
       return '等待简介初评';
     case 'not_selected':
-      return `简介初评 ${podcastScoreText(item.initial_score)} < 处理线 ${initialLine}`;
+      return `简介初评 ${podcastScoreText(item.initial_score)} < 付费 ASR 线 ${initialLine}`;
     case 'awaiting_transcript':
-      return `已过处理线 ${initialLine} · 等待逐字稿`;
+      return `已过付费 ASR 线 ${initialLine} · 等待逐字稿`;
     case 'processing': {
       const status = processingStatusOf(item);
       const queued = status === 'queued';

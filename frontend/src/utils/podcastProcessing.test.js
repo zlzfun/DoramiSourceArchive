@@ -11,7 +11,7 @@ import {
   podcastTaskMeta,
 } from './podcastProcessing.js';
 
-const THRESHOLDS = { initial: 5, premium: 8 };
+const THRESHOLDS = { initial: 6, premium: 7.5 };
 
 test('retry kind is derived from processing status and stage', () => {
   assert.equal(podcastRetryKind({ processing_status: 'reconciliation_required', processing_stage: 'asr' }), 'reconcile');
@@ -56,14 +56,14 @@ test('task meta normalizes stage / verdict / tts and keeps reconciliation apart 
     stage_code: 'full_analyzed', verdict: 'premium', is_premium: true, initial_score: 7, final_score: 8.7,
     analysis_basis: 'asr_transcript', tts_status: 'synthesizing', can_force_tts: false,
   }, THRESHOLDS);
-  assert.equal(premium.reason, 'ASR 逐字稿 · 8.7 ≥ 门槛 8.0');
+  assert.equal(premium.reason, 'ASR 逐字稿 · 8.7 ≥ 门槛 7.5');
   assert.equal(premium.verdict.label, '优质');
   assert.equal(premium.tts.label, '合成音频中');
   assert.equal(premium.active, true);
 
   const rejected = podcastTaskMeta({ initial_score: 4.5 }, THRESHOLDS);
   assert.equal(rejected.stage.code, 'not_selected');
-  assert.equal(rejected.reason, '简介初评 4.5 < 处理线 5.0');
+  assert.equal(rejected.reason, '简介初评 4.5 < 付费 ASR 线 6.0');
   assert.deepEqual(podcastScoreCell({ initial_score: 4.5 }), { main: '4.5', sub: '简介' });
   assert.deepEqual(podcastScoreCell({ initial_score: 7, final_score: 8.7 }), { main: '8.7', sub: '全文 · 简介 7.0' });
 });

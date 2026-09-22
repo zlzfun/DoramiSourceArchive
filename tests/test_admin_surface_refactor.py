@@ -73,7 +73,7 @@ def _processing(episode_id: str, *, status: str, stage: str = "asr", error: str 
         requested_target="full_analysis",
         selection_source="policy",
         requested_by="system",
-        request_reason="简介初评达到全文处理线",
+        request_reason="简介初评达到付费 ASR 线",
         idempotency_key=f"key-{episode_id}",
         input_artifact_id=f"audio-{episode_id}",
         input_artifact_kind="source_media_snapshot",
@@ -122,13 +122,13 @@ def refactor_engine(tmp_path):
         session.add(_episode("premium", "Mike Krieger on Claude Code", publish=LATER))
         session.add(_episode("below", "Pricing war"))
         session.commit()
-        session.add(_analysis("rejected", initial=4.5))
-        session.add(_analysis("waiting", initial=5.5))
+        session.add(_analysis("rejected", initial=5.9))
+        session.add(_analysis("waiting", initial=6.0))
         session.add(_analysis("running", initial=7.5))
         session.add(_analysis("broken", initial=6.0))
         session.add(_analysis("reconcile", initial=6.5))
         session.add(_analysis("premium", initial=7.0, final=8.7, updated=LATER))
-        session.add(_analysis("below", initial=8.0, final=7.6))
+        session.add(_analysis("below", initial=8.0, final=7.4))
         session.add(_processing("running", status="running"))
         session.add(_processing("broken", status="failed", error="音频地址 403"))
         session.add(_processing("reconcile", status="reconciliation_required", error="任务结果待核对"))
@@ -174,7 +174,7 @@ def test_dashboard_axes_filters_sort_and_breakdown(refactor_engine):
     assert [i["episode_id"] for i in dashboard(refactor_engine, q="claude")["items"]] == ["premium"]
     assert [i["episode_id"] for i in dashboard(refactor_engine, q="Refactor Show", stage="not_processed")["items"]] == ["raw"]
     scored = [i["episode_id"] for i in dashboard(refactor_engine, sort="score", order="desc")["items"]]
-    assert scored[:3] == ["premium", "below", "running"] and scored[-1] == "raw"
+    assert scored[:3] == ["premium", "running", "below"] and scored[-1] == "raw"
     assert dashboard(refactor_engine, sort="updated", order="desc")["items"][0]["episode_id"] in {"premium", "running", "broken", "reconcile", "below"}
     # 旧 status 档位与新轴可叠加
     assert [i["episode_id"] for i in dashboard(refactor_engine, status_filter="failed", stage="failed")["items"]] == ["broken"]
@@ -191,7 +191,7 @@ def test_episode_detail_timeline_and_texts(refactor_engine):
     assert detail["episode"]["source_name"] == "Refactor Show"
     steps = {row["step"]: row for row in detail["timeline"]}
     assert [row["step"] for row in detail["timeline"]] == ["initial", "fetch", "asr", "analyze", "guide", "tts"]
-    assert steps["initial"]["state"] == "done" and "过处理线" in steps["initial"]["note"]
+    assert steps["initial"]["state"] == "done" and "过付费 ASR 线" in steps["initial"]["note"]
     assert steps["analyze"]["state"] == "done" and "8.7" in steps["analyze"]["note"]
     assert steps["guide"]["state"] == "pending"
     assert steps["tts"]["state"] == "pending"
@@ -203,7 +203,7 @@ def test_episode_detail_timeline_and_texts(refactor_engine):
     assert broken["guide"]["state"] == "pending"
 
     rejected = {row["step"]: row for row in episode_detail(refactor_engine, "rejected")["timeline"]}
-    assert "未过处理线" in rejected["initial"]["note"]
+    assert "未过付费 ASR 线" in rejected["initial"]["note"]
     assert rejected["fetch"]["state"] == "pending"
 
     below = episode_detail(refactor_engine, "below")

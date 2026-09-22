@@ -161,7 +161,7 @@ def engine(tmp_path):
             )
         )
         session.flush()
-        for episode_id, score in (("episode-49", 4.9), ("episode-50", 5.0)):
+        for episode_id, score in (("episode-49", 5.9), ("episode-50", 6.0)):
             session.add(
                 ArticleRecord(
                     id=episode_id,
@@ -241,7 +241,7 @@ def engine(tmp_path):
             ArticleAnalysisRecord(
                 article_id="episode-asr",
                 status="succeeded",
-                quality_score=5.0,
+                quality_score=6.0,
                 score_reason="初评",
                 summary="简介摘要",
                 content_hash="c" * 64,
@@ -286,19 +286,45 @@ def _request(engine, episode_id: str, *, override: bool, key: str):
     )
 
 
-def test_initial_assessment_boundary_and_editor_override(engine):
+def test_publisher_transcript_bypasses_initial_score_but_paid_asr_does_not(engine):
+    publisher = _request(engine, "episode-49", override=False, key="auto-episode-49")
+    assert publisher.selection_source == "policy"
+    assert publisher.stage == "analyze"
+    assert publisher.input_artifact_kind == "publisher_transcript"
+
+    with Session(engine) as session:
+        analysis = session.get(ArticleAnalysisRecord, "episode-asr")
+        analysis.quality_score = 5.9
+        session.add(analysis)
+        session.commit()
     with pytest.raises(PodcastAdminError) as rejected:
-        _request(engine, "episode-49", override=False, key="auto-episode-49")
+        _request(engine, "episode-asr", override=False, key="auto-asr-59")
     assert rejected.value.code == "podcast_selection_required"
 
-    exact = _request(engine, "episode-50", override=False, key="auto-episode-50")
+    with Session(engine) as session:
+        analysis = session.get(ArticleAnalysisRecord, "episode-asr")
+        analysis.quality_score = 6.0
+        session.add(analysis)
+        session.commit()
+    exact = _request(engine, "episode-asr", override=False, key="auto-asr-60")
     assert exact.selection_source == "policy"
-    assert exact.stage == "analyze"
-    assert exact.input_artifact_kind == "publisher_transcript"
+    assert exact.stage == "asr"
+    assert exact.input_artifact_kind == "source_media_snapshot"
 
-    forced = _request(engine, "episode-49", override=True, key="force-episode-49")
-    assert forced.selection_source == "editor"
-    assert forced.stage == "analyze"
+
+def test_paid_asr_refresh_uses_saved_initial_score_after_full_analysis(engine):
+    with Session(engine) as session:
+        analysis = session.get(ArticleAnalysisRecord, "episode-asr")
+        analysis.analysis_basis = "asr_transcript"
+        analysis.podcast_initial_score = 6.0
+        analysis.podcast_final_score = 8.0
+        analysis.quality_score = 8.0
+        session.add(analysis)
+        session.commit()
+
+    refreshed = _request(engine, "episode-asr", override=False, key="asr-refresh-60")
+    assert refreshed.stage == "asr"
+    assert refreshed.input_artifact_kind == "source_media_snapshot"
 
 
 def test_same_full_analysis_request_is_idempotent(engine):
@@ -476,7 +502,7 @@ def test_full_analysis_does_not_overwrite_authority_changed_during_llm(engine):
         assert step.action == "not_required"
         analysis = session.get(ArticleAnalysisRecord, "episode-50")
         assert analysis.authority_id == "remote-producer"
-        assert analysis.quality_score == 5.0
+        assert analysis.quality_score == 6.0
         pending = session.get(PodcastProcessingRecord, process.id)
         assert pending.processing_status == "not_required"
         assert pending.eligibility_status == "blocked_source"
@@ -487,7 +513,7 @@ def test_map_reduce_covers_every_character_and_exact_runtime_threshold_is_premiu
         engine, "episode-50", override=False, key="worker-episode-50"
     )
     config = replace(_config(), premium_score_threshold=8.25)
-    provider = _Provider(score=8.0)
+    provider = _Provider(score=7.5)
     with Session(engine) as session:
         step = asyncio.run(
             run_full_analysis_worker_step(
@@ -518,13 +544,13 @@ def test_map_reduce_covers_every_character_and_exact_runtime_threshold_is_premiu
         analysis = session.get(ArticleAnalysisRecord, "episode-50")
         assert persisted.processing_status == "ready"
         assert analysis.analysis_basis == "publisher_transcript"
-        assert analysis.quality_score == 8.0
-        assert analysis.podcast_initial_score == 5.0
-        assert analysis.podcast_final_score == 8.0
+        assert analysis.quality_score == 7.5
+        assert analysis.podcast_initial_score == 6.0
+        assert analysis.podcast_final_score == 7.5
         diagnostics = json.loads(analysis.analysis_diagnostics_json)
         assert diagnostics["coverage"]["source_chars"] == len("".join(provider.chunks))
         assert diagnostics["coverage"]["chunk_count"] == len(provider.chunks)
-        assert diagnostics["final_premium_threshold"] == 8.0
+        assert diagnostics["final_premium_threshold"] == 7.5
         assert diagnostics["final_premium"] is True
 
 
@@ -868,7 +894,7 @@ def test_podcast_projection_exposes_durable_status_basis_and_thresholds():
     initial = SimpleNamespace(
         status="succeeded",
         analysis_basis="podcast_show_notes",
-        quality_score=5.0,
+        quality_score=6.0,
     )
     failed = SimpleNamespace(
         id="processing-1",
@@ -1249,7 +1275,7 @@ def test_historical_asr_reuse_rejects_a_cross_episode_producer(engine):
         )[0] == "invalid_input"
 
 
-@pytest.mark.parametrize("score,expected", [(7.9, []), (8.0, ["episode-50"]), (None, [])])
+@pytest.mark.parametrize("score,expected", [(7.4, []), (7.5, ["episode-50"]), (None, [])])
 def test_scheduler_triggers_premium_only_after_successful_final_score(engine, monkeypatch, score, expected):
     from dataclasses import replace
     import api.app as app_module
@@ -1263,7 +1289,7 @@ def test_scheduler_triggers_premium_only_after_successful_final_score(engine, mo
         session.commit()
     monkeypatch.setattr(app_module, "db_sink", SimpleNamespace(engine=engine))
     monkeypatch.setattr(app_module, "settings", replace(
-        app_module.settings, podcast=replace(_config(), premium_score_threshold=8.0),
+        app_module.settings, podcast=replace(_config(), premium_score_threshold=7.5),
         podcast_worker=replace(app_module.settings.podcast_worker, max_steps_per_tick=1),
     ))
     monkeypatch.setattr(app_module, "_configured_podcast_asr_worker", lambda: None)

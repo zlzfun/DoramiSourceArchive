@@ -8,8 +8,8 @@
 `api/app.py::execute_podcast_landing_job`。
 
 三层防线:
-1. **游标**:复合 keyset 游标 `(updated_at, article_id)` 只扫新更新的 succeeded
-   播客分析行;另有一根**轮转 sweep 游标**每轮再看一小页全部行,兜住那些不改分析行
+1. **游标**:复合 keyset 游标 `(updated_at, article_id)` 扫新更新的 succeeded
+   播客分析行或带 publisher locator 的单集;另有一根**轮转 sweep 游标**每轮再看一小页全部行,兜住那些不改分析行
    但改变全文处理输入 revision 的变更(RSS transcript locator、publisher transcript
    发布、source-media snapshot、archive sync 收养)。
 2. **失败记忆**:按 episode 记录最近一次尝试(revision/次数/类别/下次可试时刻)。
@@ -29,10 +29,10 @@ import json
 from dataclasses import dataclass
 from typing import Iterable, Sequence
 
-from sqlalchemy import or_, and_
+from sqlalchemy import and_, func, or_
 from sqlmodel import Session, select
 
-from models.db import AppSettingRecord, ArticleAnalysisRecord
+from models.db import AppSettingRecord, ArticleAnalysisRecord, ArticleRecord
 from services import podcast_artifacts, podcast_processing_admin, podcast_source_media
 
 CURSOR_KEY = "podcast_landing:cursor"
@@ -69,6 +69,7 @@ DETERMINISTIC_ADMIN_CODES = frozenset(
         "podcast_not_found",
         "podcast_source_media_too_long",
         "podcast_artifact_not_ready",
+        "podcast_selection_required",
     }
 )
 # 配置 / 容量类:随运维动作改变,按守门节奏回访而非长停。
@@ -225,16 +226,41 @@ def save_state(session: Session, state: dict[str, dict]) -> None:
 
 
 def _landing_rows_statement():
-    return select(ArticleAnalysisRecord.article_id, ArticleAnalysisRecord.updated_at).where(
-        ArticleAnalysisRecord.status == "succeeded",
-        ArticleAnalysisRecord.analysis_basis.in_(LANDING_BASES),
+    # Publisher locators are eligible even when show-note analysis is absent or
+    # failed.  Keep those episode rows in both incremental scan and sweep; the
+    # resolver performs the authoritative locator validation before enqueue.
+    activity_at = func.max(
+        func.coalesce(
+            func.nullif(ArticleRecord.archive_updated_at, ""),
+            ArticleRecord.fetched_date,
+            "",
+        ),
+        func.coalesce(ArticleAnalysisRecord.updated_at, ""),
+    )
+    return (
+        select(ArticleRecord.id, activity_at)
+        .select_from(ArticleRecord)
+        .outerjoin(
+            ArticleAnalysisRecord,
+            ArticleAnalysisRecord.article_id == ArticleRecord.id,
+        )
+        .where(
+            ArticleRecord.content_type == "podcast_episode",
+            or_(
+                and_(
+                    ArticleAnalysisRecord.status == "succeeded",
+                    ArticleAnalysisRecord.analysis_basis.in_(LANDING_BASES),
+                ),
+                ArticleRecord.extensions_json.like('%"transcripts"%'),
+            ),
+        )
     )
 
 
 def scan_new_candidates(
     session: Session, cursor: Cursor, *, limit: int = SCAN_LIMIT
 ) -> tuple[list[str], Cursor]:
-    """Return succeeded podcast analyses strictly after the composite cursor.
+    """Return eligible analysis/publisher-locator rows after the composite cursor.
 
     ``updated_at`` is an ISO-8601 UTC string so lexical order is chronological;
     ties are broken by ``article_id`` so a page boundary inside one timestamp
@@ -243,16 +269,24 @@ def scan_new_candidates(
     """
 
     ts, article_id = cursor
+    activity_at = func.max(
+        func.coalesce(
+            func.nullif(ArticleRecord.archive_updated_at, ""),
+            ArticleRecord.fetched_date,
+            "",
+        ),
+        func.coalesce(ArticleAnalysisRecord.updated_at, ""),
+    )
     statement = _landing_rows_statement().order_by(
-        ArticleAnalysisRecord.updated_at.asc(), ArticleAnalysisRecord.article_id.asc()
+        activity_at.asc(), ArticleRecord.id.asc()
     ).limit(max(1, limit))
     if ts:
         statement = statement.where(
             or_(
-                ArticleAnalysisRecord.updated_at > ts,
+                activity_at > ts,
                 and_(
-                    ArticleAnalysisRecord.updated_at == ts,
-                    ArticleAnalysisRecord.article_id > article_id,
+                    activity_at == ts,
+                    ArticleRecord.id > article_id,
                 ),
             )
         )
@@ -273,11 +307,11 @@ def scan_sweep_page(
     the end so the following round restarts from the top.
     """
 
-    statement = _landing_rows_statement().order_by(
-        ArticleAnalysisRecord.article_id.asc()
-    ).limit(max(1, page))
+    statement = _landing_rows_statement().order_by(ArticleRecord.id.asc()).limit(
+        max(1, page)
+    )
     if after_id:
-        statement = statement.where(ArticleAnalysisRecord.article_id > after_id)
+        statement = statement.where(ArticleRecord.id > after_id)
     rows = session.exec(statement).all()
     ids = [str(row_id) for row_id, _updated in rows]
     next_after = ids[-1] if len(ids) >= max(1, page) else ""
