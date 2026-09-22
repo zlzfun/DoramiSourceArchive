@@ -123,8 +123,6 @@ def _podcast_projection(
         effective_guide_status = "ready"
     elif guide_status:
         effective_guide_status = guide_status
-    elif "digest_blog_zh" in published_text_kinds:
-        effective_guide_status = "ready"
     else:
         effective_guide_status = ""
 
@@ -174,6 +172,7 @@ def _podcast_projection(
             "error": str(premium_guide.get("error") or ""),
             "audio_ready": digest_audio is not None,
             "blog_ready": "digest_blog_zh" in published_text_kinds,
+            "script_ready": "narration_script_zh" in published_text_kinds,
         },
         "condensed_audio_url": (
             f"/api/reader/podcast-artifacts/{digest_audio.id}/audio"
