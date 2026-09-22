@@ -11,6 +11,7 @@ import struct
 import subprocess
 import sys
 from dataclasses import replace
+from types import SimpleNamespace
 from urllib.parse import parse_qs
 
 from fastapi.testclient import TestClient
@@ -282,6 +283,46 @@ def test_asr_quota_route_reports_current_window_without_inventing_usage(api_env,
     assert unknown["usage_status"] == "configuration_error"
     assert unknown["used_audio_seconds"] is None
     assert unknown["remaining_audio_seconds"] is None
+
+
+def test_asr_quota_readback_counts_spent_and_only_live_reservations(monkeypatch):
+    from api.routers import podcasts
+
+    config = _aliyun_config(dt.datetime.now(dt.timezone.utc))
+    monkeypatch.setattr(podcasts.podcast_speech_config_service, "resolve_config", lambda _s: config)
+    monkeypatch.setattr(podcasts.podcast_speech_config_service, "field_sources", lambda _s: {
+        "asr_daily_audio_seconds_limit": "ini", "asr_max_audio_seconds_per_file": "ini",
+    })
+    from services.aliyun_isi_usage import asr_usage_plan
+    plan = asr_usage_plan(config, audio_duration_ms=1000, now=dt.datetime.now(dt.timezone.utc))
+    definition = dict(
+        provider_quota_window_start_at=plan.window_start_at.isoformat(timespec="microseconds"),
+        provider_quota_window_end_at=plan.window_end_at.isoformat(timespec="microseconds"),
+        unit_price_cny_minor=plan.unit_price_cny_minor,
+        price_unit_count=plan.price_unit_count,
+        pricing_revision=plan.pricing_revision,
+        provider_quota_breached=False,
+    )
+
+    class Result:
+        def __init__(self, rows): self.rows = rows
+        def all(self): return self.rows
+        def one(self): return self.rows[0]
+
+    class SessionRows:
+        calls = 0
+        def exec(self, _query):
+            self.calls += 1
+            if self.calls == 1:
+                return Result([
+                    SimpleNamespace(**definition, status="reserved", reserved_usage_units=60),
+                    SimpleNamespace(**definition, status="released", reserved_usage_units=90),
+                ])
+            return Result([120])
+
+    data = podcasts._asr_quota_response(SessionRows())
+    assert data.usage_status == "available"
+    assert (data.used_audio_seconds, data.reserved_audio_seconds, data.remaining_audio_seconds) == (120, 60, 7020)
 
 
 def test_premium_threshold_api_persists_and_returns_effective_value(api_env):
