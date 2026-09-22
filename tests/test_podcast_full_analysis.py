@@ -987,7 +987,8 @@ def test_podcast_projection_exposes_durable_status_basis_and_thresholds():
         "failed_stage": "synthesizing",
         "error": "TTS provider timeout",
         "audio_ready": False,
-        "blog_ready": False,
+            "blog_ready": False,
+            "script_ready": False,
     }
     with_blog = _podcast_projection(
         {"premium_guide": {"status": "ready"}},
