@@ -3,7 +3,6 @@ import configparser
 from concurrent.futures import ThreadPoolExecutor
 import datetime as dt
 from dataclasses import replace
-import fcntl
 import hashlib
 import io
 import json
@@ -18,6 +17,7 @@ from types import SimpleNamespace
 import pytest
 
 from config_backup import BackupConfig, load_backup_config
+from services.file_lock import LOCK_EX, LOCK_NB, flock  # noqa: E402
 from services.storage_backup import BackupError, BackupService, restore_backup
 import services.storage_backup as backup_module
 
@@ -112,7 +112,7 @@ def test_runtime_receipt_root_override_and_busy_spool(service, tmp_path):
     receipt = root / ("c" * 64 + ".json")
     receipt.write_text('{"paid":"response"}')
     with (root / ".lock").open("wb") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        flock(lock, LOCK_EX)
         state = service.run()
         assert state["status"] == "failed"
         assert state["error"] == "backup_busy"
@@ -495,7 +495,7 @@ def test_snapshot_deadline_interrupts_steps_and_releases_read_transaction(servic
         # No abandoned read snapshot prevents the WAL from being fully reset.
         assert writer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone() == (0, 0, 0)
     with (service.receipt_root / ".lock").open("wb") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        flock(lock, LOCK_EX | LOCK_NB)
 
 
 def test_other_instances_new_success_supersedes_later_busy_attempt(service, monkeypatch):

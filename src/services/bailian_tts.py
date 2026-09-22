@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
-import fcntl
+from services.file_lock import LOCK_EX, flock
 import hashlib
 import io
 import json
@@ -113,7 +113,10 @@ def _atomic_write(path, data):
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(tmp, path)
-    fd = os.open(path.parent, os.O_RDONLY)
+    try:  # 目录 fsync:Windows 打不开目录句柄(PermissionError),跳过即可,rename 本身已落盘
+        fd = os.open(path.parent, os.O_RDONLY)
+    except OSError:
+        return
     try:
         os.fsync(fd)
     finally:
@@ -259,7 +262,7 @@ class BailianPremiumGuideTtsProvider:
         # No database transaction is held over provider I/O.
         fd = os.open(root / ".lock", os.O_RDWR | os.O_CREAT, 0o600)
         with os.fdopen(fd, "wb") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+            flock(lock, LOCK_EX)
             total = sum(p.stat().st_size for p in root.iterdir() if p.is_file())
             with Session(self.engine) as session:
                 needs_storage = any(

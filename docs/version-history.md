@@ -92,3 +92,29 @@ dirty `--here` 固化成快照 commit(pin ref)可原样重放;路径探针在目
 两边都启用才比对,`database` 仍严格);`/api/health` 是 v3.60.0 才有、文档误写 v3.56+ → 收养前置检查在开事务前拒绝旧代码;
 editable 痕迹移除调到路径核对之后、收养不接受重设基准;续做前核对运行身份仍等于事务身份(否则等于切回旧代码);
 `current` / `html_dir` 悬空时 `--status` 标出、收养拒绝并给恢复步骤。用例五条。
+
+
+## 下游身份源接入点:password_login_enabled 能力位 + alembic heads 口径(issue #130,待发布)
+
+内网适配分支在 main 之上接 SSO,把「账号能否密码登录」当 prop 从 `App.jsx` 穿到 `SettingsModal.jsx` 签名行,main 每改签名就撞冲突;
+内网自带迁移支线,main 每加一条迁移就双 head,内网每次手工 `alembic merge` 下次照样双头。按 `INTRANET_DELTA` 上游优先:
+main 提供 `services/auth_policy.password_login_enabled(record)` 单一覆盖点(main 恒 True),`runtime` / `GET /api/auth/session` 透出,
+登录与改密端点 `false` 时 403,设置柜账户区据能力位隐藏改密表单,登录页不动;下游拆掉 prop 穿线、只改这一个函数。
+迁移口径统一 `upgrade heads`(单链等价)、版本表读 `get_current_heads()`;新增守卫 `main_chain_heads`(去掉声明了 branch label 的 revision 及其后代后主线恰好一个叶子),下游带 label 的支线无论分叉还是延伸主线末端都可并存、不再合并。codex R1 三条 P2 一条 P3 全部接受并修:移动端设置同样传能力位、单头读取器改 heads 集合、守卫改按声明的 label 判定、匿名 False 用例。复检:四条均落实、通过,无阻断;codex 另在仓库外用两种下游拓扑副本跑完整迁移测试各 58 例通过。
+
+
+## 跨平台文件锁(issue #133,待发布)
+
+内网 agent 在 Windows 开发机跑测试:六处顶层裸 `import fcntl`(播客产物、TTS 回执、对象存储、日报生成、备份、存储维护)导入即
+`ModuleNotFoundError`,连带 `api.app` 导入链整片测试无法收集。它建议改成空实现 shim,未采纳:六处都是跨进程互斥,空实现会让锁静默失效。
+新增 `services/file_lock.py`:POSIX 委托 `fcntl.flock`;Windows 经 ctypes 调 `LockFileEx` / `UnlockFileEx`——真共享锁、真阻塞无超时,
+锁区固定在偏移 2^62 处 1 字节永不与数据相交(Windows 字节锁是强制锁),`LOCK_NB` 争用 `ERROR_LOCK_VIOLATION` 映射 `BlockingIOError`,
+与调用点既有的 `except BlockingIOError` 一致。六处调用点与 `tests/test_storage_backup.py` 改名接入;Windows 分支用假 Win32 API 单测
+flags 组合、锁区偏移、错误映射、解锁静默。codex R1 两条 P2 全部接受(首版用 `msvcrt.locking`:首字节强制锁会挡住播客上传 fd 持锁期间
+另一句柄的读取;阻塞模式约 10 s 放弃后调用方进入未获锁的临界区、共享锁降独占自争用)→ 改走 `LockFileEx` 一并解决。
+内网 Windows 实测:`file_lock` 用例通过,但播客产物 30 例挂在 `os.replace`(WinError 32)——不是锁的问题,Windows 上任何打开的句柄
+都挡住改名 / 删除(`os.open` 不带 `FILE_SHARE_DELETE`),内网 agent 提的「不上锁」治不了。修法:`import_bytes` 与 HTTP 流式导入写完即关
+暂存 fd(锁随之释放,关到 rename 之间由 staging_ttl 保护),reconcile 的过期暂存清理改「拿锁 → 关句柄 → 删」(`_unlink_stale_if_unlocked`);
+`bailian_tts._atomic_write` / `storage_backup._sync_directory` 的目录 fsync 在 Windows 打不开目录句柄,吞 OSError。POSIX 上用「能否再拿到锁」
+代替「句柄是否已关」写回归用例。生产平台不变(仅 Linux)。
+

@@ -347,3 +347,34 @@ def plan_migrations(db_url: str, *, script_location: Optional[str] = None) -> di
         "已在目标 revision 集合" if not pending else f"待执行 {len(pending)} 个迁移",
         pending=pending,
     )
+
+def main_chain_heads(script) -> list:
+    """main 自己那条链的 head 列表(issue #130):去掉「声明了 branch_labels 的 revision 及其全部后代」
+    (下游分叉仓的支线,如内网 SSO 迁移)之后,剩余子图的叶子。
+
+    注意不能用 ``Script.branch_labels`` 判定——alembic 会把标签同时传给后代**与祖先**(直到分叉点),
+    下游直接延伸 main 末端时整条主链都会被打上标签;这里读迁移文件里声明的 ``branch_labels``。
+    正常的 main 恒返回恰好一个 head;两个即 main 自己分叉(下游未加 label 的支线也按分叉计,有意如此)。
+    """
+    revisions = {rev.revision: rev for rev in script.walk_revisions()}
+
+    def parents(rev):
+        down = rev.down_revision
+        if not down:
+            return ()
+        return (down,) if isinstance(down, str) else tuple(down)
+
+    children: dict = {rid: [] for rid in revisions}
+    for rid, rev in revisions.items():
+        for parent in parents(rev):
+            children.setdefault(parent, []).append(rid)
+    downstream = set()
+    stack = [rid for rid, rev in revisions.items() if getattr(rev.module, "branch_labels", None)]
+    while stack:
+        rid = stack.pop()
+        if rid in downstream:
+            continue
+        downstream.add(rid)
+        stack.extend(children.get(rid, ()))
+    main = set(revisions) - downstream
+    return sorted(rid for rid in main if not any(child in main for child in children.get(rid, ())))
