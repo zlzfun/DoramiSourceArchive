@@ -94,6 +94,48 @@ def test_premium_guide_failure_retains_the_actionable_stage(tmp_path):
         assert guide["error"] == "TTS provider timeout"
 
 
+def test_tts_retry_reuses_valid_published_text_without_llm_regeneration(tmp_path):
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'retry.db'}")
+    _seed_force_candidate(sink)
+    store = PodcastArtifactStore(
+        sink.engine, tmp_path / "retry-audio", max_bytes=1024 * 1024,
+        total_quota_bytes=10 * 1024 * 1024, minimum_free_bytes=0,
+        staging_ttl_seconds=60, allowed_mime_types=("audio/wav",),
+        probe_runner=lambda *_a, **_k: subprocess.CompletedProcess(
+            [], 0, stdout='{"streams":[{"codec_type":"audio","duration":"1"}],"format":{"duration":"1"}}', stderr="",
+        ),
+    )
+
+    class CountingText(TextProvider):
+        blogs = 0
+        scripts = 0
+
+        async def create_blog(self, **kwargs):
+            self.blogs += 1
+            return await super().create_blog(**kwargs)
+
+        async def create_narration(self, **kwargs):
+            self.scripts += 1
+            return await super().create_narration(**kwargs)
+
+    class FailingTts(TtsProvider):
+        async def synthesize(self, _text):
+            raise RuntimeError("capacity blocked")
+
+    text = CountingText()
+    kwargs = dict(engine=sink.engine, store=store, episode_id="episode-force",
+                  config=_external_config(), text_provider=text, selection_override=True)
+    with pytest.raises(RuntimeError, match="capacity blocked"):
+        asyncio.run(run_premium_guide(**kwargs, tts_provider=FailingTts()))
+    with Session(sink.engine) as session:
+        script = session.get(PodcastTextPublicationRecord, "episode-force:narration_script_zh").artifact_id
+    result = asyncio.run(run_premium_guide(**kwargs, tts_provider=TtsProvider()))
+    assert result["audio_artifact_id"]
+    assert (text.blogs, text.scripts) == (1, 1)
+    with Session(sink.engine) as session:
+        assert session.get(PodcastTextPublicationRecord, "episode-force:narration_script_zh").artifact_id == script
+
+
 def test_premium_guide_tasks_only_list_premium_episodes_and_paginate(tmp_path):
     sink = DatabaseStorage(f"sqlite:///{tmp_path / 'premium-list.db'}")
     with Session(sink.engine) as session:
@@ -786,4 +828,3 @@ def test_audio_qa_fails_when_exceeding_hard_ceiling_and_keeps_blog(tmp_path):
             )
         ).all()
         assert audios == []
-

@@ -60,6 +60,8 @@ from services import podcast_premium as podcast_premium_service
 from services import aliyun_isi_config as aliyun_isi_config_service
 from services import bailian_speech_config as podcast_speech_config_service
 from services import credentials as credentials_service
+from config_bailian import BailianSpeechConfig
+from services.bailian_tts import receipt_cache_overview, reclaim_completed_receipts
 
 
 router = APIRouter(tags=["podcasts"])
@@ -763,6 +765,24 @@ def _audio_response(
 )
 def get_podcast_asr_quota(session: Session = Depends(deps.get_session)):
     return _asr_quota_response(session)
+
+
+@router.get("/api/admin/podcast-tts-receipts", dependencies=[Depends(deps.require_admin)])
+def get_podcast_tts_receipts(session: Session = Depends(deps.get_session)):
+    config = podcast_speech_config_service.resolve_config(session)
+    if not isinstance(config, BailianSpeechConfig):
+        return {"status": "unavailable", "reason": "当前未启用百炼 TTS 回执缓存"}
+    store = _store()
+    return {"status": "available", **receipt_cache_overview(config, max_audio_bytes=store.max_bytes)}
+
+
+@router.post("/api/admin/podcast-tts-receipts/reclaim", dependencies=[Depends(deps.require_admin)])
+def reclaim_podcast_tts_receipts(session: Session = Depends(deps.get_session)):
+    config = podcast_speech_config_service.resolve_config(session)
+    if not isinstance(config, BailianSpeechConfig):
+        raise HTTPException(status_code=409, detail="当前未启用百炼 TTS 回执缓存")
+    result = reclaim_completed_receipts(config, _app().db_sink.engine)
+    return {**result, **receipt_cache_overview(config, max_audio_bytes=_store().max_bytes)}
 
 
 @router.put(
