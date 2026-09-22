@@ -87,3 +87,8 @@ tag 模式在 checkout 前核对目标 tag 宣告 `DORAMI_BAREMETAL_TXN`,否则 
 dirty `--here` 固化成快照 commit(pin ref)可原样重放;路径探针在目标上下文核对可变存储都在 release 之外且与基准一致;extras 钉版导出 `docker/requirements-crawl4ai.txt`(守卫与基础清单同锁);
 锁默认与 Docker 同一把、不可写即失败。桩测试 `tests/test_deploy_baremetal.py`(迷你项目 + PATH 桩,真 git / symlink / SQLite / Alembic;35 例覆盖用法 / 锁 / 首装门 / 布局 / 健康告警 / 未收口纪律 / nginx 变更集真实文件 / dirty 固化 / 能力检查 / 旧脚本自举 / 路径探针 / 迁移矩阵 / 收养 / 回滚各模式 / 清理),
 `tests/fixtures/deploy_scripts_pre_issue_126/` 固化本波之前的脚本。实现记录与偏差见方案 §9。
+**内网实测 R1(2026-09-22)**:首次真实收养(运行 v3.58 一脉、工作树已是新代码)在 `venv_ready` 退出 33,暴露五个缺陷并修:
+收养基准探针用的是工作树新代码、目标是旧代码,键集合不同被判不一致 → 比对规则改不对称(缺键 = 基准代码更旧、空串 = 未启用,
+两边都启用才比对,`database` 仍严格);`/api/health` 是 v3.60.0 才有、文档误写 v3.56+ → 收养前置检查在开事务前拒绝旧代码;
+editable 痕迹移除调到路径核对之后、收养不接受重设基准;续做前核对运行身份仍等于事务身份(否则等于切回旧代码);
+`current` / `html_dir` 悬空时 `--status` 标出、收养拒绝并给恢复步骤。用例五条。

@@ -490,6 +490,20 @@ P2-06 残留(入窗后不受 deadline 约束)→ 每轮 sleep / `--max-time` 取
 修法按其建议:只在救援阶段尚未完成时改写决策;阶段已结束的保留当时的跳过记录与理由、提示「已按当时的跳过决策结束,不补做」,不回退阶段补造救援。
 用例拆成三条:救援前中断(`pm2 delete` 失败)→ 库修好后续做真实创建救援快照;救援阶段已结束 → 记录原样、无快照;反向事后加跳过 → exit 2。
 
+### 内网实测 R1(2026-09-22,内网裸机首次真实收养;检视方 = 生产环境)
+
+首次在内网跑 `./deploy.sh --here`(运行 v3.58 一脉 8d0be2a,工作树已拉到含 #126 的 master)在收养的 `venv_ready` 退出 33,内网 agent 随后绕过、清理、手工起服务,留下悬空 symlink。暴露五个缺陷,全部修在本分支:
+
+| # | 缺陷 | 修法 |
+|---|---|---|
+| 1 | 收养基准探针跑的是工作树(新代码),目标探针跑 legacy release(旧代码),键集合不同(旧代码无 `backup.local_dir`)被判不一致 | §4.7 比对规则改**不对称**:基准永远是某次探针的完整输出,缺键只可能是基准代码更旧、空串是该代码 / 配置未启用,两边都启用才比对;`database` 仍严格。这与实现检视 R1 复检时和 codex 商定的「缺键即无法确认」有出入——当时的前提是「缺键来自跳过规则」,现在基准不再跳过任何键,缺键有了唯一解释;否则收养旧版本后第一次带新存储根的升级必然被挡 |
+| 2 | 文档把收养前提写成 v3.56+,实际 `/api/health` 是 v3.60.0(#102)才有:旧代码收养重启后三道健康门必然过不去,而此时维护窗已开始 | 收养前置检查:服务有响应却给不出 `/api/health` 身份 → 开事务前 exit 24,提示先按旧方式升到 ≥ v3.60.0;文档改正 |
+| 3 | 移除 venv editable 痕迹发生在路径核对之前,核对失败时已改过运行中的 venv | `venv_ready` 改为挂点 → 探针核对 → 持久化 → 再 detach;收养不接受 `DORAMI_DEPLOY_ACCEPT_PATH_CHANGE` 重设基准 |
+| 4 | 收养中断后有人手工从仓库根起了新版本,续做会用事务记录的旧代码起服务 = 降级 | 续做前核对运行身份 == 事务 `target.code_sha`,不等则 exit 24 要求 `--discard-txn` 后重新收养当前版本 |
+| 5 | `releases/` 被人工清空后 `current` / `html_dir` 悬空,`--status` 看不出,收养会拿悬空目录当 dist | `--status` 标 ⚠️ 悬空;收养检测到悬空即拒绝并给出恢复步骤(删链接、放回真实 dist、删 current) |
+
+用例:`test_adoption_and_first_deploy_tolerate_storage_roots_unknown_to_older_code`(新代码多一个存储根的收养 + 首次正向)、`test_adoption_refuses_running_code_without_health_endpoint`、`test_adopt_resume_refuses_when_running_identity_changed`、`test_dangling_html_dir_is_refused_and_flagged_in_status`、`test_partial_or_missing_baseline_fields_cannot_pass_as_consistent` 末段(非库键缺失 = 新增)。
+
 ## 9. 实现记录(2026-09-21,分支 `feat/issue-126-baremetal-rollback`)
 
 §7 七项全按推荐拍板后,按 §5 六层提交实现(Claude Code 实现)。落点:`deploy.sh`(裸机专属参数与流程)、`scripts/deploy-baremetal.sh`
@@ -522,7 +536,7 @@ SQLite 快照、checkout 前钩子、`DORAMI_BAREMETAL_TXN` 宣告)、`deploy-do
 | 阶段 `db_migrated` | 切换序内、快照后 | 同;迁移与 taxonomy reconcile 在目标上下文(目标 venv + cwd=app + PYTHONPATH=app/src)执行,旧进程仍在跑(与旧脚本时序一致) |
 | 健康门 ② 的资产选择 | index 引用的主 JS / CSS | 第一个 `type=module` 脚本(无则第一个脚本)+ 第一个 stylesheet;外链资产跳过 |
 | 退出码 | §4.13 | 同;另 `--discard-txn` 需 `--yes` 与非交互 `--rollback` 缺 `--yes` 都是 2 |
-| 收养前提 | 未写 | 运行中的代码须透出构建身份(`/api/health` `build.*`,v3.56+),否则健康门过不了;身份取不到时 `--adopt-sha` |
+| 收养前提 | 未写 | 运行中的代码须有 `/api/health`(**v3.60.0 起**,#102 引入;此前误写 v3.56+),有响应却非身份则开事务前拒绝(24);完全无响应时 `--adopt-sha`,健康门裁决 |
 | dirty 固化的排除集合 | 固定项 + 生成项 | 固定项另含 `config/production.ini` / `config/backend.ini` / `.env`;生成项由 deploy.sh 按 ini + 环境覆盖算出(库目录 / 媒体 / 播客产物 / 备份目录 / `NGINX_RELEASES_DIR`);临时 excludes 文件只挡未跟踪文件,目录项与 `*.db` `*.sqlite` `*-wal` `*-shm` 在临时 index 里显式移除(`!` 否定与已跟踪都挡不住);指进已入库源码路径的项不排除,交挂点冲突检查拒绝 |
 | `--status` | §4.13 | 同;回滚预判段与 `--rollback` 共用目标选择、材料门与计划段(只读) |
 

@@ -1434,7 +1434,8 @@ def test_partial_or_missing_baseline_fields_cannot_pass_as_consistent(bm: BM):
     """P1-02 复检:历史基准缺 mutable.database(或整个 mutable)时无法确认历史布局 → 33;db.target 也参与核对。"""
     _deploy_v1(bm)
     ls_path = bm.clone / "deploy-state" / "last-success.json"
-    ls = json.loads(ls_path.read_text())
+    original_text = ls_path.read_text()
+    ls = json.loads(original_text)
     (bm.clone / "state-db").mkdir(); shutil.copy(bm.clone / "data" / "cms_data.db", bm.clone / "state-db" / "other.db")
     bm.write_ini(storage="database_url = sqlite:///state-db/other.db")
     del ls["paths"]["mutable"]["database"]
@@ -1446,6 +1447,13 @@ def test_partial_or_missing_baseline_fields_cannot_pass_as_consistent(bm: BM):
     r = bm.run("--here")
     assert r.returncode == 33 and "缺 mutable" in r.stderr
     assert bm.state("last-success.json")["db"]["target"] == os.path.realpath(bm.clone / "data" / "cms_data.db")
+    # 非库键缺失 = 基准代码更旧、不认识该存储根:记录并入基准,不算不一致(内网实测 R1)
+    bm.write_ini(storage="database_url = sqlite:///data/cms_data.db")
+    ls = json.loads(original_text); del ls["paths"]["mutable"]["media_dir"]; ls_path.write_text(json.dumps(ls))
+    r = bm.run("--here")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "media_dir: 历史基准(更旧的代码)无此存储根,视为新增" in r.stdout
+    assert bm.state("last-success.json")["paths"]["mutable"]["media_dir"] == os.path.realpath(bm.clone / "data" / "media")
 
 
 def test_absolute_in_repo_storage_roots_and_sqlite_sidecars_stay_out_of_snapshot(bm: BM):
@@ -1527,3 +1535,92 @@ def test_resumed_rollback_cannot_add_no_rescue_snapshot_afterwards(bm: BM):
     r = bm.run("--rollback", "--yes", "--restore-db")
     assert r.returncode == 0, r.stdout + r.stderr
     assert bm.state("last-success.json")["db"]["rescue_snapshot"] == ip["db"]["rescue_snapshot"]
+
+
+# 更新的代码多一个存储根(backup.local_dir):旧代码的探针给不出它
+MINI_CONFIG_WITH_BACKUP = MINI_CONFIG.replace(
+    "@dataclass(frozen=True)\nclass AppConfig:\n    storage: StorageConfig\n",
+    "@dataclass(frozen=True)\nclass BackupConfig:\n    local_dir: str\n@dataclass(frozen=True)\nclass AppConfig:\n    backup: BackupConfig\n    storage: StorageConfig\n",
+).replace(
+    "    return AppConfig(\n        storage=",
+    '    return AppConfig(\n        backup=BackupConfig(_path(parser.get("backup", "local_dir", fallback="data/backups"))),\n        storage=',
+)
+assert "class BackupConfig" in MINI_CONFIG_WITH_BACKUP and "backup=BackupConfig" in MINI_CONFIG_WITH_BACKUP
+
+
+def test_adoption_and_first_deploy_tolerate_storage_roots_unknown_to_older_code(bm: BM):
+    """内网实测 R1:收养 v3.58 一脉的安装时工作树已是新代码,新代码多一个存储根(backup),旧代码探针给不出;
+    收养只比对两边都启用的根,之后第一次正向部署把新根记入基准,不再 33。"""
+    old_sha = bm.head()
+    _setup_old_form(bm, old_sha)
+    new_sha = _commit_and_pull(bm, mini_project("1.1.0", extra_files={"src/config.py": MINI_CONFIG_WITH_BACKUP}))
+    r = bm.run("--here")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "收养完成" in r.stdout and "Deploy complete" in r.stdout
+    # 收养:基准(新代码)有 backup 根、目标(旧代码)未启用 → 记录不拒
+    assert "backup_local_dir: 历史基准" in r.stdout and "退役或停用" in r.stdout
+    legacy = [p for p in bm.releases() if p.name.startswith("legacy-")][0]
+    lm = json.loads((legacy / "manifest.json").read_text())
+    assert lm["target"]["code_sha"] == old_sha and lm["paths"]["mutable"]["backup_local_dir"] == ""
+    # 正向部署:基准(legacy 探针)未启用、目标(新代码)启用 → 记录并入基准
+    assert "backup_local_dir: 历史基准未启用,本次启用" in r.stdout
+    ls = bm.state("last-success.json")
+    assert ls["target"]["head_sha"] == new_sha  # 工作树 dirty(venv/ 等未忽略)→ code_sha 是快照提交
+    assert ls["paths"]["mutable"]["backup_local_dir"] == os.path.realpath(bm.clone / "data" / "backups")
+    assert ls["paths"]["mutable"]["database"] == lm["paths"]["mutable"]["database"]
+
+
+def test_adoption_refuses_running_code_without_health_endpoint(bm: BM):
+    """内网实测 R1:运行中的旧代码对 /api/health 回 404(v3.60.0 之前没有该端点):在开事务、动 venv 之前拒绝,提示先按旧方式升级。"""
+    sha = bm.head()
+    _setup_old_form(bm, sha)
+    sp = bm.clone / "venv" / "lib" / "python3.12" / "site-packages"
+    r = bm.run("--here", FAKE_HEALTH_RAW="<html>404</html>", FAKE_HEALTH_CODE="404")
+    assert r.returncode == 24 and "v3.60.0" in r.stderr and "HTTP 404" in r.stderr
+    assert not (bm.clone / "deploy-state" / "in-progress.json").exists() and not bm.releases()
+    assert list(sp.glob("__editable__*")), "拒绝发生在动 venv 之前"
+    assert bm.html_dir.is_dir() and not bm.html_dir.is_symlink()
+
+
+def test_adopt_resume_refuses_when_running_identity_changed(bm: BM):
+    """内网实测 R1:收养中断后有人手工从仓库根起了新代码,续做会用事务记录的旧代码起服务(降级)——拒绝,要求 --discard-txn 后重新收养。"""
+    old_sha = bm.head()
+    _setup_old_form(bm, old_sha)
+    r = bm.run("--adopt", FAKE_PM2_DELETE_FAIL="1")
+    assert r.returncode == 1 and bm.state("in-progress.json")["kind"] == "adopt"
+    assert bm.state("in-progress.json")["stage"]["intent"] == "process_stopped"
+    new_sha = _commit_and_pull(bm, mini_project("1.1.0"))
+    # 模拟人工从仓库根起了新代码:pm2 env 与 /api/health 的身份都变成 new_sha
+    state = json.loads((bm.pm2dir / "state.json").read_text())
+    state[APP]["env"]["DORAMI_BUILD_SHA"] = new_sha; state[APP]["env"]["DORAMI_BUILD_REF"] = "v1.1.0"
+    (bm.pm2dir / "state.json").write_text(json.dumps(state))
+    bm.health.write_text(json.dumps({"status": "ok", "version": "1.1.0", "build": {"ref": "v1.1.0", "sha": new_sha, "source": "env"}}))
+    r = bm.run("--here")
+    assert r.returncode == 24 and "--discard-txn" in r.stderr and "切回旧代码" in r.stderr
+    assert bm.state("in-progress.json")["kind"] == "adopt", "事务原样保留,由人决定"
+    assert bm.run("--discard-txn").returncode == 2, "已进入停机阶段的事务不能无确认丢弃"
+    assert bm.run("--discard-txn", "--yes").returncode == 0
+    r = bm.run("--here")
+    assert r.returncode == 0, r.stdout + r.stderr
+    ls = bm.state("last-success.json")
+    assert ls["prev"]["kind"] == "adopt" and ls["prev"]["code_sha"] == new_sha, "重新收养的是当前运行的版本"
+
+
+def test_dangling_html_dir_is_refused_and_flagged_in_status(bm: BM):
+    """内网实测 R1:上一次收养被人工清掉 releases/ 后 current / html_dir 悬空——--status 标出来,收养拒绝并给出恢复步骤。"""
+    sha = bm.head()
+    _setup_old_form(bm, sha)
+    backup = bm.html_dir.with_name(bm.html_dir.name + ".adopt-legacy-x")
+    shutil.move(str(bm.html_dir), str(backup))
+    os.symlink(bm.clone / "releases" / "gone" / "dist", bm.html_dir)
+    os.symlink(bm.clone / "releases" / "gone" / "app", bm.clone / "current")
+    r = bm.run("--status")
+    assert r.returncode == 0 and "html_dir 悬空" in r.stdout and "current 悬空" in r.stdout
+    r = bm.run("--here")
+    assert r.returncode == 24 and "悬空 symlink" in r.stderr and ".adopt-*" in r.stderr and not bm.releases()
+    # 按提示恢复现场后照常收养
+    bm.html_dir.unlink(); shutil.move(str(backup), str(bm.html_dir)); (bm.clone / "current").unlink()
+    r = bm.run("--here")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "收养完成" in r.stdout
+

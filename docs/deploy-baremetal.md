@@ -191,7 +191,12 @@ TLS 用 `--resolve` + 系统 CA 或 `DORAMI_DEPLOY_PROBE_CACERT`,不提供 `-k`;
 生效的 nginx 集合;然后 `pm2 delete` → 旧 `html_dir` 挪到 `<html_dir>.adopt-<txn>` + 建 symlink → `pm2 start legacy` →
 `pm2 save` → 两级健康门 → 晋升 last-success(`kind=adopt`,prev=null)。这是唯一的维护窗(一次重启);中断由未收口事务分派续做,
 不归档。之后的第一次正向部署以 legacy release 为回滚点。
-前提:运行中的代码要能透出构建身份(`/api/health` 的 `build.*`,v3.56+),否则健康门过不了——先人工核对再 `--adopt-sha`。
+前提:运行中的代码要有 **`/api/health`(v3.60.0 起才有,`build.*` 即构建身份)**——健康门只认它;服务在响应却回 404 / 401 / HTML
+时脚本在开事务之前就拒绝(exit 24),先按旧方式(`alembic upgrade heads` + 构建 + `pm2 restart`)把运行版本升到 ≥ v3.60.0 再收养。
+完全无响应(已停机)时给 `--adopt-sha`,由健康门裁决。工作树可以已经是更新的代码:路径核对只比对两边都启用的存储根,
+新代码新增的根在收养后的第一次正向部署记入基准。收养中断后若有人手工从仓库根起了别的版本,续做会拒绝(否则等于切回旧代码),
+先 `--discard-txn` 再重新收养当前运行的版本。`current` / `html_dir` 悬空(指向已被删掉的 release)时同样拒绝并给出恢复步骤:
+删悬空链接、把真实 dist 放回 html_dir(`<html_dir>.adopt-*` 是旧 dist 备份)、删 `current`。
 
 ## 配置
 
