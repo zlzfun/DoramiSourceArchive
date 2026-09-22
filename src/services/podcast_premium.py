@@ -26,6 +26,7 @@ from models.db import (
     PodcastTextPublicationRecord,
     SourceConfigRecord,
 )
+from services.podcast_publisher_transcripts import PublisherTranscriptError, supported_candidates
 
 
 INITIAL_PROCESSING_THRESHOLD = 6.0
@@ -466,6 +467,12 @@ def _serialize_state(state: _EpisodeState, *, threshold: float) -> dict[str, Any
     reason_text = reason
     if tts_forced and guide_status == "ready" and not current_premium:
         reason_text = "已强制生成 TTS；全文终评仍未达到当前优质门槛"
+    try:
+        has_publisher_locator = bool(supported_candidates(
+            _episode_extensions(state.episode).get("transcripts")
+        ))
+    except PublisherTranscriptError:
+        has_publisher_locator = False
     return {
         "episode_id": state.episode.id,
         "title": state.episode.title,
@@ -478,6 +485,7 @@ def _serialize_state(state: _EpisodeState, *, threshold: float) -> dict[str, Any
         "current_score": current_score,
         "current_basis": current_basis,
         "analysis_basis": raw_basis,
+        "publisher_transcript_available": has_publisher_locator,
         "initial_eligible": score_initial is not None and score_initial >= INITIAL_PROCESSING_THRESHOLD,
         "is_premium": current_premium,
         "stage": stage,

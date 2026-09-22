@@ -149,6 +149,69 @@ def test_candidate_policy_prefers_timed_and_does_not_rescue_unsupported_mime():
         )
 
 
+def test_json_zero_duration_word_keeps_original_evidence_and_rejects_bad_times():
+    raw = b'{"segments":[{"startTime":1.0,"endTime":1.0,"body":"hello"}]}'
+    parsed = transcripts.parse_transcript(raw, "json", max_segments=10, max_text_chars=1000)
+    assert parsed.source_text == raw.decode()
+    assert parsed.text == "hello"
+    for start, end in ((-1, 0), (2, 1), (float("inf"), float("inf"))):
+        body = json.dumps({"segments": [{"startTime": start, "endTime": end, "body": "hello"}]}).encode()
+        with pytest.raises(transcripts.PublisherTranscriptMalformed):
+            transcripts.parse_transcript(body, "json", max_segments=10, max_text_chars=1000)
+    with pytest.raises(transcripts.PublisherTranscriptMalformed):
+        transcripts.parse_transcript(b'{"segments":[{"startTime":1,"body":"hello"}]}', "json", max_segments=10, max_text_chars=1000)
+
+
+def test_fallback_publishes_supported_alternative_and_reuses_locator(monkeypatch, tmp_path):
+    sink = _sink(tmp_path)
+    json_url = "https://cdn.publisher.example/episode.json"
+    vtt_url = "https://cdn.publisher.example/episode.vtt"
+    with Session(sink.engine) as session:
+        episode = session.get(ArticleRecord, "episode-publisher")
+        episode.extensions_json = json.dumps({"transcripts": [
+            {"url": "https://cdn.publisher.example/episode.html", "type": "text/html"},
+            {"url": json_url, "type": "application/json"},
+            {"url": vtt_url, "type": "text/vtt"},
+        ]})
+        session.add(episode)
+        session.commit()
+    calls = []
+
+    async def fetch(_client, url, **kwargs):
+        calls.append((url, kwargs["headers"]["User-Agent"]))
+        if url == json_url:
+            raise httpx.HTTPStatusError("403", request=httpx.Request("GET", url), response=httpx.Response(403))
+        return VTT
+
+    first = _run_ingest(sink, monkeypatch, fetcher=fetch)
+    assert first["created"] is True
+    assert [url for url, _ in calls] == [json_url, vtt_url]
+    assert all("Mozilla/5.0" in ua for _, ua in calls)
+    assert transcripts.publisher_transcript_refresh_revision(sink.engine, episode_id="episode-publisher") == ""
+    with Session(sink.engine) as session:
+        artifact = session.get(PodcastTextArtifactRecord, first["artifact"]["id"])
+        assert transcripts.publisher_artifact_matches_current_locator(session, episode_id="episode-publisher", artifact=artifact)
+    calls.clear()
+    second = _run_ingest(sink, monkeypatch, fetcher=fetch)
+    assert second["created"] is False
+    assert [url for url, _ in calls] == [vtt_url]
+    with Session(sink.engine) as session:
+        episode = session.get(ArticleRecord, "episode-publisher")
+        episode.extensions_json = json.dumps({"transcripts": [{"url": vtt_url, "type": "text/vtt", "language": "fr"}]})
+        session.add(episode)
+        session.commit()
+    # A changed declaration at the same URL must not silently reuse old evidence.
+    assert transcripts.publisher_transcript_refresh_revision(sink.engine, episode_id="episode-publisher")
+    with Session(sink.engine) as session:
+        episode = session.get(ArticleRecord, "episode-publisher")
+        episode.extensions_json = json.dumps({"transcripts": [{"url": json_url, "type": "application/json"}]})
+        session.add(episode)
+        session.commit()
+        artifact = session.get(PodcastTextArtifactRecord, first["artifact"]["id"])
+        assert not transcripts.publisher_artifact_matches_current_locator(session, episode_id="episode-publisher", artifact=artifact)
+    assert transcripts.publisher_transcript_refresh_revision(sink.engine, episode_id="episode-publisher")
+
+
 @pytest.mark.parametrize(
     ("format", "body", "expected"),
     [
@@ -277,11 +340,10 @@ def test_ingest_is_bounded_idempotent_and_moves_immutable_pointer(
     assert first["artifact"]["id"] == second["artifact"]["id"]
     assert changed["artifact"]["version"] == 2
     assert all(result["provider_calls"] == 0 for result in (first, second, changed))
-    assert calls == [
-        ("https://cdn.publisher.example/episode.vtt?token=secret", 4096, 7),
-        ("https://cdn.publisher.example/episode.vtt?token=secret", 4096, 7),
-        ("https://cdn.publisher.example/episode.vtt?token=secret", 4096, 7),
-    ]
+    assert [(url, size) for url, size, _timeout in calls] == [
+        ("https://cdn.publisher.example/episode.vtt?token=secret", 4096),
+    ] * 3
+    assert all(0 < timeout <= 7 for _, _, timeout in calls)
     assert boundaries == ["enqueue", "provider_submit", "commit"] * 3
     with Session(sink.engine) as session:
         artifacts = session.exec(
@@ -469,7 +531,8 @@ def test_download_size_and_timeout_are_safely_mapped(
 
     with pytest.raises(expected_error):
         _run_ingest(sink, monkeypatch, fetcher=fail)
-    assert observed == [(4096, 7)]
+    assert len(observed) == 2
+    assert all(size == 4096 and 0 < timeout <= 7 for size, timeout in observed)
 
 
 def test_outer_deadline_also_bounds_safety_resolution(monkeypatch, tmp_path):
@@ -517,7 +580,10 @@ def test_ssrf_redirect_is_rechecked_and_private_target_is_never_requested(
 
     with pytest.raises(transcripts.PublisherTranscriptMalformed, match="下载失败"):
         asyncio.run(run())
-    assert requested == ["https://cdn.publisher.example/episode.vtt?token=secret"]
+    assert requested == [
+        "https://cdn.publisher.example/episode.vtt?token=secret",
+        "https://cdn.publisher.example/episode.txt",
+    ]
 
 
 def test_config_ini_and_env_override_transcript_limits(monkeypatch, tmp_path):
