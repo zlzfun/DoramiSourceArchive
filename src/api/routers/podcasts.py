@@ -359,7 +359,7 @@ async def ingest_episode_publisher_transcript(episode_id: str):
 
 async def _stream_bounded_audio(
     request: Request, store
-) -> tuple[Path, str, int, int]:
+) -> tuple[Path, str, int]:
     max_bytes = store.max_bytes
     try:
         declared = int(request.headers.get("content-length") or 0)
@@ -374,7 +374,8 @@ async def _stream_bounded_audio(
     size = 0
     timeout = _app().settings.podcast_artifacts.upload_timeout_seconds
     try:
-        with os.fdopen(fd, "wb", closefd=False) as handle:
+        # 写完即关 fd(释放暂存锁):Windows 上打开的句柄会挡住随后 import_file 的 os.replace
+        with os.fdopen(fd, "wb") as handle:
             async def write_chunks() -> None:
                 nonlocal size
                 async for chunk in request.stream():
@@ -392,14 +393,12 @@ async def _stream_bounded_audio(
             handle.flush()
             os.fsync(handle.fileno())
     except asyncio.TimeoutError as exc:
-        os.close(fd)
         path.unlink(missing_ok=True)
         raise HTTPException(status_code=408, detail="Podcast 音频上传超时") from exc
     except Exception:
-        os.close(fd)
         path.unlink(missing_ok=True)
         raise
-    return path, digest.hexdigest(), size, fd
+    return path, digest.hexdigest(), size
 
 
 @router.get(
@@ -545,11 +544,8 @@ async def import_artifact(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     store = _store()
     path: Path | None = None
-    staging_fd: int | None = None
     try:
-        path, content_hash, size_bytes, staging_fd = await _stream_bounded_audio(
-            request, store
-        )
+        path, content_hash, size_bytes = await _stream_bounded_audio(request, store)
         policy.require_artifact_writer(kind, boundary="commit")
         record = await asyncio.to_thread(
             store.import_file,
@@ -570,8 +566,6 @@ async def import_artifact(
     except PodcastArtifactError as exc:
         raise _as_http_error(exc) from exc
     finally:
-        if staging_fd is not None:
-            os.close(staging_fd)
         if path is not None:
             path.unlink(missing_ok=True)
     return serialize_artifact(record)
