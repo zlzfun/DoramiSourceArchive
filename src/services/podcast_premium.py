@@ -41,7 +41,7 @@ ACTIVE_PROCESSING_STATUSES = frozenset(
     {"queued", "running", "awaiting_review"}
 )
 FAILED_PROCESSING_STATUSES = frozenset(
-    {"failed", "retry_wait", "reconciliation_required"}
+    {"failed", "reconciliation_required"}
 )
 ACTIVE_TTS_STATUSES = frozenset({"queued", "summarizing", "synthesizing"})
 VALID_FILTERS = frozenset(
@@ -55,6 +55,7 @@ STAGE_CODES = (
     "not_selected",
     "awaiting_transcript",
     "processing",
+    "retry_wait",
     "full_analyzed",
     "reconciliation",
     "failed",
@@ -189,6 +190,9 @@ def _stage_and_reason(
         return "failed", str(
             process.error_message or "供应方结果待对账，完成对账后再重试"
         )
+    if status == "retry_wait":
+        reason = "等待 ASR 配额" if stage in {"fetch", "asr"} else "等待自动重试"
+        return "retry_wait", f"{reason}（{process.error_message}）" if process.error_message else reason
     if status in FAILED_PROCESSING_STATUSES:
         if stage in {"fetch", "asr"}:
             reason = (
@@ -228,6 +232,8 @@ def _stage_code(state: _EpisodeState) -> str:
     status = str(process.processing_status if process else "")
     if status == "reconciliation_required":
         return "reconciliation"
+    if status == "retry_wait":
+        return "retry_wait"
     if status in FAILED_PROCESSING_STATUSES:
         return "failed"
     if status in ACTIVE_PROCESSING_STATUSES:
@@ -315,7 +321,7 @@ def _matches_filter(
         return (
             score is None
             and process_status not in ACTIVE_PROCESSING_STATUSES
-            and process_status not in FAILED_PROCESSING_STATUSES
+            and process_status not in FAILED_PROCESSING_STATUSES | {"retry_wait"}
             and (initial_score(state.analysis) or 0) >= INITIAL_PROCESSING_THRESHOLD
         )
     return False
@@ -487,6 +493,7 @@ def _serialize_state(state: _EpisodeState, *, threshold: float) -> dict[str, Any
         "processing_status": process_status,
         "processing_id": str(process.id if process else ""),
         "processing_error": str(process.error_message if process else ""),
+        "next_retry_at": str(process.next_retry_at if process else ""),
         "attempt_count": int(process.attempt_count if process else 0),
         "reason": reason_text,
         "blog_ready": state.blog_ready,
@@ -512,10 +519,10 @@ def _serialize_state(state: _EpisodeState, *, threshold: float) -> dict[str, Any
         "can_force": (
             score_final is None
             and process_status not in ACTIVE_PROCESSING_STATUSES
-            and process_status != "reconciliation_required"
+            and process_status not in {"reconciliation_required", "retry_wait"}
         ),
         "can_retry": (
-            process_status in {"failed", "retry_wait", "reconciliation_required"}
+            process_status in {"failed", "reconciliation_required"}
             and process is not None
         ),
     }
@@ -576,7 +583,7 @@ def dashboard(
         pending_or_failed = sum(
             (
                 str(row.processing.processing_status if row.processing else "")
-                in ACTIVE_PROCESSING_STATUSES | FAILED_PROCESSING_STATUSES
+                in ACTIVE_PROCESSING_STATUSES | FAILED_PROCESSING_STATUSES | {"retry_wait"}
             )
             or (
                 str(_premium_guide(row.episode).get("status") or "")
@@ -729,7 +736,11 @@ def _timeline(
                 row_state, note = "pending", note or "排队中"
             elif status == "retry_wait":
                 row_state = "warn"
-                note = str(process.error_message or "等待自动重试")
+                note = "等待 ASR 配额" if stage in {"fetch", "asr"} else "等待自动重试"
+                if process.error_message:
+                    note += f"：{process.error_message}"
+                if process.next_retry_at:
+                    note += f"；计划 {process.next_retry_at} 自动重试"
             elif status == "reconciliation_required":
                 row_state = "warn"
                 note = str(process.error_message or "结果待对账，对账后重试")

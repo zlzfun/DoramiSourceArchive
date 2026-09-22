@@ -155,6 +155,7 @@ def _podcast_projection(
         "attempt_count": getattr(processing, "attempt_count", 0),
         "status": processing_status,
         "processing_status": processing_status,
+        "next_retry_at": str(getattr(processing, "next_retry_at", "") or ""),
         "stage": processing_stage,
         "error": str(getattr(processing, "error_message", "") or ""),
         "retryable": processing_status

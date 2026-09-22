@@ -11,6 +11,8 @@ import os
 import re
 from email.utils import formatdate
 from pathlib import Path
+from sqlalchemy import func
+from sqlalchemy.exc import SQLAlchemyError
 from typing import Annotated, Any, BinaryIO, Iterator, Literal
 
 import httpx
@@ -21,7 +23,8 @@ from sqlmodel import Session, select
 
 from api import deps
 from api.tokens import AUTH_SECRET
-from models.db import ArticleRecord, SourceConfigRecord
+from models.db import ArticleRecord, PodcastBudgetReservationRecord, PodcastCostLedgerRecord, SourceConfigRecord
+from services.aliyun_isi_usage import AliyunIsiUsageConfigurationError, asr_usage_plan
 from services.podcast_artifacts import (
     ARTIFACT_KINDS,
     PodcastArtifactConflict,
@@ -160,6 +163,12 @@ class PodcastAsrQuotaResponse(BaseModel):
     quota_timezone: str
     source: Literal["runtime_kv", "env", "ini", "default"]
     max_audio_per_file_source: Literal["runtime_kv", "env", "ini", "default"]
+    usage_status: Literal["available", "unknown", "configuration_error", "inconsistent", "frozen"]
+    usage_reason: str | None = None
+    quota_period: str | None = None
+    used_audio_seconds: int | None = None
+    reserved_audio_seconds: int | None = None
+    remaining_audio_seconds: int | None = None
 
 
 class PodcastAsrQuotaUpdate(BaseModel):
@@ -189,6 +198,41 @@ def _actor(auth: dict[str, Any]) -> str:
 def _asr_quota_response(session: Session) -> PodcastAsrQuotaResponse:
     config = podcast_speech_config_service.resolve_config(session)
     sources = podcast_speech_config_service.field_sources(session)
+    usage: dict[str, Any] = {"usage_status": "unknown", "usage_reason": "用量尚未读取"}
+    try:
+        plan = asr_usage_plan(config, audio_duration_ms=1000, now=dt.datetime.now(dt.timezone.utc))
+        reservations = session.exec(select(PodcastBudgetReservationRecord).where(
+            PodcastBudgetReservationRecord.provider_quota_scope == plan.quota_scope,
+            PodcastBudgetReservationRecord.provider_quota_period == plan.quota_period,
+            PodcastBudgetReservationRecord.provider_quota_unit == plan.unit.value,
+        )).all()
+        expected = (plan.window_start_at.isoformat(timespec="microseconds"),
+                    plan.window_end_at.isoformat(timespec="microseconds"),
+                    plan.unit_price_cny_minor, plan.price_unit_count, plan.pricing_revision)
+        if any((row.provider_quota_window_start_at, row.provider_quota_window_end_at,
+                row.unit_price_cny_minor, row.price_unit_count, row.pricing_revision) != expected
+               for row in reservations):
+            usage = {"usage_status": "inconsistent", "usage_reason": "当前配额窗口与已有预占定义不一致"}
+        else:
+            used = session.exec(select(func.coalesce(func.sum(PodcastCostLedgerRecord.actual_usage_units), 0)).where(
+                PodcastCostLedgerRecord.provider_quota_scope == plan.quota_scope,
+                PodcastCostLedgerRecord.provider_quota_period == plan.quota_period,
+                PodcastCostLedgerRecord.provider_quota_unit == plan.unit.value,
+            )).one()
+            reserved = sum(int(row.reserved_usage_units or 0) for row in reservations if row.status == "reserved")
+            frozen = any(row.provider_quota_breached for row in reservations)
+            usage = {
+                "usage_status": "frozen" if frozen else "available",
+                "usage_reason": "观察到超额，配额已冻结" if frozen else None,
+                "quota_period": plan.quota_period,
+                "used_audio_seconds": int(used),
+                "reserved_audio_seconds": reserved,
+                "remaining_audio_seconds": max(0, plan.limit_units - int(used) - reserved),
+            }
+    except (AliyunIsiUsageConfigurationError, ValueError) as exc:
+        usage = {"usage_status": "configuration_error", "usage_reason": "ASR 用量计划不可用，请检查供应商计量配置及有效期"}
+    except SQLAlchemyError:
+        usage = {"usage_status": "unknown", "usage_reason": "用量读取失败，请稍后刷新"}
     return PodcastAsrQuotaResponse(
         daily_audio_seconds_limit=config.asr_daily_audio_seconds_limit,
         daily_audio_hours_limit=config.asr_daily_audio_seconds_limit / 3600,
@@ -198,6 +242,7 @@ def _asr_quota_response(session: Session) -> PodcastAsrQuotaResponse:
         quota_timezone=config.asr_quota_timezone,
         source=sources["asr_daily_audio_seconds_limit"],
         max_audio_per_file_source=sources["asr_max_audio_seconds_per_file"],
+        **usage,
     )
 
 

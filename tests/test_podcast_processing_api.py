@@ -258,6 +258,32 @@ def _login(client: TestClient) -> None:
     )
 
 
+def test_asr_quota_route_reports_current_window_without_inventing_usage(api_env, monkeypatch):
+    app, _sink, _store, _snapshot, _config = api_env
+    now = dt.datetime.now(dt.timezone.utc)
+    config = _aliyun_config(now)
+    monkeypatch.setattr(app.podcast_speech_config_service, "resolve_config", lambda _session: config)
+    monkeypatch.setattr(app.podcast_speech_config_service, "field_sources", lambda _session: {
+        "asr_daily_audio_seconds_limit": "ini", "asr_max_audio_seconds_per_file": "ini",
+    })
+    client = TestClient(app.app, raise_server_exceptions=False)
+    _login(client)
+    response = client.get("/api/admin/podcast-asr-quota")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["usage_status"] == "available"
+    assert data["quota_scope"] == config.asr_quota_scope
+    assert data["used_audio_seconds"] == data["reserved_audio_seconds"] == 0
+    assert data["remaining_audio_seconds"] == config.asr_daily_audio_seconds_limit
+    assert data["quota_period"]
+
+    monkeypatch.setattr(app.podcast_speech_config_service, "resolve_config", lambda _session: _aliyun_config(now, asr_quota_scope=""))
+    unknown = client.get("/api/admin/podcast-asr-quota").json()
+    assert unknown["usage_status"] == "configuration_error"
+    assert unknown["used_audio_seconds"] is None
+    assert unknown["remaining_audio_seconds"] is None
+
+
 def test_premium_threshold_api_persists_and_returns_effective_value(api_env):
     app_module, _sink, _store, _source_audio, _config = api_env
     with TestClient(app_module.app) as client:
