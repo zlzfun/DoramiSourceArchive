@@ -109,6 +109,7 @@ from services import image_insights as image_insights_service
 from services import remote_sync as remote_sync_service
 from services import sync_consumer_policy
 from services import accounts as accounts_service
+from services import auth_policy
 from services import admin_audit as admin_audit_service
 from services.collection_nodes import PODCAST_SOURCE_TYPES, resolve_collection_node
 from services import reader_state as reader_state_service
@@ -254,7 +255,31 @@ def runtime_capabilities(session: Optional[Dict[str, Any]] = None) -> Dict[str, 
         "user_sources_enabled": _user_sources_capability(),
         # 个人早报发布闸：关闭时读者端隐藏页面入口，端点侧继续以 404 防守。
         "personal_digest_enabled": _personal_digest_capability(),
+        # 密码登录能力位(issue #130):main 恒 True;下游外部身份源只覆盖 services/auth_policy,
+        # 前端设置柜据此隐藏改密表单,登录 / 改密端点据此 403。
+        "password_login_enabled": _password_login_capability(session),
     }
+
+
+def _password_login_allows(record: Any) -> bool:
+    """能力位透出用的策略调用:策略异常按 True 降级(main 默认),只影响展示;登录 / 改密端点直接调策略,不降级。"""
+    try:
+        return bool(auth_policy.password_login_enabled(record))
+    except Exception:
+        return True
+
+
+def _password_login_capability(session: Optional[Dict[str, Any]] = None) -> bool:
+    """密码登录能力位(runtime 透出用):有会话按该账号判定,无会话取全局姿态;异常按 True 降级(main 默认)。"""
+    username = str(session.get("sub")) if session else ""
+    if not username or db_sink is None:
+        return _password_login_allows(None)
+    try:
+        with Session(db_sink.engine) as db:
+            record = accounts_service.get_user(db, username)
+    except Exception:  # 能力探测不应阻断 runtime 接口
+        return True
+    return _password_login_allows(record)
 
 
 def _user_sources_capability() -> bool:
@@ -1936,6 +1961,9 @@ def login_admin(params: AuthLoginParams, response: Response):
         if record is None or not record.is_active:
             accounts_service.verify_against_dummy(params.password)
             raise HTTPException(status_code=401, detail="账号或密码错误")
+        # 下游外部身份源接管的账号不走密码(issue #130,services/auth_policy 覆盖点);main 上恒不触发。
+        if not auth_policy.password_login_enabled(record):
+            raise HTTPException(status_code=403, detail="该账号不使用密码登录")
         if not accounts_service.verify_password(params.password, record.password_hash):
             raise HTTPException(status_code=401, detail="账号或密码错误")
         role = record.role
@@ -1969,13 +1997,19 @@ def login_admin(params: AuthLoginParams, response: Response):
 def get_auth_session(request: Request):
     session = current_auth_session(request)
     if session is None:
-        return {"authenticated": False, "user": None}
+        # 匿名可读的全局姿态(issue #130):登录页据此决定是否呈现密码表单;main 恒 True。
+        return {
+            "authenticated": False,
+            "user": None,
+            "password_login_enabled": _password_login_allows(None),
+        }
     with Session(db_sink.engine) as db_session:
         record = accounts_service.get_user(db_session, session["sub"])
         avatar = record.avatar if record else None
         interest_onboarding_completed_at = (
             record.interest_onboarding_completed_at if record else None
         )
+        password_login = _password_login_allows(record)
     return {
         "authenticated": True,
         "user": _auth_user_payload(
@@ -1984,6 +2018,7 @@ def get_auth_session(request: Request):
             avatar,
             interest_onboarding_completed_at=interest_onboarding_completed_at,
         ),
+        "password_login_enabled": password_login,
     }
 
 
@@ -2022,6 +2057,8 @@ def change_own_password(params: ChangePasswordParams, request: Request, response
         record = accounts_service.get_active_user(session, username)
         if record is None:
             raise HTTPException(status_code=401, detail="账户不存在或已停用")
+        if not auth_policy.password_login_enabled(record):
+            raise HTTPException(status_code=403, detail="该账号不使用密码登录,不能修改密码")
         if not accounts_service.verify_password(params.current_password, record.password_hash):
             raise HTTPException(status_code=400, detail="当前密码错误")
         updated = accounts_service.set_password(session, username, params.new_password)

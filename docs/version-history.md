@@ -72,6 +72,15 @@ ZCode 排查确认 IT之家首页截断、公共日报评分前裁剪后推进�
 Claude Code (`claude-fable-5-1`) 交叉检视先协商后返修：限定空游标 bootstrap，保留删报回退时的旧 pending，同值配置不打断生成，消除首页条数与全页时间游标假设；拒绝按龄期丢弃未评估文章，改用新旧池配额及积压最老时间观测。详细证据、测试、验收和上线边界见 [方案](./news-coverage-reliability-plan.md)。
 
 
+## 下游身份源接入点:password_login_enabled 能力位 + alembic heads 口径(issue #130,待发布)
+
+内网适配分支在 main 之上接 SSO,把「账号能否密码登录」当 prop 从 `App.jsx` 穿到 `SettingsModal.jsx` 签名行,main 每改签名就撞冲突;
+内网自带迁移支线,main 每加一条迁移就双 head,内网每次手工 `alembic merge` 下次照样双头。按 `INTRANET_DELTA` 上游优先:
+main 提供 `services/auth_policy.password_login_enabled(record)` 单一覆盖点(main 恒 True),`runtime` / `GET /api/auth/session` 透出,
+登录与改密端点 `false` 时 403,设置柜账户区据能力位隐藏改密表单,登录页不动;下游拆掉 prop 穿线、只改这一个函数。
+迁移口径统一 `upgrade heads`(单链等价)、版本表读 `get_current_heads()`;新增守卫 `main_chain_heads`(去掉声明了 branch label 的 revision 及其后代后主线恰好一个叶子),下游带 label 的支线无论分叉还是延伸主线末端都可并存、不再合并。codex R1 三条 P2 一条 P3 全部接受并修:移动端设置同样传能力位、单头读取器改 heads 集合、守卫改按声明的 label 判定、匿名 False 用例。复检:四条均落实、通过,无阻断;codex 另在仓库外用两种下游拓扑副本跑完整迁移测试各 58 例通过。
+
+
 ## 跨平台文件锁(issue #133,待发布)
 
 内网 agent 在 Windows 开发机跑测试:六处顶层裸 `import fcntl`(播客产物、TTS 回执、对象存储、日报生成、备份、存储维护)导入即
