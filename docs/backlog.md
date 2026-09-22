@@ -6,6 +6,11 @@
 
 ## 进行中
 
+- ☐ **issue #97 Podcast 成本门控与评分标定**（分支 `feat/issue-97-podcast-cost-gates`，方案
+  `docs/podcast-cost-and-scoring-calibration-plan.md`）：P0 已实现——简介付费 ASR 线 `>= 6.0`；
+  发布方逐字稿不看简介分直达全文分析，失败后低于 6.0 严禁回退 ASR；全文优质/TTS 代码
+  默认线 `>= 7.5`，KV 存量不覆盖；边界与零 ASR 旁路回归已补。待合入、生产 KV 核对和 7 天
+  观察。P1 六组 32 输入黄金集尚未启动；通过前不改评分提示词、不 bump 评分版本、不批量重评。
 - ☐ **issue #74 个人早报三处**(分支 `feat/issue-74-brief-grid`,方案 `docs/personal-brief-grid-and-sections.md`):
   公共日报剔出早报范围 + 板块固定顺序 / 板块内分数降序 + 分值驱动网格(策略 F,样页 `docs/design/dorami-brief-grid-quiet.html`)
   已实现;待用户本地验收与 codex 检视。观察期:T = 9.0 / Δ = 1.0 两个常量在生产分布下的通栏频率与 2 + 2 出现率。

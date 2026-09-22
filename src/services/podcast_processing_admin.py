@@ -903,10 +903,16 @@ def request_processing(
                 initial_candidate = bool(
                     analysis is not None
                     and analysis.status == "succeeded"
-                    and analysis.analysis_basis == "podcast_show_notes"
-                    and analysis.quality_score is not None
-                    and float(analysis.quality_score)
+                    and podcast_premium.initial_score(analysis) is not None
+                    and podcast_premium.initial_score(analysis)
                     >= podcast_premium.INITIAL_PROCESSING_THRESHOLD
+                )
+                # A publisher transcript is already durable, verified against
+                # the current RSS locator, and costs no ASR spend.  It is an
+                # independent policy candidate, not a show-notes fallback.
+                publisher_candidate = bool(
+                    target == "full_analysis"
+                    and selected.kind == "publisher_transcript"
                 )
                 transcript_refresh = bool(
                     analysis is not None
@@ -918,7 +924,7 @@ def request_processing(
                     and selected.artifact_id != analysis.transcript_artifact_id
                 )
                 if target != "full_analysis" or not (
-                    initial_candidate or transcript_refresh
+                    initial_candidate or publisher_candidate or transcript_refresh
                 ):
                     raise PodcastAdminError(
                         "podcast_selection_required", status_code=409

@@ -297,7 +297,7 @@ class PodcastConfig:
     provider_ready_targets: tuple[str, ...] = ()
     voice_profiles: tuple[str, ...] = ()
     default_voice_profile: str = ""
-    premium_score_threshold: float = 8.0
+    premium_score_threshold: float = 7.5
     premium_transcript_max_chars: int = 120_000
     premium_blog_max_chars: int = 6_000
     premium_narration_max_chars: int = 4_500
@@ -1266,7 +1266,7 @@ def load_config() -> AppConfig:
             premium_score_threshold=float(
                 os.getenv("DORAMI_PODCAST_PREMIUM_SCORE_THRESHOLD")
                 or parser.getfloat(
-                    "podcast", "premium_score_threshold", fallback=8.0
+                    "podcast", "premium_score_threshold", fallback=7.5
                 )
             ),
             premium_transcript_max_chars=int(

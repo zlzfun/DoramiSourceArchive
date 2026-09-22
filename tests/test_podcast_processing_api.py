@@ -264,16 +264,16 @@ def test_premium_threshold_api_persists_and_returns_effective_value(api_env):
         _login(client)
         initial = client.get("/api/admin/podcast-premium-tasks")
         assert initial.status_code == 200
-        assert initial.json()["threshold"] == 8.0
-        assert initial.json()["initial_processing_threshold"] == 5.0
+        assert initial.json()["threshold"] == 7.5
+        assert initial.json()["initial_processing_threshold"] == 6.0
 
         saved = client.put(
-            "/api/admin/podcast-premium-threshold", json={"threshold": 7.5}
+            "/api/admin/podcast-premium-threshold", json={"threshold": 8.0}
         )
         assert saved.status_code == 200
-        assert saved.json()["threshold"] == 7.5
+        assert saved.json()["threshold"] == 8.0
         refreshed = client.get("/api/admin/podcast-premium-tasks")
-        assert refreshed.json()["threshold"] == 7.5
+        assert refreshed.json()["threshold"] == 8.0
 
         assert client.put(
             "/api/admin/podcast-premium-threshold", json={"threshold": 8.55}

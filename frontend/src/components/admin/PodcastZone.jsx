@@ -72,7 +72,7 @@ const fetchQuota = () => fetchPodcastAsrQuota();
 
 /**
  * 运维管理 → 内容 → 「播客」分区(issue #76,样页 docs/design/dorami-admin-podcast-taxonomy-quiet.html)。
- * 区头(quiet 刷新)→ KPI 六格 → 处理参数开关板(优质门槛 + 固定处理线 + ASR 配额 chip)→
+ * 区头(quiet 刷新)→ KPI 六格 → 处理参数开关板(优质门槛 + 固定付费 ASR 线 + ASR 配额 chip)→
  * 单集处理表 → 中文精简音频表;三处整行可点开同一个单集抽屉。四组数据各自 loading/error/data,
  * 一组失败不挡其它;活动态行存在时 3s 轮询任务表(静默,不闪 loading)。
  */
@@ -109,8 +109,8 @@ export default function PodcastZone({ showToast, refreshTick = 0, onOpenCredenti
   }, [tasks.data?.threshold]);
 
   const thresholds = useMemo(() => ({
-    initial: tasks.data?.initial_processing_threshold ?? 5,
-    premium: tasks.data?.threshold ?? 8,
+    initial: tasks.data?.initial_processing_threshold ?? 6,
+    premium: tasks.data?.threshold ?? 7.5,
   }), [tasks.data?.initial_processing_threshold, tasks.data?.threshold]);
 
   // 活动态(处理中 / TTS 生成中)存在时静默轮询;抽屉开着也同步刷新。
@@ -169,7 +169,7 @@ export default function PodcastZone({ showToast, refreshTick = 0, onOpenCredenti
   const handleRetry = (item) => runProcessing(item);
 
   const handleForceFull = async (item) => {
-    const initial = item.initial_score == null ? '尚未初评' : `简介初评 ${podcastScoreText(item.initial_score)}${item.initial_eligible ? '，尚未进入全文处理' : `，未过自动处理线 ${podcastScoreText(thresholds.initial)}`}`;
+    const initial = item.initial_score == null ? '尚未初评' : `简介初评 ${podcastScoreText(item.initial_score)}${item.initial_eligible ? '，尚未进入全文处理' : `，未过付费 ASR 线 ${podcastScoreText(thresholds.initial)}`}`;
     if (!(await confirm({
       title: '强制全文处理',
       message: `「${item.title}」${initial}。\n将准备原节目音频、提交 ASR 转录并进行全文分析；消耗 ASR 日配额。`,
@@ -323,7 +323,7 @@ export default function PodcastZone({ showToast, refreshTick = 0, onOpenCredenti
             />
           </label>
           <span className="ai-divider" />
-          <span className="knob is-fixed">简介初评处理线 <strong>≥ {podcastScoreText(thresholds.initial)}</strong></span>
+          <span className="knob is-fixed">简介付费 ASR 线 <strong>≥ {podcastScoreText(thresholds.initial)}</strong></span>
           <span className="ai-divider" />
           <button
             type="button"

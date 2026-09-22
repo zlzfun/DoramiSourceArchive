@@ -51,6 +51,14 @@ def test_classify_failure_three_classes():
     )
     assert deterministic == landing.FailureClass("deterministic", "podcast_source_media_too_long")
     assert landing.classify_failure(PodcastArtifactTooLarge("大")).kind == "deterministic"
+    assert landing.classify_failure(
+        PodcastAdminError("podcast_selection_required", status_code=409)
+    ).kind == "deterministic"
+    assert landing.classify_failure(PodcastAdminError(
+        "podcast_publisher_transcript_unavailable",
+        status_code=503,
+        message="temporary publisher failure",
+    )).kind == "transient"
     # 配置 / 容量类 → gated(随运维动作变化,按守门节奏回访)
     assert landing.classify_failure(
         PodcastAdminError("podcast_provider_unavailable", status_code=503)
@@ -71,6 +79,28 @@ def test_landing_gated_is_an_admin_error_for_the_manual_api():
     assert isinstance(exc, PodcastAdminError)
     assert exc.status_code == 503 and exc.code == "podcast_landing_gated"
     assert "artifact_store_capacity" in exc.message
+
+
+def test_publisher_failure_retry_class_distinguishes_404_from_transient_http():
+    request = httpx.Request("GET", "https://publisher.example/transcript.vtt")
+    not_found = publisher.PublisherTranscriptFetchFailed("fetch failed")
+    not_found.__cause__ = httpx.HTTPStatusError(
+        "404",
+        request=request,
+        response=httpx.Response(404, request=request),
+    )
+    upstream = publisher.PublisherTranscriptFetchFailed("fetch failed")
+    upstream.__cause__ = httpx.HTTPStatusError(
+        "503",
+        request=request,
+        response=httpx.Response(503, request=request),
+    )
+
+    assert app_module._publisher_transcript_failure_is_transient(not_found) is False
+    assert app_module._publisher_transcript_failure_is_transient(upstream) is True
+    assert app_module._publisher_transcript_failure_is_transient(
+        publisher.PublisherTranscriptTimeout("timeout")
+    ) is True
 
 
 def test_transient_backoff_doubles_from_five_minutes_and_caps():
@@ -263,13 +293,58 @@ def test_scan_sweep_page_rotates_and_wraps(tmp_path):
         assert ids == ["s4"] and after == ""  # 到底回绕
 
 
+def test_low_score_publisher_locator_is_a_free_full_analysis_candidate(
+    tmp_path, monkeypatch
+):
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'publisher-bypass.db'}")
+    _seed(sink, [("ep-official", 5.9, STAMP)])
+    with Session(sink.engine) as session:
+        episode = session.get(ArticleRecord, "ep-official")
+        payload = json.loads(episode.extensions_json)
+        payload["transcripts"] = [{
+            "url": "https://publisher.example/ep-official.vtt",
+            "type": "text/vtt",
+            "language": "zh-CN",
+        }]
+        episode.extensions_json = json.dumps(payload)
+        session.add(episode)
+        session.add(_episode(
+            "ep-official-unscored",
+            STAMP,
+            extensions={"transcripts": [{
+                "url": "https://publisher.example/ep-official-unscored.vtt",
+                "type": "text/vtt",
+                "language": "zh-CN",
+            }]},
+        ))
+        session.commit()
+    monkeypatch.setattr(app_module, "db_sink", sink)
+
+    with Session(sink.engine) as session:
+        scanned, _cursor = landing.scan_new_candidates(session, landing.EMPTY_CURSOR)
+    assert set(scanned) == {"ep-official", "ep-official-unscored"}
+
+    resolution = app_module.collect_podcast_landing_candidates(scanned)
+
+    assert resolution.settled == [] and resolution.failed == {}
+    assert {candidate.episode_id for candidate in resolution.candidates} == {
+        "ep-official",
+        "ep-official-unscored",
+    }
+    assert all(
+        not candidate.needs_source_media
+        and candidate.revision.startswith("prepare:")
+        for candidate in resolution.candidates
+    )
+
+
 # ── 调度轮次(app 层)────────────────────────────────────────────────────────
 
 
 @pytest.fixture()
 def landing_env(monkeypatch, tmp_path):
     sink = DatabaseStorage(f"sqlite:///{tmp_path / 'landing-job.db'}")
-    _seed(sink, [("ep-high", 6.5, STAMP), ("ep-low", 4.0, STAMP), ("ep-mid", 5.0, STAMP)])
+    _seed(sink, [("ep-high", 6.5, STAMP), ("ep-low", 5.9, STAMP), ("ep-mid", 6.0, STAMP)])
     calls: list[str] = []
     outcomes: dict[str, object] = {}
 
@@ -318,7 +393,7 @@ def test_round_attempts_only_eligible_and_remembers_outcomes(landing_env):
     env = landing_env
     env.outcomes["ep-high"] = PodcastArtifactTooLarge("太大")
     stats = _run()
-    # ep-low(4.0)不够线;ep-high 与 ep-mid(恰好 5.0)入队
+    # ep-low(5.9)不够线;ep-high 与 ep-mid(恰好 6.0)入队
     assert sorted(env.calls) == ["ep-high", "ep-mid"]
     assert stats["scanned"] == 3 and stats["eligible"] == 2 and stats["swept"] == 3
     assert stats["attempted"] == 2 and stats["succeeded"] == 1 and stats["failed"] == 1
@@ -360,8 +435,8 @@ def test_round_picks_up_new_rows_and_due_retries(landing_env):
     assert _cursor(env.sink) == ("2026-09-14T00:00:00+00:00", "ep-new")
 
 
-def test_sweep_catches_locator_change_without_analysis_update(landing_env):
-    """P1-2:分析行 updated_at 不变、只改 RSS transcript locator → sweep 拾起并因 revision 变化放行。"""
+def test_landing_catches_locator_change_without_analysis_update(landing_env):
+    """只改 RSS transcript locator 也会因 article revision 变化放行。"""
 
     env = landing_env
     _run()
@@ -377,8 +452,8 @@ def test_sweep_catches_locator_change_without_analysis_update(landing_env):
         episode.extensions_json = json.dumps(payload)
         session.add(episode); session.commit()
     stats = _run()
-    assert stats["scanned"] == 0  # 增量扫描看不到它
-    assert env.calls == ["ep-mid"]  # sweep 看到了
+    assert stats["scanned"] == 1
+    assert env.calls == ["ep-mid"]  # article revision 进入增量扫描
     assert _state(env.sink)["ep-mid"]["revision"] != old_revision
     assert _state(env.sink)["ep-mid"]["revision"].startswith("prepare:")
 
@@ -544,12 +619,12 @@ def enqueue_env(monkeypatch, tmp_path):
     return SimpleNamespace(sink=sink, ingests=ingests)
 
 
-def _enqueue():
+def _enqueue(*, selection_override=False):
     return asyncio.run(
         app_module.enqueue_podcast_processing_with_input(
             episode_id="ep-vtt",
             target="full_analysis",
-            selection_override=False,
+            selection_override=selection_override,
             idempotency_key="k",
             reason="test",
             actor="system",
@@ -571,6 +646,53 @@ def test_enqueue_reapplies_asr_gate_after_publisher_failure(enqueue_env, monkeyp
         _enqueue()
     assert info.value.reason == "artifact_store_capacity"
     assert env.ingests == ["ep-vtt", "ep-vtt"]
+
+
+def test_failed_publisher_fetch_cannot_send_low_score_episode_to_paid_asr(
+    enqueue_env, monkeypatch
+):
+    env = enqueue_env
+    with Session(env.sink.engine) as session:
+        analysis = session.get(ArticleAnalysisRecord, "ep-vtt")
+        analysis.quality_score = 5.9
+        session.add(analysis)
+        session.commit()
+    monkeypatch.setattr(
+        app_module,
+        "_podcast_asr_admission_ready",
+        lambda: pytest.fail("low-score fallback must stop before the ASR gate"),
+    )
+
+    with pytest.raises(PodcastAdminError) as info:
+        _enqueue()
+
+    assert info.value.code == "podcast_publisher_transcript_unavailable"
+    assert "6.0" in info.value.message
+    assert env.ingests == ["ep-vtt"]
+
+    monkeypatch.setattr(app_module, "_podcast_asr_admission_ready", lambda: False)
+    with pytest.raises(landing.PodcastLandingGated) as forced:
+        _enqueue(selection_override=True)
+    assert forced.value.reason == "asr_admission_not_ready"
+    assert env.ingests == ["ep-vtt", "ep-vtt"]
+
+
+def test_publisher_refresh_fallback_uses_saved_initial_score(enqueue_env, monkeypatch):
+    env = enqueue_env
+    with Session(env.sink.engine) as session:
+        analysis = session.get(ArticleAnalysisRecord, "ep-vtt")
+        analysis.analysis_basis = "publisher_transcript"
+        analysis.podcast_initial_score = 6.0
+        analysis.podcast_final_score = 8.0
+        analysis.quality_score = 8.0
+        session.add(analysis)
+        session.commit()
+    monkeypatch.setattr(app_module, "_podcast_asr_admission_ready", lambda: False)
+
+    with pytest.raises(landing.PodcastLandingGated) as info:
+        _enqueue()
+    assert info.value.reason == "asr_admission_not_ready"
+    assert env.ingests == ["ep-vtt"]
 
 
 def test_success_then_failed_reresolution_keeps_memory(landing_env, monkeypatch):

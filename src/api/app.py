@@ -884,6 +884,38 @@ def _podcast_asr_admission_ready() -> bool:
     return podcast_processing_providers.stage_admission_ready("asr", effective_aliyun)
 
 
+def _podcast_asr_fallback_eligible(episode_id: str) -> bool:
+    """Whether show-note evidence may cross the paid ASR boundary."""
+
+    with Session(db_sink.engine) as session:
+        analysis = session.get(ArticleAnalysisRecord, episode_id)
+        return bool(
+            analysis is not None
+            and analysis.status == "succeeded"
+            and podcast_premium_service.initial_score(analysis) is not None
+            and podcast_premium_service.initial_score(analysis)
+            >= podcast_premium_service.INITIAL_PROCESSING_THRESHOLD
+        )
+
+
+def _publisher_transcript_failure_is_transient(exc: BaseException | None) -> bool:
+    if isinstance(
+        exc,
+        podcast_publisher_transcript_service.PublisherTranscriptTimeout,
+    ):
+        return True
+    if not isinstance(
+        exc,
+        podcast_publisher_transcript_service.PublisherTranscriptFetchFailed,
+    ):
+        return False
+    cause = exc.__cause__
+    if not isinstance(cause, httpx.HTTPStatusError):
+        return True
+    status = cause.response.status_code
+    return status in {408, 429} or status >= 500
+
+
 async def enqueue_podcast_processing_with_input(
     *,
     episode_id: str,
@@ -933,7 +965,10 @@ async def enqueue_podcast_processing_with_input(
             actor=actor,
         )
 
+    publisher_failure: BaseException | None = None
+
     async def _ingest_publisher_transcript() -> bool:
+        nonlocal publisher_failure
         try:
             async with httpx.AsyncClient() as client:
                 await podcast_publisher_transcript_service.ingest_publisher_transcript(
@@ -942,7 +977,8 @@ async def enqueue_podcast_processing_with_input(
                     config=settings.podcast,
                     client=client,
                 )
-        except podcast_publisher_transcript_service.PublisherTranscriptError:
+        except podcast_publisher_transcript_service.PublisherTranscriptError as exc:
+            publisher_failure = exc
             return False
         return True
 
@@ -968,6 +1004,26 @@ async def enqueue_podcast_processing_with_input(
     if not publisher_attempted:
         publisher_ready = await _ingest_publisher_transcript()
     if not publisher_ready:
+        # A failed publisher fetch must not inherit the free transcript's
+        # eligibility and silently cross into paid ASR.  Only the independent
+        # show-notes score can authorize that fallback.
+        if (
+            not selection_override
+            and not await asyncio.to_thread(_podcast_asr_fallback_eligible, episode_id)
+        ):
+            transient = _publisher_transcript_failure_is_transient(publisher_failure)
+            raise podcast_processing_admin_service.PodcastAdminError(
+                (
+                    "podcast_publisher_transcript_unavailable"
+                    if transient
+                    else "podcast_selection_required"
+                ),
+                status_code=503 if transient else 409,
+                message=(
+                    "发布方逐字稿不可用，且简介初评未达到付费 ASR 处理线 "
+                    f"{podcast_premium_service.INITIAL_PROCESSING_THRESHOLD:.1f}"
+                ),
+            )
         # ASR fallback: re-apply the gate *before* touching the network or disk.
         if not await asyncio.to_thread(_podcast_asr_admission_ready):
             raise podcast_landing_service.PodcastLandingGated("asr_admission_not_ready")
@@ -1048,13 +1104,14 @@ def _resolve_podcast_landing_candidate(
         and analysis.status == "succeeded"
         and analysis.analysis_basis in {"publisher_transcript", "asr_transcript"}
     )
-    if not initial_candidate and not transcript_result:
-        return None
     locator_revision = (
         podcast_publisher_transcript_service.publisher_transcript_refresh_revision(
             db_sink.engine, episode_id=article_id
         )
     )
+    publisher_candidate = locator_revision is not None
+    if not initial_candidate and not transcript_result and not publisher_candidate:
+        return None
     needs_source_media = False
     try:
         selected = podcast_processing_admin_service.select_full_analysis_input(
@@ -1062,7 +1119,10 @@ def _resolve_podcast_landing_candidate(
             episode_id=article_id,
         )
     except podcast_processing_admin_service.PodcastAdminError as exc:
-        if not initial_candidate or exc.code != "podcast_artifact_not_ready":
+        if (
+            (not initial_candidate and not publisher_candidate)
+            or exc.code != "podcast_artifact_not_ready"
+        ):
             return None
         # No local input yet: the revision must still move when the publisher
         # locator (or the enclosure itself) changes, never a constant.
@@ -1074,7 +1134,7 @@ def _resolve_podcast_landing_candidate(
         except podcast_source_media_service.SourceMediaError:
             enclosure_hash = ""
         revision = "prepare:" + (locator_revision or enclosure_hash or "")[:16]
-        needs_source_media = not locator_revision
+        needs_source_media = not publisher_candidate
     else:
         if (
             transcript_result
