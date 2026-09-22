@@ -193,8 +193,8 @@ def test_episode_detail_timeline_and_texts(refactor_engine):
     assert [row["step"] for row in detail["timeline"]] == ["initial", "fetch", "asr", "analyze", "guide", "tts"]
     assert steps["initial"]["state"] == "done" and "过付费 ASR 线" in steps["initial"]["note"]
     assert steps["analyze"]["state"] == "done" and "8.7" in steps["analyze"]["note"]
-    assert steps["guide"]["state"] == "pending"
-    assert steps["tts"]["state"] == "pending"
+    assert steps["guide"]["state"] == "skipped" and "缺少当前全文逐字稿" in steps["guide"]["note"]
+    assert steps["tts"]["state"] == "skipped" and "未入自动队列" in steps["tts"]["note"]
 
     broken = {row["step"]: row for row in episode_detail(refactor_engine, "broken")["timeline"]}
     assert broken["fetch"]["state"] == "done"

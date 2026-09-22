@@ -808,7 +808,7 @@ def _timeline(
     elif guide_row["state"] == "warn":
         tts_row = {"state": "pending", "note": "等待有效口播稿"}
     else:
-        tts_row = {"state": "skipped", "note": "未达门槛，可强制 TTS"}
+        tts_row = {"state": "skipped", "note": "未入自动队列，可手动点播" if premium_now else "未达门槛，可强制 TTS"}
     rows.append({"step": "tts", "label": _TIMELINE_LABELS["tts"], "at": guide_at, **tts_row})
     return rows
 
