@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
-import fcntl
+from services.file_lock import LOCK_EX, LOCK_NB, LOCK_SH, LOCK_UN, flock
 import json
 import time
 from contextlib import contextmanager
@@ -92,16 +92,16 @@ class ObjectStorage:
         directory = self.root / ".oss-locks"
         directory.mkdir(parents=True, exist_ok=True)
         with (directory / content_hash[:2]).open("a+b") as handle:
-            operation = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+            operation = LOCK_EX if exclusive else LOCK_SH
             try:
-                fcntl.flock(handle.fileno(), operation | (0 if blocking else fcntl.LOCK_NB))
+                flock(handle.fileno(), operation | (0 if blocking else LOCK_NB))
             except BlockingIOError:
                 yield False
                 return
             try:
                 yield True
             finally:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                flock(handle.fileno(), LOCK_UN)
 
     def _state(self):
         try:
@@ -115,7 +115,7 @@ class ObjectStorage:
         try:
             self.root.mkdir(parents=True, exist_ok=True)
             with (self.root / ".oss-status.lock").open("a+b") as lock:
-                fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+                flock(lock.fileno(), LOCK_EX)
                 state = self._state()
                 state.setdefault(section, {}).update(values)
                 fd, name = tempfile.mkstemp(prefix=".oss-status-", dir=self.root)

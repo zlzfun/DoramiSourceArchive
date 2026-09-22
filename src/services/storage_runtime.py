@@ -1,7 +1,7 @@
 """Periodic node-local cache maintenance, independent of the collector role."""
 
 import datetime as dt
-import fcntl
+from services.file_lock import LOCK_EX, LOCK_NB, flock
 
 
 def maintain_storage(stores, backup=None):
@@ -13,7 +13,7 @@ def maintain_storage(stores, backup=None):
             # Multiple uvicorn workers may schedule a tick; one node does the work.
             with (store.root / ".oss-maintenance.lock").open("a+b") as lock:
                 try:
-                    fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    flock(lock.fileno(), LOCK_EX | LOCK_NB)
                 except BlockingIOError:
                     continue
                 state = store._state().get("cache", {})

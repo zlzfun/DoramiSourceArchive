@@ -56,7 +56,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
-import fcntl
+from services.file_lock import LOCK_EX, LOCK_NB, flock
 import threading
 from weakref import WeakKeyDictionary
 from sqlmodel import Session, select
@@ -1494,7 +1494,7 @@ def _generation_guard(engine):
         if database and database != ":memory:":
             stream = Path(database + ".daily-brief.lock").open("a+b")
             try:
-                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                flock(stream.fileno(), LOCK_EX | LOCK_NB)
             except BlockingIOError as exc:
                 raise RuntimeError("日报正在生成，请等待当前任务结束") from exc
         yield
