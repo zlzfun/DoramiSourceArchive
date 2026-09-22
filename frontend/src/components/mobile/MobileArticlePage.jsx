@@ -22,6 +22,7 @@ import {
   shouldShowAiReadingCard,
 } from '../../utils/analysis';
 import AiReadingCard from '../AiReadingCard';
+import ArticleListenBar from '../ArticleListenBar';
 import { hostOf } from '../../utils/readerText';
 
 // 正文页(移动波 Wave2,样页画面②):push 全屏页——无底部 Tab,返回即出栈。
@@ -44,6 +45,7 @@ export default function MobileArticlePage({
     showTranslation, translating, translatedBody, translatedTitle, activeIsChinese, handleTranslate,
     activeSummary, summarizing, handleSummarize,
     prevArticle, nextArticle, activeIndex, selectArticle, searchForLabel,
+    refreshActiveArticle,
   } = rs;
 
   const [podcastSelection, setPodcastSelection] = useState({ articleId: '', variant: 'original' });
@@ -192,6 +194,9 @@ export default function MobileArticlePage({
               onVariantChange={(variant) => {
                 setPodcastSelection({ articleId: activeArticle.id, variant });
               }}
+              aiEnabled={aiEnabled}
+              showToast={showToast}
+              onArticleRefresh={refreshActiveArticle}
             />
           )}
           {!podcastGuideActive && !activeBodyLoading && shouldShowAiReadingCard(activeArticle, {
@@ -206,7 +211,13 @@ export default function MobileArticlePage({
               canGenerate={aiEnabled && Boolean(activeBody)}
               onGenerate={handleSummarize}
               podcast={podcastView}
+              aiEnabled={aiEnabled}
+              showToast={showToast}
+              onArticleRefresh={refreshActiveArticle}
             />
+          )}
+          {!podcastView && !activeBodyLoading && (
+            <ArticleListenBar article={activeArticle} />
           )}
           {podcastView && !podcastGuideActive && !activeBodyLoading && activeBody && (
             <div className="podcast-show-notes-head">

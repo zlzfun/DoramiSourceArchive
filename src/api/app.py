@@ -23,6 +23,7 @@ from sqlalchemy import delete
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.schedulers.base import STATE_STOPPED
 from apscheduler.triggers.cron import CronTrigger
+from services.cron_expr import parse_cron_expr
 
 from storage.impl.db_storage import DatabaseStorage
 from pipeline.core import DataPipeline
@@ -139,6 +140,11 @@ from services.storage_runtime import maintain_storage
 from services.podcast_artifacts import PodcastArtifactStore
 from services.podcast_asr_worker import AsrWorkerConfig, AsrWorkerStep
 from services import podcast_premium_guides as podcast_premium_guide_service
+from services import article_listen_guides as article_listen_guide_service
+from services.article_listen_guides import (
+    ArticleListenStore,
+    OpenAiCompatibleArticleListenTextProvider,
+)
 from services import podcast_premium as podcast_premium_service
 from services import podcast_publisher_transcripts as podcast_publisher_transcript_service
 from services import podcast_source_media as podcast_source_media_service
@@ -664,6 +670,14 @@ podcast_artifact_store = PodcastArtifactStore(
     orphan_grace_seconds=settings.podcast_artifacts.orphan_grace_seconds,
     object_storage=ObjectStorage(db_sink.engine, Path(settings.podcast_artifacts.root_dir), "podcast", settings.oss),
 )
+# 文章点播旁白：挂在 podcast-artifacts/article-listen 下的本地 CAS，不扩 OSS namespace。
+article_listen_store = ArticleListenStore(
+    Path(settings.podcast_artifacts.root_dir) / "article-listen",
+    max_bytes=min(
+        article_listen_guide_service.MAX_AUDIO_BYTES,
+        settings.podcast_artifacts.max_audio_mb * 1024 * 1024,
+    ),
+)
 
 storage_backup_service = BackupService(
     settings.backup, settings.storage.database_url, settings.bailian_speech.tts_receipt_root,
@@ -713,6 +727,7 @@ podcast_full_analysis_service.register_full_analysis_worker(
 _MEDIA_PREFETCH_TASKS: set = set()
 _PERSONAL_DIGEST_TRIGGER_TASKS: set = set()
 _PODCAST_PREMIUM_GUIDE_TASKS: dict[str, asyncio.Task] = {}
+_ARTICLE_LISTEN_GUIDE_TASKS: dict[str, asyncio.Task] = {}
 
 
 def schedule_podcast_premium_guide(episode_id: str) -> bool:
@@ -883,6 +898,90 @@ def schedule_forced_podcast_premium_guide(
     _PODCAST_PREMIUM_GUIDE_TASKS[episode_id] = task
     task.add_done_callback(
         lambda _task: _PODCAST_PREMIUM_GUIDE_TASKS.pop(episode_id, None)
+    )
+    return {**prepared, "started": True}
+
+
+def schedule_article_listen_guide(article_id: str, *, actor: str) -> dict[str, Any]:
+    """落库排队并异步跑文章点播旁白（LLM → TTS）；产物全站共享。"""
+
+    existing = _ARTICLE_LISTEN_GUIDE_TASKS.get(article_id)
+    if existing is not None and not existing.done():
+        return {
+            "outcome": "in_progress",
+            "status": "queued",
+            "should_schedule": False,
+            "started": False,
+        }
+
+    prepared = article_listen_guide_service.prepare_ondemand(
+        db_sink.engine,
+        article_id=article_id,
+        actor=actor,
+    )
+    if not prepared.get("should_schedule"):
+        return {**prepared, "started": False}
+
+    try:
+        with Session(db_sink.engine) as session:
+            llm_config = daily_brief_service.resolve_llm_config(session)
+            aliyun_config = podcast_speech_config_service.resolve_config(session)
+        voice = settings.podcast.default_voice_profile
+        if not llm_config.configured or not aliyun_config.tts_configured or not voice:
+            raise article_listen_guide_service.ArticleListenError(
+                "article_ondemand_provider_unavailable",
+                "点播所需的 LLM、TTS 或音色配置尚未就绪",
+                status_code=503,
+            )
+    except Exception as exc:
+        article_listen_guide_service.fail_listen_guide(
+            db_sink.engine,
+            article_id,
+            exc,
+            failed_stage="queued",
+        )
+        raise
+
+    existing = _ARTICLE_LISTEN_GUIDE_TASKS.get(article_id)
+    if existing is not None and not existing.done():
+        return {
+            "outcome": "in_progress",
+            "status": "queued",
+            "should_schedule": False,
+            "started": False,
+        }
+
+    async def _run() -> None:
+        try:
+            await article_listen_guide_service.run_listen_guide(
+                db_sink.engine,
+                article_listen_store,
+                article_id=article_id,
+                text_provider=OpenAiCompatibleArticleListenTextProvider(llm_config),
+                tts_provider=make_premium_tts_provider(
+                    aliyun_config,
+                    engine=db_sink.engine,
+                    episode_id=article_id,
+                    voice_profile=voice,
+                    max_audio_bytes=article_listen_store.max_bytes,
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - service persists failure
+            article_listen_guide_service.fail_listen_guide(
+                db_sink.engine,
+                article_id,
+                exc,
+            )
+            _dorami_logger.warning(
+                "文章点播旁白生成失败 article=%s (%s)",
+                article_id,
+                type(exc).__name__,
+            )
+
+    task = asyncio.create_task(_run())
+    _ARTICLE_LISTEN_GUIDE_TASKS[article_id] = task
+    task.add_done_callback(
+        lambda _task: _ARTICLE_LISTEN_GUIDE_TASKS.pop(article_id, None)
     )
     return {**prepared, "started": True}
 
@@ -2276,11 +2375,22 @@ async def execute_collection_job(job_id: int):
 CRON_MISFIRE_GRACE_SECONDS = 300
 
 
-def add_cron_job(job_id: str, callback, cron_expr: str, args: List[Any]):
-    parts = cron_expr.split()
-    if len(parts) != 5:
-        return
-    trigger = CronTrigger(minute=parts[0], hour=parts[1], day=parts[2], month=parts[3], day_of_week=parts[4])
+def add_cron_job(job_id: str, callback, cron_expr: str, args: List[Any]) -> bool:
+    """注册 / 覆盖一个 cron 类任务;表达式非法(非 5 段或字段越界)返回 False、不抛,调用方据此摘除旧注册。
+
+    幂等:同 id 已注册且 trigger 与 args 都未变时原样保留——replace 会把 next_run_time 重置为「现在起算」,
+    采集任务 CRUD 每次热重载都替换一遍会让无关任务在触发边界漏掉当次执行(PR-0 检视 F2)。
+    """
+    trigger = parse_cron_expr(cron_expr)
+    if trigger is None:
+        return False
+    existing = scheduler.get_job(job_id)
+    if (
+        existing is not None
+        and str(getattr(existing, "trigger", None)) == str(trigger)
+        and tuple(getattr(existing, "args", ()) or ()) == tuple(args)
+    ):
+        return True
     # 默认 misfire 宽限只有 1s:整点秒位若撞上一次事件循环阻塞,日报/采集就整天缺席
     # (2026-09-14 生产实录,issue #68)。给 cron 类任务 5 分钟宽限,晚到即补跑而非跳过。
     scheduler.add_job(
@@ -2292,54 +2402,80 @@ def add_cron_job(job_id: str, callback, cron_expr: str, args: List[Any]):
         misfire_grace_time=CRON_MISFIRE_GRACE_SECONDS,
         coalesce=True,
     )
+    return True
+
+
+def _ensure_interval_job(job_id: str, callback, **kwargs) -> None:
+    """固定 interval worker 只在缺席时注册;已在的原样保留(replace 会把 next_run_time 重置为现在起算)。"""
+    if scheduler.get_job(job_id) is None:
+        scheduler.add_job(callback, "interval", id=job_id, **kwargs)
+
+
+COLLECTION_JOB_ID_PREFIX = "collection_job_"
+
+
+def sync_collection_job_schedules(session: Session) -> None:
+    """按库里 is_active 采集任务差量同步 ``collection_job_*`` 命名空间:只增删改本命名空间,不碰其它任务。
+
+    历史写法是 ``scheduler.remove_all_jobs()`` 后整体重建,而它被采集任务的每次创建 / 更新 / 删除调用——
+    留存清理、播客 ASR worker、远程同步、用户自定源刷新只在 lifespan「调度器新鲜启动」分支注册,
+    编辑一次采集任务就全部消失到下次重启(issue #82 检视 R1-F1,2026-09-15 核实;此前只为
+    storage_maintenance 单独补过一次注册)。差量同步后其它命名空间与本函数无关。
+    """
+    desired: Dict[str, CollectionJobRecord] = {}
+    for job in session.exec(
+        select(CollectionJobRecord).where(CollectionJobRecord.is_active == True)
+    ).all():
+        # 单节点 cron 覆盖已退役:一任务一 cron(想要不同节奏 = 建新任务)
+        if job.cron_expr:
+            desired[f"{COLLECTION_JOB_ID_PREFIX}{job.id}"] = job
+    existing = {
+        str(existing_job.id)
+        for existing_job in scheduler.get_jobs()
+        if str(existing_job.id).startswith(COLLECTION_JOB_ID_PREFIX)
+    }
+    for stale_id in sorted(existing - set(desired)):
+        scheduler.remove_job(stale_id)
+    for job_id, job in desired.items():
+        registered = add_cron_job(job_id, execute_collection_job, job.cron_expr, [job.id])
+        if registered:
+            continue
+        # cron 非法(非 5 段 / 字段越界,CRUD 已拒绝,这里是历史脏行):不注册、不抛,也不让旧节奏的注册残留。
+        _dorami_logger.warning("采集任务 %s 的 cron 非法,跳过注册: %r", job.id, job.cron_expr)
+        if job_id in existing:
+            scheduler.remove_job(job_id)
 
 
 def load_tasks_to_scheduler():
-    scheduler.remove_all_jobs()
-    reload_storage_schedule()
+    """采集类调度的幂等装载:差量同步采集任务 + 幂等注册日报 / 分析 / 分类 / 播客 landing / 个人早报。
+
+    不再 ``remove_all_jobs()``——留存清理 / 存储巡检 / ASR worker / 远程同步 / 自定源刷新各有自己的
+    ``reload_*``,本函数对它们零影响;采集任务 CRUD 端点可以放心随时调用。
+    """
     with Session(db_sink.engine) as session:
-        jobs = session.exec(
-            select(CollectionJobRecord)
-            .where(CollectionJobRecord.is_active == True)
-        ).all()
-        for job in jobs:
-            # 单节点 cron 覆盖已退役:一任务一 cron(想要不同节奏 = 建新任务)
-            if job.cron_expr:
-                add_cron_job(f"collection_job_{job.id}", execute_collection_job, job.cron_expr, [job.id])
-        # 每日 AI 资讯日报（独立于采集任务，默认排在全量采集之后）
-        if daily_brief_service.daily_brief_enabled(session):
-            add_cron_job(
-                "daily_brief",
-                execute_daily_brief_job,
-                daily_brief_service.daily_brief_cron(session),
-                [],
-            )
+        sync_collection_job_schedules(session)
+    # 每日 AI 资讯日报(独立于采集任务):启用即幂等注册,停用即摘除。
+    reload_daily_brief_schedule()
     # 当前双节点部署均为 runtime.role=all：文章分析与个人早报和采集共用调度器；
     # 远端权威文章另由持久化 authority 围栏排除本地分析。
     # 两个 worker 都在执行时读取数据库 feature flag，默认关闭且支持热切换。
-    scheduler.add_job(
+    _ensure_interval_job(
+        "article_analysis",
         execute_article_analysis_job,
-        "interval",
         minutes=1,
-        id="article_analysis",
-        replace_existing=True,
         max_instances=1,
     )
-    scheduler.add_job(
+    _ensure_interval_job(
+        "taxonomy_retag",
         execute_taxonomy_retag_job,
-        "interval",
         minutes=1,
-        id="taxonomy_retag",
-        replace_existing=True,
         max_instances=1,
     )
     # Podcast 全文处理自动入队:增量游标 + 失败记忆/退避,max_instances=1 防重叠。
-    scheduler.add_job(
+    _ensure_interval_job(
+        PODCAST_LANDING_JOB_ID,
         execute_podcast_landing_job,
-        "interval",
         minutes=1,
-        id=PODCAST_LANDING_JOB_ID,
-        replace_existing=True,
         max_instances=1,
         coalesce=True,
     )
@@ -2349,12 +2485,10 @@ def load_tasks_to_scheduler():
         "30 8 * * *",
         [],
     )
-    scheduler.add_job(
+    _ensure_interval_job(
+        "personal_digest_pending",
         execute_personal_digest_pending_job,
-        "interval",
         minutes=1,
-        id="personal_digest_pending",
-        replace_existing=True,
         max_instances=1,
     )
 async def execute_article_analysis_job():

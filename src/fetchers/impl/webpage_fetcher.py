@@ -2,7 +2,7 @@ import hashlib
 import html
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, AsyncGenerator, Dict, Iterable, List, Optional
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse
 
@@ -836,29 +836,106 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
             return {**detail, "url": str(response.url)}
         return await super()._detail_for_url(client, url, max_chars)
 
+    def _article_entries(self, items, page_url):
+        entries = []
+        for item in items:
+            title_link = item.select_one("a.title[href]")
+            if title_link is None:
+                continue
+            url = self._normalize_article_url(urljoin(page_url, str(title_link["href"])))
+            if self._matches_article_url(url):
+                entries.append((item, title_link, url))
+        return entries
+
+    max_listing_pages = 10
+    coverage_window_hours = 72
+
+    async def _listing_pages(self, client):
+        response = await self._safe_get(client, self.listing_url)
+        if response is None:
+            raise RuntimeError(f"IT之家 AI 分类页请求失败: {self.listing_url}")
+        soup = BeautifulSoup(response.text, "html.parser")
+        previous_cursor = None
+        for page in range(self.max_listing_pages):
+            items = self._list_items(soup)
+            if not items:
+                raise RuntimeError("IT之家 AI 列表结构异常: 未找到文章列表")
+            yield items, str(response.url)
+            # The site's own load-more contract uses the last item's timestamp.
+            dated = [self._parse_listing_datetime(str(node.get("data-ot") or ""))
+                     for item, _, _ in self._article_entries(items, str(response.url))
+                     for node in item.select(".c[data-ot]")]
+            dated = [value for value in dated if value]
+            if not dated:
+                raise RuntimeError("IT之家 AI 分页缺少时间游标")
+            cursor = int(datetime.fromisoformat(dated[-1]).timestamp() * 1000)
+            if previous_cursor is not None and cursor >= previous_cursor:
+                raise RuntimeError("IT之家 AI 分页时间游标未向前推进")
+            if page + 1 >= self.max_listing_pages:
+                raise RuntimeError("IT之家 AI 达到分页安全上限，覆盖尚未完成")
+            previous_cursor = cursor
+            url = f"https://next.ithome.com/category/domainpage?domain=next&subdomain=ai&ot={cursor}"
+            response = await self._safe_post(client, url, data={})
+            if response is None:
+                raise RuntimeError(f"IT之家 AI 第 {page + 2} 页请求失败")
+            try:
+                payload = response.json()
+                content = payload["content"]
+                count = content["count"]
+                html_text = content["html"]
+                if payload.get("success") is not True or not isinstance(count, int) or count < 0 or not isinstance(html_text, str):
+                    raise ValueError("invalid pagination payload")
+            except (ValueError, KeyError, TypeError) as exc:
+                raise RuntimeError("IT之家 AI 分页响应格式异常") from exc
+            if count == 0:
+                return
+            soup = BeautifulSoup(f'<ul class="bl">{html_text}</ul>', "html.parser")
+
+    async def _discover_listing_entries(self, client, limit):
+        chosen = []
+        discovered = 0
+        cutoff = None
+        seen_urls = set()
+        async for items, page_url in self._listing_pages(client):
+            entries = []
+            for entry in self._article_entries(items, page_url):
+                if entry[2] not in seen_urls:
+                    seen_urls.add(entry[2])
+                    entries.append(entry)
+            if not entries:
+                raise RuntimeError("IT之家 AI 分页没有新的有效文章链接")
+            discovered += len(entries)
+            existing = await self._lookup_existing_content_flags(self._content_id(url) for _, _, url in entries)
+            dates = [self._parse_listing_datetime(str(node.get("data-ot") or ""))
+                     for item, _, _ in entries for node in item.select(".c[data-ot]")]
+            dates = [datetime.fromisoformat(value) for value in dates if value]
+            if cutoff is None and dates:
+                cutoff = max(dates) - timedelta(hours=self.coverage_window_hours)
+            reached_window = bool(cutoff and dates and min(dates) < cutoff)
+            for item, title_link, url in entries:
+                date_node = item.select_one(".c[data-ot]")
+                item_date = self._parse_listing_datetime(str(date_node.get("data-ot") or "")) if date_node else ""
+                if (cutoff and item_date and datetime.fromisoformat(item_date) < cutoff) or existing.get(self._content_id(url), False):
+                    continue
+                chosen.append((item, title_link, url))
+                if len(chosen) >= limit:
+                    self.logger.info("IT之家 AI 达到本轮新增上限: discovered=%d selected=%d; 后续轮次继续扫描", discovered, len(chosen))
+                    return chosen
+            if reached_window:
+                break
+        self.logger.info("IT之家 AI 已覆盖列表窗口: discovered=%d selected=%d", discovered, len(chosen))
+        return chosen
+
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         limit = self._entry_limit(kwargs.get("limit"))
         fetch_detail = self._bool_param(kwargs.get("fetch_detail"))
         detail_max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
         if limit <= 0:
             return
-
-        response = await self._safe_get(client, self.listing_url)
-        if not response:
-            raise RuntimeError(f"IT之家 AI 分类页请求失败: {self.listing_url}")
-
-        soup = BeautifulSoup(response.text, "html.parser")
-        emitted = 0
-        seen_urls: set[str] = set()
-        for item in self._list_items(soup):
-            title_link = item.select_one("a.title[href]")
-            if not title_link:
-                continue
-            url = self._normalize_article_url(urljoin(str(response.url), str(title_link["href"])))
-            if not self._matches_article_url(url) or url in seen_urls:
-                continue
-            seen_urls.add(url)
-
+        # Complete discovery before yielding: a later list failure must not leave
+        # already-saved rows outside the pipeline's successful analysis hooks.
+        entries = await self._discover_listing_entries(client, limit)
+        for item, title_link, url in entries:
             title = self._clean_text(title_link.get_text(" ", strip=True)) or str(title_link.get("title") or "")
             summary_node = item.select_one(".m")
             summary = self._clean_text(summary_node.get_text(" ", strip=True) if summary_node else "")[:500]
@@ -909,9 +986,6 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
                     "detail_source_url": detail.get("url", ""),
                 },
             )
-            emitted += 1
-            if emitted >= limit:
-                break
 
 
 class QwenBlogWebFetcher(BaseWebPageListFetcher):

@@ -19,7 +19,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
-from sqlalchemy import and_, case, exists, false, func, or_
+from sqlalchemy import and_, case, exists, false, func, or_, text
 from sqlmodel import Session, select
 
 from api import deps
@@ -740,9 +740,16 @@ def _maybe_rewind_daily_brief_cursor(record) -> None:
     if not cursor_after:
         return
     with Session(deps.get_db_sink().engine) as session:
-        if daily_brief_service.read_cursor(session) == cursor_after:
-            daily_brief_service.set_setting(
-                session, daily_brief_service.KEY_CURSOR, ext.get("cursor_before") or ""
+        session.exec(text("BEGIN IMMEDIATE"))
+        # Backlog-only runs can share a watermark across report dates. Deleting
+        # an older report must not rewind a more recently generated report.
+        newer = session.exec(select(ArticleRecord.id).where(
+            ArticleRecord.source_id == DAILY_BRIEF_SOURCE_ID,
+            ArticleRecord.fetched_date > record.fetched_date,
+        ).limit(1)).first()
+        if newer is None and daily_brief_service.read_cursor(session) == cursor_after:
+            daily_brief_service.rewind_cursor(
+                session, ext.get("cursor_before") or "", ext.get("included_article_ids", [])
             )
 
 

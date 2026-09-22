@@ -667,6 +667,9 @@ class _Scheduler:
     def remove_job(self, job_id):
         self.jobs.pop(job_id, None)
 
+    def get_jobs(self):
+        return [SimpleNamespace(id=job_id) for job_id in list(self.jobs)]
+
     def remove_all_jobs(self):
         self.jobs.clear()
 

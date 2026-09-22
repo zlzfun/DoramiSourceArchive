@@ -9,7 +9,7 @@
 
 | 字段 | 值 |
 |---|---|
-| `UPSTREAM_BASE` | `v3.60.1`(main `ad049bb`;自动同步工作流合入,本清单 2026-09-21 补记) |
+| `UPSTREAM_BASE` | `v3.61.0`(main `fced005`;2026-09-22 人工合入,sync 工作流因 CLAUDE.md / version-history 冲突失败) |
 | 本清单最近核对 | 2026-09-21(GitHub 侧 master,内网侧差异待内网 Agent 补登,见 §4) |
 | 同步方式 | GitHub `Sync main → master` 工作流,**按 main 的版本 tag(`v*`)触发**,`--no-ff` 合并;冲突时任务失败、人工处理 |
 
@@ -23,22 +23,10 @@
 `v3.58.2` 会切到 main 的发布 tag,不含本分支适配。
 本次评分修复在外网导出端生效,内网 `v3.58.1` 接收端已兼容撤回协议,可先直接重试 v2 同步。
 
-2026-09-21 **预合入 issue #126(裸机部署回滚,PR #129,main 尚未合入)**:按拍板先把分支
-`feat/issue-126-baremetal-rollback` 相对其基点 `5fd4fe9` 的差异整体应用到本分支做内网实机验收;
-**不含** main 上 `v3.60.1` 之后的其它未发布提交(#116 / #120 / #123–#125 / #128 等,含两条新迁移),
-内网仍停在 `v3.60.1` 的应用代码。带进来的全是部署面文件(`deploy.sh`、`scripts/deploy-baremetal.sh`、
-`scripts/deploy-lib.sh`、`deploy-docker.sh` 等价重构、`docker/requirements-crawl4ai.txt`、`.gitignore`、
-ini 示例)与测试、文档,部署面仍以 main 为准,**不构成新的内网差异条目**。
-验收用法:`./deploy.sh --here`(首次运行会把现有旧形态安装自动收养成 release 形态,有一次 PM2 重启,放维护窗;
-新脚本不带参数会因发布 tag 未宣告 `DORAMI_BAREMETAL_TXN` 能力而 exit 11,内网一律 `--here`)。
-PR #129 合入 main 并随下一个版本 tag 同步下来时内容相同,应干净合并;届时删除本段。
-
-2026-09-22 **预合入 issue #130(下游身份源接入点,PR #131,main 尚未合入)**:同上手法只应用分支相对基点 `5fd4fe9` 的差异。
-内容:`src/services/auth_policy.password_login_enabled(record)`(main 恒 True)是内网 SSO 的**唯一覆盖点**,
-`runtime` / `GET /api/auth/session` 透出 `password_login_enabled`,登录 / 改密端点 False 时 403,设置柜(桌面 + 移动壳)据此隐藏改密表单;
-`storage.migrations.main_chain_heads` + 迁移测试口径 `heads`。**内网配套**(见 §4 待补登):给 SSO 迁移加 `branch_labels = ("intranet",)`、
-一律 `alembic upgrade heads`、停止 `alembic merge`;删掉 `App.jsx` / `SettingsModal.jsx` 的 `passwordLoginable` prop 穿线,
-只覆盖 `auth_policy.password_login_enabled`(按账号:SSO 供给账号 False、本地管理员 True)。PR #131 合入 main 随 tag 同步后删除本段。
+2026-09-22 合入 `v3.61.0`(裸机部署回滚 #126 / 下游身份源接入点 #130 / 跨平台文件锁 #133 / 时间炸弹用例热修 #135):
+此前三段「预合入」记录对应的内容已随 tag 正式进入 main,三段删除;冲突只在 `CLAUDE.md` 年表与 `docs/version-history.md`
+(按 §1.4:采纳 main、保留顶部须知块),复核 §2/§3 差异范围与冲突原则仍成立。内网接收后 `./deploy.sh --here`
+(已是 release 形态,不再收养);#130 的内网配套(SSO 迁移加 `branch_labels`、拆 `passwordLoginable` 穿线、§4 补登)见 §4 待办。
 
 ## 1. 维护规则
 

@@ -68,6 +68,7 @@ import {
   shouldShowAiReadingCard,
 } from '../utils/analysis';
 import AiReadingCard from './AiReadingCard';
+import ArticleListenBar from './ArticleListenBar';
 import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
 import { mediaProxyUrl } from '../api';
 
@@ -404,7 +405,7 @@ export default function ReaderTab({
     articles, articlesLoading, loadingMore, hasMore, handleLoadMore,
     listRef, sentinelRef,
     // 选中文章 / 正文
-    activeArticle, activeBody, activeBodyLoading, selectArticle, openArticleById, supersedePendingOpen,
+    activeArticle, activeBody, activeBodyLoading, selectArticle, openArticleById, refreshActiveArticle, supersedePendingOpen,
     schedulePrefetch, cancelPrefetch,
     activeIndex, prevArticle, nextArticle,
     crumbSource, crumbName, displayBody, displayTranslatedBody, bodyStats,
@@ -1334,9 +1335,13 @@ export default function ReaderTab({
                   article={activeArticle}
                   variant={podcastVariant}
                   onVariantChange={handlePodcastVariantChange}
+                  aiEnabled={aiEnabled}
+                  showToast={showToast}
+                  onArticleRefresh={refreshActiveArticle}
                 />
               )}
-              {/* 已落库分析始终可读；本端 AI 开启时才额外给现场生成入口。 */}
+              {/* 已落库分析始终可读；本端 AI 开启时才额外给现场生成入口。
+                  文章点播动作收在速读卡内；就绪播放条挂在卡下。 */}
               {!podcastGuideActive && !activeBodyLoading && shouldShowAiReadingCard(activeArticle, {
                 summary: activeSummary,
                 aiEnabled,
@@ -1349,7 +1354,13 @@ export default function ReaderTab({
                   canGenerate={aiEnabled && Boolean(activeBody)}
                   onGenerate={handleSummarize}
                   podcast={podcastView}
+                  aiEnabled={aiEnabled}
+                  showToast={showToast}
+                  onArticleRefresh={refreshActiveArticle}
                 />
+              )}
+              {!podcastView && !activeBodyLoading && (
+                <ArticleListenBar article={activeArticle} />
               )}
               {podcastView && !podcastGuideActive && !activeBodyLoading && activeBody && (
                 <div className="podcast-show-notes-head">

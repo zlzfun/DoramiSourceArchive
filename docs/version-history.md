@@ -62,6 +62,15 @@
 **检视记录(本地 codex 协商式,三轮)**:R1 三条(P2×2 / P3×1)全落在新加的 E2E 守卫上,CSS 修法「无问题项」全部通过(它独立盘点了层内 19 处 `outline: none` + JSX 1 处 `focus:outline-none`,与我方结论一致)。F1 Tab 遍历用「视口坐标 + class」判重会在碰撞时提前结束而放过后半页——改元素身份,完整一圈只认「回到首个停靠元素」(直接回绕,或焦点离开文档一次后再按 Tab 回到首元素;codex 补的一层:落到 body 本身不算走完,控件自退焦 / 重渲染卸载也会出现同样状态),陷阱 / 连续落 body / 触上限均失败;F2 未命中 `:focus-visible` 的停靠点被静默跳过——一律断言命中;F3 快照启发式把任何颜色变化都当指示——定点控件改为只认宿主环类属性(box-shadow / 四边描边 / outline,含伪元素)的具体契约,Tab 扫描采样面加宽并含 `::before/::after`,双环只认祖先环类变化,守卫定位改口为「结构性守卫 + Tab 启发式烟测」(不做像素差断言,对比度与裁切留给目检)。R2 抓到 F2 残留(已卸载停靠点的 `isConnected` 早退排在断言之前),R3 终审通过。反向对照两次:全局环改回未分层 → CSSOM 断言失败;删掉发现页容器环 → 定点契约失败。
 **发现页按形态批量订阅(issue #105,分支 `feat/issue-105-bulk-subscribe`;版本号以实际发版为准)**:发现页原来只能逐张源卡订阅,文章与播客目录扩容后操作成本过高。文章 / 播客筛选态新增「订阅全部…源（剩余 N 个）」,只计算当前账号尚未订阅的可见源,请求中显示「订阅中…」,归零后禁用为「已全部订阅」;全部形态、目录加载中或该形态无候选源时不展示批量入口,桌面与移动端共用 `DiscoverPage` / `useReaderState` 逻辑。任一形态批量请求在途时全局锁住文章 / 播客两个入口(同步 ref 防同一渲染帧双击),10 秒 `AbortController` 截止后解锁;客户端超时不等于服务端事务失败,提示「结果可能已生效」。服务端让同一用户的批量 / 单源 / 合集 / 自定源 / 订阅管理写操作共用互斥状态,重叠请求返回 409,`GET /api/reader/sources/subscribe-batch/status` 暴露当前账号是否仍在处理;超时 / 409 后前端后台轮询该状态,只在 `processing=false` 后重拉源目录 / 聚合列表 / 未读数,避免提交前脏刷新,也避免任一订阅写操作与原事务争 SQLite 写锁。后端新增单次调用 `POST /api/reader/sources/subscribe-batch`(`shape=article|podcast`),候选集复用 `/api/reader/sources` 的常规可见目录与私有自定源隔离口径:未订阅的隐藏源完全不可枚举,只有账号原本已知的隐藏订阅可计入 `unavailable`,既有可用订阅计入 `already_subscribed`;新增项逐个初始化未读 backlog 水位后统一提交,任一初始化失败整批回滚,重复调用幂等,不同用户仍各自持有订阅关系。Codex review 五条 P2 返修:批量响应不再泄露未知隐藏源 ID;加载中 / 空候选不再误报「已全部订阅」;跨文章 / 播客的并发请求改为全局锁 + 10 秒截止;超时后用服务端互斥 + 状态轮询协调仍在执行的事务;其余订阅写入口也纳入同一用户级互斥,杜绝与超时后的批量事务重叠。验证:后端专项及相关回归 109 项;前端 `node --test` 30 项、lint / build;隔离数据库端到端覆盖桌面文章 + 播客与 iPhone 14 文章流程,按钮剩余数 / 完成态 / 无横向溢出正确,每次操作只有一条 batch POST,不同测试账号可独立订阅同一公共源,pageerror / console error 均为 0。
 
+**GitHub Release 自动部署流水线(issue #102,v3.60.0 首发、v3.60.1 闭环,2026-09-16–19;方案 `docs/auto-deploy-plan.md`,PR #111 / #115 / #117)**:生产长期落后 main、SSH 假死、前置项靠人记、没有部署记录面——改成「tag 即发布」之上再一步:`scripts/release.sh` 推 tag → `release.yml` 核验并自动建 Release → 同一 run 串联可复用 `deploy.yml`,停在 Environment `production`(required reviewers = 发版人,引用只放 `main` 与 `v*`)等批准 → runner 用部署专用密钥经 forced command 触发生产机**仓库外**的 launcher + worker(worker 是锁 / in-progress · last-success 事务 / 方向与单调护栏 / 首装门 / 退出码的唯一 owner,launcher 只起它并跟日志)→ 目标 tag 自己的 `./deploy-docker.sh` 七步(预检 / 构建 / `--check-config` / `--plan-migrations` 只读自检 / 备份 / 切换标记 + `up` / 五项健康核对)→ runner 从公网再核一次 `/api/health` → Job Summary 只登 allowlist 元数据。只有一种 tag,防误触的边界是批准人不是 tag 名;不自动回滚(备份按代际恢复,见 `docs/release-process.md`「回滚」);不接通知;手工 `./deploy-docker.sh` 仍可兜底且与流水线共用锁,手工部署过后流水线靠切换标记与容器构建 sha 交叉核对、不再信任旧记录。设计经 codex 四轮、实现三个增量共八轮协商检视收口(方案 §7 全文)。**上线实证抓到两个本地测不出的坑**:①`actions/checkout` 对 tag 事件在全量 fetch 后再 `fetch +<commit>:refs/tags/<tag>`,把 runner 本地 tag 引用改写成轻量 tag,核验脚本 `git fetch --tags` 撞「would clobber existing tag」且 `--quiet` 吞掉原因静默退出 1(#115:不再 `--tags`,tag 缺失才单独取,轻量判定看 `ls-remote`);②Environment **secrets** 不会自动进 workflow_call 的被调用 job(variables 会),调用方必须 `secrets: inherit`——设计与检视共同的错误假设(#117)。v3.60.0 经 dispatch 路径首次部署(基线自运行容器的构建身份读出,`allow_downgrade` 未起作用,文档相应更正),v3.60.1 经 `release.yml`→`deploy.yml` 串联部署成功(基线自 last-success)。留观察:`actionlint -shellcheck` 关闭;二期(另开 issue)= CI 构建镜像推 GHCR + 专用部署用户 + worker 自动升级;生产旧脚本时代的 rollback 镜像须手工清理(磁盘预检 5 GB)。
+
+
+## 新闻覆盖可靠性（issue #127，待发布）
+
+ZCode 排查确认 IT之家首页截断、公共日报评分前裁剪后推进全量游标、HN 网关失败与仅 AI 关键词发现三项风险。补上 IT之家 72h 分页、已知条目不占新额度及先发现后写入；日报以节点本地消费表保留暂缓候选，与正文/游标/运行统计同事务提交，默认40积压+80新候选并互补、每源60；HN保留RSS同时直连Algolia，品牌只匹配标题，ID与发现源语义不变。提供默认只读、固定任务ID、离线应用与快照回滚脚本。
+
+Claude Code (`claude-fable-5-1`) 交叉检视先协商后返修：限定空游标 bootstrap，保留删报回退时的旧 pending，同值配置不打断生成，消除首页条数与全页时间游标假设；拒绝按龄期丢弃未评估文章，改用新旧池配额及积压最老时间观测。详细证据、测试、验收和上线边界见 [方案](./news-coverage-reliability-plan.md)。
+
 
 ## 裸机部署回滚:运行副本版本化(issue #126,待发布)
 
@@ -78,6 +87,11 @@ tag 模式在 checkout 前核对目标 tag 宣告 `DORAMI_BAREMETAL_TXN`,否则 
 dirty `--here` 固化成快照 commit(pin ref)可原样重放;路径探针在目标上下文核对可变存储都在 release 之外且与基准一致;extras 钉版导出 `docker/requirements-crawl4ai.txt`(守卫与基础清单同锁);
 锁默认与 Docker 同一把、不可写即失败。桩测试 `tests/test_deploy_baremetal.py`(迷你项目 + PATH 桩,真 git / symlink / SQLite / Alembic;35 例覆盖用法 / 锁 / 首装门 / 布局 / 健康告警 / 未收口纪律 / nginx 变更集真实文件 / dirty 固化 / 能力检查 / 旧脚本自举 / 路径探针 / 迁移矩阵 / 收养 / 回滚各模式 / 清理),
 `tests/fixtures/deploy_scripts_pre_issue_126/` 固化本波之前的脚本。实现记录与偏差见方案 §9。
+**内网实测 R1(2026-09-22)**:首次真实收养(运行 v3.58 一脉、工作树已是新代码)在 `venv_ready` 退出 33,暴露五个缺陷并修:
+收养基准探针用的是工作树新代码、目标是旧代码,键集合不同被判不一致 → 比对规则改不对称(缺键 = 基准代码更旧、空串 = 未启用,
+两边都启用才比对,`database` 仍严格);`/api/health` 是 v3.60.0 才有、文档误写 v3.56+ → 收养前置检查在开事务前拒绝旧代码;
+editable 痕迹移除调到路径核对之后、收养不接受重设基准;续做前核对运行身份仍等于事务身份(否则等于切回旧代码);
+`current` / `html_dir` 悬空时 `--status` 标出、收养拒绝并给恢复步骤。用例五条。
 
 
 ## 下游身份源接入点:password_login_enabled 能力位 + alembic heads 口径(issue #130,待发布)
@@ -87,8 +101,6 @@ dirty `--here` 固化成快照 commit(pin ref)可原样重放;路径探针在目
 main 提供 `services/auth_policy.password_login_enabled(record)` 单一覆盖点(main 恒 True),`runtime` / `GET /api/auth/session` 透出,
 登录与改密端点 `false` 时 403,设置柜账户区据能力位隐藏改密表单,登录页不动;下游拆掉 prop 穿线、只改这一个函数。
 迁移口径统一 `upgrade heads`(单链等价)、版本表读 `get_current_heads()`;新增守卫 `main_chain_heads`(去掉声明了 branch label 的 revision 及其后代后主线恰好一个叶子),下游带 label 的支线无论分叉还是延伸主线末端都可并存、不再合并。codex R1 三条 P2 一条 P3 全部接受并修:移动端设置同样传能力位、单头读取器改 heads 集合、守卫改按声明的 label 判定、匿名 False 用例。复检:四条均落实、通过,无阻断;codex 另在仓库外用两种下游拓扑副本跑完整迁移测试各 58 例通过。
-
-
 
 
 ## 跨平台文件锁(issue #133,待发布)
@@ -105,8 +117,4 @@ flags 组合、锁区偏移、错误映射、解锁静默。codex R1 两条 P2 �
 暂存 fd(锁随之释放,关到 rename 之间由 staging_ttl 保护),reconcile 的过期暂存清理改「拿锁 → 关句柄 → 删」(`_unlink_stale_if_unlocked`);
 `bailian_tts._atomic_write` / `storage_backup._sync_directory` 的目录 fsync 在 Windows 打不开目录句柄,吞 OSError。POSIX 上用「能否再拿到锁」
 代替「句柄是否已关」写回归用例。生产平台不变(仅 Linux)。
-**内网实测 R1(2026-09-22)**:首次真实收养(运行 v3.58 一脉、工作树已是新代码)在 `venv_ready` 退出 33,暴露五个缺陷并修:
-收养基准探针用的是工作树新代码、目标是旧代码,键集合不同被判不一致 → 比对规则改不对称(缺键 = 基准代码更旧、空串 = 未启用,
-两边都启用才比对,`database` 仍严格);`/api/health` 是 v3.60.0 才有、文档误写 v3.56+ → 收养前置检查在开事务前拒绝旧代码;
-editable 痕迹移除调到路径核对之后、收养不接受重设基准;续做前核对运行身份仍等于事务身份(否则等于切回旧代码);
-`current` / `html_dir` 悬空时 `--status` 标出、收养拒绝并给恢复步骤。用例五条。
+

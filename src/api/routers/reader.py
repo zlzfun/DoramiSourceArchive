@@ -15,9 +15,11 @@ import hashlib
 import hmac
 import importlib
 import json
+import uuid
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import literal_column, or_
 from sqlmodel import Session, func, select
@@ -62,9 +64,12 @@ from models.db import (
     SourceConfigRecord,
 )
 from services import accounts as accounts_service
+from services import article_listen_guides as article_listen_guide_service
 from services import podcast_premium as podcast_premium_service
+from services import podcast_premium_guides as podcast_premium_guide_service
 from services import podcast_text_reader as podcast_text_reader_service
 from services import podcast_transcript_translation as podcast_transcript_translation_service
+from services import ai_usage as ai_usage_service
 from services import article_share as article_share_service
 from services.article_display_tags import article_ids_for_flexible_label, load_display_tags
 from services import daily_brief as daily_brief_service
@@ -1493,26 +1498,41 @@ def _require_reader_ai(request: Request):
 
 
 # 读者 AI 逐用户每日配额（常量，可调）：护住共享 LLM 预算不被单账户刷爆。
-# 计数复用 AiUsageRecord.calls，即底层 LLM 调用次数——translate 会按段并发多次调用，
-# 故该额度更接近「若干篇整文翻译」而非固定篇数；ask 通常一问一次调用。
-_AI_DAILY_CALL_LIMITS = {"translate": 50, "ask": 100, "summarize": 50}
+# 计数复用 AiUsageRecord.calls。translate/ask/summarize 更接近底层调用次数；
+# podcast_ondemand / article_ondemand 按「发起一次新生成」记 1 次（复用 / 拒绝不扣），
+# 且二者共用同一日额度池（issue #124）。
+_AI_ONDEMAND_DAILY_LIMIT = 5
+_AI_ONDEMAND_PURPOSES = frozenset({"podcast_ondemand", "article_ondemand"})
+_AI_DAILY_CALL_LIMITS = {
+    "translate": 50,
+    "ask": 100,
+    "summarize": 50,
+    # 池容量读取键；article_ondemand 走同一池，不单独加限额。
+    "podcast_ondemand": _AI_ONDEMAND_DAILY_LIMIT,
+}
 
 
 def _enforce_ai_daily_quota(username: str, purpose: str) -> None:
     """按当日 AiUsageRecord 聚合的 calls 判该账户此用途是否超额；超则 429。
 
     admin 不豁免：配额护的是共享 LLM 预算/成本，与账户角色无关，统一限最简单可预期。
+    点播用途（播客 + 文章）合计计入同一池。
     """
-    limit = _AI_DAILY_CALL_LIMITS.get(purpose)
-    if not limit:
-        return
+    if purpose in _AI_ONDEMAND_PURPOSES:
+        limit = _AI_ONDEMAND_DAILY_LIMIT
+        purpose_clause = AiUsageRecord.purpose.in_(tuple(_AI_ONDEMAND_PURPOSES))
+    else:
+        limit = _AI_DAILY_CALL_LIMITS.get(purpose)
+        if not limit:
+            return
+        purpose_clause = AiUsageRecord.purpose == purpose
     today = datetime.date.today().isoformat()
     with Session(deps.get_db_sink().engine) as session:
         used = session.exec(
             select(func.coalesce(func.sum(AiUsageRecord.calls), 0)).where(
                 AiUsageRecord.day == today,
                 AiUsageRecord.username == username,
-                AiUsageRecord.purpose == purpose,
+                purpose_clause,
             )
         ).one()
     if int(used or 0) >= limit:
@@ -1622,6 +1642,231 @@ async def reader_ai_translate_podcast_transcript(
         "item": result["items"][0],
         "cached": cached,
     }
+
+
+@router.post("/ai/podcasts/{episode_id}/ondemand")
+async def reader_ai_podcast_ondemand(episode_id: str, request: Request):
+    """读者点播精品导读音频：复用强制 TTS 流水线，跳过优质分门槛。
+
+    资格：必须已有全文终评；无终评且非进行中 → 评分过低文案。
+    配额：仅「真正新开一次生成」扣 1（日限额 5）；复用已有/进行中不扣。
+    顺序：先只读评估 → 成本闸 → 再落库调度 → 成功后记账。
+    """
+
+    username, _llm_config = _require_reader_ai(request)
+    app = _app()
+    db_sink = deps.get_db_sink()
+    with Session(db_sink.engine) as session:
+        episode = session.get(ArticleRecord, episode_id)
+        if episode is None or episode.content_type != "podcast_episode":
+            raise HTTPException(status_code=404, detail="播客单集不存在")
+        if episode.source_id in source_visibility_service.reader_unavailable_source_ids(
+            session
+        ):
+            raise HTTPException(status_code=404, detail="播客单集不存在")
+        _deny_unsubscribed_user_source_article(session, username, episode)
+        _deny_nonexportable_article(session, episode)
+
+    try:
+        evaluated = (
+            podcast_premium_guide_service.evaluate_reader_ondemand_premium_guide(
+                db_sink.engine,
+                episode_id=episode_id,
+                config=app.settings.podcast,
+                actor=username,
+            )
+        )
+    except podcast_premium_guide_service.PremiumGuideForceError as exc:
+        return JSONResponse(
+            {"code": exc.code, "message": exc.message},
+            status_code=exc.status_code,
+            headers={"Cache-Control": "private, no-store", "Vary": "Cookie"},
+        )
+
+    if evaluated["outcome"] in {"ready", "in_progress"}:
+        return {
+            "status": "success",
+            "episode_id": episode_id,
+            "outcome": evaluated["outcome"],
+            "guide_status": evaluated["status"],
+            "charged": False,
+            "started": False,
+        }
+
+    # 仅「需要新开生成」才走成本闸；过闸后再落库，避免拒配额却留下排队痕迹。
+    _enforce_ai_cost_gates(username, "podcast_ondemand")
+
+    idempotency_key = f"reader-ondemand:{username}:{episode_id}:{uuid.uuid4().hex}"
+    try:
+        scheduled = app.schedule_forced_podcast_premium_guide(
+            episode_id,
+            idempotency_key=idempotency_key,
+            reason=podcast_premium_guide_service.READER_ONDEMAND_REASON,
+            actor=username,
+        )
+    except podcast_premium_guide_service.PremiumGuideForceError as exc:
+        # 并发下另一请求已入队/已就绪：软复用，不扣配额。
+        if exc.code == "podcast_force_tts_in_progress":
+            return {
+                "status": "success",
+                "episode_id": episode_id,
+                "outcome": "in_progress",
+                "guide_status": "queued",
+                "charged": False,
+                "started": False,
+            }
+        if exc.code == "podcast_force_tts_already_ready":
+            return {
+                "status": "success",
+                "episode_id": episode_id,
+                "outcome": "ready",
+                "guide_status": "ready",
+                "charged": False,
+                "started": False,
+            }
+        return JSONResponse(
+            {"code": exc.code, "message": exc.message},
+            status_code=exc.status_code,
+            headers={"Cache-Control": "private, no-store", "Vary": "Cookie"},
+        )
+
+    with Session(db_sink.engine) as session:
+        ai_usage_service.record_usage(
+            session,
+            username=username,
+            purpose="podcast_ondemand",
+            model="ondemand",
+            usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        )
+        accounts_service.record_ai_usage(session, username, "podcast_ondemand")
+
+    return {
+        "status": "success",
+        "episode_id": episode_id,
+        "outcome": "queued",
+        "guide_status": scheduled.get("status") or "queued",
+        "charged": True,
+        "started": bool(scheduled.get("started")),
+    }
+
+
+@router.post("/ai/articles/{article_id}/ondemand")
+async def reader_ai_article_ondemand(article_id: str, request: Request):
+    """读者点播文章精简旁白音频：无新闻价值分门槛，有正文即可。
+
+    配额：与播客点播共用日额度池；仅「真正新开一次生成」扣 1；复用已有/进行中不扣。
+    顺序：先只读评估 → 成本闸 → 再落库调度 → 成功后记账。
+    """
+
+    username, _llm_config = _require_reader_ai(request)
+    app = _app()
+    db_sink = deps.get_db_sink()
+    with Session(db_sink.engine) as session:
+        article = session.get(ArticleRecord, article_id)
+        if article is None or article.content_type == "podcast_episode":
+            raise HTTPException(status_code=404, detail="文章不存在")
+        _deny_hidden_source_article(session, request, article)
+        _deny_unsubscribed_user_source_article(session, username, article)
+        _deny_nonexportable_article(session, article)
+
+    try:
+        evaluated = article_listen_guide_service.evaluate_reader_ondemand(
+            db_sink.engine,
+            article_id=article_id,
+            actor=username,
+        )
+    except article_listen_guide_service.ArticleListenError as exc:
+        return JSONResponse(
+            {"code": exc.code, "message": exc.message},
+            status_code=exc.status_code,
+            headers={"Cache-Control": "private, no-store", "Vary": "Cookie"},
+        )
+
+    if evaluated["outcome"] in {"ready", "in_progress"}:
+        return {
+            "status": "success",
+            "article_id": article_id,
+            "outcome": evaluated["outcome"],
+            "guide_status": evaluated["status"],
+            "charged": False,
+            "started": False,
+        }
+
+    _enforce_ai_cost_gates(username, "article_ondemand")
+
+    try:
+        scheduled = app.schedule_article_listen_guide(article_id, actor=username)
+    except article_listen_guide_service.ArticleListenError as exc:
+        return JSONResponse(
+            {"code": exc.code, "message": exc.message},
+            status_code=exc.status_code,
+            headers={"Cache-Control": "private, no-store", "Vary": "Cookie"},
+        )
+
+    if scheduled.get("outcome") in {"ready", "in_progress"} and not scheduled.get(
+        "started"
+    ):
+        return {
+            "status": "success",
+            "article_id": article_id,
+            "outcome": scheduled["outcome"],
+            "guide_status": scheduled.get("status") or scheduled["outcome"],
+            "charged": False,
+            "started": False,
+        }
+
+    with Session(db_sink.engine) as session:
+        ai_usage_service.record_usage(
+            session,
+            username=username,
+            purpose="article_ondemand",
+            model="ondemand",
+            usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        )
+        accounts_service.record_ai_usage(session, username, "article_ondemand")
+
+    return {
+        "status": "success",
+        "article_id": article_id,
+        "outcome": scheduled.get("outcome") or "queued",
+        "guide_status": scheduled.get("status") or "queued",
+        "charged": True,
+        "started": bool(scheduled.get("started")),
+    }
+
+
+@router.get("/articles/{article_id}/listen-audio")
+def reader_article_listen_audio(article_id: str, request: Request):
+    """已就绪的文章点播旁白音频（本地 CAS）。"""
+
+    username = _app().current_username(request)
+    if not username:
+        raise HTTPException(status_code=401, detail="未登录")
+    app = _app()
+    db_sink = deps.get_db_sink()
+    with Session(db_sink.engine) as session:
+        article = session.get(ArticleRecord, article_id)
+        if article is None or article.content_type == "podcast_episode":
+            raise HTTPException(status_code=404, detail="音频不存在")
+        _deny_hidden_source_article(session, request, article)
+        _deny_unsubscribed_user_source_article(session, username, article)
+        _deny_nonexportable_article(session, article)
+
+    resolved = article_listen_guide_service.audio_file_for_article(
+        db_sink.engine, app.article_listen_store, article_id
+    )
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="音频不存在")
+    path, mime, _guide = resolved
+    return FileResponse(
+        path,
+        media_type=mime or "audio/mpeg",
+        headers={
+            "Cache-Control": "private, max-age=3600",
+            "X-Content-Type-Options": "nosniff",
+            "Accept-Ranges": "bytes",
+        },
+    )
 
 
 @router.post("/ai/summarize")

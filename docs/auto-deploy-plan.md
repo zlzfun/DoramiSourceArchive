@@ -70,8 +70,9 @@ deploy.yml 另有 workflow_dispatch(tag, allow_downgrade, force_redeploy)= 手�
   比对(现有 `release.yml` 从工作区读版本,手动部署旧 tag 时会拿 main 的版本号比对而误拒)→ 输出 `target_sha`。
   push 路径与两个 dispatch 路径都用它。
 - `release.yml`:`release` job 改用该脚本,输出 `tag` / `target_sha`;新增 `deploy` job,`needs: release`,
-  `uses: ./.github/workflows/deploy.yml`,`with: {tag, target_sha}`;**不写** `secrets: inherit`(Environment secrets
-  由被调用 job 自己的 `environment` 声明获得,`on.workflow_call` 不支持 `environment`)。
+  `uses: ./.github/workflows/deploy.yml`,`with: {tag, target_sha}`,**加 `secrets: inherit`**(被调用 job 自己声明
+  `environment` 只拿得到 vars、拿不到 Environment secrets——v3.60.1 首次串联部署实证 `PROD_SSH_KEY` 为空;`on.workflow_call`
+  不支持 `environment`,故 environment 仍声明在被调用 job)。
   `workflow_dispatch`(补建 Release)加布尔输入 `deploy`(默认 false)。
 - `deploy.yml`:`on: workflow_call(inputs: tag, target_sha)` + `on: workflow_dispatch(inputs: tag, allow_downgrade=false,
   force_redeploy=false)`;dispatch 路径自己跑 `verify-release-ref.sh` 得 `target_sha`,并核对该 tag 已有**非 draft**
@@ -357,7 +358,8 @@ in-progress / last-success 事务(含 prev 镜像采样与 worker 自己做的 D
   + 脚本图做 DAG 闭包比较(PR-1 落地时收为四种状态,见 §4.6);pending=0 不等于降级安全。
 - **备份与测试分界**(分歧 D4):备份保留数不改、可配、manifest 引用者 pin 住;锁 / attach / `.rc` / 自举场景做进程级 CI 测试,
   真实断网与完整新旧 tag 部署留上线前演练。
-- 其余:environment 声明在被调用 job(`on.workflow_call` 不支持 `environment`,Environment secrets 不经 `secrets: inherit`);
+- 其余:environment 声明在被调用 job(`on.workflow_call` 不支持 `environment`;Environment secrets 须经 `secrets: inherit` 透传——
+  设计时以为不用,v3.60.1 实证推翻,见 §7 末);
   Deployment branches / tags 策略;`docker compose config -q` 固定且禁打印;健康核对五项与 `no-store`;managed tag 唯一命名 +
   manifest 提交点,不碰手工 `rollback:vX`;SSH `restrict`;元数据前缀不用 `::`;邮件不作机器验收。
 
@@ -451,3 +453,10 @@ GitHub CI 后端首跑失败并非代码回归:脚本自举测试用 `git show 8
 但 worker 从运行容器的构建身份读到基线 v3.59.0、方向 forward,护栏本就放行;runner 侧 3 分 26 秒,生产机事务 1789636725-6ccc02f1)。
 修法:刷新 `origin/main` 用 `--no-tags`,tag 只在本地缺失时单独取,fetch 失败显式报错;轻量 tag 判定改看 `ls-remote` 的剥离行而非本地对象类型
 (runner 上本地对象已被改写成 commit,会误报);回归测试模拟 checkout 的改写。修复随下一个发布版进入 tag 里的脚本后,tag 推送路径才真正闭环。
+
+**v3.60.1(2026-09-19)tag 推送路径二次实证**:修复进 tag 后,核验通过、Release 自动建成、部署作业挂起等审批——tag 推送串联本身走通。
+批准后却在 runner 的 Prepare SSH 步失败:被调用的 `deploy.yml` job 里 `vars.PROD_KNOWN_HOSTS` 有值而 `secrets.PROD_SSH_KEY` 为空。
+结论:Environment **secrets** 不会自动进 workflow_call 的被调用 job(即便该 job 声明了 `environment`),必须由调用方 `secrets: inherit`
+透传;variables 则自动可见。设计稿与 R1–R5 检视都写成「不经 inherit」,是两人共同的错误假设。生产机未被触碰(SSH 未发起)。
+修法:`release.yml` 的 `deploy` job 加 `secrets: inherit`;用 `workflow_dispatch`(deploy=true)从 main 重跑 release.yml 走同一条
+workflow_call 链路验证,再由下一个发布版确认 push 事件下完整闭环。
