@@ -8,6 +8,7 @@ export default function PodcastExperiencePanel({
   variant,
   onVariantChange,
   aiEnabled = false,
+  ondemandEnabled = false,
   showToast,
   onArticleRefresh,
 }) {
@@ -18,6 +19,7 @@ export default function PodcastExperiencePanel({
       variant={variant}
       onVariantChange={onVariantChange}
       aiEnabled={aiEnabled}
+      ondemandEnabled={ondemandEnabled}
       showToast={showToast}
       onArticleRefresh={onArticleRefresh}
     />
@@ -29,6 +31,7 @@ function PodcastExperience({
   variant: controlledVariant,
   onVariantChange,
   aiEnabled,
+  ondemandEnabled,
   showToast,
   onArticleRefresh,
 }) {
@@ -56,6 +59,7 @@ function PodcastExperience({
         variant={variant}
         onVariantChange={handleVariantChange}
         aiEnabled={aiEnabled}
+        ondemandEnabled={ondemandEnabled}
         showToast={showToast}
         onArticleRefresh={onArticleRefresh}
       />

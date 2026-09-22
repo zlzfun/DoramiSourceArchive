@@ -394,6 +394,7 @@ def test_evaluate_disabled_when_tts_stage_missing(tmp_path):
         )
     assert caught.value.code == "podcast_ondemand_disabled"
     assert caught.value.status_code == 503
+    assert caught.value.message == "当前部署未开启播客点播"
 
 
 # ── HTTP /api/reader/ai/podcasts/{id}/ondemand ─────────────────

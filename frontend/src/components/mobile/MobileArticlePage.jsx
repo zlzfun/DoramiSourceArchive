@@ -32,6 +32,7 @@ import { hostOf } from '../../utils/readerText';
 export default function MobileArticlePage({
   rs,
   aiEnabled,
+  ondemand = {},   // 点播能力位(issue #137):{podcast, article}
   showToast,
   onBack,
   onLeaveForSearch = null, // 标签检索离开正文页的专用出口(不走早报返回)
@@ -195,6 +196,7 @@ export default function MobileArticlePage({
                 setPodcastSelection({ articleId: activeArticle.id, variant });
               }}
               aiEnabled={aiEnabled}
+              ondemandEnabled={ondemand.podcast === true}
               showToast={showToast}
               onArticleRefresh={refreshActiveArticle}
             />
@@ -212,6 +214,7 @@ export default function MobileArticlePage({
               onGenerate={handleSummarize}
               podcast={podcastView}
               aiEnabled={aiEnabled}
+              ondemandEnabled={ondemand.article === true}
               showToast={showToast}
               onArticleRefresh={refreshActiveArticle}
             />

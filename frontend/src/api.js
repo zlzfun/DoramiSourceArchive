@@ -764,6 +764,16 @@ export function updatePublicShareGlobal(enabled) {
   return request('/admin/public-share', { method: 'POST', body: { enabled }, errorMsg: '更新分享总闸失败' });
 }
 
+// 读者点播总闸(issue #137):播客精品导读 + 文章精简旁白共一枚开关;
+// 返回值另带本部署实际可用性与 blockers(开着却跑不了时缺什么)。
+export function fetchReaderOndemandGlobal() {
+  return request('/admin/reader-ondemand', { errorMsg: '获取点播总闸失败' });
+}
+
+export function updateReaderOndemandGlobal(enabled) {
+  return request('/admin/reader-ondemand', { method: 'POST', body: { enabled }, errorMsg: '更新点播总闸失败' });
+}
+
 export function fetchFeedToken() {
   return request('/reader/feed-token', { errorMsg: '获取聚合接口令牌失败' });
 }
