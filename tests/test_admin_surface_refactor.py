@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import os
 import sys
@@ -266,8 +267,10 @@ def test_artifact_list_pagination_search_and_titles(monkeypatch, tmp_path):
 
 
 def _seed_ledger(session):
-    now = "2026-09-14T08:00:00+00:00"
-    old = "2026-08-01T08:00:00+00:00"
+    # 相对当前时间造数据:hits_7d / 30d 是按「现在」滚动的窗口,写死日期会在日历翻页后改变排序(2026-09-22 CI 实炸)
+    _now_dt = _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0) - _dt.timedelta(days=1)
+    now = _now_dt.isoformat()
+    old = (_now_dt - _dt.timedelta(days=44)).isoformat()
     tags = []
     for code, kind, zh, en, status, selectable in (
         ("topic.agent-orchestration", "topic", "Agent 编排", "Agent orchestration", "active", True),
@@ -319,7 +322,7 @@ def _seed_ledger(session):
     for index in range(2):
         session.add(CmsTagCandidateEvidenceRecord(
             candidate_id=candidate.id, article_id=f"ledger-{index}", source_id=f"source-{index}",
-            source_owner_or_domain="example.test", published_date="2026-09-13", confidence=0.9,
+            source_owner_or_domain="example.test", published_date=_now_dt.date().isoformat(), confidence=0.9,
             raw_label="MCP", context_excerpt="…", created_at=now,
         ))
     session.commit()
