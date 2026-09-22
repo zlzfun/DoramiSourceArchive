@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Podcast } from 'lucide-react';
-import { mediaProxyUrl } from '../api';
+import { mediaProxyUrl, requestPodcastOndemand } from '../api';
 import { formatPodcastDuration, podcastOf } from '../utils/podcast';
 import { podcastFullProcessingMeta } from '../utils/analysis';
 import {
@@ -10,6 +10,7 @@ import {
 } from '../utils/podcastPlayback';
 
 const PROGRESS_SAVE_INTERVAL_MS = 3000;
+const GUIDE_ACTIVE_STATUSES = new Set(['queued', 'summarizing', 'synthesizing']);
 
 export function PodcastCover({ src, className = '' }) {
   const [failedSrc, setFailedSrc] = useState('');
@@ -32,7 +33,15 @@ export function PodcastCover({ src, className = '' }) {
   );
 }
 
-export default function PodcastAudioPanel({ article, variant, onVariantChange }) {
+export default function PodcastAudioPanel({
+  article,
+  variant,
+  onVariantChange,
+  aiEnabled = false,
+  ondemandEnabled = false,
+  showToast,
+  onArticleRefresh,
+}) {
   const podcast = podcastOf(article);
   if (!podcast) return null;
 
@@ -45,14 +54,29 @@ export default function PodcastAudioPanel({ article, variant, onVariantChange })
       podcast={podcast}
       variant={variant}
       onVariantChange={onVariantChange}
+      aiEnabled={aiEnabled}
+      ondemandEnabled={ondemandEnabled}
+      showToast={showToast}
+      onArticleRefresh={onArticleRefresh}
     />
   );
 }
 
-function PodcastAudioPlayer({ article, podcast, variant: controlledVariant, onVariantChange }) {
+function PodcastAudioPlayer({
+  article,
+  podcast,
+  variant: controlledVariant,
+  onVariantChange,
+  aiEnabled,
+  ondemandEnabled,
+  showToast,
+  onArticleRefresh,
+}) {
   const fullProcessing = podcastFullProcessingMeta(article);
   const hasDigest = Boolean(podcast.condensed_audio_url);
   const hasDigestBlog = Boolean(podcast.premium_guide?.blog_ready || podcast.premium_guide?.status === 'ready');
+  const guideStatus = String(podcast.premium_guide?.status || '').trim().toLowerCase();
+  const guideActive = !hasDigest && GUIDE_ACTIVE_STATUSES.has(guideStatus);
   const isFailure = fullProcessing?.tone === 'bad'
     || fullProcessing?.label === '全文处理失败'
     || fullProcessing?.label === '全文处理等待重试'
@@ -62,13 +86,16 @@ function PodcastAudioPlayer({ article, podcast, variant: controlledVariant, onVa
   const visibleProcessing = isFailure ? null : fullProcessing;
   const status = (hasDigest || hasDigestBlog)
     ? { label: '精品导读已就绪', tone: 'ok' }
-    : (visibleProcessing || { label: '仅提供原节目', tone: 'idle' });
+    : guideActive
+      ? { label: '精品导读生成中…', tone: 'run' }
+      : (visibleProcessing || { label: '仅提供原节目', tone: 'idle' });
   const originalDuration = formatPodcastDuration(podcast.duration_seconds);
   const condensedDuration = formatPodcastDuration(podcast.condensed_duration_seconds);
   const [localVariant, setLocalVariant] = useState(() => (
     podcast.audio_url ? 'original' : 'digest'
   ));
   const [audioError, setAudioError] = useState('');
+  const [ondemandBusy, setOndemandBusy] = useState(false);
   const audioRef = useRef(null);
   const lastSavedAtRef = useRef(0);
   const preferredVariant = controlledVariant ?? localVariant;
@@ -76,6 +103,12 @@ function PodcastAudioPlayer({ article, podcast, variant: controlledVariant, onVa
     ? 'digest'
     : podcast.audio_url ? 'original' : hasDigest ? 'digest' : 'original';
   const playbackIdentityRef = useRef({ articleId: article?.id, variant: activeVariant });
+  const canRequestOndemand = Boolean(
+    aiEnabled && ondemandEnabled && article?.id && !hasDigest && !guideActive && !ondemandBusy,
+  );
+  // 点播不可用(总闸关 / 本部署跑不了)就不画按钮。已在生成的仍要看得见进度——
+  // 开关中途被关掉时,读者不该以为自己的生成请求凭空消失。
+  const ondemandVisible = Boolean(aiEnabled && (ondemandEnabled || guideActive));
 
   const activeTrack = activeVariant === 'digest'
     ? { label: '精品导读', duration: condensedDuration, src: podcast.condensed_audio_url, generated: true }
@@ -120,6 +153,27 @@ function PodcastAudioPlayer({ article, podcast, variant: controlledVariant, onVa
     }
   };
 
+  const handleOndemand = async () => {
+    if (!canRequestOndemand) return;
+    setOndemandBusy(true);
+    try {
+      const result = await requestPodcastOndemand(article.id);
+      const outcome = String(result?.outcome || '');
+      if (outcome === 'ready') {
+        showToast?.('精品导读已就绪', 'success');
+      } else if (outcome === 'in_progress') {
+        showToast?.('精品导读正在生成中', 'info');
+      } else {
+        showToast?.('已开始生成精品导读', 'success');
+      }
+      await onArticleRefresh?.();
+    } catch (error) {
+      showToast?.(error?.message || '点播失败，请稍后重试', 'error');
+    } finally {
+      setOndemandBusy(false);
+    }
+  };
+
   const failureMessage = activeVariant === 'digest'
     ? '精品导读音频加载失败，请切换到原节目或稍后重试'
     : '原节目音频加载失败，请打开节目页面收听或稍后重试';
@@ -139,24 +193,36 @@ function PodcastAudioPlayer({ article, podcast, variant: controlledVariant, onVa
           {visibleProcessing.detail}
         </p>
       )}
-      {hasDigest && (
+      {(hasDigest || ondemandVisible) && (
         <div className="mini-seg podcast-mode-switch" role="group" aria-label="播客播放模式">
           <button
             type="button"
-            className={`mini-seg-btn ${activeVariant === 'original' ? 'is-on' : ''}`}
-            aria-pressed={activeVariant === 'original'}
+            className={`mini-seg-btn ${activeVariant === 'original' || !hasDigest ? 'is-on' : ''}`}
+            aria-pressed={activeVariant === 'original' || !hasDigest}
             onClick={() => switchVariant('original')}
           >
             原节目{originalDuration ? ` · ${originalDuration}` : ''}
           </button>
-          <button
-            type="button"
-            className={`mini-seg-btn ${activeVariant === 'digest' ? 'is-on' : ''}`}
-            aria-pressed={activeVariant === 'digest'}
-            onClick={() => switchVariant('digest')}
-          >
-            精品导读{condensedDuration ? ` · ${condensedDuration}` : ''}
-          </button>
+          {hasDigest ? (
+            <button
+              type="button"
+              className={`mini-seg-btn ${activeVariant === 'digest' ? 'is-on' : ''}`}
+              aria-pressed={activeVariant === 'digest'}
+              onClick={() => switchVariant('digest')}
+            >
+              精品导读{condensedDuration ? ` · ${condensedDuration}` : ''}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="mini-seg-btn podcast-ondemand-seg"
+              disabled={!canRequestOndemand}
+              aria-busy={ondemandBusy || guideActive}
+              onClick={handleOndemand}
+            >
+              {ondemandBusy ? '提交中…' : guideActive ? '生成中…' : '点播精品导读'}
+            </button>
+          )}
         </div>
       )}
       {activeTrack.src ? (

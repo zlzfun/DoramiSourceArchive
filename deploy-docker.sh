@@ -192,36 +192,13 @@ EXPECT_VERSION="$(_deploy_lib_source_version)"
 # 连接建立后后端不答也不能吃掉整个预算(容器 nginx 的 upstream 读超时是 300s)。次数只作额外上限。
 BUDGET="${DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS:-180}"
 ATTEMPTS="${DORAMI_DEPLOY_HEALTH_ATTEMPTS:-90}"
-deadline=$(( $(date +%s) + BUDGET ))
+# 判定与轮询在 scripts/deploy-lib.sh(deploy_wait_healthy,裸机路径的后端身份门共用同一段);预算仍由这里传入。
 health_ok=""
-last_verdict=""
-attempt=0
-while [ "$attempt" -lt "$ATTEMPTS" ]; do
-    attempt=$((attempt + 1))
-    remaining=$(( deadline - $(date +%s) ))
-    [ "$remaining" -gt 0 ] || break
-    max_time=$(( remaining < 15 ? remaining : 15 ))
-    body="$(curl -fsS --connect-timeout 5 --max-time "$max_time" -H 'Cache-Control: no-cache' "${PROBE}/api/health?_=$(date +%s)" 2>/dev/null || true)"
-    if [ -n "$body" ]; then
-        verdict="$(printf '%s' "$body" | python3 -c '
-import json, sys
-want_version, want_ref, want_sha = sys.argv[1:4]
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    print("bad-json"); sys.exit(0)
-b = d.get("build") or {}
-got = {"status": d.get("status"), "version": d.get("version"), "ref": b.get("ref"), "sha": b.get("sha"), "source": b.get("source")}
-expect = {"status": "ok", "version": want_version, "ref": want_ref, "sha": want_sha, "source": "env"}
-bad = [k for k in expect if got.get(k) != expect[k]]
-print("ok" if not bad else "mismatch " + ",".join(f"{k}={got.get(k)}" for k in bad))
-' "$EXPECT_VERSION" "$DORAMI_BUILD_REF" "$DORAMI_BUILD_SHA")"
-        if [ "$verdict" = "ok" ]; then health_ok=1; break; fi
-        last_verdict="$verdict"
-    fi
-    [ $(( deadline - $(date +%s) )) -gt 2 ] || break
-    sleep 2
-done
+if deploy_wait_healthy "${PROBE}/api/health" "$EXPECT_VERSION" "$DORAMI_BUILD_REF" "$DORAMI_BUILD_SHA" "$BUDGET" "$ATTEMPTS"; then
+    health_ok=1
+fi
+attempt="$DEPLOY_HEALTH_ATTEMPT"
+last_verdict="$DEPLOY_HEALTH_LAST_VERDICT"
 
 if [ -n "$health_ok" ]; then
     deploy_meta health ok

@@ -196,7 +196,7 @@ def launch_remote_sync_job(
                 podcast_text_page_max_rows=(
                     app_module.settings.podcast.text_sync_page_max_rows
                 ),
-                on_advance=job.advance,
+                on_progress=job.set_progress,
                 on_stream_complete=_record_stream,
             )
         result = await remote_sync_service.run_pull(

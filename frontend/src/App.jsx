@@ -81,6 +81,8 @@ const INITIAL_RUNTIME = {
   ai_beta_enabled: false,
   llm_configured: false,
   personal_digest_enabled: false,
+  // 读者点播能力位(issue #137):总闸 ∧ 本部署真能跑;未知时按不可用,宁可晚一拍画入口。
+  ondemand: { podcast: false, article: false },
   default_surface: 'console',
 };
 
@@ -867,6 +869,7 @@ export default function App() {
                   aiEnabled={runtimeInfo.ai_beta_enabled && runtimeInfo.llm_configured}
                   userSourcesEnabled={runtimeInfo.user_sources_enabled !== false}
                   personalDigestEnabled={runtimeInfo.personal_digest_enabled === true}
+                  ondemand={runtimeInfo.ondemand || INITIAL_RUNTIME.ondemand}
                   standalone
                   account={authState.user}
                   onUserUpdated={handleUserUpdated}

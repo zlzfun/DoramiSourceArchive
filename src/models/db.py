@@ -85,6 +85,14 @@ class ArticleRecord(SQLModel, table=True):
     read_count: int = Field(default=0, description="全站累计阅读次数")
 
 
+class DailyBriefCandidateRecord(SQLModel, table=True):
+    """Node-local consumption ledger. Pending rows survive cursor advancement."""
+    __tablename__ = "daily_brief_candidates"
+    __table_args__ = (CheckConstraint("status IN ('pending','processed')", name="ck_daily_brief_candidate_status"),)
+    article_id: str = Field(primary_key=True, foreign_key="articles.id", ondelete="CASCADE")
+    status: str = Field(default="pending", index=True)
+
+
 # Fields that make up the faithfully replicated article archive. Reader-local
 # counters and the analysis authority fence deliberately do not advance this
 # watermark.
@@ -2397,6 +2405,7 @@ class JobRecord(SQLModel, table=True):
     total: Optional[int] = Field(default=None, description="总步数，未知则空")
     processed: int = Field(default=0, description="已处理步数")
     payload_json: str = Field(default="{}", description="提交时的入参快照 JSON")
+    progress_json: Optional[str] = Field(default=None, description="运行中的进度快照 JSON")
     result_json: Optional[str] = Field(default=None, description="成功结果 JSON")
     error: Optional[str] = Field(default=None, description="失败原因摘要")
     created_by: Optional[str] = Field(default=None, index=True, description="触发账户；系统任务为空")
@@ -2409,7 +2418,8 @@ class AiUsageRecord(SQLModel, table=True):
     """AI 用量按天聚合：一行 = 某天某用户某用途某模型的累计调用与 token 消耗。
 
     username 为登录账户名；系统级任务（定时日报等）记为 "system"。
-    purpose ∈ translate / ask / daily_brief_editorial / daily_brief_dedup /
+    purpose ∈ translate / ask / summarize / podcast_ondemand /
+    article_ondemand / daily_brief_editorial / daily_brief_dedup /
     daily_brief_reduce / article_analysis / source_config / detail_profile。
     """
     __tablename__ = "ai_usage"

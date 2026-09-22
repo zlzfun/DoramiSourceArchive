@@ -636,6 +636,25 @@ export function useReaderState({
     }
   }, [activeArticle, summarizing, showToast]);
 
+  // 点播等会改 podcast.premium_guide / condensed_audio_url 的动作后，主动拉一次详情
+  // 以便状态徽标立刻切换；后续仍由 analysisNeedsPolling 续轮询。
+  const refreshActiveArticle = useCallback(async () => {
+    const id = activeIdRef.current;
+    if (!id) return null;
+    try {
+      const data = await fetchArticle(id);
+      setActiveArticle((current) => (
+        current?.id === id ? withFreshAnalysis(current, data) : current
+      ));
+      setArticles((prev) => prev.map((item) => (
+        item.id === id ? withFreshAnalysis(item, data) : item
+      )));
+      return data;
+    } catch {
+      return null;
+    }
+  }, []);
+
   // ── AI · 一键译为中文（结果按 id 缓存，再次切回直接复用）──
   const handleTranslate = useCallback(async () => {
     const id = activeArticle?.id;
@@ -1504,7 +1523,7 @@ export function useReaderState({
     articles, articlesTotal, articlesLoading, loadingMore, hasMore, handleLoadMore,
     listRef, sentinelRef,
     // 选中文章 / 正文
-    activeArticle, activeBody, activeBodyLoading, selectArticle, openArticleById, supersedePendingOpen,
+    activeArticle, activeBody, activeBodyLoading, selectArticle, openArticleById, refreshActiveArticle, supersedePendingOpen,
     schedulePrefetch, cancelPrefetch,
     activeIndex, prevArticle, nextArticle,
     crumbSource, crumbHost, crumbName, displayBody, displayTranslatedBody, bodyStats,

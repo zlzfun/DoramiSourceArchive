@@ -56,6 +56,7 @@ export default function MobileReader({
   aiEnabled = false,
   userSourcesEnabled = false,
   personalDigestEnabled = false,
+  ondemand = {},   // 点播能力位(issue #137):{podcast, article}
   account = null,
   onUserUpdated,
   themePref = 'system',
@@ -552,6 +553,7 @@ export default function MobileReader({
         <MobileArticlePage
           rs={rs}
           aiEnabled={aiEnabled}
+          ondemand={ondemand}
           showToast={showToast}
           onBack={closeArticle}
           onLeaveForSearch={leaveArticleForSearch}

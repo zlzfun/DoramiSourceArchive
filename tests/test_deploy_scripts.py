@@ -713,6 +713,21 @@ def test_verify_release_ref(tmp_path: Path):
     assert run("v1.9.9").returncode == 1 and "版本号" in run("v1.9.9").stderr
     assert run("v2.0.0").returncode == 1 and "不在 main 线上" in run("v2.0.0").stderr
     assert run("nope").returncode == 1
+    # actions/checkout 对 tag 事件会把本地 tag 引用改写成指向提交的轻量 tag(fetch +<sha>:refs/tags/<tag>);
+    # 核验不得因此失败(2026-09-17 v3.60.0:--tags 撞「would clobber existing tag」静默退出 1),
+    # 也不得把它误报成轻量 tag(轻量与否以 origin 为准)
+    git(clone, "fetch", "--no-tags", "origin", f"+{good_sha}:refs/tags/v1.1.0", env=repo.env)
+    assert git(clone, "cat-file", "-t", "refs/tags/v1.1.0", env=repo.env).stdout.strip() == "commit"
+    r = run("v1.1.0")
+    assert r.returncode == 0 and r.stdout.strip() == good_sha, r.stderr
+    assert "轻量" not in r.stderr
+    # 本地没有 tag 时单独取回;origin 删了 tag 则拒绝
+    git(clone, "tag", "-d", "v1.1.0", env=repo.env)
+    r = run("v1.1.0")
+    assert r.returncode == 0 and r.stdout.strip() == good_sha, r.stderr
+    git(repo.work, "push", "-q", "--delete", "origin", "v1.1.0", env=repo.env)
+    r = run("v1.1.0")
+    assert r.returncode == 1 and "不存在于 origin" in r.stderr
 
 
 # ══════════════ 脚本层检视 R1 返修(codex 14 条)对应的失败路径 / 竞争窗口 ══════════════
@@ -1143,3 +1158,24 @@ def test_container_without_build_identity_makes_last_success_unverifiable(env: E
     r = env.launch(env.cmd("v1.1.0"))
     assert r.returncode == 21, r.stdout + r.stderr   # 不回放;基线未知 → 护栏
     assert "没有构建身份" in env.worker_log("v1.1.0")
+
+
+# ══════════════ issue #126 裸机回滚波的 Docker 等价守卫(docs/baremetal-rollback-plan.md §4.14 / §6.6)══════════════
+
+def test_deploy_docker_default_health_budget_unchanged():
+    """健康轮询抽到 deploy-lib 共用后,Docker 路径的默认预算仍是 180 s / 90 次,由本脚本传入(不在库里定默认)。"""
+    text = (ROOT / "deploy-docker.sh").read_text(encoding="utf-8")
+    assert 'BUDGET="${DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS:-180}"' in text
+    assert 'ATTEMPTS="${DORAMI_DEPLOY_HEALTH_ATTEMPTS:-90}"' in text
+    assert "deploy_wait_healthy" in text
+    lib = (ROOT / "scripts" / "deploy-lib.sh").read_text(encoding="utf-8")
+    assert "HEALTH_BUDGET_SECONDS:-" not in lib, "预算默认值只能在调用方"
+
+
+@pytest.mark.parametrize("arg", ["--rollback", "--status", "--code", "--adopt", "--discard-txn", "--restore-db"])
+def test_deploy_docker_rejects_baremetal_only_arguments(real: Env, arg: str):
+    """裸机专属参数只在 deploy.sh 装配;deploy-docker.sh 对它们仍按未知参数拒绝(不改 Docker 路径行为)。"""
+    _health(real, "v9.9.9")
+    r = _run_deploy(real, arg)
+    assert r.returncode != 0 and "未知参数" in r.stderr
+    assert not real.calls(), "参数错误须在任何 docker 调用之前"

@@ -3,18 +3,38 @@ import { podcastOf } from '../utils/podcast';
 import PodcastAudioPanel from './PodcastAudioPanel';
 import PodcastTextPanel from './PodcastTextPanel';
 
-export default function PodcastExperiencePanel({ article, variant, onVariantChange }) {
+export default function PodcastExperiencePanel({
+  article,
+  variant,
+  onVariantChange,
+  aiEnabled = false,
+  ondemandEnabled = false,
+  showToast,
+  onArticleRefresh,
+}) {
   return (
     <PodcastExperience
       key={article?.id}
       article={article}
       variant={variant}
       onVariantChange={onVariantChange}
+      aiEnabled={aiEnabled}
+      ondemandEnabled={ondemandEnabled}
+      showToast={showToast}
+      onArticleRefresh={onArticleRefresh}
     />
   );
 }
 
-function PodcastExperience({ article, variant: controlledVariant, onVariantChange }) {
+function PodcastExperience({
+  article,
+  variant: controlledVariant,
+  onVariantChange,
+  aiEnabled,
+  ondemandEnabled,
+  showToast,
+  onArticleRefresh,
+}) {
   const podcast = podcastOf(article);
   const [localVariant, setLocalVariant] = useState(() => (
     podcast?.audio_url ? 'original' : 'digest'
@@ -38,6 +58,10 @@ function PodcastExperience({ article, variant: controlledVariant, onVariantChang
         article={article}
         variant={variant}
         onVariantChange={handleVariantChange}
+        aiEnabled={aiEnabled}
+        ondemandEnabled={ondemandEnabled}
+        showToast={showToast}
+        onArticleRefresh={onArticleRefresh}
       />
       {guideVisible && (
         <PodcastTextPanel

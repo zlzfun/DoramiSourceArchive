@@ -265,6 +265,22 @@ export function translatePodcastTranscript(episodeId, sourceKind, options = {}) 
   });
 }
 
+export function requestPodcastOndemand(episodeId, options = {}) {
+  return request(`/reader/ai/podcasts/${enc(episodeId)}/ondemand`, {
+    method: 'POST',
+    errorMsg: '点播失败，请稍后重试',
+    ...options,
+  });
+}
+
+export function requestArticleOndemand(articleId, options = {}) {
+  return request(`/reader/ai/articles/${enc(articleId)}/ondemand`, {
+    method: 'POST',
+    errorMsg: '点播失败，请稍后重试',
+    ...options,
+  });
+}
+
 export function forcePodcastFullAnalysis(episodeId, idempotencyKey = '', podcast = {}) {
   const command = podcastFullAnalysisCommand(episodeId, podcast, idempotencyKey);
   return request(command.path, {
@@ -746,6 +762,16 @@ export function fetchPublicShareGlobal() {
 
 export function updatePublicShareGlobal(enabled) {
   return request('/admin/public-share', { method: 'POST', body: { enabled }, errorMsg: '更新分享总闸失败' });
+}
+
+// 读者点播总闸(issue #137):播客精品导读 + 文章精简旁白共一枚开关;
+// 返回值另带本部署实际可用性与 blockers(开着却跑不了时缺什么)。
+export function fetchReaderOndemandGlobal() {
+  return request('/admin/reader-ondemand', { errorMsg: '获取点播总闸失败' });
+}
+
+export function updateReaderOndemandGlobal(enabled) {
+  return request('/admin/reader-ondemand', { method: 'POST', body: { enabled }, errorMsg: '更新点播总闸失败' });
 }
 
 export function fetchFeedToken() {

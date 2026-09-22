@@ -125,7 +125,10 @@ cat /root/prod_known_hosts.txt                                           # 相�
 - 手工命令(绝对路径):`/root/bin/dorami-deploy-worker status` 看三份状态;`/root/bin/dorami-deploy-worker --close-in-progress`
   关闭未收口事务(恢复备份 / 放弃失败部署之后)。
 - **首次安装的空机器**:`touch /var/lib/dorami-deploy/first-install.token` 才允许起空库,有任何部署证据(容器 / 备份 / managed 镜像 /
-  库文件)的机器绝不起空站;首次经流水线部署时基线未知,Run workflow 要勾 `allow_downgrade`(人为确认);令牌在事务落盘后自动消费。
+  库文件)的机器绝不起空站;令牌在事务落盘后自动消费。
+- **基线从哪来**:没有 last-success 时 worker 读运行容器的构建身份(`DORAMI_BUILD_REF/SHA`,v3.56 起部署脚本烤进镜像)当基线——
+  v3.60.0 首次流水线部署即如此(基线 v3.59.0,来源 container,方向 forward,`allow_downgrade` 没起作用);只有容器没有构建身份
+  (更早的镜像)或没有容器时基线才是「未知」,那时须在 Run workflow 勾 `allow_downgrade`(人为确认)。
 - 恢复哪份备份看代际(`in-progress` 撤销失败升级 / `last-success` 回退上次成功),见 `docs/release-process.md`「回滚」。
 - 升级 launcher / worker 是显式手工步骤(重新 cp);目标 tag 的 `scripts/deploy-lib.sh` 用 `DORAMI_DEPLOY_PROTOCOL` 宣告
   契约版本,worker 不认识的版本拒绝部署。

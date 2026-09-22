@@ -8119,6 +8119,82 @@ input[type="radio"] {
   .reader-ai-summary-generate:hover:not(:disabled) { color: var(--dorami-blue); }
   .reader-ai-summary-generate:disabled { cursor: default; opacity: 0.7; }
 
+  /* 文章点播：可点播/生成中收在速读卡内（小胶囊，像控件不像纯文字）；
+     就绪播放条对齐播客 audio-track。 */
+  .reader-ai-listen-action {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 10px;
+    margin-top: 10px;
+  }
+  .reader-ai-listen-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 28px;
+    padding: 0 11px 0 9px;
+    border-radius: var(--r-pill);
+    border: 1px solid var(--dorami-border);
+    background: var(--dorami-well);
+    color: var(--dorami-ink-2);
+    cursor: pointer;
+  }
+  .reader-ai-listen-pill:hover:not(:disabled):not(.is-busy) {
+    border-color: var(--dorami-border-strong);
+    color: var(--dorami-ink);
+    background: var(--dorami-surface);
+  }
+  .reader-ai-listen-pill:disabled,
+  .reader-ai-listen-pill.is-busy {
+    cursor: default;
+    opacity: 0.85;
+  }
+  .reader-ai-listen-icon {
+    width: 14px;
+    height: 14px;
+    flex: none;
+  }
+  .reader-ai-listen-status {
+    color: var(--dorami-muted);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+  .article-listen-track {
+    margin: 0 0 14px;
+    padding-top: 11px;
+    border-top: 1px solid var(--dorami-border);
+  }
+  .article-listen-track-head {
+    display: flex;
+    align-items: center;
+    gap: 6px 10px;
+    margin-bottom: 7px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--dorami-faint);
+    font-variant-numeric: tabular-nums;
+  }
+  .article-listen-label {
+    font-weight: 700;
+    color: var(--dorami-ink-2);
+  }
+  .article-listen-duration { font-variant-numeric: tabular-nums; }
+  .article-listen-ai { color: var(--dorami-accent-ink); }
+  .article-listen-track audio {
+    display: block;
+    width: 100%;
+    height: 40px;
+    color-scheme: light dark;
+  }
+  .article-listen-error {
+    margin: 8px 0 0;
+    color: var(--state-bad, #b42318);
+    font-size: 12px;
+    font-weight: 600;
+  }
+
   /* 滚动壳:滚动容器 + 浮层滑块的定位祖先(占据列头以下的剩余高度) */
   .reader-scrollwrap {
     position: relative;
@@ -9019,6 +9095,11 @@ input[type="radio"] {
     flex: 1;
     min-width: 0;
     font-variant-numeric: tabular-nums;
+  }
+  /* 无精品音频时，点播占用「精品导读」分段位，不另开大按钮。 */
+  .podcast-mode-switch .podcast-ondemand-seg:disabled {
+    cursor: default;
+    opacity: 0.72;
   }
 
   .podcast-show-notes-head {
@@ -11171,6 +11252,7 @@ input[type="radio"] {
 .reader-src-more { font-size: 12.5px; font-weight: 400; }
 .reader-load-more { font-size: 12px; font-weight: 500; }
 .reader-ai-summary-generate { font-size: 12px; font-weight: 600; }
+.reader-ai-listen-pill { font-size: 12px; font-weight: 650; line-height: 1; }
 /* 速读卡大数字的排印同样钉在未分层区(全局 button{font:inherit} 未分层,@layer 内恒败) */
 .reader-ai-score-btn {
   /* 数字专用衬线栈:要齐线数字——Georgia 只有老式数字,7/5 带降部让小数点看着像居中点
@@ -12099,6 +12181,7 @@ input[type="radio"] {
    复用在册类:.ai-switchboard/.ledger-switch/.kpi-*/.acct-*/.rowact-btn/.stamp/.pager/.ledger-drawer*/.ledger-kv。
    ══════════════════════════════════════════════════════════════════════ */
 .ai-switchboard.is-wrap { flex-wrap: wrap; row-gap: 10px; }
+.ai-switchboard.is-wrap > .tiny-meta { flex: 1 1 16rem; min-width: 0; white-space: normal; }
 .sw { display: inline-flex; align-items: center; gap: 9px; }
 .sw-group { display: inline-flex; align-items: center; gap: 14px; }
 /* 开关板里的旋钮:标签小字 + well 底等宽小输入(与 AI 面板 .model-field 同刻度) */
