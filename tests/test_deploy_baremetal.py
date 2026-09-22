@@ -1597,6 +1597,9 @@ def test_adopt_resume_refuses_when_running_identity_changed(bm: BM):
     bm.health.write_text(json.dumps({"status": "ok", "version": "1.1.0", "build": {"ref": "v1.1.0", "sha": new_sha, "source": "env"}}))
     r = bm.run("--here")
     assert r.returncode == 24 and "--discard-txn" in r.stderr and "切回旧代码" in r.stderr
+    # 固化入口(--rollback → controller 续做收养)不经正向预检,同样必须核身份(codex 复检 P1)
+    r = bm.run("--rollback", "--yes")
+    assert r.returncode == 24 and "切回旧代码" in r.stderr, r.stdout + r.stderr
     assert bm.state("in-progress.json")["kind"] == "adopt", "事务原样保留,由人决定"
     assert bm.run("--discard-txn").returncode == 2, "已进入停机阶段的事务不能无确认丢弃"
     assert bm.run("--discard-txn", "--yes").returncode == 0
@@ -1618,6 +1621,9 @@ def test_dangling_html_dir_is_refused_and_flagged_in_status(bm: BM):
     assert r.returncode == 0 and "html_dir 悬空" in r.stdout and "current 悬空" in r.stdout
     r = bm.run("--here")
     assert r.returncode == 24 and "悬空 symlink" in r.stderr and ".adopt-*" in r.stderr and not bm.releases()
+    r = bm.run("--adopt")  # 显式入口同样在开事务前拒绝(codex 复检 P2)
+    assert r.returncode == 24 and "悬空 symlink" in r.stderr and not bm.releases()
+    assert not (bm.clone / "deploy-state" / "in-progress.json").exists()
     # 按提示恢复现场后照常收养
     bm.html_dir.unlink(); shutil.move(str(backup), str(bm.html_dir)); (bm.clone / "current").unlink()
     r = bm.run("--here")

@@ -502,6 +502,10 @@ P2-06 残留(入窗后不受 deadline 约束)→ 每轮 sleep / `--max-time` 取
 | 4 | 收养中断后有人手工从仓库根起了新版本,续做会用事务记录的旧代码起服务 = 降级 | 续做前核对运行身份 == 事务 `target.code_sha`,不等则 exit 24 要求 `--discard-txn` 后重新收养当前版本 |
 | 5 | `releases/` 被人工清空后 `current` / `html_dir` 悬空,`--status` 看不出,收养会拿悬空目录当 dist | `--status` 标 ⚠️ 悬空;收养检测到悬空即拒绝并给出恢复步骤(删链接、放回真实 dist、删 current) |
 
+codex 只看 diff 复检(`.review/intranet-r1-codex.md`):第 1 条推理成立、未见新换库漏洞(补一句:旧 config 常见的是固定键给空串而非缺键);
+第 4 条 P1 残留——固化入口 `--rollback` 续做收养不经正向预检、`BM_RUN_SHA` 为空时守卫被跳过(它在隔离现场复现了降级)→ `bm_adopt_resume`
+先自己采样再核身份;第 5 条 P2——显式 `--adopt` 绕过悬空检查 → 抽成 `bm_adopt_refuse_dangling` 两个入口共用。两条已修,用例各补一段。
+
 用例:`test_adoption_and_first_deploy_tolerate_storage_roots_unknown_to_older_code`(新代码多一个存储根的收养 + 首次正向)、`test_adoption_refuses_running_code_without_health_endpoint`、`test_adopt_resume_refuses_when_running_identity_changed`、`test_dangling_html_dir_is_refused_and_flagged_in_status`、`test_partial_or_missing_baseline_fields_cannot_pass_as_consistent` 末段(非库键缺失 = 新增)。
 
 ## 9. 实现记录(2026-09-21,分支 `feat/issue-126-baremetal-rollback`)

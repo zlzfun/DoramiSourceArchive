@@ -600,18 +600,22 @@ bm_ensure_adopted() {
         echo "    无 last-success,证据(${ev})来自 release 形态的未晋升事务而非旧形态安装:不收养,按首装候选继续(本次没有回滚点)"
         return 0
     fi
-    # 现场有悬空 symlink(上一次收养被人工清理过 releases/ 之类):旧形态现场已不完整,不能拿悬空目录当 dist 去收养(内网实测 R1)
-    local dangling=""
-    [ -L "$BM_CURRENT_LINK" ] && [ ! -e "$BM_CURRENT_LINK" ] && dangling="${dangling} current"
-    [ -n "${NGINX_HTML_DIR:-}" ] && [ -L "$NGINX_HTML_DIR" ] && [ ! -e "$NGINX_HTML_DIR" ] && dangling="${dangling} html_dir"
-    if [ -n "$dangling" ]; then
-        bm_fail "$BM_RC_IDENTITY" "现场有悬空 symlink(${dangling# }):指向的 release 已不存在,旧形态现场不完整。恢复:rm 悬空的 html_dir 链接;把真实 dist 目录放回 html_dir(${NGINX_HTML_DIR:-<html_dir>}.adopt-* 是旧 dist 备份,或 frontend/dist);rm ${BM_CURRENT_LINK};./deploy.sh --status 核对后重跑"
-    fi
+    bm_adopt_refuse_dangling
     echo "    无 last-success 但有既有部署证据(${ev}):先收养旧形态安装(一次 PM2 重启的维护窗)"
     bm_adopt_main
     # 收养重启了服务、建了 release:证据快照与现场采样都要刷新
     bm_sample_running
     bm_snapshot_evidence
+}
+
+# 现场有悬空 symlink(上一次收养被人工清理过 releases/ 之类):旧形态现场已不完整,不能拿悬空目录当 dist 去收养(内网实测 R1;
+# 自动收养与显式 --adopt 两个入口都在开事务前检查——codex 复检 P2)
+bm_adopt_refuse_dangling() {
+    local dangling=""
+    [ -L "$BM_CURRENT_LINK" ] && [ ! -e "$BM_CURRENT_LINK" ] && dangling="${dangling} current"
+    [ -n "${NGINX_HTML_DIR:-}" ] && [ -L "$NGINX_HTML_DIR" ] && [ ! -e "$NGINX_HTML_DIR" ] && dangling="${dangling} html_dir"
+    [ -n "$dangling" ] || return 0
+    bm_fail "$BM_RC_IDENTITY" "现场有悬空 symlink(${dangling# }):指向的 release 已不存在,旧形态现场不完整。恢复:rm 悬空的 html_dir 链接;把真实 dist 目录放回 html_dir(${NGINX_HTML_DIR:-<html_dir>}.adopt-* 是旧 dist 备份,或 frontend/dist);rm ${BM_CURRENT_LINK};./deploy.sh --status 核对后重跑"
 }
 
 # ══════════════════════ 收养(§4.11;第 4 层)══════════════════════
@@ -636,6 +640,7 @@ bm_adopt_main() {
         return 0
     fi
     [ -f "$BM_LAST_SUCCESS" ] && bm_fail "$BM_RC_USAGE" "本机已是 release 形态(last-success 存在),不需要收养"
+    bm_adopt_refuse_dangling
     # 前提(内网实测 R1):健康门只认 /api/health(v3.60.0 起才有)。服务在响应却给不出它(404 / 401 / HTML),
     # 说明运行的是更旧的代码,收养重启后必然过不了门——在开事务、动 venv 之前拒绝;完全无响应(已停机)交给 --adopt-sha 与健康门裁决
     if [ "${BM_HEALTH_HTTP:-none}" != none ] && [ -z "${BM_HEALTH_VERSION:-}" ]; then
@@ -682,6 +687,7 @@ PY
 }
 bm_adopt_resume() {
     bm_adopt_prepare_env
+    bm_sample_running   # 固化入口(--rollback / deploy-state/rollback)不经正向预检,这里必须自己采样(codex 复检 P1)
     # 运行中的代码已被人换掉(手工从仓库根起了新版本)时不能续做:续做会用事务记录的旧代码起服务 = 降级(内网实测 R1)
     local want; want="$(bm_manifest_get target.code_sha "")"
     if [ -n "${BM_RUN_SHA:-}" ]; then
@@ -1262,7 +1268,8 @@ for key, p in probe["mutable"].items():
         elif b and p != b:
             bad.append(f"database: 目标={p} 基准={b}")
         continue
-    # 基准永远是某次探针的完整输出:缺键只可能是基准代码更旧、不认识这个存储根;空串是该代码 / 配置未启用。
+    # 基准永远是某次探针的完整输出:缺键 = 产生基准的探针 / 代码不认识这个存储根(更旧),空串 = 该代码 / 配置未启用
+    # (旧 config 常见的是固定键给空串,而不是缺键)。
     # 两边都启用才比对(内网实测 R1:收养 v3.58 安装、再升到带 backup 根的版本时,严格「缺即拒」会把正常升级挡死)
     if b is None:
         notes.append(f"{key}: 历史基准(更旧的代码)无此存储根,视为新增:{p or '<未启用>'}")
