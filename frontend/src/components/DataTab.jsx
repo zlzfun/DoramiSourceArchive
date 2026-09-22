@@ -477,10 +477,18 @@ export default function DataTab({
         // 已有 processing 响应足以即时反馈；详情刷新失败留给下一次打开/手动同步。
       }
     } catch (error) {
+      const mediaPreparationError = [
+        'podcast_source_media_timeout', 'podcast_source_media_fetch_failed',
+        'podcast_source_media_too_large', 'podcast_source_media_too_long',
+        'podcast_processing_conflict', 'podcast_storage_full',
+        'podcast_provider_unavailable', 'podcast_artifact_invalid',
+      ].includes(error.code);
       showToast(
         error.code === 'podcast_artifact_not_ready'
           ? '无法启动全文处理：请确认节目 RSS 提供了可下载的音频地址后重试'
-          : (error.message || '启动全文处理失败，请稍后重试'),
+          : mediaPreparationError
+            ? `${error.message || '源音频准备失败'}，尚未进入 ASR；请检查来源或存储容量后重试`
+            : (error.message || '启动全文处理失败，请稍后重试'),
         'error',
       );
     } finally {
