@@ -600,6 +600,13 @@ bm_ensure_adopted() {
         echo "    无 last-success,证据(${ev})来自 release 形态的未晋升事务而非旧形态安装:不收养,按首装候选继续(本次没有回滚点)"
         return 0
     fi
+    # 现场有悬空 symlink(上一次收养被人工清理过 releases/ 之类):旧形态现场已不完整,不能拿悬空目录当 dist 去收养(内网实测 R1)
+    local dangling=""
+    [ -L "$BM_CURRENT_LINK" ] && [ ! -e "$BM_CURRENT_LINK" ] && dangling="${dangling} current"
+    [ -n "${NGINX_HTML_DIR:-}" ] && [ -L "$NGINX_HTML_DIR" ] && [ ! -e "$NGINX_HTML_DIR" ] && dangling="${dangling} html_dir"
+    if [ -n "$dangling" ]; then
+        bm_fail "$BM_RC_IDENTITY" "现场有悬空 symlink(${dangling# }):指向的 release 已不存在,旧形态现场不完整。恢复:rm 悬空的 html_dir 链接;把真实 dist 目录放回 html_dir(${NGINX_HTML_DIR:-<html_dir>}.adopt-* 是旧 dist 备份,或 frontend/dist);rm ${BM_CURRENT_LINK};./deploy.sh --status 核对后重跑"
+    fi
     echo "    无 last-success 但有既有部署证据(${ev}):先收养旧形态安装(一次 PM2 重启的维护窗)"
     bm_adopt_main
     # 收养重启了服务、建了 release:证据快照与现场采样都要刷新
@@ -629,6 +636,11 @@ bm_adopt_main() {
         return 0
     fi
     [ -f "$BM_LAST_SUCCESS" ] && bm_fail "$BM_RC_USAGE" "本机已是 release 形态(last-success 存在),不需要收养"
+    # 前提(内网实测 R1):健康门只认 /api/health(v3.60.0 起才有)。服务在响应却给不出它(404 / 401 / HTML),
+    # 说明运行的是更旧的代码,收养重启后必然过不了门——在开事务、动 venv 之前拒绝;完全无响应(已停机)交给 --adopt-sha 与健康门裁决
+    if [ "${BM_HEALTH_HTTP:-none}" != none ] && [ -z "${BM_HEALTH_VERSION:-}" ]; then
+        bm_fail "$BM_RC_IDENTITY" "运行中的服务对 /api/health 回了 HTTP ${BM_HEALTH_HTTP} 而不是构建身份:该端点 v3.60.0 起才有,新脚本的健康门依赖它。先按旧方式(alembic upgrade + 构建 + pm2 restart)把运行版本升到 ≥ v3.60.0,再跑本脚本收养"
+    fi
     # ① 身份:运行中 sha(/api/health 或 pm2 env);取不到 → 要求 --adopt-sha
     local sha="" ref="" src="" reproducible=true
     if [ -n "$BM_RUN_SHA" ]; then
@@ -670,6 +682,17 @@ PY
 }
 bm_adopt_resume() {
     bm_adopt_prepare_env
+    # 运行中的代码已被人换掉(手工从仓库根起了新版本)时不能续做:续做会用事务记录的旧代码起服务 = 降级(内网实测 R1)
+    local want; want="$(bm_manifest_get target.code_sha "")"
+    if [ -n "${BM_RUN_SHA:-}" ]; then
+        case "$want" in
+            "$BM_RUN_SHA"*) ;;
+            *) case "$BM_RUN_SHA" in
+                   "$want"*) ;;
+                   *) bm_fail "$BM_RC_IDENTITY" "运行中的代码 ${BM_RUN_SHA:0:7}(来源 ${BM_RUN_SRC})已不是收养事务记录的 ${want:0:7}:续做会把服务切回旧代码。先 ./deploy.sh --discard-txn 归档该事务(事务已进入停机阶段时加 --yes 确认现场已人工恢复),再 ./deploy.sh --here 重新收养当前运行的版本" ;;
+               esac ;;
+        esac
+    fi
     echo "    续做收养事务 $(bm_manifest_get txn_id ?)(completed=$(bm_manifest_get stage.completed ?) intent=$(bm_manifest_get stage.intent ?))"
     BM_TXN_OPEN=1
     bm_adopt_run
@@ -691,16 +714,19 @@ bm_adopt_run() {
     if bm_stage_needed "$seq" venv_ready; then
         bm_stage_intent venv_ready
         ln -sfn "$venv_real" "$app/venv"
-        bm_legacy_venv_detach "$venv_real" "$app"
         bm_mount_points "$release" "$venv_real" "$CONFIG_FILE"
         # 路径基准 = 原安装上下文(cwd=<repo>、PYTHONPATH=<repo>/src、<repo>/venv)的探针(§4.7 收养基准;codex R1 P1-01):
-        # legacy release 补齐动态挂点并逐项相等,否则在维护窗开始前拒绝;探针结果与 DB 目标持久化进收养 manifest
+        # 工作树可能已是更新的代码,所以只比对两边都启用的存储根(见 bm_check_paths);持久化的是 legacy 上下文的探针。
+        # 先核对、再动 venv(内网实测 R1:核对失败时不该已经改过运行中的 venv);收养不接受 DORAMI_DEPLOY_ACCEPT_PATH_CHANGE 重设
         local baseline
         baseline="$(bm_path_probe "$BM_REPO" "$venv_real" "$CONFIG_FILE")" || bm_fail "$BM_RC_PATH_PROBE" "原安装上下文的路径探针失败(旧代码的 config 无法加载?)"
+        BM_PATHS_NO_REBASE=1
         bm_check_paths "$release" "$app" "$venv_real" "$CONFIG_FILE" "$baseline"
+        unset BM_PATHS_NO_REBASE
         bm_persist_paths "$BM_PROBE_JSON"
         deploy_json_set "$BM_IN_PROGRESS" db.target "$BM_DB_TARGET" && deploy_json_set "$BM_IN_PROGRESS" db.backend "${BM_DB_BACKEND:-sqlite}" \
             || bm_fail "$BM_RC_STEP" "记录 DB 目标失败"
+        bm_legacy_venv_detach "$venv_real" "$app"
         bm_stage_done venv_ready
     fi
     if bm_stage_needed "$seq" dist_copied; then
@@ -1224,27 +1250,44 @@ if not isinstance(base_m, dict) or not base_m:
     bad.append("历史基准缺 mutable(无法确认历史存储布局)")
     base_m = {}
 base_backend = base.get("backend") or "sqlite"
+notes = []
 for key, p in probe["mutable"].items():
-    if key not in base_m:
-        # 缺字段 = 无法确认历史布局,不能当作一致(codex R1 P1-02 复检);显式空串才是「已知禁用 / 未启用」
-        bad.append(f"{key}: 历史基准无此字段,无法确认(目标={p})")
-        continue
-    b = base_m[key]
-    if b == "":
-        if key == "database" and base_backend == "sqlite":
+    b = base_m.get(key)
+    if key == "database":
+        # 库路径永远严格:基准缺字段 / 为空都无法确认(codex R1 P1-02 复检)
+        if b is None:
+            bad.append(f"database: 历史基准无此字段,无法确认(目标={p})")
+        elif b == "" and base_backend == "sqlite":
             bad.append("database: 历史基准的 SQLite 路径为空,无法确认")
+        elif b and p != b:
+            bad.append(f"database: 目标={p} 基准={b}")
         continue
-    if p != b:
+    # 基准永远是某次探针的完整输出:缺键只可能是基准代码更旧、不认识这个存储根;空串是该代码 / 配置未启用。
+    # 两边都启用才比对(内网实测 R1:收养 v3.58 安装、再升到带 backup 根的版本时,严格「缺即拒」会把正常升级挡死)
+    if b is None:
+        notes.append(f"{key}: 历史基准(更旧的代码)无此存储根,视为新增:{p or '<未启用>'}")
+    elif b == "" and p:
+        notes.append(f"{key}: 历史基准未启用,本次启用:{p}")
+    elif p == "" and b:
+        notes.append(f"{key}: 历史基准 {b},目标代码 / 配置未启用(退役或停用)")
+    elif p != b:
         bad.append(f"{key}: 目标={p} 基准={b}")
+for key, b in base_m.items():
+    if key not in probe["mutable"]:
+        notes.append(f"{key}: 目标代码不再报告该存储根(基准 {b})")
 if db_target and probe["mutable"].get("database", "") != db_target:
     bad.append(f"database: 目标={probe['mutable'].get('database')} last-success.db.target={db_target}")
 if probe.get("backend") != base_backend:
     bad.append(f"数据库后端: 目标={probe.get('backend')} 基准={base_backend}")
 if bad:
     print("\n".join("    ✗ " + b for b in bad)); sys.exit(1)
+print("\n".join("    · " + n for n in notes))
 PY
 )"; then
-            if [ "${DORAMI_DEPLOY_ACCEPT_PATH_CHANGE:-0}" = 1 ] && [ "${BM_NO_ROLLBACK_GUARANTEE:-0}" = 1 ]; then
+            if [ "${BM_PATHS_NO_REBASE:-0}" = 1 ]; then
+                echo "$diff" >&2
+                bm_fail "$BM_RC_PATH_PROBE" "收养:legacy release 上下文与原安装上下文的存储路径不一致(见上),收养不接受重设基准;核对配置与挂点后重跑"
+            elif [ "${DORAMI_DEPLOY_ACCEPT_PATH_CHANGE:-0}" = 1 ] && [ "${BM_NO_ROLLBACK_GUARANTEE:-0}" = 1 ]; then
                 echo "$diff"
                 echo "    ⚠️  路径基准变化已由 DORAMI_DEPLOY_ACCEPT_PATH_CHANGE=1 + --no-rollback-guarantee 显式接受:此次重设存储基准,没有跨存储布局的回滚保证(prev=null);搬数据是运维自己的事"
                 BM_PATHS_REBASED=1
@@ -1258,6 +1301,7 @@ PY
             fi
         else
             echo "    路径探针:与基准一致"
+            [ -n "$diff" ] && echo "$diff"
         fi
     else
         echo "    路径探针:无基准(首装),可变存储均在 release 之外"
@@ -2441,7 +2485,9 @@ bm_status() {
     echo "   HEAD: ${head_ref} (${head_sha:0:7}) dirty=${dirty}   编排器脚本: ${BM_LIB_DIR}"
     echo "== 现场 =="
     echo "   current -> ${BM_CURRENT_TARGET:-<无>}"
+    [ -L "$BM_CURRENT_LINK" ] && [ ! -e "$BM_CURRENT_LINK" ] && echo "   ⚠️  current 悬空:指向的目录不存在"
     [ -n "${NGINX_HTML_DIR:-}" ] && echo "   html_dir ${NGINX_HTML_DIR} -> ${BM_HTML_TARGET:-<无>}"
+    [ -n "${NGINX_HTML_DIR:-}" ] && [ -L "$NGINX_HTML_DIR" ] && [ ! -e "$NGINX_HTML_DIR" ] && echo "   ⚠️  html_dir 悬空:指向的目录不存在,站点此刻没有前端"
     if [ "${BM_PM2_PRESENT:-0}" = 1 ]; then
         echo "   pm2 ${BM_APP_NAME}: status=${BM_PM2_STATUS} pid=${BM_PM2_PID:-?} cwd=${BM_PM2_CWD} sha=${BM_PM2_SHA:0:7}"
         if [ -n "$BM_CURRENT_TARGET" ] && [ "$(bm_realpath "$BM_PM2_CWD")" != "$BM_CURRENT_TARGET" ]; then

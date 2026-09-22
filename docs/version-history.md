@@ -105,4 +105,8 @@ flags 组合、锁区偏移、错误映射、解锁静默。codex R1 两条 P2 �
 暂存 fd(锁随之释放,关到 rename 之间由 staging_ttl 保护),reconcile 的过期暂存清理改「拿锁 → 关句柄 → 删」(`_unlink_stale_if_unlocked`);
 `bailian_tts._atomic_write` / `storage_backup._sync_directory` 的目录 fsync 在 Windows 打不开目录句柄,吞 OSError。POSIX 上用「能否再拿到锁」
 代替「句柄是否已关」写回归用例。生产平台不变(仅 Linux)。
-
+**内网实测 R1(2026-09-22)**:首次真实收养(运行 v3.58 一脉、工作树已是新代码)在 `venv_ready` 退出 33,暴露五个缺陷并修:
+收养基准探针用的是工作树新代码、目标是旧代码,键集合不同被判不一致 → 比对规则改不对称(缺键 = 基准代码更旧、空串 = 未启用,
+两边都启用才比对,`database` 仍严格);`/api/health` 是 v3.60.0 才有、文档误写 v3.56+ → 收养前置检查在开事务前拒绝旧代码;
+editable 痕迹移除调到路径核对之后、收养不接受重设基准;续做前核对运行身份仍等于事务身份(否则等于切回旧代码);
+`current` / `html_dir` 悬空时 `--status` 标出、收养拒绝并给恢复步骤。用例五条。
