@@ -24,6 +24,7 @@ import html
 import json
 import math
 import re
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -75,6 +76,9 @@ _TIMING_LINE = re.compile(r"^(.+?)\s+-->\s+([^\s]+)(?:\s+.*)?$")
 _TAG = re.compile(r"<[^>]*>")
 _SPACE = re.compile(r"[ \t\f\v]+")
 _LANGUAGE = re.compile(r"^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$")
+_PUBLISHER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+}
 
 
 class PublisherTranscriptError(ValueError):
@@ -137,8 +141,8 @@ def _extension(url: str) -> str:
     return PurePosixPath(urlsplit(url).path).suffix.lower()
 
 
-def select_candidate(raw_transcripts: Any) -> TranscriptCandidate:
-    """Choose the first safe supported locator using the module policy above."""
+def supported_candidates(raw_transcripts: Any) -> list[TranscriptCandidate]:
+    """Keep the bounded, deterministic RSS order for supported alternatives."""
 
     if isinstance(raw_transcripts, dict):
         raw_transcripts = [raw_transcripts]
@@ -176,7 +180,11 @@ def select_candidate(raw_transcripts: Any) -> TranscriptCandidate:
     if not candidates:
         raise PublisherTranscriptNotFound("Podcast 单集没有支持的发布者逐字稿")
     candidates.sort(key=lambda item: (item.format == "text", item.metadata_index))
-    return candidates[0]
+    return candidates
+
+
+def select_candidate(raw_transcripts: Any) -> TranscriptCandidate:
+    return supported_candidates(raw_transcripts)[0]
 
 
 def _decode(body: bytes, *, max_text_chars: int) -> str:
@@ -352,7 +360,7 @@ def _parse_json(value: str, *, max_segments: int, max_text_chars: int) -> Parsed
             raise PublisherTranscriptMalformed("Podcasting 2.0 segment 时间码不完整")
         if start_value is not None:
             start, end = _timestamp(start_value), _timestamp(end_value)
-            if end <= start or start < previous_start:
+            if end < start or start < previous_start:
                 raise PublisherTranscriptMalformed(
                     "Podcasting 2.0 segment 时间码倒序或区间无效"
                 )
@@ -398,9 +406,9 @@ def parse_transcript(
     raise PublisherTranscriptMalformed("不支持的发布者逐字稿格式")
 
 
-def _episode_and_candidate(
+def _episode_and_candidates(
     session: Session, episode_id: str
-) -> tuple[ArticleRecord, TranscriptCandidate]:
+) -> tuple[ArticleRecord, list[TranscriptCandidate]]:
     episode = session.get(ArticleRecord, episode_id)
     if episode is None or episode.content_type != "podcast_episode":
         raise PublisherTranscriptNotFound("Podcast 单集不存在")
@@ -410,7 +418,35 @@ def _episode_and_candidate(
         raise PublisherTranscriptMalformed("Podcast 单集的逐字稿元数据无效") from exc
     if not isinstance(extensions, dict):
         raise PublisherTranscriptMalformed("Podcast 单集的逐字稿元数据无效")
-    return episode, select_candidate(extensions.get("transcripts"))
+    return episode, supported_candidates(extensions.get("transcripts"))
+
+
+def _episode_and_candidate(
+    session: Session, episode_id: str
+) -> tuple[ArticleRecord, TranscriptCandidate]:
+    episode, candidates = _episode_and_candidates(session, episode_id)
+    return episode, candidates[0]
+
+
+def _locator_hash(candidate: TranscriptCandidate) -> str:
+    return hashlib.sha256(candidate.url.encode("utf-8")).hexdigest()
+
+
+def _current_locator_candidate(
+    candidates: list[TranscriptCandidate], artifact: PodcastTextArtifactRecord | None
+) -> TranscriptCandidate | None:
+    if artifact is None:
+        return None
+    try:
+        provenance = json.loads(artifact.provenance_json or "{}")
+    except (TypeError, ValueError):
+        return None
+    return next((item for item in candidates if (
+        _locator_hash(item) == provenance.get("url_sha256")
+        and (not provenance.get("format") or item.format == provenance["format"])
+        and (not provenance.get("mime") or item.mime == provenance["mime"])
+        and (not artifact.language or item.language == artifact.language)
+    )), None)
 
 
 def publisher_transcript_refresh_revision(
@@ -420,10 +456,10 @@ def publisher_transcript_refresh_revision(
 
     with Session(engine) as session:
         try:
-            _episode, candidate = _episode_and_candidate(session, episode_id)
+            _episode, candidates = _episode_and_candidates(session, episode_id)
         except PublisherTranscriptError:
             return None
-        locator_hash = hashlib.sha256(candidate.url.encode("utf-8")).hexdigest()
+        locator_hash = _locator_hash(candidates[0])
         publication = session.get(
             PodcastTextPublicationRecord, f"{episode_id}:{KIND}"
         )
@@ -434,11 +470,7 @@ def publisher_transcript_refresh_revision(
         )
         if artifact is None:
             return locator_hash
-        try:
-            provenance = json.loads(artifact.provenance_json or "{}")
-        except (TypeError, ValueError):
-            return locator_hash
-        return "" if provenance.get("url_sha256") == locator_hash else locator_hash
+        return "" if _current_locator_candidate(candidates, artifact) else locator_hash
 
 
 def publisher_artifact_matches_current_locator(
@@ -450,16 +482,13 @@ def publisher_artifact_matches_current_locator(
     """Whether a published artifact was fetched from the current RSS locator."""
 
     try:
-        _episode, candidate = _episode_and_candidate(session, episode_id)
-        provenance = json.loads(artifact.provenance_json or "{}")
+        _episode, candidates = _episode_and_candidates(session, episode_id)
     except PublisherTranscriptNotFound:
         # Synced/manual publications may not retain a live RSS locator.
         return True
     except (PublisherTranscriptError, TypeError, ValueError):
         return False
-    return provenance.get("url_sha256") == hashlib.sha256(
-        candidate.url.encode("utf-8")
-    ).hexdigest()
+    return _current_locator_candidate(candidates, artifact) is not None
 
 
 def _serialize(
@@ -539,8 +568,8 @@ def _commit_publication(
                 .where(ArticleRecord.id == episode_id)
                 .with_for_update()
             ).first()
-        episode, current_candidate = _episode_and_candidate(session, episode_id)
-        if current_candidate != candidate:
+        episode, current_candidates = _episode_and_candidates(session, episode_id)
+        if candidate not in current_candidates:
             raise PublisherTranscriptConflict(
                 "逐字稿元数据已在下载期间变化，请重试"
             )
@@ -652,55 +681,62 @@ async def ingest_publisher_transcript(
         )
     policy.require_artifact_writer(KIND, boundary="enqueue")
     with Session(engine) as session:
-        episode, candidate = _episode_and_candidate(session, episode_id)
+        _episode, candidates = _episode_and_candidates(session, episode_id)
+        publication = session.get(PodcastTextPublicationRecord, f"{episode_id}:{KIND}")
+        artifact = (
+            session.get(PodcastTextArtifactRecord, publication.artifact_id)
+            if publication is not None and publication.status == "published"
+            else None
+        )
+        current = _current_locator_candidate(candidates, artifact)
+        if current is not None:
+            candidates = [current, *[item for item in candidates if item != current]]
 
     policy.require_artifact_writer(KIND, boundary="provider_submit")
     with Session(engine) as session:
-        episode, current_candidate = _episode_and_candidate(session, episode_id)
-        if current_candidate != candidate:
+        _episode, current_candidates = _episode_and_candidates(session, episode_id)
+        if set(current_candidates) != set(candidates):
             raise PublisherTranscriptConflict("逐字稿元数据已变化，请重试")
-    try:
-        # The helper enforces the same deadline per hop; the outer wait also
-        # bounds its DNS safety resolution, which precedes httpx's own timeout.
-        body = await asyncio.wait_for(
-            http_safety.fetch_public_bytes_limited(
-                client,
-                candidate.url,
-                max_bytes=min(
-                    config.transcript_max_bytes,
-                    config.text_artifact_max_bytes,
+    # One deadline covers all alternatives, including DNS validation and redirects.
+    deadline = time.monotonic() + config.transcript_timeout_seconds
+    last_error: PublisherTranscriptError | None = None
+    for candidate in candidates:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise PublisherTranscriptTimeout("发布者逐字稿下载超时") from last_error
+        try:
+            body = await asyncio.wait_for(
+                http_safety.fetch_public_bytes_limited(
+                    client,
+                    candidate.url,
+                    max_bytes=min(config.transcript_max_bytes, config.text_artifact_max_bytes),
+                    timeout_seconds=remaining,
+                    headers=_PUBLISHER_HEADERS,
                 ),
-                timeout_seconds=config.transcript_timeout_seconds,
-            ),
-            timeout=config.transcript_timeout_seconds,
-        )
-    except (asyncio.TimeoutError, httpx.TimeoutException) as exc:
-        raise PublisherTranscriptTimeout("发布者逐字稿下载超时") from exc
-    except httpx.HTTPError as exc:
-        raise PublisherTranscriptFetchFailed("发布者逐字稿上游请求失败") from exc
-    except ValueError as exc:
-        message = str(exc)
-        if "大小上限" in message:
-            raise PublisherTranscriptTooLarge("发布者逐字稿超过大小上限") from exc
-        if "超时上限" in message:
-            raise PublisherTranscriptTimeout("发布者逐字稿下载超时") from exc
-        raise PublisherTranscriptMalformed(
-            "发布者逐字稿下载失败或超过安全限制"
-        ) from exc
-    parsed = parse_transcript(
-        body,
-        candidate.format,
-        max_segments=config.transcript_max_segments,
-        max_text_chars=min(
-            config.transcript_max_text_chars,
-            config.text_artifact_max_chars,
-        ),
-    )
-    return _commit_publication(
-        engine,
-        episode_id=episode_id,
-        candidate=candidate,
-        parsed=parsed,
-        raw_hash=hashlib.sha256(body).hexdigest(),
-        policy=policy,
-    )
+                timeout=remaining,
+            )
+            parsed = parse_transcript(
+                body,
+                candidate.format,
+                max_segments=config.transcript_max_segments,
+                max_text_chars=min(config.transcript_max_text_chars, config.text_artifact_max_chars),
+            )
+        except (asyncio.TimeoutError, httpx.TimeoutException) as exc:
+            last_error = PublisherTranscriptTimeout("发布者逐字稿下载超时")
+        except httpx.HTTPError as exc:
+            last_error = PublisherTranscriptFetchFailed("发布者逐字稿上游请求失败")
+        except ValueError as exc:
+            if isinstance(exc, PublisherTranscriptError):
+                last_error = exc
+            elif "大小上限" in str(exc):
+                last_error = PublisherTranscriptTooLarge("发布者逐字稿超过大小上限")
+            elif "超时上限" in str(exc):
+                last_error = PublisherTranscriptTimeout("发布者逐字稿下载超时")
+            else:
+                last_error = PublisherTranscriptMalformed("发布者逐字稿下载失败或超过安全限制")
+        else:
+            return _commit_publication(
+                engine, episode_id=episode_id, candidate=candidate,
+                parsed=parsed, raw_hash=hashlib.sha256(body).hexdigest(), policy=policy,
+            )
+    raise last_error or PublisherTranscriptNotFound("Podcast 单集没有可用的发布者逐字稿")

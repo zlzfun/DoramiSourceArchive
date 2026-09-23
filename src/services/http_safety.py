@@ -514,6 +514,7 @@ async def fetch_public_bytes_limited(
     max_bytes: int,
     max_redirects: int = MAX_PUBLIC_REDIRECTS,
     timeout_seconds: float | None = None,
+    headers: dict[str, str] | None = None,
 ) -> bytes:
     """GET an HTTP(S) URL with redirect, size, and wall-clock limits."""
 
@@ -534,6 +535,8 @@ async def fetch_public_bytes_limited(
             raise ValueError("RSS 请求超过超时上限")
         await ensure_public_http_url(current)
         request_kwargs = {"follow_redirects": False}
+        if headers:
+            request_kwargs["headers"] = headers
         if remaining is not None:
             request_kwargs["timeout"] = httpx.Timeout(remaining)
         async with client.stream("GET", current, **request_kwargs) as response:
