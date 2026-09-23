@@ -5,6 +5,7 @@ import datetime as dt
 import io
 import json
 import wave
+from pathlib import Path
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -12,7 +13,7 @@ import httpx
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 from config_bailian import BailianSpeechConfig, load_bailian_config
-from models.db import BailianTtsCallRecord
+from models.db import BailianTtsCallRecord, ArticleRecord, PodcastArtifactRecord, PodcastTextArtifactRecord, PodcastTextPublicationRecord
 from services.bailian_asr import (
     BailianAsrAdapter,
     asr_identity,
@@ -29,6 +30,7 @@ from services.bailian_tts import (
     BailianPremiumGuideTtsProvider,
     join_wav,
     split_narration,
+    reclaim_completed_receipts,
 )
 from services.podcast_stage_policy import PodcastStagePolicy
 from services.podcast_worker_contracts import (
@@ -670,6 +672,93 @@ def test_tts_replay_needs_no_additional_disk_reservation(tts_env):
         provider(engine, replace(cfg, tts_cache_max_bytes=1)).synthesize("hello")
     )
     assert first.data == second.data and len(FakeTtsClient.calls) == 1
+
+
+def test_tts_estimate_allows_consecutive_runs_and_distinguishes_capacity(tts_env, monkeypatch):
+    engine, cfg = tts_env
+    cfg = replace(cfg, tts_cache_max_bytes=200_000)
+    FakeTtsClient.calls = []
+    Path(cfg.tts_receipt_root).mkdir(parents=True, exist_ok=True)
+    (Path(cfg.tts_receipt_root) / 'existing').write_bytes(b'x')
+    asyncio.run(provider(engine, cfg).synthesize('hello'))
+    asyncio.run(provider(engine, cfg).synthesize('world'))
+    assert len(FakeTtsClient.calls) == 2
+    used = provider(engine, cfg).capacity_snapshot(5)['used_bytes']
+    with pytest.raises(BailianSpeechError, match='tts_receipt_cache_full'):
+        asyncio.run(provider(engine, replace(cfg, tts_cache_max_bytes=used + 1)).synthesize('third'))
+    assert len(FakeTtsClient.calls) == 2
+    from services import bailian_tts
+    monkeypatch.setattr(bailian_tts.shutil, 'disk_usage', lambda _root: SimpleNamespace(free=10))
+    with pytest.raises(BailianSpeechError, match='tts_receipt_disk_full'):
+        asyncio.run(provider(engine, cfg).synthesize('fourth'))
+    assert len(FakeTtsClient.calls) == 2
+
+
+def test_completed_receipt_archive_preserves_receipt_and_replay(tts_env):
+    engine, cfg = tts_env
+    FakeTtsClient.calls = []
+    original = asyncio.run(provider(engine, cfg).synthesize('hello'))
+    root = Path(cfg.tts_receipt_root)
+    with Session(engine) as session:
+        row = session.exec(select(BailianTtsCallRecord)).one()
+        key = row.id
+    # No published artifact: no cleanup, even if this call succeeded.
+    assert reclaim_completed_receipts(cfg, engine, now=NOW + dt.timedelta(days=10))['compressed_wavs'] == 0
+    with Session(engine) as session:
+        session.add(ArticleRecord(id='episode-test', title='test', content_type='podcast_episode',
+            source_id='test', source_url='https://example.test/episode', publish_date=NOW.isoformat(),
+            fetched_date=NOW.isoformat(), content='test'))
+        session.commit()
+        narration = PodcastTextArtifactRecord(id='narration-test', episode_id='episode-test',
+            kind='narration_script_zh', version=1, content_hash='a' * 64,
+            inline_text='hello', language='zh-CN', created_at=NOW.isoformat())
+        session.add(narration)
+        session.commit()
+        session.add(PodcastTextPublicationRecord(identity='episode-test:narration_script_zh',
+            episode_id='episode-test', kind='narration_script_zh', artifact_id=narration.id,
+            status='published', authority_id='', published_at=NOW.isoformat(), updated_at=NOW.isoformat()))
+        session.commit()
+        session.add(PodcastArtifactRecord(id='published-test', episode_id='episode-test',
+            kind='digest_audio_zh', content_hash='b' * 64, mime='audio/wav', ext='.wav',
+            size_bytes=len(original.data), status='published', provenance='premium_guide_tts',
+            narration_artifact_id=narration.id, narration_content_hash=narration.content_hash,
+            created_at=NOW.isoformat(), updated_at=NOW.isoformat()))
+        session.commit()
+    result = reclaim_completed_receipts(cfg, engine, now=NOW + dt.timedelta(days=10))
+    assert result['compressed_wavs'] == 1
+    assert (root / f'{key}.json').exists()
+    assert not (root / f'{key}.wav').exists()
+    assert (root / f'{key}.wav.zlib').exists()
+    replay = asyncio.run(provider(engine, cfg).synthesize('hello'))
+    assert replay.data == original.data and len(FakeTtsClient.calls) == 1
+
+
+def test_completed_article_listen_receipt_can_be_archived(tts_env):
+    engine, cfg = tts_env
+    FakeTtsClient.calls = []
+    original = asyncio.run(provider(engine, cfg).synthesize('hello'))
+    with Session(engine) as session:
+        row = session.exec(select(BailianTtsCallRecord)).one()
+        key = row.id
+        session.add(ArticleRecord(
+            id='episode-test', title='article', content_type='article', source_id='test',
+            source_url='https://example.test/article', publish_date=NOW.isoformat(),
+            fetched_date=NOW.isoformat(), content='test',
+            extensions_json=json.dumps({'listen_guide': {
+                'status': 'ready',
+                'content_hash': 'c' * 64,
+                'mime': 'audio/wav',
+                'size_bytes': len(original.data),
+            }}),
+        ))
+        session.commit()
+
+    result = reclaim_completed_receipts(cfg, engine, now=NOW + dt.timedelta(days=10))
+    root = Path(cfg.tts_receipt_root)
+    assert result['compressed_wavs'] == 1
+    assert (root / f'{key}.json').exists()
+    assert not (root / f'{key}.wav').exists()
+    assert (root / f'{key}.wav.zlib').exists()
 
 
 def test_tts_concurrent_duplicate_calls_share_one_receipt(tts_env):

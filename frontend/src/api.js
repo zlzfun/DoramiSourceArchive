@@ -333,6 +333,16 @@ export function fetchPodcastAsrQuota(options = {}) {
   });
 }
 
+export function fetchPodcastTtsReceipts(options = {}) {
+  return request('/admin/podcast-tts-receipts', { errorMsg: '获取 TTS 回执缓存状态失败', ...options });
+}
+
+export function reclaimPodcastTtsReceipts() {
+  return request('/admin/podcast-tts-receipts/reclaim', {
+    method: 'POST', errorMsg: '回收 TTS 回执缓存失败',
+  });
+}
+
 export function updatePodcastAsrQuota(dailyAudioSecondsLimit, maxAudioSecondsPerFile) {
   return request('/admin/podcast-asr-quota', {
     method: 'PUT',
