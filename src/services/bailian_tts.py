@@ -25,7 +25,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import or_, text as sql_text
 from sqlmodel import Session, select
 from config_bailian import BailianSpeechConfig
-from models.db import BailianTtsCallRecord, PodcastArtifactRecord
+from models.db import ArticleRecord, BailianTtsCallRecord, PodcastArtifactRecord
 from services.bailian_speech_client import (
     BailianSpeechClient,
     BailianSpeechError,
@@ -163,6 +163,18 @@ def reclaim_completed_receipts(
                 PodcastArtifactRecord.kind == "digest_audio_zh",
                 PodcastArtifactRecord.status == "published",
             )).all())
+            for article in session.exec(select(ArticleRecord)).all():
+                try:
+                    extensions = json.loads(article.extensions_json or "{}")
+                except (TypeError, ValueError):
+                    continue
+                guide = extensions.get("listen_guide") if isinstance(extensions, dict) else None
+                if not isinstance(guide, dict) or guide.get("status") != "ready":
+                    continue
+                content_hash = str(guide.get("content_hash") or "").strip().lower()
+                mime = str(guide.get("mime") or "").strip().lower()
+                if re.fullmatch(r"[0-9a-f]{64}", content_hash) and mime:
+                    published.add(article.id)
             rows = session.exec(select(BailianTtsCallRecord).where(
                 BailianTtsCallRecord.account_scope == config.account_scope,
             )).all()
