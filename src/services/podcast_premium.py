@@ -8,6 +8,7 @@ this module so a show-notes score can never accidentally award premium status.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -83,6 +84,16 @@ def _episode_extensions(episode: ArticleRecord) -> dict[str, Any]:
     except (TypeError, ValueError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def _duration_seconds(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        duration = float(value)
+    except (TypeError, ValueError):
+        return None
+    return duration if math.isfinite(duration) and duration >= 0 else None
 
 
 def _premium_guide(episode: ArticleRecord) -> dict[str, Any]:
@@ -799,7 +810,9 @@ def _timeline(
     blog = session.get(PodcastTextArtifactRecord, publications["digest_blog_zh"].artifact_id) if "digest_blog_zh" in publications else None
     script = session.get(PodcastTextArtifactRecord, publications["narration_script_zh"].artifact_id) if "narration_script_zh" in publications else None
     script_current = bool(blog and script and script.source_artifact_id == blog.id and script.source_content_hash == blog.content_hash)
-    duration = float(_episode_extensions(state.episode).get("duration_seconds") or 0)
+    duration = _duration_seconds(
+        _episode_extensions(state.episode).get("duration_seconds")
+    )
     if guide_status in {"summarizing", "queued"}:
         guide_row = {"state": "run", "note": "正在生成导读与口播稿"}
     elif blog and script_current:
@@ -815,7 +828,7 @@ def _timeline(
             guide_row = {"state": "skipped", "note": "已达门槛，当前部署未启用自动生成"}
         elif not state.transcript_ready:
             guide_row = {"state": "skipped", "note": "已达门槛，缺少当前全文逐字稿"}
-        elif duration <= 0:
+        elif duration is None or duration <= 0:
             guide_row = {"state": "skipped", "note": "已达门槛，节目时长未知"}
         elif duration < minimum_duration_seconds:
             guide_row = {"state": "skipped", "note": f"已达门槛，节目不足自动生成时长 {minimum_duration_seconds // 60} 分钟"}
@@ -895,7 +908,7 @@ def episode_detail(engine: Engine, episode_id: str, *, minimum_duration_seconds:
             .order_by(PodcastArtifactRecord.created_at.desc(), PodcastArtifactRecord.id.desc())
         ).all()
         extensions = _episode_extensions(state.episode)
-        duration = extensions.get("duration_seconds")
+        duration = _duration_seconds(extensions.get("duration_seconds"))
         return {
             "item": _serialize_state(state, threshold=threshold),
             "threshold": threshold,
@@ -907,9 +920,7 @@ def episode_detail(engine: Engine, episode_id: str, *, minimum_duration_seconds:
                 "source_name": state.source_name,
                 "publish_date": str(state.episode.publish_date or ""),
                 "source_url": str(state.episode.source_url or ""),
-                "duration_seconds": (
-                    int(duration) if isinstance(duration, (int, float)) and not isinstance(duration, bool) else None
-                ),
+                "duration_seconds": int(duration) if duration is not None else None,
                 "show_title": str(extensions.get("show_title") or ""),
             },
             "timeline": _timeline(session, state, threshold=threshold,
