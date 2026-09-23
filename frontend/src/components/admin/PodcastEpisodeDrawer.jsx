@@ -155,6 +155,7 @@ export default function PodcastEpisodeDrawer({
                       <><span className="acct-mono">{podcastScoreText(item.current_score)}</span> · {item.final_score != null ? '全文分已替换简介初评，读者面按此显示' : '读者面按简介初评显示'}</>
                     )}
                   </dd>
+                  {meta.stage.code === 'retry_wait' && <><dt>计划重试</dt><dd>{meta.reason}</dd></>}
                 </dl>
               </section>
               <section>

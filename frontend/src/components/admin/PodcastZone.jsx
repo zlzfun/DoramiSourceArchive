@@ -331,12 +331,15 @@ export default function PodcastZone({ showToast, refreshTick = 0, onOpenCredenti
           <button
             type="button"
             className="model-chip"
-            title="前往设置 → 凭据 编辑播客 ASR 配额"
+            title={quotaData?.usage_reason || `配额窗口 ${quotaData?.quota_period || '未读取'} · ${quotaData?.quota_timezone || '本地时区'}；前往设置 → 凭据 编辑上限`}
             onClick={() => onOpenCredentials?.()}
           >
             <i className={quotaData ? '' : 'is-off'} />
             ASR 日配额{' '}
             <b>{quotaData ? `${Number(quotaData.daily_audio_hours_limit || 0).toFixed(1)}h` : (quota.status === 'error' ? '未读取' : '…')}</b>
+            {quotaData && (quotaData.usage_status === 'available' || quotaData.usage_status === 'frozen')
+              ? <> · 已用 <b>{(quotaData.used_audio_seconds / 3600).toFixed(2)}h</b> · 预占 <b>{(quotaData.reserved_audio_seconds / 3600).toFixed(2)}h</b> · 剩余 <b>{(quotaData.remaining_audio_seconds / 3600).toFixed(2)}h</b>{quotaData.usage_status === 'frozen' ? '（已冻结）' : ''}</>
+              : quotaData && <> · 用量<b>未知（{quotaData.usage_reason || '读取失败'}）</b></>}
             {quotaData && <> · 单集 ≤ <b>{Number(quotaData.max_audio_hours_per_file || 0).toFixed(1)}h</b></>}
           </button>
           <button

@@ -1321,6 +1321,7 @@ def serialize_processing(record: PodcastProcessingRecord) -> dict[str, Any]:
         "status": record.processing_status,
         "stage": record.stage,
         "attempt_count": record.attempt_count,
+        "next_retry_at": record.next_retry_at,
         "cost_currency": "CNY",
         "estimated_cost_minor": record.estimated_cost_minor,
         "budget_scope": record.budget_scope,
