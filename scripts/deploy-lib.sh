@@ -406,7 +406,7 @@ backup_sqlite_db() {
     referenced="$(_deploy_lib_referenced_backups)"
     while IFS= read -r f; do
         [ -n "$f" ] || continue
-        if printf '%s\n' "$referenced" | grep -qxF "$f" || printf '%s\n' "$referenced" | grep -qxF "$PWD/$f"; then
+        if grep -qxF "$f" <<<"$referenced" || grep -qxF "$PWD/$f" <<<"$referenced"; then   # here-string:无管道无 SIGPIPE
             continue
         fi
         n=$((n + 1))

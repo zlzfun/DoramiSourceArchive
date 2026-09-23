@@ -127,7 +127,7 @@ cp backups/cms_data.db.20260914-110000 data/cms_data.db && rm -f data/cms_data.d
 Settings → Branches → Add rule for `main`:
 
 - Require a pull request before merging(禁止直推;两人一视同仁);
-- Require status checks to pass:勾 `backend (pytest)` 与 `frontend (lint + build)`(CI 跑过一次后才会出现在列表里);
+- Require status checks to pass:勾 `backend (pytest)` 与 `frontend (lint + build)`(CI 跑过一次后才会出现在列表里)。issue #150 起 `backend (pytest)` 是汇总门 job:`needs` 真跑测试的 `backend-unit (pytest)` / `backend-deploy (pytest)`,`if: always()` 逐项核对结果——required 只勾它一个即可,两个真 job 不必也勾,将来再拆分时规则不用改;
 - Do not allow force pushes / deletions。
 
 tag 不设保护(2026-09-14 拍板:任何人可打 tag);`release.yml` 的核对负责把不合格的 tag 标红。

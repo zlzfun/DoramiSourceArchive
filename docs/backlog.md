@@ -6,11 +6,6 @@
 
 ## 进行中
 
-- ☐ **issue #97 Podcast 成本门控与评分标定**（分支 `feat/issue-97-podcast-cost-gates`，方案
-  `docs/podcast-cost-and-scoring-calibration-plan.md`）：P0 已实现——简介付费 ASR 线 `>= 6.0`；
-  发布方逐字稿不看简介分直达全文分析，失败后低于 6.0 严禁回退 ASR；全文优质/TTS 代码
-  默认线 `>= 7.5`，KV 存量不覆盖；边界与零 ASR 旁路回归已补。待合入、生产 KV 核对和 7 天
-  观察。P1 六组 32 输入黄金集尚未启动；通过前不改评分提示词、不 bump 评分版本、不批量重评。
 - ☐ **issue #126 裸机部署回滚**(分支 `feat/issue-126-baremetal-rollback`,方案 `docs/baremetal-rollback-plan.md`;2026-09-21 用户拍板 §7 七项全按推荐后实现):
   运行副本版本化 release 形态 + 事务阶段 + 两级健康门告警(不自动回滚)+ `--rollback`(DB 按迁移计划分流,`--restore-db` 显式恢复)+ 收养 + `--code` / `--status` / `--discard-txn`,
   `docker/requirements-crawl4ai.txt` extras 钉版,锁与 Docker 同一把;桩测试 `tests/test_deploy_baremetal.py`。待 codex 检视、用户本地(内网)实机验收:收养一次 → 部署新版 → 故意起不来的提交告警 → `--rollback` → 机器重启 resurrect 起当前 release → 带迁移版本回滚被拒 / `--restore-db`。
@@ -157,6 +152,11 @@
 - **日报 `per_source_cap=5` 是软配额**:`select_top` 的 overflow 补位可再加同源条目,淡日单源可能超过 5 篇(The Decoder 入名单后更可能出现);若运营要硬上限需改 overflow 语义。
 
 ## 已完结(近期,留档索引;执行记录与更早波次见 `docs/archive/README.md`)
+
+- ✅ **issue #150 CI 后端测试并行化**(PR #151,归因与检视记录在 `docs/version-history.md`):后端拆 `backend-unit` / `backend-deploy` 两 job 各 `-n 4 --dist worksteal`
+  + `backend (pytest)` 汇总门 + conftest 按 worker 沙箱 + 守卫 `tests/test_ci_workflow.py`(11 种反向对照);PR CI 实测整次 run 6.0 min(此前 28 min)。
+  **暂缓**(并行后墙钟收益约 1 min):③ 39 个 baremetal 用例共享「已首装」快照(状态文件 / symlink 烤了绝对路径)与 sudo 桩改 sh;④ ffmpeg 静态包 / apt 缓存、
+  路径过滤(近 40 个合入 PR 仅 4 个 docs / frontend-only;若做须 job 级 `if` + paths-filter)。观察期:时序型用例在 4 vCPU 下的抖动;入库 `uv.lock` 陈旧是否单独清理。
 
 - ✅ **issue #85 移动端 PWA**（PR #100，方案 [frontend/pwa.md](./frontend/pwa.md)）：Android／iOS 主屏幕安装与联网恢复，用户两平台真机放行，本地检视通过；鸿蒙保留网页阅读，原生套壳另列展望。
 

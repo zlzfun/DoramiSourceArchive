@@ -575,8 +575,14 @@ bm_discard_txn() {
 # ── 能力检查与 checkout 前检查(§3.3 / §4.2)──
 # 目标 tag 的 scripts/deploy-lib.sh 必须宣告 DORAMI_BAREMETAL_TXN,否则以 tag 模式切换会换掉本脚本并失去回滚入口
 bm_pre_exec_check() {  # tag tag_sha(由 resolve_deploy_ref 在 checkout 前调用)
-    local tag="$1" sha="$2"
-    if ! git show "${sha}:scripts/deploy-lib.sh" 2>/dev/null | grep -qE '^DORAMI_BAREMETAL_TXN=[0-9]+'; then
+    local tag="$1" sha="$2" lib
+    # 先整体读进变量再判(issue #150):`git show … | grep -q` 在 pipefail 下有竞态——git 按 16 KB 分块写,grep 读完首块
+    # 命中即退出,负载下 git 被抢占后第二次写吃 SIGPIPE(141)让条件翻转,并行 CI 首次暴露(2026-09-23 run 35826876920)。
+    # 读取失败与「没有宣告」分开报,git 的 stderr 带进消息,再出问题能直接看到原因。
+    if ! lib="$(git show "${sha}:scripts/deploy-lib.sh" 2>&1)"; then
+        bm_fail "$BM_RC_NO_TXN_CAP" "读取目标 ${tag}(${sha:0:7})的 scripts/deploy-lib.sh 失败:${lib}"
+    fi
+    if ! grep -qE '^DORAMI_BAREMETAL_TXN=[0-9]+' <<<"$lib"; then
         bm_fail "$BM_RC_NO_TXN_CAP" "目标 ${tag}(${sha:0:7})的部署脚本没有裸机事务能力(scripts/deploy-lib.sh 未宣告 DORAMI_BAREMETAL_TXN):以 tag 模式切换会换掉本脚本并失去回滚入口。改用当前编排器部署那份代码:  ./deploy.sh --code $tag"
     fi
     bm_pre_deploy_checks
@@ -1536,7 +1542,8 @@ bm_nginx_prepare() {  # release_dir backend_host backend_port
     mkdir -p "$ndir"
     render_nginx_site_config "$2" "$3" >"$ndir/site.conf"
     # 主配置是否需要插 include(源码装 nginx):以现状判断,记进受影响集合
-    if ! ${SUDO:-} "$NGINX_BIN" -T 2>/dev/null | grep -qF "configuration file ${NGINX_SITE_FILE}"; then
+    # grep 读到 EOF 再判(不用 -q 早退):pipefail 下生产者被 SIGPIPE 会让条件翻转,见 bm_pre_exec_check
+    if ! ${SUDO:-} "$NGINX_BIN" -T 2>/dev/null | grep -F "configuration file ${NGINX_SITE_FILE}" >/dev/null; then
         resolve_nginx_main_conf; main_conf="$NGINX_MAIN_CONF"; need_include=1
     fi
     local affected=("$NGINX_SITE_FILE")
@@ -2435,7 +2442,7 @@ ensure_nginx_running_or_reload() {
         ${SUDO:-} "$NGINX_BIN" -s reload
         return
     fi
-    if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files 2>/dev/null | grep -q '^nginx\.service'; then
+    if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files 2>/dev/null | grep '^nginx\.service' >/dev/null; then
         ${SUDO:-} systemctl start nginx
     elif command -v service >/dev/null 2>&1 && service nginx status >/dev/null 2>&1; then
         ${SUDO:-} service nginx start
