@@ -1194,14 +1194,14 @@ def test_completed_asr_reuse_respects_current_publisher_locator(engine, historic
             process.processing_status = "ready"
             session.add(process)
         episode = session.get(ArticleRecord, "episode-asr")
-        episode.extensions_json = json.dumps({"transcripts": [{"url": "https://example.test/new.vtt", "type": "text/vtt"}]})
+        episode.extensions_json = json.dumps({"transcripts": [{"url": "https://example.test/new.vtt", "type": "text/vtt", "language": "en"}]})
         session.add(episode)
         text = "stale publisher"
         session.add(PodcastTextArtifactRecord(
             id="old-publisher", episode_id="episode-asr", kind="publisher_transcript",
             version=1, content_hash=hashlib.sha256(text.encode()).hexdigest(),
             inline_text=text, language="en", authority_id="",
-            provenance_json=json.dumps({"format": "text", "url_sha256": hashlib.sha256(
+            provenance_json=json.dumps({"format": "vtt" if current_publisher else "text", "url_sha256": hashlib.sha256(
                 b"https://example.test/new.vtt" if current_publisher else b"https://example.test/old.vtt"
             ).hexdigest()}),
             created_at=NOW.isoformat(),

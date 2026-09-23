@@ -170,9 +170,12 @@ export default function PodcastZone({ showToast, refreshTick = 0, onOpenCredenti
 
   const handleForceFull = async (item) => {
     const initial = item.initial_score == null ? '尚未初评' : `简介初评 ${podcastScoreText(item.initial_score)}${item.initial_eligible ? '，尚未进入全文处理' : `，未过付费 ASR 线 ${podcastScoreText(thresholds.initial)}`}`;
+    const inputCost = item.publisher_transcript_available
+      ? '将优先获取发布方逐字稿并进行全文分析；若逐字稿不可用，可能下载原节目音频并提交 ASR，消耗 ASR 日配额。'
+      : '将准备原节目音频、提交 ASR 转录并进行全文分析；消耗 ASR 日配额。';
     if (!(await confirm({
       title: '强制全文处理',
-      message: `「${item.title}」${initial}。\n将准备原节目音频、提交 ASR 转录并进行全文分析；消耗 ASR 日配额。`,
+      message: `「${item.title}」${initial}。\n${inputCost}`,
       confirmText: '开始处理',
       tone: 'primary',
     }))) return;
