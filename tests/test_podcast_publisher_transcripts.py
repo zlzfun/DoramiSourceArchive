@@ -202,12 +202,19 @@ def test_fallback_publishes_supported_alternative_and_reuses_locator(monkeypatch
         session.commit()
     # A changed declaration at the same URL must not silently reuse old evidence.
     assert transcripts.publisher_transcript_refresh_revision(sink.engine, episode_id="episode-publisher")
+    rebound = _run_ingest(sink, monkeypatch, fetcher=fetch)
+    assert rebound["created"] is True
+    assert rebound["artifact"]["version"] == 2
+    assert rebound["artifact"]["language"] == "fr"
+    assert transcripts.publisher_transcript_refresh_revision(
+        sink.engine, episode_id="episode-publisher"
+    ) == ""
     with Session(sink.engine) as session:
         episode = session.get(ArticleRecord, "episode-publisher")
         episode.extensions_json = json.dumps({"transcripts": [{"url": json_url, "type": "application/json"}]})
         session.add(episode)
         session.commit()
-        artifact = session.get(PodcastTextArtifactRecord, first["artifact"]["id"])
+        artifact = session.get(PodcastTextArtifactRecord, rebound["artifact"]["id"])
         assert not transcripts.publisher_artifact_matches_current_locator(session, episode_id="episode-publisher", artifact=artifact)
     assert transcripts.publisher_transcript_refresh_revision(sink.engine, episode_id="episode-publisher")
 
