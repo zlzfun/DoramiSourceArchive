@@ -54,6 +54,10 @@ def test_classify_failure_three_classes():
     assert landing.classify_failure(
         PodcastAdminError("podcast_selection_required", status_code=409)
     ).kind == "deterministic"
+    for code in ("podcast_source_media_too_large", "podcast_artifact_invalid"):
+        assert landing.classify_failure(
+            PodcastAdminError(code, status_code=413, message="mapped media failure")
+        ).kind == "deterministic"
     assert landing.classify_failure(PodcastAdminError(
         "podcast_publisher_transcript_unavailable",
         status_code=503,
@@ -63,6 +67,9 @@ def test_classify_failure_three_classes():
     assert landing.classify_failure(
         PodcastAdminError("podcast_provider_unavailable", status_code=503)
     ) == landing.FailureClass("gated", "podcast_provider_unavailable")
+    assert landing.classify_failure(
+        PodcastAdminError("podcast_storage_full", status_code=507, message="mapped media failure")
+    ) == landing.FailureClass("gated", "podcast_storage_full")
     assert landing.classify_failure(PodcastArtifactStorageFull("满")).kind == "gated"
     assert landing.classify_failure(
         landing.PodcastLandingGated("asr_admission_not_ready")
