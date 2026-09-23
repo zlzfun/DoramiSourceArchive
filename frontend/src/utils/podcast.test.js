@@ -13,3 +13,13 @@ test('podcast list availability never exposes background processing state', () =
     tone: 'ok',
   });
 });
+
+test('list labels separate text, running synthesis, failed audio and playable audio', () => {
+  const guide = { blog_ready: true, status: 'failed' };
+  assert.deepEqual(podcastListAvailabilityMeta({ premium_guide: guide }), {
+    label: '导读文字已生成，音频失败', tone: 'bad',
+  });
+  assert.equal(podcastListAvailabilityMeta({ premium_guide: { ...guide, status: 'synthesizing' } }).tone, 'run');
+  assert.equal(podcastListAvailabilityMeta({ premium_guide: { ...guide, status: '' } }).label, '导读文字已生成，音频待生成');
+  assert.equal(podcastListAvailabilityMeta({ condensed_audio_url: '/audio', premium_guide: guide }).label, '精品导读音频已就绪');
+});

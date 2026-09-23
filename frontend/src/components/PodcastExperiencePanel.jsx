@@ -44,7 +44,7 @@ function PodcastExperience({
 
   const variant = controlledVariant ?? localVariant;
   const hasGuideAudio = Boolean(podcast.condensed_audio_url);
-  const hasGuideBlog = Boolean(podcast.premium_guide?.blog_ready || podcast.premium_guide?.status === 'ready');
+  const hasGuideBlog = Boolean(podcast.premium_guide?.blog_ready);
   const isBlogOnlyGuide = hasGuideBlog && !hasGuideAudio;
   const guideVisible = isBlogOnlyGuide || (variant === 'digest' && hasGuideAudio);
   const handleVariantChange = (nextVariant) => {

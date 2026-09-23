@@ -48,7 +48,18 @@ export function podcastProcessingMeta(status, hasCondensedAudio = false) {
     : { label: '仅提供原节目', tone: 'idle' };
 }
 
-/** User lists show available listening modes, never background pipeline state. */
-export function podcastListAvailabilityMeta(hasCondensedAudio = false) {
-  return podcastProcessingMeta('', hasCondensedAudio);
+/** The same audio/text/task projection is used by list and detail. */
+export function podcastListAvailabilityMeta(podcast = {}) {
+  if (typeof podcast === 'boolean') return podcastProcessingMeta('', podcast);
+  const guide = podcast?.premium_guide || {};
+  if (podcast?.condensed_audio_url) return { label: '精品导读音频已就绪', tone: 'ok' };
+  const status = String(guide.status || '').toLowerCase();
+  if (['queued', 'summarizing', 'synthesizing'].includes(status)) {
+    return { label: guide.blog_ready ? '导读文字已生成，音频生成中…' : '精品导读生成中…', tone: 'run' };
+  }
+  if (status === 'failed') {
+    return { label: guide.blog_ready ? '导读文字已生成，音频失败' : '精品导读生成失败', tone: 'bad' };
+  }
+  if (guide.blog_ready) return { label: '导读文字已生成，音频待生成', tone: 'idle' };
+  return { label: '仅提供原节目', tone: 'idle' };
 }

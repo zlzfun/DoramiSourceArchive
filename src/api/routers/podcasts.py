@@ -909,7 +909,14 @@ def podcast_premium_task_detail(episode_id: str):
     """单集抽屉载荷:任务行 + 处理时间线 + 文本产物 + 精简音频(issue #76)。"""
 
     app = _app()
-    detail = podcast_premium_service.episode_detail(app.db_sink.engine, episode_id)
+    detail = podcast_premium_service.episode_detail(
+        app.db_sink.engine, episode_id,
+        minimum_duration_seconds=app.settings.podcast.premium_min_duration_seconds,
+        generation_enabled=(
+            app.settings.podcast.processing_enabled
+            and all(stage in app.settings.podcast.allowed_stages for stage in ("digest", "script", "tts", "audio_qa", "local_publish"))
+        ),
+    )
     if detail is None:
         raise HTTPException(status_code=404, detail="播客单集不存在")
     return detail

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Podcast } from 'lucide-react';
 import { mediaProxyUrl, requestPodcastOndemand } from '../api';
-import { formatPodcastDuration, podcastOf } from '../utils/podcast';
+import { formatPodcastDuration, podcastListAvailabilityMeta, podcastOf } from '../utils/podcast';
 import { podcastFullProcessingMeta } from '../utils/analysis';
 import {
   readPodcastPosition,
@@ -74,7 +74,7 @@ function PodcastAudioPlayer({
 }) {
   const fullProcessing = podcastFullProcessingMeta(article);
   const hasDigest = Boolean(podcast.condensed_audio_url);
-  const hasDigestBlog = Boolean(podcast.premium_guide?.blog_ready || podcast.premium_guide?.status === 'ready');
+  const hasDigestBlog = Boolean(podcast.premium_guide?.blog_ready);
   const guideStatus = String(podcast.premium_guide?.status || '').trim().toLowerCase();
   const guideActive = !hasDigest && GUIDE_ACTIVE_STATUSES.has(guideStatus);
   const isFailure = fullProcessing?.tone === 'bad'
@@ -84,11 +84,9 @@ function PodcastAudioPlayer({
       String(podcast.processing_status || '').toLowerCase()
     );
   const visibleProcessing = isFailure ? null : fullProcessing;
-  const status = (hasDigest || hasDigestBlog)
-    ? { label: '精品导读已就绪', tone: 'ok' }
-    : guideActive
-      ? { label: '精品导读生成中…', tone: 'run' }
-      : (visibleProcessing || { label: '仅提供原节目', tone: 'idle' });
+  const guideAvailability = podcastListAvailabilityMeta(podcast);
+  const status = (hasDigest || hasDigestBlog || guideActive || guideStatus === 'failed')
+    ? guideAvailability : (visibleProcessing || guideAvailability);
   const originalDuration = formatPodcastDuration(podcast.duration_seconds);
   const condensedDuration = formatPodcastDuration(podcast.condensed_duration_seconds);
   const [localVariant, setLocalVariant] = useState(() => (
@@ -160,11 +158,11 @@ function PodcastAudioPlayer({
       const result = await requestPodcastOndemand(article.id);
       const outcome = String(result?.outcome || '');
       if (outcome === 'ready') {
-        showToast?.('精品导读已就绪', 'success');
+        showToast?.('精品导读音频已就绪', 'success');
       } else if (outcome === 'in_progress') {
         showToast?.('精品导读正在生成中', 'info');
       } else {
-        showToast?.('已开始生成精品导读', 'success');
+        showToast?.(hasDigestBlog ? '已开始生成导读音频' : '已开始生成精品导读', 'success');
       }
       await onArticleRefresh?.();
     } catch (error) {
@@ -220,7 +218,8 @@ function PodcastAudioPlayer({
               aria-busy={ondemandBusy || guideActive}
               onClick={handleOndemand}
             >
-              {ondemandBusy ? '提交中…' : guideActive ? '生成中…' : '点播精品导读'}
+              {ondemandBusy ? '提交中…' : guideActive ? '生成中…'
+                : hasDigestBlog ? (guideStatus === 'failed' ? '重试导读音频' : '生成导读音频') : '点播精品导读'}
             </button>
           )}
         </div>
