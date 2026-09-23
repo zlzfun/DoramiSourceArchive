@@ -138,7 +138,7 @@ from services.media_store import MediaStore
 from services.object_storage import ObjectStorage, ObjectStorageError
 from services.storage_backup import BackupService
 from services.storage_runtime import maintain_storage
-from services.podcast_artifacts import PodcastArtifactStore
+from services.podcast_artifacts import PodcastArtifactError, PodcastArtifactStore
 from services.podcast_asr_worker import AsrWorkerConfig, AsrWorkerStep
 from services import podcast_premium_guides as podcast_premium_guide_service
 from services import article_listen_guides as article_listen_guide_service
@@ -1197,9 +1197,52 @@ async def enqueue_podcast_processing_with_input(
                 max_audio_seconds_per_file=max_audio_seconds_per_file,
                 client_factory=httpx.AsyncClient,
             )
-        except podcast_source_media_service.SourceMediaTooLong as exc:
+        except podcast_source_media_service.SourceMediaError as exc:
+            from services.podcast_source_media import (
+                SourceMediaConflict, SourceMediaFetchFailed, SourceMediaNotFound,
+                SourceMediaTimeout, SourceMediaTooLarge, SourceMediaTooLong,
+            )
+
+            mapping = (
+                (SourceMediaNotFound, 404, "podcast_not_found"),
+                (SourceMediaTooLarge, 413, "podcast_source_media_too_large"),
+                (SourceMediaTooLong, 422, "podcast_source_media_too_long"),
+                (SourceMediaTimeout, 504, "podcast_source_media_timeout"),
+                (SourceMediaFetchFailed, 502, "podcast_source_media_fetch_failed"),
+                (SourceMediaConflict, 409, "podcast_processing_conflict"),
+            )
+            for kind, status, code in mapping:
+                if isinstance(exc, kind):
+                    raise podcast_processing_admin_service.PodcastAdminError(
+                        code, status_code=status, message=str(exc)
+                    ) from exc
+            raise
+        except PodcastStageDenied as exc:
             raise podcast_processing_admin_service.PodcastAdminError(
-                "podcast_source_media_too_long", status_code=422
+                "podcast_stage_denied", status_code=403, message=str(exc)
+            ) from exc
+        except PodcastArtifactError as exc:
+            from services.podcast_artifacts import (
+                PodcastArtifactConflict, PodcastArtifactNotFound,
+                PodcastArtifactProbeUnavailable, PodcastArtifactStorageFull,
+                PodcastArtifactTooLarge, PodcastArtifactUnsupportedMedia,
+            )
+
+            mapping = (
+                (PodcastArtifactStorageFull, 507, "podcast_storage_full"),
+                (PodcastArtifactTooLarge, 413, "podcast_source_media_too_large"),
+                (PodcastArtifactProbeUnavailable, 503, "podcast_provider_unavailable"),
+                (PodcastArtifactUnsupportedMedia, 415, "podcast_artifact_invalid"),
+                (PodcastArtifactNotFound, 404, "podcast_not_found"),
+                (PodcastArtifactConflict, 409, "podcast_processing_conflict"),
+            )
+            for kind, status, code in mapping:
+                if isinstance(exc, kind):
+                    raise podcast_processing_admin_service.PodcastAdminError(
+                        code, status_code=status, message=str(exc)
+                    ) from exc
+            raise podcast_processing_admin_service.PodcastAdminError(
+                "podcast_artifact_invalid", status_code=400, message=str(exc)
             ) from exc
     return await asyncio.to_thread(enqueue)
 
