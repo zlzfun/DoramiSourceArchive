@@ -16,7 +16,7 @@ const THRESHOLDS = { initial: 6, premium: 7.5 };
 test('retry kind is derived from processing status and stage', () => {
   assert.equal(podcastRetryKind({ processing_status: 'reconciliation_required', processing_stage: 'asr' }), 'reconcile');
   assert.equal(podcastRetryKind({ processing_status: 'failed', stage: 'fetch' }), 'asr');
-  assert.equal(podcastRetryKind({ processing_status: 'retry_wait', stage: 'analyze' }), 'analyze');
+  assert.equal(podcastRetryKind({ processing_status: 'retry_wait', stage: 'analyze' }), '');
   assert.equal(podcastRetryKind({ processing_status: 'failed' }), 'full');
   assert.equal(podcastRetryKind({ processing_status: 'running', stage: 'asr' }), '');
   assert.equal(podcastRetryKind({ status: 'not_required' }), '');
@@ -37,6 +37,21 @@ test('audit reason, button label and success toast come from the same predicate'
 });
 
 test('task meta normalizes stage / verdict / tts and keeps reconciliation apart from failure', () => {
+  const waiting = podcastTaskMeta({
+    processing_status: 'retry_wait', processing_stage: 'asr', initial_score: 6,
+    processing_error_code: 'provider_usage_window_unavailable',
+    processing_error: 'provider usage capacity was unavailable before submission',
+    next_retry_at: '2026-09-23T00:00:00+08:00', can_retry: false, can_force: false,
+  }, THRESHOLDS);
+  assert.equal(waiting.stage.code, 'retry_wait');
+  assert.equal(waiting.stage.tone, 'warn');
+  assert.match(waiting.reason, /等待 ASR 配额.*自动重试.*provider usage capacity/);
+  assert.equal(waiting.actions.retry, '');
+  assert.equal(waiting.active, true);
+  const polling = podcastTaskMeta({ processing_status: 'retry_wait', processing_stage: 'asr' }, THRESHOLDS);
+  assert.equal(polling.stage.code, 'retry_wait');
+  assert.equal(polling.reason, '等待自动重试');
+  assert.equal(polling.active, true);
   const reconcile = podcastTaskMeta({
     stage_code: 'reconciliation', verdict: 'unscored', processing_status: 'reconciliation_required',
     processing_stage: 'asr', initial_score: 6.5, can_retry: true,

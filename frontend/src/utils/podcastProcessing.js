@@ -9,7 +9,8 @@
 // 阶段以后端 stage_code 为准;缺失时按 processing_status + stage 就地推导(旧响应兼容)。
 
 const ACTIVE_PROCESSING = new Set(['queued', 'running', 'awaiting_review']);
-const FAILED_PROCESSING = new Set(['failed', 'retry_wait', 'reconciliation_required']);
+const FAILED_PROCESSING = new Set(['failed', 'reconciliation_required']);
+const ASR_QUOTA_WAIT_CODES = new Set(['provider_usage_window_unavailable', 'provider_call_window_unavailable']);
 
 export const PODCAST_INITIAL_THRESHOLD = 6.0;
 
@@ -20,6 +21,7 @@ export const PODCAST_STAGE_META = Object.freeze({
   processing: { label: '处理中', tone: 'run' },
   full_analyzed: { label: '全文完成', tone: 'ok' },
   reconciliation: { label: '待对账', tone: 'warn' },
+  retry_wait: { label: '等待重试', tone: 'warn' },
   failed: { label: '失败', tone: 'bad' },
 });
 
@@ -31,6 +33,7 @@ export const PODCAST_STAGE_FILTERS = Object.freeze([
   ['processing', '处理中'],
   ['full_analyzed', '全文完成'],
   ['reconciliation', '待对账'],
+  ['retry_wait', '等待重试'],
   ['failed', '失败'],
 ]);
 
@@ -163,6 +166,7 @@ function deriveStageCode(item = {}) {
   if (item.final_score != null) return 'full_analyzed';
   const status = processingStatusOf(item);
   if (status === 'reconciliation_required') return 'reconciliation';
+  if (status === 'retry_wait') return 'retry_wait';
   if (FAILED_PROCESSING.has(status)) return 'failed';
   if (ACTIVE_PROCESSING.has(status)) return 'processing';
   if (item.initial_score == null) return 'not_processed';
@@ -182,7 +186,7 @@ function deriveVerdict(item = {}) {
 function stageReason(item, stageCode, thresholds) {
   const initialLine = podcastScoreText(thresholds.initial ?? PODCAST_INITIAL_THRESHOLD);
   const premiumLine = podcastScoreText(thresholds.premium);
-  const error = String(item.processing_error || '').trim();
+  const error = String(item.processing_error || item.error || '').trim();
   const asr = isAsrStage(item);
   const analyze = processingStageOf(item) === 'analyze';
   switch (stageCode) {
@@ -208,10 +212,17 @@ function stageReason(item, stageCode, thresholds) {
     }
     case 'reconciliation':
       return asr ? 'ASR 结果待对账 · 对账后重试 ASR' : '结果待对账 · 对账后重试';
+    case 'retry_wait': {
+      const errorCode = String(item.processing_error_code || item.error_code || '').trim();
+      const quotaWait = ASR_QUOTA_WAIT_CODES.has(errorCode);
+      const when = item.next_retry_at && !Number.isNaN(Date.parse(item.next_retry_at))
+        ? ` · 计划 ${new Date(item.next_retry_at).toLocaleString('zh-CN', { timeZoneName: 'short' })} 自动重试`
+        : '';
+      return `${quotaWait ? '等待 ASR 配额' : '等待自动重试'}${when}${error ? ` · ${error}` : ''}`;
+    }
     case 'failed': {
       const head = asr ? 'ASR 转录失败' : analyze ? '全文分析失败' : '全文处理失败';
-      const retry = processingStatusOf(item) === 'retry_wait' ? '等待自动重试' : '可重试';
-      return error ? `${head} · ${error}` : `${head} · ${retry}`;
+      return error ? `${head} · ${error}` : `${head} · 可重试`;
     }
     default:
       return String(item.reason || '');
@@ -245,7 +256,7 @@ export function podcastTaskMeta(item = {}, thresholds = {}) {
     reasonFull: String(item.reason || ''),
     verdict,
     tts,
-    active: stageCode === 'processing' || tts.active,
+    active: stageCode === 'processing' || stageCode === 'retry_wait' || tts.active,
     scores: {
       initial: item.initial_score,
       final: item.final_score,

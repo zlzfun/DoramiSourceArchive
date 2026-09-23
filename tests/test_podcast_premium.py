@@ -29,6 +29,7 @@ from services.podcast_premium import (  # noqa: E402
     normalize_threshold,
     set_threshold,
 )
+from services.podcast_processing_admin import serialize_processing  # noqa: E402
 from storage.impl.db_storage import DatabaseStorage  # noqa: E402
 
 
@@ -207,6 +208,27 @@ def test_dashboard_uses_final_score_only_and_recalculates_without_changing_candi
     historical = next(item for item in raised["items"] if item["episode_id"] == "historical")
     assert historical["historical_generated"] is True
     assert historical["reason"] == "历史已生成，当前未达门槛"
+
+
+def test_asr_retry_wait_is_distinct_from_failure_and_keeps_retry_time(premium_engine):
+    with Session(premium_engine) as session:
+        row = session.get(PodcastProcessingRecord, "processing-failed")
+        row.processing_status = "retry_wait"
+        row.attempt_count = 0
+        row.error_code = "provider_usage_window_unavailable"
+        row.error_message = "provider usage capacity was unavailable before submission"
+        row.next_retry_at = "2026-09-23T00:00:00+08:00"
+        session.add(row)
+        session.commit()
+        assert serialize_processing(row)["next_retry_at"] == row.next_retry_at
+    item = next(row for row in dashboard(premium_engine)["items"] if row["episode_id"] == "failed")
+    assert item["stage_code"] == "retry_wait"
+    assert item["next_retry_at"] == "2026-09-23T00:00:00+08:00"
+    assert item["processing_error_code"] == "provider_usage_window_unavailable"
+    assert "等待 ASR 配额" in item["reason"]
+    assert item["can_retry"] is False
+    assert item["can_force"] is False
+    assert dashboard(premium_engine, status_filter="failed")["items"] == []
 
 
 def test_dashboard_exposes_force_tts_only_for_ready_full_analysis(premium_engine):
