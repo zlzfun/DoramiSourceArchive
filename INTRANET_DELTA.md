@@ -75,6 +75,7 @@
 | 会话提示 hook | `.claude/settings.json`、`.claude/hooks/master-session-start.sh` | 开工注入落后主干提示;main 无对应文件,不冲突 |
 | IM 机器人接入文档 | `docs/contracts/im_bot_integration.md`、`docs/im-bot-architecture.md`、`docs/README.md` 索引两行 | 纯内网场景文档按拍板只进本分支;`docs/README.md` 冲突 = 两边索引都保留 |
 | 部署文档内网注记 | `docs/deploy-docker.md`(内网 Docker 过旧的说明段) | 以 main 为准 + 保留注记段 |
+| 内网发布与部署指南 | `docs/intranet-release-guide.md`、`docs/README.md` 索引 | 通用流程仅进 master;内网独立 tag、同版本双包、部署与社区发布;环境专属信息另存内网文档,索引冲突保留两边 |
 | 内网日报修复脚本 | `scripts/repair_intranet_briefs.py` | 一次性运维脚本,main 无对应文件 |
 | 本清单 | `INTRANET_DELTA.md` | 永远以本分支为准 |
 
