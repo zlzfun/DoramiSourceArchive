@@ -67,13 +67,21 @@ DETERMINISTIC_ADMIN_CODES = frozenset(
     {
         "podcast_stage_denied",
         "podcast_not_found",
+        "podcast_artifact_invalid",
         "podcast_source_media_too_long",
+        "podcast_source_media_too_large",
         "podcast_artifact_not_ready",
         "podcast_selection_required",
     }
 )
 # 配置 / 容量类:随运维动作改变,按守门节奏回访而非长停。
-GATE_ADMIN_CODES = frozenset({"podcast_provider_unavailable", "podcast_landing_gated"})
+GATE_ADMIN_CODES = frozenset(
+    {
+        "podcast_provider_unavailable",
+        "podcast_landing_gated",
+        "podcast_storage_full",
+    }
+)
 
 DETERMINISTIC_EXCEPTIONS: tuple[type[BaseException], ...] = (
     podcast_artifacts.PodcastArtifactTooLarge,
