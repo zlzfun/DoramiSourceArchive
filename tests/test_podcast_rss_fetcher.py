@@ -604,6 +604,7 @@ def test_article_list_and_detail_serializer_project_lightweight_podcast_contract
         "next_retry_at": "",
         "stage": "",
         "error": "",
+        "error_code": "",
         "retryable": False,
         "transcript_source": "",
         "full_analysis_candidate": False,
