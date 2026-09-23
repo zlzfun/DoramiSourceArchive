@@ -8,6 +8,7 @@ this module so a show-notes score can never accidentally award premium status.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -83,6 +84,16 @@ def _episode_extensions(episode: ArticleRecord) -> dict[str, Any]:
     except (TypeError, ValueError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def _duration_seconds(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        duration = float(value)
+    except (TypeError, ValueError):
+        return None
+    return duration if math.isfinite(duration) and duration >= 0 else None
 
 
 def _premium_guide(episode: ArticleRecord) -> dict[str, Any]:
@@ -655,7 +666,8 @@ _TIMELINE_LABELS = {
 
 
 def _timeline(
-    session: Session, state: _EpisodeState, *, threshold: float
+    session: Session, state: _EpisodeState, *, threshold: float,
+    minimum_duration_seconds: int = 0, generation_enabled: bool = True,
 ) -> list[dict[str, Any]]:
     """Six fixed steps, each with a state the frontend paints as a stamp.
 
@@ -786,16 +798,42 @@ def _timeline(
     failed_stage = str(guide.get("failed_stage") or "")
     guide_at = str(guide.get("updated_at") or "")
     premium_now = score_final is not None and score_final >= threshold
-    if state.blog_ready or guide_status in {"synthesizing", "ready"}:
-        guide_row = {"state": "done", "note": "导读博客 + 口播稿已发布"}
-    elif guide_status in {"summarizing", "queued"}:
+    publications = {
+        row.kind: row for row in session.exec(
+            select(PodcastTextPublicationRecord).where(
+                PodcastTextPublicationRecord.episode_id == state.episode.id,
+                PodcastTextPublicationRecord.kind.in_(("digest_blog_zh", "narration_script_zh")),
+                PodcastTextPublicationRecord.status == "published",
+            )
+        ).all()
+    }
+    blog = session.get(PodcastTextArtifactRecord, publications["digest_blog_zh"].artifact_id) if "digest_blog_zh" in publications else None
+    script = session.get(PodcastTextArtifactRecord, publications["narration_script_zh"].artifact_id) if "narration_script_zh" in publications else None
+    script_current = bool(blog and script and script.source_artifact_id == blog.id and script.source_content_hash == blog.content_hash)
+    duration = _duration_seconds(
+        _episode_extensions(state.episode).get("duration_seconds")
+    )
+    if guide_status in {"summarizing", "queued"}:
         guide_row = {"state": "run", "note": "正在生成导读与口播稿"}
+    elif blog and script_current:
+        guide_row = {"state": "done", "note": "导读博客与当前口播稿已发布"}
+    elif blog:
+        guide_row = {"state": "warn", "note": "导读博客已发布，口播稿尚未完成或版本不匹配"}
     elif guide_status == "failed" and failed_stage != "synthesizing":
         guide_row = {"state": "fail", "note": guide_error or "导读生成失败"}
     elif score_final is None:
         guide_row = {"state": "pending", "note": "等待全文分析"}
     elif premium_now:
-        guide_row = {"state": "pending", "note": "已达门槛，等待生成"}
+        if not generation_enabled:
+            guide_row = {"state": "skipped", "note": "已达门槛，当前部署未启用自动生成"}
+        elif not state.transcript_ready:
+            guide_row = {"state": "skipped", "note": "已达门槛，缺少当前全文逐字稿"}
+        elif duration is None or duration <= 0:
+            guide_row = {"state": "skipped", "note": "已达门槛，节目时长未知"}
+        elif duration < minimum_duration_seconds:
+            guide_row = {"state": "skipped", "note": f"已达门槛，节目不足自动生成时长 {minimum_duration_seconds // 60} 分钟"}
+        else:
+            guide_row = {"state": "pending", "note": "已达门槛，等待生成"}
     else:
         guide_row = {"state": "skipped", "note": "未达门槛，不自动生成"}
     rows.append({"step": "guide", "label": _TIMELINE_LABELS["guide"], "at": guide_at, **guide_row})
@@ -811,8 +849,10 @@ def _timeline(
         tts_row = {"state": "pending", "note": "等待导读完成"}
     elif guide_row["state"] == "done":
         tts_row = {"state": "pending", "note": "等待合成"}
+    elif guide_row["state"] == "warn":
+        tts_row = {"state": "pending", "note": "等待有效口播稿"}
     else:
-        tts_row = {"state": "skipped", "note": "未达门槛，可强制 TTS"}
+        tts_row = {"state": "skipped", "note": "未入自动队列，可手动点播" if premium_now else "未达门槛，可强制 TTS"}
     rows.append({"step": "tts", "label": _TIMELINE_LABELS["tts"], "at": guide_at, **tts_row})
     return rows
 
@@ -847,7 +887,8 @@ def _texts(session: Session, episode_id: str) -> dict[str, Any]:
     return result
 
 
-def episode_detail(engine: Engine, episode_id: str) -> dict[str, Any] | None:
+def episode_detail(engine: Engine, episode_id: str, *, minimum_duration_seconds: int = 0,
+                   generation_enabled: bool = True) -> dict[str, Any] | None:
     """Single-episode drawer payload: row + timeline + texts + digest audios."""
 
     from services.podcast_artifacts import serialize_artifact
@@ -867,7 +908,7 @@ def episode_detail(engine: Engine, episode_id: str) -> dict[str, Any] | None:
             .order_by(PodcastArtifactRecord.created_at.desc(), PodcastArtifactRecord.id.desc())
         ).all()
         extensions = _episode_extensions(state.episode)
-        duration = extensions.get("duration_seconds")
+        duration = _duration_seconds(extensions.get("duration_seconds"))
         return {
             "item": _serialize_state(state, threshold=threshold),
             "threshold": threshold,
@@ -879,12 +920,12 @@ def episode_detail(engine: Engine, episode_id: str) -> dict[str, Any] | None:
                 "source_name": state.source_name,
                 "publish_date": str(state.episode.publish_date or ""),
                 "source_url": str(state.episode.source_url or ""),
-                "duration_seconds": (
-                    int(duration) if isinstance(duration, (int, float)) and not isinstance(duration, bool) else None
-                ),
+                "duration_seconds": int(duration) if duration is not None else None,
                 "show_title": str(extensions.get("show_title") or ""),
             },
-            "timeline": _timeline(session, state, threshold=threshold),
+            "timeline": _timeline(session, state, threshold=threshold,
+                                  minimum_duration_seconds=minimum_duration_seconds,
+                                  generation_enabled=generation_enabled),
             "texts": _texts(session, episode_id),
             "artifacts": [serialize_artifact(row) for row in audio_rows],
         }

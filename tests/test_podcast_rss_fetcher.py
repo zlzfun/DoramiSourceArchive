@@ -615,6 +615,7 @@ def test_article_list_and_detail_serializer_project_lightweight_podcast_contract
             "error": "",
             "audio_ready": False,
             "blog_ready": False,
+            "script_ready": False,
         },
         "condensed_audio_url": "",
         "condensed_duration_seconds": None,
@@ -998,6 +999,29 @@ def test_articles_list_and_detail_endpoints_expose_same_podcast_projection(monke
             published_at="2026-09-02T00:09:00+00:00",
             updated_at="2026-09-02T00:09:00+00:00",
         ))
+        narration = "用于验证读者投影的已发布口播稿。"
+        session.add(PodcastTextArtifactRecord(
+            id="podcast-e2e-narration-script",
+            episode_id=episode.id,
+            kind="narration_script_zh",
+            version=1,
+            content_hash=hashlib.sha256(narration.encode("utf-8")).hexdigest(),
+            inline_text=narration,
+            language="zh-CN",
+            authority_id="",
+            provenance_json='{"format":"text"}',
+            created_at="2026-09-02T00:09:30+00:00",
+        ))
+        session.add(PodcastTextPublicationRecord(
+            identity=f"{episode.id}:narration_script_zh",
+            episode_id=episode.id,
+            kind="narration_script_zh",
+            artifact_id="podcast-e2e-narration-script",
+            status="published",
+            authority_id="",
+            published_at="2026-09-02T00:09:30+00:00",
+            updated_at="2026-09-02T00:09:30+00:00",
+        ))
         session.commit()
 
     with TestClient(app_module.app) as client:
@@ -1034,6 +1058,7 @@ def test_articles_list_and_detail_endpoints_expose_same_podcast_projection(monke
     assert list_item["quality_score"] == 8.1
     assert list_item["score_reason"] == "普通嘉宾给出了可复用的技术细节。"
     assert list_item["analysis_input_hash"] == "sha256:endpoint-show-notes"
+    assert list_item["podcast"]["premium_guide"]["script_ready"] is True
     assert analysis_detail.json()["analysis_basis"] == "podcast_show_notes"
     assert analysis_detail.json()["analysis_input_hash"] == "sha256:endpoint-show-notes"
     assert analysis_detail.json()["transcript_artifact_id"] is None

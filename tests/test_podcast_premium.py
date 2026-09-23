@@ -25,6 +25,7 @@ from services.podcast_premium import (  # noqa: E402
     DEFAULT_PREMIUM_SCORE_THRESHOLD,
     INITIAL_PROCESSING_THRESHOLD,
     dashboard,
+    episode_detail,
     get_threshold,
     normalize_threshold,
     set_threshold,
@@ -310,6 +311,40 @@ def test_dashboard_exposes_force_tts_only_for_ready_full_analysis(premium_engine
         item["episode_id"]: item for item in dashboard(premium_engine)["items"]
     }
     assert mismatched["low-final"]["can_force_tts"] is False
+
+
+def test_timeline_separates_blog_script_and_duration_gate(premium_engine):
+    blog_only = episode_detail(premium_engine, "historical")
+    guide = next(row for row in blog_only["timeline"] if row["step"] == "guide")
+    assert guide["state"] == "warn"
+    assert "口播稿尚未完成" in guide["note"]
+    with Session(premium_engine) as session:
+        episode = session.get(ArticleRecord, "exact-final")
+        episode.extensions_json = '{"duration_seconds":660}'
+        transcript = PodcastTextArtifactRecord(
+            id="transcript-exact-final", episode_id="exact-final", kind="publisher_transcript",
+            version=1, content_hash=hashlib.sha256(b"transcript").hexdigest(),
+            inline_text="transcript", language="en", provenance_json="{}", created_at=STAMP,
+        )
+        analysis = session.get(ArticleAnalysisRecord, "exact-final")
+        analysis.transcript_artifact_id = transcript.id
+        session.add_all([episode, transcript, analysis])
+        session.commit()
+    short = episode_detail(premium_engine, "exact-final", minimum_duration_seconds=1200)
+    guide = next(row for row in short["timeline"] if row["step"] == "guide")
+    assert guide["state"] == "skipped"
+    assert "不足自动生成时长 20 分钟" in guide["note"]
+
+    with Session(premium_engine) as session:
+        episode = session.get(ArticleRecord, "exact-final")
+        episode.extensions_json = '{"duration_seconds":"20:00"}'
+        session.add(episode)
+        session.commit()
+    legacy = episode_detail(premium_engine, "exact-final", minimum_duration_seconds=1200)
+    assert legacy["episode"]["duration_seconds"] is None
+    guide = next(row for row in legacy["timeline"] if row["step"] == "guide")
+    assert guide["state"] == "skipped"
+    assert "节目时长未知" in guide["note"]
 
 
 def test_reader_badge_requires_transcript_score_and_uses_inclusive_current_threshold():

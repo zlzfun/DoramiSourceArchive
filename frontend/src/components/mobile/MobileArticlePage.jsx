@@ -56,7 +56,7 @@ export default function MobileArticlePage({
   const analysisStatus = analysisStatusMeta(activeArticle, { podcast: podcastView });
   const activePodcast = podcastOf(activeArticle);
   const hasGuideAudio = Boolean(activePodcast?.condensed_audio_url);
-  const hasGuideBlog = Boolean(activePodcast?.premium_guide?.blog_ready || activePodcast?.premium_guide?.status === 'ready');
+  const hasGuideBlog = Boolean(activePodcast?.premium_guide?.blog_ready);
   const isBlogOnlyGuide = hasGuideBlog && !hasGuideAudio;
   const defaultPodcastVariant = activePodcast?.audio_url
     ? 'original'
