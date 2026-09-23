@@ -733,6 +733,34 @@ def test_completed_receipt_archive_preserves_receipt_and_replay(tts_env):
     assert replay.data == original.data and len(FakeTtsClient.calls) == 1
 
 
+def test_completed_article_listen_receipt_can_be_archived(tts_env):
+    engine, cfg = tts_env
+    FakeTtsClient.calls = []
+    original = asyncio.run(provider(engine, cfg).synthesize('hello'))
+    with Session(engine) as session:
+        row = session.exec(select(BailianTtsCallRecord)).one()
+        key = row.id
+        session.add(ArticleRecord(
+            id='episode-test', title='article', content_type='article', source_id='test',
+            source_url='https://example.test/article', publish_date=NOW.isoformat(),
+            fetched_date=NOW.isoformat(), content='test',
+            extensions_json=json.dumps({'listen_guide': {
+                'status': 'ready',
+                'content_hash': 'c' * 64,
+                'mime': 'audio/wav',
+                'size_bytes': len(original.data),
+            }}),
+        ))
+        session.commit()
+
+    result = reclaim_completed_receipts(cfg, engine, now=NOW + dt.timedelta(days=10))
+    root = Path(cfg.tts_receipt_root)
+    assert result['compressed_wavs'] == 1
+    assert (root / f'{key}.json').exists()
+    assert not (root / f'{key}.wav').exists()
+    assert (root / f'{key}.wav.zlib').exists()
+
+
 def test_tts_concurrent_duplicate_calls_share_one_receipt(tts_env):
     engine, cfg = tts_env
     FakeTtsClient.calls = []

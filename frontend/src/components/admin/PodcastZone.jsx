@@ -331,14 +331,18 @@ export default function PodcastZone({ showToast, refreshTick = 0, onOpenCredenti
         <section className="surface-card rounded-[var(--r-card)]" aria-label="TTS 回执缓存">
           <div className="tbl-head"><span className="tools-title">TTS 回执缓存</span></div>
           {ttsCache.data?.status === 'available' ? (
-            <div className="body-text px-4 pb-4">
-              已用 {formatPodcastArtifactBytes(ttsCache.data.used_bytes)} / {formatPodcastArtifactBytes(ttsCache.data.limit_bytes)}
-              {' · '}单次最长口播预留约 {formatPodcastArtifactBytes(ttsCache.data.estimated_max_narration_reservation_bytes)}
-              {' · '}缓存缺口 {formatPodcastArtifactBytes(ttsCache.data.cache_shortfall_bytes)}
-              {' · '}磁盘缺口 {formatPodcastArtifactBytes(ttsCache.data.disk_shortfall_bytes)}
-              <button type="button" className="action-button action-button-secondary ml-3" disabled={ttsGcBusy} onClick={handleTtsReclaim}>
-                {ttsGcBusy ? '归档中…' : '安全归档已完成回执'}
-              </button>
+            <div className="body-text grid gap-2 px-4 pb-4">
+              <p>
+                已用 {formatPodcastArtifactBytes(ttsCache.data.used_bytes)} / {formatPodcastArtifactBytes(ttsCache.data.limit_bytes)}
+                {' · '}单次最长口播预留约 {formatPodcastArtifactBytes(ttsCache.data.estimated_max_narration_reservation_bytes)}
+              </p>
+              <p>
+                缓存缺口 {formatPodcastArtifactBytes(ttsCache.data.cache_shortfall_bytes)}
+                {' · '}磁盘缺口 {formatPodcastArtifactBytes(ttsCache.data.disk_shortfall_bytes)}
+                <button type="button" className="action-button action-button-secondary ml-3" disabled={ttsGcBusy} onClick={handleTtsReclaim}>
+                  {ttsGcBusy ? '归档中…' : '安全归档已完成回执'}
+                </button>
+              </p>
             </div>
           ) : <p className="tiny-meta px-4 pb-4">{ttsCache.data?.reason || stateError(ttsCache) || '读取中…'}</p>}
         </section>
