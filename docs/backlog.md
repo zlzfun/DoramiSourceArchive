@@ -7,7 +7,7 @@
 ## 进行中
 
 - ☐ **issue #150 CI 后端测试并行化**(分支 `feat/issue-150-ci-parallel`;归因数据与方案写在 issue 与 `docs/version-history.md`):① xdist `-n 4 --dist worksteal` + conftest 按 worker 沙箱、
-  ② 拆 `backend-unit` / `backend-deploy` 两 job + `backend (pytest)` 汇总门 已实现,守卫 `tests/test_ci_workflow.py`;待 codex 检视、用户放行、PR 上 CI 实测墙钟(目标 ≤ 8 min,预期 5~6)。
+  ② 拆 `backend-unit` / `backend-deploy` 两 job + `backend (pytest)` 汇总门 已实现,守卫 `tests/test_ci_workflow.py`;codex R1(3 条全接受、守卫加固 + 11 种反向对照)/ R2 ✓ 已过;待用户本地验收放行 → PR 上 CI 实测墙钟(目标 ≤ 8 min,预期 5~6)。
   **暂缓**(并行后墙钟收益约 1 min):③ 39 个 baremetal 用例共享「已首装」快照(状态文件 / symlink 烤了绝对路径,搬迁要改写)与 sudo 桩改 sh;④ ffmpeg 静态包 / apt 缓存、
   路径过滤(近 40 个合入 PR 仅 4 个 docs / frontend-only;若做须 job 级 `if` + paths-filter)。观察期:时序型用例在 4 vCPU 下的抖动;入库 `uv.lock` 陈旧(含已退役 chromadb / torch)是否要单独清理。
 - ☐ **issue #97 Podcast 成本门控与评分标定**（分支 `feat/issue-97-podcast-cost-gates`，方案
