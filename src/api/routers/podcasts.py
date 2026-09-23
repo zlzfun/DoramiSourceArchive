@@ -869,7 +869,13 @@ def podcast_premium_task_detail(episode_id: str):
         minimum_duration_seconds=app.settings.podcast.premium_min_duration_seconds,
         generation_enabled=(
             app.settings.podcast.processing_enabled
-            and all(stage in app.settings.podcast.allowed_stages for stage in ("digest", "script", "tts", "audio_qa", "local_publish"))
+            and all(
+                stage in app.settings.podcast.allowed_stages
+                for stage in (
+                    "translate", "analyze", "digest", "local_publish",
+                    "script", "tts", "audio_qa",
+                )
+            )
         ),
     )
     if detail is None:

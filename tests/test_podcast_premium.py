@@ -313,6 +313,17 @@ def test_timeline_separates_blog_script_and_duration_gate(premium_engine):
     assert guide["state"] == "skipped"
     assert "不足自动生成时长 20 分钟" in guide["note"]
 
+    with Session(premium_engine) as session:
+        episode = session.get(ArticleRecord, "exact-final")
+        episode.extensions_json = '{"duration_seconds":"20:00"}'
+        session.add(episode)
+        session.commit()
+    legacy = episode_detail(premium_engine, "exact-final", minimum_duration_seconds=1200)
+    assert legacy["episode"]["duration_seconds"] is None
+    guide = next(row for row in legacy["timeline"] if row["step"] == "guide")
+    assert guide["state"] == "skipped"
+    assert "节目时长未知" in guide["note"]
+
 
 def test_reader_badge_requires_transcript_score_and_uses_inclusive_current_threshold():
     episode = _episode("projection")
