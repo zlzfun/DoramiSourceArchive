@@ -36,6 +36,7 @@ from services.podcast_artifacts import (
 from services.podcast_stage_policy import PodcastStagePolicy
 from services import podcast_premium, reader_ondemand
 from services.article_analysis import has_authoritative_analysis
+from services.bailian_speech_client import BailianSpeechError
 
 logger = logging.getLogger("dorami.podcast_premium_guides")
 
@@ -238,6 +239,11 @@ def fail_premium_guide(
     """Persist a terminal guide error so admin polling never loses failures."""
 
     message = str(error).strip() or type(error).__name__
+    if isinstance(error, BailianSpeechError):
+        message = {
+            "tts_receipt_cache_full": "TTS 回执缓存不足，请在播客管理台检查缺口并安全归档已完成回执",
+            "tts_receipt_disk_full": "TTS 回执所在磁盘空间不足，请在播客管理台检查磁盘缺口",
+        }.get(error.code, message)
     _set_episode_status(
         engine,
         episode_id,
@@ -361,6 +367,31 @@ def _source_transcript(
     return episode, artifact, transcript
 
 
+def _reusable_guide_text(
+    session: Session, episode_id: str, transcript: PodcastTextArtifactRecord,
+    pipeline_version: str,
+) -> tuple[PodcastTextArtifactRecord | None, PodcastTextArtifactRecord | None]:
+    def published(kind: str) -> PodcastTextArtifactRecord | None:
+        publication = session.get(PodcastTextPublicationRecord, f"{episode_id}:{kind}")
+        if publication is None or publication.status != "published":
+            return None
+        return session.get(PodcastTextArtifactRecord, publication.artifact_id)
+
+    def matches(artifact, source):
+        if not artifact or artifact.source_artifact_id != source.id or artifact.source_content_hash != source.content_hash:
+            return False
+        try:
+            return json.loads(artifact.provenance_json or "{}").get("pipeline") == pipeline_version
+        except (TypeError, ValueError):
+            return False
+
+    blog = published("digest_blog_zh")
+    if not matches(blog, transcript):
+        return None, None
+    narration = published("narration_script_zh")
+    return blog, narration if matches(narration, blog) else None
+
+
 async def run_premium_guide(
     engine: Engine,
     store: PodcastArtifactStore,
@@ -427,26 +458,40 @@ async def run_premium_guide(
             if tts_provider is None:
                 raise PremiumGuideError("精品导读音频合成所需的 TTS 提供者未配置")
 
-        draft = await text_provider.create_blog(
-            title=title,
-            transcript=transcript[: config.premium_transcript_max_chars],
-            max_chars=config.premium_blog_max_chars,
-        )
-        blog = draft.blog_markdown.strip()[: config.premium_blog_max_chars]
         with Session(engine) as session:
-            episode = session.get(ArticleRecord, episode_id)
-            if episode is None:
-                raise PremiumGuideError("播客分析记录不存在")
-            blog_artifact = _publish_text(
-                session,
-                episode=episode,
-                kind="digest_blog_zh",
-                text=blog,
-                source_artifact=transcript_artifact,
-                pipeline_version=config.text_pipeline_version,
+            blog_artifact, reusable_narration = _reusable_guide_text(
+                session, episode_id, transcript_artifact, config.text_pipeline_version
             )
-            blog_artifact_id = blog_artifact.id
-            session.commit()
+        if blog_artifact is None:
+            # Capacity is checked before any paid text generation. The provider
+            # performs the locked final check immediately before TTS submission.
+            if plan.should_synthesize_audio and callable(getattr(tts_provider, "ensure_capacity", None)):
+                try:
+                    await asyncio.to_thread(tts_provider.ensure_capacity,
+                        min(plan.max_chars, config.premium_narration_max_chars))
+                except BailianSpeechError:
+                    _set_episode_status(engine, episode_id, "synthesizing")
+                    raise
+            draft = await text_provider.create_blog(
+                title=title,
+                transcript=transcript[: config.premium_transcript_max_chars],
+                max_chars=config.premium_blog_max_chars,
+            )
+            blog = draft.blog_markdown.strip()[: config.premium_blog_max_chars]
+            with Session(engine) as session:
+                episode = session.get(ArticleRecord, episode_id)
+                if episode is None:
+                    raise PremiumGuideError("播客分析记录不存在")
+                blog_artifact = _publish_text(
+                    session, episode=episode, kind="digest_blog_zh", text=blog,
+                    source_artifact=transcript_artifact,
+                    pipeline_version=config.text_pipeline_version,
+                )
+                session.commit()
+                session.refresh(blog_artifact)
+                session.expunge(blog_artifact)
+        blog_artifact_id = blog_artifact.id
+        blog = blog_artifact.inline_text
 
         if not plan.should_synthesize_audio:
             _set_episode_status(engine, episode_id, "ready")
@@ -462,33 +507,34 @@ async def run_premium_guide(
             }
 
         narration_char_budget = min(plan.max_chars, config.premium_narration_max_chars)
-        narration = await text_provider.create_narration(
-            title=title,
-            blog_markdown=blog,
-            max_chars=narration_char_budget,
-            max_minutes=plan.max_audio_minutes,
-            min_minutes=plan.min_audio_minutes,
-            target_chars=plan.target_chars,
-        )
-        with Session(engine) as session:
-            episode = session.get(ArticleRecord, episode_id)
-            blog_artifact = session.get(
-                PodcastTextArtifactRecord, blog_artifact_id
+        if reusable_narration is None:
+            if callable(getattr(tts_provider, "ensure_capacity", None)):
+                try:
+                    await asyncio.to_thread(tts_provider.ensure_capacity, narration_char_budget)
+                except BailianSpeechError:
+                    _set_episode_status(engine, episode_id, "synthesizing")
+                    raise
+            narration = await text_provider.create_narration(
+                title=title, blog_markdown=blog, max_chars=narration_char_budget,
+                max_minutes=plan.max_audio_minutes, min_minutes=plan.min_audio_minutes,
+                target_chars=plan.target_chars,
             )
-            if episode is None or blog_artifact is None:
-                raise PremiumGuideError("播客在导读生成期间被删除")
-            narration_artifact = _publish_text(
-                session,
-                episode=episode,
-                kind="narration_script_zh",
-                text=narration[: config.premium_narration_max_chars],
-                source_artifact=blog_artifact,
-                pipeline_version=config.text_pipeline_version,
-            )
-            narration_id = narration_artifact.id
-            narration_hash = narration_artifact.content_hash
-            narration_text = narration_artifact.inline_text
-            session.commit()
+            with Session(engine) as session:
+                episode = session.get(ArticleRecord, episode_id)
+                current_blog = session.get(PodcastTextArtifactRecord, blog_artifact_id)
+                if episode is None or current_blog is None:
+                    raise PremiumGuideError("播客在导读生成期间被删除")
+                reusable_narration = _publish_text(
+                    session, episode=episode, kind="narration_script_zh",
+                    text=narration[: config.premium_narration_max_chars],
+                    source_artifact=current_blog, pipeline_version=config.text_pipeline_version,
+                )
+                session.commit()
+                session.refresh(reusable_narration)
+                session.expunge(reusable_narration)
+        narration_id = reusable_narration.id
+        narration_hash = reusable_narration.content_hash
+        narration_text = reusable_narration.inline_text
 
         _set_episode_status(engine, episode_id, "synthesizing")
         synthesized = await tts_provider.synthesize(narration_text)

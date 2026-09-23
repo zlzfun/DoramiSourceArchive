@@ -6,11 +6,13 @@ import {
   fetchPodcastArtifactStats,
   fetchPodcastArtifacts,
   fetchPodcastAsrQuota,
+  fetchPodcastTtsReceipts,
   fetchPodcastPremiumTasks,
   forcePodcastFullAnalysis,
   forcePodcastPremiumTts,
   publishPodcastArtifact,
   reconcilePodcastArtifacts,
+  reclaimPodcastTtsReceipts,
   updatePodcastPremiumThreshold,
   withdrawPodcastArtifact,
 } from '../../api';
@@ -88,19 +90,21 @@ export default function PodcastZone({ showToast, refreshTick = 0, onOpenCredenti
   const [audio, loadAudio] = useLoader(fetchAudio);
   const [stats, loadStats] = useLoader(fetchStats);
   const [quota, loadQuota] = useLoader(fetchQuota);
+  const [ttsCache, loadTtsCache] = useLoader(fetchPodcastTtsReceipts);
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState({ episodeId: '', action: '' });
   const [busyId, setBusyId] = useState(null);
   const [gcBusy, setGcBusy] = useState(false);
+  const [ttsGcBusy, setTtsGcBusy] = useState(false);
   const [drawerId, setDrawerId] = useState(null);
   const [drawerTick, setDrawerTick] = useState(0);
 
   useEffect(() => { loadTasks(taskQuery); }, [loadTasks, taskQuery]);
   useEffect(() => { loadAudio(audioQuery); }, [loadAudio, audioQuery]);
-  useEffect(() => { loadStats(); loadQuota(); }, [loadStats, loadQuota]);
+  useEffect(() => { loadStats(); loadQuota(); loadTtsCache(); }, [loadStats, loadQuota, loadTtsCache]);
   useEffect(() => {
-    if (refreshTick > 0) { loadTasks(taskQuery, { quiet: true }); loadAudio(audioQuery, { quiet: true }); loadStats(); loadQuota(); }
+    if (refreshTick > 0) { loadTasks(taskQuery, { quiet: true }); loadAudio(audioQuery, { quiet: true }); loadStats(); loadQuota(); loadTtsCache(); }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 只响应「切回 Tab / 切子页」刷新脉冲
   }, [refreshTick]);
   useEffect(() => {
@@ -246,6 +250,21 @@ export default function PodcastZone({ showToast, refreshTick = 0, onOpenCredenti
     } finally { setGcBusy(false); }
   };
 
+  const handleTtsReclaim = async () => {
+    if (!(await confirm({
+      title: '归档已完成的 TTS 缓存',
+      message: '仅压缩七天前、已有已发布音频且回执校验通过的 WAV；调用回执与计费记录保留，未完成任务不会清理。',
+      confirmText: '归档缓存', tone: 'primary',
+    }))) return;
+    setTtsGcBusy(true);
+    try {
+      const result = await reclaimPodcastTtsReceipts();
+      showToast(`已归档 ${result.compressed_wavs} 段回执音频，节省 ${formatPodcastArtifactBytes(result.saved_bytes)}`, 'success');
+      await loadTtsCache();
+    } catch (error) { showToast(error.message, 'error'); }
+    finally { setTtsGcBusy(false); }
+  };
+
   const stageFilterLink = (stage, label) => (
     <button type="button" className={`kpi-sub-link ${taskFilters.stage === stage ? 'is-on' : ''}`} onClick={() => patchTaskFilters({ stage: taskFilters.stage === stage ? '' : stage, page: 1 })}>
       {label}
@@ -270,7 +289,7 @@ export default function PodcastZone({ showToast, refreshTick = 0, onOpenCredenti
           <button
             type="button"
             className="action-button action-button-quiet min-h-[32px] px-3 text-xs"
-            onClick={() => { refreshAll(); loadQuota(); }}
+            onClick={() => { refreshAll(); loadQuota(); loadTtsCache(); }}
             disabled={refreshing}
           >
             {refreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} 刷新
@@ -310,6 +329,21 @@ export default function PodcastZone({ showToast, refreshTick = 0, onOpenCredenti
           ) : (
             <KpiState label="音频统计" error={stateError(stats)} onRetry={() => loadStats()} />
           )}
+        </section>
+
+        <section className="surface-card rounded-[var(--r-card)]" aria-label="TTS 回执缓存">
+          <div className="tbl-head"><span className="tools-title">TTS 回执缓存</span></div>
+          {ttsCache.data?.status === 'available' ? (
+            <div className="body-text px-4 pb-4">
+              已用 {formatPodcastArtifactBytes(ttsCache.data.used_bytes)} / {formatPodcastArtifactBytes(ttsCache.data.limit_bytes)}
+              {' · '}单次最长口播预留约 {formatPodcastArtifactBytes(ttsCache.data.estimated_max_narration_reservation_bytes)}
+              {' · '}缓存缺口 {formatPodcastArtifactBytes(ttsCache.data.cache_shortfall_bytes)}
+              {' · '}磁盘缺口 {formatPodcastArtifactBytes(ttsCache.data.disk_shortfall_bytes)}
+              <button type="button" className="action-button action-button-secondary ml-3" disabled={ttsGcBusy} onClick={handleTtsReclaim}>
+                {ttsGcBusy ? '归档中…' : '安全归档已完成回执'}
+              </button>
+            </div>
+          ) : <p className="tiny-meta px-4 pb-4">{ttsCache.data?.reason || stateError(ttsCache) || '读取中…'}</p>}
         </section>
 
         <section className="surface-card ai-switchboard is-wrap rounded-[var(--r-card)]" aria-label="播客处理参数">

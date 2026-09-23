@@ -18,13 +18,14 @@ import re
 import shutil
 import struct
 import wave
+import zlib
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import or_, text as sql_text
 from sqlmodel import Session, select
 from config_bailian import BailianSpeechConfig
-from models.db import BailianTtsCallRecord
+from models.db import BailianTtsCallRecord, PodcastArtifactRecord
 from services.bailian_speech_client import (
     BailianSpeechClient,
     BailianSpeechError,
@@ -123,6 +124,78 @@ def _atomic_write(path, data):
         os.close(fd)
 
 
+def receipt_cache_overview(config: BailianSpeechConfig, *, max_audio_bytes: int) -> dict:
+    root = Path(config.tts_receipt_root)
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    used = sum(path.stat().st_size for path in root.iterdir() if path.is_file())
+    free = shutil.disk_usage(root).free
+    reservation = min(max_audio_bytes, config.tts_max_chars * 12_000 + 44)
+    return {
+        "used_bytes": used, "limit_bytes": config.tts_cache_max_bytes,
+        "estimated_max_narration_reservation_bytes": reservation,
+        "cache_shortfall_bytes": max(0, used + reservation - config.tts_cache_max_bytes),
+        "disk_free_bytes": free, "disk_minimum_free_bytes": 1024**3,
+        "disk_shortfall_bytes": max(0, reservation + 1024**3 - free),
+        "max_audio_bytes": max_audio_bytes,
+    }
+
+
+def reclaim_completed_receipts(
+    config: BailianSpeechConfig, engine, *, retention_days: int = 7,
+    now: dt.datetime | None = None,
+) -> dict:
+    """Compress verified old WAVs only after published audio exists.
+
+    JSON provider receipts and database billing/idempotency records stay intact.
+    In-flight or ambiguous calls, recent WAVs, and episodes without a published
+    replacement remain untouched. Replay decompresses the archive by hash.
+    """
+    root = Path(config.tts_receipt_root)
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    cutoff = (now or dt.datetime.now(dt.timezone.utc)) - dt.timedelta(days=retention_days)
+    compressed = 0
+    saved = 0
+    fd = os.open(root / ".lock", os.O_RDWR | os.O_CREAT, 0o600)
+    with os.fdopen(fd, "wb") as lock:
+        flock(lock, LOCK_EX)
+        with Session(engine) as session:
+            published = set(session.exec(select(PodcastArtifactRecord.episode_id).where(
+                PodcastArtifactRecord.kind == "digest_audio_zh",
+                PodcastArtifactRecord.status == "published",
+            )).all())
+            rows = session.exec(select(BailianTtsCallRecord).where(
+                BailianTtsCallRecord.account_scope == config.account_scope,
+            )).all()
+            in_flight = {row.episode_id for row in rows if row.status in {"reserved", "authorized", "generated"}}
+            for row in rows:
+                if row.status != "succeeded" or row.episode_id not in published or row.episode_id in in_flight:
+                    continue
+                try:
+                    created = dt.datetime.fromisoformat(row.created_at)
+                    if created.tzinfo is None or created > cutoff:
+                        continue
+                except (TypeError, ValueError):
+                    continue
+                source = root / f"{row.id}.wav"
+                receipt = root / f"{row.id}.json"
+                archive = root / f"{row.id}.wav.zlib"
+                if not source.is_file() or not receipt.is_file() or archive.exists():
+                    continue
+                if source.stat().st_size > config.tts_cache_max_bytes:
+                    continue
+                data = source.read_bytes()
+                if hashlib.sha256(data).hexdigest() != row.audio_hash:
+                    continue
+                packed = zlib.compress(data, level=6)
+                if len(packed) >= len(data):
+                    continue
+                _atomic_write(archive, packed)
+                source.unlink()
+                compressed += 1
+                saved += len(data) - len(packed)
+    return {"compressed_wavs": compressed, "saved_bytes": saved}
+
+
 class BailianPremiumGuideTtsProvider:
     def __init__(
         self,
@@ -150,6 +223,31 @@ class BailianPremiumGuideTtsProvider:
 
     async def synthesize(self, narration):
         return await asyncio.to_thread(self._synthesize, narration)
+
+    def capacity_snapshot(self, characters: int) -> dict:
+        """Conservative PCM estimate, bounded by the final file limit."""
+        root = Path(self.config.tts_receipt_root)
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        # 24 kHz mono PCM is 48 KB/s; 12 KB/character allows 4 seconds per
+        # character, above ordinary Chinese narration, without reserving 512 MiB.
+        estimate = min(self.max_audio_bytes, max(1, characters) * 12_000 + 44)
+        used = sum(p.stat().st_size for p in root.iterdir() if p.is_file())
+        free = shutil.disk_usage(root).free
+        return {
+            "used_bytes": used, "limit_bytes": self.config.tts_cache_max_bytes,
+            "reservation_bytes": estimate,
+            "cache_shortfall_bytes": max(0, used + estimate - self.config.tts_cache_max_bytes),
+            "disk_free_bytes": free, "disk_minimum_free_bytes": 1024**3,
+            "disk_shortfall_bytes": max(0, estimate + 1024**3 - free),
+        }
+
+    def ensure_capacity(self, characters: int) -> dict:
+        snapshot = self.capacity_snapshot(characters)
+        if snapshot["cache_shortfall_bytes"]:
+            raise BailianSpeechError("tts_receipt_cache_full")
+        if snapshot["disk_shortfall_bytes"]:
+            raise BailianSpeechError("tts_receipt_disk_full")
+        return snapshot
 
     def _reserve(self, chunks, keys, now):
         cfg = self.config
@@ -263,18 +361,11 @@ class BailianPremiumGuideTtsProvider:
         fd = os.open(root / ".lock", os.O_RDWR | os.O_CREAT, 0o600)
         with os.fdopen(fd, "wb") as lock:
             flock(lock, LOCK_EX)
-            total = sum(p.stat().st_size for p in root.iterdir() if p.is_file())
             with Session(self.engine) as session:
-                needs_storage = any(
-                    (row := session.get(BailianTtsCallRecord, key)) is None
-                    or row.status != "succeeded"
-                    for key in keys
-                )
-            if needs_storage and (
-                total + self.max_audio_bytes > cfg.tts_cache_max_bytes
-                or shutil.disk_usage(root).free < self.max_audio_bytes + 1024**3
-            ):
-                raise BailianSpeechError("tts_receipt_storage_full")
+                needs_storage_chars = sum(len(chunk) for chunk, key in zip(chunks, keys)
+                    if (row := session.get(BailianTtsCallRecord, key)) is None or row.status != "succeeded")
+            if needs_storage_chars:
+                self.ensure_capacity(needs_storage_chars)
             self._reserve(chunks, keys, self.clock())
             parts = []
             client = self.client_factory(cfg)
@@ -323,6 +414,11 @@ class BailianPremiumGuideTtsProvider:
                             )
                         )
                         data = join_wav([data], self.max_audio_bytes)
+                        snapshot = self.capacity_snapshot(0)
+                        if snapshot["used_bytes"] + len(data) > cfg.tts_cache_max_bytes:
+                            raise BailianSpeechError("tts_receipt_cache_full")
+                        if snapshot["disk_free_bytes"] < len(data) + 1024**3:
+                            raise BailianSpeechError("tts_receipt_disk_full")
                         _atomic_write(audio_path, data)
                         self._update(
                             key,
@@ -335,7 +431,16 @@ class BailianPremiumGuideTtsProvider:
                         raise BailianSpeechError(
                             "tts_reconciliation_required", unknown=True
                         )
-                    data = audio_path.read_bytes()
+                    archive = root / f"{key}.wav.zlib"
+                    if audio_path.exists():
+                        data = audio_path.read_bytes()
+                    elif archive.exists():
+                        decoder = zlib.decompressobj()
+                        data = decoder.decompress(archive.read_bytes(), self.max_audio_bytes + 1)
+                        if len(data) > self.max_audio_bytes or not decoder.eof or decoder.unused_data:
+                            raise BailianSpeechError("tts_cached_audio_corrupt")
+                    else:
+                        raise BailianSpeechError("tts_cached_audio_missing", unknown=True)
                     if hashlib.sha256(data).hexdigest() != row.audio_hash:
                         raise BailianSpeechError("tts_cached_audio_corrupt")
                     parts.append(data)
