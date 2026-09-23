@@ -43,6 +43,9 @@ ACTIVE_PROCESSING_STATUSES = frozenset(
 FAILED_PROCESSING_STATUSES = frozenset(
     {"failed", "reconciliation_required"}
 )
+ASR_QUOTA_WAIT_CODES = frozenset(
+    {"provider_usage_window_unavailable", "provider_call_window_unavailable"}
+)
 ACTIVE_TTS_STATUSES = frozenset({"queued", "summarizing", "synthesizing"})
 VALID_FILTERS = frozenset(
     {"all", "pending_full", "processing", "premium", "below_threshold", "failed"}
@@ -191,7 +194,11 @@ def _stage_and_reason(
             process.error_message or "供应方结果待对账，完成对账后再重试"
         )
     if status == "retry_wait":
-        reason = "等待 ASR 配额" if stage in {"fetch", "asr"} else "等待自动重试"
+        reason = (
+            "等待 ASR 配额"
+            if str(process.error_code or "") in ASR_QUOTA_WAIT_CODES
+            else "等待自动重试"
+        )
         return "retry_wait", f"{reason}（{process.error_message}）" if process.error_message else reason
     if status in FAILED_PROCESSING_STATUSES:
         if stage in {"fetch", "asr"}:
@@ -493,6 +500,7 @@ def _serialize_state(state: _EpisodeState, *, threshold: float) -> dict[str, Any
         "processing_status": process_status,
         "processing_id": str(process.id if process else ""),
         "processing_error": str(process.error_message if process else ""),
+        "processing_error_code": str(process.error_code if process else ""),
         "next_retry_at": str(process.next_retry_at if process else ""),
         "attempt_count": int(process.attempt_count if process else 0),
         "reason": reason_text,
@@ -736,7 +744,11 @@ def _timeline(
                 row_state, note = "pending", note or "排队中"
             elif status == "retry_wait":
                 row_state = "warn"
-                note = "等待 ASR 配额" if stage in {"fetch", "asr"} else "等待自动重试"
+                note = (
+                    "等待 ASR 配额"
+                    if str(process.error_code or "") in ASR_QUOTA_WAIT_CODES
+                    else "等待自动重试"
+                )
                 if process.error_message:
                     note += f"：{process.error_message}"
                 if process.next_retry_at:

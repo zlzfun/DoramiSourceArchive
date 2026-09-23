@@ -10,6 +10,7 @@
 
 const ACTIVE_PROCESSING = new Set(['queued', 'running', 'awaiting_review']);
 const FAILED_PROCESSING = new Set(['failed', 'reconciliation_required']);
+const ASR_QUOTA_WAIT_CODES = new Set(['provider_usage_window_unavailable', 'provider_call_window_unavailable']);
 
 export const PODCAST_INITIAL_THRESHOLD = 6.0;
 
@@ -185,7 +186,7 @@ function deriveVerdict(item = {}) {
 function stageReason(item, stageCode, thresholds) {
   const initialLine = podcastScoreText(thresholds.initial ?? PODCAST_INITIAL_THRESHOLD);
   const premiumLine = podcastScoreText(thresholds.premium);
-  const error = String(item.processing_error || '').trim();
+  const error = String(item.processing_error || item.error || '').trim();
   const asr = isAsrStage(item);
   const analyze = processingStageOf(item) === 'analyze';
   switch (stageCode) {
@@ -212,10 +213,12 @@ function stageReason(item, stageCode, thresholds) {
     case 'reconciliation':
       return asr ? 'ASR 结果待对账 · 对账后重试 ASR' : '结果待对账 · 对账后重试';
     case 'retry_wait': {
+      const errorCode = String(item.processing_error_code || item.error_code || '').trim();
+      const quotaWait = ASR_QUOTA_WAIT_CODES.has(errorCode);
       const when = item.next_retry_at && !Number.isNaN(Date.parse(item.next_retry_at))
         ? ` · 计划 ${new Date(item.next_retry_at).toLocaleString('zh-CN', { timeZoneName: 'short' })} 自动重试`
-        : ' · 等待自动重试';
-      return `${asr ? '等待 ASR 配额' : '等待处理恢复'}${when}${error ? ` · ${error}` : ''}`;
+        : '';
+      return `${quotaWait ? '等待 ASR 配额' : '等待自动重试'}${when}${error ? ` · ${error}` : ''}`;
     }
     case 'failed': {
       const head = asr ? 'ASR 转录失败' : analyze ? '全文分析失败' : '全文处理失败';
@@ -253,7 +256,7 @@ export function podcastTaskMeta(item = {}, thresholds = {}) {
     reasonFull: String(item.reason || ''),
     verdict,
     tts,
-    active: stageCode === 'processing' || tts.active,
+    active: stageCode === 'processing' || stageCode === 'retry_wait' || tts.active,
     scores: {
       initial: item.initial_score,
       final: item.final_score,

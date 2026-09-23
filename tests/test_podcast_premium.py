@@ -215,6 +215,7 @@ def test_asr_retry_wait_is_distinct_from_failure_and_keeps_retry_time(premium_en
         row = session.get(PodcastProcessingRecord, "processing-failed")
         row.processing_status = "retry_wait"
         row.attempt_count = 0
+        row.error_code = "provider_usage_window_unavailable"
         row.error_message = "provider usage capacity was unavailable before submission"
         row.next_retry_at = "2026-09-23T00:00:00+08:00"
         session.add(row)
@@ -223,6 +224,7 @@ def test_asr_retry_wait_is_distinct_from_failure_and_keeps_retry_time(premium_en
     item = next(row for row in dashboard(premium_engine)["items"] if row["episode_id"] == "failed")
     assert item["stage_code"] == "retry_wait"
     assert item["next_retry_at"] == "2026-09-23T00:00:00+08:00"
+    assert item["processing_error_code"] == "provider_usage_window_unavailable"
     assert "等待 ASR 配额" in item["reason"]
     assert item["can_retry"] is False
     assert item["can_force"] is False
