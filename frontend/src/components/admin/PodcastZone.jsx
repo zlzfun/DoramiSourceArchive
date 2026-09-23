@@ -123,15 +123,23 @@ export default function PodcastZone({ showToast, refreshTick = 0, onOpenCredenti
     [tasks.data?.items, thresholds],
   );
   const poll = useCallback(async () => {
-    await loadTasks(taskQuery, { quiet: true });
+    await Promise.all([
+      loadTasks(taskQuery, { quiet: true }),
+      loadQuota(undefined, { quiet: true }),
+    ]);
     if (drawerId) setDrawerTick((t) => t + 1);
-  }, [loadTasks, taskQuery, drawerId]);
+  }, [loadTasks, taskQuery, loadQuota, drawerId]);
   usePolling(poll, 3000, { immediate: false, enabled: anyActive });
 
   const refreshAll = useCallback(async () => {
-    await Promise.all([loadTasks(taskQuery, { quiet: true }), loadAudio(audioQuery, { quiet: true }), loadStats()]);
+    await Promise.all([
+      loadTasks(taskQuery, { quiet: true }),
+      loadAudio(audioQuery, { quiet: true }),
+      loadStats(),
+      loadQuota(undefined, { quiet: true }),
+    ]);
     if (drawerId) setDrawerTick((t) => t + 1);
-  }, [loadTasks, taskQuery, loadAudio, audioQuery, loadStats, drawerId]);
+  }, [loadTasks, taskQuery, loadAudio, audioQuery, loadStats, loadQuota, drawerId]);
 
   const patchTaskFilters = (patch) => setTaskFilters((prev) => ({ ...prev, ...patch }));
   const patchAudioFilters = (patch) => setAudioFilters((prev) => ({ ...prev, ...patch }));
