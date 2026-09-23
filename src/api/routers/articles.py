@@ -167,6 +167,7 @@ def _podcast_text_publication_assets(
         "normalized_transcript",
         "transcript_zh",
         "digest_blog_zh",
+        "narration_script_zh",
     )
     rows = session.exec(
         select(
