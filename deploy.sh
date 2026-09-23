@@ -415,7 +415,8 @@ ensure_site_included() {
     # 包管理器装的 nginx 自带 include /etc/nginx/conf.d/*.conf;源码装的默认
     # 什么都不 include,站点文件写了也不生效。用 nginx -T(实际生效配置)复核,
     # 缺失则备份主配置后往 http 块里插一行 include。
-    if $SUDO "$NGINX_BIN" -T 2>/dev/null | grep -qF "configuration file ${NGINX_SITE_FILE}"; then
+    # grep 读到 EOF 再判(不用 -q 早退):pipefail 下 nginx -T 被 SIGPIPE 会让条件翻转(issue #150,同 deploy-baremetal.sh)
+    if $SUDO "$NGINX_BIN" -T 2>/dev/null | grep -F "configuration file ${NGINX_SITE_FILE}" >/dev/null; then
         return
     fi
 
@@ -434,7 +435,7 @@ PY
         echo "Backed up original config to ${NGINX_MAIN_CONF}.dorami-bak"
     fi
 
-    $SUDO "$NGINX_BIN" -T 2>/dev/null | grep -qF "configuration file ${NGINX_SITE_FILE}" \
+    $SUDO "$NGINX_BIN" -T 2>/dev/null | grep -F "configuration file ${NGINX_SITE_FILE}" >/dev/null \
         || fail "自动插入 include 后站点文件仍未生效。请手动在 ${NGINX_MAIN_CONF} 的 http { } 块内加入一行:  include ${NGINX_SITE_FILE};  然后重跑本脚本(原配置已备份为 ${NGINX_MAIN_CONF}.dorami-bak)。"
 }
 
