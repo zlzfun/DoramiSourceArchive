@@ -595,6 +595,9 @@ def _commit_publication(
             and current.content_hash == content_hash
             and publication.status == "published"
             and current_provenance.get("url_sha256") == locator_hash
+            and current_provenance.get("format") == candidate.format
+            and current_provenance.get("mime") == candidate.mime
+            and current.language == candidate.language
         ):
             return _serialize(
                 current, publication, created=False, candidate=candidate
