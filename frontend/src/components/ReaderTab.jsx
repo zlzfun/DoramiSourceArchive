@@ -30,6 +30,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Rss,
+  BarChart3,
 } from 'lucide-react';
 import LogoMark from './LogoMark';
 import BrandLogoImage from './BrandLogoImage';
@@ -49,6 +50,7 @@ import PodcastTextPanel from './PodcastTextPanel';
 import { rebuildToast } from '../utils/briefRebuild';
 import PersonalBriefPage from './PersonalBriefPage';
 import InterestPage from './InterestPage';
+import RankingsPage from './RankingsPage';
 import AnalysisTagChip from './AnalysisTagChip';
 import { excerptOf, hostOf } from '../utils/readerText';
 import { highlightMatch } from '../utils/highlight';
@@ -369,14 +371,15 @@ export default function ReaderTab({
 }) {
   const [brandFailed, setBrandFailed] = useState(false);
   const {
-    briefOpen, setBriefOpen, briefReturn, setBriefReturn, briefRestore, setBriefRestore,
+    briefOpen, setBriefOpen, rankingsOpen, setRankingsOpen,
+    briefReturn, setBriefReturn, briefRestore, setBriefRestore,
     discoverTab, setDiscoverTab, interestVersion, setInterestVersion,
   } = view;
   const leaveBriefTrail = useCallback(() => setBriefReturn(null), [setBriefReturn]);
   const onboardingRequired = personalDigestEnabled
     && account?.role === 'user'
     && account?.interest_onboarding_completed === false;
-  const pageOpen = briefOpen;
+  const pageOpen = briefOpen || rankingsOpen;
 
   const {
     // 源目录 / 订阅
@@ -433,6 +436,14 @@ export default function ReaderTab({
     setDiscoverTab('interests');
     openDiscover({ shape: 'all' });
   }, [supersedePendingOpen, leaveBriefTrail, openDiscover, setBriefOpen, setDiscoverTab]);
+  const openRankings = useCallback(() => {
+    supersedePendingOpen();
+    closeDiscover();
+    if (bulletinView || socialView) goView('article');
+    setBriefOpen(false);
+    leaveBriefTrail();
+    setRankingsOpen(true);
+  }, [bulletinView, closeDiscover, goView, leaveBriefTrail, setBriefOpen, setRankingsOpen, socialView, supersedePendingOpen]);
   const listPlan = useMemo(
     () => buildListPlan(articles, grouping),
     [articles, grouping],
@@ -627,7 +638,7 @@ export default function ReaderTab({
             type="button"
             aria-label={label}
             aria-pressed={!pageOpen && railActive === view}
-            onClick={() => { setBriefOpen(false); leaveBriefTrail(); goView(view); }}
+            onClick={() => { setBriefOpen(false); setRankingsOpen(false); leaveBriefTrail(); goView(view); }}
             className={`reader-vrail-btn ${!pageOpen && railActive === view ? 'is-on' : ''}`}
           >
             <Icon className="h-[18px] w-[18px]" />
@@ -642,7 +653,7 @@ export default function ReaderTab({
           type="button"
           aria-label={onboardingRequired && !discover ? '发现(兴趣待设置)' : '发现'}
           aria-pressed={!pageOpen && discover}
-          onClick={() => { setBriefOpen(false); leaveBriefTrail(); openDiscover(); }}
+          onClick={() => { setBriefOpen(false); setRankingsOpen(false); leaveBriefTrail(); openDiscover(); }}
           className={`reader-vrail-btn ${!pageOpen && discover ? 'is-on' : ''}`}
         >
           <Compass className="h-[18px] w-[18px]" />
@@ -714,7 +725,7 @@ export default function ReaderTab({
       </nav>
 
       {/* ── 源栏 · 我的订阅 ── */}
-      {!pageOpen && <aside className="reader-col reader-col-sources">
+      {!briefOpen && <aside className="reader-col reader-col-sources">
         <div className="reader-sources-inner">
         {/* 栏头 = 容器名 + 轴切换(issue #27 五稿):左栏是一根轴,栏头二选一决定其下列源还是列标签。
             社交容器没有标签(推文不打标),不出轴切换,只列账号。 */}
@@ -727,7 +738,22 @@ export default function ReaderTab({
           )}
         </div>
 
-        <div className="reader-source-scroll">
+        {!bulletinView && !socialView && (
+          <button
+            type="button"
+            aria-pressed={rankingsOpen}
+            className={`reader-ranking-entry ${rankingsOpen ? 'is-on' : ''}`}
+            onClick={openRankings}
+          >
+            <span className="reader-ranking-entry-ic"><BarChart3 aria-hidden="true" /></span>
+            <span>
+              <strong>{podcastView ? '播客榜' : '文章榜'}</strong>
+              <small>近 7 天标签趋势</small>
+            </span>
+          </button>
+        )}
+
+        {!rankingsOpen && <div className="reader-source-scroll">
           {sourcesLoading ? (
             <SourceRowsSkeleton />
           ) : (
@@ -822,7 +848,7 @@ export default function ReaderTab({
               )}
             </>
           )}
-        </div>
+        </div>}
         </div>
       </aside>}
 
@@ -853,6 +879,18 @@ export default function ReaderTab({
         />
       )}
 
+      {rankingsOpen && (
+        <RankingsPage
+          sourceMap={sourceMap}
+          initialShape={podcastView ? 'podcast' : 'article'}
+          onShapeChange={goView}
+          onOpenArticle={async (articleId) => {
+            const opened = await openArticleById(articleId, { silent: true });
+            if (opened) setRankingsOpen(false);
+          }}
+        />
+      )}
+
 
       {/* ── 发现页:占据 条目列+阅读窗 的整片区域(源栏保持在场,订阅结果即时可见) ── */}
       {!pageOpen && discover && (
@@ -879,6 +917,7 @@ export default function ReaderTab({
           onTabChange={setDiscoverTab}
           shape={discoverShape}
           onShapeChange={setDiscoverShape}
+          onOpenRankings={openRankings}
           interestsPanel={personalDigestEnabled ? (
             <InterestPage
               embedded

@@ -714,6 +714,24 @@ export function fetchReaderSources() {
   return request('/reader/sources', { errorMsg: '获取内容源目录失败' });
 }
 
+export function fetchReaderRankings(shape = 'article', date = 'latest', options = {}) {
+  const params = new URLSearchParams({ shape, date });
+  return request(`/reader/rankings?${params}`, { ...options, errorMsg: '获取榜单失败' });
+}
+
+export function fetchReaderRankingTag(date, tagCode, shape, options = {}) {
+  const params = new URLSearchParams({ shape });
+  return request(`/reader/rankings/${enc(date)}/tags/${enc(tagCode)}?${params}`, {
+    ...options,
+    errorMsg: '获取标签内容失败',
+  });
+}
+
+export function fetchReaderRankingHistory(tagCode, shape, days = 30, options = {}) {
+  const params = new URLSearchParams({ tag_code: tagCode, shape, days });
+  return request(`/reader/rankings/history?${params}`, { ...options, errorMsg: '获取趋势失败' });
+}
+
 export function fetchFavorites(filters = {}, limit = 100, skip = 0, options = {}) {
   const { includeContent, ...fetchOptions } = options;
   const params = new URLSearchParams({ limit, skip });

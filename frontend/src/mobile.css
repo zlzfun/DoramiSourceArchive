@@ -114,6 +114,28 @@
   display: flex;
   flex-direction: column;
 }
+/* 榜单是移动端一级 Tab；桌面页在这里收敛为单列并接管内容区滚动。 */
+.m-content > .rankings-page {
+  grid-column: auto;
+  flex: 1;
+  min-height: 0;
+  padding: 14px 12px calc(26px + env(safe-area-inset-bottom));
+  overflow-y: auto;
+}
+.m-content .ranking-head { align-items: center; gap: 10px; }
+.m-content .ranking-head .reader-disc-title { font-size: 20px; }
+.m-content .ranking-head-note { font-size: 10.5px; }
+.m-content .ranking-head .reader-seg-btn { padding-inline: 9px; }
+.m-content .ranking-axis { margin-top: 14px; overflow-x: auto; }
+.m-content .ranking-axis button { flex: 1; min-width: 74px; }
+.m-content .ranking-layout { grid-template-columns: minmax(0, 1fr); gap: 10px; margin-top: 10px; }
+.m-content .ranking-tags,
+.m-content .ranking-detail,
+.m-content .ranking-must { padding: 12px; }
+.m-content .ranking-must { margin-top: 10px; }
+.m-content .ranking-trend svg { width: 120px; }
+.m-content .ranking-section-head > div { align-items: flex-start; flex-direction: column; gap: 2px; }
+.m-content .ranking-content-row { grid-template-columns: 20px minmax(0, 1fr) 34px; padding-inline: 4px; }
 /* 我的早报(issue #23 重做):单列——横向日期条 + 同一张报纸面;点卡片推正文页 */
 .m-content > .brief-m {
   flex: 1;
@@ -181,6 +203,7 @@
 }
 .m-tab {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -190,7 +213,7 @@
   transition: color var(--motion-fast) var(--motion-ease);
 }
 .m-tab-ic {
-  width: 46px;
+  width: min(46px, 100%);
   height: 28px;
   display: grid;
   place-items: center;
