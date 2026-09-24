@@ -42,7 +42,7 @@ test('normalized ASR transcript is visible and remains distinct from publisher t
     view.transcripts.map(({ item, label }) => [item.kind, label.title, label.note]),
     [
       ['publisher_transcript', '节目方逐字稿', '节目方提供'],
-      ['normalized_transcript', 'ASR 逐字稿', '语音识别稿'],
+      ['normalized_transcript', '语音识别稿', 'AI 整理'],
     ],
   );
   assert.equal(view.transcripts[0].item.kind, 'publisher_transcript');

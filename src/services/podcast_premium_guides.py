@@ -12,6 +12,7 @@ import datetime as dt
 import hashlib
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -28,6 +29,7 @@ from models.db import (
     PodcastProcessingRecord,
     PodcastTextArtifactRecord,
     PodcastTextPublicationRecord,
+    SourceConfigRecord,
 )
 from services.podcast_artifacts import (
     PodcastArtifactStore,
@@ -200,6 +202,7 @@ def _extensions(article: ArticleRecord) -> dict:
 
 _UNKNOWN_LANGUAGES = frozenset({"", "und", "mul", "zxx"})
 _CHINESE_LANGUAGES = frozenset({"zh", "cmn", "yue", "wuu", "nan", "hak"})
+_LANGUAGE_TAG = re.compile(r"^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$")
 
 
 def _normalized_language(value: Any) -> str:
@@ -208,7 +211,10 @@ def _normalized_language(value: Any) -> str:
 
 def _known_language(value: Any) -> str:
     language = _normalized_language(value)
-    return "" if language.split("-", 1)[0] in _UNKNOWN_LANGUAGES else language
+    base = language.split("-", 1)[0]
+    if base in _UNKNOWN_LANGUAGES or not _LANGUAGE_TAG.fullmatch(language):
+        return ""
+    return language
 
 
 def _is_non_chinese_language(value: str) -> bool:
@@ -219,6 +225,8 @@ def _is_non_chinese_language(value: str) -> bool:
 def resolve_episode_language(
     episode: ArticleRecord,
     transcript: PodcastTextArtifactRecord,
+    *,
+    source_language: str = "",
 ) -> tuple[str, str]:
     """Resolve a traceable primary language without title heuristics."""
 
@@ -240,7 +248,25 @@ def resolve_episode_language(
             language = _known_language(candidate.get("language"))
             if language:
                 return language, "rss_transcript"
+    language = _known_language(source_language)
+    if language:
+        return language, "source_config"
     return "", "unknown"
+
+
+def _source_language(session: Session, episode: ArticleRecord) -> str:
+    if not episode.source_id:
+        return ""
+    source = session.get(SourceConfigRecord, episode.source_id)
+    if source is None:
+        return ""
+    try:
+        params = json.loads(source.params_json or "{}")
+    except (TypeError, ValueError):
+        return ""
+    if not isinstance(params, dict):
+        return ""
+    return _known_language(params.get("language"))
 
 
 def _guide_eligibility(
@@ -250,10 +276,13 @@ def _guide_eligibility(
     *,
     score_threshold: float,
     selection_override: bool = False,
+    source_language: str = "",
 ) -> GuideEligibility:
     score = podcast_premium.final_score(analysis)
     initial_score = podcast_premium.initial_score(analysis)
-    language, language_source = resolve_episode_language(episode, transcript)
+    language, language_source = resolve_episode_language(
+        episode, transcript, source_language=source_language
+    )
     if selection_override or (score is not None and score >= score_threshold):
         mode = "solo_deep"
     elif (
@@ -292,7 +321,11 @@ def guide_eligibility(
         if transcript is None or not has_authoritative_analysis(analysis):
             return GuideEligibility("", False, "", "unknown", None, None)
         return _guide_eligibility(
-            episode, analysis, transcript, score_threshold=score_threshold
+            episode,
+            analysis,
+            transcript,
+            score_threshold=score_threshold,
+            source_language=_source_language(session, episode),
         )
 
 
@@ -397,7 +430,17 @@ def _publish_text(
         else None
     )
     if current is not None and current.content_hash == content_hash:
-        return current
+        try:
+            provenance = json.loads(current.provenance_json or "{}")
+        except (TypeError, ValueError):
+            provenance = {}
+        if (
+            current.source_artifact_id == source_artifact.id
+            and current.source_content_hash == source_artifact.content_hash
+            and provenance.get("pipeline") == pipeline_version
+            and str(provenance.get("guide_mode") or "solo_deep") == guide_mode
+        ):
+            return current
 
     version = session.exec(
         select(func.max(PodcastTextArtifactRecord.version)).where(
@@ -485,6 +528,27 @@ def _source_transcript(
         or artifact.kind != expected_kind
     ):
         raise PremiumGuideError("全文分析逐字稿不可用")
+    publication = session.get(
+        PodcastTextPublicationRecord, f"{episode_id}:{expected_kind}"
+    )
+    # Legacy local analyses may predate publication pointers.  Once a pointer
+    # exists it is authoritative: a withdrawn or replaced transcript must never
+    # continue driving a guide from stale evidence.
+    if publication is not None and (
+        publication.status != "published"
+        or publication.artifact_id != artifact.id
+        or publication.authority_id != artifact.authority_id
+    ):
+        raise PremiumGuideError("全文分析逐字稿已更新，请等待重新分析")
+    if expected_kind == "publisher_transcript":
+        from services.podcast_publisher_transcripts import (
+            publisher_artifact_matches_current_locator,
+        )
+
+        if not publisher_artifact_matches_current_locator(
+            session, episode_id=episode_id, artifact=artifact
+        ):
+            raise PremiumGuideError("节目方逐字稿已更新，请等待重新分析")
     try:
         from services.podcast_full_analysis import _transcript_text
 
@@ -558,6 +622,7 @@ async def run_premium_guide(
                 raise PremiumGuideError("播客全文终评尚未完成")
             title = episode.title
             duration = float(_extensions(episode).get("duration_seconds") or 0)
+            source_language = _source_language(session, episode)
         if duration <= 0:
             raise PremiumGuideError("播客时长未知，暂不触发精品导读")
         if config.premium_guide_mode != "solo_deep":
@@ -575,6 +640,7 @@ async def run_premium_guide(
             transcript_artifact,
             score_threshold=effective_threshold,
             selection_override=selection_override,
+            source_language=source_language,
         )
         if not eligibility.eligible:
             _set_episode_status(engine, episode_id, "not_required")
@@ -1285,6 +1351,25 @@ def pending_premium_guide_candidates(
         for episode, analysis, transcript in rows:
             if not has_authoritative_analysis(analysis):
                 continue
+            transcript_publication = session.get(
+                PodcastTextPublicationRecord,
+                f"{episode.id}:{transcript.kind}",
+            )
+            if transcript_publication is not None and (
+                transcript_publication.status != "published"
+                or transcript_publication.artifact_id != transcript.id
+                or transcript_publication.authority_id != transcript.authority_id
+            ):
+                continue
+            if transcript.kind == "publisher_transcript":
+                from services.podcast_publisher_transcripts import (
+                    publisher_artifact_matches_current_locator,
+                )
+
+                if not publisher_artifact_matches_current_locator(
+                    session, episode_id=episode.id, artifact=transcript
+                ):
+                    continue
             extensions = _extensions(episode)
             if bool(extensions.get("premium_guide_auto_suppressed")):
                 continue
@@ -1296,6 +1381,7 @@ def pending_premium_guide_candidates(
                 analysis,
                 transcript,
                 score_threshold=score_threshold,
+                source_language=_source_language(session, episode),
             )
             if not eligibility.eligible:
                 continue
@@ -1311,7 +1397,28 @@ def pending_premium_guide_candidates(
             if status in {"summarizing", "synthesizing", "failed"}:
                 continue
             if status == "ready" and current_mode == eligibility.mode:
-                continue
+                publication = session.get(
+                    PodcastTextPublicationRecord, f"{episode.id}:digest_blog_zh"
+                )
+                blog = (
+                    session.get(PodcastTextArtifactRecord, publication.artifact_id)
+                    if publication is not None and publication.status == "published"
+                    else None
+                )
+                try:
+                    provenance = json.loads(blog.provenance_json or "{}") if blog else {}
+                except (TypeError, ValueError):
+                    provenance = {}
+                guide_language = _known_language(guide.get("language"))
+                if (
+                    blog is not None
+                    and blog.source_artifact_id == transcript.id
+                    and blog.source_content_hash == transcript.content_hash
+                    and str(provenance.get("guide_mode") or "solo_deep")
+                    == eligibility.mode
+                    and guide_language == eligibility.language
+                ):
+                    continue
             candidates.append(episode.id)
         return candidates
 

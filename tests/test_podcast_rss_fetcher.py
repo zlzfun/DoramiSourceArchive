@@ -595,28 +595,17 @@ def test_article_list_and_detail_serializer_project_lightweight_podcast_contract
         ],
         "chapters_url": "https://cdn.example.test/1.chapters.json",
         "chapters_mime": "application/json+chapters",
-        "analysis_basis": "show_notes",
         "is_long_form": False,
         "transcript_available": False,
-        "id": "",
-        "attempt_count": 0,
         "status": "",
         "processing_status": "",
-        "next_retry_at": "",
-        "stage": "",
-        "error": "",
-        "error_code": "",
         "retryable": False,
-        "transcript_source": "",
-        "full_analysis_candidate": False,
-        "final_premium": None,
         "premium_guide": {
             "status": "",
-            "failed_stage": "",
-            "error": "",
             "audio_ready": False,
             "blog_ready": False,
             "script_ready": False,
+            "mode": "",
         },
         "condensed_audio_url": "",
         "condensed_duration_seconds": None,
@@ -651,7 +640,12 @@ def test_podcast_projection_uses_authoritative_analysis_basis_and_versions():
     extensions["analysis_basis"] = "asr_transcript"
     record.extensions_json = json.dumps(extensions)
 
-    item = serialize_article_list_item(record, include_content=False, analysis=analysis)
+    item = serialize_article_list_item(
+        record,
+        include_content=False,
+        analysis=analysis,
+        include_podcast_diagnostics=True,
+    )
 
     # RSS extensions 中的旧值不得覆盖权威分析记录。
     assert item["podcast"]["analysis_basis"] == "publisher_transcript"
@@ -664,7 +658,12 @@ def test_podcast_projection_uses_authoritative_analysis_basis_and_versions():
     assert item["score_reason"] == "关键人物提供了相关领域的一手信息。"
 
     analysis.analysis_basis = ""
-    legacy = serialize_article_list_item(record, include_content=False, analysis=analysis)
+    legacy = serialize_article_list_item(
+        record,
+        include_content=False,
+        analysis=analysis,
+        include_podcast_diagnostics=True,
+    )
     assert legacy["podcast"]["analysis_basis"] == "podcast_show_notes"
 
 
@@ -934,16 +933,17 @@ def test_articles_list_and_detail_endpoints_expose_same_podcast_projection(monke
         replace(app_module.settings, runtime=RuntimeConfig(role="all")),
     )
     with Session(sink.engine) as session:
-        session.add(
-            UserRecord(
-                username="admin",
-                password_hash=accounts_service.hash_password("admin"),
-                role="admin",
-                is_active=True,
-                created_at="2026-09-02T00:00:00+00:00",
-                updated_at="2026-09-02T00:00:00+00:00",
+        for username, role in (("admin", "admin"), ("reader", "user")):
+            session.add(
+                UserRecord(
+                    username=username,
+                    password_hash=accounts_service.hash_password(username),
+                    role=role,
+                    is_active=True,
+                    created_at="2026-09-02T00:00:00+00:00",
+                    updated_at="2026-09-02T00:00:00+00:00",
+                )
             )
-        )
         session.commit()
 
     episode = PodcastEpisodeContent(
@@ -962,6 +962,16 @@ def test_articles_list_and_detail_endpoints_expose_same_podcast_projection(monke
     )
     assert asyncio.run(sink.save(episode)) is True
     with Session(sink.engine) as session:
+        stored_episode = session.get(ArticleRecord, episode.id)
+        raw_extensions = json.loads(stored_episode.extensions_json)
+        raw_extensions["premium_guide"] = {
+            "status": "failed",
+            "failed_stage": "tts",
+            "error": "provider usage capacity unavailable",
+            "force_request": {"actor": "reader"},
+        }
+        stored_episode.extensions_json = json.dumps(raw_extensions)
+        session.add(stored_episode)
         session.add(ArticleAnalysisRecord(
             article_id=episode.id,
             status="succeeded",
@@ -1044,6 +1054,24 @@ def test_articles_list_and_detail_endpoints_expose_same_podcast_projection(monke
         analysis_detail = client.get("/api/articles/podcast-e2e-1/analysis")
         assert analysis_detail.status_code == 200
 
+        reader_login = client.post(
+            "/api/auth/login", json={"username": "reader", "password": "reader"}
+        )
+        assert reader_login.status_code == 200
+        reader_list = client.get(
+            "/api/articles",
+            params={"include_content": "true", "include_total": "true"},
+        )
+        assert reader_list.status_code == 200
+        reader_item = next(
+            item for item in reader_list.json()["items"]
+            if item["id"] == "podcast-e2e-1"
+        )
+        reader_detail = client.get("/api/articles/podcast-e2e-1")
+        assert reader_detail.status_code == 200
+        reader_analysis = client.get("/api/articles/podcast-e2e-1/analysis")
+        assert reader_analysis.status_code == 200
+
     assert list_item["podcast"] == detail_item["podcast"]
     assert list_item["podcast"]["analysis_basis"] == "podcast_show_notes"
     for key in (
@@ -1067,3 +1095,22 @@ def test_articles_list_and_detail_endpoints_expose_same_podcast_projection(monke
     assert list_item["podcast"]["transcript_available"] is True
     assert "content" not in list_item
     assert detail_item["content"] == "Endpoint show notes"
+    reader_detail_item = reader_detail.json()
+    for payload in (reader_item, reader_detail_item, reader_analysis.json()):
+        for internal_key in (
+            "analysis_basis",
+            "analysis_input_hash",
+            "transcript_artifact_id",
+            "prompt_version",
+            "scoring_version",
+            "taxonomy_version",
+            "extensions_json",
+        ):
+            assert internal_key not in payload
+    assert "analysis_basis" not in reader_item["podcast"]
+    assert "final_premium" not in reader_item["podcast"]
+    assert "error" not in reader_item["podcast"]
+    assert "failed_stage" not in reader_item["podcast"]["premium_guide"]
+    assert "provider usage capacity" not in json.dumps(
+        reader_detail_item, ensure_ascii=False
+    )

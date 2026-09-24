@@ -145,9 +145,6 @@ def _podcast_projection(
         "transcripts": transcripts,
         "chapters_url": str(extensions.get("chapters_url") or ""),
         "chapters_mime": str(extensions.get("chapters_mime") or ""),
-        # RSS ingestion only sees publisher metadata/show notes.  Duration is a
-        # descriptive scheduling signal, never authorization for paid processing.
-        "analysis_basis": analysis_basis,
         "is_long_form": duration_seconds is not None and duration_seconds > 1800,
         # RSS transcript entries are untrusted download candidates.  Reader
         # visibility starts only after a validated artifact is published.
@@ -159,7 +156,6 @@ def _podcast_projection(
         "processing_status": processing_status,
         "retryable": processing_status
         in {"retry_wait", "reconciliation_required", "failed"},
-        "final_premium": final_premium,
         "premium_guide": {
             "status": effective_guide_status,
             "audio_ready": digest_audio is not None,
@@ -178,6 +174,11 @@ def _podcast_projection(
     }
     if include_diagnostics:
         projected.update({
+            # Internal evidence/provenance belongs to the admin ledger only.
+            # Reader copy is expressed through transcript_available and the
+            # stable guide readiness flags above.
+            "analysis_basis": analysis_basis,
+            "final_premium": final_premium,
             "id": str(getattr(processing, "id", "") or ""),
             "attempt_count": getattr(processing, "attempt_count", 0),
             "next_retry_at": str(getattr(processing, "next_retry_at", "") or ""),
@@ -378,11 +379,6 @@ def serialize_article_list_item(
         "analysis_next_attempt_at": getattr(analysis, "next_attempt_at", None),
         "quality_score": getattr(analysis, "quality_score", None),
         "score_reason": getattr(analysis, "score_reason", None) or None,
-        "analysis_basis": getattr(analysis, "analysis_basis", None) or None,
-        "analysis_input_hash": getattr(analysis, "analysis_input_hash", None) or None,
-        "transcript_artifact_id": getattr(analysis, "transcript_artifact_id", None) or None,
-        "prompt_version": getattr(analysis, "prompt_version", None) or None,
-        "scoring_version": getattr(analysis, "scoring_version", None) or None,
         "content_genre": getattr(analysis, "content_genre", None),
         "primary_tag": next((tag for tag in (tags or []) if tag.get("is_primary")), None),
         "tags": tags or [],
@@ -395,6 +391,14 @@ def serialize_article_list_item(
             and podcast_premium.is_premium(analysis, premium_score_threshold)
         ),
     }
+    if record.content_type != "podcast_episode" or include_podcast_diagnostics:
+        item.update({
+            "analysis_basis": getattr(analysis, "analysis_basis", None) or None,
+            "analysis_input_hash": getattr(analysis, "analysis_input_hash", None) or None,
+            "transcript_artifact_id": getattr(analysis, "transcript_artifact_id", None) or None,
+            "prompt_version": getattr(analysis, "prompt_version", None) or None,
+            "scoring_version": getattr(analysis, "scoring_version", None) or None,
+        })
     if include_content:
         item["content"] = content
     if record.content_type == "podcast_episode":
@@ -412,7 +416,9 @@ def serialize_article_list_item(
         from services.article_listen_guides import projection_from_extensions
 
         item["listen_guide"] = projection_from_extensions(record.id, ext)
-    if include_content or include_extensions:
+    if (include_content or include_extensions) and (
+        record.content_type != "podcast_episode" or include_podcast_diagnostics
+    ):
         item["extensions_json"] = record.extensions_json or "{}"
     return item
 

@@ -590,7 +590,7 @@ def test_premium_guide_score_below_threshold_never_calls_provider(
         assert analysis.analysis_basis == "asr_transcript"
 
 
-@pytest.mark.parametrize("language", ["en", "fr-FR", "ja"])
+@pytest.mark.parametrize("language", ["en", "fr-FR", "ja", "und"])
 def test_non_chinese_full_analysis_publishes_text_only_guide(
     tmp_path, language
 ):
@@ -600,6 +600,11 @@ def test_non_chinese_full_analysis_publishes_text_only_guide(
         session.add(SourceConfigRecord(
             source_id="podcast-brief", name="Brief", source_type="podcast",
             url="https://example.test/brief.xml", created_at=STAMP, updated_at=STAMP,
+            params_json=(
+                '{"catalog":"test","language":"en"}'
+                if language == "und"
+                else "{}"
+            ),
         ))
         session.add(ArticleRecord(
             id="episode-brief", title="Brief", content_type="podcast_episode",
@@ -676,11 +681,15 @@ def test_non_chinese_full_analysis_publishes_text_only_guide(
             session.get(ArticleRecord, "episode-brief").extensions_json
         )["premium_guide"]
         assert guide["mode"] == "brief_zh"
-        assert guide["language"] == language.lower()
-        assert guide["language_source"] == "transcript_artifact"
+        assert guide["language"] == ("en" if language == "und" else language.lower())
+        assert guide["language_source"] == (
+            "source_config" if language == "und" else "transcript_artifact"
+        )
 
 
-@pytest.mark.parametrize("language", ["zh-CN", "und", "mul"])
+@pytest.mark.parametrize(
+    "language", ["zh-CN", "und", "mul", "unknown", "not_a_language"]
+)
 def test_chinese_or_unknown_low_score_does_not_auto_generate_guide(
     tmp_path, language
 ):

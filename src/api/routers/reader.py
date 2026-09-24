@@ -15,6 +15,7 @@ import hashlib
 import hmac
 import importlib
 import json
+import logging
 import uuid
 from typing import Any, Dict, List, Literal, Optional
 
@@ -87,6 +88,34 @@ from services import user_sources as user_sources_service
 from services import x_api_config as x_api_config_service
 
 router = APIRouter(prefix="/api/reader", tags=["reader"])
+logger = logging.getLogger("dorami.api.reader")
+
+
+_SAFE_PODCAST_GUIDE_ERRORS = frozenset({
+    "podcast_ondemand_score_too_low",
+    "podcast_ondemand_final_pending",
+    "podcast_ondemand_disabled",
+})
+
+
+def _reader_podcast_guide_error(exc) -> JSONResponse:
+    """Return stable reader copy while retaining provider diagnostics in logs."""
+
+    if exc.code in _SAFE_PODCAST_GUIDE_ERRORS:
+        code, message = exc.code, exc.message
+    else:
+        logger.warning(
+            "podcast ondemand rejected code=%s detail=%s",
+            exc.code,
+            exc.message,
+        )
+        code = "podcast_guide_unavailable"
+        message = "中文导读暂时无法生成，请稍后再试"
+    return JSONResponse(
+        {"code": code, "message": message},
+        status_code=exc.status_code,
+        headers={"Cache-Control": "private, no-store", "Vary": "Cookie"},
+    )
 
 
 @router.get("/rankings")
@@ -1745,11 +1774,7 @@ async def reader_ai_podcast_ondemand(episode_id: str, request: Request):
             )
         )
     except podcast_premium_guide_service.PremiumGuideForceError as exc:
-        return JSONResponse(
-            {"code": exc.code, "message": exc.message},
-            status_code=exc.status_code,
-            headers={"Cache-Control": "private, no-store", "Vary": "Cookie"},
-        )
+        return _reader_podcast_guide_error(exc)
 
     if evaluated["outcome"] in {"ready", "in_progress"}:
         return {
@@ -1792,11 +1817,7 @@ async def reader_ai_podcast_ondemand(episode_id: str, request: Request):
                 "charged": False,
                 "started": False,
             }
-        return JSONResponse(
-            {"code": exc.code, "message": exc.message},
-            status_code=exc.status_code,
-            headers={"Cache-Control": "private, no-store", "Vary": "Cookie"},
-        )
+        return _reader_podcast_guide_error(exc)
 
     with Session(db_sink.engine) as session:
         ai_usage_service.record_usage(
