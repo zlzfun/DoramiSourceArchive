@@ -23,6 +23,8 @@ from models.db import (  # noqa: E402
     RankingContentItemRecord,
     RankingSnapshotRecord,
     RankingTagItemRecord,
+    ReaderSubscriptionRecord,
+    SourceConfigRecord,
     TaxonomyVersionRecord,
 )
 from services import rankings  # noqa: E402
@@ -166,6 +168,56 @@ def test_snapshot_counts_shapes_filters_and_parent_chain_must_read(tmp_path):
     }
 
 
+def test_sitewide_board_ignores_personal_subscriptions_and_reader_defaults(tmp_path):
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'sitewide.db'}")
+    _seed(sink.engine)
+    with Session(sink.engine) as session:
+        # Alice sees only source-a in her personal reader and new accounts have
+        # no seeded defaults.  Neither preference may narrow a site-wide board.
+        session.add(AppSettingRecord(key="reader_default_source_ids", value="[]"))
+        session.add(ReaderSubscriptionRecord(
+            owner_username="alice",
+            name="Alice only",
+            filters_json='{"source_ids":"source-a"}',
+            delivery_policy_json="{}",
+            token_hash="alice-token-hash",
+            token_preview="ali…ice",
+            is_active=True,
+            created_at=STAMP,
+            updated_at=STAMP,
+        ))
+
+        # Prefixes are a defense-in-depth convention, not the privacy boundary:
+        # an owner-backed legacy config remains private even with a public-looking ID.
+        session.add(SourceConfigRecord(
+            source_id="legacy-private-feed",
+            name="Legacy private feed",
+            source_type="rss",
+            url="https://private.example.test/feed",
+            owner_username="alice",
+            created_at=STAMP,
+            updated_at=STAMP,
+        ))
+        private_article = _content(session, "legacy-private", "legacy-private-feed")
+        topic = session.exec(
+            select(CmsTagRecord).where(CmsTagRecord.code == "topic.image")
+        ).one()
+        _assign(session, private_article, topic, primary=True)
+        session.commit()
+
+    rankings.build_snapshot(sink.engine, at=AT)
+    with Session(sink.engine) as session:
+        board = rankings.read_rankings(session, shape="article")
+        detail = rankings.read_tag_contents(
+            session, date="latest", shape="article", tag_code="topic.image"
+        )
+
+    assert board["scope"] == rankings.PUBLIC_SCOPE
+    image_tag = next(item for item in board["axes"]["topic"] if item["code"] == "topic.image")
+    assert image_tag["occurrence_count"] == 2
+    assert {item["source_id"] for item in detail["contents"]} == {"source-a", "source-b"}
+
+
 def test_snapshot_boundary_and_failed_rerun_preserve_last_good_snapshot(monkeypatch, tmp_path):
     before = dt.datetime(2026, 9, 24, 6, 59, tzinfo=rankings.SHANGHAI)
     after = dt.datetime(2026, 9, 24, 7, 0, tzinfo=rankings.SHANGHAI)
@@ -215,6 +267,26 @@ def test_current_hidden_source_is_removed_from_counts_titles_and_history(tmp_pat
     assert history["points"] == []
 
 
+def test_article_deleted_after_snapshot_is_not_exposed(tmp_path):
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'deleted.db'}")
+    _seed(sink.engine)
+    rankings.build_snapshot(sink.engine, at=AT)
+    with Session(sink.engine) as session:
+        article = session.get(ArticleRecord, "article-2")
+        assert article is not None
+        session.delete(article)
+        session.commit()
+
+    with Session(sink.engine) as session:
+        response = rankings.read_rankings(session, shape="article")
+        detail = rankings.read_tag_contents(
+            session, date="latest", shape="article", tag_code="topic.image"
+        )
+    assert all(not response["axes"][axis] for axis in rankings.AXES)
+    assert response["must_read"] == []
+    assert detail is None
+
+
 def test_reader_ranking_endpoints_expose_snapshot_detail_and_history(tmp_path):
     sink = DatabaseStorage(f"sqlite:///{tmp_path / 'reader-api.db'}")
     _seed(sink.engine)
@@ -232,6 +304,7 @@ def test_reader_ranking_endpoints_expose_snapshot_detail_and_history(tmp_path):
 
     board = client.get("/api/reader/rankings", params={"shape": "article"})
     assert board.status_code == 200
+    assert board.json()["scope"] == rankings.PUBLIC_SCOPE
     assert set(board.json()["axes"]) == set(rankings.AXES)
     assert board.json()["axes"]["topic"][0]["occurrence_count"] == 2
 
@@ -240,6 +313,7 @@ def test_reader_ranking_endpoints_expose_snapshot_detail_and_history(tmp_path):
         params={"shape": "article"},
     )
     assert detail.status_code == 200
+    assert detail.json()["scope"] == rankings.PUBLIC_SCOPE
     assert len(detail.json()["contents"]) == 2
 
     trend = client.get(
@@ -247,6 +321,7 @@ def test_reader_ranking_endpoints_expose_snapshot_detail_and_history(tmp_path):
         params={"shape": "article", "tag_code": "topic.image", "days": 30},
     )
     assert trend.status_code == 200
+    assert trend.json()["scope"] == rankings.PUBLIC_SCOPE
     assert trend.json()["points"][0]["occurrence_count"] == 2
     assert client.get(
         "/api/reader/rankings/history",

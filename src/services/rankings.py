@@ -46,6 +46,7 @@ MIN_SOURCE_SUPPORT = 2
 MIN_RELEVANCE = 0.8
 MIN_TAGGED_COVERAGE = 0.5
 FULL_PODCAST_BASES = frozenset({"publisher_transcript", "asr_transcript"})
+PUBLIC_SCOPE = "all_visible_public_content"
 
 
 @dataclass(frozen=True)
@@ -110,6 +111,18 @@ def _source_shapes(session: Session) -> dict[str, str]:
     return result
 
 
+def _private_source_ids(session: Session) -> set[str]:
+    """Return every configured private source, independent of subscriptions.
+
+    The ``user_rss_`` prefix is still checked at article-read time so orphaned
+    rows remain private after their source config is physically removed.  The
+    owner-backed set closes the inverse gap: a private config with a legacy or
+    imported non-standard ID must never enter a site-wide board.
+    """
+
+    return set(user_sources.user_source_ids(session))
+
+
 def _content_shape(article: ArticleRecord, source_shapes: dict[str, str]) -> str:
     known = source_shapes.get(article.source_id)
     if known:
@@ -159,6 +172,7 @@ def _eligible_facts(
     end: dt.datetime,
 ) -> tuple[dict[str, ContentFact], dict[str, dict[str, int]]]:
     hidden = source_visibility.reader_unavailable_source_ids(session)
+    private = _private_source_ids(session)
     source_shapes = _source_shapes(session)
     facts: dict[str, ContentFact] = {}
     coverage = {shape: {"eligible": 0, "analyzed": 0, "tagged": 0} for shape in SHAPES}
@@ -183,7 +197,11 @@ def _eligible_facts(
         ).all()
     )
     for article, analysis in rows:
-        if article.source_id in hidden or user_sources.is_user_source(article.source_id):
+        if (
+            article.source_id in hidden
+            or article.source_id in private
+            or user_sources.is_user_source(article.source_id)
+        ):
             continue
         shape = _content_shape(article, source_shapes)
         if shape not in SHAPES:
@@ -458,6 +476,7 @@ def _visible_rows(
     shape: str,
 ) -> list[tuple[RankingContentItemRecord, ArticleRecord]]:
     hidden = source_visibility.reader_unavailable_source_ids(session)
+    private = _private_source_ids(session)
     rows = session.exec(
         select(RankingContentItemRecord, ArticleRecord)
         .join(ArticleRecord, ArticleRecord.id == RankingContentItemRecord.article_id)
@@ -468,7 +487,9 @@ def _visible_rows(
     ).all()
     return [
         (item, article) for item, article in rows
-        if item.source_id not in hidden and not user_sources.is_user_source(item.source_id)
+        if item.source_id not in hidden
+        and item.source_id not in private
+        and not user_sources.is_user_source(item.source_id)
     ]
 
 
@@ -596,6 +617,7 @@ def read_rankings(
         coverage["tagged"] / coverage["eligible"], 4
     ) if coverage["eligible"] else 1.0
     return {
+        "scope": PUBLIC_SCOPE,
         "snapshot_date": snapshot.snapshot_date,
         "window_start": snapshot.window_start,
         "window_end": snapshot.window_end,
@@ -641,6 +663,7 @@ def read_tag_contents(
     ) < MIN_SOURCE_SUPPORT:
         return None
     return {
+        "scope": PUBLIC_SCOPE,
         "snapshot_date": snapshot.snapshot_date,
         "shape": shape,
         "axis": tag.axis,
@@ -691,10 +714,15 @@ def read_history(
             "distinct_source_count": source_count,
             "rank": tag.rank,
         })
-    return {"tag_code": tag_code, "shape": shape, "points": points}
+    return {
+        "scope": PUBLIC_SCOPE,
+        "tag_code": tag_code,
+        "shape": shape,
+        "points": points,
+    }
 
 
 __all__ = [
-    "AXES", "SHAPES", "build_snapshot", "latest_snapshot_needed", "read_history",
+    "AXES", "PUBLIC_SCOPE", "SHAPES", "build_snapshot", "latest_snapshot_needed", "read_history",
     "read_rankings", "read_tag_contents", "snapshot_boundary",
 ]

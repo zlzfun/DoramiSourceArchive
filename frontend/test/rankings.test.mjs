@@ -1,7 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { rankingMovement, rankingTrendPath, scoreBasisLabel } from '../src/utils/rankings.js';
+import {
+  RANKING_SCOPE_NOTE,
+  rankingMovement,
+  rankingTrendPath,
+  scoreBasisLabel,
+} from '../src/utils/rankings.js';
+
+test('ranking scope is explicitly site-wide and independent from personal subscriptions', () => {
+  assert.match(RANKING_SCOPE_NOTE, /全站/);
+  assert.match(RANKING_SCOPE_NOTE, /与个人订阅无关/);
+  assert.doesNotMatch(RANKING_SCOPE_NOTE, /我的订阅/);
+});
 
 test('ranking movement is explicit for up, down, flat and new states', () => {
   assert.deepEqual(rankingMovement(3), { label: '↑ 3', direction: 'up' });

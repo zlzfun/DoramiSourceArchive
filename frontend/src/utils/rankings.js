@@ -4,6 +4,8 @@ export const RANKING_AXES = [
   ['entity', '实体'],
 ];
 
+export const RANKING_SCOPE_NOTE = '全站近 7 天公开内容的正式标签趋势，与个人订阅无关，不代表全网热度';
+
 export function rankingMovement(value) {
   if (value === null || value === undefined || value === '') {
     return { label: '新', direction: 'new' };

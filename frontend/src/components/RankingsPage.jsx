@@ -7,6 +7,7 @@ import {
 } from '../api';
 import {
   RANKING_AXES,
+  RANKING_SCOPE_NOTE,
   rankingMovement,
   rankingTrendPath,
   scoreBasisLabel,
@@ -116,7 +117,7 @@ export default function RankingsPage({
       <header className="ranking-head">
         <div>
           <span className="reader-disc-title">榜单</span>
-          <p className="ranking-head-note">平台近 7 天正式标签趋势，不代表全网热度</p>
+          <p className="ranking-head-note">{RANKING_SCOPE_NOTE}</p>
         </div>
         <div className="reader-seg" role="group" aria-label="内容类型">
           {[['article', '文章榜', FileText], ['podcast', '播客榜', Headphones]].map(([key, label, Icon]) => (
