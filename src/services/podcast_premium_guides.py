@@ -1285,7 +1285,10 @@ def pending_premium_guide_candidates(
         for episode, analysis, transcript in rows:
             if not has_authoritative_analysis(analysis):
                 continue
-            duration = float(_extensions(episode).get("duration_seconds") or 0)
+            extensions = _extensions(episode)
+            if bool(extensions.get("premium_guide_auto_suppressed")):
+                continue
+            duration = float(extensions.get("duration_seconds") or 0)
             if duration <= 0:
                 continue
             eligibility = _guide_eligibility(
@@ -1301,7 +1304,6 @@ def pending_premium_guide_candidates(
                 and duration < minimum_duration_seconds
             ):
                 continue
-            extensions = _extensions(episode)
             guide = extensions.get("premium_guide")
             guide = guide if isinstance(guide, dict) else {}
             status = str(guide.get("status") or extensions.get("processing_status") or "")

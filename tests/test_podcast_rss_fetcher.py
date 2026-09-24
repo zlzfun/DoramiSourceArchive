@@ -514,6 +514,7 @@ def test_podcast_source_config_routes_to_dedicated_fetcher_and_shape():
         "category": "podcast",
         "feed_url": "https://example.test/podcast.xml",
         "feed_name": "Podcast Demo",
+        "entry_id_namespace": "podcast_demo",
     }
     serialized = serialize_source_config(record)
     assert serialized["shape"] == "podcast"

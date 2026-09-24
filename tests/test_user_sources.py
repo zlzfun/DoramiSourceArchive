@@ -549,6 +549,36 @@ def test_conflict_with_configured_podcast_redirects_to_subscribe(monkeypatch, tm
         assert custom_rows == []
 
 
+def test_ai_native_dev_catalog_feed_cannot_be_recreated_as_custom_source(
+    monkeypatch, tmp_path
+):
+    app_module = _setup_app(monkeypatch, tmp_path, "tessl-system-feed.db")
+    from models.db import SourceConfigRecord
+    from services.podcast_catalog import (
+        AI_NATIVE_DEV_SOURCE_ID,
+        import_podcast_catalog,
+    )
+
+    feed_url = "https://rss.buzzsprout.com/2375985.rss"
+    with Session(app_module.db_sink.engine) as session:
+        import_podcast_catalog(session, source_ids=[AI_NATIVE_DEV_SOURCE_ID])
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        preview = client.post(
+            "/api/reader/custom-sources/preview", json={"url": f"{feed_url}/"}
+        )
+        created = _add(client, feed_url, kind="podcast")
+    assert preview.status_code == 200
+    assert preview.json()["existing"]["source_id"] == AI_NATIVE_DEV_SOURCE_ID
+    assert created.status_code == 200
+    assert created.json()["status"] == "exists"
+    assert created.json()["existing"]["source_id"] == AI_NATIVE_DEV_SOURCE_ID
+    with Session(app_module.db_sink.engine) as session:
+        assert session.exec(
+            select(SourceConfigRecord).where(SourceConfigRecord.owner_username != "")
+        ).all() == []
+
+
 def test_conflict_with_hidden_system_source_is_404(monkeypatch, tmp_path):
     """撞中被隐藏系统源:统一「暂不可用」,不泄露隐藏细节、不造影子源。"""
     app_module = _setup_app(monkeypatch, tmp_path)

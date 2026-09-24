@@ -10,6 +10,22 @@
 > 标「版本号以实际发版为准」的段落是 tag 即发布(2026-09-14)后合入、尚未或刚刚发版的波次。
 > 阅读提示:据本文查「怎么来的」;判断现状以 CLAUDE.md 与代码为准。
 
+## issue #153 Tessl 公共播客源（分支 `feat/issue-153-tessl-source`，版本号以实际发版为准）
+
+精选 Podcast 目录新增 Tessl 的 `The AI Native Dev`，目录从全局验证日期改为逐源
+`verified_at`，避免新增单源时虚假刷新旧目录；该源安装时幂等维护一条首次创建即启用、后续
+尊重管理员启停选择的六小时观察任务，但不替用户订阅，也不直接触发 ASR/TTS。公开 RSS 于
+2026-09-24 实测可解析、含
+`audio/mpeg` enclosure，并声明 HTML/JSON/SRT/VTT 多种发布方逐字稿候选。
+
+同 feed 的存量 `user_rss_*` Podcast 采用 canonical URL 唯一匹配并 fail-closed：在一个事务中
+新建公共 SourceConfig，迁移文章归属、订阅、未读水位、阅读计量、隐藏设置、采集任务、早报
+快照与源状态，保持 Article 主键和全部文章级关联不动，最后删除私有源。公共源持久化旧
+`entry_id_namespace`，抓取器继续用旧 namespace 计算单集主键，因此重抓和 Archive Sync 均不会
+产生第二份单集；公共 source payload 本身不携带旧 owner。收养过的历史单集打仅限自动候选的
+精品导读抑制标记，避免升格即触发历史 TTS，管理员手动/点播路径仍可用。重复导入幂等，任何
+来源歧义、类型冲突或中途异常都会整笔回滚。
+
 ## issue #97 Podcast 成本门控（分支 `feat/issue-97-podcast-cost-gates`，版本号以实际发版为准）
 
 将简介分从“所有全文处理的总闸”收窄为“是否值得支付 ASR”的成本闸：固定边界由 5.0 调至
