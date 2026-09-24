@@ -6,6 +6,7 @@ import {
   PODCAST_TEXT_LABELS,
   isPodcastTextRequestCurrent,
   mergePodcastTextPage,
+  podcastDigestMeta,
   podcastTextPageAction,
   podcastTranscriptForLanguage,
   podcastTextView,
@@ -31,6 +32,17 @@ test('podcast text view falls back to source transcript and has a true empty sta
   assert.equal(fallback.transcripts[0].label.note, '节目方提供');
   assert.deepEqual(podcastTextView({ items: [] }).transcripts, []);
   assert.equal(PODCAST_TEXT_LABELS.digest_blog_zh.title, '精品导读');
+});
+
+test('brief Chinese guides are not presented as premium guides', () => {
+  assert.deepEqual(podcastDigestMeta('brief_zh'), {
+    title: '中文导读',
+    action: '继续阅读中文导读',
+  });
+  assert.deepEqual(podcastDigestMeta('solo_deep'), {
+    title: '精品导读',
+    action: '继续阅读精品导读',
+  });
 });
 
 test('normalized ASR transcript is visible and remains distinct from publisher text', () => {

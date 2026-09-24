@@ -5,6 +5,13 @@ export const PODCAST_TEXT_LABELS = Object.freeze({
   normalized_transcript: { title: '语音识别稿', note: 'AI 整理' },
 });
 
+export function podcastDigestMeta(mode = '') {
+  const isBrief = String(mode || '').trim().toLowerCase() === 'brief_zh';
+  return isBrief
+    ? { title: '中文导读', action: '继续阅读中文导读' }
+    : { title: '精品导读', action: '继续阅读精品导读' };
+}
+
 const TRANSCRIPT_PRIORITY = Object.freeze([
   'transcript_zh',
   'publisher_transcript',

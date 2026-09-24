@@ -67,6 +67,7 @@ function PodcastExperience({
         <PodcastTextPanel
           episodeId={article.id}
           showDigest
+          digestMode={podcast.premium_guide?.mode}
           hiddenTranscriptKinds={['publisher_transcript']}
         />
       )}
