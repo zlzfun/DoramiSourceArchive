@@ -152,6 +152,9 @@ def _podcast_projection(
             {"publisher_transcript", "normalized_transcript", "transcript_zh"}
             .intersection(published_text_kinds)
         ),
+        # Stable reader fact: the score came from a complete transcript.  Keep
+        # the implementation basis (publisher/ASR) in admin diagnostics only.
+        "full_analysis_ready": transcript_basis,
         "status": processing_status,
         "processing_status": processing_status,
         "retryable": processing_status

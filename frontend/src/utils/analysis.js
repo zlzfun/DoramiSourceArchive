@@ -111,7 +111,8 @@ export function podcastAssessmentMeta(article) {
     return null;
   }
   const basis = podcastAnalysisBasis(article);
-  if (TRANSCRIPT_ANALYSIS_BASES.has(basis)) {
+  if (podcastProjection(article).full_analysis_ready === true
+      || TRANSCRIPT_ANALYSIS_BASES.has(basis)) {
     return {
       label: '全文深度分析',
       note: 'AI 已分析整期内容，关键结论可回到原节目核验',

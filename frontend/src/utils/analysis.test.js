@@ -139,6 +139,17 @@ test('podcast assessment exposes one score with an honest input-basis label', ()
   assert.equal(podcastAssessmentMeta({ ...initial, content_type: 'rss_article' }), null);
 });
 
+test('reader-safe full analysis fact does not require exposing the transcript implementation', () => {
+  const meta = podcastAssessmentMeta({
+    content_type: 'podcast_episode',
+    quality_score: 7.2,
+    score_reason: '有完整内容证据',
+    podcast: { full_analysis_ready: true },
+  });
+  assert.equal(meta.label, '全文深度分析');
+  assert.doesNotMatch(meta.note, /ASR|provider|逐字稿/);
+});
+
 const podcastFixture = (podcast = {}, article = {}) => ({
   content_type: 'podcast_episode',
   quality_score: 7.2,

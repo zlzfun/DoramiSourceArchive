@@ -597,6 +597,7 @@ def test_article_list_and_detail_serializer_project_lightweight_podcast_contract
         "chapters_mime": "application/json+chapters",
         "is_long_form": False,
         "transcript_available": False,
+        "full_analysis_ready": False,
         "status": "",
         "processing_status": "",
         "retryable": False,
@@ -1108,6 +1109,7 @@ def test_articles_list_and_detail_endpoints_expose_same_podcast_projection(monke
         ):
             assert internal_key not in payload
     assert "analysis_basis" not in reader_item["podcast"]
+    assert reader_item["podcast"]["full_analysis_ready"] is False
     assert "final_premium" not in reader_item["podcast"]
     assert "error" not in reader_item["podcast"]
     assert "failed_stage" not in reader_item["podcast"]["premium_guide"]

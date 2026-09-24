@@ -959,6 +959,7 @@ def test_podcast_projection_exposes_durable_status_basis_and_thresholds():
         include_content=False,
         analysis=final,
         premium_score_threshold=8.5,
+        include_podcast_diagnostics=True,
     )
     assert item["is_premium_podcast"] is True
     assert item["podcast"]["final_premium"] is True
@@ -968,6 +969,7 @@ def test_podcast_projection_exposes_durable_status_basis_and_thresholds():
         include_content=False,
         analysis=final,
         premium_score_threshold=8.5,
+        include_podcast_diagnostics=True,
     )
     assert item["is_premium_podcast"] is True
     assert item["podcast"]["final_premium"] is True
