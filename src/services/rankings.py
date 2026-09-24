@@ -8,6 +8,7 @@ or taxonomy mutation occurs here.
 from __future__ import annotations
 
 import datetime as dt
+import threading
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Iterable
@@ -47,6 +48,17 @@ MIN_RELEVANCE = 0.8
 MIN_TAGGED_COVERAGE = 0.5
 FULL_PODCAST_BASES = frozenset({"publisher_transcript", "asr_transcript"})
 PUBLIC_SCOPE = "all_visible_public_content"
+
+
+class RankingSnapshotBusy(RuntimeError):
+    """Raised when an operator refresh overlaps an existing snapshot build."""
+
+
+# Every build entry (07:00 cron, startup catch-up, first reader request and the
+# admin button) shares one process-wide mutex. The snapshot write is
+# transactionally idempotent by date, while this lock prevents two concurrent
+# requests from doing the same full-table scan and contending on SQLite.
+_SNAPSHOT_BUILD_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -294,7 +306,7 @@ def _root_tag_id(tag_id: int, parent_by_id: dict[int, int | None]) -> int:
     return current
 
 
-def build_snapshot(
+def _build_snapshot_unlocked(
     engine: Engine,
     *,
     at: dt.datetime | None = None,
@@ -454,6 +466,59 @@ def build_snapshot(
         return snapshot
 
 
+def build_snapshot(
+    engine: Engine,
+    *,
+    at: dt.datetime | None = None,
+) -> RankingSnapshotRecord:
+    """Build or atomically replace one Shanghai-day snapshot.
+
+    Scheduled builds wait for the current build instead of racing it. Manual
+    refreshes use :func:`build_snapshot_if_idle` so the UI can report a
+    conflict immediately.
+    """
+
+    with _SNAPSHOT_BUILD_LOCK:
+        return _build_snapshot_unlocked(engine, at=at)
+
+
+def build_snapshot_if_idle(
+    engine: Engine,
+    *,
+    at: dt.datetime | None = None,
+) -> RankingSnapshotRecord:
+    """Build a snapshot, or fail fast when another build already owns the lock."""
+
+    if not _SNAPSHOT_BUILD_LOCK.acquire(blocking=False):
+        raise RankingSnapshotBusy("榜单正在刷新，请稍后再试")
+    try:
+        return _build_snapshot_unlocked(engine, at=at)
+    finally:
+        _SNAPSHOT_BUILD_LOCK.release()
+
+
+def ensure_snapshot_if_empty(
+    engine: Engine,
+    *,
+    at: dt.datetime | None = None,
+) -> RankingSnapshotRecord | None:
+    """Build exactly once when the database has no usable ranking snapshot.
+
+    The fast path avoids taking the process lock after the first snapshot.
+    The second check under the lock makes simultaneous first-reader requests
+    idempotent; only the winner performs the full build.
+    """
+
+    with Session(engine) as session:
+        if _snapshot_or_none(session, "latest") is not None:
+            return None
+    with _SNAPSHOT_BUILD_LOCK:
+        with Session(engine) as session:
+            if _snapshot_or_none(session, "latest") is not None:
+                return None
+        return _build_snapshot_unlocked(engine, at=at)
+
+
 def _snapshot_or_none(session: Session, date: str) -> RankingSnapshotRecord | None:
     query = select(RankingSnapshotRecord)
     if date and date != "latest":
@@ -468,6 +533,48 @@ def latest_snapshot_needed(session: Session, *, at: dt.datetime | None = None) -
     return session.exec(
         select(RankingSnapshotRecord.id).where(RankingSnapshotRecord.snapshot_date == date)
     ).first() is None
+
+
+def snapshot_status(
+    session: Session,
+    *,
+    at: dt.datetime | None = None,
+) -> dict[str, Any]:
+    """Return the operator-facing status of the most recent ranking snapshot."""
+
+    now = at or dt.datetime.now(dt.timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=dt.timezone.utc)
+    local = now.astimezone(SHANGHAI)
+    next_local = dt.datetime.combine(local.date(), dt.time(hour=7), tzinfo=SHANGHAI)
+    if local >= next_local:
+        next_local += dt.timedelta(days=1)
+    snapshot = _snapshot_or_none(session, "latest")
+    payload = None
+    if snapshot is not None:
+        payload = {
+            "snapshot_date": snapshot.snapshot_date,
+            "generated_at": snapshot.generated_at,
+            "window_start": snapshot.window_start,
+            "window_end": snapshot.window_end,
+            "status": snapshot.status,
+            "taxonomy_version": snapshot.taxonomy_version,
+            "coverage": {
+                shape: {
+                    "eligible": getattr(snapshot, f"{shape}_eligible_count"),
+                    "analyzed": getattr(snapshot, f"{shape}_analyzed_count"),
+                    "tagged": getattr(snapshot, f"{shape}_tagged_count"),
+                }
+                for shape in SHAPES
+            },
+        }
+    return {
+        "refresh_running": _SNAPSHOT_BUILD_LOCK.locked(),
+        "schedule": "0 7 * * *",
+        "timezone": "Asia/Shanghai",
+        "next_refresh_at": next_local.isoformat(),
+        "snapshot": payload,
+    }
 
 
 def _visible_rows(
@@ -723,6 +830,8 @@ def read_history(
 
 
 __all__ = [
-    "AXES", "PUBLIC_SCOPE", "SHAPES", "build_snapshot", "latest_snapshot_needed", "read_history",
-    "read_rankings", "read_tag_contents", "snapshot_boundary",
+    "AXES", "PUBLIC_SCOPE", "SHAPES", "RankingSnapshotBusy", "build_snapshot",
+    "build_snapshot_if_idle", "ensure_snapshot_if_empty", "latest_snapshot_needed",
+    "read_history", "read_rankings", "read_tag_contents", "snapshot_boundary",
+    "snapshot_status",
 ]

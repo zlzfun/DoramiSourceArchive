@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
@@ -29,6 +30,7 @@ from models.db import (  # noqa: E402
 )
 from services import rankings  # noqa: E402
 from api import deps  # noqa: E402
+from api.routers import admin as admin_router  # noqa: E402
 from api.routers import reader as reader_router  # noqa: E402
 from storage.impl.db_storage import DatabaseStorage  # noqa: E402
 
@@ -327,6 +329,85 @@ def test_reader_ranking_endpoints_expose_snapshot_detail_and_history(tmp_path):
         "/api/reader/rankings/history",
         params={"shape": "article", "tag_code": "topic.image", "days": 91},
     ).status_code == 400
+
+
+def test_first_reader_request_builds_once_when_database_has_no_snapshot(tmp_path):
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'reader-first-build.db'}")
+    _seed(sink.engine)
+
+    api = FastAPI()
+    api.include_router(reader_router.router)
+
+    def _session_override():
+        with Session(sink.engine) as session:
+            yield session
+
+    api.dependency_overrides[deps.get_session] = _session_override
+    client = TestClient(api)
+
+    first = client.get("/api/reader/rankings", params={"shape": "article"})
+    second = client.get("/api/reader/rankings", params={"shape": "article"})
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["generated_at"] == second.json()["generated_at"]
+    with Session(sink.engine) as session:
+        assert len(session.exec(select(RankingSnapshotRecord)).all()) == 1
+
+
+def test_concurrent_empty_snapshot_guards_perform_one_full_build(tmp_path):
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'concurrent-first-build.db'}")
+    _seed(sink.engine)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(
+            lambda _index: rankings.ensure_snapshot_if_empty(sink.engine, at=AT),
+            range(8),
+        ))
+
+    assert sum(result is not None for result in results) == 1
+    with Session(sink.engine) as session:
+        assert len(session.exec(select(RankingSnapshotRecord)).all()) == 1
+
+
+def test_admin_ranking_status_and_manual_refresh(monkeypatch, tmp_path):
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'admin-refresh.db'}")
+    _seed(sink.engine)
+
+    api = FastAPI()
+    api.include_router(admin_router.router)
+
+    def _session_override():
+        with Session(sink.engine) as session:
+            yield session
+
+    api.dependency_overrides[deps.get_session] = _session_override
+    monkeypatch.setattr(deps, "get_db_sink", lambda: sink)
+    client = TestClient(api)
+
+    empty = client.get("/api/admin/rankings/status")
+    assert empty.status_code == 200
+    assert empty.json()["snapshot"] is None
+    assert empty.json()["schedule"] == "0 7 * * *"
+    assert empty.json()["timezone"] == "Asia/Shanghai"
+
+    refreshed = client.post("/api/admin/rankings/refresh")
+    assert refreshed.status_code == 200
+    body = refreshed.json()
+    assert body["snapshot"]["status"] == "complete"
+    assert body["snapshot"]["coverage"]["article"] == {
+        "eligible": 3,
+        "analyzed": 3,
+        "tagged": 2,
+    }
+    assert body["refresh_running"] is False
+
+    def _busy(_engine):
+        raise rankings.RankingSnapshotBusy("榜单正在刷新，请稍后再试")
+
+    monkeypatch.setattr(rankings, "build_snapshot_if_idle", _busy)
+    conflict = client.post("/api/admin/rankings/refresh")
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"] == "榜单正在刷新，请稍后再试"
 
 
 def test_ranking_schedule_is_0700_coalesced_and_misfire_tolerant(monkeypatch, tmp_path):

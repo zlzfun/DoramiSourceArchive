@@ -126,6 +126,11 @@ def get_reader_rankings(
 ):
     """Return one shape's three governed tag boards and must-read list."""
 
+    # Empty deployments should not make the first reader wait until tomorrow's
+    # cron (or depend on the startup catch-up winning a race). The service
+    # double-checks under a process-wide mutex, so concurrent first requests
+    # still perform one full build only.
+    rankings_service.ensure_snapshot_if_empty(session.get_bind())
     result = rankings_service.read_rankings(session, date=date, shape=shape)
     if result is None:
         raise HTTPException(status_code=404, detail="榜单快照尚未生成")

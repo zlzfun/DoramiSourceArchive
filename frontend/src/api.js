@@ -175,6 +175,14 @@ export function fetchAdminContent(top = 12) {
   return request(`/admin/content?top=${enc(top)}`, { errorMsg: '获取内容看板失败' });
 }
 
+export function fetchAdminRankingStatus(options = {}) {
+  return request('/admin/rankings/status', { ...options, errorMsg: '获取榜单状态失败' });
+}
+
+export function refreshAdminRankings() {
+  return request('/admin/rankings/refresh', { method: 'POST', errorMsg: '刷新榜单失败' });
+}
+
 // 管理操作审计(v3.19 多管理员波):中间件对管理面写操作逐条落行,按时间倒序;服务端分页。
 // v3.42(M11):operator 操作者子串 / q 跨摘要·目标·路径子串 / status ∈ ok|denied,
 // 全部服务端生效并与时间窗/分页叠加。
