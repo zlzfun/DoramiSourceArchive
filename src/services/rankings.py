@@ -110,6 +110,23 @@ def snapshot_boundary(at: dt.datetime | None = None) -> tuple[str, dt.datetime, 
     return end_local.date().isoformat(), end - dt.timedelta(days=WINDOW_DAYS), end
 
 
+def _snapshot_window(
+    at: dt.datetime | None,
+    *,
+    current_cutoff: bool,
+) -> tuple[str, dt.datetime, dt.datetime]:
+    """Choose the frozen daily boundary or an operator-triggered current cutoff."""
+
+    if not current_cutoff:
+        return snapshot_boundary(at)
+    current = at or dt.datetime.now(dt.timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=SHANGHAI)
+    local = current.astimezone(SHANGHAI)
+    end = current.astimezone(dt.timezone.utc)
+    return local.date().isoformat(), end - dt.timedelta(days=WINDOW_DAYS), end
+
+
 def _source_shapes(session: Session) -> dict[str, str]:
     result: dict[str, str] = {}
     for shape in VALID_CONTENT_SHAPES:
@@ -310,10 +327,11 @@ def _build_snapshot_unlocked(
     engine: Engine,
     *,
     at: dt.datetime | None = None,
+    current_cutoff: bool = False,
 ) -> RankingSnapshotRecord:
     """Build or atomically replace one Shanghai-day snapshot."""
 
-    snapshot_date, start, end = snapshot_boundary(at)
+    snapshot_date, start, end = _snapshot_window(at, current_cutoff=current_cutoff)
     previous_start = start - dt.timedelta(days=WINDOW_DAYS)
     generated_at = dt.datetime.now(dt.timezone.utc).isoformat()
     with Session(engine) as session:
@@ -470,6 +488,7 @@ def build_snapshot(
     engine: Engine,
     *,
     at: dt.datetime | None = None,
+    current_cutoff: bool = False,
 ) -> RankingSnapshotRecord:
     """Build or atomically replace one Shanghai-day snapshot.
 
@@ -479,20 +498,29 @@ def build_snapshot(
     """
 
     with _SNAPSHOT_BUILD_LOCK:
-        return _build_snapshot_unlocked(engine, at=at)
+        return _build_snapshot_unlocked(
+            engine,
+            at=at,
+            current_cutoff=current_cutoff,
+        )
 
 
 def build_snapshot_if_idle(
     engine: Engine,
     *,
     at: dt.datetime | None = None,
+    current_cutoff: bool = False,
 ) -> RankingSnapshotRecord:
     """Build a snapshot, or fail fast when another build already owns the lock."""
 
     if not _SNAPSHOT_BUILD_LOCK.acquire(blocking=False):
         raise RankingSnapshotBusy("榜单正在刷新，请稍后再试")
     try:
-        return _build_snapshot_unlocked(engine, at=at)
+        return _build_snapshot_unlocked(
+            engine,
+            at=at,
+            current_cutoff=current_cutoff,
+        )
     finally:
         _SNAPSHOT_BUILD_LOCK.release()
 
@@ -516,7 +544,7 @@ def ensure_snapshot_if_empty(
         with Session(engine) as session:
             if _snapshot_or_none(session, "latest") is not None:
                 return None
-        return _build_snapshot_unlocked(engine, at=at)
+        return _build_snapshot_unlocked(engine, at=at, current_cutoff=True)
 
 
 def _snapshot_or_none(session: Session, date: str) -> RankingSnapshotRecord | None:

@@ -559,6 +559,7 @@ async def lifespan(app: FastAPI):
                     "date",
                     run_date=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=2),
                     id="reader_rankings_bootstrap",
+                    args=[True],
                     replace_existing=True,
                     max_instances=1,
                 )
@@ -1760,11 +1761,15 @@ def reload_storage_schedule():
         scheduler.remove_job("storage_maintenance")
 
 
-async def execute_ranking_snapshot_job():
-    """Build the 07:00 Shanghai snapshot off the event loop."""
+async def execute_ranking_snapshot_job(current_cutoff: bool = False):
+    """Build a ranking snapshot off-loop, frozen for cron or current for catch-up."""
 
     try:
-        snapshot = await asyncio.to_thread(rankings_service.build_snapshot, db_sink.engine)
+        snapshot = await asyncio.to_thread(
+            rankings_service.build_snapshot,
+            db_sink.engine,
+            current_cutoff=current_cutoff,
+        )
         _dorami_logger.info(
             "读者榜单快照已生成 date=%s status=%s",
             snapshot.snapshot_date,

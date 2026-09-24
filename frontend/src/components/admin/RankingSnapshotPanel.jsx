@@ -76,7 +76,7 @@ export default function RankingSnapshotPanel({ showToast, refreshTick = 0 }) {
         <div className="grid gap-2 sm:grid-cols-2">
           <div>
             <p className="body-text">最近生成 <span className="tabular-nums">{formatPodcastArtifactTime(snapshot.generated_at)}</span></p>
-            <p className="tiny-meta mt-1">数据窗口截至每日 07:00，全站公共内容，不受个人订阅限制</p>
+            <p className="tiny-meta mt-1 tabular-nums">数据截至 {formatPodcastArtifactTime(snapshot.window_end)} · 滚动 7 天全站公共内容，不受个人订阅限制</p>
           </div>
           <div>
             <p className="body-text">{rankingCoverageText(snapshot)}</p>

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
@@ -58,7 +60,16 @@ def _tag(session, code, kind, *, parent_id=None, entity_type=""):
     return row
 
 
-def _content(session, article_id, source_id, *, podcast=False, score=8.0, basis="article_body"):
+def _content(
+    session,
+    article_id,
+    source_id,
+    *,
+    podcast=False,
+    score=8.0,
+    basis="article_body",
+    publish_date="2026-09-23T08:00:00+08:00",
+):
     content_type = "podcast_episode" if podcast else "web_article"
     article = ArticleRecord(
         id=article_id,
@@ -66,7 +77,7 @@ def _content(session, article_id, source_id, *, podcast=False, score=8.0, basis=
         content_type=content_type,
         source_id=source_id,
         source_url=f"https://example.test/{article_id}",
-        publish_date="2026-09-23T08:00:00+08:00",
+        publish_date=publish_date,
         fetched_date="2026-09-23T09:00:00+08:00",
         content="body",
     )
@@ -246,6 +257,74 @@ def test_snapshot_boundary_and_failed_rerun_preserve_last_good_snapshot(monkeypa
         assert len(session.exec(select(RankingContentItemRecord)).all()) == original_contents
 
 
+def test_current_cutoff_includes_afternoon_content_while_daily_snapshot_stays_frozen(tmp_path):
+    noon = dt.datetime(2026, 9, 24, 12, tzinfo=rankings.SHANGHAI)
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'current-cutoff.db'}")
+    _seed(sink.engine)
+    with Session(sink.engine) as session:
+        topic = session.exec(
+            select(CmsTagRecord).where(CmsTagRecord.code == "topic.image")
+        ).one()
+        for index, source in enumerate(("late-source-a", "late-source-b"), start=1):
+            article = _content(
+                session,
+                f"late-{index}",
+                source,
+                publish_date="2026-09-24T10:00:00+08:00",
+            )
+            _assign(session, article, topic, primary=True)
+        session.commit()
+
+    frozen = rankings.build_snapshot(sink.engine, at=noon)
+    assert frozen.snapshot_date == "2026-09-24"
+    assert frozen.window_end == "2026-09-23T23:00:00+00:00"
+    with Session(sink.engine) as session:
+        frozen_board = rankings.read_rankings(session, shape="article")
+    frozen_tag = next(
+        item for item in frozen_board["axes"]["topic"] if item["code"] == "topic.image"
+    )
+    assert frozen_tag["occurrence_count"] == 2
+
+    current = rankings.build_snapshot(sink.engine, at=noon, current_cutoff=True)
+    assert current.snapshot_date == "2026-09-24"
+    assert current.window_end == "2026-09-24T04:00:00+00:00"
+    assert current.window_start == "2026-09-17T04:00:00+00:00"
+    with Session(sink.engine) as session:
+        current_board = rankings.read_rankings(session, shape="article")
+        assert len(session.exec(select(RankingSnapshotRecord)).all()) == 1
+    current_tag = next(
+        item for item in current_board["axes"]["topic"] if item["code"] == "topic.image"
+    )
+    assert current_tag["occurrence_count"] == 4
+
+
+def test_empty_database_ensure_uses_current_cutoff(tmp_path):
+    noon = dt.datetime(2026, 9, 24, 12, tzinfo=rankings.SHANGHAI)
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'empty-current-cutoff.db'}")
+    _seed(sink.engine)
+    with Session(sink.engine) as session:
+        topic = session.exec(
+            select(CmsTagRecord).where(CmsTagRecord.code == "topic.image")
+        ).one()
+        for index, source in enumerate(("late-source-a", "late-source-b"), start=1):
+            article = _content(
+                session,
+                f"late-{index}",
+                source,
+                publish_date="2026-09-24T10:00:00+08:00",
+            )
+            _assign(session, article, topic, primary=True)
+        session.commit()
+
+    built = rankings.ensure_snapshot_if_empty(sink.engine, at=noon)
+    assert built is not None
+    assert built.window_end == "2026-09-24T04:00:00+00:00"
+    with Session(sink.engine) as session:
+        board = rankings.read_rankings(session, shape="article")
+    topic = next(item for item in board["axes"]["topic"] if item["code"] == "topic.image")
+    assert topic["occurrence_count"] == 4
+
+
 def test_current_hidden_source_is_removed_from_counts_titles_and_history(tmp_path):
     sink = DatabaseStorage(f"sqlite:///{tmp_path / 'visibility.db'}")
     _seed(sink.engine)
@@ -390,8 +469,17 @@ def test_admin_ranking_status_and_manual_refresh(monkeypatch, tmp_path):
     assert empty.json()["schedule"] == "0 7 * * *"
     assert empty.json()["timezone"] == "Asia/Shanghai"
 
+    original_refresh = rankings.build_snapshot_if_idle
+    refresh_options = {}
+
+    def _capture_refresh(engine, **kwargs):
+        refresh_options.update(kwargs)
+        return original_refresh(engine, **kwargs)
+
+    monkeypatch.setattr(rankings, "build_snapshot_if_idle", _capture_refresh)
     refreshed = client.post("/api/admin/rankings/refresh")
     assert refreshed.status_code == 200
+    assert refresh_options["current_cutoff"] is True
     body = refreshed.json()
     assert body["snapshot"]["status"] == "complete"
     assert body["snapshot"]["coverage"]["article"] == {
@@ -401,7 +489,7 @@ def test_admin_ranking_status_and_manual_refresh(monkeypatch, tmp_path):
     }
     assert body["refresh_running"] is False
 
-    def _busy(_engine):
+    def _busy(_engine, **_kwargs):
         raise rankings.RankingSnapshotBusy("榜单正在刷新，请稍后再试")
 
     monkeypatch.setattr(rankings, "build_snapshot_if_idle", _busy)
@@ -429,3 +517,25 @@ def test_ranking_schedule_is_0700_coalesced_and_misfire_tolerant(monkeypatch, tm
         assert jobs[0].misfire_grace_time == app_module.CRON_MISFIRE_GRACE_SECONDS
     finally:
         scheduler.shutdown(wait=False)
+
+
+def test_ranking_job_keeps_cron_frozen_but_allows_current_cutoff_catchup(monkeypatch, tmp_path):
+    import api.app as app_module
+
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'job-cutoff.db'}")
+    options = []
+
+    def _build(_engine, **kwargs):
+        options.append(kwargs)
+        return SimpleNamespace(snapshot_date="2026-09-24", status="complete")
+
+    monkeypatch.setattr(app_module, "db_sink", sink)
+    monkeypatch.setattr(app_module.rankings_service, "build_snapshot", _build)
+
+    asyncio.run(app_module.execute_ranking_snapshot_job())
+    asyncio.run(app_module.execute_ranking_snapshot_job(True))
+
+    assert options == [
+        {"current_cutoff": False},
+        {"current_cutoff": True},
+    ]

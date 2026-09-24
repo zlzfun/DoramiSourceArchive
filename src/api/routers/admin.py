@@ -93,7 +93,7 @@ def refresh_rankings():
 
     engine = deps.get_db_sink().engine
     try:
-        rankings_service.build_snapshot_if_idle(engine)
+        rankings_service.build_snapshot_if_idle(engine, current_cutoff=True)
     except rankings_service.RankingSnapshotBusy as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     with Session(engine) as session:
