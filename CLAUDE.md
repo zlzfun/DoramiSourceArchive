@@ -70,13 +70,16 @@ Data is stored in the `data/` directory (SQLite `cms_data.db`,含 FTS5 全文索
   复检只对照修复清单不重新开放全面检视。轮次由执行者控制,原则是两人合作检视、协商,避免「乒乓球」式来回传球与发散;
   再有新面先判严重性,非严重记观察期。分歧与结论写进方案文档的检视节。
 - **合入前必须用户本地端到端验收 + 目检放行**,codex 通过也不例外;拍板后 squash 合入 main。
-- **tag 即发布(2026-09-14 拍板)**:PR 里不改 `src/version.py` / `pyproject.toml` / `uv.lock` 的版本号、不打 tag;
-  合入 main 的门禁 = PR + CI + 检视,发布 = 发版人在 main 上跑 `scripts/release.sh` 统一 bump 版本并打 annotated tag `vX.Y.Z`,
+- **开发版使用 alpha(2026-09-24 拍板)**:从最新正式 tag 开始新一波开发时,立即把
+  `src/version.py` / `pyproject.toml` / `uv.lock` 根包行同步改为下一版本的 `X.Y.Z-alpha`；
+  同一开发波内后续特性沿用这个 alpha 版本,不为每个 PR 另抢版本号、不打 alpha tag。
+  合入 main 的门禁 = PR + CI + 检视,正式发布 = 发版人在 main 上跑 `scripts/release.sh X.Y.Z`
+  去掉 `-alpha` 并打 annotated tag `vX.Y.Z`,
   两条部署脚本按 tag 部署(`--here` 显式部署工作树)。波次叙述仍可写「vX.Y 某某波」,号以实际发版为准。见 `docs/release-process.md`。
 
 ## Versioning
 
-单一事实来源是 `src/version.py` 的 `__version__`(SemVer:MAJOR=产品形态级改版 / MINOR=功能波 / PATCH=修复)。**版本号只在发版那一刻改,PR 不各自 bump**(2026-09-14「tag 即发布」拍板,见 [`docs/release-process.md`](docs/release-process.md)):发版人在 main 上跑 `scripts/release.sh X.Y.Z -m "说明"`,脚本校验(main/干净/与 origin 同步/号递增/tag 不存在)→ 改 `version.py` + `pyproject.toml` + `uv.lock` 根包行(只写索引,工作区那份带镜像改写永不入库)→ 提交 `release: vX.Y.Z` → annotated tag(正文附提交清单)→ 推送;tag 推上去后 `release.yml` 自动建 GitHub Release(核对由 `scripts/verify-release-ref.sh` 承担:tag 在 main 线上且目标 tag 里的版本号等于 tag 名)并串联 `deploy.yml` 等批准部署(issue #102)、`sync-master.yml` 同步内网 master。**两条部署脚本只认 tag**(`./deploy-docker.sh [vX.Y.Z]` / `./deploy.sh [vX.Y.Z]`,缺省最新;`--here` 显式部署工作树并标注非发布版;共用 `scripts/deploy-lib.sh`:fetch tags → 拒绝入库文件手改 → checkout 后以新脚本重执行 → 核对 tag=版本号 → SQLite 在线备份到 `backups/`)。`/api/runtime` 透出 `version` 与 `build{ref,sha,source}`(env `DORAMI_BUILD_REF/SHA` 由部署脚本导出:Docker 经 build args 烤进镜像、裸机经 ecosystem 透传;缺省退回 `git describe`),前端「设置 → 关于」显示版本与「发布版/非发布版」构建行。合入门禁 `ci.yml`(后端 pytest 拆 `backend-unit` / `backend-deploy` 两 job 各 4 worker 并行 + `backend (pytest)` 汇总门,前端 lint/build;issue #150)——发版只起名不验证,验证前移到合入。
+单一事实来源是 `src/version.py` 的 `__version__`(SemVer:MAJOR=产品形态级改版 / MINOR=功能波 / PATCH=修复)。**开发中的版本统一带 `-alpha`,正式发布去掉后缀**(2026-09-24 拍板,见 [`docs/release-process.md`](docs/release-process.md)):最新正式 tag 为 `vX.Y.Z` 时,新一波功能开发把三处版本同步设为下一个版本的 `X.Y.Z-alpha`;该开发波内所有后续特性复用它,不得自行增加 alpha 编号或打 alpha tag。发版人在 main 上跑 `scripts/release.sh X.Y.Z -m "说明"`,脚本校验(main/干净/与 origin 同步/号递增/tag 不存在)→ 把 `version.py` + `pyproject.toml` + `uv.lock` 根包行从 alpha 改为正式号(锁文件只写索引,工作区那份带镜像改写永不入库)→ 提交 `release: vX.Y.Z` → annotated tag(正文附提交清单)→ 推送;tag 推上去后 `release.yml` 自动建 GitHub Release(核对由 `scripts/verify-release-ref.sh` 承担:tag 在 main 线上且目标 tag 里的版本号等于 tag 名)并串联 `deploy.yml` 等批准部署(issue #102)、`sync-master.yml` 同步内网 master。**两条部署脚本只认正式 tag**(`./deploy-docker.sh [vX.Y.Z]` / `./deploy.sh [vX.Y.Z]`,缺省最新;alpha 工作树仅可用 `--here` 显式部署并标注非发布版;共用 `scripts/deploy-lib.sh`:fetch tags → 拒绝入库文件手改 → checkout 后以新脚本重执行 → 核对 tag=版本号 → SQLite 在线备份到 `backups/`)。`/api/runtime` 透出 `version` 与 `build{ref,sha,source}`(env `DORAMI_BUILD_REF/SHA` 由部署脚本导出:Docker 经 build args 烤进镜像、裸机经 ecosystem 透传;缺省退回 `git describe`),前端「设置 → 关于」显示版本与「发布版/非发布版」构建行。合入门禁 `ci.yml`(后端 pytest 拆 `backend-unit` / `backend-deploy` 两 job 各 4 worker 并行 + `backend (pytest)` 汇总门,前端 lint/build;issue #150)——发版只起名不验证,验证前移到合入。
 
 **波次年表**(每波一行,只记「现状是什么 / 落在哪」;设计取舍、目检返修与检视记录的全文见 [`docs/version-history.md`](docs/version-history.md)——**新波次的详细记录写到那里,本年表只加一行**,CLAUDE.md 有 150k 字符上限):
 
