@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import sys
+from types import SimpleNamespace
 
 import pytest
 from sqlmodel import Session
@@ -174,6 +175,43 @@ def test_threshold_validation_and_persistence(premium_engine):
         normalize_threshold(8.55)
     with pytest.raises(ValueError, match="1.0–10.0"):
         normalize_threshold(10.1)
+
+
+def test_threshold_uses_deployment_config_until_runtime_kv_overrides(
+    premium_engine, monkeypatch,
+):
+    import config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "settings",
+        SimpleNamespace(podcast=SimpleNamespace(premium_score_threshold=8.5)),
+    )
+    with Session(premium_engine) as session:
+        analysis = session.get(ArticleAnalysisRecord, "exact-final")
+        analysis.quality_score = 8.4
+        analysis.podcast_final_score = 8.4
+        session.add(analysis)
+        session.commit()
+
+        assert get_threshold(session) == 8.5
+
+    configured = {
+        item["episode_id"]: item for item in dashboard(premium_engine)["items"]
+    }["exact-final"]
+    assert configured["is_premium"] is False
+    assert configured["pending_generation"] is False
+    assert configured["tts_status"] == "not_started"
+
+    with Session(premium_engine) as session:
+        assert set_threshold(session, 8.0) == 8.0
+        assert get_threshold(session) == 8.0
+
+    overridden = {
+        item["episode_id"]: item for item in dashboard(premium_engine)["items"]
+    }["exact-final"]
+    assert overridden["is_premium"] is True
+    assert overridden["pending_generation"] is True
 
 
 def test_dashboard_uses_final_score_only_and_recalculates_without_changing_candidates(premium_engine):

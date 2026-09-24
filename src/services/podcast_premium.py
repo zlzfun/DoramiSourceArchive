@@ -118,13 +118,19 @@ def normalize_threshold(value: Any) -> float:
 
 
 def get_threshold(session: Session) -> float:
+    # The deployment setting (INI/env) is the baseline policy.  The database
+    # row is only a runtime override, so an absent or invalid override must not
+    # silently reset an operator-configured threshold to the code default.
+    from config import settings
+
+    configured_threshold = settings.podcast.premium_score_threshold
     row = session.get(AppSettingRecord, PREMIUM_SCORE_THRESHOLD_KEY)
     if row is None:
-        return DEFAULT_PREMIUM_SCORE_THRESHOLD
+        return configured_threshold
     try:
         return normalize_threshold(row.value)
     except ValueError:
-        return DEFAULT_PREMIUM_SCORE_THRESHOLD
+        return configured_threshold
 
 
 def set_threshold(session: Session, value: Any) -> float:
