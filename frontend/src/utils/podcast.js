@@ -54,6 +54,10 @@ export function podcastListAvailabilityMeta(podcast = {}) {
   const guide = podcast?.premium_guide || {};
   if (podcast?.condensed_audio_url) return { label: '精品导读音频已就绪', tone: 'ok' };
   const status = String(guide.status || '').toLowerCase();
+  const mode = String(guide.mode || '').toLowerCase();
+  if (mode === 'brief_zh' && guide.blog_ready) {
+    return { label: '中文导读已生成', tone: 'ok' };
+  }
   if (['queued', 'summarizing', 'synthesizing'].includes(status)) {
     return { label: guide.blog_ready ? '导读文字已生成，音频生成中…' : '精品导读生成中…', tone: 'run' };
   }

@@ -590,6 +590,130 @@ def test_premium_guide_score_below_threshold_never_calls_provider(
         assert analysis.analysis_basis == "asr_transcript"
 
 
+@pytest.mark.parametrize("language", ["en", "fr-FR", "ja"])
+def test_non_chinese_full_analysis_publishes_text_only_guide(
+    tmp_path, language
+):
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / f'brief-{language}.db'}")
+    transcript = json.dumps({"text": "complete transcript", "language": language})
+    with Session(sink.engine) as session:
+        session.add(SourceConfigRecord(
+            source_id="podcast-brief", name="Brief", source_type="podcast",
+            url="https://example.test/brief.xml", created_at=STAMP, updated_at=STAMP,
+        ))
+        session.add(ArticleRecord(
+            id="episode-brief", title="Brief", content_type="podcast_episode",
+            source_id="podcast-brief", source_url="https://example.test/brief",
+            publish_date=STAMP, fetched_date=STAMP, content="notes",
+            extensions_json='{"duration_seconds":2400}',
+        ))
+        session.commit()
+        session.add(PodcastTextArtifactRecord(
+            id="transcript-brief", episode_id="episode-brief",
+            kind="normalized_transcript", version=1,
+            content_hash=hashlib.sha256(transcript.encode()).hexdigest(),
+            inline_text=transcript, language=language, authority_id="test-authority",
+            provenance_json='{"provider":"fake"}', created_at=STAMP,
+        ))
+        session.commit()
+        session.add(ArticleAnalysisRecord(
+            article_id="episode-brief", status="succeeded", quality_score=7.2,
+            podcast_initial_score=6.4, podcast_final_score=7.2,
+            score_reason="全文分析完成", analysis_basis="asr_transcript",
+            transcript_artifact_id="transcript-brief",
+            created_at=STAMP, updated_at=STAMP,
+        ))
+        session.commit()
+
+    calls = {"blog": 0}
+
+    class BriefTextProvider(TextProvider):
+        async def create_blog(self, **kwargs):
+            calls["blog"] += 1
+            assert kwargs["max_chars"] == 3500
+            return PremiumGuideDraft(blog_markdown="一篇短小中文导读。")
+
+        async def create_narration(self, **_kwargs):
+            pytest.fail("brief_zh must not generate narration")
+
+    class ForbiddenTts:
+        async def synthesize(self, _text):
+            pytest.fail("brief_zh must not call TTS")
+
+    store = PodcastArtifactStore(
+        sink.engine, tmp_path / f"brief-audio-{language}", max_bytes=1024 * 1024,
+        total_quota_bytes=10 * 1024 * 1024, minimum_free_bytes=0,
+        staging_ttl_seconds=60, allowed_mime_types=("audio/wav",),
+        probe_runner=lambda *_a, **_k: None,
+    )
+    config = _external_config()
+    assert pending_premium_guide_candidates(
+        sink.engine,
+        minimum_duration_seconds=config.premium_min_duration_seconds,
+        score_threshold=config.premium_score_threshold,
+    ) == ["episode-brief"]
+    result = asyncio.run(run_premium_guide(
+        sink.engine, store, episode_id="episode-brief", config=config,
+        text_provider=BriefTextProvider(), tts_provider=ForbiddenTts(),
+    ))
+    assert result["mode"] == "brief_zh"
+    assert result["reason"] == "non_chinese_text_guide"
+    assert result["audio_artifact_id"] is None
+    assert calls == {"blog": 1}
+    assert pending_premium_guide_candidates(
+        sink.engine,
+        minimum_duration_seconds=config.premium_min_duration_seconds,
+        score_threshold=config.premium_score_threshold,
+    ) == []
+    with Session(sink.engine) as session:
+        assert session.get(
+            PodcastTextPublicationRecord, "episode-brief:digest_blog_zh"
+        ) is not None
+        assert session.get(
+            PodcastTextPublicationRecord, "episode-brief:narration_script_zh"
+        ) is None
+        guide = json.loads(
+            session.get(ArticleRecord, "episode-brief").extensions_json
+        )["premium_guide"]
+        assert guide["mode"] == "brief_zh"
+        assert guide["language"] == language.lower()
+        assert guide["language_source"] == "transcript_artifact"
+
+
+@pytest.mark.parametrize("language", ["zh-CN", "und", "mul"])
+def test_chinese_or_unknown_low_score_does_not_auto_generate_guide(
+    tmp_path, language
+):
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / f'no-brief-{language}.db'}")
+    transcript = json.dumps({"text": "complete transcript"})
+    with Session(sink.engine) as session:
+        session.add(ArticleRecord(
+            id="episode-no-brief", title="No brief", content_type="podcast_episode",
+            source_id="podcast-no-brief", source_url="https://example.test/no-brief",
+            publish_date=STAMP, fetched_date=STAMP, content="notes",
+            extensions_json='{"duration_seconds":2400}',
+        ))
+        session.commit()
+        session.add(PodcastTextArtifactRecord(
+            id="transcript-no-brief", episode_id="episode-no-brief",
+            kind="normalized_transcript", version=1,
+            content_hash=hashlib.sha256(transcript.encode()).hexdigest(),
+            inline_text=transcript, language=language, authority_id="test-authority",
+            provenance_json="{}", created_at=STAMP,
+        ))
+        session.commit()
+        session.add(ArticleAnalysisRecord(
+            article_id="episode-no-brief", status="succeeded", quality_score=7.2,
+            podcast_initial_score=6.4, podcast_final_score=7.2,
+            analysis_basis="asr_transcript", transcript_artifact_id="transcript-no-brief",
+            created_at=STAMP, updated_at=STAMP,
+        ))
+        session.commit()
+    assert pending_premium_guide_candidates(
+        sink.engine, minimum_duration_seconds=1200, score_threshold=8.5,
+    ) == []
+
+
 def test_premium_guide_skips_episode_not_over_twenty_minutes(tmp_path):
     sink = DatabaseStorage(f"sqlite:///{tmp_path / 'short.db'}")
     transcript = json.dumps({"text": "short episode"})

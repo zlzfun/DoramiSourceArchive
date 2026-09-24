@@ -206,6 +206,7 @@ test('completed full analysis replaces the intro basis and reports the premium r
   // 模拟列表与详情交错刷新：任一权威投影已是全文 basis，就不能退回简介标签。
   assert.equal(podcastAnalysisBasis(complete), 'publisher_transcript');
   assert.equal(podcastAssessmentMeta(complete).label, '全文深度分析');
+  assert.doesNotMatch(podcastAssessmentMeta(complete).note, /ASR|逐字稿|provider/);
   assert.equal(podcastFullProcessingMeta(complete).label, '全文评分完成');
   assert.match(podcastFullProcessingMeta(complete).detail, /当前分已替换简介初评/);
 

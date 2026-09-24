@@ -197,6 +197,7 @@ test('podcast lists reuse taxonomy tag styling and hide pipeline status', async 
   assert.match(reader, /const analysisTag =[\s\S]*className="reader-entry-tag"/);
   assert.match(reader, /podcastListAvailabilityMeta/);
   assert.doesNotMatch(podcastBranch, /podcastFullProcessingMeta|analysisStatus\.label/);
+  assert.doesNotMatch(podcastBranch, /processing_error|error_code|next_retry_at|\.error\b/);
   assert.equal(reader.match(/className="reader-entry-tag">\{analysisLabel\}/g)?.length, 1);
 });
 
@@ -222,4 +223,3 @@ test('blog-only guide without condensed audio is visible in experience panel and
   assert.match(experience, /isBlogOnlyGuide = hasGuideBlog && !hasGuideAudio/);
   assert.match(experience, /guideVisible = isBlogOnlyGuide \|\| \(variant === 'digest' && hasGuideAudio\)/);
 });
-

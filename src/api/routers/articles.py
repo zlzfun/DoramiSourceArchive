@@ -500,6 +500,7 @@ def get_articles(
             processing=processings.get(record.id),
             published_podcast_text_kinds=text_publications.get(record.id, set()),
             digest_audio=digest_audios.get(record.id),
+            include_podcast_diagnostics=is_admin,
         )
         for record in records
     ]
@@ -653,9 +654,10 @@ async def get_article(article_id: str, request: Request):
     record = await deps.get_db_sink().get(article_id)
     if not record:
         raise HTTPException(status_code=404, detail="文章未找到")
+    auth_session = _app().current_auth_session(request)
+    is_admin = bool(auth_session and auth_session.get("role") == "admin")
     if record.source_id:
-        auth_session = _app().current_auth_session(request)
-        if not (auth_session and auth_session.get("role") == "admin"):
+        if not is_admin:
             with Session(deps.get_db_sink().engine) as session:
                 if record.source_id in source_visibility_service.reader_unavailable_source_ids(session):
                     # 与列表口径一致：隐藏源的单条详情对读者会话按不存在处理。
@@ -690,6 +692,7 @@ async def get_article(article_id: str, request: Request):
             processing=processings.get(record.id),
             published_podcast_text_kinds=text_publications.get(record.id, set()),
             digest_audio=digest_audios.get(record.id),
+            include_podcast_diagnostics=is_admin,
         )
 
 

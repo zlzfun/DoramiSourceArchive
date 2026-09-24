@@ -23,3 +23,11 @@ test('list labels separate text, running synthesis, failed audio and playable au
   assert.equal(podcastListAvailabilityMeta({ premium_guide: { ...guide, status: '' } }).label, '导读文字已生成，音频待生成');
   assert.equal(podcastListAvailabilityMeta({ condensed_audio_url: '/audio', premium_guide: guide }).label, '精品导读音频已就绪');
 });
+
+test('non-Chinese text-only guide never promises pending audio', () => {
+  assert.deepEqual(podcastListAvailabilityMeta({
+    premium_guide: { blog_ready: true, status: 'ready', mode: 'brief_zh' },
+  }), {
+    label: '中文导读已生成', tone: 'ok',
+  });
+});

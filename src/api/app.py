@@ -774,14 +774,23 @@ def schedule_podcast_premium_guide(episode_id: str) -> bool:
                         duration = float(ext.get("duration_seconds") or 0)
                     except Exception:
                         duration = 0.0
+            eligibility = podcast_premium_guide_service.guide_eligibility(
+                db_sink.engine,
+                episode_id=episode_id,
+                score_threshold=premium_threshold,
+            )
             plan = podcast_premium_guide_service.calculate_solo_deep_plan(
                 duration,
                 hard_max_audio_minutes=settings.podcast.premium_max_audio_minutes,
             )
+            should_synthesize_audio = (
+                eligibility.should_synthesize_audio
+                and plan.should_synthesize_audio
+            )
             voice = settings.podcast.default_voice_profile
             if not llm_config.configured:
                 raise RuntimeError("精品导读所需的 LLM 配置尚未就绪")
-            if plan.should_synthesize_audio and (not aliyun_config.tts_configured or not voice):
+            if should_synthesize_audio and (not aliyun_config.tts_configured or not voice):
                 raise RuntimeError("精品导读所需的 TTS 配置尚未就绪")
             tts_provider = (
                 make_premium_tts_provider(
@@ -791,7 +800,7 @@ def schedule_podcast_premium_guide(episode_id: str) -> bool:
                     voice_profile=voice,
                     max_audio_bytes=podcast_artifact_store.max_bytes,
                 )
-                if plan.should_synthesize_audio
+                if should_synthesize_audio
                 else None
             )
             await podcast_premium_guide_service.run_premium_guide(
