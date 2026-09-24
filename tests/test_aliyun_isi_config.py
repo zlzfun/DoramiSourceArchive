@@ -193,8 +193,10 @@ def test_tts_usage_settlement_defaults_to_manual():
     assert config.AliyunIsiConfig().tts_usage_settlement_mode == "manual"
 
 
-def test_asr_single_audio_limit_defaults_to_twelve_hours():
-    assert config.AliyunIsiConfig().asr_max_audio_seconds_per_file == 12 * 60 * 60
+def test_asr_limits_default_to_daily_forty_hours_and_three_hours_per_episode():
+    defaults = config.AliyunIsiConfig()
+    assert defaults.asr_daily_audio_seconds_limit == 40 * 60 * 60
+    assert defaults.asr_max_audio_seconds_per_file == 3 * 60 * 60
 
 
 def test_compose_empty_asr_switches_keep_enabled_defaults(monkeypatch):
