@@ -136,6 +136,54 @@ def test_tts_retry_reuses_valid_published_text_without_llm_regeneration(tmp_path
         assert session.get(PodcastTextPublicationRecord, "episode-force:narration_script_zh").artifact_id == script
 
 
+def test_ordinary_rerun_reuses_matching_published_audio_without_tts(tmp_path):
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'published-audio-reuse.db'}")
+    _seed_force_candidate(sink)
+    store = PodcastArtifactStore(
+        sink.engine, tmp_path / "published-audio-reuse", max_bytes=1024 * 1024,
+        total_quota_bytes=10 * 1024 * 1024, minimum_free_bytes=0,
+        staging_ttl_seconds=60, allowed_mime_types=("audio/wav",),
+        probe_runner=lambda *_a, **_k: subprocess.CompletedProcess(
+            [], 0,
+            stdout='{"streams":[{"codec_type":"audio","duration":"1"}],"format":{"duration":"1"}}',
+            stderr="",
+        ),
+    )
+
+    class CountingTts(TtsProvider):
+        calls = 0
+
+        async def synthesize(self, text):
+            self.calls += 1
+            return await super().synthesize(text)
+
+    tts = CountingTts()
+    kwargs = dict(
+        engine=sink.engine,
+        store=store,
+        episode_id="episode-force",
+        config=_external_config(),
+        text_provider=TextProvider(),
+        tts_provider=tts,
+        selection_override=True,
+    )
+    first = asyncio.run(run_premium_guide(**kwargs))
+    second = asyncio.run(run_premium_guide(**kwargs))
+
+    assert second["audio_artifact_id"] == first["audio_artifact_id"]
+    assert tts.calls == 1
+    with Session(sink.engine) as session:
+        audio_rows = session.exec(
+            select(PodcastArtifactRecord).where(
+                PodcastArtifactRecord.episode_id == "episode-force",
+                PodcastArtifactRecord.kind == "digest_audio_zh",
+            )
+        ).all()
+        assert [(row.id, row.status) for row in audio_rows] == [
+            (first["audio_artifact_id"], "published")
+        ]
+
+
 def test_tts_cache_preflight_blocks_before_text_generation(tmp_path):
     from services.bailian_speech_client import BailianSpeechError
 

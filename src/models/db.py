@@ -2112,6 +2112,17 @@ class PodcastArtifactRecord(SQLModel, table=True):
                 "processing_id IS NOT NULL AND kind = 'digest_audio_zh'"
             ),
         ),
+        Index(
+            "uq_podcast_artifacts_active_episode",
+            "episode_id",
+            unique=True,
+            sqlite_where=text(
+                "kind = 'digest_audio_zh' AND status = 'published'"
+            ),
+            postgresql_where=text(
+                "kind = 'digest_audio_zh' AND status = 'published'"
+            ),
+        ),
         UniqueConstraint(
             "producing_attempt_id",
             name="uq_podcast_artifacts_producing_attempt",

@@ -588,6 +588,36 @@ def _reusable_guide_text(
     return blog, narration if matches(narration, blog) else None
 
 
+def _reusable_published_audio(
+    session: Session,
+    store: PodcastArtifactStore,
+    *,
+    episode_id: str,
+    narration: PodcastTextArtifactRecord,
+) -> PodcastArtifactRecord | None:
+    """Return an intact publication for the exact current narration, if any."""
+
+    candidates = session.exec(
+        select(PodcastArtifactRecord)
+        .where(
+            PodcastArtifactRecord.episode_id == episode_id,
+            PodcastArtifactRecord.kind == "digest_audio_zh",
+            PodcastArtifactRecord.status == "published",
+            PodcastArtifactRecord.narration_artifact_id == narration.id,
+            PodcastArtifactRecord.narration_content_hash == narration.content_hash,
+        )
+        .order_by(
+            PodcastArtifactRecord.published_at.desc(),
+            PodcastArtifactRecord.id.desc(),
+        )
+    ).all()
+    for candidate in candidates:
+        if store.is_intact(candidate):
+            session.expunge(candidate)
+            return candidate
+    return None
+
+
 async def run_premium_guide(
     engine: Engine,
     store: PodcastArtifactStore,
@@ -777,6 +807,31 @@ async def run_premium_guide(
         narration_id = reusable_narration.id
         narration_hash = reusable_narration.content_hash
         narration_text = reusable_narration.inline_text
+
+        with Session(engine) as session:
+            published_audio = _reusable_published_audio(
+                session,
+                store,
+                episode_id=episode_id,
+                narration=reusable_narration,
+            )
+        if published_audio is not None:
+            _set_episode_status(
+                engine,
+                episode_id,
+                "ready",
+                audio=published_audio,
+                guide_metadata=guide_metadata,
+            )
+            return {
+                "episode_id": episode_id,
+                "is_premium": score >= effective_threshold,
+                "selection_override": selection_override,
+                "score": score,
+                "mode": eligibility.mode,
+                "audio_artifact_id": published_audio.id,
+                "duration_seconds": published_audio.duration_seconds,
+            }
 
         _set_episode_status(
             engine, episode_id, "synthesizing", guide_metadata=guide_metadata
