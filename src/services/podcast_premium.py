@@ -275,13 +275,24 @@ def _guide_status(state: _EpisodeState) -> tuple[str, str]:
     """
 
     guide = _premium_guide(state.episode)
+    guide_mode = str(guide.get("mode") or "")
     status = str(guide.get("status") or "not_started")
     error = str(guide.get("error") or "")
     if state.audio_ready:
         status = "ready"
     elif status not in TTS_STATUS_LABELS:
         status = "not_started"
-    if status == "ready" and not state.audio_ready:
+    if (
+        status == "ready"
+        and guide_mode == "brief_zh"
+        and state.blog_ready
+        and not state.audio_ready
+    ):
+        # brief_zh is a completed text product.  Missing audio is intentional,
+        # not a failed TTS job; operators can still request audio on demand.
+        status = "not_started"
+        error = ""
+    elif status == "ready" and not state.audio_ready:
         status = "failed"
         error = error or "TTS 标记完成，但已发布音频成品不存在"
     return status, error
@@ -483,6 +494,7 @@ def _serialize_state(state: _EpisodeState, *, threshold: float) -> dict[str, Any
         raw_basis if raw_basis else "尚未分析",
     )
     guide = _premium_guide(state.episode)
+    guide_mode = str(guide.get("mode") or "")
     guide_status, guide_error = _guide_status(state)
     force_request = guide.get("force_request")
     if not isinstance(force_request, dict):
@@ -524,6 +536,7 @@ def _serialize_state(state: _EpisodeState, *, threshold: float) -> dict[str, Any
         "attempt_count": int(process.attempt_count if process else 0),
         "reason": reason_text,
         "blog_ready": state.blog_ready,
+        "guide_mode": guide_mode,
         "audio_ready": state.audio_ready,
         "historical_generated": historical_generated,
         "pending_generation": current_premium and not historical_generated,
@@ -794,6 +807,7 @@ def _timeline(
         rows.append({"step": stage, "label": label, "state": row_state, "note": note, "at": at})
 
     guide = _premium_guide(state.episode)
+    guide_mode = str(guide.get("mode") or "")
     guide_status, guide_error = _guide_status(state)
     failed_stage = str(guide.get("failed_stage") or "")
     guide_at = str(guide.get("updated_at") or "")
@@ -817,6 +831,8 @@ def _timeline(
         guide_row = {"state": "run", "note": "正在生成导读与口播稿"}
     elif blog and script_current:
         guide_row = {"state": "done", "note": "导读博客与当前口播稿已发布"}
+    elif blog and guide_mode == "brief_zh":
+        guide_row = {"state": "done", "note": "短版中文导读已发布（文字版）"}
     elif blog:
         guide_row = {"state": "warn", "note": "导读博客已发布，口播稿尚未完成或版本不匹配"}
     elif guide_status == "failed" and failed_stage != "synthesizing":
@@ -843,6 +859,11 @@ def _timeline(
         tts_row = {"state": "run", "note": "正在合成中文精简音频，完成后自动发布"}
     elif guide_status == "failed" and failed_stage == "synthesizing":
         tts_row = {"state": "fail", "note": guide_error or "合成失败"}
+    elif guide_mode == "brief_zh" and blog:
+        tts_row = {
+            "state": "skipped",
+            "note": "文字版导读无需自动合成音频，可按需生成",
+        }
     elif guide_status == "ready":
         tts_row = {"state": "warn", "note": guide_error or "音频成品缺失"}
     elif guide_row["state"] in {"run", "pending"}:

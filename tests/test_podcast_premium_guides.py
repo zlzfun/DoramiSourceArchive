@@ -670,6 +670,12 @@ def test_non_chinese_full_analysis_publishes_text_only_guide(
         minimum_duration_seconds=config.premium_min_duration_seconds,
         score_threshold=config.premium_score_threshold,
     ) == []
+    task = dashboard(sink.engine)["items"][0]
+    assert task["guide_mode"] == "brief_zh"
+    assert task["blog_ready"] is True
+    assert task["audio_ready"] is False
+    assert task["tts_status"] == "not_started"
+    assert task["tts_error"] == ""
     with Session(sink.engine) as session:
         assert session.get(
             PodcastTextPublicationRecord, "episode-brief:digest_blog_zh"
