@@ -20,6 +20,12 @@ _config`）与 triggers 不在 `SQLModel.metadata` 里，autogenerate 会误报�
 **查询降级契约**：`fts_search_ids(session_or_conn, search)` 返回命中 rowid 列表
 （`[]` = FTS 可用但零命中，仍走 FTS 语义），或 `None` = 不可用/输入过短/异常，
 调用方据此回退 LIKE。
+
+**Unicode 归一化**：trigram 索引按原始字节匹配，排版用的 Unicode 变体
+（如 U+2011 非破坏性连字符 vs U+002D 普通连字符）会导致搜索不命中。
+``normalize_for_search`` 在 Python 端归一化搜索词，trigger 内用 SQLite REPLACE
+链归一化索引内容，两端同时处理保证一致。短于 trigram 下限的词（如 "AI"、"as"）
+由 ``build_search_components`` 分离出来交给调用方做 LIKE 回退。
 """
 
 from __future__ import annotations
@@ -41,27 +47,100 @@ _SOURCE_TABLE = "articles"
 # 故整串短于此长度、或切词后无一词达标时直接判不可用、回退 LIKE。
 MIN_TRIGRAM_CHARS = 3
 
+# ── Unicode 归一化 ──────────────────────────────────────────────────────────
+# Python 端：str.translate 映射表，用于搜索词归一化。
+_NORMALIZE_TABLE = str.maketrans({
+    0x2010: '-',   # HYPHEN
+    0x2011: '-',   # NON-BREAKING HYPHEN (实际案例：AI‑Native 中的 ‑)
+    0x2012: '-',   # FIGURE DASH
+    0x2013: '-',   # EN DASH
+    0x2014: '-',   # EM DASH
+    0x2015: '-',   # HORIZONTAL BAR
+    0x2212: '-',   # MINUS SIGN
+    0xFF0D: '-',   # FULLWIDTH HYPHEN-MINUS
+    0xFE63: '-',   # SMALL HYPHEN-MINUS
+    0x2018: "'",   # LEFT SINGLE QUOTATION MARK
+    0x2019: "'",   # RIGHT SINGLE QUOTATION MARK
+    0x201C: '"',   # LEFT DOUBLE QUOTATION MARK
+    0x201D: '"',   # RIGHT DOUBLE QUOTATION MARK
+    0xFF1A: ':',   # FULLWIDTH COLON
+    0xFF0C: ',',   # FULLWIDTH COMMA
+    0xFF1B: ';',   # FULLWIDTH SEMICOLON
+    0x3000: ' ',   # IDEOGRAPHIC SPACE
+})
+
+# SQLite 端：trigger 内用 REPLACE() 链实现相同的归一化（UTF-8 十六进制 -> 替换字符）。
+_SQL_NORMALIZE_PAIRS: tuple[tuple[str, str], ...] = (
+    ("E28090", "-"),   # U+2010 HYPHEN
+    ("E28091", "-"),   # U+2011 NON-BREAKING HYPHEN
+    ("E28092", "-"),   # U+2012 FIGURE DASH
+    ("E28093", "-"),   # U+2013 EN DASH
+    ("E28094", "-"),   # U+2014 EM DASH
+    ("E28095", "-"),   # U+2015 HORIZONTAL BAR
+    ("E28892", "-"),   # U+2212 MINUS SIGN
+    ("EFBC8D", "-"),   # U+FF0D FULLWIDTH HYPHEN-MINUS
+    ("E28098", "'"),   # U+2018 LEFT SINGLE QUOTATION MARK
+    ("E28099", "'"),   # U+2019 RIGHT SINGLE QUOTATION MARK
+    ("E2809C", '"'),   # U+201C LEFT DOUBLE QUOTATION MARK
+    ("E2809D", '"'),   # U+201D RIGHT DOUBLE QUOTATION MARK
+)
+
+
+def normalize_for_search(text_value: str) -> str:
+    """Python 端 Unicode 归一化：把排版用的 Unicode 变体映射到 ASCII 等价字符。
+
+    用于搜索词预处理，与 trigger 端的 REPLACE 链保持同一映射，保证搜索词的
+    trigram 与索引内容的 trigram 一致。
+    """
+    if not text_value:
+        return text_value
+    return text_value.translate(_NORMALIZE_TABLE)
+
+
+def _sql_normalize_expr(col: str) -> str:
+    """为 SQLite 列表达式 *col* 包裹嵌套 REPLACE() 调用，实现 Unicode 归一化。"""
+    expr = col
+    for hex_bytes, repl in _SQL_NORMALIZE_PAIRS:
+        safe_repl = repl.replace("'", "''")
+        expr = f"REPLACE({expr}, X'{hex_bytes}', '{safe_repl}')"
+    return expr
+
+
+# ── FTS DDL ─────────────────────────────────────────────────────────────────
+
 _CREATE_TABLE = (
     f"CREATE VIRTUAL TABLE IF NOT EXISTS {FTS_TABLE} USING fts5("
     f"title, content, content='{_SOURCE_TABLE}', content_rowid='rowid', "
     f"tokenize='trigram')"
 )
 
-# external-content 标准同步 trigger 模板：insert 直插；delete/update 需先发
-# 'delete' 特殊指令告知 FTS 撤旧行（external content 不留正文副本，删除须带旧值），
-# update = delete 旧 + insert 新两条。
-_TRIGGER_DDL = (
-    f"""CREATE TRIGGER IF NOT EXISTS {FTS_TABLE}_ai AFTER INSERT ON {_SOURCE_TABLE} BEGIN
-  INSERT INTO {FTS_TABLE}(rowid, title, content) VALUES (new.rowid, new.title, new.content);
+
+def _build_trigger_ddl() -> tuple[str, ...]:
+    """构建包含 Unicode 归一化的 FTS 同步 trigger。
+
+    insert 直插归一化后的 title/content；delete/update 需先发 'delete' 特殊指令
+    告知 FTS 撤旧行（external content 不留正文副本，删除须带旧值的归一化形式），
+    update = delete 旧 + insert 新两条。
+    """
+    nt_new = _sql_normalize_expr("new.title")
+    nc_new = _sql_normalize_expr("new.content")
+    nt_old = _sql_normalize_expr("old.title")
+    nc_old = _sql_normalize_expr("old.content")
+    return (
+        f"""CREATE TRIGGER IF NOT EXISTS {FTS_TABLE}_ai AFTER INSERT ON {_SOURCE_TABLE} BEGIN
+  INSERT INTO {FTS_TABLE}(rowid, title, content) VALUES (new.rowid, {nt_new}, {nc_new});
 END""",
-    f"""CREATE TRIGGER IF NOT EXISTS {FTS_TABLE}_ad AFTER DELETE ON {_SOURCE_TABLE} BEGIN
-  INSERT INTO {FTS_TABLE}({FTS_TABLE}, rowid, title, content) VALUES('delete', old.rowid, old.title, old.content);
+        f"""CREATE TRIGGER IF NOT EXISTS {FTS_TABLE}_ad AFTER DELETE ON {_SOURCE_TABLE} BEGIN
+  INSERT INTO {FTS_TABLE}({FTS_TABLE}, rowid, title, content) VALUES('delete', old.rowid, {nt_old}, {nc_old});
 END""",
-    f"""CREATE TRIGGER IF NOT EXISTS {FTS_TABLE}_au AFTER UPDATE ON {_SOURCE_TABLE} BEGIN
-  INSERT INTO {FTS_TABLE}({FTS_TABLE}, rowid, title, content) VALUES('delete', old.rowid, old.title, old.content);
-  INSERT INTO {FTS_TABLE}(rowid, title, content) VALUES (new.rowid, new.title, new.content);
+        f"""CREATE TRIGGER IF NOT EXISTS {FTS_TABLE}_au AFTER UPDATE ON {_SOURCE_TABLE} BEGIN
+  INSERT INTO {FTS_TABLE}({FTS_TABLE}, rowid, title, content) VALUES('delete', old.rowid, {nt_old}, {nc_old});
+  INSERT INTO {FTS_TABLE}(rowid, title, content) VALUES (new.rowid, {nt_new}, {nc_new});
 END""",
-)
+    )
+
+
+_TRIGGER_DDL = _build_trigger_ddl()
 
 _DROP_STMTS = (
     f"DROP TRIGGER IF EXISTS {FTS_TABLE}_ai",
@@ -70,6 +149,8 @@ _DROP_STMTS = (
     f"DROP TABLE IF EXISTS {FTS_TABLE}",  # 虚拟表 DROP 会连带清掉 shadow 表
 )
 
+
+# ── 内部工具 ────────────────────────────────────────────────────────────────
 
 @contextmanager
 def _as_connection(bind):
@@ -94,6 +175,21 @@ def _table_exists(conn: Connection) -> bool:
     ).first() is not None
 
 
+def _populate_fts_normalized(conn: Connection) -> None:
+    """批量灌入存量文章（带 Unicode 归一化）。
+
+    不使用 FTS5 的 'rebuild' 指令——rebuild 直读 content 表原始文本，跳过
+    trigger 中的 REPLACE 归一化，索引仍含排版用 Unicode 变体。改用 SELECT
+    手动灌入，与 trigger 保持同一归一化路径。
+    """
+    norm_title = _sql_normalize_expr("title")
+    norm_content = _sql_normalize_expr("content")
+    conn.exec_driver_sql(
+        f"INSERT INTO {FTS_TABLE}(rowid, title, content) "
+        f"SELECT rowid, {norm_title}, {norm_content} FROM {_SOURCE_TABLE}"
+    )
+
+
 def _install_fts(conn: Connection) -> None:
     """在一个已开事务的 Connection 上幂等安装 FTS 表 + triggers；首次创建时回填存量。"""
     existed = _table_exists(conn)
@@ -101,12 +197,13 @@ def _install_fts(conn: Connection) -> None:
     for ddl in _TRIGGER_DDL:
         conn.exec_driver_sql(ddl)
     if not existed:
-        # 首次创建：把存量文章批量灌入索引（external content 的 'rebuild' 指令）。
-        conn.exec_driver_sql(f"INSERT INTO {FTS_TABLE}({FTS_TABLE}) VALUES('rebuild')")
+        _populate_fts_normalized(conn)
 
+
+# ── 公共 API ───────────────────────────────────────────────────────────────
 
 def ensure_fts(bind) -> bool:
-    """幂等创建 FTS 虚拟表 + 同步 triggers（首次创建时 rebuild 回填存量）。
+    """幂等创建 FTS 虚拟表 + 同步 triggers（首次创建时回填存量）。
 
     `bind` 可为 Engine（运行期 `DatabaseStorage`：自开事务）或 Connection
     （Alembic 迁移 `op.get_bind()`：复用其事务）。老 SQLite 无 fts5/trigram 时
@@ -139,6 +236,16 @@ def drop_fts(bind) -> None:
         _run(bind)
 
 
+def rebuild_fts_normalized(bind) -> bool:
+    """删除并重建 FTS 索引（含 Unicode 归一化 trigger 和索引内容）。
+
+    现有索引可能用旧 trigger（无归一化）建立，排版用 Unicode 变体仍在索引中。
+    本函数 drop -> ensure 一步完成，新索引与新 trigger 均带归一化。
+    """
+    drop_fts(bind)
+    return ensure_fts(bind)
+
+
 def fts_available(bind) -> bool:
     """探测 FTS 虚拟表是否已建（表不存在 / 探测异常均视为不可用）。"""
     try:
@@ -151,17 +258,43 @@ def fts_available(bind) -> bool:
 def build_match_query(search: str) -> Optional[str]:
     """把用户输入安全包装成 FTS5 短语（phrase）查询。
 
-    按空白切词，每词包成双引号短语（内部双引号翻倍转义）以规避 FTS5 运算符
-    （AND/OR/NOT/*/(/) 等）被误解释；短于 trigram 下限的词丢弃（trigram 无法
-    匹配 < 3 字的短语，留着会拖垮整条 AND）。多词以 AND 连接。无可用词时返回 None。
+    先做 Unicode 归一化，再按空白切词，每词包成双引号短语（内部双引号翻倍转义）
+    以规避 FTS5 运算符（AND/OR/NOT/*/(/) 等）被误解释；短于 trigram 下限的词
+    丢弃（trigram 无法匹配 < 3 字的短语，留着会拖垮整条 AND）。多词以 AND 连接。
+    无可用词时返回 None。
     """
     if not search:
         return None
-    tokens = [t for t in search.split() if len(t) >= MIN_TRIGRAM_CHARS]
+    normalized = normalize_for_search(search)
+    tokens = [t for t in normalized.split() if len(t) >= MIN_TRIGRAM_CHARS]
     if not tokens:
         return None
     phrases = ['"' + t.replace('"', '""') + '"' for t in tokens]
     return " AND ".join(phrases)
+
+
+def build_search_components(search: str) -> tuple[Optional[str], list[str]]:
+    """把用户输入拆分成 FTS5 可处理的长词和需要 LIKE 回退的短词。
+
+    返回 ``(fts_match, short_words)``：
+
+    - *fts_match*：>= 3 字符的词组成的 FTS5 MATCH 表达式，或 ``None``（无达标词）；
+    - *short_words*：< 3 字符的词列表（如 ``['AI', 'as']``），调用方应为这些词
+      追加 ``title LIKE '%word%'`` 条件。
+
+    两者均经过 Unicode 归一化。
+    """
+    if not search:
+        return None, []
+    normalized = normalize_for_search(search.strip())
+    all_tokens = normalized.split()
+    long_tokens = [t for t in all_tokens if len(t) >= MIN_TRIGRAM_CHARS]
+    short_tokens = [t for t in all_tokens if 0 < len(t) < MIN_TRIGRAM_CHARS]
+    fts_match = None
+    if long_tokens:
+        phrases = ['"' + t.replace('"', '""') + '"' for t in long_tokens]
+        fts_match = " AND ".join(phrases)
+    return fts_match, short_tokens
 
 
 def fts_search_ids(bind, search: Optional[str]) -> Optional[list]:

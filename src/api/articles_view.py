@@ -16,7 +16,7 @@ from api.textutils import _date_end_value, _json_loads, _split_csv
 from models.content import BaseContent
 from models.db import ArticleRecord
 from services import podcast_premium
-from storage.fts import fts_search_ids
+from storage.fts import build_search_components, fts_search_ids, normalize_for_search
 
 
 class GenericContent(BaseContent):
@@ -264,13 +264,20 @@ def apply_article_query_filters(
     if has_content is not None:
         query = query.where(ArticleRecord.has_content == has_content)
     if search:
-        # 先试 FTS5 全文检索（标题+正文）；不可用/输入过短时 fts_search_ids 返回
-        # None，回退到原标题 LIKE。命中按 rowid 过滤，排序/分页/其它过滤保持不变。
+        # FTS5 全文检索 + 短词 LIKE 补漏。
+        # build_search_components 把搜索词拆成 FTS 可处理的长词（>= 3 字符）和
+        # 需要 LIKE 回退的短词（如 "AI"、"as"——trigram 无法匹配 < 3 字）。
+        # 两部分以 AND 组合：FTS 缩小候选集，LIKE 补上短词约束。
+        _, short_words = build_search_components(search)
         fts_ids = fts_search_ids(session, search) if session is not None else None
         if fts_ids is not None:
             query = query.where(literal_column("articles.rowid").in_(fts_ids))
-        else:
-            query = query.where(ArticleRecord.title.contains(search))
+        elif not short_words:
+            # FTS 不可用且无短词 -> 整串 LIKE 回退（归一化后匹配）
+            query = query.where(ArticleRecord.title.contains(normalize_for_search(search)))
+        # 短词逐个追加 title LIKE 条件（与 FTS 结果取交集）
+        for word in short_words:
+            query = query.where(ArticleRecord.title.contains(word))
 
     if publish_date_start:
         query = query.where(ArticleRecord.publish_date >= publish_date_start)
