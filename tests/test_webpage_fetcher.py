@@ -6,6 +6,8 @@ import os
 import sys
 from urllib.parse import urljoin
 
+from sqlmodel import Session
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from fetchers.impl.webpage_fetcher import (
@@ -32,6 +34,8 @@ from fetchers.impl.curated_core_fetcher import (
     ZaiNewReleasedFetcher,
 )
 from fetchers.web_content.profiles import resolve_profile
+from models.db import ArticleRecord
+from storage.impl.db_storage import DatabaseStorage
 
 
 class DummyResponse:
@@ -1877,6 +1881,83 @@ def test_kimi_generic_research_title_forces_detail_title_refresh_for_existing_bo
     assert item.raw_data["detail_fetched"] is True
     assert item.raw_data["detail_title"] == item.title
     assert item._refresh_existing_metadata is True
+
+
+def test_kimi_existing_body_emits_metadata_only_item_and_repairs_storage(tmp_path):
+    article_list = {
+        "articleList": {
+            "items": [{
+                "id": "kimi-k2-6",
+                "title": "Kimi K2.6",
+                "description": "",
+                "href": "/en/blog/kimi-k2-6",
+                "date": "2026-04-20",
+            }],
+        }
+    }
+    flight_chunk = "7:" + json.dumps(article_list, ensure_ascii=False)
+    listing_html = (
+        "<html><body><h1>研究</h1>"
+        f"<script>self.__next_f.push([1,{json.dumps(flight_chunk, ensure_ascii=False)}])</script>"
+        "</body></html>"
+    )
+    fetcher = KimiResearchWebFetcher()
+    storage = DatabaseStorage(f"sqlite:///{tmp_path / 'kimi-metadata-refresh.db'}")
+    canonical_url = "https://www.kimi.com/blog/kimi-k2-6"
+    article_id = fetcher._content_id(canonical_url)
+    original_body = "Original full Kimi K2.6 article body must remain byte-for-byte unchanged."
+    original_extensions = '{"sentinel": "keep-me"}'
+
+    with Session(storage.engine) as session:
+        session.add(ArticleRecord(
+            id=article_id,
+            title="研究",
+            content_type=fetcher.content_type,
+            source_id=fetcher.source_id,
+            source_url=canonical_url,
+            publish_date="2026-09-24T13:10:04+00:00",
+            fetched_date="2026-09-24T21:10:04+00:00",
+            archive_updated_at="2026-09-24T21:10:04+00:00",
+            has_content=True,
+            content=original_body,
+            extensions_json=original_extensions,
+        ))
+        session.commit()
+
+    detail_requests = []
+
+    async def fake_safe_get(client, url, **kwargs):
+        if url == fetcher.listing_url:
+            return DummyResponse(listing_html, url)
+        detail_requests.append(url)
+        raise AssertionError(f"Existing body should skip detail fetch: {url}")
+
+    fetcher.dedup_lookup = storage.existing_content_flags
+    fetcher._safe_get = fake_safe_get
+
+    async def fetch_and_save():
+        items = [item async for item in fetcher.fetch(limit=1)]
+        saved = [await storage.save(item) for item in items]
+        return items, saved
+
+    items, saved = asyncio.run(fetch_and_save())
+    assert detail_requests == []
+    assert len(items) == 1
+    assert items[0].title == "Kimi K2.6"
+    assert items[0].content == ""
+    assert items[0].has_content is False
+    assert items[0].raw_data["metadata_only_refresh"] is True
+    assert saved == [True]
+
+    with Session(storage.engine) as session:
+        repaired = session.get(ArticleRecord, article_id)
+        assert repaired is not None
+        assert repaired.title == "Kimi K2.6"
+        assert repaired.publish_date == "2026-04-20T00:00:00+00:00"
+        assert repaired.source_url == canonical_url
+        assert repaired.has_content is True
+        assert repaired.content == original_body
+        assert repaired.extensions_json == original_extensions
 
 
 def test_minimax_scopes_prose_without_title_meta_or_site_navigation():

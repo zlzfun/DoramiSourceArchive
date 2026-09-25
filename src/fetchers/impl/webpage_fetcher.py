@@ -478,10 +478,18 @@ class BaseWebPageListFetcher(BaseFetcher):
             publish_date = entry.get("publish_date") or ""
             content_id = self._content_id(url)
             detail = {"title": "", "text": "", "publish_date": ""}
+            # 权威元数据刷新源即使跳过已有正文，也必须知道该条目确实存在：
+            # 后面会保留一个 metadata-only item 进入 storage，自愈标题/日期，
+            # 但绝不以空正文覆盖既有正文。普通源仍只在抓详情时做去重查询。
+            existing_has_content = (
+                await self._should_skip_detail_fetch(content_id)
+                if fetch_detail or self.refresh_existing_metadata
+                else False
+            )
             # 已入库且有正文则跳过详情请求，避免对重复条目重复抓取正文。
             detail_fetched = fetch_detail and (
                 self._requires_detail_metadata_refresh(title)
-                or not await self._should_skip_detail_fetch(content_id)
+                or not existing_has_content
             )
             if detail_fetched:
                 detail = await self._detail_for_url(client, url, detail_max_chars)
@@ -497,13 +505,17 @@ class BaseWebPageListFetcher(BaseFetcher):
             raw_data.update({
                 "listing_source": entry.get("listing_source", ""),
                 "detail_fetched": detail_fetched,
+                "metadata_only_refresh": bool(
+                    self.refresh_existing_metadata and existing_has_content and not detail["text"]
+                ),
                 "detail_title": detail["title"],
                 "detail_text_length": len(detail["text"]),
                 "detail_extraction_method": detail.get("method", ""),
                 "detail_source_url": detail.get("url", ""),
             })
             content = detail["text"] or summary
-            if self.drop_empty_content and not content:
+            keep_metadata_only = self.refresh_existing_metadata and existing_has_content
+            if self.drop_empty_content and not content and not keep_metadata_only:
                 continue
 
             yield WebPageArticleContent(
