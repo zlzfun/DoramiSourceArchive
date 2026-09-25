@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { FileText, Headphones, Loader2, Trophy } from 'lucide-react';
+import { Crown, FileText, Headphones, Loader2, Trophy } from 'lucide-react';
 import {
   fetchReaderRankingHistory,
   fetchReaderRankings,
@@ -13,9 +13,12 @@ import {
   scoreBasisLabel,
 } from '../utils/rankings';
 
-function ContentList({ items, onOpenArticle, sourceMap, must = false }) {
+function ContentList({
+  items, onOpenArticle, sourceMap, must = false,
+  emptyText = '还没有达到公开门槛的内容，明早 7 点再来看看',
+}) {
   if (!items?.length) {
-    return <p className="ranking-empty">还没有达到公开门槛的内容，明早 7 点再来看看</p>;
+    return <p className="ranking-empty">{emptyText}</p>;
   }
   return (
     <ol className="ranking-content-list">
@@ -202,6 +205,19 @@ export default function RankingsPage({
               <ContentList items={detail?.contents || []} onOpenArticle={onOpenArticle} sourceMap={sourceMap} />
             </section>
           </div>
+
+          <section className="ranking-global surface-card" aria-label="全局高分榜">
+            <div className="ranking-section-head">
+              <span className="card-title"><Crown aria-hidden="true" />全局高分榜</span>
+              <span className="tiny-meta">全站全部历史公开{shape === 'podcast' ? '播客' : '文章'} Top 10</span>
+            </div>
+            <ContentList
+              items={data?.all_time_high_score || []}
+              onOpenArticle={onOpenArticle}
+              sourceMap={sourceMap}
+              emptyText="还没有可展示的历史评分内容"
+            />
+          </section>
 
           <section className="ranking-must surface-card" aria-label={shape === 'podcast' ? '必听播客' : '必读文章'}>
             <div className="ranking-section-head">

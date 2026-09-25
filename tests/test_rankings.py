@@ -214,6 +214,44 @@ def test_single_source_article_and_podcast_tags_rank_without_becoming_must_read(
         assert board["must_read"] == []
 
 
+def test_all_time_high_score_includes_old_public_content_without_tags(tmp_path):
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'all-time-high-score.db'}")
+    _seed(sink.engine)
+    with Session(sink.engine) as session:
+        _content(
+            session,
+            "old-article",
+            "old-article-source",
+            score=9.8,
+            publish_date="2020-01-02T08:00:00+08:00",
+        )
+        _content(
+            session,
+            "old-podcast",
+            "old-podcast-source",
+            podcast=True,
+            score=9.7,
+            basis="asr_transcript",
+            publish_date="2020-01-01T08:00:00+08:00",
+        )
+        session.commit()
+
+    rankings.build_snapshot(sink.engine, at=AT)
+    with Session(sink.engine) as session:
+        article_board = rankings.read_rankings(session, shape="article")
+        podcast_board = rankings.read_rankings(session, shape="podcast")
+
+    assert article_board["all_time_high_score"][0]["id"] == "old-article"
+    assert article_board["all_time_high_score"][0]["score"] == 9.8
+    assert podcast_board["all_time_high_score"][0]["id"] == "old-podcast"
+    assert podcast_board["all_time_high_score"][0]["score_basis"] == "full_transcript"
+    assert all(
+        item["source_id"] not in {"hidden-source", "user_rss_alice_private"}
+        for board in (article_board, podcast_board)
+        for item in board["all_time_high_score"]
+    )
+
+
 def test_sitewide_board_ignores_personal_subscriptions_and_reader_defaults(tmp_path):
     sink = DatabaseStorage(f"sqlite:///{tmp_path / 'sitewide.db'}")
     _seed(sink.engine)
@@ -379,6 +417,10 @@ def test_current_hidden_source_is_removed_from_counts_titles_and_history(tmp_pat
     assert all(response["axes"][axis] for axis in rankings.AXES)
     assert response["axes"]["topic"][0]["occurrence_count"] == 1
     assert response["must_read"] == []
+    assert all(
+        item["source_id"] != "source-b"
+        for item in response["all_time_high_score"]
+    )
     assert len(detail["contents"]) == 1
     assert history["points"][0]["occurrence_count"] == 1
     assert history["points"][0]["distinct_source_count"] == 1

@@ -9705,6 +9705,7 @@ input[type="radio"] {
   .ranking-axis,
   .ranking-layout,
   .ranking-must,
+  .ranking-global,
   .ranking-coverage-note,
   .ranking-state {
     width: min(1080px, 100%);
@@ -9790,7 +9791,8 @@ input[type="radio"] {
 
   .ranking-tags,
   .ranking-detail,
-  .ranking-must { padding: 16px; }
+  .ranking-must,
+  .ranking-global { padding: 16px; }
 
   .ranking-section-head {
     min-height: 24px;
@@ -9872,7 +9874,8 @@ input[type="radio"] {
   .ranking-content-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dorami-faint); font-size: 10.5px; }
   .ranking-content-score { justify-self: end; color: var(--dorami-accent-ink); font-size: 12px; font-weight: 700; }
 
-  .ranking-must { margin-top: 14px; }
+  .ranking-must,
+  .ranking-global { margin-top: 14px; }
   .ranking-empty { margin: 18px 8px; color: var(--dorami-faint); font-size: 12px; line-height: 1.6; }
   .ranking-state { min-height: 44vh; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--dorami-muted); font-size: 13px; }
   .ranking-state svg { width: 17px; height: 17px; }

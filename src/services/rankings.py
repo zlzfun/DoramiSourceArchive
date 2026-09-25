@@ -660,6 +660,61 @@ def _content_payload(
     }
 
 
+def _all_time_high_scores(
+    session: Session,
+    *,
+    shape: str,
+) -> list[dict[str, Any]]:
+    """Return the current public all-time Top 10 for one content shape.
+
+    Unlike the tag boards, this list is not bounded by the seven-day snapshot,
+    taxonomy coverage or source support. Visibility is evaluated at read time so
+    hiding a source removes its historical entries immediately.
+    """
+
+    hidden = source_visibility.reader_unavailable_source_ids(session)
+    private = _private_source_ids(session)
+    source_shapes = _source_shapes(session)
+    candidates: list[ContentFact] = []
+    rows = session.exec(
+        select(ArticleRecord, ArticleAnalysisRecord)
+        .join(
+            ArticleAnalysisRecord,
+            ArticleAnalysisRecord.article_id == ArticleRecord.id,
+        )
+        .where(ArticleAnalysisRecord.status == "succeeded")
+    ).all()
+    for article, analysis in rows:
+        if (
+            article.source_id in hidden
+            or article.source_id in private
+            or user_sources.is_user_source(article.source_id)
+            or _content_shape(article, source_shapes) != shape
+        ):
+            continue
+        score, basis = _score(analysis, shape)
+        if score <= 0:
+            continue
+        published = _published_at(article) or dt.datetime.min.replace(
+            tzinfo=dt.timezone.utc
+        )
+        candidates.append(ContentFact(article, analysis, shape, published, score, basis))
+
+    return [
+        {
+            "id": fact.article.id,
+            "title": fact.article.title,
+            "source_id": fact.article.source_id,
+            "content_type": fact.article.content_type,
+            "publish_date": fact.article.publish_date,
+            "score": round(fact.score, 1),
+            "score_basis": fact.score_basis,
+            "appearance_count": 0,
+        }
+        for fact in sorted(candidates, key=_content_order)[:TOP_CONTENT]
+    ]
+
+
 def _visible_tag_model(
     tag_items: Iterable[RankingTagItemRecord],
     rows: list[tuple[RankingContentItemRecord, ArticleRecord]],
@@ -784,6 +839,7 @@ def read_rankings(
         "shape": shape,
         "coverage": coverage,
         "axes": axes,
+        "all_time_high_score": _all_time_high_scores(session, shape=shape),
         "must_read": [
             _content_payload(item, article, appearance_count=appearance)
             for appearance, (item, article) in must[:TOP_CONTENT]

@@ -131,8 +131,10 @@
 .m-content .ranking-layout { grid-template-columns: minmax(0, 1fr); gap: 10px; margin-top: 10px; }
 .m-content .ranking-tags,
 .m-content .ranking-detail,
-.m-content .ranking-must { padding: 12px; }
-.m-content .ranking-must { margin-top: 10px; }
+.m-content .ranking-must,
+.m-content .ranking-global { padding: 12px; }
+.m-content .ranking-must,
+.m-content .ranking-global { margin-top: 10px; }
 .m-content .ranking-trend svg { width: 120px; }
 .m-content .ranking-section-head > div { align-items: flex-start; flex-direction: column; gap: 2px; }
 .m-content .ranking-content-row { grid-template-columns: 20px minmax(0, 1fr) 34px; padding-inline: 4px; }

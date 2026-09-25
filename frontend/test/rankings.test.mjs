@@ -14,6 +14,11 @@ test('ranking scope is explicitly site-wide and independent from personal subscr
   assert.doesNotMatch(RANKING_SCOPE_NOTE, /我的订阅/);
 });
 
+test('ranking scope note keeps the seven-day window scoped to tag trends', () => {
+  assert.match(RANKING_SCOPE_NOTE, /近 7 天/);
+  assert.match(RANKING_SCOPE_NOTE, /标签趋势/);
+});
+
 test('ranking movement is explicit for up, down, flat and new states', () => {
   assert.deepEqual(rankingMovement(3), { label: '↑ 3', direction: 'up' });
   assert.deepEqual(rankingMovement(-2), { label: '↓ 2', direction: 'down' });
