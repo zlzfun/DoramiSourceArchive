@@ -57,6 +57,32 @@ class LLMNotConfigured(LLMError):
     """大模型未配置（缺 base_url/api_key/model）。"""
 
 
+class LLMStructuredOutputError(LLMError):
+    """模型返回的结构化文本无法解析为 JSON 对象。
+
+    ``code`` 与可选的位置字段供上层决定是否执行一次结构化纠错；异常文本不携带
+    原始模型输出，避免把文章内容写进日志或持久化错误字段。
+    """
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        line: int | None = None,
+        column: int | None = None,
+        position: int | None = None,
+    ) -> None:
+        self.code = code
+        self.line = line
+        self.column = column
+        self.position = position
+        location = ""
+        if line is not None and column is not None:
+            location = f" (line={line}, column={column}, char={position})"
+        super().__init__(f"{code}: {message}{location}")
+
+
 @dataclass
 class ChatMessage:
     """一条对话消息。
@@ -301,7 +327,7 @@ def parse_json_object(text: str) -> dict:
     处理 ```json 围栏、前后多余文字：截取首个 '{' 到末个 '}' 之间内容后 json.loads。
     """
     if not text:
-        raise LLMError("待解析文本为空")
+        raise LLMStructuredOutputError("empty_output", "待解析文本为空")
     cleaned = text.strip()
     # 去掉 markdown 代码围栏
     if cleaned.startswith("```"):
@@ -315,14 +341,24 @@ def parse_json_object(text: str) -> dict:
     start = cleaned.find("{")
     end = cleaned.rfind("}")
     if start == -1 or end == -1 or end < start:
-        raise LLMError(f"未找到 JSON 对象: {text[:200]}")
+        raise LLMStructuredOutputError(
+            "object_not_found", "模型输出中未找到完整 JSON 对象"
+        )
     snippet = cleaned[start:end + 1]
     try:
         result = json.loads(snippet)
     except json.JSONDecodeError as exc:
-        raise LLMError(f"JSON 解析失败: {exc} | 原文: {snippet[:200]}") from exc
+        raise LLMStructuredOutputError(
+            "json_decode_error",
+            exc.msg,
+            line=exc.lineno,
+            column=exc.colno,
+            position=exc.pos,
+        ) from exc
     if not isinstance(result, dict):
-        raise LLMError("解析结果不是 JSON 对象")
+        raise LLMStructuredOutputError(
+            "not_an_object", "解析结果不是 JSON 对象"
+        )
     return result
 
 

@@ -9,7 +9,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from config import LLMConfig  # noqa: E402
 from llm import client as llm_client  # noqa: E402
-from llm.client import ChatMessage, LLMError, LLMNotConfigured, chat_completion, parse_json_object  # noqa: E402
+from llm.client import (  # noqa: E402
+    ChatMessage,
+    LLMError,
+    LLMNotConfigured,
+    LLMStructuredOutputError,
+    chat_completion,
+    parse_json_object,
+)
 
 
 CONFIGURED = LLMConfig(base_url="https://api.example.com/v1", api_key="sk-test", model="test-model")
@@ -172,6 +179,16 @@ def test_parse_json_object_with_surrounding_text():
 def test_parse_json_object_invalid():
     with pytest.raises(LLMError):
         parse_json_object("not json at all")
+
+
+def test_parse_json_object_exposes_location_without_leaking_output():
+    malformed = '{"summary":"private article text" "quality_score":8.2}'
+    with pytest.raises(LLMStructuredOutputError) as raised:
+        parse_json_object(malformed)
+    error = raised.value
+    assert error.code == "json_decode_error"
+    assert (error.line, error.column, error.position) == (1, 35, 34)
+    assert "private article text" not in str(error)
 
 
 def test_endpoint_normalization():

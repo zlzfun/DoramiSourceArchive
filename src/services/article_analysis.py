@@ -48,7 +48,13 @@ from llm.article_analysis_prompt import (
     analysis_system_prompt,
     build_article_analysis_user_prompt,
 )
-from llm.client import ChatMessage, UsageMeta, chat_completion, parse_json_object
+from llm.client import (
+    ChatMessage,
+    LLMStructuredOutputError,
+    UsageMeta,
+    chat_completion,
+    parse_json_object,
+)
 from models.analysis_contracts import (
     ANALYSIS_LEASE_SECONDS,
     AnalysisAttemptStatus,
@@ -103,6 +109,7 @@ DEFAULT_SCAN_LIMIT = 500
 # score_reason 解析上限：提示词要求 ≤40 汉字，此处留余量；超出即截断而非拒收。
 _SCORE_REASON_MAX_CHARS = 120
 MAX_ERROR_CHARS = 800
+MAX_STRUCTURED_REPAIR_INPUT_CHARS = 16_000
 _PODCAST_FACTOR_KEYS = (
     "guest_authority",
     "topic_timeliness",
@@ -1455,14 +1462,62 @@ async def analyze_article_with_llm(
     ``article_analysis`` purpose; the brief passes its trigger attribution.
     """
 
+    messages = _analysis_messages(article, active_tags)
     raw = await chat_completion(
-        messages=_analysis_messages(article, active_tags),
+        messages=messages,
         config=llm_config.for_aux(),
         response_json=True,
         usage_meta=usage_meta or UsageMeta(purpose="article_analysis", username=None),
         http_client=http_client,
     )
-    return parse_json_object(raw)
+    try:
+        payload = parse_json_object(raw)
+        validate_analysis_payload(payload, active_tags=active_tags)
+        return payload
+    except (LLMStructuredOutputError, ValueError) as initial_error:
+        # Do not spend another attempt on the identical article request.  Give the
+        # provider its own malformed response plus the original grounded context
+        # and ask for one schema-only correction.  The outer lease deadline still
+        # bounds both calls, and the repaired object must pass the same validator
+        # as every normal analysis result before it can leave this function.
+        repair_raw = await chat_completion(
+            messages=[
+                *messages,
+                ChatMessage(
+                    role="assistant",
+                    content=raw[:MAX_STRUCTURED_REPAIR_INPUT_CHARS],
+                ),
+                ChatMessage(
+                    role="user",
+                    content=(
+                        "上一条响应不是可接受的分析 JSON。错误定位："
+                        f"{initial_error}。请只修复结构与缺失字段，不添加输入中没有的事实；"
+                        "重新输出一个完整 JSON 对象，不要 Markdown 围栏或解释。输出必须满足"
+                        "最初 system 消息中的字段、类型、枚举、范围与标签闭集约束。"
+                    ),
+                ),
+            ],
+            config=llm_config.for_aux(),
+            temperature=0,
+            response_json=True,
+            max_retries=1,
+            usage_meta=usage_meta
+            or UsageMeta(purpose="article_analysis", username=None),
+            http_client=http_client,
+        )
+        try:
+            repaired = parse_json_object(repair_raw)
+            validate_analysis_payload(repaired, active_tags=active_tags)
+            return repaired
+        except (LLMStructuredOutputError, ValueError) as repair_error:
+            raise AnalysisOutputRecoveryError(
+                "article_analysis_structured_output_invalid_after_repair: "
+                f"initial={initial_error}; repair={repair_error}"
+            ) from repair_error
+
+
+class AnalysisOutputRecoveryError(ValueError):
+    """One bounded structured-output repair still failed validation."""
 
 
 def _article_extensions(article: ArticleRecord) -> dict[str, Any]:
