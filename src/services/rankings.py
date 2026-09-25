@@ -42,8 +42,9 @@ SHAPES = ("article", "podcast")
 WINDOW_DAYS = 7
 TOP_TAGS = 10
 TOP_CONTENT = 10
-MIN_CONTENT_SUPPORT = 2
-MIN_SOURCE_SUPPORT = 2
+MIN_TAG_CONTENT_SUPPORT = 1
+MIN_MUST_READ_TAG_APPEARANCES = 2
+MIN_MUST_READ_SOURCE_SUPPORT = 2
 MIN_RELEVANCE = 0.8
 MIN_TAGGED_COVERAGE = 0.5
 FULL_PODCAST_BASES = frozenset({"publisher_transcript", "asr_transcript"})
@@ -294,10 +295,10 @@ def _tag_buckets(
 
 
 def _supported(bucket: TagBucket) -> bool:
-    return (
-        bucket.occurrence_count >= MIN_CONTENT_SUPPORT
-        and bucket.source_count >= MIN_SOURCE_SUPPORT
-    )
+    # A leaderboard describes what appeared, so a single public item from a
+    # single public source is enough to rank.  Cross-source corroboration is a
+    # stronger signal reserved for the must-read/must-listen section below.
+    return bucket.occurrence_count >= MIN_TAG_CONTENT_SUPPORT
 
 
 def _bucket_order(bucket: TagBucket) -> tuple[Any, ...]:
@@ -401,7 +402,9 @@ def _build_snapshot_unlocked(
             if tag.id is not None
         }
         content_rows: list[RankingContentItemRecord] = []
-        top_memberships: dict[tuple[str, str], list[tuple[str, int]]] = defaultdict(list)
+        top_memberships: dict[
+            tuple[str, str], dict[tuple[str, int], set[str]]
+        ] = defaultdict(lambda: defaultdict(set))
         fact_by_shape_id = {(fact.shape, article_id): fact for article_id, fact in current_facts.items()}
 
         for shape in SHAPES:
@@ -434,6 +437,7 @@ def _build_snapshot_unlocked(
                     ))
                     ordered_facts = sorted(bucket.facts, key=_content_order)
                     root_id = _root_tag_id(int(bucket.tag.id or 0), parent_by_id)
+                    bucket_sources = {fact.article.source_id for fact in bucket.facts}
                     for content_rank, fact in enumerate(ordered_facts, start=1):
                         row = RankingContentItemRecord(
                             snapshot_id=snapshot.id,
@@ -448,7 +452,9 @@ def _build_snapshot_unlocked(
                         )
                         content_rows.append(row)
                         if content_rank <= TOP_CONTENT:
-                            top_memberships[(shape, fact.article.id)].append((axis, root_id))
+                            top_memberships[(shape, fact.article.id)][
+                                (axis, root_id)
+                            ].update(bucket_sources)
 
         must_rank_by_content: dict[tuple[str, str], tuple[int, int]] = {}
         for shape in SHAPES:
@@ -456,8 +462,12 @@ def _build_snapshot_unlocked(
             for (member_shape, article_id), memberships in top_memberships.items():
                 if member_shape != shape:
                     continue
-                appearance = len(set(memberships))
-                if appearance >= 2:
+                appearance = len(memberships)
+                supporting_sources = set().union(*memberships.values()) if memberships else set()
+                if (
+                    appearance >= MIN_MUST_READ_TAG_APPEARANCES
+                    and len(supporting_sources) >= MIN_MUST_READ_SOURCE_SUPPORT
+                ):
                     candidates.append((appearance, fact_by_shape_id[(shape, article_id)]))
             candidates.sort(
                 key=lambda item: (
@@ -476,7 +486,9 @@ def _build_snapshot_unlocked(
                 row.appearance_count, row.must_rank = result
                 row.is_must_read = True
             else:
-                row.appearance_count = len(set(top_memberships.get((row.shape, row.article_id), ())))
+                row.appearance_count = len(
+                    top_memberships.get((row.shape, row.article_id), {})
+                )
             session.add(row)
 
         session.commit()
@@ -665,7 +677,7 @@ def _visible_tag_model(
             visible = rows_by_tag.get(tag.tag_code, [])
             articles = {article.id for _, article in visible}
             sources = {article.source_id for _, article in visible}
-            if len(articles) < MIN_CONTENT_SUPPORT or len(sources) < MIN_SOURCE_SUPPORT:
+            if len(articles) < MIN_TAG_CONTENT_SUPPORT:
                 continue
             max_score = max((item.score for item, _ in visible), default=0.0)
             latest = max(
@@ -717,7 +729,9 @@ def read_rankings(
         for tag in session.exec(select(CmsTagRecord)).all()
         if tag.id is not None
     }
-    memberships: dict[str, set[tuple[str, int]]] = defaultdict(set)
+    memberships: dict[str, dict[tuple[str, int], set[str]]] = defaultdict(
+        lambda: defaultdict(set)
+    )
     row_by_article: dict[str, tuple[RankingContentItemRecord, ArticleRecord]] = {}
     for axis in AXES:
         for tag_view in axes[axis]:
@@ -727,13 +741,21 @@ def read_rankings(
                 selected_rows.get(tag.tag_code, []),
                 key=lambda pair: (pair[0].content_rank, pair[1].id),
             )[:TOP_CONTENT]
+            supporting_sources = {
+                article.source_id
+                for _, article in selected_rows.get(tag.tag_code, [])
+            }
             for item, article in visible:
-                memberships[article.id].add((axis, root))
+                memberships[article.id][(axis, root)].update(supporting_sources)
                 row_by_article.setdefault(article.id, (item, article))
     must = [
-        (len(member_set), row_by_article[article_id])
-        for article_id, member_set in memberships.items()
-        if len(member_set) >= 2
+        (len(member_sources), row_by_article[article_id])
+        for article_id, member_sources in memberships.items()
+        if (
+            len(member_sources) >= MIN_MUST_READ_TAG_APPEARANCES
+            and len(set().union(*member_sources.values()))
+            >= MIN_MUST_READ_SOURCE_SUPPORT
+        )
     ]
     must.sort(key=lambda pair: (
         -pair[0], -pair[1][0].score,
@@ -793,9 +815,7 @@ def read_tag_contents(
         if item.tag_code == tag_code
     ]
     visible.sort(key=lambda pair: (pair[0].content_rank, pair[1].id))
-    if len({article.id for _, article in visible}) < MIN_CONTENT_SUPPORT or len(
-        {article.source_id for _, article in visible}
-    ) < MIN_SOURCE_SUPPORT:
+    if len({article.id for _, article in visible}) < MIN_TAG_CONTENT_SUPPORT:
         return None
     return {
         "scope": PUBLIC_SCOPE,
@@ -841,7 +861,7 @@ def read_history(
         ]
         content_count = len({article.id for _, article in visible})
         source_count = len({article.source_id for _, article in visible})
-        if content_count < MIN_CONTENT_SUPPORT or source_count < MIN_SOURCE_SUPPORT:
+        if content_count < MIN_TAG_CONTENT_SUPPORT:
             continue
         points.append({
             "date": snapshot.snapshot_date,

@@ -188,7 +188,7 @@ export default function RankingsPage({
                     );
                   })}
                 </ol>
-              ) : <p className="ranking-empty">还没有标签达到 2 篇内容、2 个来源的公开门槛</p>}
+              ) : <p className="ranking-empty">近 7 天还没有可展示的正式标签</p>}
             </section>
 
             <section className="ranking-detail surface-card" aria-label="标签高分内容">
@@ -206,7 +206,7 @@ export default function RankingsPage({
           <section className="ranking-must surface-card" aria-label={shape === 'podcast' ? '必听播客' : '必读文章'}>
             <div className="ranking-section-head">
               <span className="card-title"><Trophy aria-hidden="true" />{shape === 'podcast' ? '必听播客' : '必读文章'}</span>
-              <span className="tiny-meta">同时进入至少 2 个独立榜内标签 Top 10</span>
+              <span className="tiny-meta">同时进入至少 2 个独立榜内标签 Top 10，且相关趋势覆盖至少 2 个来源</span>
             </div>
             <ContentList items={data?.must_read || []} onOpenArticle={onOpenArticle} sourceMap={sourceMap} must />
           </section>

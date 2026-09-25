@@ -181,6 +181,39 @@ def test_snapshot_counts_shapes_filters_and_parent_chain_must_read(tmp_path):
     }
 
 
+def test_single_source_article_and_podcast_tags_rank_without_becoming_must_read(tmp_path):
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'single-source-rankings.db'}")
+    with Session(sink.engine) as session:
+        session.add(TaxonomyVersionRecord(
+            version=7, status="active", created_at=STAMP, change_summary="test"
+        ))
+        topic = _tag(session, "topic.solo", "topic")
+        industry = _tag(session, "industry.solo", "industry")
+        article = _content(session, "article-solo", "article-source")
+        podcast = _content(
+            session,
+            "podcast-solo",
+            "podcast-source",
+            podcast=True,
+            basis="asr_transcript",
+        )
+        for content in (article, podcast):
+            _assign(session, content, topic, primary=True)
+            _assign(session, content, industry, primary=True)
+        session.commit()
+
+    rankings.build_snapshot(sink.engine, at=AT)
+    with Session(sink.engine) as session:
+        article_board = rankings.read_rankings(session, shape="article")
+        podcast_board = rankings.read_rankings(session, shape="podcast")
+
+    for board in (article_board, podcast_board):
+        assert board["axes"]["topic"][0]["occurrence_count"] == 1
+        assert board["axes"]["topic"][0]["distinct_source_count"] == 1
+        assert board["axes"]["industry"][0]["occurrence_count"] == 1
+        assert board["must_read"] == []
+
+
 def test_sitewide_board_ignores_personal_subscriptions_and_reader_defaults(tmp_path):
     sink = DatabaseStorage(f"sqlite:///{tmp_path / 'sitewide.db'}")
     _seed(sink.engine)
@@ -341,11 +374,14 @@ def test_current_hidden_source_is_removed_from_counts_titles_and_history(tmp_pat
         history = rankings.read_history(
             session, tag_code="topic.image", shape="article", days=30
         )
-    # One visible source no longer satisfies the public two-source support floor.
-    assert all(not response["axes"][axis] for axis in rankings.AXES)
+    # A single visible source remains eligible for tag rankings. Must-read still
+    # requires the related tag trends to be supported by at least two sources.
+    assert all(response["axes"][axis] for axis in rankings.AXES)
+    assert response["axes"]["topic"][0]["occurrence_count"] == 1
     assert response["must_read"] == []
-    assert detail is None
-    assert history["points"] == []
+    assert len(detail["contents"]) == 1
+    assert history["points"][0]["occurrence_count"] == 1
+    assert history["points"][0]["distinct_source_count"] == 1
 
 
 def test_article_deleted_after_snapshot_is_not_exposed(tmp_path):
@@ -363,9 +399,9 @@ def test_article_deleted_after_snapshot_is_not_exposed(tmp_path):
         detail = rankings.read_tag_contents(
             session, date="latest", shape="article", tag_code="topic.image"
         )
-    assert all(not response["axes"][axis] for axis in rankings.AXES)
+    assert all(response["axes"][axis] for axis in rankings.AXES)
     assert response["must_read"] == []
-    assert detail is None
+    assert len(detail["contents"]) == 1
 
 
 def test_reader_ranking_endpoints_expose_snapshot_detail_and_history(tmp_path):
