@@ -5,15 +5,16 @@
 - 改版本只改这里,并同步 pyproject.toml 的 version(项目非 editable install,
   importlib.metadata 读不到包元数据,故以本常量为准);
 - `/api/runtime` 透出 version,前端「设置 → 关于」展示;
-- 版本号只在发版那一刻改(scripts/release.sh),PR 不各自 bump;annotated git tag
-  `v{__version__}` 是唯一的发布单元,部署脚本按 tag 部署(docs/release-process.md)。
+- 每个新开发波次从最新正式 tag 派生下一个版本并使用 `-alpha` 后缀；正式发布时
+  scripts/release.sh 去掉后缀并打 annotated tag。annotated git tag `v{__version__}`
+  仍是唯一的正式发布单元,部署脚本按 tag 部署(docs/release-process.md)。
 
 纪元回溯:1.x = 采集/归档 CMS 原型(单管理员);2.x = 读者分发平台
 (双角色/订阅/RAG/日报/运维,PM2 app 名 dorami-backend-v2 即此纪元遗痕);
 3.0.0 = 静默仪器全站重构 + 实体简化/阶段3 收官(style/quiet-instrument 合入 main)。
 """
 
-__version__ = "3.62.0"
+__version__ = "3.63.0-alpha"
 
 
 def build_info() -> dict:

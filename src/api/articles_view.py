@@ -43,8 +43,14 @@ def _podcast_projection(
     *,
     premium_score_threshold: float = podcast_premium.DEFAULT_PREMIUM_SCORE_THRESHOLD,
     digest_audio: Any = None,
+    include_diagnostics: bool = False,
 ) -> Dict[str, Any]:
-    """生成列表/详情共用的轻量播客对象，不透出 raw_data。"""
+    """生成列表/详情共用的轻量播客对象，不透出 raw_data。
+
+    Reader responses intentionally omit provider errors, quota windows and
+    pipeline-stage details.  Admin ledger callers opt in to diagnostics; this
+    keeps new operational fields from becoming reader copy by accident.
+    """
     raw_premium_guide = extensions.get("premium_guide")
     premium_guide = (
         raw_premium_guide if isinstance(raw_premium_guide, dict) else {}
@@ -126,7 +132,7 @@ def _podcast_projection(
     else:
         effective_guide_status = ""
 
-    return {
+    projected = {
         "show_title": str(extensions.get("show_title") or ""),
         "audio_url": str(extensions.get("audio_url") or ""),
         "audio_mime": str(extensions.get("audio_mime") or ""),
@@ -139,9 +145,6 @@ def _podcast_projection(
         "transcripts": transcripts,
         "chapters_url": str(extensions.get("chapters_url") or ""),
         "chapters_mime": str(extensions.get("chapters_mime") or ""),
-        # RSS ingestion only sees publisher metadata/show notes.  Duration is a
-        # descriptive scheduling signal, never authorization for paid processing.
-        "analysis_basis": analysis_basis,
         "is_long_form": duration_seconds is not None and duration_seconds > 1800,
         # RSS transcript entries are untrusted download candidates.  Reader
         # visibility starts only after a validated artifact is published.
@@ -149,32 +152,19 @@ def _podcast_projection(
             {"publisher_transcript", "normalized_transcript", "transcript_zh"}
             .intersection(published_text_kinds)
         ),
-        "id": str(getattr(processing, "id", "") or ""),
-        "attempt_count": getattr(processing, "attempt_count", 0),
+        # Stable reader fact: the score came from a complete transcript.  Keep
+        # the implementation basis (publisher/ASR) in admin diagnostics only.
+        "full_analysis_ready": transcript_basis,
         "status": processing_status,
         "processing_status": processing_status,
-        "next_retry_at": str(getattr(processing, "next_retry_at", "") or ""),
-        "stage": processing_stage,
-        "error": str(getattr(processing, "error_message", "") or ""),
-        "error_code": str(getattr(processing, "error_code", "") or ""),
         "retryable": processing_status
         in {"retry_wait", "reconciliation_required", "failed"},
-        "transcript_source": transcript_source,
-        "full_analysis_candidate": bool(
-            analysis is not None
-            and analysis_basis == "podcast_show_notes"
-            and getattr(analysis, "status", "") == "succeeded"
-            and score_initial is not None
-            and score_initial >= podcast_premium.INITIAL_PROCESSING_THRESHOLD
-        ),
-        "final_premium": final_premium,
         "premium_guide": {
             "status": effective_guide_status,
-            "failed_stage": str(premium_guide.get("failed_stage") or ""),
-            "error": str(premium_guide.get("error") or ""),
             "audio_ready": digest_audio is not None,
             "blog_ready": "digest_blog_zh" in published_text_kinds,
             "script_ready": "narration_script_zh" in published_text_kinds,
+            "mode": str(premium_guide.get("mode") or ""),
         },
         "condensed_audio_url": (
             f"/api/reader/podcast-artifacts/{digest_audio.id}/audio"
@@ -185,6 +175,35 @@ def _podcast_projection(
             getattr(digest_audio, "duration_seconds", None)
         ),
     }
+    if include_diagnostics:
+        projected.update({
+            # Internal evidence/provenance belongs to the admin ledger only.
+            # Reader copy is expressed through transcript_available and the
+            # stable guide readiness flags above.
+            "analysis_basis": analysis_basis,
+            "final_premium": final_premium,
+            "id": str(getattr(processing, "id", "") or ""),
+            "attempt_count": getattr(processing, "attempt_count", 0),
+            "next_retry_at": str(getattr(processing, "next_retry_at", "") or ""),
+            "stage": processing_stage,
+            "error": str(getattr(processing, "error_message", "") or ""),
+            "error_code": str(getattr(processing, "error_code", "") or ""),
+            "transcript_source": transcript_source,
+            "full_analysis_candidate": bool(
+                analysis is not None
+                and analysis_basis == "podcast_show_notes"
+                and getattr(analysis, "status", "") == "succeeded"
+                and score_initial is not None
+                and score_initial >= podcast_premium.INITIAL_PROCESSING_THRESHOLD
+            ),
+        })
+        projected["premium_guide"].update({
+            "failed_stage": str(premium_guide.get("failed_stage") or ""),
+            "error": str(premium_guide.get("error") or ""),
+            "language": str(premium_guide.get("language") or ""),
+            "language_source": str(premium_guide.get("language_source") or ""),
+        })
+    return projected
 
 
 def _record_to_content(record: ArticleRecord) -> GenericContent:
@@ -307,6 +326,7 @@ def serialize_article_list_item(
     processing: Any = None,
     published_podcast_text_kinds: Collection[str] = (),
     digest_audio: Any = None,
+    include_podcast_diagnostics: bool = False,
 ) -> Dict[str, Any]:
     content = record.content or ""
     # AI 要点摘要(extensions_json.summary_zh)作为轻字段随条目透出:
@@ -362,11 +382,6 @@ def serialize_article_list_item(
         "analysis_next_attempt_at": getattr(analysis, "next_attempt_at", None),
         "quality_score": getattr(analysis, "quality_score", None),
         "score_reason": getattr(analysis, "score_reason", None) or None,
-        "analysis_basis": getattr(analysis, "analysis_basis", None) or None,
-        "analysis_input_hash": getattr(analysis, "analysis_input_hash", None) or None,
-        "transcript_artifact_id": getattr(analysis, "transcript_artifact_id", None) or None,
-        "prompt_version": getattr(analysis, "prompt_version", None) or None,
-        "scoring_version": getattr(analysis, "scoring_version", None) or None,
         "content_genre": getattr(analysis, "content_genre", None),
         "primary_tag": next((tag for tag in (tags or []) if tag.get("is_primary")), None),
         "tags": tags or [],
@@ -379,6 +394,14 @@ def serialize_article_list_item(
             and podcast_premium.is_premium(analysis, premium_score_threshold)
         ),
     }
+    if record.content_type != "podcast_episode" or include_podcast_diagnostics:
+        item.update({
+            "analysis_basis": getattr(analysis, "analysis_basis", None) or None,
+            "analysis_input_hash": getattr(analysis, "analysis_input_hash", None) or None,
+            "transcript_artifact_id": getattr(analysis, "transcript_artifact_id", None) or None,
+            "prompt_version": getattr(analysis, "prompt_version", None) or None,
+            "scoring_version": getattr(analysis, "scoring_version", None) or None,
+        })
     if include_content:
         item["content"] = content
     if record.content_type == "podcast_episode":
@@ -389,13 +412,16 @@ def serialize_article_list_item(
             published_podcast_text_kinds,
             premium_score_threshold=premium_score_threshold,
             digest_audio=digest_audio,
+            include_diagnostics=include_podcast_diagnostics,
         )
     else:
         # 文章点播精简旁白（issue #124）：轻量投影，不透出 content_hash。
         from services.article_listen_guides import projection_from_extensions
 
         item["listen_guide"] = projection_from_extensions(record.id, ext)
-    if include_content or include_extensions:
+    if (include_content or include_extensions) and (
+        record.content_type != "podcast_episode" or include_podcast_diagnostics
+    ):
         item["extensions_json"] = record.extensions_json or "{}"
     return item
 

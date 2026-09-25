@@ -138,6 +138,12 @@ def test_env_ini_configuration_and_secret_redaction(monkeypatch):
     assert not cfg.tts_configured
 
 
+def test_asr_limits_default_to_daily_forty_hours_and_three_hours_per_episode():
+    cfg = BailianSpeechConfig()
+    assert cfg.asr_daily_audio_seconds_limit == 40 * 60 * 60
+    assert cfg.asr_max_audio_seconds_per_file == 3 * 60 * 60
+
+
 def test_exact_fractional_price_and_region_boundary():
     cfg = configuration()
     plan = usage_plan(cfg, audio_duration_ms=3600000, now=NOW)

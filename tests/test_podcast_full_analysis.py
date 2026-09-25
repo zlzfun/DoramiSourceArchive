@@ -905,7 +905,7 @@ def test_podcast_projection_exposes_durable_status_basis_and_thresholds():
         attempt_count=3,
         error_message="temporary failure",
     )
-    projected = _podcast_projection({}, initial, failed)
+    projected = _podcast_projection({}, initial, failed, include_diagnostics=True)
     assert projected["status"] == projected["processing_status"] == "retry_wait"
     assert projected["stage"] == "analyze"
     assert projected["error"] == "temporary failure"
@@ -929,7 +929,8 @@ def test_podcast_projection_exposes_durable_status_basis_and_thresholds():
         error_message="",
     )
     projected = _podcast_projection(
-        {}, final, completed, premium_score_threshold=8.5
+        {}, final, completed, premium_score_threshold=8.5,
+        include_diagnostics=True,
     )
     assert projected["transcript_source"] == "asr_transcript"
     assert projected["full_analysis_candidate"] is False
@@ -937,7 +938,8 @@ def test_podcast_projection_exposes_durable_status_basis_and_thresholds():
 
     final.quality_score = 8.5001
     projected = _podcast_projection(
-        {}, final, completed, premium_score_threshold=8.5
+        {}, final, completed, premium_score_threshold=8.5,
+        include_diagnostics=True,
     )
     assert projected["final_premium"] is True
 
@@ -957,6 +959,7 @@ def test_podcast_projection_exposes_durable_status_basis_and_thresholds():
         include_content=False,
         analysis=final,
         premium_score_threshold=8.5,
+        include_podcast_diagnostics=True,
     )
     assert item["is_premium_podcast"] is True
     assert item["podcast"]["final_premium"] is True
@@ -966,6 +969,7 @@ def test_podcast_projection_exposes_durable_status_basis_and_thresholds():
         include_content=False,
         analysis=final,
         premium_score_threshold=8.5,
+        include_podcast_diagnostics=True,
     )
     assert item["is_premium_podcast"] is True
     assert item["podcast"]["final_premium"] is True
@@ -981,6 +985,7 @@ def test_podcast_projection_exposes_durable_status_basis_and_thresholds():
         },
         final,
         completed,
+        include_diagnostics=True,
     )
     assert projected["premium_guide"] == {
         "status": "failed",
@@ -989,6 +994,9 @@ def test_podcast_projection_exposes_durable_status_basis_and_thresholds():
         "audio_ready": False,
         "blog_ready": False,
         "script_ready": False,
+        "mode": "",
+        "language": "",
+        "language_source": "",
     }
     with_blog = _podcast_projection(
         {"premium_guide": {"status": "ready"}},
@@ -998,6 +1006,35 @@ def test_podcast_projection_exposes_durable_status_basis_and_thresholds():
     )
     assert with_blog["premium_guide"]["blog_ready"] is True
     assert with_blog["premium_guide"]["audio_ready"] is False
+
+    reader_safe = _podcast_projection(
+        {
+            "premium_guide": {
+                "status": "failed",
+                "failed_stage": "synthesizing",
+                "error": "provider secret failure",
+                "mode": "brief_zh",
+            }
+        },
+        final,
+        SimpleNamespace(
+            processing_status="retry_wait",
+            stage="asr",
+            error_message="raw provider quota error",
+            error_code="provider_usage_window_unavailable",
+        ),
+    )
+    assert reader_safe["premium_guide"] == {
+        "status": "failed",
+        "audio_ready": False,
+        "blog_ready": False,
+        "script_ready": False,
+        "mode": "brief_zh",
+    }
+    assert not {
+        "id", "attempt_count", "next_retry_at", "stage", "error", "error_code",
+        "transcript_source", "full_analysis_candidate",
+    }.intersection(reader_safe)
 
 
 def test_changed_publisher_locator_is_detected_before_reusing_publication(engine):

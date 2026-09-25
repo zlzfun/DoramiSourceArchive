@@ -500,6 +500,7 @@ def get_articles(
             processing=processings.get(record.id),
             published_podcast_text_kinds=text_publications.get(record.id, set()),
             digest_audio=digest_audios.get(record.id),
+            include_podcast_diagnostics=is_admin,
         )
         for record in records
     ]
@@ -601,6 +602,7 @@ async def get_article_analysis(article_id: str, request: Request):
     if not record:
         raise HTTPException(status_code=404, detail="文章未找到")
     auth_session = _app().current_auth_session(request)
+    is_admin = bool(auth_session and auth_session.get("role") == "admin")
     with Session(deps.get_db_sink().engine) as session:
         if record.source_id and not (auth_session and auth_session.get("role") == "admin"):
             if record.source_id in source_visibility_service.reader_unavailable_source_ids(session):
@@ -626,7 +628,7 @@ async def get_article_analysis(article_id: str, request: Request):
                 "tags": [],
                 "display_tags": [],
             }
-        return {
+        payload = {
             "article_id": article_id,
             "status": analysis.status,
             "tagging_status": analysis.tagging_status,
@@ -636,16 +638,20 @@ async def get_article_analysis(article_id: str, request: Request):
             "content_genre": analysis.content_genre,
             "content_features": _json_loads(analysis.content_features_json, []),
             "entities": _json_loads(analysis.entities_json, []),
-            "analysis_basis": analysis.analysis_basis or None,
-            "analysis_input_hash": analysis.analysis_input_hash or None,
-            "transcript_artifact_id": analysis.transcript_artifact_id,
-            "prompt_version": analysis.prompt_version,
-            "scoring_version": analysis.scoring_version,
-            "taxonomy_version": analysis.taxonomy_version,
             "analyzed_at": analysis.analyzed_at,
             "tags": tags.get(article_id, []),
             "display_tags": display_tags.get(article_id, []),
         }
+        if record.content_type != "podcast_episode" or is_admin:
+            payload.update({
+                "analysis_basis": analysis.analysis_basis or None,
+                "analysis_input_hash": analysis.analysis_input_hash or None,
+                "transcript_artifact_id": analysis.transcript_artifact_id,
+                "prompt_version": analysis.prompt_version,
+                "scoring_version": analysis.scoring_version,
+                "taxonomy_version": analysis.taxonomy_version,
+            })
+        return payload
 
 
 @router.get("/api/articles/{article_id:path}")
@@ -653,9 +659,10 @@ async def get_article(article_id: str, request: Request):
     record = await deps.get_db_sink().get(article_id)
     if not record:
         raise HTTPException(status_code=404, detail="文章未找到")
+    auth_session = _app().current_auth_session(request)
+    is_admin = bool(auth_session and auth_session.get("role") == "admin")
     if record.source_id:
-        auth_session = _app().current_auth_session(request)
-        if not (auth_session and auth_session.get("role") == "admin"):
+        if not is_admin:
             with Session(deps.get_db_sink().engine) as session:
                 if record.source_id in source_visibility_service.reader_unavailable_source_ids(session):
                     # 与列表口径一致：隐藏源的单条详情对读者会话按不存在处理。
@@ -690,6 +697,7 @@ async def get_article(article_id: str, request: Request):
             processing=processings.get(record.id),
             published_podcast_text_kinds=text_publications.get(record.id, set()),
             digest_audio=digest_audios.get(record.id),
+            include_podcast_diagnostics=is_admin,
         )
 
 

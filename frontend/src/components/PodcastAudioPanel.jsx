@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Podcast } from 'lucide-react';
 import { mediaProxyUrl, requestPodcastOndemand } from '../api';
 import { formatPodcastDuration, podcastListAvailabilityMeta, podcastOf } from '../utils/podcast';
-import { podcastFullProcessingMeta } from '../utils/analysis';
 import {
   readPodcastPosition,
   resumablePodcastPosition,
@@ -72,21 +71,14 @@ function PodcastAudioPlayer({
   showToast,
   onArticleRefresh,
 }) {
-  const fullProcessing = podcastFullProcessingMeta(article);
   const hasDigest = Boolean(podcast.condensed_audio_url);
   const hasDigestBlog = Boolean(podcast.premium_guide?.blog_ready);
+  const guideMode = String(podcast.premium_guide?.mode || '').trim().toLowerCase();
+  const isTextOnlyGuide = guideMode === 'brief_zh';
   const guideStatus = String(podcast.premium_guide?.status || '').trim().toLowerCase();
   const guideActive = !hasDigest && GUIDE_ACTIVE_STATUSES.has(guideStatus);
-  const isFailure = fullProcessing?.tone === 'bad'
-    || fullProcessing?.label === '全文处理失败'
-    || fullProcessing?.label === '全文处理等待重试'
-    || ['failed', 'retry_wait', 'reconciliation_required'].includes(
-      String(podcast.processing_status || '').toLowerCase()
-    );
-  const visibleProcessing = isFailure ? null : fullProcessing;
   const guideAvailability = podcastListAvailabilityMeta(podcast);
-  const status = (hasDigest || hasDigestBlog || guideActive || guideStatus === 'failed')
-    ? guideAvailability : (visibleProcessing || guideAvailability);
+  const status = guideAvailability;
   const originalDuration = formatPodcastDuration(podcast.duration_seconds);
   const condensedDuration = formatPodcastDuration(podcast.condensed_duration_seconds);
   const [localVariant, setLocalVariant] = useState(() => (
@@ -102,11 +94,14 @@ function PodcastAudioPlayer({
     : podcast.audio_url ? 'original' : hasDigest ? 'digest' : 'original';
   const playbackIdentityRef = useRef({ articleId: article?.id, variant: activeVariant });
   const canRequestOndemand = Boolean(
-    aiEnabled && ondemandEnabled && article?.id && !hasDigest && !guideActive && !ondemandBusy,
+    aiEnabled && ondemandEnabled && article?.id && !hasDigest && !guideActive
+      && !isTextOnlyGuide && !ondemandBusy,
   );
   // 点播不可用(总闸关 / 本部署跑不了)就不画按钮。已在生成的仍要看得见进度——
   // 开关中途被关掉时,读者不该以为自己的生成请求凭空消失。
-  const ondemandVisible = Boolean(aiEnabled && (ondemandEnabled || guideActive));
+  const ondemandVisible = Boolean(
+    aiEnabled && !isTextOnlyGuide && (ondemandEnabled || guideActive),
+  );
 
   const activeTrack = activeVariant === 'digest'
     ? { label: '精品导读', duration: condensedDuration, src: podcast.condensed_audio_url, generated: true }
@@ -186,11 +181,6 @@ function PodcastAudioPlayer({
           <span className={`podcast-status is-${status.tone}`}>{status.label}</span>
         </div>
       </div>
-      {visibleProcessing?.detail && (
-        <p className={`podcast-full-state is-${visibleProcessing.tone}`} role="status">
-          {visibleProcessing.detail}
-        </p>
-      )}
       {(hasDigest || ondemandVisible) && (
         <div className="mini-seg podcast-mode-switch" role="group" aria-label="播客播放模式">
           <button

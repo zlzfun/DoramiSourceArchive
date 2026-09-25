@@ -22,8 +22,8 @@ class BailianSpeechConfig:
     request_timeout_seconds: int = 120
     asr_poll_interval_seconds: int = 10
     asr_provider_deadline_seconds: int = 7200
-    asr_max_audio_seconds_per_file: int = 43200
-    asr_daily_audio_seconds_limit: int = 0
+    asr_max_audio_seconds_per_file: int = 10800
+    asr_daily_audio_seconds_limit: int = 144000
     asr_quota_timezone: str = "Asia/Singapore"
     asr_entitlement_ends_at: str = ""
     # Rational CNY minor-unit prices: no floating-point currency conversion.

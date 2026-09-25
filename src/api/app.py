@@ -118,6 +118,7 @@ from services import jobs as jobs_service
 from services import user_sources as user_sources_service
 from services import reader_defaults as reader_defaults_service
 from services import reader_ondemand as reader_ondemand_service
+from services import rankings as rankings_service
 from services import article_analysis as article_analysis_service
 from services import taxonomy as taxonomy_service
 from services import podcast_catalog as podcast_catalog_service
@@ -536,6 +537,8 @@ async def lifespan(app: FastAPI):
     reconcile_orphaned_runs()
     if collector_on:
         load_tasks_to_scheduler()
+    # 标签榜由 reader 本地正式标签派生，拆分部署下也必须在 reader 节点运行。
+    reload_ranking_schedule()
     if scheduler.state == STATE_STOPPED:
         scheduler.start()
         print("⏰ APScheduler 定时调度引擎已启动！")
@@ -547,6 +550,19 @@ async def lifespan(app: FastAPI):
         # allowed to register ASR. The first tick is deliberately delayed.
         reload_podcast_asr_worker_schedule()
         reload_storage_schedule()
+        # 新部署不必等到次日 07:00；缺当天边界快照时补一轮。固定日榜 job
+        # 仍由上方 cron 承担，补跑使用独立 id 且同日写入幂等。
+        with Session(db_sink.engine) as session:
+            if rankings_service.latest_snapshot_needed(session):
+                scheduler.add_job(
+                    execute_ranking_snapshot_job,
+                    "date",
+                    run_date=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=2),
+                    id="reader_rankings_bootstrap",
+                    args=[True],
+                    replace_existing=True,
+                    max_instances=1,
+                )
         if collector_on:
             # 远程内容同步定时任务(启用且 cron 合法时注册,否则移除既有 job)。
             reload_remote_sync_schedule()
@@ -774,14 +790,23 @@ def schedule_podcast_premium_guide(episode_id: str) -> bool:
                         duration = float(ext.get("duration_seconds") or 0)
                     except Exception:
                         duration = 0.0
+            eligibility = podcast_premium_guide_service.guide_eligibility(
+                db_sink.engine,
+                episode_id=episode_id,
+                score_threshold=premium_threshold,
+            )
             plan = podcast_premium_guide_service.calculate_solo_deep_plan(
                 duration,
                 hard_max_audio_minutes=settings.podcast.premium_max_audio_minutes,
             )
+            should_synthesize_audio = (
+                eligibility.should_synthesize_audio
+                and plan.should_synthesize_audio
+            )
             voice = settings.podcast.default_voice_profile
             if not llm_config.configured:
                 raise RuntimeError("精品导读所需的 LLM 配置尚未就绪")
-            if plan.should_synthesize_audio and (not aliyun_config.tts_configured or not voice):
+            if should_synthesize_audio and (not aliyun_config.tts_configured or not voice):
                 raise RuntimeError("精品导读所需的 TTS 配置尚未就绪")
             tts_provider = (
                 make_premium_tts_provider(
@@ -791,7 +816,7 @@ def schedule_podcast_premium_guide(episode_id: str) -> bool:
                     voice_profile=voice,
                     max_audio_bytes=podcast_artifact_store.max_bytes,
                 )
-                if plan.should_synthesize_audio
+                if should_synthesize_audio
                 else None
             )
             await podcast_premium_guide_service.run_premium_guide(
@@ -1718,6 +1743,7 @@ app.include_router(remote_sync_router.router)
 app.include_router(share_router.router)
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
+RANKING_JOB_ID = "reader_rankings"
 
 
 async def execute_storage_maintenance_job():
@@ -1733,6 +1759,32 @@ def reload_storage_schedule():
                           id="storage_maintenance", replace_existing=True, max_instances=1, coalesce=True)
     elif scheduler.get_job("storage_maintenance"):
         scheduler.remove_job("storage_maintenance")
+
+
+async def execute_ranking_snapshot_job(current_cutoff: bool = False):
+    """Build a ranking snapshot off-loop, frozen for cron or current for catch-up."""
+
+    try:
+        snapshot = await asyncio.to_thread(
+            rankings_service.build_snapshot,
+            db_sink.engine,
+            current_cutoff=current_cutoff,
+        )
+        _dorami_logger.info(
+            "读者榜单快照已生成 date=%s status=%s",
+            snapshot.snapshot_date,
+            snapshot.status,
+        )
+    except Exception:  # noqa: BLE001 - the next cron/restart catch-up retries it
+        _dorami_logger.exception("读者榜单快照生成失败")
+
+
+def reload_ranking_schedule() -> None:
+    """Install the all-role, idempotent 07:00 Asia/Shanghai ranking job."""
+
+    add_cron_job(RANKING_JOB_ID, execute_ranking_snapshot_job, "0 7 * * *", [])
+
+
 COLLECTION_FETCH_CONCURRENCY = 4
 PODCAST_ASR_WORKER_JOB_ID = "podcast_asr_worker"
 

@@ -313,6 +313,14 @@ export default function App() {
     commitNav({ tab, views, focus });
   }, [commitNav]);
 
+  const openAdminPodcastQuota = useCallback(() => {
+    setSettingsOpen(false);
+    jumpWithFocus('admin', null, {
+      tab: 'admin',
+      payload: { sub: 'content', zone: 'podcast-asr-quota' },
+    });
+  }, [jumpWithFocus]);
+
   const setFetchView = useCallback((v) => goView('fetch', v), [goView]);
 
   const markArticlesDirty = useCallback(() => setArticlesDirty(true), []);
@@ -848,6 +856,7 @@ export default function App() {
           onArticlesChanged={markArticlesDirty}
           feedbackUnread={feedbackUnread}
           onFeedbackSeen={handleFeedbackSeen}
+          onOpenAdminPodcast={openAdminPodcastQuota}
         />
       </Suspense>
 

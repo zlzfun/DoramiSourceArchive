@@ -64,7 +64,7 @@
   去重策略：同源片段时间覆盖与连续 token 双判定、部分镜像保留独有内容、真实多声道验收矩阵。
 - ◉ [Issue #7 可执行规格](../specs/007-podcast-intelligence/spec.md) — Podcast Intelligence 的
   用户故事、成功指标、研究决策、数据模型、OpenAPI 契约、多 Agent 任务和主会话验收入口。
-- ◉ [sources/podcast_catalog.md](./sources/podcast_catalog.md) — 内部「欧研观澜」36 个节目样本的
+- ◉ [sources/podcast_catalog.md](./sources/podcast_catalog.md) — 37 个精选节目、逐源验证日期与
   RSS 可接入性验证、精选目录、幂等导入命令/API、观察期与权利边界。
 - ◉ [taxonomy-v1-deployment.md](./taxonomy-v1-deployment.md) — 已批准 Taxonomy v1 的发布资产与上线手册：
   外网 authority 启动自动 reconcile → 人工发布，内网 replica 通过 Archive Sync

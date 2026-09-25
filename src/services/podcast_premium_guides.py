@@ -12,11 +12,12 @@ import datetime as dt
 import hashlib
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
@@ -28,6 +29,7 @@ from models.db import (
     PodcastProcessingRecord,
     PodcastTextArtifactRecord,
     PodcastTextPublicationRecord,
+    SourceConfigRecord,
 )
 from services.podcast_artifacts import (
     PodcastArtifactStore,
@@ -63,6 +65,24 @@ class SoloDeepDurationPlan:
     min_chars: int
     target_chars: int
     max_chars: int
+
+
+@dataclass(frozen=True)
+class GuideEligibility:
+    mode: str
+    is_premium: bool
+    language: str
+    language_source: str
+    score: float | None
+    initial_score: float | None
+
+    @property
+    def eligible(self) -> bool:
+        return bool(self.mode)
+
+    @property
+    def should_synthesize_audio(self) -> bool:
+        return self.mode == "solo_deep"
 
 
 def _capped_plan(
@@ -180,6 +200,135 @@ def _extensions(article: ArticleRecord) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+_UNKNOWN_LANGUAGES = frozenset({"", "und", "mul", "zxx"})
+_CHINESE_LANGUAGES = frozenset({"zh", "cmn", "yue", "wuu", "nan", "hak"})
+_LANGUAGE_TAG = re.compile(r"^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$")
+
+
+def _normalized_language(value: Any) -> str:
+    return str(value or "").strip().replace("_", "-").lower()
+
+
+def _known_language(value: Any) -> str:
+    language = _normalized_language(value)
+    base = language.split("-", 1)[0]
+    if base in _UNKNOWN_LANGUAGES or not _LANGUAGE_TAG.fullmatch(language):
+        return ""
+    return language
+
+
+def _is_non_chinese_language(value: str) -> bool:
+    base = _normalized_language(value).split("-", 1)[0]
+    return bool(base and base not in _UNKNOWN_LANGUAGES and base not in _CHINESE_LANGUAGES)
+
+
+def resolve_episode_language(
+    episode: ArticleRecord,
+    transcript: PodcastTextArtifactRecord,
+    *,
+    source_language: str = "",
+) -> tuple[str, str]:
+    """Resolve a traceable primary language without title heuristics."""
+
+    language = _known_language(transcript.language)
+    if language:
+        return language, "transcript_artifact"
+    extensions = _extensions(episode)
+    for key in ("language", "episode_language", "feed_language", "channel_language"):
+        language = _known_language(extensions.get(key))
+        if language:
+            return language, f"rss_{key}"
+    transcripts = extensions.get("transcripts")
+    if isinstance(transcripts, dict):
+        transcripts = [transcripts]
+    if isinstance(transcripts, list):
+        for candidate in transcripts:
+            if not isinstance(candidate, dict):
+                continue
+            language = _known_language(candidate.get("language"))
+            if language:
+                return language, "rss_transcript"
+    language = _known_language(source_language)
+    if language:
+        return language, "source_config"
+    return "", "unknown"
+
+
+def _source_language(session: Session, episode: ArticleRecord) -> str:
+    if not episode.source_id:
+        return ""
+    source = session.get(SourceConfigRecord, episode.source_id)
+    if source is None:
+        return ""
+    try:
+        params = json.loads(source.params_json or "{}")
+    except (TypeError, ValueError):
+        return ""
+    if not isinstance(params, dict):
+        return ""
+    return _known_language(params.get("language"))
+
+
+def _guide_eligibility(
+    episode: ArticleRecord,
+    analysis: ArticleAnalysisRecord,
+    transcript: PodcastTextArtifactRecord,
+    *,
+    score_threshold: float,
+    selection_override: bool = False,
+    source_language: str = "",
+) -> GuideEligibility:
+    score = podcast_premium.final_score(analysis)
+    initial_score = podcast_premium.initial_score(analysis)
+    language, language_source = resolve_episode_language(
+        episode, transcript, source_language=source_language
+    )
+    if selection_override or (score is not None and score >= score_threshold):
+        mode = "solo_deep"
+    elif (
+        score is not None
+        and initial_score is not None
+        and initial_score >= podcast_premium.INITIAL_PROCESSING_THRESHOLD
+        and _is_non_chinese_language(language)
+    ):
+        mode = "brief_zh"
+    else:
+        mode = ""
+    return GuideEligibility(
+        mode=mode,
+        is_premium=bool(score is not None and score >= score_threshold),
+        language=language,
+        language_source=language_source,
+        score=score,
+        initial_score=initial_score,
+    )
+
+
+def guide_eligibility(
+    engine: Engine,
+    *,
+    episode_id: str,
+    score_threshold: float,
+) -> GuideEligibility:
+    with Session(engine) as session:
+        episode = session.get(ArticleRecord, episode_id)
+        analysis = session.get(ArticleAnalysisRecord, episode_id)
+        if episode is None or analysis is None or not analysis.transcript_artifact_id:
+            return GuideEligibility("", False, "", "unknown", None, None)
+        transcript = session.get(
+            PodcastTextArtifactRecord, analysis.transcript_artifact_id
+        )
+        if transcript is None or not has_authoritative_analysis(analysis):
+            return GuideEligibility("", False, "", "unknown", None, None)
+        return _guide_eligibility(
+            episode,
+            analysis,
+            transcript,
+            score_threshold=score_threshold,
+            source_language=_source_language(session, episode),
+        )
+
+
 def _set_episode_status(
     engine: Engine,
     episode_id: str,
@@ -188,6 +337,7 @@ def _set_episode_status(
     error: str = "",
     failed_stage: str = "",
     audio: PodcastArtifactRecord | None = None,
+    guide_metadata: dict[str, Any] | None = None,
 ) -> None:
     with Session(engine) as session:
         episode = session.get(ArticleRecord, episode_id)
@@ -200,6 +350,11 @@ def _set_episode_status(
             guide = {}
         previous_status = str(guide.get("status") or "").strip()
         guide.update({"status": status, "updated_at": _now()})
+        if guide_metadata:
+            guide.update({
+                key: value for key, value in guide_metadata.items()
+                if value not in (None, "")
+            })
         if status == "failed":
             effective_failed_stage = (
                 str(failed_stage or "").strip()
@@ -261,6 +416,7 @@ def _publish_text(
     text: str,
     source_artifact: PodcastTextArtifactRecord,
     pipeline_version: str,
+    guide_mode: str,
 ) -> PodcastTextArtifactRecord:
     canonical = text.strip()
     if not canonical:
@@ -274,7 +430,17 @@ def _publish_text(
         else None
     )
     if current is not None and current.content_hash == content_hash:
-        return current
+        try:
+            provenance = json.loads(current.provenance_json or "{}")
+        except (TypeError, ValueError):
+            provenance = {}
+        if (
+            current.source_artifact_id == source_artifact.id
+            and current.source_content_hash == source_artifact.content_hash
+            and provenance.get("pipeline") == pipeline_version
+            and str(provenance.get("guide_mode") or "solo_deep") == guide_mode
+        ):
+            return current
 
     version = session.exec(
         select(func.max(PodcastTextArtifactRecord.version)).where(
@@ -295,7 +461,11 @@ def _publish_text(
         source_artifact_id=source_artifact.id,
         source_content_hash=source_artifact.content_hash,
         provenance_json=json.dumps(
-            {"pipeline": pipeline_version, "source": "premium_guide"},
+            {
+                "pipeline": pipeline_version,
+                "source": "premium_guide",
+                "guide_mode": guide_mode,
+            },
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -358,6 +528,27 @@ def _source_transcript(
         or artifact.kind != expected_kind
     ):
         raise PremiumGuideError("全文分析逐字稿不可用")
+    publication = session.get(
+        PodcastTextPublicationRecord, f"{episode_id}:{expected_kind}"
+    )
+    # Legacy local analyses may predate publication pointers.  Once a pointer
+    # exists it is authoritative: a withdrawn or replaced transcript must never
+    # continue driving a guide from stale evidence.
+    if publication is not None and (
+        publication.status != "published"
+        or publication.artifact_id != artifact.id
+        or publication.authority_id != artifact.authority_id
+    ):
+        raise PremiumGuideError("全文分析逐字稿已更新，请等待重新分析")
+    if expected_kind == "publisher_transcript":
+        from services.podcast_publisher_transcripts import (
+            publisher_artifact_matches_current_locator,
+        )
+
+        if not publisher_artifact_matches_current_locator(
+            session, episode_id=episode_id, artifact=artifact
+        ):
+            raise PremiumGuideError("节目方逐字稿已更新，请等待重新分析")
     try:
         from services.podcast_full_analysis import _transcript_text
 
@@ -369,7 +560,7 @@ def _source_transcript(
 
 def _reusable_guide_text(
     session: Session, episode_id: str, transcript: PodcastTextArtifactRecord,
-    pipeline_version: str,
+    pipeline_version: str, guide_mode: str,
 ) -> tuple[PodcastTextArtifactRecord | None, PodcastTextArtifactRecord | None]:
     def published(kind: str) -> PodcastTextArtifactRecord | None:
         publication = session.get(PodcastTextPublicationRecord, f"{episode_id}:{kind}")
@@ -381,7 +572,12 @@ def _reusable_guide_text(
         if not artifact or artifact.source_artifact_id != source.id or artifact.source_content_hash != source.content_hash:
             return False
         try:
-            return json.loads(artifact.provenance_json or "{}").get("pipeline") == pipeline_version
+            provenance = json.loads(artifact.provenance_json or "{}")
+            artifact_mode = str(provenance.get("guide_mode") or "solo_deep")
+            return (
+                provenance.get("pipeline") == pipeline_version
+                and artifact_mode == guide_mode
+            )
         except (TypeError, ValueError):
             return False
 
@@ -390,6 +586,36 @@ def _reusable_guide_text(
         return None, None
     narration = published("narration_script_zh")
     return blog, narration if matches(narration, blog) else None
+
+
+def _reusable_published_audio(
+    session: Session,
+    store: PodcastArtifactStore,
+    *,
+    episode_id: str,
+    narration: PodcastTextArtifactRecord,
+) -> PodcastArtifactRecord | None:
+    """Return an intact publication for the exact current narration, if any."""
+
+    candidates = session.exec(
+        select(PodcastArtifactRecord)
+        .where(
+            PodcastArtifactRecord.episode_id == episode_id,
+            PodcastArtifactRecord.kind == "digest_audio_zh",
+            PodcastArtifactRecord.status == "published",
+            PodcastArtifactRecord.narration_artifact_id == narration.id,
+            PodcastArtifactRecord.narration_content_hash == narration.content_hash,
+        )
+        .order_by(
+            PodcastArtifactRecord.published_at.desc(),
+            PodcastArtifactRecord.id.desc(),
+        )
+    ).all()
+    for candidate in candidates:
+        if store.is_intact(candidate):
+            session.expunge(candidate)
+            return candidate
+    return None
 
 
 async def run_premium_guide(
@@ -414,7 +640,6 @@ async def run_premium_guide(
             "local_publish",
         ):
             policy.require_stage(stage, boundary="provider_submit")
-        _set_episode_status(engine, episode_id, "summarizing")
         with Session(engine) as session:
             episode, transcript_artifact, transcript = _source_transcript(
                 session, episode_id, config
@@ -427,6 +652,7 @@ async def run_premium_guide(
                 raise PremiumGuideError("播客全文终评尚未完成")
             title = episode.title
             duration = float(_extensions(episode).get("duration_seconds") or 0)
+            source_language = _source_language(session, episode)
         if duration <= 0:
             raise PremiumGuideError("播客时长未知，暂不触发精品导读")
         if config.premium_guide_mode != "solo_deep":
@@ -438,17 +664,40 @@ async def run_premium_guide(
             if score_threshold is None
             else float(score_threshold)
         )
-        if score < effective_threshold and not selection_override:
+        eligibility = _guide_eligibility(
+            episode,
+            analysis,
+            transcript_artifact,
+            score_threshold=effective_threshold,
+            selection_override=selection_override,
+            source_language=source_language,
+        )
+        if not eligibility.eligible:
             _set_episode_status(engine, episode_id, "not_required")
             return {"episode_id": episode_id, "is_premium": False, "score": score}
+
+        guide_metadata = {
+            "mode": eligibility.mode,
+            "language": eligibility.language,
+            "language_source": eligibility.language_source,
+        }
+        _set_episode_status(
+            engine,
+            episode_id,
+            "summarizing",
+            guide_metadata=guide_metadata,
+        )
 
         plan = calculate_solo_deep_plan(
             duration,
             selection_override=selection_override,
             hard_max_audio_minutes=config.premium_max_audio_minutes,
         )
+        should_synthesize_audio = (
+            eligibility.should_synthesize_audio and plan.should_synthesize_audio
+        )
 
-        if plan.should_synthesize_audio:
+        if should_synthesize_audio:
             for stage in (
                 "script",
                 "tts",
@@ -460,24 +709,33 @@ async def run_premium_guide(
 
         with Session(engine) as session:
             blog_artifact, reusable_narration = _reusable_guide_text(
-                session, episode_id, transcript_artifact, config.text_pipeline_version
+                session,
+                episode_id,
+                transcript_artifact,
+                config.text_pipeline_version,
+                eligibility.mode,
             )
         if blog_artifact is None:
             # Capacity is checked before any paid text generation. The provider
             # performs the locked final check immediately before TTS submission.
-            if plan.should_synthesize_audio and callable(getattr(tts_provider, "ensure_capacity", None)):
+            if should_synthesize_audio and callable(getattr(tts_provider, "ensure_capacity", None)):
                 try:
                     await asyncio.to_thread(tts_provider.ensure_capacity,
                         min(plan.max_chars, config.premium_narration_max_chars))
                 except BailianSpeechError:
                     _set_episode_status(engine, episode_id, "synthesizing")
                     raise
+            blog_max_chars = (
+                min(config.premium_blog_max_chars, 3500)
+                if eligibility.mode == "brief_zh"
+                else config.premium_blog_max_chars
+            )
             draft = await text_provider.create_blog(
                 title=title,
                 transcript=transcript[: config.premium_transcript_max_chars],
-                max_chars=config.premium_blog_max_chars,
+                max_chars=blog_max_chars,
             )
-            blog = draft.blog_markdown.strip()[: config.premium_blog_max_chars]
+            blog = draft.blog_markdown.strip()[:blog_max_chars]
             with Session(engine) as session:
                 episode = session.get(ArticleRecord, episode_id)
                 if episode is None:
@@ -486,6 +744,7 @@ async def run_premium_guide(
                     session, episode=episode, kind="digest_blog_zh", text=blog,
                     source_artifact=transcript_artifact,
                     pipeline_version=config.text_pipeline_version,
+                    guide_mode=eligibility.mode,
                 )
                 session.commit()
                 session.refresh(blog_artifact)
@@ -493,8 +752,13 @@ async def run_premium_guide(
         blog_artifact_id = blog_artifact.id
         blog = blog_artifact.inline_text
 
-        if not plan.should_synthesize_audio:
-            _set_episode_status(engine, episode_id, "ready")
+        if not should_synthesize_audio:
+            _set_episode_status(
+                engine,
+                episode_id,
+                "ready",
+                guide_metadata=guide_metadata,
+            )
             return {
                 "episode_id": episode_id,
                 "is_premium": score >= effective_threshold,
@@ -503,7 +767,14 @@ async def run_premium_guide(
                 "blog_artifact_id": blog_artifact_id,
                 "audio_artifact_id": None,
                 "duration_seconds": None,
-                "reason": "duration_not_over_minimum",
+                "mode": eligibility.mode,
+                "language": eligibility.language,
+                "language_source": eligibility.language_source,
+                "reason": (
+                    "non_chinese_text_guide"
+                    if eligibility.mode == "brief_zh"
+                    else "duration_not_over_minimum"
+                ),
             }
 
         narration_char_budget = min(plan.max_chars, config.premium_narration_max_chars)
@@ -528,6 +799,7 @@ async def run_premium_guide(
                     session, episode=episode, kind="narration_script_zh",
                     text=narration[: config.premium_narration_max_chars],
                     source_artifact=current_blog, pipeline_version=config.text_pipeline_version,
+                    guide_mode=eligibility.mode,
                 )
                 session.commit()
                 session.refresh(reusable_narration)
@@ -536,7 +808,34 @@ async def run_premium_guide(
         narration_hash = reusable_narration.content_hash
         narration_text = reusable_narration.inline_text
 
-        _set_episode_status(engine, episode_id, "synthesizing")
+        with Session(engine) as session:
+            published_audio = _reusable_published_audio(
+                session,
+                store,
+                episode_id=episode_id,
+                narration=reusable_narration,
+            )
+        if published_audio is not None:
+            _set_episode_status(
+                engine,
+                episode_id,
+                "ready",
+                audio=published_audio,
+                guide_metadata=guide_metadata,
+            )
+            return {
+                "episode_id": episode_id,
+                "is_premium": score >= effective_threshold,
+                "selection_override": selection_override,
+                "score": score,
+                "mode": eligibility.mode,
+                "audio_artifact_id": published_audio.id,
+                "duration_seconds": published_audio.duration_seconds,
+            }
+
+        _set_episode_status(
+            engine, episode_id, "synthesizing", guide_metadata=guide_metadata
+        )
         synthesized = await tts_provider.synthesize(narration_text)
         audio = await asyncio.to_thread(
             store.import_bytes,
@@ -582,6 +881,7 @@ async def run_premium_guide(
                     text=retry_narration[: config.premium_narration_max_chars],
                     source_artifact=blog_artifact,
                     pipeline_version=config.text_pipeline_version,
+                    guide_mode=eligibility.mode,
                 )
                 retry_id = retry_narration_artifact.id
                 retry_hash = retry_narration_artifact.content_hash
@@ -614,12 +914,19 @@ async def run_premium_guide(
         audio = await asyncio.to_thread(
             store.publish, audio.id, expected_updated_at=audio.updated_at
         )
-        _set_episode_status(engine, episode_id, "ready", audio=audio)
+        _set_episode_status(
+            engine,
+            episode_id,
+            "ready",
+            audio=audio,
+            guide_metadata=guide_metadata,
+        )
         return {
             "episode_id": episode_id,
             "is_premium": score >= effective_threshold,
             "selection_override": selection_override,
             "score": score,
+            "mode": eligibility.mode,
             "audio_artifact_id": audio.id,
             "duration_seconds": audio.duration_seconds,
         }
@@ -962,12 +1269,24 @@ def list_premium_guide_tasks(
             ArticleAnalysisRecord.podcast_final_score,
             ArticleAnalysisRecord.quality_score,
         )
-        premium_filter = (
+        guide_filter = (
             ArticleRecord.content_type == "podcast_episode",
             ArticleAnalysisRecord.analysis_basis.in_(
                 ("publisher_transcript", "asr_transcript")
             ),
-            effective_final_score >= threshold,
+            or_(
+                effective_final_score >= threshold,
+                case(
+                    (
+                        func.json_valid(ArticleRecord.extensions_json),
+                        func.json_extract(
+                            ArticleRecord.extensions_json,
+                            "$.premium_guide.mode",
+                        ),
+                    ),
+                    else_="",
+                ) == "brief_zh",
+            ),
             or_(
                 ArticleAnalysisRecord.status == "succeeded",
                 ArticleAnalysisRecord.analyzed_at.is_not(None),
@@ -980,7 +1299,7 @@ def list_premium_guide_tasks(
                 ArticleAnalysisRecord,
                 ArticleAnalysisRecord.article_id == ArticleRecord.id,
             )
-            .where(*premium_filter)
+            .where(*guide_filter)
         ).one()
         rows = session.exec(
             select(ArticleRecord, ArticleAnalysisRecord)
@@ -988,7 +1307,7 @@ def list_premium_guide_tasks(
                 ArticleAnalysisRecord,
                 ArticleAnalysisRecord.article_id == ArticleRecord.id,
             )
-            .where(*premium_filter)
+            .where(*guide_filter)
             .order_by(ArticleRecord.publish_date.desc(), ArticleRecord.id.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)
@@ -1018,7 +1337,7 @@ def list_premium_guide_tasks(
                     "title": episode.title,
                     "source_id": episode.source_id,
                     "quality_score": score,
-                    "is_premium": True,
+                    "is_premium": bool(score is not None and score >= threshold),
                     "status": str(
                         guide.get("status")
                         or extensions.get("processing_status")
@@ -1030,7 +1349,9 @@ def list_premium_guide_tasks(
                     "audio_ready": audio is not None,
                     "error": str(guide.get("error") or ""),
                     "updated_at": str(guide.get("updated_at") or ""),
-                    "mode": mode,
+                    "mode": str(guide.get("mode") or mode),
+                    "language": str(guide.get("language") or ""),
+                    "language_source": str(guide.get("language_source") or ""),
                 }
             )
         return {
@@ -1048,15 +1369,19 @@ def pending_premium_guide_candidates(
     minimum_duration_seconds: int = 0,
     score_threshold: float = podcast_premium.DEFAULT_PREMIUM_SCORE_THRESHOLD,
 ) -> list[str]:
-    """Return only episodes whose authoritative score requires guide generation."""
+    """Return premium audio or non-Chinese text-guide candidates.
+
+    This query never creates transcript work: a candidate must already point at
+    the exact transcript artifact used by a completed authoritative analysis.
+    """
 
     with Session(engine) as session:
-        effective_final_score = func.coalesce(
-            ArticleAnalysisRecord.podcast_final_score,
-            ArticleAnalysisRecord.quality_score,
-        )
         rows = session.exec(
-            select(ArticleRecord, ArticleAnalysisRecord)
+            select(
+                ArticleRecord,
+                ArticleAnalysisRecord,
+                PodcastTextArtifactRecord,
+            )
             .join(
                 PodcastTextArtifactRecord,
                 PodcastTextArtifactRecord.episode_id == ArticleRecord.id,
@@ -1075,19 +1400,82 @@ def pending_premium_guide_candidates(
                 ArticleAnalysisRecord.analysis_basis.in_(
                     ("asr_transcript", "publisher_transcript")
                 ),
-                effective_final_score >= score_threshold,
             )
         ).all()
-        return [
-            row.id
-            for row, analysis in rows
-            if has_authoritative_analysis(analysis)
-            and float(_extensions(row).get("duration_seconds") or 0) > 0
-            and float(_extensions(row).get("duration_seconds") or 0)
-            >= minimum_duration_seconds
-            and str(_extensions(row).get("processing_status") or "")
-            not in {"summarizing", "synthesizing", "ready", "failed"}
-        ]
+        candidates: list[str] = []
+        for episode, analysis, transcript in rows:
+            if not has_authoritative_analysis(analysis):
+                continue
+            transcript_publication = session.get(
+                PodcastTextPublicationRecord,
+                f"{episode.id}:{transcript.kind}",
+            )
+            if transcript_publication is not None and (
+                transcript_publication.status != "published"
+                or transcript_publication.artifact_id != transcript.id
+                or transcript_publication.authority_id != transcript.authority_id
+            ):
+                continue
+            if transcript.kind == "publisher_transcript":
+                from services.podcast_publisher_transcripts import (
+                    publisher_artifact_matches_current_locator,
+                )
+
+                if not publisher_artifact_matches_current_locator(
+                    session, episode_id=episode.id, artifact=transcript
+                ):
+                    continue
+            extensions = _extensions(episode)
+            if bool(extensions.get("premium_guide_auto_suppressed")):
+                continue
+            duration = float(extensions.get("duration_seconds") or 0)
+            if duration <= 0:
+                continue
+            eligibility = _guide_eligibility(
+                episode,
+                analysis,
+                transcript,
+                score_threshold=score_threshold,
+                source_language=_source_language(session, episode),
+            )
+            if not eligibility.eligible:
+                continue
+            if (
+                eligibility.mode == "solo_deep"
+                and duration < minimum_duration_seconds
+            ):
+                continue
+            guide = extensions.get("premium_guide")
+            guide = guide if isinstance(guide, dict) else {}
+            status = str(guide.get("status") or extensions.get("processing_status") or "")
+            current_mode = str(guide.get("mode") or "")
+            if status in {"summarizing", "synthesizing", "failed"}:
+                continue
+            if status == "ready" and current_mode == eligibility.mode:
+                publication = session.get(
+                    PodcastTextPublicationRecord, f"{episode.id}:digest_blog_zh"
+                )
+                blog = (
+                    session.get(PodcastTextArtifactRecord, publication.artifact_id)
+                    if publication is not None and publication.status == "published"
+                    else None
+                )
+                try:
+                    provenance = json.loads(blog.provenance_json or "{}") if blog else {}
+                except (TypeError, ValueError):
+                    provenance = {}
+                guide_language = _known_language(guide.get("language"))
+                if (
+                    blog is not None
+                    and blog.source_artifact_id == transcript.id
+                    and blog.source_content_hash == transcript.content_hash
+                    and str(provenance.get("guide_mode") or "solo_deep")
+                    == eligibility.mode
+                    and guide_language == eligibility.language
+                ):
+                    continue
+            candidates.append(episode.id)
+        return candidates
 
 
 __all__ = [
@@ -1101,12 +1489,15 @@ __all__ = [
     "READER_ONDEMAND_SCORE_TOO_LOW_MESSAGE",
     "SoloDeepDurationPlan",
     "SynthesizedAudio",
+    "GuideEligibility",
     "calculate_solo_deep_plan",
     "fail_premium_guide",
     "list_premium_guide_tasks",
     "lookup_forced_premium_guide_request",
     "evaluate_reader_ondemand_premium_guide",
+    "guide_eligibility",
     "pending_premium_guide_candidates",
     "prepare_forced_premium_guide",
     "run_premium_guide",
+    "resolve_episode_language",
 ]

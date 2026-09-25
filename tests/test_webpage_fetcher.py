@@ -6,6 +6,8 @@ import os
 import sys
 from urllib.parse import urljoin
 
+from sqlmodel import Session
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from fetchers.impl.webpage_fetcher import (
@@ -32,6 +34,8 @@ from fetchers.impl.curated_core_fetcher import (
     ZaiNewReleasedFetcher,
 )
 from fetchers.web_content.profiles import resolve_profile
+from models.db import ArticleRecord
+from storage.impl.db_storage import DatabaseStorage
 
 
 class DummyResponse:
@@ -1756,6 +1760,204 @@ def test_kimi_listing_prefers_dated_card_over_header_duplicate_and_keeps_body_ma
     assert "[Read the model docs](https://www.kimi.com/docs/k3)" in item.content
     assert "Try Kimi" not in item.content
     assert item.raw_data["detail_extraction_method"] == "kimi_research_markdown_body"
+
+
+def test_kimi_localized_nextjs_listing_uses_article_list_without_duplicate_ids():
+    # 2026-09 live structure: the zh page heading/footer say “研究”, while both
+    # visible cards and the RSC articleList point at /en/blog/*. The latter must
+    # collapse onto the historical /blog/* canonical IDs instead of duplicating
+    # existing records or inheriting the localized section heading as a title.
+    article_list = {
+        "articleList": {
+            "cardLayout": "firstCardHero",
+            "items": [
+                {
+                    "id": "kimi-k3",
+                    "title": "Kimi K3",
+                    "description": "",
+                    "href": "/en/blog/kimi-k3",
+                    "date": "2026-07-16",
+                },
+                {
+                    "id": "kimi-k2-6",
+                    "title": "Kimi K2.6",
+                    "description": "",
+                    "href": "/en/blog/kimi-k2-6",
+                    "date": "2026-04-20",
+                },
+            ],
+        }
+    }
+    flight_chunk = "7:" + json.dumps(article_list, ensure_ascii=False)
+    listing_html = f"""
+    <html><head><title>Kimi 研究博客 | 月之暗面</title></head><body>
+      <main><h1>研究</h1>
+        <div class="menu-card"><a href="/en/blog/kimi-k3" aria-label="Kimi K3"></a>
+          <h3>Kimi K3</h3></div>
+        <div class="menu-card"><a href="/en/blog/kimi-k2-6" aria-label="Kimi K2.6"></a>
+          <h3>Kimi K2.6</h3></div>
+      </main>
+      <footer><h4>研究</h4>
+        <a href="/blog/kimi-k3">Kimi K3 技术博客</a>
+        <a href="/blog/kimi-k2-6">Kimi K2.6 技术博客</a>
+      </footer>
+      <script>self.__next_f.push([1,{json.dumps(flight_chunk, ensure_ascii=False)}])</script>
+    </body></html>
+    """
+    detail_by_url = {
+        "https://www.kimi.com/blog/kimi-k3": (
+            "Kimi K3 Tech Blog: Open Frontier Intelligence",
+            "Kimi K3 introduces open frontier intelligence.",
+        ),
+        "https://www.kimi.com/blog/kimi-k2-6": (
+            "Kimi K2.6 Tech Blog: Advancing Open-Source Coding",
+            "Kimi K2.6 advances open-source coding.",
+        ),
+    }
+    fetcher = KimiResearchWebFetcher()
+
+    async def fake_safe_get(client, url, **kwargs):
+        if url == fetcher.listing_url:
+            return DummyResponse(listing_html, url)
+        title, paragraph = detail_by_url[url]
+        return DummyResponse(
+            f"<html><head><title>{title}</title></head><body>"
+            f"<div class='blog-v2-main'><div class='markdown'><p>{paragraph}</p>"
+            "</div></div></body></html>",
+            url,
+        )
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [item async for item in fetcher.fetch(limit=10)]
+
+    items = asyncio.run(collect_items())
+    assert [(item.title, item.source_url, item.publish_date) for item in items] == [
+        ("Kimi K3", "https://www.kimi.com/blog/kimi-k3", "2026-07-16T00:00:00+00:00"),
+        ("Kimi K2.6", "https://www.kimi.com/blog/kimi-k2-6", "2026-04-20T00:00:00+00:00"),
+    ]
+    assert len({item.id for item in items}) == 2
+    assert items[0].id == fetcher._content_id("https://www.kimi.com/blog/kimi-k3")
+    assert all("embedded_json" in item.raw_data["listing_source"] for item in items)
+    assert all(item._refresh_existing_metadata is True for item in items)
+
+
+def test_kimi_generic_research_title_forces_detail_title_refresh_for_existing_body():
+    listing_html = """
+    <html><body><section><h1>研究</h1>
+      <a href="/blog/kimi-orion" aria-label="Research"></a>
+    </section></body></html>
+    """
+    detail_html = """
+    <html><head><title>Kimi Orion Tech Blog: Long-Horizon Agents</title></head><body>
+      <div class="blog-v2-main"><div class="markdown">
+        <p>Kimi Orion coordinates long-horizon agent work.</p>
+      </div></div>
+    </body></html>
+    """
+    fetcher = KimiResearchWebFetcher()
+    canonical_url = "https://www.kimi.com/blog/kimi-orion"
+    detail_requests = []
+
+    async def existing_content(item_ids):
+        return {item_id: True for item_id in item_ids}
+
+    async def fake_safe_get(client, url, **kwargs):
+        if url == fetcher.listing_url:
+            return DummyResponse(listing_html, url)
+        detail_requests.append(url)
+        return DummyResponse(detail_html, url)
+
+    fetcher.dedup_lookup = existing_content
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [item async for item in fetcher.fetch(limit=1)]
+
+    item = asyncio.run(collect_items())[0]
+    assert detail_requests == [canonical_url]
+    assert item.title == "Kimi Orion Tech Blog: Long-Horizon Agents"
+    assert item.raw_data["detail_fetched"] is True
+    assert item.raw_data["detail_title"] == item.title
+    assert item._refresh_existing_metadata is True
+
+
+def test_kimi_existing_body_emits_metadata_only_item_and_repairs_storage(tmp_path):
+    article_list = {
+        "articleList": {
+            "items": [{
+                "id": "kimi-k2-6",
+                "title": "Kimi K2.6",
+                "description": "",
+                "href": "/en/blog/kimi-k2-6",
+                "date": "2026-04-20",
+            }],
+        }
+    }
+    flight_chunk = "7:" + json.dumps(article_list, ensure_ascii=False)
+    listing_html = (
+        "<html><body><h1>研究</h1>"
+        f"<script>self.__next_f.push([1,{json.dumps(flight_chunk, ensure_ascii=False)}])</script>"
+        "</body></html>"
+    )
+    fetcher = KimiResearchWebFetcher()
+    storage = DatabaseStorage(f"sqlite:///{tmp_path / 'kimi-metadata-refresh.db'}")
+    canonical_url = "https://www.kimi.com/blog/kimi-k2-6"
+    article_id = fetcher._content_id(canonical_url)
+    original_body = "Original full Kimi K2.6 article body must remain byte-for-byte unchanged."
+    original_extensions = '{"sentinel": "keep-me"}'
+
+    with Session(storage.engine) as session:
+        session.add(ArticleRecord(
+            id=article_id,
+            title="研究",
+            content_type=fetcher.content_type,
+            source_id=fetcher.source_id,
+            source_url=canonical_url,
+            publish_date="2026-09-24T13:10:04+00:00",
+            fetched_date="2026-09-24T21:10:04+00:00",
+            archive_updated_at="2026-09-24T21:10:04+00:00",
+            has_content=True,
+            content=original_body,
+            extensions_json=original_extensions,
+        ))
+        session.commit()
+
+    detail_requests = []
+
+    async def fake_safe_get(client, url, **kwargs):
+        if url == fetcher.listing_url:
+            return DummyResponse(listing_html, url)
+        detail_requests.append(url)
+        raise AssertionError(f"Existing body should skip detail fetch: {url}")
+
+    fetcher.dedup_lookup = storage.existing_content_flags
+    fetcher._safe_get = fake_safe_get
+
+    async def fetch_and_save():
+        items = [item async for item in fetcher.fetch(limit=1)]
+        saved = [await storage.save(item) for item in items]
+        return items, saved
+
+    items, saved = asyncio.run(fetch_and_save())
+    assert detail_requests == []
+    assert len(items) == 1
+    assert items[0].title == "Kimi K2.6"
+    assert items[0].content == ""
+    assert items[0].has_content is False
+    assert items[0].raw_data["metadata_only_refresh"] is True
+    assert saved == [True]
+
+    with Session(storage.engine) as session:
+        repaired = session.get(ArticleRecord, article_id)
+        assert repaired is not None
+        assert repaired.title == "Kimi K2.6"
+        assert repaired.publish_date == "2026-04-20T00:00:00+00:00"
+        assert repaired.source_url == canonical_url
+        assert repaired.has_content is True
+        assert repaired.content == original_body
+        assert repaired.extensions_json == original_extensions
 
 
 def test_minimax_scopes_prose_without_title_meta_or_site_navigation():

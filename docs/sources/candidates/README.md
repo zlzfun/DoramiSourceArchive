@@ -31,3 +31,4 @@
 | `personal_newsletter_sources.md` | 个人博客/Newsletter(**含三批候补**) | wave2(07-17) |
 | `source_expansion_wave4_sources.md` | Microsoft/Meta/Kimi/MiniMax 官方、Artificial Analysis、Import AI、Arena Changelog | wave4(07-26) |
 | `hn_popular_blogs_2025_sources.md` | Evan Schwartz 的 HN Popular Blogs 2025 OPML：92 源的可用性/匹配度审查 + Scour 评估 | under review(08-24) |
+| `tessl_ai_native_dev_source.md` | Tessl 官方 The AI Native Dev 播客与逐字稿能力 | implemented incubating(09-24) |

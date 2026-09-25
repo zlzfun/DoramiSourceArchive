@@ -47,8 +47,10 @@ tag 在 main 线上、**目标 tag 里的**版本号等于 tag 名;不合格则�
 PR 清单),随后在同一次 run 里串联 `deploy.yml`,停在 Environment `production` 等发版人批准(见下节);
 `sync-master.yml` 把版本节点合进内网 master。
 
-**PR 不改版本号**。两人并行时各自在 PR 里 bump 必然抢号(2026-09-10 实证);版本号只在发版
-那一刻由发版人统一定。CLAUDE.md 里各波次的「vX.Y 某某波」叙述照旧,号以发版为准。
+**开发版统一使用下一正式版本的 `-alpha` 后缀**(2026-09-24 起)。开始新开发波时只做一次
+`src/version.py` / `pyproject.toml` / `uv.lock` 根包版本同步；同一波内并行 PR 沿用该 alpha,
+不得各自追加 alpha 编号或打 alpha tag。正式发布时由发版人运行本脚本把 `X.Y.Z-alpha`
+收口为 `X.Y.Z` 并打正式 tag。CLAUDE.md 里各波次的「vX.Y 某某波」叙述照旧,号以发版为准。
 
 ## 部署
 

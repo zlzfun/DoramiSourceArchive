@@ -6,7 +6,6 @@ import {
   getLLMConfig,
   fetchPodcastAsrQuota,
   getXApiConfig,
-  updatePodcastAsrQuota,
   saveLLMConfig,
   saveXApiConfig,
   testLLMConfig,
@@ -16,9 +15,9 @@ import SecretField from '../SecretField';
 
 /**
  * 凭据区(v3.27 凭据整合台,设置柜 → 管理组):外部凭据的**单点编辑台**。
- * - LLM / X API / 播客 ASR 三张编辑卡:与后端 services/credentials 统一保管契约对应
+ * - LLM / X API 两张编辑卡:与后端 services/credentials 统一保管契约对应
  *   (来源徽记=field_sources、掩码占位=只写不回显、空 secret=保留);
- * - 「其它凭据」只读回指:定时同步凭据与 cron 同属一个工作流,编辑留在
+ * - 播客 ASR 策略只读回指到内容管理；「其它凭据」只读回指:定时同步凭据与 cron 同属一个工作流,编辑留在
  *   数据同步区(柜内一跳);GitHub Token 部署级 env-only,无面板编辑;
  * - 消费页(AI 日报页头 / 运维内容页 X 区头)的 chip 跳到本区;用量/配额等
  *   观测面留在运维管理——「设置=写入口,运维=观测面」(2026-07-31 拍板 B)。
@@ -39,7 +38,7 @@ function CredStamp({ ok }) {
   return <span className={`stamp ${ok ? 'stamp-ok' : 'stamp-idle'}`}>{ok ? '已配置' : '未配置'}</span>;
 }
 
-export default function CredentialsSection({ showToast, onNavigate }) {
+export default function CredentialsSection({ showToast, onNavigate, onOpenAdminPodcast }) {
   // ── 大模型 ──
   const [llmStatus, setLlmStatus] = useState(null);
   const [llmForm, setLlmForm] = useState({ base_url: '', model: '', api_key: '', temperature: 0.3, max_tokens: 4096, thinking_mode: '', aux_model: '', vision_model: '' });
@@ -52,11 +51,8 @@ export default function CredentialsSection({ showToast, onNavigate }) {
   const [savingX, setSavingX] = useState(false);
   const [testingX, setTestingX] = useState(false);
 
-  // ── 播客 ASR 配额 ──
+  // ── 播客 ASR 只读回指（额度策略的唯一编辑入口在内容管理）──
   const [asrQuota, setAsrQuota] = useState(null);
-  const [asrHours, setAsrHours] = useState('');
-  const [asrMaxHours, setAsrMaxHours] = useState('');
-  const [savingAsr, setSavingAsr] = useState(false);
 
   // ── 只读回指:定时同步凭据 + 部署级 env 机密 ──
   const [schedule, setSchedule] = useState(null);
@@ -90,8 +86,6 @@ export default function CredentialsSection({ showToast, onNavigate }) {
 
   const loadAsrQuota = useCallback(() => fetchPodcastAsrQuota().then((d) => {
     setAsrQuota(d);
-    setAsrHours(String(d.daily_audio_hours_limit ?? 0));
-    setAsrMaxHours(String(d.max_audio_hours_per_file ?? 12));
   }).catch(() => {}), []);
 
   useEffect(() => {
@@ -200,34 +194,6 @@ export default function CredentialsSection({ showToast, onNavigate }) {
   };
 
   const scheduleConfigured = Boolean(schedule?.password_set);
-
-  const handleSaveAsr = async () => {
-    const hours = Number(asrHours);
-    if (!Number.isFinite(hours) || hours <= 0) {
-      showToast('每日累计音频上限需大于 0 小时', 'error');
-      return;
-    }
-    const maxHours = Number(asrMaxHours);
-    if (!Number.isFinite(maxHours) || maxHours <= 0 || maxHours > 12) {
-      showToast('单集音频上限需大于 0 且不超过 12 小时', 'error');
-      return;
-    }
-    setSavingAsr(true);
-    try {
-      const saved = await updatePodcastAsrQuota(
-        Math.round(hours * 3600),
-        Math.round(maxHours * 3600),
-      );
-      setAsrQuota(saved);
-      setAsrHours(String(saved.daily_audio_hours_limit));
-      setAsrMaxHours(String(saved.max_audio_hours_per_file));
-      showToast('已保存 ASR 音频时长设置', 'success');
-    } catch (error) {
-      showToast(error.message || '保存失败', 'error');
-    } finally {
-      setSavingAsr(false);
-    }
-  };
 
   return (
     <div>
@@ -356,53 +322,25 @@ export default function CredentialsSection({ showToast, onNavigate }) {
         </div>
       </section>
 
-      {/* ── 播客 ASR 配额 ── */}
+      {/* ── 播客 ASR：凭据柜只读回指，配额不在此形成第二编辑入口 ── */}
       <section className="cred-card">
         <div className="cred-head">
           <Bot />
           <span className="cred-title">播客 ASR</span>
           <div className="cred-head-right">
             <SrcBadge source={asrQuota?.source} />
-            <CredStamp ok={Boolean(asrQuota?.daily_audio_seconds_limit)} />
+            <CredStamp ok={Boolean(asrQuota?.configured)} />
           </div>
         </div>
-        <p className="cred-sub">每日累计量可大于 24 小时；单集上限是独立的供应商任务边界，不会缩减每日可处理总量。</p>
-        <div className="cred-fields">
-          <label className="sett-field">
-            <span className="sett-field-lbl">每日累计音频上限（小时）</span>
-            <input
-              className="form-input font-mono"
-              type="number"
-              step="0.5"
-              min="0.5"
-              value={asrHours}
-              onChange={(e) => setAsrHours(e.target.value)}
-            />
-          </label>
-          <label className="sett-field">
-            <span className="sett-field-lbl">单集音频上限（小时）</span>
-            <input
-              className="form-input font-mono"
-              type="number"
-              step="0.5"
-              min="0.5"
-              max="12"
-              value={asrMaxHours}
-              onChange={(e) => setAsrMaxHours(e.target.value)}
-            />
-            <span className="cred-ref-meta mt-2">阿里云单任务最长 12 小时，超限会在入队前拒绝</span>
-          </label>
-          <div className="sett-field">
-            <span className="sett-field-lbl">累计周期</span>
-            <div className="cred-ref-meta mt-2">
-              {asrQuota?.quota_timezone || '—'} · {asrQuota?.quota_scope || '—'}
-            </div>
-          </div>
-        </div>
+        <p className="cred-sub">供应商身份与连接配置从环境变量或配置文件读取；每日总额度和单集上限属于内容生产策略。</p>
         <div className="sett-sync-foot">
-          <span className="cred-ref-meta">保存后立即用于新提交的转录任务</span>
-          <button type="button" className="action-button action-button-primary min-h-[32px] px-3 text-xs" onClick={handleSaveAsr} disabled={savingAsr}>
-            {savingAsr ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} 保存
+          <span className="cred-ref-meta">
+            {asrQuota
+              ? `当前策略：每日 ${Number(asrQuota.daily_audio_hours_limit).toFixed(1)}h · 单集 ${Number(asrQuota.max_audio_hours_per_file).toFixed(1)}h`
+              : '当前策略尚未读取'}
+          </span>
+          <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={onOpenAdminPodcast}>
+            前往 内容 → 播客 <ChevronRight className="h-3.5 w-3.5" />
           </button>
         </div>
       </section>

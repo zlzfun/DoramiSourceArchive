@@ -213,9 +213,9 @@ token_refresh_skew_seconds = 300
 # ASR 日界固定按上海时区，时长按毫秒向上取整到秒。
 asr_quota_scope =
 asr_quota_timezone = Asia/Shanghai
-asr_daily_audio_seconds_limit = 0
+asr_daily_audio_seconds_limit = 144000
 # 单集 ASR 时长上限；独立于每日累计额度，阿里录音文件识别当前硬上限为 12 小时。
-asr_max_audio_seconds_per_file = 43200
+asr_max_audio_seconds_per_file = 10800
 asr_entitlement_ends_at =
 asr_provider_deadline_seconds = 0
 asr_price_cny_minor_per_hour = 0
@@ -245,10 +245,10 @@ OSS 回退复用 `ALIYUN_AK_ID` / `ALIYUN_AK_SECRET`（以及可选的
 额度配置与 AK/SK/Appkey/Token 的“能否鉴权”是两套独立门槛：凭据齐全但额度配置
 不完整时仍禁止提交。ASR 在提交前按 `ceil(audio_duration_ms / 1000)` 预占当日秒数，
 日窗口以 `Asia/Shanghai` 的 `[00:00, 次日 00:00)` 为界且不越过 entitlement
-截止时刻；管理员可在“设置 → 凭据 → 播客 ASR”按小时调整每日上限，修改后同一
+截止时刻；管理员可在“运维管理 → 内容 → 播客 → ASR 配额策略”按小时调整每日上限，修改后同一
 scope/period 内已使用和已预占的时长继续累计。这里限制的是每日累计处理量，并非单日
 只有 24 小时的墙钟时长，因此可按并行处理能力配置大于 24 小时的正数。
-`asr_max_audio_seconds_per_file` 则是完全独立的单集准入边界，默认 43,200 秒（12 小时）；超过
+`asr_max_audio_seconds_per_file` 则是完全独立的单集准入边界，默认 10,800 秒（3 小时）；超过
 该边界的单集会在 API 入队前被拒绝，不占每日额度，也不会发起供应商请求。TTS 按实际
 送给供应商的计费字符数预占 campaign 总量。价格全部用人民币分的整数配置，并以向上
 取整计算，避免浮点误差。
