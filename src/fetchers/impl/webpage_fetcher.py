@@ -399,6 +399,18 @@ class BaseWebPageListFetcher(BaseFetcher):
         flags = await self._lookup_existing_content_flags([content_id])
         return flags.get(content_id, False)
 
+    def _requires_detail_metadata_refresh(self, title: str) -> bool:
+        """Whether an existing item still needs a detail request for metadata repair.
+
+        The default stays false so the archive-wide detail de-duplication contract is
+        unchanged. A source whose listing is known to emit generic titles may opt in
+        narrowly and use the detail page as an authoritative title fallback.
+        """
+        return False
+
+    def _should_use_detail_title(self, title: str) -> bool:
+        return title == "未命名网页条目" or title.lower() in self.generic_link_titles
+
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         limit = self._entry_limit(kwargs.get("limit"))
         fetch_detail = self._bool_param(kwargs.get("fetch_detail"))
@@ -467,10 +479,13 @@ class BaseWebPageListFetcher(BaseFetcher):
             content_id = self._content_id(url)
             detail = {"title": "", "text": "", "publish_date": ""}
             # 已入库且有正文则跳过详情请求，避免对重复条目重复抓取正文。
-            detail_fetched = fetch_detail and not await self._should_skip_detail_fetch(content_id)
+            detail_fetched = fetch_detail and (
+                self._requires_detail_metadata_refresh(title)
+                or not await self._should_skip_detail_fetch(content_id)
+            )
             if detail_fetched:
                 detail = await self._detail_for_url(client, url, detail_max_chars)
-                if (title == "未命名网页条目" or title.lower() in self.generic_link_titles) and detail["title"]:
+                if self._should_use_detail_title(title) and detail["title"]:
                     title = detail["title"]
                 if not publish_date and detail.get("publish_date"):
                     publish_date = detail["publish_date"]
@@ -1536,9 +1551,84 @@ class KimiResearchWebFetcher(_ScopedArticleBodyFetcher):
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public_website"
+    # Kimi 的列表 JSON 是官方元数据；允许下一次采集只刷新同 ID 的
+    # 标题/日期/原文 URL，以修复存量被中文栏目名“研究”污染的记录。
+    refresh_existing_metadata = True
+
+    _non_article_titles = {
+        "research",
+        "all research",
+        "研究",
+        "全部研究",
+        "kimi 研究博客 | 月之暗面",
+    }
+
+    def _normalize_article_url(self, url: str) -> str:
+        normalized = super()._normalize_article_url(url)
+        parsed = urlparse(normalized)
+        # 中文列表的真实卡片和 Next.js articleList 指向 /en/blog/*，而页脚
+        # 仍指向 /blog/*。统一成历史 canonical，避免同一文章生成新 ID。
+        path = re.sub(r"^/en/blog/", "/blog/", parsed.path, count=1)
+        return parsed._replace(path=path).geturl()
 
     def _matches_article_url(self, url: str) -> bool:
         return bool(re.fullmatch(r"https://www\.kimi\.com/blog/[^/?#]+/?", url))
+
+    def _embedded_article_entries(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
+        """Read only the authoritative Next.js ``articleList.items`` payload.
+
+        The same RSC response also embeds header/footer navigation objects containing
+        blog URLs. Treating every JSON object as an article would re-introduce generic
+        Chinese navigation labels and duplicates, so Kimi intentionally narrows the
+        generic embedded-JSON parser to the list model used by the page itself.
+        """
+        entries: List[Dict[str, Any]] = []
+        seen_urls = set()
+        for payload in self._script_payloads(soup):
+            for value in self._json_values_from_text(payload):
+                for record in self._walk_json(value):
+                    article_list = record.get("articleList")
+                    if not isinstance(article_list, dict):
+                        continue
+                    items = article_list.get("items")
+                    if not isinstance(items, list):
+                        continue
+                    for item in items:
+                        if not isinstance(item, dict):
+                            continue
+                        title = self._clean_text(str(item.get("title") or ""))
+                        raw_url = item.get("href") or item.get("url")
+                        if not title or not isinstance(raw_url, str):
+                            continue
+                        url = self._entry_url_from_slug(raw_url)
+                        if url in seen_urls or not self._matches_article_url(url):
+                            continue
+                        seen_urls.add(url)
+                        raw_date = item.get("date") or item.get("publishedAt") or ""
+                        publish_date = (
+                            self._extract_datetime_or_empty(str(raw_date)) if raw_date else ""
+                        )
+                        summary = item.get("description") or item.get("summary") or ""
+                        entries.append({
+                            "url": url,
+                            "title": title,
+                            "summary": self._clean_text(str(summary))[:500],
+                            "publish_date": publish_date,
+                            "listing_source": "embedded_json",
+                        })
+        return entries
+
+    def _title_from_container(self, link: Tag, container: Tag) -> str:
+        title = super()._title_from_container(link, container)
+        if title.casefold() in self._non_article_titles:
+            return "未命名网页条目"
+        return title
+
+    def _requires_detail_metadata_refresh(self, title: str) -> bool:
+        return title == "未命名网页条目" or title.casefold() in self._non_article_titles
+
+    def _should_use_detail_title(self, title: str) -> bool:
+        return self._requires_detail_metadata_refresh(title) or super()._should_use_detail_title(title)
 
     def _candidate_container(self, link: Tag) -> Tag:
         # 顶部移动导航也链接最新文章；若沿通用规则上溯，会把整页研究卡片列表
@@ -1563,9 +1653,10 @@ class KimiResearchWebFetcher(_ScopedArticleBodyFetcher):
     def _merge_entry(self, entries_by_url: Dict[str, Dict[str, Any]], entry: Dict[str, Any]) -> None:
         existing = entries_by_url.get(entry["url"])
         prefer_dated_card = bool(entry.get("publish_date")) and bool(existing) and not existing.get("publish_date")
+        prefer_embedded_list = entry.get("listing_source") == "embedded_json"
         super()._merge_entry(entries_by_url, entry)
         merged = entries_by_url[entry["url"]]
-        if prefer_dated_card:
+        if prefer_dated_card or prefer_embedded_list:
             merged["title"] = entry["title"]
             merged["summary"] = entry["summary"]
         if re.fullmatch(r"20\d{2}/\d{1,2}/\d{1,2}", str(merged.get("summary") or "")):
