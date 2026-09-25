@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import { rankingCoverageText, rankingSnapshotStatusMeta } from '../src/utils/rankingAdmin.js';
 
@@ -19,4 +20,14 @@ test('ranking admin coverage copy reports tagged and eligible counts for both sh
   });
   assert.match(text, /文章：可入榜 120，已分析 110，已打标签 104/);
   assert.match(text, /播客：可入榜 20，已分析 16，已打标签 10/);
+});
+
+test('ranking admin panel polls until an external refresh finishes', () => {
+  const source = readFileSync(
+    new URL('../src/components/admin/RankingSnapshotPanel.jsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /if \(!state\.data\?\.refresh_running\) return undefined/);
+  assert.match(source, /window\.setTimeout\(\(\) => load\(\), 2000\)/);
+  assert.match(source, /window\.clearTimeout\(timer\)/);
 });

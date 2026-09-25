@@ -68,6 +68,7 @@ export default function RankingsPage({
   const [selectedCode, setSelectedCode] = useState('');
   const [detail, setDetail] = useState(null);
   const [history, setHistory] = useState([]);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -94,17 +95,27 @@ export default function RankingsPage({
     if (!data?.snapshot_date || !selectedCode) {
       setDetail(null);
       setHistory([]);
+      setDetailLoading(false);
       return undefined;
     }
     const controller = new AbortController();
+    // The selected heading changes synchronously. Clear the previous tag's
+    // payload before starting the next request so it can never be presented
+    // under the new tag name on a slow connection.
+    setDetail(null);
+    setHistory([]);
+    setDetailLoading(true);
     Promise.all([
       fetchReaderRankingTag(data.snapshot_date, selectedCode, shape, { signal: controller.signal }),
       fetchReaderRankingHistory(selectedCode, shape, 30, { signal: controller.signal }),
     ]).then(([tagDetail, trend]) => {
+      if (controller.signal.aborted) return;
       setDetail(tagDetail);
       setHistory(trend.points || []);
     }).catch((reason) => {
       if (reason?.name !== 'AbortError') setDetail(null);
+    }).finally(() => {
+      if (!controller.signal.aborted) setDetailLoading(false);
     });
     return () => controller.abort();
   }, [data?.snapshot_date, selectedCode, shape]);
@@ -202,7 +213,11 @@ export default function RankingsPage({
                 </div>
               </div>
               <Trend points={history} />
-              <ContentList items={detail?.contents || []} onOpenArticle={onOpenArticle} sourceMap={sourceMap} />
+              {detailLoading ? (
+                <div className="ranking-state"><Loader2 className="animate-spin" />高分内容加载中…</div>
+              ) : (
+                <ContentList items={detail?.contents || []} onOpenArticle={onOpenArticle} sourceMap={sourceMap} />
+              )}
             </section>
           </div>
 

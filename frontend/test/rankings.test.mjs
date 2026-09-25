@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   RANKING_SCOPE_NOTE,
@@ -37,4 +38,18 @@ test('trend path handles empty, singleton and changing series without NaN', () =
 test('podcast score basis never presents show notes as a full score', () => {
   assert.equal(scoreBasisLabel('show_notes'), '简介初评');
   assert.equal(scoreBasisLabel('full_transcript'), '全文终评');
+});
+
+test('tag selection clears stale detail before loading the next tag', () => {
+  const source = readFileSync(
+    new URL('../src/components/RankingsPage.jsx', import.meta.url),
+    'utf8',
+  );
+  const effectStart = source.indexOf('const controller = new AbortController();', source.indexOf('if (!data?.snapshot_date'));
+  const clearDetail = source.indexOf('setDetail(null);', effectStart);
+  const clearHistory = source.indexOf('setHistory([]);', effectStart);
+  const requestStart = source.indexOf('Promise.all([', effectStart);
+  assert.ok(effectStart >= 0 && clearDetail > effectStart && clearHistory > effectStart);
+  assert.ok(clearDetail < requestStart && clearHistory < requestStart);
+  assert.match(source, /detailLoading[\s\S]*高分内容加载中/);
 });

@@ -13,7 +13,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from sqlalchemy import delete, or_
+from sqlalchemy import and_, case, delete, func, or_
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
@@ -675,43 +675,87 @@ def _all_time_high_scores(
     hidden = source_visibility.reader_unavailable_source_ids(session)
     private = _private_source_ids(session)
     source_shapes = _source_shapes(session)
-    candidates: list[ContentFact] = []
+    known_shape_sources = sorted(
+        source_id for source_id, source_shape in source_shapes.items()
+        if source_shape == shape
+    )
+    known_sources = sorted(source_shapes)
+    excluded_content_types = {
+        "github_release", "github_repository", "hf_model", "huggingface_model",
+        "github_trending", "social_post", "daily_brief",
+    }
+    if shape == "podcast":
+        fallback_shape = ArticleRecord.content_type == "podcast_episode"
+        score_expression = case(
+            (
+                ArticleAnalysisRecord.analysis_basis.in_(FULL_PODCAST_BASES),
+                func.coalesce(
+                    ArticleAnalysisRecord.podcast_final_score,
+                    ArticleAnalysisRecord.quality_score,
+                    0.0,
+                ),
+            ),
+            else_=func.coalesce(
+                ArticleAnalysisRecord.podcast_initial_score,
+                ArticleAnalysisRecord.quality_score,
+                0.0,
+            ),
+        )
+    else:
+        fallback_shape = ArticleRecord.content_type.notin_(excluded_content_types)
+        score_expression = func.coalesce(ArticleAnalysisRecord.quality_score, 0.0)
+
+    shape_filter = or_(
+        ArticleRecord.source_id.in_(known_shape_sources),
+        and_(
+            ArticleRecord.source_id.notin_(known_sources),
+            fallback_shape,
+        ),
+    )
+    visibility_filters = [
+        ~ArticleRecord.source_id.startswith(user_sources.USER_SOURCE_PREFIX),
+        shape_filter,
+        score_expression > 0,
+    ]
+    if hidden:
+        visibility_filters.append(ArticleRecord.source_id.notin_(sorted(hidden)))
+    if private:
+        visibility_filters.append(ArticleRecord.source_id.notin_(sorted(private)))
+
+    published_expression = func.coalesce(
+        func.nullif(ArticleRecord.publish_date, ""),
+        ArticleRecord.fetched_date,
+        "",
+    )
     rows = session.exec(
-        select(ArticleRecord, ArticleAnalysisRecord)
+        select(ArticleRecord, ArticleAnalysisRecord, score_expression.label("ranking_score"))
         .join(
             ArticleAnalysisRecord,
             ArticleAnalysisRecord.article_id == ArticleRecord.id,
         )
-        .where(ArticleAnalysisRecord.status == "succeeded")
-    ).all()
-    for article, analysis in rows:
-        if (
-            article.source_id in hidden
-            or article.source_id in private
-            or user_sources.is_user_source(article.source_id)
-            or _content_shape(article, source_shapes) != shape
-        ):
-            continue
-        score, basis = _score(analysis, shape)
-        if score <= 0:
-            continue
-        published = _published_at(article) or dt.datetime.min.replace(
-            tzinfo=dt.timezone.utc
+        .where(
+            ArticleAnalysisRecord.status == "succeeded",
+            *visibility_filters,
         )
-        candidates.append(ContentFact(article, analysis, shape, published, score, basis))
-
+        .order_by(
+            score_expression.desc(),
+            published_expression.desc(),
+            ArticleRecord.id,
+        )
+        .limit(TOP_CONTENT)
+    ).all()
     return [
         {
-            "id": fact.article.id,
-            "title": fact.article.title,
-            "source_id": fact.article.source_id,
-            "content_type": fact.article.content_type,
-            "publish_date": fact.article.publish_date,
-            "score": round(fact.score, 1),
-            "score_basis": fact.score_basis,
+            "id": article.id,
+            "title": article.title,
+            "source_id": article.source_id,
+            "content_type": article.content_type,
+            "publish_date": article.publish_date,
+            "score": round(float(ranking_score), 1),
+            "score_basis": _score(analysis, shape)[1],
             "appearance_count": 0,
         }
-        for fact in sorted(candidates, key=_content_order)[:TOP_CONTENT]
+        for article, analysis, ranking_score in rows
     ]
 
 

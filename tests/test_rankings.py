@@ -13,6 +13,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
+from sqlalchemy import event
 from sqlmodel import Session, select
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -250,6 +251,38 @@ def test_all_time_high_score_includes_old_public_content_without_tags(tmp_path):
         for board in (article_board, podcast_board)
         for item in board["all_time_high_score"]
     )
+
+
+def test_all_time_high_score_query_is_bounded_in_sql(tmp_path):
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'bounded-all-time-high-score.db'}")
+    _seed(sink.engine)
+    with Session(sink.engine) as session:
+        for index in range(25):
+            _content(
+                session,
+                f"archive-{index:02d}",
+                f"archive-source-{index:02d}",
+                score=9.9 - index / 100,
+                publish_date=f"2020-01-{(index % 25) + 1:02d}T08:00:00+08:00",
+            )
+        session.commit()
+
+    statements = []
+
+    def _capture(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if "article_analyses" in statement and "ranking_score" in statement:
+            statements.append(statement)
+
+    event.listen(sink.engine, "before_cursor_execute", _capture)
+    try:
+        with Session(sink.engine) as session:
+            result = rankings._all_time_high_scores(session, shape="article")
+    finally:
+        event.remove(sink.engine, "before_cursor_execute", _capture)
+
+    assert len(result) == rankings.TOP_CONTENT
+    assert result[0]["id"] == "archive-00"
+    assert statements and all(" LIMIT " in statement.upper() for statement in statements)
 
 
 def test_sitewide_board_ignores_personal_subscriptions_and_reader_defaults(tmp_path):

@@ -31,6 +31,12 @@ export default function RankingSnapshotPanel({ showToast, refreshTick = 0 }) {
     return () => { sequence.current += 1; request.current?.abort(); };
   }, [load, refreshTick]);
 
+  useEffect(() => {
+    if (!state.data?.refresh_running) return undefined;
+    const timer = window.setTimeout(() => load(), 2000);
+    return () => window.clearTimeout(timer);
+  }, [load, state.data?.refresh_running]);
+
   const handleRefresh = async () => {
     if (refreshing || state.data?.refresh_running) return;
     setRefreshing(true);
