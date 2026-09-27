@@ -79,10 +79,15 @@ _SQL_NORMALIZE_PAIRS: tuple[tuple[str, str], ...] = (
     ("E28095", "-"),   # U+2015 HORIZONTAL BAR
     ("E28892", "-"),   # U+2212 MINUS SIGN
     ("EFBC8D", "-"),   # U+FF0D FULLWIDTH HYPHEN-MINUS
+    ("EFB9A3", "-"),   # U+FE63 SMALL HYPHEN-MINUS
     ("E28098", "'"),   # U+2018 LEFT SINGLE QUOTATION MARK
     ("E28099", "'"),   # U+2019 RIGHT SINGLE QUOTATION MARK
     ("E2809C", '"'),   # U+201C LEFT DOUBLE QUOTATION MARK
     ("E2809D", '"'),   # U+201D RIGHT DOUBLE QUOTATION MARK
+    ("EFBC9A", ":"),   # U+FF1A FULLWIDTH COLON
+    ("EFBC8C", ","),   # U+FF0C FULLWIDTH COMMA
+    ("EFBC9B", ";"),   # U+FF1B FULLWIDTH SEMICOLON
+    ("E38080", " "),   # U+3000 IDEOGRAPHIC SPACE
 )
 
 
@@ -108,17 +113,30 @@ def _sql_normalize_expr(col: str) -> str:
 
 # ── FTS DDL ─────────────────────────────────────────────────────────────────
 
-_CREATE_TABLE = (
-    f"CREATE VIRTUAL TABLE IF NOT EXISTS {FTS_TABLE} USING fts5("
-    f"title, content, content='{_SOURCE_TABLE}', content_rowid='rowid', "
-    f"tokenize='trigram')"
-)
+def _has_tags_column(conn: Connection) -> bool:
+    try:
+        cols = {
+            row[1]
+            for row in conn.execute(text(f"PRAGMA table_info({_SOURCE_TABLE})")).fetchall()
+        }
+        return "tags" in cols
+    except Exception:
+        return False
 
 
-def _build_trigger_ddl() -> tuple[str, ...]:
+def _get_create_table_ddl(has_tags: bool) -> str:
+    cols = "title, tags, content" if has_tags else "title, content"
+    return (
+        f"CREATE VIRTUAL TABLE IF NOT EXISTS {FTS_TABLE} USING fts5("
+        f"{cols}, content='{_SOURCE_TABLE}', content_rowid='rowid', "
+        f"tokenize='trigram')"
+    )
+
+
+def _build_trigger_ddl(has_tags: bool) -> tuple[str, ...]:
     """构建包含 Unicode 归一化的 FTS 同步 trigger。
 
-    insert 直插归一化后的 title/content；delete/update 需先发 'delete' 特殊指令
+    insert 直插归一化后的 title/tags/content；delete/update 需先发 'delete' 特殊指令
     告知 FTS 撤旧行（external content 不留正文副本，删除须带旧值的归一化形式），
     update = delete 旧 + insert 新两条。
     """
@@ -126,6 +144,21 @@ def _build_trigger_ddl() -> tuple[str, ...]:
     nc_new = _sql_normalize_expr("new.content")
     nt_old = _sql_normalize_expr("old.title")
     nc_old = _sql_normalize_expr("old.content")
+    if has_tags:
+        ntag_new = _sql_normalize_expr("new.tags")
+        ntag_old = _sql_normalize_expr("old.tags")
+        return (
+            f"""CREATE TRIGGER IF NOT EXISTS {FTS_TABLE}_ai AFTER INSERT ON {_SOURCE_TABLE} BEGIN
+  INSERT INTO {FTS_TABLE}(rowid, title, tags, content) VALUES (new.rowid, {nt_new}, {ntag_new}, {nc_new});
+END""",
+            f"""CREATE TRIGGER IF NOT EXISTS {FTS_TABLE}_ad AFTER DELETE ON {_SOURCE_TABLE} BEGIN
+  INSERT INTO {FTS_TABLE}({FTS_TABLE}, rowid, title, tags, content) VALUES('delete', old.rowid, {nt_old}, {ntag_old}, {nc_old});
+END""",
+            f"""CREATE TRIGGER IF NOT EXISTS {FTS_TABLE}_au AFTER UPDATE ON {_SOURCE_TABLE} BEGIN
+  INSERT INTO {FTS_TABLE}({FTS_TABLE}, rowid, title, tags, content) VALUES('delete', old.rowid, {nt_old}, {ntag_old}, {nc_old});
+  INSERT INTO {FTS_TABLE}(rowid, title, tags, content) VALUES (new.rowid, {nt_new}, {ntag_new}, {nc_new});
+END""",
+        )
     return (
         f"""CREATE TRIGGER IF NOT EXISTS {FTS_TABLE}_ai AFTER INSERT ON {_SOURCE_TABLE} BEGIN
   INSERT INTO {FTS_TABLE}(rowid, title, content) VALUES (new.rowid, {nt_new}, {nc_new});
@@ -140,12 +173,13 @@ END""",
     )
 
 
-_TRIGGER_DDL = _build_trigger_ddl()
-
-_DROP_STMTS = (
+_DROP_TRIGGER_STMTS = (
     f"DROP TRIGGER IF EXISTS {FTS_TABLE}_ai",
     f"DROP TRIGGER IF EXISTS {FTS_TABLE}_ad",
     f"DROP TRIGGER IF EXISTS {FTS_TABLE}_au",
+)
+_DROP_STMTS = (
+    *_DROP_TRIGGER_STMTS,
     f"DROP TABLE IF EXISTS {FTS_TABLE}",  # 虚拟表 DROP 会连带清掉 shadow 表
 )
 
@@ -175,7 +209,7 @@ def _table_exists(conn: Connection) -> bool:
     ).first() is not None
 
 
-def _populate_fts_normalized(conn: Connection) -> None:
+def _populate_fts_normalized(conn: Connection, has_tags: bool) -> None:
     """批量灌入存量文章（带 Unicode 归一化）。
 
     不使用 FTS5 的 'rebuild' 指令——rebuild 直读 content 表原始文本，跳过
@@ -184,20 +218,30 @@ def _populate_fts_normalized(conn: Connection) -> None:
     """
     norm_title = _sql_normalize_expr("title")
     norm_content = _sql_normalize_expr("content")
-    conn.exec_driver_sql(
-        f"INSERT INTO {FTS_TABLE}(rowid, title, content) "
-        f"SELECT rowid, {norm_title}, {norm_content} FROM {_SOURCE_TABLE}"
-    )
+    if has_tags:
+        norm_tags = _sql_normalize_expr("tags")
+        conn.exec_driver_sql(
+            f"INSERT INTO {FTS_TABLE}(rowid, title, tags, content) "
+            f"SELECT rowid, {norm_title}, {norm_tags}, {norm_content} FROM {_SOURCE_TABLE}"
+        )
+    else:
+        conn.exec_driver_sql(
+            f"INSERT INTO {FTS_TABLE}(rowid, title, content) "
+            f"SELECT rowid, {norm_title}, {norm_content} FROM {_SOURCE_TABLE}"
+        )
 
 
 def _install_fts(conn: Connection) -> None:
     """在一个已开事务的 Connection 上幂等安装 FTS 表 + triggers；首次创建时回填存量。"""
+    has_tags = _has_tags_column(conn)
     existed = _table_exists(conn)
-    conn.exec_driver_sql(_CREATE_TABLE)
-    for ddl in _TRIGGER_DDL:
+    conn.exec_driver_sql(_get_create_table_ddl(has_tags))
+    for stmt in _DROP_TRIGGER_STMTS:
+        conn.exec_driver_sql(stmt)
+    for ddl in _build_trigger_ddl(has_tags):
         conn.exec_driver_sql(ddl)
     if not existed:
-        _populate_fts_normalized(conn)
+        _populate_fts_normalized(conn, has_tags)
 
 
 # ── 公共 API ───────────────────────────────────────────────────────────────
@@ -327,8 +371,13 @@ def fts_search_ranked(bind, search: Optional[str]) -> Optional[dict]:
         with _as_connection(bind) as conn:
             if not _table_exists(conn):
                 return None
+            has_tags = _has_tags_column(conn)
+            bm25_weights = "100.0, 10.0, 1.0" if has_tags else "10.0, 1.0"
             rows = conn.execute(
-                text(f"SELECT rowid, rank FROM {FTS_TABLE} WHERE {FTS_TABLE} MATCH :q"),
+                text(
+                    f"SELECT rowid, bm25({FTS_TABLE}, {bm25_weights}) AS rank "
+                    f"FROM {FTS_TABLE} WHERE {FTS_TABLE} MATCH :q ORDER BY rank LIMIT 200"
+                ),
                 {"q": match},
             ).all()
         return {r[0]: float(r[1]) for r in rows}

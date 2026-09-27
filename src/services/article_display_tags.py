@@ -16,6 +16,7 @@ from sqlmodel import Session, select
 
 from models.db import (
     ArticleAnalysisRecord,
+    ArticleTagAssignmentRecord,
     CmsTagAliasRecord,
     CmsTagCandidateEvidenceRecord,
     CmsTagCandidateRecord,
@@ -300,3 +301,72 @@ def article_ids_for_flexible_label(session: Session, label: str) -> list[str]:
             for item in current.get(article_id, [])
         )
     ]
+
+
+def build_article_tags_text(session: Session, article_id: str) -> str:
+    """聚合单篇文章/播客的所有标签文本（含受控概念、别名与动态提取标签），供检索匹配。"""
+    if not article_id:
+        return ""
+    labels: list[str] = []
+    seen: set[str] = set()
+
+    def _add(text: Any):
+        if not text:
+            return
+        clean = str(text).strip()
+        if clean and clean.lower() not in seen:
+            seen.add(clean.lower())
+            labels.append(clean)
+
+    # 1. 规范标签
+    canonical_rows = session.exec(
+        select(CmsTagRecord, ArticleTagAssignmentRecord.tag_id)
+        .join(ArticleTagAssignmentRecord, ArticleTagAssignmentRecord.tag_id == CmsTagRecord.id)
+        .where(ArticleTagAssignmentRecord.article_id == article_id)
+    ).all()
+    tag_ids = []
+    for tag_rec, tid in canonical_rows:
+        _add(tag_rec.name_zh)
+        _add(tag_rec.name_en)
+        tag_ids.append(tid)
+
+    # 2. 标签别名
+    if tag_ids:
+        for alias_row in session.exec(
+            select(CmsTagAliasRecord.alias).where(CmsTagAliasRecord.tag_id.in_(tag_ids))
+        ).all():
+            _add(alias_row)
+
+    # 3. AI 提取展示标签
+    analysis = session.exec(
+        select(ArticleAnalysisRecord.display_tags_json).where(
+            ArticleAnalysisRecord.article_id == article_id
+        )
+    ).first()
+    if analysis:
+        for item in _json_rows(analysis):
+            _add(item.get("label") or item.get("name"))
+
+    # 4. 候选词证据
+    for ev in session.exec(
+        select(CmsTagCandidateEvidenceRecord.raw_label).where(
+            CmsTagCandidateEvidenceRecord.article_id == article_id
+        )
+    ).all():
+        _add(ev)
+
+    return " ".join(labels)
+
+
+def sync_article_tags_text(session: Session, article_id: str) -> None:
+    """根据最新标签状态重新计算并同步 articles.tags 字段（触发 FTS5 自动更新）。"""
+    from models.db import ArticleRecord
+
+    article = session.exec(select(ArticleRecord).where(ArticleRecord.id == article_id)).first()
+    if not article:
+        return
+    new_tags_text = build_article_tags_text(session, article_id)
+    if article.tags != new_tags_text:
+        article.tags = new_tags_text
+        session.add(article)
+

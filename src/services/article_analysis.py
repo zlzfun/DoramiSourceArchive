@@ -76,7 +76,7 @@ from models.db import (
     TagRetagJobRecord,
     TaxonomyVersionRecord,
 )
-from services.article_display_tags import extracted_tag_snapshot
+from services.article_display_tags import extracted_tag_snapshot, sync_article_tags_text
 from services.article_time import in_time_window, parse_article_time
 from services import error_redaction
 from services import image_insights as image_insights_service
@@ -2293,6 +2293,7 @@ async def process_claimed_analysis(
                 session.flush()
             record.primary_tag_id = primary_id
             record.display_tags_json = json.dumps(display_tags, ensure_ascii=False)
+            sync_article_tags_text(session, task.article_id)
             if tag_status == TaggingStatus.SUCCEEDED.value:
                 tag_status = persisted_status
         except Exception as exc:  # noqa: BLE001 - base analysis remains authoritative

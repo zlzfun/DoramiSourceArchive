@@ -10,7 +10,7 @@ import json
 from collections.abc import Collection
 from typing import Any, Dict, Optional
 
-from sqlalchemy import literal_column
+from sqlalchemy import literal_column, or_
 
 from api.textutils import _date_end_value, _json_loads, _split_csv
 from models.content import BaseContent
@@ -253,11 +253,25 @@ def apply_article_query_filters(
         if fts_ids is not None:
             query = query.where(literal_column("articles.rowid").in_(fts_ids))
         elif not short_words:
-            # FTS 不可用且无短词 -> 整串 LIKE 回退（归一化后匹配）
-            query = query.where(ArticleRecord.title.contains(normalize_for_search(search)))
-        # 短词逐个追加 title LIKE 条件（与 FTS 结果取交集）
+            # FTS 不可用且无短词 -> 整串 LIKE 回退（归一化后匹配标题或标签）
+            norm_q = normalize_for_search(search)
+            query = query.where(
+                or_(ArticleRecord.title.contains(norm_q), ArticleRecord.tags.contains(norm_q))
+            )
+        else:
+            # FTS 不可用但有短词——长词也须逐个追加 LIKE，否则被静默丢弃
+            # （如搜 "AI Agent"：短词 "AI" 由下方循环处理，长词 "Agent" 在此处理）。
+            norm = normalize_for_search(search.strip())
+            long_words = [t for t in norm.split() if len(t) >= 3]
+            for word in long_words:
+                query = query.where(
+                    or_(ArticleRecord.title.contains(word), ArticleRecord.tags.contains(word))
+                )
+        # 短词逐个追加 title/tags LIKE 条件（与 FTS 或长词 LIKE 取交集）
         for word in short_words:
-            query = query.where(ArticleRecord.title.contains(word))
+            query = query.where(
+                or_(ArticleRecord.title.contains(word), ArticleRecord.tags.contains(word))
+            )
 
     if publish_date_start:
         query = query.where(ArticleRecord.publish_date >= publish_date_start)

@@ -100,16 +100,23 @@ def _insert_source_audio_migration_case(
     content_hash = ("b" if suffix == "valid" else "d") * 64
     try:
         with Session(engine) as session:
-            session.add(ArticleRecord(
-                id=episode_id,
-                title="Snapshot migration",
-                content_type="podcast_episode",
-                source_id="migration-test",
-                source_url="https://example.com/episode",
-                publish_date=stamp,
-                fetched_date=stamp,
-                extensions_json="{}",
-            ))
+            from sqlalchemy import MetaData, Table
+
+            legacy_articles = Table("articles", MetaData(), autoload_with=session.connection())
+            session.execute(
+                legacy_articles.insert().values(
+                    id=episode_id,
+                    title="Snapshot migration",
+                    content_type="podcast_episode",
+                    source_id="migration-test",
+                    source_url="https://example.com/episode",
+                    publish_date=stamp,
+                    fetched_date=stamp,
+                    run_scope="ad_hoc",
+                    has_content=True,
+                    extensions_json="{}",
+                )
+            )
             session.commit()
         with engine.begin() as conn:
             conn.execute(text(
@@ -405,16 +412,24 @@ def test_normalized_transcript_publication_migration_backfills_successful_output
     engine = create_engine(db_url)
     try:
         with Session(engine) as session:
-            session.add(ArticleRecord(
-                id="normalized-publication-episode",
-                title="Normalized publication migration",
-                content_type="podcast_episode",
-                source_id="migration-test",
-                source_url="https://example.com/episode",
-                publish_date=stamp,
-                fetched_date=stamp,
-                extensions_json="{}",
-            ))
+            from sqlalchemy import MetaData, Table
+
+            legacy_articles = Table("articles", MetaData(), autoload_with=session.connection())
+            session.execute(
+                legacy_articles.insert().values(
+                    id="normalized-publication-episode",
+                    title="Normalized publication migration",
+                    content_type="podcast_episode",
+                    source_id="migration-test",
+                    source_url="https://example.com/episode",
+                    publish_date=stamp,
+                    fetched_date=stamp,
+                    run_scope="ad_hoc",
+                    has_content=True,
+                    extensions_json="{}",
+                )
+            )
+            session.commit()
             session.add(PodcastSourceMediaSnapshotRecord(
                 id="normalized-publication-source",
                 episode_id="normalized-publication-episode",

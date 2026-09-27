@@ -2,10 +2,10 @@ from __future__ import annotations
 import json
 from typing import Optional
 from mcp.server.fastmcp import FastMCP
-from sqlalchemy import literal_column
+from sqlalchemy import literal_column, or_
 from sqlmodel import Session, select
 from models.db import ArticleRecord, SourceStateRecord
-from storage.fts import fts_search_ids
+from storage.fts import build_search_components, fts_search_ids, normalize_for_search
 from storage.impl.db_storage import DatabaseStorage
 from services.source_naming import friendly_source_name
 from fetchers.registry import fetcher_registry
@@ -154,7 +154,7 @@ def _fts_hit_records(
     source_ids: Optional[list[str]] = None,
     publish_date_gte: Optional[str] = None,
 ) -> list[ArticleRecord]:
-    """FTS 全文检索(标题+正文)+ 元数据过滤,返回命中文章记录。"""
+    """FTS 全文检索(标题+正文+标签)+ 短词 LIKE 补漏 + 元数据过滤。"""
     with Session(db_sink.engine) as session:
         stmt = select(ArticleRecord)
         if source_ids is not None:
@@ -169,15 +169,33 @@ def _fts_hit_records(
         if publish_date_gte:
             stmt = stmt.where(ArticleRecord.publish_date >= publish_date_gte)
 
+        _, short_words = build_search_components(query)
         fts_ids = fts_search_ids(session, query)
         if fts_ids is not None:
-            if not fts_ids:
+            if not fts_ids and not short_words:
                 return []
+            if fts_ids:
+                stmt = stmt.where(
+                    literal_column("articles.rowid").in_(fts_ids[:_SEARCH_MAX_ROWIDS])
+                )
+        elif not short_words:
+            # FTS 不可用且无短词 → 整串归一化后 LIKE 回退(标题 + 标签)
+            norm_q = normalize_for_search(query.strip())
             stmt = stmt.where(
-                literal_column("articles.rowid").in_(fts_ids[:_SEARCH_MAX_ROWIDS])
+                or_(ArticleRecord.title.contains(norm_q), ArticleRecord.tags.contains(norm_q))
             )
         else:
-            stmt = stmt.where(ArticleRecord.title.contains(query.strip()))
+            # FTS 不可用但有短词 → 长词也须逐个追加 LIKE
+            norm = normalize_for_search(query.strip())
+            for word in [t for t in norm.split() if len(t) >= 3]:
+                stmt = stmt.where(
+                    or_(ArticleRecord.title.contains(word), ArticleRecord.tags.contains(word))
+                )
+        # 短词逐个追加 title/tags LIKE(与 FTS 结果取交集)
+        for word in short_words:
+            stmt = stmt.where(
+                or_(ArticleRecord.title.contains(word), ArticleRecord.tags.contains(word))
+            )
         stmt = stmt.order_by(ArticleRecord.publish_date.desc()).limit(top_k)
         return list(session.exec(stmt).all())
 

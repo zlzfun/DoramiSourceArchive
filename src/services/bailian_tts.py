@@ -9,7 +9,15 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
-import fcntl
+try:
+    import fcntl  # Linux/macOS only
+except ImportError:
+    import types as _types
+    fcntl = _types.ModuleType("fcntl")
+    fcntl.LOCK_EX = 0
+    fcntl.LOCK_UN = 0
+    fcntl.LOCK_NB = 0
+    fcntl.flock = lambda fd, op: None  # type: ignore[attr-defined]
 import hashlib
 import io
 import json
