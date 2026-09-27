@@ -91,6 +91,35 @@ def _copy_stream(producer, consumer, stream, *, limit=1000):
     return raw, result
 
 
+@pytest.mark.parametrize("separator", ["\u0085", "\u2028", "\u2029"])
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_article_jsonl_preserves_unicode_line_separators(tmp_path, separator, newline):
+    producer = _sink(tmp_path, "producer-unicode.db")
+    consumer = _sink(tmp_path, "consumer-unicode.db")
+    body = f"First paragraph{separator}第二段\nThird paragraph\r\nFourth paragraph"
+    with Session(producer.engine) as session:
+        session.add(_article("article-1"))
+        session.commit()
+        session.add(_article("article-2", content=body))
+        session.commit()
+
+    raw = archive_sync_v2.export_page(producer.engine, "articles")
+    wire = raw.replace("\n", newline)
+    result = archive_sync_v2.import_page(consumer.engine, wire, expected_stream="articles")
+    assert result["inserted"] == 2
+    with Session(consumer.engine) as session:
+        assert session.get(ArticleRecord, "article-2").content == body
+
+    # A genuinely broken JSON record must still reject the whole page before writing.
+    broken_consumer = _sink(tmp_path, "consumer-broken-json.db")
+    with pytest.raises(archive_sync_v2.SyncV2Error, match="line 3: invalid JSON"):
+        archive_sync_v2.import_page(
+            broken_consumer.engine, wire.rstrip()[:-1], expected_stream="articles",
+        )
+    with Session(broken_consumer.engine) as session:
+        assert session.exec(select(ArticleRecord)).all() == []
+
+
 def test_sources_remain_reader_visible_but_become_remote_managed(tmp_path, monkeypatch):
     producer = _sink(tmp_path, "producer-source.db")
     consumer = _sink(tmp_path, "consumer-source.db")
@@ -1073,10 +1102,11 @@ def test_media_manifest_rejects_path_traversal_extension(tmp_path):
     assert not (tmp_path / "escaped.py").exists()
 
 
-def test_candidate_evidence_is_minimized_and_review_only(tmp_path):
+@pytest.mark.parametrize("separator", [" ", "\u0085", "\u2028", "\u2029"])
+def test_candidate_evidence_is_minimized_and_review_only(tmp_path, separator):
     sink = _sink(tmp_path, "candidate-inbound.db")
     payload = {
-        "label": "Agent Memory",
+        "label": f"Agent{separator}Memory",
         "kind": "topic",
         "confidence": 0.8,
         "article_fingerprint": "a" * 64,
@@ -1108,7 +1138,7 @@ def test_candidate_evidence_is_minimized_and_review_only(tmp_path):
             "authority_id": "inner-stable",
             "source_provenance": "user_rss_example",
             "confidence": 0.8,
-            "label": "Agent Memory",
+            "label": payload["label"],
             "prompt_version": "p1",
             "created_at": evidence.created_at,
         }]
@@ -1653,6 +1683,122 @@ def test_new_producer_rejects_wall_clock_snapshot_and_invalid_continuation(tmp_p
             after=archive_sync_v2._encode_cursor("01", "article"),
             limit=1,
         )
+
+
+@pytest.mark.parametrize("already_synced", [False, True], ids=["legacy-v1", "v2-incremental"])
+@pytest.mark.parametrize("page_size", [1, 1000], ids=["paged", "same-page"])
+def test_stale_brief_analysis_does_not_block_score_sync(tmp_path, already_synced, page_size):
+    producer = _sink(tmp_path, "producer-stale-analysis.db")
+    consumer = _sink(tmp_path, "consumer-stale-analysis.db")
+    brief_id = "daily_brief_2026-09-15"
+    with Session(producer.engine) as session:
+        session.add(_source())
+        for article in (_article(brief_id, content="Original daily brief"), _article()):
+            session.add(article)
+            session.flush()
+            session.add(ArticleAnalysisRecord(
+                article_id=article.id, status="succeeded", quality_score=5.8,
+                content_hash=compute_content_hash(article),
+                created_at="2026-09-15", updated_at="2026-09-15",
+            ))
+        session.commit()
+    # V1 already copied articles but never supplied authoritative analyses.
+    with Session(consumer.engine) as session:
+        brief = _article(brief_id, content="Original daily brief", read_count=17)
+        session.add_all([brief, _article()])
+        session.flush()
+        session.add(ArticleAnalysisRecord(
+            article_id=brief.id, status="succeeded", quality_score=4.0,
+            content_hash=compute_content_hash(brief),
+            created_at="2026-09-15", updated_at="2026-09-15",
+        ))
+        session.commit()
+    remote = _V2Remote(producer)
+
+    def pull(checkpoints=None):
+        return asyncio.run(remote_sync_service.run_pull_v2(
+            engine=consumer.engine, base_url="https://remote.test",
+            username="admin", password="secret", page_size=page_size,
+            media_root=tmp_path / "media", checkpoints=checkpoints,
+            transport=httpx.MockTransport(remote.handler),
+        ))
+
+    previous = pull()["streams"] if already_synced else None
+    with Session(producer.engine) as session:
+        brief = session.get(ArticleRecord, brief_id)
+        brief.content = "Regenerated daily brief"
+        session.add(brief)
+        session.flush()
+        analysis = session.get(ArticleAnalysisRecord, "article-1")
+        analysis.quality_score = 9.0
+        analysis.score_reason = "Current news value"
+        analysis.summary = "Current summary"
+        session.add(analysis)
+        session.commit()
+
+    result = pull(previous)
+    assert list(result["streams"]) == list(remote_sync_service.V2_STREAM_ORDER)
+    assert result["streams"]["analyses"]["count"] == 2
+    with Session(consumer.engine) as session:
+        brief = session.get(ArticleRecord, brief_id)
+        assert brief.content == "Regenerated daily brief"
+        assert brief.read_count == 17
+        assert session.get(ArticleAnalysisRecord, brief_id) is None
+        assert session.get(ArchiveSyncEntityStateRecord, ("analyses", brief_id)).operation == "tombstone"
+        analysis = session.get(ArticleAnalysisRecord, "article-1")
+        assert (analysis.quality_score, analysis.score_reason, analysis.summary) == (
+            9.0, "Current news value", "Current summary",
+        )
+    assert archive_sync_v2.authority_present_identities(
+        producer.engine, "analyses", [brief_id, "article-1"]
+    ) == ["article-1"]
+
+    # Export does not rewrite the producer's old result. A genuinely new
+    # analysis gets its own revision and can restore the withdrawn score.
+    with Session(producer.engine) as session:
+        brief = session.get(ArticleRecord, brief_id)
+        analysis = session.get(ArticleAnalysisRecord, brief_id)
+        assert analysis.content_hash != compute_content_hash(brief)
+        assert analysis.quality_score == 5.8
+        analysis.content_hash = compute_content_hash(brief)
+        analysis.quality_score = 7.0
+        session.add(analysis)
+        session.commit()
+    restored = pull(result["streams"])
+    assert restored["streams"]["analyses"]["count"] == 1
+    with Session(consumer.engine) as session:
+        assert session.get(ArticleAnalysisRecord, brief_id).quality_score == 7.0
+        assert session.get(ArticleAnalysisRecord, "article-1").quality_score == 9.0
+
+
+def test_analysis_hash_mismatch_still_rolls_back_the_whole_page(tmp_path):
+    producer = _sink(tmp_path, "producer-bad-analysis.db")
+    consumer = _sink(tmp_path, "consumer-bad-analysis.db")
+    with Session(producer.engine) as session:
+        for article_id in ("first", "second"):
+            article = _article(article_id)
+            session.add(article)
+            session.flush()
+            session.add(ArticleAnalysisRecord(
+                article_id=article.id, status="succeeded", quality_score=8.0,
+                content_hash=compute_content_hash(article),
+                created_at="2026-09-15", updated_at="2026-09-15",
+            ))
+        session.commit()
+    _copy_stream(producer, consumer, "articles")
+    manifest, rows = archive_sync_v2.parse_page(
+        archive_sync_v2.export_page(producer.engine, "analyses")
+    )
+    rows[1]["payload"]["content_hash"] = "0" * 64
+    rows[1]["checksum"] = archive_sync_v2.checksum(rows[1]["payload"])
+    with pytest.raises(archive_sync_v2.SyncV2Error, match="analysis content_hash mismatch: second"):
+        archive_sync_v2.import_page(
+            consumer.engine, archive_sync_v2.encode_page(manifest, rows),
+            expected_stream="analyses",
+        )
+    with Session(consumer.engine) as session:
+        assert session.exec(select(ArticleAnalysisRecord)).all() == []
+        assert session.get(ArchiveSyncEntityStateRecord, ("analyses", "first")) is None
 
 
 def test_remote_pull_v2_end_to_end_and_terminal_state_is_last(tmp_path):

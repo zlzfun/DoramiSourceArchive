@@ -25,10 +25,11 @@ from alembic.runtime.migration import MigrationContext  # noqa: E402
 from sqlalchemy import create_engine, event, inspect, text  # noqa: E402
 from sqlalchemy.exc import IntegrityError  # noqa: E402
 from sqlalchemy.engine import Engine  # noqa: E402
-from sqlmodel import Session  # noqa: E402
+from sqlmodel import Session, select  # noqa: E402
 
 from models.db import (  # noqa: E402
     ArticleRecord,
+    PodcastArtifactRecord,
     PodcastBudgetReservationRecord,
     PodcastProcessingRecord,
     PodcastSourceMediaSnapshotRecord,
@@ -42,14 +43,30 @@ from storage.impl.db_storage import DatabaseStorage  # noqa: E402
 from storage.migrations import (  # noqa: E402
     BASELINE_REVISION,
     ensure_migrated,
+    main_chain_heads,
     make_alembic_config,
 )
 
 
 def _head_revision() -> str:
+    """main 自己那条链的 head(issue #130):下游分叉仓带 label 的支线并存时也只取主线,不用 get_current_head()。"""
     from alembic.script import ScriptDirectory
 
-    return ScriptDirectory.from_config(make_alembic_config()).get_current_head()
+    heads = main_chain_heads(ScriptDirectory.from_config(make_alembic_config()))
+    assert len(heads) == 1, heads
+    return heads[0]
+
+
+def _db_heads(conn) -> set:
+    """版本表里的全部 head(多头时 get_current_revision() 会直接报错)。"""
+    return set(MigrationContext.configure(conn).get_current_heads())
+
+
+def _script_heads() -> set:
+    """脚本目录的全部 head:「已升到最新」= 版本表恰好等于它(下游支线从旧节点分叉或延伸主线末端都成立)。"""
+    from alembic.script import ScriptDirectory
+
+    return set(ScriptDirectory.from_config(make_alembic_config()).get_heads())
 
 
 def _insert_legacy_podcast_attempt(
@@ -271,7 +288,7 @@ def test_source_audio_cache_guard_is_historical_and_removed_at_head(tmp_path):
     finally:
         engine.dispose()
 
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "heads")
     engine = create_engine(db_url)
     try:
         artifact_columns = {
@@ -308,7 +325,7 @@ def test_source_audio_migration_preserves_proven_task_and_closes_invalid_hold(
         locator_hash=None,
     )
 
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "heads")
 
     engine = create_engine(db_url)
     try:
@@ -380,17 +397,19 @@ def test_source_audio_migration_preserves_proven_task_and_closes_invalid_hold(
 def test_source_audio_retirement_migration_requires_backup_to_downgrade(tmp_path):
     db_url = f"sqlite:///{tmp_path / 'source-audio-retirement-one-way.db'}"
     cfg = make_alembic_config(db_url)
-    command.upgrade(cfg, "head")
+    # The later OSS registry is reversible when empty. Exercise the original
+    # one-way boundary directly; OSS downgrade has its own registry tests.
+    command.upgrade(cfg, "b715a91c4e02")
 
     with pytest.raises(RuntimeError, match="restore the pre-upgrade database"):
         command.downgrade(cfg, "d6a3f9c2e714")
 
-    # transaction_per_migration=True:单向边界之上的每个迁移都必须在自己的 DDL 之前拒绝,
-    # 否则会先提交逆操作再撞到父守卫——库离开 head 却报错。故断言仍在 head 且 v3.56 的 CHECK 未被放宽。
+    # transaction_per_migration=True:原有单向边界必须在自身 DDL 之前拒绝，
+    # 保持在这次指定的 b715 revision，且 v3.56 的 CHECK 未被放宽。
     engine = create_engine(db_url)
     try:
         with engine.connect() as conn:
-            assert MigrationContext.configure(conn).get_current_revision() == _head_revision()
+            assert MigrationContext.configure(conn).get_current_revision() == "b715a91c4e02"
             checks = {
                 item["name"]: item["sqltext"]
                 for item in inspect(engine).get_check_constraints("user_interest_tags")
@@ -515,7 +534,7 @@ def test_normalized_transcript_publication_migration_backfills_successful_output
     finally:
         engine.dispose()
 
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "heads")
 
     engine = create_engine(db_url)
     try:
@@ -540,7 +559,7 @@ def test_tts_settlement_mode_migration_backfills_and_freezes_legacy_attempt(
     command.upgrade(cfg, "5e9a1c7d3b42")
     _insert_legacy_podcast_attempt(db_url, state="succeeded", stage="tts")
 
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "heads")
     engine = create_engine(db_url)
     try:
         with engine.begin() as conn:
@@ -661,7 +680,7 @@ def test_provider_usage_quota_migration_backfills_legacy_cost_rows(tmp_path):
     _insert_legacy_podcast_attempt(db_url, state="succeeded")
     _insert_legacy_podcast_cost_rows(db_url)
 
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "heads")
     engine = create_engine(db_url)
     try:
         with engine.connect() as conn:
@@ -690,7 +709,7 @@ def test_provider_usage_ledger_binding_rejects_mismatch(tmp_path, schema_path):
     else:
         cfg = make_alembic_config(db_url)
         command.upgrade(cfg, "6b8d2f4a9c70")
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, "heads")
 
     _assert_provider_ledger_binding_rejects_mismatch(db_url)
 
@@ -717,7 +736,7 @@ def test_provider_usage_quota_migration_refuses_active_legacy_provider_hold(tmp_
         engine.dispose()
 
     with pytest.raises(RuntimeError, match="active legacy provider budget"):
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, "heads")
     engine = create_engine(db_url)
     try:
         assert "provider_quota_scope" not in {
@@ -749,14 +768,13 @@ def test_processing_admin_migration_adopts_empty_create_all_command_table(tmp_pa
     finally:
         engine.dispose()
 
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "heads")
 
     engine = create_engine(db_url)
     try:
         with engine.connect() as conn:
             assert (
-                MigrationContext.configure(conn).get_current_revision()
-                == _head_revision()
+                _db_heads(conn) == _script_heads()
             )
         assert "input_artifact_id" in {
             column["name"]
@@ -806,7 +824,7 @@ def test_provider_usage_quota_migration_adopts_current_schema_active_hold(tmp_pa
     engine = create_engine(db_url)
     try:
         with engine.connect() as conn:
-            assert MigrationContext.configure(conn).get_current_revision() == _head_revision()
+            assert _db_heads(conn) == _script_heads()
             row = conn.execute(text(
                 "SELECT provider_quota_scope,reserved_usage_units,status "
                 "FROM podcast_budget_reservations WHERE id='current-reservation'"
@@ -853,7 +871,7 @@ def test_provider_usage_quota_migration_round_trip(tmp_path):
             )
     finally:
         engine.dispose()
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "heads")
 
 
 def test_provider_usage_quota_migration_refuses_used_binding(tmp_path):
@@ -902,7 +920,7 @@ def test_provider_usage_quota_migration_refuses_used_binding(tmp_path):
 
 def test_upgrade_head_has_no_drift_from_metadata(tmp_path):
     db_url = f"sqlite:///{tmp_path / 'fresh.db'}"
-    command.upgrade(make_alembic_config(db_url), "head")
+    command.upgrade(make_alembic_config(db_url), "heads")
 
     engine = create_engine(db_url)
     try:
@@ -931,6 +949,109 @@ def test_upgrade_head_has_no_drift_from_metadata(tmp_path):
             fk for fk in artifact_fks if fk["constrained_columns"] == ["episode_id"]
         )
         assert episode_fk["options"].get("ondelete") == "CASCADE"
+    finally:
+        engine.dispose()
+
+
+def test_active_podcast_audio_migration_withdraws_older_duplicates(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'podcast-audio-active.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "c154a7d90001")
+    narration = "迁移测试口播稿"
+    narration_hash = hashlib.sha256(narration.encode("utf-8")).hexdigest()
+
+    engine = create_engine(db_url)
+    try:
+        with Session(engine) as session:
+            session.add(ArticleRecord(
+                id="migration-audio-episode",
+                title="Migration audio",
+                content_type="podcast_episode",
+                source_id="migration-test",
+                source_url="https://example.test/migration-audio",
+                publish_date="2026-09-24T00:00:00+00:00",
+                fetched_date="2026-09-24T00:00:00+00:00",
+                extensions_json="{}",
+            ))
+            session.add(PodcastTextArtifactRecord(
+                id="migration-narration",
+                episode_id="migration-audio-episode",
+                kind="narration_script_zh",
+                version=1,
+                content_hash=narration_hash,
+                inline_text=narration,
+                language="zh-CN",
+                authority_id="",
+                created_at="2026-09-24T00:00:00+00:00",
+            ))
+            session.commit()
+            session.add(PodcastTextPublicationRecord(
+                identity="migration-audio-episode:narration_script_zh",
+                episode_id="migration-audio-episode",
+                kind="narration_script_zh",
+                artifact_id="migration-narration",
+                status="published",
+                authority_id="",
+                published_at="2026-09-24T00:00:00+00:00",
+                updated_at="2026-09-24T00:00:00+00:00",
+            ))
+            session.commit()
+            for suffix, published_at in (("old", "2026-09-24T01:00:00+00:00"),
+                                         ("new", "2026-09-24T02:00:00+00:00")):
+                session.add(PodcastArtifactRecord(
+                    id=f"migration-audio-{suffix}",
+                    episode_id="migration-audio-episode",
+                    kind="digest_audio_zh",
+                    content_hash=hashlib.sha256(suffix.encode()).hexdigest(),
+                    mime="audio/mpeg",
+                    ext=".mp3",
+                    size_bytes=10,
+                    duration_seconds=1,
+                    status="published",
+                    provenance="migration_fixture",
+                    authority_id="",
+                    narration_artifact_id="migration-narration",
+                    narration_content_hash=narration_hash,
+                    created_at=published_at,
+                    updated_at=published_at,
+                    published_at=published_at,
+                ))
+            session.commit()
+    finally:
+        engine.dispose()
+
+    command.upgrade(cfg, "head")
+    engine = create_engine(db_url)
+    try:
+        with Session(engine) as session:
+            rows = session.exec(select(PodcastArtifactRecord)).all()
+            assert {row.id: row.status for row in rows} == {
+                "migration-audio-old": "withdrawn",
+                "migration-audio-new": "published",
+            }
+        indexes = {item["name"] for item in inspect(engine).get_indexes("podcast_artifacts")}
+        assert "uq_podcast_artifacts_active_episode" in indexes
+        with Session(engine) as session:
+            session.add(PodcastArtifactRecord(
+                id="migration-audio-third",
+                episode_id="migration-audio-episode",
+                kind="digest_audio_zh",
+                content_hash=hashlib.sha256(b"third").hexdigest(),
+                mime="audio/mpeg",
+                ext=".mp3",
+                size_bytes=10,
+                duration_seconds=1,
+                status="published",
+                provenance="migration_fixture",
+                authority_id="",
+                narration_artifact_id="migration-narration",
+                narration_content_hash=narration_hash,
+                created_at="2026-09-24T03:00:00+00:00",
+                updated_at="2026-09-24T03:00:00+00:00",
+                published_at="2026-09-24T03:00:00+00:00",
+            ))
+            with pytest.raises(IntegrityError):
+                session.commit()
     finally:
         engine.dispose()
 
@@ -1159,7 +1280,7 @@ def test_normalized_transcript_migration_refuses_active_legacy_attempt(tmp_path)
     _insert_legacy_podcast_attempt(db_url, state="prepared")
 
     with pytest.raises(RuntimeError, match="active legacy Podcast attempts"):
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, "heads")
 
     engine = create_engine(db_url)
     try:
@@ -1182,7 +1303,7 @@ def test_normalized_transcript_migration_preserves_terminal_legacy_attempt(tmp_p
     command.upgrade(cfg, "3f6b9d2a7c41")
     _insert_legacy_podcast_attempt(db_url, state="succeeded")
 
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "heads")
     engine = create_engine(db_url)
     try:
         with engine.connect() as conn:
@@ -1243,13 +1364,13 @@ def test_parallel_release_heads_converge_without_replay(tmp_path):
         db_url = f"sqlite:///{tmp_path / f'{parent}.db'}"
         cfg = make_alembic_config(db_url)
         command.upgrade(cfg, parent)
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, "heads")
 
         engine = create_engine(db_url)
         try:
             with engine.connect() as conn:
-                current = MigrationContext.configure(conn).get_current_revision()
-            assert current == _head_revision()
+                current = _db_heads(conn)
+            assert current == _script_heads()
             tables = set(inspect(engine).get_table_names())
             assert "article_analyses" in tables
             assert "personal_digest_editions" in tables
@@ -1274,7 +1395,7 @@ def test_sqlite_revision_rolls_back_all_ddl_on_interruption(tmp_path):
     event.listen(Engine, "before_cursor_execute", fail_mid_revision)
     try:
         with pytest.raises(RuntimeError, match="simulated migration interruption"):
-            command.upgrade(cfg, "head")
+            command.upgrade(cfg, "heads")
     finally:
         event.remove(Engine, "before_cursor_execute", fail_mid_revision)
 
@@ -1491,7 +1612,7 @@ def test_intermediate_pr_data_cleanup_is_scoped_and_privacy_minimizing(tmp_path)
     finally:
         engine.dispose()
 
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "heads")
 
     engine = create_engine(db_url)
     try:
@@ -1553,8 +1674,8 @@ def test_ensure_migrated_adopts_legacy_db(tmp_path):
     engine = create_engine(db_url)
     try:
         with engine.connect() as conn:
-            current = MigrationContext.configure(conn).get_current_revision()
-        assert current == _head_revision()
+            current = _db_heads(conn)
+        assert current == _script_heads()
         # 采纳基线不应破坏已有表。
         assert "articles" in inspect(engine).get_table_names()
     finally:
@@ -1677,7 +1798,7 @@ def _assert_healed_to_head(db_url):
     engine = create_engine(db_url)
     try:
         with engine.connect() as conn:
-            assert MigrationContext.configure(conn).get_current_revision() == _head_revision()
+            assert _db_heads(conn) == _script_heads()
         insp = inspect(engine)
         assert "login_events" in insp.get_table_names()
         user_cols = {c["name"] for c in insp.get_columns("users")}
@@ -1712,7 +1833,7 @@ def test_ensure_migrated_is_idempotent(tmp_path):
     engine = create_engine(db_url)
     try:
         with engine.connect() as conn:
-            assert MigrationContext.configure(conn).get_current_revision() == _head_revision()
+            assert _db_heads(conn) == _script_heads()
     finally:
         engine.dispose()
 
@@ -1745,7 +1866,7 @@ def test_reconcile_migration_restores_dropped_declared_indexes(tmp_path):
     # 老库采纳基线（跳过建表），再升级到含对账迁移的 head。
     cfg = make_alembic_config(db_url)
     alembic_command.stamp(cfg, BASELINE_REVISION)
-    alembic_command.upgrade(cfg, "head")
+    alembic_command.upgrade(cfg, "heads")
 
     engine = create_engine(db_url)
     try:
@@ -1843,7 +1964,7 @@ def test_retire_migration_inlines_groups_and_converts_legacy_tasks(tmp_path):
     finally:
         engine.dispose()
 
-    alembic_command.upgrade(cfg, "head")
+    alembic_command.upgrade(cfg, "heads")
 
     engine = create_engine(db_url)
     try:
@@ -1915,7 +2036,7 @@ def test_per_fetcher_cron_retirement_splits_overrides(tmp_path):
     finally:
         engine.dispose()
 
-    alembic_command.upgrade(cfg, "head")
+    alembic_command.upgrade(cfg, "heads")
 
     engine = create_engine(db_url)
     try:
@@ -1971,7 +2092,7 @@ def test_retired_param_fields_purged_from_jobs(tmp_path):
     finally:
         engine.dispose()
 
-    alembic_command.upgrade(cfg, "head")
+    alembic_command.upgrade(cfg, "heads")
 
     engine = create_engine(db_url)
     try:
@@ -2015,7 +2136,7 @@ def test_reader_read_states_migration_adds_missing_is_read(tmp_path):
     finally:
         engine.dispose()
 
-    alembic_command.upgrade(cfg, "head")
+    alembic_command.upgrade(cfg, "heads")
 
     engine = create_engine(db_url)
     try:
@@ -2139,7 +2260,7 @@ def test_analysis_migrations_upgrade_existing_source_configs_with_default_on(tmp
     finally:
         engine.dispose()
 
-    alembic_command.upgrade(cfg, "head")
+    alembic_command.upgrade(cfg, "heads")
 
     engine = create_engine(db_url)
     try:
@@ -2263,7 +2384,23 @@ def test_ensure_migrated_tolerates_forked_heads(tmp_path, monkeypatch):
         assert "articles" in insp.get_table_names()       # 主线头已应用
         with engine.connect() as conn:
             heads = set(MigrationContext.configure(conn).get_current_heads())
-        assert heads == {"aaaafork0001", main_head}
+        # 与脚本目录的 head 集合逐字相等(下游再带 label 支线时也成立),支线头与主线头都已应用
+        from alembic.script import ScriptDirectory
+
+        assert heads == set(ScriptDirectory.from_config(patched_make(db_url)).get_heads())
+        assert "aaaafork0001" in heads
+        assert main_head in heads or main_head not in ScriptDirectory.from_config(patched_make(db_url)).get_heads()
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO intranet_only (id) VALUES (7)"))
+
+        def unexpected_adoption(_db_url):
+            pytest.fail("An already migrated multi-head database must not re-enter legacy adoption")
+
+        monkeypatch.setattr(migrations_module, "_align_legacy_to_baseline", unexpected_adoption)
+        ensure_migrated(db_url)  # 数据库现有两条版本行，重复启动仍必须幂等。
+        with engine.connect() as conn:
+            assert set(MigrationContext.configure(conn).get_current_heads()) == heads
+            assert conn.execute(text("SELECT id FROM intranet_only")).scalars().all() == [7]
     finally:
         engine.dispose()
 
@@ -2303,7 +2440,7 @@ def test_archive_sync_v2_migration_fences_only_explicit_v2_schedule(
     finally:
         engine.dispose()
 
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "heads")
     engine = create_engine(db_url)
     try:
         with engine.connect() as conn:
@@ -2370,15 +2507,32 @@ def test_archive_sync_v2_downgrade_refuses_to_reopen_live_writers(tmp_path, bloc
                     },
                 )
         if blocker == "source_authority":
-            with Session(engine) as session:
-                session.add(SourceConfigRecord(
-                    source_id="remote",
-                    name="Remote",
-                    collection_authority_id="producer-a",
-                    created_at="2026-09-04",
-                    updated_at="2026-09-04",
-                ))
-                session.commit()
+            # This database intentionally stops before the current source schema.
+            # Build current defaults, then insert only columns present at this
+            # historical revision so later nullable fields are not referenced.
+            from sqlalchemy import MetaData, Table
+
+            source = SourceConfigRecord(
+                source_id="remote",
+                name="Remote",
+                collection_authority_id="producer-a",
+                created_at="2026-09-04",
+                updated_at="2026-09-04",
+            )
+            historical_table = Table(
+                "source_configs", MetaData(), autoload_with=engine
+            )
+            payload = source.model_dump()
+            with engine.begin() as conn:
+                conn.execute(
+                    historical_table.insert().values(
+                        **{
+                            key: value
+                            for key, value in payload.items()
+                            if key in historical_table.c
+                        }
+                    )
+                )
         elif blocker == "analysis_authority":
             # This database intentionally stops at d6a3f9c2e714. Use that
             # historical schema rather than the current ORM model, which has
@@ -2495,7 +2649,7 @@ def test_podcast_initial_assessment_migration_preserves_legacy_basis(tmp_path):
         engine.dispose()
 
 
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "heads")
     engine = create_engine(db_url)
     try:
         indexes = {
@@ -2543,7 +2697,7 @@ def test_retired_podcast_asr_fetch_settings_are_purged(tmp_path):
     finally:
         engine.dispose()
 
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "heads")
     engine = create_engine(db_url)
     try:
         with engine.connect() as conn:
@@ -2590,7 +2744,7 @@ def test_cleanup_podcast_extension_fields(tmp_path):
     finally:
         engine.dispose()
 
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "heads")
     engine = create_engine(db_url)
     try:
         with engine.connect() as conn:
@@ -2627,7 +2781,7 @@ def test_retire_interest_mute_stance_migration_deletes_mute_rows_and_narrows_che
                 "('alice', 2, 'mute', 'normal', 'explicit', :s, :s), "
                 "('bob', 2, 'mute', 'normal', 'explicit', :s, :s)"
             ), {"s": stamp})
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, "heads")
         with engine.connect() as conn:
             rows = conn.execute(text(
                 "SELECT owner_username, tag_id, stance FROM user_interest_tags ORDER BY owner_username, tag_id"
@@ -2658,8 +2812,76 @@ def test_retire_interest_mute_stance_migration_fails_closed_without_table(tmp_pa
         with engine.begin() as conn:
             conn.execute(text("DROP TABLE user_interest_tags"))
         with pytest.raises(Exception):
-            command.upgrade(cfg, "head")
+            command.upgrade(cfg, "heads")
         with engine.connect() as conn:
             assert MigrationContext.configure(conn).get_current_revision() == "8be5beaf1307"
     finally:
         engine.dispose()
+
+
+def test_main_migration_chain_has_a_single_unlabeled_head():
+    """issue #130:main 自己的迁移链必须单头;下游分叉仓声明了 branch_labels 的支线(内网 SSO 迁移)允许并存,
+    不做 alembic merge——多头由 ensure_migrated 的 upgrade("heads") 承担,测试与文档口径统一用 heads。"""
+    from alembic.script import ScriptDirectory
+
+    script = ScriptDirectory.from_config(make_alembic_config("sqlite://"))
+    heads = main_chain_heads(script)
+    assert len(heads) == 1, heads
+    # 主线 head 自己不声明 label;下游支线并存时 get_current_head() 会报多头,故不与之比较
+    assert not getattr(script.get_revision(heads[0]).module, "branch_labels", None)
+
+
+def _script_with_extra_revision(tmp_path, *, down_revision, labels):
+    """复制真实迁移链并追加一条空操作 revision,返回指向副本的 ScriptDirectory。"""
+    import shutil
+
+    from alembic.script import ScriptDirectory
+
+    import storage.migrations as migrations_module
+
+    script_dir = tmp_path / "alembic"
+    shutil.copytree(migrations_module._PROJECT_ROOT / "alembic", script_dir)
+    (script_dir / "versions" / "zzzz_extra.py").write_text(
+        '"""下游支线 / 分叉模拟。"""\n'
+        "revision = 'aaaaextra001'\n"
+        f"down_revision = '{down_revision}'\n"
+        f"branch_labels = {labels!r}\n"
+        "depends_on = None\n\n\n"
+        "def upgrade():\n    pass\n\n\n"
+        "def downgrade():\n    pass\n",
+        encoding="utf-8",
+    )
+    cfg = make_alembic_config(f"sqlite:///{tmp_path / 'graph.db'}")
+    cfg.set_main_option("script_location", str(script_dir))
+    return cfg, ScriptDirectory.from_config(cfg)
+
+
+@pytest.mark.parametrize("topology", ["fork_from_baseline", "extend_main_head"])
+def test_main_chain_heads_tolerates_labeled_downstream_branches(tmp_path, topology):
+    """带 label 的下游支线无论从旧节点分叉还是直接延伸 main 末端,守卫都只看主线且 upgrade("heads") 可过(codex R1 P2-3)。
+    alembic 会把 label 传给祖先,延伸末端时整条主链都带 label,所以守卫按迁移文件声明的 branch_labels 判定。"""
+    main_head = _head_revision()
+    down = BASELINE_REVISION if topology == "fork_from_baseline" else main_head
+    # label 名避开下游真实使用的 "intranet":alembic 不允许两条 revision 声明同一 branch label
+    cfg, script = _script_with_extra_revision(tmp_path, down_revision=down, labels=("dorami_test_branch",))
+    assert main_chain_heads(script) == [main_head]
+    command.upgrade(cfg, "heads")
+    engine = create_engine(cfg.get_main_option("sqlalchemy.url"))
+    try:
+        with engine.connect() as conn:
+            heads = _db_heads(conn)
+    finally:
+        engine.dispose()
+    # 版本表 = 脚本目录的全部 head(真实图之外若还有其它下游支线也成立);延伸拓扑下主线头被支线头取代
+    assert heads == set(script.get_heads())
+    assert "aaaaextra001" in heads
+    # 主线 head 与支线 revision 都已应用(是某个版本表 head 的祖先或自身);不断言主线 head 本身是否仍是 head,
+    # 基图若已有其它下游支线延伸主线末端,它就不是了
+    applied = {rev.revision for head in heads for rev in script.walk_revisions("base", head)}
+    assert main_head in applied and "aaaaextra001" in applied
+
+
+def test_main_chain_heads_flags_an_unlabeled_fork(tmp_path):
+    """未声明 label 的分叉一律按 main 自己分叉计(下游忘记加 label 也会被这条守卫拦下,有意如此)。"""
+    _, script = _script_with_extra_revision(tmp_path, down_revision=BASELINE_REVISION, labels=None)
+    assert sorted(main_chain_heads(script)) == sorted([_head_revision(), "aaaaextra001"])

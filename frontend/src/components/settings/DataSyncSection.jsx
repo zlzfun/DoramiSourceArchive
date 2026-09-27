@@ -11,6 +11,8 @@ import {
   fetchBackgroundJob,
 } from '../../api';
 import SecretField from '../SecretField';
+import RemoteSyncProgress from './RemoteSyncProgress';
+import { syncBytes } from '../../utils/syncProgress';
 
 function downloadFile(url, filename) {
   const a = document.createElement('a');
@@ -284,7 +286,11 @@ function syncTotals(result) {
     updated: totals.updated + Number(stream.updated || 0),
     skipped: totals.skipped,
     errors: totals.errors,
-  }), { pulled: 0, imported: 0, updated: 0, skipped: 0, errors: 0 });
+    reused: totals.reused + Number(stream.media_reused || 0) + Number(stream.podcast_audio_reused || 0),
+    downloaded: totals.downloaded + Number(stream.media_downloaded || 0) + Number(stream.podcast_audio_downloaded || 0),
+    reusedBytes: totals.reusedBytes + Number(stream.reused_bytes || 0),
+    downloadedBytes: totals.downloadedBytes + Number(stream.downloaded_bytes || 0),
+  }), { pulled: 0, imported: 0, updated: 0, skipped: 0, errors: 0, reused: 0, downloaded: 0, reusedBytes: 0, downloadedBytes: 0 });
 }
 
 function RemoteSyncCard({ showToast, onArticlesChanged }) {
@@ -385,7 +391,6 @@ function RemoteSyncCard({ showToast, onArticlesChanged }) {
     }
   };
 
-  const progressPct = job?.total ? Math.min(100, Math.round((job.processed / job.total) * 100)) : null;
   const canStart = normalizedUrl && form.username.trim() && form.password && !running && !starting;
 
   return (
@@ -504,31 +509,26 @@ function RemoteSyncCard({ showToast, onArticlesChanged }) {
       {job && (
         <div className="sett-sync-panel">
           {running ? (
-            <>
-              <div className="flex items-center justify-between text-sm">
-                <span className="flex items-center gap-1.5 font-bold"><Loader2 className="h-3.5 w-3.5 animate-spin" /> 正在同步…</span>
-                <span className="run-progress-n text-xs font-bold">
-                  {progressPct != null ? `${job.processed} / ${job.total}(${progressPct}%)` : `已拉取 ${job.processed || 0} 条`}
-                </span>
-              </div>
-              {progressPct != null && (
-                <div className="run-progress-track mt-2">
-                  <div className="run-progress-fill" style={{ width: `${progressPct}%` }} />
-                </div>
-              )}
-            </>
+            <RemoteSyncProgress job={job} />
           ) : job.status === 'succeeded' ? (
             <>
               {(() => {
                 const totals = syncTotals(job.result);
                 return (
-              <div className="sett-sync-stats">
-                <div><span className="tiny-meta block">拉取</span><b>{totals.pulled ?? 0}</b></div>
-                <div><span className="tiny-meta block">新增</span><b>{totals.imported ?? 0}</b></div>
-                <div><span className="tiny-meta block">回填</span><b>{totals.updated ?? 0}</b></div>
-                <div><span className="tiny-meta block">跳过</span><b>{totals.skipped ?? 0}</b></div>
-                <div><span className="tiny-meta block">错误</span><b className={totals.errors ? 'text-rose-500' : ''}>{totals.errors ?? 0}</b></div>
-              </div>
+                  <>
+                    <div className="sett-sync-stats">
+                      <div><span className="tiny-meta block">拉取</span><b>{totals.pulled ?? 0}</b></div>
+                      <div><span className="tiny-meta block">新增</span><b>{totals.imported ?? 0}</b></div>
+                      <div><span className="tiny-meta block">回填</span><b>{totals.updated ?? 0}</b></div>
+                      <div><span className="tiny-meta block">跳过</span><b>{totals.skipped ?? 0}</b></div>
+                      <div><span className="tiny-meta block">错误</span><b className={totals.errors ? 'text-rose-500' : ''}>{totals.errors ?? 0}</b></div>
+                    </div>
+                    {(totals.reused > 0 || totals.downloaded > 0) && (
+                      <p className="tiny-meta mt-3 tabular-nums">
+                        本地复用 {totals.reused} 个（{syncBytes(totals.reusedBytes)}），下载完成 {totals.downloaded} 个（{syncBytes(totals.downloadedBytes)}）
+                      </p>
+                    )}
+                  </>
                 );
               })()}
               {(job.result?.error_samples?.length ?? 0) > 0 && (
@@ -538,7 +538,10 @@ function RemoteSyncCard({ showToast, onArticlesChanged }) {
               )}
             </>
           ) : job.status === 'failed' ? (
-            <p className="text-sm font-bold text-rose-600">同步失败:{job.error || '未知原因'}</p>
+            <div className="space-y-3">
+              {job.progress && <RemoteSyncProgress job={job} />}
+              <p className="body-text text-rose-600">同步失败:{job.error || '未知原因'}{job.progress ? '。重试会校验并复用已完成的文件' : ''}</p>
+            </div>
           ) : null}
         </div>
       )}

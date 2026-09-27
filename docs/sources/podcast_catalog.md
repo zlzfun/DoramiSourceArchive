@@ -2,9 +2,10 @@
 
 ## 结论
 
-内部分析列出的 36 个节目可以复用 Dorami 已有的 `SourceConfigRecord(source_type=podcast)`
+目录中的 37 个节目可以复用 Dorami 已有的 `SourceConfigRecord(source_type=podcast)`
 与 `generic_podcast_rss` 接入，不需要为 Spotify、Simplecast、Libsyn、Fireside、Transistor、
-Megaphone、小宇宙分发源等平台各写一个抓取器。2026-09-03 的真实网络验证结果：
+Megaphone、小宇宙和 Buzzsprout 等平台各写一个抓取器。原 36 源于 2026-09-03 验证；
+验证日期现为逐源字段，新增/复验单个节目不会虚假刷新其它节目：
 
 - 35 个 feed 返回可解析的 RSS/Atom，且至少一个单集含音频 enclosure；
 - `Voices from DARPA` 的 Apple 目录仍指向 Blubrry feed，但当前网络 TLS 握手 EOF，标为
@@ -12,6 +13,8 @@ Megaphone、小宇宙分发源等平台各写一个抓取器。2026-09-03 的真
 - `Inside AI` 的 feed 可用，但最新单集停在 2025-01，保留在扩展档观察；
 - `Latent Space`、`20VC` 等历史 feed 接近或超过 10 MiB，目录参数统一设置 20 MiB
   响应上限和每轮 20 集，避免无界响应与首次全量处理。
+- `The AI Native Dev` 于 2026-09-24 验证，当前 RSS 同时提供音频 enclosure 和
+  HTML/JSON/SRT/VTT 发布方逐字稿候选；以 `incubating` 身份进入独立启用的观察任务。
 
 目录单一事实来源为 `src/services/podcast_catalog.py`。每个条目记录稳定 source ID、feed、
 发布方、语言、主题、首发档位、验证状态和最近单集日期。这里仅登记公开分发元数据，不复制
@@ -19,7 +22,7 @@ Megaphone、小宇宙分发源等平台各写一个抓取器。2026-09-03 的真
 
 ## 导入与上线
 
-应用启动时会幂等安装全部 36 个条目，使全新部署的节点管理不再缺少 Podcast。公共播客与
+应用启动时会幂等安装全部 37 个条目，使全新部署的节点管理不再缺少 Podcast。公共播客与
 内置文章节点一样始终可供采集任务选择，不再设源级“启用采集”开关；只有加入启用的采集任务后
 才按任务 Cron 运行。安装不会自动订阅给任何用户，也不会直接触发 ASR 或 TTS。重复启动只补充
 目录新增项，不覆盖管理员对已有节点的名称和配置；Feed 健康状态只用于源审查。
@@ -57,7 +60,23 @@ PYTHONPATH=src uv run python scripts/import_podcast_catalog.py --apply
 执行时读取最新 SourceConfig 并解析为共用的 `generic_podcast_rss` 执行器；Feed URL 和源身份
 始终以 SourceConfig 为准，运行开关只存在于采集任务。节点运行史直接使用逻辑播客源 ID。
 采集任务只更新 feed/单集元数据，
-不会直接调用 ASR 或 TTS。
+不会直接调用 ASR 或 TTS。`The AI Native Dev` 是显式例外：目录安装同时幂等维护一个首次创建
+即启用的观察期采集任务，每 6 小时只增量抓 RSS 元数据；后续保留管理员对任务启停的选择。
+它仍不会自动订阅用户，也不会因目录安装自动触发历史 ASR/TTS 回填。
+
+### 自定 Podcast 升格
+
+`The AI Native Dev` 支持一次性的 fail-closed 收养：导入器按 canonical feed URL 查找唯一
+存量自定 Podcast；多条同 URL、类型/权威冲突或目标公共源已存在时整笔回滚并要求人工处理。
+收养在单事务内建立公共源、迁移文章归属和订阅/未读水位/阅读计量/隐藏配置/采集任务等
+source-id 状态，保持 Article 主键及其分析、全文处理、文本/音频产物、收藏、已读与分享引用
+不变，最后才删除旧配置。公共源参数保存旧 `entry_id_namespace`，后续同一 GUID 仍命中旧单集
+主键。收养时给历史单集加“仅自动候选抑制”标记，防止公共化本身触发历史精品导读 TTS；
+管理员手动/读者点播路径不受影响。再次导入幂等，`update_existing=true` 也不会清掉兼容
+namespace。
+
+Archive Sync 只在收养完成后把这些单集作为公共内容导出；source payload 不含旧
+`owner_username`，私有状态不跨线，保留的 Article 主键保证接收端不会得到第二份单集。
 
 ## 与内部博客 RSS 的边界
 

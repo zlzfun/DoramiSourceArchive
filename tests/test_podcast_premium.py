@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import sys
+from types import SimpleNamespace
 
 import pytest
 from sqlmodel import Session
@@ -25,10 +26,12 @@ from services.podcast_premium import (  # noqa: E402
     DEFAULT_PREMIUM_SCORE_THRESHOLD,
     INITIAL_PROCESSING_THRESHOLD,
     dashboard,
+    episode_detail,
     get_threshold,
     normalize_threshold,
     set_threshold,
 )
+from services.podcast_processing_admin import serialize_processing  # noqa: E402
 from storage.impl.db_storage import DatabaseStorage  # noqa: E402
 
 
@@ -142,12 +145,12 @@ def premium_engine(tmp_path):
         for episode_id in ids:
             session.add(_episode(episode_id))
         session.commit()
-        session.add(_analysis("low-initial", initial=4.9))
-        session.add(_analysis("exact-initial", initial=5.0))
-        session.add(_analysis("low-final", initial=5.0, final=7.9))
-        session.add(_analysis("exact-final", initial=5.0, final=8.0))
-        session.add(_analysis("historical", initial=5.0, final=8.1))
-        session.add(_analysis("failed", initial=5.0))
+        session.add(_analysis("low-initial", initial=5.9))
+        session.add(_analysis("exact-initial", initial=6.0))
+        session.add(_analysis("low-final", initial=6.0, final=7.4))
+        session.add(_analysis("exact-final", initial=6.0, final=7.5))
+        session.add(_analysis("historical", initial=6.0, final=7.6))
+        session.add(_analysis("failed", initial=6.0))
         session.add(_analysis("high-initial", initial=9.9))
         session.add(_failed_processing("failed"))
         blog, publication = _published_blog("historical")
@@ -160,10 +163,10 @@ def premium_engine(tmp_path):
 
 
 def test_threshold_validation_and_persistence(premium_engine):
-    assert INITIAL_PROCESSING_THRESHOLD == 5.0
-    assert DEFAULT_PREMIUM_SCORE_THRESHOLD == 8.0
+    assert INITIAL_PROCESSING_THRESHOLD == 6.0
+    assert DEFAULT_PREMIUM_SCORE_THRESHOLD == 7.5
     with Session(premium_engine) as session:
-        assert get_threshold(session) == 8.0
+        assert get_threshold(session) == 7.5
         assert set_threshold(session, 10.0) == 10.0
     with Session(premium_engine) as session:
         assert get_threshold(session) == 10.0
@@ -172,6 +175,43 @@ def test_threshold_validation_and_persistence(premium_engine):
         normalize_threshold(8.55)
     with pytest.raises(ValueError, match="1.0–10.0"):
         normalize_threshold(10.1)
+
+
+def test_threshold_uses_deployment_config_until_runtime_kv_overrides(
+    premium_engine, monkeypatch,
+):
+    import config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "settings",
+        SimpleNamespace(podcast=SimpleNamespace(premium_score_threshold=8.5)),
+    )
+    with Session(premium_engine) as session:
+        analysis = session.get(ArticleAnalysisRecord, "exact-final")
+        analysis.quality_score = 8.4
+        analysis.podcast_final_score = 8.4
+        session.add(analysis)
+        session.commit()
+
+        assert get_threshold(session) == 8.5
+
+    configured = {
+        item["episode_id"]: item for item in dashboard(premium_engine)["items"]
+    }["exact-final"]
+    assert configured["is_premium"] is False
+    assert configured["pending_generation"] is False
+    assert configured["tts_status"] == "not_started"
+
+    with Session(premium_engine) as session:
+        assert set_threshold(session, 8.0) == 8.0
+        assert get_threshold(session) == 8.0
+
+    overridden = {
+        item["episode_id"]: item for item in dashboard(premium_engine)["items"]
+    }["exact-final"]
+    assert overridden["is_premium"] is True
+    assert overridden["pending_generation"] is True
 
 
 def test_dashboard_uses_final_score_only_and_recalculates_without_changing_candidates(premium_engine):
@@ -189,13 +229,13 @@ def test_dashboard_uses_final_score_only_and_recalculates_without_changing_candi
     assert [item["episode_id"] for item in dashboard(premium_engine, status_filter="failed")["items"]] == ["failed"]
 
     with Session(premium_engine) as session:
-        set_threshold(session, 7.5)
+        set_threshold(session, 7.0)
     lowered = dashboard(premium_engine, status_filter="premium")
     assert lowered["stats"]["premium"] == 3
     low_final = next(item for item in lowered["items"] if item["episode_id"] == "low-final")
     assert low_final["pending_generation"] is True
-    # Changing the final threshold must not pull the 4.9 show-notes item into
-    # the fixed >=5.0 full-processing candidate set.
+    # Changing the final threshold must not pull the 5.9 show-notes item into
+    # the fixed >=6.0 paid-ASR candidate set.
     assert "low-initial" not in {
         item["episode_id"]
         for item in dashboard(premium_engine, status_filter="pending_full")["items"]
@@ -207,6 +247,27 @@ def test_dashboard_uses_final_score_only_and_recalculates_without_changing_candi
     historical = next(item for item in raised["items"] if item["episode_id"] == "historical")
     assert historical["historical_generated"] is True
     assert historical["reason"] == "历史已生成，当前未达门槛"
+
+
+def test_asr_retry_wait_is_distinct_from_failure_and_keeps_retry_time(premium_engine):
+    with Session(premium_engine) as session:
+        row = session.get(PodcastProcessingRecord, "processing-failed")
+        row.processing_status = "retry_wait"
+        row.attempt_count = 0
+        row.error_code = "provider_usage_window_unavailable"
+        row.error_message = "provider usage capacity was unavailable before submission"
+        row.next_retry_at = "2026-09-23T00:00:00+08:00"
+        session.add(row)
+        session.commit()
+        assert serialize_processing(row)["next_retry_at"] == row.next_retry_at
+    item = next(row for row in dashboard(premium_engine)["items"] if row["episode_id"] == "failed")
+    assert item["stage_code"] == "retry_wait"
+    assert item["next_retry_at"] == "2026-09-23T00:00:00+08:00"
+    assert item["processing_error_code"] == "provider_usage_window_unavailable"
+    assert "等待 ASR 配额" in item["reason"]
+    assert item["can_retry"] is False
+    assert item["can_force"] is False
+    assert dashboard(premium_engine, status_filter="failed")["items"] == []
 
 
 def test_dashboard_exposes_force_tts_only_for_ready_full_analysis(premium_engine):
@@ -288,6 +349,40 @@ def test_dashboard_exposes_force_tts_only_for_ready_full_analysis(premium_engine
         item["episode_id"]: item for item in dashboard(premium_engine)["items"]
     }
     assert mismatched["low-final"]["can_force_tts"] is False
+
+
+def test_timeline_separates_blog_script_and_duration_gate(premium_engine):
+    blog_only = episode_detail(premium_engine, "historical")
+    guide = next(row for row in blog_only["timeline"] if row["step"] == "guide")
+    assert guide["state"] == "warn"
+    assert "口播稿尚未完成" in guide["note"]
+    with Session(premium_engine) as session:
+        episode = session.get(ArticleRecord, "exact-final")
+        episode.extensions_json = '{"duration_seconds":660}'
+        transcript = PodcastTextArtifactRecord(
+            id="transcript-exact-final", episode_id="exact-final", kind="publisher_transcript",
+            version=1, content_hash=hashlib.sha256(b"transcript").hexdigest(),
+            inline_text="transcript", language="en", provenance_json="{}", created_at=STAMP,
+        )
+        analysis = session.get(ArticleAnalysisRecord, "exact-final")
+        analysis.transcript_artifact_id = transcript.id
+        session.add_all([episode, transcript, analysis])
+        session.commit()
+    short = episode_detail(premium_engine, "exact-final", minimum_duration_seconds=1200)
+    guide = next(row for row in short["timeline"] if row["step"] == "guide")
+    assert guide["state"] == "skipped"
+    assert "不足自动生成时长 20 分钟" in guide["note"]
+
+    with Session(premium_engine) as session:
+        episode = session.get(ArticleRecord, "exact-final")
+        episode.extensions_json = '{"duration_seconds":"20:00"}'
+        session.add(episode)
+        session.commit()
+    legacy = episode_detail(premium_engine, "exact-final", minimum_duration_seconds=1200)
+    assert legacy["episode"]["duration_seconds"] is None
+    guide = next(row for row in legacy["timeline"] if row["step"] == "guide")
+    assert guide["state"] == "skipped"
+    assert "节目时长未知" in guide["note"]
 
 
 def test_reader_badge_requires_transcript_score_and_uses_inclusive_current_threshold():

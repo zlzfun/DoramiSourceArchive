@@ -1,5 +1,6 @@
 import { Monitor, Moon, Sun } from 'lucide-react';
 import { useMotionPref } from '../../motion';
+import InstallApp from '../InstallApp';
 
 // 外观(弹窗波,设置行范式):主题三态,白拇指分段(复用 .segmented-control)。
 // 减少动效(issue #73):应用内开关取代 OS 的 prefers-reduced-motion(见 motion.js);
@@ -13,6 +14,7 @@ export default function AppearanceSection({ theme, onThemeChange }) {
   ];
   return (
     <>
+      <InstallApp settings />
       <div className="sett-row">
         <span className="sett-id">
           <span className="sett-lbl">主题</span>

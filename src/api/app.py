@@ -23,6 +23,7 @@ from sqlalchemy import delete
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.schedulers.base import STATE_STOPPED
 from apscheduler.triggers.cron import CronTrigger
+from services.cron_expr import parse_cron_expr
 
 from storage.impl.db_storage import DatabaseStorage
 from pipeline.core import DataPipeline
@@ -108,6 +109,7 @@ from services import image_insights as image_insights_service
 from services import remote_sync as remote_sync_service
 from services import sync_consumer_policy
 from services import accounts as accounts_service
+from services import auth_policy
 from services import admin_audit as admin_audit_service
 from services.collection_nodes import PODCAST_SOURCE_TYPES, resolve_collection_node
 from services import reader_state as reader_state_service
@@ -115,6 +117,8 @@ from services import ai_usage as ai_usage_service
 from services import jobs as jobs_service
 from services import user_sources as user_sources_service
 from services import reader_defaults as reader_defaults_service
+from services import reader_ondemand as reader_ondemand_service
+from services import rankings as rankings_service
 from services import article_analysis as article_analysis_service
 from services import taxonomy as taxonomy_service
 from services import podcast_catalog as podcast_catalog_service
@@ -132,9 +136,17 @@ from services.podcast_stage_policy import (
     require_stage as require_podcast_stage,
 )
 from services.media_store import MediaStore
-from services.podcast_artifacts import PodcastArtifactStore
+from services.object_storage import ObjectStorage, ObjectStorageError
+from services.storage_backup import BackupService
+from services.storage_runtime import maintain_storage
+from services.podcast_artifacts import PodcastArtifactError, PodcastArtifactStore
 from services.podcast_asr_worker import AsrWorkerConfig, AsrWorkerStep
 from services import podcast_premium_guides as podcast_premium_guide_service
+from services import article_listen_guides as article_listen_guide_service
+from services.article_listen_guides import (
+    ArticleListenStore,
+    OpenAiCompatibleArticleListenTextProvider,
+)
 from services import podcast_premium as podcast_premium_service
 from services import podcast_publisher_transcripts as podcast_publisher_transcript_service
 from services import podcast_source_media as podcast_source_media_service
@@ -245,7 +257,53 @@ def runtime_capabilities(session: Optional[Dict[str, Any]] = None) -> Dict[str, 
         "user_sources_enabled": _user_sources_capability(),
         # 个人早报发布闸：关闭时读者端隐藏页面入口，端点侧继续以 404 防守。
         "personal_digest_enabled": _personal_digest_capability(),
+        # 读者点播能力位(issue #137)：总闸 ∧ 本部署真能跑；为假则不画入口，
+        # 端点侧另有 403 / 503 防守。
+        "ondemand": _ondemand_capabilities(),
+        # 密码登录能力位(issue #130):main 恒 True;下游外部身份源只覆盖 services/auth_policy,
+        # 前端设置柜据此隐藏改密表单,登录 / 改密端点据此 403。
+        "password_login_enabled": _password_login_capability(session),
     }
+
+
+def _password_login_allows(record: Any) -> bool:
+    """能力位透出用的策略调用:策略异常按 True 降级(main 默认),只影响展示;登录 / 改密端点直接调策略,不降级。"""
+    try:
+        return bool(auth_policy.password_login_enabled(record))
+    except Exception:
+        return True
+
+
+def _password_login_capability(session: Optional[Dict[str, Any]] = None) -> bool:
+    """密码登录能力位(runtime 透出用):有会话按该账号判定,无会话取全局姿态;异常按 True 降级(main 默认)。"""
+    username = str(session.get("sub")) if session else ""
+    if not username or db_sink is None:
+        return _password_login_allows(None)
+    try:
+        with Session(db_sink.engine) as db:
+            record = accounts_service.get_user(db, username)
+    except Exception:  # 能力探测不应阻断 runtime 接口
+        return True
+    return _password_login_allows(record)
+
+
+def _ondemand_capabilities() -> Dict[str, bool]:
+    """读者点播两条链路的能力位（runtime 透出用）。
+
+    判定在 ``services/reader_ondemand``：总闸 ∧ LLM/TTS/音色就绪，播客侧另需
+    Podcast 处理阶段授权。无 DB / 异常一律按「不可用」：点播烧真钱，探测不准时
+    宁可不画入口，也不该画个点下去必失败的按钮。
+    """
+    unavailable = {"podcast": False, "article": False}
+    if db_sink is None:
+        return unavailable
+    try:
+        with Session(db_sink.engine) as session:
+            return reader_ondemand_service.availability(
+                session, podcast_config=settings.podcast
+            ).as_runtime()
+    except Exception:  # noqa: BLE001 - 能力探测不阻断 runtime 接口
+        return unavailable
 
 
 def _user_sources_capability() -> bool:
@@ -479,6 +537,8 @@ async def lifespan(app: FastAPI):
     reconcile_orphaned_runs()
     if collector_on:
         load_tasks_to_scheduler()
+    # 标签榜由 reader 本地正式标签派生，拆分部署下也必须在 reader 节点运行。
+    reload_ranking_schedule()
     if scheduler.state == STATE_STOPPED:
         scheduler.start()
         print("⏰ APScheduler 定时调度引擎已启动！")
@@ -489,6 +549,20 @@ async def lifespan(app: FastAPI):
         # Both production hosts may run role=all while only the external host is
         # allowed to register ASR. The first tick is deliberately delayed.
         reload_podcast_asr_worker_schedule()
+        reload_storage_schedule()
+        # 新部署不必等到次日 07:00；缺当天边界快照时补一轮。固定日榜 job
+        # 仍由上方 cron 承担，补跑使用独立 id 且同日写入幂等。
+        with Session(db_sink.engine) as session:
+            if rankings_service.latest_snapshot_needed(session):
+                scheduler.add_job(
+                    execute_ranking_snapshot_job,
+                    "date",
+                    run_date=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=2),
+                    id="reader_rankings_bootstrap",
+                    args=[True],
+                    replace_existing=True,
+                    max_instances=1,
+                )
         if collector_on:
             # 远程内容同步定时任务(启用且 cron 合法时注册,否则移除既有 job)。
             reload_remote_sync_schedule()
@@ -513,6 +587,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Dorami 数据归档中枢 API", lifespan=lifespan)
+
+
+@app.exception_handler(ObjectStorageError)
+async def object_storage_unavailable(request: Request, exc: ObjectStorageError):
+    return StarletteJSONResponse({"code": str(exc), "detail": "媒体存储暂时不可用，请稍后重试"}, status_code=503)
 
 
 def _is_podcast_text_reader_path(path: str) -> bool:
@@ -603,6 +682,7 @@ media_store: Optional[MediaStore] = (
         Path(settings.media.media_dir),
         max_bytes=settings.media.max_file_mb * 1024 * 1024,
         timeout_seconds=settings.media.timeout_seconds,
+        object_storage=ObjectStorage(db_sink.engine, Path(settings.media.media_dir), "media", settings.oss),
     )
     if settings.media.enabled else None
 )
@@ -627,7 +707,37 @@ podcast_artifact_store = PodcastArtifactStore(
     ffprobe_binary=settings.podcast_artifacts.ffprobe_binary,
     probe_timeout_seconds=settings.podcast_artifacts.probe_timeout_seconds,
     orphan_grace_seconds=settings.podcast_artifacts.orphan_grace_seconds,
+    object_storage=ObjectStorage(db_sink.engine, Path(settings.podcast_artifacts.root_dir), "podcast", settings.oss),
 )
+# 文章点播旁白：挂在 podcast-artifacts/article-listen 下的本地 CAS，不扩 OSS namespace。
+article_listen_store = ArticleListenStore(
+    Path(settings.podcast_artifacts.root_dir) / "article-listen",
+    max_bytes=min(
+        article_listen_guide_service.MAX_AUDIO_BYTES,
+        settings.podcast_artifacts.max_audio_mb * 1024 * 1024,
+    ),
+)
+
+storage_backup_service = BackupService(
+    settings.backup, settings.storage.database_url, settings.bailian_speech.tts_receipt_root,
+    media_root=settings.media.media_dir, podcast_root=settings.podcast_artifacts.root_dir,
+    object_stores={"media": media_store.object_storage if media_store else None,
+                   "podcast": podcast_artifact_store.object_storage},
+)
+
+
+def _object_stores():
+    return [store.object_storage for store in (media_store, podcast_artifact_store)
+            if store is not None and store.engine is db_sink.engine and getattr(store, "object_storage", None)]
+
+
+@app.get("/api/admin/storage/status")
+def admin_storage_status():
+    result = {"media": {"storage_backend": "local"}, "podcast": {"storage_backend": "local"}}
+    for store in _object_stores():
+        result[store.namespace] = store.stats()
+    result["backup"] = storage_backup_service.status()
+    return result
 
 # The durable processing state machine is used for resumable ASR. Premium-guide
 # text and TTS use their smaller provider-neutral workflow below.
@@ -656,6 +766,7 @@ podcast_full_analysis_service.register_full_analysis_worker(
 _MEDIA_PREFETCH_TASKS: set = set()
 _PERSONAL_DIGEST_TRIGGER_TASKS: set = set()
 _PODCAST_PREMIUM_GUIDE_TASKS: dict[str, asyncio.Task] = {}
+_ARTICLE_LISTEN_GUIDE_TASKS: dict[str, asyncio.Task] = {}
 
 
 def schedule_podcast_premium_guide(episode_id: str) -> bool:
@@ -679,14 +790,23 @@ def schedule_podcast_premium_guide(episode_id: str) -> bool:
                         duration = float(ext.get("duration_seconds") or 0)
                     except Exception:
                         duration = 0.0
+            eligibility = podcast_premium_guide_service.guide_eligibility(
+                db_sink.engine,
+                episode_id=episode_id,
+                score_threshold=premium_threshold,
+            )
             plan = podcast_premium_guide_service.calculate_solo_deep_plan(
                 duration,
                 hard_max_audio_minutes=settings.podcast.premium_max_audio_minutes,
             )
+            should_synthesize_audio = (
+                eligibility.should_synthesize_audio
+                and plan.should_synthesize_audio
+            )
             voice = settings.podcast.default_voice_profile
             if not llm_config.configured:
                 raise RuntimeError("精品导读所需的 LLM 配置尚未就绪")
-            if plan.should_synthesize_audio and (not aliyun_config.tts_configured or not voice):
+            if should_synthesize_audio and (not aliyun_config.tts_configured or not voice):
                 raise RuntimeError("精品导读所需的 TTS 配置尚未就绪")
             tts_provider = (
                 make_premium_tts_provider(
@@ -696,7 +816,7 @@ def schedule_podcast_premium_guide(episode_id: str) -> bool:
                     voice_profile=voice,
                     max_audio_bytes=podcast_artifact_store.max_bytes,
                 )
-                if plan.should_synthesize_audio
+                if should_synthesize_audio
                 else None
             )
             await podcast_premium_guide_service.run_premium_guide(
@@ -830,6 +950,90 @@ def schedule_forced_podcast_premium_guide(
     return {**prepared, "started": True}
 
 
+def schedule_article_listen_guide(article_id: str, *, actor: str) -> dict[str, Any]:
+    """落库排队并异步跑文章点播旁白（LLM → TTS）；产物全站共享。"""
+
+    existing = _ARTICLE_LISTEN_GUIDE_TASKS.get(article_id)
+    if existing is not None and not existing.done():
+        return {
+            "outcome": "in_progress",
+            "status": "queued",
+            "should_schedule": False,
+            "started": False,
+        }
+
+    prepared = article_listen_guide_service.prepare_ondemand(
+        db_sink.engine,
+        article_id=article_id,
+        actor=actor,
+    )
+    if not prepared.get("should_schedule"):
+        return {**prepared, "started": False}
+
+    try:
+        with Session(db_sink.engine) as session:
+            llm_config = daily_brief_service.resolve_llm_config(session)
+            aliyun_config = podcast_speech_config_service.resolve_config(session)
+        voice = settings.podcast.default_voice_profile
+        if not llm_config.configured or not aliyun_config.tts_configured or not voice:
+            raise article_listen_guide_service.ArticleListenError(
+                "article_ondemand_provider_unavailable",
+                "点播所需的 LLM、TTS 或音色配置尚未就绪",
+                status_code=503,
+            )
+    except Exception as exc:
+        article_listen_guide_service.fail_listen_guide(
+            db_sink.engine,
+            article_id,
+            exc,
+            failed_stage="queued",
+        )
+        raise
+
+    existing = _ARTICLE_LISTEN_GUIDE_TASKS.get(article_id)
+    if existing is not None and not existing.done():
+        return {
+            "outcome": "in_progress",
+            "status": "queued",
+            "should_schedule": False,
+            "started": False,
+        }
+
+    async def _run() -> None:
+        try:
+            await article_listen_guide_service.run_listen_guide(
+                db_sink.engine,
+                article_listen_store,
+                article_id=article_id,
+                text_provider=OpenAiCompatibleArticleListenTextProvider(llm_config),
+                tts_provider=make_premium_tts_provider(
+                    aliyun_config,
+                    engine=db_sink.engine,
+                    episode_id=article_id,
+                    voice_profile=voice,
+                    max_audio_bytes=article_listen_store.max_bytes,
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - service persists failure
+            article_listen_guide_service.fail_listen_guide(
+                db_sink.engine,
+                article_id,
+                exc,
+            )
+            _dorami_logger.warning(
+                "文章点播旁白生成失败 article=%s (%s)",
+                article_id,
+                type(exc).__name__,
+            )
+
+    task = asyncio.create_task(_run())
+    _ARTICLE_LISTEN_GUIDE_TASKS[article_id] = task
+    task.add_done_callback(
+        lambda _task: _ARTICLE_LISTEN_GUIDE_TASKS.pop(article_id, None)
+    )
+    return {**prepared, "started": True}
+
+
 def _podcast_episode_download_limit(episode_id: str) -> int:
     """Bytes a source-media validation of this episode may reserve (sync, off-loop)."""
 
@@ -850,6 +1054,38 @@ def _podcast_asr_admission_ready() -> bool:
     with Session(db_sink.engine) as session:
         effective_aliyun = podcast_speech_config_service.resolve_config(session)
     return podcast_processing_providers.stage_admission_ready("asr", effective_aliyun)
+
+
+def _podcast_asr_fallback_eligible(episode_id: str) -> bool:
+    """Whether show-note evidence may cross the paid ASR boundary."""
+
+    with Session(db_sink.engine) as session:
+        analysis = session.get(ArticleAnalysisRecord, episode_id)
+        return bool(
+            analysis is not None
+            and analysis.status == "succeeded"
+            and podcast_premium_service.initial_score(analysis) is not None
+            and podcast_premium_service.initial_score(analysis)
+            >= podcast_premium_service.INITIAL_PROCESSING_THRESHOLD
+        )
+
+
+def _publisher_transcript_failure_is_transient(exc: BaseException | None) -> bool:
+    if isinstance(
+        exc,
+        podcast_publisher_transcript_service.PublisherTranscriptTimeout,
+    ):
+        return True
+    if not isinstance(
+        exc,
+        podcast_publisher_transcript_service.PublisherTranscriptFetchFailed,
+    ):
+        return False
+    cause = exc.__cause__
+    if not isinstance(cause, httpx.HTTPStatusError):
+        return True
+    status = cause.response.status_code
+    return status in {408, 429} or status >= 500
 
 
 async def enqueue_podcast_processing_with_input(
@@ -901,7 +1137,10 @@ async def enqueue_podcast_processing_with_input(
             actor=actor,
         )
 
+    publisher_failure: BaseException | None = None
+
     async def _ingest_publisher_transcript() -> bool:
+        nonlocal publisher_failure
         try:
             async with httpx.AsyncClient() as client:
                 await podcast_publisher_transcript_service.ingest_publisher_transcript(
@@ -910,7 +1149,8 @@ async def enqueue_podcast_processing_with_input(
                     config=settings.podcast,
                     client=client,
                 )
-        except podcast_publisher_transcript_service.PublisherTranscriptError:
+        except podcast_publisher_transcript_service.PublisherTranscriptError as exc:
+            publisher_failure = exc
             return False
         return True
 
@@ -936,6 +1176,26 @@ async def enqueue_podcast_processing_with_input(
     if not publisher_attempted:
         publisher_ready = await _ingest_publisher_transcript()
     if not publisher_ready:
+        # A failed publisher fetch must not inherit the free transcript's
+        # eligibility and silently cross into paid ASR.  Only the independent
+        # show-notes score can authorize that fallback.
+        if (
+            not selection_override
+            and not await asyncio.to_thread(_podcast_asr_fallback_eligible, episode_id)
+        ):
+            transient = _publisher_transcript_failure_is_transient(publisher_failure)
+            raise podcast_processing_admin_service.PodcastAdminError(
+                (
+                    "podcast_publisher_transcript_unavailable"
+                    if transient
+                    else "podcast_selection_required"
+                ),
+                status_code=503 if transient else 409,
+                message=(
+                    "发布方逐字稿不可用，且简介初评未达到付费 ASR 处理线 "
+                    f"{podcast_premium_service.INITIAL_PROCESSING_THRESHOLD:.1f}"
+                ),
+            )
         # ASR fallback: re-apply the gate *before* touching the network or disk.
         if not await asyncio.to_thread(_podcast_asr_admission_ready):
             raise podcast_landing_service.PodcastLandingGated("asr_admission_not_ready")
@@ -962,9 +1222,52 @@ async def enqueue_podcast_processing_with_input(
                 max_audio_seconds_per_file=max_audio_seconds_per_file,
                 client_factory=httpx.AsyncClient,
             )
-        except podcast_source_media_service.SourceMediaTooLong as exc:
+        except podcast_source_media_service.SourceMediaError as exc:
+            from services.podcast_source_media import (
+                SourceMediaConflict, SourceMediaFetchFailed, SourceMediaNotFound,
+                SourceMediaTimeout, SourceMediaTooLarge, SourceMediaTooLong,
+            )
+
+            mapping = (
+                (SourceMediaNotFound, 404, "podcast_not_found"),
+                (SourceMediaTooLarge, 413, "podcast_source_media_too_large"),
+                (SourceMediaTooLong, 422, "podcast_source_media_too_long"),
+                (SourceMediaTimeout, 504, "podcast_source_media_timeout"),
+                (SourceMediaFetchFailed, 502, "podcast_source_media_fetch_failed"),
+                (SourceMediaConflict, 409, "podcast_processing_conflict"),
+            )
+            for kind, status, code in mapping:
+                if isinstance(exc, kind):
+                    raise podcast_processing_admin_service.PodcastAdminError(
+                        code, status_code=status, message=str(exc)
+                    ) from exc
+            raise
+        except PodcastStageDenied as exc:
             raise podcast_processing_admin_service.PodcastAdminError(
-                "podcast_source_media_too_long", status_code=422
+                "podcast_stage_denied", status_code=403, message=str(exc)
+            ) from exc
+        except PodcastArtifactError as exc:
+            from services.podcast_artifacts import (
+                PodcastArtifactConflict, PodcastArtifactNotFound,
+                PodcastArtifactProbeUnavailable, PodcastArtifactStorageFull,
+                PodcastArtifactTooLarge, PodcastArtifactUnsupportedMedia,
+            )
+
+            mapping = (
+                (PodcastArtifactStorageFull, 507, "podcast_storage_full"),
+                (PodcastArtifactTooLarge, 413, "podcast_source_media_too_large"),
+                (PodcastArtifactProbeUnavailable, 503, "podcast_provider_unavailable"),
+                (PodcastArtifactUnsupportedMedia, 415, "podcast_artifact_invalid"),
+                (PodcastArtifactNotFound, 404, "podcast_not_found"),
+                (PodcastArtifactConflict, 409, "podcast_processing_conflict"),
+            )
+            for kind, status, code in mapping:
+                if isinstance(exc, kind):
+                    raise podcast_processing_admin_service.PodcastAdminError(
+                        code, status_code=status, message=str(exc)
+                    ) from exc
+            raise podcast_processing_admin_service.PodcastAdminError(
+                "podcast_artifact_invalid", status_code=400, message=str(exc)
             ) from exc
     return await asyncio.to_thread(enqueue)
 
@@ -992,6 +1295,16 @@ class PodcastLandingResolution:
 def _resolve_podcast_landing_candidate(
     session: Session, article_id: str
 ) -> PodcastLandingCandidate | None:
+    episode = session.get(ArticleRecord, article_id)
+    if episode is None or episode.content_type != "podcast_episode":
+        return None
+    source = session.get(SourceConfigRecord, episode.source_id)
+    if (
+        source is not None
+        and bool((source.owner_username or "").strip())
+        and (source.retired_at is not None or not source.is_active)
+    ):
+        return None
     analysis = session.get(ArticleAnalysisRecord, article_id)
     initial_candidate = (
         analysis is not None
@@ -1006,13 +1319,14 @@ def _resolve_podcast_landing_candidate(
         and analysis.status == "succeeded"
         and analysis.analysis_basis in {"publisher_transcript", "asr_transcript"}
     )
-    if not initial_candidate and not transcript_result:
-        return None
     locator_revision = (
         podcast_publisher_transcript_service.publisher_transcript_refresh_revision(
             db_sink.engine, episode_id=article_id
         )
     )
+    publisher_candidate = locator_revision is not None
+    if not initial_candidate and not transcript_result and not publisher_candidate:
+        return None
     needs_source_media = False
     try:
         selected = podcast_processing_admin_service.select_full_analysis_input(
@@ -1020,21 +1334,22 @@ def _resolve_podcast_landing_candidate(
             episode_id=article_id,
         )
     except podcast_processing_admin_service.PodcastAdminError as exc:
-        if not initial_candidate or exc.code != "podcast_artifact_not_ready":
+        if (
+            (not initial_candidate and not publisher_candidate)
+            or exc.code != "podcast_artifact_not_ready"
+        ):
             return None
         # No local input yet: the revision must still move when the publisher
         # locator (or the enclosure itself) changes, never a constant.
-        episode = session.get(ArticleRecord, article_id)
         enclosure_hash = ""
-        if episode is not None:
-            try:
-                enclosure_hash = podcast_source_media_service.enclosure_snapshot(
-                    episode
-                ).locator_hash
-            except podcast_source_media_service.SourceMediaError:
-                enclosure_hash = ""
+        try:
+            enclosure_hash = podcast_source_media_service.enclosure_snapshot(
+                episode
+            ).locator_hash
+        except podcast_source_media_service.SourceMediaError:
+            enclosure_hash = ""
         revision = "prepare:" + (locator_revision or enclosure_hash or "")[:16]
-        needs_source_media = not locator_revision
+        needs_source_media = not publisher_candidate
     else:
         if (
             transcript_result
@@ -1428,6 +1743,48 @@ app.include_router(remote_sync_router.router)
 app.include_router(share_router.router)
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
+RANKING_JOB_ID = "reader_rankings"
+
+
+async def execute_storage_maintenance_job():
+    # Avoid touching a different database when embedded hosts/tests replace it.
+    backup = storage_backup_service if str(db_sink.engine.url) == storage_backup_service.database_url else None
+    await asyncio.to_thread(maintain_storage, _object_stores(), backup)
+
+
+def reload_storage_schedule():
+    enabled = any(store.enabled and store.config.cache_enabled for store in _object_stores())
+    if enabled or settings.backup.enabled:
+        scheduler.add_job(execute_storage_maintenance_job, "interval", seconds=60,
+                          id="storage_maintenance", replace_existing=True, max_instances=1, coalesce=True)
+    elif scheduler.get_job("storage_maintenance"):
+        scheduler.remove_job("storage_maintenance")
+
+
+async def execute_ranking_snapshot_job(current_cutoff: bool = False):
+    """Build a ranking snapshot off-loop, frozen for cron or current for catch-up."""
+
+    try:
+        snapshot = await asyncio.to_thread(
+            rankings_service.build_snapshot,
+            db_sink.engine,
+            current_cutoff=current_cutoff,
+        )
+        _dorami_logger.info(
+            "读者榜单快照已生成 date=%s status=%s",
+            snapshot.snapshot_date,
+            snapshot.status,
+        )
+    except Exception:  # noqa: BLE001 - the next cron/restart catch-up retries it
+        _dorami_logger.exception("读者榜单快照生成失败")
+
+
+def reload_ranking_schedule() -> None:
+    """Install the all-role, idempotent 07:00 Asia/Shanghai ranking job."""
+
+    add_cron_job(RANKING_JOB_ID, execute_ranking_snapshot_job, "0 7 * * *", [])
+
+
 COLLECTION_FETCH_CONCURRENCY = 4
 PODCAST_ASR_WORKER_JOB_ID = "podcast_asr_worker"
 
@@ -1568,6 +1925,15 @@ def is_public_auth_path(path: str) -> bool:
     return path in {"/api/auth/login", "/api/auth/logout", "/api/auth/session"}
 
 
+PUBLIC_HEALTH_PATH = "/api/health"
+
+
+def is_public_health_path(path: str) -> bool:
+    """部署探针(issue #102):免鉴权、exact 路径、与 auth 公开路径同级短路——不用前缀,
+    `/api/healthz`、`/api/health/x` 照旧 401;也不受 runtime role 的 surface 门控影响。"""
+    return path == PUBLIC_HEALTH_PATH
+
+
 def is_public_subscription_path(path: str) -> bool:
     # 所有 /api/public/* 消费端（按订阅令牌 / 个人聚合令牌鉴权）均无需登录会话。
     return path == "/api/public" or path.startswith("/api/public/")
@@ -1576,7 +1942,7 @@ def is_public_subscription_path(path: str) -> bool:
 @app.middleware("http")
 async def require_admin_session(request: Request, call_next):
     path = request.url.path
-    if request.method == "OPTIONS" or is_public_auth_path(path):
+    if request.method == "OPTIONS" or is_public_auth_path(path) or is_public_health_path(path):
         return await call_next(request)
     if is_public_subscription_path(path):
         disabled_surface = disabled_runtime_surface(path)
@@ -1773,6 +2139,9 @@ def login_admin(params: AuthLoginParams, response: Response):
         if record is None or not record.is_active:
             accounts_service.verify_against_dummy(params.password)
             raise HTTPException(status_code=401, detail="账号或密码错误")
+        # 下游外部身份源接管的账号不走密码(issue #130,services/auth_policy 覆盖点);main 上恒不触发。
+        if not auth_policy.password_login_enabled(record):
+            raise HTTPException(status_code=403, detail="该账号不使用密码登录")
         if not accounts_service.verify_password(params.password, record.password_hash):
             raise HTTPException(status_code=401, detail="账号或密码错误")
         role = record.role
@@ -1806,13 +2175,19 @@ def login_admin(params: AuthLoginParams, response: Response):
 def get_auth_session(request: Request):
     session = current_auth_session(request)
     if session is None:
-        return {"authenticated": False, "user": None}
+        # 匿名可读的全局姿态(issue #130):登录页据此决定是否呈现密码表单;main 恒 True。
+        return {
+            "authenticated": False,
+            "user": None,
+            "password_login_enabled": _password_login_allows(None),
+        }
     with Session(db_sink.engine) as db_session:
         record = accounts_service.get_user(db_session, session["sub"])
         avatar = record.avatar if record else None
         interest_onboarding_completed_at = (
             record.interest_onboarding_completed_at if record else None
         )
+        password_login = _password_login_allows(record)
     return {
         "authenticated": True,
         "user": _auth_user_payload(
@@ -1821,12 +2196,25 @@ def get_auth_session(request: Request):
             avatar,
             interest_onboarding_completed_at=interest_onboarding_completed_at,
         ),
+        "password_login_enabled": password_login,
     }
 
 
 @app.get("/api/runtime")
 def get_runtime(request: Request):
     return runtime_capabilities(current_auth_session(request))
+
+
+@app.get(PUBLIC_HEALTH_PATH)
+def get_health(response: Response):
+    """部署探针(issue #102 自动部署):免鉴权,只回 status / version / build 三项。
+
+    流水线没有账号,`/api/runtime` 匿名 401,故另开此端点核对「生产现在跑的是哪个 tag / 哪个提交」。
+    版本号对匿名可见可接受(它已出现在 Release 页与前端构建产物里);不透出配置、能力位、账号。
+    `no-store` 让部署核对永远读到当前容器,不被任何一层缓存。
+    """
+    response.headers["Cache-Control"] = "no-store"
+    return {"status": "ok", "version": __version__, "build": build_info()}
 
 
 @app.post("/api/auth/logout")
@@ -1847,6 +2235,8 @@ def change_own_password(params: ChangePasswordParams, request: Request, response
         record = accounts_service.get_active_user(session, username)
         if record is None:
             raise HTTPException(status_code=401, detail="账户不存在或已停用")
+        if not auth_policy.password_login_enabled(record):
+            raise HTTPException(status_code=403, detail="该账号不使用密码登录,不能修改密码")
         if not accounts_service.verify_password(params.current_password, record.password_hash):
             raise HTTPException(status_code=400, detail="当前密码错误")
         updated = accounts_service.set_password(session, username, params.new_password)
@@ -2163,11 +2553,22 @@ async def execute_collection_job(job_id: int):
 CRON_MISFIRE_GRACE_SECONDS = 300
 
 
-def add_cron_job(job_id: str, callback, cron_expr: str, args: List[Any]):
-    parts = cron_expr.split()
-    if len(parts) != 5:
-        return
-    trigger = CronTrigger(minute=parts[0], hour=parts[1], day=parts[2], month=parts[3], day_of_week=parts[4])
+def add_cron_job(job_id: str, callback, cron_expr: str, args: List[Any]) -> bool:
+    """注册 / 覆盖一个 cron 类任务;表达式非法(非 5 段或字段越界)返回 False、不抛,调用方据此摘除旧注册。
+
+    幂等:同 id 已注册且 trigger 与 args 都未变时原样保留——replace 会把 next_run_time 重置为「现在起算」,
+    采集任务 CRUD 每次热重载都替换一遍会让无关任务在触发边界漏掉当次执行(PR-0 检视 F2)。
+    """
+    trigger = parse_cron_expr(cron_expr)
+    if trigger is None:
+        return False
+    existing = scheduler.get_job(job_id)
+    if (
+        existing is not None
+        and str(getattr(existing, "trigger", None)) == str(trigger)
+        and tuple(getattr(existing, "args", ()) or ()) == tuple(args)
+    ):
+        return True
     # 默认 misfire 宽限只有 1s:整点秒位若撞上一次事件循环阻塞,日报/采集就整天缺席
     # (2026-09-14 生产实录,issue #68)。给 cron 类任务 5 分钟宽限,晚到即补跑而非跳过。
     scheduler.add_job(
@@ -2179,53 +2580,80 @@ def add_cron_job(job_id: str, callback, cron_expr: str, args: List[Any]):
         misfire_grace_time=CRON_MISFIRE_GRACE_SECONDS,
         coalesce=True,
     )
+    return True
+
+
+def _ensure_interval_job(job_id: str, callback, **kwargs) -> None:
+    """固定 interval worker 只在缺席时注册;已在的原样保留(replace 会把 next_run_time 重置为现在起算)。"""
+    if scheduler.get_job(job_id) is None:
+        scheduler.add_job(callback, "interval", id=job_id, **kwargs)
+
+
+COLLECTION_JOB_ID_PREFIX = "collection_job_"
+
+
+def sync_collection_job_schedules(session: Session) -> None:
+    """按库里 is_active 采集任务差量同步 ``collection_job_*`` 命名空间:只增删改本命名空间,不碰其它任务。
+
+    历史写法是 ``scheduler.remove_all_jobs()`` 后整体重建,而它被采集任务的每次创建 / 更新 / 删除调用——
+    留存清理、播客 ASR worker、远程同步、用户自定源刷新只在 lifespan「调度器新鲜启动」分支注册,
+    编辑一次采集任务就全部消失到下次重启(issue #82 检视 R1-F1,2026-09-15 核实;此前只为
+    storage_maintenance 单独补过一次注册)。差量同步后其它命名空间与本函数无关。
+    """
+    desired: Dict[str, CollectionJobRecord] = {}
+    for job in session.exec(
+        select(CollectionJobRecord).where(CollectionJobRecord.is_active == True)
+    ).all():
+        # 单节点 cron 覆盖已退役:一任务一 cron(想要不同节奏 = 建新任务)
+        if job.cron_expr:
+            desired[f"{COLLECTION_JOB_ID_PREFIX}{job.id}"] = job
+    existing = {
+        str(existing_job.id)
+        for existing_job in scheduler.get_jobs()
+        if str(existing_job.id).startswith(COLLECTION_JOB_ID_PREFIX)
+    }
+    for stale_id in sorted(existing - set(desired)):
+        scheduler.remove_job(stale_id)
+    for job_id, job in desired.items():
+        registered = add_cron_job(job_id, execute_collection_job, job.cron_expr, [job.id])
+        if registered:
+            continue
+        # cron 非法(非 5 段 / 字段越界,CRUD 已拒绝,这里是历史脏行):不注册、不抛,也不让旧节奏的注册残留。
+        _dorami_logger.warning("采集任务 %s 的 cron 非法,跳过注册: %r", job.id, job.cron_expr)
+        if job_id in existing:
+            scheduler.remove_job(job_id)
 
 
 def load_tasks_to_scheduler():
-    scheduler.remove_all_jobs()
+    """采集类调度的幂等装载:差量同步采集任务 + 幂等注册日报 / 分析 / 分类 / 播客 landing / 个人早报。
+
+    不再 ``remove_all_jobs()``——留存清理 / 存储巡检 / ASR worker / 远程同步 / 自定源刷新各有自己的
+    ``reload_*``,本函数对它们零影响;采集任务 CRUD 端点可以放心随时调用。
+    """
     with Session(db_sink.engine) as session:
-        jobs = session.exec(
-            select(CollectionJobRecord)
-            .where(CollectionJobRecord.is_active == True)
-        ).all()
-        for job in jobs:
-            # 单节点 cron 覆盖已退役:一任务一 cron(想要不同节奏 = 建新任务)
-            if job.cron_expr:
-                add_cron_job(f"collection_job_{job.id}", execute_collection_job, job.cron_expr, [job.id])
-        # 每日 AI 资讯日报（独立于采集任务，默认排在全量采集之后）
-        if daily_brief_service.daily_brief_enabled(session):
-            add_cron_job(
-                "daily_brief",
-                execute_daily_brief_job,
-                daily_brief_service.daily_brief_cron(session),
-                [],
-            )
+        sync_collection_job_schedules(session)
+    # 每日 AI 资讯日报(独立于采集任务):启用即幂等注册,停用即摘除。
+    reload_daily_brief_schedule()
     # 当前双节点部署均为 runtime.role=all：文章分析与个人早报和采集共用调度器；
     # 远端权威文章另由持久化 authority 围栏排除本地分析。
     # 两个 worker 都在执行时读取数据库 feature flag，默认关闭且支持热切换。
-    scheduler.add_job(
+    _ensure_interval_job(
+        "article_analysis",
         execute_article_analysis_job,
-        "interval",
         minutes=1,
-        id="article_analysis",
-        replace_existing=True,
         max_instances=1,
     )
-    scheduler.add_job(
+    _ensure_interval_job(
+        "taxonomy_retag",
         execute_taxonomy_retag_job,
-        "interval",
         minutes=1,
-        id="taxonomy_retag",
-        replace_existing=True,
         max_instances=1,
     )
     # Podcast 全文处理自动入队:增量游标 + 失败记忆/退避,max_instances=1 防重叠。
-    scheduler.add_job(
+    _ensure_interval_job(
+        PODCAST_LANDING_JOB_ID,
         execute_podcast_landing_job,
-        "interval",
         minutes=1,
-        id=PODCAST_LANDING_JOB_ID,
-        replace_existing=True,
         max_instances=1,
         coalesce=True,
     )
@@ -2235,12 +2663,10 @@ def load_tasks_to_scheduler():
         "30 8 * * *",
         [],
     )
-    scheduler.add_job(
+    _ensure_interval_job(
+        "personal_digest_pending",
         execute_personal_digest_pending_job,
-        "interval",
         minutes=1,
-        id="personal_digest_pending",
-        replace_existing=True,
         max_instances=1,
     )
 async def execute_article_analysis_job():
@@ -2662,7 +3088,7 @@ async def execute_user_rss_refresh_job():
             select(SourceConfigRecord)
             .where(SourceConfigRecord.owner_username != "")
             .where(SourceConfigRecord.is_active == True)  # noqa: E712
-            .where(SourceConfigRecord.source_type.in_(["rss", "atom"]))
+            .where(SourceConfigRecord.source_type.in_(["rss", "atom", "podcast", "podcast_rss"]))
             .order_by(SourceConfigRecord.source_id)
         ).all()
         items = []
@@ -2697,7 +3123,7 @@ async def execute_user_rss_refresh_job():
                     if state is None:
                         # 从未成功抓过的源也要累计(三轮收口:否则永远达不到停用阈值)
                         state = SourceStateRecord(
-                            source_id=item["source_id"], fetcher_id="generic_rss",
+                            source_id=item["source_id"], fetcher_id=item["fetcher_id"],
                             updated_at=datetime.datetime.now().isoformat(),
                         )
                     now_iso = datetime.datetime.now().isoformat()
@@ -2801,10 +3227,33 @@ def classify_error(error: Exception | str | None) -> str:
     return error.__class__.__name__ if isinstance(error, Exception) else "runtime_error"
 
 
+def _user_source_collection_blocked(
+    session: Session,
+    source_id: str,
+    source: SourceConfigRecord | None = None,
+) -> bool:
+    """Fence deleted/retired custom sources at collection transaction edges."""
+
+    record = source if source is not None else session.get(SourceConfigRecord, source_id)
+    is_custom = user_sources_service.is_user_source(source_id) or bool(
+        record is not None and (record.owner_username or "").strip()
+    )
+    return bool(
+        is_custom
+        and (
+            record is None
+            or record.retired_at is not None
+            or not record.is_active
+        )
+    )
+
+
 def mark_source_state_started(fetcher_id: str, params: Dict[str, Any], run_id: int):
     source_id = resolve_state_source_id(fetcher_id, params)
     now = _now_iso()
     with Session(db_sink.engine) as session:
+        if _user_source_collection_blocked(session, source_id):
+            return
         if not sync_consumer_policy.local_source_operation_allowed(
             session, source_id, operation="collection"
         ):
@@ -2840,6 +3289,8 @@ def mark_source_state_finished(
     source_id = resolve_state_source_id(fetcher_id, params, result)
     now = _now_iso()
     with Session(db_sink.engine) as session:
+        if _user_source_collection_blocked(session, source_id):
+            return
         if not sync_consumer_policy.local_source_operation_allowed(
             session, source_id, operation="collection"
         ):
@@ -2914,6 +3365,12 @@ async def run_fetcher_with_tracking(
         )
         source_id = resolve_state_source_id(execution_fetcher_id, params)
         source = authority_session.get(SourceConfigRecord, source_id)
+        if _user_source_collection_blocked(authority_session, source_id, source):
+            raise ValueError(f"用户自定源 {source_id} 已移除或退役，拒绝采集")
+        is_user_source_run = bool(
+            user_sources_service.is_user_source(source_id)
+            or (source is not None and (source.owner_username or "").strip())
+        )
         is_podcast_run = bool(
             execution_fetcher_id == "generic_podcast_rss"
             or (
@@ -2977,10 +3434,16 @@ async def run_fetcher_with_tracking(
             authority_taken = not sync_consumer_policy.local_source_operation_allowed(
                 authority_session, source_id, operation="collection"
             )
+            current_source = authority_session.get(SourceConfigRecord, source_id)
+            user_source_revoked = bool(
+                is_user_source_run
+                and _user_source_collection_blocked(
+                    authority_session, source_id, current_source
+                )
+            )
             podcast_revoked = False
             podcast_revoke_reason = ""
             if is_podcast_run:
-                current_source = authority_session.get(SourceConfigRecord, source_id)
                 if (
                     current_source is None
                     or (current_source.source_type or "").strip().lower() not in PODCAST_SOURCE_TYPES
@@ -2993,7 +3456,7 @@ async def run_fetcher_with_tracking(
                     except PodcastStageDenied as exc:
                         podcast_revoked = True
                         podcast_revoke_reason = str(exc)
-        if authority_taken or podcast_revoked:
+        if authority_taken or user_source_revoked or podcast_revoked:
             # The run began locally but lost authority while network work was in
             # flight. DatabaseStorage fenced every late article commit; do not
             # recreate local readiness or enqueue analysis after handoff.
@@ -3005,7 +3468,11 @@ async def run_fetcher_with_tracking(
             reason = (
                 f"数据源 {source_id} 已由远端权威接管"
                 if authority_taken
-                else podcast_revoke_reason
+                else (
+                    f"用户自定源 {source_id} 已移除或退役"
+                    if user_source_revoked
+                    else podcast_revoke_reason
+                )
             )
             raise RuntimeError(f"{reason}，本次本地采集作废")
         finish_fetch_run(run_id, status="success", result=result)
@@ -3030,6 +3497,10 @@ async def run_fetcher_with_tracking(
             cleanup_required = not sync_consumer_policy.local_source_operation_allowed(
                 cleanup_session, source_id, operation="collection"
             )
+            if is_user_source_run:
+                cleanup_required = cleanup_required or _user_source_collection_blocked(
+                    cleanup_session, source_id
+                )
             if is_podcast_run:
                 current_source = cleanup_session.get(SourceConfigRecord, source_id)
                 cleanup_required = cleanup_required or bool(

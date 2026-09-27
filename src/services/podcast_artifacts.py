@@ -3,17 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
-try:
-    import fcntl  # Linux/macOS only
-except ImportError:
-    # Windows: provide a no-op stub so the module loads.
-    # File-level locking is skipped; safe for single-process dev use.
-    import types as _types
-    fcntl = _types.ModuleType("fcntl")
-    fcntl.LOCK_EX = 0
-    fcntl.LOCK_UN = 0
-    fcntl.LOCK_NB = 0
-    fcntl.flock = lambda fd, op: None  # type: ignore[attr-defined]
+from services.file_lock import LOCK_EX, LOCK_NB, LOCK_UN, flock
 import hashlib
 import json
 import os
@@ -22,7 +12,8 @@ import subprocess
 import tempfile
 import threading
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
+from functools import wraps
 from pathlib import Path
 from typing import BinaryIO, Callable, Iterable, Iterator, Optional
 
@@ -30,6 +21,7 @@ from sqlalchemy import func, or_, text, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
+from services.object_storage import ObjectStorage
 
 from models.db import (
     ArticleRecord,
@@ -217,6 +209,33 @@ def withdraw_digest_audio_for_script_change(
     return max(int(getattr(result, "rowcount", 0) or 0), 0)
 
 
+def _pin_storage(method):
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        if not self.object_storage or not self.object_storage.enabled:
+            return method(self, *args, **kwargs)
+        hashes = []
+        if method.__name__ == "import_file":
+            hashes = [kwargs["content_hash"]]
+        elif method.__name__ == "is_intact":
+            hashes = [(args[0] if args else kwargs["record"]).content_hash]
+        elif method.__name__ == "find_digest_audio_by_processing_id":
+            with Session(self.engine) as session:
+                rows = session.exec(select(PodcastArtifactRecord).where(
+                    PodcastArtifactRecord.processing_id == str(kwargs.get("processing_id") or "").strip()
+                )).all()
+                hashes = [row.content_hash for row in rows]
+        else:
+            row = self.get(args[0] if args else kwargs["artifact_id"])
+            if row is not None:
+                hashes = [row.content_hash]
+        with ExitStack() as leases:
+            for content_hash in sorted(set(hashes)):
+                leases.enter_context(self.object_storage.pin(content_hash))
+            return method(self, *args, **kwargs)
+    return wrapped
+
+
 class PodcastArtifactStore:
     def __init__(
         self,
@@ -233,8 +252,10 @@ class PodcastArtifactStore:
         orphan_grace_seconds: int = 3600,
         probe_runner: Optional[Callable[..., subprocess.CompletedProcess]] = None,
         disk_usage_provider: Optional[Callable[[Path], object]] = None,
+        object_storage: ObjectStorage | None = None,
     ) -> None:
         self.engine = engine
+        self.object_storage = object_storage
         self.root = Path(root).expanduser().resolve()
         self.max_bytes = int(max_bytes)
         self.total_quota_bytes = int(total_quota_bytes)
@@ -274,22 +295,41 @@ class PodcastArtifactStore:
         with self._lock:
             lock_fd = os.open(self.root / ".cas.lock", os.O_CREAT | os.O_RDWR, 0o600)
             try:
-                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                flock(lock_fd, LOCK_EX)
                 yield
             finally:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                flock(lock_fd, LOCK_UN)
                 os.close(lock_fd)
 
     def create_upload_temp(self) -> tuple[int, Path]:
+        """暂存文件 + 持锁的 fd:锁让 reconcile 的暂存清理绕开正在写入的文件。
+
+        调用方必须在 import_file(内部 os.replace)之前 os.close(fd):Windows 上任何打开的句柄都会挡住
+        改名 / 删除,与锁无关;关闭到 rename 之间由 staging_ttl(mtime 刚更新)保护。"""
         fd, raw = tempfile.mkstemp(prefix="upload-", suffix=".part", dir=self.root / ".incoming")
         path = Path(raw)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            flock(fd, LOCK_EX | LOCK_NB)
         except BaseException:
             os.close(fd)
             path.unlink(missing_ok=True)
             raise
         return fd, path
+
+    @staticmethod
+    def _unlink_stale_if_unlocked(fd: int, path: Path) -> bool:
+        """过期暂存文件:能拿到锁 = 没人在用 → 先关句柄再删(Windows 上打开的句柄会挡住 unlink)。
+
+        关到删之间没有争用:暂存名由 mkstemp 唯一生成,不会有新写入方拿到同一路径。"""
+        try:
+            try:
+                flock(fd, LOCK_EX | LOCK_NB)
+            except BlockingIOError:
+                return False
+        finally:
+            os.close(fd)
+        path.unlink(missing_ok=True)
+        return True
 
     def _download_reservations(self) -> list[tuple[Path, int]]:
         reservations: list[tuple[Path, int]] = []
@@ -341,7 +381,7 @@ class PodcastArtifactStore:
         marker_locked = False
         try:
             with self._cas_lock():
-                blobs = sum(path.stat().st_size for path in self._blob_files())
+                blobs = self._durable_blob_bytes()
                 staging = sum(path.stat().st_size for path in self._staging_files())
                 reservations = self._download_reservations()
                 reserved_total = sum(
@@ -373,14 +413,14 @@ class PodcastArtifactStore:
                 if os.write(marker_fd, marker) != len(marker):
                     raise OSError("short reservation marker write")
                 os.fsync(marker_fd)
-                fcntl.flock(marker_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                flock(marker_fd, LOCK_EX | LOCK_NB)
                 marker_locked = True
             yield
         finally:
             if marker_fd is not None:
                 try:
                     if marker_locked:
-                        fcntl.flock(marker_fd, fcntl.LOCK_UN)
+                        flock(marker_fd, LOCK_UN)
                 finally:
                     os.close(marker_fd)
             if marker_path is not None:
@@ -464,11 +504,18 @@ class PodcastArtifactStore:
     def file_path_for(self, record: PodcastArtifactRecord) -> Path:
         return self.file_path_for_hash(record.content_hash, record.mime)
 
-    def is_intact(self, record: PodcastArtifactRecord) -> bool:
+    def readable_path(self, record: PodcastArtifactRecord) -> Path:
+        path = self.file_path_for(record)
+        if self.object_storage:
+            return self.object_storage.materialize(path, record.content_hash, record.ext, record.size_bytes)
+        return path
+
+    @_pin_storage
+    def is_intact(self, record: PodcastArtifactRecord, *, restore: bool = True) -> bool:
         """Verify that a registry row still resolves to its exact immutable blob."""
 
-        path = self.file_path_for(record)
         try:
+            path = self.readable_path(record) if restore else self.file_path_for(record)
             if not path.is_file() or path.stat().st_size != record.size_bytes:
                 return False
             content_hash, size = self._hash_file(path)
@@ -497,6 +544,7 @@ class PodcastArtifactStore:
         except OSError:
             pass
 
+    @_pin_storage
     def import_file(
         self, *, episode_id: str, kind: str, path: Path,
         content_hash: str, size_bytes: int, declared_mime: str,
@@ -520,6 +568,22 @@ class PodcastArtifactStore:
             mime = self._validate_signature(handle.read(64), declared_mime)
         duration = self.probe_audio(path)
         target = self.file_path_for_hash(content_hash, mime)
+        if self.object_storage:
+            # No SQLite transaction is held during cloud I/O. A subsequent
+            # validation failure leaves a tracked, unpublished object for GC.
+            already_stored = self.object_storage.location(content_hash, _EXTENSIONS[mime])
+            if self.object_storage.enabled and not already_stored and self.total_quota_bytes > 0:
+                added = 0 if target.is_file() else size_bytes
+                if self._durable_blob_bytes() + added > self.total_quota_bytes:
+                    raise PodcastArtifactStorageFull("Podcast 音频存储配额不足")
+            self.object_storage.persist(path, content_hash, _EXTENSIONS[mime], size_bytes, mime)
+            if producing_attempt_id:
+                with Session(self.engine) as preflight:
+                    replay = preflight.exec(select(PodcastArtifactRecord).where(
+                        PodcastArtifactRecord.producing_attempt_id == producing_attempt_id
+                    )).first()
+                if replay is not None:
+                    self.readable_path(replay)
         now = _now()
         with self._cas_lock(), Session(self.engine) as session:
             if self.engine.dialect.name == "sqlite":
@@ -638,7 +702,7 @@ class PodcastArtifactStore:
                             and producing_attempt.output_hash == content_hash
                             and producing_attempt.output_authority_id
                             == (authority_id or "").strip()[:200]
-                            and self.is_intact(existing_attempt_output)
+                            and self.is_intact(existing_attempt_output, restore=False)
                         )
                         if not exact_replay:
                             raise PodcastArtifactRecoveryConflict(
@@ -664,10 +728,10 @@ class PodcastArtifactStore:
                 if not valid_existing:
                     if target.is_file():
                         replaced_bytes = target.stat().st_size
-                    current_blob_bytes = sum(
-                        blob.stat().st_size for blob in self._blob_files()
-                    )
+                    current_blob_bytes = self._durable_blob_bytes()
                     projected_blob_bytes = current_blob_bytes - replaced_bytes + size_bytes
+                    if self.object_storage and self.object_storage.location(content_hash, _EXTENSIONS[mime]):
+                        projected_blob_bytes = current_blob_bytes
                     if (
                         self.total_quota_bytes > 0
                         and projected_blob_bytes > self.total_quota_bytes
@@ -745,7 +809,9 @@ class PodcastArtifactStore:
         self.validate_audio(data, declared_mime)
         fd, path = self.create_upload_temp()
         try:
-            with os.fdopen(fd, "wb", closefd=False) as handle:
+            # 写完即关 fd(同时释放暂存锁)再导入:Windows 上任何打开的句柄都会挡住 os.replace(WinError 32);
+            # 关到 rename 之间靠 staging_ttl 保护(mtime 刚更新,清理不会碰它)
+            with os.fdopen(fd, "wb") as handle:
                 handle.write(data)
                 handle.flush()
                 os.fsync(handle.fileno())
@@ -759,13 +825,13 @@ class PodcastArtifactStore:
                 processing_id=processing_id,
             )
         finally:
-            os.close(fd)
             path.unlink(missing_ok=True)
 
     def get(self, artifact_id: str) -> Optional[PodcastArtifactRecord]:
         with Session(self.engine) as session:
             return session.get(PodcastArtifactRecord, artifact_id)
 
+    @_pin_storage
     def find_digest_audio_by_processing_id(
         self,
         *,
@@ -819,6 +885,13 @@ class PodcastArtifactStore:
             if not normalized_mime:
                 raise PodcastArtifactError("精简音频恢复 MIME 无效")
 
+        if self.object_storage:
+            with Session(self.engine) as preflight:
+                candidates = preflight.exec(select(PodcastArtifactRecord).where(
+                    PodcastArtifactRecord.processing_id == normalized_processing_id
+                )).all()
+            for candidate in candidates:
+                self.readable_path(candidate)
         with self._cas_lock(), Session(self.engine) as session:
             rows = list(
                 session.exec(
@@ -865,7 +938,7 @@ class PodcastArtifactStore:
                     "processing_id 已绑定到不同的精简音频产物，拒绝恢复"
                 )
             try:
-                intact = self.is_intact(record)
+                intact = self.is_intact(record, restore=False)
             except PodcastArtifactError as exc:
                 raise PodcastArtifactRecoveryConflict(
                     "processing_id 对应的精简音频登记无效，拒绝恢复"
@@ -908,6 +981,7 @@ class PodcastArtifactStore:
                 ) from exc
         return record
 
+    @_pin_storage
     def open_readable_audio(
         self,
         artifact_id: str,
@@ -925,6 +999,14 @@ class PodcastArtifactStore:
         """
 
         open_file = opener or (lambda row: self.file_path_for(row).open("rb"))
+        if self.object_storage and opener is None:
+            # Authorize before remote reads, then authorize again under the
+            # original publication lock before opening/returning any bytes.
+            with Session(self.engine) as preflight:
+                candidate = self._get_readable_in_session(preflight, artifact_id, admin=admin)
+                if authorize is not None:
+                    authorize(preflight, candidate)
+            self.readable_path(candidate)
         handle: BinaryIO | None = None
         with Session(self.engine) as session:
             try:
@@ -1084,7 +1166,7 @@ class PodcastArtifactStore:
         the gate never admits an episode the reservation would refuse.
         """
 
-        blobs = sum(path.stat().st_size for path in self._blob_files())
+        blobs = self._durable_blob_bytes()
         staging = sum(path.stat().st_size for path in self._staging_files())
         reserved_total = sum(size for _path, size in self._download_reservations())
         _capacity, _used, free = self._disk_usage()
@@ -1103,7 +1185,7 @@ class PodcastArtifactStore:
         """
 
         requested = max(0, int(requested_bytes))
-        blobs = sum(path.stat().st_size for path in self._blob_files())
+        blobs = self._durable_blob_bytes()
         staging = sum(path.stat().st_size for path in self._staging_files())
         reserved_total = sum(size for _path, size in self._download_reservations())
         if self.total_quota_bytes > 0 and (
@@ -1116,6 +1198,12 @@ class PodcastArtifactStore:
     def _blob_files(self) -> list[Path]:
         suffixes = set(_EXTENSIONS.values())
         return [path for path in self.root.glob("*/*") if path.is_file() and path.suffix in suffixes]
+
+    def _durable_blob_bytes(self) -> int:
+        files = self._blob_files()
+        if self.object_storage:
+            return self.object_storage.durable_bytes(files)
+        return sum(path.stat().st_size for path in files)
 
     def _staging_files(self) -> list[Path]:
         return [path for path in (self.root / ".incoming").glob("*.part") if path.is_file()]
@@ -1148,7 +1236,10 @@ class PodcastArtifactStore:
         for path in self._blob_files():
             if path in referenced:
                 continue
-            stat = path.stat()
+            try:
+                stat = path.stat()
+            except FileNotFoundError:
+                continue
             orphan_count += 1
             orphan_bytes += stat.st_size
             if now - stat.st_mtime >= self.orphan_grace_seconds:
@@ -1163,7 +1254,7 @@ class PodcastArtifactStore:
             for row in rows:
                 counts[row.status] = counts.get(row.status, 0) + 1
             files = self._blob_files()
-            disk_bytes = sum(path.stat().st_size for path in files)
+            disk_bytes = self.object_storage.local_bytes() if self.object_storage else sum(path.stat().st_size for path in files)
             missing_files = sum(
                 1
                 for row in rows
@@ -1175,15 +1266,16 @@ class PodcastArtifactStore:
             capacity, used, free = self._disk_usage()
             with Session(self.engine) as session:
                 reconciled = session.get(AppSettingRecord, LAST_RECONCILED_SETTING)
+            durable_bytes = self._durable_blob_bytes()
             quota_pressure = (
                 self.total_quota_bytes > 0
-                and disk_bytes + staging_bytes + reservation_bytes
+                and durable_bytes + staging_bytes + reservation_bytes
                 >= self.total_quota_bytes
             )
             disk_pressure = (
                 free - reservation_bytes < self.minimum_free_bytes
             )
-            return {
+            result = {
                 "artifacts": len(rows), "ready": counts["ready"],
                 "published": counts["published"], "withdrawn": counts["withdrawn"],
                 "logical_bytes": sum(row.size_bytes for row in rows),
@@ -1194,7 +1286,7 @@ class PodcastArtifactStore:
                 "quota_bytes": self.total_quota_bytes,
                 "quota_remaining_bytes": max(
                     self.total_quota_bytes
-                    - disk_bytes
+                    - durable_bytes
                     - staging_bytes
                     - reservation_bytes,
                     0,
@@ -1215,8 +1307,21 @@ class PodcastArtifactStore:
                 "download_reservations": reservation_count,
                 "download_reserved_bytes": reservation_bytes,
             }
+            if self.object_storage:
+                result.update(self.object_storage.stats())
+                result["cold_cached_files"] = sum(
+                    1 for row in rows if not self.file_path_for(row).is_file()
+                    and self.object_storage.location(row.content_hash, row.ext)
+                )
+                result["missing_files"] -= result["cold_cached_files"]
+            return result
 
+    @_pin_storage
     def publish(self, artifact_id: str, *, expected_updated_at: str) -> PodcastArtifactRecord:
+        if self.object_storage:
+            candidate = self.get(artifact_id)
+            if candidate is not None:
+                self.readable_path(candidate)
         with Session(self.engine) as session:
             if self.engine.dialect.name == "sqlite":
                 session.connection().exec_driver_sql("BEGIN IMMEDIATE")
@@ -1231,18 +1336,20 @@ class PodcastArtifactStore:
                 raise PodcastArtifactConflict("只有 ready 的精简音频可以发布")
             if not self.file_path_for(record).is_file():
                 raise PodcastArtifactConflict("Podcast 音频文件不存在，不能发布")
-            episode = session.get(ArticleRecord, record.episode_id)
+            episode_statement = select(ArticleRecord).where(
+                ArticleRecord.id == record.episode_id
+            )
+            if self.engine.dialect.name == "postgresql":
+                # Serialize publications for one episode so replacing the active
+                # audio remains atomic across workers.
+                episode_statement = episode_statement.with_for_update()
+            episode = session.exec(episode_statement).first()
             if episode is None or episode.content_type != "podcast_episode":
                 raise PodcastArtifactNotFound("Podcast 单集不存在")
             source_id = episode.source_id
             if self.engine.dialect.name == "postgresql":
                 session.expire_all()
                 record = session.get(PodcastArtifactRecord, artifact_id)
-                episode = (
-                    session.get(ArticleRecord, record.episode_id)
-                    if record is not None
-                    else None
-                )
                 if (
                     record is None
                     or record.updated_at != expected_updated_at
@@ -1267,6 +1374,17 @@ class PodcastArtifactStore:
                 narration_content_hash=record.narration_content_hash,
             )
             now = _now()
+            session.exec(
+                update(PodcastArtifactRecord)
+                .where(
+                    PodcastArtifactRecord.episode_id == record.episode_id,
+                    PodcastArtifactRecord.kind == "digest_audio_zh",
+                    PodcastArtifactRecord.status == "published",
+                    PodcastArtifactRecord.id != artifact_id,
+                )
+                .values(status="withdrawn", withdrawn_at=now, updated_at=now)
+                .execution_options(synchronize_session=False)
+            )
             result = session.exec(
                 update(PodcastArtifactRecord)
                 .where(
@@ -1378,16 +1496,10 @@ class PodcastArtifactStore:
                     fd = os.open(path, os.O_RDWR)
                 except FileNotFoundError:
                     continue
-                try:
-                    try:
-                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    except BlockingIOError:
-                        continue
-                    path.unlink(missing_ok=True)
-                    deleted_staging += 1
-                    deleted_staging_bytes += stat.st_size
-                finally:
-                    os.close(fd)
+                if not self._unlink_stale_if_unlocked(fd, path):
+                    continue
+                deleted_staging += 1
+                deleted_staging_bytes += stat.st_size
             for path, _reserved in self._download_reservations():
                 try:
                     stat = path.stat()
@@ -1396,16 +1508,10 @@ class PodcastArtifactStore:
                     fd = os.open(path, os.O_RDWR)
                 except FileNotFoundError:
                     continue
-                try:
-                    try:
-                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    except BlockingIOError:
-                        continue
-                    path.unlink(missing_ok=True)
-                    deleted_staging += 1
-                    deleted_staging_bytes += stat.st_size
-                finally:
-                    os.close(fd)
+                if not self._unlink_stale_if_unlocked(fd, path):
+                    continue
+                deleted_staging += 1
+                deleted_staging_bytes += stat.st_size
             with Session(self.engine) as session:
                 setting = session.get(AppSettingRecord, LAST_RECONCILED_SETTING)
                 if setting is None:

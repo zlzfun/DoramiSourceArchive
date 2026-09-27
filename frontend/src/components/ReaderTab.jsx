@@ -30,6 +30,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Rss,
+  BarChart3,
 } from 'lucide-react';
 import LogoMark from './LogoMark';
 import BrandLogoImage from './BrandLogoImage';
@@ -49,6 +50,7 @@ import PodcastTextPanel from './PodcastTextPanel';
 import { rebuildToast } from '../utils/briefRebuild';
 import PersonalBriefPage from './PersonalBriefPage';
 import InterestPage from './InterestPage';
+import RankingsPage from './RankingsPage';
 import AnalysisTagChip from './AnalysisTagChip';
 import { excerptOf, hostOf } from '../utils/readerText';
 import { highlightMatch } from '../utils/highlight';
@@ -68,6 +70,7 @@ import {
   shouldShowAiReadingCard,
 } from '../utils/analysis';
 import AiReadingCard from './AiReadingCard';
+import ArticleListenBar from './ArticleListenBar';
 import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
 import { mediaProxyUrl } from '../api';
 
@@ -216,9 +219,7 @@ export const ArticleRow = memo(function ArticleRow({
     ? ''
     : excerptOf(article.summary_zh || article.content_preview || article.content);
   const podcast = entryPodcast ? podcastOf(article) : null;
-  const podcastStatus = podcastListAvailabilityMeta(
-    Boolean(podcast?.condensed_audio_url),
-  );
+  const podcastStatus = podcastListAvailabilityMeta(podcast);
   const analysisLabel = primaryAnalysisLabel(article);
   const score = qualityScoreText(article.quality_score);
   const scoreTier = scoreTierClass(article.quality_score);   // issue #54:按分值分档着色
@@ -352,6 +353,7 @@ export default function ReaderTab({
   aiEnabled = false,
   userSourcesEnabled = false,
   personalDigestEnabled = false,
+  ondemand = {},   // 点播能力位(issue #137):{podcast, article};不可用即不画入口
   // ── standalone(读者账号):应用导轨已隐藏,视图轨独占——轨底并入用户菜单 ──
   standalone = false,
   account = null,
@@ -369,14 +371,15 @@ export default function ReaderTab({
 }) {
   const [brandFailed, setBrandFailed] = useState(false);
   const {
-    briefOpen, setBriefOpen, briefReturn, setBriefReturn, briefRestore, setBriefRestore,
+    briefOpen, setBriefOpen, rankingsOpen, setRankingsOpen,
+    briefReturn, setBriefReturn, briefRestore, setBriefRestore,
     discoverTab, setDiscoverTab, interestVersion, setInterestVersion,
   } = view;
   const leaveBriefTrail = useCallback(() => setBriefReturn(null), [setBriefReturn]);
   const onboardingRequired = personalDigestEnabled
     && account?.role === 'user'
     && account?.interest_onboarding_completed === false;
-  const pageOpen = briefOpen;
+  const pageOpen = briefOpen || rankingsOpen;
 
   const {
     // 源目录 / 订阅
@@ -385,6 +388,7 @@ export default function ReaderTab({
     handleSubscribe, handleUnsubscribe, handleAddCustomSource,
     collections, discoverCollectionId, setDiscoverCollectionId,
     collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
+    shapePinning, handleSubscribeShape,
     // 视图 / 导航
     mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover, discoverShape, setDiscoverShape,
     bulletinView, socialView, podcastView, railActive, listTitle, listSubtitle,
@@ -403,7 +407,7 @@ export default function ReaderTab({
     articles, articlesLoading, loadingMore, hasMore, handleLoadMore,
     listRef, sentinelRef,
     // 选中文章 / 正文
-    activeArticle, activeBody, activeBodyLoading, selectArticle, openArticleById, supersedePendingOpen,
+    activeArticle, activeBody, activeBodyLoading, selectArticle, openArticleById, refreshActiveArticle, supersedePendingOpen,
     schedulePrefetch, cancelPrefetch,
     activeIndex, prevArticle, nextArticle,
     crumbSource, crumbName, displayBody, displayTranslatedBody, bodyStats,
@@ -432,6 +436,14 @@ export default function ReaderTab({
     setDiscoverTab('interests');
     openDiscover({ shape: 'all' });
   }, [supersedePendingOpen, leaveBriefTrail, openDiscover, setBriefOpen, setDiscoverTab]);
+  const openRankings = useCallback(() => {
+    supersedePendingOpen();
+    closeDiscover();
+    if (bulletinView || socialView) goView('article');
+    setBriefOpen(false);
+    leaveBriefTrail();
+    setRankingsOpen(true);
+  }, [bulletinView, closeDiscover, goView, leaveBriefTrail, setBriefOpen, setRankingsOpen, socialView, supersedePendingOpen]);
   const listPlan = useMemo(
     () => buildListPlan(articles, grouping),
     [articles, grouping],
@@ -450,7 +462,7 @@ export default function ReaderTab({
   const [podcastSelection, setPodcastSelection] = useState({ articleId: '', variant: 'original' });
   const activePodcast = podcastOf(activeArticle);
   const hasGuideAudio = Boolean(activePodcast?.condensed_audio_url);
-  const hasGuideBlog = Boolean(activePodcast?.premium_guide?.blog_ready || activePodcast?.premium_guide?.status === 'ready');
+  const hasGuideBlog = Boolean(activePodcast?.premium_guide?.blog_ready);
   const isBlogOnlyGuide = hasGuideBlog && !hasGuideAudio;
   const defaultPodcastVariant = activePodcast?.audio_url
     ? 'original'
@@ -626,7 +638,7 @@ export default function ReaderTab({
             type="button"
             aria-label={label}
             aria-pressed={!pageOpen && railActive === view}
-            onClick={() => { setBriefOpen(false); leaveBriefTrail(); goView(view); }}
+            onClick={() => { setBriefOpen(false); setRankingsOpen(false); leaveBriefTrail(); goView(view); }}
             className={`reader-vrail-btn ${!pageOpen && railActive === view ? 'is-on' : ''}`}
           >
             <Icon className="h-[18px] w-[18px]" />
@@ -641,7 +653,7 @@ export default function ReaderTab({
           type="button"
           aria-label={onboardingRequired && !discover ? '发现(兴趣待设置)' : '发现'}
           aria-pressed={!pageOpen && discover}
-          onClick={() => { setBriefOpen(false); leaveBriefTrail(); openDiscover(); }}
+          onClick={() => { setBriefOpen(false); setRankingsOpen(false); leaveBriefTrail(); openDiscover(); }}
           className={`reader-vrail-btn ${!pageOpen && discover ? 'is-on' : ''}`}
         >
           <Compass className="h-[18px] w-[18px]" />
@@ -713,7 +725,7 @@ export default function ReaderTab({
       </nav>
 
       {/* ── 源栏 · 我的订阅 ── */}
-      {!pageOpen && <aside className="reader-col reader-col-sources">
+      {!briefOpen && <aside className="reader-col reader-col-sources">
         <div className="reader-sources-inner">
         {/* 栏头 = 容器名 + 轴切换(issue #27 五稿):左栏是一根轴,栏头二选一决定其下列源还是列标签。
             社交容器没有标签(推文不打标),不出轴切换,只列账号。 */}
@@ -726,7 +738,22 @@ export default function ReaderTab({
           )}
         </div>
 
-        <div className="reader-source-scroll">
+        {!bulletinView && !socialView && (
+          <button
+            type="button"
+            aria-pressed={rankingsOpen}
+            className={`reader-ranking-entry ${rankingsOpen ? 'is-on' : ''}`}
+            onClick={openRankings}
+          >
+            <span className="reader-ranking-entry-ic"><BarChart3 aria-hidden="true" /></span>
+            <span>
+              <strong>{podcastView ? '播客榜' : '文章榜'}</strong>
+              <small>近 7 天标签趋势</small>
+            </span>
+          </button>
+        )}
+
+        {!rankingsOpen && <div className="reader-source-scroll">
           {sourcesLoading ? (
             <SourceRowsSkeleton />
           ) : (
@@ -821,7 +848,7 @@ export default function ReaderTab({
               )}
             </>
           )}
-        </div>
+        </div>}
         </div>
       </aside>}
 
@@ -852,6 +879,18 @@ export default function ReaderTab({
         />
       )}
 
+      {rankingsOpen && (
+        <RankingsPage
+          sourceMap={sourceMap}
+          initialShape={podcastView ? 'podcast' : 'article'}
+          onShapeChange={goView}
+          onOpenArticle={async (articleId) => {
+            const opened = await openArticleById(articleId, { silent: true });
+            if (opened) setRankingsOpen(false);
+          }}
+        />
+      )}
+
 
       {/* ── 发现页:占据 条目列+阅读窗 的整片区域(源栏保持在场,订阅结果即时可见) ── */}
       {!pageOpen && discover && (
@@ -870,12 +909,15 @@ export default function ReaderTab({
           collectionPinningId={collectionPinningId}
           onSubscribeCollection={handleSubscribeCollection}
           onUnsubscribeCollection={handleUnsubscribeCollection}
+          shapePinning={shapePinning}
+          onSubscribeShape={handleSubscribeShape}
           userSourcesEnabled={userSourcesEnabled}
           onAddCustomSource={handleAddCustomSource}
           tab={discoverTab}
           onTabChange={setDiscoverTab}
           shape={discoverShape}
           onShapeChange={setDiscoverShape}
+          onOpenRankings={openRankings}
           interestsPanel={personalDigestEnabled ? (
             <InterestPage
               embedded
@@ -1331,9 +1373,14 @@ export default function ReaderTab({
                   article={activeArticle}
                   variant={podcastVariant}
                   onVariantChange={handlePodcastVariantChange}
+                  aiEnabled={aiEnabled}
+                  ondemandEnabled={ondemand.podcast === true}
+                  showToast={showToast}
+                  onArticleRefresh={refreshActiveArticle}
                 />
               )}
-              {/* 已落库分析始终可读；本端 AI 开启时才额外给现场生成入口。 */}
+              {/* 已落库分析始终可读；本端 AI 开启时才额外给现场生成入口。
+                  文章点播动作收在速读卡内；就绪播放条挂在卡下。 */}
               {!podcastGuideActive && !activeBodyLoading && shouldShowAiReadingCard(activeArticle, {
                 summary: activeSummary,
                 aiEnabled,
@@ -1346,7 +1393,14 @@ export default function ReaderTab({
                   canGenerate={aiEnabled && Boolean(activeBody)}
                   onGenerate={handleSummarize}
                   podcast={podcastView}
+                  aiEnabled={aiEnabled}
+                  ondemandEnabled={ondemand.article === true}
+                  showToast={showToast}
+                  onArticleRefresh={refreshActiveArticle}
                 />
+              )}
+              {!podcastView && !activeBodyLoading && (
+                <ArticleListenBar article={activeArticle} />
               )}
               {podcastView && !podcastGuideActive && !activeBodyLoading && activeBody && (
                 <div className="podcast-show-notes-head">

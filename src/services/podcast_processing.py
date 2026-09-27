@@ -34,6 +34,7 @@ from models.db import (
     PodcastStageAttemptRecord,
     PodcastTextArtifactRecord,
     PodcastTextPublicationRecord,
+    SourceConfigRecord,
 )
 from services.podcast_worker_contracts import (
     NormalizedUsage,
@@ -421,6 +422,13 @@ def _evaluate_processing_eligibility(
     article = session.get(ArticleRecord, process.episode_id)
     if article is None or article.content_type != "podcast_episode":
         return "invalid_input", ["Podcast episode no longer exists"]
+    source = session.get(SourceConfigRecord, article.source_id)
+    if (
+        source is not None
+        and bool((source.owner_username or "").strip())
+        and (source.retired_at is not None or not source.is_active)
+    ):
+        return "blocked_source", ["Podcast custom source is retired"]
     eligibility, reasons = _evaluate_full_analysis_authority(
         session,
         article,
@@ -655,6 +663,14 @@ def enqueue_processing(
         stage=stage,
         input_artifact_kind=bound_artifact_kind,
     )
+    source = session.get(SourceConfigRecord, article.source_id)
+    if (
+        source is not None
+        and bool((source.owner_username or "").strip())
+        and (source.retired_at is not None or not source.is_active)
+    ):
+        eligibility = "blocked_source"
+        evaluated_reasons = ["Podcast custom source is retired"]
     evaluated_reasons = [*evaluated_reasons, *(eligibility_reasons or [])]
     if eligibility == "eligible" and input_safety_evaluator is not None:
         safe, safety_reasons = input_safety_evaluator(

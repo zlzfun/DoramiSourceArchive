@@ -545,13 +545,12 @@ class ImageInsightService:
                 continue
             if media.content_hash in seen_hashes:
                 continue
-            path = self.media_store.file_path_for(media)
             # 筛选阶段只读文件头做尺寸判定,不提前物化整图(codex 检视 F2:12 篇×4 图曾同时占 48 份原图)
             try:
-                if path.stat().st_size > MAX_IMAGE_BYTES:
+                path = self.media_store.file_path_for(media)
+                if media.size_bytes > MAX_IMAGE_BYTES:
                     continue
-                with path.open("rb") as fh:
-                    head = fh.read(_HEADER_BYTES)
+                head = await asyncio.to_thread(self.media_store.read_bytes, media, _HEADER_BYTES)
             except OSError:
                 continue
             dims = image_dimensions(head)
@@ -567,6 +566,7 @@ class ImageInsightService:
             work.append(asyncio.create_task(self._describe_one(
                 candidate=replace(candidate, index=accepted - 1),
                 content_hash=media.content_hash,
+                media_record=media,
                 path=path,
                 mime=media.mime or "image/png",
                 llm_config=llm_config,
@@ -624,6 +624,7 @@ class ImageInsightService:
     async def _describe_one(
         self, *, candidate: ImageCandidate, content_hash: str, path: Any, mime: str,
         llm_config: LLMConfig, usage_meta: Optional[UsageMeta], title: str, source_name: str, total: int,
+        media_record=None,
     ) -> None:
         # 全局并发信号量在最外层:排队的任务不持有整图字节,读盘 / base64 / 调用都在名额内进行
         async with self._semaphore:
@@ -635,7 +636,8 @@ class ImageInsightService:
                 vision_config = llm_config.for_vision()
                 meta = UsageMeta(purpose=USAGE_PURPOSE, username=usage_meta.username if usage_meta else None)
                 try:
-                    data = path.read_bytes()
+                    data = (await asyncio.to_thread(self.media_store.read_bytes, media_record, MAX_IMAGE_BYTES + 1)
+                            if media_record is not None else path.read_bytes())
                     if len(data) > MAX_IMAGE_BYTES:
                         return
                     raw = await chat_completion(

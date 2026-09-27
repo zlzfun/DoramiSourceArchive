@@ -19,6 +19,7 @@ import {
   Zap,
   Podcast,
   Newspaper,
+  BarChart3,
 } from 'lucide-react';
 import { useLongPress } from '../../hooks/useLongPress';
 import { useLayerHistory } from '../../hooks/useLayerHistory';
@@ -35,6 +36,7 @@ import ActionSheet from './ActionSheet';
 import { rebuildToast } from '../../utils/briefRebuild';
 import PersonalBriefPage from '../PersonalBriefPage';
 import InterestPage from '../InterestPage';
+import RankingsPage from '../RankingsPage';
 
 // 静态 noop:ArticleRow 的 onContextMenu 契约位——移动端 contextmenu 由外层
 // .m-press 包装统一接管(useLongPress 的 onContextMenu 覆盖 Android 长按/桌面右键),
@@ -56,6 +58,7 @@ export default function MobileReader({
   aiEnabled = false,
   userSourcesEnabled = false,
   personalDigestEnabled = false,
+  ondemand = {},   // 点播能力位(issue #137):{podcast, article}
   account = null,
   onUserUpdated,
   themePref = 'system',
@@ -79,6 +82,7 @@ export default function MobileReader({
     handleSubscribe, handleUnsubscribe, handleAddCustomSource,
     collections, discoverCollectionId, setDiscoverCollectionId,
     collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
+    shapePinning, handleSubscribeShape,
     // 视图 / 导航
     mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover, discoverShape, setDiscoverShape,
     bulletinView, socialView, podcastView, listTitle, listSubtitle,
@@ -143,7 +147,7 @@ export default function MobileReader({
     supersedePendingOpen(); // 任何主动切 Tab(含「我的」/早报)都作废在途的按 id 打开,迟到响应不再把人拉走
     setBriefReturn(null); // 主动切 Tab = 结束这一程外出
     if (t === 'brief') setBriefRestore(null); // 点 Tab 进早报是新开,不落回旧位
-    if (t === 'me' || t === 'brief') { setTab(t); return; }
+    if (t === 'me' || t === 'brief' || t === 'rankings') { setTab(t); return; }
     setTab(t);
     // 与桌面视图轨同语义:点容器钮=回到该容器聚合(清源/收藏/搜索过滤)
     goView(t);
@@ -179,7 +183,7 @@ export default function MobileReader({
 
   const pressBind = useLongPress(openArticleSheet);
 
-  const listView = !['me', 'brief'].includes(tab) && !socialView;
+  const listView = !['me', 'brief', 'rankings'].includes(tab) && !socialView;
   // 正文页(push 全屏):文章/动态容器里选中了一篇即入栈;社交流直读不进正文页
   const readOpen = listView && !discover && Boolean(activeArticle);
 
@@ -197,8 +201,8 @@ export default function MobileReader({
 
       {/* ── 顶栏(四个内容容器共用:抽屉入口 + 标题/搜索 + seg + 标读 + 搜索开关;
              社交流 headless 化后其控件行由此承担——Wave3 收口,两层头部合一) ── */}
-      {tab === 'me' || tab === 'brief' ? (
-        <div className="m-topbar"><span className="m-title m-title-solo">{tab === 'brief' ? '我的早报' : '我的'}</span></div>
+      {tab === 'me' || tab === 'brief' || tab === 'rankings' ? (
+        <div className="m-topbar"><span className="m-title m-title-solo">{tab === 'brief' ? '我的早报' : tab === 'rankings' ? '榜单' : '我的'}</span></div>
       ) : (
         <div className="m-topbar">
           <button type="button" className="m-iconbtn" onClick={() => setDrawerOpen(true)} aria-label="订阅源">
@@ -295,6 +299,16 @@ export default function MobileReader({
               setBriefReturn(ctx || null);
               setTab(mode);
               return true;
+            }}
+          />
+        ) : tab === 'rankings' ? (
+          <RankingsPage
+            sourceMap={sourceMap}
+            initialShape={mode === 'podcast' ? 'podcast' : 'article'}
+            onShapeChange={goView}
+            onOpenArticle={async (articleId) => {
+              const opened = await openArticleById(articleId, { silent: true });
+              if (opened) setTab(mode);
             }}
           />
         ) : tab === 'me' ? (
@@ -466,6 +480,7 @@ export default function MobileReader({
           ['podcast', '播客', Podcast],
           ['bulletin', '动态', Zap],
           ['social', '社交', AtSign],
+          ['rankings', '榜单', BarChart3],
           ['me', '我的', UserRound],
         ].map(([id, label, Icon]) => (
           <button
@@ -512,12 +527,15 @@ export default function MobileReader({
               collectionPinningId={collectionPinningId}
               onSubscribeCollection={handleSubscribeCollection}
               onUnsubscribeCollection={handleUnsubscribeCollection}
+              shapePinning={shapePinning}
+              onSubscribeShape={handleSubscribeShape}
               userSourcesEnabled={userSourcesEnabled}
               onAddCustomSource={handleAddCustomSource}
               tab={discoverTab}
               onTabChange={setDiscoverTab}
               shape={discoverShape}
               onShapeChange={setDiscoverShape}
+              onOpenRankings={() => { closeDiscover(); setTab('rankings'); }}
               interestsPanel={personalDigestEnabled ? (
                 <InterestPage
                   mobile
@@ -549,6 +567,7 @@ export default function MobileReader({
         <MobileArticlePage
           rs={rs}
           aiEnabled={aiEnabled}
+          ondemand={ondemand}
           showToast={showToast}
           onBack={closeArticle}
           onLeaveForSearch={leaveArticleForSearch}

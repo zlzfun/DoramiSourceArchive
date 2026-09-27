@@ -1,0 +1,38 @@
+# /etc/dorami-deploy.conf —— 仓库外部署 launcher / worker 的配置(issue #102 自动部署流水线)。
+# root 属主、0600。由 /root/bin/dorami-deploy-worker `source` 后显式导出;这里的值 **不会** 被 compose 读到,
+# 也不要把部署参数写进项目 .env(compose 读 .env 做插值,但部署 shell 不会把 .env 导出为自己的环境)。
+#
+# 安装:cp docker/dorami-deploy.conf.example /etc/dorami-deploy.conf && chmod 600 /etc/dorami-deploy.conf
+#       cp docker/dorami-deploy.example /root/bin/dorami-deploy && chmod 700 /root/bin/dorami-deploy
+#       cp docker/dorami-deploy-worker.example /root/bin/dorami-deploy-worker && chmod 700 /root/bin/dorami-deploy-worker
+#       mkdir -p /var/lib/dorami-deploy /var/log/dorami-deploy && chmod 700 /var/lib/dorami-deploy /var/log/dorami-deploy
+# authorized_keys 一行(部署专用 ed25519 公钥;restrict 一并关掉 pty / 转发 / user-rc):
+#       restrict,command="/root/bin/dorami-deploy" ssh-ed25519 AAAA... deploy@github-actions
+
+# 仓库根(git clone 取的代码;部署脚本要求有 .git)
+REPO_DIR=/root/DoramiSourceArchive
+
+# 跨版本状态:state.json / in-progress.json / last-success.json / closed-<txn>.json / <tag>-<sha7>.rc / <txn>.switch /
+# first-install.token(首装一次性令牌,由人手工 touch,成功后自动消费)
+STATE_DIR=/var/lib/dorami-deploy
+
+# 每次部署一份日志 <tag>-<sha7>.log(launcher 把它流回 GitHub Actions)
+LOG_DIR=/var/log/dorami-deploy
+
+# 唯一锁:worker 持 FD 9,继承给部署脚本;手工 ./deploy-docker.sh 也抢同一把
+LOCK_FILE=/run/lock/dorami-deploy.lock
+
+# worker 可执行文件(launcher 用 setsid 起它)
+DEPLOY_WORKER=/root/bin/dorami-deploy-worker
+
+# worker 与部署脚本运行时的 PATH(固定,不继承 sshd 给的)
+DEPLOY_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# 部署脚本预检:每个相关文件系统(docker root / 仓库 / data / backups)至少要有这么多 GB 可用
+DORAMI_DEPLOY_MIN_FREE_GB=5
+
+# 备份保留数(手工路径 deploy-lib 的计数清理与 worker 的计数清理共用;被 manifest 引用的备份永不参与计数)
+DORAMI_DEPLOY_BACKUP_KEEP=10
+
+# 部署脚本健康核对的本机入口(经容器 nginx;生产 .env 里 DORAMI_HTTP_LISTEN=127.0.0.1:8080 即此)
+DORAMI_HTTP_LISTEN=127.0.0.1:8080

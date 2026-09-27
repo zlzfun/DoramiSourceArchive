@@ -10,6 +10,7 @@
 deps.get_db_sink()。
 """
 
+from api.storage_response import StorageFileResponse
 import hashlib
 import hmac
 import importlib
@@ -21,7 +22,6 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from sqlalchemy import func, or_
 from sqlmodel import Session, select
 from starlette.responses import JSONResponse as StarletteJSONResponse
-from starlette.responses import FileResponse
 
 from api import deps
 from api.articles_view import apply_article_query_filters
@@ -165,7 +165,8 @@ def import_archive_sync_jsonl(raw_text: str) -> Dict[str, Any]:
     changed_article_ids: list[str] = []
 
     with Session(deps.get_db_sink().engine) as session:
-        for line_number, raw_line in enumerate(raw_text.splitlines(), start=1):
+        # Unicode separators inside article text are not JSONL record boundaries.
+        for line_number, raw_line in enumerate(raw_text.split("\n"), start=1):
             line = raw_line.strip()
             if not line:
                 continue
@@ -539,10 +540,10 @@ def export_archive_v2_media(url_hash: str):
     if store is None:
         raise HTTPException(status_code=404, detail="media store disabled")
     path = store.file_path_for(record)
-    if not path.is_file():
+    if not getattr(getattr(store, "object_storage", None), "enabled", False) and not path.is_file():
         raise HTTPException(status_code=404, detail="media file missing")
-    return FileResponse(
-        path,
+    return StorageFileResponse(
+        store, record,
         media_type=record.mime or "application/octet-stream",
         headers={"X-Content-Type-Options": "nosniff"},
     )
@@ -565,10 +566,10 @@ def export_archive_v2_podcast_audio(artifact_id: str):
     if store is None:
         raise HTTPException(status_code=404, detail="podcast artifact store disabled")
     path = store.file_path_for(record)
-    if not path.is_file():
+    if not getattr(getattr(store, "object_storage", None), "enabled", False) and not path.is_file():
         raise HTTPException(status_code=404, detail="podcast audio file missing")
-    return FileResponse(
-        path,
+    return StorageFileResponse(
+        store, record,
         media_type=record.mime or "application/octet-stream",
         headers={"X-Content-Type-Options": "nosniff"},
     )

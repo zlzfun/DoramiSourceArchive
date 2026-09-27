@@ -2,8 +2,15 @@ export const PODCAST_TEXT_LABELS = Object.freeze({
   digest_blog_zh: { title: '精品导读', note: 'AI 整理' },
   transcript_zh: { title: '中文逐字稿', note: 'AI 翻译整理' },
   publisher_transcript: { title: '节目方逐字稿', note: '节目方提供' },
-  normalized_transcript: { title: 'ASR 逐字稿', note: '语音识别稿' },
+  normalized_transcript: { title: '语音识别稿', note: 'AI 整理' },
 });
+
+export function podcastDigestMeta(mode = '') {
+  const isBrief = String(mode || '').trim().toLowerCase() === 'brief_zh';
+  return isBrief
+    ? { title: '中文导读', action: '继续阅读中文导读' }
+    : { title: '精品导读', action: '继续阅读精品导读' };
+}
 
 const TRANSCRIPT_PRIORITY = Object.freeze([
   'transcript_zh',

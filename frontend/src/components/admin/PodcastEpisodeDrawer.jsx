@@ -135,8 +135,8 @@ export default function PodcastEpisodeDrawer({
                   <dd>
                     {item.initial_score == null ? '尚未初评' : (
                       <>
-                        <span className="acct-mono">{podcastScoreText(item.initial_score)}</span> · 基于节目简介 · 处理线 {podcastScoreText(thresholds.initial)}
-                        <span className={`stamp ${item.initial_eligible ? 'stamp-ok' : 'stamp-idle'} drawer-kv-stamp`}>{item.initial_eligible ? '已过处理线' : '未过处理线'}</span>
+                        <span className="acct-mono">{podcastScoreText(item.initial_score)}</span> · 基于节目简介 · 付费 ASR 线 {podcastScoreText(thresholds.initial)}
+                        <span className={`stamp ${item.initial_eligible ? 'stamp-ok' : 'stamp-idle'} drawer-kv-stamp`}>{item.initial_eligible ? '已过付费 ASR 线' : '未过付费 ASR 线'}</span>
                       </>
                     )}
                   </dd>
@@ -155,6 +155,7 @@ export default function PodcastEpisodeDrawer({
                       <><span className="acct-mono">{podcastScoreText(item.current_score)}</span> · {item.final_score != null ? '全文分已替换简介初评，读者面按此显示' : '读者面按简介初评显示'}</>
                     )}
                   </dd>
+                  {meta.stage.code === 'retry_wait' && <><dt>计划重试</dt><dd>{meta.reason}</dd></>}
                 </dl>
               </section>
               <section>

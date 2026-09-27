@@ -61,8 +61,42 @@ function checkCeremony(context, raw, node) {
   }
 }
 
-const doramiPlugin = {
+// ── 弹窗遮罩护栏(issue #104) ──
+// 遮罩关闭判定只在 components/Modal.jsx 一处(按下与松开同在遮罩才关,见 utils/overlayClose.js);
+// 业务弹窗不得再自写 .modal-overlay 元素——那意味着又一套 onClick / onMouseDown 关闭判定,
+// 面板内拖选文字松手落到遮罩就会把弹窗关掉。这个 token 在业务代码里没有任何合法出处(元素类名 /
+// 选择器 / 常量 / clsx 键都不该出现),故与另外三条 dorami 规则同一扫描面:所有字符串与模板字面量
+// (codex R1:只看 className 属性会被 `className={CONST}` / `clsx({ 'modal-overlay': x })` / `join()` 绕过)。
+// Modal.jsx 本体在配置末尾按文件豁免;移动壳 .m-dim 是面板的兄弟节点、不叫 modal-overlay,不在此列。
+const MODAL_OVERLAY_RE = /\bmodal-overlay\b/
+
+function checkModalOverlay(context, raw, node) {
+  if (typeof raw !== 'string') return
+  if (MODAL_OVERLAY_RE.test(raw)) {
+    context.report({ node, message: '不要自写 .modal-overlay 元素:遮罩关闭判定只在 components/Modal.jsx(按下与松开同在遮罩才关),请改用 <Modal closeOnOverlay>(docs/frontend/conventions.md §8 弹窗外壳)' })
+  }
+}
+
+// 测试 frontend/test/modalOverlay.test.mjs 用真实配置跑 Linter 证明护栏拦得住,故插件具名导出;ESLint 只读 default。
+export const doramiPlugin = {
   rules: {
+    'no-raw-modal-overlay': {
+      meta: {
+        type: 'problem',
+        docs: { description: '弹窗遮罩只在 components/Modal.jsx 一处:业务弹窗用 <Modal closeOnOverlay>,不得自写 .modal-overlay 元素(issue #104)' },
+        schema: [],
+      },
+      create(context) {
+        return {
+          Literal(node) {
+            if (typeof node.value === 'string') checkModalOverlay(context, node.value, node)
+          },
+          TemplateElement(node) {
+            checkModalOverlay(context, node.value.raw, node)
+          },
+        }
+      },
+    },
     'no-ceremonial-entrance': {
       meta: {
         type: 'suggestion',
@@ -143,6 +177,13 @@ export default defineConfig([
       'dorami/no-legacy-bridge-class': 'error',
       // 静默仪器防回潮:字重/入场编排增量拦截(B 残债清尾)
       'dorami/no-ceremonial-entrance': 'error',
+      // 弹窗遮罩护栏(issue #104):业务弹窗不得自写 .modal-overlay 元素
+      'dorami/no-raw-modal-overlay': 'error',
     },
+  },
+  {
+    // 共用外壳是遮罩元素的唯一合法出处
+    files: ['src/components/Modal.jsx'],
+    rules: { 'dorami/no-raw-modal-overlay': 'off' },
   },
 ])

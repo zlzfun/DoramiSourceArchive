@@ -241,13 +241,17 @@ def test_official_startup_paths_reconcile_after_migration_before_api():
     main_source = (ROOT / "src/main.py").read_text(encoding="utf-8")
     container_source = (ROOT / "docker/entrypoint.py").read_text(encoding="utf-8")
     deploy_source = (ROOT / "deploy.sh").read_text(encoding="utf-8")
+    baremetal_lib = (ROOT / "scripts/deploy-baremetal.sh").read_text(encoding="utf-8")
     for source, final_marker in (
         (main_source, "uvicorn.run("),
         (container_source, "import uvicorn"),
-        (deploy_source, "Building frontend"),
+        # 裸机路径(issue #126 release 形态):迁移 + reconcile 在库的 bm_db_migrate 里、在目标上下文执行,
+        # deploy.sh 的切换序里它先于 pm2 起新进程(前端构建已提前到切换之前,不再是分界点)
+        (baremetal_lib, "bm_pm2_stop() {"),
     ):
         assert source.index("ensure_migrated") < source.index("run_taxonomy_deployment")
         assert source.index("run_taxonomy_deployment") < source.index(final_marker)
+    assert deploy_source.index("bm_db_migrate ") < deploy_source.index("bm_pm2_start ")
     assert "COPY config/taxonomy-v1-approved-catalog.json" in (
         ROOT / "docker/backend.Dockerfile"
     ).read_text(encoding="utf-8")

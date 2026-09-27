@@ -95,6 +95,36 @@ def test_get_missing_job_returns_none(tmp_path):
     assert jobs.get_job(engine, "does-not-exist") is None
 
 
+def test_structured_progress_flushes_first_item_and_retains_failure_snapshot(tmp_path, monkeypatch):
+    engine = _sink(tmp_path).engine
+    monkeypatch.setattr(jobs, "_FLUSH_INTERVAL", 10000)
+    async def scenario():
+        async def work(job):
+            progress = dict(stream="media", processed=10, stream_processed=0,
+                            reused=0, downloaded=0, reused_bytes=0, downloaded_bytes=0)
+            job.set_progress(progress)
+            assert jobs.get_job(engine, job.id)["progress"] == progress
+            progress.update(processed=11, stream_processed=1, reused=1, reused_bytes=123)
+            job.set_progress(progress)
+            first = jobs.get_job(engine, job.id)
+            assert first["processed"] == 11 and first["progress"] == progress
+            assert first["result"] is None
+            progress.update(processed=12, stream_processed=2, downloaded=1, downloaded_bytes=456)
+            job.set_progress(progress)
+            # Subsequent small updates are throttled; failure flushes the latest.
+            assert jobs.get_job(engine, job.id)["processed"] == 11
+            raise RuntimeError("interrupted")
+        handle = jobs.launch(engine, "sync_progress", work)
+        done = await _drain(engine, handle.id)
+        assert done["status"] == "failed"
+        assert done["processed"] == done["progress"]["processed"] == 12
+        assert done["progress"]["reused"] == done["progress"]["downloaded"] == 1
+        assert done["result"] is None
+        reopened = _sink(tmp_path).engine
+        assert jobs.get_job(reopened, handle.id)["progress"] == done["progress"]
+    asyncio.run(scenario())
+
+
 def test_list_jobs_orders_and_filters(tmp_path):
     engine = _sink(tmp_path).engine
 

@@ -20,10 +20,14 @@ from models.db import AiUsageRecord
 # 注意：读者面新增 AI 用途必须同步登记此处 + reader.py _AI_DAILY_CALL_LIMITS +
 # accounts.READER_AI_BUDGET_PURPOSES 三处——v3.40.4 前 summarize 漏登记本表，
 # record_usage 静默丢行导致逐用户限额/全站日预算/用量看板三层护栏全部失效。
+# podcast_ondemand / article_ondemand 按「发起一次新生成」计 1 次（非底层 LLM 分段次数）；
+# 二者共用读者日额度池（见 reader._AI_ONDEMAND_*）。
 VALID_PURPOSES = (
     "translate",
     "ask",
     "summarize",
+    "podcast_ondemand",
+    "article_ondemand",
     "daily_brief_editorial",
     "daily_brief_dedup",
     "daily_brief_reduce",

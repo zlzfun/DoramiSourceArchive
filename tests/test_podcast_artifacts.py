@@ -18,7 +18,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from config import RuntimeConfig, load_config
 from models.db import (
@@ -1187,6 +1187,29 @@ def test_publish_uses_optimistic_lock_and_cannot_be_repeated(monkeypatch, tmp_pa
         assert repeated.status_code == 409
 
 
+def test_publish_atomically_replaces_the_active_episode_audio(monkeypatch, tmp_path):
+    app_module, sink, _ = _setup_app(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        first = _import(client).json()
+        second = _import(client).json()
+
+        assert _publish(client, first).status_code == 200
+        assert _publish(client, second).status_code == 200
+
+    with Session(sink.engine) as session:
+        rows = session.exec(
+            select(PodcastArtifactRecord)
+            .where(PodcastArtifactRecord.episode_id == "episode-1")
+            .order_by(PodcastArtifactRecord.created_at, PodcastArtifactRecord.id)
+        ).all()
+        assert {row.id: row.status for row in rows} == {
+            first["id"]: "withdrawn",
+            second["id"]: "published",
+        }
+        assert sum(row.status == "published" for row in rows) == 1
+
+
 def test_concurrent_publish_has_exactly_one_winner(monkeypatch, tmp_path):
     app_module, _, store = _setup_app(monkeypatch, tmp_path)
     with TestClient(app_module.app) as client:
@@ -1403,3 +1426,59 @@ def test_reconcile_preserves_shared_blob_while_any_row_references_it(
             == 1
         )
         assert not path.exists()
+
+
+def test_staging_handle_is_released_before_rename_and_unlink(monkeypatch, tmp_path):
+    """Windows 上任何打开的句柄都会挡住 os.replace / unlink(WinError 32),与锁无关:导入(import_bytes 与
+    HTTP 流式导入)必须在 rename 前关掉暂存 fd,清理必须在 unlink 前关掉探测 fd。POSIX 上用「能否再拿到锁」
+    代替「句柄是否已关」断言——暂存 fd 是锁的唯一持有者,句柄一关锁即释放(issue #133,内网 Windows 实测)。"""
+    from pathlib import Path
+
+    from services.file_lock import LOCK_EX, LOCK_NB, flock
+
+    app_module, sink, store = _setup_app(monkeypatch, tmp_path, staging_ttl_seconds=0)
+    incoming = (store.root / ".incoming").resolve()
+    seen = {"replace": 0, "unlink": 0}
+
+    def assert_unlocked(path):
+        with open(path, "rb") as probe:
+            flock(probe.fileno(), LOCK_EX | LOCK_NB)  # 仍被持锁 → BlockingIOError → 用例失败
+
+    real_replace = os.replace
+
+    def guarded_replace(src, dst, *args, **kwargs):
+        if Path(src).resolve().parent == incoming:
+            assert_unlocked(src)
+            seen["replace"] += 1
+        return real_replace(src, dst, *args, **kwargs)
+
+    real_unlink = Path.unlink
+
+    def guarded_unlink(self, missing_ok=False):
+        if self.exists() and self.resolve().parent == incoming:
+            assert_unlocked(self)
+            seen["unlink"] += 1
+        return real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(os, "replace", guarded_replace)
+    monkeypatch.setattr(Path, "unlink", guarded_unlink)
+    try:
+        text = "episode-1 的中文口播稿。"
+        store.import_bytes(
+            episode_id="episode-1", kind="digest_audio_zh", data=WAV, declared_mime="audio/wav",
+            provenance="test_fixture", narration_artifact_id="script-episode-1",
+            narration_content_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        )
+        with TestClient(app_module.app) as client:
+            _login(client, "admin", "admin")
+            # 不同字节:同内容会被 CAS 去重、不走 rename
+            response = _import(client, "episode-2", body=_wav_bytes(samples=32))
+            assert response.status_code in (200, 201), response.text
+        fd, path = store.create_upload_temp()
+        os.write(fd, b"stale")
+        os.close(fd)
+        assert store.reconcile_storage()["deleted_staging_files"] == 1
+        assert not path.exists()
+    finally:
+        sink.engine.dispose()
+    assert seen["replace"] == 2 and seen["unlink"] >= 1

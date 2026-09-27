@@ -41,6 +41,9 @@ def _classify(app_module, method: str, path: str) -> str:
         return "public-auth"
     if a.is_public_subscription_path(path):
         return "public-sub"
+    if a.is_public_health_path(path):
+        # 部署探针 /api/health（issue #102）：与 auth 公开路径同级短路，exact path。
+        return "public-health"
     # disabled_runtime_surface：reader 前缀短路 → reader；否则 collector 前缀 → collector
     is_reader = (
         path == "/mcp"

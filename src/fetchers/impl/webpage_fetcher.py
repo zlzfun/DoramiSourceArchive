@@ -2,7 +2,7 @@ import hashlib
 import html
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, AsyncGenerator, Dict, Iterable, List, Optional
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse
 
@@ -399,6 +399,18 @@ class BaseWebPageListFetcher(BaseFetcher):
         flags = await self._lookup_existing_content_flags([content_id])
         return flags.get(content_id, False)
 
+    def _requires_detail_metadata_refresh(self, title: str) -> bool:
+        """Whether an existing item still needs a detail request for metadata repair.
+
+        The default stays false so the archive-wide detail de-duplication contract is
+        unchanged. A source whose listing is known to emit generic titles may opt in
+        narrowly and use the detail page as an authoritative title fallback.
+        """
+        return False
+
+    def _should_use_detail_title(self, title: str) -> bool:
+        return title == "未命名网页条目" or title.lower() in self.generic_link_titles
+
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         limit = self._entry_limit(kwargs.get("limit"))
         fetch_detail = self._bool_param(kwargs.get("fetch_detail"))
@@ -466,11 +478,22 @@ class BaseWebPageListFetcher(BaseFetcher):
             publish_date = entry.get("publish_date") or ""
             content_id = self._content_id(url)
             detail = {"title": "", "text": "", "publish_date": ""}
+            # 权威元数据刷新源即使跳过已有正文，也必须知道该条目确实存在：
+            # 后面会保留一个 metadata-only item 进入 storage，自愈标题/日期，
+            # 但绝不以空正文覆盖既有正文。普通源仍只在抓详情时做去重查询。
+            existing_has_content = (
+                await self._should_skip_detail_fetch(content_id)
+                if fetch_detail or self.refresh_existing_metadata
+                else False
+            )
             # 已入库且有正文则跳过详情请求，避免对重复条目重复抓取正文。
-            detail_fetched = fetch_detail and not await self._should_skip_detail_fetch(content_id)
+            detail_fetched = fetch_detail and (
+                self._requires_detail_metadata_refresh(title)
+                or not existing_has_content
+            )
             if detail_fetched:
                 detail = await self._detail_for_url(client, url, detail_max_chars)
-                if (title == "未命名网页条目" or title.lower() in self.generic_link_titles) and detail["title"]:
+                if self._should_use_detail_title(title) and detail["title"]:
                     title = detail["title"]
                 if not publish_date and detail.get("publish_date"):
                     publish_date = detail["publish_date"]
@@ -482,13 +505,17 @@ class BaseWebPageListFetcher(BaseFetcher):
             raw_data.update({
                 "listing_source": entry.get("listing_source", ""),
                 "detail_fetched": detail_fetched,
+                "metadata_only_refresh": bool(
+                    self.refresh_existing_metadata and existing_has_content and not detail["text"]
+                ),
                 "detail_title": detail["title"],
                 "detail_text_length": len(detail["text"]),
                 "detail_extraction_method": detail.get("method", ""),
                 "detail_source_url": detail.get("url", ""),
             })
             content = detail["text"] or summary
-            if self.drop_empty_content and not content:
+            keep_metadata_only = self.refresh_existing_metadata and existing_has_content
+            if self.drop_empty_content and not content and not keep_metadata_only:
                 continue
 
             yield WebPageArticleContent(
@@ -836,29 +863,106 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
             return {**detail, "url": str(response.url)}
         return await super()._detail_for_url(client, url, max_chars)
 
+    def _article_entries(self, items, page_url):
+        entries = []
+        for item in items:
+            title_link = item.select_one("a.title[href]")
+            if title_link is None:
+                continue
+            url = self._normalize_article_url(urljoin(page_url, str(title_link["href"])))
+            if self._matches_article_url(url):
+                entries.append((item, title_link, url))
+        return entries
+
+    max_listing_pages = 10
+    coverage_window_hours = 72
+
+    async def _listing_pages(self, client):
+        response = await self._safe_get(client, self.listing_url)
+        if response is None:
+            raise RuntimeError(f"IT之家 AI 分类页请求失败: {self.listing_url}")
+        soup = BeautifulSoup(response.text, "html.parser")
+        previous_cursor = None
+        for page in range(self.max_listing_pages):
+            items = self._list_items(soup)
+            if not items:
+                raise RuntimeError("IT之家 AI 列表结构异常: 未找到文章列表")
+            yield items, str(response.url)
+            # The site's own load-more contract uses the last item's timestamp.
+            dated = [self._parse_listing_datetime(str(node.get("data-ot") or ""))
+                     for item, _, _ in self._article_entries(items, str(response.url))
+                     for node in item.select(".c[data-ot]")]
+            dated = [value for value in dated if value]
+            if not dated:
+                raise RuntimeError("IT之家 AI 分页缺少时间游标")
+            cursor = int(datetime.fromisoformat(dated[-1]).timestamp() * 1000)
+            if previous_cursor is not None and cursor >= previous_cursor:
+                raise RuntimeError("IT之家 AI 分页时间游标未向前推进")
+            if page + 1 >= self.max_listing_pages:
+                raise RuntimeError("IT之家 AI 达到分页安全上限，覆盖尚未完成")
+            previous_cursor = cursor
+            url = f"https://next.ithome.com/category/domainpage?domain=next&subdomain=ai&ot={cursor}"
+            response = await self._safe_post(client, url, data={})
+            if response is None:
+                raise RuntimeError(f"IT之家 AI 第 {page + 2} 页请求失败")
+            try:
+                payload = response.json()
+                content = payload["content"]
+                count = content["count"]
+                html_text = content["html"]
+                if payload.get("success") is not True or not isinstance(count, int) or count < 0 or not isinstance(html_text, str):
+                    raise ValueError("invalid pagination payload")
+            except (ValueError, KeyError, TypeError) as exc:
+                raise RuntimeError("IT之家 AI 分页响应格式异常") from exc
+            if count == 0:
+                return
+            soup = BeautifulSoup(f'<ul class="bl">{html_text}</ul>', "html.parser")
+
+    async def _discover_listing_entries(self, client, limit):
+        chosen = []
+        discovered = 0
+        cutoff = None
+        seen_urls = set()
+        async for items, page_url in self._listing_pages(client):
+            entries = []
+            for entry in self._article_entries(items, page_url):
+                if entry[2] not in seen_urls:
+                    seen_urls.add(entry[2])
+                    entries.append(entry)
+            if not entries:
+                raise RuntimeError("IT之家 AI 分页没有新的有效文章链接")
+            discovered += len(entries)
+            existing = await self._lookup_existing_content_flags(self._content_id(url) for _, _, url in entries)
+            dates = [self._parse_listing_datetime(str(node.get("data-ot") or ""))
+                     for item, _, _ in entries for node in item.select(".c[data-ot]")]
+            dates = [datetime.fromisoformat(value) for value in dates if value]
+            if cutoff is None and dates:
+                cutoff = max(dates) - timedelta(hours=self.coverage_window_hours)
+            reached_window = bool(cutoff and dates and min(dates) < cutoff)
+            for item, title_link, url in entries:
+                date_node = item.select_one(".c[data-ot]")
+                item_date = self._parse_listing_datetime(str(date_node.get("data-ot") or "")) if date_node else ""
+                if (cutoff and item_date and datetime.fromisoformat(item_date) < cutoff) or existing.get(self._content_id(url), False):
+                    continue
+                chosen.append((item, title_link, url))
+                if len(chosen) >= limit:
+                    self.logger.info("IT之家 AI 达到本轮新增上限: discovered=%d selected=%d; 后续轮次继续扫描", discovered, len(chosen))
+                    return chosen
+            if reached_window:
+                break
+        self.logger.info("IT之家 AI 已覆盖列表窗口: discovered=%d selected=%d", discovered, len(chosen))
+        return chosen
+
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         limit = self._entry_limit(kwargs.get("limit"))
         fetch_detail = self._bool_param(kwargs.get("fetch_detail"))
         detail_max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
         if limit <= 0:
             return
-
-        response = await self._safe_get(client, self.listing_url)
-        if not response:
-            raise RuntimeError(f"IT之家 AI 分类页请求失败: {self.listing_url}")
-
-        soup = BeautifulSoup(response.text, "html.parser")
-        emitted = 0
-        seen_urls: set[str] = set()
-        for item in self._list_items(soup):
-            title_link = item.select_one("a.title[href]")
-            if not title_link:
-                continue
-            url = self._normalize_article_url(urljoin(str(response.url), str(title_link["href"])))
-            if not self._matches_article_url(url) or url in seen_urls:
-                continue
-            seen_urls.add(url)
-
+        # Complete discovery before yielding: a later list failure must not leave
+        # already-saved rows outside the pipeline's successful analysis hooks.
+        entries = await self._discover_listing_entries(client, limit)
+        for item, title_link, url in entries:
             title = self._clean_text(title_link.get_text(" ", strip=True)) or str(title_link.get("title") or "")
             summary_node = item.select_one(".m")
             summary = self._clean_text(summary_node.get_text(" ", strip=True) if summary_node else "")[:500]
@@ -909,9 +1013,6 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
                     "detail_source_url": detail.get("url", ""),
                 },
             )
-            emitted += 1
-            if emitted >= limit:
-                break
 
 
 class QwenBlogWebFetcher(BaseWebPageListFetcher):
@@ -1462,9 +1563,84 @@ class KimiResearchWebFetcher(_ScopedArticleBodyFetcher):
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public_website"
+    # Kimi 的列表 JSON 是官方元数据；允许下一次采集只刷新同 ID 的
+    # 标题/日期/原文 URL，以修复存量被中文栏目名“研究”污染的记录。
+    refresh_existing_metadata = True
+
+    _non_article_titles = {
+        "research",
+        "all research",
+        "研究",
+        "全部研究",
+        "kimi 研究博客 | 月之暗面",
+    }
+
+    def _normalize_article_url(self, url: str) -> str:
+        normalized = super()._normalize_article_url(url)
+        parsed = urlparse(normalized)
+        # 中文列表的真实卡片和 Next.js articleList 指向 /en/blog/*，而页脚
+        # 仍指向 /blog/*。统一成历史 canonical，避免同一文章生成新 ID。
+        path = re.sub(r"^/en/blog/", "/blog/", parsed.path, count=1)
+        return parsed._replace(path=path).geturl()
 
     def _matches_article_url(self, url: str) -> bool:
         return bool(re.fullmatch(r"https://www\.kimi\.com/blog/[^/?#]+/?", url))
+
+    def _embedded_article_entries(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
+        """Read only the authoritative Next.js ``articleList.items`` payload.
+
+        The same RSC response also embeds header/footer navigation objects containing
+        blog URLs. Treating every JSON object as an article would re-introduce generic
+        Chinese navigation labels and duplicates, so Kimi intentionally narrows the
+        generic embedded-JSON parser to the list model used by the page itself.
+        """
+        entries: List[Dict[str, Any]] = []
+        seen_urls = set()
+        for payload in self._script_payloads(soup):
+            for value in self._json_values_from_text(payload):
+                for record in self._walk_json(value):
+                    article_list = record.get("articleList")
+                    if not isinstance(article_list, dict):
+                        continue
+                    items = article_list.get("items")
+                    if not isinstance(items, list):
+                        continue
+                    for item in items:
+                        if not isinstance(item, dict):
+                            continue
+                        title = self._clean_text(str(item.get("title") or ""))
+                        raw_url = item.get("href") or item.get("url")
+                        if not title or not isinstance(raw_url, str):
+                            continue
+                        url = self._entry_url_from_slug(raw_url)
+                        if url in seen_urls or not self._matches_article_url(url):
+                            continue
+                        seen_urls.add(url)
+                        raw_date = item.get("date") or item.get("publishedAt") or ""
+                        publish_date = (
+                            self._extract_datetime_or_empty(str(raw_date)) if raw_date else ""
+                        )
+                        summary = item.get("description") or item.get("summary") or ""
+                        entries.append({
+                            "url": url,
+                            "title": title,
+                            "summary": self._clean_text(str(summary))[:500],
+                            "publish_date": publish_date,
+                            "listing_source": "embedded_json",
+                        })
+        return entries
+
+    def _title_from_container(self, link: Tag, container: Tag) -> str:
+        title = super()._title_from_container(link, container)
+        if title.casefold() in self._non_article_titles:
+            return "未命名网页条目"
+        return title
+
+    def _requires_detail_metadata_refresh(self, title: str) -> bool:
+        return title == "未命名网页条目" or title.casefold() in self._non_article_titles
+
+    def _should_use_detail_title(self, title: str) -> bool:
+        return self._requires_detail_metadata_refresh(title) or super()._should_use_detail_title(title)
 
     def _candidate_container(self, link: Tag) -> Tag:
         # 顶部移动导航也链接最新文章；若沿通用规则上溯，会把整页研究卡片列表
@@ -1489,9 +1665,10 @@ class KimiResearchWebFetcher(_ScopedArticleBodyFetcher):
     def _merge_entry(self, entries_by_url: Dict[str, Dict[str, Any]], entry: Dict[str, Any]) -> None:
         existing = entries_by_url.get(entry["url"])
         prefer_dated_card = bool(entry.get("publish_date")) and bool(existing) and not existing.get("publish_date")
+        prefer_embedded_list = entry.get("listing_source") == "embedded_json"
         super()._merge_entry(entries_by_url, entry)
         merged = entries_by_url[entry["url"]]
-        if prefer_dated_card:
+        if prefer_dated_card or prefer_embedded_list:
             merged["title"] = entry["title"]
             merged["summary"] = entry["summary"]
         if re.fullmatch(r"20\d{2}/\d{1,2}/\d{1,2}", str(merged.get("summary") or "")):

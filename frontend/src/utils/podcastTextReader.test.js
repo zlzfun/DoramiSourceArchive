@@ -6,6 +6,7 @@ import {
   PODCAST_TEXT_LABELS,
   isPodcastTextRequestCurrent,
   mergePodcastTextPage,
+  podcastDigestMeta,
   podcastTextPageAction,
   podcastTranscriptForLanguage,
   podcastTextView,
@@ -33,6 +34,17 @@ test('podcast text view falls back to source transcript and has a true empty sta
   assert.equal(PODCAST_TEXT_LABELS.digest_blog_zh.title, '精品导读');
 });
 
+test('brief Chinese guides are not presented as premium guides', () => {
+  assert.deepEqual(podcastDigestMeta('brief_zh'), {
+    title: '中文导读',
+    action: '继续阅读中文导读',
+  });
+  assert.deepEqual(podcastDigestMeta('solo_deep'), {
+    title: '精品导读',
+    action: '继续阅读精品导读',
+  });
+});
+
 test('normalized ASR transcript is visible and remains distinct from publisher text', () => {
   const view = podcastTextView({ items: [
     { kind: 'normalized_transcript', text: '识别内容' },
@@ -42,7 +54,7 @@ test('normalized ASR transcript is visible and remains distinct from publisher t
     view.transcripts.map(({ item, label }) => [item.kind, label.title, label.note]),
     [
       ['publisher_transcript', '节目方逐字稿', '节目方提供'],
-      ['normalized_transcript', 'ASR 逐字稿', '语音识别稿'],
+      ['normalized_transcript', '语音识别稿', 'AI 整理'],
     ],
   );
   assert.equal(view.transcripts[0].item.kind, 'publisher_transcript');
@@ -197,6 +209,7 @@ test('podcast lists reuse taxonomy tag styling and hide pipeline status', async 
   assert.match(reader, /const analysisTag =[\s\S]*className="reader-entry-tag"/);
   assert.match(reader, /podcastListAvailabilityMeta/);
   assert.doesNotMatch(podcastBranch, /podcastFullProcessingMeta|analysisStatus\.label/);
+  assert.doesNotMatch(podcastBranch, /processing_error|error_code|next_retry_at|\.error\b/);
   assert.equal(reader.match(/className="reader-entry-tag">\{analysisLabel\}/g)?.length, 1);
 });
 
@@ -222,4 +235,3 @@ test('blog-only guide without condensed audio is visible in experience panel and
   assert.match(experience, /isBlogOnlyGuide = hasGuideBlog && !hasGuideAudio/);
   assert.match(experience, /guideVisible = isBlogOnlyGuide \|\| \(variant === 'digest' && hasGuideAudio\)/);
 });
-

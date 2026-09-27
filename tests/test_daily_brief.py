@@ -167,7 +167,7 @@ def test_collect_candidates_empty_cursor_caps_total(tmp_path):
     assert len(candidates) == 3
     # 取最新的三篇（06-06 / 06-05 / 06-04）
     assert {c.id for c in candidates} == {"n5", "n4", "n3"}
-    assert scanned == 6  # 裁剪观测:扫描总数如实上报(6 篇里取用 3)
+    assert scanned == 3  # 空游标仅开放近期有界窗口，旧历史不登记为积压
 
 
 def test_collect_candidates_per_source_cap(tmp_path):
@@ -1634,3 +1634,187 @@ def test_daily_brief_min_items_default_and_clamp(tmp_path):
         db.set_setting(session, db.KEY_MIN_ITEMS, "999"); assert db.daily_brief_min_items(session) == db.TOP_N_MAX
         db.set_setting(session, db.KEY_MIN_ITEMS, "abc"); assert db.daily_brief_min_items(session) == db.DEFAULT_MIN_ITEMS
         db.set_setting(session, db.KEY_MIN_ITEMS, "0"); assert db.daily_brief_min_items(session) == 0
+
+
+def test_deferred_candidates_survive_cursor_and_are_eventually_processed(tmp_path, monkeypatch):
+    from models.db import DailyBriefCandidateRecord
+    from sqlmodel import select
+    _patch_llm(monkeypatch, _fake_chat_completion)
+    sink = _make_sink(tmp_path)
+    for i in range(5):
+        _seed(sink.engine, f'queue-{i}', 'busy', f'2026-06-05T0{i}:00:00')
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, '2026-06-01T00:00:00')
+    for expected_pending in [3, 1, 0]:
+        result = asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED,
+            report_date='2026-06-06', per_source_cap=2, max_total=2))
+        assert result['status'] == 'success'
+        with Session(sink.engine) as session:
+            rows = session.exec(select(DailyBriefCandidateRecord)).all()
+            assert sum(r.status == 'pending' for r in rows) == expected_pending
+            assert db.read_cursor(session) == '2026-06-05T04:00:00'
+    assert asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED,
+        report_date='2026-06-06'))['status'] == 'empty'
+
+
+def test_same_timestamp_late_arrival_is_not_lost_or_reprocessed(tmp_path, monkeypatch):
+    _patch_llm(monkeypatch, _fake_chat_completion)
+    sink = _make_sink(tmp_path)
+    stamp = '2026-06-05T10:00:00'
+    _seed(sink.engine, 'first', 'src', stamp)
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date='2026-06-06'))
+    _seed(sink.engine, 'late', 'src', stamp)
+    with Session(sink.engine) as session:
+        candidates, _, _ = collect_candidates(session, cursor=db.read_cursor(session))
+    assert [c.id for c in candidates] == ['late']
+
+
+def test_brief_and_ledger_rollback_together_on_commit_failure(tmp_path, monkeypatch):
+    import pytest
+    from models.db import DailyBriefCandidateRecord
+    from sqlmodel import select
+    _patch_llm(monkeypatch, _fake_chat_completion)
+    sink = _make_sink(tmp_path)
+    _seed(sink.engine, 'item', 'src', '2026-06-05T10:00:00')
+    def fail(*args, **kwargs): raise RuntimeError('commit failed')
+    monkeypatch.setattr(db, '_stage_setting', fail)
+    with pytest.raises(RuntimeError, match='commit failed'):
+        asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date='2026-06-06'))
+    assert asyncio.run(sink.get('daily_brief_2026-06-06')) is None
+    with Session(sink.engine) as session:
+        assert session.exec(select(DailyBriefCandidateRecord)).all() == []
+        assert db.read_cursor(session) == ''
+
+
+def test_deferred_queue_respects_changed_scope_and_cursor_reset(tmp_path, monkeypatch):
+    _patch_llm(monkeypatch, _fake_chat_completion)
+    sink = _make_sink(tmp_path)
+    for i in range(3): _seed(sink.engine, f'pending-{i}', 'one', f'2026-06-05T0{i}:00:00')
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, '2026-06-01T00:00:00')
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date='2026-06-06', max_total=1))
+    with Session(sink.engine) as session:
+        cursor = db.read_cursor(session)
+        assert collect_candidates(session, cursor=cursor, source_ids=['other'])[0] == []
+        assert len(collect_candidates(session, cursor=cursor, source_ids=['one'])[0]) == 2
+        db.set_setting(session, db.KEY_CURSOR, '')
+        assert len(collect_candidates(session, cursor='')[0]) == 3
+
+
+def test_concurrent_generation_guard_rejects_second_run(tmp_path):
+    import pytest
+    sink = _make_sink(tmp_path)
+    with db._generation_guard(sink.engine):
+        with pytest.raises(RuntimeError, match='正在生成'):
+            with db._generation_guard(sink.engine): pass
+
+
+def test_generation_refuses_stale_scope_commit(tmp_path, monkeypatch):
+    import pytest
+    _patch_llm(monkeypatch, _fake_chat_completion)
+    sink = _make_sink(tmp_path)
+    _seed(sink.engine, 'item', 'src', '2026-06-05T10:00:00')
+    original = db.render_brief_markdown
+    def change_scope(*args, **kwargs):
+        with Session(sink.engine) as session:
+            db.set_setting(session, db.KEY_SOURCE_IDS, '["other"]')
+        return original(*args, **kwargs)
+    monkeypatch.setattr(db, 'render_brief_markdown', change_scope)
+    with pytest.raises(RuntimeError, match='生成期间已变更'):
+        asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date='2026-06-06'))
+    assert asyncio.run(sink.get('daily_brief_2026-06-06')) is None
+    with Session(sink.engine) as session: assert db.read_cursor(session) == ''
+
+
+def test_file_generation_guard_covers_independent_engines(tmp_path):
+    import pytest
+    from sqlmodel import create_engine
+    sink = _make_sink(tmp_path)
+    second = create_engine(str(sink.engine.url))
+    with db._generation_guard(sink.engine):
+        with pytest.raises(RuntimeError, match='正在生成'):
+            with db._generation_guard(second): pass
+    with db._generation_guard(second): pass
+    second.dispose()
+
+
+def test_default_candidate_budget_can_drain_daytime_media_volume(tmp_path):
+    sink = _make_sink(tmp_path)
+    for source, count in [('web_ithome_ai', 40), ('rss_hn_ai', 30), ('other', 30)]:
+        for i in range(count):
+            _seed(sink.engine, f'{source}-{i}', source, '2026-06-05T10:00:00')
+    with Session(sink.engine) as session:
+        candidates, _, scanned = collect_candidates(session, cursor='')
+        assert len(candidates) == scanned == 100  # no perpetual 15/day bottleneck
+        bounded, _, _ = collect_candidates(session, cursor='', max_total=80)
+        assert len(bounded) == 80
+
+
+def test_bootstrap_does_not_turn_archive_or_timestamp_ties_into_backlog(tmp_path, monkeypatch):
+    from models.db import DailyBriefCandidateRecord
+    from sqlmodel import select
+    _patch_llm(monkeypatch, _fake_chat_completion)
+    sink = _make_sink(tmp_path)
+    for i in range(8):
+        _seed(sink.engine, f'old-{i}', 'src', '2026-01-01T00:00:00')
+    for i in range(5):
+        _seed(sink.engine, f'tied-{i}', 'src', '2026-06-05T10:00:00')
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date='2026-06-06', max_total=3))
+    with Session(sink.engine) as session:
+        assert not session.exec(select(DailyBriefCandidateRecord).where(DailyBriefCandidateRecord.status == 'pending')).all()
+        assert collect_candidates(session, cursor=db.read_cursor(session))[0] == []
+    _seed(sink.engine, 'arrived-later', 'src', '2026-06-05T10:00:00')
+    with Session(sink.engine) as session:
+        assert [c.id for c in collect_candidates(session, cursor=db.read_cursor(session))[0]] == ['arrived-later']
+
+
+def test_mixed_backlog_and_new_stories_share_batch_without_wasting_capacity(tmp_path):
+    from models.db import DailyBriefCandidateRecord
+    sink = _make_sink(tmp_path)
+    for i in range(9): _seed(sink.engine, f'old-{i}', 'old-source', '2026-06-01T00:00:00')
+    for i in range(9): _seed(sink.engine, f'new-{i}', 'new-source', '2026-06-05T00:00:00')
+    with Session(sink.engine) as session:
+        session.add_all([DailyBriefCandidateRecord(article_id=f'old-{i}', status='pending') for i in range(9)])
+        session.commit()
+        candidates, _, _ = collect_candidates(session, cursor='2026-06-04', max_total=6)
+        assert sum(c.id.startswith('old-') for c in candidates) == 2
+        assert sum(c.id.startswith('new-') for c in candidates) == 4
+        old_only, _, _ = collect_candidates(session, cursor='2026-06-04', max_total=6, source_ids=['old-source'])
+        assert len(old_only) == 6
+
+
+def test_unchanged_settings_do_not_clear_ledger_or_cancel_generation(tmp_path, monkeypatch):
+    _patch_llm(monkeypatch, _fake_chat_completion)
+    sink = _make_sink(tmp_path)
+    _seed(sink.engine, 'item', 'src', '2026-06-05T10:00:00')
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_SOURCE_IDS, '["src", "other"]')
+    original = db.render_brief_markdown
+    def save_same_scope(*args, **kwargs):
+        with Session(sink.engine) as session:
+            before = db.get_setting(session, db.KEY_SELECTION_REVISION)
+            db.set_setting(session, db.KEY_SOURCE_IDS, '["other", "src", "src"]')
+            assert db.get_setting(session, db.KEY_SELECTION_REVISION) == before
+        return original(*args, **kwargs)
+    monkeypatch.setattr(db, 'render_brief_markdown', save_same_scope)
+    assert asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date='2026-06-06'))['status'] == 'success'
+    with Session(sink.engine) as session:
+        cursor = db.read_cursor(session)
+        db.set_setting(session, db.KEY_CURSOR, cursor)
+        assert collect_candidates(session, cursor=cursor)[0] == []
+
+
+def test_deleting_older_brief_with_same_watermark_does_not_rewind(tmp_path, monkeypatch):
+    import api.app as app_module
+    from models.db import ArticleRecord
+    sink = _make_sink(tmp_path)
+    monkeypatch.setattr(app_module, 'db_sink', sink)
+    _seed(sink.engine, 'older-report', db.DAILY_BRIEF_SOURCE_ID, '2026-06-05', content_type='daily_brief')
+    _seed(sink.engine, 'newer-report', db.DAILY_BRIEF_SOURCE_ID, '2026-06-06', content_type='daily_brief')
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, '2026-06-04')
+        old = session.get(ArticleRecord, 'older-report')
+        old.extensions_json = json.dumps({'cursor_before': '2026-06-01', 'cursor_after': '2026-06-04'})
+        session.add(old); session.commit(); session.refresh(old)
+        app_module._maybe_rewind_daily_brief_cursor(old)
+        assert db.read_cursor(session) == '2026-06-04'

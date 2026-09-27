@@ -8,6 +8,7 @@ this module so a show-notes score can never accidentally award premium status.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -26,10 +27,11 @@ from models.db import (
     PodcastTextPublicationRecord,
     SourceConfigRecord,
 )
+from services.podcast_publisher_transcripts import PublisherTranscriptError, supported_candidates
 
 
-INITIAL_PROCESSING_THRESHOLD = 5.0
-DEFAULT_PREMIUM_SCORE_THRESHOLD = 8.0
+INITIAL_PROCESSING_THRESHOLD = 6.0
+DEFAULT_PREMIUM_SCORE_THRESHOLD = 7.5
 PREMIUM_SCORE_THRESHOLD_KEY = "podcast_premium_score_threshold"
 TRANSCRIPT_BASES = frozenset({"publisher_transcript", "asr_transcript"})
 ANALYSIS_BASIS_LABELS = {
@@ -41,7 +43,10 @@ ACTIVE_PROCESSING_STATUSES = frozenset(
     {"queued", "running", "awaiting_review"}
 )
 FAILED_PROCESSING_STATUSES = frozenset(
-    {"failed", "retry_wait", "reconciliation_required"}
+    {"failed", "reconciliation_required"}
+)
+ASR_QUOTA_WAIT_CODES = frozenset(
+    {"provider_usage_window_unavailable", "provider_call_window_unavailable"}
 )
 ACTIVE_TTS_STATUSES = frozenset({"queued", "summarizing", "synthesizing"})
 VALID_FILTERS = frozenset(
@@ -55,6 +60,7 @@ STAGE_CODES = (
     "not_selected",
     "awaiting_transcript",
     "processing",
+    "retry_wait",
     "full_analyzed",
     "reconciliation",
     "failed",
@@ -80,6 +86,16 @@ def _episode_extensions(episode: ArticleRecord) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _duration_seconds(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        duration = float(value)
+    except (TypeError, ValueError):
+        return None
+    return duration if math.isfinite(duration) and duration >= 0 else None
+
+
 def _premium_guide(episode: ArticleRecord) -> dict[str, Any]:
     guide = _episode_extensions(episode).get("premium_guide")
     return guide if isinstance(guide, dict) else {}
@@ -102,13 +118,19 @@ def normalize_threshold(value: Any) -> float:
 
 
 def get_threshold(session: Session) -> float:
+    # The deployment setting (INI/env) is the baseline policy.  The database
+    # row is only a runtime override, so an absent or invalid override must not
+    # silently reset an operator-configured threshold to the code default.
+    from config import settings
+
+    configured_threshold = settings.podcast.premium_score_threshold
     row = session.get(AppSettingRecord, PREMIUM_SCORE_THRESHOLD_KEY)
     if row is None:
-        return DEFAULT_PREMIUM_SCORE_THRESHOLD
+        return configured_threshold
     try:
         return normalize_threshold(row.value)
     except ValueError:
-        return DEFAULT_PREMIUM_SCORE_THRESHOLD
+        return configured_threshold
 
 
 def set_threshold(session: Session, value: Any) -> float:
@@ -189,6 +211,13 @@ def _stage_and_reason(
         return "failed", str(
             process.error_message or "供应方结果待对账，完成对账后再重试"
         )
+    if status == "retry_wait":
+        reason = (
+            "等待 ASR 配额"
+            if str(process.error_code or "") in ASR_QUOTA_WAIT_CODES
+            else "等待自动重试"
+        )
+        return "retry_wait", f"{reason}（{process.error_message}）" if process.error_message else reason
     if status in FAILED_PROCESSING_STATUSES:
         if stage in {"fetch", "asr"}:
             reason = (
@@ -228,6 +257,8 @@ def _stage_code(state: _EpisodeState) -> str:
     status = str(process.processing_status if process else "")
     if status == "reconciliation_required":
         return "reconciliation"
+    if status == "retry_wait":
+        return "retry_wait"
     if status in FAILED_PROCESSING_STATUSES:
         return "failed"
     if status in ACTIVE_PROCESSING_STATUSES:
@@ -250,13 +281,24 @@ def _guide_status(state: _EpisodeState) -> tuple[str, str]:
     """
 
     guide = _premium_guide(state.episode)
+    guide_mode = str(guide.get("mode") or "")
     status = str(guide.get("status") or "not_started")
     error = str(guide.get("error") or "")
     if state.audio_ready:
         status = "ready"
     elif status not in TTS_STATUS_LABELS:
         status = "not_started"
-    if status == "ready" and not state.audio_ready:
+    if (
+        status == "ready"
+        and guide_mode == "brief_zh"
+        and state.blog_ready
+        and not state.audio_ready
+    ):
+        # brief_zh is a completed text product.  Missing audio is intentional,
+        # not a failed TTS job; operators can still request audio on demand.
+        status = "not_started"
+        error = ""
+    elif status == "ready" and not state.audio_ready:
         status = "failed"
         error = error or "TTS 标记完成，但已发布音频成品不存在"
     return status, error
@@ -315,7 +357,7 @@ def _matches_filter(
         return (
             score is None
             and process_status not in ACTIVE_PROCESSING_STATUSES
-            and process_status not in FAILED_PROCESSING_STATUSES
+            and process_status not in FAILED_PROCESSING_STATUSES | {"retry_wait"}
             and (initial_score(state.analysis) or 0) >= INITIAL_PROCESSING_THRESHOLD
         )
     return False
@@ -458,6 +500,7 @@ def _serialize_state(state: _EpisodeState, *, threshold: float) -> dict[str, Any
         raw_basis if raw_basis else "尚未分析",
     )
     guide = _premium_guide(state.episode)
+    guide_mode = str(guide.get("mode") or "")
     guide_status, guide_error = _guide_status(state)
     force_request = guide.get("force_request")
     if not isinstance(force_request, dict):
@@ -466,6 +509,12 @@ def _serialize_state(state: _EpisodeState, *, threshold: float) -> dict[str, Any
     reason_text = reason
     if tts_forced and guide_status == "ready" and not current_premium:
         reason_text = "已强制生成 TTS；全文终评仍未达到当前优质门槛"
+    try:
+        has_publisher_locator = bool(supported_candidates(
+            _episode_extensions(state.episode).get("transcripts")
+        ))
+    except PublisherTranscriptError:
+        has_publisher_locator = False
     return {
         "episode_id": state.episode.id,
         "title": state.episode.title,
@@ -478,6 +527,7 @@ def _serialize_state(state: _EpisodeState, *, threshold: float) -> dict[str, Any
         "current_score": current_score,
         "current_basis": current_basis,
         "analysis_basis": raw_basis,
+        "publisher_transcript_available": has_publisher_locator,
         "initial_eligible": score_initial is not None and score_initial >= INITIAL_PROCESSING_THRESHOLD,
         "is_premium": current_premium,
         "stage": stage,
@@ -487,9 +537,12 @@ def _serialize_state(state: _EpisodeState, *, threshold: float) -> dict[str, Any
         "processing_status": process_status,
         "processing_id": str(process.id if process else ""),
         "processing_error": str(process.error_message if process else ""),
+        "processing_error_code": str(process.error_code if process else ""),
+        "next_retry_at": str(process.next_retry_at if process else ""),
         "attempt_count": int(process.attempt_count if process else 0),
         "reason": reason_text,
         "blog_ready": state.blog_ready,
+        "guide_mode": guide_mode,
         "audio_ready": state.audio_ready,
         "historical_generated": historical_generated,
         "pending_generation": current_premium and not historical_generated,
@@ -512,10 +565,10 @@ def _serialize_state(state: _EpisodeState, *, threshold: float) -> dict[str, Any
         "can_force": (
             score_final is None
             and process_status not in ACTIVE_PROCESSING_STATUSES
-            and process_status != "reconciliation_required"
+            and process_status not in {"reconciliation_required", "retry_wait"}
         ),
         "can_retry": (
-            process_status in {"failed", "retry_wait", "reconciliation_required"}
+            process_status in {"failed", "reconciliation_required"}
             and process is not None
         ),
     }
@@ -576,7 +629,7 @@ def dashboard(
         pending_or_failed = sum(
             (
                 str(row.processing.processing_status if row.processing else "")
-                in ACTIVE_PROCESSING_STATUSES | FAILED_PROCESSING_STATUSES
+                in ACTIVE_PROCESSING_STATUSES | FAILED_PROCESSING_STATUSES | {"retry_wait"}
             )
             or (
                 str(_premium_guide(row.episode).get("status") or "")
@@ -632,7 +685,8 @@ _TIMELINE_LABELS = {
 
 
 def _timeline(
-    session: Session, state: _EpisodeState, *, threshold: float
+    session: Session, state: _EpisodeState, *, threshold: float,
+    minimum_duration_seconds: int = 0, generation_enabled: bool = True,
 ) -> list[dict[str, Any]]:
     """Six fixed steps, each with a state the frontend paints as a stamp.
 
@@ -656,9 +710,9 @@ def _timeline(
             "label": _TIMELINE_LABELS["initial"],
             "state": "done",
             "note": (
-                f"{score_initial:.1f} · 过处理线 {INITIAL_PROCESSING_THRESHOLD:.1f}，自动进入全文处理"
+                f"{score_initial:.1f} · 过付费 ASR 线 {INITIAL_PROCESSING_THRESHOLD:.1f}，自动进入全文处理"
                 if passed
-                else f"{score_initial:.1f} · 未过处理线 {INITIAL_PROCESSING_THRESHOLD:.1f}，可强制全文"
+                else f"{score_initial:.1f} · 未过付费 ASR 线 {INITIAL_PROCESSING_THRESHOLD:.1f}，可强制全文"
             ),
             "at": analysis_at,
         })
@@ -729,7 +783,15 @@ def _timeline(
                 row_state, note = "pending", note or "排队中"
             elif status == "retry_wait":
                 row_state = "warn"
-                note = str(process.error_message or "等待自动重试")
+                note = (
+                    "等待 ASR 配额"
+                    if str(process.error_code or "") in ASR_QUOTA_WAIT_CODES
+                    else "等待自动重试"
+                )
+                if process.error_message:
+                    note += f"：{process.error_message}"
+                if process.next_retry_at:
+                    note += f"；计划 {process.next_retry_at} 自动重试"
             elif status == "reconciliation_required":
                 row_state = "warn"
                 note = str(process.error_message or "结果待对账，对账后重试")
@@ -751,20 +813,49 @@ def _timeline(
         rows.append({"step": stage, "label": label, "state": row_state, "note": note, "at": at})
 
     guide = _premium_guide(state.episode)
+    guide_mode = str(guide.get("mode") or "")
     guide_status, guide_error = _guide_status(state)
     failed_stage = str(guide.get("failed_stage") or "")
     guide_at = str(guide.get("updated_at") or "")
     premium_now = score_final is not None and score_final >= threshold
-    if state.blog_ready or guide_status in {"synthesizing", "ready"}:
-        guide_row = {"state": "done", "note": "导读博客 + 口播稿已发布"}
-    elif guide_status in {"summarizing", "queued"}:
+    publications = {
+        row.kind: row for row in session.exec(
+            select(PodcastTextPublicationRecord).where(
+                PodcastTextPublicationRecord.episode_id == state.episode.id,
+                PodcastTextPublicationRecord.kind.in_(("digest_blog_zh", "narration_script_zh")),
+                PodcastTextPublicationRecord.status == "published",
+            )
+        ).all()
+    }
+    blog = session.get(PodcastTextArtifactRecord, publications["digest_blog_zh"].artifact_id) if "digest_blog_zh" in publications else None
+    script = session.get(PodcastTextArtifactRecord, publications["narration_script_zh"].artifact_id) if "narration_script_zh" in publications else None
+    script_current = bool(blog and script and script.source_artifact_id == blog.id and script.source_content_hash == blog.content_hash)
+    duration = _duration_seconds(
+        _episode_extensions(state.episode).get("duration_seconds")
+    )
+    if guide_status in {"summarizing", "queued"}:
         guide_row = {"state": "run", "note": "正在生成导读与口播稿"}
+    elif blog and script_current:
+        guide_row = {"state": "done", "note": "导读博客与当前口播稿已发布"}
+    elif blog and guide_mode == "brief_zh":
+        guide_row = {"state": "done", "note": "短版中文导读已发布（文字版）"}
+    elif blog:
+        guide_row = {"state": "warn", "note": "导读博客已发布，口播稿尚未完成或版本不匹配"}
     elif guide_status == "failed" and failed_stage != "synthesizing":
         guide_row = {"state": "fail", "note": guide_error or "导读生成失败"}
     elif score_final is None:
         guide_row = {"state": "pending", "note": "等待全文分析"}
     elif premium_now:
-        guide_row = {"state": "pending", "note": "已达门槛，等待生成"}
+        if not generation_enabled:
+            guide_row = {"state": "skipped", "note": "已达门槛，当前部署未启用自动生成"}
+        elif not state.transcript_ready:
+            guide_row = {"state": "skipped", "note": "已达门槛，缺少当前全文逐字稿"}
+        elif duration is None or duration <= 0:
+            guide_row = {"state": "skipped", "note": "已达门槛，节目时长未知"}
+        elif duration < minimum_duration_seconds:
+            guide_row = {"state": "skipped", "note": f"已达门槛，节目不足自动生成时长 {minimum_duration_seconds // 60} 分钟"}
+        else:
+            guide_row = {"state": "pending", "note": "已达门槛，等待生成"}
     else:
         guide_row = {"state": "skipped", "note": "未达门槛，不自动生成"}
     rows.append({"step": "guide", "label": _TIMELINE_LABELS["guide"], "at": guide_at, **guide_row})
@@ -774,14 +865,21 @@ def _timeline(
         tts_row = {"state": "run", "note": "正在合成中文精简音频，完成后自动发布"}
     elif guide_status == "failed" and failed_stage == "synthesizing":
         tts_row = {"state": "fail", "note": guide_error or "合成失败"}
+    elif guide_mode == "brief_zh" and blog:
+        tts_row = {
+            "state": "skipped",
+            "note": "文字版导读无需自动合成音频，可按需生成",
+        }
     elif guide_status == "ready":
         tts_row = {"state": "warn", "note": guide_error or "音频成品缺失"}
     elif guide_row["state"] in {"run", "pending"}:
         tts_row = {"state": "pending", "note": "等待导读完成"}
     elif guide_row["state"] == "done":
         tts_row = {"state": "pending", "note": "等待合成"}
+    elif guide_row["state"] == "warn":
+        tts_row = {"state": "pending", "note": "等待有效口播稿"}
     else:
-        tts_row = {"state": "skipped", "note": "未达门槛，可强制 TTS"}
+        tts_row = {"state": "skipped", "note": "未入自动队列，可手动点播" if premium_now else "未达门槛，可强制 TTS"}
     rows.append({"step": "tts", "label": _TIMELINE_LABELS["tts"], "at": guide_at, **tts_row})
     return rows
 
@@ -816,7 +914,8 @@ def _texts(session: Session, episode_id: str) -> dict[str, Any]:
     return result
 
 
-def episode_detail(engine: Engine, episode_id: str) -> dict[str, Any] | None:
+def episode_detail(engine: Engine, episode_id: str, *, minimum_duration_seconds: int = 0,
+                   generation_enabled: bool = True) -> dict[str, Any] | None:
     """Single-episode drawer payload: row + timeline + texts + digest audios."""
 
     from services.podcast_artifacts import serialize_artifact
@@ -836,7 +935,7 @@ def episode_detail(engine: Engine, episode_id: str) -> dict[str, Any] | None:
             .order_by(PodcastArtifactRecord.created_at.desc(), PodcastArtifactRecord.id.desc())
         ).all()
         extensions = _episode_extensions(state.episode)
-        duration = extensions.get("duration_seconds")
+        duration = _duration_seconds(extensions.get("duration_seconds"))
         return {
             "item": _serialize_state(state, threshold=threshold),
             "threshold": threshold,
@@ -848,12 +947,12 @@ def episode_detail(engine: Engine, episode_id: str) -> dict[str, Any] | None:
                 "source_name": state.source_name,
                 "publish_date": str(state.episode.publish_date or ""),
                 "source_url": str(state.episode.source_url or ""),
-                "duration_seconds": (
-                    int(duration) if isinstance(duration, (int, float)) and not isinstance(duration, bool) else None
-                ),
+                "duration_seconds": int(duration) if duration is not None else None,
                 "show_title": str(extensions.get("show_title") or ""),
             },
-            "timeline": _timeline(session, state, threshold=threshold),
+            "timeline": _timeline(session, state, threshold=threshold,
+                                  minimum_duration_seconds=minimum_duration_seconds,
+                                  generation_enabled=generation_enabled),
             "texts": _texts(session, episode_id),
             "artifacts": [serialize_artifact(row) for row in audio_rows],
         }

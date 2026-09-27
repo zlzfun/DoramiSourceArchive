@@ -47,6 +47,10 @@ delivery where possible:
 
 ## JSONL Shape
 
+Both protocol versions delimit records with LF (`\n`); CRLF is also accepted.
+Unicode separators U+0085, U+2028 and U+2029 inside JSON strings are content,
+not record boundaries. Parsers must preserve them rather than use `str.splitlines()`.
+
 The first line is a manifest:
 
 ```json
@@ -198,11 +202,45 @@ messages, optional `transcript_artifact_id`, `analysis_diagnostics_json`, and th
 prompt/scoring versions. `content_hash` remains the separate article-version guard
 used during import; receivers must not recompute or overwrite a producer score.
 
+An analysis whose `content_hash` no longer matches the producer's current article
+is exported as a tombstone, and is absent from analysis presence checks. This
+withdraws an outdated authoritative result without blocking valid scores in the
+same page. The producer's stored analysis is unchanged; once a matching analysis
+is written, its new revision is exported normally. Receiver hash validation and
+whole-page rollback remain mandatory for invalid incoming upserts.
+
 `source_states` is last by design. All non-Taxonomy streams use the same committed
 transaction-revision snapshot, so publishing terminal readiness cannot outrun
 the matching article, analysis, or media generation. A stream checkpoint advances
 only after its terminal page has committed; the media checkpoint additionally
 waits for every declared binary to pass byte-size and SHA-256 verification.
+
+Before requesting an image or generated Podcast audio binary, the receiver checks
+the manifest's content-addressed local file: regular file, exact size, full
+SHA-256, and matching MIME/signature and extension. A matching file is reused
+without a binary GET, including historical local caches and completed downloads
+from an interrupted stream. Reuse still completes the authority-owned metadata
+and publication transition. Missing or corrupt files are downloaded, verified,
+and atomically replaced; an existing pathname alone never establishes availability.
+Configured object-storage persistence and cache leases also apply to reuse.
+An already available OSS archive whose local working copy was evicted keeps its
+availability if a retry's producer download fails; the matching OSS registration
+alone is not counted as local reuse and does not advance progress or checkpoints.
+An existing but corrupt local file still requires repair before being marked available.
+The final metadata write compares the original authority, identity and state so
+concurrent manifest changes or audio withdrawal cannot be overwritten.
+
+`GET /api/jobs/{job_id}` adds nullable `progress` independently of terminal
+`result`. V2 progress includes `stream`, cumulative `processed`, the current
+`stream_processed`, `reused`, `downloaded`, `reused_bytes` and `downloaded_bytes`.
+File counters advance after verification, durable installation and metadata
+publication. Tombstones count as processed records, not files. Stage transitions
+and the first completed record are persisted immediately; subsequent updates are
+throttled and terminal states flush the latest snapshot, including on failure.
+Counters are per attempt; stream file/byte counters reset at stage transitions.
+Stream results retain `media_reused`/`podcast_audio_reused`, the corresponding
+`*_downloaded` counts and `reused_bytes`/`downloaded_bytes` for the final summary.
+Progress is observational and never advances a replication checkpoint.
 
 Endpoints:
 

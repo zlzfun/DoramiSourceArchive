@@ -40,7 +40,7 @@ def validate_sandbox(sandbox: Path) -> Path:
     return database
 
 
-def seed(sandbox: Path) -> None:
+def seed(sandbox: Path, *, password: str = PASSWORD) -> None:
     database = validate_sandbox(sandbox)
     sys.path.insert(0, str(ROOT / "src"))
     from config import settings
@@ -58,7 +58,7 @@ def seed(sandbox: Path) -> None:
     timestamp = now.isoformat()
     try:
         with Session(sink.engine) as session:
-            user = create_user(session, USERNAME, PASSWORD, "user")
+            user = create_user(session, USERNAME, password, "user")
             user.interest_onboarding_completed_at = timestamp
             session.add(user)
             for key, value in {
@@ -95,4 +95,4 @@ def seed(sandbox: Path) -> None:
 
 
 if __name__ == "__main__":
-    seed(Path(sys.argv[1]))
+    seed(Path(sys.argv[1]), password=os.environ.get("DORAMI_E2E_PASSWORD", PASSWORD))

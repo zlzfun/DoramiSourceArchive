@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import os
 import sys
@@ -72,7 +73,7 @@ def _processing(episode_id: str, *, status: str, stage: str = "asr", error: str 
         requested_target="full_analysis",
         selection_source="policy",
         requested_by="system",
-        request_reason="简介初评达到全文处理线",
+        request_reason="简介初评达到付费 ASR 线",
         idempotency_key=f"key-{episode_id}",
         input_artifact_id=f"audio-{episode_id}",
         input_artifact_kind="source_media_snapshot",
@@ -121,13 +122,13 @@ def refactor_engine(tmp_path):
         session.add(_episode("premium", "Mike Krieger on Claude Code", publish=LATER))
         session.add(_episode("below", "Pricing war"))
         session.commit()
-        session.add(_analysis("rejected", initial=4.5))
-        session.add(_analysis("waiting", initial=5.5))
+        session.add(_analysis("rejected", initial=5.9))
+        session.add(_analysis("waiting", initial=6.0))
         session.add(_analysis("running", initial=7.5))
         session.add(_analysis("broken", initial=6.0))
         session.add(_analysis("reconcile", initial=6.5))
         session.add(_analysis("premium", initial=7.0, final=8.7, updated=LATER))
-        session.add(_analysis("below", initial=8.0, final=7.6))
+        session.add(_analysis("below", initial=8.0, final=7.4))
         session.add(_processing("running", status="running"))
         session.add(_processing("broken", status="failed", error="音频地址 403"))
         session.add(_processing("reconcile", status="reconciliation_required", error="任务结果待核对"))
@@ -159,7 +160,7 @@ def test_dashboard_axes_filters_sort_and_breakdown(refactor_engine):
     assert by_id["broken"]["processing_error"] == "音频地址 403"
     assert result["breakdown"]["stage"] == {
         "not_processed": 1, "not_selected": 1, "awaiting_transcript": 1, "processing": 1,
-        "full_analyzed": 2, "reconciliation": 1, "failed": 1,
+        "full_analyzed": 2, "reconciliation": 1, "retry_wait": 0, "failed": 1,
     }
     assert result["breakdown"]["verdict"] == {"premium": 1, "below_threshold": 1, "unscored": 6}
     assert result["breakdown"]["tts"] == {"not_started": 7, "active": 0, "ready": 0, "failed": 1}
@@ -173,7 +174,7 @@ def test_dashboard_axes_filters_sort_and_breakdown(refactor_engine):
     assert [i["episode_id"] for i in dashboard(refactor_engine, q="claude")["items"]] == ["premium"]
     assert [i["episode_id"] for i in dashboard(refactor_engine, q="Refactor Show", stage="not_processed")["items"]] == ["raw"]
     scored = [i["episode_id"] for i in dashboard(refactor_engine, sort="score", order="desc")["items"]]
-    assert scored[:3] == ["premium", "below", "running"] and scored[-1] == "raw"
+    assert scored[:3] == ["premium", "running", "below"] and scored[-1] == "raw"
     assert dashboard(refactor_engine, sort="updated", order="desc")["items"][0]["episode_id"] in {"premium", "running", "broken", "reconcile", "below"}
     # 旧 status 档位与新轴可叠加
     assert [i["episode_id"] for i in dashboard(refactor_engine, status_filter="failed", stage="failed")["items"]] == ["broken"]
@@ -190,10 +191,10 @@ def test_episode_detail_timeline_and_texts(refactor_engine):
     assert detail["episode"]["source_name"] == "Refactor Show"
     steps = {row["step"]: row for row in detail["timeline"]}
     assert [row["step"] for row in detail["timeline"]] == ["initial", "fetch", "asr", "analyze", "guide", "tts"]
-    assert steps["initial"]["state"] == "done" and "过处理线" in steps["initial"]["note"]
+    assert steps["initial"]["state"] == "done" and "过付费 ASR 线" in steps["initial"]["note"]
     assert steps["analyze"]["state"] == "done" and "8.7" in steps["analyze"]["note"]
-    assert steps["guide"]["state"] == "pending"
-    assert steps["tts"]["state"] == "pending"
+    assert steps["guide"]["state"] == "skipped" and "缺少当前全文逐字稿" in steps["guide"]["note"]
+    assert steps["tts"]["state"] == "skipped" and "未入自动队列" in steps["tts"]["note"]
 
     broken = {row["step"]: row for row in episode_detail(refactor_engine, "broken")["timeline"]}
     assert broken["fetch"]["state"] == "done"
@@ -202,7 +203,7 @@ def test_episode_detail_timeline_and_texts(refactor_engine):
     assert broken["guide"]["state"] == "pending"
 
     rejected = {row["step"]: row for row in episode_detail(refactor_engine, "rejected")["timeline"]}
-    assert "未过处理线" in rejected["initial"]["note"]
+    assert "未过付费 ASR 线" in rejected["initial"]["note"]
     assert rejected["fetch"]["state"] == "pending"
 
     below = episode_detail(refactor_engine, "below")
@@ -266,8 +267,10 @@ def test_artifact_list_pagination_search_and_titles(monkeypatch, tmp_path):
 
 
 def _seed_ledger(session):
-    now = "2026-09-14T08:00:00+00:00"
-    old = "2026-08-01T08:00:00+00:00"
+    # 相对当前时间造数据:hits_7d / 30d 是按「现在」滚动的窗口,写死日期会在日历翻页后改变排序(2026-09-22 CI 实炸)
+    _now_dt = _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0) - _dt.timedelta(days=1)
+    now = _now_dt.isoformat()
+    old = (_now_dt - _dt.timedelta(days=44)).isoformat()
     tags = []
     for code, kind, zh, en, status, selectable in (
         ("topic.agent-orchestration", "topic", "Agent 编排", "Agent orchestration", "active", True),
@@ -319,7 +322,7 @@ def _seed_ledger(session):
     for index in range(2):
         session.add(CmsTagCandidateEvidenceRecord(
             candidate_id=candidate.id, article_id=f"ledger-{index}", source_id=f"source-{index}",
-            source_owner_or_domain="example.test", published_date="2026-09-13", confidence=0.9,
+            source_owner_or_domain="example.test", published_date=_now_dt.date().isoformat(), confidence=0.9,
             raw_label="MCP", context_excerpt="…", created_at=now,
         ))
     session.commit()

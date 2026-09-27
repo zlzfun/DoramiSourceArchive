@@ -450,6 +450,9 @@ class GenericPodcastRssFetcher(GenericRssFetcher):
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         feed_url = str(kwargs.get("feed_url", "")).strip()
         runtime_source_id = str(kwargs.get("source_id", "")).strip() or self.source_id
+        entry_id_namespace = (
+            str(kwargs.get("entry_id_namespace", "")).strip() or runtime_source_id
+        )
         requested_show_title = str(kwargs.get("feed_name", "")).strip()
         category = str(kwargs.get("category", "")).strip()
         limit = self._entry_limit(kwargs.get("limit"), self.default_limit)
@@ -516,7 +519,7 @@ class GenericPodcastRssFetcher(GenericRssFetcher):
             }
             title = str(entry.get("title") or "未命名播客单集")
             yield PodcastEpisodeContent(
-                id=self._entry_id(runtime_source_id, entry),
+                id=self._entry_id(entry_id_namespace, entry),
                 title=title,
                 source_url=source_url,
                 publish_date=self._entry_datetime(entry, "published"),
