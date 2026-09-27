@@ -70,7 +70,8 @@ def build_source_fetch_params(
 ) -> Dict[str, Any]:
     """Build execution params from the current source row plus run overrides."""
 
-    params = parse_json_object(source_config.params_json)
+    stored_params = parse_json_object(source_config.params_json)
+    params = dict(stored_params)
     source_type = (source_config.source_type or "").strip().lower()
     if source_type in {"web", "webpage"}:
         params.update({
@@ -99,6 +100,13 @@ def build_source_fetch_params(
     if source_type in {"rss", "atom"} | PODCAST_SOURCE_TYPES:
         params["feed_url"] = source_config.url
         params["feed_name"] = source_config.name
+    if source_type in PODCAST_SOURCE_TYPES:
+        # Episode identity is persisted source policy, never a per-run override.
+        # Promoted custom Podcasts use this compatibility namespace to hit their
+        # historical Article primary keys after the public source-id changes.
+        params["entry_id_namespace"] = str(
+            stored_params.get("entry_id_namespace") or source_config.source_id
+        ).strip()
 
     if source_config.owner_username:
         # User RSS safety limits are owned by the configured-source path.

@@ -10,9 +10,9 @@
 - **同 URL 去重共享**:source_id = 前缀 + sha256(规范化 URL) 截断,第二人添加同一
   feed 退化为订阅既有配置行,一份抓取多人共享;``owner_username`` 记首建者,仅作
   身份标记与溯源,不承担权限差异。
-- **删除语义**:「移除」= 退订本人 + 无其他活跃订阅者时物理删除(配置行+文章+
-  抓取状态+各用户水位);收藏/已读态/分享的孤儿行沿既有「无害」口径不清
-  (与 DELETE /api/articles 行为一致)。
+- **删除语义**:「移除」= 退订本人 + 无其他活跃订阅者时收口共享源。普通文章与
+  未进入处理链的 Podcast 物理删除；已有不可变处理/成本审计的 Podcast 退役停抓，
+  保留审计真相并允许未来同 URL 重新订阅后复活。
 
 护栏数值是代码常量而非配置(沿 DAILY_SHARE_LIMIT 范式:防滥用护栏不是运营旋钮);
 总闸与刷新间隔是运营旋钮,走 KV(运维管理→内容 可改,刷新间隔改后热生效)。
@@ -21,6 +21,7 @@
 import datetime
 import hashlib
 import json
+import mimetypes
 import threading
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import parse_qsl, urlsplit, urlunsplit
@@ -33,6 +34,7 @@ from models.db import (
     AppSettingRecord,
     ArticleRecord,
     ArticleShareRecord,
+    PodcastProcessingRecord,
     ReaderReadCursorRecord,
     ReaderSubscriptionRecord,
     SourceConfigRecord,
@@ -63,6 +65,11 @@ MIN_REFRESH_MINUTES = 15       # 下限保护:对目标站与本机负载都别�
 FEED_MAX_BYTES = 5 * 1024 * 1024
 FEED_TIMEOUT_SECONDS = 20
 PREVIEW_ENTRY_COUNT = 5
+USER_SOURCE_KINDS = frozenset({"article", "podcast"})
+PODCAST_SOURCE_TYPES = frozenset({"podcast", "podcast_rss"})
+_AUDIO_EXTENSIONS = frozenset({
+    ".aac", ".flac", ".m4a", ".m4b", ".mp3", ".oga", ".ogg", ".opus", ".wav",
+})
 
 # Query-string credentials are common in signed/private feed URLs. They remain valid
 # fetch targets, but their contents must not be sent to MaaS or public sharing.
@@ -107,6 +114,17 @@ def _now_iso() -> str:
 
 def is_user_source(source_id: str) -> bool:
     return bool(source_id) and str(source_id).startswith(USER_SOURCE_PREFIX)
+
+
+def source_content_kind(record: SourceConfigRecord) -> str:
+    """Return the persisted content shape for a custom/configured feed."""
+    source_type = (record.source_type or "").strip().lower()
+    fetcher_id = (record.fetcher_id or "").strip().lower()
+    return (
+        "podcast"
+        if source_type in PODCAST_SOURCE_TYPES or fetcher_id == "generic_podcast_rss"
+        else "article"
+    )
 
 
 # ==================== URL 规范化与身份 ====================
@@ -441,6 +459,11 @@ def system_feed_urls(session: Session) -> Dict[str, Dict[str, str]]:
                 result[canonical_feed_url(feed_url)] = {
                     "source_id": source_id,
                     "name": getattr(fetcher_class, "name", source_id),
+                    "content_kind": (
+                        "podcast"
+                        if str(getattr(fetcher_class, "content_shape", "article")).lower() == "podcast"
+                        else "article"
+                    ),
                 }
             except ValueError:
                 continue
@@ -449,7 +472,7 @@ def system_feed_urls(session: Session) -> Dict[str, Dict[str, str]]:
     for record in session.exec(
         select(SourceConfigRecord).where(
             SourceConfigRecord.owner_username == "",
-            SourceConfigRecord.source_type.in_(["rss", "atom"]),
+            SourceConfigRecord.source_type.in_(["rss", "atom", "podcast", "podcast_rss"]),
         )
     ).all():
         if not record.url:
@@ -458,6 +481,7 @@ def system_feed_urls(session: Session) -> Dict[str, Dict[str, str]]:
             result[canonical_feed_url(record.url)] = {
                 "source_id": record.source_id,
                 "name": record.name,
+                "content_kind": source_content_kind(record),
             }
         except ValueError:
             continue
@@ -465,6 +489,72 @@ def system_feed_urls(session: Session) -> Dict[str, Dict[str, str]]:
 
 
 # ==================== feed 拉取与解析(preview 守门) ====================
+
+def _entry_audio_enclosure(entry: Any) -> tuple[bool, bool]:
+    """Return ``(has_enclosure, has_audio_enclosure)`` for a feedparser entry."""
+    enclosures = list(entry.get("enclosures") or [])
+    enclosures.extend(
+        link for link in (entry.get("links") or [])
+        if str(link.get("rel") or "").strip().lower() == "enclosure"
+    )
+    seen: Set[tuple[str, str]] = set()
+    has_enclosure = False
+    for enclosure in enclosures:
+        href = str(enclosure.get("href") or enclosure.get("url") or "").strip()
+        media_type = str(enclosure.get("type") or "").strip().lower()
+        key = (href, media_type)
+        if not href or key in seen:
+            continue
+        seen.add(key)
+        has_enclosure = True
+        filename = urlsplit(href).path.rsplit("/", 1)[-1].lower()
+        extension = f".{filename.rsplit('.', 1)[-1]}" if "." in filename else ""
+        guessed_type = mimetypes.guess_type(href)[0] or ""
+        if (
+            media_type.startswith("audio/")
+            or guessed_type.startswith("audio/")
+            or extension in _AUDIO_EXTENSIONS
+        ):
+            return True, True
+    return has_enclosure, False
+
+
+def _feed_has_podcast_metadata(parsed: Any) -> bool:
+    feed = getattr(parsed, "feed", None) or {}
+    keys = {str(key).lower() for key in feed.keys()}
+    namespaces = {
+        str(key).lower() for key in (getattr(parsed, "namespaces", None) or {}).keys()
+    }
+    return any(key.startswith(("itunes_", "podcast_")) for key in keys) or bool(
+        namespaces & {"itunes", "podcast"}
+    )
+
+
+def detect_feed_content_kind(parsed: Any) -> Dict[str, Any]:
+    """Classify a parsed feed without treating arbitrary media RSS as a podcast."""
+    entries = getattr(parsed, "entries", None) or []
+    audio_entry_count = 0
+    enclosure_entry_count = 0
+    for entry in entries:
+        has_enclosure, has_audio = _entry_audio_enclosure(entry)
+        enclosure_entry_count += int(has_enclosure)
+        audio_entry_count += int(has_audio)
+    podcast_metadata = _feed_has_podcast_metadata(parsed)
+    playable_entry_count = enclosure_entry_count if podcast_metadata else audio_entry_count
+    reasons = []
+    if audio_entry_count:
+        reasons.append("audio_enclosure")
+    if podcast_metadata:
+        reasons.append("podcast_metadata")
+    return {
+        "detected_kind": "podcast" if playable_entry_count else "article",
+        "detection_confidence": "high" if audio_entry_count else "medium",
+        "detection_reasons": reasons,
+        "audio_entry_count": audio_entry_count,
+        "enclosure_entry_count": enclosure_entry_count,
+        "playable_entry_count": playable_entry_count,
+    }
+
 
 async def fetch_feed_preview(
     url: str, *, transport: Optional[httpx.AsyncBaseTransport] = None
@@ -492,8 +582,10 @@ async def fetch_feed_preview(
         raise ValueError("无法从该地址解析出任何条目,请确认这是一个 RSS/Atom feed")
 
     feed_title = str((getattr(parsed, "feed", None) or {}).get("title") or "").strip()
+    podcast_metadata = _feed_has_podcast_metadata(parsed)
     preview_entries: List[Dict[str, Any]] = []
     for entry in entries[:PREVIEW_ENTRY_COUNT]:
+        has_enclosure, has_audio = _entry_audio_enclosure(entry)
         content_text = ""
         content_list = entry.get("content") or []
         if content_list:
@@ -504,12 +596,14 @@ async def fetch_feed_preview(
             "title": str(entry.get("title") or "").strip(),
             "publish_date": str(entry.get("published") or entry.get("updated") or ""),
             "content_chars": len(content_text),
+            "has_audio": has_audio or (has_enclosure and podcast_metadata),
         })
     return {
         "canonical_url": canonical,
         "feed_title": feed_title,
         "entry_count": len(entries),
         "entries": preview_entries,
+        **detect_feed_content_kind(parsed),
     }
 
 
@@ -555,10 +649,19 @@ def prepare_check(session: Session, url: str) -> Dict[str, Any]:
         if record.source_id in source_visibility.reader_unavailable_source_ids(session):
             # 被 admin 隐藏的既有用户源同样拒绝(检视返修 F6:防重新添加绕过止损)
             return {"blocked": True}
-        if not record.is_active and not _auto_disabled(session, record.source_id):
+        if (
+            not record.is_active
+            and not record.retired_at
+            and not _auto_disabled(session, record.source_id)
+        ):
             # admin 手动停用(计数未达自动阈值)不可经再次添加复活
             return {"blocked": True}
-        return {"existing": {"source_id": record.source_id, "name": record.name, "kind": "user"}}
+        return {"existing": {
+            "source_id": record.source_id,
+            "name": record.name,
+            "kind": "user",
+            "content_kind": source_content_kind(record),
+        }}
     return {}
 
 
@@ -596,7 +699,7 @@ class UserSourceQuotaError(ValueError):
 
 
 def prepare_user_source(
-    session: Session, username: str, url: str, name: str = ""
+    session: Session, username: str, url: str, name: str = "", content_kind: str = "article"
 ) -> Dict[str, Any]:
     """撞库检测 + 配额 + 建/复用配置行(不 commit,订阅动作由 router 编排)。
 
@@ -606,6 +709,9 @@ def prepare_user_source(
     - ``{"source_id", "created": bool, "record"}``:用户源就绪(新建或复用)
     """
     canonical = canonical_feed_url(url)
+    normalized_kind = (content_kind or "article").strip().lower()
+    if normalized_kind not in USER_SOURCE_KINDS:
+        raise ValueError("自定源类型仅支持文章或播客")
 
     conflict = system_feed_urls(session).get(canonical)
     if conflict:
@@ -625,14 +731,19 @@ def prepare_user_source(
         # 阈值)的源允许经再次添加复活并清计数(有人还要看,值得再试)。
         if record.source_id in source_visibility.reader_unavailable_source_ids(session):
             return {"blocked": True}
-        if not record.is_active and not _auto_disabled(session, record.source_id):
+        if (
+            not record.is_active
+            and not record.retired_at
+            and not _auto_disabled(session, record.source_id)
+        ):
             return {"blocked": True}
         if source_id not in mine and len(mine) >= MAX_SOURCES_PER_USER:
             raise UserSourceQuotaError(
                 f"自定源数量已达上限({MAX_SOURCES_PER_USER} 个)", status_code=400
             )
-        if not record.is_active:
+        if not record.is_active or record.retired_at:
             record.is_active = True
+            record.retired_at = None
             record.updated_at = _now_iso()
             session.add(record)
             state = session.get(SourceStateRecord, record.source_id)
@@ -654,10 +765,10 @@ def prepare_user_source(
     record = SourceConfigRecord(
         source_id=source_id,
         name=(name or "").strip()[:80] or canonical,
-        source_type="rss",
+        source_type="podcast" if normalized_kind == "podcast" else "rss",
         url=canonical,
         category="user",
-        fetcher_id="",  # resolve_source_fetcher_id 按 source_type 路由 generic_rss
+        fetcher_id="",  # resolve_source_fetcher_id 按 source_type 路由 RSS / Podcast 抓取器
         description="",
         owner_username=username,
         # Public custom feeds are analyzed once on the internal authority.  A
@@ -665,10 +776,10 @@ def prepare_user_source(
         ai_analysis_enabled=not credentialed_private,
         is_active=True,
         # 最简正文拍板:feed 给什么存什么,不触发详情页补抓。ssrf_guard 与响应上限
-        # 由 generic_rss 执行层承接(检视返修 D2/D3:首抓/调度/手工抓取全通道生效)。
+        # 由对应 RSS / Podcast 执行层承接(检视返修 D2/D3:全抓取通道生效)。
         params_json=json.dumps({
             "fetch_detail_if_missing": False,
-            "limit": 12,
+            "limit": 20 if normalized_kind == "podcast" else 12,
             "ssrf_guard": True,
             "max_response_bytes": FEED_MAX_BYTES,
             "credentialed_private": credentialed_private,
@@ -707,11 +818,13 @@ def list_user_sources(session: Session, username: Optional[str] = None) -> List[
             "feed_url": record.url,
             "owner_username": record.owner_username,
             "is_active": record.is_active,
+            "retired_at": record.retired_at or "",
             "ai_analysis_enabled": record.ai_analysis_enabled,
             "created_at": record.created_at,
             "status": state.status if state else "never_run",
             "consecutive_failures": state.consecutive_failures if state else 0,
             "last_success_at": (state.last_success_at or "") if state else "",
+            "content_kind": source_content_kind(record),
         })
     return items
 
@@ -779,66 +892,162 @@ def remove_source_from_subscriptions(
     return sorted(affected)
 
 
-def purge_user_source(session: Session, source_id: str) -> Dict[str, int]:
-    """物理删除用户源:配置行 + 全部文章(FTS trigger 同步)+ 抓取状态 + 各用户水位
-    + 分享记录(检视返修 F8:分享行留存会在「我的分享」显示死链并占每日额度)。
-
-    收藏/已读态的孤儿行沿既有「无害」口径不清(与 DELETE /api/articles 一致)。
-    不 commit,由调用方统一提交。
-    """
-    # 清一切残余订阅引用(codex 复检二轮 F7/F8:purge 只在无**活跃**订阅者时发生,
-    # 但 inactive 订阅行/REST 路径的引用若留存,之后 is_active 翻回 true 就成悬空
-    # 订阅——统一在物理删除前剔除,含所有用户)。
-    remove_source_from_subscriptions(session, source_id, username=None)
-    article_ids = [
+def _source_article_ids(session: Session, source_id: str) -> List[str]:
+    return [
         str(row) for row in session.exec(
             select(ArticleRecord.id).where(ArticleRecord.source_id == source_id)
         ).all()
     ]
+
+
+def _processing_bound_episode_ids(
+    session: Session, article_ids: List[str]
+) -> Set[str]:
+    """Return episodes whose immutable Podcast audit graph protects the article row."""
+
+    if not article_ids:
+        return set()
+    return {
+        str(row) for row in session.exec(
+            select(PodcastProcessingRecord.episode_id).where(
+                PodcastProcessingRecord.episode_id.in_(article_ids)
+            )
+        ).all()
+    }
+
+
+def _purge_user_source_rows(
+    session: Session, source_id: str, article_ids: List[str]
+) -> Dict[str, Any]:
+    """Hard-delete a source already proven free of protected Podcast processing."""
+
+    # 清一切残余订阅引用(codex 复检二轮 F7/F8:purge 只在无**活跃**订阅者时发生,
+    # 但 inactive 订阅行/REST 路径的引用若留存,之后 is_active 翻回 true 就成悬空
+    # 订阅——统一在物理删除前剔除,含所有用户)。
+    remove_source_from_subscriptions(session, source_id, username=None)
     if article_ids:
+        session.exec(
+            delete(ArticleShareRecord).where(
+                ArticleShareRecord.article_id.in_(article_ids)
+            )
+        )
         session.exec(delete(ArticleRecord).where(ArticleRecord.source_id == source_id))
-        session.exec(delete(ArticleShareRecord).where(ArticleShareRecord.article_id.in_(article_ids)))
-    session.exec(delete(ReaderReadCursorRecord).where(ReaderReadCursorRecord.source_id == source_id))
+    session.exec(
+        delete(ReaderReadCursorRecord).where(
+            ReaderReadCursorRecord.source_id == source_id
+        )
+    )
     state = session.get(SourceStateRecord, source_id)
     if state is not None:
         session.delete(state)
     record = session.get(SourceConfigRecord, source_id)
     if record is not None:
         session.delete(record)
-    return {"articles_deleted": len(article_ids)}
+    return {"disposition": "purged", "articles_deleted": len(article_ids)}
+
+
+def dispose_user_source(session: Session, source_id: str) -> Dict[str, Any]:
+    """Close an unreferenced shared source without violating Podcast audit truth.
+
+    Article sources and Podcast sources without durable processing are physically
+    removed.  Once an episode is referenced by ``podcast_processings`` its cost,
+    provider-attempt and operator-command graph is intentionally immutable; the
+    source is therefore retired (stopped and hidden) rather than deleting the
+    protected article out from under that graph.  No commit occurs here.
+    """
+
+    remove_source_from_subscriptions(session, source_id, username=None)
+    article_ids = _source_article_ids(session, source_id)
+    protected = _processing_bound_episode_ids(session, article_ids)
+    if not protected:
+        return _purge_user_source_rows(session, source_id, article_ids)
+
+    deletable = [article_id for article_id in article_ids if article_id not in protected]
+    if article_ids:
+        # Public links must stop working when the last subscriber removes the
+        # private custom source, even though audit-bound episode rows remain.
+        session.exec(
+            delete(ArticleShareRecord).where(
+                ArticleShareRecord.article_id.in_(article_ids)
+            )
+        )
+    if deletable:
+        session.exec(delete(ArticleRecord).where(ArticleRecord.id.in_(deletable)))
+    session.exec(
+        delete(ReaderReadCursorRecord).where(
+            ReaderReadCursorRecord.source_id == source_id
+        )
+    )
+    state = session.get(SourceStateRecord, source_id)
+    if state is not None:
+        session.delete(state)
+    record = session.get(SourceConfigRecord, source_id)
+    if record is not None:
+        record.is_active = False
+        record.retired_at = record.retired_at or _now_iso()
+        record.updated_at = _now_iso()
+        session.add(record)
+        disposition = "retired"
+    else:
+        # Legacy/racy orphan: its user-source prefix keeps it outside every
+        # public delivery scope. Keep the audit-bound row and let a future
+        # source recreation reclaim the stable identity.
+        disposition = "retained_orphan"
+    return {
+        "disposition": disposition,
+        "articles_deleted": len(deletable),
+        "protected_episodes": len(protected),
+    }
+
+
+def purge_user_source(session: Session, source_id: str) -> Dict[str, Any]:
+    """Compatibility entry point; safely purge or retire an unreferenced source."""
+
+    return dispose_user_source(session, source_id)
 
 
 def remove_user_source(session: Session, username: str, source_id: str) -> Dict[str, Any]:
-    """读者「移除自定源」:退订本人;无其他活跃订阅者时物理删除。commit 由本函数负责。"""
+    """读者移除共享源；最后订阅者触发原子 purge/retire。"""
     with _WRITE_LOCK:
         record = get_user_source(session, source_id)
         if record is None:
             raise LookupError("自定源不存在")
         remove_source_from_subscriptions(session, source_id, username=username)
-        session.commit()
+        session.flush()
         remaining = active_subscriber_usernames(session, source_id)
-        purged = {}
+        disposition: Dict[str, Any] = {"disposition": "kept", "articles_deleted": 0}
         if not remaining:
-            purged = purge_user_source(session, source_id)
-            session.commit()
-    return {"source_id": source_id, "purged": bool(purged), **purged}
+            disposition = dispose_user_source(session, source_id)
+        session.commit()
+    return {
+        "source_id": source_id,
+        "purged": disposition["disposition"] == "purged",
+        "retired": disposition["disposition"] == "retired",
+        **disposition,
+    }
 
 
 def admin_delete_user_source(session: Session, source_id: str) -> Dict[str, Any]:
-    """admin 强删:级联清所有订阅者的订阅行与水位后物理删除(读者路径碰不到这支)。"""
+    """Admin 强制收口：清订阅；无审计引用则删除，否则退役。"""
     with _WRITE_LOCK:
         record = get_user_source(session, source_id)
         if record is None:
             raise LookupError("自定源不存在")
         affected = remove_source_from_subscriptions(session, source_id, username=None)
-        purged = purge_user_source(session, source_id)
+        disposition = dispose_user_source(session, source_id)
         session.commit()
-    return {"source_id": source_id, "affected_subscribers": affected, **purged}
+    return {
+        "source_id": source_id,
+        "affected_subscribers": affected,
+        "purged": disposition["disposition"] == "purged",
+        "retired": disposition["disposition"] == "retired",
+        **disposition,
+    }
 
 
 def purge_account_user_sources(session: Session, username: str) -> List[str]:
     """账户删除级联（v3.40.4 审计 M03）：退订该用户的全部自定源引用，退订后无剩余
-    活跃订阅者的自定源按既有「无人订阅即物理删」语义整体清除，返回被清源清单。
+    活跃订阅者的自定源统一收口：普通源物理删除，审计绑定 Podcast 退役。
 
     **不 commit**——运行在调用方（accounts.delete_user）的单事务里，与账户行删除
     一并原子提交。候选集扫该用户全部订阅行（含 inactive，防僵尸行漏源）；持
@@ -857,8 +1066,9 @@ def purge_account_user_sources(session: Session, username: str) -> List[str]:
         purged: List[str] = []
         for source_id in sorted(candidate_ids):
             remove_source_from_subscriptions(session, source_id, username=username)
+            session.flush()
             if not active_subscriber_usernames(session, source_id):
-                purge_user_source(session, source_id)
+                dispose_user_source(session, source_id)
                 purged.append(source_id)
         return purged
 
@@ -878,16 +1088,22 @@ def tombstone_owner_username(session: Session, username: str, tombstone: str) ->
 
 
 def purge_orphan_user_sources(session: Session) -> List[str]:
-    """孤儿 GC(检视返修 F8):无任何活跃订阅者的用户源整体物理删除,返回清单。
+    """孤儿 GC：收口无活跃订阅者的用户源，返回处理清单。
 
     覆盖所有绕过专用移除端点的退订路径(REST 订阅更新/删除、账户删除等)——
     每轮定时刷新末尾执行,专用移除仍即时清理,GC 只是兜底。commit 由本函数负责。
     """
     with _WRITE_LOCK:
         purged: List[str] = []
-        for source_id in sorted(user_source_ids(session)):
+        records = list(session.exec(
+            select(SourceConfigRecord).where(SourceConfigRecord.owner_username != "")
+        ).all())
+        for record in sorted(records, key=lambda item: item.source_id):
+            source_id = record.source_id
+            if record.retired_at:
+                continue
             if not active_subscriber_usernames(session, source_id):
-                purge_user_source(session, source_id)
+                dispose_user_source(session, source_id)
                 purged.append(source_id)
         # 孤儿数据清理(codex 复检二/三轮):删除与在途抓取竞态可能在配置行已删后
         # 写回文章/重建 SourceStateRecord,REST 路径可能提交引用已删配置的订阅——
@@ -898,11 +1114,13 @@ def purge_orphan_user_sources(session: Session) -> List[str]:
             .where(ArticleRecord.source_id.startswith(USER_SOURCE_PREFIX, autoescape=True))
         ).all()
         orphan_article_ids = [str(aid) for aid, sid in orphan_rows if str(sid) not in remaining_ids]
-        if orphan_article_ids:
-            session.exec(delete(ArticleRecord).where(ArticleRecord.id.in_(orphan_article_ids)))
+        protected_orphans = _processing_bound_episode_ids(session, orphan_article_ids)
+        deletable_orphans = [aid for aid in orphan_article_ids if aid not in protected_orphans]
+        if deletable_orphans:
             session.exec(delete(ArticleShareRecord).where(
-                ArticleShareRecord.article_id.in_(orphan_article_ids)))
-            purged.append(f"(孤儿文章 ×{len(orphan_article_ids)})")
+                ArticleShareRecord.article_id.in_(deletable_orphans)))
+            session.exec(delete(ArticleRecord).where(ArticleRecord.id.in_(deletable_orphans)))
+            purged.append(f"(孤儿文章 ×{len(deletable_orphans)})")
         orphan_states = [
             s for s in session.exec(
                 select(SourceStateRecord).where(

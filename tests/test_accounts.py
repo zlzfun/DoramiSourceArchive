@@ -529,3 +529,47 @@ def test_delete_account_keeps_shared_custom_source_with_tombstoned_owner(tmp_pat
         record = session.get(SourceConfigRecord, shared_sid)
         assert record is not None
         assert record.owner_username == "deleted:user"
+
+
+def test_password_login_capability_defaults_true_and_gates_login_and_change_password(monkeypatch, tmp_path):
+    """issue #130:main 上 password_login_enabled 恒 True;下游只覆盖 services/auth_policy 一个函数,
+    按账号返回 False 时登录 / 改密 403、runtime 与 session 透出 False(前端据此隐藏改密表单,不再穿 prop)。"""
+    from services import auth_policy
+
+    app_module = _setup_app(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as client:
+        assert client.get("/api/auth/session").json() == {
+            "authenticated": False, "user": None, "password_login_enabled": True,
+        }
+        assert _login(client, "user", "user").status_code == 200
+        assert client.get("/api/runtime").json()["password_login_enabled"] is True
+        assert client.get("/api/auth/session").json()["password_login_enabled"] is True
+
+        # 下游覆盖:按账号判定——只有 user 被外部身份源接管,admin 仍可密码登录
+        monkeypatch.setattr(
+            auth_policy, "password_login_enabled",
+            lambda record=None: record is None or record.username != "user",
+        )
+        assert client.get("/api/runtime").json()["password_login_enabled"] is False
+        assert client.get("/api/auth/session").json()["password_login_enabled"] is False
+        assert client.post(
+            "/api/auth/change-password",
+            json={"current_password": "user", "new_password": "brand-new-pw"},
+        ).status_code == 403
+    with TestClient(app_module.app) as client:
+        assert client.get("/api/auth/session").json()["password_login_enabled"] is True  # 匿名 = 全局姿态
+        assert _login(client, "user", "user").status_code == 403
+        assert _login(client, "admin", "admin").status_code == 200
+        assert client.get("/api/runtime").json()["password_login_enabled"] is True
+
+    # 匿名全局姿态为 False(登录页默认不呈现密码表单)时,本地 admin 按账号仍可密码登录(codex R1 P3)
+    monkeypatch.setattr(
+        auth_policy, "password_login_enabled",
+        lambda record=None: record is not None and record.username == "admin",
+    )
+    with TestClient(app_module.app) as client:
+        assert client.get("/api/auth/session").json()["password_login_enabled"] is False
+        assert _login(client, "user", "user").status_code == 403
+        assert _login(client, "admin", "admin").status_code == 200
+        assert client.get("/api/runtime").json()["password_login_enabled"] is True
+        assert client.get("/api/auth/session").json()["password_login_enabled"] is True

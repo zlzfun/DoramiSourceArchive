@@ -6,6 +6,7 @@ import { mediaProxyUrl } from '../api';
 import { SOURCE_ROLES, sourceRoleOf, platformLabelOf, resolveCompany } from '../sourceTaxonomy';
 import { highlightMatch } from '../utils/highlight';
 import { renderAnnouncementContent } from '../utils/announcementText';
+import { bulkSubscribeModel } from '../utils/bulkSubscribe';
 
 // last_fetched(ISO)→ 人话:今日 / 昨日 / MM-DD;空值不显示
 function lastLabel(lastFetched) {
@@ -119,6 +120,8 @@ export default function DiscoverPage({
   collectionPinningId = null,
   onSubscribeCollection,
   onUnsubscribeCollection,
+  shapePinning = null,
+  onSubscribeShape,
   // ── 用户自定源(v3.40):总闸开且传入添加动作时,头部出现「添加源」入口 ──
   userSourcesEnabled = false,
   onAddCustomSource = null,
@@ -128,6 +131,7 @@ export default function DiscoverPage({
   tab: controlledTab = null,
   onTabChange = null,
   interestsPanel = null,
+  onOpenRankings = null,
   // ── 形态过滤受控(issue #55):从哪个容器进入就落在哪个形态,由上层(useReaderState.discoverShape)
   //    随 openDiscover 写入;是初值不是锁定,页内 seg 仍可切。不传时退回页内局部态(初值「全部」)。 ──
   shape: controlledShape = null,
@@ -142,6 +146,7 @@ export default function DiscoverPage({
   const setShape = (next) => { setLocalShape(next); onShapeChange?.(next); };
   const activeTab = interestsPanel || tab !== 'interests' ? tab : 'sources';
   const activeShape = shape;
+  const addSourceKind = activeShape === 'article' || activeShape === 'podcast' ? activeShape : null;
   const [query, setQuery] = useState('');
   // 排序小开关:默认(收录量降序,原有秩序)⇄ 订阅降序(全站订阅人数,选源社会证明)
   const [sortBySubs, setSortBySubs] = useState(false);
@@ -149,6 +154,7 @@ export default function DiscoverPage({
   const [confirmingId, setConfirmingId] = useState(null);
   const confirmTimerRef = useRef(null);
   useEffect(() => () => clearTimeout(confirmTimerRef.current), []);
+  const bulkSubscribe = bulkSubscribeModel(activeShape, sources, subscribedIds, shapePinning, loading);
 
   // 分组统一「信息角色」单轴;内容形态交给上方过滤条,不作分组维度。
   const groups = useMemo(() => {
@@ -310,12 +316,21 @@ export default function DiscoverPage({
               <div className="reader-disc-tools">
                 {/* 目录视图切换:平铺源目录 ⇄ 策展合集 */}
                 <span className="reader-seg reader-disc-viewseg" role="group" aria-label="目录视图">
-                  {[['sources', '源'], ['collections', '合集'], ...(interestsPanel ? [['interests', '兴趣']] : [])].map(([key, label]) => (
+                  {[
+                    ['sources', '源'],
+                    ['collections', '合集'],
+                    ...(interestsPanel ? [['interests', '兴趣']] : []),
+                    ...(onOpenRankings ? [['rankings', '榜单']] : []),
+                  ].map(([key, label]) => (
                     <button
                       key={key}
                       type="button"
                       className={`reader-seg-btn ${activeTab === key ? 'is-on' : ''}`}
-                      onClick={() => { setTab(key); disarmConfirm(); }}
+                      onClick={() => {
+                        if (key === 'rankings') onOpenRankings();
+                        else setTab(key);
+                        disarmConfirm();
+                      }}
                     >
                       {label}
                     </button>
@@ -343,7 +358,18 @@ export default function DiscoverPage({
                         onClick={() => setAddOpen(true)}
                       >
                         <Plus className="h-[13px] w-[13px]" aria-hidden="true" />
-                        添加源
+                        {addSourceKind === 'article' ? '添加文章源' : addSourceKind === 'podcast' ? '添加播客' : '添加源'}
+                      </button>
+                    )}
+                    {bulkSubscribe && onSubscribeShape && (
+                      <button
+                        type="button"
+                        className="reader-disc-add reader-disc-bulk-sub"
+                        disabled={bulkSubscribe.disabled}
+                        onClick={() => onSubscribeShape(bulkSubscribe.shape)}
+                      >
+                        {bulkSubscribe.busy && <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />}
+                        {bulkSubscribe.text}
                       </button>
                     )}
                     <span className="reader-seg reader-disc-seg" role="group" aria-label="形态筛选">
@@ -480,6 +506,7 @@ export default function DiscoverPage({
           open={addOpen}
           onClose={() => setAddOpen(false)}
           onAdd={onAddCustomSource}
+          expectedKind={addSourceKind}
         />
       )}
     </main>

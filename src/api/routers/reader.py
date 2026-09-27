@@ -15,9 +15,12 @@ import hashlib
 import hmac
 import importlib
 import json
+import logging
+import uuid
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import literal_column, or_
 from sqlmodel import Session, func, select
@@ -62,23 +65,122 @@ from models.db import (
     SourceConfigRecord,
 )
 from services import accounts as accounts_service
+from services import article_listen_guides as article_listen_guide_service
 from services import podcast_premium as podcast_premium_service
+from services import podcast_premium_guides as podcast_premium_guide_service
 from services import podcast_text_reader as podcast_text_reader_service
 from services import podcast_transcript_translation as podcast_transcript_translation_service
+from services import ai_usage as ai_usage_service
 from services import article_share as article_share_service
 from services.article_display_tags import article_ids_for_flexible_label, load_display_tags
 from services import daily_brief as daily_brief_service
 from services import reader_activity as reader_activity_service
 from services import reader_ai as reader_ai_service
+from services import reader_ondemand as reader_ondemand_service
 from services import reader_search as reader_search_service
 from services import reader_interests as reader_interests_service
+from services import rankings as rankings_service
 from services import reader_state as reader_state_service
 from services import source_collections as source_collections_service
+from services import subscription_mutations as subscription_mutations_service
 from services import source_visibility as source_visibility_service
 from services import user_sources as user_sources_service
 from services import x_api_config as x_api_config_service
 
 router = APIRouter(prefix="/api/reader", tags=["reader"])
+logger = logging.getLogger("dorami.api.reader")
+
+
+_SAFE_PODCAST_GUIDE_ERRORS = frozenset({
+    "podcast_ondemand_score_too_low",
+    "podcast_ondemand_final_pending",
+    "podcast_ondemand_disabled",
+})
+
+
+def _reader_podcast_guide_error(exc) -> JSONResponse:
+    """Return stable reader copy while retaining provider diagnostics in logs."""
+
+    if exc.code in _SAFE_PODCAST_GUIDE_ERRORS:
+        code, message = exc.code, exc.message
+    else:
+        logger.warning(
+            "podcast ondemand rejected code=%s detail=%s",
+            exc.code,
+            exc.message,
+        )
+        code = "podcast_guide_unavailable"
+        message = "中文导读暂时无法生成，请稍后再试"
+    return JSONResponse(
+        {"code": code, "message": message},
+        status_code=exc.status_code,
+        headers={"Cache-Control": "private, no-store", "Vary": "Cookie"},
+    )
+
+
+@router.get("/rankings")
+def get_reader_rankings(
+    shape: Literal["article", "podcast"],
+    date: str = "latest",
+    session: Session = Depends(deps.get_session),
+):
+    """Return one shape's three governed tag boards and must-read list."""
+
+    # Empty deployments should not make the first reader wait until tomorrow's
+    # cron (or depend on the startup catch-up winning a race). The service
+    # double-checks under a process-wide mutex, so concurrent first requests
+    # still perform one full build only.
+    rankings_service.ensure_snapshot_if_empty(session.get_bind())
+    result = rankings_service.read_rankings(session, date=date, shape=shape)
+    if result is None:
+        raise HTTPException(status_code=404, detail="榜单快照尚未生成")
+    return result
+
+
+@router.get("/rankings/history")
+def get_reader_ranking_history(
+    tag_code: str,
+    shape: Literal["article", "podcast"],
+    days: int = 30,
+    session: Session = Depends(deps.get_session),
+):
+    if not 1 <= days <= 90:
+        raise HTTPException(status_code=400, detail="趋势天数必须在 1 到 90 天之间")
+    return rankings_service.read_history(
+        session,
+        tag_code=tag_code.strip(),
+        shape=shape,
+        days=days,
+    )
+
+
+@router.get("/rankings/{date}/tags/{tag_code:path}")
+def get_reader_ranking_tag(
+    date: str,
+    tag_code: str,
+    shape: Literal["article", "podcast"],
+    session: Session = Depends(deps.get_session),
+):
+    result = rankings_service.read_tag_contents(
+        session,
+        date=date,
+        shape=shape,
+        tag_code=tag_code.strip(),
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="这个标签当前没有可见榜单内容")
+    return result
+
+def _guard_source_subscription_mutation(request: Request):
+    """给单源、合集和自定源写入口复用同一用户级互斥状态。"""
+    username = _app().current_username(request)
+    operation = f"{request.method} {request.url.path}"
+    if not subscription_mutations_service.begin(username, operation):
+        raise HTTPException(status_code=409, detail="已有订阅操作正在处理中")
+    try:
+        yield
+    finally:
+        subscription_mutations_service.finish(username, operation)
 
 
 def _app():
@@ -149,7 +251,12 @@ def resolve_favorite_article_ids(session: Session, username: str) -> List[str]:
 # ==================== 一键订阅 / 退订 ====================
 
 @router.post("/sources/{source_id}/subscribe")
-def subscribe_source(source_id: str, request: Request, session: Session = Depends(deps.get_session)):
+def subscribe_source(
+    source_id: str,
+    request: Request,
+    session: Session = Depends(deps.get_session),
+    _mutation_guard: None = Depends(_guard_source_subscription_mutation),
+):
     """一键订阅单个内容源：尚未订阅则创建一个仅含该源的订阅，已订阅则幂等返回。
 
     交付令牌、限额等高级设置使用默认值，留待用户在「我的订阅」中按需编辑。
@@ -200,7 +307,12 @@ def subscribe_source(source_id: str, request: Request, session: Session = Depend
 
 
 @router.delete("/sources/{source_id}/subscribe")
-def unsubscribe_source(source_id: str, request: Request, session: Session = Depends(deps.get_session)):
+def unsubscribe_source(
+    source_id: str,
+    request: Request,
+    session: Session = Depends(deps.get_session),
+    _mutation_guard: None = Depends(_guard_source_subscription_mutation),
+):
     """一键取消订阅：从当前用户的所有订阅范围内移除该源，因此清空的订阅会被删除。"""
     app = _app()
     username = app.current_username(request)
@@ -274,7 +386,12 @@ def list_source_collections():
 
 
 @router.post("/collections/{collection_id}/subscribe")
-def subscribe_collection(collection_id: str, request: Request, session: Session = Depends(deps.get_session)):
+def subscribe_collection(
+    collection_id: str,
+    request: Request,
+    session: Session = Depends(deps.get_session),
+    _mutation_guard: None = Depends(_guard_source_subscription_mutation),
+):
     """一键订阅合集 = 批量订阅其当前成员(批量动作,非持久绑定)。
 
     逐成员沿用单源订阅的两条纪律:隐藏源与注册表外成员跳过(不整体 404,
@@ -322,7 +439,12 @@ def subscribe_collection(collection_id: str, request: Request, session: Session 
 
 
 @router.delete("/collections/{collection_id}/subscribe")
-def unsubscribe_collection(collection_id: str, request: Request, session: Session = Depends(deps.get_session)):
+def unsubscribe_collection(
+    collection_id: str,
+    request: Request,
+    session: Session = Depends(deps.get_session),
+    _mutation_guard: None = Depends(_guard_source_subscription_mutation),
+):
     """取消订阅合集 = 批量退订其当前成员。
 
     无绑定记录的诚实推论:同属其它合集的成员也会被退订(前端确认框如实列出)。
@@ -379,6 +501,7 @@ def unsubscribe_collection(collection_id: str, request: Request, session: Sessio
 class CustomSourceParams(BaseModel):
     url: str
     name: Optional[str] = None
+    kind: Optional[Literal["article", "podcast"]] = None
 
 
 class CustomSourceAiAnalysisParams(BaseModel):
@@ -471,7 +594,10 @@ async def preview_custom_source(
 
 @router.post("/custom-sources")
 async def create_custom_source(
-        params: CustomSourceParams, request: Request, session: Session = Depends(deps.get_session)
+        params: CustomSourceParams,
+        request: Request,
+        session: Session = Depends(deps.get_session),
+        _mutation_guard: None = Depends(_guard_source_subscription_mutation),
 ):
     """添加自定源:守门 → 撞库 → 建/复用配置行 → 订阅本人 → 提交首抓后台 job。"""
     app = _app()
@@ -484,7 +610,7 @@ async def create_custom_source(
     if existing and existing.get("kind") == "system":
         # 撞中可见系统源:不建用户源,前端引导走普通订阅(该来源已收录)。
         return {"status": "exists", "existing": existing}
-    preview = {"feed_title": ""}
+    preview = {"feed_title": "", "detected_kind": "article", "playable_entry_count": 0}
     if not existing:
         # 新 feed 才重跑守门(不能信任前端一定先走了 preview);顺带拿 feed_title 作默认名。
         # 既有用户源(去重共享:第二人添加同 URL)跳过网络校验,直接进复用+订阅。
@@ -494,6 +620,14 @@ async def create_custom_source(
             raise HTTPException(status_code=400, detail=str(exc))
         except Exception:  # noqa: BLE001
             raise HTTPException(status_code=400, detail="无法访问该地址,请检查 URL 或稍后再试")
+    content_kind = (
+        existing.get("content_kind", "article")
+        if existing
+        else (params.kind or preview.get("detected_kind") or "article")
+    )
+    playable_count = preview.get("playable_entry_count", preview.get("audio_entry_count", 0))
+    if not existing and content_kind == "podcast" and not playable_count:
+        raise HTTPException(status_code=400, detail="该 feed 未检测到可播放的音频条目,请改为文章源或检查地址")
     # 建行→订阅→commit 是 check-then-write 段,以 service 写锁串行化(检视返修 F7;
     # 段内全同步无 await,锁窗口极短)。prepared 的 blocked(隐藏/admin 停用的既有
     # 用户源)统一按「暂不可用」处理。
@@ -502,7 +636,11 @@ async def create_custom_source(
     with user_sources_service._WRITE_LOCK:  # noqa: SLF001 - 与 service 写路径同一把锁
         try:
             prepared = user_sources_service.prepare_user_source(
-                session, username, params.url, name=(params.name or preview["feed_title"] or "")
+                session,
+                username,
+                params.url,
+                name=(params.name or preview["feed_title"] or ""),
+                content_kind=content_kind,
             )
         except user_sources_service.UserSourceQuotaError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc))
@@ -542,19 +680,21 @@ async def create_custom_source(
         return {
             "status": "success", "source_id": source_id, "name": record.name,
             "created": False, "first_fetch": "skipped", "saved_count": 0,
+            "content_kind": user_sources_service.source_content_kind(record),
         }
 
     # 首抓同步等待(2026-08-28 返修:原后台 job 形态下,添加后立即点开该源列表为空,
     # 像「没文章」,刷新才出现——单 feed 首抓仅数秒,同步等完再返回,modal 的 busy 态
     # 自然覆盖,关闭浮层即一切就绪)。失败不阻断:源已建成,随定时调度重试。
-    from api.routers.source_configs import build_source_fetch_params
+    from api.routers.source_configs import build_source_fetch_params, resolve_source_fetcher_id
 
     fetch_params = build_source_fetch_params(record, {})
+    fetcher_id = resolve_source_fetcher_id(record)
     first_fetch = "ok"
     saved_count = 0
     try:
         fetch_result = await app.run_single_fetch_as_collection(
-            "generic_rss", fetch_params,
+            fetcher_id, fetch_params,
             name=f"自定源首抓: {record.name}", trigger_type="manual", run_scope="ad_hoc",
         )
         saved_count = int(fetch_result.get("saved_count")
@@ -567,8 +707,9 @@ async def create_custom_source(
     # 防与「另一用户同 URL 重建」竞态误删刚建的新源(三轮收口)。
     with user_sources_service._WRITE_LOCK:  # noqa: SLF001
         with Session(deps.get_db_sink().engine) as check_session:
-            if user_sources_service.get_user_source(check_session, source_id) is None:
-                user_sources_service.purge_user_source(check_session, source_id)
+            current = user_sources_service.get_user_source(check_session, source_id)
+            if current is None or current.retired_at:
+                user_sources_service.dispose_user_source(check_session, source_id)
                 check_session.commit()
                 raise HTTPException(status_code=404, detail="该来源已被移除")
     return {
@@ -578,6 +719,7 @@ async def create_custom_source(
         "created": prepared["created"],
         "first_fetch": first_fetch,
         "saved_count": saved_count,
+        "content_kind": user_sources_service.source_content_kind(record),
     }
 
 
@@ -618,7 +760,12 @@ def update_custom_source_ai_analysis(
 
 
 @router.delete("/custom-sources/{source_id}")
-def remove_custom_source(source_id: str, request: Request, session: Session = Depends(deps.get_session)):
+def remove_custom_source(
+    source_id: str,
+    request: Request,
+    session: Session = Depends(deps.get_session),
+    _mutation_guard: None = Depends(_guard_source_subscription_mutation),
+):
     """移除自定源:退订本人;无其他活跃订阅者时物理删除(配置行+文章)。"""
     app = _app()
     username = app.current_username(request)
@@ -1115,8 +1262,10 @@ def rotate_feed_token(request: Request, session: Session = Depends(deps.get_sess
 
 # ==================== 内容源目录 ====================
 
-@router.get("/sources")
-def get_reader_sources(request: Request, session: Session = Depends(deps.get_session)):
+def _reader_sources_catalog(
+    request: Request,
+    session: Session,
+):
     """读者层内容源目录：可订阅来源 = 所有已注册抓取源 ∪ 已归档来源 ∪ 已订阅来源。
 
     即便某个源历史产出为 0，它仍会出现在目录里，用户可提前订阅以接收其后续产出。
@@ -1264,6 +1413,97 @@ def get_reader_sources(request: Request, session: Session = Depends(deps.get_ses
     }
 
 
+@router.get("/sources")
+def get_reader_sources(request: Request, session: Session = Depends(deps.get_session)):
+    """读者层内容源目录：可订阅来源 = 所有已注册抓取源 ∪ 已归档来源 ∪ 已订阅来源。
+
+    即便某个源历史产出为 0，它仍会出现在目录里，用户可提前订阅以接收其后续产出。
+    """
+    return _reader_sources_catalog(request, session)
+
+
+class BatchSourceSubscribeParams(BaseModel):
+    shape: Literal["article", "podcast"]
+
+
+@router.get("/sources/subscribe-batch/status")
+def get_source_batch_subscription_status(request: Request):
+    username = _app().current_username(request)
+    active = subscription_mutations_service.status(username)
+    return {
+        "processing": active is not None,
+        "shape": active.get("shape") if active else None,
+    }
+
+
+@router.post("/sources/subscribe-batch")
+def subscribe_sources_by_shape(
+    params: BatchSourceSubscribeParams,
+    request: Request,
+    session: Session = Depends(deps.get_session),
+):
+    """按内容形态订阅当前目录内全部来源，一次请求、一次事务。
+
+    候选集合与发现页目录同源；隐藏源会回报在 unavailable，自定源仍遵守
+    当前用户私有可见边界。已订阅源幂等跳过，新订阅与单源入口一样初始化未读积压。
+    """
+    app = _app()
+    username = app.current_username(request)
+    operation = f"batch:{params.shape}"
+    if not subscription_mutations_service.begin(
+        username,
+        operation,
+        shape=params.shape,
+    ):
+        raise HTTPException(status_code=409, detail="已有订阅操作正在处理中")
+    try:
+        catalog = _reader_sources_catalog(request, session)
+        registry_meta = _registry_source_meta()
+        existing = set(catalog["subscribed_source_ids"])
+        added: List[str] = []
+        already_subscribed: List[str] = []
+        unavailable: List[str] = []
+
+        for source in catalog["sources"]:
+            if source.get("shape") != params.shape:
+                continue
+            source_id = source["source_id"]
+            if source.get("hidden"):
+                unavailable.append(source_id)
+                continue
+            if source_id in existing:
+                already_subscribed.append(source_id)
+                continue
+            app._create_single_source_subscription(
+                session,
+                username,
+                source_id,
+                source.get("name") or _friendly_source_name(source_id, registry_meta),
+            )
+            reader_state_service.init_cursor_with_backlog(
+                session,
+                username=username,
+                source_id=source_id,
+            )
+            added.append(source_id)
+
+        if added:
+            session.commit()
+        subscribed_ids = sorted(set(
+            app.resolve_subscribed_source_ids(session, username, include_hidden=True)
+        ))
+        return {
+            "status": "success",
+            "shape": params.shape,
+            "added": added,
+            "already_subscribed": already_subscribed,
+            "unavailable": unavailable,
+            "subscribed_source_ids": subscribed_ids,
+        }
+    finally:
+        subscription_mutations_service.finish(username, operation)
+
+
 # ==================== 阅读器 AI（用户面：翻译 / 问答）====================
 
 class ReaderTranslateParams(BaseModel):
@@ -1343,26 +1583,41 @@ def _require_reader_ai(request: Request):
 
 
 # 读者 AI 逐用户每日配额（常量，可调）：护住共享 LLM 预算不被单账户刷爆。
-# 计数复用 AiUsageRecord.calls，即底层 LLM 调用次数——translate 会按段并发多次调用，
-# 故该额度更接近「若干篇整文翻译」而非固定篇数；ask 通常一问一次调用。
-_AI_DAILY_CALL_LIMITS = {"translate": 50, "ask": 100, "summarize": 50}
+# 计数复用 AiUsageRecord.calls。translate/ask/summarize 更接近底层调用次数；
+# podcast_ondemand / article_ondemand 按「发起一次新生成」记 1 次（复用 / 拒绝不扣），
+# 且二者共用同一日额度池（issue #124）。
+_AI_ONDEMAND_DAILY_LIMIT = 5
+_AI_ONDEMAND_PURPOSES = frozenset({"podcast_ondemand", "article_ondemand"})
+_AI_DAILY_CALL_LIMITS = {
+    "translate": 50,
+    "ask": 100,
+    "summarize": 50,
+    # 池容量读取键；article_ondemand 走同一池，不单独加限额。
+    "podcast_ondemand": _AI_ONDEMAND_DAILY_LIMIT,
+}
 
 
 def _enforce_ai_daily_quota(username: str, purpose: str) -> None:
     """按当日 AiUsageRecord 聚合的 calls 判该账户此用途是否超额；超则 429。
 
     admin 不豁免：配额护的是共享 LLM 预算/成本，与账户角色无关，统一限最简单可预期。
+    点播用途（播客 + 文章）合计计入同一池。
     """
-    limit = _AI_DAILY_CALL_LIMITS.get(purpose)
-    if not limit:
-        return
+    if purpose in _AI_ONDEMAND_PURPOSES:
+        limit = _AI_ONDEMAND_DAILY_LIMIT
+        purpose_clause = AiUsageRecord.purpose.in_(tuple(_AI_ONDEMAND_PURPOSES))
+    else:
+        limit = _AI_DAILY_CALL_LIMITS.get(purpose)
+        if not limit:
+            return
+        purpose_clause = AiUsageRecord.purpose == purpose
     today = datetime.date.today().isoformat()
     with Session(deps.get_db_sink().engine) as session:
         used = session.exec(
             select(func.coalesce(func.sum(AiUsageRecord.calls), 0)).where(
                 AiUsageRecord.day == today,
                 AiUsageRecord.username == username,
-                AiUsageRecord.purpose == purpose,
+                purpose_clause,
             )
         ).one()
     if int(used or 0) >= limit:
@@ -1472,6 +1727,242 @@ async def reader_ai_translate_podcast_transcript(
         "item": result["items"][0],
         "cached": cached,
     }
+
+
+def _require_ondemand_enabled() -> None:
+    """点播总闸(issue #137)：关闭时两条链路一并谢绝。
+
+    前端同步收入口（runtime 能力位），这里是端点侧防守——旧页面、直调、
+    开关在页面打开后被关掉，三种情形都落到这里。
+    """
+    with Session(deps.get_db_sink().engine) as session:
+        if not reader_ondemand_service.feature_enabled(session):
+            raise HTTPException(
+                status_code=403,
+                detail=reader_ondemand_service.FEATURE_DISABLED_MESSAGE,
+            )
+
+
+@router.post("/ai/podcasts/{episode_id}/ondemand")
+async def reader_ai_podcast_ondemand(episode_id: str, request: Request):
+    """读者点播精品导读音频：复用强制 TTS 流水线，跳过优质分门槛。
+
+    总闸关闭时直接 403，不评估、不扣额度。
+    资格：必须已有全文终评；无终评且非进行中 → 评分过低文案。
+    本部署未授权播客点播阶段时返回「当前部署未开启播客点播」，不向读者列出阶段名。
+    配额：仅「真正新开一次生成」扣 1（日限额 5）；复用已有/进行中不扣。
+    顺序：总闸 → 只读评估 → 成本闸 → 再落库调度 → 成功后记账。
+    """
+
+    username, _llm_config = _require_reader_ai(request)
+    _require_ondemand_enabled()
+    app = _app()
+    db_sink = deps.get_db_sink()
+    with Session(db_sink.engine) as session:
+        episode = session.get(ArticleRecord, episode_id)
+        if episode is None or episode.content_type != "podcast_episode":
+            raise HTTPException(status_code=404, detail="播客单集不存在")
+        if episode.source_id in source_visibility_service.reader_unavailable_source_ids(
+            session
+        ):
+            raise HTTPException(status_code=404, detail="播客单集不存在")
+        _deny_unsubscribed_user_source_article(session, username, episode)
+        _deny_nonexportable_article(session, episode)
+
+    try:
+        evaluated = (
+            podcast_premium_guide_service.evaluate_reader_ondemand_premium_guide(
+                db_sink.engine,
+                episode_id=episode_id,
+                config=app.settings.podcast,
+                actor=username,
+            )
+        )
+    except podcast_premium_guide_service.PremiumGuideForceError as exc:
+        return _reader_podcast_guide_error(exc)
+
+    if evaluated["outcome"] in {"ready", "in_progress"}:
+        return {
+            "status": "success",
+            "episode_id": episode_id,
+            "outcome": evaluated["outcome"],
+            "guide_status": evaluated["status"],
+            "charged": False,
+            "started": False,
+        }
+
+    # 仅「需要新开生成」才走成本闸；过闸后再落库，避免拒配额却留下排队痕迹。
+    _enforce_ai_cost_gates(username, "podcast_ondemand")
+
+    idempotency_key = f"reader-ondemand:{username}:{episode_id}:{uuid.uuid4().hex}"
+    try:
+        scheduled = app.schedule_forced_podcast_premium_guide(
+            episode_id,
+            idempotency_key=idempotency_key,
+            reason=podcast_premium_guide_service.READER_ONDEMAND_REASON,
+            actor=username,
+        )
+    except podcast_premium_guide_service.PremiumGuideForceError as exc:
+        # 并发下另一请求已入队/已就绪：软复用，不扣配额。
+        if exc.code == "podcast_force_tts_in_progress":
+            return {
+                "status": "success",
+                "episode_id": episode_id,
+                "outcome": "in_progress",
+                "guide_status": "queued",
+                "charged": False,
+                "started": False,
+            }
+        if exc.code == "podcast_force_tts_already_ready":
+            return {
+                "status": "success",
+                "episode_id": episode_id,
+                "outcome": "ready",
+                "guide_status": "ready",
+                "charged": False,
+                "started": False,
+            }
+        return _reader_podcast_guide_error(exc)
+
+    with Session(db_sink.engine) as session:
+        ai_usage_service.record_usage(
+            session,
+            username=username,
+            purpose="podcast_ondemand",
+            model="ondemand",
+            usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        )
+        accounts_service.record_ai_usage(session, username, "podcast_ondemand")
+
+    return {
+        "status": "success",
+        "episode_id": episode_id,
+        "outcome": "queued",
+        "guide_status": scheduled.get("status") or "queued",
+        "charged": True,
+        "started": bool(scheduled.get("started")),
+    }
+
+
+@router.post("/ai/articles/{article_id}/ondemand")
+async def reader_ai_article_ondemand(article_id: str, request: Request):
+    """读者点播文章精简旁白音频：无新闻价值分门槛，有正文即可。
+
+    总闸关闭时直接 403，不评估、不扣额度。
+    配额：与播客点播共用日额度池；仅「真正新开一次生成」扣 1；复用已有/进行中不扣。
+    顺序：总闸 → 只读评估 → 成本闸 → 再落库调度 → 成功后记账。
+    """
+
+    username, _llm_config = _require_reader_ai(request)
+    _require_ondemand_enabled()
+    app = _app()
+    db_sink = deps.get_db_sink()
+    with Session(db_sink.engine) as session:
+        article = session.get(ArticleRecord, article_id)
+        if article is None or article.content_type == "podcast_episode":
+            raise HTTPException(status_code=404, detail="文章不存在")
+        _deny_hidden_source_article(session, request, article)
+        _deny_unsubscribed_user_source_article(session, username, article)
+        _deny_nonexportable_article(session, article)
+
+    try:
+        evaluated = article_listen_guide_service.evaluate_reader_ondemand(
+            db_sink.engine,
+            article_id=article_id,
+            actor=username,
+        )
+    except article_listen_guide_service.ArticleListenError as exc:
+        return JSONResponse(
+            {"code": exc.code, "message": exc.message},
+            status_code=exc.status_code,
+            headers={"Cache-Control": "private, no-store", "Vary": "Cookie"},
+        )
+
+    if evaluated["outcome"] in {"ready", "in_progress"}:
+        return {
+            "status": "success",
+            "article_id": article_id,
+            "outcome": evaluated["outcome"],
+            "guide_status": evaluated["status"],
+            "charged": False,
+            "started": False,
+        }
+
+    _enforce_ai_cost_gates(username, "article_ondemand")
+
+    try:
+        scheduled = app.schedule_article_listen_guide(article_id, actor=username)
+    except article_listen_guide_service.ArticleListenError as exc:
+        return JSONResponse(
+            {"code": exc.code, "message": exc.message},
+            status_code=exc.status_code,
+            headers={"Cache-Control": "private, no-store", "Vary": "Cookie"},
+        )
+
+    if scheduled.get("outcome") in {"ready", "in_progress"} and not scheduled.get(
+        "started"
+    ):
+        return {
+            "status": "success",
+            "article_id": article_id,
+            "outcome": scheduled["outcome"],
+            "guide_status": scheduled.get("status") or scheduled["outcome"],
+            "charged": False,
+            "started": False,
+        }
+
+    with Session(db_sink.engine) as session:
+        ai_usage_service.record_usage(
+            session,
+            username=username,
+            purpose="article_ondemand",
+            model="ondemand",
+            usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        )
+        accounts_service.record_ai_usage(session, username, "article_ondemand")
+
+    return {
+        "status": "success",
+        "article_id": article_id,
+        "outcome": scheduled.get("outcome") or "queued",
+        "guide_status": scheduled.get("status") or "queued",
+        "charged": True,
+        "started": bool(scheduled.get("started")),
+    }
+
+
+@router.get("/articles/{article_id}/listen-audio")
+def reader_article_listen_audio(article_id: str, request: Request):
+    """已就绪的文章点播旁白音频（本地 CAS）。"""
+
+    username = _app().current_username(request)
+    if not username:
+        raise HTTPException(status_code=401, detail="未登录")
+    app = _app()
+    db_sink = deps.get_db_sink()
+    with Session(db_sink.engine) as session:
+        article = session.get(ArticleRecord, article_id)
+        if article is None or article.content_type == "podcast_episode":
+            raise HTTPException(status_code=404, detail="音频不存在")
+        _deny_hidden_source_article(session, request, article)
+        _deny_unsubscribed_user_source_article(session, username, article)
+        _deny_nonexportable_article(session, article)
+
+    resolved = article_listen_guide_service.audio_file_for_article(
+        db_sink.engine, app.article_listen_store, article_id
+    )
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="音频不存在")
+    path, mime, _guide = resolved
+    return FileResponse(
+        path,
+        media_type=mime or "audio/mpeg",
+        headers={
+            "Cache-Control": "private, max-age=3600",
+            "X-Content-Type-Options": "nosniff",
+            "Accept-Ranges": "bytes",
+        },
+    )
 
 
 @router.post("/ai/summarize")

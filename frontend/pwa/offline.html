@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>连接已断开 · 哆啦美</title>
+  <style>
+    :root { color-scheme: light dark; --canvas: #eef1f6; --surface: #fff; --ink: #18243b; --muted: #526079; --border: #d9dfe9; --accent: #4353a4; }
+    @media (prefers-color-scheme: dark) { :root { --canvas: #141821; --surface: #1c2230; --ink: #e9edf5; --muted: #aab5c7; --border: #343e50; --accent: #bac5ff; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100dvh; display: grid; place-items: center; padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left)); background: var(--canvas); color: var(--ink); font-family: "Mona Sans VF", -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans Backtick Fix", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji"; }
+    main { width: min(100%, 400px); padding: 32px; background: var(--surface); border: 1px solid var(--border); border-radius: 20px; }
+    .brand { font-size: 14px; color: var(--muted); margin: 0 0 32px; }
+    svg { width: 32px; height: 32px; color: var(--muted); }
+    h1 { font-size: 24px; letter-spacing: -.03em; margin: 20px 0 12px; }
+    p { font-size: 15px; line-height: 1.8; color: var(--muted); }
+    button { display: inline-flex; align-items: center; min-height: 44px; margin-top: 12px; padding: 0 18px; color: var(--accent); background: transparent; border: 1px solid var(--border); border-radius: 10px; font: inherit; font-weight: 600; cursor: pointer; }
+    button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="brand">哆啦美 · AI 资讯阅读器</p>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="m2 2 20 20M8.5 8.5a10 10 0 0 1 10.8 2.8M2 8.8a16 16 0 0 1 2.2-1.6M9.5 3.2A16 16 0 0 1 22 8.8M5 12a10 10 0 0 1 1.5-1.1M8.5 15.5a5 5 0 0 1 7 0M12 20h.01"/></svg>
+    <h1>暂时无法连接</h1>
+    <p>请检查网络后重试。哆啦美需要联网阅读，文章不会保存在离线缓存中。</p>
+    <button type="button" id="retry">重新连接</button>
+  </main>
+  <script>
+    // Reload preserves the full URL, including article and share-token fragments.
+    document.getElementById('retry').addEventListener('click', () => window.location.reload());
+  </script>
+</body>
+</html>

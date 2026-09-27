@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { avatarInitial, avatarHue } from '../../utils/avatarColor';
 import { useConfirm } from '../../hooks/useConfirm';
+import InstallApp from '../InstallApp';
 
 // 「我的」页(移动波 Wave2,样页画面③):承接桌面 RailUserFlyout 的全部职责
 // (主题/设置/反馈/退出)+ 收藏与发现入口。退出改确认对话框——触屏上 hover 展开的
@@ -74,6 +75,7 @@ export default function MobileMePage({
       </div>
 
       <div className="m-group">
+        <InstallApp />
         {/* 反馈是「读者→管理员」通道,admin 会话无此入口(与桌面设置柜同口径) */}
         {!isAdmin && (
           <button type="button" className="m-row" onClick={() => onOpenSettings?.('feedback')}>

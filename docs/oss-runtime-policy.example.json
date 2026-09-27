@@ -1,0 +1,14 @@
+{
+  "Version": "1",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["oss:GetObject", "oss:PutObject"],
+      "Resource": [
+        "acs:oss:*:*:YOUR_BUCKET/prod/media/*",
+        "acs:oss:*:*:YOUR_BUCKET/prod/podcast/*"
+      ],
+      "Condition": {"Bool": {"acs:SecureTransport": "true"}}
+    }
+  ]
+}

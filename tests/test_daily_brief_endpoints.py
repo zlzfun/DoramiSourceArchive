@@ -184,3 +184,30 @@ def test_daily_brief_config_min_items_round_trip(monkeypatch, tmp_path):
         assert client.post("/api/daily-brief/config", json={"min_items": 51}).status_code == 400
         assert client.post("/api/daily-brief/config", json={"min_items": -1}).status_code == 400
         assert client.get("/api/daily-brief/pipeline").json()["params"]["min_items"] == 3
+
+
+def test_delete_latest_brief_preserves_backlog_and_requeues_old_included_item(monkeypatch, tmp_path):
+    import json
+    from sqlmodel import Session
+    from models.db import ArticleRecord, DailyBriefCandidateRecord
+    from services import daily_brief as brief
+    from tests.test_daily_brief import _seed
+    app = _setup(monkeypatch, tmp_path)
+    for name, stamp in [('pending', '2026-06-01'), ('included', '2026-06-02'), ('recent', '2026-06-09')]:
+        _seed(app.db_sink.engine, name, 'src', stamp)
+    with Session(app.db_sink.engine) as session:
+        brief.set_setting(session, brief.KEY_CURSOR, '2026-06-09')
+        session.add_all([DailyBriefCandidateRecord(article_id=name, status=status) for name, status in
+            [('pending', 'pending'), ('included', 'processed'), ('recent', 'processed')]])
+        session.add(ArticleRecord(id='daily-test', title='日报', source_id=brief.DAILY_BRIEF_SOURCE_ID,
+            content_type='daily_brief', source_url='', publish_date='2026-06-10', fetched_date='2026-06-10',
+            has_content=True, content='report', extensions_json=json.dumps({
+                'cursor_before': '2026-06-08', 'cursor_after': '2026-06-09', 'included_article_ids': ['included']})))
+        session.commit()
+    with TestClient(app.app) as client:
+        _login(client)
+        assert client.delete('/api/articles/daily-test').status_code == 200
+    with Session(app.db_sink.engine) as session:
+        assert brief.read_cursor(session) == '2026-06-08'
+        assert all(session.get(DailyBriefCandidateRecord, name).status == 'pending' for name in ('pending','included','recent'))
+        assert {c.id for c in brief.collect_candidates(session, cursor=brief.read_cursor(session))[0]} == {'pending','included','recent'}

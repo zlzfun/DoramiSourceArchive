@@ -114,6 +114,7 @@ export default function MobileSettings({
                 accountRoleLabel={accountRoleLabel}
                 isAdmin={isAdmin}
                 defaultSurface={runtimeInfo?.default_surface}
+                passwordLoginEnabled={runtimeInfo?.password_login_enabled !== false}
                 onUserUpdated={onUserUpdated}
                 onLogout={onLogout}
                 showToast={showToast}

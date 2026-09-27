@@ -264,13 +264,23 @@ def _validate_existing_subset(
     return by_code
 
 
-def reconcile_catalog_session(
+def validate_catalog_session(
     session: Session,
     catalog: Mapping[str, Any],
     *,
     actor_id: str = DEPLOYMENT_ACTOR,
 ) -> dict[str, Any]:
-    """Reconcile one authority database; caller owns the transaction."""
+    """The read-only half of the reconciler: every check that precedes the first write.
+
+    Returns ``{"status": "unchanged", ...}`` when the receipt already matches, or
+    ``{"status": "install_required", "entries": [...], "existing": {code: row},
+    "manifest_sha256": digest, "missing": n}`` when a reconcile would install rows.
+    Raises ``TaxonomyDeploymentError`` on any receipt / version / Candidate / tag /
+    alias conflict.  ``reconcile_catalog_session`` calls this first and then writes;
+    the deployment pre-check (``docker/entrypoint.py --check-config``, issue #102)
+    calls only this on a query-only connection so the semantic conflicts surface
+    before the container is switched, without touching the production database.
+    """
 
     validate_catalog(catalog)
     digest = str(catalog["manifest_sha256"])
@@ -313,6 +323,30 @@ def reconcile_catalog_session(
 
     entries = [entry for entry in catalog["entries"] if isinstance(entry, Mapping)]
     by_code = _validate_existing_subset(session, entries)
+    return {
+        "status": "install_required",
+        "manifest_sha256": digest,
+        "entries": entries,
+        "existing": by_code,
+        "missing": sum(1 for entry in entries if str(entry["code"]) not in by_code),
+    }
+
+
+def reconcile_catalog_session(
+    session: Session,
+    catalog: Mapping[str, Any],
+    *,
+    actor_id: str = DEPLOYMENT_ACTOR,
+) -> dict[str, Any]:
+    """Reconcile one authority database; caller owns the transaction."""
+
+    outcome = validate_catalog_session(session, catalog, actor_id=actor_id)
+    if outcome["status"] == "unchanged":
+        return {key: outcome[key] for key in ("status", "manifest_sha256", "created")}
+    actor_id = str(actor_id or "").strip()
+    digest = str(outcome["manifest_sha256"])
+    entries = outcome["entries"]
+    by_code = outcome["existing"]
     created = 0
     stamp = taxonomy.now_iso()
     for entry in entries:
@@ -449,4 +483,5 @@ __all__ = [
     "reconcile_catalog_session",
     "run_taxonomy_deployment",
     "validate_catalog",
+    "validate_catalog_session",
 ]

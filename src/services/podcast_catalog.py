@@ -13,13 +13,20 @@ from datetime import datetime
 import json
 from typing import Any, Iterable, Sequence
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
-from models.db import SourceConfigRecord
+from models.db import CollectionJobRecord, SourceConfigRecord
+from services.podcast_source_adoption import (
+    adopt_custom_podcast_source,
+    find_custom_podcast_for_feed,
+)
 
 
-CATALOG_VERIFIED_AT = "2026-09-03"
+LEGACY_CATALOG_VERIFIED_AT = "2026-09-03"
 DEFAULT_FETCH_LIMIT = 20
+AI_NATIVE_DEV_SOURCE_ID = "podcast_ai_native_dev"
+AI_NATIVE_DEV_COLLECTION_JOB_NAME = "The AI Native Dev 增量采集"
+AI_NATIVE_DEV_COLLECTION_CRON = "20 */6 * * *"
 
 
 @dataclass(frozen=True)
@@ -34,14 +41,16 @@ class PodcastCatalogSource:
     provenance_tier: str
     launch_tier: str
     latest_episode_date: str
+    verified_at: str
     description: str
     ingest_status: str = "ready"
     status_note: str = ""
+    adopt_existing_custom: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         item = asdict(self)
         item["topics"] = list(self.topics)
-        item["verified_at"] = CATALOG_VERIFIED_AT
+        item.pop("adopt_existing_custom", None)
         return item
 
 
@@ -57,8 +66,10 @@ def _source(
     latest_episode_date: str,
     description: str,
     *,
+    verified_at: str = LEGACY_CATALOG_VERIFIED_AT,
     ingest_status: str = "ready",
     status_note: str = "",
+    adopt_existing_custom: bool = False,
 ) -> PodcastCatalogSource:
     if source_scope in {"ai_media", "tech_media"}:
         provenance_tier = "tier1_curated"
@@ -79,16 +90,33 @@ def _source(
         provenance_tier=provenance_tier,
         launch_tier=launch_tier,
         latest_episode_date=latest_episode_date,
+        verified_at=verified_at,
         description=description,
         ingest_status=ingest_status,
         status_note=status_note,
+        adopt_existing_custom=adopt_existing_custom,
     )
 
 
 # 目录来自内部「欧研观澜」分析；feed URL 通过 Apple Podcasts/iTunes Search
-# 返回的发布者分发地址反查，并在 CATALOG_VERIFIED_AT 做了 HTTP + XML + enclosure
-# 实测。这里只保存抓取所需事实，不复制第三方平台的摘要或逐字稿。
+# 返回的发布者分发地址反查，并在每条 source 的 verified_at 日期做 HTTP + XML +
+# enclosure 实测。这里只保存抓取所需事实，不复制第三方平台的摘要或逐字稿。
 PODCAST_CATALOG: tuple[PodcastCatalogSource, ...] = (
+    _source(
+        "ai_native_dev",
+        "The AI Native Dev",
+        "https://rss.buzzsprout.com/2375985.rss",
+        "Tessl",
+        "en",
+        ("AI-native software development", "coding agents"),
+        "company",
+        "core",
+        "2026-09-22",
+        "Tessl 关于 AI 原生软件开发、编码 Agent 与工程实践的访谈。",
+        verified_at="2026-09-24",
+        adopt_existing_custom=True,
+        status_note="2026-09-24 实测 RSS enclosure 及 HTML/JSON/SRT/VTT 官方逐字稿候选可用。",
+    ),
     _source("ai_daily_brief", "The AI Daily Brief", "https://anchor.fm/s/f7cac464/podcast/rss", "The AI Daily Brief", "en", ("AI news", "industry"), "ai_media", "core", "2026-09-02", "每日 AI 新闻与产业变化解读。"),
     _source("a16z_show", "The a16z Show", "https://feeds.simplecast.com/JGE3yC0V", "Andreessen Horowitz", "en", ("technology", "venture capital"), "company", "core", "2026-09-02", "a16z 关于技术、产业与创业的访谈。"),
     _source("latent_space", "Latent Space", "https://api.substack.com/feed/podcast/1084089.rss", "Latent Space", "en", ("AI engineering", "agents"), "ai_media", "core", "2026-08-26", "面向 AI 工程师的模型、Agent 与基础设施访谈。", status_note="feed 较大，导入参数使用 20 MiB 响应上限。"),
@@ -141,7 +169,8 @@ def list_podcast_catalog(session: Session | None = None) -> dict[str, Any]:
         installed_count += int(installed)
         items.append({**source.to_dict(), "installed": installed})
     return {
-        "verified_at": CATALOG_VERIFIED_AT,
+        "verification_mode": "per_source",
+        "latest_verified_at": max(item["verified_at"] for item in items),
         "total": len(items),
         "ready": sum(item["ingest_status"] == "ready" for item in items),
         "blocked": sum(item["ingest_status"] != "ready" for item in items),
@@ -162,7 +191,7 @@ def _record_params(
         feed_max_bytes = settings.podcast.feed_max_bytes
     return {
         "catalog": "ouyan-guanlan-2026-09",
-        "catalog_verified_at": CATALOG_VERIFIED_AT,
+        "catalog_verified_at": source.verified_at,
         "credentialed_private": False,
         "language": source.language,
         "launch_tier": source.launch_tier,
@@ -205,8 +234,21 @@ def _apply_catalog_fields(
     # Podcast scheduling belongs to CollectionJobRecord. The SourceConfig keeps
     # only the feed identity and per-run parameters.
     record.fetch_interval_minutes = None
+    existing_params: dict[str, Any] = {}
+    try:
+        parsed_params = json.loads(record.params_json or "{}")
+        if isinstance(parsed_params, dict):
+            existing_params = parsed_params
+    except (TypeError, ValueError, json.JSONDecodeError):
+        pass
+    params = _record_params(source, feed_max_bytes=feed_max_bytes)
+    # A promoted custom Podcast keeps its old source-id namespace so a GUID
+    # resolves to the already archived episode primary key after promotion.
+    entry_namespace = str(existing_params.get("entry_id_namespace") or "").strip()
+    if entry_namespace:
+        params["entry_id_namespace"] = entry_namespace
     record.params_json = json.dumps(
-        _record_params(source, feed_max_bytes=feed_max_bytes),
+        params,
         ensure_ascii=False,
         sort_keys=True,
     )
@@ -236,55 +278,123 @@ def import_podcast_catalog(
     created: list[str] = []
     updated: list[str] = []
     skipped_existing: list[str] = []
+    adopted: list[dict[str, Any]] = []
     now = datetime.now().isoformat()
 
-    for source in selected:
-        record = session.get(SourceConfigRecord, source.source_id)
-        if record is not None and not update_existing:
-            skipped_existing.append(source.source_id)
-            if record.source_type in {"podcast", "podcast_rss"} and not record.owner_username:
-                record.is_active = True
-                try:
-                    existing_params = json.loads(record.params_json or "{}")
-                except (TypeError, ValueError, json.JSONDecodeError):
-                    existing_params = None
-                if (
-                    isinstance(existing_params, dict)
-                    and "credentialed_private" not in existing_params
-                    and (record.url or "") == source.feed_url
-                ):
-                    existing_params["credentialed_private"] = False
-                    record.params_json = json.dumps(
-                        existing_params,
-                        ensure_ascii=False,
-                        sort_keys=True,
-                    )
-                record.updated_at = now
-                session.add(record)
-            continue
-        if record is None:
-            record = SourceConfigRecord(
-                source_id=source.source_id,
-                name=source.name,
-                created_at=now,
-                updated_at=now,
+    try:
+        for source in selected:
+            record = session.get(SourceConfigRecord, source.source_id)
+            custom = None
+            if source.adopt_existing_custom:
+                custom = find_custom_podcast_for_feed(
+                    session,
+                    feed_url=source.feed_url,
+                    target_source_id=source.source_id,
+                )
+            if record is not None and not update_existing:
+                skipped_existing.append(source.source_id)
+                if record.source_type in {"podcast", "podcast_rss"} and not record.owner_username:
+                    record.is_active = True
+                    try:
+                        existing_params = json.loads(record.params_json or "{}")
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        existing_params = None
+                    if (
+                        isinstance(existing_params, dict)
+                        and "credentialed_private" not in existing_params
+                        and (record.url or "") == source.feed_url
+                    ):
+                        existing_params["credentialed_private"] = False
+                        record.params_json = json.dumps(
+                            existing_params,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        )
+                    record.updated_at = now
+                    session.add(record)
+                continue
+            if record is None:
+                record = SourceConfigRecord(
+                    source_id=source.source_id,
+                    name=source.name,
+                    created_at=now,
+                    updated_at=now,
+                )
+                created.append(source.source_id)
+            else:
+                updated.append(source.source_id)
+            if custom is not None:
+                record.params_json = json.dumps(
+                    {"entry_id_namespace": custom.source_id}, sort_keys=True
+                )
+            _apply_catalog_fields(
+                record, source, now, feed_max_bytes=feed_max_bytes
             )
-            created.append(source.source_id)
-        else:
-            updated.append(source.source_id)
-        _apply_catalog_fields(
-            record, source, now, feed_max_bytes=feed_max_bytes
-        )
-        session.add(record)
+            session.add(record)
+            if custom is not None:
+                result = adopt_custom_podcast_source(
+                    session,
+                    custom_source=custom,
+                    public_source=record,
+                    now=now,
+                )
+                adopted.append(asdict(result))
 
-    session.commit()
+        if any(source.source_id == AI_NATIVE_DEV_SOURCE_ID for source in selected):
+            _ensure_ai_native_dev_collection_job(session, now=now)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     return {
         "selected": len(selected),
         "created": created,
         "updated": updated,
         "skipped_existing": skipped_existing,
+        "adopted": adopted,
         "update_existing": update_existing,
     }
+
+
+def _ensure_ai_native_dev_collection_job(session: Session, *, now: str) -> None:
+    """Keep the incubating Tessl node in an explicit enabled observation job."""
+
+    record = session.exec(
+        select(CollectionJobRecord).where(
+            CollectionJobRecord.name == AI_NATIVE_DEV_COLLECTION_JOB_NAME
+        )
+    ).first()
+    if record is None:
+        record = CollectionJobRecord(
+            name=AI_NATIVE_DEV_COLLECTION_JOB_NAME,
+            description="Tessl 公共播客观察期增量采集；只抓 RSS 元数据，不自动订阅。",
+            fetcher_ids_json=json.dumps([AI_NATIVE_DEV_SOURCE_ID]),
+            params_json="{}",
+            per_fetcher_params_json="{}",
+            cron_expr=AI_NATIVE_DEV_COLLECTION_CRON,
+            is_active=True,
+            downstream_policy_json=json.dumps(
+                {
+                    "purpose": "podcast_incubation_observation",
+                    "delivery_targets": ["archive", "reader_feed"],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            created_at=now,
+            updated_at=now,
+        )
+    else:
+        try:
+            source_ids = json.loads(record.fetcher_ids_json or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("Tessl 采集任务节点列表损坏，停止目录导入") from exc
+        if not isinstance(source_ids, list):
+            raise ValueError("Tessl 采集任务节点列表不是数组，停止目录导入")
+        source_ids = list(dict.fromkeys([*source_ids, AI_NATIVE_DEV_SOURCE_ID]))
+        record.fetcher_ids_json = json.dumps(source_ids, ensure_ascii=False, sort_keys=True)
+        record.updated_at = now
+    session.add(record)
 
 
 def ensure_default_podcast_sources(engine: Any) -> dict[str, Any]:

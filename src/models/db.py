@@ -14,6 +14,21 @@ from sqlalchemy import (
 )
 
 
+class ObjectBlobRecord(SQLModel, table=True):
+    """Local-only OSS location registry; never exported by Archive Sync."""
+    __tablename__ = "object_blobs"
+    id: str = Field(primary_key=True)
+    namespace: str = Field(index=True)
+    content_hash: str
+    ext: str
+    size_bytes: int
+    mime: str
+    bucket: str
+    region: str
+    object_key: str
+    created_at: str
+
+
 class ArticleRecord(SQLModel, table=True):
     """关系型数据库表结构：用于 CMS 后端管理系统"""
     __tablename__ = "articles"
@@ -75,6 +90,14 @@ class ArticleRecord(SQLModel, table=True):
         sa_column_kwargs={"server_default": text("''")},
         description="聚合规范标签与提取标签的检索文本，供 FTS5 与搜索匹配",
     )
+
+
+class DailyBriefCandidateRecord(SQLModel, table=True):
+    """Node-local consumption ledger. Pending rows survive cursor advancement."""
+    __tablename__ = "daily_brief_candidates"
+    __table_args__ = (CheckConstraint("status IN ('pending','processed')", name="ck_daily_brief_candidate_status"),)
+    article_id: str = Field(primary_key=True, foreign_key="articles.id", ondelete="CASCADE")
+    status: str = Field(default="pending", index=True)
 
 
 # Fields that make up the faithfully replicated article archive. Reader-local
@@ -437,6 +460,117 @@ class ArticleTagAssignmentRecord(SQLModel, table=True):
     taxonomy_version: int = Field(default=0)
     created_at: str
     updated_at: str
+
+
+class RankingSnapshotRecord(SQLModel, table=True):
+    """One immutable-by-date reader ranking snapshot.
+
+    Child rows are replaced transactionally when the same Shanghai calendar day
+    is rebuilt.  Shape-specific coverage remains structured so clients never
+    need to infer it from the ranked rows.
+    """
+
+    __tablename__ = "ranking_snapshots"
+    __table_args__ = (
+        UniqueConstraint("snapshot_date", name="uq_ranking_snapshots_date"),
+        Index("ix_ranking_snapshots_generated", "generated_at"),
+        CheckConstraint(
+            "status IN ('complete','degraded')",
+            name="ck_ranking_snapshots_status",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    snapshot_date: str = Field(description="Asia/Shanghai YYYY-MM-DD")
+    window_start: str
+    window_end: str
+    taxonomy_version: int = Field(default=0)
+    status: str = Field(default="complete")
+    article_eligible_count: int = Field(default=0, ge=0)
+    article_analyzed_count: int = Field(default=0, ge=0)
+    article_tagged_count: int = Field(default=0, ge=0)
+    podcast_eligible_count: int = Field(default=0, ge=0)
+    podcast_analyzed_count: int = Field(default=0, ge=0)
+    podcast_tagged_count: int = Field(default=0, ge=0)
+    generated_at: str
+
+
+class RankingTagItemRecord(SQLModel, table=True):
+    """A governed tag's position and counts in one snapshot and content shape."""
+
+    __tablename__ = "ranking_tag_items"
+    __table_args__ = (
+        UniqueConstraint(
+            "snapshot_id", "shape", "axis", "tag_code",
+            name="uq_ranking_tag_items_snapshot_shape_axis_code",
+        ),
+        Index(
+            "ix_ranking_tag_items_snapshot_shape_axis_rank",
+            "snapshot_id", "shape", "axis", "rank",
+        ),
+        CheckConstraint("shape IN ('article','podcast')", name="ck_ranking_tag_items_shape"),
+        CheckConstraint("axis IN ('topic','industry','entity')", name="ck_ranking_tag_items_axis"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    snapshot_id: int = Field(foreign_key="ranking_snapshots.id", ondelete="CASCADE")
+    shape: str
+    axis: str
+    tag_id: Optional[int] = Field(default=None, foreign_key="cms_tags.id", ondelete="SET NULL")
+    tag_code: str
+    tag_name_zh: str = Field(default="")
+    tag_name_en: str = Field(default="")
+    rank: int = Field(ge=1)
+    occurrence_count: int = Field(default=0, ge=0)
+    distinct_source_count: int = Field(default=0, ge=0)
+    previous_rank: Optional[int] = Field(default=None, ge=1)
+    count_delta: int = Field(default=0)
+
+
+class RankingContentItemRecord(SQLModel, table=True):
+    """All qualifying occurrences behind a ranked tag.
+
+    Persisting every occurrence, rather than only the visible Top 10, lets the
+    reader API re-apply today's hidden-source policy without exposing stale
+    counts from yesterday's snapshot.  ``content_rank <= 10`` is the tag drill-
+    down list; must-read flags are calculated only from those Top-10 lists.
+    """
+
+    __tablename__ = "ranking_content_items"
+    __table_args__ = (
+        UniqueConstraint(
+            "snapshot_id", "shape", "axis", "tag_code", "article_id",
+            name="uq_ranking_content_items_occurrence",
+        ),
+        Index(
+            "ix_ranking_content_items_snapshot_tag_rank",
+            "snapshot_id", "shape", "axis", "tag_code", "content_rank",
+        ),
+        Index(
+            "ix_ranking_content_items_snapshot_must",
+            "snapshot_id", "shape", "is_must_read", "must_rank",
+        ),
+        CheckConstraint("shape IN ('article','podcast')", name="ck_ranking_content_items_shape"),
+        CheckConstraint("axis IN ('topic','industry','entity')", name="ck_ranking_content_items_axis"),
+        CheckConstraint(
+            "score_basis IN ('article_body','show_notes','full_transcript')",
+            name="ck_ranking_content_items_score_basis",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    snapshot_id: int = Field(foreign_key="ranking_snapshots.id", ondelete="CASCADE")
+    shape: str
+    axis: str
+    tag_code: str
+    article_id: str = Field(foreign_key="articles.id", ondelete="CASCADE")
+    source_id: str
+    content_rank: int = Field(ge=1)
+    score: float = Field(default=0.0)
+    score_basis: str
+    appearance_count: int = Field(default=0, ge=0)
+    is_must_read: bool = Field(default=False)
+    must_rank: Optional[int] = Field(default=None, ge=1)
 
 
 class CmsTagCandidateRecord(SQLModel, table=True):
@@ -875,6 +1009,11 @@ class SourceConfigRecord(SQLModel, table=True):
     )
 
     is_active: bool = Field(default=True, index=True, description="是否启用该数据源")
+    retired_at: Optional[str] = Field(
+        default=None,
+        index=True,
+        description="用户共享源无人订阅后的退役时间；保留受审计保护的 Podcast 数据",
+    )
     fetch_interval_minutes: Optional[int] = Field(
         default=None,
         description="用户自定源的新鲜度参考间隔，分钟；公共源调度统一由 CollectionJob 管理",
@@ -1980,6 +2119,17 @@ class PodcastArtifactRecord(SQLModel, table=True):
                 "processing_id IS NOT NULL AND kind = 'digest_audio_zh'"
             ),
         ),
+        Index(
+            "uq_podcast_artifacts_active_episode",
+            "episode_id",
+            unique=True,
+            sqlite_where=text(
+                "kind = 'digest_audio_zh' AND status = 'published'"
+            ),
+            postgresql_where=text(
+                "kind = 'digest_audio_zh' AND status = 'published'"
+            ),
+        ),
         UniqueConstraint(
             "producing_attempt_id",
             name="uq_podcast_artifacts_producing_attempt",
@@ -2384,6 +2534,7 @@ class JobRecord(SQLModel, table=True):
     total: Optional[int] = Field(default=None, description="总步数，未知则空")
     processed: int = Field(default=0, description="已处理步数")
     payload_json: str = Field(default="{}", description="提交时的入参快照 JSON")
+    progress_json: Optional[str] = Field(default=None, description="运行中的进度快照 JSON")
     result_json: Optional[str] = Field(default=None, description="成功结果 JSON")
     error: Optional[str] = Field(default=None, description="失败原因摘要")
     created_by: Optional[str] = Field(default=None, index=True, description="触发账户；系统任务为空")
@@ -2396,7 +2547,8 @@ class AiUsageRecord(SQLModel, table=True):
     """AI 用量按天聚合：一行 = 某天某用户某用途某模型的累计调用与 token 消耗。
 
     username 为登录账户名；系统级任务（定时日报等）记为 "system"。
-    purpose ∈ translate / ask / daily_brief_editorial / daily_brief_dedup /
+    purpose ∈ translate / ask / summarize / podcast_ondemand /
+    article_ondemand / daily_brief_editorial / daily_brief_dedup /
     daily_brief_reduce / article_analysis / source_config / detail_profile。
     """
     __tablename__ = "ai_usage"

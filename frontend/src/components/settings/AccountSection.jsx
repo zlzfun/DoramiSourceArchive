@@ -30,7 +30,8 @@ function readImageAsDataUrl(file, maxSize = 256) {
 }
 
 // 账户(弹窗波,设置行范式):头像行 + (admin)默认落地界面 + 改密码行内表单(区内唯一 primary)+ 退出登录 danger 行。
-export default function AccountSection({ username, avatar, accountRoleLabel, isAdmin = false, defaultSurface, onUserUpdated, onLogout, showToast }) {
+// passwordLoginEnabled 来自 runtime.password_login_enabled(issue #130):下游外部身份源接管的账号不呈现改密表单;main 恒 true。
+export default function AccountSection({ username, avatar, accountRoleLabel, isAdmin = false, defaultSurface, passwordLoginEnabled = true, onUserUpdated, onLogout, showToast }) {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -181,6 +182,7 @@ export default function AccountSection({ username, avatar, accountRoleLabel, isA
         </div>
       )}
 
+      {passwordLoginEnabled && (
       <form className="sett-row is-block" onSubmit={handleChangePassword}>
         <span className="sett-id">
           <span className="sett-lbl">修改密码</span>
@@ -220,6 +222,7 @@ export default function AccountSection({ username, avatar, accountRoleLabel, isA
           </button>
         </div>
       </form>
+      )}
 
       <div className="sett-row">
         <span className="sett-id">

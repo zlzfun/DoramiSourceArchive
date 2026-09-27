@@ -19,7 +19,7 @@ import importlib
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from apscheduler.triggers.cron import CronTrigger
+from services.cron_expr import CRON_INVALID_DETAIL, parse_cron_expr
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field as PydanticField
 from sqlmodel import Session, select
@@ -52,22 +52,16 @@ def _app():
 def _next_fire_iso(cron_exprs: List[str]) -> Optional[str]:
     """若干 5 段 cron 中最早的下次触发时间(本地时区 ISO);无有效表达式返回 None。
 
-    与 app.add_cron_job 同一解析语义(minute/hour/day/month/day_of_week),
+    与 app.add_cron_job 共用 services.cron_expr.parse_cron_expr 同一解析语义,
     保证「时刻表倒计时」与调度器实际注册的触发一致。
     """
     best = None
     now = datetime.now().astimezone()
     for expr in cron_exprs:
-        parts = (expr or "").split()
-        if len(parts) != 5:
+        trigger = parse_cron_expr(expr)
+        if trigger is None:
             continue
-        try:
-            trigger = CronTrigger(
-                minute=parts[0], hour=parts[1], day=parts[2], month=parts[3], day_of_week=parts[4]
-            )
-            fire = trigger.get_next_fire_time(None, now)
-        except ValueError:
-            continue
+        fire = trigger.get_next_fire_time(None, now)
         if fire and (best is None or fire < best):
             best = fire
     return best.isoformat() if best else None
@@ -155,6 +149,10 @@ def create_collection_job(data: CollectionJobCreate, session: Session = Depends(
         raise HTTPException(status_code=400, detail="采集任务名称不能为空")
     if not normalize_fetcher_ids(data.fetcher_ids):
         raise HTTPException(status_code=400, detail="采集任务至少需要一个节点")
+    cron_expr = data.cron_expr.strip()
+    if cron_expr and parse_cron_expr(cron_expr) is None:
+        # commit 前拒绝:坏 cron 一旦入库,热重载与下次启动都会撞上它(issue #82 PR-0)
+        raise HTTPException(status_code=400, detail=CRON_INVALID_DETAIL)
     now = _now_iso()
     record = CollectionJobRecord(
         name=name,
@@ -162,7 +160,7 @@ def create_collection_job(data: CollectionJobCreate, session: Session = Depends(
         fetcher_ids_json=_json_dumps(normalize_fetcher_ids(data.fetcher_ids)),
         params_json=_json_dumps(data.params),
         per_fetcher_params_json=_json_dumps(data.per_fetcher_params),
-        cron_expr=data.cron_expr.strip(),
+        cron_expr=cron_expr,
         is_active=data.is_active,
         downstream_policy_json=_json_dumps(data.downstream_policy),
         created_at=now,
@@ -181,6 +179,11 @@ def update_collection_job(job_id: int, data: CollectionJobUpdate, session: Sessi
     if not record:
         raise HTTPException(status_code=404, detail="采集任务不存在")
     update_data = data.dict(exclude_unset=True)
+    if "cron_expr" in update_data:
+        # 先于任何字段改动校验,非法直接 400,不留半改的 ORM 状态
+        cron_candidate = (update_data["cron_expr"] or "").strip()
+        if cron_candidate and parse_cron_expr(cron_candidate) is None:
+            raise HTTPException(status_code=400, detail=CRON_INVALID_DETAIL)
     if "name" in update_data:
         name = (update_data["name"] or "").strip()
         if not name:

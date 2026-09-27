@@ -45,6 +45,7 @@ def _record_to_dict(record: JobRecord) -> Dict[str, Any]:
         "status": record.status,
         "total": record.total,
         "processed": record.processed,
+        "progress": json.loads(record.progress_json) if record.progress_json else None,
         "result": json.loads(record.result_json) if record.result_json else None,
         "error": record.error,
         "created_at": record.created_at,
@@ -63,6 +64,7 @@ class Job:
         self._total: Optional[int] = None
         self._last_flush = 0.0
         self._pending = 0
+        self._progress: Optional[Dict[str, Any]] = None
 
     def _update(self, **fields: Any) -> None:
         with Session(self.engine) as session:
@@ -85,8 +87,22 @@ class Job:
         if self._pending >= _FLUSH_EVERY or now - self._last_flush >= _FLUSH_INTERVAL:
             self._flush_progress()
 
+    def set_progress(self, progress: Dict[str, Any]) -> None:
+        """Persist an absolute progress snapshot, independent of final result."""
+        previous = self._progress or {}
+        force = (progress.get("stream") != previous.get("stream") or (
+            not previous.get("stream_processed") and progress.get("stream_processed")))
+        processed = int(progress["processed"])
+        self._pending += max(0, processed - self._processed)
+        self._processed = processed
+        self._progress = dict(progress)
+        if force or self._pending >= _FLUSH_EVERY or time.time() - self._last_flush >= _FLUSH_INTERVAL:
+            self._flush_progress()
+
     def _flush_progress(self) -> None:
-        self._update(processed=self._processed)
+        self._update(processed=self._processed, progress_json=(
+            json.dumps(self._progress, ensure_ascii=False) if self._progress is not None else None
+        ))
         self._last_flush = time.time()
         self._pending = 0
 

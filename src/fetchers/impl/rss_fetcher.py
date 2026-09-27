@@ -1,8 +1,8 @@
 import calendar
 import hashlib
 import re
-from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
+from datetime import datetime, timezone, timedelta
+from email.utils import parsedate_to_datetime, format_datetime
 from typing import Any, AsyncGenerator, Dict, List
 
 import feedparser
@@ -257,6 +257,17 @@ class GenericRssFetcher(BaseFetcher):
         )
         return {"title": detail.title, "text": detail.text, "method": detail.method, "url": detail.url}
 
+    async def _fetch_parsed_feed(self, client, feed_url, max_response_bytes=0):
+        if max_response_bytes:
+            feed_bytes = await self._fetch_feed_limited(client, feed_url, max_response_bytes)
+        else:
+            response = await self._safe_get(client, feed_url)
+            if not response:
+                raise RuntimeError(f"RSS/Atom 请求失败: {feed_url} ({getattr(self, 'last_request_error', 'unknown')})")
+            feed_bytes = response.content
+
+        return feedparser.parse(feed_bytes)
+
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         feed_url = str(kwargs.get("feed_url", "")).strip()
         runtime_source_id = str(kwargs.get("source_id", "")).strip() or self.source_id
@@ -296,15 +307,7 @@ class GenericRssFetcher(BaseFetcher):
 
             await ensure_public_host(_urlsplit(feed_url).hostname or "")
 
-        if max_response_bytes:
-            feed_bytes = await self._fetch_feed_limited(client, feed_url, max_response_bytes)
-        else:
-            response = await self._safe_get(client, feed_url)
-            if not response:
-                raise RuntimeError(f"RSS/Atom 请求失败: {feed_url}")
-            feed_bytes = response.content
-
-        parsed_feed = feedparser.parse(feed_bytes)
+        parsed_feed = await self._fetch_parsed_feed(client, feed_url, max_response_bytes)
         if parsed_feed.bozo:
             self.logger.warning(f"RSS 解析存在异常: {parsed_feed.bozo_exception}")
 
@@ -678,10 +681,107 @@ class HackerNewsAiRssFetcher(PresetRssFetcher):
         summary = entry.get("summary", "") or ""
         points_match = self._points_re.search(summary)
         comments_match = self._num_comments_re.search(summary)
-        raw["hn_points"] = int(points_match.group(1)) if points_match else None
-        raw["hn_num_comments"] = int(comments_match.group(1)) if comments_match else None
+        raw["hn_points"] = int(points_match.group(1)) if points_match else entry.get("hn_points")
+        raw["hn_num_comments"] = int(comments_match.group(1)) if comments_match else entry.get("hn_num_comments")
+        raw["discovery_backend"] = entry.get("discovery_backend", "hnrss")
         raw["discussion_url"] = entry.get("comments", "")
         return raw
+
+    # Algolia backs hnrss too; direct access bypasses the failing RSS gateway.
+    # Search recent voted stories locally so brand-only titles need not contain AI.
+    api_url = "https://hn.algolia.com/api/v1/search_by_date"
+    api_max_pages = 8
+    api_window_hours = 72
+    _ai_topic = re.compile(
+        r"\b(?:AI|LLMs?|artificial intelligence|machine learning|deep learning|"
+        r"neural networks?|generative AI)\b", re.I)
+    _ai_brand = re.compile(
+        r"\b(?:OpenAI|Anthropic|ChatGPT|Claude|Codex|Gemini|DeepSeek|Qwen|ZCode|"
+        r"Zhipu|GLM[ -]?\d*|Kimi|MiniMax|Grok|Llama|Mistral|Hugging ?Face|"
+        r"Cursor|Copilot|MCP)\b", re.I)
+
+    async def _fetch_parsed_feed(self, client, feed_url, max_response_bytes=0):
+        rss = None
+        rss_error = ""
+        try:
+            rss = await super()._fetch_parsed_feed(client, feed_url, max_response_bytes)
+            if not rss.get("version"):
+                raise RuntimeError("RSS 响应不是有效 feed")
+        except RuntimeError as exc:
+            rss_error = str(exc)
+            rss = None
+        entries = list(rss.entries) if rss is not None else []
+        api_ok = False
+        api_error = ""
+        since = int((datetime.now(timezone.utc) - timedelta(hours=self.api_window_hours)).timestamp())
+        from urllib.parse import urlencode
+        for page in range(self.api_max_pages):
+            url = self.api_url + "?" + urlencode({
+                "tags": "story", "numericFilters": f"points>={self._active_min_points},num_comments>={self._active_min_comments},created_at_i>{since}",
+                "hitsPerPage": 100, "page": page,
+            })
+            response = await self._safe_get(client, url)
+            try:
+                if response is None:
+                    raise ValueError(getattr(self, "last_request_error", "request_failed"))
+                payload = response.json()
+                hits = payload["hits"]
+                pages = payload["nbPages"]
+                if not isinstance(hits, list) or not isinstance(pages, int) or pages < 0:
+                    raise ValueError("invalid Algolia payload")
+                api_ok = True
+                for hit in hits:
+                    entry = self._algolia_entry(hit, since)
+                    if entry is not None:
+                        entries.append(entry)
+                if page + 1 >= pages:
+                    break
+                if page + 1 == self.api_max_pages:
+                    self.logger.warning("HN Algolia 达到分页安全上限: pages=%d", self.api_max_pages)
+            except (AttributeError, ValueError, KeyError, TypeError) as exc:
+                api_error = str(exc)
+                break
+        if rss is None and not api_ok:
+            raise RuntimeError(f"HN RSS 与 Algolia 均失败: {rss_error}; Algolia: {api_error}")
+        if rss_error or api_error:
+            self.logger.warning("HN 使用可用入口继续: rss=%s algolia=%s", rss_error or "ok", api_error or "ok")
+        merged = {}
+        for entry in entries:
+            key = self._entry_id(self.source_id, entry)
+            merged.setdefault(key, entry)  # prefer original RSS body/metadata
+        existing = await self._lookup_existing_content_flags(merged)
+        # External stories deliberately have no body; presence alone means seen.
+        entries = [entry for key, entry in merged.items() if key not in existing]
+        return feedparser.FeedParserDict(feed={"title": self.name}, entries=entries, bozo=False)
+
+    def _algolia_entry(self, hit, since):
+        if not isinstance(hit, dict):
+            return None
+        try:
+            item_id = str(hit["objectID"])
+            stamp = int(hit["created_at_i"])
+            points = int(hit.get("points") or 0)
+            comments = int(hit.get("num_comments") or 0)
+            title = str(hit.get("title") or "")
+            story_text = str(hit.get("story_text") or "")
+            link = str(hit.get("url") or "")
+            if (not item_id.isdigit() or stamp <= since or points < self._active_min_points
+                    or comments < self._active_min_comments or not title
+                    or not (self._ai_brand.search(title) or self._ai_topic.search(f"{title} {story_text} {link}"))):
+                return None
+            discussion = f"https://news.ycombinator.com/item?id={item_id}"
+            if link and not link.startswith(("https://", "http://")):
+                return None
+            body = story_text if not link or link == discussion else ""
+            return feedparser.FeedParserDict(
+                id=discussion, guid=discussion, title=title, link=link or discussion,
+                comments=discussion, author=str(hit.get("author") or ""),
+                published=format_datetime(datetime.fromtimestamp(stamp, timezone.utc)),
+                summary=body, hn_points=points, hn_num_comments=comments,
+                discovery_backend="algolia",
+            )
+        except (KeyError, ValueError, TypeError, OverflowError, OSError):
+            return None
 
     def _build_feed_url(self, min_points: int, min_comments: int) -> str:
         from urllib.parse import urlencode
@@ -698,6 +798,8 @@ class HackerNewsAiRssFetcher(PresetRssFetcher):
         min_comments = self._positive_int_param(kwargs.get("min_comments"), self.default_min_comments)
         # 父类 PresetRssFetcher._run 会读取 self.feed_url 拼装参数，这里按门槛动态改写。
         # 与 GenericRssFetcher._run 改写 self.source_id 同属「单次运行内的实例身份切换」模式。
+        self._active_min_points = min_points
+        self._active_min_comments = min_comments
         self.feed_url = self._build_feed_url(min_points, min_comments)
         async for item in super()._run(client, **kwargs):
             yield item

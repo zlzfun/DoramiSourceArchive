@@ -175,6 +175,14 @@ export function fetchAdminContent(top = 12) {
   return request(`/admin/content?top=${enc(top)}`, { errorMsg: '获取内容看板失败' });
 }
 
+export function fetchAdminRankingStatus(options = {}) {
+  return request('/admin/rankings/status', { ...options, errorMsg: '获取榜单状态失败' });
+}
+
+export function refreshAdminRankings() {
+  return request('/admin/rankings/refresh', { method: 'POST', errorMsg: '刷新榜单失败' });
+}
+
 // 管理操作审计(v3.19 多管理员波):中间件对管理面写操作逐条落行,按时间倒序;服务端分页。
 // v3.42(M11):operator 操作者子串 / q 跨摘要·目标·路径子串 / status ∈ ok|denied,
 // 全部服务端生效并与时间窗/分页叠加。
@@ -195,6 +203,10 @@ export function mediaProxyUrl(src) {
 
 export function fetchMediaStats() {
   return request('/admin/media/stats', { errorMsg: '获取媒体库统计失败' });
+}
+
+export function fetchStorageStatus(options = {}) {
+  return request('/admin/storage/status', { ...options, errorMsg: '获取存储状态失败' });
 }
 
 // ── Podcast 音频资产（本地存储管理）──
@@ -261,6 +273,22 @@ export function translatePodcastTranscript(episodeId, sourceKind, options = {}) 
   });
 }
 
+export function requestPodcastOndemand(episodeId, options = {}) {
+  return request(`/reader/ai/podcasts/${enc(episodeId)}/ondemand`, {
+    method: 'POST',
+    errorMsg: '点播失败，请稍后重试',
+    ...options,
+  });
+}
+
+export function requestArticleOndemand(articleId, options = {}) {
+  return request(`/reader/ai/articles/${enc(articleId)}/ondemand`, {
+    method: 'POST',
+    errorMsg: '点播失败，请稍后重试',
+    ...options,
+  });
+}
+
 export function forcePodcastFullAnalysis(episodeId, idempotencyKey = '', podcast = {}) {
   const command = podcastFullAnalysisCommand(episodeId, podcast, idempotencyKey);
   return request(command.path, {
@@ -310,6 +338,16 @@ export function fetchPodcastAsrQuota(options = {}) {
   return request('/admin/podcast-asr-quota', {
     errorMsg: '获取 ASR 配额配置失败',
     ...options,
+  });
+}
+
+export function fetchPodcastTtsReceipts(options = {}) {
+  return request('/admin/podcast-tts-receipts', { errorMsg: '获取 TTS 回执缓存状态失败', ...options });
+}
+
+export function reclaimPodcastTtsReceipts() {
+  return request('/admin/podcast-tts-receipts/reclaim', {
+    method: 'POST', errorMsg: '回收 TTS 回执缓存失败',
   });
 }
 
@@ -684,6 +722,24 @@ export function fetchReaderSources() {
   return request('/reader/sources', { errorMsg: '获取内容源目录失败' });
 }
 
+export function fetchReaderRankings(shape = 'article', date = 'latest', options = {}) {
+  const params = new URLSearchParams({ shape, date });
+  return request(`/reader/rankings?${params}`, { ...options, errorMsg: '获取榜单失败' });
+}
+
+export function fetchReaderRankingTag(date, tagCode, shape, options = {}) {
+  const params = new URLSearchParams({ shape });
+  return request(`/reader/rankings/${enc(date)}/tags/${enc(tagCode)}?${params}`, {
+    ...options,
+    errorMsg: '获取标签内容失败',
+  });
+}
+
+export function fetchReaderRankingHistory(tagCode, shape, days = 30, options = {}) {
+  const params = new URLSearchParams({ tag_code: tagCode, shape, days });
+  return request(`/reader/rankings/history?${params}`, { ...options, errorMsg: '获取趋势失败' });
+}
+
 export function fetchFavorites(filters = {}, limit = 100, skip = 0, options = {}) {
   const { includeContent, ...fetchOptions } = options;
   const params = new URLSearchParams({ limit, skip });
@@ -744,6 +800,16 @@ export function updatePublicShareGlobal(enabled) {
   return request('/admin/public-share', { method: 'POST', body: { enabled }, errorMsg: '更新分享总闸失败' });
 }
 
+// 读者点播总闸(issue #137):播客精品导读 + 文章精简旁白共一枚开关;
+// 返回值另带本部署实际可用性与 blockers(开着却跑不了时缺什么)。
+export function fetchReaderOndemandGlobal() {
+  return request('/admin/reader-ondemand', { errorMsg: '获取点播总闸失败' });
+}
+
+export function updateReaderOndemandGlobal(enabled) {
+  return request('/admin/reader-ondemand', { method: 'POST', body: { enabled }, errorMsg: '更新点播总闸失败' });
+}
+
 export function fetchFeedToken() {
   return request('/reader/feed-token', { errorMsg: '获取聚合接口令牌失败' });
 }
@@ -758,6 +824,19 @@ export function subscribeSource(sourceId) {
 
 export function unsubscribeSource(sourceId) {
   return request(`/reader/sources/${enc(sourceId)}/subscribe`, { method: 'DELETE', errorMsg: '取消订阅失败' });
+}
+
+export function subscribeSourcesByShape(shape, options = {}) {
+  return request('/reader/sources/subscribe-batch', {
+    ...options,
+    method: 'POST', body: { shape }, errorMsg: '批量订阅失败',
+  });
+}
+
+export function fetchSourceBatchSubscriptionStatus() {
+  return request('/reader/sources/subscribe-batch/status', {
+    errorMsg: '获取批量订阅状态失败',
+  });
 }
 
 // ==================== 源合集(策展合集) ====================
@@ -780,9 +859,9 @@ export function previewCustomSource(url) {
   return request('/reader/custom-sources/preview', { method: 'POST', body: { url }, errorMsg: '预览失败' });
 }
 
-export function createCustomSource(url, name) {
+export function createCustomSource(url, name, kind) {
   return request('/reader/custom-sources', {
-    method: 'POST', body: name ? { url, name } : { url }, errorMsg: '添加自定源失败',
+    method: 'POST', body: { url, ...(name ? { name } : {}), ...(kind ? { kind } : {}) }, errorMsg: '添加自定源失败',
   });
 }
 

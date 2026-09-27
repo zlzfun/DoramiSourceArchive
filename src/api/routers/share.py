@@ -11,11 +11,12 @@ routers/reader.py），拿到形如 ``#/s/{token}`` 的链接发给同事；同�
 账户信息。令牌泄露的最坏后果被钉死在「这一篇被看到」，不会成为进入归档的入口。
 """
 
+from api.storage_response import StorageFileResponse
 import importlib
 from typing import Any, Dict, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from sqlmodel import Session
 
 from api import deps
@@ -114,10 +115,11 @@ async def get_shared_article_media(
     if record is None:
         return _redirect()
     path = store.file_path_for(record)
-    if not path.is_file():
+    if not getattr(getattr(store, "object_storage", None), "enabled", False) and not path.is_file():
         return _redirect()
-    return FileResponse(
-        path,
+    return StorageFileResponse(
+        store, record,
+        missing_response=_redirect,
         media_type=record.mime or "application/octet-stream",
         headers={
             "Cache-Control": "public, max-age=31536000, immutable",

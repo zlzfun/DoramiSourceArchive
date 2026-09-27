@@ -40,7 +40,7 @@
 | `tts_usage_settlement_mode = submitted_characters` | 默认改回 `manual`；只有明确接受“本地提交字符数”口径时才使用自动结算。 |
 | AK/SK、AppKey、Token、X/LLM key 写在 INI | 生产全部改为主机 Secret/环境变量。上线后禁用或轮换验收凭据。 |
 | OSS Bucket 为验收专用 | 新建生产私有 Bucket，限定 `asr-relay/` 前缀，配置 1 天删除生命周期。 |
-| `premium_score_threshold = 8.5` | 这是产品阈值，不是阿里云参数。确认继续用 8.5，否则回到仓库默认 8.0。 |
+| `premium_score_threshold = 8.5` | 这是产品阈值，不是阿里云参数。确认继续用 8.5，否则回到仓库默认 7.5。 |
 
 验收 INI 当前权限为 `0600`，但明文凭据仍不应提升到生产、不应复制进镜像或版本库。
 
@@ -111,7 +111,7 @@ asr_oss_signed_url_ttl_seconds = 86400
 asr_quota_scope = <prod-asr-scope>
 asr_quota_timezone = Asia/Shanghai
 asr_daily_audio_seconds_limit = <approved-daily-seconds>
-asr_max_audio_seconds_per_file = 43200
+asr_max_audio_seconds_per_file = 10800
 asr_entitlement_ends_at = <contract-end-iso8601>
 asr_provider_deadline_seconds = <approved-deadline>
 asr_price_cny_minor_per_hour = <contract-price>

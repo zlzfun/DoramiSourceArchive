@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import {
   Users,
   Database,
@@ -32,6 +31,8 @@ import {
   setAiDailyTokenBudget,
   fetchPublicShareGlobal,
   updatePublicShareGlobal,
+  fetchReaderOndemandGlobal,
+  updateReaderOndemandGlobal,
   fetchReaderDefaults,
   updateReaderDefaults,
   fetchAiUsage,
@@ -45,7 +46,8 @@ import {
 import { useConfirm } from '../hooks/useConfirm';
 import { ThFilter, ThSearch, ThSort } from './admin/TableTh';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
-import { useModalTransition } from '../hooks/useModalTransition';
+import Modal from './Modal';
+import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { MultiSeriesArea, RankBars, BarList } from './charts/DashboardCharts';
 import MediaHeatmap from './admin/MediaHeatmap';
@@ -58,6 +60,8 @@ import Pager from './admin/Pager';
 import AdminTaxonomyPanel from './admin/AdminTaxonomyPanel';
 import PodcastZone from './admin/PodcastZone';
 import BriefInterestZone from './admin/BriefInterestZone';
+import StorageStatusPanel from './admin/StorageStatusPanel';
+import RankingSnapshotPanel from './admin/RankingSnapshotPanel';
 import { Kpi, KpiState } from './admin/Kpi';
 import { pivotDaily, C_READ, C_FAVORITE, C_SUBSCRIBE } from './charts/chartUtils';
 import { PURPOSE_LABELS, formatStamp, fmtNum, truncLabel } from './admin/adminUtils';
@@ -82,12 +86,26 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
   const confirm = useConfirm();
   const [sub, setSub] = useState('user'); // 子页：user | content | ai | engage | taxonomy
 
-  // 跨页聚焦(pendingFocus 单通道):目前只解释 { sub } —— 集成页模型 chip 跳到 AI 子页。
+  const [pendingZone, setPendingZone] = useState('');
+  // 跨页聚焦(pendingFocus 单通道):解释 { sub, zone }，设置柜可直达 ASR 配额卡。
   useEffect(() => {
     if (!pendingFocus) return;
     if (pendingFocus.sub) setSub(pendingFocus.sub);
-    onPendingFocusApplied?.();
+    if (pendingFocus.zone) setPendingZone(pendingFocus.zone);
+    else onPendingFocusApplied?.();
   }, [pendingFocus, onPendingFocusApplied]);
+  useEffect(() => {
+    if (!pendingZone || sub !== 'content') return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      const target = document.getElementById(`admin-${pendingZone}`);
+      if (!target) return;
+      target.scrollIntoView({ block: 'start' });
+      target.focus({ preventScroll: true });
+      setPendingZone('');
+      onPendingFocusApplied?.();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [pendingZone, sub, onPendingFocusApplied]);
   // 账户列表(规模化波):服务端分页 + 搜索,前端只持有当前页;summary 聚合全量供 KPI/排行。
   const [acctData, setAcctData] = useState(null); // {items,total,summary} | null = 加载中
   // 账户增长(v3.55 issue #31):聚合口径,全体管理员可见;账户名单/逐用户明细只有根管理员(rootAdmin)。
@@ -97,6 +115,7 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
   const [newUserAiDefault, setNewUserAiDefault] = useState(null); // 新账号 AI 默认值(只影响此后新建账户)
   const [budgetDraft, setBudgetDraft] = useState(''); // 预算输入框草稿(失焦/回车提交)
   const [publicShare, setPublicShare] = useState(null);   // 公开分享总闸 + 存活链接盘点
+  const [ondemand, setOndemand] = useState(null);         // 读者点播总闸(issue #137):{enabled, podcast_available, article_available, blockers}
   const [readerDefaults, setReaderDefaults] = useState(null); // 新账号默认订阅名单(issue #56):{source_ids, overridden, sources, code_default, candidates}
   const [defaultsPick, setDefaultsPick] = useState('');
   const [defaultsBusy, setDefaultsBusy] = useState(false); // 整集写请求在途:卡内全部控件禁用(快速增删会互相覆盖——codex 检视 P2)
@@ -146,21 +165,15 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
 
   // ── 新建账户弹窗 ──
   const [createModalOpen, setCreateModalOpen] = useState(false);
-  const createModal = useModalTransition(createModalOpen);
 
   // ── 重置密码弹窗（取代 window.prompt：不回显明文、与全站 Modal 体系一致）──
   const [resetTarget, setResetTarget] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
   const [resetBusy, setResetBusy] = useState(false);
-  const resetModal = useModalTransition(Boolean(resetTarget));
 
-  // 弹窗/抽屉可访问性（Esc 关闭 / 焦点陷阱 / 焦点归还）：各挂一个 panelRef。
-  const createPanelRef = useRef(null);
-  const resetPanelRef = useRef(null);
+  // 两个弹窗走共用 Modal 外壳(Esc / 焦点陷阱 / 遮罩关闭判定,issue #104);
+  // 详情抽屉的可访问性仍自挂 panelRef,其 useModalA11y 在 closeDetail 定义之后挂(见下方,Esc 关闭须作废在途请求)。
   const detailPanelRef = useRef(null);
-  useModalA11y(createModalOpen && createModal.mounted, () => setCreateModalOpen(false), createPanelRef);
-  useModalA11y(Boolean(resetTarget) && resetModal.mounted, () => setResetTarget(null), resetPanelRef);
-  // 详情抽屉的 useModalA11y 在 closeDetail 定义之后挂(见下方,Esc 关闭须作废在途请求)。
 
   // 每组 loader 的请求代次守卫(v3.43.1 codex 交叉检视):M15 加了多个刷新时机后,
   // 同组请求可能并发在途——旧响应后到会覆盖新快照。发起时领代次,异步返回后校验
@@ -230,6 +243,10 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
       const defaults = await fetchReaderDefaults();
       if (fresh()) setReaderDefaults(defaults);
     } catch { /* 同上:名单卡显示读取中 */ }
+    try {
+      const ondemandGlobal = await fetchReaderOndemandGlobal();
+      if (fresh()) setOndemand(ondemandGlobal);
+    } catch { /* 同上:点播卡显示读取中且开关禁用 */ }
   }, [claimGen, showToast]);
 
   // 新账号默认订阅名单(issue #56):增删即写,null = 恢复代码缺省;只影响此后新建账号
@@ -256,6 +273,17 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
     saveReaderDefaults([...(readerDefaults?.source_ids || []), sourceId], '已加入默认订阅名单');
   };
   const handleDefaultsReset = () => saveReaderDefaults(null, '已恢复代码缺省名单');
+
+  const handleToggleOndemand = async () => {
+    const next = !ondemand?.enabled;
+    try {
+      const res = await updateReaderOndemandGlobal(next);
+      setOndemand(res);
+      showToast(res.enabled ? '已开启读者点播' : '已关闭读者点播', 'success');
+    } catch (error) {
+      showToast(error.message || '更新点播总闸失败', 'error');
+    }
+  };
 
   const handleTogglePublicShare = async () => {
     const next = !publicShare?.enabled;
@@ -352,13 +380,9 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 只响应子页切换时机
   }, [sub]);
 
-  // 新建 / 详情 / 重置密码打开时锁定页面滚动。
-  useEffect(() => {
-    if (!createModalOpen && !detailUser && !resetTarget) return undefined;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = prev; };
-  }, [createModalOpen, detailUser, resetTarget]);
+  // 详情抽屉打开时锁定页面滚动(新建 / 重置密码弹窗的锁由 Modal 外壳承担);全站共用引用计数锁,
+  // 抽屉上再叠确认框 / 表单弹窗、Esc 一次关两层也不会把 hidden 留在 body 上。
+  useBodyScrollLock(Boolean(detailUser));
 
   const handleToggleGlobalAi = async () => {
     const next = !globalAi;
@@ -1046,6 +1070,8 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
       {/* ══ 内容子页 ══════════════════════════════════════════════ */}
       {sub === 'content' && (
         <div>
+          <StorageStatusPanel refreshTick={refreshTick} />
+          <RankingSnapshotPanel showToast={showToast} refreshTick={refreshTick} />
           {/* 公开分享总闸:与 AI 总闸同形制。放「内容」而非「用户」——它管的是内容能否
               被摊到登录之外,和媒体库、X 接入同类(对外的内容出口)。 */}
           <section className="surface-card ai-switchboard rounded-[var(--r-card)] mb-4">
@@ -1068,6 +1094,35 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
                 ? '正在读取…'
                 : `当前有效 ${publicShare.live_count} 条 · 累计签发 ${publicShare.total_count} 条`}
               {' · '}读者可为单篇内容生成免登录只读链接，可设有效期并随时撤销
+            </span>
+          </section>
+
+          {/* 读者点播总闸(issue #137):播客精品导读 + 文章精简旁白共一枚开关——
+              二者是读者侧仅有的主动烧 LLM + TTS 的动作,共用同一日额度池。
+              开着却跑不了时把缺什么列出来,管理员据此决定改部署还是关总闸。 */}
+          <section className="surface-card ai-switchboard is-wrap rounded-[var(--r-card)] mb-4">
+            <span className={`ai-light ${ondemand?.enabled ? '' : 'is-off'}`} />
+            <div className="ai-switch-lbl" title="总闸:关闭后读者面不再出现点播入口,端点一并谢绝;已生成的音频与排队中的任务不动,重开即回归。管理面的强制生成不受影响">
+              读者点播
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!!ondemand?.enabled}
+              aria-label="读者点播总闸"
+              disabled={ondemand === null}
+              onClick={handleToggleOndemand}
+              className={`ledger-switch ${ondemand?.enabled ? 'is-on' : ''}`}
+            />
+            <span className="ai-divider" />
+            <span className="tiny-meta">
+              {ondemand === null
+                ? '正在读取…'
+                : !ondemand.enabled
+                  ? '已关闭：读者不再看到点播入口，已生成的音频照常播放'
+                  : (ondemand.blockers || []).length === 0
+                    ? '读者可按需生成播客精品导读与文章精简旁白（两者共用每日额度池）'
+                    : `${ondemand.article_available ? '仅文章精简旁白可点播' : '本部署当前跑不了点播'}，入口不对读者露出 · 缺：${ondemand.blockers.join('；')}`}
             </span>
           </section>
 
@@ -1235,7 +1290,7 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
               <BriefInterestZone showToast={showToast} refreshTick={refreshTick} />
 
               {/* ── 播客(issue #76):KPI + 处理参数 + 单集处理表 + 中文精简音频表 + 单集抽屉 ── */}
-              <PodcastZone showToast={showToast} refreshTick={refreshTick} onOpenCredentials={onOpenCredentials} />
+              <PodcastZone showToast={showToast} refreshTick={refreshTick} />
 
               {/* ── 用户自定源(v3.40):读者自助 RSS 源的治理与观测 ── */}
               <UserSourcesPanel showToast={showToast} refreshTick={refreshTick} />
@@ -1457,87 +1512,83 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
       </aside>
       </>)}
 
-      {/* ── 新建账户弹窗（Portal 到 body，避开变换祖先造成的 fixed 错位） ── */}
-      {createModal.mounted && createPortal(
-        <div className={`modal-overlay ${createModal.closing ? 'is-closing' : ''}`} onClick={() => setCreateModalOpen(false)}>
-          <form ref={createPanelRef} role="dialog" aria-modal="true" aria-label="新建账户" tabIndex={-1} className="modal-panel max-w-md form-sheet" onClick={(e) => e.stopPropagation()} onSubmit={handleCreate}>
-            <div className="form-sheet-head">
-              <h3 className="card-title">新建账户</h3>
-              <button type="button" onClick={() => setCreateModalOpen(false)} className="icon-button" aria-label="关闭"><X className="w-4 h-4" /></button>
+      {/* ── 新建账户弹窗(portal 到 body,避开变换祖先造成的 fixed 错位) ── */}
+      <Modal
+        open={createModalOpen} onClose={() => setCreateModalOpen(false)} closeOnOverlay portal size="md"
+        as="form" panelClassName="form-sheet" ariaLabel="新建账户" panelProps={{ onSubmit: handleCreate }}
+      >
+        <div className="form-sheet-head">
+          <h3 className="card-title">新建账户</h3>
+          <button type="button" onClick={() => setCreateModalOpen(false)} className="icon-button" aria-label="关闭"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="form-sheet-body">
+          <div className="form-sheet-field">
+            <label className="form-label" htmlFor="acct-new-name">用户名</label>
+            <input id="acct-new-name" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} placeholder="用户名" autoComplete="off" className="form-input w-full" />
+          </div>
+          <div className="form-sheet-field">
+            <label className="form-label" htmlFor="acct-new-pw">初始密码</label>
+            <input id="acct-new-pw" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="至少 6 位" autoComplete="new-password" className="form-input w-full" />
+          </div>
+          <div className="form-sheet-field">
+            <span className="form-label">角色</span>
+            <div className="mini-seg" role="group" aria-label="账户角色">
+              {[['user', '读者'], ['admin', '管理员']].map(([role, label]) => (
+                <button
+                  key={role}
+                  type="button"
+                  onClick={() => setNewRole(role)}
+                  className={`mini-seg-btn ${newRole === role ? 'is-on' : ''}`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
-            <div className="form-sheet-body">
-              <div className="form-sheet-field">
-                <label className="form-label" htmlFor="acct-new-name">用户名</label>
-                <input id="acct-new-name" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} placeholder="用户名" autoComplete="off" className="form-input w-full" />
-              </div>
-              <div className="form-sheet-field">
-                <label className="form-label" htmlFor="acct-new-pw">初始密码</label>
-                <input id="acct-new-pw" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="至少 6 位" autoComplete="new-password" className="form-input w-full" />
-              </div>
-              <div className="form-sheet-field">
-                <span className="form-label">角色</span>
-                <div className="mini-seg" role="group" aria-label="账户角色">
-                  {[['user', '读者'], ['admin', '管理员']].map(([role, label]) => (
-                    <button
-                      key={role}
-                      type="button"
-                      onClick={() => setNewRole(role)}
-                      className={`mini-seg-btn ${newRole === role ? 'is-on' : ''}`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                {newRole === 'admin' && (
-                  <p className="tiny-meta" style={{ marginTop: 6 }}>管理员拥有采集、归档、账户与系统配置的全部权限。</p>
-                )}
-              </div>
-            </div>
-            <div className="form-sheet-foot">
-              <button type="button" onClick={() => setCreateModalOpen(false)} className="action-button action-button-quiet min-h-[32px] px-3 text-xs">取消</button>
-              <button type="submit" disabled={busy} className="action-button action-button-primary min-h-[32px] px-3 text-xs">
-                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />} 创建{newRole === 'admin' ? '管理员' : '读者'}账户
-              </button>
-            </div>
-          </form>
-        </div>,
-        document.body,
-      )}
+            {newRole === 'admin' && (
+              <p className="tiny-meta" style={{ marginTop: 6 }}>管理员拥有采集、归档、账户与系统配置的全部权限。</p>
+            )}
+          </div>
+        </div>
+        <div className="form-sheet-foot">
+          <button type="button" onClick={() => setCreateModalOpen(false)} className="action-button action-button-quiet min-h-[32px] px-3 text-xs">取消</button>
+          <button type="submit" disabled={busy} className="action-button action-button-primary min-h-[32px] px-3 text-xs">
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />} 创建{newRole === 'admin' ? '管理员' : '读者'}账户
+          </button>
+        </div>
+      </Modal>
 
-      {/* ── 重置密码弹窗（Portal 到 body） ── */}
-      {resetModal.mounted && createPortal(
-        <div className={`modal-overlay ${resetModal.closing ? 'is-closing' : ''}`} onClick={() => setResetTarget(null)}>
-          <form ref={resetPanelRef} role="dialog" aria-modal="true" aria-label="重置密码" tabIndex={-1} className="modal-panel max-w-md form-sheet" onClick={(e) => e.stopPropagation()} onSubmit={handleResetSubmit}>
-            <div className="form-sheet-head">
-              <h3 className="card-title">重置密码</h3>
-              <button type="button" onClick={() => setResetTarget(null)} className="icon-button" aria-label="关闭"><X className="w-4 h-4" /></button>
-            </div>
-            <div className="form-sheet-body">
-              <p className="tiny-meta">为账户「{resetTarget?.username}」设置新密码，设置后该账户需用新密码登录。</p>
-              <div className="form-sheet-field">
-                <label className="form-label" htmlFor="acct-reset-pw">新密码</label>
-                <input
-                  id="acct-reset-pw"
-                  type="password"
-                  value={resetPassword}
-                  onChange={(e) => setResetPassword(e.target.value)}
-                  placeholder="至少 6 位"
-                  autoComplete="new-password"
-                  autoFocus
-                  className="form-input w-full"
-                />
-              </div>
-            </div>
-            <div className="form-sheet-foot">
-              <button type="button" onClick={() => setResetTarget(null)} className="action-button action-button-quiet min-h-[32px] px-3 text-xs">取消</button>
-              <button type="submit" disabled={resetBusy} className="action-button action-button-primary min-h-[32px] px-3 text-xs">
-                {resetBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />} 保存新密码
-              </button>
-            </div>
-          </form>
-        </div>,
-        document.body,
-      )}
+      {/* ── 重置密码弹窗(portal 到 body) ── */}
+      <Modal
+        open={Boolean(resetTarget)} onClose={() => setResetTarget(null)} closeOnOverlay portal size="md"
+        as="form" panelClassName="form-sheet" ariaLabel="重置密码" panelProps={{ onSubmit: handleResetSubmit }}
+      >
+        <div className="form-sheet-head">
+          <h3 className="card-title">重置密码</h3>
+          <button type="button" onClick={() => setResetTarget(null)} className="icon-button" aria-label="关闭"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="form-sheet-body">
+          <p className="tiny-meta">为账户「{resetTarget?.username}」设置新密码，设置后该账户需用新密码登录。</p>
+          <div className="form-sheet-field">
+            <label className="form-label" htmlFor="acct-reset-pw">新密码</label>
+            <input
+              id="acct-reset-pw"
+              type="password"
+              value={resetPassword}
+              onChange={(e) => setResetPassword(e.target.value)}
+              placeholder="至少 6 位"
+              autoComplete="new-password"
+              autoFocus
+              className="form-input w-full"
+            />
+          </div>
+        </div>
+        <div className="form-sheet-foot">
+          <button type="button" onClick={() => setResetTarget(null)} className="action-button action-button-quiet min-h-[32px] px-3 text-xs">取消</button>
+          <button type="submit" disabled={resetBusy} className="action-button action-button-primary min-h-[32px] px-3 text-xs">
+            {resetBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />} 保存新密码
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }
