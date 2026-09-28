@@ -118,6 +118,7 @@ from services import jobs as jobs_service
 from services import user_sources as user_sources_service
 from services import reader_defaults as reader_defaults_service
 from services import reader_ondemand as reader_ondemand_service
+from services import rankings as rankings_service
 from services import article_analysis as article_analysis_service
 from services import taxonomy as taxonomy_service
 from services import podcast_catalog as podcast_catalog_service
@@ -138,7 +139,7 @@ from services.media_store import MediaStore
 from services.object_storage import ObjectStorage, ObjectStorageError
 from services.storage_backup import BackupService
 from services.storage_runtime import maintain_storage
-from services.podcast_artifacts import PodcastArtifactStore
+from services.podcast_artifacts import PodcastArtifactError, PodcastArtifactStore
 from services.podcast_asr_worker import AsrWorkerConfig, AsrWorkerStep
 from services import podcast_premium_guides as podcast_premium_guide_service
 from services import article_listen_guides as article_listen_guide_service
@@ -536,6 +537,8 @@ async def lifespan(app: FastAPI):
     reconcile_orphaned_runs()
     if collector_on:
         load_tasks_to_scheduler()
+    # 标签榜由 reader 本地正式标签派生，拆分部署下也必须在 reader 节点运行。
+    reload_ranking_schedule()
     if scheduler.state == STATE_STOPPED:
         scheduler.start()
         print("⏰ APScheduler 定时调度引擎已启动！")
@@ -547,6 +550,19 @@ async def lifespan(app: FastAPI):
         # allowed to register ASR. The first tick is deliberately delayed.
         reload_podcast_asr_worker_schedule()
         reload_storage_schedule()
+        # 新部署不必等到次日 07:00；缺当天边界快照时补一轮。固定日榜 job
+        # 仍由上方 cron 承担，补跑使用独立 id 且同日写入幂等。
+        with Session(db_sink.engine) as session:
+            if rankings_service.latest_snapshot_needed(session):
+                scheduler.add_job(
+                    execute_ranking_snapshot_job,
+                    "date",
+                    run_date=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=2),
+                    id="reader_rankings_bootstrap",
+                    args=[True],
+                    replace_existing=True,
+                    max_instances=1,
+                )
         if collector_on:
             # 远程内容同步定时任务(启用且 cron 合法时注册,否则移除既有 job)。
             reload_remote_sync_schedule()
@@ -774,14 +790,23 @@ def schedule_podcast_premium_guide(episode_id: str) -> bool:
                         duration = float(ext.get("duration_seconds") or 0)
                     except Exception:
                         duration = 0.0
+            eligibility = podcast_premium_guide_service.guide_eligibility(
+                db_sink.engine,
+                episode_id=episode_id,
+                score_threshold=premium_threshold,
+            )
             plan = podcast_premium_guide_service.calculate_solo_deep_plan(
                 duration,
                 hard_max_audio_minutes=settings.podcast.premium_max_audio_minutes,
             )
+            should_synthesize_audio = (
+                eligibility.should_synthesize_audio
+                and plan.should_synthesize_audio
+            )
             voice = settings.podcast.default_voice_profile
             if not llm_config.configured:
                 raise RuntimeError("精品导读所需的 LLM 配置尚未就绪")
-            if plan.should_synthesize_audio and (not aliyun_config.tts_configured or not voice):
+            if should_synthesize_audio and (not aliyun_config.tts_configured or not voice):
                 raise RuntimeError("精品导读所需的 TTS 配置尚未就绪")
             tts_provider = (
                 make_premium_tts_provider(
@@ -791,7 +816,7 @@ def schedule_podcast_premium_guide(episode_id: str) -> bool:
                     voice_profile=voice,
                     max_audio_bytes=podcast_artifact_store.max_bytes,
                 )
-                if plan.should_synthesize_audio
+                if should_synthesize_audio
                 else None
             )
             await podcast_premium_guide_service.run_premium_guide(
@@ -1031,6 +1056,38 @@ def _podcast_asr_admission_ready() -> bool:
     return podcast_processing_providers.stage_admission_ready("asr", effective_aliyun)
 
 
+def _podcast_asr_fallback_eligible(episode_id: str) -> bool:
+    """Whether show-note evidence may cross the paid ASR boundary."""
+
+    with Session(db_sink.engine) as session:
+        analysis = session.get(ArticleAnalysisRecord, episode_id)
+        return bool(
+            analysis is not None
+            and analysis.status == "succeeded"
+            and podcast_premium_service.initial_score(analysis) is not None
+            and podcast_premium_service.initial_score(analysis)
+            >= podcast_premium_service.INITIAL_PROCESSING_THRESHOLD
+        )
+
+
+def _publisher_transcript_failure_is_transient(exc: BaseException | None) -> bool:
+    if isinstance(
+        exc,
+        podcast_publisher_transcript_service.PublisherTranscriptTimeout,
+    ):
+        return True
+    if not isinstance(
+        exc,
+        podcast_publisher_transcript_service.PublisherTranscriptFetchFailed,
+    ):
+        return False
+    cause = exc.__cause__
+    if not isinstance(cause, httpx.HTTPStatusError):
+        return True
+    status = cause.response.status_code
+    return status in {408, 429} or status >= 500
+
+
 async def enqueue_podcast_processing_with_input(
     *,
     episode_id: str,
@@ -1080,7 +1137,10 @@ async def enqueue_podcast_processing_with_input(
             actor=actor,
         )
 
+    publisher_failure: BaseException | None = None
+
     async def _ingest_publisher_transcript() -> bool:
+        nonlocal publisher_failure
         try:
             async with httpx.AsyncClient() as client:
                 await podcast_publisher_transcript_service.ingest_publisher_transcript(
@@ -1089,7 +1149,8 @@ async def enqueue_podcast_processing_with_input(
                     config=settings.podcast,
                     client=client,
                 )
-        except podcast_publisher_transcript_service.PublisherTranscriptError:
+        except podcast_publisher_transcript_service.PublisherTranscriptError as exc:
+            publisher_failure = exc
             return False
         return True
 
@@ -1115,6 +1176,26 @@ async def enqueue_podcast_processing_with_input(
     if not publisher_attempted:
         publisher_ready = await _ingest_publisher_transcript()
     if not publisher_ready:
+        # A failed publisher fetch must not inherit the free transcript's
+        # eligibility and silently cross into paid ASR.  Only the independent
+        # show-notes score can authorize that fallback.
+        if (
+            not selection_override
+            and not await asyncio.to_thread(_podcast_asr_fallback_eligible, episode_id)
+        ):
+            transient = _publisher_transcript_failure_is_transient(publisher_failure)
+            raise podcast_processing_admin_service.PodcastAdminError(
+                (
+                    "podcast_publisher_transcript_unavailable"
+                    if transient
+                    else "podcast_selection_required"
+                ),
+                status_code=503 if transient else 409,
+                message=(
+                    "发布方逐字稿不可用，且简介初评未达到付费 ASR 处理线 "
+                    f"{podcast_premium_service.INITIAL_PROCESSING_THRESHOLD:.1f}"
+                ),
+            )
         # ASR fallback: re-apply the gate *before* touching the network or disk.
         if not await asyncio.to_thread(_podcast_asr_admission_ready):
             raise podcast_landing_service.PodcastLandingGated("asr_admission_not_ready")
@@ -1141,9 +1222,52 @@ async def enqueue_podcast_processing_with_input(
                 max_audio_seconds_per_file=max_audio_seconds_per_file,
                 client_factory=httpx.AsyncClient,
             )
-        except podcast_source_media_service.SourceMediaTooLong as exc:
+        except podcast_source_media_service.SourceMediaError as exc:
+            from services.podcast_source_media import (
+                SourceMediaConflict, SourceMediaFetchFailed, SourceMediaNotFound,
+                SourceMediaTimeout, SourceMediaTooLarge, SourceMediaTooLong,
+            )
+
+            mapping = (
+                (SourceMediaNotFound, 404, "podcast_not_found"),
+                (SourceMediaTooLarge, 413, "podcast_source_media_too_large"),
+                (SourceMediaTooLong, 422, "podcast_source_media_too_long"),
+                (SourceMediaTimeout, 504, "podcast_source_media_timeout"),
+                (SourceMediaFetchFailed, 502, "podcast_source_media_fetch_failed"),
+                (SourceMediaConflict, 409, "podcast_processing_conflict"),
+            )
+            for kind, status, code in mapping:
+                if isinstance(exc, kind):
+                    raise podcast_processing_admin_service.PodcastAdminError(
+                        code, status_code=status, message=str(exc)
+                    ) from exc
+            raise
+        except PodcastStageDenied as exc:
             raise podcast_processing_admin_service.PodcastAdminError(
-                "podcast_source_media_too_long", status_code=422
+                "podcast_stage_denied", status_code=403, message=str(exc)
+            ) from exc
+        except PodcastArtifactError as exc:
+            from services.podcast_artifacts import (
+                PodcastArtifactConflict, PodcastArtifactNotFound,
+                PodcastArtifactProbeUnavailable, PodcastArtifactStorageFull,
+                PodcastArtifactTooLarge, PodcastArtifactUnsupportedMedia,
+            )
+
+            mapping = (
+                (PodcastArtifactStorageFull, 507, "podcast_storage_full"),
+                (PodcastArtifactTooLarge, 413, "podcast_source_media_too_large"),
+                (PodcastArtifactProbeUnavailable, 503, "podcast_provider_unavailable"),
+                (PodcastArtifactUnsupportedMedia, 415, "podcast_artifact_invalid"),
+                (PodcastArtifactNotFound, 404, "podcast_not_found"),
+                (PodcastArtifactConflict, 409, "podcast_processing_conflict"),
+            )
+            for kind, status, code in mapping:
+                if isinstance(exc, kind):
+                    raise podcast_processing_admin_service.PodcastAdminError(
+                        code, status_code=status, message=str(exc)
+                    ) from exc
+            raise podcast_processing_admin_service.PodcastAdminError(
+                "podcast_artifact_invalid", status_code=400, message=str(exc)
             ) from exc
     return await asyncio.to_thread(enqueue)
 
@@ -1195,13 +1319,14 @@ def _resolve_podcast_landing_candidate(
         and analysis.status == "succeeded"
         and analysis.analysis_basis in {"publisher_transcript", "asr_transcript"}
     )
-    if not initial_candidate and not transcript_result:
-        return None
     locator_revision = (
         podcast_publisher_transcript_service.publisher_transcript_refresh_revision(
             db_sink.engine, episode_id=article_id
         )
     )
+    publisher_candidate = locator_revision is not None
+    if not initial_candidate and not transcript_result and not publisher_candidate:
+        return None
     needs_source_media = False
     try:
         selected = podcast_processing_admin_service.select_full_analysis_input(
@@ -1209,7 +1334,10 @@ def _resolve_podcast_landing_candidate(
             episode_id=article_id,
         )
     except podcast_processing_admin_service.PodcastAdminError as exc:
-        if not initial_candidate or exc.code != "podcast_artifact_not_ready":
+        if (
+            (not initial_candidate and not publisher_candidate)
+            or exc.code != "podcast_artifact_not_ready"
+        ):
             return None
         # No local input yet: the revision must still move when the publisher
         # locator (or the enclosure itself) changes, never a constant.
@@ -1221,7 +1349,7 @@ def _resolve_podcast_landing_candidate(
         except podcast_source_media_service.SourceMediaError:
             enclosure_hash = ""
         revision = "prepare:" + (locator_revision or enclosure_hash or "")[:16]
-        needs_source_media = not locator_revision
+        needs_source_media = not publisher_candidate
     else:
         if (
             transcript_result
@@ -1615,6 +1743,7 @@ app.include_router(remote_sync_router.router)
 app.include_router(share_router.router)
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
+RANKING_JOB_ID = "reader_rankings"
 
 
 async def execute_storage_maintenance_job():
@@ -1630,6 +1759,32 @@ def reload_storage_schedule():
                           id="storage_maintenance", replace_existing=True, max_instances=1, coalesce=True)
     elif scheduler.get_job("storage_maintenance"):
         scheduler.remove_job("storage_maintenance")
+
+
+async def execute_ranking_snapshot_job(current_cutoff: bool = False):
+    """Build a ranking snapshot off-loop, frozen for cron or current for catch-up."""
+
+    try:
+        snapshot = await asyncio.to_thread(
+            rankings_service.build_snapshot,
+            db_sink.engine,
+            current_cutoff=current_cutoff,
+        )
+        _dorami_logger.info(
+            "读者榜单快照已生成 date=%s status=%s",
+            snapshot.snapshot_date,
+            snapshot.status,
+        )
+    except Exception:  # noqa: BLE001 - the next cron/restart catch-up retries it
+        _dorami_logger.exception("读者榜单快照生成失败")
+
+
+def reload_ranking_schedule() -> None:
+    """Install the all-role, idempotent 07:00 Asia/Shanghai ranking job."""
+
+    add_cron_job(RANKING_JOB_ID, execute_ranking_snapshot_job, "0 7 * * *", [])
+
+
 COLLECTION_FETCH_CONCURRENCY = 4
 PODCAST_ASR_WORKER_JOB_ID = "podcast_asr_worker"
 

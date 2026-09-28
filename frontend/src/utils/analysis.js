@@ -111,10 +111,11 @@ export function podcastAssessmentMeta(article) {
     return null;
   }
   const basis = podcastAnalysisBasis(article);
-  if (TRANSCRIPT_ANALYSIS_BASES.has(basis)) {
+  if (podcastProjection(article).full_analysis_ready === true
+      || TRANSCRIPT_ANALYSIS_BASES.has(basis)) {
     return {
       label: '全文深度分析',
-      note: `AI ${podcastTranscriptBasisText(basis)}分析，关键结论可回到原节目时间码核验`,
+      note: 'AI 已分析整期内容，关键结论可回到原节目核验',
     };
   }
   return {
@@ -338,10 +339,9 @@ export function analysisNeedsPolling(article) {
   if (PODCAST_GUIDE_ACTIVE.has(guideStatus) && !article?.podcast?.condensed_audio_url) {
     return true;
   }
-  const processing = podcastFullProcessingMeta(article);
-  return Boolean(processing && PODCAST_PROCESSING_ACTIVE.has(
+  return PODCAST_PROCESSING_ACTIVE.has(
     String(article?.podcast?.processing_status || article?.podcast?.status || '').trim().toLowerCase(),
-  ));
+  );
 }
 
 export function preferredAnalysisSummary(cachedSummary, incomingSummary) {

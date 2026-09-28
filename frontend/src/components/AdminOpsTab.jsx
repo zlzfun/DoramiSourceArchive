@@ -61,6 +61,7 @@ import AdminTaxonomyPanel from './admin/AdminTaxonomyPanel';
 import PodcastZone from './admin/PodcastZone';
 import BriefInterestZone from './admin/BriefInterestZone';
 import StorageStatusPanel from './admin/StorageStatusPanel';
+import RankingSnapshotPanel from './admin/RankingSnapshotPanel';
 import { Kpi, KpiState } from './admin/Kpi';
 import { pivotDaily, C_READ, C_FAVORITE, C_SUBSCRIBE } from './charts/chartUtils';
 import { PURPOSE_LABELS, formatStamp, fmtNum, truncLabel } from './admin/adminUtils';
@@ -85,12 +86,26 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
   const confirm = useConfirm();
   const [sub, setSub] = useState('user'); // 子页：user | content | ai | engage | taxonomy
 
-  // 跨页聚焦(pendingFocus 单通道):目前只解释 { sub } —— 集成页模型 chip 跳到 AI 子页。
+  const [pendingZone, setPendingZone] = useState('');
+  // 跨页聚焦(pendingFocus 单通道):解释 { sub, zone }，设置柜可直达 ASR 配额卡。
   useEffect(() => {
     if (!pendingFocus) return;
     if (pendingFocus.sub) setSub(pendingFocus.sub);
-    onPendingFocusApplied?.();
+    if (pendingFocus.zone) setPendingZone(pendingFocus.zone);
+    else onPendingFocusApplied?.();
   }, [pendingFocus, onPendingFocusApplied]);
+  useEffect(() => {
+    if (!pendingZone || sub !== 'content') return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      const target = document.getElementById(`admin-${pendingZone}`);
+      if (!target) return;
+      target.scrollIntoView({ block: 'start' });
+      target.focus({ preventScroll: true });
+      setPendingZone('');
+      onPendingFocusApplied?.();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [pendingZone, sub, onPendingFocusApplied]);
   // 账户列表(规模化波):服务端分页 + 搜索,前端只持有当前页;summary 聚合全量供 KPI/排行。
   const [acctData, setAcctData] = useState(null); // {items,total,summary} | null = 加载中
   // 账户增长(v3.55 issue #31):聚合口径,全体管理员可见;账户名单/逐用户明细只有根管理员(rootAdmin)。
@@ -1056,6 +1071,7 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
       {sub === 'content' && (
         <div>
           <StorageStatusPanel refreshTick={refreshTick} />
+          <RankingSnapshotPanel showToast={showToast} refreshTick={refreshTick} />
           {/* 公开分享总闸:与 AI 总闸同形制。放「内容」而非「用户」——它管的是内容能否
               被摊到登录之外,和媒体库、X 接入同类(对外的内容出口)。 */}
           <section className="surface-card ai-switchboard rounded-[var(--r-card)] mb-4">
@@ -1274,7 +1290,7 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
               <BriefInterestZone showToast={showToast} refreshTick={refreshTick} />
 
               {/* ── 播客(issue #76):KPI + 处理参数 + 单集处理表 + 中文精简音频表 + 单集抽屉 ── */}
-              <PodcastZone showToast={showToast} refreshTick={refreshTick} onOpenCredentials={onOpenCredentials} />
+              <PodcastZone showToast={showToast} refreshTick={refreshTick} />
 
               {/* ── 用户自定源(v3.40):读者自助 RSS 源的治理与观测 ── */}
               <UserSourcesPanel showToast={showToast} refreshTick={refreshTick} />

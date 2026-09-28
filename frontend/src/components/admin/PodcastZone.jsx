@@ -6,11 +6,14 @@ import {
   fetchPodcastArtifactStats,
   fetchPodcastArtifacts,
   fetchPodcastAsrQuota,
+  fetchPodcastTtsReceipts,
   fetchPodcastPremiumTasks,
   forcePodcastFullAnalysis,
   forcePodcastPremiumTts,
   publishPodcastArtifact,
   reconcilePodcastArtifacts,
+  reclaimPodcastTtsReceipts,
+  updatePodcastAsrQuota,
   updatePodcastPremiumThreshold,
   withdrawPodcastArtifact,
 } from '../../api';
@@ -18,6 +21,12 @@ import { useConfirm } from '../../hooks/useConfirm';
 import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 import { usePolling } from '../../hooks/usePolling';
 import { formatPodcastArtifactBytes, podcastArtifactKindLabel } from '../../utils/podcastArtifactAdmin';
+import {
+  ASR_SOURCE_LABELS,
+  asrProviderLabel,
+  asrUsageText,
+  parseAsrQuotaDraft,
+} from '../../utils/podcastAsrQuota';
 import {
   podcastForceTtsResult,
   podcastProcessingSuccessMessage,
@@ -72,11 +81,11 @@ const fetchQuota = () => fetchPodcastAsrQuota();
 
 /**
  * 运维管理 → 内容 → 「播客」分区(issue #76,样页 docs/design/dorami-admin-podcast-taxonomy-quiet.html)。
- * 区头(quiet 刷新)→ KPI 六格 → 处理参数开关板(优质门槛 + 固定处理线 + ASR 配额 chip)→
+ * 区头(quiet 刷新)→ KPI 六格 → 处理参数开关板(优质门槛 + 固定付费 ASR 线 + ASR 配额 chip)→
  * 单集处理表 → 中文精简音频表;三处整行可点开同一个单集抽屉。四组数据各自 loading/error/data,
  * 一组失败不挡其它;活动态行存在时 3s 轮询任务表(静默,不闪 loading)。
  */
-export default function PodcastZone({ showToast, refreshTick = 0, onOpenCredentials }) {
+export default function PodcastZone({ showToast, refreshTick = 0 }) {
   const confirm = useConfirm();
   const [taskFilters, setTaskFilters] = useState(TASK_FILTERS_INIT);
   const [audioFilters, setAudioFilters] = useState(AUDIO_FILTERS_INIT);
@@ -88,29 +97,39 @@ export default function PodcastZone({ showToast, refreshTick = 0, onOpenCredenti
   const [audio, loadAudio] = useLoader(fetchAudio);
   const [stats, loadStats] = useLoader(fetchStats);
   const [quota, loadQuota] = useLoader(fetchQuota);
+  const [ttsCache, loadTtsCache] = useLoader(fetchPodcastTtsReceipts);
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState({ episodeId: '', action: '' });
   const [busyId, setBusyId] = useState(null);
   const [gcBusy, setGcBusy] = useState(false);
+  const [ttsGcBusy, setTtsGcBusy] = useState(false);
+  const [quotaDailyHours, setQuotaDailyHours] = useState('');
+  const [quotaEpisodeHours, setQuotaEpisodeHours] = useState('');
+  const [quotaSaving, setQuotaSaving] = useState(false);
   const [drawerId, setDrawerId] = useState(null);
   const [drawerTick, setDrawerTick] = useState(0);
 
   useEffect(() => { loadTasks(taskQuery); }, [loadTasks, taskQuery]);
   useEffect(() => { loadAudio(audioQuery); }, [loadAudio, audioQuery]);
-  useEffect(() => { loadStats(); loadQuota(); }, [loadStats, loadQuota]);
+  useEffect(() => { loadStats(); loadQuota(); loadTtsCache(); }, [loadStats, loadQuota, loadTtsCache]);
   useEffect(() => {
-    if (refreshTick > 0) { loadTasks(taskQuery, { quiet: true }); loadAudio(audioQuery, { quiet: true }); loadStats(); loadQuota(); }
+    if (refreshTick > 0) { loadTasks(taskQuery, { quiet: true }); loadAudio(audioQuery, { quiet: true }); loadStats(); loadQuota(); loadTtsCache(); }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 只响应「切回 Tab / 切子页」刷新脉冲
   }, [refreshTick]);
   useEffect(() => {
     const threshold = tasks.data?.threshold;
     if (threshold != null) setDraft(Number(threshold).toFixed(1));
   }, [tasks.data?.threshold]);
+  useEffect(() => {
+    if (!quota.data) return;
+    setQuotaDailyHours(String(quota.data.daily_audio_hours_limit));
+    setQuotaEpisodeHours(String(quota.data.max_audio_hours_per_file));
+  }, [quota.data]);
 
   const thresholds = useMemo(() => ({
-    initial: tasks.data?.initial_processing_threshold ?? 5,
-    premium: tasks.data?.threshold ?? 8,
+    initial: tasks.data?.initial_processing_threshold ?? 6,
+    premium: tasks.data?.threshold ?? 7.5,
   }), [tasks.data?.initial_processing_threshold, tasks.data?.threshold]);
 
   // 活动态(处理中 / TTS 生成中)存在时静默轮询;抽屉开着也同步刷新。
@@ -119,15 +138,23 @@ export default function PodcastZone({ showToast, refreshTick = 0, onOpenCredenti
     [tasks.data?.items, thresholds],
   );
   const poll = useCallback(async () => {
-    await loadTasks(taskQuery, { quiet: true });
+    await Promise.all([
+      loadTasks(taskQuery, { quiet: true }),
+      loadQuota(undefined, { quiet: true }),
+    ]);
     if (drawerId) setDrawerTick((t) => t + 1);
-  }, [loadTasks, taskQuery, drawerId]);
+  }, [loadTasks, taskQuery, loadQuota, drawerId]);
   usePolling(poll, 3000, { immediate: false, enabled: anyActive });
 
   const refreshAll = useCallback(async () => {
-    await Promise.all([loadTasks(taskQuery, { quiet: true }), loadAudio(audioQuery, { quiet: true }), loadStats()]);
+    await Promise.all([
+      loadTasks(taskQuery, { quiet: true }),
+      loadAudio(audioQuery, { quiet: true }),
+      loadStats(),
+      loadQuota(undefined, { quiet: true }),
+    ]);
     if (drawerId) setDrawerTick((t) => t + 1);
-  }, [loadTasks, taskQuery, loadAudio, audioQuery, loadStats, drawerId]);
+  }, [loadTasks, taskQuery, loadAudio, audioQuery, loadStats, loadQuota, drawerId]);
 
   const patchTaskFilters = (patch) => setTaskFilters((prev) => ({ ...prev, ...patch }));
   const patchAudioFilters = (patch) => setAudioFilters((prev) => ({ ...prev, ...patch }));
@@ -150,6 +177,37 @@ export default function PodcastZone({ showToast, refreshTick = 0, onOpenCredenti
     } finally { setSaving(false); }
   };
 
+  const saveQuota = async () => {
+    const parsed = parseAsrQuotaDraft(quotaDailyHours, quotaEpisodeHours);
+    if (parsed.error) {
+      showToast(parsed.error, 'error');
+      return;
+    }
+    const dailyHours = parsed.dailyAudioSecondsLimit / 3600;
+    const episodeHours = parsed.maxAudioSecondsPerFile / 3600;
+    if (!(await confirm({
+      title: '更新 ASR 配额策略',
+      message: `每日总额度将设为 ${dailyHours} 小时，单集上限将设为 ${episodeHours} 小时。\n这是本地费用保护上限，不会同步提高供应商账号的真实额度。`,
+      confirmText: '保存配额',
+      tone: 'primary',
+    }))) return;
+    setQuotaSaving(true);
+    try {
+      const saved = await updatePodcastAsrQuota(
+        parsed.dailyAudioSecondsLimit,
+        parsed.maxAudioSecondsPerFile,
+      );
+      setQuotaDailyHours(String(saved.daily_audio_hours_limit));
+      setQuotaEpisodeHours(String(saved.max_audio_hours_per_file));
+      await loadQuota(undefined, { quiet: true });
+      showToast('已更新 ASR 配额策略', 'success');
+    } catch (error) {
+      showToast(error.message || '保存失败，请检查额度后重试', 'error');
+    } finally {
+      setQuotaSaving(false);
+    }
+  };
+
   const runProcessing = async (item) => {
     setRunning({ episodeId: item.episode_id, action: 'full' });
     try {
@@ -169,10 +227,13 @@ export default function PodcastZone({ showToast, refreshTick = 0, onOpenCredenti
   const handleRetry = (item) => runProcessing(item);
 
   const handleForceFull = async (item) => {
-    const initial = item.initial_score == null ? '尚未初评' : `简介初评 ${podcastScoreText(item.initial_score)}${item.initial_eligible ? '，尚未进入全文处理' : `，未过自动处理线 ${podcastScoreText(thresholds.initial)}`}`;
+    const initial = item.initial_score == null ? '尚未初评' : `简介初评 ${podcastScoreText(item.initial_score)}${item.initial_eligible ? '，尚未进入全文处理' : `，未过付费 ASR 线 ${podcastScoreText(thresholds.initial)}`}`;
+    const inputCost = item.publisher_transcript_available
+      ? '将优先获取发布方逐字稿并进行全文分析；若逐字稿不可用，可能下载原节目音频并提交 ASR，消耗 ASR 日配额。'
+      : '将准备原节目音频、提交 ASR 转录并进行全文分析；消耗 ASR 日配额。';
     if (!(await confirm({
       title: '强制全文处理',
-      message: `「${item.title}」${initial}。\n将准备原节目音频、提交 ASR 转录并进行全文分析；消耗 ASR 日配额。`,
+      message: `「${item.title}」${initial}。\n${inputCost}`,
       confirmText: '开始处理',
       tone: 'primary',
     }))) return;
@@ -243,6 +304,21 @@ export default function PodcastZone({ showToast, refreshTick = 0, onOpenCredenti
     } finally { setGcBusy(false); }
   };
 
+  const handleTtsReclaim = async () => {
+    if (!(await confirm({
+      title: '归档已完成的 TTS 缓存',
+      message: '仅压缩七天前、已有已发布音频且回执校验通过的 WAV；调用回执与计费记录保留，未完成任务不会清理。',
+      confirmText: '归档缓存', tone: 'primary',
+    }))) return;
+    setTtsGcBusy(true);
+    try {
+      const result = await reclaimPodcastTtsReceipts();
+      showToast(`已归档 ${result.compressed_wavs} 段回执音频，节省 ${formatPodcastArtifactBytes(result.saved_bytes)}`, 'success');
+      await loadTtsCache();
+    } catch (error) { showToast(error.message, 'error'); }
+    finally { setTtsGcBusy(false); }
+  };
+
   const stageFilterLink = (stage, label) => (
     <button type="button" className={`kpi-sub-link ${taskFilters.stage === stage ? 'is-on' : ''}`} onClick={() => patchTaskFilters({ stage: taskFilters.stage === stage ? '' : stage, page: 1 })}>
       {label}
@@ -255,6 +331,10 @@ export default function PodcastZone({ showToast, refreshTick = 0, onOpenCredenti
   const stageCounts = breakdown.stage ?? {};
   const refreshing = tasks.status === 'loading' || audio.status === 'loading' || stats.status === 'loading';
   const quotaData = quota.data;
+  const quotaDirty = Boolean(quotaData) && (
+    quotaDailyHours !== String(quotaData.daily_audio_hours_limit)
+    || quotaEpisodeHours !== String(quotaData.max_audio_hours_per_file)
+  );
 
   return (
     <>
@@ -267,7 +347,7 @@ export default function PodcastZone({ showToast, refreshTick = 0, onOpenCredenti
           <button
             type="button"
             className="action-button action-button-quiet min-h-[32px] px-3 text-xs"
-            onClick={() => { refreshAll(); loadQuota(); }}
+            onClick={() => { refreshAll(); loadQuota(); loadTtsCache(); }}
             disabled={refreshing}
           >
             {refreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} 刷新
@@ -309,6 +389,94 @@ export default function PodcastZone({ showToast, refreshTick = 0, onOpenCredenti
           )}
         </section>
 
+        <section className="surface-card rounded-[var(--r-card)]" aria-label="TTS 回执缓存">
+          <div className="tbl-head"><span className="tools-title">TTS 回执缓存</span></div>
+          {ttsCache.data?.status === 'available' ? (
+            <div className="body-text grid gap-2 px-4 pb-4">
+              <p>
+                已用 {formatPodcastArtifactBytes(ttsCache.data.used_bytes)} / {formatPodcastArtifactBytes(ttsCache.data.limit_bytes)}
+                {' · '}单次最长口播预留约 {formatPodcastArtifactBytes(ttsCache.data.estimated_max_narration_reservation_bytes)}
+              </p>
+              <p>
+                缓存缺口 {formatPodcastArtifactBytes(ttsCache.data.cache_shortfall_bytes)}
+                {' · '}磁盘缺口 {formatPodcastArtifactBytes(ttsCache.data.disk_shortfall_bytes)}
+                <button type="button" className="action-button action-button-secondary ml-3" disabled={ttsGcBusy} onClick={handleTtsReclaim}>
+                  {ttsGcBusy ? '归档中…' : '安全归档已完成回执'}
+                </button>
+              </p>
+            </div>
+          ) : <p className="tiny-meta px-4 pb-4">{ttsCache.data?.reason || stateError(ttsCache) || '读取中…'}</p>}
+        </section>
+
+        <section
+          id="admin-podcast-asr-quota"
+          tabIndex="-1"
+          className="surface-card rounded-[var(--r-card)]"
+          aria-label="ASR 配额策略"
+        >
+          <div className="tbl-head">
+            <span className="tools-title">ASR 配额策略</span>
+            {quotaData && <span className={`stamp ${quotaData.usage_status === 'frozen' ? 'stamp-warn' : 'stamp-idle'}`}>{asrProviderLabel(quotaData.provider)}</span>}
+          </div>
+          {quotaData ? (
+            <div className="grid gap-3 px-4 pb-4 md:grid-cols-2 xl:grid-cols-4">
+              <label className="sett-field">
+                <span className="sett-field-lbl">每日总额度（小时）</span>
+                <input
+                  className="form-input font-mono"
+                  type="number"
+                  min="0.01"
+                  step="0.5"
+                  value={quotaDailyHours}
+                  onChange={(event) => setQuotaDailyHours(event.target.value)}
+                />
+                <span className="tiny-meta mt-2">来源：{ASR_SOURCE_LABELS[quotaData.source] || quotaData.source}</span>
+              </label>
+              <label className="sett-field">
+                <span className="sett-field-lbl">单集上限（小时）</span>
+                <input
+                  className="form-input font-mono"
+                  type="number"
+                  min="0.01"
+                  max="12"
+                  step="0.5"
+                  value={quotaEpisodeHours}
+                  onChange={(event) => setQuotaEpisodeHours(event.target.value)}
+                />
+                <span className="tiny-meta mt-2">来源：{ASR_SOURCE_LABELS[quotaData.max_audio_per_file_source] || quotaData.max_audio_per_file_source} · 硬边界 12h</span>
+              </label>
+              <div className="sett-field">
+                <span className="sett-field-lbl">当前窗口</span>
+                <p className="body-text mt-2 tabular-nums">{quotaData.quota_period || '尚未建立窗口'}</p>
+                <p className="tiny-meta mt-1">{quotaData.quota_timezone || '时区未知'} · {quotaData.quota_scope || '范围未配置'}</p>
+                <p className="tiny-meta mt-1">
+                  {quotaData.quota_window_end_at
+                    ? `下次恢复 ${new Date(quotaData.quota_window_end_at).toLocaleString('zh-CN', { hour12: false })}`
+                    : '恢复时间未知'}
+                </p>
+              </div>
+              <div className="sett-field">
+                <span className="sett-field-lbl">本窗口用量</span>
+                <p className="body-text mt-2 tabular-nums">{asrUsageText(quotaData)}</p>
+                {quotaData.usage_reason && <p className="tiny-meta mt-1">{quotaData.usage_reason}</p>}
+              </div>
+              <div className="md:col-span-2 xl:col-span-4 flex flex-wrap items-center gap-3 border-t border-[var(--dorami-border)] pt-3">
+                <span className="tiny-meta">放大的是本地费用保护上限，不代表供应商账号真实额度同步增加</span>
+                <button
+                  type="button"
+                  className="action-button action-button-primary ml-auto min-h-[32px] px-3 text-xs"
+                  onClick={saveQuota}
+                  disabled={quotaSaving || !quotaDirty}
+                >
+                  {quotaSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}保存配额
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="px-4 pb-4"><KpiState label="ASR 配额" error={stateError(quota)} onRetry={() => loadQuota()} /></div>
+          )}
+        </section>
+
         <section className="surface-card ai-switchboard is-wrap rounded-[var(--r-card)]" aria-label="播客处理参数">
           <span className="ai-switch-lbl">优质门槛</span>
           <label className="knob">
@@ -323,19 +491,7 @@ export default function PodcastZone({ showToast, refreshTick = 0, onOpenCredenti
             />
           </label>
           <span className="ai-divider" />
-          <span className="knob is-fixed">简介初评处理线 <strong>≥ {podcastScoreText(thresholds.initial)}</strong></span>
-          <span className="ai-divider" />
-          <button
-            type="button"
-            className="model-chip"
-            title="前往设置 → 凭据 编辑播客 ASR 配额"
-            onClick={() => onOpenCredentials?.()}
-          >
-            <i className={quotaData ? '' : 'is-off'} />
-            ASR 日配额{' '}
-            <b>{quotaData ? `${Number(quotaData.daily_audio_hours_limit || 0).toFixed(1)}h` : (quota.status === 'error' ? '未读取' : '…')}</b>
-            {quotaData && <> · 单集 ≤ <b>{Number(quotaData.max_audio_hours_per_file || 0).toFixed(1)}h</b></>}
-          </button>
+          <span className="knob is-fixed">简介付费 ASR 线 <strong>≥ {podcastScoreText(thresholds.initial)}</strong></span>
           <button
             type="button"
             className="action-button action-button-secondary min-h-[32px] px-3 text-xs ml-auto"

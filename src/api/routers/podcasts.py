@@ -11,17 +11,22 @@ import os
 import re
 from email.utils import formatdate
 from pathlib import Path
+from sqlalchemy import func
+from sqlalchemy.exc import SQLAlchemyError
 from typing import Annotated, Any, BinaryIO, Iterator, Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlmodel import Session, select
 
 from api import deps
 from api.tokens import AUTH_SECRET
-from models.db import ArticleRecord, SourceConfigRecord
+from models.db import ArticleRecord, PodcastBudgetReservationRecord, PodcastCostLedgerRecord, SourceConfigRecord
+from services.aliyun_isi_usage import AliyunIsiUsageConfigurationError, asr_usage_plan
+from services.bailian_asr import usage_plan as bailian_asr_usage_plan
+from services.podcast_provider_ports import AsrPlanningUnavailable
 from services.podcast_artifacts import (
     ARTIFACT_KINDS,
     PodcastArtifactConflict,
@@ -60,6 +65,8 @@ from services import podcast_premium as podcast_premium_service
 from services import aliyun_isi_config as aliyun_isi_config_service
 from services import bailian_speech_config as podcast_speech_config_service
 from services import credentials as credentials_service
+from config_bailian import BailianSpeechConfig
+from services.bailian_tts import receipt_cache_overview, reclaim_completed_receipts
 
 
 router = APIRouter(tags=["podcasts"])
@@ -152,6 +159,8 @@ class PodcastDomainErrorResponse(BaseModel):
 
 
 class PodcastAsrQuotaResponse(BaseModel):
+    provider: Literal["aliyun_isi", "bailian"]
+    configured: bool
     daily_audio_seconds_limit: int = Field(ge=0)
     daily_audio_hours_limit: float = Field(ge=0)
     max_audio_seconds_per_file: int = Field(ge=1, le=43_200)
@@ -160,11 +169,28 @@ class PodcastAsrQuotaResponse(BaseModel):
     quota_timezone: str
     source: Literal["runtime_kv", "env", "ini", "default"]
     max_audio_per_file_source: Literal["runtime_kv", "env", "ini", "default"]
+    usage_status: Literal["available", "unknown", "configuration_error", "inconsistent", "frozen"]
+    usage_reason: str | None = None
+    quota_period: str | None = None
+    quota_window_start_at: str | None = None
+    quota_window_end_at: str | None = None
+    used_audio_seconds: int | None = None
+    reserved_audio_seconds: int | None = None
+    remaining_audio_seconds: int | None = None
 
 
 class PodcastAsrQuotaUpdate(BaseModel):
     daily_audio_seconds_limit: int = Field(ge=1)
     max_audio_seconds_per_file: int | None = Field(default=None, ge=1, le=43_200)
+
+    @model_validator(mode="after")
+    def daily_limit_must_cover_one_episode(self):
+        if (
+            self.max_audio_seconds_per_file is not None
+            and self.daily_audio_seconds_limit < self.max_audio_seconds_per_file
+        ):
+            raise ValueError("每日总额度不能小于单集上限")
+        return self
 
 
 class PodcastSourceMediaSnapshotResponse(BaseModel):
@@ -189,7 +215,48 @@ def _actor(auth: dict[str, Any]) -> str:
 def _asr_quota_response(session: Session) -> PodcastAsrQuotaResponse:
     config = podcast_speech_config_service.resolve_config(session)
     sources = podcast_speech_config_service.field_sources(session)
+    provider = "bailian" if isinstance(config, BailianSpeechConfig) else "aliyun_isi"
+    usage: dict[str, Any] = {"usage_status": "unknown", "usage_reason": "用量尚未读取"}
+    try:
+        planner = bailian_asr_usage_plan if provider == "bailian" else asr_usage_plan
+        plan = planner(config, audio_duration_ms=1000, now=dt.datetime.now(dt.timezone.utc))
+        reservations = session.exec(select(PodcastBudgetReservationRecord).where(
+            PodcastBudgetReservationRecord.provider_quota_scope == plan.quota_scope,
+            PodcastBudgetReservationRecord.provider_quota_period == plan.quota_period,
+            PodcastBudgetReservationRecord.provider_quota_unit == plan.unit.value,
+        )).all()
+        expected = (plan.window_start_at.isoformat(timespec="microseconds"),
+                    plan.window_end_at.isoformat(timespec="microseconds"),
+                    plan.unit_price_cny_minor, plan.price_unit_count, plan.pricing_revision)
+        if any((row.provider_quota_window_start_at, row.provider_quota_window_end_at,
+                row.unit_price_cny_minor, row.price_unit_count, row.pricing_revision) != expected
+               for row in reservations):
+            usage = {"usage_status": "inconsistent", "usage_reason": "当前配额窗口与已有预占定义不一致"}
+        else:
+            used = session.exec(select(func.coalesce(func.sum(PodcastCostLedgerRecord.actual_usage_units), 0)).where(
+                PodcastCostLedgerRecord.provider_quota_scope == plan.quota_scope,
+                PodcastCostLedgerRecord.provider_quota_period == plan.quota_period,
+                PodcastCostLedgerRecord.provider_quota_unit == plan.unit.value,
+            )).one()
+            reserved = sum(int(row.reserved_usage_units or 0) for row in reservations if row.status == "reserved")
+            frozen = any(row.provider_quota_breached for row in reservations)
+            usage = {
+                "usage_status": "frozen" if frozen else "available",
+                "usage_reason": "观察到超额，配额已冻结" if frozen else None,
+                "quota_period": plan.quota_period,
+                "quota_window_start_at": plan.window_start_at.isoformat(),
+                "quota_window_end_at": plan.window_end_at.isoformat(),
+                "used_audio_seconds": int(used),
+                "reserved_audio_seconds": reserved,
+                "remaining_audio_seconds": max(0, plan.limit_units - int(used) - reserved),
+            }
+    except (AliyunIsiUsageConfigurationError, AsrPlanningUnavailable, ValueError):
+        usage = {"usage_status": "configuration_error", "usage_reason": "ASR 用量计划不可用，请检查供应商计量配置及有效期"}
+    except SQLAlchemyError:
+        usage = {"usage_status": "unknown", "usage_reason": "用量读取失败，请稍后刷新"}
     return PodcastAsrQuotaResponse(
+        provider=provider,
+        configured=config.asr_configured,
         daily_audio_seconds_limit=config.asr_daily_audio_seconds_limit,
         daily_audio_hours_limit=config.asr_daily_audio_seconds_limit / 3600,
         max_audio_seconds_per_file=config.asr_max_audio_seconds_per_file,
@@ -198,6 +265,7 @@ def _asr_quota_response(session: Session) -> PodcastAsrQuotaResponse:
         quota_timezone=config.asr_quota_timezone,
         source=sources["asr_daily_audio_seconds_limit"],
         max_audio_per_file_source=sources["asr_max_audio_seconds_per_file"],
+        **usage,
     )
 
 
@@ -765,22 +833,66 @@ def get_podcast_asr_quota(session: Session = Depends(deps.get_session)):
     return _asr_quota_response(session)
 
 
+@router.get("/api/admin/podcast-tts-receipts", dependencies=[Depends(deps.require_admin)])
+def get_podcast_tts_receipts(session: Session = Depends(deps.get_session)):
+    config = podcast_speech_config_service.resolve_config(session)
+    if not isinstance(config, BailianSpeechConfig):
+        return {"status": "unavailable", "reason": "当前未启用百炼 TTS 回执缓存"}
+    store = _store()
+    return {"status": "available", **receipt_cache_overview(config, max_audio_bytes=store.max_bytes)}
+
+
+@router.post("/api/admin/podcast-tts-receipts/reclaim", dependencies=[Depends(deps.require_admin)])
+def reclaim_podcast_tts_receipts(session: Session = Depends(deps.get_session)):
+    config = podcast_speech_config_service.resolve_config(session)
+    if not isinstance(config, BailianSpeechConfig):
+        raise HTTPException(status_code=409, detail="当前未启用百炼 TTS 回执缓存")
+    result = reclaim_completed_receipts(config, _app().db_sink.engine)
+    return {**result, **receipt_cache_overview(config, max_audio_bytes=_store().max_bytes)}
+
+
 @router.put(
     "/api/admin/podcast-asr-quota",
     response_model=PodcastAsrQuotaResponse,
-    dependencies=[Depends(deps.require_admin)],
 )
 def update_podcast_asr_quota(
     payload: PodcastAsrQuotaUpdate,
     session: Session = Depends(deps.get_session),
+    auth: dict[str, Any] = Depends(deps.require_admin),
 ):
+    before = podcast_speech_config_service.resolve_config(session)
+    max_per_file = (
+        payload.max_audio_seconds_per_file
+        if payload.max_audio_seconds_per_file is not None
+        else before.asr_max_audio_seconds_per_file
+    )
+    if payload.daily_audio_seconds_limit < max_per_file:
+        raise HTTPException(status_code=422, detail="每日总额度不能小于单集上限")
     updates = {"asr_daily_audio_seconds_limit": payload.daily_audio_seconds_limit}
     if payload.max_audio_seconds_per_file is not None:
         updates["asr_max_audio_seconds_per_file"] = payload.max_audio_seconds_per_file
     credentials_service.save_updates(
         session, podcast_speech_config_service.namespace(), updates
     )
-    return _asr_quota_response(session)
+    response = _asr_quota_response(session)
+    # This route owns its semantic audit row so the record can contain trusted
+    # effective values from before and after the mutation (not client claims).
+    from services import admin_audit as admin_audit_service
+
+    admin_audit_service.record_audit(
+        _app().db_sink.engine,
+        username=_actor(auth),
+        method="PUT",
+        path="/api/admin/podcast-asr-quota",
+        status_code=200,
+        body={
+            "previous_daily_audio_seconds_limit": before.asr_daily_audio_seconds_limit,
+            "previous_max_audio_seconds_per_file": before.asr_max_audio_seconds_per_file,
+            "daily_audio_seconds_limit": response.daily_audio_seconds_limit,
+            "max_audio_seconds_per_file": response.max_audio_seconds_per_file,
+        },
+    )
+    return response
 
 
 @router.head(
@@ -864,7 +976,20 @@ def podcast_premium_task_detail(episode_id: str):
     """单集抽屉载荷:任务行 + 处理时间线 + 文本产物 + 精简音频(issue #76)。"""
 
     app = _app()
-    detail = podcast_premium_service.episode_detail(app.db_sink.engine, episode_id)
+    detail = podcast_premium_service.episode_detail(
+        app.db_sink.engine, episode_id,
+        minimum_duration_seconds=app.settings.podcast.premium_min_duration_seconds,
+        generation_enabled=(
+            app.settings.podcast.processing_enabled
+            and all(
+                stage in app.settings.podcast.allowed_stages
+                for stage in (
+                    "translate", "analyze", "digest", "local_publish",
+                    "script", "tts", "audio_qa",
+                )
+            )
+        ),
+    )
     if detail is None:
         raise HTTPException(status_code=404, detail="播客单集不存在")
     return detail

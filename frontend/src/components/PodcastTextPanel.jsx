@@ -4,6 +4,7 @@ import { fetchPodcastEpisodeTexts, translatePodcastTranscript } from '../api';
 import {
   isPodcastTextRequestCurrent,
   mergePodcastTextPage,
+  podcastDigestMeta,
   podcastTextPageAction,
   podcastTranscriptForLanguage,
   podcastTextView,
@@ -15,6 +16,7 @@ const NO_HIDDEN_TRANSCRIPT_KINDS = Object.freeze([]);
 export default function PodcastTextPanel({
   episodeId,
   showDigest = false,
+  digestMode = '',
   preferredTranscriptKind = '',
   hiddenTranscriptKinds = NO_HIDDEN_TRANSCRIPT_KINDS,
   showTranslation = false,
@@ -241,6 +243,7 @@ export default function PodcastTextPanel({
   const transcript = transcriptView.transcript;
   const transcriptOpen = disclosure.episodeId === episodeId ? disclosure.open : true;
   const digestVisible = showDigest && view.digest;
+  const digestMeta = podcastDigestMeta(digestMode);
   if (!digestVisible && !transcript) return null;
 
   return (
@@ -248,7 +251,7 @@ export default function PodcastTextPanel({
       {digestVisible && (
         <div className="podcast-text-digest">
           <div className="podcast-text-heading">
-            <h2>精品导读</h2>
+            <h2>{digestMeta.title}</h2>
             <span>中文博客 · AI 整理</span>
           </div>
           <div className="podcast-guide-body">
@@ -260,7 +263,7 @@ export default function PodcastTextPanel({
                 disabled={more[view.digest.kind]?.loading}
                 onClick={() => loadMore(view.digest)}
               >
-                {more[view.digest.kind]?.loading ? '正在载入…' : '继续阅读精品导读'}
+                {more[view.digest.kind]?.loading ? '正在载入…' : digestMeta.action}
               </button>
             )}
             {more[view.digest.kind]?.error && <p className="podcast-text-more-error" role="alert">{more[view.digest.kind].error}</p>}

@@ -15,6 +15,7 @@ import hashlib
 import hmac
 import importlib
 import json
+import logging
 import uuid
 from typing import Any, Dict, List, Literal, Optional
 
@@ -78,6 +79,7 @@ from services import reader_ai as reader_ai_service
 from services import reader_ondemand as reader_ondemand_service
 from services import reader_search as reader_search_service
 from services import reader_interests as reader_interests_service
+from services import rankings as rankings_service
 from services import reader_state as reader_state_service
 from services import source_collections as source_collections_service
 from services import subscription_mutations as subscription_mutations_service
@@ -86,6 +88,88 @@ from services import user_sources as user_sources_service
 from services import x_api_config as x_api_config_service
 
 router = APIRouter(prefix="/api/reader", tags=["reader"])
+logger = logging.getLogger("dorami.api.reader")
+
+
+_SAFE_PODCAST_GUIDE_ERRORS = frozenset({
+    "podcast_ondemand_score_too_low",
+    "podcast_ondemand_final_pending",
+    "podcast_ondemand_disabled",
+})
+
+
+def _reader_podcast_guide_error(exc) -> JSONResponse:
+    """Return stable reader copy while retaining provider diagnostics in logs."""
+
+    if exc.code in _SAFE_PODCAST_GUIDE_ERRORS:
+        code, message = exc.code, exc.message
+    else:
+        logger.warning(
+            "podcast ondemand rejected code=%s detail=%s",
+            exc.code,
+            exc.message,
+        )
+        code = "podcast_guide_unavailable"
+        message = "中文导读暂时无法生成，请稍后再试"
+    return JSONResponse(
+        {"code": code, "message": message},
+        status_code=exc.status_code,
+        headers={"Cache-Control": "private, no-store", "Vary": "Cookie"},
+    )
+
+
+@router.get("/rankings")
+def get_reader_rankings(
+    shape: Literal["article", "podcast"],
+    date: str = "latest",
+    session: Session = Depends(deps.get_session),
+):
+    """Return one shape's three governed tag boards and must-read list."""
+
+    # Empty deployments should not make the first reader wait until tomorrow's
+    # cron (or depend on the startup catch-up winning a race). The service
+    # double-checks under a process-wide mutex, so concurrent first requests
+    # still perform one full build only.
+    rankings_service.ensure_snapshot_if_empty(session.get_bind())
+    result = rankings_service.read_rankings(session, date=date, shape=shape)
+    if result is None:
+        raise HTTPException(status_code=404, detail="榜单快照尚未生成")
+    return result
+
+
+@router.get("/rankings/history")
+def get_reader_ranking_history(
+    tag_code: str,
+    shape: Literal["article", "podcast"],
+    days: int = 30,
+    session: Session = Depends(deps.get_session),
+):
+    if not 1 <= days <= 90:
+        raise HTTPException(status_code=400, detail="趋势天数必须在 1 到 90 天之间")
+    return rankings_service.read_history(
+        session,
+        tag_code=tag_code.strip(),
+        shape=shape,
+        days=days,
+    )
+
+
+@router.get("/rankings/{date}/tags/{tag_code:path}")
+def get_reader_ranking_tag(
+    date: str,
+    tag_code: str,
+    shape: Literal["article", "podcast"],
+    session: Session = Depends(deps.get_session),
+):
+    result = rankings_service.read_tag_contents(
+        session,
+        date=date,
+        shape=shape,
+        tag_code=tag_code.strip(),
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="这个标签当前没有可见榜单内容")
+    return result
 
 def _guard_source_subscription_mutation(request: Request):
     """给单源、合集和自定源写入口复用同一用户级互斥状态。"""
@@ -1695,11 +1779,7 @@ async def reader_ai_podcast_ondemand(episode_id: str, request: Request):
             )
         )
     except podcast_premium_guide_service.PremiumGuideForceError as exc:
-        return JSONResponse(
-            {"code": exc.code, "message": exc.message},
-            status_code=exc.status_code,
-            headers={"Cache-Control": "private, no-store", "Vary": "Cookie"},
-        )
+        return _reader_podcast_guide_error(exc)
 
     if evaluated["outcome"] in {"ready", "in_progress"}:
         return {
@@ -1742,11 +1822,7 @@ async def reader_ai_podcast_ondemand(episode_id: str, request: Request):
                 "charged": False,
                 "started": False,
             }
-        return JSONResponse(
-            {"code": exc.code, "message": exc.message},
-            status_code=exc.status_code,
-            headers={"Cache-Control": "private, no-store", "Vary": "Cookie"},
-        )
+        return _reader_podcast_guide_error(exc)
 
     with Session(db_sink.engine) as session:
         ai_usage_service.record_usage(

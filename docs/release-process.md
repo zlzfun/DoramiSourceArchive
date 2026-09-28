@@ -47,8 +47,10 @@ tag 在 main 线上、**目标 tag 里的**版本号等于 tag 名;不合格则�
 PR 清单),随后在同一次 run 里串联 `deploy.yml`,停在 Environment `production` 等发版人批准(见下节);
 `sync-master.yml` 把版本节点合进内网 master。
 
-**PR 不改版本号**。两人并行时各自在 PR 里 bump 必然抢号(2026-09-10 实证);版本号只在发版
-那一刻由发版人统一定。CLAUDE.md 里各波次的「vX.Y 某某波」叙述照旧,号以发版为准。
+**开发版统一使用下一正式版本的 `-alpha` 后缀**(2026-09-24 起)。开始新开发波时只做一次
+`src/version.py` / `pyproject.toml` / `uv.lock` 根包版本同步；同一波内并行 PR 沿用该 alpha,
+不得各自追加 alpha 编号或打 alpha tag。正式发布时由发版人运行本脚本把 `X.Y.Z-alpha`
+收口为 `X.Y.Z` 并打正式 tag。CLAUDE.md 里各波次的「vX.Y 某某波」叙述照旧,号以发版为准。
 
 ## 部署
 
@@ -127,7 +129,7 @@ cp backups/cms_data.db.20260914-110000 data/cms_data.db && rm -f data/cms_data.d
 Settings → Branches → Add rule for `main`:
 
 - Require a pull request before merging(禁止直推;两人一视同仁);
-- Require status checks to pass:勾 `backend (pytest)` 与 `frontend (lint + build)`(CI 跑过一次后才会出现在列表里);
+- Require status checks to pass:勾 `backend (pytest)` 与 `frontend (lint + build)`(CI 跑过一次后才会出现在列表里)。issue #150 起 `backend (pytest)` 是汇总门 job:`needs` 真跑测试的 `backend-unit (pytest)` / `backend-deploy (pytest)`,`if: always()` 逐项核对结果——required 只勾它一个即可,两个真 job 不必也勾,将来再拆分时规则不用改;
 - Do not allow force pushes / deletions。
 
 tag 不设保护(2026-09-14 拍板:任何人可打 tag);`release.yml` 的核对负责把不合格的 tag 标红。

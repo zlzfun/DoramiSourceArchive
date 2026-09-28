@@ -455,6 +455,117 @@ class ArticleTagAssignmentRecord(SQLModel, table=True):
     updated_at: str
 
 
+class RankingSnapshotRecord(SQLModel, table=True):
+    """One immutable-by-date reader ranking snapshot.
+
+    Child rows are replaced transactionally when the same Shanghai calendar day
+    is rebuilt.  Shape-specific coverage remains structured so clients never
+    need to infer it from the ranked rows.
+    """
+
+    __tablename__ = "ranking_snapshots"
+    __table_args__ = (
+        UniqueConstraint("snapshot_date", name="uq_ranking_snapshots_date"),
+        Index("ix_ranking_snapshots_generated", "generated_at"),
+        CheckConstraint(
+            "status IN ('complete','degraded')",
+            name="ck_ranking_snapshots_status",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    snapshot_date: str = Field(description="Asia/Shanghai YYYY-MM-DD")
+    window_start: str
+    window_end: str
+    taxonomy_version: int = Field(default=0)
+    status: str = Field(default="complete")
+    article_eligible_count: int = Field(default=0, ge=0)
+    article_analyzed_count: int = Field(default=0, ge=0)
+    article_tagged_count: int = Field(default=0, ge=0)
+    podcast_eligible_count: int = Field(default=0, ge=0)
+    podcast_analyzed_count: int = Field(default=0, ge=0)
+    podcast_tagged_count: int = Field(default=0, ge=0)
+    generated_at: str
+
+
+class RankingTagItemRecord(SQLModel, table=True):
+    """A governed tag's position and counts in one snapshot and content shape."""
+
+    __tablename__ = "ranking_tag_items"
+    __table_args__ = (
+        UniqueConstraint(
+            "snapshot_id", "shape", "axis", "tag_code",
+            name="uq_ranking_tag_items_snapshot_shape_axis_code",
+        ),
+        Index(
+            "ix_ranking_tag_items_snapshot_shape_axis_rank",
+            "snapshot_id", "shape", "axis", "rank",
+        ),
+        CheckConstraint("shape IN ('article','podcast')", name="ck_ranking_tag_items_shape"),
+        CheckConstraint("axis IN ('topic','industry','entity')", name="ck_ranking_tag_items_axis"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    snapshot_id: int = Field(foreign_key="ranking_snapshots.id", ondelete="CASCADE")
+    shape: str
+    axis: str
+    tag_id: Optional[int] = Field(default=None, foreign_key="cms_tags.id", ondelete="SET NULL")
+    tag_code: str
+    tag_name_zh: str = Field(default="")
+    tag_name_en: str = Field(default="")
+    rank: int = Field(ge=1)
+    occurrence_count: int = Field(default=0, ge=0)
+    distinct_source_count: int = Field(default=0, ge=0)
+    previous_rank: Optional[int] = Field(default=None, ge=1)
+    count_delta: int = Field(default=0)
+
+
+class RankingContentItemRecord(SQLModel, table=True):
+    """All qualifying occurrences behind a ranked tag.
+
+    Persisting every occurrence, rather than only the visible Top 10, lets the
+    reader API re-apply today's hidden-source policy without exposing stale
+    counts from yesterday's snapshot.  ``content_rank <= 10`` is the tag drill-
+    down list; must-read flags are calculated only from those Top-10 lists.
+    """
+
+    __tablename__ = "ranking_content_items"
+    __table_args__ = (
+        UniqueConstraint(
+            "snapshot_id", "shape", "axis", "tag_code", "article_id",
+            name="uq_ranking_content_items_occurrence",
+        ),
+        Index(
+            "ix_ranking_content_items_snapshot_tag_rank",
+            "snapshot_id", "shape", "axis", "tag_code", "content_rank",
+        ),
+        Index(
+            "ix_ranking_content_items_snapshot_must",
+            "snapshot_id", "shape", "is_must_read", "must_rank",
+        ),
+        CheckConstraint("shape IN ('article','podcast')", name="ck_ranking_content_items_shape"),
+        CheckConstraint("axis IN ('topic','industry','entity')", name="ck_ranking_content_items_axis"),
+        CheckConstraint(
+            "score_basis IN ('article_body','show_notes','full_transcript')",
+            name="ck_ranking_content_items_score_basis",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    snapshot_id: int = Field(foreign_key="ranking_snapshots.id", ondelete="CASCADE")
+    shape: str
+    axis: str
+    tag_code: str
+    article_id: str = Field(foreign_key="articles.id", ondelete="CASCADE")
+    source_id: str
+    content_rank: int = Field(ge=1)
+    score: float = Field(default=0.0)
+    score_basis: str
+    appearance_count: int = Field(default=0, ge=0)
+    is_must_read: bool = Field(default=False)
+    must_rank: Optional[int] = Field(default=None, ge=1)
+
+
 class CmsTagCandidateRecord(SQLModel, table=True):
     """未知词候选的幂等聚合行；计数必须从 evidence 聚合得出。"""
     __tablename__ = "cms_tag_candidates"
@@ -1999,6 +2110,17 @@ class PodcastArtifactRecord(SQLModel, table=True):
             ),
             postgresql_where=text(
                 "processing_id IS NOT NULL AND kind = 'digest_audio_zh'"
+            ),
+        ),
+        Index(
+            "uq_podcast_artifacts_active_episode",
+            "episode_id",
+            unique=True,
+            sqlite_where=text(
+                "kind = 'digest_audio_zh' AND status = 'published'"
+            ),
+            postgresql_where=text(
+                "kind = 'digest_audio_zh' AND status = 'published'"
             ),
         ),
         UniqueConstraint(

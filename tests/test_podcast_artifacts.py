@@ -18,7 +18,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from config import RuntimeConfig, load_config
 from models.db import (
@@ -1187,6 +1187,29 @@ def test_publish_uses_optimistic_lock_and_cannot_be_repeated(monkeypatch, tmp_pa
         assert repeated.status_code == 409
 
 
+def test_publish_atomically_replaces_the_active_episode_audio(monkeypatch, tmp_path):
+    app_module, sink, _ = _setup_app(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        first = _import(client).json()
+        second = _import(client).json()
+
+        assert _publish(client, first).status_code == 200
+        assert _publish(client, second).status_code == 200
+
+    with Session(sink.engine) as session:
+        rows = session.exec(
+            select(PodcastArtifactRecord)
+            .where(PodcastArtifactRecord.episode_id == "episode-1")
+            .order_by(PodcastArtifactRecord.created_at, PodcastArtifactRecord.id)
+        ).all()
+        assert {row.id: row.status for row in rows} == {
+            first["id"]: "withdrawn",
+            second["id"]: "published",
+        }
+        assert sum(row.status == "published" for row in rows) == 1
+
+
 def test_concurrent_publish_has_exactly_one_winner(monkeypatch, tmp_path):
     app_module, _, store = _setup_app(monkeypatch, tmp_path)
     with TestClient(app_module.app) as client:
@@ -1459,4 +1482,3 @@ def test_staging_handle_is_released_before_rename_and_unlink(monkeypatch, tmp_pa
     finally:
         sink.engine.dispose()
     assert seen["replace"] == 2 and seen["unlink"] >= 1
-

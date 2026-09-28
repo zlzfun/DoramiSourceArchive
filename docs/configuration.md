@@ -102,7 +102,7 @@ budget_timezone = Asia/Shanghai
 # voice_profiles = narrator_zh
 # default_voice_profile = narrator_zh
 # 旧精品导读流程的启动基线；管理面保存后以运行时 KV 为准
-premium_score_threshold = 8.0
+premium_score_threshold = 7.5
 premium_min_duration_seconds = 1200
 premium_guide_mode = solo_deep
 premium_max_audio_minutes = 15
@@ -111,10 +111,11 @@ premium_blog_max_chars = 6000
 premium_narration_max_chars = 4500
 ```
 
-播客评分分两步但阅读面只展示一个当前分数：简介初评达到 `>= 5.0`（或管理员强制）
-后进入 `full_analysis`；发布方完整逐字稿优先，否则才使用 ASR。全文评分完成后替换
-简介初评。简介线固定不变；“优质播客”只按全文终评与 AppSettingRecord KV
-`podcast_premium_score_threshold` 判定，缺省 `8.0`、范围 `1.0–10.0`、最多一位小数。
+播客评分分两步但阅读面只展示一个当前分数：有发布方完整逐字稿时不看简介分，直接进入
+`full_analysis`；没有可用官方稿时，简介初评达到 `>= 6.0`（或管理员强制）才允许回退付费
+ASR。全文评分完成后替换简介初评。简介 ASR 线固定不变；“优质播客”只按全文终评与
+AppSettingRecord KV `podcast_premium_score_threshold` 判定，缺省 `7.5`、范围 `1.0–10.0`、
+最多一位小数。
 管理面修改后即时重算历史全文资格与待生成状态，不重排简介候选，也不删除已发布成品。
 
 ASR worker 的轮询与租约参数单独配置；启动时首轮总会延后一个 `tick_seconds`，不会因
@@ -212,9 +213,9 @@ token_refresh_skew_seconds = 300
 # ASR 日界固定按上海时区，时长按毫秒向上取整到秒。
 asr_quota_scope =
 asr_quota_timezone = Asia/Shanghai
-asr_daily_audio_seconds_limit = 0
+asr_daily_audio_seconds_limit = 144000
 # 单集 ASR 时长上限；独立于每日累计额度，阿里录音文件识别当前硬上限为 12 小时。
-asr_max_audio_seconds_per_file = 43200
+asr_max_audio_seconds_per_file = 10800
 asr_entitlement_ends_at =
 asr_provider_deadline_seconds = 0
 asr_price_cny_minor_per_hour = 0
@@ -244,10 +245,10 @@ OSS 回退复用 `ALIYUN_AK_ID` / `ALIYUN_AK_SECRET`（以及可选的
 额度配置与 AK/SK/Appkey/Token 的“能否鉴权”是两套独立门槛：凭据齐全但额度配置
 不完整时仍禁止提交。ASR 在提交前按 `ceil(audio_duration_ms / 1000)` 预占当日秒数，
 日窗口以 `Asia/Shanghai` 的 `[00:00, 次日 00:00)` 为界且不越过 entitlement
-截止时刻；管理员可在“设置 → 凭据 → 播客 ASR”按小时调整每日上限，修改后同一
+截止时刻；管理员可在“运维管理 → 内容 → 播客 → ASR 配额策略”按小时调整每日上限，修改后同一
 scope/period 内已使用和已预占的时长继续累计。这里限制的是每日累计处理量，并非单日
 只有 24 小时的墙钟时长，因此可按并行处理能力配置大于 24 小时的正数。
-`asr_max_audio_seconds_per_file` 则是完全独立的单集准入边界，默认 43,200 秒（12 小时）；超过
+`asr_max_audio_seconds_per_file` 则是完全独立的单集准入边界，默认 10,800 秒（3 小时）；超过
 该边界的单集会在 API 入队前被拒绝，不占每日额度，也不会发起供应商请求。TTS 按实际
 送给供应商的计费字符数预占 campaign 总量。价格全部用人民币分的整数配置，并以向上
 取整计算，避免浮点误差。

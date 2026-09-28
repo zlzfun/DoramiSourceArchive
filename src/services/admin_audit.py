@@ -48,6 +48,10 @@ def should_audit(path: str, method: str) -> bool:
         return False
     if method.upper() == "POST" and path == "/api/admin/analysis/backfills/estimate":
         return False
+    # The handler records this mutation itself with trusted effective before /
+    # after values; the middleware only has the untrusted request payload.
+    if method.upper() == "PUT" and path == "/api/admin/podcast-asr-quota":
+        return False
     return any(
         path == prefix or path.startswith(f"{prefix}/")
         for prefix in AUDIT_PATH_PREFIXES
@@ -150,6 +154,18 @@ def _id_target(
 
 # 语义摘要注册表：顺序即优先级，首个 (method, path regex) 命中即停止。
 AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
+    (
+        "PUT",
+        re.compile(r"^/api/admin/podcast-asr-quota$"),
+        lambda _m, body: (
+            "更新播客 ASR 配额："
+            f"每日 {int((body or {}).get('previous_daily_audio_seconds_limit', 0)) / 3600:g}h"
+            f" → {int((body or {}).get('daily_audio_seconds_limit', 0)) / 3600:g}h；"
+            f"单集 {int((body or {}).get('previous_max_audio_seconds_per_file', 0)) / 3600:g}h"
+            f" → {int((body or {}).get('max_audio_seconds_per_file', 0)) / 3600:g}h",
+            "podcast-asr-quota",
+        ),
+    ),
     ("POST", re.compile(r"^/api/accounts$"), _create_account),
     ("POST", re.compile(r"^/api/accounts/batch$"), _batch_accounts),
     (

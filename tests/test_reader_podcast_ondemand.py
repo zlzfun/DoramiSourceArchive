@@ -568,6 +568,39 @@ def test_ondemand_api_final_pending_message(monkeypatch, tmp_path):
     assert resp.json()["message"] == READER_ONDEMAND_FINAL_PENDING_MESSAGE
 
 
+def test_ondemand_api_hides_provider_and_pipeline_errors(monkeypatch, tmp_path):
+    from api.routers import reader as reader_router
+
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "api-safe-error.db")
+    _seed_episode(sink.engine)
+
+    def reject(*_args, **_kwargs):
+        raise PremiumGuideForceError(
+            "podcast_force_tts_provider_unavailable",
+            "LLM、阿里云 TTS 或音色配置尚未就绪",
+            status_code=503,
+        )
+
+    monkeypatch.setattr(
+        reader_router.podcast_premium_guide_service,
+        "evaluate_reader_ondemand_premium_guide",
+        reject,
+    )
+    with TestClient(app_module.app) as client:
+        _login(client)
+        resp = client.post("/api/reader/ai/podcasts/episode-ondemand/ondemand")
+
+    assert resp.status_code == 503
+    assert resp.json() == {
+        "code": "podcast_guide_unavailable",
+        "message": "中文导读暂时无法生成，请稍后再试",
+    }
+    serialized = json.dumps(resp.json(), ensure_ascii=False)
+    assert "LLM" not in serialized
+    assert "阿里云" not in serialized
+    assert "TTS" not in serialized
+
+
 def test_ondemand_api_rejects_credentialed_source(monkeypatch, tmp_path):
     app_module, sink = _base_setup(monkeypatch, tmp_path, "api-cred.db")
     _seed_episode(sink.engine, credentialed=True, source_id="rss_credentialed")

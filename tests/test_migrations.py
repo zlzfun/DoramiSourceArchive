@@ -25,10 +25,11 @@ from alembic.runtime.migration import MigrationContext  # noqa: E402
 from sqlalchemy import create_engine, event, inspect, text  # noqa: E402
 from sqlalchemy.exc import IntegrityError  # noqa: E402
 from sqlalchemy.engine import Engine  # noqa: E402
-from sqlmodel import Session  # noqa: E402
+from sqlmodel import Session, select  # noqa: E402
 
 from models.db import (  # noqa: E402
     ArticleRecord,
+    PodcastArtifactRecord,
     PodcastBudgetReservationRecord,
     PodcastProcessingRecord,
     PodcastSourceMediaSnapshotRecord,
@@ -933,6 +934,109 @@ def test_upgrade_head_has_no_drift_from_metadata(tmp_path):
             fk for fk in artifact_fks if fk["constrained_columns"] == ["episode_id"]
         )
         assert episode_fk["options"].get("ondelete") == "CASCADE"
+    finally:
+        engine.dispose()
+
+
+def test_active_podcast_audio_migration_withdraws_older_duplicates(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'podcast-audio-active.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "c154a7d90001")
+    narration = "迁移测试口播稿"
+    narration_hash = hashlib.sha256(narration.encode("utf-8")).hexdigest()
+
+    engine = create_engine(db_url)
+    try:
+        with Session(engine) as session:
+            session.add(ArticleRecord(
+                id="migration-audio-episode",
+                title="Migration audio",
+                content_type="podcast_episode",
+                source_id="migration-test",
+                source_url="https://example.test/migration-audio",
+                publish_date="2026-09-24T00:00:00+00:00",
+                fetched_date="2026-09-24T00:00:00+00:00",
+                extensions_json="{}",
+            ))
+            session.add(PodcastTextArtifactRecord(
+                id="migration-narration",
+                episode_id="migration-audio-episode",
+                kind="narration_script_zh",
+                version=1,
+                content_hash=narration_hash,
+                inline_text=narration,
+                language="zh-CN",
+                authority_id="",
+                created_at="2026-09-24T00:00:00+00:00",
+            ))
+            session.commit()
+            session.add(PodcastTextPublicationRecord(
+                identity="migration-audio-episode:narration_script_zh",
+                episode_id="migration-audio-episode",
+                kind="narration_script_zh",
+                artifact_id="migration-narration",
+                status="published",
+                authority_id="",
+                published_at="2026-09-24T00:00:00+00:00",
+                updated_at="2026-09-24T00:00:00+00:00",
+            ))
+            session.commit()
+            for suffix, published_at in (("old", "2026-09-24T01:00:00+00:00"),
+                                         ("new", "2026-09-24T02:00:00+00:00")):
+                session.add(PodcastArtifactRecord(
+                    id=f"migration-audio-{suffix}",
+                    episode_id="migration-audio-episode",
+                    kind="digest_audio_zh",
+                    content_hash=hashlib.sha256(suffix.encode()).hexdigest(),
+                    mime="audio/mpeg",
+                    ext=".mp3",
+                    size_bytes=10,
+                    duration_seconds=1,
+                    status="published",
+                    provenance="migration_fixture",
+                    authority_id="",
+                    narration_artifact_id="migration-narration",
+                    narration_content_hash=narration_hash,
+                    created_at=published_at,
+                    updated_at=published_at,
+                    published_at=published_at,
+                ))
+            session.commit()
+    finally:
+        engine.dispose()
+
+    command.upgrade(cfg, "head")
+    engine = create_engine(db_url)
+    try:
+        with Session(engine) as session:
+            rows = session.exec(select(PodcastArtifactRecord)).all()
+            assert {row.id: row.status for row in rows} == {
+                "migration-audio-old": "withdrawn",
+                "migration-audio-new": "published",
+            }
+        indexes = {item["name"] for item in inspect(engine).get_indexes("podcast_artifacts")}
+        assert "uq_podcast_artifacts_active_episode" in indexes
+        with Session(engine) as session:
+            session.add(PodcastArtifactRecord(
+                id="migration-audio-third",
+                episode_id="migration-audio-episode",
+                kind="digest_audio_zh",
+                content_hash=hashlib.sha256(b"third").hexdigest(),
+                mime="audio/mpeg",
+                ext=".mp3",
+                size_bytes=10,
+                duration_seconds=1,
+                status="published",
+                provenance="migration_fixture",
+                authority_id="",
+                narration_artifact_id="migration-narration",
+                narration_content_hash=narration_hash,
+                created_at="2026-09-24T03:00:00+00:00",
+                updated_at="2026-09-24T03:00:00+00:00",
+                published_at="2026-09-24T03:00:00+00:00",
+            ))
+            with pytest.raises(IntegrityError):
+                session.commit()
     finally:
         engine.dispose()
 

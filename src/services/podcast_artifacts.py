@@ -1336,18 +1336,20 @@ class PodcastArtifactStore:
                 raise PodcastArtifactConflict("只有 ready 的精简音频可以发布")
             if not self.file_path_for(record).is_file():
                 raise PodcastArtifactConflict("Podcast 音频文件不存在，不能发布")
-            episode = session.get(ArticleRecord, record.episode_id)
+            episode_statement = select(ArticleRecord).where(
+                ArticleRecord.id == record.episode_id
+            )
+            if self.engine.dialect.name == "postgresql":
+                # Serialize publications for one episode so replacing the active
+                # audio remains atomic across workers.
+                episode_statement = episode_statement.with_for_update()
+            episode = session.exec(episode_statement).first()
             if episode is None or episode.content_type != "podcast_episode":
                 raise PodcastArtifactNotFound("Podcast 单集不存在")
             source_id = episode.source_id
             if self.engine.dialect.name == "postgresql":
                 session.expire_all()
                 record = session.get(PodcastArtifactRecord, artifact_id)
-                episode = (
-                    session.get(ArticleRecord, record.episode_id)
-                    if record is not None
-                    else None
-                )
                 if (
                     record is None
                     or record.updated_at != expected_updated_at
@@ -1372,6 +1374,17 @@ class PodcastArtifactStore:
                 narration_content_hash=record.narration_content_hash,
             )
             now = _now()
+            session.exec(
+                update(PodcastArtifactRecord)
+                .where(
+                    PodcastArtifactRecord.episode_id == record.episode_id,
+                    PodcastArtifactRecord.kind == "digest_audio_zh",
+                    PodcastArtifactRecord.status == "published",
+                    PodcastArtifactRecord.id != artifact_id,
+                )
+                .values(status="withdrawn", withdrawn_at=now, updated_at=now)
+                .execution_options(synchronize_session=False)
+            )
             result = session.exec(
                 update(PodcastArtifactRecord)
                 .where(

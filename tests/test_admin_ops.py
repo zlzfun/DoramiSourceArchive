@@ -131,6 +131,8 @@ def test_admin_overview_and_gating(monkeypatch, tmp_path):
         assert client.get("/api/admin/overview").status_code == 403
         assert client.get("/api/admin/accounts").status_code == 403
         assert client.get("/api/admin/ai-beta/global").status_code == 403
+        assert client.get("/api/admin/rankings/status").status_code == 403
+        assert client.post("/api/admin/rankings/refresh").status_code == 403
 
 
 def test_admin_accounts_pagination_and_q_filter(monkeypatch, tmp_path):

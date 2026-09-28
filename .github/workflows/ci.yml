@@ -1,7 +1,18 @@
 # 合入门禁:PR 与 main 上的每次 push 都跑后端测试 + 前端 lint/build。
 # 「tag 即发布」的前提是「合入 main 的东西已经过了测试」——发版只是给 main 上某个提交起名,
-# 不再做验证;所以验证必须前移到这里。分支保护里把这两个 job 设为 required(见
-# docs/release-process.md 的分支保护清单)。
+# 不再做验证;所以验证必须前移到这里。分支保护里把 `backend (pytest)` 与 `frontend (lint + build)`
+# 设为 required(见 docs/release-process.md 的分支保护清单)。
+#
+# 后端测试(issue #150)拆成两个 job 各占一台 runner 并行,每个 job 内再用 pytest-xdist 开 4 个 worker
+# (public 仓库的 ubuntu-latest 是 4 vCPU):
+#   backend-unit   —— tests/ 里除部署脚本 / 迁移之外的全部用例(约 2200 个,0.3 s 一个,CPU 密集,4 worker ≈ 2 min)
+#   backend-deploy —— tests/test_deploy_*.py + tests/test_migrations.py(约 200 个,单个 10~26 s:每个用例真起
+#                     deploy.sh,一次运行几百次进程 spawn,等待为主;4 worker ≈ 4~5 min)
+# 两边对 tests/ 的划分由 tests/test_ci_workflow.py 守卫(互斥、覆盖全部文件、并行参数不退回串行)。
+# `--dist worksteal` 不是可选项:默认 load 调度按连续块分发,收集顺序里连成一片的部署用例会整块落到
+# 单个 worker、其余三个空转(2026-09-23 本地实测 13 min vs 5:50)。
+# `backend (pytest)` 现在是汇总门 job,只为让分支保护里既有的 required check 名继续有效;
+# `if: always()` + 逐项核对上游结果——不这样写,上游失败时它会被 skip,而 skip 在分支保护眼里等于通过。
 name: CI
 
 on:
@@ -15,8 +26,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  backend:
-    name: backend (pytest)
+  backend-unit:
+    name: backend-unit (pytest)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,18 +38,56 @@ jobs:
           python-version: "3.12"
 
       # 依赖按入库的钉版清单装(与两条部署路径同一份版本事实来源),不现解 pyproject;
-      # tests/test_docker_requirements.py 守卫清单与 pyproject 一致。
+      # tests/test_docker_requirements.py 守卫清单与 pyproject 一致。pytest / pytest-xdist 是测试工具,
+      # 不进部署清单(pyproject 的 dev 组同样声明了二者)。
       - name: Install dependencies
         run: |
           uv venv .venv --python 3.12
-          uv pip install --python .venv/bin/python -r docker/requirements.txt pytest
+          uv pip install --python .venv/bin/python -r docker/requirements.txt pytest pytest-xdist
 
-      # 少数 Podcast 测试探测 ffmpeg/ffprobe 是否存在(存在时走真实封装路径)
+      # 少数 Podcast 测试探测 ffmpeg/ffprobe 是否存在(存在时走真实封装路径);部署测试用 PATH 桩,不需要它
       - name: Install ffmpeg
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
 
+      # 划分模式与 backend-deploy 的正向列表逐字相同(守卫测试比对);命令写成一行,守卫按行解析。
+      # --ignore-glob 的值加引号:它要原样交给 pytest 去 fnmatch,不能让 shell 先展开(zsh 会直接报 no matches)
       - name: Run tests
-        run: .venv/bin/python -m pytest tests -q -p no:cacheprovider
+        run: .venv/bin/python -m pytest tests -q -p no:cacheprovider -n 4 --dist worksteal --durations=25 --ignore-glob='tests/test_deploy_*.py' --ignore=tests/test_migrations.py
+
+  backend-deploy:
+    name: backend-deploy (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/bin/python -r docker/requirements.txt pytest pytest-xdist
+
+      # 位置参数不加引号:pytest 不展开 glob,靠 runner 的 bash 展开;无匹配时 bash 原样传递、pytest 报文件不存在,CI 会红而不是静默漏跑
+      - name: Run tests
+        run: .venv/bin/python -m pytest tests/test_deploy_*.py tests/test_migrations.py -q -p no:cacheprovider -n 4 --dist worksteal --durations=25
+
+  # 汇总门:分支保护里 required 的是这个名字(见文件头注释)
+  backend:
+    name: backend (pytest)
+    needs: [backend-unit, backend-deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require both backend jobs to succeed
+        env:
+          UNIT: ${{ needs.backend-unit.result }}
+          DEPLOY: ${{ needs.backend-deploy.result }}
+        run: |
+          echo "backend-unit=$UNIT backend-deploy=$DEPLOY"
+          [ "$UNIT" = "success" ] && [ "$DEPLOY" = "success" ]
 
   workflows:
     name: workflows (actionlint)

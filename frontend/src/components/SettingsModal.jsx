@@ -31,7 +31,7 @@ const HINTS = {
   about: '产品与账户信息',
 };
 
-export default function SettingsModal({ open, initialSection, onClose, theme, onThemeChange, runtimeInfo, readerSurface = false, username, avatar, onUserUpdated, onLogout, showToast, onArticlesChanged, feedbackUnread = 0, onFeedbackSeen }) {
+export default function SettingsModal({ open, initialSection, onClose, theme, onThemeChange, runtimeInfo, readerSurface = false, username, avatar, onUserUpdated, onLogout, showToast, onArticlesChanged, feedbackUnread = 0, onFeedbackSeen, onOpenAdminPodcast }) {
   const collectorEnabled = Boolean(runtimeInfo?.collector_enabled);
   const readerEnabled = Boolean(runtimeInfo?.reader_enabled);
   const accountRole = runtimeInfo?.account_role;
@@ -175,7 +175,7 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
               />
             )}
             {activeSection.id === 'credentials' && adminConsole && (
-              <CredentialsSection showToast={showToast} onNavigate={setActive} />
+              <CredentialsSection showToast={showToast} onNavigate={setActive} onOpenAdminPodcast={onOpenAdminPodcast} />
             )}
             {activeSection.id === 'feedback' && (
               <FeedbackSection showToast={showToast} />

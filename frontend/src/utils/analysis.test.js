@@ -139,6 +139,17 @@ test('podcast assessment exposes one score with an honest input-basis label', ()
   assert.equal(podcastAssessmentMeta({ ...initial, content_type: 'rss_article' }), null);
 });
 
+test('reader-safe full analysis fact does not require exposing the transcript implementation', () => {
+  const meta = podcastAssessmentMeta({
+    content_type: 'podcast_episode',
+    quality_score: 7.2,
+    score_reason: '有完整内容证据',
+    podcast: { full_analysis_ready: true },
+  });
+  assert.equal(meta.label, '全文深度分析');
+  assert.doesNotMatch(meta.note, /ASR|provider|逐字稿/);
+});
+
 const podcastFixture = (podcast = {}, article = {}) => ({
   content_type: 'podcast_episode',
   quality_score: 7.2,
@@ -206,6 +217,7 @@ test('completed full analysis replaces the intro basis and reports the premium r
   // 模拟列表与详情交错刷新：任一权威投影已是全文 basis，就不能退回简介标签。
   assert.equal(podcastAnalysisBasis(complete), 'publisher_transcript');
   assert.equal(podcastAssessmentMeta(complete).label, '全文深度分析');
+  assert.doesNotMatch(podcastAssessmentMeta(complete).note, /ASR|逐字稿|provider/);
   assert.equal(podcastFullProcessingMeta(complete).label, '全文评分完成');
   assert.match(podcastFullProcessingMeta(complete).detail, /当前分已替换简介初评/);
 

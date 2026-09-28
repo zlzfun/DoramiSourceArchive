@@ -307,7 +307,7 @@ class PodcastConfig:
     provider_ready_targets: tuple[str, ...] = ()
     voice_profiles: tuple[str, ...] = ()
     default_voice_profile: str = ""
-    premium_score_threshold: float = 8.0
+    premium_score_threshold: float = 7.5
     premium_transcript_max_chars: int = 120_000
     premium_blog_max_chars: int = 6_000
     premium_narration_max_chars: int = 4_500
@@ -588,14 +588,16 @@ class AliyunIsiConfig:
     asr_poll_interval_seconds: int = 10
     tts_poll_interval_seconds: int = 10
     token_refresh_skew_seconds: int = 300
-    # Empty accounting scopes/windows and zero limits mean "not configured",
-    # never unlimited. Provider workers must require the matching readiness.
+    # Empty accounting scopes/windows mean "not configured", never unlimited.
+    # Operators may still explicitly set a zero runtime/INI/env override to
+    # disable admission; fresh installs default to a 40-hour local daily guard.
     asr_quota_scope: str = ""
     asr_quota_timezone: str = "Asia/Shanghai"
-    asr_daily_audio_seconds_limit: int = 0
-    # Recording-file recognition accepts at most one 12-hour input. This is
-    # an independent per-episode admission guard, not the daily usage quota.
-    asr_max_audio_seconds_per_file: int = 43_200
+    asr_daily_audio_seconds_limit: int = 144_000
+    # Product admission is intentionally tighter than the provider's 12-hour
+    # hard boundary: one episode defaults to 3 hours, independently of the
+    # global daily usage guard.
+    asr_max_audio_seconds_per_file: int = 10_800
     asr_entitlement_ends_at: str = ""
     asr_provider_deadline_seconds: int = 0
     asr_price_cny_minor_per_hour: int = 0
@@ -1284,7 +1286,7 @@ def load_config() -> AppConfig:
             premium_score_threshold=float(
                 os.getenv("DORAMI_PODCAST_PREMIUM_SCORE_THRESHOLD")
                 or parser.getfloat(
-                    "podcast", "premium_score_threshold", fallback=8.0
+                    "podcast", "premium_score_threshold", fallback=7.5
                 )
             ),
             premium_transcript_max_chars=int(
@@ -1624,13 +1626,13 @@ def load_config() -> AppConfig:
             asr_daily_audio_seconds_limit=int(
                 os.getenv("DORAMI_ALIYUN_ISI_ASR_DAILY_AUDIO_SECONDS_LIMIT")
                 or parser.getint(
-                    "aliyun_isi", "asr_daily_audio_seconds_limit", fallback=0
+                    "aliyun_isi", "asr_daily_audio_seconds_limit", fallback=144_000
                 )
             ),
             asr_max_audio_seconds_per_file=int(
                 os.getenv("DORAMI_ALIYUN_ISI_ASR_MAX_AUDIO_SECONDS_PER_FILE")
                 or parser.getint(
-                    "aliyun_isi", "asr_max_audio_seconds_per_file", fallback=43_200
+                    "aliyun_isi", "asr_max_audio_seconds_per_file", fallback=10_800
                 )
             ),
             asr_entitlement_ends_at=(

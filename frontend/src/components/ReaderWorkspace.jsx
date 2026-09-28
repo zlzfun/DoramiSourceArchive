@@ -14,6 +14,7 @@ export default function ReaderWorkspace({ mobile, ...props }) {
   const [interestVersion, setInterestVersion] = useState(0);
   const closePage = useCallback(() => setPage(null), []);
   const setBriefOpen = useCallback((open) => setPage(open ? 'brief' : null), []);
+  const setRankingsOpen = useCallback((open) => setPage(open ? 'rankings' : null), []);
   useEffect(() => {
     if (!personalDigestEnabled) setPage((current) => current === 'brief' ? null : current);
   }, [personalDigestEnabled]);
@@ -30,11 +31,12 @@ export default function ReaderWorkspace({ mobile, ...props }) {
   const setTab = useCallback((next) => {
     setPage((current) => {
       const value = typeof next === 'function' ? next(current || rs.mode) : next;
-      return value === 'brief' || value === 'me' ? value : null;
+      return value === 'brief' || value === 'rankings' || value === 'me' ? value : null;
     });
   }, [rs.mode]);
   const view = {
     briefOpen: page === 'brief', setBriefOpen,
+    rankingsOpen: page === 'rankings', setRankingsOpen,
     briefReturn, setBriefReturn, briefRestore, setBriefRestore,
     discoverTab, setDiscoverTab, interestVersion, setInterestVersion,
     tab, setTab,

@@ -153,6 +153,11 @@
 
 ## 已完结(近期,留档索引;执行记录与更早波次见 `docs/archive/README.md`)
 
+- ✅ **issue #150 CI 后端测试并行化**(PR #151,归因与检视记录在 `docs/version-history.md`):后端拆 `backend-unit` / `backend-deploy` 两 job 各 `-n 4 --dist worksteal`
+  + `backend (pytest)` 汇总门 + conftest 按 worker 沙箱 + 守卫 `tests/test_ci_workflow.py`(11 种反向对照);PR CI 实测整次 run 6.0 min(此前 28 min)。
+  **暂缓**(并行后墙钟收益约 1 min):③ 39 个 baremetal 用例共享「已首装」快照(状态文件 / symlink 烤了绝对路径)与 sudo 桩改 sh;④ ffmpeg 静态包 / apt 缓存、
+  路径过滤(近 40 个合入 PR 仅 4 个 docs / frontend-only;若做须 job 级 `if` + paths-filter)。观察期:时序型用例在 4 vCPU 下的抖动;入库 `uv.lock` 陈旧是否单独清理。
+
 - ✅ **issue #85 移动端 PWA**（PR #100，方案 [frontend/pwa.md](./frontend/pwa.md)）：Android／iOS 主屏幕安装与联网恢复，用户两平台真机放行，本地检视通过；鸿蒙保留网页阅读，原生套壳另列展望。
 
 - ☑ **阅读面小特性波(v3.53.0,issue #54 + #55)**:新闻价值分按分值分档着色(灰线 6.0 = 评分尺子档界、固定刻度,

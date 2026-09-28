@@ -45,6 +45,7 @@ from services import jobs as jobs_service
 from services import reader_activity as reader_activity_service
 from services import reader_defaults as reader_defaults_service
 from services import reader_ondemand as reader_ondemand_service
+from services import rankings as rankings_service
 from services import social_backfill as social_backfill_service
 from services import source_visibility as source_visibility_service
 from services import user_sources as user_sources_service
@@ -77,6 +78,26 @@ class UserSourceToggleParams(BaseModel):
 
 class SourceVisibilityParams(BaseModel):
     hidden: bool
+
+
+@router.get("/rankings/status")
+def get_ranking_status(session: Session = Depends(deps.get_session)):
+    """Expose the latest site-wide ranking snapshot and its 07:00 schedule."""
+
+    return rankings_service.snapshot_status(session)
+
+
+@router.post("/rankings/refresh")
+def refresh_rankings():
+    """Synchronously rebuild today's site-wide ranking snapshot on demand."""
+
+    engine = deps.get_db_sink().engine
+    try:
+        rankings_service.build_snapshot_if_idle(engine, current_cutoff=True)
+    except rankings_service.RankingSnapshotBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    with Session(engine) as session:
+        return rankings_service.snapshot_status(session)
 
 
 @router.get("/credentials")

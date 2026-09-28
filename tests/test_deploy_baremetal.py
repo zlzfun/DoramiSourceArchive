@@ -1395,8 +1395,10 @@ def test_https_redirect_must_point_to_this_site(bm: BM):
 
 def test_health_budget_covers_site_gate_and_stability_window(bm: BM):
     """codex R1 P2-06:三道门共用一个预算;剩余不足以完成稳定窗即判失败而不是另起计时。"""
-    r = bm.run("--here", DORAMI_DEPLOY_FRESH_OK="1", DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS="1", DORAMI_DEPLOY_STABLE_SECONDS="5")
-    assert r.returncode == 1 and "不足以完成 5s 稳定窗" in r.stderr
+    # 预算要放得下门①②本身的耗时(4 vCPU 并行 CI 上曾超过 1 s 让门①先耗尽预算,issue #150 run 35826876920),
+    # 只需保证剩余预算 < 稳定窗即可
+    r = bm.run("--here", DORAMI_DEPLOY_FRESH_OK="1", DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS="8", DORAMI_DEPLOY_STABLE_SECONDS="30")
+    assert r.returncode == 1 and "不足以完成 30s 稳定窗" in r.stderr, r.stderr
 
 
 def test_identity_override_does_not_bypass_path_baseline(bm: BM):

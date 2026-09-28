@@ -38,10 +38,13 @@ from models.db import (  # noqa: E402
     SourceConfigRecord,
     TaxonomyVersionRecord,
 )
+from services import article_analysis as article_analysis_service  # noqa: E402
 from services.article_analysis import (  # noqa: E402
     ARTICLE_ANALYSIS_PROMPT_VERSION,
     ARTICLE_ANALYSIS_SCORING_VERSION,
+    AnalysisInput,
     PODCAST_PEOPLE_DIRTY_REASON,
+    analyze_article_with_llm,
     build_topic_heat_context,
     claim_analysis_tasks,
     compute_analysis_input_hash,
@@ -372,6 +375,134 @@ def _payload(*, candidate: bool = False) -> dict:
         "content_features": ["official_release"],
         "entities": [{"name": "Dorami", "type": "product", "relevance": 0.8}],
     }
+
+
+def _analysis_input(article_id: str = "structured-output") -> AnalysisInput:
+    return AnalysisInput(
+        article_id=article_id,
+        title="Kimi K2.6 Tech Blog: Advancing Open-Source Coding",
+        body="Kimi K2.6 is an open-source model release with coding improvements.",
+        content_type="article",
+        source_id="web_kimi_research",
+        publish_date=NOW_ISO,
+        fetched_date=NOW_ISO,
+        credentialed_source=False,
+        source_owner_or_domain="Moonshot AI",
+        source_name="Kimi Research",
+        source_role="official",
+    )
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        '{"score_reason":"旗舰开源模型发布" "quality_score":8.2}',
+        '{"score_reason":"旗舰开源模型发布","quality_score":8.2,"summary":"输出在这里被截断',
+    ],
+    ids=["missing-delimiter", "truncated"],
+)
+def test_article_analysis_repairs_malformed_json_once(monkeypatch, malformed):
+    calls = []
+    repaired = json.dumps(_payload(), ensure_ascii=False)
+
+    async def fake_chat_completion(**kwargs):
+        calls.append(kwargs)
+        return malformed if len(calls) == 1 else repaired
+
+    monkeypatch.setattr(
+        article_analysis_service, "chat_completion", fake_chat_completion
+    )
+    result = asyncio.run(
+        analyze_article_with_llm(_analysis_input(), [], LLM_CONFIG)
+    )
+
+    assert result == _payload()
+    assert len(calls) == 2
+    assert calls[0]["response_json"] is True
+    assert calls[1]["response_json"] is True
+    assert calls[1]["temperature"] == 0
+    assert calls[1]["max_retries"] == 1
+    assert [message.role for message in calls[1]["messages"][-2:]] == [
+        "assistant",
+        "user",
+    ]
+    assert calls[1]["messages"][-2].content == malformed
+    assert "只修复结构与缺失字段" in calls[1]["messages"][-1].content
+
+
+def test_unrepairable_json_keeps_bounded_backoff_and_terminal_state(
+    storage, monkeypatch
+):
+    calls = 0
+
+    async def always_malformed(**_kwargs):
+        nonlocal calls
+        calls += 1
+        return '{"score_reason":"still invalid" "quality_score":8.2}'
+
+    async def no_image_notes(*_args):
+        return ""
+
+    monkeypatch.setattr(
+        article_analysis_service, "chat_completion", always_malformed
+    )
+    with Session(storage.engine) as session:
+        session.add(_tag())
+        session.commit()
+    task = _seed_and_claim(storage, _article("unrepairable-json"))
+
+    first = asyncio.run(
+        process_claimed_analysis(
+            storage.engine,
+            task,
+            llm_config=LLM_CONFIG,
+            max_attempts=2,
+            now_fn=lambda: NOW,
+            image_notes_provider=no_image_notes,
+        )
+    )
+    assert first.status == "failed"
+    with Session(storage.engine) as session:
+        record = session.get(ArticleAnalysisRecord, task.article_id)
+        assert record.next_attempt_at == (
+            NOW + dt.timedelta(seconds=60)
+        ).isoformat(timespec="microseconds")
+        [retry] = claim_analysis_tasks(
+            session,
+            worker_id="structured-retry",
+            now=NOW + dt.timedelta(seconds=61),
+        )
+
+    second = asyncio.run(
+        process_claimed_analysis(
+            storage.engine,
+            retry,
+            llm_config=LLM_CONFIG,
+            max_attempts=2,
+            now_fn=lambda: NOW + dt.timedelta(seconds=62),
+            image_notes_provider=no_image_notes,
+        )
+    )
+    assert second.status == "failed"
+    assert calls == 4  # one analysis + one structured correction per lease
+    with Session(storage.engine) as session:
+        record = session.get(ArticleAnalysisRecord, task.article_id)
+        attempts = session.exec(
+            select(ArticleAnalysisAttemptRecord)
+            .where(ArticleAnalysisAttemptRecord.article_id == task.article_id)
+            .order_by(ArticleAnalysisAttemptRecord.attempt_no)
+        ).all()
+        assert record.attempt_count == 2
+        assert record.next_attempt_at is None
+        assert record.status == "failed"
+        assert "AnalysisOutputRecoveryError" in record.last_error
+        assert "article_analysis_structured_output_invalid_after_repair" in (
+            record.last_error
+        )
+        assert [(attempt.attempt_no, attempt.status) for attempt in attempts] == [
+            (1, "failed"),
+            (2, "failed"),
+        ]
 
 
 def _seed_and_claim(storage, article: ArticleRecord, *, worker: str = "worker-1"):
