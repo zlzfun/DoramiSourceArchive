@@ -84,6 +84,13 @@ class ArticleRecord(SQLModel, table=True):
     # 本列是文章粒度的轻量计数器，供阅读窗标题下直接展示，免去逐请求聚合。
     read_count: int = Field(default=0, description="全站累计阅读次数")
 
+    # 聚合标签文本：包含受控规范标签与 AI 提取标签，供 FTS5 Trigram 全文检索与短词匹配
+    tags: str = Field(
+        default="",
+        sa_column_kwargs={"server_default": text("''")},
+        description="聚合规范标签与提取标签的检索文本，供 FTS5 与搜索匹配",
+    )
+
 
 class DailyBriefCandidateRecord(SQLModel, table=True):
     """Node-local consumption ledger. Pending rows survive cursor advancement."""

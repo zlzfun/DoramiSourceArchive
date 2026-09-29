@@ -117,16 +117,23 @@ def _insert_source_audio_migration_case(
     content_hash = ("b" if suffix == "valid" else "d") * 64
     try:
         with Session(engine) as session:
-            session.add(ArticleRecord(
-                id=episode_id,
-                title="Snapshot migration",
-                content_type="podcast_episode",
-                source_id="migration-test",
-                source_url="https://example.com/episode",
-                publish_date=stamp,
-                fetched_date=stamp,
-                extensions_json="{}",
-            ))
+            from sqlalchemy import MetaData, Table
+
+            legacy_articles = Table("articles", MetaData(), autoload_with=session.connection())
+            session.execute(
+                legacy_articles.insert().values(
+                    id=episode_id,
+                    title="Snapshot migration",
+                    content_type="podcast_episode",
+                    source_id="migration-test",
+                    source_url="https://example.com/episode",
+                    publish_date=stamp,
+                    fetched_date=stamp,
+                    run_scope="ad_hoc",
+                    has_content=True,
+                    extensions_json="{}",
+                )
+            )
             session.commit()
         with engine.begin() as conn:
             conn.execute(text(
@@ -424,16 +431,24 @@ def test_normalized_transcript_publication_migration_backfills_successful_output
     engine = create_engine(db_url)
     try:
         with Session(engine) as session:
-            session.add(ArticleRecord(
-                id="normalized-publication-episode",
-                title="Normalized publication migration",
-                content_type="podcast_episode",
-                source_id="migration-test",
-                source_url="https://example.com/episode",
-                publish_date=stamp,
-                fetched_date=stamp,
-                extensions_json="{}",
-            ))
+            from sqlalchemy import MetaData, Table
+
+            legacy_articles = Table("articles", MetaData(), autoload_with=session.connection())
+            session.execute(
+                legacy_articles.insert().values(
+                    id="normalized-publication-episode",
+                    title="Normalized publication migration",
+                    content_type="podcast_episode",
+                    source_id="migration-test",
+                    source_url="https://example.com/episode",
+                    publish_date=stamp,
+                    fetched_date=stamp,
+                    run_scope="ad_hoc",
+                    has_content=True,
+                    extensions_json="{}",
+                )
+            )
+            session.commit()
             session.add(PodcastSourceMediaSnapshotRecord(
                 id="normalized-publication-source",
                 episode_id="normalized-publication-episode",
@@ -948,15 +963,9 @@ def test_active_podcast_audio_migration_withdraws_older_duplicates(tmp_path):
     engine = create_engine(db_url)
     try:
         with Session(engine) as session:
-            session.add(ArticleRecord(
-                id="migration-audio-episode",
-                title="Migration audio",
-                content_type="podcast_episode",
-                source_id="migration-test",
-                source_url="https://example.test/migration-audio",
-                publish_date="2026-09-24T00:00:00+00:00",
-                fetched_date="2026-09-24T00:00:00+00:00",
-                extensions_json="{}",
+            session.connection().execute(text(
+                "INSERT INTO articles (id, title, content_type, source_id, source_url, publish_date, fetched_date, extensions_json, run_scope, has_content, analysis_authority_id, read_count) "
+                "VALUES ('migration-audio-episode', 'Migration audio', 'podcast_episode', 'migration-test', 'https://example.test/migration-audio', '2026-09-24T00:00:00+00:00', '2026-09-24T00:00:00+00:00', '{}', 'ad_hoc', 1, '', 0)"
             ))
             session.add(PodcastTextArtifactRecord(
                 id="migration-narration",

@@ -190,7 +190,10 @@ def fetch_candidates(
             conditions.append(rowid_col.in_(top_ids))
         if like_keywords:
             conditions.append(
-                or_(*[ArticleRecord.title.contains(keyword) for keyword in like_keywords])
+                or_(*[
+                    or_(ArticleRecord.title.contains(keyword), ArticleRecord.tags.contains(keyword))
+                    for keyword in like_keywords
+                ])
             )
         if not conditions:
             return []
