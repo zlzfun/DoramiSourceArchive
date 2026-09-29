@@ -9,8 +9,7 @@
 
 ## 顶层(活跃)
 
-- ◇ [system-overview.md](./system-overview.md) — **系统总览(面向人的整体设计导览,issue #89)**:产品定位与 admin/user 分面、
-  领域模型(源/条目/分析/读者状态/产出物)、核心数据流与双节点归档同步的位置、模块边界、关键取舍、「改动该放哪」判断表;细节链到 CLAUDE.md 与各方案。
+- ◇ [system-overview.md](./system-overview.md) — **系统总览(issue #89)**:面向人的整体设计导览,新协作者从这里开始。
 - ◉ [news-coverage-reliability-plan.md](./news-coverage-reliability-plan.md) — **新闻漏采修复(issue #127)**：IT之家有界分页、公共日报候选持久积压、HN 备用发现入口；真实源验证、日间采集配置预览与回滚。
 
 - ◉ [backlog.md](./backlog.md) — **跨波次待办总账**(进行中/排队中/展望三档 + 近期已完结索引)。
