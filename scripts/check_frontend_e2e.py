@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and test the mobile reader against an owned FastAPI/SQLite sandbox.
+"""Build and test the frontend (readers and admin console) against an owned FastAPI/SQLite sandbox.
 
 No externally supplied server or database URL is accepted. Each invocation owns
 its processes, configuration, browser context and disposable database.
@@ -27,11 +27,13 @@ from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+from e2e.admin_console import run_admin_flows  # noqa: E402
+from e2e.desktop_reader import run_desktop_flows  # noqa: E402
 from e2e.mobile_reader import run_flows  # noqa: E402
 from e2e.focus_ring import run_focus_flows  # noqa: E402
 from e2e.pwa import run_pwa_flows  # noqa: E402
 
-FLOWS = ("mobile", "pwa", "focus")
+FLOWS = ("mobile", "pwa", "focus", "desktop", "admin")
 
 
 def isolated_environment(sandbox: Path) -> dict[str, str]:
@@ -49,14 +51,14 @@ def free_port() -> int:
         return sock.getsockname()[1]
 
 
-def configure(sandbox: Path, port: int) -> None:
+def configure(sandbox: Path, port: int, role: str = "reader") -> None:
     (sandbox / ".dorami-e2e").touch()
     (sandbox / "backend.ini").write_text(f"""[server]
 host = 127.0.0.1
 port = {port}
 reload = false
 [runtime]
-role = reader
+role = {role}
 [taxonomy]
 deployment = manual
 [storage]
@@ -142,6 +144,7 @@ def run(args) -> int:
         raise SystemExit(f"--flows accepts a comma-separated subset of {','.join(FLOWS)}; got {args.flows!r}")
     result = {"status": "failed", "started_at": datetime.now(timezone.utc).isoformat(),
               "browser": args.channel or "chromium", "issues": [85, 86, 90, 108], "flows": flows,
+              "runtime_role": "all",
               "scope": "Built frontend + real FastAPI + disposable SQLite; no API response mocks.",
               "artifacts": str(artifacts)}
     started = time.monotonic()
@@ -152,9 +155,11 @@ def run(args) -> int:
         with tempfile.TemporaryDirectory(prefix="dorami-reader-e2e-") as temp, ExitStack() as stack:
             sandbox = Path(temp).resolve()
             backend_port = free_port()
-            configure(sandbox, backend_port)
+            # The default single-node role: the admin flow needs collector surfaces. The sandbox
+            # has no collection jobs, so no scheduled fetch reaches the network.
+            configure(sandbox, backend_port, role="all")
             env = isolated_environment(sandbox)
-            run_command([sys.executable, "e2e/reader_fixture.py", str(sandbox)], env, ROOT,
+            run_command([sys.executable, "e2e/reader_fixture.py", str(sandbox), "--with-admin"], env, ROOT,
                         artifacts / "seed.log", timeout=60)
             run_command(["npm", "run", "build", "--", "--outDir", str(sandbox / "site")],
                         env, ROOT / "frontend", artifacts / "build.log", timeout=90)
@@ -185,6 +190,10 @@ def run(args) -> int:
                         run_pwa_flows(browser, base_url, sandbox / "site", artifacts, result)
                     if "focus" in flows:
                         run_focus_flows(browser, base_url, artifacts, result)
+                    if "desktop" in flows:
+                        run_desktop_flows(browser, base_url, sandbox / "reader.db", artifacts, result)
+                    if "admin" in flows:
+                        run_admin_flows(browser, base_url, artifacts, result)
                 finally:
                     browser.close()
         result["status"] = "passed"
@@ -197,7 +206,7 @@ def run(args) -> int:
             result["sandbox_removed"] = not sandbox.exists()
         result["duration_seconds"] = round(time.monotonic() - started, 2)
         (artifacts / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
-    print(f"Mobile reader E2E: {result['status']} ({result['duration_seconds']}s)\nArtifacts: {artifacts}")
+    print(f"Frontend E2E ({','.join(flows)}): {result['status']} ({result['duration_seconds']}s)\nArtifacts: {artifacts}")
     return 0 if result["status"] == "passed" else 1
 
 

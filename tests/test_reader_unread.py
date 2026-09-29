@@ -178,6 +178,34 @@ def test_legacy_subscription_lazy_inits_backlog(monkeypatch, tmp_path):
         assert _unread(client)["total"] == INIT_UNREAD_BACKLOG
 
 
+def test_lazy_cursor_init_tolerates_a_concurrent_first_request(monkeypatch, tmp_path):
+    """首屏并发请求各自补同一水位行:落后的一方不应撞主键 500,而以先落库的行为准。"""
+    from models.db import ReaderReadCursorRecord
+    from services import reader_state
+    from storage.impl.db_storage import DatabaseStorage
+
+    sink = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'race.db'}")
+    real_load = reader_state.load_cursors
+    calls = []
+
+    def load_before_the_other_request_commits(session, *, username):
+        if not calls:
+            calls.append(username)
+            with Session(sink.engine) as other:
+                other.add(ReaderReadCursorRecord(
+                    owner_username=username, source_id="src_a",
+                    mark_read_before="winner", updated_at="2026-01-01T00:00:00",
+                ))
+                other.commit()
+            return {}
+        return real_load(session, username=username)
+
+    monkeypatch.setattr(reader_state, "load_cursors", load_before_the_other_request_commits)
+    with Session(sink.engine) as session:
+        cursors = reader_state.ensure_cursors(session, username="user", source_ids=["src_a", "src_b", "src_a"])
+    assert cursors == {"src_a": "winner", "src_b": ""}
+
+
 def test_open_article_clears_unread(monkeypatch, tmp_path):
     app_module, sink = _make_app(monkeypatch, tmp_path, "open.db")
 

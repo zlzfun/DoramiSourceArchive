@@ -7,7 +7,7 @@ import subprocess
 
 import pytest
 
-from scripts.check_mobile_reader_e2e import configure
+from scripts.check_frontend_e2e import configure
 from scripts.preview_pwa import run, validate_named_tunnel, write_guest_config
 
 ROOT = Path(__file__).resolve().parents[1]

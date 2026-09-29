@@ -139,22 +139,25 @@ def ensure_cursors(
     """给缺水位行的源懒初始化（backlog 语义），返回补齐后的水位映射。
 
     幂等：已有行不动。新建行在本函数内 commit 落库。
+    同一读者首屏会并发发出多个带未读的请求，各自都可能补同一批行：插入走
+    ON CONFLICT DO NOTHING，提交后重读，以先落库的那行为准。
     """
     username = (username or "").strip()
     if not username:
         return {}
     cursors = load_cursors(session, username=username)
-    missing = [sid for sid in source_ids if sid and sid not in cursors]
+    missing = list(dict.fromkeys(sid for sid in source_ids if sid and sid not in cursors))
     if missing:
         now = _now_iso()
-        for sid in missing:
-            wm = _backlog_watermark(session, sid)
-            session.add(ReaderReadCursorRecord(
-                owner_username=username, source_id=sid,
-                mark_read_before=wm, updated_at=now,
-            ))
-            cursors[sid] = wm
+        table = ReaderReadCursorRecord.__table__
+        stmt = sqlite_insert(table).values([
+            {"owner_username": username, "source_id": sid,
+             "mark_read_before": _backlog_watermark(session, sid), "updated_at": now}
+            for sid in missing
+        ]).on_conflict_do_nothing(index_elements=[table.c.owner_username, table.c.source_id])
+        session.execute(stmt)
         session.commit()
+        cursors = load_cursors(session, username=username)
     return cursors
 
 

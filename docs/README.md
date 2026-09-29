@@ -132,7 +132,7 @@
 
 ## frontend/ —— 前端纪律(◉ 活跃)
 
-- ◉ [frontend/e2e.md](./frontend/e2e.md) — #90 移动读者与 #85 PWA 真实 E2E：一条命令、自建 FastAPI/SQLite 沙箱、阅读交互与 SW 生命周期。
+- ◉ [frontend/e2e.md](./frontend/e2e.md) — #90 前端真实 E2E：移动读者、PWA、聚焦环、桌面读者与个人早报、管理台采集页；一条命令、自建 FastAPI/SQLite 沙箱。
 - ◉ [frontend/pwa.md](./frontend/pwa.md) — #85 主屏幕安装入口、最小离线恢复、更新边界与 cloudflared 隔离真机预览。
 - ◉ [frontend/mobile-navigation.md](./frontend/mobile-navigation.md) — Issue #86：响应式阅读器、贴底导航、共享阅读状态与浏览器回归入口；含验证边界。
 

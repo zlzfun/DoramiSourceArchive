@@ -11,7 +11,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from e2e.reader_fixture import validate_sandbox  # noqa: E402
-from scripts.check_mobile_reader_e2e import configure, isolated_environment, stop_process  # noqa: E402
+from scripts.check_frontend_e2e import configure, isolated_environment, stop_process  # noqa: E402
 
 
 def test_child_environment_does_not_inherit_deployment_configuration(monkeypatch, tmp_path):
@@ -53,6 +53,21 @@ def test_seed_guard_accepts_owned_empty_sandbox(monkeypatch, tmp_path):
     monkeypatch.setenv("DORAMI_CONFIG_FILE", str(tmp_path / "backend.ini"))
     assert validate_sandbox(tmp_path) == tmp_path / "reader.db"
     assert not (tmp_path / "reader.db").exists()
+
+
+def test_public_preview_sandbox_stays_reader_only(tmp_path):
+    """preview_pwa exposes the default sandbox publicly; only the local runner opts into collector pages."""
+    import configparser
+
+    def role(sandbox, **kwargs):
+        sandbox.mkdir()
+        configure(sandbox, 19001, **kwargs)
+        parser = configparser.ConfigParser(interpolation=None)
+        parser.read(sandbox / "backend.ini")
+        return parser.get("runtime", "role")
+
+    assert role(tmp_path / "preview") == "reader"
+    assert role(tmp_path / "runner", role="all") == "all"
 
 
 @pytest.mark.skipif(os.name != "posix", reason="E2E process groups currently target macOS/Linux")
