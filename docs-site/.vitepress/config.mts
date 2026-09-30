@@ -1,6 +1,50 @@
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitepress'
 
+const sidebarGroups = [
+  { text: '开始', items: [
+    { text: '快速开始', link: '/guide/quick-start' },
+  ] },
+  { text: '早报', items: [
+    { text: '读每天的早报', link: '/features/brief' },
+    { text: '管理兴趣', link: '/features/interests' },
+  ] },
+  { text: '文章', items: [
+    { text: '读文章与订阅内容', link: '/features/reader' },
+    { text: '问哆啦美与翻译', link: '/features/ask-and-translate' },
+  ] },
+  { text: '播客', items: [
+    { text: '听播客', link: '/features/podcasts' },
+  ] },
+  { text: '动态', items: [
+    { text: '看动态', link: '/features/updates' },
+  ] },
+  { text: '社交', items: [
+    { text: '看社交帖子', link: '/features/social' },
+  ] },
+  { text: '发现', items: [
+    { text: '找到更多来源', link: '/features/discover' },
+  ] },
+  { text: '更多用法', items: [
+    { text: '在手机上用', link: '/features/mobile' },
+    { text: '把订阅接到别的工具', link: '/features/integrations' },
+  ] },
+  { text: '帮助与参考', items: [
+    { text: '常见问题与排错', link: '/help/faq' },
+    { text: '界面标记速查', link: '/reference/markers' },
+  ] },
+  { text: '了解哆啦美', items: [
+    { text: '设计理念', link: '/about/philosophy' },
+  ] },
+]
+
+// 每页使用相同目录，仅展开当前页所在的组；换页时也重置折叠状态。
+const sidebar = Object.fromEntries(sidebarGroups.flatMap(group =>
+  group.items.map(item => [item.link, sidebarGroups.map(section => ({
+    ...section, collapsed: section !== group,
+  }))]),
+))
+
 export default defineConfig({
   lang: 'zh-CN',
   title: '哆啦美',
@@ -9,34 +53,13 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: '快速开始', link: '/guide/quick-start' },
-      { text: '使用指南', link: '/features/brief', activeMatch: '/features/' },
+      { text: '使用指南', activeMatch: '/features/', items:
+        sidebarGroups.slice(1, 7).map(group => ({ text: group.text, link: group.items[0].link })),
+      },
       { text: '常见问题', link: '/help/faq' },
       { text: '设计理念', link: '/about/philosophy' },
     ],
-    sidebar: [
-      { text: '开始', items: [{ text: '快速开始', link: '/guide/quick-start' }] },
-      {
-        text: '使用指南',
-        items: [
-          { text: '读每天的早报', link: '/features/brief' },
-          { text: '读文章与订阅内容', link: '/features/reader' },
-          { text: '管理兴趣', link: '/features/interests' },
-          { text: '找到更多来源', link: '/features/discover' },
-          { text: '问哆啦美与翻译', link: '/features/ask-and-translate' },
-          { text: '听播客', link: '/features/podcasts' },
-          { text: '在手机上用', link: '/features/mobile' },
-          { text: '把订阅接到别的工具', link: '/features/integrations' },
-        ],
-      },
-      {
-        text: '参考',
-        items: [
-          { text: '界面标记速查', link: '/reference/markers' },
-          { text: '常见问题与排错', link: '/help/faq' },
-        ],
-      },
-      { text: '了解哆啦美', items: [{ text: '设计理念', link: '/about/philosophy' }] },
-    ],
+    sidebar,
     search: {
       provider: 'local',
       options: {

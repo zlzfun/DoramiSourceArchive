@@ -27,7 +27,7 @@ hero:
 
 <FeatureRow title="一个阅读器读完所有来源" link="/features/reader" reverse crop="0.469,0.078,0.474,0.46">
 
-订阅的来源都在左栏，文章、播客、动态、社交帖子各有各的页面。分析过的文章开头有 AI 速读，几秒钟判断值不值得读全文。
+订阅的来源都在左栏，[文章](/features/reader)、[播客](/features/podcasts)、[动态](/features/updates)、[社交](/features/social)各有各的页面。分析过的文章开头有 AI 速读，几秒钟判断值不值得读全文。
 
 未读、收藏、搜索、分享都在手边，状态在电脑和手机之间同步。
 

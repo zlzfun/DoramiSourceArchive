@@ -81,4 +81,5 @@
 - [读每天的早报](/features/brief)：看懂早报上的每个标记，让它越来越合你的口味。
 - [读文章与订阅内容](/features/reader)：未读、收藏、搜索和分享。
 - [找到更多来源](/features/discover)：预览、合集，以及添加自己的 RSS 源。
+- [听播客](/features/podcasts)、[看动态](/features/updates)、[看社交帖子](/features/social)：按内容形态接着浏览。
 - [常见问题与排错](/help/faq)：遇到问题先看这里。
