@@ -12,6 +12,11 @@ from playwright.sync_api import expect
 
 from e2e.reader_fixture import ARTICLE_COUNT, PASSWORD, SOURCE_A, SOURCE_B, SOURCE_NAMES, USERNAME
 
+# Source logos come from Google's favicon service. The runner's browser proxies external traffic to
+# a dead local port, so these requests fail locally; the audit requires that and checks LogoMark's
+# monogram fallback.
+FAVICON_SERVICE = "https://www.google.com/s2/favicons"
+
 
 def viewport_metrics(page):
     return page.evaluate("""() => {
@@ -50,13 +55,15 @@ def assert_viewport(page):
 
 
 @contextmanager
-def observed_page(browser, base_url, artifacts, name, result):
-    context = browser.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
+def observed_page(browser, base_url, artifacts, name, result, desktop=False):
+    context = (browser.new_context(viewport={"width": 1440, "height": 900}) if desktop else
+               browser.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True))
     context.set_default_timeout(8000)
     context.tracing.start(screenshots=True, snapshots=True, sources=True)
     page = context.new_page()
     audit = {"reject_login": False, "offline": False, "offline_requests": set(),
-             "page_errors": [], "unexpected": [], "requests": Counter(), "cancelled_brand_images": []}
+             "page_errors": [], "unexpected": [], "requests": Counter(), "cancelled_brand_images": [],
+             "favicon_requests": [], "blocked_favicons": []}
     page.on("pageerror", lambda error: audit["page_errors"].append(str(error)))
 
     def response_seen(response):
@@ -72,13 +79,18 @@ def observed_page(browser, base_url, artifacts, name, result):
                 and urlsplit(request.url).path.startswith("/brand/")):
             audit["cancelled_brand_images"].append(request.url)
             return
+        if request.url.startswith(FAVICON_SERVICE) and request.failure == "net::ERR_PROXY_CONNECTION_FAILED":
+            audit["blocked_favicons"].append(request.url)
+            return
         if request not in audit["offline_requests"] or request.failure != "net::ERR_INTERNET_DISCONNECTED":
             audit["unexpected"].append(f"Request failed: {request.url} {request.failure}")
 
     def request_seen(request):
         if audit["offline"]:
             audit["offline_requests"].add(request)
-        if request.url.startswith(base_url):
+        if request.url.startswith(FAVICON_SERVICE):
+            audit["favicon_requests"].append(request.url)
+        elif request.url.startswith(base_url):
             audit["requests"][(request.method, urlsplit(request.url).path)] += 1
         elif not request.url.startswith(("data:", "blob:")):
             audit["unexpected"].append(f"External request: {request.url}")
@@ -91,9 +103,10 @@ def observed_page(browser, base_url, artifacts, name, result):
         yield page, audit
         assert page.evaluate("""urls => [...document.images].every(img =>
             !urls.includes(img.currentSrc || img.src) || !img.getClientRects().length || img.naturalWidth > 0)
-        """, audit["cancelled_brand_images"]), audit["cancelled_brand_images"]
+        """, audit["cancelled_brand_images"] + audit["blocked_favicons"]), audit["cancelled_brand_images"]
         assert not audit["page_errors"], audit["page_errors"]
         assert not audit["unexpected"], audit["unexpected"]
+        assert sorted(audit["blocked_favicons"]) == sorted(audit["favicon_requests"]), "a favicon request was not blocked"
         passed = True
     except Exception:
         try:
@@ -110,6 +123,7 @@ def observed_page(browser, base_url, artifacts, name, result):
         result.setdefault("browser_audits", {})[name] = {
             "page_errors": audit["page_errors"], "unexpected": audit["unexpected"],
             "cancelled_brand_images": audit["cancelled_brand_images"],
+            "blocked_favicons": len(audit["blocked_favicons"]),
             "requests": {f"{method} {path}": count for (method, path), count in audit["requests"].items()},
             "injected_offline_requests": sorted({urlsplit(request.url).path for request in audit["offline_requests"]}),
         }
@@ -119,8 +133,8 @@ def observed_page(browser, base_url, artifacts, name, result):
             context.close()
 
 
-def login(page, password=PASSWORD):
-    page.get_by_placeholder("输入登录账号").fill(USERNAME)
+def login(page, password=PASSWORD, username=USERNAME):
+    page.get_by_placeholder("输入登录账号").fill(username)
     page.get_by_placeholder("输入登录密码").fill(password)
     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/auth/login") as response:
         page.get_by_role("button", name="登录", exact=True).click()
@@ -289,7 +303,12 @@ def run_flows(browser, base_url, database, artifacts, result):
         expect(page.get_by_role("dialog", name="设置", exact=True)).to_be_visible()
         page.go_back()
         expect(page.get_by_role("dialog", name="设置", exact=True)).to_have_count(0)
-        page.get_by_role("button", name="文章", exact=True).tap()
+        # Reloading while this tab's refresh requests are in flight aborts them and fails the audit.
+        def finished(path):
+            return page.expect_event("requestfinished", lambda request: urlsplit(request.url).path == path)
+
+        with finished("/api/articles"), finished("/api/reader/unread-counts"):
+            page.get_by_role("button", name="文章", exact=True).tap()
         expect(page.locator('.m-tab[aria-current="page"]')).to_have_attribute("aria-label", "文章")
         page.reload()
         expect(page.locator(".reader-entry")).to_have_count(30)

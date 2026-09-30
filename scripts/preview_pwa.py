@@ -26,7 +26,7 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from e2e.reader_fixture import USERNAME  # noqa: E402
-from scripts.check_mobile_reader_e2e import (  # noqa: E402
+from scripts.check_frontend_e2e import (  # noqa: E402
     configure, free_port, isolated_environment, run_command, start_process, wait_ready,
 )
 

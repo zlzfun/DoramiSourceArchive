@@ -1,10 +1,10 @@
-# 阅读器端到端测试
+# 前端端到端测试
 
-[Issue #90](https://github.com/zlzfun/DoramiSourceArchive/issues/90) 的首个切片：移动读者主链路，兼顾 [#86](https://github.com/zlzfun/DoramiSourceArchive/issues/86) 响应式导航和 [#2](https://github.com/zlzfun/DoramiSourceArchive/issues/2) 登录门深链回归，并覆盖 [#85 PWA 安装层](./pwa.md)。使用已有 Python Playwright；管理端、个人早报和 CI 集成留在 #90 后续范围。
+[Issue #90](https://github.com/zlzfun/DoramiSourceArchive/issues/90) 的端到端回归：移动读者主链路（兼顾 [#86](https://github.com/zlzfun/DoramiSourceArchive/issues/86) 响应式导航和 [#2](https://github.com/zlzfun/DoramiSourceArchive/issues/2) 登录门深链）、[#85 PWA 安装层](./pwa.md)、[#108](https://github.com/zlzfun/DoramiSourceArchive/issues/108) 聚焦环、桌面读者主链路（含个人早报）与管理台采集页。使用已有 Python Playwright 与 Chromium；WebKit 与 CI 接入不在本范围。
 
 ## 一条命令
 
-依赖已装好的仓库 `.venv` 和 `frontend/node_modules`；默认使用 Playwright Chromium。首次安装浏览器，在仓库根目录运行：
+依赖已装好的仓库 `.venv` 和 `frontend/node_modules`；默认使用 Playwright Chromium。首次安装浏览器（Playwright 升级后也要重装），在仓库根目录运行：
 
 ```bash
 .venv/bin/python -m playwright install chromium
@@ -17,11 +17,13 @@ cd frontend
 npm run test:e2e
 ```
 
-可选 `npm run test:e2e -- --headed` 显示浏览器，或 `--channel chrome` 使用已安装的 Google Chrome。`--flows mobile,pwa,focus` 选择流程子集（默认全跑；例如只回归聚焦环：`--flows focus`），沙箱、构建与清理不变。当前进程组清理按 macOS/Linux 实现；Windows 未验证。
+`--flows mobile,pwa,focus,desktop,admin` 选择流程子集（默认全跑；例如只回归管理台：`--flows admin`），沙箱、构建与清理不变。可选 `--headed` 显示浏览器，或 `--channel chrome` 使用已安装的 Google Chrome。当前进程组清理按 macOS/Linux 实现；Windows 未验证。
 
 ## 测什么
 
-主流程通过界面完成登录、来源筛选、阅读、收藏、返回和设置操作：
+各流程通过界面完成操作，只等待具体响应或界面状态，不用固定睡眠。
+
+**mobile**（手机视口）：
 
 - 错误密码被真实后端拒绝；正确密码进入阅读器。
 - 长来源名保持筛选按钮单行；选源后抽屉关闭、标题和真实列表一致。
@@ -30,31 +32,53 @@ npm run test:e2e
 - 空态、断网反馈与恢复不混入旧条目；提示不遮挡底部导航。
 - 刷新后仍已登录且收藏保留；独立读取 SQLite 确认读态和收藏落库。
 - 在登录门收到同标签页 hash 深链，登录后打开目标文章。
+
+**pwa**：
+
 - Android／iOS PWA 指引的取消／失败／已安装状态，浮层完整可见与关闭命中、暗色和短横屏、宽屏内联步骤。
 - HarmonyOS／OpenHarmony／华为兼容 UA 及 UA-CH 平台的范围判断：反复注入安装事件也不展示移动／平板安装入口，网页阅读与 SW 仍可用。
 - 实际替换本次沙箱 SW 后提示刷新且不自动重载；离线导航恢复页、API 失败、完整路径／query／hash 重试并打开真实目标文章、退出后 CacheStorage 为空。
-- 聚焦环（#108）：结构性守卫——全局 `input:focus-visible` 兜底环必须落在 `@layer base`（读 CSSOM 断言）；登录账号框、发现页筛选框、条目列头搜索、移动端顶栏搜索鼠标点入后 input 自身 `outline: none`，且环宿主的 box-shadow／描边／outline 在聚焦前后必须变化。Tab 启发式烟测——发现页与文章容器按元素身份 Tab 遍历到回绕首元素为止，每个停靠点须命中 `:focus-visible` 并在自身／子元素／祖先／伪元素的采样样式上有变化，文本控件不叠双环；只比较计算样式，不判对比度与裁切。
 
-PWA 安装事件、上述 UA 输入与独立显示模式由浏览器脚本模拟，仅验证应用反应；更新使用实际新 SW，业务请求仍走真实服务。设备能力另行真机验收。
+安装事件、UA 输入与独立显示模式由浏览器脚本模拟，仅验证应用反应；设备能力另行真机验收。
 
-操作等待具体响应或界面状态，不使用固定睡眠等待页面就绪。点击用 `tap`，内容滚动用浏览器 wheel；这是 Chromium 手机模拟，不是真机触摸手势、软键盘或安全区验收。截图将有限 CSS 动画推进到结束后保存；交互本身保留应用动画。
+**focus**（#108）：结构性守卫——全局 `input:focus-visible` 兜底环必须落在 `@layer base`（读 CSSOM 断言）；登录账号框、发现页筛选框、条目列头搜索、移动端顶栏搜索鼠标点入后 input 自身 `outline: none`，且环宿主的 box-shadow／描边／outline 在聚焦前后必须变化。Tab 启发式烟测——发现页与文章容器按元素身份 Tab 遍历到回绕首元素为止，每个停靠点须命中 `:focus-visible` 并在采样样式上有变化，文本控件不叠双环；只比较计算样式，不判对比度与裁切。
+
+**desktop**（1440×900）：
+
+- 由真实管理员 API 打开个人早报总开关（流程结束时关回）。读者登录即落到后端当场生成的早报：`ensure` 返回的篇目与播种分数一致且降序，低于 5.0 门槛的那篇不出现；页面卡片顺序与之相同，编排说明行写「选出 6 篇」。
+- 点早报卡片在阅读窗打开该篇并记一次阅读。
+- 文章容器只列已订阅的文章源（真实 `/api/articles` 返回），可打开正文；动态容器只列已订阅的发布记录源。
+- 发现页从动态形态带入后切到文章，筛选出播种源：已订阅的显示「已订阅」，点另一个的「订阅」后真实请求成功，独立读取 SQLite 确认订阅落库。
+- 回到早报：同一版不被自动重编，编排说明行提示「你的订阅已更新」。
+
+**admin**（1440×900）：
+
+- 管理员登录进入管理台，导航含采集页。
+- 节点管理：拦住首个节点的近期运行请求，检视器显示「加载中…」，放行后显示空态文案；各形态计数与 `/api/fetchers` 一致，自动选中一个节点并在检视器同名显示。
+- 任务与运行：拦住运行史请求，显示 6 行骨架；放行后没有待触发任务，唯一任务（播客目录自带的观察期任务）显示「已停用」，运行流水为空态、总数为 0。
+
+载入态靠 `page.route` 暂存真实请求，断言后原样放行，不替换响应。节点看板的「暂无某形态节点」空态在真实注册表下到达不了（四种形态都有内置节点），不测。
+
+点击在手机视口用 `tap`、内容滚动用浏览器 wheel；这是 Chromium 手机模拟，不是真机触摸手势、软键盘或安全区验收。截图将有限 CSS 动画推进到结束后保存；交互本身保留应用动画。
 
 ## 隔离与结果
 
-[`scripts/check_mobile_reader_e2e.py`](../../scripts/check_mobile_reader_e2e.py) 每次新建临时配置和数据库，运行迁移并播种两个来源、63 篇合成文章和一个普通读者。以实际 `src/main.py` 启动 FastAPI，前端重新构建到独立临时目录，通过 `vite preview` 同源代理访问后端。业务 API 不替换响应；网络故障用例把浏览器网络临时设为离线，安装故障用例模拟拒绝的系统安装事件。
+[`scripts/check_frontend_e2e.py`](../../scripts/check_frontend_e2e.py) 每次新建临时配置和数据库，运行迁移并由 [`e2e/reader_fixture.py`](../../e2e/reader_fixture.py) 播种：三个来源（两个文章源、一个发布记录源）、合成文章与其中 7 篇的成功分析、两个已完成兴趣引导的读者（移动流程用一个，桌面流程用另一个并留一个未订阅源给发现页）和一个管理员。以实际 `src/main.py` 启动 FastAPI，前端重新构建到独立临时目录，通过 `vite preview` 同源代理访问后端。业务 API 不替换响应；网络故障用例把浏览器网络临时设为离线，安装故障用例模拟拒绝的系统安装事件。
 
-测试不接受外部服务或数据库 URL；子进程环境采用白名单，不继承部署配置、云凭据或模型配置。媒体、语音产物路径均在沙箱，reader 运行角色不启动采集任务。测试结束或失败时关闭所属进程组、删除临时数据库与构建目录，保留用户原来的开发服务和 `frontend/dist`。
+沙箱以 `all` 运行角色启动，管理员才能看到采集页。后端启动时会安装播客目录并建一个启用的采集任务；夹具先装好目录并把全部采集任务存为停用，启动引导尊重已有任务的启停，所以调度器不注册任何外部抓取。日报默认关闭，沙箱不配模型与云凭据。浏览器启动时把所有非回环流量（主机名与 IP 字面量）指向一个无人监听的本地代理端口，任何上下文的请求都出不了本机；来源图标服务（Google favicon）的请求因此在本地失败，审计要求每一个都失败并确认界面回退为字母头像；其余任何外部请求、HTTP ≥ 400、请求失败或页面异常都判失败。
+
+测试不接受外部服务或数据库 URL；子进程环境采用白名单，不继承部署配置、云凭据或模型配置。媒体、语音产物路径均在沙箱。测试结束或失败时关闭所属进程组、删除临时数据库与构建目录，保留用户原来的开发服务和 `frontend/dist`。
+
+`scripts/preview_pwa.py` 复用同一夹具对外预览，只播种读者、不建管理员，并保持 `reader` 运行角色。
 
 每次结果写入 `tmp/e2e/reader-*/`：
 
 - `result.json`：结论、构建指纹、检查项、阅读位置和请求审计。
-- `mobile-*.png` / `desktop-reader.png` / `pwa-*.png`：实际渲染产物。
+- `mobile-*.png` / `desktop-reader.png` / `pwa-*.png` / `desktop-*.png` / `admin-*.png`：实际渲染产物。
 - 失败时的 `*-trace.zip`、截图、DOM 几何和 `error.txt`，以及构建／服务日志。
 
 阅读流程默认只保留失败 trace；PWA 流程另保留 `pwa-trace.zip`，便于核对 SW 更新事件。不录视频。trace 含一次性测试账号和合成内容，没有生产会话；分享产物前仍应检查内容。
 
 ## 验证状态
 
-本地已实跑主命令；隔离／PWA 预览／配置输出守卫及部署库合计 29 项 pytest、前端 lint 和 14 项 Node 测试通过。故意将底栏移出视口 96px 时布局断言拒绝；缺失沙箱标记、配置错指、数据库错指、已有数据库均被拒绝，忽略 SIGTERM 的测试子进程也被清理。
-
-这不是全站 E2E 覆盖，也未替代 WebKit / 手机真机验收。演进及本轮发现的问题见 [e2e-Evolution.md](./e2e-Evolution.md)。
+全部五个流程本地无头实跑通过，演进与每轮发现见 [e2e-Evolution.md](./e2e-Evolution.md)。这不是全站 E2E 覆盖，也未替代 WebKit / 手机真机验收。
