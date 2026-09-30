@@ -585,7 +585,8 @@ def test_admin_ranking_status_and_manual_refresh(monkeypatch, tmp_path):
 
     def _capture_refresh(engine, **kwargs):
         refresh_options.update(kwargs)
-        return original_refresh(engine, **kwargs)
+        # The route uses the wall clock; pin it to the seeded week so the fixture stays in the window.
+        return original_refresh(engine, **{"at": AT, **kwargs})
 
     monkeypatch.setattr(rankings, "build_snapshot_if_idle", _capture_refresh)
     refreshed = client.post("/api/admin/rankings/refresh")
