@@ -9,11 +9,11 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: '快速开始', link: '/guide/quick-start' },
-      { text: '功能', link: '/features/brief' },
+      { text: '使用指南', link: '/features/brief' },
     ],
     sidebar: [
       { text: '开始', items: [{ text: '快速开始', link: '/guide/quick-start' }] },
-      { text: '功能', items: [{ text: '每日早报', link: '/features/brief' }] },
+      { text: '使用指南', items: [{ text: '读每天的早报', link: '/features/brief' }] },
     ],
     search: {
       provider: 'local',
