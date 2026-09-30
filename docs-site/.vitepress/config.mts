@@ -50,7 +50,9 @@ export default defineConfig({
   title: '哆啦美',
   description: '哆啦美使用手册：每天一份按你的订阅和兴趣编排的 AI 资讯早报',
   cleanUrls: true,
+  head: [['link', { rel: 'icon', type: 'image/png', href: '/brand/dorami-logo-32.png' }]],
   themeConfig: {
+    logo: { src: '/brand/dorami-logo-128.png', alt: '哆啦美' },
     nav: [
       { text: '快速开始', link: '/guide/quick-start' },
       { text: '使用指南', activeMatch: '/features/', items:
