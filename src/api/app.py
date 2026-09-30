@@ -167,6 +167,7 @@ from llm.client import UsageMeta
 from llm.client import set_usage_recorder as _set_llm_usage_recorder
 
 from starlette.responses import JSONResponse as StarletteJSONResponse
+from starlette.routing import Route
 from mcp_server import build_mcp_app
 from config import settings
 
@@ -206,6 +207,14 @@ class MCPGateApp:
             response = StarletteJSONResponse({"detail": "MCP server not ready"}, status_code=503)
             await response(scope, receive, send)
             return
+        # The exact /mcp route bypasses Mount's slash redirect. Give the inner
+        # transport the same scope as the existing /mcp/ mount.
+        if scope["path"] == scope.get("root_path", "") + "/mcp":
+            scope = dict(
+                scope,
+                path=scope["path"] + "/",
+                root_path=scope.get("root_path", "") + "/mcp",
+            )
         await self._app(scope, receive, send)
 
 
@@ -1713,6 +1722,7 @@ def schedule_media_prefetch(article_ids: List[str]) -> None:
     task.add_done_callback(_MEDIA_PREFETCH_TASKS.discard)
 
 
+app.router.routes.append(Route("/mcp", _mcp_gate, methods=["GET", "POST", "DELETE"]))
 app.mount("/mcp", _mcp_gate)
 app.include_router(skill_router)
 # 阶段1：按域迁出的 Router（路径保持不变；鉴权仍由中间件统一强制）。
