@@ -9,11 +9,33 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: '快速开始', link: '/guide/quick-start' },
-      { text: '使用指南', link: '/features/brief' },
+      { text: '使用指南', link: '/features/brief', activeMatch: '/features/' },
+      { text: '常见问题', link: '/help/faq' },
+      { text: '设计理念', link: '/about/philosophy' },
     ],
     sidebar: [
       { text: '开始', items: [{ text: '快速开始', link: '/guide/quick-start' }] },
-      { text: '使用指南', items: [{ text: '读每天的早报', link: '/features/brief' }] },
+      {
+        text: '使用指南',
+        items: [
+          { text: '读每天的早报', link: '/features/brief' },
+          { text: '读文章与订阅内容', link: '/features/reader' },
+          { text: '管理兴趣', link: '/features/interests' },
+          { text: '找到更多来源', link: '/features/discover' },
+          { text: '问哆啦美与翻译', link: '/features/ask-and-translate' },
+          { text: '听播客', link: '/features/podcasts' },
+          { text: '在手机上用', link: '/features/mobile' },
+          { text: '把订阅接到别的工具', link: '/features/integrations' },
+        ],
+      },
+      {
+        text: '参考',
+        items: [
+          { text: '界面标记速查', link: '/reference/markers' },
+          { text: '常见问题与排错', link: '/help/faq' },
+        ],
+      },
+      { text: '了解哆啦美', items: [{ text: '设计理念', link: '/about/philosophy' }] },
     ],
     search: {
       provider: 'local',
