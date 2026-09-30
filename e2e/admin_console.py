@@ -66,7 +66,8 @@ def run_admin_flows(browser, base_url, artifacts, result):
         page.screenshot(path=str(artifacts / "admin-nodes.png"), animations="disabled")
         checks.append("node board: per-shape counts match /api/fetchers, one node auto-selected into the inspector, runs load then empty")
 
-        with held_requests(page, "/api/collection-job-runs"):
+        with held_requests(page, "/api/collection-job-runs"), \
+                page.expect_request(lambda request: urlsplit(request.url).path == "/api/collection-job-runs"):
             nav.get_by_role("button", name="任务与运行").click()
             expect(page.locator(".flow-skel")).to_have_count(6)
             page.screenshot(path=str(artifacts / "admin-runs-loading.png"), animations="disabled")

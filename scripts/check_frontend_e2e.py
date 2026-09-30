@@ -182,7 +182,12 @@ def run(args) -> int:
             result["base_url"] = base_url
             result["processes"] = {"backend": backend.pid, "frontend": frontend.pid}
             with sync_playwright() as playwright:
-                browser = playwright.chromium.launch(channel=args.channel, headless=not args.headed)
+                # Every context sends non-loopback traffic (hostnames and IP literals alike) to a proxy
+                # port nobody listens on, so nothing a page asks for leaves the machine; observed_page
+                # still reports such requests.
+                browser = playwright.chromium.launch(
+                    channel=args.channel, headless=not args.headed,
+                    proxy={"server": f"http://127.0.0.1:{free_port()}", "bypass": "127.0.0.1,localhost"})
                 try:
                     if "mobile" in flows:
                         run_flows(browser, base_url, sandbox / "reader.db", artifacts, result)

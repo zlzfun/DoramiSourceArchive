@@ -12,8 +12,9 @@ from playwright.sync_api import expect
 
 from e2e.reader_fixture import ARTICLE_COUNT, PASSWORD, SOURCE_A, SOURCE_B, SOURCE_NAMES, USERNAME
 
-# Source logos come from Google's favicon service; the sandbox never lets them leave the machine,
-# which also exercises LogoMark's monogram fallback.
+# Source logos come from Google's favicon service. The runner's browser proxies external traffic to
+# a dead local port, so these requests fail locally; the audit requires that and checks LogoMark's
+# monogram fallback.
 FAVICON_SERVICE = "https://www.google.com/s2/favicons"
 
 
@@ -59,11 +60,10 @@ def observed_page(browser, base_url, artifacts, name, result, desktop=False):
                browser.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True))
     context.set_default_timeout(8000)
     context.tracing.start(screenshots=True, snapshots=True, sources=True)
-    context.route(lambda url: url.startswith(FAVICON_SERVICE), lambda route: route.abort("blockedbyclient"))
     page = context.new_page()
     audit = {"reject_login": False, "offline": False, "offline_requests": set(),
              "page_errors": [], "unexpected": [], "requests": Counter(), "cancelled_brand_images": [],
-             "blocked_favicons": []}
+             "favicon_requests": [], "blocked_favicons": []}
     page.on("pageerror", lambda error: audit["page_errors"].append(str(error)))
 
     def response_seen(response):
@@ -79,7 +79,8 @@ def observed_page(browser, base_url, artifacts, name, result, desktop=False):
                 and urlsplit(request.url).path.startswith("/brand/")):
             audit["cancelled_brand_images"].append(request.url)
             return
-        if request.url.startswith(FAVICON_SERVICE) and (request.failure or "").startswith("net::ERR_BLOCKED_BY_CLIENT"):
+        if request.url.startswith(FAVICON_SERVICE) and request.failure == "net::ERR_PROXY_CONNECTION_FAILED":
+            audit["blocked_favicons"].append(request.url)
             return
         if request not in audit["offline_requests"] or request.failure != "net::ERR_INTERNET_DISCONNECTED":
             audit["unexpected"].append(f"Request failed: {request.url} {request.failure}")
@@ -88,7 +89,7 @@ def observed_page(browser, base_url, artifacts, name, result, desktop=False):
         if audit["offline"]:
             audit["offline_requests"].add(request)
         if request.url.startswith(FAVICON_SERVICE):
-            audit["blocked_favicons"].append(request.url)
+            audit["favicon_requests"].append(request.url)
         elif request.url.startswith(base_url):
             audit["requests"][(request.method, urlsplit(request.url).path)] += 1
         elif not request.url.startswith(("data:", "blob:")):
@@ -105,6 +106,7 @@ def observed_page(browser, base_url, artifacts, name, result, desktop=False):
         """, audit["cancelled_brand_images"] + audit["blocked_favicons"]), audit["cancelled_brand_images"]
         assert not audit["page_errors"], audit["page_errors"]
         assert not audit["unexpected"], audit["unexpected"]
+        assert sorted(audit["blocked_favicons"]) == sorted(audit["favicon_requests"]), "a favicon request was not blocked"
         passed = True
     except Exception:
         try:
@@ -302,8 +304,10 @@ def run_flows(browser, base_url, database, artifacts, result):
         page.go_back()
         expect(page.get_by_role("dialog", name="设置", exact=True)).to_have_count(0)
         # Reloading while this tab's refresh requests are in flight aborts them and fails the audit.
-        with page.expect_response(lambda response: urlsplit(response.url).path == "/api/articles"), \
-                page.expect_response(lambda response: urlsplit(response.url).path == "/api/reader/unread-counts"):
+        def finished(path):
+            return page.expect_event("requestfinished", lambda request: urlsplit(request.url).path == path)
+
+        with finished("/api/articles"), finished("/api/reader/unread-counts"):
             page.get_by_role("button", name="文章", exact=True).tap()
         expect(page.locator('.m-tab[aria-current="page"]')).to_have_attribute("aria-label", "文章")
         page.reload()
