@@ -308,6 +308,7 @@ def test_mcp_transport_accepts_public_host_without_redirect(monkeypatch, tmp_pat
         assert resp.status_code == 200
         assert "location" not in resp.headers
         assert '"protocolVersion"' in resp.text
+        assert client.post("/mcp/mcp", follow_redirects=False).status_code == 404
 
 
 def test_mcp_status_returns_correct_structure(monkeypatch, tmp_path):

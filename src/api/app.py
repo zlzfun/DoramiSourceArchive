@@ -207,14 +207,9 @@ class MCPGateApp:
             response = StarletteJSONResponse({"detail": "MCP server not ready"}, status_code=503)
             await response(scope, receive, send)
             return
-        # The exact /mcp route bypasses Mount's slash redirect. Give the inner
-        # transport the same scope as the existing /mcp/ mount.
-        if scope["path"] == scope.get("root_path", "") + "/mcp":
-            scope = dict(
-                scope,
-                path=scope["path"] + "/",
-                root_path=scope.get("root_path", "") + "/mcp",
-            )
+        # Both exact routes enter the inner transport at / without redirects.
+        root_path = scope.get("root_path", "") + "/mcp"
+        scope = dict(scope, path=root_path + "/", root_path=root_path)
         await self._app(scope, receive, send)
 
 
@@ -1722,8 +1717,10 @@ def schedule_media_prefetch(article_ids: List[str]) -> None:
     task.add_done_callback(_MEDIA_PREFETCH_TASKS.discard)
 
 
-app.router.routes.append(Route("/mcp", _mcp_gate, methods=["GET", "POST", "DELETE"]))
-app.mount("/mcp", _mcp_gate)
+app.router.routes.extend(
+    Route(path, _mcp_gate, methods=["GET", "POST", "DELETE"])
+    for path in ("/mcp", "/mcp/")
+)
 app.include_router(skill_router)
 # 阶段1：按域迁出的 Router（路径保持不变；鉴权仍由中间件统一强制）。
 app.include_router(accounts_router.router)
