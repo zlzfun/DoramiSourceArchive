@@ -31,8 +31,7 @@ cd frontend && npm run lint && npm test && npm run build
 ## 收口状态
 
 - 本地开发服务和生产构建预览均已通过浏览器回归，并直接审阅列表、正文、亮暗色与桌面截图；旧版在同一检查的“缩窄后底栏可见”断言失败，非本地目标 URL 被脚本拒绝。
-- 全量前端 lint、现有 7 项 Node 测试和 Vite 构建通过；真实 E2E 补测与返修见 [演进记录](./e2e-Evolution.md)。
+- 全量前端 lint、现有 7 项 Node 测试和 Vite 构建通过。
 - 用户已确认 5186 基础布局正确；独立代码检视和本轮完整真机验收仍待完成。
 - 手机真机（尤其 Safari / 华为浏览器）、软键盘与真实安全区仍待验收；媒体播放连续性和个人早报具体日期页的跨版式滚动位置不属于本次已验证范围。
 
-根因、取舍与检视记录见 [mobile-navigation-Evolution.md](./mobile-navigation-Evolution.md)。
