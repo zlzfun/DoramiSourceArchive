@@ -8,6 +8,7 @@ import os
 import sys
 from dataclasses import replace
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlmodel import Session, select
@@ -681,9 +682,15 @@ def test_local_crash_window_is_recomputed_after_lease_expiry(engine, settled):
     # Keep the persisted budget period valid while making the injected clock
     # unmistakably older than the wall clock.  Any boundary that accidentally
     # switches back to datetime.now() will therefore fence this lease.
-    logical_now = dt.datetime(2026, 9, 1, tzinfo=dt.timezone.utc)
     process = _request(engine, "episode-50", override=False, key="settled-crash")
     config = _config()
+    # The period is stamped from the wall clock, so start from that month
+    # instead of a fixed date that expires when the calendar month rolls over.
+    logical_now = (
+        dt.datetime.strptime(process.budget_period, "%Y-%m")
+        .replace(tzinfo=ZoneInfo(config.budget_timezone))
+        .astimezone(dt.timezone.utc)
+    )
     policy = PodcastStagePolicy(config)
     with Session(engine) as session:
         claim = claim_next_processing(
