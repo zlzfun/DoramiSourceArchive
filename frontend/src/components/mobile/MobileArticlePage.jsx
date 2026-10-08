@@ -45,7 +45,7 @@ export default function MobileArticlePage({
     shareOpen, setShareOpen,
     showTranslation, translating, translatedBody, translatedTitle, activeIsChinese, handleTranslate,
     activeSummary, summarizing, handleSummarize,
-    prevArticle, nextArticle, activeIndex, selectArticle, searchForLabel,
+    prevArticle, nextArticle, activeIndex, selectArticle, searchForTag,
     refreshActiveArticle,
   } = rs;
 
@@ -178,8 +178,8 @@ export default function MobileArticlePage({
                 <AnalysisTagChip
                   key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
                   tag={tag}
-                  onTemporarySearch={(label) => {
-                    searchForLabel(label);
+                  onSearch={(selectedTag) => {
+                    searchForTag(selectedTag);
                     (onLeaveForSearch || onBack)();
                   }}
                 />

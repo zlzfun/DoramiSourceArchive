@@ -1,6 +1,6 @@
 # 阅读器端到端测试
 
-[Issue #90](https://github.com/zlzfun/DoramiSourceArchive/issues/90) 的首个切片：移动读者主链路，兼顾 [#86](https://github.com/zlzfun/DoramiSourceArchive/issues/86) 响应式导航和 [#2](https://github.com/zlzfun/DoramiSourceArchive/issues/2) 登录门深链回归，并覆盖 [#85 PWA 安装层](./pwa.md)。使用已有 Python Playwright；管理端、个人早报和 CI 集成留在 #90 后续范围。
+[Issue #90](https://github.com/zlzfun/DoramiSourceArchive/issues/90) 的首个切片：移动读者主链路，兼顾 [#86](https://github.com/zlzfun/DoramiSourceArchive/issues/86) 响应式导航和 [#2](https://github.com/zlzfun/DoramiSourceArchive/issues/2) 登录门深链回归，并覆盖 [#85 PWA 安装层](./pwa.md) 和 [#93 标签检索](../issue-93-tag-search-plan.md)。使用已有 Python Playwright；管理端、个人早报和 CI 集成留在 #90 后续范围。
 
 ## 一条命令
 
@@ -17,7 +17,7 @@ cd frontend
 npm run test:e2e
 ```
 
-可选 `npm run test:e2e -- --headed` 显示浏览器，或 `--channel chrome` 使用已安装的 Google Chrome。`--flows mobile,pwa,focus` 选择流程子集（默认全跑；例如只回归聚焦环：`--flows focus`），沙箱、构建与清理不变。当前进程组清理按 macOS/Linux 实现；Windows 未验证。
+可选 `npm run test:e2e -- --headed` 显示浏览器，或 `--channel chrome` 使用已安装的 Google Chrome。`--flows mobile,pwa,focus,tags` 选择流程子集（默认全跑；例如只回归标签与聚焦环：`--flows tags,focus`），沙箱、构建与清理不变。当前进程组清理按 macOS/Linux 实现；Windows 未验证。
 
 ## 测什么
 
@@ -34,6 +34,7 @@ npm run test:e2e
 - HarmonyOS／OpenHarmony／华为兼容 UA 及 UA-CH 平台的范围判断：反复注入安装事件也不展示移动／平板安装入口，网页阅读与 SW 仍可用。
 - 实际替换本次沙箱 SW 后提示刷新且不自动重载；离线导航恢复页、API 失败、完整路径／query／hash 重试并打开真实目标文章、退出后 CacheStorage 为空。
 - 聚焦环（#108）：结构性守卫——全局 `input:focus-visible` 兜底环必须落在 `@layer base`（读 CSSOM 断言）；登录账号框、发现页筛选框、条目列头搜索、移动端顶栏搜索鼠标点入后 input 自身 `outline: none`，且环宿主的 box-shadow／描边／outline 在聚焦前后必须变化。Tab 启发式烟测——发现页与文章容器按元素身份 Tab 遍历到回绕首元素为止，每个停靠点须命中 `:focus-visible` 并在自身／子元素／祖先／伪元素的采样样式上有变化，文本控件不叠双环；只比较计算样式，不判对比度与裁切。
+- 标签检索（#93）：桌面与移动阅读器都按正式标签 ID、非正式标签原文检索，正式标签排在前面，排除正文提词却无标签的条目；正常关闭和点击后约 25ms 内关闭均恢复列表，继续观察 600ms 确认防抖旧词不会复现。独立读取 SQLite 确认未添加兴趣关注或来源订阅。
 
 PWA 安装事件、上述 UA 输入与独立显示模式由浏览器脚本模拟，仅验证应用反应；更新使用实际新 SW，业务请求仍走真实服务。设备能力另行真机验收。
 
@@ -43,12 +44,15 @@ PWA 安装事件、上述 UA 输入与独立显示模式由浏览器脚本模拟
 
 [`scripts/check_mobile_reader_e2e.py`](../../scripts/check_mobile_reader_e2e.py) 每次新建临时配置和数据库，运行迁移并播种两个来源、63 篇合成文章和一个普通读者。以实际 `src/main.py` 启动 FastAPI，前端重新构建到独立临时目录，通过 `vite preview` 同源代理访问后端。业务 API 不替换响应；网络故障用例把浏览器网络临时设为离线，安装故障用例模拟拒绝的系统安装事件。
 
+仅选择 `tags` 流程时，合成文章会增加低相关度正式指派、高置信非正式标签、仅由名称解析为正式 chip 的文章及正文提词噪声；未选择时沿用原播种数据。桌面/移动直接点击没有指派记录的正式 chip，检查 `display_tag_id` 同时返回指派与投影命中的两篇文章，核对形态并确认检索不增加指派记录。
+
 测试不接受外部服务或数据库 URL；子进程环境采用白名单，不继承部署配置、云凭据或模型配置。媒体、语音产物路径均在沙箱，reader 运行角色不启动采集任务。测试结束或失败时关闭所属进程组、删除临时数据库与构建目录，保留用户原来的开发服务和 `frontend/dist`。
 
 每次结果写入 `tmp/e2e/reader-*/`：
 
 - `result.json`：结论、构建指纹、检查项、阅读位置和请求审计。
 - `mobile-*.png` / `desktop-reader.png` / `pwa-*.png`：实际渲染产物。
+- `tag-search-*.png` / `tag-search-checks.json`：标签检索截图及桌面、移动共八项请求/快速关闭检查。
 - 失败时的 `*-trace.zip`、截图、DOM 几何和 `error.txt`，以及构建／服务日志。
 
 阅读流程默认只保留失败 trace；PWA 流程另保留 `pwa-trace.zip`，便于核对 SW 更新事件。不录视频。trace 含一次性测试账号和合成内容，没有生产会话；分享产物前仍应检查内容。

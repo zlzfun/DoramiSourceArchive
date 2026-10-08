@@ -19,7 +19,7 @@ import Sparkline from './charts/Sparkline';
 import { runAction } from '../utils/runAction';
 import { excerptOf } from '../utils/readerText';
 import { contentTypeLabel, CONTENT_TYPE_GROUPS } from '../utils/contentType';
-import { SCORE_DISCLAIMER, analysisStatusMeta, podcastLedgerProcessingMeta, primaryAnalysisLabel, qualityScoreText, scoreTierClass } from '../utils/analysis';
+import { SCORE_DISCLAIMER, analysisStatusMeta, analysisTagSearch, podcastLedgerProcessingMeta, primaryAnalysisLabel, qualityScoreText, scoreTierClass } from '../utils/analysis';
 import { podcastProcessingSuccessMessage } from '../utils/podcastProcessing';
 import { useConfirm } from '../hooks/useConfirm';
 import { useAbortableLoad } from '../hooks/useAbortableLoad';
@@ -104,6 +104,8 @@ export default function DataTab({
     fetched_date_end: '',
     subscribed_scope: 'off', // off | prioritize | only（相对当前用户订阅的源）
     min_score: '',
+    display_tag_id: '',
+    display_tag: '',
     sort: 'newest',
   });
 
@@ -286,16 +288,16 @@ export default function DataTab({
   };
 
   const handleSearchSubmit = () => {
-    setFilters((prev) => ({ ...prev, display_tag: '' }));
+    setFilters((prev) => ({ ...prev, display_tag_id: '', display_tag: '' }));
     setAppliedSearch(searchInput.trim());
   };
 
-  const handleTemporaryTagSearch = (label) => {
-    const value = String(label || '').trim();
-    if (!value) return;
-    setSearchInput(value);
+  const handleTemporaryTagSearch = (tag) => {
+    const search = analysisTagSearch(tag);
+    if (!search) return;
+    setSearchInput(search.label);
     setAppliedSearch('');
-    setFilters((prev) => ({ ...prev, display_tag: value }));
+    setFilters((prev) => ({ ...prev, display_tag_id: '', display_tag: '', ...search.filters }));
     closeDrawer();
     closeEditModal();
   };
@@ -347,6 +349,8 @@ export default function DataTab({
       fetched_date_start: '',
       fetched_date_end: '',
       min_score: '',
+      display_tag_id: '',
+      display_tag: '',
       sort: 'newest',
     }));
     onPendingFilterApplied?.();

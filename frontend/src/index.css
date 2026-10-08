@@ -11847,11 +11847,14 @@ input[type="radio"] {
   border: 0;
   cursor: pointer;
 }
-.reader-tag-chip.is-actionable:hover,
-.reader-tag-chip.is-actionable:focus-visible {
+.reader-tag-chip.is-actionable:hover {
   color: var(--dorami-accent-ink);
   background: var(--dorami-wash);
-  outline-style: solid;
+  outline: 1px solid var(--dorami-border-strong);
+}
+.reader-tag-chip.is-actionable:focus-visible {
+  outline: 2px solid var(--dorami-focus);
+  outline-offset: 1px;
 }
 .reader-analysis-summary {
   margin-top: 14px;

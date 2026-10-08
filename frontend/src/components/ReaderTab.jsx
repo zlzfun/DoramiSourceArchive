@@ -397,7 +397,7 @@ export default function ReaderTab({
     interestAxisEnabled, showUnsubscribedMark, showInterestHit,
     activeSourceHidden, activeUnsubscribed, grouping,
     // 搜索
-    searchOpen, searchInput, setSearchInput, searchQuery, toggleSearch, searchForLabel,
+    searchOpen, searchInput, setSearchInput, searchQuery, toggleSearch, searchForTag,
     // 未读体系
     unreadBySource, unreadOnly, setUnreadOnly, scopeUnread,
     isArticleUnread, handleTogglePaneRead, handleToggleSocialRead,
@@ -1349,7 +1349,7 @@ export default function ReaderTab({
               </div>
               {paneTags.length === 0 && paneActions}
               </div>
-              {/* 尾行:左标签小签(规范实线 / 灵活虚线可点检索),右动作——「原语言 | 译为中文」二段 +
+              {/* 尾行:左标签小签(规范实线 / 灵活虚线,均可点检索),右动作——「原语言 | 译为中文」二段 +
                   查看原文文字链(v3.45 拍板的「标题 → 正文」视线路径不变,只是不再独占一行);
                   译文二段激活态沿 AI 渐变身份(v3.33),AI 未开启只余原文。 */}
               {paneTags.length > 0 && (
@@ -1359,7 +1359,7 @@ export default function ReaderTab({
                       <AnalysisTagChip
                         key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
                         tag={tag}
-                        onTemporarySearch={searchForLabel}
+                        onSearch={searchForTag}
                       />
                     ))}
                   </div>
