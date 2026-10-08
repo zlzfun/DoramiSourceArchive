@@ -5,10 +5,12 @@
 v3.56(issue #27)起兴趣只有「关注」一极,列表标注只剩 interest_hits。
 """
 import datetime
+import json
 import os
 import sys
 from dataclasses import replace
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
@@ -43,7 +45,7 @@ def _seed_users(engine):
         session.commit()
 
 
-def _seed_article(engine, article_id: str, source_id: str, *, fetched: str = ""):
+def _seed_article(engine, article_id: str, source_id: str, *, fetched: str = "", content_type: str = "web_article"):
     """默认昨天入库:无水位源的未读有 30 天时效下限,固定的历史日期会让样本一律视为已读。"""
     from models.db import ArticleRecord
 
@@ -53,7 +55,7 @@ def _seed_article(engine, article_id: str, source_id: str, *, fetched: str = "")
         session.add(ArticleRecord(
             id=article_id,
             title=f"Title {article_id}",
-            content_type="web_article",
+            content_type=content_type,
             source_id=source_id,
             source_url=f"https://example.test/{article_id}",
             publish_date="2026-05-20T00:00:00",
@@ -209,6 +211,72 @@ def test_interest_scope_without_interests_is_explicit_empty(monkeypatch, tmp_pat
         ids, data = _ids(client, interest_scope="only")
         assert ids == set()
         assert data["total"] == 0
+
+
+@pytest.mark.parametrize("shape,content_type,other_type", [
+    ("article", "web_article", "podcast_episode"),
+    ("podcast", "podcast_episode", "web_article"),
+])
+@pytest.mark.parametrize("search_kind", ["canonical", "extracted"])
+def test_tag_search_without_interests_keeps_visibility_and_shape(
+    monkeypatch, tmp_path, shape, content_type, other_type, search_kind,
+):
+    """Issue #93: retrieval is read-only and does not use the interest threshold."""
+    from models.db import ArticleAnalysisRecord, UserInterestTagRecord
+    from services.source_visibility import set_source_hidden
+
+    app_module, sink = _make_app(monkeypatch, tmp_path, "tag-search.db")
+    tag_id = _seed_tag(sink.engine, "openai", "OpenAI")
+    for article_id, source_id in [
+        ("match-a", "tag-public"), ("match-b", "tag-other"),
+        ("hidden", "tag-hidden"), ("private", "user_rss_private"),
+        ("other-shape", "tag-other-shape"),
+    ]:
+        _seed_article(sink.engine, article_id, source_id,
+                      content_type=other_type if article_id == "other-shape" else content_type)
+        _assign(sink.engine, article_id, tag_id, relevance=0.07)
+        with Session(sink.engine) as session:
+            session.add(ArticleAnalysisRecord(
+                article_id=article_id, status="succeeded", tagging_status="succeeded",
+                quality_score=7.0, created_at=STAMP, updated_at=STAMP,
+                display_tags_json=json.dumps([{
+                    "label": "A/B 案例", "kind": "topic", "confidence": 0.99,
+                }]),
+            ))
+            session.commit()
+    _seed_article(sink.engine, "OpenAI-unassigned", "tag-public", content_type=content_type)
+    with Session(sink.engine) as session:
+        set_source_hidden(session, "tag-hidden", True)
+    tag_filter = {"tag_ids": str(tag_id)} if search_kind == "canonical" else {"display_tag": "A/B 案例"}
+    params = {"shape": shape, **tag_filter}
+
+    with TestClient(app_module.app) as client:
+        assert client.get("/api/articles", params=params).status_code == 401
+        _login(client)
+        # This fixture also leaves the personal-digest/interest feature disabled.
+        assert client.get("/api/reader/interests").status_code == 404
+        subscriptions_response = client.get("/api/subscriptions")
+        assert subscriptions_response.status_code == 200
+        subscriptions = subscriptions_response.json()
+        with Session(sink.engine) as session:
+            assert session.exec(select(UserInterestTagRecord)).all() == []
+        ids, data = _ids(client, **params)
+        assert ids == {"match-a", "match-b"}
+        assert data["total"] == 2
+        ids, data = _ids(client, **params, limit=1, skip=1)
+        assert len(ids) == 1 and data["total"] == 2
+        ids, _ = _ids(client, **params, source_id="tag-public")
+        assert ids == {"match-a"}
+        ids, data = _ids(client, **params, source_id="tag-hidden")
+        assert ids == set() and data["total"] == 0
+        with Session(sink.engine) as session:
+            assert session.exec(select(UserInterestTagRecord)).all() == []
+        assert client.get("/api/subscriptions").json() == subscriptions
+
+        _login(client, "admin", "admin")
+        ids, data = _ids(client, **params)
+        assert ids == {"match-a", "match-b", "hidden", "private"}
+        assert data["total"] == 4
 
 
 def test_favorite_scope_and_total_pairing(monkeypatch, tmp_path):

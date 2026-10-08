@@ -65,7 +65,7 @@ def rank_display_tags(
     *,
     limit: int = DISPLAY_TAG_LIMIT,
 ) -> list[dict[str, Any]]:
-    """Deduplicate and rank a single article's display-only tag projection."""
+    """Deduplicate and rank tags: canonical first, then flexible labels."""
 
     canonical: list[dict[str, Any]] = []
     extracted: list[dict[str, Any]] = []
@@ -114,8 +114,8 @@ def rank_display_tags(
     primary_ids = {str(item.get("code")) for item in primary}
     remainder = [item for item in canonical if str(item.get("code")) not in primary_ids] + extracted
     remainder.sort(key=lambda item: (
-        -float(item.get("score", 0.0)),
         0 if item.get("type") == "canonical" else 1,
+        -float(item.get("score", 0.0)),
         _FACET_ORDER.get(str(item.get("kind")), 9),
         normalize_label(str(item.get("label") or "")),
     ))

@@ -20,7 +20,8 @@ STAMP = "2026-09-02T12:00:00+08:00"
 def test_rank_display_tags_keeps_primary_first_and_caps_at_six():
     canonical = [
         {"code": "topic.primary", "kind": "topic", "name_zh": "主标签", "is_primary": True, "relevance": 0.4},
-        {"code": "industry.ai", "kind": "industry", "name_zh": "人工智能", "is_primary": False, "relevance": 0.95},
+        # Even low-relevance canonical tags precede high-confidence free labels.
+        {"code": "industry.ai", "kind": "industry", "name_zh": "人工智能", "is_primary": False, "relevance": 0.15},
     ]
     extracted = [
         {"label": "人工智能", "kind": "industry", "confidence": 0.99},  # canonical duplicate
@@ -40,6 +41,21 @@ def test_rank_display_tags_keeps_primary_first_and_caps_at_six():
     assert [row["label"] for row in result[2:]] == [
         "自由标签 0", "自由标签 1", "自由标签 2", "自由标签 3",
     ]
+
+
+def test_canonical_tags_take_priority_at_display_limit():
+    canonical = [
+        {"code": f"topic.{index}", "kind": "topic", "name_zh": f"正式 {index}",
+         "is_primary": index == 0, "relevance": index / 100}
+        for index in range(7)
+    ]
+    result = rank_display_tags(canonical, [
+        {"label": "高置信自由标签", "kind": "topic", "confidence": 1.0},
+    ])
+    assert [tag["code"] for tag in result] == [
+        "topic.0", "topic.6", "topic.5", "topic.4", "topic.3", "topic.2",
+    ]
+    assert rank_display_tags(canonical, [], limit=0) == []
 
 
 def test_load_display_tags_honors_merge_reject_and_delete_governance():

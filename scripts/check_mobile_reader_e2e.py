@@ -30,8 +30,9 @@ sys.path.insert(0, str(ROOT))
 from e2e.mobile_reader import run_flows  # noqa: E402
 from e2e.focus_ring import run_focus_flows  # noqa: E402
 from e2e.pwa import run_pwa_flows  # noqa: E402
+from e2e.tag_search import run_tag_search_flows  # noqa: E402
 
-FLOWS = ("mobile", "pwa", "focus")
+FLOWS = ("mobile", "pwa", "focus", "tags")
 
 
 def isolated_environment(sandbox: Path) -> dict[str, str]:
@@ -141,7 +142,7 @@ def run(args) -> int:
     if unknown or not flows:
         raise SystemExit(f"--flows accepts a comma-separated subset of {','.join(FLOWS)}; got {args.flows!r}")
     result = {"status": "failed", "started_at": datetime.now(timezone.utc).isoformat(),
-              "browser": args.channel or "chromium", "issues": [85, 86, 90, 108], "flows": flows,
+              "browser": args.channel or "chromium", "issues": [85, 86, 90, 93, 108], "flows": flows,
               "scope": "Built frontend + real FastAPI + disposable SQLite; no API response mocks.",
               "artifacts": str(artifacts)}
     started = time.monotonic()
@@ -154,6 +155,8 @@ def run(args) -> int:
             backend_port = free_port()
             configure(sandbox, backend_port)
             env = isolated_environment(sandbox)
+            if "tags" in flows:
+                env["DORAMI_E2E_TAG_SEARCH"] = "1"
             run_command([sys.executable, "e2e/reader_fixture.py", str(sandbox)], env, ROOT,
                         artifacts / "seed.log", timeout=60)
             run_command(["npm", "run", "build", "--", "--outDir", str(sandbox / "site")],
@@ -185,6 +188,8 @@ def run(args) -> int:
                         run_pwa_flows(browser, base_url, sandbox / "site", artifacts, result)
                     if "focus" in flows:
                         run_focus_flows(browser, base_url, artifacts, result)
+                    if "tags" in flows:
+                        run_tag_search_flows(browser, base_url, sandbox / "reader.db", artifacts, result)
                 finally:
                     browser.close()
         result["status"] = "passed"
