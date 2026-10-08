@@ -116,13 +116,17 @@ def seed_tag_search(session, timestamp: str) -> None:
         session.add(ArticleAnalysisRecord(
             article_id=article_id, status="succeeded", tagging_status="succeeded",
             quality_score=8.0, summary="标签检索合成样例",
-            display_tags_json=json.dumps([{"label": FREE_LABEL, "kind": "topic", "confidence": .99}]),
+            display_tags_json=json.dumps([
+                {"label": FREE_LABEL, "kind": "topic", "confidence": .99},
+                {"label": TAG_LABEL, "kind": "entity", "confidence": .98},
+            ]),
             created_at=timestamp, updated_at=timestamp,
         ))
-        session.add(ArticleTagAssignmentRecord(
-            article_id=article_id, tag_id=tag.id, tag_kind="entity", is_primary=False,
-            relevance=.07, assignment_source="llm", created_at=timestamp, updated_at=timestamp,
-        ))
+        if article_id == TAG_MATCH_IDS[0]:
+            session.add(ArticleTagAssignmentRecord(
+                article_id=article_id, tag_id=tag.id, tag_kind="entity", is_primary=False,
+                relevance=.07, assignment_source="llm", created_at=timestamp, updated_at=timestamp,
+            ))
     session.commit()
 
 

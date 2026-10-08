@@ -17,7 +17,7 @@ import importlib
 import json
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import and_, case, exists, false, func, or_, text
 from sqlmodel import Session, select
@@ -57,7 +57,9 @@ from models.db import (
     SourceConfigRecord,
 )
 from services import article_analysis as article_analysis_service
-from services.article_display_tags import article_ids_for_flexible_label, load_display_tags
+from services.article_display_tags import (
+    article_ids_for_canonical_projection, article_ids_for_flexible_label, load_display_tags,
+)
 from services import reader_interests as reader_interests_service
 from services import reader_state as reader_state_service
 from services import source_visibility as source_visibility_service
@@ -314,6 +316,7 @@ def get_articles(
         min_score: Optional[float] = None,
         content_genre: Optional[str] = None,
         tag_ids: Optional[str] = None,
+        display_tag_id: Optional[int] = Query(default=None, gt=0),
         display_tag: Optional[str] = None,
         sort: str = "newest",
         session: Session = Depends(deps.get_session),
@@ -385,6 +388,19 @@ def get_articles(
             )
             query = query.where(tag_filter)
             count_query = count_query.where(tag_filter)
+    if display_tag_id is not None:
+        # A canonical chip can come from read-time Candidate/name/alias resolution
+        # without a durable assignment. This is temporary retrieval, not interests.
+        projected_ids = article_ids_for_canonical_projection(session, display_tag_id)
+        canonical_display_condition = or_(
+            exists(select(1).where(
+                ArticleTagAssignmentRecord.article_id == ArticleRecord.id,
+                ArticleTagAssignmentRecord.tag_id == display_tag_id,
+            )),
+            ArticleRecord.id.in_(projected_ids) if projected_ids else false(),
+        )
+        query = query.where(canonical_display_condition)
+        count_query = count_query.where(canonical_display_condition)
     if display_tag:
         flexible_article_ids = article_ids_for_flexible_label(session, display_tag)
         display_tag_condition = ArticleRecord.id.in_(flexible_article_ids or ["__none__"])

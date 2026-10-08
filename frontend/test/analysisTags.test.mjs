@@ -22,10 +22,10 @@ test('the six-tag limit is applied after canonical priority', () => {
 
 test('canonical retrieval uses identity, including legacy tags without a type', () => {
   assert.deepEqual(analysisTagSearch({ type: 'canonical', id: 3, name_zh: 'OpenAI', relevance: 0.07 }), {
-    label: 'OpenAI', filters: { tag_ids: '3' },
+    label: 'OpenAI', filters: { display_tag_id: '3' },
   });
   assert.deepEqual(analysisTagSearch({ id: '4', name_en: 'Agents' }), {
-    label: 'Agents', filters: { tag_ids: '4' },
+    label: 'Agents', filters: { display_tag_id: '4' },
   });
   // A missing canonical identity must never silently turn into a free-text query.
   for (const id of [undefined, null, '', 0, -1, 'bad']) {

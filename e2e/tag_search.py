@@ -33,8 +33,9 @@ def run_tag_search_flows(browser, base_url, database, artifacts, result):
             page.goto(base_url)
             login(page)
             expect(page.locator(".reader-entry")).to_have_count(30)
-            first = page.locator(".reader-entry").filter(has=page.get_by_text("连续阅读 00：移动阅读端到端样例", exact=True))
-            for label, filter_key in [(TAG_LABEL, "tag_ids"), (FREE_LABEL, "display_tag")]:
+            # Article 01 has a canonical display projection but no assignment.
+            first = page.locator(".reader-entry").filter(has=page.get_by_text("连续阅读 01：移动阅读端到端样例", exact=True))
+            for label, filter_key in [(TAG_LABEL, "display_tag_id"), (FREE_LABEL, "display_tag")]:
                 first.click()
                 chip = page.get_by_role("button", name=f"检索「{label}」", exact=True)
                 expect(chip).to_be_visible()
@@ -60,7 +61,7 @@ def run_tag_search_flows(browser, base_url, database, artifacts, result):
                 expect(chip).to_be_visible()
                 with page.expect_response(lambda response: urlsplit(response.url).path == "/api/articles"
                                           and not any(key in parse_qs(urlsplit(response.url).query)
-                                                      for key in ["tag_ids", "display_tag", "search"])
+                                                      for key in ["display_tag_id", "tag_ids", "display_tag", "search"])
                                           and response.status == 200):
                     elapsed = chip.evaluate("""el => new Promise((resolve, reject) => {
                         const started = performance.now();
@@ -79,7 +80,7 @@ def run_tag_search_flows(browser, base_url, database, artifacts, result):
                 # debounced effect must not restore a hidden filter after the clear.
                 page.wait_for_timeout(600)
                 query = successful_lists[-1]["query"]
-                assert not any(key in query for key in ["tag_ids", "display_tag", "search"]), query
+                assert not any(key in query for key in ["display_tag_id", "tag_ids", "display_tag", "search"]), query
                 expect(page.locator(".reader-entry")).to_have_count(30)
                 cases.append({"viewport": name, "tag": label, "check": "rapid_close", "elapsed_ms": elapsed, "query": query})
             assert not errors, errors
@@ -93,6 +94,7 @@ def run_tag_search_flows(browser, base_url, database, artifacts, result):
             context.tracing.stop(path=str(artifacts / f"tag-search-{name}-trace.zip") if not passed else None)
             context.close()
     with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT count(*) FROM article_tag_assignments").fetchone()[0] == 1
         assert connection.execute("SELECT count(*) FROM user_interest_tags").fetchone()[0] == 0
         assert connection.execute("SELECT count(*) FROM reader_subscriptions").fetchone()[0] == 2
     (artifacts / "tag-search-checks.json").write_text(json.dumps(cases, ensure_ascii=False, indent=2)+"\n")

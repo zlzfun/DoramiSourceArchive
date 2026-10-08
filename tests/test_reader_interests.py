@@ -80,12 +80,12 @@ def _seed_tag(engine, code: str, name_zh: str) -> int:
         return int(tag.id)
 
 
-def _assign(engine, article_id: str, tag_id: int, *, primary: bool = False, relevance: float = 0.9):
+def _assign(engine, article_id: str, tag_id: int, *, primary: bool = False, relevance: float = 0.9, tag_kind: str = "topic"):
     from models.db import ArticleTagAssignmentRecord
 
     with Session(engine) as session:
         session.add(ArticleTagAssignmentRecord(
-            article_id=article_id, tag_id=tag_id, tag_kind="topic", is_primary=primary,
+            article_id=article_id, tag_id=tag_id, tag_kind=tag_kind, is_primary=primary,
             relevance=relevance, assignment_source="llm", prompt_version="t", taxonomy_version=1,
             created_at=STAMP, updated_at=STAMP,
         ))
@@ -247,7 +247,7 @@ def test_tag_search_without_interests_keeps_visibility_and_shape(
     _seed_article(sink.engine, "OpenAI-unassigned", "tag-public", content_type=content_type)
     with Session(sink.engine) as session:
         set_source_hidden(session, "tag-hidden", True)
-    tag_filter = {"tag_ids": str(tag_id)} if search_kind == "canonical" else {"display_tag": "A/B 案例"}
+    tag_filter = {"display_tag_id": str(tag_id)} if search_kind == "canonical" else {"display_tag": "A/B 案例"}
     params = {"shape": shape, **tag_filter}
 
     with TestClient(app_module.app) as client:
@@ -277,6 +277,119 @@ def test_tag_search_without_interests_keeps_visibility_and_shape(
         ids, data = _ids(client, **params)
         assert ids == {"match-a", "match-b", "hidden", "private"}
         assert data["total"] == 4
+
+
+@pytest.mark.parametrize("shape,content_type,other_type", [
+    ("article", "web_article", "podcast_episode"),
+    ("podcast", "podcast_episode", "web_article"),
+])
+@pytest.mark.parametrize("resolution", ["name", "alias", "merged", "activated", "legacy"])
+def test_projected_canonical_tag_search_preserves_identity_and_authority(
+    monkeypatch, tmp_path, shape, content_type, other_type, resolution,
+):
+    """A displayed canonical chip need not have a durable tag assignment."""
+    from models.db import (
+        ArticleAnalysisRecord, ArticleTagAssignmentRecord, CmsTagAliasRecord,
+        CmsTagCandidateEvidenceRecord, CmsTagCandidateRecord, CmsTagRecord,
+        UserInterestTagRecord,
+    )
+    from services.source_visibility import set_source_hidden
+
+    app_module, sink = _make_app(monkeypatch, tmp_path, "projected-tag.db")
+    tag_id = _seed_tag(sink.engine, "openai", "OpenAI")
+    label = "OpenAI" if resolution == "name" else "Historical OpenAI Label"
+    with Session(sink.engine) as session:
+        # Same spelling in a different facet must not become an identity match.
+        other = CmsTagRecord(
+            code="other-openai", kind="entity", name_zh="OpenAI", normalized_name="openai",
+            status="active", user_selectable=True, created_at=STAMP, updated_at=STAMP,
+        )
+        session.add(other)
+        session.flush()
+        other_id = int(other.id)
+        candidate_id = None
+        if resolution == "alias":
+            session.add(CmsTagAliasRecord(
+                tag_id=tag_id, kind="topic", alias=label, normalized_alias=label.casefold(),
+                created_at=STAMP, updated_at=STAMP,
+            ))
+        elif resolution in {"merged", "activated", "legacy"}:
+            candidate = CmsTagCandidateRecord(
+                label=label, normalized_label=label.casefold(), proposed_kind="topic",
+                status="merged" if resolution == "legacy" else resolution,
+                resolution_tag_id=tag_id, first_seen_at=STAMP, last_seen_at=STAMP,
+                created_at=STAMP, updated_at=STAMP,
+            )
+            session.add(candidate)
+            session.flush()
+            candidate_id = int(candidate.id)
+        session.commit()
+
+    projected = [("projected-a", "public"), ("projected-b", "other"),
+                 ("hidden", "hidden"), ("private", "user_rss_private"),
+                 ("other-shape", "other")]
+    for article_id, source_id in projected:
+        _seed_article(sink.engine, article_id, source_id,
+                      content_type=other_type if article_id == "other-shape" else content_type)
+        with Session(sink.engine) as session:
+            if resolution == "legacy":
+                session.add(CmsTagCandidateEvidenceRecord(
+                    candidate_id=candidate_id, article_id=article_id, source_id=source_id,
+                    confidence=.99, raw_label=label, created_at=STAMP,
+                ))
+            else:
+                session.add(ArticleAnalysisRecord(
+                    article_id=article_id, status="succeeded", tagging_status="succeeded",
+                    display_tags_json=json.dumps([{
+                        "candidate_id": candidate_id, "label": label,
+                        "kind": "topic", "confidence": .99,
+                    }]), created_at=STAMP, updated_at=STAMP,
+                ))
+            session.commit()
+    _seed_article(sink.engine, "assigned", "public", content_type=content_type)
+    _assign(sink.engine, "assigned", tag_id, relevance=.07)
+    _seed_article(sink.engine, "same-label-other-id", "public", content_type=content_type)
+    _assign(sink.engine, "same-label-other-id", other_id, tag_kind="entity")
+    _seed_article(sink.engine, "OpenAI-text-only", "public", content_type=content_type)
+    with Session(sink.engine) as session:
+        set_source_hidden(session, "hidden", True)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        detail = client.get("/api/articles/projected-a").json()
+        assert detail["tags"] == []
+        assert [(tag["type"], tag["id"]) for tag in detail["display_tags"]] == [("canonical", tag_id)]
+        # The durable filter stays assignment-only; chip retrieval also resolves projections.
+        assert _ids(client, shape=shape, tag_ids=tag_id)[0] == {"assigned"}
+        params = {"shape": shape, "display_tag_id": str(tag_id)}
+        ids, data = _ids(client, **params)
+        assert ids == {"assigned", "projected-a", "projected-b"}
+        assert data["total"] == 3
+        ids, data = _ids(client, **params, limit=1, skip=1)
+        assert len(ids) == 1 and data["total"] == 3
+        ids, _ = _ids(client, **params, source_id="public")
+        assert ids == {"assigned", "projected-a"}
+        assert _ids(client, **params, source_id="hidden")[0] == set()
+        with Session(sink.engine) as session:
+            assignments = session.exec(select(ArticleTagAssignmentRecord)).all()
+            assert {(row.article_id, row.tag_id) for row in assignments} == {
+                ("assigned", tag_id), ("same-label-other-id", other_id),
+            }
+            assert session.exec(select(UserInterestTagRecord)).all() == []
+        # Display promotion must not bypass the durable interest threshold.
+        _set_interest(sink.engine, "user", tag_id, "follow")
+        assert _ids(client, **params, interest_scope="only")[0] == set()
+        _login(client, "admin", "admin")
+        ids, data = _ids(client, **params)
+        assert ids == {"assigned", "projected-a", "projected-b", "hidden", "private"}
+        assert data["total"] == 5
+        if candidate_id is not None:
+            with Session(sink.engine) as session:
+                candidate = session.get(CmsTagCandidateRecord, candidate_id)
+                candidate.status = "rejected"
+                session.add(candidate)
+                session.commit()
+            assert _ids(client, **params)[0] == {"assigned"}
 
 
 def test_favorite_scope_and_total_pairing(monkeypatch, tmp_path):

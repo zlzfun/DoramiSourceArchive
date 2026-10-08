@@ -104,7 +104,7 @@ export default function DataTab({
     fetched_date_end: '',
     subscribed_scope: 'off', // off | prioritize | only（相对当前用户订阅的源）
     min_score: '',
-    tag_ids: '',
+    display_tag_id: '',
     display_tag: '',
     sort: 'newest',
   });
@@ -288,7 +288,7 @@ export default function DataTab({
   };
 
   const handleSearchSubmit = () => {
-    setFilters((prev) => ({ ...prev, tag_ids: '', display_tag: '' }));
+    setFilters((prev) => ({ ...prev, display_tag_id: '', display_tag: '' }));
     setAppliedSearch(searchInput.trim());
   };
 
@@ -297,7 +297,7 @@ export default function DataTab({
     if (!search) return;
     setSearchInput(search.label);
     setAppliedSearch('');
-    setFilters((prev) => ({ ...prev, tag_ids: '', display_tag: '', ...search.filters }));
+    setFilters((prev) => ({ ...prev, display_tag_id: '', display_tag: '', ...search.filters }));
     closeDrawer();
     closeEditModal();
   };
@@ -349,7 +349,7 @@ export default function DataTab({
       fetched_date_start: '',
       fetched_date_end: '',
       min_score: '',
-      tag_ids: '',
+      display_tag_id: '',
       display_tag: '',
       sort: 'newest',
     }));

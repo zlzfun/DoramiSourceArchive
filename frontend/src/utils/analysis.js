@@ -41,7 +41,7 @@ export function analysisTagSearch(tag) {
   if (tag?.type === 'extracted') return { label, filters: { display_tag: label } };
   const id = Number(tag?.id);
   if (!Number.isSafeInteger(id) || id <= 0) return null;
-  return { label, filters: { tag_ids: String(id) } };
+  return { label, filters: { display_tag_id: String(id) } };
 }
 
 export function displayTagProps(tag) {

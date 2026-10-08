@@ -1,8 +1,8 @@
 """Reader-facing article tags: stable canonical concepts plus flexible AI labels.
 
-Canonical assignments remain the only authority for filtering, interests and
-digest selection.  This module builds a bounded display projection without
-promoting free labels into that authority boundary.
+Canonical assignments remain the authority for durable taxonomy filters,
+interests and digest selection. Temporary chip retrieval can also match the
+current display projection without promoting it into that authority boundary.
 """
 
 from __future__ import annotations
@@ -246,13 +246,40 @@ def load_display_tags(
     return result
 
 
+def article_ids_for_canonical_projection(session: Session, tag_id: int) -> list[str]:
+    """Find read-time canonical promotions without materializing assignments.
+
+    Reuse the display resolver for active names/aliases, Candidate governance
+    and legacy evidence, so retrieval cannot drift from the chip's identity.
+    Durable assignment matching remains an independent SQL predicate.
+    """
+
+    article_ids = set(session.exec(
+        select(ArticleAnalysisRecord.article_id).where(
+            ArticleAnalysisRecord.display_tags_json.notin_(["", "[]"]),
+        )
+    ).all())
+    article_ids.update(session.exec(
+        select(CmsTagCandidateEvidenceRecord.article_id).distinct()
+    ).all())
+    ordered_ids = sorted(article_ids)
+    matching_ids: list[str] = []
+    for start in range(0, len(ordered_ids), 500):
+        current = load_display_tags(session, ordered_ids[start:start + 500])
+        matching_ids.extend(
+            article_id for article_id, tags in current.items()
+            if any(tag.get("type") == "canonical" and tag.get("id") == tag_id for tag in tags)
+        )
+    return matching_ids
+
+
 def article_ids_for_flexible_label(session: Session, label: str) -> list[str]:
     """Return articles whose current display projection contains a free label.
 
-    This intentionally excludes canonical tags: those already have the durable
-    ``tag_ids`` filter contract.  The scan is only used for an explicit click on
-    a flexible display chip, so it keeps that temporary discovery path separate
-    from taxonomy, interests and digest selection.
+    This intentionally excludes canonical tags, which use ``display_tag_id``
+    for chip retrieval and ``tag_ids`` for durable assignment filtering. This
+    scan is only used for an explicit click on a flexible chip, keeping that
+    temporary discovery path separate from taxonomy, interests and digest selection.
     """
 
     wanted = normalize_label(label)
