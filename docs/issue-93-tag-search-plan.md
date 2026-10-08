@@ -56,6 +56,7 @@ npm run test:e2e -- --flows tags,focus
 
 唯一 P3：管理抽屉/弹窗中标签的 1px 淡灰焦点环覆盖了原全局 2px 焦点环，文字/底色又与静止态一致。接受，未产生分歧。
 修复把悬停与键盘焦点规则拆开：悬停保留 1px `--dorami-border-strong`，`:focus-visible` 恢复 2px `--dorami-focus` 及 1px offset；阅读窗后置规则不变。
-修复后 lint、构建与真实 `tags,focus` E2E 再次通过。另用实际构建 CSS、Chromium Tab 在管理/阅读两种容器和两类标签共四种样例中检查计算样式，均为 2px solid 且颜色匹配 `--dorami-focus`。此为 CSS 容器夹具验证，不冒充管理端完整UI或人类验收。按唯一修复清单复检，不重开全站审查。
+修复后 lint、构建与真实 `tags,focus` E2E 再次通过。另用实际构建 CSS、Chromium Tab 在管理/阅读两种容器和两类标签共四种样例中检查计算样式，均为 2px solid 且颜色匹配 `--dorami-focus`。此为 CSS 容器夹具验证，不冒充管理端完整UI或人类验收。
+同一 Claude Code / GLM-5.3 会话按唯一修复清单复检通过：`p3_status=resolved`、`verdict=pass`、`findings=[]`，不重开全站审查。实际模型、原始只读日志、冻结diff/hash及样式证据保存在本地测评输出目录，评审未改代码或独立跑测试。
 
 阅读器手输防抖期间短暂使用旧词属于基线行为，记观察项而不扩修；默认移动流程的主线审计失败已在回归节记录。
