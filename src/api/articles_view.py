@@ -16,7 +16,7 @@ from api.textutils import _date_end_value, _json_loads, _split_csv
 from models.content import BaseContent
 from models.db import ArticleRecord
 from services import podcast_premium
-from storage.fts import fts_search_ids
+from storage.fts import build_search_components, fts_search_ids
 
 
 class GenericContent(BaseContent):
@@ -269,6 +269,11 @@ def apply_article_query_filters(
         fts_ids = fts_search_ids(session, search) if session is not None else None
         if fts_ids is not None:
             query = query.where(literal_column("articles.rowid").in_(fts_ids))
+            # trigram 匹配不了 < 3 字的词（如「AI Agent」里的 AI），FTS 只按长词
+            # 召回；短词在此补一条标题 LIKE（AND），不再被静默丢弃。
+            _, short_words = build_search_components(search)
+            for word in short_words:
+                query = query.where(ArticleRecord.title.contains(word, autoescape=True))
         else:
             query = query.where(ArticleRecord.title.contains(search))
 
