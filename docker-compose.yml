@@ -157,6 +157,13 @@ services:
       DORAMI_ALIYUN_ISI_TTS_USAGE_SETTLEMENT_MODE: ${DORAMI_ALIYUN_ISI_TTS_USAGE_SETTLEMENT_MODE:-}
       # cron 语义按此时区解释(与裸机部署的宿主时区行为对齐)
       TZ: ${TZ:-Asia/Shanghai}
+      # 代理头信任面(issue #172)。容器内 uvicorn 的客户端是 nginx 容器,其源 IP 落在
+      # compose 默认 bridge 网段(典型 172.x),不在 uvicorn 默认白名单 "127.0.0.1" 内,故
+      # 必须显式扩白名单,否则 nginx 透传的 X-Forwarded-Proto 会被丢弃、HTTPS 部署下
+      # request.base_url 恒为 http。默认含 127.0.0.1:把站点收进环回
+      # (DORAMI_HTTP_LISTEN=127.0.0.1:8080)时经宿主 curl 的直连请求同样需要它。
+      # 若 daemon 自定义了 bridge 网段,用此变量覆盖(逗号分隔的 IP 或 CIDR)。
+      DORAMI_FORWARDED_ALLOW_IPS: ${DORAMI_FORWARDED_ALLOW_IPS:-127.0.0.1,172.16.0.0/12}
     volumes:
       # SQLite、图片与 Podcast 本地 CAS(上面的 artifact root)一并持久化。
       - ./data:/app/data
