@@ -1,10 +1,12 @@
 """docker/requirements.txt 钉版清单与 pyproject 的一致性守卫。
 
-v3.17.0 生产事故复盘:uv.lock 不入库(含开发机镜像源改写),而 `uv export --frozen`
-不校验锁与 pyproject 的一致性——生产机用旧锁构建,把已移入 extra 的 torch 栈静默装回。
-自此镜像构建的版本事实来源改为入库的导出清单(docker/requirements.txt),
-本守卫确保清单与 pyproject 不漂移:改依赖后须重导出并一并提交
-(`uv export --frozen --no-dev --no-hashes --no-emit-project -o …`)。
+v3.17.0 生产事故复盘:当时 uv.lock 不入库、`uv export --frozen` 又不校验锁与 pyproject
+的一致性——生产机用旧锁构建,把已移入 extra 的 torch 栈静默装回。自此镜像构建的版本
+事实来源改为入库的导出清单(docker/requirements.txt),本守卫确保清单与 pyproject 不漂移:
+改依赖后须重导出并一并提交(`uv export --frozen --no-dev --no-hashes --no-emit-project -o …`)。
+
+uv.lock 现已入库(issue #171),它自身与 pyproject 的一致性由 tests/test_uv_lock.py 守卫;
+两份守卫是互补的——本文件盯**导出清单**,那边盯**锁**。
 (requirements-rag.txt 已随 v3.31 RAG 退役清仓删除。)
 """
 import os

@@ -39,7 +39,8 @@ scripts/release.sh 3.56.0 -m "一句话说明"     # 功能波 MINOR / 修复 PA
    版本号大于最近的 tag、tag 本地与远端都不存在、`src/version.py` 尚未是该版本;
 2. 预览 `<上一 tag>..HEAD` 的提交清单,确认;
 3. 改 `src/version.py`(单一事实来源)、`pyproject.toml`、`uv.lock` 根包 `version` 行
-   (`uv.lock` 只写索引不动工作区——开发机那份常带镜像源改写,永不入库);
+   (`uv.lock` 以 HEAD 那份为基准派新 blob 只写索引、不动工作区:工作区那份可能被开发机的
+   换源改写成镜像 registry;锁文件本身自 issue #171 起入库,但镜像改写永不入库);
 4. 提交 `release: vX.Y.Z`,打 annotated tag(首行 `-m` 说明,正文附提交清单),推送 main 与 tag。
 
 tag 推上去后两个 workflow 自动接手:`release.yml` 建 GitHub Release(核对由 `scripts/verify-release-ref.sh` 承担:
