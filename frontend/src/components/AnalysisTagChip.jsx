@@ -1,11 +1,10 @@
-import { cmsTagLabel, displayTagProps } from '../utils/analysis';
+import { analysisTagSearch, cmsTagLabel, displayTagProps } from '../utils/analysis';
 
-export default function AnalysisTagChip({ tag, onTemporarySearch }) {
+export default function AnalysisTagChip({ tag, onSearch }) {
   const label = cmsTagLabel(tag);
-  const extracted = tag?.type === 'extracted';
   const props = displayTagProps(tag);
 
-  if (extracted && onTemporarySearch) {
+  if (onSearch && analysisTagSearch(tag)) {
     return (
       <button
         type="button"
@@ -14,7 +13,7 @@ export default function AnalysisTagChip({ tag, onTemporarySearch }) {
         aria-label={`检索「${label}」`}
         onClick={(event) => {
           event.stopPropagation();
-          onTemporarySearch(label);
+          onSearch(tag);
         }}
       >
         {label}

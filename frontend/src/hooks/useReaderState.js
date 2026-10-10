@@ -18,6 +18,7 @@ import { stripDuplicateLeadingHeading } from '../utils/markdownTitle';
 import { createBulkSubscribeDeadline, waitForBulkSubscribeSettlement } from '../utils/bulkSubscribe';
 import {
   analysisItemsFromResponse,
+  analysisTagSearch,
   analysisNeedsPolling,
   preferredAnalysisSummary,
 } from '../utils/analysis';
@@ -80,7 +81,7 @@ function writeStoredScope(username, mode, scope) {
   } catch { /* 隐私模式等写不进去:面板退化为会话态 */ }
 }
 // 列表请求参数的单一拼装点:轴 + 下钻项 + 收藏 + 容器形态 + 读态 + 搜索(列表首拉与分析轮询共用)
-function buildListFilters({ activeSourceId, activeTagId, mode, scope, displayTagQuery, searchQuery, unreadOnly }) {
+function buildListFilters({ activeSourceId, activeTagId, mode, scope, tagSearch, searchQuery, unreadOnly }) {
   const filters = {};
   if (activeSourceId) filters.source_id = activeSourceId;
   else filters.shape = mode; // 容器分流(文章/动态/社交各取自己那类)
@@ -94,7 +95,7 @@ function buildListFilters({ activeSourceId, activeTagId, mode, scope, displayTag
     filters.subscribed_scope = activeSourceId ? 'off' : 'only';
   }
   if (scope.favorite) filters.favorite_scope = 'only';
-  if (displayTagQuery) filters.display_tag = displayTagQuery;
+  if (tagSearch) Object.assign(filters, tagSearch.filters);
   else if (searchQuery) filters.search = searchQuery;
   filters.with_unread = 'true';    // 条目附页级未读标记(水位由 unread-counts 校准)
   filters.with_interest = 'true';  // 条目附命中的兴趣标签名(命中胶囊)
@@ -247,22 +248,21 @@ export function useReaderState({
   const shapePinningRef = useRef(null);
 
   const [searchInput, setSearchInputState] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [displayTagQuery, setDisplayTagQuery] = useState('');
+  const [tagSearch, setTagSearch] = useState(null);
   const [searchOpen, setSearchOpen] = useState(false); // 「搜索」开合中栏搜索行
 
   const setSearchInput = useCallback((value) => {
     setSearchInputState(value);
-    setDisplayTagQuery('');
+    setTagSearch(null);
   }, []);
-  const searchForLabel = useCallback((label) => {
-    const value = String(label || '').trim();
-    if (!value) return;
+  const searchForTag = useCallback((tag) => {
+    const search = analysisTagSearch(tag);
+    if (!search) return;
+    supersedePendingOpen();
     setSearchOpen(true);
-    setSearchInputState(value);
-    setSearchQuery(value);
-    setDisplayTagQuery(value);
-  }, []);
+    setSearchInputState(search.label);
+    setTagSearch(search);
+  }, [supersedePendingOpen]);
 
   // ── 容器模型(Folo 语义):文章/播客/动态/社交是四个内容宇宙,各自渲染形态不同 ──
   // 'article'(默认) | 'podcast' | 'bulletin' | 'social'。选中源=在容器内收窄(mode 与 activeSourceId
@@ -419,7 +419,9 @@ export function useReaderState({
 
   // 搜索防抖
   const debouncedSearchInput = useDebouncedValue(searchInput, 300);
-  useEffect(() => { setSearchQuery(debouncedSearchInput.trim()); }, [debouncedSearchInput]);
+  // Tag clicks are immediate; typing stays debounced. Derive the query so a
+  // quick clear/navigation before the debounce fires cannot leave a stale label.
+  const searchQuery = tagSearch?.label || (searchInput.trim() ? debouncedSearchInput.trim() : '');
 
   const sourceNameMap = useMemo(() => {
     const map = {};
@@ -703,7 +705,7 @@ export function useReaderState({
       data = await runList((signal) => {
         // 三谓词面板 + 源轴 + 读态 + 搜索,一份拼装(分析轮询复用同一函数,不再分叉)
         const filters = buildListFilters({
-          activeSourceId, activeTagId, mode, scope, displayTagQuery, searchQuery, unreadOnly,
+          activeSourceId, activeTagId, mode, scope, tagSearch, searchQuery, unreadOnly,
         });
         // 社交流全文直出(推文正文 2~4 行,取回零负担),且卡片要 extensions
         // (引用推/转推/图链)——那只在 include_content=true 时随列表返回。
@@ -722,7 +724,7 @@ export function useReaderState({
     // 等用户主动点选一篇才加载正文并计一次阅读（见 selectArticle）。
     if (!append) setFreshCount(0); // 列表已刷新,新内容提示归零
     if (append) setLoadingMore(false); else setArticlesLoading(false);
-  }, [activeSourceId, activeTagId, activeSourceHidden, searchQuery, displayTagQuery, scope, unreadOnly, mode, showToast, runList]);
+  }, [activeSourceId, activeTagId, activeSourceHidden, searchQuery, tagSearch, scope, unreadOnly, mode, showToast, runList]);
 
   // 分析任务与采集解耦：列表首拉可能拿到 pending/running。只在确有在途项时
   // 每 30 秒静默重取当前已加载窗口，既不闪骨架屏也不弹失败 toast；响应回写前
@@ -732,7 +734,7 @@ export function useReaderState({
     activeTagId,
     activeSourceHidden,
     searchQuery,
-    displayTagQuery,
+    tagSearch,
     scope,
     unreadOnly,
     mode,
@@ -747,7 +749,7 @@ export function useReaderState({
       activeSourceId,
       activeTagId,
       articles,
-      displayTagQuery,
+      tagSearch,
       scope,
       mode,
       scopeKey: analysisScopeKey,
@@ -760,7 +762,7 @@ export function useReaderState({
     activeTagId,
     analysisScopeKey,
     articles,
-    displayTagQuery,
+    tagSearch,
     scope,
     mode,
     searchQuery,
@@ -799,7 +801,7 @@ export function useReaderState({
       if (selected?.id) updates.set(selected.id, selected);
       setArticles((current) => current
         .filter((article) => (
-          !context.displayTagQuery || !activeIds.has(article.id) || updates.has(article.id)
+          !context.tagSearch || !activeIds.has(article.id) || updates.has(article.id)
         ))
         .map((article) => (
           updates.has(article.id) ? withFreshAnalysis(article, updates.get(article.id)) : article
@@ -1412,12 +1414,10 @@ export function useReaderState({
     writeStoredScope(scopeUserRef.current, modeRef.current, next);
     setScopeState(next);
   };
-  // 搜索开关(条目列头就地展开):关闭即清词(searchQuery 经防抖同步清空,列表回到无过滤)。
+  // 搜索开关(条目列头就地展开):关闭即清词与标签过滤,列表回到无过滤。
   const toggleSearch = () => {
-    setSearchOpen((open) => {
-      if (open) setSearchInput('');
-      return !open;
-    });
+    if (searchOpen) setSearchInput('');
+    setSearchOpen(!searchOpen);
   };
   // 视图轨激活态 = 发现页 或 当前容器(源内保持点亮——层级关系,不再互斥)
   const railActive = discover ? 'discover' : mode;
@@ -1513,7 +1513,7 @@ export function useReaderState({
     interestAxisEnabled, showUnsubscribedMark, showInterestHit,
     activeSourceHidden, activeUnsubscribed, grouping,
     // 搜索
-    searchOpen, searchInput, setSearchInput, searchQuery, toggleSearch, searchForLabel,
+    searchOpen, searchInput, setSearchInput, searchQuery, toggleSearch, searchForTag,
     // 未读体系
     unreadBySource, unreadOnly, setUnreadOnly, scopeUnread, unreadByShape,
     isArticleUnread, toggleArticleRead, handleTogglePaneRead, handleToggleSocialRead,

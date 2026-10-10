@@ -100,7 +100,7 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
                     {podcastAssessment && <span className="stamp stamp-idle" role="status">{podcastAssessment.label}</span>}
                     {(analysisTags.length > 0 || data.content_genre) && <span className="reader-analysis-tags">
                       {analysisTags.map((tag, index) => (
-                        <AnalysisTagChip key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`} tag={tag} onTemporarySearch={onTemporaryTagSearch} />
+                        <AnalysisTagChip key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`} tag={tag} onSearch={onTemporaryTagSearch} />
                       ))}
                       {analysisTags.length === 0 && data.content_genre && <span className="reader-tag-chip">{contentGenreLabel(data.content_genre)}</span>}
                     </span>}

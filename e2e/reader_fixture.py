@@ -15,6 +15,9 @@ SOURCE_A = "e2e-reader-alpha"
 SOURCE_B = "e2e-reader-beta"
 SOURCE_NAMES = {SOURCE_A: "端到端测试来源甲", SOURCE_B: "端到端测试来源乙"}
 ARTICLE_COUNT = 60
+TAG_LABEL = "OpenAI"
+FREE_LABEL = "A/B 案例 & C++"
+TAG_MATCH_IDS = (f"{SOURCE_A}-00", f"{SOURCE_A}-01")
 BODY = "\n\n".join(
     f"## 阅读章节 {index:02d}\n\n"
     + ("这是一篇用于验证移动阅读体验的测试文章。滚动正文、切换窗口宽度后，应该仍能接着阅读，而不是重新寻找位置。" * 5)
@@ -40,7 +43,7 @@ def validate_sandbox(sandbox: Path) -> Path:
     return database
 
 
-def seed(sandbox: Path, *, password: str = PASSWORD) -> None:
+def seed(sandbox: Path, *, password: str = PASSWORD, tag_search: bool = False) -> None:
     database = validate_sandbox(sandbox)
     sys.path.insert(0, str(ROOT / "src"))
     from config import settings
@@ -89,10 +92,44 @@ def seed(sandbox: Path, *, password: str = PASSWORD) -> None:
                         publish_date=published, fetched_date=published, has_content=True, content=BODY,
                     ))
             session.commit()
+            if tag_search:
+                seed_tag_search(session, timestamp)
     finally:
         sink.engine.dispose()
     print(f"Seeded {ARTICLE_COUNT + 3} articles and one reader in {database}")
 
 
+def seed_tag_search(session, timestamp: str) -> None:
+    """Opt-in issue #93 fixture; leaves the existing mobile/PWA fixture unchanged."""
+    from models.db import ArticleAnalysisRecord, ArticleRecord, ArticleTagAssignmentRecord, CmsTagRecord
+    tag = CmsTagRecord(code="entity.e2e_openai", kind="entity", name_zh=TAG_LABEL,
+                       normalized_name="e2e-openai", status="active", user_selectable=True,
+                       created_at=timestamp, updated_at=timestamp)
+    session.add(tag)
+    session.flush()
+    for article_id in [*TAG_MATCH_IDS, f"{SOURCE_A}-02"]:
+        article = session.get(ArticleRecord, article_id)
+        article.content = f"正文提及 {TAG_LABEL} 与 {FREE_LABEL}。\n\n" + BODY
+        session.add(article)
+        if article_id not in TAG_MATCH_IDS:
+            continue  # Text mention alone must never satisfy either tag filter.
+        session.add(ArticleAnalysisRecord(
+            article_id=article_id, status="succeeded", tagging_status="succeeded",
+            quality_score=8.0, summary="标签检索合成样例",
+            display_tags_json=json.dumps([
+                {"label": FREE_LABEL, "kind": "topic", "confidence": .99},
+                {"label": TAG_LABEL, "kind": "entity", "confidence": .98},
+            ]),
+            created_at=timestamp, updated_at=timestamp,
+        ))
+        if article_id == TAG_MATCH_IDS[0]:
+            session.add(ArticleTagAssignmentRecord(
+                article_id=article_id, tag_id=tag.id, tag_kind="entity", is_primary=False,
+                relevance=.07, assignment_source="llm", created_at=timestamp, updated_at=timestamp,
+            ))
+    session.commit()
+
+
 if __name__ == "__main__":
-    seed(Path(sys.argv[1]), password=os.environ.get("DORAMI_E2E_PASSWORD", PASSWORD))
+    seed(Path(sys.argv[1]), password=os.environ.get("DORAMI_E2E_PASSWORD", PASSWORD),
+         tag_search=os.environ.get("DORAMI_E2E_TAG_SEARCH") == "1")
