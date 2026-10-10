@@ -17,6 +17,28 @@
   margin: 0;
   border-radius: 14px;
 }
+
+/* 首屏底色：一块跟随滚动缓慢上移的光晕，让首屏不只是一张截图 */
+.VPHero .hero-stage {
+  position: relative;
+  width: 100%;
+}
+.VPHero .hero-glow {
+  position: absolute;
+  top: -26%;
+  left: -14%;
+  width: 128%;
+  height: 152%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, var(--vp-c-brand-soft), transparent);
+  filter: blur(26px);
+  pointer-events: none;
+  z-index: 0;
+}
+.VPHero .hero-stage .hero-shot {
+  position: relative;
+  z-index: 1;
+}
 @media (max-width: 959px) {
   .VPHero .main {
     order: 1;
@@ -93,12 +115,12 @@
   }
 }
 
-/* 首页末尾的入口 */
+/* 首页末尾的站内入口 */
 .home-start {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
-  margin: 24px 0 64px;
+  margin: 24px 0 0;
 }
 .vp-doc a.home-start-card {
   display: block;
@@ -126,6 +148,71 @@
   .home-start {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+/* 首页末尾的站外入口 */
+.home-outside {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 16px 0 72px;
+}
+.vp-doc a.home-outside-card {
+  display: block;
+  padding: 20px 22px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 12px;
+  background: var(--vp-c-bg);
+  color: var(--vp-c-text-1);
+  text-decoration: none;
+  transition: border-color 0.2s, background-color 0.2s;
+}
+.vp-doc a.home-outside-card:hover {
+  border-color: var(--vp-c-brand-1);
+  background: var(--vp-c-bg-soft);
+}
+.vp-doc a.home-outside-card.is-brand {
+  border-color: var(--vp-c-brand-1);
+  background: var(--vp-c-brand-soft);
+}
+.home-outside-card strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 16px;
+}
+.home-outside-card span {
+  color: var(--vp-c-text-2);
+  font-size: 14px;
+  line-height: 1.6;
+}
+@media (max-width: 768px) {
+  .home-outside {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* 首页两个演示并排；窄屏上下叠放 */
+.home-demos {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+  align-items: start;
+  margin: 24px 0 56px;
+}
+@media (max-width: 900px) {
+  .home-demos {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* 首页的分节标题：去掉正文页的顶部分隔线，留出呼吸 */
+.vp-doc .home-rows + h2,
+.home-demos + h2 {
+  margin: 56px 0 0;
+  padding-top: 0;
+  border-top: 0;
+  font-size: 28px;
+  letter-spacing: -0.01em;
 }
 
 /* 正文里的截图：圆角 + 轻阴影，和页面底色分开 */

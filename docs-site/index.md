@@ -7,11 +7,14 @@ hero:
   tagline: AI 动态散在官方博客、科技媒体、个人博客、X 和播客里。哆啦美把它们收在一处，给文章配上 AI 摘要和新闻价值分，每天早上按你的订阅和兴趣排成一版早报。
   actions:
     - theme: brand
-      text: 快速开始
-      link: /guide/quick-start
+      text: 体验哆啦美
+      link: https://dorami.cloud/
     - theme: alt
       text: 看功能
       link: '#features'
+    - theme: alt
+      text: 查看源码
+      link: https://github.com/zlzfun/DoramiSourceArchive
 ---
 
 <div id="features" class="home-rows">
@@ -33,6 +36,24 @@ hero:
 
 <template #media><img src="../docs/assets/readme/02-reader.png" alt="阅读器正文：标题下方是 AI 速读卡片和新闻价值分"></template>
 </FeatureRow>
+
+</div>
+
+## 动手试试
+
+<div class="home-demos">
+
+<InterestDemo />
+
+<ReadingDemo />
+
+</div>
+
+## 一天里用到的三个时刻
+
+<HomeWalkthrough />
+
+<div class="home-rows">
 
 <FeatureRow title="告诉哆啦美你关心什么" link="/features/interests" crop="0,0,0.62,0.72" :ratio="2.054">
 
@@ -88,4 +109,15 @@ hero:
   <a class="home-start-card" href="./guide/quick-start"><strong>快速开始</strong><span>五分钟：登录、订阅、选兴趣，读第一份早报</span></a>
   <a class="home-start-card" href="./help/faq"><strong>常见问题</strong><span>登录、早报、AI 功能、手机上遇到问题先看这里</span></a>
   <a class="home-start-card" href="./about/philosophy"><strong>设计理念</strong><span>为什么要订阅、为什么打分、为什么每天只有十来篇</span></a>
+</div>
+
+<div class="home-outside">
+  <a class="home-outside-card is-brand" href="https://dorami.cloud/" target="_blank" rel="noreferrer">
+    <strong>体验哆啦美</strong>
+    <span>打开 dorami.cloud，用账号读今天的早报</span>
+  </a>
+  <a class="home-outside-card" href="https://github.com/zlzfun/DoramiSourceArchive" target="_blank" rel="noreferrer">
+    <strong>GitHub / 查看源码</strong>
+    <span>自托管部署方式、后端与前端代码都在仓库里</span>
+  </a>
 </div>

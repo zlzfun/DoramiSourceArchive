@@ -60,6 +60,12 @@ export default defineConfig({
       },
       { text: '常见问题', link: '/help/faq' },
       { text: '设计理念', link: '/about/philosophy' },
+      {
+        text: 'GitHub',
+        link: 'https://github.com/zlzfun/DoramiSourceArchive',
+        target: '_blank',
+        rel: 'noreferrer',
+      },
     ],
     sidebar,
     search: {
@@ -77,6 +83,12 @@ export default defineConfig({
       },
     },
     outline: { level: [2, 3], label: '本页目录' },
+    footer: {
+      message: '哆啦美 · 自托管的 AI 资讯阅读器',
+      copyright:
+        '代码在 <a href="https://github.com/zlzfun/DoramiSourceArchive" target="_blank" rel="noreferrer">GitHub</a> 开源；' +
+        '在线体验 <a href="https://dorami.cloud/" target="_blank" rel="noreferrer">dorami.cloud</a>',
+    },
     docFooter: { prev: '上一页', next: '下一页' },
     returnToTopLabel: '回到顶部',
     sidebarMenuLabel: '目录',
