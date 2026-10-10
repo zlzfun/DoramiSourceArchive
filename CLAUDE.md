@@ -291,7 +291,7 @@ src/
 │       ├── playwright_renderer.py       # PlaywrightRenderer: headless-Chromium detail rendering for Cloudflare-challenged sources (used by OpenAINewsRssFetcher)
 │       └── webhook_trigger.py           # Outbound Dify workflow trigger (not an inbound content source)
 ├── fetchers/web_content/    # Optional crawl4ai Web Content backend: backend.py (WebContentBackend ABC + DetailResult), legacy_backend.py (httpx baseline), crawl4ai_backend.py (browser, opt-in extra), profiles.py (per-site CrawlProfile), compare.py (bypass A/B)
-├── mcp_server.py            # build_mcp_app(): FastMCP streamable-HTTP server, mounted at /mcp by app.py
+├── mcp_server.py            # build_mcp_app(): FastMCP streamable-HTTP server, registered at /mcp and /mcp/ by app.py
 ├── pipeline/
 │   ├── core.py              # DataPipeline: drives fetcher → broadcasts to registered storages
 │   └── progress.py          # In-memory per-fetcher {current,total} run progress (polled by frontend)

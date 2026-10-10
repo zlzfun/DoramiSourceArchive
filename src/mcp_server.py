@@ -2,6 +2,9 @@ from __future__ import annotations
 import json
 from typing import Optional
 from mcp.server.fastmcp import FastMCP
+# 内部模块路径:mcp 顶层与 mcp.server.fastmcp 都不导出 TransportSecuritySettings。
+# pyproject 的 mcp<2 上限是这行成立的前提,2.x 会移动该模块。
+from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy import literal_column
 from sqlmodel import Session, select
 from models.db import ArticleRecord, SourceStateRecord
@@ -259,6 +262,8 @@ def build_mcp_app(
         "dorami-archive",
         instructions="哆啦美·归档中枢 MCP Server — AI资讯检索与上下文组装",
         streamable_http_path="/",
+        # Public transport: content access is token-scoped, not trusted by Host.
+        transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
     )
 
     def _token_from_header() -> Optional[str]:

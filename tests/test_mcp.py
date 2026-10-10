@@ -1,4 +1,5 @@
 import sys, os
+import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from sqlmodel import create_engine, SQLModel, Session
@@ -290,12 +291,24 @@ def test_admin_auth_session_lifecycle(monkeypatch, tmp_path):
         assert client.get("/api/auth/session").json()["authenticated"] is False
 
 
-def test_mcp_transport_does_not_require_admin_cookie(monkeypatch, tmp_path):
+@pytest.mark.parametrize("path", ["/mcp", "/mcp/"])
+def test_mcp_transport_accepts_public_host_without_redirect(monkeypatch, tmp_path, path):
     app_module = __import__('api.app', fromlist=['app'])
     monkeypatch.setattr(app_module, "db_sink", DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'mcp_transport.db'}"))
     with TestClient(app_module.app) as client:
-        resp = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
-        assert resp.status_code != 401
+        resp = client.post(
+            path,
+            headers={"Host": "dorami.cloud", "Accept": "application/json, text/event-stream"},
+            json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                "protocolVersion": "2025-03-26", "capabilities": {},
+                "clientInfo": {"name": "public-host-test", "version": "1.0"},
+            }},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 200
+        assert "location" not in resp.headers
+        assert '"protocolVersion"' in resp.text
+        assert client.post("/mcp/mcp", follow_redirects=False).status_code == 404
 
 
 def test_mcp_status_returns_correct_structure(monkeypatch, tmp_path):
