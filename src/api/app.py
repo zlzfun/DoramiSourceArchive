@@ -167,7 +167,6 @@ from llm.client import UsageMeta
 from llm.client import set_usage_recorder as _set_llm_usage_recorder
 
 from starlette.responses import JSONResponse as StarletteJSONResponse
-from starlette.routing import Route
 from mcp_server import build_mcp_app
 from config import settings
 
@@ -1717,10 +1716,10 @@ def schedule_media_prefetch(article_ids: List[str]) -> None:
     task.add_done_callback(_MEDIA_PREFETCH_TASKS.discard)
 
 
-app.router.routes.extend(
-    Route(path, _mcp_gate, methods=["GET", "POST", "DELETE"])
-    for path in ("/mcp", "/mcp/")
-)
+# 精确 Route 而非 mount：Mount 的正则不含无斜杠路径，/mcp 会被外层 307 重定向。
+# add_route 是 FastAPI 公开 API，且 Route 不进 OpenAPI schema（与 mount 一致）。
+for _mcp_path in ("/mcp", "/mcp/"):
+    app.add_route(_mcp_path, _mcp_gate, methods=["GET", "POST", "DELETE"])
 app.include_router(skill_router)
 # 阶段1：按域迁出的 Router（路径保持不变；鉴权仍由中间件统一强制）。
 app.include_router(accounts_router.router)
