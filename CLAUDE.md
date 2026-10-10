@@ -10,11 +10,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Install dependencies (use uv, the project uses uv.lock)
 uv sync    # dev 全量:uv sync --extra crawl4ai(浏览器详情后端)
 
-# ⚠️ 改依赖(pyproject dependencies/extras)后的完整流程——uv.lock 按惯例不入库
-# (含开发机镜像源改写),镜像构建的版本事实来源是入库的导出清单,改完必须重导出并提交:
-#   uv lock && uv sync --extra crawl4ai
+# ⚠️ 改依赖(pyproject dependencies/extras)后的完整流程——uv.lock **入库**,改完必须提交
+# 解析时避开开发机镜像源(否则锁里的 registry 会被改写成内网/区域镜像):
+#   env -u UV_INDEX_URL -u UV_DEFAULT_INDEX uv lock && uv sync --extra crawl4ai
 #   uv export --frozen --no-dev --no-hashes --no-emit-project -o docker/requirements.txt
-# tests/test_docker_requirements.py 守卫清单与 pyproject 的一致性(v3.17.0 生产曾因旧锁静默装回 torch)
+#   uv export --frozen --no-dev --no-hashes --no-emit-project --extra crawl4ai -o docker/requirements-crawl4ai.txt
+# 守卫:tests/test_uv_lock.py(锁 vs pyproject/version、无镜像源、无退役重型栈)
+#       tests/test_docker_requirements.py(导出清单 vs pyproject;v3.17.0 生产曾因旧锁静默装回 torch)
 
 # Run the backend server (starts on http://127.0.0.1:8088, hot-reload enabled)
 python src/main.py
