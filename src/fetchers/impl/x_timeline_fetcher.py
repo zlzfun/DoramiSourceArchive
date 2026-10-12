@@ -365,7 +365,9 @@ class PresetXTimelineFetcher(XTimelineFetcher):
 
     is_template = False
     source_id = "unknown_source"
-    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
+    # 整批观察期:不进每日自动采集。单个账号转正 = 在该账号的子类上写 admission_status = "admitted";
+    # 删掉这一行等于全部 X 预设一起转正。
+    admission_status = "incubating"
     content_type = "social_post"
     content_shape = "social"
     default_limit = 25

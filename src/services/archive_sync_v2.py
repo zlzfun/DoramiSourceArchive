@@ -216,6 +216,8 @@ def _public_source(source_id: str) -> bool:
     return not (source_id or "").startswith(_USER_SOURCE_PREFIX)
 
 
+_LEGACY_INCUBATING = "incubating"
+
 _SOURCE_FIELDS = (
     "source_id",
     "name",
@@ -243,7 +245,11 @@ _SOURCE_FIELDS = (
 def _source_payload(row: SourceConfigRecord) -> dict[str, Any]:
     # No fetcher/cron/params: the receiving all-role node must not start collecting
     # platform sources, and params may contain producer-only credentials.
-    return {field: getattr(row, field) for field in _SOURCE_FIELDS}
+    payload = {field: getattr(row, field) for field in _SOURCE_FIELDS}
+    # 线路兼容键(issue #178):旧版接收端只认 category,据此保留观察期,升级时迁移再映射成
+    # admission_status。值由准入状态派生,不读退役列;内外网都升级后可删(见 docs/backlog.md)。
+    payload["category"] = _LEGACY_INCUBATING if row.admission_status == _LEGACY_INCUBATING else ""
+    return payload
 
 
 def _article_payload(row: ArticleRecord, authority_id: str) -> dict[str, Any]:
@@ -1610,6 +1616,11 @@ def _apply_sources(
         for field in _SOURCE_FIELDS:
             if field != "source_id" and field in data:
                 setattr(existing, field, data[field])
+        if "admission_status" not in data and "category" in data:
+            # 旧版生产者只发 category(issue #178 前):按它推导准入状态,混部期间观察期不丢
+            existing.admission_status = (
+                "incubating" if data.get("category") == _LEGACY_INCUBATING else "admitted"
+            )
         if taking_authority:
             local_state = session.get(SourceStateRecord, source_id)
             if local_state is not None:

@@ -164,30 +164,73 @@ def test_archive_sync_sources_stream_carries_admission_not_retired_columns(tmp_p
     producer = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'producer.db'}")
     consumer = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'consumer.db'}")
     with Session(producer.engine) as session:
-        session.add(SourceConfigRecord(
-            source_id="podcast_demo",
-            name="Demo",
-            source_type="podcast",
-            url="https://example.test/podcast.xml",
-            admission_status="incubating",
-            category="incubating",
-            content_tags_json='["opinion"]',
-            created_at=STAMP,
-            updated_at=STAMP,
-        ))
+        for source_id, admission, legacy_category in (
+            ("podcast_demo", "incubating", "incubating"),
+            ("podcast_promoted", "admitted", "incubating"),  # 已转正,退役列里还留着旧值
+        ):
+            session.add(SourceConfigRecord(
+                source_id=source_id,
+                name=source_id,
+                source_type="podcast",
+                url=f"https://example.test/{source_id}.xml",
+                admission_status=admission,
+                category=legacy_category,
+                content_tags_json='["opinion"]',
+                created_at=STAMP,
+                updated_at=STAMP,
+            ))
         session.commit()
 
     raw = archive_sync_v2.export_page(producer.engine, "sources", limit=100)
-    payloads = [
-        item["payload"] for item in (json.loads(line) for line in raw.splitlines()[1:] if line.strip())
+    payloads = {
+        item["payload"]["source_id"]: item["payload"]
+        for item in (json.loads(line) for line in raw.splitlines()[1:] if line.strip())
         if isinstance(item, dict) and isinstance(item.get("payload"), dict)
-    ]
-    assert payloads and payloads[0]["admission_status"] == "incubating"
-    assert "category" not in payloads[0] and "content_tags_json" not in payloads[0]
+    }
+    assert payloads["podcast_demo"]["admission_status"] == "incubating"
+    assert "content_tags_json" not in payloads["podcast_demo"]
+    # 线路兼容键:由准入状态派生(不读退役列),旧版接收端据此保留观察期
+    assert payloads["podcast_demo"]["category"] == "incubating"
+    assert payloads["podcast_promoted"]["category"] == ""
 
     archive_sync_v2.import_page(consumer.engine, raw, expected_stream="sources")
     with Session(consumer.engine) as session:
         assert session.get(SourceConfigRecord, "podcast_demo").admission_status == "incubating"
+        assert session.get(SourceConfigRecord, "podcast_promoted").admission_status == "admitted"
+
+
+def test_receiver_derives_admission_from_legacy_producer_payload(tmp_path):
+    """旧版生产者只发 category(混部期间):新接收端按它推导准入状态,观察期不丢(codex R1 #1)。"""
+    from services import archive_sync_v2
+
+    consumer = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'legacy.db'}")
+    rows = [
+        {"payload": {
+            "source_id": source_id, "name": source_id, "source_type": "podcast",
+            "url": f"https://example.test/{source_id}.xml", "category": category,
+            "content_tags_json": "[]", "created_at": STAMP, "updated_at": STAMP,
+        }}
+        for source_id, category in (("legacy_incubating", "incubating"), ("legacy_official", "official"))
+    ]
+    with Session(consumer.engine) as session:
+        archive_sync_v2._apply_sources(session, rows, "producer-legacy")
+        session.commit()
+        assert session.get(SourceConfigRecord, "legacy_incubating").admission_status == "incubating"
+        assert session.get(SourceConfigRecord, "legacy_official").admission_status == "admitted"
+
+        def apply(payload):
+            archive_sync_v2._apply_sources(session, [{"payload": {
+                "source_id": "legacy_incubating", "name": "x", "source_type": "podcast",
+                "url": "https://example.test/x.xml", "created_at": STAMP, "updated_at": STAMP, **payload,
+            }}], "producer-legacy")
+            session.commit()
+            return session.get(SourceConfigRecord, "legacy_incubating").admission_status
+
+        # 新字段在场时以它为准,旧兼容键不得覆盖
+        assert apply({"admission_status": "admitted", "category": "incubating"}) == "admitted"
+        assert apply({"admission_status": "incubating", "category": ""}) == "incubating"
+        # 两个键都缺:不动已有状态
+        assert apply({}) == "incubating"
 
 
 # ==================== 每日采集脚本 ====================
@@ -205,3 +248,14 @@ def test_daily_collection_job_excludes_templates_and_incubating_nodes():
     assert "rss_hf_blog" not in default_ids  # 观察期
     assert "generic_rss" not in default_ids  # 模板
     assert set(selected_fetcher_ids(include_advanced=True)) == set(rows)
+
+
+def test_promoting_one_inherited_incubating_source_only_admits_that_source(monkeypatch):
+    """X 预设的观察期继承自父类:单个账号转正要在具体类上覆盖,删父类那一行等于整批转正(codex R1 #3)。"""
+    from ensure_daily_collection_job import selected_fetcher_ids
+
+    before = set(selected_fetcher_ids())
+    x_openai = fetcher_registry.get_class("x_openai")
+    assert "admission_status" not in vars(x_openai)  # 继承自 PresetXTimelineFetcher
+    monkeypatch.setattr(x_openai, "admission_status", "admitted", raising=False)
+    assert set(selected_fetcher_ids()) - before == {"x_openai"}

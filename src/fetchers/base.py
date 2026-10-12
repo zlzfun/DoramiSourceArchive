@@ -42,7 +42,8 @@ class BaseFetcher(abc.ABC):
 
     # 准入状态(issue #178 自原 category 拆出):admitted 正式 | incubating 观察期。
     # 观察期节点默认可见、可订阅、可手动抓取,但不进每日自动采集(scripts/ensure_daily_collection_job.py),
-    # 管理面挂「观察」徽记;验收转正 = 删掉子类上的 admission_status 行。来源角色(官方 / 媒体 / 个人 / 榜单)
+    # 管理面挂「观察」徽记。验收转正 = 让该类的有效值成为 admitted:类上自己声明观察期的删掉那一行,
+    # 观察期继承自父类的(如 X 预设)在具体类上写 admission_status = "admitted"。来源角色(官方 / 媒体 / 个人 / 榜单)
     # 由 services/source_naming.source_role 推导,模板节点看 is_template,都不再挤在这个字段里。
     admission_status: str = "admitted"
 
