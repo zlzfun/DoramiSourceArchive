@@ -2860,3 +2860,78 @@ def test_upgraded_receiver_refetches_analyses_dropped_by_its_old_version(tmp_pat
     again = _prepare_and_pull(consumer, producer, remote, tmp_path, label="again")
     assert dict(remote.requested_params)["analyses"].get("since")
     assert again["streams"]["analyses"]["count"] == 0
+
+
+def test_refetch_that_fails_midway_resumes_on_the_next_sync(tmp_path):
+    """补拉中途失败:checkpoint 仍空,下次从头重新下载,已应用的行被记账跳过,剩下的行补齐(检视 R4-1)。"""
+    producer = _sink(tmp_path, "producer-refetch-fail.db")
+    consumer = _sink(tmp_path, "consumer-refetch-fail.db")
+    now = "2026-10-12T00:00:00+00:00"
+    ids = ["a-1", "a-2", "a-3"]
+    with Session(producer.engine) as session:
+        session.add(_source())
+        for article_id in ids:
+            article = _article(article_id, content=f"body {article_id}")
+            session.add(article)
+            session.flush()
+            session.add(ArticleAnalysisRecord(
+                article_id=article_id, status="succeeded", tagging_status="succeeded", quality_score=5.0,
+                summary="摘要", content_kind="paper", content_value=7.0, content_value_reason="方法新",
+                content_value_version="content-value-v2", content_hash=compute_content_hash(article),
+                created_at=now, updated_at=now,
+            ))
+        session.commit()
+    remote = _V2Remote(producer)
+    base_url = "https://remote.test"
+    _prepare_and_pull(consumer, producer, remote, tmp_path, label="first")
+    with Session(consumer.engine) as session:
+        for article_id in ids:
+            record = session.get(ArticleAnalysisRecord, article_id)
+            record.content_value, record.content_value_version = None, ""
+            session.add(record)
+        row = session.get(AppSettingRecord, remote_sync_service.REMOTE_SYNC_STATE_KEY)
+        state = json.loads(row.value)
+        state["targets"][base_url].pop("v2_analysis_payload_generation")
+        row.value = json.dumps(state, ensure_ascii=False)
+        session.add(row)
+        session.commit()
+
+    def pull(label, handler):
+        target = remote_sync_service.load_sync_state(consumer.engine)["targets"][base_url]
+        return asyncio.run(remote_sync_service.run_pull_v2(
+            engine=consumer.engine, base_url=base_url, username="admin", password="secret",
+            media_root=tmp_path / f"{label}-media", page_size=2,
+            checkpoints=target.get("v2_streams") or {},
+            on_stream_complete=lambda stream, checkpoint: remote_sync_service.record_v2_stream_success(
+                consumer.engine, base_url=base_url, username="admin", stream=stream,
+                checkpoint=checkpoint, synced_at=now,
+            ),
+            transport=httpx.MockTransport(handler),
+        ))
+
+    def failing_second_analyses_page(request):
+        if request.url.path.endswith("/analyses.jsonl") and request.url.params.get("after"):
+            return httpx.Response(500, json={"detail": "network glitch"})
+        return remote.handler(request)
+
+    with Session(consumer.engine) as session:
+        remote_sync_service.prepare_transaction_revision_consumer(
+            session, base_url=base_url, username="admin",
+            authority_id=archive_sync_v2.producer_authority_id(producer.engine),
+            schema_version=archive_sync_v2.SCHEMA_VERSION, prepared_at=now,
+            capabilities=list(archive_sync_v2.ADVERTISED_CAPABILITIES),
+        )
+        session.commit()
+    with pytest.raises(remote_sync_service.RemoteSyncError):
+        pull("broken", failing_second_analyses_page)
+    target = remote_sync_service.load_sync_state(consumer.engine)["targets"][base_url]
+    assert "analyses" not in target["v2_streams"]
+    with Session(consumer.engine) as session:
+        restored = [aid for aid in ids if session.get(ArticleAnalysisRecord, aid).content_value is not None]
+    assert len(restored) == 2   # 第一页已提交
+
+    result = _prepare_and_pull(consumer, producer, remote, tmp_path, label="retry")
+    assert result["streams"]["analyses"]["count"] == 3          # 从头重新下载
+    with Session(consumer.engine) as session:
+        assert all(session.get(ArticleAnalysisRecord, aid).content_value == 7.0 for aid in ids)
+    assert "analyses" in remote_sync_service.load_sync_state(consumer.engine)["targets"][base_url]["v2_streams"]

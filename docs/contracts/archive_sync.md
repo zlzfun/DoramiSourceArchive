@@ -221,9 +221,12 @@ authority's `analyses` entity states (otherwise every same-revision row would be
 skipped as not newer), so the run re-pulls the full analyses stream through the
 existing full-stream path: rows are overwritten, entity states rebuilt, and only
 presence-confirmed absent rows are pruned. Other streams stay incremental. A run
-that fails midway leaves the checkpoint empty, and the rebuilt entity states make
-the next run fetch only what is left. Bump the constant whenever the analyses
-payload gains fields.
+that fails before the analyses stream completes leaves its checkpoint empty: the
+next run downloads the stream from the beginning again, and the entity states
+rebuilt so far make it skip already-applied, unchanged revisions, applying only
+the remaining or newer rows. Replay is safe and idempotent, but there is no
+network-level page resumption. Bump the constant whenever the analyses payload
+gains fields.
 
 An analysis whose `content_hash` no longer matches the producer's current article
 is exported as a tombstone, and is absent from analysis presence checks. This
