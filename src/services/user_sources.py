@@ -767,7 +767,6 @@ def prepare_user_source(
         name=(name or "").strip()[:80] or canonical,
         source_type="podcast" if normalized_kind == "podcast" else "rss",
         url=canonical,
-        category="user",
         fetcher_id="",  # resolve_source_fetcher_id 按 source_type 路由 RSS / Podcast 抓取器
         description="",
         owner_username=username,

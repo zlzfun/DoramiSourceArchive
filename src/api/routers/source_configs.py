@@ -23,6 +23,7 @@ from sqlmodel import Session, select
 from api import deps
 from api.sources import configured_source_platform, configured_source_shape
 from api.textutils import _json_dumps, _now_iso
+from fetchers.registry import admission_status_of
 from models.db import SourceConfigRecord
 from services import accounts as accounts_service
 from services import jobs
@@ -76,7 +77,7 @@ class SourceConfigCreate(BaseModel):
     name: str
     source_type: str = "rss"
     url: str = ""
-    category: str = ""
+    admission_status: str = "admitted"
     fetcher_id: str = ""
     description: str = ""
     source_owner: str = ""
@@ -85,7 +86,6 @@ class SourceConfigCreate(BaseModel):
     source_channel: str = ""
     base_url: str = ""
     provenance_tier: str = ""
-    content_tags: List[str] = PydanticField(default_factory=list)
     signal_strength: str = ""
     noise_risk: str = ""
     fetch_reliability: str = ""
@@ -99,7 +99,7 @@ class SourceConfigUpdate(BaseModel):
     name: Optional[str] = None
     source_type: Optional[str] = None
     url: Optional[str] = None
-    category: Optional[str] = None
+    admission_status: Optional[str] = None
     fetcher_id: Optional[str] = None
     description: Optional[str] = None
     source_owner: Optional[str] = None
@@ -108,7 +108,6 @@ class SourceConfigUpdate(BaseModel):
     source_channel: Optional[str] = None
     base_url: Optional[str] = None
     provenance_tier: Optional[str] = None
-    content_tags: Optional[List[str]] = None
     signal_strength: Optional[str] = None
     noise_risk: Optional[str] = None
     fetch_reliability: Optional[str] = None
@@ -163,11 +162,10 @@ def serialize_source_config(record: SourceConfigRecord, *, mask_private_url: boo
                     data["params"][key] = masked
         data["params_json"] = _json_dumps(data["params"])
         data["url_masked"] = True
-    try:
-        tags = json.loads(record.content_tags_json or "[]")
-        data["content_tags"] = tags if isinstance(tags, list) else []
-    except json.JSONDecodeError:
-        data["content_tags"] = []
+    # 已退役的列不再外露(issue #178)
+    data.pop("category", None)
+    data.pop("content_tags_json", None)
+    data["admission_status"] = admission_status_of(record.admission_status)
     data["shape"] = configured_source_shape(
         record.source_type, resolve_source_fetcher_id(record)
     )
@@ -186,7 +184,7 @@ def normalize_source_id(source_id: str) -> str:
 @router.get("/api/source-configs")
 def get_source_configs(
         source_type: Optional[str] = None,
-        category: Optional[str] = None,
+        admission_status: Optional[str] = None,
         is_active: Optional[bool] = None,
         search: Optional[str] = None,
         skip: int = 0,
@@ -198,8 +196,8 @@ def get_source_configs(
     query = select(SourceConfigRecord)
     if source_type:
         query = query.where(SourceConfigRecord.source_type == source_type)
-    if category:
-        query = query.where(SourceConfigRecord.category == category)
+    if admission_status:
+        query = query.where(SourceConfigRecord.admission_status == admission_status_of(admission_status))
     if is_active is not None:
         query = query.where(SourceConfigRecord.is_active == is_active)
     if search:
@@ -263,7 +261,7 @@ def create_source_config(params: SourceConfigCreate, session: Session = Depends(
         name=params.name.strip(),
         source_type=source_type,
         url=params.url.strip(),
-        category=params.category.strip(),
+        admission_status=admission_status_of(params.admission_status),
         fetcher_id=params.fetcher_id.strip(),
         description=params.description.strip(),
         source_owner=params.source_owner.strip(),
@@ -272,7 +270,6 @@ def create_source_config(params: SourceConfigCreate, session: Session = Depends(
         source_channel=params.source_channel.strip(),
         base_url=params.base_url.strip(),
         provenance_tier=params.provenance_tier.strip(),
-        content_tags_json=json.dumps(params.content_tags or [], ensure_ascii=False),
         signal_strength=params.signal_strength.strip(),
         noise_risk=params.noise_risk.strip(),
         fetch_reliability=params.fetch_reliability.strip(),
@@ -343,8 +340,8 @@ def update_source_config(
     for key, value in update_data.items():
         if key == "params":
             record.params_json = _json_dumps(value)
-        elif key == "content_tags":
-            record.content_tags_json = json.dumps(value or [], ensure_ascii=False)
+        elif key == "admission_status":
+            record.admission_status = admission_status_of(value)
         elif isinstance(value, str):
             setattr(record, key, value.strip())
         else:

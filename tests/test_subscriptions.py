@@ -269,10 +269,11 @@ def test_reader_sources_catalog_marks_subscribed(monkeypatch, tmp_path):
     # 目录是 注册源 ∪ 归档源 ∪ 已订阅源，会包含尚未产出文章的注册源，故只校验具体条目。
     by_id = {s["source_id"]: s for s in data["sources"]}
     assert by_id["rss_openai"]["count"] == 3
-    assert by_id["rss_openai"]["category"] == "RSS 资讯"
+    # 目录的 category 是数据结构中文名,与 content_classification 词表同一张表(issue #178)
+    assert by_id["rss_openai"]["category"] == "RSS 条目"
     assert by_id["rss_openai"]["subscribed"] is True
     assert by_id["gh_repo"]["subscribed"] is False
-    assert by_id["gh_repo"]["category"] == "代码仓库"
+    assert by_id["gh_repo"]["category"] == "GitHub 仓库"
     # 全站订阅人数(发现页选源参考):按 owner 去重,同一用户多份订阅只计一人。
     assert by_id["rss_openai"]["subscriber_count"] == 1
     assert by_id["gh_repo"]["subscriber_count"] == 0

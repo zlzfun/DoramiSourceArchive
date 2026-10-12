@@ -19,7 +19,6 @@ class GenericGitHubReleasesFetcher(BaseFetcher):
     source_id = "generic_github_releases"
     content_type = "github_release"
     default_kind = "release"  # 版本发布:内容类型「版本更新」,文章列表里用紧凑行(预设子类继承)
-    category = "advanced"
 
     name = "通用 GitHub Releases"
     description = "通过 GitHub API 抓取指定仓库的 Release 元数据，适合 AI 工具、框架与产品更新。"
@@ -175,7 +174,6 @@ class PresetGitHubReleasesFetcher(GenericGitHubReleasesFetcher):
     source_id = "unknown_source"
     owner = ""
     repo = ""
-    category = "product_update"
     default_limit = 8
     default_include_prereleases = True
 
@@ -213,7 +211,6 @@ class OpenCodeGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
     source_channel = "github_release"
     source_url = "https://github.com/anomalyco/opencode/releases"
     provenance_tier = "tier0_primary"
-    content_tags = ["developer_tool", "product_update"]
     signal_strength = "medium_signal"
     noise_risk = "high_noise"
     fetch_reliability = "stable_public"
@@ -232,7 +229,6 @@ class OpenClawGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
     source_channel = "github_release"
     source_url = "https://github.com/openclaw/openclaw/releases"
     provenance_tier = "tier0_primary"
-    content_tags = ["developer_tool", "product_update", "api_platform"]
     signal_strength = "medium_signal"
     noise_risk = "high_noise"
     fetch_reliability = "stable_public"
@@ -254,7 +250,6 @@ class HermesAgentGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
     source_channel = "github_release"
     source_url = "https://github.com/NousResearch/hermes-agent/releases"
     provenance_tier = "tier0_primary"
-    content_tags = ["developer_tool", "product_update", "api_platform"]
     signal_strength = "medium_signal"
     noise_risk = "high_noise"
     fetch_reliability = "stable_public"

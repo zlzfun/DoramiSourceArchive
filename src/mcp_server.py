@@ -61,7 +61,6 @@ def _list_sources_impl(db_sink: DatabaseStorage) -> list[dict]:
             "name": f["name"],
             "icon": f.get("icon", ""),
             "content_type": f.get("content_type", ""),
-            "category": f.get("category", "general"),
             "last_fetch_time": state.last_completed_at if state else None,
             "last_fetch_status": state.status if state else None,
         })

@@ -10,27 +10,11 @@ from typing import Any, Dict, List, Optional
 
 from fetchers.registry import fetcher_registry
 from models.db import ReaderSubscriptionRecord
+from services import content_classification
 from services import daily_brief as daily_brief_service
 from services.source_naming import friendly_source_name
 
 
-# content_type -> 中文分类名（内容源目录/看板展示用）。
-CONTENT_TYPE_CATEGORY = {
-    "rss_article": "RSS 资讯",
-    "podcast_episode": "播客单集",
-    "web_article": "网页文章",
-    "wechat_article": "微信公众号",
-    "arxiv": "arXiv 论文",
-    "github_release": "GitHub 发布",
-    "github_repository": "代码仓库",
-    "hf_model": "模型",
-    "huggingface_model": "模型",
-    "tech_conference": "技术会议",
-    "social_post": "社交动态",
-    "webhook_trigger": "工作流",
-    "daily_brief": "AI 日报",
-    "github_trending": "GitHub 趋势",
-}
 
 # 日报作为「特殊源」的展示元数据。日报不是抓取器（不进 FetcherRegistry），
 # 在内容源目录里直接特判其名称/图标/简介，避免被采集触发流程误调。
@@ -40,7 +24,6 @@ DAILY_BRIEF_SOURCE_META = {
     "icon": "🤖",
     "desc": "由后端大模型每日自动生成的 AI 资讯日报，汇总择优近期归档内容。",
     "content_type": "daily_brief",
-    "category": "AI 日报",
     # 归到哆啦美自有品牌身份，使前端徽标走品牌色「美」字而非通用齿轮兜底。
     "source_owner": "dorami",
 }
@@ -62,9 +45,14 @@ def subscription_source_ids(subscription: ReaderSubscriptionRecord) -> List[str]
 
 
 def _source_category(content_type: Optional[str]) -> str:
+    """读者源目录 / 管理端内容看板的 ``category``:来源的数据结构中文名。
+
+    issue #178 起与 ``content_classification.CONTENT_TYPE_LABELS`` 同一张词表(此前另有一张
+    映射表,把 RSS / 网页条目叫成「RSS 资讯」「网页文章」)。
+    """
     if not content_type:
         return "其它"
-    return CONTENT_TYPE_CATEGORY.get(content_type, content_type)
+    return content_classification.content_type_label(content_type)
 
 
 # ==================== 内容形态（阅读器容器，迭代 3 / issue #178）====================

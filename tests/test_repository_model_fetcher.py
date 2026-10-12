@@ -221,7 +221,7 @@ def test_github_trending_yields_single_daily_digest():
     # 形态与观察期元数据
     assert GitHubTrendingFetcher.content_shape == "article"
     assert GitHubTrendingFetcher.default_kind == "project"
-    assert GitHubTrendingFetcher.category == "incubating"
+    assert GitHubTrendingFetcher.admission_status == "incubating"
     assert GitHubTrendingFetcher.content_type == "github_trending"
     for dim in ("source_owner", "source_brand", "provenance_tier", "signal_strength",
                 "noise_risk", "fetch_reliability"):

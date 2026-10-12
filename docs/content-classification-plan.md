@@ -1,6 +1,6 @@
 # 内容分类与双评分(issue #178)方案
 
-> 状态:**第一波已实现、检视通过,待用户验收**(2026-10-12 动工,分支 `feat/issue-178-content-kind`)。
+> 状态:**第一波已合入**(#180,2026-10-12);**第一波补实施中**(分支 `feat/issue-178-category-retire`,见 §2b)。
 > 结论与可视化见 [issue #178](https://github.com/zlzfun/DoramiSourceArchive/issues/178)
 > 和样页 [`docs/design/dorami-classification-scores-quiet.html`](./design/dorami-classification-scores-quiet.html)
 > (仓库公开,可经 htmlpreview 免登录打开)。#168 的历史探索不作为本方案的前提。
@@ -24,8 +24,8 @@
 
 | 波次 | 范围 | 读者可见变化 |
 |---|---|---|
-| **第一波**(本分支) | 内容类型 / 事件类型(读取时推导,不改提示词、不加列);「动态」并入「文章」;类型签、类型筛选、紧凑行;词表收口 | 类型签、筛选带、左轨三个容器、发现页类型签 |
-| 第一波补(下一个 PR) | `category` 拆出准入状态后退役;源级 `content_tags` 退役;停止把 category 写进条目扩展标签 | 无(管理面「观察」徽记换数据来源) |
+| **第一波**(#180 已合入) | 内容类型 / 事件类型(读取时推导,不改提示词、不加列);「动态」并入「文章」;类型签、类型筛选、紧凑行;词表收口 | 类型签、筛选带、左轨三个容器、发现页类型签 |
+| **第一波补**(本分支) | `category` 拆出准入状态后退役;源级 `content_tags` 退役;停止把 category 写进条目扩展标签 | 无(管理面「观察」徽记换数据来源) |
 | 第二波 | 内容价值:新分析提示词一次产出内容类型(LLM 补判)与两个分;黄金集按类型扩充;播客尺子迁入;评分卡新交互 | 主分与评分卡 |
 | 第三波 | 分发:早报「值得读 / 值得听」;日报论文名额改按内容价值;播客门控改读内容价值;新闻尺子移除「非新闻体裁」条款 | 早报新分区 |
 
@@ -122,6 +122,60 @@ WHEN 的 CASE 表达式(体裁用相关标量子查询),筛选取它的 IN(`kind
   lint / build 通过;e2e `mobile_reader.py` 与 `check_mobile_navigation.py` 的「动态」步骤改用播客容器。
 - 隔离栈(真实库副本,已清除副本中的模型密钥并停用采集任务):Playwright 亮 / 暗 / 390px 三组,左轨三容器、
   筛选带选项、论文筛选、版本更新紧凑行、眉头、发现页类型签、标读收起均符合预期,无 pageerror。
+
+## 2b. 第一波补:`category` / `content_tags` 退役
+
+### 2b.1 拆分
+
+源级 `category` 一个字段挤着三件事,逐个盘点消费方后拆开(注册表 69 个节点:38 个 `incubating`,7 个 `advanced`
+与 `is_template` 完全重合,其余是 official_doc / official_web / product_update / primary / official / community / media 等角色值):
+
+| 原职责 | 原表达 | 现在 |
+|---|---|---|
+| 准入状态(观察期) | `category = "incubating"`,注释写「转正后改回 X」 | **`admission_status`**:`admitted` 正式(默认)/ `incubating` 观察期。注册源是抓取器类属性,配置源是同名列 |
+| 节点用途(通用模板) | `category = "advanced"` / `"workflow"` | 现有的 `is_template`(`workflow` 已无节点) |
+| 来源角色 | official / media / community … | 不再记录;角色一直由 `services/source_naming.source_role`(前端 `sourceRoleOf`)推导 |
+
+准入状态的消费方:每日采集脚本(排除观察期与模板)、节点管理「观察」徽记、源健康接口与节点目录。
+转正:注册源删掉类上的 `admission_status` 行;配置源 `PUT /api/source-configs/{id}` `{"admission_status": "admitted"}`。
+播客精选目录新建行时设为观察期,之后的目录重导不改写(此前每次导入都把 `category` 重置为 incubating,转正无从谈起)。
+规范化 `admission_status_of`:未知值按正式处理,不让拼错的值把节点悄悄挤出每日采集。
+
+### 2b.2 退役范围
+
+- **抓取器**:删除全部 `category` 与 `content_tags` 类属性(63 处)、三个通用模板参数表里的「业务分类」、
+  RSS / 播客 / 网页模板的 `category` 运行参数;配置源调度不再把 `category` 塞进抓取参数。
+- **条目标签**:不再写入源级 `category`、`content_tags` 和抓取方式字面量 `webpage`,只保留源站自带的标签(feed term、
+  WordPress 分类、站点标签)。历史条目不改写(方案 §3.1:档案忠实性;改写会经归档同步触发器把全库重新广播)。
+- **接口**:注册表元数据、源健康、节点目录、读者源目录、配置源 CRUD 不再输出 `category` / `content_tags`,
+  改输出 `admission_status`(配置源列表的 `?category=` 过滤换成 `?admission_status=`);MCP `list_sources` 去掉
+  `category` 键(它把内部的 incubating 状态暴露给了外部客户端;仓库内与 IM 机器人均无消费方)。
+  旧客户端提交的 `category` / `content_tags` 被接口静默忽略。
+- **读者源目录 / 管理端内容看板的 `category`**:这是另一个概念(数据结构中文名),原映射表与第一波的
+  `CONTENT_TYPE_LABELS` 重复且把 RSS 叫「RSS 资讯」;改用同一张词表(「RSS 条目」「网页条目」「GitHub 仓库」…),
+  删除 `api/sources.CONTENT_TYPE_CATEGORY`。仓库内无消费方。
+- **AI 自定义节点生成器**(前端入口关闭):提示词、启发式基线与 LLM 合并不再产出这两个字段。
+- **前端**:「观察」徽记改看 `admission_status`;节点检视器去掉内容标签行(`.inspector-tags` 样式删除);生成器表单去掉两个字段。
+- **每日采集脚本**:`--exclude-category` 参数删除(`--include-advanced` 语义不变:同时纳入模板与观察期节点)。
+
+### 2b.3 数据库与同步
+
+- 迁移 `c6413eda8931`:`source_configs` 只加列 `admission_status`(NOT NULL,默认 `admitted`),把 `category='incubating'`
+  的行映射为观察期;SQLite 原生 ADD COLUMN,不重建表。降级用原生 DROP COLUMN 去掉新列。
+- 旧列 `category` / `content_tags_json` **暂留、不再读写**:表上挂着 7 个归档同步触发器,SQLite 删列要重建表并重装触发器,
+  留给后续结构清理一并做(见 backlog)。
+- 归档同步 v2 的 sources 流:去掉 `category` / `content_tags_json`,加入 `admission_status`。接收端只应用自己认识且 payload 里
+  带了的字段,新旧版本两个方向都兼容(外网先部署时,未升级的内网保留旧值;内网先升级时,新列由迁移按本地旧列初始化)。
+- 盘点时发现的既有问题(不在本波修):迁移环境跑完迁移后重装同步触发器这一步实际不生效,升级后 43 个触发器全无,
+  由启动时 `DatabaseStorage` 初始化的 `create_all` 钩子补齐。生产是「迁移 → 启动」顺序,中间无写入,所以会自愈;记入 backlog。
+
+### 2b.4 自测
+
+- 行为不变的对照(与 origin/main 逐个比较):69 个节点的观察期集合(38)、模板标记、默认可见性与策展理由完全一致;
+  每日采集脚本默认选出的 24 个节点、`--include-advanced` 的 69 个节点完全一致。
+- 新增 `tests/test_source_admission.py`(注册表无退役字段且准入取值合法、类上不再有退役属性的防回潮守卫、RSS 条目标签
+  只取 feed term、配置源接口读写与转正与忽略旧字段、播客目录重导不打回观察期、同步流传准入状态、每日采集排除口径);
+  `tests/test_migrations.py` 补迁移升降级用例(按「迁移 → DatabaseStorage」顺序核对触发器完整恢复);更新相关用例的断言。
 
 ## 3. 第二波、第三波要点(待动工时细化)
 

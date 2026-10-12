@@ -35,6 +35,17 @@
 codex R1 检视 11 条(2 P1),1 条协商撤回,其余成批修复,R2 复检再补两处轮询交错:配置化版本发布源重新进榜、论文链接锚定 URL 开头、播客行补类型签、
 筛选作用域往返复活、轮询成员与分面协调、分面单次聚合、标读端点拒绝非法 shape 等,详见方案 §4。
 
+### issue #178 第一波补:`category` / `content_tags` 退役(分支 `feat/issue-178-category-retire`)
+
+源级 `category` 拆成三处:准入状态独立成 `admission_status`(`admitted` / `incubating`;注册源是抓取器类属性,配置源是新增列,
+迁移只加列并把 `category='incubating'` 映射过去),模板看既有的 `is_template`,来源角色本就由 `source_role` 推导。
+每日采集脚本、节点管理「观察」徽记、源健康与节点目录改读准入状态;播客目录只在新建时设观察期,重导不再打回。
+源级 `content_tags` 整体退役(63 处类属性、配置源接口、节点检视器、生成器提示词);条目标签不再拼入源级分类、
+内容标签与 `webpage` 字面量,只留源站自带标签,历史条目不改写。读者源目录 / 管理端看板的 `category`(数据结构中文名)
+改用第一波的同一张词表;MCP `list_sources` 去掉泄露内部观察期状态的 `category`。旧列暂留不读写(表上挂同步触发器,
+删列需重建表),同步 sources 流改传 `admission_status`,新旧版本双向兼容。对照 origin/main:节点观察期集合、可见性、
+策展理由与每日采集选中集合逐个一致。盘点中发现迁移环境的触发器重装不生效(启动时自愈),记 backlog。
+
 ## issue #153 Tessl 公共播客源（分支 `feat/issue-153-tessl-source`，版本号以实际发版为准）
 
 精选 Podcast 目录新增 Tessl 的 `The AI Native Dev`，目录从全局验证日期改为逐源

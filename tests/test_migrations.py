@@ -2804,6 +2804,67 @@ def test_retire_interest_mute_stance_migration_fails_closed_without_table(tmp_pa
         engine.dispose()
 
 
+def test_source_admission_status_migration_splits_incubating_out_of_category(tmp_path):
+    """issue #178:category='incubating' 的配置源升级后为观察期,其余为正式;按生产启动顺序
+    (迁移 → DatabaseStorage 初始化)source_configs 上的归档同步触发器完整恢复;降级去掉新列、旧列仍在。
+
+    注:迁移环境跑完迁移后的触发器重装当前不生效(origin/main 上同样如此),由启动时的
+    create_all after_create 钩子补齐——见 docs/backlog.md。"""
+    db_url = f"sqlite:///{tmp_path / 'admission.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "7ec8c19b1356")
+    engine = create_engine(db_url)
+    stamp = "2026-10-12T00:00:00+08:00"
+
+    def triggers(conn):
+        return {
+            row[0] for row in conn.execute(text(
+                "SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name='source_configs'"
+            ))
+        }
+
+    try:
+        with engine.begin() as conn:
+            before = triggers(conn)
+            columns = conn.execute(text("PRAGMA table_info(source_configs)")).all()
+            required = [
+                (row[1], row[2]) for row in columns
+                if row[3] and row[4] is None and row[1] not in {"source_id", "category"}
+            ]
+            for source_id, category in (
+                ("podcast_a", "incubating"),
+                ("user_rss_x", "user"),
+                ("custom_feed", "official"),
+            ):
+                values = {name: (0 if "INT" in (kind or "").upper() or "BOOL" in (kind or "").upper() else stamp
+                                 if name.endswith("_at") else source_id)
+                          for name, kind in required}
+                values.update({"source_id": source_id, "category": category})
+                names = ", ".join(values)
+                params = ", ".join(f":{name}" for name in values)
+                conn.execute(text(f"INSERT INTO source_configs ({names}) VALUES ({params})"), values)
+        assert "archive_sync_source_update" in before
+
+        command.upgrade(cfg, "heads")
+        with engine.connect() as conn:
+            rows = dict(conn.execute(text(
+                "SELECT source_id, admission_status FROM source_configs"
+            )).all())
+            assert rows == {"podcast_a": "incubating", "user_rss_x": "admitted", "custom_feed": "admitted"}
+        from storage.impl.db_storage import DatabaseStorage
+
+        DatabaseStorage(db_url=db_url).engine.dispose()
+        with engine.connect() as conn:
+            assert triggers(conn) == before
+
+        command.downgrade(cfg, "7ec8c19b1356")
+        with engine.connect() as conn:
+            names = {row[1] for row in conn.execute(text("PRAGMA table_info(source_configs)"))}
+            assert "admission_status" not in names and "category" in names
+    finally:
+        engine.dispose()
+
+
 def test_main_migration_chain_has_a_single_unlabeled_head():
     """issue #130:main 自己的迁移链必须单头;下游分叉仓声明了 branch_labels 的支线(内网 SSO 迁移)允许并存,
     不做 alembic merge——多头由 ensure_migrated 的 upgrade("heads") 承担,测试与文档口径统一用 heads。"""

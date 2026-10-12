@@ -37,7 +37,6 @@ class SinglePageDocumentFetcher(BaseFetcher):
 
     source_id = "unknown_source"
     content_type = "web_article"
-    category = "official_doc"
     page_url = ""
     site_name = ""
     source_section = ""
@@ -142,7 +141,7 @@ class SinglePageDocumentFetcher(BaseFetcher):
             site_name=self.site_name or self.name,
             source_section=self.source_section,
             summary=content[:500],
-            tags=[self.category, *list(self.content_tags or [])],
+            tags=[],
             raw_data={
                 "listing_url": self.page_url,
                 "url": source_url,
@@ -169,7 +168,6 @@ class OpenAiCodexChangelogFetcher(SinglePageDocumentFetcher):
     source_scope = "developer_tool"
     source_channel = "docs_changelog"
     provenance_tier = "tier0_primary"
-    content_tags = ["developer_tool", "product_update", "model_release", "api_platform"]
     signal_strength = "high_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
@@ -273,7 +271,7 @@ class OpenAiCodexChangelogFetcher(SinglePageDocumentFetcher):
                 site_name=self.site_name,
                 source_section=self.source_section,
                 summary=entry["summary"],
-                tags=[self.category, *list(self.content_tags or [])],
+                tags=[],
                 raw_data={
                     "listing_url": self.page_url,
                     "url": entry["source_url"],
@@ -302,7 +300,6 @@ class ClaudeCodeChangelogFetcher(SinglePageDocumentFetcher):
     source_scope = "developer_tool"
     source_channel = "changelog"
     provenance_tier = "tier0_primary"
-    content_tags = ["developer_tool", "product_update"]
     signal_strength = "high_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
@@ -421,7 +418,7 @@ class ClaudeCodeChangelogFetcher(SinglePageDocumentFetcher):
                 site_name=self.site_name,
                 source_section=self.source_section,
                 summary=entry["summary"],
-                tags=[self.category, *list(self.content_tags or [])],
+                tags=[],
                 raw_data={
                     "listing_url": self.page_url,
                     "url": entry["source_url"],
@@ -562,7 +559,7 @@ class DevsiteReleaseNotesFetcher(SinglePageDocumentFetcher):
                 site_name=self.site_name or self.name,
                 source_section=self.source_section,
                 summary=entry["summary"],
-                tags=[self.category, *list(self.content_tags or [])],
+                tags=[],
                 raw_data={
                     "listing_url": self.page_url,
                     "url": entry["source_url"],
@@ -590,7 +587,6 @@ class GemmaReleaseNotesFetcher(DevsiteReleaseNotesFetcher):
     source_scope = "open_model_family"
     source_channel = "docs_release_notes"
     provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "research_paper", "api_platform"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
@@ -611,7 +607,6 @@ class XAiDeveloperReleaseNotesFetcher(SinglePageDocumentFetcher):
     source_scope = "api_platform"
     source_channel = "docs_changelog"
     provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "api_platform", "developer_tool", "product_update"]
     signal_strength = "high_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
@@ -746,7 +741,7 @@ class XAiDeveloperReleaseNotesFetcher(SinglePageDocumentFetcher):
                 site_name=self.site_name,
                 source_section=self.source_section,
                 summary=entry["summary"],
-                tags=[self.category, *list(self.content_tags or [])],
+                tags=[],
                 raw_data={
                     "listing_url": self.page_url,
                     "url": entry["source_url"],
@@ -775,7 +770,6 @@ class DeepSeekApiChangeLogFetcher(DevsiteReleaseNotesFetcher):
     source_scope = "api_platform"
     source_channel = "docs_changelog"
     provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "api_platform", "product_update"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
@@ -878,7 +872,6 @@ class ZaiNewReleasedFetcher(SinglePageDocumentFetcher):
     source_scope = "model_family"
     source_channel = "docs_release_notes"
     provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "api_platform", "developer_tool", "product_update"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
@@ -966,7 +959,7 @@ class ZaiNewReleasedFetcher(SinglePageDocumentFetcher):
                 site_name=self.site_name,
                 source_section=self.source_section,
                 summary=entry["summary"],
-                tags=[self.category, *list(self.content_tags or [])],
+                tags=[],
                 raw_data={
                     "listing_url": self.page_url,
                     "url": entry["source_url"],
@@ -993,7 +986,6 @@ class ByteDanceSeedResearchFetcher(SinglePageDocumentFetcher):
     source_scope = "research_lab"
     source_channel = "research_index"
     provenance_tier = "tier0_primary"
-    content_tags = ["research_paper", "model_release"]
     signal_strength = "medium_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
@@ -1103,7 +1095,7 @@ class ByteDanceSeedResearchFetcher(SinglePageDocumentFetcher):
                 site_name=self.site_name,
                 source_section=self.source_section,
                 summary=entry["summary"],
-                tags=[self.category, *list(self.content_tags or [])],
+                tags=[],
                 raw_data={
                     "listing_url": self.page_url,
                     "url": entry["source_url"],
@@ -1131,7 +1123,6 @@ class HuggingFaceDailyPapersFetcher(SinglePageDocumentFetcher):
     source_channel = "paper_ranking"
     provenance_tier = "tier1_curated"
     default_kind = "paper"  # 每条都是一篇论文原文(arXiv 摘要页)
-    content_tags = ["research_paper", "model_release", "developer_tool"]
     signal_strength = "medium_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
@@ -1243,7 +1234,7 @@ class HuggingFaceDailyPapersFetcher(SinglePageDocumentFetcher):
                 site_name=self.site_name,
                 source_section=self.source_section,
                 summary=entry["summary"],
-                tags=[self.category, *list(self.content_tags or [])],
+                tags=[],
                 raw_data={
                     "listing_url": self.page_url,
                     "url": entry["source_url"],
@@ -1289,7 +1280,6 @@ class CursorChangelogWebFetcher(BaseWebPageListFetcher):
     source_scope = "developer_tool"
     source_channel = "changelog"
     provenance_tier = "tier0_primary"
-    content_tags = ["developer_tool", "product_update"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
@@ -1331,7 +1321,6 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
     source_scope = "ai_media"
     source_channel = "website"
     provenance_tier = "tier1_curated"
-    content_tags = ["market_news", "model_release", "product_update", "research_paper", "opinion"]
     signal_strength = "medium_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
@@ -1554,7 +1543,7 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
                 site_name=self.site_name,
                 source_section=self.source_section,
                 summary=summary,
-                tags=[self.category, "webpage", *entry["tags"]],
+                tags=list(entry["tags"]),
                 raw_data={
                     "listing_url": self.listing_url,
                     "url": url,
@@ -1586,14 +1575,13 @@ class ArenaLeaderboardChangelogFetcher(SinglePageDocumentFetcher):
     source_url = page_url
     site_name = "Arena"
     source_section = "Leaderboard Changelog"
-    category = "incubating"  # 观察期;验收转正后改回 "official_doc"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 20
     source_owner = "arena_intelligence"
     source_brand = "Arena"
     source_scope = "ai_benchmark_platform"
     source_channel = "leaderboard_changelog"
     provenance_tier = "tier0_primary"
-    content_tags = ["benchmark", "model_release", "leaderboard_update"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public_ssr_page"
@@ -1703,7 +1691,7 @@ class ArenaLeaderboardChangelogFetcher(SinglePageDocumentFetcher):
                 site_name=self.site_name,
                 source_section=self.source_section,
                 summary=entry["summary"],
-                tags=[self.category, *list(self.content_tags or [])],
+                tags=[],
                 raw_data={
                     "listing_url": self.page_url,
                     "url": entry["source_url"],
@@ -1749,7 +1737,6 @@ class AieraWebsiteFetcher(BaseWebPageListFetcher):
     source_scope = "ai_media"
     source_channel = "website"
     provenance_tier = "tier1_curated"
-    content_tags = ["market_news", "model_release", "product_update", "research_paper", "opinion"]
     signal_strength = "medium_signal"
     noise_risk = "high_noise"
     fetch_reliability = "stable_public_website"
@@ -1910,7 +1897,7 @@ class AieraWebsiteFetcher(BaseWebPageListFetcher):
                     site_name=self.site_name,
                     source_section=self.source_section,
                     summary=summary,
-                    tags=[self.category, "webpage", *self.content_tags, *categories],
+                    tags=list(categories),
                     raw_data={
                         "listing_url": request_url,
                         "url": url,

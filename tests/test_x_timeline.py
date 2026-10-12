@@ -134,11 +134,11 @@ def test_presets_are_registered_with_social_contract():
         assert fetcher_class.content_type == "social_post"
         assert fetcher_class.content_shape == "social"
         assert fetcher_class.platform == "x"
-        assert fetcher_class.category == "incubating"
+        assert fetcher_class.admission_status == "incubating"
         assert fetcher_class.is_template is False
         assert metadata[source_id]["shape"] == "social"
         assert metadata[source_id]["platform"] == "x"
-        assert metadata[source_id]["category"] == "incubating"
+        assert metadata[source_id]["admission_status"] == "incubating"
         assert metadata[source_id]["default_visible"] is True
 
 

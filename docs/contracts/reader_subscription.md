@@ -79,7 +79,8 @@ slimmed; the only exception is a user who is *already* subscribed to one, who st
 it so they can unsubscribe. Legitimate unregistered import sources (e.g. `social_post`)
 are *not* on that list and remain subscribable. Each entry carries a friendly `name` and `description`/`icon`
 (enriched from the fetcher registry, falling back to `SOURCE_FRIENDLY_NAMES` then the raw
-id), primary `content_type`, a grouping `category`, article `count`, a `registered` flag,
+id), primary `content_type`, a grouping `category` (the Chinese name of the data structure, from the same
+vocabulary as `content_type_label` — issue #178), article `count`, a `registered` flag,
 and a `subscribed` flag for the current user. The 阅读器 left sidebar renders these as the
 subscription manager: subscribed sources pinned at the top (star to unsubscribe) and the
 rest under a collapsible "发现更多来源" group with a one-click subscribe `+`. Selecting a
@@ -238,7 +239,8 @@ only authorization signal it carries. Its content-returning tools (`search_artic
 consumer a personalized MCP view through one shared MCP endpoint. A missing, invalid, or
 inactive token makes the tool return an error instead of any data — there is no unscoped
 global surface over MCP. `list_sources` is the only exception: it returns just the source
-catalog (ids/types, no article bodies) and needs no token, so a consumer can discover what
+catalog (ids/names/types and last-fetch status, no article bodies; the fetcher `category` key was
+dropped in issue #178 because it leaked the internal admission state) and needs no token, so a consumer can discover what
 to subscribe to. Admins searching the whole archive use the in-app surfaces (知识台账检索),
 not MCP; to debug MCP they pass their own `dfeed_` token like any reader.
 

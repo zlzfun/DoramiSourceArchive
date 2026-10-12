@@ -54,7 +54,7 @@ PYTHONPATH=src uv run python scripts/import_podcast_catalog.py --apply
 - `POST /api/source-configs/podcast-catalog/import`：按 ID 幂等导入。
 
 自动安装和手动导入默认都是 `update_existing=false`。目录中的所有源都会进入节点管理；
-`ingest_status` 只报告 Feed 健康，不作为准入门槛。所有新源标记为 `incubating`，可先立即抓取
+`ingest_status` 只报告 Feed 健康，不作为准入门槛。所有新源以准入状态 `admission_status = "incubating"` 建行（issue #178 起独立于已退役的 `category`；目录重新导入不改写，管理员转正后保持正式），可先立即抓取
 检查标题、日期、show notes、封面、时长与重复率，再扩大采集。可在「采集任务」中像博客节点
 一样选择多个节目、分别设置单次上限，并由任务的统一 Cron 定时运行。任务保存逻辑播客源 ID，
 执行时读取最新 SourceConfig 并解析为共用的 `generic_podcast_rss` 执行器；Feed URL 和源身份

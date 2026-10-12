@@ -259,7 +259,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
         name: item.name,
         icon: '',
         desc: item.desc || item.feed_url || '',
-        category: item.user_source ? 'user' : (item.category || 'podcast'),
         content_type: item.content_type || (item.source_type === 'podcast' ? 'podcast_episode' : 'rss_article'),
         shape: item.shape || (item.source_type === 'podcast' ? 'podcast' : 'article'),
         user_source: Boolean(item.user_source),
@@ -271,7 +270,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
         source_channel: item.source_channel || '',
         base_url: item.base_url || item.feed_url || '',
         provenance_tier: item.provenance_tier || '',
-        content_tags: Array.isArray(item.content_tags) ? item.content_tags : [],
         signal_strength: item.signal_strength || '',
         noise_risk: item.noise_risk || '',
         fetch_reliability: item.fetch_reliability || '',
@@ -728,7 +726,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
               <span className="board-node-name-text">{fetcher.name}</span>
               {/* 信息角色已由所在分组的组头承担,行上不再重复挂胶囊(同一信息画两遍即噪声) */}
               {/* 观察期:新节点批次质量验收转正前的集中观察标记(不进每日自动采集) */}
-              {fetcher.category === 'incubating' && (
+              {fetcher.admission_status === 'incubating' && (
                 <span className="tier-pill incubating-pill" title="观察期:质量验收转正前不进每日自动采集">观察</span>
               )}
               {/* 读者面隐藏:发现页/源栏/文章流对读者不可见,采集照常 */}

@@ -197,10 +197,6 @@ def _configured_source_meta(session: Session) -> Dict[str, Dict[str, Any]]:
     """SourceConfig 的读者目录元数据；尤其覆盖尚无产出的配置源形态。"""
     result: Dict[str, Dict[str, Any]] = {}
     for record in session.exec(select(SourceConfigRecord)).all():
-        try:
-            tags = json.loads(record.content_tags_json or "[]")
-        except (TypeError, json.JSONDecodeError):
-            tags = []
         result[record.source_id] = {
             "id": record.source_id,
             "name": record.name,
@@ -215,7 +211,6 @@ def _configured_source_meta(session: Session) -> Dict[str, Dict[str, Any]]:
             "source_channel": record.source_channel,
             "provenance_tier": record.provenance_tier,
             "base_url": record.base_url or record.url,
-            "content_tags": tags if isinstance(tags, list) else [],
         }
     return result
 
@@ -1348,7 +1343,6 @@ def _reader_sources_catalog(
                 "source_channel": meta.get("source_channel", ""),
                 "provenance_tier": meta.get("provenance_tier", ""),
                 "base_url": meta.get("base_url", ""),
-                "content_tags": meta.get("content_tags", []),
                 "content_type": resolved_type,
                 "category": _source_category(resolved_type),
                 "shape": source_shape(source_id, resolved_type, source_meta),
