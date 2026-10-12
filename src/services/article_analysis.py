@@ -2644,7 +2644,8 @@ def queue_content_value_fill(
 
     前提:有当前新闻分(``scoring_version`` 为当前、内容未变)、该数据结构的提示词产出内容价值、
     内容价值缺失或版本过期。分析行为 failed / timeout 但旧结果仍有效时:补评自己的失败重新排队(重置尝试
-    次数),完整刷新还在重试的返回 ``busy``,完整刷新已到终态的允许补评。排队期间上一次分析照常可读(与强制刷新同一套交接语义);期间若正文变化,
+    次数),完整刷新还在重试的返回 ``busy``,完整刷新已到终态的允许补评。本机无执行权(远端权威 / 接收端
+    停写)先于其它判断返回 ``remote_authority`` / ``consumer_quiesced``。排队期间上一次分析照常可读(与强制刷新同一套交接语义);期间若正文变化,
     入库钩子的完整分析会把范围改回完整。返回 ``queued`` / ``unchanged`` / ``busy`` / ``ineligible`` /
     ``remote_authority``。
     """
@@ -2654,6 +2655,11 @@ def queue_content_value_fill(
         return "ineligible"
     if (article.analysis_authority_id or "").strip():
         return "remote_authority"
+    if not sync_consumer_policy.local_source_operation_allowed(
+        session, article.source_id, operation="analysis"
+    ):
+        # 执行权检查放在 busy 之前:停写模式下在途的完整刷新也跑不了(codex R2-1)。
+        return "consumer_quiesced"
     record = session.get(ArticleAnalysisRecord, article_id)
     if record is None or not content_value_contract_version(article.content_type):
         return "ineligible"
@@ -2675,9 +2681,7 @@ def queue_content_value_fill(
         return "ineligible"
     if content_value_fill_is_current(article, record):
         return "unchanged"
-    if not sync_consumer_policy.local_source_operation_allowed(
-        session, article.source_id, operation="analysis"
-    ) or not source_allows_analysis(session, article.source_id):
+    if not source_allows_analysis(session, article.source_id):
         return "ineligible"
     now_iso = _iso(now)
     if not record.analyzed_at:

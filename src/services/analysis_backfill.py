@@ -80,6 +80,39 @@ class AnalysisBackfillError(ValueError):
     """A full-analysis backfill request violates a governance invariant."""
 
 
+def _local_execution_block(session: Session, article: ArticleRecord) -> Optional[str]:
+    """本机对这篇是否已无分析执行权:归档同步接管(远端权威)或接收端停写;有权时返回 None。"""
+
+    if (article.analysis_authority_id or "").strip():
+        return "remote_authority"
+    if not sync_consumer_policy.local_source_operation_allowed(
+        session, article.source_id, operation="analysis"
+    ):
+        return "v2_consumer_quiesced"
+    return None
+
+
+def _dispatch_target_done(
+    selection: Optional[str],
+    article: ArticleRecord,
+    analysis: Optional[ArticleAnalysisRecord],
+) -> bool:
+    """派发前目标是否已经达成(不必再派):仅从未分析 = 已有结果;补内容价值 = 已有当前内容价值。
+
+    派发与对账共用「目标已完成 → 本机执行权 → 等待 / 入队」的顺序(codex R1 / R2-1)。
+    """
+
+    if selection == MISSING_SELECTION:
+        return has_authoritative_analysis(analysis)
+    if selection == CONTENT_VALUE_SELECTION:
+        return bool(
+            analysis is not None
+            and analysis.status == AnalysisStatus.SUCCEEDED.value
+            and content_value_fill_is_current(article, analysis)
+        )
+    return False
+
+
 @dataclass(frozen=True)
 class BackfillTarget:
     article: ArticleRecord
@@ -465,9 +498,15 @@ def reconcile_full_analysis_backfill(
             item.status = "skipped"
             item.last_error = "article_deleted"
         elif analysis is None:
-            # A crash between item dispatch and queue commit is safe to replay.
-            item.status = "pending"
-            item.last_error = "analysis_queue_missing"
+            block = _local_execution_block(session, article)
+            if block:
+                # 目标未完成而本机已无执行权:没有可等待或可重放的本地任务(codex R2-1)。
+                item.status = "skipped"
+                item.last_error = block
+            else:
+                # A crash between item dispatch and queue commit is safe to replay.
+                item.status = "pending"
+                item.last_error = "analysis_queue_missing"
         else:
             current_hash = compute_content_hash(article)
             expected_prompt, expected_scoring = analysis_contract_versions(
@@ -611,24 +650,29 @@ def dispatch_full_analysis_backfill(
             item.updated_at = stamp
             session.add(item)
             continue
+        # 共同外层顺序:目标已完成 → 本机执行权 → 等待 / 入队(codex R1 / R2-1)。
+        analysis = session.get(ArticleAnalysisRecord, article.id)
+        if _dispatch_target_done(selection, article, analysis):
+            # 建任务后到派发前,别的路径(实时补偿扫描、版本巡检、远端同步)已经达成目标:不再重评。
+            item.status = "succeeded"
+            item.last_error = "already_analyzed" if selection == MISSING_SELECTION else None
+            item.target_content_hash = compute_content_hash(article)
+            item.completed_at = stamp
+            item.updated_at = stamp
+            session.add(item)
+            continue
+        block = _local_execution_block(session, article)
+        if block:
+            item.status = "skipped"
+            item.last_error = block
+            item.completed_at = stamp
+            item.updated_at = stamp
+            session.add(item)
+            continue
         if selection == MISSING_SELECTION:
-            # 建任务后到派发前,实时补偿扫描可能已分析过它;已有结果的不强制重评(codex R1-1)。
-            analysis = session.get(ArticleAnalysisRecord, article.id)
-            if has_authoritative_analysis(analysis):
-                item.status = "succeeded"
-                item.last_error = "already_analyzed"
-                item.target_content_hash = compute_content_hash(article)
-                item.completed_at = stamp
-                item.updated_at = stamp
-                session.add(item)
-                continue
             if (
                 analysis is not None
                 and analysis.status in {AnalysisStatus.PENDING.value, AnalysisStatus.RUNNING.value}
-                and not (article.analysis_authority_id or "").strip()
-                and sync_consumer_policy.local_source_operation_allowed(
-                    session, article.source_id, operation="analysis"
-                )
             ):
                 # 已在途:关联它的结果,不重新入队、不重置尝试次数。
                 item.status = "queued"
@@ -657,7 +701,7 @@ def dispatch_full_analysis_backfill(
             item.target_content_hash = compute_content_hash(article)
             item.last_error = None
             item.completed_at = stamp
-        elif outcome in {"ineligible", "remote_authority", "skipped", "unchanged"}:
+        elif outcome in {"ineligible", "remote_authority", "consumer_quiesced", "skipped", "unchanged"}:
             item.status = "skipped"
             item.last_error = f"queue_{outcome}"
             item.completed_at = stamp

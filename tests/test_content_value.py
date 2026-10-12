@@ -732,3 +732,77 @@ def test_eval_report_as_paper_is_checked_on_every_run():
     assert script.majority_kind(["news", "paper"]) == "news"      # 平票按词表顺序
     assert script.majority_kind(["paper", "paper", "news"]) == "paper"
     assert script.majority_kind([]) is None
+
+
+# ── codex R2-1:目标已完成 → 本机执行权 → 等待 / 入队 ─────────────────────────────
+
+def test_missing_job_settles_when_consumer_mode_starts_before_dispatch(storage):
+    from services import sync_consumer_policy
+
+    later = NOW + dt.timedelta(hours=1)
+    with Session(storage.engine) as session:
+        _plain_source(session)
+        session.add(_article("no-row"))
+        session.commit()
+        job_id = _new_job(session, "missing", later)
+        sync_consumer_policy.activate_v2_consumer_mode(session, reason="test")
+        session.commit()
+        job = analysis_backfill.get_full_analysis_backfill(session, job_id)
+        analysis_backfill.dispatch_full_analysis_backfill(session, job, lease_owner="w", now=later)
+        job = analysis_backfill.reconcile_full_analysis_backfill(session, job, lease_owner="w", now=later)
+        item = session.exec(select(TagRetagJobItemRecord)).one()
+        assert (item.status, item.last_error) == ("skipped", "v2_consumer_quiesced")
+        assert job.status == "succeeded"
+
+
+def test_content_value_job_settles_when_consumer_mode_hides_behind_full_retry(storage):
+    from services import sync_consumer_policy
+
+    later = NOW + dt.timedelta(hours=1)
+    with Session(storage.engine) as session:
+        _plain_source(session)
+        article = _article("retrying", fetched_date=OLD_ISO)
+        session.add(article)
+        session.flush()
+        _seed_v6_result(session, article)
+        session.commit()
+        job_id = _new_job(session, "content_value", later)
+        # 快照之后:完整刷新失败、还有重试排期;随后进入接收端停写
+        record = session.get(ArticleAnalysisRecord, "retrying")
+        record.status, record.next_attempt_at, record.attempt_count = "failed", NOW_ISO, 1
+        session.add(record)
+        sync_consumer_policy.activate_v2_consumer_mode(session, reason="test")
+        session.commit()
+        assert queue_content_value_fill(session, "retrying", now=later) == "consumer_quiesced"
+        job = analysis_backfill.get_full_analysis_backfill(session, job_id)
+        analysis_backfill.dispatch_full_analysis_backfill(session, job, lease_owner="w", now=later)
+        job = analysis_backfill.reconcile_full_analysis_backfill(session, job, lease_owner="w", now=later)
+        item = session.exec(select(TagRetagJobItemRecord)).one()
+        assert (item.status, item.last_error) == ("skipped", "v2_consumer_quiesced")
+        assert job.status == "succeeded"
+
+
+def test_content_value_target_completed_remotely_counts_as_succeeded(storage):
+    later = NOW + dt.timedelta(hours=1)
+    with Session(storage.engine) as session:
+        _plain_source(session)
+        article = _article("remote-done", fetched_date=OLD_ISO)
+        session.add(article)
+        session.flush()
+        _seed_v6_result(session, article)
+        session.commit()
+        job_id = _new_job(session, "content_value", later)
+        # 快照之后远端接管并同步来了当前内容价值
+        article = session.get(ArticleRecord, "remote-done")
+        article.analysis_authority_id = "external-producer"
+        record = session.get(ArticleAnalysisRecord, "remote-done")
+        record.content_kind, record.content_value = "tutorial", 7.1
+        record.content_value_reason, record.content_value_version = "可照做", "content-value-v2"
+        session.add_all([article, record])
+        session.commit()
+        job = analysis_backfill.get_full_analysis_backfill(session, job_id)
+        analysis_backfill.dispatch_full_analysis_backfill(session, job, lease_owner="w", now=later)
+        job = analysis_backfill.reconcile_full_analysis_backfill(session, job, lease_owner="w", now=later)
+        item = session.exec(select(TagRetagJobItemRecord)).one()
+        assert item.status == "succeeded"
+        assert (job.status, job.succeeded_count) == ("succeeded", 1)
