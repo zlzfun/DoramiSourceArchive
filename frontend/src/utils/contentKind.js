@@ -59,23 +59,32 @@ export function reconcileKindChoice(choice, scopeKey) {
 }
 
 /**
- * 分析轮询的类型协调(codex R1 #4)。fresh:id → 最新条目(轮询响应,加上对缺失在途项的补取)。
- * - 已加载条目的类型有变 → 记一条分面增量 {from, to};
- * - 类型筛选下改判出本类型 → 移出列表(轮询响应本身已按类型过滤,能命中的只有补取回来的条目)。
+ * 分析轮询:已加载条目在响应里的类型变化,记为分面增量 [{from, to}](未判定记为空串)。
+ * 筛选下的成员变化不走增量,由 polledMembershipChanged 判定后整窗重拉(codex R2)。
  */
-export function reconcilePolledKinds(articles, fresh, kindFilter = '') {
+export function polledKindChanges(articles, fresh) {
   const changes = [];
-  const removed = new Set();
-  if (!Array.isArray(articles) || !fresh) return { changes, removed };
+  if (!Array.isArray(articles) || !fresh) return changes;
   for (const article of articles) {
     const next = fresh.get(article?.id);
     if (!next) continue;
     const from = article.kind || '';
     const to = next.kind || '';
     if (from !== to) changes.push({ from, to });
-    if (kindFilter && to !== kindFilter) removed.add(article.id);
   }
-  return { changes, removed };
+  return changes;
+}
+
+/**
+ * 分析轮询:按类型 / 标签筛选时,在途条目不在本轮响应(同一窗口 [0, N))里,说明窗口成员变了——
+ * 可能已改判出筛选范围,也可能被补位或新到的条目挤出窗口。两种情况本地都分辨不了,也不能在本地
+ * 扣总数(翻页可能已拿到服务端的新总数),调用方应整窗重拉一份带总数与分面的快照。
+ * 不带筛选时分析结果不影响成员,返回 false。
+ */
+export function polledMembershipChanged(articles, inFlightIds, polledIds, { kindFilter = '', tagSearch = false } = {}) {
+  if (!kindFilter && !tagSearch) return false;
+  if (!Array.isArray(articles) || !inFlightIds || !polledIds) return false;
+  return articles.some((article) => inFlightIds.has(article?.id) && !polledIds.has(article?.id));
 }
 
 /**

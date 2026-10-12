@@ -9,8 +9,9 @@ import {
   kindFilterFor,
   kindFilterOptions,
   kindKickerLabel,
+  polledKindChanges,
+  polledMembershipChanged,
   reconcileKindChoice,
-  reconcilePolledKinds,
 } from '../src/utils/contentKind.js';
 import { readerShapeOf } from '../src/utils/readerShape.js';
 
@@ -95,36 +96,31 @@ const FACETS = [
   { kind: 'opinion', label: '观点', count: 0 },
 ];
 
-test('轮询补位:响应满额时改判的在途项仍被移出,分面同步加减(codex R1 #4)', () => {
-  // 教程筛选,同范围 31 篇,首屏 30 篇含在途的 A;A 改判观点后第 31 篇补位,响应仍是 30 篇
+test('轮询补位:筛选下在途项不在满额响应里即判为成员变化,交给整窗重拉(codex R1 #4 / R2-2)', () => {
+  // 教程筛选,同范围 31 篇,首屏 30 篇含在途的 A;A 改判观点后第 31 篇补位,响应仍是满额 30 篇
   const loaded = Array.from({ length: 30 }, (_, i) => ({ id: `t${i}`, kind: 'tutorial' }));
   loaded[5] = { id: 'A', kind: 'tutorial', analysis_status: 'pending' };
-  const fresh = new Map(loaded.filter((a) => a.id !== 'A').map((a) => [a.id, a]));
-  fresh.set('t30', { id: 't30', kind: 'tutorial' }); // 补位进来的第 31 篇
-  // 缺失的在途项 A 经补取拿到真实分类
-  fresh.set('A', { id: 'A', kind: 'opinion' });
-
-  const { changes, removed } = reconcilePolledKinds(loaded, fresh, 'tutorial');
-  assert.deepEqual([...removed], ['A']);
-  assert.deepEqual(changes, [{ from: 'tutorial', to: 'opinion' }]);
-  const counts = Object.fromEntries(applyKindFacetDelta(FACETS, changes).map((f) => [f.kind, f.count]));
-  assert.deepEqual(counts, { paper: 2, tutorial: 30, opinion: 1 });
-});
-
-test('轮询:仍匹配、只是被挤出窗口的在途项不移出', () => {
-  const loaded = [{ id: 'A', kind: 'tutorial', analysis_status: 'pending' }];
-  const { changes, removed } = reconcilePolledKinds(loaded, new Map([['A', { id: 'A', kind: 'tutorial' }]]), 'tutorial');
-  assert.equal(removed.size, 0);
-  assert.deepEqual(changes, []);
+  const inFlight = new Set(['A']);
+  const polled = new Set([...loaded.map((a) => a.id).filter((id) => id !== 'A'), 't30']);
+  assert.equal(polledMembershipChanged(loaded, inFlight, polled, { kindFilter: 'tutorial' }), true);
+  // 先翻页拿到了服务端新总数、再轮询,判定不变——总数不在本地扣,由快照给出
+  assert.equal(polledMembershipChanged(loaded, inFlight, polled, { tagSearch: true }), true);
+  // 不带筛选时分析结果不影响成员
+  assert.equal(polledMembershipChanged(loaded, inFlight, polled, {}), false);
+  // 在途项都在响应里:无成员变化
+  assert.equal(polledMembershipChanged(loaded, inFlight, new Set(loaded.map((a) => a.id)), { kindFilter: 'tutorial' }), false);
 });
 
 test('首次分析完成:未判定 → 观点,观点计数从 0 变 1,筛选选项随之出现', () => {
-  const loaded = [{ id: 'B', kind: null, analysis_status: 'pending' }];
-  const { changes, removed } = reconcilePolledKinds(loaded, new Map([['B', { id: 'B', kind: 'opinion' }]]), '');
-  assert.equal(removed.size, 0, '未筛类型时不移出');
+  const loaded = [{ id: 'B', kind: null, analysis_status: 'pending' }, { id: 'C', kind: 'paper' }];
+  const changes = polledKindChanges(loaded, new Map([['B', { id: 'B', kind: 'opinion' }], ['C', { id: 'C', kind: 'paper' }]]));
+  assert.deepEqual(changes, [{ from: '', to: 'opinion' }]);
   const next = applyKindFacetDelta(FACETS, changes);
   assert.deepEqual(kindFilterOptions(next).map((o) => o.kind), ['paper', 'tutorial', 'opinion']);
   assert.equal(applyKindFacetDelta(FACETS, []), FACETS, '无变化原样返回');
+  // 改判:教程 → 观点,两边各加减一
+  const moved = applyKindFacetDelta(FACETS, [{ from: 'tutorial', to: 'opinion' }]);
+  assert.deepEqual(moved.map((f) => f.count), [2, 30, 1]);
 });
 
 test('分面增量只应用到轮询开始时那一代:同作用域刷新后晚到的旧轮询不再加减', () => {

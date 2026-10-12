@@ -21,8 +21,9 @@ import {
   EMPTY_KIND_CHOICE,
   applyPolledFacetDelta,
   kindFilterFor,
+  polledKindChanges,
+  polledMembershipChanged,
   reconcileKindChoice,
-  reconcilePolledKinds,
 } from '../utils/contentKind';
 import {
   analysisItemsFromResponse,
@@ -114,8 +115,6 @@ function buildListFilters({ activeSourceId, activeTagId, mode, scope, tagSearch,
 
 const UNREAD_POLL_MS = 60000; // 未读轻轮询间隔（标签页可见时才真正请求）
 const ANALYSIS_POLL_MS = 30000;
-// 类型筛选下轮询缺失的在途项逐条补取分类,单轮上限(通常只有 0~2 条)
-const KIND_RECHECK_MAX = 8;
 const ANALYSIS_PROJECTION_KEYS = [
   'analysis_status',
   'tagging_status',
@@ -348,6 +347,9 @@ export function useReaderState({
   // runList 发新请求前 abort 掉旧的（与 DataTab 同一约定）。
   const runList = useAbortableLoad();
   const analysisPollContextRef = useRef(null);
+  // 列表版本:每次列表加载(首页 / 翻页 / 轮询整窗重拉)提交前 +1。分析轮询整次提交前核对,
+  // 被同作用域刷新或翻页取代的旧轮询整体丢弃——不回滚新条目,也不重复累加分面(codex R2-1)。
+  const listVersionRef = useRef(0);
 
   // ── 源目录 ──
   const loadSources = useCallback(async () => {
@@ -750,6 +752,7 @@ export function useReaderState({
     }
     if (data === undefined) return; // 被更新的请求取代，loading 交给新请求，不在此清除
     const items = data.items || [];
+    listVersionRef.current += 1;
     if (!append && mode === 'article') {
       setKindFacets((prev) => ({
         key: kindScopeKey,
@@ -798,6 +801,8 @@ export function useReaderState({
       searchQuery,
       unreadOnly,
       kindFilter,
+      kindScopeKey,
+      listVersion: listVersionRef.current,
       facetsBasis: { key: kindFacets.key, gen: kindFacets.gen },
     };
   }, [
@@ -812,6 +817,7 @@ export function useReaderState({
     searchQuery,
     unreadOnly,
     kindFilter,
+    kindScopeKey,
     kindFacets.key,
     kindFacets.gen,
   ]);
@@ -841,43 +847,51 @@ export function useReaderState({
         listRequest,
         selectedNeedsRefresh ? fetchArticle(context.activeArticle.id) : Promise.resolve(null),
       ]);
-      if (analysisPollContextRef.current?.scopeKey !== context.scopeKey) return;
+      // 作用域变了,或期间有过列表加载(同作用域刷新 / 翻页):本轮结果整体作废,等下一轮
+      const superseded = () => (
+        analysisPollContextRef.current?.scopeKey !== context.scopeKey
+        || listVersionRef.current !== context.listVersion
+      );
+      if (superseded()) return;
       const updates = new Map(
         analysisItemsFromResponse(data).map((article) => [article.id, article]),
       );
       if (selected?.id) updates.set(selected.id, selected);
-      const polledIds = new Set(updates.keys());
-      // 类型筛选下,在途项不在响应里:可能已改判出本类型,也可能只是被补位 / 新到的条目挤出窗口——
-      // 响应满额与否说明不了是哪种(codex R1 #4),逐条补取真实分类(有界)再决定去留。
-      if (context.kindFilter) {
-        const missing = context.articles
-          .filter((article) => activeIds.has(article.id) && !updates.has(article.id))
-          .slice(0, KIND_RECHECK_MAX);
-        const refetched = await Promise.all(
-          missing.map((article) => fetchArticle(article.id).catch(() => null)),
+      if (polledMembershipChanged(context.articles, activeIds, updates, context)) {
+        // 筛选下窗口成员变了:不在本地移出、不在本地扣总数(翻页可能已拿到服务端新总数,codex R2-2),
+        // 按同一窗口静默重拉带总数与分面的权威快照整体替换——成员、总数、下一页位置、分面一起对齐。
+        const snapshotFilters = { ...filters };
+        if (context.mode === 'article') snapshotFilters.kind_facets = 'true';
+        const snapshot = await fetchArticles(
+          snapshotFilters,
+          Math.max(PAGE_SIZE, context.articles.length),
+          0,
+          true,
+          { includeContent: context.mode === 'social' },
         );
-        if (analysisPollContextRef.current?.scopeKey !== context.scopeKey) return;
-        for (const item of refetched) if (item?.id) updates.set(item.id, item);
-      }
-      const { changes, removed } = reconcilePolledKinds(context.articles, updates, context.kindFilter);
-      // 标签搜索沿用既有规则:在途项不在响应里即视为不再命中
-      if (context.tagSearch) {
-        for (const article of context.articles) {
-          if (activeIds.has(article.id) && !polledIds.has(article.id)) removed.add(article.id);
+        if (superseded()) return;
+        const items = snapshot?.items || [];
+        for (const item of items) updates.set(item.id, item);
+        listVersionRef.current += 1;
+        if (context.mode === 'article') {
+          setKindFacets((prev) => ({
+            key: context.kindScopeKey,
+            gen: prev.gen + 1,
+            items: Array.isArray(snapshot?.kind_facets) ? snapshot.kind_facets : [],
+          }));
         }
-      }
-      // 移出的条目从总数里扣掉;下一页按已加载条数取,移出后与服务端位置仍对齐
-      const removedCount = (analysisPollContextRef.current?.articles || [])
-        .filter((article) => removed.has(article.id)).length;
-      if (removedCount) setArticlesTotal((total) => Math.max(0, total - removedCount));
-      if (changes.length) {
-        setKindFacets((state) => applyPolledFacetDelta(state, context.facetsBasis, changes));
-      }
-      setArticles((current) => current
-        .filter((article) => !removed.has(article.id))
-        .map((article) => (
+        setArticlesTotal(snapshot?.total || 0);
+        setArticles(items);
+        setFreshCount(0); // 与首页刷新同口径:窗口已是最新
+      } else {
+        const changes = polledKindChanges(context.articles, updates);
+        if (changes.length) {
+          setKindFacets((state) => applyPolledFacetDelta(state, context.facetsBasis, changes));
+        }
+        setArticles((current) => current.map((article) => (
           updates.has(article.id) ? withFreshAnalysis(article, updates.get(article.id)) : article
         )));
+      }
       setActiveArticle((current) => (
         current?.id && updates.has(current.id)
           ? withFreshAnalysis(current, updates.get(current.id))
