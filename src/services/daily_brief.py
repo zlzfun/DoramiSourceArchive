@@ -1070,6 +1070,15 @@ def _paper_by_value(item: ScoredItem) -> bool:
     return _is_paper(item) and item.content_value is not None
 
 
+def _rule_paper(candidate: BriefCandidate) -> bool:
+    """评分没到手的候选只能凭规则(来源先验 / 数据结构 / 链接形状)认论文。"""
+    return rule_kind(
+        source_id=candidate.source_id,
+        source_url=candidate.source_url,
+        content_type=candidate.content_type,
+    ) == "paper"
+
+
 def _passes_gate(item: ScoredItem, min_score: float, paper_min: float) -> bool:
     if _paper_by_value(item):
         return float(item.content_value) >= paper_min
@@ -1518,12 +1527,18 @@ def load_existing_brief_state(
     raw_items = [e for e in (raw_items or []) if isinstance(e, dict)]
     included = [str(i) for i in (ext.get("included_article_ids") or []) if i]
     items: List[ScoredItem] = []
+    legacy_kind: List[ScoredItem] = []
     for i, entry in enumerate(raw_items):
         article_id = str(entry.get("id") or "")
         if not article_id:
             # 历史日报无 id 键:items 与 included_article_ids 前段同源同序,按位兜底
             article_id = included[i] if i < len(included) else f"legacy_{report_date}_{i}"
-        items.append(_scored_item_from_stored(entry, article_id))
+        item = _scored_item_from_stored(entry, article_id)
+        items.append(item)
+        if "content_kind" not in entry:
+            legacy_kind.append(item)
+    if legacy_kind:
+        _derive_legacy_kinds(session, legacy_kind)
     # 附录 = included_article_ids 去掉正选前段后的余段,回库取标题/链接
     title_only: List[BriefCandidate] = []
     for article_id in included[len(raw_items):]:
@@ -1540,6 +1555,46 @@ def load_existing_brief_state(
             )
         )
     return items, title_only
+
+
+def _derive_legacy_kinds(session: Session, items: List[ScoredItem]) -> None:
+    """升级前写入的当日条目没有 content_kind 键:按文章与分析现推导(同 classify_item 判定序),
+    同日重跑才能把早间已占的论文名额算进来;文章已删时只凭条目里的来源 / 链接 / 数据结构走规则。
+    不看展示分类「学术论文」——它按体裁标,媒体研究报道也是这个值(issue #178 第三波)。"""
+    ids = [it.candidate.id for it in items]
+    articles = {
+        row.id: row for row in session.exec(select(ArticleRecord).where(ArticleRecord.id.in_(ids))).all()
+    }
+    analyses = {
+        row.article_id: row
+        for row in session.exec(
+            select(ArticleAnalysisRecord).where(ArticleAnalysisRecord.article_id.in_(ids))
+        ).all()
+    }
+    source_kinds = source_default_kinds()
+    for item in items:
+        article = articles.get(item.candidate.id)
+        analysis = analyses.get(item.candidate.id)
+        if article is None:
+            item.content_kind = rule_kind(
+                source_id=item.candidate.source_id,
+                source_url=item.candidate.source_url,
+                content_type=item.candidate.content_type,
+                source_kinds=source_kinds,
+            ) or ""
+            continue
+        kind = classify_item(
+            source_id=article.source_id,
+            source_url=article.source_url,
+            content_type=article.content_type,
+            content_genre=analysis.content_genre if analysis is not None else None,
+            source_kinds=source_kinds,
+            content_kind=analysis.content_kind if analysis is not None else None,
+        ).kind or ""
+        item.content_kind = kind
+        item.content_value = score_projection(
+            content_type=article.content_type, kind=kind, analysis=analysis,
+        )["content_value"]
 
 
 async def merge_same_day(
@@ -1754,14 +1809,19 @@ async def _generate_daily_brief(
     # 评分没到手的条目只有标题与链接——降入「📎 其它收录」附录;低于门槛的直接 pass;
     # 无正文候选按标题走了同一把尺子:过线者也只能进附录(没有正文可写要点与点评)
     # 论文名额(issue #178 第三波):有内容价值的论文过的是内容价值门槛 paper_min,不看新闻门槛
-    score_failed = [it.candidate for it in scored if not it.score_ok]
+    # 论文只经正文的论文名额入选,不进附录(附录的三条来路——无正文过线、近线补位、评分失败——都按新闻价值说话);
+    # 评分失败的条目没有分析类型,凭规则能认出是论文的同样不进附录
+    score_failed = [
+        it.candidate for it in scored if not it.score_ok and not _rule_paper(it.candidate)
+    ]
     usable = [
         it for it in scored
         if it.score_ok and it.candidate.has_content and _passes_gate(it, min_score, paper_min)
     ]
     bodyless_passed = [
         it.candidate for it in scored
-        if it.score_ok and not it.candidate.has_content and _passes_gate(it, min_score, paper_min)
+        if it.score_ok and not it.candidate.has_content and not _is_paper(it)
+        and _passes_gate(it, min_score, paper_min)
     ]
     below_threshold = sum(
         1 for it in scored if it.score_ok and not _passes_gate(it, min_score, paper_min)
@@ -1803,12 +1863,12 @@ async def _generate_daily_brief(
     # 标题+链接填进「其它收录」)。低于近线带的仍直接 pass。
     near_band: List[ScoredItem] = []
     if min_score > 0:
-        # 有内容价值的论文不进近线带:它们由论文名额按内容价值裁决,不按新闻分补足
+        # 论文不进近线带:去留只由论文名额决定,不按新闻分补足、也不进附录补位
         near_band = sorted(
             (it for it in scored
              if it.score_ok and it.candidate.has_content
              and it.candidate.id not in prior_ids
-             and not _paper_by_value(it)
+             and not _is_paper(it)
              and min_score - APPENDIX_BAND <= it.score < min_score),
             key=_effective_score, reverse=True,
         )
@@ -1894,7 +1954,10 @@ async def _generate_daily_brief(
     survivor_ids = {it.candidate.id for it in survivors}
     crossday_dropped = {it.candidate.id for it in preselected} - survivor_ids
     qualified_survivors = [it for it in survivors if it.candidate.id not in backfill_ids]
-    need = max(0, min_items - prior_core - len(qualified_survivors)) if min_items else 0
+    # 预选多带的备用论文终会按名额裁掉,保底计数只算名额内的论文(与 core_count 同口径)
+    qualified_papers = sum(1 for it in qualified_survivors if _is_paper(it))
+    qualified_count = len(qualified_survivors) - qualified_papers + min(qualified_papers, paper_cap)
+    need = max(0, min_items - prior_core - qualified_count) if min_items else 0
     backfill_survivors = sorted(
         (it for it in survivors if it.candidate.id in backfill_ids),
         key=_effective_score, reverse=True,

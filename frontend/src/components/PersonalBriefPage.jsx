@@ -656,13 +656,31 @@ export default function PersonalBriefPage({
     const stale = usesToday && (edition.interest_stale || edition.scope_stale);
     const n = (value) => <b>{value}</b>;
     let fact;
-    if (edition.degraded_reason) {
+    // 降级只说新闻那份(issue #178 第三波):值得读 / 值得听照常入选时,说明行如实写「新闻」不足并交代另有几篇;
+    // 「最新更新、不计入正式精选」只指回退板块,没有回退条目时不说
+    const valueCount = readCount + listenCount;
+    const valueText = valueCount > 0 && (
+      <>
+        另有{readCount > 0 && <> {n(readCount)} 篇值得读</>}
+        {readCount > 0 && listenCount > 0 && '、'}
+        {listenCount > 0 && <> {n(listenCount)} 集值得听</>}
+      </>
+    );
+    const scopeText = scopeCount > 0 ? <> {n(scopeCount)} 个订阅来源</> : '订阅来源';
+    if (edition.degraded_reason && valueCount > 0) {
+      const head = interestOnly
+        ? <>今天没有命中你兴趣的新闻{followedCount ? <>（{n(followedCount)} 个兴趣）</> : null}</>
+        : (ratioUnfillable ? '今天缺少用于补齐的非兴趣新闻' : '今天没有达到入选标准的新闻');
+      fact = ownItems.length > 0
+        ? <>{head}，「订阅源最新更新」是{scopeText}的最新内容，不计入正式精选；{valueText}</>
+        : <>{head}，{valueText}</>;
+    } else if (edition.degraded_reason) {
       fact = interestOnly
         ? <>今天没有命中你兴趣的新内容{followedCount ? <>（{n(followedCount)} 个兴趣）</> : null}</>
         : (
           <>
             {ratioUnfillable ? '今天缺少用于补齐的非兴趣内容' : '今天没有达到入选标准的内容'}，以下是
-            {scopeCount > 0 ? <> {n(scopeCount)} 个订阅来源</> : '订阅来源'}的最新更新，不计入正式精选
+            {scopeText}的最新更新，不计入正式精选
           </>
         );
     } else if (interestOnly) {

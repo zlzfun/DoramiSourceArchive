@@ -1137,6 +1137,91 @@ def test_generate_paper_quota_counts_the_whole_day(tmp_path, monkeypatch):
     assert sorted(e["id"] for e in items if e["content_kind"] == "paper") == ["p0", "p1", "p2"]
 
 
+def test_paper_buffer_does_not_shrink_the_backfill(tmp_path, monkeypatch):
+    """检视 R1-1:预选多带的备用论文终会裁掉,保底缺口不能把它算成正文——4 篇论文 + 近线资讯 → 3 + 5 = 8。"""
+    _patch_llm(monkeypatch, _fake_chat_completion)
+    sink = _make_sink(tmp_path, "paper_backfill.db")
+    for article_id, value in (("pa", 9.0), ("pb", 8.8), ("pc", 8.6), ("pd", 8.4)):
+        _seed(sink.engine, article_id, f"src_{article_id}", "2026-06-05T10:00:00")
+        _seed_persisted_analysis(sink.engine, article_id, score=4.5, content_kind="paper", content_value=value)
+    for article_id in ("na", "nb", "nc", "nd", "ne", "nf"):
+        _seed(sink.engine, article_id, f"src_{article_id}", "2026-06-05T10:00:00")
+        _seed_persisted_analysis(sink.engine, article_id, score=5.5, genre="industry_news", content_kind="news")
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+    items = json.loads(record.extensions_json)["items"]
+    assert sorted(e["id"] for e in items if e["content_kind"] == "paper") == ["pa", "pb", "pc"]
+    assert len([e for e in items if e["content_kind"] == "news"]) == 5 and len(items) == 8
+
+
+def test_papers_never_enter_the_appendix(tmp_path, monkeypatch):
+    """检视 R1-2:论文只经正文名额入选——存量近线论文、无正文论文、规则可认的评分失败论文都不进附录。"""
+    async def _fail_one(*, messages, config, **kwargs):
+        if _is_scoring(messages) and "标题-pfail" in messages[1].content:
+            raise RuntimeError("scoring down")
+        return await _fake_chat_completion(messages=messages, config=config, **kwargs)
+
+    _patch_llm(monkeypatch, _fail_one)
+    sink = _make_sink(tmp_path, "paper_appendix.db")
+    for article_id, value in (("pa", 8.0), ("pb", 8.2), ("pc", 8.4)):
+        _seed(sink.engine, article_id, f"src_{article_id}", "2026-06-05T10:00:00")
+        _seed_persisted_analysis(sink.engine, article_id, score=4.5, content_kind="paper", content_value=value)
+    for article_id in ("na", "nb", "nc", "nd", "ne"):
+        _seed(sink.engine, article_id, f"src_{article_id}", "2026-06-05T10:00:00")
+        _seed_persisted_analysis(sink.engine, article_id, score=7.0, genre="industry_news", content_kind="news")
+    arxiv = "https://arxiv.org/abs/2606.0{}"
+    _seed(sink.engine, "plegacy", "src_l", "2026-06-05T10:00:00", source_url=arxiv.format("0001"))
+    _seed_persisted_analysis(sink.engine, "plegacy", score=5.5)
+    _seed(sink.engine, "pbodyless", "src_b", "2026-06-05T10:00:00", has_content=False, source_url=arxiv.format("0002"))
+    _seed(sink.engine, "pfail", "src_f", "2026-06-05T10:00:00", source_url=arxiv.format("0003"))
+    _seed(sink.engine, "nnear", "src_n", "2026-06-05T10:00:00")
+    _seed_persisted_analysis(sink.engine, "nnear", score=5.5, genre="industry_news", content_kind="news")
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+    ext = json.loads(record.extensions_json)
+    assert sorted(e["id"] for e in ext["items"] if e["content_kind"] == "paper") == ["pa", "pb", "pc"]
+    included = set(ext["included_article_ids"])
+    assert {"plegacy", "pbodyless", "pfail"}.isdisjoint(included)
+    assert "nnear" in included  # 资讯的近线补位照旧进附录
+
+
+def test_same_day_rerun_counts_papers_of_a_pre_upgrade_brief(tmp_path, monkeypatch):
+    """检视 R1-3:升级前写入的当日日报 items 没有 content_kind 键,重跑时按文章与分析现推导,早间论文照样占名额。"""
+    _patch_llm(monkeypatch, _fake_chat_completion)
+    sink = _make_sink(tmp_path, "paper_legacy_items.db")
+    for index, value in enumerate([9.0, 8.8, 8.6]):
+        article_id = f"p{index + 1}"  # 标题带不同数字:同日合并的机械预聚类不会把它们当同一事件
+        _seed(sink.engine, article_id, f"src_{article_id}", "2026-06-05T10:00:00",
+              source_url=f"https://arxiv.org/abs/2606.1000{index}")
+        _seed_persisted_analysis(sink.engine, article_id, score=4.0, content_kind="paper", content_value=value)
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    from models.db import ArticleRecord
+    with Session(sink.engine) as session:
+        row = session.get(ArticleRecord, "daily_brief_2026-06-06")
+        ext = json.loads(row.extensions_json)
+        for entry in ext["items"]:
+            entry.pop("content_kind", None)
+            entry.pop("content_value", None)
+        row.extensions_json = json.dumps(ext, ensure_ascii=False)
+        session.add(row)
+        session.commit()
+    _seed(sink.engine, "late", "src_late", "2026-06-05T13:00:00")
+    _seed_persisted_analysis(sink.engine, "late", score=4.0, content_kind="paper", content_value=9.6)
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+    ext = json.loads(record.extensions_json)
+    assert sorted(e["id"] for e in ext["items"]) == ["p1", "p2", "p3"]
+    assert all(e["content_kind"] == "paper" for e in ext["items"])  # 重写时补上了推导出的类型
+    with Session(sink.engine) as session:
+        assert db.get_json_setting(session, db.KEY_LAST_RUN, None)["paper_selected"] == 3
+
+
 def test_editorial_failure_keeps_analysis_summary(monkeypatch):
     """编辑调用失败(重试后仍失败)不降附录:分数已到手,要点回落分析摘要、点评留空。"""
     async def _no_editorial(*, messages, config, **kwargs):
