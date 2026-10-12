@@ -1,6 +1,6 @@
 # 内容分类与双评分(issue #178)方案
 
-> 状态:**第一波实施中**(2026-10-12 动工,分支 `feat/issue-178-content-kind`)。
+> 状态:**第一波已实现、检视通过,待用户验收**(2026-10-12 动工,分支 `feat/issue-178-content-kind`)。
 > 结论与可视化见 [issue #178](https://github.com/zlzfun/DoramiSourceArchive/issues/178)
 > 和样页 [`docs/design/dorami-classification-scores-quiet.html`](./design/dorami-classification-scores-quiet.html)
 > (仓库公开,可经 htmlpreview 免登录打开)。#168 的历史探索不作为本方案的前提。
@@ -167,3 +167,6 @@ WHEN 的 CASE 表达式(体裁用相关标量子查询),筛选取它的 IN(`kind
 - R3-O2(P3):正在阅读的条目被移出窗口时,阅读窗晚一个轮询周期才更新。修:快照里没有它时补取一次详情再提交。
 - 隔离栈端到端:61 篇教程、选中在途 A、第一次翻页人为延迟 40 秒;快照到达当轮阅读窗眉头即变「观点」,
   迟到页被丢弃并重新翻页,最终 60 条全不重复、含第 61 篇、不含 A。
+
+**R4**(核对 `26f9ada`,只看两处修复):通过,codex 用 hook 内存模拟重跑两条交错路径,另核对补取期间改选其它条目、补取失败两种变体。
+检视结论:**通过**,待用户本地验收。
