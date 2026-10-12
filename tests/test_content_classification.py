@@ -452,3 +452,27 @@ def test_article_facets_carry_content_type_labels(monkeypatch, tmp_path):
         assert client.post("/api/auth/login", json={"username": "admin", "password": "admin"}).status_code == 200
         facets = client.get("/api/articles/facets").json()
         assert {"value": "web_article", "count": 1, "label": "网页条目"} in facets["content_types"]
+
+
+def test_article_analysis_endpoint_carries_kind_and_dual_scores(monkeypatch, tmp_path):
+    """issue #178 第二波:单篇分析端点与列表同一推导与投影(含模型类型与内容价值)。"""
+    from models.db import ArticleAnalysisRecord
+
+    app_module, sink = _make_app(monkeypatch, tmp_path, "analysis_endpoint.db")
+    _seed(sink.engine, [("tu", "plain_blog", "rss_article", "https://blog.test/x", "product_update")])
+    with Session(sink.engine) as session:
+        record = session.get(ArticleAnalysisRecord, "tu")
+        record.content_kind, record.content_value = "tutorial", 7.4
+        record.content_value_reason, record.content_value_version = "步骤完整", "content-value-v2"
+        session.add(record)
+        session.commit()
+    with TestClient(app_module.app) as client:
+        assert client.post("/api/auth/login", json={"username": "admin", "password": "admin"}).status_code == 200
+        data = client.get("/api/articles/tu/analysis").json()
+        listed = client.get("/api/articles", params={"include_content": "false"}).json()
+    assert (data["kind"], data["kind_basis"]) == ("tutorial", "llm")
+    assert (data["news_value"], data["content_value"], data["content_value_reason"]) == (6.0, 7.4, "步骤完整")
+    assert (data["primary_dimension"], data["primary_score"]) == ("content", 7.4)
+    item = next(row for row in listed if row["id"] == "tu")
+    for key in ("kind", "news_value", "content_value", "primary_dimension", "primary_score"):
+        assert item[key] == data[key], key

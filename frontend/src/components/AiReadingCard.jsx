@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Headphones, Loader2 } from 'lucide-react';
 import {
   podcastAnalysisBasis,
@@ -29,7 +29,8 @@ const LISTEN_POLL_MS = 4000;
  *
  * 双评分(issue #178 第二波):数字下方小字标出当前维度(新闻价值 / 内容价值)。有两个分时点数字
  * 在两个维度间切换,数字沿里程表滑到另一个值,AI 速读不变;换篇回到主分。悬停或键盘聚焦数字浮出
- * 该维度的评分依据(一句理由 + 免责小字);触屏没有悬停,依据改为卡内常显的一行小字。此前「点数字
+ * 该维度的评分依据(一句理由 + 免责小字),鼠标可以移进浮层停留;Escape 收起且不移动焦点,等悬停与焦点
+ * 都离开、或有新的悬停 / 聚焦进来时复位(codex R1-6)。触屏没有悬停,依据改为卡内常显的一行小字。此前「点数字
  * 翻面看评分依据」的交互随之退役。无分数时右栏承接骨架与生成入口。桌面与移动壳共用。
  *
  * 文章点播(issue #124):非播客时，可点播/生成中/失败重试用卡内小胶囊（耳机图标 + 文案）；
@@ -64,6 +65,8 @@ export default function AiReadingCard({
   const scoreTier = scoreTierClass(current?.value);   // issue #54:档位挂在每位数字自身(渐变落在元素自身)
   const reason = (article?.score_reason || '').trim();
   const tipId = useId();
+  const sideRef = useRef(null);
+  const [tipDismissed, setTipDismissed] = useState(false);
   const tipTitle = podcast ? podcastReasonTitle : `评分依据 · ${current?.label || ''}`;
   const tipReason = current?.reason || '';
   const tipNote = podcast ? podcastBasisNote : scoreDisclaimer(current?.key);
@@ -88,7 +91,17 @@ export default function AiReadingCard({
     ),
   );
 
-  useEffect(() => { setDimKey(null); }, [article?.id]);
+  useEffect(() => { setDimKey(null); setTipDismissed(false); }, [article?.id]);
+  useEffect(() => {
+    // Escape 收起评分依据:只在数字区处于悬停或焦点在其中时生效,不移动焦点。
+    const onKey = (event) => {
+      if (event.key !== 'Escape') return;
+      const side = sideRef.current;
+      if (side && (side.contains(document.activeElement) || side.matches(':hover'))) setTipDismissed(true);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
   useEffect(() => { setListenBusy(false); }, [article?.id]);
   useEffect(() => {
     if (!listenActive || !onArticleRefresh) return undefined;
@@ -129,7 +142,19 @@ export default function AiReadingCard({
   return (
     <div className="reader-ai-summary">
       {score && (
-        <div className="reader-ai-summary-side">
+        <div
+          ref={sideRef}
+          className={`reader-ai-summary-side ${tipDismissed ? 'is-tip-dismissed' : ''}`}
+          onMouseEnter={() => setTipDismissed(false)}
+          onFocus={() => setTipDismissed(false)}
+          onMouseLeave={(event) => {
+            if (!event.currentTarget.contains(document.activeElement)) setTipDismissed(false);
+          }}
+          onBlur={(event) => {
+            const side = event.currentTarget;
+            if (!side.contains(event.relatedTarget) && !side.matches(':hover')) setTipDismissed(false);
+          }}
+        >
           <ScoreFigure
             key={article.id}
             score={score}

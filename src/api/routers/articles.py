@@ -695,6 +695,20 @@ async def get_article_analysis(article_id: str, request: Request):
             "tags": tags.get(article_id, []),
             "display_tags": display_tags.get(article_id, []),
         }
+        # 内容类型与双评分(issue #178 第二波):与列表 / 详情同一推导与投影。
+        classification = content_classification.classify_item(
+            source_id=record.source_id,
+            source_url=record.source_url,
+            content_type=record.content_type,
+            content_genre=analysis.content_genre,
+            content_kind=analysis.content_kind,
+        )
+        payload.update(classification.as_projection())
+        payload.update(content_classification.score_projection(
+            content_type=record.content_type,
+            kind=classification.kind,
+            analysis=analysis,
+        ))
         if record.content_type != "podcast_episode" or is_admin:
             payload.update({
                 "analysis_basis": analysis.analysis_basis or None,

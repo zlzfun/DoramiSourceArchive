@@ -17,6 +17,7 @@ import { articleDeepLink } from '../utils/shareLink';
 import { stripDuplicateLeadingHeading } from '../utils/markdownTitle';
 import { createBulkSubscribeDeadline, waitForBulkSubscribeSettlement } from '../utils/bulkSubscribe';
 import { readerShapeOf } from '../utils/readerShape';
+import { withFreshAnalysis } from '../utils/analysisProjection';
 import {
   EMPTY_KIND_CHOICE,
   applyPolledFacetDelta,
@@ -115,49 +116,6 @@ function buildListFilters({ activeSourceId, activeTagId, mode, scope, tagSearch,
 
 const UNREAD_POLL_MS = 60000; // 未读轻轮询间隔（标签页可见时才真正请求）
 const ANALYSIS_POLL_MS = 30000;
-const ANALYSIS_PROJECTION_KEYS = [
-  'analysis_status',
-  'tagging_status',
-  'analysis_has_result',
-  'analysis_next_attempt_at',
-  'quality_score',
-  'score_reason',
-  // 双评分(issue #178 第二波):内容价值与主分随分析落地变化
-  'news_value',
-  'news_value_reason',
-  'content_value',
-  'content_value_reason',
-  'primary_dimension',
-  'primary_score',
-  'analysis_basis',
-  'analysis_input_hash',
-  'transcript_artifact_id',
-  'prompt_version',
-  'scoring_version',
-  'summary_zh',
-  'content_genre',
-  'content_genre_label',
-  // 内容类型 / 事件类型随分析落地变化(体裁到了才知道是教程还是观点),须随轮询刷新
-  'kind',
-  'kind_label',
-  'kind_basis',
-  'event_type',
-  'event_label',
-  'primary_tag',
-  'tags',
-  'display_tags',
-  'podcast',
-  // 兴趣标注随分析轮询刷新:pending 篇拿到标签后,命中胶囊不必等整列重载(codex 检视 P2)
-  'interest_hits',
-];
-
-function withFreshAnalysis(article, incoming) {
-  if (!article || !incoming) return article;
-  const next = { ...article };
-  for (const key of ANALYSIS_PROJECTION_KEYS) next[key] = incoming[key];
-  return next;
-}
-
 // crumb 的「源名 · 域名」域名段(样页:Simon Willison · simonwillison.net)
 const hostOf = (url) => {
   if (!url) return '';

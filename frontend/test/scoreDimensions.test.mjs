@@ -39,3 +39,15 @@ test('免责小字随维度换说法', () => {
   assert.match(scoreDisclaimer('news'), /新闻价值评估/);
   assert.match(scoreDisclaimer(undefined), /新闻价值评估/);
 });
+
+test('旧响应经轮询 / 详情合并后仍回落 quality_score(codex R1-5)', async () => {
+  const { withFreshAnalysis } = await import('../src/utils/analysisProjection.js');
+  const listed = { id: 'a', quality_score: 7, score_reason: '旗舰发布' };
+  const refreshed = withFreshAnalysis(listed, { quality_score: 7, score_reason: '旗舰发布' });
+  assert.equal('news_value' in refreshed, true);   // 合并会带出 undefined 键
+  assert.deepEqual(keys(refreshed), ['news']);
+  assert.equal(primaryScoreOf(refreshed).text, '7');
+  // 新协议里显式 null 表示缺席,不回落旧分
+  const fresh = withFreshAnalysis(listed, { quality_score: 7, news_value: null, content_value: null, primary_dimension: null });
+  assert.deepEqual(keys(fresh), []);
+});

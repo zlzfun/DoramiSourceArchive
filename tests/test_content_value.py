@@ -535,3 +535,200 @@ def test_eval_gates():
     # 内容价值的波动不得高于同批调用里的新闻分
     failures, _ = script.check_gates(items, results(n1={"values": [5.4, 6.0, 6.3]}))
     assert any("极差" in item for item in failures)
+
+
+# ── codex R1 回归 ──────────────────────────────────────────────────────────────
+
+# 早于版本巡检窗口的抓取时间:「补内容价值」只选这类 v6 结果(近 7 天的交给巡检整篇重跑)。
+OLD_ISO = (NOW - dt.timedelta(days=30)).isoformat(timespec="seconds")
+
+def _seed_v6_result(session, article, **overrides):
+    values = dict(
+        article_id=article.id, status="succeeded", tagging_status="succeeded", quality_score=6.1,
+        score_reason="旧依据", summary="旧摘要", content_genre="tutorial", content_hash=compute_content_hash(article),
+        prompt_version="article-analysis-v6", scoring_version="news-value-v2", taxonomy_version=1,
+        model_name="old-model", analyzed_at=NOW_ISO, created_at=NOW_ISO, updated_at=NOW_ISO,
+    )
+    values.update(overrides)
+    session.add(ArticleAnalysisRecord(**values))
+
+
+def _plain_source(session):
+    session.add(SourceConfigRecord(
+        source_id="plain_blog", name="plain_blog", ai_analysis_enabled=True, created_at=NOW_ISO, updated_at=NOW_ISO,
+    ))
+
+
+def _new_job(session, selection, now):
+    job = analysis_backfill.create_full_analysis_backfill(
+        session, days=None, selection=selection, actor_id="admin",
+        confirmation=analysis_backfill.FULL_ANALYSIS_CONFIRMATION, now=now,
+    )
+    job = analysis_backfill.claim_full_analysis_backfill(session, lease_owner="w", now=now)
+    return int(job.id)
+
+
+def test_missing_selection_does_not_rescore_articles_the_live_path_analysed(storage):
+    later = NOW + dt.timedelta(hours=1)
+    calls = []
+
+    async def fake(_input, _tags, _config):
+        calls.append(1)
+        return _payload(quality_score=6.0 + len(calls))
+
+    with Session(storage.engine) as session:
+        _plain_source(session)
+        session.add_all([_article("live-done"), _article("live-inflight")])
+        session.commit()
+        job_id = _new_job(session, "missing", later)
+        # 建任务之后,实时补偿扫描先把两篇都排上,其中一篇已分析完
+        queue_article_analysis(session, "live-done", now=later)
+        queue_article_analysis(session, "live-inflight", now=later)
+        session.commit()
+        task = next(t for t in claim_analysis_tasks(session, worker_id="live", now=later) if t.article_id == "live-done")
+    asyncio.run(process_claimed_analysis(storage.engine, task, llm_config=LLM_CONFIG, analyzer=fake,
+                                         now_fn=lambda: later + dt.timedelta(seconds=1)))
+    with Session(storage.engine) as session:
+        job = analysis_backfill.get_full_analysis_backfill(session, job_id)
+        analysis_backfill.dispatch_full_analysis_backfill(session, job, lease_owner="w", now=later)
+        items = {i.article_id: i for i in session.exec(select(TagRetagJobItemRecord)).all()}
+        assert (items["live-done"].status, items["live-done"].last_error) == ("succeeded", "already_analyzed")
+        assert items["live-inflight"].status == "queued"
+        inflight = session.get(ArticleAnalysisRecord, "live-inflight")
+        assert inflight.status == "running" and inflight.attempt_count == 1   # 未被重新入队、未重置尝试
+        assert session.get(ArticleAnalysisRecord, "live-done").quality_score == 7.0
+    assert len(calls) == 1
+
+
+def test_content_value_retry_failed_items_requeues_the_fill(storage):
+    later = NOW + dt.timedelta(hours=1)
+    with Session(storage.engine) as session:
+        _plain_source(session)
+        article = _article("retry", fetched_date=OLD_ISO)
+        session.add(article)
+        session.flush()
+        _seed_v6_result(session, article)
+        session.commit()
+        job_id = _new_job(session, "content_value", later)
+        job = analysis_backfill.get_full_analysis_backfill(session, job_id)
+        assert analysis_backfill.dispatch_full_analysis_backfill(session, job, lease_owner="w", now=later) == 1
+        # 模拟四次失败到终态:旧结果仍在,补评范围保留
+        record = session.get(ArticleAnalysisRecord, "retry")
+        record.status, record.attempt_count, record.next_attempt_at = "failed", 4, None
+        record.last_error = "boom"
+        session.add(record)
+        session.commit()
+        job = analysis_backfill.reconcile_full_analysis_backfill(session, job, lease_owner="w", now=later)
+        assert job.status == "partial_failed"
+        job = analysis_backfill.retry_failed_full_analysis_items(session, job, now=later)
+        job = analysis_backfill.claim_full_analysis_backfill(session, lease_owner="w", now=later)
+        assert analysis_backfill.dispatch_full_analysis_backfill(session, job, lease_owner="w", now=later) == 1
+        record = session.get(ArticleAnalysisRecord, "retry")
+        assert (record.status, record.pending_scope, record.attempt_count) == ("pending", "content_value", 0)
+        assert record.quality_score == 6.1
+    _run_worker(storage, "retry", _payload())
+    with Session(storage.engine) as session:
+        job = analysis_backfill.get_full_analysis_backfill(session, job_id)
+        job = analysis_backfill.reconcile_full_analysis_backfill(session, job, lease_owner="w", now=later)
+        assert (job.status, job.succeeded_count, job.failed_count) == ("succeeded", 1, 0)
+
+
+def test_full_refresh_retry_keeps_priority_over_content_value_fill(storage):
+    with Session(storage.engine) as session:
+        article = _article("full-retry")
+        session.add(article)
+        session.flush()
+        _seed_v6_result(session, article, status="failed", next_attempt_at=NOW_ISO, attempt_count=1)
+        session.commit()
+        assert queue_content_value_fill(session, "full-retry", now=NOW) == "busy"
+        record = session.get(ArticleAnalysisRecord, "full-retry")
+        record.next_attempt_at, record.attempt_count = None, 4   # 完整刷新已放弃,旧结果仍有效
+        session.add(record)
+        session.commit()
+        assert queue_content_value_fill(session, "full-retry", now=NOW) == "queued"
+
+
+@pytest.mark.parametrize("handoff", ["source_disabled", "remote_authority"])
+def test_content_value_job_settles_when_fill_is_revoked_or_taken_over(storage, handoff):
+    from services.article_analysis import revoke_queued_analysis
+
+    later = NOW + dt.timedelta(hours=1)
+    with Session(storage.engine) as session:
+        _plain_source(session)
+        article = _article("handoff", fetched_date=OLD_ISO)
+        session.add(article)
+        session.flush()
+        _seed_v6_result(session, article)
+        session.commit()
+        job_id = _new_job(session, "content_value", later)
+        job = analysis_backfill.get_full_analysis_backfill(session, job_id)
+        analysis_backfill.dispatch_full_analysis_backfill(session, job, lease_owner="w", now=later)
+        if handoff == "source_disabled":
+            revoke_queued_analysis(session, "handoff", reason="source_ai_analysis_disabled", now=later)
+            expected = "source_ai_analysis_disabled"
+        else:
+            article = session.get(ArticleRecord, "handoff")
+            article.analysis_authority_id = "external-producer"
+            session.add(article)
+            expected = "remote_authority"
+        session.commit()
+        job = analysis_backfill.reconcile_full_analysis_backfill(session, job, lease_owner="w", now=later)
+        item = session.exec(select(TagRetagJobItemRecord)).one()
+        assert (item.status, item.last_error) == ("skipped", expected)
+        assert job.status == "succeeded"
+
+
+@pytest.mark.parametrize("outcome", ["success", "failure"])
+def test_content_value_fill_keeps_result_provenance(storage, outcome):
+    with Session(storage.engine) as session:
+        article = _article("prov")
+        session.add(article)
+        session.flush()
+        _seed_v6_result(session, article, taxonomy_version=0)
+        session.commit()
+        assert queue_content_value_fill(session, "prov", now=NOW) == "queued"
+        session.commit()
+        task = claim_analysis_tasks(session, worker_id="w", now=NOW)[0]
+
+    async def fake(_input, _tags, _config):
+        if outcome == "failure":
+            raise RuntimeError("provider down")
+        return _payload()
+
+    asyncio.run(process_claimed_analysis(storage.engine, task, llm_config=LLM_CONFIG, analyzer=fake,
+                                         now_fn=lambda: NOW + dt.timedelta(seconds=2)))
+    with Session(storage.engine) as session:
+        record = session.get(ArticleAnalysisRecord, "prov")
+        assert (record.model_name, record.taxonomy_version) == ("old-model", 0)
+        attempt = session.exec(select(ArticleAnalysisAttemptRecord)).one()
+        assert (attempt.model_name, attempt.taxonomy_version) == ("fake", 1)
+        assert record.content_value == (7.3 if outcome == "success" else None)
+
+
+def test_content_value_selection_leaves_recent_outdated_rows_to_the_version_scan(storage):
+    with Session(storage.engine) as session:
+        _plain_source(session)
+        recent = _article("recent", fetched_date=(NOW - dt.timedelta(days=1)).isoformat(timespec="seconds"))
+        old = _article("old", fetched_date=(NOW - dt.timedelta(days=30)).isoformat(timespec="seconds"))
+        session.add_all([recent, old])
+        session.flush()
+        _seed_v6_result(session, recent)
+        _seed_v6_result(session, old)
+        session.commit()
+        estimate = analysis_backfill.estimate_full_analysis_backfill(
+            session, days=None, selection="content_value", now=NOW,
+        )
+    assert estimate["article_count"] == 1
+
+
+def test_eval_report_as_paper_is_checked_on_every_run():
+    script = _load_eval_script()
+    items = [{"n": 1, "id": "r", "group": "research_report", "pair_with": None, "kind_hint": None,
+              "gold": {"kind": "news", "content_value": 5.0}}]
+    results = {1: {"values": [5.0, 5.0, 5.0], "news": [6.0, 6.0, 6.0], "kinds": ["news", "news", "paper"],
+                   "kind": "news", "errors": []}}
+    failures, _ = script.check_gates(items, results)
+    assert any("研究报道被判成论文" in item for item in failures)
+    assert script.majority_kind(["news", "paper"]) == "news"      # 平票按词表顺序
+    assert script.majority_kind(["paper", "paper", "news"]) == "paper"
+    assert script.majority_kind([]) is None

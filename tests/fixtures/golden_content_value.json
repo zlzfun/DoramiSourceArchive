@@ -62,7 +62,7 @@
    "key": "g02",
    "id": "rss_openai_news_adbd50c1b1db1eb7",
    "group": "news_official",
-   "pair_with": "web_aiera_866c5fd98bf9bf55",
+   "pair_with": null,
    "source_id": "rss_openai_news",
    "source_url": "https://openai.com/index/previewing-gpt-5-6-sol",
    "content_type": "rss_article",

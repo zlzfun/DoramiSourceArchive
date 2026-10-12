@@ -397,7 +397,9 @@ export function scoreDisclaimer(dimension) {
  */
 export function scoreDimensions(article) {
   if (!article) return [];
-  const projected = 'primary_dimension' in article || 'news_value' in article || 'content_value' in article;
+  // 新协议的判据是投影键「有值或显式 null」;旧响应经轮询合并后这些键会以 undefined 存在,不能当作新协议
+  // (codex R1-5)——显式 null 才表示该维度缺席,不回落旧分。
+  const projected = ['primary_dimension', 'news_value', 'content_value'].some((key) => article[key] !== undefined);
   const entries = [
     ['news', projected ? article.news_value : article.quality_score,
       projected ? article.news_value_reason : article.score_reason],

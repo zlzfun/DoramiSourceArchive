@@ -13,9 +13,8 @@
 3. 领域外条目每次都 ≤ 4.9;
 4. 成对 / 成组检验(官方 > 媒体转述、真教程 > 伪教程、一手观点 > 二手、精选汇编 > 稀薄汇编)≥ 80% 成立;
 5. 内容价值对金标 MAE ≤ 0.9、档位一致率 ≥ 70%;
-6. 多次运行时单篇极差 p90 不高于同批调用里新闻分的极差 p90(模型采样随机性的基线),且不超过 1.0。
-   (首轮设的 0.8 借自播客方案;实测同批调用的新闻分 p90 也是 1.0,波动来自模型而非这把尺子,
-   2026-10-12 改为与新闻分对照,见方案 §3.6。)
+6. 多次运行时单篇极差 p90 不高于同批调用里新闻分的极差 p90,且不超过 1.0——即内容价值不比新闻分更不稳定。
+   (首轮设的 0.8 借自播客方案,那里是同一份证据重复归约;2026-10-12 改为与同批新闻分对照,见方案 §3.6。)
 
 新闻分不回归另由 ``scripts/eval_news_value_golden.py`` 把关。会产生 LLM 调用(篇数 × 次数)。
 """
@@ -55,6 +54,16 @@ def p90(values: list[float]) -> float:
     return ordered[min(len(ordered) - 1, int(round(0.9 * (len(ordered) - 1))))]
 
 
+def majority_kind(kinds: list[str]) -> str | None:
+    """多数票;票数相同按内容类型词表顺序取,保证确定性。"""
+    if not kinds:
+        return None
+    from services.content_classification import ITEM_KINDS
+
+    order = {kind: index for index, kind in enumerate(ITEM_KINDS)}
+    return min(set(kinds), key=lambda kind: (-kinds.count(kind), order.get(kind, len(order)), kind))
+
+
 def check_gates(items: list[dict], results: dict[int, dict]) -> tuple[list[str], dict]:
     """纯函数:按方案 §3.6 的门禁给出失败项与读数(测试直接覆盖)。"""
 
@@ -70,7 +79,12 @@ def check_gates(items: list[dict], results: dict[int, dict]) -> tuple[list[str],
     kind_acc = kind_hits / len(judged) if judged else 1.0
     if kind_acc < KIND_ACCURACY_MIN:
         failures.append(f"内容类型准确率 {kind_acc:.0%} < {KIND_ACCURACY_MIN:.0%}")
-    report_as_paper = [it["n"] for it in ok if it["group"] == "research_report" and results[it["n"]]["kind"] == "paper"]
+    # 硬约束逐次检查:生产只跑一次,任一次判成论文都算(codex R1-7);总体准确率仍按多数口径。
+    report_as_paper = [
+        it["n"] for it in ok
+        if it["group"] == "research_report"
+        and "paper" in (results[it["n"]].get("kinds") or [results[it["n"]]["kind"]])
+    ]
     if report_as_paper:
         failures.append(f"研究报道被判成论文: {report_as_paper}")
 
@@ -194,7 +208,7 @@ async def main() -> int:
 
     await asyncio.gather(*(one(*p) for p in prepared for _ in range(max(1, args.runs))))
     for slot in results.values():
-        slot["kind"] = max(set(slot["kinds"]), key=slot["kinds"].count) if slot["kinds"] else None
+        slot["kind"] = majority_kind(slot["kinds"])
 
     failures, r = check_gates(items, results)
     print(f"prompt={ARTICLE_ANALYSIS_PROMPT_VERSION} ruler={CONTENT_VALUE_SCORING_VERSION} model={cfg.model} "

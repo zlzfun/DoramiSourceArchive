@@ -2228,8 +2228,11 @@ async def process_claimed_analysis(
             )
         effective_model = llm_config.for_aux().model
         taxonomy_version = _active_taxonomy_version(session)
-        record.model_name = effective_model
-        record.taxonomy_version = taxonomy_version
+        if record.pending_scope != PENDING_SCOPE_CONTENT_VALUE:
+            # 「只补内容价值」不替换完整结果,结果行的模型与 taxonomy 来源保持上一次完整分析的值,
+            # 本次调用的来源只记在 attempt 上(codex R1-4)。
+            record.model_name = effective_model
+            record.taxonomy_version = taxonomy_version
         attempt = _attempt_for(session, task)
         if attempt is not None:
             attempt.model_name = effective_model
@@ -2609,6 +2612,28 @@ def content_value_fill_is_current(
     )
 
 
+def in_version_refresh_window(
+    article: ArticleRecord,
+    record: ArticleAnalysisRecord | None,
+    *,
+    now: Optional[dt.datetime] = None,
+    lookback_days: int = DEFAULT_BACKFILL_DAYS,
+) -> bool:
+    """版本巡检(``scan_analysis_backfill``)会整篇重跑的文章:窗口内、提示词或评分版本落后的成功结果。
+
+    窗口与时间解析与巡检同一口径;「补内容价值」选样据此避开它们,整篇重跑会顺带产出内容价值(codex R1-8)。
+    """
+
+    if record is None or record.status != AnalysisStatus.SUCCEEDED.value:
+        return False
+    prompt_version, scoring_version = analysis_contract_versions(article.content_type)
+    if record.prompt_version == prompt_version and record.scoring_version == scoring_version:
+        return False
+    now_utc = _as_utc(now)
+    since_time = now_utc - dt.timedelta(days=max(1, lookback_days))
+    return in_time_window(article.fetched_date, start=since_time, end=now_utc)
+
+
 def queue_content_value_fill(
     session: Session,
     article_id: str,
@@ -2618,7 +2643,8 @@ def queue_content_value_fill(
     """把一篇已有完整分析的文章排进「只补内容价值」(历史回填策略 ``content_value``)。
 
     前提:有当前新闻分(``scoring_version`` 为当前、内容未变)、该数据结构的提示词产出内容价值、
-    内容价值缺失或版本过期。排队期间上一次分析照常可读(与强制刷新同一套交接语义);期间若正文变化,
+    内容价值缺失或版本过期。分析行为 failed / timeout 但旧结果仍有效时:补评自己的失败重新排队(重置尝试
+    次数),完整刷新还在重试的返回 ``busy``,完整刷新已到终态的允许补评。排队期间上一次分析照常可读(与强制刷新同一套交接语义);期间若正文变化,
     入库钩子的完整分析会把范围改回完整。返回 ``queued`` / ``unchanged`` / ``busy`` / ``ineligible`` /
     ``remote_authority``。
     """
@@ -2631,12 +2657,18 @@ def queue_content_value_fill(
     record = session.get(ArticleAnalysisRecord, article_id)
     if record is None or not content_value_contract_version(article.content_type):
         return "ineligible"
-    if record.status == AnalysisStatus.RUNNING.value:
+    if record.status in {AnalysisStatus.RUNNING.value, AnalysisStatus.PENDING.value}:
         return "busy"
+    if record.status in {AnalysisStatus.FAILED.value, AnalysisStatus.TIMEOUT.value}:
+        # 失败但旧结果仍有效(codex R1-2):补评自己的失败(含终态,管理面「重试失败项」)重新排队;
+        # 完整刷新失败、还有重试排期的让它继续重试;完整刷新已到终态的,旧结果仍可补内容价值。
+        if record.pending_scope != PENDING_SCOPE_CONTENT_VALUE and record.next_attempt_at:
+            return "busy"
+    elif record.status != AnalysisStatus.SUCCEEDED.value:
+        return "ineligible"
     _prompt, scoring_version = analysis_contract_versions(article.content_type)
     if (
-        record.status != AnalysisStatus.SUCCEEDED.value
-        or not has_authoritative_analysis(record)
+        not has_authoritative_analysis(record)
         or record.scoring_version != scoring_version
         or record.content_hash != compute_content_hash(article)
     ):

@@ -8084,12 +8084,14 @@ input[type="radio"] {
     transition: opacity var(--motion-fast) var(--motion-ease), transform var(--motion-fast) var(--motion-ease),
       visibility 0s linear var(--motion-fast);
   }
-  .reader-ai-summary-side:focus-within .reader-ai-score-tip {
-    opacity: 1; visibility: visible; transform: none; transition-delay: 0s;
+  /* 透明桥接锚点与浮层之间的 8px 间隙:鼠标从数字移进浮层不丢悬停(codex R1-6) */
+  .reader-ai-score-tip::before { content: ''; position: absolute; left: 0; right: 0; top: -10px; height: 10px; }
+  .reader-ai-summary-side:not(.is-tip-dismissed):focus-within .reader-ai-score-tip {
+    opacity: 1; visibility: visible; transform: none; pointer-events: auto; transition-delay: 0s;
   }
   @media (hover: hover) {
-    .reader-ai-summary-side:hover .reader-ai-score-tip {
-      opacity: 1; visibility: visible; transform: none; transition-delay: 0s;
+    .reader-ai-summary-side:not(.is-tip-dismissed):hover .reader-ai-score-tip {
+      opacity: 1; visibility: visible; transform: none; pointer-events: auto; transition-delay: 0s;
     }
   }
   .reader-ai-score-tip .reader-ai-layer-text { font-size: 13px; line-height: 1.7; }
