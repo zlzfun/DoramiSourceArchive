@@ -730,6 +730,7 @@ export function useReaderState({
     }
     // 竞态由 runList 兜底：发新弃旧，杜绝乱序晚到的响应覆盖当前列表。
     if (append) setLoadingMore(true); else { setArticlesLoading(true); setLoadingMore(false); }
+    const versionAtStart = listVersionRef.current;
     let data;
     try {
       // 列表只渲染摘要（content_preview），故请求统一不带全文，正文按需懒加载（见 selectArticle）。
@@ -751,6 +752,12 @@ export function useReaderState({
       return;
     }
     if (data === undefined) return; // 被更新的请求取代，loading 交给新请求，不在此清除
+    // 翻页的偏移取自发起时的窗口:期间窗口被分析轮询的快照整体替换过,这一页已对不上,丢弃;
+    // 哨兵随 loadingMore 复位重新求值,按新窗口长度再取(codex R3-O1)
+    if (append && listVersionRef.current !== versionAtStart) {
+      setLoadingMore(false);
+      return;
+    }
     const items = data.items || [];
     listVersionRef.current += 1;
     if (!append && mode === 'article') {
@@ -872,6 +879,13 @@ export function useReaderState({
         if (superseded()) return;
         const items = snapshot?.items || [];
         for (const item of items) updates.set(item.id, item);
+        // 正在阅读的条目被移出窗口:快照里没有它的新结果,补取一次详情,阅读窗当轮更新(codex R3-O2)
+        const readingId = activeIdRef.current;
+        if (readingId && !updates.has(readingId) && context.articles.some((article) => article.id === readingId)) {
+          const detail = await fetchArticle(readingId).catch(() => null);
+          if (superseded()) return;
+          if (detail?.id === readingId) updates.set(readingId, detail);
+        }
         listVersionRef.current += 1;
         if (context.mode === 'article') {
           setKindFacets((prev) => ({
