@@ -585,12 +585,12 @@ MAE 0.83、档位一致 80%、类型准确 87%(53 篇),门禁照旧通过。分�
 **R4**(核对 `26f9ada`,只看两处修复):通过,codex 用 hook 内存模拟重跑两条交错路径,另核对补取期间改选其它条目、补取失败两种变体。
 检视结论:**通过**,待用户本地验收。
 
-## 5. 第三波:分发(方案稿,待拍板)
+## 5. 第三波:分发(2026-10-12 拍板:全部按推荐)
 
 第二波让每条内容有了两个分;第三波让分发面用上内容价值。§3.9 列的六件事里,播客评分拆分依赖 #97 的播客黄金集
 (评测脚本、候选池、标注全未动工),新闻尺子收紧会改动全部新闻分;两者与「早报 / 日报用上内容价值」互不依赖,拆开推进。
 
-### 5.0 拆分(需要拍板)
+### 5.0 拆分(已拍板:本分支只做 3a)
 
 | 段 | 内容 | 依赖 |
 |---|---|---|
@@ -660,3 +660,51 @@ MAE 0.83、档位一致 80%、类型准确 87%(53 篇),门禁照旧通过。分�
 1. 早报:DTO / 加载 / 选篇 / 快照 / 迁移(重建 `personal_digest_items`)/ 设置 / 页面。
 2. 日报:论文判定改内容类型、补评保留内容价值、论文名额独立通道与设置、统计。
 3. 测试、文档、隔离栈验收(早报页亮暗 / 手机)、本地 codex 检视,交你目检,PR 写 `Refs #178`。
+
+### 5.7 实现记录(3a)
+
+实现方 Claude Code(Opus 5.5),检视方 Codex(gpt-6-astra ultra),检视记录见 §5.8。
+
+**早报**
+
+- 选篇是纯函数 `digest_selection.select_value_lane` + `ValueLanePolicy`:只有硬规则(内容价值门槛、分区的内容类型、
+  订阅外须命中兴趣、每源 1 篇、同事件 1 篇),不放宽;排序 = 内容价值降序 → 发布时间较新 → article_id。
+  分区归属 `value_lane_accepts`:值得读 = 非播客且内容类型 ∈ {论文, 教程, 观点, 汇编};值得听 = 播客。
+- 候选 `load_value_candidates`:订阅池 ∪ 订阅外兴趣池(与新闻通道同一套可见性过滤),窗口按天;值得读在 SQL 里
+  先按「当前尺子版本的内容价值 ≥ 门槛」收窄,再在 Python 里按 `classify_item` 推导的内容类型留下四类;
+  值得听按播客分(第二波投影的内容价值)过线。候选 DTO 新增 `content_kind` / `content_value`。
+- 编排顺序:新闻(兴趣 / 质量)→ 重大事件与提级 → 值得读 → 值得听 → 降级回退。两个分区排除本期新闻已选、
+  读者近 7 期(按日期、每天最新完成版)出现过的条目;值得读选中的不会再进值得听(本就互斥)。
+  降级回退「订阅源最新更新」避开两个分区已选的条目。
+- 播客退出新闻:订阅池、订阅外兴趣池、重大事件池在 SQL 里排除 `podcast_episode`。降级回退保留播客——
+  它是「订阅源最新内容」的如实列表,不按分数排序,不属于新闻通道。
+- 落库:通道 `read` / `listen`,板块「值得读」「值得听」排在 `SECTION_ORDER` 末尾(新闻区含降级回退之后);
+  `ranking_features` 记 `content_value` / `content_kind`,`_assign_positions` 在这两个板块内按内容价值排。
+  快照新增 `content_kind` / `content_value` / `content_value_reason` / `score_dimension`(新闻通道 news,两个分区与
+  任何播客 content)。`selection_stats_json` 新增 `read` / `listen` 两块(候选数 / 入选数 / 门槛 / 名额 / 窗口)。
+- 迁移 `e5c1f7a2b938`:batch 重建 `personal_digest_items` 改 CHECK;降级先删 `read` / `listen` 条目再收窄。
+- 页面:卡片分数、注脚与悬停说明随维度(`briefGrid.scoreDimensionOf` / `scoreOf`;旧快照无 `score_dimension` 时
+  播客回落内容价值);理由位「内容价值入选」(命中兴趣仍是「兴趣 · 标签」);报头精选篇数只数新闻,另写
+  「N 篇值得读」「N 集值得听」;只有两个分区时不设头版。管理面「早报与兴趣」区加两张旋钮卡。
+
+**日报**
+
+- `_is_paper` 改为内容类型 = 论文(`ScoredItem.content_kind`);`load_stored_scores` 与就地补评都推导内容类型并带出
+  当前内容价值;补评的分析输入补上规则判出的 `kind_hint`(与 worker 同一份输入,`content_classification.rule_kind`
+  自 `analysis_input_from_article` 抽出共用)。
+- 门槛:有内容价值的论文过 `daily_brief_paper_min_content_value`,其余过新闻门槛(`_passes_gate`);有内容价值的
+  论文不进近线带(软阈值只按新闻分补足)。**存量还没有当前内容价值的论文照旧走新闻门槛、仍占名额**——
+  3.64.0 发布后、「补内容价值」回填跑完前,日报的论文不会因此整体消失。
+- 择优:`select_top` 先按论文排序(有内容价值的按内容价值在前,存量按有效新闻分在后)挑至多 `paper_cap` 篇,
+  再按有效分填其余名额;名额外的论文不参与凑数回补。预选多带 `PAPER_BUFFER`=1 篇,跨天查重剔掉时顶上;
+  `trim_to_top_n` 裁回时论文按同一排序留至多 `paper_cap` 篇。名额按当日计:同日重跑扣掉早间已占的论文
+  (`extensions.items` 新增加法键 `content_kind` / `content_value`,重跑据此识别)。软阈值的保底缺口只把名额内的
+  论文算作合格簇。
+- `last_run` 新增 `paper_min_content_value` / `paper_candidates` / `paper_qualified` / `paper_selected`;配置端点与
+  日报面板加「论文门槛」。
+
+**测试**:`test_digest_selection`(纯函数 4 条)、`test_personal_digest`(端到端 7 条:额外分区与板块顺序、去重与窗口与
+尺子版本、订阅外须命中兴趣与可见性、KV 旋钮与关闭、播客退出含重大事件、降级回退避让、板块内排序)、
+`test_analysis_personal_api`(旋钮读写与越界)、`test_daily_brief`(名额按类型与内容价值、名额外不回补、门槛分流与存量
+回落、按当日计、补评保留类型与价值)、`test_daily_brief_endpoints`(门槛读写)、`frontend/test/briefGrid`(维度与取分)。
+

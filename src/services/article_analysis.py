@@ -1788,26 +1788,15 @@ def analysis_input_from_article(
 
     from services.source_naming import friendly_source_name, source_role
 
-    from services.content_classification import (
-        KIND_BASIS_CONTENT_TYPE,
-        KIND_BASIS_SOURCE,
-        KIND_BASIS_URL,
-        classify_item,
-    )
+    from services.content_classification import rule_kind as classify_rule_kind
 
     owner = ((source.source_owner if source else "") or article.source_id).strip()
     sid = article.source_id or ""
     is_podcast = (article.content_type or "").strip() == "podcast_episode"
-    rule = classify_item(
+    rule_kind = classify_rule_kind(
         source_id=sid,
         source_url=article.source_url,
         content_type=article.content_type,
-        content_genre=None,
-    )
-    rule_kind = (
-        rule.kind
-        if rule.kind_basis in {KIND_BASIS_SOURCE, KIND_BASIS_CONTENT_TYPE, KIND_BASIS_URL}
-        else None
     )
     return AnalysisInput(
         article_id=article.id,

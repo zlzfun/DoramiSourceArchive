@@ -335,6 +335,30 @@ def classify_item(
     return ItemClassification(kind=kind, kind_basis=basis, event_type=event_type)
 
 
+RULE_KIND_BASES: frozenset[str] = frozenset({KIND_BASIS_SOURCE, KIND_BASIS_CONTENT_TYPE, KIND_BASIS_URL})
+
+
+def rule_kind(
+    *,
+    source_id: Optional[str],
+    source_url: Optional[str],
+    content_type: Optional[str],
+    source_kinds: Optional[Mapping[str, str]] = None,
+) -> Optional[str]:
+    """只凭规则(来源先验 / 数据结构 / 链接形状)能判出的内容类型;判不了返回 None。
+
+    分析输入的 ``kind_hint``(第二波)用它:规则能判时喂给模型并以规则为准。
+    """
+    result = classify_item(
+        source_id=source_id,
+        source_url=source_url,
+        content_type=content_type,
+        content_genre=None,
+        source_kinds=source_kinds,
+    )
+    return result.kind if result.kind_basis in RULE_KIND_BASES else None
+
+
 def parse_kind_filter(value: Optional[str]) -> list[str]:
     """``?kind=paper,tutorial`` → 类型列表(保持词表顺序、去重);含任何未知值即抛 ``ValueError``。"""
     requested = {part.strip().lower() for part in str(value or "").split(",") if part.strip()}
