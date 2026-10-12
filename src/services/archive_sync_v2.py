@@ -247,7 +247,7 @@ def _source_payload(row: SourceConfigRecord) -> dict[str, Any]:
     # platform sources, and params may contain producer-only credentials.
     payload = {field: getattr(row, field) for field in _SOURCE_FIELDS}
     # 线路兼容键(issue #178):旧版接收端只认 category,据此保留观察期,升级时迁移再映射成
-    # admission_status。值由准入状态派生,不读退役列;内外网都升级后可删(见 docs/backlog.md)。
+    # admission_status。值由准入状态派生,不读退役列;不再支持旧版本对端后可删(见 docs/backlog.md)。
     payload["category"] = _LEGACY_INCUBATING if row.admission_status == _LEGACY_INCUBATING else ""
     return payload
 
