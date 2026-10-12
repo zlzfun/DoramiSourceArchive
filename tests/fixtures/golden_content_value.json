@@ -324,15 +324,15 @@
     }
    },
    "gold": {
-    "kind": null,
-    "content_value": 5.75
+    "kind": "news",
+    "content_value": 5.0
    },
    "review_flags": [
     "kind",
     "gap>1.0",
     "band"
    ],
-   "adjudication": null
+   "adjudication": "2026-10-12 用户定夺:厂商员工的工作流案例,按「营销式最佳实践算 news」判资讯,金标 5.0"
   },
   {
    "n": 10,
@@ -505,7 +505,7 @@
     "gap>1.0",
     "band"
    ],
-   "adjudication": null
+   "adjudication": "2026-10-12 用户定夺:扎实的媒体研究报道保持两人均值"
   },
   {
    "n": 15,
@@ -678,7 +678,7 @@
     "gap>1.0",
     "band"
    ],
-   "adjudication": null
+   "adjudication": "2026-10-12 用户定夺:详尽 changelog 的分歧保持两人均值"
   },
   {
    "n": 20,
@@ -888,7 +888,7 @@
     "gap>1.0",
     "band"
    ],
-   "adjudication": null
+   "adjudication": "2026-10-12 用户定夺:扎实的媒体研究报道保持两人均值"
   },
   {
    "n": 26,
@@ -993,7 +993,7 @@
     "gap>1.0",
     "band"
    ],
-   "adjudication": null
+   "adjudication": "2026-10-12 用户定夺:扎实的媒体研究报道保持两人均值"
   },
   {
    "n": 29,
@@ -1067,7 +1067,7 @@
     "gap>1.0",
     "band"
    ],
-   "adjudication": null
+   "adjudication": "2026-10-12 用户定夺:扎实的媒体研究报道保持两人均值"
   },
   {
    "n": 31,
@@ -1373,7 +1373,7 @@
     "gap>1.0",
     "band"
    ],
-   "adjudication": null
+   "adjudication": "2026-10-12 用户定夺:详尽 changelog 的分歧保持两人均值"
   },
   {
    "n": 40,
@@ -2138,7 +2138,7 @@
     "gap>1.0",
     "band"
    ],
-   "adjudication": null
+   "adjudication": "2026-10-12 用户定夺:详尽 changelog 的分歧保持两人均值"
   },
   {
    "n": 62,
