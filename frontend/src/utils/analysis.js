@@ -380,5 +380,43 @@ export function analysisStatusMeta(article, { podcast = false, includeTerminal =
   return null;
 }
 
-// 分数语义 v3.48 起是「新闻价值」(这件事有多重要),不是阅读质量;全站唯一一把尺子。
+// 分数语义 v3.48 起是「新闻价值」(这件事有多重要),不是阅读质量。issue #178 第二波起每条最多两个分:
+// 新闻价值 + 内容价值(值不值得花时间读完 / 听完);个人早报与日报仍只用新闻价值。
 export const SCORE_DISCLAIMER = 'AI 新闻价值评估，用于辅助筛选，不代表事实保证或你的个人评分';
+export const SCORE_DIMENSION_LABELS = { news: '新闻价值', content: '内容价值' };
+
+export function scoreDisclaimer(dimension) {
+  const label = SCORE_DIMENSION_LABELS[dimension] || SCORE_DIMENSION_LABELS.news;
+  return `AI ${label}评估，用于辅助筛选，不代表事实保证或你的个人评分`;
+}
+
+/**
+ * 条目可显示的分数维度,主分在前:[{ key, label, value, text, reason }](issue #178 第二波)。
+ * 后端按内容类型与例外线算好 primary_dimension;缺失的维度不出现(缺失即缺席)。
+ * 没有新字段的旧响应(部署交替期的缓存列表)回落为「quality_score = 新闻价值」。
+ */
+export function scoreDimensions(article) {
+  if (!article) return [];
+  const projected = 'primary_dimension' in article || 'news_value' in article || 'content_value' in article;
+  const entries = [
+    ['news', projected ? article.news_value : article.quality_score,
+      projected ? article.news_value_reason : article.score_reason],
+    ['content', projected ? article.content_value : null, projected ? article.content_value_reason : ''],
+  ];
+  const dims = entries
+    .filter(([, value]) => qualityScoreText(value))
+    .map(([key, value, reason]) => ({
+      key,
+      label: SCORE_DIMENSION_LABELS[key],
+      value: Number(value),
+      text: qualityScoreText(value),
+      reason: String(reason || '').trim(),
+    }));
+  if (dims.length > 1 && article.primary_dimension && dims[0].key !== article.primary_dimension) dims.reverse();
+  return dims;
+}
+
+/** 列表与卡片的主分:scoreDimensions 的第一项,没有分数时 null。 */
+export function primaryScoreOf(article) {
+  return scoreDimensions(article)[0] || null;
+}

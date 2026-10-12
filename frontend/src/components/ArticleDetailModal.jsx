@@ -5,7 +5,7 @@ import {
   displayAnalysisTags,
   hasReadableAnalysis,
   podcastAssessmentMeta,
-  qualityScoreText,
+  scoreDimensions,
   scoreTierClass,
   SCORE_DISCLAIMER,
 } from '../utils/analysis';
@@ -22,7 +22,8 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
     includeTerminal: true,
     podcast: data?.content_type === 'podcast_episode',
   });
-  const score = qualityScoreText(data.quality_score);
+  // 双评分(issue #178 第二波):主分在前,缺失的维度不出现
+  const scoreDims = scoreDimensions(data);
   const analysisTags = displayAnalysisTags(data);
 
   const handleSave = () => {
@@ -94,7 +95,9 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
               {hasAnalysis ? (
                 <div className="reader-analysis-summary">
                   <div className="reader-analysis-top">
-                    {score && <span className={`reader-analysis-score ${scoreTierClass(data.quality_score)}`}><strong>{score}</strong><small>新闻价值</small></span>}
+                    {scoreDims.map((dim) => (
+                        <span key={dim.key} className={`reader-analysis-score ${scoreTierClass(dim.value)}`}><strong>{dim.text}</strong><small>{dim.label}</small></span>
+                      ))}
                     {podcastAssessment && <span className="stamp stamp-idle" role="status">{podcastAssessment.label}</span>}
                     {(analysisTags.length > 0 || data.content_genre) && <span className="reader-analysis-tags">
                       {analysisTags.map((tag, index) => (
@@ -104,7 +107,9 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
                     </span>}
                     {analysisStatus && <span className={`stamp ${analysisStatus.cls}`} role="status">{analysisStatus.label}</span>}
                   </div>
-                  {data.score_reason && <p>{data.score_reason}</p>}
+                  {scoreDims.filter((dim) => dim.reason).map((dim) => (
+                    <p key={dim.key}>{scoreDims.length > 1 ? `${dim.label}：${dim.reason}` : dim.reason}</p>
+                  ))}
                   {data.summary_zh && <p className="tiny-meta">{data.summary_zh}</p>}
                   <small>{podcastAssessment ? `${podcastAssessment.note}；${SCORE_DISCLAIMER}` : SCORE_DISCLAIMER}</small>
                 </div>

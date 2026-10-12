@@ -5,6 +5,17 @@ module adds an auditable job header plus per-article snapshots so a deployment
 restart can resume dispatch without duplicating work.  Backfill articles are
 only dispatched into spare analysis capacity; ``claim_analysis_tasks`` keeps
 its newest-first ordering, so live arrivals always win.
+
+Selections (issue #178 wave 2 adds the last two):
+
+- ``all`` — force every article in scope through a full re-analysis;
+- ``missing_or_outdated`` — articles without a current result (content, prompt,
+  scoring or taxonomy version changed);
+- ``missing`` — only articles that never got a result; existing news values are
+  never re-scored (the 2026-10-12 stock decision, plan §3.1);
+- ``content_value`` — articles that already have a current news value but lack a
+  current content value, limited to paper / tutorial / opinion / digest plus
+  ``research_paper``-genre news; only the content-value fields are written.
 """
 
 from __future__ import annotations
@@ -22,8 +33,10 @@ from sqlmodel import Session, select
 from llm.article_analysis_prompt import (
     ARTICLE_ANALYSIS_PROMPT_VERSION,
     ARTICLE_ANALYSIS_SCORING_VERSION,
+    CONTENT_VALUE_SCORING_VERSION,
     MAX_ANALYSIS_BODY_CHARS,
     analysis_contract_versions,
+    content_value_contract_version,
 )
 from models.analysis_contracts import AnalysisOperation, AnalysisStatus, TaggingStatus
 from models.db import (
@@ -35,7 +48,10 @@ from models.db import (
 from services.article_analysis import (
     DEFAULT_MAX_ATTEMPTS,
     compute_content_hash,
+    content_value_fill_is_current,
+    has_authoritative_analysis,
     queue_article_analysis,
+    queue_content_value_fill,
     revoke_queued_analysis,
     sanitize_error,
     source_allows_analysis,
@@ -46,7 +62,12 @@ from services.taxonomy import current_taxonomy_version, now_iso
 
 FULL_ANALYSIS_CONFIRMATION = "RUN FULL ANALYSIS"
 FULL_ANALYSIS_ACTIVE_STATUSES = ("queued", "running", "paused")
-FULL_ANALYSIS_SELECTIONS = ("all", "missing_or_outdated")
+FULL_ANALYSIS_SELECTIONS = ("all", "missing_or_outdated", "missing", "content_value")
+CONTENT_VALUE_SELECTION = "content_value"
+# 「补内容价值」默认覆盖的内容类型(内容价值为主分的几类),外加体裁为「学术论文」的资讯——
+# 这批最可能被模型改判为论文(issue #178 第二波 §3.7)。
+CONTENT_VALUE_FILL_KINDS = frozenset({"paper", "tutorial", "opinion", "digest"})
+CONTENT_VALUE_FILL_GENRES = frozenset({"research_paper"})
 DEFAULT_DISPATCH_LIMIT = 8
 LEASE_SECONDS = 300
 
@@ -117,6 +138,9 @@ def _eligible_rows(
     if normalized_sources:
         statement = statement.where(ArticleRecord.source_id.in_(normalized_sources))
 
+    from services.content_classification import classify_item, source_default_kinds
+
+    source_kinds = source_default_kinds()
     targets: list[BackfillTarget] = []
     for article, analysis in session.exec(statement).all():
         if not source_allows_analysis(session, article.source_id):
@@ -137,6 +161,29 @@ def _eligible_rows(
         )
         if selection == "missing_or_outdated" and is_current:
             continue
+        if selection == "missing" and has_authoritative_analysis(analysis):
+            continue
+        if selection == CONTENT_VALUE_SELECTION:
+            if (
+                analysis is None
+                or analysis.status != AnalysisStatus.SUCCEEDED.value
+                or not has_authoritative_analysis(analysis)
+                or analysis.content_hash != content_hash
+                or analysis.scoring_version != expected_scoring
+                or not content_value_contract_version(article.content_type)
+                or content_value_fill_is_current(article, analysis)
+            ):
+                continue
+            kind = classify_item(
+                source_id=article.source_id,
+                source_url=article.source_url,
+                content_type=article.content_type,
+                content_genre=analysis.content_genre,
+                source_kinds=source_kinds,
+                content_kind=analysis.content_kind,
+            ).kind
+            if kind not in CONTENT_VALUE_FILL_KINDS and analysis.content_genre not in CONTENT_VALUE_FILL_GENRES:
+                continue
         targets.append(BackfillTarget(article=article, content_hash=content_hash))
     return targets, since, until
 
@@ -255,6 +302,7 @@ def create_full_analysis_backfill(
             }
         ),
         "target_taxonomy_version": taxonomy_version,
+        "target_content_value_version": CONTENT_VALUE_SCORING_VERSION,
     }
     job = TagRetagJobRecord(
         taxonomy_version=taxonomy_version,
@@ -357,11 +405,16 @@ def _target_versions_match(job: TagRetagJobRecord, scope: dict[str, Any]) -> boo
         ":".join(analysis_contract_versions("podcast_episode")),
     }
     scoped_contracts = set(scope.get("target_contracts") or [])
+    content_value_ok = (
+        scope.get("selection") != CONTENT_VALUE_SELECTION
+        or scope.get("target_content_value_version") == CONTENT_VALUE_SCORING_VERSION
+    )
     return bool(
         int(scope.get("target_taxonomy_version") or 0) == int(job.taxonomy_version)
         and scope.get("target_prompt_version") == ARTICLE_ANALYSIS_PROMPT_VERSION
         and scope.get("target_scoring_version") == ARTICLE_ANALYSIS_SCORING_VERSION
         and (not scoped_contracts or scoped_contracts <= current_contracts)
+        and content_value_ok
     )
 
 
@@ -380,6 +433,7 @@ def reconcile_full_analysis_backfill(
     current = _utc(now)
     stamp = now_iso(current)
     scope = _scope(job)
+    content_value_job = scope.get("selection") == CONTENT_VALUE_SELECTION
     queued = list(
         session.exec(
             select(TagRetagJobItemRecord)
@@ -412,14 +466,21 @@ def reconcile_full_analysis_backfill(
             expected_prompt, expected_scoring = analysis_contract_versions(
                 article.content_type
             )
-            current_result = bool(
-                analysis.status == AnalysisStatus.SUCCEEDED.value
-                and analysis.tagging_status != TaggingStatus.FAILED.value
-                and analysis.content_hash == current_hash
-                and analysis.prompt_version == expected_prompt
-                and analysis.scoring_version == expected_scoring
-                and int(analysis.taxonomy_version) == int(job.taxonomy_version)
-            )
+            if content_value_job:
+                # 「补内容价值」只看内容价值是否已是当前版本;新闻分与标签沿用原结果。
+                current_result = bool(
+                    analysis.status == AnalysisStatus.SUCCEEDED.value
+                    and content_value_fill_is_current(article, analysis)
+                )
+            else:
+                current_result = bool(
+                    analysis.status == AnalysisStatus.SUCCEEDED.value
+                    and analysis.tagging_status != TaggingStatus.FAILED.value
+                    and analysis.content_hash == current_hash
+                    and analysis.prompt_version == expected_prompt
+                    and analysis.scoring_version == expected_scoring
+                    and int(analysis.taxonomy_version) == int(job.taxonomy_version)
+                )
             terminal_failure = bool(
                 (
                     analysis.status in {AnalysisStatus.FAILED.value, AnalysisStatus.TIMEOUT.value}
@@ -482,6 +543,7 @@ def dispatch_full_analysis_backfill(
         return 0
     current = _utc(now)
     stamp = now_iso(current)
+    content_value_job = _scope(job).get("selection") == CONTENT_VALUE_SELECTION
     rows = list(
         session.exec(
             select(TagRetagJobItemRecord)
@@ -513,13 +575,16 @@ def dispatch_full_analysis_backfill(
             item.updated_at = stamp
             session.add(item)
             continue
-        outcome = queue_article_analysis(
-            session,
-            article.id,
-            enabled=True,
-            force=True,
-            now=current,
-        )
+        if content_value_job:
+            outcome = queue_content_value_fill(session, article.id, now=current)
+        else:
+            outcome = queue_article_analysis(
+                session,
+                article.id,
+                enabled=True,
+                force=True,
+                now=current,
+            )
         if outcome == "busy":
             continue
         if outcome in {"ineligible", "remote_authority", "skipped", "unchanged"}:

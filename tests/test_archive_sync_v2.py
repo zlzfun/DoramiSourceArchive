@@ -534,6 +534,50 @@ def test_legacy_v2_analysis_payload_clears_newer_provenance_fields(tmp_path):
         assert record.analysis_diagnostics_json == "{}"
 
 
+def test_content_value_fields_sync_and_legacy_payload_clears_them(tmp_path):
+    """issue #178 第二波:内容价值四项随分析流传到接收端;旧版生产者的结果不带它们时置空。"""
+    producer = _sink(tmp_path, "producer-content-value.db")
+    consumer = _sink(tmp_path, "consumer-content-value.db")
+    authority_id = "producer-cv"
+    now = "2026-10-12T02:00:00+00:00"
+    with Session(producer.engine) as session:
+        article = _article()
+        session.add(article)
+        session.flush()
+        row = ArticleAnalysisRecord(
+            article_id=article.id, status="succeeded", quality_score=5.2,
+            content_kind="paper", content_value=7.6, content_value_reason="方法新",
+            content_value_version="content-value-v2", pending_scope="content_value",
+            content_hash=compute_content_hash(article), created_at=now, updated_at=now,
+        )
+        session.add(row)
+        session.commit()
+        payload = archive_sync_v2._analysis_payload(session, row)
+    assert (payload["content_kind"], payload["content_value"], payload["content_value_version"]) == (
+        "paper", 7.6, "content-value-v2",
+    )
+    assert "pending_scope" not in payload   # 本地任务状态,不外传
+
+    with Session(consumer.engine) as session:
+        article = _article()
+        article.analysis_authority_id = authority_id
+        session.add(article)
+        session.commit()
+        archive_sync_v2._apply_analyses(session, [{"revision": "1", "payload": payload}], authority_id)
+        session.commit()
+        record = session.get(ArticleAnalysisRecord, article.id)
+        assert (record.content_value, record.content_value_reason) == (7.6, "方法新")
+        assert record.pending_scope == ""
+
+        new_fields = {"content_kind", "content_value", "content_value_reason", "content_value_version"}
+        legacy = {key: value for key, value in payload.items() if key not in new_fields}
+        archive_sync_v2._apply_analyses(session, [{"revision": "2", "payload": legacy}], authority_id)
+        session.commit()
+        record = session.get(ArticleAnalysisRecord, article.id)
+        assert record.quality_score == 5.2
+        assert (record.content_kind, record.content_value, record.content_value_version) == (None, None, "")
+
+
 def test_new_article_body_hides_old_authority_analysis_until_matching_result_arrives(tmp_path):
     producer = _sink(tmp_path, "producer-body-revision.db")
     consumer = _sink(tmp_path, "consumer-body-revision.db")

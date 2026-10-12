@@ -54,7 +54,7 @@ _BREAKING_KEYS = {
 
 class FullAnalysisScope(BaseModel):
     days: int | None = Field(default=30, ge=1, le=3650)
-    selection: Literal["all", "missing_or_outdated"] = "all"
+    selection: Literal["all", "missing_or_outdated", "missing", "content_value"] = "all"
     source_ids: list[str] = Field(default_factory=list, max_length=200)
 
 

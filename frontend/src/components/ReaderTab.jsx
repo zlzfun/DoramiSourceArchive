@@ -59,12 +59,12 @@ import { formatRelativeTime, formatDateTime, formatPublishDate } from '../utils/
 import { formatPodcastDuration, podcastListAvailabilityMeta, podcastOf } from '../utils/podcast';
 import { isCompactKind, kindChipLabel, kindFilterOptions, kindKickerLabel } from '../utils/contentKind';
 import {
-  SCORE_DISCLAIMER,
   analysisStatusMeta,
   displayAnalysisTags,
   podcastAssessmentMeta,
   primaryAnalysisLabel,
-  qualityScoreText,
+  primaryScoreOf,
+  scoreDisclaimer,
   scoreTierClass,
   shouldShowAiReadingCard,
 } from '../utils/analysis';
@@ -223,8 +223,11 @@ export const ArticleRow = memo(function ArticleRow({
   const podcast = entryPodcast ? podcastOf(article) : null;
   const podcastStatus = podcastListAvailabilityMeta(podcast);
   const analysisLabel = primaryAnalysisLabel(article);
-  const score = qualityScoreText(article.quality_score);
-  const scoreTier = scoreTierClass(article.quality_score);   // issue #54:按分值分档着色
+  // 分数位显示主分(issue #178 第二波:内容类型决定默认维度,新闻价值 ≥ 8.5 例外);列表不标维度,悬停说明。
+  const primaryScore = primaryScoreOf(article);
+  const score = primaryScore?.text || '';
+  const scoreTier = scoreTierClass(primaryScore?.value);   // issue #54:按分值分档着色
+  const scoreTitle = primaryScore ? `${primaryScore.label} ${score}。${scoreDisclaimer(primaryScore.key)}` : '';
   const analysisStatus = analysisStatusMeta(article, { podcast: entryPodcast });
   const podcastAssessment = entryPodcast ? podcastAssessmentMeta(article) : null;
   const analysisTag = analysisLabel && analysisLabel !== interestHit && analysisLabel !== labelSuppress
@@ -272,7 +275,7 @@ export const ArticleRow = memo(function ArticleRow({
                 {kindTag}
                 {analysisTag}
                 {score && (
-                  <span className={`reader-entry-score ai-grad-text ${scoreTier}`} title={SCORE_DISCLAIMER}>
+                  <span className={`reader-entry-score ai-grad-text ${scoreTier}`} title={scoreTitle}>
                     {score}
                   </span>
                 )}
@@ -331,7 +334,7 @@ export const ArticleRow = memo(function ArticleRow({
               {/* 分析主签与命中胶囊同名时让位;单标签视图里与当前标签同名时也让位(每行都写同一个词是重复信息) */}
               {analysisTag}
               {score
-                ? <span className={`reader-entry-score ai-grad-text ${scoreTier}`} title={SCORE_DISCLAIMER}>{score}</span>
+                ? <span className={`reader-entry-score ai-grad-text ${scoreTier}`} title={scoreTitle}>{score}</span>
                 : (analysisStatus && <span className="reader-entry-score is-pending" role="status">分析中</span>)}
               <span
                 className="reader-entry-time"

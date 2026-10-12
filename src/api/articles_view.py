@@ -372,6 +372,7 @@ def serialize_article_list_item(
         content_type=record.content_type,
         content_genre=genre,
         source_kinds=source_kinds,
+        content_kind=getattr(analysis, "content_kind", None),
     )
     item = {
         "id": record.id,
@@ -397,6 +398,12 @@ def serialize_article_list_item(
         "analysis_next_attempt_at": getattr(analysis, "next_attempt_at", None),
         "quality_score": getattr(analysis, "quality_score", None),
         "score_reason": getattr(analysis, "score_reason", None) or None,
+        # 双评分(issue #178 第二波):新闻价值 / 内容价值各自缺失即缺席,主分按内容类型与例外线在读取时计算。
+        **content_classification.score_projection(
+            content_type=record.content_type,
+            kind=classification.kind,
+            analysis=analysis,
+        ),
         "content_genre": genre,
         "content_genre_label": content_classification.genre_label(genre) or None,
         # 内容类型 / 事件类型(issue #178):读取时由来源先验、数据结构、链接形状与体裁推导。

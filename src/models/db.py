@@ -304,6 +304,29 @@ class ArticleAnalysisRecord(SQLModel, table=True):
     )
     dimension_scores_json: str = Field(default="{}", description="内部版本化评分维度，不对外展示")
     score_reason: str = Field(default="", description="一句话评分理由（≤40 字，分数注脚，不复述内容）")
+    # 内容价值(issue #178 第二波):值不值得花时间读完 / 听完,与新闻价值相互独立,标准随内容类型变化。
+    # 独立版本号:content_value_version 不等于当前尺子版本即视为没有内容价值(缺失即缺席),
+    # 新闻价值的 scoring_version 不受它影响。取值约束在服务层校验(加表级 CHECK 要重建表、丢触发器)。
+    content_kind: Optional[str] = Field(
+        default=None,
+        description="模型给出的内容类型(news/paper/tutorial/opinion/release/project/digest);规则能判时以规则为准",
+    )
+    content_value: Optional[float] = Field(default=None, ge=1.0, le=10.0, description="内容价值分")
+    content_value_reason: str = Field(
+        default="",
+        sa_column_kwargs={"server_default": text("''")},
+        description="一句话内容价值依据(≤40 字,分数注脚,不复述内容)",
+    )
+    content_value_version: str = Field(
+        default="",
+        sa_column_kwargs={"server_default": text("''")},
+        description="内容价值尺子版本;不等于当前版本即视为缺失",
+    )
+    pending_scope: str = Field(
+        default="",
+        sa_column_kwargs={"server_default": text("''")},
+        description="待处理任务的提交范围:空=完整分析;content_value=只补内容价值(不动新闻分、摘要、标签)",
+    )
     summary: str = Field(default="", description="文章唯一摘要：速读卡 / 个人早报 / 列表 summary_zh 投影共用")
     content_genre: Optional[str] = Field(default=None, description="独立受控内容性质")
     content_features_json: str = Field(default="[]", description="附加内容特征 JSON")

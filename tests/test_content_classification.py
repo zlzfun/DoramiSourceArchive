@@ -264,8 +264,9 @@ def test_sql_condition_matches_python_classification(fixture_engine):
 
 
 def test_sql_expression_matches_python_on_exhaustive_combinations(tmp_path):
-    """由规则表生成的穷举组合:源 × 数据结构 × URL × 体裁(含无分析行),逐条比较 ``kind_expr``
-    与 ``classify_item``;规则表新增取值会自动进入组合(codex R1 #8)。"""
+    """由规则表生成的穷举组合:源 × 数据结构 × URL × (体裁, 模型类型)(含无分析行),逐条比较
+    ``kind_expr`` 与 ``classify_item``;规则表新增取值会自动进入组合(codex R1 #8)。第二波起
+    模型给的类型排在规则之后、体裁之前,组合里含每个合法类型与一个非法值。"""
     from sqlalchemy import func, insert
 
     from models.db import ArticleAnalysisRecord, ArticleRecord
@@ -287,28 +288,33 @@ def test_sql_expression_matches_python_on_exhaustive_combinations(tmp_path):
         "",
     ]
     genres = sorted(cc.GENRE_KIND_EVENT) + [None]
+    llm_kinds = list(cc.ITEM_KINDS) + ["bogus"]
+    analysis_variants = [(genre, None) for genre in genres] + [
+        (genre, llm_kind) for genre in (None, "research_paper", "opinion") for llm_kind in llm_kinds
+    ]
 
     sink = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'exhaustive.db'}")
     articles, analyses, expected = [], [], {}
     for source_id in sources:
         for content_type in content_types:
             for url_index, url in enumerate(urls):
-                for genre in genres:
-                    article_id = f"{source_id}|{content_type}|{url_index}|{genre}"
+                for genre, llm_kind in analysis_variants:
+                    article_id = f"{source_id}|{content_type}|{url_index}|{genre}|{llm_kind}"
                     articles.append({
                         "id": article_id, "title": "t", "content_type": content_type, "source_id": source_id,
                         "source_url": url, "publish_date": "2026-09-01T00:00:00",
                         "fetched_date": "2026-09-01T00:00:00", "has_content": True, "content": "",
                         "extensions_json": "{}",
                     })
-                    if genre is not None:
+                    if genre is not None or llm_kind is not None:
                         analyses.append({
                             "article_id": article_id, "status": "succeeded", "content_genre": genre,
+                            "content_kind": llm_kind,
                             "created_at": "2026-09-01T00:00:00", "updated_at": "2026-09-01T00:00:00",
                         })
                     expected[article_id] = cc.classify_item(
                         source_id=source_id, source_url=url, content_type=content_type,
-                        content_genre=genre, source_kinds=RULES,
+                        content_genre=genre, source_kinds=RULES, content_kind=llm_kind,
                     ).kind
     with Session(sink.engine) as session:
         session.execute(insert(ArticleRecord.__table__), articles)

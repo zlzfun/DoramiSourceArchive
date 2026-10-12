@@ -196,11 +196,19 @@ the two Podcast streams):
 7. `podcast_audio`
 8. `source_states`
 
-The `analyses` payload carries the complete authoritative single-score contract,
+The `analyses` payload carries the complete authoritative scoring contract,
 including `analysis_basis`, the SHA-256 `analysis_input_hash` of the exact model
 messages, optional `transcript_artifact_id`, `analysis_diagnostics_json`, and the
 prompt/scoring versions. `content_hash` remains the separate article-version guard
 used during import; receivers must not recompute or overwrite a producer score.
+
+Since issue #178 wave 2 the payload also carries the second score — `content_kind`,
+`content_value`, `content_value_reason` and its own ruler version
+`content_value_version` (absent version = no content value). The fields are
+additive within v2: a receiver that gets a result from an older producer without
+them clears its copy instead of pairing a new news score with a stale content
+value, and an older receiver ignores them. The local task marker `pending_scope`
+is never exported. Deploy the external producer first, as for any stream change.
 
 An analysis whose `content_hash` no longer matches the producer's current article
 is exported as a tombstone, and is absent from analysis presence checks. This

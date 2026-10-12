@@ -328,6 +328,10 @@ def _analysis_payload(session: Session, row: ArticleAnalysisRecord) -> dict[str,
         "podcast_final_score",
         "dimension_scores_json",
         "score_reason",
+        "content_kind",
+        "content_value",
+        "content_value_reason",
+        "content_value_version",
         "summary",
         "content_genre",
         "content_features_json",
@@ -1559,6 +1563,10 @@ def _supersede_local_analysis(
         record.transcript_artifact_id = None
         record.analysis_diagnostics_json = "{}"
         record.score_reason = ""
+        record.content_kind = None
+        record.content_value = None
+        record.content_value_reason = ""
+        record.content_value_version = ""
         record.summary = ""
         record.content_genre = None
         record.content_features_json = "[]"
@@ -1571,6 +1579,7 @@ def _supersede_local_analysis(
     record.next_attempt_at = None
     record.lease_owner = None
     record.lease_expires_at = None
+    record.pending_scope = ""
     record.last_error = None
     record.updated_at = now
     session.add(record)
@@ -2025,6 +2034,11 @@ def _apply_analyses(
             ("analysis_diagnostics_json", "{}"),
             ("podcast_initial_score", None),
             ("podcast_final_score", None),
+            # 内容价值(issue #178 第二波):旧版生产者的结果不带这几项,接收端置空而不是保留旧值。
+            ("content_kind", None),
+            ("content_value", None),
+            ("content_value_reason", ""),
+            ("content_value_version", ""),
         ):
             setattr(record, field, data.get(field, default))
         for field in (
@@ -2057,6 +2071,7 @@ def _apply_analyses(
         record.next_attempt_at = None
         record.lease_owner = None
         record.lease_expires_at = None
+        record.pending_scope = ""
         record.last_error = (
             None
             if record.status in {"pending", "running", "succeeded"}

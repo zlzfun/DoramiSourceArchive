@@ -5,7 +5,8 @@
   "source": "production articles fetched 2026-09-01..09-08, stratified random sample",
   "raters": "Claude (Fable 5.1) and codex (gpt-5.6-sol) scored independently against the anchor doc; gold = mean",
   "body_note": "body clipped to 6000 chars",
-  "usage": "scripts/eval_news_value_golden.py"
+  "usage": "scripts/eval_news_value_golden.py",
+  "baseline": "2026-10-12 换为 article-analysis-v6(issue #178 第二波,此前为 v5)。同模型 deepseek-flash、关闭思考,v6 两次 MAE 0.70/0.71、档位一致率 68%/69%;v7 两次 MAE 0.59/0.71、档位一致率 76%/74%。单次运行的 MAE 有约 ±0.1 的采样波动,比较时宜各跑两次。"
  },
  "items": [
   {
@@ -29,10 +30,10 @@
    },
    "gold": 3.8,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 2.0,
-    "reason": "排行榜新增条目，信息量稀薄，非重大发布。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 2.8,
+    "reason": "仅排行榜收录变更，属边角信息，无实质新闻价值"
    }
   },
   {
@@ -56,10 +57,10 @@
    },
    "gold": 5.35,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 5.5,
-    "reason": "Anthropic 官方系统提示更新，涉及版权规避与安全策略，但属常规调整，影响面有限。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 6.2,
+    "reason": "Anthropic公开系统提示词变更，涉及版权合规，属风向标厂商的增量更新"
    }
   },
   {
@@ -83,10 +84,10 @@
    },
    "gold": 2.85,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 2.0,
-    "reason": "GitHub 日榜聚合，信息稀薄，多为转述，无实质新闻价值。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 2.8,
+    "reason": "GitHub日榜聚合，仅罗列仓库与星数，无实质新闻事件，信息量稀薄"
    }
   },
   {
@@ -110,10 +111,10 @@
    },
    "gold": 5.05,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 2.0,
-    "reason": "仅是一个小版本补丁，新增模型配置支持，无实质新能力，信息量稀薄。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 4.2,
+    "reason": "官方补丁说明，仅新增隐藏模型配置项，属增量小修，影响面有限"
    }
   },
   {
@@ -137,10 +138,10 @@
    },
    "gold": 6.3,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 5.5,
-    "reason": "Codex CLI 常规增量更新，无新范式或重大能力面，属琐碎修补。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 4.8,
+    "reason": "Codex CLI 常规版本更新，多为交互与配置细节修补，非重大发布"
    }
   },
   {
@@ -164,10 +165,10 @@
    },
    "gold": 3.1,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 1.5,
-    "reason": "信息量稀薄，无实质内容，营销或社交转述。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 3.2,
+    "reason": "官方账号转推仅透露内部项目名，无实质发布信息，价值稀薄"
    }
   },
   {
@@ -191,10 +192,10 @@
    },
    "gold": 6.25,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 7.5,
-    "reason": "数据中心与能源基建企业IPO，涉及OpenAI、英伟达，行业影响面广，属重大业界新闻。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 7.2,
+    "reason": "软银数据中心能源公司IPO，4000亿美元积压合同牵动AI算力基建格局"
    }
   },
   {
@@ -218,10 +219,10 @@
    },
    "gold": 4.3,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 1.5,
-    "reason": "信息量稀薄，仅标题提及Astra，无实质内容，属边角消息。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 3.5,
+    "reason": "仅剩链接与标题，看不出Astra具体事件，信息稀薄。"
    }
   },
   {
@@ -245,10 +246,10 @@
    },
    "gold": 5.35,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 5.5,
-    "reason": "常规研究论文，非里程碑，影响面有限。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 4.8,
+    "reason": "常规学术论文，方法增量改进，影响面限于去偏研究圈"
    }
   },
   {
@@ -272,10 +273,10 @@
    },
    "gold": 5.05,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 1.0,
-    "reason": "标题耸动但正文为空，无实质信息，无法评估重要性。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 3.8,
+    "reason": "仅标题与链接，Meta裁员传闻未经证实，信息稀薄且影响面有限。"
    }
   },
   {
@@ -299,10 +300,10 @@
    },
    "gold": 5.45,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 7.5,
-    "reason": "OpenAI 生图模型新版本泄露，能力显著提升，属风向标厂商功能更新，影响面广。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 5.4,
+    "reason": "GPT Image 2.5尚未官方发布，属内测泄露与目击传闻，分量有限且确定性不足。"
    }
   },
   {
@@ -326,10 +327,10 @@
    },
    "gold": 6.15,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 5.5,
-    "reason": "Claude Code 常规版本更新，以修复和细节改进为主，无新范式或重大能力，属增量维护。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 4.2,
+    "reason": "Claude Code 常规补丁更新，仅修复细节与小幅设置项，无新能力或范式变化"
    }
   },
   {
@@ -353,10 +354,10 @@
    },
    "gold": 3.9,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 1.5,
-    "reason": "内容为一条呼吁暂停AI发展的简短推文，无实质新闻信息，属边角消息。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 2.5,
+    "reason": "仅一条转推链接，看不出具体事件，信息量稀薄"
    }
   },
   {
@@ -380,10 +381,10 @@
    },
    "gold": 4.4,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 5.5,
-    "reason": "研究结论对AI陪伴产品设计有参考价值，但影响面有限，非行业级事件。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 5.3,
+    "reason": "老年AI陪伴的实证研究，有具体发现但影响面限于细分场景"
    }
   },
   {
@@ -407,10 +408,10 @@
    },
    "gold": 5.7,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 7.5,
-    "reason": "研究有明确新意，验证LLM对话可削弱新发阴谋论信念，影响面广，但非行业级突破。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 5.2,
+    "reason": "研究有新意但属常规学术论文，影响面有限，未达里程碑级。"
    }
   },
   {
@@ -434,10 +435,10 @@
    },
    "gold": 3.05,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 3.0,
-    "reason": "常规小版本更新，仅含请求头优化与桌面端小修复，影响面有限。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 3.2,
+    "reason": "开源编程工具的小版本补丁，仅含请求头与桌面端细节修复，影响面很小。"
    }
   },
   {
@@ -461,10 +462,10 @@
    },
    "gold": 2.3,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 2.0,
-    "reason": "官方账号转发的简短消息，信息量稀薄，仅涉及用户权益延续，无实质新闻价值。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 3.2,
+    "reason": "官方账号转推的额度延续通知，无新事件，信息量稀薄"
    }
   },
   {
@@ -488,10 +489,10 @@
    },
    "gold": 7.4,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 7.5,
-    "reason": "微软发布旗舰语音识别模型，性能与价格优势明确，属头部厂商核心模型发布。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 6.8,
+    "reason": "微软发布语音识别新模型，基准领先且价格极低，属常规模型发布。"
    }
   },
   {
@@ -515,10 +516,10 @@
    },
    "gold": 4.2,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 3.5,
-    "reason": "观点文章，讨论AI对写作职业的影响，缺乏实质新闻或技术细节，影响力有限。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 3.2,
+    "reason": "仅一条观点随笔链接，无实质事件与技术信息，讨论度有限"
    }
   },
   {
@@ -542,10 +543,10 @@
    },
    "gold": 7.9,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 8.5,
-    "reason": "头部厂商旗舰模型重大版本更新，前端编程能力登顶权威榜单，影响面广。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 8.2,
+    "reason": "阿里旗舰模型重大更新，前端编程登顶全球榜单并开放API，影响面大"
    }
   },
   {
@@ -569,10 +570,10 @@
    },
    "gold": 6.0,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 3.0,
-    "reason": "仅提及发布研究数据，无实质细节，信息量稀薄。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 7.2,
+    "reason": "OpenAI发布模型加速自身研究的内部数据，触及递归自我改进，行业讨论度高。"
    }
   },
   {
@@ -596,10 +597,10 @@
    },
    "gold": 6.5,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 7.5,
-    "reason": "VLDB工业最佳论文，PB级数据工程系统，有明确新意与生产验证，但属数据工程而非模型突破。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 6.8,
+    "reason": "VLDB工业最佳论文，35PB生产级数据系统，对LLM训练数据工程有实质参考价值"
    }
   },
   {
@@ -623,10 +624,10 @@
    },
    "gold": 3.9,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 1.5,
-    "reason": "个人社交动态，内容琐碎，无实质新闻价值。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 2.0,
+    "reason": "仅一句个人感慨，无具体事件与可验证信息，价值稀薄。"
    }
   },
   {
@@ -650,10 +651,10 @@
    },
    "gold": 7.55,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 6.5,
-    "reason": "OpenAI 官方承诺建立智能体失控披露框架，涉及安全与监管，但属政策声明而非产品发布，影响面中等。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 7.2,
+    "reason": "OpenAI就智能体失控披露建框架，涉监管与行业标准，分量较重"
    }
   },
   {
@@ -677,10 +678,10 @@
    },
    "gold": 5.2,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 7.0,
-    "reason": "研究有明确新意，提出训练框架与评估协议，跨三领域优于基线，但影响面有限。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 6.8,
+    "reason": "微软开源学生模拟器训练框架，基准超越GPT-5.4，属有明确新意的研究"
    }
   },
   {
@@ -704,10 +705,10 @@
    },
    "gold": 3.05,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 4.5,
-    "reason": "机器人本体厂商产品介绍，非行业级事件，营销色彩较重，价值有限。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 3.2,
+    "reason": "本末科技轮足机器人企业宣传稿，非行业级事件，营销口吻重"
    }
   },
   {
@@ -731,10 +732,10 @@
    },
    "gold": 9.1,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 9.5,
-    "reason": "OpenAI 旗舰模型发布，行业级重大突破，影响面广。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 9.2,
+    "reason": "OpenAI 旗舰模型发布，宣称多项基准饱和，属行业级事件"
    }
   },
   {
@@ -758,10 +759,10 @@
    },
    "gold": 6.2,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 8.5,
-    "reason": "OpenAI旗舰模型GPT-6 Astra上线并全面开放，属行业级重大发布，但文章为转述且细节有限。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 9.2,
+    "reason": "GPT-6 Astra 正式面向全体付费用户开放，属头部厂商旗舰模型发布，行业级事件。"
    }
   },
   {
@@ -785,10 +786,10 @@
    },
    "gold": 6.2,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 5.5,
-    "reason": "官方变更日志，多为修复与增量改进，影响面有限，属常规更新。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 5.2,
+    "reason": "Claude Code 常规补丁更新，含企业级 MCP 托管设置等增量改进，非重大发布"
    }
   },
   {
@@ -812,10 +813,10 @@
    },
    "gold": 2.85,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 1.0,
-    "reason": "仅一张图片，无实质内容，信息量极稀薄。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 3.2,
+    "reason": "仅一张开源LLM现状图，无实质信息，属信息稀薄的榜单转贴。"
    }
   },
   {
@@ -839,10 +840,10 @@
    },
    "gold": 2.9,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 2.0,
-    "reason": "GitHub Trending 日榜聚合，信息量稀薄，多为转述，无实质新闻价值。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 2.8,
+    "reason": "GitHub日榜聚合，仅罗列仓库与星数，无实质新闻事件，信息量稀薄。"
    }
   },
   {
@@ -866,10 +867,10 @@
    },
    "gold": 3.15,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 2.0,
-    "reason": "常规开源项目小版本更新，仅含bug修复，无重大功能或影响。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 4.2,
+    "reason": "开源编程工具的小版本补丁，仅修复超时与配置项，影响面有限。"
    }
   },
   {
@@ -893,10 +894,10 @@
    },
    "gold": 4.95,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 4.5,
-    "reason": "自动驾驶VLM模型发布，属车载领域，非行业级事件，按规则降权。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 4.8,
+    "reason": "自动驾驶视觉语言基础模型，开源权重但受车载类降权上限约束"
    }
   },
   {
@@ -920,10 +921,10 @@
    },
    "gold": 6.2,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 5.5,
-    "reason": "微信内测AI社交功能，属产品更新，影响面有限，非重大发布。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 6.8,
+    "reason": "微信内测AI代理间社交，属大厂产品新范式探索，但仅内测且影响面待验证"
    }
   },
   {
@@ -947,10 +948,10 @@
    },
    "gold": 1.75,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 1.0,
-    "reason": "信息量稀薄，仅一句号召性推文，无实质新闻内容。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 3.0,
+    "reason": "官方账号仅发布口号与链接，看不出具体事件，信息量稀薄"
    }
   },
   {
@@ -974,10 +975,10 @@
    },
    "gold": 7.05,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 7.5,
-    "reason": "Anthropic 开放文本水印验证 API，面向监管与媒体，属行业级合规与检测新动向，影响面广。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 6.2,
+    "reason": "Anthropic开放水印验证API，服务监管合规，属合规基础设施而非模型能力突破"
    }
   },
   {
@@ -1001,10 +1002,10 @@
    },
    "gold": 4.15,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 4.5,
-    "reason": "非行业级大事件，属常规硬件产品预告，影响面有限。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 4.2,
+    "reason": "迷你主机硬件发布，属边缘产品消息，对AI行业影响有限"
    }
   },
   {
@@ -1028,10 +1029,10 @@
    },
    "gold": 5.15,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 5.5,
-    "reason": "二线厂商具身世界模型发布，登顶评测子榜，但影响面有限，非行业级事件。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 5.8,
+    "reason": "二线厂商具身世界模型发布，登顶仿真榜单，属细分领域进展"
    }
   },
   {
@@ -1055,10 +1056,10 @@
    },
    "gold": 5.05,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 5.5,
-    "reason": "Adobe 创意工具接入 Slack 属企业协作生态整合，非重大发布或范式级创新，影响面有限。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 5.2,
+    "reason": "大厂产品接入第三方协作平台的常规集成，影响面有限，非模型或范式级发布。"
    }
   },
   {
@@ -1082,10 +1083,10 @@
    },
    "gold": 5.3,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 6.0,
-    "reason": "研究论文，多轮图表生成基准与系统，有明确新意但影响面有限。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 4.8,
+    "reason": "常规论文，新基准与多智能体方法，影响面有限，非里程碑级结果。"
    }
   },
   {
@@ -1109,10 +1110,10 @@
    },
    "gold": 6.85,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 7.5,
-    "reason": "企业AI智能体平台获5.5亿美元融资，属业界重大融资新闻，影响面较大。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 6.8,
+    "reason": "企业AI智能体公司5.5亿美元融资，属重大融资但非行业级突破"
    }
   },
   {
@@ -1136,10 +1137,10 @@
    },
    "gold": 6.35,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 6.5,
-    "reason": "新基准发布，面向长周期自主商务运营，有明确新意但影响面有限。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 5.8,
+    "reason": "阿里Qwen发布长时程自主经营基准，属有明确新意的评估研究，影响面中等。"
    }
   },
   {
@@ -1163,10 +1164,10 @@
    },
    "gold": 7.5,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 6.5,
-    "reason": "Meta 旗舰模型常规版本更新，性能小幅提升，主要卖点是价格，非行业级突破。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 6.8,
+    "reason": "Meta 新模型发布，主打低价与智能体能力，属头部厂商常规迭代而非范式突破。"
    }
   },
   {
@@ -1190,10 +1191,10 @@
    },
    "gold": 3.15,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 2.0,
-    "reason": "观点帖，信息量稀薄，无实质新闻内容，仅提及ModelScope作为替代。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 2.5,
+    "reason": "仅社区闲聊与链接，无实质新闻，NVIDIA 交易未证实"
    }
   },
   {
@@ -1217,10 +1218,10 @@
    },
    "gold": 5.1,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 5.0,
-    "reason": "第三方评测，影响面有限，非官方发布，价值中等偏低。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 4.8,
+    "reason": "AI搜索商业偏向的实证观察，影响面有限，非官方发布"
    }
   },
   {
@@ -1244,10 +1245,10 @@
    },
    "gold": 6.3,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 7.5,
-    "reason": "视频预训练世界模型，零样本成功率大幅提升，具身智能领域有明确新意。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 5.2,
+    "reason": "机器人世界动作模型论文，大规模视频预训练提升泛化，属有价值研究但非里程碑"
    }
   },
   {
@@ -1271,10 +1272,10 @@
    },
    "gold": 6.5,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 7.5,
-    "reason": "OpenAI 试点按结果付费，属头部厂商商业模式重大变化，影响行业定价范式。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 7.2,
+    "reason": "OpenAI转向按结果计费，反映AI商业模式重大变化，影响行业定价逻辑。"
    }
   },
   {
@@ -1298,10 +1299,10 @@
    },
    "gold": 3.75,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 4.0,
-    "reason": "个人实验性分支，影响面有限，非官方发布。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 4.2,
+    "reason": "个人开发者对llama.cpp的MoE专家扩展分支，属边缘技术尝试，影响面有限。"
    }
   },
   {
@@ -1325,10 +1326,10 @@
    },
    "gold": 4.85,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 5.0,
-    "reason": "xAI 图像 API 的增量更新，影响面有限，非重大发布。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 4.6,
+    "reason": "xAI图像API的常规参数与限额增量更新，影响面有限"
    }
   },
   {
@@ -1352,10 +1353,10 @@
    },
    "gold": 5.55,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 6.0,
-    "reason": "开源复现审美RL训练，方法有巧思但影响面有限，非里程碑研究。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 5.8,
+    "reason": "开源复现用RL训练编码模型作画，属有明确新意的技术实践，影响面有限"
    }
   },
   {
@@ -1379,10 +1380,10 @@
    },
    "gold": 5.65,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 6.5,
-    "reason": "研究论文，探讨推理操作在表示空间中的几何结构，有明确新意但影响面有限。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 5.8,
+    "reason": "机制可解释性研究，揭示推理操作的几何结构，有明确新意但影响面有限"
    }
   },
   {
@@ -1406,10 +1407,10 @@
    },
    "gold": 5.4,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 5.5,
-    "reason": "美国财长批评AI企业沟通，属业界政策讨论，影响面有限。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 4.8,
+    "reason": "财长批评数据中心沟通，属政策表态与行业舆论，非技术或产品事件"
    }
   },
   {
@@ -1433,10 +1434,10 @@
    },
    "gold": 8.65,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 9.5,
-    "reason": "OpenAI 旗舰模型达到网络安全关键能力级别，属行业级重大发布。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 9.3,
+    "reason": "OpenAI 旗舰模型发布并首次触及网络安全关键级，属行业级里程碑"
    }
   },
   {
@@ -1460,10 +1461,10 @@
    },
    "gold": 1.4,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 1.5,
-    "reason": "信息量稀薄，仅询问他人使用体验，无实质新闻内容。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 2.0,
+    "reason": "仅一句提问，无实质信息，属社区闲聊，不构成新闻。"
    }
   },
   {
@@ -1487,10 +1488,10 @@
    },
    "gold": 8.6,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 9.5,
-    "reason": "OpenAI 旗舰模型 GPT-6 Astra 全面开放并上线 API，属行业级重大发布。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 9.3,
+    "reason": "OpenAI旗舰模型GPT-6发布并上线API，属行业级重大事件"
    }
   },
   {
@@ -1514,10 +1515,10 @@
    },
    "gold": 7.25,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 5.5,
-    "reason": "微软图像模型常规迭代，非行业级突破，价值有限。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 7.2,
+    "reason": "微软旗舰图像模型迭代并在Foundry开放，属头部厂商重要产品发布"
    }
   },
   {
@@ -1541,10 +1542,10 @@
    },
    "gold": 6.7,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 7.0,
-    "reason": "论文提出技能蒸馏方法，提升智能体研究能力，有明确新意，但非范式级突破。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 5.2,
+    "reason": "论文提出技能蒸馏新范式，但属常规研究，影响面有限"
    }
   },
   {
@@ -1568,10 +1569,10 @@
    },
    "gold": 2.7,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 4.5,
-    "reason": "企业客户案例，非一手技术发布，影响面有限。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 3.2,
+    "reason": "大厂企业客户案例，属营销叙事，无实质技术或产品新闻"
    }
   },
   {
@@ -1595,10 +1596,10 @@
    },
    "gold": 6.5,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 6.0,
-    "reason": "评测基准更新，新增私有测试集与长文档任务，对行业有参考价值但非重大发布。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 5.8,
+    "reason": "榜单机构更新评测基准，属行业参考工具迭代，非模型或产品发布"
    }
   },
   {
@@ -1622,10 +1623,10 @@
    },
    "gold": 5.25,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 6.0,
-    "reason": "综述论文，覆盖面广但非里程碑，影响力中等。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 4.8,
+    "reason": "综述性论文，梳理智能体产物构建，非里程碑成果，影响面有限"
    }
   },
   {
@@ -1649,10 +1650,10 @@
    },
    "gold": 4.75,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 5.5,
-    "reason": "社区实测对比，非官方发布，影响面有限，属常规技术分享。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 4.8,
+    "reason": "个人硬件上的推理引擎对比实测，属社区经验分享，影响面有限"
    }
   },
   {
@@ -1676,10 +1677,10 @@
    },
    "gold": 5.8,
    "baseline": {
-    "prompt_version": "article-analysis-v5",
-    "model": "deepseek-v4-flash",
-    "score": 6.5,
-    "reason": "研究论文，提出记忆路由新架构，有明确新意但属初步探索，影响面有限。"
+    "prompt_version": "article-analysis-v6",
+    "model": "deepseek-flash",
+    "score": 4.3,
+    "reason": "常规架构探索论文，仅初步实验，未开源权重或达公认SOTA，影响面有限"
    }
   }
  ]

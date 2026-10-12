@@ -122,6 +122,13 @@ const ANALYSIS_PROJECTION_KEYS = [
   'analysis_next_attempt_at',
   'quality_score',
   'score_reason',
+  // 双评分(issue #178 第二波):内容价值与主分随分析落地变化
+  'news_value',
+  'news_value_reason',
+  'content_value',
+  'content_value_reason',
+  'primary_dimension',
+  'primary_score',
   'analysis_basis',
   'analysis_input_hash',
   'transcript_artifact_id',

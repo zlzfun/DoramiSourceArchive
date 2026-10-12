@@ -6,7 +6,7 @@ import {
   hasReadableAnalysis,
   podcastAssessmentMeta,
   podcastFullProcessingMeta,
-  qualityScoreText,
+  scoreDimensions,
   scoreTierClass,
   SCORE_DISCLAIMER,
 } from '../utils/analysis';
@@ -81,7 +81,8 @@ export default function ArticleDetailDrawer({
     includeTerminal: true,
     podcast: article?.content_type === 'podcast_episode',
   });
-  const score = qualityScoreText(article?.quality_score);
+  // 双评分(issue #178 第二波):主分在前,缺失的维度不出现
+  const scoreDims = scoreDimensions(article);
   const analysisTags = displayAnalysisTags(article);
 
   return (
@@ -146,7 +147,9 @@ export default function ArticleDetailDrawer({
                 {hasAnalysis ? (
                   <div className="reader-analysis-summary">
                     <div className="reader-analysis-top">
-                      {score && <span className={`reader-analysis-score ${scoreTierClass(article?.quality_score)}`}><strong>{score}</strong><small>新闻价值</small></span>}
+                      {scoreDims.map((dim) => (
+                        <span key={dim.key} className={`reader-analysis-score ${scoreTierClass(dim.value)}`}><strong>{dim.text}</strong><small>{dim.label}</small></span>
+                      ))}
                       {podcastAssessment && <span className="stamp stamp-idle" role="status">{podcastAssessment.label}</span>}
                       {(analysisTags.length > 0 || article.content_genre) && <span className="reader-analysis-tags">
                         {analysisTags.map((tag, index) => (
@@ -156,7 +159,9 @@ export default function ArticleDetailDrawer({
                       </span>}
                       {analysisStatus && <span className={`stamp ${analysisStatus.cls}`} role="status">{analysisStatus.label}</span>}
                     </div>
-                    {article.score_reason && <p>{article.score_reason}</p>}
+                    {scoreDims.filter((dim) => dim.reason).map((dim) => (
+                    <p key={dim.key}>{scoreDims.length > 1 ? `${dim.label}：${dim.reason}` : dim.reason}</p>
+                  ))}
                     {article.summary_zh && <p className="tiny-meta">{article.summary_zh}</p>}
                     <small>{podcastAssessment ? `${podcastAssessment.note}；${SCORE_DISCLAIMER}` : SCORE_DISCLAIMER}</small>
                   </div>

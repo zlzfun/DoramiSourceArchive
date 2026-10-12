@@ -8056,15 +8056,55 @@ input[type="radio"] {
     border: none;
   }
 
-  /* 左栏只有一个数字;上下居中对齐右栏内容 */
+  /* 左栏:主分数字 + 维度小字(issue #178 第二波),上下居中对齐右栏内容;评分依据浮层以它为锚 */
   .reader-ai-summary-side {
+    position: relative;
     display: flex;
+    flex-direction: column;
     align-items: center;
+    gap: 3px;
     align-self: center;
     min-width: 52px;
   }
+  .reader-ai-score-dim {
+    color: var(--dorami-faint); font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em;
+    line-height: 1; white-space: nowrap;
+  }
+  /* 评分依据浮层:悬停数字或键盘聚焦时浮出(触屏见下方常显行)。格式与速读层同构:小标 + 正文 + 免责小字 */
+  .reader-ai-score-tip {
+    position: absolute; left: 0; top: calc(100% + 8px); z-index: 30;
+    width: min(300px, 72vw);
+    display: flex; flex-direction: column; gap: 5px;
+    padding: 10px 12px;
+    border-radius: var(--r-control);
+    background: var(--dorami-surface);
+    border: 1px solid var(--dorami-border-soft);
+    box-shadow: var(--sh-2);
+    opacity: 0; visibility: hidden; transform: translateY(-4px); pointer-events: none;
+    transition: opacity var(--motion-fast) var(--motion-ease), transform var(--motion-fast) var(--motion-ease),
+      visibility 0s linear var(--motion-fast);
+  }
+  .reader-ai-summary-side:focus-within .reader-ai-score-tip {
+    opacity: 1; visibility: visible; transform: none; transition-delay: 0s;
+  }
+  @media (hover: hover) {
+    .reader-ai-summary-side:hover .reader-ai-score-tip {
+      opacity: 1; visibility: visible; transform: none; transition-delay: 0s;
+    }
+  }
+  .reader-ai-score-tip .reader-ai-layer-text { font-size: 13px; line-height: 1.7; }
+  :root[data-motion="reduce"] .reader-ai-score-tip { transition: none; }
+  /* 触屏没有悬停:评分依据改为卡内常显的一行小字,点数字切换维度时随之更换 */
+  .reader-ai-reason-inline { display: none; }
+  @media (hover: none) {
+    .reader-ai-score-tip { display: none; }
+    .reader-ai-reason-inline {
+      display: block; margin: 8px 0 0; color: var(--dorami-muted); font-size: 12px; line-height: 1.6;
+    }
+    .reader-ai-reason-inline-label { color: var(--dorami-accent-ink); font-weight: 650; margin-right: 6px; }
+  }
 
-  /* 大数字:衬线渐变(这张卡的身份标记就是它——星已撤)。它是按钮(切换评分依据),
+  /* 大数字:衬线渐变(这张卡的身份标记就是它——星已撤)。它是按钮(有两个分时切换维度),
      但视觉上是个数字——去掉一切按钮痕迹;可点时悬停微浮。字体/字号见文件尾未分层区。 */
   .reader-ai-score-btn {
     background: transparent; border: none; padding: 2px 4px; margin: 0; cursor: default;
@@ -8092,8 +8132,7 @@ input[type="radio"] {
   }
   .reader-ai-odo-digit { display: block; height: 1.2em; line-height: 1.2em; }
 
-  /* 右栏:摘要层与评分依据层叠在同一格,卡高由较高者撑住;两层格式同构(小标 + 正文),
-     切换=慢速淡切+轻位移 */
+  /* 右栏:速读层(小标 + 正文);评分依据已移到数字的悬停浮层(issue #178 第二波),不再翻面 */
   .reader-ai-summary-main { min-width: 0; align-self: center; display: grid; }
   .reader-ai-layer {
     grid-area: 1 / 1;
@@ -8101,9 +8140,6 @@ input[type="radio"] {
     display: flex; flex-direction: column; gap: 5px;
     transition: opacity 480ms var(--motion-ease), transform 480ms var(--motion-ease);
   }
-  .reader-ai-layer-reason { opacity: 0; transform: translateY(8px); pointer-events: none; }
-  .reader-ai-summary.is-reason .reader-ai-layer-summary { opacity: 0; transform: translateY(-8px); pointer-events: none; }
-  .reader-ai-summary.is-reason .reader-ai-layer-reason { opacity: 1; transform: none; pointer-events: auto; }
   .reader-ai-layer-title { color: var(--dorami-accent-ink); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; }
   /* 双类选择器压过 .markdown-body p 的段落外边距(卡住在阅读窗正文容器里) */
   .reader-ai-summary .reader-ai-layer-text { margin: 0; }

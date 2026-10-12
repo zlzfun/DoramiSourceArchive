@@ -718,8 +718,10 @@ async def _score_one(
             )
             if notes:
                 article_input = replace(article_input, image_notes=notes)
+        # 日报只用新闻分:内容价值字段缺损不触发修复、不丢分(issue #178 第二波)。
         raw = await analyze_article_with_llm(
             article_input, active_tags, llm_config, usage_meta=usage_meta, http_client=http_client,
+            require_content_value=False,
         )
         result = validate_analysis_payload(raw, active_tags=active_tags).result
         name_by_code = {

@@ -245,6 +245,10 @@ class ArticleAnalysisResultDTO(ContractModel):
     tag_candidates: tuple[ArticleTagCandidateDTO, ...] = Field(default_factory=tuple)
     content_features: tuple[str, ...] = Field(default_factory=tuple)
     entities: tuple[dict[str, object], ...] = Field(default_factory=tuple)
+    # 内容价值(issue #178 第二波):文章提示词 v7 起产出;播客与旧版结果为空。
+    content_kind: Optional[str] = None
+    content_value: Optional[float] = Field(default=None, ge=1.0, le=10.0)
+    content_value_reason: str = ""
 
 
 class DigestArticleCandidateDTO(ContractModel):
