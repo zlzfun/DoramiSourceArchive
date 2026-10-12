@@ -2758,3 +2758,105 @@ def test_article_and_analysis_committed_after_generation_wait_for_next_pull(tmp_
         )
         assert article is not None
         assert analysis is not None and analysis.quality_score == 9.1
+
+
+def _prepare_and_pull(consumer, producer, remote, tmp_path, *, label):
+    base_url = "https://remote.test"
+    with Session(consumer.engine) as session:
+        remote_sync_service.prepare_transaction_revision_consumer(
+            session,
+            base_url=base_url,
+            username="admin",
+            authority_id=archive_sync_v2.producer_authority_id(producer.engine),
+            schema_version=archive_sync_v2.SCHEMA_VERSION,
+            prepared_at="2026-10-12T00:00:00+00:00",
+            capabilities=list(archive_sync_v2.ADVERTISED_CAPABILITIES),
+        )
+        session.commit()
+    target = remote_sync_service.load_sync_state(consumer.engine)["targets"][base_url]
+    return asyncio.run(remote_sync_service.run_pull_v2(
+        engine=consumer.engine,
+        base_url=base_url,
+        username="admin",
+        password="secret",
+        media_root=tmp_path / f"{label}-media",
+        checkpoints=target.get("v2_streams") or {},
+        on_stream_complete=lambda stream, checkpoint: remote_sync_service.record_v2_stream_success(
+            consumer.engine, base_url=base_url, username="admin", stream=stream,
+            checkpoint=checkpoint, synced_at="2026-10-12T00:00:00+00:00",
+        ),
+        transport=httpx.MockTransport(remote.handler),
+    ))
+
+
+def test_upgraded_receiver_refetches_analyses_dropped_by_its_old_version(tmp_path):
+    """issue #178 第二波:旧版接收端丢掉了内容价值字段、同步进度已越过那些行;升级后第一次同步自动整流重拉
+    分析流把它们补回来,其它流仍是增量。"""
+    producer = _sink(tmp_path, "producer-refetch.db")
+    consumer = _sink(tmp_path, "consumer-refetch.db")
+    now = "2026-10-12T00:00:00+00:00"
+    with Session(producer.engine) as session:
+        session.add(_source())
+        article = _article()
+        session.add(article)
+        session.flush()
+        session.add(ArticleAnalysisRecord(
+            article_id=article.id, status="succeeded", tagging_status="succeeded", quality_score=5.2,
+            score_reason="常规论文", summary="摘要", content_kind="paper", content_value=7.6,
+            content_value_reason="方法新", content_value_version="content-value-v2",
+            content_hash=compute_content_hash(article), created_at=now, updated_at=now,
+        ))
+        session.commit()
+    remote = _V2Remote(producer)
+    _prepare_and_pull(consumer, producer, remote, tmp_path, label="first")
+    base_url = "https://remote.test"
+    with Session(consumer.engine) as session:
+        assert session.get(ArticleAnalysisRecord, "article-1").content_value == 7.6
+        # 模拟「旧版本拉过」:内容价值字段被丢掉、记账里没有字段代次,但分析流 checkpoint 已越过这一行
+        record = session.get(ArticleAnalysisRecord, "article-1")
+        record.content_kind, record.content_value = None, None
+        record.content_value_reason, record.content_value_version = "", ""
+        session.add(record)
+        row = session.get(AppSettingRecord, remote_sync_service.REMOTE_SYNC_STATE_KEY)
+        state = json.loads(row.value)
+        assert state["targets"][base_url]["v2_analysis_payload_generation"] == 2   # 首次 rebase 即记当前代次
+        state["targets"][base_url].pop("v2_analysis_payload_generation")
+        assert "analyses" in state["targets"][base_url]["v2_streams"]
+        row.value = json.dumps(state, ensure_ascii=False)
+        session.add(row)
+        session.commit()
+
+    def states(stream):
+        with Session(consumer.engine) as session:
+            return {
+                (row.identity, int(row.revision))
+                for row in session.exec(select(ArchiveSyncEntityStateRecord).where(
+                    ArchiveSyncEntityStateRecord.stream == stream
+                )).all()
+            }
+
+    article_states_before = states("articles")
+    analysis_states_before = states("analyses")
+    assert analysis_states_before
+    remote.requested_params.clear()
+    result = _prepare_and_pull(consumer, producer, remote, tmp_path, label="upgraded")
+    # 补拉清掉了分析流的逐行应用记账(否则同版本号的行会被当旧数据跳过),拉取后重建;文章流记账不动
+    assert states("analyses") == analysis_states_before
+    assert states("articles") == article_states_before
+    params = dict(remote.requested_params)
+    assert "since" not in params["analyses"] or not params["analyses"]["since"]   # 分析流整流重拉
+    assert params["articles"].get("since")                                         # 其它流仍是增量
+    assert result["streams"]["analyses"]["count"] == 1
+    assert result["streams"]["articles"]["count"] == 0
+    with Session(consumer.engine) as session:
+        record = session.get(ArticleAnalysisRecord, "article-1")
+        assert (record.content_value, record.content_value_version) == (7.6, "content-value-v2")
+    target = remote_sync_service.load_sync_state(consumer.engine)["targets"][base_url]
+    assert target["v2_analysis_payload_generation"] == 2
+    assert "analyses" in target["v2_streams"]   # 补拉完成后 checkpoint 重新建立
+
+    # 再同步一次:代次已是当前,不再重拉
+    remote.requested_params.clear()
+    again = _prepare_and_pull(consumer, producer, remote, tmp_path, label="again")
+    assert dict(remote.requested_params)["analyses"].get("since")
+    assert again["streams"]["analyses"]["count"] == 0

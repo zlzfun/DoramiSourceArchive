@@ -88,6 +88,12 @@ ADVERTISED_CAPABILITIES = (
 # Compatibility alias for integrations that display the producer's advertised
 # feature set. Capability validation must use REQUIRED_CAPABILITIES instead.
 CAPABILITIES = ADVERTISED_CAPABILITIES
+# 分析流载荷的字段代次(接收端本地记账,不进线路协议):1 = issue #178 第二波之前;2 = 加入内容价值四项
+# (content_kind / content_value / content_value_reason / content_value_version)。旧版接收端会丢掉它不认识的
+# 字段、同步进度照样前移,升级后那些行不会重发;所以接收端记下自己按哪一代拉过分析流,落后时把分析流
+# checkpoint 清掉、整流重拉一次(逐行覆盖、presence 确认后才删,见 remote_sync.prepare_transaction_revision_consumer)。
+# 以后再给分析流加字段时把它 +1。
+ANALYSIS_PAYLOAD_GENERATION = 2
 AUTHORITY_ID_KEY = "archive_sync:v2:authority_id"
 CANDIDATE_STAGING_KEY_PREFIX = "archive_sync:v2:candidate_staging:"
 TAXONOMY_SNAPSHOT_DIGEST_KEY = "archive_sync:v2:taxonomy_snapshot_digest"

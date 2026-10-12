@@ -125,6 +125,53 @@ def _decode_sync_state_record(record: AppSettingRecord | None) -> Dict[str, Any]
     return state
 
 
+def _refetch_outdated_analysis_payloads(
+    session: Session,
+    target: Dict[str, Any],
+    *,
+    base_url: str,
+    authority_id: str,
+    prepared_at: str,
+) -> bool:
+    """接收端升级后自动补拉一次分析流(issue #178 第二波)。
+
+    本机记下的分析流字段代次落后于 ``archive_sync_v2.ANALYSIS_PAYLOAD_GENERATION`` 时(例如旧版本期间把
+    内容价值字段丢掉了),在同一事务里清掉两样东西:分析流 checkpoint,以及本机对这个权威的分析流逐行
+    应用记账(``ArchiveSyncEntityStateRecord``,接收端靠它跳过「版本号不比已应用的新」的行——不清掉的话
+    整流重拉会把每一行都当旧数据跳过)。本次同步随即按协议既有的全量路径重拉:逐行覆盖、重建记账,收尾时
+    只删经生产者 presence 确认不存在的行——与首次 rebase 清记账再全量拉取是同一做法,只限分析流。
+    代次在清零时即记为当前;若这次同步中途失败,checkpoint 仍是空的,已重建的记账让下次只补剩下的行。
+    返回是否触发了补拉。
+    """
+
+    current = archive_sync_v2.ANALYSIS_PAYLOAD_GENERATION
+    try:
+        recorded = int(target.get("v2_analysis_payload_generation") or 1)
+    except (TypeError, ValueError):
+        recorded = 1
+    if recorded >= current:
+        return False
+    streams = dict(target.get("v2_streams") or {})
+    dropped = streams.pop("analyses", None) is not None
+    target["v2_streams"] = streams
+    session.exec(
+        delete(ArchiveSyncEntityStateRecord).where(
+            ArchiveSyncEntityStateRecord.stream == "analyses",
+            ArchiveSyncEntityStateRecord.authority_id == authority_id,
+        )
+    )
+    target["v2_analysis_payload_generation"] = current
+    target["v2_analysis_refetch_at"] = prepared_at
+    _logger.info(
+        "remote sync %s: analysis payload generation %s < %s, refetching the analyses stream (checkpoint %s)",
+        base_url,
+        recorded,
+        current,
+        "cleared" if dropped else "absent",
+    )
+    return True
+
+
 def prepare_transaction_revision_consumer(
     session: Session,
     *,
@@ -183,6 +230,13 @@ def prepare_transaction_revision_consumer(
                 for stream, checkpoint in (target.get("v2_streams") or {}).items()
                 if stream in negotiated_streams
             }
+            _refetch_outdated_analysis_payloads(
+                session,
+                target,
+                base_url=base_url,
+                authority_id=authority_id,
+                prepared_at=prepared_at,
+            )
             targets[base_url] = target
             state["targets"] = targets
             value = json.dumps(state, ensure_ascii=False)
@@ -243,6 +297,8 @@ def prepare_transaction_revision_consumer(
             or list(archive_sync_v2.REQUIRED_CAPABILITIES),
             "v2_rebased_at": prepared_at,
             "v2_streams": {},
+            # 首次 rebase 本来就整流拉取分析,拉到的即当前字段代次。
+            "v2_analysis_payload_generation": archive_sync_v2.ANALYSIS_PAYLOAD_GENERATION,
         }
     )
     targets[base_url] = target

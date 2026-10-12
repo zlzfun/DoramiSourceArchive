@@ -210,6 +210,21 @@ them clears its copy instead of pairing a new news score with a stale content
 value, and an older receiver ignores them. The local task marker `pending_scope`
 is never exported. Deploy the external producer first, as for any stream change.
 
+An older receiver drops unknown fields but still advances its checkpoint and its
+per-entity applied revisions, so those rows would never be re-sent after it
+upgrades. The receiver therefore records, per target, which analysis payload
+generation it has pulled (`v2_analysis_payload_generation`, local bookkeeping —
+not a wire field; constant `archive_sync_v2.ANALYSIS_PAYLOAD_GENERATION`, 2 since
+the content-value fields). When the recorded generation is older, the next sync
+preparation clears, in one transaction, the `analyses` checkpoint and that
+authority's `analyses` entity states (otherwise every same-revision row would be
+skipped as not newer), so the run re-pulls the full analyses stream through the
+existing full-stream path: rows are overwritten, entity states rebuilt, and only
+presence-confirmed absent rows are pruned. Other streams stay incremental. A run
+that fails midway leaves the checkpoint empty, and the rebuilt entity states make
+the next run fetch only what is left. Bump the constant whenever the analyses
+payload gains fields.
+
 An analysis whose `content_hash` no longer matches the producer's current article
 is exported as a tombstone, and is absent from analysis presence checks. This
 withdraws an outdated authoritative result without blocking valid scores in the
