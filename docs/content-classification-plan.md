@@ -1,6 +1,6 @@
 # 内容分类与双评分(issue #178)方案
 
-> 状态:**第一波已合入**(#180,2026-10-12);**第一波补已合入**(#181,2026-10-12);**第二波实施中**(分支 `feat/issue-178-content-value`,见 §3)。
+> 状态:**第一波已合入**(#180,2026-10-12);**第一波补已合入**(#181,2026-10-12);**第二波检视通过、待用户验收**(分支 `feat/issue-178-content-value`,见 §3)。
 > 结论与可视化见 [issue #178](https://github.com/zlzfun/DoramiSourceArchive/issues/178)
 > 和样页 [`docs/design/dorami-classification-scores-quiet.html`](./design/dorami-classification-scores-quiet.html)
 > (仓库公开,可经 htmlpreview 免登录打开)。#168 的历史探索不作为本方案的前提。
@@ -526,6 +526,9 @@ MAE 0.83、档位一致 80%、类型准确 87%(53 篇),门禁照旧通过。分�
   `consumer_quiesced`),派发把它记跳过。回归用真实 `activate_v2_consumer_mode`。
 - R2-O1(P3,观察):快照后远端接管并同步来了当前内容价值,派发先撞 `remote_authority` 记成跳过——同一个外层顺序先认目标
   完成,改记成功。
+
+**R3**(核对 `92553c8`,只看 R2-1 与 R2-O1):两项通过,三条新增回归覆盖无分析行时停写、完整刷新重试时停写、远端补齐后的成功计数。
+检视结论:**通过**,待用户本地验收。
 
 ## 4. 检视记录(第一波)
 
