@@ -322,6 +322,13 @@ def get_articles(
     favorite_only = (favorite_scope or "off").strip().lower() == "only"
     safe_limit = min(max(int(limit), 1), 500)
     safe_skip = max(int(skip), 0)
+    # 内容类型参数先于任何查询校验:任一非法值即 400(issue #178)
+    try:
+        requested_kinds = content_classification.parse_kind_filter(kind)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # 分面只随分页对象返回:请求分面即隐含 include_total(不传时默认响应仍是数组)
+    include_total = include_total or kind_facets
     auth_session = _app().current_auth_session(request)
     is_admin = bool(auth_session and auth_session.get("role") == "admin")
     needs_username = (
@@ -474,19 +481,20 @@ def get_articles(
     source_kinds = content_classification.source_default_kinds()
     facets = None
     if kind_facets:
+        # 一次 GROUP BY 求各类型计数(按判定序的 CASE 表达式),不逐类型各扫一遍。
+        # count_query 是 SelectOfScalar,换列后 session.exec 仍只取首列,这里用 execute 拿整行。
+        kind_value = content_classification.kind_expr(source_kinds)
+        counts = dict(session.execute(
+            count_query.with_only_columns(kind_value, func.count(ArticleRecord.id)).group_by(kind_value)
+        ).all())
         facets = [
             {
                 "kind": value,
                 "label": content_classification.item_kind_label(value),
-                "count": int(session.exec(
-                    count_query.where(content_classification.kind_condition([value], source_kinds))
-                ).one() or 0),
+                "count": int(counts.get(value) or 0),
             }
             for value in content_classification.FILTERABLE_ITEM_KINDS
         ]
-    requested_kinds = content_classification.parse_kind_filter(kind)
-    if kind and not requested_kinds:
-        raise HTTPException(status_code=400, detail="kind 取值无效")
     if requested_kinds:
         kind_cond = content_classification.kind_condition(requested_kinds, source_kinds)
         query = query.where(kind_cond)

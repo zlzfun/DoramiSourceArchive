@@ -858,6 +858,18 @@ def _mark_all_read_response(app, session: Session, username: str, source_ids: Li
     return {"status": "success", "by_source": by_source, "total": sum(by_source.values())}
 
 
+def _mark_read_shape(shape: Optional[str]) -> str:
+    """标读端点的 shape:未传 = 不限容器;合法值与旧别名 bulletin 归一;其余非空值 400。
+
+    标读是写操作,把拼错的 shape 当「未传」会把全部订阅(含播客、社交)一并标读(codex R1 #9);
+    只读的列表与收藏仍按 ``normalize_shape`` 宽松处理。在任何读态写入之前调用。
+    """
+    shape_value = normalize_shape(shape)
+    if (shape or "").strip() and not shape_value:
+        raise HTTPException(status_code=400, detail="shape 取值无效")
+    return shape_value
+
+
 @router.post("/mark-all-read")
 def mark_all_read(
     request: Request,
@@ -867,13 +879,13 @@ def mark_all_read(
     """把当前用户订阅源标为已读（推进各源水位到当下），返回更新后的未读统计。
 
     可选 shape=article|social|podcast:只标对应形态的源，不越容器边界。
-    未传 = 全部订阅。旧值 bulletin 视同 article(issue #178),不能当未知值忽略——
+    未传 = 全部订阅。旧值 bulletin 视同 article(issue #178);其余非法值 400,不当未传处理——
     那会把全部订阅标读。
     """
+    shape_value = _mark_read_shape(shape)
     app = _app()
     username = app.current_username(request)
     source_ids = app.resolve_subscribed_source_ids(session, username)
-    shape_value = normalize_shape(shape)
     if shape_value:
         registry_meta = _registry_source_meta()
         source_meta = {**_configured_source_meta(session), **registry_meta}
@@ -901,6 +913,7 @@ def mark_scope_read(
     响应回报 ``marked`` 与更新后的订阅源未读统计(与 ``/mark-all-read`` 同形)。
     可见范围与 ``GET /api/articles`` 同尺:读者会话排除隐藏源与非我订阅的私有自定源,admin 会话不受限。
     """
+    shape_value = _mark_read_shape(shape)
     app = _app()
     username = app.current_username(request)
     auth_session = app.current_auth_session(request)
@@ -932,7 +945,6 @@ def mark_scope_read(
                 ~ArticleRecord.source_id.startswith(user_sources_service.USER_SOURCE_PREFIX, autoescape=True),
                 *([ArticleRecord.source_id.in_(my_user_ids)] if my_user_ids else []),
             ))
-        shape_value = normalize_shape(shape)
         if shape_value:
             query = query.where(content_shape_condition(shape_value, session))
         unread_cond = reader_state_service.unread_filter_condition(

@@ -39,3 +39,71 @@ export function kindFilterOptions(facets, selected = '') {
       && (Number(facet.count) > 0 || facet.kind === selected))
     .map((facet) => ({ kind: facet.kind, label: facet.label || facet.kind, count: Number(facet.count) }));
 }
+
+// ── 类型筛选的作用域绑定 ──
+// 选中值记成 {key, kind}:key 是选中时的作用域(容器 / 源 / 标签 / 轴 / 收藏)。
+
+export const EMPTY_KIND_CHOICE = Object.freeze({ key: '', kind: '' });
+
+/** 当前生效的类型筛选:只在选中时的作用域里有效,作用域一变即为空(同一帧就不会带旧类型发请求)。 */
+export function kindFilterFor(choice, scopeKey) {
+  return choice?.kind && choice.key === scopeKey ? choice.kind : '';
+}
+
+/**
+ * 作用域变化后应保存的选中值:离开选中时的作用域即永久清除,返回原作用域也不复活。
+ * 无需变化时原样返回同一对象,调用方据此判断是否 setState。
+ */
+export function reconcileKindChoice(choice, scopeKey) {
+  return choice?.kind && choice.key !== scopeKey ? EMPTY_KIND_CHOICE : choice;
+}
+
+/**
+ * 分析轮询的类型协调(codex R1 #4)。fresh:id → 最新条目(轮询响应,加上对缺失在途项的补取)。
+ * - 已加载条目的类型有变 → 记一条分面增量 {from, to};
+ * - 类型筛选下改判出本类型 → 移出列表(轮询响应本身已按类型过滤,能命中的只有补取回来的条目)。
+ */
+export function reconcilePolledKinds(articles, fresh, kindFilter = '') {
+  const changes = [];
+  const removed = new Set();
+  if (!Array.isArray(articles) || !fresh) return { changes, removed };
+  for (const article of articles) {
+    const next = fresh.get(article?.id);
+    if (!next) continue;
+    const from = article.kind || '';
+    const to = next.kind || '';
+    if (from !== to) changes.push({ from, to });
+    if (kindFilter && to !== kindFilter) removed.add(article.id);
+  }
+  return { changes, removed };
+}
+
+/**
+ * 按类型变化修正分面计数:旧类型减一、新类型加一(计数从 0 变 1 时筛选选项随之出现)。
+ * 只覆盖已加载条目;其余范围的变化等下次列表加载。无变化时原样返回。
+ */
+export function applyKindFacetDelta(facets, changes) {
+  if (!Array.isArray(facets) || !Array.isArray(changes) || changes.length === 0) return facets;
+  const delta = new Map();
+  for (const { from, to } of changes) {
+    if (from === to) continue;
+    if (from) delta.set(from, (delta.get(from) || 0) - 1);
+    if (to) delta.set(to, (delta.get(to) || 0) + 1);
+  }
+  if (![...delta.values()].some(Boolean)) return facets;
+  return facets.map((facet) => (
+    delta.get(facet?.kind)
+      ? { ...facet, count: Math.max(0, Number(facet.count || 0) + delta.get(facet.kind)) }
+      : facet
+  ));
+}
+
+/**
+ * 只把增量应用到轮询开始时那一代分面上:同作用域手动刷新已拿到服务端新计数(代次 +1)后,
+ * 晚到的旧轮询不得再加减一次。state:{key, gen, items};basis:轮询开始时的 {key, gen}。
+ */
+export function applyPolledFacetDelta(state, basis, changes) {
+  if (!state || !basis || state.key !== basis.key || state.gen !== basis.gen) return state;
+  const items = applyKindFacetDelta(state.items, changes);
+  return items === state.items ? state : { ...state, items };
+}

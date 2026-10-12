@@ -18,6 +18,13 @@ import { stripDuplicateLeadingHeading } from '../utils/markdownTitle';
 import { createBulkSubscribeDeadline, waitForBulkSubscribeSettlement } from '../utils/bulkSubscribe';
 import { readerShapeOf } from '../utils/readerShape';
 import {
+  EMPTY_KIND_CHOICE,
+  applyPolledFacetDelta,
+  kindFilterFor,
+  reconcileKindChoice,
+  reconcilePolledKinds,
+} from '../utils/contentKind';
+import {
   analysisItemsFromResponse,
   analysisTagSearch,
   analysisNeedsPolling,
@@ -107,6 +114,8 @@ function buildListFilters({ activeSourceId, activeTagId, mode, scope, tagSearch,
 
 const UNREAD_POLL_MS = 60000; // 未读轻轮询间隔（标签页可见时才真正请求）
 const ANALYSIS_POLL_MS = 30000;
+// 类型筛选下轮询缺失的在途项逐条补取分类,单轮上限(通常只有 0~2 条)
+const KIND_RECHECK_MAX = 8;
 const ANALYSIS_PROJECTION_KEYS = [
   'analysis_status',
   'tagging_status',
@@ -690,15 +699,20 @@ export function useReaderState({
 
   // ── 内容类型筛选(issue #178)──
   // 只在文章容器出现,单选。选中值绑定在「当时的作用域」上:切容器 / 源 / 轴 / 收藏 / 标签后
-  // 自动失效(派生为空),不必在每个导航入口逐一清零,也不会先发一次「旧类型 × 新范围」的请求。
+  // 同一帧即派生为空(不会先发一次「旧类型 × 新范围」的请求),并在渲染期永久清除——
+  // 返回原作用域不复活旧筛选(codex R1 #3)。不必在每个导航入口逐一清零;
+  // 作用域 key 不变的导航(按 id 打开同源文章)在 openArticleById 里显式清除。
   // 选项来自列表首页附带的分面计数(kind_facets,不含 kind 自身的同一范围),不从当前页推导。
   const kindScopeKey = JSON.stringify([mode, activeSourceId, activeTagId, scope.axis, scope.favorite]);
-  const [kindChoice, setKindChoice] = useState({ key: '', kind: '' });
-  const kindFilter = mode === 'article' && kindChoice.key === kindScopeKey ? kindChoice.kind : '';
+  const [kindChoice, setKindChoice] = useState(EMPTY_KIND_CHOICE);
+  const reconciledKindChoice = reconcileKindChoice(kindChoice, kindScopeKey);
+  if (reconciledKindChoice !== kindChoice) setKindChoice(reconciledKindChoice);
+  const kindFilter = mode === 'article' ? kindFilterFor(kindChoice, kindScopeKey) : '';
   const setKindFilter = useCallback((kind) => {
     setKindChoice({ key: kindScopeKey, kind: kind || '' });
-  }, [kindScopeKey]);
-  const [kindFacets, setKindFacets] = useState({ key: '', items: [] });
+  }, [kindScopeKey, setKindChoice]);
+  // gen = 列表首页加载代次:分析轮询的分面增量只应用到它开始时的那一代(见 refreshAnalysisStates)
+  const [kindFacets, setKindFacets] = useState({ key: '', gen: 0, items: [] });
 
   // ── 文章列表 ──
   const loadArticles = useCallback(async (skip = 0, append = false) => {
@@ -737,7 +751,11 @@ export function useReaderState({
     if (data === undefined) return; // 被更新的请求取代，loading 交给新请求，不在此清除
     const items = data.items || [];
     if (!append && mode === 'article') {
-      setKindFacets({ key: kindScopeKey, items: Array.isArray(data.kind_facets) ? data.kind_facets : [] });
+      setKindFacets((prev) => ({
+        key: kindScopeKey,
+        gen: prev.gen + 1,
+        items: Array.isArray(data.kind_facets) ? data.kind_facets : [],
+      }));
     }
     setArticlesTotal(data.total || 0);
     setArticles(prev => (append ? [...prev, ...items] : items));
@@ -780,6 +798,7 @@ export function useReaderState({
       searchQuery,
       unreadOnly,
       kindFilter,
+      facetsBasis: { key: kindFacets.key, gen: kindFacets.gen },
     };
   }, [
     activeArticle,
@@ -793,6 +812,8 @@ export function useReaderState({
     searchQuery,
     unreadOnly,
     kindFilter,
+    kindFacets.key,
+    kindFacets.gen,
   ]);
   const refreshAnalysisStates = useCallback(async () => {
     const context = analysisPollContextRef.current;
@@ -825,10 +846,35 @@ export function useReaderState({
         analysisItemsFromResponse(data).map((article) => [article.id, article]),
       );
       if (selected?.id) updates.set(selected.id, selected);
+      const polledIds = new Set(updates.keys());
+      // 类型筛选下,在途项不在响应里:可能已改判出本类型,也可能只是被补位 / 新到的条目挤出窗口——
+      // 响应满额与否说明不了是哪种(codex R1 #4),逐条补取真实分类(有界)再决定去留。
+      if (context.kindFilter) {
+        const missing = context.articles
+          .filter((article) => activeIds.has(article.id) && !updates.has(article.id))
+          .slice(0, KIND_RECHECK_MAX);
+        const refetched = await Promise.all(
+          missing.map((article) => fetchArticle(article.id).catch(() => null)),
+        );
+        if (analysisPollContextRef.current?.scopeKey !== context.scopeKey) return;
+        for (const item of refetched) if (item?.id) updates.set(item.id, item);
+      }
+      const { changes, removed } = reconcilePolledKinds(context.articles, updates, context.kindFilter);
+      // 标签搜索沿用既有规则:在途项不在响应里即视为不再命中
+      if (context.tagSearch) {
+        for (const article of context.articles) {
+          if (activeIds.has(article.id) && !polledIds.has(article.id)) removed.add(article.id);
+        }
+      }
+      // 移出的条目从总数里扣掉;下一页按已加载条数取,移出后与服务端位置仍对齐
+      const removedCount = (analysisPollContextRef.current?.articles || [])
+        .filter((article) => removed.has(article.id)).length;
+      if (removedCount) setArticlesTotal((total) => Math.max(0, total - removedCount));
+      if (changes.length) {
+        setKindFacets((state) => applyPolledFacetDelta(state, context.facetsBasis, changes));
+      }
       setArticles((current) => current
-        .filter((article) => (
-          !context.tagSearch || !activeIds.has(article.id) || updates.has(article.id)
-        ))
+        .filter((article) => !removed.has(article.id))
         .map((article) => (
           updates.has(article.id) ? withFreshAnalysis(article, updates.get(article.id)) : article
         )));
@@ -1385,6 +1431,7 @@ export function useReaderState({
       setDiscover(false);
       setActiveSourceId(article.source_id || null);
       setActiveTagId(null);
+      setKindChoice(EMPTY_KIND_CHOICE); // 导航到具体一篇:退出类型筛选,作用域 key 不变时也不留旧筛选
       const nextMode = ctx.shapeOfSource(article.source_id);
       setMode(nextMode);
       // 按 id 打开 = 导航到一篇具体文章:临时进入来源轴且放开收藏(否则该源列表可能不含这篇);
@@ -1397,7 +1444,7 @@ export function useReaderState({
       if (!silent) showToast('这条内容已不在库中', 'error');
       return false;
     }
-  }, [onBeforeOpenArticle, showToast]);
+  }, [onBeforeOpenArticle, showToast, setKindChoice]);
   // doneRef 存「已启动消费的 id」而非布尔:同一 id 在消费在途时 deps 重建重跑 effect
   // 不会双跳;消费完成后 App 清空 initialArticleId,这里同步清 doneRef——运行时深链
   // (粘进已开 tab,经 App 的 onPop 再次设值,含同一篇重复粘贴)才能再次落地。

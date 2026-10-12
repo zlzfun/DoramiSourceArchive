@@ -269,6 +269,7 @@ export const ArticleRow = memo(function ArticleRow({
             <span className="reader-podcast-copy">
               <span className="reader-entry-top">
                 <span className="reader-entry-src">{podcast?.show_title || sourceName}</span>
+                {kindTag}
                 {analysisTag}
                 {score && (
                   <span className={`reader-entry-score ai-grad-text ${scoreTier}`} title={SCORE_DISCLAIMER}>

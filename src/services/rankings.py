@@ -19,6 +19,7 @@ from sqlmodel import Session, select
 
 from api.sources import (
     VALID_CONTENT_SHAPES,
+    configured_source_content_type,
     configured_source_shape,
     registry_source_ids_for_shape,
 )
@@ -138,13 +139,23 @@ def _source_shapes(session: Session) -> dict[str, str]:
     for shape in VALID_CONTENT_SHAPES:
         for source_id in registry_source_ids_for_shape(shape):
             result[source_id] = shape
-    for source_id, kind in content_classification.source_default_kinds().items():
+    source_kinds = content_classification.source_default_kinds()
+    for source_id, kind in source_kinds.items():
         if kind in RANKING_EXCLUDED_KINDS:
             result[source_id] = "excluded"
     for source in session.exec(select(SourceConfigRecord)).all():
-        result.setdefault(
+        if source.source_id in result:
+            continue
+        # 配置源(如绑定 generic_github_releases 的公共源)没有来源先验,按它预期产出的
+        # 数据结构求默认类型——否则会以 article 形态绕过下方 _content_shape 的数据结构排除。
+        kind = content_classification.source_kind_prior(
             source.source_id,
-            configured_source_shape(source.source_type, source.fetcher_id),
+            configured_source_content_type(source.source_type, source.fetcher_id),
+            source_kinds,
+        )
+        result[source.source_id] = (
+            "excluded" if kind in RANKING_EXCLUDED_KINDS
+            else configured_source_shape(source.source_type, source.fetcher_id)
         )
     return result
 

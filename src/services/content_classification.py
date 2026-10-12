@@ -20,7 +20,7 @@
 
 from __future__ import annotations
 
-import re
+import string
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Optional
 
@@ -157,7 +157,8 @@ DAILY_BRIEF_GENRE_CLASSIFICATIONS: dict[str, str] = {
 }
 
 # ── 判定规则 ──────────────────────────────────────────────────────────────────
-# 数据结构的默认类型:只对注册表之外的历史 / 导入源兜底(注册源以抓取器 default_kind 为准)。
+# 数据结构的默认类型:对没有来源先验的源兜底(配置源、历史 / 导入源,以及未设 default_kind 的注册源;
+# 有来源先验的源一律以 default_kind 为准)。
 CONTENT_TYPE_DEFAULT_KINDS: dict[str, str] = {
     "github_release": "release",
     "github_repository": "project",
@@ -171,18 +172,22 @@ CONTENT_TYPE_DEFAULT_KINDS: dict[str, str] = {
 SPECIAL_SOURCE_KINDS: dict[str, str] = {
     "dorami_daily_brief": "digest",
 }
-# 链接形状判定论文原文。社交帖 / 播客 / 日报的 source_url 指向自身,不套用。
-PAPER_URL_LIKE_PATTERNS: tuple[str, ...] = (
-    "%arxiv.org/abs/%",
-    "%arxiv.org/pdf/%",
-    "%openreview.net/forum%",
-    "%openreview.net/pdf%",
-    "%huggingface.co/papers/%",
+# 链接形状判定论文原文:锚定在 URL 开头的「协议 + 主机 + 路径」前缀,查询串 / 片段里引用的
+# 论文地址、相似域名(notarxiv.org)都不算。社交帖 / 播客 / 日报的 source_url 指向自身,不套用。
+_PAPER_URL_HOST_PATHS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (("arxiv.org", "www.arxiv.org", "export.arxiv.org"), ("/abs/", "/pdf/")),
+    (("openreview.net", "www.openreview.net"), ("/forum", "/pdf")),
+    (("huggingface.co", "www.huggingface.co", "hf.co"), ("/papers/",)),
 )
-_PAPER_URL_RE = re.compile(
-    r"arxiv\.org/(?:abs|pdf)/|openreview\.net/(?:forum|pdf)|huggingface\.co/papers/",
-    re.IGNORECASE,
+PAPER_URL_PREFIXES: tuple[str, ...] = tuple(
+    f"{scheme}://{host}{path}"
+    for hosts, paths in _PAPER_URL_HOST_PATHS
+    for host in hosts
+    for path in paths
+    for scheme in ("http", "https")
 )
+# SQLite LIKE 只对 ASCII 字母不区分大小写;Python 侧用同样的「仅 ASCII 小写化」,两边逐字等价。
+_ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
 URL_RULE_EXCLUDED_CONTENT_TYPES: frozenset[str] = frozenset({
     "social_post", "podcast_episode", "daily_brief",
 })
@@ -275,7 +280,7 @@ def source_kind_prior(
 
 
 def is_paper_url(source_url: Optional[str]) -> bool:
-    return bool(_PAPER_URL_RE.search(source_url or ""))
+    return (source_url or "").translate(_ASCII_LOWER).startswith(PAPER_URL_PREFIXES)
 
 
 def classify_item(
@@ -288,7 +293,7 @@ def classify_item(
 ) -> ItemClassification:
     """推导一条内容的内容类型与事件类型。
 
-    判定序:来源先验 → 数据结构(仅注册表之外的源)→ 链接形状(论文原文)→ 体裁 → 未知。
+    判定序:来源先验 → 数据结构(仅没有来源先验的源)→ 链接形状(论文原文)→ 体裁 → 未知。
     ``source_kinds`` 可由调用方批量预取后传入,避免逐条读注册表。
     """
     kinds = source_kinds if source_kinds is not None else source_default_kinds()
@@ -313,59 +318,61 @@ def classify_item(
 
 
 def parse_kind_filter(value: Optional[str]) -> list[str]:
-    """``?kind=paper,tutorial`` → 合法类型列表(未知值忽略,保持词表顺序、去重)。"""
+    """``?kind=paper,tutorial`` → 类型列表(保持词表顺序、去重);含任何未知值即抛 ``ValueError``。"""
     requested = {part.strip().lower() for part in str(value or "").split(",") if part.strip()}
+    unknown = sorted(requested - set(ITEM_KINDS))
+    if unknown:
+        raise ValueError(f"kind 取值无效: {', '.join(unknown)}")
     return [kind for kind in ITEM_KINDS if kind in requested]
 
 
-def kind_condition(kinds: Iterable[str], source_kinds: Optional[Mapping[str, str]] = None):
-    """``classify_item`` 的 SQL 镜像:条目的内容类型属于 ``kinds`` 之一。
+def kind_expr(source_kinds: Optional[Mapping[str, str]] = None):
+    """``classify_item`` 的 SQL 镜像:按同一判定序给出条目内容类型的 CASE 表达式(无依据时为 NULL)。
 
-    与 Python 推导共用同一组规则表,``tests/test_content_classification.py`` 逐条对拍两者。
-    体裁取自 ``article_analyses.content_genre``(与列表序列化读取的是同一列,不额外看分析状态)。
+    WHEN 的先后就是判定序(来源先验 → 数据结构 → 链接形状 → 体裁),与 Python 推导共用同一组规则表;
+    ``tests/test_content_classification.py`` 用由规则表生成的穷举组合逐条对拍两者。
+    体裁取自 ``article_analyses.content_genre``(一篇一行,与列表序列化读取的是同一列,不额外看分析状态)。
+    筛选用 ``kind_condition``,分面按它 GROUP BY 一次聚合(codex R1 #8)。
     """
-    from sqlalchemy import and_, exists, false, func, not_, or_, select
+    from sqlalchemy import and_, case, func, or_, select
 
     from models.db import ArticleAnalysisRecord, ArticleRecord
+
+    rules = dict(source_kinds if source_kinds is not None else source_default_kinds())
+    whens = []
+    for kind in ITEM_KINDS:
+        sources = sorted(sid for sid, value in rules.items() if value == kind)
+        if sources:
+            whens.append((ArticleRecord.source_id.in_(sources), kind))
+    for kind in ITEM_KINDS:
+        types = sorted(ctype for ctype, value in CONTENT_TYPE_DEFAULT_KINDS.items() if value == kind)
+        if types:
+            whens.append((ArticleRecord.content_type.in_(types), kind))
+    url_value = func.coalesce(ArticleRecord.source_url, "")
+    whens.append((
+        and_(
+            ArticleRecord.content_type.notin_(sorted(URL_RULE_EXCLUDED_CONTENT_TYPES)),
+            or_(*[url_value.like(f"{prefix}%") for prefix in PAPER_URL_PREFIXES]),
+        ),
+        "paper",
+    ))
+    genre = (
+        select(ArticleAnalysisRecord.content_genre)
+        .where(ArticleAnalysisRecord.article_id == ArticleRecord.id)
+        .scalar_subquery()
+    )
+    for kind in ITEM_KINDS:
+        genres = sorted(g for g, (value, _event) in GENRE_KIND_EVENT.items() if value == kind)
+        if genres:
+            whens.append((genre.in_(genres), kind))
+    return case(*whens, else_=None)
+
+
+def kind_condition(kinds: Iterable[str], source_kinds: Optional[Mapping[str, str]] = None):
+    """条目的内容类型属于 ``kinds`` 之一(``kind_expr`` 的 IN;空集合恒假)。"""
+    from sqlalchemy import false
 
     wanted = [kind for kind in ITEM_KINDS if kind in set(kinds)]
     if not wanted:
         return false()
-    rules = dict(source_kinds if source_kinds is not None else source_default_kinds())
-    ruled_sources = sorted(rules)
-    not_ruled_source = ArticleRecord.source_id.notin_(ruled_sources) if ruled_sources else None
-    content_type_kinds = sorted(CONTENT_TYPE_DEFAULT_KINDS)
-    url_value = func.coalesce(ArticleRecord.source_url, "")
-    url_paper = and_(
-        ArticleRecord.content_type.notin_(sorted(URL_RULE_EXCLUDED_CONTENT_TYPES)),
-        or_(*[url_value.like(pattern) for pattern in PAPER_URL_LIKE_PATTERNS]),
-    )
-
-    def _scoped(*parts):
-        return and_(*[part for part in (not_ruled_source, *parts) if part is not None])
-
-    conditions = []
-    for kind in wanted:
-        branches = []
-        sources = sorted(sid for sid, value in rules.items() if value == kind)
-        if sources:
-            branches.append(ArticleRecord.source_id.in_(sources))
-        types = sorted(ctype for ctype, value in CONTENT_TYPE_DEFAULT_KINDS.items() if value == kind)
-        if types:
-            branches.append(_scoped(ArticleRecord.content_type.in_(types)))
-        if kind == "paper":
-            branches.append(_scoped(ArticleRecord.content_type.notin_(content_type_kinds), url_paper))
-        genres = sorted(genre for genre, (value, _event) in GENRE_KIND_EVENT.items() if value == kind)
-        if genres:
-            branches.append(_scoped(
-                ArticleRecord.content_type.notin_(content_type_kinds),
-                not_(url_paper),
-                exists(
-                    select(1).where(
-                        ArticleAnalysisRecord.article_id == ArticleRecord.id,
-                        ArticleAnalysisRecord.content_genre.in_(genres),
-                    )
-                ),
-            ))
-        conditions.append(or_(*branches) if branches else false())
-    return or_(*conditions)
+    return kind_expr(source_kinds).in_(wanted)

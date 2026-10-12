@@ -291,6 +291,10 @@ def test_mark_all_read_shape_scoped(monkeypatch, tmp_path):
         _seed_article(sink.engine, "s1", "x_openai", fetched_date=now)
         assert _unread(client)["total"] == 3
 
+        # 拼错的 shape 是 400,且不写任何读态——不能当「未传」把全部订阅标读(codex R1 #9)
+        assert client.post("/api/reader/mark-all-read?shape=artcile").status_code == 400
+        assert _unread(client)["total"] == 3
+
         # 旧值 bulletin:只标文章容器(含原动态源),social 的未读原样保留
         data = client.post("/api/reader/mark-all-read?shape=bulletin").json()
         assert data["by_source"].get("src_a", 0) == 0

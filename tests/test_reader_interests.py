@@ -497,6 +497,11 @@ def test_mark_scope_read_marks_interest_hits_per_article(monkeypatch, tmp_path):
         _login(client)
         client.post("/api/reader/sources/web_anthropic_news/subscribe")
         client.get("/api/reader/unread-counts")
+        # 拼错的 shape 是 400,且不写任何读态(codex R1 #9)
+        res = client.post("/api/reader/mark-scope-read", params={"shape": "artcile", "interest_tag_id": llm})
+        assert res.status_code == 400
+        ids, _ = _ids(client, subscribed_scope="off", interest_scope="only", unread_only="true")
+        assert "out_llm" in ids
         # 先只标「大语言模型」:AI 智能体的命中仍未读
         res = client.post("/api/reader/mark-scope-read", params={"shape": "article", "interest_tag_id": agents_id + llm + 1000})
         assert res.status_code == 200 and res.json()["marked"] == 0  # 非关注标签 id:显式空集

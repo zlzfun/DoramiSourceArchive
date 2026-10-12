@@ -3,7 +3,7 @@
 覆盖三件事:
 1. 词表与分析体裁闭集逐项对齐(新增体裁必须在这里显式归类);
 2. ``classify_item`` 的判定序:来源先验 → 数据结构 → 链接形状 → 体裁 → 未知;
-3. SQL 镜像 ``kind_condition`` 与 Python 推导逐条对拍,以及 /api/articles 的 kind 筛选与分面。
+3. SQL 镜像 ``kind_expr`` / ``kind_condition`` 与 Python 推导逐条对拍(含穷举组合),以及 /api/articles 的 kind 筛选与分面。
 """
 import os
 import sys
@@ -61,9 +61,12 @@ def test_content_type_labels_are_data_structure_names():
 
 
 def test_parse_kind_filter():
-    assert cc.parse_kind_filter("tutorial, paper ,PAPER,bogus") == ["paper", "tutorial"]
+    assert cc.parse_kind_filter("tutorial, paper ,PAPER") == ["paper", "tutorial"]
     assert cc.parse_kind_filter("") == []
     assert cc.parse_kind_filter(None) == []
+    # 任一非法值即拒绝,不静默丢弃(codex R1 #10)
+    with pytest.raises(ValueError):
+        cc.parse_kind_filter("paper,bogus")
 
 
 # ==================== Python 推导 ====================
@@ -112,6 +115,30 @@ def test_paper_url_rule_but_not_for_social_posts():
     assert (social.kind, social.kind_basis) == ("news", "genre")
 
 
+def test_paper_url_rule_is_anchored_to_scheme_host_and_path():
+    """只认 URL 开头的论文地址;查询串里引用的、相似域名的都不算(codex R1 #5)。"""
+    for url in (
+        "https://arxiv.org/abs/2609.01234?context=cs",
+        "HTTP://Export.ArXiv.org/pdf/2609.1v2#page=3",
+        "https://hf.co/papers/2609.1",
+        "https://openreview.net/forum?id=abc",
+    ):
+        assert cc.is_paper_url(url), url
+    for url in (
+        "https://news.test/story?ref=https://arxiv.org/abs/1",
+        "https://news.test/#https://huggingface.co/papers/1",
+        "https://notarxiv.org/abs/1",
+        "https://arxiv.org.evil.test/abs/1",
+        "https://arxiv.org/list/cs.AI/recent",
+        "ftp://arxiv.org/abs/1",
+        "",
+        None,
+    ):
+        assert not cc.is_paper_url(url), url
+    # 前缀里不得出现 LIKE 通配符,SQL 侧才与 startswith 逐字等价
+    assert not any(ch in prefix for prefix in cc.PAPER_URL_PREFIXES for ch in "%_")
+
+
 def test_content_type_fallback_for_unregistered_sources():
     result = _classify("legacy_releases", "github_release", "product_update")
     assert (result.kind, result.kind_basis, result.event_type) == ("release", "content_type", "product_update")
@@ -152,6 +179,9 @@ FIXTURE_ROWS = [
     ("p1", "hf_papers", "web_article", "https://huggingface.co/papers/1", "research_paper"),
     ("p2", "rss_hn_ai", "rss_article", "https://arxiv.org/pdf/2609.1", "social_discussion"),
     ("p3", "rss_hn_ai", "rss_article", "https://openreview.net/forum?id=x", None),
+    ("p4", "blog", "rss_article", "HTTPS://ArXiv.org/abs/2609.4?v=2", "industry_news"),
+    ("n3", "blog", "rss_article", "https://news.test/s?ref=https://arxiv.org/abs/1", "industry_news"),
+    ("n4", "blog", "rss_article", "https://notarxiv.org/abs/1", "industry_news"),
     ("n1", "qbitai", "web_article", "https://qbitai.com/1", "research_paper"),
     ("n2", "anthropic", "web_article", "https://anthropic.com/1", "model_release"),
     ("s1", "x_someone", "social_post", "https://arxiv.org/abs/2609.2", "social_discussion"),
@@ -231,6 +261,70 @@ def test_sql_condition_matches_python_classification(fixture_engine):
         assert session.exec(
             select(ArticleRecord.id).where(cc.kind_condition([], RULES))
         ).all() == []
+
+
+def test_sql_expression_matches_python_on_exhaustive_combinations(tmp_path):
+    """由规则表生成的穷举组合:源 × 数据结构 × URL × 体裁(含无分析行),逐条比较 ``kind_expr``
+    与 ``classify_item``;规则表新增取值会自动进入组合(codex R1 #8)。"""
+    from sqlalchemy import func, insert
+
+    from models.db import ArticleAnalysisRecord, ArticleRecord
+    from storage.impl.db_storage import DatabaseStorage
+
+    sources = sorted(RULES) + ["plain_blog"]
+    content_types = sorted(
+        set(cc.CONTENT_TYPE_DEFAULT_KINDS) | set(cc.URL_RULE_EXCLUDED_CONTENT_TYPES) | {"rss_article", "web_article"}
+    )
+    first_prefix_per_host = {}
+    for prefix in cc.PAPER_URL_PREFIXES:
+        first_prefix_per_host.setdefault(prefix.split("://", 1)[1].split("/", 1)[0], prefix)
+    urls = [f"{prefix}2609.1" for prefix in first_prefix_per_host.values()] + [
+        "HTTPS://ArXiv.ORG/ABS/2609.1?v=2",
+        "https://news.test/s?ref=https://arxiv.org/abs/1",
+        "https://notarxiv.org/abs/1",
+        "https://arxiv.org/list/cs.AI",
+        "https://blog.test/1",
+        "",
+    ]
+    genres = sorted(cc.GENRE_KIND_EVENT) + [None]
+
+    sink = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'exhaustive.db'}")
+    articles, analyses, expected = [], [], {}
+    for source_id in sources:
+        for content_type in content_types:
+            for url_index, url in enumerate(urls):
+                for genre in genres:
+                    article_id = f"{source_id}|{content_type}|{url_index}|{genre}"
+                    articles.append({
+                        "id": article_id, "title": "t", "content_type": content_type, "source_id": source_id,
+                        "source_url": url, "publish_date": "2026-09-01T00:00:00",
+                        "fetched_date": "2026-09-01T00:00:00", "has_content": True, "content": "",
+                        "extensions_json": "{}",
+                    })
+                    if genre is not None:
+                        analyses.append({
+                            "article_id": article_id, "status": "succeeded", "content_genre": genre,
+                            "created_at": "2026-09-01T00:00:00", "updated_at": "2026-09-01T00:00:00",
+                        })
+                    expected[article_id] = cc.classify_item(
+                        source_id=source_id, source_url=url, content_type=content_type,
+                        content_genre=genre, source_kinds=RULES,
+                    ).kind
+    with Session(sink.engine) as session:
+        session.execute(insert(ArticleRecord.__table__), articles)
+        session.execute(insert(ArticleAnalysisRecord.__table__), analyses)
+        session.commit()
+        kind_value = cc.kind_expr(RULES)
+        actual = dict(session.execute(select(ArticleRecord.id, kind_value)).all())
+        grouped = dict(session.execute(
+            select(kind_value, func.count(ArticleRecord.id)).group_by(kind_value)
+        ).all())
+
+    mismatches = [(aid, expected[aid], actual.get(aid)) for aid in expected if expected[aid] != actual.get(aid)]
+    assert not mismatches, mismatches[:10]
+    assert set(filter(None, expected.values())) == set(cc.ITEM_KINDS)
+    for kind in cc.ITEM_KINDS:
+        assert grouped.get(kind, 0) == sum(1 for value in expected.values() if value == kind), kind
 
 
 # ==================== /api/articles ====================
@@ -335,8 +429,14 @@ def test_articles_kind_filter_facets_and_projection(monkeypatch, tmp_path):
         assert {item["id"] for item in mixed["items"]} == {"cl", "tu"}
 
         assert client.get("/api/articles", params={**base, "kind": "bogus"}).status_code == 400
+        assert client.get("/api/articles", params={**base, "kind": "paper,bogus"}).status_code == 400
         # 不传 kind_facets 时不附分面(默认响应形状不变)
         assert "kind_facets" not in client.get("/api/articles", params=base).json()
+        # 单独请求分面(不带 include_total)也拿到分页对象与分面;两者都不传时仍是数组(codex R1 #7)
+        bare = {"include_content": "false", "shape": "article"}
+        alone = client.get("/api/articles", params={**bare, "kind_facets": "true"}).json()
+        assert alone["total"] == 4 and len(alone["kind_facets"]) == 6
+        assert isinstance(client.get("/api/articles", params=bare).json(), list)
 
 
 def test_article_facets_carry_content_type_labels(monkeypatch, tmp_path):
