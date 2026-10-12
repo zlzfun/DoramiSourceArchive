@@ -356,7 +356,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
                       onChange={() => toggleScopeId(s.source_id)}
                     />
                     <span className="brief-scope-name">{s.name || s.source_id}</span>
-                    <span className="tiny-meta shrink-0">{s.count || 0} 篇{s.shape === 'bulletin' ? ' · 动态' : ''}</span>
+                    <span className="tiny-meta shrink-0">{s.count || 0} 篇{s.default_kind_label && s.default_kind !== 'digest' ? ` · ${s.default_kind_label}` : ''}</span>
                   </label>
                 ))
               )}

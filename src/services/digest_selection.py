@@ -33,6 +33,7 @@ from models.analysis_contracts import (
     UserInterestDTO,
 )
 from services.article_time import parse_article_time
+from services.content_classification import PERSONAL_DIGEST_GENRE_SECTIONS
 
 
 _TRACKING_QUERY_KEYS = frozenset({
@@ -40,21 +41,8 @@ _TRACKING_QUERY_KEYS = frozenset({
     "utm_campaign", "utm_content", "utm_medium", "utm_source", "utm_term",
 })
 
-GENRE_SECTIONS = {
-    "model_release": "模型发布",
-    "open_source_update": "开源动态",
-    "research_paper": "学术论文",
-    "conference": "技术大会",
-    "social_discussion": "社交动态",
-    "product_update": "行业资讯",
-    "industry_news": "行业资讯",
-    "security_incident": "行业资讯",
-    "regulation": "行业资讯",
-    "tutorial": "工程实践",
-    "opinion": "观点洞察",
-    "aggregation": "资讯聚合",
-    "other": "其它",
-}
+# 体裁 → 板块(取值不变,定义收拢到 content_classification 词表,issue #178)。
+GENRE_SECTIONS = PERSONAL_DIGEST_GENRE_SECTIONS
 BREAKING_SECTION = "重大事件"
 # 板块固定顺序(issue #74):此前板块按条目首次出现建组,顺序随当天最高分条目的体裁漂移
 # (「论文排在模型发布前」只因当天最高分恰好是论文)。「发生了什么」在前,「怎么看」在后,

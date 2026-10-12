@@ -103,10 +103,11 @@ def run(args):
         page.goto(args.base_url, wait_until="networkidle")
         expect(page.locator(".reader-vrail")).to_be_visible()
         expect(page.locator(".reader-entry").first).to_be_visible()
-        page.get_by_role("button", name="动态", exact=True).click()
+        # issue #178 撤销「动态」容器:改用播客容器验证宽转窄后保持所选视图
+        page.get_by_role("button", name="播客", exact=True).click()
         page.set_viewport_size({"width": 390, "height": 844})
         check_footer(page)
-        expect(page.locator('.m-tab[aria-current="page"]')).to_have_attribute("aria-label", "动态")
+        expect(page.locator('.m-tab[aria-current="page"]')).to_have_attribute("aria-label", "播客")
         checks.append("wide-to-narrow keeps selected view and pins footer")
 
         for width, height in [(320, 568), (767, 844), (768, 844), (900, 700), (1024, 768), (844, 390), (390, 844)]:

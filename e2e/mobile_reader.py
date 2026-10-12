@@ -255,8 +255,9 @@ def run_flows(browser, base_url, database, artifacts, result):
         assert_viewport(page)
         checks.append("real server pagination loads the next page without scrolling the document")
 
-        page.get_by_role("button", name="动态", exact=True).tap()
-        expect(page.get_by_text("暂无动态", exact=True)).to_be_visible()
+        # issue #178 撤销「动态」容器后,用无订阅内容的播客容器覆盖空容器的视口约束
+        page.get_by_role("button", name="播客", exact=True).tap()
+        expect(page.get_by_text("暂无播客", exact=True)).to_be_visible()
         expect(page.locator(".reader-entry")).to_have_count(0)
         for width, height in ((320, 568), (900, 700), (844, 390), (390, 844)):
             page.set_viewport_size({"width": width, "height": height})

@@ -7892,15 +7892,46 @@ input[type="radio"] {
 
   .reader-fresh-pill:hover { filter: brightness(0.97); }
 
-  /* ── 内容形态分流(迭代 2) ──
-     · 动态条目:changelog/Release/榜单的紧凑形——单行标题、无摘要;
-       混合流(今日)里由「动态」chip 标注形态。
-     · 子分组标签:左栏「发现更多来源」内按形态分组的轻量小节头。 */
-  .reader-entry.is-bulletin { padding-top: 7px; padding-bottom: 7px; }
+  /* ── 紧凑行(issue #178) ──
+     · 版本更新(changelog / Release Notes / GitHub Release)的短条目扫读形——单行标题、无摘要。
+       此前由「动态」容器整体切换,现在由条目的内容类型决定,与文章混排在同一列表。
+     · .reader-shape-chip:细线形态签(发现页源卡、条目行分类签同一语法)。 */
+  .reader-entry.is-compact { padding-top: 7px; padding-bottom: 7px; }
 
-  .reader-entry.is-bulletin .reader-entry-title {
+  .reader-entry.is-compact .reader-entry-title {
     font-size: 13px;
     -webkit-line-clamp: 1;
+  }
+
+  /* 内容类型筛选带(issue #178):列头下的过滤器带,与 全部/未读、收藏 同属「过滤当前容器」。
+     激活态按 accent 纪律 = wash 底 + accent-ink 字、无描边;hover 只用 soft,不引入 accent。
+     字号写在容器上靠继承穿透(button 的 font: inherit 未分层压层,见 conventions §3)。 */
+  .reader-kind-band {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 6px 6px 8px 8px;   /* 选项文字左缘与卡片内容(16)对齐 */
+    border-bottom: 1px solid var(--dorami-border-soft);
+    font-size: 12px;
+  }
+
+  .reader-kind-chip {
+    padding: 2px 8px;
+    border: none;
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--dorami-muted);
+    line-height: 1.5;
+    cursor: pointer;
+    transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+  }
+
+  .reader-kind-chip:hover { background: var(--dorami-soft); color: var(--dorami-ink); }
+
+  .reader-kind-chip.is-on,
+  .reader-kind-chip.is-on:hover {
+    background: var(--dorami-wash);
+    color: var(--dorami-accent-ink);
   }
 
   .reader-shape-chip {
@@ -8360,6 +8391,13 @@ input[type="radio"] {
     letter-spacing: 0.06em;
     color: var(--dorami-faint);
     white-space: nowrap;
+  }
+
+  /* 内容类型签(论文 / 教程 / 版本更新…):同一细线语法,墨色提一档——它是「这是什么」的事实,
+     比后面的主题标签更该先被读到;仍不着色(issue #178)。 */
+  .reader-entry-kind {
+    border-color: var(--dorami-border-strong);
+    color: var(--dorami-muted);
   }
 
   .reader-entry-score {

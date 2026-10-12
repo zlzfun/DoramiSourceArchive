@@ -1134,7 +1134,7 @@ export function markScopeRead(shape = null, interestTagId = null) {
 
 // sourceId 为空 = 全部订阅源标为已读；返回更新后的 {by_source, total}。
 export function markAllRead(sourceId = null, shape = null) {
-  // shape=article|bulletin|social|podcast:全部标读只作用于当前内容容器
+  // shape=article|social|podcast:全部标读只作用于当前内容容器(issue #178 撤销 bulletin)
   const path = sourceId
     ? `/reader/sources/${enc(sourceId)}/mark-all-read`
     : `/reader/mark-all-read${shape ? `?shape=${enc(shape)}` : ''}`;

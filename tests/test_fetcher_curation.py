@@ -86,10 +86,8 @@ def test_fourth_expansion_sources_are_visible_incubating_and_fully_classified():
         assert item["content_tags"]
         assert all(item[dimension] for dimension in required_dimensions)
 
-    assert metadata["docs_arena_leaderboard_changelog"]["shape"] == "bulletin"
-    assert all(metadata[source_id]["shape"] == "article" for source_id in source_ids - {
-        "docs_arena_leaderboard_changelog"
-    })
+    assert metadata["docs_arena_leaderboard_changelog"]["default_kind"] == "release"
+    assert all(metadata[source_id]["shape"] == "article" for source_id in source_ids)
 
 
 def test_non_whitelisted_source_cannot_become_default_visible(monkeypatch):

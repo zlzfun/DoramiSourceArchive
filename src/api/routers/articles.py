@@ -35,13 +35,13 @@ from api.collection_planning import resolve_delivery_source_ids
 from api.feed_service import resolve_subscribed_source_ids
 from api.schemas import BatchOpParams
 from api.sources import (
-    BULLETIN_CONTENT_TYPES,
     CONTENT_TYPES_BY_SHAPE,
     DAILY_BRIEF_SOURCE_ID,
     PODCAST_CONTENT_TYPES,
     SOCIAL_CONTENT_TYPES,
     VALID_CONTENT_SHAPES,
     configured_source_shape,
+    normalize_shape,
     registry_source_ids_for_shape,
 )
 from api.textutils import _json_loads
@@ -57,6 +57,7 @@ from models.db import (
     SourceConfigRecord,
 )
 from services import article_analysis as article_analysis_service
+from services import content_classification
 from services.article_display_tags import (
     article_ids_for_canonical_projection, article_ids_for_flexible_label, load_display_tags,
 )
@@ -248,8 +249,8 @@ def content_shape_condition(shape: str, session: Optional[Session] = None):
     content_type 只对注册表/SourceConfig 之外的历史归档源兜底，
     因此 article 不再是简单的 NOT bulletin，不会把 social 误收进来。
     """
-    shape_value = (shape or "").strip().lower()
-    if shape_value not in VALID_CONTENT_SHAPES:
+    shape_value = normalize_shape(shape)
+    if not shape_value:
         return false()
 
     ids_by_shape = _source_ids_by_shape(session)
@@ -261,19 +262,12 @@ def content_shape_condition(shape: str, session: Optional[Session] = None):
     if exact_source_ids:
         conditions.append(ArticleRecord.source_id.in_(exact_source_ids))
     if shape_value == "article":
-        non_article_types = sorted(
-            BULLETIN_CONTENT_TYPES | SOCIAL_CONTENT_TYPES | PODCAST_CONTENT_TYPES
-        )
+        non_article_types = sorted(SOCIAL_CONTENT_TYPES | PODCAST_CONTENT_TYPES)
         conditions.append(and_(unknown_source, ArticleRecord.content_type.notin_(non_article_types)))
     else:
         fallback_types = sorted(CONTENT_TYPES_BY_SHAPE[shape_value])
         conditions.append(and_(unknown_source, ArticleRecord.content_type.in_(fallback_types)))
     return or_(*conditions)
-
-
-def bulletin_shape_condition(session: Optional[Session] = None):
-    """向后兼容：bulletin 形文章的 SQL 条件。"""
-    return content_shape_condition("bulletin", session)
 
 
 def social_shape_condition(session: Optional[Session] = None):
@@ -305,7 +299,9 @@ def get_articles(
         interest_tag_id: Optional[int] = None,  # 兴趣轴下钻:只看命中这一个关注标签的(五稿,须与 interest_scope=only 同用)
         favorite_scope: str = "off",  # off | only
         with_interest: bool = False,  # 给返回条目附 interest_hits(列表命中胶囊)
-        shape: Optional[str] = None,  # article | bulletin | social | podcast：阅读器内容形态分流
+        shape: Optional[str] = None,  # article | social | podcast：阅读器容器（旧值 bulletin 视同 article）
+        kind: Optional[str] = None,  # CSV：内容类型（issue #178），如 paper,tutorial
+        kind_facets: bool = False,  # 附带当前范围（不含 kind 自身）的各内容类型计数，供筛选条取选项
         unread_only: bool = False,  # 只看未读（按当前用户订阅源的水位+逐篇已读判定）
         with_unread: bool = False,  # 给返回条目附 unread 标记（页级，reader 列表用）
         skip: int = 0,
@@ -455,8 +451,8 @@ def get_articles(
         favorite_cond = reader_interests_service.favorite_filter_condition(username)
         query = query.where(favorite_cond)
         count_query = count_query.where(favorite_cond)
-    shape_value = (shape or "").strip().lower()
-    if shape_value in VALID_CONTENT_SHAPES:
+    shape_value = normalize_shape(shape)
+    if shape_value:
         cond = content_shape_condition(shape_value, session)
         query = query.where(cond)
         count_query = count_query.where(cond)
@@ -473,6 +469,28 @@ def get_articles(
         else:
             query = query.where(unread_cond)
             count_query = count_query.where(unread_cond)
+    # 内容类型(issue #178):放在其余谓词之后,分面计数用「除 kind 外」的同一范围——
+    # 选中「论文」后筛选条的其它选项不消失。规则与序列化共用 content_classification。
+    source_kinds = content_classification.source_default_kinds()
+    facets = None
+    if kind_facets:
+        facets = [
+            {
+                "kind": value,
+                "label": content_classification.item_kind_label(value),
+                "count": int(session.exec(
+                    count_query.where(content_classification.kind_condition([value], source_kinds))
+                ).one() or 0),
+            }
+            for value in content_classification.FILTERABLE_ITEM_KINDS
+        ]
+    requested_kinds = content_classification.parse_kind_filter(kind)
+    if kind and not requested_kinds:
+        raise HTTPException(status_code=400, detail="kind 取值无效")
+    if requested_kinds:
+        kind_cond = content_classification.kind_condition(requested_kinds, source_kinds)
+        query = query.where(kind_cond)
+        count_query = count_query.where(kind_cond)
     sort_value = (sort or "newest").strip().lower()
     if sort_value not in {"newest", "score", "quality"}:
         raise HTTPException(status_code=400, detail="sort 仅支持 newest/score/quality")
@@ -517,6 +535,7 @@ def get_articles(
             published_podcast_text_kinds=text_publications.get(record.id, set()),
             digest_audio=digest_audios.get(record.id),
             include_podcast_diagnostics=is_admin,
+            source_kinds=source_kinds,
         )
         for record in records
     ]
@@ -533,13 +552,16 @@ def get_articles(
         reader_interests_service.annotate_interest(items, tags, interests)
     if not include_total:
         return items
-    return {
+    payload = {
         "items": items,
         "total": total,
         "skip": safe_skip,
         "limit": safe_limit,
         "next_skip": safe_skip + len(records) if safe_skip + len(records) < total else None,
     }
+    if facets is not None:
+        payload["kind_facets"] = facets
+    return payload
 
 
 @router.get("/api/articles/facets")
@@ -567,7 +589,7 @@ def get_article_facets(
         else set()
     )
 
-    def _facet(column):
+    def _facet(column, label_of=None):
         q = select(column, func.count(ArticleRecord.id)).group_by(column)
         if excludes:
             q = q.where(ArticleRecord.source_id.notin_(excludes))
@@ -585,7 +607,12 @@ def get_article_facets(
                 ))
         rows = session.exec(q).all()
         return [
-            {"value": value, "count": int(count)}
+            {
+                "value": value,
+                "count": int(count),
+                # 数据结构的中文名由后端词表下发(issue #178),台账不再维护前端映射
+                **({"label": label_of(value)} if label_of else {}),
+            }
             for value, count in sorted(rows, key=lambda r: -r[1])
             if value
         ]
@@ -607,7 +634,9 @@ def get_article_facets(
             ))
     return {
         "total": int(session.exec(total_q).one() or 0),
-        "content_types": _facet(ArticleRecord.content_type),
+        "content_types": _facet(
+            ArticleRecord.content_type, content_classification.content_type_label
+        ),
         "source_ids": _facet(ArticleRecord.source_id),
     }
 

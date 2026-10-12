@@ -10,7 +10,6 @@ import {
   Compass,
   BookOpenText,
   FileText,
-  Zap,
   AtSign,
   Star,
   CheckCheck,
@@ -58,10 +57,10 @@ import { dayLabelOf } from '../utils/readerTime';
 import { buildListPlan } from '../utils/listPlan';
 import { formatRelativeTime, formatDateTime, formatPublishDate } from '../utils/datetime';
 import { formatPodcastDuration, podcastListAvailabilityMeta, podcastOf } from '../utils/podcast';
+import { isCompactKind, kindChipLabel, kindFilterOptions, kindKickerLabel } from '../utils/contentKind';
 import {
   SCORE_DISCLAIMER,
   analysisStatusMeta,
-  contentGenreLabel,
   displayAnalysisTags,
   podcastAssessmentMeta,
   primaryAnalysisLabel,
@@ -209,15 +208,18 @@ export function TagRows({ groups, activeTagId, onPick, hasInterests, onOpenInter
 }
 
 export const ArticleRow = memo(function ArticleRow({
-  article, active, isUnread, isFav, entryBulletin, entryPodcast, showLabel, dayKey, searchQuery,
+  article, active, isUnread, isFav, entryPodcast, showLabel, dayKey, searchQuery,
   source, sourceName, onSelect, onPrefetchEnter, onPrefetchLeave, onToggleFavorite,
   onContextMenu, ctxAnchor,
   // issue #27 兴趣即透镜:命中的兴趣标签名(顶行一枚胶囊)/ 订阅外标记(悬停翻「+ 订阅」)
   interestHit = '', labelSuppress = '', unsubscribed = false, onSubscribeSource = null,
 }) {
-  const excerpt = entryBulletin
+  // 版本更新用紧凑行(单行标题、无摘要),由条目的内容类型决定(issue #178,取代「动态」容器)
+  const compact = !entryPodcast && isCompactKind(article);
+  const excerpt = compact
     ? ''
     : excerptOf(article.summary_zh || article.content_preview || article.content);
+  const kindLabel = kindChipLabel(article);
   const podcast = entryPodcast ? podcastOf(article) : null;
   const podcastStatus = podcastListAvailabilityMeta(podcast);
   const analysisLabel = primaryAnalysisLabel(article);
@@ -226,8 +228,11 @@ export const ArticleRow = memo(function ArticleRow({
   const analysisStatus = analysisStatusMeta(article, { podcast: entryPodcast });
   const podcastAssessment = entryPodcast ? podcastAssessmentMeta(article) : null;
   const analysisTag = analysisLabel && analysisLabel !== interestHit && analysisLabel !== labelSuppress
+    && analysisLabel !== kindLabel
     ? <span className="reader-entry-tag">{analysisLabel}</span>
     : null;
+  // 内容类型签(论文 / 教程 / 观点 / 版本更新…):源名后的细线小签,资讯不挂(issue #178)
+  const kindTag = kindLabel ? <span className="reader-entry-tag reader-entry-kind">{kindLabel}</span> : null;
   const favoriteControl = (
     <span
       role="button"
@@ -256,7 +261,7 @@ export const ArticleRow = memo(function ArticleRow({
         onMouseEnter={() => onPrefetchEnter(article)}
         onMouseLeave={onPrefetchLeave}
         onContextMenu={(e) => onContextMenu(e, article, 'article')}
-        className={`reader-entry ${entryBulletin ? 'is-bulletin' : ''} ${entryPodcast ? 'is-podcast' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'} ${isFav ? 'is-fav' : ''} ${ctxAnchor ? 'is-ctx-anchor' : ''}`}
+        className={`reader-entry ${compact ? 'is-compact' : ''} ${entryPodcast ? 'is-podcast' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'} ${isFav ? 'is-fav' : ''} ${ctxAnchor ? 'is-ctx-anchor' : ''}`}
       >
         {entryPodcast ? (
           <span className="reader-podcast-layout">
@@ -317,6 +322,7 @@ export const ArticleRow = memo(function ArticleRow({
               )}
               {/* 命中兴趣:只挂一枚胶囊,写命中的那个兴趣标签(命中多个取第一个);它是透镜的产物,与开关无关。
                   与分析主签同名时顶替它(不并列两枚同名签)。 */}
+              {kindTag}
               {interestHit && <span className="reader-entry-hit">{interestHit}</span>}
               {/* 分析结果归入元信息行(issue #23 第三项):分类是源名后的一段元信息文字,
                   分数是衬线数字落在时间之前——不再独占一行,晚到只横向填字、标题不动;
@@ -391,8 +397,9 @@ export default function ReaderTab({
     shapePinning, handleSubscribeShape,
     // 视图 / 导航
     mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover, discoverShape, setDiscoverShape,
-    bulletinView, socialView, podcastView, railActive, listTitle, listSubtitle,
+    socialView, podcastView, railActive, listTitle, listSubtitle,
     goView, goSource, goTag,
+    kindFilter, setKindFilter, kindFacetItems,
     scope, setAxis, toggleFavoriteScope, activeTagId, activeTagName, interestGroups, hasInterests, refreshInterests,
     interestAxisEnabled, showUnsubscribedMark, showInterestHit,
     activeSourceHidden, activeUnsubscribed, grouping,
@@ -439,14 +446,18 @@ export default function ReaderTab({
   const openRankings = useCallback(() => {
     supersedePendingOpen();
     closeDiscover();
-    if (bulletinView || socialView) goView('article');
+    if (socialView) goView('article');
     setBriefOpen(false);
     leaveBriefTrail();
     setRankingsOpen(true);
-  }, [bulletinView, closeDiscover, goView, leaveBriefTrail, setBriefOpen, setRankingsOpen, socialView, supersedePendingOpen]);
+  }, [closeDiscover, goView, leaveBriefTrail, setBriefOpen, setRankingsOpen, socialView, supersedePendingOpen]);
   const listPlan = useMemo(
     () => buildListPlan(articles, grouping),
     [articles, grouping],
+  );
+  const kindOptions = useMemo(
+    () => (mode === 'article' ? kindFilterOptions(kindFacetItems, kindFilter) : []),
+    [mode, kindFacetItems, kindFilter],
   );
   // 栏头轴切换:社交容器没有标签不出;「个人早报」能力位关闭时兴趣端点不可用、也不出
   const showAxisSeg = !socialView && interestAxisEnabled;
@@ -630,7 +641,6 @@ export default function ReaderTab({
         {[
           ['article', '文章', FileText, '文章'],
           ['podcast', '播客', Podcast, '播客'],
-          ['bulletin', '动态', Zap, '动态'],
           ['social', '社交媒体', AtSign, '社交'],
         ].map(([view, label, Icon, short]) => (
           <button
@@ -731,14 +741,14 @@ export default function ReaderTab({
             社交容器没有标签(推文不打标),不出轴切换,只列账号。 */}
         <div className={`reader-src-head ${showAxisSeg ? 'is-axis' : ''}`}>
           <span className="reader-src-title">
-            {mode === 'bulletin' ? '动态' : socialView ? '社交媒体' : podcastView ? '播客' : '文章'}
+            {socialView ? '社交媒体' : podcastView ? '播客' : '文章'}
           </span>
           {showAxisSeg && (
             <AxisSeg axis={scope.axis} onChange={(axis) => { leaveBriefTrail(); setAxis(axis); }} />
           )}
         </div>
 
-        {!bulletinView && !socialView && (
+        {!socialView && (
           <button
             type="button"
             aria-pressed={rankingsOpen}
@@ -1034,17 +1044,20 @@ export default function ReaderTab({
               >
                 <Star className="h-4 w-4" fill={favOnly ? 'currentColor' : 'none'} />
               </button>
-              {/* 全部标读两根轴同一枚钮:订阅轴推源水位,兴趣轴按范围逐篇写行(hook 内分流) */}
-              <button
-                type="button"
-                onClick={handleMarkAllRead}
-                disabled={markingRead}
-                aria-label={markAllLabel}
-                title={markAllLabel}
-                className="reader-unread-icon"
-              >
-                {markingRead ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCheck className="h-4 w-4" />}
-              </button>
+              {/* 全部标读两根轴同一枚钮:订阅轴推源水位,兴趣轴按范围逐篇写行(hook 内分流)。
+                  按内容类型筛选时收起:标读按源水位推进,会连同没显示的其它类型一并标掉。 */}
+              {!kindFilter && (
+                <button
+                  type="button"
+                  onClick={handleMarkAllRead}
+                  disabled={markingRead}
+                  aria-label={markAllLabel}
+                  title={markAllLabel}
+                  className="reader-unread-icon"
+                >
+                  {markingRead ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCheck className="h-4 w-4" />}
+                </button>
+              )}
             </>
           )}
           {/* 搜索开关(就地展开:图标 ↔ ✕):由视图轨降级而来的条目列过滤器,与未读/收藏同维度 */}
@@ -1059,6 +1072,32 @@ export default function ReaderTab({
             {searchOpen ? <X className="h-4 w-4" /> : <Search className="h-4 w-4" />}
           </button>
         </div>
+
+        {/* 内容类型筛选带(issue #178):列头下的过滤器带,只在文章容器出现;选项来自列表首页的
+            分面计数(不含 kind 自身的同一范围),计数为 0 的类型不列。单选,再点一次取消。 */}
+        {kindOptions.length > 0 && (
+          <div className="reader-kind-band" role="group" aria-label="按内容类型筛选">
+            <button
+              type="button"
+              aria-pressed={!kindFilter}
+              onClick={() => setKindFilter('')}
+              className={`reader-kind-chip ${!kindFilter ? 'is-on' : ''}`}
+            >
+              全部类型
+            </button>
+            {kindOptions.map((option) => (
+              <button
+                key={option.kind}
+                type="button"
+                aria-pressed={kindFilter === option.kind}
+                onClick={() => setKindFilter(kindFilter === option.kind ? '' : option.kind)}
+                className={`reader-kind-chip ${kindFilter === option.kind ? 'is-on' : ''}`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* 预览未订阅源:显眼订阅横幅(Folo 的「＋ 订阅」条),订阅成功即消失 */}
         {activeUnsubscribed && (
@@ -1123,12 +1162,14 @@ export default function ReaderTab({
                       ? '没有未读内容，都看完啦'
                       : activeSourceId
                         ? '该来源暂无内容'
-                        : (mode === 'bulletin' ? '暂无动态' : mode === 'podcast' ? '暂无播客' : mode === 'article' ? '暂无文章' : '暂无内容')}
+                        : kindFilter
+                          ? '当前范围没有这一类内容'
+                        : (mode === 'podcast' ? '暂无播客' : mode === 'article' ? '暂无文章' : '暂无内容')}
               </span>
             </div>
           ) : (
             /* key 按视图范围重挂载,切源/切容器时列表整体淡入(A1) */
-            <div key={`${activeSourceId ?? '__all__'}|${activeTagId ?? ''}|${mode}|${scope.axis}${scope.favorite ? '+f' : ''}`} className="reader-list-enter">
+            <div key={`${activeSourceId ?? '__all__'}|${activeTagId ?? ''}|${mode}|${scope.axis}${scope.favorite ? '+f' : ''}|${kindFilter}`} className="reader-list-enter">
               {listPlan.map((entry) => {
                 const { article } = entry;
                 return (
@@ -1138,9 +1179,8 @@ export default function ReaderTab({
                     active={activeArticle?.id === article.id}
                     isUnread={isArticleUnread(article)}
                     isFav={favoriteIds.has(article.id)}
-                    /* 条目列只在文章/动态容器渲染(社交走 SocialFlow),容器内形态同质:
-                       动态容器整条呈紧凑形(无独立标题,不挂摘要),不再需要逐条形态 chip。 */
-                    entryBulletin={bulletinView}
+                    /* 条目列只在文章/播客容器渲染(社交走 SocialFlow);版本更新的紧凑行由条目的
+                       内容类型决定(ArticleRow 内判定),不再随容器整体切换。 */
                     entryPodcast={podcastView}
                     showLabel={entry.showLabel}
                     dayKey={entry.dayKey}
@@ -1295,15 +1335,13 @@ export default function ReaderTab({
           {/* key 按文章 id 重挂载,触发 reader-enter 淡入+轻上移(体验二波 A1) */}
           <article className="reader-pane reader-enter" key={activeArticle.id}>
             {/* 标题区(issue #23 第三项延伸,样页 docs/design/dorami-pane-head-quiet.html):
-                四行三语言——眉头「源 · 体裁」/ 衬线标题 / 署名行(只放事实:日期·时长·阅读量·分析状态)/
-                尾行「左标签小签 · 右动作」贴着分隔线。内容类型是数据形态(容器已交代),眉头改画分析出的
-                体裁,与条目行分类同一件事。 */}
+                四行三语言——眉头「源 · 类型」/ 衬线标题 / 署名行(只放事实:日期·时长·阅读量·分析状态)/
+                尾行「左标签小签 · 右动作」贴着分隔线。眉头第二段(issue #178):非资讯写内容类型
+                (论文 / 版本更新…),资讯写事件类型(模型发布…),与条目行的类型签同一件事。 */}
             <header className="reader-pane-head">
               <div className="reader-kicker">
                 {(sourceNameMap[activeArticle.source_id] || activeArticle.source_id)}
-                {contentGenreLabel(activeArticle.content_genre)
-                  ? ` · ${contentGenreLabel(activeArticle.content_genre)}`
-                  : ''}
+                {kindKickerLabel(activeArticle) ? ` · ${kindKickerLabel(activeArticle)}` : ''}
                 {/* 全站范围里读到订阅外的文章:眉头挂一枚「+ 订阅」胶囊(源被收窄预览时列头已有横幅,不重复) */}
                 {!activeUnsubscribed && !subscribedIds.has(activeArticle.source_id) && !sourceMap[activeArticle.source_id]?.hidden && (
                   <button
@@ -1473,7 +1511,7 @@ export default function ReaderTab({
         ) : (
           <div className="reader-empty reader-empty-read">
             <BookOpenText className="h-8 w-8 text-slate-300" />
-            <span>{bulletinView ? '选择一条动态以开始阅读' : podcastView ? '选择一期播客以开始收听' : '选择一篇文章以开始阅读'}</span>
+            <span>{podcastView ? '选择一期播客以开始收听' : '选择一篇文章以开始阅读'}</span>
             {/* 新老用户通用的轻引导:空态下一行小字直达发现页(欢迎卡方案已否决——太啰嗦) */}
             <button type="button" className="reader-empty-link" onClick={openDiscoverSources}>
               去「发现」添加订阅

@@ -213,10 +213,9 @@ def test_favorite_add_list_remove_flow(monkeypatch, tmp_path):
 
 
 def test_favorites_shape_filter(monkeypatch, tmp_path):
-    """容器内收藏:shape=article|bulletin|social 过滤收藏列表。
+    """容器内收藏:shape=article|social 过滤收藏列表。
 
-    动态形判定走 content_type 兜底(github_trending ∈ BULLETIN_CONTENT_TYPES)
-    ∪ 注册表动态源(github_trending_daily 亦命中源级标记)。
+    原「动态」源(github_trending_daily)issue #178 起并入 article;旧值 bulletin 视同 article。
     """
     app_module, sink = _prepare(monkeypatch, tmp_path, "fav_shape.db")
     _seed_article(sink.engine, "art1", "rss_openai", "文章形")
@@ -231,9 +230,9 @@ def test_favorites_shape_filter(monkeypatch, tmp_path):
 
         assert client.get("/api/reader/favorites").json()["total"] == 3
         art = client.get("/api/reader/favorites", params={"shape": "article"}).json()
-        assert art["total"] == 1 and [i["id"] for i in art["items"]] == ["art1"]
+        assert art["total"] == 2 and {i["id"] for i in art["items"]} == {"art1", "bul1"}
         bul = client.get("/api/reader/favorites", params={"shape": "bulletin"}).json()
-        assert bul["total"] == 1 and [i["id"] for i in bul["items"]] == ["bul1"]
+        assert bul["total"] == 2 and {i["id"] for i in bul["items"]} == {"art1", "bul1"}
         social = client.get("/api/reader/favorites", params={"shape": "social"}).json()
         assert social["total"] == 1 and [i["id"] for i in social["items"]] == ["soc1"]
         # 非法值忽略(等同不过滤)

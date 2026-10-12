@@ -34,7 +34,7 @@ from models.db import (
     TaxonomyVersionRecord,
 )
 from services.article_time import SHANGHAI, parse_article_time
-from services import source_visibility, user_sources
+from services import content_classification, source_visibility, user_sources
 
 
 AXES = ("topic", "industry", "entity")
@@ -128,11 +128,19 @@ def _snapshot_window(
     return local.date().isoformat(), end - dt.timedelta(days=WINDOW_DAYS), end
 
 
+# issue #178 撤销「动态」容器后,版本更新 / 项目源在阅读器里归入文章;但榜单的口径不随之变化:
+# 它们此前因形态是 bulletin 而不进文章榜 / 必读榜,这里按来源先验继续排除,保持榜单行为不变。
+RANKING_EXCLUDED_KINDS = frozenset({"release", "project"})
+
+
 def _source_shapes(session: Session) -> dict[str, str]:
     result: dict[str, str] = {}
     for shape in VALID_CONTENT_SHAPES:
         for source_id in registry_source_ids_for_shape(shape):
             result[source_id] = shape
+    for source_id, kind in content_classification.source_default_kinds().items():
+        if kind in RANKING_EXCLUDED_KINDS:
+            result[source_id] = "excluded"
     for source in session.exec(select(SourceConfigRecord)).all():
         result.setdefault(
             source.source_id,

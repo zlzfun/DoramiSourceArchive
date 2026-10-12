@@ -1,9 +1,7 @@
 import { FileText, Link as LinkIcon, Calendar, Database, Box, ExternalLink, Edit2, Save, X, AlertCircle } from 'lucide-react';
 import Modal from './Modal';
-import { contentTypeLabel } from '../utils/contentType';
 import {
   analysisStatusMeta,
-  contentGenreLabel,
   displayAnalysisTags,
   hasReadableAnalysis,
   podcastAssessmentMeta,
@@ -41,7 +39,7 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
         <div className="px-6 py-4 border-b border-[var(--dorami-border)] flex justify-between items-center bg-[var(--dorami-well)]">
           <div className="flex items-center space-x-3">
             <h3 className="card-title">数据全景档案</h3>
-            <span className="data-chip" title={data.content_type || ''}>{contentTypeLabel(data.content_type, data.content_type)}</span>
+            <span className="data-chip" title={data.content_type || ''}>{data.content_type_label || data.content_type}</span>
           </div>
           <div className="flex items-center space-x-2">
             {canEdit && (
@@ -102,7 +100,7 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
                       {analysisTags.map((tag, index) => (
                         <AnalysisTagChip key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`} tag={tag} onSearch={onTemporaryTagSearch} />
                       ))}
-                      {analysisTags.length === 0 && data.content_genre && <span className="reader-tag-chip">{contentGenreLabel(data.content_genre)}</span>}
+                      {analysisTags.length === 0 && data.content_genre && <span className="reader-tag-chip">{data.content_genre_label || data.content_genre}</span>}
                     </span>}
                     {analysisStatus && <span className={`stamp ${analysisStatus.cls}`} role="status">{analysisStatus.label}</span>}
                   </div>

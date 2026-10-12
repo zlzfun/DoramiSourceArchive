@@ -6,6 +6,13 @@
 
 ## 进行中
 
+- ☐ **issue #178 内容分类与双评分**(方案 `docs/content-classification-plan.md`,样页 `docs/design/dorami-classification-scores-quiet.html`):
+  第一波(分支 `feat/issue-178-content-kind`)内容类型 / 事件类型读取时推导 +「动态」并入「文章」+ 类型签 / 筛选带 / 紧凑行 + 词表收口,
+  待 codex 检视与用户本地验收。排队:第一波补(`category` 拆出准入状态、源级 `content_tags` 退役、停止把 category 写进条目扩展标签)→
+  第二波内容价值分与评分卡交互 → 第三波早报「值得读 / 值得听」与日报论文名额。
+  待验收确认:批量「订阅全部文章源」纳入原动态源;榜单继续排除版本更新 / 项目源。
+  有意不做:公共日报分类字符串(神灯契约,改需先与神灯侧确认);文档站「看版本更新」配图未重拍;「隐藏版本更新」的记忆选项。
+
 - ☐ **issue #126 裸机部署回滚**(分支 `feat/issue-126-baremetal-rollback`,方案 `docs/baremetal-rollback-plan.md`;2026-09-21 用户拍板 §7 七项全按推荐后实现):
   运行副本版本化 release 形态 + 事务阶段 + 两级健康门告警(不自动回滚)+ `--rollback`(DB 按迁移计划分流,`--restore-db` 显式恢复)+ 收养 + `--code` / `--status` / `--discard-txn`,
   `docker/requirements-crawl4ai.txt` extras 钉版,锁与 Docker 同一把;桩测试 `tests/test_deploy_baremetal.py`。待 codex 检视、用户本地(内网)实机验收:收养一次 → 部署新版 → 故意起不来的提交告警 → `--rollback` → 机器重启 resurrect 起当前 release → 带迁移版本回滚被拒 / `--restore-db`。

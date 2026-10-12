@@ -227,6 +227,7 @@ class FetcherRegistry:
                 "category": category,
                 "content_type": cls.content_type,
                 "shape": getattr(cls, "content_shape", "article"),
+                "default_kind": getattr(cls, "default_kind", "") or "",
                 "platform": getattr(cls, "platform", ""),
                 "active": True,
                 "is_template": getattr(cls, "is_template", False),

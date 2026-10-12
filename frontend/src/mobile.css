@@ -698,3 +698,13 @@
 .interest-m .interest-onb { flex-direction: column; align-items: stretch; gap: 10px; margin: 0 0 6px; }
 .interest-m .interest-onb .interest-btn { align-self: flex-end; }
 .m-page .reader-disc-interests { padding: 0; }
+
+/* 内容类型筛选带(issue #178):窄屏不换行,横向滑动;选项字号放大一档便于点按 */
+.m-kind-band {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 8px 12px 8px 10px;
+  font-size: 13px;
+}
+.m-kind-band .reader-kind-chip { flex: none; padding: 4px 10px; }

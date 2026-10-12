@@ -140,6 +140,9 @@
   颜色令牌四套/圆角/描边预算/动效/选中语法(轨=wash 块、工作区列表=accent 竖条)/暗色,
   含 `button|input{font:inherit}` 压层陷阱档案。token 单一事实来源 = `frontend/src/index.css`。
 
+- ◉ [content-classification-plan.md](./content-classification-plan.md) — issue #178 内容分类与双评分:
+  内容类型 / 事件类型(读取时推导)、「动态」并入「文章」、新闻价值 + 内容价值双评分与分波计划。
+
 ## sources/ —— 源策展与节点运维
 
 - ◉ [sources/curation_policy.md](./sources/curation_policy.md) — 默认可见性(`ESSENTIAL_FETCHER_IDS`)

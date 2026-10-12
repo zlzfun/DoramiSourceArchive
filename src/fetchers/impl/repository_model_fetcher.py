@@ -22,7 +22,7 @@ class GenericGitHubRepositoriesFetcher(BaseFetcher):
 
     source_id = "generic_github_repositories"
     content_type = "github_repository"
-    content_shape = "bulletin"  # 新仓库监控是动态形(预设子类继承)
+    default_kind = "project"  # 新仓库监控:内容类型「项目」(预设子类继承)
     category = "advanced"
 
     name = "通用 GitHub 新仓库"
@@ -277,7 +277,7 @@ class GenericHuggingFaceModelsFetcher(BaseFetcher):
 
     source_id = "generic_huggingface_models"
     content_type = "hf_model"
-    content_shape = "bulletin"  # 新模型监控是动态形(预设子类继承)
+    default_kind = "project"  # 新模型监控:内容类型「项目」(预设子类继承)
     category = "advanced"
 
     name = "通用 Hugging Face 新模型"
@@ -445,7 +445,7 @@ class GitHubTrendingFetcher(BaseFetcher):
     """
     source_id = "github_trending_daily"
     content_type = "github_trending"
-    content_shape = "bulletin"  # 榜单快照:动态形,进「动态」视图
+    default_kind = "project"  # 趋势榜条目:内容类型「项目」
     category = "incubating"  # 观察期(准入方案 wave3 N3);验收转正后改回 "community"
 
     name = "GitHub Trending 日榜"

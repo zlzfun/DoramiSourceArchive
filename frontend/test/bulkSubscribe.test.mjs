@@ -15,6 +15,12 @@ const sources = [
   { source_id: 'social_a', shape: 'social' },
 ];
 
+test('旧的「动态」源计入文章源(issue #178 并入文章容器,与后端批量订阅同口径)', () => {
+  const withLegacy = [...sources, { source_id: 'release_a', shape: 'bulletin' }];
+  const model = bulkSubscribeModel('article', withLegacy, new Set(['article_a']));
+  assert.equal(model.remainingCount, 2);
+});
+
 test('文章筛选只统计可见且尚未订阅的文章源', () => {
   const model = bulkSubscribeModel('article', sources, new Set(['article_a']));
   assert.equal(model.remainingCount, 1);

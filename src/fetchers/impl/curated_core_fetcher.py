@@ -156,7 +156,7 @@ class SinglePageDocumentFetcher(BaseFetcher):
 
 class OpenAiCodexChangelogFetcher(SinglePageDocumentFetcher):
     source_id = "docs_openai_codex_changelog"
-    content_shape = "bulletin"  # changelog/发布说明:动态形,进「动态」视图
+    default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
     name = "Codex Changelog"
     description = "OpenAI Codex 官方 Changelog 中的 Codex、CLI、IDE 与自动化更新。"
     icon = "🟢"
@@ -289,7 +289,7 @@ class OpenAiCodexChangelogFetcher(SinglePageDocumentFetcher):
 
 class ClaudeCodeChangelogFetcher(SinglePageDocumentFetcher):
     source_id = "docs_claude_code_changelog"
-    content_shape = "bulletin"  # changelog/发布说明:动态形,进「动态」视图
+    default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
     name = "Claude Code Changelog"
     description = "Claude Code 官方 Changelog 中的版本级工具更新。"
     icon = "🟧"
@@ -576,7 +576,7 @@ class DevsiteReleaseNotesFetcher(SinglePageDocumentFetcher):
 
 class GemmaReleaseNotesFetcher(DevsiteReleaseNotesFetcher):
     source_id = "docs_gemma_release_notes"
-    content_shape = "bulletin"  # changelog/发布说明:动态形,进「动态」视图
+    default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
     name = "Gemma Release Notes"
     description = "Gemma 官方 Release Notes 中的开放模型发布与更新。"
     icon = "💎"
@@ -598,7 +598,7 @@ class GemmaReleaseNotesFetcher(DevsiteReleaseNotesFetcher):
 
 class XAiDeveloperReleaseNotesFetcher(SinglePageDocumentFetcher):
     source_id = "docs_xai_release_notes"
-    content_shape = "bulletin"  # changelog/发布说明:动态形,进「动态」视图
+    default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
     name = "xAI Release Notes"
     description = "xAI 官方 Release Notes 中的 Grok 模型、API 与产品更新。"
     icon = "𝕏"
@@ -762,7 +762,7 @@ class XAiDeveloperReleaseNotesFetcher(SinglePageDocumentFetcher):
 
 class DeepSeekApiChangeLogFetcher(DevsiteReleaseNotesFetcher):
     source_id = "docs_deepseek_api_changelog"
-    content_shape = "bulletin"  # changelog/发布说明:动态形,进「动态」视图
+    default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
     name = "DeepSeek API Changelog"
     description = "DeepSeek API 官方 Changelog 中的模型、API 与平台更新。"
     icon = "🧠"
@@ -865,7 +865,7 @@ class DeepSeekApiChangeLogFetcher(DevsiteReleaseNotesFetcher):
 
 class ZaiNewReleasedFetcher(SinglePageDocumentFetcher):
     source_id = "docs_zai_new_released"
-    content_shape = "bulletin"  # changelog/发布说明:动态形,进「动态」视图
+    default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
     name = "Z.ai 更新公告"
     description = "Z.ai 官方发布页的 GLM 模型、API、Agent 与产品更新。"
     icon = "🧩"
@@ -1130,6 +1130,7 @@ class HuggingFaceDailyPapersFetcher(SinglePageDocumentFetcher):
     source_scope = "research_community"
     source_channel = "paper_ranking"
     provenance_tier = "tier1_curated"
+    default_kind = "paper"  # 每条都是一篇论文原文(arXiv 摘要页)
     content_tags = ["research_paper", "model_release", "developer_tool"]
     signal_strength = "medium_signal"
     noise_risk = "medium_noise"
@@ -1261,7 +1262,7 @@ class HuggingFaceDailyPapersFetcher(SinglePageDocumentFetcher):
 class CursorChangelogWebFetcher(BaseWebPageListFetcher):
     default_fetch_detail = True
     source_id = "web_cursor_changelog"
-    content_shape = "bulletin"  # changelog/发布说明:动态形,进「动态」视图
+    default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
     name = "Cursor Changelog"
     description = "Cursor 官方 Changelog 中的 AI 编程、Agent 与 IDE 产品更新。"
     icon = "⌨️"
@@ -1577,7 +1578,7 @@ class ArenaLeaderboardChangelogFetcher(SinglePageDocumentFetcher):
     """把 Arena 单页 Leaderboard Changelog 按日期卡片拆成独立动态。"""
 
     source_id = "docs_arena_leaderboard_changelog"
-    content_shape = "bulletin"
+    default_kind = "release"  # 榜单维护记录:按版本更新呈现
     name = "Arena 排行榜更新"
     description = "Arena 各类排行榜新增模型、分数修订与方法变更。"
     icon = "🏟️"

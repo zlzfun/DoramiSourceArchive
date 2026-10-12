@@ -16,8 +16,8 @@ const sidebarGroups = [
   { text: '播客', items: [
     { text: '听播客', link: '/features/podcasts' },
   ] },
-  { text: '动态', items: [
-    { text: '看动态', link: '/features/updates' },
+  { text: '版本更新', items: [
+    { text: '看版本更新', link: '/features/updates' },
   ] },
   { text: '社交', items: [
     { text: '看社交帖子', link: '/features/social' },

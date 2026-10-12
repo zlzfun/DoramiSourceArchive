@@ -1,9 +1,7 @@
 import { X, Edit2, FileAudio2, Trash2, ExternalLink, RotateCcw } from 'lucide-react';
-import { contentTypeLabel } from '../utils/contentType';
 import { excerptOf } from '../utils/readerText';
 import {
   analysisStatusMeta,
-  contentGenreLabel,
   displayAnalysisTags,
   hasReadableAnalysis,
   podcastAssessmentMeta,
@@ -116,8 +114,17 @@ export default function ArticleDetailDrawer({
                   {getFetcherName?.(article.source_id) || article.source_id}
                   <span className="ledger-kv-mono"> · {article.source_id}</span>
                 </dd>
-                <dt>类型</dt>
-                <dd>{contentTypeLabel(article.content_type, article.content_type)}</dd>
+                {/* issue #178:内容类型(这是什么)与数据结构(怎么抓进来的)分开写 */}
+                <dt>内容类型</dt>
+                <dd>
+                  {article.kind_label || '未判定'}
+                  {article.event_label ? ` · ${article.event_label}` : ''}
+                </dd>
+                <dt>数据结构</dt>
+                <dd>
+                  {article.content_type_label || article.content_type}
+                  <span className="ledger-kv-mono"> · {article.content_type}</span>
+                </dd>
                 <dt>发布时间</dt>
                 <dd className="ledger-kv-mono">{fmtTime(article.publish_date)}</dd>
                 <dt>收录时间</dt>
@@ -145,7 +152,7 @@ export default function ArticleDetailDrawer({
                         {analysisTags.map((tag, index) => (
                           <AnalysisTagChip key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`} tag={tag} onSearch={onTemporaryTagSearch} />
                         ))}
-                        {analysisTags.length === 0 && article.content_genre && <span className="reader-tag-chip">{contentGenreLabel(article.content_genre)}</span>}
+                        {analysisTags.length === 0 && article.content_genre && <span className="reader-tag-chip">{article.content_genre_label || article.content_genre}</span>}
                       </span>}
                       {analysisStatus && <span className={`stamp ${analysisStatus.cls}`} role="status">{analysisStatus.label}</span>}
                     </div>

@@ -67,22 +67,31 @@ def _source_category(content_type: Optional[str]) -> str:
     return CONTENT_TYPE_CATEGORY.get(content_type, content_type)
 
 
-# ==================== 内容形态（阅读器分流轴，迭代 3）====================
+# ==================== 内容形态（阅读器容器，迭代 3 / issue #178）====================
 # 形态是**源级标记**（fetcher.content_shape），registry 是第一事实源;
 # 对注册表之外的历史归档源（已下线节点、导入源），按 content_type 兜底:
-# 结构化监控产物属于 bulletin，社交帖属于 social，播客单集属于 podcast。
-VALID_CONTENT_SHAPES = frozenset({"article", "bulletin", "social", "podcast"})
-BULLETIN_CONTENT_TYPES = frozenset({
-    "github_release", "github_repository", "hf_model", "huggingface_model",
-    "github_trending",
-})
+# 社交帖属于 social，播客单集属于 podcast，其余都是 article。
+# issue #178 撤销 bulletin「动态」容器并入 article:版本更新 / 项目改由条目的内容类型
+# (services/content_classification.py)表达,列表里用紧凑行。旧客户端仍可能传 shape=bulletin,
+# 入参经 normalize_shape 视同 article——绝不能当作未知值忽略,否则 mark-all-read?shape=bulletin
+# 会把全部订阅标读、列表会混进社交与播客。
+VALID_CONTENT_SHAPES = frozenset({"article", "social", "podcast"})
+LEGACY_SHAPE_ALIASES = {"bulletin": "article"}
 SOCIAL_CONTENT_TYPES = frozenset({"social_post"})
 PODCAST_CONTENT_TYPES = frozenset({"podcast_episode"})
 CONTENT_TYPES_BY_SHAPE = {
-    "bulletin": BULLETIN_CONTENT_TYPES,
     "social": SOCIAL_CONTENT_TYPES,
     "podcast": PODCAST_CONTENT_TYPES,
 }
+
+
+def normalize_shape(shape: Optional[str]) -> str:
+    """入参形态归一:合法值原样返回,旧别名(bulletin)映射到 article,其余返回空串(= 不过滤)。"""
+    value = (shape or "").strip().lower()
+    value = LEGACY_SHAPE_ALIASES.get(value, value)
+    return value if value in VALID_CONTENT_SHAPES else ""
+
+
 X_SOURCE_TYPES = frozenset({"x", "x_timeline"})
 PODCAST_SOURCE_TYPES = frozenset({"podcast", "podcast_rss"})
 
@@ -92,13 +101,10 @@ def source_shape(
     content_type: Optional[str],
     registry_meta: Dict[str, Dict[str, Any]],
 ) -> str:
-    """解析某源的内容形态：article | bulletin | social | podcast。"""
+    """解析某源的内容形态：article | social | podcast。"""
     meta = registry_meta.get(source_id or "")
     if meta is not None:
-        shape = str(meta.get("shape") or "article").strip().lower()
-        return shape if shape in VALID_CONTENT_SHAPES else "article"
-    if (content_type or "") in BULLETIN_CONTENT_TYPES:
-        return "bulletin"
+        return normalize_shape(str(meta.get("shape") or "article")) or "article"
     if (content_type or "") in SOCIAL_CONTENT_TYPES:
         return "social"
     if (content_type or "") in PODCAST_CONTENT_TYPES:
@@ -114,8 +120,8 @@ def configured_source_shape(source_type: str, fetcher_id: str = "") -> str:
     if fetcher_id:
         fetcher_class = fetcher_registry.get_class(fetcher_id)
         if fetcher_class is not None:
-            shape = str(getattr(fetcher_class, "content_shape", "article")).strip().lower()
-            if shape in VALID_CONTENT_SHAPES:
+            shape = normalize_shape(str(getattr(fetcher_class, "content_shape", "article")))
+            if shape:
                 return shape
     if (source_type or "").strip().lower() in X_SOURCE_TYPES:
         return "social"
@@ -155,18 +161,13 @@ def configured_source_platform(source_type: str, fetcher_id: str = "") -> str:
 
 def registry_source_ids_for_shape(shape: str) -> List[str]:
     """注册表中指定形态的 source_id 集合（shape= SQL 过滤用）。"""
-    shape_value = (shape or "").strip().lower()
-    if shape_value not in VALID_CONTENT_SHAPES:
+    shape_value = normalize_shape(shape)
+    if not shape_value:
         return []
     return sorted(
         sid for sid, meta in _registry_source_meta().items()
-        if (meta.get("shape") or "article") == shape_value
+        if (normalize_shape(str(meta.get("shape") or "article")) or "article") == shape_value
     )
-
-
-def bulletin_registry_source_ids() -> List[str]:
-    """向后兼容：注册表中 bulletin 源的 source_id 集合。"""
-    return registry_source_ids_for_shape("bulletin")
 
 
 def social_registry_source_ids() -> List[str]:

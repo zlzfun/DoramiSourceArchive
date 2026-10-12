@@ -77,6 +77,7 @@ def _usage_meta(purpose: str, username: Optional[str]) -> UsageMeta:
     return UsageMeta(purpose=purpose, username=(username or USAGE_SYSTEM))
 from models.analysis_contracts import TaxonomyTagDTO
 from models.content import DailyBriefContent
+from services.content_classification import DAILY_BRIEF_GENRE_CLASSIFICATIONS
 from models.db import (
     AppSettingRecord,
     DailyBriefCandidateRecord,
@@ -253,22 +254,9 @@ class ScoredItem:
 
 
 # 文章级分析的 content_genre → 日报 classification(分节用)。日报自己不再产分类,
-# 体裁与分数一样来自分析结果,映射是确定性代码。
-CLASSIFICATION_FROM_GENRE: Dict[str, str] = {
-    "model_release": "模型发布",
-    "product_update": "行业资讯",
-    "open_source_update": "开源动态",
-    "research_paper": "学术论文",
-    "tutorial": "行业资讯",
-    "opinion": "行业资讯",
-    "industry_news": "行业资讯",
-    "conference": "技术大会",
-    "social_discussion": "社交动态",
-    "aggregation": "资讯聚合",
-    "security_incident": "行业资讯",
-    "regulation": "行业资讯",
-    "other": "资讯聚合",
-}
+# 体裁与分数一样来自分析结果,映射是确定性代码。取值是对外契约(神灯流水线原样消费),
+# 定义收拢在 content_classification 词表(issue #178),此处只保留历史名字供引用。
+CLASSIFICATION_FROM_GENRE: Dict[str, str] = DAILY_BRIEF_GENRE_CLASSIFICATIONS
 
 
 def classification_from_genre(content_genre: str) -> str:
