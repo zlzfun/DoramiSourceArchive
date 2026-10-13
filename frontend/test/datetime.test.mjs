@@ -18,6 +18,9 @@ test('没有时刻的 00:00 占位只画原始日期,不因时区换算跨日', 
   assert.equal(formatPublishDate('2026-09-15T00:00:00+00:00'), '2026-09-15');
   assert.equal(formatPublishDate('2026-09-15T00:00:00'), '2026-09-15');
   assert.equal(formatPublishDate('2026-09-15'), '2026-09-15');
+  // 悬停提示同一规则:不补出换算出来的时刻(codex R1-P2-04)
+  assert.equal(formatPublishDateTime('2026-09-15T00:00:00+00:00'), '2026-09-15');
+  assert.equal(formatPublishDateTime('2026-09-15'), '2026-09-15');
 });
 
 test('不带时区的值按本地时间解析,与原来按字符截断一致', () => {

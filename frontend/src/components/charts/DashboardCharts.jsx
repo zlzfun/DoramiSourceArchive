@@ -18,13 +18,17 @@ import { useMotionReduced } from '../../motion';
 
 const AXIS_TICK = { fill: AXIS, fontSize: 12 };
 
+// 没有数据的那天:柱位上画一个刻度点(不连线、不画成 0 高的山谷)。
+// 键里带冒号:系列键是用户名或用途名,用户名不允许冒号(services/accounts.py),用途是蛇形英文或中文标签,不会撞上。
+const EMPTY_KEY = ':empty-day';
+
 // 统一 hover 浮层：surface-card 风格 + 令牌，暗色安全。
 function ThemedTooltip({ active, payload, label, titleKey, colorFor }) {
   if (!active || !payload || payload.length === 0) return null;
   const head = payload[0]?.payload?.[titleKey] ?? label;
   // 多系列时按值倒序、过滤掉 0，浮层更聚焦。
   const rows = payload
-    .filter((p) => Number(p.value) > 0 && !String(p.dataKey).startsWith('__'))
+    .filter((p) => Number(p.value) > 0 && p.dataKey !== EMPTY_KEY)
     .sort((a, b) => Number(b.value) - Number(a.value));
   if (rows.length === 0) return null;
   return (
@@ -48,8 +52,6 @@ function ThemedTooltip({ active, payload, label, titleKey, colorFor }) {
 
 const kFormatter = (v) => (v >= 1000 ? `${Math.round(v / 1000)}k` : v);
 
-// 没有数据的那天:柱位上画一个刻度点(不连线、不画成 0 高的山谷)
-const EMPTY_KEY = '__empty';
 function EmptyDayTick({ x, y, width, payload }) {
   if (!payload?.[EMPTY_KEY] || !Number.isFinite(x) || !Number.isFinite(y)) return null;
   return <rect x={x + width / 2 - 1} y={y - 2} width={2} height={2} rx={1} fill="var(--dorami-border-strong)" />;
@@ -127,7 +129,7 @@ export function MultiSeriesBars({
                 maxBarSize={8}
               />
             ))}
-            <Bar dataKey={EMPTY_KEY} stackId="s" shape={EmptyDayTick} isAnimationActive={false} legendType="none" />
+            <Bar dataKey={EMPTY_KEY} stackId="s" shape={EmptyDayTick} isAnimationActive={false} legendType="none" tooltipType="none" />
           </BarChart>
         </ResponsiveContainer>
       </div>

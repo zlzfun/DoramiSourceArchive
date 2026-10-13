@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { Monitor, Moon, Sun } from 'lucide-react';
 import { useMotionPref } from '../../motion';
 import { usePalettePref } from '../../palette';
@@ -17,6 +18,19 @@ const PALETTE_OPTIONS = [
 export default function AppearanceSection({ theme, onThemeChange }) {
   const { reduced, setMotion } = useMotionPref();
   const { palette, setPalette } = usePalettePref();
+  // 中性色是单选组(codex R1-P2-06):组内只有选中那张卡在 Tab 序列里,方向键 / Home / End 移动并选中
+  const palRefs = useRef([]);
+  const onPaletteKey = (event, index) => {
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+    let next = null;
+    if (step) next = (index + step + PALETTE_OPTIONS.length) % PALETTE_OPTIONS.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = PALETTE_OPTIONS.length - 1;
+    if (next == null) return;
+    event.preventDefault();
+    setPalette(PALETTE_OPTIONS[next].id);
+    palRefs.current[next]?.focus();
+  };
   const options = [
     { id: 'light', label: '亮色', icon: Sun },
     { id: 'dark', label: '暗色', icon: Moon },
@@ -52,14 +66,17 @@ export default function AppearanceSection({ theme, onThemeChange }) {
         </span>
         <span className="sett-ctl">
           <span className="sett-pals" role="radiogroup" aria-label="中性色">
-            {PALETTE_OPTIONS.map(opt => (
+            {PALETTE_OPTIONS.map((opt, index) => (
               <button
                 key={opt.id}
+                ref={(el) => { palRefs.current[index] = el; }}
                 type="button"
                 role="radio"
                 aria-checked={palette === opt.id}
                 aria-label={`${opt.name} · ${opt.tone}`}
+                tabIndex={palette === opt.id ? 0 : -1}
                 onClick={() => setPalette(opt.id)}
+                onKeyDown={(event) => onPaletteKey(event, index)}
                 className="sett-pal"
                 data-pal={opt.id}
               >

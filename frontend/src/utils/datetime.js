@@ -20,19 +20,27 @@ function formatLocal(value, withSeconds) {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${hm}`;
 }
 
-// 发布时间的完整写法(阅读窗署名行的悬停提示),按本地时区。
-export function formatPublishDateTime(value, fallback = '') {
-  if (!value) return fallback;
-  return formatLocal(String(value), true);
+// feed 没给时刻时后端落的是 00:00:00 假值;只有日期的值同理——两者都「没有真实时刻」
+function lacksRealTime(raw) {
+  const time = raw.replace('T', ' ').substring(11, 16);
+  return !time || time === '00:00';
 }
 
-// 发布日期(阅读窗署名行):feed 没给时刻时后端落的是 00:00:00 假值,画出来像"凌晨发布",
-// 这种只画原始日期(不换算时区,避免把日期推到前一天或后一天);有真实时刻才按本地时区补 HH:MM。
+// 发布时间的完整写法(阅读窗署名行的悬停提示),按本地时区;没有真实时刻时同样只给原始日期
+// (不补出一个换算出来的「17:00:00」,也不因时区把日期推到前一天,codex R1-P2-04)。
+export function formatPublishDateTime(value, fallback = '') {
+  if (!value) return fallback;
+  const raw = String(value);
+  if (lacksRealTime(raw)) return raw.substring(0, 10);
+  return formatLocal(raw, true);
+}
+
+// 发布日期(阅读窗署名行):没有真实时刻的只画原始日期(画出来像「凌晨发布」,换算时区还会跨日);
+// 有真实时刻才按本地时区补 HH:MM。
 export function formatPublishDate(value, fallback = '') {
   if (!value) return fallback;
   const raw = String(value);
-  const time = raw.replace('T', ' ').substring(11, 16);
-  if (!time || time === '00:00') return raw.substring(0, 10);
+  if (lacksRealTime(raw)) return raw.substring(0, 10);
   return formatLocal(raw, false);
 }
 

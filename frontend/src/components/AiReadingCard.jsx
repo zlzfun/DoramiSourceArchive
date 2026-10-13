@@ -140,43 +140,46 @@ export default function AiReadingCard({
   const inlineReason = tipReason && !(podcast && !summary) ? tipReason : '';
   return (
     <div className="reader-ai-summary">
-      {score && (
-        <div
-          ref={sideRef}
-          className={`reader-ai-summary-side ${tipDismissed ? 'is-tip-dismissed' : ''}`}
-          onMouseEnter={() => setTipDismissed(false)}
-          onFocus={() => setTipDismissed(false)}
-          onMouseLeave={(event) => {
-            if (!event.currentTarget.contains(document.activeElement)) setTipDismissed(false);
-          }}
-          onBlur={(event) => {
-            const side = event.currentTarget;
-            if (!side.contains(event.relatedTarget) && !side.matches(':hover')) setTipDismissed(false);
-          }}
-        >
-          <ScoreFigure
-            key={article.id}
-            score={score}
-            tierClass={scoreTier}
-            interactive={Boolean(other)}
-            label={other ? `${current.label} ${score}，点按切换到${other.label}` : `${current.label} ${score}`}
-            describedBy={tipReason || tipNote ? tipId : undefined}
-            onToggle={() => { if (other) setDimKey(other.key); }}
-          />
-          <span className="reader-ai-score-dim" aria-hidden="true">{current.label}</span>
-          {(tipReason || tipNote) && (
-            <div className="reader-ai-score-tip" role="tooltip" id={tipId}>
-              <span className="reader-ai-layer-title">{tipTitle}</span>
-              {tipReason && <p className="reader-ai-layer-text">{tipReason}</p>}
-              <span className="reader-ai-layer-note">{tipNote}</span>
-            </div>
-          )}
-        </div>
-      )}
+      {/* 卡头恒在常流里(codex R1-P2-03):左「✦ 标题」,右统计位「维度 分数」——只有分数没有正文时卡也撑得住 */}
+      <div className="reader-ai-card-head">
+        <span className="reader-ai-layer-title">{primaryTitle}</span>
+        {score && (
+          <div
+            ref={sideRef}
+            className={`reader-ai-summary-side ${tipDismissed ? 'is-tip-dismissed' : ''}`}
+            onMouseEnter={() => setTipDismissed(false)}
+            onFocus={() => setTipDismissed(false)}
+            onMouseLeave={(event) => {
+              if (!event.currentTarget.contains(document.activeElement)) setTipDismissed(false);
+            }}
+            onBlur={(event) => {
+              const side = event.currentTarget;
+              if (!side.contains(event.relatedTarget) && !side.matches(':hover')) setTipDismissed(false);
+            }}
+          >
+            <ScoreFigure
+              key={article.id}
+              score={score}
+              tierClass={scoreTier}
+              interactive={Boolean(other)}
+              label={other ? `${current.label} ${score}，点按切换到${other.label}` : `${current.label} ${score}`}
+              describedBy={tipReason || tipNote ? tipId : undefined}
+              onToggle={() => { if (other) setDimKey(other.key); }}
+            />
+            <span className="reader-ai-score-dim" aria-hidden="true">{current.label}</span>
+            {(tipReason || tipNote) && (
+              <div className="reader-ai-score-tip" role="tooltip" id={tipId}>
+                <span className="reader-ai-layer-title">{tipTitle}</span>
+                {tipReason && <p className="reader-ai-layer-text">{tipReason}</p>}
+                <span className="reader-ai-layer-note">{tipNote}</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
       <div className="reader-ai-summary-main">
         {primaryText ? (
           <div className="reader-ai-layer reader-ai-layer-summary">
-            <span className="reader-ai-layer-title">{primaryTitle}</span>
             <p className="reader-ai-layer-text">{primaryText}</p>
             {podcast && (
               <span className="reader-ai-layer-note">

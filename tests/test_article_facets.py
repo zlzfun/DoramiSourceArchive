@@ -91,6 +91,13 @@ def test_facets_source_labels_use_friendly_names(monkeypatch, tmp_path):
         session.commit()
     monkeypatch.setattr(app_module, "db_sink", sink)
     monkeypatch.setattr(deps, "get_db_sink", lambda: sink)
+    # 分面取名走批量路径:不许再逐个 id 各开一次 session(codex R1)
+    from services import source_naming
+
+    def _no_per_id_lookup(_source_id):
+        raise AssertionError("facets 不应逐个 id 查配置源名称")
+
+    monkeypatch.setattr(source_naming, "_config_source_name", _no_per_id_lookup)
 
     with TestClient(app_module.app) as client:
         client.post("/api/auth/login", json={"username": "admin", "password": "admin"})

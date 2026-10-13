@@ -115,13 +115,11 @@ def source_role(
     return DEFAULT_SOURCE_ROLE
 
 
-def friendly_source_name(source_id: str) -> str:
-    """source_id → 读者可读来源名:现役源取注册表 name,其余查兜底映射,最后回落原 id。
+def _static_source_name(source_id: str) -> str:
+    """前两级取名:注册表 name → 兜底映射;都没有返回空串(不碰数据库)。
 
     延迟导入注册表(触发 impl/ 扫描),避免服务层在 import 期背上抓取器依赖。
     """
-    if not source_id:
-        return source_id
     try:
         from fetchers.registry import fetcher_registry
 
@@ -131,12 +129,63 @@ def friendly_source_name(source_id: str) -> str:
             return str(name)
     except Exception:  # noqa: BLE001 - 取名失败绝不阻断展示/检索主流程
         pass
-    if source_id in SOURCE_FRIENDLY_NAMES:
-        return SOURCE_FRIENDLY_NAMES[source_id]
+    return SOURCE_FRIENDLY_NAMES.get(source_id, "")
+
+
+def friendly_source_name(source_id: str) -> str:
+    """source_id → 读者可读来源名:现役源取注册表 name,其余查兜底映射,最后回落原 id。"""
+    if not source_id:
+        return source_id
+    name = _static_source_name(source_id)
+    if name:
+        return name
     # 第三级兜底(v3.40):配置源(用户自定源/X config 源等)不在注册表与兜底表,
     # 查 source_configs 行取展示名——否则问答上下文块头/引用出处显示裸 id。
     name = _config_source_name(source_id)
     return name or source_id
+
+
+def friendly_source_names(source_ids, session=None) -> Dict[str, str]:
+    """批量版 :func:`friendly_source_name`(issue #184 台账分面):前两级逐个取,剩下的配置源
+    一次查询取名(传入 session 就复用调用方的,不再每个 id 各开一次);取不到的回落原 id。"""
+    names: Dict[str, str] = {}
+    pending = []
+    for source_id in dict.fromkeys(sid for sid in source_ids if sid):
+        name = _static_source_name(source_id)
+        if name:
+            names[source_id] = name
+        else:
+            pending.append(source_id)
+    if pending:
+        config_names = _config_source_names(pending, session)
+        for source_id in pending:
+            names[source_id] = config_names.get(source_id) or source_id
+    return names
+
+
+def _config_source_names(source_ids, session=None) -> Dict[str, str]:
+    """一次查询取一批配置源的展示名;任何失败静默返回空映射(取名绝不阻断主流程)。"""
+    try:
+        from sqlmodel import Session, select
+
+        from models.db import SourceConfigRecord
+
+        stmt = select(SourceConfigRecord.source_id, SourceConfigRecord.name).where(
+            SourceConfigRecord.source_id.in_(list(source_ids))
+        )
+        if session is not None:
+            rows = session.exec(stmt).all()
+        else:
+            from api import deps
+
+            sink = deps.get_db_sink()
+            if sink is None:
+                return {}
+            with Session(sink.engine) as own:
+                rows = own.exec(stmt).all()
+        return {str(sid): str(name) for sid, name in rows if name}
+    except Exception:  # noqa: BLE001 - 同上
+        return {}
 
 
 def _config_source_name(source_id: str) -> str:

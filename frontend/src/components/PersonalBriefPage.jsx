@@ -286,11 +286,14 @@ function PosterSkeleton() {
   );
 }
 
-// 「往期」浮层:按月分组的日期行;当天有多版时,选中那天的各版列在它下面。非模态浮层,
-// Esc / 焦点移入与归还复用 useModalA11y(层栈,§8),外点关闭沿全站浮层约定(mousedown)。
+// 「往期」浮层:按月分组的日期行;当天有多版时,选中那天的各版列在它下面。非模态浮层:
+// Esc 与层栈复用 useModalA11y(§8)但不困住 Tab(trapFocus: false),焦点先落在当前那一天(focus 顺带把它卷进视野);
+// 焦点 Tab 出去或外点(mousedown,全站浮层约定)即关闭,触发钮自身的点击由它切换。
+const currentDayOf = (panel) => panel?.querySelector('[aria-current="date"]') || null;
+
 function HistoryPopover({ months, todayKey, selDate, selRevision, live, onPickDay, onPickRevision, onClose, triggerRef }) {
   const panelRef = useRef(null);
-  useModalA11y(true, onClose, panelRef);
+  useModalA11y(true, onClose, panelRef, { trapFocus: false, initialFocus: currentDayOf });
   useEffect(() => {
     const onDown = (event) => {
       if (panelRef.current?.contains(event.target) || triggerRef.current?.contains(event.target)) return;
@@ -299,13 +302,13 @@ function HistoryPopover({ months, todayKey, selDate, selRevision, live, onPickDa
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [onClose, triggerRef]);
-  // 打开时把当前那天卷进视野(往期多时)
-  useLayoutEffect(() => {
-    panelRef.current?.querySelector('[aria-current="date"]')?.scrollIntoView({ block: 'nearest' });
-  }, []);
+  const handleBlur = (event) => {
+    const next = event.relatedTarget;
+    if (next && !panelRef.current?.contains(next) && !triggerRef.current?.contains(next)) onClose();
+  };
   const label = { degraded: '降级', failed: '失败', pending: '准备中', generating: '编排中' };
   return (
-    <div ref={panelRef} className="bp-pop" role="dialog" aria-label="往期早报" tabIndex={-1}>
+    <div ref={panelRef} className="bp-pop" role="dialog" aria-label="往期早报" tabIndex={-1} onBlur={handleBlur}>
       <p className="bp-pop-title">往期早报</p>
       <div className="bp-pop-scroll">
         {months.map((month) => (
@@ -963,7 +966,12 @@ export default function PersonalBriefPage({
         {showEdition && headline && (
           <>
             <dt>头条</dt>
-            <dd>有重大事件时取重大事件，否则取本期新闻价值最高的一条；其余按板块排列，板块内按分数</dd>
+            <dd>
+              {VALUE_LANES.has(headline.selection_lane)
+                ? '本期没有新闻入选，取深度阅读与播客精选里内容价值最高的一条'
+                : '有重大事件时取重大事件，否则取本期新闻价值最高的一条'}
+              ；其余按板块排列，板块内按分数
+            </dd>
           </>
         )}
         {pastDays.length > 0 && (

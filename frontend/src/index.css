@@ -326,7 +326,7 @@ body {
 
 /* button / input / select / textarea 的 font: inherit 由 Tailwind preflight 在 @layer base 给出(issue #184 / #176 W0a):
    此前这里另有一条未分层的同名规则,会压过 @layer components 与 utilities 里对按钮、输入框写的字号字重
-   (「button{font:inherit} 未分层陷阱」),已退役;组件规则按本意生效,不必再把字号钉到未分层区。 */
+   (「button{font:inherit}(#184 已退役) 未分层陷阱」),已退役;组件规则按本意生效,不必再把字号钉到未分层区。 */
 
 button {
   cursor: pointer;
@@ -1642,9 +1642,9 @@ input[type="radio"] {
     border: 0;
     background: transparent;
     outline: none;
-    font-family: inherit;
-    font-size: 14.5px;
-    font-weight: 600;
+    /* 品牌豁免(issue #184):全局未分层的 font: inherit 退役后,这里原写的 14.5px / 600 会第一次生效、改变登录页;
+       就地保持此前的实际渲染(继承 16px / 400) */
+    font: inherit;
     color: #f1f2ff;
   }
 
@@ -1677,9 +1677,8 @@ input[type="radio"] {
     border: 0;
     border-radius: var(--r-card);
     cursor: pointer;
-    font-family: inherit;
-    font-size: 15.5px;
-    font-weight: 800;
+    /* 品牌豁免(issue #184):同 .auth-input,保持此前的实际渲染(继承 16px / 400),原写的 15.5px / 800 从未生效 */
+    font: inherit;
     letter-spacing: 0.01em;
     color: #fff;
     background: linear-gradient(135deg, var(--dorami-blue) 0%, var(--dorami-blue-2) 100%);
@@ -1845,7 +1844,7 @@ input[type="radio"] {
   /* ── Segmented control ── */
 
   /* 分段控件(视图切换):总高与页头 M 档按钮同轴 32(壳 3 + 拇指 24 + 边 2)。
-     字号/字重写在容器上靠继承穿透——button{font:inherit} 未分层陷阱(见 conventions §3)。 */
+     字号/字重写在容器上靠继承穿透——button{font:inherit}(#184 已退役) 未分层陷阱(见 conventions §3)。 */
   .segmented-control {
     display: inline-flex;
     width: fit-content;
@@ -2819,7 +2818,7 @@ input[type="radio"] {
   /* ── DataTab 静默仪器布局波(L2):分面栏 + 一张纸(总账条/表格/批量/表脚) + 详情抽屉 ── */
 
   /* 壳层:与 nodes-shell 同技术满幅定高,页面本身不滚,滚动只发生在纸内/分面栏内。
-     字号挂壳(13px):建立与样页一致的字号语境(button{font:inherit} 会穿透继承)。 */
+     字号挂壳(13px):建立与样页一致的字号语境(button{font:inherit}(#184 已退役) 会穿透继承)。 */
   .ledger-shell {
     width: calc(100vw - var(--rail-w));
     margin-inline: calc(50% - 50vw + var(--rail-w) / 2);
@@ -3317,7 +3316,8 @@ input[type="radio"] {
     color: var(--dorami-muted);
   }
   .mini-seg-btn:hover:not(.is-on) { color: var(--dorami-ink-2); }
-  .mini-seg-btn.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); font-weight: 600; }
+  /* 带拇指的分段控件:选中靠白拇指表达,字重恒 400 不跳(跳字重会让拇指宽度跟着抖;issue #184) */
+  .mini-seg-btn.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
   /* 流体档:表单字段语境下撑满字段宽、选项对半分(inline 缩在左侧会显得挤缩) */
   .mini-seg.is-fluid { display: flex; width: 100%; }
   .mini-seg.is-fluid .mini-seg-btn { flex: 1; }
@@ -3945,7 +3945,7 @@ input[type="radio"] {
      接入集成页签并入,柜体随内容扩容 880×640(接入分区带代码块/工具表,原 760×560 放不下);
      admin 的 服务/数据同步 归入「管理」组。基础刻度取自 docs/design/dorami-settings-quiet.html。 ── */
 
-  /* 字号语境挂容器(13px,样页口径;按钮经 button{font:inherit} 继承它) */
+  /* 字号语境挂容器(13px,样页口径;按钮经 button{font:inherit}(#184 已退役) 继承它) */
   .sett-cab { display: flex; overflow: hidden; font-size: 13px; }
   /* 与 .modal-panel 复合使用:panel 供表面/高程/开合动画;其 width:100%/flex-direction:column
      定义在后会压过同特异性声明——布局向属性一律用复合选择器钉住(弹窗波陷阱) */
@@ -3955,7 +3955,7 @@ input[type="radio"] {
 
   .sett-nav { width: 184px; flex: none; display: flex; flex-direction: column;
     background: var(--dorami-soft); border-right: 1px solid var(--dorami-border); padding: 14px 8px;
-    /* 字号/字重挂容器:button{font:inherit}(未分层)会压掉 @layer 里按钮类的 font-* */
+    /* 字号/字重挂容器:button{font:inherit}(#184 已退役)(未分层)会压掉 @layer 里按钮类的 font-* */
     font-size: 12.5px; font-weight: 600; }
   .sett-nav-title { padding: 0 10px 10px; font-size: 14px; font-weight: 600; }
   .sett-nav-sec { display: flex; flex-direction: column; }
@@ -4219,7 +4219,7 @@ input[type="radio"] {
   /* 排序/筛选表头(v3.41 账户管理 V2):th 内按钮继承表头字形;激活列 accent-ink。
      排序列带方向箭头;枚举列(角色/状态/AI)点击轮换筛选档,列头文字即当前档——
      两类列头共用同一套「点列头」操作语言与同一个激活色。
-     字号靠 font:inherit 全局规则从 th 继承(§3 未分层陷阱:类上写 font-size 无效,也无需)。 */
+     字号靠 font:inherit 全局规则(#184 已退役)从 th 继承(§3 未分层陷阱:类上写 font-size 无效,也无需)。 */
   .acct-sortbtn {
     display: inline-flex; align-items: center; gap: 3px;
     background: none; border: none; padding: 0; margin: 0;
@@ -5762,7 +5762,7 @@ input[type="radio"] {
 
   /* 全屏工作区：跳出 main 的 max-w/padding，铺满导轨右侧，页面不滚（内部各区自滚） */
   .nodes-shell {
-    /* 字号语境挂壳(13px,与台账壳/样页一致):button{font:inherit} 穿透继承,
+    /* 字号语境挂壳(13px,与台账壳/样页一致):button{font:inherit}(#184 已退役) 穿透继承,
        检视器/按钮/参数全页排印随之落到样页刻度——此前漏设导致整页在 16px 基准膨胀 */
     font-size: 13px;
     line-height: 1.55;
@@ -7222,7 +7222,7 @@ input[type="radio"] {
   /* 微标签(v3.45):10px/500——它是图标的注脚,不是名字更不是徽标:目检 11px/600 与源栏
      组头(10.5px/700 加字距)几乎同一分量,像同层级文字;降到 10/500 才退到图标之下、
      与组头拉开一档(五档并排目检拍板)。两字短名(早报/文章/动态/社交/发现/兴趣/主题/
-     反馈/设置,管理台三字是唯一例外)。字号写在 span 上不受 button{font:inherit}
+     反馈/设置,管理台三字是唯一例外)。字号写在 span 上不受 button{font:inherit}(#184 已退役)
      未分层陷阱影响(陷阱只压钮自身的 font)。 */
   .reader-vrail-label {
     position: absolute;
@@ -7566,7 +7566,7 @@ input[type="radio"] {
     background: transparent;
     padding: 0;
     color: var(--dorami-ink);
-    /* font-size 钉在未分层区(见文件尾),否则被全局 input{font:inherit} 压回 16px */
+    /* font-size 钉在未分层区(见文件尾),否则被全局 input{font:inherit}(#184 已退役) 压回 16px */
   }
 
   .reader-search-input::placeholder { color: var(--dorami-faint); }
@@ -7916,7 +7916,7 @@ input[type="radio"] {
 
   /* 内容类型筛选带(issue #178):列头下的过滤器带,与 全部/未读、收藏 同属「过滤当前容器」。
      激活态按 accent 纪律 = wash 底 + accent-ink 字、无描边;hover 只用 soft,不引入 accent。
-     字号写在容器上靠继承穿透(button 的 font: inherit 未分层压层,见 conventions §3)。 */
+     字号写在容器上靠继承穿透(当年 button 的 font: inherit 未分层压层,#184 已退役,见 conventions §3)。 */
   .reader-kind-band {
     display: flex;
     flex-wrap: wrap;
@@ -8075,24 +8075,27 @@ input[type="radio"] {
      两栏:左「统计位」= 小星 + 衬线大数字(新闻价值分,与阅读窗大标题同字系,数字才是
      卡头);右 = 摘要正文。数字常态无说明,悬停/点按弹三行浮层。 ── */
   /* issue #184 细线卡:底色取外框色 + 最弱一级细线,不再铺渐变;AI 身份由卡头的渐变 ✦ 与分数承担。
-     结构:卡头一行 =「✦ AI 速读」(左)+「维度名 分数」(右,绝对定位的统计位),下面是速读正文。 */
+     结构:卡头一行 .reader-ai-card-head =「✦ AI 速读」(左)+「维度名 分数」(右,统计位),下面是速读正文 / 骨架 / 生成入口。
+     卡头恒在常流里:只有分数、没有正文的合法状态卡也撑得住(codex R1-P2-03)。 */
   .reader-ai-summary {
     position: relative;
     display: block;
     margin-bottom: 28px;
-    padding: 14px 20px 17px;
+    padding: 14px 20px 16px;
     border-radius: var(--r-card);
     background: var(--dorami-canvas);
     box-shadow: inset 0 0 0 1px var(--dorami-border-soft);
     border: none;
   }
 
+  .reader-ai-card-head { display: flex; align-items: center; gap: 12px; min-height: 30px; margin-top: -4px; }
   /* 统计位:卡头右侧「维度名 分数」(issue #178 第二波的维度切换与评分依据浮层照旧以它为锚) */
   .reader-ai-summary-side {
-    position: absolute;
-    top: 9px;
-    right: 14px;
+    position: relative;
     z-index: 1;
+    flex: none;
+    margin-left: auto;
+    margin-right: -6px;
     display: flex;
     flex-direction: row-reverse;
     align-items: center;
@@ -8166,19 +8169,20 @@ input[type="radio"] {
   }
   .reader-ai-odo-digit { display: block; height: 1.2em; line-height: 1.2em; }
 
-  /* 正文区:速读层(卡头小标 + 正文);评分依据在数字的悬停浮层(issue #178 第二波),不再翻面 */
-  .reader-ai-summary-main { min-width: 0; display: grid; }
+  /* 正文区:速读正文 / 骨架 / 生成入口;评分依据在数字的悬停浮层(issue #178 第二波),不再翻面 */
+  .reader-ai-summary-main { min-width: 0; display: grid; margin-top: 6px; }
+  .reader-ai-summary-main:empty { display: none; }
   .reader-ai-layer {
     grid-area: 1 / 1;
     display: flex; flex-direction: column; gap: 9px;
     transition: opacity 480ms var(--motion-ease), transform 480ms var(--motion-ease);
   }
-  /* 卡头小标:渐变 ✦ +「AI 速读」;右侧留出统计位的宽度 */
+  /* 卡头小标:渐变 ✦ +「AI 速读」(播客为「全文导读 / 简介导读」) */
   .reader-ai-layer-title {
-    display: flex; align-items: center; gap: 7px; min-height: 22px; padding-right: 128px;
+    display: flex; align-items: center; gap: 7px; min-width: 0;
     color: var(--dorami-ink-2); font-size: 13px; font-weight: 600; letter-spacing: 0.02em;
   }
-  .reader-ai-layer-summary > .reader-ai-layer-title::before {
+  .reader-ai-card-head > .reader-ai-layer-title::before {
     content: ''; flex: none; width: 13px; height: 13px; background: var(--grad-ai);
     -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2c.6 5.4 2.6 7.4 10 10-7.4 2.6-9.4 4.6-10 10-.6-5.4-2.6-7.4-10-10 7.4-2.6 9.4-4.6 10-10Z'/%3E%3C/svg%3E") center / contain no-repeat;
     mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2c.6 5.4 2.6 7.4 10 10-7.4 2.6-9.4 4.6-10 10-.6-5.4-2.6-7.4-10-10 7.4-2.6 9.4-4.6 10-10Z'/%3E%3C/svg%3E") center / contain no-repeat;
@@ -8187,18 +8191,17 @@ input[type="radio"] {
   .reader-ai-summary .reader-ai-layer-text { margin: 0; }
   .reader-ai-layer-text { color: var(--dorami-ink-2); font-size: 15px; font-weight: 400; line-height: 1.8; }
   .reader-ai-layer-note { color: var(--dorami-faint); font-size: 12px; font-weight: 400; line-height: 1.5; }
-  /* 浮层里的小标不画 ✦、不留统计位 */
-  .reader-ai-score-tip .reader-ai-layer-title { min-height: 0; padding-right: 0; font-size: 12px; color: var(--dorami-accent-ink); }
+  /* 浮层里的小标不画 ✦ */
+  .reader-ai-score-tip .reader-ai-layer-title { font-size: 12px; color: var(--dorami-accent-ink); }
 
   /* 生成中骨架:三行 shimmer,行宽错落模拟摘要典型体量。复用全局 .skeleton。 */
   .reader-ai-summary-skel { display: grid; gap: 9px; padding: 6px 0 2px; }
-  .reader-ai-summary-side + .reader-ai-summary-main > .reader-ai-summary-skel { padding-right: 132px; }
   .reader-ai-summary-skel .skeleton { height: 10px; border-radius: 5px; }
   .reader-ai-summary-skel .skeleton:nth-child(1) { width: 92%; }
   .reader-ai-summary-skel .skeleton:nth-child(2) { width: 78%; }
   .reader-ai-summary-skel .skeleton:nth-child(3) { width: 85%; }
 
-  /* 未生成时的入口:低调文字链。字号钉在未分层区——否则被全局 button{font:inherit}
+  /* 未生成时的入口:低调文字链。字号钉在未分层区——否则被全局 button{font:inherit}(#184 已退役)
      压回正文 markdown 字号。 */
   .reader-ai-summary-generate {
     display: inline-flex;
@@ -8789,7 +8792,7 @@ input[type="radio"] {
      16px 大圆角属于 288px 宽、带分区结构的 .share-menu 那类面板;窄条菜单的
      参照系是源栏行:13px/400–500、8px 行圆角、30px 行高):
      壳 = --r-card 14 + surface + 1px border + --sh-3;项 = 28px/8px 圆角/500 字重。
-     字号字重挂容器:button{font:inherit}(未分层)会压掉 @layer 里按钮类的 font-*,
+     字号字重挂容器:button{font:inherit}(#184 已退役)(未分层)会压掉 @layer 里按钮类的 font-*,
      菜单项靠继承穿透。开合 dorami-popover-in × --motion-fast,单次、无 stagger(§7)。 */
   .ctx-menu {
     position: fixed;
@@ -8896,7 +8899,7 @@ input[type="radio"] {
   .share-public-off { font-size: 12px; font-weight: 400; color: var(--dorami-faint); line-height: 1.6; }
 
   /* 档位 pill + 生成小钮同一行。⚠️ 字号/字重写在本容器上靠继承穿透——
-     button{font:inherit} 未分层陷阱(§3):初版把 11px 写在 .share-create 按钮类上,
+     button{font:inherit}(#184 已退役) 未分层陷阱(§3):初版把 11px 写在 .share-create 按钮类上,
      被压回阅读窗继承链渲染成大字,即当时被评「违和」的按钮;设计意图本是小胶囊。 */
   .share-expiry {
     display: flex;
@@ -9054,7 +9057,7 @@ input[type="radio"] {
      「查看原文」胶囊 + 「原文 | 译为中文」二段。沿 meta 行的 11.5px 字阶但用正文字系
      (中文标签不走等宽);胶囊 26px 高、hairline 描边、surface 底;译文激活态沿 AI 渐变身份
      (v3.33 纪律:渐变只上身份标记——渐变 wash 底 + 渐变字,胶囊本体不上 solid accent)。
-     字号/字重写在容器上靠继承穿透(button{font:inherit} 未分层陷阱)。 ── */
+     字号/字重写在容器上靠继承穿透(button{font:inherit}(#184 已退役) 未分层陷阱)。 ── */
   /* 尾行(issue #23 第三项延伸):左标签小签、右动作,贴着标题区分隔线;标签折行时动作随末行,
      无标签(分析在途)时尾行只有动作 */
   .reader-pane-foot {
@@ -9881,12 +9884,13 @@ input[type="radio"] {
     border-radius: var(--r-pill);
     color: var(--dorami-muted);
     font-size: 13px;
-    font-weight: 600;
+    font-weight: 400;
     transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
   }
 
-  .ranking-axis button:hover { color: var(--dorami-ink); background: var(--dorami-soft); }
-  .ranking-axis button.is-on { color: var(--dorami-accent-ink); background: var(--dorami-wash); }
+  .ranking-axis button:hover { color: var(--dorami-ink); background: var(--dorami-hover); }
+  /* 选中 = 中性加深一档 + 墨色 + 600(issue #184 全站选中语法,撤 wash 选中块) */
+  .ranking-axis button.is-on { color: var(--dorami-ink); background: var(--dorami-select); font-weight: 600; }
 
   .ranking-layout {
     display: grid;
@@ -10103,7 +10107,7 @@ input[type="radio"] {
 
   /* ── 添加自定源浮层(阅读器 quiet 浮层语法,自持类族)──
      留白分层而非横线分层;一体化输入条(内嵌图标+就地预览钮);hairline 条目样例;
-     胶囊 CTA。字号写在容器/未分层区(button·input{font:inherit} 陷阱,§3)。 */
+     胶囊 CTA。字号写在容器/未分层区(button·input{font:inherit}(#184 已退役) 陷阱,§3)。 */
   .csrc-sheet {
     position: relative;
     max-width: 460px;
@@ -10437,7 +10441,7 @@ input[type="radio"] {
     border: none;
     border-radius: 6px;
     background: transparent;
-    /* 字号/字族在文件尾未分层区(全局无 layer 的 button{font:inherit} 压层内声明) */
+    /* 字号/字族在文件尾未分层区(全局无 layer 的 button{font:inherit}(#184 已退役) 压层内声明) */
     color: var(--dorami-faint);
     cursor: pointer;
     transition: color var(--motion-fast) var(--motion-ease);
@@ -10806,9 +10810,9 @@ input[type="radio"] {
     flex-direction: column;
     align-items: center;
     gap: 2px;
-    /* 字号字重挂容器:未分层的 button{font:inherit} 会压掉 @layer 里按钮上的
+    /* 字号字重挂容器:未分层的 button{font:inherit}(#184 已退役) 会压掉 @layer 里按钮上的
        font-*(写在 .reader-ai-suggest-btn 上不生效——实测按钮继承了面板 13px,
-       比空态副文案还大);挂容器则按钮恰好经 font:inherit 拿到这里的值。
+       比空态副文案还大);挂容器则按钮恰好经 font:inherit(#184 已退役)拿到这里的值。
        比副文案(12px)再小半档,同 faint 淡度。 */
     font-size: 12px;
     font-weight: 400;
@@ -10878,10 +10882,8 @@ input[type="radio"] {
     border-radius: var(--r-card);
     background: var(--dorami-surface);
     transition: border-color var(--motion-fast) var(--motion-ease);
-    /* 字号的唯一真源：挂在 div 容器上。textarea/按钮经全局 `font: inherit`
-       继承此值（无 layer 的 font:inherit 会压过 layer 内给它们写的 font-size），
-       从而让 引导语/输入文字/基于本文 与气泡正文统一为 13px。
-       字重不显式设置，让它们与气泡一样继承自 body，保证四者字号字重完全一致。 */
+    /* 容器字号 13px:引导语、气泡正文按它走。issue #184 之前 textarea / 按钮经全局未分层的 font: inherit
+       一律继承这里;该规则退役后,输入框与范围分段用各自类上写的字号(输入框 13、分段 12 / 400)。 */
     font-size: 13px;
   }
   .reader-ai-composer:focus-within { border-color: var(--dorami-accent); }
@@ -10920,7 +10922,7 @@ input[type="radio"] {
     padding: 4px 11px;
     border-radius: var(--r-pill);
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 400;   /* 带拇指的分段:字重不跳,选中靠拇指(issue #184) */
     color: var(--dorami-muted);
     transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
   }
@@ -11647,7 +11649,7 @@ input[type="radio"] {
 
 /* 问哆啦美 fab 星标:暗色下胶囊翻浅(bg=ink 令牌=近白),星标改深靛保对比 */
 
-/* 阅读器按钮字号(历史):当年全局未分层的 `button{font:inherit}` 压过 @layer 内对按钮写的字号,
+/* 阅读器按钮字号(历史):当年全局未分层的 `button{font:inherit}(#184 已退役)` 压过 @layer 内对按钮写的字号,
    这里把字号钉在未分层区胜出。issue #184 已让那条规则退役(改由 preflight 在 base 层给出),
    下面这些仍是这些按钮的有效值,以后改到哪条就顺手并回层内。 */
 .reader-seg-btn { font-size: 12px; font-weight: 400; }
@@ -11655,7 +11657,7 @@ input[type="radio"] {
 .reader-load-more { font-size: 12px; font-weight: 400; }
 .reader-ai-summary-generate { font-size: 12px; font-weight: 600; }
 .reader-ai-listen-pill { font-size: 12px; font-weight: 600; line-height: 1; }
-/* 速读卡大数字的排印同样钉在未分层区(全局 button{font:inherit} 未分层,@layer 内恒败) */
+/* 速读卡大数字的排印同样钉在未分层区(全局 button{font:inherit}(#184 已退役) 未分层,@layer 内恒败) */
 .reader-ai-score-btn {
   /* 分数身份数字(issue #184):自托管思源宋体的齐线数字,Mac / Windows 一致(Windows 上没有 Charter);
      细线卡的卡头尺寸 22px,里程表入场照旧 */
@@ -11677,7 +11679,7 @@ input[type="radio"] {
 .csrc-name-input { font-size: 14.5px; font-weight: 600; }
 .csrc-btn-quiet { font-size: 12.5px; font-weight: 400; }
 .csrc-btn-cta { font-size: 12.5px; font-weight: 600; }
-/* 输入框同陷阱:无层级 input{font:inherit} 压 @layer 字号,发现页目录搜索框字号在此钉住 */
+/* 输入框同陷阱:无层级 input{font:inherit}(#184 已退役) 压 @layer 字号,发现页目录搜索框字号在此钉住 */
 .reader-disc-search input { font-size: 12.5px; }
 /* 条目列头就地展开的搜索框同理钉字号+行高,与发现页目录搜索一致(否则回落 16px/40px 高) */
 .reader-search-input { font-size: 12.5px; line-height: 1.5; }
@@ -11729,12 +11731,11 @@ input[type="radio"] {
 }
 [data-theme="dark"] :is(.date-range-day, .source-meta-val) { color: var(--dorami-ink-2); }
 
-/* ── 弹窗波·未分层字重修正:button{font:inherit}(未分层)压掉 @layer 内按钮类的
+/* ── 弹窗波·未分层字重修正:button{font:inherit}(#184 已退役)(未分层)压掉 @layer 内按钮类的
    font-*;基础字号已挂容器继承,此处仅补选中态加粗(unlayered 同源比特异性,0,2,0 胜)── */
 .sett-nav-btn.is-on { font-weight: 600; }
-.sett-seg-btn.is-on { font-weight: 600; }
 
-/* ── 账户表用户列头就地搜索(v3.42 目检返修):input{font:inherit}(未分层)会让
+/* ── 账户表用户列头就地搜索(v3.42 目检返修):input{font:inherit}(#184 已退役)(未分层)会让
    表头内输入框继承 th 的 10.5px——搜索词可读性不够,在此未分层区钉回 12px。 ── */
 .acct-th-search { font-size: 12px; }
 
@@ -12489,7 +12490,7 @@ input[type="radio"] {
 .brief-state .action-button { margin-top: 6px; }
 
 /* ── 早报外出返回带(阅读窗顶部,issue #23 三稿)──
-   wash 底 + accent-ink 字:这一程是从早报出来的;左返回、右下一条,字号写容器(button{font:inherit})。 */
+   wash 底 + accent-ink 字:这一程是从早报出来的;左返回、右下一条,字号写容器(button{font:inherit}(#184 已退役))。 */
 .reader-brief-trail {
   display: flex;
   flex: none;
@@ -12522,8 +12523,8 @@ input[type="radio"] {
 .reader-brief-trail-end { font-size: 12px; font-weight: 400; color: var(--dorami-faint); }
 /* 阅读进度线锚在栏顶;有返回带时压到带下缘 */
 .reader-brief-trail + .reader-progress { top: 34px; }
-/* ≤1024 阅读器纵向堆叠(单列网格):早报页不再跨列——.bp-sheet 的 2/-1 在单列网格里会挤出隐式列;
-   本规则须与 .bp-sheet 同在未分层区,层内写法会被未分层的跨列声明压回 */
+/* ≤1024 时 ReaderWorkspace 经 useCompactLayout 换成移动壳(MobileReader),桌面阅读器壳不渲染;
+   这条只在桌面壳被强行渲染(窄窗口调试)时兜底:单列网格里 .bp-sheet 的 2/-1 会挤出隐式列,故取消跨列 */
 @media (max-width: 1024px) {
   .bp-sheet { grid-column: auto; overflow: visible; }
 }
@@ -12646,8 +12647,8 @@ input[type="radio"] {
 /* ══════════════════════════════════════════════════════════════════════
    运维管理 → 内容「播客」/「早报与兴趣」分区 + 「分析与标签」子页(issue #76,
    样页 docs/design/dorami-admin-podcast-taxonomy-quiet.html)。
-   未分层区:含 input / button 字号的规则写在这里(@layer 内会被全局 button{font:inherit} 压掉)。
-   复用在册类:.ai-switchboard/.ledger-switch/.kpi-*/.acct-*/.rowact-btn/.stamp/.pager/.ledger-drawer*/.ledger-kv。
+   未分层区:含 input / button 字号的规则写在这里(@layer 内会被全局 button{font:inherit}(#184 已退役) 压掉)。
+   复用在册类:.ai-switchboard / .ledger-switch / .kpi-* / .acct-* / .rowact-btn / .stamp / .pager / .ledger-drawer* / .ledger-kv。
    ══════════════════════════════════════════════════════════════════════ */
 .ai-switchboard.is-wrap { flex-wrap: wrap; row-gap: 10px; }
 .ai-switchboard.is-wrap > .tiny-meta { flex: 1 1 16rem; min-width: 0; white-space: normal; }
@@ -12773,7 +12774,7 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 
 /* ══════════════════════════════════════════════════════════════════════
    兴趣即透镜(issue #27 第一波,四稿 docs/design/dorami-interest-lens-quiet.html → 五稿 dorami-interest-axis-quiet.html)
-   未分层区:含 button/input 字号的规则写在这里(@layer 内会被全局 button{font:inherit} 压掉)。
+   未分层区:含 button/input 字号的规则写在这里(@layer 内会被全局 button{font:inherit}(#184 已退役) 压掉)。
    ══════════════════════════════════════════════════════════════════════ */
 
 /* ── 左栏一根轴(五稿,样页 docs/design/dorami-interest-axis-quiet.html):栏头 = 容器名 + 二段轴切换 ──
