@@ -101,6 +101,7 @@
 - ◉ [personal-brief-grid-and-sections.md](./personal-brief-grid-and-sections.md) — **个人早报板块顺序 / 分值驱动网格 / 公共日报排除(issue #74)**:
   日报剔出早报范围并退役 daily_brief_ready 触发链;板块按 SECTION_ORDER 固定、板块内分数降序;网格 6 等分单元,宽度跟分数走
   (≥ 9 通栏、并排分差 ≥ 1 用 ⅔ + ⅓、余 1 头卡够高才通栏否则 2 + 2),样页 `design/dorami-brief-grid-quiet.html`。
+  **网格部分已于 issue #184 随早报夜航版式退役**(`utils/briefGrid` → `briefScore` 只留分数助手);板块顺序与日报排除仍有效。
 - ◇ [node-watchdog-layer1-plan.md](./node-watchdog-layer1-plan.md) — **节点看护第一层:抓取失败判定升级(issue #82 L1,R2 方案稿,codex 检视一致,2026-09-19 拍板)**:
   执行轴不动、新增独立**产出轴** `yield_status`(S1 两个不同日显式零候选 / S2 严格新增数 + 源自身历史最长间隔 ×2 + 观察世代与指纹,产出日不足即「未分类」);
   抓取器上报 `discovered_count` + `discovery_mode` 默认 unknown 显式 opt-in;正文偏薄按源级 `body_expectation` 显式声明;调度「收据先行 + 对账」(`guarded_schedule` / `schedule_receipts`)、`watch_events` occurrence 模型;

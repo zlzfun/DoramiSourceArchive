@@ -19,7 +19,7 @@ import { scoreDimensionOf, scoreOf } from '../utils/briefScore';
 import { useModalA11y } from '../hooks/useModalA11y';
 
 // ── 我的早报 ──
-// issue #184「夜航」版式(样页 docs/design/dorami-visual-refine-final.html 早报页;用户拍板:保留左轨、取消日期中栏、
+// issue #184「夜航」版式(样页 docs/design/visual-refine-final/brief.html;用户拍板:保留左轨、取消日期中栏、
 // 往期从右上角「往期」浮层与页尾「本期编排」切换):
 //   ① 海报 = 眉头(早报 · 日期)+ 头条(宋体大标题 / 原标题 / 来源与时间 / 摘要 / 阅读全文 · 收藏)+ 右侧评分栏
 //      (维度名 · 宋体渐变大数字 · 评分依据 · 入选理由),背后一层 AI 渐变环境光;

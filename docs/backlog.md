@@ -20,6 +20,10 @@
   feed / MCP 的内容价值字段(有下游需求再加);文档站「看版本更新」配图未重拍;早报页配图未重拍;「隐藏版本更新」的记忆选项。
   后续结构清理:`source_configs.category` / `content_tags_json` 两列已不读写,物理删除需重建表并重装归档同步触发器,攒到下次结构清理一并做;
   归档同步 sources 流的线路兼容键 `category`(由准入状态派生)在不再支持 issue #178 之前的旧版本对端后删除。
+- ☐ **issue #184 视觉精修波(含 #176)**(分支 `feat/issue-184-visual-refine`,方案 `docs/visual-refine-plan.md`):实现完成,
+  待 Codex 本地检视 → 用户 Mac 目检 → Windows 按 #176 矩阵实机验收(Win10 / 11 × Chrome / Edge × 100 / 125 / 150% × 亮 / 暗)→ 合入后关 #176。
+  后续(本波有意不做):早报条目配图缩略图(早报接口要给首图与尺寸)、`text-autospace` 评估、尾区「阅读器按钮字号」并回层内、
+  管理面死类清扫(`.field-box` / 来源目录族 / `.scope-toggle`)、e2e `mobile` 流程本机 `ERR_ABORTED` 基线问题(main 上同样失败)。
 - ☐ **迁移环境的归档同步触发器重装不生效**(2026-10-12 第一波补盘点时发现,origin/main 上同样复现):`alembic/env.py` 跑迁移前删光
   43 个同步触发器、跑完按理重装,实测升级后为 0,直到启动时 `DatabaseStorage` 的 `create_all` after_create 钩子才补齐。生产是
   「迁移 → 启动」顺序且中间无写入,所以会自愈,但只跑迁移不启动(运维脚本、离线升级)的库会缺触发器。疑点:重装语句所在的事务

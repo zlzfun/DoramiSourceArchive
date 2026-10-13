@@ -684,7 +684,7 @@ MAE 0.83、档位一致 80%、类型准确 87%(53 篇),门禁照旧通过。分�
   快照新增 `content_kind` / `content_value` / `content_value_reason` / `score_dimension`(新闻通道 news,两个分区与
   任何播客 content)。`selection_stats_json` 新增 `read` / `listen` 两块(候选数 / 入选数 / 门槛 / 名额 / 窗口)。
 - 迁移 `e5c1f7a2b938`:batch 重建 `personal_digest_items` 改 CHECK;降级先删 `read` / `listen` 条目再收窄。
-- 页面:卡片分数、注脚与悬停说明随维度(`briefGrid.scoreDimensionOf` / `scoreOf`;旧快照无 `score_dimension` 时
+- 页面:卡片分数、注脚与悬停说明随维度(`briefGrid.scoreDimensionOf` / `scoreOf`,issue #184 起在 `utils/briefScore.js`;旧快照无 `score_dimension` 时
   播客回落内容价值);理由位「内容价值入选」(命中兴趣仍是「兴趣 · 标签」);报头精选篇数只数新闻,另写
   「N 篇深度阅读」「N 集播客」;只有两个分区时不设头版。管理面「早报与兴趣」区加两张旋钮卡。
 
@@ -708,7 +708,7 @@ MAE 0.83、档位一致 80%、类型准确 87%(53 篇),门禁照旧通过。分�
 **测试**:`test_digest_selection`(纯函数 4 条)、`test_personal_digest`(端到端 7 条:额外分区与板块顺序、去重与窗口与
 尺子版本、订阅外须命中兴趣与可见性、KV 旋钮与关闭、播客退出含重大事件、降级回退避让、板块内排序)、
 `test_analysis_personal_api`(旋钮读写与越界)、`test_daily_brief`(名额按类型与内容价值、名额外不回补、门槛分流与存量
-回落、按当日计、补评保留类型与价值)、`test_daily_brief_endpoints`(门槛读写)、`frontend/test/briefGrid`(维度与取分)。
+回落、按当日计、补评保留类型与价值)、`test_daily_brief_endpoints`(门槛读写)、`frontend/test/briefGrid`(维度与取分;issue #184 起为 `briefScore`)。
 
 ### 5.8 检视记录(3a)
 

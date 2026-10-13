@@ -1,7 +1,8 @@
 # 视觉精修波(issue #184,含 #176 W0a + W0b)
 
-> 状态:实现中(分支 `feat/issue-184-visual-refine`)。实现方:Claude Code(Opus 5.5);检视方:Codex(合入前本地协商式交叉检视)。
-> 样页:定稿 <https://claude.ai/artifact/MZKEAA8BfGjS6vGVKsHQ3A>;提案(现状诊断 + 被替换的备选)<https://claude.ai/artifact/RHKTd2n33TZa6b5HDqSFgK>。
+> 状态:实现完成,待 Codex 检视与用户目检(分支 `feat/issue-184-visual-refine`,开发版 3.65.0-alpha)。实现方:Claude Code(Opus 5.5);检视方:Codex(合入前本地协商式交叉检视)。
+> 样页:定稿入库 `docs/design/visual-refine-final/`(多页,字体以 data URI 内嵌,内网离线可开;线上版 <https://claude.ai/artifact/MZKEAA8BfGjS6vGVKsHQ3A>);
+> 提案(现状诊断 + 被替换的备选)<https://claude.ai/artifact/RHKTd2n33TZa6b5HDqSFgK>。
 
 ## 1. 为什么做
 
@@ -43,29 +44,61 @@
 
 ### 3.2 W0a(栈、字重、字号、层叠)
 
-- `@theme` 重定义 `--font-sans`(系统黑体,西文在前)与 `--font-serif`,新增分数字体 token;消除 `App.jsx` `font-sans` 遮蔽;
-  阅读正文 SF Pro 栈并入。
-- 字重只用 400 / 600(宋体海报头条 900);归并 500 / 550 / 650 / 700 / 800。
-- 字号下限 12px(来源字母徽标例外)。
-- 未分层 `font: inherit` 迁入 base 层,逐项核对计算字号;试移除 `-webkit-font-smoothing`;开 `text-autospace` / `text-spacing-trim`。
+- `@theme` 重定义 `--font-sans`(系统黑体,西文在前)与 `--font-serif`,新增分数字体 token `--font-score`;
+  `App.jsx` 的 `font-sans` 不再遮蔽为 Tailwind 默认栈;阅读正文的 SF Pro 栈并入 `--font-sans`。✅
+- 字重只用 400 / 600(宋体海报头条 900):index.css 248 处、mobile.css 与 JSX 原子类归并。✅
+- 字号下限 12px:241 处;豁免来源字母徽标、头像字母、▸ / 排序箭头与登录品牌演出。✅
+- 未分层 `font: inherit` 退役(preflight 在 base 层已有同一条)。退役前后对 21 个页面导出按钮 / 输入框的计算字号字重做差异,
+  就地改正「从未生效、一生效就不对」的几类(分段 / 切换未选 400 选中 600、输入框正文 400、次按钮 400 主按钮 600、
+  M 档按钮落 12px、导轨头像字母 14 / 600)。✅
+- 去掉 `-webkit-font-smoothing: antialiased`。✅
+- `text-autospace` / `text-spacing-trim`:**评估后暂缓**。`text-spacing-trim` 初值即合理;`text-autospace` 各引擎初值语义不一,
+  全局开启会改动所有中西混排的间距,日期与数字要逐处豁免,且与 Mac / Windows 一致性无关(两端都是 Chromium 系)。记入 backlog。
+- 护栏:`frontend/test/typography.test.mjs`(字重 / 字号 / 陷阱回潮 / 同源字体 / 字体 token)+ eslint(`font-medium|bold|extrabold`、
+  `font-[N]`、小数 `text-[Npx]`)。✅
 
 ## 4. 实现顺序与进度
 
-| 步 | 内容 | 状态 |
-|---|---|---|
-| 0 | 版本号 3.65.0-alpha;方案文档;字体生成链与产物;nginx `/fonts/` 长缓存 | 进行中 |
-| 1 | 字体地基(W0a) | 待做 |
-| 2 | 色彩:三套中性色 token、设置「中性色」、选中语法、AI 渐变用法 | 待做 |
-| 3 | 组件与阅读器 | 待做 |
-| 4 | 早报夜航版式(桌面与移动) | 待做 |
-| 5 | 管理面图表与台账 | 待做 |
-| 6 | 顺带修复;文档(conventions / CLAUDE.md / version-history)与守卫(lint、字体预检) | 待做 |
+| 步 | 内容 | 状态 | 提交 |
+|---|---|---|---|
+| 0 | 版本号 3.65.0-alpha;方案文档;字体生成链与产物;nginx `/fonts/` 长缓存 | ✅ | `169a458` |
+| 2 | 色彩:accent 去荧光、三套中性色 token、设置「中性色」、两层图底、选中语法;读者面时间按本地时区 | ✅ | `eb96406` |
+| 3a | 阅读器:条目行「静」、日期组头、阅读窗标题区、细线速读卡、长文正文、源栏「文章榜」 | ✅ | `d444f07` |
+| 4 | 早报夜航版式(桌面与移动);分值驱动网格退役(`briefGrid` → `briefScore`) | ✅ | `0a6a3b0` |
+| 1 | 字体地基 W0a(字重 / 字号 / `font: inherit` 退役 / 读者面去等宽 / 字体平滑) | ✅ | `53987c3` |
+| 1′ | 护栏:typography 测试 + eslint | ✅ | `7e26edd` |
+| 3b | 组件:令牌化表面、来源徽标底板、管理面中性选中、发现页描边订阅、未定义令牌、theme-color / 离线页 | ✅ | `cd8eea0` |
+| 5 | 管理面:指标格、离散柱、阶梯线、台账行与分析列、来源名称(facets label)、AI 用途标签 | ✅ | `42385be` |
+| 6 | 文档:conventions §3 / §4 / §8、CLAUDE.md 年表与过时描述、version-history、本文、文档索引与旧方案状态注 | ✅ | — |
+| 7 | Codex 本地协商式检视 → 用户目检(Mac)→ Windows 按 #176 矩阵验收 → 合入 | 待做 | — |
 
 ## 5. 这一波不做
 
 - 早报条目配图缩略图(需要早报接口提供首图与尺寸)。
 - 自托管黑体(按 #176 的门槛:Windows 实机验收发现粘连、层级难辨或截断再议)。
 - 登录页与品牌演出(品牌豁免)。
+- `text-autospace`(见 §3.2)。
+- 尾区「阅读器按钮字号」历史钉法并回层内(值仍有效,改到哪条并哪条)。
+- 管理面死类清扫(`.field-box` / `.source-*` 目录族 / `.scope-toggle` 等;字体扫描时一并统计在案,不影响渲染)。
+
+## 5.1 实现中的取舍
+
+- **早报头条**:降级版面(订阅源最新更新)不设头条,头条位如实写「今天没有达到入选标准的内容」——没达标的内容不该被印成头版;
+  只有深度阅读 / 播客精选时取其中最高分作头条。海报与条目新增收藏(与条目列同一份收藏状态)。
+- **移动壳早报**不再叠「我的早报」顶栏,眉头(早报 · 日期 · 往期)即顶栏;窄宽下「重新编排」只留图标(可访问名不变)。
+- **发现页**按定稿撤掉单独的「预览」钮,整卡点开即预览;名称按钮是唯一的「打开」控件,订阅钮浮在覆盖层之上。
+- **账户增长**仍是「两量一张图」(v3.55 拍板):累计画阶梯线,新增作为抬阶处的「+N」标注,不再柱线双轴;阶梯从窗口前的存量起步,
+  窗口第一天就有人加入时那一阶也看得见。
+- **导轨微标签**随字号下限从 10px 到 12px(悬停整面揭示的机制不变)——这是 #176 Windows 可读性的直接要求,目检时请留意。
+
+## 5.2 验证
+
+- Mac 隔离栈(本机库副本 + 独立端口)截图:瓷 / 墨 / 宣 × 亮 / 暗的阅读器、早报(今天降级版与 9 月 16 日有头条版、往期浮层、移动 390 宽)、
+  设置柜、发现页、管理面各子页;移动阅读器列表与正文页。
+- `npm run lint` / `npm run build` / `npm test`(75)/ `node --test src/utils/*.test.js`(61)通过;后端 `test_article_facets` /
+  `test_content_classification` / `test_route_permissions` / `test_admin_ops` 通过。
+- e2e:`--flows focus,tags,pwa` 通过;`mobile` 流程在本机 main 与本分支以同样的 `ERR_ABORTED` 失败(既有基线问题,见 backlog),
+  该流程覆盖不到的移动改动以截图核对。
 
 ## 6. 验收
 
