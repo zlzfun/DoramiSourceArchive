@@ -135,6 +135,9 @@
   --dorami-surface-2: var(--dorami-well);
   --dorami-ink-1: var(--dorami-ink);
   --dorami-ink-3: var(--dorami-muted);
+  /* 来源徽标底板(issue #184):亮色纯白 + 极淡细环;暗色降亮,不再是一列白方块 */
+  --dorami-logo-tile: #ffffff;
+  --dorami-logo-ring: rgba(22, 25, 34, 0.08);
   /* JSX 里散落的 slate 原子类跟随中性色(issue #184):文字三档对应 faint / ink-2 / ink,浅底对应 soft / well */
   --color-slate-50: var(--dorami-soft);
   --color-slate-100: var(--dorami-well);
@@ -713,9 +716,9 @@ input[type="radio"] {
     z-index: 40;
     min-height: 76px;
     border-bottom: 1px solid var(--dorami-border);
-    background: rgba(255, 255, 255, 0.72);
+    background: color-mix(in srgb, var(--dorami-surface) 72%, transparent);
     backdrop-filter: blur(22px) saturate(1.4);
-    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7), 0 8px 30px rgba(11, 18, 32, 0.05);
+    box-shadow: 0 1px 0 var(--dorami-edge), 0 8px 30px rgba(22, 25, 34, 0.05);
   }
 
   .brand-mark {
@@ -737,7 +740,7 @@ input[type="radio"] {
   .checking-state {
     background:
       radial-gradient(ellipse 70% 50% at 50% 20%, rgba(var(--dorami-accent-rgb), 0.06), transparent 60%),
-      linear-gradient(180deg, #fbfbfd, var(--dorami-canvas));
+      linear-gradient(180deg, var(--dorami-soft), var(--dorami-canvas));
     color: var(--dorami-muted);
   }
 
@@ -994,14 +997,14 @@ input[type="radio"] {
   }
 
   .action-button-primary:hover {
-    background: var(--dorami-accent-ink);
+    background: color-mix(in srgb, var(--dorami-blue) 86%, #000);
   }
 
   .action-button-secondary {
-    border-color: rgba(11, 18, 32, 0.13);
-    background: rgba(255, 255, 255, 0.86);
+    border-color: var(--dorami-border-strong);
+    background: var(--dorami-surface);
     color: var(--dorami-ink-2);
-    box-shadow: 0 4px 14px rgba(11, 18, 32, 0.05);
+    box-shadow: var(--sh-1);
   }
 
   /* 静默仪器·R3:次按钮 hover 灰阶、不抬升 */
@@ -1033,9 +1036,9 @@ input[type="radio"] {
   }
 
   .action-button-quiet {
-    border-color: rgba(11, 18, 32, 0.09);
-    background: rgba(247, 248, 250, 0.56);
-    color: #475569;
+    border-color: var(--dorami-border);
+    background: color-mix(in srgb, var(--dorami-soft) 56%, transparent);
+    color: var(--dorami-ink-2);
   }
 
   .action-button-quiet:hover {
@@ -1049,11 +1052,11 @@ input[type="radio"] {
     width: 38px;
     align-items: center;
     justify-content: center;
-    border: 1px solid rgba(11, 18, 32, 0.12);
+    border: 1px solid var(--dorami-border-strong);
     border-radius: var(--r-control);
-    background: rgba(255, 255, 255, 0.84);
-    color: #475569;
-    box-shadow: 0 4px 14px rgba(11, 18, 32, 0.05);
+    background: var(--dorami-surface);
+    color: var(--dorami-ink-2);
+    box-shadow: var(--sh-1);
     transition:
       transform var(--motion-fast) var(--motion-spring),
       box-shadow var(--motion-fast) var(--motion-ease),
@@ -1159,11 +1162,8 @@ input[type="radio"] {
     z-index: 50;
     pointer-events: none;
     opacity: 0;
-    background: #eef1f6;
+    background: var(--dorami-canvas);   /* 与 App 抵达幕、工作台外框同色(随中性色与亮暗) */
     transition: opacity 620ms var(--motion-ease);
-  }
-  [data-theme="dark"] .auth-warp-flash {
-    background: #0c0e13;
   }
   .auth-warp-flash.is-on {
     opacity: 1;
@@ -1179,10 +1179,7 @@ input[type="radio"] {
     z-index: 2000;
     pointer-events: none;
     opacity: 1;
-    background: #eef1f6;
-  }
-  [data-theme="dark"] .app-arrive {
-    background: #0c0e13;
+    background: var(--dorami-canvas);
   }
   .app-arrive.is-fading {
     opacity: 0;
@@ -1854,12 +1851,11 @@ input[type="radio"] {
     width: fit-content;
     align-items: center;
     gap: 3px;
-    border: 1px solid rgba(11, 18, 32, 0.12);
+    border: 1px solid var(--dorami-border);
     border-radius: var(--r-control);
-    background: rgba(240, 242, 246, 0.58);
-    box-shadow: inset 0 1px 2px rgba(11, 18, 32, 0.04), 0 4px 14px rgba(11, 18, 32, 0.05);
+    background: var(--dorami-well);
+    box-shadow: var(--dorami-inset);
     padding: 3px;
-    backdrop-filter: blur(12px);
     font-size: 12.5px;
     font-weight: 400;   /* 选中靠白拇指表达,字重不跳(跳字重会让拇指宽度跟着抖) */
   }
@@ -1872,7 +1868,7 @@ input[type="radio"] {
     gap: 6px;
     border-radius: calc(var(--r-control) - 3px);
     padding: 0 14px;
-    color: #64748b;
+    color: var(--dorami-muted);
     letter-spacing: 0;
     line-height: 18px;
     transition:
@@ -1891,7 +1887,7 @@ input[type="radio"] {
 
   /* 静默仪器:拇指白面 + ink 文字,中性阴影(去 indigo 文字与染色影) */
   .segmented-option-active {
-    background: rgba(255, 255, 255, 0.98);
+    background: var(--dorami-surface);
     color: var(--dorami-ink);
     box-shadow: var(--sh-1);
   }
@@ -2889,20 +2885,8 @@ input[type="radio"] {
 
   .ledger-facet-item:hover { background: var(--dorami-soft); color: var(--dorami-ink-2); }
 
-  /* 选中语法 = accent 竖条 + soft 底(R1) */
-  .ledger-facet-item.is-on { color: var(--dorami-ink); font-weight: 600; background: var(--dorami-soft); }
-
-  .ledger-facet-item.is-on::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 3px;
-    height: 14px;
-    background: var(--dorami-blue);
-    border-radius: 0 var(--r-pill) var(--r-pill) 0;
-  }
+  /* 选中语法 = 中性加深一档 + 墨色(issue #184 全站统一,撤 accent 竖条) */
+  .ledger-facet-item.is-on { color: var(--dorami-ink); font-weight: 600; background: var(--dorami-select); }
 
   /* 分面项名称截断 + 右侧计数(样页 .facet-item .n) */
   .ledger-facet-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -3118,7 +3102,7 @@ input[type="radio"] {
   /* 行是自定义可点元素(tr[tabindex]),需自带焦点指示(a11y §2) */
   .ledger-row:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: -2px; }
   /* 选中行 = accent 竖条(R1),hover 只灰阶 */
-  .ledger-row.is-sel { background: var(--dorami-soft); box-shadow: inset 3px 0 0 var(--dorami-blue); }
+  .ledger-row.is-sel { background: var(--dorami-select); }
 
   .ledger-tt { font-size: 13.5px; font-weight: 600; line-height: 1.35; color: var(--dorami-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -3394,7 +3378,7 @@ input[type="radio"] {
      动作区与行同吃选中背景(任务的动作跟着任务列表走,原右栏 jobbar 已退役) */
   .tt-item + .tt-item { border-top: 1px solid var(--dorami-border); }
   /* 选中语法 R1:accent 竖条 + soft 底 */
-  .tt-item.is-sel { background: var(--dorami-soft); box-shadow: inset 3px 0 0 var(--dorami-blue); }
+  .tt-item.is-sel { background: var(--dorami-select); }
 
   .tt-row {
     position: relative; display: block; width: 100%; text-align: left;
@@ -3445,7 +3429,7 @@ input[type="radio"] {
     font-size: 12px; font-weight: 600; color: var(--dorami-muted); white-space: nowrap;
     transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
   .tt-act-btn + .tt-act-btn { border-left: 1px solid var(--dorami-border); }
-  .tt-act-btn:hover { background: var(--dorami-paper); color: var(--dorami-ink); }
+  .tt-act-btn:hover { background: var(--dorami-hover); color: var(--dorami-ink); }
   .tt-act-btn.is-danger:hover { background: var(--state-bad-bg); color: var(--state-bad); }
 
   .tt-foot { flex: none; display: flex; align-items: center; min-height: 47px;
@@ -3615,7 +3599,7 @@ input[type="radio"] {
   /* 表脚过滤指示的清除钮(任务/临时/来源过滤统一收在表脚,原 jobbar 上下文条已退役) */
   .foot-clear { display: inline-grid; place-items: center; width: 18px; height: 18px;
     margin-left: 4px; vertical-align: -4px; border-radius: var(--r-sm); color: var(--dorami-faint); }
-  .foot-clear:hover { background: var(--dorami-paper); color: var(--dorami-ink); }
+  .foot-clear:hover { background: var(--dorami-hover); color: var(--dorami-ink); }
   .foot-clear svg { width: 11px; height: 11px; }
 
   /* 骨架屏行:loading 且无数据时 */
@@ -4279,7 +4263,7 @@ input[type="radio"] {
   .acct-row td:first-child { padding-left: 18px; }
   .acct-row td:last-child { padding-right: 14px; }
   .acct-row:hover { background: var(--dorami-soft); }
-  .acct-row.is-sel { background: var(--dorami-soft); box-shadow: inset 3px 0 0 var(--dorami-blue); }
+  .acct-row.is-sel { background: var(--dorami-select); }
   .acct-row:hover .rowacts, .acct-row:focus-within .rowacts { opacity: 1; }
   .acct-user { display: flex; align-items: center; gap: 9px; }
   .acct-avatar {
@@ -4608,9 +4592,9 @@ input[type="radio"] {
 
   .form-input {
     width: 100%;
-    border: 1px solid rgba(11, 18, 32, 0.13);
+    border: 1px solid var(--dorami-border-strong);
     border-radius: var(--r-control);
-    background: rgba(255, 255, 255, 0.72);
+    background: var(--dorami-surface);
     color: var(--dorami-ink);
     /* 集成页目检 #7:输入框全局收紧(14px/10px 内距 → 13px/7px,总高 ~42px → ~36px),
        与 .mini-seg/.action-button 的密度刻度对齐 */
@@ -4632,7 +4616,7 @@ input[type="radio"] {
 
   .form-input:focus {
     border-color: rgba(var(--dorami-accent-rgb), 0.42);
-    background: #fff;
+    background: var(--dorami-surface);
     box-shadow: 0 0 0 3px rgba(var(--dorami-accent-rgb), 0.08), 0 8px 18px rgba(11, 18, 32, 0.06);
   }
 
@@ -4687,10 +4671,10 @@ input[type="radio"] {
     z-index: 90;
     width: 264px;
     margin-top: 8px;
-    border: 1px solid rgba(11, 18, 32, 0.14);
+    border: 1px solid var(--dorami-border);
     border-radius: var(--r-card);
-    background: #ffffff;
-    box-shadow: 0 24px 56px rgba(11, 18, 32, 0.14), 0 8px 24px rgba(11, 18, 32, 0.08);
+    background: var(--dorami-raised);
+    box-shadow: 0 24px 56px rgba(22, 25, 34, 0.14), 0 8px 24px rgba(22, 25, 34, 0.08);
     padding: 16px;
     transform-origin: top left;
   }
@@ -4775,9 +4759,9 @@ input[type="radio"] {
     width: 100%;
     flex-direction: column;
     overflow: hidden;
-    border: 1px solid rgba(11, 18, 32, 0.14);
+    border: 1px solid var(--dorami-border);
     border-radius: var(--r-overlay);
-    background: #ffffff;
+    background: var(--dorami-raised);
     box-shadow: 0 32px 80px rgba(11, 18, 32, 0.2), 0 8px 32px rgba(11, 18, 32, 0.1);
     animation: modal-pop-in 320ms var(--motion-spring) both;
   }
@@ -4827,9 +4811,8 @@ input[type="radio"] {
 
   .logo-mark-img {
     position: relative;
-    background: #fff;
-    border: 1px solid rgba(11, 18, 32, 0.08);
-    box-shadow: 0 1px 3px rgba(11, 18, 32, 0.06);
+    background: var(--dorami-logo-tile);
+    box-shadow: inset 0 0 0 1px var(--dorami-logo-ring);
   }
 
   .logo-mark-img img {
@@ -4852,9 +4835,8 @@ input[type="radio"] {
 
   .logo-mark-custom {
     color: color-mix(in srgb, var(--logo-accent, #64748b) 88%, #0f172a);
-    background: color-mix(in srgb, var(--logo-accent, #64748b) 10%, #fff);
-    border: 1px solid rgba(11, 18, 32, 0.08);
-    box-shadow: 0 1px 3px rgba(11, 18, 32, 0.06);
+    background: color-mix(in srgb, var(--logo-accent, #64748b) 10%, var(--dorami-logo-tile));
+    box-shadow: inset 0 0 0 1px var(--dorami-logo-ring);
   }
 
   .logo-mark-custom svg {
@@ -6244,20 +6226,9 @@ input[type="radio"] {
     background: var(--dorami-soft);
   }
 
-  /* R1 选中语法：accent 竖条 + 灰阶底 */
+  /* 选中语法:中性加深一档(issue #184 全站统一,撤 accent 竖条) */
   .board-node-sel {
-    background: var(--dorami-soft);
-  }
-
-  .board-node-sel::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 8px;
-    bottom: 8px;
-    width: 3px;
-    background: var(--dorami-blue);
-    border-radius: 0 var(--r-pill) var(--r-pill) 0;
+    background: var(--dorami-select);
   }
 
   .board-node-focus {
@@ -8674,7 +8645,7 @@ input[type="radio"] {
      让收到链接的人一眼看出这是「一篇正经内容」而非某个系统的截图。 */
   .shared-page {
     min-height: 100vh;
-    background: var(--dorami-bg);
+    background: var(--dorami-surface);
     color: var(--dorami-ink);
     padding: 48px 20px 64px;
   }
@@ -9963,7 +9934,7 @@ input[type="radio"] {
   .ranking-tag-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 600; }
   .ranking-tag-row strong { justify-self: end; font-size: 13px; font-variant-numeric: tabular-nums; }
   .ranking-move { min-width: 24px; font-size: 12px; text-align: right; }
-  .ranking-move.is-up { color: var(--state-good); }
+  .ranking-move.is-up { color: var(--state-ok); }
   .ranking-move.is-down { color: var(--state-bad); }
   .ranking-move.is-flat,
   .ranking-move.is-new { color: var(--dorami-faint); }
@@ -10309,16 +10280,18 @@ input[type="radio"] {
   /* 卡=纵向 flex 且 main 撑满:网格拉伸等高时高度传导到内层,
      meta 的 margin-top:auto / 右列 space-between 才有施力空间(贴底对齐的前提) */
   .reader-disc-card {
+    position: relative;   /* 整卡预览:名称按钮的 ::after 铺满卡片 */
     display: flex;
     flex-direction: column;
     background: var(--dorami-surface);
-    border-radius: 10px;
-    box-shadow: var(--sh-1);
-    padding: 12px 13px;
+    border-radius: var(--r-card);
+    box-shadow: inset 0 0 0 1px var(--dorami-border-soft);
+    padding: 14px 14px 13px;
     transition: box-shadow var(--motion-fast) var(--motion-ease);
   }
 
-  .reader-disc-card:hover { box-shadow: 0 1px 3px rgba(11, 18, 32, 0.06), 0 5px 14px rgba(11, 18, 32, 0.07); }
+  .reader-disc-card:hover { box-shadow: inset 0 0 0 1px var(--dorami-border-strong); }
+  .reader-disc-card:has(.reader-disc-open:focus-visible) { box-shadow: 0 0 0 2px var(--dorami-focus); }
 
   .reader-disc-card-main { flex: 1; display: flex; gap: 11px; }
   .reader-disc-card-main > .logo-mark { margin-top: 1px; }
@@ -10328,13 +10301,22 @@ input[type="radio"] {
   .reader-disc-name-row { display: flex; align-items: center; gap: 7px; }
 
   .reader-disc-name {
-    font-size: 13.5px;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-size: 14px;
     font-weight: 600;
     color: var(--dorami-ink);
+    text-align: left;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    cursor: pointer;
   }
+  .reader-disc-open::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
+  .reader-disc-open:focus-visible { outline: none; }
 
   .reader-disc-desc {
     margin-top: 3px;
@@ -10359,55 +10341,39 @@ input[type="radio"] {
     gap: 7px;
   }
 
-  /* 订阅胶囊:视图内首要动作;已订阅退为描边态,悬停翻「取消订阅」变危险色 */
+  /* 订阅钮(issue #184):描边,不再是一列实心色块;已订阅退成无底的「✓ 已订阅」,悬停翻「取消订阅」变危险色。
+     浮在整卡预览的覆盖层之上 */
   .reader-disc-sub {
+    position: relative;
+    z-index: 1;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 5px;
+    gap: 4px;
     min-width: 64px;
-    padding: 4.5px 12px;
-    border: 1px solid transparent;
-    border-radius: var(--r-pill);
-    background: var(--dorami-accent);
-    color: #fff;
+    height: 28px;
+    padding: 0 10px 0 8px;
+    border: 0;
+    border-radius: var(--r-control);
+    background: var(--dorami-surface);
+    box-shadow: inset 0 0 0 1px var(--dorami-border-strong);
+    color: var(--dorami-ink);
+    font-size: 13px;
     cursor: pointer;
-    transition: background var(--motion-fast) var(--motion-ease),
-                color var(--motion-fast) var(--motion-ease),
-                border-color var(--motion-fast) var(--motion-ease),
-                transform var(--motion-fast) var(--motion-ease);
+    transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
   }
-
-  .reader-disc-sub:hover { background: var(--dorami-accent-ink); }
+  .reader-disc-sub svg { width: 14px; height: 14px; }
+  .reader-disc-sub .t-on { display: inline-flex; align-items: center; gap: 4px; }
+  .reader-disc-sub:hover { background: var(--dorami-hover); }
   .reader-disc-sub:active { transform: scale(0.96); }
   .reader-disc-sub:disabled { opacity: 0.6; cursor: default; }
-
-  .reader-disc-sub.is-subbed {
-    background: transparent;
-    color: var(--dorami-faint);
-    border-color: var(--dorami-border);
-  }
-
-  .reader-disc-sub.is-subbed:hover { color: #dc2626; border-color: rgba(220, 38, 38, 0.35); background: transparent; }
+  .reader-disc-sub.is-subbed { background: transparent; box-shadow: none; color: var(--dorami-muted); }
+  .reader-disc-sub.is-subbed:hover { color: var(--state-bad); background: transparent; }
   .reader-disc-sub.is-subbed .t-off { display: none; }
   .reader-disc-sub.is-subbed:hover .t-on { display: none; }
   .reader-disc-sub.is-subbed:hover .t-off { display: inline; }
 
-  .reader-disc-prev {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 3px 6px;
-    border: none;
-    border-radius: 6px;
-    background: transparent;
-    color: var(--dorami-faint);
-    cursor: pointer;
-    transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
-  }
-
-  .reader-disc-prev:hover { background: color-mix(in srgb, var(--dorami-ink) 6%, transparent); color: var(--dorami-ink-2); }
-  /* (预览抽出已退役——预览改 Folo 语义:直接跳转该源的条目列表) */
+  /* 「预览」钮已退役(issue #184):整卡点开即预览(Folo 语义,直接跳到该源的条目列表) */
 
   .reader-disc-empty { padding: 60px 0; text-align: center; font-size: 12.5px; color: var(--dorami-faint); }
 
@@ -11328,6 +11294,8 @@ input[type="radio"] {
   --dorami-card: rgba(20, 22, 26, 0.96);
   --dorami-card-solid: #14161a;
   --dorami-raised: #1e2025;   /* 暗色专用：抬起的可点控件（次按钮/图标按钮/胶囊/hover） */
+  --dorami-logo-tile: #dfe0e5;
+  --dorami-logo-ring: rgba(255, 255, 255, 0.06);
   --dorami-wash: rgba(var(--dorami-accent-rgb), 0.14);
   /* AI 渐变端色暗色翻转:表面变暗→正向端色调亮;FAB 底翻浅→反向端色转深 */
   --ai-g1: #6ea3ff;
@@ -11512,6 +11480,8 @@ input[type="radio"] {
   --dorami-accent: #4950b0;
   --dorami-accent-ink: #3f449f;
   --heat-0: #ece8e1;
+  --dorami-logo-tile: #fdfcf9;
+  --dorami-logo-ring: rgba(32, 27, 22, 0.09);
 }
 [data-theme="dark"][data-palette="graphite"] {
   --dorami-canvas: #0e0e0e;
@@ -11523,6 +11493,7 @@ input[type="radio"] {
   --dorami-card: rgba(21, 21, 21, 0.96);
   --dorami-card-solid: #151515;
   --dorami-raised: #1f1f1f;
+  --dorami-logo-tile: #e0e0e0;
   --dorami-surface-2: #101010;
   --dorami-ink: #e8e8e8;
   --dorami-ink-2: #cacaca;
@@ -11543,6 +11514,7 @@ input[type="radio"] {
   --dorami-card: rgba(26, 22, 19, 0.96);
   --dorami-card-solid: #1a1613;
   --dorami-raised: #25211d;
+  --dorami-logo-tile: #e2ded7;
   --dorami-surface-2: #15120f;
   --dorami-ink: #eae5dd;
   --dorami-ink-2: #cdc8c0;
@@ -11566,7 +11538,7 @@ input[type="radio"] {
 
 /* ── Shell / 顶栏 ── */
 [data-theme="dark"] .app-header {
-  background: rgba(12, 14, 19, 0.8);
+  background: color-mix(in srgb, var(--dorami-canvas) 80%, transparent);
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04), 0 8px 30px rgba(0, 0, 0, 0.45);
 }
 [data-theme="dark"] .brand-title { text-shadow: none; }
@@ -11574,7 +11546,7 @@ input[type="radio"] {
 [data-theme="dark"] .checking-state {
   background:
     radial-gradient(ellipse 70% 50% at 50% 20%, rgba(var(--dorami-accent-rgb), 0.1), transparent 60%),
-    linear-gradient(180deg, #11131a, var(--dorami-canvas));
+    linear-gradient(180deg, var(--dorami-canvas-2), var(--dorami-canvas));
 }
 
 /* ── Tabs ── */
@@ -11635,7 +11607,7 @@ input[type="radio"] {
   .category-chip:hover:not(.category-chip-active), .tier-segment-btn:hover:not(:disabled):not(.tier-segment-btn-active),
   .scope-toggle-option:hover:not(.scope-toggle-option-active)
 ) {
-  background: #323a47;
+  background: color-mix(in srgb, var(--dorami-ink) 8%, var(--dorami-raised));
 }
 [data-theme="dark"] :is(.icon-button:hover, .action-button-secondary:hover, .ghost-action:hover, .category-chip:hover:not(.category-chip-active), .tier-segment-btn:hover:not(:disabled):not(.tier-segment-btn-active)) { border-color: var(--dorami-border-strong); }
 [data-theme="dark"] :is(.category-chip, .tier-segment-btn) { box-shadow: var(--sh-1); }
@@ -11689,7 +11661,6 @@ input[type="radio"] {
 .social-more { font-size: 12.5px; font-weight: 600; }
 .reader-disc-sub { font-size: 12px; font-weight: 400; }
 .reader-disc-sub.is-subbed { font-weight: 400; }
-.reader-disc-prev { font-size: 12px; font-weight: 400; }
 .reader-disc-back { font-size: 12px; font-weight: 400; }
 .reader-disc-add { font-size: 12px; font-weight: 600; }
 /* 添加自定源浮层:input/button 字号同陷阱,unlayered 区钉住(聚焦外环的钉法已随
@@ -13000,7 +12971,7 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 .rdef-select {
   height: 28px; padding: 0 8px; max-width: 240px; font-size: 12px;
   border-radius: var(--r-control); background: var(--dorami-surface); color: var(--dorami-ink-2);
-  box-shadow: inset 0 0 0 1px var(--dorami-hairline);
+  box-shadow: inset 0 0 0 1px var(--dorami-border);
 }
 /* 早报首屏的引导横幅(issue #56):同一形制,报头之上;按钮组右对齐,窄屏折行到下方 */
 .brief-onb { margin: 0 0 22px; }

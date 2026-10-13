@@ -1,5 +1,5 @@
 import { cloneElement, isValidElement, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDownWideNarrow, ArrowLeft, ChevronRight, Loader2, Plus, Search } from 'lucide-react';
+import { ArrowDownWideNarrow, ArrowLeft, Check, Loader2, Plus, Search } from 'lucide-react';
 import LogoMark from './LogoMark';
 import AddCustomSourceModal from './AddCustomSourceModal';
 import { mediaProxyUrl } from '../api';
@@ -22,6 +22,13 @@ function lastLabel(lastFetched) {
   return `最近 ${day.slice(5)}`;
 }
 
+// 社交源名称里已带平台名(「X · OpenAI」「OpenAI (X)」)时,平台签是重复信息
+function nameCarriesPlatform(source) {
+  const label = platformLabelOf(source.platform);
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[\\s·(（])${escaped}($|[\\s·)）])`, 'i').test(source.name || '');
+}
+
 // 单源卡(源视图分组网格 与 合集详情成员网格 共用同一渲染)。
 // showArticleChip:文章源是否也挂「文章」形态标——多形态混排的上下文(全部视图/
 // 合集详情)才标,已按形态过滤时不标(每卡同词是纯噪声)。
@@ -37,7 +44,15 @@ function SourceCard({ source, subbed, pinning, query, showArticleChip, onSubscri
         )}
         <div className="reader-disc-card-mid">
           <div className="reader-disc-name-row">
-            <span className="reader-disc-name">{q ? highlightMatch(source.name || source.source_id, q) : (source.name || source.source_id)}</span>
+            {/* 整卡点开 = 预览该源的收录列表(Folo 语义);名称按钮是唯一的「打开」控件,::after 铺满卡片 */}
+            <button
+              type="button"
+              className="reader-disc-name reader-disc-open"
+              title={`查看 ${source.name || source.source_id} 的收录列表`}
+              onClick={() => onPreview?.(source)}
+            >
+              {q ? highlightMatch(source.name || source.source_id, q) : (source.name || source.source_id)}
+            </button>
             {readerShapeOf(source) === 'article' && showArticleChip && (
               <span className="reader-shape-chip">文章</span>
             )}
@@ -45,7 +60,7 @@ function SourceCard({ source, subbed, pinning, query, showArticleChip, onSubscri
             {readerShapeOf(source) === 'article' && source.default_kind_label && source.default_kind !== 'digest' && (
               <span className="reader-shape-chip">{source.default_kind_label}</span>
             )}
-            {readerShapeOf(source) === 'social' && (
+            {readerShapeOf(source) === 'social' && !nameCarriesPlatform(source) && (
               <span className="reader-shape-chip">{platformLabelOf(source.platform)}</span>
             )}
             {readerShapeOf(source) === 'podcast' && (
@@ -73,17 +88,8 @@ function SourceCard({ source, subbed, pinning, query, showArticleChip, onSubscri
             {pinning
               ? <Loader2 className="h-3 w-3 animate-spin" />
               : subbed
-                ? <><span className="t-on">✓ 已订阅</span><span className="t-off">取消订阅</span></>
-                : '订阅'}
-          </button>
-          <button
-            type="button"
-            className="reader-disc-prev"
-            title={`查看 ${source.name || source.source_id} 的收录列表`}
-            onClick={() => onPreview?.(source)}
-          >
-            <ChevronRight className="h-[11px] w-[11px]" aria-hidden="true" />
-            预览
+                ? <><span className="t-on"><Check aria-hidden="true" />已订阅</span><span className="t-off">取消订阅</span></>
+                : <><Plus aria-hidden="true" />订阅</>}
           </button>
         </div>
       </div>
