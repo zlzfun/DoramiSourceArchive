@@ -870,6 +870,8 @@ export default function ReaderTab({
           onSetupInterests={openInterests}
           onOnboardingCompleted={() => onUserUpdated?.({ interest_onboarding_completed: true })}
           onBrowse={() => { setBriefOpen(false); leaveBriefTrail(); }}
+          favoriteIds={favoriteIds}
+          onToggleFavorite={(articleId) => handleToggleFavorite({ id: articleId })}
           onSubscribeSource={onRowSubscribeSource}
           onOpenArticle={async (articleId, ctx) => {
             // 结果回传早报页:false=不在库(早报页退到原链),null=被更晚的点击盖过(不动)

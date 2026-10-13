@@ -138,46 +138,9 @@
 .m-content .ranking-trend svg { width: 120px; }
 .m-content .ranking-section-head > div { align-items: flex-start; flex-direction: column; gap: 2px; }
 .m-content .ranking-content-row { grid-template-columns: 20px minmax(0, 1fr) 34px; padding-inline: 4px; }
-/* 我的早报(issue #23 重做):单列——横向日期条 + 同一张报纸面;点卡片推正文页 */
-.m-content > .brief-m {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  background: var(--rd-list-bg);
-}
-.brief-m-days {
-  flex: none;
-  display: flex;
-  gap: 6px;
-  padding: 10px 14px 8px;
-  overflow-x: auto;
-  font-size: 12.5px; /* 日期钮是 button,字号写容器靠继承 */
-}
-.brief-m-day {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 11px;
-  border-radius: var(--r-pill);
-  color: var(--dorami-muted);
-  background: color-mix(in srgb, var(--dorami-ink) 5%, transparent);
-}
-.brief-m-day.is-on { background: var(--dorami-surface); color: var(--dorami-ink); font-weight: 600; box-shadow: var(--sh-1); }
-.brief-m-day svg { width: 12px; height: 12px; color: var(--dorami-accent); }
-.brief-sheet.is-mobile { flex: 1; min-height: 0; overflow-y: auto; }
-.brief-sheet.is-mobile .brief-sheet-inner { padding: 6px 14px calc(28px + env(safe-area-inset-bottom)); }
-.brief-sheet.is-mobile .brief-mast { padding-bottom: 14px; }
-.brief-sheet.is-mobile .brief-mast-title { font-size: 28px; }
-/* 单列:桌面网格的 --span 在这里一律铺满(6 等分单元遇到单列模板会撑出隐式列,故显式 1 / -1) */
-.brief-sheet.is-mobile .brief-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
-.brief-sheet.is-mobile .brief-grid .brief-card { grid-column: 1 / -1; }
-.brief-sheet.is-mobile .brief-card, .brief-sheet.is-mobile .brief-card.is-lead, .brief-sheet.is-mobile .brief-card.is-wide, .brief-sheet.is-mobile .brief-card.is-w4 { padding: 16px 16px 14px; }
-.brief-sheet.is-mobile .brief-card.is-lead .brief-card-title { font-size: 19px; }
-.brief-sheet.is-mobile .brief-card.is-lead .brief-card-sum { font-size: 13.5px; }
-.brief-sheet.is-mobile .brief-card-aside .brief-card-score { font-size: 26px; }
-.brief-sheet.is-mobile .brief-state { min-height: 46vh; }
+/* 我的早报(issue #184 夜航版式):与桌面同一张页面,单列,页面自己滚;眉头即顶栏 */
+.m-content > .bp-sheet { flex: 1; min-height: 0; overflow-y: auto; }
+.bp-sheet.is-mobile { padding-bottom: calc(24px + env(safe-area-inset-bottom)); }
 .m-list {
   flex: 1;
   min-height: 0;
