@@ -120,10 +120,10 @@ def test_release_metrics_are_aggregate_and_cover_gate_indicators(tmp_path):
                 created_at=stamp,
             )
         )
-        # 额外于 target 的通道(重大事件、值得读)不进兴趣 / 质量占比的分母(issue #178 第三波)
+        # 额外于 target 的通道(重大事件、深度阅读)不进兴趣 / 质量占比的分母(issue #178 第三波)
         for position, lane in ((1, "breaking"), (2, "read")):
             session.add(PersonalDigestItemRecord(
-                edition_id=edition.id, article_id=None, position=position, section="值得读",
+                edition_id=edition.id, article_id=None, position=position, section="深度阅读",
                 selection_lane=lane, quality_score_snapshot=7.0, snapshot_json="{}", created_at=stamp,
             ))
         session.commit()

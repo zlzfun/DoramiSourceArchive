@@ -1571,7 +1571,7 @@ def test_assign_positions_section_order_score_desc_missing_last_ties_stable():
     ]
 
 
-# ── 「值得读」「值得听」(issue #178 第三波,方案 §5.1) ──
+# ── 「深度阅读」「播客精选」(issue #178 第三波,方案 §5.1) ──
 
 from llm.article_analysis_prompt import CONTENT_VALUE_SCORING_VERSION  # noqa: E402
 
@@ -1653,7 +1653,7 @@ def test_value_sections_are_extra_and_follow_the_news_sections(storage):
     with Session(storage.engine) as session:
         session.add_all([_user(), _subscribe("alice", "rss_a,rss_papers,rss_blog,rss_ops,pod_a,pod_b")])
         news = [_seed_valued(session, n, source="rss_a", news=7.0, days_ago=0.2) for n in range(1, 4)]
-        # 论文:新闻价值 4.5 过不了新闻门槛,内容价值 8.2 进「值得读」;链接形状判为论文
+        # 论文:新闻价值 4.5 过不了新闻门槛,内容价值 8.2 进「深度阅读」;链接形状判为论文
         paper = _seed_valued(
             session, 11, source="rss_papers", news=4.5, content_value=8.2,
             url="https://arxiv.org/abs/2610.00011", days_ago=3,
@@ -1664,10 +1664,10 @@ def test_value_sections_are_extra_and_follow_the_news_sections(storage):
             url="https://arxiv.org/abs/2610.00012", days_ago=2,
         )
         tutorial = _seed_valued(session, 13, source="rss_blog", news=4.0, content_value=7.4, content_kind="tutorial")
-        # 内容价值 6.5 < 7.0;资讯类不进「值得读」
+        # 内容价值 6.5 < 7.0;资讯类不进「深度阅读」
         _seed_valued(session, 14, source="rss_blog2", news=4.0, content_value=6.5, content_kind="opinion")
         _seed_valued(session, 15, source="rss_ops", news=4.0, content_value=9.0, content_kind="news")
-        # 播客:即使分数够新闻门槛也不进新闻通道,只进「值得听」(播客分 = 内容价值)
+        # 播客:即使分数够新闻门槛也不进新闻通道,只进「播客精选」(播客分 = 内容价值)
         episode = _seed_valued(session, 21, source="pod_a", news=8.0, content_type="podcast_episode", days_ago=4)
         _seed_valued(session, 22, source="pod_b", news=7.0, content_type="podcast_episode", days_ago=1)
         session.commit()
@@ -1678,9 +1678,9 @@ def test_value_sections_are_extra_and_follow_the_news_sections(storage):
         lanes = [(item.article_id, item.selection_lane, item.section) for item in result.items]
         assert lanes == [
             *[(article.id, "quality", "行业资讯") for article in news],
-            (paper.id, "read", "值得读"),
-            (tutorial.id, "read", "值得读"),
-            (episode.id, "listen", "值得听"),
+            (paper.id, "read", "深度阅读"),
+            (tutorial.id, "read", "深度阅读"),
+            (episode.id, "listen", "播客精选"),
         ]
         by_id = {item.article_id: item for item in result.items}
         paper_item = by_id[paper.id]
@@ -1705,7 +1705,7 @@ def test_value_sections_are_extra_and_follow_the_news_sections(storage):
 def test_value_sections_skip_news_picks_recent_editions_stale_rulers_and_old_items(storage):
     with Session(storage.engine) as session:
         session.add_all([_user(), _subscribe("alice", "rss_a,rss_b,rss_c,rss_d,rss_e")])
-        # 已进新闻通道的论文不在「值得读」重复出现
+        # 已进新闻通道的论文不在「深度阅读」重复出现
         in_news = _seed_valued(session, 1, source="rss_a", news=7.5, content_value=8.5, content_kind="paper", days_ago=0.3)
         # 五天前的早报出现过
         seen = _seed_valued(session, 2, source="rss_b", news=4.0, content_value=8.4, content_kind="paper", days_ago=5)
@@ -1804,7 +1804,7 @@ def test_degraded_fallback_avoids_value_picks_and_value_sections_stay_last(stora
 
         assert result.status == "degraded"
         lanes = [(item.article_id, item.section) for item in result.items]
-        assert lanes == [(other.id, "订阅源最新更新"), (paper.id, "值得读")]
+        assert lanes == [(other.id, "订阅源最新更新"), (paper.id, "深度阅读")]
 
 
 def test_assign_positions_orders_value_sections_by_content_value():
@@ -1819,9 +1819,9 @@ def test_assign_positions_orders_value_sections_by_content_value():
         )
 
     records = [
-        record("值得听", "listen", 7.6, 7.6, "pod"),
-        record("值得读", "read", 6.9, 7.1, "read-low"),
-        record("值得读", "read", 4.2, 8.3, "read-high"),
+        record("播客精选", "listen", 7.6, 7.6, "pod"),
+        record("深度阅读", "read", 6.9, 7.1, "read-low"),
+        record("深度阅读", "read", 4.2, 8.3, "read-high"),
         record("订阅源最新更新", "quality", 5.0, None, "fallback"),
         record("模型发布", "quality", 7.0, None, "news"),
     ]

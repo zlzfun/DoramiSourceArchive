@@ -4,7 +4,7 @@ Revision ID: e5c1f7a2b938
 Revises: d2b7c4e19f30
 Create Date: 2026-10-12
 
-issue #178 第三波:个人早报新增按内容价值入选的「值得读」「值得听」两个分区,条目 selection_lane
+issue #178 第三波:个人早报新增按内容价值入选的「深度阅读」「播客精选」两个分区,条目 selection_lane
 多两个枚举值 ``read`` / ``listen``。SQLite 的 CHECK 约束只能随表重建改写,故走 batch 模式;
 ``personal_digest_items`` 不参与归档同步、没有同步触发器,重建安全。
 """

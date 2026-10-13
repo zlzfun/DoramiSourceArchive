@@ -45,7 +45,7 @@ class AnalysisFeatureFlagsPatch(BaseModel):
     personal_digest_external_per_source_max: int | None = Field(
         default=None, ge=1, le=PERSONAL_DIGEST_EXTERNAL_PER_SOURCE_MAX_LIMIT
     )
-    # issue #178 第三波「值得读」「值得听」:内容价值门槛(0～10)/ 每期名额(0 = 关闭该分区)/ 窗口天数
+    # issue #178 第三波「深度阅读」「播客精选」:内容价值门槛(0～10)/ 每期名额(0 = 关闭该分区)/ 窗口天数
     personal_digest_read_min_value: float | None = Field(default=None, ge=0.0, le=10.0)
     personal_digest_read_max_items: int | None = Field(
         default=None, ge=0, le=PERSONAL_DIGEST_VALUE_MAX_ITEMS_LIMIT

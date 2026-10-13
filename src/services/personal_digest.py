@@ -110,7 +110,7 @@ BREAKING_MAX_ITEMS_KEY = "personal_digest_breaking_max_items"
 # v3.54「订阅 ∪ 兴趣」(issue #33 §3 前置):订阅外兴趣候选的门槛与每源硬上限,管理面 KV 旋钮
 EXTERNAL_MIN_SCORE_KEY = "personal_digest_external_min_score"
 EXTERNAL_PER_SOURCE_MAX_KEY = "personal_digest_external_per_source_max"
-# issue #178 第三波「值得读」「值得听」:门槛 / 名额(0 = 关闭该分区)/ 窗口天数,管理面 KV 旋钮
+# issue #178 第三波「深度阅读」「播客精选」:门槛 / 名额(0 = 关闭该分区)/ 窗口天数,管理面 KV 旋钮
 READ_MIN_VALUE_KEY = "personal_digest_read_min_value"
 READ_MAX_ITEMS_KEY = "personal_digest_read_max_items"
 READ_WINDOW_DAYS_KEY = "personal_digest_read_window_days"
@@ -125,7 +125,7 @@ _VALUE_LANE_DEFAULTS: dict[str, tuple[float, int]] = {
     SelectionLane.READ.value: (PERSONAL_DIGEST_READ_MIN_VALUE, PERSONAL_DIGEST_READ_MAX_ITEMS),
     SelectionLane.LISTEN.value: (PERSONAL_DIGEST_LISTEN_MIN_VALUE, PERSONAL_DIGEST_LISTEN_MAX_ITEMS),
 }
-# 播客单集的数据结构;新闻通道(兴趣 / 质量 / 重大事件)不收播客,播客只进「值得听」(方案 §5.1)
+# 播客单集的数据结构;新闻通道(兴趣 / 质量 / 重大事件)不收播客,播客只进「播客精选」(方案 §5.1)
 PODCAST_CONTENT_TYPE = "podcast_episode"
 # 会开新同日 revision 的原因。interest_changed/subscription_changed 自 v3.51.1 起不再由
 # 读者面写入(兴趣/订阅变更只记录,下次编排生效),保留是为历史版本与服务契约兼容;
@@ -867,7 +867,7 @@ def _query_candidate_rows(
     ``interest_tag_codes`` narrows to articles with a qualifying assignment(primary
     or relevance ≥ ``INTEREST_MATCH_MIN_RELEVANCE``)for one of those codes——the
     全站 interest pool must be bounded in SQL, not loaded and filtered in Python.
-    ``content_types`` / ``exclude_content_types`` 按数据结构收窄(新闻通道排除播客、「值得听」只要播客);
+    ``content_types`` / ``exclude_content_types`` 按数据结构收窄(新闻通道排除播客、「播客精选」只要播客);
     ``min_content_value`` 只认当前尺子版本的内容价值(缺失即缺席,issue #178 第三波)。
     """
 
@@ -1077,10 +1077,10 @@ def load_value_candidates(
     cutoff_at: dt.datetime,
     policy: ValueLanePolicy,
 ) -> list[DigestArticleCandidateDTO]:
-    """「值得读」「值得听」的候选池(issue #178 第三波):订阅池 ∪ 订阅外兴趣池,窗口按天。
+    """「深度阅读」「播客精选」的候选池(issue #178 第三波):订阅池 ∪ 订阅外兴趣池,窗口按天。
 
-    值得读 = 非播客、当前版本内容价值过线,再按推导出的内容类型留下论文 / 教程 / 观点 / 汇编;
-    值得听 = 播客单集,内容价值即现有播客分(第二波投影),按 ``quality_score`` 过线。订阅外候选
+    深度阅读 = 非播客、当前版本内容价值过线,再按推导出的内容类型留下论文 / 教程 / 观点 / 汇编;
+    播客精选 = 播客单集,内容价值即现有播客分(第二波投影),按 ``quality_score`` 过线。订阅外候选
     与新闻通道同一套可见性过滤(私有源、隐藏源、公共日报记录一律不进)。
     """
 
@@ -1307,7 +1307,7 @@ def _recent_edition_article_ids(
 ) -> set[str]:
     """读者此前 N 期(按日期,每天取最新的完成版)早报里出现过的文章,任一分区都算。
 
-    「值得读」「值得听」的窗口是 7 天,同一篇好文不该连着几天出现(issue #178 第三波)。
+    「深度阅读」「播客精选」的窗口是 7 天,同一篇好文不该连着几天出现(issue #178 第三波)。
     """
 
     if editions <= 0:
@@ -1446,7 +1446,7 @@ def _snapshot(
     score_dimension: str | None = None,
 ) -> dict[str, object]:
     # issue #178 第三波:快照记下卡片显示哪个分(score_dimension)和内容价值。新闻通道显示新闻价值;
-    # 「值得读」「值得听」显示内容价值;播客没有新闻价值,任何分区里都显示内容价值(第二波投影)。
+    # 「深度阅读」「播客精选」显示内容价值;播客没有新闻价值,任何分区里都显示内容价值(第二波投影)。
     projection = score_projection(
         content_type=article.content_type, kind=content_kind, analysis=analysis
     )
@@ -1484,7 +1484,7 @@ _VALUE_LANES = frozenset({SelectionLane.READ.value, SelectionLane.LISTEN.value})
 
 
 def _display_score(record: PersonalDigestItemRecord) -> float | None:
-    """卡片上显示的那个分:「值得读」「值得听」是内容价值,其余是新闻价值快照。"""
+    """卡片上显示的那个分:「深度阅读」「播客精选」是内容价值,其余是新闻价值快照。"""
 
     if record.selection_lane in _VALUE_LANES:
         value = _json_mapping(record.ranking_features_json).get("content_value")
@@ -1499,7 +1499,7 @@ def _assign_positions(records: list[PersonalDigestItemRecord]) -> None:
     当天最高分条目的体裁漂移,板块内命中兴趣的 6.6 也会排在质量通道的 8.0 之前。现在板块按
     ``SECTION_ORDER``,板块内按分数降序、缺分殿后、同分保持原序——前端网格的宽度跟分数走,
     要求板块头卡恒是板块最高分;重大事件板块此前按事件分 / 官方优先排,重排后同样分数降序。
-    「值得读」「值得听」按卡上显示的内容价值排(issue #178 第三波)。
+    「深度阅读」「播客精选」按卡上显示的内容价值排(issue #178 第三波)。
     """
 
     def key(pair: tuple[int, PersonalDigestItemRecord]) -> tuple[object, ...]:
@@ -2135,7 +2135,7 @@ def generate_personal_digest(
         remaining = [candidate for candidate in candidates if candidate.article_id not in promoted_ids]
         selections = _select(remaining)
 
-    # 「值得读」「值得听」(issue #178 第三波,方案 §5.1):按内容价值的两个额外分区,不占新闻的
+    # 「深度阅读」「播客精选」(issue #178 第三波,方案 §5.1):按内容价值的两个额外分区,不占新闻的
     # target;不与本期新闻通道重复,读者近 7 期早报出现过的不再出现。先于降级回退选出,回退的
     # 「订阅源最新更新」再避开它们。
     value_excluded = (
@@ -2232,7 +2232,7 @@ def generate_personal_digest(
         "interest_only": interest_only,
         "external_min_score": policy.external_min_quality_score,
         "external_per_source_max": policy.external_per_source_max,
-        # issue #178 第三波:「值得读」「值得听」各自的候选数 / 入选数 / 门槛 / 名额 / 窗口
+        # issue #178 第三波:「深度阅读」「播客精选」各自的候选数 / 入选数 / 门槛 / 名额 / 窗口
         "read": value_stats[SelectionLane.READ.value],
         "listen": value_stats[SelectionLane.LISTEN.value],
     }

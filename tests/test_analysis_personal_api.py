@@ -394,7 +394,7 @@ def test_admin_can_tune_personal_digest_breaking_lane(monkeypatch, tmp_path):
 
 
 def test_admin_can_tune_personal_digest_value_sections(monkeypatch, tmp_path):
-    """issue #178 第三波:「值得读」「值得听」的门槛 / 名额 / 窗口同端点可调,越界 422。"""
+    """issue #178 第三波:「深度阅读」「播客精选」的门槛 / 名额 / 窗口同端点可调,越界 422。"""
 
     app_module, _sink, _tag_id = _setup(monkeypatch, tmp_path)
     with TestClient(app_module.app) as client:

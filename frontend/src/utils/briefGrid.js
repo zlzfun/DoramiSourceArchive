@@ -25,7 +25,7 @@ export function gridColsFor(contentWidth) {
 
 const VALUE_LANES = new Set(['read', 'listen']);
 
-// 卡上显示哪个分(issue #178 第三波):快照写明 score_dimension;「值得读」「值得听」与播客是内容价值,
+// 卡上显示哪个分(issue #178 第三波):快照写明 score_dimension;「深度阅读」「播客精选」两区与任何分区的播客是内容价值,
 // 其余是新闻价值。没有该键的历史快照:播客回落内容价值(第二波起播客分即内容价值),其余新闻价值。
 export function scoreDimensionOf(item) {
   const snapshot = item?.snapshot || {};

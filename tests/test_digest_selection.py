@@ -370,7 +370,7 @@ def test_policy_rejects_out_of_range_external_knobs():
         DigestSelectionPolicy(external_per_source_max=0)
 
 
-# ── 「值得读」「值得听」(issue #178 第三波) ──
+# ── 「深度阅读」「播客精选」(issue #178 第三波) ──
 
 import pytest  # noqa: E402
 
@@ -399,8 +399,8 @@ def test_value_lane_ranks_by_content_value_not_news_and_keeps_hard_rules():
         _valued(4, 8.0, score=4.0, source="s3", group=7),
         _valued(5, 7.9, score=4.0, source="s4", group=7),  # 同事件第二篇
         _valued(6, 6.9, score=8.0, source="s5"),          # 门槛之下
-        _valued(7, 9.5, kind="news", source="s6"),        # 资讯不进「值得读」
-        _valued(8, 9.6, source="s7", shape="podcast"),    # 播客不进「值得读」
+        _valued(7, 9.5, kind="news", source="s6"),        # 资讯不进「深度阅读」
+        _valued(8, 9.6, source="s7", shape="podcast"),    # 播客不进「深度阅读」
         _valued(9, 9.7, source="s8"),                     # 调用方排除(已进新闻 / 近期出现过)
     ]
     picked = select_value_lane(
@@ -445,5 +445,5 @@ def test_value_lane_policy_bounds_and_lane_guard():
         ValueLanePolicy(min_value=7.0, max_items=2, window_days=0)
     with pytest.raises(ValueError):
         select_value_lane([], lane="quality", policy=ValueLanePolicy(min_value=7.0, max_items=2))
-    assert SECTION_ORDER[-2:] == ("值得读", "值得听")
-    assert SECTION_ORDER.index("订阅源最新更新") < SECTION_ORDER.index("值得读")
+    assert SECTION_ORDER[-2:] == ("深度阅读", "播客精选")
+    assert SECTION_ORDER.index("订阅源最新更新") < SECTION_ORDER.index("深度阅读")

@@ -153,8 +153,8 @@ class SelectionLane(StringEnum):
     # v3.50(issue #33 §2):「重大事件」通道——不看订阅范围的头条位,机械准入
     # (官方一手 ≥ 阈值,或多源印证),额外加在 target 之上、不进兴趣配额分母。
     BREAKING = "breaking"
-    # issue #178 第三波:按内容价值的两个额外分区——「值得读」(论文 / 教程 / 观点 / 汇编)与
-    # 「值得听」(播客),接在新闻分区之后,不占新闻的 target 名额。
+    # issue #178 第三波:按内容价值的两个额外分区——「深度阅读」(论文 / 教程 / 观点 / 汇编)与
+    # 「播客精选」(播客),接在新闻分区之后,不占新闻的 target 名额。
     READ = "read"
     LISTEN = "listen"
 
@@ -206,7 +206,7 @@ PERSONAL_DIGEST_BREAKING_WINDOW_HOURS = 24
 PERSONAL_DIGEST_BREAKING_CORROBORATION_SOURCES = 2
 PERSONAL_DIGEST_BREAKING_CORROBORATION_SLACK = 0.5
 PERSONAL_DIGEST_BREAKING_SUPPRESS_EDITIONS = 2
-# 「值得读」「值得听」(issue #178 第三波,方案 §5.1):按内容价值入选,额外于新闻的 target 之上。
+# 「深度阅读」「播客精选」(issue #178 第三波,方案 §5.1):按内容价值入选,额外于新闻的 target 之上。
 # 门槛按黄金集分布暂定(扎实的论文 / 教程 / 一手观点多在 6.5–8 分),上线后按生产分布校准;
 # 7 天窗口——深度内容不像新闻那样过期,36 小时常凑不出;每源 1 篇,防一个高产源占满;
 # 读者近 7 期早报出现过的不再出现。门槛、名额、窗口是管理面 KV 旋钮(见 personal_digest)。
@@ -294,7 +294,7 @@ class DigestArticleCandidateDTO(ContractModel):
     # tag_codes 全集(旧调用方/纯策略测试)。
     interest_tag_codes: Optional[tuple[str, ...]] = None
     # issue #178 第三波:条目的内容类型(content_classification.classify_item 推导)与当前有效的
-    # 内容价值(文章只认当前尺子版本;播客 = 现有播客分的投影)。「值得读」「值得听」两个分区据此入选,
+    # 内容价值(文章只认当前尺子版本;播客 = 现有播客分的投影)。「深度阅读」「播客精选」两个分区据此入选,
     # 新闻通道不读这两项。
     content_kind: Optional[str] = None
     content_value: Optional[float] = Field(default=None, ge=1.0, le=10.0)

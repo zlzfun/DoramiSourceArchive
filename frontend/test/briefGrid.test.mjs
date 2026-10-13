@@ -106,7 +106,7 @@ test('scoreOf:缺分是缺席不是 0 分', () => {
   assert.equal(scoreOf(null), null);
 });
 
-test('scoreOf / scoreDimensionOf:值得读 / 值得听与播客显示内容价值(issue #178 第三波)', () => {
+test('scoreOf / scoreDimensionOf:深度阅读 / 播客精选两区与任何分区的播客显示内容价值(issue #178 第三波)', () => {
   const read = { selection_lane: 'read', quality_score: 4.5, snapshot: { score_dimension: 'content', content_value: 8.2, quality_score: 4.5 } };
   assert.equal(scoreDimensionOf(read), 'content');
   assert.equal(scoreOf(read), 8.2);

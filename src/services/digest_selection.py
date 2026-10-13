@@ -49,14 +49,14 @@ _TRACKING_QUERY_KEYS = frozenset({
 GENRE_SECTIONS = PERSONAL_DIGEST_GENRE_SECTIONS
 BREAKING_SECTION = "重大事件"
 # issue #178 第三波:按内容价值入选的两个额外分区,接在新闻分区(含降级时的「订阅源最新更新」)之后。
-READ_SECTION = "值得读"
-LISTEN_SECTION = "值得听"
-# 「值得读」收的内容类型 = 主分以内容价值为准的那几类(论文 / 教程 / 观点 / 汇编);播客另走「值得听」。
+READ_SECTION = "深度阅读"
+LISTEN_SECTION = "播客精选"
+# 「深度阅读」收的内容类型 = 主分以内容价值为准的那几类(论文 / 教程 / 观点 / 汇编);播客另走「播客精选」。
 READ_KINDS: frozenset[str] = CONTENT_PRIMARY_KINDS
 PODCAST_SHAPE = "podcast"
 # 板块固定顺序(issue #74):此前板块按条目首次出现建组,顺序随当天最高分条目的体裁漂移
 # (「论文排在模型发布前」只因当天最高分恰好是论文)。「发生了什么」在前,「怎么看」在后,
-# 社交与聚合殿后,降级版面的「订阅源最新更新」是新闻区的最后一块;「值得读」「值得听」(issue #178
+# 社交与聚合殿后,降级版面的「订阅源最新更新」是新闻区的最后一块;「深度阅读」「播客精选」(issue #178
 # 第三波)在新闻区之后;未登记的板块名排在已登记之后、按名字稳定。
 SECTION_ORDER: tuple[str, ...] = (
     BREAKING_SECTION,
@@ -482,7 +482,7 @@ def select_digest_articles(
     return result
 
 
-# ── 「值得读」「值得听」(issue #178 第三波,方案 §5.1)──
+# ── 「深度阅读」「播客精选」(issue #178 第三波,方案 §5.1)──
 # 与新闻的兴趣 / 质量两通道并列、额外于 target 之上的两个分区,按内容价值(值不值得花时间读完 / 听完)
 # 入选,不看新闻价值。范围同新闻通道:订阅内直接参选,订阅外须命中兴趣;门槛、名额、窗口是 KV 旋钮,
 # 每源 1 篇、同事件 1 篇;按内容价值降序,平分时较新的在前。已进新闻通道的、读者近 7 期早报出现过的,
@@ -508,7 +508,7 @@ class ValueLanePolicy:
 
 
 def value_lane_accepts(candidate: DigestArticleCandidateDTO, lane: SelectionLane | str) -> bool:
-    """这条候选是否属于该分区:值得读 = 论文 / 教程 / 观点 / 汇编(非播客),值得听 = 播客。"""
+    """这条候选是否属于该分区:深度阅读 = 论文 / 教程 / 观点 / 汇编(非播客),播客精选 = 播客。"""
 
     value = str(getattr(lane, "value", lane))
     is_podcast = candidate.content_shape == PODCAST_SHAPE

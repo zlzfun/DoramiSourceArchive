@@ -77,17 +77,17 @@ function ZoneState({ status, error, onRetry }) {
 
 const num = (value) => Number(value);
 
-// 「值得读」「值得听」(issue #178 第三波):按内容价值入选的两个额外分区,各三枚旋钮
+// 「深度阅读」「播客精选」(issue #178 第三波):按内容价值入选的两个额外分区,各三枚旋钮
 const VALUE_LANES = [
-  { key: 'read', title: '值得读', done: '已更新值得读' },
-  { key: 'listen', title: '值得听', done: '已更新值得听' },
+  { key: 'read', title: '深度阅读', done: '已更新深度阅读' },
+  { key: 'listen', title: '播客精选', done: '已更新播客精选' },
 ];
 const VALUE_FIELDS = ['min_value', 'max_items', 'window_days'];
 const emptyValueForm = () => ({ min_value: '', max_items: '', window_days: '' });
 
 /**
  * 运维管理 → 内容 → 「早报与兴趣」区(issue #76 拍板①③):个人早报的读者分发策略旋钮
- * (重大事件通道 / 订阅外兴趣 / issue #178 第三波的值得读、值得听)+ 兴趣目录 Top N,自「标签」子页
+ * (重大事件通道 / 订阅外兴趣 / issue #178 第三波的深度阅读、播客精选)+ 兴趣目录 Top N,自「标签」子页
  * 迁入——它们是 personal_digest_* 的分发策略,不是分析 worker 或目录的生产状态。每张表单卡各一枚
  * secondary 保存。
  * 分析配置与目录策略两组数据各自 loading / error / data:404 才显示「未接入」,其它失败可重试并
