@@ -195,7 +195,7 @@ test('publisher transcript follows show notes on desktop and mobile reader surfa
   assert.match(experience, /hiddenTranscriptKinds=\{\['publisher_transcript'\]\}/);
 });
 
-test('podcast lists reuse taxonomy tag styling and hide pipeline status', async () => {
+test('podcast lists keep topic tags and pipeline status out of list rows', async () => {
   const reader = await readFile(
     new URL('../components/ReaderTab.jsx', import.meta.url),
     'utf8',
@@ -205,12 +205,12 @@ test('podcast lists reuse taxonomy tag styling and hide pipeline status', async 
     reader.indexOf(') : (', reader.indexOf('{entryPodcast ? (')),
   );
 
-  assert.match(podcastBranch, /\{analysisTag\}/);
-  assert.match(reader, /const analysisTag =[\s\S]*className="reader-entry-tag"/);
+  // issue #184「静」:条目行只留「源 · 内容类型 · 时间 …… 分数」,主题标签只在阅读窗出现
+  assert.match(podcastBranch, /\{kindTag\}/);
+  assert.doesNotMatch(reader, /reader-entry-tag|analysisTag/);
   assert.match(reader, /podcastListAvailabilityMeta/);
   assert.doesNotMatch(podcastBranch, /podcastFullProcessingMeta|analysisStatus\.label/);
   assert.doesNotMatch(podcastBranch, /processing_error|error_code|next_retry_at|\.error\b/);
-  assert.equal(reader.match(/className="reader-entry-tag">\{analysisLabel\}/g)?.length, 1);
 });
 
 test('blog-only guide without condensed audio is visible in experience panel and reader surfaces', async () => {

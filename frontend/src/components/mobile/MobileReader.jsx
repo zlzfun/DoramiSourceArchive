@@ -88,7 +88,7 @@ export default function MobileReader({
     socialView, podcastView, listTitle, listSubtitle,
     goView, goSource, goTag, goFavorites,
     kindFilter, setKindFilter, kindFacetItems,
-    scope, setAxis, toggleFavoriteScope, activeTagId, activeTagName, interestGroups, hasInterests, refreshInterests,
+    scope, setAxis, toggleFavoriteScope, activeTagId, interestGroups, hasInterests, refreshInterests,
     interestAxisEnabled, showUnsubscribedMark, showInterestHit,
     activeSourceHidden, activeUnsubscribed, grouping,
     // 搜索
@@ -488,7 +488,6 @@ export default function MobileReader({
                         onContextMenu={noopContextMenu}
                         ctxAnchor={sheet?.anchorKey === `article:${article.id}`}
                         interestHit={showInterestHit ? (article.interest_hits?.[0] || '') : ''}
-                        labelSuppress={activeTagName}
                         unsubscribed={showUnsubscribedMark && !subscribedIds.has(article.source_id)}
                         onSubscribeSource={subscribeSourceById}
                       />
