@@ -49,7 +49,7 @@ import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import Modal from './Modal';
 import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 import { useModalA11y } from '../hooks/useModalA11y';
-import { MultiSeriesArea, RankBars, BarList } from './charts/DashboardCharts';
+import { MultiSeriesBars, RankBars, BarList } from './charts/DashboardCharts';
 import MediaHeatmap from './admin/MediaHeatmap';
 import UserSourcesPanel from './admin/UserSourcesPanel';
 import FeedbackInboxPanel from './admin/FeedbackInboxPanel';
@@ -1377,8 +1377,8 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
               </section>
               <div className="zone-head"><span className="zone-title">每日用量</span><span className="zone-hint">悬停看当日明细；系列色恒随实体，不随排位</span></div>
               <div className="admin-grid">
-                <MultiSeriesArea title="每日调用次数" datasets={callsDatasets} namespace="ai-calls" dims={aiDims} />
-                <MultiSeriesArea title="每日 tokens" datasets={tokensDatasets} namespace="ai-tokens" dims={aiDims} />
+                <MultiSeriesBars title="每日调用次数" datasets={callsDatasets} namespace="ai-calls" dims={aiDims} />
+                <MultiSeriesBars title="每日 tokens" datasets={tokensDatasets} namespace="ai-tokens" dims={aiDims} />
               </div>
             </>
           )}
@@ -1498,7 +1498,7 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
                       emptyHint="窗口内无阅读、且无收藏记录"
                     />
                   </div>
-                  <MultiSeriesArea
+                  <MultiSeriesBars
                     title="每日 AI 用量"
                     datasets={detailDatasets}
                     dims={[['calls', '调用'], ['tokens', 'tokens']]}

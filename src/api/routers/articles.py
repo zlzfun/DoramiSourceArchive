@@ -58,6 +58,7 @@ from models.db import (
 )
 from services import article_analysis as article_analysis_service
 from services import content_classification
+from services.source_naming import friendly_source_name
 from services.article_display_tags import (
     article_ids_for_canonical_projection, article_ids_for_flexible_label, load_display_tags,
 )
@@ -645,7 +646,8 @@ def get_article_facets(
         "content_types": _facet(
             ArticleRecord.content_type, content_classification.content_type_label
         ),
-        "source_ids": _facet(ArticleRecord.source_id),
+        # 来源的展示名(issue #184):注册表 / 兜底表 / 配置源三级取名,读者自定源在台账里显示名称而不是 user_rss_ 裸 id
+        "source_ids": _facet(ArticleRecord.source_id, friendly_source_name),
     }
 
 

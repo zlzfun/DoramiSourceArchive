@@ -2783,9 +2783,10 @@ input[type="radio"] {
 
   .ledger-col-select { width: 36px; }
   .ledger-col-type { width: 112px; }
-  .ledger-col-source { width: 150px; }
+  .ledger-col-source { width: 168px; }
+  .ledger-col-analysis { width: 150px; }
   .ledger-col-title { width: auto; }
-  .ledger-col-publish { width: 84px; }
+  .ledger-col-publish { width: 104px; }   /* 「2026-09-17」13px 等宽数字 + 两侧 12px */
 
   /* 可滚动容器底部渐隐：内容自然淡出以暗示「还可下滑」，替代文字提示条。
      仅在「可滚动且未到底」时挂到滚动元素上（见 BarList），到底即撤除、末行完整可见。 */
@@ -3097,23 +3098,27 @@ input[type="radio"] {
   .ledger-iconbtn:focus-visible { opacity: 1; }
 
   .ledger-row { cursor: pointer; }
-  .ledger-row td { height: 52px; vertical-align: middle; }
+  /* 行有呼吸(issue #184):上下各 12px,内容顶对齐——标题、来源、分析、日期落在同一条首行基线上 */
+  .ledger-row td { height: auto; padding-top: 12px; padding-bottom: 12px; vertical-align: top; }
   .ledger-row:hover { background: var(--dorami-soft); }
   /* 行是自定义可点元素(tr[tabindex]),需自带焦点指示(a11y §2) */
   .ledger-row:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: -2px; }
-  /* 选中行 = accent 竖条(R1),hover 只灰阶 */
+  /* 选中行 = 中性加深一档(issue #184 全站选中语法),hover 只灰阶 */
   .ledger-row.is-sel { background: var(--dorami-select); }
 
-  .ledger-tt { font-size: 13.5px; font-weight: 600; line-height: 1.35; color: var(--dorami-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ledger-tt { font-size: 14px; font-weight: 600; line-height: 1.45; color: var(--dorami-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-  /* 紧凑密度:摘录行退场、行高 52→44(摘录仍在抽屉) */
+  /* 紧凑密度:摘录行退场、上下留白收到 8px(摘录仍在抽屉) */
   .ledger-table.is-compact .ledger-ex { display: none; }
-  .ledger-table.is-compact .ledger-row td { height: 44px; }
-  .ledger-ex { margin-top: 2px; font-size: 12px; font-weight: 400; color: var(--dorami-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ledger-table.is-compact .ledger-row td { padding-top: 8px; padding-bottom: 8px; }
+  .ledger-ex { margin-top: 3px; font-size: 13px; font-weight: 400; line-height: 1.5; color: var(--dorami-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 来源格:名称一行,读者自定源 / 配置源的原始 id 在下一行小字 */
+  .ledger-source-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 1.6; color: var(--dorami-ink-2); }
+  .ledger-source-id { display: block; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--dorami-faint); }
 
   .ledger-date {
-    font-family: var(--mono);
-    font-size: 12px;
+    font-size: 13px;
+    line-height: 1.6;
     color: var(--dorami-muted);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
@@ -4160,17 +4165,18 @@ input[type="radio"] {
   .usrc-minutes-input { width: 64px; text-align: center; }
 
   .kpi-strip { display: flex; align-items: stretch; flex-wrap: wrap; border-radius: var(--r-card); overflow: hidden; }
-  .kpi { flex: 1; min-width: 130px; padding: 14px 18px 12px; }
-  .kpi + .kpi { border-left: 1px solid var(--dorami-border); }
+  /* 指标格(issue #184「数字先于图」):名称在上、数字在中、注脚在下;JSX 里数字写在前,用 order 把名称提上去 */
+  .kpi { flex: 1; min-width: 130px; display: flex; flex-direction: column; padding: 16px 20px 14px; }
+  .kpi + .kpi { border-left: 1px solid var(--dorami-border-soft); }
   .kpi-num {
     display: block; font-size: 28px; font-weight: 600; line-height: 32px;
     letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: var(--dorami-ink);
   }
   .kpi-num.is-warn { color: var(--state-warn); }
   .kpi-num.is-bad { color: var(--state-bad); }
-  .kpi-lbl { display: block; margin-top: 3px; font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
+  .kpi-lbl { display: block; order: -1; margin-bottom: 6px; font-size: 13px; font-weight: 400; color: var(--dorami-muted); }
   .kpi-sub {
-    display: block; margin-top: 1px; font-size: 12px; font-weight: 400;
+    display: block; margin-top: 4px; font-size: 12px; font-weight: 400;
     color: var(--dorami-faint); font-variant-numeric: tabular-nums;
   }
 
@@ -11989,12 +11995,14 @@ input[type="radio"] {
 
 /* ── 文章智能分析:详情说明与管理面轻徽标(阅读器条目行的分数/类型已归入元信息行,
    见 @layer 内 .reader-entry-kind / .reader-entry-score;.reader-score-chip 只余管理面台账在用) ── */
+/* 台账「分析」列(issue #184 从条目格挪出):分数 · 主签 · 状态,窄列里折行 */
 .ledger-analysis-meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 5px;
+  gap: 4px 5px;
   min-width: 0;
-  margin-top: 5px;
+  padding-top: 1px;
 }
 .ledger-processing-error {
   min-width: 0;
