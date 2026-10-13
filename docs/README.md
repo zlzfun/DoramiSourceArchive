@@ -9,6 +9,8 @@
 
 ## 顶层(活跃)
 
+- ◉ [visual-refine-plan.md](./visual-refine-plan.md) — **视觉精修波(issue #184,含 #176 W0a + W0b)**:自托管思源宋体(分片随构建打包、内网可用)、三套可选中性色、夜航版式早报、分数身份线、条目行与组件收敛;拍板记录、字体生成链、实现进度与验收。
+
 - ◉ [news-coverage-reliability-plan.md](./news-coverage-reliability-plan.md) — **新闻漏采修复(issue #127)**：IT之家有界分页、公共日报候选持久积压、HN 备用发现入口；真实源验证、日间采集配置预览与回滚。
 
 - ◉ [backlog.md](./backlog.md) — **跨波次待办总账**(进行中/排队中/展望三档 + 近期已完结索引)。
