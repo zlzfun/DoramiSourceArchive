@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>色彩 · 视觉精修定稿</title><link rel="stylesheet" href="assets/fonts.css"><link rel="stylesheet" href="assets/site.css"><link rel="stylesheet" href="assets/dm.css"><script>try{var t=localStorage.getItem('dorami-refine2-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}</script></head><body>
+<header class="top"><div class="top-in"><a class="brand" href="./"><img src="assets/logos/dorami.png" alt="">哆啦美<span>视觉精修 · 定稿</span></a><nav class="nav" aria-label="定稿目录"><a href="./" class="">总览</a><a href="type.html" class=""><b>01</b>字体</a><a href="color.html" class="on" aria-current="page"><b>02</b>色彩</a><a href="reader.html" class=""><b>03</b>阅读器</a><a href="brief.html" class=""><b>04</b>早报</a><a href="details.html" class=""><b>05</b>组件</a><a href="console.html" class=""><b>06</b>管理面</a></nav><div class="theme" role="group" aria-label="页面主题"><button data-t="light">亮</button><button data-t="dark">暗</button><button data-t="auto">跟随</button></div></div></header>
+<style>
+  .sett-stage { margin-top: 18px; border-radius: 14px; background: var(--sunk); padding: 28px; display: grid; place-items: center; overflow: hidden; }
+  .grad-uses { margin-top: 16px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .grad-uses > div { border-radius: 12px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line-soft); padding: 16px; min-height: 120px; display: flex; flex-direction: column; gap: 10px; }
+  .grad-uses b { color: var(--ink); font-size: 14px; }
+  .grad-uses p { margin: 0; font-size: 13.5px; line-height: 1.7; }
+  @media (max-width: 900px) { .grad-uses { grid-template-columns: minmax(0, 1fr); } }
+</style>
+<main class="wrap">
+  <header class="head">
+    <div class="eyebrow"><b>02 色彩</b><span>定稿</span></div>
+    <h1 class="title">色彩：三套中性色都保留，在设置里选</h1>
+    <p class="lede">瓷、墨、宣三套中性色全部保留，读者在「设置 → 外观」里自己选，默认是瓷。三套的结构、明暗次序和强调色相同，只在中性色的色温上不同，亮色和暗色下都可用。蓝紫 AI 渐变也保留在色彩方案里，作为 AI 的身份色。</p>
+    <div class="facts"><span>中性色<b>瓷（默认）· 墨 · 宣</b></span><span>强调色<b>靛蓝，降低亮度</b></span><span>AI 渐变<b>保留</b></span></div>
+  </header>
+
+  <section class="s">
+    <h2>在哪里选</h2>
+    <p>「设置 → 外观」在「主题」下面新增一行「中性色」，三张小卡就是三套配色本身。点一下立即生效，记在本机浏览器里，和主题的记法一样。下面的样页可以直接点。</p>
+    <div class="sett-stage"><div class="frame-stage" data-w="880" data-h="576" style="background:transparent;width:100%;max-width:880px"><div class="frame-scale"><div id="m-sett" data-follow data-pal="porcelain"></div></div></div></div>
+  </section>
+
+  <section class="s">
+    <h2>三套配色</h2>
+    <figure class="frame">
+      <div class="frame-bar">
+        <div class="lab">定稿 · 阅读器<small>1440 × 900，按宽度缩放</small></div>
+        <span class="sw-lab">中性色</span>
+        <div class="sw" data-for="m-pal" data-attr="pal" data-group="pal"><button data-v="porcelain" class="on">瓷</button><button data-v="graphite">墨</button><button data-v="paper">宣</button></div>
+        <div class="sw" data-for="m-pal" data-attr="mode"><button data-v="light">亮</button><button data-v="dark">暗</button></div>
+        <button class="ib" data-full><svg viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg><span>1:1 查看</span></button>
+      </div>
+      <div class="frame-stage" data-w="1440"><div class="frame-scale"><div id="m-pal" data-follow data-pal="porcelain"></div></div></div>
+    </figure>
+    <div class="tw"><table class="t">
+      <thead><tr><th>token</th><th>瓷 · 亮</th><th>瓷 · 暗</th><th>墨 · 亮</th><th>墨 · 暗</th><th>宣 · 亮</th><th>宣 · 暗</th></tr></thead>
+      <tbody>
+        <tr><td class="k">外框（导轨、源栏）</td><td class="num"><i class="swatch" style="background:#f4f6f9"></i>#f4f6f9</td><td class="num"><i class="swatch" style="background:#0d0f13"></i>#0d0f13</td><td class="num"><i class="swatch" style="background:#f5f4f4"></i>#f5f4f4</td><td class="num"><i class="swatch" style="background:#0e0e0e"></i>#0e0e0e</td><td class="num"><i class="swatch" style="background:#f5f2ed"></i>#f5f2ed</td><td class="num"><i class="swatch" style="background:#13100d"></i>#13100d</td></tr>
+        <tr><td class="k">内容（条目、阅读窗、卡片）</td><td class="num"><i class="swatch" style="background:#ffffff"></i>#ffffff</td><td class="num"><i class="swatch" style="background:#14161a"></i>#14161a</td><td class="num"><i class="swatch" style="background:#ffffff"></i>#ffffff</td><td class="num"><i class="swatch" style="background:#151515"></i>#151515</td><td class="num"><i class="swatch" style="background:#fdfcf9"></i>#fdfcf9</td><td class="num"><i class="swatch" style="background:#1a1613"></i>#1a1613</td></tr>
+        <tr><td class="k">选中</td><td class="num"><i class="swatch" style="background:#e7e9ef"></i>#e7e9ef</td><td class="num"><i class="swatch" style="background:#22242b"></i>#22242b</td><td class="num"><i class="swatch" style="background:#e9e8e8"></i>#e9e8e8</td><td class="num"><i class="swatch" style="background:#242424"></i>#242424</td><td class="num"><i class="swatch" style="background:#ebe7e0"></i>#ebe7e0</td><td class="num"><i class="swatch" style="background:#292521"></i>#292521</td></tr>
+        <tr><td class="k">细线</td><td class="num"><i class="swatch" style="background:#dde0e5"></i>#dde0e5</td><td class="num"><i class="swatch" style="background:#282a2f"></i>#282a2f</td><td class="num"><i class="swatch" style="background:#e0dfdf"></i>#e0dfdf</td><td class="num"><i class="swatch" style="background:#292929"></i>#292929</td><td class="num"><i class="swatch" style="background:#dfdcd6"></i>#dfdcd6</td><td class="num"><i class="swatch" style="background:#2f2a26"></i>#2f2a26</td></tr>
+        <tr><td class="k">墨色（标题）</td><td class="num"><i class="swatch" style="background:#161922"></i>#161922</td><td class="num"><i class="swatch" style="background:#e8e9ee"></i>#e8e9ee</td><td class="num"><i class="swatch" style="background:#171717"></i>#171717</td><td class="num"><i class="swatch" style="background:#e8e8e8"></i>#e8e8e8</td><td class="num"><i class="swatch" style="background:#201b16"></i>#201b16</td><td class="num"><i class="swatch" style="background:#eae5dd"></i>#eae5dd</td></tr>
+        <tr><td class="k">次要文字</td><td class="num"><i class="swatch" style="background:#61656d"></i>#61656d</td><td class="num"><i class="swatch" style="background:#9c9ea5"></i>#9c9ea5</td><td class="num"><i class="swatch" style="background:#636363"></i>#636363</td><td class="num"><i class="swatch" style="background:#9e9e9e"></i>#9e9e9e</td><td class="num"><i class="swatch" style="background:#68625c"></i>#68625c</td><td class="num"><i class="swatch" style="background:#a29e96"></i>#a29e96</td></tr>
+        <tr><td class="k">强调色</td><td class="num"><i class="swatch" style="background:#5252c5"></i>#5252c5</td><td class="num"><i class="swatch" style="background:#919bf8"></i>#919bf8</td><td class="num"><i class="swatch" style="background:#5252c5"></i>#5252c5</td><td class="num"><i class="swatch" style="background:#919bf8"></i>#919bf8</td><td class="num"><i class="swatch" style="background:#4950b0"></i>#4950b0</td><td class="num"><i class="swatch" style="background:#909def"></i>#909def</td></tr>
+      </tbody>
+    </table></div>
+    <p class="p" style="font-size:13.5px;color:var(--muted)">所有文字色在对应底色上都达到 4.5:1；最弱一级文字在外框底色上约 4.6:1。实现时直接改现有 <code>--dorami-*</code> token 的取值，组件层不用逐个改。</p>
+  </section>
+
+  <section class="s">
+    <h2>AI 渐变：保留，只用在 AI 的东西上</h2>
+    <p>蓝紫渐变（#3f7bf6 → #8b52f4，暗色下提亮）保留为 AI 的身份色，三套中性色共用。它不再铺满速读卡，而是出现在下面三处，看到渐变就知道这是 AI 给出的判断。</p>
+    <div class="grad-uses dm" data-follow data-pal="porcelain" id="m-grad" style="background:transparent"></div>
+  </section>
+
+  <section class="s">
+    <details class="impl"><summary>落地要点</summary><div class="impl-body"><ul>
+      <li><code>index.css</code>：在 <code>:root</code>（瓷 · 亮）与 <code>[data-theme=dark]</code> 两段改值，再为 <code>[data-palette=graphite]</code>、<code>[data-palette=paper]</code> 各写亮暗两组覆盖；新增 <code>--dorami-select</code>。</li>
+      <li><code>theme.js</code> 增加中性色偏好（<code>dorami-palette</code>，默认 porcelain），写到 <code>&lt;html data-palette&gt;</code>；<code>index.html</code> 的防闪烁脚本同时设置它。</li>
+      <li><code>settings/AppearanceSection.jsx</code> 在「主题」下面加「中性色」一行；桌面设置柜与移动设置栈共用。</li>
+      <li>选中语法改为中性加深：导轨、源栏、条目、分类筛选统一，conventions §4 同步修订。</li>
+    </ul></div></details>
+  </section>
+</main>
+<div class="wrap"><nav class="pager"><a href="type.html"><span>上一篇</span><b>01 字体</b></a><a class="next" href="reader.html"><span>下一篇</span><b>03 阅读器</b></a></nav><p class="foot">样页数据来自本地库副本（2026-09-28 快照），经产品自身接口导出；标题字体为思源宋体子集，内嵌在页面里，不请求任何外部字体域名。</p></div><script src="assets/data.js"></script><script src="assets/dm.js"></script><script src="assets/site.js"></script><script>(function () {
+  DMR.reader(document.getElementById('m-pal'));
+  const sett = document.getElementById('m-sett');
+  const paint = () => DMR.settings(sett);
+  paint();
+  sett.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-pal-pick]'); if (!b) return;
+    sett.dataset.pal = b.dataset.palPick; paint();
+  });
+  new MutationObserver(paint).observe(sett, { attributes: true, attributeFilter: ['data-mode'] });
+  const g = document.getElementById('m-grad'), A = window.DM.article;
+  g.innerHTML = `<div><b>✦ 标记</b><div style="display:flex;align-items:center;gap:8px;font-size:14px;color:var(--c-ink2)">${DMR.AI}<b style="font-size:14px;color:var(--c-ink2)">AI 速读</b><span style="color:var(--c-faint)">·</span>问哆啦美</div><p>速读卡、问答面板、问哆啦美按钮上的 ✦。</p></div>
+    <div><b>分数</b><div style="display:flex;align-items:baseline;gap:16px">${[9.1, 8.2, 7.2, 5.8].map((v) => `<span class="score ${DMR.tier(v)}" style="font-size:30px;line-height:1">${v.toFixed(1)}</span>`).join('')}</div><p>新闻价值和内容价值的数字，按分档逐级变浓，6 分以下是灰色。</p></div>
+    <div><b>早报头条的环境光</b><div style="height:44px;border-radius:8px;background:radial-gradient(60% 120% at 30% 50%, color-mix(in oklab, var(--c-ai1) 16%, transparent), transparent 70%), radial-gradient(50% 120% at 70% 50%, color-mix(in oklab, var(--c-ai2) 14%, transparent), transparent 70%)"></div><p>头条海报背后一层极淡的光，取自渐变的两种颜色。</p></div>`;
+  DMR.ensureDefs();
+})();</script>
+</body></html>

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>字体 · 视觉精修定稿</title><link rel="stylesheet" href="assets/fonts.css"><link rel="stylesheet" href="assets/site.css"><link rel="stylesheet" href="assets/dm.css"><script>try{var t=localStorage.getItem('dorami-refine2-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}</script></head><body>
+<header class="top"><div class="top-in"><a class="brand" href="./"><img src="assets/logos/dorami.png" alt="">哆啦美<span>视觉精修 · 定稿</span></a><nav class="nav" aria-label="定稿目录"><a href="./" class="">总览</a><a href="type.html" class="on" aria-current="page"><b>01</b>字体</a><a href="color.html" class=""><b>02</b>色彩</a><a href="reader.html" class=""><b>03</b>阅读器</a><a href="brief.html" class=""><b>04</b>早报</a><a href="details.html" class=""><b>05</b>组件</a><a href="console.html" class=""><b>06</b>管理面</a></nav><div class="theme" role="group" aria-label="页面主题"><button data-t="light">亮</button><button data-t="dark">暗</button><button data-t="auto">跟随</button></div></div></header>
+<style>
+  .spec2 { margin-top: 18px; border-radius: 14px; background: var(--panel); box-shadow: var(--shadow); overflow: hidden; }
+  .spec2 > header { display: flex; align-items: center; gap: 12px; padding: 10px 14px 10px 16px; border-bottom: 1px solid var(--line-soft); flex-wrap: wrap; }
+  .spec2 > header b { font-size: 13px; color: var(--ink); font-weight: 500; margin-right: auto; }
+  .spec2 .sb { padding: 24px 28px 28px; }
+  .spec2 .lab { font-size: 12px; color: var(--faint); letter-spacing: 0.04em; margin-bottom: 8px; }
+  .spec2 .row + .row { margin-top: 26px; padding-top: 22px; border-top: 1px solid var(--line-soft); }
+  .fallback-on .dm { --f-serif: "Songti SC", "Microsoft YaHei UI", "Microsoft YaHei", serif; --f-score: "Songti SC", "Times New Roman", serif; }
+</style>
+<main class="wrap">
+  <header class="head">
+    <div class="eyebrow"><b>01 字体</b><span>定稿</span><span>含 #176 的 W0a + W0b</span></div>
+    <h1 class="title">字体：两族字体，自托管，内网也一样</h1>
+    <p class="lede">界面用系统黑体（西文在前），标题和分数用自托管的思源宋体。字体文件随前端构建打包，和页面同源发出，不请求 Google Fonts 等任何外部字体域名，所以公司内网和公网看到的是同一套字形。这一页的宋体也是内嵌在页面里的子集，打不开 Google Fonts 的网络里显示一样。</p>
+    <div class="facts"><span>界面<b>系统黑体</b></span><span>标题 / 分数<b>思源宋体 600 · 900（自托管）</b></span><span>字重<b>400 / 600，海报头条 900</b></span><span>最小字号<b>12px</b></span></div>
+  </header>
+
+  <section class="s">
+    <h2>样张</h2>
+    <p>勾选「模拟字体没加载」，看自托管字体还没下载完、或加载失败时的回退效果：Mac 落到宋体-简，Windows 落到雅黑，都不会落到没有粗体的中易宋体。</p>
+    <div class="spec2" id="spec">
+      <header><b>Dorami Serif · 思源宋体</b><label style="display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);cursor:pointer"><input type="checkbox" id="fb-toggle"> 模拟字体没加载</label></header>
+      <div class="sb dm" data-follow data-pal="porcelain" style="background:transparent" id="m-spec"></div>
+    </div>
+  </section>
+
+  <section class="s">
+    <h2>字体怎么送到读者那里</h2>
+    <div class="tw"><table class="t">
+      <thead><tr><th>环节</th><th>做法</th></tr></thead>
+      <tbody>
+        <tr><td class="k">字体来源</td><td>Google Fonts 仓库里的思源宋体可变字体（Noto Serif SC，SIL OFL 1.1），文件和来源提交号一起记录在仓库里</td></tr>
+        <tr><td class="k">生成</td><td>用脚本实例化出 600、900 两个静态字重，按常用字频分成 101 片 WOFF2，每片声明 <code>unicode-range</code>，覆盖字库全部 30928 个字符，不只截样稿用到的字</td></tr>
+        <tr><td class="k">体积</td><td>每个字重全部分片约 3.3MB，两档合计约 6.5MB，进仓库、进镜像；浏览器只下载页面用到的分片，一期早报的标题约 17 片、0.75MB，之后长缓存</td></tr>
+        <tr><td class="k">发布</td><td>放在前端静态资源里，与页面同源；内网构建原样打包，不访问外部网络；文件名带版本，nginx 给长缓存</td></tr>
+        <tr><td class="k">回退</td><td><code>font-display: swap</code>；没加载完时 Mac 用宋体-简，Windows 用雅黑</td></tr>
+        <tr><td class="k">界面黑体</td><td>不自托管，按 #176 的门槛：Windows 实机验收发现粘连、层级难辨或截断时再议</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="s">
+    <h2>字号与字重</h2>
+    <div class="scale dm" id="scale" data-follow data-pal="porcelain" style="background:var(--panel)"></div>
+    <ul class="list">
+      <li><b>字重只用 400 和 600。</b>雅黑没有 500，苹方最粗到 600，这两档在两个平台上都真实存在。宋体海报头条另用 900。</li>
+      <li><b>最小 12px。</b>现在的 10–11.5px 文字（共 388 处声明）全部提到 12px 以上；只有来源的字母徽标例外。</li>
+      <li><b>中西混排：</b>中西文之间自动留空（<code>text-autospace</code>），标点挤压（<code>text-spacing-trim</code>）；日期、时间、计数不加空。</li>
+      <li><b>数字：</b>分数用宋体齐线数字；其余计数、时间用界面黑体的等宽数字（<code>tabular-nums</code>）。等宽字体只留给代码和 ID。</li>
+    </ul>
+  </section>
+
+  <section class="s">
+    <h2>与 #176 的关系</h2>
+    <p>这一波实现 #176 的 W0a 与 W0b，合入后关闭 #176。逐条对照见<a href="https://claude.ai/artifact/RHKTd2n33TZa6b5HDqSFgK" target="_blank" rel="noopener">提案 01 页的对照表</a>。验收仍按 #176：Windows 10 / 11、Chrome / Edge、100% / 125% / 150% 缩放实机看过再发布。</p>
+  </section>
+</main>
+<div class="wrap"><nav class="pager"><a href="./"><span>上一篇</span><b>总览</b></a><a class="next" href="color.html"><span>下一篇</span><b>02 色彩</b></a></nav><p class="foot">样页数据来自本地库副本（2026-09-28 快照），经产品自身接口导出；标题字体为思源宋体子集，内嵌在页面里，不请求任何外部字体域名。</p></div><script src="assets/data.js"></script><script src="assets/dm.js"></script><script src="assets/site.js"></script><script>(function () {
+  const D = window.DM, A = D.article, sec = D.brief.sections;
+  const spec = document.getElementById('m-spec');
+  spec.innerHTML = `
+    <div class="row"><div class="lab">海报头条 · 900</div><div style="font:900 52px/1.16 var(--f-serif);color:var(--c-ink)">${DMR.esc(sec[1].items[0].title)}</div></div>
+    <div class="row"><div class="lab">文章标题 · 600 · 30px</div><h1 class="art-title" style="margin:0">${DMR.esc(A.title)}</h1></div>
+    <div class="row"><div class="lab">早报条目 · 600 · 21px</div><div style="font:600 21px/1.5 var(--f-serif);color:var(--c-ink)">${DMR.esc(sec[0].items[0].title)}</div></div>
+    <div class="row"><div class="lab">分数 · 宋体齐线数字 + AI 渐变分档</div><div style="display:flex;align-items:baseline;gap:28px;flex-wrap:wrap">
+      ${[9.3, 8.7, 7.6, 6.2, 4.6].map((v) => `<span style="display:inline-flex;flex-direction:column;gap:4px"><span class="score ${DMR.tier(v)}" style="font-size:44px;line-height:1">${v.toFixed(1)}</span><span style="font-size:12px;color:var(--c-faint)">${v >= 9 ? '9 以上' : v >= 6 ? Math.floor(v) + ' 分档' : '6 以下'}</span></span>`).join('')}</div></div>
+    <div class="row"><div class="lab">正文 · 系统黑体 17px</div><div class="body" style="margin:0;padding:0;border:0;max-width:616px">${A.body.filter((b) => b.startsWith('<p>')).slice(2, 4).join('')}</div></div>`;
+  document.getElementById('fb-toggle').addEventListener('change', (e) => document.getElementById('spec').classList.toggle('fallback-on', e.target.checked));
+  const rows = [
+    ['60', '早报海报头条（900，此处缩小显示）', `<span style="font:900 38px/1.15 var(--f-serif)">${DMR.esc(sec[1].items[1].title)}</span>`],
+    ['44', '分数大字', '<span class="score t3" style="font-size:44px;line-height:1">8.7</span>'],
+    ['30', '文章标题', `<span style="font:600 26px/1.3 var(--f-serif)">${DMR.esc(A.title)}</span>`],
+    ['21–22', '早报条目、板块名、正文小标题', `<span style="font:600 21px/1.4 var(--f-serif)">${DMR.esc(sec[1].items[2].title)}</span>`],
+    ['17', '长文正文', '<span style="font-size:17px">团队给每个Token加上结束标记，把教师的Token概率分布完整转换到字节级别。</span>'],
+    ['15', '列表标题、区标题', `<span style="font-size:15px;font-weight:600">${DMR.esc(D.articles[4].title)}</span>`],
+    ['14', '界面正文、源栏', '<span style="font-size:14px">OpenAI 新闻　Claude Code Changelog　量子位　The Decoder</span>'],
+    ['13', '摘要、元信息、署名', `<span style="font-size:13px;color:var(--c-muted)">${DMR.esc(D.articles[4].summary)}</span>`],
+    ['12', '最小：组头、标签、时间', '<span style="font-size:12px;color:var(--c-muted)">官方　·　模型训练 · 大语言模型　·　17 小时前</span>'],
+  ];
+  document.getElementById('scale').innerHTML = rows.map(([px, use, s]) => `<div class="scale-row"><span class="px">${px}px</span><span class="use">${use}</span><span class="sample">${s}</span></div>`).join('');
+})();</script>
+</body></html>
