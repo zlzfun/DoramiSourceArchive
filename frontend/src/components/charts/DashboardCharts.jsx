@@ -17,7 +17,7 @@ import {
 import { C_PRIMARY, AXIS, GRID, colorForEntity, fmtNumLocale as fmt } from './chartUtils';
 import { useMotionReduced } from '../../motion';
 
-const AXIS_TICK = { fill: AXIS, fontSize: 11 };
+const AXIS_TICK = { fill: AXIS, fontSize: 12 };
 
 // 统一 hover 浮层：surface-card 风格 + 令牌，暗色安全。
 function ThemedTooltip({ active, payload, label, titleKey, colorFor }) {
@@ -30,7 +30,7 @@ function ThemedTooltip({ active, payload, label, titleKey, colorFor }) {
   if (rows.length === 0) return null;
   return (
     <div className="rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-[var(--dorami-card-solid)] px-3 py-2 shadow-[var(--sh-2)]">
-      <p className="mb-1 text-xs font-bold text-slate-700">{head}</p>
+      <p className="mb-1 text-xs font-semibold text-slate-700">{head}</p>
       <div className="space-y-0.5">
         {rows.map((p) => (
           <div key={p.dataKey} className="flex items-center justify-between gap-4 text-xs">
@@ -39,7 +39,7 @@ function ThemedTooltip({ active, payload, label, titleKey, colorFor }) {
               <span className="h-2 w-2 rounded-sm" style={{ background: colorFor ? colorFor(p.name) : (p.fill || p.color) }} />
               {p.name}
             </span>
-            <span className="font-bold tabular-nums text-slate-700">{fmt(p.value)}</span>
+            <span className="font-semibold tabular-nums text-slate-700">{fmt(p.value)}</span>
           </div>
         ))}
       </div>
@@ -210,7 +210,7 @@ export function BarList({ rows, nameKey, metrics, maxHeight = 248, emptyHint = '
           {rows.map((r) => (
             <div key={r[nameKey]} className="group rounded-[var(--r-sm)] px-1.5 py-1.5 transition-colors hover:bg-[var(--dorami-soft)]">
               <div className="flex items-center justify-between gap-2">
-                <span className="truncate text-xs font-bold text-slate-700" title={r[nameKey]}>{r[nameKey]}</span>
+                <span className="truncate text-xs font-semibold text-slate-700" title={r[nameKey]}>{r[nameKey]}</span>
                 <span className={`shrink-0 tiny-meta tabular-nums text-slate-500 ${alwaysShowValue ? '' : 'opacity-0 transition-opacity group-hover:opacity-100'}`}>
                   {metrics.map((m) => `${m.name} ${Number(r[m.key]) || 0}`).join(' · ')}
                 </span>

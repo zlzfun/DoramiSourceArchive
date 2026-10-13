@@ -643,7 +643,7 @@ export default function App() {
     return (
       <div className="checking-state app-shell flex min-h-screen items-center justify-center font-sans">
         <Loader2 className="mr-3 h-5 w-5 animate-spin text-blue-600" />
-        <span className="text-sm font-bold">正在检查登录状态</span>
+        <span className="text-sm font-semibold">正在检查登录状态</span>
       </div>
     );
   }
@@ -676,7 +676,7 @@ export default function App() {
     return (
       <div className="checking-state app-shell flex min-h-screen items-center justify-center font-sans">
         <Loader2 className="mr-3 h-5 w-5 animate-spin text-blue-600" />
-        <span className="text-sm font-bold">正在载入工作台</span>
+        <span className="text-sm font-semibold">正在载入工作台</span>
         {arrivalOverlay}
       </div>
     );
@@ -764,7 +764,7 @@ export default function App() {
             <button
               key={tab.id}
               onClick={() => goTab(tab.id)}
-              className={`nav-pill flex shrink-0 items-center gap-2 px-3 py-2 text-xs font-extrabold ${activeTab === tab.id ? 'nav-pill-active' : 'text-slate-500'}`}
+              className={`nav-pill flex shrink-0 items-center gap-2 px-3 py-2 text-xs font-semibold ${activeTab === tab.id ? 'nav-pill-active' : 'text-slate-500'}`}
             >
               <tab.icon className="h-4 w-4" /> {tab.label}
             </button>

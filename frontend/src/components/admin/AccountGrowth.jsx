@@ -21,7 +21,7 @@ import {
 } from 'recharts';
 import { C_PRIMARY, CHART_SLOTS, AXIS, GRID, fmtNumLocale as fmt } from '../charts/chartUtils';
 
-const AXIS_TICK = { fill: AXIS, fontSize: 11 };
+const AXIS_TICK = { fill: AXIS, fontSize: 12 };
 const C_NEW = C_PRIMARY;
 const C_TOTAL = CHART_SLOTS[1];
 
@@ -65,7 +65,7 @@ function GrowthTooltip({ active, payload }) {
   if (!row) return null;
   return (
     <div className="rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-[var(--dorami-card-solid)] px-3 py-2 shadow-[var(--sh-2)]">
-      <p className="mb-1 text-xs font-bold text-slate-700">{row.day}</p>
+      <p className="mb-1 text-xs font-semibold text-slate-700">{row.day}</p>
       <div className="space-y-0.5">
         {[['新增账户', row.new, C_NEW], ['累计账户', row.total, C_TOTAL]].map(([name, value, color]) => (
           <div key={name} className="flex items-center justify-between gap-4 text-xs">
@@ -73,7 +73,7 @@ function GrowthTooltip({ active, payload }) {
               <span className="h-2 w-2 rounded-sm" style={{ background: color }} />
               {name}
             </span>
-            <span className="font-bold tabular-nums text-slate-700">{fmt(value)}</span>
+            <span className="font-semibold tabular-nums text-slate-700">{fmt(value)}</span>
           </div>
         ))}
       </div>

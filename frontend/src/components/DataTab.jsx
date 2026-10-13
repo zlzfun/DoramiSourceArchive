@@ -749,7 +749,7 @@ export default function DataTab({
                     </tr>
                   ))
                 ) : articles.length === 0 ? (
-                  <tr><td colSpan={2 + (canSelectArticles ? 1 : 0) + 4} className="px-6 py-16 text-center font-medium text-slate-500">当前筛选条件下未查询到相关数据，试试放宽时间区间或清除筛选</td></tr>
+                  <tr><td colSpan={2 + (canSelectArticles ? 1 : 0) + 4} className="px-6 py-16 text-center text-slate-500">当前筛选条件下未查询到相关数据，试试放宽时间区间或清除筛选</td></tr>
                 ) : articles.map((article) => {
                   const isSel = drawer.open && drawer.article?.id === article.id;
                   const analysisScore = qualityScoreText(article.quality_score);

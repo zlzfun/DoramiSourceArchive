@@ -271,7 +271,7 @@ export default function CustomNodeBuilder({ showToast }) {
               <ul className="space-y-2">
                 {(preview.entries || []).map((e, i) => (
                   <li key={i} className="text-sm">
-                    <a href={e.url} target="_blank" rel="noreferrer" className="font-medium text-slate-800 hover:text-blue-600 inline-flex items-center gap-1">
+                    <a href={e.url} target="_blank" rel="noreferrer" className="text-slate-800 hover:text-blue-600 inline-flex items-center gap-1">
                       {e.title || '(无标题)'} <ExternalLink className="h-3 w-3" />
                     </a>
                     {e.method && <span className="ml-2 micro-label font-mono text-slate-500">{e.method}</span>}
@@ -298,7 +298,7 @@ export default function CustomNodeBuilder({ showToast }) {
               <li key={row.source_id} className="flex items-center gap-3 py-2.5">
                 <span className={`h-2 w-2 rounded-full ${row.is_active ? 'bg-emerald-500' : 'bg-slate-300'}`} />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium text-slate-800">{row.name}</div>
+                  <div className="truncate text-sm text-slate-800">{row.name}</div>
                   <div className="truncate text-xs text-slate-500 font-mono">{row.source_id} · {row.source_type} · {row.url}</div>
                 </div>
                 <button onClick={() => onFetchNow(row)} title="立即抓取" className="icon-btn text-blue-600"><Play className="h-4 w-4" /></button>
