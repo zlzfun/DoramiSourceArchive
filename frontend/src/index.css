@@ -4005,10 +4005,10 @@ input[type="radio"] {
   .sett-sub { font-size: 12px; font-weight: 400; color: var(--dorami-faint); margin-top: 1px; line-height: 1.6; }
   .sett-ctl { flex: none; display: flex; align-items: center; gap: 8px; }
 
-  /* 外观三态分段(紧凑白拇指;字号字重挂容器继承穿透)。
+  /* 外观三态分段(紧凑白拇指;字号挂容器继承)。带拇指的分段字重恒 400 不跳,选中靠拇指(issue #184)。
      26+3×2=32:与设置柜 M 档按钮(min-h-32)同一高度刻度(按钮尺寸统一,2026-07-24)。 */
   .sett-seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: var(--r-control);
-    background: var(--dorami-well); font-size: 12px; font-weight: 600; }
+    background: var(--dorami-well); font-size: 12px; font-weight: 400; }
   .sett-seg-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 26px;
     padding: 0 12px; border-radius: 8px; color: var(--dorami-muted); }
   .sett-seg-btn:hover:not(.is-on) { color: var(--dorami-ink-2); }
