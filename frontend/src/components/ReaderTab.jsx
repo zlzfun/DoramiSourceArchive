@@ -55,7 +55,7 @@ import { excerptOf, hostOf } from '../utils/readerText';
 import { highlightMatch } from '../utils/highlight';
 import { dayLabelOf } from '../utils/readerTime';
 import { buildListPlan } from '../utils/listPlan';
-import { formatRelativeTime, formatDateTime, formatPublishDate } from '../utils/datetime';
+import { formatRelativeTime, formatPublishDate, formatPublishDateTime } from '../utils/datetime';
 import { formatPodcastDuration, podcastListAvailabilityMeta, podcastOf } from '../utils/podcast';
 import { isCompactKind, kindChipLabel, kindFilterOptions, kindKickerLabel } from '../utils/contentKind';
 import {
@@ -281,7 +281,7 @@ export const ArticleRow = memo(function ArticleRow({
                 )}
                 <span
                   className="reader-entry-time"
-                  title={formatDateTime(article.publish_date || article.fetched_date)}
+                  title={formatPublishDateTime(article.publish_date || article.fetched_date)}
                 >
                   {formatRelativeTime(article.publish_date || article.fetched_date, '')}
                 </span>
@@ -338,7 +338,7 @@ export const ArticleRow = memo(function ArticleRow({
                 : (analysisStatus && <span className="reader-entry-score is-pending" role="status">分析中</span>)}
               <span
                 className="reader-entry-time"
-                title={formatDateTime(article.publish_date || article.fetched_date)}
+                title={formatPublishDateTime(article.publish_date || article.fetched_date)}
               >
                 {formatRelativeTime(article.publish_date || article.fetched_date, '')}
               </span>
@@ -1371,7 +1371,7 @@ export default function ReaderTab({
               <div className="reader-pane-byline">
               <div className="reader-pane-meta">
                 {activeArticle.publish_date && (
-                  <span title={formatDateTime(activeArticle.publish_date)}>
+                  <span title={formatPublishDateTime(activeArticle.publish_date)}>
                     {formatPublishDate(activeArticle.publish_date)}
                   </span>
                 )}

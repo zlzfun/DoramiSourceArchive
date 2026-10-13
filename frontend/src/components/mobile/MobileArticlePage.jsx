@@ -13,7 +13,7 @@ import PodcastExperiencePanel from '../PodcastExperiencePanel';
 import PodcastTextPanel from '../PodcastTextPanel';
 import AnalysisTagChip from '../AnalysisTagChip';
 import { PaneBodySkeleton } from '../ReaderTab';
-import { formatDateTime, formatPublishDate } from '../../utils/datetime';
+import { formatPublishDate, formatPublishDateTime } from '../../utils/datetime';
 import { formatPodcastDuration, podcastOf } from '../../utils/podcast';
 import {
   analysisStatusMeta,
@@ -155,7 +155,7 @@ export default function MobileArticlePage({
           )}
           <div className="reader-pane-meta">
             {activeArticle.publish_date && (
-              <span title={formatDateTime(activeArticle.publish_date)}>
+              <span title={formatPublishDateTime(activeArticle.publish_date)}>
                 {formatPublishDate(activeArticle.publish_date)}
               </span>
             )}

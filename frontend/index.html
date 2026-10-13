@@ -32,8 +32,13 @@
           if (localStorage.getItem('dorami-motion') === 'reduce') {
             document.documentElement.setAttribute('data-motion', 'reduce');
           }
+          // 中性色(issue #184):瓷 / 墨 / 宣,默认瓷;首帧先挂属性,防止闪一下默认色
+          var palette = localStorage.getItem('dorami-palette');
+          document.documentElement.setAttribute('data-palette',
+            palette === 'graphite' || palette === 'paper' ? palette : 'porcelain');
         } catch (e) {
           document.documentElement.setAttribute('data-theme', 'light');
+          document.documentElement.setAttribute('data-palette', 'porcelain');
         }
       })();
     </script>

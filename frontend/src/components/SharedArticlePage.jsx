@@ -3,7 +3,7 @@ import { ExternalLink, Loader2, Link2Off } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import { fetchSharedArticle } from '../api';
 import ReaderMarkdown from './ReaderMarkdown';
-import { formatDateTime } from '../utils/datetime';
+import { formatPublishDate } from '../utils/datetime';
 import { stripDuplicateLeadingHeading } from '../utils/markdownTitle';
 
 /**
@@ -71,7 +71,7 @@ export default function SharedArticlePage({ token }) {
           <div className="shared-kicker">{article.source_name}</div>
           <h1 className="shared-title">{article.title || '（无标题）'}</h1>
           <div className="shared-meta">
-            {article.publish_date && <span>{formatDateTime(article.publish_date)}</span>}
+            {article.publish_date && <span>{formatPublishDate(article.publish_date)}</span>}
             {article.source_url && (
               <a href={article.source_url} target="_blank" rel="noreferrer" className="shared-source-link">
                 查看原文 <ExternalLink className="h-3.5 w-3.5" />

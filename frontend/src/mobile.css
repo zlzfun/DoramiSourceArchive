@@ -224,8 +224,8 @@
 }
 .m-tab svg { width: 20px; height: 20px; }
 .m-tab-label { font-size: 11px; font-weight: 600; }
-.m-tab.is-on { color: var(--dorami-accent-ink); }
-.m-tab.is-on .m-tab-ic { background: var(--dorami-wash); }
+.m-tab.is-on { color: var(--dorami-ink); font-weight: 600; }  /* 选中 = 墨色 + 中性加深(issue #184) */
+.m-tab.is-on .m-tab-ic { background: var(--dorami-select); }
 
 /* ── 整页层(发现页等 push 页):盖过内容与 TabBar ── */
 .m-page {
