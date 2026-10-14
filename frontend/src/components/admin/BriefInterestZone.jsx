@@ -77,10 +77,19 @@ function ZoneState({ status, error, onRetry }) {
 
 const num = (value) => Number(value);
 
+// 「深度阅读」「播客精选」(issue #178 第三波):按内容价值入选的两个额外分区,各三枚旋钮
+const VALUE_LANES = [
+  { key: 'read', title: '深度阅读', done: '已更新深度阅读' },
+  { key: 'listen', title: '播客精选', done: '已更新播客精选' },
+];
+const VALUE_FIELDS = ['min_value', 'max_items', 'window_days'];
+const emptyValueForm = () => ({ min_value: '', max_items: '', window_days: '' });
+
 /**
- * 运维管理 → 内容 → 「早报与兴趣」区(issue #76 拍板①③):个人早报的两枚读者分发策略旋钮
- * (重大事件通道 / 订阅外兴趣)+ 兴趣目录 Top N,自「标签」子页迁入——它们是 personal_digest_*
- * 的分发策略,不是分析 worker 或目录的生产状态。三张表单卡各一枚 secondary 保存。
+ * 运维管理 → 内容 → 「早报与兴趣」区(issue #76 拍板①③):个人早报的读者分发策略旋钮
+ * (重大事件通道 / 订阅外兴趣 / issue #178 第三波的深度阅读、播客精选)+ 兴趣目录 Top N,自「标签」子页
+ * 迁入——它们是 personal_digest_* 的分发策略,不是分析 worker 或目录的生产状态。每张表单卡各一枚
+ * secondary 保存。
  * 分析配置与目录策略两组数据各自 loading / error / data:404 才显示「未接入」,其它失败可重试并
  * 保留上次快照(归并稿 P1 #7)。
  */
@@ -91,6 +100,7 @@ export default function BriefInterestZone({ showToast, refreshTick = 0 }) {
   const [breakingForm, setBreakingForm] = useState({ min_score: '', max_items: '' });
   const [unionForm, setUnionForm] = useState({ external_min_score: '', external_per_source_max: '' });
   const [limitsForm, setLimitsForm] = useState({ topic: '', industry: '', entity: '' });
+  const [valueForms, setValueForms] = useState({ read: emptyValueForm(), listen: emptyValueForm() });
   const [busy, setBusy] = useState('');
 
   const applyConfig = useCallback((data) => {
@@ -98,6 +108,11 @@ export default function BriefInterestZone({ showToast, refreshTick = 0 }) {
     const selection = data?.personal_digest_selection || {};
     setBreakingForm({ min_score: String(breaking.min_score ?? ''), max_items: String(breaking.max_items ?? '') });
     setUnionForm({ external_min_score: String(selection.external_min_score ?? ''), external_per_source_max: String(selection.external_per_source_max ?? '') });
+    const lanes = data?.personal_digest_value_lanes || {};
+    setValueForms(Object.fromEntries(VALUE_LANES.map(({ key }) => [
+      key,
+      Object.fromEntries(VALUE_FIELDS.map((field) => [field, String(lanes[key]?.[field] ?? '')])),
+    ])));
   }, []);
   const applyPolicy = useCallback((data) => {
     const limits = data?.policy?.limits || {};
@@ -171,6 +186,7 @@ export default function BriefInterestZone({ showToast, refreshTick = 0 }) {
   const breakingDirty = Boolean(breaking) && (num(breakingForm.min_score) !== num(breaking.min_score) || num(breakingForm.max_items) !== num(breaking.max_items));
   const unionDirty = Boolean(selection) && (num(unionForm.external_min_score) !== num(selection.external_min_score) || num(unionForm.external_per_source_max) !== num(selection.external_per_source_max));
   const limitsDirty = Boolean(policy.data) && ['topic', 'industry', 'entity'].some((k) => num(limitsForm[k]) !== num(limits[k]));
+  const valueLanes = config.data?.personal_digest_value_lanes;
   const loading = config.status === 'loading' || policy.status === 'loading';
 
   return (
@@ -236,6 +252,34 @@ export default function BriefInterestZone({ showToast, refreshTick = 0 }) {
         ) : (
           <ZoneState status={policy.status} error={policy.error} onRetry={loadPolicy} />
         )}
+        {valueLanes && VALUE_LANES.map(({ key, title, done }) => {
+          const lane = valueLanes[key];
+          if (!lane) return null;
+          const form = valueForms[key];
+          const dirty = VALUE_FIELDS.some((field) => num(form[field]) !== num(lane[field]));
+          return (
+            <KnobCard
+              key={key}
+              title={title}
+              stamp={num(lane.max_items) > 0 ? { label: '开启', tone: 'ok' } : { label: '关闭', tone: 'idle' }}
+              fields={[
+                { key: 'min_value', label: '内容价值门槛', min: 0, max: 10, step: 0.1 },
+                { key: 'max_items', label: '每期名额', min: 0, max: lane.max_items_limit ?? 5, step: 1 },
+                { key: 'window_days', label: '窗口天数', min: 1, max: lane.window_days_limit ?? 14, step: 1 },
+              ]}
+              form={form}
+              onChange={(k, v) => setValueForms((f) => ({ ...f, [key]: { ...f[key], [k]: v } }))}
+              meta="名额 0 = 关闭"
+              onSave={() => saveConfig(key, {
+                [`personal_digest_${key}_min_value`]: num(form.min_value),
+                [`personal_digest_${key}_max_items`]: num(form.max_items),
+                [`personal_digest_${key}_window_days`]: num(form.window_days),
+              }, done)}
+              busy={busy === key}
+              dirty={dirty}
+            />
+          );
+        })}
       </div>
     </>
   );

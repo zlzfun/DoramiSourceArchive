@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Headphones, Loader2 } from 'lucide-react';
 import {
   podcastAnalysisBasis,
   podcastAssessmentMeta,
-  qualityScoreText,
+  scoreDimensions,
+  scoreDisclaimer,
   scoreTierClass,
-  SCORE_DISCLAIMER,
 } from '../utils/analysis';
 import { motionReduced } from '../motion';
 import { requestArticleOndemand } from '../api';
@@ -22,13 +22,16 @@ const LISTEN_POLL_MS = 4000;
  *   │        │                                       │
  *   └────────┴──────────────────────────────────────┘
  *
- * 左栏一个衬线渐变大数字(新闻价值分),入场以「里程表」方式滚到分值:每一位数字住在
+ * 左栏一个衬线渐变大数字(主分),入场以「里程表」方式滚到分值:每一位数字住在
  * 固定宽度的格子里,格子内 0–9 竖条用 transform 滑到目标——无逐帧重渲染、无布局变化。
  * 渐变落在每个数字/小数点元素自身:挂在外层时 background-clip:text 画不进
  * overflow:hidden 格子里的子元素,实测数字整个消失只剩小数点。
- * 右栏两层内容叠在同一格,格式完全同构(小标 + 正文):「AI 速读」摘要层与「评分依据」
- * 层(一句理由 + 免责小字)。点数字在两层间慢速淡切,卡高由较高者撑住不跳;
- * 再点/Esc/换篇回摘要。无分数时右栏承接骨架与生成入口。桌面与移动壳共用。
+ *
+ * 双评分(issue #178 第二波):数字下方小字标出当前维度(新闻价值 / 内容价值)。有两个分时点数字
+ * 在两个维度间切换,数字沿里程表滑到另一个值,AI 速读不变;换篇回到主分。悬停或键盘聚焦数字浮出
+ * 该维度的评分依据(一句理由 + 免责小字),鼠标可以移进浮层停留;Escape 收起且不移动焦点,等悬停与焦点
+ * 都离开、或有新的悬停 / 聚焦进来时复位(codex R1-6)。触屏没有悬停,依据改为卡内常显的一行小字。此前「点数字
+ * 翻面看评分依据」的交互随之退役。无分数时右栏承接骨架与生成入口。桌面与移动壳共用。
  *
  * 文章点播(issue #124):非播客时，可点播/生成中/失败重试用卡内小胶囊（耳机图标 + 文案）；
  * 音频就绪后的播放条由 ArticleListenBar 承接，不挤进本卡。
@@ -54,10 +57,19 @@ export default function AiReadingCard({
   const podcastBasisNote = assessment?.note || (transcriptBacked
     ? 'AI 基于完整逐字稿分析，关键结论可回到原节目时间码核验'
     : 'AI 基于节目简介的初步评估，尚未分析完整音频，仅用于辅助筛选');
-  const score = article?.quality_score != null ? qualityScoreText(article.quality_score) : '';
-  const scoreTier = scoreTierClass(article?.quality_score);   // issue #54:档位挂在每位数字自身(渐变落在元素自身)
+  const dims = scoreDimensions(article);
+  const [dimKey, setDimKey] = useState(null);   // null = 主分
+  const current = dims.find((d) => d.key === dimKey) || dims[0] || null;
+  const other = dims.length > 1 ? dims.find((d) => d.key !== current.key) : null;
+  const score = current?.text || '';
+  const scoreTier = scoreTierClass(current?.value);   // issue #54:档位挂在每位数字自身(渐变落在元素自身)
   const reason = (article?.score_reason || '').trim();
-  const [showReason, setShowReason] = useState(false);
+  const tipId = useId();
+  const sideRef = useRef(null);
+  const [tipDismissed, setTipDismissed] = useState(false);
+  const tipTitle = podcast ? podcastReasonTitle : `评分依据 · ${current?.label || ''}`;
+  const tipReason = current?.reason || '';
+  const tipNote = podcast ? podcastBasisNote : scoreDisclaimer(current?.key);
   const [listenBusy, setListenBusy] = useState(false);
 
   const guide = !podcast && article?.listen_guide && typeof article.listen_guide === 'object'
@@ -79,14 +91,18 @@ export default function AiReadingCard({
     ),
   );
 
-  useEffect(() => { setShowReason(false); }, [article?.id]);
-  useEffect(() => { setListenBusy(false); }, [article?.id]);
+  useEffect(() => { setDimKey(null); setTipDismissed(false); }, [article?.id]);
   useEffect(() => {
-    if (!showReason) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') setShowReason(false); };
+    // Escape 收起评分依据:只在数字区处于悬停或焦点在其中时生效,不移动焦点。
+    const onKey = (event) => {
+      if (event.key !== 'Escape') return;
+      const side = sideRef.current;
+      if (side && (side.contains(document.activeElement) || side.matches(':hover'))) setTipDismissed(true);
+    };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [showReason]);
+  }, []);
+  useEffect(() => { setListenBusy(false); }, [article?.id]);
   useEffect(() => {
     if (!listenActive || !onArticleRefresh) return undefined;
     const timer = window.setInterval(() => {
@@ -116,29 +132,51 @@ export default function AiReadingCard({
     }
   };
 
-  const canFlip = Boolean(score && summary && reason);
   // 同步来的权威初评理论上包含摘要，但即使旧/异常数据只有分数理由，也不能把理由藏掉。
   const primaryText = summary || (podcast ? reason : '');
   const primaryTitle = summary
     ? (podcast ? podcastSummaryTitle : 'AI 速读')
     : (podcast ? podcastReasonTitle : 'AI 速读');
+  // 播客无摘要时理由已作正文,不再重复成依据行。
+  const inlineReason = tipReason && !(podcast && !summary) ? tipReason : '';
   return (
-    <div className={`reader-ai-summary ${showReason ? 'is-reason' : ''}`}>
+    <div className="reader-ai-summary">
       {score && (
-        <div className="reader-ai-summary-side">
+        <div
+          ref={sideRef}
+          className={`reader-ai-summary-side ${tipDismissed ? 'is-tip-dismissed' : ''}`}
+          onMouseEnter={() => setTipDismissed(false)}
+          onFocus={() => setTipDismissed(false)}
+          onMouseLeave={(event) => {
+            if (!event.currentTarget.contains(document.activeElement)) setTipDismissed(false);
+          }}
+          onBlur={(event) => {
+            const side = event.currentTarget;
+            if (!side.contains(event.relatedTarget) && !side.matches(':hover')) setTipDismissed(false);
+          }}
+        >
           <ScoreFigure
             key={article.id}
             score={score}
             tierClass={scoreTier}
-            interactive={canFlip}
-            pressed={showReason}
-            onToggle={() => setShowReason((v) => !v)}
+            interactive={Boolean(other)}
+            label={other ? `${current.label} ${score}，点按切换到${other.label}` : `${current.label} ${score}`}
+            describedBy={tipReason || tipNote ? tipId : undefined}
+            onToggle={() => { if (other) setDimKey(other.key); }}
           />
+          <span className="reader-ai-score-dim" aria-hidden="true">{current.label}</span>
+          {(tipReason || tipNote) && (
+            <div className="reader-ai-score-tip" role="tooltip" id={tipId}>
+              <span className="reader-ai-layer-title">{tipTitle}</span>
+              {tipReason && <p className="reader-ai-layer-text">{tipReason}</p>}
+              <span className="reader-ai-layer-note">{tipNote}</span>
+            </div>
+          )}
         </div>
       )}
       <div className="reader-ai-summary-main">
         {primaryText ? (
-          <div className="reader-ai-layer reader-ai-layer-summary" aria-hidden={showReason}>
+          <div className="reader-ai-layer reader-ai-layer-summary">
             <span className="reader-ai-layer-title">{primaryTitle}</span>
             <p className="reader-ai-layer-text">{primaryText}</p>
             {podcast && (
@@ -156,16 +194,11 @@ export default function AiReadingCard({
             {podcast ? '生成节目简介导读' : '生成本文要点速读'}
           </button>
         ) : null}
-        {canFlip && (
-          <div className="reader-ai-layer reader-ai-layer-reason" aria-hidden={!showReason}>
-            <span className="reader-ai-layer-title">{podcast ? podcastReasonTitle : '评分依据'}</span>
-            {reason && <p className="reader-ai-layer-text">{reason}</p>}
-            <span className="reader-ai-layer-note">
-              {podcast
-                ? podcastBasisNote
-                : SCORE_DISCLAIMER}
-            </span>
-          </div>
+        {score && inlineReason && (
+          <p className="reader-ai-reason-inline">
+            <span className="reader-ai-reason-inline-label">{current.label}依据</span>
+            {inlineReason}
+          </p>
         )}
         {showListenAction && (
           <div className="reader-ai-listen-action">
@@ -209,8 +242,8 @@ export default function AiReadingCard({
 const DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
 
 
-/** 衬线渐变大数字:里程表式入场(每位数字在定宽格内滑到位),点按在摘要/评分依据间切换。 */
-function ScoreFigure({ score, tierClass = '', interactive, pressed, onToggle }) {
+/** 衬线渐变大数字:里程表式入场(每位数字在定宽格内滑到位),有两个分时点按切换维度(数字滑到另一个值)。 */
+function ScoreFigure({ score, tierClass = '', interactive, label, describedBy, onToggle }) {
   const reduced = motionReduced();
   // 先以 0 挂载,下一帧再落到目标值,让 CSS transition 接管滑动;减少动画时直落。
   const [armed, setArmed] = useState(reduced);
@@ -225,10 +258,9 @@ function ScoreFigure({ score, tierClass = '', interactive, pressed, onToggle }) 
     <button
       type="button"
       className={`reader-ai-score-btn ${interactive ? 'is-interactive' : ''}`}
-      aria-pressed={pressed}
-      disabled={!interactive}
+      aria-label={label}
+      aria-describedby={describedBy}
       onClick={() => { if (interactive) onToggle?.(); }}
-      title={interactive ? (pressed ? '返回摘要' : '查看评分依据') : undefined}
     >
       <span className="reader-ai-odo" aria-hidden="true">
         {chars.split('').map((ch, i) => {
@@ -247,7 +279,6 @@ function ScoreFigure({ score, tierClass = '', interactive, pressed, onToggle }) 
           );
         })}
       </span>
-      <span className="sr-only">{score}</span>
     </button>
   );
 }

@@ -51,7 +51,7 @@ Each parking-lot source should still have a short reason so it can be revisited 
    - `source_url`
 4. Fill classification metadata:
    - `provenance_tier`
-   - `content_tags`
+   - `default_kind`(仅当该源每一条都确定属于论文 / 版本更新 / 项目 / 汇编时填;源级 `content_tags` 已于 issue #178 退役)
    - `signal_strength`
    - `noise_risk`
    - `fetch_reliability`
@@ -90,7 +90,7 @@ Use these status values:
 - source_channel:
 - source_url:
 - provenance_tier:
-- content_tags:
+- default_kind:
 - signal_strength:
 - noise_risk:
 - fetch_reliability:

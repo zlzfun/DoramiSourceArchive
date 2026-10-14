@@ -534,6 +534,50 @@ def test_legacy_v2_analysis_payload_clears_newer_provenance_fields(tmp_path):
         assert record.analysis_diagnostics_json == "{}"
 
 
+def test_content_value_fields_sync_and_legacy_payload_clears_them(tmp_path):
+    """issue #178 第二波:内容价值四项随分析流传到接收端;旧版生产者的结果不带它们时置空。"""
+    producer = _sink(tmp_path, "producer-content-value.db")
+    consumer = _sink(tmp_path, "consumer-content-value.db")
+    authority_id = "producer-cv"
+    now = "2026-10-12T02:00:00+00:00"
+    with Session(producer.engine) as session:
+        article = _article()
+        session.add(article)
+        session.flush()
+        row = ArticleAnalysisRecord(
+            article_id=article.id, status="succeeded", quality_score=5.2,
+            content_kind="paper", content_value=7.6, content_value_reason="方法新",
+            content_value_version="content-value-v2", pending_scope="content_value",
+            content_hash=compute_content_hash(article), created_at=now, updated_at=now,
+        )
+        session.add(row)
+        session.commit()
+        payload = archive_sync_v2._analysis_payload(session, row)
+    assert (payload["content_kind"], payload["content_value"], payload["content_value_version"]) == (
+        "paper", 7.6, "content-value-v2",
+    )
+    assert "pending_scope" not in payload   # 本地任务状态,不外传
+
+    with Session(consumer.engine) as session:
+        article = _article()
+        article.analysis_authority_id = authority_id
+        session.add(article)
+        session.commit()
+        archive_sync_v2._apply_analyses(session, [{"revision": "1", "payload": payload}], authority_id)
+        session.commit()
+        record = session.get(ArticleAnalysisRecord, article.id)
+        assert (record.content_value, record.content_value_reason) == (7.6, "方法新")
+        assert record.pending_scope == ""
+
+        new_fields = {"content_kind", "content_value", "content_value_reason", "content_value_version"}
+        legacy = {key: value for key, value in payload.items() if key not in new_fields}
+        archive_sync_v2._apply_analyses(session, [{"revision": "2", "payload": legacy}], authority_id)
+        session.commit()
+        record = session.get(ArticleAnalysisRecord, article.id)
+        assert record.quality_score == 5.2
+        assert (record.content_kind, record.content_value, record.content_value_version) == (None, None, "")
+
+
 def test_new_article_body_hides_old_authority_analysis_until_matching_result_arrives(tmp_path):
     producer = _sink(tmp_path, "producer-body-revision.db")
     consumer = _sink(tmp_path, "consumer-body-revision.db")
@@ -2714,3 +2758,180 @@ def test_article_and_analysis_committed_after_generation_wait_for_next_pull(tmp_
         )
         assert article is not None
         assert analysis is not None and analysis.quality_score == 9.1
+
+
+def _prepare_and_pull(consumer, producer, remote, tmp_path, *, label):
+    base_url = "https://remote.test"
+    with Session(consumer.engine) as session:
+        remote_sync_service.prepare_transaction_revision_consumer(
+            session,
+            base_url=base_url,
+            username="admin",
+            authority_id=archive_sync_v2.producer_authority_id(producer.engine),
+            schema_version=archive_sync_v2.SCHEMA_VERSION,
+            prepared_at="2026-10-12T00:00:00+00:00",
+            capabilities=list(archive_sync_v2.ADVERTISED_CAPABILITIES),
+        )
+        session.commit()
+    target = remote_sync_service.load_sync_state(consumer.engine)["targets"][base_url]
+    return asyncio.run(remote_sync_service.run_pull_v2(
+        engine=consumer.engine,
+        base_url=base_url,
+        username="admin",
+        password="secret",
+        media_root=tmp_path / f"{label}-media",
+        checkpoints=target.get("v2_streams") or {},
+        on_stream_complete=lambda stream, checkpoint: remote_sync_service.record_v2_stream_success(
+            consumer.engine, base_url=base_url, username="admin", stream=stream,
+            checkpoint=checkpoint, synced_at="2026-10-12T00:00:00+00:00",
+        ),
+        transport=httpx.MockTransport(remote.handler),
+    ))
+
+
+def test_upgraded_receiver_refetches_analyses_dropped_by_its_old_version(tmp_path):
+    """issue #178 第二波:旧版接收端丢掉了内容价值字段、同步进度已越过那些行;升级后第一次同步自动整流重拉
+    分析流把它们补回来,其它流仍是增量。"""
+    producer = _sink(tmp_path, "producer-refetch.db")
+    consumer = _sink(tmp_path, "consumer-refetch.db")
+    now = "2026-10-12T00:00:00+00:00"
+    with Session(producer.engine) as session:
+        session.add(_source())
+        article = _article()
+        session.add(article)
+        session.flush()
+        session.add(ArticleAnalysisRecord(
+            article_id=article.id, status="succeeded", tagging_status="succeeded", quality_score=5.2,
+            score_reason="常规论文", summary="摘要", content_kind="paper", content_value=7.6,
+            content_value_reason="方法新", content_value_version="content-value-v2",
+            content_hash=compute_content_hash(article), created_at=now, updated_at=now,
+        ))
+        session.commit()
+    remote = _V2Remote(producer)
+    _prepare_and_pull(consumer, producer, remote, tmp_path, label="first")
+    base_url = "https://remote.test"
+    with Session(consumer.engine) as session:
+        assert session.get(ArticleAnalysisRecord, "article-1").content_value == 7.6
+        # 模拟「旧版本拉过」:内容价值字段被丢掉、记账里没有字段代次,但分析流 checkpoint 已越过这一行
+        record = session.get(ArticleAnalysisRecord, "article-1")
+        record.content_kind, record.content_value = None, None
+        record.content_value_reason, record.content_value_version = "", ""
+        session.add(record)
+        row = session.get(AppSettingRecord, remote_sync_service.REMOTE_SYNC_STATE_KEY)
+        state = json.loads(row.value)
+        assert state["targets"][base_url]["v2_analysis_payload_generation"] == 2   # 首次 rebase 即记当前代次
+        state["targets"][base_url].pop("v2_analysis_payload_generation")
+        assert "analyses" in state["targets"][base_url]["v2_streams"]
+        row.value = json.dumps(state, ensure_ascii=False)
+        session.add(row)
+        session.commit()
+
+    def states(stream):
+        with Session(consumer.engine) as session:
+            return {
+                (row.identity, int(row.revision))
+                for row in session.exec(select(ArchiveSyncEntityStateRecord).where(
+                    ArchiveSyncEntityStateRecord.stream == stream
+                )).all()
+            }
+
+    article_states_before = states("articles")
+    analysis_states_before = states("analyses")
+    assert analysis_states_before
+    remote.requested_params.clear()
+    result = _prepare_and_pull(consumer, producer, remote, tmp_path, label="upgraded")
+    # 补拉清掉了分析流的逐行应用记账(否则同版本号的行会被当旧数据跳过),拉取后重建;文章流记账不动
+    assert states("analyses") == analysis_states_before
+    assert states("articles") == article_states_before
+    params = dict(remote.requested_params)
+    assert "since" not in params["analyses"] or not params["analyses"]["since"]   # 分析流整流重拉
+    assert params["articles"].get("since")                                         # 其它流仍是增量
+    assert result["streams"]["analyses"]["count"] == 1
+    assert result["streams"]["articles"]["count"] == 0
+    with Session(consumer.engine) as session:
+        record = session.get(ArticleAnalysisRecord, "article-1")
+        assert (record.content_value, record.content_value_version) == (7.6, "content-value-v2")
+    target = remote_sync_service.load_sync_state(consumer.engine)["targets"][base_url]
+    assert target["v2_analysis_payload_generation"] == 2
+    assert "analyses" in target["v2_streams"]   # 补拉完成后 checkpoint 重新建立
+
+    # 再同步一次:代次已是当前,不再重拉
+    remote.requested_params.clear()
+    again = _prepare_and_pull(consumer, producer, remote, tmp_path, label="again")
+    assert dict(remote.requested_params)["analyses"].get("since")
+    assert again["streams"]["analyses"]["count"] == 0
+
+
+def test_refetch_that_fails_midway_resumes_on_the_next_sync(tmp_path):
+    """补拉中途失败:checkpoint 仍空,下次从头重新下载,已应用的行被记账跳过,剩下的行补齐(检视 R4-1)。"""
+    producer = _sink(tmp_path, "producer-refetch-fail.db")
+    consumer = _sink(tmp_path, "consumer-refetch-fail.db")
+    now = "2026-10-12T00:00:00+00:00"
+    ids = ["a-1", "a-2", "a-3"]
+    with Session(producer.engine) as session:
+        session.add(_source())
+        for article_id in ids:
+            article = _article(article_id, content=f"body {article_id}")
+            session.add(article)
+            session.flush()
+            session.add(ArticleAnalysisRecord(
+                article_id=article_id, status="succeeded", tagging_status="succeeded", quality_score=5.0,
+                summary="摘要", content_kind="paper", content_value=7.0, content_value_reason="方法新",
+                content_value_version="content-value-v2", content_hash=compute_content_hash(article),
+                created_at=now, updated_at=now,
+            ))
+        session.commit()
+    remote = _V2Remote(producer)
+    base_url = "https://remote.test"
+    _prepare_and_pull(consumer, producer, remote, tmp_path, label="first")
+    with Session(consumer.engine) as session:
+        for article_id in ids:
+            record = session.get(ArticleAnalysisRecord, article_id)
+            record.content_value, record.content_value_version = None, ""
+            session.add(record)
+        row = session.get(AppSettingRecord, remote_sync_service.REMOTE_SYNC_STATE_KEY)
+        state = json.loads(row.value)
+        state["targets"][base_url].pop("v2_analysis_payload_generation")
+        row.value = json.dumps(state, ensure_ascii=False)
+        session.add(row)
+        session.commit()
+
+    def pull(label, handler):
+        target = remote_sync_service.load_sync_state(consumer.engine)["targets"][base_url]
+        return asyncio.run(remote_sync_service.run_pull_v2(
+            engine=consumer.engine, base_url=base_url, username="admin", password="secret",
+            media_root=tmp_path / f"{label}-media", page_size=2,
+            checkpoints=target.get("v2_streams") or {},
+            on_stream_complete=lambda stream, checkpoint: remote_sync_service.record_v2_stream_success(
+                consumer.engine, base_url=base_url, username="admin", stream=stream,
+                checkpoint=checkpoint, synced_at=now,
+            ),
+            transport=httpx.MockTransport(handler),
+        ))
+
+    def failing_second_analyses_page(request):
+        if request.url.path.endswith("/analyses.jsonl") and request.url.params.get("after"):
+            return httpx.Response(500, json={"detail": "network glitch"})
+        return remote.handler(request)
+
+    with Session(consumer.engine) as session:
+        remote_sync_service.prepare_transaction_revision_consumer(
+            session, base_url=base_url, username="admin",
+            authority_id=archive_sync_v2.producer_authority_id(producer.engine),
+            schema_version=archive_sync_v2.SCHEMA_VERSION, prepared_at=now,
+            capabilities=list(archive_sync_v2.ADVERTISED_CAPABILITIES),
+        )
+        session.commit()
+    with pytest.raises(remote_sync_service.RemoteSyncError):
+        pull("broken", failing_second_analyses_page)
+    target = remote_sync_service.load_sync_state(consumer.engine)["targets"][base_url]
+    assert "analyses" not in target["v2_streams"]
+    with Session(consumer.engine) as session:
+        restored = [aid for aid in ids if session.get(ArticleAnalysisRecord, aid).content_value is not None]
+    assert len(restored) == 2   # 第一页已提交
+
+    result = _prepare_and_pull(consumer, producer, remote, tmp_path, label="retry")
+    assert result["streams"]["analyses"]["count"] == 3          # 从头重新下载
+    with Session(consumer.engine) as session:
+        assert all(session.get(ArticleAnalysisRecord, aid).content_value == 7.0 for aid in ids)
+    assert "analyses" in remote_sync_service.load_sync_state(consumer.engine)["targets"][base_url]["v2_streams"]

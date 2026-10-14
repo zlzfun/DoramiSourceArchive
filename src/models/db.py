@@ -304,6 +304,29 @@ class ArticleAnalysisRecord(SQLModel, table=True):
     )
     dimension_scores_json: str = Field(default="{}", description="内部版本化评分维度，不对外展示")
     score_reason: str = Field(default="", description="一句话评分理由（≤40 字，分数注脚，不复述内容）")
+    # 内容价值(issue #178 第二波):值不值得花时间读完 / 听完,与新闻价值相互独立,标准随内容类型变化。
+    # 独立版本号:content_value_version 不等于当前尺子版本即视为没有内容价值(缺失即缺席),
+    # 新闻价值的 scoring_version 不受它影响。取值约束在服务层校验(加表级 CHECK 要重建表、丢触发器)。
+    content_kind: Optional[str] = Field(
+        default=None,
+        description="模型给出的内容类型(news/paper/tutorial/opinion/release/project/digest);规则能判时以规则为准",
+    )
+    content_value: Optional[float] = Field(default=None, ge=1.0, le=10.0, description="内容价值分")
+    content_value_reason: str = Field(
+        default="",
+        sa_column_kwargs={"server_default": text("''")},
+        description="一句话内容价值依据(≤40 字,分数注脚,不复述内容)",
+    )
+    content_value_version: str = Field(
+        default="",
+        sa_column_kwargs={"server_default": text("''")},
+        description="内容价值尺子版本;不等于当前版本即视为缺失",
+    )
+    pending_scope: str = Field(
+        default="",
+        sa_column_kwargs={"server_default": text("''")},
+        description="待处理任务的提交范围:空=完整分析;content_value=只补内容价值(不动新闻分、摘要、标签)",
+    )
     summary: str = Field(default="", description="文章唯一摘要：速读卡 / 个人早报 / 列表 summary_zh 投影共用")
     content_genre: Optional[str] = Field(default=None, description="独立受控内容性质")
     content_features_json: str = Field(default="[]", description="附加内容特征 JSON")
@@ -966,7 +989,9 @@ class SourceConfigRecord(SQLModel, table=True):
     name: str = Field(index=True, description="数据源展示名称")
     source_type: str = Field(default="rss", index=True, description="数据源类型，如 rss/wechat/github/arxiv")
     url: str = Field(default="", description="数据源入口 URL")
-    category: str = Field(default="", index=True, description="业务分类，如 official/news/paper/community")
+    # 已退役(issue #178):准入状态拆到 admission_status,来源角色由 source_naming.source_role 推导。
+    # 列暂留(表上挂着归档同步触发器,SQLite 删列要重建表),不再读写;物理删除留给后续结构清理。
+    category: str = Field(default="", index=True, description="已退役,不再读写")
     fetcher_id: str = Field(default="", index=True, description="绑定的抓取器 ID，通用源可为空或使用 generic_rss")
     description: str = Field(default="", description="数据源说明")
     source_owner: str = Field(default="", index=True, description="来源主体，如 openai/anthropic/google")
@@ -975,10 +1000,17 @@ class SourceConfigRecord(SQLModel, table=True):
     source_channel: str = Field(default="", index=True, description="承载渠道，如 blog/newsroom/changelog/github_release")
     base_url: str = Field(default="", description="审查时记录的候选源 base URL")
     provenance_tier: str = Field(default="", index=True, description="来源直接性分层，如 tier0_primary/tier1_curated")
-    content_tags_json: str = Field(default="[]", description="内容标签 JSON 数组")
+    content_tags_json: str = Field(default="[]", description="已退役(issue #178),不再读写")
     signal_strength: str = Field(default="", index=True, description="信号强度判断")
     noise_risk: str = Field(default="", index=True, description="噪声风险判断")
     fetch_reliability: str = Field(default="", index=True, description="抓取可靠性判断")
+
+    # 准入状态(issue #178):admitted 正式 | incubating 观察期(管理面「观察」徽记)。
+    admission_status: str = Field(
+        default="admitted",
+        sa_column_kwargs={"server_default": text("'admitted'")},
+        description="准入状态:admitted 正式 | incubating 观察期",
+    )
 
     # 用户自定源(v3.40):非空=读者自助添加、未列入公共目录的 RSS 创建者;空=平台源(admin 管理)。
     # 仅作身份标记与溯源,不承担权限差异(删除语义="退订+无人订阅才物理删",与 owner 无关)。
@@ -1811,7 +1843,7 @@ class PersonalDigestItemRecord(SQLModel, table=True):
         Index("ix_personal_digest_items_article_id", "article_id"),
         CheckConstraint("position >= 0", name="ck_personal_digest_items_position"),
         CheckConstraint(
-            "selection_lane IN ('interest','quality','breaking')",
+            "selection_lane IN ('interest','quality','breaking','read','listen')",
             name="ck_personal_digest_items_selection_lane",
         ),
         CheckConstraint(
@@ -1834,7 +1866,9 @@ class PersonalDigestItemRecord(SQLModel, table=True):
     )
     position: int = Field(ge=0)
     section: str = Field(default="")
-    selection_lane: str = Field(description="interest/quality/breaking(v3.50 重大事件通道)")
+    selection_lane: str = Field(
+        description="interest/quality/breaking(v3.50 重大事件通道)/read/listen(issue #178「深度阅读」「播客精选」)"
+    )
     quality_score_snapshot: Optional[float] = Field(default=None, ge=1.0, le=10.0)
     matched_interest_codes_json: str = Field(default="[]")
     ranking_features_json: str = Field(default="{}", description="内部排障特征，不是对外个人评分")

@@ -16,7 +16,6 @@ import {
   Tags,
   UserRound,
   X,
-  Zap,
   Podcast,
   Newspaper,
   BarChart3,
@@ -26,6 +25,7 @@ import { useLayerHistory } from '../../hooks/useLayerHistory';
 import { articleDeepLink } from '../../utils/shareLink';
 import { ArticleRow, ArticleCardsSkeleton } from '../ReaderTab';
 import { buildListPlan } from '../../utils/listPlan';
+import { kindFilterOptions } from '../../utils/contentKind';
 import SocialFlow from '../SocialFlow';
 import DiscoverPage from '../DiscoverPage';
 import AnnouncementBanner from '../AnnouncementBanner';
@@ -85,8 +85,9 @@ export default function MobileReader({
     shapePinning, handleSubscribeShape,
     // 视图 / 导航
     mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover, discoverShape, setDiscoverShape,
-    bulletinView, socialView, podcastView, listTitle, listSubtitle,
+    socialView, podcastView, listTitle, listSubtitle,
     goView, goSource, goTag, goFavorites,
+    kindFilter, setKindFilter, kindFacetItems,
     scope, setAxis, toggleFavoriteScope, activeTagId, activeTagName, interestGroups, hasInterests, refreshInterests,
     interestAxisEnabled, showUnsubscribedMark, showInterestHit,
     activeSourceHidden, activeUnsubscribed, grouping,
@@ -126,7 +127,8 @@ export default function MobileReader({
     selectArticle(null);
   }, [selectArticle, mode, setBriefReturn, setTab]);
 
-  // 底部 Tab:article|podcast|bulletin|social 与容器 mode 一一对应,me 是移动端独有落点
+  // 底部 Tab:article|podcast|social 与容器 mode 一一对应,me 是移动端独有落点
+  // (issue #178 撤销「动态」,版本更新并入文章列表的紧凑行)
   const onboardingRequired = personalDigestEnabled
     && account?.role === 'user'
     && account?.interest_onboarding_completed === false;
@@ -140,6 +142,10 @@ export default function MobileReader({
   const listPlan = useMemo(
     () => buildListPlan(articles, grouping),
     [articles, grouping],
+  );
+  const kindOptions = useMemo(
+    () => (mode === 'article' ? kindFilterOptions(kindFacetItems, kindFilter) : []),
+    [mode, kindFacetItems, kindFilter],
   );
   const subscribeSourceById = (sid) => handleSubscribe(sourceMap[sid] || { source_id: sid, name: sourceNameMap[sid] || sid });
 
@@ -252,16 +258,19 @@ export default function MobileReader({
               >
                 <Star fill={favOnly ? 'currentColor' : 'none'} />
               </button>
-              {/* 全部标读两根轴同一枚钮(hook 内按轴分流:推水位 / 逐篇写行) */}
-              <button
-                type="button"
-                onClick={handleMarkAllRead}
-                disabled={markingRead}
-                aria-label={activeSourceId ? '本来源全部标为已读' : scope.axis === 'interest' ? '兴趣全部标为已读' : '本容器全部标为已读'}
-                className="m-iconbtn"
-              >
-                {markingRead ? <Loader2 className="animate-spin" /> : <CheckCheck />}
-              </button>
+              {/* 全部标读两根轴同一枚钮(hook 内按轴分流:推水位 / 逐篇写行);
+                  按内容类型筛选时收起——推水位会连同没显示的其它类型一并标掉 */}
+              {!kindFilter && (
+                <button
+                  type="button"
+                  onClick={handleMarkAllRead}
+                  disabled={markingRead}
+                  aria-label={activeSourceId ? '本来源全部标为已读' : scope.axis === 'interest' ? '兴趣全部标为已读' : '本容器全部标为已读'}
+                  className="m-iconbtn"
+                >
+                  {markingRead ? <Loader2 className="animate-spin" /> : <CheckCheck />}
+                </button>
+              )}
             </>
           )}
           <button
@@ -367,6 +376,30 @@ export default function MobileReader({
           </div>
         ) : (
           <div className="m-list" ref={listRef}>
+            {/* 内容类型筛选带(issue #178):与桌面同一组件语法,放在列表顶而非顶栏(顶栏须保持单行) */}
+            {kindOptions.length > 0 && (
+              <div className="reader-kind-band m-kind-band" role="group" aria-label="按内容类型筛选">
+                <button
+                  type="button"
+                  aria-pressed={!kindFilter}
+                  onClick={() => setKindFilter('')}
+                  className={`reader-kind-chip ${!kindFilter ? 'is-on' : ''}`}
+                >
+                  全部类型
+                </button>
+                {kindOptions.map((option) => (
+                  <button
+                    key={option.kind}
+                    type="button"
+                    aria-pressed={kindFilter === option.kind}
+                    onClick={() => setKindFilter(kindFilter === option.kind ? '' : option.kind)}
+                    className={`reader-kind-chip ${kindFilter === option.kind ? 'is-on' : ''}`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            )}
             {/* 预览未订阅源:显眼订阅横幅(Folo 的「＋ 订阅」条),订阅成功即消失 */}
             {activeUnsubscribed && (
               <button
@@ -426,11 +459,13 @@ export default function MobileReader({
                         ? '没有未读内容，都看完啦'
                         : activeSourceId
                           ? '该来源暂无内容'
-                          : (mode === 'bulletin' ? '暂无动态' : mode === 'podcast' ? '暂无播客' : '暂无文章')}
+                          : kindFilter
+                            ? '当前范围没有这一类内容'
+                          : (mode === 'podcast' ? '暂无播客' : '暂无文章')}
                 </span>
               </div>
             ) : (
-              <div key={`${activeSourceId ?? '__all__'}|${activeTagId ?? ''}|${mode}|${scope.axis}${scope.favorite ? '+f' : ''}`}>
+              <div key={`${activeSourceId ?? '__all__'}|${activeTagId ?? ''}|${mode}|${scope.axis}${scope.favorite ? '+f' : ''}|${kindFilter}`}>
                 {listPlan.map((entry) => {
                   const { article } = entry;
                   return (
@@ -440,7 +475,6 @@ export default function MobileReader({
                         active={false}
                         isUnread={isArticleUnread(article)}
                         isFav={favoriteIds.has(article.id)}
-                        entryBulletin={bulletinView}
                         entryPodcast={podcastView}
                         showLabel={entry.showLabel}
                         dayKey={entry.dayKey}
@@ -478,7 +512,6 @@ export default function MobileReader({
           ...(personalDigestEnabled ? [['brief', '早报', Newspaper]] : []),
           ['article', '文章', FileText],
           ['podcast', '播客', Podcast],
-          ['bulletin', '动态', Zap],
           ['social', '社交', AtSign],
           ['rankings', '榜单', BarChart3],
           ['me', '我的', UserRound],

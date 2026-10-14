@@ -94,7 +94,6 @@ class GenericPodcastRssFetcher(GenericRssFetcher):
     source_id = "generic_podcast_rss"
     content_type = "podcast_episode"
     content_shape = "podcast"
-    category = "advanced"
 
     name = "通用 Podcast RSS"
     description = "抓取 Podcast RSS 单集、音频 enclosure、时长、封面、transcript 与 chapters 元数据。"
@@ -134,7 +133,6 @@ class GenericPodcastRssFetcher(GenericRssFetcher):
             {"field": "feed_url", "label": "Podcast RSS 地址", "type": "url", "default": ""},
             {"field": "source_id", "label": "数据源 ID", "type": "text", "default": ""},
             {"field": "feed_name", "label": "节目名称", "type": "text", "default": ""},
-            {"field": "category", "label": "业务分类", "type": "text", "default": "podcast"},
             {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
         ]
 
@@ -454,7 +452,6 @@ class GenericPodcastRssFetcher(GenericRssFetcher):
             str(kwargs.get("entry_id_namespace", "")).strip() or runtime_source_id
         )
         requested_show_title = str(kwargs.get("feed_name", "")).strip()
-        category = str(kwargs.get("category", "")).strip()
         limit = self._entry_limit(kwargs.get("limit"), self.default_limit)
         if not feed_url:
             raise ValueError("Podcast RSS/Atom 地址不能为空")
@@ -527,7 +524,7 @@ class GenericPodcastRssFetcher(GenericRssFetcher):
                 has_content=bool(content_text),
                 show_title=str(show_title),
                 author=str(entry.get("author") or parsed_feed.feed.get("author") or ""),
-                tags=self._entry_tags(entry, category),
+                tags=self._entry_tags(entry),
                 guid=str(entry.get("id") or entry.get("guid") or ""),
                 summary=self._clean_text(str(entry.get("summary") or "")),
                 updated_date=(

@@ -6,6 +6,25 @@
 
 ## 进行中
 
+- ☐ **issue #178 内容分类与双评分**(方案 `docs/content-classification-plan.md`,样页 `docs/design/dorami-classification-scores-quiet.html`):
+  第一波已合入(#180):内容类型 / 事件类型读取时推导 +「动态」并入「文章」+ 类型签 / 筛选带 / 紧凑行 + 词表收口。
+  第一波补已合入(#181):`category` 拆出 `admission_status` 后退役、源级 `content_tags` 退役、条目标签不再拼入源级分类。
+  第二波(分支 `feat/issue-178-content-value`,方案 §3):文章提示词 v7 产出内容价值与内容类型、评分卡新交互、回填「仅从未分析」
+  「补内容价值」。**已上线**(v3.64.0,2026-10-13):「仅从未分析」6,394 篇与「补内容价值」763 篇都已跑完、全部成功,
+  用量与费用记录见方案 §5.5。
+  第三波 3a(分支 `feat/issue-178-distribution`,方案 §5):早报「深度阅读 / 播客精选」、播客退出新闻通道、日报论文名额改看内容类型与内容价值。
+  已随 v3.64.0 上线;三个门槛按生产只读聚合核对后都不动(方案 §5.5)。**观察期**:两个分区的空板率与每源 1 篇是否过严
+  (首期深度阅读多数读者只出 1 篇,主要被每源 1 篇挡住);日报论文名额填充率(`last_run.paper_*`),工作日常空再把论文门槛降到 6.5。
+  排队:3b 播客提示词拆分与门控改读内容价值(依赖 #97 播客黄金集,按切换日生效);3c 新闻尺子删「非新闻体裁」条款(暂缓,3a 上线后再评估)。
+  有意不做:公共日报分类字符串(神灯契约,媒体研究报道仍标「学术论文」但不占名额,改标签需先与神灯侧确认);官方观点类主分特例;
+  feed / MCP 的内容价值字段(有下游需求再加);文档站「看版本更新」配图未重拍;早报页配图未重拍;「隐藏版本更新」的记忆选项。
+  后续结构清理:`source_configs.category` / `content_tags_json` 两列已不读写,物理删除需重建表并重装归档同步触发器,攒到下次结构清理一并做;
+  归档同步 sources 流的线路兼容键 `category`(由准入状态派生)在不再支持 issue #178 之前的旧版本对端后删除。
+- ☐ **迁移环境的归档同步触发器重装不生效**(2026-10-12 第一波补盘点时发现,origin/main 上同样复现):`alembic/env.py` 跑迁移前删光
+  43 个同步触发器、跑完按理重装,实测升级后为 0,直到启动时 `DatabaseStorage` 的 `create_all` after_create 钩子才补齐。生产是
+  「迁移 → 启动」顺序且中间无写入,所以会自愈,但只跑迁移不启动(运维脚本、离线升级)的库会缺触发器。疑点:重装语句所在的事务
+  在 `transaction_per_migration=True` + 手动 `BEGIN IMMEDIATE` 下没有提交。
+
 - ☐ **issue #126 裸机部署回滚**(分支 `feat/issue-126-baremetal-rollback`,方案 `docs/baremetal-rollback-plan.md`;2026-09-21 用户拍板 §7 七项全按推荐后实现):
   运行副本版本化 release 形态 + 事务阶段 + 两级健康门告警(不自动回滚)+ `--rollback`(DB 按迁移计划分流,`--restore-db` 显式恢复)+ 收养 + `--code` / `--status` / `--discard-txn`,
   `docker/requirements-crawl4ai.txt` extras 钉版,锁与 Docker 同一把;桩测试 `tests/test_deploy_baremetal.py`。待 codex 检视、用户本地(内网)实机验收:收养一次 → 部署新版 → 故意起不来的提交告警 → `--rollback` → 机器重启 resurrect 起当前 release → 带迁移版本回滚被拒 / `--restore-db`。

@@ -56,8 +56,8 @@ def test_facets_counts_exclude_and_csv_filter(monkeypatch, tmp_path):
         data = client.get("/api/articles/facets?exclude_source_ids=dorami_daily_brief").json()
         assert data["total"] == 3
         assert data["content_types"] == [
-            {"value": "web_article", "count": 2},
-            {"value": "rss_article", "count": 1},
+            {"value": "web_article", "count": 2, "label": "网页条目"},
+            {"value": "rss_article", "count": 1, "label": "RSS 条目"},
         ]
         assert {r["value"] for r in data["source_ids"]} == {"src_a", "src_b"}
         # 降序

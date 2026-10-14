@@ -363,6 +363,9 @@ def _payload(*, candidate: bool = False) -> dict:
     return {
         "quality_score": 8.6,
         "score_reason": "原创信息充分，并有明确实践价值。",
+        "content_kind": "news",
+        "content_value_reason": "机制与数字具体，可带走结论。",
+        "content_value": 6.4,
         "summary": "文章解释了能力边界、实现方式与实际影响。",
         "content_genre": "product_update",
         "primary_tag_code": "agents",
