@@ -59,7 +59,6 @@ class BaseWebPageListFetcher(BaseFetcher):
 
     source_id = "unknown_source"
     content_type = "web_article"
-    category = "official_web"
 
     listing_url = ""
     site_name = ""
@@ -528,7 +527,7 @@ class BaseWebPageListFetcher(BaseFetcher):
                 site_name=self.site_name or self.name,
                 source_section=self.source_section,
                 summary=summary,
-                tags=[self.category, "webpage"],
+                tags=[],
                 raw_data=raw_data,
             )
 
@@ -552,7 +551,6 @@ class AnthropicNewsWebFetcher(BaseWebPageListFetcher):
     source_channel = "newsroom"
     source_url = listing_url
     provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "product_update", "api_platform", "research_paper", "safety_policy"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
@@ -698,7 +696,7 @@ class AnthropicNewsWebFetcher(BaseWebPageListFetcher):
                 site_name=self.site_name or self.name,
                 source_section=self.source_section,
                 summary=summary,
-                tags=[self.category, "webpage"] + entry.get("subjects", []),
+                tags=list(entry.get("subjects", [])),
                 raw_data=raw_data,
             )
             emitted += 1
@@ -726,7 +724,6 @@ class ClaudeBlogWebFetcher(BaseWebPageListFetcher):
     source_channel = "blog"
     source_url = listing_url
     provenance_tier = "tier0_primary"
-    content_tags = ["product_update", "developer_tool", "tutorial_or_practice", "api_platform", "model_release"]
     signal_strength = "high_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
@@ -780,7 +777,6 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
     listing_url = "https://next.ithome.com/ai"
     site_name = "IT之家"
     source_section = "人工智能"
-    category = "media"
     # 2026-09-10 起 IT之家文章 ID 跨过一百万,链接由 /0/956/628.htm 变成 /1/002/341.htm——
     # 首段目录是 ID 的百万位,「ithome.com/0/」子串匹配自此一条都对不上,列表页结构其实
     # 未变,却连续多日「success 0 条」静默停产(issue #79)。改按形状匹配:一位数字目录 +
@@ -800,7 +796,6 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
     source_channel = "website_category"
     source_url = listing_url
     provenance_tier = "tier1_curated"
-    content_tags = ["market_news", "model_release", "product_update", "developer_tool"]
     signal_strength = "medium_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public_website_category"
@@ -996,7 +991,7 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
                 site_name=self.site_name,
                 source_section=self.source_section,
                 summary=summary,
-                tags=[self.category, "webpage", *tags],
+                tags=list(tags),
                 raw_data={
                     "listing_url": self.listing_url,
                     "url": url,
@@ -1033,7 +1028,6 @@ class QwenBlogWebFetcher(BaseWebPageListFetcher):
     source_channel = "blog_api"
     source_url = listing_url
     provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "product_update", "research_paper", "developer_tool"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public_api"
@@ -1223,7 +1217,7 @@ class QwenBlogWebFetcher(BaseWebPageListFetcher):
                 site_name=self.site_name,
                 source_section=self.source_section,
                 summary=summary,
-                tags=[self.category, "webpage", *tags],
+                tags=list(tags),
                 raw_data=raw_data,
             )
 
@@ -1321,7 +1315,7 @@ class ArtificialAnalysisArticlesWebFetcher(_ScopedArticleBodyFetcher):
     source_url = listing_url
     site_name = "Artificial Analysis"
     source_section = "Articles"
-    category = "incubating"  # 观察期;验收转正后改回 "media"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     article_url_patterns = ["artificialanalysis.ai/articles/"]
     max_listing_pages = 7
     default_limit = 12
@@ -1333,7 +1327,6 @@ class ArtificialAnalysisArticlesWebFetcher(_ScopedArticleBodyFetcher):
     source_scope = "ai_benchmark_analysis"
     source_channel = "articles"
     provenance_tier = "tier1_curated"
-    content_tags = ["benchmark", "model_release", "market_news"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public_website"
@@ -1359,7 +1352,7 @@ class MetaAiBlogWebFetcher(_ScopedArticleBodyFetcher):
     source_url = "https://ai.meta.com/blog/"
     site_name = "Meta AI"
     source_section = "Blog"
-    category = "incubating"  # 观察期;验收转正后改回 "official"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     article_url_patterns = ["ai.meta.com/blog/"]
     max_listing_pages = 5
     default_limit = 12
@@ -1370,7 +1363,6 @@ class MetaAiBlogWebFetcher(_ScopedArticleBodyFetcher):
     source_scope = "ai_lab"
     source_channel = "official_blog"
     provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "research_paper", "open_source", "product_update"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public_website_obfuscated_css"
@@ -1548,7 +1540,7 @@ class KimiResearchWebFetcher(_ScopedArticleBodyFetcher):
     source_url = listing_url
     site_name = "Kimi"
     source_section = "Research"
-    category = "incubating"  # 观察期;验收转正后改回 "official"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     article_url_patterns = ["kimi.com/blog/"]
     default_limit = 12
     body_selectors = (".blog-v2-main .markdown", ".blog-v2-main", "main .markdown")
@@ -1559,7 +1551,6 @@ class KimiResearchWebFetcher(_ScopedArticleBodyFetcher):
     source_scope = "model_family"
     source_channel = "research_blog"
     provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "research_paper", "agent", "multimodal"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public_website"
@@ -1684,7 +1675,7 @@ class MiniMaxResearchWebFetcher(_ScopedArticleBodyFetcher):
     source_url = listing_url
     site_name = "MiniMax"
     source_section = "Research"
-    category = "incubating"  # 观察期;验收转正后改回 "official"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     article_url_patterns = ["minimax.io/blog/"]
     default_limit = 10
     body_selectors = ("article .prose.max-w-none", "article .prose")
@@ -1694,7 +1685,6 @@ class MiniMaxResearchWebFetcher(_ScopedArticleBodyFetcher):
     source_scope = "ai_lab"
     source_channel = "research_blog"
     provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "research_paper", "agent", "multimodal"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public_website"

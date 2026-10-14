@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 from sqlmodel import Session, select
 
-from fetchers.registry import fetcher_registry
+from fetchers.registry import admission_status_of, fetcher_registry
 from models.db import SourceConfigRecord
 
 
@@ -94,7 +94,6 @@ def build_source_fetch_params(
     # Source identity always comes from the persisted row. This also keeps a
     # saved job on the latest URL/name after an administrator edits the source.
     params["source_id"] = source_config.source_id
-    params["category"] = source_config.category
     if source_type in {"web", "webpage"}:
         params["listing_url"] = source_config.url
     if source_type in {"rss", "atom"} | PODCAST_SOURCE_TYPES:
@@ -137,14 +136,6 @@ def resolve_collection_node(
     return fetcher_id, build_source_fetch_params(source, overrides)
 
 
-def _content_tags(record: SourceConfigRecord) -> list[str]:
-    try:
-        value = json.loads(record.content_tags_json or "[]")
-    except (TypeError, ValueError):
-        value = []
-    return value if isinstance(value, list) else []
-
-
 def _configured_limit(record: SourceConfigRecord, default: int = 20) -> int:
     raw = parse_json_object(record.params_json).get("limit", default)
     try:
@@ -164,7 +155,7 @@ def configured_source_metadata(record: SourceConfigRecord) -> Dict[str, Any]:
         "name": record.name,
         "icon": "",
         "desc": record.description or record.url,
-        "category": record.category or source_type,
+        "admission_status": admission_status_of(record.admission_status),
         "content_type": content_type,
         "shape": shape,
         "is_template": False,
@@ -178,7 +169,6 @@ def configured_source_metadata(record: SourceConfigRecord) -> Dict[str, Any]:
         "source_channel": record.source_channel,
         "base_url": record.base_url or record.url,
         "provenance_tier": record.provenance_tier,
-        "content_tags": _content_tags(record),
         "signal_strength": record.signal_strength,
         "noise_risk": record.noise_risk,
         "fetch_reliability": record.fetch_reliability,

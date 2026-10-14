@@ -87,7 +87,7 @@ ESSENTIAL_FETCHER_IDS = frozenset({
     # Kimi / MiniMax research
     "web_kimi_research",
     "web_minimax_research",
-    # X 社交波（观察期，category=incubating；默认目录可见但不进每日采集）
+    # X 社交波（观察期，admission_status=incubating；默认目录可见但不进每日采集）
     # 2026-07-21 压缩成本删两源：x_ai_at_meta（低频零覆盖但增量小）、
     # x_openrouter（高频哨兵、成本大头）——见下方 DECOMMISSIONED。
     "x_deepseek_ai",
@@ -124,7 +124,16 @@ DECOMMISSIONED_FETCHER_IDS = frozenset({
 FOCUSED_FETCHER_CURATION: Dict[str, Dict[str, str | bool]] = {}
 
 
-def focused_curation_for(source_id: str, category: str) -> Dict[str, str | bool]:
+ADMISSION_STATUSES = ("admitted", "incubating")
+
+
+def admission_status_of(value: Any) -> str:
+    """规范化准入状态;未知值按正式处理(不让拼错的值把节点挤出每日采集之外再无人察觉)。"""
+    status = str(value or "").strip().lower()
+    return status if status in ADMISSION_STATUSES else "admitted"
+
+
+def focused_curation_for(source_id: str, *, is_template: bool = False) -> Dict[str, str | bool]:
     if source_id in ESSENTIAL_FETCHER_IDS:
         curation = FOCUSED_FETCHER_CURATION.get(source_id, {})
         reason = str(curation.get("curation_reason") or "")
@@ -146,15 +155,10 @@ def focused_curation_for(source_id: str, category: str) -> Dict[str, str | bool]
                 "curation_reason": f"{curation.get('curation_reason', '')} 未列入精品源白名单，默认隐藏。",
             }
         return curation
-    if category == "advanced":
+    if is_template:
         return {
             "default_visible": False,
             "curation_reason": "通用扩展能力，不属于默认 AI 资讯源。",
-        }
-    if category == "workflow":
-        return {
-            "default_visible": False,
-            "curation_reason": "工作流触发节点，不是入站资讯来源。",
         }
     return {
         "default_visible": False,
@@ -217,19 +221,20 @@ class FetcherRegistry:
         """
         metadata_list = []
         for source_id, cls in self._fetchers.items():
-            category = getattr(cls, "category", "general")
-            curation = focused_curation_for(source_id, category)
+            is_template = bool(getattr(cls, "is_template", False))
+            curation = focused_curation_for(source_id, is_template=is_template)
             metadata_list.append({
                 "id": source_id,
                 "name": cls.name,
                 "icon": cls.icon,
                 "desc": cls.description,
-                "category": category,
+                "admission_status": admission_status_of(getattr(cls, "admission_status", "")),
                 "content_type": cls.content_type,
                 "shape": getattr(cls, "content_shape", "article"),
+                "default_kind": getattr(cls, "default_kind", "") or "",
                 "platform": getattr(cls, "platform", ""),
                 "active": True,
-                "is_template": getattr(cls, "is_template", False),
+                "is_template": is_template,
                 "parameters": cls.get_parameter_schema(),
                 "source_owner": getattr(cls, "source_owner", ""),
                 "source_brand": getattr(cls, "source_brand", ""),
@@ -238,7 +243,6 @@ class FetcherRegistry:
                 "source_url": getattr(cls, "source_url", ""),
                 "base_url": getattr(cls, "source_url", "") or getattr(cls, "listing_url", "") or getattr(cls, "feed_url", ""),
                 "provenance_tier": getattr(cls, "provenance_tier", ""),
-                "content_tags": list(getattr(cls, "content_tags", []) or []),
                 "signal_strength": getattr(cls, "signal_strength", ""),
                 "noise_risk": getattr(cls, "noise_risk", ""),
                 "fetch_reliability": getattr(cls, "fetch_reliability", ""),

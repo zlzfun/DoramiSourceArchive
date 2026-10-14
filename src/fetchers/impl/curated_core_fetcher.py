@@ -37,7 +37,6 @@ class SinglePageDocumentFetcher(BaseFetcher):
 
     source_id = "unknown_source"
     content_type = "web_article"
-    category = "official_doc"
     page_url = ""
     site_name = ""
     source_section = ""
@@ -142,7 +141,7 @@ class SinglePageDocumentFetcher(BaseFetcher):
             site_name=self.site_name or self.name,
             source_section=self.source_section,
             summary=content[:500],
-            tags=[self.category, *list(self.content_tags or [])],
+            tags=[],
             raw_data={
                 "listing_url": self.page_url,
                 "url": source_url,
@@ -156,7 +155,7 @@ class SinglePageDocumentFetcher(BaseFetcher):
 
 class OpenAiCodexChangelogFetcher(SinglePageDocumentFetcher):
     source_id = "docs_openai_codex_changelog"
-    content_shape = "bulletin"  # changelog/发布说明:动态形,进「动态」视图
+    default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
     name = "Codex Changelog"
     description = "OpenAI Codex 官方 Changelog 中的 Codex、CLI、IDE 与自动化更新。"
     icon = "🟢"
@@ -169,7 +168,6 @@ class OpenAiCodexChangelogFetcher(SinglePageDocumentFetcher):
     source_scope = "developer_tool"
     source_channel = "docs_changelog"
     provenance_tier = "tier0_primary"
-    content_tags = ["developer_tool", "product_update", "model_release", "api_platform"]
     signal_strength = "high_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
@@ -273,7 +271,7 @@ class OpenAiCodexChangelogFetcher(SinglePageDocumentFetcher):
                 site_name=self.site_name,
                 source_section=self.source_section,
                 summary=entry["summary"],
-                tags=[self.category, *list(self.content_tags or [])],
+                tags=[],
                 raw_data={
                     "listing_url": self.page_url,
                     "url": entry["source_url"],
@@ -289,7 +287,7 @@ class OpenAiCodexChangelogFetcher(SinglePageDocumentFetcher):
 
 class ClaudeCodeChangelogFetcher(SinglePageDocumentFetcher):
     source_id = "docs_claude_code_changelog"
-    content_shape = "bulletin"  # changelog/发布说明:动态形,进「动态」视图
+    default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
     name = "Claude Code Changelog"
     description = "Claude Code 官方 Changelog 中的版本级工具更新。"
     icon = "🟧"
@@ -302,7 +300,6 @@ class ClaudeCodeChangelogFetcher(SinglePageDocumentFetcher):
     source_scope = "developer_tool"
     source_channel = "changelog"
     provenance_tier = "tier0_primary"
-    content_tags = ["developer_tool", "product_update"]
     signal_strength = "high_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
@@ -421,7 +418,7 @@ class ClaudeCodeChangelogFetcher(SinglePageDocumentFetcher):
                 site_name=self.site_name,
                 source_section=self.source_section,
                 summary=entry["summary"],
-                tags=[self.category, *list(self.content_tags or [])],
+                tags=[],
                 raw_data={
                     "listing_url": self.page_url,
                     "url": entry["source_url"],
@@ -562,7 +559,7 @@ class DevsiteReleaseNotesFetcher(SinglePageDocumentFetcher):
                 site_name=self.site_name or self.name,
                 source_section=self.source_section,
                 summary=entry["summary"],
-                tags=[self.category, *list(self.content_tags or [])],
+                tags=[],
                 raw_data={
                     "listing_url": self.page_url,
                     "url": entry["source_url"],
@@ -576,7 +573,7 @@ class DevsiteReleaseNotesFetcher(SinglePageDocumentFetcher):
 
 class GemmaReleaseNotesFetcher(DevsiteReleaseNotesFetcher):
     source_id = "docs_gemma_release_notes"
-    content_shape = "bulletin"  # changelog/发布说明:动态形,进「动态」视图
+    default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
     name = "Gemma Release Notes"
     description = "Gemma 官方 Release Notes 中的开放模型发布与更新。"
     icon = "💎"
@@ -590,7 +587,6 @@ class GemmaReleaseNotesFetcher(DevsiteReleaseNotesFetcher):
     source_scope = "open_model_family"
     source_channel = "docs_release_notes"
     provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "research_paper", "api_platform"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
@@ -598,7 +594,7 @@ class GemmaReleaseNotesFetcher(DevsiteReleaseNotesFetcher):
 
 class XAiDeveloperReleaseNotesFetcher(SinglePageDocumentFetcher):
     source_id = "docs_xai_release_notes"
-    content_shape = "bulletin"  # changelog/发布说明:动态形,进「动态」视图
+    default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
     name = "xAI Release Notes"
     description = "xAI 官方 Release Notes 中的 Grok 模型、API 与产品更新。"
     icon = "𝕏"
@@ -611,7 +607,6 @@ class XAiDeveloperReleaseNotesFetcher(SinglePageDocumentFetcher):
     source_scope = "api_platform"
     source_channel = "docs_changelog"
     provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "api_platform", "developer_tool", "product_update"]
     signal_strength = "high_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
@@ -746,7 +741,7 @@ class XAiDeveloperReleaseNotesFetcher(SinglePageDocumentFetcher):
                 site_name=self.site_name,
                 source_section=self.source_section,
                 summary=entry["summary"],
-                tags=[self.category, *list(self.content_tags or [])],
+                tags=[],
                 raw_data={
                     "listing_url": self.page_url,
                     "url": entry["source_url"],
@@ -762,7 +757,7 @@ class XAiDeveloperReleaseNotesFetcher(SinglePageDocumentFetcher):
 
 class DeepSeekApiChangeLogFetcher(DevsiteReleaseNotesFetcher):
     source_id = "docs_deepseek_api_changelog"
-    content_shape = "bulletin"  # changelog/发布说明:动态形,进「动态」视图
+    default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
     name = "DeepSeek API Changelog"
     description = "DeepSeek API 官方 Changelog 中的模型、API 与平台更新。"
     icon = "🧠"
@@ -775,7 +770,6 @@ class DeepSeekApiChangeLogFetcher(DevsiteReleaseNotesFetcher):
     source_scope = "api_platform"
     source_channel = "docs_changelog"
     provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "api_platform", "product_update"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
@@ -865,7 +859,7 @@ class DeepSeekApiChangeLogFetcher(DevsiteReleaseNotesFetcher):
 
 class ZaiNewReleasedFetcher(SinglePageDocumentFetcher):
     source_id = "docs_zai_new_released"
-    content_shape = "bulletin"  # changelog/发布说明:动态形,进「动态」视图
+    default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
     name = "Z.ai 更新公告"
     description = "Z.ai 官方发布页的 GLM 模型、API、Agent 与产品更新。"
     icon = "🧩"
@@ -878,7 +872,6 @@ class ZaiNewReleasedFetcher(SinglePageDocumentFetcher):
     source_scope = "model_family"
     source_channel = "docs_release_notes"
     provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "api_platform", "developer_tool", "product_update"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
@@ -966,7 +959,7 @@ class ZaiNewReleasedFetcher(SinglePageDocumentFetcher):
                 site_name=self.site_name,
                 source_section=self.source_section,
                 summary=entry["summary"],
-                tags=[self.category, *list(self.content_tags or [])],
+                tags=[],
                 raw_data={
                     "listing_url": self.page_url,
                     "url": entry["source_url"],
@@ -993,7 +986,6 @@ class ByteDanceSeedResearchFetcher(SinglePageDocumentFetcher):
     source_scope = "research_lab"
     source_channel = "research_index"
     provenance_tier = "tier0_primary"
-    content_tags = ["research_paper", "model_release"]
     signal_strength = "medium_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
@@ -1103,7 +1095,7 @@ class ByteDanceSeedResearchFetcher(SinglePageDocumentFetcher):
                 site_name=self.site_name,
                 source_section=self.source_section,
                 summary=entry["summary"],
-                tags=[self.category, *list(self.content_tags or [])],
+                tags=[],
                 raw_data={
                     "listing_url": self.page_url,
                     "url": entry["source_url"],
@@ -1130,7 +1122,7 @@ class HuggingFaceDailyPapersFetcher(SinglePageDocumentFetcher):
     source_scope = "research_community"
     source_channel = "paper_ranking"
     provenance_tier = "tier1_curated"
-    content_tags = ["research_paper", "model_release", "developer_tool"]
+    default_kind = "paper"  # 每条都是一篇论文原文(arXiv 摘要页)
     signal_strength = "medium_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
@@ -1242,7 +1234,7 @@ class HuggingFaceDailyPapersFetcher(SinglePageDocumentFetcher):
                 site_name=self.site_name,
                 source_section=self.source_section,
                 summary=entry["summary"],
-                tags=[self.category, *list(self.content_tags or [])],
+                tags=[],
                 raw_data={
                     "listing_url": self.page_url,
                     "url": entry["source_url"],
@@ -1261,7 +1253,7 @@ class HuggingFaceDailyPapersFetcher(SinglePageDocumentFetcher):
 class CursorChangelogWebFetcher(BaseWebPageListFetcher):
     default_fetch_detail = True
     source_id = "web_cursor_changelog"
-    content_shape = "bulletin"  # changelog/发布说明:动态形,进「动态」视图
+    default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
     name = "Cursor Changelog"
     description = "Cursor 官方 Changelog 中的 AI 编程、Agent 与 IDE 产品更新。"
     icon = "⌨️"
@@ -1288,7 +1280,6 @@ class CursorChangelogWebFetcher(BaseWebPageListFetcher):
     source_scope = "developer_tool"
     source_channel = "changelog"
     provenance_tier = "tier0_primary"
-    content_tags = ["developer_tool", "product_update"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
@@ -1330,7 +1321,6 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
     source_scope = "ai_media"
     source_channel = "website"
     provenance_tier = "tier1_curated"
-    content_tags = ["market_news", "model_release", "product_update", "research_paper", "opinion"]
     signal_strength = "medium_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
@@ -1553,7 +1543,7 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
                 site_name=self.site_name,
                 source_section=self.source_section,
                 summary=summary,
-                tags=[self.category, "webpage", *entry["tags"]],
+                tags=list(entry["tags"]),
                 raw_data={
                     "listing_url": self.listing_url,
                     "url": url,
@@ -1577,7 +1567,7 @@ class ArenaLeaderboardChangelogFetcher(SinglePageDocumentFetcher):
     """把 Arena 单页 Leaderboard Changelog 按日期卡片拆成独立动态。"""
 
     source_id = "docs_arena_leaderboard_changelog"
-    content_shape = "bulletin"
+    default_kind = "release"  # 榜单维护记录:按版本更新呈现
     name = "Arena 排行榜更新"
     description = "Arena 各类排行榜新增模型、分数修订与方法变更。"
     icon = "🏟️"
@@ -1585,14 +1575,13 @@ class ArenaLeaderboardChangelogFetcher(SinglePageDocumentFetcher):
     source_url = page_url
     site_name = "Arena"
     source_section = "Leaderboard Changelog"
-    category = "incubating"  # 观察期;验收转正后改回 "official_doc"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 20
     source_owner = "arena_intelligence"
     source_brand = "Arena"
     source_scope = "ai_benchmark_platform"
     source_channel = "leaderboard_changelog"
     provenance_tier = "tier0_primary"
-    content_tags = ["benchmark", "model_release", "leaderboard_update"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public_ssr_page"
@@ -1702,7 +1691,7 @@ class ArenaLeaderboardChangelogFetcher(SinglePageDocumentFetcher):
                 site_name=self.site_name,
                 source_section=self.source_section,
                 summary=entry["summary"],
-                tags=[self.category, *list(self.content_tags or [])],
+                tags=[],
                 raw_data={
                     "listing_url": self.page_url,
                     "url": entry["source_url"],
@@ -1748,7 +1737,6 @@ class AieraWebsiteFetcher(BaseWebPageListFetcher):
     source_scope = "ai_media"
     source_channel = "website"
     provenance_tier = "tier1_curated"
-    content_tags = ["market_news", "model_release", "product_update", "research_paper", "opinion"]
     signal_strength = "medium_signal"
     noise_risk = "high_noise"
     fetch_reliability = "stable_public_website"
@@ -1909,7 +1897,7 @@ class AieraWebsiteFetcher(BaseWebPageListFetcher):
                     site_name=self.site_name,
                     source_section=self.source_section,
                     summary=summary,
-                    tags=[self.category, "webpage", *self.content_tags, *categories],
+                    tags=list(categories),
                     raw_data={
                         "listing_url": request_url,
                         "url": url,

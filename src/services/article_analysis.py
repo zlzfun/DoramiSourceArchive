@@ -47,6 +47,7 @@ from llm.article_analysis_prompt import (
     analysis_contract_versions,
     analysis_system_prompt,
     build_article_analysis_user_prompt,
+    content_value_contract_version,
 )
 from llm.client import (
     ChatMessage,
@@ -193,6 +194,10 @@ class AnalysisInput:
     # 配图识别文本(issue #69,services/image_insights.render_notes 产出):有配图且视觉模型
     # 识别成功时非空,随 user prompt 进入 <untrusted_article>;为空时提示词与既有逐字一致。
     image_notes: str = ""
+    # issue #178 第二波:规则(来源先验 / 数据结构 / 链接形状)已确定的内容类型,模型须照用;
+    # 抓取时的社区信号快照(HF Daily Papers 赞数)。都只进文章信封,播客不带。
+    kind_hint: str = ""
+    community_signals: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -227,6 +232,12 @@ class ValidatedAnalysis:
     result: ArticleAnalysisResultDTO
     warnings: tuple[str, ...]
     podcast_factors: dict[str, dict[str, str]]
+
+
+# 待处理任务的提交范围(article_analyses.pending_scope):空 = 完整分析;
+# content_value = 只补内容价值(历史回填「补内容价值」,不动新闻分、摘要、标签与 prompt_version)。
+PENDING_SCOPE_FULL = ""
+PENDING_SCOPE_CONTENT_VALUE = "content_value"
 
 
 Analyzer = Callable[
@@ -324,6 +335,8 @@ def _analysis_messages(
                 topic_heat=article.topic_heat,
                 analysis_basis=article.analysis_basis,
                 image_notes=article.image_notes,
+                kind_hint=article.kind_hint,
+                community_signals=article.community_signals,
             ),
         ),
     ]
@@ -459,6 +472,10 @@ def _clear_authoritative_result(record: ArticleAnalysisRecord) -> None:
     record.transcript_artifact_id = None
     record.analysis_diagnostics_json = "{}"
     record.score_reason = ""
+    record.content_kind = None
+    record.content_value = None
+    record.content_value_reason = ""
+    record.content_value_version = ""
     record.summary = ""
     record.content_genre = None
     record.content_features_json = "[]"
@@ -534,6 +551,7 @@ def revoke_queued_analysis(
         if has_authoritative_analysis(record)
         else AnalysisStatus.SKIPPED.value
     )
+    record.pending_scope = PENDING_SCOPE_FULL
     record.started_at = None
     record.next_attempt_at = None
     record.lease_owner = None
@@ -646,6 +664,7 @@ def queue_article_analysis(
                 reason="source_ai_analysis_disabled",
             )
             record.status = AnalysisStatus.SKIPPED.value
+            record.pending_scope = PENDING_SCOPE_FULL
             record.content_hash = content_hash
             record.prompt_version = prompt_version
             record.scoring_version = scoring_version
@@ -717,6 +736,7 @@ def queue_article_analysis(
         reason="analysis superseded by content or version change",
     )
     record.status = AnalysisStatus.PENDING.value
+    record.pending_scope = PENDING_SCOPE_FULL
     if not preserve_authority:
         record.tagging_status = TaggingStatus.PENDING.value
     record.content_hash = content_hash
@@ -1183,12 +1203,57 @@ def _clean_text(value: Any, *, max_chars: int) -> str:
     return " ".join(str(value or "").split())[:max_chars]
 
 
+def _validate_content_value_fields(
+    payload: dict[str, Any],
+    *,
+    required: bool,
+    kind_hint: str,
+    warnings: list[str],
+) -> dict[str, Any]:
+    """内容类型 / 内容价值 / 依据(issue #178 第二波)。
+
+    ``required``(文章 v7 契约)时三项任一无效即判整次输出无效,交给既有的结构修复重试;否则
+    (播客契约、公共日报现场补评只要新闻分)尽力解析、无效就丢掉,不影响新闻分。规则已确定类型
+    (``kind_hint``)而模型给了别的,以规则为准、只记 warning。
+    """
+
+    from services.content_classification import GENRE_KIND_EVENT, ITEM_KINDS
+
+    kind = str(payload.get("content_kind") or "").strip().lower()
+    if kind not in ITEM_KINDS and kind in GENRE_KIND_EVENT:
+        # 模型偶尔把体裁的取值填进内容类型(如 social_discussion):按体裁映射表折回,记 warning。
+        kind = GENRE_KIND_EVENT[kind][0]
+        warnings.append("content_kind_from_genre")
+    reason = _clean_text(payload.get("content_value_reason"), max_chars=_SCORE_REASON_MAX_CHARS)
+    try:
+        value = round(float(payload.get("content_value")), 1)
+    except (TypeError, ValueError):
+        value = None
+    hint = (kind_hint or "").strip()
+    if hint and kind and kind != hint:
+        warnings.append("content_kind_overridden_by_rule")
+    if hint:
+        kind = hint
+    valid = bool(kind in ITEM_KINDS and value is not None and 1.0 <= value <= 10.0 and reason)
+    if not valid:
+        if required:
+            raise ValueError("content_kind, content_value and content_value_reason must be valid")
+        return {}
+    return {"content_kind": kind, "content_value": value, "content_value_reason": reason}
+
+
 def validate_analysis_payload(
     payload: dict[str, Any] | ArticleAnalysisResultDTO,
     *,
     active_tags: Sequence[TaxonomyTagDTO],
+    require_content_value: bool = False,
+    kind_hint: str = "",
 ) -> ValidatedAnalysis:
-    """Validate base fields strictly while isolating malformed tag fields."""
+    """Validate base fields strictly while isolating malformed tag fields.
+
+    ``require_content_value`` is the article v7 contract (issue #178 wave 2): the
+    content kind / value / reason must be valid or the output is rejected.
+    """
 
     if isinstance(payload, ArticleAnalysisResultDTO):
         # DTO construction proves shape/ranges, but active-code and per-facet
@@ -1216,6 +1281,12 @@ def validate_analysis_payload(
     summary = _clean_text(payload.get("summary"), max_chars=6_000)
     if not reason or not summary:
         raise ValueError("analysis summary and score_reason must be non-empty")
+    content_fields = _validate_content_value_fields(
+        payload,
+        required=require_content_value,
+        kind_hint=kind_hint,
+        warnings=warnings,
+    )
 
     factors: dict[str, dict[str, str]] = {}
     raw_factors = payload.get("podcast_factors")
@@ -1354,6 +1425,7 @@ def validate_analysis_payload(
             tag_candidates=tuple(candidates),
             content_features=features,
             entities=tuple(entities),
+            **content_fields,
         )
     except ValidationError as exc:
         raise ValueError("analysis base fields failed schema validation") from exc
@@ -1452,8 +1524,14 @@ async def analyze_article_with_llm(
     *,
     usage_meta: UsageMeta | None = None,
     http_client=None,
+    require_content_value: Optional[bool] = None,
 ) -> dict[str, Any]:
     """The platform's single article-scoring call (issue #22).
+
+    ``require_content_value`` defaults to the shape's prompt contract (articles:
+    required since v7).  The public daily brief passes ``False``: it consumes only
+    the news value and must not spend a repair call or lose a score because the
+    content-value fields came back malformed.
 
     Used by the analysis worker and, for candidates the worker has not reached
     yet, by the public daily brief's in-place scoring — same prompt, same
@@ -1470,9 +1548,12 @@ async def analyze_article_with_llm(
         usage_meta=usage_meta or UsageMeta(purpose="article_analysis", username=None),
         http_client=http_client,
     )
+    expectations = _content_value_expectations(article)
+    if require_content_value is not None:
+        expectations["require_content_value"] = bool(require_content_value)
     try:
         payload = parse_json_object(raw)
-        validate_analysis_payload(payload, active_tags=active_tags)
+        validate_analysis_payload(payload, active_tags=active_tags, **expectations)
         return payload
     except (LLMStructuredOutputError, ValueError) as initial_error:
         # Do not spend another attempt on the identical article request.  Give the
@@ -1507,7 +1588,7 @@ async def analyze_article_with_llm(
         )
         try:
             repaired = parse_json_object(repair_raw)
-            validate_analysis_payload(repaired, active_tags=active_tags)
+            validate_analysis_payload(repaired, active_tags=active_tags, **expectations)
             return repaired
         except (LLMStructuredOutputError, ValueError) as repair_error:
             raise AnalysisOutputRecoveryError(
@@ -1518,6 +1599,31 @@ async def analyze_article_with_llm(
 
 class AnalysisOutputRecoveryError(ValueError):
     """One bounded structured-output repair still failed validation."""
+
+
+def _content_value_expectations(article: AnalysisInput) -> dict[str, Any]:
+    """该输入的提示词契约是否要求内容价值,以及规则给出的类型。"""
+
+    return {
+        "require_content_value": bool(content_value_contract_version(article.content_type)),
+        "kind_hint": article.kind_hint,
+    }
+
+
+def _community_signals(article: ArticleRecord) -> dict[str, Any] | None:
+    """抓取时的社区信号快照(issue #178 第二波):目前只有 HF Daily Papers 的赞数。
+
+    抓取器把它写在扩展字段的 ``raw_data.upvotes``(存量条目也有);数值是抓取那一刻的快照。
+    """
+
+    raw = _article_extensions(article).get("raw_data")
+    if not isinstance(raw, dict) or raw.get("listing_source") != "huggingface_daily_papers":
+        return None
+    try:
+        upvotes = int(raw.get("upvotes"))
+    except (TypeError, ValueError):
+        return None
+    return {"hf_upvotes": upvotes} if upvotes >= 0 else None
 
 
 def _article_extensions(article: ArticleRecord) -> dict[str, Any]:
@@ -1682,9 +1788,16 @@ def analysis_input_from_article(
 
     from services.source_naming import friendly_source_name, source_role
 
+    from services.content_classification import rule_kind as classify_rule_kind
+
     owner = ((source.source_owner if source else "") or article.source_id).strip()
     sid = article.source_id or ""
     is_podcast = (article.content_type or "").strip() == "podcast_episode"
+    rule_kind = classify_rule_kind(
+        source_id=sid,
+        source_url=article.source_url,
+        content_type=article.content_type,
+    )
     return AnalysisInput(
         article_id=article.id,
         title=article.title or "",
@@ -1713,6 +1826,8 @@ def analysis_input_from_article(
             if is_podcast and session is not None
             else None
         ),
+        kind_hint="" if is_podcast else (rule_kind or ""),
+        community_signals=None if is_podcast else _community_signals(article),
     )
 
 
@@ -2102,8 +2217,11 @@ async def process_claimed_analysis(
             )
         effective_model = llm_config.for_aux().model
         taxonomy_version = _active_taxonomy_version(session)
-        record.model_name = effective_model
-        record.taxonomy_version = taxonomy_version
+        if record.pending_scope != PENDING_SCOPE_CONTENT_VALUE:
+            # 「只补内容价值」不替换完整结果,结果行的模型与 taxonomy 来源保持上一次完整分析的值,
+            # 本次调用的来源只记在 attempt 上(codex R1-4)。
+            record.model_name = effective_model
+            record.taxonomy_version = taxonomy_version
         attempt = _attempt_for(session, task)
         if attempt is not None:
             attempt.model_name = effective_model
@@ -2173,7 +2291,11 @@ async def process_claimed_analysis(
             call if inspect.isawaitable(call) else _immediate(call),
             timeout=remaining,
         )
-        validated = validate_analysis_payload(raw, active_tags=active_tags)
+        validated = validate_analysis_payload(
+            raw,
+            active_tags=active_tags,
+            **_content_value_expectations(article_input),
+        )
     except TimeoutError:
         return _mark_failure(
             engine,
@@ -2280,8 +2402,18 @@ async def process_claimed_analysis(
             return ProcessResult(task.article_id, record.status, record.tagging_status)
 
         result = validated.result
+        if record.pending_scope == PENDING_SCOPE_CONTENT_VALUE:
+            return _commit_content_value_fill(
+                session,
+                record=record,
+                attempt=attempt,
+                validated=validated,
+                content_type=article.content_type,
+                ended=ended,
+            )
         prompt_version, scoring_version = analysis_contract_versions(article.content_type)
         record.status = AnalysisStatus.SUCCEEDED.value
+        record.pending_scope = PENDING_SCOPE_FULL
         record.quality_score = result.quality_score
         if article_input.content_type == "podcast_episode":
             record.podcast_initial_score = result.quality_score
@@ -2297,6 +2429,7 @@ async def process_claimed_analysis(
             separators=(",", ":"),
         )
         record.score_reason = result.score_reason
+        _apply_content_value(record, result, content_type=article.content_type)
         record.summary = result.summary
         record.content_genre = str(result.content_genre)
         record.content_features_json = json.dumps(result.content_features, ensure_ascii=False)
@@ -2385,6 +2518,174 @@ async def process_claimed_analysis(
         session.add(record)
         session.commit()
     return ProcessResult(task.article_id, AnalysisStatus.SUCCEEDED.value, tag_status)
+
+
+def _apply_content_value(
+    record: ArticleAnalysisRecord,
+    result: ArticleAnalysisResultDTO,
+    *,
+    content_type: str,
+) -> None:
+    """写入内容价值三项与尺子版本;该契约不产出内容价值(播客)或结果缺项时一并清空。"""
+
+    version = content_value_contract_version(content_type)
+    if version and result.content_value is not None and result.content_kind:
+        record.content_kind = result.content_kind
+        record.content_value = result.content_value
+        record.content_value_reason = result.content_value_reason
+        record.content_value_version = version
+    else:
+        record.content_kind = None
+        record.content_value = None
+        record.content_value_reason = ""
+        record.content_value_version = ""
+
+
+def _commit_content_value_fill(
+    session: Session,
+    *,
+    record: ArticleAnalysisRecord,
+    attempt: ArticleAnalysisAttemptRecord | None,
+    validated: ValidatedAnalysis,
+    content_type: str,
+    ended: dt.datetime,
+) -> ProcessResult:
+    """「补内容价值」任务的提交:只写内容类型、内容价值与依据(issue #178 第二波,§3.7)。
+
+    新闻分、依据、摘要、体裁、标签、``prompt_version`` 与 ``analyzed_at`` 都保持原样——它们仍是上一次
+    完整分析的权威结果;这次调用里模型重给的那些字段直接丢弃。归档同步由表上的触发器照常推进。
+    """
+
+    result = validated.result
+    _apply_content_value(record, result, content_type=content_type)
+    record.status = AnalysisStatus.SUCCEEDED.value
+    record.pending_scope = PENDING_SCOPE_FULL
+    record.started_at = None
+    record.next_attempt_at = None
+    record.lease_owner = None
+    record.lease_expires_at = None
+    record.last_error = None
+    record.updated_at = _iso(ended)
+    if attempt is not None:
+        attempt.status = AnalysisAttemptStatus.SUCCEEDED.value
+        attempt.ended_at = _iso(ended)
+        started = _parse_datetime(attempt.started_at)
+        attempt.duration_ms = max(0, int((ended - started).total_seconds() * 1000)) if started else None
+        attempt.result_summary_json = json.dumps(
+            {
+                "scope": PENDING_SCOPE_CONTENT_VALUE,
+                "content_kind": result.content_kind,
+                "content_value": result.content_value,
+                "validation_warnings": list(validated.warnings),
+            },
+            ensure_ascii=False,
+        )
+        session.add(attempt)
+    session.add(record)
+    session.commit()
+    return ProcessResult(record.article_id, AnalysisStatus.SUCCEEDED.value, record.tagging_status)
+
+
+def content_value_fill_is_current(
+    article: ArticleRecord, record: ArticleAnalysisRecord | None
+) -> bool:
+    """该文章已有当前版本的内容价值(不需要再补)。"""
+
+    version = content_value_contract_version(article.content_type)
+    return bool(
+        record is not None
+        and version
+        and record.content_value is not None
+        and record.content_value_version == version
+        and record.content_hash == compute_content_hash(article)
+    )
+
+
+def in_version_refresh_window(
+    article: ArticleRecord,
+    record: ArticleAnalysisRecord | None,
+    *,
+    now: Optional[dt.datetime] = None,
+    lookback_days: int = DEFAULT_BACKFILL_DAYS,
+) -> bool:
+    """版本巡检(``scan_analysis_backfill``)会整篇重跑的文章:窗口内、提示词或评分版本落后的成功结果。
+
+    窗口与时间解析与巡检同一口径;「补内容价值」选样据此避开它们,整篇重跑会顺带产出内容价值(codex R1-8)。
+    """
+
+    if record is None or record.status != AnalysisStatus.SUCCEEDED.value:
+        return False
+    prompt_version, scoring_version = analysis_contract_versions(article.content_type)
+    if record.prompt_version == prompt_version and record.scoring_version == scoring_version:
+        return False
+    now_utc = _as_utc(now)
+    since_time = now_utc - dt.timedelta(days=max(1, lookback_days))
+    return in_time_window(article.fetched_date, start=since_time, end=now_utc)
+
+
+def queue_content_value_fill(
+    session: Session,
+    article_id: str,
+    *,
+    now: Optional[dt.datetime] = None,
+) -> str:
+    """把一篇已有完整分析的文章排进「只补内容价值」(历史回填策略 ``content_value``)。
+
+    前提:有当前新闻分(``scoring_version`` 为当前、内容未变)、该数据结构的提示词产出内容价值、
+    内容价值缺失或版本过期。分析行为 failed / timeout 但旧结果仍有效时:补评自己的失败重新排队(重置尝试
+    次数),完整刷新还在重试的返回 ``busy``,完整刷新已到终态的允许补评。本机无执行权(远端权威 / 接收端
+    停写)先于其它判断返回 ``remote_authority`` / ``consumer_quiesced``。排队期间上一次分析照常可读(与强制刷新同一套交接语义);期间若正文变化,
+    入库钩子的完整分析会把范围改回完整。返回 ``queued`` / ``unchanged`` / ``busy`` / ``ineligible`` /
+    ``remote_authority``。
+    """
+
+    article = session.get(ArticleRecord, article_id)
+    if article is None or not article.has_content or not (article.content or "").strip():
+        return "ineligible"
+    if (article.analysis_authority_id or "").strip():
+        return "remote_authority"
+    if not sync_consumer_policy.local_source_operation_allowed(
+        session, article.source_id, operation="analysis"
+    ):
+        # 执行权检查放在 busy 之前:停写模式下在途的完整刷新也跑不了(codex R2-1)。
+        return "consumer_quiesced"
+    record = session.get(ArticleAnalysisRecord, article_id)
+    if record is None or not content_value_contract_version(article.content_type):
+        return "ineligible"
+    if record.status in {AnalysisStatus.RUNNING.value, AnalysisStatus.PENDING.value}:
+        return "busy"
+    if record.status in {AnalysisStatus.FAILED.value, AnalysisStatus.TIMEOUT.value}:
+        # 失败但旧结果仍有效(codex R1-2):补评自己的失败(含终态,管理面「重试失败项」)重新排队;
+        # 完整刷新失败、还有重试排期的让它继续重试;完整刷新已到终态的,旧结果仍可补内容价值。
+        if record.pending_scope != PENDING_SCOPE_CONTENT_VALUE and record.next_attempt_at:
+            return "busy"
+    elif record.status != AnalysisStatus.SUCCEEDED.value:
+        return "ineligible"
+    _prompt, scoring_version = analysis_contract_versions(article.content_type)
+    if (
+        not has_authoritative_analysis(record)
+        or record.scoring_version != scoring_version
+        or record.content_hash != compute_content_hash(article)
+    ):
+        return "ineligible"
+    if content_value_fill_is_current(article, record):
+        return "unchanged"
+    if not source_allows_analysis(session, article.source_id):
+        return "ineligible"
+    now_iso = _iso(now)
+    if not record.analyzed_at:
+        record.analyzed_at = record.updated_at or now_iso
+    record.status = AnalysisStatus.PENDING.value
+    record.pending_scope = PENDING_SCOPE_CONTENT_VALUE
+    record.attempt_count = 0
+    record.started_at = None
+    record.next_attempt_at = None
+    record.lease_owner = None
+    record.lease_expires_at = None
+    record.last_error = None
+    record.updated_at = now_iso
+    session.add(record)
+    return "queued"
 
 
 async def _immediate(value: Any) -> Any:

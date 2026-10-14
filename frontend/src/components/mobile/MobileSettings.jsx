@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Info, MessageSquare, Package, Palette, Plug2, Rss, User, X } from 'lucide-react';
+import { ArrowDownUp, ChevronLeft, ChevronRight, Info, MessageSquare, Package, Palette, Plug2, Rss, User, X } from 'lucide-react';
 import { markFeedbackSeen } from '../../api';
 import { useLayerHistory } from '../../hooks/useLayerHistory';
 import AccountSection from '../settings/AccountSection';
@@ -9,6 +9,7 @@ import McpAccessSection from '../settings/McpAccessSection';
 import SkillSection from '../settings/SkillSection';
 import FeedbackSection from '../settings/FeedbackSection';
 import AboutSection from '../settings/AboutSection';
+import OpmlSection, { OpmlPreview } from '../settings/OpmlSection';
 
 // 移动设置栈(移动波 Wave3):桌面 880×576 设置柜的页面栈翻译——一级=分组清单页,
 // 二级=分区页(back 出栈)。分区组件与桌面设置柜完全同源(components/settings/),
@@ -17,6 +18,7 @@ import AboutSection from '../settings/AboutSection';
 const HINTS = {
   account: '身份、头像与登录凭据',
   appearance: '主题与动效',
+  opml: 'OPML 迁移',
   feed: '一枚 dfeed_ 令牌与聚合拉取接口',
   mcp: '把内容接进你的 Agent 工具',
   skill: '装进 Agent 的每日资讯技能',
@@ -49,6 +51,7 @@ export default function MobileSettings({
       items: [
         { id: 'account', label: '账户', icon: User },
         { id: 'appearance', label: '外观', icon: Palette },
+        { id: 'opml', label: '订阅源 OPML', icon: ArrowDownUp },
         { id: 'feedback', label: '反馈与建议', icon: MessageSquare, show: !isAdmin },
       ],
     },
@@ -80,9 +83,16 @@ export default function MobileSettings({
     if (!initialSection || initialSection === 'account') setSectionId(null);
   }, [open, initialSection, sections]);
 
-  // 返回键握手:设置根一层 + 分区页一层(back 先回清单,再关设置)
+  // 导入预览是设置栈里单独一屏,返回先离开预览,再回清单,再关设置。
+  const [opmlPreview, setOpmlPreview] = useState(null);
+  useEffect(() => {
+    if (!open || sectionId !== 'opml') setOpmlPreview(null);
+  }, [open, sectionId]);
+
+  // 返回键握手:设置根一层 + 分区页一层 + 预览一层
   useLayerHistory(open, onClose);
   useLayerHistory(open && Boolean(sectionId), () => setSectionId(null));
+  useLayerHistory(open && Boolean(opmlPreview), () => setOpmlPreview(null));
 
   // 打开反馈分区即视为已读(与桌面设置柜同约定)
   useEffect(() => {
@@ -95,6 +105,28 @@ export default function MobileSettings({
   if (!open) return null;
 
   const active = sections.find((s) => s.id === sectionId) || null;
+
+  if (opmlPreview) {
+    return (
+      <div className="m-page m-sett" role="dialog" aria-modal="true" aria-label="导入预览">
+        <div className="m-topbar on-pane">
+          <button type="button" className="m-iconbtn" onClick={() => setOpmlPreview(null)} aria-label="返回订阅源 OPML">
+            <ChevronLeft />
+          </button>
+          <span className="m-title">导入预览</span>
+        </div>
+        <OpmlPreview
+          layout="mobile"
+          filename={opmlPreview.filename}
+          opml={opmlPreview.opml}
+          plan={opmlPreview.plan}
+          showToast={showToast}
+          onCancel={() => setOpmlPreview(null)}
+          onDone={() => setOpmlPreview(null)}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="m-page m-sett" role="dialog" aria-modal="true" aria-label="设置">
@@ -122,6 +154,9 @@ export default function MobileSettings({
             )}
             {active.id === 'appearance' && (
               <AppearanceSection theme={theme} onThemeChange={onThemeChange} />
+            )}
+            {active.id === 'opml' && (
+              <OpmlSection showToast={showToast} onPushPreview={setOpmlPreview} />
             )}
             {/* 移动壳恒为阅读器观感:isAdmin/canManage 一律走读者口径(adminConsole=false) */}
             {active.id === 'feed' && (

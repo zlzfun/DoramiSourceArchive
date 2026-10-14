@@ -1,0 +1,973 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>内容分类与双评分</title>
+<style>
+/* 布局：单栏说明文档（最宽 1120px），中段嵌一块按现有四栏阅读器还原的交互样页；
+   色板、字体沿用 frontend/src/index.css 的 dorami 令牌（靛色 accent、AI 蓝紫渐变只上分数）。 */
+:root {
+  --bg: #f4f6fa;
+  --surface: #ffffff;
+  --canvas: #eef1f6;
+  --soft: #f8fafc;
+  --rail: #e8ecf3;
+  --ink: #0b1220;
+  --muted: #5b6678;
+  --faint: #64748b;
+  --line: rgba(11, 18, 32, 0.09);
+  --line-soft: rgba(11, 18, 32, 0.06);
+  --line-strong: rgba(11, 18, 32, 0.16);
+  --accent: #5b54e8;
+  --accent-ink: #4a43d4;
+  --wash: rgba(91, 84, 232, 0.08);
+  --g1: #3f7bf6;
+  --g2: #8b52f4;
+  --ai-wash-a: rgba(63, 123, 246, 0.07);
+  --ai-wash-b: rgba(139, 82, 244, 0.09);
+  --add: #047857; --add-bg: #ecfdf5;
+  --chg: #b45309; --chg-bg: #fffbeb;
+  --del: #be123c; --del-bg: #fff1f2;
+  --int: #0369a1; --int-bg: #f0f9ff;
+  --same: #64748b; --same-bg: #f1f5f9;
+  --shadow: 0 1px 2px rgba(11, 18, 32, 0.05), 0 8px 24px rgba(11, 18, 32, 0.06);
+  --ui: "PingFang SC", "SF Pro Text", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  --serif: Georgia, "Times New Roman", "Songti SC", "Noto Serif CJK SC", serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "PingFang SC", "Microsoft YaHei", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0c0e13; --surface: #1a1e26; --canvas: #15181f; --soft: #161a21; --rail: #11141a;
+    --ink: #f2f4f7; --muted: #99a1ad; --faint: #828b97;
+    --line: rgba(255, 255, 255, 0.10); --line-soft: rgba(255, 255, 255, 0.06); --line-strong: rgba(255, 255, 255, 0.18);
+    --accent: #8b84f0; --accent-ink: #aaa4f6; --wash: rgba(124, 112, 235, 0.15);
+    --g1: #6ea3ff; --g2: #ab86ff; --ai-wash-a: rgba(110, 163, 255, 0.10); --ai-wash-b: rgba(171, 134, 255, 0.12);
+    --add: #34d399; --add-bg: #0f241b; --chg: #fbbf24; --chg-bg: #281e10;
+    --del: #fb7185; --del-bg: #2a151a; --int: #38bdf8; --int-bg: #0e1c27;
+    --same: #99a1ad; --same-bg: #15181f;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0c0e13; --surface: #1a1e26; --canvas: #15181f; --soft: #161a21; --rail: #11141a;
+  --ink: #f2f4f7; --muted: #99a1ad; --faint: #828b97;
+  --line: rgba(255, 255, 255, 0.10); --line-soft: rgba(255, 255, 255, 0.06); --line-strong: rgba(255, 255, 255, 0.18);
+  --accent: #8b84f0; --accent-ink: #aaa4f6; --wash: rgba(124, 112, 235, 0.15);
+  --g1: #6ea3ff; --g2: #ab86ff; --ai-wash-a: rgba(110, 163, 255, 0.10); --ai-wash-b: rgba(171, 134, 255, 0.12);
+  --add: #34d399; --add-bg: #0f241b; --chg: #fbbf24; --chg-bg: #281e10;
+  --del: #fb7185; --del-bg: #2a151a; --int: #38bdf8; --int-bg: #0e1c27;
+  --same: #99a1ad; --same-bg: #15181f;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; } }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--ui);
+  font-size: 14.5px; line-height: 1.7; margin: 0;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+code, .mono { font-family: var(--mono); font-size: 0.86em; }
+.wrap { max-width: 1120px; margin: 0 auto; padding-inline: 24px; padding-block: 0; }
+@media (max-width: 640px) { .wrap { padding-inline: 16px; } }
+
+/* ── 页头 ── */
+header.top { padding-block: 48px 28px; }
+.eyebrow { font-size: 12px; letter-spacing: 0.06em; color: var(--faint); }
+h1 { font-family: var(--serif); font-weight: 700; font-size: clamp(28px, 4vw, 38px); line-height: 1.2; margin: 10px 0 12px; text-wrap: balance; }
+.lead { font-size: 16px; color: var(--muted); max-width: 64ch; margin: 0; }
+.status { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); }
+.demo-num { border-bottom: 1.5px dashed currentColor; }
+
+nav.toc {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(8px); border-bottom: 1px solid var(--line-soft);
+}
+nav.toc .wrap { display: flex; gap: 4px; overflow-x: auto; padding-block: 8px; scrollbar-width: none; }
+nav.toc a { flex: none; font-size: 13px; color: var(--muted); padding: 4px 10px; border-radius: 8px; }
+nav.toc a:hover { background: var(--wash); color: var(--accent-ink); text-decoration: none; }
+
+section { padding-block: 44px 8px; scroll-margin-top: 48px; }
+h2 { font-family: var(--serif); font-size: 24px; line-height: 1.3; margin: 0 0 6px; text-wrap: balance; }
+h2 .no { color: var(--faint); font-weight: 400; margin-right: 10px; font-variant-numeric: tabular-nums; }
+.sub { color: var(--muted); margin: 0 0 22px; max-width: 72ch; }
+h3 { font-size: 15px; margin: 0 0 10px; }
+p { margin: 0 0 12px; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px 22px; }
+
+/* ── 第 1 节：决定 ── */
+.decisions { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.decisions li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: baseline; }
+.tagd { font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 6px; white-space: nowrap; }
+.tagd.ok { color: var(--add); background: var(--add-bg); }
+.tagd.prop { color: var(--chg); background: var(--chg-bg); }
+.callout { margin-top: 16px; border-left: 3px solid var(--line-strong); padding: 4px 0 4px 16px; }
+.callout h3 { font-size: 14px; }
+.callout ul { margin: 6px 0 10px; padding-left: 20px; }
+.callout li { margin-bottom: 4px; }
+
+/* ── 第 2 节：维度总览 ── */
+.dimgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 900px) { .dimgrid { grid-template-columns: minmax(0, 1fr); } }
+.dimcol h3 { display: flex; justify-content: space-between; align-items: baseline; }
+.dimcol h3 small { font-weight: 400; color: var(--faint); font-size: 12px; }
+.dim { display: grid; grid-template-columns: 54px minmax(0, 1fr); gap: 10px; padding: 9px 0; border-top: 1px solid var(--line-soft); }
+.dim:first-of-type { border-top: 0; }
+.st { font-size: 11px; font-weight: 600; text-align: center; border-radius: 6px; padding: 1px 0; height: fit-content; }
+.st.keep { color: var(--same); background: var(--same-bg); }
+.st.add { color: var(--add); background: var(--add-bg); }
+.st.chg { color: var(--chg); background: var(--chg-bg); }
+.st.del { color: var(--del); background: var(--del-bg); }
+.st.int { color: var(--int); background: var(--int-bg); }
+.dim b { font-weight: 600; }
+.dim .code { font-family: var(--mono); font-size: 11.5px; color: var(--faint); margin-left: 6px; }
+.dim .note { display: block; font-size: 12.5px; color: var(--muted); line-height: 1.55; margin-top: 2px; }
+.dim.is-del b { text-decoration: line-through; text-decoration-color: var(--del); color: var(--muted); }
+.eye { font-size: 10.5px; color: var(--accent-ink); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 4px; padding: 0 4px; margin-left: 6px; white-space: nowrap; }
+.legend { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; font-size: 12.5px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+/* ── 第 3 节：字段 diff ── */
+.diffs { display: grid; gap: 16px; }
+.diff { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.diff-h { padding: 12px 18px; border-bottom: 1px solid var(--line-soft); display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+.diff-h b { font-size: 14px; }
+.diff-h span { font-size: 12.5px; color: var(--faint); }
+.diff-body { overflow-x: auto; }
+.dl { display: grid; grid-template-columns: 28px minmax(200px, 270px) minmax(260px, 1fr); gap: 0 10px; padding: 6px 18px 6px 0; border-top: 1px solid var(--line-soft); font-size: 13px; line-height: 1.6; min-width: 560px; }
+.dl:first-child { border-top: 0; }
+.dl .g { font-family: var(--mono); font-weight: 700; text-align: center; }
+.dl .f { font-family: var(--mono); font-size: 12.5px; word-break: break-word; }
+.dl .d { color: var(--muted); }
+.dl.add { background: color-mix(in srgb, var(--add-bg) 70%, transparent); } .dl.add .g { color: var(--add); }
+.dl.chg { background: color-mix(in srgb, var(--chg-bg) 70%, transparent); } .dl.chg .g { color: var(--chg); }
+.dl.del { background: color-mix(in srgb, var(--del-bg) 70%, transparent); } .dl.del .g { color: var(--del); } .dl.del .f { text-decoration: line-through; }
+.dl.same .g { color: var(--same); }
+
+/* ── 第 4 节：规则表 ── */
+.rule { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; align-items: start; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px 20px; margin-bottom: 16px; }
+.rule .big { font-family: var(--serif); font-size: 20px; color: var(--accent-ink); }
+.tbl-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
+table { border-collapse: collapse; width: 100%; min-width: 760px; font-size: 13px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 14px; border-top: 1px solid var(--line-soft); }
+thead th { border-top: 0; font-size: 12px; font-weight: 600; color: var(--faint); background: var(--soft); }
+td.k { font-weight: 600; white-space: nowrap; }
+.dimtag { display: inline-block; font-size: 11.5px; padding: 0 7px; border-radius: 6px; white-space: nowrap; }
+.dimtag.news { color: var(--int); background: var(--int-bg); }
+.dimtag.content { color: #7c3aed; background: color-mix(in srgb, #8b52f4 12%, transparent); }
+:root[data-theme="dark"] .dimtag.content { color: #c4b5fd; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .dimtag.content { color: #c4b5fd; } }
+.notes { margin: 14px 0 0; padding-left: 20px; color: var(--muted); font-size: 13px; }
+.notes li { margin-bottom: 4px; }
+
+/* ── 第 5 节：样页控制条 ── */
+.ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin-bottom: 12px; }
+.seg { display: inline-flex; background: var(--canvas); border: 1px solid var(--line); border-radius: 10px; padding: 2px; }
+.seg button { font: inherit; font-size: 13px; border: 0; background: none; color: var(--muted); padding: 4px 14px; border-radius: 8px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(11, 18, 32, 0.1); }
+.ctl label { font-size: 13px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.ctl .lbl { font-size: 12px; color: var(--faint); }
+.mock-scroll { overflow-x: auto; border-radius: 16px; box-shadow: var(--shadow); }
+.mock-hint { font-size: 12.5px; color: var(--faint); margin-top: 8px; }
+
+/* ── 样页：四带阅读器 ── */
+.mock {
+  min-width: 1060px; height: 640px; display: grid;
+  grid-template-columns: 64px 224px 360px minmax(0, 1fr);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 16px; overflow: hidden;
+  font-size: 13px; line-height: 1.5;
+}
+.m-rail { background: var(--rail); display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 14px 0; border-right: 1px solid var(--line-soft); }
+.m-logo { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; color: #fff; font-weight: 700; font-family: var(--serif); background: linear-gradient(135deg, var(--g1), var(--g2)); margin-bottom: 10px; }
+.m-vbtn { width: 52px; border: 0; background: none; color: var(--muted); font: inherit; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 7px 0 5px; border-radius: 10px; cursor: pointer; position: relative; }
+.m-vbtn svg { width: 18px; height: 18px; }
+.m-vbtn span { font-size: 10px; }
+.m-vbtn:hover { color: var(--ink); }
+.m-vbtn.on { background: var(--wash); color: var(--accent-ink); }
+.m-vbtn.is-gone { opacity: 0.38; text-decoration: line-through; cursor: default; }
+.m-div { width: 24px; height: 1px; background: var(--line); margin: 6px 0; }
+.m-src { background: var(--surface); border-right: 1px solid var(--line-soft); padding: 14px 10px; overflow: auto; }
+.m-src-h { display: flex; align-items: center; justify-content: space-between; padding: 0 6px 10px; }
+.m-src-h b { font-size: 15px; }
+.m-mini { display: inline-flex; background: var(--canvas); border-radius: 7px; padding: 2px; font-size: 11px; }
+.m-mini i { font-style: normal; padding: 1px 8px; border-radius: 5px; color: var(--faint); }
+.m-mini i.on { background: var(--surface); color: var(--ink); font-weight: 600; }
+.m-grp { font-size: 11px; color: var(--faint); letter-spacing: 0.04em; padding: 10px 6px 4px; }
+.m-srow { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 8px; color: var(--ink); white-space: nowrap; overflow: hidden; }
+.m-srow .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.m-srow .moved { flex: none; font-size: 10px; color: var(--chg); }
+.badge { flex: none; display: inline-grid; place-items: center; color: #fff; font-weight: 700; border-radius: 5px; }
+.badge.s20 { width: 20px; height: 20px; font-size: 10px; border-radius: 6px; }
+.badge.s15 { width: 15px; height: 15px; font-size: 8px; border-radius: 4.5px; }
+.badge.s44 { width: 44px; height: 44px; font-size: 16px; border-radius: 10px; }
+.m-list { background: var(--soft); border-right: 1px solid var(--line-soft); display: flex; flex-direction: column; min-width: 0; }
+.m-list-h { padding: 14px 16px 10px; border-bottom: 1px solid var(--line-soft); }
+.m-list-h .row { display: flex; align-items: center; justify-content: space-between; }
+.m-list-h b { font-size: 15px; }
+.m-filter { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center; }
+.m-chip { font: inherit; font-size: 11.5px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); border-radius: 999px; padding: 1px 10px; cursor: pointer; }
+.m-chip[aria-pressed="true"] { border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: var(--wash); color: var(--accent-ink); font-weight: 600; }
+.m-items { overflow: auto; flex: 1; }
+.m-date { font-size: 11px; color: var(--faint); padding: 10px 16px 2px; }
+.m-entry { display: block; width: 100%; text-align: left; font: inherit; color: inherit; border: 0; background: none; border-bottom: 1px solid var(--line-soft); padding: 10px 16px 11px 22px; cursor: pointer; position: relative; }
+.m-entry:hover { background: color-mix(in srgb, var(--wash) 60%, transparent); }
+.m-entry.on { background: var(--wash); }
+.m-top { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); min-width: 0; }
+.m-top .src { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 130px; }
+.m-top .tag { color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-top .time { margin-left: auto; color: var(--faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.kchip { flex: none; font-size: 10.5px; line-height: 15px; padding: 0 5px; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--muted); white-space: nowrap; }
+.score { font-family: var(--serif); font-weight: 700; font-size: 13px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.grad { background: linear-gradient(118deg, var(--g1), var(--g2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.below { color: var(--faint); background: none; }
+.m-title { display: block; font-size: 14px; font-weight: 600; color: var(--ink); margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.m-dot { position: absolute; left: 9px; top: 33px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.m-ex { display: block; font-size: 12.5px; color: var(--muted); margin-top: 3px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.m-entry.compact { padding-top: 7px; padding-bottom: 7px; }
+.m-entry.compact .m-title { font-size: 13px; -webkit-line-clamp: 1; }
+.m-entry.compact .m-dot { top: 28px; }
+.m-pod { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 10px; }
+.m-pod .meta { font-size: 11.5px; color: var(--faint); margin-top: 3px; }
+.m-pane { overflow: auto; padding: 26px 34px 40px; min-width: 0; }
+.m-crumb { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.m-h { font-family: var(--serif); font-size: 23px; line-height: 1.35; margin: 10px 0 8px; font-weight: 700; text-wrap: balance; }
+.m-meta { font-size: 12.5px; color: var(--faint); display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+.aicard { margin-top: 18px; border-radius: 14px; border: 1px solid var(--line-soft); background: linear-gradient(118deg, var(--ai-wash-a), var(--ai-wash-b)); display: grid; grid-template-columns: 104px minmax(0, 1fr); min-height: 150px; }
+.aicard .side { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border-right: 1px solid var(--line-soft); padding: 14px 6px; }
+.fig { font: 700 42px/1 var(--serif); border: 0; background: none; padding: 0; cursor: pointer; font-variant-numeric: tabular-nums; }
+.fig:disabled { cursor: default; }
+.fig .grad, .fig.grad { display: inline-block; }
+.dimlbl { font-size: 11px; color: var(--muted); }
+.figwrap { position: relative; }
+.tip {
+  position: absolute; left: calc(100% + 14px); top: 50%; transform: translateY(-50%);
+  width: 280px; z-index: 6; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 12px; box-shadow: var(--shadow); padding: 10px 14px 11px;
+  opacity: 0; visibility: hidden; transition: opacity 0.14s ease, visibility 0.14s;
+  text-align: left; font-family: var(--ui);
+}
+.figwrap:hover .tip, .fig:focus-visible + .tip { opacity: 1; visibility: visible; }
+.tip .ltext { font-size: 12.5px; }
+.steps { display: flex; gap: 4px; margin-top: 2px; }
+.steps i { width: 5px; height: 5px; border-radius: 50%; background: var(--line-strong); }
+.steps i.on { background: var(--accent); }
+.aicard .main { padding: 14px 18px; min-width: 0; }
+.ltitle { font-size: 11.5px; font-weight: 600; color: var(--accent-ink); letter-spacing: 0.04em; }
+.ltext { margin: 6px 0 0; font-size: 13px; color: var(--ink); line-height: 1.7; }
+.lnote { display: block; margin-top: 8px; font-size: 11.5px; color: var(--faint); }
+.dimrows { display: grid; gap: 10px; margin-top: 8px; }
+.dimrow { display: grid; grid-template-columns: 64px 44px minmax(0, 1fr); gap: 4px 10px; align-items: baseline; padding: 8px 10px; border-radius: 10px; }
+.dimrow.is-primary { background: color-mix(in srgb, var(--surface) 70%, transparent); }
+.dimrow .dn { font-size: 12px; font-weight: 600; color: var(--muted); }
+.dimrow .dv { font: 700 18px/1 var(--serif); }
+.dimrow p { grid-column: 3; grid-row: 1 / span 2; margin: 0; font-size: 12.5px; line-height: 1.6; }
+.dimrow .pc { grid-column: 1 / span 2; font-size: 10.5px; color: var(--accent-ink); }
+.demo { font-size: 10.5px; color: var(--chg); border: 1px dashed var(--chg); border-radius: 4px; padding: 0 4px; margin-left: 4px; white-space: nowrap; font-family: var(--ui); font-weight: 400; }
+.skel { margin-top: 22px; display: grid; gap: 10px; }
+.skel i { display: block; height: 9px; border-radius: 5px; background: var(--canvas); }
+.m-orig { display: inline-block; margin-top: 18px; font-size: 12.5px; }
+.m-empty { height: 100%; display: grid; place-items: center; color: var(--faint); font-size: 13px; text-align: center; padding: 24px; }
+.mk { display: inline-grid; place-items: center; flex: none; width: 16px; height: 16px; border-radius: 50%; background: var(--chg); color: #fff; font: 700 10px/1 var(--ui); vertical-align: middle; }
+.m-vbtn .mk { position: absolute; top: 0; right: 2px; }
+.hide-mk .mk { display: none; }
+/* 早报（跨列整幅） */
+.m-brief { grid-column: 2 / -1; overflow: auto; padding: 26px 40px 40px; background: var(--surface); }
+.m-brief h4 { font-family: var(--serif); font-size: 22px; margin: 0 0 4px; }
+.m-brief .bnote { font-size: 12.5px; color: var(--faint); margin: 0 0 18px; }
+.bsec { margin-top: 20px; }
+.bsec-h { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; padding-bottom: 6px; border-bottom: 1px solid var(--line-soft); }
+.bsec-h small { font-weight: 400; color: var(--faint); font-size: 12px; }
+.bsec.is-new .bsec-h { color: var(--add); }
+.bgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 10px; }
+.bcard { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--soft); }
+.bcard .m-top { font-size: 11px; }
+.bcard .bt { font-family: var(--serif); font-size: 14.5px; font-weight: 700; margin-top: 6px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.bcard .bs { margin-top: 8px; font-size: 11.5px; color: var(--faint); display: flex; gap: 6px; align-items: baseline; }
+
+/* ── 第 6 节：例子 ── */
+.exgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 860px) { .exgrid { grid-template-columns: minmax(0, 1fr); } }
+.ex { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ex-h { display: flex; gap: 10px; align-items: flex-start; }
+.ex-h .t { font-family: var(--serif); font-size: 15.5px; font-weight: 700; line-height: 1.4; }
+.ex-h .s { font-size: 12px; color: var(--faint); margin-top: 2px; }
+.kv { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 6px 10px; font-size: 12.5px; }
+.kv .when { font-size: 11px; font-weight: 600; color: var(--faint); padding-top: 3px; }
+.kv .when.after { color: var(--add); }
+.facts { display: flex; flex-wrap: wrap; gap: 6px; }
+.fact { display: inline-flex; gap: 5px; align-items: baseline; border: 1px solid var(--line); border-radius: 8px; padding: 2px 8px; background: var(--soft); white-space: nowrap; }
+.fact em { font-style: normal; color: var(--faint); font-size: 11px; }
+.fact.hl { border-color: color-mix(in srgb, var(--accent) 40%, transparent); background: var(--wash); }
+.ex .why { font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--line-soft); padding-top: 10px; margin: 0; }
+
+/* ── 第 7、8 节 ── */
+.two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 860px) { .two { grid-template-columns: minmax(0, 1fr); } }
+.two ul, .panel ul { margin: 0; padding-left: 20px; }
+.two li, .panel li { margin-bottom: 6px; }
+.verdict { font-family: var(--serif); font-size: 18px; margin: 0 0 12px; }
+.phases { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 900px) { .phases { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .phases { grid-template-columns: minmax(0, 1fr); } }
+.phase { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; }
+.phase .pn { font-family: var(--mono); font-size: 12px; color: var(--accent-ink); }
+.phase h3 { margin: 4px 0 8px; }
+.phase ul { padding-left: 18px; margin: 0; font-size: 13px; color: var(--muted); }
+footer { padding-block: 40px 56px; color: var(--faint); font-size: 12.5px; }
+footer .panel { color: var(--muted); }
+</style>
+
+<header class="top wrap">
+  <div class="eyebrow">哆啦美 · 分类整改提案 · 2026-10-12</div>
+  <h1>内容分类与双评分</h1>
+  <p class="lead">每条内容先说清“它是什么”，再用两把尺子回答两个问题：这件事有多重要，以及值不值得花时间读或听。本页说明改动后后端字段、阅读器和日报早报分别会发生什么。</p>
+  <div class="status">
+    <span class="pill">状态：提案，尚未实现</span>
+    <span class="pill">数据：本地开发库 9 月快照 + 两档公开播客 RSS</span>
+    <span class="pill"><span class="demo-num">7.6</span> 虚线数字为示意值，按拟定尺子手工估计</span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="目录">
+  <div class="wrap">
+    <a href="#decisions">1 已定方向</a>
+    <a href="#dims">2 维度总览</a>
+    <a href="#fields">3 后端字段</a>
+    <a href="#primary">4 主分规则</a>
+    <a href="#reader">5 阅读器样页</a>
+    <a href="#examples">6 八个例子</a>
+    <a href="#bulletin">7 动态并入文章</a>
+    <a href="#plan">8 分步上线</a>
+  </div>
+</nav>
+
+<main class="wrap">
+
+<section id="decisions">
+  <h2><span class="no">1</span>已定方向</h2>
+  <p class="sub">前四条已拍板，第五条是本次新提议，第 7 节单独评估。</p>
+  <div class="panel">
+    <ul class="decisions">
+      <li><span class="tagd ok">已定</span><span>平台定位扩展为「资讯 + 值得深读 / 收听」。</span></li>
+      <li><span class="tagd ok">已定</span><span>每条内容都打两个分：<b>新闻价值</b>（这件事有多重要）和<b>内容价值</b>（值不值得花时间读或听）。</span></li>
+      <li><span class="tagd ok">已定</span><span>公共日报继续收少量论文。</span></li>
+      <li><span class="tagd ok">已定</span><span>阅读器每条显示一个主分。评分卡里 AI 速读不变；分数下方小字标出当前维度，点分数切换到另一个维度，悬停分数显示它的评分依据。</span></li>
+      <li><span class="tagd prop">提议</span><span>左轨去掉「动态」，并入「文章」。</span></li>
+    </ul>
+    <div class="callout">
+      <h3>和 issue #22「只留一把尺子」的关系</h3>
+      <p>9 月 7 日的统一评分波拍板取缔阅读价值维度，只保留新闻价值。理由是重要性比阅读价值更有共识，分数要给所有人看，就该量共识高的东西。这次恢复第二把尺子，是因为之后发生了三件事：</p>
+      <ul>
+        <li><b>播客上线后，第二把尺子已经存在。</b>播客的打分规则写进了同一个字段，改掉了「不看时效」，还计入嘉宾名气，只是没有单独命名。</li>
+        <li><b>论文持续沉底。</b>当时已预计论文、教程、观点会落在 4–5 分，并加了锚点修补。本地库里体裁为「学术论文」的 59 条分析只有 11 条达到 6.0；模型发布是 55 条里 45 条。</li>
+        <li><b>定位改了。</b>深读和收听成为平台要服务的目标。</li>
+      </ul>
+      <p>对当时共识顾虑的回应：内容价值不评“写得好不好”，而是按内容类型给出能核对的标准（第 4 节），并且所有类型都有领域相关性上限。新闻价值的定义、数值和门槛原样保留。</p>
+    </div>
+  </div>
+</section>
+
+<section id="dims">
+  <h2><span class="no">2</span>维度总览</h2>
+  <p class="sub">现在和分类有关的字段有 13 个，标签与映射表有 5 张，彼此重叠。改后每个维度只回答一个问题；读者能看到的是呈现形态、来源角色、内容类型三根轴，加上主题标签和一个分数。</p>
+  <div class="legend">
+    <span><i class="st keep" style="width:40px">保留</i>不变</span>
+    <span><i class="st add" style="width:40px">新增</i>新字段</span>
+    <span><i class="st chg" style="width:40px">改动</i>拆分或改语义</span>
+    <span><i class="st int" style="width:40px">内部</i>保留但不再对读者展示</span>
+    <span><i class="st del" style="width:40px">退役</i>删除</span>
+    <span><span class="eye">读者可见</span>出现在阅读器里</span>
+  </div>
+  <div class="dimgrid">
+    <div class="panel dimcol">
+      <h3>来源层 <small>挂在源上，由策展决定</small></h3>
+      <div class="dim"><i class="st keep">保留</i><div><b>来源角色</b><span class="eye">读者可见</span><span class="note">官方 / 媒体 / 个人 / 榜单 / 自定。回答“谁在说话”。</span></div></div>
+      <div class="dim"><i class="st keep">保留</i><div><b>平台</b><span class="code">platform</span><span class="note">X、播客、网站等事实。</span></div></div>
+      <div class="dim"><i class="st chg">改动</i><div><b>呈现形态</b><span class="code">content_shape</span><span class="eye">读者可见</span><span class="note">决定用哪种界面呈现。文章 / 播客 / 社交，「动态」并入文章（第 7 节）。</span></div></div>
+      <div class="dim"><i class="st add">新增</i><div><b>默认内容类型</b><span class="code">default_kind</span><span class="note">给条目判定提供先验，例如 HF Daily Papers 默认是论文。</span></div></div>
+      <div class="dim"><i class="st add">新增</i><div><b>准入状态</b><span class="code">admission_status</span><span class="note">观察期 / 正式，从 category 里拆出来。</span></div></div>
+      <div class="dim"><i class="st int">内部</i><div><b>数据结构</b><span class="code">content_type</span><span class="note">决定扩展字段长什么样，三份对外契约依赖它。不改，只是不再当成分类展示。</span></div></div>
+      <div class="dim"><i class="st int">内部</i><div><b>策展资料</b><span class="code">scope / channel / tier</span><span class="note">只用来推导来源角色。</span></div></div>
+      <div class="dim is-del"><i class="st del">退役</i><div><b>category</b><span class="note">62 个源里 38 个填的是“观察期”，已经不是分类。</span></div></div>
+      <div class="dim is-del"><i class="st del">退役</i><div><b>源级体裁猜测</b><span class="code">content_tags</span><span class="note">被条目级的内容类型取代。</span></div></div>
+    </div>
+    <div class="panel dimcol">
+      <h3>条目层 <small>挂在每篇内容上</small></h3>
+      <div class="dim"><i class="st add">新增</i><div><b>内容类型</b><span class="code">content_kind</span><span class="eye">读者可见</span><span class="note">“这是什么”：资讯 / 论文 / 教程 / 观点 / 版本更新 / 项目 / 汇编。规则优先，LLM 补判。</span></div></div>
+      <div class="dim"><i class="st add">新增</i><div><b>事件类型</b><span class="code">event_type</span><span class="note">“发生了哪类事”：模型发布 / 产品更新 / 开源发布 / 研究成果 / 行业 / 政策 / 安全。只对事件类内容填写，用于日报早报分区。</span></div></div>
+      <div class="dim"><i class="st chg">改动</i><div><b>体裁</b><span class="code">content_genre</span><span class="note">现在把上面两件事压在一个单选里，一篇发布模型的论文只能二选一。拆分后停止写入，过渡期派生，之后退役。</span></div></div>
+      <div class="dim"><i class="st keep">保留</i><div><b>规范标签</b><span class="code">topic / industry / entity</span><span class="eye">读者可见</span><span class="note">主题、行业、公司。兴趣和早报兴趣通道照旧使用。</span></div></div>
+    </div>
+    <div class="panel dimcol">
+      <h3>评分层 <small>每篇两个分</small></h3>
+      <div class="dim"><i class="st keep">保留</i><div><b>新闻价值</b><span class="code">quality_score</span><span class="note">这件事有多重要。定义、数值、门槛都不变。</span></div></div>
+      <div class="dim"><i class="st add">新增</i><div><b>内容价值</b><span class="code">content_value_score</span><span class="note">值不值得花时间读或听。标准随内容类型变化，见第 4 节。</span></div></div>
+      <div class="dim"><i class="st add">新增</i><div><b>主分</b><span class="code">primary_dimension</span><span class="eye">读者可见</span><span class="note">阅读器默认显示哪一个。读取时按规则算出，不落库。</span></div></div>
+      <div class="dim"><i class="st chg">改动</i><div><b>播客初评 / 终评</b><span class="code">podcast_*_score</span><span class="note">改为内容价值口径，转写与优质线需要重新标定。</span></div></div>
+    </div>
+  </div>
+</section>
+
+<section id="fields">
+  <h2><span class="no">3</span>后端字段变化</h2>
+  <p class="sub">按改动位置分四组。<b style="color:var(--add)">+</b> 新增，<b style="color:var(--chg)">~</b> 改动，<b style="color:var(--del)">−</b> 退役，<b style="color:var(--same)">=</b> 不变但需要说明。</p>
+  <div class="diffs">
+    <div class="diff">
+      <div class="diff-h"><b>article_analyses</b><span>每篇内容的入库分析结果，一次 LLM 调用同时产出两个分</span></div>
+      <div class="diff-body">
+        <div class="dl add"><span class="g">+</span><span class="f">content_kind</span><span class="d">内容类型：news / paper / tutorial / opinion / release / project / digest</span></div>
+        <div class="dl add"><span class="g">+</span><span class="f">kind_basis</span><span class="d">判定依据：source_rule（来源先验）/ url_rule（链接形状）/ llm</span></div>
+        <div class="dl add"><span class="g">+</span><span class="f">event_type</span><span class="d">事件类型，仅事件类内容填写：model_release / product_update / open_source / research / industry / policy / security</span></div>
+        <div class="dl chg"><span class="g">~</span><span class="f">content_genre</span><span class="d">停止写入新值。过渡期由 content_kind + event_type 派生，供归档同步和旧客户端读取，下个版本移除</span></div>
+        <div class="dl same"><span class="g">=</span><span class="f">quality_score</span><span class="d">新闻价值。定义、数值和所有门槛不变；列名沿用，接口另给别名 news_value</span></div>
+        <div class="dl same"><span class="g">=</span><span class="f">score_reason</span><span class="d">新闻价值的依据</span></div>
+        <div class="dl add"><span class="g">+</span><span class="f">content_value_score</span><span class="d">内容价值，1.0–10.0，一位小数</span></div>
+        <div class="dl add"><span class="g">+</span><span class="f">content_value_reason</span><span class="d">内容价值的依据，一句话</span></div>
+        <div class="dl add"><span class="g">+</span><span class="f">content_value_version</span><span class="d">评分版本，例如 content-value-v2（v1 已被 9 月前的旧阅读价值尺子用过）</span></div>
+        <div class="dl chg"><span class="g">~</span><span class="f">podcast_initial_score<br>podcast_final_score</span><span class="d">改为内容价值口径。播客尺子整体迁入内容价值；转写回退线 6.0、优质线 7.5 需要重新标定</span></div>
+      </div>
+    </div>
+    <div class="diff">
+      <div class="diff-h"><b>源定义</b><span>抓取器类属性与 source_configs</span></div>
+      <div class="diff-body">
+        <div class="dl add"><span class="g">+</span><span class="f">default_kind</span><span class="d">来源先验。HF Daily Papers → paper；各家 changelog、GitHub Release → release；模型与仓库源 → project</span></div>
+        <div class="dl add"><span class="g">+</span><span class="f">admission_status</span><span class="d">观察期 / 正式，从 category 拆出</span></div>
+        <div class="dl del"><span class="g">−</span><span class="f">category</span><span class="d">62 个源里 38 个填的是 incubating</span></div>
+        <div class="dl del"><span class="g">−</span><span class="f">content_tags</span><span class="d">源级体裁猜测，被条目级 content_kind 取代</span></div>
+        <div class="dl chg"><span class="g">~</span><span class="f">content_shape</span><span class="d">bulletin 并入 article，涉及 15 个源（采纳第 7 节提议时）</span></div>
+        <div class="dl same"><span class="g">=</span><span class="f">content_type</span><span class="d">数据结构，决定 extensions_json 的字段。feed、订阅、归档同步三份契约和 MCP 参数都依赖它，不改，只是不再当作分类展示</span></div>
+        <div class="dl same"><span class="g">=</span><span class="f">source_scope / source_channel<br>provenance_tier</span><span class="d">保留为策展资料，只用来推导来源角色，不对读者展示</span></div>
+      </div>
+    </div>
+    <div class="diff">
+      <div class="diff-h"><b>接口</b><span>GET /api/articles 列表与详情</span></div>
+      <div class="diff-body">
+        <div class="dl add"><span class="g">+</span><span class="f">content_kind, kind_label</span><span class="d">内容类型与中文名，中文名由后端词表下发</span></div>
+        <div class="dl add"><span class="g">+</span><span class="f">event_type</span><span class="d">事件类型</span></div>
+        <div class="dl add"><span class="g">+</span><span class="f">news_value</span><span class="d">quality_score 的别名</span></div>
+        <div class="dl add"><span class="g">+</span><span class="f">content_value, content_value_reason</span><span class="d">内容价值与依据</span></div>
+        <div class="dl add"><span class="g">+</span><span class="f">primary_dimension</span><span class="d">"news" 或 "content"，按第 4 节规则在读取时计算</span></div>
+        <div class="dl add"><span class="g">+</span><span class="f">?kind=paper,tutorial</span><span class="d">新筛选参数，可多选</span></div>
+        <div class="dl chg"><span class="g">~</span><span class="f">?shape=bulletin</span><span class="d">继续接受，按 article 处理，兼容旧客户端和移动壳</span></div>
+      </div>
+    </div>
+    <div class="diff">
+      <div class="diff-h"><b>词表与消费方</b><span>谁读这些字段、读法怎么变</span></div>
+      <div class="diff-body">
+        <div class="dl chg"><span class="g">~</span><span class="f">标签与映射表 5 → 1</span><span class="d">前端 CONTENT_TYPE_LABELS、GENRE_LABELS，后端 CONTENT_TYPE_CATEGORY、GENRE_SECTIONS、CLASSIFICATION_FROM_GENRE 合成一张后端词表。顺带消除一处矛盾：现在公共日报把教程和观点归进「行业资讯」，个人早报却归「工程实践」「观点洞察」</span></div>
+        <div class="dl chg"><span class="g">~</span><span class="f">公共日报</span><span class="d">新闻部分不变（新闻价值 ≥ 6.0）。论文名额仍为 3 篇，改为从内容类型为论文的条目里按内容价值挑选；媒体对论文的报道不再占论文名额</span></div>
+        <div class="dl add"><span class="g">+</span><span class="f">个人早报</span><span class="d">新闻分区不变；新增「值得读」（论文、教程、观点、汇编，按内容价值）和「值得听」（播客，按内容价值）</span></div>
+        <div class="dl chg"><span class="g">~</span><span class="f">播客成本门控</span><span class="d">是否转写、是否进入优质与精简音频，改读内容价值</span></div>
+        <div class="dl same"><span class="g">=</span><span class="f">重大事件通道</span><span class="d">继续只看新闻价值</span></div>
+        <div class="dl same"><span class="g">=</span><span class="f">feed / MCP / 归档同步</span><span class="d">content_type 不变；新增字段按归档同步的协议版本追加</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="primary">
+  <h2><span class="no">4</span>主分规则与内容价值的标准</h2>
+  <p class="sub">阅读器默认显示哪个分，由内容类型决定。内容价值按类型换标准，避免用读论文的眼光评教程，或者反过来。</p>
+  <div class="rule">
+    <span class="big">主分</span>
+    <div>
+      <p style="margin:0 0 4px"><b>取内容类型的默认维度。</b>例外：新闻价值达到 8.5 时一律以新闻价值为主，重大事件优先。只有一个分数时显示已有的那个。</p>
+      <p style="margin:0;color:var(--muted);font-size:13px">8.5 是待定参数，和重大事件通道的门槛（9.0）分开设置。</p>
+    </div>
+  </div>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>内容类型</th><th>例子</th><th>怎么判定</th><th>默认主分</th><th>内容价值看什么</th></tr></thead>
+      <tbody>
+        <tr><td class="k">资讯</td><td>模型发布稿、媒体报道、官方新闻、推文</td><td>LLM</td><td><span class="dimtag news">新闻价值</span></td><td>信息密度、一手程度</td></tr>
+        <tr><td class="k">论文</td><td>论文原文、技术报告</td><td>来源规则（HF Daily Papers）、链接规则（arXiv、OpenReview），其余 LLM 补判</td><td><span class="dimtag content">内容价值</span></td><td>贡献新不新、证据扎不扎实、是否开源可复现、社区信号（如 HF 赞数）</td></tr>
+        <tr><td class="k">教程</td><td>实践指南、操作复盘</td><td>LLM</td><td><span class="dimtag content">内容价值</span></td><td>能否照着做、离开某家厂商是否仍成立、具体程度</td></tr>
+        <tr><td class="k">观点</td><td>评论、立场声明、访谈、播客对谈</td><td>LLM</td><td><span class="dimtag content">内容价值</span></td><td>有没有新事实或新框架、论证、讲述者是否一手</td></tr>
+        <tr><td class="k">版本更新</td><td>changelog、Release Notes</td><td>来源规则</td><td><span class="dimtag news">新闻价值</span></td><td>对使用者的实际改动</td></tr>
+        <tr><td class="k">项目</td><td>代码仓库、模型卡、趋势榜条目</td><td>来源规则</td><td><span class="dimtag news">新闻价值</span></td><td>能否用起来、文档与维护情况</td></tr>
+        <tr><td class="k">汇编</td><td>周刊、日报、合集</td><td>来源规则 + LLM</td><td><span class="dimtag content">内容价值</span></td><td>编选质量与覆盖面</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul class="notes">
+    <li>所有类型共用一条领域相关性上限：与 AI 无关的内容，内容价值不超过 4.9。</li>
+    <li>列表里「资讯」不显示类型签。它是默认值，每行都写等于没写。</li>
+    <li>播客和社交的呈现形态不变，内容类型照常判定：播客多为观点，推文多为资讯。</li>
+  </ul>
+</section>
+
+<section id="reader">
+  <h2><span class="no">5</span>阅读器样页</h2>
+  <p class="sub">用第 6 节的样例条目还原现有的四栏阅读器。切换「现状」和「改后」对比；点左轨换容器，点条目看阅读窗，点评分大数字看评分。</p>
+  <div class="ctl">
+    <span class="lbl">版本</span>
+    <div class="seg" id="ctl-mode">
+      <button type="button" data-mode="before" aria-pressed="false">现状</button>
+      <button type="button" data-mode="after" aria-pressed="true">改后</button>
+    </div>
+    <label for="ctl-mk"><input type="checkbox" id="ctl-mk" checked> 显示改动标注</label>
+  </div>
+  <div class="mock-scroll"><div class="mock" id="mock"></div></div>
+  <p class="mock-hint">窄屏时样页可横向滚动。发现、设置等入口在样页里不可点。</p>
+  <div class="panel" style="margin-top:16px">
+    <h3>改后看点</h3>
+    <ul class="notes" style="margin:0;color:var(--ink)">
+      <li><span class="mk">1</span> 左轨去掉「动态」，只剩文章、播客、社交三种呈现形态。</li>
+      <li><span class="mk">2</span> 列表头新增类型筛选，只列当前列表里出现过的类型。</li>
+      <li><span class="mk">3</span> 条目显示内容类型签（资讯不显示），分数位显示主分。</li>
+      <li><span class="mk">4</span> 版本更新在文章列表里用紧凑行。紧凑与否改由内容类型决定，不再由容器决定。</li>
+      <li><span class="mk">5</span> 评分卡：AI 速读不变。分数下方小字标出当前维度；点分数在新闻价值和内容价值之间切换；鼠标悬停在分数上，显示这个分数的评分依据。</li>
+      <li><span class="mk">6</span> 早报新增「值得读」「值得听」两个分区，新闻分区不变。</li>
+    </ul>
+  </div>
+</section>
+
+<section id="examples">
+  <h2><span class="no">6</span>八个例子</h2>
+  <p class="sub">标题、来源、新闻价值和依据取自本地开发库（提示词版本 article-analysis-v6）；播客取自公开 RSS。内容价值和所有播客分数都是示意值，用虚线标出。</p>
+  <div class="exgrid">
+
+    <article class="ex">
+      <div class="ex-h"><span class="badge s20" style="background:hsl(42 70% 42%)">H</span><div><div class="t"><a href="https://huggingface.co/papers/2609.02749">Repo-To-Skill: Distilling GitHub Repositories Into AI4AI Skills</a></div><div class="s">Hugging Face Daily Papers · 榜单 · 2026-09-02 · 社区 344 赞</div></div></div>
+      <div class="kv">
+        <span class="when">现在</span><div class="facts"><span class="fact"><em>台账类型</em>资讯文章</span><span class="fact"><em>体裁</em>学术论文</span><span class="fact"><em>新闻价值</em>5.2</span></div>
+        <span class="when after">改后</span><div class="facts"><span class="fact hl"><em>内容类型</em>论文 · 来源规则</span><span class="fact"><em>新闻价值</em>5.2</span><span class="fact hl"><em>内容价值</em><span class="demo-num">7.6</span></span><span class="fact"><em>主分</em>内容价值</span><span class="fact"><em>去向</em>早报「值得读」、日报论文候选</span></div>
+      </div>
+      <p class="why">新闻尺子对常规论文默认给 4.0–5.5，344 个社区赞在现在的尺子里没有位置。台账把它叫“资讯文章”，是因为它通过网页抓取进来。</p>
+    </article>
+
+    <article class="ex">
+      <div class="ex-h"><span class="badge s20" style="background:hsl(4 70% 48%)">量</span><div><div class="t"><a href="https://www.qbitai.com/2026/09/489023.html">分子之心QuantaMind登Science Advances，让AI给分子世界”拍电影”</a></div><div class="s">量子位 · 媒体 · 2026-09-14</div></div></div>
+      <div class="kv">
+        <span class="when">现在</span><div class="facts"><span class="fact"><em>台账类型</em>资讯文章</span><span class="fact"><em>体裁</em>学术论文</span><span class="fact"><em>新闻价值</em>7.2</span></div>
+        <span class="when after">改后</span><div class="facts"><span class="fact hl"><em>内容类型</em>资讯 · LLM</span><span class="fact hl"><em>事件类型</em>研究成果</span><span class="fact"><em>新闻价值</em>7.2</span><span class="fact"><em>内容价值</em><span class="demo-num">5.6</span></span><span class="fact"><em>主分</em>新闻价值</span><span class="fact"><em>去向</em>日报新闻部分</span></div>
+      </div>
+      <p class="why">现在它和论文原文共用“学术论文”体裁，日报会把它计入 3 篇论文名额。改后它是一篇关于研究成果的报道，“只看论文”筛选里不会出现。</p>
+    </article>
+
+    <article class="ex">
+      <div class="ex-h"><span class="badge s20" style="background:hsl(24 55% 46%)">A</span><div><div class="t"><a href="https://www.anthropic.com/news/claude-opus-5">Introducing Claude Opus 5</a></div><div class="s">Anthropic · 官方 · 2026-07-24</div></div></div>
+      <div class="kv">
+        <span class="when">现在</span><div class="facts"><span class="fact"><em>台账类型</em>资讯文章</span><span class="fact"><em>体裁</em>模型发布</span><span class="fact"><em>新闻价值</em>9.2</span></div>
+        <span class="when after">改后</span><div class="facts"><span class="fact"><em>内容类型</em>资讯 · LLM</span><span class="fact hl"><em>事件类型</em>模型发布</span><span class="fact"><em>新闻价值</em>9.2</span><span class="fact"><em>内容价值</em><span class="demo-num">7.0</span></span><span class="fact"><em>主分</em>新闻价值</span><span class="fact"><em>去向</em>重大事件通道、日报</span></div>
+      </div>
+      <p class="why">新闻类内容几乎不受影响：分数、去向都和现在一样，只多了一个可以点开查看的内容价值。</p>
+    </article>
+
+    <article class="ex">
+      <div class="ex-h"><span class="badge s20" style="background:hsl(18 60% 45%)">C</span><div><div class="t"><a href="https://code.claude.com/docs/en/changelog#2.1.257">Claude Code 2.1.257</a></div><div class="s">Claude Code Changelog · 官方 · 2026-09-01</div></div></div>
+      <div class="kv">
+        <span class="when">现在</span><div class="facts"><span class="fact"><em>台账类型</em>资讯文章</span><span class="fact"><em>体裁</em>产品更新</span><span class="fact"><em>容器</em>动态</span><span class="fact"><em>新闻价值</em>5.5</span></div>
+        <span class="when after">改后</span><div class="facts"><span class="fact hl"><em>内容类型</em>版本更新 · 来源规则</span><span class="fact"><em>事件类型</em>产品更新</span><span class="fact"><em>新闻价值</em>5.5</span><span class="fact"><em>内容价值</em><span class="demo-num">3.5</span></span><span class="fact hl"><em>容器</em>文章，紧凑行</span></div>
+      </div>
+      <p class="why">一条 changelog 在台账里叫“资讯文章”，原因同样是网页抓取（content_type 为 web_article）。改后由来源规则直接判成版本更新，不需要调用 LLM。</p>
+    </article>
+
+    <article class="ex">
+      <div class="ex-h"><span class="badge s20" style="background:hsl(16 55% 50%)">C</span><div><div class="t"><a href="https://claude.com/blog/claude-code-guide-for-startups">The Claude Code guide for startups</a></div><div class="s">Claude Blog · 官方 · 2026-08-20</div></div></div>
+      <div class="kv">
+        <span class="when">现在</span><div class="facts"><span class="fact"><em>台账类型</em>资讯文章</span><span class="fact"><em>体裁</em>教程</span><span class="fact"><em>新闻价值</em>6.5</span></div>
+        <span class="when after">改后</span><div class="facts"><span class="fact hl"><em>内容类型</em>教程 · LLM</span><span class="fact"><em>新闻价值</em>6.5</span><span class="fact hl"><em>内容价值</em><span class="demo-num">7.3</span></span><span class="fact"><em>主分</em>内容价值</span><span class="fact"><em>去向</em>早报「值得读」</span></div>
+      </div>
+      <p class="why">教程的价值在于能照着做。新闻尺子只能按“影响力”给它 6.5，说不出它有多实用。</p>
+    </article>
+
+    <article class="ex">
+      <div class="ex-h"><span class="badge s20" style="background:hsl(24 55% 46%)">A</span><div><div class="t"><a href="https://www.anthropic.com/news/position-open-weights-models">Our position on open-weights models</a></div><div class="s">Anthropic · 官方 · 2026-07-27</div></div></div>
+      <div class="kv">
+        <span class="when">现在</span><div class="facts"><span class="fact"><em>台账类型</em>资讯文章</span><span class="fact"><em>体裁</em>观点</span><span class="fact"><em>新闻价值</em>7.5</span></div>
+        <span class="when after">改后</span><div class="facts"><span class="fact hl"><em>内容类型</em>观点 · LLM</span><span class="fact"><em>新闻价值</em>7.5</span><span class="fact"><em>内容价值</em><span class="demo-num">6.8</span></span><span class="fact"><em>主分</em>内容价值</span><span class="fact"><em>阅读器</em>显示 6.8，点开可见 7.5</span></div>
+      </div>
+      <p class="why">来源角色和内容类型各管各的：官方源也会发观点文章。这一条主分比新闻价值低，是规则的直接结果，第 8 节把它列为需要验证的边界情况。</p>
+    </article>
+
+    <article class="ex">
+      <div class="ex-h"><span class="badge s20" style="background:hsl(200 55% 40%)">D</span><div><div class="t"><a href="https://www.dwarkesh.com/">Noam Brown – Agent swarms, alignment, &amp; recursive self-improvement</a></div><div class="s">Dwarkesh Podcast · 个人 · 2026-09-17 · 80 分钟</div></div></div>
+      <div class="kv">
+        <span class="when">现在</span><div class="facts"><span class="fact"><em>类型</em>播客单集</span><span class="fact"><em>评分</em><span class="demo-num">8.4</span> 播客附加尺</span></div>
+        <span class="when after">改后</span><div class="facts"><span class="fact hl"><em>内容类型</em>观点（访谈）</span><span class="fact"><em>新闻价值</em><span class="demo-num">6.2</span></span><span class="fact hl"><em>内容价值</em><span class="demo-num">8.4</span></span><span class="fact"><em>主分</em>内容价值</span><span class="fact"><em>去向</em>早报「值得听」</span></div>
+      </div>
+      <p class="why">现在播客的规则写在同一个字段里，计入时效和嘉宾名气，实际上已经是第二把尺子。改后它有了名字，转写资格也改读内容价值。</p>
+    </article>
+
+    <article class="ex">
+      <div class="ex-h"><span class="badge s20" style="background:hsl(200 55% 40%)">D</span><div><div class="t"><a href="https://www.dwarkesh.com/">Si Sheppard – How did a few hundred Spanish soldiers topple two empires?</a></div><div class="s">Dwarkesh Podcast · 个人 · 2026-10-01 · 97 分钟</div></div></div>
+      <div class="kv">
+        <span class="when">现在</span><div class="facts"><span class="fact"><em>类型</em>播客单集</span><span class="fact"><em>评分</em><span class="demo-num">4.6</span> 播客附加尺</span></div>
+        <span class="when after">改后</span><div class="facts"><span class="fact hl"><em>内容类型</em>观点（访谈）</span><span class="fact"><em>新闻价值</em><span class="demo-num">2.0</span></span><span class="fact"><em>内容价值</em><span class="demo-num">4.6</span></span><span class="fact"><em>主分</em>内容价值</span><span class="fact"><em>去向</em>不进早报</span></div>
+      </div>
+      <p class="why">内容价值同样受领域相关性约束：历史话题与 AI 无关，最高只到 4.9。这一条直接回应 issue #22 当时担心的“小众随笔拿高分”。</p>
+    </article>
+
+  </div>
+</section>
+
+<section id="bulletin">
+  <h2><span class="no">7</span>「动态」并入「文章」</h2>
+  <p class="sub">对这条新提议的评估。</p>
+  <div class="panel">
+    <p class="verdict">赞成。前提是内容类型先上线，因为版本更新的紧凑显示和筛选都要靠它。</p>
+    <div class="two">
+      <div>
+        <h3>依据</h3>
+        <ul>
+          <li>两者的渲染差别只有三处：行距更紧、标题单行、不显示摘要；另外动态容器不显示「文章榜」入口。阅读窗完全一样。</li>
+          <li>「动态」是在来源层代替一个缺失的条目层类型。有了「版本更新」「项目」两个类型后，紧凑行可以由类型决定，单独的容器就多余了。</li>
+          <li>量很小。本地开发库近 30 天：动态 74 条，文章 3008 条，约 2%。生产比例上线前再查。</li>
+        </ul>
+        <h3 style="margin-top:16px">术语建议</h3>
+        <p style="margin:0">文章、播客、社交的区别在于<b>呈现形态</b>（排版、播放器、卡片流），不是体裁。本方案里“类型”专指论文、教程这类内容类型。对外统一这么说，可以避免两个概念混用。</p>
+      </div>
+      <div>
+        <h3>连带改动</h3>
+        <ul>
+          <li>左轨容器从 4 个减到 3 个。</li>
+          <li>发现页的形态筛选从 5 档减到 4 档。</li>
+          <li>发现页“订阅全部文章源”会把 15 个 changelog、Release、模型、仓库源也包含进去，需要决定是否排除。</li>
+          <li>后端 15 个源的 content_shape 改为 article，<code>shape=bulletin</code> 保留为别名。</li>
+          <li>原来按容器统计的未读数和“全部标读”合并。</li>
+          <li>文章榜（近 7 天标签趋势）会计入版本更新。</li>
+        </ul>
+        <h3 style="margin-top:16px">风险</h3>
+        <p style="margin:0">订阅了很多 changelog 的读者会觉得文章列表被刷屏。对策是类型筛选里提供“隐藏版本更新”，并记住每个人的选择。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="plan">
+  <h2><span class="no">8</span>分步上线与待定参数</h2>
+  <p class="sub">每一步都可以单独上线、单独回滚；前一步不依赖后一步。</p>
+  <div class="phases">
+    <div class="phase"><div class="pn">P0</div><h3>收口</h3><ul><li>5 张标签表合成 1 张后端词表</li><li>category 拆出准入状态</li><li>源级 content_tags 退役</li><li>读者无感</li></ul></div>
+    <div class="phase"><div class="pn">P1</div><h3>内容类型</h3><ul><li>新增 content_kind、event_type</li><li>规则判定 + LLM 补判，存量回填</li><li>卡片类型签与类型筛选</li><li>「动态」并入「文章」</li></ul></div>
+    <div class="phase"><div class="pn">P2</div><h3>内容价值</h3><ul><li>按类型的内容价值标准</li><li>一次分析调用产出两个分</li><li>黄金集按类型扩充（现有 62 条，论文 8 条、播客 0 条）</li><li>播客尺子迁入</li></ul></div>
+    <div class="phase"><div class="pn">P3</div><h3>分发</h3><ul><li>早报「值得读」「值得听」</li><li>日报论文名额改按内容价值</li><li>播客门控改读内容价值</li><li>收紧新闻尺子：移除“非新闻体裁”条款，让它只评事件</li></ul></div>
+  </div>
+  <div class="panel" style="margin-top:16px">
+    <h3>待定参数与待验证的问题</h3>
+    <ul>
+      <li>主分的例外线：新闻价值达到多少时改以新闻价值为主（提议 8.5）。</li>
+      <li>日报论文名额的内容价值门槛。</li>
+      <li>早报「值得读」「值得听」各几个名额，是否和新闻部分共用 10 条的总目标。</li>
+      <li>播客转写回退线 6.0 和优质线 7.5 在新口径下的数值。</li>
+      <li>官方观点类文章（例子 6）主分低于新闻价值，是否需要按来源角色调整规则。</li>
+      <li>列表里只显示主分数字、不标维度，读者能否理解；需要在验收时观察。</li>
+    </ul>
+  </div>
+</section>
+
+</main>
+
+<footer class="wrap">
+  <div class="panel">
+    <b>数据与方法</b>
+    <p style="margin:6px 0 0">文章样例来自本地开发库（截至 2026-09-17），新闻价值与依据由 article-analysis-v6 / news-value-v2 产出，未改动。内容价值、播客的两个分数均为按第 4 节拟定标准手工估计的示意值，实现后以模型输出为准。播客标题、日期和时长取自 Dwarkesh Podcast 与晚点聊 LateTalk 的公开 RSS。论文分布等统计来自同一开发库，含两个本地测试用的自定源，不代表生产；拍板参数前应在生产只读复核。</p>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var SRC = {
+    qbitai: { name: '量子位', l: '量', h: 4, role: '媒体' },
+    hfp: { name: 'Hugging Face Daily Papers', l: 'H', h: 42, role: '榜单' },
+    ccl: { name: 'Claude Code Changelog', l: 'C', h: 18, role: '官方' },
+    anth: { name: 'Anthropic', l: 'A', h: 24, role: '官方' },
+    cblog: { name: 'Claude Blog', l: 'C', h: 16, role: '官方' },
+    cursor: { name: 'Cursor Changelog', l: 'C', h: 230, role: '官方' },
+    dwk: { name: 'Dwarkesh Podcast', l: 'D', h: 200, role: '个人' },
+    late: { name: '晚点聊 LateTalk', l: '晚', h: 280, role: '媒体' }
+  };
+  var KIND = { news: '资讯', paper: '论文', tutorial: '教程', opinion: '观点', release: '版本更新', project: '项目', digest: '汇编' };
+  var NEWS_LEAD = { news: 1, release: 1, project: 1 };
+  var DISCLAIMER = 'AI 新闻价值评估，用于辅助筛选，不代表事实保证或你的个人评分';
+
+  var ITEMS = [
+    { id: 'quanta', c: 'article', kind: 'news', ev: '研究成果', genre: '学术论文', src: 'qbitai', date: '2026-09-14', tag: '机器学习',
+      title: '分子之心QuantaMind登Science Advances，让AI给分子世界”拍电影”', url: 'https://www.qbitai.com/2026/09/489023.html',
+      sum: '分子之心自主研发的反应性原子建模平台 QuantaMind 相关研究发表于《Science Advances》，首次将接近密度泛函理论（DFT）精度的反应性分子动力学推进至数万原子级生物体系与数十纳秒时间尺度，论文提交后的扩展测试进一步达到十万原子级和百纳秒尺度。',
+      news: { v: 7.2, r: 'AI分子动力学首次达十万原子级反应模拟并登Science Advances，属科研里程碑', real: true },
+      content: { v: 5.6, r: '媒体转述论文成果，关键数字齐全，但方法细节和局限讨论少，读原论文收获更多。' } },
+    { id: 'posttrain', c: 'article', kind: 'paper', genre: '学术论文', src: 'hfp', date: '2026-09-02', tag: '后训练',
+      title: 'Post-Training Language Models for Gold-Medal Performance in Coding Competitions', url: 'https://huggingface.co/papers/2609.02849',
+      sum: 'NVIDIA研究团队提出一种端到端后训练流水线，结合大规模问题筛选、合成推理轨迹、监督微调（SFT）和强化学习（RL），用于提升大语言模型在编程竞赛中的表现。在IOI 2026前瞻性评估中，Ultra-CC系统在人类同等约束下得分535.4，超过人类最高分498.27。',
+      news: { v: 7.5, r: '首次在IOI竞赛中超越人类最高分，里程碑级结果，但属车载无关且为论文，影响面有限。', real: true },
+      content: { v: 7.8, r: '完整披露数据筛选、合成轨迹与 SFT+RL 流程，结果可核对；社区关注度低（6 赞）。' } },
+    { id: 'repo2skill', c: 'article', kind: 'paper', genre: '学术论文', src: 'hfp', date: '2026-09-02', tag: '机器学习',
+      title: 'Repo-To-Skill: Distilling GitHub Repositories Into AI4AI Skills', url: 'https://huggingface.co/papers/2609.02749',
+      sum: '论文提出 DisCo，一种技能驱动的 AI 研究智能体，通过将 GitHub 仓库中的操作知识蒸馏为紧凑、可验证的技能，提升智能体的研究能力。AREX-Skill Library 包含从 1000 个广泛使用的 ML 仓库中蒸馏出的 5000+ 技能，覆盖 20 个领域和 178 个能力族。',
+      news: { v: 5.2, r: '常规论文，提出技能蒸馏方法并发布库，但非里程碑级结果，影响面有限。', real: true },
+      content: { v: 7.6, r: '从 1000 个常用 ML 仓库蒸馏出 5000+ 技能并开源技能库，可以直接复用；社区 344 赞。' } },
+    { id: 'cc257', c: 'bulletin', kind: 'release', ev: '产品更新', genre: '产品更新', src: 'ccl', date: '2026-09-01', tag: 'Claude Code',
+      title: 'Claude Code 2.1.257', url: 'https://code.claude.com/docs/en/changelog#2.1.257',
+      sum: 'Claude Code 2.1.257 发布，主要包含多项修复与改进。新增 Claude Fable 5.1 模型作为默认 Fable 模型，支持 1M 上下文。新增时间格式与时区设置、自动模式下的 Containment Escape 规则、子代理模型强制设置等。整体为常规版本更新，无重大功能突破。',
+      news: { v: 5.5, r: '常规增量更新，大量bug修复与细节改进，无重大新能力或范式变化。', real: true },
+      content: { v: 3.5, r: '以修复为主的补丁说明，读者要自己挑出和自己相关的改动。' } },
+    { id: 'ccguide', c: 'article', kind: 'tutorial', genre: '教程', src: 'cblog', date: '2026-08-20', tag: 'Claude Code',
+      title: 'The Claude Code guide for startups', url: 'https://claude.com/blog/claude-code-guide-for-startups',
+      sum: 'Anthropic 官方发布面向初创公司的 Claude Code 实践指南，基于对十余家高增长初创公司的访谈，总结出五条规则：全员参与开发、自动化繁琐工作、信任但验证、为重构而构建、原型-自用-产品化，并给出各公司的具体数据。',
+      news: { v: 6.5, r: '官方发布的创业公司实践指南，具行业参考价值，但非重大发布。', real: true },
+      content: { v: 7.3, r: '五条规则配十余家公司的实际数据，可以照着做；部分做法依赖 Claude Code 本身。' } },
+    { id: 'cursor', c: 'bulletin', kind: 'release', ev: '产品更新', genre: '产品更新', src: 'cursor', date: '2026-08-19', tag: 'AI 智能体',
+      title: 'Cloud Agents and Cursor Harness Improvements', url: 'https://cursor.com/changelog/08-19-26',
+      sum: 'Cursor 更新增强了云代理与开发环境，使始终在线的代理能自主构建和交付软件。新增订阅功能，代理可监控 PR、Slack 线程或定时任务，并在事件发生时自动唤醒；子代理现可在独立虚拟机中运行。',
+      news: { v: 7.2, r: 'Cursor 官方发布云代理订阅、自定义模式等新功能，属编码工具重大更新，影响面广。', real: true },
+      content: { v: 5.4, r: '功能说明清楚，但多为产品介绍，没有可迁移的做法。' } },
+    { id: 'openw', c: 'article', kind: 'opinion', genre: '观点', src: 'anth', date: '2026-07-27', tag: '开源与开放权重 AI',
+      title: 'Our position on open-weights models', url: 'https://www.anthropic.com/news/position-open-weights-models',
+      sum: 'Anthropic CEO Dario Amodei 发表官方声明，澄清 Anthropic 从未主张全面禁止开源权重模型，并阐述其对中美 AI 竞争与安全的立场，主张三项措施：不向中国出售先进芯片并打击走私、打击工业规模的模型蒸馏、对所有足够强大的模型进行强制性安全测试。',
+      news: { v: 7.5, r: 'Anthropic CEO 就开源权重模型政策发表官方立场，涉及中美AI竞争与安全，影响面广但非产品发布，属重要业界声明。', real: true },
+      content: { v: 6.8, r: '立场和三项主张表述清楚，新事实不多。' } },
+    { id: 'opus5', c: 'article', kind: 'news', ev: '模型发布', genre: '模型发布', src: 'anth', date: '2026-07-24', tag: 'Claude',
+      title: 'Introducing Claude Opus 5', url: 'https://www.anthropic.com/news/claude-opus-5',
+      sum: 'Anthropic 发布 Claude Opus 5，定位为接近前沿智能、价格减半的日常模型。在 Frontier-Bench、GDPval-AA 等编码与知识工作评测上成为新 SOTA，在 ARC-AGI 3、OSWorld 2.0 等基准上大幅领先。现已全平台上线。',
+      news: { v: 9.2, r: '头部厂商旗舰模型发布，官方一手，多项基准领先，影响面广。', real: true },
+      content: { v: 7.0, r: '发布页给出定价与多项基准，细节集中在评测数字。' } },
+    { id: 'late', c: 'podcast', kind: 'opinion', src: 'late', date: '2026-10-02', dur: '127 分钟',
+      title: '183: 与Henry的「AI季报26Q3」：Muse引爆个人助理、Astra进入机器人、OpenAI收入猛增', url: 'https://feeds.fireside.fm/latetalk/rss',
+      sumTitle: '节目简介（RSS 原文）',
+      sum: '「这个秋天并不冷。」AI 本身的进展速度已经超过了对它的理解和讨论的速度。本期内容由两次录制构成，包含 OpenAI DevDay 之后的新信息。本期季报的嘉宾是 MoE Capital 的创始合伙人 Henry Yin。',
+      before: 7.8,
+      news: { v: 6.8, r: '季度回顾，汇总已发生的事件，本身没有新消息。' },
+      content: { v: 7.9, r: '投资人视角串起一个季度的个人助理与机器人进展，补录了 DevDay 之后的信息。' } },
+    { id: 'sheppard', c: 'podcast', kind: 'opinion', src: 'dwk', date: '2026-10-01', dur: '97 分钟',
+      title: 'Si Sheppard – How did a few hundred Spanish soldiers topple two empires?', url: 'https://www.dwarkesh.com/',
+      sumTitle: '节目简介（RSS 原文）',
+      sum: 'New episode with military historian Si Sheppard. The conquests of the Aztec and Inca empires might be the most shocking events in human history.',
+      before: 4.6,
+      news: { v: 2.0, r: '与 AI 无关的历史话题。' },
+      content: { v: 4.6, r: '访谈扎实，但与 AI 无关，按领域相关性封顶 4.9。' } },
+    { id: 'noam', c: 'podcast', kind: 'opinion', src: 'dwk', date: '2026-09-17', dur: '80 分钟',
+      title: 'Noam Brown – Agent swarms, alignment, & recursive self-improvement', url: 'https://www.dwarkesh.com/',
+      sumTitle: '节目简介（RSS 原文）',
+      sum: 'New episode with Noam Brown. We talk about multi-agent, Navier-Stokes, and what the current explosion of maths progress tells us about what happens once you automate AI research.',
+      before: 8.4,
+      news: { v: 6.2, r: '讨论前沿进展，没有新发布或新事实披露。' },
+      content: { v: 8.4, r: '一线研究者谈多智能体、数学进展与对齐判断，观点有一手来源，附逐字稿。' } }
+  ];
+
+  var st = { mode: 'after', view: 'article', kf: 'all', sel: 'repo2skill', flip: 0, v: 'A', mk: true };
+  var root = document.getElementById('mock');
+
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function fmt(v) { return v % 1 ? v.toFixed(1) : String(v); }
+  function find(id) { for (var i = 0; i < ITEMS.length; i++) if (ITEMS[i].id === id) return ITEMS[i]; return null; }
+  function badge(key, size) { var s = SRC[key]; return '<span class="badge ' + size + '" style="background:hsl(' + s.h + ' 55% 45%)">' + esc(s.l) + '</span>'; }
+  function mk(n) { return st.mode === 'after' ? '<span class="mk" aria-hidden="true">' + n + '</span>' : ''; }
+  function primaryDim(it) { if (it.news.v >= 8.5) return 'news'; return NEWS_LEAD[it.kind] ? 'news' : 'content'; }
+  function dimName(d) { return d === 'news' ? '新闻价值' : '内容价值'; }
+  function isDemo(it, d) { return d === 'news' ? !it.news.real : true; }
+  function scoreSpan(v, demo, extra) {
+    var cls = 'score ' + (v >= 6 ? 'grad' : 'below') + (extra ? ' ' + extra : '');
+    return '<span class="' + cls + '"' + (demo ? ' style="border-bottom:1.5px dashed var(--faint)" title="示意值"' : '') + '>' + fmt(v) + '</span>';
+  }
+  function listScore(it) {
+    if (st.mode === 'before') {
+      if (it.c === 'podcast') return scoreSpan(it.before, true);
+      return scoreSpan(it.news.v, false);
+    }
+    var d = primaryDim(it);
+    return scoreSpan(it[d].v, isDemo(it, d));
+  }
+  function rel(date) {
+    var p = date.split('-');
+    return p[1].replace(/^0/, '') + '月' + p[2].replace(/^0/, '') + '日';
+  }
+
+  var ICONS = {
+    brief: '<path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8M15 18h-5M10 6h8v4h-8z"/>',
+    article: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4M16 13H8M16 17H8M10 9H8"/>',
+    podcast: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v4"/>',
+    bulletin: '<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/>',
+    social: '<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/>',
+    discover: '<circle cx="12" cy="12" r="10"/><path d="m16.24 7.76-2.12 6.36-6.36 2.12 2.12-6.36z"/>'
+  };
+  function icon(k) { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[k] + '</svg>'; }
+  function vbtn(view, label, marker) {
+    var on = st.view === view;
+    return '<button type="button" class="m-vbtn' + (on ? ' on' : '') + '" data-view="' + view + '" aria-pressed="' + on + '">' + icon(view) + '<span>' + label + '</span>' + (marker || '') + '</button>';
+  }
+
+  function renderRail() {
+    var h = '<div class="m-rail"><div class="m-logo" aria-hidden="true">美</div>';
+    h += vbtn('brief', '早报');
+    h += '<span class="m-div"></span>';
+    h += vbtn('article', '文章', mk(1)) + vbtn('podcast', '播客');
+    if (st.mode === 'before') h += vbtn('bulletin', '动态');
+    h += vbtn('social', '社交');
+    h += '<span class="m-div"></span>';
+    h += '<button type="button" class="m-vbtn" tabindex="-1" title="样页未覆盖">' + icon('discover') + '<span>发现</span></button>';
+    return h + '</div>';
+  }
+
+  function visible() {
+    var out;
+    if (st.view === 'podcast') out = ITEMS.filter(function (i) { return i.c === 'podcast'; });
+    else if (st.mode === 'before') out = ITEMS.filter(function (i) { return i.c === st.view; });
+    else {
+      out = ITEMS.filter(function (i) { return i.c === 'article' || i.c === 'bulletin'; });
+      if (st.kf !== 'all') out = out.filter(function (i) { return i.kind === st.kf; });
+    }
+    return out.slice().sort(function (a, b) { return a.date < b.date ? 1 : -1; });
+  }
+
+  function renderSources() {
+    var items = st.view === 'podcast' ? ITEMS.filter(function (i) { return i.c === 'podcast'; })
+      : st.mode === 'before' ? ITEMS.filter(function (i) { return i.c === st.view; })
+      : ITEMS.filter(function (i) { return i.c === 'article' || i.c === 'bulletin'; });
+    var groups = {}; var order = ['官方', '媒体', '个人', '榜单'];
+    items.forEach(function (i) { var r = SRC[i.src].role; groups[r] = groups[r] || []; if (groups[r].indexOf(i.src) < 0) groups[r].push(i.src); });
+    var title = st.view === 'podcast' ? '播客' : st.view === 'bulletin' ? '动态' : '文章';
+    var h = '<div class="m-src"><div class="m-src-h"><b>' + title + '</b><span class="m-mini"><i class="on">订阅</i><i>兴趣</i></span></div>';
+    order.forEach(function (r) {
+      if (!groups[r]) return;
+      h += '<div class="m-grp">' + r + '</div>';
+      groups[r].forEach(function (k) {
+        var moved = st.mode === 'after' && (k === 'ccl' || k === 'cursor') && st.view === 'article';
+        h += '<div class="m-srow">' + badge(k, 's20') + '<span class="nm">' + esc(SRC[k].name) + '</span>' + (moved ? '<span class="moved">原动态</span>' : '') + '</div>';
+      });
+    });
+    return h + '</div>';
+  }
+
+  function renderList() {
+    if (st.view === 'social') return '<div class="m-list" style="grid-column:3/-1"><div class="m-empty">社交容器本次不改动，样页从略。</div></div>';
+    var items = visible();
+    var h = '<div class="m-list"><div class="m-list-h"><div class="row"><b>订阅</b><span class="m-mini"><i class="on">全部</i><i>未读</i></span></div>';
+    if (st.mode === 'after' && st.view === 'article') {
+      var kinds = []; ITEMS.forEach(function (i) { if ((i.c === 'article' || i.c === 'bulletin') && i.kind !== 'news' && kinds.indexOf(i.kind) < 0) kinds.push(i.kind); });
+      h += '<div class="m-filter">' + mk(2) + '<button type="button" class="m-chip" data-kf="all" aria-pressed="' + (st.kf === 'all') + '">全部类型</button>';
+      kinds.forEach(function (k) { h += '<button type="button" class="m-chip" data-kf="' + k + '" aria-pressed="' + (st.kf === k) + '">' + KIND[k] + '</button>'; });
+      h += '</div>';
+    }
+    h += '</div><div class="m-items">';
+    var lastDate = '', markedChip = false, markedCompact = false;
+    items.forEach(function (it) {
+      if (it.date !== lastDate) { h += '<div class="m-date">' + rel(it.date) + '</div>'; lastDate = it.date; }
+      var on = it.id === st.sel ? ' on' : '';
+      if (it.c === 'podcast') {
+        h += '<button type="button" class="m-entry' + on + '" data-sel="' + it.id + '"><span class="m-dot"></span><span class="m-pod">' + badge(it.src, 's44') + '<span style="min-width:0"><span class="m-top"><span class="src">' + esc(SRC[it.src].name) + '</span>';
+        if (st.mode === 'after') { h += '<span class="kchip">' + KIND[it.kind] + '</span>'; }
+        h += listScore(it) + '<span class="time">' + rel(it.date) + '</span></span><span class="m-title">' + esc(it.title) + '</span><span class="meta">' + it.dur + '</span></span></span></button>';
+        return;
+      }
+      var compact = (st.mode === 'before' && it.c === 'bulletin') || (st.mode === 'after' && it.kind === 'release');
+      h += '<button type="button" class="m-entry' + on + (compact ? ' compact' : '') + '" data-sel="' + it.id + '"><span class="m-dot"></span><span class="m-top">' + badge(it.src, 's15') + '<span class="src">' + esc(SRC[it.src].name) + '</span>';
+      if (st.mode === 'after' && it.kind !== 'news') {
+        if (!markedChip) { h += mk(3); markedChip = true; }
+        h += '<span class="kchip">' + KIND[it.kind] + '</span>';
+      }
+      h += '<span class="tag">' + esc(it.tag) + '</span>' + listScore(it) + '<span class="time">' + rel(it.date) + '</span></span>';
+      h += '<span class="m-title">' + (st.mode === 'after' && compact && !markedCompact ? (markedCompact = true, mk(4) + ' ') : '') + esc(it.title) + '</span>';
+      if (!compact) h += '<span class="m-ex">' + esc(it.sum) + '</span>';
+      h += '</button>';
+    });
+    if (!items.length) h += '<div class="m-empty">没有符合条件的条目</div>';
+    return h + '</div></div>';
+  }
+
+  function card(it) {
+    var pod = it.c === 'podcast';
+    var sumTitle = it.sumTitle || 'AI 速读';
+    if (st.mode === 'before') {
+      var v = pod ? it.before : it.news.v;
+      var reason = pod ? it.content.r : it.news.r;
+      var h = '<div class="aicard"><div class="side"><button type="button" class="fig" data-flip="1" aria-pressed="' + (st.flip > 0) + '" aria-label="切换评分依据"><span class="' + (v >= 6 ? 'grad' : 'below') + '"' + (pod ? ' style="border-bottom:2px dashed var(--faint)"' : '') + '>' + fmt(v) + '</span></button>' + (pod ? '<span class="demo">示意</span>' : '') + '</div><div class="main">';
+      if (st.flip === 0) h += '<span class="ltitle">' + sumTitle + '</span><p class="ltext">' + esc(it.sum) + '</p>';
+      else h += '<span class="ltitle">评分依据</span><p class="ltext">' + esc(reason) + '</p><span class="lnote">' + DISCLAIMER + '</span>';
+      return h + '</div></div>';
+    }
+    // 改后（2026-10-12 拍板）：AI 速读恒定不翻面；点分数只在两个维度间切换；
+    // 分数下方小字标当前维度；悬停 / 键盘聚焦分数浮出这个分数的评分依据。
+    var p = primaryDim(it), o = p === 'news' ? 'content' : 'news';
+    var shown = st.flip ? o : p, other = shown === p ? o : p;
+    var sv = it[shown].v;
+    var h2 = '<div class="aicard"><div class="side"><div class="figwrap">';
+    h2 += '<button type="button" class="fig" data-flip="1" aria-describedby="m-tip" aria-label="' + dimName(shown) + ' ' + fmt(sv) + '，点击切换到' + dimName(other) + '"><span class="' + (sv >= 6 ? 'grad' : 'below') + '"' + (isDemo(it, shown) ? ' style="border-bottom:2px dashed var(--faint)"' : '') + '>' + fmt(sv) + '</span></button>';
+    h2 += '<div class="tip" id="m-tip" role="tooltip"><span class="ltitle">' + dimName(shown) + '依据' + (shown === p ? ' · 主分' : '') + '</span><p class="ltext">' + esc(it[shown].r) + (isDemo(it, shown) ? '<span class="demo">示意</span>' : '') + '</p><span class="lnote">点击分数切换到' + dimName(other) + ' ' + fmt(it[other].v) + '</span></div>';
+    h2 += '</div><span class="dimlbl">' + mk(5) + ' ' + dimName(shown) + '</span></div><div class="main">';
+    h2 += '<span class="ltitle">' + sumTitle + '</span><p class="ltext">' + esc(it.sum) + '</p>';
+    return h2 + '</div></div>';
+  }
+
+  function renderPane() {
+    if (st.view === 'social') return '';
+    var it = find(st.sel);
+    var inView = visible().some(function (x) { return x.id === st.sel; });
+    if (!it || !inView) return '<div class="m-pane"><div class="m-empty">' + (st.view === 'podcast' ? '选择一期播客以开始收听' : '选择一篇文章以开始阅读') + '</div></div>';
+    var h = '<div class="m-pane"><div class="m-crumb">' + badge(it.src, 's15') + '<span>' + esc(SRC[it.src].name) + '</span><span style="color:var(--faint)">· ' + SRC[it.src].role + '</span></div>';
+    h += '<h3 class="m-h">' + esc(it.title) + '</h3><div class="m-meta"><span>' + it.date + '</span>';
+    if (st.mode === 'before') { if (it.genre) h += '<span>· ' + it.genre + '</span>'; if (it.dur) h += '<span>· ' + it.dur + '</span>'; }
+    else { h += '<span class="kchip">' + KIND[it.kind] + '</span>' + (it.ev ? '<span>' + it.ev + '</span>' : '') + (it.dur ? '<span>· ' + it.dur + '</span>' : ''); }
+    h += '</div>' + card(it);
+    h += '<div class="skel" aria-hidden="true"><i style="width:96%"></i><i style="width:88%"></i><i style="width:92%"></i><i style="width:64%"></i><i style="width:90%"></i><i style="width:78%"></i></div>';
+    h += '<a class="m-orig" href="' + esc(it.url) + '" target="_blank" rel="noopener">查看原文 ↗</a></div>';
+    return h;
+  }
+
+  function bcard(it) {
+    var d = st.mode === 'after' ? primaryDim(it) : 'news';
+    var v = st.mode === 'after' ? it[d].v : (it.c === 'podcast' ? it.before : it.news.v);
+    var demo = st.mode === 'after' ? isDemo(it, d) : it.c === 'podcast';
+    return '<div class="bcard"><div class="m-top">' + badge(it.src, 's15') + '<span class="src">' + esc(SRC[it.src].name) + '</span>' + (st.mode === 'after' && it.kind !== 'news' ? '<span class="kchip">' + KIND[it.kind] + '</span>' : '') + '</div><div class="bt">' + esc(it.title) + '</div><div class="bs">' + scoreSpan(v, demo) + '<span>' + (st.mode === 'after' ? dimName(d) : '新闻价值') + '</span></div></div>';
+  }
+  function sec(title, note, ids, isNew) {
+    var h = '<div class="bsec' + (isNew ? ' is-new' : '') + '"><div class="bsec-h">' + (isNew ? mk(6) : '') + title + (note ? '<small>' + note + '</small>' : '') + '</div><div class="bgrid">';
+    ids.forEach(function (id) { h += bcard(find(id)); });
+    return h + '</div></div>';
+  }
+  function renderBrief() {
+    var h = '<div class="m-brief"><h4>我的早报</h4><p class="bnote">示意编排：用样例条目演示分区，不是某一天的真实早报；名额与门槛待定。</p>';
+    h += sec('重大事件', '新闻价值', ['opus5']);
+    if (st.mode === 'before') {
+      h += sec('学术论文', '按新闻价值入选；媒体报道也算在这里', ['posttrain', 'quanta']);
+      h += sec('工程实践与观点', '按新闻价值入选', ['openw', 'ccguide']);
+      h += '<p class="bnote" style="margin-top:18px">Repo-To-Skill 新闻价值 5.2，排序靠后；现在没有按“值得听”组织的分区。</p>';
+    } else {
+      h += sec('研究进展', '新闻价值', ['quanta']);
+      h += sec('值得读', '论文、教程、观点，按内容价值', ['posttrain', 'repo2skill', 'ccguide'], true);
+      h += sec('值得听', '播客，按内容价值', ['noam', 'late'], true);
+    }
+    return h + '</div>';
+  }
+
+  function render() {
+    root.classList.toggle('hide-mk', !st.mk);
+    if (st.view === 'brief') root.innerHTML = renderRail() + renderBrief();
+    else root.innerHTML = renderRail() + renderSources() + renderList() + renderPane();
+    document.querySelectorAll('#ctl-mode button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.mode === st.mode)); });
+  }
+
+  root.addEventListener('click', function (e) {
+    var t = e.target.closest('[data-view],[data-sel],[data-kf],[data-flip]');
+    if (!t) return;
+    if (t.dataset.view) {
+      st.view = t.dataset.view; st.kf = 'all'; st.flip = 0;
+      var v = visible(); if (st.view !== 'brief' && st.view !== 'social' && v.length && !v.some(function (x) { return x.id === st.sel; })) st.sel = v[0].id;
+    } else if (t.dataset.sel) { st.sel = t.dataset.sel; st.flip = 0; }
+    else if (t.dataset.kf) { st.kf = t.dataset.kf; var v2 = visible(); if (v2.length && !v2.some(function (x) { return x.id === st.sel; })) st.sel = v2[0].id; st.flip = 0; }
+    else if (t.dataset.flip) {
+      st.flip = (st.flip + 1) % 2;
+      render();
+      var f = root.querySelector('.fig'); if (f) f.focus({ preventScroll: true });
+      return;
+    }
+    render();
+  });
+  document.getElementById('ctl-mode').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    st.mode = b.dataset.mode; st.flip = 0; st.kf = 'all';
+    if (st.mode === 'after' && st.view === 'bulletin') st.view = 'article';
+    var v = visible(); if (st.view !== 'brief' && st.view !== 'social' && v.length && !v.some(function (x) { return x.id === st.sel; })) st.sel = v[0].id;
+    render();
+  });
+  document.getElementById('ctl-mk').addEventListener('change', function (e) { st.mk = e.target.checked; render(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && st.flip) { st.flip = 0; render(); } });
+  render();
+})();
+</script>

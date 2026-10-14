@@ -500,7 +500,6 @@ def test_podcast_source_config_routes_to_dedicated_fetcher_and_shape():
         name="Podcast Demo",
         source_type="podcast",
         url="https://example.test/podcast.xml",
-        category="podcast",
         params_json=json.dumps({"limit": 8}),
         created_at="2026-09-02T00:00:00+00:00",
         updated_at="2026-09-02T00:00:00+00:00",
@@ -511,7 +510,6 @@ def test_podcast_source_config_routes_to_dedicated_fetcher_and_shape():
     assert params == {
         "limit": 8,
         "source_id": "podcast_demo",
-        "category": "podcast",
         "feed_url": "https://example.test/podcast.xml",
         "feed_name": "Podcast Demo",
         "entry_id_namespace": "podcast_demo",

@@ -27,7 +27,6 @@ class ConfigurableWebFetcher(BaseWebPageListFetcher):
     is_template = True  # 通用模板节点:后端保留,前端目录不显现
     source_id = "generic_web"
     content_type = "web_article"
-    category = "advanced"
 
     name = "通用网页"
     description = "按配置抓取任意网页列表页（官网/博客/新闻），无需为每个站点新写抓取器。"
@@ -43,7 +42,6 @@ class ConfigurableWebFetcher(BaseWebPageListFetcher):
             {"field": "listing_url", "label": "列表页地址", "type": "url", "default": ""},
             {"field": "site_name", "label": "站点名称", "type": "text", "default": ""},
             {"field": "source_section", "label": "栏目", "type": "text", "default": ""},
-            {"field": "category", "label": "业务分类", "type": "text", "default": "official_web"},
             {"field": "article_url_patterns", "label": "文章 URL 包含模式（逗号分隔）", "type": "text", "default": ""},
             {"field": "exclude_url_patterns", "label": "排除 URL 模式（逗号分隔）", "type": "text", "default": ""},
             {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
@@ -107,7 +105,6 @@ class ConfigurableWebFetcher(BaseWebPageListFetcher):
         self.listing_url = str(kwargs.get("listing_url") or kwargs.get("url") or "").strip()
         self.site_name = str(kwargs.get("site_name") or "").strip()
         self.source_section = str(kwargs.get("source_section") or "").strip()
-        self.category = str(kwargs.get("category") or self.category).strip() or self.category
         self.article_url_patterns = self._as_list(kwargs.get("article_url_patterns"))
         self.exclude_url_patterns = self._as_list(kwargs.get("exclude_url_patterns"))
         self.drop_empty_content = self._flag(kwargs.get("drop_empty_content"), False)
@@ -235,7 +232,7 @@ class ConfigurableWebFetcher(BaseWebPageListFetcher):
                 site_name=self.site_name or self.name,
                 source_section=self.source_section,
                 summary=summary,
-                tags=[self.category, "webpage"],
+                tags=[],
                 raw_data=raw_data,
             )
             emitted += 1

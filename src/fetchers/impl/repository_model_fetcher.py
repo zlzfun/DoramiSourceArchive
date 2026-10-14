@@ -22,8 +22,7 @@ class GenericGitHubRepositoriesFetcher(BaseFetcher):
 
     source_id = "generic_github_repositories"
     content_type = "github_repository"
-    content_shape = "bulletin"  # 新仓库监控是动态形(预设子类继承)
-    category = "advanced"
+    default_kind = "project"  # 新仓库监控:内容类型「项目」(预设子类继承)
 
     name = "通用 GitHub 新仓库"
     description = "通过 GitHub API 抓取指定组织或用户的最新公开仓库。"
@@ -238,7 +237,6 @@ class PresetGitHubRepositoriesFetcher(GenericGitHubRepositoriesFetcher):
     is_template = False  # preset 固化节点:重置 Generic 基类的模板标志
     source_id = "unknown_source"
     owner = ""
-    category = "primary"
     default_limit = 10
 
     @classmethod
@@ -265,7 +263,6 @@ class DeepSeekGitHubRepositoriesFetcher(PresetGitHubRepositoriesFetcher):
     source_channel = "github_repository_activity"
     source_url = "https://github.com/deepseek-ai"
     provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "developer_tool", "research_paper"]
     signal_strength = "high_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
@@ -277,8 +274,7 @@ class GenericHuggingFaceModelsFetcher(BaseFetcher):
 
     source_id = "generic_huggingface_models"
     content_type = "hf_model"
-    content_shape = "bulletin"  # 新模型监控是动态形(预设子类继承)
-    category = "advanced"
+    default_kind = "project"  # 新模型监控:内容类型「项目」(预设子类继承)
 
     name = "通用 Hugging Face 新模型"
     description = "通过 Hugging Face API 抓取指定作者或组织的最新模型。"
@@ -378,7 +374,6 @@ class PresetHuggingFaceModelsFetcher(GenericHuggingFaceModelsFetcher):
     is_template = False  # preset 固化节点:重置 Generic 基类的模板标志
     source_id = "unknown_source"
     author = ""
-    category = "primary"
     default_limit = 10
 
     @classmethod
@@ -403,7 +398,6 @@ class DeepSeekHuggingFaceModelsFetcher(PresetHuggingFaceModelsFetcher):
     source_channel = "model_repository"
     source_url = "https://huggingface.co/deepseek-ai"
     provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "research_paper"]
     signal_strength = "high_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
@@ -425,7 +419,6 @@ class QwenHuggingFaceModelsFetcher(PresetHuggingFaceModelsFetcher):
     source_channel = "model_repository"
     source_url = "https://huggingface.co/Qwen"
     provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "open_model"]
     signal_strength = "high_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
@@ -445,8 +438,8 @@ class GitHubTrendingFetcher(BaseFetcher):
     """
     source_id = "github_trending_daily"
     content_type = "github_trending"
-    content_shape = "bulletin"  # 榜单快照:动态形,进「动态」视图
-    category = "incubating"  # 观察期(准入方案 wave3 N3);验收转正后改回 "community"
+    default_kind = "project"  # 趋势榜条目:内容类型「项目」
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
 
     name = "GitHub Trending 日榜"
     description = "GitHub 全站每日趋势仓库榜,每天一则汇总,开源热度信号。"
@@ -458,7 +451,6 @@ class GitHubTrendingFetcher(BaseFetcher):
     source_channel = "ranking"
     source_url = "https://github.com/trending"
     provenance_tier = "tier1_curated"
-    content_tags = ["developer_tool"]
     signal_strength = "medium_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"

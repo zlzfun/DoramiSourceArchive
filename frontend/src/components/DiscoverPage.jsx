@@ -7,6 +7,7 @@ import { SOURCE_ROLES, sourceRoleOf, platformLabelOf, resolveCompany } from '../
 import { highlightMatch } from '../utils/highlight';
 import { renderAnnouncementContent } from '../utils/announcementText';
 import { bulkSubscribeModel } from '../utils/bulkSubscribe';
+import { readerShapeOf } from '../utils/readerShape';
 
 // last_fetched(ISO)→ 人话:今日 / 昨日 / MM-DD;空值不显示
 function lastLabel(lastFetched) {
@@ -37,16 +38,17 @@ function SourceCard({ source, subbed, pinning, query, showArticleChip, onSubscri
         <div className="reader-disc-card-mid">
           <div className="reader-disc-name-row">
             <span className="reader-disc-name">{q ? highlightMatch(source.name || source.source_id, q) : (source.name || source.source_id)}</span>
-            {(source.shape || 'article') === 'article' && showArticleChip && (
+            {readerShapeOf(source) === 'article' && showArticleChip && (
               <span className="reader-shape-chip">文章</span>
             )}
-            {(source.shape || 'article') === 'bulletin' && (
-              <span className="reader-shape-chip">动态</span>
+            {/* 来源的默认内容类型(issue #178):取代原「动态」签——论文 / 版本更新 / 项目一眼可辨 */}
+            {readerShapeOf(source) === 'article' && source.default_kind_label && source.default_kind !== 'digest' && (
+              <span className="reader-shape-chip">{source.default_kind_label}</span>
             )}
-            {(source.shape || 'article') === 'social' && (
+            {readerShapeOf(source) === 'social' && (
               <span className="reader-shape-chip">{platformLabelOf(source.platform)}</span>
             )}
-            {(source.shape || 'article') === 'podcast' && (
+            {readerShapeOf(source) === 'podcast' && (
               <span className="reader-shape-chip">播客</span>
             )}
           </div>
@@ -141,11 +143,12 @@ export default function DiscoverPage({
   const tab = controlledTab ?? localTab;
   const setTab = (next) => { setLocalTab(next); onTabChange?.(next); };
   const [addOpen, setAddOpen] = useState(false); // 添加自定源浮层
-  const [localShape, setLocalShape] = useState('all');   // all | article | bulletin | social | podcast
+  const [localShape, setLocalShape] = useState('all');   // all | article | social | podcast
   const shape = controlledShape ?? localShape;
   const setShape = (next) => { setLocalShape(next); onShapeChange?.(next); };
   const activeTab = interestsPanel || tab !== 'interests' ? tab : 'sources';
-  const activeShape = shape;
+  // 旧值 bulletin(「动态」已并入文章,issue #178)折叠到文章,不让过滤条落空
+  const activeShape = shape === 'all' ? 'all' : readerShapeOf(shape);
   const addSourceKind = activeShape === 'article' || activeShape === 'podcast' ? activeShape : null;
   const [query, setQuery] = useState('');
   // 排序小开关:默认(收录量降序,原有秩序)⇄ 订阅降序(全站订阅人数,选源社会证明)
@@ -161,7 +164,7 @@ export default function DiscoverPage({
     const q = query.trim().toLowerCase();
     const buckets = {};
     for (const s of sources) {
-      const sShape = s.shape || 'article';
+      const sShape = readerShapeOf(s);
       if (activeShape !== 'all' && sShape !== activeShape) continue;
       if (q && !`${s.name || ''} ${s.description || ''} ${s.source_id}`.toLowerCase().includes(q)) continue;
       (buckets[sourceRoleOf(s)] ||= []).push(s);
@@ -373,7 +376,7 @@ export default function DiscoverPage({
                       </button>
                     )}
                     <span className="reader-seg reader-disc-seg" role="group" aria-label="形态筛选">
-                      {[['all', '全部'], ['article', '文章'], ['bulletin', '动态'], ['social', '社交'], ['podcast', '播客']].map(([key, label]) => (
+                      {[['all', '全部'], ['article', '文章'], ['social', '社交'], ['podcast', '播客']].map(([key, label]) => (
                         <button
                           key={key}
                           type="button"

@@ -15,7 +15,7 @@ from sqlalchemy import literal_column
 from api.textutils import _date_end_value, _json_loads, _split_csv
 from models.content import BaseContent
 from models.db import ArticleRecord
-from services import podcast_premium
+from services import content_classification, podcast_premium
 from storage.fts import build_search_components, fts_search_ids
 
 
@@ -332,6 +332,7 @@ def serialize_article_list_item(
     published_podcast_text_kinds: Collection[str] = (),
     digest_audio: Any = None,
     include_podcast_diagnostics: bool = False,
+    source_kinds: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     content = record.content or ""
     # AI 要点摘要(extensions_json.summary_zh)作为轻字段随条目透出:
@@ -364,10 +365,20 @@ def serialize_article_list_item(
         or (analysis is not None and bool(getattr(analysis, "content_genre", None)))
         or machine_tag
     )
+    genre = getattr(analysis, "content_genre", None)
+    classification = content_classification.classify_item(
+        source_id=record.source_id,
+        source_url=record.source_url,
+        content_type=record.content_type,
+        content_genre=genre,
+        source_kinds=source_kinds,
+        content_kind=getattr(analysis, "content_kind", None),
+    )
     item = {
         "id": record.id,
         "title": record.title,
         "content_type": record.content_type,
+        "content_type_label": content_classification.content_type_label(record.content_type),
         "source_id": record.source_id,
         "source_url": record.source_url,
         "publish_date": record.publish_date,
@@ -387,7 +398,16 @@ def serialize_article_list_item(
         "analysis_next_attempt_at": getattr(analysis, "next_attempt_at", None),
         "quality_score": getattr(analysis, "quality_score", None),
         "score_reason": getattr(analysis, "score_reason", None) or None,
-        "content_genre": getattr(analysis, "content_genre", None),
+        # 双评分(issue #178 第二波):新闻价值 / 内容价值各自缺失即缺席,主分按内容类型与例外线在读取时计算。
+        **content_classification.score_projection(
+            content_type=record.content_type,
+            kind=classification.kind,
+            analysis=analysis,
+        ),
+        "content_genre": genre,
+        "content_genre_label": content_classification.genre_label(genre) or None,
+        # 内容类型 / 事件类型(issue #178):读取时由来源先验、数据结构、链接形状与体裁推导。
+        **classification.as_projection(),
         "primary_tag": next((tag for tag in (tags or []) if tag.get("is_primary")), None),
         "tags": tags or [],
         # Reader-facing projection: canonical + flexible AI-extracted labels,

@@ -35,6 +35,14 @@ from models.analysis_contracts import (
     PERSONAL_DIGEST_EXTERNAL_PER_SOURCE_MAX_LIMIT,
     PERSONAL_DIGEST_FALLBACK_WINDOW_HOURS,
     PERSONAL_DIGEST_LATEST_FALLBACK_LIMIT,
+    PERSONAL_DIGEST_LISTEN_MAX_ITEMS,
+    PERSONAL_DIGEST_LISTEN_MIN_VALUE,
+    PERSONAL_DIGEST_READ_MAX_ITEMS,
+    PERSONAL_DIGEST_READ_MIN_VALUE,
+    PERSONAL_DIGEST_VALUE_MAX_ITEMS_LIMIT,
+    PERSONAL_DIGEST_VALUE_SUPPRESS_EDITIONS,
+    PERSONAL_DIGEST_VALUE_WINDOW_DAYS,
+    PERSONAL_DIGEST_VALUE_WINDOW_DAYS_LIMIT,
     PERSONAL_DIGEST_WINDOW_HOURS,
     PersonalDigestStatus,
     SelectionLane,
@@ -61,10 +69,20 @@ from services import source_visibility
 from services.article_display_tags import load_display_tags
 from services.article_time import in_time_window
 from services.collection_nodes import is_public_podcast_source
+from services.content_classification import (
+    CONTENT_VALUE_SCORING_VERSION,
+    classify_item,
+    score_projection,
+    source_default_kinds,
+)
 from services.digest_selection import (
     BREAKING_SECTION,
+    LISTEN_SECTION,
+    PODCAST_SHAPE,
+    READ_SECTION,
     BreakingSelectionPolicy,
     DigestSelectionPolicy,
+    ValueLanePolicy,
     eligible_for_selection,
     interest_codes_of,
     interest_only_policy,
@@ -72,6 +90,8 @@ from services.digest_selection import (
     section_rank,
     select_breaking_events,
     select_digest_articles,
+    select_value_lane,
+    value_lane_accepts,
 )
 from services.reader_interests import INTEREST_MATCH_MIN_RELEVANCE
 from services.source_naming import friendly_source_name, source_role
@@ -90,6 +110,23 @@ BREAKING_MAX_ITEMS_KEY = "personal_digest_breaking_max_items"
 # v3.54「订阅 ∪ 兴趣」(issue #33 §3 前置):订阅外兴趣候选的门槛与每源硬上限,管理面 KV 旋钮
 EXTERNAL_MIN_SCORE_KEY = "personal_digest_external_min_score"
 EXTERNAL_PER_SOURCE_MAX_KEY = "personal_digest_external_per_source_max"
+# issue #178 第三波「深度阅读」「播客精选」:门槛 / 名额(0 = 关闭该分区)/ 窗口天数,管理面 KV 旋钮
+READ_MIN_VALUE_KEY = "personal_digest_read_min_value"
+READ_MAX_ITEMS_KEY = "personal_digest_read_max_items"
+READ_WINDOW_DAYS_KEY = "personal_digest_read_window_days"
+LISTEN_MIN_VALUE_KEY = "personal_digest_listen_min_value"
+LISTEN_MAX_ITEMS_KEY = "personal_digest_listen_max_items"
+LISTEN_WINDOW_DAYS_KEY = "personal_digest_listen_window_days"
+VALUE_LANE_KEYS: dict[str, tuple[str, str, str]] = {
+    SelectionLane.READ.value: (READ_MIN_VALUE_KEY, READ_MAX_ITEMS_KEY, READ_WINDOW_DAYS_KEY),
+    SelectionLane.LISTEN.value: (LISTEN_MIN_VALUE_KEY, LISTEN_MAX_ITEMS_KEY, LISTEN_WINDOW_DAYS_KEY),
+}
+_VALUE_LANE_DEFAULTS: dict[str, tuple[float, int]] = {
+    SelectionLane.READ.value: (PERSONAL_DIGEST_READ_MIN_VALUE, PERSONAL_DIGEST_READ_MAX_ITEMS),
+    SelectionLane.LISTEN.value: (PERSONAL_DIGEST_LISTEN_MIN_VALUE, PERSONAL_DIGEST_LISTEN_MAX_ITEMS),
+}
+# 播客单集的数据结构;新闻通道(兴趣 / 质量 / 重大事件)不收播客,播客只进「播客精选」(方案 §5.1)
+PODCAST_CONTENT_TYPE = "podcast_episode"
 # 会开新同日 revision 的原因。interest_changed/subscription_changed 自 v3.51.1 起不再由
 # 读者面写入(兴趣/订阅变更只记录,下次编排生效),保留是为历史版本与服务契约兼容;
 # subscription_changed 仍用于管理员下架来源的全员重编。daily_brief_ready 自 issue #74 起退役
@@ -221,6 +258,34 @@ def breaking_policy(session: Session) -> BreakingSelectionPolicy:
         except ValueError:
             pass
     return BreakingSelectionPolicy(min_score=min_score, max_items=max_items)
+
+
+def value_lane_policy(session: Session, lane: SelectionLane | str) -> ValueLanePolicy:
+    """Read one content-value section's knobs from KV; bad/missing values fall back to defaults."""
+
+    lane_value = str(getattr(lane, "value", lane))
+    min_key, items_key, days_key = VALUE_LANE_KEYS[lane_value]
+    min_value, max_items = _VALUE_LANE_DEFAULTS[lane_value]
+    window_days = PERSONAL_DIGEST_VALUE_WINDOW_DAYS
+    raw_min = _setting_value(session, min_key)
+    if raw_min is not None:
+        try:
+            min_value = min(10.0, max(0.0, float(raw_min)))
+        except ValueError:
+            pass
+    raw_items = _setting_value(session, items_key)
+    if raw_items is not None:
+        try:
+            max_items = min(PERSONAL_DIGEST_VALUE_MAX_ITEMS_LIMIT, max(0, int(float(raw_items))))
+        except ValueError:
+            pass
+    raw_days = _setting_value(session, days_key)
+    if raw_days is not None:
+        try:
+            window_days = min(PERSONAL_DIGEST_VALUE_WINDOW_DAYS_LIMIT, max(1, int(float(raw_days))))
+        except ValueError:
+            pass
+    return ValueLanePolicy(min_value=min_value, max_items=max_items, window_days=window_days)
 
 
 def _explicit_subscription_source_ids(subscription: ReaderSubscriptionRecord) -> set[str]:
@@ -793,12 +858,17 @@ def _query_candidate_rows(
     min_score: float | None = None,
     interest_tag_codes: Sequence[str] | None = None,
     exclude_source_ids: Sequence[str] = (),
+    content_types: Sequence[str] | None = None,
+    exclude_content_types: Sequence[str] = (),
+    min_content_value: float | None = None,
 ) -> list[tuple[ArticleRecord, ArticleAnalysisRecord]]:
     """Shared window query.  ``source_ids=None`` means every non-private source.
 
     ``interest_tag_codes`` narrows to articles with a qualifying assignment(primary
     or relevance ≥ ``INTEREST_MATCH_MIN_RELEVANCE``)for one of those codes——the
     全站 interest pool must be bounded in SQL, not loaded and filtered in Python.
+    ``content_types`` / ``exclude_content_types`` 按数据结构收窄(新闻通道排除播客、「播客精选」只要播客);
+    ``min_content_value`` 只认当前尺子版本的内容价值(缺失即缺席,issue #178 第三波)。
     """
 
     cutoff = _as_shanghai(cutoff_at)
@@ -834,6 +904,22 @@ def _query_candidate_rows(
         query = query.where(ArticleRecord.source_id.notin_(sorted(set(exclude_source_ids))))
     if min_score is not None:
         query = query.where(ArticleAnalysisRecord.quality_score >= min_score)
+    if content_types is not None:
+        wanted_types = sorted({str(value) for value in content_types if value})
+        if not wanted_types:
+            return []
+        query = query.where(ArticleRecord.content_type.in_(wanted_types))
+    if exclude_content_types:
+        query = query.where(or_(
+            ArticleRecord.content_type.is_(None),
+            ArticleRecord.content_type.notin_(sorted(set(exclude_content_types))),
+        ))
+    if min_content_value is not None:
+        query = query.where(
+            ArticleAnalysisRecord.content_value.is_not(None),
+            ArticleAnalysisRecord.content_value >= min_content_value,
+            ArticleAnalysisRecord.content_value_version == CONTENT_VALUE_SCORING_VERSION,
+        )
     if interest_tag_codes is not None:
         codes = sorted({str(code) for code in interest_tag_codes if code})
         if not codes:
@@ -944,6 +1030,7 @@ def load_digest_candidates(
         source_ids=source_ids,
         cutoff_at=cutoff_at,
         window_hours=window_hours,
+        exclude_content_types=(PODCAST_CONTENT_TYPE,),
     )
     return _candidates_from_rows(session, rows, followed_codes=followed_codes)
 
@@ -975,9 +1062,64 @@ def load_interest_candidates(
         min_score=min_score,
         interest_tag_codes=codes,
         exclude_source_ids=tuple(exclude_source_ids),
+        exclude_content_types=(PODCAST_CONTENT_TYPE,),
     )
     rows = _reader_visible_rows(session, rows)
     return _candidates_from_rows(session, rows, followed_codes=codes, subscribed=False)
+
+
+def load_value_candidates(
+    session: Session,
+    *,
+    lane: SelectionLane | str,
+    source_ids: Sequence[str],
+    followed_codes: Iterable[str],
+    cutoff_at: dt.datetime,
+    policy: ValueLanePolicy,
+) -> list[DigestArticleCandidateDTO]:
+    """「深度阅读」「播客精选」的候选池(issue #178 第三波):订阅池 ∪ 订阅外兴趣池,窗口按天。
+
+    深度阅读 = 非播客、当前版本内容价值过线,再按推导出的内容类型留下论文 / 教程 / 观点 / 汇编;
+    播客精选 = 播客单集,内容价值即现有播客分(第二波投影),按 ``quality_score`` 过线。订阅外候选
+    与新闻通道同一套可见性过滤(私有源、隐藏源、公共日报记录一律不进)。
+    """
+
+    lane_value = str(getattr(lane, "value", lane))
+    window_hours = policy.window_days * 24
+    if lane_value == SelectionLane.LISTEN.value:
+        filters: dict[str, object] = {
+            "content_types": (PODCAST_CONTENT_TYPE,),
+            "min_score": policy.min_value,
+        }
+    else:
+        filters = {
+            "exclude_content_types": (PODCAST_CONTENT_TYPE,),
+            "min_content_value": policy.min_value,
+        }
+    pool: list[DigestArticleCandidateDTO] = []
+    codes = sorted({str(code) for code in followed_codes if code})
+    if source_ids:
+        rows = _query_candidate_rows(
+            session,
+            source_ids=source_ids,
+            cutoff_at=cutoff_at,
+            window_hours=window_hours,
+            **filters,  # type: ignore[arg-type]
+        )
+        pool.extend(_candidates_from_rows(session, rows, followed_codes=codes))
+    if codes:
+        rows = _query_candidate_rows(
+            session,
+            source_ids=None,
+            cutoff_at=cutoff_at,
+            window_hours=window_hours,
+            interest_tag_codes=codes,
+            exclude_source_ids=tuple(source_ids),
+            **filters,  # type: ignore[arg-type]
+        )
+        rows = _reader_visible_rows(session, rows)
+        pool.extend(_candidates_from_rows(session, rows, followed_codes=codes, subscribed=False))
+    return [candidate for candidate in pool if value_lane_accepts(candidate, lane_value)]
 
 
 def load_breaking_candidates(
@@ -1001,6 +1143,7 @@ def load_breaking_candidates(
         cutoff_at=cutoff_at,
         window_hours=window_hours,
         min_score=min_score,
+        exclude_content_types=(PODCAST_CONTENT_TYPE,),
     )
     rows = _reader_visible_rows(session, rows)
     meta = _source_role_and_shape(session, (article.source_id for article, _analysis in rows))
@@ -1043,13 +1186,21 @@ def _candidates_from_rows(
     } if article_ids else {}
     candidates: list[DigestArticleCandidateDTO] = []
     meta = source_meta or {}
+    source_kinds = source_default_kinds() if rows else {}
     for article, analysis in rows:
         try:
             genre = ContentGenre(analysis.content_genre or ContentGenre.OTHER.value)
         except ValueError:
             genre = ContentGenre.OTHER
         primary_code = primary_codes.get(analysis.primary_tag_id)
-        role, shape = meta.get(article.source_id, ("media", "article"))
+        is_podcast = (article.content_type or "") == PODCAST_CONTENT_TYPE
+        role, shape = meta.get(
+            article.source_id, ("media", PODCAST_SHAPE if is_podcast else "article")
+        )
+        kind = _item_kind(article, analysis, source_kinds)
+        content_value = score_projection(
+            content_type=article.content_type, kind=kind, analysis=analysis
+        )["content_value"]
         candidates.append(DigestArticleCandidateDTO(
             article_id=article.id,
             source_id=article.source_id,
@@ -1069,8 +1220,27 @@ def _candidates_from_rows(
             interest_tag_codes=(
                 interest_codes.get(article.id, ()) if interest_codes is not None else None
             ),
+            content_kind=kind,
+            content_value=content_value,
         ))
     return candidates
+
+
+def _item_kind(
+    article: ArticleRecord,
+    analysis: ArticleAnalysisRecord | None,
+    source_kinds: Mapping[str, str],
+) -> str | None:
+    """条目的内容类型(与阅读器列表同一推导:来源先验 → 数据结构 → 链接 → 模型类型 → 体裁)。"""
+
+    return classify_item(
+        source_id=article.source_id,
+        source_url=article.source_url,
+        content_type=article.content_type,
+        content_genre=analysis.content_genre if analysis is not None else None,
+        source_kinds=source_kinds,
+        content_kind=getattr(analysis, "content_kind", None) if analysis is not None else None,
+    ).kind
 
 
 def _latest_revision(session: Session, username: str, report_date: str) -> int:
@@ -1126,6 +1296,51 @@ def _previous_edition_article_ids(
         )
     ).all()
     return {str(article_id) for article_id in rows if article_id}
+
+
+def _recent_edition_article_ids(
+    session: Session,
+    username: str,
+    report_date: str,
+    *,
+    editions: int = PERSONAL_DIGEST_VALUE_SUPPRESS_EDITIONS,
+) -> set[str]:
+    """读者此前 N 期(按日期,每天取最新的完成版)早报里出现过的文章,任一分区都算。
+
+    「深度阅读」「播客精选」的窗口是 7 天,同一篇好文不该连着几天出现(issue #178 第三波)。
+    """
+
+    if editions <= 0:
+        return set()
+    rows = session.exec(
+        select(PersonalDigestEditionRecord).where(
+            PersonalDigestEditionRecord.owner_username == username,
+            PersonalDigestEditionRecord.report_date < report_date,
+            PersonalDigestEditionRecord.status.in_((
+                PersonalDigestStatus.READY.value,
+                PersonalDigestStatus.DEGRADED.value,
+            )),
+        ).order_by(
+            PersonalDigestEditionRecord.report_date.desc(),
+            PersonalDigestEditionRecord.revision.desc(),
+        )
+    ).all()
+    chosen: dict[str, int] = {}
+    for edition in rows:
+        if edition.id is None or edition.report_date in chosen:
+            continue
+        chosen[edition.report_date] = edition.id
+        if len(chosen) >= editions:
+            break
+    if not chosen:
+        return set()
+    article_ids = session.exec(
+        select(PersonalDigestItemRecord.article_id).where(
+            PersonalDigestItemRecord.edition_id.in_(list(chosen.values())),
+            PersonalDigestItemRecord.article_id.is_not(None),
+        )
+    ).all()
+    return {str(article_id) for article_id in article_ids if article_id}
 
 
 def _previous_breaking_entities(
@@ -1227,7 +1442,16 @@ def _snapshot(
     selection_reason: str,
     degraded: bool,
     subscribed: bool = True,
+    content_kind: str | None = None,
+    score_dimension: str | None = None,
 ) -> dict[str, object]:
+    # issue #178 第三波:快照记下卡片显示哪个分(score_dimension)和内容价值。新闻通道显示新闻价值;
+    # 「深度阅读」「播客精选」显示内容价值;播客没有新闻价值,任何分区里都显示内容价值(第二波投影)。
+    projection = score_projection(
+        content_type=article.content_type, kind=content_kind, analysis=analysis
+    )
+    is_podcast = (article.content_type or "") == PODCAST_CONTENT_TYPE
+    dimension = score_dimension or ("content" if is_podcast else "news")
     return {
         "article_id": article.id,
         "title": article.title,
@@ -1249,7 +1473,23 @@ def _snapshot(
         "is_latest_update": degraded,
         # v3.54:是否在读者订阅面内(订阅外兴趣命中 / 订阅外头条为 False);快照事实,不随后来的订阅变
         "subscribed": subscribed,
+        "content_kind": content_kind,
+        "content_value": projection["content_value"],
+        "content_value_reason": projection["content_value_reason"] or "",
+        "score_dimension": dimension,
     }
+
+
+_VALUE_LANES = frozenset({SelectionLane.READ.value, SelectionLane.LISTEN.value})
+
+
+def _display_score(record: PersonalDigestItemRecord) -> float | None:
+    """卡片上显示的那个分:「深度阅读」「播客精选」是内容价值,其余是新闻价值快照。"""
+
+    if record.selection_lane in _VALUE_LANES:
+        value = _json_mapping(record.ranking_features_json).get("content_value")
+        return float(value) if isinstance(value, (int, float)) else None
+    return record.quality_score_snapshot
 
 
 def _assign_positions(records: list[PersonalDigestItemRecord]) -> None:
@@ -1259,11 +1499,12 @@ def _assign_positions(records: list[PersonalDigestItemRecord]) -> None:
     当天最高分条目的体裁漂移,板块内命中兴趣的 6.6 也会排在质量通道的 8.0 之前。现在板块按
     ``SECTION_ORDER``,板块内按分数降序、缺分殿后、同分保持原序——前端网格的宽度跟分数走,
     要求板块头卡恒是板块最高分;重大事件板块此前按事件分 / 官方优先排,重排后同样分数降序。
+    「深度阅读」「播客精选」按卡上显示的内容价值排(issue #178 第三波)。
     """
 
     def key(pair: tuple[int, PersonalDigestItemRecord]) -> tuple[object, ...]:
         index, record = pair
-        score = record.quality_score_snapshot
+        score = _display_score(record)
         return (section_rank(record.section), score is None, -(score or 0.0), index)
 
     ordered = [record for _index, record in sorted(enumerate(records), key=key)]
@@ -1894,6 +2135,58 @@ def generate_personal_digest(
         remaining = [candidate for candidate in candidates if candidate.article_id not in promoted_ids]
         selections = _select(remaining)
 
+    # 「深度阅读」「播客精选」(issue #178 第三波,方案 §5.1):按内容价值的两个额外分区,不占新闻的
+    # target;不与本期新闻通道重复,读者近 7 期早报出现过的不再出现。先于降级回退选出,回退的
+    # 「订阅源最新更新」再避开它们。
+    value_excluded = (
+        {selection.article_id for selection in selections}
+        | promoted_ids
+        | _recent_edition_article_ids(session, username, report_date)
+    )
+    value_selections: dict[str, list] = {}
+    value_stats: dict[str, dict[str, object]] = {}
+    value_source_names: dict[str, str] = {}
+    for value_lane in (SelectionLane.READ, SelectionLane.LISTEN):
+        lane_policy = value_lane_policy(session, value_lane)
+        lane_pool = (
+            load_value_candidates(
+                session,
+                lane=value_lane,
+                source_ids=scope.expected_source_ids,
+                followed_codes=followed_codes,
+                cutoff_at=current,
+                policy=lane_policy,
+            )
+            if lane_policy.max_items > 0 else []
+        )
+        lane_names = _source_display_names(
+            session, sorted({candidate.source_id for candidate in lane_pool})
+        )
+        value_source_names.update(lane_names)
+        picked = select_value_lane(
+            lane_pool,
+            interests,
+            lane=value_lane,
+            policy=lane_policy,
+            excluded_article_ids=value_excluded,
+            tag_display_names=tag_display_names,
+            source_display_names=lane_names,
+        )
+        value_excluded.update(selection.article_id for selection in picked)
+        value_selections[value_lane.value] = picked
+        value_stats[value_lane.value] = {
+            "candidate_count": len(lane_pool),
+            "selected_count": len(picked),
+            "min_value": lane_policy.min_value,
+            "max_items": lane_policy.max_items,
+            "window_days": lane_policy.window_days,
+        }
+    value_article_ids = {
+        selection.article_id
+        for picked in value_selections.values()
+        for selection in picked
+    }
+
     generated_at = current.isoformat()
     first_open = _as_shanghai(first_open_at) if first_open_at else None
     report_day = dt.date.fromisoformat(report_date)
@@ -1939,6 +2232,9 @@ def generate_personal_digest(
         "interest_only": interest_only,
         "external_min_score": policy.external_min_quality_score,
         "external_per_source_max": policy.external_per_source_max,
+        # issue #178 第三波:「深度阅读」「播客精选」各自的候选数 / 入选数 / 门槛 / 名额 / 窗口
+        "read": value_stats[SelectionLane.READ.value],
+        "listen": value_stats[SelectionLane.LISTEN.value],
     }
     revision = (
         pending_edition.revision
@@ -2036,6 +2332,7 @@ def generate_personal_digest(
             session.flush()
 
     item_records: list[PersonalDigestItemRecord] = []
+    source_kinds = source_default_kinds()
     if breaking_selections:
         breaking_ids = [selection.article_id for selection in breaking_selections]
         breaking_articles = {
@@ -2092,6 +2389,7 @@ def generate_personal_digest(
                     selection_reason=selection.selection_reason,
                     degraded=False,
                     subscribed=article.source_id in subscribed_set,
+                    content_kind=_item_kind(article, analysis, source_kinds),
                 )),
                 created_at=generated_at,
             )
@@ -2145,6 +2443,7 @@ def generate_personal_digest(
                     selection_reason=selection.selection_reason,
                     degraded=False,
                     subscribed=in_scope,
+                    content_kind=_item_kind(article, analysis, source_kinds),
                 )),
                 created_at=generated_at,
             )
@@ -2155,7 +2454,7 @@ def generate_personal_digest(
             scope.expected_source_ids,
             interests,
             limit=PERSONAL_DIGEST_LATEST_FALLBACK_LIMIT,
-            excluded_article_ids=previous_article_ids,
+            excluded_article_ids=previous_article_ids | value_article_ids,
         )
         for position, (article, analysis, codes, tags, display_tags) in enumerate(
             latest, start=len(item_records)
@@ -2197,10 +2496,72 @@ def generate_personal_digest(
                     display_tags=display_tags,
                     selection_reason=selection_reason,
                     degraded=True,
+                    content_kind=_item_kind(article, analysis, source_kinds),
                 )),
                 created_at=generated_at,
             )
             item_records.append(record)
+    if value_article_ids:
+        value_ids = sorted(value_article_ids)
+        value_articles = {
+            row.id: row for row in session.exec(
+                select(ArticleRecord).where(ArticleRecord.id.in_(value_ids))
+            ).all()
+        }
+        value_analyses = {
+            row.article_id: row for row in session.exec(
+                select(ArticleAnalysisRecord).where(ArticleAnalysisRecord.article_id.in_(value_ids))
+            ).all()
+        }
+        _v_codes, value_tag_snapshots = _tag_maps(session, value_ids)
+        value_display_tags = load_display_tags(
+            session,
+            value_ids,
+            analyses=value_analyses,
+            canonical_tags=value_tag_snapshots,
+        )
+        for value_lane, section in (
+            (SelectionLane.READ, READ_SECTION),
+            (SelectionLane.LISTEN, LISTEN_SECTION),
+        ):
+            for selection in value_selections.get(value_lane.value, []):
+                article = value_articles.get(selection.article_id)
+                analysis = value_analyses.get(selection.article_id)
+                if article is None or analysis is None:
+                    continue
+                in_scope = article.source_id in subscribed_set
+                kind = _item_kind(article, analysis, source_kinds)
+                snapshot = _snapshot(
+                    article,
+                    analysis,
+                    value_tag_snapshots.get(article.id, []),
+                    source_name=value_source_names.get(article.source_id, article.source_id),
+                    display_tags=value_display_tags.get(article.id, []),
+                    selection_reason=selection.selection_reason,
+                    degraded=False,
+                    subscribed=in_scope,
+                    content_kind=kind,
+                    score_dimension="content",
+                )
+                item_records.append(PersonalDigestItemRecord(
+                    edition_id=edition.id,
+                    article_id=article.id,
+                    position=len(item_records),
+                    section=section,
+                    selection_lane=value_lane.value,
+                    quality_score_snapshot=analysis.quality_score,
+                    matched_interest_codes_json=_json(list(selection.matched_interest_codes)),
+                    ranking_features_json=_json({
+                        "policy_version": POLICY_VERSION,
+                        "subscribed": in_scope,
+                        "content_kind": kind,
+                        "content_value": snapshot["content_value"],
+                    }),
+                    coverage_adjustments_json="[]",
+                    selection_reason=selection.selection_reason,
+                    snapshot_json=_json(snapshot),
+                    created_at=generated_at,
+                ))
     # 落库前统一定位:板块固定顺序 + 板块内分数降序(issue #74)。记录在此之前刻意不 add 进
     # session——三段构建之间的查询会触发 autoflush,先按临时 position 写入再改写会在
     # (edition_id, position) 唯一键上互撞;集中添加让 INSERT 只带最终 position。
@@ -2243,10 +2604,13 @@ __all__ = [
     "EXTERNAL_MIN_SCORE_KEY",
     "EXTERNAL_PER_SOURCE_MAX_KEY",
     "FrozenDigestScope",
+    "VALUE_LANE_KEYS",
     "breaking_policy",
     "selection_policy",
     "load_breaking_candidates",
     "load_interest_candidates",
+    "load_value_candidates",
+    "value_lane_policy",
     "PersonalDigestGenerationResult",
     "calculate_due_source_ids",
     "freeze_personal_digest_scope",

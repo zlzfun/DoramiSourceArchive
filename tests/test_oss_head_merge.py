@@ -6,9 +6,8 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 import pytest
 from sqlalchemy import create_engine, inspect, text
-from sqlmodel import Session
 
-from models.db import SourceConfigRecord, SQLModel
+from models.db import SQLModel
 from storage.fts import fts_include_object
 from storage.migrations import ensure_migrated, make_alembic_config
 
@@ -55,12 +54,17 @@ def test_existing_branches_upgrade_to_one_head_without_drift(tmp_path, starting_
             if RETIREMENT_REVISION not in starting_revisions:
                 assert "retired_at" not in {row["name"] for row in inspect(connection).get_columns("source_configs")}
         if RETIREMENT_REVISION in starting_revisions:
-            with Session(engine) as session:
-                session.add(SourceConfigRecord(
-                    source_id="retained-retirement", name="Retired source", retired_at="2026-09-16T01:00:00Z",
-                    created_at="2026-09-15T01:00:00Z", updated_at="2026-09-16T01:00:00Z",
+            # 按当时的表结构写原生 SQL:当前 ORM 模型可能已有更晚迁移才加的列(如 admission_status)
+            with engine.begin() as connection:
+                connection.execute(text(
+                    "INSERT INTO source_configs (source_id, name, source_type, url, category, fetcher_id, "
+                    "description, source_owner, source_brand, source_scope, source_channel, base_url, "
+                    "provenance_tier, content_tags_json, signal_strength, noise_risk, fetch_reliability, "
+                    "owner_username, collection_authority_id, ai_analysis_enabled, is_active, retired_at, "
+                    "params_json, created_at, updated_at) VALUES ('retained-retirement', 'Retired source', "
+                    "'rss', '', '', '', '', '', '', '', '', '', '', '[]', '', '', '', '', '', 1, 1, "
+                    "'2026-09-16T01:00:00Z', '{}', '2026-09-15T01:00:00Z', '2026-09-16T01:00:00Z')"
                 ))
-                session.commit()
 
         ensure_migrated(url)
         # Repeated deployment startup must remain idempotent.

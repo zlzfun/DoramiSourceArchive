@@ -40,27 +40,35 @@ class BaseFetcher(abc.ABC):
     # 产出的数据结构类型，对应 models.content (例如: "arxiv", "tech_news")
     content_type: str = "unknown_content"
 
-    # 面向管理台的来源分类，用于在节点较多时筛选和分组展示。
-    category: str = "general"
+    # 准入状态(issue #178 自原 category 拆出):admitted 正式 | incubating 观察期。
+    # 观察期节点默认可见、可订阅、可手动抓取,但不进每日自动采集(scripts/ensure_daily_collection_job.py),
+    # 管理面挂「观察」徽记。验收转正 = 让该类的有效值成为 admitted:类上自己声明观察期的删掉那一行,
+    # 观察期继承自父类的(如 X 预设)在具体类上写 admission_status = "admitted"。来源角色(官方 / 媒体 / 个人 / 榜单)
+    # 由 services/source_naming.source_role 推导,模板节点看 is_template,都不再挤在这个字段里。
+    admission_status: str = "admitted"
 
-    # 内容形态（阅读器分流轴，迭代 3）：article 文章形｜bulletin 短条目扫读形
-    # （changelog/Release/仓库/模型监控）｜social 社交卡片流直读形｜podcast
-    # 播客单集形。必须是源级标记：
-    # docs_* changelog 的 content_type 也是 web_article，靠 content_type 分不开。
+    # 呈现形态（阅读器容器）：article 文章形｜social 社交卡片流直读形｜podcast 播客单集形。
+    # 必须是源级标记。原 bulletin「动态」形于 issue #178 并入 article：短条目扫读改由条目的
+    # 内容类型（版本更新）决定紧凑行，不再需要单独的容器。
     content_shape: str = "article"
+
+    # 内容类型的来源先验（issue #178，services/content_classification.py）：paper / release /
+    # project / digest 等。留空 = 无先验，由数据结构、链接形状与分析体裁判定。docs_* changelog 的
+    # content_type 也是 web_article，靠 content_type 分不开，所以必须是源级标记。
+    default_kind: str = ""
 
     # 社交平台标识（x / mastodon / bluesky 等）。非社交源留空；作为源级
     # 元数据透出给阅读器，不从单篇 raw_data 反推。
     platform: str = ""
 
-    # 新一代数据源准入元数据。用于区分来源身份、准入层级、内容标签与抓取可靠性。
+    # 新一代数据源准入元数据。用于区分来源身份、准入层级与抓取可靠性(源级 content_tags 已于 issue #178 退役:
+    # 条目的类型与主题由内容类型推导和入库分析给出)。
     source_owner: str = ""
     source_brand: str = ""
     source_scope: str = ""
     source_channel: str = ""
     source_url: str = ""
     provenance_tier: str = ""
-    content_tags: List[str] = []
     signal_strength: str = ""
     noise_risk: str = ""
     fetch_reliability: str = ""
@@ -108,7 +116,7 @@ class BaseFetcher(abc.ABC):
         示例重写格式:
         return [
             {"field": "limit", "label": "单次获取上限", "type": "number", "default": 5},
-            {"field": "category", "label": "分类", "type": "text", "default": ""}
+            {"field": "feed_url", "label": "订阅地址", "type": "text", "default": ""}
         ]
         """
         return []

@@ -58,13 +58,15 @@ const SIGNAL_STATS = [
   { key: 'never_run', label: '未运行', sig: 'idle' },
 ];
 
-// 内容形态是节点目录的一级视图；标签与阅读器四个内容容器保持一致。
+// 内容形态是节点目录的一级视图；标签与阅读器三个内容容器保持一致(issue #178 撤销「动态」,
+// changelog / Release / 仓库与模型监控并入文章,由来源的默认内容类型区分)。
 const CONTENT_SHAPES = [
   { key: 'article', label: '文章' },
   { key: 'podcast', label: '播客' },
-  { key: 'bulletin', label: '动态' },
   { key: 'social', label: '社交' },
 ];
+// 版本更新 / 项目源的产出是短条目,计数量词用「条」
+const ITEM_KIND_SHORT = new Set(['release', 'project']);
 const CONTENT_SHAPE_LABELS = Object.fromEntries(CONTENT_SHAPES.map(item => [item.key, item.label]));
 
 const REFRESH_SECONDS = 45;
@@ -257,7 +259,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
         name: item.name,
         icon: '',
         desc: item.desc || item.feed_url || '',
-        category: item.user_source ? 'user' : (item.category || 'podcast'),
         content_type: item.content_type || (item.source_type === 'podcast' ? 'podcast_episode' : 'rss_article'),
         shape: item.shape || (item.source_type === 'podcast' ? 'podcast' : 'article'),
         user_source: Boolean(item.user_source),
@@ -269,7 +270,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
         source_channel: item.source_channel || '',
         base_url: item.base_url || item.feed_url || '',
         provenance_tier: item.provenance_tier || '',
-        content_tags: Array.isArray(item.content_tags) ? item.content_tags : [],
         signal_strength: item.signal_strength || '',
         noise_risk: item.noise_risk || '',
         fetch_reliability: item.fetch_reliability || '',
@@ -694,7 +694,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     const isUserSource = Boolean(fetcher.user_source);
     const isBatchableNode = !isUserSource;
     const shape = contentShapeOf(fetcher);
-    const itemNoun = shape === 'podcast' ? '期' : shape === 'bulletin' ? '条' : shape === 'social' ? '则' : '篇';
+    const itemNoun = shape === 'podcast' ? '期' : ITEM_KIND_SHORT.has(fetcher.default_kind) ? '条' : shape === 'social' ? '则' : '篇';
 
     return (
       <div key={fetcher.id} ref={el => { sourceRowRefs.current[fetcher.id] = el; }}>
@@ -726,7 +726,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
               <span className="board-node-name-text">{fetcher.name}</span>
               {/* 信息角色已由所在分组的组头承担,行上不再重复挂胶囊(同一信息画两遍即噪声) */}
               {/* 观察期:新节点批次质量验收转正前的集中观察标记(不进每日自动采集) */}
-              {fetcher.category === 'incubating' && (
+              {fetcher.admission_status === 'incubating' && (
                 <span className="tier-pill incubating-pill" title="观察期:质量验收转正前不进每日自动采集">观察</span>
               )}
               {/* 读者面隐藏:发现页/源栏/文章流对读者不可见,采集照常 */}
@@ -948,7 +948,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     const preview = previewByNode[fetcher.id];
     const totalItems = health?.total_articles ?? 0;
     const shape = contentShapeOf(fetcher);
-    const collectedLabel = shape === 'podcast' ? '抓取播客' : shape === 'bulletin' ? '抓取动态' : shape === 'social' ? '抓取社交' : '抓取文章';
+    const collectedLabel = shape === 'podcast' ? '抓取播客' : ITEM_KIND_SHORT.has(fetcher.default_kind) ? '抓取条目' : shape === 'social' ? '抓取社交' : '抓取文章';
 
     return (
       <>

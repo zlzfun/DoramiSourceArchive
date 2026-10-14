@@ -32,13 +32,13 @@ def _make_sink(tmp_path, name="brief.db"):
 
 
 def _seed(engine, article_id, source_id, fetched_date, *, content="正文内容", content_type="rss_article",
-          has_content=True, publish_date="2026-06-05"):
+          has_content=True, publish_date="2026-06-05", source_url=None):
     from models.db import ArticleRecord
 
     with Session(engine) as session:
         session.add(ArticleRecord(
             id=article_id, title=f"标题-{article_id}", content_type=content_type, source_id=source_id,
-            source_url=f"https://example.test/{article_id}", publish_date=publish_date,
+            source_url=source_url or f"https://example.test/{article_id}", publish_date=publish_date,
             fetched_date=fetched_date, has_content=has_content, content=content if has_content else None,
             extensions_json="{}",
         ))
@@ -46,8 +46,9 @@ def _seed(engine, article_id, source_id, fetched_date, *, content="正文内容"
 
 
 def _seed_persisted_analysis(engine, article_id, *, score=4.5, genre="research_paper",
-                             scoring_version=None):
-    from llm.article_analysis_prompt import ARTICLE_ANALYSIS_SCORING_VERSION
+                             scoring_version=None, content_kind=None, content_value=None,
+                             content_value_version=None):
+    from llm.article_analysis_prompt import ARTICLE_ANALYSIS_SCORING_VERSION, CONTENT_VALUE_SCORING_VERSION
     from models.db import (
         ArticleAnalysisRecord,
         ArticleTagAssignmentRecord,
@@ -75,6 +76,11 @@ def _seed_persisted_analysis(engine, article_id, *, score=4.5, genre="research_p
             prompt_version="article-analysis-v5",
             scoring_version=scoring_version or ARTICLE_ANALYSIS_SCORING_VERSION,
             entities_json='[{"name": "OpenAI", "type": "company", "relevance": 0.9}]',
+            content_kind=content_kind, content_value=content_value,
+            content_value_reason="内容价值理由" if content_value is not None else "",
+            content_value_version=(
+                (content_value_version or CONTENT_VALUE_SCORING_VERSION) if content_value is not None else ""
+            ),
             analyzed_at=now, tagged_at=now, created_at=now, updated_at=now,
         ))
         session.add(ArticleTagAssignmentRecord(
@@ -211,31 +217,43 @@ def test_select_top_final_order_is_score_desc_after_diversity():
 
 
 def _scored_full(score, *, source="s", classification="行业资讯", source_url="", summary=None,
-                 company="", content_type="rss_article", item_id=None):
+                 company="", content_type="rss_article", item_id=None, content_kind="",
+                 content_value=None):
     cand = BriefCandidate(id=item_id or f"id-{score}-{source}-{classification}", title="t", source_id=source,
                           source_url=source_url, content_type=content_type, publish_date="", fetched_date="",
                           has_content=True, body="")
     return ScoredItem(candidate=cand, score=score, classification=classification,
-                      summary=summary or [], company=company)
+                      summary=summary or [], company=company, content_kind=content_kind,
+                      content_value=content_value)
 
 
-def test_select_top_paper_cap_limits_and_deprioritizes():
-    # 5 篇高分论文 + 5 条低分行业资讯；paper_cap=2、top_n=6 →
-    # 即便论文分更高，也只入选 2 篇，腾出名额给行业资讯（有足够其它内容时配额硬生效）
-    papers = [_scored_full(9 - i, source="hf", classification="学术论文", item_id=f"p{i}") for i in range(5)]
-    industry = [_scored_full(4 - i, source=f"news{i}", classification="行业资讯", item_id=f"n{i}") for i in range(5)]
-    selected = select_top(papers + industry, top_n=6, per_source_cap=10, per_realm_cap=10, paper_cap=2)
-    assert sum(1 for it in selected if it.classification == "学术论文") == 2  # 论文被配额限制
-    assert sum(1 for it in selected if it.classification == "行业资讯") == 4  # 行业资讯占满其余名额
+def test_select_top_paper_lane_is_content_kind_ranked_by_content_value():
+    """issue #178 第三波:论文名额看内容类型、按内容价值挑,不看新闻分;媒体对论文的报道不占名额。"""
+    papers = [
+        _scored_full(9 - i, source=f"hf{i}", classification="学术论文", item_id=f"p{i}",
+                     content_kind="paper", content_value=value)
+        for i, value in enumerate([7.1, 8.9, 7.6, 8.2, 7.3])
+    ]
+    report = _scored_full(9.5, source="media", classification="学术论文", item_id="report", content_kind="news")
+    industry = [_scored_full(4 - i, source=f"news{i}", item_id=f"n{i}", content_kind="news") for i in range(5)]
+    selected = select_top(papers + [report] + industry, top_n=6, per_source_cap=10, per_realm_cap=10, paper_cap=2)
+    assert {it.candidate.id for it in selected if it.content_kind == "paper"} == {"p1", "p3"}
+    assert "report" in {it.candidate.id for it in selected}  # 按新闻价值与资讯同台
+    assert [it.score for it in selected] == sorted((it.score for it in selected), reverse=True)
 
 
-def test_select_top_paper_cap_via_content_type():
-    # 即使 classification 不是「学术论文」，content_type=arxiv 也算论文，受同一配额约束
-    papers = [_scored_full(9 - i, source="hf", classification="", content_type="arxiv", item_id=f"a{i}")
-              for i in range(4)]
-    industry = [_scored_full(3 - i, source=f"news{i}", classification="行业资讯", item_id=f"n{i}") for i in range(3)]
-    selected = select_top(papers + industry, top_n=4, paper_cap=2)
-    assert sum(1 for it in selected if it.candidate.content_type == "arxiv") == 2  # arxiv 计入论文配额
+def test_select_top_papers_beyond_the_quota_never_backfill():
+    """名额以外的论文不进日报:凑不满 top_n 也不拿多余论文补;存量未补内容价值的论文排在有价值的之后。"""
+    papers = [
+        _scored_full(9, source="a", item_id="legacy", content_kind="paper"),
+        _scored_full(4, source="b", item_id="valued", content_kind="paper", content_value=7.2),
+        _scored_full(4, source="c", item_id="valued2", content_kind="paper", content_value=8.0),
+    ]
+    news = [_scored_full(6, source="d", item_id="n0", content_kind="news")]
+    selected = select_top(papers + news, top_n=6, paper_cap=2)
+    assert {it.candidate.id for it in selected} == {"valued", "valued2", "n0"}
+    trimmed = db.trim_to_top_n(papers + news, 2, paper_cap=1)
+    assert {it.candidate.id for it in trimmed} == {"valued2", "n0"}
 
 
 # ---------------- dedup_clusters 同事件去重 ----------------
@@ -923,6 +941,28 @@ def test_score_candidates_retries_transient_failure(monkeypatch):
     assert results[0].score == 8.0
 
 
+def test_inline_scoring_keeps_content_kind_and_value_with_rule_hint(monkeypatch):
+    """issue #178 第三波:就地补评保留内容价值(只用于本次论文名额、不写回);规则能判出的类型
+    作为 kind_hint 喂给模型,并以规则为准。"""
+    prompts_seen = []
+
+    async def _paper(*, messages, config, **kwargs):
+        if _is_scoring(messages):
+            prompts_seen.append(messages[1].content)
+            return json.dumps({
+                **ANALYSIS_PAYLOAD, "quality_score": 4.5, "content_genre": "research_paper",
+                "content_kind": "news", "content_value": 8.1, "content_value_reason": "方法扎实",
+            })
+        return await _fake_chat_completion(messages=messages, config=config, **kwargs)
+
+    _patch_llm(monkeypatch, _paper)
+    cand = BriefCandidate(id="c1", title="t", source_id="s", source_url="https://arxiv.org/abs/2606.00002",
+                          content_type="rss_article", publish_date="", fetched_date="", has_content=True, body="正文")
+    [item] = asyncio.run(score_candidates([cand], CONFIGURED, stored={}))
+    assert item.score == 4.5 and item.content_kind == "paper" and item.content_value == 8.1
+    assert '"kind_hint":"paper"' in prompts_seen[0]
+
+
 # ---------------- 复用文章级分析 / 门槛 / 编辑(v3.48 统一新闻价值评分波) ----------------
 
 def test_classification_from_genre_covers_controlled_enum():
@@ -1039,6 +1079,147 @@ def test_generate_min_score_passes_low_items(tmp_path, monkeypatch):
         db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
     result = asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-07"))
     assert result["articles_count"] == 2
+
+
+def test_generate_paper_lane_uses_content_value_instead_of_the_news_gate(tmp_path, monkeypatch):
+    """issue #178 第三波:有内容价值的论文按内容价值过门槛(不受新闻门槛 6.0 约束);内容价值不够的
+    论文不进日报;媒体研究报道按新闻价值作资讯;存量未补内容价值的论文照旧走新闻门槛。"""
+    _patch_llm(monkeypatch, _fake_chat_completion)
+    sink = _make_sink(tmp_path, "paper_lane.db")
+    for article_id, source in (("p1", "src_p1"), ("p2", "src_p2"), ("report", "src_m"), ("news", "src_n")):
+        _seed(sink.engine, article_id, source, "2026-06-05T10:00:00")
+    # 存量论文(链接形状判为论文)还没有当前版本的内容价值:照旧按新闻门槛,仍占名额
+    _seed(sink.engine, "legacy", "src_p3", "2026-06-05T10:00:00", source_url="https://arxiv.org/abs/2606.00001")
+    _seed_persisted_analysis(sink.engine, "p1", score=4.5, content_kind="paper", content_value=8.4)
+    _seed_persisted_analysis(sink.engine, "p2", score=4.0, content_kind="paper", content_value=6.5)
+    _seed_persisted_analysis(sink.engine, "report", score=7.0, content_kind="news", content_value=6.0)
+    _seed_persisted_analysis(sink.engine, "legacy", score=7.5)
+    _seed_persisted_analysis(sink.engine, "news", score=8.0, genre="industry_news", content_kind="news", content_value=5.0)
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+    items = {e["id"]: e for e in json.loads(record.extensions_json)["items"]}
+    assert set(items) == {"news", "legacy", "report", "p1"}
+    assert "p2" not in json.loads(record.extensions_json)["included_article_ids"]
+    # 分类字段是神灯契约:媒体研究报道仍按体裁标「学术论文」,只是不再占名额
+    assert items["report"]["classification"] == "学术论文" and items["report"]["content_kind"] == "news"
+    assert items["p1"]["score"] == 4.5 and items["p1"]["content_value"] == 8.4
+    assert items["p1"]["content_kind"] == "paper" and items["legacy"]["content_value"] is None
+    assert items["legacy"]["content_kind"] == "paper"
+    with Session(sink.engine) as session:
+        last = db.get_json_setting(session, db.KEY_LAST_RUN, None)
+    assert last["paper_candidates"] == 2 and last["paper_qualified"] == 1 and last["paper_selected"] == 2
+    assert last["paper_min_content_value"] == 7.0 and last["below_threshold"] == 1
+
+
+def test_generate_paper_quota_counts_the_whole_day(tmp_path, monkeypatch):
+    """论文名额 3 篇按内容价值挑;同日重跑时早间已占的名额扣掉,不会越补越多。"""
+    _patch_llm(monkeypatch, _fake_chat_completion)
+    sink = _make_sink(tmp_path, "paper_quota.db")
+    for index, value in enumerate([9.0, 8.8, 8.6, 8.4, 8.2]):
+        _seed(sink.engine, f"p{index}", f"src_p{index}", "2026-06-05T10:00:00")
+        _seed_persisted_analysis(sink.engine, f"p{index}", score=4.0, content_kind="paper", content_value=value)
+    _seed(sink.engine, "news", "src_n", "2026-06-05T10:00:00")
+    _seed_persisted_analysis(sink.engine, "news", score=8.0, genre="industry_news", content_kind="news")
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+    items = json.loads(record.extensions_json)["items"]
+    assert sorted(e["id"] for e in items if e["content_kind"] == "paper") == ["p0", "p1", "p2"]
+
+    _seed(sink.engine, "late", "src_late", "2026-06-05T13:00:00")
+    _seed_persisted_analysis(sink.engine, "late", score=4.0, content_kind="paper", content_value=9.6)
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+    items = json.loads(record.extensions_json)["items"]
+    assert sorted(e["id"] for e in items if e["content_kind"] == "paper") == ["p0", "p1", "p2"]
+
+
+def test_paper_buffer_does_not_shrink_the_backfill(tmp_path, monkeypatch):
+    """检视 R1-1:预选多带的备用论文终会裁掉,保底缺口不能把它算成正文——4 篇论文 + 近线资讯 → 3 + 5 = 8。"""
+    _patch_llm(monkeypatch, _fake_chat_completion)
+    sink = _make_sink(tmp_path, "paper_backfill.db")
+    for article_id, value in (("pa", 9.0), ("pb", 8.8), ("pc", 8.6), ("pd", 8.4)):
+        _seed(sink.engine, article_id, f"src_{article_id}", "2026-06-05T10:00:00")
+        _seed_persisted_analysis(sink.engine, article_id, score=4.5, content_kind="paper", content_value=value)
+    for article_id in ("na", "nb", "nc", "nd", "ne", "nf"):
+        _seed(sink.engine, article_id, f"src_{article_id}", "2026-06-05T10:00:00")
+        _seed_persisted_analysis(sink.engine, article_id, score=5.5, genre="industry_news", content_kind="news")
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+    items = json.loads(record.extensions_json)["items"]
+    assert sorted(e["id"] for e in items if e["content_kind"] == "paper") == ["pa", "pb", "pc"]
+    assert len([e for e in items if e["content_kind"] == "news"]) == 5 and len(items) == 8
+
+
+def test_papers_never_enter_the_appendix(tmp_path, monkeypatch):
+    """检视 R1-2:论文只经正文名额入选——存量近线论文、无正文论文、规则可认的评分失败论文都不进附录。"""
+    async def _fail_one(*, messages, config, **kwargs):
+        if _is_scoring(messages) and "标题-pfail" in messages[1].content:
+            raise RuntimeError("scoring down")
+        return await _fake_chat_completion(messages=messages, config=config, **kwargs)
+
+    _patch_llm(monkeypatch, _fail_one)
+    sink = _make_sink(tmp_path, "paper_appendix.db")
+    for article_id, value in (("pa", 8.0), ("pb", 8.2), ("pc", 8.4)):
+        _seed(sink.engine, article_id, f"src_{article_id}", "2026-06-05T10:00:00")
+        _seed_persisted_analysis(sink.engine, article_id, score=4.5, content_kind="paper", content_value=value)
+    for article_id in ("na", "nb", "nc", "nd", "ne"):
+        _seed(sink.engine, article_id, f"src_{article_id}", "2026-06-05T10:00:00")
+        _seed_persisted_analysis(sink.engine, article_id, score=7.0, genre="industry_news", content_kind="news")
+    arxiv = "https://arxiv.org/abs/2606.0{}"
+    _seed(sink.engine, "plegacy", "src_l", "2026-06-05T10:00:00", source_url=arxiv.format("0001"))
+    _seed_persisted_analysis(sink.engine, "plegacy", score=5.5)
+    _seed(sink.engine, "pbodyless", "src_b", "2026-06-05T10:00:00", has_content=False, source_url=arxiv.format("0002"))
+    _seed(sink.engine, "pfail", "src_f", "2026-06-05T10:00:00", source_url=arxiv.format("0003"))
+    _seed(sink.engine, "nnear", "src_n", "2026-06-05T10:00:00")
+    _seed_persisted_analysis(sink.engine, "nnear", score=5.5, genre="industry_news", content_kind="news")
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+    ext = json.loads(record.extensions_json)
+    assert sorted(e["id"] for e in ext["items"] if e["content_kind"] == "paper") == ["pa", "pb", "pc"]
+    included = set(ext["included_article_ids"])
+    assert {"plegacy", "pbodyless", "pfail"}.isdisjoint(included)
+    assert "nnear" in included  # 资讯的近线补位照旧进附录
+
+
+def test_same_day_rerun_counts_papers_of_a_pre_upgrade_brief(tmp_path, monkeypatch):
+    """检视 R1-3:升级前写入的当日日报 items 没有 content_kind 键,重跑时按文章与分析现推导,早间论文照样占名额。"""
+    _patch_llm(monkeypatch, _fake_chat_completion)
+    sink = _make_sink(tmp_path, "paper_legacy_items.db")
+    for index, value in enumerate([9.0, 8.8, 8.6]):
+        article_id = f"p{index + 1}"  # 标题带不同数字:同日合并的机械预聚类不会把它们当同一事件
+        _seed(sink.engine, article_id, f"src_{article_id}", "2026-06-05T10:00:00",
+              source_url=f"https://arxiv.org/abs/2606.1000{index}")
+        _seed_persisted_analysis(sink.engine, article_id, score=4.0, content_kind="paper", content_value=value)
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    from models.db import ArticleRecord
+    with Session(sink.engine) as session:
+        row = session.get(ArticleRecord, "daily_brief_2026-06-06")
+        ext = json.loads(row.extensions_json)
+        for entry in ext["items"]:
+            entry.pop("content_kind", None)
+            entry.pop("content_value", None)
+        row.extensions_json = json.dumps(ext, ensure_ascii=False)
+        session.add(row)
+        session.commit()
+    _seed(sink.engine, "late", "src_late", "2026-06-05T13:00:00")
+    _seed_persisted_analysis(sink.engine, "late", score=4.0, content_kind="paper", content_value=9.6)
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+    ext = json.loads(record.extensions_json)
+    assert sorted(e["id"] for e in ext["items"]) == ["p1", "p2", "p3"]
+    assert all(e["content_kind"] == "paper" for e in ext["items"])  # 重写时补上了推导出的类型
+    with Session(sink.engine) as session:
+        assert db.get_json_setting(session, db.KEY_LAST_RUN, None)["paper_selected"] == 3
 
 
 def test_editorial_failure_keeps_analysis_summary(monkeypatch):

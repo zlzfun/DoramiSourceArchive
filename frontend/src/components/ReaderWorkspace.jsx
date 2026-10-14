@@ -48,7 +48,7 @@ export default function ReaderWorkspace({ mobile, ...props }) {
   const scrollRef = useRef({});
   const previousLayout = useRef(mobile);
   const articleKey = rs.activeArticle?.id;
-  const listKey = JSON.stringify([rs.mode, rs.activeSourceId, rs.activeTagId, rs.scope, rs.searchQuery, rs.unreadOnly]);
+  const listKey = JSON.stringify([rs.mode, rs.activeSourceId, rs.activeTagId, rs.scope, rs.searchQuery, rs.unreadOnly, rs.kindFilter]);
   const captureScroll = (event) => {
     const el = event.target;
     const kind = el.matches('.reader-pane, .m-read-scroll') ? 'article'

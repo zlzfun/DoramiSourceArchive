@@ -48,7 +48,14 @@ Tier does not answer: how useful, stable, or important is this source?
 
 ## 2. Content Type
 
-Each source should declare one or more content-type tags. These tags explain why the source is useful and how downstream filtering should treat it.
+> **issue #178(2026-10-12)**:源级 `content_tags` 已在「第一波补」退役(抓取器类属性、配置源接口与节点检视器一并移除,
+> 也不再写进条目标签)——它们是对条目体裁的源级猜测,
+> 已被条目级的**内容类型**取代(`services/content_classification.py`,读取时按来源先验 / 链接形状 / 分析体裁推导)。
+> 新源需要声明的是**来源先验** `default_kind`:只有当这个源的每一条都确定属于某一类时才填,取值
+> `paper`(论文原文)/ `release`(changelog、Release Notes、GitHub Release)/ `project`(仓库、模型卡、趋势榜条目)/
+> `digest`(周刊、日报、合集);普通博客、媒体、个人源留空,交给条目级判定。原 `content_shape = "bulletin"` 已并入 article。
+
+*(历史参考,已退役)* Each source used to declare one or more content-type tags. The vocabulary below is kept only to read old candidate records; new sources declare `default_kind` instead.
 
 Recommended tags:
 

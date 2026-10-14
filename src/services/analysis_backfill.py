@@ -5,6 +5,17 @@ module adds an auditable job header plus per-article snapshots so a deployment
 restart can resume dispatch without duplicating work.  Backfill articles are
 only dispatched into spare analysis capacity; ``claim_analysis_tasks`` keeps
 its newest-first ordering, so live arrivals always win.
+
+Selections (issue #178 wave 2 adds the last two):
+
+- ``all`` — force every article in scope through a full re-analysis;
+- ``missing_or_outdated`` — articles without a current result (content, prompt,
+  scoring or taxonomy version changed);
+- ``missing`` — only articles that never got a result; existing news values are
+  never re-scored (the 2026-10-12 stock decision, plan §3.1);
+- ``content_value`` — articles that already have a current news value but lack a
+  current content value, limited to paper / tutorial / opinion / digest plus
+  ``research_paper``-genre news; only the content-value fields are written.
 """
 
 from __future__ import annotations
@@ -22,8 +33,10 @@ from sqlmodel import Session, select
 from llm.article_analysis_prompt import (
     ARTICLE_ANALYSIS_PROMPT_VERSION,
     ARTICLE_ANALYSIS_SCORING_VERSION,
+    CONTENT_VALUE_SCORING_VERSION,
     MAX_ANALYSIS_BODY_CHARS,
     analysis_contract_versions,
+    content_value_contract_version,
 )
 from models.analysis_contracts import AnalysisOperation, AnalysisStatus, TaggingStatus
 from models.db import (
@@ -33,26 +46,71 @@ from models.db import (
     TagRetagJobRecord,
 )
 from services.article_analysis import (
+    PENDING_SCOPE_CONTENT_VALUE,
     DEFAULT_MAX_ATTEMPTS,
     compute_content_hash,
+    content_value_fill_is_current,
+    has_authoritative_analysis,
+    in_version_refresh_window,
     queue_article_analysis,
+    queue_content_value_fill,
     revoke_queued_analysis,
     sanitize_error,
     source_allows_analysis,
 )
+from services import sync_consumer_policy
 from services.article_time import parse_article_time
 from services.taxonomy import current_taxonomy_version, now_iso
 
 
 FULL_ANALYSIS_CONFIRMATION = "RUN FULL ANALYSIS"
 FULL_ANALYSIS_ACTIVE_STATUSES = ("queued", "running", "paused")
-FULL_ANALYSIS_SELECTIONS = ("all", "missing_or_outdated")
+FULL_ANALYSIS_SELECTIONS = ("all", "missing_or_outdated", "missing", "content_value")
+MISSING_SELECTION = "missing"
+CONTENT_VALUE_SELECTION = "content_value"
+# 「补内容价值」默认覆盖的内容类型(内容价值为主分的几类),外加体裁为「学术论文」的资讯——
+# 这批最可能被模型改判为论文(issue #178 第二波 §3.7)。
+CONTENT_VALUE_FILL_KINDS = frozenset({"paper", "tutorial", "opinion", "digest"})
+CONTENT_VALUE_FILL_GENRES = frozenset({"research_paper"})
 DEFAULT_DISPATCH_LIMIT = 8
 LEASE_SECONDS = 300
 
 
 class AnalysisBackfillError(ValueError):
     """A full-analysis backfill request violates a governance invariant."""
+
+
+def _local_execution_block(session: Session, article: ArticleRecord) -> Optional[str]:
+    """本机对这篇是否已无分析执行权:归档同步接管(远端权威)或接收端停写;有权时返回 None。"""
+
+    if (article.analysis_authority_id or "").strip():
+        return "remote_authority"
+    if not sync_consumer_policy.local_source_operation_allowed(
+        session, article.source_id, operation="analysis"
+    ):
+        return "v2_consumer_quiesced"
+    return None
+
+
+def _dispatch_target_done(
+    selection: Optional[str],
+    article: ArticleRecord,
+    analysis: Optional[ArticleAnalysisRecord],
+) -> bool:
+    """派发前目标是否已经达成(不必再派):仅从未分析 = 已有结果;补内容价值 = 已有当前内容价值。
+
+    派发与对账共用「目标已完成 → 本机执行权 → 等待 / 入队」的顺序(codex R1 / R2-1)。
+    """
+
+    if selection == MISSING_SELECTION:
+        return has_authoritative_analysis(analysis)
+    if selection == CONTENT_VALUE_SELECTION:
+        return bool(
+            analysis is not None
+            and analysis.status == AnalysisStatus.SUCCEEDED.value
+            and content_value_fill_is_current(article, analysis)
+        )
+    return False
 
 
 @dataclass(frozen=True)
@@ -117,6 +175,9 @@ def _eligible_rows(
     if normalized_sources:
         statement = statement.where(ArticleRecord.source_id.in_(normalized_sources))
 
+    from services.content_classification import classify_item, source_default_kinds
+
+    source_kinds = source_default_kinds()
     targets: list[BackfillTarget] = []
     for article, analysis in session.exec(statement).all():
         if not source_allows_analysis(session, article.source_id):
@@ -137,6 +198,31 @@ def _eligible_rows(
         )
         if selection == "missing_or_outdated" and is_current:
             continue
+        if selection == MISSING_SELECTION and has_authoritative_analysis(analysis):
+            continue
+        if selection == CONTENT_VALUE_SELECTION:
+            if (
+                analysis is None
+                or analysis.status != AnalysisStatus.SUCCEEDED.value
+                or not has_authoritative_analysis(analysis)
+                or analysis.content_hash != content_hash
+                or analysis.scoring_version != expected_scoring
+                or not content_value_contract_version(article.content_type)
+                or content_value_fill_is_current(article, analysis)
+                # 版本巡检即将整篇重跑的近期文章会顺带产出内容价值,不重复派发(codex R1-8)
+                or in_version_refresh_window(article, analysis, now=current)
+            ):
+                continue
+            kind = classify_item(
+                source_id=article.source_id,
+                source_url=article.source_url,
+                content_type=article.content_type,
+                content_genre=analysis.content_genre,
+                source_kinds=source_kinds,
+                content_kind=analysis.content_kind,
+            ).kind
+            if kind not in CONTENT_VALUE_FILL_KINDS and analysis.content_genre not in CONTENT_VALUE_FILL_GENRES:
+                continue
         targets.append(BackfillTarget(article=article, content_hash=content_hash))
     return targets, since, until
 
@@ -255,6 +341,7 @@ def create_full_analysis_backfill(
             }
         ),
         "target_taxonomy_version": taxonomy_version,
+        "target_content_value_version": CONTENT_VALUE_SCORING_VERSION,
     }
     job = TagRetagJobRecord(
         taxonomy_version=taxonomy_version,
@@ -357,11 +444,16 @@ def _target_versions_match(job: TagRetagJobRecord, scope: dict[str, Any]) -> boo
         ":".join(analysis_contract_versions("podcast_episode")),
     }
     scoped_contracts = set(scope.get("target_contracts") or [])
+    content_value_ok = (
+        scope.get("selection") != CONTENT_VALUE_SELECTION
+        or scope.get("target_content_value_version") == CONTENT_VALUE_SCORING_VERSION
+    )
     return bool(
         int(scope.get("target_taxonomy_version") or 0) == int(job.taxonomy_version)
         and scope.get("target_prompt_version") == ARTICLE_ANALYSIS_PROMPT_VERSION
         and scope.get("target_scoring_version") == ARTICLE_ANALYSIS_SCORING_VERSION
         and (not scoped_contracts or scoped_contracts <= current_contracts)
+        and content_value_ok
     )
 
 
@@ -380,6 +472,8 @@ def reconcile_full_analysis_backfill(
     current = _utc(now)
     stamp = now_iso(current)
     scope = _scope(job)
+    selection = scope.get("selection")
+    content_value_job = selection == CONTENT_VALUE_SELECTION
     queued = list(
         session.exec(
             select(TagRetagJobItemRecord)
@@ -404,22 +498,42 @@ def reconcile_full_analysis_backfill(
             item.status = "skipped"
             item.last_error = "article_deleted"
         elif analysis is None:
-            # A crash between item dispatch and queue commit is safe to replay.
-            item.status = "pending"
-            item.last_error = "analysis_queue_missing"
+            block = _local_execution_block(session, article)
+            if block:
+                # 目标未完成而本机已无执行权:没有可等待或可重放的本地任务(codex R2-1)。
+                item.status = "skipped"
+                item.last_error = block
+            else:
+                # A crash between item dispatch and queue commit is safe to replay.
+                item.status = "pending"
+                item.last_error = "analysis_queue_missing"
         else:
             current_hash = compute_content_hash(article)
             expected_prompt, expected_scoring = analysis_contract_versions(
                 article.content_type
             )
-            current_result = bool(
-                analysis.status == AnalysisStatus.SUCCEEDED.value
-                and analysis.tagging_status != TaggingStatus.FAILED.value
-                and analysis.content_hash == current_hash
-                and analysis.prompt_version == expected_prompt
-                and analysis.scoring_version == expected_scoring
-                and int(analysis.taxonomy_version) == int(job.taxonomy_version)
-            )
+            if content_value_job:
+                # 「补内容价值」只看内容价值是否已是当前版本;新闻分与标签沿用原结果。
+                current_result = bool(
+                    analysis.status == AnalysisStatus.SUCCEEDED.value
+                    and content_value_fill_is_current(article, analysis)
+                )
+            elif selection == MISSING_SELECTION:
+                # 「仅从未分析」的目标是「有结果」,不论它出自回填还是实时补偿扫描(codex R1-1)。
+                current_result = bool(
+                    analysis.status == AnalysisStatus.SUCCEEDED.value
+                    and has_authoritative_analysis(analysis)
+                    and analysis.content_hash == current_hash
+                )
+            else:
+                current_result = bool(
+                    analysis.status == AnalysisStatus.SUCCEEDED.value
+                    and analysis.tagging_status != TaggingStatus.FAILED.value
+                    and analysis.content_hash == current_hash
+                    and analysis.prompt_version == expected_prompt
+                    and analysis.scoring_version == expected_scoring
+                    and int(analysis.taxonomy_version) == int(job.taxonomy_version)
+                )
             terminal_failure = bool(
                 (
                     analysis.status in {AnalysisStatus.FAILED.value, AnalysisStatus.TIMEOUT.value}
@@ -427,20 +541,41 @@ def reconcile_full_analysis_backfill(
                     and analysis.attempt_count >= DEFAULT_MAX_ATTEMPTS
                 )
                 or (
-                    analysis.status == AnalysisStatus.SUCCEEDED.value
+                    not content_value_job
+                    and analysis.status == AnalysisStatus.SUCCEEDED.value
                     and analysis.tagging_status == TaggingStatus.FAILED.value
+                )
+            )
+            local_execution_allowed = bool(
+                not (article.analysis_authority_id or "").strip()
+                and sync_consumer_policy.local_source_operation_allowed(
+                    session, article.source_id, operation="analysis"
                 )
             )
             if current_result:
                 item.status = "succeeded"
                 item.target_content_hash = current_hash
                 item.last_error = None
+            elif not local_execution_allowed:
+                # 目标未完成而本机已无执行权(归档同步接管 / 接收端停写):没有可等待的本地任务(codex R1)。
+                item.status = "skipped"
+                item.last_error = (
+                    "remote_authority" if (article.analysis_authority_id or "").strip() else "v2_consumer_quiesced"
+                )
             elif analysis.status == AnalysisStatus.SKIPPED.value:
                 item.status = "skipped"
                 item.last_error = analysis.last_error or "analysis_skipped"
             elif terminal_failure:
                 item.status = "failed"
                 item.last_error = sanitize_error(analysis.last_error or "analysis_failed")
+            elif (
+                content_value_job
+                and analysis.status == AnalysisStatus.SUCCEEDED.value
+                and analysis.pending_scope != PENDING_SCOPE_CONTENT_VALUE
+            ):
+                # 补评被撤销(源开关关闭等)或被别的路径收尾而没写内容价值,且已无在途工作(codex R1-3)。
+                item.status = "skipped"
+                item.last_error = analysis.last_error or "content_value_fill_revoked"
             else:
                 continue
         item.completed_at = stamp if item.status in {"succeeded", "failed", "skipped"} else None
@@ -482,6 +617,8 @@ def dispatch_full_analysis_backfill(
         return 0
     current = _utc(now)
     stamp = now_iso(current)
+    selection = _scope(job).get("selection")
+    content_value_job = selection == CONTENT_VALUE_SELECTION
     rows = list(
         session.exec(
             select(TagRetagJobItemRecord)
@@ -513,16 +650,58 @@ def dispatch_full_analysis_backfill(
             item.updated_at = stamp
             session.add(item)
             continue
-        outcome = queue_article_analysis(
-            session,
-            article.id,
-            enabled=True,
-            force=True,
-            now=current,
-        )
+        # 共同外层顺序:目标已完成 → 本机执行权 → 等待 / 入队(codex R1 / R2-1)。
+        analysis = session.get(ArticleAnalysisRecord, article.id)
+        if _dispatch_target_done(selection, article, analysis):
+            # 建任务后到派发前,别的路径(实时补偿扫描、版本巡检、远端同步)已经达成目标:不再重评。
+            item.status = "succeeded"
+            item.last_error = "already_analyzed" if selection == MISSING_SELECTION else None
+            item.target_content_hash = compute_content_hash(article)
+            item.completed_at = stamp
+            item.updated_at = stamp
+            session.add(item)
+            continue
+        block = _local_execution_block(session, article)
+        if block:
+            item.status = "skipped"
+            item.last_error = block
+            item.completed_at = stamp
+            item.updated_at = stamp
+            session.add(item)
+            continue
+        if selection == MISSING_SELECTION:
+            if (
+                analysis is not None
+                and analysis.status in {AnalysisStatus.PENDING.value, AnalysisStatus.RUNNING.value}
+            ):
+                # 已在途:关联它的结果,不重新入队、不重置尝试次数。
+                item.status = "queued"
+                item.target_content_hash = compute_content_hash(article)
+                item.last_error = None
+                item.queued_at = stamp
+                item.updated_at = stamp
+                session.add(item)
+                dispatched += 1
+                continue
+        if content_value_job:
+            outcome = queue_content_value_fill(session, article.id, now=current)
+        else:
+            outcome = queue_article_analysis(
+                session,
+                article.id,
+                enabled=True,
+                force=True,
+                now=current,
+            )
         if outcome == "busy":
             continue
-        if outcome in {"ineligible", "remote_authority", "skipped", "unchanged"}:
+        if content_value_job and outcome == "unchanged":
+            # 已有当前内容价值(例如版本巡检的整篇重跑顺带产出了它):目标已完成。
+            item.status = "succeeded"
+            item.target_content_hash = compute_content_hash(article)
+            item.last_error = None
+            item.completed_at = stamp
+        elif outcome in {"ineligible", "remote_authority", "consumer_quiesced", "skipped", "unchanged"}:
             item.status = "skipped"
             item.last_error = f"queue_{outcome}"
             item.completed_at = stamp

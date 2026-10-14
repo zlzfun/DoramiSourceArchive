@@ -127,6 +127,8 @@ class DailyBriefConfigUpdate(BaseModel):
     min_score: Optional[float] = None
     # 正文保底条数(v3.49.1):过线不足时从近线带(门槛下 1 分内)补足;0 = 不保底
     min_items: Optional[int] = None
+    # 论文名额的内容价值门槛(issue #178 第三波):有内容价值的论文按它入选,不看新闻门槛
+    paper_min_content_value: Optional[float] = None
 
 
 class DailyBriefGenerateParams(BaseModel):
@@ -143,6 +145,8 @@ def _daily_brief_config_response(session: Session) -> Dict[str, Any]:
         "top_n": daily_brief_service.daily_brief_top_n(session),
         "min_score": daily_brief_service.daily_brief_min_score(session),
         "min_items": daily_brief_service.daily_brief_min_items(session),
+        "paper_min_content_value": daily_brief_service.daily_brief_paper_min_content_value(session),
+        "paper_cap": daily_brief_service.PAPER_CAP,
         # None = 全部源;非空名单 = 候选只取名单内源(手工维护)
         "source_ids": daily_brief_service.read_source_scope(session),
         "last_run": daily_brief_service.get_json_setting(session, daily_brief_service.KEY_LAST_RUN, None),
@@ -171,6 +175,8 @@ def set_daily_brief_config(payload: DailyBriefConfigUpdate, session: Session = D
         raise HTTPException(status_code=400, detail="入选门槛需在 0–10 之间")
     if payload.min_items is not None and not (0 <= payload.min_items <= daily_brief_service.TOP_N_MAX):
         raise HTTPException(status_code=400, detail=f"正文保底条数需在 0–{daily_brief_service.TOP_N_MAX} 之间")
+    if payload.paper_min_content_value is not None and not (0.0 <= payload.paper_min_content_value <= 10.0):
+        raise HTTPException(status_code=400, detail="论文门槛需在 0–10 之间")
     if payload.enabled is not None:
         daily_brief_service.set_setting(
             session, daily_brief_service.KEY_ENABLED, "true" if payload.enabled else "false"
@@ -182,6 +188,12 @@ def set_daily_brief_config(payload: DailyBriefConfigUpdate, session: Session = D
     if payload.min_items is not None:
         daily_brief_service.set_setting(
             session, daily_brief_service.KEY_MIN_ITEMS, str(payload.min_items)
+        )
+    if payload.paper_min_content_value is not None:
+        daily_brief_service.set_setting(
+            session,
+            daily_brief_service.KEY_PAPER_MIN_CONTENT_VALUE,
+            f"{payload.paper_min_content_value:g}",
         )
     if payload.cron is not None:
         daily_brief_service.set_setting(session, daily_brief_service.KEY_CRON, payload.cron.strip())
@@ -290,6 +302,8 @@ def get_daily_brief_pipeline(session: Session = Depends(deps.get_session)):
             "top_n": daily_brief_service.daily_brief_top_n(session),
             "min_score": daily_brief_service.daily_brief_min_score(session),
             "min_items": daily_brief_service.daily_brief_min_items(session),
+            "paper_min_content_value": daily_brief_service.daily_brief_paper_min_content_value(session),
+            "paper_cap": daily_brief_service.PAPER_CAP,
             "appendix_band": daily_brief_service.APPENDIX_BAND,
             "max_total": 120,          # collect_candidates 默认总量上限
             "per_source_cap": 15,      # collect_candidates 每来源候选上限

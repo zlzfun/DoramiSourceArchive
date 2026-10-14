@@ -32,8 +32,7 @@ export default function SourceReviewSection({ source }) {
   const signal = normalizedReviewValue('signal_strength', source?.signal_strength);
   const noise = normalizedReviewValue('noise_risk', source?.noise_risk);
   const reliability = normalizedReviewValue('fetch_reliability', source?.fetch_reliability);
-  const contentTags = (Array.isArray(source?.content_tags) ? source.content_tags : []).slice(0, 6);
-  const hasReview = Boolean(signal || noise || reliability || contentTags.length);
+  const hasReview = Boolean(signal || noise || reliability);
 
   if (!hasReview) return null;
 
@@ -45,11 +44,6 @@ export default function SourceReviewSection({ source }) {
         {noise && <div><span className="tiny-meta">噪声</span><div className="inspector-review-val">{labelFrom(NOISE_LABELS, noise)}</div></div>}
         {reliability && <div><span className="tiny-meta">稳定性</span><div className="inspector-review-val">{labelFrom(RELIABILITY_LABELS, reliability)}</div></div>}
       </div>
-      {contentTags.length > 0 && (
-        <div className="inspector-tags">
-          {contentTags.map((tag, index) => <span key={`${tag}-${index}`}>{tag}</span>)}
-        </div>
-      )}
     </div>
   );
 }

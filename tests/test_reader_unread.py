@@ -270,9 +270,11 @@ def test_mark_all_read_single_source_and_global(monkeypatch, tmp_path):
 
 
 def test_mark_all_read_shape_scoped(monkeypatch, tmp_path):
-    """容器级全部标读:article|bulletin|social 只推进本容器源的水位。
+    """容器级全部标读:article|social|podcast 只推进本容器源的水位。
 
-    src_a 未注册兜底 article；github_trending_daily 是 bulletin；x_openai 是 social。
+    src_a 未注册兜底 article；github_trending_daily 原是「动态」源,issue #178 起并入
+    article;x_openai 是 social。旧值 shape=bulletin 视同 article——不能被当成未知值
+    忽略,否则会把全部订阅(含 social)标读。
     """
     import datetime
 
@@ -289,14 +291,17 @@ def test_mark_all_read_shape_scoped(monkeypatch, tmp_path):
         _seed_article(sink.engine, "s1", "x_openai", fetched_date=now)
         assert _unread(client)["total"] == 3
 
-        # 只标文章容器:动态源的未读原样保留
-        data = client.post("/api/reader/mark-all-read?shape=article").json()
-        assert data["by_source"].get("src_a", 0) == 0
-        assert data["by_source"].get("github_trending_daily", 0) == 1
-        assert data["by_source"].get("x_openai", 0) == 1
+        # 拼错的 shape 是 400,且不写任何读态——不能当「未传」把全部订阅标读(codex R1 #9)
+        assert client.post("/api/reader/mark-all-read?shape=artcile").status_code == 400
+        assert _unread(client)["total"] == 3
 
-        # 再标 bulletin 容器，仅剩 social。
-        assert client.post("/api/reader/mark-all-read?shape=bulletin").json()["total"] == 1
+        # 旧值 bulletin:只标文章容器(含原动态源),social 的未读原样保留
+        data = client.post("/api/reader/mark-all-read?shape=bulletin").json()
+        assert data["by_source"].get("src_a", 0) == 0
+        assert data["by_source"].get("github_trending_daily", 0) == 0
+        assert data["by_source"].get("x_openai", 0) == 1
+        assert data["total"] == 1
+
         assert client.post("/api/reader/mark-all-read?shape=social").json()["total"] == 0
 
 

@@ -82,7 +82,6 @@ class XTimelineFetcher(BaseFetcher):
     content_type = "social_post"
     content_shape = "social"
     platform = "x"
-    category = "advanced"
 
     name = "通用 X 用户时间线"
     description = "通过 X API v2 抓取指定公开账号的原创、转发与引用动态（排除回复）。"
@@ -90,7 +89,6 @@ class XTimelineFetcher(BaseFetcher):
     source_channel = "x_user_timeline"
     source_url = "https://x.com/"
     provenance_tier = "tier0_primary"
-    content_tags = ["social_update"]
     signal_strength = "high_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "official_paid_api"
@@ -367,7 +365,9 @@ class PresetXTimelineFetcher(XTimelineFetcher):
 
     is_template = False
     source_id = "unknown_source"
-    category = "incubating"
+    # 整批观察期:不进每日自动采集。单个账号转正 = 在该账号的子类上写 admission_status = "admitted";
+    # 删掉这一行等于全部 X 预设一起转正。
+    admission_status = "incubating"
     content_type = "social_post"
     content_shape = "social"
     default_limit = 25
@@ -405,7 +405,6 @@ class DeepSeekXTimelineFetcher(PresetXTimelineFetcher):
     source_brand = "deepseek"
     source_scope = "frontier_ai_lab"
     source_url = "https://x.com/deepseek_ai"
-    content_tags = ["model_release", "research_paper", "api_platform"]
 
 
 class QwenXTimelineFetcher(PresetXTimelineFetcher):
@@ -418,7 +417,6 @@ class QwenXTimelineFetcher(PresetXTimelineFetcher):
     source_brand = "qwen"
     source_scope = "frontier_ai_lab"
     source_url = "https://x.com/Alibaba_Qwen"
-    content_tags = ["model_release", "open_model", "developer_tool"]
 
 
 class MoonshotXTimelineFetcher(PresetXTimelineFetcher):
@@ -431,7 +429,6 @@ class MoonshotXTimelineFetcher(PresetXTimelineFetcher):
     source_brand = "kimi"
     source_scope = "frontier_ai_lab"
     source_url = "https://x.com/Kimi_Moonshot"
-    content_tags = ["model_release", "open_model", "product_update"]
 
 
 class KarpathyXTimelineFetcher(PresetXTimelineFetcher):
@@ -444,7 +441,6 @@ class KarpathyXTimelineFetcher(PresetXTimelineFetcher):
     source_brand = "karpathy"
     source_scope = "expert_commentary"
     source_url = "https://x.com/karpathy"
-    content_tags = ["expert_commentary", "developer_tool", "agent"]
 
 
 class SamAltmanXTimelineFetcher(PresetXTimelineFetcher):
@@ -457,7 +453,6 @@ class SamAltmanXTimelineFetcher(PresetXTimelineFetcher):
     source_brand = "openai"
     source_scope = "executive_commentary"
     source_url = "https://x.com/sama"
-    content_tags = ["executive_commentary", "model_release", "product_update"]
     noise_risk = "high_noise"
 
 
@@ -471,7 +466,6 @@ class OpenAIXTimelineFetcher(PresetXTimelineFetcher):
     source_brand = "openai"
     source_scope = "frontier_ai_lab"
     source_url = "https://x.com/OpenAI"
-    content_tags = ["model_release", "product_update", "research_paper", "api_platform"]
 
 
 class ZaiXTimelineFetcher(PresetXTimelineFetcher):
@@ -489,4 +483,3 @@ class ZaiXTimelineFetcher(PresetXTimelineFetcher):
     source_brand = "glm"
     source_scope = "frontier_ai_lab"
     source_url = "https://x.com/Zai_org"
-    content_tags = ["model_release", "open_model", "product_update"]

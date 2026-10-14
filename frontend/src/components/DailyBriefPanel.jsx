@@ -46,6 +46,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
   const [topN, setTopN] = useState(12);
   const [minScore, setMinScore] = useState(6);
   const [minItems, setMinItems] = useState(8);
+  const [paperMin, setPaperMin] = useState(7);
   const [enabled, setEnabled] = useState(false);
   // 源范围手工名单(用户拍板):all=全部源(后端 source_ids 空);custom=只取勾选名单。
   // 新增源默认不进名单——高噪即时源的取舍交给名单 + LLM 打分,不做类型规则过滤。
@@ -67,7 +68,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
 
   const loadBrief = () => getDailyBriefConfig()
     .then(d => {
-      setBriefConfig(d); setCron(d.cron || '30 8 * * *'); setTopN(d.top_n ?? 12); setMinScore(d.min_score ?? 6); setMinItems(d.min_items ?? 8); setEnabled(Boolean(d.enabled));
+      setBriefConfig(d); setCron(d.cron || '30 8 * * *'); setTopN(d.top_n ?? 12); setMinScore(d.min_score ?? 6); setMinItems(d.min_items ?? 8); setPaperMin(d.paper_min_content_value ?? 7); setEnabled(Boolean(d.enabled));
       const ids = Array.isArray(d.source_ids) ? d.source_ids : null;
       setScopeMode(ids && ids.length > 0 ? 'custom' : 'all');
       setScopeIds(new Set(ids || []));
@@ -203,6 +204,11 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
       showToast('正文保底条数需为 0–50 的整数', 'error');
       return;
     }
+    const pm = Number(paperMin);
+    if (!Number.isFinite(pm) || pm < 0 || pm > 10) {
+      showToast('论文门槛需为 0–10 的数字', 'error');
+      return;
+    }
     const c = cron.trim();
     if (!c) {
       showToast('Cron 表达式不能为空,请填写 5 段 cron', 'error');
@@ -214,7 +220,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
     }
     try {
       // 全部来源 → 传 [] 清空名单(后端语义:空=全部);自定 → 传勾选集合
-      await saveDailyBriefConfig({ cron: c, top_n: n, min_score: m, min_items: mi, source_ids: scopeMode === 'custom' ? [...scopeIds] : [] });
+      await saveDailyBriefConfig({ cron: c, top_n: n, min_score: m, min_items: mi, paper_min_content_value: pm, source_ids: scopeMode === 'custom' ? [...scopeIds] : [] });
       showToast('已保存 日报配置', 'success');
       loadBrief();
     } catch (error) {
@@ -322,6 +328,10 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
           <label className="form-label" htmlFor="brief-minitems">正文保底条数（0–50）</label>
           <input id="brief-minitems" type="number" min="0" max="50" step="1" value={minItems} onChange={e => setMinItems(e.target.value)} className="form-input" title="过线条目不足时,从门槛下 1 分内的近线条目按分数补足正文;近线带其余条目在正文未满时以标题补进附录;0 = 不保底" />
         </div>
+        <div className="brief-field">
+          <label className="form-label" htmlFor="brief-papermin">论文门槛（内容价值分，0–10）</label>
+          <input id="brief-papermin" type="number" min="0" max="10" step="0.5" value={paperMin} onChange={e => setPaperMin(e.target.value)} className="form-input" title={`论文单独占至多 ${briefConfig?.paper_cap ?? 3} 个名额,按内容价值挑,不受新闻价值门槛约束;名额以外的论文不进日报`} />
+        </div>
 
         {/* ── 源范围:手工名单(全部来源 ⇄ 自定名单) ── */}
         <div className="brief-field">
@@ -356,7 +366,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
                       onChange={() => toggleScopeId(s.source_id)}
                     />
                     <span className="brief-scope-name">{s.name || s.source_id}</span>
-                    <span className="tiny-meta shrink-0">{s.count || 0} 篇{s.shape === 'bulletin' ? ' · 动态' : ''}</span>
+                    <span className="tiny-meta shrink-0">{s.count || 0} 篇{s.default_kind_label && s.default_kind !== 'digest' ? ` · ${s.default_kind_label}` : ''}</span>
                   </label>
                 ))
               )}

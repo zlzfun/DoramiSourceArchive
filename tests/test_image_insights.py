@@ -400,6 +400,7 @@ def test_worker_attaches_image_notes_before_scoring(stack):
         seen["messages"] = article_analysis._analysis_messages(article_input, [])
         return {
             "quality_score": 7.2, "score_reason": "一手发布", "summary": "摘要", "content_genre": "model_release",
+            "content_kind": "news", "content_value_reason": "一手发布稿", "content_value": 6.0,
             "primary_tag_code": "", "tag_assignments": [], "tag_candidates": [], "content_features": [], "entities": [],
         }
 
@@ -430,6 +431,7 @@ def test_worker_without_vision_keeps_prompt_byte_identical(stack):
         seen["messages"] = article_analysis._analysis_messages(article_input, [])
         return {
             "quality_score": 5.0, "score_reason": "r", "summary": "s", "content_genre": "other",
+            "content_kind": "news", "content_value_reason": "r", "content_value": 4.0,
             "primary_tag_code": "", "tag_assignments": [], "tag_candidates": [], "content_features": [], "entities": [],
         }
 

@@ -19,6 +19,7 @@ from sqlmodel import Session, select
 
 from api.sources import (
     VALID_CONTENT_SHAPES,
+    configured_source_content_type,
     configured_source_shape,
     registry_source_ids_for_shape,
 )
@@ -34,7 +35,7 @@ from models.db import (
     TaxonomyVersionRecord,
 )
 from services.article_time import SHANGHAI, parse_article_time
-from services import source_visibility, user_sources
+from services import content_classification, source_visibility, user_sources
 
 
 AXES = ("topic", "industry", "entity")
@@ -128,15 +129,33 @@ def _snapshot_window(
     return local.date().isoformat(), end - dt.timedelta(days=WINDOW_DAYS), end
 
 
+# issue #178 撤销「动态」容器后,版本更新 / 项目源在阅读器里归入文章;但榜单的口径不随之变化:
+# 它们此前因形态是 bulletin 而不进文章榜 / 必读榜,这里按来源先验继续排除,保持榜单行为不变。
+RANKING_EXCLUDED_KINDS = frozenset({"release", "project"})
+
+
 def _source_shapes(session: Session) -> dict[str, str]:
     result: dict[str, str] = {}
     for shape in VALID_CONTENT_SHAPES:
         for source_id in registry_source_ids_for_shape(shape):
             result[source_id] = shape
+    source_kinds = content_classification.source_default_kinds()
+    for source_id, kind in source_kinds.items():
+        if kind in RANKING_EXCLUDED_KINDS:
+            result[source_id] = "excluded"
     for source in session.exec(select(SourceConfigRecord)).all():
-        result.setdefault(
+        if source.source_id in result:
+            continue
+        # 配置源(如绑定 generic_github_releases 的公共源)没有来源先验,按它预期产出的
+        # 数据结构求默认类型——否则会以 article 形态绕过下方 _content_shape 的数据结构排除。
+        kind = content_classification.source_kind_prior(
             source.source_id,
-            configured_source_shape(source.source_type, source.fetcher_id),
+            configured_source_content_type(source.source_type, source.fetcher_id),
+            source_kinds,
+        )
+        result[source.source_id] = (
+            "excluded" if kind in RANKING_EXCLUDED_KINDS
+            else configured_source_shape(source.source_type, source.fetcher_id)
         )
     return result
 

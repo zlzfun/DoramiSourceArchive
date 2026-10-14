@@ -26,16 +26,16 @@ Historical concrete preset nodes, workflow trigger nodes, broad firehoses, frame
 
 ## Incubation (观察期)
 
-Every newly admitted source batch starts in the `incubating` fetcher category, regardless of its target category (official/media/community/...). While incubating:
+Every newly admitted source batch starts with `admission_status = "incubating"` on its fetcher class (issue #178 split this out of the retired `category` attribute; the information role 官方 / 媒体 / 个人 / 榜单 is derived by `services/source_naming.source_role`, template nodes are marked by `is_template`). Public `SourceConfig` rows carry the same field as a column; the podcast catalog creates its rows as `incubating`. While incubating:
 
-- The source is default-visible, subscribable, and manually fetchable — but **excluded from the daily auto-collection job** (`scripts/ensure_daily_collection_job.py` excludes the `incubating` category alongside `advanced`/`workflow`).
+- The source is default-visible, subscribable, and manually fetchable — but **excluded from the daily auto-collection job** (`scripts/ensure_daily_collection_job.py` excludes `admission_status = "incubating"` nodes alongside `is_template` nodes).
 - The 节点管理 board shows an 「观察」 badge on incubating nodes for focused review.
-- Promotion (转正): after fetch-quality review over a few manual/observed runs (body cleanliness, dates/order, dedup, no boilerplate leakage — see `node_audit_playbook.md`), change the class `category` back to the target category noted in its code comment, update the category snapshot assertion in `tests/test_rss_fetcher.py`, and re-run `ensure_daily_collection_job.py` to admit it into the daily schedule.
+- Promotion (转正): after fetch-quality review over a few manual/observed runs (body cleanliness, dates/order, dedup, no boilerplate leakage — see `node_audit_playbook.md`), make the class's effective `admission_status` `admitted`: if the class itself declares `admission_status = "incubating"`, delete that line (the default is `admitted`); if it inherits incubation from a shared parent (the X presets inherit it from `PresetXTimelineFetcher`), set `admission_status = "admitted"` on the concrete class — deleting the parent's line would promote the whole batch at once. Then update the admission snapshot assertion in `tests/test_rss_fetcher.py`, and re-run `ensure_daily_collection_job.py` to admit it into the daily schedule. A `SourceConfig` row is promoted with `PUT /api/source-configs/{source_id}` `{"admission_status": "admitted"}`; catalog re-imports keep that choice.
 - Demotion: a source that fails review is removed from `ESSENTIAL_FETCHER_IDS` and recorded in its candidate file's Parking Lot with the reason (the class may stay for a later retry).
 
 ## Default Essential Sources
 
-The current default-visible catalog is the admitted first additive batch. Each source should keep the v1.0 dimensions in code metadata: source owner, brand, scope, channel, base URL, provenance tier, content tags, signal strength, noise risk, and fetch reliability.
+The current default-visible catalog is the admitted first additive batch. Each source should keep the v1.0 dimensions in code metadata: source owner, brand, scope, channel, base URL, provenance tier, signal strength, noise risk, and fetch reliability. (Source-level content tags were retired in issue #178: item kinds come from `default_kind` priors and per-item classification, topics from article analysis.)
 
 | Source ID | Candidate Reason |
 | --- | --- |

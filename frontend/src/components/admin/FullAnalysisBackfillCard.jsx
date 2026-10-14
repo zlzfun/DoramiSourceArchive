@@ -24,6 +24,21 @@ const RANGE_OPTIONS = [
   ['all', '全部历史'],
 ];
 
+// 回填策略(issue #178 第二波新增「仅从未分析」「补内容价值」):label 用于下拉与任务表,
+// confirm 是二次确认里说明这次会改什么、不改什么。
+const SELECTION_OPTIONS = [
+  ['missing_or_outdated', '仅缺失或版本过期'],
+  ['missing', '仅从未分析'],
+  ['content_value', '补内容价值'],
+  ['all', '全部强制重分析'],
+];
+const SELECTION_LABELS = Object.fromEntries(SELECTION_OPTIONS);
+const selectionConfirm = (selection, scope, count) => ({
+  all: `将强制重新分析${scope}中的 ${count} 篇文章，重算评分、摘要和标签，包括当前版本已成功的文章。`,
+  missing: `将分析${scope}中从未分析过的 ${count} 篇文章。已有结果的文章不会重算。`,
+  content_value: `将为${scope}中的 ${count} 篇论文、教程、观点与汇编补充内容价值。新闻价值、摘要和标签保持不变。`,
+}[selection] || `将补充分析${scope}中缺失或版本过期的 ${count} 篇文章。`) + '新文章始终优先。';
+
 const STATUS_META = {
   queued: ['排队中', 'idle'],
   running: ['分析中', 'run'],
@@ -99,9 +114,7 @@ export default function FullAnalysisBackfillCard({ showToast, refreshTick = 0 })
   const create = async () => {
     if (!estimate?.ready) return;
     const scope = payload.days == null ? '全部历史文章' : `最近 ${payload.days} 天文章`;
-    const message = selection === 'all'
-      ? `将强制重新分析${scope}中的 ${int(estimate.article_count)} 篇文章，重算评分、摘要和标签，包括当前版本已成功的文章。新文章始终优先。`
-      : `将补充分析${scope}中缺失或版本过期的 ${int(estimate.article_count)} 篇文章。新文章始终优先。`;
+    const message = selectionConfirm(selection, scope, int(estimate.article_count));
     if (!(await confirm({ title: '创建回填任务', message, confirmText: '开始', tone: 'primary' }))) return;
     setCreating(true);
     try {
@@ -150,8 +163,7 @@ export default function FullAnalysisBackfillCard({ showToast, refreshTick = 0 })
             {RANGE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
           <select className="form-input form-input-inline" value={selection} onChange={(event) => setSelection(event.target.value)} aria-label="回填选择策略">
-            <option value="missing_or_outdated">仅缺失或版本过期</option>
-            <option value="all">全部强制重分析</option>
+            {SELECTION_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
           <input
             type="text"
@@ -216,7 +228,7 @@ export default function FullAnalysisBackfillCard({ showToast, refreshTick = 0 })
                     <tr key={job.job_id} className="acct-row is-static">
                       <td><span className="acct-mono">#{job.job_id}</span></td>
                       <td><span className="tiny-meta">{job.days == null ? '全部历史' : `最近 ${job.days} 天`}{job.source_count ? ` · ${job.source_count} 源` : ''}</span></td>
-                      <td><span className="tiny-meta">{job.selection === 'all' ? '全部强制重分析' : '仅缺失或过期'}</span></td>
+                      <td><span className="tiny-meta">{SELECTION_LABELS[job.selection] || '仅缺失或版本过期'}</span></td>
                       <td><span className={`stamp stamp-${tone}`} title={job.last_error || undefined}>{statusLabel}</span></td>
                       <td>
                         <span className="prog-cell">

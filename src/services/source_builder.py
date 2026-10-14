@@ -246,14 +246,12 @@ def heuristic_config(url: str, signals: Dict[str, Any], *, source_id: str) -> Di
         "name": _clean(name)[:120],
         "source_type": "web",
         "url": url,
-        "category": "official_web",
         "description": _clean(signals.get("description") or "")[:300],
         "source_owner": "",
         "source_brand": "",
         "source_scope": "",
         "source_channel": "",
         "provenance_tier": "",
-        "content_tags": [],
         "signal_strength": "",
         "noise_risk": "",
         "fetch_reliability": "",
@@ -296,15 +294,12 @@ async def propose_config_via_llm(signals: Dict[str, Any], llm_config, usage_meta
 def merge_llm_config(base: Dict[str, Any], llm: Dict[str, Any]) -> Dict[str, Any]:
     """LLM 字段非空时覆盖启发式基线；source_id/url/source_type 始终保留基线。"""
     out = {**base}
-    for key in ("name", "category", "description", "source_owner", "source_brand",
+    for key in ("name", "description", "source_owner", "source_brand",
                 "source_scope", "source_channel", "provenance_tier",
                 "signal_strength", "noise_risk"):
         val = llm.get(key)
         if val:
             out[key] = str(val).strip()
-    tags = llm.get("content_tags")
-    if isinstance(tags, list) and tags:
-        out["content_tags"] = [str(t).strip() for t in tags if str(t).strip()]
 
     params = {**out["params"]}
     if llm.get("article_url_patterns"):
@@ -396,9 +391,9 @@ async def analyze_url(
         title = _clean(re.sub(r"<!\[CDATA\[(.*?)\]\]>", r"\1", m.group(1))) if m else ""
         cfg = {
             "source_id": sid, "name": title or urlparse(final_url).hostname or "RSS 源",
-            "source_type": "rss", "url": final_url, "category": "official",
+            "source_type": "rss", "url": final_url,
             "description": "", "source_owner": "", "source_brand": "", "source_scope": "",
-            "source_channel": "blog", "provenance_tier": "", "content_tags": [],
+            "source_channel": "blog", "provenance_tier": "",
             "signal_strength": "", "noise_risk": "", "fetch_reliability": "",
             "params": {"limit": 12, "fetch_detail_if_missing": True},
         }
@@ -486,7 +481,6 @@ async def preview_config(payload: Dict[str, Any], *, max_entries: int = 5) -> Di
     params: Dict[str, Any] = dict(payload.get("params") or {})
     params.setdefault("source_id", payload.get("source_id") or "preview_tmp")
     params["source_id"] = payload.get("source_id") or params["source_id"]
-    params["category"] = payload.get("category") or params.get("category") or ""
     params["limit"] = min(int(params.get("limit") or max_entries), max_entries)
 
     # 预览会用建议配置真去抓 listing/detail，先按 SSRF 判定挡住指向内网的目标。

@@ -4046,6 +4046,42 @@ input[type="radio"] {
   .sett-file svg { width: 16px; height: 16px; flex: none; color: var(--dorami-muted); }
   .sett-file-name { display: block; font-size: 12.5px; font-weight: 700; }
   .sett-file-hint { display: block; font-size: 11px; font-weight: 500; color: var(--dorami-faint); margin-top: 1px; }
+
+  /* 读者 OPML(issue #179):预览占满设置正文,列表自己滚,脚部留在可见区。 */
+  .sett-scroll:has(> .opml-preview) { display: flex; flex-direction: column; overflow: hidden; }
+  .opml-preview { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .opml-back-row { flex: none; display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .opml-back { display: inline-flex; align-items: center; gap: 2px; padding: 4px 6px;
+    border-radius: var(--r-sm); color: var(--dorami-muted); font-weight: 600; }
+  .opml-back:hover { background: var(--dorami-well); color: var(--dorami-ink); }
+  .opml-back svg { width: 16px; height: 16px; }
+  .opml-preview-title { font-size: 13px; font-weight: 700; }
+  .opml-filemeta { margin-left: auto; }
+  .opml-chips { flex: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+  .opml-chips .stamp { cursor: default; }
+  .opml-stamp.stamp-run::before { animation: none; }
+  .opml-note { flex: none; margin: 0 0 8px; font-size: 11.5px; font-weight: 500; color: var(--dorami-faint); }
+  .opml-list { flex: 1; min-height: 0; overflow-y: auto; list-style: none; margin: 0; padding: 0;
+    border: 1px solid var(--dorami-border); border-radius: var(--r-card); }
+  .opml-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; }
+  .opml-item + .opml-item { border-top: 1px solid var(--dorami-border); }
+  .opml-item input { width: 16px; height: 16px; margin-top: 2px; flex: none; }
+  .opml-item-main { min-width: 0; flex: 1; }
+  .opml-item-title { display: block; font-size: 13px; font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .opml-item-url, .opml-item-reason { display: block; margin-top: 1px; font-size: 11.5px; line-height: 1.5;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .opml-item-url { font-family: var(--mono); color: var(--dorami-faint); }
+  .opml-item-reason.is-warn { color: var(--state-warn); }
+  .opml-item-reason.is-bad { color: var(--state-bad); }
+  .opml-item.is-idle .opml-item-title { color: var(--dorami-muted); }
+  .opml-foot { flex: none; margin-top: 12px; }
+  .opml-foot-note { font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
+  .opml-foot-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .opml-home { position: relative; }
+  .opml-import-sub { margin-bottom: 10px; }
+  .opml-file-input { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   /* 结果/进度盘:soft 底信息块(导入结果/同步进度/探针结果共用) */
   .sett-sync-panel { margin-top: 12px; border: 1px solid var(--dorami-border);
     border-radius: var(--r-card); background: var(--dorami-soft); padding: 10px 14px; }
@@ -6918,24 +6954,6 @@ input[type="radio"] {
     margin-top: 2px;
   }
 
-  .inspector-tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 5px;
-  }
-
-  .inspector-tags span {
-    display: inline-flex;
-    align-items: center;
-    height: 20px;
-    padding: 0 7px;
-    border-radius: var(--r-pill);
-    background: var(--dorami-soft);
-    color: var(--dorami-muted);
-    font-size: 11px;
-    font-weight: 700;
-  }
-
   /* 移动端遮罩（仅小屏渲染出效果） */
   .inspector-scrim {
     display: none;
@@ -7892,15 +7910,46 @@ input[type="radio"] {
 
   .reader-fresh-pill:hover { filter: brightness(0.97); }
 
-  /* ── 内容形态分流(迭代 2) ──
-     · 动态条目:changelog/Release/榜单的紧凑形——单行标题、无摘要;
-       混合流(今日)里由「动态」chip 标注形态。
-     · 子分组标签:左栏「发现更多来源」内按形态分组的轻量小节头。 */
-  .reader-entry.is-bulletin { padding-top: 7px; padding-bottom: 7px; }
+  /* ── 紧凑行(issue #178) ──
+     · 版本更新(changelog / Release Notes / GitHub Release)的短条目扫读形——单行标题、无摘要。
+       此前由「动态」容器整体切换,现在由条目的内容类型决定,与文章混排在同一列表。
+     · .reader-shape-chip:细线形态签(发现页源卡、条目行分类签同一语法)。 */
+  .reader-entry.is-compact { padding-top: 7px; padding-bottom: 7px; }
 
-  .reader-entry.is-bulletin .reader-entry-title {
+  .reader-entry.is-compact .reader-entry-title {
     font-size: 13px;
     -webkit-line-clamp: 1;
+  }
+
+  /* 内容类型筛选带(issue #178):列头下的过滤器带,与 全部/未读、收藏 同属「过滤当前容器」。
+     激活态按 accent 纪律 = wash 底 + accent-ink 字、无描边;hover 只用 soft,不引入 accent。
+     字号写在容器上靠继承穿透(button 的 font: inherit 未分层压层,见 conventions §3)。 */
+  .reader-kind-band {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 6px 6px 8px 8px;   /* 选项文字左缘与卡片内容(16)对齐 */
+    border-bottom: 1px solid var(--dorami-border-soft);
+    font-size: 12px;
+  }
+
+  .reader-kind-chip {
+    padding: 2px 8px;
+    border: none;
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--dorami-muted);
+    line-height: 1.5;
+    cursor: pointer;
+    transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+  }
+
+  .reader-kind-chip:hover { background: var(--dorami-soft); color: var(--dorami-ink); }
+
+  .reader-kind-chip.is-on,
+  .reader-kind-chip.is-on:hover {
+    background: var(--dorami-wash);
+    color: var(--dorami-accent-ink);
   }
 
   .reader-shape-chip {
@@ -8043,15 +8092,57 @@ input[type="radio"] {
     border: none;
   }
 
-  /* 左栏只有一个数字;上下居中对齐右栏内容 */
+  /* 左栏:主分数字 + 维度小字(issue #178 第二波),上下居中对齐右栏内容;评分依据浮层以它为锚 */
   .reader-ai-summary-side {
+    position: relative;
     display: flex;
+    flex-direction: column;
     align-items: center;
+    gap: 3px;
     align-self: center;
     min-width: 52px;
   }
+  .reader-ai-score-dim {
+    color: var(--dorami-faint); font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em;
+    line-height: 1; white-space: nowrap;
+  }
+  /* 评分依据浮层:悬停数字或键盘聚焦时浮出(触屏见下方常显行)。格式与速读层同构:小标 + 正文 + 免责小字 */
+  .reader-ai-score-tip {
+    position: absolute; left: 0; top: calc(100% + 8px); z-index: 30;
+    width: min(300px, 72vw);
+    display: flex; flex-direction: column; gap: 5px;
+    padding: 10px 12px;
+    border-radius: var(--r-control);
+    background: var(--dorami-surface);
+    border: 1px solid var(--dorami-border-soft);
+    box-shadow: var(--sh-2);
+    opacity: 0; visibility: hidden; transform: translateY(-4px); pointer-events: none;
+    transition: opacity var(--motion-fast) var(--motion-ease), transform var(--motion-fast) var(--motion-ease),
+      visibility 0s linear var(--motion-fast);
+  }
+  /* 透明桥接锚点与浮层之间的 8px 间隙:鼠标从数字移进浮层不丢悬停(codex R1-6) */
+  .reader-ai-score-tip::before { content: ''; position: absolute; left: 0; right: 0; top: -10px; height: 10px; }
+  .reader-ai-summary-side:not(.is-tip-dismissed):focus-within .reader-ai-score-tip {
+    opacity: 1; visibility: visible; transform: none; pointer-events: auto; transition-delay: 0s;
+  }
+  @media (hover: hover) {
+    .reader-ai-summary-side:not(.is-tip-dismissed):hover .reader-ai-score-tip {
+      opacity: 1; visibility: visible; transform: none; pointer-events: auto; transition-delay: 0s;
+    }
+  }
+  .reader-ai-score-tip .reader-ai-layer-text { font-size: 13px; line-height: 1.7; }
+  :root[data-motion="reduce"] .reader-ai-score-tip { transition: none; }
+  /* 触屏没有悬停:评分依据改为卡内常显的一行小字,点数字切换维度时随之更换 */
+  .reader-ai-reason-inline { display: none; }
+  @media (hover: none) {
+    .reader-ai-score-tip { display: none; }
+    .reader-ai-reason-inline {
+      display: block; margin: 8px 0 0; color: var(--dorami-muted); font-size: 12px; line-height: 1.6;
+    }
+    .reader-ai-reason-inline-label { color: var(--dorami-accent-ink); font-weight: 650; margin-right: 6px; }
+  }
 
-  /* 大数字:衬线渐变(这张卡的身份标记就是它——星已撤)。它是按钮(切换评分依据),
+  /* 大数字:衬线渐变(这张卡的身份标记就是它——星已撤)。它是按钮(有两个分时切换维度),
      但视觉上是个数字——去掉一切按钮痕迹;可点时悬停微浮。字体/字号见文件尾未分层区。 */
   .reader-ai-score-btn {
     background: transparent; border: none; padding: 2px 4px; margin: 0; cursor: default;
@@ -8079,8 +8170,7 @@ input[type="radio"] {
   }
   .reader-ai-odo-digit { display: block; height: 1.2em; line-height: 1.2em; }
 
-  /* 右栏:摘要层与评分依据层叠在同一格,卡高由较高者撑住;两层格式同构(小标 + 正文),
-     切换=慢速淡切+轻位移 */
+  /* 右栏:速读层(小标 + 正文);评分依据已移到数字的悬停浮层(issue #178 第二波),不再翻面 */
   .reader-ai-summary-main { min-width: 0; align-self: center; display: grid; }
   .reader-ai-layer {
     grid-area: 1 / 1;
@@ -8088,9 +8178,6 @@ input[type="radio"] {
     display: flex; flex-direction: column; gap: 5px;
     transition: opacity 480ms var(--motion-ease), transform 480ms var(--motion-ease);
   }
-  .reader-ai-layer-reason { opacity: 0; transform: translateY(8px); pointer-events: none; }
-  .reader-ai-summary.is-reason .reader-ai-layer-summary { opacity: 0; transform: translateY(-8px); pointer-events: none; }
-  .reader-ai-summary.is-reason .reader-ai-layer-reason { opacity: 1; transform: none; pointer-events: auto; }
   .reader-ai-layer-title { color: var(--dorami-accent-ink); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; }
   /* 双类选择器压过 .markdown-body p 的段落外边距(卡住在阅读窗正文容器里) */
   .reader-ai-summary .reader-ai-layer-text { margin: 0; }
@@ -8360,6 +8447,13 @@ input[type="radio"] {
     letter-spacing: 0.06em;
     color: var(--dorami-faint);
     white-space: nowrap;
+  }
+
+  /* 内容类型签(论文 / 教程 / 版本更新…):同一细线语法,墨色提一档——它是「这是什么」的事实,
+     比后面的主题标签更该先被读到;仍不着色(issue #178)。 */
+  .reader-entry-kind {
+    border-color: var(--dorami-border-strong);
+    color: var(--dorami-muted);
   }
 
   .reader-entry-score {

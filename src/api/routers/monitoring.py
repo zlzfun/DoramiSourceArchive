@@ -62,7 +62,7 @@ def build_fetcher_health(fetcher_metadata: Dict[str, Any], runs: List[FetchRunRe
         "fetcher_id": fetcher_metadata["id"],
         "source_id": fetcher_metadata["id"],
         "name": fetcher_metadata["name"],
-        "category": fetcher_metadata.get("category", "general"),
+        "admission_status": fetcher_metadata.get("admission_status", "admitted"),
         "content_type": fetcher_metadata.get("content_type", ""),
         "shape": fetcher_metadata.get("shape", "article"),
         "health_status": derive_health_status(latest_run, consecutive_failures),
@@ -87,7 +87,7 @@ def build_fetcher_health_from_state(fetcher_metadata: Dict[str, Any], state: Sou
         "fetcher_id": fetcher_metadata["id"],
         "source_id": state.source_id,
         "name": fetcher_metadata["name"],
-        "category": fetcher_metadata.get("category", "general"),
+        "admission_status": fetcher_metadata.get("admission_status", "admitted"),
         "content_type": state.content_type or fetcher_metadata.get("content_type", ""),
         "shape": fetcher_metadata.get("shape", "article"),
         "health_status": state.status,
@@ -132,7 +132,7 @@ def get_source_health(session: Session = Depends(deps.get_session)):
             "name": record.name,
             "icon": "",
             "desc": record.url,
-            "category": "user",
+            "admission_status": "admitted",
             "content_type": configured_source_content_type(record.source_type, record.fetcher_id),
             "shape": configured_source_shape(record.source_type, record.fetcher_id),
             "user_source": True,
@@ -191,12 +191,12 @@ def get_source_health(session: Session = Depends(deps.get_session)):
             for key in (
                 "source_config_node", "source_type", "source_owner", "source_brand",
                 "source_scope", "source_channel", "base_url", "provenance_tier",
-                "content_tags", "signal_strength", "noise_risk", "fetch_reliability",
+                "signal_strength", "noise_risk", "fetch_reliability",
                 "ai_analysis_enabled", "feed_url", "parameters", "desc",
             ):
                 item[key] = fetcher.get(key)
         health_items.append(item)
-    return sorted(health_items, key=lambda item: (item["category"], item["name"]))
+    return sorted(health_items, key=lambda item: item["name"])
 
 
 @router.get("/api/source-states")

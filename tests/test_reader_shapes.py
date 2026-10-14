@@ -1,9 +1,9 @@
-"""内容形态分流测试(迭代 3):article | bulletin | social | podcast 四容器。
+"""呈现形态分流测试:article | social | podcast 三容器(issue #178 撤销 bulletin「动态」)。
 
 形态是**源级标记**(fetcher.content_shape),content_type 只作注册表之外历史
-归档源的兜底(github_release/github_repository/hf_model/huggingface_model
-必然是动态形)。快照断言锁死每个内置节点的形态——新增节点必须显式归类,
-改动既有节点形态也会在此显形。
+归档源的兜底。原「动态」源并入 article,改由来源先验 default_kind(版本更新 / 项目)
+表达;旧客户端传 shape=bulletin 视同 article。快照断言锁死每个内置节点的形态与
+来源先验——新增节点必须显式归类,改动既有节点也会在此显形。
 """
 import os
 import sys
@@ -19,8 +19,8 @@ from fetchers.registry import fetcher_registry  # noqa: E402
 
 _DEFAULT_ACCOUNTS = (("admin", "admin", "admin"), ("user", "user", "user"))
 
-# 内置节点形态快照:bulletin / social 全集(其余一律 article)。
-EXPECTED_BULLETIN_SOURCE_IDS = {
+# 内置节点来源先验快照(issue #178):原「动态」源全部进 release / project,形态改回 article。
+EXPECTED_RELEASE_KIND_SOURCE_IDS = {
     # changelog / 发布说明(content_type 是 web_article,必须靠源级标记)
     "docs_openai_codex_changelog",
     "docs_claude_code_changelog",
@@ -35,15 +35,18 @@ EXPECTED_BULLETIN_SOURCE_IDS = {
     "github_opencode_releases",
     "github_openclaw_releases",
     "github_hermes_agent_releases",
+}
+EXPECTED_PROJECT_KIND_SOURCE_IDS = {
     # 仓库 / 模型监控(基类标记,预设继承)
     "generic_github_repositories",
     "github_deepseek_repositories",
     "generic_huggingface_models",
     "hf_deepseek_models",
     "hf_qwen_models",
-    # 榜单类(短条目发现流)
+    # 趋势榜条目
     "github_trending_daily",
 }
+EXPECTED_PAPER_KIND_SOURCE_IDS = {"web_huggingface_daily_papers"}
 
 EXPECTED_SOCIAL_SOURCE_IDS = {
     # X 社交卡片流（通用模板 + preset；2026-07-21 压缩成本删 x_ai_at_meta / x_openrouter）
@@ -128,22 +131,26 @@ def _make_app(monkeypatch, tmp_path, name: str):
 # ==================== 源级标记快照 ====================
 
 def test_builtin_fetcher_shape_snapshot():
-    """每个内置节点的 content_shape 与快照一致——形态归类是显式决策,不许漂移。"""
-    actual_bulletin = set()
+    """每个内置节点的 content_shape 与来源先验与快照一致——归类是显式决策,不许漂移。"""
     actual_social = set()
     actual_podcast = set()
+    kinds: dict[str, set[str]] = {}
     for meta in fetcher_registry.get_all_metadata():
         shape = meta.get("shape")
-        assert shape in ("article", "bulletin", "social", "podcast"), f"{meta['id']} 非法形态: {shape!r}"
-        if shape == "bulletin":
-            actual_bulletin.add(meta["id"])
-        elif shape == "social":
+        assert shape in ("article", "social", "podcast"), f"{meta['id']} 非法形态: {shape!r}"
+        if shape == "social":
             actual_social.add(meta["id"])
         elif shape == "podcast":
             actual_podcast.add(meta["id"])
-    assert actual_bulletin == EXPECTED_BULLETIN_SOURCE_IDS
+        if meta.get("default_kind"):
+            kinds.setdefault(meta["default_kind"], set()).add(meta["id"])
     assert actual_social == EXPECTED_SOCIAL_SOURCE_IDS
     assert actual_podcast == EXPECTED_PODCAST_SOURCE_IDS
+    assert kinds == {
+        "release": EXPECTED_RELEASE_KIND_SOURCE_IDS,
+        "project": EXPECTED_PROJECT_KIND_SOURCE_IDS,
+        "paper": EXPECTED_PAPER_KIND_SOURCE_IDS,
+    }
 
 
 def test_source_shape_fallback_by_content_type():
@@ -154,10 +161,10 @@ def test_source_shape_fallback_by_content_type():
     # 注册源:HN AI / HF Daily Papers 虽是发现型/榜单型,拍板保持文章形
     assert source_shape("rss_hn_ai", "rss_article", meta) == "article"
     assert source_shape("web_huggingface_daily_papers", "web_article", meta) == "article"
-    assert source_shape("docs_claude_code_changelog", "web_article", meta) == "bulletin"
-    # 未注册历史源:content_type 兜底
-    assert source_shape("legacy_gone", "github_release", meta) == "bulletin"
-    assert source_shape("legacy_gone", "huggingface_model", meta) == "bulletin"
+    assert source_shape("docs_claude_code_changelog", "web_article", meta) == "article"
+    # 未注册历史源:content_type 兜底(版本发布 / 模型卡也归文章,类型由内容类型表达)
+    assert source_shape("legacy_gone", "github_release", meta) == "article"
+    assert source_shape("legacy_gone", "huggingface_model", meta) == "article"
     assert source_shape("legacy_social", "social_post", meta) == "social"
     assert source_shape("legacy_podcast", "podcast_episode", meta) == "podcast"
     assert source_shape("generic_podcast_rss", "podcast_episode", meta) == "podcast"
@@ -212,11 +219,11 @@ def test_reader_sources_payload_carries_shape(monkeypatch, tmp_path):
         shapes = {s["source_id"]: s["shape"] for s in data["sources"]}
         platforms = {s["source_id"]: s["platform"] for s in data["sources"]}
         sources = {s["source_id"]: s for s in data["sources"]}
-        assert shapes["github_opencode_releases"] == "bulletin"
-        assert shapes["docs_claude_code_changelog"] == "bulletin"
+        assert shapes["github_opencode_releases"] == "article"
+        assert shapes["docs_claude_code_changelog"] == "article"
         assert shapes["web_anthropic_news"] == "article"
         assert shapes["dorami_daily_brief"] == "article"  # 日报是要读的
-        assert shapes["legacy_releases"] == "bulletin"    # content_type 兜底
+        assert shapes["legacy_releases"] == "article"     # content_type 兜底(动态已并入文章)
         assert shapes["x_openai"] == "social"             # 注册源标记
         assert shapes["legacy_social"] == "social"        # social_post 兜底
         assert shapes["x_configured_zero"] == "social"    # 零产出 SourceConfig
@@ -240,7 +247,7 @@ def test_articles_shape_filter(monkeypatch, tmp_path):
     from models.db import SourceConfigRecord
 
     app_module, sink = _make_app(monkeypatch, tmp_path, "filter.db")
-    # 七类代表:注册/兜底 bulletin，兜底/配置 social，兜底/配置 podcast，普通 article。
+    # 七类代表:注册/兜底的原动态源，兜底/配置 social，兜底/配置 podcast，普通 article。
     _seed_article(sink.engine, "c1", "docs_claude_code_changelog", content_type="web_article")
     _seed_article(sink.engine, "r1", "legacy_releases", content_type="github_release")
     _seed_article(sink.engine, "a1", "web_anthropic_news", content_type="web_article")
@@ -279,10 +286,10 @@ def test_articles_shape_filter(monkeypatch, tmp_path):
             return {item["id"] for item in client.get("/api/articles", params=params).json()["items"]}
 
         assert ids() == {"c1", "r1", "a1", "s1", "s2", "p1", "p2"}  # 不传 shape:不过滤
-        assert ids("bulletin") == {"c1", "r1"}          # 源级标记 ∪ content_type 兜底
+        assert ids("article") == {"c1", "r1", "a1"}    # 原动态源并入文章,不误收 social / podcast
+        assert ids("bulletin") == {"c1", "r1", "a1"}   # 旧值视同 article,不能被当成「不过滤」
         assert ids("social") == {"s1", "s2"}             # social_post 兜底 ∪ 配置源标记
         assert ids("podcast") == {"p1", "p2"}            # podcast_episode 兜底 ∪ 配置源标记
-        assert ids("article") == {"a1"}                  # 不误收 bulletin / social / podcast
         assert ids("bogus") == {"c1", "r1", "a1", "s1", "s2", "p1", "p2"} # 非法值忽略
 
 
@@ -320,6 +327,6 @@ def test_articles_shape_composes_with_subscribed_scope(monkeypatch, tmp_path):
             item["id"]
             for item in client.get("/api/articles", params={**params, "shape": "social"}).json()["items"]
         }
-        assert article_ids == {"a1"}
-        assert bulletin_ids == {"c1"}
+        assert article_ids == {"c1", "a1"}
+        assert bulletin_ids == {"c1", "a1"}  # 旧值视同 article
         assert social_ids == {"s1"}

@@ -38,7 +38,7 @@ export default function MobileSourceDrawer({
 
   if (!open) return null;
 
-  const title = mode === 'bulletin' ? '动态' : socialView ? '社交媒体' : mode === 'podcast' ? '播客' : '文章';
+  const title = socialView ? '社交媒体' : mode === 'podcast' ? '播客' : '文章';
   const pick = (fn) => (...args) => { fn(...args); onClose?.(); };
   // 列源还是列标签:兴趣轴列标签;社交容器 / 预览单源(临时在来源轴上)列源
   const showSourceRows = scope.axis !== 'interest' || socialView || Boolean(activeSourceId);

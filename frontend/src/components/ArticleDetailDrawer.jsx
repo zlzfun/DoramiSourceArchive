@@ -1,14 +1,12 @@
 import { X, Edit2, FileAudio2, Trash2, ExternalLink, RotateCcw } from 'lucide-react';
-import { contentTypeLabel } from '../utils/contentType';
 import { excerptOf } from '../utils/readerText';
 import {
   analysisStatusMeta,
-  contentGenreLabel,
   displayAnalysisTags,
   hasReadableAnalysis,
   podcastAssessmentMeta,
   podcastFullProcessingMeta,
-  qualityScoreText,
+  scoreDimensions,
   scoreTierClass,
   SCORE_DISCLAIMER,
 } from '../utils/analysis';
@@ -83,7 +81,8 @@ export default function ArticleDetailDrawer({
     includeTerminal: true,
     podcast: article?.content_type === 'podcast_episode',
   });
-  const score = qualityScoreText(article?.quality_score);
+  // 双评分(issue #178 第二波):主分在前,缺失的维度不出现
+  const scoreDims = scoreDimensions(article);
   const analysisTags = displayAnalysisTags(article);
 
   return (
@@ -116,8 +115,17 @@ export default function ArticleDetailDrawer({
                   {getFetcherName?.(article.source_id) || article.source_id}
                   <span className="ledger-kv-mono"> · {article.source_id}</span>
                 </dd>
-                <dt>类型</dt>
-                <dd>{contentTypeLabel(article.content_type, article.content_type)}</dd>
+                {/* issue #178:内容类型(这是什么)与数据结构(怎么抓进来的)分开写 */}
+                <dt>内容类型</dt>
+                <dd>
+                  {article.kind_label || '未判定'}
+                  {article.event_label ? ` · ${article.event_label}` : ''}
+                </dd>
+                <dt>数据结构</dt>
+                <dd>
+                  {article.content_type_label || article.content_type}
+                  <span className="ledger-kv-mono"> · {article.content_type}</span>
+                </dd>
                 <dt>发布时间</dt>
                 <dd className="ledger-kv-mono">{fmtTime(article.publish_date)}</dd>
                 <dt>收录时间</dt>
@@ -139,17 +147,21 @@ export default function ArticleDetailDrawer({
                 {hasAnalysis ? (
                   <div className="reader-analysis-summary">
                     <div className="reader-analysis-top">
-                      {score && <span className={`reader-analysis-score ${scoreTierClass(article?.quality_score)}`}><strong>{score}</strong><small>新闻价值</small></span>}
+                      {scoreDims.map((dim) => (
+                        <span key={dim.key} className={`reader-analysis-score ${scoreTierClass(dim.value)}`}><strong>{dim.text}</strong><small>{dim.label}</small></span>
+                      ))}
                       {podcastAssessment && <span className="stamp stamp-idle" role="status">{podcastAssessment.label}</span>}
                       {(analysisTags.length > 0 || article.content_genre) && <span className="reader-analysis-tags">
                         {analysisTags.map((tag, index) => (
                           <AnalysisTagChip key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`} tag={tag} onSearch={onTemporaryTagSearch} />
                         ))}
-                        {analysisTags.length === 0 && article.content_genre && <span className="reader-tag-chip">{contentGenreLabel(article.content_genre)}</span>}
+                        {analysisTags.length === 0 && article.content_genre && <span className="reader-tag-chip">{article.content_genre_label || article.content_genre}</span>}
                       </span>}
                       {analysisStatus && <span className={`stamp ${analysisStatus.cls}`} role="status">{analysisStatus.label}</span>}
                     </div>
-                    {article.score_reason && <p>{article.score_reason}</p>}
+                    {scoreDims.filter((dim) => dim.reason).map((dim) => (
+                    <p key={dim.key}>{scoreDims.length > 1 ? `${dim.label}：${dim.reason}` : dim.reason}</p>
+                  ))}
                     {article.summary_zh && <p className="tiny-meta">{article.summary_zh}</p>}
                     <small>{podcastAssessment ? `${podcastAssessment.note}；${SCORE_DISCLAIMER}` : SCORE_DISCLAIMER}</small>
                   </div>

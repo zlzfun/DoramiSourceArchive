@@ -18,7 +18,6 @@ import {
 import Sparkline from './charts/Sparkline';
 import { runAction } from '../utils/runAction';
 import { excerptOf } from '../utils/readerText';
-import { contentTypeLabel, CONTENT_TYPE_GROUPS } from '../utils/contentType';
 import { SCORE_DISCLAIMER, analysisStatusMeta, analysisTagSearch, podcastLedgerProcessingMeta, primaryAnalysisLabel, qualityScoreText, scoreTierClass } from '../utils/analysis';
 import { podcastProcessingSuccessMessage } from '../utils/podcastProcessing';
 import { useConfirm } from '../hooks/useConfirm';
@@ -116,25 +115,13 @@ export default function DataTab({
 
   const getFetcherName = (id) => fetchersById[id]?.name || id;
 
-  // 内容类型分面：按 CONTENT_TYPE_GROUPS 归组（组内计数求和），未归组类型落「其他」；
-  // count=0 的组不显示。选项/计数均来自 facets（全量 group-by），不从当前页推导。
-  const typeGroups = useMemo(() => {
-    const counts = new Map((facets?.content_types ?? []).map(c => [c.value, c.count]));
-    const claimed = new Set();
-    const grouped = [];
-    for (const g of CONTENT_TYPE_GROUPS) {
-      let sum = 0;
-      for (const t of g.types) { if (counts.has(t)) sum += counts.get(t); claimed.add(t); }
-      if (sum > 0) grouped.push({ label: g.label, csv: g.types.join(','), count: sum });
-    }
-    let otherSum = 0;
-    const otherTypes = [];
-    for (const [value, count] of counts) {
-      if (!claimed.has(value)) { otherSum += count; otherTypes.push(value); }
-    }
-    if (otherSum > 0) grouped.push({ label: '其他', csv: otherTypes.join(','), count: otherSum });
-    return grouped;
-  }, [facets]);
+  // 数据结构分面(issue #178):每个 content_type 一项,中文名由后端词表下发(facets.label)。
+  // 此前把 rss / web 归成「资讯文章」一组,恰是「论文被叫成资讯文章」的来源;内容类型(论文 /
+  // 版本更新…)在阅读器按条目判定,这里只如实列数据结构。选项/计数来自 facets(全量 group-by)。
+  const typeGroups = useMemo(
+    () => (facets?.content_types ?? []).map(c => ({ label: c.label || c.value, csv: c.value, count: c.count })),
+    [facets],
+  );
 
   // 来源分面：取消厂商分组，扁平列表按计数降序（后端已降序），显示 fetcher 名 + 计数。
   const sourceFacets = facets?.source_ids ?? [];
@@ -563,7 +550,7 @@ export default function DataTab({
 
 
           <div className="ledger-facet">
-            <h3 className="micro-label ledger-facet-title">内容类型</h3>
+            <h3 className="micro-label ledger-facet-title">数据结构</h3>
             <div className="ledger-facet-list">
               <button
                 type="button"
@@ -829,7 +816,7 @@ export default function DataTab({
                           );
                         })()}
                       </td>
-                      <td className="px-3"><span className="ledger-type-chip max-w-full overflow-hidden text-ellipsis" title={article.content_type || ''}>{contentTypeLabel(article.content_type)}</span></td>
+                      <td className="px-3"><span className="ledger-type-chip max-w-full overflow-hidden text-ellipsis" title={`数据结构:${article.content_type_label || article.content_type || ''}`}>{article.kind_label || article.content_type_label || article.content_type || '未知'}</span></td>
                       <td className="px-3 text-right"><span className="ledger-date">{article.publish_date?.split('T')[0] || '-'}</span></td>
                       <td className="px-3 text-right"><span className="ledger-date" title={`收录时间：${article.fetched_date?.replace('T', ' ').substring(0, 16) || '—'}`}>{article.fetched_date?.split('T')[0] || '-'}</span></td>
                       <td className="px-3" onClick={e => e.stopPropagation()}>

@@ -41,7 +41,9 @@ def test_recommended_fetcher_metadata_has_source_dimensions():
     assert item["source_brand"] == "anthropic"
     assert item["base_url"] == "https://www.anthropic.com/news"
     assert item["provenance_tier"] == "tier0_primary"
-    assert "model_release" in item["content_tags"]
+    # issue #178:源级 category / content_tags 退役,准入状态独立成 admission_status
+    assert "content_tags" not in item and "category" not in item
+    assert item["admission_status"] == "admitted"
 
 
 def test_recovered_sources_are_default_visible_with_stable_metadata():
@@ -81,15 +83,12 @@ def test_fourth_expansion_sources_are_visible_incubating_and_fully_classified():
     assert source_ids <= ESSENTIAL_FETCHER_IDS
     for source_id in source_ids:
         item = metadata[source_id]
-        assert item["category"] == "incubating"
+        assert item["admission_status"] == "incubating"
         assert item["default_visible"] is True
-        assert item["content_tags"]
         assert all(item[dimension] for dimension in required_dimensions)
 
-    assert metadata["docs_arena_leaderboard_changelog"]["shape"] == "bulletin"
-    assert all(metadata[source_id]["shape"] == "article" for source_id in source_ids - {
-        "docs_arena_leaderboard_changelog"
-    })
+    assert metadata["docs_arena_leaderboard_changelog"]["default_kind"] == "release"
+    assert all(metadata[source_id]["shape"] == "article" for source_id in source_ids)
 
 
 def test_non_whitelisted_source_cannot_become_default_visible(monkeypatch):
@@ -104,7 +103,7 @@ def test_non_whitelisted_source_cannot_become_default_visible(monkeypatch):
         },
     )
 
-    curation = focused_curation_for("rss_huggingface_blog", "official")
+    curation = focused_curation_for("rss_huggingface_blog")
 
     assert curation["default_visible"] is False
     assert "精品源白名单" in curation["curation_reason"]

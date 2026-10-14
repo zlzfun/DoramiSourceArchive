@@ -180,7 +180,7 @@ def test_analyze_url_with_llm(monkeypatch):
     cfg = result["proposed_config"]
     assert cfg["name"] == "Demo Labs News"
     assert cfg["source_owner"] == "demo"
-    assert "model_release" in cfg["content_tags"]
+    assert "content_tags" not in cfg and "category" not in cfg  # issue #178 退役字段不再生成
     assert cfg["params"]["article_url_patterns"] == "/news/"
     assert cfg["params"]["target_elements"] == "article.post-content"
     assert cfg["params"]["detail_use_browser"] is True
