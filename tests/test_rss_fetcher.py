@@ -737,10 +737,9 @@ def test_hn_popular_blogs_presets_are_visible_incubating_and_classified():
         source_id = fetcher_class.source_id
         assert source_id in ESSENTIAL_FETCHER_IDS
         item = metadata_by_id[source_id]
-        assert item["category"] == "incubating"
+        assert item["admission_status"] == "incubating"
         assert item["default_visible"] is True
         assert item["shape"] == "article"
-        assert item["content_tags"]
         assert all(item[dimension] for dimension in required_dimensions)
 
 
@@ -821,10 +820,9 @@ def test_second_expansion_rss_presets_are_registered_with_complete_curation_meta
 
     assert expected_ids <= ESSENTIAL_FETCHER_IDS
     assert expected_ids <= metadata_by_id.keys()
-    # 观察期(incubating):新节点批次统一在此分类集中观察、不进每日自动采集
-    # (curation_policy「Incubation」节)。质量验收转正时,改回各类注释里的
-    # 目标分类(official/media/community)并同步更新本断言——这是转正的显式护栏。
-    assert {item_id: metadata_by_id[item_id]["category"] for item_id in expected_ids} == {
+    # 观察期(incubating):新节点批次集中观察、不进每日自动采集(curation_policy「Incubation」节)。
+    # 质量验收转正时删掉类上的 admission_status 行,并同步把本断言改为 admitted——这是转正的显式护栏。
+    assert {item_id: metadata_by_id[item_id]["admission_status"] for item_id in expected_ids} == {
         "rss_deepmind_blog": "incubating",
         "rss_mistral_news": "incubating",
         "rss_hf_blog": "incubating",
@@ -845,7 +843,6 @@ def test_second_expansion_rss_presets_are_registered_with_complete_curation_meta
     for fetcher_class in expansion_classes:
         item = metadata_by_id[fetcher_class.source_id]
         assert all(item[dimension] for dimension in required_dimensions)
-        assert item["content_tags"]
         assert item["shape"] == "article"
         assert "content_shape" not in fetcher_class.__dict__
 

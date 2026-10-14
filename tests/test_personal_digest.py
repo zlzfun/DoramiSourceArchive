@@ -1569,3 +1569,262 @@ def test_assign_positions_section_order_score_desc_missing_last_ties_stable():
         (6, "unknown-a"),
         (7, "unknown-z"),
     ]
+
+
+# ── 「深度阅读」「播客精选」(issue #178 第三波,方案 §5.1) ──
+
+from llm.article_analysis_prompt import CONTENT_VALUE_SCORING_VERSION  # noqa: E402
+
+
+def _seed_valued(
+    session: Session,
+    number: int,
+    *,
+    source: str,
+    content_value: float | None = None,
+    content_kind: str | None = None,
+    news: float = 5.0,
+    content_type: str = "rss_article",
+    days_ago: float = 1.0,
+    url: str | None = None,
+    version: str = CONTENT_VALUE_SCORING_VERSION,
+    genre: str = "industry_news",
+) -> ArticleRecord:
+    article_id = f"article-{number:02d}"
+    published_at = NOW - dt.timedelta(days=days_ago)
+    article = ArticleRecord(
+        id=article_id,
+        title=f"Article {number}",
+        content_type=content_type,
+        source_id=source,
+        source_url=url or f"https://example.com/{article_id}",
+        publish_date=published_at.isoformat(),
+        fetched_date=published_at.isoformat(),
+        content=f"full body {number}",
+    )
+    session.add(article)
+    session.flush()
+    session.add(ArticleAnalysisRecord(
+        article_id=article_id,
+        status="succeeded",
+        tagging_status="succeeded",
+        quality_score=news,
+        score_reason=f"reason {number}",
+        summary=f"summary {number}",
+        content_genre=genre,
+        content_kind=content_kind,
+        content_value=content_value,
+        content_value_reason=f"value reason {number}" if content_value is not None else "",
+        content_value_version=version if content_value is not None else "",
+        created_at=NOW_ISO,
+        updated_at=NOW_ISO,
+    ))
+    return article
+
+
+def _past_edition(session: Session, report_date: str, article_ids: list[str]) -> None:
+    stamp = f"{report_date}T08:30:00+08:00"
+    edition = PersonalDigestEditionRecord(
+        owner_username="alice",
+        report_date=report_date,
+        revision=1,
+        status="ready",
+        check_after=stamp,
+        cutoff_at=stamp,
+        generated_at=stamp,
+        created_at=stamp,
+        updated_at=stamp,
+    )
+    session.add(edition)
+    session.flush()
+    for position, article_id in enumerate(article_ids):
+        session.add(PersonalDigestItemRecord(
+            edition_id=edition.id,
+            article_id=article_id,
+            position=position,
+            selection_lane="read",
+            quality_score_snapshot=5.0,
+            snapshot_json="{}",
+            created_at=stamp,
+        ))
+
+
+def test_value_sections_are_extra_and_follow_the_news_sections(storage):
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a,rss_papers,rss_blog,rss_ops,pod_a,pod_b")])
+        news = [_seed_valued(session, n, source="rss_a", news=7.0, days_ago=0.2) for n in range(1, 4)]
+        # 论文:新闻价值 4.5 过不了新闻门槛,内容价值 8.2 进「深度阅读」;链接形状判为论文
+        paper = _seed_valued(
+            session, 11, source="rss_papers", news=4.5, content_value=8.2,
+            url="https://arxiv.org/abs/2610.00011", days_ago=3,
+        )
+        # 同源第二篇论文:每源 1 篇,让位给 8.2
+        _seed_valued(
+            session, 12, source="rss_papers", news=4.5, content_value=8.0,
+            url="https://arxiv.org/abs/2610.00012", days_ago=2,
+        )
+        tutorial = _seed_valued(session, 13, source="rss_blog", news=4.0, content_value=7.4, content_kind="tutorial")
+        # 内容价值 6.5 < 7.0;资讯类不进「深度阅读」
+        _seed_valued(session, 14, source="rss_blog2", news=4.0, content_value=6.5, content_kind="opinion")
+        _seed_valued(session, 15, source="rss_ops", news=4.0, content_value=9.0, content_kind="news")
+        # 播客:即使分数够新闻门槛也不进新闻通道,只进「播客精选」(播客分 = 内容价值)
+        episode = _seed_valued(session, 21, source="pod_a", news=8.0, content_type="podcast_episode", days_ago=4)
+        _seed_valued(session, 22, source="pod_b", news=7.0, content_type="podcast_episode", days_ago=1)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert result.status == "ready"
+        lanes = [(item.article_id, item.selection_lane, item.section) for item in result.items]
+        assert lanes == [
+            *[(article.id, "quality", "行业资讯") for article in news],
+            (paper.id, "read", "深度阅读"),
+            (tutorial.id, "read", "深度阅读"),
+            (episode.id, "listen", "播客精选"),
+        ]
+        by_id = {item.article_id: item for item in result.items}
+        paper_item = by_id[paper.id]
+        assert paper_item.selection_reason == "来自你订阅的「rss_papers」，按内容价值入选。"
+        snapshot = json.loads(paper_item.snapshot_json)
+        assert snapshot["score_dimension"] == "content"
+        assert snapshot["content_value"] == 8.2 and snapshot["content_kind"] == "paper"
+        assert snapshot["content_value_reason"] == "value reason 11"
+        assert snapshot["quality_score"] == 4.5
+        assert json.loads(paper_item.ranking_features_json)["content_value"] == 8.2
+        listen_snapshot = json.loads(by_id[episode.id].snapshot_json)
+        assert listen_snapshot["score_dimension"] == "content" and listen_snapshot["content_value"] == 8.0
+        assert json.loads(by_id[news[0].id].snapshot_json)["score_dimension"] == "news"
+        stats = json.loads(result.edition.selection_stats_json)
+        assert stats["selected_count"] == 3
+        assert stats["read"] == {
+            "candidate_count": 3, "selected_count": 2, "min_value": 7.0, "max_items": 3, "window_days": 7,
+        }
+        assert stats["listen"]["candidate_count"] == 1 and stats["listen"]["selected_count"] == 1
+
+
+def test_value_sections_skip_news_picks_recent_editions_stale_rulers_and_old_items(storage):
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a,rss_b,rss_c,rss_d,rss_e")])
+        # 已进新闻通道的论文不在「深度阅读」重复出现
+        in_news = _seed_valued(session, 1, source="rss_a", news=7.5, content_value=8.5, content_kind="paper", days_ago=0.3)
+        # 五天前的早报出现过
+        seen = _seed_valued(session, 2, source="rss_b", news=4.0, content_value=8.4, content_kind="paper", days_ago=5)
+        # 尺子版本不是当前版本:缺失即缺席
+        _seed_valued(session, 3, source="rss_c", news=4.0, content_value=9.0, content_kind="paper", version="content-value-v1")
+        # 窗口 7 天之外
+        _seed_valued(session, 4, source="rss_d", news=4.0, content_value=9.0, content_kind="paper", days_ago=8)
+        fresh = _seed_valued(session, 5, source="rss_e", news=4.0, content_value=7.2, content_kind="opinion", days_ago=6)
+        _past_edition(session, "2026-08-27", [seen.id])
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        lanes = [(item.article_id, item.selection_lane) for item in result.items]
+        assert lanes == [(in_news.id, "quality"), (fresh.id, "read")]
+
+
+def test_value_sections_reach_outside_subscriptions_only_through_interests(storage):
+    with Session(storage.engine) as session:
+        tag = _tag("agents")
+        session.add_all([_user(), _subscribe("alice", "rss_a"), tag])
+        session.add(AppSettingRecord(key="reader_hidden_source_ids", value=json.dumps(["rss_hidden"])))
+        session.flush()
+        _seed_valued(session, 1, source="rss_a", news=7.0, days_ago=0.2)
+        hit = _seed_valued(session, 2, source="rss_outside", news=4.0, content_value=7.6, content_kind="tutorial")
+        miss = _seed_valued(session, 3, source="rss_outside2", news=4.0, content_value=9.1, content_kind="tutorial")
+        hidden = _seed_valued(session, 4, source="rss_hidden", news=4.0, content_value=9.3, content_kind="paper")
+        private = _seed_valued(session, 5, source="user_rss_private01", news=4.0, content_value=9.4, content_kind="paper")
+        session.flush()
+        for article in (hit, hidden, private):
+            _assign_topic(session, article, tag)
+        _follow(session, "alice", tag)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        read = [item for item in result.items if item.selection_lane == "read"]
+        assert [item.article_id for item in read] == [hit.id]
+        assert miss.id not in {item.article_id for item in result.items}
+        assert json.loads(read[0].matched_interest_codes_json) == ["agents"]
+        assert read[0].selection_reason == "命中你的兴趣「agents」，来自你未订阅的「rss_outside」，按内容价值入选。"
+        assert json.loads(read[0].snapshot_json)["subscribed"] is False
+
+
+def test_value_section_knobs_come_from_kv_and_zero_items_turns_a_section_off(storage):
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a,rss_p,pod_a")])
+        session.add_all([
+            AppSettingRecord(key="personal_digest_read_max_items", value="0"),
+            AppSettingRecord(key="personal_digest_listen_min_value", value="8.5"),
+            AppSettingRecord(key="personal_digest_listen_window_days", value="2"),
+        ])
+        _seed_valued(session, 1, source="rss_a", news=7.0, days_ago=0.2)
+        _seed_valued(session, 2, source="rss_p", news=4.0, content_value=9.5, content_kind="paper")
+        _seed_valued(session, 3, source="pod_a", news=8.0, content_type="podcast_episode")
+        _seed_valued(session, 4, source="pod_a", news=9.0, content_type="podcast_episode", days_ago=3)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert [item.selection_lane for item in result.items] == ["quality"]
+        stats = json.loads(result.edition.selection_stats_json)
+        assert stats["read"]["max_items"] == 0 and stats["read"]["candidate_count"] == 0
+        assert stats["listen"] == {
+            "candidate_count": 0, "selected_count": 0, "min_value": 8.5, "max_items": 2, "window_days": 2,
+        }
+
+
+def test_podcasts_leave_every_news_lane_including_breaking(storage):
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a,pod_a")])
+        session.add(SourceConfigRecord(
+            source_id="pod_a", name="Pod A", source_type="podcast", source_scope="official",
+            created_at=NOW_ISO, updated_at=NOW_ISO,
+        ))
+        own = _seed_valued(session, 1, source="rss_a", news=6.0, days_ago=0.2)
+        loud = _seed_valued(session, 2, source="pod_a", news=9.8, content_type="podcast_episode", days_ago=0.3)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        lanes = [(item.article_id, item.selection_lane) for item in result.items]
+        assert lanes == [(own.id, "quality"), (loud.id, "listen")]
+        stats = json.loads(result.edition.selection_stats_json)
+        assert stats["breaking_count"] == 0 and stats["candidate_count"] == 1
+
+
+def test_degraded_fallback_avoids_value_picks_and_value_sections_stay_last(storage):
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        paper = _seed_valued(session, 1, source="rss_a", news=3.0, content_value=8.0, content_kind="paper", days_ago=0.5)
+        other = _seed_valued(session, 2, source="rss_a", news=3.0, days_ago=0.6)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert result.status == "degraded"
+        lanes = [(item.article_id, item.section) for item in result.items]
+        assert lanes == [(other.id, "订阅源最新更新"), (paper.id, "深度阅读")]
+
+
+def test_assign_positions_orders_value_sections_by_content_value():
+    from services.personal_digest import _assign_positions
+
+    def record(section: str, lane: str, news: float, value: float | None, article_id: str):
+        return PersonalDigestItemRecord(
+            edition_id=1, article_id=article_id, position=0, section=section, selection_lane=lane,
+            quality_score_snapshot=news, matched_interest_codes_json="[]",
+            ranking_features_json=json.dumps({"content_value": value}),
+            coverage_adjustments_json="[]", selection_reason="", snapshot_json="{}", created_at=NOW_ISO,
+        )
+
+    records = [
+        record("播客精选", "listen", 7.6, 7.6, "pod"),
+        record("深度阅读", "read", 6.9, 7.1, "read-low"),
+        record("深度阅读", "read", 4.2, 8.3, "read-high"),
+        record("订阅源最新更新", "quality", 5.0, None, "fallback"),
+        record("模型发布", "quality", 7.0, None, "news"),
+    ]
+    _assign_positions(records)
+
+    assert [r.article_id for r in records] == ["news", "fallback", "read-high", "read-low", "pod"]

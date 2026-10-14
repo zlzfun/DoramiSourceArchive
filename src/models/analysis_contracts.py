@@ -153,6 +153,10 @@ class SelectionLane(StringEnum):
     # v3.50(issue #33 §2):「重大事件」通道——不看订阅范围的头条位,机械准入
     # (官方一手 ≥ 阈值,或多源印证),额外加在 target 之上、不进兴趣配额分母。
     BREAKING = "breaking"
+    # issue #178 第三波:按内容价值的两个额外分区——「深度阅读」(论文 / 教程 / 观点 / 汇编)与
+    # 「播客精选」(播客),接在新闻分区之后,不占新闻的 target 名额。
+    READ = "read"
+    LISTEN = "listen"
 
 
 class DigestGenerationReason(StringEnum):
@@ -202,6 +206,19 @@ PERSONAL_DIGEST_BREAKING_WINDOW_HOURS = 24
 PERSONAL_DIGEST_BREAKING_CORROBORATION_SOURCES = 2
 PERSONAL_DIGEST_BREAKING_CORROBORATION_SLACK = 0.5
 PERSONAL_DIGEST_BREAKING_SUPPRESS_EDITIONS = 2
+# 「深度阅读」「播客精选」(issue #178 第三波,方案 §5.1):按内容价值入选,额外于新闻的 target 之上。
+# 门槛按黄金集分布暂定(扎实的论文 / 教程 / 一手观点多在 6.5–8 分),上线后按生产分布校准;
+# 7 天窗口——深度内容不像新闻那样过期,36 小时常凑不出;每源 1 篇,防一个高产源占满;
+# 读者近 7 期早报出现过的不再出现。门槛、名额、窗口是管理面 KV 旋钮(见 personal_digest)。
+PERSONAL_DIGEST_READ_MIN_VALUE = 7.0
+PERSONAL_DIGEST_READ_MAX_ITEMS = 3
+PERSONAL_DIGEST_LISTEN_MIN_VALUE = 7.5
+PERSONAL_DIGEST_LISTEN_MAX_ITEMS = 2
+PERSONAL_DIGEST_VALUE_MAX_ITEMS_LIMIT = 5
+PERSONAL_DIGEST_VALUE_WINDOW_DAYS = 7
+PERSONAL_DIGEST_VALUE_WINDOW_DAYS_LIMIT = 14
+PERSONAL_DIGEST_VALUE_PER_SOURCE_MAX = 1
+PERSONAL_DIGEST_VALUE_SUPPRESS_EDITIONS = 7
 
 
 class ContractModel(BaseModel):
@@ -245,6 +262,10 @@ class ArticleAnalysisResultDTO(ContractModel):
     tag_candidates: tuple[ArticleTagCandidateDTO, ...] = Field(default_factory=tuple)
     content_features: tuple[str, ...] = Field(default_factory=tuple)
     entities: tuple[dict[str, object], ...] = Field(default_factory=tuple)
+    # 内容价值(issue #178 第二波):文章提示词 v7 起产出;播客与旧版结果为空。
+    content_kind: Optional[str] = None
+    content_value: Optional[float] = Field(default=None, ge=1.0, le=10.0)
+    content_value_reason: str = ""
 
 
 class DigestArticleCandidateDTO(ContractModel):
@@ -272,6 +293,11 @@ class DigestArticleCandidateDTO(ContractModel):
     # 兴趣命中判据用的标签码(主标签或相关度过线的指派,与阅读器兴趣透镜同一尺);None = 回退到
     # tag_codes 全集(旧调用方/纯策略测试)。
     interest_tag_codes: Optional[tuple[str, ...]] = None
+    # issue #178 第三波:条目的内容类型(content_classification.classify_item 推导)与当前有效的
+    # 内容价值(文章只认当前尺子版本;播客 = 现有播客分的投影)。「深度阅读」「播客精选」两个分区据此入选,
+    # 新闻通道不读这两项。
+    content_kind: Optional[str] = None
+    content_value: Optional[float] = Field(default=None, ge=1.0, le=10.0)
 
 
 class UserInterestDTO(ContractModel):

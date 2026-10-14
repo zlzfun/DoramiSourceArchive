@@ -210,9 +210,6 @@ def _apply_catalog_fields(
     record.name = source.name
     record.source_type = "podcast"
     record.url = source.feed_url
-    # SourceConfig category controls collection operations, so every newly curated
-    # source follows the repository's mandatory observation period.
-    record.category = "incubating"
     record.fetcher_id = "generic_podcast_rss"
     record.description = source.description
     record.source_owner = source.publisher
@@ -221,7 +218,6 @@ def _apply_catalog_fields(
     record.source_channel = "podcast_rss"
     record.base_url = source.feed_url
     record.provenance_tier = source.provenance_tier
-    record.content_tags_json = json.dumps(list(source.topics), ensure_ascii=False)
     record.signal_strength = "high_signal" if source.launch_tier == "core" else "medium_signal"
     record.noise_risk = "low_noise" if source.launch_tier == "core" else "medium_noise"
     record.fetch_reliability = (
@@ -317,6 +313,9 @@ def import_podcast_catalog(
                 record = SourceConfigRecord(
                     source_id=source.source_id,
                     name=source.name,
+                    # 新装入的精选源一律从观察期开始(准入政策);之后的目录更新不再改写,
+                    # 管理员转正后保持正式(issue #178 起准入状态独立于 category)。
+                    admission_status="incubating",
                     created_at=now,
                     updated_at=now,
                 )

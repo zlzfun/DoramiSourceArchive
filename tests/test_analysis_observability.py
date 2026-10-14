@@ -1,6 +1,8 @@
 import datetime as dt
 import json
 
+import pytest
+
 from sqlmodel import Session
 
 from models.db import (
@@ -118,6 +120,12 @@ def test_release_metrics_are_aggregate_and_cover_gate_indicators(tmp_path):
                 created_at=stamp,
             )
         )
+        # 额外于 target 的通道(重大事件、深度阅读)不进兴趣 / 质量占比的分母(issue #178 第三波)
+        for position, lane in ((1, "breaking"), (2, "read")):
+            session.add(PersonalDigestItemRecord(
+                edition_id=edition.id, article_id=None, position=position, section="深度阅读",
+                selection_lane=lane, quality_score_snapshot=7.0, snapshot_json="{}", created_at=stamp,
+            ))
         session.commit()
 
         metrics = collect_release_metrics(session, days=7, now=now)
@@ -129,7 +137,9 @@ def test_release_metrics_are_aggregate_and_cover_gate_indicators(tmp_path):
     assert metrics["taxonomy"]["tagged_article_rate"] == 1.0
     assert metrics["taxonomy"]["primary_missing_rate"] == 0.0
     assert metrics["personal_digest"]["interest_ratio"] == 1.0
-    assert metrics["personal_digest"]["coverage_adjusted_item_rate"] == 1.0
+    assert metrics["personal_digest"]["quality_ratio"] == 0.0
+    assert metrics["personal_digest"]["selection_lane_counts"] == {"breaking": 1, "interest": 1, "read": 1}
+    assert metrics["personal_digest"]["coverage_adjusted_item_rate"] == pytest.approx(1 / 3)
     encoded = json.dumps(metrics, ensure_ascii=False)
     assert "private-user" not in encoded
     assert "secret-article-id" not in encoded

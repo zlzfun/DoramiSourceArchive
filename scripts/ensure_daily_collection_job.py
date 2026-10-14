@@ -5,9 +5,10 @@ Run from the repository root:
 
     PYTHONPATH=src uv run python scripts/ensure_daily_collection_job.py
 
-The job targets all built-in concrete source nodes by default. Generic advanced
-fetchers are excluded unless --include-advanced is set, because they require
-per-source parameters and would fail as unattended daily jobs without them.
+The job targets all built-in concrete source nodes by default. Generic template
+fetchers (``is_template``) are excluded unless --include-advanced is set, because they
+require per-source parameters and would fail as unattended daily jobs without them.
+Incubating nodes (``admission_status = "incubating"``) are excluded too.
 """
 
 from __future__ import annotations
@@ -35,9 +36,9 @@ from storage.impl.db_storage import DatabaseStorage  # noqa: E402
 
 DEFAULT_JOB_NAME = "每日全量采集"
 DEFAULT_CRON_EXPR = "10 7 * * *"
-# incubating = 新节点观察期(curation_policy「Incubation」节):质量验收转正前
-# 不进每日自动采集,只手动触发、集中观察抓取结果。
-DEFAULT_EXCLUDED_CATEGORIES = frozenset({"advanced", "workflow", "incubating"})
+# 默认排除:通用模板节点(is_template,要逐源参数)与观察期节点(admission_status=incubating,
+# curation_policy「Incubation」节:质量验收转正前不进每日自动采集,只手动触发、集中观察)。
+# issue #178 起二者分别由 is_template / admission_status 表达,不再读源级 category。
 
 
 def json_dumps(value: Any) -> str:
@@ -70,13 +71,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--include-advanced",
         action="store_true",
-        help="包含 advanced/workflow 等通用能力节点。默认排除，因为它们通常需要额外参数。",
-    )
-    parser.add_argument(
-        "--exclude-category",
-        action="append",
-        default=[],
-        help="额外排除的节点 category，可重复传入。",
+        help="包含通用模板节点与观察期节点。默认排除：模板需要逐源参数，观察期节点只手动触发。",
     )
     parser.add_argument(
         "--exclude-fetcher",
@@ -100,21 +95,18 @@ def parse_args() -> argparse.Namespace:
 def selected_fetcher_ids(
     *,
     include_advanced: bool = False,
-    exclude_categories: set[str] | None = None,
     exclude_fetchers: set[str] | None = None,
 ) -> list[str]:
-    excluded_categories = set(exclude_categories or set())
-    if not include_advanced:
-        excluded_categories.update(DEFAULT_EXCLUDED_CATEGORIES)
     excluded_fetchers = set(exclude_fetchers or set())
 
     fetcher_ids: list[str] = []
     for item in fetcher_registry.get_all_metadata():
         fetcher_id = str(item["id"]).strip()
-        category = str(item.get("category") or "").strip()
         if not fetcher_id:
             continue
-        if category in excluded_categories:
+        if not include_advanced and (
+            item.get("is_template") or item.get("admission_status") == "incubating"
+        ):
             continue
         if fetcher_id in excluded_fetchers:
             continue
@@ -182,7 +174,6 @@ def main() -> int:
 
     fetcher_ids = selected_fetcher_ids(
         include_advanced=args.include_advanced,
-        exclude_categories={item.strip() for item in args.exclude_category if item.strip()},
         exclude_fetchers={item.strip() for item in args.exclude_fetcher if item.strip()},
     )
     if not fetcher_ids:

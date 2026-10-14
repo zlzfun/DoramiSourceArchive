@@ -27,12 +27,11 @@ class GenericRssFetcher(BaseFetcher):
     通用 RSS/Atom 抓取器。
 
     该抓取器通过运行时参数承载具体数据源身份，因此一次执行只处理一个 feed。
-    后续 SourceConfig 调度可以把配置中的 source_id/url/name/category 转换为这些参数。
+    后续 SourceConfig 调度可以把配置中的 source_id/url/name 转换为这些参数。
     """
     is_template = True  # 通用模板节点:后端保留,前端目录不显现
     source_id = "generic_rss"
     content_type = "rss_article"
-    category = "advanced"
 
     name = "通用 RSS/Atom"
     description = "抓取任意 RSS/Atom Feed，适合官方博客、产品更新、论文与社区资讯源。"
@@ -53,7 +52,6 @@ class GenericRssFetcher(BaseFetcher):
             {"field": "feed_url", "label": "RSS/Atom 地址", "type": "url", "default": ""},
             {"field": "source_id", "label": "数据源 ID", "type": "text", "default": ""},
             {"field": "feed_name", "label": "数据源名称", "type": "text", "default": ""},
-            {"field": "category", "label": "业务分类", "type": "text", "default": "official"},
             {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
             {"field": "fetch_detail_if_missing", "label": "短正文时抓取详情页", "type": "boolean", "default": cls.default_fetch_detail_if_missing},
             {"field": "detail_min_chars", "label": "触发详情抓取的正文长度", "type": "number", "default": cls.default_detail_min_chars},
@@ -137,14 +135,13 @@ class GenericRssFetcher(BaseFetcher):
         )
         return [entry for _, entry in sorted_entries]
 
-    def _entry_tags(self, entry: Any, category: str) -> List[str]:
+    def _entry_tags(self, entry: Any) -> List[str]:
+        """条目标签只取 feed 自带的 term;源级分类不再写进条目(issue #178)。"""
         tags = []
         for tag in entry.get("tags", []) or []:
             term = tag.get("term") if isinstance(tag, dict) else getattr(tag, "term", "")
             if term:
                 tags.append(str(term))
-        if category and category not in tags:
-            tags.append(category)
         return tags
 
     def _entry_html(self, entry: Any) -> str:
@@ -272,7 +269,6 @@ class GenericRssFetcher(BaseFetcher):
         feed_url = str(kwargs.get("feed_url", "")).strip()
         runtime_source_id = str(kwargs.get("source_id", "")).strip() or self.source_id
         feed_name = str(kwargs.get("feed_name", "")).strip()
-        category = str(kwargs.get("category", "")).strip()
         limit = self._entry_limit(kwargs.get("limit"), self.default_limit)
         fetch_detail_if_missing = self._bool_param(
             kwargs.get("fetch_detail_if_missing"),
@@ -364,7 +360,7 @@ class GenericRssFetcher(BaseFetcher):
                 has_content=bool(content_text),
                 feed_name=resolved_feed_name,
                 author=entry.get("author", ""),
-                tags=self._entry_tags(entry, category),
+                tags=self._entry_tags(entry),
                 guid=entry.get("id", "") or entry.get("guid", ""),
                 summary=self._clean_text(entry.get("summary", "")),
                 updated_date=updated_date,
@@ -382,7 +378,6 @@ class PresetRssFetcher(GenericRssFetcher):
     is_template = False  # preset 固化节点:重置 Generic 基类的模板标志
     source_id = "unknown_source"
     feed_url = ""
-    category = "official"
     default_limit = 12
 
     @classmethod
@@ -401,7 +396,6 @@ class PresetRssFetcher(GenericRssFetcher):
             "feed_url": self.feed_url,
             "source_id": self.source_id,
             "feed_name": self.name,
-            "category": self.category,
             "limit": limit,
         }
         async for item in super()._run(client, **params):
@@ -414,14 +408,12 @@ class OpenAINewsRssFetcher(PresetRssFetcher):
     description = "OpenAI 官方新闻、产品、研究与工程博客动态。"
     icon = "🧠"
     feed_url = "https://openai.com/news/rss.xml"
-    category = "official"
     source_owner = "openai"
     source_brand = "openai"
     source_scope = "company"
     source_channel = "newsroom_rss"
     source_url = feed_url
     provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "product_update", "api_platform", "research_paper", "developer_tool"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
@@ -606,14 +598,12 @@ class GoogleGeminiModelsRssFetcher(PresetRssFetcher):
     description = "Google 官方的 Gemini 模型、能力与产品公告。"
     icon = "🔷"
     feed_url = "https://blog.google/innovation-and-ai/models-and-research/gemini-models/rss/"
-    category = "official"
     source_owner = "google"
     source_brand = "gemini"
     source_scope = "model_family"
     source_channel = "blog_category_rss"
     source_url = "https://blog.google/innovation-and-ai/models-and-research/gemini-models/"
     provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "research_paper", "product_update", "developer_tool"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public_rss"
@@ -634,14 +624,12 @@ class HackerNewsAiRssFetcher(PresetRssFetcher):
     default_min_points = 10
     default_min_comments = 0
     feed_url = "https://hnrss.org/newest?q=AI"
-    category = "community"
     source_owner = "ycombinator"
     source_brand = "hacker_news"
     source_scope = "developer_community"
     source_channel = "search_rss"
     source_url = feed_url
     provenance_tier = "tier1_curated"
-    content_tags = ["developer_tool", "market_news", "opinion", "product_update"]
     signal_strength = "medium_signal"
     noise_risk = "high_noise"
     fetch_reliability = "stable_public"
@@ -811,7 +799,7 @@ class GoogleDeepMindBlogRssFetcher(PresetRssFetcher):
     description = "Google DeepMind 的模型、研究与产品官方动态。"
     icon = "🧬"
     feed_url = "https://deepmind.google/blog/rss.xml"
-    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "official"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 12
     default_fetch_detail_if_missing = True
     source_owner = "google_deepmind"
@@ -820,7 +808,6 @@ class GoogleDeepMindBlogRssFetcher(PresetRssFetcher):
     source_channel = "blog"
     source_url = "https://deepmind.google/blog/"
     provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "research_paper", "product_update"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
@@ -855,7 +842,7 @@ class MistralNewsRssFetcher(PresetRssFetcher):
     description = "Mistral AI 的模型、产品与 API 平台官方新闻。"
     icon = "🌬️"
     feed_url = "https://mistral.ai/rss.xml"
-    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "official"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 8
     default_fetch_detail_if_missing = True
     source_owner = "mistral"
@@ -864,7 +851,6 @@ class MistralNewsRssFetcher(PresetRssFetcher):
     source_channel = "newsroom"
     source_url = "https://mistral.ai/news/"
     provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "product_update", "api_platform"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
@@ -920,7 +906,7 @@ class HuggingFaceBlogRssFetcher(PresetRssFetcher):
     description = "Hugging Face 的模型、产品、实践与研究博客动态。"
     icon = "🤗"
     feed_url = "https://huggingface.co/blog/feed.xml"
-    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "official"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 8
     default_fetch_detail_if_missing = True
     source_owner = "huggingface"
@@ -929,7 +915,6 @@ class HuggingFaceBlogRssFetcher(PresetRssFetcher):
     source_channel = "blog"
     source_url = "https://huggingface.co/blog"
     provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "product_update", "tutorial_or_practice", "research_paper"]
     signal_strength = "high_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
@@ -990,7 +975,7 @@ class TheDecoderRssFetcher(PresetRssFetcher):
     description = "The Decoder 的英文 AI 模型、市场与产品报道。"
     icon = "📰"
     feed_url = "https://the-decoder.com/feed/"
-    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "media"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 12
     default_fetch_detail_if_missing = True
     # 该 feed 的摘要长 288-530 字符,超过通用触发线 200 导致详情永不回填
@@ -1014,7 +999,6 @@ class TheDecoderRssFetcher(PresetRssFetcher):
     source_channel = "blog"
     source_url = "https://the-decoder.com/"
     provenance_tier = "tier1_curated"
-    content_tags = ["market_news", "model_release", "product_update"]
     signal_strength = "medium_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
@@ -1026,7 +1010,7 @@ class RuanYifengRssFetcher(PresetRssFetcher):
     description = "阮一峰科技爱好者周刊的中文技术与 AI 精选内容。"
     icon = "📮"
     feed_url = "https://www.ruanyifeng.com/blog/atom.xml"
-    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "community"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 5
     source_owner = "ruanyifeng"
     source_brand = "科技爱好者周刊"
@@ -1034,7 +1018,6 @@ class RuanYifengRssFetcher(PresetRssFetcher):
     source_channel = "blog"
     source_url = "https://www.ruanyifeng.com/blog/"
     provenance_tier = "tier2_personal_social"
-    content_tags = ["market_news", "developer_tool", "tutorial_or_practice", "opinion"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
@@ -1050,7 +1033,7 @@ class TestingCatalogRssFetcher(PresetRssFetcher):
     description = "TestingCatalog 对主流 AI 产品功能上线与变化的追踪。"
     icon = "🧪"
     feed_url = "https://www.testingcatalog.com/rss/"
-    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "media"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 12
     default_fetch_detail_if_missing = True
     source_owner = "testingcatalog"
@@ -1059,7 +1042,6 @@ class TestingCatalogRssFetcher(PresetRssFetcher):
     source_channel = "blog"
     source_url = "https://www.testingcatalog.com/"
     provenance_tier = "tier1_curated"
-    content_tags = ["product_update", "model_release"]
     signal_strength = "high_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
@@ -1071,7 +1053,7 @@ class SimonWillisonRssFetcher(PresetRssFetcher):
     description = "Simon Willison 的 LLM 工具与开发实践长文。"
     icon = "🛠️"
     feed_url = "https://simonwillison.net/atom/entries/"
-    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "community"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 8
     source_owner = "simonwillison"
     source_brand = "Simon Willison"
@@ -1079,7 +1061,6 @@ class SimonWillisonRssFetcher(PresetRssFetcher):
     source_channel = "blog"
     source_url = "https://simonwillison.net/"
     provenance_tier = "tier2_personal_social"
-    content_tags = ["developer_tool", "tutorial_or_practice", "opinion"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
@@ -1095,7 +1076,7 @@ class LatentSpaceRssFetcher(PresetRssFetcher):
     description = "Latent Space 的 AI 工程访谈与行业分析长文。"
     icon = "🎙️"
     feed_url = "https://www.latent.space/feed"
-    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "community"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 5
     source_owner = "latent_space"
     source_brand = "Latent Space"
@@ -1103,7 +1084,6 @@ class LatentSpaceRssFetcher(PresetRssFetcher):
     source_channel = "newsletter"
     source_url = "https://www.latent.space/"
     provenance_tier = "tier2_personal_social"
-    content_tags = ["opinion", "market_news", "tutorial_or_practice"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
@@ -1119,7 +1099,7 @@ class InterconnectsRssFetcher(PresetRssFetcher):
     description = "Nathan Lambert 对 RLHF 与开源模型的深度分析。"
     icon = "🧵"
     feed_url = "https://www.interconnects.ai/feed"
-    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "community"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 5
     source_owner = "nathan_lambert"
     source_brand = "Interconnects"
@@ -1127,7 +1107,6 @@ class InterconnectsRssFetcher(PresetRssFetcher):
     source_channel = "newsletter"
     source_url = "https://www.interconnects.ai/"
     provenance_tier = "tier2_personal_social"
-    content_tags = ["opinion", "research_paper", "model_release"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
@@ -1143,7 +1122,7 @@ class RaschkaRssFetcher(PresetRssFetcher):
     description = "Sebastian Raschka 的 LLM 研究解读与实践。"
     icon = "📚"
     feed_url = "https://magazine.sebastianraschka.com/feed"
-    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "community"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 5
     source_owner = "sebastian_raschka"
     source_brand = "Ahead of AI"
@@ -1151,7 +1130,6 @@ class RaschkaRssFetcher(PresetRssFetcher):
     source_channel = "newsletter"
     source_url = "https://magazine.sebastianraschka.com/"
     provenance_tier = "tier2_personal_social"
-    content_tags = ["research_paper", "tutorial_or_practice", "opinion"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
@@ -1167,7 +1145,7 @@ class OneUsefulThingRssFetcher(PresetRssFetcher):
     description = "Ethan Mollick 对 AI 应用与工作方式的洞察。"
     icon = "💡"
     feed_url = "https://www.oneusefulthing.org/feed"
-    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "community"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 5
     source_owner = "ethan_mollick"
     source_brand = "One Useful Thing"
@@ -1175,7 +1153,6 @@ class OneUsefulThingRssFetcher(PresetRssFetcher):
     source_channel = "newsletter"
     source_url = "https://www.oneusefulthing.org/"
     provenance_tier = "tier2_personal_social"
-    content_tags = ["opinion", "tutorial_or_practice", "product_update"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
@@ -1191,7 +1168,7 @@ class LilianWengRssFetcher(PresetRssFetcher):
     description = "Lilian Weng 的深度技术长文。"
     icon = "🪵"
     feed_url = "https://lilianweng.github.io/index.xml"
-    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "community"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 5
     # 该 Hugo feed 的摘要长 500-900 字符,超过通用触发线 200 导致详情永不回填
     # (2026-07-17 实测,与 The Decoder 同款);提高触发线,正文从文章页回填。
@@ -1235,7 +1212,6 @@ class LilianWengRssFetcher(PresetRssFetcher):
     source_channel = "blog"
     source_url = "https://lilianweng.github.io/"
     provenance_tier = "tier2_personal_social"
-    content_tags = ["research_paper", "tutorial_or_practice"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
@@ -1247,7 +1223,7 @@ class BairBlogRssFetcher(PresetRssFetcher):
     description = "伯克利 AI 实验室（BAIR）的研究博客。"
     icon = "🎓"
     feed_url = "https://bair.berkeley.edu/blog/feed.xml"
-    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "official"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 5
     source_owner = "uc_berkeley"
     source_brand = "BAIR"
@@ -1255,7 +1231,6 @@ class BairBlogRssFetcher(PresetRssFetcher):
     source_channel = "blog"
     source_url = "https://bair.berkeley.edu/blog/"
     provenance_tier = "tier0_primary"
-    content_tags = ["research_paper"]
     signal_strength = "medium_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
@@ -1274,7 +1249,7 @@ class AppleMachineLearningResearchRssFetcher(PresetRssFetcher):
     # 摘要 feed 型统一规则(wave3 方法论固化,三连发教训):摘要长 ~600 字符
     # 超通用触发线 200,不提线则详情永不回填。
     default_detail_min_chars = 1500
-    category = "incubating"  # 观察期;验收转正后改回 "official"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 8
     source_owner = "apple"
     source_brand = "Apple MLR"
@@ -1282,7 +1257,6 @@ class AppleMachineLearningResearchRssFetcher(PresetRssFetcher):
     source_channel = "blog"
     source_url = "https://machinelearning.apple.com/"
     provenance_tier = "tier0_primary"
-    content_tags = ["research_paper", "model_release"]
     signal_strength = "medium_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
@@ -1332,7 +1306,7 @@ class NvidiaGenAiBlogRssFetcher(PresetRssFetcher):
     description = "NVIDIA 生成式 AI 的产品、平台与实践动态。"
     icon = "🟩"
     feed_url = "https://blogs.nvidia.com/blog/category/generative-ai/feed/"
-    category = "incubating"  # 观察期;验收转正后改回 "official"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 8
     source_owner = "nvidia"
     source_brand = "NVIDIA"
@@ -1340,7 +1314,6 @@ class NvidiaGenAiBlogRssFetcher(PresetRssFetcher):
     source_channel = "blog"
     source_url = "https://blogs.nvidia.com/blog/category/generative-ai/"
     provenance_tier = "tier0_primary"
-    content_tags = ["product_update", "api_platform", "tutorial_or_practice"]
     signal_strength = "medium_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
@@ -1357,7 +1330,7 @@ class RedditLocalLlamaRssFetcher(PresetRssFetcher):
     icon = "🦙"
     # top/.rss?t=day 变体即社区投票去噪，是 HN min_points 的 Reddit 等价物。
     feed_url = "https://www.reddit.com/r/LocalLLaMA/top/.rss?t=day"
-    category = "incubating"  # 观察期;验收转正后改回 "community"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 12
     source_owner = "reddit"
     source_brand = "r/LocalLLaMA"
@@ -1365,7 +1338,6 @@ class RedditLocalLlamaRssFetcher(PresetRssFetcher):
     source_channel = "forum"
     source_url = "https://www.reddit.com/r/LocalLLaMA/"
     provenance_tier = "tier1_curated"
-    content_tags = ["model_release", "developer_tool", "opinion"]
     signal_strength = "medium_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
@@ -1412,7 +1384,7 @@ class MicrosoftAiModelsRssFetcher(PresetRssFetcher):
     description = "Microsoft AI 自研模型的发布、能力评测与技术说明。"
     icon = "🪟"
     feed_url = "https://microsoft.ai/news-categories/models/feed/"
-    category = "incubating"  # 观察期;验收转正后改回 "official"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 10
     source_owner = "microsoft"
     source_brand = "Microsoft AI"
@@ -1420,7 +1392,6 @@ class MicrosoftAiModelsRssFetcher(PresetRssFetcher):
     source_channel = "models_rss"
     source_url = "https://microsoft.ai/news-categories/models/"
     provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "research_paper", "product_update"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public_rss_custom_user_agent"
@@ -1461,7 +1432,7 @@ class ImportAiRssFetcher(PresetRssFetcher):
     description = "Jack Clark 对 AI 研究、产业与政策信号的周度深度综述。"
     icon = "🗞️"
     feed_url = "https://jack-clark.net/feed/"
-    category = "incubating"  # 观察期;验收转正后改回 "media"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 6
     source_owner = "jack_clark"
     source_brand = "Import AI"
@@ -1469,7 +1440,6 @@ class ImportAiRssFetcher(PresetRssFetcher):
     source_channel = "newsletter_rss"
     source_url = "https://jack-clark.net/"
     provenance_tier = "tier1_curated"
-    content_tags = ["research_paper", "market_news", "opinion", "ai_policy"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public_rss"
@@ -1496,7 +1466,7 @@ class SeanGoedeckeRssFetcher(PresetRssFetcher):
     description = "Sean Goedecke 对 AI、软件工程与技术组织的个人分析。"
     icon = "🧭"
     feed_url = "https://www.seangoedecke.com/rss.xml"
-    category = "incubating"  # 观察期;验收转正后改回 "community"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 5
     source_owner = "sean_goedecke"
     source_brand = "Sean Goedecke"
@@ -1504,7 +1474,6 @@ class SeanGoedeckeRssFetcher(PresetRssFetcher):
     source_channel = "blog"
     source_url = "https://www.seangoedecke.com/"
     provenance_tier = "tier2_personal_social"
-    content_tags = ["opinion", "developer_tool", "tutorial_or_practice"]
     signal_strength = "medium_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public_rss"
@@ -1518,7 +1487,7 @@ class GilesThomasRssFetcher(PresetRssFetcher):
     description = "Giles Thomas 关于 LLM 实现、训练实验与开发实践的长文。"
     icon = "🧪"
     feed_url = "https://gilesthomas.com/feed/rss.xml"
-    category = "incubating"  # 观察期;验收转正后改回 "community"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 5
     source_owner = "giles_thomas"
     source_brand = "Giles Thomas"
@@ -1526,7 +1495,6 @@ class GilesThomasRssFetcher(PresetRssFetcher):
     source_channel = "blog"
     source_url = "https://gilesthomas.com/"
     provenance_tier = "tier2_personal_social"
-    content_tags = ["research_paper", "tutorial_or_practice", "developer_tool", "opinion"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public_rss"
@@ -1540,7 +1508,7 @@ class MaxWoolfRssFetcher(PresetRssFetcher):
     description = "Max Woolf 关于 LLM 应用实验、模型行为与 Agent 实践的观察。"
     icon = "🧮"
     feed_url = "https://minimaxir.com/index.xml"
-    category = "incubating"  # 观察期;验收转正后改回 "community"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 5
     source_owner = "max_woolf"
     source_brand = "Max Woolf"
@@ -1548,7 +1516,6 @@ class MaxWoolfRssFetcher(PresetRssFetcher):
     source_channel = "blog"
     source_url = "https://minimaxir.com/"
     provenance_tier = "tier2_personal_social"
-    content_tags = ["research_paper", "developer_tool", "product_update", "opinion"]
     signal_strength = "medium_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public_rss"
@@ -1562,7 +1529,7 @@ class GeohotRssFetcher(PresetRssFetcher):
     description = "geohot 关于 AI 系统、工程实践与行业炒作的评论。"
     icon = "⚡"
     feed_url = "https://geohot.github.io/blog/feed.xml"
-    category = "incubating"  # 观察期;验收转正后改回 "community"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 5
     source_owner = "geohot"
     source_brand = "geohot"
@@ -1570,7 +1537,6 @@ class GeohotRssFetcher(PresetRssFetcher):
     source_channel = "blog"
     source_url = "https://geohot.github.io/blog/"
     provenance_tier = "tier2_personal_social"
-    content_tags = ["opinion", "developer_tool", "model_release"]
     signal_strength = "medium_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public_rss"
@@ -1584,7 +1550,7 @@ class GeoffreyLittRssFetcher(PresetRssFetcher):
     description = "Geoffrey Litt 关于 AI、HCI 与编程工具的长文。"
     icon = "🧩"
     feed_url = "https://www.geoffreylitt.com/feed.xml"
-    category = "incubating"  # 观察期;验收转正后改回 "community"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 5
     source_owner = "geoffrey_litt"
     source_brand = "Geoffrey Litt"
@@ -1592,7 +1558,6 @@ class GeoffreyLittRssFetcher(PresetRssFetcher):
     source_channel = "blog"
     source_url = "https://www.geoffreylitt.com/"
     provenance_tier = "tier2_personal_social"
-    content_tags = ["developer_tool", "tutorial_or_practice", "opinion"]
     signal_strength = "medium_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public_rss"
@@ -1619,7 +1584,7 @@ class MartinAldersonRssFetcher(PresetRssFetcher):
     description = "Martin Alderson 关于开放权重、AI 成本与模型工程的分析。"
     icon = "📉"
     feed_url = "https://martinalderson.com/feed.xml"
-    category = "incubating"  # 观察期;验收转正后改回 "community"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 5
     source_owner = "martin_alderson"
     source_brand = "Martin Alderson"
@@ -1627,7 +1592,6 @@ class MartinAldersonRssFetcher(PresetRssFetcher):
     source_channel = "blog"
     source_url = "https://martinalderson.com/"
     provenance_tier = "tier2_personal_social"
-    content_tags = ["model_release", "api_platform", "market_news", "opinion"]
     signal_strength = "high_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public_rss"
@@ -1641,7 +1605,7 @@ class AnilDashRssFetcher(PresetRssFetcher):
     description = "Anil Dash 关于 AI 治理、技术社会影响与软件实践的评论。"
     icon = "🗣️"
     feed_url = "https://anildash.com/feed.xml"
-    category = "incubating"  # 观察期;验收转正后改回 "community"
+    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 5
     source_owner = "anil_dash"
     source_brand = "Anil Dash"
@@ -1649,7 +1613,6 @@ class AnilDashRssFetcher(PresetRssFetcher):
     source_channel = "blog"
     source_url = "https://anildash.com/"
     provenance_tier = "tier2_personal_social"
-    content_tags = ["opinion", "market_news", "product_update", "developer_tool"]
     signal_strength = "medium_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public_rss"

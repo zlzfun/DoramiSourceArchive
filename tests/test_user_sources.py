@@ -307,7 +307,8 @@ def test_add_custom_source_end_to_end(monkeypatch, tmp_path):
         with Session(app_module.db_sink.engine) as session:
             record = session.get(SourceConfigRecord, source_id)
             assert record is not None and record.owner_username == "alice"
-            assert record.source_type == "rss" and record.category == "user"
+            assert record.source_type == "rss"
+            assert record.admission_status == "admitted"
             assert record.ai_analysis_enabled is True
             params = jsonlib.loads(record.params_json)
             # 最简正文拍板:feed 给什么存什么,永不触发详情补抓
@@ -739,7 +740,7 @@ def test_source_health_includes_user_sources(monkeypatch, tmp_path):
         row = next(i for i in items if i["fetcher_id"] == source_id)
         assert row["user_source"] is True
         assert row["owner_username"] == "alice"
-        assert row["category"] == "user"
+        assert row["admission_status"] == "admitted" and "category" not in row
         assert row["shape"] == "article"
         assert row["feed_url"].startswith("https://")
         # registry 节点行不带 user_source 标记

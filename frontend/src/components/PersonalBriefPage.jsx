@@ -14,8 +14,8 @@ import LogoMark from './LogoMark';
 import { resolveCompany } from '../sourceTaxonomy';
 import { formatDateTime, formatRelativeTime } from '../utils/datetime';
 import { fmtDayKey, WEEKDAY_CHARS } from '../utils/readerTime';
-import { qualityScoreText, scoreTierClass, SCORE_DISCLAIMER } from '../utils/analysis';
-import { GRID_UNITS, gridColsFor, planSectionSpans, scoreOf, skeletonSpans } from '../utils/briefGrid';
+import { qualityScoreText, scoreTierClass, scoreDisclaimer, SCORE_DIMENSION_LABELS } from '../utils/analysis';
+import { GRID_UNITS, gridColsFor, planSectionSpans, scoreDimensionOf, scoreOf, skeletonSpans } from '../utils/briefGrid';
 
 // ── 我的早报(issue #23 重做,二稿)──
 // 桌面 = 视图轨 · 日期栏(顶替源栏槽位) · 报纸面(占条目列 + 阅读窗整幅):一份卡片式日报——
@@ -41,8 +41,14 @@ import { GRID_UNITS, gridColsFor, planSectionSpans, scoreOf, skeletonSpans } fro
 // 每张卡的宽度由 utils/briefGrid.planSectionSpans 按分数规划(≥ 9 通栏、并排分差 ≥ 1 用 ⅔ + ⅓、余 1 头卡
 // 够高才通栏否则 2 + 2),不再有「因为余数」而变宽或留白的卡;板块顺序由后端固定(SECTION_ORDER),
 // 板块内按分数降序;列数由 ResizeObserver 量报纸面内容宽给出(3 / 2 / 1),骨架屏固定版式。
+// issue #178 第三波:新闻板块之后接「深度阅读」「播客精选」两个按内容价值入选的分区(不占新闻的 10 条);
+// 卡上的分跟着维度走——这两个分区与播客显示内容价值,注脚与悬停说明随之写「内容价值」;理由位写
+// 「内容价值入选」(命中兴趣时仍是「兴趣 · 标签」)。报头的精选篇数只数新闻那份。
 
 const TERMINAL = new Set(['ready', 'degraded', 'failed', 'superseded']);
+// 额外于新闻精选之上的通道:重大事件 + 深度阅读 / 播客精选(报头「N 篇精选」不数它们)
+const EXTRA_LANES = new Set(['breaking', 'read', 'listen']);
+const VALUE_LANES = new Set(['read', 'listen']);
 const LIVE = new Set(['pending', 'generating']);
 const HISTORY_LIMIT = 100;
 const POLL_MS = 8000;
@@ -92,13 +98,18 @@ function whyOf(item, snapshot, interest) {
   }
   if (snapshot.is_latest_update) return { cls: 'is-fallback', text: '最新更新', title: item.selection_reason || snapshot.selection_reason || '' };
   if (interest) return { cls: 'is-interest', text: `兴趣 · ${interest}`, title: item.selection_reason || snapshot.selection_reason || '命中你的兴趣' };
-  return { cls: '', text: '新闻价值入选', title: item.selection_reason || snapshot.selection_reason || '' };
+  const byValue = VALUE_LANES.has(item.selection_lane);
+  return { cls: '', text: byValue ? '内容价值入选' : '新闻价值入选', title: item.selection_reason || snapshot.selection_reason || '' };
 }
 
 function BriefCard({ item, lead, span = 2, cols = 3, source, onOpen, onSubscribeSource = null, flash = false }) {
   const snapshot = item.snapshot || {};
-  const score = qualityScoreText(item.quality_score ?? snapshot.quality_score);
-  const scoreTier = scoreTierClass(item.quality_score ?? snapshot.quality_score);   // issue #54
+  // 卡上显示的分随维度(issue #178 第三波):深度阅读 / 播客精选两区与任何分区的播客是内容价值,其余新闻价值
+  const dimension = scoreDimensionOf(item);
+  const dimensionLabel = SCORE_DIMENSION_LABELS[dimension];
+  const shownScore = scoreOf(item);
+  const score = qualityScoreText(shownScore);
+  const scoreTier = scoreTierClass(shownScore);   // issue #54
   // display_tags 是读者面投影(规范标签 + 灵活标签,codex 检视 P2);tags 只有规范指派,老快照回退用
   const tags = Array.isArray(snapshot.display_tags) ? snapshot.display_tags : (snapshot.tags || []);
   const interest = interestLabelOf(item, snapshot);
@@ -132,7 +143,7 @@ function BriefCard({ item, lead, span = 2, cols = 3, source, onOpen, onSubscribe
     <span key={chip.key} className={`reader-tag-chip ${chip.cls || ''}`} title={chip.title}>{chip.text}</span>
   ));
   const scoreNode = score && (
-    <span className="brief-card-score" title={SCORE_DISCLAIMER} aria-label={`新闻价值分 ${score}`}>
+    <span className="brief-card-score" title={scoreDisclaimer(dimension)} aria-label={`${dimensionLabel}分 ${score}`}>
       <span className={`ai-grad-text ${scoreTier}`}>{score}</span>
     </span>
   );
@@ -191,7 +202,7 @@ function BriefCard({ item, lead, span = 2, cols = 3, source, onOpen, onSubscribe
           {score && (
             <span className="brief-card-aside-score">
               {scoreNode}
-              <span className="brief-card-aside-cap">新闻价值</span>
+              <span className="brief-card-aside-cap">{dimensionLabel}</span>
             </span>
           )}
           {chips.length > 0 && <span className="brief-card-tags is-stack">{chipNodes}</span>}
@@ -556,9 +567,11 @@ export default function PersonalBriefPage({
 
 
   const items = edition?.items || [];
-  // 重大事件条目额外于精选之上、可能来自订阅外,报头统计只数用户自己那份精选
+  // 重大事件与深度阅读 / 播客精选额外于精选之上(前者可能来自订阅外),报头统计只数用户自己那份新闻精选
   const breakingCount = items.filter((item) => item.selection_lane === 'breaking').length;
-  const ownItems = items.filter((item) => item.selection_lane !== 'breaking');
+  const readCount = items.filter((item) => item.selection_lane === 'read').length;
+  const listenCount = items.filter((item) => item.selection_lane === 'listen').length;
+  const ownItems = items.filter((item) => !EXTRA_LANES.has(item.selection_lane));
   const interestCount = ownItems.filter((item) => (item.matched_interest_codes || []).length > 0).length;
   const sourceCount = new Set(ownItems.map((item) => item.snapshot?.source_id).filter(Boolean)).size;
   const live = isToday && LIVE.has(status);
@@ -584,6 +597,8 @@ export default function PersonalBriefPage({
       ownItems.length > 0 ? `${ownItems.length} 篇${edition?.degraded_reason ? '最新更新' : '精选'}` : null,
       interestCount > 0 ? `${interestCount} 篇命中你的兴趣` : null,
       sourceCount > 0 ? `来自 ${sourceCount} 个来源` : null,
+      readCount > 0 ? `${readCount} 篇深度阅读` : null,
+      listenCount > 0 ? `${listenCount} 集播客` : null,
       interestOnly ? '未订阅来源' : null,
     ].filter(Boolean).join(' · ')
     : '';
@@ -641,13 +656,31 @@ export default function PersonalBriefPage({
     const stale = usesToday && (edition.interest_stale || edition.scope_stale);
     const n = (value) => <b>{value}</b>;
     let fact;
-    if (edition.degraded_reason) {
+    // 降级只说新闻那份(issue #178 第三波):深度阅读 / 播客精选照常入选时,说明行如实写「新闻」不足并交代另有几篇;
+    // 「最新更新、不计入正式精选」只指回退板块,没有回退条目时不说
+    const valueCount = readCount + listenCount;
+    const valueText = valueCount > 0 && (
+      <>
+        另有{readCount > 0 && <> {n(readCount)} 篇深度阅读</>}
+        {readCount > 0 && listenCount > 0 && '、'}
+        {listenCount > 0 && <> {n(listenCount)} 集播客</>}
+      </>
+    );
+    const scopeText = scopeCount > 0 ? <> {n(scopeCount)} 个订阅来源</> : '订阅来源';
+    if (edition.degraded_reason && valueCount > 0) {
+      const head = interestOnly
+        ? <>今天没有命中你兴趣的新闻{followedCount ? <>（{n(followedCount)} 个兴趣）</> : null}</>
+        : (ratioUnfillable ? '今天缺少用于补齐的非兴趣新闻' : '今天没有达到入选标准的新闻');
+      fact = ownItems.length > 0
+        ? <>{head}，「订阅源最新更新」是{scopeText}的最新内容，不计入正式精选；{valueText}</>
+        : <>{head}，{valueText}</>;
+    } else if (edition.degraded_reason) {
       fact = interestOnly
         ? <>今天没有命中你兴趣的新内容{followedCount ? <>（{n(followedCount)} 个兴趣）</> : null}</>
         : (
           <>
             {ratioUnfillable ? '今天缺少用于补齐的非兴趣内容' : '今天没有达到入选标准的内容'}，以下是
-            {scopeCount > 0 ? <> {n(scopeCount)} 个订阅来源</> : '订阅来源'}的最新更新，不计入正式精选
+            {scopeText}的最新更新，不计入正式精选
           </>
         );
     } else if (interestOnly) {
@@ -719,8 +752,9 @@ export default function PersonalBriefPage({
             {onBrowse && isToday && <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={onBrowse}>先去看文章</button>}
           </div>
         ) : grouped.map((group, groupIndex) => {
-          // 头版 = 第一板块首张(降级版面无头版);其余按分数规划宽度,头版板块规划的是它之后的那些卡
-          const lead = groupIndex === 0 && !edition.degraded_reason;
+          // 头版 = 第一板块首张(降级版面无头版;只有深度阅读 / 播客精选时也不设头版——它们是新闻之后的附加分区);
+          // 其余按分数规划宽度,头版板块规划的是它之后的那些卡
+          const lead = groupIndex === 0 && !edition.degraded_reason && !group.items.every((item) => VALUE_LANES.has(item.selection_lane));
           const scores = group.items.map(scoreOf);
           const spans = lead
             ? [GRID_UNITS, ...planSectionSpans(scores.slice(1), cols)]

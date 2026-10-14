@@ -18,14 +18,12 @@ function flatten(cfg) {
     name: cfg.name || '',
     source_type: cfg.source_type || 'web',
     url: cfg.url || '',
-    category: cfg.category || '',
     description: cfg.description || '',
     source_owner: cfg.source_owner || '',
     source_brand: cfg.source_brand || '',
     source_scope: cfg.source_scope || '',
     source_channel: cfg.source_channel || '',
     provenance_tier: cfg.provenance_tier || '',
-    content_tags: Array.isArray(cfg.content_tags) ? cfg.content_tags.join(', ') : (cfg.content_tags || ''),
     signal_strength: cfg.signal_strength || '',
     noise_risk: cfg.noise_risk || '',
     // params
@@ -62,14 +60,12 @@ function toPayload(f) {
     name: f.name,
     source_type: f.source_type,
     url: f.url,
-    category: f.category,
     description: f.description,
     source_owner: f.source_owner,
     source_brand: f.source_brand,
     source_scope: f.source_scope,
     source_channel: f.source_channel,
     provenance_tier: f.provenance_tier,
-    content_tags: f.content_tags ? f.content_tags.split(',').map(s => s.trim()).filter(Boolean) : [],
     signal_strength: f.signal_strength,
     noise_risk: f.noise_risk,
     params,
@@ -231,7 +227,6 @@ export default function CustomNodeBuilder({ showToast }) {
               </select>
             </Field>
             <Field label="入口 URL"><input className={inputCls} value={form.url} onChange={e => set('url', e.target.value)} /></Field>
-            <Field label="业务分类"><input className={inputCls} value={form.category} onChange={e => set('category', e.target.value)} /></Field>
             <Field label="单次上限"><input type="number" className={inputCls} value={form.limit} onChange={e => set('limit', e.target.value)} /></Field>
           </div>
 
@@ -256,7 +251,6 @@ export default function CustomNodeBuilder({ showToast }) {
                   <Field label="渲染等待条件 (css:/js:)"><input className={inputCls} value={form.wait_for} onChange={e => set('wait_for', e.target.value)} /></Field>
                   <Field label="列表 CSS schema (JSON)"><input className={inputCls} value={form.listing_css} onChange={e => set('listing_css', e.target.value)} /></Field>
                   <Field label="来源主体"><input className={inputCls} value={form.source_owner} onChange={e => set('source_owner', e.target.value)} /></Field>
-                  <Field label="内容标签（逗号分隔）"><input className={inputCls} value={form.content_tags} onChange={e => set('content_tags', e.target.value)} /></Field>
                 </div>
               )}
             </div>

@@ -45,7 +45,6 @@ class SourceBuilderPreviewRequest(BaseModel):
     name: str = ""
     source_type: str = "web"
     url: str = ""
-    category: str = ""
     params: Dict[str, Any] = PydanticField(default_factory=dict)
 
 

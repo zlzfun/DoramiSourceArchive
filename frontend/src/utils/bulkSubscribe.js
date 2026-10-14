@@ -1,3 +1,5 @@
+import { readerShapeOf } from './readerShape.js';
+
 const SHAPE_LABELS = Object.freeze({
   article: '文章源',
   podcast: '播客源',
@@ -36,7 +38,7 @@ export function bulkSubscribeModel(shape, sources, subscribedIds, busyShape = nu
   if (!sourceLabel || loading) return null;
 
   const sourceIds = (sources || [])
-    .filter((source) => !source.hidden && (source.shape || 'article') === shape)
+    .filter((source) => !source.hidden && readerShapeOf(source) === shape)
     .map((source) => source.source_id);
   if (sourceIds.length === 0) return null;
   const remainingCount = sourceIds.filter((sourceId) => !subscribedIds.has(sourceId)).length;

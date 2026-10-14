@@ -304,17 +304,12 @@ When assembling the final report, follow this exact backend system prompt:
 # ==========================================
 
 # 治理字段的受控取值（与现有 fetcher/source-config 取值对齐，约束 LLM 输出）。
-SOURCE_CONFIG_CATEGORIES = ["official", "official_web", "media", "community", "paper", "blog"]
 SOURCE_CONFIG_SCOPES = [
     "company", "model_family", "product_family", "api_platform",
     "open_model_family", "developer_tool", "tech_media", "research_lab",
 ]
 SOURCE_CONFIG_CHANNELS = ["newsroom", "blog", "changelog", "release_notes", "website_category", "docs", "community"]
 SOURCE_CONFIG_TIERS = ["tier0_primary", "tier1_curated", "tier2_aggregator"]
-SOURCE_CONFIG_CONTENT_TAGS = [
-    "model_release", "product_update", "api_platform", "research_paper",
-    "developer_tool", "market_news", "safety_policy", "tutorial_or_practice",
-]
 SOURCE_CONFIG_SIGNALS = ["high_signal", "medium_signal", "low_signal"]
 SOURCE_CONFIG_NOISE = ["low_noise", "medium_noise", "high_noise"]
 
@@ -351,18 +346,15 @@ def build_source_config_user_prompt(signals: Dict[str, Any]) -> str:
         f"候选文章链接（最多 25 条）：\n{link_lines}\n"
         f"\n条目容器 HTML 样例：\n{sample_item_html}\n"
         "\n【受控取值】\n"
-        f"category ∈ {SOURCE_CONFIG_CATEGORIES}\n"
         f"source_scope ∈ {SOURCE_CONFIG_SCOPES}\n"
         f"source_channel ∈ {SOURCE_CONFIG_CHANNELS}\n"
         f"provenance_tier ∈ {SOURCE_CONFIG_TIERS}\n"
-        f"content_tags ⊆ {SOURCE_CONFIG_CONTENT_TAGS}\n"
         f"signal_strength ∈ {SOURCE_CONFIG_SIGNALS}\n"
         f"noise_risk ∈ {SOURCE_CONFIG_NOISE}\n"
         "\n【输出 JSON 结构】\n"
         "{\n"
         '  "name": "节点展示名",\n'
         '  "site_name": "站点名",\n'
-        '  "category": "official_web",\n'
         '  "description": "一句话说明该源抓什么",\n'
         '  "article_url_patterns": ["/news/"],\n'
         '  "exclude_url_patterns": ["/category/"],\n'
@@ -372,7 +364,6 @@ def build_source_config_user_prompt(signals: Dict[str, Any]) -> str:
         '  "source_scope": "company",\n'
         '  "source_channel": "newsroom",\n'
         '  "provenance_tier": "tier0_primary",\n'
-        '  "content_tags": ["product_update"],\n'
         '  "signal_strength": "high_signal",\n'
         '  "noise_risk": "low_noise"\n'
         "}"

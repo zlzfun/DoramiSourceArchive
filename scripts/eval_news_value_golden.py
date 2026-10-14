@@ -3,9 +3,9 @@
 
     .venv/bin/python scripts/eval_news_value_golden.py [--model deepseek-v4-flash] [--limit N] [--out FILE]
 
-读 tests/fixtures/golden_news_value.json(生产文章 + Claude/codex 独立打分 + v5 基线),
+读 tests/fixtures/golden_news_value.json(生产文章 + Claude/codex 独立打分 + 夹具里记录的基线,2026-10-12 起为 v6),
 调 `analyze_article_with_llm`(与 worker/日报同一函数、同一标签闭集召回),打印:
-MAE(vs 黄金均值 / 各评审)、档位一致率、按层均分、与基线 v5 的逐篇变化。
+MAE(vs 黄金均值 / 各评审)、档位一致率、按层均分、与基线的逐篇变化。
 提示词改动前后各跑一次,MAE 与档位一致率不得劣化。会产生 LLM 调用(62 次)。
 """
 from __future__ import annotations
@@ -29,7 +29,7 @@ async def main() -> int:
     ap.add_argument("--concurrency", type=int, default=6)
     ap.add_argument("--out", default="", help="逐篇结果 JSON 输出路径")
     ap.add_argument("--allow-regression", action="store_true",
-                    help="只报告不判定(默认:任一篇评分失败、或 MAE/档位一致率劣于夹具里的 v5 基线即非零退出)")
+                    help="只报告不判定(默认:任一篇评分失败、或 MAE/档位一致率劣于夹具里的基线即非零退出)")
     args = ap.parse_args()
 
     from sqlmodel import Session
@@ -86,8 +86,8 @@ async def main() -> int:
         print(f"vs {name}: MAE {mae(zip(cur, r)):.2f}  档位一致率 {sum(band(a)==band(b) for a,b in zip(cur,r))/len(ok):.0%}")
     base = [(results[it["n"]]["score"], it["baseline"]["score"]) for it in ok if it["baseline"].get("score") is not None]
     if base:
-        print(f"vs 基线 v5: MAE {mae(base):.2f}  平均变化 {st.mean(a-b for a,b in base):+.2f}")
-    print("\n层        n  当前   黄金   Claude codex  基线v5")
+        print(f"vs 基线 {items[0]['baseline'].get('prompt_version', '')}: MAE {mae(base):.2f}  平均变化 {st.mean(a-b for a,b in base):+.2f}")
+    print("\n层        n  当前   黄金   Claude codex  基线")
     for s in ("official", "media", "paper", "board", "community"):
         g = [it for it in ok if it["stratum"] == s]
         if not g: continue
@@ -106,7 +106,7 @@ async def main() -> int:
     if args.allow_regression:
         return 0
     # 门禁判定:评分失败即失败(提示词产出畸形输出不能靠「至少评了一篇」混过);
-    # 与黄金均值的 MAE 与档位一致率不得劣于夹具自带的 v5 基线(同一 ok 子集上比较)。
+    # 与黄金均值的 MAE 与档位一致率不得劣于夹具自带的基线(同一 ok 子集上比较)。
     failed = [it["n"] for it in items if "score" not in results.get(it["n"], {})]
     if failed:
         print(f"门禁失败:{len(failed)} 篇评分失败 {failed}", file=sys.stderr)
@@ -118,7 +118,7 @@ async def main() -> int:
         cur_agree = sum(band(results[it["n"]]["score"]) == band(it["gold"]) for it in with_base) / len(with_base)
         base_agree = sum(band(it["baseline"]["score"]) == band(it["gold"]) for it in with_base) / len(with_base)
         if cur_mae > base_mae + 1e-9 or cur_agree < base_agree - 1e-9:
-            print(f"门禁失败:MAE {cur_mae:.2f}(基线 {base_mae:.2f})/ 档位一致率 {cur_agree:.0%}(基线 {base_agree:.0%})劣于 v5 基线",
+            print(f"门禁失败:MAE {cur_mae:.2f}(基线 {base_mae:.2f})/ 档位一致率 {cur_agree:.0%}(基线 {base_agree:.0%})劣于基线",
                   file=sys.stderr)
             return 4
         print(f"门禁通过:MAE {cur_mae:.2f} ≤ 基线 {base_mae:.2f},档位一致率 {cur_agree:.0%} ≥ 基线 {base_agree:.0%}")

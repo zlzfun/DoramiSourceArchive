@@ -157,6 +157,9 @@ def collect_release_metrics(
         coverage_adjusted += int(bool(adjustments))
     lane_counts = _counts(item.selection_lane for item in items)
     selected_total = sum(lane_counts.values())
+    # 兴趣 / 质量占比的分母只算新闻精选两通道:重大事件与深度阅读 / 播客精选(issue #178 第三波)额外于 target,
+    # 不在兴趣上限的约束范围内
+    news_total = lane_counts.get("interest", 0) + lane_counts.get("quality", 0)
     completed = [row for row in editions if row.status in {"ready", "degraded"}]
 
     flags = {
@@ -210,10 +213,10 @@ def collect_release_metrics(
             ),
             "selection_lane_counts": lane_counts,
             "interest_ratio": (
-                lane_counts.get("interest", 0) / selected_total if selected_total else 0.0
+                lane_counts.get("interest", 0) / news_total if news_total else 0.0
             ),
             "quality_ratio": (
-                lane_counts.get("quality", 0) / selected_total if selected_total else 0.0
+                lane_counts.get("quality", 0) / news_total if news_total else 0.0
             ),
             "coverage_adjusted_item_rate": (
                 coverage_adjusted / selected_total if selected_total else 0.0

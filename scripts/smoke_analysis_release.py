@@ -129,6 +129,9 @@ def _fake_analysis_payload() -> dict[str, Any]:
     return {
         "quality_score": 8.2,
         "score_reason": "信息完整、边界明确，并包含可复核的实践价值。",
+        "content_kind": "news",
+        "content_value_reason": "给出实现约束与验证结果，可直接参考。",
+        "content_value": 6.8,
         "one_sentence_summary": "文章说明了一项 AI 产品能力及其使用边界。",
         "summary": "文章介绍了能力、实现约束、验证结果和对开发者的实际影响。",
         "content_genre": "product_update",

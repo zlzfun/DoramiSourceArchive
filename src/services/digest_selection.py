@@ -29,10 +29,15 @@ from models.analysis_contracts import (
     PERSONAL_DIGEST_INTEREST_MAX_RATIO,
     PERSONAL_DIGEST_MIN_QUALITY_SCORE,
     PERSONAL_DIGEST_TARGET_ITEMS,
+    PERSONAL_DIGEST_VALUE_MAX_ITEMS_LIMIT,
+    PERSONAL_DIGEST_VALUE_PER_SOURCE_MAX,
+    PERSONAL_DIGEST_VALUE_WINDOW_DAYS,
+    PERSONAL_DIGEST_VALUE_WINDOW_DAYS_LIMIT,
     SelectionLane,
     UserInterestDTO,
 )
 from services.article_time import parse_article_time
+from services.content_classification import CONTENT_PRIMARY_KINDS, PERSONAL_DIGEST_GENRE_SECTIONS
 
 
 _TRACKING_QUERY_KEYS = frozenset({
@@ -40,25 +45,19 @@ _TRACKING_QUERY_KEYS = frozenset({
     "utm_campaign", "utm_content", "utm_medium", "utm_source", "utm_term",
 })
 
-GENRE_SECTIONS = {
-    "model_release": "模型发布",
-    "open_source_update": "开源动态",
-    "research_paper": "学术论文",
-    "conference": "技术大会",
-    "social_discussion": "社交动态",
-    "product_update": "行业资讯",
-    "industry_news": "行业资讯",
-    "security_incident": "行业资讯",
-    "regulation": "行业资讯",
-    "tutorial": "工程实践",
-    "opinion": "观点洞察",
-    "aggregation": "资讯聚合",
-    "other": "其它",
-}
+# 体裁 → 板块(取值不变,定义收拢到 content_classification 词表,issue #178)。
+GENRE_SECTIONS = PERSONAL_DIGEST_GENRE_SECTIONS
 BREAKING_SECTION = "重大事件"
+# issue #178 第三波:按内容价值入选的两个额外分区,接在新闻分区(含降级时的「订阅源最新更新」)之后。
+READ_SECTION = "深度阅读"
+LISTEN_SECTION = "播客精选"
+# 「深度阅读」收的内容类型 = 主分以内容价值为准的那几类(论文 / 教程 / 观点 / 汇编);播客另走「播客精选」。
+READ_KINDS: frozenset[str] = CONTENT_PRIMARY_KINDS
+PODCAST_SHAPE = "podcast"
 # 板块固定顺序(issue #74):此前板块按条目首次出现建组,顺序随当天最高分条目的体裁漂移
 # (「论文排在模型发布前」只因当天最高分恰好是论文)。「发生了什么」在前,「怎么看」在后,
-# 社交与聚合殿后,降级版面的「订阅源最新更新」永远最后;未登记的板块名排在已登记之后、按名字稳定。
+# 社交与聚合殿后,降级版面的「订阅源最新更新」是新闻区的最后一块;「深度阅读」「播客精选」(issue #178
+# 第三波)在新闻区之后;未登记的板块名排在已登记之后、按名字稳定。
 SECTION_ORDER: tuple[str, ...] = (
     BREAKING_SECTION,
     "模型发布",
@@ -72,6 +71,8 @@ SECTION_ORDER: tuple[str, ...] = (
     "资讯聚合",
     "其它",
     "订阅源最新更新",
+    READ_SECTION,
+    LISTEN_SECTION,
 )
 _SECTION_RANK = {name: index for index, name in enumerate(SECTION_ORDER)}
 
@@ -481,6 +482,126 @@ def select_digest_articles(
     return result
 
 
+# ── 「深度阅读」「播客精选」(issue #178 第三波,方案 §5.1)──
+# 与新闻的兴趣 / 质量两通道并列、额外于 target 之上的两个分区,按内容价值(值不值得花时间读完 / 听完)
+# 入选,不看新闻价值。范围同新闻通道:订阅内直接参选,订阅外须命中兴趣;门槛、名额、窗口是 KV 旋钮,
+# 每源 1 篇、同事件 1 篇;按内容价值降序,平分时较新的在前。已进新闻通道的、读者近 7 期早报出现过的,
+# 由调用方经 ``excluded_article_ids`` 排除。
+
+
+@dataclass(frozen=True)
+class ValueLanePolicy:
+    min_value: float
+    max_items: int
+    window_days: int = PERSONAL_DIGEST_VALUE_WINDOW_DAYS
+    per_source_max: int = PERSONAL_DIGEST_VALUE_PER_SOURCE_MAX
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.min_value <= 10.0:
+            raise ValueError("min_value 必须在 0～10 之间")
+        if not 0 <= self.max_items <= PERSONAL_DIGEST_VALUE_MAX_ITEMS_LIMIT:
+            raise ValueError(f"max_items 必须在 0～{PERSONAL_DIGEST_VALUE_MAX_ITEMS_LIMIT} 之间")
+        if not 1 <= self.window_days <= PERSONAL_DIGEST_VALUE_WINDOW_DAYS_LIMIT:
+            raise ValueError(f"window_days 必须在 1～{PERSONAL_DIGEST_VALUE_WINDOW_DAYS_LIMIT} 之间")
+        if self.per_source_max < 1:
+            raise ValueError("per_source_max 必须至少为 1")
+
+
+def value_lane_accepts(candidate: DigestArticleCandidateDTO, lane: SelectionLane | str) -> bool:
+    """这条候选是否属于该分区:深度阅读 = 论文 / 教程 / 观点 / 汇编(非播客),播客精选 = 播客。"""
+
+    value = str(getattr(lane, "value", lane))
+    is_podcast = candidate.content_shape == PODCAST_SHAPE
+    if value == SelectionLane.LISTEN.value:
+        return is_podcast
+    if value == SelectionLane.READ.value:
+        return not is_podcast and candidate.content_kind in READ_KINDS
+    return False
+
+
+def _value_reason(
+    candidate: DigestArticleCandidateDTO,
+    matched_codes: Sequence[str],
+    *,
+    tag_display_names: Mapping[str, str],
+    source_display_names: Mapping[str, str],
+) -> str:
+    source_name = source_display_names.get(candidate.source_id, candidate.source_id)
+    if matched_codes:
+        code = matched_codes[0]
+        display_name = tag_display_names.get(code, code)
+        if not candidate.subscribed:
+            return f"命中你的兴趣「{display_name}」，来自你未订阅的「{source_name}」，按内容价值入选。"
+        return f"命中你的兴趣「{display_name}」，来自你订阅的「{source_name}」，按内容价值入选。"
+    return f"来自你订阅的「{source_name}」，按内容价值入选。"
+
+
+def select_value_lane(
+    candidates: Iterable[DigestArticleCandidateDTO],
+    interests: Iterable[UserInterestDTO] = (),
+    *,
+    lane: SelectionLane | str,
+    policy: ValueLanePolicy,
+    excluded_article_ids: Iterable[str] = (),
+    tag_display_names: Mapping[str, str] | None = None,
+    source_display_names: Mapping[str, str] | None = None,
+) -> list[DigestSelectionDTO]:
+    """Pick at most ``policy.max_items`` items for one content-value section.
+
+    Hard rules only, nothing is relaxed: the content-value floor, the lane's
+    content kind, external = interest hit, one item per source and per event.
+    Deterministic for equal input.
+    """
+
+    lane_value = SelectionLane(str(getattr(lane, "value", lane)))
+    if lane_value not in (SelectionLane.READ, SelectionLane.LISTEN):
+        raise ValueError("select_value_lane 只接受 read / listen 两个分区")
+    if policy.max_items <= 0:
+        return []
+    followed = _followed_map(interests)
+    excluded = set(excluded_article_ids)
+    rows: list[tuple[DigestArticleCandidateDTO, tuple[str, ...]]] = []
+    for candidate in candidates:
+        if candidate.article_id in excluded or not value_lane_accepts(candidate, lane_value):
+            continue
+        if candidate.content_value is None or candidate.content_value < policy.min_value - 1e-9:
+            continue
+        matched = tuple(sorted(code for code in set(interest_codes_of(candidate)) if code in followed))
+        if not candidate.subscribed and not matched:
+            continue
+        rows.append((candidate, matched))
+    rows.sort(key=lambda row: (
+        -float(row[0].content_value or 0.0),
+        -_published_timestamp(row[0].publish_date),
+        row[0].article_id,
+    ))
+    names = source_display_names or {}
+    tags = tag_display_names or {}
+    result: list[DigestSelectionDTO] = []
+    event_keys: set[str] = set()
+    source_counts: dict[str, int] = {}
+    for candidate, matched in rows:
+        if len(result) >= policy.max_items:
+            break
+        event_key = _event_key(candidate)
+        if event_key in event_keys:
+            continue
+        if source_counts.get(candidate.source_id, 0) >= policy.per_source_max:
+            continue
+        event_keys.add(event_key)
+        source_counts[candidate.source_id] = source_counts.get(candidate.source_id, 0) + 1
+        result.append(DigestSelectionDTO(
+            article_id=candidate.article_id,
+            lane=lane_value,
+            matched_interest_codes=matched,
+            selection_reason=_value_reason(
+                candidate, matched, tag_display_names=tags, source_display_names=names
+            ),
+            coverage_adjustments=(),
+        ))
+    return result
+
+
 # ── 「重大事件」通道(v3.50,issue #33 §2)──
 # 与兴趣/分数两通道并列的第三条通道,但语义不同:它不看订阅范围,只回答「今天有没有
 # 对所有读者都是头条的事」。准入全是机械层,不靠 LLM 自觉:
@@ -676,7 +797,11 @@ __all__ = [
     "BreakingSelectionPolicy",
     "DigestSelectionPolicy",
     "GENRE_SECTIONS",
+    "LISTEN_SECTION",
+    "READ_KINDS",
+    "READ_SECTION",
     "SECTION_ORDER",
+    "ValueLanePolicy",
     "eligible_for_selection",
     "interest_codes_of",
     "interest_only_policy",
@@ -684,4 +809,6 @@ __all__ = [
     "section_rank",
     "select_breaking_events",
     "select_digest_articles",
+    "select_value_lane",
+    "value_lane_accepts",
 ]

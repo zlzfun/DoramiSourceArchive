@@ -77,6 +77,13 @@ def _usage_meta(purpose: str, username: Optional[str]) -> UsageMeta:
     return UsageMeta(purpose=purpose, username=(username or USAGE_SYSTEM))
 from models.analysis_contracts import TaxonomyTagDTO
 from models.content import DailyBriefContent
+from services.content_classification import (
+    DAILY_BRIEF_GENRE_CLASSIFICATIONS,
+    classify_item,
+    rule_kind,
+    score_projection,
+    source_default_kinds,
+)
 from models.db import (
     AppSettingRecord,
     DailyBriefCandidateRecord,
@@ -147,6 +154,14 @@ DEFAULT_MIN_ITEMS = 8
 APPENDIX_BAND = 1.0
 # 软阈值保底时陪跑进同事件聚类的近线稿下限(条):近线稿之间互为重复会坍缩,名额要留足
 NEAR_BAND_PROBE_MIN = 12
+# 论文名额(issue #178 第三波,方案 §5.2):内容类型为论文的条目单独成通道——按内容价值挑至多
+# PAPER_CAP 篇,门槛是内容价值(KV,默认 7.0),不受新闻价值门槛约束(常规论文的新闻价值多在 4–5.5,
+# 旧门槛把它们挡在外面、名额常空);名额以外的论文不进日报。还没有当前版本内容价值的论文(存量未补)
+# 照旧走新闻门槛、仍占名额。预选多带 PAPER_BUFFER 篇,跨天查重剔掉时顶上。
+KEY_PAPER_MIN_CONTENT_VALUE = "daily_brief_paper_min_content_value"
+DEFAULT_PAPER_MIN_CONTENT_VALUE = 7.0
+PAPER_CAP = 3
+PAPER_BUFFER = 1
 # LLM 配置的 KV key 沿用 services/credentials 注册表(与历史存量一致,零迁移)。
 KEY_LLM_BASE_URL = credentials.LLM_NAMESPACE.field_by_name("base_url").kv_key
 KEY_LLM_MODEL = credentials.LLM_NAMESPACE.field_by_name("model").kv_key
@@ -223,6 +238,10 @@ class ScoredItem:
     # 软阈值补足稿标记(v3.49.1):随 items 落库,同日重跑合并后报头「按分补足 N 条」与
     # last_run.threshold_backfilled 才能如实计入早间批补进的条目
     backfilled: bool = False
+    # 内容类型与当前有效的内容价值(issue #178 第三波):论文名额据此判定与排序。随 items 落库
+    # (加法键),同日重跑时早间批的论文才能计入当日名额。
+    content_kind: str = ""
+    content_value: Optional[float] = None
 
     def to_reduce_dict(self) -> Dict[str, Any]:
         return {
@@ -249,26 +268,15 @@ class ScoredItem:
             # 并入代表的条目 id 随 items 落库:游标重置重生成时这些文章会再次成为候选,
             # 靠它们才能识别「早间已被代表吸收」而不重复计数/渲染
             "merged_ids": list(self.merged_ids),
+            "content_kind": self.content_kind,
+            "content_value": self.content_value,
         }
 
 
 # 文章级分析的 content_genre → 日报 classification(分节用)。日报自己不再产分类,
-# 体裁与分数一样来自分析结果,映射是确定性代码。
-CLASSIFICATION_FROM_GENRE: Dict[str, str] = {
-    "model_release": "模型发布",
-    "product_update": "行业资讯",
-    "open_source_update": "开源动态",
-    "research_paper": "学术论文",
-    "tutorial": "行业资讯",
-    "opinion": "行业资讯",
-    "industry_news": "行业资讯",
-    "conference": "技术大会",
-    "social_discussion": "社交动态",
-    "aggregation": "资讯聚合",
-    "security_incident": "行业资讯",
-    "regulation": "行业资讯",
-    "other": "资讯聚合",
-}
+# 体裁与分数一样来自分析结果,映射是确定性代码。取值是对外契约(神灯流水线原样消费),
+# 定义收拢在 content_classification 词表(issue #178),此处只保留历史名字供引用。
+CLASSIFICATION_FROM_GENRE: Dict[str, str] = DAILY_BRIEF_GENRE_CLASSIFICATIONS
 
 
 def classification_from_genre(content_genre: str) -> str:
@@ -306,6 +314,9 @@ class ArticleScore:
     entity_tags: Tuple[str, ...] = ()
     # 一句「为什么重要/不重要」:只喂给编辑阶段作已知事实,绝不进 extensions.items
     score_reason: str = ""
+    # 内容类型(classify_item 推导)与当前有效的内容价值(issue #178 第三波,论文名额用)
+    content_kind: str = ""
+    content_value: Optional[float] = None
 
 
 def load_stored_scores(session: Session, article_ids: List[str]) -> Dict[str, ArticleScore]:
@@ -319,19 +330,38 @@ def load_stored_scores(session: Session, article_ids: List[str]) -> Dict[str, Ar
     if not ids:
         return {}
     rows = session.exec(
-        select(ArticleAnalysisRecord, ArticleRecord.content_type)
+        select(
+            ArticleAnalysisRecord,
+            ArticleRecord.content_type,
+            ArticleRecord.source_id,
+            ArticleRecord.source_url,
+        )
         .join(ArticleRecord, ArticleRecord.id == ArticleAnalysisRecord.article_id)
         .where(ArticleAnalysisRecord.article_id.in_(ids))
         .where(ArticleAnalysisRecord.status == "succeeded")
         .where(ArticleAnalysisRecord.quality_score.is_not(None))
     ).all()
-    analyses = [
-        analysis
-        for analysis, content_type in rows
+    current = [
+        (analysis, content_type, source_id, source_url)
+        for analysis, content_type, source_id, source_url in rows
         if analysis.scoring_version == analysis_contract_versions(content_type)[1]
     ]
+    analyses = [row[0] for row in current]
     if not analyses:
         return {}
+    source_kinds = source_default_kinds()
+    kinds: Dict[str, Tuple[str, Optional[float]]] = {}
+    for analysis, content_type, source_id, source_url in current:
+        kind = classify_item(
+            source_id=source_id,
+            source_url=source_url,
+            content_type=content_type,
+            content_genre=analysis.content_genre,
+            source_kinds=source_kinds,
+            content_kind=analysis.content_kind,
+        ).kind or ""
+        value = score_projection(content_type=content_type, kind=kind, analysis=analysis)["content_value"]
+        kinds[analysis.article_id] = (kind, value)
 
     analysis_ids = [row.article_id for row in analyses]
     tag_rows = session.exec(
@@ -368,6 +398,8 @@ def load_stored_scores(session: Session, article_ids: List[str]) -> Dict[str, Ar
             topic_tags=tuple(topics.get(row.article_id, [])),
             entity_tags=tuple(entity_names),
             score_reason=row.score_reason or "",
+            content_kind=kinds[row.article_id][0],
+            content_value=kinds[row.article_id][1],
         )
     return out
 
@@ -477,6 +509,16 @@ def daily_brief_min_items(session: Session) -> int:
     except (TypeError, ValueError):
         value = DEFAULT_MIN_ITEMS
     return max(0, min(TOP_N_MAX, value))
+
+
+def daily_brief_paper_min_content_value(session: Session) -> float:
+    """论文名额的内容价值门槛(issue #178 第三波);非法 / 越界回落默认并夹到 [0, 10]。"""
+    raw = get_setting(session, KEY_PAPER_MIN_CONTENT_VALUE, "")
+    try:
+        value = float(raw) if raw else DEFAULT_PAPER_MIN_CONTENT_VALUE
+    except ValueError:
+        value = DEFAULT_PAPER_MIN_CONTENT_VALUE
+    return max(0.0, min(10.0, value))
 
 
 def daily_brief_min_score(session: Session) -> float:
@@ -673,6 +715,8 @@ def _scored_item(candidate: BriefCandidate, score: ArticleScore) -> ScoredItem:
         score=score.score,
         score_ok=True,
         score_reason=score.score_reason,
+        content_kind=score.content_kind,
+        content_value=score.content_value,
     )
 
 
@@ -721,6 +765,16 @@ async def _score_one(
             source_owner_or_domain=candidate.source_id,
             source_name=friendly_source_name(candidate.source_id),
             source_role=candidate.source_role,
+            # 与 worker 同一份输入:规则能判出内容类型时喂给模型并以规则为准(issue #178)
+            kind_hint=(
+                ""
+                if candidate.content_type == "podcast_episode"
+                else rule_kind(
+                    source_id=candidate.source_id,
+                    source_url=candidate.source_url,
+                    content_type=candidate.content_type,
+                ) or ""
+            ),
         )
         # 配图识别(issue #69):补评与 worker 同一把尺子,也同一份输入——缺则识、
         # 受预算保护、失败空串;有说明时 prompt 多一个 image_notes 字段。
@@ -730,10 +784,26 @@ async def _score_one(
             )
             if notes:
                 article_input = replace(article_input, image_notes=notes)
+        # 内容价值字段缺损不触发修复、不丢新闻分(issue #178 第二波);有则保留给论文名额,仍不写回。
         raw = await analyze_article_with_llm(
             article_input, active_tags, llm_config, usage_meta=usage_meta, http_client=http_client,
+            require_content_value=False,
         )
-        result = validate_analysis_payload(raw, active_tags=active_tags).result
+        result = validate_analysis_payload(
+            raw, active_tags=active_tags, kind_hint=article_input.kind_hint,
+        ).result
+        kind = classify_item(
+            source_id=candidate.source_id,
+            source_url=candidate.source_url,
+            content_type=candidate.content_type,
+            content_genre=str(result.content_genre),
+            content_kind=result.content_kind,
+        ).kind or ""
+        content_value = (
+            float(result.quality_score)
+            if candidate.content_type == "podcast_episode"
+            else result.content_value
+        )
         name_by_code = {
             tag.code: (tag.name_zh or tag.name_en or tag.code).strip() for tag in active_tags
         }
@@ -755,6 +825,8 @@ async def _score_one(
             topic_tags=tuple(topics),
             entity_tags=tuple(entities),
             score_reason=result.score_reason or "",
+            content_kind=kind,
+            content_value=content_value,
         ))
     except (LLMError, Exception) as exc:  # noqa: BLE001 单篇失败降级，不中断整体
         logger.warning("日报补评单篇失败 (id=%s): %s", candidate.id, exc)
@@ -980,12 +1052,44 @@ async def dedup_clusters(
 # 阶段 3：Select（按分数 + 来源/领域多样性择优）
 # ==========================================
 
-# 论文类 classification（占比受 paper_cap 限制，避免论文淹没行业资讯）
+# 论文类 classification:日报对外分类取值(神灯契约,冻结);是否算论文已改看内容类型(issue #178)
 PAPER_CLASSIFICATION = "学术论文"
 
 
 def _is_paper(item: ScoredItem) -> bool:
-    return item.classification == PAPER_CLASSIFICATION or item.candidate.content_type == "arxiv"
+    """是否占论文名额:内容类型为论文(来源先验 / 数据结构 / 链接形状 / 模型判定)。
+
+    媒体对论文的报道是资讯,按新闻价值与其它资讯同台;分类字段仍可能是「学术论文」(按体裁),
+    标签与是否占名额从此脱钩(issue #178 第三波)。
+    """
+    return item.content_kind == "paper"
+
+
+def _paper_by_value(item: ScoredItem) -> bool:
+    """有当前版本内容价值的论文:入选只看内容价值(门槛 + 排序),不看新闻价值门槛。"""
+    return _is_paper(item) and item.content_value is not None
+
+
+def _rule_paper(candidate: BriefCandidate) -> bool:
+    """评分没到手的候选只能凭规则(来源先验 / 数据结构 / 链接形状)认论文。"""
+    return rule_kind(
+        source_id=candidate.source_id,
+        source_url=candidate.source_url,
+        content_type=candidate.content_type,
+    ) == "paper"
+
+
+def _passes_gate(item: ScoredItem, min_score: float, paper_min: float) -> bool:
+    if _paper_by_value(item):
+        return float(item.content_value) >= paper_min
+    return item.score >= min_score
+
+
+def _paper_rank(item: ScoredItem) -> Tuple[bool, float]:
+    # 有内容价值的论文按内容价值排在前;存量未补的论文按有效新闻分殿后
+    if item.content_value is not None:
+        return (True, float(item.content_value))
+    return (False, _effective_score(item))
 
 
 def select_top(
@@ -994,33 +1098,39 @@ def select_top(
     top_n: int = 30,
     per_source_cap: int = 5,
     per_realm_cap: int = 8,
-    paper_cap: int = 3,
+    paper_cap: int = PAPER_CAP,
 ) -> List[ScoredItem]:
-    # 有效分 = score + 官方有界加成(v3.35):整数分高度压缩(生产实测 76% 挤在 7/8),
-    # 平分段顺序此前由抓取顺序随机决定;+0.5 让同分段官方置顶、且绝不跨分数段。
-    ranked = sorted(items, key=_effective_score, reverse=True)
+    """论文名额先挑(按内容价值,至多 paper_cap 篇),其余名额按有效分择优。
+
+    名额以外的论文不进日报,也不参与凑数回补(issue #178 第三波);多样性配额对两者都生效。
+    """
     selected: List[ScoredItem] = []
     overflow: List[ScoredItem] = []
     source_count: Dict[str, int] = {}
     realm_count: Dict[str, int] = {}
-    paper_count = 0
-    for item in ranked:
-        if len(selected) >= top_n:
-            break
+
+    def admit(item: ScoredItem) -> bool:
         src = item.candidate.source_id
         realm = item.realm or "未分类"
-        # 论文配额：超额的论文丢进 overflow（仅在凑不满时才回补），压低论文占比
-        if _is_paper(item) and paper_count >= paper_cap:
-            overflow.append(item)
-            continue
         if source_count.get(src, 0) >= per_source_cap or realm_count.get(realm, 0) >= per_realm_cap:
-            overflow.append(item)
-            continue
+            return False
         selected.append(item)
         source_count[src] = source_count.get(src, 0) + 1
         realm_count[realm] = realm_count.get(realm, 0) + 1
-        if _is_paper(item):
-            paper_count += 1
+        return True
+
+    paper_slots = max(0, min(paper_cap, top_n))
+    for item in sorted((it for it in items if _is_paper(it)), key=_paper_rank, reverse=True):
+        if len(selected) >= paper_slots:
+            break
+        admit(item)
+    # 有效分 = score + 官方有界加成(v3.35):整数分高度压缩(生产实测 76% 挤在 7/8),
+    # 平分段顺序此前由抓取顺序随机决定;+0.5 让同分段官方置顶、且绝不跨分数段。
+    for item in sorted((it for it in items if not _is_paper(it)), key=_effective_score, reverse=True):
+        if len(selected) >= top_n:
+            break
+        if not admit(item):
+            overflow.append(item)
     # 多样性配额导致不足时，用 overflow 中分数最高者补满
     if len(selected) < top_n:
         for item in overflow:
@@ -1031,6 +1141,15 @@ def select_top(
     # 使日报 markdown 与导出 items（shendeng sort）都呈重要性排序、同分官方在前。
     selected.sort(key=_effective_score, reverse=True)
     return selected
+
+
+def trim_to_top_n(items: List[ScoredItem], top_n: int, *, paper_cap: int = PAPER_CAP) -> List[ScoredItem]:
+    """预选池裁回 top_n:论文按内容价值留至多 paper_cap 篇(名额独立于新闻排序),其余按有效分。"""
+    papers = sorted((it for it in items if _is_paper(it)), key=_paper_rank, reverse=True)
+    papers = papers[:max(0, min(paper_cap, top_n))]
+    others = sorted((it for it in items if not _is_paper(it)), key=_effective_score, reverse=True)
+    kept = papers + others[:max(0, top_n - len(papers))]
+    return sorted(kept, key=_effective_score, reverse=True)
 
 
 # ==========================================
@@ -1378,7 +1497,19 @@ def _scored_item_from_stored(entry: Dict[str, Any], article_id: str) -> ScoredIt
         followup_note=str(entry.get("followup_note") or ""),
         backfilled=bool(entry.get("backfilled")),
         merged_ids=[str(i) for i in (entry.get("merged_ids") or []) if i],
+        content_kind=str(entry.get("content_kind") or ""),
+        content_value=_optional_value(entry.get("content_value")),
     )
+
+
+def _optional_value(raw: Any) -> Optional[float]:
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if 1.0 <= value <= 10.0 else None
 
 
 def load_existing_brief_state(
@@ -1396,12 +1527,18 @@ def load_existing_brief_state(
     raw_items = [e for e in (raw_items or []) if isinstance(e, dict)]
     included = [str(i) for i in (ext.get("included_article_ids") or []) if i]
     items: List[ScoredItem] = []
+    legacy_kind: List[ScoredItem] = []
     for i, entry in enumerate(raw_items):
         article_id = str(entry.get("id") or "")
         if not article_id:
             # 历史日报无 id 键:items 与 included_article_ids 前段同源同序,按位兜底
             article_id = included[i] if i < len(included) else f"legacy_{report_date}_{i}"
-        items.append(_scored_item_from_stored(entry, article_id))
+        item = _scored_item_from_stored(entry, article_id)
+        items.append(item)
+        if "content_kind" not in entry:
+            legacy_kind.append(item)
+    if legacy_kind:
+        _derive_legacy_kinds(session, legacy_kind)
     # 附录 = included_article_ids 去掉正选前段后的余段,回库取标题/链接
     title_only: List[BriefCandidate] = []
     for article_id in included[len(raw_items):]:
@@ -1418,6 +1555,46 @@ def load_existing_brief_state(
             )
         )
     return items, title_only
+
+
+def _derive_legacy_kinds(session: Session, items: List[ScoredItem]) -> None:
+    """升级前写入的当日条目没有 content_kind 键:按文章与分析现推导(同 classify_item 判定序),
+    同日重跑才能把早间已占的论文名额算进来;文章已删时只凭条目里的来源 / 链接 / 数据结构走规则。
+    不看展示分类「学术论文」——它按体裁标,媒体研究报道也是这个值(issue #178 第三波)。"""
+    ids = [it.candidate.id for it in items]
+    articles = {
+        row.id: row for row in session.exec(select(ArticleRecord).where(ArticleRecord.id.in_(ids))).all()
+    }
+    analyses = {
+        row.article_id: row
+        for row in session.exec(
+            select(ArticleAnalysisRecord).where(ArticleAnalysisRecord.article_id.in_(ids))
+        ).all()
+    }
+    source_kinds = source_default_kinds()
+    for item in items:
+        article = articles.get(item.candidate.id)
+        analysis = analyses.get(item.candidate.id)
+        if article is None:
+            item.content_kind = rule_kind(
+                source_id=item.candidate.source_id,
+                source_url=item.candidate.source_url,
+                content_type=item.candidate.content_type,
+                source_kinds=source_kinds,
+            ) or ""
+            continue
+        kind = classify_item(
+            source_id=article.source_id,
+            source_url=article.source_url,
+            content_type=article.content_type,
+            content_genre=analysis.content_genre if analysis is not None else None,
+            source_kinds=source_kinds,
+            content_kind=analysis.content_kind if analysis is not None else None,
+        ).kind or ""
+        item.content_kind = kind
+        item.content_value = score_projection(
+            content_type=article.content_type, kind=kind, analysis=analysis,
+        )["content_value"]
 
 
 async def merge_same_day(
@@ -1582,6 +1759,7 @@ async def _generate_daily_brief(
     # 4. 评分(复用分析 / 就地补评)→ 阈值 → 聚类 → 择优 → 编辑
     with Session(engine) as session:
         min_score = daily_brief_min_score(session)
+        paper_min = daily_brief_paper_min_content_value(session)
         min_items = daily_brief_min_items(session)
         if min_items > top_n:
             # 正文最终裁到 top_n,保底不能承诺比 top_n 还多(配置端点两者独立可改,单次 top_n 覆盖也会撞上)
@@ -1630,13 +1808,28 @@ async def _generate_daily_brief(
     )
     # 评分没到手的条目只有标题与链接——降入「📎 其它收录」附录;低于门槛的直接 pass;
     # 无正文候选按标题走了同一把尺子:过线者也只能进附录(没有正文可写要点与点评)
-    score_failed = [it.candidate for it in scored if not it.score_ok]
-    usable = [it for it in scored if it.score_ok and it.candidate.has_content and it.score >= min_score]
+    # 论文名额(issue #178 第三波):有内容价值的论文过的是内容价值门槛 paper_min,不看新闻门槛
+    # 论文只经正文的论文名额入选,不进附录(附录的三条来路——无正文过线、近线补位、评分失败——都按新闻价值说话);
+    # 评分失败的条目没有分析类型,凭规则能认出是论文的同样不进附录
+    score_failed = [
+        it.candidate for it in scored if not it.score_ok and not _rule_paper(it.candidate)
+    ]
+    usable = [
+        it for it in scored
+        if it.score_ok and it.candidate.has_content and _passes_gate(it, min_score, paper_min)
+    ]
     bodyless_passed = [
         it.candidate for it in scored
-        if it.score_ok and not it.candidate.has_content and it.score >= min_score
+        if it.score_ok and not it.candidate.has_content and not _is_paper(it)
+        and _passes_gate(it, min_score, paper_min)
     ]
-    below_threshold = sum(1 for it in scored if it.score_ok and it.score < min_score)
+    below_threshold = sum(
+        1 for it in scored if it.score_ok and not _passes_gate(it, min_score, paper_min)
+    )
+    paper_candidates = sum(
+        1 for it in scored if it.score_ok and it.candidate.has_content and _paper_by_value(it)
+    )
+    paper_qualified = sum(1 for it in usable if _paper_by_value(it))
     histogram = score_histogram(scored)
     logger.info(
         "日报[%s]：评分完成——复用分析 %d 篇、补评 %d 篇（其中 %d 篇正在 worker 队列）、失败 %d 篇；"
@@ -1657,6 +1850,8 @@ async def _generate_daily_brief(
     prior_backfilled_ids = {
         mid for it in prior_items if it.backfilled for mid in (it.candidate.id, *it.merged_ids)
     }
+    # 论文名额按当日计:同日重跑时早间批已占的论文名额扣掉(早间条目随 items 带回内容类型)
+    paper_cap = max(0, PAPER_CAP - sum(1 for it in prior_items if _is_paper(it)))
     if prior_ids:
         # 游标重置后同日重生成:与早间正文**同一文章 id** 的候选已由早间行代表,不再作为本批
         # 过线稿/近线稿重复入簇(否则聚类回退原样时同一篇被数两次,缺口算小)
@@ -1668,10 +1863,12 @@ async def _generate_daily_brief(
     # 标题+链接填进「其它收录」)。低于近线带的仍直接 pass。
     near_band: List[ScoredItem] = []
     if min_score > 0:
+        # 论文不进近线带:去留只由论文名额决定,不按新闻分补足、也不进附录补位
         near_band = sorted(
             (it for it in scored
              if it.score_ok and it.candidate.has_content
              and it.candidate.id not in prior_ids
+             and not _is_paper(it)
              and min_score - APPENDIX_BAND <= it.score < min_score),
             key=_effective_score, reverse=True,
         )
@@ -1702,7 +1899,10 @@ async def _generate_daily_brief(
         (it for it in deduped_all if it.candidate.id not in core_ids),
         key=_effective_score, reverse=True,
     )
-    deficit = max(0, min_items - len(core)) if min_items else 0
+    # 名额以外的论文终究不进日报,不能算进「合格簇」把保底缺口算小
+    core_papers = sum(1 for it in core if it.candidate.id not in prior_ids and _is_paper(it))
+    core_count = len(core) - core_papers + min(core_papers, paper_cap)
+    deficit = max(0, min_items - core_count) if min_items else 0
     # 多带一条备用稿:合格稿或补足稿被跨天查重剔掉时顶上,终选再按剩余缺口裁回。
     backfilled: List[ScoredItem] = near_survivors[:deficit + (1 if deficit else 0)]
     for it in backfilled:
@@ -1722,7 +1922,11 @@ async def _generate_daily_brief(
     # 扩选池(v3.35):跨天查重会剔条,旧流程剔完不回补——热点连报日成品远少于 top_n。
     # 现按 top_n+buffer 预选,查重幸存者再裁回 top_n:回补条目天然也过了跨天检查。
     select_buffer = max(3, top_n // 3)
-    preselected = select_top(deduped, top_n=top_n + select_buffer)
+    preselected = select_top(
+        deduped,
+        top_n=top_n + select_buffer,
+        paper_cap=paper_cap + (PAPER_BUFFER if paper_cap else 0),
+    )
     title_only = bodyless_passed + score_failed
     logger.info("日报[%s]：预选 %d 条（目标 %d + 回补池 %d，仅标题 %d 条）",
                 report_date, len(preselected), top_n, select_buffer, len(title_only))
@@ -1750,7 +1954,10 @@ async def _generate_daily_brief(
     survivor_ids = {it.candidate.id for it in survivors}
     crossday_dropped = {it.candidate.id for it in preselected} - survivor_ids
     qualified_survivors = [it for it in survivors if it.candidate.id not in backfill_ids]
-    need = max(0, min_items - prior_core - len(qualified_survivors)) if min_items else 0
+    # 预选多带的备用论文终会按名额裁掉,保底计数只算名额内的论文(与 core_count 同口径)
+    qualified_papers = sum(1 for it in qualified_survivors if _is_paper(it))
+    qualified_count = len(qualified_survivors) - qualified_papers + min(qualified_papers, paper_cap)
+    need = max(0, min_items - prior_core - qualified_count) if min_items else 0
     backfill_survivors = sorted(
         (it for it in survivors if it.candidate.id in backfill_ids),
         key=_effective_score, reverse=True,
@@ -1764,7 +1971,7 @@ async def _generate_daily_brief(
         ],
         key=_effective_score, reverse=True,
     )
-    selected = sorted(survivors, key=_effective_score, reverse=True)[:top_n]
+    selected = trim_to_top_n(survivors, top_n, paper_cap=paper_cap)
     if len(survivors) > len(selected):
         logger.info("日报[%s]：查重幸存 %d 条，按有效分裁回 %d 条", report_date, len(survivors), len(selected))
     # 附录补位(v3.49.1):正文没填满 top_n 时,近线带余下条目按分数以标题+链接填进附录,
@@ -1881,6 +2088,11 @@ async def _generate_daily_brief(
             # 门槛偏高或名单过窄;全为零说明保底从未介入。
             "min_items": min_items, "threshold_backfilled": backfilled_in_brief,
             "near_miss_appendix": len(near_miss_appendix),
+            # 论文名额(issue #178 第三波):有内容价值的论文候选数 / 过内容价值门槛数 / 最终入选论文数
+            "paper_min_content_value": paper_min,
+            "paper_candidates": paper_candidates,
+            "paper_qualified": paper_qualified,
+            "paper_selected": sum(1 for it in selected if _is_paper(it)),
         }
         _stage_setting(session, KEY_LAST_RUN, json.dumps(last_run, ensure_ascii=False))
         session.commit()

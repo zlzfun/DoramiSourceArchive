@@ -368,3 +368,82 @@ def test_policy_rejects_out_of_range_external_knobs():
         DigestSelectionPolicy(external_min_quality_score=11)
     with pytest.raises(ValueError):
         DigestSelectionPolicy(external_per_source_max=0)
+
+
+# ── 「深度阅读」「播客精选」(issue #178 第三波) ──
+
+import pytest  # noqa: E402
+
+from models.analysis_contracts import SelectionLane  # noqa: E402
+from services.digest_selection import (  # noqa: E402
+    SECTION_ORDER,
+    ValueLanePolicy,
+    select_value_lane,
+    value_lane_accepts,
+)
+
+
+def _valued(number: int, value: float | None, *, kind: str | None = "paper", **kwargs):
+    subscribed = kwargs.pop("subscribed", True)
+    base = _candidate(number, **kwargs)
+    return base.model_copy(update={
+        "content_kind": kind, "content_value": value, "subscribed": subscribed,
+    })
+
+
+def test_value_lane_ranks_by_content_value_not_news_and_keeps_hard_rules():
+    candidates = [
+        _valued(1, 7.4, score=9.0, source="s1"),
+        _valued(2, 8.6, score=3.0, source="s2"),
+        _valued(3, 8.1, score=4.0, source="s2"),          # 同源第二篇:每源 1 篇
+        _valued(4, 8.0, score=4.0, source="s3", group=7),
+        _valued(5, 7.9, score=4.0, source="s4", group=7),  # 同事件第二篇
+        _valued(6, 6.9, score=8.0, source="s5"),          # 门槛之下
+        _valued(7, 9.5, kind="news", source="s6"),        # 资讯不进「深度阅读」
+        _valued(8, 9.6, source="s7", shape="podcast"),    # 播客不进「深度阅读」
+        _valued(9, 9.7, source="s8"),                     # 调用方排除(已进新闻 / 近期出现过)
+    ]
+    picked = select_value_lane(
+        candidates, lane="read", policy=ValueLanePolicy(min_value=7.0, max_items=3),
+        excluded_article_ids={"a09"},
+    )
+    assert [(item.article_id, item.lane) for item in picked] == [("a02", "read"), ("a04", "read"), ("a01", "read")]
+    assert all(item.selection_reason.endswith("按内容价值入选。") for item in picked)
+
+
+def test_value_lane_ties_prefer_newer_and_listen_takes_only_podcasts():
+    older = _valued(1, 8.0, kind=None, shape="podcast", source="p1", published="2026-09-01T01:00:00+08:00")
+    newer = _valued(2, 8.0, kind=None, shape="podcast", source="p2", published="2026-09-01T05:00:00+08:00")
+    article = _valued(3, 9.0, source="p3")
+    picked = select_value_lane(
+        [older, newer, article], lane=SelectionLane.LISTEN, policy=ValueLanePolicy(min_value=7.5, max_items=2),
+    )
+    assert [item.article_id for item in picked] == ["a02", "a01"]
+    assert value_lane_accepts(article, "listen") is False and value_lane_accepts(older, "read") is False
+
+
+def test_value_lane_external_needs_interest_and_zero_items_is_off():
+    interests = [UserInterestDTO(tag_code="agent", stance=InterestStance.FOLLOW)]
+    outside_hit = _valued(1, 7.5, tags=("agent",), subscribed=False, source="x1")
+    outside_miss = _valued(2, 9.5, tags=("other",), subscribed=False, source="x2")
+    picked = select_value_lane(
+        [outside_hit, outside_miss], interests, lane="read", policy=ValueLanePolicy(min_value=7.0, max_items=3),
+        source_display_names={"x1": "外站"}, tag_display_names={"agent": "智能体"},
+    )
+    assert [item.article_id for item in picked] == ["a01"]
+    assert picked[0].matched_interest_codes == ("agent",)
+    assert picked[0].selection_reason == "命中你的兴趣「智能体」，来自你未订阅的「外站」，按内容价值入选。"
+    assert select_value_lane(
+        [outside_hit], interests, lane="read", policy=ValueLanePolicy(min_value=7.0, max_items=0),
+    ) == []
+
+
+def test_value_lane_policy_bounds_and_lane_guard():
+    with pytest.raises(ValueError):
+        ValueLanePolicy(min_value=7.0, max_items=6)
+    with pytest.raises(ValueError):
+        ValueLanePolicy(min_value=7.0, max_items=2, window_days=0)
+    with pytest.raises(ValueError):
+        select_value_lane([], lane="quality", policy=ValueLanePolicy(min_value=7.0, max_items=2))
+    assert SECTION_ORDER[-2:] == ("深度阅读", "播客精选")
+    assert SECTION_ORDER.index("订阅源最新更新") < SECTION_ORDER.index("深度阅读")

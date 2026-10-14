@@ -11,6 +11,9 @@ from models.analysis_contracts import (
     PERSONAL_DIGEST_BREAKING_MAX_ITEMS_LIMIT,
     PERSONAL_DIGEST_EXTERNAL_PER_SOURCE_MAX_LIMIT,
     PERSONAL_DIGEST_MIN_QUALITY_SCORE,
+    PERSONAL_DIGEST_VALUE_MAX_ITEMS_LIMIT,
+    PERSONAL_DIGEST_VALUE_WINDOW_DAYS_LIMIT,
+    SelectionLane,
 )
 from models.db import AppSettingRecord, TagRetagJobRecord
 from services import analysis_backfill as backfill_service
@@ -42,6 +45,21 @@ class AnalysisFeatureFlagsPatch(BaseModel):
     personal_digest_external_per_source_max: int | None = Field(
         default=None, ge=1, le=PERSONAL_DIGEST_EXTERNAL_PER_SOURCE_MAX_LIMIT
     )
+    # issue #178 第三波「深度阅读」「播客精选」:内容价值门槛(0～10)/ 每期名额(0 = 关闭该分区)/ 窗口天数
+    personal_digest_read_min_value: float | None = Field(default=None, ge=0.0, le=10.0)
+    personal_digest_read_max_items: int | None = Field(
+        default=None, ge=0, le=PERSONAL_DIGEST_VALUE_MAX_ITEMS_LIMIT
+    )
+    personal_digest_read_window_days: int | None = Field(
+        default=None, ge=1, le=PERSONAL_DIGEST_VALUE_WINDOW_DAYS_LIMIT
+    )
+    personal_digest_listen_min_value: float | None = Field(default=None, ge=0.0, le=10.0)
+    personal_digest_listen_max_items: int | None = Field(
+        default=None, ge=0, le=PERSONAL_DIGEST_VALUE_MAX_ITEMS_LIMIT
+    )
+    personal_digest_listen_window_days: int | None = Field(
+        default=None, ge=1, le=PERSONAL_DIGEST_VALUE_WINDOW_DAYS_LIMIT
+    )
 
 
 _BREAKING_KEYS = {
@@ -49,12 +67,18 @@ _BREAKING_KEYS = {
     "personal_digest_breaking_max_items": personal_digest_service.BREAKING_MAX_ITEMS_KEY,
     "personal_digest_external_min_score": personal_digest_service.EXTERNAL_MIN_SCORE_KEY,
     "personal_digest_external_per_source_max": personal_digest_service.EXTERNAL_PER_SOURCE_MAX_KEY,
+    "personal_digest_read_min_value": personal_digest_service.READ_MIN_VALUE_KEY,
+    "personal_digest_read_max_items": personal_digest_service.READ_MAX_ITEMS_KEY,
+    "personal_digest_read_window_days": personal_digest_service.READ_WINDOW_DAYS_KEY,
+    "personal_digest_listen_min_value": personal_digest_service.LISTEN_MIN_VALUE_KEY,
+    "personal_digest_listen_max_items": personal_digest_service.LISTEN_MAX_ITEMS_KEY,
+    "personal_digest_listen_window_days": personal_digest_service.LISTEN_WINDOW_DAYS_KEY,
 }
 
 
 class FullAnalysisScope(BaseModel):
     days: int | None = Field(default=30, ge=1, le=3650)
-    selection: Literal["all", "missing_or_outdated"] = "all"
+    selection: Literal["all", "missing_or_outdated", "missing", "content_value"] = "all"
     source_ids: list[str] = Field(default_factory=list, max_length=200)
 
 
@@ -92,11 +116,26 @@ def _selection(session: Session) -> dict[str, Any]:
     }
 
 
+def _value_lanes(session: Session) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for lane in (SelectionLane.READ, SelectionLane.LISTEN):
+        policy = personal_digest_service.value_lane_policy(session, lane)
+        result[lane.value] = {
+            "min_value": policy.min_value,
+            "max_items": policy.max_items,
+            "window_days": policy.window_days,
+            "max_items_limit": PERSONAL_DIGEST_VALUE_MAX_ITEMS_LIMIT,
+            "window_days_limit": PERSONAL_DIGEST_VALUE_WINDOW_DAYS_LIMIT,
+        }
+    return result
+
+
 def _config_payload(session: Session) -> dict[str, Any]:
     return {
         "feature_flags": _flags(session),
         "personal_digest_breaking": _breaking(session),
         "personal_digest_selection": _selection(session),
+        "personal_digest_value_lanes": _value_lanes(session),
     }
 
 

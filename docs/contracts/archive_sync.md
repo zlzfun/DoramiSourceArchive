@@ -196,11 +196,37 @@ the two Podcast streams):
 7. `podcast_audio`
 8. `source_states`
 
-The `analyses` payload carries the complete authoritative single-score contract,
+The `analyses` payload carries the complete authoritative scoring contract,
 including `analysis_basis`, the SHA-256 `analysis_input_hash` of the exact model
 messages, optional `transcript_artifact_id`, `analysis_diagnostics_json`, and the
 prompt/scoring versions. `content_hash` remains the separate article-version guard
 used during import; receivers must not recompute or overwrite a producer score.
+
+Since issue #178 wave 2 the payload also carries the second score — `content_kind`,
+`content_value`, `content_value_reason` and its own ruler version
+`content_value_version` (absent version = no content value). The fields are
+additive within v2: a receiver that gets a result from an older producer without
+them clears its copy instead of pairing a new news score with a stale content
+value, and an older receiver ignores them. The local task marker `pending_scope`
+is never exported. Deploy the external producer first, as for any stream change.
+
+An older receiver drops unknown fields but still advances its checkpoint and its
+per-entity applied revisions, so those rows would never be re-sent after it
+upgrades. The receiver therefore records, per target, which analysis payload
+generation it has pulled (`v2_analysis_payload_generation`, local bookkeeping —
+not a wire field; constant `archive_sync_v2.ANALYSIS_PAYLOAD_GENERATION`, 2 since
+the content-value fields). When the recorded generation is older, the next sync
+preparation clears, in one transaction, the `analyses` checkpoint and that
+authority's `analyses` entity states (otherwise every same-revision row would be
+skipped as not newer), so the run re-pulls the full analyses stream through the
+existing full-stream path: rows are overwritten, entity states rebuilt, and only
+presence-confirmed absent rows are pruned. Other streams stay incremental. A run
+that fails before the analyses stream completes leaves its checkpoint empty: the
+next run downloads the stream from the beginning again, and the entity states
+rebuilt so far make it skip already-applied, unchanged revisions, applying only
+the remaining or newer rows. Replay is safe and idempotent, but there is no
+network-level page resumption. Bump the constant whenever the analyses payload
+gains fields.
 
 An analysis whose `content_hash` no longer matches the producer's current article
 is exported as a tombstone, and is absent from analysis presence checks. This

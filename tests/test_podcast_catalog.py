@@ -98,7 +98,7 @@ def test_default_import_creates_collectable_public_nodes_and_is_idempotent(tmp_p
         assert latent is not None
         assert latent.source_type == "podcast"
         assert latent.fetcher_id == "generic_podcast_rss"
-        assert latent.category == "incubating"
+        assert latent.admission_status == "incubating"
         assert latent.is_active is True
         assert latent.owner_username == ""
         assert latent.source_scope == "ai_media"
@@ -146,7 +146,7 @@ def test_ai_native_dev_fresh_install_is_public_scheduled_and_not_subscribed(tmp_
         source = session.get(SourceConfigRecord, AI_NATIVE_DEV_SOURCE_ID)
         assert source is not None
         assert source.owner_username == ""
-        assert source.category == "incubating"
+        assert source.admission_status == "incubating"
         assert json.loads(source.params_json)["catalog_verified_at"] == "2026-09-24"
         assert session.exec(select(ReaderSubscriptionRecord)).all() == []
         assert session.exec(
@@ -828,7 +828,8 @@ def test_catalog_api_is_not_shadowed_by_dynamic_source_route(monkeypatch, tmp_pa
             "type": "number",
             "default": 20,
         }]
-        assert logical_node["content_tags"]
+        assert "content_tags" not in logical_node and "category" not in logical_node
+        assert logical_node["admission_status"] == "incubating"
         assert logical_node["signal_strength"] == "high_signal"
         assert logical_node["noise_risk"] == "low_noise"
         assert logical_node["fetch_reliability"] == "stable_public"
@@ -846,7 +847,7 @@ def test_catalog_api_is_not_shadowed_by_dynamic_source_route(monkeypatch, tmp_pa
         assert "is_active" not in node
         assert node["feed_url"].startswith("https://")
         assert node["source_scope"] == "ai_media"
-        assert node["content_tags"]
+        assert node["admission_status"] == "incubating"
         assert node["signal_strength"] == "high_signal"
         assert node["noise_risk"] == "low_noise"
         assert node["fetch_reliability"] == "stable_public"

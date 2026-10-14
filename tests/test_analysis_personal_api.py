@@ -393,6 +393,40 @@ def test_admin_can_tune_personal_digest_breaking_lane(monkeypatch, tmp_path):
         ).status_code == 422
 
 
+def test_admin_can_tune_personal_digest_value_sections(monkeypatch, tmp_path):
+    """issue #178 第三波:「深度阅读」「播客精选」的门槛 / 名额 / 窗口同端点可调,越界 422。"""
+
+    app_module, _sink, _tag_id = _setup(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as client:
+        _login(client, "admin")
+        initial = client.get("/api/admin/analysis/config")
+        assert initial.status_code == 200
+        limits = {"max_items_limit": 5, "window_days_limit": 14}
+        assert initial.json()["personal_digest_value_lanes"] == {
+            "read": {"min_value": 7.0, "max_items": 3, "window_days": 7, **limits},
+            "listen": {"min_value": 7.5, "max_items": 2, "window_days": 7, **limits},
+        }
+        tuned = client.put(
+            "/api/admin/analysis/config",
+            json={
+                "personal_digest_read_min_value": 6.8,
+                "personal_digest_read_max_items": 0,
+                "personal_digest_listen_window_days": 3,
+            },
+        )
+        assert tuned.status_code == 200, tuned.text
+        lanes = tuned.json()["personal_digest_value_lanes"]
+        assert lanes["read"]["min_value"] == 6.8 and lanes["read"]["max_items"] == 0
+        assert lanes["listen"]["window_days"] == 3 and lanes["listen"]["min_value"] == 7.5
+        for body in (
+            {"personal_digest_read_max_items": 6},
+            {"personal_digest_listen_min_value": 10.5},
+            {"personal_digest_read_window_days": 0},
+            {"personal_digest_listen_window_days": 15},
+        ):
+            assert client.put("/api/admin/analysis/config", json=body).status_code == 422
+
+
 def test_synced_taxonomy_is_read_only_on_internal_node(monkeypatch, tmp_path):
     app_module, sink, _tag_id = _setup(monkeypatch, tmp_path)
     with Session(sink.engine) as session:

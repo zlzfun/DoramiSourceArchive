@@ -186,6 +186,20 @@ def test_daily_brief_config_min_items_round_trip(monkeypatch, tmp_path):
         assert client.get("/api/daily-brief/pipeline").json()["params"]["min_items"] == 3
 
 
+def test_daily_brief_config_paper_threshold_round_trip(monkeypatch, tmp_path):
+    """issue #178 第三波:论文名额的内容价值门槛同端点可改,0–10 之外 400。"""
+    app_module = _setup(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as client:
+        _login(client)
+        cfg = client.get("/api/daily-brief/config").json()
+        assert cfg["paper_min_content_value"] == 7.0 and cfg["paper_cap"] == 3
+        assert client.post("/api/daily-brief/config", json={"paper_min_content_value": 7.5}).status_code == 200
+        cfg = client.get("/api/daily-brief/config").json()
+        assert cfg["paper_min_content_value"] == 7.5 and cfg["min_score"] == 6.0
+        assert client.post("/api/daily-brief/config", json={"paper_min_content_value": 10.5}).status_code == 400
+        assert client.get("/api/daily-brief/pipeline").json()["params"]["paper_min_content_value"] == 7.5
+
+
 def test_delete_latest_brief_preserves_backlog_and_requeues_old_included_item(monkeypatch, tmp_path):
     import json
     from sqlmodel import Session
