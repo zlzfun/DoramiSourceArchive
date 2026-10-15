@@ -143,6 +143,26 @@ test('字体随构建同源发出:不引外部字体域名,宋体样式表与 ng
   }
 });
 
+test('西文衬线随构建同源发出:Dorami Latin Serif 三个样式各两片,只引同目录的 woff2(目检返修)', () => {
+  assert.match(read('../index.html'), /href="\/fonts\/dorami-latin-v1\/dorami-latin\.css"/);
+  const fontCss = read('../public/fonts/dorami-latin-v1/dorami-latin.css');
+  assert.doesNotMatch(fontCss, /https?:/);
+  const faces = [...fontCss.matchAll(/@font-face\{([^}]*)\}/g)].map((m) => m[1]);
+  assert.equal(faces.length, 6);
+  faces.forEach((face) => assert.match(face, /font-family:"Dorami Latin Serif"/));
+  const styles = new Set(faces.map((face) => `${/font-style:(\w+)/.exec(face)[1]} ${/font-weight:(\d+)/.exec(face)[1]}`));
+  assert.deepEqual([...styles].sort(), ['italic 400', 'normal 600', 'normal 900']);
+  const urls = faces.map((face) => /url\("([^"]+)"\)/.exec(face)[1]);
+  assert.deepEqual(urls.filter((url) => !/^\.\/dorami-latin-(600|900|400i)-latin(-ext)?\.woff2$/.test(url)), []);
+});
+
+test('西文衬线 token 先 Dorami Latin Serif、中文落回 Dorami Serif;lang="en" 把宋体角色换成它', () => {
+  const css = SHEETS['index.css'];
+  const latin = /--font-serif-latin:\s*([^;]+);/.exec(css)?.[1] || '';
+  assert.match(latin, /^"Dorami Latin Serif",\s*"Dorami Serif"/);
+  assert.match(css, /\[lang="en"\]\s*\{\s*--font-serif:\s*var\(--font-serif-latin\);\s*\}/);
+});
+
 test('字体 token:标题宋体先 Dorami Serif、回退不落中易宋体;分数字体不再依赖 Charter', () => {
   const css = SHEETS['index.css'];
   const serif = /--font-serif:\s*([^;]+);/.exec(css)?.[1] || '';

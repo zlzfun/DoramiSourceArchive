@@ -51,7 +51,7 @@ import PersonalBriefPage from './PersonalBriefPage';
 import InterestPage from './InterestPage';
 import RankingsPage from './RankingsPage';
 import AnalysisTagChip from './AnalysisTagChip';
-import { excerptOf, hostOf } from '../utils/readerText';
+import { excerptOf, hostOf, latinLang } from '../utils/readerText';
 import { highlightMatch } from '../utils/highlight';
 import { dayLabelOf } from '../utils/readerTime';
 import { buildListPlan } from '../utils/listPlan';
@@ -1352,11 +1352,11 @@ export default function ReaderTab({
                 )}
               </div>
               {/* 译文态(v3.45):大标题换中文译名,原标题降为其下一行小字 */}
-              <h1 className="reader-pane-title">
+              <h1 className="reader-pane-title" lang={latinLang((showTranslation && translatedTitle) ? translatedTitle : activeArticle.title)}>
                 {(showTranslation && translatedTitle) ? translatedTitle : (activeArticle.title || '（无标题）')}
               </h1>
               {showTranslation && translatedTitle && activeArticle.title && translatedTitle !== activeArticle.title && (
-                <div className="reader-pane-title-orig">{activeArticle.title}</div>
+                <div className="reader-pane-title-orig" lang={latinLang(activeArticle.title)}>{activeArticle.title}</div>
               )}
               <div className="reader-pane-byline">
               <div className="reader-pane-meta">
@@ -1441,7 +1441,11 @@ export default function ReaderTab({
                 </div>
               )}
               {!podcastGuideActive && (
-                <div className="reader-article-copy markdown-body" data-ai-translation-scope="article-body">
+                <div
+                  className="reader-article-copy markdown-body"
+                  data-ai-translation-scope="article-body"
+                  lang={(showTranslation && translatedBody) ? undefined : latinLang(activeBody)}
+                >
                   {activeBodyLoading ? (
                     <PaneBodySkeleton />
                   ) : (showTranslation && translatedBody) ? (

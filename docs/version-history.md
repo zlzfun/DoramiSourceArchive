@@ -54,6 +54,14 @@
 后端相关测试。e2e 的 focus / tags / pwa 三个流程通过;mobile 流程在本机 main 上同样以 `ERR_ABORTED` 失败(既有基线问题,非本波回归)。
 Windows 按 #176 的矩阵实机验收待做。检视记录见方案文档。
 
+**用户目检 R1 返修(2026-10-15)**:早报「看着和原夜航样页还有区别」——定稿样页曾把原「夜航」整体收小一档(头条 60 / 条目 21 /
+英文原标题 13px 黑体),现对回原样页:版心 1200、头条按版心宽 6.6%(约 73px)、条目 23px、板块名 24px,英文原标题改西文衬线斜体。
+为此新增第二套自托管字体 **Dorami Latin Serif**(Source Serif 4,`scripts/build_dorami_latin.py`,`public/fonts/dorami-latin-v1/`,
+正体 600 / 900 + 斜体 400,6 片共 154KB;原字体有保留字体名「Source」,改动版按 OFL 改名),英文文本经 `latinLang` 标 `lang="en"`
+换西文衬线在前的栈——顺带修掉宋体排西文时的全角撇号(「Life’ s」)。「往期」改描边胶囊 + 月历(`BriefHistoryCalendar.jsx`,
+APG 日期网格键位),看往期时右上角给「回到今天」。往期浮层「偶现透明」的根因是层叠:海报自成层叠上下文,浮层出不了海报,
+降级日海报矮时被后面板块的定位条目盖住——海报加 `z-index: 2`。
+
 ## issue #178 内容分类第一波(分支 `feat/issue-178-content-kind`,版本号以实际发版为准)
 
 2026-10-12 讨论定案(issue #178,样页 `docs/design/dorami-classification-scores-quiet.html`):定位扩展为「资讯 + 值得深读 /

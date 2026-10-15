@@ -57,6 +57,20 @@
 - 护栏:`frontend/test/typography.test.mjs`(字重 / 字号 / 陷阱回潮 / 同源字体 / 字体 token)+ eslint(`font-medium|bold|extrabold`、
   `font-[N]`、小数 `text-[Npx]`)。✅
 
+### 3.3 西文衬线「Dorami Latin Serif」(目检返修,2026-10-15)
+
+- 为什么:宋体排西文会把弯撇号、弯引号排成全角(「Life’s」成了「Life’ s」);原「夜航」样页的英文原标题是 Source Serif 4 斜体,
+  定稿样页改成了 13px 黑体小字,早报因此少了一层「刊物」感(见 §8)。
+- 来源:同一 google/fonts 提交 `2e61f43` 里的 Source Serif 4 4.004 正体 / 斜体可变字体(SIL OFL 1.1,sha256 `97b2d4da…` / `15fbc7e4…`);
+  该目录没带许可文件,许可取 Adobe 官方仓库同版本标签 `4.004R` 的 LICENSE.md。
+- 生成:`uv run --with fonttools --with brotli python scripts/build_dorami_latin.py`——正体 600(opsz 24)、900(opsz 60)、斜体 400(opsz 16)
+  三个静态实例,按 Google Fonts 的 latin / latin-ext 切 WOFF2,6 片共 154KB;一个样式实际只加载 latin 那片(26–35KB)。产物 `frontend/public/fonts/dorami-latin-v1/`。
+- 改名:原字体声明了保留字体名「Source」,OFL 第 3 条不许改动版(实例化、子集化都算)以保留名作主名——内部名称改为 Dorami Latin Serif,
+  版权、商标、许可字段原样保留;构建时断言除版权 / 商标声明外不再出现保留名。
+- 用法:英文原标题(斜体)直接用 `--font-serif-latin`;`utils/readerText.latinLang(text)` 给英文文本标 `lang="en"`,
+  base 层 `[lang="en"] { --font-serif: var(--font-serif-latin) }` 把宋体角色换成西文衬线在前的栈(早报标题、阅读窗标题与英文正文的小节标题)。
+- 护栏:`typography.test.mjs` 加两条——样式表同源且只引同目录 woff2、三个样式各两片;token 与 `[lang="en"]` 换栈在位。
+
 ## 4. 实现顺序与进度
 
 | 步 | 内容 | 状态 | 提交 |
@@ -70,7 +84,9 @@
 | 3b | 组件:令牌化表面、来源徽标底板、管理面中性选中、发现页描边订阅、未定义令牌、theme-color / 离线页 | ✅ | `cd8eea0` |
 | 5 | 管理面:指标格、离散柱、阶梯线、台账行与分析列、来源名称(facets label)、AI 用途标签 | ✅ | `42385be` |
 | 6 | 文档:conventions §3 / §4 / §8、CLAUDE.md 年表与过时描述、version-history、本文、文档索引与旧方案状态注 | ✅ | — |
-| 7 | Codex 本地协商式检视 → 用户目检(Mac)→ Windows 按 #176 矩阵验收 → 合入 | 待做 | — |
+| 7 | Codex 本地协商式检视(R1 + 复检已过,见 §7) | ✅ | `de88099` `b7850ff` |
+| 8 | 用户目检 R1 返修:早报对回原「夜航」尺度、西文衬线、往期月历与入口、往期浮层层叠(见 §8) | ✅ | — |
+| 9 | 用户再目检(Mac)→ 返修部分的检视 → Windows 按 #176 矩阵验收 → 合入 | 待做 | — |
 
 ## 5. 这一波不做
 
@@ -95,7 +111,7 @@
 
 - Mac 隔离栈(本机库副本 + 独立端口)截图:瓷 / 墨 / 宣 × 亮 / 暗的阅读器、早报(今天降级版与 9 月 16 日有头条版、往期浮层、移动 390 宽)、
   设置柜、发现页、管理面各子页;移动阅读器列表与正文页。
-- `npm run lint` / `npm run build` / `npm test`(75)/ `node --test src/utils/*.test.js`(61)通过;后端 `test_article_facets` /
+- `npm run lint` / `npm run build` / `npm test`(75;目检返修后 84)/ `node --test src/utils/*.test.js`(61)通过;后端 `test_article_facets` /
   `test_content_classification` / `test_route_permissions` / `test_admin_ops` 通过。
 - e2e:`--flows focus,tags,pwa` 通过;`mobile` 流程在本机 main 与本分支以同样的 `ERR_ABORTED` 失败(既有基线问题,见 backlog),
   该流程覆盖不到的移动改动以截图核对。
@@ -127,3 +143,23 @@
 **复检(对照 R1 清单,`2643376..de88099`)**:可以进入用户目检;9 条中 8 条 ✓、三条疑点 ✓,未发现修复新引入的 P1 / P2。
 R1-P2-05 记为 △:同批承诺的「带拇指分段字重恒 400」漏了设置柜外观的 `.sett-seg`(容器写着 600,三个主题按钮全部继承)——已补,
 实测三钮均为 400。复检以代码对照、测试与内存探针为主(Codex 沙箱起不了 Chromium),浏览器结果由实现方核对。
+
+## 8. 用户目检返修
+
+**R1(2026-10-15,用户在 Mac 隔离栈上看早报,四条)**——全部接受,一次改完:
+
+| # | 用户反馈 | 原因 | 改法 |
+|---|---|---|---|
+| 1 | 早报与原「夜航」样页仍有区别:中文标题下的衬线英文原标题小字?字体更大、更夸张? | 两个猜测都对。定稿样页(`visual-refine-final/brief.html`)在原「夜航」基础上整体收小了一档:头条最大 60px(原样页按版心宽 6.6%,约 73px)、条目标题 21px(原 23)、板块名 22px(原 24),英文原标题从 Source Serif 4 斜体换成了 13px 黑体;实现照定稿样页做 | 版心 1200 / 两侧 48、头条 `clamp(36px, (min(100cqi,1200px) − 96px) × 6.6%, 84px)`、条目 23px、板块名与本期编排 24px、各段留白取原样页值;英文原标题改西文衬线斜体(海报 18px、条目 15px);手机档取原样页手机值。字重仍是 600(Dorami Serif 没有 700,不为一档字重再加 6MB 分片) |
+| 2 | 右上角「往期」入口不够明显 | 原样页本身就是一枚纯文字钮,和编排信息排在同一行同一字号 | 改描边胶囊(抬起面 + 描边 + 日历图标 + 下拉角标,展开时角标翻转);看往期时「重新编排」的位置换成「回到今天」 |
+| 3 | 往期下拉偶现透明底色,内容与早报重叠 | 海报自成层叠上下文(环境光要 `isolation`),浮层的 z-index 出不了海报;后面板块里 `position: relative` 的条目、`z-index: 1` 的收藏星按文档序画在海报之上。有头条的日子海报够高、浮层落在海报内,降级日海报矮(今天这类),浮层伸进板块区就被条目盖住——所以是「偶现」。浏览器 `elementFromPoint` 复现:浮层下半截命中的是条目标题按钮 | 海报 `z-index: 2`;复测降级日与有头条两种海报,浮层各点命中均为浮层本身 |
+| 4 | 往期下拉或许更适合日历视图 | 同意:按日期找一期,月历能直接看出哪天有、哪天没有、星期几,比按月分组的长列表少翻 | `components/BriefHistoryCalendar.jsx` + `utils/briefCalendar.js`:一屏一个月(周一起),有早报的日子可点、没有的灰显,正在看的那天实底、今天一个点(编排中呼吸)、失败标红,多版次排在月历下方;WAI-ARIA APG 日期网格键位(←→ 一天、↑↓ 一周、Home / End、PageUp / PageDown),焦点走出本月时月历跟着翻;非模态浮层、Esc 关闭回到「往期」 |
+
+**顺带修**:宋体排西文的全角撇号——测试栈模型是死地址时英文标题没译成中文,「When AI Solves Your Life’s Work」排成了「Life’ s」;
+阅读窗的英文文章标题、英文正文的小节标题同样受影响。新增自托管西文衬线(§3.3),英文文本标 `lang="en"` 换栈;阅读窗译文态的原标题小字也改为同一套斜体。
+
+**核对**(隔离栈 Playwright,1440×900 与 390×844,亮 / 暗):9 月 16 日头条 72.9px / 900、原标题 18px 斜体 Dorami Latin Serif;板块名 24px、条目 23px;
+往期月历在今天(降级、海报矮)与 9 月 16 日浮层各点命中浮层本身;从 10 月 15 日按 ↑ 三次落到 9 月 24 日、月历翻到 9 月,PageDown 夹回今天,
+Esc 关闭后焦点回到「往期」;10 月 14 日两版在月历下方列出;「回到今天」回到 10 月 15 日;英文文章阅读窗标题与正文 `lang="en"`、标题走西文衬线;
+手机宽月历 296px 落在屏内;页面无报错。`npm run lint` / `npm test`(84)/ `node --test src/utils/*.test.js`(61)/ `npm run build`(无告警)通过。
+

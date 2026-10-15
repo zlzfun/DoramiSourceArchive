@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowRight, ArrowUpRight, CalendarDays, Clock3, Loader2, RefreshCw, Star, Zap } from 'lucide-react';
+import { ArrowDown, ArrowRight, ArrowUpRight, CalendarDays, ChevronDown, Clock3, Loader2, RefreshCw, Star, Undo2, Zap } from 'lucide-react';
 import {
   completeInterestOnboarding,
   ensurePersonalBrief,
@@ -11,16 +11,17 @@ import {
 import { flushPendingInterestSaves } from '../utils/interestSaveQueue';
 import { rebuildToast } from '../utils/briefRebuild';
 import LogoMark from './LogoMark';
+import BriefHistoryCalendar from './BriefHistoryCalendar';
 import { resolveCompany } from '../sourceTaxonomy';
 import { formatDateTime, formatRelativeTime } from '../utils/datetime';
 import { fmtDayKey, WEEKDAY_CHARS } from '../utils/readerTime';
+import { latinLang } from '../utils/readerText';
 import { qualityScoreText, scoreTierClass, scoreDisclaimer, SCORE_DIMENSION_LABELS } from '../utils/analysis';
 import { scoreDimensionOf, scoreOf } from '../utils/briefScore';
-import { useModalA11y } from '../hooks/useModalA11y';
 
 // ── 我的早报 ──
 // issue #184「夜航」版式(样页 docs/design/visual-refine-final/brief.html;用户拍板:保留左轨、取消日期中栏、
-// 往期从右上角「往期」浮层与页尾「本期编排」切换):
+// 往期从右上角「往期」日历与页尾「本期编排」切换;目检返修把字号、英文原标题斜体衬线对回原「夜航」样页):
 //   ① 海报 = 眉头(早报 · 日期)+ 头条(宋体大标题 / 原标题 / 来源与时间 / 摘要 / 阅读全文 · 收藏)+ 右侧评分栏
 //      (维度名 · 宋体渐变大数字 · 评分依据 · 入选理由),背后一层 AI 渐变环境光;
 //   ② 板块 = 左侧 sticky 板块名 + 右侧条目(宋体标题 / 两行摘要 / 来源 · 时间 · 分数 · 兴趣),板块顺序沿用后端
@@ -58,13 +59,6 @@ function dayNameOf(key, todayKey) {
   y.setDate(y.getDate() - 1);
   if (key === fmtDayKey(y)) return '昨天';
   return dateTextOf(key);
-}
-
-// 月分组签:同年只写「9 月」,跨年补年份
-function monthLabelOf(key, todayKey) {
-  const year = key.slice(0, 4);
-  const month = Number(key.slice(5, 7));
-  return year === todayKey.slice(0, 4) ? `${month} 月` : `${year} 年 ${month} 月`;
 }
 
 // 兴趣命中的标签名:matched_interest_codes → 快照 tags 反查;老快照无 code 时从理由句里取「」内文字
@@ -192,10 +186,10 @@ function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds
   return (
     <article className={`bp-item ${flash ? 'is-just-read' : ''}`}>
       {/* 标题按钮是唯一的「打开」控件:::after 拉伸覆盖整条,点条目任意处即打开;收藏与「+ 订阅」浮在覆盖层之上 */}
-      <h3 className="bp-item-title">
+      <h3 className="bp-item-title" lang={latinLang(view.title)}>
         <button type="button" className="bp-item-open" onClick={() => onOpen(item)}>{view.title}</button>
       </h3>
-      {view.titleOrig && <p className="bp-item-orig">{view.titleOrig}</p>}
+      {view.titleOrig && <p className="bp-item-orig" lang={latinLang(view.titleOrig)}>{view.titleOrig}</p>}
       {view.summary && <p className="bp-item-sum">{view.summary}</p>}
       <div className="bp-item-meta">
         <span className="bp-src">
@@ -226,8 +220,8 @@ function Headline({ item, kicker, source, flash, restCount, onOpen, onSubscribeS
     <div className={`bp-head ${flash ? 'is-just-read' : ''}`}>
       <p className="bp-kicker">{kicker}</p>
       {/* 标题可点(鼠标的直觉);键盘与读屏走下方「阅读全文」,标题本身不重复成第二个按钮 */}
-      <h1 className="bp-title" onClick={() => onOpen(item)}>{view.title}</h1>
-      {view.titleOrig && <p className="bp-orig">{view.titleOrig}</p>}
+      <h1 className="bp-title" lang={latinLang(view.title)} onClick={() => onOpen(item)}>{view.title}</h1>
+      {view.titleOrig && <p className="bp-orig" lang={latinLang(view.titleOrig)}>{view.titleOrig}</p>}
       <div className={`bp-lower ${view.score ? '' : 'is-solo'}`}>
         <div className="bp-lower-main">
           <p className="bp-meta">
@@ -282,83 +276,6 @@ function PosterSkeleton() {
       <div className="skeleton bp-skel-line" />
       <div className="skeleton bp-skel-line" />
       <div className="skeleton bp-skel-line is-short" />
-    </div>
-  );
-}
-
-// 「往期」浮层:按月分组的日期行;当天有多版时,选中那天的各版列在它下面。非模态浮层:
-// Esc 与层栈复用 useModalA11y(§8)但不困住 Tab(trapFocus: false),焦点先落在当前那一天(focus 顺带把它卷进视野);
-// 焦点 Tab 出去或外点(mousedown,全站浮层约定)即关闭,触发钮自身的点击由它切换。
-const currentDayOf = (panel) => panel?.querySelector('[aria-current="date"]') || null;
-
-function HistoryPopover({ months, todayKey, selDate, selRevision, live, onPickDay, onPickRevision, onClose, triggerRef }) {
-  const panelRef = useRef(null);
-  useModalA11y(true, onClose, panelRef, { trapFocus: false, initialFocus: currentDayOf });
-  useEffect(() => {
-    const onDown = (event) => {
-      if (panelRef.current?.contains(event.target) || triggerRef.current?.contains(event.target)) return;
-      onClose();
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [onClose, triggerRef]);
-  const handleBlur = (event) => {
-    const next = event.relatedTarget;
-    if (next && !panelRef.current?.contains(next) && !triggerRef.current?.contains(next)) onClose();
-  };
-  const label = { degraded: '降级', failed: '失败', pending: '准备中', generating: '编排中' };
-  return (
-    <div ref={panelRef} className="bp-pop" role="dialog" aria-label="往期早报" tabIndex={-1} onBlur={handleBlur}>
-      <p className="bp-pop-title">往期早报</p>
-      <div className="bp-pop-scroll">
-        {months.map((month) => (
-          <div key={month.key} className="bp-pop-month">
-            <p className="bp-pop-label">{month.label}</p>
-            {month.days.map((day) => {
-              const on = day.key === selDate;
-              const dayLive = day.key === todayKey ? live : LIVE.has(day.latest?.status);
-              const failed = !dayLive && day.latest?.status === 'failed';
-              return (
-                <div key={day.key}>
-                  <button
-                    type="button"
-                    className={`bp-pop-item ${on ? 'is-on' : ''}`}
-                    aria-current={on ? 'date' : undefined}
-                    onClick={() => onPickDay(day.key)}
-                  >
-                    <span className="bp-pop-name">{dateTextOf(day.key)} {weekdayOf(day.key)}</span>
-                    {dayLive
-                      ? <Loader2 className="bp-pop-spin animate-spin" aria-label="编排中" />
-                      : failed
-                        ? <span className="bp-pop-aux is-bad">失败</span>
-                        : (
-                          <span className="bp-pop-aux">
-                            {[day.key === todayKey ? '今天' : '', day.revisions.length > 1 ? `${day.revisions.length} 版` : ''].filter(Boolean).join(' · ')}
-                          </span>
-                        )}
-                  </button>
-                  {on && day.revisions.length > 1 && (
-                    <div className="bp-pop-revs" role="group" aria-label={`${dateTextOf(day.key)}的版本`}>
-                      {day.revisions.map((rev) => (
-                        <button
-                          key={rev.revision}
-                          type="button"
-                          className={`bp-pop-rev ${rev.revision === selRevision ? 'is-on' : ''}`}
-                          aria-pressed={rev.revision === selRevision}
-                          onClick={() => onPickRevision(rev.revision)}
-                        >
-                          {`第 ${rev.revision} 版`}
-                          <span className="bp-pop-aux">{[clockOf(rev.generated_at), label[rev.status]].filter(Boolean).join(' ')}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
@@ -459,17 +376,6 @@ export default function PersonalBriefPage({
         return { key, revisions, latest: revisions[0] || null };
       });
   }, [history, todayEdition, todayKey]);
-
-  const months = useMemo(() => {
-    const result = [];
-    days.forEach((day) => {
-      const key = day.key.slice(0, 7);
-      const current = result[result.length - 1];
-      if (current && current.key === key) current.days.push(day);
-      else result.push({ key, label: monthLabelOf(day.key, todayKey), days: [day] });
-    });
-    return result;
-  }, [days, todayKey]);
 
   const selDate = sel.date || todayKey;
   const isToday = selDate === todayKey;
@@ -891,14 +797,21 @@ export default function PersonalBriefPage({
             <button
               ref={histTriggerRef}
               type="button"
-              className="bp-lbtn"
+              className="bp-hist"
               aria-haspopup="dialog"
               aria-expanded={histOpen}
               onClick={() => setHistOpen((open) => !open)}
             >
               <CalendarDays aria-hidden="true" />
               往期
+              <ChevronDown className="bp-hist-caret" aria-hidden="true" />
             </button>
+            {!isToday && (
+              <button type="button" className="bp-lbtn" onClick={() => pickDay(todayKey)} aria-label="回到今天" title="回到今天">
+                <Undo2 aria-hidden="true" />
+                <span className="bp-lbtn-label">回到今天</span>
+              </button>
+            )}
             {isToday && (
               <button
                 type="button"
@@ -913,8 +826,8 @@ export default function PersonalBriefPage({
               </button>
             )}
             {histOpen && (
-              <HistoryPopover
-                months={months}
+              <BriefHistoryCalendar
+                days={days}
                 todayKey={todayKey}
                 selDate={selDate}
                 selRevision={edition?.revision ?? selRevision}
