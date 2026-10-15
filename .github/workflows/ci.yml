@@ -45,6 +45,14 @@ jobs:
           uv venv .venv --python 3.12
           uv pip install --python .venv/bin/python -r docker/requirements.txt pytest pytest-xdist
 
+      # issue #171:uv.lock 现已入库,但改依赖时最容易漏掉它——锁悄悄陈旧(旧锁里 mcp 丢过 <2 上限、
+      # oss2 整条缺席、registry 还是开发机的镜像源),而基于本地新锁导出的 requirements 全绿。
+      # 这一步把「锁与 pyproject 漂移」变成红灯;文本侧的不变量(无镜像源、无退役重型栈、根包 version
+      # 与 src/version.py 一致)由 tests/test_uv_lock.py 在 Run tests 里守。
+      # 写成独立步骤:上面那条 pytest 命令守卫(tests/test_ci_workflow.py)按一行解析,不能并进去。
+      - name: Verify uv.lock matches pyproject
+        run: uv lock --check
+
       # 少数 Podcast 测试探测 ffmpeg/ffprobe 是否存在(存在时走真实封装路径);部署测试用 PATH 桩,不需要它
       - name: Install ffmpeg
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null

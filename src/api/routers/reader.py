@@ -19,7 +19,7 @@ import logging
 import uuid
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import literal_column, or_
@@ -85,6 +85,7 @@ from services import reader_state as reader_state_service
 from services import source_collections as source_collections_service
 from services import subscription_mutations as subscription_mutations_service
 from services import source_visibility as source_visibility_service
+from services import opml as opml_service
 from services import user_sources as user_sources_service
 from services import x_api_config as x_api_config_service
 
@@ -1523,6 +1524,87 @@ def subscribe_sources_by_shape(
         }
     finally:
         subscription_mutations_service.finish(username, operation)
+
+
+class OpmlImportParams(BaseModel):
+    opml: str = ""
+    dry_run: bool = True
+    urls: Optional[List[str]] = None
+
+
+def _reader_opml_plan(request: Request, session: Session):
+    app = _app()
+    username = app.current_username(request)
+    # 与源栏同一份订阅并集:隐藏中的已订阅 RSS 仍导出,避免备份里静默缺一条。
+    # 文件不写隐藏标记;未订阅的隐藏源不在这份名单里。
+    source_ids = app.resolve_subscribed_source_ids(session, username, include_hidden=True)
+    return opml_service.export_plan(session, source_ids)
+
+
+@router.get("/sources/opml")
+def reader_opml_summary(request: Request, session: Session = Depends(deps.get_session)):
+    """当前读者可导出的 RSS 数量,以及无法写入 OPML 的非 RSS 订阅数。"""
+    plan = _reader_opml_plan(request, session)
+    return JSONResponse(
+        {
+            "exportable_count": plan["exportable_count"],
+            "skipped_count": plan["skipped_count"],
+        },
+        headers={"Cache-Control": "private, no-store"},
+    )
+
+
+@router.get("/sources/export.opml")
+def export_reader_opml(request: Request, session: Session = Depends(deps.get_session)):
+    """导出当前读者订阅中的 RSS / 播客 feed。非 RSS 来源只计入跳过数,不写进文件。"""
+    plan = _reader_opml_plan(request, session)
+    xml = opml_service.render_opml(plan["outlines"])
+    return Response(
+        content=xml,
+        media_type="application/xml; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="dorami-subscriptions.opml"',
+            "X-Dorami-Opml-Exportable": str(plan["exportable_count"]),
+            "X-Dorami-Opml-Skipped": str(plan["skipped_count"]),
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
+@router.post("/sources/import")
+async def import_reader_opml(
+    params: OpmlImportParams,
+    request: Request,
+    background: BackgroundTasks,
+    session: Session = Depends(deps.get_session),
+):
+    """导入 OPML。默认 dry_run 只预览;确认后才订阅或新建自定源。"""
+    app = _app()
+    username = app.current_username(request)
+    if not params.dry_run:
+        operation = "opml-import"
+        if not subscription_mutations_service.begin(username, operation):
+            raise HTTPException(status_code=409, detail="已有订阅操作正在处理中")
+    else:
+        operation = ""
+    try:
+        try:
+            result = await opml_service.import_subscriptions(
+                session,
+                username,
+                params.opml,
+                dry_run=params.dry_run,
+                urls=params.urls,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        created_ids = result.pop("created_source_ids", [])
+        if created_ids:
+            background.add_task(opml_service.fetch_imported_user_sources, created_ids)
+        return result
+    finally:
+        if operation:
+            subscription_mutations_service.finish(username, operation)
 
 
 # ==================== 阅读器 AI（用户面：翻译 / 问答）====================

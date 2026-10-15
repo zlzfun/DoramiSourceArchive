@@ -1558,6 +1558,21 @@ export function useReaderState({
     ? (sourceMap[activeSourceId] || { source_id: activeSourceId, name: activeSourceId })
     : null;
 
+  // 设置柜 OPML 确认导入发生在阅读器之外,写完后刷新源栏与未读。
+  const opmlRefreshRef = useRef(() => {});
+  useEffect(() => {
+    opmlRefreshRef.current = () => {
+      loadSources();
+      loadUnreadCounts();
+      refreshAggregateIfActive();
+    };
+  });
+  useEffect(() => {
+    const onChanged = () => opmlRefreshRef.current();
+    window.addEventListener('dorami-subscriptions-changed', onChanged);
+    return () => window.removeEventListener('dorami-subscriptions-changed', onChanged);
+  }, []);
+
   return {
     // 源目录 / 订阅
     sources, subscribedIds, sourcesLoading, discoverSources, subscribedSources,

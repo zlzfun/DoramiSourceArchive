@@ -15,10 +15,11 @@ COPY --from=ghcr.io/astral-sh/uv:0.9 /uv /uvx /bin/
 WORKDIR /app
 
 # 依赖层单独成层:只 COPY 钉版清单,改源码不触发依赖重装。
-# 版本事实来源是入库的 docker/requirements*.txt(由 `uv export` 从 uv.lock 生成:
-# 纯 name==version 行、零 URL,与开发机的镜像源改写解耦——uv.lock 本身按惯例不入库,
-# v3.17.0 生产曾因“旧锁 + --frozen 不校验”静默装回 torch,故改此方案)。
-# 改依赖后必须重导出并提交该清单(见 CLAUDE.md),tests/test_docker_requirements.py 兜底。
+# 版本事实来源是入库的 docker/requirements*.txt(由 `uv export` 从入库的 uv.lock 生成:
+# 纯 name==version 行、零 URL,与开发机的镜像源改写解耦;uv.lock 自身见 issue #171 起入库),
+# v3.17.0 生产曾因“旧锁 + --frozen 不校验”静默装回 torch,故改用导出清单当构建输入。
+# 改依赖后必须重导出并提交该清单(见 CLAUDE.md),tests/test_docker_requirements.py 兜底;
+# 锁与 pyproject 的漂移由 tests/test_uv_lock.py 与 CI 的 `uv lock --check` 兜底。
 ARG PIP_INDEX=https://pypi.org/simple
 ENV UV_DEFAULT_INDEX=${PIP_INDEX}
 COPY docker/requirements.txt /tmp/

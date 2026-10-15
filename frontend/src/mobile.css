@@ -651,6 +651,23 @@
 }
 /* 分区页正文:分区组件与桌面设置柜同源,窄屏给统一留白;栅格已由 ≤767 断点塌陷 */
 .m-sett-body { padding: 14px 16px calc(24px + env(safe-area-inset-bottom)); background: var(--rd-pane-bg); }
+/* OPML 导入预览是设置栈里单独一屏:列表在滚动区,确认条贴底 */
+.m-page-scroll.opml-mobile-scroll {
+  padding: 12px 16px 16px;
+  background: var(--rd-pane-bg);
+}
+.opml-mobile-scroll .opml-list { flex: none; overflow: visible; }
+.opml-mobile-scroll .opml-filemeta { margin-left: 0; }
+.opml-mobile-bar {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 16px calc(12px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--dorami-border);
+  background: var(--rd-pane-bg);
+}
+.opml-mobile-bar .action-button { width: 100%; }
 
 /* ── 兴趣即透镜(issue #27 五稿):抽屉栏头轴切换加高到触摸档;顶栏标题副文案;嵌入态兴趣页 ── */
 .m-axis { margin: 0 12px 6px; }

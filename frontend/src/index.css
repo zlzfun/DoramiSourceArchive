@@ -4095,6 +4095,42 @@ input[type="radio"] {
   .sett-file svg { width: 16px; height: 16px; flex: none; color: var(--dorami-muted); }
   .sett-file-name { display: block; font-size: 12.5px; font-weight: 600; }
   .sett-file-hint { display: block; font-size: 12px; font-weight: 400; color: var(--dorami-faint); margin-top: 1px; }
+
+  /* 读者 OPML(issue #179):预览占满设置正文,列表自己滚,脚部留在可见区。 */
+  .sett-scroll:has(> .opml-preview) { display: flex; flex-direction: column; overflow: hidden; }
+  .opml-preview { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .opml-back-row { flex: none; display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .opml-back { display: inline-flex; align-items: center; gap: 2px; padding: 4px 6px;
+    border-radius: var(--r-sm); color: var(--dorami-muted); font-weight: 600; }
+  .opml-back:hover { background: var(--dorami-well); color: var(--dorami-ink); }
+  .opml-back svg { width: 16px; height: 16px; }
+  .opml-preview-title { font-size: 13px; font-weight: 600; }
+  .opml-filemeta { margin-left: auto; }
+  .opml-chips { flex: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+  .opml-chips .stamp { cursor: default; }
+  .opml-stamp.stamp-run::before { animation: none; }
+  .opml-note { flex: none; margin: 0 0 8px; font-size: 12px; font-weight: 400; color: var(--dorami-faint); }
+  .opml-list { flex: 1; min-height: 0; overflow-y: auto; list-style: none; margin: 0; padding: 0;
+    border: 1px solid var(--dorami-border); border-radius: var(--r-card); }
+  .opml-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; }
+  .opml-item + .opml-item { border-top: 1px solid var(--dorami-border); }
+  .opml-item input { width: 16px; height: 16px; margin-top: 2px; flex: none; }
+  .opml-item-main { min-width: 0; flex: 1; }
+  .opml-item-title { display: block; font-size: 13px; font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .opml-item-url, .opml-item-reason { display: block; margin-top: 1px; font-size: 12px; line-height: 1.5;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .opml-item-url { color: var(--dorami-faint); }
+  .opml-item-reason.is-warn { color: var(--state-warn); }
+  .opml-item-reason.is-bad { color: var(--state-bad); }
+  .opml-item.is-idle .opml-item-title { color: var(--dorami-muted); }
+  .opml-foot { flex: none; margin-top: 12px; }
+  .opml-foot-note { font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
+  .opml-foot-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .opml-home { position: relative; }
+  .opml-import-sub { margin-bottom: 10px; }
+  .opml-file-input { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   /* 结果/进度盘:soft 底信息块(导入结果/同步进度/探针结果共用) */
   .sett-sync-panel { margin-top: 12px; border: 1px solid var(--dorami-border);
     border-radius: var(--r-card); background: var(--dorami-soft); padding: 10px 14px; }

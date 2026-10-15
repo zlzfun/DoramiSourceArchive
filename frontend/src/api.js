@@ -873,6 +873,54 @@ export function removeCustomSource(sourceId) {
   return request(`/reader/custom-sources/${enc(sourceId)}`, { method: 'DELETE', errorMsg: '移除自定源失败' });
 }
 
+// ==================== 读者 OPML(issue #179) ====================
+
+export function fetchOpmlSummary() {
+  return request('/reader/sources/opml', {
+    errorMsg: '获取订阅导出信息失败',
+    cache: 'no-store',
+  });
+}
+
+export async function downloadSubscriptionOpml() {
+  let res;
+  try {
+    res = await apiFetch(`${API_BASE_URL}/reader/sources/export.opml`);
+  } catch (error) {
+    if (error?.name === 'AbortError') throw error;
+    const wrapped = new Error('导出订阅失败：后端未响应，请确认服务已启动后重试');
+    wrapped.status = 0;
+    wrapped.code = 'network';
+    wrapped.cause = error;
+    throw wrapped;
+  }
+  if (!res.ok) await handleApiError(res, '导出订阅失败');
+  const blob = await res.blob();
+  return {
+    blob,
+    filename: 'dorami-subscriptions.opml',
+    exportable: Number(res.headers.get('X-Dorami-Opml-Exportable') || 0),
+    skipped: Number(res.headers.get('X-Dorami-Opml-Skipped') || 0),
+  };
+}
+
+export function previewOpmlImport(opml, signal) {
+  return request('/reader/sources/import', {
+    method: 'POST',
+    body: { opml, dry_run: true },
+    errorMsg: '预览导入失败',
+    signal,
+  });
+}
+
+export function confirmOpmlImport(opml, urls) {
+  return request('/reader/sources/import', {
+    method: 'POST',
+    body: { opml, dry_run: false, urls },
+    errorMsg: '导入订阅失败',
+  });
+}
+
 // ==================== 我的早报 / 显式兴趣 ====================
 export function fetchInterestCatalog(options = {}) {
   return request('/reader/interests/catalog', { ...options, errorMsg: '获取兴趣目录失败' });

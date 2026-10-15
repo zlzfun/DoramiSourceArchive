@@ -75,6 +75,7 @@ docker compose down                 # 停站(数据在宿主目录,安全)
 对外监听默认 80,`DORAMI_HTTP_LISTEN` 可改端口(`8080`)或收进环回
 (`127.0.0.1:8080`,配合外层 TLS 反代);时区默认
 `Asia/Shanghai`(影响采集任务/日报的 cron 语义),`TZ` 环境变量可覆盖。
+反代头信任面由 `DORAMI_FORWARDED_ALLOW_IPS` 控制(见下方「HTTPS」节)。
 
 ## ini 在容器内的语义差异
 
@@ -141,6 +142,37 @@ cat /root/prod_known_hosts.txt                                           # 相�
 2. 云厂商 LB/CDN 终止 TLS;
 3. 在 compose 里加一个 caddy 服务自动签发(将来需要再加)。
 启用 HTTPS 后记得把 ini `[auth] cookie_secure = true`(启动安全校验的生产姿态随之生效)。
+
+### 代理头信任面(issue #172)
+
+该 bug 由两处叠加而成,缺一不可:
+
+1. **容器内 nginx 覆盖了协议**:它只监听 80,`$scheme` 恒为 `http`,而反代头原本直写
+   `proxy_set_header X-Forwarded-Proto $scheme;` —— 外层边缘透传进来的正确 `https` 在这一跳被踩掉。
+   现改为 `map $http_x_forwarded_proto $dorami_forwarded_proto`(见 [`docker/nginx.conf`](../docker/nginx.conf)):
+   默认透传上游值,**仅当上游未给**(直连容器端口、无边缘)时才回落 `$scheme`;
+2. **容器内 uvicorn 不信任 nginx 容器**:uvicorn 的直接客户端是 **nginx 容器**,不是浏览器,它的源 IP
+   落在 compose 默认 bridge 网段(典型 `172.x`),不在 uvicorn 的默认白名单 `127.0.0.1` 里。默认值下
+   `ProxyHeadersMiddleware` 会整段跳过,`request.base_url` 与 `scope["scheme"]` 在 HTTPS 部署下恒为 `http`。
+   同一原因也让「谁是真的客户端 IP」丢失:nginx 已发的 `X-Forwarded-For` 不会被采信。
+
+所以 `docker-compose.yml` 显式注入信任面,`docker/entrypoint.py` 把它交给 `uvicorn.run(forwarded_allow_ips=...)`:
+
+| 变量 | 默认 | 含义 |
+| --- | --- | --- |
+| `DORAMI_FORWARDED_ALLOW_IPS` | `127.0.0.1,172.16.0.0/12` | 逗号分隔的 IP / CIDR 白名单;只有这些来源发的 `X-Forwarded-*` 才被采信 |
+
+- `127.0.0.1` 是 uvicorn 的原默认值,保留它是因为方案 1(站点收进环回)时经宿主 `curl` 直连的请求也来自它;
+- `172.16.0.0/12` 覆盖 docker 默认 bridge 池。**若 daemon 配了自定义 `bip`(网段可能落在该区间外)**,
+  用 `DORAMI_FORWARDED_ALLOW_IPS` 覆盖成实际网段(可多项,逗号分隔);
+- 容器内 nginx 是唯一入口、backend 不发布宿主端口,故这份白名单不构成公网伪造面;
+  反过来**不要**图省事写成 `*`——那等于信任任意来源声明的协议与客户端 IP。
+  注意两处白名单语义不同:nginx 的 `map` 只知道「上游有没有声明协议」,真正决定采信与否的是 uvicorn 这份来源白名单。
+- 裸机路径不受影响:那里 nginx 与后端同机,源 IP 就是 `127.0.0.1`,本就在白名单内。
+
+改动由 [`tests/test_forwarded_proto.py`](../tests/test_forwarded_proto.py) 守卫:配置面(compose 默认值与进程默认值同源)、
+nginx 透传面(map 存在、两处反代都不再直写 `$scheme`)、行为面(真实 socket 上受信/不受信来源的 `scheme` 与客户端 IP),
+以及端到端断言(受信来源 + `X-Forwarded-Proto: https` 时 `/api/mcp/status` 导出的地址必须是 `https://…`)。
 
 ## 全新服务器部署(含迁移)
 
