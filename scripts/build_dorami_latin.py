@@ -154,7 +154,10 @@ def main() -> int:
     if OUT_DIR.exists():
         shutil.rmtree(OUT_DIR)
     OUT_DIR.mkdir(parents=True)
-    fetch(LICENSE_URL, OUT_DIR / "LICENSE.md")
+    license_path = OUT_DIR / "LICENSE.md"
+    fetch(LICENSE_URL, license_path)
+    # 上游许可文件是 CRLF;内容逐字保留,只统一成 LF(仓库文本一律 LF,git diff --check 不报行尾空白)
+    license_path.write_bytes(license_path.read_bytes().replace(b"\r\n", b"\n"))
 
     faces: list[str] = []
     total = 0

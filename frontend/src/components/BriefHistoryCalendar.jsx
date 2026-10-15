@@ -68,7 +68,9 @@ export default function BriefHistoryCalendar({
     const next = event.relatedTarget;
     if (next && !panelRef.current?.contains(next) && !triggerRef.current?.contains(next)) onClose();
   };
+  // 月份按钮翻月:焦点留在按钮上,网格只挪 roving tabindex 的落点
   const goMonth = (delta) => {
+    moveFocusRef.current = false;
     const nextFocus = clampKey(shiftMonthKeepDay(focusKey, delta), minKey, todayKey);
     setFocusKey(nextFocus);
     setMonth(monthOf(nextFocus));
@@ -78,6 +80,8 @@ export default function BriefHistoryCalendar({
     if (!target) return;
     event.preventDefault();
     const next = clampKey(target, minKey, todayKey);
+    // 夹在范围端点、落点没变:不留聚焦请求——否则它会留到下一次翻月,把焦点从月份按钮拽进网格(Codex E1-P2-01)
+    if (next === focusKey) return;
     moveFocusRef.current = true;
     setFocusKey(next);
     setMonth(monthOf(next));
@@ -93,10 +97,11 @@ export default function BriefHistoryCalendar({
       <p className="bp-cal-title">往期早报</p>
       <div className="bp-cal-head">
         <p className="bp-cal-month" aria-live="polite">{monthLabel(month)}</p>
-        <button type="button" className="bp-cal-nav" aria-label="上个月" disabled={!canPrev} onClick={() => goMonth(-1)}>
+        {/* 到范围边界用 aria-disabled 而不是 disabled:正按着的按钮一旦 disabled 会丢焦点(落到 body),键盘用户就迷路了 */}
+        <button type="button" className="bp-cal-nav" aria-label="上个月" aria-disabled={canPrev ? undefined : 'true'} onClick={() => { if (canPrev) goMonth(-1); }}>
           <ChevronLeft aria-hidden="true" />
         </button>
-        <button type="button" className="bp-cal-nav" aria-label="下个月" disabled={!canNext} onClick={() => goMonth(1)}>
+        <button type="button" className="bp-cal-nav" aria-label="下个月" aria-disabled={canNext ? undefined : 'true'} onClick={() => { if (canNext) goMonth(1); }}>
           <ChevronRight aria-hidden="true" />
         </button>
       </div>

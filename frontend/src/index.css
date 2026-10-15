@@ -12164,7 +12164,7 @@ input[type="radio"] {
 
 
 /* ── 我的早报 · 夜航版式(issue #184;样页 docs/design/visual-refine-final/brief.html)──
-   占「源栏 + 条目列 + 阅读窗」整幅(grid-column 2 / -1,日期中栏已撤),整页可滚,版心 1160 居中。
+   占「源栏 + 条目列 + 阅读窗」整幅(grid-column 2 / -1,日期中栏已撤),整页可滚,版心 1200 居中、两侧 48。
    海报(眉头 · 头条 · 评分栏,背后一层 AI 渐变环境光)→ 板块(左 sticky 板块名 + 右条目)→ 本期编排。
    字:头条宋体 900(Dorami Serif 只有这一处用 900),板块名 / 条目标题宋体 600,其余界面黑体 400 / 600;
    英文原标题走西文衬线斜体(Dorami Latin Serif),未译的英文标题标 lang="en" 换西文衬线;
@@ -12462,8 +12462,8 @@ input[type="radio"] {
   cursor: pointer;
 }
 .bp-cal-nav svg { width: 16px; height: 16px; }
-.bp-cal-nav:hover:not(:disabled) { background: var(--dorami-hover); color: var(--dorami-ink); }
-.bp-cal-nav:disabled { cursor: default; opacity: 0.35; }
+.bp-cal-nav:hover:not([aria-disabled="true"]) { background: var(--dorami-hover); color: var(--dorami-ink); }
+.bp-cal-nav[aria-disabled="true"] { cursor: default; opacity: 0.35; }
 .bp-cal-grid { width: 100%; border-collapse: separate; border-spacing: 2px; table-layout: fixed; }
 .bp-cal-grid th { height: 28px; padding: 0; font-size: 12px; font-weight: 400; color: var(--dorami-faint); text-align: center; }
 .bp-cal-grid td { padding: 0; text-align: center; }

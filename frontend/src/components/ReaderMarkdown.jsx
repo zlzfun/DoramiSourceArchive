@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -7,6 +7,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 import { mediaProxyUrl } from '../api';
+import { latinLang } from '../utils/readerText';
 
 // react-markdown 默认不渲染原始 HTML（无 rehype-raw），无 XSS 风险
 // remark-math + KaTeX:渲染正文里的 $...$ / $$...$$ LaTeX(学术型源如 Lil'Log
@@ -60,6 +61,7 @@ const ImageSrcContext = createContext(mediaProxyUrl);
 function MarkdownImage({ node, alt, ...props }) {
   const resolveSrc = useContext(ImageSrcContext);
   const [failed, setFailed] = useState(false);
+  const labelId = useId();
   const [loaded, setLoaded] = useState(false);
   // 初始走代理（取图路径由 ImageSrcContext 决定）；onError 回退原链（fallback=true 后不再重试）
   const [src, setSrc] = useState(() => resolveSrc(props.src));
@@ -77,9 +79,11 @@ function MarkdownImage({ node, alt, ...props }) {
   }, [props.src]);
   if (failed) {
     // 裂图态不加点击放大：没有可展示的原图
+    // 语言标记跟着名字走(Codex E1-P2-02):英文正文容器标了 lang="en",组件自己的中文文案要显式标回 zh-CN,
+    // 有 alt 时名字就是 alt,按它自己的语种标
     return (
-      <span className="markdown-img-fallback" role="img" aria-label={alt || '图片加载失败'}>
-        <span className="micro-label">图片加载失败</span>
+      <span className="markdown-img-fallback" role="img" aria-label={alt || '图片加载失败'} lang={alt ? (latinLang(alt) || 'zh-CN') : 'zh-CN'}>
+        <span className="micro-label" lang="zh-CN">图片加载失败</span>
         {alt ? <span className="markdown-img-fallback-alt">{alt}</span> : null}
       </span>
     );
@@ -92,8 +96,18 @@ function MarkdownImage({ node, alt, ...props }) {
       className="markdown-img-button"
       // e.currentTarget（button 本体）作触发元素传出，关闭灯箱后焦点归还到它
       onClick={(e) => openLightbox?.(src, alt || '', e.currentTarget)}
-      aria-label={alt ? `放大图片：${alt}` : '放大图片'}
+      // 名字 =「放大图片」+ alt:两段各标各的语言再用 aria-labelledby 拼起来,不继承正文容器的 lang(E1-P2-02);
+      // 没有 alt 时整钮就是中文
+      aria-labelledby={alt ? `${labelId}-act ${labelId}-alt` : undefined}
+      aria-label={alt ? undefined : '放大图片'}
+      lang={alt ? undefined : 'zh-CN'}
     >
+      {alt && (
+        <>
+          <span id={`${labelId}-act`} lang="zh-CN" hidden>放大图片：</span>
+          <span id={`${labelId}-alt`} lang={latinLang(alt) || 'zh-CN'} hidden>{alt}</span>
+        </>
+      )}
       <img
         {...props}
         src={src}
