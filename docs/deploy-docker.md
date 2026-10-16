@@ -134,6 +134,10 @@ cat /root/prod_known_hosts.txt                                           # 相�
 - 升级 launcher / worker 是显式手工步骤(重新 cp);目标 tag 的 `scripts/deploy-lib.sh` 用 `DORAMI_DEPLOY_PROTOCOL` 宣告
   契约版本,worker 不认识的版本拒绝部署。
 - 手工 `./deploy-docker.sh` 与流水线共用锁 `/run/lock/dorami-deploy.lock`,互斥。
+- **worker 有意 `umask 077`**(部署状态与备份只给 root 读),所以它检出的新文件 / 改动过的文件是 0600、目录 0700,构建上下文的
+  权限会原样进镜像。镜像不能依赖检出时的权限:nginx 镜像在拷入前端产物之后统一 `chmod -R a+rX`(issue #192——v3.65.0 首次上线时
+  自托管字体、manifest、PWA 图标因此全部 403,早年手工克隆的老文件权限正常所以没暴露);后端容器以 root 运行不受影响。
+  以后让非 root 进程读新增文件的镜像,同样在镜像里放开权限。
 
 ## HTTPS
 
