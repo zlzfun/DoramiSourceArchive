@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
+import './palette'
 import App from './App.jsx'
 import SharedArticlePage from './components/SharedArticlePage.jsx'
 import { ConfirmProvider } from './components/ConfirmDialog.jsx'

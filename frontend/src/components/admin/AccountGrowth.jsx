@@ -1,7 +1,8 @@
 /**
- * 账户增长（v3.55 issue #31）：把 `/api/admin/account-growth` 的「按创建日新增」序列画成一张组合图——
- * 柱 = 当日新增、折线 = 累计账户(用户验收拍板:两量合一张图,不拆两卡;粒度不另设,直接吃运维页头的
- * 近 N 天时间窗)。两个量级差一个数量级,柱与折线各挂一根 y 轴(左=新增、右=累计),图例常备标明归属。
+ * 账户增长（v3.55 issue #31；issue #184 改阶梯线）：把 `/api/admin/account-growth` 的「按创建日新增」序列画成
+ * 一条从存量起步的阶梯线——累计账户只在有人加入的那天抬一阶,抬阶处画一个点并标「+N」。两个量仍在一张图里
+ * (v3.55 用户验收拍板:两量合一张图,不拆两卡;粒度直接吃运维页头的近 N 天时间窗),但不再柱线双轴:
+ * 新增是稀疏事件,画成柱时大多数日子是空的,双轴还让两个量级互相挤压。
  *
  * 累计值从全量序列前缀和推出(视野之前的账户算进起点),视野末端恒等于现存总数。
  * 「今天」取服务端 as_of_day(与 created_at 同一时钟),浏览器与服务端跨日时不漏当天新增。
@@ -11,19 +12,17 @@ import { useMemo } from 'react';
 import { useMotionReduced } from '../../motion';
 import {
   ResponsiveContainer,
-  ComposedChart,
-  Bar,
+  LineChart,
   Line,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
 } from 'recharts';
-import { C_PRIMARY, CHART_SLOTS, AXIS, GRID, fmtNumLocale as fmt } from '../charts/chartUtils';
+import { C_PRIMARY, AXIS, GRID, fmtNumLocale as fmt } from '../charts/chartUtils';
 
-const AXIS_TICK = { fill: AXIS, fontSize: 11 };
-const C_NEW = C_PRIMARY;
-const C_TOTAL = CHART_SLOTS[1];
+const AXIS_TICK = { fill: AXIS, fontSize: 12 };
+const C_TOTAL = C_PRIMARY;
 
 function isoDate(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -62,18 +61,15 @@ function dailyGrowth(series, days, asOf) {
 function GrowthTooltip({ active, payload }) {
   if (!active || !payload || payload.length === 0) return null;
   const row = payload[0]?.payload;
-  if (!row) return null;
+  if (!row || !row.day) return null;   // 起点(窗口之前的存量)不出浮层
   return (
     <div className="rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-[var(--dorami-card-solid)] px-3 py-2 shadow-[var(--sh-2)]">
-      <p className="mb-1 text-xs font-bold text-slate-700">{row.day}</p>
+      <p className="mb-1 text-xs font-semibold text-slate-700">{row.day}</p>
       <div className="space-y-0.5">
-        {[['新增账户', row.new, C_NEW], ['累计账户', row.total, C_TOTAL]].map(([name, value, color]) => (
+        {[['累计账户', row.total], ['当日新增', row.new]].map(([name, value]) => (
           <div key={name} className="flex items-center justify-between gap-4 text-xs">
-            <span className="inline-flex items-center gap-1.5 text-slate-500">
-              <span className="h-2 w-2 rounded-sm" style={{ background: color }} />
-              {name}
-            </span>
-            <span className="font-bold tabular-nums text-slate-700">{fmt(value)}</span>
+            <span className="text-slate-500">{name}</span>
+            <span className="font-semibold tabular-nums text-slate-700">{fmt(value)}</span>
           </div>
         ))}
       </div>
@@ -83,38 +79,47 @@ function GrowthTooltip({ active, payload }) {
 
 const intFormatter = (v) => (v >= 1000 ? `${Math.round(v / 1000)}k` : v);
 
-export default function AccountGrowth({ growth, days = 30, height = 230 }) {
+// 抬阶处的点与「+N」标注;其余日子不画点
+function JoinDot({ cx, cy, payload }) {
+  if (!payload?.new || !Number.isFinite(cx) || !Number.isFinite(cy)) return null;
+  return (
+    <g>
+      <circle cx={cx} cy={cy} r={3.5} fill="var(--dorami-surface)" stroke={C_TOTAL} strokeWidth={1.6} />
+      <text x={cx + 7} y={cy - 8} fontSize={12} fill="var(--dorami-ink-2)">+{payload.new}</text>
+    </g>
+  );
+}
+
+export default function AccountGrowth({ growth, days = 30, height = 200 }) {
   // 动效偏好显式传给 recharts(issue #73):不让其 'auto' 档自己读 OS 查询
   const animate = !useMotionReduced();
   const asOf = useMemo(() => (growth?.as_of_day ? parseDay(growth.as_of_day) : new Date()), [growth]);
-  const data = useMemo(() => dailyGrowth(growth?.series, days, asOf), [growth, days, asOf]);
-  const windowNew = data.reduce((acc, r) => acc + r.new, 0);
+  const daily = useMemo(() => dailyGrowth(growth?.series, days, asOf), [growth, days, asOf]);
+  const windowNew = daily.reduce((acc, r) => acc + r.new, 0);
+  // 阶梯从窗口之前的存量起步:首格前补一个起点,窗口第一天就有人加入时也看得见那一阶
+  const data = useMemo(() => (daily.length
+    ? [{ day: '', label: '', new: 0, total: daily[0].total - daily[0].new }, ...daily]
+    : daily), [daily]);
+  const totals = data.map((r) => r.total);
+  const lo = totals.length ? Math.min(...totals) : 0;
+  const hi = totals.length ? Math.max(...totals) : 1;
+  const total = totals.length ? totals[totals.length - 1] : 0;
   return (
     <>
       <div className="zone-head">
         <span className="zone-title">账户增长</span>
-        <span className="zone-hint">近 {days} 天 · 新增 {fmt(windowNew)} · 现存账户按加入日回溯,已删除不计</span>
+        <span className="zone-hint">{fmt(total)} 个 · 近 {days} 天新增 {fmt(windowNew)} · 现存账户按加入日回溯,已删除不计</span>
       </div>
       <section className="surface-card card-pad rounded-[var(--r-card)]" aria-label="账户增长">
-        <div className="mb-2 flex flex-wrap gap-x-3 gap-y-1">
-          {[['新增账户', C_NEW], ['累计账户', C_TOTAL]].map(([name, color]) => (
-            <span key={name} className="inline-flex items-center gap-1 tiny-meta text-slate-500">
-              <span className="h-2 w-2 rounded-sm" style={{ background: color }} />
-              {name}
-            </span>
-          ))}
-        </div>
         <div style={{ height }}>
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={data} margin={{ top: 4, right: 0, bottom: 0, left: 0 }} barCategoryGap="30%">
+            <LineChart data={data} margin={{ top: 22, right: 24, bottom: 0, left: 0 }}>
               <CartesianGrid stroke={GRID} vertical={false} />
               <XAxis dataKey="label" tick={AXIS_TICK} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={40} />
-              <YAxis yAxisId="new" tick={AXIS_TICK} axisLine={false} tickLine={false} width={40} tickCount={3} tickFormatter={intFormatter} allowDecimals={false} />
-              <YAxis yAxisId="total" orientation="right" tick={AXIS_TICK} axisLine={false} tickLine={false} width={44} tickCount={3} tickFormatter={intFormatter} allowDecimals={false} />
-              <Tooltip cursor={{ fill: 'var(--dorami-wash)' }} content={<GrowthTooltip />} isAnimationActive={animate} />
-              <Bar yAxisId="new" dataKey="new" name="新增账户" fill={C_NEW} radius={[4, 4, 0, 0]} maxBarSize={14} isAnimationActive={animate} />
-              <Line yAxisId="total" type="monotone" dataKey="total" name="累计账户" stroke={C_TOTAL} strokeWidth={2} dot={false} activeDot={{ r: 4 }} isAnimationActive={animate} />
-            </ComposedChart>
+              <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} width={44} tickCount={3} tickFormatter={intFormatter} allowDecimals={false} domain={[Math.max(0, lo - 1), hi + 1]} />
+              <Tooltip cursor={{ stroke: GRID }} content={<GrowthTooltip />} isAnimationActive={animate} />
+              <Line type="stepAfter" dataKey="total" name="累计账户" stroke={C_TOTAL} strokeWidth={1.6} dot={<JoinDot />} activeDot={{ r: 4 }} isAnimationActive={animate} />
+            </LineChart>
           </ResponsiveContainer>
         </div>
       </section>

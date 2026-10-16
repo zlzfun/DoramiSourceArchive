@@ -357,26 +357,23 @@ export function analysisItemsFromResponse(response) {
  * result is a forced refresh and therefore says “更新中” rather than pretending
  * the old score disappeared.
  */
-export function analysisStatusMeta(article, { podcast = false, includeTerminal = false } = {}) {
+// short:用在列头已写明「分析」的地方(台账分析列,issue #184),标签省掉「分析」二字
+export function analysisStatusMeta(article, { podcast = false, includeTerminal = false, short = false } = {}) {
   const status = article?.analysis_status;
   const refreshing = hasReadableAnalysis(article);
-  if (status === 'pending') {
+  if (status === 'pending' || status === 'running') {
     return {
-      label: refreshing ? (podcast ? '简介更新中…' : '更新中…') : (podcast ? '简介分析中…' : '正在分析…'),
-      cls: 'stamp-run',
-    };
-  }
-  if (status === 'running') {
-    return {
-      label: refreshing ? (podcast ? '简介更新中…' : '更新中…') : (podcast ? '简介分析中…' : '正在分析…'),
+      label: refreshing
+        ? (podcast ? '简介更新中…' : '更新中…')
+        : (podcast ? '简介分析中…' : (short ? '进行中…' : '正在分析…')),
       cls: 'stamp-run',
     };
   }
   if (!includeTerminal) return null;
-  if (status === 'failed') return { label: '分析失败', cls: 'stamp-bad' };
-  if (status === 'timeout') return { label: '分析超时', cls: 'stamp-warn' };
-  if (status === 'skipped') return { label: '未执行分析', cls: 'stamp-idle' };
-  if (!status) return { label: '尚未分析', cls: 'stamp-idle' };
+  if (status === 'failed') return { label: short ? '失败' : '分析失败', cls: 'stamp-bad' };
+  if (status === 'timeout') return { label: short ? '超时' : '分析超时', cls: 'stamp-warn' };
+  if (status === 'skipped') return { label: short ? '未执行' : '未执行分析', cls: 'stamp-idle' };
+  if (!status) return { label: short ? '未分析' : '尚未分析', cls: 'stamp-idle' };
   return null;
 }
 

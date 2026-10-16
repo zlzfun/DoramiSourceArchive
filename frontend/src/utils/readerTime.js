@@ -16,17 +16,20 @@ export const dayKeyOf = (article) => {
   return Number.isNaN(d.getTime()) ? '' : fmtDayKey(d);
 };
 
-// 样页组头格式:「今天 · 07-18」「昨天 · 07-17」「07-16 · 四」
+// 组头格式(issue #184):「今天 · 10月13日」「昨天 · 10月12日」「9月15日 周二」;跨年时带年份。
+// 中文日期写法,不再用等宽字体的「09-15 · 二」。
 export const dayLabelOf = (key) => {
   if (!key) return '更早';
   const now = new Date();
-  const mmdd = `${key.slice(5, 7)}-${key.slice(8, 10)}`;
-  if (key === fmtDayKey(now)) return `今天 · ${mmdd}`;
+  const d = new Date(`${key}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return key;
+  const md = `${d.getMonth() + 1}月${d.getDate()}日`;
+  if (key === fmtDayKey(now)) return `今天 · ${md}`;
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
-  if (key === fmtDayKey(yesterday)) return `昨天 · ${mmdd}`;
-  const d = new Date(`${key}T00:00:00`);
-  return Number.isNaN(d.getTime()) ? mmdd : `${mmdd} · ${WEEKDAY_CHARS[d.getDay()]}`;
+  if (key === fmtDayKey(yesterday)) return `昨天 · ${md}`;
+  const year = d.getFullYear() === now.getFullYear() ? '' : `${d.getFullYear()}年`;
+  return `${year}${md} 周${WEEKDAY_CHARS[d.getDay()]}`;
 };
 
 // 注:条目列/社交流的相对时刻直接用 utils/datetime.js 的 formatRelativeTime

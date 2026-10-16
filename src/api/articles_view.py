@@ -200,6 +200,8 @@ def _podcast_projection(
         projected["premium_guide"].update({
             "failed_stage": str(premium_guide.get("failed_stage") or ""),
             "error": str(premium_guide.get("error") or ""),
+            "error_code": str(premium_guide.get("error_code") or ""),
+            "next_retry_at": str(premium_guide.get("next_retry_at") or ""),
             "language": str(premium_guide.get("language") or ""),
             "language_source": str(premium_guide.get("language_source") or ""),
         })

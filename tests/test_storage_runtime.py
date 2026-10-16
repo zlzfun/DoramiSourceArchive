@@ -140,6 +140,29 @@ def test_reader_startup_registers_maintenance_without_collector_jobs(runtime, mo
         assert scheduler.get_job("storage_maintenance") is not None
         assert scheduler.get_job("article_analysis") is None
         assert scheduler.get_job("retention_cleanup") is not None
+        reclaim = scheduler.get_job(app.TTS_RECEIPT_RECLAIM_JOB_ID)
+        assert reclaim is not None
+        assert reclaim.func is app.execute_tts_receipt_reclaim_job
+        assert "hour='4'" in str(reclaim.trigger) and "minute='45'" in str(reclaim.trigger)
+
+
+def test_tts_receipt_reclaim_job_is_nonblocking_and_bailian_only(runtime, monkeypatch):
+    app, *_rest = runtime
+    calls = []
+
+    def fake(_config, _engine, **kwargs):
+        calls.append(kwargs)
+        return {"compressed_wavs": 0, "saved_bytes": 0}
+
+    monkeypatch.setattr("services.bailian_tts.reclaim_completed_receipts", fake)
+    skipped = app._run_tts_receipt_reclaim()
+    assert skipped["skipped"] is True and calls == []
+
+    from config_bailian import BailianSpeechConfig
+    cfg = BailianSpeechConfig(enabled=True, api_key="secret-test", account_scope="acct")
+    monkeypatch.setattr(app.podcast_speech_config_service, "resolve_config", lambda _session: cfg)
+    assert app._run_tts_receipt_reclaim()["compressed_wavs"] == 0
+    assert calls == [{"blocking": False}]
 
 
 def test_collection_schedule_reload_preserves_storage_maintenance(runtime):

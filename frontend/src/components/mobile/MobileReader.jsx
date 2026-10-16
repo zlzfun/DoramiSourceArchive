@@ -88,7 +88,7 @@ export default function MobileReader({
     socialView, podcastView, listTitle, listSubtitle,
     goView, goSource, goTag, goFavorites,
     kindFilter, setKindFilter, kindFacetItems,
-    scope, setAxis, toggleFavoriteScope, activeTagId, activeTagName, interestGroups, hasInterests, refreshInterests,
+    scope, setAxis, toggleFavoriteScope, activeTagId, interestGroups, hasInterests, refreshInterests,
     interestAxisEnabled, showUnsubscribedMark, showInterestHit,
     activeSourceHidden, activeUnsubscribed, grouping,
     // 搜索
@@ -207,8 +207,9 @@ export default function MobileReader({
 
       {/* ── 顶栏(四个内容容器共用:抽屉入口 + 标题/搜索 + seg + 标读 + 搜索开关;
              社交流 headless 化后其控件行由此承担——Wave3 收口,两层头部合一) ── */}
-      {tab === 'me' || tab === 'brief' || tab === 'rankings' ? (
-        <div className="m-topbar"><span className="m-title m-title-solo">{tab === 'brief' ? '我的早报' : tab === 'rankings' ? '榜单' : '我的'}</span></div>
+      {/* 早报页自带眉头(早报 · 日期 · 往期,issue #184 夜航版式),不再叠一条「我的早报」顶栏 */}
+      {tab === 'brief' ? null : tab === 'me' || tab === 'rankings' ? (
+        <div className="m-topbar"><span className="m-title m-title-solo">{tab === 'rankings' ? '榜单' : '我的'}</span></div>
       ) : (
         <div className="m-topbar">
           <button type="button" className="m-iconbtn" onClick={() => setDrawerOpen(true)} aria-label="订阅源">
@@ -301,6 +302,8 @@ export default function MobileReader({
             onSetupInterests={openInterests}
             onOnboardingCompleted={() => onUserUpdated?.({ interest_onboarding_completed: true })}
             onBrowse={() => setTab(mode)}
+            favoriteIds={favoriteIds}
+            onToggleFavorite={(articleId) => handleToggleFavorite({ id: articleId })}
             onSubscribeSource={subscribeSourceById}
             onOpenArticle={async (articleId, ctx) => {
               const opened = await openArticleById(articleId, { silent: true });
@@ -488,7 +491,6 @@ export default function MobileReader({
                         onContextMenu={noopContextMenu}
                         ctxAnchor={sheet?.anchorKey === `article:${article.id}`}
                         interestHit={showInterestHit ? (article.interest_hits?.[0] || '') : ''}
-                        labelSuppress={activeTagName}
                         unsubscribed={showUnsubscribedMark && !subscribedIds.has(article.source_id)}
                         onSubscribeSource={subscribeSourceById}
                       />

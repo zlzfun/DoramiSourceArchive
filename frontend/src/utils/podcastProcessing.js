@@ -55,6 +55,7 @@ export const PODCAST_TTS_META = Object.freeze({
   queued: { label: '已排队', tone: 'run', active: true },
   summarizing: { label: '生成导读中', tone: 'run', active: true },
   synthesizing: { label: '合成音频中', tone: 'run', active: true },
+  retry_wait: { label: '等待重试', tone: 'warn', active: false },
   ready: { label: '已生成', tone: 'ok', active: false },
   failed: { label: '失败', tone: 'bad', active: false },
 });
@@ -63,6 +64,7 @@ export const PODCAST_TTS_FILTERS = Object.freeze([
   ['', 'TTS'],
   ['not_started', '未生成'],
   ['active', '生成中'],
+  ['retry_wait', '等待重试'],
   ['ready', '已生成'],
   ['failed', '失败'],
 ]);
@@ -78,6 +80,12 @@ export const PODCAST_TIMELINE_TONES = Object.freeze({
 });
 
 const lower = (value) => String(value || '').trim().toLowerCase();
+
+function formatAutoRetry(raw) {
+  const value = String(raw || '').trim();
+  if (!value || Number.isNaN(Date.parse(value))) return '';
+  return `计划 ${new Date(value).toLocaleString('zh-CN', { timeZoneName: 'short' })} 自动重试`;
+}
 
 export function podcastScoreText(value) {
   if (value == null || value === '') return '—';
@@ -215,10 +223,8 @@ function stageReason(item, stageCode, thresholds) {
     case 'retry_wait': {
       const errorCode = String(item.processing_error_code || item.error_code || '').trim();
       const quotaWait = ASR_QUOTA_WAIT_CODES.has(errorCode);
-      const when = item.next_retry_at && !Number.isNaN(Date.parse(item.next_retry_at))
-        ? ` · 计划 ${new Date(item.next_retry_at).toLocaleString('zh-CN', { timeZoneName: 'short' })} 自动重试`
-        : '';
-      return `${quotaWait ? '等待 ASR 配额' : '等待自动重试'}${when}${error ? ` · ${error}` : ''}`;
+      const when = formatAutoRetry(item.next_retry_at);
+      return `${quotaWait ? '等待 ASR 配额' : '等待自动重试'}${when ? ` · ${when}` : ''}${error ? ` · ${error}` : ''}`;
     }
     case 'failed': {
       const head = asr ? 'ASR 转录失败' : analyze ? '全文分析失败' : '全文处理失败';
@@ -246,6 +252,7 @@ export function podcastTaskMeta(item = {}, thresholds = {}) {
     tone: ttsBase.tone,
     active: ttsBase.active,
     error: String(item.tts_error || ''),
+    retryNote: ttsStatus === 'retry_wait' ? formatAutoRetry(item.tts_next_retry_at) : '',
     forced: Boolean(item.tts_forced),
     shown: verdictCode !== 'unscored' || ttsStatus !== 'not_started',
   };

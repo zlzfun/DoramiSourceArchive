@@ -60,37 +60,60 @@
 
 ## 3. 排版（Typography）
 
-正文优先用 Tailwind 字号梯度（`text-xs/sm/base` + `font-*`）；**不要手写 `text-[Npx]`**。
-固定语义角色引用 `index.css` 的角色类（详见该文件 `── Typography ──` 段注释）：
+正文优先用 Tailwind 字号梯度（`text-xs/sm/base` + `font-normal/semibold`）；**不要手写 `text-[Npx]`**。
+固定语义角色引用 `index.css` 的角色类（详见该文件 `── Typography ──` 段注释）。
+
+**字体地基(2026-10,issue #184,含 #176 W0a / W0b;护栏 `frontend/test/typography.test.mjs` + eslint)**:
+
+| 字体族 | token | 用在 | 不用在 |
+|---|---|---|---|
+| 界面黑体 | `--font-sans`:`-apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", …`(西文在前,Mac 走 SF / 苹方,Windows 走 Segoe / 雅黑) | 全部界面与长文正文 | — |
+| 宋体 | `--font-serif`:`"Dorami Serif"` → 宋体-简 → 雅黑 | 阅读窗标题与正文小节标题、早报(海报头条 / 板块名 / 条目标题 / 本期编排)、兴趣页报头、播客正文标题、分享页标题 | 正文、界面控件、元信息 |
+| 西文衬线 | `--font-serif-latin`:`"Dorami Latin Serif"` → Dorami Serif → Georgia | 英文原标题(斜体 400:早报海报与条目的原标题、阅读窗译文态原标题);`lang="en"` 的元素里宋体角色整体换成它(未译的英文标题、英文正文的小节标题) | 中文文本、界面控件 |
+| 分数 | `--font-score`:`"Dorami Serif"` 齐线数字 | 新闻价值 / 内容价值分(身份线,见下) | 其它数字(计数、日期走黑体 `tabular-nums`) |
+| 等宽 | `--font-mono`(别名 `--mono`) | 代码、管理面的 ID / cron / sha / token | **读者面一律不用**(眉头、署名、日期组头、计数都已去等宽) |
+
+- **Dorami Serif = 自托管思源宋体**(Noto Serif SC 2.003,OFL),只有 **600 / 900** 两个静态字重:
+  `scripts/build_dorami_serif.py` 从固定提交的可变字体实例化并按 101 组字频 unicode-range 切 WOFF2,产物在
+  `frontend/public/fonts/dorami-serif-v1/`,随构建**同源发出**(`index.html` 直接引样式表),nginx 两版 `/fonts/` `expires 1y`。
+  **不得引外部字体域名**(公司内网访问不到 Google Fonts 等)。换字体或字重:改脚本里的 `FONT_VERSION` 换目录名,别原地覆盖。
+  回退顺序刻意避开中易宋体(SimSun 没有粗体,600 会被伪粗或落成细字)。
+- **Dorami Latin Serif = 自托管 Source Serif 4**(4.004,OFL;原字体声明保留字体名「Source」,实例化 / 子集化后的改动版按 OFL 第 3 条改名),
+  正体 600 / 900、斜体 400 三个静态实例,各切 latin / latin-ext 两片:`scripts/build_dorami_latin.py` 生成,产物 `frontend/public/fonts/dorami-latin-v1/`,
+  同源发出规则同上。**宋体排西文会把弯撇号、弯引号排成全角**(「Life’s」成了「Life’ s」),所以英文文本一律经
+  `utils/readerText.latinLang(text)` 标 `lang="en"`(含拉丁字母且不以中文为主),base 层 `[lang="en"] { --font-serif: var(--font-serif-latin) }`
+  把宋体角色换成西文衬线在前的栈;新增会显示英文的宋体标题时照此标 `lang`,不要给中文文本标。
+- **字重只用 400 / 600**;900 只给早报海报头条(宋体)。500 在雅黑上落成常规、在苹方上是中黑(两端不一致);
+  700 / 800 在苹方、雅黑上与 600 同档,还会让宋体匹配到 900。导航 / 列表 / 筛选项选中 600、未选 400;**带拇指的分段控件
+  字重恒 400 不跳**(选中靠拇指,跳字重会让拇指宽度跟着抖);主按钮与标题 600,次按钮与输入框正文 400。
+  数字列 / 计数 / 时间戳一律 `tabular-nums`。(登录与品牌演出豁免。)
+- **字号下限 12px**。豁免只有图形:来源字母徽标(`LOGO_SIZES`)、头像字母、▸ / 排序箭头等字符,以及登录品牌演出。
+- **字体平滑**:不设 `-webkit-font-smoothing: antialiased`(它在 macOS 上关掉笔画补偿,字比 Windows 细一档)。
 
 | 角色类 | 用途 | 规格 |
 |---|---|---|
-| `.page-title` | 页面 H1(页头范式 `.page-head`) | 24px/800 |
+| `.page-title` | 页面 H1(页头范式 `.page-head`) | 24px/600 |
 | `.page-subtitle` | 卡内说明(页级副标题已随页头范式退役) | 14px/600·muted |
-| `.card-title` / `.section-title` | 卡片/区块标题 | 15px/700 · 14px/700 |
+| `.card-title` / `.section-title` | 卡片/区块标题 | 15px/600 · 14px/600 |
 | `.body-text` | 默认正文/可读多行 | 14px/1.6/600 |
-| `.tiny-meta` | 次要 meta | 12px/500 |
-| `.micro-label` | 微标签/徽标/角标 | 11px/700 |
-| `.stat-number` | 指标数字 | 26px/700·tabular |
+| `.tiny-meta` | 次要 meta | 12px/400 |
+| `.micro-label` | 微标签/徽标/角标 | 12px/600 |
+| `.stat-number` | 指标数字 | 26px/600·tabular |
 
-**页头范式(2026-07,全站统一)**:每页页头 = `.page-head`(`h1.page-title` 24/800 + 右侧
+**页头范式(2026-07,全站统一)**:每页页头 = `.page-head`(`h1.page-title` 24/600 + 右侧
 `.page-head-actions`),**不带副标题**;流式页自带下边距,全屏壳页由壳选择器给内边距。
 新页面照此,勿再造 page-header/自定义标题。
 
-**静默仪器·字重纪律(2026-07)**:工作区 900/`font-black` 全面退场——页面级标题 800、
-指标数字 700、列表条目标题 ≤700(阅读器文章卡 600);大字号配中粗,仪表感靠 tabular 对齐而非超粗。
-数字列/计数/时间戳一律 `tabular-nums`。(登录/品牌面豁免。)
-
 语境化标签（`.form-label`/`.node-param-label`/`.active-filter-label` 等）各自就地维护，不必归一。
 
-**标题层级刻度(2026-07 字体审计波,硬约束)**:工作区标题按**职责层**取刻度,禁止就地发明字号:
+**标题层级刻度(2026-07 字体审计波,硬约束;issue #184 字重归 600)**:工作区标题按**职责层**取刻度,禁止就地发明字号:
 
 | 职责层 | 刻度 | 在册类 |
 |---|---|---|
-| 页 | 24/800 | `.page-title` |
-| 区(页内分区头) | 14/700 | `.zone-title`、`.tt-head-title`、`.sett-head-title`、`.section-title` |
-| 卡(surface-card 的实体标题) | 15/700/ink | `.card-title`、`.brief-col-title` |
-| 卡内小节 | 12.5–13/700 | `.tools-title`、`.sett-sync-title`、`.drawer-sec-title` |
+| 页 | 24/600 | `.page-title` |
+| 区(页内分区头) | 14/600 | `.zone-title`、`.tt-head-title`、`.sett-head-title`、`.section-title` |
+| 卡(surface-card 的实体标题) | 15/600/ink | `.card-title`、`.brief-col-title` |
+| 卡内小节 | 12.5–13/600 | `.tools-title`、`.sett-sync-title`、`.drawer-sec-title` |
 
 三条规则:①**同职责同刻度**——同一页面上并列的同层标题必须同字号(肇因:brief 卡列标题 12px
 与邻卡 `.card-title` 15px 并排);②**标题字号不得小于其辖区正文**(肇因:「定时配置」12px <
@@ -99,74 +122,109 @@
 并列多列的标题要求**顶对齐**——列头行若含更高的控件(按钮),用 `align-items: flex-start` +
 控件负 margin 配平,不许让控件把标题压离基线。
 
-**阅读器页头两族(2026-09-06,issue #23)**:阅读器整幅页面的页头只有两种,按页面**主语**选:
+**阅读器页头三族(2026-09-06 issue #23;issue #184 早报改夜航版式)**:阅读器整幅页面的页头按页面**主语**选:
 
 | 族 | 用于 | 规格 | 在册类 |
 |---|---|---|---|
 | 栏名工具头 | 内容容器与站内目录:文章/播客列头、社交头、发现页头 | 标题 14/600,同落 19px 基线;工具行在下 | `.reader-list-title` / `.reader-social-title` / `.reader-disc-title`(同一条规则) |
-| 报头 | 「我的」页:我的早报、我的兴趣(以读者本人为主语,占源栏槽位 + 整幅右栏) | 等宽 kicker 11px/0.12em accent-ink + 衬线标题(早报 36 / 兴趣 32)+ 13px muted 提示,版心 1120 | `.brief-mast` 族 |
+| 报头 | 我的兴趣(以读者本人为主语,占源栏槽位 + 整幅右栏) | 12px/600 accent-ink 眉头 + 宋体标题 32/600 + 13px muted 提示,版心 1120 | `.brief-mast` 族 |
+| 海报 | 我的早报(整幅,无源栏槽位) | 眉头「早报 · 日期」+ 宋体 900 头条 + 评分栏;下接板块与本期编排,见下「早报夜航版式」 | `.bp-*` |
 
-规则:看到衬线报头即知这是属于读者自己的一面;容器与目录页不得借用报头,「我的」页不得退成工具头。
+规则:看到宋体报头 / 海报即知这是属于读者自己的一面;容器与目录页不得借用,「我的」页不得退成工具头。
 视图轨分组与之对应:早报·兴趣 | 文章·播客·社交 | 发现——同族相邻(issue #178 撤「动态」并入文章)。
 横向对齐各随下方内容(列头 16 / 社交 24 / 发现随 920 版心),不强求页间对齐。
 
-**新闻价值分的身份线(2026-09-06,issue #23;v3.48 起分数语义=新闻价值)**:分数是数字,不是标签——全站只用一种画法、三档大小,
-字体栈恒 `Charter, Cambria, Baskerville, var(--font-serif)`(齐线数字):速读卡 38px 渐变 → 早报卡 22px 渐变 →
-阅读器条目行 13px 渐变(`.reader-entry-score.ai-grad-text`,落元信息行时间之前;三档同字同色,「见渐变即 AI」在列表同样成立)。
-不做分数胶囊。**分数按分值分档着色(2026-09-10,issue #54,样页 `dorami-score-tiers-quiet.html`)**:只改颜色,三档大小与字体栈不动;
+**分数的身份线(2026-09-06 issue #23;v3.48 起分数语义=新闻价值;issue #184 字体换 `--font-score`)**:分数是数字,不是标签——
+全站只用一种画法:宋体齐线数字 + AI 渐变,按位置取大小:早报海报评分栏 44px → 速读卡卡头 22px → 早报条目 17px →
+阅读器条目行 14px(`.reader-entry-score.ai-grad-text`,推到元信息行尾)。不做分数胶囊。
+此前的 Charter 栈在 Windows 上没有,落到 Cambria 字形不同,#184 起统一为自托管宋体(Mac / Windows 一致)。
+**分数按分值分档着色(2026-09-10,issue #54,样页 `dorami-score-tiers-quiet.html`)**:只改颜色,大小与字体不动;
 灰线 6.0 以下退成与旁边元信息同一个 `--dorami-faint`、不画身份色,其上按整数分一档(`is-score-1..4`,渐变两端色各自向 faint
 `color-mix` 85/60/30/0%),9+ 完整渐变——「有渐变 = 值得看」本身是信息,「见渐变即 AI」不破。灰线取自**评分尺子自身的档界**
 (提示词把 1.0–5.9 定为泛泛/宣传/重复、6.0 起才「有用或深入」),是固定视觉刻度,随尺子版本走、**不随运营旋钮
 `daily_brief_min_score` 联动**(与台账筛选 7+/8+/9+ 固定档位同口径;评分尺子换版本改分布时随之重定灰线)。档位判定单点
-`utils/analysis.scoreTierClass`,管理面纯色触点复用同一比例把 accent-ink 向 faint 混、不上渐变。条目行的分类(`.reader-entry-tag`)是源名后的一段
-10px 细线小签(沿用形态签 `.reader-shape-chip` 的语法:hairline 框、字距 0.06em、faint 不着色),
-靠形态与来源分开;**内容类型签**(`.reader-entry-kind`,issue #178:论文/教程/观点/版本更新/项目/汇编,资讯不挂)同一语法、
-墨色提一档,排在主题标签之前,与主题标签同名时主题标签让位;版本更新用紧凑行 `.is-compact`(由内容类型决定,不由容器决定)。
-内容类型筛选带 `.reader-kind-band` 在列头之下(过滤器带,不进导航轨),选项来自 `kind_facets` 分面计数;按类型筛选时收起列头「全部标读」(右键 / 长按的「该源全部已读」是显式源级动作,不收起);阅读窗标题区的标签行同为细线小签(规范实线 / 灵活虚线可点),饱和胶囊只留早报卡。
-**阅读窗标题区四行**(2026-09-06,样页 `dorami-pane-head-quiet.html`):眉头「源 · 类型」(等宽 accent,报头家族;
-issue #178 起第二段 = 非资讯写内容类型、资讯写事件类型,`utils/contentKind.kindKickerLabel`;数据结构 content_type 不上眉头)/ 衬线标题 / 署名行只放事实(日期——无真实时刻不画 00:00 · 阅读约 N 分钟 · 阅读量 ·
-分析状态 faint 文字,中点分隔)/ 尾行「左标签小签 · 右动作(语言二段 + 查看原文文字链)」贴着分隔线。
-三种语言(等宽 + 衬线 + 小签),饱和色只在眉头,渐变留给速读卡与译文激活态;往标题区加东西先问它归哪一行。条目行只有三档音量:
-标题响、摘要轻、元信息最轻——新增信息先问它属于哪一档,不给卡片加行。
+`utils/analysis.scoreTierClass`,管理面纯色触点复用同一比例把 accent-ink 向 faint 混、不上渐变。
 
-> ⚠️ **`button/input { font: inherit }` 陷阱(未分层压层)**:`index.css` 顶部这条全局规则是**未分层**的
-> `font` 简写(作用于 button/input/select/textarea),按 cascade layers 规则会压过 `@layer components`
-> 里任何类选择器的 `font-size`——给按钮/输入框类写 `font-size` 看似合法实则不生效(计算值回落到继承链)。
-> 定字号要么写在**容器**上靠继承穿透(实例:`.ledger-scope`/`.sett-nav`),要么写进文件尾的**未分层修复区**
-> (实例:`.reader-seg-btn`/`.reader-disc-search input`)。排查「字号怎么改都不生效」先想到这条。
-> 已知踩坑记录:分段钮(弹窗波)、阅读器 全部/未读 分段(v3.6)、发现页搜索框(v3.10)。
+**条目行「静」(issue #184,样页 `docs/design/visual-refine-final/reader.html`)**:元信息一行在上——「源标 源名 · 内容类型 · 兴趣 · 时间 …… 分数」,
+内容类型(`.reader-entry-kind`,论文 / 教程 / 观点 / 版本更新 / 项目 / 汇编,资讯不挂)是源名后的一个词,不画框不着色;
+**主题标签不进条目行**(只在阅读窗)。标题 15px 是行里唯一响亮的东西(未读 600 墨色,已读 400 次墨色,另有左侧未读点);
+摘要两行、末行尾部渐隐(不用 line-clamp 的「…」——它恒定落在卡片右下角,会被误认成按钮);行间一条内缩细线,悬停与选中时相邻细线隐去。
+版本更新用紧凑行 `.is-compact`(由内容类型决定,不由容器决定)。
+内容类型筛选带 `.reader-kind-band` 在列头之下(过滤器带,不进导航轨),选项来自 `kind_facets` 分面计数;按类型筛选时收起列头「全部标读」(右键 / 长按的「该源全部已读」是显式源级动作,不收起)。
+日期组头写中文「今天 · 10月13日 / 9月15日 周二」(`utils/readerTime.dayLabelOf`,社交流同用),不用等宽。
+**阅读窗标题区四行**(2026-09-06,样页 `dorami-pane-head-quiet.html`;issue #184 去等宽、标签去盒化):
+眉头「源 · 类型」(黑体 13/600 accent-ink;issue #178 起第二段 = 非资讯写内容类型、资讯写事件类型,
+`utils/contentKind.kindKickerLabel`;数据结构 content_type 不上眉头)/ 宋体标题 30/600 / 署名行只放事实(黑体 13 muted:
+本地时区的日期时刻——无真实时刻不画 00:00 · 阅读约 N 分钟 · 阅读量 · 分析状态,中点分隔)/ 尾行「左标签 · 右动作(语言二段 + 查看原文文字链)」。
+标签是中点分隔的文字(规范标签 muted、灵活标签 faint;可点检索时悬停变墨色加下划线,类名 `.reader-tag-chip` 与可访问名「检索「…」」不变)。
+两种字体(黑体 + 宋体),饱和色只在眉头,渐变留给 ✦ 与分数;往标题区加东西先问它归哪一行。
+**长文正文**:17px/1.85 黑体(与界面同一条栈),小节标题宋体(h2 21px),引文线中性 2px,图片一圈最弱细线,粗体 600,链接 accent-ink 下划线退淡。
+**AI 速读卡 = 细线卡(issue #184)**:外框色 `--dorami-canvas` 底 + `--dorami-border-soft` 细环;卡头「✦ AI 速读」(✦ 用 `--grad-ai`)
++ 右侧统计位「维度 分数」(悬停 / 聚焦浮出评分依据);正文 15/400。不再铺 `--grad-ai-wash` 渐变底。
+
+> ℹ️ **`button/input { font: inherit }` 未分层陷阱已退役(issue #184)**:`index.css` 顶部曾有一条**未分层**的
+> `font: inherit`(作用于 button/input/select/textarea),按 cascade layers 规则压过 `@layer components` 与 utilities 里
+> 对按钮 / 输入框写的字号字重(写了不生效、计算值回落到继承链)。现由 Tailwind preflight 在 `@layer base` 给出同一条,
+> **层内规则与 `text-xs` 等原子类按本意生效**,不必再把字号写在容器上靠继承、或钉到文件尾的未分层区
+> (尾区「阅读器按钮字号」一段是历史钉法,值仍有效,改到哪条就顺手并回层内)。`test/typography.test.mjs` 防它回潮。
 >
-> **聚焦环已不在此列(issue #108)**:全局 `:focus-visible` 兜底环已移入 `@layer base`(层序 theme → base →
-> components → utilities),容器 / 自身另画聚焦指示的输入框在层内写 `outline: none` 即生效,**不再需要**尾区钉
-> `.xxx:focus-visible { outline: none }`(v3.32 AI 问答框 / v3.42 账户表列头搜索 / 自定源浮层三处旧钉已删)。
-> `mobile.css` 是未分层 `@import`,同样压得住 base 层。`font: inherit` 仍是未分层规则,字号陷阱照旧。
+> **聚焦环同理(issue #108)**:全局 `:focus-visible` 兜底环在 `@layer base`(层序 theme → base → components → utilities),
+> 容器 / 自身另画聚焦指示的输入框在层内写 `outline: none` 即生效。`mobile.css` 是未分层 `@import`,同样压得住 base 层。
+
+**早报夜航版式(issue #184,样页 `docs/design/visual-refine-final/brief.html`,字号与留白以原「夜航」探索样页为准;`PersonalBriefPage.jsx` + `.bp-*`)**:
+占「源栏 + 条目列 + 阅读窗」整幅(日期中栏已撤),版心 1200、两侧 48。
+①**海报**:眉头「早报 · 日期」+ 编排信息 + **「往期」描边胶囊**(日历图标 + 下拉角标,点开月历 `BriefHistoryCalendar.jsx`)+ 今天「重新编排」/ 往期「回到今天」
+→ 状态提示一行(重编排队 / 来源或分析未完成 / 兴趣或订阅已更新,带就地动作)
+→ 头条:宋体 900 大标题(版心宽的 6.6%,1200 版心约 73px)+ 英文原标题(西文衬线斜体 18px)+ 来源与时间 + 三行摘要 + 阅读全文(唯一实心)/ 收藏,
+右侧评分栏(维度 · 44px 分数 · 评分依据 · 入选理由),背后一层 AI 渐变环境光(只给头条)。**头条规则**:有重大事件取第一条,否则新闻通道里新闻价值最高的一条;
+**降级版面不设头条**,头条位如实说明。编排中 / 失败 / 没有早报 / 空订阅等状态替换头条位,眉头与往期照常可用。
+海报带 `z-index: 2`:它自成层叠上下文(环境光要 `isolation`),浮层的 z-index 出不了海报——没有它,降级日海报矮时往期浮层会被后面的条目盖住。
+②**板块**:左侧 sticky 宋体板块名(24px)+ 条数,右侧条目(宋体 23/600 标题 + 英文原标题斜体 15px + 两行摘要 + 来源 · 时间 · 分数 · 兴趣 + 收藏星),
+悬停时其余条目淡出;板块顺序沿用后端 `SECTION_ORDER`、板块内分数降序。
+③**本期编排**:编排(渐变「哆啦美」· 时刻 · 版次)/ 入选事实句 + 调整兴趣 / 头条规则 / 往期日期。
+**往期月历**:一屏一个月(周一起),有早报的日子墨色可点、没有的灰显(`aria-disabled`,方向键仍可走到),正在看的那天实底加粗、今天下方一个点(编排中呼吸)、
+失败标红,当天多版时版本排在月历下方;非模态浮层(Esc / 层栈复用 `useModalA11y`,不困 Tab),键位按 WAI-ARIA APG 日期网格(`utils/briefCalendar.moveByKey`),
+范围夹在「最早一期所在月 1 日 … 今天」;月份按钮到边界用 `aria-disabled` 而不是 `disabled`(正按着的按钮一旦 `disabled` 就丢焦点落到 body)。
+容器窄于 960 时板块名移到条目上方,窄于 680(移动壳)时评分栏落到摘要下、眉头即页面顶栏,尺寸取原「夜航」手机档(头条 30–40px、条目 19px)。
 
 ## 4. 颜色令牌（语义四套，互不混用）
 
 详见 `index.css` `:root` 顶部「设计令牌分类法」注释。
 
-- **背景/图底**：`--dorami-canvas / canvas-2 / surface / soft / card / well / wash` —— 勿用作文字色。
+- **背景/图底**：`--dorami-canvas / canvas-2 / surface / soft / card / well / raised / wash` —— 勿用作文字色。
+  **两层图底(issue #184)**:外框(应用导轨 / 视图轨 / 源栏)= `canvas`,内容(条目列 / 阅读窗 / 整幅页面)= `surface`,
+  两层之间一条细线;不再有第三面阶梯。悬停 `--dorami-hover`(墨色 4.5%),选中 `--dorami-select`(墨色 7.5%)。
+  来源徽标底板 `--dorami-logo-tile` / 细环 `--dorami-logo-ring`(亮色纯白,暗色降亮——不再是一列白方块)。
 - **文字/墨色**：`--dorami-ink / ink-2 / muted / faint` —— 信息层级；勿用作背景。
 - **描边**：`--dorami-border / border-strong`。
 - **强调/状态**：`--dorami-accent`(=`--dorami-blue`) / `blue-2` / `accent-ink` ——
   **唯一饱和色，只用于「激活/状态」与「一个视图里最重要的那个动作（CTA）」。**
-- 散落的 indigo/blue 原子类已在 `@theme` 折叠为同一 accent；emerald/amber/red/slate 语义中性色照常用。
+- 散落的 indigo/blue 原子类已在 `@theme` 折叠为同一 accent；emerald/amber/red/slate 语义中性色照常用
+  (JSX 里的 `text-slate-*` / `bg-slate-50/100` 亮色也映射到中性色 token,跟着三套中性色走)。
+- **accent 色值(issue #184)**:亮色 `#5252c5`(oklch 0.505 0.175 278,比旧值降亮去荧光)、暗色 `#919bf8`;宣略深一档 `#4950b0`。
+
+**三套中性色(issue #184,用户拍板全部保留)**:瓷(冷调,默认)/ 墨(中性)/ 宣(暖调),「设置 → 外观 → 中性色」选,
+亮暗都生效。实现 = `frontend/src/palette.js`(模块级 store + `useSyncExternalStore`,localStorage `dorami-palette`,
+`index.html` 内联脚本首帧挂 `<html data-palette>`)+ `index.css` 四个覆盖段(墨 / 宣 × 亮 / 暗)。三套**只改底色、细线与墨色**
+(宣另把 accent 压深一档),结构、明暗次序与状态色不变。规矩:①新增中性 token 先问三套与亮暗是否都要给值,能用
+`color-mix(… var(--dorami-ink) N%, transparent)` 派生就别写死;②亮色覆盖段必须带 `:not([data-theme="dark"])`——
+`:root[data-palette]` 的特异性高于 `[data-theme="dark"]`,不带会把亮色值漏进暗色;③容器底一律走 token,
+写死的白或冷灰在宣下就是一块冷白(issue #184 收口了次按钮、输入框、分段控件、浮层、模态、顶栏)。
 
 **静默仪器·accent 纪律（2026-07，全站已落地）**：
 - **实心/渐变 accent 一屏 ≤2 处**：主按钮（CTA）+ 选中标记。chip/徽标激活态一律
   「`--dorami-wash` 底 + `--dorami-accent-ink` 字 + 无描边」，不再渐变实心。
-- **hover 不得引入 accent**：hover 背景 `--dorami-soft`（暗色可点控件 `--dorami-raised`），
+- **hover 不得引入 accent**：hover 背景 `--dorami-hover` / `--dorami-soft`（暗色可点控件 `--dorami-raised`），
   文字/描边走 ink/border-strong；wash 基底元素的 hover 只允许同族加深。
   例外：focus 焦点环（a11y）、checkbox 类控件、CTA 自身的提亮。
-- **选中语法(v3.8 轨语言统一后分双轨)**：
-  ① **轨与轨延伸面**(应用导轨/阅读器视图轨/设置柜左导航)= **wash 块**
-  (`--dorami-wash` 底 + `--dorami-accent-ink` 字,无描边无竖条;`.reader-vrail-btn.is-on`
-  类族即全站轨语言的单一事实来源);
-  ② **工作区纵向列表/导航项** = 3px `--dorami-blue` 左竖条(`inset 3px 0 0` 或 `::before`)
-  + `--dorami-soft` 底。两者都**不用 indigo 描边/ring/glow**；
-  横向控件：segmented 拇指 = surface 底 + ink 字 + 中性 `--sh-1`，顶栏 tab = 底部 accent 条；
-  阅读器条目卡/源行选中 = surface 浮起 + `--sh-1`(阅读器样页语法)。
+- **选中语法(issue #184 全站统一)**:**中性加深一档 + 墨色**——`--dorami-select` 底 + `--dorami-ink` 字,文字项另加 600;
+  不用 accent 竖条、不用 wash 块、不用浮白高程,也**不用 indigo 描边/ring/glow**。应用导轨 / 视图轨 / 设置柜左导航 /
+  源栏行 / 条目卡 / 内容类型筛选 / 台账分面与行 / 账户行 / 运行条目 / 节点卡同一种(v3.8 的「轨 = wash 块、
+  列表 = 3px 竖条」双轨与阅读器「浮白 + sh-1」均已退役)。横向分段控件的拇指仍是 surface 底 + ink 字 + 中性 `--sh-1`,
+  字重不跳(跳字重会让拇指宽度跟着抖)。
 - 「运行中/进度」类活动态（进度线、运行 pulse、running 徽标）与 accent 同族，是有意的产品语义。
+- **AI 渐变是身份色,不是装饰(issue #184 定稿)**:`--grad-ai`(`--ai-g1` → `--ai-g2`)只上 AI 触点的**标记**——✦ 星标、
+  分数(身份线)、渐变「哆啦美」字、早报海报背后的环境光;不铺卡片底(速读卡改细线卡后,`--grad-ai-wash` 只余译文激活态)。
 - **语义状态 token(2026-07)**:ok/warn/bad/run/idle 五态一律引用 `--state-*` / `--state-*-bg`
   成对 token(亮暗自动翻转),不再散写 emerald/rose/amber hex。
 - **热度/密度色阶(图床波 v3.11)**:需要「连续量深浅」的可视化(热点图等)用 `--heat-0…4`
@@ -253,7 +311,10 @@ issue #178 起第二段 = 非资讯写内容类型、资讯写事件类型,`util
 - **页码 `.pager` / `.pager-btn`(`.is-on`=accent 实底,选中标记) / `.pager-ellipsis`**:所有分页统一。
 - **微型分段 `.mini-seg` / `.mini-seg-btn`(`.is-on`=白拇指)**:表脚/工具条级轻量二择(如表格密度 舒适/紧凑),勿再造小开关。**播放器内「未就绪态动作」优先占用既有分段槽位**(如播客点播精品导读占「精品导读」位:可点播 → 生成中… → 已就绪切换),不要另开整宽次按钮。
 - **滚动条**:全局范式已定——常态隐形、悬停所在容器显现(`--dorami-scrollbar*` token);组件内**禁止**再写 `::-webkit-scrollbar`。
-- **主按钮扁平化**:`.action-button-primary`/`.primary-action` = 实心 accent + `--sh-1`,hover 加深;无渐变无 glow(登录 auth-* 豁免)。
+- **主按钮扁平化**:`.action-button-primary`/`.primary-action` = 实心 accent + `--sh-1` + 600,hover 往深走(`color-mix` 混黑,亮暗两态白字都可读);
+  无渐变无 glow(登录 auth-* 豁免)。次按钮 / 静默按钮 400、底色走 `--dorami-surface` 等 token(issue #184)。
+- **订阅钮(发现页,issue #184)**:描边「＋ 订阅」,已订阅退成无底「✓ 已订阅」、悬停翻「取消订阅」危险色——
+  一页几十张源卡,实心色块会把唯一 CTA 的纪律冲掉;整卡点开即预览(名称按钮 `::after` 铺满卡片,订阅钮浮在其上)。
 - **分面数据源**:筛选栏选项一律来自聚合端点(`GET /api/articles/facets` 之类的全量 group-by),不得从当前页数据推导。
 
 ## 7. 动效（区分场景）
@@ -289,7 +350,7 @@ issue #178 起第二段 = 非资讯写内容类型、资讯写事件类型,`util
 
 ## 8. 组件层级与一致性
 
-- **一个视图一个主操作**：`.action-button-primary`（渐变实心）只给该视图/卡片/表单里最重要的那一个动作；
+- **一个视图一个主操作**：`.action-button-primary`（实心 accent）只给该视图/卡片/表单里最重要的那一个动作；
   次要动作用 `.action-button-secondary / -quiet`，破坏性动作用 `.action-button-danger`。
 - 复用既有原语（`.action-button*` / `.icon-button` / `.surface-card` / `.modal-*` / `.toast-*`），
   不要为同类元素另起样式。
@@ -313,12 +374,12 @@ issue #178 起第二段 = 非资讯写内容类型、资讯写事件类型,`util
 
 | 类 | 总高(壳+拇指) | 语境 |
 |---|---|---|
-| `.segmented-control` | 32(3+24+边2),字 12.5/650 | 页头视图/子页切换(与页头 M 档同轴) |
+| `.segmented-control` | 32(3+24+边2),字 12.5/400,well 底 + 内凹(issue #184 去毛玻璃) | 页头视图/子页切换(与页头 M 档同轴) |
 | `.sett-seg` | ~34(3+28) | 设置面板行内(外观三态等) |
-| `.mini-seg` | ~26(2+22),字 11 | 工具条/表脚/卡头轻量刻度(时间窗、密度) |
+| `.mini-seg` | ~26(2+22),字 12/400(选中不跳字重) | 工具条/表脚/卡头轻量刻度(时间窗、密度) |
 
-注意:分段拇指是 button,**字号/字重必须写在容器上靠继承穿透**(`button{font:inherit}`
-未分层陷阱,§3);`.scope-toggle` 已无使用者,属死类待清扫,新分段勿取用。
+分段拇指是 button;issue #184 退役未分层 `font: inherit` 后,拇指自身写的字号字重即生效(此前必须写在容器上靠继承,§3)。
+`.scope-toggle` 已无使用者,属死类待清扫,新分段勿取用。
 
 **输入框两档(2026-07 补)**:表单档 = `.form-input` 默认(36px,竖排表单配 `.form-label`);
 行内工具档 = `.form-input.form-input-inline`(32px/12px,与 M 档按钮、segmented 同排等高——

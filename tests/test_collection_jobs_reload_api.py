@@ -48,7 +48,7 @@ def test_unrelated_crud_keeps_other_jobs_and_rejects_bad_cron(monkeypatch, tmp_p
         assert client.post("/api/auth/login", json={"username": "admin", "password": "admin"}).status_code == 200
         scheduler = app_module.scheduler
         watched = ("article_analysis", "personal_digest_pending", "personal_digest_schedule",
-                   "retention_cleanup", "collection_job_1")
+                   "retention_cleanup", "tts_receipt_reclaim", "collection_job_1")
         before = {job_id: _snapshot(scheduler, job_id) for job_id in watched}
 
         created = client.post("/api/collection-jobs", json={

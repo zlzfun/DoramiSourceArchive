@@ -191,6 +191,7 @@ export default function PodcastEpisodeDrawer({
                         </span>
                       );
                     })}
+                    {meta.tts.retryNote && <span className="tiny-meta drawer-line">{meta.tts.retryNote}</span>}
                     {meta.tts.error && <span className="tiny-meta drawer-line" title={meta.tts.error}>{meta.tts.error}</span>}
                   </dd>
                 </dl>

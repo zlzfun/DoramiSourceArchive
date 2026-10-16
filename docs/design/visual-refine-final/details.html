@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>组件 · 视觉精修定稿</title><link rel="stylesheet" href="assets/fonts.css"><link rel="stylesheet" href="assets/site.css"><link rel="stylesheet" href="assets/dm.css"><script>try{var t=localStorage.getItem('dorami-refine2-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}</script></head><body>
+<header class="top"><div class="top-in"><a class="brand" href="./"><img src="assets/logos/dorami.png" alt="">哆啦美<span>视觉精修 · 定稿</span></a><nav class="nav" aria-label="定稿目录"><a href="./" class="">总览</a><a href="type.html" class=""><b>01</b>字体</a><a href="color.html" class=""><b>02</b>色彩</a><a href="reader.html" class=""><b>03</b>阅读器</a><a href="brief.html" class=""><b>04</b>早报</a><a href="details.html" class="on" aria-current="page"><b>05</b>组件</a><a href="console.html" class=""><b>06</b>管理面</a></nav><div class="theme" role="group" aria-label="页面主题"><button data-t="light">亮</button><button data-t="dark">暗</button><button data-t="auto">跟随</button></div></div></header>
+<style>
+  .row2 { margin-top: 18px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  .box { border-radius: 14px; background: var(--panel); box-shadow: var(--shadow); overflow: hidden; display: flex; flex-direction: column; min-width: 0; }
+  .box > header { padding: 10px 14px; border-bottom: 1px solid var(--line-soft); font-size: 13px; font-weight: 500; color: var(--ink); }
+  .box .bb { padding: 18px; flex: 1; min-width: 0; }
+  .box .cap { border-top: 1px solid var(--line-soft); }
+  .stack { display: flex; flex-direction: column; gap: 14px; align-items: flex-start; }
+  .dm.inline { background: transparent; }
+  .logo-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .logo-grid > .dm { padding: 18px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; }
+  .logo-grid > .dm .nav-row { height: 30px; }
+  @media (max-width: 900px) { .row2, .logo-grid, .logo-grid > .dm { grid-template-columns: minmax(0, 1fr); } }
+</style>
+<main class="wrap">
+  <header class="head">
+    <div class="eyebrow"><b>05 组件</b><span>定稿</span></div>
+    <h1 class="title">组件：同一类东西只有一种画法</h1>
+    <p class="lede">标签都是文字，分数都是宋体渐变数字，选中都是中性加深，按钮和分段控件只有固定的几档。下面每一块都可以切中性色和亮暗。</p>
+    <div style="margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="sw-lab">中性色</span>
+      <div class="sw" data-for="m-tags,m-scores,m-ctl,m-disc,m-sel" data-attr="pal" data-group="pal"><button data-v="porcelain" class="on">瓷</button><button data-v="graphite">墨</button><button data-v="paper">宣</button></div>
+      <div class="sw" data-for="m-tags,m-scores,m-ctl,m-disc,m-sel" data-attr="mode"><button data-v="light">亮</button><button data-v="dark">暗</button></div></div>
+  </header>
+
+  <section class="s">
+    <h2>标签与分数</h2>
+    <div class="row2">
+      <div class="box"><header>标签：文字，中点分隔</header><div class="bb"><div class="dm inline stack" data-follow data-pal="porcelain" id="m-tags"></div></div>
+        <div class="cap">规范标签用次要灰，灵活标签（如「递归自我改进」）退到最弱灰；不再画胶囊和线框。列表里不放主题标签，只在阅读窗和早报显示。</div></div>
+      <div class="box"><header>分数：宋体数字 + AI 渐变分档，四种尺寸</header><div class="bb"><div class="dm inline" data-follow data-pal="porcelain" id="m-scores"></div></div>
+        <div class="cap">同一种画法、四种尺寸：条目列 14、早报条目 17、速读卡 20、早报头条 44。</div></div>
+    </div>
+  </section>
+
+  <section class="s">
+    <h2>按钮、分段与图标钮</h2>
+    <div class="box" style="margin-top:18px"><header>定稿</header><div class="bb"><div class="dm inline stack" id="m-ctl" data-follow data-pal="porcelain"></div></div>
+      <div class="cap">分段只有一种外观：凹槽加浮起的拇指，三档高度按语境取用。按钮三档：主按钮（每屏一个，靛蓝实底）、描边、无底色；图标钮 30 见方。</div></div>
+  </section>
+
+  <section class="s">
+    <h2>发现页</h2>
+    <div class="box" style="margin-top:18px"><header>订阅按钮改为描边；已订阅变成无底色的「✓ 已订阅」；点整张卡预览</header>
+      <div class="bb" style="background:var(--sunk)"><div style="max-width:940px;margin:0 auto"><div class="frame-stage" data-w="940" style="background:transparent"><div class="frame-scale"><div id="m-disc" data-follow data-pal="porcelain" style="background:transparent;width:940px;padding:8px"></div></div></div></div></div></div>
+  </section>
+
+  <section class="s">
+    <h2>来源标识</h2>
+    <div class="box" style="margin-top:18px"><header>左亮右暗：18px 底板加一圈极淡内描边；暗色下底板降亮，不再是一列白方块</header>
+      <div class="logo-grid"><div class="dm" id="m-logo-l" data-pal="porcelain" data-mode="light"></div><div class="dm" id="m-logo-d" data-pal="porcelain" data-mode="dark"></div></div></div>
+  </section>
+
+  <section class="s">
+    <h2>选中与日期组头</h2>
+    <div class="box" style="margin-top:18px"><header>导轨、源栏、条目、分类筛选的选中都是中性加深一档加墨色</header>
+      <div class="bb"><div class="dm inline" id="m-sel" data-follow data-pal="porcelain" style="display:grid;grid-template-columns:64px minmax(0,1fr);gap:18px;align-items:start;max-width:520px"></div></div></div>
+  </section>
+</main>
+<div class="wrap"><nav class="pager"><a href="brief.html"><span>上一篇</span><b>04 早报</b></a><a class="next" href="console.html"><span>下一篇</span><b>06 管理面</b></a></nav><p class="foot">样页数据来自本地库副本（2026-09-28 快照），经产品自身接口导出；标题字体为思源宋体子集，内嵌在页面里，不请求任何外部字体域名。</p></div><script src="assets/data.js"></script><script src="assets/dm.js"></script><script src="assets/site.js"></script><script>(function () {
+  DMR.ensureDefs();
+  const D = window.DM, ic = DMR.ic, A = D.article;
+  document.getElementById('m-tags').innerHTML = `
+    <div style="font-size:12px;color:var(--c-faint)">早报条目（新智元那条的真实标签）</div>
+    <div class="tags">${DMR.tagsHtml(['AI 智能体', '递归自我改进', '大语言模型'], ['canonical', 'extracted', 'canonical'])}</div>
+    <div style="height:1px;background:var(--c-line-soft);align-self:stretch"></div>
+    <div style="font-size:12px;color:var(--c-faint)">阅读窗标签行</div>
+    <div class="tags">${DMR.tagsHtml(A.tags.map((t) => t.label), A.tags.map((t) => t.type))}</div>`;
+  const sizes = [['条目列', 14], ['早报条目', 17], ['速读卡', 20], ['早报头条', 44]];
+  document.getElementById('m-scores').innerHTML = `<div style="display:grid;grid-template-columns:repeat(4,auto);justify-content:start;gap:16px 28px;align-items:end">
+    ${sizes.map(([lab, px]) => `<div style="display:flex;flex-direction:column;gap:8px">${[9.1, 7.6, 5.8].map((v) => `<span class="score ${DMR.tier(v)}" style="font-size:${px}px;line-height:1">${v.toFixed(1)}</span>`).join('')}<span style="font-size:12px;color:var(--c-faint)">${lab} ${px}</span></div>`).join('')}</div>`;
+  document.getElementById('m-ctl').innerHTML = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-primary">${ic('plus', 's14')}手工录入</button><button class="btn btn-outline">${ic('refresh', 's14')}同步最新</button><button class="btn btn-ghost">取消</button></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap"><div class="seg"><button>7 天</button><button>14 天</button><button class="on">30 天</button><button>90 天</button></div><div class="seg"><button class="on">用户</button><button>内容</button><button>AI</button><button>分析与标签</button><button>消息</button></div></div>
+    <div style="display:flex;align-items:center;gap:6px;width:100%;max-width:380px;padding:10px 12px 10px 20px;border-radius:10px;box-shadow:inset 0 0 0 1px var(--c-line-soft)"><span style="font-size:15px;font-weight:600;margin-right:auto">订阅</span><div class="seg"><button class="on">全部</button><button>未读</button></div><button class="ibtn">${ic('star', 's16')}</button><button class="ibtn">${ic('checks', 's16')}</button><button class="ibtn">${ic('search', 's16')}</button></div>`;
+  DMR.discover(document.getElementById('m-disc'));
+  const g = D.sources;
+  const pick = [g[0].items[0], g[0].items[1], g[0].items[6], g[0].items[8], g[1].items[0], g[1].items[1], g[1].items[2], g[1].items[3], g[2].items[0], g[2].items[1], g[3].items[1], g[3].items[3]];
+  ['m-logo-l', 'm-logo-d'].forEach((id) => { document.getElementById(id).innerHTML = pick.map((s) => `<div class="nav-row">${DMR.mk(s)}<span class="nm">${DMR.esc(s.name)}</span></div>`).join(''); });
+  document.getElementById('m-sel').innerHTML = `<div style="background:var(--c-chrome);border-radius:12px;padding:10px 0;display:flex;flex-direction:column;align-items:center;gap:4px">
+      <div class="rail-btn">${ic('paper', 's20')}</div><div class="rail-btn on">${ic('file', 's20')}</div><div class="rail-btn">${ic('podcast', 's20')}</div><div class="rail-btn">${ic('at', 's20')}</div><div class="rail-btn">${ic('compass', 's20')}</div></div>
+    <div style="min-width:0"><div class="kinds" style="border:0;padding:0 0 10px"><button class="on">全部</button><button>论文</button><button>教程</button><button>观点</button><button>版本更新</button></div>
+      <div class="day num" style="padding-left:12px">9月15日<span>周二</span></div>${DMR.row(D.articles[4], 4, true)}${DMR.row(D.articles[13], 13, false)}</div>`;
+})();</script>
+</body></html>

@@ -30,6 +30,14 @@ export function looksChinese(text) {
   return cjk > latin * 0.2;
 }
 
+// 西文文本的 lang 标记(issue #184 目检返修):含拉丁字母且不以中文为主时标 en——[lang="en"] 把宋体角色
+// 换成西文衬线在前的栈(宋体排西文会把弯撇号、弯引号排成全角,「Life’s」成了「Life’ s」),读屏也按英文读。
+// 中文或空文本返回 undefined,沿用页面的 zh-CN。
+export function latinLang(text) {
+  const value = String(text || '');
+  return /[A-Za-z]/.test(value) && !looksChinese(value) ? 'en' : undefined;
+}
+
 // 链接的展示用域名(v3.45 正文尾部「查看原文 ↗ · 域名」):剥 www.,解析失败返回 ''。
 export function hostOf(url) {
   try {

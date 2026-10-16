@@ -17,12 +17,19 @@ const FOCUSABLE =
 
 const layers = [];
 
-export function useModalA11y(active, onClose, panelRef) {
+// options(issue #184 往期浮层):非模态浮层用 { trapFocus: false }——保留层栈与 Esc,不困住 Tab,
+// 关闭时只在焦点仍在面板里(或掉到 body)时才归还给触发者,免得把已经 Tab 出去的焦点拽回来;
+// initialFocus(panel) 返回首个要聚焦的元素(如当前选中的那一天),缺省为首个可聚焦元素。
+export function useModalA11y(active, onClose, panelRef, { trapFocus = true, initialFocus = null } = {}) {
   // onClose ref 化:调用方常传内联箭头(每次渲染新引用),若进 effect 依赖,任何重渲染
   // (如编辑器每秒走字)都会让 effect 重跑——cleanup 把焦点归还给遮罩下的触发者、再抢回
   // 面板首元素,表现为「输入框打字 1-2 秒后被夺焦」。依赖只留 active/panelRef。
   const onCloseRef = useRef(onClose);
   useEffect(() => { onCloseRef.current = onClose; });
+  // 选项同样 ref 化,不进 effect 依赖(理由同上)
+  const trapFocusRef = useRef(trapFocus);
+  const initialFocusRef = useRef(initialFocus);
+  useEffect(() => { trapFocusRef.current = trapFocus; initialFocusRef.current = initialFocus; });
   // 触发者要在 commit 之前抓:面板里若有 autoFocus,React 在 commit 阶段就把焦点搬进面板,
   // 等到 effect 再读 activeElement 拿到的是面板内的输入框——关闭时「归还」给一个正在卸载的元素,
   // 焦点最终掉到 body(重置密码 / 确认框都有 autoFocus,改前即如此)。故在 active 由假变真的
@@ -58,9 +65,10 @@ export function useModalA11y(active, onClose, panelRef) {
     // (StrictMode 重跑),再退到首个可聚焦元素（兜底面板本身）。
     if (!(panel && panel.contains(document.activeElement))) {
       const remembered = panelFocusRef.current;
+      const preferred = typeof initialFocusRef.current === 'function' ? initialFocusRef.current(panel) : null;
       const target = (remembered && panel && panel.contains(remembered) && remembered.offsetParent !== null)
         ? remembered
-        : (focusables()[0] || panel);
+        : (preferred || focusables()[0] || panel);
       target?.focus?.();
     }
     panelFocusRef.current = (panel && panel.contains(document.activeElement)) ? document.activeElement : null;
@@ -68,7 +76,7 @@ export function useModalA11y(active, onClose, panelRef) {
     const onKeyDown = (e) => {
       if (!isTop()) return;
       if (e.key === 'Escape') { e.stopPropagation(); onCloseRef.current?.(); return; }
-      if (e.key !== 'Tab') return;
+      if (e.key !== 'Tab' || !trapFocusRef.current) return;
       const items = focusables();
       if (items.length === 0) { e.preventDefault(); return; }
       const first = items[0];
@@ -82,7 +90,10 @@ export function useModalA11y(active, onClose, panelRef) {
       if (idx !== -1) layers.splice(idx, 1);
       document.removeEventListener('keydown', onKeyDown, true);
       // 焦点归还给触发者（若它仍在文档内且不在正在关闭的面板里）。
-      if (previouslyFocused && previouslyFocused.focus && document.contains(previouslyFocused)
+      // 非模态浮层:焦点已经离开面板(用户 Tab 出去或点了别处)就不再拽回。
+      const focusLeft = !trapFocusRef.current && document.activeElement
+        && document.activeElement !== document.body && !(panel && panel.contains(document.activeElement));
+      if (!focusLeft && previouslyFocused && previouslyFocused.focus && document.contains(previouslyFocused)
         && !(panel && panel.contains(previouslyFocused))) {
         previouslyFocused.focus();
       }

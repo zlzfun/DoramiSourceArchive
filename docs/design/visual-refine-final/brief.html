@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>早报 · 视觉精修定稿</title><link rel="stylesheet" href="assets/fonts.css"><link rel="stylesheet" href="assets/site.css"><link rel="stylesheet" href="assets/dm.css"><script>try{var t=localStorage.getItem('dorami-refine2-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}</script></head><body>
+<header class="top"><div class="top-in"><a class="brand" href="./"><img src="assets/logos/dorami.png" alt="">哆啦美<span>视觉精修 · 定稿</span></a><nav class="nav" aria-label="定稿目录"><a href="./" class="">总览</a><a href="type.html" class=""><b>01</b>字体</a><a href="color.html" class=""><b>02</b>色彩</a><a href="reader.html" class=""><b>03</b>阅读器</a><a href="brief.html" class="on" aria-current="page"><b>04</b>早报</a><a href="details.html" class=""><b>05</b>组件</a><a href="console.html" class=""><b>06</b>管理面</a></nav><div class="theme" role="group" aria-label="页面主题"><button data-t="light">亮</button><button data-t="dark">暗</button><button data-t="auto">跟随</button></div></div></header>
+<main class="wrap">
+  <header class="head">
+    <div class="eyebrow"><b>04 早报</b><span>定稿</span><span>采用「夜航」早报版式</span></div>
+    <h1 class="title">早报：头条一张海报，其余按板块读下去</h1>
+    <p class="lede">按你的意见，早报直接采用夜航样页的早报版式。保留左侧导轨，取消日期中栏，往期早报从右上角的「往期」浮层或页尾的日期切换。颜色跟随所选中性色，亮色暗色都可用；分数恢复宋体数字加 AI 渐变。</p>
+    <div class="facts"><span>来源<b>夜航样页的早报部分</b></span><span>保留<b>左轨、板块顺序、编排规则</b></span><span>取消<b>日期中栏</b></span></div>
+  </header>
+
+  <section class="s">
+    <h2>整页</h2>
+    <p>下面是 9 月 16 日那期的真实数据，共 10 条。头条取本期新闻价值最高的一条（8.7）；有「重大事件」时改为重大事件优先。</p>
+    <figure class="frame">
+      <div class="frame-bar">
+        <div class="lab">定稿 · 早报<small>1440 宽，按宽度缩放</small></div>
+        <span class="sw-lab">中性色</span>
+        <div class="sw" data-for="m-brief" data-attr="pal" data-group="pal"><button data-v="porcelain" class="on">瓷</button><button data-v="graphite">墨</button><button data-v="paper">宣</button></div>
+        <div class="sw" data-for="m-brief" data-attr="mode"><button data-v="light">亮</button><button data-v="dark">暗</button></div>
+        <button class="ib" data-full><svg viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg><span>1:1 查看</span></button>
+      </div>
+      <div class="frame-stage" data-w="1440"><div class="frame-scale"><div id="m-brief" data-follow data-pal="porcelain" style="width:1440px"></div></div></div>
+      <figcaption class="frame-note">条目、分数、摘要、评分依据、入选理由都取自这一期快照，没有挑选或改写；克雷数学那条的中文标题缺右引号，是数据本身的样子。相对时间按 2026-09-16 09:00 计算。</figcaption>
+    </figure>
+  </section>
+
+  <section class="s">
+    <h2>往期切换</h2>
+    <p>右上角「往期」打开浮层，列出最近的早报；页尾「本期编排」里也有往期日期，读完一期可以直接跳到上一期。</p>
+    <figure class="frame">
+      <div class="frame-bar"><div class="lab">「往期」浮层展开<small>首屏，1440 × 620</small></div>
+        <div class="sw" data-for="m-pop" data-attr="mode"><button data-v="light">亮</button><button data-v="dark">暗</button></div></div>
+      <div class="frame-stage" data-w="1440" data-h="620"><div class="frame-scale"><div id="m-pop" data-follow data-pal="porcelain" style="width:1440px;height:620px;overflow:hidden"></div></div></div>
+    </figure>
+  </section>
+
+  <section class="s">
+    <h2>手机</h2>
+    <p>手机上海报缩小，评分栏移到摘要下方；板块头改成一行，往期仍从右上角进入。</p>
+    <div class="phones" style="margin-top:20px;display:grid;grid-template-columns:repeat(2,minmax(0,360px));gap:24px;justify-content:center">
+      <div class="cmp-col"><header>现状 · 390 × 844</header><div class="cmp-body sunk" style="display:grid;place-items:center"><img src="shots/cur-m-brief.webp" alt="现状移动端早报" style="width:100%;max-width:300px;border-radius:22px;box-shadow:0 0 0 1px var(--line)" loading="lazy"></div></div>
+      <div class="cmp-col after"><header>定稿 · 390 × 844</header><div class="cmp-body sunk" style="display:grid;place-items:center"><div style="width:100%;max-width:300px;border-radius:22px;overflow:hidden;box-shadow:0 0 0 1px var(--line)"><div class="frame-stage" data-w="390" style="background:transparent"><div class="frame-scale"><div id="m-phone" data-follow data-pal="porcelain"></div></div></div></div></div></div>
+    </div>
+    <p class="p" style="font-size:13.5px;color:var(--muted)">现状截图是 10 月 13 日的「今天」降级早报，定稿画的是 9 月 16 日那期，内容不同，比的是排法。</p>
+  </section>
+
+  <section class="s">
+    <h2>现有功能放在哪里</h2>
+    <p>版式换了，早报现有的状态和操作都要有位置。下表是落地时的对应关系。</p>
+    <div class="tw"><table class="t">
+      <thead><tr><th>现有功能</th><th>放在</th></tr></thead>
+      <tbody>
+        <tr><td class="k">重新编排今日早报</td><td>海报右上角「重新编排」，只在今天这期出现</td></tr>
+        <tr><td class="k">同日多个版本</td><td>右上角显示「第 N 版」；往期浮层里当天的各版本列在日期下面</td></tr>
+        <tr><td class="k">兴趣或订阅已改、下次编排生效</td><td>「本期编排」里一行说明，附「立即重编」</td></tr>
+        <tr><td class="k">部分来源未同步完、分析未完成</td><td>「本期编排」的「说明」一行</td></tr>
+        <tr><td class="k">编排中、失败、这一天没有早报</td><td>替换海报位置的状态块，导轨和往期入口照常可用</td></tr>
+        <tr><td class="k">重大事件</td><td>作头条；多条时其余排在第一个板块</td></tr>
+        <tr><td class="k">兴趣命中、订阅外的兴趣条目</td><td>条目元信息里「兴趣」标记；订阅外的条目旁边给「＋ 订阅」</td></tr>
+        <tr><td class="k">深度阅读、播客精选（内容分类 3a）</td><td>作为普通板块，排在固定的板块顺序里</td></tr>
+        <tr><td class="k">首登兴趣引导横幅</td><td>海报上方一条横幅，样式与现在相同</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="s">
+    <h2>与夜航原稿的差别</h2>
+    <ul class="list">
+      <li><b>颜色：</b>夜航是暗色加琥珀色。这里跟随所选的中性色和亮暗主题，强调色仍是靛蓝；头条背后的环境光用 AI 渐变的两种颜色。</li>
+      <li><b>头条规则：</b>夜航取最高分。这里改为有「重大事件」时重大事件优先。</li>
+      <li><b>配图缩略图：</b>夜航条目右侧有配图，需要早报接口提供首图和尺寸，这一波先不做。</li>
+      <li><b>「问哆啦美」按钮：</b>海报只保留「阅读全文」和「收藏」两个动作。</li>
+      <li><b>英文原标题：</b>夜航用英文斜体衬线；这里不再多加一款英文字体，用界面黑体的次要灰。</li>
+    </ul>
+  </section>
+</main>
+<div class="wrap"><nav class="pager"><a href="reader.html"><span>上一篇</span><b>03 阅读器</b></a><a class="next" href="details.html"><span>下一篇</span><b>05 组件</b></a></nav><p class="foot">样页数据来自本地库副本（2026-09-28 快照），经产品自身接口导出；标题字体为思源宋体子集，内嵌在页面里，不请求任何外部字体域名。</p></div><script src="assets/data.js"></script><script src="assets/dm.js"></script><script src="assets/site.js"></script><script>DMR.brief(document.getElementById('m-brief'));
+DMR.brief(document.getElementById('m-pop'), { pop: true, acts: 1 });
+DMR.phone(document.getElementById('m-phone'));</script>
+</body></html>

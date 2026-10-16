@@ -66,7 +66,7 @@ STAGE_CODES = (
     "failed",
 )
 VERDICT_CODES = ("premium", "below_threshold", "unscored")
-TTS_FILTERS = ("not_started", "active", "ready", "failed")
+TTS_FILTERS = ("not_started", "active", "retry_wait", "ready", "failed")
 SORT_KEYS = ("publish", "score", "updated")
 TTS_STATUS_LABELS = {
     "not_started": "未开始",
@@ -75,6 +75,7 @@ TTS_STATUS_LABELS = {
     "synthesizing": "正在合成音频",
     "ready": "音频已生成",
     "failed": "生成失败",
+    "retry_wait": "等待重试",
 }
 
 
@@ -313,6 +314,8 @@ def _verdict_code(state: _EpisodeState, *, threshold: float) -> str:
 
 def _tts_bucket(state: _EpisodeState) -> str:
     status, _ = _guide_status(state)
+    if status == "retry_wait":
+        return "retry_wait"
     if status in ACTIVE_TTS_STATUSES:
         return "active"
     if status == "ready":
@@ -349,7 +352,7 @@ def _matches_filter(
     if status_filter == "processing":
         return (
             process_status in ACTIVE_PROCESSING_STATUSES
-            or tts_status in ACTIVE_TTS_STATUSES
+            or tts_status in ACTIVE_TTS_STATUSES | {"retry_wait"}
         )
     if status_filter == "failed":
         return process_status in FAILED_PROCESSING_STATUSES or tts_status == "failed"
@@ -549,6 +552,7 @@ def _serialize_state(state: _EpisodeState, *, threshold: float) -> dict[str, Any
         "tts_status": guide_status,
         "tts_status_label": TTS_STATUS_LABELS[guide_status],
         "tts_error": guide_error,
+        "tts_next_retry_at": str(guide.get("next_retry_at") or ""),
         "tts_failed_stage": str(guide.get("failed_stage") or ""),
         "tts_forced": tts_forced,
         "tts_updated_at": str(guide.get("updated_at") or ""),
@@ -633,7 +637,7 @@ def dashboard(
             )
             or (
                 str(_premium_guide(row.episode).get("status") or "")
-                in ACTIVE_TTS_STATUSES | {"failed"}
+                in ACTIVE_TTS_STATUSES | {"failed", "retry_wait"}
             )
             or (
                 final_score(row.analysis) is None
@@ -841,6 +845,8 @@ def _timeline(
         guide_row = {"state": "done", "note": "短版中文导读已发布（文字版）"}
     elif blog:
         guide_row = {"state": "warn", "note": "导读博客已发布，口播稿尚未完成或版本不匹配"}
+    elif guide_status == "retry_wait":
+        guide_row = {"state": "warn", "note": guide_error or "等待自动重试"}
     elif guide_status == "failed" and failed_stage != "synthesizing":
         guide_row = {"state": "fail", "note": guide_error or "导读生成失败"}
     elif score_final is None:
@@ -863,6 +869,12 @@ def _timeline(
         tts_row = {"state": "done", "note": "中文精简音频已发布，读者可听"}
     elif guide_status == "synthesizing":
         tts_row = {"state": "run", "note": "正在合成中文精简音频，完成后自动发布"}
+    elif guide_status == "retry_wait":
+        when = str(guide.get("next_retry_at") or "")
+        note = guide_error or "等待自动重试"
+        if when:
+            note += f"；计划 {when} 自动重试"
+        tts_row = {"state": "warn", "note": note}
     elif guide_status == "failed" and failed_stage == "synthesizing":
         tts_row = {"state": "fail", "note": guide_error or "合成失败"}
     elif guide_mode == "brief_zh" and blog:

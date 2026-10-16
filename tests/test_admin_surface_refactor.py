@@ -163,7 +163,9 @@ def test_dashboard_axes_filters_sort_and_breakdown(refactor_engine):
         "full_analyzed": 2, "reconciliation": 1, "retry_wait": 0, "failed": 1,
     }
     assert result["breakdown"]["verdict"] == {"premium": 1, "below_threshold": 1, "unscored": 6}
-    assert result["breakdown"]["tts"] == {"not_started": 7, "active": 0, "ready": 0, "failed": 1}
+    assert result["breakdown"]["tts"] == {
+        "not_started": 7, "active": 0, "retry_wait": 0, "ready": 0, "failed": 1,
+    }
     assert result["breakdown"]["shows"] == 1
 
     assert [i["episode_id"] for i in dashboard(refactor_engine, stage="reconciliation")["items"]] == ["reconcile"]

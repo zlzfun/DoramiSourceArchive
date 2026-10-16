@@ -364,6 +364,22 @@ def test_evaluate_in_progress_when_guide_active(tmp_path):
     assert result["should_schedule"] is False
 
 
+def test_evaluate_capacity_wait_is_in_progress_and_not_charged(tmp_path):
+    sink = _make_sink(tmp_path, "eval-capacity-wait.db")
+    _seed_episode(sink.engine, guide_status="retry_wait")
+
+    result = evaluate_reader_ondemand_premium_guide(
+        sink.engine,
+        episode_id="episode-ondemand",
+        config=_premium_config(),
+        actor="user",
+    )
+    assert result["outcome"] == "in_progress"
+    assert result["status"] == "retry_wait"
+    assert result["should_schedule"] is False
+    assert result["charged"] is False
+
+
 def test_evaluate_can_queue_when_eligible(tmp_path):
     sink = _make_sink(tmp_path, "eval-queue.db")
     _seed_episode(sink.engine)

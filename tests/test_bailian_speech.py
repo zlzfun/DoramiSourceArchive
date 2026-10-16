@@ -2,9 +2,12 @@
 
 import asyncio
 import datetime as dt
+import hashlib
 import io
 import json
+import os
 import wave
+import zlib
 from pathlib import Path
 from dataclasses import replace
 from types import SimpleNamespace
@@ -32,6 +35,7 @@ from services.bailian_tts import (
     split_narration,
     reclaim_completed_receipts,
 )
+from services.file_lock import LOCK_EX, flock
 from services.podcast_stage_policy import PodcastStagePolicy
 from services.podcast_worker_contracts import (
     Accepted,
@@ -779,6 +783,267 @@ def test_tts_concurrent_duplicate_calls_share_one_receipt(tts_env):
 
     a, b = asyncio.run(run())
     assert a.data == b.data and len(FakeTtsClient.calls) == 1
+
+
+def _incompressible(n: int = 8192) -> bytes:
+    blocks = []
+    seed = b"dorami-tts-receipt-v1"
+    while sum(len(block) for block in blocks) < n:
+        seed = hashlib.sha256(seed).digest()
+        blocks.append(seed)
+    data = b"".join(blocks)[:n]
+    assert len(zlib.compress(data, 6)) >= len(data)
+    return data
+
+
+def _plant_old_receipt(
+    engine, cfg, *, published=True, nbytes=8000, write_wav=True, created_at=None, payload=None,
+):
+    data = payload if payload is not None else b"\x00" * nbytes
+    nbytes = len(data)
+    key = "old-receipt"
+    root = Path(cfg.tts_receipt_root)
+    root.mkdir(parents=True, exist_ok=True)
+    if write_wav:
+        (root / f"{key}.wav").write_bytes(data)
+    (root / f"{key}.json").write_bytes(b"{}")
+    stamp = created_at or (NOW - dt.timedelta(days=10)).isoformat()
+    with Session(engine) as session:
+        session.add(ArticleRecord(
+            id="episode-old", title="old", content_type="podcast_episode", source_id="test",
+            source_url="https://example.test/old", publish_date=NOW.isoformat(),
+            fetched_date=NOW.isoformat(), content="old",
+        ))
+        session.commit()
+        if published:
+            narration = PodcastTextArtifactRecord(
+                id="narration-old", episode_id="episode-old", kind="narration_script_zh",
+                version=1, content_hash="a" * 64, inline_text="old", language="zh-CN",
+                created_at=stamp,
+            )
+            session.add(narration)
+            session.commit()
+            session.add(PodcastTextPublicationRecord(
+                identity="episode-old:narration_script_zh",
+                episode_id="episode-old", kind="narration_script_zh",
+                artifact_id=narration.id, status="published", authority_id="",
+                published_at=stamp, updated_at=stamp,
+            ))
+            session.commit()
+            session.add(PodcastArtifactRecord(
+                id="published-old", episode_id="episode-old", kind="digest_audio_zh",
+                content_hash="b" * 64, mime="audio/wav", ext=".wav", size_bytes=nbytes,
+                status="published", provenance="premium_guide_tts",
+                narration_artifact_id=narration.id, narration_content_hash=narration.content_hash,
+                created_at=stamp, updated_at=stamp,
+            ))
+            session.commit()
+        session.add(BailianTtsCallRecord(
+            id=key, episode_id="episode-old", account_scope=cfg.account_scope,
+            budget_period="2026-09", created_at=stamp, status="succeeded",
+            reserved_characters=1, actual_characters=1, cost_minor=0,
+            price_minor=cfg.tts_price_minor, price_units=cfg.tts_price_units,
+            pricing_revision=cfg.pricing_revision,
+            audio_hash=hashlib.sha256(data).hexdigest(),
+        ))
+        session.commit()
+    return key, data
+
+
+def _cache_limit_one_byte_short(cfg, characters):
+    root = Path(cfg.tts_receipt_root)
+    used = sum(path.stat().st_size for path in root.iterdir() if path.is_file())
+    reservation = characters * 12_000 + 44
+    return replace(cfg, tts_cache_max_bytes=used + reservation - 1)
+
+
+def test_capacity_shortfall_reclaims_once_then_synthesizes(tts_env):
+    engine, cfg = tts_env
+    FakeTtsClient.calls = []
+    key, _data = _plant_old_receipt(engine, cfg)
+    cfg = _cache_limit_one_byte_short(cfg, len("hello"))
+    root = Path(cfg.tts_receipt_root)
+    audio = asyncio.run(provider(engine, cfg).synthesize("hello"))
+    assert audio.data
+    assert len(FakeTtsClient.calls) == 1
+    assert not (root / f"{key}.wav").exists()
+    assert (root / f"{key}.wav.zlib").exists()
+    assert (root / f"{key}.json").exists()
+    with Session(engine) as session:
+        old = session.get(BailianTtsCallRecord, key)
+        assert old.status == "succeeded" and old.cost_minor == 0
+
+
+def test_unpublished_receipt_is_not_reclaimed_and_capacity_still_fails(tts_env):
+    engine, cfg = tts_env
+    FakeTtsClient.calls = []
+    key, _data = _plant_old_receipt(engine, cfg, published=False)
+    cfg = _cache_limit_one_byte_short(cfg, len("hello"))
+    root = Path(cfg.tts_receipt_root)
+    with pytest.raises(BailianSpeechError, match="tts_receipt_cache_full"):
+        asyncio.run(provider(engine, cfg).synthesize("hello"))
+    assert FakeTtsClient.calls == []
+    assert (root / f"{key}.wav").exists()
+    assert not (root / f"{key}.wav.zlib").exists()
+
+
+def test_disk_shortfall_still_fails_after_one_reclaim(tts_env, monkeypatch):
+    engine, cfg = tts_env
+    FakeTtsClient.calls = []
+    key, _data = _plant_old_receipt(engine, cfg)
+    from services import bailian_tts
+    monkeypatch.setattr(bailian_tts.shutil, "disk_usage", lambda _root: SimpleNamespace(free=10))
+    root = Path(cfg.tts_receipt_root)
+    with pytest.raises(BailianSpeechError, match="tts_receipt_disk_full"):
+        asyncio.run(provider(engine, cfg).synthesize("hello"))
+    assert FakeTtsClient.calls == []
+    assert not (root / f"{key}.wav").exists()
+    assert (root / f"{key}.wav.zlib").exists()
+    assert (root / f"{key}.json").exists()
+
+
+def test_download_shortfall_reclaims_before_writing_the_new_wav(tts_env):
+    engine, cfg = tts_env
+    FakeTtsClient.calls = []
+    # 预检按字符估算（hello ≈ 60KB）仍低于上限；下载回调才把旧 wav 落盘，
+    # 实字节加上新 wav 越过 70KB，于是走下载后回收。旧 wav 必须 ≤ 上限，否则回收跳过。
+    key, data = _plant_old_receipt(engine, cfg, nbytes=68_000, write_wav=False)
+    cfg = replace(cfg, tts_cache_max_bytes=70_000)
+    root = Path(cfg.tts_receipt_root)
+
+    async def download(*_args, **_kwargs):
+        (root / f"{key}.wav").write_bytes(data)
+        return wav()
+
+    audio = asyncio.run(provider(engine, cfg, downloader=download).synthesize("hello"))
+    assert audio.data and len(FakeTtsClient.calls) == 1
+    assert not (root / f"{key}.wav").exists()
+    assert (root / f"{key}.wav.zlib").exists()
+
+
+def test_nonblocking_reclaim_skips_while_the_receipt_lock_is_held(tts_env):
+    engine, cfg = tts_env
+    key, _data = _plant_old_receipt(engine, cfg)
+    root = Path(cfg.tts_receipt_root)
+    fd = os.open(root / ".lock", os.O_RDWR | os.O_CREAT, 0o600)
+    flock(fd, LOCK_EX)
+    try:
+        skipped = reclaim_completed_receipts(cfg, engine, now=NOW, blocking=False)
+    finally:
+        os.close(fd)
+    assert skipped == {
+        "compressed_wavs": 0, "removed_wavs": 0, "saved_bytes": 0, "skipped": True,
+    }
+    assert (root / f"{key}.wav").exists()
+    done = reclaim_completed_receipts(cfg, engine, now=NOW)
+    assert done["compressed_wavs"] == 1 and "skipped" not in done
+    assert not (root / f"{key}.wav").exists()
+
+
+def test_capacity_reclaim_frees_recent_incompressible_wavs(tts_env):
+    """Segments newer than 7 days that zlib cannot shrink still free the cache."""
+
+    engine, cfg = tts_env
+    FakeTtsClient.calls = []
+    data = _incompressible()
+    key, _data = _plant_old_receipt(
+        engine, cfg, payload=data, created_at=NOW.isoformat(),
+    )
+    cfg = _cache_limit_one_byte_short(cfg, len("hello"))
+    root = Path(cfg.tts_receipt_root)
+    daily = reclaim_completed_receipts(cfg, engine, now=NOW)
+    assert daily["compressed_wavs"] == 0 and daily["removed_wavs"] == 0
+    assert (root / f"{key}.wav").is_file()
+    audio = asyncio.run(provider(engine, cfg).synthesize("hello"))
+    assert audio.data and FakeTtsClient.calls == ["hello"]
+    assert not (root / f"{key}.wav").exists()
+    assert not (root / f"{key}.wav.zlib").exists()
+    assert (root / f"{key}.json").exists()
+    with Session(engine) as session:
+        old = session.get(BailianTtsCallRecord, key)
+        assert old is not None and old.status == "succeeded" and old.cost_minor == 0
+
+
+def test_urgent_reclaim_deletes_oversized_verified_wav(tts_env):
+    engine, cfg = tts_env
+    cfg = replace(cfg, tts_cache_max_bytes=1000)
+    key, data = _plant_old_receipt(
+        engine, cfg, nbytes=5000, created_at=NOW.isoformat(),
+    )
+    root = Path(cfg.tts_receipt_root)
+    kept = reclaim_completed_receipts(cfg, engine, now=NOW)
+    assert kept["compressed_wavs"] == 0 and kept["removed_wavs"] == 0
+    assert (root / f"{key}.wav").exists()
+    urgent = reclaim_completed_receipts(cfg, engine, now=NOW, urgent=True)
+    assert urgent["compressed_wavs"] == 0
+    assert urgent["removed_wavs"] == 1 and urgent["saved_bytes"] == len(data)
+    assert not (root / f"{key}.wav").exists()
+    assert not (root / f"{key}.wav.zlib").exists()
+    assert (root / f"{key}.json").exists()
+    with Session(engine) as session:
+        row = session.get(BailianTtsCallRecord, key)
+        assert row is not None and row.status == "succeeded"
+
+
+def test_succeeded_receipt_without_local_audio_replays_url_without_rebilling(tts_env):
+    engine, cfg = tts_env
+    FakeTtsClient.calls = []
+    original = asyncio.run(provider(engine, cfg).synthesize("hello"))
+    root = Path(cfg.tts_receipt_root)
+    with Session(engine) as session:
+        row = session.exec(select(BailianTtsCallRecord)).one()
+        key, audio_hash = row.id, row.audio_hash
+    wav_path = root / f"{key}.wav"
+    archive = root / f"{key}.wav.zlib"
+    wav_path.unlink()
+    archive.unlink(missing_ok=True)
+    replay = asyncio.run(provider(engine, cfg).synthesize("hello"))
+    assert replay.data == original.data
+    assert FakeTtsClient.calls == ["hello"]
+    assert not wav_path.exists()
+    with Session(engine) as session:
+        row = session.get(BailianTtsCallRecord, key)
+        assert row is not None and row.status == "succeeded" and row.audio_hash == audio_hash
+    (root / f"{key}.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(BailianSpeechError, match="tts_cached_audio_missing"):
+        asyncio.run(provider(engine, cfg).synthesize("hello"))
+    assert FakeTtsClient.calls == ["hello"]
+    with Session(engine) as session:
+        row = session.get(BailianTtsCallRecord, key)
+        assert row is not None and row.status == "succeeded" and row.cost_minor >= 0
+
+
+def test_post_download_capacity_failure_resumes_generated_without_another_charge(tts_env):
+    engine, cfg = tts_env
+    FakeTtsClient.calls = []
+    root = Path(cfg.tts_receipt_root)
+    cfg = replace(cfg, tts_cache_max_bytes=80_000)
+    blocked = {"armed": True}
+
+    async def download(*_args, **_kwargs):
+        if blocked["armed"]:
+            blocked["armed"] = False
+            (root / "blocker").write_bytes(b"x" * cfg.tts_cache_max_bytes)
+        return wav()
+
+    with pytest.raises(BailianSpeechError, match="tts_receipt_cache_full"):
+        asyncio.run(provider(engine, cfg, downloader=download).synthesize("hello"))
+    assert FakeTtsClient.calls == ["hello"]
+    with Session(engine) as session:
+        row = session.exec(select(BailianTtsCallRecord)).one()
+        assert row.status == "generated"
+        assert row.request_id == "req-1"
+        assert row.cost_minor > 0
+        request_id, cost = row.request_id, row.cost_minor
+    (root / "blocker").unlink()
+    audio = asyncio.run(provider(engine, cfg, downloader=download).synthesize("hello"))
+    assert audio.data
+    assert FakeTtsClient.calls == ["hello"]
+    with Session(engine) as session:
+        row = session.exec(select(BailianTtsCallRecord)).one()
+        assert row.status == "succeeded"
+        assert row.request_id == request_id
+        assert row.cost_minor == cost
 
 
 def test_asr_admission_is_independent_of_tts_and_secret():

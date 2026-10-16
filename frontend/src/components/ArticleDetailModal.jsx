@@ -58,7 +58,7 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
             <label className="form-label flex items-center"><FileText className="w-3.5 h-3.5 mr-1" /> 文章标题</label>
             {isEditing ? (
               <input type="text" defaultValue={data.title} id="edit-title" className="form-input" />
-            ) : <div className="text-xl font-bold text-[var(--dorami-ink)] leading-snug">{data.title}</div>}
+            ) : <div className="text-xl font-semibold text-[var(--dorami-ink)] leading-snug">{data.title}</div>}
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -68,13 +68,13 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
                 <input type="text" defaultValue={data.source_url} id="edit-url" className="form-input" />
               ) : (
                 data.source_url ?
-                  <a href={data.source_url} target="_blank" rel="noreferrer" className="text-sm font-medium text-[var(--dorami-blue)] hover:text-[var(--dorami-accent-ink)] flex items-center break-all"><ExternalLink className="w-3.5 h-3.5 mr-1 shrink-0" /> {data.source_url}</a>
+                  <a href={data.source_url} target="_blank" rel="noreferrer" className="text-sm text-[var(--dorami-blue)] hover:text-[var(--dorami-accent-ink)] flex items-center break-all"><ExternalLink className="w-3.5 h-3.5 mr-1 shrink-0" /> {data.source_url}</a>
                   : <span className="text-sm text-slate-500">无链接</span>
               )}
             </div>
             <div>
               <label className="form-label flex items-center"><Calendar className="w-3.5 h-3.5 mr-1" /> 来源节点与收录时间</label>
-              <div className="text-sm font-medium text-slate-700 flex items-center space-x-2">
+              <div className="text-sm text-slate-700 flex items-center space-x-2">
                 <span className="bg-[var(--dorami-soft)] px-2 py-0.5 rounded text-slate-500">{getFetcherName(data.source_id)}</span>
                 <span className="text-slate-500">|</span>
                 <span className="font-mono">{data.fetched_date?.replace('T', ' ').substring(0, 19)}</span>

@@ -51,18 +51,17 @@ import PersonalBriefPage from './PersonalBriefPage';
 import InterestPage from './InterestPage';
 import RankingsPage from './RankingsPage';
 import AnalysisTagChip from './AnalysisTagChip';
-import { excerptOf, hostOf } from '../utils/readerText';
+import { excerptOf, hostOf, latinLang } from '../utils/readerText';
 import { highlightMatch } from '../utils/highlight';
 import { dayLabelOf } from '../utils/readerTime';
 import { buildListPlan } from '../utils/listPlan';
-import { formatRelativeTime, formatDateTime, formatPublishDate } from '../utils/datetime';
+import { formatRelativeTime, formatPublishDate, formatPublishDateTime } from '../utils/datetime';
 import { formatPodcastDuration, podcastListAvailabilityMeta, podcastOf } from '../utils/podcast';
 import { isCompactKind, kindChipLabel, kindFilterOptions, kindKickerLabel } from '../utils/contentKind';
 import {
   analysisStatusMeta,
   displayAnalysisTags,
   podcastAssessmentMeta,
-  primaryAnalysisLabel,
   primaryScoreOf,
   scoreDisclaimer,
   scoreTierClass,
@@ -212,7 +211,7 @@ export const ArticleRow = memo(function ArticleRow({
   source, sourceName, onSelect, onPrefetchEnter, onPrefetchLeave, onToggleFavorite,
   onContextMenu, ctxAnchor,
   // issue #27 兴趣即透镜:命中的兴趣标签名(顶行一枚胶囊)/ 订阅外标记(悬停翻「+ 订阅」)
-  interestHit = '', labelSuppress = '', unsubscribed = false, onSubscribeSource = null,
+  interestHit = '', unsubscribed = false, onSubscribeSource = null,
 }) {
   // 版本更新用紧凑行(单行标题、无摘要),由条目的内容类型决定(issue #178,取代「动态」容器)
   const compact = !entryPodcast && isCompactKind(article);
@@ -222,7 +221,6 @@ export const ArticleRow = memo(function ArticleRow({
   const kindLabel = kindChipLabel(article);
   const podcast = entryPodcast ? podcastOf(article) : null;
   const podcastStatus = podcastListAvailabilityMeta(podcast);
-  const analysisLabel = primaryAnalysisLabel(article);
   // 分数位显示主分(issue #178 第二波:内容类型决定默认维度,新闻价值 ≥ 8.5 例外);列表不标维度,悬停说明。
   const primaryScore = primaryScoreOf(article);
   const score = primaryScore?.text || '';
@@ -230,12 +228,9 @@ export const ArticleRow = memo(function ArticleRow({
   const scoreTitle = primaryScore ? `${primaryScore.label} ${score}。${scoreDisclaimer(primaryScore.key)}` : '';
   const analysisStatus = analysisStatusMeta(article, { podcast: entryPodcast });
   const podcastAssessment = entryPodcast ? podcastAssessmentMeta(article) : null;
-  const analysisTag = analysisLabel && analysisLabel !== interestHit && analysisLabel !== labelSuppress
-    && analysisLabel !== kindLabel
-    ? <span className="reader-entry-tag">{analysisLabel}</span>
-    : null;
-  // 内容类型签(论文 / 教程 / 观点 / 版本更新…):源名后的细线小签,资讯不挂(issue #178)
-  const kindTag = kindLabel ? <span className="reader-entry-tag reader-entry-kind">{kindLabel}</span> : null;
+  // 内容类型(论文 / 教程 / 观点 / 版本更新…):源名后的一个词,资讯不挂(issue #178)。
+  // issue #184:列表不再挂主题标签,内容类型也不画框——标签只在阅读窗出现,条目行只回答「谁发的、说了什么、值不值得点开」。
+  const kindTag = kindLabel ? <span className="reader-entry-kind">{kindLabel}</span> : null;
   const favoriteControl = (
     <span
       role="button"
@@ -273,18 +268,17 @@ export const ArticleRow = memo(function ArticleRow({
               <span className="reader-entry-top">
                 <span className="reader-entry-src">{podcast?.show_title || sourceName}</span>
                 {kindTag}
-                {analysisTag}
+                <span
+                  className="reader-entry-time"
+                  title={formatPublishDateTime(article.publish_date || article.fetched_date)}
+                >
+                  {formatRelativeTime(article.publish_date || article.fetched_date, '')}
+                </span>
                 {score && (
                   <span className={`reader-entry-score ai-grad-text ${scoreTier}`} title={scoreTitle}>
                     {score}
                   </span>
                 )}
-                <span
-                  className="reader-entry-time"
-                  title={formatDateTime(article.publish_date || article.fetched_date)}
-                >
-                  {formatRelativeTime(article.publish_date || article.fetched_date, '')}
-                </span>
               </span>
               <span className="reader-entry-titlerow">
                 <span className={`reader-unread-dot ${isUnread ? '' : 'is-off'}`} aria-hidden="true" />
@@ -324,24 +318,19 @@ export const ArticleRow = memo(function ArticleRow({
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onSubscribeSource?.(article.source_id); } }}
                 />
               )}
-              {/* 命中兴趣:只挂一枚胶囊,写命中的那个兴趣标签(命中多个取第一个);它是透镜的产物,与开关无关。
-                  与分析主签同名时顶替它(不并列两枚同名签)。 */}
               {kindTag}
+              {/* 命中兴趣:写命中的那个兴趣标签(命中多个取第一个);它是透镜的产物,与开关无关 */}
               {interestHit && <span className="reader-entry-hit">{interestHit}</span>}
-              {/* 分析结果归入元信息行(issue #23 第三项):分类是源名后的一段元信息文字,
-                  分数是衬线数字落在时间之前——不再独占一行,晚到只横向填字、标题不动;
-                  没有可读结果且分析在途时,分数槽先以「分析中」占位,落地即换成数。 */}
-              {/* 分析主签与命中胶囊同名时让位;单标签视图里与当前标签同名时也让位(每行都写同一个词是重复信息) */}
-              {analysisTag}
-              {score
-                ? <span className={`reader-entry-score ai-grad-text ${scoreTier}`} title={scoreTitle}>{score}</span>
-                : (analysisStatus && <span className="reader-entry-score is-pending" role="status">分析中</span>)}
               <span
                 className="reader-entry-time"
-                title={formatDateTime(article.publish_date || article.fetched_date)}
+                title={formatPublishDateTime(article.publish_date || article.fetched_date)}
               >
                 {formatRelativeTime(article.publish_date || article.fetched_date, '')}
               </span>
+              {/* 分数(身份线:宋体数字 + AI 渐变分档)推到行尾;分析在途时先以「分析中」占位,落地即换成数 */}
+              {score
+                ? <span className={`reader-entry-score ai-grad-text ${scoreTier}`} title={scoreTitle}>{score}</span>
+                : (analysisStatus && <span className="reader-entry-score is-pending" role="status">分析中</span>)}
             </span>
             {/* 标题行内收藏控件复用 span role=button，避免 button 嵌套。 */}
             <span className="reader-entry-titlerow">
@@ -404,7 +393,7 @@ export default function ReaderTab({
     socialView, podcastView, railActive, listTitle, listSubtitle,
     goView, goSource, goTag,
     kindFilter, setKindFilter, kindFacetItems,
-    scope, setAxis, toggleFavoriteScope, activeTagId, activeTagName, interestGroups, hasInterests, refreshInterests,
+    scope, setAxis, toggleFavoriteScope, activeTagId, interestGroups, hasInterests, refreshInterests,
     interestAxisEnabled, showUnsubscribedMark, showInterestHit,
     activeSourceHidden, activeUnsubscribed, grouping,
     // 搜索
@@ -767,7 +756,9 @@ export default function ReaderTab({
           </button>
         )}
 
-        {!rankingsOpen && <div className="reader-source-scroll">
+        {/* 榜单打开时源列表保持在场。点源、标签或「发现更多来源」会先关掉榜单再进入，
+            与视图轨文章/播客/发现按钮同一套 setRankingsOpen(false)。 */}
+        <div className="reader-source-scroll">
           {sourcesLoading ? (
             <SourceRowsSkeleton />
           ) : (
@@ -788,7 +779,7 @@ export default function ReaderTab({
                 <TagRows
                   groups={interestGroups}
                   activeTagId={activeTagId}
-                  onPick={(id) => { leaveBriefTrail(); goTag(id); }}
+                  onPick={(id) => { setRankingsOpen(false); leaveBriefTrail(); goTag(id); }}
                   hasInterests={hasInterests}
                   onOpenInterests={openInterests}
                 />
@@ -810,8 +801,8 @@ export default function ReaderTab({
                         key={source.source_id}
                         role="button"
                         tabIndex={0}
-                        onClick={() => { leaveBriefTrail(); goSource(source.source_id); }}
-                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); leaveBriefTrail(); goSource(source.source_id); } }}
+                        onClick={() => { setRankingsOpen(false); leaveBriefTrail(); goSource(source.source_id); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setRankingsOpen(false); leaveBriefTrail(); goSource(source.source_id); } }}
                         onContextMenu={(e) => onRowContextMenu(e, source, 'source')}
                         className={`reader-source-row ${active ? 'reader-source-row-active' : ''} ${unread > 0 ? 'has-unread' : ''} ${source.hidden ? 'is-unavailable' : ''} ${ctxMenu?.anchorKey === `source:${source.source_id}` ? 'is-ctx-anchor' : ''}`}
                       >
@@ -853,7 +844,7 @@ export default function ReaderTab({
               {showSourceRows && !hasNoSubscriptions && (
                 <button
                   type="button"
-                  onClick={openDiscoverSources}
+                  onClick={() => { setRankingsOpen(false); openDiscoverSources(); }}
                   className="reader-src-more"
                 >
                   <Compass className="h-3.5 w-3.5" />
@@ -862,7 +853,7 @@ export default function ReaderTab({
               )}
             </>
           )}
-        </div>}
+        </div>
         </div>
       </aside>}
 
@@ -881,6 +872,8 @@ export default function ReaderTab({
           onSetupInterests={openInterests}
           onOnboardingCompleted={() => onUserUpdated?.({ interest_onboarding_completed: true })}
           onBrowse={() => { setBriefOpen(false); leaveBriefTrail(); }}
+          favoriteIds={favoriteIds}
+          onToggleFavorite={(articleId) => handleToggleFavorite({ id: articleId })}
           onSubscribeSource={onRowSubscribeSource}
           onOpenArticle={async (articleId, ctx) => {
             // 结果回传早报页:false=不在库(早报页退到原链),null=被更晚的点击盖过(不动)
@@ -1198,7 +1191,6 @@ export default function ReaderTab({
                     onContextMenu={onRowContextMenu}
                     ctxAnchor={ctxMenu?.anchorKey === `article:${article.id}`}
                     interestHit={showInterestHit ? (article.interest_hits?.[0] || '') : ''}
-                    labelSuppress={activeTagName}
                     unsubscribed={showUnsubscribedMark && !subscribedIds.has(article.source_id)}
                     onSubscribeSource={onRowSubscribeSource}
                   />
@@ -1362,16 +1354,16 @@ export default function ReaderTab({
                 )}
               </div>
               {/* 译文态(v3.45):大标题换中文译名,原标题降为其下一行小字 */}
-              <h1 className="reader-pane-title">
+              <h1 className="reader-pane-title" lang={latinLang((showTranslation && translatedTitle) ? translatedTitle : activeArticle.title)}>
                 {(showTranslation && translatedTitle) ? translatedTitle : (activeArticle.title || '（无标题）')}
               </h1>
               {showTranslation && translatedTitle && activeArticle.title && translatedTitle !== activeArticle.title && (
-                <div className="reader-pane-title-orig">{activeArticle.title}</div>
+                <div className="reader-pane-title-orig" lang={latinLang(activeArticle.title)}>{activeArticle.title}</div>
               )}
               <div className="reader-pane-byline">
               <div className="reader-pane-meta">
                 {activeArticle.publish_date && (
-                  <span title={formatDateTime(activeArticle.publish_date)}>
+                  <span title={formatPublishDateTime(activeArticle.publish_date)}>
                     {formatPublishDate(activeArticle.publish_date)}
                   </span>
                 )}
@@ -1451,7 +1443,11 @@ export default function ReaderTab({
                 </div>
               )}
               {!podcastGuideActive && (
-                <div className="reader-article-copy markdown-body" data-ai-translation-scope="article-body">
+                <div
+                  className="reader-article-copy markdown-body"
+                  data-ai-translation-scope="article-body"
+                  lang={(showTranslation && translatedBody) ? undefined : latinLang(activeBody)}
+                >
                   {activeBodyLoading ? (
                     <PaneBodySkeleton />
                   ) : (showTranslation && translatedBody) ? (

@@ -113,7 +113,12 @@ export default function DataTab({
     [availableFetchers]
   );
 
-  const getFetcherName = (id) => fetchersById[id]?.name || id;
+  // 来源名:注册抓取器名 → 分面下发的展示名(读者自定源 / 配置源的名称,issue #184)→ 原 id
+  const facetSourceLabels = useMemo(
+    () => Object.fromEntries((facets?.source_ids ?? []).map((s) => [s.value, s.label]).filter(([, label]) => label)),
+    [facets],
+  );
+  const getFetcherName = (id) => fetchersById[id]?.name || facetSourceLabels[id] || id;
 
   // 数据结构分面(issue #178):每个 content_type 一项,中文名由后端词表下发(facets.label)。
   // 此前把 rss / web 归成「资讯文章」一组,恰是「论文被叫成资讯文章」的来源;内容类型(论文 /
@@ -715,6 +720,7 @@ export default function DataTab({
                 {canSelectArticles && <col className="ledger-col-select" />}
                 <col className="ledger-col-title" />
                 <col className="ledger-col-source" />
+                <col className="ledger-col-analysis" />
                 <col className="ledger-col-type" />
                 <col className="ledger-col-publish" />
                 <col className="ledger-col-publish" />
@@ -729,6 +735,7 @@ export default function DataTab({
                   )}
                   <th className="ledger-th px-4">条目</th>
                   <th className="ledger-th px-3">来源</th>
+                  <th className="ledger-th px-3">分析</th>
                   <th className="ledger-th px-3">类型</th>
                   <th className="ledger-th px-3 text-right">发布</th>
                   <th className="ledger-th px-3 text-right">收录</th>
@@ -742,6 +749,7 @@ export default function DataTab({
                       {canSelectArticles && <td className="px-4"><div className="skeleton mx-auto h-4 w-4" /></td>}
                       <td className="px-4"><div className="skeleton h-4 w-3/4" /><div className="skeleton mt-2 h-3 w-1/2" /></td>
                       <td className="px-3"><div className="flex items-center gap-2.5"><div className="skeleton h-8 w-8 rounded-[var(--r-control)]" /><div className="skeleton h-4 w-20" /></div></td>
+                      <td className="px-3"><div className="skeleton h-4 w-14" /></td>
                       <td className="px-3"><div className="skeleton h-5 w-16 rounded-full" /></td>
                       <td className="px-3"><div className="skeleton ml-auto h-4 w-16" /></td>
                       <td className="px-3"><div className="skeleton ml-auto h-4 w-16" /></td>
@@ -749,13 +757,14 @@ export default function DataTab({
                     </tr>
                   ))
                 ) : articles.length === 0 ? (
-                  <tr><td colSpan={2 + (canSelectArticles ? 1 : 0) + 4} className="px-6 py-16 text-center font-medium text-slate-500">当前筛选条件下未查询到相关数据，试试放宽时间区间或清除筛选</td></tr>
+                  <tr><td colSpan={2 + (canSelectArticles ? 1 : 0) + 5} className="px-6 py-16 text-center text-slate-500">当前筛选条件下未查询到相关数据，试试放宽时间区间或清除筛选</td></tr>
                 ) : articles.map((article) => {
                   const isSel = drawer.open && drawer.article?.id === article.id;
                   const analysisScore = qualityScoreText(article.quality_score);
                   const analysisLabel = primaryAnalysisLabel(article);
                   const analysisStatus = analysisStatusMeta(article, {
                     includeTerminal: true,
+                    short: true,
                     podcast: String(article.content_type || '').startsWith('podcast'),
                   });
                   const podcastProcessing = podcastLedgerProcessingMeta(article);
@@ -774,6 +783,29 @@ export default function DataTab({
                       )}
                       <td className="ledger-td-title px-4">
                         <div className="ledger-tt">{article.title}</div>
+                        <div className="ledger-ex">{excerptOf(article.content_preview || article.content) || '暂无摘要内容'}</div>
+                      </td>
+                      <td className="px-3" onClick={e => e.stopPropagation()}>
+                        {(() => {
+                          const name = getFetcherName(article.source_id);
+                          return (
+                            <button
+                              type="button"
+                              disabled={!onFocusSource}
+                              onClick={() => onFocusSource?.(article.source_id)}
+                              className="ledger-source-link block min-w-0 max-w-full text-left"
+                              title={onFocusSource ? `定位来源「${name}」（${article.source_id}）` : article.source_id}
+                            >
+                              <span className="ledger-source-name">{name}</span>
+                              {/* 读者自定源 / 配置源:名称之下留原始 id 小字,排查时仍能对上号 */}
+                              {name !== article.source_id && !fetchersById[article.source_id] && (
+                                <span className="ledger-source-id">{article.source_id}</span>
+                              )}
+                            </button>
+                          );
+                        })()}
+                      </td>
+                      <td className="px-3">
                         {(analysisScore || analysisLabel || analysisStatus || podcastProcessing) && (
                           <div className="ledger-analysis-meta">
                             {analysisScore && <span className={`reader-score-chip ${scoreTierClass(article.quality_score)}`}>{analysisScore}</span>}
@@ -798,23 +830,6 @@ export default function DataTab({
                             )}
                           </div>
                         )}
-                        <div className="ledger-ex">{excerptOf(article.content_preview || article.content) || '暂无摘要内容'}</div>
-                      </td>
-                      <td className="px-3" onClick={e => e.stopPropagation()}>
-                        {(() => {
-                          const name = getFetcherName(article.source_id);
-                          return (
-                            <button
-                              type="button"
-                              disabled={!onFocusSource}
-                              onClick={() => onFocusSource?.(article.source_id)}
-                              className="ledger-source-link block min-w-0 max-w-full text-left"
-                              title={onFocusSource ? `定位来源「${name}」（${article.source_id}）` : article.source_id}
-                            >
-                              <span className="ledger-source-name line-clamp-1 text-xs font-semibold text-slate-700">{name}</span>
-                            </button>
-                          );
-                        })()}
                       </td>
                       <td className="px-3"><span className="ledger-type-chip max-w-full overflow-hidden text-ellipsis" title={`数据结构:${article.content_type_label || article.content_type || ''}`}>{article.kind_label || article.content_type_label || article.content_type || '未知'}</span></td>
                       <td className="px-3 text-right"><span className="ledger-date">{article.publish_date?.split('T')[0] || '-'}</span></td>

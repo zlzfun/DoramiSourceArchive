@@ -206,6 +206,9 @@ class MCPGateApp:
             response = StarletteJSONResponse({"detail": "MCP server not ready"}, status_code=503)
             await response(scope, receive, send)
             return
+        # Both exact routes enter the inner transport at / without redirects.
+        root_path = scope.get("root_path", "") + "/mcp"
+        scope = dict(scope, path=root_path + "/", root_path=root_path)
         await self._app(scope, receive, send)
 
 
@@ -545,6 +548,12 @@ async def lifespan(app: FastAPI):
         # 仅在调度器新鲜启动（绑定当前事件循环）时注册巡检，避免跨 loop add_job。
         # 明细/埋点表滚动窗清理（每日 04:30）——所有运行角色均注册。
         add_cron_job("retention_cleanup", execute_retention_cleanup_job, "30 4 * * *", [])
+        add_cron_job(
+            TTS_RECEIPT_RECLAIM_JOB_ID,
+            execute_tts_receipt_reclaim_job,
+            TTS_RECEIPT_RECLAIM_CRON,
+            [],
+        )
         # Podcast processing authority is a stage-policy axis, not runtime.role.
         # Both production hosts may run role=all while only the external host is
         # allowed to register ASR. The first tick is deliberately delayed.
@@ -775,6 +784,13 @@ def schedule_podcast_premium_guide(episode_id: str) -> bool:
     existing = _PODCAST_PREMIUM_GUIDE_TASKS.get(episode_id)
     if existing is not None and not existing.done():
         return False
+    # Hold only a force-owned queue and a capacity wait that is not due.
+    # failed / ready / not_required, including a ready guide whose mode
+    # changed, still start.
+    if not podcast_premium_guide_service.premium_guide_auto_schedule_allowed(
+        db_sink.engine, episode_id
+    ):
+        return False
 
     async def _run() -> None:
         try:
@@ -834,8 +850,13 @@ def schedule_podcast_premium_guide(episode_id: str) -> bool:
                 episode_id,
                 exc,
             )
+            capacity_wait = getattr(exc, "code", "") in {
+                "tts_receipt_cache_full",
+                "tts_receipt_disk_full",
+            }
             _dorami_logger.warning(
-                "Podcast 精品导读生成失败 episode=%s (%s)",
+                "Podcast 精品导读%s episode=%s (%s)",
+                "因回执容量等待重试" if capacity_wait else "生成失败",
                 episode_id,
                 type(exc).__name__,
             )
@@ -936,8 +957,13 @@ def schedule_forced_podcast_premium_guide(
                 episode_id,
                 exc,
             )
+            capacity_wait = getattr(exc, "code", "") in {
+                "tts_receipt_cache_full",
+                "tts_receipt_disk_full",
+            }
             _dorami_logger.warning(
-                "Podcast 强制 TTS 生成失败 episode=%s (%s)",
+                "Podcast 强制 TTS %s episode=%s (%s)",
+                "因回执容量等待重试" if capacity_wait else "生成失败",
                 episode_id,
                 type(exc).__name__,
             )
@@ -1713,7 +1739,10 @@ def schedule_media_prefetch(article_ids: List[str]) -> None:
     task.add_done_callback(_MEDIA_PREFETCH_TASKS.discard)
 
 
-app.mount("/mcp", _mcp_gate)
+# 精确 Route 而非 mount：Mount 的正则不含无斜杠路径，/mcp 会被外层 307 重定向。
+# add_route 是 FastAPI 公开 API，且 Route 不进 OpenAPI schema（与 mount 一致）。
+for _mcp_path in ("/mcp", "/mcp/"):
+    app.add_route(_mcp_path, _mcp_gate, methods=["GET", "POST", "DELETE"])
 app.include_router(skill_router)
 # 阶段1：按域迁出的 Router（路径保持不变；鉴权仍由中间件统一强制）。
 app.include_router(accounts_router.router)
@@ -1744,6 +1773,9 @@ app.include_router(share_router.router)
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
 RANKING_JOB_ID = "reader_rankings"
+# Daily, after retention cleanup, on every role. Receipts are node-local.
+TTS_RECEIPT_RECLAIM_JOB_ID = "tts_receipt_reclaim"
+TTS_RECEIPT_RECLAIM_CRON = "45 4 * * *"
 
 
 async def execute_storage_maintenance_job():
@@ -2768,6 +2800,33 @@ async def execute_daily_brief_job():
                 })
         except Exception:  # noqa: BLE001
             pass
+
+
+def _run_tts_receipt_reclaim() -> dict:
+    """One non-blocking pass over completed Bailian TTS receipts.
+
+    A second worker, or an in-flight synthesis holding the same receipt lock,
+    skips this tick. The next daily run tries again.
+    """
+    from services.bailian_tts import reclaim_completed_receipts
+
+    with Session(db_sink.engine) as session:
+        config = podcast_speech_config_service.resolve_config(session)
+    if not isinstance(config, BailianSpeechConfig):
+        return {"compressed_wavs": 0, "saved_bytes": 0, "skipped": True}
+    return reclaim_completed_receipts(config, db_sink.engine, blocking=False)
+
+
+async def execute_tts_receipt_reclaim_job():
+    """Daily receipt maintenance. Failures stay off the scheduler."""
+
+    try:
+        result = await asyncio.to_thread(_run_tts_receipt_reclaim)
+    except Exception:  # noqa: BLE001 - maintenance must not stop the scheduler
+        _dorami_logger.warning("TTS 回执定时回收失败", exc_info=True)
+        return
+    if result.get("compressed_wavs") or result.get("removed_wavs"):
+        _dorami_logger.info("TTS 回执定时回收: %s", result)
 
 
 async def execute_retention_cleanup_job():

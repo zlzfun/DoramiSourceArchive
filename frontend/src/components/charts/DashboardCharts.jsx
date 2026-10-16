@@ -5,19 +5,22 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   ResponsiveContainer,
-  AreaChart,
-  Area,
   BarChart,
   Bar,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
+  LabelList,
 } from 'recharts';
 import { C_PRIMARY, AXIS, GRID, colorForEntity, fmtNumLocale as fmt } from './chartUtils';
 import { useMotionReduced } from '../../motion';
 
-const AXIS_TICK = { fill: AXIS, fontSize: 11 };
+const AXIS_TICK = { fill: AXIS, fontSize: 12 };
+
+// 没有数据的那天:柱位上画一个刻度点(不连线、不画成 0 高的山谷)。
+// 键里带冒号:系列键是用户名或用途名,用户名不允许冒号(services/accounts.py),用途是蛇形英文或中文标签,不会撞上。
+const EMPTY_KEY = ':empty-day';
 
 // 统一 hover 浮层：surface-card 风格 + 令牌，暗色安全。
 function ThemedTooltip({ active, payload, label, titleKey, colorFor }) {
@@ -25,12 +28,12 @@ function ThemedTooltip({ active, payload, label, titleKey, colorFor }) {
   const head = payload[0]?.payload?.[titleKey] ?? label;
   // 多系列时按值倒序、过滤掉 0，浮层更聚焦。
   const rows = payload
-    .filter((p) => Number(p.value) > 0)
+    .filter((p) => Number(p.value) > 0 && p.dataKey !== EMPTY_KEY)
     .sort((a, b) => Number(b.value) - Number(a.value));
   if (rows.length === 0) return null;
   return (
     <div className="rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-[var(--dorami-card-solid)] px-3 py-2 shadow-[var(--sh-2)]">
-      <p className="mb-1 text-xs font-bold text-slate-700">{head}</p>
+      <p className="mb-1 text-xs font-semibold text-slate-700">{head}</p>
       <div className="space-y-0.5">
         {rows.map((p) => (
           <div key={p.dataKey} className="flex items-center justify-between gap-4 text-xs">
@@ -39,7 +42,7 @@ function ThemedTooltip({ active, payload, label, titleKey, colorFor }) {
               <span className="h-2 w-2 rounded-sm" style={{ background: colorFor ? colorFor(p.name) : (p.fill || p.color) }} />
               {p.name}
             </span>
-            <span className="font-bold tabular-nums text-slate-700">{fmt(p.value)}</span>
+            <span className="font-semibold tabular-nums text-slate-700">{fmt(p.value)}</span>
           </div>
         ))}
       </div>
@@ -49,14 +52,18 @@ function ThemedTooltip({ active, payload, label, titleKey, colorFor }) {
 
 const kFormatter = (v) => (v >= 1000 ? `${Math.round(v / 1000)}k` : v);
 
+function EmptyDayTick({ x, y, width, payload }) {
+  if (!payload?.[EMPTY_KEY] || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return <rect x={x + width / 2 - 1} y={y - 2} width={2} height={2} rx={1} fill="var(--dorami-border-strong)" />;
+}
+
 /**
- * 多系列每日堆叠面积图,含可切换维度的 mini-seg。
+ * 多系列每日堆叠柱(issue #184:每日计数是离散事件,不画成连续的山),含可切换维度的 mini-seg。
  * datasets: { <dimKey>: {data, keys} }(已透视、零填充,keys 超 6 系由 pivotDaily 并入「其它」)。
  * dims: [[dimKey, 标签], …];namespace 供「色随实体」的槽位记忆(如 'ai-purpose'/'ai-user')。
- * 标记规格(dataviz):段间 2px 表面缝(surface 描边)、末端选择性直标(总量 Top2)、
- * hairline 网格、图例常备、tooltip 十字线。
+ * 标记规格(dataviz):细柱(≤ 8px)、段间 1px 表面缝、没有数据的日子画刻度点、hairline 网格、图例常备。
  */
-export function MultiSeriesArea({
+export function MultiSeriesBars({
   title,
   datasets,
   height = 230,
@@ -73,7 +80,10 @@ export function MultiSeriesArea({
   useEffect(() => { if (!dimValid) setDim(dims[0][0]); }, [dimValid, dims]);
   const ds = datasets[dimValid ? dim : dims[0][0]] || { data: [], keys: [] };
   const colorOf = (k) => colorForEntity(`${namespace}:${dim}`, k);
-  // (末端直标已退役:两系列末端相近时文字互叠、右缘裁字,且与常备自绘图例信息重复。)
+  // 空日标记:全部系列为 0 的那天给一个极小的占位值,由 EmptyDayTick 画成刻度点(浮层里不出现)
+  const data = ds.data.map((row) => (
+    ds.keys.some((k) => Number(row[k]) > 0) ? row : { ...row, [EMPTY_KEY]: 1e-9 }
+  ));
   return (
     <div className="surface-card card-pad rounded-[var(--r-card)]">
       <div className="card-head">
@@ -101,26 +111,26 @@ export function MultiSeriesArea({
       )}
       <div style={{ height }}>
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={ds.data} margin={{ top: 4, right: 16, bottom: 0, left: 0 }}>
+          <BarChart data={data} margin={{ top: 4, right: 16, bottom: 0, left: 0 }} barCategoryGap="30%">
             <CartesianGrid stroke={GRID} vertical={false} />
             <XAxis dataKey="label" tick={AXIS_TICK} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={40} />
             <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} width={40} tickCount={3} tickFormatter={kFormatter} allowDecimals={false} />
-            <Tooltip cursor={{ stroke: GRID }} content={<ThemedTooltip titleKey="day" colorFor={colorOf} />} isAnimationActive={animate} />
+            <Tooltip cursor={{ fill: 'var(--dorami-hover)' }} content={<ThemedTooltip titleKey="day" colorFor={colorOf} />} isAnimationActive={animate} />
             {ds.keys.map((k) => (
-              <Area
+              <Bar
                 key={k}
                 isAnimationActive={animate}
-                type="monotone"
                 dataKey={k}
                 name={k}
                 stackId="s"
-                stroke="var(--dorami-surface)"
                 fill={colorOf(k)}
-                fillOpacity={0.9}
-                strokeWidth={2}
+                stroke="var(--dorami-surface)"
+                strokeWidth={1}
+                maxBarSize={8}
               />
             ))}
-          </AreaChart>
+            <Bar dataKey={EMPTY_KEY} stackId="s" shape={EmptyDayTick} isAnimationActive={false} legendType="none" tooltipType="none" />
+          </BarChart>
         </ResponsiveContainer>
       </div>
     </div>
@@ -146,13 +156,14 @@ export function RankBars({ rows, labelKey, valueKey, name, color = C_PRIMARY, he
   return (
     <div style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 12, bottom: 4, left: 8 }}>
-          <CartesianGrid stroke={GRID} horizontal={false} />
+        <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 40, bottom: 4, left: 8 }}>
           <XAxis type="number" hide allowDecimals={false} />
           <YAxis type="category" dataKey={labelKey} tick={AXIS_TICK} axisLine={false} tickLine={false} width={labelWidth} interval={0} tickFormatter={tickFormatter} />
-          <Tooltip cursor={{ fill: 'var(--dorami-wash)' }} content={<ThemedTooltip titleKey={labelKey} />} isAnimationActive={animate} />
-          {/* 细标记纪律:排行柱厚 22→14(2026-07-24 拍板,原柱偏粗) */}
-          <Bar dataKey={valueKey} name={name} fill={color} radius={[0, 4, 4, 0]} maxBarSize={14} isAnimationActive={animate} />
+          <Tooltip cursor={{ fill: 'var(--dorami-hover)' }} content={<ThemedTooltip titleKey={labelKey} />} isAnimationActive={animate} />
+          {/* 细标记纪律:排行柱厚 22→14(2026-07-24)→ 8 且去网格、柱尾直标数值(issue #184「图表更轻」) */}
+          <Bar dataKey={valueKey} name={name} fill={color} radius={[0, 3, 3, 0]} maxBarSize={8} isAnimationActive={animate}>
+            <LabelList dataKey={valueKey} position="right" offset={8} fill="var(--dorami-ink-2)" fontSize={12} formatter={fmt} />
+          </Bar>
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -210,7 +221,7 @@ export function BarList({ rows, nameKey, metrics, maxHeight = 248, emptyHint = '
           {rows.map((r) => (
             <div key={r[nameKey]} className="group rounded-[var(--r-sm)] px-1.5 py-1.5 transition-colors hover:bg-[var(--dorami-soft)]">
               <div className="flex items-center justify-between gap-2">
-                <span className="truncate text-xs font-bold text-slate-700" title={r[nameKey]}>{r[nameKey]}</span>
+                <span className="truncate text-xs font-semibold text-slate-700" title={r[nameKey]}>{r[nameKey]}</span>
                 <span className={`shrink-0 tiny-meta tabular-nums text-slate-500 ${alwaysShowValue ? '' : 'opacity-0 transition-opacity group-hover:opacity-100'}`}>
                   {metrics.map((m) => `${m.name} ${Number(r[m.key]) || 0}`).join(' · ')}
                 </span>

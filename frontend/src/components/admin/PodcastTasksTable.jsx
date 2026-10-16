@@ -110,7 +110,8 @@ export default function PodcastTasksTable({
                       <td>
                         {meta.tts.shown ? (
                           <span className="cell-2">
-                            <span className={`stamp stamp-${meta.tts.tone}`} title={meta.tts.error || undefined}>{meta.tts.label}</span>
+                            <span className={`stamp stamp-${meta.tts.tone}`} title={meta.tts.error || meta.tts.retryNote || undefined}>{meta.tts.label}</span>
+                            {meta.tts.retryNote && <small>{meta.tts.retryNote}</small>}
                             {meta.tts.forced && <small title="管理员强制生成，不改变优质判定">强制生成</small>}
                           </span>
                         ) : <span className="tiny-meta">—</span>}

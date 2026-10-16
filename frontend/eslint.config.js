@@ -9,7 +9,11 @@ import { defineConfig, globalIgnores } from 'eslint/config'
 // 因此可安全扫描所有字符串/模板字面量（含 INPUT_CLS 这类常量）而不会误伤 JS 数据里的裸 hex。
 // index.css 自身是令牌的事实来源，不在 JS lint 范围内；登录页 .auth-* 同理天然豁免。
 const FORBIDDEN = [
-  { re: /text-\[\d+px\]/, msg: '禁止手写像素字号 text-[Npx]：请用 Tailwind 字号梯度或角色类（.card-title/.body-text/.micro-label 等）' },
+  { re: /text-\[\d+(?:\.\d+)?px\]/, msg: '禁止手写像素字号 text-[Npx]：请用 Tailwind 字号梯度或角色类（.card-title/.body-text/.micro-label 等）' },
+  // 字重只用 400 / 600(issue #184 / #176 W0a):500 在 Windows 雅黑上落成常规、在 Mac 苹方上是中黑,两端不一致;
+  // 700 / 800 与 600 在苹方、雅黑上本是同一档,写多档只会让宋体标题匹配到 900
+  { re: /\bfont-(?:medium|bold|extrabold)\b/, msg: '字重只用 400 / 600:font-medium 改 font-normal(或不写),font-bold / font-extrabold 改 font-semibold(conventions §3)' },
+  { re: /\bfont-\[\d+\]/, msg: '禁止手写字重 font-[N]:字重只用 400 / 600(conventions §3)' },
   { re: /rounded-\[\d+px\]/, msg: '禁止手写像素圆角 rounded-[Npx]：请用圆角令牌 rounded-[var(--r-sm|control|card|overlay|pill)]' },
   { re: /-\[#[0-9a-fA-F]{3,8}\]/, msg: '禁止在 class 中手写十六进制色 -[#hex]：请用 --dorami-* 颜色令牌（如 bg-[var(--dorami-blue)]）' },
   { re: /\btext-slate-400\b/, msg: '禁止用 text-slate-400 作文本（对比度仅 ~2.7:1，不达 WCAG AA）：请用 text-slate-500 或 --dorami-faint' },
@@ -49,7 +53,7 @@ function checkBridge(context, raw, node) {
 // (conventions §3/§7),此处拦增量。popover/modal 开合的 animate-in fade-in 属
 // feedback 白名单,不禁;禁的是字重回潮与列表/卡片入场位移编排。
 const FORBIDDEN_CEREMONY = [
-  { re: /\bfont-black\b/, msg: '工作区 900/font-black 已退场(conventions §3):页面级标题 font-extrabold、指标数字 font-bold' },
+  { re: /\bfont-black\b/, msg: '工作区 900/font-black 已退场(conventions §3):字重只用 400 / 600,标题与指标数字用 font-semibold' },
   { re: /\b(?:row-stagger|entrance-stagger)\b/, msg: '仪式性入场编排已拆除(conventions §7 feedback-only),不要再给列表/卡片加入场' },
   { re: /\bslide-in-from-(?:bottom|top|left|right)(?:-\d+)?\b/, msg: '入场位移动效属仪式性编排(conventions §7 feedback-only);浮层开合复用既有 popover/modal 范式' },
 ]

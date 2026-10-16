@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>管理面 · 视觉精修定稿</title><link rel="stylesheet" href="assets/fonts.css"><link rel="stylesheet" href="assets/site.css"><link rel="stylesheet" href="assets/dm.css"><script>try{var t=localStorage.getItem('dorami-refine2-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}</script></head><body>
+<header class="top"><div class="top-in"><a class="brand" href="./"><img src="assets/logos/dorami.png" alt="">哆啦美<span>视觉精修 · 定稿</span></a><nav class="nav" aria-label="定稿目录"><a href="./" class="">总览</a><a href="type.html" class=""><b>01</b>字体</a><a href="color.html" class=""><b>02</b>色彩</a><a href="reader.html" class=""><b>03</b>阅读器</a><a href="brief.html" class=""><b>04</b>早报</a><a href="details.html" class=""><b>05</b>组件</a><a href="console.html" class="on" aria-current="page"><b>06</b>管理面</a></nav><div class="theme" role="group" aria-label="页面主题"><button data-t="light">亮</button><button data-t="dark">暗</button><button data-t="auto">跟随</button></div></div></header>
+<style>
+  .ledger { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .ledger th { height: 36px; padding: 0 12px; text-align: left; font-weight: 400; font-size: 12px; color: var(--c-muted); border-bottom: 1px solid var(--c-line-soft); white-space: nowrap; }
+  .ledger td { padding: 12px 12px; border-bottom: 1px solid var(--c-line-soft); vertical-align: top; color: var(--c-ink2); }
+  .ledger tr:last-child td { border-bottom: 0; }
+  .ledger .cb { width: 16px; height: 16px; border-radius: 4px; box-shadow: inset 0 0 0 1.5px var(--c-line); margin-top: 2px; }
+  .ledger .tt { font-size: 14px; font-weight: 600; color: var(--c-ink); line-height: 1.45; }
+  .ledger .ex { margin-top: 3px; font-size: 13px; color: var(--c-muted); line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 560px; }
+  .ledger .src { color: var(--c-ink2); white-space: nowrap; }
+  .ledger .src small { display: block; color: var(--c-faint); font-size: 12px; margin-top: 3px; }
+  .ledger .dt { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--c-muted); }
+  .ledger .stamp { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--c-muted); white-space: nowrap; }
+  .ledger .stamp::before { content: ""; width: 6px; height: 6px; border-radius: 1.5px; background: var(--c-faint); }
+</style>
+<main class="wrap">
+  <header class="head">
+    <div class="eyebrow"><b>06 管理面</b><span>定稿</span></div>
+    <h1 class="title">管理面：数字先于图，图表更轻，表格有呼吸</h1>
+    <p class="lede">遵守既有的管理面纪律（零描述文本、列头即操作、小图标、像素级对齐），只处理指标与图表的画法、稀疏数据怎么画、表格行的节奏。管理面同样跟随所选中性色。</p>
+  </header>
+
+  <section class="s">
+    <h2>运维 · 用户子页</h2>
+    <figure class="frame">
+      <div class="frame-bar">
+        <div class="lab">定稿<small>1440 宽，按宽度缩放</small></div>
+        <span class="sw-lab">中性色</span>
+        <div class="sw" data-for="m-con,m-ai,m-ledger" data-attr="pal" data-group="pal"><button data-v="porcelain" class="on">瓷</button><button data-v="graphite">墨</button><button data-v="paper">宣</button></div>
+        <div class="sw" data-for="m-con,m-ai,m-ledger" data-attr="mode"><button data-v="light">亮</button><button data-v="dark">暗</button></div>
+        <button class="ib" data-full><svg viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg><span>1:1 查看</span></button>
+      </div>
+      <div class="frame-stage" data-w="1440"><div class="frame-scale"><div id="m-con" data-follow data-pal="porcelain" style="width:1440px"></div></div></div>
+      <figcaption class="frame-note">数字来自本地库副本的 <code>/api/admin/*</code> 接口；两个像真人账号的用户名换成了 reader-a、reader-b。</figcaption>
+    </figure>
+  </section>
+
+  <section class="s">
+    <h2>每日用量：离散柱，不画成山</h2>
+    <p>30 天里只有 4 天有数据。每日计数画成按用途堆叠的柱，没有数据的日子画一个刻度点，不连线；账户增长画成从存量起步的阶梯线。</p>
+    <div style="margin-top:18px;max-width:720px"><div id="m-ai" data-follow data-pal="porcelain" style="background:transparent"></div></div>
+  </section>
+
+  <section class="s">
+    <h2>知识台账的行</h2>
+    <p>上下各留 12px；条目格只放标题和一行摘要，分析状态挪到自己的列；读者自定源在来源列显示名称，原始 ID 放在下面一行小字里。</p>
+    <div class="box" style="margin-top:18px;border-radius:14px;background:var(--panel);box-shadow:var(--shadow);overflow:hidden"><div class="dm" id="m-ledger" data-follow data-pal="porcelain" style="overflow-x:auto"></div></div>
+  </section>
+</main>
+<div class="wrap"><nav class="pager"><a href="details.html"><span>上一篇</span><b>05 组件</b></a></nav><p class="foot">样页数据来自本地库副本（2026-09-28 快照），经产品自身接口导出；标题字体为思源宋体子集，内嵌在页面里，不请求任何外部字体域名。</p></div><script src="assets/data.js"></script><script src="assets/dm.js"></script><script src="assets/site.js"></script><script>DMR.console(document.getElementById('m-con'));
+DMR.aiDaily(document.getElementById('m-ai'));
+(function () {
+  const rows = [
+    ['紫金矿业10亿元投资AI与人形机器人基金', '紫金矿业全资投资平台将出资10亿元人民币（1.4亿美元），参与一只总规模49亿元的新基金，聚焦人工智能、具身智能及前沿技术应用。该基金还获宁…'],
+    ['阿里云Apsara大会AI原生圆桌', 'AI 正从被采用走向成为企业运营的原生方式。欢迎参加 #ApsaraConference2026 的"AI + Cloud： From AI…'],
+    ['OpenAI 发布模型错位披露框架，含3条审查路径和6份RL训练事故报告', 'OpenAI 发布一套用于追踪、调查和公开披露自家模型错位行为的新框架，设定披露标准和时限，即使行为未被完全解释或修复也可披露，并同步发布6…'],
+    ['Grok 4.7 现身 GCP 配额页', 'SPACEXAI 🔥：Grok 4.7 已出现在 GCP 配额页面上，可能正在为即将到来的发布做准备。'],
+  ];
+  document.getElementById('m-ledger').innerHTML = `<table class="ledger"><thead><tr><th style="width:40px;padding-left:16px"><div class="cb"></div></th><th>条目</th><th>来源</th><th>分析</th><th>类型</th><th>发布</th><th>收录</th></tr></thead><tbody>${rows.map(([t, ex]) => `<tr><td style="padding-left:16px"><div class="cb"></div></td><td style="min-width:0"><div class="tt">${DMR.esc(t)}</div><div class="ex">${DMR.esc(ex)}</div></td><td class="src">AIHOT — 全部 AI 动态<small class="num">user_rss_2fa81c48a794</small></td><td><span class="stamp">未执行</span></td><td class="dt">RSS 条目</td><td class="dt">2026-09-17</td><td class="dt">2026-09-17</td></tr>`).join('')}</tbody></table>`;
+})();</script>
+</body></html>

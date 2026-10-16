@@ -446,7 +446,7 @@ function RemoteSyncCard({ showToast, onArticlesChanged }) {
 
       {probe && (
         <div className="sett-sync-panel">
-          <span className="flex items-center gap-1.5 text-sm font-bold text-emerald-600"><Check className="h-3.5 w-3.5" /> 远端可用</span>
+          <span className="flex items-center gap-1.5 text-sm font-semibold text-emerald-600"><Check className="h-3.5 w-3.5" /> 远端可用</span>
           <div className="sett-sync-stats mt-1.5">
             <div><span className="tiny-meta block">远端版本</span><b>{probe.version || '未知'}</b></div>
             <div><span className="tiny-meta block">文章总量</span><b>{probe.article_total ?? '未知'}</b></div>

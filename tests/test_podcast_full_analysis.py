@@ -998,6 +998,8 @@ def test_podcast_projection_exposes_durable_status_basis_and_thresholds():
         "status": "failed",
         "failed_stage": "synthesizing",
         "error": "TTS provider timeout",
+        "error_code": "",
+        "next_retry_at": "",
         "audio_ready": False,
         "blog_ready": False,
         "script_ready": False,

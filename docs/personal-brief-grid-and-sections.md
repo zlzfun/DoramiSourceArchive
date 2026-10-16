@@ -1,6 +1,9 @@
 # 个人早报:板块顺序、分值驱动网格与公共日报排除(issue #74)
 
-> 状态:PR #80 检视收口,待合入(分支 `feat/issue-74-brief-grid`,2026-09-14 实现,2026-09-15 检视)。样页 `docs/design/dorami-brief-grid-quiet.html`
+> 状态:已合入(PR #80)。**§「分值驱动网格」已于 issue #184 退役**:我的早报改夜航版式(海报头条 + 板块列表,见
+> `docs/visual-refine-plan.md` 与 conventions §3),`utils/briefGrid.js` 的网格规划器删除,分数助手迁到 `utils/briefScore.js`;
+> 板块固定顺序、板块内分数降序与公共日报排除照旧有效。
+> 原状态:PR #80 检视收口,待合入(分支 `feat/issue-74-brief-grid`,2026-09-14 实现,2026-09-15 检视)。样页 `docs/design/dorami-brief-grid-quiet.html`
 > (六种策略对照 + 「同一张数换分数」画板 + 整页节奏,策略 F 为拍板方案)。
 
 ## 0. 起因

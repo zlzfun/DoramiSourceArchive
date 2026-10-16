@@ -8,14 +8,19 @@
     <link rel="icon" type="image/png" sizes="48x48" href="/brand/dorami-logo-48.png?v=2" />
     <link rel="apple-touch-icon" sizes="180x180" href="/brand/pwa-apple-180.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#141821" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f4f6f9" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0d0f13" media="(prefers-color-scheme: dark)" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="哆啦美" />
     <!-- viewport-fit=cover(移动波):允许内容延伸进刘海/底部横条区,配合 env(safe-area-inset-*) 垫边 -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
     <title>哆啦美</title>
+    <!-- 自托管标题字体 Dorami Serif(思源宋体分片,issue #184):同源发出,不请求外部字体域名;
+         单独成表、不并进主样式(unicode-range 声明约 200KB)。SPA 首屏要等 JS,这条样式表并行加载不拖慢可见内容 -->
+    <link rel="stylesheet" href="/fonts/dorami-serif-v1/dorami-serif.css" />
+    <!-- 自托管西文衬线 Dorami Latin Serif(Source Serif 4,#184 目检返修):英文原标题的斜体与 lang="en" 的标题 / 正文小标题 -->
+    <link rel="stylesheet" href="/fonts/dorami-latin-v1/dorami-latin.css" />
     <meta name="description" content="哆啦美 — AI 资讯阅读器" />
     <!-- 防闪烁（FOUC）：React 挂载前先据 localStorage / 系统偏好给 <html> 打 data-theme -->
     <script>
@@ -29,8 +34,13 @@
           if (localStorage.getItem('dorami-motion') === 'reduce') {
             document.documentElement.setAttribute('data-motion', 'reduce');
           }
+          // 中性色(issue #184):瓷 / 墨 / 宣,默认瓷;首帧先挂属性,防止闪一下默认色
+          var palette = localStorage.getItem('dorami-palette');
+          document.documentElement.setAttribute('data-palette',
+            palette === 'graphite' || palette === 'paper' ? palette : 'porcelain');
         } catch (e) {
           document.documentElement.setAttribute('data-theme', 'light');
+          document.documentElement.setAttribute('data-palette', 'porcelain');
         }
       })();
     </script>

@@ -301,6 +301,12 @@ render_nginx_site_config() {
     }
 
 ${pwa_locations}
+    # 自托管字体(issue #184):目录名带版本号,内容不变即长缓存;缺文件给 404,不回落成 SPA 页面
+    location /fonts/ {
+        expires 1y;
+        try_files \$uri =404;
+    }
+
     location / {
         try_files \$uri \$uri/ /index.html;
     }

@@ -1,0 +1,94 @@
+<title>哆啦美视觉精修定稿</title><link rel="stylesheet" href="assets/fonts.css"><link rel="stylesheet" href="assets/site.css"><link rel="stylesheet" href="assets/dm.css"><script>try{var t=localStorage.getItem('dorami-refine2-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}</script>
+<header class="top"><div class="top-in"><a class="brand" href="./"><img src="assets/logos/dorami.png" alt="">哆啦美<span>视觉精修 · 定稿</span></a><nav class="nav" aria-label="定稿目录"><a href="./" class="on" aria-current="page">总览</a><a href="type.html" class=""><b>01</b>字体</a><a href="color.html" class=""><b>02</b>色彩</a><a href="reader.html" class=""><b>03</b>阅读器</a><a href="brief.html" class=""><b>04</b>早报</a><a href="details.html" class=""><b>05</b>组件</a><a href="console.html" class=""><b>06</b>管理面</a></nav><div class="theme" role="group" aria-label="页面主题"><button data-t="light">亮</button><button data-t="dark">暗</button><button data-t="auto">跟随</button></div></div></header>
+<main class="wrap">
+  <header class="head">
+    <div class="eyebrow"><b>哆啦美</b><span>视觉精修</span><span>定稿样页</span><span class="num">2026-10-13</span></div>
+    <h1 class="title">视觉精修定稿</h1>
+    <p class="lede">按你的拍板整理：六个方向全部采用推荐方案，另有四处按你的意见调整。这一版的宋体是内嵌在页面里的子集，不请求 Google Fonts，在公司内网这类打不开外部字体的网络里看到的效果一致。</p>
+    <div class="facts"><span>样页<b>7 页</b></span><span>字体<b>内嵌子集，无外部请求</b></span><span>实现<b id="issue-ref"><a href="https://github.com/zlzfun/DoramiSourceArchive/issues/184" target="_blank" rel="noopener">issue #184</a></b></span></div>
+    <figure class="wipe" style="--pos:50%">
+      <div class="frame-stage" data-w="1440" data-h="900" style="background:var(--panel)"><div class="frame-scale"><div id="m-hero" data-follow data-pal="porcelain" style="width:1440px;height:900px;overflow:hidden"></div></div></div>
+      <img class="wipe-before" src="shots/cur-brief.webp" data-light="shots/cur-brief.webp" data-dark="shots/cur-brief-dark.webp" alt="现状早报截图" width="1440" height="900">
+      <div class="wipe-line" aria-hidden="true"><i></i></div>
+      <span class="wipe-tag l">现状</span><span class="wipe-tag r">定稿</span>
+      <input class="wipe-range" type="range" min="0" max="100" value="50" step="0.5" aria-label="拖动分隔线，对比现状与定稿">
+    </figure>
+    <p class="wipe-cap">同一期早报（9 月 16 日）。拖动分隔线对比；页面切到暗色时两边都换成暗色。</p>
+  </header>
+
+  <section class="s">
+    <h2>拍板记录</h2>
+    <div class="tw"><table class="t">
+      <thead><tr><th>项</th><th>定稿</th><th>依据</th></tr></thead>
+      <tbody>
+        <tr><td class="k">字体</td><td>界面系统黑体（西文在前），标题和分数用自托管思源宋体 600 / 900；随构建打包，内网可用；字重 400 / 600；最小 12px</td><td>推荐方案（含 #176 的 W0a + W0b）</td></tr>
+        <tr><td class="k">中性色</td><td>瓷、墨、宣三套都保留，「设置 → 外观」里选，默认瓷</td><td>你的调整</td></tr>
+        <tr><td class="k">AI 渐变</td><td>保留为 AI 身份色，用在 ✦、分数、早报头条的环境光；不再铺满速读卡</td><td>你的调整</td></tr>
+        <tr><td class="k">AI 速读</td><td>细线卡</td><td>你的调整</td></tr>
+        <tr><td class="k">分数</td><td>恢复宋体数字加 AI 渐变分档（原来的画法），数字字体换成自托管思源宋体，Mac 和 Windows 一致</td><td>你的反馈：黑体加黑色的分数突兀</td></tr>
+        <tr><td class="k">早报</td><td>采用夜航的早报版式：保留左轨，取消日期中栏，往期从「往期」浮层和页尾日期切换</td><td>你的调整</td></tr>
+        <tr><td class="k">阅读器、组件、管理面</td><td>推荐方案：条目行「静」、标签去盒化、选中中性加深、离散柱与阶梯线、台账行恢复留白</td><td>推荐方案</td></tr>
+        <tr><td class="k">顺带修复</td><td>阅读窗时间按北京时间显示；台账来源列对读者自定源显示名称</td><td>提案中的顺带发现</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="s">
+    <h2>六个部分</h2>
+    <div class="dirs">
+      <a class="dir" href="type.html"><div class="thumb" data-w="680"><div class="frame-scale"><div id="t-type" data-follow data-pal="porcelain"></div></div></div>
+        <div class="db"><div class="n"><b>01</b><span>字体</span></div><h3>两族字体，自托管</h3><p>思源宋体切成 101 片随构建打包，内网和公网一样；Mac 和 Windows 的层级一致。</p></div></a>
+      <a class="dir" href="color.html"><div class="thumb" data-w="1440"><div class="frame-scale"><div id="t-color" data-follow data-pal="paper"></div></div></div>
+        <div class="db"><div class="n"><b>02</b><span>色彩</span></div><h3>三套中性色，设置里选</h3><p>瓷、墨、宣都保留；AI 渐变保留为身份色。</p></div></a>
+      <a class="dir" href="reader.html"><div class="thumb" data-w="1440"><div class="frame-scale"><div id="t-reader" data-follow data-pal="porcelain"></div></div></div>
+        <div class="db"><div class="n"><b>03</b><span>阅读器</span></div><h3>列表好扫，正文像文章</h3><p>条目行「静」，宋体渐变分数，细线卡 AI 速读。</p></div></a>
+      <a class="dir" href="brief.html"><div class="thumb" data-w="1440"><div class="frame-scale"><div id="t-brief" data-follow data-pal="porcelain" style="width:1440px"></div></div></div>
+        <div class="db"><div class="n"><b>04</b><span>早报</span></div><h3>夜航版式</h3><p>头条一张海报，其余按板块；往期从浮层切换。</p></div></a>
+      <a class="dir" href="details.html"><div class="thumb" data-w="940"><div class="frame-scale"><div id="t-details" data-follow data-pal="porcelain" style="padding:22px 18px;width:940px"></div></div></div>
+        <div class="db"><div class="n"><b>05</b><span>组件</span></div><h3>一类东西一种画法</h3><p>标签、分数、按钮、分段、发现卡、来源标识、选中。</p></div></a>
+      <a class="dir" href="console.html"><div class="thumb" data-w="1440"><div class="frame-scale"><div id="t-console" data-follow data-pal="porcelain" style="width:1440px"></div></div></div>
+        <div class="db"><div class="n"><b>06</b><span>管理面</span></div><h3>数字先于图</h3><p>离散柱与阶梯线，台账行恢复留白。</p></div></a>
+    </div>
+  </section>
+
+  <section class="s">
+    <h2>实现顺序</h2>
+    <div class="path">
+      <div><span class="k">第一步</span><h4>字体地基</h4><p>字体 token、自托管思源宋体、字重与字号、样式迁层（#176 的 W0a、W0b）。</p></div>
+      <div><span class="k">第二步</span><h4>色彩与设置</h4><p>三套中性色的 token、设置里的选择、选中语法、AI 渐变的用法。</p></div>
+      <div><span class="k">第三步</span><h4>组件与阅读器</h4><p>标签、分数、按钮、发现卡、来源标识；条目行、阅读窗、正文、源栏。</p></div>
+      <div><span class="k">第四步</span><h4>早报与管理面</h4><p>夜航版式的早报（桌面与手机）；运维图表与台账。文档与守卫同波更新。</p></div>
+    </div>
+  </section>
+
+  <section class="s">
+    <h2>这一波不做</h2>
+    <ul class="list">
+      <li><b>早报条目配图：</b>夜航条目右侧的配图需要早报接口提供首图和尺寸，列为后续。</li>
+      <li><b>自托管黑体：</b>按 #176 的门槛，Windows 实机验收发现问题再议。</li>
+      <li><b>登录页与品牌演出：</b>品牌区豁免，不改。</li>
+    </ul>
+  </section>
+
+  <section class="s">
+    <h2>样页说明</h2>
+    <ul class="list">
+      <li><b>数据：</b>本地库副本（9 月 28 日快照）经产品自身接口导出，条目、分数、摘要、评分依据、入选理由都没有挑选或改写。</li>
+      <li><b>字体：</b>宋体是按样页用字取的子集，以 data URI 内嵌，页面不访问任何外部域名；界面黑体随设备，在 Windows 上是雅黑。</li>
+      <li><b>核对范围：</b>截图与测量都在 Mac 上做过；Windows 的效果在实现后按 #176 的矩阵实机验收。</li>
+      <li><b>上一版提案：</b>包含现状诊断和被替换掉的备选方案，见 <a href="https://claude.ai/artifact/RHKTd2n33TZa6b5HDqSFgK" target="_blank" rel="noopener">前端精修提案</a>。</li>
+    </ul>
+  </section>
+</main>
+<div class="wrap"><nav class="pager"><a class="next" href="type.html"><span>下一篇</span><b>01 字体</b></a></nav><p class="foot">样页数据来自本地库副本（2026-09-28 快照），经产品自身接口导出；标题字体为思源宋体子集，内嵌在页面里，不请求任何外部字体域名。</p></div><script src="assets/data.js"></script><script src="assets/dm.js"></script><script src="assets/site.js"></script><script>(function () {
+  DMR.brief(document.getElementById('m-hero'), { acts: 1 });
+  DMR.paneOnly(document.getElementById('t-type'), { body: false });
+  DMR.reader(document.getElementById('t-color'));
+  DMR.reader(document.getElementById('t-reader'));
+  DMR.brief(document.getElementById('t-brief'), { acts: 1 });
+  DMR.discover(document.getElementById('t-details'));
+  DMR.console(document.getElementById('t-console'));
+  const wipe = document.querySelector('.wipe'), range = wipe.querySelector('.wipe-range');
+  const set = () => wipe.style.setProperty('--pos', range.value + '%');
+  range.addEventListener('input', set); set();
+})();</script>

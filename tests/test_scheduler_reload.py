@@ -29,6 +29,7 @@ from storage.impl.db_storage import DatabaseStorage  # noqa: E402
 # lifespan 新鲜启动分支才注册、且各自带 reload_* 的任务——重载采集任务不得碰它们。
 OTHER_JOB_IDS = (
     "retention_cleanup",
+    "tts_receipt_reclaim",
     "podcast_asr_worker",
     "remote_sync",
     "user_rss_refresh",

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import inspect
+import io
 import json
 import subprocess
 import asyncio
+import wave
 
 import pytest
 from sqlmodel import Session, select
@@ -21,12 +24,15 @@ from models.db import (
 from services.podcast_artifacts import PodcastArtifactStore
 from services.podcast_premium import dashboard
 from services.podcast_premium_guides import (
+    CAPACITY_RETRY_MAX_ATTEMPTS,
     PremiumGuideDraft,
     PremiumGuideForceError,
     SynthesizedAudio,
     _set_episode_status,
+    fail_premium_guide,
     list_premium_guide_tasks,
     pending_premium_guide_candidates,
+    premium_guide_auto_schedule_allowed,
     prepare_forced_premium_guide,
     run_premium_guide,
 )
@@ -128,6 +134,10 @@ def test_tts_retry_reuses_valid_published_text_without_llm_regeneration(tmp_path
     with pytest.raises(RuntimeError, match="capacity blocked"):
         asyncio.run(run_premium_guide(**kwargs, tts_provider=FailingTts()))
     with Session(sink.engine) as session:
+        guide = json.loads(session.get(ArticleRecord, "episode-force").extensions_json)["premium_guide"]
+        assert guide["status"] == "failed"
+        assert "next_retry_at" not in guide
+    with Session(sink.engine) as session:
         script = session.get(PodcastTextPublicationRecord, "episode-force:narration_script_zh").artifact_id
     result = asyncio.run(run_premium_guide(**kwargs, tts_provider=TtsProvider()))
     assert result["audio_artifact_id"]
@@ -208,9 +218,376 @@ def test_tts_cache_preflight_blocks_before_text_generation(tmp_path):
         ))
     with Session(sink.engine) as session:
         guide = json.loads(session.get(ArticleRecord, "episode-force").extensions_json)["premium_guide"]
+        assert guide["status"] == "retry_wait"
+        assert guide["error_code"] == "tts_receipt_cache_full"
+        assert guide["next_retry_at"]
         assert guide["failed_stage"] == "synthesizing"
         assert "回执缓存不足" in guide["error"]
         assert session.get(PodcastTextPublicationRecord, "episode-force:digest_blog_zh") is None
+
+
+def _pcm_wav() -> bytes:
+    out = io.BytesIO()
+    with wave.open(out, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(24000)
+        handle.writeframes(b"\x00\x00" * 2400)
+    return out.getvalue()
+
+
+@pytest.mark.parametrize("code", ["tts_receipt_cache_full", "tts_receipt_disk_full", "http_403"])
+def test_only_capacity_errors_enter_retry_wait(tmp_path, code):
+    from services.bailian_speech_client import BailianSpeechError
+
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / f'status-{code}.db'}")
+    _seed_force_candidate(sink, duration=21 * 60)
+    with Session(sink.engine) as session:
+        analysis = session.get(ArticleAnalysisRecord, "episode-force")
+        analysis.quality_score = 9.0
+        analysis.podcast_final_score = 9.0
+        session.add(analysis)
+        session.commit()
+
+    class Boom(TtsProvider):
+        async def synthesize(self, _text):
+            raise BailianSpeechError(code)
+
+    with pytest.raises(BailianSpeechError, match=code):
+        asyncio.run(run_premium_guide(
+            sink.engine, None, episode_id="episode-force", config=_external_config(),
+            text_provider=TextProvider(), tts_provider=Boom(),
+        ))
+    with Session(sink.engine) as session:
+        guide = json.loads(session.get(ArticleRecord, "episode-force").extensions_json)["premium_guide"]
+        blog = session.get(PodcastTextPublicationRecord, "episode-force:digest_blog_zh")
+        script = session.get(PodcastTextPublicationRecord, "episode-force:narration_script_zh")
+    assert blog is not None and script is not None
+    minimum = _external_config().premium_min_duration_seconds
+    threshold = _external_config().premium_score_threshold
+    if code == "http_403":
+        assert guide["status"] == "failed"
+        assert "next_retry_at" not in guide
+        assert "episode-force" not in pending_premium_guide_candidates(
+            sink.engine, minimum_duration_seconds=minimum, score_threshold=threshold,
+        )
+    else:
+        assert guide["status"] == "retry_wait"
+        assert guide["error_code"] == code
+        assert "episode-force" not in pending_premium_guide_candidates(
+            sink.engine, minimum_duration_seconds=minimum, score_threshold=threshold,
+        )
+
+
+def test_capacity_wait_retries_tts_without_another_supplier_or_llm_call(tmp_path):
+    from config_bailian import BailianSpeechConfig
+    from models.db import BailianTtsCallRecord
+    from services.bailian_speech_client import BailianSpeechError
+    from services.bailian_tts import BailianPremiumGuideTtsProvider, split_narration
+
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'capacity-retry.db'}")
+    _seed_force_candidate(sink, duration=21 * 60)
+    with Session(sink.engine) as session:
+        analysis = session.get(ArticleAnalysisRecord, "episode-force")
+        analysis.quality_score = 9.0
+        analysis.podcast_final_score = 9.0
+        session.add(analysis)
+        session.commit()
+    narration = "这是内部中文播客导读。"
+    assert len(split_narration(narration, 8)) == 2
+    root = tmp_path / "receipts"
+    cfg = BailianSpeechConfig(
+        enabled=True, api_key="secret-test", account_scope="test-account",
+        tts_monthly_budget_minor=100, tts_per_run_budget_minor=50,
+        tts_chunk_chars=8, tts_receipt_root=str(root), tts_cache_max_bytes=40_000_000,
+        asr_entitlement_ends_at="2027-01-01T00:00:00+00:00",
+    )
+    poisoned = {"done": False}
+
+    class Supplier:
+        texts: list[str] = []
+
+        def __init__(self, _config):
+            pass
+
+        def close(self):
+            pass
+
+        def synthesize(self, text):
+            Supplier.texts.append(text)
+            return {
+                "request_id": "req-" + str(len(Supplier.texts)),
+                "usage": {"characters": len(text)},
+                "output": {"audio": {"url": "https://result.oss-ap-southeast-1.aliyuncs.com/a.wav"}},
+            }
+
+    async def download(*_args, **_kwargs):
+        if len(Supplier.texts) >= 2 and not poisoned["done"]:
+            poisoned["done"] = True
+            (root / "blocker").write_bytes(b"x" * cfg.tts_cache_max_bytes)
+        return _pcm_wav()
+
+    class CountingText(TextProvider):
+        blogs = 0
+        scripts = 0
+
+        async def create_blog(self, **kwargs):
+            self.blogs += 1
+            return await super().create_blog(**kwargs)
+
+        async def create_narration(self, **_kwargs):
+            self.scripts += 1
+            return narration
+
+    store = PodcastArtifactStore(
+        sink.engine, tmp_path / "audio", max_bytes=1024 * 1024,
+        total_quota_bytes=10 * 1024 * 1024, minimum_free_bytes=0,
+        staging_ttl_seconds=60, allowed_mime_types=("audio/wav",),
+        probe_runner=lambda *_a, **_k: subprocess.CompletedProcess(
+            [], 0, stdout='{"streams":[{"codec_type":"audio","duration":"1"}],"format":{"duration":"1"}}', stderr="",
+        ),
+    )
+    text = CountingText()
+    tts = BailianPremiumGuideTtsProvider(
+        cfg, engine=sink.engine, episode_id="episode-force", voice_profile="narrator_zh",
+        max_audio_bytes=store.max_bytes, client_factory=Supplier, downloader=download,
+    )
+    config = _external_config()
+    kwargs = dict(
+        engine=sink.engine, store=store, episode_id="episode-force", config=config,
+        text_provider=text, tts_provider=tts,
+    )
+    assert pending_premium_guide_candidates(
+        sink.engine, minimum_duration_seconds=config.premium_min_duration_seconds,
+        score_threshold=config.premium_score_threshold,
+    ) == ["episode-force"]
+    with pytest.raises(BailianSpeechError, match="tts_receipt_cache_full"):
+        asyncio.run(run_premium_guide(**kwargs))
+    assert (text.blogs, text.scripts) == (1, 1)
+    assert len(Supplier.texts) == 2
+    assert (root / "blocker").is_file()
+    with Session(sink.engine) as session:
+        guide = json.loads(session.get(ArticleRecord, "episode-force").extensions_json)["premium_guide"]
+        first_ids = {
+            row.id: row.request_id
+            for row in session.exec(select(BailianTtsCallRecord)).all()
+        }
+    assert guide["status"] == "retry_wait"
+    assert guide["error_code"] == "tts_receipt_cache_full"
+    assert guide["retry_attempts"] == 1
+    retry_at = dt.datetime.fromisoformat(guide["next_retry_at"])
+    remaining = retry_at - dt.datetime.now(dt.timezone.utc)
+    assert dt.timedelta(seconds=300 - 15) <= remaining <= dt.timedelta(seconds=300 + 5)
+    assert "episode-force" not in pending_premium_guide_candidates(
+        sink.engine, minimum_duration_seconds=config.premium_min_duration_seconds,
+        score_threshold=config.premium_score_threshold,
+    )
+    with Session(sink.engine) as session:
+        episode = session.get(ArticleRecord, "episode-force")
+        extensions = json.loads(episode.extensions_json)
+        extensions["premium_guide"]["next_retry_at"] = "2020-01-01T00:00:00+00:00"
+        episode.extensions_json = json.dumps(extensions)
+        session.add(episode)
+        session.commit()
+    assert pending_premium_guide_candidates(
+        sink.engine, minimum_duration_seconds=config.premium_min_duration_seconds,
+        score_threshold=config.premium_score_threshold,
+    ) == ["episode-force"]
+    (root / "blocker").unlink()
+    result = asyncio.run(run_premium_guide(**kwargs))
+    assert result["audio_artifact_id"]
+    assert (text.blogs, text.scripts) == (1, 1)
+    assert len(Supplier.texts) == 2
+    with Session(sink.engine) as session:
+        guide = json.loads(session.get(ArticleRecord, "episode-force").extensions_json)["premium_guide"]
+        rows = session.exec(select(BailianTtsCallRecord)).all()
+        assert guide["status"] == "ready"
+        assert "retry_attempts" not in guide
+        assert "next_retry_at" not in guide
+        assert "error_code" not in guide
+        assert {row.id: row.request_id for row in rows} == first_ids
+        assert {row.status for row in rows} == {"succeeded"}
+
+
+def _force_guide(sink: DatabaseStorage) -> dict:
+    with Session(sink.engine) as session:
+        episode = session.get(ArticleRecord, "episode-force")
+        return json.loads(episode.extensions_json)["premium_guide"]
+
+
+def _eligible_force_sink(tmp_path, name: str) -> DatabaseStorage:
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / name}")
+    _seed_force_candidate(sink, duration=21 * 60)
+    with Session(sink.engine) as session:
+        analysis = session.get(ArticleAnalysisRecord, "episode-force")
+        analysis.quality_score = 9.0
+        analysis.podcast_final_score = 9.0
+        session.add(analysis)
+        session.commit()
+    return sink
+
+
+def test_capacity_retry_backs_off_and_stops_after_eight_attempts(tmp_path):
+    from services.bailian_speech_client import BailianSpeechError
+
+    sink = _eligible_force_sink(tmp_path, "backoff.db")
+    config = _external_config()
+    error = BailianSpeechError("tts_receipt_cache_full")
+    scope = dict(
+        minimum_duration_seconds=config.premium_min_duration_seconds,
+        score_threshold=config.premium_score_threshold,
+    )
+
+    fail_premium_guide(sink.engine, "episode-force", error)
+    fail_premium_guide(sink.engine, "episode-force", error)
+    guide = _force_guide(sink)
+    assert guide["status"] == "retry_wait"
+    assert guide["retry_attempts"] == 1
+    assert guide["error_code"] == "tts_receipt_cache_full"
+    remaining = dt.datetime.fromisoformat(guide["next_retry_at"]) - dt.datetime.now(dt.timezone.utc)
+    assert dt.timedelta(seconds=300 - 15) <= remaining <= dt.timedelta(seconds=300 + 5)
+    assert "episode-force" not in pending_premium_guide_candidates(sink.engine, **scope)
+
+    expected = {2: 30 * 60, 3: 2 * 60 * 60, 4: 6 * 60 * 60}
+    for attempt, delay in expected.items():
+        _set_episode_status(sink.engine, "episode-force", "synthesizing")
+        fail_premium_guide(sink.engine, "episode-force", error)
+        guide = _force_guide(sink)
+        assert guide["retry_attempts"] == attempt
+        assert guide["status"] == "retry_wait"
+        remaining = dt.datetime.fromisoformat(guide["next_retry_at"]) - dt.datetime.now(dt.timezone.utc)
+        assert dt.timedelta(seconds=delay - 15) <= remaining <= dt.timedelta(seconds=delay + 5)
+
+    with Session(sink.engine) as session:
+        episode = session.get(ArticleRecord, "episode-force")
+        extensions = json.loads(episode.extensions_json)
+        extensions["premium_guide"]["status"] = "synthesizing"
+        extensions["premium_guide"]["retry_attempts"] = CAPACITY_RETRY_MAX_ATTEMPTS
+        extensions["processing_status"] = "synthesizing"
+        episode.extensions_json = json.dumps(extensions)
+        session.add(episode)
+        session.commit()
+    fail_premium_guide(sink.engine, "episode-force", error)
+    fail_premium_guide(sink.engine, "episode-force", error)
+    guide = _force_guide(sink)
+    assert guide["status"] == "failed"
+    assert guide["error_code"] == "tts_receipt_cache_full"
+    assert guide["retry_attempts"] == CAPACITY_RETRY_MAX_ATTEMPTS + 1
+    assert "next_retry_at" not in guide
+    assert "回执缓存不足" in guide["error"]
+    assert "episode-force" not in pending_premium_guide_candidates(sink.engine, **scope)
+
+
+def test_force_during_retry_wait_clears_the_timer_and_is_not_auto_scheduled(tmp_path):
+    from services.bailian_speech_client import BailianSpeechError
+
+    sink = _eligible_force_sink(tmp_path, "force-wait.db")
+    config = _external_config()
+    scope = dict(
+        minimum_duration_seconds=config.premium_min_duration_seconds,
+        score_threshold=config.premium_score_threshold,
+    )
+    fail_premium_guide(
+        sink.engine, "episode-force", BailianSpeechError("tts_receipt_disk_full"),
+    )
+    _set_episode_status(sink.engine, "episode-force", "synthesizing")
+    fail_premium_guide(
+        sink.engine, "episode-force", BailianSpeechError("tts_receipt_disk_full"),
+    )
+    assert _force_guide(sink)["retry_attempts"] == 2
+    assert premium_guide_auto_schedule_allowed(sink.engine, "episode-force") is False
+    assert "episode-force" not in pending_premium_guide_candidates(sink.engine, **scope)
+
+    first = prepare_forced_premium_guide(
+        sink.engine,
+        episode_id="episode-force",
+        config=config,
+        score_threshold=config.premium_score_threshold,
+        idempotency_key="force-during-wait",
+        reason="容量等待期间强制补一次",
+        actor="admin",
+    )
+    replay = prepare_forced_premium_guide(
+        sink.engine,
+        episode_id="episode-force",
+        config=config,
+        score_threshold=config.premium_score_threshold,
+        idempotency_key="force-during-wait",
+        reason="容量等待期间强制补一次",
+        actor="admin",
+    )
+    guide = _force_guide(sink)
+    assert first["should_schedule"] is True and first["replayed"] is False
+    assert replay["replayed"] is True and replay["status"] == "queued"
+    assert guide["status"] == "queued"
+    assert guide["retry_attempts"] == 2
+    assert "next_retry_at" not in guide
+    assert "error_code" not in guide
+    assert premium_guide_auto_schedule_allowed(sink.engine, "episode-force") is False
+    assert "episode-force" not in pending_premium_guide_candidates(sink.engine, **scope)
+
+
+def test_schedule_gate_lets_failed_and_mode_change_start(tmp_path, monkeypatch):
+    """Manual run and a ready guide with a new mode still start.
+
+    Only a future capacity wait and a force-owned queue stay blocked.
+    """
+
+    from types import SimpleNamespace
+
+    import api.app as app_module
+
+    sink = _eligible_force_sink(tmp_path, "schedule-gate.db")
+    config = _external_config()
+    scope = dict(
+        minimum_duration_seconds=config.premium_min_duration_seconds,
+        score_threshold=config.premium_score_threshold,
+    )
+    monkeypatch.setattr(app_module, "db_sink", SimpleNamespace(engine=sink.engine))
+
+    def start(episode_id: str) -> bool:
+        async def once() -> bool:
+            started = app_module.schedule_podcast_premium_guide(episode_id)
+            task = app_module._PODCAST_PREMIUM_GUIDE_TASKS.pop(episode_id, None)
+            if task is not None and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            return started
+
+        return asyncio.run(once())
+
+    _set_episode_status(sink.engine, "episode-force", "failed", error="earlier failure")
+    assert premium_guide_auto_schedule_allowed(sink.engine, "episode-force") is True
+    assert start("episode-force") is True
+
+    _set_episode_status(sink.engine, "episode-force", "not_required")
+    assert premium_guide_auto_schedule_allowed(sink.engine, "episode-force") is True
+    assert start("episode-force") is True
+
+    _set_episode_status(
+        sink.engine, "episode-force", "ready",
+        guide_metadata={"mode": "brief_zh", "language": "en"},
+    )
+    assert pending_premium_guide_candidates(sink.engine, **scope) == ["episode-force"]
+    assert premium_guide_auto_schedule_allowed(sink.engine, "episode-force") is True
+    assert start("episode-force") is True
+
+    future = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)).isoformat()
+    _set_episode_status(
+        sink.engine, "episode-force", "retry_wait",
+        error="TTS 回执缓存不足", next_retry_at=future, error_code="tts_receipt_cache_full",
+    )
+    assert premium_guide_auto_schedule_allowed(sink.engine, "episode-force") is False
+    assert "episode-force" not in pending_premium_guide_candidates(sink.engine, **scope)
+    assert start("episode-force") is False
+
+    _set_episode_status(sink.engine, "episode-force", "queued")
+    assert premium_guide_auto_schedule_allowed(sink.engine, "episode-force") is False
+    assert "episode-force" not in pending_premium_guide_candidates(sink.engine, **scope)
+    assert start("episode-force") is False
 
 
 def test_premium_guide_tasks_only_list_premium_episodes_and_paginate(tmp_path):

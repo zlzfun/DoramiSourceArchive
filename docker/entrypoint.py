@@ -48,5 +48,17 @@ print(f"🏷️  Taxonomy deployment: {taxonomy_result['status']}")
 
 import uvicorn  # noqa: E402
 
+from services.proxy_headers import forwarded_allow_ips  # noqa: E402
+
+# 代理头信任面(issue #172):容器内的客户端不是浏览器而是 nginx 容器,其源 IP 是
+# compose 默认 bridge 网络的地址(典型 172.x),不在 uvicorn 默认白名单 "127.0.0.1" 内
+# ——ProxyHeadersMiddleware 会整段跳过,nginx 透传的 X-Forwarded-Proto 被丢弃,
+# request.base_url 与 scope["scheme"] 在 HTTPS 部署下恒为 http。
+# 取值单点在 services.proxy_headers(compose 可用 DORAMI_FORWARDED_ALLOW_IPS 覆盖)。
 print("🚀 正在启动 AI CMS & RAG 后端 API 服务(容器内 0.0.0.0:8088)...")
-uvicorn.run("api.app:app", host="0.0.0.0", port=8088)
+uvicorn.run(
+    "api.app:app",
+    host="0.0.0.0",
+    port=8088,
+    forwarded_allow_ips=forwarded_allow_ips(),
+)

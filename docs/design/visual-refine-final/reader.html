@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>阅读器 · 视觉精修定稿</title><link rel="stylesheet" href="assets/fonts.css"><link rel="stylesheet" href="assets/site.css"><link rel="stylesheet" href="assets/dm.css"><script>try{var t=localStorage.getItem('dorami-refine2-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}</script></head><body>
+<header class="top"><div class="top-in"><a class="brand" href="./"><img src="assets/logos/dorami.png" alt="">哆啦美<span>视觉精修 · 定稿</span></a><nav class="nav" aria-label="定稿目录"><a href="./" class="">总览</a><a href="type.html" class=""><b>01</b>字体</a><a href="color.html" class=""><b>02</b>色彩</a><a href="reader.html" class="on" aria-current="page"><b>03</b>阅读器</a><a href="brief.html" class=""><b>04</b>早报</a><a href="details.html" class=""><b>05</b>组件</a><a href="console.html" class=""><b>06</b>管理面</a></nav><div class="theme" role="group" aria-label="页面主题"><button data-t="light">亮</button><button data-t="dark">暗</button><button data-t="auto">跟随</button></div></div></header>
+<main class="wrap">
+  <header class="head">
+    <div class="eyebrow"><b>03 阅读器</b><span>定稿</span></div>
+    <h1 class="title">阅读器：列表好扫，正文像一篇文章</h1>
+    <p class="lede">条目行按推荐的「静」：来源与时间一行在上，标题唯一响亮，摘要两行。分数恢复原来的宋体数字加 AI 渐变分档，字体换成自托管的思源宋体，Mac 和 Windows 上一样。AI 速读用细线卡。</p>
+    <div class="facts"><span>条目行<b>静</b></span><span>分数<b>宋体数字 + AI 渐变分档</b></span><span>AI 速读<b>细线卡</b></span></div>
+  </header>
+
+  <section class="s">
+    <h2>整页</h2>
+    <p>拖动分隔线对比现状与定稿；下面的画框可以切换中性色和亮暗，也可以按 1:1 原尺寸看。</p>
+    <figure class="wipe" style="--pos:50%">
+      <div class="frame-stage" data-w="1440" style="background:var(--panel)"><div class="frame-scale"><div id="m-wipe" data-follow data-pal="porcelain"></div></div></div>
+      <img class="wipe-before" src="shots/cur-reader.webp" data-light="shots/cur-reader.webp" data-dark="shots/cur-reader-dark.webp" alt="现状阅读器截图" width="1440" height="900">
+      <div class="wipe-line" aria-hidden="true"><i></i></div>
+      <span class="wipe-tag l">现状</span><span class="wipe-tag r">定稿</span>
+      <input class="wipe-range" type="range" min="0" max="100" value="50" step="0.5" aria-label="拖动分隔线，对比现状与定稿">
+    </figure>
+    <figure class="frame">
+      <div class="frame-bar">
+        <div class="lab">定稿 · 阅读器<small>1440 × 900，按宽度缩放</small></div>
+        <span class="sw-lab">中性色</span>
+        <div class="sw" data-for="m-rd" data-attr="pal" data-group="pal"><button data-v="porcelain" class="on">瓷</button><button data-v="graphite">墨</button><button data-v="paper">宣</button></div>
+        <div class="sw" data-for="m-rd" data-attr="mode"><button data-v="light">亮</button><button data-v="dark">暗</button></div>
+        <button class="ib" data-full><svg viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg><span>1:1 查看</span></button>
+      </div>
+      <div class="frame-stage" data-w="1440"><div class="frame-scale"><div id="m-rd" data-follow data-pal="porcelain"></div></div></div>
+      <figcaption class="frame-note">条目、正文、配图、分数、标签都取自本地库副本；两条「Hacked by CoupDeGrace」是 9 月 15 日量子位被篡改的页面，原样保留。署名行按北京时间显示 15:01（现状直接截取 UTC 字符串，显示为 07:01，这一波一并修正）。</figcaption>
+    </figure>
+  </section>
+
+  <section class="s">
+    <h2>分数：恢复原来的身份线</h2>
+    <p>你觉得黑体加黑色的分数突兀，这里恢复原来的画法：宋体数字，6 分以下退成最弱灰，6、7、8 分三档渐变逐级变浓，9 分以上是完整渐变。档位和混色比例与现在的 <code>scoreTierClass</code> 完全一样；唯一的变化是数字字体从 Charter 换成自托管的思源宋体，因为 Windows 上没有 Charter，会落到 Cambria。</p>
+    <div class="cmp">
+      <figure class="cmp-col" style="margin:0"><header>条目列<small>同一批真实条目</small></header>
+        <div class="cmp-body flush" style="background:var(--panel)"><div class="frame-stage" data-w="380" style="background:transparent"><div class="frame-scale"><div id="m-rows" data-follow data-pal="porcelain" style="width:380px"></div></div></div></div></figure>
+      <figure class="cmp-col after" style="margin:0"><header>AI 速读 · 细线卡</header>
+        <div class="cmp-body flush" style="background:var(--panel)"><div class="frame-stage" data-w="680" style="background:transparent"><div class="frame-scale"><div id="m-ai" data-follow data-pal="porcelain" style="width:680px"></div></div></div></div>
+        <figcaption>卡底用侧栏同色，描边是最弱一级细线，不再铺渐变；✦ 和分数保留 AI 渐变。这一篇新闻价值 5.8，低于 6，所以分数是灰的。</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="s">
+    <h2>正文与源栏</h2>
+    <div class="tw"><table class="t">
+      <thead><tr><th>项目</th><th>现状</th><th>定稿</th></tr></thead>
+      <tbody>
+        <tr><td class="k">正文字号 / 行高</td><td class="num">16.5px / 1.85</td><td class="num">17px / 1.85，版心 616px</td></tr>
+        <tr><td class="k">文章标题、正文小标题</td><td>Georgia 加宋体</td><td>思源宋体 600：标题 30px，小标题 21px</td></tr>
+        <tr><td class="k">眉头、署名行、日期组头</td><td>等宽字体，11–11.5px</td><td>界面黑体 13px；眉头保留强调色</td></tr>
+        <tr><td class="k">标签</td><td>11px 线框签</td><td>文字，中点分隔；规范标签次要灰，灵活标签最弱灰</td></tr>
+        <tr><td class="k">引用块</td><td>2px 强调色竖条</td><td>2px 中性细线</td></tr>
+        <tr><td class="k">图片</td><td>10px 圆角，无描边</td><td>圆角不变，加一圈极淡细线；暗色下降亮 8%</td></tr>
+        <tr><td class="k">粗体</td><td class="num">700</td><td class="num">600 + 墨色</td></tr>
+        <tr><td class="k">源栏「文章榜」</td><td>带边框的淡紫卡片</td><td>普通导航行，与来源行同高</td></tr>
+        <tr><td class="k">源栏组头</td><td class="num">10.5px</td><td class="num">12px</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+</main>
+<div class="wrap"><nav class="pager"><a href="color.html"><span>上一篇</span><b>02 色彩</b></a><a class="next" href="brief.html"><span>下一篇</span><b>04 早报</b></a></nav><p class="foot">样页数据来自本地库副本（2026-09-28 快照），经产品自身接口导出；标题字体为思源宋体子集，内嵌在页面里，不请求任何外部字体域名。</p></div><script src="assets/data.js"></script><script src="assets/dm.js"></script><script src="assets/site.js"></script><script>(function () {
+  DMR.reader(document.getElementById('m-rd'));
+  DMR.reader(document.getElementById('m-wipe'));
+  DMR.listOnly(document.getElementById('m-rows'), { rows: 6, sel: null });
+  const ai = document.getElementById('m-ai');
+  DMR.paneOnly(ai, { body: false });
+  ai.querySelectorAll('.kicker,.art-title,.byline,.art-tags').forEach((n) => n.remove());
+  ai.querySelector('.art').style.padding = '20px 24px';
+  ai.querySelector('.ai').style.marginTop = '0';
+  const wipe = document.querySelector('.wipe'), range = wipe.querySelector('.wipe-range');
+  const set = () => wipe.style.setProperty('--pos', range.value + '%');
+  range.addEventListener('input', set); set();
+})();</script>
+</body></html>

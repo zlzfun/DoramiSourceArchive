@@ -13,7 +13,7 @@ import PodcastExperiencePanel from '../PodcastExperiencePanel';
 import PodcastTextPanel from '../PodcastTextPanel';
 import AnalysisTagChip from '../AnalysisTagChip';
 import { PaneBodySkeleton } from '../ReaderTab';
-import { formatDateTime, formatPublishDate } from '../../utils/datetime';
+import { formatPublishDate, formatPublishDateTime } from '../../utils/datetime';
 import { formatPodcastDuration, podcastOf } from '../../utils/podcast';
 import {
   analysisStatusMeta,
@@ -22,7 +22,7 @@ import {
 } from '../../utils/analysis';
 import AiReadingCard from '../AiReadingCard';
 import ArticleListenBar from '../ArticleListenBar';
-import { hostOf } from '../../utils/readerText';
+import { hostOf, latinLang } from '../../utils/readerText';
 import { kindKickerLabel } from '../../utils/contentKind';
 
 // 正文页(移动波 Wave2,样页画面②):push 全屏页——无底部 Tab,返回即出栈。
@@ -146,16 +146,16 @@ export default function MobileArticlePage({
             {(sourceNameMap[activeArticle.source_id] || activeArticle.source_id)}
             {kindKickerLabel(activeArticle) ? ` · ${kindKickerLabel(activeArticle)}` : ''}
           </div>
-          <h1 className="reader-pane-title">
+          <h1 className="reader-pane-title" lang={latinLang((showTranslation && translatedTitle) ? translatedTitle : activeArticle.title)}>
             {(showTranslation && translatedTitle) ? translatedTitle : (activeArticle.title || '（无标题）')}
           </h1>
           {activeArticle.is_premium_podcast && <span className="podcast-premium-badge is-title">优质播客</span>}
           {showTranslation && translatedTitle && activeArticle.title && translatedTitle !== activeArticle.title && (
-            <div className="reader-pane-title-orig">{activeArticle.title}</div>
+            <div className="reader-pane-title-orig" lang={latinLang(activeArticle.title)}>{activeArticle.title}</div>
           )}
           <div className="reader-pane-meta">
             {activeArticle.publish_date && (
-              <span title={formatDateTime(activeArticle.publish_date)}>
+              <span title={formatPublishDateTime(activeArticle.publish_date)}>
                 {formatPublishDate(activeArticle.publish_date)}
               </span>
             )}
@@ -227,7 +227,11 @@ export default function MobileArticlePage({
             </div>
           )}
           {!podcastGuideActive && (
-            <div className="reader-article-copy markdown-body" data-ai-translation-scope="article-body">
+            <div
+              className="reader-article-copy markdown-body"
+              data-ai-translation-scope="article-body"
+              lang={(showTranslation && translatedBody) ? undefined : latinLang(activeBody)}
+            >
               {activeBodyLoading ? (
                 <PaneBodySkeleton />
               ) : (showTranslation && translatedBody) ? (
