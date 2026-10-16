@@ -55,8 +55,8 @@ def _sha(text: str) -> str:
 
 
 @pytest.fixture
-def storage():
-    value = DatabaseStorage(db_url="sqlite:///:memory:")
+def storage(tmp_path):
+    value = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'content-value.db'}")
     with Session(value.engine) as session:
         session.add(TaxonomyVersionRecord(version=1, status="active", created_at=NOW_ISO))
         session.commit()

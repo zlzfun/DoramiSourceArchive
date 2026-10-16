@@ -70,8 +70,9 @@ LLM_CONFIG = LLMConfig(base_url="https://llm.invalid/v1", api_key="test", model=
 
 
 @pytest.fixture
-def storage():
-    value = DatabaseStorage(db_url="sqlite:///:memory:")
+def storage(tmp_path):
+    # Analysis DB phases now run in workers, as with production's file DB.
+    value = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'analysis.db'}")
     try:
         yield value
     finally:
@@ -1328,11 +1329,19 @@ def test_analysis_cycle_drains_eight_map_sized_batches_with_bounded_concurrency(
 
     active = 0
     peak = 0
+    batch_ready = None
 
     async def measured_analyzer(*_args):
-        nonlocal active, peak
+        nonlocal active, peak, batch_ready
+        if active == 0:
+            batch_ready = asyncio.Event()
         active += 1
         peak = max(peak, active)
+        # Worker-thread input loading can finish at different times. Hold the
+        # model requests until the whole bounded batch has actually started.
+        if active == 4:
+            batch_ready.set()
+        await asyncio.wait_for(batch_ready.wait(), timeout=5)
         await asyncio.sleep(0)
         active -= 1
         return _payload()
@@ -1394,6 +1403,41 @@ def test_analysis_cycle_drains_eight_map_sized_batches_with_bounded_concurrency(
             now_fn=lambda: NOW,
         )
     ) == []
+
+
+def test_concurrent_analysis_results_preserve_shared_candidate_stats(storage):
+    with Session(storage.engine) as session:
+        session.add(_tag())
+        session.add(TaxonomyVersionRecord(version=1, status="active", created_at=NOW_ISO))
+        session.add_all([_article(f"shared-{index}") for index in range(4)])
+        session.commit()
+
+    async def scenario():
+        ready = asyncio.Event()
+        started = 0
+
+        async def analyzer(*_args):
+            nonlocal started
+            started += 1
+            if started == 4:
+                ready.set()
+            await asyncio.wait_for(ready.wait(), 5)
+            return _payload(candidate=True)
+
+        return await run_analysis_cycle(
+            storage.engine, worker_id="shared-candidate", llm_config=LLM_CONFIG,
+            analyzer=analyzer, enabled=True, candidate_enabled=True,
+            max_batches=1, now_fn=lambda: NOW,
+        )
+
+    results = asyncio.run(scenario())
+    assert len(results) == 4
+    assert all((row.status, row.tagging_status) == ("succeeded", "succeeded") for row in results)
+    with Session(storage.engine) as session:
+        candidate = session.exec(select(CmsTagCandidateRecord)).one()
+        assert candidate.support_article_count_7d == 4
+        assert candidate.support_article_count_30d == 4
+        assert len(session.exec(select(CmsTagCandidateEvidenceRecord)).all()) == 4
 
 
 def test_validation_limits_score_genre_and_active_tag_codes():

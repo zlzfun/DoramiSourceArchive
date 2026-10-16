@@ -2704,9 +2704,17 @@ def load_tasks_to_scheduler():
 async def execute_article_analysis_job():
     """Recover/scan/claim article analysis without coupling it to ingestion."""
 
-    try:
+    def _resolve_config():
         with Session(db_sink.engine) as session:
-            llm_config = daily_brief_service.resolve_llm_config(session)
+            return daily_brief_service.resolve_llm_config(session)
+
+    def _activate_candidates():
+        with Session(db_sink.engine) as session:
+            if not sync_consumer_policy.v2_consumer_mode_active(session):
+                taxonomy_service.run_auto_activation_cycle(session)
+
+    try:
+        llm_config = await asyncio.to_thread(_resolve_config)
         if not llm_config.configured:
             return
         await article_analysis_service.run_analysis_cycle(
@@ -2719,9 +2727,7 @@ async def execute_article_analysis_job():
         # Candidate aggregation commits with each article.  Automatic promotion
         # runs only afterwards, outside those transactions, and remains inert
         # unless the explicit governance switch is enabled.
-        with Session(db_sink.engine) as session:
-            if not sync_consumer_policy.v2_consumer_mode_active(session):
-                taxonomy_service.run_auto_activation_cycle(session)
+        await asyncio.to_thread(_activate_candidates)
     except Exception as exc:  # noqa: BLE001 - scheduler jobs never stop collection
         _dorami_logger.warning("文章分析调度失败: %s", exc)
 
@@ -3012,10 +3018,11 @@ async def execute_podcast_asr_worker_job() -> tuple[str, ...]:
 
     try:
         actions = await asyncio.to_thread(_run_steps)
-        with Session(db_sink.engine) as threshold_session:
-            premium_threshold = podcast_premium_service.get_threshold(
-                threshold_session
-            )
+        def _read_threshold():
+            with Session(db_sink.engine) as threshold_session:
+                return podcast_premium_service.get_threshold(threshold_session)
+
+        premium_threshold = await asyncio.to_thread(_read_threshold)
         for episode_id in await asyncio.to_thread(
             podcast_premium_guide_service.pending_premium_guide_candidates,
             db_sink.engine,

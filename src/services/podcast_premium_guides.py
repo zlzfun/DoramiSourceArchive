@@ -19,6 +19,7 @@ from typing import Any, Protocol
 
 from sqlalchemy import case, func, or_
 from sqlalchemy.engine import Engine
+from sqlalchemy.orm import load_only
 from sqlmodel import Session, select
 
 from config import PodcastConfig
@@ -1546,6 +1547,29 @@ def pending_premium_guide_candidates(
                     ("asr_transcript", "publisher_transcript")
                 ),
             )
+            .options(
+                load_only(
+                    ArticleRecord.id, ArticleRecord.content_type,
+                    ArticleRecord.source_id, ArticleRecord.extensions_json,
+                    raiseload=True,
+                ),
+                load_only(
+                    ArticleAnalysisRecord.article_id, ArticleAnalysisRecord.status,
+                    ArticleAnalysisRecord.quality_score, ArticleAnalysisRecord.analyzed_at,
+                    ArticleAnalysisRecord.analysis_basis,
+                    ArticleAnalysisRecord.podcast_initial_score,
+                    ArticleAnalysisRecord.podcast_final_score,
+                    raiseload=True,
+                ),
+                load_only(
+                    PodcastTextArtifactRecord.id, PodcastTextArtifactRecord.kind,
+                    PodcastTextArtifactRecord.content_hash,
+                    PodcastTextArtifactRecord.authority_id,
+                    PodcastTextArtifactRecord.language,
+                    PodcastTextArtifactRecord.provenance_json,
+                    raiseload=True,
+                ),
+            )
         ).all()
         candidates: list[str] = []
         for episode, analysis, transcript in rows:
@@ -1608,7 +1632,15 @@ def pending_premium_guide_candidates(
                     PodcastTextPublicationRecord, f"{episode.id}:digest_blog_zh"
                 )
                 blog = (
-                    session.get(PodcastTextArtifactRecord, publication.artifact_id)
+                    session.get(
+                        PodcastTextArtifactRecord, publication.artifact_id,
+                        options=[load_only(
+                            PodcastTextArtifactRecord.source_artifact_id,
+                            PodcastTextArtifactRecord.source_content_hash,
+                            PodcastTextArtifactRecord.provenance_json,
+                            raiseload=True,
+                        )],
+                    )
                     if publication is not None and publication.status == "published"
                     else None
                 )
