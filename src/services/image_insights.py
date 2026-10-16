@@ -476,7 +476,9 @@ class ImageInsightService:
         except Exception as exc:  # noqa: BLE001 — 识图是补充,不能拖垮调用方
             logger.warning("图片理解失败,按无配图继续 (article=%s): %s", article_id, _sanitize(exc))
             try:
-                return self.cached_notes(article_id, llm_config, max_chars=max_chars)
+                return await asyncio.to_thread(
+                    self.cached_notes, article_id, llm_config, max_chars=max_chars,
+                )
             except Exception:  # noqa: BLE001
                 return ""
 
@@ -502,28 +504,43 @@ class ImageInsightService:
         ])
         return {article_id: text for article_id, text in zip(ids, results) if text}
 
-    async def _ensure_notes(
-        self, article_id: str, llm_config: LLMConfig, *,
-        usage_meta: Optional[UsageMeta], budget_seconds: float, max_chars: int,
-    ) -> str:
+    def _prepare_ensure(self, article_id: str, llm_config: LLMConfig):
+        """Read in one worker, returning value snapshots without live ORM rows."""
         if not self.enabled(llm_config):
-            return ""
+            return None
         limit = self.max_per_article()
         with Session(self.engine) as session:
             article = session.get(ArticleRecord, article_id)
             if article is None or not self._eligible(session, article):
-                return ""
+                return None
             candidates = article_image_candidates(article, limit=limit * 2)
             if not candidates:
-                return ""
+                return None
             media_by_url_hash, insights_by_hash = self._resolve_cached(session, candidates)
             title = article.title or ""
             source_id = article.source_id or ""
-            total_hint = len(candidates)
+            return (
+                limit, candidates, title, source_id,
+                {key: row.model_dump() for key, row in media_by_url_hash.items()},
+                {key: row.model_dump() for key, row in insights_by_hash.items()},
+            )
+
+    async def _ensure_notes(
+        self, article_id: str, llm_config: LLMConfig, *,
+        usage_meta: Optional[UsageMeta], budget_seconds: float, max_chars: int,
+    ) -> str:
+        prepared = await asyncio.to_thread(self._prepare_ensure, article_id, llm_config)
+        if prepared is None:
+            return ""
+        limit, candidates, title, source_id, media_values, insight_values = prepared
+        # These fresh SQLModel value objects have never belonged to a Session.
+        media_by_url_hash = {key: MediaAssetRecord.model_validate(value) for key, value in media_values.items()}
+        insights_by_hash = {key: ImageInsightRecord.model_validate(value) for key, value in insight_values.items()}
+        total_hint = len(candidates)
 
         from services.source_naming import friendly_source_name
 
-        source_name = friendly_source_name(source_id)
+        source_name = await asyncio.to_thread(friendly_source_name, source_id)
         deadline = asyncio.get_running_loop().time() + max(0.5, float(budget_seconds))
         accepted = 0
         seen_hashes: set = set()
@@ -588,7 +605,9 @@ class ImageInsightService:
                 task.add_done_callback(self._on_background_done)
             if pending:
                 logger.info("图片理解超出预算 %.0fs,%d 张转后台继续 (article=%s)", budget_seconds, len(pending), article_id)
-        return self.cached_notes(article_id, llm_config, max_chars=max_chars)
+        return await asyncio.to_thread(
+            self.cached_notes, article_id, llm_config, max_chars=max_chars,
+        )
 
     @staticmethod
     def _log_task_failure(task: "asyncio.Task", article_id: str = "") -> None:
@@ -621,6 +640,11 @@ class ImageInsightService:
             lock = self._locks[key] = asyncio.Lock()
         return lock
 
+    def _has_current_insight(self, content_hash: str) -> bool:
+        with Session(self.engine) as session:
+            existing = session.get(ImageInsightRecord, content_hash)
+            return existing is not None and self._is_current(existing)
+
     async def _describe_one(
         self, *, candidate: ImageCandidate, content_hash: str, path: Any, mime: str,
         llm_config: LLMConfig, usage_meta: Optional[UsageMeta], title: str, source_name: str, total: int,
@@ -629,15 +653,13 @@ class ImageInsightService:
         # 全局并发信号量在最外层:排队的任务不持有整图字节,读盘 / base64 / 调用都在名额内进行
         async with self._semaphore:
             async with self._lock_for(content_hash):
-                with Session(self.engine) as session:
-                    existing = session.get(ImageInsightRecord, content_hash)
-                    if existing is not None and self._is_current(existing):
-                        return  # 等锁期间已被并发调用补全
+                if await asyncio.to_thread(self._has_current_insight, content_hash):
+                    return  # 等锁期间已被并发调用补全
                 vision_config = llm_config.for_vision()
                 meta = UsageMeta(purpose=USAGE_PURPOSE, username=usage_meta.username if usage_meta else None)
                 try:
                     data = (await asyncio.to_thread(self.media_store.read_bytes, media_record, MAX_IMAGE_BYTES + 1)
-                            if media_record is not None else path.read_bytes())
+                            if media_record is not None else await asyncio.to_thread(path.read_bytes))
                     if len(data) > MAX_IMAGE_BYTES:
                         return
                     raw = await chat_completion(
@@ -658,9 +680,27 @@ class ImageInsightService:
                     )
                     payload = _clean_payload(parse_json_object(raw))
                 except (LLMError, Exception) as exc:  # noqa: BLE001
-                    self._persist_guarded(lambda: self._mark_failed(content_hash, vision_config.model, exc), content_hash)
+                    await self._persist_off_loop(
+                        lambda: self._mark_failed(content_hash, vision_config.model, exc), content_hash,
+                    )
                     return
-                self._persist_guarded(lambda: self._mark_succeeded(content_hash, vision_config.model, payload), content_hash)
+                await self._persist_off_loop(
+                    lambda: self._mark_succeeded(content_hash, vision_config.model, payload), content_hash,
+                )
+
+    async def _persist_off_loop(self, write: Any, content_hash: str) -> None:
+        # Cancelling to_thread cannot stop a running SQLite commit. Keep the
+        # per-image lock until it finishes, so a waiter cannot pay for it again.
+        pending = asyncio.create_task(asyncio.to_thread(self._persist_guarded, write, content_hash))
+        cancelled = False
+        while not pending.done():
+            try:
+                await asyncio.shield(pending)
+            except asyncio.CancelledError:
+                cancelled = True
+        pending.result()
+        if cancelled:
+            raise asyncio.CancelledError
 
     @staticmethod
     def _persist_guarded(write: Any, content_hash: str) -> None:

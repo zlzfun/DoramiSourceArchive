@@ -32,12 +32,13 @@ STAMP = NOW.isoformat()
     ("language_changed", True), ("retry_due", True), ("retry_future", False),
     ("queued", False), ("suppressed", False), ("short", False),
     ("authority_changed", False), ("withdrawn", False),
+    ("no_publication", True), ("locator_changed", True),
 ])
 def test_candidate_scan_reads_only_metadata(tmp_path, kind, case, expected):
     sink = DatabaseStorage(f"sqlite:///{tmp_path / 'candidates.db'}")
     locator = "https://example.test/transcript.txt"
     guide = {"status": "ready", "mode": "solo_deep", "language": "en"}
-    if case == "new":
+    if case in {"new", "no_publication", "locator_changed"}:
         guide = {}
     elif case == "mode_changed":
         guide["mode"] = "brief_zh"
@@ -56,6 +57,9 @@ def test_candidate_scan_reads_only_metadata(tmp_path, kind, case, expected):
         "premium_guide": guide,
         "premium_guide_auto_suppressed": case == "suppressed",
     }
+    if case == "locator_changed":
+        extensions["transcripts"][0]["url"] = "https://example.test/replacement.txt"
+        expected = kind == "normalized_transcript"
     with Session(sink.engine) as session:
         session.add(SourceConfigRecord(
             source_id="show", name="Show", source_type="podcast",
@@ -95,14 +99,16 @@ def test_candidate_scan_reads_only_metadata(tmp_path, kind, case, expected):
             transcript_artifact_id="transcript", summary="摘要" * 8192,
             created_at=STAMP, updated_at=STAMP,
         ))
-        session.add(PodcastTextPublicationRecord(
+        transcript_publication = PodcastTextPublicationRecord(
             identity=f"episode:{kind}", episode_id="episode", kind=kind,
             artifact_id="other-transcript" if case == "authority_changed" else "transcript",
             authority_id="other" if case == "authority_changed" else "local",
             status="unpublished" if case == "withdrawn" else "published",
             published_at=STAMP, unpublished_at=STAMP if case == "withdrawn" else None,
             updated_at=STAMP,
-        ))
+        )
+        if case != "no_publication":
+            session.add(transcript_publication)
         session.add(PodcastTextPublicationRecord(
             identity="episode:digest_blog_zh", episode_id="episode", kind="digest_blog_zh",
             artifact_id="blog", status="published", published_at=STAMP, updated_at=STAMP,

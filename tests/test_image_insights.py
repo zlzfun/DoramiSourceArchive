@@ -11,9 +11,11 @@ import datetime as dt
 import json
 import os
 import sys
+import threading
 
 import httpx
 import pytest
+from sqlalchemy import event
 from sqlmodel import Session, select
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -413,6 +415,162 @@ def test_worker_attaches_image_notes_before_scoring(stack):
     assert seen["messages"][0].content.endswith(IMAGE_NOTES_RULES_PROMPT)
     assert '"image_notes"' in seen["messages"][1].content
     assert len(vision_calls) == 2
+
+
+@pytest.mark.parametrize("phase", [
+    "prepare", "current_read", "vision_write", "vision_failure", "cache_read",
+    "media_read", "media_write", "media_failure",
+])
+def test_default_vision_provider_keeps_database_off_loop(stack, monkeypatch, phase):
+    storage, service, media_calls, vision_calls = stack
+    url = "https://cdn.example.com/missing.png" if phase == "media_failure" else "https://cdn.example.com/a.png"
+    article = _article("responsive", content=f"新闻正文。![表格]({url})")
+    if not phase.startswith("media_"):
+        # Vision cases start from local bytes; only vision/model ports are mocked.
+        assert asyncio.run(service.media_store.get_or_fetch(url)) is not None
+        asyncio.run(service.media_store.aclose())
+    with Session(storage.engine) as session:
+        session.add(article)
+        session.commit()
+        article_analysis.queue_article_analysis(session, article.id, enabled=True, now=NOW)
+        session.commit()
+        claimed = article_analysis.claim_analysis_tasks(session, worker_id="vision-loop", now=NOW)[0]
+
+    async def scenario():
+        owner = threading.get_ident()
+        loop = asyncio.get_running_loop()
+        entered = asyncio.Event()
+        release = threading.Event()
+        target, name = {
+            "prepare": (service, "_prepare_ensure"),
+            "current_read": (service, "_has_current_insight"),
+            "vision_write": (service, "_mark_succeeded"),
+            "vision_failure": (service, "_mark_failed"),
+            "cache_read": (service, "cached_notes"),
+            "media_read": (service.media_store, "_get_record"),
+            "media_write": (service.media_store, "_replace_record"),
+            "media_failure": (service.media_store, "_mark_failed"),
+        }[phase]
+        original = getattr(target, name)
+        fake_chat = ii.chat_completion
+        blocked = False
+        sql_count = 0
+        vision_attempts = []
+
+        def slow_db(*args, **kwargs):
+            nonlocal blocked
+            assert threading.get_ident() != owner
+            if not blocked:
+                blocked = True
+                loop.call_soon_threadsafe(entered.set)
+                assert release.wait(3)
+            return original(*args, **kwargs)
+
+        def check_sql(*_args):
+            nonlocal sql_count
+            assert threading.get_ident() != owner
+            sql_count += 1
+
+        async def vision(**kwargs):
+            assert asyncio.get_running_loop() is loop
+            vision_attempts.append(True)
+            if phase == "vision_failure":
+                raise LLMError("test provider failed")
+            return await fake_chat(**kwargs)
+
+        async def analyzer(article_input, *_args):
+            assert asyncio.get_running_loop() is loop
+            if phase not in {"vision_failure", "media_failure"}:
+                assert "基准对比表" in article_input.image_notes
+            return {
+                "quality_score": 7.2, "score_reason": "一手发布", "summary": "摘要",
+                "content_genre": "model_release", "content_kind": "news",
+                "content_value_reason": "一手发布稿", "content_value": 6,
+                "tag_assignments": [], "tag_candidates": [],
+            }
+
+        monkeypatch.setattr(target, name, slow_db)
+        monkeypatch.setattr(ii, "chat_completion", vision)
+        event.listen(storage.engine, "before_cursor_execute", check_sql)
+        # Deliberately use the production default image_notes_provider.
+        task = asyncio.create_task(article_analysis.process_claimed_analysis(
+            storage.engine, claimed, llm_config=VISION, analyzer=analyzer,
+            now_fn=lambda: NOW + dt.timedelta(seconds=2),
+        ))
+        try:
+            await asyncio.wait_for(entered.wait(), 3)
+            assert not task.done()
+            heartbeat = loop.create_future()
+            loop.call_soon(heartbeat.set_result, True)
+            assert await asyncio.wait_for(heartbeat, .5)
+        finally:
+            release.set()
+            result = await asyncio.wait_for(task, 10)
+            event.remove(storage.engine, "before_cursor_execute", check_sql)
+            await service.media_store.aclose()
+        assert result.status == "succeeded"
+        assert sql_count > 0
+        with Session(storage.engine) as session:
+            insights = session.exec(select(ImageInsightRecord)).all()
+        if phase == "media_failure":
+            assert not vision_attempts
+            assert not insights
+        else:
+            assert vision_attempts
+            expected = "failed" if phase == "vision_failure" else "succeeded"
+            assert [record.status for record in insights] == [expected]
+
+    asyncio.run(scenario())
+
+
+def test_cancelled_vision_commit_keeps_lock_until_database_finishes(stack, monkeypatch):
+    storage, service, _, vision_calls = stack
+    _seed(storage, _article("cancel-write", content="![表格](https://cdn.example.com/a.png)"))
+    assert asyncio.run(service.media_store.get_or_fetch("https://cdn.example.com/a.png"))
+    asyncio.run(service.media_store.aclose())
+
+    async def scenario():
+        loop = asyncio.get_running_loop()
+        entered = asyncio.Event()
+        second_waiting = asyncio.Event()
+        release = threading.Event()
+        descriptions = []
+        original_describe = service._describe_one
+        original_mark = service._mark_succeeded
+
+        async def describe(**kwargs):
+            descriptions.append(asyncio.current_task())
+            if len(descriptions) == 2:
+                second_waiting.set()
+            return await original_describe(**kwargs)
+
+        def slow_commit(*args):
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(3)
+            return original_mark(*args)
+
+        monkeypatch.setattr(service, "_describe_one", describe)
+        monkeypatch.setattr(service, "_mark_succeeded", slow_commit)
+        first = asyncio.create_task(service.ensure_notes("cancel-write", VISION))
+        second = None
+        try:
+            await asyncio.wait_for(entered.wait(), 3)
+            descriptions[0].cancel()
+            second = asyncio.create_task(service.ensure_notes("cancel-write", VISION))
+            await asyncio.wait_for(second_waiting.wait(), 3)
+            await asyncio.sleep(0)
+            assert not descriptions[0].done()
+            assert len(vision_calls) == 1
+        finally:
+            release.set()
+            pending = [task for task in (first, second) if task is not None]
+            notes = await asyncio.wait_for(asyncio.gather(*pending), 10)
+            await service.media_store.aclose()
+        assert descriptions[0].cancelled()
+        assert len(vision_calls) == 1
+        assert all("基准对比表" in note for note in notes)
+
+    asyncio.run(scenario())
 
 
 def test_worker_without_vision_keeps_prompt_byte_identical(stack):

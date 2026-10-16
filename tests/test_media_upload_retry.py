@@ -68,7 +68,13 @@ def test_pending_upload_survives_restart_and_short_cooldown_without_refetch(uplo
         restarted = upload.make_store()
         upload.bucket.unavailable = False
         with monkeypatch.context() as patch:
-            patch.setattr(asyncio, "to_thread", lambda *_args, **_kwargs: pytest.fail("cooldown must not occupy thread pool"))
+            # Metadata reads now run off-loop. Cooling down must still avoid
+            # expensive storage/upload work, including force=True requests.
+            def unexpected_retry(*_args, **_kwargs):
+                pytest.fail("cooldown must not retry storage I/O")
+
+            for method in ("_retry_pending_upload", "_persist_pending_upload", "_download"):
+                patch.setattr(restarted, method, unexpected_retry)
             assert await restarted.get_or_fetch(URL) is None
             assert await restarted.get_or_fetch(URL, force=True) is None
         assert len(upload.attempts) == 1 and upload.calls == [URL]

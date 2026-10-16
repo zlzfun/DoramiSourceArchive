@@ -331,7 +331,9 @@ class MediaStore:
 
     def _get_record(self, url_hash: str) -> Optional[MediaAssetRecord]:
         with Session(self.engine) as session:
-            return session.get(MediaAssetRecord, url_hash)
+            row = session.get(MediaAssetRecord, url_hash)
+            # A detached value snapshot, never a Session-owned row crossing threads.
+            return MediaAssetRecord.model_validate(row.model_dump()) if row is not None else None
 
     @staticmethod
     def _retry_window(fail_count: int) -> int:
@@ -396,17 +398,24 @@ class MediaStore:
             await asyncio.to_thread(persist)
         except OSError as exc:
             error = str(exc) if isinstance(exc, ObjectStorageError) else "object_storage_local_file_unavailable"
-            self._replace_record(record, record.url, record.url_hash, last_error=error, updated_at=_now())
+            await asyncio.to_thread(
+                self._replace_record, record, record.url, record.url_hash,
+                last_error=error, updated_at=_now(),
+            )
             return None
         now = _now()
-        return self._replace_record(record, record.url, record.url_hash,
-                                    status="cached", last_error=None, fetched_at=now, updated_at=now)
+        return await asyncio.to_thread(
+            self._replace_record, record, record.url, record.url_hash,
+            status="cached", last_error=None, fetched_at=now, updated_at=now,
+        )
 
     async def _retry_pending_upload(self, record: MediaAssetRecord):
         # Even explicit source retries respect the separate cloud cooldown.
         if record.sync_authority_id or self._upload_still_cooling(record):
             return None
-        claimed = self._replace_record(record, record.url, record.url_hash, updated_at=_now())
+        claimed = await asyncio.to_thread(
+            self._replace_record, record, record.url, record.url_hash, updated_at=_now(),
+        )
         return await self._persist_pending_upload(claimed) if claimed is not None else None
 
     # ── 供给主径 ──────────────────────────────────────────────
@@ -422,7 +431,7 @@ class MediaStore:
             return None
         key = url_hash_of(url)
 
-        record = self._get_record(key)
+        record = await asyncio.to_thread(self._get_record, key)
         if record is not None and record.status == "pending_upload" and (
             record.sync_authority_id or self._upload_still_cooling(record)
         ):
@@ -430,7 +439,9 @@ class MediaStore:
         if record is not None and record.status == "cached":
             if await self._restore_cached(record):
                 return record
-            if self.object_storage and self.object_storage.location(record.content_hash, record.ext):
+            if self.object_storage and await asyncio.to_thread(
+                self.object_storage.location, record.content_hash, record.ext,
+            ):
                 # The archived bytes are authoritative; a cloud outage must not
                 # replace them with whatever a mutable origin serves today.
                 return None
@@ -445,7 +456,7 @@ class MediaStore:
 
         async with self._lock_for(key):
             # 等锁期间可能已被并发请求补全
-            record = self._get_record(key)
+            record = await asyncio.to_thread(self._get_record, key)
             if record is not None and (record.sync_authority_id or "").strip():
                 # A v2 manifest owns this row. Never race its staged binary by
                 # downloading the mutable origin URL on the receiving node.
@@ -455,40 +466,40 @@ class MediaStore:
             if record is not None and record.status == "cached" and await self._restore_cached(record):
                 return record
             if (record is not None and record.status == "cached" and self.object_storage
-                    and self.object_storage.location(record.content_hash, record.ext)):
+                    and await asyncio.to_thread(self.object_storage.location, record.content_hash, record.ext)):
                 return None
             return await self._download(url, key)
 
     async def _download(self, url: str, key: str) -> Optional[MediaAssetRecord]:
-        previous = self._get_record(key)
+        previous = await asyncio.to_thread(self._get_record, key)
         if previous is not None and (previous.sync_authority_id or previous.status == "pending_upload"):
             return None
         host = urlparse(url).hostname or ""
         if not host or not await _resolve_is_public(host):
-            return self._mark_failed(url, key, "非公网主机（SSRF 防护拒绝）")
+            return await asyncio.to_thread(self._mark_failed, url, key, "非公网主机（SSRF 防护拒绝）")
         try:
             # 带 Referer 请求：防盗链 CDN 无 Referer 会 403（见 _referer_for）；
             # 对不校验的站点无副作用，故统一带上而非失败后重试，省一轮往返。
             headers = {"Referer": _referer_for(url)}
             async with self._get_client().stream("GET", url, headers=headers) as response:
                 if response.status_code != 200:
-                    return self._mark_failed(url, key, f"HTTP {response.status_code}")
+                    return await asyncio.to_thread(self._mark_failed, url, key, f"HTTP {response.status_code}")
                 declared = int(response.headers.get("content-length") or 0)
                 if declared > self.max_bytes:
-                    return self._mark_failed(url, key, f"超出大小上限（声明 {declared} 字节）")
+                    return await asyncio.to_thread(self._mark_failed, url, key, f"超出大小上限（声明 {declared} 字节）")
                 chunks: List[bytes] = []
                 size = 0
                 async for chunk in response.aiter_bytes():
                     size += len(chunk)
                     if size > self.max_bytes:
-                        return self._mark_failed(url, key, "超出大小上限")
+                        return await asyncio.to_thread(self._mark_failed, url, key, "超出大小上限")
                     chunks.append(chunk)
                 body = b"".join(chunks)
                 mime = _sniff_image_mime(body[:64], response.headers.get("content-type", ""))
                 if not body or mime is None:
-                    return self._mark_failed(url, key, "响应不是图片")
+                    return await asyncio.to_thread(self._mark_failed, url, key, "响应不是图片")
         except httpx.HTTPError as exc:
-            return self._mark_failed(url, key, f"{type(exc).__name__}: {exc}")
+            return await asyncio.to_thread(self._mark_failed, url, key, f"{type(exc).__name__}: {exc}")
 
         content_hash = hashlib.sha256(body).hexdigest()
         ext = _MIME_EXT.get(mime, ".bin")
@@ -505,7 +516,7 @@ class MediaStore:
 
         now = _now()
         needs_upload = self.object_storage is not None and self.object_storage.enabled
-        record = self._replace_record(previous, url, key,
+        record = await asyncio.to_thread(self._replace_record, previous, url, key,
                                       status="pending_upload" if needs_upload else "cached",
                                       content_hash=content_hash, mime=mime, ext=ext, size_bytes=len(body),
                                       last_error=None, fetched_at=now, updated_at=now)
