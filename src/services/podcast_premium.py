@@ -14,6 +14,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from sqlalchemy import Engine
+from sqlalchemy.orm import load_only
 from sqlmodel import Session, select
 
 from models.db import (
@@ -400,6 +401,12 @@ def _load_states(
 ) -> list[_EpisodeState]:
     query = (
         select(ArticleRecord)
+        .options(load_only(
+            ArticleRecord.id, ArticleRecord.title, ArticleRecord.source_id,
+            ArticleRecord.source_url, ArticleRecord.publish_date,
+            ArticleRecord.extensions_json,
+            raiseload=True,
+        ))
         .where(ArticleRecord.content_type == "podcast_episode")
         .order_by(ArticleRecord.publish_date.desc(), ArticleRecord.id.desc())
     )
@@ -410,7 +417,19 @@ def _load_states(
     analyses = {
         row.article_id: row
         for row in session.exec(
-            select(ArticleAnalysisRecord).where(ArticleAnalysisRecord.article_id.in_(ids))
+            select(ArticleAnalysisRecord)
+            .options(load_only(
+                ArticleAnalysisRecord.article_id, ArticleAnalysisRecord.status,
+                ArticleAnalysisRecord.quality_score,
+                ArticleAnalysisRecord.podcast_initial_score,
+                ArticleAnalysisRecord.podcast_final_score,
+                ArticleAnalysisRecord.analysis_basis,
+                ArticleAnalysisRecord.transcript_artifact_id,
+                ArticleAnalysisRecord.analyzed_at, ArticleAnalysisRecord.updated_at,
+                ArticleAnalysisRecord.last_error,
+                raiseload=True,
+            ))
+            .where(ArticleAnalysisRecord.article_id.in_(ids))
         ).all()
     } if ids else {}
     transcript_ids = [
@@ -421,7 +440,10 @@ def _load_states(
     transcript_artifacts = {
         row.id: row
         for row in session.exec(
-            select(PodcastTextArtifactRecord).where(
+            select(
+                PodcastTextArtifactRecord.id, PodcastTextArtifactRecord.episode_id,
+                PodcastTextArtifactRecord.kind,
+            ).where(
                 PodcastTextArtifactRecord.id.in_(transcript_ids)
             )
         ).all()
@@ -438,8 +460,10 @@ def _load_states(
     for row in processing_rows:
         processings.setdefault(row.episode_id, row)
     source_names = {
-        row.source_id: row.name
-        for row in session.exec(select(SourceConfigRecord)).all()
+        source_id: name
+        for source_id, name in session.exec(
+            select(SourceConfigRecord.source_id, SourceConfigRecord.name)
+        ).all()
     }
     blog_ids = set(session.exec(
         select(PodcastTextPublicationRecord.episode_id).where(

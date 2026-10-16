@@ -2158,25 +2158,15 @@ def _mark_failure(
     return ProcessResult(task.article_id, status, TaggingStatus.PENDING.value)
 
 
-async def process_claimed_analysis(
+def _prepare_claimed_analysis(
     engine: Engine,
     task: ClaimedAnalysisTask,
     *,
     llm_config: LLMConfig,
-    analyzer: Analyzer = analyze_article_with_llm,
-    timeout_seconds: int = ANALYSIS_LEASE_SECONDS,
-    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
-    candidate_enabled: bool = False,
-    now_fn: Callable[[], dt.datetime] = _utc_now,
-    image_notes_provider: ImageNotesProvider = default_image_notes_provider,
-) -> ProcessResult:
-    """Run one lease without holding a DB connection during the LLM request.
-
-    ``image_notes_provider``(issue #69)runs after the input is assembled and
-    before the scoring call, outside any DB session: it may spend its own time
-    budget on vision calls, and whatever it returns (possibly "") is attached
-    as ``AnalysisInput.image_notes``.  A provider failure never fails the lease.
-    """
+    max_attempts: int,
+    now_fn: Callable[[], dt.datetime],
+) -> tuple[AnalysisInput, list[TaxonomyTagDTO]] | ProcessResult:
+    """Build detached inputs; this worker owns every Session it opens."""
 
     with Session(engine) as session:
         record = session.get(ArticleAnalysisRecord, task.article_id)
@@ -2246,76 +2236,22 @@ async def process_claimed_analysis(
             session.commit()
             session.refresh(record)
             return ProcessResult(task.article_id, record.status, record.tagging_status)
+    return article_input, active_tags
 
-    # 整次处理的总上限(codex 检视 F6):识图 + 评分共享同一个 deadline,识图用掉的时间
-    # 从评分预算里扣;识图把预算耗尽则直接按 timeout 收口、不再调评分——租约 300s 的
-    # 安全余量不因多了一步识图而被吃掉。
-    effective_timeout = min(
-        float(ANALYSIS_LEASE_SECONDS),
-        max(0.001, float(timeout_seconds)),
-    )
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + effective_timeout
 
-    # 配图识别(issue #69):在 DB 会话之外、评分调用之前补上图片说明。提供者自带时间预算
-    # 与失败兜底(空串),这里再包一层硬上限——它是补充输入,任何异常都不能让租约失败。
-    if not article_input.image_notes:
-        provider_cap = min(
-            image_insights_service.ENSURE_BUDGET_SECONDS + 5.0,
-            max(0.001, deadline - loop.time()),
-        )
-        try:
-            notes = await asyncio.wait_for(
-                image_notes_provider(task.article_id, llm_config), timeout=provider_cap
-            )
-        except Exception as exc:  # noqa: BLE001 - includes TimeoutError
-            logger.warning("image notes provider failed (article_id=%s): %s", task.article_id, sanitize_error(exc))
-            notes = ""
-        if notes:
-            article_input = replace(article_input, image_notes=str(notes))
-    analysis_input_hash = compute_analysis_input_hash(article_input, active_tags)
+def _persist_claimed_analysis(
+    engine: Engine,
+    task: ClaimedAnalysisTask,
+    *,
+    article_input: AnalysisInput,
+    validated: ValidatedAnalysis,
+    analysis_input_hash: str,
+    llm_config: LLMConfig,
+    candidate_enabled: bool,
+    ended: dt.datetime,
+) -> ProcessResult:
+    """Recheck the lease/authority and commit without blocking the event loop."""
 
-    remaining = deadline - loop.time()
-    if remaining <= 0:
-        return _mark_failure(
-            engine,
-            task,
-            status=AnalysisStatus.TIMEOUT.value,
-            error=f"analysis exceeded {effective_timeout:g} seconds (image notes consumed the budget)",
-            now=_as_utc(now_fn()),
-            max_attempts=max_attempts,
-        )
-    try:
-        call = analyzer(article_input, active_tags, llm_config)
-        raw = await asyncio.wait_for(
-            call if inspect.isawaitable(call) else _immediate(call),
-            timeout=remaining,
-        )
-        validated = validate_analysis_payload(
-            raw,
-            active_tags=active_tags,
-            **_content_value_expectations(article_input),
-        )
-    except TimeoutError:
-        return _mark_failure(
-            engine,
-            task,
-            status=AnalysisStatus.TIMEOUT.value,
-            error=f"analysis exceeded {effective_timeout:g} seconds",
-            now=_as_utc(now_fn()),
-            max_attempts=max_attempts,
-        )
-    except Exception as exc:  # noqa: BLE001 - persisted retry state is the boundary
-        return _mark_failure(
-            engine,
-            task,
-            status=AnalysisStatus.FAILED.value,
-            error=exc,
-            now=_as_utc(now_fn()),
-            max_attempts=max_attempts,
-        )
-
-    ended = _as_utc(now_fn())
     with Session(engine) as session:
         record = session.get(ArticleAnalysisRecord, task.article_id)
         article = session.get(ArticleRecord, task.article_id)
@@ -2520,6 +2456,110 @@ async def process_claimed_analysis(
     return ProcessResult(task.article_id, AnalysisStatus.SUCCEEDED.value, tag_status)
 
 
+async def process_claimed_analysis(
+    engine: Engine,
+    task: ClaimedAnalysisTask,
+    *,
+    llm_config: LLMConfig,
+    analyzer: Analyzer = analyze_article_with_llm,
+    timeout_seconds: int = ANALYSIS_LEASE_SECONDS,
+    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    candidate_enabled: bool = False,
+    now_fn: Callable[[], dt.datetime] = _utc_now,
+    image_notes_provider: ImageNotesProvider = default_image_notes_provider,
+) -> ProcessResult:
+    """Run one lease without holding a DB connection during the LLM request.
+
+    ``image_notes_provider``(issue #69)runs after the input is assembled and
+    before the scoring call, outside any DB session: it may spend its own time
+    budget on vision calls, and whatever it returns (possibly "") is attached
+    as ``AnalysisInput.image_notes``.  A provider failure never fails the lease.
+    """
+
+    prepared = await asyncio.to_thread(
+        _prepare_claimed_analysis, engine, task,
+        llm_config=llm_config, max_attempts=max_attempts, now_fn=now_fn,
+    )
+    if isinstance(prepared, ProcessResult):
+        return prepared
+    article_input, active_tags = prepared
+
+    # 整次处理的总上限(codex 检视 F6):识图 + 评分共享同一个 deadline,识图用掉的时间
+    # 从评分预算里扣;识图把预算耗尽则直接按 timeout 收口、不再调评分——租约 300s 的
+    # 安全余量不因多了一步识图而被吃掉。
+    effective_timeout = min(
+        float(ANALYSIS_LEASE_SECONDS),
+        max(0.001, float(timeout_seconds)),
+    )
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + effective_timeout
+
+    # 配图识别(issue #69):在 DB 会话之外、评分调用之前补上图片说明。提供者自带时间预算
+    # 与失败兜底(空串),这里再包一层硬上限——它是补充输入,任何异常都不能让租约失败。
+    if not article_input.image_notes:
+        provider_cap = min(
+            image_insights_service.ENSURE_BUDGET_SECONDS + 5.0,
+            max(0.001, deadline - loop.time()),
+        )
+        try:
+            notes = await asyncio.wait_for(
+                image_notes_provider(task.article_id, llm_config), timeout=provider_cap
+            )
+        except Exception as exc:  # noqa: BLE001 - includes TimeoutError
+            logger.warning("image notes provider failed (article_id=%s): %s", task.article_id, sanitize_error(exc))
+            notes = ""
+        if notes:
+            article_input = replace(article_input, image_notes=str(notes))
+    analysis_input_hash = compute_analysis_input_hash(article_input, active_tags)
+
+    remaining = deadline - loop.time()
+    if remaining <= 0:
+        return await asyncio.to_thread(
+            _mark_failure, engine,
+            task,
+            status=AnalysisStatus.TIMEOUT.value,
+            error=f"analysis exceeded {effective_timeout:g} seconds (image notes consumed the budget)",
+            now=_as_utc(now_fn()),
+            max_attempts=max_attempts,
+        )
+    try:
+        call = analyzer(article_input, active_tags, llm_config)
+        raw = await asyncio.wait_for(
+            call if inspect.isawaitable(call) else _immediate(call),
+            timeout=remaining,
+        )
+        validated = validate_analysis_payload(
+            raw,
+            active_tags=active_tags,
+            **_content_value_expectations(article_input),
+        )
+    except TimeoutError:
+        return await asyncio.to_thread(
+            _mark_failure, engine,
+            task,
+            status=AnalysisStatus.TIMEOUT.value,
+            error=f"analysis exceeded {effective_timeout:g} seconds",
+            now=_as_utc(now_fn()),
+            max_attempts=max_attempts,
+        )
+    except Exception as exc:  # noqa: BLE001 - persisted retry state is the boundary
+        return await asyncio.to_thread(
+            _mark_failure, engine,
+            task,
+            status=AnalysisStatus.FAILED.value,
+            error=exc,
+            now=_as_utc(now_fn()),
+            max_attempts=max_attempts,
+        )
+
+    return await asyncio.to_thread(
+        _persist_claimed_analysis, engine, task,
+        article_input=article_input, validated=validated,
+        analysis_input_hash=analysis_input_hash, llm_config=llm_config,
+        candidate_enabled=candidate_enabled, ended=_as_utc(now_fn()),
+    )
+
+
 def _apply_content_value(
     record: ArticleAnalysisRecord,
     result: ArticleAnalysisResultDTO,
@@ -2692,33 +2732,19 @@ async def _immediate(value: Any) -> Any:
     return value
 
 
-async def run_analysis_cycle(
+def _prepare_analysis_cycle(
     engine: Engine,
     *,
-    worker_id: str,
-    llm_config: LLMConfig,
-    analyzer: Analyzer = analyze_article_with_llm,
-    enabled: Optional[bool] = None,
-    candidate_enabled: Optional[bool] = None,
-    batch_size: int = DEFAULT_BATCH_SIZE,
-    max_batches: int = DEFAULT_MAX_BATCHES_PER_CYCLE,
-    scan_limit: int = DEFAULT_SCAN_LIMIT,
-    now_fn: Callable[[], dt.datetime] = _utc_now,
-    image_notes_provider: ImageNotesProvider = default_image_notes_provider,
-) -> list[ProcessResult]:
-    """Scheduler integration point for the all-in-one V1 runtime.
+    enabled: bool | None,
+    candidate_enabled: bool | None,
+    max_batches: int,
+    scan_limit: int,
+    backfill_owner: str,
+    now: dt.datetime,
+) -> tuple[bool, int | None] | None:
+    """Recover/scan in a worker; return scalars, never live ORM records."""
 
-    Live/missing work is claimed first. Historical full-analysis items are only
-    dispatched into remaining batch capacity, after which the same newest-first
-    claim path and lease/retry machinery processes them.  A scheduler tick drains
-    up to ``max_batches`` immediately instead of sleeping a minute after every
-    map-sized claim; each batch remains bounded by ``map_concurrency`` so all
-    leases start promptly.
-    """
-
-    now = _as_utc(now_fn())
     backfill_job_id: Optional[int] = None
-    backfill_owner = f"{worker_id}:full-analysis"
     with Session(engine) as session:
         effective_enabled = (
             read_feature_flag(session, ARTICLE_ANALYSIS_ENABLED_KEY, default=False)
@@ -2726,9 +2752,9 @@ async def run_analysis_cycle(
             else enabled
         )
         if not effective_enabled:
-            return []
+            return None
         if max_batches <= 0:
-            return []
+            return None
         effective_candidates = (
             read_feature_flag(session, TAXONOMY_CANDIDATE_ENABLED_KEY, default=False)
             if candidate_enabled is None
@@ -2753,9 +2779,125 @@ async def run_analysis_cycle(
                 now=now,
             )
             backfill_job_id = int(backfill_job.id)
+    return effective_candidates, backfill_job_id
+
+
+def _claim_analysis_batch(
+    engine: Engine,
+    *,
+    worker_id: str,
+    concurrency: int,
+    backfill_job_id: int | None,
+    backfill_owner: str,
+    batch_now: dt.datetime,
+) -> list[ClaimedAnalysisTask]:
+    from services import analysis_backfill as backfill_service
+
+    with Session(engine) as session:
+        current_backfill = (
+            session.get(TagRetagJobRecord, backfill_job_id)
+            if backfill_job_id is not None
+            else None
+        )
+        if (
+            current_backfill is not None
+            and current_backfill.status == "running"
+            and current_backfill.lease_owner == backfill_owner
+        ):
+            current_backfill = backfill_service.reconcile_full_analysis_backfill(
+                session,
+                current_backfill,
+                lease_owner=backfill_owner,
+                now=batch_now,
+            )
+
+        tasks = claim_analysis_tasks(
+            session,
+            worker_id=worker_id,
+            limit=concurrency,
+            now=batch_now,
+        )
+        remaining = max(0, concurrency - len(tasks))
+        if (
+            current_backfill is not None
+            and current_backfill.status == "running"
+            and remaining
+        ):
+            dispatched = backfill_service.dispatch_full_analysis_backfill(
+                session,
+                current_backfill,
+                lease_owner=backfill_owner,
+                limit=remaining,
+                now=batch_now,
+            )
+            if dispatched:
+                tasks.extend(
+                    claim_analysis_tasks(
+                        session,
+                        worker_id=worker_id,
+                        limit=remaining,
+                        now=batch_now,
+                    )
+                )
+    return tasks
+
+
+def _reconcile_analysis_cycle(
+    engine: Engine, *, backfill_job_id: int, backfill_owner: str, now: dt.datetime,
+) -> None:
+    from services import analysis_backfill as backfill_service
+
+    with Session(engine) as session:
+        current = session.get(TagRetagJobRecord, backfill_job_id)
+        if (
+            current is not None
+            and current.status == "running"
+            and current.lease_owner == backfill_owner
+        ):
+            backfill_service.reconcile_full_analysis_backfill(
+                session,
+                current,
+                lease_owner=backfill_owner,
+                now=now,
+            )
+
+
+async def run_analysis_cycle(
+    engine: Engine,
+    *,
+    worker_id: str,
+    llm_config: LLMConfig,
+    analyzer: Analyzer = analyze_article_with_llm,
+    enabled: Optional[bool] = None,
+    candidate_enabled: Optional[bool] = None,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    max_batches: int = DEFAULT_MAX_BATCHES_PER_CYCLE,
+    scan_limit: int = DEFAULT_SCAN_LIMIT,
+    now_fn: Callable[[], dt.datetime] = _utc_now,
+    image_notes_provider: ImageNotesProvider = default_image_notes_provider,
+) -> list[ProcessResult]:
+    """Scheduler integration point for the all-in-one V1 runtime.
+
+    Live/missing work is claimed first. Historical full-analysis items are only
+    dispatched into remaining batch capacity, after which the same newest-first
+    claim path and lease/retry machinery processes them.  A scheduler tick drains
+    up to ``max_batches`` immediately instead of sleeping a minute after every
+    map-sized claim; each batch remains bounded by ``map_concurrency`` so all
+    leases start promptly.
+    """
+
+    backfill_owner = f"{worker_id}:full-analysis"
+    prepared = await asyncio.to_thread(
+        _prepare_analysis_cycle, engine, enabled=enabled,
+        candidate_enabled=candidate_enabled, max_batches=max_batches,
+        scan_limit=scan_limit, backfill_owner=backfill_owner, now=_as_utc(now_fn()),
+    )
+    if prepared is None:
+        return []
+    effective_candidates, backfill_job_id = prepared
     # Every leased task starts promptly; otherwise a sequential batch could let
     # later leases expire while the first LLM call consumes its five minutes.
-    # Only the short claim/finalize sections touch SQLite.
+    # Each DB phase owns its Session in a worker; model calls stay on this loop.
     concurrency = max(
         1,
         min(batch_size, llm_config.map_concurrency, MAX_ANALYSIS_CONCURRENCY),
@@ -2777,52 +2919,11 @@ async def run_analysis_cycle(
     results: list[ProcessResult] = []
     for _batch_number in range(max_batches):
         batch_now = _as_utc(now_fn())
-        with Session(engine) as session:
-            current_backfill = (
-                session.get(TagRetagJobRecord, backfill_job_id)
-                if backfill_job_id is not None
-                else None
-            )
-            if (
-                current_backfill is not None
-                and current_backfill.status == "running"
-                and current_backfill.lease_owner == backfill_owner
-            ):
-                current_backfill = backfill_service.reconcile_full_analysis_backfill(
-                    session,
-                    current_backfill,
-                    lease_owner=backfill_owner,
-                    now=batch_now,
-                )
-
-            tasks = claim_analysis_tasks(
-                session,
-                worker_id=worker_id,
-                limit=concurrency,
-                now=batch_now,
-            )
-            remaining = max(0, concurrency - len(tasks))
-            if (
-                current_backfill is not None
-                and current_backfill.status == "running"
-                and remaining
-            ):
-                dispatched = backfill_service.dispatch_full_analysis_backfill(
-                    session,
-                    current_backfill,
-                    lease_owner=backfill_owner,
-                    limit=remaining,
-                    now=batch_now,
-                )
-                if dispatched:
-                    tasks.extend(
-                        claim_analysis_tasks(
-                            session,
-                            worker_id=worker_id,
-                            limit=remaining,
-                            now=batch_now,
-                        )
-                    )
+        tasks = await asyncio.to_thread(
+            _claim_analysis_batch, engine, worker_id=worker_id,
+            concurrency=concurrency, backfill_job_id=backfill_job_id,
+            backfill_owner=backfill_owner, batch_now=batch_now,
+        )
 
         if not tasks:
             break
@@ -2834,8 +2935,8 @@ async def run_analysis_cycle(
             if isinstance(outcome, BaseException):
                 # One unexpected worker failure must not cancel siblings or
                 # strand its lease. Reuse the normal retry transition.
-                results.append(_mark_failure(
-                    engine,
+                results.append(await asyncio.to_thread(
+                    _mark_failure, engine,
                     task,
                     status=AnalysisStatus.FAILED.value,
                     error=outcome,
@@ -2847,19 +2948,10 @@ async def run_analysis_cycle(
 
     if backfill_job_id is not None:
         try:
-            with Session(engine) as session:
-                current = session.get(TagRetagJobRecord, backfill_job_id)
-                if (
-                    current is not None
-                    and current.status == "running"
-                    and current.lease_owner == backfill_owner
-                ):
-                    backfill_service.reconcile_full_analysis_backfill(
-                        session,
-                        current,
-                        lease_owner=backfill_owner,
-                        now=_as_utc(now_fn()),
-                    )
+            await asyncio.to_thread(
+                _reconcile_analysis_cycle, engine, backfill_job_id=backfill_job_id,
+                backfill_owner=backfill_owner, now=_as_utc(now_fn()),
+            )
         except Exception as exc:  # noqa: BLE001 - analysis results remain authoritative
             logger.warning("Failed to reconcile full-analysis backfill job %s: %s", backfill_job_id, exc)
     return results
