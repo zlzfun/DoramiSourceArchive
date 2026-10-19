@@ -7491,13 +7491,6 @@ input[type="radio"] {
     color: var(--dorami-ink);
   }
 
-  .reader-src-unread {
-    font-size: 12px;
-    color: var(--dorami-accent-ink);
-    font-variant-numeric: tabular-nums;
-    flex-shrink: 0;
-  }
-
   /* 源分组小节头(样页 .src-label):细字距灰签,无计数芯片 */
   .reader-src-label {
     padding: 14px 10px 6px;
@@ -7543,14 +7536,6 @@ input[type="radio"] {
 
   .reader-fav-icon.is-on { color: #f59e0b; }
   .reader-fav-icon.is-on:hover { color: #d97706; }
-
-  /* 源行未读计数(样页 .src-count):裸数字,不做徽标芯片;计数走黑体 tabular-nums(conventions §4) */
-  .reader-src-count {
-    font-size: 12px;
-    color: var(--dorami-faint);
-    font-variant-numeric: tabular-nums;
-    flex-shrink: 0;
-  }
 
   /* 「发现更多来源」触发行(样页 .src-more):虚线框幽灵行 */
   .reader-src-more {
@@ -7800,9 +7785,6 @@ input[type="radio"] {
     pointer-events: auto;
   }
 
-  .reader-source-row:hover .reader-src-count { opacity: 0; }
-  .reader-src-count { transition: opacity 130ms var(--motion-ease); }
-
   /* hover 提示移除（红） */
   .reader-pin-on:hover:not(:disabled) {
     color: #dc2626;
@@ -7884,7 +7866,7 @@ input[type="radio"] {
   }
 
   /* ── 未读体系 ──
-     · 源行计数：裸数字(.reader-src-count,黑体 tabular-nums),行整体 has-unread 提字重;
+     · 源行：不显示每源未读数(conventions §3),有未读只由行整体 has-unread 提字重;
      · 圆点（条目首行右缘）：7px 品牌蓝点，读过缩零淡出；
      · 列表头动作（全部标读）：安静图标钮，语义色品牌蓝；
      · 新内容提示条：列表顶 sticky 胶囊，点击刷新——轮询只提示、不自动插入打断阅读。 */
