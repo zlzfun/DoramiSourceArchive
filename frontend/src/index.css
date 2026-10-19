@@ -7544,7 +7544,7 @@ input[type="radio"] {
   .reader-fav-icon.is-on { color: #f59e0b; }
   .reader-fav-icon.is-on:hover { color: #d97706; }
 
-  /* 源行未读计数(样页 .src-count):等宽裸数字,不做徽标芯片 */
+  /* 源行未读计数(样页 .src-count):裸数字,不做徽标芯片;计数走黑体 tabular-nums(conventions §4) */
   .reader-src-count {
     font-size: 12px;
     color: var(--dorami-faint);
@@ -7884,7 +7884,7 @@ input[type="radio"] {
   }
 
   /* ── 未读体系 ──
-     · 源行计数：等宽裸数字(.reader-src-count),行整体 has-unread 提字重;
+     · 源行计数：裸数字(.reader-src-count,黑体 tabular-nums),行整体 has-unread 提字重;
      · 圆点（条目首行右缘）：7px 品牌蓝点，读过缩零淡出；
      · 列表头动作（全部标读）：安静图标钮，语义色品牌蓝；
      · 新内容提示条：列表顶 sticky 胶囊，点击刷新——轮询只提示、不自动插入打断阅读。 */

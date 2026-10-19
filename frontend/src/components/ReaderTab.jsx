@@ -51,7 +51,7 @@ import PersonalBriefPage from './PersonalBriefPage';
 import InterestPage from './InterestPage';
 import RankingsPage from './RankingsPage';
 import AnalysisTagChip from './AnalysisTagChip';
-import { excerptOf, hostOf, latinLang } from '../utils/readerText';
+import { excerptOf, hostOf, latinLang, formatUnreadCount } from '../utils/readerText';
 import { highlightMatch } from '../utils/highlight';
 import { dayLabelOf } from '../utils/readerTime';
 import { buildListPlan } from '../utils/listPlan';
@@ -813,11 +813,18 @@ export default function ReaderTab({
                         ) : (
                           <LogoMark company={resolveCompany(source)} size="s20" emoji={source.icon} />
                         )}
-                        {/* 每源未读数字已撤(减噪 + 名字铺满右侧);未读靠行整体加粗(has-unread)示意,
-                            总数看顶部「我的订阅 · N 未读」。退订钮浮层化,不占布局。 */}
                         <p className="reader-source-name min-w-0 flex-1">{source.name || source.source_id}</p>
                         {/* 临时隐藏的已订阅源:条目保留但内容停发,标记说明状态;悬停退订钮照常浮出 */}
                         {source.hidden && <span className="reader-src-off">暂不可用</span>}
+                        {/* 每源未读数:裸数字不做徽标芯片(conventions §4:计数走黑体 tabular-nums)。
+                            退订钮浮层化,悬停时这里淡出让位(CSS 里两条规则成对),故数字与减号不争同一格。
+                            单位用 sr-only 补在数字后:行是 role=button,可读名成了「源名 12 篇未读」。 */}
+                        {unread > 0 && (
+                          <span className="reader-src-count" title={`${unread} 篇未读`}>
+                            {formatUnreadCount(unread)}
+                            <span className="sr-only"> 篇未读</span>
+                          </span>
+                        )}
                         <button
                           type="button"
                           title="取消订阅"

@@ -5,6 +5,14 @@ export function formatDate(value) {
   return String(value).replace('T', ' ').substring(0, 10);
 }
 
+// 未读计数的显示值:超过 999 收成 999+(源行窄、等宽数字,再多一位就会把源名挤到换行)。
+// 阅读器源栏(桌面)与移动端源抽屉共用,免得两处各写一遍截断规则而漂移。
+export function formatUnreadCount(n) {
+  const num = Number(n) || 0;
+  if (num <= 0) return '';
+  return num > 999 ? '999+' : String(num);
+}
+
 // 剥离裸 markdown 标记（图片/链接/标题/列表/引用/强调/代码），折叠空白。
 // 展示层清洗，不改动存储；台账摘要与阅读器卡片摘要共用同一套规则。
 export function stripMarkdown(text) {
