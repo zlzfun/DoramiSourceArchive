@@ -1,0 +1,533 @@
+/* 全局播放条样页(issue #199 · 方案 C「随行」升级,第二轮:条位 × 配色)。类名前缀 ppg-;只用 index.css 的 token。
+   形变全程只动 transform / opacity / clip-path;悬停样式包在 @media (hover: hover) 里(触屏点按后 :hover 会粘住)。
+   动态颜色只有一个运行时变量 --ppg-cover(JS 写入,已按主题夹住明度彩度),其余颜色都是 token 或 token 的 color-mix。 */
+
+/* ═════════════ 对照外壳 ═════════════ */
+html, body { margin: 0; }
+body.ppg-host { background: var(--dorami-canvas); color: var(--dorami-ink); font-family: var(--font-sans); }
+.ppg-host-wrap { padding: 24px 24px 56px; }
+.ppg-host-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin-bottom: 14px; }
+.ppg-host-head h1 { margin: 0; font: 600 24px/1.3 var(--font-serif); }
+.ppg-host-head span { color: var(--dorami-muted); font-size: 13px; }
+.ppg-host-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; margin-bottom: 10px; }
+.ppg-host-label { margin-right: 6px; color: var(--dorami-muted); font-size: 12px; font-weight: 600; }
+.ppg-host-seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r-control); background: var(--dorami-well); }
+.ppg-host-seg button { border: 0; border-radius: calc(var(--r-control) - 2px); padding: 6px 12px; background: transparent; color: var(--dorami-muted); font: inherit; font-size: 13px; cursor: pointer; }
+.ppg-host-seg button.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
+.ppg-host-reset { border: 1px solid var(--dorami-border-strong); border-radius: var(--r-control); padding: 6px 12px; background: var(--dorami-surface); color: var(--dorami-ink-2); font: inherit; font-size: 13px; cursor: pointer; }
+.ppg-host-notes { margin: 0 0 16px; padding-left: 18px; color: var(--dorami-muted); font-size: 13px; line-height: 1.75; }
+.ppg-host-stage { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 24px; }
+.ppg-host-frame { display: grid; gap: 8px; }
+.ppg-host-frame > span { color: var(--dorami-muted); font-size: 12px; font-weight: 600; }
+.ppg-host-frame iframe { display: block; border: 0; background: var(--dorami-surface); box-shadow: 0 0 0 1px var(--dorami-border-soft), var(--sh-2); }
+.ppg-host-frame.is-mobile iframe { border-radius: var(--r-overlay); }
+/* 桌面画框按可用宽度等比缩放:外层占缩放后的尺寸,内层 iframe 用 transform 缩(交互坐标随之换算) */
+.ppg-host-scale { --s: 1; --w: 1440px; width: calc(var(--w) * var(--s)); height: calc(900px * var(--s)); }
+.ppg-host-scale iframe { transform: scale(var(--s)); transform-origin: 0 0; border-radius: calc(var(--r-card) / var(--s)); }
+
+/* ═════════════ 画框底座 ═════════════ */
+html[data-device] { height: 100%; overflow: hidden; }
+html[data-device] body { height: 100%; overflow: hidden; background: var(--dorami-surface); color: var(--dorami-ink); font-family: var(--font-sans); }
+#ppg-root { height: 100%; }
+.ppg-app { position: relative; height: 100%; --ppg-dock-h: 72px; }
+/* 现网 reader-shell 按 App 外框算宽高(100vw / 顶栏偏移),画框里铺满即可 */
+.ppg-app .ppg-shell { width: 100%; height: 100%; margin: 0; border-top: 0; }
+.ppg-app .reader-list-inner { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.ppg-app .reader-sources-inner { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.ppg-app .reader-col-read { display: flex; flex-direction: column; min-height: 0; }
+.ppg-app .reader-vrail-btn svg, .ppg-app .reader-pane-iconbtn svg, .ppg-app .reader-unread-icon svg, .ppg-app .reader-search-icon svg { width: 16px; height: 16px; }
+.ppg-app .reader-vrail-btn svg { width: 18px; height: 18px; }
+.ppg-app .reader-vrail-brand svg { width: 18px; height: 18px; }
+.ppg-app .reader-tr-seg-btn svg, .ppg-app .reader-pane-act svg { width: 14px; height: 14px; flex: none; }
+.ppg-app .m-iconbtn svg { width: 19px; height: 19px; }
+.ppg-app .m-tab svg { width: 20px; height: 20px; }
+
+/* 网格:所有条位都多一行底行(默认 0 高);贴底条位在形变落地那一帧撑开到条高(data-docked),收起 / 关闭开始时收回 */
+.ppg-app.is-desktop .ppg-shell { grid-template-rows: minmax(0, 1fr) var(--ppg-space, 0px); }
+.ppg-app.is-desktop[data-docked] .ppg-shell { --ppg-space: var(--ppg-dock-h); }
+.ppg-app.is-desktop .ppg-shell > :is(.reader-col, .reader-disc) { grid-row: 1; }
+.ppg-app.is-desktop .ppg-shell > .reader-vrail { grid-row: 1 / -1; }
+.ppg-app.is-desktop[data-layout="full"] .ppg-shell > .reader-vrail { grid-row: 1; }
+/* 轨底:主题 / 设置 / 头像收进一组,全宽贴底时整组随轨变矮一起 FLIP */
+.ppg-rail-foot { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.ppg-rail-avatar { display: grid; place-items: center; margin-top: 8px; font-size: 12px; font-weight: 600; }
+
+/* 来源字标 / 节目封面小图(样页没有品牌注册表:播客用封面,文章源用字母方块) */
+.ppg-logo {
+  display: inline-grid; place-items: center; flex: none;
+  width: 15px; height: 15px; border-radius: var(--r-sm);
+  background: var(--dorami-logo-tile); box-shadow: inset 0 0 0 1px var(--dorami-logo-ring);
+  color: var(--dorami-ink-2); font-size: 8px; font-weight: 600; letter-spacing: -0.02em; line-height: 1;
+}
+.ppg-logo.is-row { width: 20px; height: 20px; font-size: 9px; }
+.ppg-logo.is-disc { width: 34px; height: 34px; font-size: 12px; }
+.ppg-src-cover, .ppg-crumb-cover { width: 20px; height: 20px; border-radius: var(--r-sm); object-fit: cover; flex: none; }
+.ppg-crumb-cover { width: 17px; height: 17px; }
+.reader-entry-top .ppg-logo { margin-right: 2px; }
+.reader-source-row .reader-src-avatar.ppg-soc-initial { display: grid; place-items: center; font-size: 10px; }
+
+/* 条目行:正在播的那一期,时长前挂「律动条 播放中」(状态是状态,不是动作——不画按钮) */
+.ppg-row-now { display: inline-flex; align-items: center; gap: 5px; color: var(--dorami-accent-ink); font-weight: 600; }
+.reader-entry-top .ppg-row-now { margin-left: 8px; font-size: 12px; }
+
+/* ═════════════ 标题区收听入口(方案 C) ═════════════ */
+.ppg-app .reader-pane-foot { row-gap: 14px; }
+.ppg-app .reader-pane-foot .reader-pane-actions { flex: 1 1 100%; }
+.ppg-app .reader-pane-actions > .ppg-entries { margin-right: auto; }
+.ppg-head-listen { margin-top: 14px; }
+.ppg-entries { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ppg-entry {
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 30px; padding: 0 13px 0 11px;
+  border: 1px solid var(--dorami-border-strong); border-radius: var(--r-pill);
+  background: var(--dorami-surface); color: var(--dorami-ink-2);
+  font-size: 13px; font-weight: 600; line-height: 1; white-space: nowrap; cursor: pointer;
+  transition: background-color var(--motion-fast) var(--motion-ease), border-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+}
+.ppg-len { font-weight: 400; color: var(--dorami-muted); font-variant-numeric: tabular-nums; }
+.ppg-entry.is-primary { border-color: transparent; background: var(--dorami-blue); color: #fff; box-shadow: var(--sh-1); }
+.ppg-entry.is-primary .ppg-len { color: inherit; opacity: 0.82; }
+.ppg-entry.is-current { border-color: transparent; background: var(--dorami-select); color: var(--dorami-ink); }
+.ppg-entry.is-busy { cursor: default; color: var(--dorami-muted); }
+@media (hover: hover) {
+  .ppg-entry:not(.is-primary):not(.is-current):not(.is-busy):hover { background: color-mix(in srgb, var(--dorami-ink) 5%, var(--dorami-surface)); color: var(--dorami-ink); }
+  .ppg-entry.is-primary:hover { background: color-mix(in srgb, var(--dorami-blue) 86%, #000); }
+  .ppg-entry.is-current:hover { background: color-mix(in srgb, var(--dorami-ink) 11%, transparent); }
+}
+.ppg-e-ico { display: inline-grid; place-items: center; flex: none; width: 12px; height: 12px; }
+.ppg-e-ico svg { width: 11px; height: 11px; }
+.ppg-spark {
+  display: inline-block; flex: none; width: 13px; height: 13px; background: var(--grad-ai);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2c.6 5.4 2.6 7.4 10 10-7.4 2.6-9.4 4.6-10 10-.6-5.4-2.6-7.4-10-10 7.4-2.6 9.4-4.6 10-10Z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2c.6 5.4 2.6 7.4 10 10-7.4 2.6-9.4 4.6-10 10-.6-5.4-2.6-7.4-10-10 7.4-2.6 9.4-4.6 10-10Z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.ppg-e-ico .ppg-spark { width: 13px; height: 13px; }
+.ppg-spark.is-breathing { animation: ppg-breathe 1.6s var(--motion-ease) infinite; }
+@keyframes ppg-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.32; } }
+.ppg-eq { display: inline-flex; align-items: flex-end; gap: 2px; flex: none; width: 12px; height: 12px; }
+.ppg-eq i { display: block; width: 2.5px; height: 100%; border-radius: var(--r-pill); background: var(--dorami-accent); transform-origin: bottom; transform: scaleY(0.5); }
+.ppg-eq i:nth-child(2) { transform: scaleY(1); }
+.ppg-eq i:nth-child(3) { transform: scaleY(0.72); }
+.ppg-eq.is-ai i:nth-child(1) { background: var(--ai-g1); }
+.ppg-eq.is-ai i:nth-child(2) { background: color-mix(in srgb, var(--ai-g1), var(--ai-g2)); }
+.ppg-eq.is-ai i:nth-child(3) { background: var(--ai-g2); }
+.ppg-eq.is-live i { animation: ppg-eq 0.9s ease-in-out infinite; }
+.ppg-eq.is-live i:nth-child(2) { animation-delay: -0.3s; }
+.ppg-eq.is-live i:nth-child(3) { animation-delay: -0.6s; }
+@keyframes ppg-eq { 0%, 100% { transform: scaleY(0.3); } 50% { transform: scaleY(1); } }
+.ppg-app.is-mobile .ppg-entry { height: 40px; padding: 0 12px 0 11px; font-size: 14px; }
+.ppg-app.is-mobile .ppg-len { font-size: 13px; }
+
+/* ═════════════ 正文:「节目简介 | 导读稿」视图切换(与播放哪条音轨无关) ═════════════ */
+.ppg-view-head { display: flex; align-items: center; gap: 10px; margin: 2px 0 16px; }
+.ppg-view-seg { height: 30px; padding: 3px; }
+.ppg-view-seg .reader-tr-seg-btn { height: 22px; padding: 0 11px; font-size: 13px; font-weight: 400; }
+.ppg-view-seg .reader-tr-seg-btn.is-on { font-weight: 400; }
+.ppg-view-seg .reader-tr-seg-btn .ppg-spark { width: 11px; height: 11px; }
+.ppg-view-note { color: var(--dorami-faint); font-size: 12px; }
+.ppg-guide { padding: 0; }
+.ppg-guide .markdown-body h3 { margin: 22px 0 8px; font: 600 18px/1.4 var(--font-serif); }
+.ppg-guide .markdown-body h3:first-child { margin-top: 4px; }
+.ppg-app.is-mobile .ppg-view-seg .reader-tr-seg-btn { height: 34px; padding: 0 14px; font-size: 14px; }
+.ppg-app.is-mobile .ppg-view-seg { height: 40px; }
+
+/* ═════════════ 社交流卡片(值取自现网 index.css 的 .social-*,改 ppg- 前缀复写) ═════════════ */
+.ppg-soc-post { position: relative; padding: 22px 0 20px; border-bottom: 1px solid var(--dorami-border-soft); }
+.ppg-soc-post:last-of-type { border-bottom: none; }
+.ppg-soc-repost { display: flex; align-items: center; gap: 6px; margin: 0 0 8px 44px; color: var(--dorami-faint); font-size: 12px; font-weight: 600; }
+.ppg-soc-repost svg { width: 13px; height: 13px; }
+.ppg-soc-body { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; }
+.ppg-soc-ava { width: 34px; height: 34px; border-radius: var(--r-pill); object-fit: cover; background: var(--dorami-well); }
+.ppg-soc-initial { display: grid; place-items: center; color: #fff; background: var(--dorami-blue); font-size: 13px; font-weight: 600; user-select: none; }
+.ppg-soc-main { min-width: 0; }
+.ppg-soc-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.ppg-soc-name { color: var(--dorami-ink); font-size: 13.5px; font-weight: 600; white-space: nowrap; }
+.ppg-soc-handle { color: var(--dorami-faint); font-size: 12px; white-space: nowrap; }
+.ppg-soc-time { color: var(--dorami-faint); font-size: 12px; white-space: nowrap; text-decoration: none; }
+.ppg-soc-text { margin: 3px 0 0; color: var(--dorami-ink-2); font-size: 13.5px; line-height: 1.62; white-space: pre-wrap; word-break: break-word; }
+.ppg-soc-text.is-clamped { display: -webkit-box; -webkit-line-clamp: 7; -webkit-box-orient: vertical; overflow: hidden; }
+.ppg-soc-more { margin-top: 4px; padding: 0; border: 0; background: none; color: var(--dorami-accent); font: inherit; font-size: 13px; cursor: pointer; }
+.ppg-soc-media { display: grid; gap: 3px; margin-top: 10px; overflow: hidden; border: 1px solid var(--dorami-border-soft); border-radius: var(--r-card); }
+.ppg-soc-media.n1 { grid-template-columns: 1fr; }
+.ppg-soc-media.n2 { grid-template-columns: 1fr 1fr; }
+.ppg-soc-media-item { display: block; position: relative; overflow: hidden; aspect-ratio: 16 / 8.4; background: var(--dorami-well); }
+.ppg-soc-media.n2 .ppg-soc-media-item { aspect-ratio: 1 / 1; }
+.ppg-soc-media-item img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.ppg-soc-quote { display: block; margin-top: 10px; padding: 11px 13px; border: 1px solid var(--dorami-border); border-radius: var(--r-card); background: color-mix(in srgb, var(--dorami-ink) 2.5%, transparent); text-decoration: none; }
+.ppg-soc-quote-head { display: flex; align-items: center; gap: 6px; }
+.ppg-soc-quote-name { color: var(--dorami-ink); font-size: 12.5px; font-weight: 600; }
+.ppg-soc-quote-text { display: block; margin-top: 4px; color: var(--dorami-muted); font-size: 12.5px; line-height: 1.55; }
+/* 手机社交列表 */
+.ppg-m-social { padding: 0 14px; }
+.ppg-m-social .reader-social-day { margin: 0 -14px; padding: 14px 14px 7px; }
+
+/* 发现页:播客封面用方圆角(与条目列一致),其它沿用现网圆形头像 */
+.reader-disc-avatar.ppg-disc-cover { border-radius: var(--r-sm); }
+.reader-disc-sub svg { width: 12px; height: 12px; flex: none; }
+.reader-disc-sub, .reader-disc-sub .t-on { display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
+
+/* ═════════════ 全局播放器 ═════════════ */
+/* 播放器层:挂在阅读器根上,在所有滚动容器之外。左边界由条位决定;手机固定在屏幕底 */
+.ppg-player {
+  position: absolute; z-index: 35; left: calc(var(--vrail) + var(--col-l) + var(--col-m)); right: 0; bottom: 0; height: 0; pointer-events: none;
+  /* ── 条的调色板(配色变体只改这里;文字 / 图标永远是 token 派生色,对比度见 PPG.audit) ── */
+  --ppg-base: var(--dorami-raised);
+  --ppg-bg: var(--ppg-base);
+  --ppg-bg-img: none;
+  --ppg-fg: var(--dorami-ink);
+  --ppg-fg-2: var(--dorami-muted);
+  --ppg-icon: var(--dorami-muted);
+  --ppg-hover: var(--dorami-hover);
+  --ppg-well: color-mix(in srgb, var(--dorami-ink) 6%, transparent);
+  --ppg-play-bg: var(--dorami-blue);
+  --ppg-play-fg: #fff;
+  --ppg-play-hover: color-mix(in srgb, var(--dorami-blue) 86%, #000);   /* 实心 accent 钮 hover 往深走(与主按钮同一规则) */
+  --ppg-rail: color-mix(in srgb, var(--dorami-ink) 13%, transparent);
+  --ppg-fill: var(--dorami-accent);
+  --ppg-ai-ink: var(--dorami-accent-ink);
+  --ppg-line: var(--dorami-border);
+  --ppg-spark: var(--grad-ai);
+}
+/* 阅读窗浮条锚在「当前主区域」:播客 / 文章是阅读窗,社交 / 发现是条目列 + 阅读窗合并的整幅 */
+.ppg-app.is-desktop[data-layout="pane"]:is([data-container="social"], [data-container="discover"]) .ppg-player { left: calc(var(--vrail) + var(--col-l)); }
+/* 宽条:内容区(视图轨右缘起)或全宽 */
+.ppg-app.is-desktop:is([data-layout="dock"], [data-layout="float"]) .ppg-player { left: var(--vrail); }
+.ppg-app.is-desktop[data-layout="full"] .ppg-player { left: 0; }
+/* 贴底条是外框的一部分:底色取外框色(与视图轨、源栏同一块),顶上一条细线 */
+.ppg-app.is-desktop:is([data-layout="dock"], [data-layout="full"]) .ppg-player { --ppg-base: var(--dorami-canvas); }
+.ppg-app.is-mobile .ppg-player { position: fixed; z-index: 45; left: 0; right: 0; }
+.ppg-fx { position: fixed; inset: 0; pointer-events: none; }
+.ppg-dock { position: absolute; left: 0; right: 0; bottom: 0; height: 0; container: ppg / inline-size; }
+/* 手机:列表页条在底部 Tab 栏之上,正文页贴安全区之上;推页时一起平移(transform,可合成) */
+.ppg-app.is-mobile .ppg-dock { transition: transform var(--ppg-settle-dur, 420ms) var(--ppg-settle, ease); }
+.ppg-app.is-mobile[data-page="list"] .ppg-dock { transform: translateY(calc(-1 * var(--ppg-tabbar, 0px))); }
+
+/* ── 配色变体 ──
+   混色一律在 oklab 里做,不用 oklch:Chrome 把低彩度颜色(外框 / 墨色这类近灰 token)的色相当作「无效」,
+   在 oklch 里两个近灰相混,结果的色相是 none,渲染时按 0°(偏粉)出色——无封面时本该等于外框色的底会泛一层粉。
+   oklab 没有色相分量,不存在这个问题;封面色与近灰底相混的方向也与 oklch 一致。
+   封面取色 / 封面模糊:播放钮与已播段改墨色(实心 accent 留给标题区的主钮,一屏只剩一处);副行文字向墨色收一档保对比度。
+   封面取色的底 = 封面主色(JS 夹好的 --ppg-cover)按 16% / 24% 混进表面色;没有封面的 AI 音轨不取色,回到中性底。 */
+.ppg-app:is([data-tone="cover"], [data-tone="blur"]) .ppg-player {
+  --ppg-fg-2: color-mix(in oklab, var(--dorami-muted) 70%, var(--dorami-ink));
+  --ppg-icon: var(--ppg-fg-2);
+  --ppg-play-bg: var(--dorami-ink);
+  --ppg-play-fg: var(--ppg-base);
+  --ppg-play-hover: color-mix(in oklab, var(--dorami-ink) 86%, var(--ppg-fg-2));   /* 墨色钮往副行色收一档(混黑在亮色下看不出) */
+  --ppg-fill: var(--dorami-ink);
+  --ppg-rail: color-mix(in srgb, var(--dorami-ink) 16%, transparent);
+  --ppg-hover: color-mix(in srgb, var(--dorami-ink) 7%, transparent);
+}
+.ppg-app[data-tone="cover"] .ppg-player { --ppg-bg: color-mix(in oklab, var(--ppg-cover, var(--ppg-base)) var(--ppg-tint, 16%), var(--ppg-base)); }
+[data-theme="dark"] .ppg-app[data-tone="cover"] .ppg-player { --ppg-tint: 24%; }
+/* 封面模糊:静态模糊位图(JS 预先算好的 64×64 data URL,不用 backdrop-filter、不用运行时 filter)上盖一层表面色遮罩 */
+/* 遮罩浓度 --ppg-veil-p 由 JS 按封面逐张算(最差像素也过对比度),缺省亮 70% / 暗 64% */
+.ppg-app[data-tone="blur"] .ppg-player {
+  --ppg-veil: color-mix(in srgb, var(--ppg-base) var(--ppg-veil-p, 70%), transparent);
+  --ppg-bg-img: linear-gradient(var(--ppg-veil), var(--ppg-veil)), var(--ppg-blur, none);
+}
+[data-theme="dark"] .ppg-app[data-tone="blur"] .ppg-player { --ppg-veil: color-mix(in srgb, var(--ppg-base) var(--ppg-veil-p, 64%), transparent); }
+/* 反色:与问哆啦美浮钮同一套——底取墨色、字取画布色;亮色下是深条,暗色下是亮条;AI 标记换反色渐变(浮钮同款) */
+.ppg-app[data-tone="inverse"] .ppg-player {
+  --ppg-bg: var(--dorami-ink);
+  --ppg-fg: var(--dorami-canvas);
+  --ppg-fg-2: color-mix(in oklab, var(--dorami-canvas) 72%, var(--dorami-ink));
+  --ppg-icon: var(--ppg-fg-2);
+  --ppg-hover: color-mix(in srgb, var(--dorami-canvas) 12%, transparent);
+  --ppg-well: color-mix(in srgb, var(--dorami-canvas) 12%, transparent);
+  --ppg-play-bg: var(--dorami-canvas);
+  --ppg-play-fg: var(--dorami-ink);
+  --ppg-play-hover: color-mix(in oklab, var(--dorami-canvas) 86%, var(--ppg-fg-2));
+  --ppg-rail: color-mix(in srgb, var(--dorami-canvas) 24%, transparent);
+  --ppg-fill: var(--dorami-canvas);
+  --ppg-ai-ink: color-mix(in oklab, var(--ai-g1-inv) 72%, var(--dorami-canvas));
+  --ppg-line: transparent;
+  --ppg-spark: linear-gradient(118deg, var(--ai-g1-inv), var(--ai-g2-inv));
+}
+/* 品牌淡底:accent 9% / 14% 混进表面色(公告横幅「强调」档同一思路),播放钮保持 accent */
+.ppg-app[data-tone="brand"] .ppg-player {
+  --ppg-bg: color-mix(in oklab, var(--dorami-accent) var(--ppg-tint, 9%), var(--ppg-base));
+  --ppg-fg-2: color-mix(in oklab, var(--dorami-muted) 75%, var(--dorami-ink));
+  --ppg-icon: var(--ppg-fg-2);
+  --ppg-hover: color-mix(in srgb, var(--dorami-ink) 7%, transparent);   /* hover 不引入 accent(conventions:accent 纪律) */
+}
+/* 暗色下 accent 实心钮压在 accent 淡底上,外缘只有 2.7:1;补一圈 1px 亮 accent 描边把外缘拉到 3:1 以上(审计 ring 列) */
+[data-theme="dark"] .ppg-app[data-tone="brand"] .ppg-player { --ppg-tint: 14%; --ppg-play-ring: var(--dorami-accent); }
+
+/* 渐隐:条上沿一段把正文「收」掉(只给阅读窗浮条——宽条横跨几种底色的栏,单色渐隐对不上;贴底条不压内容) */
+.ppg-scrim {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  height: calc(var(--ppg-bar-h, 60px) + 16px + 30px);
+  background: linear-gradient(to bottom, transparent, var(--rd-pane-bg, var(--dorami-surface)) 30px);
+  opacity: 0; transition: opacity var(--motion-medium) var(--motion-ease);
+}
+.ppg-app.is-desktop:not([data-layout="pane"]) .ppg-scrim { display: none; }
+.ppg-app.is-mobile .ppg-scrim { height: calc(var(--ppg-bar-h, 90px) + 8px + 26px + env(safe-area-inset-bottom)); transition: opacity var(--motion-medium) var(--motion-ease), transform var(--ppg-settle-dur, 420ms) var(--ppg-settle, ease); }
+.ppg-app.is-mobile[data-page="list"] .ppg-scrim { transform: translateY(calc(-1 * var(--ppg-tabbar, 0px))); }
+.ppg-app.is-mobile[data-page="list"] .ppg-scrim { background: linear-gradient(to bottom, transparent, var(--rd-list-bg) 26px); }
+.ppg-player[data-form="bar"]:not([data-leaving]) .ppg-scrim { opacity: 1; }
+
+/* ── 底部条 ── */
+.ppg-bar, .ppg-mini, .ppg-fx-plate {
+  background-color: var(--ppg-bg);
+  background-image: var(--ppg-bg-img);
+  background-size: cover;
+  background-position: center;
+}
+/* 封面模糊:位图放进条自己的一层(独立合成层),4 Hz 的进度 / 时间刷新只重绘上面那层的文字与进度,
+   不再连带把位图那几块重新光栅化(软件合成下实测:同一位图直接画在条上,稳态光栅耗时是中性档的 20 倍以上) */
+.ppg-app[data-tone="blur"] :is(.ppg-bar, .ppg-mini) { background-image: none; }
+.ppg-app[data-tone="blur"] :is(.ppg-bar, .ppg-mini)::before {
+  content: ''; position: absolute; inset: 0; z-index: 0; border-radius: inherit; pointer-events: none;
+  background-image: var(--ppg-bg-img); background-size: cover; background-position: center;
+  will-change: transform;
+}
+.ppg-player[data-assembling] :is(.ppg-bar, .ppg-mini)::before { opacity: 0; }
+[data-theme="dark"] .ppg-app[data-tone="blur"]:not([data-layout="dock"]):not([data-layout="full"]) :is(.ppg-bar, .ppg-mini)::before { box-shadow: inset 0 0 0 1px var(--dorami-card-bd); }
+/* 阅读窗浮条(第一轮):浮层语法(--r-overlay + --sh-3),居中于阅读窗,宽 ≤720 */
+.ppg-bar {
+  position: absolute; left: 0; right: 0; bottom: 16px; margin: 0 auto;
+  width: min(720px, calc(100% - 52px));
+  border-radius: var(--r-overlay);
+  box-shadow: var(--sh-3);
+  pointer-events: auto;
+  touch-action: none;
+}
+[data-theme="dark"] .ppg-bar { box-shadow: var(--sh-3), inset 0 0 0 1px var(--dorami-card-bd); }
+/* 内容区浮层:宽条,左右下各留 12px */
+.ppg-app.is-desktop[data-layout="float"] .ppg-bar { left: 12px; right: 12px; bottom: 12px; width: auto; height: var(--ppg-dock-h); margin: 0; }
+/* 贴底(内容区 / 全宽):外框的一部分——无圆角无影子,顶一条细线(border 会被浏览器取整到设备像素,小数缩放下也不发虚) */
+.ppg-app.is-desktop:is([data-layout="dock"], [data-layout="full"]) .ppg-bar {
+  left: 0; right: 0; bottom: 0; width: auto; height: var(--ppg-dock-h); margin: 0;
+  border-radius: 0; box-shadow: none; border-top: 1px solid var(--ppg-line);
+}
+.ppg-app.is-mobile .ppg-bar { left: 8px; right: 8px; width: auto; bottom: calc(8px + env(safe-area-inset-bottom)); }
+/* 形变中:真条只出内容,底板 / 影子 / 播放钮由形变层代画,落地同一帧换回 */
+.ppg-player[data-assembling] .ppg-bar,
+.ppg-player[data-assembling] .ppg-mini { background: transparent; box-shadow: none; border-top-color: transparent; }
+/* 落点由形变层代画:播放钮(三种形变都飞)、封面(条 ⇄ 迷你时飞) */
+.ppg-player[data-assembling] .ppg-play { opacity: 0; }
+.ppg-player[data-assembling="mini"] .ppg-mini-art .ppg-cover,
+.ppg-player[data-assembling="bar"] .ppg-bar .ppg-cover { opacity: 0; }
+/* 换台时旧底色冻结成一层,只动 opacity 淡出 */
+.ppg-tone-old { position: absolute; inset: 0; z-index: 0; border-radius: inherit; background-size: cover; background-position: center; pointer-events: none; }
+
+.ppg-bar-in {
+  position: relative; z-index: 1;
+  display: grid; align-items: center;
+  grid-template-columns: minmax(170px, 1.5fr) auto minmax(120px, 1fr) auto;
+  grid-template-areas: "info ctrl seek tail";
+  column-gap: 10px;
+  padding: 8px;
+}
+.ppg-row2 { display: contents; }
+.ppg-tail { grid-area: tail; display: flex; align-items: center; gap: 2px; }
+
+/* 正在播放:封面 + 标题 / 节目名(整块是「打开这一期」) */
+.ppg-info {
+  grid-area: info; display: flex; align-items: center; gap: 10px; min-width: 0;
+  margin: -2px; padding: 2px; border: 0; border-radius: var(--r-control);
+  background: transparent; color: inherit; text-align: left; cursor: pointer;
+}
+.ppg-art { flex: none; display: block; width: 44px; height: 44px; }
+.ppg-art-slot { display: block; width: 100%; height: 100%; }
+.ppg-cover { display: block; width: 100%; height: 100%; border-radius: var(--r-sm); object-fit: cover; background: var(--ppg-well); }
+.ppg-cover-ai { display: grid; place-items: center; background: var(--ppg-well); }
+.ppg-cover-ai .ppg-spark { width: 40%; height: 40%; }
+.ppg-player .ppg-spark { background: var(--ppg-spark); }
+.ppg-info-slot { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ppg-title { overflow: hidden; color: var(--ppg-fg); font-size: 13px; font-weight: 600; line-height: 1.25; white-space: nowrap; text-overflow: ellipsis; }
+.ppg-title[lang="en"] { font-family: var(--font-sans); }
+.ppg-sub { display: flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden; color: var(--ppg-fg-2); font-size: 12px; line-height: 1.25; white-space: nowrap; }
+.ppg-sub > span:not(.ppg-spark) { overflow: hidden; text-overflow: ellipsis; }
+.ppg-sub .ppg-spark { width: 11px; height: 11px; }
+.ppg-ai { flex: none; color: var(--ppg-ai-ink); font-weight: 600; }
+
+/* 控制:±15 = 图标 + 12px 数字;中性 / 品牌配色下播放钮是条上唯一的实心 accent */
+.ppg-ctrl { grid-area: ctrl; display: flex; align-items: center; gap: 2px; }
+.ppg-btn {
+  position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 2px;
+  height: 32px; min-width: 32px; padding: 0 6px; border: 0; border-radius: var(--r-pill);
+  background: transparent; color: var(--ppg-icon);
+  font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1; cursor: pointer;
+  transition: background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+}
+.ppg-btn svg { width: 15px; height: 15px; flex: none; }
+.ppg-min svg, .ppg-close svg { width: 17px; height: 17px; }
+.ppg-rate { min-width: 38px; }
+.ppg-rate.is-on { color: var(--ppg-fg); }
+.ppg-play {
+  display: grid; place-items: center; flex: none; width: 40px; height: 40px; margin: 0 2px;
+  border: 0; border-radius: var(--r-pill); background: var(--ppg-play-bg); color: var(--ppg-play-fg); box-shadow: var(--sh-1), inset 0 0 0 1px var(--ppg-play-ring, transparent);
+  cursor: pointer; transition: background-color var(--motion-fast) var(--motion-ease);
+}
+.ppg-play-ico { position: relative; display: block; width: 15px; height: 15px; }
+.ppg-play-ico > span { position: absolute; inset: 0; display: grid; place-items: center; transition: opacity var(--motion-fast) var(--motion-ease); }
+.ppg-play-ico svg { width: 15px; height: 15px; }
+.ppg-g-play svg { transform: translateX(1px); }   /* ▶ 视觉重心偏左,右挪 1px 才居中 */
+.ppg-player[data-playing] .ppg-play .ppg-g-play,
+.ppg-player:not([data-playing]) .ppg-play .ppg-g-pause { opacity: 0; }
+
+/* 进度:细轨 + 已播段(transform: scaleX)+ 常显拖柄;时间黑体 tabular */
+.ppg-seek { grid-area: seek; display: flex; align-items: center; gap: 4px; min-width: 0; }
+.ppg-time { flex: none; min-width: 36px; color: var(--ppg-fg-2); font-size: 12px; font-variant-numeric: tabular-nums; }
+.ppg-cur { text-align: right; }
+.ppg-track { position: relative; flex: 1; min-width: 48px; height: 28px; }
+.ppg-track-in { position: absolute; inset: 0 6px; cursor: pointer; touch-action: none; outline: none; }
+.ppg-rail { position: absolute; left: 0; right: 0; top: 50%; height: 4px; margin-top: -2px; overflow: hidden; border-radius: var(--r-pill); background: var(--ppg-rail); }
+.ppg-fill { display: block; width: 100%; height: 100%; background: var(--ppg-fill); transform-origin: left; transform: scaleX(var(--ppg-p, 0)); }
+.ppg-thumb {
+  position: absolute; top: 50%; left: calc(var(--ppg-p, 0) * 100%); width: 12px; height: 12px; margin: -6px 0 0 -6px;
+  border-radius: var(--r-pill); background: var(--ppg-fill); box-shadow: 0 0 0 2px var(--ppg-bg);
+  transition: transform var(--motion-fast) var(--motion-ease), box-shadow var(--motion-fast) var(--motion-ease);
+}
+.ppg-track-in[data-dragging] .ppg-thumb { transform: scale(1.25); }
+.ppg-track-in:focus-visible .ppg-thumb { transform: scale(1.25); box-shadow: 0 0 0 2px var(--ppg-bg), 0 0 0 4px var(--dorami-focus); }
+
+@media (hover: hover) {
+  .ppg-info:hover .ppg-title { text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--ppg-fg) 30%, transparent); text-underline-offset: 3px; }
+  .ppg-btn:hover { background: var(--ppg-hover); color: var(--ppg-fg); }
+  .ppg-play:hover { background: var(--ppg-play-hover); }
+  .ppg-track-in:hover .ppg-thumb { transform: scale(1.25); }
+  .ppg-mini-art:hover .ppg-cover { filter: brightness(0.92); }
+}
+
+/* 窄容器(手机 / 窄阅读窗,< 640px):两行——上:封面 标题 ±15 播放;下:进度 倍速 缩小 关闭。
+   第二行视觉 32px,::after 外扩到 40px 触控面 */
+@container ppg (max-width: 640px) {
+  .ppg-bar-in {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "info ctrl" "row2 row2";
+    row-gap: 2px; column-gap: 8px;
+    padding: 8px 8px 4px 8px;
+  }
+  .ppg-row2 { grid-area: row2; display: flex; align-items: center; gap: 2px; min-width: 0; }
+  .ppg-seek { flex: 1; }
+  .ppg-art { width: 40px; height: 40px; }
+  .ppg-ctrl .ppg-btn { height: 40px; min-width: 40px; }
+  .ppg-play { width: 44px; height: 44px; }
+  .ppg-play-ico, .ppg-play-ico svg { width: 16px; height: 16px; }
+  .ppg-row2 .ppg-btn::after { content: ''; position: absolute; inset: -4px; }
+  .ppg-track { height: 32px; }
+  .ppg-track-in { inset: -4px 6px; }
+}
+
+/* 宽条三区(内容区贴底 / 内容区浮层 / 全宽贴底,容器 ≥ 900px):
+   左 = 封面 + 标题 / 节目名(余量全给它);中 = 控制在上、进度在下,中区封顶 600px,1920 宽也不会被拉空;右 = 倍速 / 缩小 / 关闭 */
+@container ppg (min-width: 900px) {
+  .ppg-app.is-desktop:not([data-layout="pane"]) .ppg-bar-in {
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 600px) minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    grid-template-areas: "info ctrl tail" "info seek tail";
+    align-content: center;
+    column-gap: 28px; row-gap: 0;
+    height: 100%; box-sizing: border-box;
+    padding: 4px 14px 5px;   /* 左右对称:中区严格落在条的中线上 */
+  }
+  .ppg-app.is-desktop:not([data-layout="pane"]) .ppg-ctrl { justify-self: center; align-self: end; }
+  .ppg-app.is-desktop:not([data-layout="pane"]) .ppg-seek { align-self: start; }
+  .ppg-app.is-desktop:not([data-layout="pane"]) .ppg-tail { justify-self: end; }
+  .ppg-app.is-desktop:not([data-layout="pane"]) .ppg-art { width: 48px; height: 48px; }
+  .ppg-app.is-desktop:not([data-layout="pane"]) .ppg-play { width: 36px; height: 36px; }
+  .ppg-app.is-desktop:not([data-layout="pane"]) .ppg-track { height: 22px; }
+  .ppg-app.is-desktop:not([data-layout="pane"]) .ppg-title { font-size: 13.5px; }
+}
+
+/* ── 迷你:右下角小胶囊 = 带进度环的封面(点开展开)+ 播放 / 暂停。所有条位共用(贴底条缩小即把空间全部还给各栏) ── */
+.ppg-mini {
+  position: absolute; right: 22px; bottom: 22px;
+  display: flex; align-items: center; gap: 4px; padding: 4px;
+  border-radius: var(--r-pill); box-shadow: var(--sh-3);
+  pointer-events: auto;
+}
+[data-theme="dark"] .ppg-mini { box-shadow: var(--sh-3), inset 0 0 0 1px var(--dorami-card-bd); }
+.ppg-app.is-mobile .ppg-mini { right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); }
+.ppg-mini-art { position: relative; z-index: 1; display: block; width: 40px; height: 40px; padding: 0; border: 0; border-radius: var(--r-pill); background: transparent; cursor: pointer; }
+.ppg-mini-art .ppg-art-slot { position: absolute; inset: 4px; width: auto; height: auto; }
+.ppg-mini-art .ppg-cover { border-radius: var(--r-pill); }
+.ppg-ring { position: absolute; inset: 0; width: 40px; height: 40px; transform: rotate(-90deg); }
+.ppg-ring circle { fill: none; stroke-width: 2.5; }
+.ppg-ring-track { stroke: var(--ppg-rail); }
+.ppg-ring-fill { stroke: var(--ppg-fill); stroke-linecap: round; stroke-dasharray: calc(var(--ppg-p, 0) * 100) 100; }
+.ppg-mini .ppg-play { position: relative; z-index: 1; width: 40px; height: 40px; margin: 0; }
+
+/* ── 形变层 ── */
+.ppg-fx > * { position: fixed; left: 0; top: 0; will-change: transform; }
+.ppg-fx-box { display: block; }
+[data-theme="dark"] .ppg-fx-plate { box-shadow: inset 0 0 0 1px var(--dorami-card-bd); }
+.ppg-app.is-desktop:is([data-layout="dock"], [data-layout="full"]) .ppg-fx-plate { box-shadow: inset 0 1px 0 var(--ppg-line); }
+.ppg-fx-shadow { display: block; background: transparent; box-shadow: var(--sh-3); transform-origin: 0 0; }
+.ppg-fx-core { background: var(--dorami-blue); }
+.ppg-fx-core.is-tone { background: var(--ppg-play-bg); }
+.ppg-fx-art { overflow: hidden; }
+.ppg-fx-art .ppg-cover { border-radius: 0; }
+.ppg-fx-fly { display: block; transform-origin: 50% 50%; }
+.ppg-fx-glyph { position: relative; display: block; width: 100%; height: 100%; color: #fff; }
+.ppg-fx-glyph .ppg-g-pause, .ppg-fx-glyph.is-tone { color: var(--ppg-play-fg); }
+.ppg-fx-glyph > span { position: absolute; inset: 0; display: grid; place-items: center; }
+.ppg-fx-glyph svg { width: 100%; height: 100%; }
+.ppg-fx-glyph > svg { display: block; }
+.ppg-fx-glyph.is-token { color: var(--dorami-accent); }
+.ppg-fx-label { display: flex; align-items: center; gap: 7px; box-sizing: border-box; color: #fff; white-space: nowrap; }
+.ppg-fx-label .ppg-len { color: inherit; opacity: 0.82; }
+/* 副本的查询容器:固定在视口原点、与播放条容器同宽;副本在里面按视口坐标 translate */
+.ppg-fx > .ppg-fx-cq { height: 0; container: ppg / inline-size; will-change: auto; }
+.ppg-fx-cq > .ppg-fx-ghost { position: absolute; left: 0; top: 0; will-change: transform; }
+.ppg-fx-ghost { display: grid; }
+.ppg-fx-ticker { display: flex; overflow: hidden; }
+.ppg-fx-ticker.ppg-info-slot { flex-direction: column; justify-content: center; }
+
+/* ── 占位:各栏底部让出位置,最后一行不被遮挡 ──
+   阅读窗浮条:只压当前主区域;内容区浮层:压所有栏(源栏 / 条目列 / 阅读窗 / 社交流 / 发现页);
+   贴底:网格底行已让出空间,一栏都不压;迷你:右下角一小块,压右侧主栏 */
+.ppg-app.is-desktop[data-layout="pane"][data-form="bar"] :is(.reader-pane, .reader-social-scroll, .reader-disc-scroll) { padding-bottom: max(96px, calc(var(--ppg-bar-h, 60px) + 16px + 30px + 16px)); }
+.ppg-app.is-desktop[data-layout="float"][data-form="bar"] :is(.reader-pane, .reader-list-scroll, .reader-source-scroll, .reader-social-scroll, .reader-disc-scroll) { padding-bottom: calc(var(--ppg-dock-h) + 12px + 20px); }
+/* 内容区浮层横跨几种底色的栏,单色渐隐对不上:改用各栏自己的 mask 把底边淡掉(露出的是各栏自己的底色),
+   卡片四周 12px 缝里不再露半行字。落地那一帧才上 mask(data-landed),收起 / 关闭开始时撤掉——
+   形变途中不逐帧重绘 mask;切换瞬间只有卡片四周 12px 的缝有变化,其余部分正被条盖住 */
+.ppg-app.is-desktop[data-layout="float"][data-landed] :is(.reader-pane, .reader-list-scroll, .reader-source-scroll, .reader-social-scroll, .reader-disc-scroll) {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--ppg-dock-h) - 12px - 34px), transparent calc(100% - var(--ppg-dock-h) - 12px + 6px));
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--ppg-dock-h) - 12px - 34px), transparent calc(100% - var(--ppg-dock-h) - 12px + 6px));
+}
+.ppg-app.is-desktop[data-form="mini"] :is(.reader-pane, .reader-social-scroll, .reader-disc-scroll) { padding-bottom: max(96px, calc(48px + 22px + 24px)); }
+.ppg-app.is-mobile[data-form="bar"] .m-list { padding-bottom: calc(var(--ppg-bar-h, 90px) + 8px + 26px + 8px); }
+.ppg-app.is-mobile[data-form="bar"] .m-read-scroll { padding-bottom: calc(var(--ppg-bar-h, 90px) + 8px + 26px + 12px + env(safe-area-inset-bottom)); }
+.ppg-app.is-mobile[data-form="mini"] .m-read-scroll { padding-bottom: calc(48px + 24px + env(safe-area-inset-bottom)); }
+.ppg-app.is-mobile[data-form="mini"] .m-list { padding-bottom: calc(48px + 32px + env(safe-area-inset-bottom)); }
+
+/* ── 问哆啦美浮钮:放进一个槽,槽负责避让(transform),浮钮自身的悬停动效照旧 ── */
+/* 浮钮在播放器层之上(静止时它们不重叠;形变途中底板扫过浮钮所在的角,浮钮应浮在上面而不是被盖住) */
+.ppg-fab-slot { position: absolute; right: 22px; bottom: 22px; z-index: 40; }
+.ppg-fab-slot .reader-ai-fab { position: static; }
+.ppg-fab-slot.is-settling .reader-ai-fab { pointer-events: none; }
+.ppg-fab-slot .reader-ai-fab svg { width: 16px; height: 16px; color: var(--ai-g2-inv); }
+.ppg-app[data-container="discover"] .ppg-fab-slot { display: none; }   /* 现网发现页不挂问哆啦美 */
+
+/* ── 手机正文页(push) ──
+   现网 --rd-pane-bg / --rd-list-bg 定义在 .m-shell / .m-page 上;正文页在样页里与列表页平级,这里在根上补齐同一组值 */
+.ppg-app.is-mobile { --rd-list-bg: var(--dorami-soft); --rd-pane-bg: var(--dorami-surface); }
+[data-theme="dark"] .ppg-app.is-mobile { --rd-list-bg: var(--dorami-well); --rd-pane-bg: var(--dorami-soft); }
+.ppg-mread[hidden] { display: none; }
+.ppg-app.is-mobile .m-read-scroll .reader-pane-head { max-width: none; }
+
+/* ═════════════ View Transitions 对照(?morph=vt) ═════════════ */
+:root.ppg-vt::view-transition-old(root),
+:root.ppg-vt::view-transition-new(root) { animation: none; }
+::view-transition-group(ppg-plate) {
+  animation-duration: 560ms; animation-timing-function: var(--ppg-morph-ease, ease);
+  overflow: clip; border-radius: var(--r-overlay); background: var(--dorami-raised); box-shadow: var(--sh-3);
+}
+::view-transition-old(ppg-plate),
+::view-transition-new(ppg-plate) { width: 100%; height: 100%; object-fit: none; object-position: left center; }
+::view-transition-old(ppg-plate) { animation: ppg-vt-out 120ms ease-out both; }
+::view-transition-new(ppg-plate) { animation: ppg-vt-in 240ms ease 240ms both; }
+::view-transition-group(ppg-glyph) { animation-duration: 560ms; animation-timing-function: var(--ppg-morph-ease, ease); }
+@keyframes ppg-vt-out { to { opacity: 0; } }
+@keyframes ppg-vt-in { from { opacity: 0; } }
+
+/* ═════════════ 减少动效:形变退化为简单淡入(JS 侧直接落地),循环动画停在静止帧 ═════════════ */
+:root[data-motion="reduce"] .ppg-eq i,
+:root[data-motion="reduce"] .ppg-spark.is-breathing { animation: none; }
+:root[data-motion="reduce"] .ppg-scrim,
+:root[data-motion="reduce"] .ppg-dock,
+:root[data-motion="reduce"] .ppg-thumb { transition: none; }

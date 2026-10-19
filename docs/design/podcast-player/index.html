@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>播客区重设计</title>
+<link rel="stylesheet" href="assets/app.css">
+<style>
+  :root { color-scheme: light dark; }
+  html, body { margin: 0; background: var(--dorami-canvas); color: var(--dorami-ink); font-family: var(--font-sans); }
+  .sh { max-width: 1320px; margin: 0 auto; padding: 28px 24px 64px; }
+  .sh-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin-bottom: 18px; }
+  .sh-head h1 { margin: 0; font-family: var(--font-serif); font-size: 26px; font-weight: 700; }
+  .sh-head span { color: var(--dorami-muted); font-size: 13px; }
+  .sh-bar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; margin-bottom: 14px; }
+  .sh-label { font-size: 12px; font-weight: 600; color: var(--dorami-muted); margin-right: 6px; }
+  .sh-seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r-control); background: var(--dorami-well); }
+  .sh-seg button { border: 0; background: transparent; color: var(--dorami-muted); font: inherit; font-size: 13px; font-weight: 600; padding: 6px 12px; border-radius: calc(var(--r-control) - 2px); cursor: pointer; }
+  .sh-seg button.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
+  .sh-seg button:focus-visible { outline: 2px solid var(--dorami-accent); outline-offset: 1px; }
+  .sh-states { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; }
+  .sh-states button { border: 1px solid var(--dorami-border); background: var(--dorami-surface); color: var(--dorami-ink-2); font: inherit; font-size: 13px; padding: 6px 12px; border-radius: var(--r-pill); cursor: pointer; }
+  .sh-states button.is-on { border-color: var(--dorami-accent); color: var(--dorami-accent-ink); box-shadow: inset 0 0 0 1px var(--dorami-accent); }
+  .sh-states button small { color: var(--dorami-faint); margin-left: 6px; }
+  .sh-desc { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; margin: 0 0 18px; padding: 14px 18px; border-radius: var(--r-card); background: var(--dorami-surface); box-shadow: inset 0 0 0 1px var(--dorami-border-soft); }
+  .sh-desc h2 { margin: 0; font-size: 16px; }
+  .sh-desc p { margin: 0; color: var(--dorami-ink-2); font-size: 14px; line-height: 1.7; }
+  .sh-desc ul { margin: 4px 0 0; padding-left: 18px; color: var(--dorami-muted); font-size: 13px; line-height: 1.75; }
+  .sh-stage { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+  .sh-frame { display: grid; gap: 8px; }
+  .sh-frame > span { font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
+  .sh-frame iframe { display: block; border: 0; border-radius: 12px; background: var(--dorami-surface); box-shadow: 0 0 0 1px var(--dorami-border-soft), var(--sh-2); }
+  #f-desktop { width: 772px; height: 1040px; }
+  #f-mobile { width: 390px; height: 844px; border-radius: 28px; }
+</style>
+</head>
+<body>
+<div class="sh">
+  <div class="sh-head"><h1>播客区重设计</h1><span>issue #199 · 阅读窗里的节目卡、播放器与点播入口</span></div>
+  <div class="sh-bar">
+    <span><span class="sh-label">方案</span><span class="sh-seg" id="opts" role="group" aria-label="方案"></span></span>
+    <span><span class="sh-label">主题</span><span class="sh-seg" id="themes" role="group" aria-label="主题"><button data-v="dark">暗</button><button data-v="light">亮</button></span></span>
+  </div>
+  <div class="sh-states" id="states" role="group" aria-label="状态"></div>
+  <section class="sh-desc" id="desc" aria-live="polite"></section>
+  <div class="sh-stage">
+    <div class="sh-frame"><span>桌面阅读窗 · 772px</span><iframe id="f-desktop" title="桌面阅读窗"></iframe></div>
+    <div class="sh-frame"><span>手机 · 390px</span><iframe id="f-mobile" title="手机阅读页"></iframe></div>
+  </div>
+</div>
+<script src="assets/data.js"></script>
+<script src="assets/opt-current.js"></script>
+<script src="assets/opt-a.js"></script>
+<script src="assets/opt-b.js"></script>
+<script src="assets/opt-c.js"></script>
+<script>
+  const q = new URLSearchParams(location.search);
+  const S = { opt: q.get('opt') || 'a', state: q.get('state') || 's1', theme: q.get('theme') || 'dark' };
+  const opts = Object.values(PP.options).sort((a, b) => a.order - b.order);
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  $('opts').innerHTML = opts.map((o) => `<button data-v="${o.id}">${esc(o.name)}</button>`).join('');
+  $('states').innerHTML = PP.states.map((s) => `<button data-v="${s.id}" title="${esc(s.note)}">${esc(s.label)}</button>`).join('');
+
+  function frameSrc(device) {
+    return `pane.html?opt=${S.opt}&state=${S.state}&theme=${S.theme}&device=${device}`;
+  }
+  function sync(reload = true) {
+    document.documentElement.dataset.theme = S.theme === 'dark' ? 'dark' : '';
+    for (const [id, key] of [['opts', 'opt'], ['themes', 'theme'], ['states', 'state']]) {
+      $(id).querySelectorAll('button').forEach((b) => {
+        const on = b.dataset.v === S[key];
+        b.classList.toggle('is-on', on);
+        b.setAttribute('aria-pressed', String(on));
+      });
+    }
+    const o = PP.options[S.opt];
+    $('desc').innerHTML = `<h2>${esc(o.name)}</h2><p>${esc(o.idea)}</p>${o.points?.length ? `<ul>${o.points.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>` : ''}`;
+    if (reload) { $('f-desktop').src = frameSrc('desktop'); $('f-mobile').src = frameSrc('mobile'); }
+    history.replaceState(null, '', `?opt=${S.opt}&state=${S.state}&theme=${S.theme}`);
+  }
+  $('opts').addEventListener('click', (e) => { const v = e.target.closest('button')?.dataset.v; if (v) { S.opt = v; sync(); } });
+  $('themes').addEventListener('click', (e) => { const v = e.target.closest('button')?.dataset.v; if (v) { S.theme = v; sync(); } });
+  $('states').addEventListener('click', (e) => {
+    const v = e.target.closest('button')?.dataset.v;
+    if (!v) return;
+    S.state = v; sync(false);
+    for (const f of ['f-desktop', 'f-mobile']) $(f).contentWindow?.postMessage({ type: 'pp-set-state', state: v }, '*');
+  });
+  // 画框里点了状态迁移(如点播 → 生成中),两个画框与状态条一起跟上
+  window.addEventListener('message', (e) => {
+    if (e.data?.type !== 'pp-state' || e.data.state === S.state) return;
+    S.state = e.data.state; sync(false);
+    for (const f of ['f-desktop', 'f-mobile']) if ($(f).contentWindow !== e.source) $(f).contentWindow?.postMessage({ type: 'pp-set-state', state: S.state }, '*');
+  });
+  sync();
+</script>
+</body>
+</html>

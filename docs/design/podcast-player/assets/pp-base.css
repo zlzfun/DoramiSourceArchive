@@ -1,0 +1,11 @@
+/* 样页画框底座:只补「编译产物抽取时没带上的 Tailwind 原子类」与画框几何,不定义任何方案样式 */
+html, body { height: 100%; margin: 0; }
+body { background: var(--dorami-surface); color: var(--dorami-ink); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+#pp-root { height: 100%; display: flex; flex-direction: column; }
+.pp-desktop { height: 100%; box-sizing: border-box; }
+.pp-mobile { position: relative; height: 100%; display: flex; flex-direction: column; }
+.pp-mobile .m-read-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+/* 现网 lucide 图标靠 h-3.5 w-3.5 等原子类定尺寸,抽取时未带上,这里补回 */
+.reader-tr-seg-btn svg, .reader-pane-act svg { width: 14px; height: 14px; flex: none; }
+.m-iconbtn svg { width: 20px; height: 20px; }
+.podcast-cover-fallback svg { width: 24px; height: 24px; }

@@ -1,0 +1,417 @@
+/* 方案 c「随行」:收听入口在标题区 + 底部常驻播放条。全部限定在 [data-opt="c"] 之下,类名前缀 ppc-。
+   只用 index.css 的 token:颜色 --dorami-* / 圆角 --r-* / 动效 --motion-* / 阴影 --sh-* / AI 身份 --grad-ai。
+   悬停样式一律包在 @media (hover: hover) 里:触屏点按后 :hover 会粘住,按钮会一直顶着悬停底色。 */
+
+/* ── 滚动容器:改为纵向 flex。粘底(sticky bottom)只管「不出底边」,内容不足一屏时
+      要靠 margin-top:auto 把播放条沉到底;子项钉满宽,auto 外边距照旧居中 720 版心 ── */
+.reader-pane[data-opt="c"],
+[data-opt="c"] .m-read-scroll {
+  display: flex;
+  flex-direction: column;
+}
+.reader-pane[data-opt="c"] > *,
+[data-opt="c"] .m-read-scroll > * {
+  flex-shrink: 0;
+  width: 100%;
+}
+
+/* ═════════════ 标题区入口 ═════════════ */
+
+/* 桌面:动作行独占尾行的第二行——左收听(主动作),右「原语言 | 译为中文」与查看原文 */
+[data-opt="c"] .reader-pane-foot { row-gap: 14px; }
+[data-opt="c"] .reader-pane-foot .reader-pane-actions { flex: 1 1 100%; }
+[data-opt="c"] .reader-pane-actions > .ppc-entries { margin-right: auto; }
+
+/* 移动:署名行之下、标签之上 */
+[data-opt="c"] .ppc-head-listen { margin-top: 14px; }
+
+[data-opt="c"] .ppc-entries {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 入口胶囊:默认是次钮(细线 + 表面底,与同一行的「原语言 | 译为中文」同底),
+   主钮 / 选中 / 生成中各是一个修饰。暗色也不上 raised:raised 与选中的 --dorami-select 在暗色几乎同亮 */
+[data-opt="c"] .ppc-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 13px 0 11px;
+  border: 1px solid var(--dorami-border-strong);
+  border-radius: var(--r-pill);
+  background: var(--dorami-surface);
+  color: var(--dorami-ink-2);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--motion-ease), border-color var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease);
+}
+[data-opt="c"] .ppc-len {
+  font-weight: 400;
+  color: var(--dorami-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 主钮:这一屏唯一的实心 accent(与 .action-button-primary 同一画法)。开始收听后实心交给播放条的播放钮 */
+[data-opt="c"] .ppc-entry.is-primary {
+  border-color: transparent;
+  background: var(--dorami-blue);
+  color: #fff;
+  box-shadow: var(--sh-1);
+}
+[data-opt="c"] .ppc-entry.is-primary .ppc-len { color: inherit; opacity: 0.82; }
+
+/* 选中(正在听 / 已选中的音轨):中性加深一档 + 墨色,全站选中语法 */
+[data-opt="c"] .ppc-entry.is-current {
+  border-color: transparent;
+  background: var(--dorami-select);
+  color: var(--dorami-ink);
+}
+
+/* 生成中:状态不是动作——同一个位置、同一个外形,字退成次要色,✦ 呼吸 */
+[data-opt="c"] .ppc-entry.is-busy {
+  cursor: default;
+  color: var(--dorami-muted);
+}
+
+@media (hover: hover) {
+  [data-opt="c"] .ppc-entry:not(.is-primary):not(.is-current):not(.is-busy):hover {
+    background: color-mix(in srgb, var(--dorami-ink) 5%, var(--dorami-surface));
+    color: var(--dorami-ink);
+  }
+  [data-opt="c"] .ppc-entry.is-primary:hover { background: color-mix(in srgb, var(--dorami-blue) 86%, #000); }
+  [data-opt="c"] .ppc-entry.is-current:hover { background: color-mix(in srgb, var(--dorami-ink) 11%, transparent); }
+}
+
+/* 入口图标:▶(原节目的「听」)/ ✦(AI 身份)/ 播放态律动条 */
+[data-opt="c"] .ppc-ico { display: inline-grid; place-items: center; flex: none; width: 12px; height: 12px; }
+[data-opt="c"] .ppc-ico svg { width: 11px; height: 11px; }
+[data-opt="c"] .ppc-spark {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  background: var(--grad-ai);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2c.6 5.4 2.6 7.4 10 10-7.4 2.6-9.4 4.6-10 10-.6-5.4-2.6-7.4-10-10 7.4-2.6 9.4-4.6 10-10Z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2c.6 5.4 2.6 7.4 10 10-7.4 2.6-9.4 4.6-10 10-.6-5.4-2.6-7.4-10-10 7.4-2.6 9.4-4.6 10-10Z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+[data-opt="c"] .ppc-spark.is-breathing { animation: ppc-breathe 1.6s var(--motion-ease) infinite; }
+@keyframes ppc-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.32; } }
+
+[data-opt="c"] .ppc-eq {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+[data-opt="c"] .ppc-eq i {
+  display: block;
+  width: 2.5px;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--dorami-accent);
+  transform-origin: bottom;
+  transform: scaleY(0.5);
+}
+[data-opt="c"] .ppc-eq i:nth-child(2) { transform: scaleY(1); }
+[data-opt="c"] .ppc-eq i:nth-child(3) { transform: scaleY(0.72); }
+/* 精品导读的律动条走 AI 渐变两端色(身份色;原节目不用) */
+[data-opt="c"] .ppc-eq.is-ai i:nth-child(1) { background: var(--ai-g1); }
+[data-opt="c"] .ppc-eq.is-ai i:nth-child(2) { background: color-mix(in srgb, var(--ai-g1), var(--ai-g2)); }
+[data-opt="c"] .ppc-eq.is-ai i:nth-child(3) { background: var(--ai-g2); }
+[data-opt="c"] .ppc-eq.is-live i { animation: ppc-eq 0.9s ease-in-out infinite; }
+[data-opt="c"] .ppc-eq.is-live i:nth-child(2) { animation-delay: -0.3s; }
+[data-opt="c"] .ppc-eq.is-live i:nth-child(3) { animation-delay: -0.6s; }
+@keyframes ppc-eq { 0%, 100% { transform: scaleY(0.3); } 50% { transform: scaleY(1); } }
+
+/* 移动入口:触控 40px;左右内边距收到 12/11,360px 宽的手机上两枚入口仍在一行 */
+.pp-mobile[data-opt="c"] .ppc-entry {
+  height: 40px;
+  padding: 0 12px 0 11px;
+  font-size: 14px;
+}
+.pp-mobile[data-opt="c"] .ppc-len { font-size: 13px; }
+
+/* ═════════════ 常驻播放条 ═════════════ */
+
+/* 外层:粘在滚动容器底部,上缘一段渐隐把卡片下面的正文「收」掉(否则卡片下沿会露出半行字)。
+   粘底的参照是滚动容器扣掉内边距后的内容框:bottom 取负的底内边距(桌面 96px)才贴到可视区底边;
+   margin-bottom 同样抵消它,滚到底时也贴底,不悬在半空。渐隐底色由 mount 取阅读窗实际底色写进 --ppc-bg。 */
+[data-opt="c"] .ppc-dock {
+  --ppc-bg: var(--dorami-surface);
+  container: ppc / inline-size;
+  position: sticky;
+  bottom: -96px;
+  z-index: 6;
+  max-width: 720px;
+  margin: auto auto -96px;
+  padding: 36px 0 16px;
+  background: linear-gradient(to bottom, transparent, var(--ppc-bg) 30px);
+  pointer-events: none;
+  transition: opacity var(--motion-medium) var(--motion-ease);
+}
+[data-opt="c"] .ppc-dock:not(.is-shown) { opacity: 0; }
+
+/* 卡片:浮层语法(--r-overlay + --sh-3 + raised 底,与模态同一档) */
+[data-opt="c"] .ppc-card {
+  pointer-events: auto;
+  display: grid;
+  grid-template-columns: 40px auto auto minmax(0, 1fr) auto auto;
+  grid-template-areas: "cover track ctrl seek rate close";
+  align-items: center;
+  column-gap: 12px;
+  padding: 8px;
+  border-radius: var(--r-overlay);
+  background: var(--dorami-raised);
+  box-shadow: var(--sh-3);
+  transition: transform var(--motion-medium) var(--motion-ease);
+}
+[data-theme="dark"] [data-opt="c"] .ppc-card { box-shadow: var(--sh-3), 0 0 0 1px var(--dorami-card-bd); }
+[data-opt="c"] .ppc-dock:not(.is-shown) .ppc-card { transform: translateY(14px); }
+
+[data-opt="c"] .ppc-cover {
+  grid-area: cover;
+  display: block;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--r-sm);
+  object-fit: cover;
+  background: var(--dorami-well);
+}
+
+/* 音轨:名称(精品导读带 ✦ 与「AI 生成」);两条音轨都在时整块是切换钮,第二行写去向 */
+[data-opt="c"] .ppc-track-slot { grid-area: track; min-width: 0; }
+[data-opt="c"] .ppc-track {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  width: calc(100% + 12px);   /* button 默认按内容收缩,不会撑满格子——不写宽度省略号就不生效 */
+  min-width: 0;
+  min-height: 40px;
+  margin: 0 -6px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--r-control);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+[data-opt="c"] button.ppc-track { cursor: pointer; transition: background-color var(--motion-fast) var(--motion-ease); }
+[data-opt="c"] .ppc-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--dorami-ink);
+  white-space: nowrap;
+}
+[data-opt="c"] .ppc-name .ppc-spark { width: 12px; height: 12px; }
+/* 窄屏先省略音轨名,「AI 生成」永远完整可读 */
+[data-opt="c"] .ppc-name-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+[data-opt="c"] .ppc-ai { flex: none; font-size: 12px; font-weight: 600; color: var(--dorami-accent-ink); }
+[data-opt="c"] .ppc-swap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.2;
+  color: var(--dorami-muted);
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+[data-opt="c"] .ppc-swap svg { width: 12px; height: 12px; flex: none; }
+
+/* 控制:±15 是图标 + 12px 数字(数字不缩进图标里,守 12px 下限);播放钮是条上唯一的实心 accent */
+[data-opt="c"] .ppc-ctrl { grid-area: ctrl; display: flex; align-items: center; gap: 2px; }
+[data-opt="c"] .ppc-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: 32px;
+  min-width: 32px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--dorami-muted);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+}
+[data-opt="c"] .ppc-btn svg { width: 15px; height: 15px; flex: none; }
+[data-opt="c"] .ppc-play {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  margin: 0 2px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--dorami-blue);
+  color: #fff;
+  box-shadow: var(--sh-1);
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--motion-ease);
+}
+[data-opt="c"] .ppc-play-ico { display: grid; place-items: center; }
+[data-opt="c"] .ppc-play svg { width: 14px; height: 14px; }
+/* ▶ 的视觉重心偏左:左边让 2px(居中后实际右移 1px);暂停的两根竖条不挪 */
+[data-opt="c"] .ppc-dock:not([data-playing]) .ppc-play svg { margin-left: 2px; }
+
+/* 进度:细轨 + accent 已播段 + 常显拖柄(可拖动要看得出来);时间黑体 tabular。
+   轨道左右各收 6px,拖柄在两端也不出轨;点击换算以收进去的轨道为准(data-pp-track 挂在内层) */
+[data-opt="c"] .ppc-row2 { display: contents; }
+[data-opt="c"] .ppc-seek {
+  grid-area: seek;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+[data-opt="c"] .ppc-time {
+  flex: none;
+  min-width: 36px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--dorami-muted);
+  font-variant-numeric: tabular-nums;
+}
+[data-opt="c"] .ppc-cur { text-align: right; }
+[data-opt="c"] .ppc-bar {
+  position: relative;
+  flex: 1;
+  min-width: 48px;
+  height: 28px;
+}
+[data-opt="c"] .ppc-bar-in {
+  position: absolute;
+  inset: 0 6px;
+  cursor: pointer;
+  touch-action: none;
+  outline: none;     /* 焦点改由拖柄外圈表示(见下),不再给整块画框 */
+}
+[data-opt="c"] .ppc-rail {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 4px;
+  margin-top: -2px;
+  overflow: hidden;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--dorami-ink) 13%, transparent);
+}
+[data-opt="c"] .ppc-fill { display: block; width: 0; height: 100%; background: var(--dorami-accent); }
+[data-opt="c"] .ppc-thumb {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border-radius: var(--r-pill);
+  background: var(--dorami-accent);
+  box-shadow: 0 0 0 2px var(--dorami-raised);
+  transition: transform var(--motion-fast) var(--motion-ease), box-shadow var(--motion-fast) var(--motion-ease);
+}
+[data-opt="c"] .ppc-bar-in[data-dragging] .ppc-thumb { transform: scale(1.25); }
+[data-opt="c"] .ppc-bar-in:focus-visible .ppc-thumb {
+  transform: scale(1.25);
+  box-shadow: 0 0 0 2px var(--dorami-raised), 0 0 0 4px var(--dorami-focus);
+}
+
+[data-opt="c"] .ppc-rate { grid-area: rate; min-width: 40px; }
+[data-opt="c"] .ppc-close { grid-area: close; }
+[data-opt="c"] .ppc-close svg { width: 18px; height: 18px; }
+
+@media (hover: hover) {
+  [data-opt="c"] button.ppc-track:hover { background: var(--dorami-hover); }
+  [data-opt="c"] button.ppc-track:hover .ppc-swap { color: var(--dorami-ink); }
+  [data-opt="c"] .ppc-btn:hover { background: var(--dorami-hover); color: var(--dorami-ink); }
+  [data-opt="c"] .ppc-play:hover { background: color-mix(in srgb, var(--dorami-blue) 86%, #000); }
+  [data-opt="c"] .ppc-bar-in:hover .ppc-thumb { transform: scale(1.25); }
+}
+
+/* 窄容器(手机 / 窄阅读窗):两行——上:封面 音轨 ±15 播放;下:进度 倍速 收起。
+   一行排下精品导读(音轨名 + AI 生成 + 去向)还要给进度轨留 ~120px,约需 660px,故 640 以下改两行。
+   第二行视觉 32px,倍速 / 收起的 ::after 与进度轨的命中区各自外扩到 40px 触控面 */
+@container ppc (max-width: 640px) {
+  [data-opt="c"] .ppc-card {
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "cover track ctrl"
+      "row2 row2 row2";
+    column-gap: 10px;
+    row-gap: 2px;
+    padding: 8px 8px 4px 10px;
+  }
+  [data-opt="c"] .ppc-row2 {
+    grid-area: row2;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+  }
+  [data-opt="c"] .ppc-seek { flex: 1; }
+  [data-opt="c"] .ppc-ctrl .ppc-btn { height: 40px; min-width: 40px; }
+  [data-opt="c"] .ppc-play { width: 44px; height: 44px; }
+  [data-opt="c"] .ppc-play svg { width: 16px; height: 16px; }
+  [data-opt="c"] .ppc-row2 .ppc-btn::after { content: ''; position: absolute; inset: -4px; }
+  [data-opt="c"] .ppc-bar { height: 32px; }
+  [data-opt="c"] .ppc-bar-in { inset: -4px 6px; }
+}
+
+/* 极窄(320px 级手机):封面让位给音轨名——功能字比装饰图要紧,「精品导读 AI 生成」不截断 */
+@container ppc (max-width: 350px) {
+  [data-opt="c"] .ppc-cover { display: none; }
+  [data-opt="c"] .ppc-card {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "track ctrl"
+      "row2 row2";
+    padding-left: 12px;
+  }
+}
+
+/* 移动:外层出血到屏幕两缘,卡片左右各留 8px;底部让出安全区(系统手势条) */
+.pp-mobile[data-opt="c"] .ppc-dock {
+  --ppc-bg: var(--rd-pane-bg, var(--dorami-surface));
+  max-width: none;
+  width: calc(100% + 40px);
+  bottom: calc(-32px - env(safe-area-inset-bottom));
+  margin: auto -20px calc(-32px - env(safe-area-inset-bottom));
+  padding: 30px 8px calc(8px + env(safe-area-inset-bottom));
+}
+
+/* ═════════════ 正文:按当前音轨显示导读稿或原节目材料 ═════════════ */
+[data-opt="c"] [data-ppc-body="normal"] > .ppc-guide { display: none; }
+[data-opt="c"] [data-ppc-body="guide"] > :is(.reader-ai-summary, .podcast-show-notes-head, .reader-article-copy, .reader-pane-origin) { display: none; }
+/* 导读稿直接接在标题区分隔线下:去掉它原来与播放卡之间的那条细线和留白 */
+[data-opt="c"] .ppc-guide > .podcast-text-panel { margin-top: 0; padding-top: 0; border-top: 0; }
+/* 原样式两层各 4px 横向内边距,导读稿会比标题区和节目简介右错 4–8px:对齐到同一条左边线 */
+[data-opt="c"] .ppc-guide .podcast-text-digest { padding: 0 0 6px; }
+[data-opt="c"] .ppc-guide .podcast-guide-body { padding: 14px 0 4px; }
+
+/* ═════════════ 减少动效 ═════════════ */
+:root[data-motion="reduce"] [data-opt="c"] :is(.ppc-eq i, .ppc-spark.is-breathing) { animation: none; }
+:root[data-motion="reduce"] [data-opt="c"] :is(.ppc-dock, .ppc-card, .ppc-thumb) { transition: none; }
