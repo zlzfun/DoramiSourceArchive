@@ -3980,7 +3980,7 @@ input[type="radio"] {
   .sett-nav-btn.is-on { background: var(--dorami-select); color: var(--dorami-ink); font-weight: 600; }
   .sett-nav-btn svg { width: 15px; height: 15px; flex: none; }
   .sett-nav-spacer { flex: 1; }
-  /* 反馈未读回复角标:数字胶囊贴导航行尾;accent 实底,与未读点同色系(不引第二饱和色) */
+  /* 反馈未读回复角标:数字胶囊贴导航行尾;accent 实底(不引第二饱和色) */
   .sett-nav-badge {
     margin-left: auto;
     min-width: 17px;
@@ -7867,21 +7867,9 @@ input[type="radio"] {
 
   /* ── 未读体系 ──
      · 源行：不显示每源未读数(conventions §3),有未读只由行整体 has-unread 提字重;
-     · 圆点（条目首行右缘）：7px 品牌蓝点，读过缩零淡出；
+     · 条目：不画未读点(issue #199),未读标题 600 墨色、已读 400 次墨色;社交卡读过整卡文字降 muted;
      · 列表头动作（全部标读）：安静图标钮，语义色品牌蓝；
      · 新内容提示条：列表顶 sticky 胶囊，点击刷新——轮询只提示、不自动插入打断阅读。 */
-  /* 未读点:绝对定位于标题左侧栏(标题行 position:relative 的锚点),
-     与右缘收藏星标错开;7px 品牌蓝点,读过缩零淡出。 */
-  .reader-unread-dot {
-    position: absolute;
-    left: -11px;
-    top: 8px;
-    width: 6px;
-    height: 6px;
-    border-radius: 9999px;
-    background: var(--dorami-accent);
-  }
-
   .reader-unread-icon {
     display: inline-flex;
     align-items: center;
@@ -8016,19 +8004,6 @@ input[type="radio"] {
     transition: background 140ms ease, box-shadow 140ms ease;
   }
 
-  /* A2 · 已读/未读区分回到首行小蓝点(.reader-unread-dot):标题不再降灰,
-     一律全墨(用户拍板:灰标题与圆点二者取圆点,减一层灰阶冗余)。 */
-
-  /* A2 · 未读点:常驻渲染,已读时缩零淡出(条件卸载无法过渡) */
-  .reader-unread-dot {
-    transition: transform 180ms var(--motion-ease), opacity 180ms ease;
-  }
-
-  .reader-unread-dot.is-off {
-    transform: scale(0);
-    opacity: 0;
-  }
-
   /* A3 · 条目首行的源 LogoMark 锚点(s15 精确尺寸,无需缩放) */
   .reader-entry-logo {
     display: inline-flex;
@@ -8092,7 +8067,6 @@ input[type="radio"] {
   :root[data-motion="reduce"] .reader-search-inline,
   :root[data-motion="reduce"] .skeleton-delay { animation: none; opacity: 1; }
   :root[data-motion="reduce"] .reader-search-inline { clip-path: none; }
-  :root[data-motion="reduce"] .reader-unread-dot,
   :root[data-motion="reduce"] .markdown-img-button img,
   :root[data-motion="reduce"] .reader-vrail-btn,
   :root[data-motion="reduce"] .reader-entry .reader-entry-title { transition: none; }
@@ -8393,7 +8367,7 @@ input[type="radio"] {
     display: block;
     width: 100%;
     text-align: left;
-    padding: 12px 6px 13px 16px;      /* 左内边距加宽:给标题左侧未读点留出不局促的槽,右侧仍铺满 */
+    padding: 12px 6px 13px 16px;      /* 左内边距 16:与日期组头 / 列头文字左缘对齐,右侧仍铺满 */
     border: none;
     border-radius: var(--r-control);
     background: transparent;
@@ -8533,7 +8507,7 @@ input[type="radio"] {
     font-variant-numeric: tabular-nums;
   }
 
-  /* 标题是条目行里唯一响亮的东西:未读 600 + 墨色;已读退到 400 + 次墨色(与左侧未读点两个信号) */
+  /* 标题是条目行里唯一响亮的东西:未读 600 + 墨色;已读退到 400 + 次墨色(读态唯一信号,不另画未读点) */
   .reader-entry-title {
     font-size: 15px;
     font-weight: 600;
@@ -9619,19 +9593,7 @@ input[type="radio"] {
     contain-intrinsic-size: auto 280px;
   }
   .social-post:last-of-type { border-bottom: none; }
-  /* 未读点:与 .reader-unread-dot 同语法(常驻渲染 + 淡出,条件卸载无法过渡) */
-  .social-post::before {
-    content: "";
-    position: absolute;
-    left: -13px;
-    top: 32px; /* 随卡片 padding 上移量同步,保持与首行文字对齐 */
-    width: 6px;
-    height: 6px;
-    border-radius: var(--r-pill);
-    background: var(--dorami-accent);
-    transition: opacity var(--motion-medium) var(--motion-ease);
-  }
-  .social-post.is-read::before { opacity: 0; }
+  /* 读态:读过整卡文字降 muted;不另画未读点(issue #199) */
   .social-post.is-read .social-text,
   .social-post.is-read .social-name { color: var(--dorami-muted); }
 

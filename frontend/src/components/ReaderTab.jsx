@@ -138,7 +138,7 @@ export function PaneBodySkeleton() {
 // 条目行(memo):未读轮询、搜索键入、hover 预取等高频父级渲染下,只有 props 实际
 // 变化的行才重渲(此前整列随任意父级 state 重渲)。回调经父级 latest-ref 稳定包装,
 // article/source 对象引用在增量追加下保持不变,memo 浅比较即可生效。
-// (export 供移动壳复用同一张条目卡——语法/收藏星/未读点单一事实来源。)
+// (export 供移动壳复用同一张条目卡——语法/收藏星/读态单一事实来源。)
 /* ── 三谓词过滤面板(issue #27 兴趣即透镜,样页 dorami-interest-lens-quiet ①):
    订阅 / 兴趣 / 收藏 三枚可多选开关,按源 / 按标签 / 按篇两两正交,AND 联合;
    选中态 = wash 底 + 勾(多选语义),与单选源行的浮白 + 弱高程分家;兴趣未设时灰掉,点它直落发现页兴趣段。
@@ -261,6 +261,8 @@ export const ArticleRow = memo(function ArticleRow({
         onContextMenu={(e) => onContextMenu(e, article, 'article')}
         className={`reader-entry ${compact ? 'is-compact' : ''} ${entryPodcast ? 'is-podcast' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'} ${isFav ? 'is-fav' : ''} ${ctxAnchor ? 'is-ctx-anchor' : ''}`}
       >
+        {/* 读态只由标题字重与墨色表达(is-read),不另画未读点(issue #199);读屏补一句「未读」与之对等 */}
+        {isUnread && <span className="sr-only">未读，</span>}
         {entryPodcast ? (
           <span className="reader-podcast-layout">
             <PodcastCover src={podcast?.image_url} className="reader-podcast-cover" />
@@ -281,7 +283,6 @@ export const ArticleRow = memo(function ArticleRow({
                 )}
               </span>
               <span className="reader-entry-titlerow">
-                <span className={`reader-unread-dot ${isUnread ? '' : 'is-off'}`} aria-hidden="true" />
                 <span className="reader-entry-title">{searchQuery ? highlightMatch(article.title || '（无标题）', searchQuery) : (article.title || '（无标题）')}</span>
                 {article.is_premium_podcast && <span className="podcast-premium-badge">优质播客</span>}
                 {favoriteControl}
@@ -334,7 +335,6 @@ export const ArticleRow = memo(function ArticleRow({
             </span>
             {/* 标题行内收藏控件复用 span role=button，避免 button 嵌套。 */}
             <span className="reader-entry-titlerow">
-              <span className={`reader-unread-dot ${isUnread ? '' : 'is-off'}`} aria-hidden="true" />
               <span className="reader-entry-title">{searchQuery ? highlightMatch(article.title || '（无标题）', searchQuery) : (article.title || '（无标题）')}</span>
               {favoriteControl}
             </span>
