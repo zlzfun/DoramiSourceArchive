@@ -84,9 +84,9 @@ hero:
 
 <FeatureRow title="听播客，也听中文导读" link="/features/podcasts" reverse>
 
-订阅的 AI 播客在「播客」里直接收听，播放位置自动记住。长访谈有 AI 整理的中文「精品导读」，几分钟听完要点。
+订阅的 AI 播客在「播客」里直接收听，换着看别的内容也不会中断，播放位置自动记住。长访谈有 AI 整理的中文「精品导读」，几分钟听完要点。
 
-<template #media><img src="./features/images/podcast-player.png" alt="播客单集页：节目标题、时长和原节目播放器"></template>
+<template #media><img src="./features/images/podcast-player.png" alt="播客页：单集标题下方是「收听原节目」，页面底部是播放条"></template>
 </FeatureRow>
 
 <FeatureRow title="手机上随时看" link="/features/mobile" crop="0,0,1,0.62" :ratio="0.5955" narrow>

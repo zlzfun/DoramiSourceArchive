@@ -9,9 +9,11 @@ function storageOrNull(storage) {
   }
 }
 
+// 音轨:original(原节目)/ digest(精品导读)/ article_narration(文章导读,issue #199 起与播客共用全局播放器)。
+// 前两者的键名沿用旧值,升级后既有的播放位置照常续播。
 export function podcastPlaybackKey(articleId, variant) {
   const id = encodeURIComponent(String(articleId || '').trim());
-  const safeVariant = variant === 'digest' ? 'digest' : 'original';
+  const safeVariant = variant === 'digest' ? 'digest' : variant === 'article_narration' ? 'narration' : 'original';
   return `${STORAGE_PREFIX}:${id}:${safeVariant}`;
 }
 

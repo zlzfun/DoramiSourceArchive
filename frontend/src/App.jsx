@@ -28,6 +28,7 @@ import { useRunningProgress } from './hooks/useRunningProgress';
 import { usePolling } from './hooks/usePolling';
 import { useCompactLayout } from './hooks/useCompactLayout';
 import { deepLinkArticleId } from './utils/shareLink';
+import { clearPlayerSession } from './utils/playerCore';
 
 // Tab 组件按路由惰性加载：各自独立 chunk，登录页与读者态不再下载用不到的重依赖
 // （AdminOpsTab→recharts、ReaderTab/DailyBriefTab→react-markdown）。每个 Tab 挂在独立
@@ -577,6 +578,8 @@ export default function App() {
     try {
       await logoutAdmin();
     } finally {
+      // 退出登录:播放器随阅读器卸载而停止;同一标签页的会话恢复也清掉(issue #199)
+      try { clearPlayerSession(window.sessionStorage); } catch { /* 存储不可用即无可清 */ }
       setAuthState({ status: 'anonymous', user: null });
       setAvailableFetchers([]);
       setRuntimeInfo(INITIAL_RUNTIME);
@@ -872,6 +875,7 @@ export default function App() {
               <TabBoundary>
                 <ReaderWorkspace
                   mobile={isMobile}
+                  surfaceActive={readerView && (isMobile || !isReaderRole || activeTab === 'reader')}
                   themePref={theme}
                   onSetTheme={setTheme}
                   showToast={showToast}

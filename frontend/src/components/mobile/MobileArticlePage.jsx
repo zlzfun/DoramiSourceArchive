@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import {
   ChevronLeft,
   ExternalLink,
@@ -10,18 +9,18 @@ import {
 import ReaderMarkdown from '../ReaderMarkdown';
 import ShareMenu from '../ShareMenu';
 import PodcastExperiencePanel from '../PodcastExperiencePanel';
-import PodcastTextPanel from '../PodcastTextPanel';
+import ListenEntries from '../player/ListenEntries';
 import AnalysisTagChip from '../AnalysisTagChip';
 import { PaneBodySkeleton } from '../ReaderTab';
 import { formatPublishDate, formatPublishDateTime } from '../../utils/datetime';
-import { formatPodcastDuration, podcastOf } from '../../utils/podcast';
+import { formatPodcastDuration } from '../../utils/podcast';
 import {
   analysisStatusMeta,
   displayAnalysisTags,
   shouldShowAiReadingCard,
 } from '../../utils/analysis';
+import { articleListenEntries, podcastListenEntries } from '../../utils/listenEntries';
 import AiReadingCard from '../AiReadingCard';
-import ArticleListenBar from '../ArticleListenBar';
 import { hostOf, latinLang } from '../../utils/readerText';
 import { kindKickerLabel } from '../../utils/contentKind';
 
@@ -29,6 +28,7 @@ import { kindKickerLabel } from '../../utils/contentKind';
 // 衬线标题/kicker/meta/速读卡/进度线/上一下一篇 全部复用阅读窗语法类
 // (.reader-kicker/.reader-pane-title/.reader-ai-summary/markdown-body,单一事实来源);
 // 顶栏动作 = 原文/收藏/分享/译/更多(更多=与长按同款动作单,由父级 onMore 装配)。
+// 收听入口(issue #199 方案 C)在署名行下:移动端没有动作行;播放条是全局的,不在这一页里。
 export default function MobileArticlePage({
   rs,
   aiEnabled,
@@ -49,23 +49,32 @@ export default function MobileArticlePage({
     refreshActiveArticle,
   } = rs;
 
-  const [podcastSelection, setPodcastSelection] = useState({ articleId: '', variant: 'original' });
-
   if (!activeArticle) return null;
   const isFav = favoriteIds.has(activeArticle.id);
   const analysisStatus = analysisStatusMeta(activeArticle, { podcast: podcastView });
-  const activePodcast = podcastOf(activeArticle);
-  const hasGuideAudio = Boolean(activePodcast?.condensed_audio_url);
-  const hasGuideBlog = Boolean(activePodcast?.premium_guide?.blog_ready);
-  const isBlogOnlyGuide = hasGuideBlog && !hasGuideAudio;
-  const defaultPodcastVariant = activePodcast?.audio_url
-    ? 'original'
-    : hasGuideAudio ? 'digest' : 'original';
-  const podcastVariant = podcastSelection.articleId === activeArticle.id
-    ? podcastSelection.variant
-    : defaultPodcastVariant;
-  const podcastGuideActive = podcastView
-    && (isBlogOnlyGuide || (podcastVariant === 'digest' && hasGuideAudio));
+  const listenList = podcastView
+    ? podcastListenEntries(activeArticle, { aiEnabled, ondemandEnabled: ondemand.podcast === true })
+    : articleListenEntries(activeArticle, { aiEnabled, ondemandEnabled: ondemand.article === true });
+  const durationOnEntry = listenList.some((entry) => entry.track === 'original');
+  const copy = (
+    <div
+      className="reader-article-copy markdown-body"
+      data-ai-translation-scope="article-body"
+      lang={(showTranslation && translatedBody) ? undefined : latinLang(activeBody)}
+    >
+      {activeBodyLoading ? (
+        <PaneBodySkeleton />
+      ) : (showTranslation && translatedBody) ? (
+        <ReaderMarkdown>{displayTranslatedBody}</ReaderMarkdown>
+      ) : activeBody ? (
+        <ReaderMarkdown>{displayBody}</ReaderMarkdown>
+      ) : (
+        podcastView
+          ? '该播客暂无文字内容，可收听上方原节目音频。'
+          : '该文章暂无正文内容，点击「查看原文」阅读完整内容。'
+      )}
+    </div>
+  );
 
   return (
     <div className="m-read" role="region" aria-label="正文">
@@ -162,7 +171,7 @@ export default function MobileArticlePage({
             {bodyStats && (
               <span>{podcastView ? '简介阅读约' : '阅读约'} {bodyStats.minutes} 分钟</span>
             )}
-            {podcastView && formatPodcastDuration(activeArticle.podcast?.duration_seconds) && (
+            {podcastView && !durationOnEntry && formatPodcastDuration(activeArticle.podcast?.duration_seconds) && (
               <span>原节目 {formatPodcastDuration(activeArticle.podcast.duration_seconds)}</span>
             )}
             {typeof activeArticle.read_count === 'number' && activeArticle.read_count > 0 && (
@@ -170,6 +179,19 @@ export default function MobileArticlePage({
             )}
             {analysisStatus && <span role="status">{analysisStatus.label}</span>}
           </div>
+          {listenList.length > 0 && (
+            <div className="m-listen">
+              <ListenEntries
+                article={activeArticle}
+                podcast={podcastView}
+                aiEnabled={aiEnabled}
+                ondemand={ondemand}
+                sourceName={sourceNameMap[activeArticle.source_id] || ''}
+                showToast={showToast}
+                onRefresh={refreshActiveArticle}
+              />
+            </div>
+          )}
           {displayAnalysisTags(activeArticle).length > 0 && (
             <div className="reader-pane-foot"><div className="reader-pane-tags">
               {displayAnalysisTags(activeArticle).map((tag, index) => (
@@ -186,20 +208,8 @@ export default function MobileArticlePage({
           )}
         </header>
         <div className="m-read-body">
-          {podcastView && (
-            <PodcastExperiencePanel
-              article={activeArticle}
-              variant={podcastVariant}
-              onVariantChange={(variant) => {
-                setPodcastSelection({ articleId: activeArticle.id, variant });
-              }}
-              aiEnabled={aiEnabled}
-              ondemandEnabled={ondemand.podcast === true}
-              showToast={showToast}
-              onArticleRefresh={refreshActiveArticle}
-            />
-          )}
-          {!podcastGuideActive && !activeBodyLoading && shouldShowAiReadingCard(activeArticle, {
+          {/* 速读卡常驻:正文与音轨解耦,在听哪条音轨都不收起它(issue #199) */}
+          {!activeBodyLoading && shouldShowAiReadingCard(activeArticle, {
             summary: activeSummary,
             aiEnabled,
             body: activeBody,
@@ -211,51 +221,19 @@ export default function MobileArticlePage({
               canGenerate={aiEnabled && Boolean(activeBody)}
               onGenerate={handleSummarize}
               podcast={podcastView}
-              aiEnabled={aiEnabled}
-              ondemandEnabled={ondemand.article === true}
-              showToast={showToast}
-              onArticleRefresh={refreshActiveArticle}
             />
           )}
-          {!podcastView && !activeBodyLoading && (
-            <ArticleListenBar article={activeArticle} />
-          )}
-          {podcastView && !podcastGuideActive && !activeBodyLoading && activeBody && (
-            <div className="podcast-show-notes-head">
-              <h2 className="section-title">节目简介</h2>
-              <span>来源方提供</span>
-            </div>
-          )}
-          {!podcastGuideActive && (
-            <div
-              className="reader-article-copy markdown-body"
-              data-ai-translation-scope="article-body"
-              lang={(showTranslation && translatedBody) ? undefined : latinLang(activeBody)}
+          {podcastView ? (
+            <PodcastExperiencePanel
+              article={activeArticle}
+              showTranslation={showTranslation}
+              showNotesHead={!activeBodyLoading && Boolean(activeBody)}
             >
-              {activeBodyLoading ? (
-                <PaneBodySkeleton />
-              ) : (showTranslation && translatedBody) ? (
-                <ReaderMarkdown>{displayTranslatedBody}</ReaderMarkdown>
-              ) : activeBody ? (
-                <ReaderMarkdown>{displayBody}</ReaderMarkdown>
-              ) : (
-                podcastView
-                  ? '该播客暂无文字内容，可收听上方原节目音频。'
-                  : '该文章暂无正文内容，点击「查看原文」阅读完整内容。'
-              )}
-            </div>
-          )}
-          {podcastView && !podcastGuideActive && !activeBodyLoading && (
-            <div data-ai-translation-excluded="true">
-              <PodcastTextPanel
-                episodeId={activeArticle.id}
-                preferredTranscriptKind="publisher_transcript"
-                showTranslation={showTranslation}
-              />
-            </div>
-          )}
+              {copy}
+            </PodcastExperiencePanel>
+          ) : copy}
           {/* 正文尾部原文行(v3.45 推全站,与桌面阅读窗同口径):无 source_url 不画 */}
-          {!podcastGuideActive && !activeBodyLoading && activeArticle.source_url && (
+          {!activeBodyLoading && activeArticle.source_url && (
             <p className="reader-pane-origin">
               <a href={activeArticle.source_url} target="_blank" rel="noreferrer">
                 查看原文 ↗

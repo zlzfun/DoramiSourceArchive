@@ -35,14 +35,11 @@ test('podcast text view falls back to source transcript and has a true empty sta
 });
 
 test('brief Chinese guides are not presented as premium guides', () => {
-  assert.deepEqual(podcastDigestMeta('brief_zh'), {
-    title: '中文导读',
-    action: '继续阅读中文导读',
-  });
-  assert.deepEqual(podcastDigestMeta('solo_deep'), {
-    title: '精品导读',
-    action: '继续阅读精品导读',
-  });
+  // issue #199:导读文字统一叫「导读稿」(正文切换的名字),不随生成模式分两套;「精品」只属于音频
+  for (const mode of ['brief_zh', 'solo_deep', '']) {
+    assert.deepEqual(podcastDigestMeta(mode), { title: '导读稿', action: '继续阅读导读稿' });
+    assert.equal(podcastDigestMeta(mode).title.includes('精品'), false);
+  }
 });
 
 test('normalized ASR transcript is visible and remains distinct from publisher text', () => {
@@ -178,21 +175,26 @@ test('publisher transcript follows show notes on desktop and mobile reader surfa
     'utf8',
   );
 
+  // issue #199:播客正文统一由 PodcastExperiencePanel 编排——节目简介头 → 节目简介正文(阅读窗传进来的
+  // 翻译作用域容器)→ 逐字稿(不参与整页翻译,发布方逐字稿优先);原文行在整个正文之后
+  const introduction = experience.indexOf('<h2 className="section-title">节目简介</h2>');
+  const notes = experience.indexOf('{!guideOn && children}');
+  const transcriptScope = experience.indexOf('data-ai-translation-excluded="true"');
+  const transcript = experience.indexOf('preferredTranscriptKind="publisher_transcript"');
+  assert.ok(introduction >= 0);
+  assert.ok(notes > introduction);
+  assert.ok(transcriptScope > notes);
+  assert.ok(transcript > transcriptScope);
+  assert.match(experience, /showTranslation=\{showTranslation\}/);
   for (const reader of [desktop, mobile]) {
-    const introduction = reader.indexOf('<h2 className="section-title">节目简介</h2>');
     const translationScope = reader.indexOf('data-ai-translation-scope="article-body"');
-    const transcriptScope = reader.indexOf('data-ai-translation-excluded="true"');
-    const transcript = reader.indexOf('preferredTranscriptKind="publisher_transcript"');
-    const origin = reader.indexOf('className="reader-pane-origin"', transcript);
-    assert.ok(introduction >= 0);
-    assert.ok(translationScope > introduction);
-    assert.ok(transcriptScope > translationScope);
-    assert.ok(transcript > introduction);
-    assert.ok(transcript > transcriptScope);
-    assert.ok(origin > transcript);
+    const panel = reader.indexOf('<PodcastExperiencePanel');
+    const origin = reader.indexOf('className="reader-pane-origin"', panel);
+    assert.ok(translationScope >= 0);
+    assert.ok(panel > translationScope, '节目简介正文作为 children 交给播客正文编排');
+    assert.ok(origin > panel);
     assert.match(reader, /showTranslation=\{showTranslation\}/);
   }
-  assert.match(experience, /hiddenTranscriptKinds=\{\['publisher_transcript'\]\}/);
 });
 
 test('podcast lists keep topic tags and pipeline status out of list rows', async () => {
@@ -213,7 +215,7 @@ test('podcast lists keep topic tags and pipeline status out of list rows', async
   assert.doesNotMatch(podcastBranch, /processing_error|error_code|next_retry_at|\.error\b/);
 });
 
-test('blog-only guide without condensed audio is visible in experience panel and reader surfaces', async () => {
+test('guide text is decoupled from the playing track on desktop and mobile reader surfaces', async () => {
   const desktop = await readFile(
     new URL('../components/ReaderTab.jsx', import.meta.url),
     'utf8',
@@ -227,11 +229,15 @@ test('blog-only guide without condensed audio is visible in experience panel and
     'utf8',
   );
 
+  // issue #199 拍板 1:有导读稿(含只有文字、没有音频)就出「节目简介 | ✦ 导读稿」切换;
+  // 在听哪条音轨与正文无关——旧的「选中精品导读就把正文换成导读稿、速读卡收起」耦合不得回潮
   for (const reader of [desktop, mobile]) {
-    assert.match(reader, /hasGuideBlog = Boolean\(activePodcast\?\.premium_guide\?\.blog_ready/);
-    assert.match(reader, /isBlogOnlyGuide = hasGuideBlog && !hasGuideAudio/);
-    assert.match(reader, /podcastGuideActive = podcastView\s*&&\s*\(isBlogOnlyGuide \|\| \(podcastVariant === 'digest' && hasGuideAudio\)\)/);
+    assert.doesNotMatch(reader, /podcastGuideActive|podcastVariant|podcastSelection/);
+    assert.doesNotMatch(reader, /ArticleListenBar|PodcastAudioPanel/);
+    assert.match(reader, /<ListenEntries/);
   }
-  assert.match(experience, /isBlogOnlyGuide = hasGuideBlog && !hasGuideAudio/);
-  assert.match(experience, /guideVisible = isBlogOnlyGuide \|\| \(variant === 'digest' && hasGuideAudio\)/);
+  assert.match(experience, /hasGuide = Boolean\(podcast\.premium_guide\?\.blog_ready\)/);
+  assert.match(experience, /guideOn = hasGuide && view === 'guide'/);
+  assert.match(experience, /showDigest=\{guideOn\}/);
+  assert.doesNotMatch(experience, /condensed_audio_url|usePlayer|variant/);
 });
