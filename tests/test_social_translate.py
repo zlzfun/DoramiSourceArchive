@@ -142,6 +142,14 @@ def test_social_text_needs_translation_matches_shared_cases(text, lang, expected
     assert social_text_needs_translation(text, lang) is expected
 
 
+@pytest.mark.parametrize("case", CASES["generated"])
+def test_social_text_needs_translation_matches_generated_cases(case):
+    from services.reader_ai import social_text_needs_translation
+
+    text = "".join(piece * count for piece, count in case["parts"])
+    assert social_text_needs_translation(text, case["lang"]) is case["expected"]
+
+
 def test_sources_use_full_repost_text_and_skip_untranslatable_pieces():
     from services.reader_ai import social_translation_sources
 
@@ -290,22 +298,24 @@ def test_translate_social_post_403_when_ai_beta_disabled(monkeypatch, tmp_path):
     assert calls == []
 
 
-def test_translate_social_post_hidden_source_is_404_for_readers(monkeypatch, tmp_path):
+def test_unreachable_posts_share_one_404_shape(monkeypatch, tmp_path):
+    """隐藏源、未订阅私有源、不存在的 ID:状态码与响应正文完全一致,零模型调用(检视 R1-01)。"""
     from services import source_visibility
+    from services.user_sources import USER_SOURCE_PREFIX
 
     app_module, sink = _base_setup(monkeypatch, tmp_path, "social_tr_hidden.db")
     _configure_llm(sink.engine)
     _set_ai_beta(sink.engine, True)
-    _seed_social(sink.engine, "p1", "it is good now!", QUOTE_POST_EXT, source_id="x_hidden")
+    _seed_social(sink.engine, "hidden", "it is good now!", QUOTE_POST_EXT, source_id="x_hidden")
+    _seed_social(sink.engine, "private", "it is good now!", QUOTE_POST_EXT, source_id=f"{USER_SOURCE_PREFIX}someone")
     with Session(sink.engine) as session:
         source_visibility.set_source_hidden(session, "x_hidden", True)
     calls = _patch_social_llm(monkeypatch)
 
     with TestClient(app_module.app) as client:
         _login(client)
-        response = client.post("/api/reader/ai/social/p1/translate")
-        assert response.status_code == 404
-        assert response.json()["detail"] == "文章不存在"
+        responses = [client.post(f"/api/reader/ai/social/{article_id}/translate") for article_id in ("hidden", "private", "missing")]
+    assert [(r.status_code, r.json()) for r in responses] == [(404, {"detail": "文章不存在"})] * 3
     assert calls == []
 
 

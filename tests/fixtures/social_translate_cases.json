@@ -19,6 +19,15 @@
     ["#AI #LLM", "qht", false],
     ["2026 12:00 → 98%", null, false],
     ["", "en", false],
-    ["it is good now! https://t.co/eiG0VDwrTe", "en", true]
+    ["it is good now! https://t.co/eiG0VDwrTe", "en", true],
+    ["https://t.co/abc\ufeffHello", "en", true],
+    ["https://t.co/abc\u0085Hello", "en", true],
+    ["https://t.co/abc\u001cHello", "en", true],
+    ["Hello world", " EN\u00a0", true],
+    ["今天发布了新模型", "ZH-cn\ufeff", false]
+  ],
+  "_comment_generated": "长文本按片段拼装(两侧测试各自 repeat 后连接):检视 R1-04 的码点采样边界——2000 码点里汉字恰好过阈值,UTF-16 切片会少取一位而误判。",
+  "generated": [
+    {"parts": [["A", 1665], ["🚀", 1], ["中", 334]], "lang": null, "expected": false}
   ]
 }

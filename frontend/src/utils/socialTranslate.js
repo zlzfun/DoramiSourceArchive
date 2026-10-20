@@ -5,7 +5,10 @@ import { looksChinese } from './readerText.js';
 
 // X 的「无语言内容」判定码:纯链接 / 纯表情 / 纯媒体链接 / 纯提及 / 纯话题等
 const NO_LANGUAGE_CODES = new Set(['zxx', 'art', 'qme', 'qam', 'qht', 'qst', 'qct']);
-const URL_RE = /https?:\/\/\S+/g;
+// 链接到第一个空白为止;空白集合与后端逐字同一份(各语言的 \s 不等价,检视 R1-04)
+// eslint-disable-next-line no-control-regex -- \x1c-\x1f 是 Python \s 含、JS \s 不含的分隔符,有意列入以对齐后端
+const URL_RE = /https?:\/\/[^\t\n\v\f\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+/gu;
+const LANG_JUNK_RE = /[^a-z0-9-]/g;
 const LETTER_RE = /\p{L}/u;
 
 // 去掉链接后没有任何字母 → 否;X 判为中文或无语言内容 → 否;其它明确语言码 → 是;
@@ -13,7 +16,8 @@ const LETTER_RE = /\p{L}/u;
 export function socialTextNeedsTranslation(text, lang) {
   const stripped = String(text || '').replace(URL_RE, ' ');
   if (!LETTER_RE.test(stripped)) return false;
-  const code = String(lang || '').trim().toLowerCase();
+  // 语言码只留 [a-z0-9-](X 给的是 ASCII BCP47);不依赖 trim / strip 各自的空白集合
+  const code = String(lang || '').toLowerCase().replace(LANG_JUNK_RE, '');
   if (code.startsWith('zh') || NO_LANGUAGE_CODES.has(code)) return false;
   if (code && code !== 'und') return true;
   return !looksChinese(stripped);
@@ -28,20 +32,58 @@ function parseExtensions(article) {
   }
 }
 
-// 需要翻译的两段:{ text, quoted } 各为布尔。转推的正文是原推全文 reposted.text,语言取 reposted.lang、
-// 缺失用顶层 lang;引用推语言取 quoted.lang、缺失走启发式。
-export function socialTranslationParts(article, ext = parseExtensions(article)) {
+// 需要翻译的原文 { text?, quoted? }(不需要的一侧不出现),与后端 social_translation_sources 同口径:
+// 转推的正文是原推全文 reposted.text,语言取 reposted.lang、缺失用顶层 lang;引用推语言取 quoted.lang、缺失走启发式。
+export function socialTranslationSources(article, ext = parseExtensions(article)) {
   const reposted = ext.reposted && typeof ext.reposted === 'object' ? ext.reposted : null;
   const quoted = ext.quoted && typeof ext.quoted === 'object' ? ext.quoted : null;
-  const mainText = reposted ? (reposted.text || article?.content || '') : (article?.content || '');
+  const mainText = String(reposted ? (reposted.text || article?.content || '') : (article?.content || ''));
   const mainLang = reposted ? (reposted.lang || ext.lang) : ext.lang;
-  return {
-    text: socialTextNeedsTranslation(mainText, mainLang),
-    quoted: Boolean(quoted) && socialTextNeedsTranslation(quoted.text, quoted.lang),
-  };
+  const sources = {};
+  if (socialTextNeedsTranslation(mainText, mainLang)) sources.text = mainText.trim();
+  if (quoted && socialTextNeedsTranslation(quoted.text, quoted.lang)) sources.quoted = String(quoted.text || '').trim();
+  return sources;
+}
+
+export function socialTranslationParts(article, ext) {
+  const sources = socialTranslationSources(article, ext);
+  return { text: 'text' in sources, quoted: 'quoted' in sources };
 }
 
 export function socialTranslatable(article, ext) {
-  const parts = socialTranslationParts(article, ext);
-  return parts.text || parts.quoted;
+  return Object.keys(socialTranslationSources(article, ext)).length > 0;
+}
+
+// 原文签名(检视 R1-02):逐卡状态记下请求时的签名,原文变了(重新加载拿到新正文 / 新引用)旧译文即作废。
+// 口径同后端指纹——需要翻译的那几段原文;lang 只经「要不要翻译」影响签名,存量补 lang 不会无谓作废。
+export function socialSignatureOf(sources) {
+  return sources && Object.keys(sources).length ? JSON.stringify(sources) : '';
+}
+
+export function socialTranslationSignature(article, ext) {
+  return socialSignatureOf(socialTranslationSources(article, ext));
+}
+
+// 当前卡片该用的翻译状态:签名对不上(原文已变)就当没有
+export function currentSocialTranslation(entry, signature) {
+  return entry && signature && entry.sig === signature ? entry : null;
+}
+
+// 本地日期键:额度用尽(429)按天失效(检视 R1-03)
+export function localDayKey(date = new Date()) {
+  return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+}
+
+// 清掉日期已过的 quota 条目;没有可清的原样返回同一对象(setState 不触发重渲)
+export function purgeExpiredSocialQuota(map, today = localDayKey()) {
+  let changed = false;
+  const next = {};
+  for (const [id, entry] of Object.entries(map || {})) {
+    if (entry?.status === 'quota' && entry.day !== today) {
+      changed = true;
+      continue;
+    }
+    next[id] = entry;
+  }
+  return changed ? next : map;
 }

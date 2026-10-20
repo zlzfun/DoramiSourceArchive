@@ -339,7 +339,12 @@ SOCIAL_TRANSLATION_KEY = "translation_zh_social"
 SOCIAL_TRANSLATION_VERSION = 1
 # X 的「无语言内容」判定码:纯链接 / 纯表情 / 纯媒体链接 / 纯提及 / 纯话题等,没有可译文字
 SOCIAL_NO_LANGUAGE_CODES = frozenset({"zxx", "art", "qme", "qam", "qht", "qst", "qct"})
-_SOCIAL_URL_RE = re.compile(r"https?://\S+")
+# 链接到第一个空白为止。空白集合显式写出(前端 utils/socialTranslate.js 逐字同一份):各语言的 \s 不等价——
+# Python 含 \x1c-\x1f / \x85、不含 \ufeff,JS 反之(检视 R1-04),依赖 \S 会让两侧对同一段文字给出不同判定。
+_SOCIAL_URL_RE = re.compile(
+    "https?://[^\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+"
+)
+_SOCIAL_LANG_JUNK_RE = re.compile(r"[^a-z0-9-]")
 
 
 def social_text_needs_translation(text: str, lang: Optional[str] = None) -> bool:
@@ -353,7 +358,8 @@ def social_text_needs_translation(text: str, lang: Optional[str] = None) -> bool
     # isalpha = Unicode 字母类(L*),与前端 /\p{L}/u 同口径;纯表情 / 数字 / 链接都没有字母
     if not any(ch.isalpha() for ch in stripped):
         return False
-    code = (lang or "").strip().lower()
+    # 语言码只留 [a-z0-9-](X 给的是 ASCII BCP47);不依赖 strip / trim 各自的空白集合
+    code = _SOCIAL_LANG_JUNK_RE.sub("", str(lang or "").lower())
     if code.startswith("zh") or code in SOCIAL_NO_LANGUAGE_CODES:
         return False
     if code and code != "und":
@@ -429,7 +435,8 @@ async def translate_social_post(
     """
     record = await db_sink.get(article_id)
     if record is None:
-        raise ReaderAIError("推文不存在", status_code=404)
+        # 与隐藏源 / 未订阅私有源的拒绝同形(检视 R1-01):不让响应正文泄露条目是否存在
+        raise ReaderAIError("文章不存在", status_code=404)
     if record.content_type != "social_post":
         raise ReaderAIError("只支持翻译社交媒体推文", status_code=400)
     _ensure_articles_exportable(db_sink, [record])

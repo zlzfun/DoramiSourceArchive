@@ -14,7 +14,12 @@ import {
   Undo2,
 } from 'lucide-react';
 import { copyText } from '../utils/clipboard';
-import { socialTranslatable } from '../utils/socialTranslate';
+import {
+  currentSocialTranslation,
+  localDayKey,
+  purgeExpiredSocialQuota,
+  socialTranslationSignature,
+} from '../utils/socialTranslate';
 import { articleDeepLink } from '../utils/shareLink';
 import { stripDuplicateLeadingHeading } from '../utils/markdownTitle';
 import { createBulkSubscribeDeadline, waitForBulkSubscribeSettlement } from '../utils/bulkSubscribe';
@@ -300,10 +305,28 @@ export function useReaderState({
   const translationCacheRef = useRef(new Map());                  // id → { body, title }
 
   // ── 用户面 AI · 推文翻译(issue #84):社交流逐卡开合,桌面卡片 / 右键菜单 / 移动长按共用一份 ──
-  // id → { status: 'loading' | 'done' | 'error' | 'quota', open, text, quoted, message }
+  // id → { status: 'loading' | 'done' | 'error' | 'quota', open, text, quoted, message, sig, day }
+  // sig 是请求时的原文签名(原文变了旧状态作废),day 是 quota 的触发日(跨日失效)
   const [socialTranslations, setSocialTranslations] = useState({});
   const socialTranslationsRef = useRef(socialTranslations);
   useEffect(() => { socialTranslationsRef.current = socialTranslations; }, [socialTranslations]);
+  // 额度用尽按天失效(检视 R1-03):本地零点与页面重新可见时清掉过期的 quota 条目,入口随之恢复
+  useEffect(() => {
+    const purge = () => setSocialTranslations((prev) => purgeExpiredSocialQuota(prev));
+    let timer;
+    const scheduleMidnight = () => {
+      const now = new Date();
+      const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 5);
+      timer = setTimeout(() => { purge(); scheduleMidnight(); }, next - now);
+    };
+    scheduleMidnight();
+    const onVisible = () => { if (document.visibilityState === 'visible') purge(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
 
   // ── 用户面 AI · 要点摘要(正文顶部「哆啦美速读」卡;缓存 id → 摘要)──
   const [activeSummary, setActiveSummary] = useState(null);
@@ -1291,27 +1314,29 @@ export function useReaderState({
     }
   };
 
-  // 推文翻译开合:已译过的只在本地开合(不再请求);首次 / 失败后重试才发请求。服务端有缓存,
-  // 收起后换页回来再点也只是一次 HTTP、零模型调用。额度用尽(429)留在 quota 态,不给重试。
+  // 推文翻译开合:已译过的只在本地开合(不再请求);首次 / 失败后重试 / 原文已变才发请求。服务端有缓存,
+  // 收起后换页回来再点也只是一次 HTTP、零模型调用。额度用尽(429)当天留在 quota 态,不给重试。
   const toggleSocialTranslation = useCallback((article) => {
     const id = article?.id;
-    if (!id) return;
-    const entry = socialTranslationsRef.current[id];
-    if (entry?.status === 'loading') return;
+    const sig = socialTranslationSignature(article);
+    if (!id || !sig) return;
+    let entry = currentSocialTranslation(socialTranslationsRef.current[id], sig);
+    if (entry?.status === 'quota' && entry.day !== localDayKey()) entry = null;
+    if (entry?.status === 'loading' || entry?.status === 'quota') return;
     if (entry?.status === 'done') {
       setSocialTranslations((prev) => ({ ...prev, [id]: { ...prev[id], open: !prev[id]?.open } }));
       return;
     }
-    setSocialTranslations((prev) => ({ ...prev, [id]: { status: 'loading', open: false } }));
+    // 回包只在该卡仍是同一签名的 loading 时落地:原文中途变了 / 旧请求晚到都不覆盖新状态(检视 R1-02)
+    const settle = (next) => setSocialTranslations((prev) => (
+      prev[id]?.status === 'loading' && prev[id].sig === sig ? { ...prev, [id]: { ...next, sig } } : prev
+    ));
+    setSocialTranslations((prev) => ({ ...prev, [id]: { status: 'loading', open: false, sig } }));
     translateSocialPost(id)
-      .then((data) => setSocialTranslations((prev) => ({
-        ...prev,
-        [id]: { status: 'done', open: true, text: data?.text || null, quoted: data?.quoted || null },
-      })))
-      .catch((error) => setSocialTranslations((prev) => ({
-        ...prev,
-        [id]: { status: error?.status === 429 ? 'quota' : 'error', open: false, message: error?.message || '' },
-      })));
+      .then((data) => settle({ status: 'done', open: true, text: data?.text || null, quoted: data?.quoted || null }))
+      .catch((error) => settle(error?.status === 429
+        ? { status: 'quota', open: false, day: localDayKey(), message: error?.message || '' }
+        : { status: 'error', open: false, message: error?.message || '' }));
   }, []);
 
   const handleToggleSocialRead = useCallback(async (article) => {
@@ -1385,9 +1410,10 @@ export function useReaderState({
   const buildSocialMenuItems = (article) => {
     const unread = isArticleUnread(article);
     const fav = favoriteIds.has(article.id);
-    // 翻译项与卡片底栏同一个开关(issue #84):译文开着时是「收起译文」
-    const tr = socialTranslations[article.id];
-    const translateItems = aiEnabled && socialTranslatable(article)
+    // 翻译项与卡片底栏同一个开关(issue #84):译文开着时是「收起译文」;状态按原文签名取,原文变了视为未翻译
+    const trSig = aiEnabled ? socialTranslationSignature(article) : '';
+    const tr = currentSocialTranslation(socialTranslations[article.id], trSig);
+    const translateItems = trSig
       ? [{
         key: 'translate',
         label: tr?.status === 'done' && tr.open ? '收起译文' : '译为中文',
