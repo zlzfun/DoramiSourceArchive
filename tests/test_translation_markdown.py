@@ -112,6 +112,15 @@ def test_duplicate_link_labels_use_multisets_and_translated_labels_are_allowed()
     assert plan.assemble([source]) == body
 
 
+@pytest.mark.parametrize("damage", ["bracket", "image"])
+def test_link_bracket_and_image_role_cannot_disappear(damage):
+    plan = plan_translation("![Figure](https://example.org/figure.png)")
+    text = plan.chunks[0].text
+    text = text.replace("[", "", 1) if damage == "bracket" else text.replace("!", "", 1)
+    with pytest.raises(TranslationStructureError, match="链接或图片结构"):
+        plan.assemble([text])
+
+
 def test_crlf_is_normalized_before_splitting_including_literals():
     body = "A.\r\n\r\n" + "B " * 40 + "\r\n\r\n```text\r\ncode\r\n```\r\n\r\n$$\r\nx=y\r\n$$"
     plan = plan_translation(body, segment_chars=64)
@@ -181,6 +190,24 @@ def test_table_numeric_sign_and_percentage_are_protected(replacement):
 def test_numeric_guard_distinguishes_model_hyphens_and_normalizes_minus():
     plan = plan_translation("| GPT-4o Llama-3.1-8B 2024-08 | -1.5% |")
     assert plan.assemble([plan.chunks[0].text.replace("-1.5", "−1.5")])
+
+
+def test_numeric_guard_accepts_chinese_adjacent_to_numbers():
+    plan = plan_translation("| score 71.0 | about 71.5% |")
+    assert plan.assemble(["| 得分71.0 | 约71.5% |"]) == "| 得分71.0 | 约71.5% |"
+    signed = plan_translation("| 得分-1.5 |")
+    with pytest.raises(TranslationStructureError, match="数值"):
+        signed.assemble(["| 得分1.5 |"])
+
+
+@pytest.mark.parametrize("source,replacement", [
+    ("o1-mini", "o3-mini"), ("H100", "H800"),
+    ("Qwen2.5-Math-1.5B", "Qwen2.0-Math-1.5B"),
+])
+def test_numeric_guard_retains_digits_inside_identifiers(source, replacement):
+    plan = plan_translation(f"| {source} | 71.0 |")
+    with pytest.raises(TranslationStructureError, match="数值"):
+        plan.assemble([plan.chunks[0].text.replace(source, replacement)])
 
 def test_missing_table_row_and_missing_chunk_rejected():
     plan = plan_translation("| Name | Value |\n| --- | --- |\n| example | 7 |")

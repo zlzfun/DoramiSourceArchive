@@ -22,7 +22,7 @@ class TranslationStructureError(ValueError):
 
 _TOKEN = re.compile(r"DORAMITR[0-9a-f]{12}X\d+Z")
 _LINK_TARGET = re.compile(r"\]\((" + _TOKEN.pattern + r")\)")
-_NUMERIC = re.compile(r"(?<![\w.])[-+]?\d+(?:[.,]\d+)*(?:[eE][-+]?\d+)?%?")
+_NUMERIC = re.compile(r"(?:(?<![A-Za-z0-9_.])[-+])?\d+(?:[.,]\d+)*(?:[eE][-+]?\d+)?%?")
 _FENCE = re.compile(r"(?m)^ {0,3}(`{3,}|~{3,})[^\n]*(?:\n|$)")
 _WITHIN_PARAGRAPH = r"(?:(?!\n[ \t]*\n)[\s\S])*?"
 _INLINE_CODE = re.compile(r"(`+)(?!`)" + _WITHIN_PARAGRAPH + r"(?<!`)\1(?!`)")
@@ -110,6 +110,9 @@ def _validate_line(source: str, translated: str) -> None:
     if Counter(_LINK_TARGET.findall(source)) != Counter(_LINK_TARGET.findall(translated)):
         raise TranslationStructureError("译文链接目标结构发生变化，整篇译文未保存")
     source_links, translated_links = _link_bindings(source), _link_bindings(translated)
+    if (Counter((label.startswith("!"), token) for label, token in source_links)
+            != Counter((label.startswith("!"), token) for label, token in translated_links)):
+        raise TranslationStructureError("译文链接或图片结构发生变化，整篇译文未保存")
     unchanged_labels = {label for label, _ in source_links} & {label for label, _ in translated_links}
     if (Counter(pair for pair in source_links if pair[0] in unchanged_labels)
             != Counter(pair for pair in translated_links if pair[0] in unchanged_labels)):
