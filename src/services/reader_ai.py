@@ -31,7 +31,9 @@ from sqlalchemy import update
 from services import image_insights as image_insights_service
 from services import user_sources as user_sources_service
 from services.paper_content import paper_metadata, strip_layout_markers
-from services.translation_markdown import TranslationStructureError, plan_translation
+from services.translation_markdown import (
+    TranslationStructureError, plan_translation, translation_units, restore_translation_units,
+)
 
 # 译文/摘要缓存在 ArticleRecord.extensions_json 下的键；只新增键，不触碰正文。
 TRANSLATION_KEY = "translation_zh"
@@ -144,17 +146,23 @@ async def _translate_segment(
     title: str, segment: str, llm_config: LLMConfig,
     usage_meta: Optional[UsageMeta] = None, http_client=None,
 ) -> str:
+    units = translation_units(segment)
+    if not units:
+        return segment
     raw = await chat_completion(
         messages=[
             ChatMessage(role="system", content=prompts.TRANSLATE_SYSTEM_PROMPT),
-            ChatMessage(role="user", content=prompts.build_translate_user_prompt(title, segment)),
+            ChatMessage(role="user", content=prompts.build_translate_user_prompt(
+                title, json.dumps({"units": units}, ensure_ascii=False),
+            )),
         ],
         config=llm_config,
         usage_meta=usage_meta,
         http_client=http_client,
         require_complete=True,
+        response_json=True,
     )
-    return raw.strip("\r\n")
+    return restore_translation_units(segment, raw)
 
 
 async def _save_translation(db_sink, article_id: str, body: str, title: str, changes: dict) -> None:

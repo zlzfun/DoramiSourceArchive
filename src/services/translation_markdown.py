@@ -8,6 +8,8 @@ table row or indivisible word fails explicitly instead of being sliced.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import Counter
+import json
 import re
 import uuid
 
@@ -37,7 +39,7 @@ _DESTINATION = re.compile(
     r"""(?P<target><[^<>\n]*>|[^\s<>]+)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?[ \t]*$"""
 )
 _PIPES = re.compile(r"(?<!\\)\|")
-_ALIGNMENT = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$")
+_ALIGNMENT = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?\s*$")
 
 
 def _valid_destination(value: str) -> bool:
@@ -67,6 +69,59 @@ def _table_shape(text: str) -> tuple[int, ...]:
     return tuple(len(_PIPES.findall(line)) for line in text.splitlines() if _PIPES.search(line))
 
 
+def translation_units(text: str) -> list[dict]:
+    """Keep each source line addressable; separators and literal-only lines stay local."""
+    return [
+        {"id": index, "text": line}
+        for index, line in enumerate(text.split("\n"))
+        if _TOKEN.sub("", line).strip() and not _ALIGNMENT.fullmatch(line)
+    ]
+
+
+def _validate_line(source: str, translated: str) -> None:
+    # Chinese word order can move inline formulae within a sentence, but a
+    # formula/link may never disappear, duplicate, or move to another unit.
+    if Counter(_TOKEN.findall(translated)) != Counter(_TOKEN.findall(source)):
+        raise TranslationStructureError("译文中的公式、代码或链接不完整，整篇译文未保存")
+    if _table_shape(translated) != _table_shape(source):
+        raise TranslationStructureError("译文表格结构发生变化，整篇译文未保存")
+    if _PIPES.search(source):
+        def numbers(value):
+            return [re.findall(r"\d+(?:\.\d+)?", cell)
+                    for cell in _PIPES.split(_TOKEN.sub("", value))]
+        if numbers(source) != numbers(translated):
+            raise TranslationStructureError("译文表格数值发生变化，整篇译文未保存")
+
+
+def restore_translation_units(text: str, raw: str) -> str:
+    """Accept one nonempty string per requested ID, never a free-form rewrite."""
+    units = translation_units(text)
+    try:
+        payload = json.loads(raw)
+        if not isinstance(payload, dict) or set(payload) != {"units"} or not isinstance(payload["units"], list):
+            raise ValueError
+        requested = {unit["id"] for unit in units}
+        translated = {}
+        for unit in payload["units"]:
+            if not isinstance(unit, dict) or set(unit) != {"id", "text"}:
+                raise ValueError
+            index, value = unit["id"], unit["text"]
+            if type(index) is not int or index not in requested or index in translated:
+                raise ValueError
+            if not isinstance(value, str) or not value.strip() or "\n" in value or "\r" in value:
+                raise ValueError
+            translated[index] = value
+        if set(translated) != requested:
+            raise ValueError
+    except (ValueError, TypeError, RecursionError) as exc:
+        raise TranslationStructureError("翻译单元不完整或格式无效，整篇译文未保存") from exc
+    lines = text.split("\n")
+    for index, value in translated.items():
+        _validate_line(lines[index], value)
+        lines[index] = value
+    return "\n".join(lines)
+
+
 @dataclass(frozen=True)
 class TranslationChunk:
     text: str
@@ -80,10 +135,11 @@ class TranslationChunk:
         translated = translated.strip("\r\n")
         if not translated.strip():
             raise TranslationStructureError("翻译片段为空，整篇译文未保存")
-        if _TOKEN.findall(translated) != _TOKEN.findall(self.text):
-            raise TranslationStructureError("译文中的公式、代码或链接不完整，整篇译文未保存")
-        if _table_shape(translated) != _table_shape(self.text):
-            raise TranslationStructureError("译文表格结构发生变化，整篇译文未保存")
+        source_lines, translated_lines = self.text.split("\n"), translated.split("\n")
+        if len(source_lines) != len(translated_lines):
+            raise TranslationStructureError("译文段落或表格行不完整，整篇译文未保存")
+        for source, value in zip(source_lines, translated_lines):
+            _validate_line(source, value)
         return translated
 
 

@@ -16,7 +16,7 @@ from llm.client import LLMIncompleteOutput, UsageMeta
 from llm import client as llm_client
 from services import reader_ai
 from services.translation_markdown import (
-    TranslationStructureError, plan_translation,
+    TranslationStructureError, plan_translation, translation_units, restore_translation_units,
 )
 
 
@@ -59,7 +59,7 @@ def test_indivisible_oversize_input_fails(body):
         plan_translation(body, segment_chars=180)
 
 
-@pytest.mark.parametrize("mode", ["missing", "duplicate", "reordered"])
+@pytest.mark.parametrize("mode", ["missing", "duplicate"])
 def test_damaged_literal_rejected(mode):
     plan = plan_translation("First $x$ then `y`.")
     first, second = plan.literals
@@ -68,11 +68,58 @@ def test_damaged_literal_rejected(mode):
         text = text.replace(first, "")
     elif mode == "duplicate":
         text += first
-    else:
-        text = text.replace(first, "TEMP").replace(second, first).replace("TEMP", second)
     with pytest.raises(TranslationStructureError):
         plan.assemble([text])
 
+
+def test_chinese_word_order_within_unit_and_cross_unit_guard():
+    plan = plan_translation("Samples $outputs$ from $policy$.\n\nNext $value$.")
+    units = translation_units(plan.chunks[0].text)
+    import re
+    tokens = re.findall(r"DORAMITR[0-9a-f]{12}X\d+Z", units[0]["text"])
+    units[0]["text"] = f"从 {tokens[1]} 采样 {tokens[0]}。"
+    raw = json.dumps({"units": list(reversed(units))})
+    restored = restore_translation_units(plan.chunks[0].text, raw)
+    assert plan.assemble([restored]) == "从 $policy$ 采样 $outputs$。\n\nNext $value$."
+    units[0]["text"], units[1]["text"] = units[1]["text"], units[0]["text"]
+    with pytest.raises(TranslationStructureError, match="不完整"):
+        restore_translation_units(plan.chunks[0].text, json.dumps({"units": units}))
+
+
+@pytest.mark.parametrize("damage", ["missing", "duplicate", "unknown", "bool_id", "newline", "empty", "non_string", "not_json"])
+def test_invalid_unit_responses_fail_closed(damage):
+    source = "First paragraph.\n\n| Header |\n| --- |\n| Second row |"
+    units = translation_units(source)
+    if damage == "missing":
+        units.pop()
+    elif damage == "duplicate":
+        units.append(units[0])
+    elif damage == "unknown":
+        units[0]["id"] = 999
+    elif damage == "bool_id":
+        units[0]["id"] = False
+    elif damage == "newline":
+        units[0]["text"] += "\nextra"
+    elif damage == "empty":
+        units[0]["text"] = ""
+    elif damage == "non_string":
+        units[0]["text"] = None
+    raw = json.dumps({"units": units}) if damage != "not_json" else "Bad JSON"
+    with pytest.raises(TranslationStructureError, match="单元"):
+        restore_translation_units(source, raw)
+
+
+def test_table_units_preserve_wrapped_rows_numbers_and_separators():
+    source = "| The assistant provides |\n| --- |\n| the answer. |\n\n| Model | 71.0 | 86.7 |"
+    units = translation_units(source)
+    assert len(units) == 3  # alignment and blank line stay local
+    units[0]["text"] = "| 助手提供 |"
+    units[1]["text"] = "| 答案。 |"
+    translated = restore_translation_units(source, json.dumps({"units": units}))
+    assert translated.startswith("| 助手提供 |\n| --- |\n| 答案。 |\n\n")
+    units[2]["text"] = "| 模型 | 86.7 | 71.0 |"
+    with pytest.raises(TranslationStructureError, match="数值"):
+        restore_translation_units(source, json.dumps({"units": units}))
 
 def test_missing_table_row_and_missing_chunk_rejected():
     plan = plan_translation("| Name | Value |\n| --- | --- |\n| example | 7 |")
@@ -160,7 +207,10 @@ def mock_model(monkeypatch, *, reason="stop", mutate=None):
             text = payload["messages"][-1]["content"].split("【待翻译正文】\n", 1)[-1]
             calls.append(text)
             if mutate:
-                text = mutate(text)
+                data = json.loads(text)
+                for unit in data["units"]:
+                    unit["text"] = mutate(unit["text"])
+                text = json.dumps(data)
             return httpx.Response(200, json={
                 "choices": [{"message": {"content": text}, "finish_reason": reason}],
                 "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
