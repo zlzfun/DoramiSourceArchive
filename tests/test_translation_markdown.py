@@ -303,7 +303,7 @@ def test_verified_is_part_of_the_benchmark_name_not_generic_results():
 def test_missing_fixed_term_cannot_be_replaced_with_wrong_translation(monkeypatch):
     mock_model(monkeypatch, mutate=lambda text: "改成少样本设置。")
     sink = Sink(body="Change the prompt to a zero-shot setting.")
-    with pytest.raises(reader_ai.ReaderAIError, match="不完整"):
+    with pytest.raises(reader_ai.ReaderAIError, match="公式、代码或链接不完整"):
         asyncio.run(reader_ai.translate_article(sink, "paper", CONFIG))
     assert sink.writes == 0
 
