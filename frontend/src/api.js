@@ -26,6 +26,9 @@ async function handleApiError(response, defaultMsg) {
   const error = new Error(msg);
   error.status = response.status;
   error.code = code;
+  // 429 的 Retry-After(秒):读者 AI 日额度据此按服务端日界恢复入口(issue #84)
+  const retryAfter = Number.parseInt(response.headers?.get?.('Retry-After') ?? '', 10);
+  if (Number.isFinite(retryAfter) && retryAfter >= 0) error.retryAfter = retryAfter;
   throw error;
 }
 

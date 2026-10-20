@@ -16,8 +16,10 @@ import {
 import { copyText } from '../utils/clipboard';
 import {
   currentSocialTranslation,
-  localDayKey,
+  nextSocialQuotaExpiry,
   purgeExpiredSocialQuota,
+  socialQuotaActive,
+  socialQuotaUntil,
   socialTranslationSignature,
 } from '../utils/socialTranslate';
 import { articleDeepLink } from '../utils/shareLink';
@@ -305,28 +307,24 @@ export function useReaderState({
   const translationCacheRef = useRef(new Map());                  // id → { body, title }
 
   // ── 用户面 AI · 推文翻译(issue #84):社交流逐卡开合,桌面卡片 / 右键菜单 / 移动长按共用一份 ──
-  // id → { status: 'loading' | 'done' | 'error' | 'quota', open, text, quoted, message, sig, day }
-  // sig 是请求时的原文签名(原文变了旧状态作废),day 是 quota 的触发日(跨日失效)
+  // id → { status: 'loading' | 'done' | 'error' | 'quota', open, text, quoted, message, sig, until }
+  // sig 是请求时的原文签名(原文变了旧状态作废),until 是 quota 的恢复时刻(服务端 Retry-After 换算)
   const [socialTranslations, setSocialTranslations] = useState({});
   const socialTranslationsRef = useRef(socialTranslations);
   useEffect(() => { socialTranslationsRef.current = socialTranslations; }, [socialTranslations]);
-  // 额度用尽按天失效(检视 R1-03):本地零点与页面重新可见时清掉过期的 quota 条目,入口随之恢复
+  // 额度用尽到点恢复(检视 R1-03 / 复检):定时器排到最早的恢复时刻,页面重新可见时再清一次
+  const nextQuotaExpiry = nextSocialQuotaExpiry(socialTranslations);
   useEffect(() => {
+    if (nextQuotaExpiry == null) return undefined;
     const purge = () => setSocialTranslations((prev) => purgeExpiredSocialQuota(prev));
-    let timer;
-    const scheduleMidnight = () => {
-      const now = new Date();
-      const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 5);
-      timer = setTimeout(() => { purge(); scheduleMidnight(); }, next - now);
-    };
-    scheduleMidnight();
+    const timer = setTimeout(purge, Math.max(0, nextQuotaExpiry - Date.now()) + 500);
     const onVisible = () => { if (document.visibilityState === 'visible') purge(); };
     document.addEventListener('visibilitychange', onVisible);
     return () => {
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, []);
+  }, [nextQuotaExpiry]);
 
   // ── 用户面 AI · 要点摘要(正文顶部「哆啦美速读」卡;缓存 id → 摘要)──
   const [activeSummary, setActiveSummary] = useState(null);
@@ -1321,22 +1319,33 @@ export function useReaderState({
     const sig = socialTranslationSignature(article);
     if (!id || !sig) return;
     let entry = currentSocialTranslation(socialTranslationsRef.current[id], sig);
-    if (entry?.status === 'quota' && entry.day !== localDayKey()) entry = null;
+    if (entry?.status === 'quota' && !socialQuotaActive(entry)) entry = null;
     if (entry?.status === 'loading' || entry?.status === 'quota') return;
     if (entry?.status === 'done') {
       setSocialTranslations((prev) => ({ ...prev, [id]: { ...prev[id], open: !prev[id]?.open } }));
       return;
     }
-    // 回包只在该卡仍是同一签名的 loading 时落地:原文中途变了 / 旧请求晚到都不覆盖新状态(检视 R1-02)
-    const settle = (next) => setSocialTranslations((prev) => (
-      prev[id]?.status === 'loading' && prev[id].sig === sig ? { ...prev, [id]: { ...next, sig } } : prev
-    ));
+    // 回包只在该卡仍是同一签名的 loading 时落地:原文中途变了 / 旧请求晚到都不覆盖新状态(检视 R1-02);
+    // next 为 null 表示回到可点状态(移除该卡条目)
+    const settle = (next) => setSocialTranslations((prev) => {
+      if (prev[id]?.status !== 'loading' || prev[id].sig !== sig) return prev;
+      const rest = { ...prev };
+      if (next) rest[id] = { ...next, sig };
+      else delete rest[id];
+      return rest;
+    });
     setSocialTranslations((prev) => ({ ...prev, [id]: { status: 'loading', open: false, sig } }));
     translateSocialPost(id)
       .then((data) => settle({ status: 'done', open: true, text: data?.text || null, quoted: data?.quoted || null }))
-      .catch((error) => settle(error?.status === 429
-        ? { status: 'quota', open: false, day: localDayKey(), message: error?.message || '' }
-        : { status: 'error', open: false, message: error?.message || '' }));
+      .catch((error) => {
+        if (error?.status !== 429) {
+          settle({ status: 'error', open: false, message: error?.message || '' });
+          return;
+        }
+        const until = socialQuotaUntil(error.retryAfter);
+        // 恢复时刻已过(零点前发出、零点后才回来的 429)就直接回到可点状态,不锁新一天
+        settle(until > Date.now() ? { status: 'quota', open: false, until, message: error.message || '' } : null);
+      });
   }, []);
 
   const handleToggleSocialRead = useCallback(async (article) => {
@@ -1418,7 +1427,7 @@ export function useReaderState({
         key: 'translate',
         label: tr?.status === 'done' && tr.open ? '收起译文' : '译为中文',
         icon: Sparkles,
-        disabled: tr?.status === 'loading' || tr?.status === 'quota',
+        disabled: tr?.status === 'loading' || socialQuotaActive(tr),
         onClick: () => toggleSocialTranslation(article),
       }]
       : [];

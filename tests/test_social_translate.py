@@ -150,6 +150,16 @@ def test_social_text_needs_translation_matches_generated_cases(case):
     assert social_text_needs_translation(text, case["lang"]) is case["expected"]
 
 
+@pytest.mark.parametrize("text,lang", [(t, l) for t, l, expected in CASES["needs_translation"] if expected])
+def test_translatable_judgement_always_leaves_something_for_the_model(text, lang):
+    """判定说要译 ⇒ 实际分段计划里必有交给模型的片段:两侧的链接分隔规则漂移时,这里先失败(检视复检)。"""
+    from services.reader_ai import _TRANSLATE_SEGMENT_CHARS
+    from services.translation_markdown import plan_translation
+
+    plan = plan_translation(text, segment_chars=_TRANSLATE_SEGMENT_CHARS)
+    assert any(chunk.needs_translation for chunk in plan.chunks)
+
+
 def test_sources_use_full_repost_text_and_skip_untranslatable_pieces():
     from services.reader_ai import social_translation_sources
 
@@ -316,6 +326,72 @@ def test_unreachable_posts_share_one_404_shape(monkeypatch, tmp_path):
         _login(client)
         responses = [client.post(f"/api/reader/ai/social/{article_id}/translate") for article_id in ("hidden", "private", "missing")]
     assert [(r.status_code, r.json()) for r in responses] == [(404, {"detail": "文章不存在"})] * 3
+    assert calls == []
+
+
+def test_text_after_zero_width_no_break_space_reaches_the_model(monkeypatch, tmp_path):
+    """U+FEFF 紧跟链接:链接仍受保护,后面的文字真的交给模型翻译(复检 R1-04 回归)。"""
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "social_tr_feff.db")
+    _configure_llm(sink.engine)
+    _set_ai_beta(sink.engine, True)
+    content = "https://t.co/abc" + chr(0xFEFF) + "Hello"
+    _seed_social(sink.engine, "p1", content, {"lang": "en"})
+    calls = _patch_social_llm(monkeypatch)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        body = client.post("/api/reader/ai/social/p1/translate").json()
+    assert len(calls) == 1
+    sent = calls[0]["payload"]["text.0"]
+    assert "Hello" in sent and "https://t.co" not in sent
+    assert body["text"] == "译：https://t.co/abc" + chr(0xFEFF) + "Hello"
+
+
+def test_piece_with_nothing_for_the_model_is_never_cached_as_translation(monkeypatch, tmp_path):
+    """兜底:判定说要译、分段计划却全是受保护字面量(如行内公式)时,这段不出译文,整条都没有就 400,不落缓存。"""
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "social_tr_literal.db")
+    _configure_llm(sink.engine)
+    _set_ai_beta(sink.engine, True)
+    _seed_social(sink.engine, "only_math", "$Hello$", {"lang": "en"})
+    _seed_social(sink.engine, "math_and_quote", "$Hello$", {
+        "lang": "en", "quoted": {"text": "big memory update", "lang": "en"},
+    })
+    calls = _patch_social_llm(monkeypatch)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        assert client.post("/api/reader/ai/social/only_math/translate").status_code == 400
+        assert calls == []
+        body = client.post("/api/reader/ai/social/math_and_quote/translate").json()
+    assert body["text"] is None and body["quoted"] == "译：big memory update"
+    assert list(calls[0]["payload"]) == ["quoted.0"]
+    assert "translation_zh_social" not in _ext_of(sink.engine, "only_math")
+
+
+def test_quota_429_tells_the_client_when_it_resets(monkeypatch, tmp_path):
+    """读者 AI 日额度的 429 带 Retry-After(距服务端下一个零点的秒数),前端据此恢复入口(复检 R1-03)。"""
+    import datetime
+
+    from models.db import AiUsageRecord
+
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "social_tr_quota.db")
+    _configure_llm(sink.engine)
+    _set_ai_beta(sink.engine, True)
+    _seed_social(sink.engine, "p1", "it is good now!", QUOTE_POST_EXT)
+    with Session(sink.engine) as session:
+        session.add(AiUsageRecord(
+            day=datetime.date.today().isoformat(), username="user", purpose="translate", model="m",
+            calls=50, prompt_tokens=0, completion_tokens=0, total_tokens=0,
+            updated_at=datetime.datetime.now().isoformat(),
+        ))
+        session.commit()
+    calls = _patch_social_llm(monkeypatch)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        response = client.post("/api/reader/ai/social/p1/translate")
+    assert response.status_code == 429
+    assert 1 <= int(response.headers["Retry-After"]) <= 86401
     assert calls == []
 
 

@@ -339,10 +339,12 @@ SOCIAL_TRANSLATION_KEY = "translation_zh_social"
 SOCIAL_TRANSLATION_VERSION = 1
 # X 的「无语言内容」判定码:纯链接 / 纯表情 / 纯媒体链接 / 纯提及 / 纯话题等,没有可译文字
 SOCIAL_NO_LANGUAGE_CODES = frozenset({"zxx", "art", "qme", "qam", "qht", "qst", "qct"})
-# 链接到第一个空白为止。空白集合显式写出(前端 utils/socialTranslate.js 逐字同一份):各语言的 \s 不等价——
+# 链接到第一个空白或尖括号为止,与实际翻译时的链接保护(translation_markdown._protect)同一分隔规则——
+# 判定说要译、保护却把文字吞进链接,就会出现「没调模型的译文」(检视复检)。空白集合显式写出(前端
+# utils/socialTranslate.js 逐字同一份):各语言的 \s 不等价——
 # Python 含 \x1c-\x1f / \x85、不含 \ufeff,JS 反之(检视 R1-04),依赖 \S 会让两侧对同一段文字给出不同判定。
 _SOCIAL_URL_RE = re.compile(
-    "https?://[^\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+"
+    "https?://[^\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff<>]+"
 )
 _SOCIAL_LANG_JUNK_RE = re.compile(r"[^a-z0-9-]")
 
@@ -461,6 +463,14 @@ async def translate_social_post(
         }
     except TranslationStructureError as exc:
         raise ReaderAIError(str(exc), status_code=422) from exc
+    # 兜底(检视复检):判定说要译、分段计划里却没有任何要交给模型的片段(全被保护成字面量)时,这段不出译文;
+    # 一段都没有就按「没有需要翻译的内容」拒绝——绝不把原文当译文缓存
+    plans = {
+        name: plan for name, plan in plans.items()
+        if any(chunk.needs_translation for chunk in plan.chunks)
+    }
+    if not plans:
+        raise ReaderAIError("这条推文没有需要翻译的内容", status_code=400)
     items = [
         (f"{name}.{index}", chunk)
         for name, plan in plans.items()

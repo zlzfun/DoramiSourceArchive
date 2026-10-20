@@ -1724,7 +1724,18 @@ def _enforce_ai_daily_quota(username: str, purpose: str) -> None:
             )
         ).one()
     if int(used or 0) >= limit:
-        raise HTTPException(status_code=429, detail="今日 AI 使用次数已达上限，请明日再试")
+        raise HTTPException(
+            status_code=429, detail="今日 AI 使用次数已达上限，请明日再试", headers=_daily_reset_headers(),
+        )
+
+
+def _daily_reset_headers() -> Dict[str, str]:
+    """读者 AI 两类日额度都按服务端本地日期(date.today())计、零点重置。429 带 Retry-After(距服务端下一个
+    本地零点的秒数),客户端据此恢复入口,不必猜服务端时区(issue #84 检视:浏览器按本地日期恢复会在跨时区
+    或零点前后晚到的回包上多锁近一天)。"""
+    now = datetime.datetime.now()
+    reset = datetime.datetime.combine(now.date() + datetime.timedelta(days=1), datetime.time.min)
+    return {"Retry-After": str(max(1, int((reset - now).total_seconds()) + 1))}
 
 
 def _enforce_ai_cost_gates(username: str, purpose: str) -> None:
@@ -1740,7 +1751,9 @@ def _enforce_ai_cost_gates(username: str, purpose: str) -> None:
         # 全局日 token 预算(v3.34):与逐用户日调用限额互补,护全站总成本
         # (多账户/IM bot 代答渠道的放大器)。0=不限;超限当日全员 429,次日自复。
         if accounts_service.reader_ai_budget_exhausted(session):
-            raise HTTPException(status_code=429, detail="今日 AI 用量已达全站上限，请明日再试")
+            raise HTTPException(
+                status_code=429, detail="今日 AI 用量已达全站上限，请明日再试", headers=_daily_reset_headers(),
+            )
     _enforce_ai_daily_quota(username, purpose)
 
 

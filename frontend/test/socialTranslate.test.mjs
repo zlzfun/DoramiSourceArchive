@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   currentSocialTranslation,
-  localDayKey,
+  nextSocialQuotaExpiry,
   purgeExpiredSocialQuota,
+  socialQuotaActive,
+  socialQuotaUntil,
   socialTextNeedsTranslation,
   socialTranslatable,
   socialTranslationParts,
@@ -69,15 +71,29 @@ test('原文变了旧译文作废:同 ID 换正文或换引用后签名不同', 
   assert.equal(currentSocialTranslation(undefined, sig), null);
 });
 
-test('额度用尽跨日失效,当天保留', () => {
-  const today = localDayKey(new Date(2026, 9, 21, 10));
+test('额度用尽按服务端 Retry-After 恢复,不看浏览器日期', () => {
+  const now = Date.UTC(2026, 9, 21, 15, 0, 0);
+  // 服务端说 1 小时后零点(例如浏览器在东京、服务端在上海):恢复时刻就是 1 小时后,不是浏览器的下一个零点
+  assert.equal(socialQuotaUntil(3600, now), now + 3600 * 1000);
+  // 零点前发出、零点后才回来的 429:服务端算出的剩余秒数很小,恢复时刻几乎就是现在
+  assert.equal(socialQuotaUntil(1, now), now + 1000);
+  // 缺 Retry-After 时退回本地零点(在 now 之后、24 小时之内)
+  const fallback = socialQuotaUntil(undefined, now);
+  assert.ok(fallback > now && fallback <= now + 24 * 3600 * 1000);
+});
+
+test('到恢复时刻清掉 quota,未到的保留,并给出最早恢复时刻', () => {
+  const now = 1_000_000;
   const map = {
-    a: { status: 'quota', day: localDayKey(new Date(2026, 9, 20, 23)), sig: 's' },
-    b: { status: 'quota', day: today, sig: 's' },
+    a: { status: 'quota', until: now - 1, sig: 's' },
+    b: { status: 'quota', until: now + 60_000, sig: 's' },
     c: { status: 'done', open: true, sig: 's' },
   };
-  const purged = purgeExpiredSocialQuota(map, today);
+  assert.equal(socialQuotaActive(map.a, now), false);
+  assert.equal(socialQuotaActive(map.b, now), true);
+  const purged = purgeExpiredSocialQuota(map, now);
   assert.deepEqual(Object.keys(purged), ['b', 'c']);
-  const unchanged = { b: map.b, c: map.c };
-  assert.equal(purgeExpiredSocialQuota(unchanged, today), unchanged);
+  assert.equal(purgeExpiredSocialQuota(purged, now), purged);
+  assert.equal(nextSocialQuotaExpiry(map), now - 1);
+  assert.equal(nextSocialQuotaExpiry({ c: map.c }), null);
 });

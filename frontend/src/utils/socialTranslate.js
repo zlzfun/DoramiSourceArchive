@@ -5,9 +5,9 @@ import { looksChinese } from './readerText.js';
 
 // X 的「无语言内容」判定码:纯链接 / 纯表情 / 纯媒体链接 / 纯提及 / 纯话题等
 const NO_LANGUAGE_CODES = new Set(['zxx', 'art', 'qme', 'qam', 'qht', 'qst', 'qct']);
-// 链接到第一个空白为止;空白集合与后端逐字同一份(各语言的 \s 不等价,检视 R1-04)
+// 链接到第一个空白或尖括号为止(与后端实际翻译时的链接保护同一分隔规则);空白集合与后端逐字同一份(各语言的 \s 不等价,检视 R1-04)
 // eslint-disable-next-line no-control-regex -- \x1c-\x1f 是 Python \s 含、JS \s 不含的分隔符,有意列入以对齐后端
-const URL_RE = /https?:\/\/[^\t\n\v\f\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+/gu;
+const URL_RE = /https?:\/\/[^\t\n\v\f\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff<>]+/gu;
 const LANG_JUNK_RE = /[^a-z0-9-]/g;
 const LETTER_RE = /\p{L}/u;
 
@@ -69,21 +69,36 @@ export function currentSocialTranslation(entry, signature) {
   return entry && signature && entry.sig === signature ? entry : null;
 }
 
-// 本地日期键:额度用尽(429)按天失效(检视 R1-03)
-export function localDayKey(date = new Date()) {
-  return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+// 额度用尽(429)的恢复时刻(毫秒):按服务端 Retry-After(距服务端下一个零点的秒数)算,不猜服务端时区;
+// 缺失时退回本地零点(检视 R1-03 / 复检)
+export function socialQuotaUntil(retryAfterSeconds, now = Date.now()) {
+  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0) return now + retryAfterSeconds * 1000;
+  const day = new Date(now);
+  return new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1).getTime();
 }
 
-// 清掉日期已过的 quota 条目;没有可清的原样返回同一对象(setState 不触发重渲)
-export function purgeExpiredSocialQuota(map, today = localDayKey()) {
+export function socialQuotaActive(entry, now = Date.now()) {
+  return entry?.status === 'quota' && entry.until > now;
+}
+
+// 清掉已到恢复时刻的 quota 条目;没有可清的原样返回同一对象(setState 不触发重渲)
+export function purgeExpiredSocialQuota(map, now = Date.now()) {
   let changed = false;
   const next = {};
   for (const [id, entry] of Object.entries(map || {})) {
-    if (entry?.status === 'quota' && entry.day !== today) {
+    if (entry?.status === 'quota' && !socialQuotaActive(entry, now)) {
       changed = true;
       continue;
     }
     next[id] = entry;
   }
   return changed ? next : map;
+}
+
+// 最早的恢复时刻,供定时清理;没有 quota 条目返回 null
+export function nextSocialQuotaExpiry(map) {
+  const times = Object.values(map || {})
+    .filter((entry) => entry?.status === 'quota' && Number.isFinite(entry.until))
+    .map((entry) => entry.until);
+  return times.length ? Math.min(...times) : null;
 }
