@@ -10746,7 +10746,9 @@ input[type="radio"] {
   .reader-ai-a-body.markdown-body h1,
   .reader-ai-a-body.markdown-body h2,
   .reader-ai-a-body.markdown-body h3,
-  .reader-ai-a-body.markdown-body h4 { margin: 14px 0 6px; font-size: 14px; }
+  .reader-ai-a-body.markdown-body h4,
+  .reader-ai-a-body.markdown-body h5,
+  .reader-ai-a-body.markdown-body h6 { margin: 14px 0 6px; font-size: 14px; }
   .reader-ai-a-error {
     align-self: flex-start;
     padding: 8px 11px;
@@ -11026,7 +11028,9 @@ input[type="radio"] {
   .markdown-body h1,
   .markdown-body h2,
   .markdown-body h3,
-  .markdown-body h4 {
+  .markdown-body h4,
+  .markdown-body h5,
+  .markdown-body h6 {
     /* 正文提到 16.5px 后旧标题梯度（21/18.5/16.5/15.5）显得太平，拉开层级；
        上外距略加大给更大的标题留呼吸。font-weight 显式写 600（PingFang 取 Semibold
        档，与原 650 落到同一实际字重，避免 font-synthesis:none 下的模糊语义）。 */
@@ -11038,7 +11042,14 @@ input[type="radio"] {
   .markdown-body h1 { font-size: 25px; }
   .markdown-body h2 { font-size: 21px; }
   .markdown-body h3 { font-size: 18px; }
-  .markdown-body h4 { font-size: 17px; }
+  .markdown-body h4,
+  .markdown-body h5,
+  .markdown-body h6 { font-size: 17px; }
+  .markdown-body .paper-abstract-title { font-family: var(--font-serif); }
+  .markdown-body .paper-caption { color: var(--dorami-muted); }
+  .markdown-body .paper-align-left { text-align: left; }
+  .markdown-body .paper-align-center { text-align: center; }
+  .markdown-body .paper-align-right { text-align: right; }
   /* 粗体统一 600(苹方 Semibold / 雅黑 Bold 同一观感;浏览器默认 bolder 会落到 700) */
   .markdown-body strong,
   .markdown-body b { font-weight: 600; color: var(--dorami-ink); }

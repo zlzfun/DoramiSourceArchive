@@ -6,6 +6,8 @@ structures are reported rather than silently advertised as complete text.
 from __future__ import annotations
 
 import re
+import copy
+from collections import Counter
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlsplit
 
@@ -13,8 +15,101 @@ from bs4 import BeautifulSoup, NavigableString
 
 from fetchers.impl.article_extractor import DETAIL_HARD_CAP, node_to_markdown
 
-CONVERTER_VERSION = "arxiv-html-v1"
+CONVERTER_VERSION = "arxiv-html-v2"
 MAX_HTML_BYTES = 5 * 1024 * 1024
+# Opaque stored values avoid matching ordinary words in the trigram FTS index.
+_LAYOUT_CODES = {"abstract-title": "zq1", "caption": "zq2", "left": "zq3", "center": "zq4", "right": "zq5"}
+
+
+def _text_alignment(node) -> str:
+    """Read only known text alignment values, never forward source CSS."""
+    for parent in [node, *node.parents]:
+        classes = parent.get("class", [])
+        style = str(parent.get("style") or "")
+        match = re.search(r"(?:^|;)\s*text-align\s*:\s*(left|center|right)\s*(?:;|$)", style, re.I)
+        if match:
+            return match[1].lower()
+        for value in ("left", "right", "center"):
+            if f"ltx_align_{value}" in classes or (value == "center" and "ltx_centering" in classes):
+                return value
+    return ""
+
+
+def _normalize_fonts(root, soup, replacements) -> None:
+    # LaTeXML often encodes emphasis as span classes, not strong/em tags.
+    # Wrap contents rather than rename nodes, retaining paragraph/list structure.
+    block_tokens = {key for key, value in replacements.items() if "\n\n" in value}
+    # Never wrap list/table structure: their converters require direct li/tr/td.
+    for node in list(root.find_all(["span", "p", "h1", "h2", "h3", "h4", "h5", "h6", "td", "th", "figcaption"])):
+        classes = node.get("class", [])
+        text = node.get_text()
+        if any(key in block_tokens for key in re.findall(r"DORAMIPAPERTOKEN\d+END", text)):
+            continue
+        for class_name, tag, equivalents in (
+            ("ltx_font_typewriter", "code", {"code", "tt"}),
+            ("ltx_font_italic", "em", {"em", "i"}),
+            ("ltx_font_bold", "strong", {"strong", "b"}),
+        ):
+            if class_name not in classes or node.name in equivalents:
+                continue
+            if node.find_parent(["pre", "code", *equivalents]):
+                continue
+            # Code spans cannot contain block structures or math placeholders.
+            if tag == "code" and (
+                node.name != "span" or "DORAMIPAPERTOKEN" in text
+                or any(child.name != "span" for child in node.find_all(True))
+            ):
+                continue
+            wrapper = soup.new_tag(tag)
+            for child in list(node.contents):
+                wrapper.append(child.extract())
+            if tag == "code":
+                # Prose dollars were escaped before normalizing font classes;
+                # code spans display backslashes literally.
+                for child in list(wrapper.find_all(string=True)):
+                    child.replace_with(NavigableString(str(child).replace("\\$", "$")))
+            node.append(wrapper)
+
+
+def _preserve_block_styles(root, soup, source_url, token) -> None:
+    """One-block annotations, invisible to ordinary Markdown readers.
+
+    The reader maps only these reserved reference definitions to fixed classes;
+    source HTML, style strings and arbitrary attributes never enter the renderer.
+    """
+    block_names = ["p", "h2", "h3", "h4", "h5", "h6", "figcaption", "pre", "ul", "ol"]
+    for node in reversed(list(root.find_all(block_names + ["div"]))):
+        # Any inline-rendered ancestor would concatenate the definition with
+        # prose. Only annotate blocks reached through structural containers.
+        ancestors = []
+        for parent in node.parents:
+            if parent is root:
+                break
+            ancestors.append(parent)
+        if node.name == "pre" or any(
+            parent.name not in {"div", "section", "article", "figure"}
+            for parent in ancestors
+        ):
+            continue
+        if node.name == "div" and node.find(block_names + ["div", "table"]):
+            continue
+        classes = node.get("class", [])
+        kind = ("abstract-title" if "ltx_title_abstract" in classes else
+                "caption" if node.name == "figcaption" else "")
+        alignment = _text_alignment(node)
+        if kind == "abstract-title" and not alignment:
+            alignment = "center"
+        styles = [_LAYOUT_CODES[value] for value in (kind, alignment) if value]
+        if not styles:
+            continue
+        container = soup.new_tag("div")
+        container.append(copy.copy(node))
+        markdown = node_to_markdown(container, source_url)
+        if not markdown:
+            continue
+        block = soup.new_tag("p")
+        block.string = token(f"[zqpl]: #{'.'.join(styles)}\n\n{markdown}")
+        node.replace_with(block)
 
 
 def _compatible_tex(latex: str) -> str:
@@ -117,7 +212,7 @@ def extract_arxiv_html(html: str, source_url: str) -> PaperExtraction:
         return key
 
     # Avoid collision with literal paper prose (or malicious source markup).
-    if "DORAMIPAPERTOKEN" in html:
+    if "DORAMIPAPERTOKEN" in html or "zqpl" in html.lower():
         raise ValueError("reserved_marker_in_source")
     # LaTeXML can leak unsupported document setup (e.g. \reportnumber 001)
     # before the title. Keep the title as the first content block so Reader's
@@ -129,10 +224,13 @@ def extract_arxiv_html(html: str, source_url: str) -> PaperExtraction:
                 node.decompose()
     for node in root.select("script, style, nav, .ltx_authors, .ltx_dates"):
         node.decompose()
-    # Escape prose dollar signs before inserting TeX delimiters.
+    # HTML source newlines are soft whitespace, not paper line breaks. Collapse
+    # text nodes (actual <br>, paragraphs and preformatted code remain intact),
+    # then escape prose dollar signs before inserting TeX delimiters.
     for node in list(root.find_all(string=True)):
         if not node.find_parent(["math", "pre", "code"]):
-            node.replace_with(NavigableString(str(node).replace("$", "\\$")))
+            text = re.sub(r"[ \t\r\n]+", " ", str(node))
+            node.replace_with(NavigableString(text.replace("$", "\\$")))
 
     math_nodes = list(root.find_all("math"))
     for node in math_nodes:
@@ -201,6 +299,8 @@ def extract_arxiv_html(html: str, source_url: str) -> PaperExtraction:
         else:
             del node["href"]
 
+    _normalize_fonts(root, soup, replacements)
+
     # Expand spans into a rectangular GFM grid. Repeated labels retain the
     # association that would otherwise shift columns or erase row headings.
     tables = list(root.find_all("table"))
@@ -208,6 +308,7 @@ def extract_arxiv_html(html: str, source_url: str) -> PaperExtraction:
         if table.find_parent("table"):
             warnings.add("nested_table")
         grid: dict[tuple[int, int], str] = {}
+        alignments: dict[int, list[str]] = {}
         rows = [tr for tr in table.find_all("tr") if tr.find_parent("table") is table]
         if len(rows) > 500:
             raise ValueError("table_too_large")
@@ -225,6 +326,10 @@ def extract_arxiv_html(html: str, source_url: str) -> PaperExtraction:
                 if col + colspan > 80 or r + rowspan > 500:
                     raise ValueError("table_too_large")
                 text = node_to_markdown(cell, source_url).replace("\n", " ; ").replace("|", "\\|")
+                alignment = _text_alignment(cell)
+                for cc in range(col, col + colspan):
+                    if alignment:
+                        alignments.setdefault(cc, []).append(alignment)
                 for rr in range(r, r + rowspan):
                     for cc in range(col, col + colspan):
                         if (rr, cc) in grid:
@@ -237,7 +342,14 @@ def extract_arxiv_html(html: str, source_url: str) -> PaperExtraction:
         width = max(c for _, c in grid) + 1
         height = max(r for r, _ in grid) + 1
         lines = ["| " + " | ".join(grid.get((r, c), "") for c in range(width)) + " |" for r in range(height)]
-        lines.insert(1, "|" + " --- |" * width)
+        # GFM supports alignment per column. Prefer the most common explicit
+        # source alignment when header and body cells differ.
+        separators = []
+        for col in range(width):
+            values = alignments.get(col, [])
+            alignment = Counter(values).most_common(1)[0][0] if values else ""
+            separators.append({"left": ":---", "center": ":---:", "right": "---:"}.get(alignment, "---"))
+        lines.insert(1, "| " + " | ".join(separators) + " |")
         # Use TeX-equivalent bar commands inside math; escaping a literal bar
         # with GFM's backslash would change it into the norm operator.
         table_md = "\n".join(lines)
@@ -251,6 +363,7 @@ def extract_arxiv_html(html: str, source_url: str) -> PaperExtraction:
 
     abstract_node = root.select_one(".ltx_abstract")
     abstract = node_to_markdown(abstract_node, source_url) if abstract_node else ""
+    _preserve_block_styles(root, soup, source_url, token)
     content = node_to_markdown(root, source_url)
     for key, value in reversed(list(replacements.items())):
         content = content.replace(key, value)

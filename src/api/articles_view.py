@@ -16,6 +16,7 @@ from api.textutils import _date_end_value, _json_loads, _split_csv
 from models.content import BaseContent
 from models.db import ArticleRecord
 from services import content_classification, podcast_premium
+from services.paper_content import strip_layout_markers
 from storage.fts import build_search_components, fts_search_ids
 
 
@@ -392,7 +393,7 @@ def serialize_article_list_item(
         "source_group_id": record.source_group_id,
         "run_scope": record.run_scope,
         "has_content": record.has_content,
-        "content_preview": content[:280],
+        "content_preview": strip_layout_markers(content)[:280],
         "summary_zh": summary,
         "read_count": record.read_count or 0,
         "analysis_status": getattr(analysis, "status", None),

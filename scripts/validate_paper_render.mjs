@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import paperLayout from '../frontend/src/utils/remarkPaperLayout.js';
 
 const require = createRequire(new URL('../frontend/package.json', import.meta.url));
 const React = require('react');
@@ -19,7 +20,7 @@ if (!directory) throw new Error('Provide the sample output directory');
 const rows = [];
 for (const file of fs.readdirSync(directory).filter((name) => name.endsWith('.md')).sort()) {
   const html = renderToStaticMarkup(React.createElement(Markdown, {
-    remarkPlugins: [gfm, breaks, math], rehypePlugins: [katex],
+    remarkPlugins: [gfm, breaks, math, paperLayout], rehypePlugins: [katex],
   }, fs.readFileSync(path.join(directory, file), 'utf8')));
   const errors = [...html.matchAll(/class="katex-error"[^>]*title="([^"]*)"/g)].map((m) => m[1]);
   rows.push({

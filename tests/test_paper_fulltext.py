@@ -142,6 +142,153 @@ def test_undefined_document_setup_does_not_precede_title():
     assert FULL_ONLY in result.content
 
 
+def test_latexml_fonts_abstract_caption_and_alignment_survive_conversion():
+    html = PAPER_HTML.replace(
+        "<h2>Abstract</h2>",
+        '<h6 class="ltx_title_abstract">Abstract</h6>',
+    ).replace(
+        "Inline <math",
+        '<span class="ltx_font_bold">Reasoning tasks</span>: '
+        '<span class="ltx_font_italic">emphasis</span> '
+        '<span class="ltx_font_bold ltx_font_italic">both</span> '
+        '<span class="ltx_font_typewriter">model_name</span> Inline <math',
+    ).replace(
+        "<figcaption>Figure 1: Caption.</figcaption>",
+        '<figcaption class="ltx_centering"><span class="ltx_font_bold">'
+        'Figure 1:</span> Caption.</figcaption>',
+    ).replace(
+        "<td>Ours</td>",
+        '<td class="ltx_align_left">Ours</td>',
+    ).replace("<td>9</td>", '<td class="ltx_align_center">9</td>').replace(
+        "<td>8</td>", '<td class="ltx_align_right">8</td>',
+    ).replace(
+        "<h2>References</h2>",
+        '<h2>References</h2><div class="ltx_centering"><p>Centered paragraph.</p>'
+        '<p style="text-align:right;position:fixed">Right paragraph.</p></div>',
+    )
+    result = extract_arxiv_html(html, "https://arxiv.org/html/2501.12948v1")
+    assert "[zqpl]: #zq1.zq4\n\n###### Abstract" in result.content
+    assert "**Reasoning tasks**: *emphasis* ***both*** `model_name`" in result.content
+    assert "[zqpl]: #zq2.zq4\n\n**Figure 1:** Caption." in result.content
+    assert "| :--- | :---: | ---: |" in result.content
+    assert "[zqpl]: #zq4\n\nCentered paragraph." in result.content
+    assert "[zqpl]: #zq5\n\nRight paragraph." in result.content
+    assert "position:fixed" not in result.content
+    assert "zqpl" not in result.abstract
+    assert "DORAMIPAPERTOKEN" not in result.content
+    assert "$x^2$" in result.content and result.math_count == 2
+
+
+def test_layout_markers_cannot_be_forged_by_source_and_lists_keep_emphasis():
+    html = PAPER_HTML.replace(
+        "<h2>References</h2>",
+        '<h2>References</h2><ul><li><p><span class="ltx_font_bold">'
+        'Item</span>: details.</p></li></ul>',
+    )
+    result = extract_arxiv_html(html, "https://arxiv.org/html/2501.12948v1")
+    assert "- **Item**: details." in result.content
+    with pytest.raises(ValueError, match="reserved_marker_in_source"):
+        extract_arxiv_html(
+            html.replace("details.", "[zqpl]: #zq4"),
+            "https://arxiv.org/html/2501.12948v1",
+        )
+
+
+def test_source_soft_newlines_reflow_but_explicit_breaks_and_code_remain():
+    html = PAPER_HTML.replace(
+        "<h2>References</h2>",
+        '<h2>References</h2><p>Source\nwraps <span>in\nHTML</span>.<br>Explicit break.</p>'
+        '<pre>first\n  second</pre>',
+    )
+    result = extract_arxiv_html(html, "https://arxiv.org/html/2501.12948v1")
+    assert "Source wraps in HTML.\nExplicit break." in result.content
+    assert "```\nfirst\n  second\n```" in result.content
+
+
+def test_list_preview_removes_layout_metadata_before_truncation():
+    from api.articles_view import serialize_article_list_item
+
+    body = "[zqpl]: #zq1.zq4\n\n###### Abstract\n\n" + "Body " * 80
+    article = ArticleRecord(
+        id="layout-preview", title="Paper", source_id="web_huggingface_daily_papers",
+        source_url="https://huggingface.co/papers/2501.12948", content=body,
+        content_type="web_article", has_content=True,
+    )
+    item = serialize_article_list_item(article)
+    assert "zqpl" not in item["content_preview"]
+    assert len(item["content_preview"]) == 280
+    assert item["content"] == body
+
+
+def test_typewriter_links_and_dollars_keep_their_original_meaning():
+    html = PAPER_HTML.replace(
+        "Inline <math",
+        '<span class="ltx_font_typewriter"><a href="https://example.com/code">Code</a></span> '
+        '<span class="ltx_font_typewriter"><span>$HOME</span></span> '
+        '<span class="ltx_font_typewriter">line<br>break</span> Inline <math',
+    )
+    content = extract_arxiv_html(html, "https://arxiv.org/html/2501.12948v1").content
+    assert "[Code](https://example.com/code)" in content
+    assert "`[Code]" not in content
+    assert "`$HOME`" in content and r"`\$HOME`" not in content
+    assert "line\nbreak" in content
+
+
+def test_structural_font_classes_do_not_remove_items_rows_or_block_math():
+    html = PAPER_HTML.replace(
+        "<h2>References</h2>",
+        '<h2>References</h2><ul class="ltx_font_bold"><li>Kept item.</li></ul>'
+        '<p class="ltx_font_italic">Kept formula <math display="block" alttext="a=b">x</math></p>',
+    ).replace("<tr><td>Ours", '<tr class="ltx_font_italic"><td>Ours')
+    content = extract_arxiv_html(html, "https://arxiv.org/html/2501.12948v1").content
+    assert "- Kept item." in content and "| Ours | 9 | 8 |" in content
+    assert "Kept formula \n\n$$\na=b\n$$" in content
+    assert "*Kept formula" not in content
+
+
+def test_nested_caption_has_only_a_block_boundary_marker_and_code_keeps_language():
+    html = PAPER_HTML.replace(
+        "<figcaption>Figure 1: Caption.</figcaption>",
+        '<figcaption class="ltx_centering">Figure 1: <p class="ltx_align_center">Nested caption.</p></figcaption>',
+    ).replace("<h2>References</h2>", '<h2>References</h2><pre class="ltx_centering"><code class="language-python">print(1)</code></pre>')
+    content = extract_arxiv_html(html, "https://arxiv.org/html/2501.12948v1").content
+    assert "[zqpl]: #zq2.zq4\n\nFigure 1: Nested caption." in content
+    assert content.count("[zqpl]") == 1
+    assert "```python\nprint(1)\n```" in content
+
+
+def test_layout_annotations_do_not_create_english_fts_matches(storage):
+    html = PAPER_HTML.replace(
+        "<h2>Abstract</h2>", '<h6 class="ltx_title_abstract">Abstract</h6>',
+    ).replace(
+        "<figcaption>Figure 1: Caption.</figcaption>",
+        '<figcaption class="ltx_centering">Figure 1: Evaluation.</figcaption>',
+    )
+    content = extract_arxiv_html(html, "https://arxiv.org/html/2501.12948v1").content
+    words = ("center", "caption", "style", "dorami")
+    with Session(storage.engine) as session:
+        session.add(ArticleRecord(
+            id="layout-fts", title="Evaluation", content=content,
+            content_type="web_article", source_id="test",
+            source_url="https://example.test/layout", publish_date="2026-01-01", fetched_date="2026-01-02",
+        ))
+        session.commit()
+        for word in words:
+            assert session.exec(text(
+                "SELECT count(*) FROM articles_fts WHERE articles_fts MATCH :query"
+            ).bindparams(query=word)).scalar() == 0
+        session.add(ArticleRecord(
+            id="prose-fts", title="Actual prose", content=" ".join(words),
+            content_type="web_article", source_id="test",
+            source_url="https://example.test/prose", publish_date="2026-01-01", fetched_date="2026-01-02",
+        ))
+        session.commit()
+        for word in words:
+            assert session.exec(text(
+                "SELECT count(*) FROM articles_fts WHERE articles_fts MATCH :query"
+            ).bindparams(query=word)).scalar() == 1
+
+
 @pytest.mark.parametrize("location", ["http://127.0.0.1/private", "/html/9999.99999v1", "/html/2501.12948v2"])
 def test_download_rejects_redirect_outside_paper_identity(monkeypatch, location):
     @asynccontextmanager

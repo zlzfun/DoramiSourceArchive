@@ -10,6 +10,11 @@ ARXIV_ID_RE = re.compile(r"^(?:\d{4}\.\d{4,5}|[a-z][a-z0-9.-]*/\d{7})(?:v[1-9]\d
 HF_METHOD = "huggingface_daily_papers_json"
 
 
+def strip_layout_markers(body: str) -> str:
+    """Plain previews must not expose the reader's Markdown reference metadata."""
+    return re.sub(r"(?im)^[ \t]*\[zqpl\]:[^\r\n]*(?:\r?\n|$)", "", body)
+
+
 def metadata(article: Any) -> dict:
     try:
         value = json.loads(article.extensions_json or "{}")

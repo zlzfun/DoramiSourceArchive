@@ -29,6 +29,7 @@ from sqlmodel import Session
 
 from services import image_insights as image_insights_service
 from services import user_sources as user_sources_service
+from services.paper_content import strip_layout_markers
 
 # 译文/摘要缓存在 ArticleRecord.extensions_json 下的键；只新增键，不触碰正文。
 TRANSLATION_KEY = "translation_zh"
@@ -115,7 +116,7 @@ def _ensure_articles_exportable(db_sink: Any, records: List[Any]) -> None:
 # ==================== 全文翻译 ====================
 def _split_for_translation(body: str, *, segment_chars: int = _TRANSLATE_SEGMENT_CHARS) -> List[str]:
     """按段落边界把长正文切成若干段，每段尽量不超过 segment_chars。"""
-    body = body.strip()
+    body = strip_layout_markers(body).strip()
     if len(body) <= segment_chars:
         return [body]
     segments: List[str] = []
@@ -329,6 +330,7 @@ async def summarize_article(
     if pre_llm_check is not None:
         pre_llm_check()
 
+    body = strip_layout_markers(body).strip()
     if len(body) > _SUMMARIZE_BODY_CHARS:
         body = body[:_SUMMARIZE_BODY_CHARS] + "\n...(正文已截断)"
     # 配图说明(issue #69,cached-only):速读兜底只在没有分析结果时走到这里,不为它发起识别;
@@ -449,6 +451,7 @@ def build_numbered_context(
             body = (art.get("content") or art.get("content_preview") or "").strip()
         else:
             body = (getattr(art, "content", None) or "").strip()
+        body = strip_layout_markers(body).strip()
         notes = (notes_map.get(_art_field(art, "id")) or "").strip()
         if not body and not notes and not keep_empty:
             continue

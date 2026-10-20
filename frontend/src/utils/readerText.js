@@ -18,6 +18,7 @@ export function formatUnreadCount(n) {
 export function stripMarkdown(text) {
   if (!text) return '';
   return String(text)
+    .replace(/^[ \t]*\[zqpl\]:[^\r\n]*(?:\r?\n|$)/gim, '') // 论文排版元信息；兼容已截断的预览
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')         // 图片 ![alt](url)
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')      // 链接 [文本](url) → 文本
     .replace(/^#{1,6}\s+/gm, '')                  // 标题 #
