@@ -82,8 +82,49 @@ def test_chinese_word_order_within_unit_and_cross_unit_guard():
     restored = restore_translation_units(plan.chunks[0].text, raw)
     assert plan.assemble([restored]) == "从 $policy$ 采样 $outputs$。\n\nNext $value$."
     units[0]["text"], units[1]["text"] = units[1]["text"], units[0]["text"]
-    with pytest.raises(TranslationStructureError, match="不完整"):
+    with pytest.raises(TranslationStructureError, match="公式、代码或链接不完整"):
         restore_translation_units(plan.chunks[0].text, json.dumps({"units": units}))
+
+
+@pytest.mark.parametrize("body", [
+    "[A](https://a.test) [B](https://b.test)",
+    "![A](https://a.test) ![B](https://b.test)",
+    "[A [nested]](https://a.test) [B](https://b.test)",
+])
+def test_links_cannot_swap_destinations_but_whole_links_may_move(body):
+    plan = plan_translation(body)
+    first, second = plan.literals
+    source = plan.chunks[0].text
+    swapped = source.replace(first, "TEMP").replace(second, first).replace("TEMP", second)
+    with pytest.raises(TranslationStructureError, match="标签与目标"):
+        plan.assemble([swapped])
+    boundary = source.rfind(" [") if not source.startswith("!") else source.rfind(" ![")
+    assert plan.assemble([source[boundary + 1:] + " " + source[:boundary]])
+    with pytest.raises(TranslationStructureError, match="目标结构"):
+        plan.assemble([source.replace(f"]({first})", f"] {first}")])
+
+
+def test_duplicate_link_labels_use_multisets_and_translated_labels_are_allowed():
+    body = "[here](https://a.test) [here](https://b.test)"
+    plan = plan_translation(body)
+    source = plan.chunks[0].text
+    assert plan.assemble([source.replace("[here]", "[这里]")]) == body.replace("[here]", "[这里]")
+    assert plan.assemble([source]) == body
+
+
+def test_crlf_is_normalized_before_splitting_including_literals():
+    body = "A.\r\n\r\n" + "B " * 40 + "\r\n\r\n```text\r\ncode\r\n```\r\n\r\n$$\r\nx=y\r\n$$"
+    plan = plan_translation(body, segment_chars=64)
+    restored = [restore_translation_units(c.text, json.dumps({"units": translation_units(c.text)}))
+                for c in plan.chunks]
+    assert plan.assemble(restored) == body.replace("\r\n", "\n")
+
+
+def test_single_column_alignment_and_horizontal_rule_round_trip():
+    body = "---\n\n| Header |\n| :--- |\n| Content |"
+    plan = plan_translation(body)
+    assert "---" in plan.literals.values() and "| :--- |" in plan.literals.values()
+    assert plan.assemble([c.text for c in plan.chunks]) == body
 
 
 @pytest.mark.parametrize("damage", ["missing", "duplicate", "unknown", "bool_id", "newline", "empty", "non_string", "not_json"])
@@ -120,6 +161,26 @@ def test_table_units_preserve_wrapped_rows_numbers_and_separators():
     units[2]["text"] = "| 模型 | 86.7 | 71.0 |"
     with pytest.raises(TranslationStructureError, match="数值"):
         restore_translation_units(source, json.dumps({"units": units}))
+
+
+def test_table_formula_cannot_move_to_another_column():
+    plan = plan_translation("| Model | $a$ | $b$ |")
+    first, second = plan.literals
+    text = plan.chunks[0].text.replace(first, "TEMP").replace(second, first).replace("TEMP", second)
+    with pytest.raises(TranslationStructureError, match="跨列"):
+        plan.assemble([text])
+
+
+@pytest.mark.parametrize("replacement", ["1.5", "-1.5", "-1.5%"])
+def test_table_numeric_sign_and_percentage_are_protected(replacement):
+    plan = plan_translation("| Model | +1.5% |")
+    with pytest.raises(TranslationStructureError, match="数值"):
+        plan.assemble([plan.chunks[0].text.replace("+1.5%", replacement)])
+
+
+def test_numeric_guard_distinguishes_model_hyphens_and_normalizes_minus():
+    plan = plan_translation("| GPT-4o Llama-3.1-8B 2024-08 | -1.5% |")
+    assert plan.assemble([plan.chunks[0].text.replace("-1.5", "−1.5")])
 
 def test_missing_table_row_and_missing_chunk_rejected():
     plan = plan_translation("| Name | Value |\n| --- | --- |\n| example | 7 |")
@@ -197,7 +258,7 @@ class Sink:
         return True
 
 
-def mock_model(monkeypatch, *, reason="stop", mutate=None):
+def mock_model(monkeypatch, *, reason="stop", mutate=None, fenced=False, degrade=False):
     calls = []
 
     @asynccontextmanager
@@ -206,11 +267,17 @@ def mock_model(monkeypatch, *, reason="stop", mutate=None):
             payload = json.loads(request.content)
             text = payload["messages"][-1]["content"].split("【待翻译正文】\n", 1)[-1]
             calls.append(text)
+            if degrade and "response_format" in payload:
+                return httpx.Response(400, json={"error": "response_format unsupported"})
+            if not degrade:
+                assert payload["response_format"] == {"type": "json_object"}
             if mutate:
                 data = json.loads(text)
                 for unit in data["units"]:
                     unit["text"] = mutate(unit["text"])
                 text = json.dumps(data)
+            if fenced:
+                text = "```json\n" + text + "\n```"
             return httpx.Response(200, json={
                 "choices": [{"message": {"content": text}, "finish_reason": reason}],
                 "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
@@ -236,9 +303,26 @@ def test_incomplete_response_is_metered_but_never_cached(monkeypatch, reason):
 def test_missing_literal_never_cached(monkeypatch):
     mock_model(monkeypatch, mutate=lambda text: "模型丢失了公式")
     sink = Sink()
-    with pytest.raises(reader_ai.ReaderAIError, match="不完整"):
+    with pytest.raises(reader_ai.ReaderAIError, match="公式、代码或链接不完整"):
         asyncio.run(reader_ai.translate_article(sink, "paper", CONFIG))
     assert sink.writes == 0
+
+
+def test_json_mode_degrades_to_fenced_output_without_losing_structure(monkeypatch):
+    calls = mock_model(monkeypatch, fenced=True, degrade=True)
+    sink = Sink()
+    result = asyncio.run(reader_ai.translate_article(sink, "paper", CONFIG))
+    assert result["translation"] == sink.record.content
+    assert len(calls) == 2 and sink.writes == 1
+
+
+def test_crlf_translation_preserves_source_and_source_fingerprint(monkeypatch):
+    mock_model(monkeypatch)
+    body = "First.\r\n\r\nSecond."
+    sink = Sink(body=body)
+    result = asyncio.run(reader_ai.translate_article(sink, "paper", CONFIG))
+    assert sink.record.content == body and result["translation"] == "First.\n\nSecond."
+    assert json.loads(sink.record.extensions_json)["translation_zh_fp"] == reader_ai._body_fingerprint(body)
 
 
 def test_paper_cache_upgrade_then_reuse(monkeypatch):

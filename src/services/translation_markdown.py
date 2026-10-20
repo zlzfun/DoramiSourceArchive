@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections import Counter
-import json
 import re
 import uuid
 
+from llm.client import LLMStructuredOutputError, parse_json_object
 from services.paper_content import strip_layout_markers
 
 
@@ -21,6 +21,8 @@ class TranslationStructureError(ValueError):
 
 
 _TOKEN = re.compile(r"DORAMITR[0-9a-f]{12}X\d+Z")
+_LINK_TARGET = re.compile(r"\]\((" + _TOKEN.pattern + r")\)")
+_NUMERIC = re.compile(r"(?<![\w.])[-+]?\d+(?:[.,]\d+)*(?:[eE][-+]?\d+)?%?")
 _FENCE = re.compile(r"(?m)^ {0,3}(`{3,}|~{3,})[^\n]*(?:\n|$)")
 _WITHIN_PARAGRAPH = r"(?:(?!\n[ \t]*\n)[\s\S])*?"
 _INLINE_CODE = re.compile(r"(`+)(?!`)" + _WITHIN_PARAGRAPH + r"(?<!`)\1(?!`)")
@@ -78,16 +80,50 @@ def translation_units(text: str) -> list[dict]:
     ]
 
 
+def _link_bindings(text: str) -> list[tuple[str, str]]:
+    bindings = []
+    for match in _LINK_TARGET.finditer(text):
+        depth, pos = 1, match.start() - 1
+        while pos >= 0:
+            backslashes, cursor = 0, pos - 1
+            while cursor >= 0 and text[cursor] == "\\":
+                backslashes += 1
+                cursor -= 1
+            if backslashes % 2 == 0:
+                if text[pos] == "]":
+                    depth += 1
+                elif text[pos] == "[":
+                    depth -= 1
+                    if depth == 0:
+                        start = pos - 1 if pos and text[pos - 1] == "!" else pos
+                        bindings.append((text[start:match.start() + 1], match[1]))
+                        break
+            pos -= 1
+    return bindings
+
+
 def _validate_line(source: str, translated: str) -> None:
     # Chinese word order can move inline formulae within a sentence, but a
     # formula/link may never disappear, duplicate, or move to another unit.
     if Counter(_TOKEN.findall(translated)) != Counter(_TOKEN.findall(source)):
         raise TranslationStructureError("译文中的公式、代码或链接不完整，整篇译文未保存")
+    if Counter(_LINK_TARGET.findall(source)) != Counter(_LINK_TARGET.findall(translated)):
+        raise TranslationStructureError("译文链接目标结构发生变化，整篇译文未保存")
+    source_links, translated_links = _link_bindings(source), _link_bindings(translated)
+    unchanged_labels = {label for label, _ in source_links} & {label for label, _ in translated_links}
+    if (Counter(pair for pair in source_links if pair[0] in unchanged_labels)
+            != Counter(pair for pair in translated_links if pair[0] in unchanged_labels)):
+        raise TranslationStructureError("译文链接标签与目标不匹配，整篇译文未保存")
     if _table_shape(translated) != _table_shape(source):
         raise TranslationStructureError("译文表格结构发生变化，整篇译文未保存")
     if _PIPES.search(source):
+        source_cells, translated_cells = _PIPES.split(source), _PIPES.split(translated)
+        if any(Counter(_TOKEN.findall(a)) != Counter(_TOKEN.findall(b))
+               for a, b in zip(source_cells, translated_cells)):
+            raise TranslationStructureError("译文表格公式或链接跨列移动，整篇译文未保存")
+
         def numbers(value):
-            return [re.findall(r"\d+(?:\.\d+)?", cell)
+            return [_NUMERIC.findall(cell.replace("−", "-"))
                     for cell in _PIPES.split(_TOKEN.sub("", value))]
         if numbers(source) != numbers(translated):
             raise TranslationStructureError("译文表格数值发生变化，整篇译文未保存")
@@ -97,7 +133,7 @@ def restore_translation_units(text: str, raw: str) -> str:
     """Accept one nonempty string per requested ID, never a free-form rewrite."""
     units = translation_units(text)
     try:
-        payload = json.loads(raw)
+        payload = parse_json_object(raw)
         if not isinstance(payload, dict) or set(payload) != {"units"} or not isinstance(payload["units"], list):
             raise ValueError
         requested = {unit["id"] for unit in units}
@@ -113,7 +149,7 @@ def restore_translation_units(text: str, raw: str) -> str:
             translated[index] = value
         if set(translated) != requested:
             raise ValueError
-    except (ValueError, TypeError, RecursionError) as exc:
+    except (ValueError, TypeError, RecursionError, LLMStructuredOutputError) as exc:
         raise TranslationStructureError("翻译单元不完整或格式无效，整篇译文未保存") from exc
     lines = text.split("\n")
     for index, value in translated.items():
@@ -272,6 +308,7 @@ def _split_line(line: str, limit: int) -> list[tuple[str, str]]:
 def plan_translation(body: str, *, segment_chars: int = 3500) -> TranslationPlan:
     if segment_chars < 64:
         raise ValueError("segment_chars must be at least 64")
+    body = body.replace("\r\n", "\n").replace("\r", "\n")
     body, literals = _protect(strip_layout_markers(body).strip())
     chunks: list[TranslationChunk] = []
     buffer, separator = "", ""
