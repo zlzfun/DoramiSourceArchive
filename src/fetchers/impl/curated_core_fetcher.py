@@ -1197,6 +1197,7 @@ class HuggingFaceDailyPapersFetcher(SinglePageDocumentFetcher):
             seen.add(arxiv_id)
             entries.append({
                 "arxiv_id": arxiv_id,
+                "paper_abstract": abstract,
                 "title": title,
                 "source_url": f"https://huggingface.co/papers/{arxiv_id}",
                 "publish_date": publish_date,
@@ -1240,6 +1241,7 @@ class HuggingFaceDailyPapersFetcher(SinglePageDocumentFetcher):
                     "url": entry["source_url"],
                     "listing_source": "huggingface_daily_papers",
                     "arxiv_id": entry["arxiv_id"],
+                    "paper_abstract": entry["paper_abstract"],
                     "upvotes": entry["upvotes"],
                     "num_authors": entry["num_authors"],
                     "ai_keywords": entry["ai_keywords"],

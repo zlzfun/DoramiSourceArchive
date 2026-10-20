@@ -8,6 +8,7 @@ import {
   Star,
 } from 'lucide-react';
 import ReaderMarkdown from '../ReaderMarkdown';
+import PaperContentNote from '../PaperContentNote';
 import ShareMenu from '../ShareMenu';
 import PodcastExperiencePanel from '../PodcastExperiencePanel';
 import PodcastTextPanel from '../PodcastTextPanel';
@@ -225,6 +226,9 @@ export default function MobileArticlePage({
               <h2 className="section-title">节目简介</h2>
               <span>来源方提供</span>
             </div>
+          )}
+          {!podcastGuideActive && (
+            <PaperContentNote article={activeArticle} />
           )}
           {!podcastGuideActive && (
             <div

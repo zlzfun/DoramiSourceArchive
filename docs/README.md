@@ -9,6 +9,8 @@
 
 ## 顶层(活跃)
 
+- ◉ [paper-fulltext-plan.md](./paper-fulltext-plan.md) — **论文全文补全（issue #41）**：HF 摘要后补抓官方 arXiv HTML、数学与图表转换、摘要分析成本边界、持久任务/回填与真实样本验证。
+
 - ◉ [backend-stall-fix-plan.md](./backend-stall-fix-plan.md) — **生产间歇停顿修复（issue #194）**：逐字稿扫描投影、分析数据库线程隔离、复现证据与本地交叉检视。
 
 - ◉ [visual-refine-plan.md](./visual-refine-plan.md) — **视觉精修波(issue #184,含 #176 W0a + W0b)**:自托管思源宋体(分片随构建打包、内网可用)、三套可选中性色、夜航版式早报、分数身份线、条目行与组件收敛;拍板记录、字体生成链、实现进度与验收。

@@ -25,6 +25,7 @@ from llm.taxonomy_bootstrap_prompt import (
     build_taxonomy_bootstrap_user_prompt,
 )
 from models.db import ArticleRecord
+from services.paper_content import analysis_body as paper_analysis_body
 from services.taxonomy import normalize_label
 from services.taxonomy_bootstrap import (
     BootstrapManifest,
@@ -140,7 +141,7 @@ def load_manifest_articles(
                 BootstrapExtractionArticle(
                     article_id=article.id,
                     title=article.title or "",
-                    body=article.content or "",
+                    body=paper_analysis_body(article),
                     content_type=article.content_type or "",
                     source_id=article.source_id or "",
                 )

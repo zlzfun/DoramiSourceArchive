@@ -2789,7 +2789,8 @@ def _prepare_and_pull(consumer, producer, remote, tmp_path, *, label):
     ))
 
 
-def test_upgraded_receiver_refetches_analyses_dropped_by_its_old_version(tmp_path):
+@pytest.mark.parametrize("old_generation", [None, 2])
+def test_upgraded_receiver_refetches_analyses_dropped_by_its_old_version(tmp_path, old_generation):
     """issue #178 第二波:旧版接收端丢掉了内容价值字段、同步进度已越过那些行;升级后第一次同步自动整流重拉
     分析流把它们补回来,其它流仍是增量。"""
     producer = _sink(tmp_path, "producer-refetch.db")
@@ -2819,8 +2820,11 @@ def test_upgraded_receiver_refetches_analyses_dropped_by_its_old_version(tmp_pat
         session.add(record)
         row = session.get(AppSettingRecord, remote_sync_service.REMOTE_SYNC_STATE_KEY)
         state = json.loads(row.value)
-        assert state["targets"][base_url]["v2_analysis_payload_generation"] == 2   # 首次 rebase 即记当前代次
-        state["targets"][base_url].pop("v2_analysis_payload_generation")
+        assert state["targets"][base_url]["v2_analysis_payload_generation"] == archive_sync_v2.ANALYSIS_PAYLOAD_GENERATION
+        if old_generation is None:
+            state["targets"][base_url].pop("v2_analysis_payload_generation")
+        else:
+            state["targets"][base_url]["v2_analysis_payload_generation"] = old_generation
         assert "analyses" in state["targets"][base_url]["v2_streams"]
         row.value = json.dumps(state, ensure_ascii=False)
         session.add(row)
@@ -2852,7 +2856,7 @@ def test_upgraded_receiver_refetches_analyses_dropped_by_its_old_version(tmp_pat
         record = session.get(ArticleAnalysisRecord, "article-1")
         assert (record.content_value, record.content_value_version) == (7.6, "content-value-v2")
     target = remote_sync_service.load_sync_state(consumer.engine)["targets"][base_url]
-    assert target["v2_analysis_payload_generation"] == 2
+    assert target["v2_analysis_payload_generation"] == archive_sync_v2.ANALYSIS_PAYLOAD_GENERATION
     assert "analyses" in target["v2_streams"]   # 补拉完成后 checkpoint 重新建立
 
     # 再同步一次:代次已是当前,不再重拉

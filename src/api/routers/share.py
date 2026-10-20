@@ -52,9 +52,10 @@ def _friendly_source(source_id: str) -> str:
 def _serialize_shared_article(
     article: ArticleRecord, share: ArticleShareRecord
 ) -> Dict[str, Any]:
+    from services.paper_content import delivery_body
     return {
         "title": article.title or "",
-        "content": article.content or "",
+        "content": delivery_body(article),
         "source_name": _friendly_source(article.source_id or ""),
         "source_url": article.source_url or "",
         "publish_date": article.publish_date,
@@ -102,7 +103,8 @@ async def get_shared_article_media(
         raise HTTPException(status_code=404, detail="分享链接无效或已失效")
 
     target = (url or "").strip()
-    if target not in extract_image_urls(article.content, article.extensions_json):
+    from services.paper_content import delivery_body, delivery_metadata
+    if target not in extract_image_urls(delivery_body(article), delivery_metadata(article)):
         raise HTTPException(status_code=404, detail="分享链接无效或已失效")
 
     def _redirect() -> RedirectResponse:

@@ -1,0 +1,133 @@
+# 论文全文补全与摘要分析
+
+Issue [#41](https://github.com/zlzfun/DoramiSourceArchive/issues/41)。2026-10-20 用户批准官方 HTML 优先的实现路径，论文自动分析只使用摘要，在独立分支与 worktree 开发。
+
+分支：`feat/issue-41-paper-fulltext`，基于 `origin/main@97a4378`。本波不改版本号、不新增依赖，不操作生产数据库。
+
+## 1. 背景与决策
+
+HF Daily Papers 的正文原本来自 JSON 的 `paper.summary`；`has_content=true` 会让普通补正文路径跳过它。文章已有稳定 ID、读者状态和分析结果，因此采用原记录上的异步正文升级。
+
+阅读器已经支持 remark-math / KaTeX，通用 HTML 提取器却会把 MathML 可见文本与 TeX annotation 重复读出，也不能正确处理 SVG object 和合并单元格。首期增加专用 LaTeXML 转换器，复用现有 Markdown 渲染与媒体缓存。
+
+调研参考：[arXiv HTML](https://info.arxiv.org/about/accessible_HTML.html)、[ar5iv](https://ar5iv.labs.arxiv.org/)、[arxiv2md](https://github.com/timf34/arxiv2md)、[Docling](https://github.com/docling-project/docling)、[MinerU](https://github.com/opendatalab/MinerU)、[KaTeX 选项](https://katex.org/docs/options.html)。ar5iv 的覆盖与版本新鲜度不同于官方入口；arxiv2md 的图片和复杂表格处理不能直接满足本站需求。PDF/OCR 与重量级转换依赖后置。
+
+## 2. 内容与成本边界
+
+| 消费路径 | 论文输入 |
+|---|---|
+| 登录阅读器、FTS 检索 | 补全后的 Markdown 正文 |
+| 自动分析、标签召回、模型输入指纹 | 原始摘要 |
+| 日报候选、补评、编辑润色 | 同一份摘要，不调用配图识别 |
+| 分类体系 bootstrap 模型提取 | 摘要 |
+| feed JSON/Markdown/Atom、MCP 正文/检索摘录/RAG、公开分享正文 | 摘要 |
+| 管理员 Markdown 导出、授权 Archive Sync | 完整归档正文 |
+| 读者主动翻译、问答 | 维持已有阅读请求语义，不属于自动分析 |
+
+HF 新记录以 `raw_data.paper_abstract` 保存未截断摘要；旧 HF 记录以原 body 作为摘要快照。其它论文优先读明确的 abstract/summary 或 Markdown Abstract 小节，缺失时仅按标题分析，绝不把已知全文作为隐式兜底。普通新闻维持原输入。
+
+受控 HF 采集或显式 `paper.abstract` 的记录以摘要计算 `content_hash`，全文补齐不改变它、不主动触发重评。其它存量论文保留旧的标题 + content 归档指纹，防止跨版本同步失配或批量重评；模型实际输入仍是摘要，由 `analysis_input_hash` 单独记录。评分尺子和全局提示词版本不变；论文输入增加 `paper_abstract` 依据，说明只能使用摘要证据。正文翻译与摘要旧缓存会被清理。
+
+## 3. 处理与持久化
+
+1. 摘要入库时同一事务幂等写入 `paper_fulltext_jobs`；采集不等待 HTTP。
+2. 采集调度器每分钟最多处理 2 篇，reader 角色不运行该任务；先原子领取租约，再在事务外下载和解析。
+3. 只请求官方 `https://arxiv.org/html/<id>`，重定向必须留在同一论文身份；显式版本不能被替换为其它版本。
+4. 写回前复核租约、原正文 hash、论文 ID、摘要和远端权威/Archive Sync 接收端围栏。编辑或同步改变输入时跳过。
+5. 原位更新正文与 `extensions.paper`，保留 ID、HF 来源 URL、首次入库时间、读者状态和其它扩展。FTS 与同步修订水位由既有机制推进。
+6. 图片走已有媒体代理按阅读需求缓存，不自动预取整篇论文的配图。任务表不进入 Archive Sync，接收端不重新抓取。
+
+滚动升级顺序：**先升级 Archive Sync 接收端，再升级采集生产端**，与通常先生产端的顺序相反；旧接收端按全文计算分析 hash，无法接收新版本的摘要分析 hash。`ANALYSIS_PAYLOAD_GENERATION` 从 2 升至 3，接收端每个目标升级后有意整流重拉一次分析，恢复旧版可能清掉的结果。两端更新后，全文补齐的文章增量不清除已同步的摘要评分，任务仍留在生产端。单节点无此顺序要求。
+
+文章同步页按 8 MiB 编码后体积目标切页，使用既有 snapshot/cursor/complete 协议；单条超限时独占一页以保证推进，不丢记录或卡死。现有接收端按 manifest.complete 继续拉取，不以行数等于 limit 推断结束。
+
+`extensions.paper` 记录摘要、实际论文 ID/可确认版本、HTML 地址、转换器版本、时间、许可 URL（未知为空）、图表公式计数、warnings，以及 `content_level=abstract/fulltext/partial`。许可未明确时首期交付正文仍保持摘要；没有“开放全文分发”开关，后续单独设计授权策略。
+
+任务状态：pending / processing / succeeded / unavailable / failed / skipped。HTTP 超时 30 秒、单篇处理 120 秒、租约 180 秒；HTML 上限 5 MiB、正文沿用 200,000 字符上限。正文与媒体共享单事件循环串行限速，请求起点至少间隔 3.1 秒；这不是跨进程分布式配额，部署沿用单采集进程。
+
+404/422 从 24 小时退避起步；429/5xx/网络错误有界重试，最多 3 次。其它结构/大小错误终止并保留摘要。崩溃后租约到期恢复；显式重试仅允许 failed/unavailable，不能抢占活动任务或复活保护人工修改的 skipped。新迁移 `c41a8e20d610` 的父版本为 `e5c1f7a2b938`，任务随文章删除级联清理。
+
+## 4. 转换与呈现
+
+- MathML 只取一次 TeX，保留行内/块级形态；处理相邻分隔符、TeX 内美元符号、RGB 颜色和 array 可选参数。
+- 方程布局表转公式块并保留编号；数据表展开 rowspan/colspan，重复表头/行标签维持列对应。
+- 表格内公式的单竖线与范数分别转成 `\vert` / `\Vert`，避免 GFM 转义改变数学语义；array/tabular 列格式带竖线时明确降级可读 TeX 并标 partial。
+- img 与 SVG object 转绝对图链，复用图片代理和灯箱；不启用原始 HTML 或受信任 TeX。
+- 图注、章节、参考文献、附录保留；内部锚点链接回原文，避免冲撞应用 hash 路由。
+- 嵌套表格、内联 SVG、TeX 图形等受限结构标 partial；正文超限则保持摘要，不截断后冒充全文。
+- 桌面和移动端显示正文层级、摘要分析依据和 arXiv 版本链接，长公式内部横向滚动。
+
+后续边界：PDF、ar5iv、其它源全文、复杂 SVG/表格高保真、通用自定义宏、全文分发授权。
+
+## 5. 回填与验证
+
+先按正常部署机制应用迁移。回填默认预览：不下载、不调用模型、不改记录；必须显式指定数据库：
+
+```sh
+uv run python scripts/backfill_paper_fulltext.py --database-url sqlite:////absolute/path/cms_data.db --limit 20
+uv run python scripts/backfill_paper_fulltext.py --database-url sqlite:////absolute/path/cms_data.db --limit 20 --apply
+```
+
+`--since YYYY-MM-DD` 限定发布时间，`--retry` 仅纳入 failed/unavailable。重复 apply 幂等，由正常调度器消费；无需全库重评。
+
+只读样本验证，不加载生产 DB、不调用 LLM：
+
+```sh
+uv run python scripts/validate_paper_html.py --output /tmp/dorami-paper-validation
+node scripts/validate_paper_render.mjs /tmp/dorami-paper-validation
+```
+
+默认 20 个固定版本，也可在末尾指定 ID。固定版本 HTML 缓存于输出目录，转换复验离线复用；原文不提交仓库。
+
+## 6. 2026-10-20 实测
+
+20 篇中 12 篇完整、5 篇 partial、3 篇回退。该样本覆盖不同年份和结构，不用于推断全站覆盖率。
+
+| arXiv ID | 结果/边界 |
+|---|---|
+| 2501.12948v1 | 完整；33 公式、3 图、6 表 |
+| 2408.09869v5 | 完整；5 图、1 表 |
+| 2407.10671v1 | 完整 |
+| 2412.19437v1 | 完整 |
+| 2307.09288v2 | 超过 200k，保留摘要 |
+| 2407.21783v1 | 超过 200k，保留摘要 |
+| 2403.05527v1 | partial：TeX 内嵌图形 |
+| 2312.00752v2 | partial：嵌套表格 |
+| 2406.02528v1 | 完整 |
+| 2402.03300v1 | 完整 |
+| 2406.17557v1 | 完整 |
+| 2501.00663v1 | 完整 |
+| 2410.24258v1 | HTML 404，保留摘要 |
+| 2402.19427v1 | 完整 |
+| 2502.09992v1 | 完整 |
+| 2404.14219v1 | partial：内联 SVG |
+| 2309.17453v1 | 完整 |
+| 2303.08774v6 | partial：嵌套表格 |
+| 1706.03762v7 | 完整 |
+| 1810.04805v2 | partial：内联 SVG |
+
+17 篇经实际 React Markdown / remark-math / rehype-katex 渲染，2,445 个 KaTeX 实例、0 解析错误。表格展开可能重复标签公式；partial 中未呈现的 SVG 不算成功渲染。
+
+迁移修复后完整后端回归 **2,730 项通过**（含全部 60 项迁移测试与 schema 零漂移）。交叉检视修复后相关后端 **203 项通过**，其中论文专项 36 项，覆盖编辑/身份/摘要改变、同步围栏/分页/代次重放、旧租约、重试、危险重定向、长度上限、默认只读回填、指纹稳定和禁止自动识图。前端 **97 项通过**（含真实 GFM/KaTeX 单竖线与范数语义），lint/build 通过。以上两组后端结果分别记录，不将最后的增量修复冒称为已重跑完整套件。
+
+真实隔离栈为临时 SQLite + FastAPI + 前端构建：R1 的 33 个公式与 3 张图正常显示，亮/暗主题均目检；390px 窄屏长公式内部滚动，页面不横向溢出。桌面和移动端均显示论文层级、摘要分析依据、arXiv 版本。截图位于本 worktree 的 `output/playwright/paper-fulltext/`（不提交）。
+
+## 7. 检视与合入
+
+实现方 Codex（当前会话 GPT-6；具体运行变体未由环境标明）。检视方为本机 Claude Code，实际模型 `claude-opus-5-5`；用户于 2026-10-20 明确授权只读源码审查。首轮 1 项 P1、6 项 P2，逐条协商后达成一致：
+
+| 意见 | 协商结论与修复 |
+|---|---|
+| P1 同步跨版本 hash 失配 | 接受；接收端先升级，分析代次 3 触发重拉恢复 |
+| P2 非 HF 存量指纹漂移 | 原建议恢复全文分析不符合用户摘要成本要求；双方同意只保留旧归档指纹，模型输入继续摘要 |
+| P2 feed Markdown / MCP 检索泄出全文 | 接受；统一摘要投影，连同自查 Atom 入口补回归 |
+| P2 表格 TeX 竖线变范数 | 接受；等价 TeX 命令，array/tabular 布局标 partial，实际 GFM/KaTeX 语义测试 |
+| P2 自动预取图占用存储与限速 | 接受；取消整篇预取，按需缓存 |
+| P2 同步全文页过大 | 接受；8 MiB 目标、单条超限独占页、cursor 连续性测试 |
+| P2 retry 覆盖人工编辑 | 接受；skipped 不允许批量重试 |
+
+独立验证还修复了迁移收养幂等、标题前 setup 宏和阅读器列表/缓存缺少论文元信息。Claude Code（`claude-opus-5-5`）按上述清单复检，8 组全部通过、无阻塞项，未重开全面检视。
+
+观察期：非 HF 论文只改 ext.summary 而正文没变时不自动重评；大量读者同时打开多图论文时，排队时间仍计入 120 秒任务截止，可能消耗一次尝试；单条超大历史文章仍允许超过分页目标。复检补充两类极少见表格表达式边界：列格式回退与范数同在单元格可能扰动 GFM 分列，`\text{}` 内竖线的替换可能不兼容 KaTeX 文本模式；固定样本未触发。这些边界已与检视方确认，后续按实际样本修订转换规则。
+
+检视意见逐条协商后成批修复，复检只核对修复清单。尚未合入或部署；合入前仍需用户本地端到端验收和目检放行。

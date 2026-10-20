@@ -2676,6 +2676,13 @@ def load_tasks_to_scheduler():
         max_instances=1,
     )
     _ensure_interval_job(
+        "paper_fulltext",
+        execute_paper_fulltext_job,
+        minutes=1,
+        max_instances=1,
+        coalesce=True,
+    )
+    _ensure_interval_job(
         "taxonomy_retag",
         execute_taxonomy_retag_job,
         minutes=1,
@@ -2701,6 +2708,17 @@ def load_tasks_to_scheduler():
         minutes=1,
         max_instances=1,
     )
+async def execute_paper_fulltext_job():
+    from services.paper_fulltext import run_batch
+
+    try:
+        # Papers may carry dozens of figures. Cache them on reader demand,
+        # rather than growing storage and the shared arXiv queue on ingestion.
+        await run_batch(db_sink.engine)
+    except Exception:
+        _dorami_logger.warning("论文全文任务异常；未完成租约将在后续批次恢复", exc_info=True)
+
+
 async def execute_article_analysis_job():
     """Recover/scan/claim article analysis without coupling it to ingestion."""
 

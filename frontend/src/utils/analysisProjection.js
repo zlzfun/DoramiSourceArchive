@@ -31,6 +31,7 @@ export const ANALYSIS_PROJECTION_KEYS = [
   'tags',
   'display_tags',
   'podcast',
+  'paper',
   // 兴趣标注随分析轮询刷新:pending 篇拿到标签后,命中胶囊不必等整列重载(codex 检视 P2)
   'interest_hits',
 ];

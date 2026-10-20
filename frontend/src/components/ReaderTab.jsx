@@ -35,6 +35,7 @@ import LogoMark from './LogoMark';
 import BrandLogoImage from './BrandLogoImage';
 import RailLogoutAvatar from './RailLogoutAvatar';
 import ReaderMarkdown from './ReaderMarkdown';
+import PaperContentNote from './PaperContentNote';
 import ReaderAiPanel from './ReaderAiPanel';
 import ShareMenu from './ShareMenu';
 import ContextMenu from './ContextMenu';
@@ -1448,6 +1449,9 @@ export default function ReaderTab({
                   <h2 className="section-title">节目简介</h2>
                   <span>来源方提供</span>
                 </div>
+              )}
+              {!podcastGuideActive && (
+                <PaperContentNote article={activeArticle} />
               )}
               {!podcastGuideActive && (
                 <div

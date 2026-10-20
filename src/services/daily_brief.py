@@ -62,6 +62,7 @@ from weakref import WeakKeyDictionary
 from sqlmodel import Session, select
 
 import config
+from services.paper_content import analysis_body as paper_analysis_body
 from llm.client import (
     ChatMessage, LLMError, LLMNotConfigured, UsageMeta,
     chat_completion, client_session, parse_json_object,
@@ -681,7 +682,7 @@ def _collect_candidate_batch(session, *, cursor, max_total=120, per_source_cap=D
                     publish_date=row.publish_date or "",
                     fetched_date=row.fetched_date or "",
                     has_content=bool(row.has_content and row.content),
-                    body=row.content or "",
+                    body=paper_analysis_body(row),
                     source_role=(
                         source_role(
                             row.source_id or "",
@@ -765,6 +766,10 @@ async def _score_one(
             source_owner_or_domain=candidate.source_id,
             source_name=friendly_source_name(candidate.source_id),
             source_role=candidate.source_role,
+            analysis_basis=("paper_abstract" if rule_kind(
+                source_id=candidate.source_id, source_url=candidate.source_url,
+                content_type=candidate.content_type,
+            ) == "paper" else "article_body"),
             # 与 worker 同一份输入:规则能判出内容类型时喂给模型并以规则为准(issue #178)
             kind_hint=(
                 ""
@@ -778,7 +783,7 @@ async def _score_one(
         )
         # 配图识别(issue #69):补评与 worker 同一把尺子,也同一份输入——缺则识、
         # 受预算保护、失败空串;有说明时 prompt 多一个 image_notes 字段。
-        if not article_input.image_notes:
+        if article_input.analysis_basis != "paper_abstract" and not article_input.image_notes:
             notes = await image_insights_service.ensure_notes(
                 candidate.id, llm_config, usage_meta=usage_meta,
             )
@@ -1163,9 +1168,12 @@ async def _polish_one(
     try:
         # 配图识别(issue #69):预选十几篇的编辑输入附图片说明,要点里的基准数字可来自图;
         # 通常 worker / 补评阶段已识过,这里是零成本命中;缺则识仍受预算保护。
-        image_notes = await image_insights_service.ensure_notes(
-            item.candidate.id, llm_config, usage_meta=usage_meta,
-        )
+        image_notes = ""
+        if rule_kind(source_id=item.candidate.source_id, source_url=item.candidate.source_url,
+                     content_type=item.candidate.content_type) != "paper":
+            image_notes = await image_insights_service.ensure_notes(
+                item.candidate.id, llm_config, usage_meta=usage_meta,
+            )
         system_prompt = prompts.EDITORIAL_SYSTEM_PROMPT
         if image_notes:
             system_prompt = system_prompt + prompts.IMAGE_NOTES_UNTRUSTED_RULE

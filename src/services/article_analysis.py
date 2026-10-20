@@ -41,6 +41,7 @@ from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
 from config import LLMConfig
+from services.paper_content import analysis_body as paper_analysis_body
 from llm.article_analysis_prompt import (
     ARTICLE_ANALYSIS_PROMPT_VERSION,
     ARTICLE_ANALYSIS_SCORING_VERSION,
@@ -301,10 +302,11 @@ def read_feature_flag(session: Session, key: str, *, default: bool = False) -> b
 
 
 def compute_content_hash(article: ArticleRecord) -> str:
-    """Hash the complete title and body with an unambiguous boundary."""
+    """Stable archive fingerprint; managed papers keep their abstract hash."""
 
+    from services.paper_content import content_hash_body
     title = unicodedata.normalize("NFKC", article.title or "").strip()
-    body = unicodedata.normalize("NFKC", article.content or "").strip()
+    body = unicodedata.normalize("NFKC", content_hash_body(article)).strip()
     payload = json.dumps([title, body], ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -1454,7 +1456,7 @@ def load_relevant_active_tags(
     """Small lexical recall stage; never dumps the whole taxonomy into a prompt."""
 
     haystack = _normalize_recall_text(
-        f"{article.title or ''} {(article.content or '')[:8000]}"
+        f"{article.title or ''} {paper_analysis_body(article)[:8000]}"
     )
     tags = list(
         session.exec(
@@ -1789,6 +1791,7 @@ def analysis_input_from_article(
     from services.source_naming import friendly_source_name, source_role
 
     from services.content_classification import rule_kind as classify_rule_kind
+    from services.paper_content import analysis_body
 
     owner = ((source.source_owner if source else "") or article.source_id).strip()
     sid = article.source_id or ""
@@ -1801,7 +1804,7 @@ def analysis_input_from_article(
     return AnalysisInput(
         article_id=article.id,
         title=article.title or "",
-        body=article.content or "",
+        body=analysis_body(article),
         content_type=article.content_type or "",
         source_id=sid,
         publish_date=article.publish_date or "",
@@ -1814,7 +1817,8 @@ def analysis_input_from_article(
             source_scope=source.source_scope if source else None,
             provenance_tier=source.provenance_tier if source else None,
         ),
-        analysis_basis="podcast_show_notes" if is_podcast else "article_body",
+        analysis_basis=("podcast_show_notes" if is_podcast else
+                        "paper_abstract" if rule_kind == "paper" else "article_body"),
         people=_podcast_people(article) if is_podcast else (),
         topic_heat=(
             build_topic_heat_context(
@@ -2496,7 +2500,7 @@ async def process_claimed_analysis(
 
     # 配图识别(issue #69):在 DB 会话之外、评分调用之前补上图片说明。提供者自带时间预算
     # 与失败兜底(空串),这里再包一层硬上限——它是补充输入,任何异常都不能让租约失败。
-    if not article_input.image_notes:
+    if article_input.analysis_basis != "paper_abstract" and not article_input.image_notes:
         provider_cap = min(
             image_insights_service.ENSURE_BUDGET_SECONDS + 5.0,
             max(0.001, deadline - loop.time()),

@@ -34,6 +34,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select, func
 
 from models.db import ArticleRecord, MediaAssetRecord
+from services.arxiv_access import arxiv_request
 from services.object_storage import ObjectStorage, ObjectStorageError, hash_file
 
 logger = logging.getLogger("dorami.media")
@@ -481,7 +482,8 @@ class MediaStore:
             # 带 Referer 请求：防盗链 CDN 无 Referer 会 403（见 _referer_for）；
             # 对不校验的站点无副作用，故统一带上而非失败后重试，省一轮往返。
             headers = {"Referer": _referer_for(url)}
-            async with self._get_client().stream("GET", url, headers=headers) as response:
+            gate = arxiv_request() if host == "arxiv.org" else nullcontext()
+            async with gate, self._get_client().stream("GET", url, headers=headers) as response:
                 if response.status_code != 200:
                     return await asyncio.to_thread(self._mark_failed, url, key, f"HTTP {response.status_code}")
                 declared = int(response.headers.get("content-length") or 0)

@@ -85,6 +85,29 @@ class ArticleRecord(SQLModel, table=True):
     read_count: int = Field(default=0, description="全站累计阅读次数")
 
 
+class PaperFulltextJobRecord(SQLModel, table=True):
+    """Local durable queue; Archive Sync replicates the article, not the job."""
+    __tablename__ = "paper_fulltext_jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','processing','succeeded','unavailable','failed','skipped')",
+            name="ck_paper_fulltext_job_status",
+        ),
+        Index("ix_paper_fulltext_jobs_due", "status", "retry_at"),
+    )
+    article_id: str = Field(primary_key=True, foreign_key="articles.id", ondelete="CASCADE")
+    arxiv_id: str
+    abstract: str
+    original_body_hash: str
+    status: str = "pending"
+    attempts: int = 0
+    retry_at: float = 0
+    lease_token: str = ""
+    lease_until: float = 0
+    last_error: str = ""
+    updated_at: str
+
+
 class DailyBriefCandidateRecord(SQLModel, table=True):
     """Node-local consumption ledger. Pending rows survive cursor advancement."""
     __tablename__ = "daily_brief_candidates"

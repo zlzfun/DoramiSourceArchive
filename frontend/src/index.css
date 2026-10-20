@@ -11153,6 +11153,20 @@ input[type="radio"] {
     border-left: 2px solid var(--dorami-border-strong);
     color: var(--dorami-muted);
   }
+  .paper-content-note {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+    margin: 0 0 20px;
+    color: var(--dorami-muted);
+  }
+  .paper-content-note a { text-decoration: underline; text-underline-offset: 3px; }
+  .markdown-body .katex-display {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 4px 0;
+  }
   .markdown-body pre {
     margin: 0 0 16px;
     padding: 14px 16px;

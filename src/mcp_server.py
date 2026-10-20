@@ -11,6 +11,7 @@ from models.db import ArticleRecord, SourceStateRecord
 from storage.fts import fts_search_ids
 from storage.impl.db_storage import DatabaseStorage
 from services.source_naming import friendly_source_name
+from services.paper_content import delivery_body
 from fetchers.registry import fetcher_registry
 
 
@@ -126,15 +127,16 @@ def _get_article_impl(
         return {"error": f"Article '{article_id}' not found."}
     if source_ids is not None and record.source_id not in set(source_ids):
         return {"error": "article is outside the subscription scope"}
+    from services.paper_content import delivery_body, delivery_metadata
     return {
         "id": record.id,
         "title": record.title,
-        "content": record.content or "",
+        "content": delivery_body(record),
         "source_id": record.source_id,
         "content_type": record.content_type,
         "publish_date": record.publish_date,
         "source_url": record.source_url,
-        "extensions": json.loads(record.extensions_json or "{}"),
+        "extensions": delivery_metadata(record),
     }
 
 
@@ -204,7 +206,7 @@ async def _search_articles_impl(
             "source_id": r.source_id,
             "content_type": r.content_type,
             "publish_date": r.publish_date,
-            "summary": " ".join((r.content or "").split())[:200],
+            "summary": " ".join(delivery_body(r).split())[:200],
         }
         for r in records
     ]
@@ -230,7 +232,7 @@ async def _get_rag_context_impl(
     for rank, record in enumerate(records, start=1):
         source_name = friendly_source_name(record.source_id or "")
         pub_date = (record.publish_date or "")[:10]
-        excerpt = (record.content or "").strip()[:1500]
+        excerpt = delivery_body(record).strip()[:1500]
         block = (
             f"[{rank}] 来源: {source_name} | 日期: {pub_date}\n"
             f"标题: {record.title}\n"

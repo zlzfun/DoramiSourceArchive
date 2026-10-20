@@ -151,6 +151,8 @@ def _xml_text(value: Optional[str]) -> str:
 
 
 def _atom_feed_xml(owner: str, records: list, include_content: bool) -> bytes:
+    from services.paper_content import delivery_body
+
     now = datetime.datetime.now(datetime.timezone.utc)
     entries = [
         (
@@ -191,13 +193,14 @@ def _atom_feed_xml(owner: str, records: list, include_content: bool) -> bytes:
         source_name = _friendly_source_name(record.source_id, registry_meta)
         ET.SubElement(author, _atom_tag("name")).text = _xml_text(source_name)
 
+        body = delivery_body(record)
         if include_content:
             ET.SubElement(entry, _atom_tag("content"), {"type": "text"}).text = _xml_text(
-                record.content
+                body
             )
         else:
             ET.SubElement(entry, _atom_tag("summary"), {"type": "text"}).text = _xml_text(
-                (record.content or "")[:280]
+                body[:280]
             )
         ET.SubElement(
             entry,
@@ -280,7 +283,7 @@ def export_public_feed_articles_markdown(
         publish_date_start=publish_date_start, publish_date_end=publish_date_end,
         skip=skip, limit=safe_limit,
     )
-    body = "\n\n---\n\n".join(article_to_markdown(record) for record in records)
+    body = "\n\n---\n\n".join(article_to_markdown(record, external_delivery=True) for record in records)
     return Response(content=body, media_type="text/markdown; charset=utf-8")
 
 
