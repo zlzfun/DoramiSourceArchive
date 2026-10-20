@@ -440,22 +440,22 @@ def build_translate_user_prompt(title: str, body: str) -> str:
     return "\n".join(parts)
 
 
-# 推文翻译(issue #84):主推与引用推的片段装进一个 JSON 对象一次译完——一次点击只花一次调用。
-# 键是片段编号(如 text.0 / quoted.0),值是原文;译文按同样的键返回。
-SOCIAL_TRANSLATE_SYSTEM_PROMPT = """你是一位专业的科技内容译者，服务于一份面向中文 AI 从业者的阅读器。用户给出一个 JSON 对象，每个值是一段社交媒体推文（或推文的一部分），请把每个值**忠实、流畅地翻译成简体中文**。
+# 推文翻译(issue #84):主推与引用推的行单元装进同一个 units 列表一次译完——一次点击只花一次调用。
+# 沿用 #206 的单元协议(逐行翻译、原样回 id),由 translation_markdown.restore_translation_units 对位还原与校验。
+SOCIAL_TRANSLATE_SYSTEM_PROMPT = """你是一位专业的科技内容译者，服务于一份面向中文 AI 从业者的阅读器。用户给出 JSON 对象 {"units":[{"id":编号,"text":"原文"}]}，每个单元是一条社交媒体推文（或它引用的推文）中的一行，请把每个 text **忠实、流畅地翻译成简体中文**。
 
 翻译要求：
 - 信达雅：准确传达原意，保留推文的口吻（随意、简短的就译得随意、简短），不要逐词硬译，不要补写、总结或解释。
-- @用户名、#话题标签、表情符号、链接 URL 原样保留。
+- 逐项翻译 text，原样返回 id；不得合并、拆分、遗漏单元或把内容移到其它单元。相邻单元有承接关系时结合上下文理解，但只翻译各自承担的内容。
+- @用户名、#话题标签、表情符号原样保留。
 - 专有名词、产品名、公司名、模型名、人名按业界惯例处理：广为人知的保留英文（如 ChatGPT、Codex、Hugging Face）。
-- 形如 DORAMITR...Z 的标记代表链接、代码或公式，必须逐字、按原顺序保留一次，不解释、不删除、不加空格。
-- 保留原文的换行与段落。
-- 若某段本身已是中文，原样返回。
-- 只输出一个 JSON 对象：键与输入完全相同，值是对应的译文；不要输出其它说明。"""
+- 形如 DORAMITR...Z 的标记代表链接、代码或公式，必须在原单元内逐字保留一次，不解释、不删除、不加空格；同一单元内可按中文语序调整位置。
+- 若某个 text 本身已是中文，在对应单元中原样返回。
+- 只输出 JSON 对象 {"units":[{"id":原id,"text":"译文"}]}；每个 text 只含原单元的译文，不加换行、说明、前言或总结。"""
 
 
-def build_social_translate_user_prompt(pieces: Dict[str, str]) -> str:
-    return json.dumps(pieces, ensure_ascii=False, indent=2)
+def build_social_translate_user_prompt(units: List[Dict[str, Any]]) -> str:
+    return json.dumps({"units": units}, ensure_ascii=False)
 
 
 TRANSLATE_TRANSCRIPT_SYSTEM_PROMPT = """你是一位专业的播客逐字稿译者。请把给定逐字稿片段忠实、流畅地翻译成简体中文。

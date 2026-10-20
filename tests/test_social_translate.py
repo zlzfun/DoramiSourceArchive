@@ -116,18 +116,24 @@ def _ext_of(engine, article_id):
         return json.loads(session.get(ArticleRecord, article_id).extensions_json)
 
 
-def _patch_social_llm(monkeypatch, *, transform=lambda key, text: f"译：{text}", on_call=None):
-    """JSON 进、JSON 出的桩:按键把原文变成「译：原文」(占位符原样保留),记录每次调用的入参。"""
+def _units_reply(messages, transform=lambda text: f"译：{text}"):
+    """单元协议(#206)的桩回包:逐单元把原文变成「译：原文」(占位符原样保留),原样回 id。"""
+    units = json.loads(messages[-1].content)["units"]
+    return units, json.dumps({"units": [{"id": u["id"], "text": transform(u["text"])} for u in units]}, ensure_ascii=False)
+
+
+def _patch_social_llm(monkeypatch, *, transform=lambda text: f"译：{text}", on_call=None):
+    """JSON 进、JSON 出的桩,记录每次调用送给模型的行单元原文(texts)与参数。"""
     import services.reader_ai as rai
 
     calls = []
 
     async def fake_chat_completion(*, messages, config, **kwargs):
-        payload = json.loads(messages[-1].content)
-        calls.append({"payload": payload, "kwargs": kwargs, "system": messages[0].content})
+        units, reply = _units_reply(messages, transform)
+        calls.append({"texts": [u["text"] for u in units], "kwargs": kwargs, "system": messages[0].content})
         if on_call is not None:
             on_call(len(calls))
-        return json.dumps({key: transform(key, text) for key, text in payload.items()}, ensure_ascii=False)
+        return reply
 
     monkeypatch.setattr(rai, "chat_completion", fake_chat_completion)
     return calls
@@ -220,8 +226,9 @@ def test_translate_social_post_translates_main_and_quote_in_one_call_and_caches(
         assert body["text"] == "译：it is good now! https://t.co/eiG0VDwrTe"
         assert body["quoted"] == "译：throughout june we rolled out major updates to chatgpt memory https://t.co/KkzOE9rGIW"
         assert len(calls) == 1
-        assert sorted(calls[0]["payload"]) == ["quoted.0", "text.0"]
-        assert "https://t.co" not in json.dumps(calls[0]["payload"])  # 送给模型的是占位符
+        texts = calls[0]["texts"]
+        assert len(texts) == 2 and texts[0].startswith("it is good now!") and texts[1].startswith("throughout june")
+        assert "https://t.co" not in json.dumps(texts)  # 送给模型的是占位符
         assert calls[0]["kwargs"]["response_json"] is True
         assert calls[0]["kwargs"]["require_complete"] is True
 
@@ -233,6 +240,22 @@ def test_translate_social_post_translates_main_and_quote_in_one_call_and_caches(
     assert ext["translation_zh_social"]["text"] == body["text"]
     assert ext["quoted"]["text"] == QUOTE_POST_EXT["quoted"]["text"]  # 原文一字不动
     assert "translation_zh" not in ext  # 与文章译文缓存分开
+
+
+def test_multi_paragraph_post_keeps_its_blank_lines(monkeypatch, tmp_path):
+    """单元协议(#206):空行不交给模型、原地保留,逐行译文对位还原;模型不必复现换行。"""
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "social_tr_paragraphs.db")
+    _configure_llm(sink.engine)
+    _set_ai_beta(sink.engine, True)
+    content = "ChatGPT Voice is now in the desktop app.\n\nControl your computer.\n\nRolling out today."
+    _seed_social(sink.engine, "p1", content, {"lang": "en"})
+    calls = _patch_social_llm(monkeypatch)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        body = client.post("/api/reader/ai/social/p1/translate").json()
+    assert calls[0]["texts"] == ["ChatGPT Voice is now in the desktop app.", "Control your computer.", "Rolling out today."]
+    assert body["text"] == "译：ChatGPT Voice is now in the desktop app.\n\n译：Control your computer.\n\n译：Rolling out today."
 
 
 def test_translate_social_post_retranslates_when_source_text_changes(monkeypatch, tmp_path):
@@ -274,7 +297,7 @@ def test_translate_social_post_only_sends_translatable_piece(monkeypatch, tmp_pa
         body = client.post("/api/reader/ai/social/p1/translate").json()
     assert body["text"] is None
     assert body["quoted"] == "译：Day 0 on Qoder: Qwen3.8-Max-Preview is live."
-    assert list(calls[0]["payload"]) == ["quoted.0"]
+    assert calls[0]["texts"] == ["Day 0 on Qoder: Qwen3.8-Max-Preview is live."]
 
 
 def test_translate_social_post_rejects_non_social_and_untranslatable(monkeypatch, tmp_path):
@@ -342,7 +365,7 @@ def test_text_after_zero_width_no_break_space_reaches_the_model(monkeypatch, tmp
         _login(client)
         body = client.post("/api/reader/ai/social/p1/translate").json()
     assert len(calls) == 1
-    sent = calls[0]["payload"]["text.0"]
+    sent = calls[0]["texts"][0]
     assert "Hello" in sent and "https://t.co" not in sent
     assert body["text"] == "译：https://t.co/abc" + chr(0xFEFF) + "Hello"
 
@@ -364,7 +387,7 @@ def test_piece_with_nothing_for_the_model_is_never_cached_as_translation(monkeyp
         assert calls == []
         body = client.post("/api/reader/ai/social/math_and_quote/translate").json()
     assert body["text"] is None and body["quoted"] == "译：big memory update"
-    assert list(calls[0]["payload"]) == ["quoted.0"]
+    assert calls[0]["texts"] == ["big memory update"]
     assert "translation_zh_social" not in _ext_of(sink.engine, "only_math")
 
 
@@ -422,15 +445,23 @@ def test_incomplete_or_malformed_output_is_not_cached(monkeypatch, tmp_path):
     async def truncated(*, messages, config, **kwargs):
         raise LLMIncompleteOutput("模型未确认完整输出，译文未保存；请缩短输入或调整模型输出上限后重试")
 
-    async def missing_key(*, messages, config, **kwargs):
-        return json.dumps({"text.0": "译文"})
+    async def missing_unit(*, messages, config, **kwargs):
+        units = json.loads(messages[-1].content)["units"]
+        return json.dumps({"units": [{"id": units[0]["id"], "text": "译文"}]})
 
     async def dropped_link(*, messages, config, **kwargs):
-        return json.dumps({"text.0": "现在好了！", "quoted.0": "六月更新"})
+        units = json.loads(messages[-1].content)["units"]
+        return json.dumps({"units": [{"id": u["id"], "text": "丢了链接的译文"} for u in units]})
+
+    async def extra_newline(*, messages, config, **kwargs):
+        return _units_reply(messages, lambda text: f"译：{text}\n多出来的一行")[1]
+
+    async def not_units(*, messages, config, **kwargs):
+        return json.dumps({"text.0": "译文"})
 
     with TestClient(app_module.app) as client:
         _login(client)
-        for fake in (truncated, missing_key, dropped_link):
+        for fake in (truncated, missing_unit, dropped_link, extra_newline, not_units):
             monkeypatch.setattr(rai, "chat_completion", fake)
             response = client.post("/api/reader/ai/social/p1/translate")
             assert response.status_code == 502, fake.__name__
@@ -481,8 +512,7 @@ def test_cost_gate_runs_only_on_cache_miss():
     gates = []
 
     async def fake_chat_completion(*, messages, config, **kwargs):
-        payload = json.loads(messages[-1].content)
-        return json.dumps({key: f"译：{text}" for key, text in payload.items()}, ensure_ascii=False)
+        return _units_reply(messages)[1]
 
     cfg = LLMConfig(base_url="https://llm.test/v1", api_key="sk", model="m")
     original = rai.chat_completion

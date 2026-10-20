@@ -406,12 +406,19 @@ def _social_fingerprint(sources: dict) -> str:
 
 
 async def _translate_social_batch(batch, llm_config: LLMConfig, usage_meta, http_client) -> dict:
+    """一批片段一次调用,沿用 #206 的逐行单元协议:各片段的行单元编成全局 id 混进同一个 units 列表
+    (主推与引用推同一请求),回包按 id 拆回各片段,交给 restore_translation_units 逐行校验与还原——
+    与文章翻译同一套结构校验,模型多吐 / 少吐一个换行不会让整条失败。"""
+    request_units: list = []
+    owners: dict = {}
+    for key, chunk in batch:
+        for unit in translation_units(chunk.text):
+            owners[len(request_units)] = (key, unit["id"])
+            request_units.append({"id": len(request_units), "text": unit["text"]})
     raw = await chat_completion(
         messages=[
             ChatMessage(role="system", content=prompts.SOCIAL_TRANSLATE_SYSTEM_PROMPT),
-            ChatMessage(role="user", content=prompts.build_social_translate_user_prompt(
-                {key: chunk.text for key, chunk in batch}
-            )),
+            ChatMessage(role="user", content=prompts.build_social_translate_user_prompt(request_units)),
         ],
         config=llm_config,
         response_json=True,
@@ -419,17 +426,25 @@ async def _translate_social_batch(batch, llm_config: LLMConfig, usage_meta, http
         http_client=http_client,
         require_complete=True,
     )
+    per_chunk: dict = {key: [] for key, _ in batch}
     try:
-        data = parse_json_object(raw)
-    except LLMStructuredOutputError as exc:
-        raise TranslationStructureError("译文格式无法解析，未保存") from exc
-    out = {}
-    for key, chunk in batch:
-        value = data.get(key)
-        if not isinstance(value, str):
-            raise TranslationStructureError("译文缺少片段，未保存")
-        out[key] = chunk.validate(value)
-    return out
+        payload = parse_json_object(raw)
+        if not isinstance(payload, dict) or set(payload) != {"units"} or not isinstance(payload["units"], list):
+            raise ValueError
+        for unit in payload["units"]:
+            if not isinstance(unit, dict) or set(unit) != {"id", "text"}:
+                raise ValueError
+            if type(unit["id"]) is not int or unit["id"] not in owners:
+                raise ValueError
+            key, line_id = owners[unit["id"]]
+            per_chunk[key].append({"id": line_id, "text": unit["text"]})
+    except (ValueError, TypeError, RecursionError, LLMStructuredOutputError) as exc:
+        raise TranslationStructureError("翻译单元不完整或格式无效，译文未保存") from exc
+    # 缺失 / 重复 / 空串 / 含换行 / 占位符或链接结构变化,都由 restore_translation_units 拒绝
+    return {
+        key: restore_translation_units(chunk.text, json.dumps({"units": per_chunk[key]}, ensure_ascii=False))
+        for key, chunk in batch
+    }
 
 
 async def translate_social_post(
@@ -438,8 +453,8 @@ async def translate_social_post(
 ) -> dict:
     """把一条推文的主推与引用推译为中文;返回 {"text", "quoted", "cached"},不需要翻译的一侧为 None。
 
-    一次点击一次调用:两段原文经 plan_translation 保护链接等字面量后,片段装进同一个 JSON 批次
-    (超长推文才按 _TRANSLATE_SEGMENT_CHARS 拆多批)。缓存 extensions_json.translation_zh_social,
+    一次点击一次调用:两段原文经 plan_translation 保护链接等字面量后,片段的行单元装进同一个 JSON 批次
+    (#206 单元协议;超长推文才按 _TRANSLATE_SEGMENT_CHARS 拆多批)。缓存 extensions_json.translation_zh_social,
     指纹取两段原文,任一变化即重译。pre_llm_check 同 translate_article:只在缓存未命中、
     即将发起真实调用时执行。
     """

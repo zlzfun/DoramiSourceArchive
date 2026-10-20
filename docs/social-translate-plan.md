@@ -36,9 +36,9 @@ X API v2 没有翻译端点或译文字段,只有 X 检测的 `lang`;借用 App 
 
 - `POST /api/reader/ai/social/{article_id}/translate` → `{status, text, quoted, cached}`;不需要翻译的一侧为 `null`。
   非社交推文 400、没有可译内容 400、结构校验失败 502、额度 429(只在缓存未命中时判)。
-- `reader_ai.translate_social_post`:沿用 #201 的 `plan_translation`(链接等保护成占位符、逐段核对)与
-  `require_complete=True`;主推和引用推的片段按 3,500 字符预算装进 JSON 批次,一批一次调用
-  (常规推文一批;超长 note tweet 才会多批)。提示词 `SOCIAL_TRANSLATE_SYSTEM_PROMPT`:@用户名、#话题、表情、占位符原样保留。
+- `reader_ai.translate_social_post`:沿用 #201 的 `plan_translation`(链接等保护成占位符)与 `require_complete=True`,
+  以及 #206 的逐行单元协议(`translation_units` / `restore_translation_units`:空行原地保留、逐行对位还原与结构校验);
+  主推和引用推的行单元编成全局 id 装进同一个 `units` 请求,按 3,500 字符预算分批(常规推文一批;超长 note tweet 才会多批)。提示词 `SOCIAL_TRANSLATE_SYSTEM_PROMPT`:@用户名、#话题、表情、占位符原样保留。
 - 缓存:`extensions_json.translation_zh_social = {text, quoted, fp, v}`,`fp` 是两段原文的指纹,任一变化即重译。
   独立于文章的 `translation_zh`(后者被文章旁白读取,不混用)。写回复用 `_save_translation` 的合并 + compare-and-set,
   并在写入前用最新 `extensions_json` 复核原文指纹(新增 `verify_ext` 钩子),原文变了返回 409 不落缓存。
@@ -92,3 +92,7 @@ X API v2 没有翻译端点或译文字段,只有 X 检测的 `lang`;借用 App 
   新增守卫「判定要译 ⇒ 计划必有要译片段」,反向对照(改回旧保护)即失败。
 - **终审**(`455526a`):R1-04 ✓;R1-03 剩一条服务端零点竞态——查询绑定旧日、恢复头却在查询后重新取日期,跨零点时给出 86400 秒
   → 恢复点绑定判额度时的日期,已过给 1 秒;受控时钟单测。按约定三轮封顶,此条由实现方修复收口,未再送审。
+- **合入前同步 main**(#206 逐行单元协议、#207 评测术语保护,均为同日合入的翻译加固):`TranslationChunk.validate` 改为要求行数一致,
+  推文翻译原「每段整块一个 JSON 字段」的写法在多段推文上会因模型少 / 多吐一个换行而整条失败,遂改走 #206 单元协议
+  (行单元全局编号同一请求、回包拆回各分段交 `restore_translation_units`);补「空行原地保留」「单元内多吐换行拒绝」等用例,
+  沙箱端到端重跑通过。此适配复用 #206 已审的还原与校验,未单独送审。
