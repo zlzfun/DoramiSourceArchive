@@ -24,6 +24,15 @@ export function podcastOf(article) {
   return article?.podcast && typeof article.podcast === 'object' ? article.podcast : null;
 }
 
+/**
+ * 播客正文文字面板(导读稿 / 逐字稿)的挂载键:只在导读稿就绪(premium_guide.blog_ready)翻转的那一次变化。
+ * 同一篇停留在本页时导读稿生成完成,面板据此重挂载、重取文字;分析结果、阅读量、premium_guide 其它字段的
+ * 刷新都不改变它,逐字稿的翻页位置不会被无关刷新清掉。
+ */
+export function podcastBodyKey(article) {
+  return `${article?.id || ''}:${podcastOf(article)?.premium_guide?.blog_ready ? 'guide' : 'notes'}`;
+}
+
 export function formatPodcastDuration(value) {
   const seconds = Number(value);
   if (!Number.isFinite(seconds) || seconds <= 0) return '';

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { podcastOf } from '../utils/podcast';
+import { podcastBodyKey, podcastOf } from '../utils/podcast';
 import PodcastTextPanel from './PodcastTextPanel';
 import { Spark } from './player/PlayerGlyphs';
 
@@ -71,8 +71,9 @@ export default function PodcastExperiencePanel({ article, showTranslation = fals
       )}
       {!guideOn && children}
       <div data-ai-translation-excluded="true">
+        {/* 键只在导读稿就绪那一次翻转:停留本页时导读稿生成完成,面板重挂载取回新文字(否则正文区是空的) */}
         <PodcastTextPanel
-          key={article.id}
+          key={podcastBodyKey(article)}
           episodeId={article.id}
           showDigest={guideOn}
           digestMode={podcast.premium_guide?.mode}

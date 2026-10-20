@@ -11331,32 +11331,29 @@ input[type="radio"] {
     .player-mini-art:hover .player-cover { filter: brightness(0.92); }
   }
 
-  /* 窄容器(手机 / 窄屏,< 640px):两行——上:封面 标题 ±15 播放;下:进度 倍速 缩小 关闭。
-     第二行视觉 32px,::after 外扩到 40px 触控面 */
+  /* 窄容器(手机,< 640px):两行——上:封面 标题 ±15 播放;下:进度 倍速 缩小 关闭。
+     行距与底边各留 5px:两行控件的触控命中区(见下方「移动壳」一节,各 42px)正好首尾相接、都落在条内 */
   @container player (max-width: 640px) {
     .player-bar-in {
       grid-template-columns: minmax(0, 1fr) auto;
       grid-template-areas: "info ctrl" "row2 row2";
-      row-gap: 2px;
+      row-gap: 5px;
       column-gap: 8px;
       height: auto;
-      padding: 8px 8px 4px;
+      padding: 8px 8px 5px;
     }
     .player-row2 { grid-area: row2; display: flex; align-items: center; gap: 2px; min-width: 0; }
     .player-seek { flex: 1; }
     .player-art { width: 40px; height: 40px; }
     .player-ctrl .player-btn { height: 40px; min-width: 40px; }
-    .player-play { width: 44px; height: 44px; }
     .player-play-ico,
     .player-play-ico svg { width: 16px; height: 16px; }
-    .player-row2 .player-btn::after { content: ''; position: absolute; inset: -4px; }
-    .player-track { height: 32px; }
-    .player-track-in { inset: -4px 6px; }
   }
-  /* 宽条三区(容器 ≥ 900px,桌面内容区浮层):左 = 封面 + 标题(余量全给它);中 = 控制在上、进度在下,
-     封顶 600px,中区严格落在条的中线上(1920 宽也不会被拉空);右 = 倍速 / 缩小 / 关闭 */
+  /* 宽条三区(容器 ≥ 900px,只给桌面内容区浮层;移动壳再宽也走单行紧凑,命中区才放得下):
+     左 = 封面 + 标题(余量全给它);中 = 控制在上、进度在下,封顶 600px,中区严格落在条的中线上
+     (1920 宽也不会被拉空);右 = 倍速 / 缩小 / 关闭 */
   @container player (min-width: 900px) {
-    .player-bar-in {
+    .player-layer.is-desktop .player-bar-in {
       grid-template-columns: minmax(0, 1fr) minmax(360px, 600px) minmax(0, 1fr);
       grid-template-rows: auto auto;
       grid-template-areas: "info ctrl tail" "info seek tail";
@@ -11365,13 +11362,13 @@ input[type="radio"] {
       row-gap: 0;
       padding: 4px 14px 5px;
     }
-    .player-ctrl { justify-self: center; align-self: end; }
-    .player-seek { align-self: start; }
-    .player-tail { justify-self: end; }
-    .player-art { width: 48px; height: 48px; }
-    .player-play { width: 36px; height: 36px; }
-    .player-track { height: 22px; }
-    .player-title { font-size: 13.5px; }
+    .player-layer.is-desktop .player-bar-in .player-ctrl { justify-self: center; align-self: end; }
+    .player-layer.is-desktop .player-bar-in .player-seek { align-self: start; }
+    .player-layer.is-desktop .player-bar-in .player-tail { justify-self: end; }
+    .player-layer.is-desktop .player-bar-in .player-art { width: 48px; height: 48px; }
+    .player-layer.is-desktop .player-bar-in .player-play { width: 36px; height: 36px; }
+    .player-layer.is-desktop .player-bar-in .player-track { height: 22px; }
+    .player-layer.is-desktop .player-bar-in .player-title { font-size: 13.5px; }
   }
 
   /* ── 迷你:右下角小胶囊 = 带进度环的封面(点开即展开)+ 播放 / 暂停 ── */
@@ -11448,20 +11445,43 @@ input[type="radio"] {
     user-select: none;
   }
   .player-layer.is-mobile .player-mini { right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); }
+  /* 移动壳(视口 ≤ 1024,触屏)的触控命中区,与容器宽度无关(容器查询只管排版):按钮宽 ≥ 40、播放钮 44;
+     其余控件命中区一律 42px 高、以控件中线为心(中心上下 20px 都落在控件上),只在条内、左右不外扩,不压相邻控件 */
+  .player-layer.is-mobile .player-bar-in .player-btn { min-width: 40px; }
+  .player-layer.is-mobile .player-bar-in .player-play { width: 44px; height: 44px; }
+  .player-layer.is-mobile .player-retry { position: relative; }
+  .player-layer.is-mobile .player-bar-in :is(.player-btn, .player-retry)::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    right: 0;
+    left: 0;
+    height: 42px;
+    margin-top: -21px;
+  }
+  .player-layer.is-mobile .player-track { height: 32px; }
+  .player-layer.is-mobile .player-track-in { top: 50%; bottom: auto; height: 42px; margin-top: -21px; }
 
   /* ── 让位:各滚动区底部留出条的位置(宿主 .reader-ws 上的 data-player;容器侧用 max() 取较大者) ── */
   .reader-ws.is-desktop[data-player="bar"] { --player-clear: calc(var(--player-bar-h, 72px) + 28px); --player-clear-end: var(--player-clear); }
   .reader-ws.is-desktop[data-player="mini"] { --player-clear-end: 88px; }
-  .reader-ws.is-mobile[data-player="bar"] { --player-clear-end: calc(var(--player-bar-h, 90px) + 24px); }
+  .reader-ws.is-mobile[data-player="bar"] { --player-clear-end: calc(var(--player-bar-h, 94px) + 24px); }
   .reader-ws.is-mobile[data-player="mini"] { --player-clear-end: 84px; }
   /* 问哆啦美浮钮:条出现时让到条之上,迷你时让到迷你左边;落点压住静止指针时先不接指针事件 */
   .reader-ws[data-fab-settling] .reader-ai-fab { pointer-events: none; }
 
-  /* Windows 高对比度:条与迷你加系统前景色边,播放钮加按钮文字色描边 */
+  /* Windows 高对比度:条与迷你加系统前景色边,播放钮加按钮文字色描边。强制色会把阴影置空、把自定义色压成
+     画布色:进度轨 / 已播段 / 拖柄(与迷你的进度环)改用系统色区分,滑块的聚焦从拖柄外圈的阴影改成系统色 outline */
   @media (forced-colors: active) {
     .player-bar,
     .player-mini { border: 1px solid CanvasText; }
     .player-play { border: 1px solid ButtonText; }
+    .player-rail { background: GrayText; }
+    .player-fill { background: Highlight; }
+    .player-thumb { background: CanvasText; }
+    .player-ring-track { stroke: GrayText; }
+    .player-ring-fill { stroke: Highlight; }
+    .player-track-in:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
   }
 
   /* 减少动效:形变由 JS 退化为直接出现 + 120ms 淡入;律动条 / 呼吸停在静止帧(不读 OS 查询,见 §7) */

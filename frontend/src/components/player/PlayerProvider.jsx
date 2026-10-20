@@ -7,7 +7,7 @@ import {
   playerReducer,
   playerTrackLabel,
   readPlayerSession,
-  startPositionFor,
+  resolveStartPosition,
   writePlayerSession,
 } from '../../utils/playerCore';
 import { readPodcastPosition, writePodcastPosition } from '../../utils/podcastPlayback';
@@ -27,6 +27,11 @@ const sessionStore = () => {
   }
 };
 
+/** 显式位置只对记下它的那一条音轨有效。 */
+function explicitFor(seek, item) {
+  return seek && item && seek.key === item.key ? seek.t : null;
+}
+
 function initPlayer(username) {
   const saved = readPlayerSession(sessionStore(), username);
   return saved ? playerReducer(initialPlayerState, { type: 'restore', ...saved }) : initialPlayerState;
@@ -39,6 +44,9 @@ export default function PlayerProvider({ username = '', active = true, children 
   const stateRef = useRef(state);
   const loadedRef = useRef(null);        // 已装进 <audio> 的条目(恢复的会话在首次播放时才装)
   const pendingSeekRef = useRef(null);   // 元数据到了再跳的续播位置
+  // 元数据到达之前读者明确拖到的位置 { key, t }(恢复的会话还没装进 <audio>,或已装、仍在加载):
+  // 按音轨 key 隔离,换台 / 关闭作废,元数据到达并应用之后才清;不套「末 3 秒视为听完」(0 也是有效值)
+  const explicitSeekRef = useRef(null);
   const lastSaveRef = useRef(0);
   const lastPositionStateRef = useRef(0);
   const progressSubs = useRef(new Set());
@@ -78,10 +86,13 @@ export default function PlayerProvider({ username = '', active = true, children 
     const loaded = loadedRef.current;
     const item = stateRef.current.item;
     if (!item) return 0;
-    if (audio && loaded && loaded.key === item.key && pendingSeekRef.current === null) return audio.currentTime || 0;
+    const explicit = explicitFor(explicitSeekRef.current, item);
+    if (audio && loaded && loaded.key === item.key && pendingSeekRef.current === null && explicit === null) {
+      return audio.currentTime || 0;
+    }
     const saved = pendingSeekRef.current ?? readPodcastPosition(item.articleId, item.track);
-    return startPositionFor(saved, item.duration);
-  }, []);
+    return resolveStartPosition({ saved, explicit, duration: durationOf() });
+  }, [durationOf]);
 
   const emitProgress = useCallback((force = false) => {
     const t = positionOf();
@@ -131,7 +142,9 @@ export default function PlayerProvider({ username = '', active = true, children 
     persist(true);
     loadedRef.current = item;
     lastSaveRef.current = 0;
-    pendingSeekRef.current = readPodcastPosition(item.articleId, item.track);
+    // 换到别的音轨:上一条的显式位置作废;同一条(恢复的会话首次播放 / 重试)保留到元数据到达
+    if (explicitSeekRef.current && explicitSeekRef.current.key !== item.key) explicitSeekRef.current = null;
+    pendingSeekRef.current = explicitFor(explicitSeekRef.current, item) ?? readPodcastPosition(item.articleId, item.track);
     const rate = stateRef.current.rate || 1;
     audio.defaultPlaybackRate = rate;
     audio.playbackRate = rate;
@@ -191,7 +204,8 @@ export default function PlayerProvider({ username = '', active = true, children 
     if (audio && loadedRef.current?.key === cur.item.key && pendingSeekRef.current === null) {
       audio.currentTime = t;
     } else {
-      // 恢复的会话还没装进 <audio>:记下位置,首次播放时从这里起
+      // 元数据还没到(恢复的会话没装进 <audio>,或已装、仍在加载):记成显式位置,首次播放 / 元数据到了从这里起
+      explicitSeekRef.current = { key: cur.item.key, t };
       writePodcastPosition(cur.item.articleId, cur.item.track, t);
       if (loadedRef.current?.key === cur.item.key) pendingSeekRef.current = t;
     }
@@ -244,6 +258,7 @@ export default function PlayerProvider({ username = '', active = true, children 
     }
     loadedRef.current = null;
     pendingSeekRef.current = null;
+    explicitSeekRef.current = null;
     dockRef.current?.beforeChange?.('close', { input, key: cur.item.key });
     dispatch({ type: 'close' });
   }, [persist]);
@@ -341,7 +356,11 @@ export default function PlayerProvider({ username = '', active = true, children 
     onCanPlay: () => dispatch({ type: 'canplay' }),
     onLoadedMetadata: (event) => {
       const audio = event.currentTarget;
-      const pos = startPositionFor(pendingSeekRef.current, audio.duration);
+      const pos = resolveStartPosition({
+        saved: pendingSeekRef.current,
+        explicit: explicitFor(explicitSeekRef.current, loadedRef.current),
+        duration: audio.duration,
+      });
       pendingSeekRef.current = null;
       if (pos > 0) {
         try {
@@ -350,6 +369,8 @@ export default function PlayerProvider({ username = '', active = true, children 
           /* 个别浏览器在可寻址范围到齐前拒绝 seek:从头播放也能用 */
         }
       }
+      // 显式位置到这里才算用掉(赋 src、调 play() 时都不清,否则会落回自动续播规则)
+      explicitSeekRef.current = null;
       emitProgress(true);
       updatePositionState(true);
     },

@@ -18,6 +18,7 @@ import {
   podcastTrackItem,
   readPlayerSession,
   rendererIsSoftware,
+  resolveStartPosition,
   sanitizeItem,
   startPositionFor,
   writePlayerSession,
@@ -163,6 +164,23 @@ test('续播位置:离结尾 3 秒内从头开始;越界夹住;时钟格式', ()
   assert.equal(nextRate(1), 1.25);
   assert.equal(nextRate(2), 1);
   assert.equal(nextRate(9), 1.25);
+});
+
+test('起播位置:元数据到达前的显式 seek 只按时长夹取(含 0),自动续播仍套末 3 秒规则', () => {
+  // 显式拖到末 3 秒内:照读者的意思,不当成「已听完」
+  assert.equal(resolveStartPosition({ saved: 60, explicit: 119, duration: 120 }), 119);
+  assert.equal(resolveStartPosition({ saved: 119, explicit: 119, duration: 119.9 }), 119);
+  // 0 是有效的显式位置,不能回落到续播的 60
+  assert.equal(resolveStartPosition({ saved: 60, explicit: 0, duration: 120 }), 0);
+  // 只夹时长:超出真实时长夹到结尾,负数夹到 0;时长未知时原样
+  assert.equal(resolveStartPosition({ saved: 0, explicit: 130, duration: 120 }), 120);
+  assert.equal(resolveStartPosition({ saved: 0, explicit: -4, duration: 120 }), 0);
+  assert.equal(resolveStartPosition({ saved: 0, explicit: 119, duration: Number.NaN }), 119);
+  // 没有显式位置(null / undefined / 非数):走自动续播,末 3 秒内归零
+  assert.equal(resolveStartPosition({ saved: 118.5, explicit: null, duration: 120 }), 0);
+  assert.equal(resolveStartPosition({ saved: 60, duration: 120 }), 60);
+  assert.equal(resolveStartPosition({ saved: 60, explicit: 'x', duration: 120 }), 60);
+  assert.equal(resolveStartPosition(), 0);
 });
 
 test('播放位置的键:新增文章导读音轨,原节目 / 精品导读沿用旧键名', () => {

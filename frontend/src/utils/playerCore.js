@@ -174,6 +174,20 @@ export function startPositionFor(saved, duration) {
   return Math.min(safe, d);
 }
 
+/**
+ * 首次播放 / 元数据到达时从哪里起播。explicit = 读者在元数据到达之前明确拖到的位置(0 也算):
+ * 只按时长夹取,不套「末 3 秒视为听完」;没有显式位置才按自动续播规则(startPositionFor)。
+ */
+export function resolveStartPosition({ saved = 0, explicit = null, duration = 0 } = {}) {
+  const pos = explicit === null || explicit === undefined ? NaN : Number(explicit);
+  if (Number.isFinite(pos)) {
+    const t = Math.max(0, pos);
+    const d = Number(duration);
+    return Number.isFinite(d) && d > 0 ? Math.min(t, d) : t;
+  }
+  return startPositionFor(saved, duration);
+}
+
 export function formatClock(seconds) {
   const s = Math.max(0, Math.floor(Number(seconds) || 0));
   const h = Math.floor(s / 3600);

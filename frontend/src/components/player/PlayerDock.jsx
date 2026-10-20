@@ -433,8 +433,10 @@ export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs
     run(fx);
   }, [form, itemKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 卸载:撤掉宿主上的让位 / 避让变量与 Toast 抬升
-  useEffect(() => {
+  // 卸载:撤掉宿主上的让位 / 避让变量与 Toast 抬升。必须是 layout 清理:桌面 ⇄ 手机互切时旧条与新条共用同一个宿主,
+  // React 的顺序是「旧实例 layout 清理 → 新实例 layout 设置 → 旧实例 passive 清理」,写成 passive 会把新条刚写好的
+  // data-player 一并删掉(开发构建的 StrictMode 二次挂载会把它补回来,所以只在生产构建里露出来)
+  useLayoutEffect(() => {
     const host = hostRef?.current;
     return () => {
       if (host) {
@@ -657,9 +659,10 @@ export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs
 
   const speech = playerTrackSpeech(item);
   const playLabel = status === 'error' ? `重试${speech}` : playing ? `暂停${speech}` : `播放${speech}`;
-  const art = item ? (item.cover
-    ? <PodcastCover src={item.cover} className="player-cover" loading="eager" />
-    : <span className="player-cover is-ai" aria-hidden="true"><Spark /></span>) : null;
+  // ✦ 占位只给 AI 音轨(文章导读没有封面);没有封面的原节目用普通播客图标,不冒充 AI 触点
+  const art = item ? (item.ai && !item.cover
+    ? <span className="player-cover is-ai" aria-hidden="true"><Spark /></span>
+    : <PodcastCover src={item.cover} className="player-cover" loading="eager" />) : null;
   const playGlyph = (
     <span className="player-play-ico">
       <span className="player-g-play"><PlayGlyph /></span>
