@@ -150,6 +150,17 @@ def _enable_ai_beta(engine, username="user"):
         accounts_service.set_ai_beta_enabled(session, username, True)
 
 
+def _translation_mock(messages):
+    import json
+    prompt = messages[-1].content
+    if "【待翻译正文】\n" in prompt:
+        payload = json.loads(prompt.split("【待翻译正文】\n", 1)[1])
+        for unit in payload["units"]:
+            unit["text"] = "AI-MOCK-OUTPUT"
+        return json.dumps(payload)
+    return "AI-MOCK-OUTPUT"
+
+
 def _patch_llm(monkeypatch):
     """把 reader_ai / reader_search 用到的 chat_completion 换成可观测的桩，返回 calls 列表。
 
@@ -164,7 +175,7 @@ def _patch_llm(monkeypatch):
 
     async def fake_chat_completion(*, messages, config, **kwargs):
         calls.append([m.content for m in messages])
-        return "AI-MOCK-OUTPUT"
+        return _translation_mock(messages)
 
     monkeypatch.setattr(rai, "chat_completion", fake_chat_completion)
     monkeypatch.setattr(rsearch, "chat_completion", fake_chat_completion)
@@ -1009,7 +1020,7 @@ def test_translate_title_failure_returns_none_and_retries_next_call(monkeypatch,
         calls.append([m.content for m in messages])
         if fail_title["on"] and "文章标题翻译成简体中文标题" in messages[0].content:
             raise RuntimeError("title endpoint hiccup")
-        return "AI-MOCK-OUTPUT"
+        return _translation_mock(messages)
 
     monkeypatch.setattr(rai, "chat_completion", fake_chat_completion)
 
@@ -1059,7 +1070,7 @@ def test_translate_title_shares_concurrency_semaphore(monkeypatch):
         in_flight["peak"] = max(in_flight["peak"], in_flight["now"])
         await asyncio.sleep(0.01)
         in_flight["now"] -= 1
-        return "译"
+        return _translation_mock(messages).replace("AI-MOCK-OUTPUT", "译")
 
     monkeypatch.setattr(rai, "chat_completion", fake_chat_completion)
     from services.translation_markdown import TranslationChunk, TranslationPlan

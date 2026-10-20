@@ -39,7 +39,9 @@ from sqlalchemy import update
 from services import image_insights as image_insights_service
 from services import user_sources as user_sources_service
 from services.paper_content import paper_metadata, strip_layout_markers
-from services.translation_markdown import TranslationStructureError, plan_translation
+from services.translation_markdown import (
+    TranslationStructureError, plan_translation, translation_units, restore_translation_units,
+)
 
 # 译文/摘要缓存在 ArticleRecord.extensions_json 下的键；只新增键，不触碰正文。
 TRANSLATION_KEY = "translation_zh"
@@ -49,7 +51,7 @@ SUMMARY_KEY = "summary_zh"
 # 只在新一次生成时补写指纹。
 TRANSLATION_FP_KEY = "translation_zh_fp"
 TRANSLATION_VERSION_KEY = "translation_zh_version"
-TRANSLATION_VERSION = 2
+TRANSLATION_VERSION = 3
 SUMMARY_FP_KEY = "summary_zh_fp"
 # 中文标题(v3.45):与正文译文同缓存于 extensions_json,指纹取标题自身——标题被权威
 # 刷新改写后失配即重译;存量只有正文译文的缓存命中时补译标题(一次小调用)。
@@ -152,17 +154,23 @@ async def _translate_segment(
     title: str, segment: str, llm_config: LLMConfig,
     usage_meta: Optional[UsageMeta] = None, http_client=None,
 ) -> str:
+    units = translation_units(segment)
+    if not units:
+        return segment
     raw = await chat_completion(
         messages=[
             ChatMessage(role="system", content=prompts.TRANSLATE_SYSTEM_PROMPT),
-            ChatMessage(role="user", content=prompts.build_translate_user_prompt(title, segment)),
+            ChatMessage(role="user", content=prompts.build_translate_user_prompt(
+                title, json.dumps({"units": units}, ensure_ascii=False),
+            )),
         ],
         config=llm_config,
         usage_meta=usage_meta,
         http_client=http_client,
         require_complete=True,
+        response_json=True,
     )
-    return raw.strip("\r\n")
+    return restore_translation_units(segment, raw)
 
 
 async def _save_translation(

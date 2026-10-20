@@ -112,7 +112,8 @@ def _patch_llm(monkeypatch):
 
     async def fake_chat_completion(*, messages, config, **kwargs):
         calls.append([m.content for m in messages])
-        return "AI-MOCK-OUTPUT"
+        from tests.test_reader_ai import _translation_mock
+        return _translation_mock(messages)
 
     monkeypatch.setattr(rai, "chat_completion", fake_chat_completion)
     return calls

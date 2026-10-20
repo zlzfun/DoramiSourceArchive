@@ -8,9 +8,11 @@ table row or indivisible word fails explicitly instead of being sliced.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import Counter
 import re
 import uuid
 
+from llm.client import LLMStructuredOutputError, parse_json_object
 from services.paper_content import strip_layout_markers
 
 
@@ -19,6 +21,8 @@ class TranslationStructureError(ValueError):
 
 
 _TOKEN = re.compile(r"DORAMITR[0-9a-f]{12}X\d+Z")
+_LINK_TARGET = re.compile(r"\]\((" + _TOKEN.pattern + r")\)")
+_NUMERIC = re.compile(r"(?:(?<![A-Za-z0-9_.])[-+])?\d+(?:[.,]\d+)*(?:[eE][-+]?\d+)?%?")
 _FENCE = re.compile(r"(?m)^ {0,3}(`{3,}|~{3,})[^\n]*(?:\n|$)")
 _WITHIN_PARAGRAPH = r"(?:(?!\n[ \t]*\n)[\s\S])*?"
 _INLINE_CODE = re.compile(r"(`+)(?!`)" + _WITHIN_PARAGRAPH + r"(?<!`)\1(?!`)")
@@ -37,7 +41,17 @@ _DESTINATION = re.compile(
     r"""(?P<target><[^<>\n]*>|[^\s<>]+)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?[ \t]*$"""
 )
 _PIPES = re.compile(r"(?<!\\)\|")
-_ALIGNMENT = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$")
+_ALIGNMENT = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?\s*$")
+# Small, explicit glossary for a measured factual mistranslation (#205).
+# Apply only after code/math/URLs have been hidden; do not rewrite identifiers.
+_EVALUATION_TERM = re.compile(r"(?<![\w-])(?:zero-shot|few-shot)(?![\w-])", re.I)
+_EVALUATION_ZH = {"zero-shot": "零样本", "few-shot": "少样本"}
+_BILINGUAL_EVALUATION_TERM = re.compile(
+    r"(?:零样本\s*[（(]\s*zero-shot\s*[）)]|少样本\s*[（(]\s*few-shot\s*[）)]"
+    r"|(?<![\w-])zero-shot\s*[（(]\s*零样本\s*[）)]"
+    r"|(?<![\w-])few-shot\s*[（(]\s*少样本\s*[）)])", re.I,
+)
+_BENCHMARK_NAME = re.compile(r"(?<![\w-])SWE-Bench[ \t]+Verified(?![\w-])", re.I)
 
 
 def _valid_destination(value: str) -> bool:
@@ -67,6 +81,96 @@ def _table_shape(text: str) -> tuple[int, ...]:
     return tuple(len(_PIPES.findall(line)) for line in text.splitlines() if _PIPES.search(line))
 
 
+def translation_units(text: str) -> list[dict]:
+    """Keep each source line addressable; separators and literal-only lines stay local."""
+    return [
+        {"id": index, "text": line}
+        for index, line in enumerate(text.split("\n"))
+        if _TOKEN.sub("", line).strip() and not _ALIGNMENT.fullmatch(line)
+    ]
+
+
+def _link_bindings(text: str) -> list[tuple[str, str]]:
+    bindings = []
+    for match in _LINK_TARGET.finditer(text):
+        depth, pos = 1, match.start() - 1
+        while pos >= 0:
+            backslashes, cursor = 0, pos - 1
+            while cursor >= 0 and text[cursor] == "\\":
+                backslashes += 1
+                cursor -= 1
+            if backslashes % 2 == 0:
+                if text[pos] == "]":
+                    depth += 1
+                elif text[pos] == "[":
+                    depth -= 1
+                    if depth == 0:
+                        start = pos - 1 if pos and text[pos - 1] == "!" else pos
+                        bindings.append((text[start:match.start() + 1], match[1]))
+                        break
+            pos -= 1
+    return bindings
+
+
+def _validate_line(source: str, translated: str) -> None:
+    # Chinese word order can move inline formulae within a sentence, but a
+    # formula/link may never disappear, duplicate, or move to another unit.
+    if Counter(_TOKEN.findall(translated)) != Counter(_TOKEN.findall(source)):
+        raise TranslationStructureError("译文中的公式、代码或链接不完整，整篇译文未保存")
+    if Counter(_LINK_TARGET.findall(source)) != Counter(_LINK_TARGET.findall(translated)):
+        raise TranslationStructureError("译文链接目标结构发生变化，整篇译文未保存")
+    source_links, translated_links = _link_bindings(source), _link_bindings(translated)
+    if (Counter((label.startswith("!"), token) for label, token in source_links)
+            != Counter((label.startswith("!"), token) for label, token in translated_links)):
+        raise TranslationStructureError("译文链接或图片结构发生变化，整篇译文未保存")
+    unchanged_labels = {label for label, _ in source_links} & {label for label, _ in translated_links}
+    if (Counter(pair for pair in source_links if pair[0] in unchanged_labels)
+            != Counter(pair for pair in translated_links if pair[0] in unchanged_labels)):
+        raise TranslationStructureError("译文链接标签与目标不匹配，整篇译文未保存")
+    if _table_shape(translated) != _table_shape(source):
+        raise TranslationStructureError("译文表格结构发生变化，整篇译文未保存")
+    if _PIPES.search(source):
+        source_cells, translated_cells = _PIPES.split(source), _PIPES.split(translated)
+        if any(Counter(_TOKEN.findall(a)) != Counter(_TOKEN.findall(b))
+               for a, b in zip(source_cells, translated_cells)):
+            raise TranslationStructureError("译文表格公式或链接跨列移动，整篇译文未保存")
+
+        def numbers(value):
+            return [_NUMERIC.findall(cell.replace("−", "-"))
+                    for cell in _PIPES.split(_TOKEN.sub("", value))]
+        if numbers(source) != numbers(translated):
+            raise TranslationStructureError("译文表格数值发生变化，整篇译文未保存")
+
+
+def restore_translation_units(text: str, raw: str) -> str:
+    """Accept one nonempty string per requested ID, never a free-form rewrite."""
+    units = translation_units(text)
+    try:
+        payload = parse_json_object(raw)
+        if not isinstance(payload, dict) or set(payload) != {"units"} or not isinstance(payload["units"], list):
+            raise ValueError
+        requested = {unit["id"] for unit in units}
+        translated = {}
+        for unit in payload["units"]:
+            if not isinstance(unit, dict) or set(unit) != {"id", "text"}:
+                raise ValueError
+            index, value = unit["id"], unit["text"]
+            if type(index) is not int or index not in requested or index in translated:
+                raise ValueError
+            if not isinstance(value, str) or not value.strip() or "\n" in value or "\r" in value:
+                raise ValueError
+            translated[index] = value
+        if set(translated) != requested:
+            raise ValueError
+    except (ValueError, TypeError, RecursionError, LLMStructuredOutputError) as exc:
+        raise TranslationStructureError("翻译单元不完整或格式无效，整篇译文未保存") from exc
+    lines = text.split("\n")
+    for index, value in translated.items():
+        _validate_line(lines[index], value)
+        lines[index] = value
+    return "\n".join(lines)
+
+
 @dataclass(frozen=True)
 class TranslationChunk:
     text: str
@@ -80,10 +184,11 @@ class TranslationChunk:
         translated = translated.strip("\r\n")
         if not translated.strip():
             raise TranslationStructureError("翻译片段为空，整篇译文未保存")
-        if _TOKEN.findall(translated) != _TOKEN.findall(self.text):
-            raise TranslationStructureError("译文中的公式、代码或链接不完整，整篇译文未保存")
-        if _table_shape(translated) != _table_shape(self.text):
-            raise TranslationStructureError("译文表格结构发生变化，整篇译文未保存")
+        source_lines, translated_lines = self.text.split("\n"), translated.split("\n")
+        if len(source_lines) != len(translated_lines):
+            raise TranslationStructureError("译文段落或表格行不完整，整篇译文未保存")
+        for source, value in zip(source_lines, translated_lines):
+            _validate_line(source, value)
         return translated
 
 
@@ -169,6 +274,11 @@ def _protect(body: str) -> tuple[str, dict[str, str]]:
     # 链接在 U+FEFF 处也截止(Python \s 不含它;合法链接里不会出现):与推文翻译的可译判定同一分隔规则(issue #84 检视)
     body = re.sub(r"https?://[^\s<>\ufeff]+", lambda match: save(match[0]), body)
     body = _MATH.sub(lambda match: save(match[0]), body)
+    body = _BILINGUAL_EVALUATION_TERM.sub(lambda match: save(match[0]), body)
+    body = _EVALUATION_TERM.sub(
+        lambda match: save(f"{_EVALUATION_ZH[match[0].lower()]}（{match[0]}）"), body,
+    )
+    body = _BENCHMARK_NAME.sub(lambda match: save("SWE-Bench Verified"), body)
     # Keep alignment rows verbatim; each data row remains an indivisible unit.
     body = "\n".join(save(line) if _ALIGNMENT.fullmatch(line) else line
                      for line in body.split("\n"))
@@ -217,6 +327,7 @@ def _split_line(line: str, limit: int) -> list[tuple[str, str]]:
 def plan_translation(body: str, *, segment_chars: int = 3500) -> TranslationPlan:
     if segment_chars < 64:
         raise ValueError("segment_chars must be at least 64")
+    body = body.replace("\r\n", "\n").replace("\r", "\n")
     body, literals = _protect(strip_layout_markers(body).strip())
     chunks: list[TranslationChunk] = []
     buffer, separator = "", ""
