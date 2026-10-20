@@ -6,6 +6,8 @@
 
 ## 进行中
 
+- ☐ **issue #199 前端细项优化波**(分支 `feat/issue-199-frontend-polish`,记录见 `docs/version-history.md`):撤回源栏每源未读数、取缔条目未读小蓝点、播客区重设计为全局播放条(样页 `docs/design/podcast-player/`)三项已实现并经用户目检,待 Codex 本地检视 → PR 合入。
+  遗留(本波有意不做):Windows 实机看一遍播放条(只做了理论判断);播客导读生成完成后入口要等约 30 秒的分析轮询才刷新;生产里封面代理 302 回源成跨域时回落中性底的路径未端到端;部分播客节目简介里链接文字独占一行——库里存的简介原文即如此断行,是抓取时 HTML 转文本的问题(Interconnects 等 Substack 源可见),与播放器无关。
 - ☐ **issue #178 内容分类与双评分**(方案 `docs/content-classification-plan.md`,样页 `docs/design/dorami-classification-scores-quiet.html`):
   第一波已合入(#180):内容类型 / 事件类型读取时推导 +「动态」并入「文章」+ 类型签 / 筛选带 / 紧凑行 + 词表收口。
   第一波补已合入(#181):`category` 拆出 `admission_status` 后退役、源级 `content_tags` 退役、条目标签不再拼入源级分类。
