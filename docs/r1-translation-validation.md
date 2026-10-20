@@ -64,4 +64,4 @@
 
 2026-10-21 清单复检完成：数字符号边界与链接/图片角色的最后两项小修通过，#206 无剩余阻塞项；#205 术语保护及最终真实输出也通过，只有已记录的语义、排版和大小写观察边界。检视方审阅差异与证据，测试由实现方执行。
 
-结构分支本地相关 **120 项**通过；真实原文/译文共 66 个 KaTeX 实例、0 个解析错误；三轮已完成的真实输出均通过最终校验回放，最初出错的自由 Markdown 片段仍被拒绝。最终 CI 与合入状态见 [PR #206](https://github.com/zlzfun/DoramiSourceArchive/pull/206) 和 [PR #207](https://github.com/zlzfun/DoramiSourceArchive/pull/207)。
+结构分支本地相关 **120 项**、同步最终基线后的术语分支 **125 项**通过；真实原文/译文共 66 个 KaTeX 实例、0 个解析错误；三轮已完成的真实输出均通过最终校验回放，最初出错的自由 Markdown 片段仍被拒绝。最终 CI 与合入状态见 [PR #206](https://github.com/zlzfun/DoramiSourceArchive/pull/206) 和 [PR #207](https://github.com/zlzfun/DoramiSourceArchive/pull/207)。
