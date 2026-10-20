@@ -10,7 +10,7 @@ import PlayerProvider from './player/PlayerProvider';
 // 播放条本身由两个视图各自挂在自己的外壳里(.reader-shell / .m-shell):手机外壳是 fixed 的层叠上下文,
 // 条要排在正文页(40)之上、抽屉 / 动作单(50 / 60)之下,只能与它们同在一个上下文里。
 export default function ReaderWorkspace({ mobile, surfaceActive = true, ...props }) {
-  const { personalDigestEnabled, initialArticleId, showToast, account, onDeepLinkConsumed } = props;
+  const { personalDigestEnabled, initialArticleId, showToast, account, onDeepLinkConsumed, aiEnabled = false } = props;
   const [page, setPage] = useState(() => personalDigestEnabled && !initialArticleId ? 'brief' : null);
   const [briefReturn, setBriefReturn] = useState(null);
   const [briefRestore, setBriefRestore] = useState(null);
@@ -30,6 +30,7 @@ export default function ReaderWorkspace({ mobile, surfaceActive = true, ...props
     onDeepLinkConsumed,
     onBeforeOpenArticle: closePage,
     interestAxisEnabled: personalDigestEnabled,
+    aiEnabled,
   });
   const tab = page || rs.mode;
   // 点播放条的标题 / 封面 = 打开正在播的那一期(切到所在容器,关掉早报 / 榜单 / 发现;手机即入栈正文页)

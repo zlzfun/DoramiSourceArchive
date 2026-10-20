@@ -9,6 +9,7 @@
 
 ## 顶层(活跃)
 
+- ◉ [social-translate-plan.md](./social-translate-plan.md) — **社交流翻译（issue #84）**：推文卡片底栏「译为中文」、原文下追加译文、主推 + 引用推一次调用、`lang` 判定与缓存；X API 无翻译能力的核查结论。
 - ◉ [paper-fulltext-plan.md](./paper-fulltext-plan.md) — **论文全文补全（issue #41）**：HF 摘要后补抓官方 arXiv HTML、数学与图表转换、摘要分析成本边界、持久任务/回填与真实样本验证。
 
 - ◉ [backend-stall-fix-plan.md](./backend-stall-fix-plan.md) — **生产间歇停顿修复（issue #194）**：逐字稿扫描投影、分析数据库线程隔离、复现证据与本地交叉检视。

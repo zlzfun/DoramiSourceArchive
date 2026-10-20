@@ -604,6 +604,10 @@
 .m-social-host .reader-social-col { padding: 0 12px; }
 /* hover 动作钮触屏常显(呈现的诚实:不画摸不到的钮) */
 .m-shell .social-act { opacity: 1; pointer-events: auto; }
+/* 推文翻译底栏(issue #84):文字钮视觉不变,点击区上下各扩 6px(负外边距抵消,不改卡片高度) */
+.m-shell .social-tr-btn,
+.m-shell .social-tr-hide,
+.m-shell .social-tr-retry { padding-block: 6px; margin-block: -6px; }
 
 /* ── 条目卡窄屏微调:时间/星标不再为桌面浮层滚动条让位 ── */
 .m-list .reader-entry-time { margin-right: 0; }

@@ -1769,6 +1769,35 @@ async def reader_ai_translate(params: ReaderTranslateParams, request: Request):
     return {"status": "success", **result}
 
 
+@router.post("/ai/social/{article_id}/translate")
+async def reader_ai_translate_social(article_id: str, request: Request):
+    """把一条推文（主推 + 引用推）译为简体中文（issue #84，结果缓存复用）。
+
+    门控、隐藏源 / 私有源 / 不可外送拒绝口径与 /ai/translate 相同；额度计入 translate 用途，
+    只在缓存未命中、即将调用模型时判。返回 {text, quoted, cached}，不需要翻译的一侧为 null。
+    """
+    username, llm_config = _require_reader_ai(request)
+    db_sink = deps.get_db_sink()
+    with Session(db_sink.engine) as session:
+        article = session.get(ArticleRecord, article_id)
+        _deny_hidden_source_article(session, request, article)
+        _deny_unsubscribed_user_source_article(session, username, article)
+        _deny_nonexportable_article(session, article)
+    try:
+        result = await reader_ai_service.translate_social_post(
+            db_sink, article_id, llm_config,
+            UsageMeta(purpose="translate", username=username),
+            pre_llm_check=lambda: _enforce_ai_cost_gates(username, "translate"),
+        )
+    except reader_ai_service.ReaderAIError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    except LLMError as exc:
+        raise HTTPException(status_code=502, detail=f"翻译失败：{exc}")
+    with Session(db_sink.engine) as session:
+        accounts_service.record_ai_usage(session, username, "translate")
+    return {"status": "success", **result}
+
+
 @router.post("/ai/podcasts/{episode_id}/translate-transcript")
 async def reader_ai_translate_podcast_transcript(
     episode_id: str,

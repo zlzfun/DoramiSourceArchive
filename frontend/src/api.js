@@ -419,6 +419,11 @@ export function translateArticle(articleId) {
   return request('/reader/ai/translate', { method: 'POST', body: { article_id: articleId }, errorMsg: '翻译失败，请稍后重试' });
 }
 
+// 推文翻译(issue #84):主推 + 引用推一次译完,返回 { text, quoted, cached },不需要翻译的一侧为 null
+export function translateSocialPost(articleId) {
+  return request(`/reader/ai/social/${enc(articleId)}/translate`, { method: 'POST', errorMsg: '翻译失败，请稍后重试' });
+}
+
 // 生成/读取文章的中文要点摘要(后端缓存于 extensions_json.summary_zh,幂等)
 export function summarizeArticle(articleId) {
   return request('/reader/ai/summarize', { method: 'POST', body: { article_id: articleId }, errorMsg: '摘要生成失败，请稍后重试' });

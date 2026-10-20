@@ -10,6 +10,42 @@
 > 标「版本号以实际发版为准」的段落是 tag 即发布(2026-09-14)后合入、尚未或刚刚发版的波次。
 > 阅读提示:据本文查「怎么来的」;判断现状以 CLAUDE.md 与代码为准。
 
+## issue #84 社交流翻译(分支 `feat/issue-84-social-translate`,开发版 3.66.0-alpha,版本号以实际发版为准)
+
+社交媒体容器的推文几乎都是英文,卡片上没有翻译入口(协作者提的需求,只附了一张 Sam Altman 长推 + 引用推的截图)。
+方案与拍板见 [`social-translate-plan.md`](./social-translate-plan.md),样页 `docs/design/social-translate/`。
+
+**先排除 X 自带翻译**:X App 的翻译(2026-04 起 Grok 自动翻译)不在公开 API 里——文档全集、OpenAPI 契约(186 个端点)与
+更新日志都没有翻译端点或译文字段,只有 X 检测的 `lang`;借 App 内部接口按开发者指南属非 API 自动化、永久封禁。第三方
+「翻译推文」接口自称与 X 无关联,本质是另一家机翻,不如平台自己的 LLM。
+
+**样页两轮**:第一轮入口放主推正文下、与「显示更多」同行,用户目检指出新用户会误以为只翻主推、不管引用推——位置本身在说
+「我只管上面这段」;第二轮把入口挪到卡片最后一行(媒体与引用推之后)作为「卡片底栏」,并给卡片动作区方案补「常显」变体对照。
+译文呈现另比了「替换原文」:设计方起初说它违反 X 展示规范「Modify post text」,用户指出我们是翻译不是改动、原文随时可切回;
+复核原文后更正为灰色地带(规范没提翻译,但「post text must be displayed on a line below the author's display name … may not be
+altered」约束的是显示出来的内容)。**拍板:卡片底栏 + 原文下追加**。
+
+**实现**:
+- 后端 `POST /api/reader/ai/social/{article_id}/translate` + `reader_ai.translate_social_post`:转推取 `reposted.text`(顶层
+  content 是 RT 截断),引用推一起译;两段经 #201 的 `plan_translation` 保护链接后装进同一个 JSON 批次,**一次点击一次调用**
+  (超长 note tweet 才按 3,500 字符拆批),`require_complete` 只收完整输出;缓存 `extensions_json.translation_zh_social`
+  (与被文章旁白读取的 `translation_zh` 分开),指纹取两段原文;写回复用 `_save_translation` 的合并 + compare-and-set,新增
+  `verify_ext` 钩子在写入前对最新 extensions 复核原文(推文原文不在 content 里,光比 content / title 不够)。
+- 判定规则一份两写:后端 `social_text_needs_translation` / 前端 `utils/socialTranslate.js`,共用
+  `tests/fixtures/social_translate_cases.json` 一份用例(去掉链接无字母 / `zh*` / X 无语言码不译,其它语言码译,`und` 或缺失走中文
+  启发式;「有无字母」两侧都按 Unicode 字母类判——JS 的 `\w` 只认 ASCII,`[^\W\d_]` 在前端会漏掉中文)。规范化
+  `_normalized_reference` 补存引用推 / 原推的 `lang`(存量可用管理员既有的社交 metadata 回填从本地 raw_data 补齐)。
+- 前端:逐卡状态提升在 `useReaderState`(`socialTranslations` / `toggleSocialTranslation`),桌面与移动共用;`SocialFlow` 的
+  底栏 `.social-tr-row` 恒为卡片最后一个元素,主推译文 `.social-tr` 在「显示更多」之后、媒体之前,引用推译文 `.social-quote-tr`
+  在引用卡内;右键 / 长按菜单第一组加「译为中文 / 收起译文」;触屏点击区上下各扩 6px。
+
+**自查**:后端新增 30 项(19 条共享用例 + 原文选取 / 规范化 lang / 一次调用与缓存 / 原文变化重译 / 只译引用推 / 拒绝口径 /
+AI 关闭 403 / 隐藏源 404 / 截断、缺键、丢链接均 502 不落缓存 / 翻译途中原文被改 409 / 成本闸只在缓存未命中时判),
+`test_x_timeline` 期望值补 `lang`;前端 4 项(与后端同一份用例),lint / 117 项单测 / build 通过。沙箱(真实库副本 + 本地
+OpenAI 兼容模拟服务,不接真模型)端到端 20 项全过:底栏位置、一次请求出两段译文且链接原样、收起再开不再请求、右键开合、
+只译引用推、模型报错与输出截断都显示「翻译失败 重试」且不落缓存、额度打满只给说明、AI 未开启账号无入口、手机点击区 32px 与长按
+动作单。控制台唯一的 404 是 Qoder 头像上游失效(既有)。未用真实模型验证译文质量与 JSON 模式兼容性。
+
 ## issue #199 前端细项优化波(分支 `feat/issue-199-frontend-polish`,开发版 3.66.0-alpha,版本号以实际发版为准)
 
 一组相对独立的小粒度前端细项放在同一波做完:一个分支、一次检视、一次验收、一个 PR。

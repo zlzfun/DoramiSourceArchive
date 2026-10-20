@@ -1,10 +1,11 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AtSign, Check, CheckCheck, Circle, Loader2, Repeat2, Search, Star, X } from 'lucide-react';
+import { AtSign, Check, CheckCheck, Circle, Loader2, Repeat2, Search, Sparkles, Star, X } from 'lucide-react';
 import LogoMark from './LogoMark';
 import { platformLabelOf, resolveCompany } from '../sourceTaxonomy';
 import { dayKeyOf, dayLabelOf } from '../utils/readerTime';
 import { formatRelativeTime, formatDateTime } from '../utils/datetime';
 import { highlightMatch } from '../utils/highlight';
+import { socialTranslationParts } from '../utils/socialTranslate';
 import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
 import { mediaProxyUrl } from '../api';
 
@@ -96,8 +97,9 @@ function SocialAvatar({ avatarUrl, source, fallbackName, className = '' }) {
 }
 
 /* 引用推:内缩嵌套卡。与转推的「顶部归属行」形态必须可区分,
-   否则读者判断不了「这话是谁说的」。 */
-function SocialQuote({ quoted }) {
+   否则读者判断不了「这话是谁说的」。
+   translation(issue #84):引用推译文接在原文下、细线隔开;整卡是原推链接,卡内不放按钮,开合归卡片底栏。 */
+function SocialQuote({ quoted, translation = null }) {
   if (!quoted || (!quoted.text && !quoted.author_name)) return null;
   const quoteAvatar = quoted.author_avatar_url_large || quoted.author_avatar_url || '';
   const body = (
@@ -110,6 +112,7 @@ function SocialQuote({ quoted }) {
         {quoted.author_handle && <span className="social-quote-meta">@{quoted.author_handle}</span>}
       </span>
       {quoted.text && <span className="social-quote-text">{quoted.text}</span>}
+      {translation && <span className="social-quote-tr">{translation}</span>}
     </>
   );
   if (!quoted.url) return <div className="social-quote">{body}</div>;
@@ -142,6 +145,53 @@ function SocialCardsSkeleton({ count = 3 }) {
 
 const CLAMP_CHARS = 360; // 超过此长度折叠(约样页的 7 行)
 
+/* 推文翻译底栏(issue #84,样页 docs/design/social-translate):卡片最后一行——翻译管整张卡片
+   (主推 + 引用推),入口就放在整张卡片末尾;「显示更多」仍紧贴正文,只管正文折叠。
+   开合都在这一行,位置不随状态移动。额度用尽只给说明,不给重试。 */
+function SocialTranslateRow({ article, translation, withQuote, onToggle }) {
+  const status = translation?.status;
+  const toggle = () => onToggle?.(article);
+  let body;
+  if (status === 'loading') {
+    body = (
+      <button type="button" className="social-tr-btn" disabled>
+        <Loader2 className="animate-spin" aria-hidden="true" />
+        翻译中…
+      </button>
+    );
+  } else if (status === 'quota') {
+    body = <span className="social-tr-note">{translation.message || '今日 AI 翻译次数已用完，明天再试'}</span>;
+  } else if (status === 'error') {
+    body = (
+      <span className="social-tr-err">
+        <span className="social-tr-note">翻译失败</span>
+        <button type="button" className="social-tr-retry" onClick={toggle}>重试</button>
+      </span>
+    );
+  } else if (status === 'done' && translation.open) {
+    body = (
+      <span className="social-tr-mark">
+        <Sparkles aria-hidden="true" />
+        <span>已译为中文</span>
+        <button type="button" className="social-tr-hide" onClick={toggle}>收起</button>
+      </span>
+    );
+  } else {
+    body = (
+      <button
+        type="button"
+        className="social-tr-btn"
+        title={withQuote ? '将这条推文和引用推译为中文' : '将这条推文译为中文'}
+        onClick={toggle}
+      >
+        <Sparkles aria-hidden="true" />
+        译为中文
+      </button>
+    );
+  }
+  return <div className="social-tr-row" aria-live="polite">{body}</div>;
+}
+
 // memo:未读轮询/搜索键入等高频父级渲染下,仅 props 实际变化的卡片重渲
 // (回调经 ReaderTab latest-ref 稳定包装,article 引用在增量追加下不变)。
 const SocialPost = memo(function SocialPost({
@@ -158,9 +208,19 @@ const SocialPost = memo(function SocialPost({
   onToggleRead,
   onContextMenu,
   ctxAnchor = false,
+  translateEnabled = false,
+  translation = null,
+  onToggleTranslation,
 }) {
   const ext = useMemo(() => parseExt(article), [article]);
   const [expanded, setExpanded] = useState(false);
+  // 推文翻译(issue #84):哪几段需要翻译由 X 的 lang 加中文启发式判定;AI 不可用时整条底栏不出现
+  const trParts = useMemo(
+    () => (translateEnabled ? socialTranslationParts(article, ext) : { text: false, quoted: false }),
+    [article, ext, translateEnabled],
+  );
+  const translatable = trParts.text || trParts.quoted;
+  const trOpen = translatable && translation?.status === 'done' && translation.open;
 
   // 转推:顶层 author_* 是转推者,reposted.* 是原作者(后端契约)。
   // 顶层 text 在转推时是 "RT @xxx: …" 截断形式,故正文取 reposted.text。
@@ -264,8 +324,27 @@ const SocialPost = memo(function SocialPost({
             </button>
           )}
 
+          {/* 主推译文:原文一字不动,译文在「显示更多」之后、媒体之前,细线隔开并标明是 AI 译文 */}
+          {trOpen && translation.text && (
+            <div className="social-tr">
+              <div className="social-tr-head">
+                <Sparkles aria-hidden="true" />
+                <span className="social-tr-label ai-grad-text">译文</span>
+              </div>
+              <p className="social-tr-text">{translation.text}</p>
+            </div>
+          )}
+
           <SocialMedia urls={mediaUrls} />
-          <SocialQuote quoted={quoted} />
+          <SocialQuote quoted={quoted} translation={trOpen ? translation.quoted : null} />
+          {translatable && (
+            <SocialTranslateRow
+              article={article}
+              translation={translation}
+              withQuote={trParts.quoted}
+              onToggle={onToggleTranslation}
+            />
+          )}
         </div>
       </div>
     </article>
@@ -303,6 +382,10 @@ export default function SocialFlow({
   platformCount = 1,
   activeSourceId = null,
   emptyHint = '暂无动态',
+  // 推文翻译(issue #84):AI 可用才出底栏;translations 是 useReaderState 的逐卡状态
+  translateEnabled = false,
+  translations = {},
+  onToggleTranslation,
   // 移动壳(v3.29 Wave3):头部控件(seg/标读/搜索)由移动顶栏承担,本组件只出卡片流;
   // 自绘浮层滚动条一并关闭——它解决的是桌面 macOS gutter 占位,移动端原生即 overlay。
   headless = false,
@@ -451,6 +534,9 @@ export default function SocialFlow({
                       onToggleRead={onToggleRead}
                       onContextMenu={onPostContextMenu}
                       ctxAnchor={ctxAnchorKey === `social:${article.id}`}
+                      translateEnabled={translateEnabled}
+                      translation={translations[article.id] || null}
+                      onToggleTranslation={onToggleTranslation}
                     />
                   </Fragment>
                 );

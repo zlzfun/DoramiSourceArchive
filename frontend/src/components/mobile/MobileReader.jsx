@@ -113,6 +113,8 @@ export default function MobileReader({
     activeArticle, selectArticle, openArticleById, supersedePendingOpen, schedulePrefetch, cancelPrefetch,
     // 收藏
     favoriteIds, favTogglingId, handleToggleFavorite,
+    // 推文翻译(issue #84):逐卡状态与开关,与桌面同源
+    socialTranslations, toggleSocialTranslation,
     // 动作单 items(桌面右键三份构建器同源)
     buildArticleMenuItems, buildSourceMenuItems, buildSocialMenuItems,
     // 订阅数(我的页)
@@ -386,6 +388,9 @@ export default function MobileReader({
                   ? '该账号暂时不可用'
                   : socialSources.length === 0 ? '还没有订阅社交账号，去「发现」看看' : '暂无动态'
               }
+              translateEnabled={aiEnabled}
+              translations={socialTranslations}
+              onToggleTranslation={toggleSocialTranslation}
             />
           </div>
         ) : (

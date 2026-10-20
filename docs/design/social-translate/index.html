@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>社交流翻译</title>
+<link rel="stylesheet" href="assets/app.css">
+<style>
+  :root { color-scheme: light dark; }
+  html, body { margin: 0; background: var(--dorami-canvas); color: var(--dorami-ink); font-family: var(--font-sans); }
+  .sh { max-width: 1640px; margin: 0 auto; padding: 28px 24px 64px; }
+  .sh-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin-bottom: 18px; }
+  .sh-head h1 { margin: 0; font-family: var(--font-serif); font-size: 26px; font-weight: 600; }
+  .sh-head span { color: var(--dorami-muted); font-size: 13px; }
+  .sh-bar { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; margin-bottom: 14px; }
+  .sh-label { font-size: 12px; font-weight: 600; color: var(--dorami-muted); margin-right: 6px; }
+  .sh-seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r-control); background: var(--dorami-well); }
+  .sh-seg button { border: 0; background: transparent; color: var(--dorami-muted); font: inherit; font-size: 13px; font-weight: 400; padding: 6px 12px; border-radius: calc(var(--r-control) - 2px); cursor: pointer; }
+  .sh-seg button.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); font-weight: 600; }
+  .sh-seg button:focus-visible, .sh-states button:focus-visible { outline: 2px solid var(--dorami-accent); outline-offset: 1px; }
+  .sh-states { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+  .sh-states button { border: 1px solid var(--dorami-border); background: var(--dorami-surface); color: var(--dorami-ink-2); font: inherit; font-size: 13px; padding: 6px 12px; border-radius: var(--r-pill); cursor: pointer; }
+  .sh-states button.is-on { border-color: var(--dorami-accent); color: var(--dorami-accent-ink); box-shadow: inset 0 0 0 1px var(--dorami-accent); }
+  .sh-desc { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; margin: 0 0 18px; }
+  .sh-card { padding: 14px 18px; border-radius: var(--r-card); background: var(--dorami-surface); box-shadow: inset 0 0 0 1px var(--dorami-border-soft); }
+  .sh-card h2 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+  .sh-card h2 small { margin-left: 8px; font-size: 12px; font-weight: 400; color: var(--dorami-faint); }
+  .sh-card p { margin: 0; color: var(--dorami-ink-2); font-size: 13.5px; line-height: 1.7; }
+  .sh-card ul { margin: 6px 0 0; padding-left: 18px; color: var(--dorami-muted); font-size: 13px; line-height: 1.75; }
+  .sh-card .warn { color: var(--state-warn); }
+  .sh-stage { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+  .sh-frame { display: grid; gap: 8px; }
+  .sh-frame > span { font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
+  .sh-frame iframe { display: block; border: 0; border-radius: 12px; background: var(--dorami-surface); box-shadow: 0 0 0 1px var(--dorami-border-soft), var(--sh-2); }
+  #f-desktop { width: 1180px; height: 900px; max-width: calc(100vw - 48px); }
+  #f-mobile { width: 390px; height: 844px; border-radius: 28px; }
+  .sh-rules { margin-top: 22px; }
+  .sh-rules ul { columns: 2 420px; column-gap: 32px; }
+  .sh-rules li { break-inside: avoid; margin-bottom: 4px; }
+  .sh-tip { margin: 0 0 12px; font-size: 12.5px; color: var(--dorami-faint); }
+</style>
+</head>
+<body>
+<div class="sh">
+  <div class="sh-head"><h1>社交流翻译</h1><span>issue #84 · 推文与引用推的中文翻译入口与译文呈现</span></div>
+  <div class="sh-bar">
+    <span><span class="sh-label">入口</span><span class="sh-seg" id="entry" role="group" aria-label="入口">
+      <button data-v="foot">A 卡片底栏</button><button data-v="act">B 卡片动作区</button><button data-v="head">C 流头开关</button></span></span>
+    <span id="w-actvis"><span class="sh-label">「译」字钮</span><span class="sh-seg" id="actvis" role="group" aria-label="动作区「译」字钮">
+      <button data-v="hover">悬停显示</button><button data-v="always">常显</button></span></span>
+    <span><span class="sh-label">译文呈现</span><span class="sh-seg" id="show" role="group" aria-label="译文呈现">
+      <button data-v="below">原文下追加</button><button data-v="replace">替换原文</button></span></span>
+    <span><span class="sh-label">主题</span><span class="sh-seg" id="theme" role="group" aria-label="主题">
+      <button data-v="dark">暗</button><button data-v="light">亮</button></span></span>
+    <span><span class="sh-label">配色</span><span class="sh-seg" id="palette" role="group" aria-label="配色">
+      <button data-v="porcelain">瓷</button><button data-v="graphite">墨</button><button data-v="paper">宣</button></span></span>
+    <span><span class="sh-label">画面</span><span class="sh-seg" id="view" role="group" aria-label="画面">
+      <button data-v="both">并排</button><button data-v="desktop">桌面</button><button data-v="mobile">手机</button></span></span>
+  </div>
+  <div class="sh-states" id="state" role="group" aria-label="状态">
+    <button data-v="idle">初始</button>
+    <button data-v="loading">翻译中</button>
+    <button data-v="done">已翻译</button>
+    <button data-v="error">失败</button>
+    <button data-v="quota">额度用尽</button>
+    <button data-v="menu">右键 / 长按菜单</button>
+    <button data-v="aioff">AI 未开启</button>
+  </div>
+  <p class="sh-tip">画面可以直接点：译为中文 / 收起 / 显示更多 / 收藏 / 标读；右键（手机长按）卡片出菜单。翻译耗时模拟 1.1 秒，收起后再展开读缓存、立即显示。引用推多的卡片在第 4、5 条（Qwen、Sam Altman），往下滚一点。</p>
+  <section class="sh-desc" id="desc" aria-live="polite"></section>
+  <div class="sh-stage">
+    <div class="sh-frame" id="w-desktop"><span>桌面 · 社交媒体容器</span><iframe id="f-desktop" title="桌面画面"></iframe></div>
+    <div class="sh-frame" id="w-mobile"><span>手机 · 390px</span><iframe id="f-mobile" title="手机画面"></iframe></div>
+  </div>
+
+  <section class="sh-card sh-rules">
+    <h2>不随方案变化的规则</h2>
+    <ul>
+      <li><b>翻什么</b>：转推取原推全文（<code>reposted.text</code>），不翻顶层「RT @xxx: …」截断文本；引用推（<code>quoted.text</code>）和主推一次翻完；不翻推文标题（只是首行截断，卡片上不显示）。</li>
+      <li><b>哪些推文出入口</b>：看 X 检测的 <code>lang</code>。<code>zh</code> 不出；<code>zxx</code> / <code>art</code> 等无语言内容不出；<code>und</code> 或缺失时退回现有的中文启发式。引用推、转推的内嵌结构现在没存 <code>lang</code>，本波在采集时补上，存量走启发式。</li>
+      <li><b>样页里的边角</b>：Qwen 那条主推只有表情加链接（<code>art</code>），引用推是英文，所以入口照常出现，只译引用推；Karpathy 那条只有一个链接的转推（<code>zxx</code>）没有入口。</li>
+      <li><b>门控</b>：和文章翻译同一套 AI 开关（全局总闸、账户开关、模型已配置），任一不满足就整个不出现，见「AI 未开启」。</li>
+      <li><b>失败</b>：就地一句说明加「重试」；额度用尽（429）只给说明，不给重试。</li>
+      <li><b>计费</b>：方案 A / B 一次点击 = 一次请求（主推 + 引用推一起），扣一次翻译额度（现行每人每天 50 次）；收起再展开读缓存，不再扣。</li>
+      <li><b>后端（预告，样页不涉及）</b>：复用 #201 的分段计划（链接自动保护成占位符、只接受完整输出、带乐观锁写缓存）；推文用专门的提示词（@用户名、#话题、表情原样保留）；译文缓存进 <code>extensions_json</code> 新键，按文本指纹失效。</li>
+      <li><b>素材</b>：本机库 7 条真实推文（7 月）；本机库没有中文推文，所以看不到「中文推不出入口」的例子。样页把「现在」定在 2026-07-24。Qoder 的头像上游已 404，按现网行为显示灰色圆底。</li>
+      <li><b>译文</b>：Claude 按平台翻译提示词的规则手写的示意，不是平台模型的实际输出。</li>
+    </ul>
+  </section>
+</div>
+<script>
+  const DESC = {
+    entry: {
+      foot: {
+        name: 'A 卡片底栏', tag: '推荐',
+        idea: '「✦ 译为中文」放在卡片最后一行，排在媒体和引用推之后：它管的是整张卡片（主推 + 引用推），就放在整张卡片的末尾。',
+        points: [
+          '「显示更多」仍紧贴正文，只管正文折叠；两个位置对应两种管辖范围，不会再误以为翻译只管主推。',
+          '开合都在这一行：翻译后变成「✦ 已译为中文 · 收起」，位置不动，不用去找按钮。译文本身就地出现在主推正文下和引用卡里。',
+          '入口常显，不靠悬停（沿用 2026-09「可发现性优先」的拍板）。代价是几乎每条英文推都多一行：本机库 94 条推文里有 90 条是英文。',
+        ],
+      },
+      act: {
+        name: 'B 卡片动作区', tag: '',
+        idea: '入口是卡片右上角的「译」字钮，和收藏、标读放在一起；卡头的动作天然管整张卡片。',
+        points: [
+          '「悬停显示」和收藏 / 标读一致，但桌面上读者不容易发现，与「入口不靠悬停」的拍板冲突；手机端本来就常显。',
+          '「常显」让「译」不随悬停出现（收藏 / 标读仍悬停），比 A 安静：每张卡多一个字，不多一行。代价是「译」单字不如「译为中文」直白，第一次要靠悬停提示（title）。',
+          '「译」排在动作区最右：常显时贴着右缘，悬停时收藏 / 标读从它左边出现。打开后钮转 AI 渐变，再点一次收起。',
+        ],
+      },
+      head: {
+        name: 'C 流头开关', tag: '',
+        idea: '社交流头部放「原语言 | ✦ 中文」开关（和文章阅读窗同一个控件），打开后整条流的可译推文都显示译文。',
+        points: [
+          '一次切换整屏都是中文，适合一口气刷英文推；手机放在顶栏「译」字钮。卡片上没有单条开关。',
+          '成本问题：开着时每条可译推文进入视口就发一次请求，30 条 = 30 次，现行每人每天 50 次翻译额度撑不住。要么合并请求（一次翻多条），要么单独设额度，需要另做后端设计。',
+          '可以作为 A 之后的第二步：先有单条入口，再加整流开关。',
+        ],
+      },
+    },
+    show: {
+      below: {
+        name: '原文下追加', tag: '推荐',
+        idea: '原文一字不动，译文在下方用细线隔开，带「✦ 译文」标签。',
+        points: [
+          '原文始终留在作者名下面那一行，译文是附加内容，合规上没有争议；原文与译文并排，也方便核对术语和模型名。',
+          '长推的原文照旧按 7 行折叠，译文完整显示：读者主动要的内容不再折叠。',
+          '引用推的译文放在引用卡里；引用卡整卡是原推链接，卡里不放按钮，开合由卡片那一行统一管。',
+        ],
+      },
+      replace: {
+        name: '替换原文', tag: '灰色地带',
+        idea: 'X App 的做法：原位换成中文，底栏给「显示原文」。',
+        points: [
+          '最省地方，读起来最像中文内容。',
+          'X 的规范没有提翻译。按「Modify post text」的本意（不篡改、不冒用作者的话），带「由 AI 译为中文」标签、一键回原文的译文说得通；原文存储也一字不动。',
+          '<span class="warn">但规范约束的是显示出来的内容：「post text must be displayed on a line below the author’s display name … and may not be altered」。切换后作者名下面那一行显示的是译文，按字面读有被认定违规的空间。内部工具实际被处理的概率低，一旦发生代价是 X 社交源整体停用。</span>',
+          '若采用，要守住四条：默认显示原文、读者主动点才翻译、带「由 AI 译为中文」标签、一键切回原文；译文永不写回推文正文字段。',
+        ],
+      },
+    },
+  };
+  const q = new URLSearchParams(location.search);
+  const S = {
+    entry: ['foot', 'act', 'head'].includes(q.get('entry')) ? q.get('entry') : 'foot',
+    actvis: q.get('actvis') === 'always' ? 'always' : 'hover',
+    show: q.get('show') || 'below',
+    theme: q.get('theme') || 'dark',
+    palette: q.get('palette') || 'porcelain',
+    view: q.get('view') || 'both',
+    state: q.get('state') || 'idle',
+  };
+  const $ = (id) => document.getElementById(id);
+  const card = (d) => `<div class="sh-card"><h2>${d.name}${d.tag ? `<small>${d.tag}</small>` : ''}</h2><p>${d.idea}</p><ul>${d.points.map((p) => `<li>${p}</li>`).join('')}</ul></div>`;
+  const KEYS = ['entry', 'actvis', 'show', 'theme', 'palette', 'view', 'state'];
+  function src(device) {
+    const p = new URLSearchParams({ device, entry: S.entry, actvis: S.actvis, show: S.show, theme: S.theme, palette: S.palette, state: S.state });
+    return `frame.html?${p}`;
+  }
+  function sync() {
+    const r = document.documentElement;
+    if (S.theme === 'dark') r.dataset.theme = 'dark'; else delete r.dataset.theme;
+    if (S.palette === 'porcelain') delete r.dataset.palette; else r.dataset.palette = S.palette;
+    $('w-actvis').hidden = S.entry !== 'act';
+    for (const key of KEYS) {
+      $(key).querySelectorAll('button').forEach((b) => {
+        const on = b.dataset.v === S[key];
+        b.classList.toggle('is-on', on);
+        b.setAttribute('aria-pressed', String(on));
+      });
+    }
+    $('desc').innerHTML = card(DESC.entry[S.entry]) + card(DESC.show[S.show]);
+    $('w-desktop').hidden = S.view === 'mobile';
+    $('w-mobile').hidden = S.view === 'desktop';
+    if (S.view !== 'mobile') $('f-desktop').src = src('desktop');
+    if (S.view !== 'desktop') $('f-mobile').src = src('mobile');
+    history.replaceState(null, '', `?${new URLSearchParams(S)}`);
+  }
+  for (const key of KEYS) {
+    $(key).addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      S[key] = b.dataset.v;
+      sync();
+    });
+  }
+  sync();
+</script>
+</body>
+</html>

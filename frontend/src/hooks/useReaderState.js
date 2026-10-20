@@ -7,12 +7,14 @@ import {
   Eye,
   EyeOff,
   Link,
+  Sparkles,
   Star,
   StarOff,
   Trash2,
   Undo2,
 } from 'lucide-react';
 import { copyText } from '../utils/clipboard';
+import { socialTranslatable } from '../utils/socialTranslate';
 import { articleDeepLink } from '../utils/shareLink';
 import { stripDuplicateLeadingHeading } from '../utils/markdownTitle';
 import { createBulkSubscribeDeadline, waitForBulkSubscribeSettlement } from '../utils/bulkSubscribe';
@@ -52,6 +54,7 @@ import {
   addFavorite,
   removeFavorite,
   translateArticle,
+  translateSocialPost,
   recordArticleRead,
   fetchUnreadCounts,
   markAllRead,
@@ -149,6 +152,8 @@ export function useReaderState({
   // 兴趣轴随「个人早报」能力位:关闭时兴趣端点 403、发现页也没有兴趣编辑面,轴切换整体不出、
   // 记住的兴趣轴回落到订阅轴(codex 检视 P2)
   interestAxisEnabled = true,
+  // 读者 AI 可用(全局总闸 ∧ 账户开关 ∧ 模型已配置):推文翻译的菜单项随它出没(issue #84)
+  aiEnabled = false,
 }) {
   const [sources, setSources] = useState([]);
   const [subscribedIds, setSubscribedIds] = useState(() => new Set());
@@ -293,6 +298,12 @@ export function useReaderState({
   const [translatedBody, setTranslatedBody] = useState(null);
   const [translatedTitle, setTranslatedTitle] = useState(null);  // v3.45:中文标题随译文一起
   const translationCacheRef = useRef(new Map());                  // id → { body, title }
+
+  // ── 用户面 AI · 推文翻译(issue #84):社交流逐卡开合,桌面卡片 / 右键菜单 / 移动长按共用一份 ──
+  // id → { status: 'loading' | 'done' | 'error' | 'quota', open, text, quoted, message }
+  const [socialTranslations, setSocialTranslations] = useState({});
+  const socialTranslationsRef = useRef(socialTranslations);
+  useEffect(() => { socialTranslationsRef.current = socialTranslations; }, [socialTranslations]);
 
   // ── 用户面 AI · 要点摘要(正文顶部「哆啦美速读」卡;缓存 id → 摘要)──
   const [activeSummary, setActiveSummary] = useState(null);
@@ -1280,6 +1291,29 @@ export function useReaderState({
     }
   };
 
+  // 推文翻译开合:已译过的只在本地开合(不再请求);首次 / 失败后重试才发请求。服务端有缓存,
+  // 收起后换页回来再点也只是一次 HTTP、零模型调用。额度用尽(429)留在 quota 态,不给重试。
+  const toggleSocialTranslation = useCallback((article) => {
+    const id = article?.id;
+    if (!id) return;
+    const entry = socialTranslationsRef.current[id];
+    if (entry?.status === 'loading') return;
+    if (entry?.status === 'done') {
+      setSocialTranslations((prev) => ({ ...prev, [id]: { ...prev[id], open: !prev[id]?.open } }));
+      return;
+    }
+    setSocialTranslations((prev) => ({ ...prev, [id]: { status: 'loading', open: false } }));
+    translateSocialPost(id)
+      .then((data) => setSocialTranslations((prev) => ({
+        ...prev,
+        [id]: { status: 'done', open: true, text: data?.text || null, quoted: data?.quoted || null },
+      })))
+      .catch((error) => setSocialTranslations((prev) => ({
+        ...prev,
+        [id]: { status: error?.status === 429 ? 'quota' : 'error', open: false, message: error?.message || '' },
+      })));
+  }, []);
+
   const handleToggleSocialRead = useCallback(async (article) => {
     if (!article?.id || socialReadToggling) return;
     setSocialReadToggling(article.id);
@@ -1351,9 +1385,21 @@ export function useReaderState({
   const buildSocialMenuItems = (article) => {
     const unread = isArticleUnread(article);
     const fav = favoriteIds.has(article.id);
+    // 翻译项与卡片底栏同一个开关(issue #84):译文开着时是「收起译文」
+    const tr = socialTranslations[article.id];
+    const translateItems = aiEnabled && socialTranslatable(article)
+      ? [{
+        key: 'translate',
+        label: tr?.status === 'done' && tr.open ? '收起译文' : '译为中文',
+        icon: Sparkles,
+        disabled: tr?.status === 'loading' || tr?.status === 'quota',
+        onClick: () => toggleSocialTranslation(article),
+      }]
+      : [];
     return [
       { key: 'read', label: unread ? '标为已读' : '标为未读', icon: unread ? Check : Undo2, onClick: () => handleToggleSocialRead(article) },
       { key: 'fav', label: fav ? '取消收藏' : '收藏推文', icon: fav ? StarOff : Star, onClick: () => handleToggleFavorite(article) },
+      ...translateItems,
       { type: 'sep' },
       // 链接组复制/打开的都是原推外链(社交卡无详情页语义),与卡上时间戳外链同目标
       { key: 'copy', label: '复制推文链接', icon: Link, disabled: !article.source_url, onClick: () => copyWithToast(article.source_url, '已复制推文链接') },
@@ -1617,6 +1663,7 @@ export function useReaderState({
     // AI(翻译 / 速读)
     showTranslation, translating, translatedBody, translatedTitle, activeIsChinese, handleTranslate,
     activeSummary, summarizing, handleSummarize,
+    socialTranslations, toggleSocialTranslation,
     // 上下文菜单 items(桌面右键 / 移动长按共用)
     isAdminSession, buildArticleMenuItems, buildSourceMenuItems, buildSocialMenuItems,
   };

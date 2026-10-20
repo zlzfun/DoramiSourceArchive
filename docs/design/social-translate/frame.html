@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>社交流翻译画面</title>
+<link rel="stylesheet" href="../../../frontend/public/fonts/dorami-serif-v1/dorami-serif.css">
+<link rel="stylesheet" href="../../../frontend/public/fonts/dorami-latin-v1/dorami-latin.css">
+<link rel="stylesheet" href="assets/app.css">
+<link rel="stylesheet" href="assets/frame.css">
+<link rel="stylesheet" href="assets/social-tr.css">
+<script>
+  // 首帧前挂主题与配色,避免画框闪白(现网:<html data-theme> + <html data-palette>)
+  (function () {
+    var q = new URLSearchParams(location.search);
+    var r = document.documentElement;
+    if (q.get('theme') !== 'light') r.dataset.theme = 'dark';
+    var pal = q.get('palette');
+    if (pal === 'graphite' || pal === 'paper') r.dataset.palette = pal;
+    if (q.get('motion') === 'reduce') r.dataset.motion = 'reduce';
+  })();
+</script>
+<script src="assets/data.js"></script>
+<script src="assets/frame.js" defer></script>
+</head>
+<body>
+<!-- AI 家族渐变(同 AiGradientDefs.jsx):图标经 stroke: url(#ai-grad) 引用 -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <linearGradient id="ai-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color: var(--ai-g1)"></stop>
+      <stop offset="100%" style="stop-color: var(--ai-g2)"></stop>
+    </linearGradient>
+  </defs>
+</svg>
+<div id="root"></div>
+</body>
+</html>

@@ -9531,6 +9531,93 @@ input[type="radio"] {
   .social-quote-meta { font-size: 12px; color: var(--dorami-faint); }
   .social-quote-text { margin-top: 4px; font-size: 12.5px; line-height: 1.55; color: var(--dorami-muted); }
 
+  /* ── 推文翻译(issue #84,样页 docs/design/social-translate):原文一字不动,译文追加在下方 ──
+     底栏是卡片最后一行(媒体与引用推之后):翻译管整张卡片,入口就在整张卡片末尾;
+     「显示更多」紧贴正文只管正文折叠。开合都在底栏,位置不随状态移动。 */
+  .social-tr-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 14px;
+    row-gap: 2px;
+    margin-top: 8px;
+  }
+  /* 入口:常显文字钮(不随悬停出现);✦ 是 AI 触点标记,悬停时转 AI 渐变 */
+  .social-tr-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12.5px;
+    font-weight: 400;
+    line-height: 20px;
+    color: var(--dorami-muted);
+    transition: color var(--motion-fast) var(--motion-ease);
+  }
+  .social-tr-btn svg { width: 12px; height: 12px; flex: none; }
+  .social-tr-btn:hover:not(:disabled) { color: var(--dorami-ink); }
+  .social-tr-btn:hover:not(:disabled) svg { stroke: url(#ai-grad) var(--dorami-accent); }
+  .social-tr-btn:disabled { cursor: default; color: var(--dorami-faint); }
+  /* 已译标记:✦ + 「已译为中文」,后接「收起」 */
+  .social-tr-mark {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    line-height: 20px;
+    color: var(--dorami-faint);
+  }
+  .social-tr-mark svg { width: 12px; height: 12px; flex: none; stroke: url(#ai-grad) var(--dorami-accent); }
+  .social-tr-hide { margin-left: 6px; font-size: 12px; line-height: 20px; color: var(--dorami-faint); }
+  .social-tr-hide:hover { color: var(--dorami-ink-2); text-decoration: underline; }
+  /* 失败 / 额度用尽:就地一句说明;失败的说明与「重试」是一句话,收成一组 */
+  .social-tr-err { display: inline-flex; align-items: center; gap: 6px; }
+  .social-tr-note { font-size: 12.5px; line-height: 20px; color: var(--dorami-faint); }
+  .social-tr-retry { font-size: 12.5px; font-weight: 600; line-height: 20px; color: var(--dorami-accent); }
+  .social-tr-retry:hover { text-decoration: underline; }
+  /* 主推译文:细线隔开,小标签标明是 AI 译文 */
+  .social-tr {
+    margin-top: 10px;
+    padding-top: 9px;
+    border-top: 1px solid var(--dorami-border-soft);
+    animation: social-tr-in var(--motion-medium) var(--motion-ease) both;
+  }
+  .social-tr-head {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    line-height: 18px;
+    color: var(--dorami-faint);
+  }
+  .social-tr-head svg { width: 12px; height: 12px; flex: none; stroke: url(#ai-grad) var(--dorami-accent); }
+  .social-tr-label { font-weight: 600; }
+  .social-tr-text {
+    margin-top: 4px;
+    font-size: 13.5px;
+    line-height: 1.7;
+    color: var(--dorami-ink-2);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .social-post.is-read .social-tr-text { color: var(--dorami-muted); }
+  /* 引用推译文:卡内细线隔开,与引用原文同级(引用卡整体是次一级内容) */
+  .social-quote-tr {
+    display: block;
+    margin-top: 8px;
+    padding-top: 7px;
+    border-top: 1px solid var(--dorami-border-soft);
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--dorami-muted);
+    animation: social-tr-in var(--motion-medium) var(--motion-ease) both;
+  }
+  @keyframes social-tr-in {
+    from { opacity: 0; transform: translateY(-2px); }
+    to { opacity: 1; transform: none; }
+  }
+  :root[data-motion="reduce"] .social-tr,
+  :root[data-motion="reduce"] .social-quote-tr { animation: none; }
+
   .reader-social-end { padding: 26px 0 10px; text-align: center; font-size: 12px; color: var(--dorami-faint); }
 
   /* ── 发现页(按发现页样页):占据 条目列+阅读窗 的整片区域,源栏保持在场。

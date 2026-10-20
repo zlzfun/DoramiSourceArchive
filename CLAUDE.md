@@ -85,6 +85,7 @@ Data is stored in the `data/` directory (SQLite `cms_data.db`,含 FTS5 全文索
 
 **波次年表**(每波一行,只记「现状是什么 / 落在哪」;设计取舍、目检返修与检视记录的全文见 [`docs/version-history.md`](docs/version-history.md)——**新波次的详细记录写到那里,本年表只加一行**,CLAUDE.md 有 150k 字符上限):
 
+- **社交流翻译(issue #84,待发布)**:推文卡片最后一行「✦ 译为中文」(管整张卡片,「显示更多」仍只管正文折叠),原文一字不动、译文追加在正文下与引用卡内;`POST /api/reader/ai/social/{id}/translate` 主推(转推取 `reposted.text`)+ 引用推一次 JSON 调用、复用 #201 分段与完整输出校验,缓存 `translation_zh_social`(不与文章 `translation_zh` 混用);可译判定按 X `lang` + 中文启发式,前后端共用 `tests/fixtures/social_translate_cases.json`,规范化补存内嵌推文 `lang`;X API 无翻译能力;方案 `docs/social-translate-plan.md`,样页 `docs/design/social-translate/`。
 - **前端细项优化波(issue #199,待发布)**:源栏每源未读数撤回、条目未读小蓝点取缔(读态只靠标题字重与墨色,读屏补「未读」);播客区重设计为**全局播放条**——`components/player/`:`PlayerProvider` 挂在 `ReaderWorkspace`、全工作区唯一 `<audio>`(换文章 / 容器 / 页面、桌面 ⇄ 移动互切不中断,同标签页刷新恢复为暂停,退出清空,Media Session),标题区收听入口 `ListenEntries`(原节目 / 精品导读 / 点播 / 生成中,文章「✦ 听导读」共用),`PlayerDock` 内容区浮层条 ⇄ 右下迷你(WAAPI 形变只动合成属性,软件渲染自动轻量档),封面模糊底 `utils/coverTone.js`(遮罩逐张算到 4.5:1,混色只用 oklab);播客正文「节目简介 | ✦ 导读稿」切换与音轨解耦;`PodcastAudioPanel` / `ArticleListenBar` 退役;样页 `docs/design/podcast-player/`,规则 conventions §7 / §8。
 - **视觉精修波(issue #184,含 #176 W0a/W0b,待发布)**:字体——界面系统黑体(西文在前)、标题与分数用自托管思源宋体 `Dorami Serif`(`public/fonts/dorami-serif-v1/`,`scripts/build_dorami_serif.py` 生成,同源发出、nginx `/fonts/` 长缓存,内网可用)、英文原标题与英文文本用自托管西文衬线 `Dorami Latin Serif`(Source Serif 4,`public/fonts/dorami-latin-v1/`;英文文本经 `utils/readerText.latinLang` 标 `lang="en"` 换栈,宋体排西文会把撇号排成全角)、字重只用 400 / 600(早报头条 900)、字号下限 12px、未分层 `button{font:inherit}` 退役(preflight 在 base 层给出);三套中性色瓷 / 墨 / 宣(`palette.js` + `<html data-palette>`,设置 → 外观)、两层图底、选中统一中性加深(管理面撤 accent 竖条);阅读器条目行「静」、阅读窗宋体标题与细线速读卡、读者面时间按本地时区;我的早报改夜航版式(海报头条 + 板块 + 本期编排 + 往期月历 `BriefHistoryCalendar.jsx`,日期中栏撤除,分值驱动网格退役、`utils/briefGrid` → `briefScore`);管理面离散柱 / 阶梯线 / 台账分析列与来源名称;护栏 `test/typography.test.mjs` + eslint 字重;方案 `docs/visual-refine-plan.md`。
 - **内容分类第一波(issue #178,待发布)**:条目「内容类型 + 事件类型」读取时推导(不改提示词、不加列),「动态」并入「文章」,类型签 / 筛选带 / 版本更新紧凑行,标签与映射表收拢到后端词表;双评分与分发在后续波次,方案 `docs/content-classification-plan.md`。
@@ -417,6 +418,7 @@ frontend/src/
 
 **Reader AI Beta** (reader surface; gated by global master switch + per-account flag + LLM configured)
 - `POST /api/reader/ai/translate` — translate an article body to 简体中文 (cached in `extensions_json`)
+- `POST /api/reader/ai/social/{article_id}/translate` — 推文(主推 + 引用推)一次调用译为中文,返回 `{text, quoted, cached}`,缓存 `extensions_json.translation_zh_social`(issue #84)
 - `POST /api/reader/ai/ask` — multi-turn QA,scope 四档 `article|articles|subscription|all`(v3.32:显式名单 vs 检索圈定;检索档走「LLM 计划检索 + FTS5」两段式);响应 `sources` 与上下文编号 [n] 同源同序(行内引用锚);可带 `ask_id` 登记阶段进度
 - `GET /api/reader/ai/ask/progress?ask_id=` — ask 阶段进度轮询(plan→search→select→answer,内存瞬时态,完成即清;阶段化等待态数据源)
 - `POST /api/reader/ai/podcasts/{episode_id}/ondemand`、`POST /api/reader/ai/articles/{article_id}/ondemand` — 读者点播精品导读 / 文章精简旁白，共用每日额度。总闸 `GET`/`POST /api/admin/reader-ondemand`（KV `reader_ondemand_enabled`，缺省开）在运维管理 → 内容；关闭只收读者入口并 403 新请求，已有音频与排队不动。能不能跑不由这个开关改：`/api/runtime` 的 `ondemand.podcast` / `ondemand.article` 还要求 LLM、TTS 和默认音色，播客侧另要求处理阶段授权。缺阶段时读者只看到「当前部署未开启播客点播」，缺什么列在管理面 `blockers`。
