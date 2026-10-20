@@ -42,6 +42,16 @@ _DESTINATION = re.compile(
 )
 _PIPES = re.compile(r"(?<!\\)\|")
 _ALIGNMENT = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?\s*$")
+# Small, explicit glossary for a measured factual mistranslation (#205).
+# Apply only after code/math/URLs have been hidden; do not rewrite identifiers.
+_EVALUATION_TERM = re.compile(r"(?<![\w-])(?:zero-shot|few-shot)(?![\w-])", re.I)
+_EVALUATION_ZH = {"zero-shot": "零样本", "few-shot": "少样本"}
+_BILINGUAL_EVALUATION_TERM = re.compile(
+    r"(?:零样本\s*[（(]\s*zero-shot\s*[）)]|少样本\s*[（(]\s*few-shot\s*[）)]"
+    r"|(?<![\w-])zero-shot\s*[（(]\s*零样本\s*[）)]"
+    r"|(?<![\w-])few-shot\s*[（(]\s*少样本\s*[）)])", re.I,
+)
+_BENCHMARK_NAME = re.compile(r"(?<![\w-])SWE-Bench[ \t]+Verified(?![\w-])", re.I)
 
 
 def _valid_destination(value: str) -> bool:
@@ -263,6 +273,11 @@ def _protect(body: str) -> tuple[str, dict[str, str]]:
                   else match[0], body)
     body = re.sub(r"https?://[^\s<>]+", lambda match: save(match[0]), body)
     body = _MATH.sub(lambda match: save(match[0]), body)
+    body = _BILINGUAL_EVALUATION_TERM.sub(lambda match: save(match[0]), body)
+    body = _EVALUATION_TERM.sub(
+        lambda match: save(f"{_EVALUATION_ZH[match[0].lower()]}（{match[0]}）"), body,
+    )
+    body = _BENCHMARK_NAME.sub(lambda match: save("SWE-Bench Verified"), body)
     # Keep alignment rows verbatim; each data row remains an indivisible unit.
     body = "\n".join(save(line) if _ALIGNMENT.fullmatch(line) else line
                      for line in body.split("\n"))

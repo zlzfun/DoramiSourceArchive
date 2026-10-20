@@ -43,7 +43,7 @@ SUMMARY_KEY = "summary_zh"
 # 只在新一次生成时补写指纹。
 TRANSLATION_FP_KEY = "translation_zh_fp"
 TRANSLATION_VERSION_KEY = "translation_zh_version"
-TRANSLATION_VERSION = 2
+TRANSLATION_VERSION = 3
 SUMMARY_FP_KEY = "summary_zh_fp"
 # 中文标题(v3.45):与正文译文同缓存于 extensions_json,指纹取标题自身——标题被权威
 # 刷新改写后失配即重译;存量只有正文译文的缓存命中时补译标题(一次小调用)。

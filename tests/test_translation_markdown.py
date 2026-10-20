@@ -270,6 +270,44 @@ def test_reference_definitions_are_not_arbitrary_labelled_prose():
     assert plan.assemble([c.text for c in plan.chunks]) == body
 
 
+def test_evaluation_terms_keep_bilingual_meaning_without_touching_literals():
+    body = ("Change the few-shot prompt to a zero-shot setting. Few-shot may hurt.\n\n"
+            "`zero-shot` $\\text{few-shot}$ [guide](https://example.org/zero-shot)\n\n"
+            "```text\nfew-shot\n```\n\nzero-shot-model my_zero-shot_value")
+    plan = plan_translation(body)
+    masked = "".join(chunk.text for chunk in plan.chunks)
+    assert "Change the few-shot" not in masked
+    restored = plan.assemble([chunk.text for chunk in plan.chunks])
+    assert restored.startswith("Change the 少样本（few-shot） prompt to a 零样本（zero-shot） setting. 少样本（Few-shot） may hurt.")
+    assert "`zero-shot` $\\text{few-shot}$ [guide](https://example.org/zero-shot)" in restored
+    assert "```text\nfew-shot\n```" in restored
+    assert restored.endswith("zero-shot-model my_zero-shot_value")
+
+
+def test_existing_bilingual_evaluation_terms_are_not_expanded_twice():
+    body = "零样本（zero-shot）与少样本 (Few-shot)，zero-shot（零样本）和 few-shot (少样本)。"
+    plan = plan_translation(body)
+    assert plan.assemble([chunk.text for chunk in plan.chunks]) == body
+
+
+def test_verified_is_part_of_the_benchmark_name_not_generic_results():
+    body = ("SWE-Bench verified results and SWE-Bench Verified.\n\n"
+            "`SWE-Bench verified` [name](https://example.org/SWE-Bench-Verified)")
+    plan = plan_translation(body)
+    restored = plan.assemble([chunk.text for chunk in plan.chunks])
+    assert restored.startswith("SWE-Bench Verified results and SWE-Bench Verified.")
+    assert "`SWE-Bench verified`" in restored
+    assert "https://example.org/SWE-Bench-Verified" in restored
+
+
+def test_missing_fixed_term_cannot_be_replaced_with_wrong_translation(monkeypatch):
+    mock_model(monkeypatch, mutate=lambda text: "改成少样本设置。")
+    sink = Sink(body="Change the prompt to a zero-shot setting.")
+    with pytest.raises(reader_ai.ReaderAIError, match="不完整"):
+        asyncio.run(reader_ai.translate_article(sink, "paper", CONFIG))
+    assert sink.writes == 0
+
+
 class Sink:
     def __init__(self, body="A long paragraph about $x$.", ext=None):
         self.record = SimpleNamespace(title="中文标题", content=body,
@@ -360,6 +398,18 @@ def test_paper_cache_upgrade_then_reuse(monkeypatch):
     assert first["translation"] == sink.record.content
     assert first["cached"] is False and second["cached"] is True
     assert len(calls) == 1
+
+
+def test_paper_version_two_cache_is_retranslated_for_term_fix(monkeypatch):
+    calls = mock_model(monkeypatch)
+    sink = Sink(body="Use zero-shot.", ext={
+        "paper": {"content_level": "fulltext"}, "translation_zh": "使用少样本。",
+        "translation_zh_version": 2,
+    })
+    result = asyncio.run(reader_ai.translate_article(sink, "paper", CONFIG))
+    assert result["translation"] == "Use 零样本（zero-shot）."
+    assert len(calls) == 1
+    assert json.loads(sink.record.extensions_json)["translation_zh_version"] == 3
 
 
 def test_stop_reason_is_case_and_whitespace_tolerant(monkeypatch):
