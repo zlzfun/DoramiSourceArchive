@@ -1,6 +1,7 @@
 """Durable translation: real DB, real LLM client protocol, fake provider only."""
 import asyncio
 from contextlib import asynccontextmanager
+from dataclasses import replace
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -269,13 +270,13 @@ def test_no_partial_publish_when_checkpoint_tampered(env):
     job_id, token = tr.claim(engine)
     with Session(engine) as session:
         article, config = tr._current(session, session.get(tr.Job, job_id))
-        plan, title_needed = tr._plan(article, tr.input_key(article, config))
+        plan, _ = tr._plan(article, tr.input_key(article, config))
     with Session(engine) as session:
         for chunk in session.exec(select(tr.Chunk)).all():
             chunk.text = "broken"
         session.commit()
     with pytest.raises(tr.TranslationStructureError):
-        tr._finish(engine, job_id, token, plan, title_needed)
+        tr._finish(engine, job_id, token, plan)
     assert "translation_zh" not in json.loads(row(engine, ArticleRecord, "a").extensions_json)
 
 
@@ -410,17 +411,17 @@ def test_cancel_and_permission_change_are_rechecked_at_publish(env):
     job_id, token = tr.claim(engine)
     with Session(engine) as session:
         article, config = tr._current(session, session.get(tr.Job, job_id))
-        plan, title_needed = tr._plan(article, tr.input_key(article, config))
+        plan, _ = tr._plan(article, tr.input_key(article, config))
     for ordinal, chunk in enumerate(plan.chunks):
         tr._checkpoint(engine, job_id, token, ordinal, chunk.text)
     tr._checkpoint(engine, job_id, token, len(plan.chunks), "译名")
     with Session(engine) as session:
         tr.accounts.set_ai_beta_enabled(session, "user", False)
     with pytest.raises(tr.Error):
-        tr._finish(engine, job_id, token, plan, title_needed)
+        tr._finish(engine, job_id, token, plan)
     tr.cancel(engine, "user", job_id)  # Cancellation remains possible with AI off.
     with pytest.raises(tr.Error):
-        tr._finish(engine, job_id, token, plan, title_needed)
+        tr._finish(engine, job_id, token, plan)
     assert "translation_zh" not in json.loads(row(engine, ArticleRecord, "a").extensions_json)
 
 
@@ -582,3 +583,88 @@ def test_layout_metadata_without_body_is_not_a_successful_empty_translation(env)
     assert not calls
     with Session(engine) as session:
         assert not session.exec(select(tr.Job)).all()
+
+
+def _write_digest_title(engine):
+    with Session(engine) as session:
+        article = session.get(ArticleRecord, "a")
+        ext = reader_ai._load_extensions(article)
+        ext[reader_ai.TRANSLATION_TITLE_KEY] = "早报已翻译的标题"
+        ext[reader_ai.TRANSLATION_TITLE_FP_KEY] = reader_ai._body_fingerprint(article.title.strip())
+        article.extensions_json = json.dumps(ext, ensure_ascii=False)
+        session.commit()
+
+
+def test_digest_title_does_not_invalidate_saved_body_checkpoints(env):
+    engine, calls, _ = env
+    job = start(engine)
+    job_id, token = tr.claim(engine)
+    with Session(engine) as session:
+        article, config = tr._current(session, session.get(tr.Job, job_id))
+        plan, _ = tr._plan(article, tr.input_key(article, config))
+    tr._checkpoint(engine, job_id, token, 0, plan.chunks[0].text)
+    _write_digest_title(engine)
+    tr.heartbeat(engine, job_id, token)
+    assert tr.status(engine, "user", "a")["job"]["job_id"] == job_id
+    asyncio.run(tr.run_job(engine, job_id, token))
+    state = tr.status(engine, "user", "a")
+    assert state["status"] == "succeeded"
+    assert state["result"]["title"] == "早报已翻译的标题"
+    assert len(calls) == job["total"] - 2  # Saved body + externally cached title.
+    with Session(engine) as session:
+        assert session.exec(select(AiUsageRecord)).one().calls == len(calls)
+
+
+def test_digest_title_written_during_body_request_is_reused(env, monkeypatch):
+    engine, calls, mode = env
+    resolve = tr.daily_brief.resolve_llm_config
+    monkeypatch.setattr(tr.daily_brief, "resolve_llm_config",
+                        lambda session: replace(resolve(session), map_concurrency=1))
+    job = start(engine)
+
+    async def scenario():
+        mode["started"], mode["block"] = asyncio.Event(), asyncio.Event()
+        task = asyncio.create_task(tr.run_once(engine))
+        await asyncio.wait_for(mode["started"].wait(), timeout=5)
+        assert len(calls) == 1
+        _write_digest_title(engine)
+        assert tr.status(engine, "user", "a")["job"]["job_id"] == job["job_id"]
+        mode["block"].set()
+        await task
+
+    asyncio.run(scenario())
+    state = tr.status(engine, "user", "a")
+    assert state["status"] == "succeeded"
+    assert state["result"]["title"] == "早报已翻译的标题"
+    assert len(calls) == job["total"] - 1
+    assert all("【待翻译正文】" in call["messages"][-1]["content"] for call in calls)
+
+
+def test_removed_title_cache_does_not_change_existing_body_plan(env):
+    engine, calls, _ = env
+    _write_digest_title(engine)
+    job = start(engine)
+    with Session(engine) as session:
+        article = session.get(ArticleRecord, "a")
+        article.extensions_json = "{}"
+        session.commit()
+    asyncio.run(tr.run_once(engine))
+    assert len(calls) == job["total"]  # Existing plan has only body checkpoints.
+    ext = json.loads(row(engine, ArticleRecord, "a").extensions_json)
+    assert ext[reader_ai.TRANSLATION_KEY]
+    assert reader_ai.TRANSLATION_TITLE_KEY not in ext
+    assert reader_ai.TRANSLATION_TITLE_FP_KEY not in ext
+    assert row(engine, tr.Job, job["job_id"]) is None
+    assert start(engine)["total"] == 1  # Missing title can be filled separately.
+
+
+@pytest.mark.parametrize("extra", [-2, 1])
+def test_invalid_persisted_title_layout_is_stale(env, extra):
+    engine, calls, _ = env
+    job = start(engine)
+    with Session(engine) as session:
+        session.get(tr.Job, job["job_id"]).total += extra
+        session.commit()
+    asyncio.run(tr.run_once(engine))
+    assert not calls
+    assert row(engine, tr.Job, job["job_id"]).status == "stale"

@@ -86,7 +86,6 @@ def input_key(article, config) -> str:
         (article.title or "").strip(), TARGET, reader_ai.TRANSLATION_VERSION,
         PIPELINE_VERSION, reader_ai._TRANSLATE_SEGMENT_CHARS, config_key(config),
         _hash(_cached_body(article)) if _cached_body(article) else "",
-        _hash(_cached_title(article)) if _cached_title(article) else "",
     ])
 
 
@@ -150,7 +149,7 @@ def cached_result(article, _config=None):
     return {"translation": body, "title": _cached_title(article), "cached": True}
 
 
-def _plan(article, key):
+def _plan(article, key, *, total=None):
     body = (article.content or "").strip()
     if not body:
         raise Error("该文章暂无可翻译的正文", 400)
@@ -163,7 +162,7 @@ def _plan(article, key):
         raise Error(str(exc), 422) from exc
     if not plan.chunks and _cached_body(article) is None:
         raise Error("该文章暂无可翻译的正文", 400)
-    title_needed = _cached_title(article) is None
+    title_needed = (_cached_title(article) is None if total is None else _planned_title(total, plan))
     if len(plan.chunks) + int(title_needed) > MAX_CHUNKS:
         raise Error("正文片段数超过后台翻译上限", 422)
     return plan, title_needed
@@ -232,7 +231,7 @@ def request(engine, username, article_id, *, resume_id=None):
             return {"status": job.status, "job": _payload(job, username), "result": cached}
         # Check before allocating persistent storage. Recheck/reserve each actual
         # provider call in the worker; joining an existing job has no cost.
-        plan, title_needed = _plan(article, key)
+        plan, title_needed = _plan(article, key, total=job.total if job else None)
         if title_needed or any(translation_units(chunk.text) for chunk in plan.chunks):
             _cost_gate(session, username, 0)
         evicted = _user_slot(session, username, job.id if job else "")
@@ -423,10 +422,27 @@ def _checkpoint(engine, job_id, token, ordinal, value):
         job.updated_at = time.time()
 
 
-def _finish(engine, job_id, token, plan, title_needed):
+def _planned_title(total, plan):
+    # Title caches can be filled independently by the personal digest. Only the
+    # persisted layout determines whether this job owns a title checkpoint.
+    count = total - len(plan.chunks)
+    if count not in (0, 1):
+        raise InputChanged("翻译计划已变化，请重新发起翻译", 409)
+    return bool(count)
+
+
+def _available_title(engine, job_id, token):
+    with Session(engine) as session:
+        job = _fenced(session, job_id, token)
+        article, _ = _current(session, job)
+        return _cached_title(article)
+
+
+def _finish(engine, job_id, token, plan):
     with _write(engine) as session:
         job = _fenced(session, job_id, token)
-        article, config = _current(session, job)
+        article, _ = _current(session, job)
+        title_needed = _planned_title(job.total, plan)
         rows = session.exec(select(Chunk).where(Chunk.job_id == job_id).order_by(Chunk.ordinal)).all()
         if len(rows) != job.total or any(not row.text for row in rows):
             raise Error("翻译片段尚未全部完成", 409)
@@ -440,10 +456,11 @@ def _finish(engine, job_id, token, plan, title_needed):
                 reader_ai.TRANSLATION_FP_KEY: reader_ai._body_fingerprint((article.content or "").strip()),
                 reader_ai.TRANSLATION_VERSION_KEY: reader_ai.TRANSLATION_VERSION,
             })
-        ext.update({
-            reader_ai.TRANSLATION_TITLE_KEY: title,
-            reader_ai.TRANSLATION_TITLE_FP_KEY: reader_ai._body_fingerprint((article.title or "").strip()),
-        })
+        if title is not None:
+            ext.update({
+                reader_ai.TRANSLATION_TITLE_KEY: title,
+                reader_ai.TRANSLATION_TITLE_FP_KEY: reader_ai._body_fingerprint((article.title or "").strip()),
+            })
         ext.pop("translation_zh_config", None)
         # Article merge + job completion + checkpoint removal share one write
         # transaction, serialized against cancellation and source replacement.
@@ -462,16 +479,16 @@ async def run_job(engine, job_id, token):
         with Session(engine) as session:
             job = _fenced(session, job_id, token)
             article, config = _current(session, job)
-            plan, title_needed = _plan(article, job.input_key)
+            plan, _ = _plan(article, job.input_key, total=job.total)
             title = (article.title or "").strip()
-            return config, plan, title_needed, title
+            return config, plan, title
 
     def missing_chunks():
         with Session(engine) as session:
             return session.exec(select(Chunk).where(Chunk.job_id == job_id, Chunk.text == "")).all()
 
     async def work():
-        config, plan, title_needed, title = await asyncio.to_thread(load_work)
+        config, plan, title = await asyncio.to_thread(load_work)
         semaphore = asyncio.Semaphore(max(1, min(8, config.map_concurrency)))
         stopping_error = None
         async with client_session(config) as client:
@@ -481,6 +498,11 @@ async def run_job(engine, job_id, token):
                     if stopping_error is not None:
                         raise stopping_error
                     chunk = plan.chunks[ordinal] if ordinal < len(plan.chunks) else None
+                    if chunk is None:
+                        cached_title = await asyncio.to_thread(_available_title, engine, job_id, token)
+                        if cached_title is not None:
+                            await asyncio.to_thread(_checkpoint, engine, job_id, token, ordinal, cached_title)
+                            return
                     if chunk is not None and not translation_units(chunk.text):
                         await asyncio.to_thread(_checkpoint, engine, job_id, token, ordinal, chunk.text)
                         return
@@ -522,7 +544,7 @@ async def run_job(engine, job_id, token):
             for cycle in range(MAX_ATTEMPTS):
                 missing = await asyncio.to_thread(missing_chunks)
                 if not missing:
-                    await asyncio.to_thread(_finish, engine, job_id, token, plan, title_needed)
+                    await asyncio.to_thread(_finish, engine, job_id, token, plan)
                     return
                 eligible = [row.ordinal for row in missing if row.attempts < MAX_ATTEMPTS]
                 if not eligible:
@@ -545,7 +567,7 @@ async def run_job(engine, job_id, token):
                     if cycle == MAX_ATTEMPTS - 1:
                         raise errors[0]
                     await asyncio.sleep(2 ** cycle)
-            await asyncio.to_thread(_finish, engine, job_id, token, plan, title_needed)
+            await asyncio.to_thread(_finish, engine, job_id, token, plan)
 
     worker, keeper = asyncio.create_task(work()), asyncio.create_task(renew())
     error = None
