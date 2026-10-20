@@ -56,6 +56,16 @@ class LLMError(Exception):
     """大模型调用或响应解析失败。"""
 
 
+class LLMHTTPError(LLMError):
+    """An explicit provider response, distinct from an ambiguous transport loss."""
+
+    def __init__(self, status_code: int, message: str):
+        super().__init__(message)
+        self.status_code = status_code
+        self.response_received = True
+        self.retryable = status_code in (408, 429) or status_code >= 500
+
+
 class LLMNotConfigured(LLMError):
     """大模型未配置（缺 base_url/api_key/model）。"""
 
@@ -281,6 +291,17 @@ async def _chat_completion_on(
             return content
 
         body_preview = resp.text[:500]
+        # A provider may return usage even with an error. Durable callers must
+        # settle that receipt, then allocate a new hold for any subsequent call.
+        if usage_meta is not None and usage_meta.recorder is not None:
+            try:
+                error_data = resp.json()
+            except ValueError:
+                error_data = {}
+            error_usage = error_data.get("usage") if isinstance(error_data, dict) else None
+            if isinstance(error_usage, dict) and error_usage:
+                _maybe_record_usage(usage_meta, error_usage, config.model)
+                raise LLMHTTPError(resp.status_code, f"HTTP {resp.status_code}: {body_preview}")
         # response_format 不被支持时，去掉后重发一次(不计入重试次数)
         if resp.status_code == 400 and want_json:
             logger.info("端点疑似不支持 response_format，降级为普通模式重试 [%s | %s]",
@@ -298,7 +319,7 @@ async def _chat_completion_on(
             continue
 
         if resp.status_code == 429 or resp.status_code >= 500:
-            last_error = LLMError(f"HTTP {resp.status_code}: {body_preview}")
+            last_error = LLMHTTPError(resp.status_code, f"HTTP {resp.status_code}: {body_preview}")
             logger.warning("LLM 响应可重试 (%s/%s) HTTP %s [%s | %s]",
                            attempt, max_retries, resp.status_code, config.base_url, config.model)
             if attempt >= max_retries:
@@ -307,7 +328,7 @@ async def _chat_completion_on(
             continue
 
         # 其它 4xx：不重试
-        raise LLMError(f"LLM 调用失败 HTTP {resp.status_code}: {body_preview}")
+        raise LLMHTTPError(resp.status_code, f"LLM 调用失败 HTTP {resp.status_code}: {body_preview}")
 
 
 def _extract_content_and_usage(resp: httpx.Response) -> tuple[str, Dict[str, Any], Optional[str]]:

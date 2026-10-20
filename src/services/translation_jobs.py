@@ -19,7 +19,7 @@ import uuid
 from sqlalchemy import delete, text
 from sqlmodel import Session, func, select
 
-from llm.client import UsageMeta, client_session
+from llm.client import UsageMeta, client_session, LLMHTTPError
 from llm import prompts
 from models.db import (
     AiUsageRecord, ArticleRecord, TranslationCallRecord as Call,
@@ -31,9 +31,20 @@ from services.translation_markdown import plan_translation, translation_units, T
 
 logger = logging.getLogger(__name__)
 Error = reader_ai.ReaderAIError
+
+
+class InputChanged(Error):
+    """The checkpoint identity no longer describes the current article/config."""
+
+
+class LeaseLost(Error):
+    """An expired owner cannot commit; another claim may safely continue."""
+
+
 PIPELINE_VERSION = 1
 TARGET = "zh-CN"
 MAX_JOBS = 500
+MAX_USER_JOBS = 3
 MAX_BODY_BYTES = 2_000_000
 MAX_CHUNKS = 1000
 MAX_CHECKPOINT_BYTES = 64 * 1024 * 1024
@@ -74,6 +85,8 @@ def input_key(article, config) -> str:
         article.id, article.source_id, (article.content or "").strip(),
         (article.title or "").strip(), TARGET, reader_ai.TRANSLATION_VERSION,
         PIPELINE_VERSION, reader_ai._TRANSLATE_SEGMENT_CHARS, config_key(config),
+        _hash(_cached_body(article)) if _cached_body(article) else "",
+        _hash(_cached_title(article)) if _cached_title(article) else "",
     ])
 
 
@@ -101,27 +114,40 @@ def _current(session, job, *, username=None):
     if not config.configured:
         raise Error("AI 服务暂未就绪", 403)
     if input_key(article, config) != job.input_key:
-        raise Error("原文或模型配置已更新，请重新发起翻译", 409)
+        raise InputChanged("原文或模型配置已更新，请重新发起翻译", 409)
     return article, config
 
 
-def cached_result(article, config):
+def _cached_body(article):
     ext = reader_ai._load_extensions(article)
-    body, title = (article.content or "").strip(), (article.title or "").strip()
+    body = (article.content or "").strip()
+    if not body:
+        return None
     if not reader_ai._cache_valid(ext, reader_ai.TRANSLATION_KEY, reader_ai.TRANSLATION_FP_KEY,
                                  reader_ai._body_fingerprint(body)):
         return None
     if (reader_ai.paper_metadata(article).get("content_level") in {"fulltext", "partial"}
             and ext.get(reader_ai.TRANSLATION_VERSION_KEY) != reader_ai.TRANSLATION_VERSION):
         return None
-    if ext.get("translation_zh_config") not in (None, config_key(config)):
-        return None
+    return ext[reader_ai.TRANSLATION_KEY]
+
+
+def _cached_title(article):
+    ext = reader_ai._load_extensions(article)
+    title = (article.title or "").strip()
     if title and not reader_ai.looks_chinese(title):
         if not reader_ai._cache_valid(ext, reader_ai.TRANSLATION_TITLE_KEY,
                                      reader_ai.TRANSLATION_TITLE_FP_KEY, reader_ai._body_fingerprint(title)):
             return None
         title = ext[reader_ai.TRANSLATION_TITLE_KEY]
-    return {"translation": ext[reader_ai.TRANSLATION_KEY], "title": title, "cached": True}
+    return title
+
+
+def cached_result(article, _config=None):
+    body = _cached_body(article)
+    if body is None:
+        return None
+    return {"translation": body, "title": _cached_title(article), "cached": True}
 
 
 def _plan(article, key):
@@ -131,11 +157,13 @@ def _plan(article, key):
     if len(body.encode()) > MAX_BODY_BYTES:
         raise Error("正文超过后台翻译容量上限", 422)
     try:
-        plan = plan_translation(body, segment_chars=reader_ai._TRANSLATE_SEGMENT_CHARS, namespace=key[:12])
+        plan = (plan_translation(body, segment_chars=reader_ai._TRANSLATE_SEGMENT_CHARS, namespace=key[:12])
+                if _cached_body(article) is None else plan_translation("", namespace=key[:12]))
     except TranslationStructureError as exc:
         raise Error(str(exc), 422) from exc
-    title = (article.title or "").strip()
-    title_needed = bool(title) and not reader_ai.looks_chinese(title)
+    if not plan.chunks and _cached_body(article) is None:
+        raise Error("该文章暂无可翻译的正文", 400)
+    title_needed = _cached_title(article) is None
     if len(plan.chunks) + int(title_needed) > MAX_CHUNKS:
         raise Error("正文片段数超过后台翻译上限", 422)
     return plan, title_needed
@@ -156,6 +184,30 @@ def _cleanup(session, now):
     session.exec(delete(Chunk).where(Chunk.job_id.in_(stale)))
     session.exec(delete(Job).where(Job.id.in_(stale)))
     session.exec(delete(Call).where(Call.created_at < now - 30 * 86400))
+    # Published translations live in articles; receipt rows must not fill the queue.
+    _delete_jobs(session, select(Job.id).where(Job.status == "succeeded", Job.lease_until <= now))
+
+
+def _delete_jobs(session, ids):
+    session.exec(delete(Chunk).where(Chunk.job_id.in_(ids)))
+    session.exec(delete(Job).where(Job.id.in_(ids)))
+
+
+def _user_slot(session, username, exclude_id=""):
+    rows = session.exec(select(Job).where(
+        Job.created_by == username, Job.id != exclude_id,
+        (Job.status.in_(("queued", "running"))) | (Job.completed > 0),
+    ).order_by(Job.updated_at)).all()
+    evicted = False
+    while len(rows) >= MAX_USER_JOBS:
+        oldest = next((item for item in rows if item.status in {"failed", "cancelled", "stale"}
+                       and item.lease_until <= time.time()), None)
+        if oldest is None:
+            raise Error("已有 3 篇文章正在翻译，请完成或取消后再试", 429)
+        _delete_jobs(session, [oldest.id])
+        rows.remove(oldest)
+        evicted = True
+    return evicted
 
 
 def request(engine, username, article_id, *, resume_id=None):
@@ -168,24 +220,30 @@ def request(engine, username, article_id, *, resume_id=None):
         if not config.configured:
             raise Error("AI 服务暂未就绪", 403)
         cached = cached_result(article, config)
-        if cached:
+        if cached and cached["title"] is not None:
             return {"status": "succeeded", "result": cached, "job": None}
         key = input_key(article, config)
         job = session.exec(select(Job).where(Job.input_key == key)).first()
         if resume_id and (job is None or job.id != resume_id):
             raise Error("原文或模型配置已更新，请重新发起翻译", 409)
         if job and job.status in {"queued", "running"}:
-            return {"status": job.status, "job": _payload(job, username)}
+            return {"status": job.status, "job": _payload(job, username), "result": cached}
         if job and job.status in {"failed", "cancelled", "stale"} and not resume_id:
-            return {"status": job.status, "job": _payload(job, username)}
+            return {"status": job.status, "job": _payload(job, username), "result": cached}
         # Check before allocating persistent storage. Recheck/reserve each actual
         # provider call in the worker; joining an existing job has no cost.
         plan, title_needed = _plan(article, key)
         if title_needed or any(translation_units(chunk.text) for chunk in plan.chunks):
             _cost_gate(session, username, 0)
+        evicted = _user_slot(session, username, job.id if job else "")
         if job is None:
             if session.exec(select(func.count()).select_from(Job)).one() >= MAX_JOBS:
-                raise Error("后台翻译队列已满，请稍后再试", 429)
+                _delete_jobs(session, select(Job.id).where(
+                    Job.status.in_(("failed", "cancelled", "stale")),
+                    Job.completed == 0, Job.lease_until <= now,
+                ))
+                if session.exec(select(func.count()).select_from(Job)).one() >= MAX_JOBS:
+                    raise Error("后台翻译队列已满，请稍后再试", 429)
             job = Job(id=uuid.uuid4().hex, input_key=key, article_id=article_id,
                       created_by=username, total=len(plan.chunks) + int(title_needed),
                       created_at=now, updated_at=now)
@@ -208,7 +266,8 @@ def request(engine, username, article_id, *, resume_id=None):
             job.created_by, job.status, job.error, job.retry_at = username, "queued", "", 0
             job.updated_at = now
         session.flush()
-        return {"status": job.status, "job": _payload(job, username)}
+        return {"status": job.status, "job": _payload(job, username), "result": cached,
+                "evicted_progress": evicted}
 
 
 def status(engine, username, article_id):
@@ -218,9 +277,10 @@ def status(engine, username, article_id):
         config = daily_brief.resolve_llm_config(session)
         cached = cached_result(article, config)
         job = session.exec(select(Job).where(Job.input_key == input_key(article, config))).first()
-        if cached:
+        if cached and cached["title"] is not None:
             return {"status": "succeeded", "result": cached, "job": _payload(job, username) if job else None}
-        return {"status": job.status if job else "idle", "job": _payload(job, username) if job else None}
+        return {"status": job.status if job else "idle", "job": _payload(job, username) if job else None,
+                "result": cached}
 
 
 def cancel(engine, username, job_id):
@@ -277,10 +337,11 @@ def claim(engine):
         try:
             _, config = _current(session, job)
         except Error as exc:
-            job.status = "stale" if exc.status_code == 409 else "failed"
+            job.status = "stale" if isinstance(exc, InputChanged) else "failed"
             job.error, job.updated_at = str(exc), now
             return None
         job.status, job.lease_token = "running", uuid.uuid4().hex
+        job.error = ""
         job.lease_until = now + max(MIN_LEASE_SECONDS, config.timeout_seconds * 4 + 30)
         job.updated_at = now
         session.flush()
@@ -290,7 +351,7 @@ def claim(engine):
 def _fenced(session, job_id, token):
     job = session.get(Job, job_id)
     if job is None or job.status != "running" or job.lease_token != token or job.lease_until <= time.time():
-        raise Error("翻译任务已停止或由其它进程接管", 409)
+        raise LeaseLost("翻译任务已停止或由其它进程接管", 409)
     return job
 
 
@@ -338,6 +399,13 @@ def _unknown(engine, call_id):
             call.status = "unknown"
 
 
+def _release(engine, call_id):
+    with _write(engine) as session:
+        call = session.get(Call, call_id)
+        if call and call.status == "reserved" and not call.recorded:
+            call.status = "released"
+
+
 def _checkpoint(engine, job_id, token, ordinal, value):
     encoded = len(value.encode())
     if encoded > MAX_CHUNK_BYTES:
@@ -362,22 +430,26 @@ def _finish(engine, job_id, token, plan, title_needed):
         rows = session.exec(select(Chunk).where(Chunk.job_id == job_id).order_by(Chunk.ordinal)).all()
         if len(rows) != job.total or any(not row.text for row in rows):
             raise Error("翻译片段尚未全部完成", 409)
-        translated = plan.assemble([row.text for row in rows[:len(plan.chunks)]])
-        title = rows[-1].text if title_needed else (article.title or "").strip()
+        translated = (_cached_body(article) if not plan.chunks
+                      else plan.assemble([row.text for row in rows[:len(plan.chunks)]]))
+        title = rows[-1].text if title_needed else _cached_title(article)
         ext = reader_ai._load_extensions(article)
+        if plan.chunks:
+            ext.update({
+                reader_ai.TRANSLATION_KEY: translated,
+                reader_ai.TRANSLATION_FP_KEY: reader_ai._body_fingerprint((article.content or "").strip()),
+                reader_ai.TRANSLATION_VERSION_KEY: reader_ai.TRANSLATION_VERSION,
+            })
         ext.update({
-            reader_ai.TRANSLATION_KEY: translated,
-            reader_ai.TRANSLATION_FP_KEY: reader_ai._body_fingerprint((article.content or "").strip()),
-            reader_ai.TRANSLATION_VERSION_KEY: reader_ai.TRANSLATION_VERSION,
             reader_ai.TRANSLATION_TITLE_KEY: title,
             reader_ai.TRANSLATION_TITLE_FP_KEY: reader_ai._body_fingerprint((article.title or "").strip()),
-            "translation_zh_config": config_key(config),
         })
+        ext.pop("translation_zh_config", None)
         # Article merge + job completion + checkpoint removal share one write
         # transaction, serialized against cancellation and source replacement.
         article.extensions_json = json.dumps(ext, ensure_ascii=False)
-        job.status, job.error, job.updated_at = "succeeded", "", time.time()
         session.exec(delete(Chunk).where(Chunk.job_id == job_id))
+        session.delete(job)
 
 
 async def run_job(engine, job_id, token):
@@ -386,16 +458,28 @@ async def run_job(engine, job_id, token):
             await asyncio.sleep(HEARTBEAT_SECONDS)
             await asyncio.to_thread(heartbeat, engine, job_id, token)
 
-    async def work():
+    def load_work():
         with Session(engine) as session:
             job = _fenced(session, job_id, token)
             article, config = _current(session, job)
             plan, title_needed = _plan(article, job.input_key)
             title = (article.title or "").strip()
+            return config, plan, title_needed, title
+
+    def missing_chunks():
+        with Session(engine) as session:
+            return session.exec(select(Chunk).where(Chunk.job_id == job_id, Chunk.text == "")).all()
+
+    async def work():
+        config, plan, title_needed, title = await asyncio.to_thread(load_work)
         semaphore = asyncio.Semaphore(max(1, min(8, config.map_concurrency)))
+        stopping_error = None
         async with client_session(config) as client:
             async def translate(ordinal):
+                nonlocal stopping_error
                 async with semaphore:
+                    if stopping_error is not None:
+                        raise stopping_error
                     chunk = plan.chunks[ordinal] if ordinal < len(plan.chunks) else None
                     if chunk is not None and not translation_units(chunk.text):
                         await asyncio.to_thread(_checkpoint, engine, job_id, token, ordinal, chunk.text)
@@ -408,8 +492,10 @@ async def run_job(engine, job_id, token):
                     # provider-specific tokenizer; max_tokens bounds output.
                     hold = len(prompt.encode()) + max(1, config.max_tokens) + 256
                     call_id, username = await asyncio.to_thread(_reserve, engine, job_id, token, ordinal, hold)
+                    receipts = []
                     meta = UsageMeta("translate", username,
-                                     recorder=lambda _meta, usage, model: _settle(engine, call_id, usage, model))
+                                     recorder=lambda _meta, usage, model: receipts.append((usage, model)))
+                    rejected = False
                     try:
                         if chunk is not None:
                             value = await reader_ai._translate_segment(title, chunk.text, config, meta, client, max_retries=1)
@@ -418,13 +504,23 @@ async def run_job(engine, job_id, token):
                             value = await reader_ai._translate_title(title, config, meta, client, max_retries=1)
                         if not value.strip():
                             raise TranslationStructureError("翻译片段为空")
+                        for usage, model in receipts:
+                            await asyncio.to_thread(_settle, engine, call_id, usage, model)
                         await asyncio.to_thread(_checkpoint, engine, job_id, token, ordinal, value)
+                    except LLMHTTPError as exc:
+                        rejected = 400 <= exc.status_code < 500 and exc.status_code != 408
+                        if not exc.retryable:
+                            stopping_error = exc
+                        raise
                     finally:
+                        for usage, model in receipts:
+                            await asyncio.to_thread(_settle, engine, call_id, usage, model)
+                        if rejected:
+                            await asyncio.to_thread(_release, engine, call_id)
                         await asyncio.to_thread(_unknown, engine, call_id)
 
             for cycle in range(MAX_ATTEMPTS):
-                with Session(engine) as session:
-                    missing = session.exec(select(Chunk).where(Chunk.job_id == job_id, Chunk.text == "")).all()
+                missing = await asyncio.to_thread(missing_chunks)
                 if not missing:
                     await asyncio.to_thread(_finish, engine, job_id, token, plan, title_needed)
                     return
@@ -441,6 +537,8 @@ async def run_job(engine, job_id, token):
                     await asyncio.gather(*tasks, return_exceptions=True)
                 errors = [result for result in results if isinstance(result, BaseException)]
                 if errors:
+                    if stopping_error is not None:
+                        raise stopping_error
                     # Budget/permission/input/lease errors need user/config change.
                     if any(isinstance(e, Error) and e.status_code != 502 for e in errors):
                         raise next(e for e in errors if isinstance(e, Error) and e.status_code != 502)
@@ -471,7 +569,8 @@ async def run_job(engine, job_id, token):
                 for call in session.exec(select(Call).where(Call.job_id == job_id, Call.status == "reserved")).all():
                     call.status = "unknown"
                 if error and job.status == "running":
-                    job.status = "stale" if isinstance(error, Error) and error.status_code == 409 else "failed"
+                    job.status = ("queued" if isinstance(error, LeaseLost) and job.lease_until <= time.time()
+                                  else "stale" if isinstance(error, InputChanged) else "failed")
                     job.error = sanitize_error(error)
                     job.updated_at = time.time()
                 job.lease_token, job.lease_until = "", 0

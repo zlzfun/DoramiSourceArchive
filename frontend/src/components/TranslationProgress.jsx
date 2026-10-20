@@ -9,6 +9,7 @@ export default function TranslationProgress({ job, pollingError, onResume, onCan
       </span>
       {active && <span>可离开页面，返回后查看进度</span>}
       {job.error && <span>{job.error}</span>}
+      {job.can_resume && <span>进度保留 7 天；超过 3 篇时清理最早暂停进度</span>}
       {pollingError && <span>进度暂未更新，正在重连</span>}
       {job.can_resume && <button type="button" className="reader-pane-act" onClick={onResume}>继续翻译</button>}
       {job.can_cancel && <button type="button" className="reader-pane-act" onClick={onCancel}>取消翻译</button>}

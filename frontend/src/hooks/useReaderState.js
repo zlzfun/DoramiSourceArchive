@@ -291,7 +291,7 @@ export function useReaderState({
   // ── 用户面 AI · 译为中文（问答浮层已抽到 ReaderAiPanel，自持其状态）──
   const {
     showTranslation, translating, translatedBody, translatedTitle, handleTranslate,
-    translationJob, translationPollError, cancelTranslation,
+    translationJob, translationPollError, cancelTranslation, resumeTranslation,
   } = useArticleTranslation(activeArticle?.id, aiEnabled, showToast);
 
   // ── 用户面 AI · 要点摘要(正文顶部「哆啦美速读」卡;缓存 id → 摘要)──
@@ -1581,7 +1581,7 @@ export function useReaderState({
     shareOpen, setShareOpen,
     // AI(翻译 / 速读)
     showTranslation, translating, translatedBody, translatedTitle, activeIsChinese, handleTranslate,
-    translationJob, translationPollError, cancelTranslation,
+    translationJob, translationPollError, cancelTranslation, resumeTranslation,
     activeSummary, summarizing, handleSummarize,
     // 上下文菜单 items(桌面右键 / 移动长按共用)
     isAdminSession, buildArticleMenuItems, buildSourceMenuItems, buildSocialMenuItems,

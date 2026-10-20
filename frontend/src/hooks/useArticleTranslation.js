@@ -29,10 +29,11 @@ export function useArticleTranslation(articleId, enabled, showToast) {
         setSnapshot({ id: articleId, data });
         setPollError(null);
         if (running(data.status)) timer = setTimeout(poll, 2000);
-      } catch {
+      } catch (error) {
         if (generation.current !== epoch) return;
         if (seq !== sequence.current) { timer = setTimeout(poll, 2000); return; }
         setPollError(articleId);
+        if (error.status === 403 || error.status === 404) return;
         timer = setTimeout(poll, 10000);
       }
     };
@@ -44,7 +45,7 @@ export function useArticleTranslation(articleId, enabled, showToast) {
     if (!articleId || busyId === articleId) return;
     const epoch = generation.current;
     const seq = ++sequence.current;
-    actionPending.current = true;
+    actionPending.current = seq;
     setBusyId(articleId);
     try {
       const data = await operation();
@@ -52,22 +53,26 @@ export function useArticleTranslation(articleId, enabled, showToast) {
       setSnapshot({ id: articleId, data });
       setPollError(null);
       setShowId(articleId);
+      if (data.evicted_progress) showToast('已清理最早暂停任务的进度，为本次翻译留出空间', 'info');
     } catch (error) {
       if (epoch === generation.current) showToast(error.message || '翻译操作失败，请稍后重试', 'error');
     } finally {
-      actionPending.current = false;
+      if (actionPending.current === seq) actionPending.current = false;
       setBusyId((id) => id === articleId ? null : id);
     }
   }, [articleId, busyId, showToast]);
 
   const handleTranslate = useCallback(() => {
     if (showId === articleId && current.result) { setShowId(null); return; }
-    if (current.result) { setShowId(articleId); return; }
+    if (current.result && current.result.title !== null) { setShowId(articleId); return; }
     if (current.job?.can_resume) act(() => resumeTranslationJob(current.job.job_id));
     else act(() => startTranslationJob(articleId));
   }, [act, articleId, current, showId]);
   const cancelTranslation = useCallback(() => {
     if (current.job?.can_cancel) act(() => cancelTranslationJob(current.job.job_id));
+  }, [act, current.job]);
+  const resumeTranslation = useCallback(() => {
+    if (current.job?.can_resume) act(() => resumeTranslationJob(current.job.job_id));
   }, [act, current.job]);
 
   return {
@@ -79,5 +84,6 @@ export function useArticleTranslation(articleId, enabled, showToast) {
     translationPollError: pollError === articleId,
     handleTranslate,
     cancelTranslation,
+    resumeTranslation,
   };
 }

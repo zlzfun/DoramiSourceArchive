@@ -32,7 +32,7 @@ def upgrade() -> None:
         sa.Column('status', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column('recorded', sa.Boolean(), nullable=False),
         sa.Column('created_at', sa.Float(), nullable=False),
-        sa.CheckConstraint("status IN ('reserved','settled','unknown')", name='ck_translation_call_status'),
+        sa.CheckConstraint("status IN ('reserved','settled','unknown','released')", name='ck_translation_call_status'),
         sa.PrimaryKeyConstraint('id')
         )
         with op.batch_alter_table('translation_calls', schema=None) as batch_op:

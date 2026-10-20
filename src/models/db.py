@@ -144,7 +144,7 @@ class TranslationCallRecord(SQLModel, table=True):
     """Per-dispatch quota hold. Unknown provider usage stays reserved that day."""
     __tablename__ = "translation_calls"
     __table_args__ = (
-        CheckConstraint("status IN ('reserved','settled','unknown')", name="ck_translation_call_status"),
+        CheckConstraint("status IN ('reserved','settled','unknown','released')", name="ck_translation_call_status"),
         Index("ix_translation_calls_budget", "day", "status"),
     )
     id: str = Field(primary_key=True)

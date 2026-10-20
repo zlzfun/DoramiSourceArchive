@@ -46,7 +46,7 @@ export default function MobileArticlePage({
     favoriteIds, favTogglingId, handleToggleFavorite,
     shareOpen, setShareOpen,
     showTranslation, translating, translatedBody, translatedTitle, activeIsChinese, handleTranslate,
-    translationJob, translationPollError, cancelTranslation,
+    translationJob, translationPollError, cancelTranslation, resumeTranslation,
     activeSummary, summarizing, handleSummarize,
     prevArticle, nextArticle, activeIndex, selectArticle, searchForTag,
     refreshActiveArticle,
@@ -66,7 +66,7 @@ export default function MobileArticlePage({
       lang={(showTranslation && translatedBody) ? undefined : latinLang(activeBody)}
     >
       <TranslationProgress job={translationJob} pollingError={translationPollError}
-        onResume={handleTranslate} onCancel={cancelTranslation} />
+        onResume={resumeTranslation} onCancel={cancelTranslation} />
       {activeBodyLoading ? (
         <PaneBodySkeleton />
       ) : (showTranslation && translatedBody) ? (

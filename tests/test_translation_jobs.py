@@ -35,6 +35,11 @@ def env(tmp_path, monkeypatch):
             mode["started"].set()
         if mode["block"]:
             await mode["block"].wait()
+        if mode.get("http_status"):
+            data = {"error": "provider rejected"}
+            if mode.get("error_usage"):
+                data["usage"] = {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+            return httpx.Response(mode["http_status"], json=data)
         if mode["fail"]:
             return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}, "finish_reason": "length"}],
                                             "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}})
@@ -73,7 +78,8 @@ def test_full_job_checkpoint_publish_and_zero_cost_cache(env):
     state = tr.status(engine, "user", "a")
     assert state["status"] == "succeeded", state
     assert "$x$" in state["result"]["translation"]
-    assert state["job"]["completed"] == state["job"]["total"]
+    assert state["job"] is None  # Successful receipt must not occupy queue capacity.
+    assert row(engine, tr.Job, job["job_id"]) is None
     with Session(engine) as session:
         assert not session.exec(select(tr.Chunk)).all()
         usage = session.exec(select(AiUsageRecord)).one()
@@ -253,7 +259,8 @@ def test_budget_hold_and_unknown_usage_not_zero(env):
         assert sum(c.reserved_tokens for c in holds) <= 30000
         assert session.exec(select(AiUsageRecord)).one().calls == len(calls)
     assert len(calls) > 0
-    assert row(engine, tr.Job, job["job_id"]).completed == len(calls)
+    saved = row(engine, tr.Job, job["job_id"])
+    assert (saved.completed if saved else job["total"]) == len(calls)
 
 
 def test_no_partial_publish_when_checkpoint_tampered(env):
@@ -349,6 +356,22 @@ def test_expired_reservation_and_old_owner_cannot_write(env):
         assert usage.calls == 1 and usage.total_tokens == 17
 
 
+def test_expired_owner_without_successor_returns_to_queue(env):
+    engine, calls, _ = env
+    job = start(engine)
+    job_id, token = tr.claim(engine)
+    with Session(engine) as session:
+        item = session.get(tr.Job, job_id)
+        item.lease_until = time.time() - 1
+        session.commit()
+    asyncio.run(tr.run_job(engine, job_id, token))
+    assert tr.status(engine, "user", "a")["status"] == "queued"
+    assert not calls
+    asyncio.run(tr.run_once(engine))
+    assert tr.status(engine, "user", "a")["status"] == "succeeded"
+    assert len(calls) == job["total"]
+
+
 @pytest.mark.parametrize("bad", ["truncated", "empty", "missing_unit", "damaged_token", "table_numbers"])
 def test_invalid_model_output_never_published(env, monkeypatch, bad):
     from llm.client import LLMIncompleteOutput, LLMError
@@ -412,3 +435,150 @@ def test_literal_only_work_does_not_need_budget(env, monkeypatch):
     asyncio.run(tr.run_once(engine))
     assert tr.status(engine, "user", "a")["status"] == "succeeded"
     assert not calls
+
+
+def test_success_releases_global_queue_capacity(env, monkeypatch):
+    engine, _, _ = env
+    monkeypatch.setattr(tr, "MAX_JOBS", 1)
+    start(engine)
+    asyncio.run(tr.run_once(engine))
+    with Session(engine) as session:
+        assert not session.exec(select(tr.Job)).all()
+    _seed_article(engine, "b", "rss_a", "Title", "Body")
+    assert tr.request(engine, "user", "b")["status"] == "queued"
+
+
+def test_per_user_slots_and_terminal_lru_without_affecting_other_users(env):
+    engine, _, _ = env
+    first = start(engine)
+    for name in ("b", "c", "d"):
+        _seed_article(engine, name, "rss_a", "Title", "Body")
+    tr.request(engine, "user", "b")
+    tr.request(engine, "user", "c")
+    with pytest.raises(tr.Error, match="3 篇"):
+        tr.request(engine, "user", "d")
+    # Joining a shared active job has no slot cost or ownership takeover.
+    assert tr.request(engine, "admin", "a")["job"]["job_id"] == first["job_id"]
+    assert tr.request(engine, "admin", "d")["status"] == "queued"
+    job_id, token = tr.claim(engine)
+    with Session(engine) as session:
+        article, config = tr._current(session, session.get(tr.Job, job_id))
+        plan, _ = tr._plan(article, tr.input_key(article, config))
+    tr._checkpoint(engine, job_id, token, 0, plan.chunks[0].text)
+    tr.cancel(engine, "user", job_id)
+    with Session(engine) as session:
+        job = session.get(tr.Job, job_id)
+        job.lease_until = 0
+        session.commit()
+    _seed_article(engine, "e", "rss_a", "Title", "Body")
+    response = tr.request(engine, "user", "e")
+    assert response["evicted_progress"]
+    assert row(engine, tr.Job, first["job_id"]) is None
+    with Session(engine) as session:
+        assert session.exec(select(tr.Job).where(tr.Job.created_by == "admin")).one().article_id == "d"
+
+
+@pytest.mark.parametrize("status", [400, 401, 402, 403, 404, 413, 422, 429])
+def test_definitive_provider_rejection_releases_quota(env, status):
+    engine, calls, mode = env
+    mode["http_status"] = status
+    job = start(engine)
+    asyncio.run(tr.run_once(engine))
+    with Session(engine) as session:
+        assert all(c.status == "released" for c in session.exec(select(tr.Call)).all())
+        assert not session.exec(select(AiUsageRecord)).all()
+        tr._cost_gate(session, "user", 1)
+    assert row(engine, tr.Job, job["job_id"]).status == "failed"
+    if status != 429:
+        # At most one concurrent wave; an auth/config failure stops new chunks.
+        assert len(calls) <= 8  # HTTP400 can do one compatibility fallback per call.
+
+
+@pytest.mark.parametrize("status", [408, 500, 502, 504])
+def test_ambiguous_provider_response_keeps_cost_hold(env, status):
+    engine, calls, mode = env
+    mode["http_status"] = status
+    start(engine)
+    asyncio.run(tr.run_once(engine))
+    with Session(engine) as session:
+        rows = session.exec(select(tr.Call)).all()
+        assert len(rows) == len(calls)
+        assert all(c.status == "unknown" for c in rows)
+        assert not session.exec(select(AiUsageRecord)).all()
+
+
+def test_error_usage_is_settled_once_before_retry(env):
+    engine, calls, mode = env
+    mode.update(http_status=500, error_usage=True)
+    start(engine)
+    asyncio.run(tr.run_once(engine))
+    with Session(engine) as session:
+        rows = session.exec(select(tr.Call)).all()
+        assert all(c.status == "settled" for c in rows)
+        usage = session.exec(select(AiUsageRecord)).one()
+        assert usage.calls == len(calls) == len(rows)
+        assert usage.total_tokens == 15 * len(rows)
+
+
+def test_published_cache_survives_model_and_credential_rotation(env):
+    engine, calls, _ = env
+    start(engine)
+    asyncio.run(tr.run_once(engine))
+    before = len(calls)
+    with Session(engine) as session:
+        tr.daily_brief.set_setting(session, tr.daily_brief.KEY_LLM_MODEL, "new-model")
+        tr.daily_brief.set_setting(session, tr.daily_brief.KEY_LLM_API_KEY, "rotated-key")
+    assert tr.request(engine, "user", "a")["result"]["cached"]
+    assert not asyncio.run(tr.run_once(engine))
+    assert len(calls) == before
+    assert "translation_zh_config" not in json.loads(row(engine, ArticleRecord, "a").extensions_json)
+
+
+def test_legacy_body_cache_is_visible_and_only_missing_title_is_translated(env):
+    engine, calls, _ = env
+    with Session(engine) as session:
+        article = session.get(ArticleRecord, "a")
+        article.extensions_json = json.dumps({"translation_zh": "已发布的完整正文", "translation_zh_config": "legacy"})
+        session.commit()
+    assert tr.status(engine, "user", "a")["result"]["translation"] == "已发布的完整正文"
+    job = start(engine)
+    assert job["total"] == 1
+    asyncio.run(tr.run_once(engine))
+    assert len(calls) == 1
+    assert "【待翻译正文】" not in calls[0]["messages"][-1]["content"]
+    state = tr.status(engine, "user", "a")
+    assert state["result"]["translation"] == "已发布的完整正文"
+    assert state["result"]["title"] == "测试标题"
+    ext = json.loads(row(engine, ArticleRecord, "a").extensions_json)
+    assert "translation_zh_fp" not in ext  # Title-only work does not relabel old body provenance.
+    assert "translation_zh_config" not in ext
+
+
+def test_title_only_work_rejects_replaced_body_cache(env):
+    engine, calls, _ = env
+    with Session(engine) as session:
+        article = session.get(ArticleRecord, "a")
+        article.extensions_json = json.dumps({"translation_zh": "已发布正文"})
+        session.commit()
+    job = start(engine)
+    job_id, token = tr.claim(engine)
+    with Session(engine) as session:
+        article = session.get(ArticleRecord, "a")
+        article.extensions_json = json.dumps({"translation_zh": "被更新的正文"})
+        session.commit()
+    asyncio.run(tr.run_job(engine, job_id, token))
+    assert not calls
+    assert row(engine, tr.Job, job["job_id"]).status == "stale"
+
+
+def test_layout_metadata_without_body_is_not_a_successful_empty_translation(env):
+    engine, calls, _ = env
+    with Session(engine) as session:
+        article = session.get(ArticleRecord, "a")
+        article.content = "[zqpl]: center\n"
+        session.commit()
+    with pytest.raises(tr.Error, match="暂无可翻译"):
+        start(engine)
+    assert not calls
+    with Session(engine) as session:
+        assert not session.exec(select(tr.Job)).all()

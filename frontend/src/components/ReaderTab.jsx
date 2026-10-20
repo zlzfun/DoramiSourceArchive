@@ -438,7 +438,7 @@ export default function ReaderTab({
     shareOpen, setShareOpen,
     // AI(翻译 / 速读)
     showTranslation, translating, translatedBody, translatedTitle, activeIsChinese, handleTranslate,
-    translationJob, translationPollError, cancelTranslation,
+    translationJob, translationPollError, cancelTranslation, resumeTranslation,
     activeSummary, summarizing, handleSummarize,
     // 上下文菜单 items(桌面右键在此装配弹层)
     buildArticleMenuItems, buildSourceMenuItems, buildSocialMenuItems,
@@ -588,7 +588,7 @@ export default function ReaderTab({
       lang={(showTranslation && translatedBody) ? undefined : latinLang(activeBody)}
     >
       <TranslationProgress job={translationJob} pollingError={translationPollError}
-        onResume={handleTranslate} onCancel={cancelTranslation} />
+        onResume={resumeTranslation} onCancel={cancelTranslation} />
       {activeBodyLoading ? (
         <PaneBodySkeleton />
       ) : (showTranslation && translatedBody) ? (
