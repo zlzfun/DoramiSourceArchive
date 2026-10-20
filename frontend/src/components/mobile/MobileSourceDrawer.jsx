@@ -2,7 +2,6 @@ import { Compass } from 'lucide-react';
 import LogoMark from '../LogoMark';
 import { resolveCompany } from '../../sourceTaxonomy';
 import { mediaProxyUrl } from '../../api';
-import { formatUnreadCount } from '../../utils/readerText';
 import { useLongPress } from '../../hooks/useLongPress';
 import { AxisSeg, TagRows } from '../ReaderTab';
 
@@ -107,15 +106,10 @@ export default function MobileSourceDrawer({
                           ) : (
                             <LogoMark company={resolveCompany(source)} size="s20" emoji={source.icon} />
                           )}
+                          {/* 与桌面源栏同口径:不显示未读数,有无未读只靠行加粗 + 读屏「有未读」 */}
                           <p className="reader-source-name min-w-0 flex-1">{source.name || source.source_id}</p>
+                          {unread > 0 && <span className="sr-only">，有未读</span>}
                           {source.hidden && <span className="reader-src-off">暂不可用</span>}
-                          {/* 与桌面源栏同一读数:触屏没有 hover 退订钮争位,故数字恒在位 */}
-                          {unread > 0 && (
-                            <span className="reader-src-count">
-                              {formatUnreadCount(unread)}
-                              <span className="sr-only"> 篇未读</span>
-                            </span>
-                          )}
                         </div>
                       </div>
                     );

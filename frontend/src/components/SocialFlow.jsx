@@ -184,6 +184,8 @@ const SocialPost = memo(function SocialPost({
       className={`social-post ${unread ? '' : 'is-read'} ${ctxAnchor ? 'is-ctx-anchor' : ''}`}
       onContextMenu={onContextMenu ? (e) => onContextMenu(e, article, 'social') : undefined}
     >
+      {/* 读态由整卡文字降 muted 表达(is-read),不另画未读点(issue #199);读屏补一句「未读」 */}
+      {unread && <span className="sr-only">未读</span>}
       {reposted && (
         <p className="social-repost">
           <Repeat2 className="h-[13px] w-[13px]" aria-hidden="true" />

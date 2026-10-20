@@ -1,0 +1,310 @@
+/* 方案 a「同框」:播客区 = 一张与「简介导读」AI 卡同族的细线卡(外框色底 + 最弱细线 + 同圆角 + 同左内边距),
+   两行:① 封面 + 音轨 + 动作位 ② 播放器。全部限定在 [data-opt="a"] 之下,类名前缀 ppa-。
+   对齐:封面与播放钮同一列(44),首行文字与次行第一个元素同落 60px(列 44 + 间距 16);
+   左内边距 20 与 AI 卡正文同线,两张卡的内容左缘对齐。 */
+
+[data-opt="a"] .ppa-card {
+  container: ppa / inline-size;
+  margin: 0 0 16px;
+  padding: 16px 20px;
+  border-radius: var(--r-card);
+  background: var(--dorami-canvas);
+  box-shadow: inset 0 0 0 1px var(--dorami-border-soft);
+}
+
+/* ── 首行:封面 + 音轨 + 动作位 ── */
+[data-opt="a"] .ppa-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 44px;
+}
+[data-opt="a"] .ppa-cover {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--r-sm);
+  object-fit: cover;
+  background: var(--dorami-well);
+  /* 与正文图片同一圈最弱细线(画在图上,inset 阴影会被图片盖住) */
+  outline: 1px solid var(--dorami-border-soft);
+  outline-offset: -1px;
+}
+
+/* 音轨:文字档位(与内容类型筛选带同一选中语法:中性加深一档 + 墨色 + 600),不是灰槽白拇指。
+   负左边距让档位底色外伸、文字仍落在 60px 线上 */
+[data-opt="a"] .ppa-tracks {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  margin-left: -8px;
+}
+[data-opt="a"] .ppa-track {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--dorami-muted);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+}
+[data-opt="a"] .ppa-track:not(.is-on):not(.is-solo):hover { background: var(--dorami-hover); color: var(--dorami-ink); }
+[data-opt="a"] .ppa-track.is-on { background: var(--dorami-select); color: var(--dorami-ink); font-weight: 600; cursor: default; }
+/* 只有原节目:是标签不是档位(没有可选项就不画底色) */
+[data-opt="a"] .ppa-track.is-solo { color: var(--dorami-ink-2); font-weight: 600; cursor: default; }
+/* 选中加粗不挤动邻居:按 600 字重预留宽度 */
+[data-opt="a"] .ppa-track-text { display: inline-flex; flex-direction: column; }
+[data-opt="a"] .ppa-track-text::after {
+  content: attr(data-label);
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  font-weight: 600;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* ✦ AI 身份星(与 AI 卡卡头同一路径、同一渐变) */
+[data-opt="a"] .ppa-spark {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  background: var(--grad-ai);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2c.6 5.4 2.6 7.4 10 10-7.4 2.6-9.4 4.6-10 10-.6-5.4-2.6-7.4-10-10 7.4-2.6 9.4-4.6 10-10Z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2c.6 5.4 2.6 7.4 10 10-7.4 2.6-9.4 4.6-10 10-.6-5.4-2.6-7.4-10-10 7.4-2.6 9.4-4.6 10-10Z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+/* 动作位:点播是描边按钮(M 档 32 高),生成中原位变状态,选中导读时写「AI 生成」 */
+[data-opt="a"] .ppa-side {
+  flex: none;
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+}
+[data-opt="a"] .ppa-side:empty { display: none; }
+[data-opt="a"] .ppa-act {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--dorami-border-strong);
+  border-radius: var(--r-pill);
+  background: var(--dorami-raised);
+  color: var(--dorami-ink-2);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+}
+[data-opt="a"] .ppa-act:hover { border-color: color-mix(in srgb, var(--dorami-ink) 30%, transparent); color: var(--dorami-ink); }
+[data-opt="a"] .ppa-status,
+[data-opt="a"] .ppa-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1;
+  white-space: nowrap;
+}
+[data-opt="a"] .ppa-status,
+[data-opt="a"] .ppa-note { color: var(--dorami-muted); }
+[data-opt="a"] .ppa-spin { width: 14px; height: 14px; flex: none; color: var(--dorami-accent-ink); }
+
+/* ── 次行:播放器原语(文章「听导读」同用)──
+   桌面一行:钮 · 当前 · 进度 · 总长 · ±15 · 倍速;窄容器(手机)进度独占一行,时间与按钮落到下一行 */
+[data-opt="a"] .ppa-player {
+  display: grid;
+  grid-template-columns: 60px auto minmax(0, 1fr) auto auto;
+  grid-template-areas: "play cur bar dur ctrls";
+  align-items: center;
+  margin-top: 12px;
+}
+[data-opt="a"] .ppa-play {
+  grid-area: play;
+  justify-self: start;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-left: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  /* 与主按钮同色同法(.action-button-primary):实心 accent + 白,亮暗两态白字都可读;这是本卡唯一的实心色块 */
+  background: var(--dorami-blue);
+  color: var(--color-white);
+  box-shadow: var(--sh-1);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease);
+}
+[data-opt="a"] .ppa-play:hover { background: color-mix(in srgb, var(--dorami-blue) 86%, var(--color-black)); }
+[data-opt="a"] .ppa-play-icon { display: grid; place-items: center; }
+[data-opt="a"] .ppa-play svg { width: 16px; height: 16px; }
+/* 三角形视觉重心偏左,播放态右移 1px 才居中 */
+[data-opt="a"] .ppa-player:not([data-playing]) .ppa-play svg { transform: translateX(1px); }
+
+[data-opt="a"] .ppa-time {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1;
+  color: var(--dorami-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+[data-opt="a"] .ppa-cur { grid-area: cur; margin-right: 12px; color: var(--dorami-muted); }
+[data-opt="a"] .ppa-dur { grid-area: dur; margin-left: 12px; }
+
+/* 进度:4px 细轨 + 已播 accent(进度 = accent 同族)+ 常显小拖柄;命中区 20px 高。
+   两端各内收半个拖柄:拖柄在 0 / 100% 时外缘正好落在格子边上,不顶住两侧时间 */
+[data-opt="a"] .ppa-bar {
+  grid-area: bar;
+  position: relative;
+  height: 20px;
+  margin: 0 6px;
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  touch-action: none;
+}
+[data-opt="a"] .ppa-bar::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: var(--r-pill);
+  background: var(--dorami-border-strong);
+}
+[data-opt="a"] .ppa-fill {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 0;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: var(--r-pill);
+  background: var(--dorami-accent);
+}
+[data-opt="a"] .ppa-thumb {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border-radius: 50%;
+  background: var(--dorami-accent);
+  box-shadow: 0 0 0 2px var(--dorami-canvas);
+  transition: transform var(--motion-fast) var(--motion-ease);
+}
+@media (hover: hover) {
+  [data-opt="a"] .ppa-bar:hover .ppa-thumb { transform: scale(1.2); }
+}
+[data-opt="a"] .ppa-bar[data-dragging] .ppa-thumb { transform: scale(1.2); }
+[data-opt="a"] .ppa-bar:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: 2px; }
+
+[data-opt="a"] .ppa-ctrls {
+  grid-area: ctrls;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 12px;
+}
+[data-opt="a"] .ppa-ctrl {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  height: 32px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--dorami-muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+}
+[data-opt="a"] .ppa-ctrl svg { width: 16px; height: 16px; flex: none; }
+[data-opt="a"] .ppa-ctrl:hover { background: var(--dorami-hover); color: var(--dorami-ink); }
+/* 倍速:有值的开关,画成描边小胶囊(与首行动作钮同一右缘);定宽按最长的「1.25×」,换档不挤动左邻 */
+[data-opt="a"] .ppa-rate {
+  height: 24px;
+  min-width: 48px;
+  margin-left: 2px;
+  padding: 0 6px;
+  border: 1px solid var(--dorami-border);
+  color: var(--dorami-ink-2);
+}
+[data-opt="a"] .ppa-rate:hover { border-color: var(--dorami-border-strong); background: transparent; }
+
+/* 窄容器(手机 / 窄阅读窗):一行工具条(钮 · 当前 / 总长 · ±15 · 倍速)对齐播放钮中线,
+   进度条独占下一行、通栏可拖;触控目标 ≥ 40 */
+@container ppa (max-width: 480px) {
+  [data-opt="a"] .ppa-player {
+    grid-template-columns: 60px auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "play cur dur . ctrls"
+      "bar  bar bar bar bar";
+    row-gap: 6px;
+    margin-top: 10px;
+  }
+  [data-opt="a"] .ppa-play { width: 44px; height: 44px; margin-left: 0; }
+  [data-opt="a"] .ppa-play svg { width: 18px; height: 18px; }
+  [data-opt="a"] .ppa-cur { margin-right: 0; }
+  [data-opt="a"] .ppa-dur { margin-left: 0; }
+  [data-opt="a"] .ppa-dur::before { content: '/'; margin: 0 4px; color: var(--dorami-faint); }
+  [data-opt="a"] .ppa-ctrls { gap: 0; }
+  [data-opt="a"] .ppa-ctrl { height: 40px; min-width: 40px; }
+  [data-opt="a"] .ppa-rate { height: 26px; min-width: 48px; margin-left: 4px; }
+  /* 通栏进度条:命中区 40 高(触控),上下用负外边距吃回,细线位置与留白不变——下半截伸进卡片内边距 */
+  [data-opt="a"] .ppa-bar { height: 40px; margin-top: -8px; margin-bottom: -14px; }
+  /* 视觉仍是 28 / 32 / 26 的控件,命中区外扩到 40 */
+  [data-opt="a"] .ppa-track::before,
+  [data-opt="a"] .ppa-act::before { content: ''; position: absolute; inset: -6px 0; }
+  [data-opt="a"] .ppa-rate::before { content: ''; position: absolute; inset: -8px -2px; }
+}
+
+/* 极窄(320 机型,卡内仅 ~240;工具条一行至少要 ~280):按钮跟播放钮一行,时间落到进度条两端之下,不溢出 */
+@container ppa (max-width: 284px) {
+  [data-opt="a"] .ppa-player {
+    grid-template-columns: 60px auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "play . . ctrls"
+      "bar  bar bar bar"
+      "cur  cur . dur";
+  }
+  [data-opt="a"] .ppa-bar { margin-bottom: -10px; }
+  [data-opt="a"] .ppa-dur::before { content: none; }
+  [data-opt="a"] .ppa-cur { justify-self: start; margin-left: 0; }
+  [data-opt="a"] .ppa-dur { justify-self: end; }
+}
+
+/* ── 导读稿(选中精品导读 / 导读稿先于音频):标题与「节目简介」同语法,正文与长文同排印 ── */
+[data-opt="a"] .ppa-guide { margin-top: 28px; }
+[data-opt="a"] .ppa-guide .markdown-body > :first-child { margin-top: 0; }
+
+/* 减少动效:档位 / 按钮的颜色过渡与拖柄缩放直落,生成中转圈停住 */
+:root[data-motion="reduce"] [data-opt="a"] :is(.ppa-track, .ppa-act, .ppa-play, .ppa-ctrl, .ppa-thumb) { transition: none; }
+:root[data-motion="reduce"] [data-opt="a"] .ppa-spin { animation: none; }

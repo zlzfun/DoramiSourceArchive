@@ -37,6 +37,9 @@ import { rebuildToast } from '../../utils/briefRebuild';
 import PersonalBriefPage from '../PersonalBriefPage';
 import InterestPage from '../InterestPage';
 import RankingsPage from '../RankingsPage';
+import { usePlayer } from '../player/playerContext';
+import PlayerDock from '../player/PlayerDock';
+import { nowPlayingFor } from '../../utils/playerCore';
 
 // 静态 noop:ArticleRow 的 onContextMenu 契约位——移动端 contextmenu 由外层
 // .m-press 包装统一接管(useLongPress 的 onContextMenu 覆盖 Android 长按/桌面右键),
@@ -71,8 +74,13 @@ export default function MobileReader({
 }) {
   const {
     tab, setTab, briefReturn, setBriefReturn, briefRestore, setBriefRestore,
-    discoverTab, setDiscoverTab, interestVersion, setInterestVersion,
+    discoverTab, setDiscoverTab, interestVersion, setInterestVersion, playerHostRef, openPlayingItem,
   } = view;
+  // 全局播放条(issue #199):列表行「播放中 / 已暂停」
+  const { state: player } = usePlayer();
+  const playingId = player.form !== 'none' ? (player.item?.articleId || '') : '';
+  const playingState = nowPlayingFor(player, playingId);
+  const playingAi = Boolean(player.item?.ai);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sheet, setSheet] = useState(null); // { title, items, anchorKey }
   const {
@@ -192,6 +200,9 @@ export default function MobileReader({
   const listView = !['me', 'brief', 'rankings'].includes(tab) && !socialView;
   // 正文页(push 全屏):文章/动态容器里选中了一篇即入栈;社交流直读不进正文页
   const readOpen = listView && !discover && Boolean(activeArticle);
+
+  // 播放条的底边:列表页在底部 Tab 栏之上;正文页 / 发现页(整页层盖住 Tab 栏)在安全区之上
+  const playerPage = readOpen || discover ? 'page' : 'tabs';
 
   // ── 返回键握手(Wave3):层开着时按返回=关层,不是退出站点(微信内浏览器的肌肉记忆)──
   useLayerHistory(readOpen, closeArticle);
@@ -493,6 +504,8 @@ export default function MobileReader({
                         interestHit={showInterestHit ? (article.interest_hits?.[0] || '') : ''}
                         unsubscribed={showUnsubscribedMark && !subscribedIds.has(article.source_id)}
                         onSubscribeSource={subscribeSourceById}
+                        nowPlaying={article.id === playingId ? playingState : ''}
+                        nowPlayingAi={article.id === playingId && playingAi}
                       />
                     </div>
                   );
@@ -643,6 +656,9 @@ export default function MobileReader({
         items={sheet?.items || []}
         onClose={() => setSheet(null)}
       />
+
+      {/* ── 全局播放条(issue #199):挂在本外壳里,层级在正文页(40)之上、抽屉 / 动作单(50 / 60)之下 ── */}
+      <PlayerDock mobile hostRef={playerHostRef} mobilePage={playerPage} onOpenItem={openPlayingItem} />
     </div>
   );
 }

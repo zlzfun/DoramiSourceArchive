@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { podcastListAvailabilityMeta, podcastProcessingMeta } from '../src/utils/podcast.js';
+import { podcastBodyKey, podcastListAvailabilityMeta, podcastProcessingMeta } from '../src/utils/podcast.js';
 import {
   PODCAST_TTS_FILTERS,
   PODCAST_TTS_META,
@@ -9,6 +9,29 @@ import {
 } from '../src/utils/podcastProcessing.js';
 
 const THRESHOLDS = { initial: 6, premium: 7.5 };
+
+test('正文文字面板的键:只在导读稿就绪那一次变化,无关刷新不变(issue #199 R1-01)', () => {
+  const episode = (guide = {}, extra = {}) => ({
+    id: 'ep-1',
+    read_count: 3,
+    summary_zh: '简介初评摘要',
+    quality_score: 7.1,
+    podcast: { show_title: 'Interconnects', premium_guide: { status: 'summarizing', blog_ready: false, mode: '', ...guide } },
+    ...extra,
+  });
+  const before = podcastBodyKey(episode());
+  assert.equal(before, 'ep-1:notes');
+  // 无导读 → 就绪:键变,面板重挂载、重取文字
+  assert.equal(podcastBodyKey(episode({ blog_ready: true })), 'ep-1:guide');
+  // 分析结果、阅读量、premium_guide 其它字段变化:键不变,逐字稿翻页位置不被清掉
+  assert.equal(podcastBodyKey(episode({}, { read_count: 9, summary_zh: '全文终评摘要', quality_score: 8.4 })), before);
+  assert.equal(podcastBodyKey(episode({ status: 'synthesizing', script_ready: true, mode: 'tts_zh', audio_ready: false })), before);
+  assert.equal(podcastBodyKey(episode({ blog_ready: true, status: 'ready', audio_ready: true })), 'ep-1:guide');
+  // 换篇当然换键;非播客 / 空值不抛
+  assert.equal(podcastBodyKey(episode({}, { id: 'ep-2' })), 'ep-2:notes');
+  assert.equal(podcastBodyKey({ id: 'a-1' }), 'a-1:notes');
+  assert.equal(podcastBodyKey(null), ':notes');
+});
 
 test('readable text without audio uses one neutral label', () => {
   const guide = { blog_ready: true, status: 'failed' };

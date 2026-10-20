@@ -1,0 +1,331 @@
+/* 方案 b「音轨」:一律限定在 [data-opt="b"] 之下,类名前缀 ppb-。只用 index.css 的 token。
+   结构:.ppb 细线卡 > ul.ppb-list > li.ppb-track(.is-open = 选中行,内含 .ppb-player;
+   其余行 .ppb-row 一行高)。宽窄两套布局按卡自身宽度(container query)切换,不看视口。 */
+
+/* ── 外框:与下方简介导读卡(.reader-ai-summary)同一种细线卡——外框色底 + 最弱一级细环 ── */
+[data-opt="b"] .ppb {
+  container: ppb / inline-size;
+  margin: 0 0 20px;
+  padding: 4px;
+  border-radius: var(--r-card);
+  background: var(--dorami-canvas);
+  box-shadow: inset 0 0 0 1px var(--dorami-border-soft);
+}
+[data-opt="b"] .ppb-list { list-style: none; margin: 0; padding: 0; }
+[data-opt="b"] .ppb-track { position: relative; }
+/* 行间一条细线,左端缩到音轨名那一列(16 内边距 + 40 圆钮列 + 14 间距):圆钮列成为一条留白的「播放槽」,
+   还没有的音轨在槽里留空也读得出是有意的;悬停行与相邻细线隐去(条目列同语法,不叠「色块 + 线」) */
+[data-opt="b"] .ppb-track + .ppb-track::before {
+  content: '';
+  position: absolute;
+  left: 70px;
+  right: 16px;
+  top: 0;
+  height: 1px;
+  background: var(--dorami-border-soft);
+  transition: opacity var(--motion-fast) var(--motion-ease);
+}
+
+/* ── 音轨名:与卡头「✦ 简介导读」同一种写法(13/600 ink-2,✦ 走 --grad-ai);
+   AI 音轨名后跟「AI 生成」——必须读得到的文字标识,不截断、不收缩 ── */
+[data-opt="b"] .ppb-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+[data-opt="b"] .ppb-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  color: var(--dorami-ink-2);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 20px;
+}
+[data-opt="b"] .ppb-spark {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  background: var(--grad-ai);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2c.6 5.4 2.6 7.4 10 10-7.4 2.6-9.4 4.6-10 10-.6-5.4-2.6-7.4-10-10 7.4-2.6 9.4-4.6 10-10Z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2c.6 5.4 2.6 7.4 10 10-7.4 2.6-9.4 4.6-10 10-.6-5.4-2.6-7.4-10-10 7.4-2.6 9.4-4.6 10-10Z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+[data-opt="b"] .ppb-meta {
+  flex: none;
+  white-space: nowrap;
+  color: var(--dorami-faint);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+/* ── 选中行 = 就地展开的播放器(宽卡两行):左圆钮;右上 音轨名 …… ±15 倍速,右下 当前 · 进度 · 剩余 ── */
+[data-opt="b"] .ppb-player {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  grid-template-rows: 32px 20px;
+  grid-template-areas: "play head" "play scrub";
+  column-gap: 14px;
+  row-gap: 4px;
+  align-items: center;
+  padding: 10px 16px;
+}
+/* 圆钮:全卡唯一的实心,墨色(不是 accent——它是控件不是 CTA 色块;accent 留给进度) */
+[data-opt="b"] .ppb-play {
+  grid-area: play;
+  /* 圆心对准「音轨名中线 ↔ 进度线」的中点(两行不等高,居中会偏上 3px) */
+  align-self: start;
+  margin-top: 11px;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--dorami-ink);
+  color: var(--dorami-canvas);
+  cursor: pointer;
+  transition: transform var(--motion-fast) var(--motion-ease), background var(--motion-fast) var(--motion-ease);
+}
+[data-opt="b"] .ppb-play:active { transform: scale(0.96); }
+[data-opt="b"] .ppb-play-icon { display: grid; place-items: center; }
+[data-opt="b"] .ppb-play svg { width: 15px; height: 15px; }
+/* 三角形的视觉重心偏左,右移 1px 才居中;暂停图标不移 */
+[data-opt="b"] .ppb-player:not([data-playing]) .ppb-play svg { transform: translateX(1px); }
+
+[data-opt="b"] .ppb-head {
+  grid-area: head;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  height: 32px;
+}
+[data-opt="b"] .ppb-ctrls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  margin-right: -8px;
+}
+[data-opt="b"] .ppb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 7px;
+  border-radius: var(--r-pill);
+  color: var(--dorami-muted);
+  font-size: 12px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+}
+[data-opt="b"] .ppb-btn svg { width: 15px; height: 15px; flex: none; }
+/* 倍速字右缘与「剩余时间」「点播」同一条右边线 */
+[data-opt="b"] .ppb-rate { min-width: 44px; justify-content: flex-end; padding-right: 8px; }
+/* 倍速不是 1× 时字回到墨色:改过的设置要看得出来 */
+[data-opt="b"] .ppb-rate:not([aria-label="播放速度 1 倍"]) { color: var(--dorami-ink); font-weight: 600; }
+
+[data-opt="b"] .ppb-scrub {
+  grid-area: scrub;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+[data-opt="b"] .ppb-time {
+  flex: none;
+  min-width: 40px;
+  color: var(--dorami-faint);
+  font-size: 12px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  line-height: 20px;
+}
+[data-opt="b"] .ppb-time.is-remain { text-align: right; }
+
+/* 进度条:命中区 20px 高、视觉 3px 细线;已播放走 accent(进度 = 活动态,与 accent 同族);
+   拖柄在悬停 / 拖动时浮出,键盘聚焦时拖柄外加一圈聚焦环(替代整条外框,不画两道环) */
+[data-opt="b"] .ppb-bar {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  cursor: pointer;
+  touch-action: none;
+  outline: none;
+}
+[data-opt="b"] .ppb-bar::before,
+[data-opt="b"] .ppb-fill {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: 3px;
+  margin-top: -1.5px;
+  border-radius: var(--r-pill);
+}
+[data-opt="b"] .ppb-bar::before { right: 0; background: color-mix(in srgb, var(--dorami-ink) 12%, transparent); }
+[data-opt="b"] .ppb-fill { width: 0; background: var(--dorami-accent); }
+[data-opt="b"] .ppb-thumb {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 11px;
+  height: 11px;
+  margin: -5.5px 0 0 -5.5px;
+  border-radius: 50%;
+  background: var(--dorami-accent);
+  box-shadow: 0 0 0 2px var(--dorami-canvas);
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--motion-ease);
+}
+[data-opt="b"] .ppb-bar[data-dragging] .ppb-thumb,
+[data-opt="b"] .ppb-bar:focus-visible .ppb-thumb { opacity: 1; }
+[data-opt="b"] .ppb-bar:focus-visible .ppb-thumb {
+  box-shadow: 0 0 0 2px var(--dorami-canvas), 0 0 0 4px var(--dorami-accent);
+}
+
+/* ── 未选中的行:一行高。可播放的整行是按钮,前导列一枚小三角(与圆钮同一列);
+   还没有的音轨前导列留空,行尾是点播 / 生成中 ── */
+[data-opt="b"] .ppb-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: var(--r-control);
+  text-align: left;
+  color: inherit;
+}
+[data-opt="b"] .ppb-row.is-playable { cursor: pointer; transition: background var(--motion-fast) var(--motion-ease); }
+[data-opt="b"] .ppb-row.is-playable:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: -2px; }
+[data-opt="b"] .ppb-lead {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  color: var(--dorami-faint);
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+[data-opt="b"] .ppb-lead svg { width: 11px; height: 11px; transform: translateX(1px); }
+[data-opt="b"] .ppb-row .ppb-title { flex: 1; }
+[data-opt="b"] .ppb-dur {
+  flex: none;
+  color: var(--dorami-faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 行尾的点播:次按钮胶囊(全卡实心只给播放圆钮);生成中退成状态字,同高不跳 */
+[data-opt="b"] .ppb-get {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--dorami-border);
+  background: var(--dorami-raised);
+  color: var(--dorami-ink-2);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+}
+[data-opt="b"] .ppb-get:disabled { cursor: default; color: var(--dorami-muted); }
+[data-opt="b"] .ppb-busy {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  color: var(--dorami-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+[data-opt="b"] .ppb-busy svg { width: 14px; height: 14px; }
+
+/* 悬停只给真有悬停的指针(触屏点按后 :hover 会粘住,圆钮 / 按钮会一直停在悬停色) */
+@media (hover: hover) {
+  [data-opt="b"] .ppb-play:hover { background: color-mix(in srgb, var(--dorami-ink) 86%, var(--dorami-canvas)); }
+  [data-opt="b"] .ppb-btn:hover { background: var(--dorami-hover); color: var(--dorami-ink); }
+  [data-opt="b"] .ppb-bar:hover .ppb-thumb { opacity: 1; }
+  [data-opt="b"] .ppb-row.is-playable:hover { background: var(--dorami-hover); }
+  [data-opt="b"] .ppb-row.is-playable:hover .ppb-lead { color: var(--dorami-ink); }
+  [data-opt="b"] .ppb-track:has(.ppb-row.is-playable:hover)::before,
+  [data-opt="b"] .ppb-track:has(.ppb-row.is-playable:hover) + .ppb-track::before { opacity: 0; }
+  [data-opt="b"] .ppb-get:hover:not(:disabled) { border-color: var(--dorami-border-strong); color: var(--dorami-ink); }
+}
+
+/* ── 导读稿(正文换成导读稿时):与「节目简介 来源方提供」同一种小标题 ── */
+[data-opt="b"] .ppb-guide { margin-top: 30px; }
+
+/* ── 退化形态:清单只剩原节目一条(点播未开放)——没有要区分的音轨,也没有 AI 要标明,
+   音轨名随之消失,整张卡就是一行播放条:圆钮 · 当前 · 进度 · 剩余 · 控件 ── */
+[data-opt="b"] .ppb-player.is-bare {
+  grid-template-columns: 40px auto minmax(0, 1fr) auto auto;
+  grid-template-rows: 40px;
+  grid-template-areas: "play cur bar left ctrls";
+  column-gap: 12px;
+}
+[data-opt="b"] .ppb-player.is-bare .ppb-head,
+[data-opt="b"] .ppb-player.is-bare .ppb-scrub { display: contents; }
+[data-opt="b"] .ppb-player.is-bare .ppb-play { align-self: center; margin-top: 0; }
+[data-opt="b"] .ppb-player.is-bare .ppb-bar { grid-area: bar; }
+[data-opt="b"] .ppb-player.is-bare .ppb-time[data-pp-cur] { grid-area: cur; margin-left: 2px; }
+[data-opt="b"] .ppb-player.is-bare .ppb-time[data-pp-left] { grid-area: left; }
+[data-opt="b"] .ppb-player.is-bare .ppb-ctrls { grid-area: ctrls; margin-left: 6px; }
+
+/* ── 窄卡(手机 / 窄阅读窗,按卡自身宽度判断):音轨名独占第一行,进度条独占第二行,
+   时间与控件同排第三行——音轨名与「AI 生成」永远完整,进度条也更长、更好拖 ── */
+@container ppb (max-width: 500px) {
+  [data-opt="b"] .ppb-player {
+    grid-template-columns: 40px auto minmax(0, 1fr) auto;
+    grid-template-rows: 24px 20px 40px;
+    grid-template-areas:
+      "play title title title"
+      "play bar   bar   bar"
+      "play cur   ctrls left";
+    padding-bottom: 4px;
+  }
+  [data-opt="b"] .ppb-head,
+  [data-opt="b"] .ppb-scrub { display: contents; }
+  [data-opt="b"] .ppb-title { grid-area: title; }
+  /* 命中区加高到 28px(视觉仍是 3px 细线),不压到上下两行 */
+  [data-opt="b"] .ppb-bar { grid-area: bar; height: 28px; margin-block: -4px; }
+  [data-opt="b"] .ppb-time[data-pp-cur] { grid-area: cur; }
+  [data-opt="b"] .ppb-time[data-pp-left] { grid-area: left; }
+  [data-opt="b"] .ppb-ctrls { grid-area: ctrls; justify-self: center; margin: 0; }
+  [data-opt="b"] .ppb-rate { justify-content: center; padding: 0 7px; }
+  /* 圆钮与进度线同一水平:▶ ━━━ */
+  [data-opt="b"] .ppb-play { margin-top: 18px; }
+  /* 退化形态在窄卡上两行:进度条一行,时间与控件一行 */
+  [data-opt="b"] .ppb-player.is-bare {
+    grid-template-columns: 40px auto minmax(0, 1fr) auto;
+    grid-template-rows: 20px 40px;
+    grid-template-areas: "play bar bar bar" "play cur ctrls left";
+    column-gap: 14px;
+    padding-top: 12px;
+  }
+  [data-opt="b"] .ppb-player.is-bare .ppb-ctrls { margin-left: 0; }
+  [data-opt="b"] .ppb-player.is-bare .ppb-time[data-pp-cur] { margin-left: 0; }
+  /* 圆心对准「进度线 ↔ 时间控件行」的中点 */
+  [data-opt="b"] .ppb-player.is-bare .ppb-play { align-self: start; margin-top: 7px; }
+}
+
+/* ── 手机:触控目标 ≥ 40px(点播胶囊视觉 28px,命中区向外扩到 42px) ── */
+[data-opt="b"].m-read .ppb-row { min-height: 48px; }
+[data-opt="b"].m-read .ppb-btn { min-width: 40px; height: 40px; }
+[data-opt="b"].m-read .ppb-rate { min-width: 46px; }
+[data-opt="b"].m-read .ppb-ctrls { gap: 0; }
+[data-opt="b"].m-read .ppb-get::after { content: ''; position: absolute; inset: -7px -4px; }
+
+:root[data-motion="reduce"] [data-opt="b"] .ppb-play:active { transform: none; }

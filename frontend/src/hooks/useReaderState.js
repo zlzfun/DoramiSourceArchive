@@ -265,8 +265,8 @@ export function useReaderState({
   // 条目未读标记来自列表接口的 with_unread 页级标记 + 本会话逐篇覆盖(readOverrides)。
   const [unreadBySource, setUnreadBySource] = useState({});
   const [unreadOnly, setUnreadOnly] = useState(false);   // 只看未读
-  // 本会话逐篇覆盖:id → true(已读)/false(未读)。打开=覆盖已读(圆点即消);
-  // 手动「标为未读」=覆盖未读(圆点复现)。无覆盖时以服务端 article.unread 为准。
+  // 本会话逐篇覆盖:id → true(已读)/false(未读)。打开=覆盖已读(标题即转已读态);
+  // 手动「标为未读」=覆盖未读(标题复原未读态)。无覆盖时以服务端 article.unread 为准。
   const [readOverrides, setReadOverrides] = useState(() => new Map());
   const readOverridesRef = useRef(new Map());
   const [markingRead, setMarkingRead] = useState(false);
@@ -527,7 +527,7 @@ export function useReaderState({
     const id = article?.id || null;
     activeIdRef.current = id;
     // 主动打开一篇新文章即记一次阅读（同篇连点不重复计；fire-and-forget）。
-    // 后端同一请求里双写计量+逐篇已读状态;此处同步做乐观清点:圆点即消、未读数-1。
+    // 后端同一请求里双写计量+逐篇已读状态;此处同步做乐观清点:标题即转已读态、未读数-1。
     if (id && id !== prevId) {
       // 上报成功即回填全站累计阅读数(含本次),阅读窗 meta 行就地刷新;失败静默。
       recordArticleRead(id).then((res) => {
@@ -1194,7 +1194,7 @@ export function useReaderState({
         ? await markScopeRead(mode, activeTagId)
         : await markAllRead(activeSourceId, activeSourceId ? null : mode);
       const partial = Boolean(data?.has_more); // 兴趣轴批次封顶未写完:如实说,不谎称「已全部」
-      // 后端返回更新后的统计;本页在列条目全部乐观清点(圆点即消)。
+      // 后端返回更新后的统计;本页在列条目全部乐观清点(标题即转已读态)。
       prevScopeUnreadRef.current = null;
       applyUnreadCounts(data);
       for (const a of articles) readOverridesRef.current.set(a.id, true);

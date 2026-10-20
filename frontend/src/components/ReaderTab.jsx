@@ -44,15 +44,18 @@ import { resolveCompany } from '../sourceTaxonomy';
 import DiscoverPage from './DiscoverPage';
 import SocialFlow from './SocialFlow';
 import AnnouncementBanner from './AnnouncementBanner';
-import { PodcastCover } from './PodcastAudioPanel';
+import PodcastCover from './PodcastCover';
 import PodcastExperiencePanel from './PodcastExperiencePanel';
-import PodcastTextPanel from './PodcastTextPanel';
+import ListenEntries from './player/ListenEntries';
+import PlayerDock from './player/PlayerDock';
+import { Eq } from './player/PlayerGlyphs';
+import { usePlayer } from './player/playerContext';
 import { rebuildToast } from '../utils/briefRebuild';
 import PersonalBriefPage from './PersonalBriefPage';
 import InterestPage from './InterestPage';
 import RankingsPage from './RankingsPage';
 import AnalysisTagChip from './AnalysisTagChip';
-import { excerptOf, hostOf, latinLang, formatUnreadCount } from '../utils/readerText';
+import { excerptOf, hostOf, latinLang } from '../utils/readerText';
 import { highlightMatch } from '../utils/highlight';
 import { dayLabelOf } from '../utils/readerTime';
 import { buildListPlan } from '../utils/listPlan';
@@ -69,8 +72,9 @@ import {
   shouldShowAiReadingCard,
 } from '../utils/analysis';
 import AiReadingCard from './AiReadingCard';
-import ArticleListenBar from './ArticleListenBar';
 import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
+import { articleListenEntries, podcastListenEntries } from '../utils/listenEntries';
+import { nowPlayingFor } from '../utils/playerCore';
 import { mediaProxyUrl } from '../api';
 
 // ReaderWorkspace 持有共享数据与阅读位置；这里仅负责桌面四栏与鼠标交互。
@@ -139,7 +143,7 @@ export function PaneBodySkeleton() {
 // 条目行(memo):未读轮询、搜索键入、hover 预取等高频父级渲染下,只有 props 实际
 // 变化的行才重渲(此前整列随任意父级 state 重渲)。回调经父级 latest-ref 稳定包装,
 // article/source 对象引用在增量追加下保持不变,memo 浅比较即可生效。
-// (export 供移动壳复用同一张条目卡——语法/收藏星/未读点单一事实来源。)
+// (export 供移动壳复用同一张条目卡——语法/收藏星/读态单一事实来源。)
 /* ── 三谓词过滤面板(issue #27 兴趣即透镜,样页 dorami-interest-lens-quiet ①):
    订阅 / 兴趣 / 收藏 三枚可多选开关,按源 / 按标签 / 按篇两两正交,AND 联合;
    选中态 = wash 底 + 勾(多选语义),与单选源行的浮白 + 弱高程分家;兴趣未设时灰掉,点它直落发现页兴趣段。
@@ -207,12 +211,25 @@ export function TagRows({ groups, activeTagId, onPick, hasInterests, onOpenInter
   ));
 }
 
+/* 正在播 / 暂停的那一期(issue #199):律动条 + 「播放中 / 已暂停」。状态是状态,不是动作——不画成按钮 */
+function NowPlayingTag({ state, ai }) {
+  if (!state) return null;
+  return (
+    <span className="reader-entry-now">
+      <Eq live={state === 'playing'} ai={ai} />
+      <span>{state === 'playing' ? '播放中' : '已暂停'}</span>
+    </span>
+  );
+}
+
 export const ArticleRow = memo(function ArticleRow({
   article, active, isUnread, isFav, entryPodcast, showLabel, dayKey, searchQuery,
   source, sourceName, onSelect, onPrefetchEnter, onPrefetchLeave, onToggleFavorite,
   onContextMenu, ctxAnchor,
   // issue #27 兴趣即透镜:命中的兴趣标签名(顶行一枚胶囊)/ 订阅外标记(悬停翻「+ 订阅」)
   interestHit = '', unsubscribed = false, onSubscribeSource = null,
+  // issue #199 全局播放条:这一期正在播 / 已暂停('playing' | 'paused' | '');AI 音轨的律动条走渐变两端色
+  nowPlaying = '', nowPlayingAi = false,
 }) {
   // 版本更新用紧凑行(单行标题、无摘要),由条目的内容类型决定(issue #178,取代「动态」容器)
   const compact = !entryPodcast && isCompactKind(article);
@@ -262,6 +279,8 @@ export const ArticleRow = memo(function ArticleRow({
         onContextMenu={(e) => onContextMenu(e, article, 'article')}
         className={`reader-entry ${compact ? 'is-compact' : ''} ${entryPodcast ? 'is-podcast' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'} ${isFav ? 'is-fav' : ''} ${ctxAnchor ? 'is-ctx-anchor' : ''}`}
       >
+        {/* 读态只由标题字重与墨色表达(is-read),不另画未读点(issue #199);读屏补一句「未读」与之对等 */}
+        {isUnread && <span className="sr-only">未读，</span>}
         {entryPodcast ? (
           <span className="reader-podcast-layout">
             <PodcastCover src={podcast?.image_url} className="reader-podcast-cover" />
@@ -282,12 +301,12 @@ export const ArticleRow = memo(function ArticleRow({
                 )}
               </span>
               <span className="reader-entry-titlerow">
-                <span className={`reader-unread-dot ${isUnread ? '' : 'is-off'}`} aria-hidden="true" />
                 <span className="reader-entry-title">{searchQuery ? highlightMatch(article.title || '（无标题）', searchQuery) : (article.title || '（无标题）')}</span>
                 {article.is_premium_podcast && <span className="podcast-premium-badge">优质播客</span>}
                 {favoriteControl}
               </span>
               <span className="reader-podcast-meta">
+                <NowPlayingTag state={nowPlaying} ai={nowPlayingAi} />
                 {formatPodcastDuration(podcast?.duration_seconds) && (
                   <span>{formatPodcastDuration(podcast.duration_seconds)}</span>
                 )}
@@ -328,6 +347,7 @@ export const ArticleRow = memo(function ArticleRow({
               >
                 {formatRelativeTime(article.publish_date || article.fetched_date, '')}
               </span>
+              <NowPlayingTag state={nowPlaying} ai={nowPlayingAi} />
               {/* 分数(身份线:宋体数字 + AI 渐变分档)推到行尾;分析在途时先以「分析中」占位,落地即换成数 */}
               {score
                 ? <span className={`reader-entry-score ai-grad-text ${scoreTier}`} title={scoreTitle}>{score}</span>
@@ -335,7 +355,6 @@ export const ArticleRow = memo(function ArticleRow({
             </span>
             {/* 标题行内收藏控件复用 span role=button，避免 button 嵌套。 */}
             <span className="reader-entry-titlerow">
-              <span className={`reader-unread-dot ${isUnread ? '' : 'is-off'}`} aria-hidden="true" />
               <span className="reader-entry-title">{searchQuery ? highlightMatch(article.title || '（无标题）', searchQuery) : (article.title || '（无标题）')}</span>
               {favoriteControl}
             </span>
@@ -464,22 +483,18 @@ export default function ReaderTab({
   const discoverRef = useRef(discover);
   useEffect(() => { discoverRef.current = discover; }, [discover]);
 
-  const [podcastSelection, setPodcastSelection] = useState({ articleId: '', variant: 'original' });
-  const activePodcast = podcastOf(activeArticle);
-  const hasGuideAudio = Boolean(activePodcast?.condensed_audio_url);
-  const hasGuideBlog = Boolean(activePodcast?.premium_guide?.blog_ready);
-  const isBlogOnlyGuide = hasGuideBlog && !hasGuideAudio;
-  const defaultPodcastVariant = activePodcast?.audio_url
-    ? 'original'
-    : hasGuideAudio ? 'digest' : 'original';
-  const podcastVariant = podcastSelection.articleId === activeArticle?.id
-    ? podcastSelection.variant
-    : defaultPodcastVariant;
-  const podcastGuideActive = podcastView
-    && (isBlogOnlyGuide || (podcastVariant === 'digest' && hasGuideAudio));
-  const handlePodcastVariantChange = (variant) => {
-    setPodcastSelection({ articleId: activeArticle?.id || '', variant });
-  };
+  // ── 全局播放器(issue #199):条目行「播放中 / 已暂停」与标题区收听入口。正文与音轨解耦——
+  //    在听哪条音轨不影响阅读窗显示什么(旧的「选中精品导读就把正文换成导读稿」已拆掉)。
+  const { state: player } = usePlayer();
+  const playingId = player.form !== 'none' ? (player.item?.articleId || '') : '';
+  const playingState = nowPlayingFor(player, playingId);
+  const playingAi = Boolean(player.item?.ai);
+  const listenList = !activeArticle ? [] : podcastView
+    ? podcastListenEntries(activeArticle, { aiEnabled, ondemandEnabled: ondemand.podcast === true })
+    : articleListenEntries(activeArticle, { aiEnabled, ondemandEnabled: ondemand.article === true });
+  const hasListen = listenList.length > 0;
+  // 原节目时长已写在入口上,署名行不再重复
+  const durationOnEntry = listenList.some((entry) => entry.track === 'original');
 
   const listThumbRef = useRef(null); // 浮层滚动条滑块(压在卡片上,内容满宽)
   // 文章/动态中栏会被发现页与社交流整段卸载；active 让自绘滚动条在 DOM 重建后
@@ -497,10 +512,10 @@ export default function ReaderTab({
   // 标题区尾行动作(语言二段 + 查看原文):有标签时住尾行右缘,无标签时并入署名行右缘——
   // 标题下不留一片只挂着两个钮的空白(样页「分析在途」帧即此形态)。
   const paneTags = activeArticle ? displayAnalysisTags(activeArticle) : [];
-  const paneActions = activeArticle
+  const paneTools = activeArticle
     && (activeArticle.source_url || activeArticle.is_premium_podcast || (aiEnabled && !activeIsChinese))
     && (
-    <div className="reader-pane-actions">
+    <>
       {aiEnabled && !activeIsChinese && (
         <div className="reader-tr-seg" role="group" aria-label="正文语言">
           <button
@@ -544,8 +559,45 @@ export default function ReaderTab({
       {activeArticle.is_premium_podcast && (
         <span className="podcast-premium-badge is-action">优质播客</span>
       )}
-    </div>
+    </>
   );
+  // 收听入口住动作行最前(DOM 顺序 = 视觉顺序,Tab 先到收听);有入口时动作行独占尾行,入口左、工具右
+  const paneActions = (hasListen || paneTools) ? (
+    <div className={`reader-pane-actions ${hasListen ? 'has-listen' : ''}`}>
+      {hasListen && (
+        <ListenEntries
+          article={activeArticle}
+          podcast={podcastView}
+          aiEnabled={aiEnabled}
+          ondemand={ondemand}
+          sourceName={sourceNameMap[activeArticle.source_id] || ''}
+          showToast={showToast}
+          onRefresh={refreshActiveArticle}
+        />
+      )}
+      {paneTools}
+    </div>
+  ) : null;
+  // 正文容器(翻译作用域):文章直接用;播客交给 PodcastExperiencePanel 放在「节目简介」视图里
+  const paneCopy = activeArticle ? (
+    <div
+      className="reader-article-copy markdown-body"
+      data-ai-translation-scope="article-body"
+      lang={(showTranslation && translatedBody) ? undefined : latinLang(activeBody)}
+    >
+      {activeBodyLoading ? (
+        <PaneBodySkeleton />
+      ) : (showTranslation && translatedBody) ? (
+        <ReaderMarkdown>{displayTranslatedBody}</ReaderMarkdown>
+      ) : activeBody ? (
+        <ReaderMarkdown>{displayBody}</ReaderMarkdown>
+      ) : (
+        podcastView
+          ? '该播客暂无文字内容，可收听上方原节目音频。'
+          : '该文章暂无正文内容，点击「查看原文」阅读完整内容。'
+      )}
+    </div>
+  ) : null;
 
   // ── 右键上下文菜单(v3.28,样页 dorami-context-menu-quiet) ──
   // items 构建在 useReaderState(桌面右键/移动长按共用);弹出定位与开合是桌面视图胶水。
@@ -814,18 +866,12 @@ export default function ReaderTab({
                         ) : (
                           <LogoMark company={resolveCompany(source)} size="s20" emoji={source.icon} />
                         )}
+                        {/* 不显示每源未读数(issue #199,conventions §3):有无未读只靠行加粗(has-unread),
+                            读屏补一句「有未读」与之对等。退订钮浮层化,不占布局。 */}
                         <p className="reader-source-name min-w-0 flex-1">{source.name || source.source_id}</p>
+                        {unread > 0 && <span className="sr-only">，有未读</span>}
                         {/* 临时隐藏的已订阅源:条目保留但内容停发,标记说明状态;悬停退订钮照常浮出 */}
                         {source.hidden && <span className="reader-src-off">暂不可用</span>}
-                        {/* 每源未读数:裸数字不做徽标芯片(conventions §4:计数走黑体 tabular-nums)。
-                            退订钮浮层化,悬停时这里淡出让位(CSS 里两条规则成对),故数字与减号不争同一格。
-                            单位用 sr-only 补在数字后:行是 role=button,可读名成了「源名 12 篇未读」。 */}
-                        {unread > 0 && (
-                          <span className="reader-src-count" title={`${unread} 篇未读`}>
-                            {formatUnreadCount(unread)}
-                            <span className="sr-only"> 篇未读</span>
-                          </span>
-                        )}
                         <button
                           type="button"
                           title="取消订阅"
@@ -1201,6 +1247,8 @@ export default function ReaderTab({
                     interestHit={showInterestHit ? (article.interest_hits?.[0] || '') : ''}
                     unsubscribed={showUnsubscribedMark && !subscribedIds.has(article.source_id)}
                     onSubscribeSource={onRowSubscribeSource}
+                    nowPlaying={article.id === playingId ? playingState : ''}
+                    nowPlayingAi={article.id === playingId && playingAi}
                   />
                 );
               })}
@@ -1380,7 +1428,7 @@ export default function ReaderTab({
                 {bodyStats && (
                   <span>{podcastView ? '简介阅读约' : '阅读约'} {bodyStats.minutes} 分钟</span>
                 )}
-                {podcastView && formatPodcastDuration(activeArticle.podcast?.duration_seconds) && (
+                {podcastView && !durationOnEntry && formatPodcastDuration(activeArticle.podcast?.duration_seconds) && (
                   <span>原节目 {formatPodcastDuration(activeArticle.podcast.duration_seconds)}</span>
                 )}
                 {typeof activeArticle.read_count === 'number' && activeArticle.read_count > 0 && (
@@ -1389,41 +1437,31 @@ export default function ReaderTab({
                 {/* 分析生命周期是署名行末尾的一段事实,不是一枚章 */}
                 {activeAnalysisStatus && <span role="status">{activeAnalysisStatus.label}</span>}
               </div>
-              {paneTags.length === 0 && paneActions}
+              {paneTags.length === 0 && !hasListen && paneActions}
               </div>
-              {/* 尾行:左标签小签(规范实线 / 灵活虚线,均可点检索),右动作——「原语言 | 译为中文」二段 +
-                  查看原文文字链(v3.45 拍板的「标题 → 正文」视线路径不变,只是不再独占一行);
+              {/* 尾行:左标签小签(规范实线 / 灵活虚线,均可点检索),右动作——收听入口(issue #199)在最前,
+                  「原语言 | 译为中文」二段 + 查看原文文字链靠右(v3.45 拍板的「标题 → 正文」视线路径不变);
                   译文二段激活态沿 AI 渐变身份(v3.33),AI 未开启只余原文。 */}
-              {paneTags.length > 0 && (
-                <div className="reader-pane-foot">
-                  <div className="reader-pane-tags">
-                    {paneTags.map((tag, index) => (
-                      <AnalysisTagChip
-                        key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
-                        tag={tag}
-                        onSearch={searchForTag}
-                      />
-                    ))}
-                  </div>
+              {(paneTags.length > 0 || hasListen) && (
+                <div className={`reader-pane-foot ${hasListen ? 'has-listen' : ''}`}>
+                  {paneTags.length > 0 && (
+                    <div className="reader-pane-tags">
+                      {paneTags.map((tag, index) => (
+                        <AnalysisTagChip
+                          key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
+                          tag={tag}
+                          onSearch={searchForTag}
+                        />
+                      ))}
+                    </div>
+                  )}
                   {paneActions}
                 </div>
               )}
             </header>
             <div className="reader-pane-body">
-              {podcastView && (
-                <PodcastExperiencePanel
-                  article={activeArticle}
-                  variant={podcastVariant}
-                  onVariantChange={handlePodcastVariantChange}
-                  aiEnabled={aiEnabled}
-                  ondemandEnabled={ondemand.podcast === true}
-                  showToast={showToast}
-                  onArticleRefresh={refreshActiveArticle}
-                />
-              )}
-              {/* 已落库分析始终可读；本端 AI 开启时才额外给现场生成入口。
-                  文章点播动作收在速读卡内；就绪播放条挂在卡下。 */}
-              {!podcastGuideActive && !activeBodyLoading && shouldShowAiReadingCard(activeArticle, {
+              {/* 已落库分析始终可读(播客与文章都常驻,与在听哪条音轨无关);本端 AI 开启时才额外给现场生成入口 */}
+              {!activeBodyLoading && shouldShowAiReadingCard(activeArticle, {
                 summary: activeSummary,
                 aiEnabled,
                 body: activeBody,
@@ -1435,55 +1473,24 @@ export default function ReaderTab({
                   canGenerate={aiEnabled && Boolean(activeBody)}
                   onGenerate={handleSummarize}
                   podcast={podcastView}
-                  aiEnabled={aiEnabled}
-                  ondemandEnabled={ondemand.article === true}
-                  showToast={showToast}
-                  onArticleRefresh={refreshActiveArticle}
                 />
               )}
-              {!podcastView && !activeBodyLoading && (
-                <ArticleListenBar article={activeArticle} />
-              )}
-              {podcastView && !podcastGuideActive && !activeBodyLoading && activeBody && (
-                <div className="podcast-show-notes-head">
-                  <h2 className="section-title">节目简介</h2>
-                  <span>来源方提供</span>
-                </div>
-              )}
-              {!podcastGuideActive && (
+              {!podcastView && (
                 <PaperContentNote article={activeArticle} />
               )}
-              {!podcastGuideActive && (
-                <div
-                  className="reader-article-copy markdown-body"
-                  data-ai-translation-scope="article-body"
-                  lang={(showTranslation && translatedBody) ? undefined : latinLang(activeBody)}
+              {/* 播客:「节目简介 | ✦ 导读稿」切换(有导读稿时出现)+ 逐字稿;节目简介正文仍是 paneCopy 这一块 */}
+              {podcastView ? (
+                <PodcastExperiencePanel
+                  article={activeArticle}
+                  showTranslation={showTranslation}
+                  showNotesHead={!activeBodyLoading && Boolean(activeBody)}
                 >
-                  {activeBodyLoading ? (
-                    <PaneBodySkeleton />
-                  ) : (showTranslation && translatedBody) ? (
-                    <ReaderMarkdown>{displayTranslatedBody}</ReaderMarkdown>
-                  ) : activeBody ? (
-                    <ReaderMarkdown>{displayBody}</ReaderMarkdown>
-                  ) : (
-                    podcastView
-                      ? '该播客暂无文字内容，可收听上方原节目音频。'
-                      : '该文章暂无正文内容，点击「查看原文」阅读完整内容。'
-                  )}
-                </div>
-              )}
-              {podcastView && !podcastGuideActive && !activeBodyLoading && (
-                <div data-ai-translation-excluded="true">
-                  <PodcastTextPanel
-                    episodeId={activeArticle.id}
-                    preferredTranscriptKind="publisher_transcript"
-                    showTranslation={showTranslation}
-                  />
-                </div>
-              )}
+                  {paneCopy}
+                </PodcastExperiencePanel>
+              ) : paneCopy}
               {/* 正文尾部原文行(v3.40 自定源首创,v3.45 推全站):读完想看原文正是最自然的
                   时刻;摘要型源读完即达原文,全文源多一个出口也无碍。无 source_url 不画。 */}
-              {!podcastGuideActive && !activeBodyLoading && activeArticle.source_url && (
+              {!activeBodyLoading && activeArticle.source_url && (
                 <p className="reader-pane-origin">
                   <a href={activeArticle.source_url} target="_blank" rel="noreferrer">
                     查看原文 ↗
@@ -1545,6 +1552,9 @@ export default function ReaderTab({
       {ctxMenu && (
         <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={closeCtxMenu} />
       )}
+
+      {/* 全局播放条(issue #199):内容区浮层,固定定位、不占网格;音频与状态在工作区外壳的 PlayerProvider 里 */}
+      <PlayerDock hostRef={view.playerHostRef} onOpenItem={view.openPlayingItem} />
     </div>
   );
 }

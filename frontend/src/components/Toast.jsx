@@ -14,9 +14,10 @@ export default function Toast({ show, message, type = 'info', onClose }) {
 
   const { bg, Icon } = STYLES[type] || STYLES.info;
 
+  // 底边距在 .toast-pop 上(index.css):播放条出现时整体抬到条之上(issue #199)
   return (
     <div
-      className={`toast-pop ${closing ? 'is-leaving' : ''} fixed bottom-8 left-1/2 z-[200] flex max-w-[90vw] items-center gap-3 rounded-[var(--r-card)] py-3.5 pl-5 pr-3 text-white shadow-2xl ${bg}`}
+      className={`toast-pop ${closing ? 'is-leaving' : ''} fixed left-1/2 z-[200] flex max-w-[90vw] items-center gap-3 rounded-[var(--r-card)] py-3.5 pl-5 pr-3 text-white shadow-2xl ${bg}`}
       role="status"
     >
       <Icon className="h-5 w-5 shrink-0" />

@@ -5,11 +5,10 @@ export const PODCAST_TEXT_LABELS = Object.freeze({
   normalized_transcript: { title: '语音识别稿', note: 'AI 整理' },
 });
 
-export function podcastDigestMeta(mode = '') {
-  const isBrief = String(mode || '').trim().toLowerCase() === 'brief_zh';
-  return isBrief
-    ? { title: '中文导读', action: '继续阅读中文导读' }
-    : { title: '精品导读', action: '继续阅读精品导读' };
+// 导读稿的措辞(issue #199 统一):正文切换写「导读稿」,继续加载写「继续阅读导读稿」——
+// 不再随生成模式分成「精品导读 / 中文导读」两套(那是音频与列表状态的说法,文字本身就是导读稿)。
+export function podcastDigestMeta() {
+  return { title: '导读稿', action: '继续阅读导读稿' };
 }
 
 const TRANSCRIPT_PRIORITY = Object.freeze([

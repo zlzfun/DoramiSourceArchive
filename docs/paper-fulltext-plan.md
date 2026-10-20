@@ -2,7 +2,7 @@
 
 Issue [#41](https://github.com/zlzfun/DoramiSourceArchive/issues/41)。2026-10-20 用户批准官方 HTML 优先的实现路径，论文自动分析只使用摘要，在独立分支与 worktree 开发。
 
-分支：`feat/issue-41-paper-fulltext`，基于 `origin/main@97a4378`。本波不改版本号、不新增依赖，不操作生产数据库。
+分支：`feat/issue-41-paper-fulltext`，最初基于 `origin/main@97a4378`，排版修复后同步主分支 `ccc2aba`（#200 阅读器播放器重构）。本波不自行改版本号、不新增依赖，不操作生产数据库。
 
 ## 1. 背景与决策
 
@@ -117,6 +117,8 @@ node scripts/validate_paper_render.mjs /tmp/dorami-paper-validation
 真实隔离栈为临时 SQLite + FastAPI + 前端构建：R1 的 33 个公式与 3 张图正常显示，亮/暗主题均目检；390px 窄屏长公式内部滚动，页面不横向溢出。桌面和移动端均显示论文层级、摘要分析依据、arXiv 版本。截图位于本 worktree 的 `output/playwright/paper-fulltext/`（不提交）。
 
 用户目检提出 Abstract 居中、加粗等格式丢失后，按同一批固定版本重新转换验证：仍为 12 篇完整、5 篇 partial、3 篇回退，17 篇合计 2,445 个 KaTeX 实例且无解析错误。排版增量相关后端 **89 项**（论文专项 44 项，加翻译/问答/旁白 45 项）、前端 **101 项**通过，lint/build 通过。隔离阅读器样例已重新生成；桌面和 390px 手机实测 Abstract 居中、字重 600，R1 33 个公式无错误，正文与列表均无排版标记泄露。此增量不改自动分析摘要边界。
+
+同步主分支后，两处冲突均位于桌面/手机正文插入点：保留新播放器的 `PodcastExperiencePanel` 与 `paneCopy/copy` 流程，在非播客正文之前加入论文来源说明。合并后前端 **113 项**通过，lint/build 通过。
 
 验收样例 R1 固定为 `2501.12948v1`；对照应使用同版本 HTML/PDF。无版本号的 arXiv 链接可能指向较新的论文修订，不能用于判断同版本转换保真。已成功补全的任务不会因转换器升级或 arXiv 新修订自动重跑；当前预览是在隔离库重新生成的样例，生产存量重转换与修订跟踪策略后置。
 

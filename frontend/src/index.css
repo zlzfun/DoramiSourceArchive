@@ -645,6 +645,8 @@ input[type="radio"] {
 }
 
 .toast-pop {
+  /* 底部居中;播放条出现时抬到条之上(--player-top = 条顶到视口底的距离,issue #199) */
+  bottom: max(2rem, calc(var(--player-top, 0px) + 12px));
   animation: toast-in 300ms var(--motion-spring) both;
 }
 
@@ -3980,7 +3982,7 @@ input[type="radio"] {
   .sett-nav-btn.is-on { background: var(--dorami-select); color: var(--dorami-ink); font-weight: 600; }
   .sett-nav-btn svg { width: 15px; height: 15px; flex: none; }
   .sett-nav-spacer { flex: 1; }
-  /* 反馈未读回复角标:数字胶囊贴导航行尾;accent 实底,与未读点同色系(不引第二饱和色) */
+  /* 反馈未读回复角标:数字胶囊贴导航行尾;accent 实底(不引第二饱和色) */
   .sett-nav-badge {
     margin-left: auto;
     min-width: 17px;
@@ -7491,13 +7493,6 @@ input[type="radio"] {
     color: var(--dorami-ink);
   }
 
-  .reader-src-unread {
-    font-size: 12px;
-    color: var(--dorami-accent-ink);
-    font-variant-numeric: tabular-nums;
-    flex-shrink: 0;
-  }
-
   /* 源分组小节头(样页 .src-label):细字距灰签,无计数芯片 */
   .reader-src-label {
     padding: 14px 10px 6px;
@@ -7543,14 +7538,6 @@ input[type="radio"] {
 
   .reader-fav-icon.is-on { color: #f59e0b; }
   .reader-fav-icon.is-on:hover { color: #d97706; }
-
-  /* 源行未读计数(样页 .src-count):裸数字,不做徽标芯片;计数走黑体 tabular-nums(conventions §4) */
-  .reader-src-count {
-    font-size: 12px;
-    color: var(--dorami-faint);
-    font-variant-numeric: tabular-nums;
-    flex-shrink: 0;
-  }
 
   /* 「发现更多来源」触发行(样页 .src-more):虚线框幽灵行 */
   .reader-src-more {
@@ -7652,7 +7639,7 @@ input[type="radio"] {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 0 2px 12px;   /* 最小边距:源行贴近细滚动条(见 .reader-list-scroll) */
+    padding: 0 2px max(12px, var(--player-clear, 0px));   /* 最小边距:源行贴近细滚动条(见 .reader-list-scroll);播放条出现时让位 */
   }
 
   .reader-source-row {
@@ -7800,9 +7787,6 @@ input[type="radio"] {
     pointer-events: auto;
   }
 
-  .reader-source-row:hover .reader-src-count { opacity: 0; }
-  .reader-src-count { transition: opacity 130ms var(--motion-ease); }
-
   /* hover 提示移除（红） */
   .reader-pin-on:hover:not(:disabled) {
     color: #dc2626;
@@ -7884,22 +7868,10 @@ input[type="radio"] {
   }
 
   /* ── 未读体系 ──
-     · 源行计数：裸数字(.reader-src-count,黑体 tabular-nums),行整体 has-unread 提字重;
-     · 圆点（条目首行右缘）：7px 品牌蓝点，读过缩零淡出；
+     · 源行：不显示每源未读数(conventions §3),有未读只由行整体 has-unread 提字重;
+     · 条目：不画未读点(issue #199),未读标题 600 墨色、已读 400 次墨色;社交卡读过整卡文字降 muted;
      · 列表头动作（全部标读）：安静图标钮，语义色品牌蓝；
      · 新内容提示条：列表顶 sticky 胶囊，点击刷新——轮询只提示、不自动插入打断阅读。 */
-  /* 未读点:绝对定位于标题左侧栏(标题行 position:relative 的锚点),
-     与右缘收藏星标错开;7px 品牌蓝点,读过缩零淡出。 */
-  .reader-unread-dot {
-    position: absolute;
-    left: -11px;
-    top: 8px;
-    width: 6px;
-    height: 6px;
-    border-radius: 9999px;
-    background: var(--dorami-accent);
-  }
-
   .reader-unread-icon {
     display: inline-flex;
     align-items: center;
@@ -8034,19 +8006,6 @@ input[type="radio"] {
     transition: background 140ms ease, box-shadow 140ms ease;
   }
 
-  /* A2 · 已读/未读区分回到首行小蓝点(.reader-unread-dot):标题不再降灰,
-     一律全墨(用户拍板:灰标题与圆点二者取圆点,减一层灰阶冗余)。 */
-
-  /* A2 · 未读点:常驻渲染,已读时缩零淡出(条件卸载无法过渡) */
-  .reader-unread-dot {
-    transition: transform 180ms var(--motion-ease), opacity 180ms ease;
-  }
-
-  .reader-unread-dot.is-off {
-    transform: scale(0);
-    opacity: 0;
-  }
-
   /* A3 · 条目首行的源 LogoMark 锚点(s15 精确尺寸,无需缩放) */
   .reader-entry-logo {
     display: inline-flex;
@@ -8110,7 +8069,6 @@ input[type="radio"] {
   :root[data-motion="reduce"] .reader-search-inline,
   :root[data-motion="reduce"] .skeleton-delay { animation: none; opacity: 1; }
   :root[data-motion="reduce"] .reader-search-inline { clip-path: none; }
-  :root[data-motion="reduce"] .reader-unread-dot,
   :root[data-motion="reduce"] .markdown-img-button img,
   :root[data-motion="reduce"] .reader-vrail-btn,
   :root[data-motion="reduce"] .reader-entry .reader-entry-title { transition: none; }
@@ -8261,82 +8219,6 @@ input[type="radio"] {
   .reader-ai-summary-generate:hover:not(:disabled) { color: var(--dorami-blue); }
   .reader-ai-summary-generate:disabled { cursor: default; opacity: 0.7; }
 
-  /* 文章点播：可点播/生成中收在速读卡内（小胶囊，像控件不像纯文字）；
-     就绪播放条对齐播客 audio-track。 */
-  .reader-ai-listen-action {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px 10px;
-    margin-top: 10px;
-  }
-  .reader-ai-listen-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    min-height: 28px;
-    padding: 0 11px 0 9px;
-    border-radius: var(--r-pill);
-    border: 1px solid var(--dorami-border);
-    background: var(--dorami-well);
-    color: var(--dorami-ink-2);
-    cursor: pointer;
-  }
-  .reader-ai-listen-pill:hover:not(:disabled):not(.is-busy) {
-    border-color: var(--dorami-border-strong);
-    color: var(--dorami-ink);
-    background: var(--dorami-surface);
-  }
-  .reader-ai-listen-pill:disabled,
-  .reader-ai-listen-pill.is-busy {
-    cursor: default;
-    opacity: 0.85;
-  }
-  .reader-ai-listen-icon {
-    width: 14px;
-    height: 14px;
-    flex: none;
-  }
-  .reader-ai-listen-status {
-    color: var(--dorami-muted);
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 1.4;
-  }
-  .article-listen-track {
-    margin: 0 0 14px;
-    padding-top: 11px;
-    border-top: 1px solid var(--dorami-border);
-  }
-  .article-listen-track-head {
-    display: flex;
-    align-items: center;
-    gap: 6px 10px;
-    margin-bottom: 7px;
-    font-size: 12px;
-    font-weight: 400;
-    color: var(--dorami-faint);
-    font-variant-numeric: tabular-nums;
-  }
-  .article-listen-label {
-    font-weight: 600;
-    color: var(--dorami-ink-2);
-  }
-  .article-listen-duration { font-variant-numeric: tabular-nums; }
-  .article-listen-ai { color: var(--dorami-accent-ink); }
-  .article-listen-track audio {
-    display: block;
-    width: 100%;
-    height: 40px;
-    color-scheme: light dark;
-  }
-  .article-listen-error {
-    margin: 8px 0 0;
-    color: var(--state-bad, #b42318);
-    font-size: 12px;
-    font-weight: 600;
-  }
-
   /* 滚动壳:滚动容器 + 浮层滑块的定位祖先(占据列头以下的剩余高度) */
   .reader-scrollwrap {
     position: relative;
@@ -8351,8 +8233,9 @@ input[type="radio"] {
     min-height: 0;
     overflow-y: auto;
     /* 顶部 padding 归零:否则 sticky 日期签停在 padding 边、上方留一条缝,滚动内容
-       从中透出(用户目检)。顶部呼吸交给首元素自身(日报卡 margin / 日期签 top padding)。 */
-    padding: 0 0 24px;
+       从中透出(用户目检)。顶部呼吸交给首元素自身(日报卡 margin / 日期签 top padding)。
+       底部 max():播放条出现时让出条的高度,最后一行完整可见(issue #199)。 */
+    padding: 0 0 max(24px, var(--player-clear, 0px));
   }
 
   /* 条目列/社交流隐藏原生滚动条 → 改用浮层滑块 .ovl-thumb 压在卡片上(内容满宽、
@@ -8411,7 +8294,7 @@ input[type="radio"] {
     display: block;
     width: 100%;
     text-align: left;
-    padding: 12px 6px 13px 16px;      /* 左内边距加宽:给标题左侧未读点留出不局促的槽,右侧仍铺满 */
+    padding: 12px 6px 13px 16px;      /* 左内边距 16:与日期组头 / 列头文字左缘对齐,右侧仍铺满 */
     border: none;
     border-radius: var(--r-control);
     background: transparent;
@@ -8551,7 +8434,7 @@ input[type="radio"] {
     font-variant-numeric: tabular-nums;
   }
 
-  /* 标题是条目行里唯一响亮的东西:未读 600 + 墨色;已读退到 400 + 次墨色(与左侧未读点两个信号) */
+  /* 标题是条目行里唯一响亮的东西:未读 600 + 墨色;已读退到 400 + 次墨色(读态唯一信号,不另画未读点) */
   .reader-entry-title {
     font-size: 15px;
     font-weight: 600;
@@ -9043,7 +8926,7 @@ input[type="radio"] {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 44px clamp(28px, 5vw, 72px) 96px;
+    padding: 44px clamp(28px, 5vw, 72px) max(96px, var(--player-clear-end, 0px));
   }
 
   .reader-pane-head {
@@ -9170,95 +9053,6 @@ input[type="radio"] {
   .reader-tr-seg-btn.is-on.is-ai { background: var(--grad-ai-wash); }
   .reader-tr-seg-btn.is-on.is-ai svg { stroke: url(#ai-grad) var(--dorami-accent); }
 
-  /* 播客详情顶部播放器:页面级模式切换，但 DOM 始终只有一个实际播放器。 */
-  .podcast-experience-panel {
-    max-width: 720px;
-    margin: 0 auto 26px;
-  }
-
-  .podcast-player-panel {
-    max-width: none;
-    margin: 0;
-    padding: 14px;
-    border-radius: var(--r-card);
-    background: var(--dorami-soft);
-  }
-
-  .podcast-player-summary {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 13px;
-  }
-
-  .podcast-full-state {
-    margin: -3px 0 12px;
-    padding: 8px 10px;
-    border-radius: var(--r-control);
-    background: var(--dorami-well);
-    color: var(--dorami-muted);
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 1.55;
-  }
-  .podcast-full-state.is-bad { color: var(--state-bad); background: var(--state-bad-bg); }
-  .podcast-full-state.is-warn { color: var(--state-warn); background: var(--state-warn-bg); }
-
-  .podcast-player-cover {
-    flex: none;
-    width: 58px;
-    height: 58px;
-    border-radius: var(--r-control);
-    background: var(--dorami-well);
-    color: var(--dorami-faint);
-    object-fit: cover;
-  }
-
-  .podcast-player-copy {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 3px;
-  }
-
-  .podcast-player-kicker {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--dorami-faint);
-  }
-
-  .podcast-player-copy strong {
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--dorami-ink);
-  }
-
-  .podcast-audio-track {
-    padding-top: 11px;
-    border-top: 1px solid var(--dorami-border);
-  }
-
-  .podcast-mode-switch {
-    display: flex;
-    width: 100%;
-    margin-bottom: 12px;
-  }
-  .podcast-mode-switch .mini-seg-btn {
-    flex: 1;
-    min-width: 0;
-    font-variant-numeric: tabular-nums;
-  }
-  /* 无精品音频时，点播占用「精品导读」分段位，不另开大按钮。 */
-  .podcast-mode-switch .podcast-ondemand-seg:disabled {
-    cursor: default;
-    opacity: 0.72;
-  }
-
   .podcast-show-notes-head {
     display: flex;
     align-items: baseline;
@@ -9293,28 +9087,11 @@ input[type="radio"] {
     font-size: 12px;
   }
   .podcast-text-digest {
-    padding: 26px 4px 6px;
+    padding: 0 0 6px;   /* 紧接正文切换「节目简介 | ✦ 导读稿」(issue #199),切换就是它的标题 */
     border: 0;
     border-radius: 0;
     background: transparent;
     box-shadow: none;
-  }
-  .podcast-text-heading {
-    display: flex;
-    align-items: baseline;
-    gap: 9px;
-    margin-bottom: 14px;
-  }
-  .podcast-text-heading h2 {
-    margin: 0;
-    color: var(--dorami-ink);
-    font: 600 20px/1.3 var(--font-serif);
-  }
-  .podcast-text-heading span,
-  .podcast-text-truncated {
-    color: var(--dorami-muted);
-    font-size: 12px;
-    font-weight: 600;
   }
   .podcast-text-transcript {
     margin: 0;
@@ -9432,71 +9209,6 @@ input[type="radio"] {
     background: transparent;
   }
 
-  .podcast-audio-track-head {
-    display: flex;
-    align-items: center;
-    gap: 6px 10px;
-    margin-bottom: 7px;
-    font-size: 12px;
-    font-weight: 400;
-    color: var(--dorami-faint);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .podcast-audio-label {
-    font-weight: 600;
-    color: var(--dorami-ink-2);
-  }
-
-  .podcast-audio-ai {
-    color: var(--dorami-accent-ink);
-  }
-
-  .podcast-audio-track audio {
-    display: block;
-    width: 100%;
-    height: 40px;
-    color-scheme: light dark;
-  }
-
-  .podcast-audio-unavailable {
-    margin: 0;
-    padding-top: 11px;
-    border-top: 1px solid var(--dorami-border);
-    font-size: 12px;
-    color: var(--dorami-faint);
-  }
-
-  .podcast-audio-error {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    margin-top: 10px;
-    padding: 9px 10px;
-    border-radius: var(--r-control);
-    background: var(--state-bad-bg);
-    color: var(--state-bad);
-    font-size: 12px;
-    font-weight: 600;
-  }
-  .podcast-audio-error-actions {
-    display: flex;
-    flex: none;
-    align-items: center;
-    gap: 8px;
-  }
-  .podcast-audio-error-actions :is(button, a) {
-    color: inherit;
-    font-weight: 600;
-    text-decoration: none;
-  }
-  .podcast-audio-error-actions :is(button, a):hover { text-decoration: underline; }
-  .podcast-audio-error-actions a:focus-visible {
-    outline: 2px solid var(--dorami-focus);
-    outline-offset: 2px;
-  }
-
   /* 上一篇/下一篇:沿当前列表序的真实翻页 */
   .reader-pager {
     display: flex;
@@ -9595,7 +9307,7 @@ input[type="radio"] {
      actions 自身 margin-left:auto 已把整组推到右侧,故搜索框无需再单独 auto 外距。 */
   .reader-social-search { flex: 0 1 420px; }
 
-  .reader-social-scroll { flex: 1; overflow-y: auto; padding-bottom: 56px; }
+  .reader-social-scroll { flex: 1; overflow-y: auto; padding-bottom: max(56px, var(--player-clear-end, 0px)); }
   /* 单列宽卡 + 行长约束(conventions 正文行长纪律) */
   .reader-social-col { max-width: 680px; margin: 0 auto; padding: 0 24px; }
 
@@ -9637,19 +9349,7 @@ input[type="radio"] {
     contain-intrinsic-size: auto 280px;
   }
   .social-post:last-of-type { border-bottom: none; }
-  /* 未读点:与 .reader-unread-dot 同语法(常驻渲染 + 淡出,条件卸载无法过渡) */
-  .social-post::before {
-    content: "";
-    position: absolute;
-    left: -13px;
-    top: 32px; /* 随卡片 padding 上移量同步,保持与首行文字对齐 */
-    width: 6px;
-    height: 6px;
-    border-radius: var(--r-pill);
-    background: var(--dorami-accent);
-    transition: opacity var(--motion-medium) var(--motion-ease);
-  }
-  .social-post.is-read::before { opacity: 0; }
+  /* 读态:读过整卡文字降 muted;不另画未读点(issue #199) */
   .social-post.is-read .social-text,
   .social-post.is-read .social-name { color: var(--dorami-muted); }
 
@@ -9852,7 +9552,7 @@ input[type="radio"] {
     min-width: 0;
     min-height: 0;
     overflow-y: auto;
-    padding: 24px 28px 44px;
+    padding: 24px 28px max(44px, var(--player-clear-end, 0px));
     background: var(--rd-list-bg);
     color: var(--dorami-ink);
   }
@@ -10324,7 +10024,7 @@ input[type="radio"] {
   }
   .reader-pane-origin a:hover { text-decoration: underline; }
 
-  .reader-disc-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 28px 40px; }
+  .reader-disc-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 28px max(40px, var(--player-clear-end, 0px)); }
   .reader-disc-body { width: 100%; }
 
   .reader-disc-grp { display: flex; align-items: baseline; gap: 8px; margin: 22px 2px 10px; }
@@ -10536,6 +10236,8 @@ input[type="radio"] {
     right: 22px;
     bottom: 22px;
     z-index: 30;
+    /* 避让全局播放条(issue #199):条出现让到条之上,迷你时让到迷你左边;独立的 translate,不碰悬停的 transform */
+    translate: var(--player-fab-x, 0px) var(--player-fab-y, 0px);
     display: inline-flex;
     align-items: center;
     height: 40px;
@@ -10583,16 +10285,16 @@ input[type="radio"] {
   .reader-ai-panel {
     position: absolute;
     right: 22px;
-    bottom: 22px;
+    bottom: calc(22px + var(--player-panel-lift, 0px));   /* 播放条 / 迷你出现时整体抬到其上(issue #199) */
     z-index: 31;
     /* 标准态刻意收小(目检拍板):384×500——小视图的职责是「不遮文章」,
        与阅读窗同屏共读;沉浸阅读回答交给放大态(560×满高)。 */
     width: 384px;
     /* 标准态也给显式高度(v3.32.1):height 有具体值,放大/还原的 width/height
        过渡才真的动画得起来——auto↔固定值不可过渡,是此前尺寸切换生硬的根因 */
-    height: min(500px, calc(100% - 44px));
+    height: min(500px, calc(100% - 44px - var(--player-panel-lift, 0px)));
     max-width: calc(100% - 44px);
-    max-height: calc(100% - 44px);
+    max-height: calc(100% - 44px - var(--player-panel-lift, 0px));
     display: flex;
     flex-direction: column;
     background: var(--dorami-surface);
@@ -10614,7 +10316,7 @@ input[type="radio"] {
   /* 放大态：更宽并拉到满高。max-width 钳制保证窄阅读窗格下不溢出视口。 */
   .reader-ai-panel.is-large {
     width: 560px;
-    height: calc(100% - 44px);
+    height: calc(100% - 44px - var(--player-panel-lift, 0px));
   }
   @keyframes reader-ai-rise {
     from { opacity: 0; transform: translateY(16px) scale(0.95); }
@@ -11256,6 +10958,560 @@ input[type="radio"] {
   }
   .reader-empty-link:hover { color: var(--dorami-accent-ink); text-decoration: underline; text-underline-offset: 3px; }
 
+  /* ══════════════════════════════════════════════════════════════════════
+     全局播客播放条(issue #199;样页 docs/design/podcast-player/global.html?layout=float&tone=blur,
+     标题区入口沿第一轮方案 C index.html?opt=c)。拍板:条位 = 内容区浮层(视图轨右缘到窗口右缘、四周留 12px),
+     配色 = 封面模糊(64×64 静态模糊位图 + 逐张算浓度的遮罩,不用 backdrop-filter),正文与音轨解耦。
+     动态颜色只有运行时变量(--player-blur / --player-veil-p,JS 按封面写入);其余都是 token 或 token 的
+     oklab 混色(不用 oklch:Chromium 在 oklch 里混近灰 token 会出 hue = none、按 0° 渲染泛粉)。
+     进度变量 --player-p 只写在进度轨与进度环上;形变只动 transform / opacity / clip-path(见 player/playerFx.js)。
+     ══════════════════════════════════════════════════════════════════════ */
+
+  /* ── 标题区收听入口(方案 C):桌面在尾行动作区最前,手机在署名行下 ── */
+  .reader-pane-foot.has-listen { row-gap: 14px; }
+  .reader-pane-actions.has-listen { flex: 1 1 100%; }
+  .reader-pane-actions > .listen-entries { margin-right: auto; }
+  .m-listen { margin-top: 14px; }
+  .listen-entries { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .listen-entry {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    height: 30px;
+    padding: 0 13px 0 11px;
+    border: 1px solid var(--dorami-border-strong);
+    border-radius: var(--r-pill);
+    background: var(--dorami-surface);
+    color: var(--dorami-ink-2);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color var(--motion-fast) var(--motion-ease), border-color var(--motion-fast) var(--motion-ease),
+      color var(--motion-fast) var(--motion-ease);
+  }
+  .listen-len { font-weight: 400; color: var(--dorami-muted); font-variant-numeric: tabular-nums; }
+  /* 主钮:这一屏唯一的实心 accent(与 .action-button-primary 同一画法);在播时退成选中,实心交还 */
+  .listen-entry.is-primary { border-color: transparent; background: var(--dorami-blue); color: #fff; box-shadow: var(--sh-1); }
+  .listen-entry.is-primary .listen-len { color: inherit; opacity: 0.82; }
+  /* 正在播的那一期:全站选中语法(中性加深一档 + 墨色)+ 律动条 */
+  .listen-entry.is-current { border-color: transparent; background: var(--dorami-select); color: var(--dorami-ink); }
+  /* 生成中:状态不是动作——同一个位置、同一个外形,字退成次要色,✦ 呼吸 */
+  .listen-entry.is-busy { cursor: default; color: var(--dorami-muted); }
+  @media (hover: hover) {
+    .listen-entry:not(.is-primary):not(.is-current):not(.is-busy):hover { background: var(--dorami-hover); color: var(--dorami-ink); }
+    .listen-entry.is-primary:hover { background: color-mix(in oklab, var(--dorami-blue) 86%, #000); }
+    .listen-entry.is-current:hover { background: color-mix(in oklab, var(--dorami-ink) 11%, transparent); }
+  }
+  .listen-ico { display: inline-grid; place-items: center; flex: none; width: 12px; height: 12px; }
+  .listen-ico svg { width: 11px; height: 11px; }
+  .listen-ico .player-spark { width: 13px; height: 13px; }
+  /* 手机:触控 40px;播客两枚入口一行放得下就并排铺满,放不下(长节目「1 小时 27 分钟」)各占一整行——
+     整齐的两段,而不是挤成一行半 */
+  .m-listen .listen-entry { height: 40px; padding: 0 14px 0 12px; font-size: 14px; }
+  .m-listen .listen-len { font-size: 13px; }
+  .m-listen .listen-entries.is-podcast .listen-entry { flex: 1 1 auto; }
+  @media (min-width: 560px) { .m-listen .listen-entries.is-podcast .listen-entry { flex: none; } }   /* 平板宽度:回到按内容宽 */
+
+  /* AI 身份 ✦(四角星蒙版 + --grad-ai)与律动条 */
+  .player-spark {
+    display: inline-block;
+    flex: none;
+    width: 13px;
+    height: 13px;
+    background: var(--grad-ai);
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2c.6 5.4 2.6 7.4 10 10-7.4 2.6-9.4 4.6-10 10-.6-5.4-2.6-7.4-10-10 7.4-2.6 9.4-4.6 10-10Z'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2c.6 5.4 2.6 7.4 10 10-7.4 2.6-9.4 4.6-10 10-.6-5.4-2.6-7.4-10-10 7.4-2.6 9.4-4.6 10-10Z'/%3E%3C/svg%3E") center / contain no-repeat;
+  }
+  .player-spark.is-breathing { animation: player-breathe 1.6s var(--motion-ease) infinite; }
+  @keyframes player-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.32; } }
+  .player-eq { display: inline-flex; align-items: flex-end; gap: 2px; flex: none; width: 12px; height: 12px; }
+  .player-eq i {
+    display: block;
+    width: 2.5px;
+    height: 100%;
+    border-radius: var(--r-pill);
+    background: var(--dorami-accent);
+    transform-origin: bottom;
+    transform: scaleY(0.5);
+  }
+  .player-eq i:nth-child(2) { transform: scaleY(1); }
+  .player-eq i:nth-child(3) { transform: scaleY(0.72); }
+  .player-eq.is-ai i:nth-child(1) { background: var(--ai-g1); }
+  .player-eq.is-ai i:nth-child(2) { background: color-mix(in oklab, var(--ai-g1), var(--ai-g2)); }
+  .player-eq.is-ai i:nth-child(3) { background: var(--ai-g2); }
+  .player-eq.is-live i { animation: player-eq 0.9s ease-in-out infinite; }
+  .player-eq.is-live i:nth-child(2) { animation-delay: -0.3s; }
+  .player-eq.is-live i:nth-child(3) { animation-delay: -0.6s; }
+  @keyframes player-eq { 0%, 100% { transform: scaleY(0.3); } 50% { transform: scaleY(1); } }
+
+  /* 条目行:正在播 / 暂停的那一期(状态,不是动作) */
+  .reader-entry-now {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 5px;
+    color: var(--dorami-accent-ink);
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .reader-entry-top .reader-entry-now { margin-left: 2px; }
+
+  /* ── 播客正文:「节目简介 | ✦ 导读稿」视图切换(与正在播放哪条音轨无关)── */
+  .podcast-view-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 2px 0 16px; }
+  .podcast-view-seg { height: 30px; padding: 3px; }
+  .podcast-view-seg .reader-tr-seg-btn { height: 22px; padding: 0 11px; font-size: 13px; font-weight: 400; }
+  .podcast-view-seg .reader-tr-seg-btn .player-spark { width: 11px; height: 11px; }
+  .podcast-view-note { color: var(--dorami-faint); font-size: 12px; }
+  .m-read-body .podcast-view-seg { height: 40px; padding: 3px; }
+  .m-read-body .podcast-view-seg .reader-tr-seg-btn { height: 32px; padding: 0 14px; font-size: 14px; }
+
+  /* ── 播放器层:挂在阅读器外壳(.reader-shell / .m-shell)里、所有滚动容器之外;桌面从视图轨右缘起 ── */
+  .player-layer {
+    --player-base: var(--dorami-raised);
+    --player-bg: var(--player-base);
+    --player-fg: var(--dorami-ink);
+    --player-fg-2: var(--dorami-muted);
+    --player-icon: var(--dorami-muted);
+    --player-hover: var(--dorami-hover);
+    --player-well: var(--dorami-well);
+    --player-play-bg: var(--dorami-ink);
+    --player-play-fg: var(--player-base);
+    --player-play-hover: var(--dorami-ink-2);
+    --player-rail: var(--dorami-border-strong);
+    --player-fill: var(--dorami-ink);
+    --player-ai-ink: var(--dorami-accent-ink);
+    position: fixed;
+    z-index: 29;   /* 低于问哆啦美浮钮(30)与面板(31),低于弹窗 / 设置柜 / 抽屉 / Toast */
+    left: calc(var(--rail-w, 0px) + var(--vrail, 64px));   /* --vrail 来自 .reader-shell */
+    right: 0;
+    bottom: 0;
+    height: 0;
+    pointer-events: none;
+  }
+  /* 封面模糊配色:播放钮与已播段用墨色(实心 accent 留给标题区主钮,一屏 ≤ 2 处);副行向墨色收一档保对比度。
+     混色一律 oklab;不支持 color-mix 的浏览器整套回中性(上面那组 token 值) */
+  @supports (color: color-mix(in oklab, red, blue)) {
+    .player-layer {
+      --player-fg-2: color-mix(in oklab, var(--dorami-muted) 70%, var(--dorami-ink));
+      --player-icon: var(--player-fg-2);
+      --player-hover: color-mix(in oklab, var(--dorami-ink) 7%, transparent);
+      --player-well: color-mix(in oklab, var(--dorami-ink) 6%, transparent);
+      --player-play-hover: color-mix(in oklab, var(--dorami-ink) 86%, var(--player-fg-2));
+      --player-rail: color-mix(in oklab, var(--dorami-ink) 16%, transparent);
+    }
+    /* 遮罩色在每一层自己身上算(换台时冻结的旧底带着自己的位图与浓度) */
+    .player-layer[data-tone="blur"] :is(.player-bg, .player-fx-plate),
+    .player-bg.is-old {
+      --player-veil-c: color-mix(in oklab, var(--player-base) var(--player-veil-p, 70%), transparent);
+      background-image: linear-gradient(var(--player-veil-c), var(--player-veil-c)), var(--player-blur, none);
+      background-size: cover;
+      background-position: center;
+    }
+    [data-theme="dark"] .player-layer[data-tone="blur"] :is(.player-bg, .player-fx-plate),
+    [data-theme="dark"] .player-bg.is-old {
+      --player-veil-c: color-mix(in oklab, var(--player-base) var(--player-veil-p, 64%), transparent);
+    }
+  }
+  .player-fx { position: fixed; inset: 0; pointer-events: none; }
+  .player-dock { position: absolute; left: 0; right: 0; bottom: 0; height: 0; container: player / inline-size; }
+
+  /* ── 底部条:浮层语法(raised 底 + --sh-3 + --r-overlay) ── */
+  .player-bar,
+  .player-mini {
+    position: absolute;
+    pointer-events: auto;
+    background-color: var(--player-bg);
+    color: var(--player-fg);
+  }
+  .player-bar[hidden],
+  .player-mini[hidden] { display: none; }
+  .player-bar {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    height: 72px;
+    border-radius: var(--r-overlay);
+    box-shadow: var(--sh-3);
+  }
+  /* 位图放在条自己的一层(独立合成层):4 Hz 的进度 / 时间刷新只重绘上面的文字与进度,不连带重光栅模糊位图 */
+  .player-bg {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    border-radius: inherit;
+    background-color: var(--player-bg);
+    pointer-events: none;
+    will-change: transform;
+  }
+  [data-theme="dark"] .player-bg { box-shadow: inset 0 0 0 1px var(--dorami-card-bd); }
+  .player-bg.is-old { animation: player-tone-out 420ms cubic-bezier(.2, 0, 0, 1) forwards; }
+  @keyframes player-tone-out { to { opacity: 0; } }
+  /* 形变中:真条只出内容,底板 / 影子 / 播放钮 / 飞行中的封面由形变层代画,落地同一帧换回 */
+  .player-layer[data-assembling] :is(.player-bar, .player-mini) { background: transparent; box-shadow: none; }
+  .player-layer[data-assembling] .player-bg { opacity: 0; }
+  .player-layer[data-assembling] .player-play { opacity: 0; }
+  .player-layer[data-assembling="mini"] .player-mini-art .player-cover,
+  .player-layer[data-assembling="bar"] .player-bar .player-cover { opacity: 0; }
+
+  .player-bar-in {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    align-items: center;
+    grid-template-columns: minmax(170px, 1.5fr) auto minmax(120px, 1fr) auto;
+    grid-template-areas: "info ctrl seek tail";
+    column-gap: 10px;
+    height: 100%;
+    box-sizing: border-box;
+    padding: 8px;
+  }
+  .player-row2 { display: contents; }
+  .player-tail { grid-area: tail; display: flex; align-items: center; gap: 2px; }
+
+  /* 正在播放:封面 + 标题 / 节目名,整块是「打开这一期」 */
+  .player-info {
+    grid-area: info;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    margin: -2px;
+    padding: 2px;
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .player-art { flex: none; display: block; width: 44px; height: 44px; }
+  .player-art-slot { display: block; width: 100%; height: 100%; }
+  .player-cover {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: var(--r-sm);
+    object-fit: cover;
+    background: var(--player-well);
+  }
+  /* 封面不参与原生拖拽(否则往下拖缩小时浏览器先接手拖图片、指针被取消) */
+  img.player-cover { -webkit-user-drag: none; user-select: none; }
+  .player-cover.podcast-cover-fallback { display: grid; place-items: center; color: var(--player-icon); }
+  .player-cover.podcast-cover-fallback svg { width: 45%; height: 45%; }
+  /* 没有封面的 AI 音轨(文章导读):中性底上一颗 ✦,渐变只上标记、不铺底 */
+  .player-cover.is-ai { display: grid; place-items: center; }
+  .player-cover.is-ai .player-spark { width: 40%; height: 40%; }
+  .player-info-slot { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .player-title {
+    overflow: hidden;
+    color: var(--player-fg);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.25;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .player-sub {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--player-fg-2);
+    font-size: 12px;
+    line-height: 1.25;
+    white-space: nowrap;
+  }
+  .player-sub-text { overflow: hidden; text-overflow: ellipsis; }
+  .player-sub .player-spark { width: 11px; height: 11px; }
+  .player-dot { flex: none; color: var(--player-fg-2); }
+  .player-ai { flex: none; color: var(--player-ai-ink); font-weight: 600; }
+
+  /* 控制:±15 = 图标 + 12px 数字;播放钮墨色实心 */
+  .player-ctrl { grid-area: ctrl; display: flex; align-items: center; gap: 2px; }
+  .player-btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    height: 32px;
+    min-width: 32px;
+    padding: 0 6px;
+    border: 0;
+    border-radius: var(--r-pill);
+    background: transparent;
+    color: var(--player-icon);
+    font-size: 12px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+  }
+  .player-btn svg { width: 15px; height: 15px; flex: none; }
+  .player-min svg,
+  .player-close svg { width: 17px; height: 17px; }
+  .player-rate { min-width: 38px; }
+  .player-rate.is-on { color: var(--player-fg); }
+  .player-play {
+    position: relative;
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 40px;
+    height: 40px;
+    margin: 0 2px;
+    border: 0;
+    border-radius: var(--r-pill);
+    background: var(--player-play-bg);
+    color: var(--player-play-fg);
+    box-shadow: var(--sh-1);
+    cursor: pointer;
+    transition: background-color var(--motion-fast) var(--motion-ease);
+  }
+  .player-play-ico { position: relative; display: block; width: 15px; height: 15px; }
+  .player-play-ico > span { position: absolute; inset: 0; display: grid; place-items: center; transition: opacity var(--motion-fast) var(--motion-ease); }
+  .player-play-ico svg { width: 15px; height: 15px; }
+  .player-g-play svg { transform: translateX(1px); }   /* ▶ 视觉重心偏左,右挪 1px 才居中 */
+  .player-layer[data-playing] .player-play .player-g-play,
+  .player-layer:not([data-playing]) .player-play .player-g-pause { opacity: 0; }
+  /* 缓冲:播放钮里一圈细弧(不另加元素) */
+  .player-layer[data-buffering] .player-play::after {
+    content: '';
+    position: absolute;
+    inset: 4px;
+    border: 2px solid transparent;
+    border-top-color: var(--player-play-fg);
+    border-radius: var(--r-pill);
+    opacity: 0.7;
+    animation: player-spin 0.9s linear infinite;
+  }
+  @keyframes player-spin { to { transform: rotate(360deg); } }
+
+  /* 进度:细轨 + 已播段(transform: scaleX)+ 常显拖柄;时间黑体 tabular */
+  .player-seek { grid-area: seek; display: flex; align-items: center; gap: 4px; min-width: 0; }
+  .player-time { flex: none; min-width: 36px; color: var(--player-fg-2); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .player-cur { text-align: right; }
+  .player-track { position: relative; flex: 1; min-width: 48px; height: 28px; }
+  .player-track-in { position: absolute; inset: 0 6px; cursor: pointer; touch-action: none; }
+  /* 聚焦指示画在拖柄外圈,整块不再画矩形环 */
+  .player-track-in:focus-visible { outline: none; }
+  .player-rail {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 4px;
+    margin-top: -2px;
+    overflow: hidden;
+    border-radius: var(--r-pill);
+    background: var(--player-rail);
+  }
+  .player-fill { display: block; width: 100%; height: 100%; background: var(--player-fill); transform-origin: left; transform: scaleX(var(--player-p, 0)); }
+  .player-thumb {
+    position: absolute;
+    top: 50%;
+    left: calc(var(--player-p, 0) * 100%);
+    width: 12px;
+    height: 12px;
+    margin: -6px 0 0 -6px;
+    border-radius: var(--r-pill);
+    background: var(--player-fill);
+    box-shadow: 0 0 0 2px var(--player-bg);
+    transition: transform var(--motion-fast) var(--motion-ease), box-shadow var(--motion-fast) var(--motion-ease);
+  }
+  .player-track-in[data-dragging] .player-thumb { transform: scale(1.25); }
+  .player-track-in:focus-visible .player-thumb { transform: scale(1.25); box-shadow: 0 0 0 2px var(--player-bg), 0 0 0 4px var(--dorami-focus); }
+  /* 音频加载失败:进度位换成短词 + 重试(不展示内部原因);入口同时回到可点的「收听」 */
+  .player-layer[data-error] .player-seek { justify-content: center; gap: 8px; }
+  .player-error { min-width: 0; color: var(--player-fg); font-size: 12px; font-weight: 600; }
+  .player-retry {
+    flex: none;
+    height: 28px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: var(--r-pill);
+    background: var(--player-hover);
+    color: var(--player-fg);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  @media (hover: hover) {
+    .player-info:hover .player-title {
+      text-decoration: underline;
+      text-decoration-color: color-mix(in oklab, var(--player-fg) 30%, transparent);
+      text-underline-offset: 3px;
+    }
+    .player-btn:hover,
+    .player-retry:hover { background: var(--player-hover); color: var(--player-fg); }
+    .player-play:hover { background: var(--player-play-hover); }
+    .player-track-in:hover .player-thumb { transform: scale(1.25); }
+    .player-mini-art:hover .player-cover { filter: brightness(0.92); }
+  }
+
+  /* 窄容器(手机,< 640px):两行——上:封面 标题 ±15 播放;下:进度 倍速 缩小 关闭。
+     行距与底边各留 5px:两行控件的触控命中区(见下方「移动壳」一节,各 42px)正好首尾相接、都落在条内 */
+  @container player (max-width: 640px) {
+    .player-bar-in {
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas: "info ctrl" "row2 row2";
+      row-gap: 5px;
+      column-gap: 8px;
+      height: auto;
+      padding: 8px 8px 5px;
+    }
+    .player-row2 { grid-area: row2; display: flex; align-items: center; gap: 2px; min-width: 0; }
+    .player-seek { flex: 1; }
+    .player-art { width: 40px; height: 40px; }
+    .player-ctrl .player-btn { height: 40px; min-width: 40px; }
+    .player-play-ico,
+    .player-play-ico svg { width: 16px; height: 16px; }
+  }
+  /* 宽条三区(容器 ≥ 900px,只给桌面内容区浮层;移动壳再宽也走单行紧凑,命中区才放得下):
+     左 = 封面 + 标题(余量全给它);中 = 控制在上、进度在下,封顶 600px,中区严格落在条的中线上
+     (1920 宽也不会被拉空);右 = 倍速 / 缩小 / 关闭 */
+  @container player (min-width: 900px) {
+    .player-layer.is-desktop .player-bar-in {
+      grid-template-columns: minmax(0, 1fr) minmax(360px, 600px) minmax(0, 1fr);
+      grid-template-rows: auto auto;
+      grid-template-areas: "info ctrl tail" "info seek tail";
+      align-content: center;
+      column-gap: 28px;
+      row-gap: 0;
+      padding: 4px 14px 5px;
+    }
+    .player-layer.is-desktop .player-bar-in .player-ctrl { justify-self: center; align-self: end; }
+    .player-layer.is-desktop .player-bar-in .player-seek { align-self: start; }
+    .player-layer.is-desktop .player-bar-in .player-tail { justify-self: end; }
+    .player-layer.is-desktop .player-bar-in .player-art { width: 48px; height: 48px; }
+    .player-layer.is-desktop .player-bar-in .player-play { width: 36px; height: 36px; }
+    .player-layer.is-desktop .player-bar-in .player-track { height: 22px; }
+    .player-layer.is-desktop .player-bar-in .player-title { font-size: 13.5px; }
+  }
+
+  /* ── 迷你:右下角小胶囊 = 带进度环的封面(点开即展开)+ 播放 / 暂停 ── */
+  .player-mini {
+    right: 22px;
+    bottom: 22px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px;
+    border-radius: var(--r-pill);
+    box-shadow: var(--sh-3);
+  }
+  .player-mini-art {
+    position: relative;
+    z-index: 1;
+    display: block;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-pill);
+    background: transparent;
+    cursor: pointer;
+  }
+  .player-mini-art .player-art-slot { position: absolute; inset: 4px; width: auto; height: auto; }
+  .player-mini-art .player-cover { border-radius: var(--r-pill); }
+  .player-ring { position: absolute; inset: 0; width: 40px; height: 40px; transform: rotate(-90deg); }
+  .player-ring circle { fill: none; stroke-width: 2.5; }
+  .player-ring-track { stroke: var(--player-rail); }
+  .player-ring-fill { stroke: var(--player-fill); stroke-linecap: round; stroke-dasharray: calc(var(--player-p, 0) * 100) 100; }
+  .player-mini .player-play { z-index: 1; width: 40px; height: 40px; margin: 0; }
+
+  /* ── 形变层(WAAPI):底板 / 影子在条下面,内核 / 图标 / 副本在条上面 ── */
+  .player-fx > * { position: fixed; left: 0; top: 0; will-change: transform; }
+  .player-fx-box { display: block; }
+  .player-fx-plate { background-color: var(--player-bg); }
+  [data-theme="dark"] .player-fx-plate { box-shadow: inset 0 0 0 1px var(--dorami-card-bd); }
+  .player-fx-shadow { display: block; background: transparent; box-shadow: var(--sh-3); transform-origin: 0 0; }
+  .player-fx-core { background: var(--dorami-blue); }
+  .player-fx-core.is-tone { background: var(--player-play-bg); }
+  .player-fx-art { overflow: hidden; }
+  .player-fx-art .player-art-slot { width: 100%; height: 100%; }
+  .player-fx-art .player-cover { border-radius: 0; }
+  .player-fx-fly { display: block; transform-origin: 50% 50%; }
+  .player-fx-glyph { position: relative; display: block; width: 100%; height: 100%; color: #fff; }
+  .player-fx-glyph .player-g-pause,
+  .player-fx-glyph.is-tone { color: var(--player-play-fg); }
+  .player-fx-glyph > span { position: absolute; inset: 0; display: grid; place-items: center; }
+  .player-fx-glyph svg { display: block; width: 100%; height: 100%; }
+  .player-fx-glyph.is-tone.is-playing .player-g-play,
+  .player-fx-glyph.is-tone:not(.is-playing) .player-g-pause { opacity: 0; }
+  .player-fx-glyph.is-token { color: var(--dorami-accent); }
+  .player-fx-label { display: flex; align-items: center; box-sizing: border-box; color: #fff; white-space: nowrap; }
+  .player-fx-label .listen-len { color: inherit; opacity: 0.82; }
+  /* 副本的查询容器:固定在视口原点、与播放条容器同宽;副本在里面按视口坐标 translate */
+  .player-fx > .player-fx-cq { height: 0; container: player / inline-size; will-change: auto; }
+  .player-fx-cq > .player-fx-ghost { position: absolute; left: 0; top: 0; will-change: transform; }
+  .player-fx-ghost { display: grid; }
+  .player-fx-ticker { display: flex; overflow: hidden; }
+  .player-fx-ticker.player-info-slot { flex-direction: column; justify-content: center; }
+
+  /* ── 手机:列表页条在底部 Tab 栏之上,push 页贴安全区之上;推页时一起平移(transform,可合成) ── */
+  .player-layer.is-mobile { z-index: 45; left: 0; }   /* 正文页(40)之上;抽屉 50 / 设置柜 55 / 动作单 60 之下 */
+  .player-layer.is-mobile .player-dock { transition: transform var(--player-settle-dur, 420ms) var(--player-settle-ease, var(--motion-ease)); }
+  .player-layer.is-mobile[data-page="tabs"] .player-dock { transform: translateY(calc(-1 * var(--player-tabbar, 0px))); }
+  .player-layer.is-mobile .player-bar {
+    left: 8px;
+    right: 8px;
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    height: auto;
+    touch-action: none;   /* 往下拖缩小:手势归条,不滚页面 */
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
+  .player-layer.is-mobile .player-mini { right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); }
+  /* 移动壳(视口 ≤ 1024,触屏)的触控命中区,与容器宽度无关(容器查询只管排版):按钮宽 ≥ 40、播放钮 44;
+     其余控件命中区一律 42px 高、以控件中线为心(中心上下 20px 都落在控件上),只在条内、左右不外扩,不压相邻控件 */
+  .player-layer.is-mobile .player-bar-in .player-btn { min-width: 40px; }
+  .player-layer.is-mobile .player-bar-in .player-play { width: 44px; height: 44px; }
+  .player-layer.is-mobile .player-retry { position: relative; }
+  .player-layer.is-mobile .player-bar-in :is(.player-btn, .player-retry)::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    right: 0;
+    left: 0;
+    height: 42px;
+    margin-top: -21px;
+  }
+  .player-layer.is-mobile .player-track { height: 32px; }
+  .player-layer.is-mobile .player-track-in { top: 50%; bottom: auto; height: 42px; margin-top: -21px; }
+
+  /* ── 让位:各滚动区底部留出条的位置(宿主 .reader-ws 上的 data-player;容器侧用 max() 取较大者) ── */
+  .reader-ws.is-desktop[data-player="bar"] { --player-clear: calc(var(--player-bar-h, 72px) + 28px); --player-clear-end: var(--player-clear); }
+  .reader-ws.is-desktop[data-player="mini"] { --player-clear-end: 88px; }
+  .reader-ws.is-mobile[data-player="bar"] { --player-clear-end: calc(var(--player-bar-h, 94px) + 24px); }
+  .reader-ws.is-mobile[data-player="mini"] { --player-clear-end: 84px; }
+  /* 问哆啦美浮钮:条出现时让到条之上,迷你时让到迷你左边;落点压住静止指针时先不接指针事件 */
+  .reader-ws[data-fab-settling] .reader-ai-fab { pointer-events: none; }
+
+  /* Windows 高对比度:条与迷你加系统前景色边,播放钮加按钮文字色描边。强制色会把阴影置空、把自定义色压成
+     画布色:进度轨 / 已播段 / 拖柄(与迷你的进度环)改用系统色区分,滑块的聚焦从拖柄外圈的阴影改成系统色 outline */
+  @media (forced-colors: active) {
+    .player-bar,
+    .player-mini { border: 1px solid CanvasText; }
+    .player-play { border: 1px solid ButtonText; }
+    .player-rail { background: GrayText; }
+    .player-fill { background: Highlight; }
+    .player-thumb { background: CanvasText; }
+    .player-ring-track { stroke: GrayText; }
+    .player-ring-fill { stroke: Highlight; }
+    .player-track-in:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
+  }
+
+  /* 减少动效:形变由 JS 退化为直接出现 + 120ms 淡入;律动条 / 呼吸停在静止帧(不读 OS 查询,见 §7) */
+  :root[data-motion="reduce"] :is(.player-eq i, .player-spark.is-breathing, .player-play::after) { animation: none; }
+
 }
 
 /* ── Responsive ── */
@@ -11729,7 +11985,6 @@ input[type="radio"] {
 .reader-src-more { font-size: 12.5px; font-weight: 400; }
 .reader-load-more { font-size: 12px; font-weight: 400; }
 .reader-ai-summary-generate { font-size: 12px; font-weight: 600; }
-.reader-ai-listen-pill { font-size: 12px; font-weight: 600; line-height: 1; }
 /* 速读卡大数字的排印同样钉在未分层区(全局 button{font:inherit}(#184 已退役) 未分层,@layer 内恒败) */
 .reader-ai-score-btn {
   /* 分数身份数字(issue #184):自托管思源宋体的齐线数字,Mac / Windows 一致(Windows 上没有 Charter);
@@ -12202,6 +12457,7 @@ input[type="radio"] {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
+  padding-bottom: var(--player-clear-end, 0px);   /* 播放条出现时让位(issue #199) */
   background: var(--dorami-surface);
   container-type: inline-size;
 }
@@ -12904,23 +13160,7 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
   font-weight: 600;
 }
 
-.podcast-guide-button {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  border: 1px solid color-mix(in srgb, var(--dorami-accent) 30%, var(--dorami-border));
-  border-radius: 12px;
-  padding: 14px 16px;
-  color: var(--dorami-ink);
-  background: color-mix(in srgb, var(--dorami-accent) 8%, var(--dorami-surface));
-}
-
-.podcast-guide-button > span { display: flex; align-items: center; gap: 8px; }
-.podcast-guide-button small { color: var(--dorami-muted); font-weight: 400; }
-.podcast-guide-button .is-open { transform: rotate(180deg); }
-.podcast-guide-body { padding: 18px 4px 4px; }
+.podcast-guide-body { padding: 0 0 4px; }
 
 /* ══════════════════════════════════════════════════════════════════════
    兴趣即透镜(issue #27 第一波,四稿 docs/design/dorami-interest-lens-quiet.html → 五稿 dorami-interest-axis-quiet.html)
