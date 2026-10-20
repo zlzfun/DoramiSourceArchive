@@ -10,6 +10,7 @@
   这些 helper 不在测试 monkeypatch 名单内，动态调用安全。源目录元数据助手已在 api.sources。
 """
 
+import asyncio
 import datetime
 import hashlib
 import hmac
@@ -77,6 +78,7 @@ from services.article_display_tags import article_ids_for_flexible_label, load_d
 from services import daily_brief as daily_brief_service
 from services import reader_activity as reader_activity_service
 from services import reader_ai as reader_ai_service
+from services import translation_jobs
 from services import reader_ondemand as reader_ondemand_service
 from services import reader_search as reader_search_service
 from services import reader_interests as reader_interests_service
@@ -1692,7 +1694,7 @@ def _require_reader_ai(request: Request):
 _AI_ONDEMAND_DAILY_LIMIT = 5
 _AI_ONDEMAND_PURPOSES = frozenset({"podcast_ondemand", "article_ondemand"})
 _AI_DAILY_CALL_LIMITS = {
-    "translate": 50,
+    "translate": translation_jobs.DAILY_CALL_LIMIT,
     "ask": 100,
     "summarize": 50,
     # 池容量读取键；article_ondemand 走同一池，不单独加限额。
@@ -1723,6 +1725,13 @@ def _enforce_ai_daily_quota(username: str, purpose: str) -> None:
                 purpose_clause,
             )
         ).one()
+        if purpose == "translate":
+            from models.db import TranslationCallRecord
+            used += session.exec(select(func.count()).select_from(TranslationCallRecord).where(
+                TranslationCallRecord.day == today, TranslationCallRecord.username == username,
+                TranslationCallRecord.status.in_(("reserved", "unknown")),
+                TranslationCallRecord.recorded == False,  # noqa: E712
+            )).one()
     if int(used or 0) >= limit:
         raise HTTPException(status_code=429, detail="今日 AI 使用次数已达上限，请明日再试")
 
@@ -1754,6 +1763,11 @@ async def reader_ai_translate(params: ReaderTranslateParams, request: Request):
         _deny_hidden_source_article(session, request, article)
         _deny_unsubscribed_user_source_article(session, username, article)
         _deny_nonexportable_article(session, article)
+        # Compatibility for existing short-text callers; all reader UI requests
+        # use the durable endpoint. Long requests must never wait on a proxy.
+        background = article is not None and len(article.content or "") > reader_ai_service._TRANSLATE_SEGMENT_CHARS
+    if background:
+        return await reader_translation_start(params, request)
     try:
         result = await reader_ai_service.translate_article(
             db_sink, params.article_id, llm_config,
@@ -1767,6 +1781,41 @@ async def reader_ai_translate(params: ReaderTranslateParams, request: Request):
     with Session(db_sink.engine) as session:
         accounts_service.record_ai_usage(session, username, "translate")
     return {"status": "success", **result}
+
+
+async def _translation_call(fn, *args):
+    try:
+        return await asyncio.to_thread(fn, deps.get_db_sink().engine, *args)
+    except reader_ai_service.ReaderAIError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
+@router.post("/ai/translation-jobs")
+async def reader_translation_start(params: ReaderTranslateParams, request: Request):
+    username, _ = _require_reader_ai(request)
+    result = await _translation_call(translation_jobs.request, username, params.article_id)
+    return JSONResponse(result, status_code=200 if result["status"] == "succeeded" else 202)
+
+
+@router.get("/ai/translation-jobs")
+async def reader_translation_status(article_id: str, request: Request):
+    username, _ = _require_reader_ai(request)
+    return await _translation_call(translation_jobs.status, username, article_id)
+
+
+@router.post("/ai/translation-jobs/{job_id}/resume")
+async def reader_translation_resume(job_id: str, request: Request):
+    username, _ = _require_reader_ai(request)
+    result = await _translation_call(translation_jobs.resume, username, job_id)
+    return JSONResponse(result, status_code=200 if result["status"] == "succeeded" else 202)
+
+
+@router.post("/ai/translation-jobs/{job_id}/cancel")
+async def reader_translation_cancel(job_id: str, request: Request):
+    username = _app().current_username(request)
+    if not username:
+        raise HTTPException(status_code=401, detail="需要登录")
+    return await _translation_call(translation_jobs.cancel, username, job_id)
 
 
 @router.post("/ai/podcasts/{episode_id}/translate-transcript")

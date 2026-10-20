@@ -30,6 +30,7 @@ export default function ReaderWorkspace({ mobile, surfaceActive = true, ...props
     onDeepLinkConsumed,
     onBeforeOpenArticle: closePage,
     interestAxisEnabled: personalDigestEnabled,
+    aiEnabled: props.aiEnabled,
   });
   const tab = page || rs.mode;
   // 点播放条的标题 / 封面 = 打开正在播的那一期(切到所在容器,关掉早报 / 榜单 / 发现;手机即入栈正文页)

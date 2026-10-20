@@ -67,6 +67,7 @@ def record_usage(
     model: str,
     usage: Dict[str, Any],
     day: Optional[str] = None,
+    commit: bool = True,
 ) -> None:
     """把一次调用的 token 用量累加进当天聚合行（不存在则建）。
 
@@ -110,7 +111,8 @@ def record_usage(
         },
     )
     session.execute(stmt)
-    session.commit()
+    if commit:
+        session.commit()
 
 
 # by_day_user 的服务端系列上限（v3.43 审计 M16）：与前端图表调色板 6 彩色槽 +

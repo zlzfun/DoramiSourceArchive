@@ -50,11 +50,6 @@
 
 ## 排队中(用户拍板、未动工)
 
-- ☐ **[issue #202 长文翻译后台任务与分段续译](https://github.com/zlzfun/DoramiSourceArchive/issues/202)**:
-  从论文全文波 #41 / PR #201 拆出；本波先做结构化分段、完整性检查与 FTS 更新优化。
-  后续增加持久化检查点、进度/失败恢复、同输入去重、取消、预算预留与过期清理；
-  刷新或重启后仅重试未完成片段，全部片段验证通过才发布，自动论文分析仍只用摘要。
-
 - ☐ **issue #82 节点看护机制**(三层:判定升级 → 异常通知 → 自主自愈):第一层方案 `docs/node-watchdog-layer1-plan.md` R2 稿
   (2026-09-15 codex 检视一致;**2026-09-19 用户拍板「全按推荐」**,§5 七点定案;PR-0 已开工);落地拆 **PR-0 调度重载现役 bug 先修**(`load_tasks_to_scheduler` 全量 `remove_all_jobs()` 被采集任务 CRUD 调用,
   留存清理 / 远程同步 / 用户源刷新 / 播客 ASR worker 编辑一次任务即消失到重启)→ PR-A schema 与上报通道(判定 feature-gated 关)→ PR-B 开判定 → PR-C 收据对账 / Q1 / 日报运行表 / 看护页。
@@ -234,3 +229,5 @@
   只以 `articles` 判「有业务表」,不含 articles 的库会被当空库;改成多表判定即可,顺手时做。
   (同时指出的另一条——`ensure_migrated` 调单数 `get_current_revision()` 在多 head 库会抛——main 已在 `10f9d54 feat(storage): OSS 持久存储、自动缓存与备份及本地回退 (#109)` 改为
   `get_current_heads()`,2026-09-17 同步合入 #111 分支时确认关闭。)
+
+- **issue #202 后台翻译**：本波实现持久化分段续译、刷新/重启恢复、任务去重/取消、调用预留与清理；验证和检视见 [方案](./background-translation-plan.md)。

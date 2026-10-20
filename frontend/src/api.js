@@ -419,6 +419,19 @@ export function translateArticle(articleId) {
   return request('/reader/ai/translate', { method: 'POST', body: { article_id: articleId }, errorMsg: '翻译失败，请稍后重试' });
 }
 
+export function startTranslationJob(articleId) {
+  return request('/reader/ai/translation-jobs', { method: 'POST', body: { article_id: articleId }, errorMsg: '无法开始翻译' });
+}
+export function fetchTranslationJob(articleId) {
+  return request(`/reader/ai/translation-jobs?article_id=${enc(articleId)}`, { errorMsg: '无法读取翻译进度' });
+}
+export function resumeTranslationJob(jobId) {
+  return request(`/reader/ai/translation-jobs/${enc(jobId)}/resume`, { method: 'POST', errorMsg: '无法继续翻译' });
+}
+export function cancelTranslationJob(jobId) {
+  return request(`/reader/ai/translation-jobs/${enc(jobId)}/cancel`, { method: 'POST', errorMsg: '无法取消翻译' });
+}
+
 // 生成/读取文章的中文要点摘要(后端缓存于 extensions_json.summary_zh,幂等)
 export function summarizeArticle(articleId) {
   return request('/reader/ai/summarize', { method: 'POST', body: { article_id: articleId }, errorMsg: '摘要生成失败，请稍后重试' });

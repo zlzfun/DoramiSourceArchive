@@ -209,11 +209,13 @@ class TranslationPlan:
         return body
 
 
-def _protect(body: str) -> tuple[str, dict[str, str]]:
+def _protect(body: str, namespace: str | None = None) -> tuple[str, dict[str, str]]:
     if _TOKEN.search(body):
         raise TranslationStructureError("正文含翻译保留标记，无法安全处理")
     literals: dict[str, str] = {}
-    prefix = f"DORAMITR{uuid.uuid4().hex[:12]}X"
+    if namespace is not None and not re.fullmatch(r"[0-9a-f]{12}", namespace):
+        raise ValueError("invalid translation namespace")
+    prefix = f"DORAMITR{namespace or uuid.uuid4().hex[:12]}X"
 
     def save(value: str) -> str:
         token = f"{prefix}{len(literals)}Z"
@@ -323,11 +325,11 @@ def _split_line(line: str, limit: int) -> list[tuple[str, str]]:
     return pieces
 
 
-def plan_translation(body: str, *, segment_chars: int = 3500) -> TranslationPlan:
+def plan_translation(body: str, *, segment_chars: int = 3500, namespace: str | None = None) -> TranslationPlan:
     if segment_chars < 64:
         raise ValueError("segment_chars must be at least 64")
     body = body.replace("\r\n", "\n").replace("\r", "\n")
-    body, literals = _protect(strip_layout_markers(body).strip())
+    body, literals = _protect(strip_layout_markers(body).strip(), namespace)
     chunks: list[TranslationChunk] = []
     buffer, separator = "", ""
     # Blank lines, list item boundaries and table row boundaries are retained

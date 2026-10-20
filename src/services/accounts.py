@@ -616,7 +616,14 @@ def reader_ai_tokens_today(session: Session) -> int:
 def reader_ai_budget_exhausted(session: Session) -> bool:
     """全局日预算已配置且今日读者面 AI 消耗已达上限。"""
     budget = ai_daily_token_budget(session)
-    return bool(budget) and reader_ai_tokens_today(session) >= budget
+    if not budget:
+        return False
+    from models.db import TranslationCallRecord
+    held = session.exec(select(func.coalesce(func.sum(TranslationCallRecord.reserved_tokens), 0)).where(
+        TranslationCallRecord.day == datetime.date.today().isoformat(),
+        TranslationCallRecord.status.in_(("reserved", "unknown")),
+    )).one()
+    return reader_ai_tokens_today(session) + int(held or 0) >= budget
 
 
 # 删号计量墓碑前缀：用户名不允许含冒号（create_user 拒绝），墓碑名天然不与任何

@@ -122,7 +122,7 @@ def _ensure_articles_exportable(db_sink: Any, records: List[Any]) -> None:
 # ==================== 全文翻译 ====================
 async def _translate_title(
     title: str, llm_config: LLMConfig,
-    usage_meta: Optional[UsageMeta] = None, http_client=None,
+    usage_meta: Optional[UsageMeta] = None, http_client=None, *, max_retries: int = 3,
 ) -> str:
     raw = await chat_completion(
         messages=[
@@ -133,6 +133,7 @@ async def _translate_title(
         usage_meta=usage_meta,
         http_client=http_client,
         require_complete=True,
+        max_retries=max_retries,
     )
     # 只取首个非空行:模型偶尔会附一行说明,标题不该带它
     for line in (raw or "").splitlines():
@@ -144,7 +145,7 @@ async def _translate_title(
 
 async def _translate_segment(
     title: str, segment: str, llm_config: LLMConfig,
-    usage_meta: Optional[UsageMeta] = None, http_client=None,
+    usage_meta: Optional[UsageMeta] = None, http_client=None, *, max_retries: int = 3,
 ) -> str:
     units = translation_units(segment)
     if not units:
@@ -161,6 +162,7 @@ async def _translate_segment(
         http_client=http_client,
         require_complete=True,
         response_json=True,
+        max_retries=max_retries,
     )
     return restore_translation_units(segment, raw)
 

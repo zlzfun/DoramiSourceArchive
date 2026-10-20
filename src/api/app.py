@@ -580,6 +580,9 @@ async def lifespan(app: FastAPI):
     if not collector_on:
         print("⏸️ 当前 reader 运行角色不启动抓取调度（仅保留留存清理定时任务）。")
 
+    from services import translation_jobs
+    translation_worker = (asyncio.create_task(translation_jobs.worker_loop(db_sink.engine))
+                          if runtime_reader_enabled() else None)
     try:
         if mcp is not None:
             async with mcp.session_manager.run():
@@ -587,6 +590,9 @@ async def lifespan(app: FastAPI):
         else:
             yield
     finally:
+        if translation_worker is not None:
+            translation_worker.cancel()
+            await asyncio.gather(translation_worker, return_exceptions=True)
         _mcp_gate._app = None
         # AsyncIOScheduler binds to the current event loop. TestClient and clean
         # service restarts create a new loop, so never retain a running scheduler

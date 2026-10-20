@@ -19,7 +19,7 @@ import struct
 import time
 import zlib
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import httpx
@@ -34,6 +34,9 @@ class UsageMeta:
     """一次 LLM 调用的计量标签：用途 + 归属用户（系统任务用 None/"system"）。"""
     purpose: str  # translate / ask / daily_brief_editorial / daily_brief_dedup / daily_brief_reduce / article_analysis / source_config / detail_profile
     username: Optional[str] = None
+    # Durable jobs settle their own reservation atomically with metering.
+    # This per-call override must not change another concurrent caller's recorder.
+    recorder: Optional[Callable] = field(default=None, repr=False, compare=False)
 
 
 # 计量回调：fn(meta, usage_dict, model)。由上层（app.py）注册写库实现，
@@ -256,12 +259,18 @@ async def _chat_completion_on(
             continue
 
         if resp.status_code == 200:
+            # Even empty/truncated/malformed content may carry billable usage.
+            try:
+                data = resp.json()
+            except ValueError:
+                data = {}
+            usage = data.get("usage", {}) if isinstance(data, dict) else {}
+            _maybe_record_usage(usage_meta, usage if isinstance(usage, dict) else {}, config.model)
             content, usage, finish_reason = _extract_content_and_usage(resp)
             normalized_reason = finish_reason.strip().lower() if finish_reason is not None else None
             if normalized_reason == "length":
                 logger.warning("LLM 输出触及 max_tokens 上限被截断 [%s | %s]——考虑调大 max_tokens 或关闭思考模式",
                                config.base_url, config.model)
-            _maybe_record_usage(usage_meta, usage, config.model)
             if require_complete and normalized_reason != "stop":
                 logger.warning("LLM 完整输出检查失败 finish_reason=%r [%s | %s]",
                                finish_reason[:80] if finish_reason is not None else None,
@@ -330,6 +339,10 @@ def _maybe_record_usage(
 ) -> None:
     """把一次调用的 token 用量交给已注册的 recorder；计量绝不阻断主流程。"""
     recorder = _usage_recorder
+    if meta is not None and meta.recorder is not None:
+        # Failure here must stop publication; the durable hold remains unknown.
+        meta.recorder(meta, usage or {}, model)
+        return
     if meta is None or recorder is None:
         return
     try:

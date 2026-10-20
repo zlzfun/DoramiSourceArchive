@@ -1,3 +1,4 @@
+import TranslationProgress from './TranslationProgress';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Search,
@@ -437,6 +438,7 @@ export default function ReaderTab({
     shareOpen, setShareOpen,
     // AI(翻译 / 速读)
     showTranslation, translating, translatedBody, translatedTitle, activeIsChinese, handleTranslate,
+    translationJob, translationPollError, cancelTranslation,
     activeSummary, summarizing, handleSummarize,
     // 上下文菜单 items(桌面右键在此装配弹层)
     buildArticleMenuItems, buildSourceMenuItems, buildSocialMenuItems,
@@ -585,6 +587,8 @@ export default function ReaderTab({
       data-ai-translation-scope="article-body"
       lang={(showTranslation && translatedBody) ? undefined : latinLang(activeBody)}
     >
+      <TranslationProgress job={translationJob} pollingError={translationPollError}
+        onResume={handleTranslate} onCancel={cancelTranslation} />
       {activeBodyLoading ? (
         <PaneBodySkeleton />
       ) : (showTranslation && translatedBody) ? (

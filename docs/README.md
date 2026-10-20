@@ -10,6 +10,7 @@
 ## 顶层(活跃)
 
 - ◉ [paper-fulltext-plan.md](./paper-fulltext-plan.md) — **论文全文补全（issue #41）**：HF 摘要后补抓官方 arXiv HTML、数学与图表转换、摘要分析成本边界、持久任务/回填与真实样本验证。
+- ◉ [background-translation-plan.md](./background-translation-plan.md) — **后台翻译（#202）**：持久任务、分段检查点、进度恢复、租约去重、预算预留与容量边界。
 - ◇ [r1-translation-validation.md](./r1-translation-validation.md) — **R1 全文真实翻译（#204/#205）**：当前模型的耗时与 token、结构和语义检查、单元协议修复及质量边界。
 
 - ◉ [backend-stall-fix-plan.md](./backend-stall-fix-plan.md) — **生产间歇停顿修复（issue #194）**：逐字稿扫描投影、分析数据库线程隔离、复现证据与本地交叉检视。

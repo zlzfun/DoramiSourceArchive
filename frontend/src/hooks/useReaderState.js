@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useArticleTranslation } from './useArticleTranslation';
 import { looksChinese } from '../utils/readerText';
 import {
   Check,
@@ -51,7 +52,6 @@ import {
   fetchInterests,
   addFavorite,
   removeFavorite,
-  translateArticle,
   recordArticleRead,
   fetchUnreadCounts,
   markAllRead,
@@ -142,6 +142,7 @@ const hostOf = (url) => {
 export function useReaderState({
   showToast,
   account = null,
+  aiEnabled = false,
   // ── 站内分享深链(#/reader/a/{id}):带 id 进来时直接开这篇,消费后回调清空 ──
   initialArticleId = '',
   onDeepLinkConsumed,
@@ -288,11 +289,10 @@ export function useReaderState({
   const deepLinkKeepRef = useRef(false);               // 深链落地中:作用域清场保留右栏(见 useLayoutEffect)
 
   // ── 用户面 AI · 译为中文（问答浮层已抽到 ReaderAiPanel，自持其状态）──
-  const [showTranslation, setShowTranslation] = useState(false);  // 右栏是否展示译文
-  const [translating, setTranslating] = useState(false);
-  const [translatedBody, setTranslatedBody] = useState(null);
-  const [translatedTitle, setTranslatedTitle] = useState(null);  // v3.45:中文标题随译文一起
-  const translationCacheRef = useRef(new Map());                  // id → { body, title }
+  const {
+    showTranslation, translating, translatedBody, translatedTitle, handleTranslate,
+    translationJob, translationPollError, cancelTranslation,
+  } = useArticleTranslation(activeArticle?.id, aiEnabled, showToast);
 
   // ── 用户面 AI · 要点摘要(正文顶部「哆啦美速读」卡;缓存 id → 摘要)──
   const [activeSummary, setActiveSummary] = useState(null);
@@ -547,14 +547,6 @@ export function useReaderState({
         });
       }
     }
-    // 切文章即回到原文视图；译文若已缓存则备好，等用户主动点「译为中文」再显示。
-    setShowTranslation(false);
-    setTranslating(false);
-    {
-      const cachedTr = id ? translationCacheRef.current.get(id) : null;
-      setTranslatedBody(cachedTr?.body ?? null);
-      setTranslatedTitle(cachedTr?.title ?? null);
-    }
     // 摘要:会话缓存 → 列表条目自带的 summary_zh(服务端缓存)→ 空(显示生成入口)
     setSummarizing(false);
     setActiveSummary(id ? preferredAnalysisSummary(
@@ -636,33 +628,6 @@ export function useReaderState({
       return null;
     }
   }, []);
-
-  // ── AI · 一键译为中文（结果按 id 缓存，再次切回直接复用）──
-  const handleTranslate = useCallback(async () => {
-    const id = activeArticle?.id;
-    if (!id) return;
-    if (showTranslation) { setShowTranslation(false); return; }
-    const cached = translationCacheRef.current.get(id);
-    // 译名缺失(上次标题翻译失败,服务端 title=null 且未缓存)→ 不定格回退值,再调一次:
-    // 正文在服务端命中缓存,只补译标题(codex 检视:此前把回退当译名缓存,整会话不再重试)
-    if (cached && cached.title) { setTranslatedBody(cached.body); setTranslatedTitle(cached.title); setShowTranslation(true); return; }
-    if (cached) { setTranslatedBody(cached.body); setTranslatedTitle(null); setShowTranslation(true); }
-    setTranslating(true);
-    try {
-      const data = await translateArticle(id);
-      const entry = { body: data.translation, title: data.title || null };
-      translationCacheRef.current.set(id, entry);
-      if (activeIdRef.current === id) {
-        setTranslatedBody(entry.body);
-        setTranslatedTitle(entry.title);
-        setShowTranslation(true);
-      }
-    } catch (error) {
-      showToast(error.message || '翻译失败，请稍后重试', 'error');
-    } finally {
-      if (activeIdRef.current === id) setTranslating(false);
-    }
-  }, [activeArticle, showTranslation, showToast]);
 
   // ── 内容类型筛选(issue #178)──
   // 只在文章容器出现,单选。选中值绑定在「当时的作用域」上:切容器 / 源 / 轴 / 收藏 / 标签后
@@ -1616,6 +1581,7 @@ export function useReaderState({
     shareOpen, setShareOpen,
     // AI(翻译 / 速读)
     showTranslation, translating, translatedBody, translatedTitle, activeIsChinese, handleTranslate,
+    translationJob, translationPollError, cancelTranslation,
     activeSummary, summarizing, handleSummarize,
     // 上下文菜单 items(桌面右键 / 移动长按共用)
     isAdminSession, buildArticleMenuItems, buildSourceMenuItems, buildSocialMenuItems,
