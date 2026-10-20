@@ -1062,7 +1062,10 @@ def test_translate_title_shares_concurrency_semaphore(monkeypatch):
         return "译"
 
     monkeypatch.setattr(rai, "chat_completion", fake_chat_completion)
-    monkeypatch.setattr(rai, "_split_for_translation", lambda body, **kw: ["p1", "p2", "p3"])
+    from services.translation_markdown import TranslationChunk, TranslationPlan
+    monkeypatch.setattr(rai, "plan_translation", lambda body, **kw: TranslationPlan(
+        (TranslationChunk("p1"), TranslationChunk("p2", "\n\n"), TranslationChunk("p3", "\n\n")), {}
+    ))
     cfg = LLMConfig(base_url="https://llm.test/v1", api_key="sk", model="m", map_concurrency=1)
 
     result = asyncio.run(rai.translate_article(FakeSink(), "a1", cfg))

@@ -26,10 +26,12 @@ from config import LLMConfig
 from llm import prompts
 from llm.client import ChatMessage, UsageMeta, chat_completion, client_session
 from sqlmodel import Session
+from sqlalchemy import update
 
 from services import image_insights as image_insights_service
 from services import user_sources as user_sources_service
-from services.paper_content import strip_layout_markers
+from services.paper_content import paper_metadata, strip_layout_markers
+from services.translation_markdown import TranslationStructureError, plan_translation
 
 # 译文/摘要缓存在 ArticleRecord.extensions_json 下的键；只新增键，不触碰正文。
 TRANSLATION_KEY = "translation_zh"
@@ -38,6 +40,8 @@ SUMMARY_KEY = "summary_zh"
 # 防陈旧译文/速读。存量缓存无指纹——视为有效沿用(不作废、不返工),
 # 只在新一次生成时补写指纹。
 TRANSLATION_FP_KEY = "translation_zh_fp"
+TRANSLATION_VERSION_KEY = "translation_zh_version"
+TRANSLATION_VERSION = 2
 SUMMARY_FP_KEY = "summary_zh_fp"
 # 中文标题(v3.45):与正文译文同缓存于 extensions_json,指纹取标题自身——标题被权威
 # 刷新改写后失配即重译;存量只有正文译文的缓存命中时补译标题(一次小调用)。
@@ -114,30 +118,6 @@ def _ensure_articles_exportable(db_sink: Any, records: List[Any]) -> None:
 
 
 # ==================== 全文翻译 ====================
-def _split_for_translation(body: str, *, segment_chars: int = _TRANSLATE_SEGMENT_CHARS) -> List[str]:
-    """按段落边界把长正文切成若干段，每段尽量不超过 segment_chars。"""
-    body = strip_layout_markers(body).strip()
-    if len(body) <= segment_chars:
-        return [body]
-    segments: List[str] = []
-    buffer = ""
-    for para in body.split("\n\n"):
-        candidate = f"{buffer}\n\n{para}" if buffer else para
-        if len(candidate) <= segment_chars:
-            buffer = candidate
-            continue
-        if buffer:
-            segments.append(buffer)
-        # 单段落本身就超长：硬切。
-        while len(para) > segment_chars:
-            segments.append(para[:segment_chars])
-            para = para[segment_chars:]
-        buffer = para
-    if buffer:
-        segments.append(buffer)
-    return segments
-
-
 async def _translate_title(
     title: str, llm_config: LLMConfig,
     usage_meta: Optional[UsageMeta] = None, http_client=None,
@@ -150,6 +130,7 @@ async def _translate_title(
         config=llm_config,
         usage_meta=usage_meta,
         http_client=http_client,
+        require_complete=True,
     )
     # 只取首个非空行:模型偶尔会附一行说明,标题不该带它
     for line in (raw or "").splitlines():
@@ -171,8 +152,43 @@ async def _translate_segment(
         config=llm_config,
         usage_meta=usage_meta,
         http_client=http_client,
+        require_complete=True,
     )
-    return raw.strip()
+    return raw.strip("\r\n")
+
+
+async def _save_translation(db_sink, article_id: str, body: str, title: str, changes: dict) -> None:
+    """Merge cache fields without overwriting newer metadata or source text."""
+    engine = getattr(db_sink, "engine", None)
+    if engine is None:  # Small in-memory adapters used outside the HTTP stack.
+        latest = await db_sink.get(article_id)
+        if latest is None or (latest.content or "").strip() != body or (latest.title or "").strip() != title:
+            raise ReaderAIError("原文已更新，请重新翻译", status_code=409)
+        ext = _load_extensions(latest)
+        ext.update(changes)
+        await db_sink.update(article_id, {"extensions_json": json.dumps(ext, ensure_ascii=False)})
+        return
+
+    from models.db import ArticleRecord
+    with Session(engine) as session:
+        latest = session.get(ArticleRecord, article_id)
+        if latest is None or (latest.content or "").strip() != body or (latest.title or "").strip() != title:
+            raise ReaderAIError("原文已更新，请重新翻译", status_code=409)
+        ext = _load_extensions(latest)
+        ext.update(changes)
+        result = session.execute(
+            update(ArticleRecord).where(
+                ArticleRecord.id == article_id,
+                ArticleRecord.content == latest.content,
+                ArticleRecord.title == latest.title,
+                ArticleRecord.extensions_json == latest.extensions_json,
+            ).values(extensions_json=json.dumps(ext, ensure_ascii=False)),
+            execution_options={"synchronize_session": False},
+        )
+        if result.rowcount != 1:
+            session.rollback()
+            raise ReaderAIError("文章已更新，请重新翻译", status_code=409)
+        session.commit()
 
 
 async def translate_article(
@@ -208,6 +224,8 @@ async def translate_article(
     fingerprint = _body_fingerprint(body)
     title_fp = _body_fingerprint(title)
     body_cached = _cache_valid(ext, TRANSLATION_KEY, TRANSLATION_FP_KEY, fingerprint)
+    if paper_metadata(record).get("content_level") in {"fulltext", "partial"}:
+        body_cached = body_cached and ext.get(TRANSLATION_VERSION_KEY) == TRANSLATION_VERSION
     # 中文标题不送翻译:原样即译文(与前端「中文源不画翻译二段」同一启发式)
     title_needed = bool(title) and not looks_chinese(title)
     title_cached = (not title_needed) or _cache_valid(
@@ -219,12 +237,17 @@ async def translate_article(
             "title": ext[TRANSLATION_TITLE_KEY] if title_needed else title,
             "cached": True,
         }
-    if pre_llm_check is not None:
+    try:
+        plan = plan_translation(body, segment_chars=_TRANSLATE_SEGMENT_CHARS) if not body_cached else None
+    except TranslationStructureError as exc:
+        raise ReaderAIError(str(exc), status_code=422) from exc
+    chunks = plan.chunks if plan is not None else ()
+    needs_llm = not title_cached or any(chunk.needs_translation for chunk in chunks)
+    if needs_llm and pre_llm_check is not None:
         pre_llm_check()
 
     concurrency = max(1, getattr(llm_config, "map_concurrency", 4))
     semaphore = asyncio.Semaphore(concurrency)
-    segments = _split_for_translation(body) if not body_cached else []
 
     async def _title_safely(http_client) -> str:
         # 标题翻译失败不拖垮正文:不写缓存、响应 title=None,前端据此下次再补;
@@ -238,14 +261,25 @@ async def translate_article(
 
     # 正文分段与标题并发共享一个连接池,避免逐段重建连接/TLS 握手。
     async with client_session(llm_config) as http_client:
-        async def _guarded(seg: str) -> str:
+        async def _guarded(chunk) -> str:
+            if not chunk.needs_translation:
+                return chunk.text
             async with semaphore:
-                return await _translate_segment(title, seg, llm_config, usage_meta, http_client)
+                translated = await _translate_segment(title, chunk.text, llm_config, usage_meta, http_client)
+                return chunk.validate(translated)
 
-        jobs = [_guarded(seg) for seg in segments]
+        jobs = [asyncio.create_task(_guarded(chunk)) for chunk in chunks]
         if not title_cached:
-            jobs.append(_title_safely(http_client))
-        results = await asyncio.gather(*jobs)
+            jobs.append(asyncio.create_task(_title_safely(http_client)))
+        try:
+            results = await asyncio.gather(*jobs)
+        except BaseException as exc:
+            for job in jobs:
+                job.cancel()
+            await asyncio.gather(*jobs, return_exceptions=True)
+            if isinstance(exc, TranslationStructureError):
+                raise ReaderAIError(str(exc), status_code=502) from exc
+            raise
 
     translated_title = ""
     if not title_cached:
@@ -253,15 +287,23 @@ async def translate_article(
     if body_cached:
         translated = ext[TRANSLATION_KEY]
     else:
-        translated = "\n\n".join(p for p in results if p).strip()
+        try:
+            translated = plan.assemble(results)
+        except TranslationStructureError as exc:
+            raise ReaderAIError(str(exc), status_code=502) from exc
         if not translated:
             raise ReaderAIError("翻译失败，请稍后重试", status_code=502)
         ext[TRANSLATION_KEY] = translated
         ext[TRANSLATION_FP_KEY] = fingerprint
+        ext[TRANSLATION_VERSION_KEY] = TRANSLATION_VERSION
     if translated_title:
         ext[TRANSLATION_TITLE_KEY] = translated_title
         ext[TRANSLATION_TITLE_FP_KEY] = title_fp
-    await db_sink.update(article_id, {"extensions_json": json.dumps(ext, ensure_ascii=False)})
+    keys = (
+        TRANSLATION_KEY, TRANSLATION_FP_KEY, TRANSLATION_VERSION_KEY,
+        TRANSLATION_TITLE_KEY, TRANSLATION_TITLE_FP_KEY,
+    )
+    await _save_translation(db_sink, article_id, body, title, {key: ext[key] for key in keys if key in ext})
 
     if title_needed:
         # 译名不可得(本次失败)→ None:明确告诉前端「没有译名」,勿把原标题当译名缓存

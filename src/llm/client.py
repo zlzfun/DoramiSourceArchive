@@ -57,6 +57,10 @@ class LLMNotConfigured(LLMError):
     """大模型未配置（缺 base_url/api_key/model）。"""
 
 
+class LLMIncompleteOutput(LLMError):
+    """A translation must finish normally before it can be published/cached."""
+
+
 class LLMStructuredOutputError(LLMError):
     """模型返回的结构化文本无法解析为 JSON 对象。
 
@@ -160,6 +164,7 @@ async def chat_completion(
     max_retries: int = 3,
     usage_meta: Optional[UsageMeta] = None,
     http_client: Optional[httpx.AsyncClient] = None,
+    require_complete: bool = False,
 ) -> str:
     """调用 chat completions，返回 choices[0].message.content。
 
@@ -169,6 +174,8 @@ async def chat_completion(
       支持（返回 400），自动去掉该字段重试一次（degrade gracefully）。
     - usage_meta：提供时把响应里的 token usage 交给已注册的计量 recorder（可选、不阻断）。
     - http_client：可选的共享连接（见 client_session）；传入时本函数不负责其生命周期。
+    - require_complete：翻译等完整输出任务使用，仅接受 finish_reason=stop；
+      已返回的非空截断响应先计量再抛错，其它消费方默认保留旧行为。
     """
     if not config.configured:
         raise LLMNotConfigured("LLM 未配置（需 base_url / api_key / model）")
@@ -178,12 +185,14 @@ async def chat_completion(
             http_client, messages=messages, config=config, temperature=temperature,
             max_tokens=max_tokens, response_json=response_json,
             max_retries=max_retries, usage_meta=usage_meta,
+            require_complete=require_complete,
         )
     async with httpx.AsyncClient(timeout=config.timeout_seconds, follow_redirects=True) as client:
         return await _chat_completion_on(
             client, messages=messages, config=config, temperature=temperature,
             max_tokens=max_tokens, response_json=response_json,
             max_retries=max_retries, usage_meta=usage_meta,
+            require_complete=require_complete,
         )
 
 
@@ -197,6 +206,7 @@ async def _chat_completion_on(
     response_json: bool,
     max_retries: int,
     usage_meta: Optional[UsageMeta],
+    require_complete: bool = False,
 ) -> str:
     url = _endpoint(config)
     headers = {
@@ -247,10 +257,18 @@ async def _chat_completion_on(
 
         if resp.status_code == 200:
             content, usage, finish_reason = _extract_content_and_usage(resp)
-            if finish_reason == "length":
+            normalized_reason = finish_reason.strip().lower() if finish_reason is not None else None
+            if normalized_reason == "length":
                 logger.warning("LLM 输出触及 max_tokens 上限被截断 [%s | %s]——考虑调大 max_tokens 或关闭思考模式",
                                config.base_url, config.model)
             _maybe_record_usage(usage_meta, usage, config.model)
+            if require_complete and normalized_reason != "stop":
+                logger.warning("LLM 完整输出检查失败 finish_reason=%r [%s | %s]",
+                               finish_reason[:80] if finish_reason is not None else None,
+                               config.base_url, config.model)
+                raise LLMIncompleteOutput(
+                    "模型未确认完整输出，译文未保存；请缩短输入或调整模型输出上限后重试"
+                )
             return content
 
         body_preview = resp.text[:500]
