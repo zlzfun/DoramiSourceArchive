@@ -395,6 +395,19 @@ def test_quota_429_tells_the_client_when_it_resets(monkeypatch, tmp_path):
     assert calls == []
 
 
+def test_retry_after_is_bound_to_the_day_the_quota_was_judged():
+    """额度查询跨过零点:旧日的拒绝不能配上新一天的恢复时刻,恢复点已过给 1 秒(检视终审)。"""
+    import datetime
+
+    from api.routers.reader import _daily_reset_headers
+
+    old_day = datetime.date(2026, 10, 21)
+    just_after_midnight = datetime.datetime(2026, 10, 22, 0, 0, 0, 1000)
+    assert _daily_reset_headers(old_day, now=just_after_midnight) == {"Retry-After": "1"}
+    one_hour_before = datetime.datetime(2026, 10, 21, 23, 0, 0)
+    assert _daily_reset_headers(old_day, now=one_hour_before) == {"Retry-After": "3601"}
+
+
 # ── 失败不落缓存 ───────────────────────────────────────────
 
 def test_incomplete_or_malformed_output_is_not_cached(monkeypatch, tmp_path):
