@@ -19,7 +19,7 @@ import struct
 import time
 import zlib
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import httpx
@@ -34,6 +34,9 @@ class UsageMeta:
     """一次 LLM 调用的计量标签：用途 + 归属用户（系统任务用 None/"system"）。"""
     purpose: str  # translate / ask / daily_brief_editorial / daily_brief_dedup / daily_brief_reduce / article_analysis / source_config / detail_profile
     username: Optional[str] = None
+    # Durable jobs settle their own reservation atomically with metering.
+    # This per-call override must not change another concurrent caller's recorder.
+    recorder: Optional[Callable] = field(default=None, repr=False, compare=False)
 
 
 # 计量回调：fn(meta, usage_dict, model)。由上层（app.py）注册写库实现，
@@ -51,6 +54,16 @@ PING_MAX_TOKENS = 256
 
 class LLMError(Exception):
     """大模型调用或响应解析失败。"""
+
+
+class LLMHTTPError(LLMError):
+    """An explicit provider response, distinct from an ambiguous transport loss."""
+
+    def __init__(self, status_code: int, message: str):
+        super().__init__(message)
+        self.status_code = status_code
+        self.response_received = True
+        self.retryable = status_code in (408, 429) or status_code >= 500
 
 
 class LLMNotConfigured(LLMError):
@@ -256,12 +269,18 @@ async def _chat_completion_on(
             continue
 
         if resp.status_code == 200:
+            # Even empty/truncated/malformed content may carry billable usage.
+            try:
+                data = resp.json()
+            except ValueError:
+                data = {}
+            usage = data.get("usage", {}) if isinstance(data, dict) else {}
+            _maybe_record_usage(usage_meta, usage if isinstance(usage, dict) else {}, config.model)
             content, usage, finish_reason = _extract_content_and_usage(resp)
             normalized_reason = finish_reason.strip().lower() if finish_reason is not None else None
             if normalized_reason == "length":
                 logger.warning("LLM 输出触及 max_tokens 上限被截断 [%s | %s]——考虑调大 max_tokens 或关闭思考模式",
                                config.base_url, config.model)
-            _maybe_record_usage(usage_meta, usage, config.model)
             if require_complete and normalized_reason != "stop":
                 logger.warning("LLM 完整输出检查失败 finish_reason=%r [%s | %s]",
                                finish_reason[:80] if finish_reason is not None else None,
@@ -272,6 +291,17 @@ async def _chat_completion_on(
             return content
 
         body_preview = resp.text[:500]
+        # A provider may return usage even with an error. Durable callers must
+        # settle that receipt, then allocate a new hold for any subsequent call.
+        if usage_meta is not None and usage_meta.recorder is not None:
+            try:
+                error_data = resp.json()
+            except ValueError:
+                error_data = {}
+            error_usage = error_data.get("usage") if isinstance(error_data, dict) else None
+            if isinstance(error_usage, dict) and error_usage:
+                _maybe_record_usage(usage_meta, error_usage, config.model)
+                raise LLMHTTPError(resp.status_code, f"HTTP {resp.status_code}: {body_preview}")
         # response_format 不被支持时，去掉后重发一次(不计入重试次数)
         if resp.status_code == 400 and want_json:
             logger.info("端点疑似不支持 response_format，降级为普通模式重试 [%s | %s]",
@@ -289,7 +319,7 @@ async def _chat_completion_on(
             continue
 
         if resp.status_code == 429 or resp.status_code >= 500:
-            last_error = LLMError(f"HTTP {resp.status_code}: {body_preview}")
+            last_error = LLMHTTPError(resp.status_code, f"HTTP {resp.status_code}: {body_preview}")
             logger.warning("LLM 响应可重试 (%s/%s) HTTP %s [%s | %s]",
                            attempt, max_retries, resp.status_code, config.base_url, config.model)
             if attempt >= max_retries:
@@ -298,7 +328,7 @@ async def _chat_completion_on(
             continue
 
         # 其它 4xx：不重试
-        raise LLMError(f"LLM 调用失败 HTTP {resp.status_code}: {body_preview}")
+        raise LLMHTTPError(resp.status_code, f"LLM 调用失败 HTTP {resp.status_code}: {body_preview}")
 
 
 def _extract_content_and_usage(resp: httpx.Response) -> tuple[str, Dict[str, Any], Optional[str]]:
@@ -330,6 +360,10 @@ def _maybe_record_usage(
 ) -> None:
     """把一次调用的 token 用量交给已注册的 recorder；计量绝不阻断主流程。"""
     recorder = _usage_recorder
+    if meta is not None and meta.recorder is not None:
+        # Failure here must stop publication; the durable hold remains unknown.
+        meta.recorder(meta, usage or {}, model)
+        return
     if meta is None or recorder is None:
         return
     try:

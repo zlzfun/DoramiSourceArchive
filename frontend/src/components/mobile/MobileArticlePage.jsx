@@ -1,3 +1,4 @@
+import TranslationProgress from '../TranslationProgress';
 import {
   ChevronLeft,
   ExternalLink,
@@ -45,6 +46,7 @@ export default function MobileArticlePage({
     favoriteIds, favTogglingId, handleToggleFavorite,
     shareOpen, setShareOpen,
     showTranslation, translating, translatedBody, translatedTitle, activeIsChinese, handleTranslate,
+    translationJob, translationPollError, cancelTranslation, resumeTranslation,
     activeSummary, summarizing, handleSummarize,
     prevArticle, nextArticle, activeIndex, selectArticle, searchForTag,
     refreshActiveArticle,
@@ -63,6 +65,8 @@ export default function MobileArticlePage({
       data-ai-translation-scope="article-body"
       lang={(showTranslation && translatedBody) ? undefined : latinLang(activeBody)}
     >
+      <TranslationProgress job={translationJob} pollingError={translationPollError}
+        onResume={resumeTranslation} onCancel={cancelTranslation} />
       {activeBodyLoading ? (
         <PaneBodySkeleton />
       ) : (showTranslation && translatedBody) ? (

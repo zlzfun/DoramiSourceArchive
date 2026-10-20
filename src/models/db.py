@@ -108,6 +108,56 @@ class PaperFulltextJobRecord(SQLModel, table=True):
     updated_at: str
 
 
+class TranslationJobRecord(SQLModel, table=True):
+    """Reader-local durable translation; never part of Archive Sync."""
+    __tablename__ = "translation_jobs"
+    __table_args__ = (
+        CheckConstraint("status IN ('queued','running','succeeded','failed','cancelled','stale')",
+                        name="ck_translation_job_status"),
+        Index("ix_translation_jobs_due", "status", "retry_at"),
+    )
+    id: str = Field(primary_key=True)
+    input_key: str = Field(unique=True, index=True)
+    article_id: str = Field(foreign_key="articles.id", ondelete="CASCADE", index=True)
+    created_by: str
+    status: str = "queued"
+    total: int = 0
+    completed: int = 0
+    lease_token: str = ""
+    lease_until: float = 0
+    retry_at: float = 0
+    error: str = ""
+    created_at: float
+    updated_at: float
+
+
+class TranslationChunkRecord(SQLModel, table=True):
+    __tablename__ = "translation_chunks"
+    job_id: str = Field(primary_key=True, foreign_key="translation_jobs.id", ondelete="CASCADE")
+    ordinal: int = Field(primary_key=True)
+    text: str = ""
+    attempts: int = 0
+    size_bytes: int = 0
+
+
+class TranslationCallRecord(SQLModel, table=True):
+    """Per-dispatch quota hold. Unknown provider usage stays reserved that day."""
+    __tablename__ = "translation_calls"
+    __table_args__ = (
+        CheckConstraint("status IN ('reserved','settled','unknown','released')", name="ck_translation_call_status"),
+        Index("ix_translation_calls_budget", "day", "status"),
+    )
+    id: str = Field(primary_key=True)
+    # No FK: metering survives article/task deletion until the accounting TTL.
+    job_id: str = Field(index=True)
+    username: str
+    day: str
+    reserved_tokens: int
+    status: str = "reserved"
+    recorded: bool = False
+    created_at: float
+
+
 class DailyBriefCandidateRecord(SQLModel, table=True):
     """Node-local consumption ledger. Pending rows survive cursor advancement."""
     __tablename__ = "daily_brief_candidates"
