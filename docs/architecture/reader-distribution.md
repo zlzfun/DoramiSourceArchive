@@ -1,0 +1,12 @@
+# 读者订阅与交付(feed / MCP / 技能包)
+
+> 状态:耐久参考(快照 2026-10-21)。自 `CLAUDE.md`「Key Design Decisions」**原文迁出**(2026-10-21,文档整理波 issue #210),内容按域归档、未改写;现状以代码为准。本域不变量变化时更新对应节,并在 `docs/version-history.md` 记一行。
+> 相关:[`contracts/reader_subscription.md`](../contracts/reader_subscription.md) · [`contracts/feed_delivery.md`](../contracts/feed_delivery.md) · 端点清单 [`reference/endpoints.md`](../reference/endpoints.md)
+
+## Reader subscription & distribution layer
+
+Reader accounts build a personalized subscription scope over already-archived records (it never triggers fetching). One-click subscribe (`POST`/`DELETE /api/reader/sources/{source_id}/subscribe`) creates/removes a per-user, single-source `ReaderSubscriptionRecord` (owned via `owner_username`). "我订阅" = the union of `source_id`s across a user's active subscriptions; for a `user` account it hard-scopes that user's search/QA/MCP retrieval and is the scope of the 阅读器 (the user's primary surface — its 我的订阅 view aggregates subscribed sources via `GET /api/articles?subscribed_scope=only`). Downstream consumers pull via tokens (HMAC-SHA256, stored only as hashes): a per-subscription token (`dsub_`) or the per-user **aggregated feed token** (`dfeed_`, one row per user in `ReaderFeedTokenRecord`) used at `GET /api/public/feed/articles[.md]` — a single endpoint covering all the user's subscribed sources with publish-time/source/type filters. Full contract in `docs/contracts/reader_subscription.md`.
+
+## Downloadable Claude skill
+
+`src/api/skill_router.py` zips `src/skill_templates/dorami-daily-brief/` on the fly (templating `{BASE_URL}` into the live host) and serves it at `GET /api/skill/daily-brief`, so a user can install a ready-made Claude skill that talks to this deployment's feed/MCP endpoints.
