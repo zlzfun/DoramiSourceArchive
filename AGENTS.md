@@ -37,6 +37,8 @@ python3 scripts/check_docs.py             # 文档守卫(索引覆盖 / 断链 /
 10. **改「系统记录」的语义前先 grep 消费方**:日报记录的分析行被个人早报与 readiness 消费;给 Archive Sync 分析流加字段时 `archive_sync_v2.ANALYSIS_PAYLOAD_GENERATION` +1;`ScoredItem.to_reduce_dict` 字段被内网神灯流水线消费(只读 `extensions.items`)。
 11. **文档同波**:每波改 `docs/version-history.md`(年表加一行 + 详细一段)、`docs/backlog.md`(有意不做的遗留)、`docs/decisions.md`(拍板 / 不做 / 触发各一行);方案落地后 `git mv` 到 `docs/archive/` 并加归档注;新方案文件名 `docs/plans/issue-<N>-<slug>.md`。跑 `scripts/check_docs.py`。
 
+## 协作流程(分支 / 检视 / 合入;全文与「为什么」在 `docs/dev/workflow.md`)
+
 - **一波一分支**:`feat/issue-<n>-<slug>` 自最新 `origin/main` 拉出,在 worktree 里实现;主仓库不停在非 main 分支。
 - **检视是合入门禁,走本地协商式交叉检视**:PR 开出后不再在 GitHub `@codex`,默认由不同于实现方的模型检视:Codex 实现交给 Claude Code,Claude Code 实现交给 Codex。Herdr 环境可用时经 Herdr 调用,否则直接使用本机 CLI;在方案文档记录实际实现方、检视方与模型。
   收到意见先逐条表态(接受 / 分歧 + 论据),分歧点与检视方讨论到一致——**一致之前不改代码**;修复成批做完再请复检,
