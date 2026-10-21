@@ -305,6 +305,15 @@ docs-site/                     用户手册(VitePress),索引里有指针
 
 每个 PR 走既有闭环(Codex 本地协商检视 → 用户目检 → 放行合入);PR-2 / PR-3 因改动面大,检视只需核「搬迁是否原文、链接是否全通」。
 
+## 6.1 实施记录(2026-10-21)
+
+- 三个 PR 合并为**一个 PR、六个提交**(方案 → 结构迁移 → L0 瘦身 → 守卫与 CI → 记忆沉淀 → 标题修补),便于一次检视与一次验收;提交边界仍按原三组划分。
+- 结构迁移脚本 `git mv` 70 个文件;全仓 Markdown 相对链接按「文件旧位置解析 → 目标新位置 → 文件新位置重算」改写,代码 / 配置 / 工作流注释里的 `docs/...` 字串同步改写;`tests/fixtures/deploy_scripts_pre_issue_*` 冻结夹具回退不动。
+- CLAUDE.md 拆分脚本按 `**标题**` 段切分、按标题路由到 14 篇 architecture 文件(`**标题**` 提升为 `##`,仓根相对链接重算);机械核对旧 KDD 49 段每段正文前 120 字符都能在新文件找到(两处因链接文字随路径改写而未命中,人工确认在)。
+- 守卫脚本 5 项全绿;快测 69 通过;部署脚本两套测试 121 通过;docs-site 本地 `vitepress build` 通过。
+- 记忆迁移在本机完成(保留 11 / 缩短 12 / 删除 19,原文备份 `memory-backup-20261021.tar.gz`),个人技能三枚;与 §3.6 的差别:`netcheck-tool` 保留(文件按用户意图仍不入库),`intranet-nginx-proxy-temp` / `issue-126` / `issue-130` 原文并入个人技能 `dorami-intranet` 的 reference 而非删除。
+- 偏离方案处:`podcast-transcript-dedup.md` 归 `architecture/`(算法说明)而非归档;活跃方案在移动时同步改名为 `issue-<N>-<slug>`;AGENTS.md 实际 101 行 / 14 KB(远低于上限)。
+
 ## 7. 盘点脚本与风险
 
 - 盘点脚本(本会话 scratchpad `linkgraph.py`:git 跟踪 + 未跟踪 md 的出入链、断链、反引号路径核验)将收进 `scripts/check_docs.py`。
