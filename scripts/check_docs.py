@@ -31,6 +31,13 @@ PATH_RE = re.compile(
 # 真实配置文件按设计不入库;部署脚本的测试夹具是冻结副本
 PATH_WHITELIST = {"config/backend.ini", "config/production.ini"}
 SKIP_PATHS_MARKER = "<!-- check-docs: skip-paths -->"
+CODE_BLOCK_RE = re.compile(r"```.*?```", re.S)
+INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
+
+
+def strip_code(text: str) -> str:
+    """链接扫描前去掉围栏代码块与行内代码,避免把代码示例里的 `[t](p "title")` 当链接。"""
+    return INLINE_CODE_RE.sub("", CODE_BLOCK_RE.sub("", text))
 
 
 def tracked_files(root: str) -> set[str]:
@@ -46,17 +53,23 @@ def run(root: str) -> list[str]:
     # 每个 README 实际收录了什么:解析出的链接目标(归一化路径)+ 反引号整名(精确匹配,不做子串)
     def link_targets(path: str, text: str) -> set[str]:
         out = set()
-        for raw in [m.group(1) for m in LINK_RE.finditer(text)] + REF_DEF_RE.findall(text):
+        plain = strip_code(text)
+        for raw in [m.group(1) for m in LINK_RE.finditer(plain)] + REF_DEF_RE.findall(plain):
             if re.match(r"^(https?:|mailto:|#)", raw):
                 continue
             out.add(os.path.normpath(os.path.join(os.path.dirname(path), raw.split("#", 1)[0])))
+        # 反引号里带目录的路径:按 README 所在目录解析成完整路径(同时接受仓根相对写法)
+        for t in TICK_RE.findall(text):
+            if "/" in t:
+                out.add(os.path.normpath(os.path.join(os.path.dirname(path), t)))
+                out.add(os.path.normpath(t))
         return out
 
     readmes: dict[str, tuple[set[str], set[str]]] = {}
     for f in docs_md:
         if os.path.basename(f) == "README.md":
             text = open(os.path.join(root, f), encoding="utf-8").read()
-            readmes[f] = (link_targets(f, text), {os.path.basename(t) for t in TICK_RE.findall(text)})
+            readmes[f] = (link_targets(f, text), {t for t in TICK_RE.findall(text) if "/" not in t})
     # 1. 索引覆盖
     for f in docs_md:
         if os.path.basename(f) == "README.md" or f in ("docs/backlog.md", "docs/version-history.md", "docs/decisions.md"):
@@ -66,7 +79,8 @@ def run(root: str) -> list[str]:
         d = os.path.dirname(f)
         while d.startswith("docs"):
             idx = readmes.get(f"{d}/README.md")
-            if idx and (f in idx[0] or base in idx[1]):
+            # 链接 / 带目录的反引号按完整路径精确匹配;裸文件名的反引号只对 README 同目录下的文件生效
+            if idx and (f in idx[0] or (base in idx[1] and os.path.dirname(f) == d)):
                 covered = True
                 break
             d = os.path.dirname(d)
@@ -76,7 +90,8 @@ def run(root: str) -> list[str]:
     for f in sorted(x for x in files if x.endswith(".md") and not x.startswith(SKIP_PREFIXES) and "node_modules" not in x):
         text = open(os.path.join(root, f), encoding="utf-8", errors="replace").read()
         archived = f.startswith("docs/archive/")
-        for t in [m.group(1) for m in LINK_RE.finditer(text)] + REF_DEF_RE.findall(text):
+        plain = strip_code(text)
+        for t in [m.group(1) for m in LINK_RE.finditer(plain)] + REF_DEF_RE.findall(plain):
             if re.match(r"^(https?:|mailto:|#|/)", t) or t in ("url", "http(s", "…", "source_url"):
                 continue
             target = os.path.normpath(os.path.join(os.path.dirname(f), t.split("#", 1)[0]))

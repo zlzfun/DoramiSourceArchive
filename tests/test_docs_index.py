@@ -92,3 +92,25 @@ def test_link_guard_sees_titled_and_reference_links(tmp_path):
     assert any(e == "link: docs/a.md -> ./missing-1.md" for e in errors), errors
     assert any(e == "link: docs/b.md -> ./missing-2.md" for e in errors), errors
 
+
+def test_index_guard_bare_backtick_only_covers_same_directory(tmp_path):
+    """反向对照(codex 复检 R1-4):README 里裸文件名的反引号只算收录同目录文件,不算其它目录的同名文件。"""
+    check_docs = _load_check_docs()
+    root = _fake_repo(tmp_path, "- `x.md` 与 `a/y.md`\n", {"x.md": "# a\n", "b/x.md": "# b\n", "a/y.md": "# c\n", "b/y.md": "# d\n"})
+    errors = check_docs.run(root)
+    assert any(e.startswith("index: docs/b/x.md") for e in errors), errors
+    assert any(e.startswith("index: docs/b/y.md") for e in errors), errors
+    assert not any("docs/x.md" in e or "docs/a/y.md" in e for e in errors), errors
+
+
+def test_link_guard_ignores_code_examples(tmp_path):
+    """反向对照(codex 复检 R1-5):行内代码与围栏代码块里的链接语法不是链接,不得误报。"""
+    check_docs = _load_check_docs()
+    root = _fake_repo(
+        tmp_path,
+        "- [a.md](./a.md)\n",
+        {"a.md": '示例 `[t](p "title")` 与\n\n```md\n[x](./nope.md)\n[ref]: ./nope2.md\n```\n'},
+    )
+    errors = check_docs.run(root)
+    assert not any(e.startswith("link:") for e in errors), errors
+
