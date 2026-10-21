@@ -2,8 +2,8 @@
 """文档守卫(文档整理波 issue #210,docs/plans/issue-210-docs-tidy.md §3.4)。
 
 检查项:
-  1. 索引覆盖:docs/**/*.md 每篇被 docs/README.md 或所属目录(含上级,限 docs/ 内)的 README.md 提到;
-  2. 链接:Markdown 相对链接与反引号仓内路径指向存在的文件(归档目录只查链接不查反引号路径);
+  1. 索引覆盖:docs/**/*.md 每篇被 docs/README.md 或所属目录(含上级,限 docs/ 内)的 README.md 以链接或反引号整名收录(不认子串);
+  2. 链接:Markdown 相对链接(行内 / 带 title / 引用式定义)与反引号仓内路径指向存在的文件(归档目录只查链接不查反引号路径);
   3. 状态行:docs/{plans,architecture,dev,reference}/ 下的文档首 20 行须有 `> 状态:` 且用词表;
   4. L0 体量:AGENTS.md ≤ MAX_AGENTS_LINES 行且 ≤ 32 KiB;CLAUDE.md ≤ MAX_CLAUDE_LINES 行且含 `@AGENTS.md`;
   5. 文件名:docs/plans/*.md 形如 issue-<N>-<slug>.md。
@@ -20,7 +20,10 @@ STATUS_WORDS = ("进行中", "排队中", "已落地", "耐久参考", "归档")
 STATUS_DIRS = ("docs/plans/", "docs/architecture/", "docs/dev/", "docs/reference/")
 MAX_AGENTS_LINES, MAX_AGENTS_BYTES, MAX_CLAUDE_LINES = 220, 32 * 1024, 60
 SKIP_PREFIXES = ("docs-site/", "docs/pr-assets/", "docs/assets/", "src/skill_templates/")
-LINK_RE = re.compile(r"\]\(([^)\s]+)\)")
+# 行内链接:](path) / ](<path>) / ](path "title");引用式定义:[id]: path
+LINK_RE = re.compile(r"\]\(\s*<?([^)\s>]+)>?(?:\s+(?:\"[^\"]*\"|'[^']*'))?\s*\)")
+REF_DEF_RE = re.compile(r"^ {0,3}\[[^\]]+\]:\s*<?(\S+?)>?(?:\s+(?:\"[^\"]*\"|'[^']*'))?\s*$", re.M)
+TICK_RE = re.compile(r"`([A-Za-z0-9_./-]+\.(?:md|json|yaml|yml|html))`")
 PATH_RE = re.compile(
     r"`((?:docs|src|scripts|frontend|tests|alembic|docker|config)/[A-Za-z0-9_./-]+"
     r"\.(?:md|py|jsx|js|mjs|sh|ini|html|json|css|yml|toml))`"
@@ -40,7 +43,20 @@ def run(root: str) -> list[str]:
     files = tracked_files(root)
     exists = lambda p: p in files or os.path.isdir(os.path.join(root, p))  # noqa: E731
     docs_md = sorted(f for f in files if f.startswith("docs/") and f.endswith(".md") and not f.startswith(SKIP_PREFIXES))
-    readmes = {f: open(os.path.join(root, f), encoding="utf-8").read() for f in docs_md if os.path.basename(f) == "README.md"}
+    # 每个 README 实际收录了什么:解析出的链接目标(归一化路径)+ 反引号整名(精确匹配,不做子串)
+    def link_targets(path: str, text: str) -> set[str]:
+        out = set()
+        for raw in [m.group(1) for m in LINK_RE.finditer(text)] + REF_DEF_RE.findall(text):
+            if re.match(r"^(https?:|mailto:|#)", raw):
+                continue
+            out.add(os.path.normpath(os.path.join(os.path.dirname(path), raw.split("#", 1)[0])))
+        return out
+
+    readmes: dict[str, tuple[set[str], set[str]]] = {}
+    for f in docs_md:
+        if os.path.basename(f) == "README.md":
+            text = open(os.path.join(root, f), encoding="utf-8").read()
+            readmes[f] = (link_targets(f, text), {os.path.basename(t) for t in TICK_RE.findall(text)})
     # 1. 索引覆盖
     for f in docs_md:
         if os.path.basename(f) == "README.md" or f in ("docs/backlog.md", "docs/version-history.md", "docs/decisions.md"):
@@ -50,19 +66,18 @@ def run(root: str) -> list[str]:
         d = os.path.dirname(f)
         while d.startswith("docs"):
             idx = readmes.get(f"{d}/README.md")
-            if idx and (base in idx):
+            if idx and (f in idx[0] or base in idx[1]):
                 covered = True
                 break
             d = os.path.dirname(d)
         if not covered:
-            errors.append(f"index: {f} 未被 docs/README.md 或所属目录 README 收录")
+            errors.append(f"index: {f} 未被 docs/README.md 或所属目录 README 以链接 / 反引号整名收录")
     # 2. 链接与路径
     for f in sorted(x for x in files if x.endswith(".md") and not x.startswith(SKIP_PREFIXES) and "node_modules" not in x):
         text = open(os.path.join(root, f), encoding="utf-8", errors="replace").read()
         archived = f.startswith("docs/archive/")
-        for m in LINK_RE.finditer(text):
-            t = m.group(1)
-            if re.match(r"^(https?:|mailto:|#|<|/)", t) or t in ("url", "http(s", "…", "source_url"):
+        for t in [m.group(1) for m in LINK_RE.finditer(text)] + REF_DEF_RE.findall(text):
+            if re.match(r"^(https?:|mailto:|#|/)", t) or t in ("url", "http(s", "…", "source_url"):
                 continue
             target = os.path.normpath(os.path.join(os.path.dirname(f), t.split("#", 1)[0]))
             if not exists(target):

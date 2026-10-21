@@ -11,7 +11,7 @@
 
 ## 凭据与开销的管理面
 
-(v3.27 起分两半:**凭据编辑**收敛到 设置柜 → 凭据[见 *外部凭据统一保管层*],运维管理 → **内容**页保留**配额与开销观测面**[KPI 条+区头凭据 chip 回指],与媒体库并列——外部资源的开销,X 不是 AI 故不放 AI 页):`GET`/`POST /api/x-api/config` + `POST /api/x-api/config/test` 与 LLM 配置同构(`services/x_api_config.py`;token **只写不回显**,只返回 `bearer_token_set` + 掩码尾四位,响应与日志均无明文;`field_sources` 逐字段标出配置来源 `runtime_kv|env|ini|default`,因为凭据可能来自环境变量、此时运行时值不生效)。连通性自测走**最省钱探针**:优先重读已有游标对应的 Post,命中当日去重则 `$0`,否则约 $0.005;响应带 `estimated_cost_usd`/`deduplicated_today`,前端如实转述花费。`_resolve_user` 的 user_id 缓存(`AppSettingRecord` 键 `x_api_user_cache:<source_id>`)**主要服务只有 handle 的 config 源** —— 8 个 preset 已硬编码 user_id,本就不发 `by/username`(2026-07-20 一处误判的更正:实测 23 次 User 读取来自时间线响应的 `includes.users`,即顶层作者 + 引用/转推作者,那是渲染引用推卡的必需开销,省不掉)。**`max_results` 默认 25**:未使用的槽位不收费,调大只增加当次实际取回的内容、不增加参数本身成本,故它降低积压漏抓风险而不涨开销(残余边界:单次积压超 25 且不翻页仍可能漏)。
+(v3.27 起分两半:**凭据编辑**收敛到 设置柜 → 凭据[见 [外部凭据统一保管层](accounts-and-access.md)],运维管理 → **内容**页保留**配额与开销观测面**[KPI 条+区头凭据 chip 回指],与媒体库并列——外部资源的开销,X 不是 AI 故不放 AI 页):`GET`/`POST /api/x-api/config` + `POST /api/x-api/config/test` 与 LLM 配置同构(`services/x_api_config.py`;token **只写不回显**,只返回 `bearer_token_set` + 掩码尾四位,响应与日志均无明文;`field_sources` 逐字段标出配置来源 `runtime_kv|env|ini|default`,因为凭据可能来自环境变量、此时运行时值不生效)。连通性自测走**最省钱探针**:优先重读已有游标对应的 Post,命中当日去重则 `$0`,否则约 $0.005;响应带 `estimated_cost_usd`/`deduplicated_today`,前端如实转述花费。`_resolve_user` 的 user_id 缓存(`AppSettingRecord` 键 `x_api_user_cache:<source_id>`)**主要服务只有 handle 的 config 源** —— 8 个 preset 已硬编码 user_id,本就不发 `by/username`(2026-07-20 一处误判的更正:实测 23 次 User 读取来自时间线响应的 `includes.users`,即顶层作者 + 引用/转推作者,那是渲染引用推卡的必需开销,省不掉)。**`max_results` 默认 25**:未使用的槽位不收费,调大只增加当次实际取回的内容、不增加参数本身成本,故它降低积压漏抓风险而不涨开销(残余边界:单次积压超 25 且不翻页仍可能漏)。
 
 ## 作者头像
 

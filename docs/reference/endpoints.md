@@ -23,7 +23,7 @@
 **Import Bridge**
 - `POST /api/import/social-posts` — ingest external social posts (X/Twitter, etc.) as `social_post` content; idempotent by `source_id + post_id`
 
-**Archive Sync** (collector → reader, see *Archive Sync* above)
+**Archive Sync** (collector → reader, see [Archive Sync](../architecture/archive-sync.md))
 - `GET /api/archive/export/articles.jsonl` — collector exports archive records as JSON Lines
 - `POST /api/archive/import/articles.jsonl` — reader imports them (admin-only; no public fetch)
 
@@ -33,7 +33,7 @@
 - `GET /api/daily-brief/runs` — recent run history; `GET /api/daily-brief/progress` — live in-memory generation progress; `GET /api/daily-brief/pipeline` — stage/pipeline view
 - `GET /api/skill/daily-brief` — download the templated `dorami-daily-brief` Claude skill zip
 
-**Collection Jobs** (the single scheduling entity; see *Collection Jobs* above)
+**Collection Jobs** (the single scheduling entity; see [Collection Jobs](../architecture/jobs-and-scheduling.md))
 - `GET/POST/PUT/DELETE /api/collection-jobs` — savable, schedulable multi-node job CRUD
 - `POST /api/collection-jobs/{job_id}/run` — submit a background job (阶段3) that runs the collection job (still writes an aggregating `CollectionJobRunRecord`); returns `{status, job_id}`, poll `GET /api/jobs/{job_id}` for the aggregate (validation 404/400 stays synchronous)
 - `GET /api/collection-job-runs` + `GET /api/collection-job-runs/{job_run_id}` — job-level run history
@@ -82,7 +82,7 @@
 - `GET /api/reader/ai/ask/progress?ask_id=` — ask 阶段进度轮询(plan→search→select→answer,内存瞬时态,完成即清;阶段化等待态数据源)
 - `POST /api/reader/ai/podcasts/{episode_id}/ondemand`、`POST /api/reader/ai/articles/{article_id}/ondemand` — 读者点播精品导读 / 文章精简旁白，共用每日额度。总闸 `GET`/`POST /api/admin/reader-ondemand`（KV `reader_ondemand_enabled`，缺省开）在运维管理 → 内容；关闭只收读者入口并 403 新请求，已有音频与排队不动。能不能跑不由这个开关改：`/api/runtime` 的 `ondemand.podcast` / `ondemand.article` 还要求 LLM、TTS 和默认音色，播客侧另要求处理阶段授权。缺阶段时读者只看到「当前部署未开启播客点播」，缺什么列在管理面 `blockers`。
 
-**Media（图床）** (see *媒体库*)
+**Media（图床）** (see [媒体库](../architecture/media-and-storage.md))
 - `GET /api/media/proxy?url=` — 正文外链图片代理（reader surface）：命中本地缓存回文件（长缓存头），未命中即时下载入库，失败/停用 302 回源降级
 - `GET /api/admin/media/stats` — 缓存统计（按 URL 计数 / 内容去重文件数 / 落盘字节 / 失败数，admin）
 - `GET /api/admin/storage/status` — 图片/音频云端登记量、本地缓存和自动备份状态（admin；不返回存储凭据）
@@ -91,7 +91,7 @@
 - `POST /api/admin/media/articles/{id}/prefetch` — 单篇定点重抓（`force` 绕过失败退避冷却，admin）
 - `POST /api/admin/media/backfill` — 全量回填后台 job；**前端入口已撤**，保留作脚本化应急通道 (admin)
 
-**X 社交源**(admin-only,见 *社交媒体流*)
+**X 社交源**(admin-only,见 [社交媒体流](../architecture/social-x.md))
 - `GET`/`POST /api/x-api/config` — 读/写 Bearer Token 与采集参数(token 只写不回显;`field_sources` 标出逐字段来源)
 - `POST /api/x-api/config/test` — 连通性自测(最省钱探针,响应含本次 `estimated_cost_usd`/`deduplicated_today`)
 - `GET /api/x-api/quota` — 本月 X API 资源计数与估算成本 + `by_source` 按源分解(按量付费守卫读数)
@@ -115,7 +115,7 @@
 - `GET /api/admin/accounts?days=` — account list enriched with `subscription_count` + **窗口指标** (`reads`, `logins`, `ai_calls`/`ai_tokens` over the last `days`, `logged_in_window`) + 埋点 fields
 - `GET /api/admin/accounts/{username}/activity?days=` — per-reader activity detail: windowed AI usage (`ai_usage.summarize_user`) + reads (`reader_activity.summarize_user_reads`) + logins (`accounts.summarize_user_logins`: count/by_day/recent) + `source_engagement` (per-source reads ∪ favorites, friendly-named) + `favorites_total` + account/subscription snapshot
 - `GET /api/admin/ai-usage?days=` — AI usage dashboard (calls + tokens by 用途/用户/日期)
-- `GET /api/admin/audit-log?days=&limit=` — 管理操作审计(v3.19):中间件落行的管理写操作,按时间倒序(见 *Admin audit log*)
+- `GET /api/admin/audit-log?days=&limit=` — 管理操作审计(v3.19):中间件落行的管理写操作,按时间倒序(见 [Admin audit log](../architecture/accounts-and-access.md))
 - `GET`/`POST /api/admin/ai-beta/global` — read/set the AI Beta global master switch
 - `GET /api/admin/credentials` — 设置柜凭据区只读补充:部署级 env-only 机密的存在性(`github_token_set`,只回布尔绝不回值;LLM/X 状态走各自 config 端点)
 - `GET /api/admin/source-visibility` + `POST /api/admin/source-visibility/{source_id}` — 读者面源可见性(管理面隐藏节点):隐藏名单存 KV `reader_hidden_source_ids`(`services/source_visibility.py`,无新表),按 `source_id` 生效。语义=「读者面临时下架」(观察期故障/文章缺陷即时止损,不改代码)。**内容交付全量排除**:文章列表与单条详情(非 admin 会话)、收藏列表、聚合 feed(dfeed/dsub)、MCP/问答检索范围——范围收窄的单一咽喉是 `feed_service.resolve_subscribed_source_ids` 默认减隐藏(`include_hidden=True` 取原始并集,供目录/subscribe 响应/播种幂等判定)。**目录呈现分订阅态**(2026-07-27 拍板,替代初版「已订阅者也整体消失」——静默消失像数据丢失):未订阅者完全不可见(发现页不出现,新订阅 404);已订阅者源栏保留条目、`/api/reader/sources` 标 `hidden:true` → 前端灰显+「暂不可用」细签,点击短路成空态(不发列表请求,admin/读者同观感),读者可退订也可留着等恢复;既有订阅与归档原样保留、恢复即回归。admin 会话内容不受影响(知识台账/管理员令牌仍见全档)。开关在节点管理检视器(「在读者面隐藏」+ 节点卡「已隐藏」徽记),操作入审计

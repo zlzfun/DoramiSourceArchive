@@ -1,10 +1,9 @@
 # 波次史(version history,L1 活跃)
 
-> 本文是 `CLAUDE.md` `## Versioning` 节的详细记录,2026-09-15 整体迁出(CLAUDE.md 超 150k 字符上限,
-> 当时该节 64k 占全文四成)。**CLAUDE.md 的「波次年表」每波只留一行「现状是什么 / 落在哪」;
-> 每波的设计取舍、目检返修、codex 检视返修与被否方案写在这里。新波次的详细记录追加于本文,CLAUDE.md 年表只加一行。**
-> 版本机制(`src/version.py` 单一事实来源、`scripts/release.sh` 发版、两条部署脚本按 tag)见 CLAUDE.md *Versioning* 与
-> [`release-process.md`](./ops/release-process.md)。
+> 本文是波次史的**唯一**载体(2026-10-21 文档整理波 issue #210 起):顶部「年表」一行一波,其后每波一段详细记录(设计取舍、目检返修、检视返修、被否方案)。
+> 历史:2026-09-15 自当时的 `CLAUDE.md` `## Versioning` 节整体迁出;2026-10-21 年表也迁入本文,L0(`AGENTS.md` / `CLAUDE.md`)不再逐波改。
+> 版本机制(`src/version.py` 单一事实来源、`scripts/release.sh` 发版、两条部署脚本按 tag)见 `AGENTS.md` 硬规则 3 与
+> [`ops/release-process.md`](./ops/release-process.md)。
 >
 > 记录形态:第一节是 3.0–3.43 的连续叙事,第二节是补丁节点,第三节起是 v3.44 之后逐波一段——**按记录先后而非版本号排序**,
 > 标「版本号以实际发版为准」的段落是 tag 即发布(2026-09-14)后合入、尚未或刚刚发版的波次。

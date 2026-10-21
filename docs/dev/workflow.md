@@ -44,7 +44,7 @@
 
 ## 5. 提交
 
-- 显式列文件(永不 `git commit -a`,`uv.lock` 的镜像改写不带),中文 message,末尾 `Co-Authored-By: <实际模型> <noreply@anthropic.com>` 或等价署名;先不 push。
+- 显式列文件(永不 `git commit -a`);`uv.lock` 的本机镜像改写不带——没改依赖就 `git checkout -- uv.lock`,改了依赖 / 版本则按 [`dependencies.md`](./dependencies.md) 重解析后**必须**提交;中文 message,末尾 `Co-Authored-By: <实际模型> <noreply@anthropic.com>` 或等价署名;先不 push。
 - 主仓 stash 栈里用户的长期条目任何会话都不得 pop / drop。
 
 ## 6. 交叉检视(合入门禁)
@@ -75,6 +75,6 @@
 - 同步单向 main → master,按版本 tag 触发(`sync-master.yml`);冲突在 master worktree 手工 `git merge <tag>`,`docs/version-history.md` 整文件取 main;master 上的 `INTRANET_DELTA.md` 是差异面唯一权威登记簿,每次合并都要更新。
 - 迁移多头:下游带 `branch_labels` 的支线可长期并存,不做 alembic merge(守卫 `test_main_migration_chain_has_a_single_unlabeled_head`)。
 
-## 10. 纯文档改动的轻量路径(可选)
+## 10. 纯文档改动的轻量路径(用户 2026-09-15 指定的例外)
 
-2026-09-15 用户指定:纯文档 / 截图类改动可直接在 main 提交推送、不走 PR / CI——先 `gh issue create` 记背景,提交信息 `refs #N`,推送后 `gh issue close N --comment` 带提交号;只暂存目标文件。代码改动仍走分支 + PR + 检视。
+这是 §6–§7「PR + 检视 + 用户验收」通用门禁之外、由用户显式指定的例外,只适用于**纯文档 / 截图类**改动(不含 `.claude/`、CI、脚本等会改变 Agent 或流水线行为的文件):可直接在 main 提交推送、不走 PR / CI——先 `gh issue create` 记背景,提交信息 `refs #N`,推送后 `gh issue close N --comment` 带提交号;只暂存目标文件。代码改动仍走分支 + PR + 检视。

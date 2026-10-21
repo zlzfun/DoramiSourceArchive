@@ -39,3 +39,56 @@ def test_docs_guard_catches_broken_link(tmp_path):
     errors = check_docs.run(str(tmp_path))
     assert any(e.startswith("link: docs/a.md") for e in errors), errors
     assert not any(e.startswith("index:") for e in errors), errors
+
+
+def _fake_repo(tmp_path, readme: str, files: dict[str, str]):
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / "AGENTS.md").write_text("# x\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text("@AGENTS.md\n", encoding="utf-8")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "README.md").write_text(readme, encoding="utf-8")
+    for rel, body in files.items():
+        p = docs / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(body, encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    return str(tmp_path)
+
+
+def test_index_guard_rejects_substring_and_same_name(tmp_path):
+    """反向对照(codex R1-4):只提到 `foo-plan.md` 不算收录 `plan.md`;链到 a/x.md 不算收录 b/x.md;删掉索引行必须报错。"""
+    check_docs = _load_check_docs()
+    root = _fake_repo(
+        tmp_path,
+        "- [foo-plan.md](./foo-plan.md)\n- [x](./a/x.md)\n",
+        {"foo-plan.md": "# a\n", "plan.md": "# b\n", "a/x.md": "# c\n", "b/x.md": "# d\n"},
+    )
+    errors = check_docs.run(root)
+    assert any(e.startswith("index: docs/plan.md") for e in errors), errors
+    assert any(e.startswith("index: docs/b/x.md") for e in errors), errors
+    assert not any("docs/foo-plan.md" in e or "docs/a/x.md" in e for e in errors), errors
+
+
+def test_index_guard_accepts_backtick_whole_name_only(tmp_path):
+    check_docs = _load_check_docs()
+    root = _fake_repo(tmp_path, "| `x_sources.md` | 覆盖 |\n", {"x_sources.md": "# a\n", "sources.md": "# b\n"})
+    errors = check_docs.run(root)
+    assert not any("docs/x_sources.md" in e for e in errors), errors
+    assert any(e.startswith("index: docs/sources.md") for e in errors), errors
+
+
+def test_link_guard_sees_titled_and_reference_links(tmp_path):
+    """反向对照(codex R1-5):带 title 的行内链接与引用式定义都要查。"""
+    check_docs = _load_check_docs()
+    root = _fake_repo(
+        tmp_path,
+        "- [a.md](./a.md)\n- [b.md](./b.md)\n",
+        {"a.md": '[gone](./missing-1.md "说明")\n', "b.md": "[gone][ref]\n\n[ref]: ./missing-2.md\n"},
+    )
+    errors = check_docs.run(root)
+    assert any(e == "link: docs/a.md -> ./missing-1.md" for e in errors), errors
+    assert any(e == "link: docs/b.md -> ./missing-2.md" for e in errors), errors
+

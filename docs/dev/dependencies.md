@@ -18,4 +18,4 @@ uv sync    # dev 全量:uv sync --extra crawl4ai(浏览器详情后端)
 # Run the backend server (starts on http://127.0.0.1:8088, hot-reload enabled)
 ```
 
-补充(自自动记忆沉淀):本机 `uv run` / `uv sync` 会把 `uv.lock` 的 registry 改写成镜像源,**这份改写永不提交**,提交前 `git checkout -- uv.lock`;worktree 软链主仓 `.venv` 时别在 worktree 里跑带项目同步的 `uv run` / `uv sync`(它按 worktree 的锁改的是主仓 venv),一次性工具用 `uv run --no-project --with …`;`uv lock --offline` 会按本地缓存重解析(实测删掉一串包),别用它对齐版本号。
+补充(自自动记忆沉淀):本机 `uv run` / `uv sync` 会把 `uv.lock` 的 registry 改写成镜像源,**这份镜像改写永不提交**——**没改依赖**的 PR 提交前 `git checkout -- uv.lock` 把它还原;**改了依赖或开新开发版本(根包 version 行)时锁文件的合法变更必须提交**(按上面的 `env -u … uv lock` 流程重解析,守卫 `tests/test_uv_lock.py` 会拦镜像源);worktree 软链主仓 `.venv` 时别在 worktree 里跑带项目同步的 `uv run` / `uv sync`(它按 worktree 的锁改的是主仓 venv),一次性工具用 `uv run --no-project --with …`;`uv lock --offline` 会按本地缓存重解析(实测删掉一串包),别用它对齐版本号。
