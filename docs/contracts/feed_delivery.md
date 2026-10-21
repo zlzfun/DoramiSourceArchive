@@ -83,6 +83,12 @@ Returns the same filtered records as a Markdown batch. Each article is separated
 
 This endpoint is capped at 200 records per request to keep exported documents reasonably sized.
 
+## Known Consumers(已知下游消费方,改字段前先对照)
+
+- **内网「神灯瞭望台」日报流水线**(运维者个人电脑上的独立脚本,每日 08:55):经 `dfeed_` 令牌拉公共日报记录,**只消费 `metadata.extensions.items`**(日报 map 段产物:`title_cn` / `classification` / `source` / `realm` / `source_url` / `summary` / `comment` 等由 `ScoredItem.to_reduce_dict` 产出的键),不读 `content` 正文——所以日报 reduce / 渲染故障对它无感,而 `items` 字段改名或删除会直接打断它;`classification` 取值对它是冻结契约。日报故障排查须分段定位(items 与 content 可各自独立好坏)。
+- **IM 机器人 / Agent**:经 MCP 与 `dfeed_` 聚合 feed 消费,只依赖本契约的记录形状。
+- 译文缓存(`translation_zh` / `translation_zh_social`)随 `metadata.extensions` 外传,与归档同步同口径。
+
 ## Current Status
 
 - Uses the existing `articles` table only; no sync-state table has been added yet.

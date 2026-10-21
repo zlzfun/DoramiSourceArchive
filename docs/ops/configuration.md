@@ -398,6 +398,12 @@ vision_model =        ; 视觉模型(issue #69,可选):同端点同 api_key 下�
   三者(base_url+api_key+model)齐备才算已配置,前端各 AI 入口据此显隐。
 - 兼容 OpenAI/DeepSeek/Kimi/智谱/通义/火山方舟/OpenRouter/Ollama/vLLM 等任意 `/chat/completions` 端点。
 
+### 模型注意事项(DeepSeek,2026-09 实测;改主模型时先看)
+
+- `deepseek-flash`(V4.1-Flash,原生多模态:`image_url` 分片仅限 user 消息,base64 data URL 可用,单图封顶 1024 token)**默认开思考**——16 token 探针会被 reasoning 吃满、`finish_reason=length` 且 content 空;`deepseek-chat` 别名路由到同一模型却**默认不思考**。把主模型改成 `deepseek-flash` 时必须同时 `thinking_mode=disabled`(或按需 low / high)并把 `max_tokens` 提到 16384 量级,日报曾因思考吃满 8192 空产。
+- `deepseek-v4-pro` 不支持图片;旧名 `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` 已退役临时转发。`vision_model` 走 `LLMConfig.for_vision()` 显式关思考(见 `docs/architecture/llm-and-ai.md`)。
+- 连通探针 `/api/llm/config/test` 回 16 token 出 pong 即证非思考生效;`vision_model` 非空时附 `vision` 子结果。
+
 ## `[oss]`——图片与生成音频的持久对象
 
 默认关闭（两个 backend 均为 `local`），独立于 ASR 临时中转。启用前阅读
