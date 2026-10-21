@@ -29,3 +29,7 @@ daily-brief-*.md
 
 # macOS
 .DS_Store
+
+# 本地编辑器 / 浏览器工具的工作区文件(文档整理波 D7)
+docs/.obsidian/
+.playwright-cli/

@@ -6,6 +6,8 @@
 
 ## 进行中
 
+- ☐ **文档整理波**(分支 `feat/docs-tidy`,方案 `docs/docs-tidy-plan.md`,R1 待拍板 D1–D10):L0(CLAUDE.md 500 行)瘦身为 AGENTS.md 正文 + `@AGENTS.md`、
+  完结方案归档 + `architecture/ ops/ dev/ plans/` 分目录、`decisions.md`、守卫脚本、记忆 → 文档 / 技能迁移;拍板后按 PR-1 / PR-2 / PR-3 执行。
 - ☐ **issue #199 前端细项优化波**(分支 `feat/issue-199-frontend-polish`,记录见 `docs/version-history.md`):撤回源栏每源未读数、取缔条目未读小蓝点、播客区重设计为全局播放条(样页 `docs/design/podcast-player/`)三项已实现并经用户目检,待 Codex 本地检视 → PR 合入。
   遗留(本波有意不做):Windows 实机看一遍播放条(只做了理论判断);播客导读生成完成后入口要等约 30 秒的分析轮询才刷新;生产里封面代理 302 回源成跨域时回落中性底的路径未端到端;部分播客节目简介里链接文字独占一行——库里存的简介原文即如此断行,是抓取时 HTML 转文本的问题(Interconnects 等 Substack 源可见),与播放器无关。
 - ☐ **issue #178 内容分类与双评分**(方案 `docs/content-classification-plan.md`,样页 `docs/design/dorami-classification-scores-quiet.html`):

@@ -9,6 +9,7 @@
 
 ## 顶层(活跃)
 
+- ◉ [docs-tidy-plan.md](./docs-tidy-plan.md) — **文档整理方案(2026-10-21,R1 待拍板)**:全仓文档 + 自动记忆联合盘点;三层分发模型(L0 常驻 ≤ 200 行 / 路径规则 / 按需文档与技能)、CLAUDE.md 节级去向、28 篇完结方案归档、记忆 40 条逐条裁决、拍板项 D1–D10 与三个 PR 的执行清单。
 - ◉ [social-translate-plan.md](./social-translate-plan.md) — **社交流翻译（issue #84）**：推文卡片底栏「译为中文」、原文下追加译文、主推 + 引用推一次调用、`lang` 判定与缓存；X API 无翻译能力的核查结论。
 - ◉ [paper-fulltext-plan.md](./paper-fulltext-plan.md) — **论文全文补全（issue #41）**：HF 摘要后补抓官方 arXiv HTML、数学与图表转换、摘要分析成本边界、持久任务/回填与真实样本验证。
 - ◉ [background-translation-plan.md](./background-translation-plan.md) — **后台翻译（#202）**：持久任务、分段检查点、进度恢复、租约去重、预算预留与容量边界。
