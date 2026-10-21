@@ -119,7 +119,7 @@ Retrieval surfaces (the 阅读器's search, the QA assistant's subscription scop
 tokenized endpoints below) restrict a restricted `user` account to its subscribed sources —
 there is no whole-archive opt-out for that role. A `user` with no subscriptions gets an
 empty result. (v3.31 起检索为 SQLite FTS5 全文检索;向量/RAG 端点已退役,见
-`docs/rag-retirement-plan.md`。)
+`docs/archive/rag-retirement-plan.md`。)
 
 The same applies to MCP via token: `search_articles` / `browse_articles` accept a token
 (`dsub_` single subscription, or `dfeed_` the user's whole subscription union) that scopes

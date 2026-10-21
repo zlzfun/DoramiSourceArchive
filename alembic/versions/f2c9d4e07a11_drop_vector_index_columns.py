@@ -4,7 +4,7 @@ Revision ID: f2c9d4e07a11
 Revises: 9548caa15eea
 Create Date: 2026-08-12
 
-向量子系统退役（docs/rag-retirement-plan.md Wave B）：ArticleRecord 的两个
+向量子系统退役（docs/archive/rag-retirement-plan.md Wave B）：ArticleRecord 的两个
 向量索引状态列（布尔派生位 is_vectorized + 五态枚举 index_status）随之删除。
 生产/开发两侧该两列的值全部为 False/pending（RAG 从未运行），删列零信息损失。
 

@@ -105,7 +105,7 @@ function SourceCard({ source, subbed, pinning, query, showArticleChip, onSubscri
  * 未订阅的源同样可看——列表接口本就不按订阅收窄。目录数据全部来自
  * GET /api/reader/sources(count/last_fetched/subscriber_count)。
  *
- * 源合集(策展合集,docs/source-collections-wave-plan.md):头部「源 ⇄ 合集」二段
+ * 源合集(策展合集,docs/archive/source-collections-wave-plan.md):头部「源 ⇄ 合集」二段
  * seg 切换目录视图。合集=目录呈现层的批量动作而非订阅实体——合集卡上的订阅按钮
  * 三态(订阅全部/订阅其余 k 个/已全部订阅→退订),退订走两击确认(首点入 4s 待确认态,
  * 防呆同轨底退出;批量退订会退掉同属其它合集的源,title 如实列出成员)。

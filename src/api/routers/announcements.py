@@ -5,7 +5,7 @@
   dismiss 的公告;逐条 dismiss。
 
 content 为受限 markdown 子集(**加粗** 与 [文字](http(s)链接)),渲染端白名单解析。
-设计见 docs/engage-sync-wave-plan.md。
+设计见 docs/archive/engage-sync-wave-plan.md。
 """
 
 import importlib

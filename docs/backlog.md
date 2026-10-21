@@ -6,11 +6,14 @@
 
 ## 进行中
 
-- ☐ **文档整理波**(分支 `feat/docs-tidy`,方案 `docs/docs-tidy-plan.md`,R1 待拍板 D1–D10):L0(CLAUDE.md 500 行)瘦身为 AGENTS.md 正文 + `@AGENTS.md`、
-  完结方案归档 + `architecture/ ops/ dev/ plans/` 分目录、`decisions.md`、守卫脚本、记忆 → 文档 / 技能迁移;拍板后按 PR-1 / PR-2 / PR-3 执行。
+- ☐ **issue #210 文档整理波**(分支 `feat/issue-210-docs-tidy`,方案 `docs/plans/issue-210-docs-tidy.md`;2026-10-21 用户拍板 D1–D10 全按推荐):
+  L0 改为 `AGENTS.md` 正文 + `CLAUDE.md` `@AGENTS.md`;CLAUDE.md 的 Key Design Decisions / 目录树 / 端点 / 测试 / 迁移 / 配置 / 年表原文迁入 `docs/{architecture,reference,dev,ops}/` 与 version-history;
+  28 篇完结方案归档 + `specs/` `artifacts/` 归档 + 零引用样页归档;新建 `decisions.md`、`docs/dev/workflow.md` 等、四枚 `.claude/rules/`、三枚项目技能、守卫 `scripts/check_docs.py`。
+  待:Codex 本地检视 → 用户目检 → 合入;合入后本机记忆按方案 §3.6 迁移(保留 11 / 缩短 11 / 删除 18)、个人技能三枚;下一次 tag 同步 master 时在 master worktree 手工合并一次 rename 冲突。
+  有意不做:归档文档内容不改写(只加归档注);`docs/sources/` `contracts/` `frontend/` 的既有文档不补状态行(守卫只对 plans / architecture / dev / reference / ops 新文件强制);未跟踪的 `scripts/netcheck.*`(内网专属,归 master)与两页未立项样页不入库。
 - ☐ **issue #199 前端细项优化波**(分支 `feat/issue-199-frontend-polish`,记录见 `docs/version-history.md`):撤回源栏每源未读数、取缔条目未读小蓝点、播客区重设计为全局播放条(样页 `docs/design/podcast-player/`)三项已实现并经用户目检,待 Codex 本地检视 → PR 合入。
   遗留(本波有意不做):Windows 实机看一遍播放条(只做了理论判断);播客导读生成完成后入口要等约 30 秒的分析轮询才刷新;生产里封面代理 302 回源成跨域时回落中性底的路径未端到端;部分播客节目简介里链接文字独占一行——库里存的简介原文即如此断行,是抓取时 HTML 转文本的问题(Interconnects 等 Substack 源可见),与播放器无关。
-- ☐ **issue #178 内容分类与双评分**(方案 `docs/content-classification-plan.md`,样页 `docs/design/dorami-classification-scores-quiet.html`):
+- ☐ **issue #178 内容分类与双评分**(方案 `docs/plans/issue-178-content-classification.md`,样页 `docs/design/dorami-classification-scores-quiet.html`):
   第一波已合入(#180):内容类型 / 事件类型读取时推导 +「动态」并入「文章」+ 类型签 / 筛选带 / 紧凑行 + 词表收口。
   第一波补已合入(#181):`category` 拆出 `admission_status` 后退役、源级 `content_tags` 退役、条目标签不再拼入源级分类。
   第二波(分支 `feat/issue-178-content-value`,方案 §3):文章提示词 v7 产出内容价值与内容类型、评分卡新交互、回填「仅从未分析」
@@ -24,7 +27,7 @@
   feed / MCP 的内容价值字段(有下游需求再加);文档站「看版本更新」配图未重拍;早报页配图未重拍;「隐藏版本更新」的记忆选项。
   后续结构清理:`source_configs.category` / `content_tags_json` 两列已不读写,物理删除需重建表并重装归档同步触发器,攒到下次结构清理一并做;
   归档同步 sources 流的线路兼容键 `category`(由准入状态派生)在不再支持 issue #178 之前的旧版本对端后删除。
-- ☐ **issue #184 视觉精修波(含 #176)**(分支 `feat/issue-184-visual-refine`,方案 `docs/visual-refine-plan.md`):实现完成,
+- ☐ **issue #184 视觉精修波(含 #176)**(分支 `feat/issue-184-visual-refine`,方案 `docs/archive/visual-refine-plan.md`):实现完成,
   待 Codex 本地检视 → 用户 Mac 目检 → Windows 按 #176 矩阵实机验收(Win10 / 11 × Chrome / Edge × 100 / 125 / 150% × 亮 / 暗)→ 合入后关 #176。
   后续(本波有意不做):早报条目配图缩略图(早报接口要给首图与尺寸)、`text-autospace` 评估、尾区「阅读器按钮字号」并回层内、
   管理面死类清扫(`.field-box` / 来源目录族 / `.scope-toggle`)、e2e `mobile` 流程本机 `ERR_ABORTED` 基线问题(main 上同样失败)。
@@ -33,32 +36,37 @@
   「迁移 → 启动」顺序且中间无写入,所以会自愈,但只跑迁移不启动(运维脚本、离线升级)的库会缺触发器。疑点:重装语句所在的事务
   在 `transaction_per_migration=True` + 手动 `BEGIN IMMEDIATE` 下没有提交。
 
-- ☐ **issue #126 裸机部署回滚**(分支 `feat/issue-126-baremetal-rollback`,方案 `docs/baremetal-rollback-plan.md`;2026-09-21 用户拍板 §7 七项全按推荐后实现):
+- ☐ **issue #126 裸机部署回滚**(分支 `feat/issue-126-baremetal-rollback`,方案 `docs/archive/baremetal-rollback-plan.md`;2026-09-21 用户拍板 §7 七项全按推荐后实现):
   运行副本版本化 release 形态 + 事务阶段 + 两级健康门告警(不自动回滚)+ `--rollback`(DB 按迁移计划分流,`--restore-db` 显式恢复)+ 收养 + `--code` / `--status` / `--discard-txn`,
   `docker/requirements-crawl4ai.txt` extras 钉版,锁与 Docker 同一把;桩测试 `tests/test_deploy_baremetal.py`。待 codex 检视、用户本地(内网)实机验收:收养一次 → 部署新版 → 故意起不来的提交告警 → `--rollback` → 机器重启 resurrect 起当前 release → 带迁移版本回滚被拒 / `--restore-db`。
   观察期:内网 `--here` 场景的收养(旧 `/api/health` 须透出构建身份)、`[nginx] releases_dir` 是否需要(仓库在 /root 下时)。
-- ☐ **issue #74 个人早报三处**(分支 `feat/issue-74-brief-grid`,方案 `docs/personal-brief-grid-and-sections.md`):
+- ☐ **issue #74 个人早报三处**(分支 `feat/issue-74-brief-grid`,方案 `docs/archive/personal-brief-grid-and-sections.md`):
   公共日报剔出早报范围 + 板块固定顺序 / 板块内分数降序 + 分值驱动网格(策略 F,样页 `docs/design/dorami-brief-grid-quiet.html`)
   已实现;待用户本地验收与 codex 检视。观察期:T = 9.0 / Δ = 1.0 两个常量在生产分布下的通栏频率与 2 + 2 出现率。
-- ☐ **issue #69 图片理解波**(分支 `feat/issue-69-vision`,方案 `docs/image-understanding-wave-plan.md`):
+- ☐ **issue #69 图片理解波**(分支 `feat/issue-69-vision`,方案 `docs/archive/image-understanding-wave-plan.md`):
   首波已实现 `vision_model` 档位 + 配图识别并入分析 / 日报 / 问答;待用户本地验收与 codex 检视。
   展望(未动工):Archive Sync 加 `image_insights` 流(内网检索档 cached-only 拿不到说明)、阅读窗图片下「图片文字」
   可展开(读者面直接受益,含表格译文)、`ocr_text` 进 FTS(需评估索引噪声)、按源开关识图(推文截图多的源优先)。
 - ☐ **issue #33 个人早报产品优化波**(v3.50.x):§2 重大事件通道已落地(v3.50.0,方案
-  `docs/personal-brief-breaking-lane-plan.md`,观察期看实体目录覆盖/月均头条数/同实体抑制误伤);
-  §5 兴趣/订阅变更不触发重编已落地(v3.51.1,`docs/personal-brief-rebuild-entrypoints.md`);
-  §4 中文标题已落地(v3.52.1,`docs/personal-brief-title-localization.md`);
+  `docs/archive/personal-brief-breaking-lane-plan.md`,观察期看实体目录覆盖/月均头条数/同实体抑制误伤);
+  §5 兴趣/订阅变更不触发重编已落地(v3.51.1,`docs/archive/personal-brief-rebuild-entrypoints.md`);
+  §4 中文标题已落地(v3.52.1,`docs/archive/personal-brief-title-localization.md`);
   余下 §3 页面「个性化/智能化」(样页先行,把 §5 的过期提示行并入编排说明头)。
 
 ## 排队中(用户拍板、未动工)
 
-- ☐ **issue #82 节点看护机制**(三层:判定升级 → 异常通知 → 自主自愈):第一层方案 `docs/node-watchdog-layer1-plan.md` R2 稿
+- ☐ **issue #132 智能管家**(2026-09-24 用户确定 Clowder AI;[R1 设计方案](./plans/issue-132-intelligent-butler.md)):
+  Mac mini 常驻专职 agent;Dorami 现有 API / 日志 / 只读聚合 + 云监控 / X 余额直连;接入与日常运行不改 Dorami 后端。
+  首期 = 宿主与渠道接通 + 可核对日报 / 预警 / 投递及外部失联兜底;后续反馈归并 → beta 自愈 → 小 bug 修复 / 独立复核 / PR。已完成设计稿,尚未安装部署。
+- ☐ **issue #94 文章全局搜索**(2026-09-21 立项,复用旧 issue;worktree `feat/issue-94-global-search` 自 3b6e4b9):一稿样页 `dorami-search-scope-quiet.html`(未入库)与七条拍板项
+  (推荐二段「当前 | 全站」、不跨容器、后端零改动——`GET /api/articles?search=` 对读者会话传 `subscribed_scope=off` 已能取全站,缺口只在前端三处入口 `useReaderState.buildListFilters`)**待用户逐条拍板后再实现**。
+- ☐ **issue #82 节点看护机制**(三层:判定升级 → 异常通知 → 自主自愈):第一层方案 `docs/plans/issue-82-node-watchdog-layer1.md` R2 稿
   (2026-09-15 codex 检视一致;**2026-09-19 用户拍板「全按推荐」**,§5 七点定案;PR-0 已开工);落地拆 **PR-0 调度重载现役 bug 先修**(`load_tasks_to_scheduler` 全量 `remove_all_jobs()` 被采集任务 CRUD 调用,
   留存清理 / 远程同步 / 用户源刷新 / 播客 ASR worker 编辑一次任务即消失到重启)→ PR-A schema 与上报通道(判定 feature-gated 关)→ PR-B 开判定 → PR-C 收据对账 / Q1 / 日报运行表 / 看护页。
   第二层通道待拍板(SMTP / IM / Bark·ntfy / 站内告警条),凭据进 credentials 层;第三层与「系统自主化」大波次合并立项。
   L1 明确不做:持久时间改 UTC(独立波次)、interval 任务收据、`silent` 影响早报选篇。
 - ☐ **管理面看板余项**(issue #31,v3.55.0 只做了两点:用户明细仅根管理员 + 账户增长曲线,
-  方案 `docs/admin-root-admin-and-account-growth.md`):曲线上标注版本发布等关键节点(需启动时登记版本首见日期
+  方案 `docs/archive/admin-root-admin-and-account-growth.md`):曲线上标注版本发布等关键节点(需启动时登记版本首见日期
   或手工标注表)、文章量/采集量/分析量统一为「当前值 + 增长趋势 + 历史曲线」、根管理员转让/多根(升级为账户列)。
 - ☐ **文章分析 / Taxonomy / 个人早报首发后的规模化与二期边界**(PR #6 交叉检视中
   明确不阻断首发的余项):①读者 AI 预算从当前软闸升级为 DB 原子预留/核销/释放；
@@ -68,7 +76,7 @@
   evidence 做有界分页，且定向重标真正执行 `tag_ids` 范围；⑥含凭证自定 RSS 如需开放
   MaaS，先设计逐订阅者授权、撤回和费用归属（当前默认硬禁用）。
 
-- ☐ **管理面审计余项**(docs/admin-usability-audit.md,P0/账户 V2/列表规模化/数据生命周期
+- ☐ **管理面审计余项**(docs/archive/admin-usability-audit.md,P0/账户 V2/列表规模化/数据生命周期
   四波已收口,负责人拍板余项暂缓):M18(核心运维数据导出)、M20(批量开户/邀请流)、
   M24(移动管理,显式产品边界)、M25(FTS 大结果集,随语料量);
   另 v3.42 列表规模化波的刻意裁剪:反馈批量流转/负责人/优先级、FetchRunsTab 完全服务端分页
@@ -112,7 +120,7 @@
 
 - ◇ **鸿蒙原生应用套壳**（#85 用户确认的后续方向）：保留现有 Web 阅读器，以鸿蒙原生应用承载。
   本轮不设计桥接、打包或分发，也不将鸿蒙 PWA 安装作为 #85 验收要求。
-- ◇ **兴趣走出早报 · 后续波次**(issue #27 第一波 v3.52.0 已落地,方案 `docs/interest-lens-wave-plan.md`):
+- ◇ **兴趣走出早报 · 后续波次**(issue #27 第一波 v3.52.0 已落地,方案 `docs/archive/interest-lens-wave-plan.md`):
   已做=左栏一根轴(栏头「订阅 | 兴趣」互斥切换,其下列源或列关注标签,点行下钻;兴趣轴 = 全站)+ 列头收藏星
   + 命中胶囊 / 订阅外就地订阅 + 兴趣编辑面并入发现页第三段。**v3.56.0(2026-09-14)取消屏蔽**:兴趣只剩关注一极
   (折叠行 / 早报 mute 硬排除与打标等待 / 头条 mute 例外一并退役),「兴趣轴是否露屏蔽」随之消失。**待拍板**:
@@ -120,7 +128,7 @@
   发现页标签卡「主要来源」脚部(不带数字的桥,可选);兴趣渠道准入门槛是否再加
   新闻价值分下限(现只认主标签或相关度 ≥ 0.8);~~早报兴趣半是否取全站~~(v3.54.0 已做:「订阅 ∪ 兴趣」,
   订阅外门槛 6.0 / 每源硬上限 2 为管理面旋钮,**待生产数据回放校准**——观察订阅外命中占比 / 单源集中度 / 空报率,
-  见 `docs/personal-brief-interest-union.md`);~~feed / MCP 屏蔽~~(屏蔽已退役);
+  见 `docs/archive/personal-brief-interest-union.md`);~~feed / MCP 屏蔽~~(屏蔽已退役);
   问答先验;隐式建议关注(只建议不落库)。观察指标:设兴趣的用户占比 / 兴趣开关使用 / 早报兴趣命中率。
 - ◇ **文章分析拆两次调用「先打分再理解」**(v3.45.1 issue #13 评估后不做):打分也要读全文,
   两次调用 prompt 翻倍(dev 实测 prompt 均 2869 tokens 占大头),低分短路能省的 completion
@@ -143,10 +151,10 @@
   单 worker 前提)。
 - ◇ **社交流整流翻译开关**(issue #84 遗留,样页方案 C):社交流头部「原语言 | ✦ 中文」一键翻整屏。
   首版只做逐卡底栏入口;整流开关开着时每条可译推文进入视口就是一次调用,现行读者 `translate` 日额度 50 次撑不住,
-  要做先定批量合并(一次调用翻多条)或单独额度。见 `docs/social-translate-plan.md` §6。
+  要做先定批量合并(一次调用翻多条)或单独额度。见 `docs/archive/social-translate-plan.md` §6。
 - ◇ **跨容器去重**(X 社交波遗留):同一次发布 = 一条推 + 一篇 blog。
   首版不做;观察期用 `x_openai` 对照组量化与 `rss_openai_news` 的重复率后再定策略
-  (候选:复用日报的 `dedup_clusters`)。见 `docs/social-x-wave-plan.md` §1「重叠率备案」。
+  (候选:复用日报的 `dedup_clusters`)。见 `docs/archive/social-x-wave-plan.md` §1「重叠率备案」。
 - ◇ **X 第二批账号**(观察期后按数据决定):候补名单与不收理由见方案文档 §1。
   同脉络的旧待办「管理面账号池(凭据池/轮换/健康探测)」**已作废**——X 改按量付费后
   官方 API 路径不需要真实账号 Cookie,前提消失。
@@ -157,7 +165,7 @@
   含「沉浸阅读模式」——小视口(≤1280)正文行长不足的对症解,替代旧折叠把手方案(2026-07-20 评估结论)。
 - ~~◇ **F 语义搜索入阅读器**(RAG 检索接入用户面)~~ **已被取代**(2026-08-11):
   RAG 层审视后定向为「取缔向量 RAG,检索改 LLM 计划检索 + FTS」,见排队中条目与
-  `docs/rag-retirement-plan.md`。
+  `docs/archive/rag-retirement-plan.md`。
 - ◇ **Newsletter 三批候补**(见 `docs/archive/source-expansion-wave3-plan.md` 候补名单)。
 - ◇ **暗色 / 登录 / 动效三区扩审**(静默仪器重构收官时留下的截图立项项)。
 - ◇ **`button/input { font: inherit }` 未分层陷阱同法收口**(issue #108 聚焦环入 base 层后的遗留):`index.css` 顶部这条
@@ -178,7 +186,7 @@
 
 - **公共日报进入个人早报的专用投影**:目前订阅了公共日报的读者靠日报记录的通用文章分析行(候选查询内连接 + `DAILY_BRIEF_READY` 重编)把日报条目带进版面,所以日报记录必须被分析 worker 评一次分(首次尝试常瞬时失败、重试成功,每天多一次调用且分数无读者面语义)。若要停止分析日报,需要给早报候选查询、`_analysis_readiness` 与 `DAILY_BRIEF_READY` 判定做一条不依赖分析行的专用投影,并改写 `test_personal_brief_accepts_persisted_public_brief_without_source_state`。
 - **crawl4ai 主路的共用上下文**:dev 可选 extra 的 `Crawl4AIContentBackend` 复用单个 `AsyncWebCrawler`,是否同样撞上 openai.com「同一上下文第二次导航恒 403 挑战」未实测;生产未装 crawl4ai 故本波只修 Playwright 兜底。实测后若同病,让 OpenAI 详情绕过 crawl4ai 主路或逐篇新会话。
-- **OpenAI 摘要正文回填**:09-09 至修复上线期间入库的 ~18 篇 `rss_openai_news` 正文只有 RSS 摘要(`has_content=True`,不会自动重抓),需一次性重渲染回填脚本。**2026-09-15 回放补正**:退化自 07-15 起就存在(每次运行首篇过、其余被 CF 拦回退摘要,近 5 周 <400 字占比 64%),09-15 只回填了 09-09 起的 14 篇,7 月中至 9 月初的摘要正文仍待同一脚本回填(见 `docs/node-watchdog-layer1-plan.md` §2.5)。
+- **OpenAI 摘要正文回填**:09-09 至修复上线期间入库的 ~18 篇 `rss_openai_news` 正文只有 RSS 摘要(`has_content=True`,不会自动重抓),需一次性重渲染回填脚本。**2026-09-15 回放补正**:退化自 07-15 起就存在(每次运行首篇过、其余被 CF 拦回退摘要,近 5 周 <400 字占比 64%),09-15 只回填了 09-09 起的 14 篇,7 月中至 9 月初的摘要正文仍待同一脚本回填(见 `docs/plans/issue-82-node-watchdog-layer1.md` §2.5)。
 - **日报 `per_source_cap=5` 是软配额**:`select_top` 的 overflow 补位可再加同源条目,淡日单源可能超过 5 篇(The Decoder 入名单后更可能出现);若运营要硬上限需改 overflow 语义。
 
 ## 已完结(近期,留档索引;执行记录与更早波次见 `docs/archive/README.md`)
@@ -211,7 +219,7 @@
 - ☑ RAG 退役与问答检索重构(v3.30 检索扶正 + v3.31 退役清仓,2026-08-11/12):
   ask 订阅域改「LLM 计划检索 + FTS5」两段式、MCP 两工具同名换 FTS 芯;向量子系统
   (chromadb/extras/compose rag profile/双状态列/对账巡检/向量雷达)整体下架。
-  审视结论、两波清单与重新引入触发器见 `docs/rag-retirement-plan.md`。
+  审视结论、两波清单与重新引入触发器见 `docs/archive/rag-retirement-plan.md`。
 
 - ☑ 源扩容 wave4(v3.23.0):Microsoft AI 模型、Artificial Analysis、Meta AI 博客、
   Kimi Research、MiniMax Research、Import AI、Arena 排行榜更新 7 个 preset 全链路接入；
@@ -219,7 +227,7 @@
   `docs/sources/candidates/source_expansion_wave4_sources.md`。
 - ☑ X 社交波(v3.12.0):X API v2 官方按量付费采集 + 社交媒体第三容器(shape=social,SocialFlow 卡片流);
   6 个白名单账号 preset(全批 incubating;立项 8 个,7-21 压缩成本删 meta/openrouter)+ config 自助加号双路径;引用推/转推扁平化跨平台抽象、真实头像、
-  配额守卫与配置面板、零成本本地回填;取缔「今日」容器、隐藏通用源、社交收藏筛选。方案 `docs/social-x-wave-plan.md`。
+  配额守卫与配置面板、零成本本地回填;取缔「今日」容器、隐藏通用源、社交收藏筛选。方案 `docs/archive/social-x-wave-plan.md`。
 - ☑ 图床波(v3.11.0):媒体库——正文外链图本地缓存(懒代理 + 随文预取 + 媒体热点图/定点重抓),
   原链不改写、三层降级、防盗链 Referer 解;设计细节见 `CLAUDE.md`「媒体库」节。
 - ☑ 文档整理波(2026-07-20):归档已完结方案文档、建三层索引机制(CLAUDE/AGENTS → docs/README → 子 README)。
@@ -235,4 +243,4 @@
   (同时指出的另一条——`ensure_migrated` 调单数 `get_current_revision()` 在多 head 库会抛——main 已在 `10f9d54 feat(storage): OSS 持久存储、自动缓存与备份及本地回退 (#109)` 改为
   `get_current_heads()`,2026-09-17 同步合入 #111 分支时确认关闭。)
 
-- **issue #202 后台翻译**：本波实现持久化分段续译、刷新/重启恢复、任务去重/取消、调用预留与清理；验证和检视见 [方案](./background-translation-plan.md)。
+- **issue #202 后台翻译**：本波实现持久化分段续译、刷新/重启恢复、任务去重/取消、调用预留与清理；验证和检视见 [方案](./archive/background-translation-plan.md)。

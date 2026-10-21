@@ -5,7 +5,7 @@
 # ── 为什么部署要站到 tag 上(2026-09-14 拍板) ──
 # 此前两条脚本都部署「当前工作树」,生产跑的是哪个版本只能靠人记;两人并行开发后
 # main 上「已合入未发布」的提交会越攒越多,发不发全凭感觉。自此:
-#   · annotated tag `v{__version__}` 是唯一的发布单元(见 docs/release-process.md);
+#   · annotated tag `v{__version__}` 是唯一的发布单元(见 docs/ops/release-process.md);
 #   · 部署脚本先把工作树站到某个 tag 上再做后面的事——生产上跑的永远是一个有名字的版本;
 #   · 想部署未打 tag 的内容(开发机联调 / 应急热修)必须显式 `--here`,脚本会大声标注。
 #
@@ -26,7 +26,7 @@
 # (带 --here 与 DORAMI_DEPLOY_REEXEC=1),由新进程从头跑完整流程;HEAD 已在目标 tag 上时
 # 文件没变,无需重执行。
 
-# ── 部署协议版本(issue #102 自动部署,docs/auto-deploy-plan.md §4.4 / §4.5)──
+# ── 部署协议版本(issue #102 自动部署,docs/archive/auto-deploy-plan.md §4.4 / §4.5)──
 # 仓库外 worker(docker/dorami-deploy-worker.example)用 `git show <sha>:scripts/deploy-lib.sh | grep '^DORAMI_DEPLOY_PROTOCOL='`
 # 读取目标 tag 的协议号,没有宣告或高于它支持的版本一律拒绝经流水线部署(那些 tag 走手工路径)。
 # 协议 = worker ↔ 本脚本之间的契约:
@@ -37,7 +37,7 @@
 # 改任一契约即 bump 本号,并同步 worker 的 WORKER_MAX_PROTOCOL。
 DORAMI_DEPLOY_PROTOCOL=1
 
-# ── 裸机事务能力宣告(issue #126,docs/baremetal-rollback-plan.md §4.2)──
+# ── 裸机事务能力宣告(issue #126,docs/archive/baremetal-rollback-plan.md §4.2)──
 # 裸机 `./deploy.sh <tag>` 在 checkout **之前** `git show <tag>:scripts/deploy-lib.sh | grep '^DORAMI_BAREMETAL_TXN='`:
 # 目标 tag 的脚本没有这一行 = 它不认识 release 事务 / 回滚入口,一律拒绝以 tag 模式部署(exit 11),
 # 改用 `./deploy.sh --code <tag>` 由当前编排器部署那份代码。与 DORAMI_DEPLOY_PROTOCOL 正交(那是 Docker worker 的契约)。
@@ -89,7 +89,7 @@ acquire_deploy_lock() {
     fi
     mkdir -p "$(dirname "$lock_file")" 2>/dev/null || true
     # 锁目录不存在 / 不可写即失败并要求显式配置,不静默回退到别的路径:两条部署路径同机时必须是同一把锁,
-    # 各自回退会造出两把互不相知的锁(docs/baremetal-rollback-plan.md §4.2)。
+    # 各自回退会造出两把互不相知的锁(docs/archive/baremetal-rollback-plan.md §4.2)。
     exec 9>>"$lock_file" \
         || _deploy_lib_fail "打不开锁文件 $lock_file(目录不存在或不可写);请显式设置 DORAMI_DEPLOY_LOCK_FILE=<可写路径>,两条部署路径须指向同一个文件"
     _deploy_lib_flock 9 || _deploy_lib_fail_rc "${DORAMI_DEPLOY_LOCK_BUSY_RC:-1}" \
@@ -107,14 +107,14 @@ _deploy_lib_usage() {
   vX.Y.Z     部署指定版本,例如 ./${self} v3.55.0
   --here     部署当前工作树(不切换 tag;开发机联调 / 应急热修用,输出会标注非发布版)
 
-发布流程与回滚见 docs/release-process.md。
+发布流程与回滚见 docs/ops/release-process.md。
 EOF
 }
 
 _deploy_lib_fail() { echo "ERROR: $*" >&2; exit 1; }
 _deploy_lib_fail_rc() { local rc="$1"; shift; echo "ERROR: $*" >&2; exit "$rc"; }
 
-# ── /api/health 五项核对(两条路径共用;docs/baremetal-rollback-plan.md §4.9 / §4.14)──
+# ── /api/health 五项核对(两条路径共用;docs/archive/baremetal-rollback-plan.md §4.9 / §4.14)──
 # deploy_health_verdict <version> <ref> <sha>:stdin 为响应体,输出 `ok` / `mismatch k=v,…` / `bad-json`。
 deploy_health_verdict() {
     python3 -c '
@@ -328,7 +328,7 @@ resolve_deploy_ref() {
             || _deploy_lib_fail "tag 不存在: ${tag}(可用版本: $(git tag --list 'v*' --sort=-v:refname | head -5 | tr '\n' ' '))"
     else
         tag="$(git tag --list 'v*' --sort=-v:refname | head -1)"
-        [ -n "$tag" ] || _deploy_lib_fail "仓库里没有任何 v* tag——先按 docs/release-process.md 发一个版本,或用 --here 部署当前工作树"
+        [ -n "$tag" ] || _deploy_lib_fail "仓库里没有任何 v* tag——先按 docs/ops/release-process.md 发一个版本,或用 --here 部署当前工作树"
     fi
 
     # 入库文件不允许有手改:生产机上改过 deploy.sh / nginx 模板之类再切 tag 会撞冲突,
@@ -347,7 +347,7 @@ resolve_deploy_ref() {
     export DORAMI_BUILD_SHA="$tag_sha"
 
     # checkout 前钩子(裸机路径注入,Docker 路径不设):目标已确定、工作树尚未改动时做能力检查 / 未收口事务分派 /
-    # 收养等跨版本的事——它们必须在换掉脚本自身之前完成(docs/baremetal-rollback-plan.md §3.3 / §4.2)。
+    # 收养等跨版本的事——它们必须在换掉脚本自身之前完成(docs/archive/baremetal-rollback-plan.md §3.3 / §4.2)。
     if [ -n "${DORAMI_DEPLOY_PRE_EXEC_CHECK:-}" ]; then
         declare -F "$DORAMI_DEPLOY_PRE_EXEC_CHECK" >/dev/null \
             || _deploy_lib_fail "DORAMI_DEPLOY_PRE_EXEC_CHECK=$DORAMI_DEPLOY_PRE_EXEC_CHECK 不是已定义的函数"
@@ -424,7 +424,7 @@ deploy_state_dir() {
 
 # in-progress / last-success 引用的备份文件(绝对路径,一行一个)。分别读 Docker worker 的状态目录
 # (/etc/dorami-deploy.conf 的 STATE_DIR,`prev.db_backup`)与裸机事务的状态目录(`deploy-state/`,`db.snapshot` /
-# `db.rescue_snapshot`);缺哪个跳哪个,不早退(docs/baremetal-rollback-plan.md §4.14)。
+# `db.rescue_snapshot`);缺哪个跳哪个,不早退(docs/archive/baremetal-rollback-plan.md §4.14)。
 _deploy_lib_referenced_backups() {
     local worker_dir baremetal_dir
     worker_dir="$(deploy_state_dir)"

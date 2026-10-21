@@ -8,7 +8,7 @@ Papers enriched from arXiv HTML are delivered as their preserved abstract across
 JSON, Markdown, personalized Atom, MCP article/search/RAG tools, and public shares.
 Full-text translation/summary caches are omitted from delivery metadata. Authenticated
 reader views, administrator archive export, and authorized Archive Sync retain
-the full archived reading content. See `docs/paper-fulltext-plan.md` for scope.
+the full archived reading content. See `docs/plans/issue-41-paper-fulltext.md` for scope.
 
 Existing downstream jobs that already use `GET /api/articles` can continue doing so. The `/api/feed/*` endpoints are a cleaner recommended delivery contract for downstream consumers, not a forced migration path.
 

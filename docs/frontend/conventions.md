@@ -431,7 +431,7 @@
 
 ## 9. 暗色主题（已落地）
 
-暗色主题通过 `[data-theme=dark]`（挂在 `<html>`，由 `src/theme.js` 的主题控制器写入）实现，三态偏好
+暗色主题通过 `[data-theme=dark]`（挂在 `<html>`，由 `frontend/src/theme.js` 的主题控制器写入）实现，三态偏好
 （亮 / 暗 / 跟随系统）存 `localStorage('dorami-theme')`、跟随 `prefers-color-scheme`；入口在顶栏快捷图标
 与「设置 → 外观」。`index.html` 有防闪烁内联脚本（React 挂载前先打 `data-theme`）。落地分三层（全部集中在
 `index.css` 末尾的 `[data-theme=dark]` 段，零改动亮色）：

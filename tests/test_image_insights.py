@@ -1,7 +1,7 @@
 """图片理解波(issue #69):选图护栏 / 内容哈希去重 / 负缓存 / 预算 / 消费方接入。
 
 全程不打真网:媒体库经 httpx.MockTransport 供图,视觉调用打桩在 services.image_insights.chat_completion。
-方案见 docs/image-understanding-wave-plan.md §3。
+方案见 docs/archive/image-understanding-wave-plan.md §3。
 """
 
 from __future__ import annotations

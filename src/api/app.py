@@ -3850,7 +3850,7 @@ def ensure_default_subscriptions(username: str) -> None:
 # collector 网关仍由中间件统一强制（COLLECTOR_API_PREFIXES 含 /api/llm、/api/daily-brief）。
 
 
-# 向量化/RAG 端点已随 v3.31 退役清仓波整体移除（见 docs/rag-retirement-plan.md）。
+# 向量化/RAG 端点已随 v3.31 退役清仓波整体移除（见 docs/archive/rag-retirement-plan.md）。
 
 
 @app.get("/api/jobs/{job_id}")

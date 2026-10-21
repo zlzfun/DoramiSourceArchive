@@ -493,7 +493,7 @@ def unsubscribe_collection(
 
 
 # ==================== 用户自定源(v3.40) ====================
-# 读者自助添加私有 RSS 源;方案 docs/user-custom-rss-wave-plan.md。
+# 读者自助添加私有 RSS 源;方案 docs/archive/user-custom-rss-wave-plan.md。
 # 业务在 services/user_sources.py;此处只做门控/编排(订阅动作复用 app 既有助手)。
 
 

@@ -17,7 +17,7 @@
 日报对文章级分析是**软依赖**:分析 worker 跑完了就直接复用(省钱),没跑完或总闸关着
 就自己按同一把尺子补评——评分部分具备或完全不具备都能 work,两个子系统互不知晓。
 日报自己不再打分(历史 MAP 逐篇打分随本波退役),全站只有一把新闻价值尺子:
-llm/article_analysis_prompt.py。方案:docs/unified-news-scoring-plan.md。
+llm/article_analysis_prompt.py。方案:docs/archive/unified-news-scoring-plan.md。
 
 v3.34 起 reduce 不再是整篇 LLM 长输出:markdown 由代码从结构化条目排版,
 LLM 在汇编段只做「对照近几天日报条目标题判断 drop/接前报」的小 JSON 决策——

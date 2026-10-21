@@ -2,7 +2,7 @@
 
 视觉模型对文章配图的结构化文字说明,一行 = 一份图片字节(主键 content_hash 与
 media_assets 的内容去重单元同源)。无逐文章状态;失败行是带退避的负缓存。
-见 docs/image-understanding-wave-plan.md §1.3。
+见 docs/archive/image-understanding-wave-plan.md §1.3。
 
 Revision ID: df8f95fe0439
 Revises: c4d8e2f6a1b3

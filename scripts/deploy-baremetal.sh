@@ -1,5 +1,5 @@
 #!/bin/bash
-# 裸机部署的事务 / release / 回滚库(issue #126,docs/baremetal-rollback-plan.md)。
+# 裸机部署的事务 / release / 回滚库(issue #126,docs/archive/baremetal-rollback-plan.md)。
 # 只被 ./deploy.sh 与固化在 releases/<txn>/controller/ 里的 rollback.sh source,不直接执行。
 # 前置:调用方已 `set -euo pipefail`、已 source scripts/deploy-lib.sh;deploy.sh 已 cd 到仓库根,
 # controller 由 env.sh 给出 BM_REPO。裸机专属的参数、能力钩子与事务函数只在这里装配,Docker 路径不 source 本文件。
@@ -304,7 +304,7 @@ bm_controller_install() {  # release_dir
     cp "$BM_LIB_DIR/deploy-baremetal.sh" "$ctl/deploy-baremetal.sh"
     cat >"$ctl/rollback.sh" <<'EOF'
 #!/bin/bash
-# 固化的回滚执行体(docs/baremetal-rollback-plan.md §4.3):开事务时的 deploy-lib.sh / deploy-baremetal.sh 副本 + 本入口,
+# 固化的回滚执行体(docs/archive/baremetal-rollback-plan.md §4.3):开事务时的 deploy-lib.sh / deploy-baremetal.sh 副本 + 本入口,
 # 永远跑树外副本——旧版 deploy.sh 不认识参数也无妨,bash 边读边执行的坑也由此消失。由 deploy-state/rollback 分派进来。
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -340,7 +340,7 @@ bm_publish_entry() {
     local tmp="$BM_STATE_DIR/.tmp-rollback-$$"
     cat >"$tmp" <<EOF
 #!/bin/bash
-# dorami 裸机部署的稳定恢复入口(自动生成,勿手改;docs/baremetal-rollback-plan.md §4.2)。
+# dorami 裸机部署的稳定恢复入口(自动生成,勿手改;docs/archive/baremetal-rollback-plan.md §4.2)。
 # ./deploy.sh --rollback 只是转发到这里;分派规则:有未收口事务 → 进入该事务自己的固化执行体(adopt / rollback 续做,
 # deploy 则回滚);否则进入 last-success 的执行体;两者都没有(真首装 / 收养未开始)→ 拒绝。
 set -euo pipefail

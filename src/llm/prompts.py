@@ -533,7 +533,7 @@ def build_qa_user_prompt(
 
 
 # ==================== 阅读器 AI：订阅域检索(规划 + 选篇) ====================
-# v3.30 检索扶正波(docs/rag-retirement-plan.md §2):scope=subscription 问答的
+# v3.30 检索扶正波(docs/archive/rag-retirement-plan.md §2):scope=subscription 问答的
 # 两段式检索——先由 LLM 把自然语言问题规划成 FTS5 关键词查询,召回后再由 LLM 选篇。
 
 SEARCH_PLAN_SYSTEM_PROMPT = """你是一份 AI 资讯归档库的检索规划器。归档库支持关键词全文检索(标题+正文,中英文均可,子串匹配)。给你一个读者的自然语言问题,请把它规划成检索计划,并输出**纯 JSON 对象**(不要任何解释文字、不要代码围栏)。

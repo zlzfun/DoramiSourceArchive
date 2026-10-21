@@ -1,13 +1,13 @@
 #!/bin/bash
 # 裸机一键部署(两条官方部署路径之一):uv 装依赖 + PM2 托管后端 + 现场构建前端
-# + 生成并校验宿主 Nginx 站点配置(含 HTTPS 与 /mcp)。文档见 docs/deploy-baremetal.md。
+# + 生成并校验宿主 Nginx 站点配置(含 HTTPS 与 /mcp)。文档见 docs/ops/deploy-baremetal.md。
 #
 # 与 Docker 路径(./deploy-docker.sh)的分工:能装 Docker 就走 Docker(依赖锁定、
 # 环境固化、发布原子化);装不了 Docker 的机器走本脚本(宿主装 Python/Node/Nginx)。
 # 沿革:本路径曾于 v3.15.1 随生产切 Docker 退役删除,v3.39.0 因「公网机不便装
 # Docker」的真实场景扶正回归,并清理了当年的 RAG 形态判定(向量子系统已于 v3.31 退役)。
 #
-# issue #126(docs/baremetal-rollback-plan.md)「运行副本版本化」:每次部署生成不可变的 release
+# issue #126(docs/archive/baremetal-rollback-plan.md)「运行副本版本化」:每次部署生成不可变的 release
 # (代码副本 + 私有 venv 指针 + dist + nginx 配置集合 + 固化的回滚执行体),PM2 从 release 实路径启动;
 # 部署是**事务**(锁 → 只读预检 → 开事务 → 阶段落盘 → 两级健康门 → 晋升),健康门不通过只**告警**、不自动回滚;
 # `--rollback` 一键回到上次成功部署(不 checkout、不出网、不构建);`--status` 只读查看。
@@ -111,7 +111,7 @@ usage() {
 环境变量:DORAMI_DEPLOY_EXTRAS=crawl4ai(按 docker/requirements-<extra>.txt 钉版装 extras)、
   DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS(默认 180)、DORAMI_DEPLOY_STABLE_SECONDS(默认 10)、
   DORAMI_DEPLOY_LOCK_FILE(默认 /run/lock/dorami-deploy.lock,与 Docker 路径同一把)、DORAMI_DEPLOY_FRESH_OK=1(真首装授权)。
-方案 docs/baremetal-rollback-plan.md;发布流程 docs/release-process.md。
+方案 docs/archive/baremetal-rollback-plan.md;发布流程 docs/ops/release-process.md。
 EOF
 }
 
@@ -741,7 +741,7 @@ else
             bm_fresh_gate fresh
             deploy_json_set "$BM_IN_PROGRESS" capabilities.rollback "$BM_CAP_ROLLBACK" json || true ;;
         incompatible)
-            bm_fail "$BM_RC_STEP" "数据库与目标代码的迁移图不兼容(${PLAN_DETAIL});先按 docs/deploy-baremetal.md「回滚」恢复对应快照再重试" ;;
+            bm_fail "$BM_RC_STEP" "数据库与目标代码的迁移图不兼容(${PLAN_DETAIL});先按 docs/ops/deploy-baremetal.md「回滚」恢复对应快照再重试" ;;
         *)
             bm_fail "$BM_RC_STEP" "迁移计划失败:${PLAN_DETAIL}" ;;
     esac

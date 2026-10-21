@@ -1160,7 +1160,7 @@ def test_container_without_build_identity_makes_last_success_unverifiable(env: E
     assert "没有构建身份" in env.worker_log("v1.1.0")
 
 
-# ══════════════ issue #126 裸机回滚波的 Docker 等价守卫(docs/baremetal-rollback-plan.md §4.14 / §6.6)══════════════
+# ══════════════ issue #126 裸机回滚波的 Docker 等价守卫(docs/archive/baremetal-rollback-plan.md §4.14 / §6.6)══════════════
 
 def test_deploy_docker_default_health_budget_unchanged():
     """健康轮询抽到 deploy-lib 共用后,Docker 路径的默认预算仍是 180 s / 90 次,由本脚本传入(不在库里定默认)。"""

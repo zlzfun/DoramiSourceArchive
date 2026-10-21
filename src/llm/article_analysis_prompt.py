@@ -131,7 +131,7 @@ tag_candidates 元素形如 {"label":"...","proposed_kind":"topic",\
 
 NEWS_VALUE_ONLY_SYSTEM_PROMPT = _NEWS_VALUE_RULER + _GENRE_AND_TAGGING_RULES + _V6_OUTPUT_CONTRACT
 
-# 内容价值尺子(issue #178 第二波,2026-10-12 拍板;docs/content-classification-plan.md §3.2)。
+# 内容价值尺子(issue #178 第二波,2026-10-12 拍板;docs/plans/issue-178-content-classification.md §3.2)。
 # 只进文章提示词;播客的现有分数在读取时投影为内容价值,提示词拆分随 #97 播客黄金集放第三波。
 CONTENT_VALUE_RULER_PROMPT = """\
 【内容价值】content_value 是第二个分，与新闻价值相互独立，衡量「这篇值不值得 AI 从业者花时间读完或听完」：

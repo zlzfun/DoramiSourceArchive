@@ -1049,7 +1049,7 @@ export function useReaderState({
     }
   };
 
-  // ── 合集批量订阅/退订(批量动作,非持久绑定;见 docs/source-collections-wave-plan.md)──
+  // ── 合集批量订阅/退订(批量动作,非持久绑定;见 docs/archive/source-collections-wave-plan.md)──
   // 批量结果不做逐源乐观调整(涉及多源订阅人数),直接重拉源目录校准订阅态与计数。
   const handleSubscribeCollection = async (collection) => {
     setCollectionPinningId(collection.collection_id);

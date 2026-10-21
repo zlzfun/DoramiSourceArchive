@@ -2,7 +2,7 @@
 # 发版:在 main 上 bump 版本号 → 提交 → 打 annotated tag → 推送。tag 一推,
 # GitHub Actions 自动建 Release(release.yml)、把版本节点同步到内网 master(sync-master.yml),并串联 deploy.yml
 # 经 Environment production 批准后自动部署到生产(issue #102);裸机 ./deploy.sh 与手工 ./deploy-docker.sh 仍可兜底。
-# 流程全文见 docs/release-process.md,流水线见 docs/auto-deploy-plan.md。
+# 流程全文见 docs/ops/release-process.md,流水线见 docs/archive/auto-deploy-plan.md。
 #
 # 用法:scripts/release.sh <X.Y.Z> [-m "一句话说明"] [--no-push] [--yes]
 #   X.Y.Z      新版本号(SemVer:MINOR=功能波 / PATCH=修复;必须大于最近的 tag)

@@ -7,7 +7,7 @@
 - `/api/runtime` 透出 version,前端「设置 → 关于」展示;
 - 每个新开发波次从最新正式 tag 派生下一个版本并使用 `-alpha` 后缀；正式发布时
   scripts/release.sh 去掉后缀并打 annotated tag。annotated git tag `v{__version__}`
-  仍是唯一的正式发布单元,部署脚本按 tag 部署(docs/release-process.md)。
+  仍是唯一的正式发布单元,部署脚本按 tag 部署(docs/ops/release-process.md)。
 
 纪元回溯:1.x = 采集/归档 CMS 原型(单管理员);2.x = 读者分发平台
 (双角色/订阅/RAG/日报/运维,PM2 app 名 dorami-backend-v2 即此纪元遗痕);
