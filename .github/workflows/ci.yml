@@ -1,7 +1,7 @@
 # 合入门禁:PR 与 main 上的每次 push 都跑后端测试 + 前端 lint/build。
 # 「tag 即发布」的前提是「合入 main 的东西已经过了测试」——发版只是给 main 上某个提交起名,
 # 不再做验证;所以验证必须前移到这里。分支保护里把 `backend (pytest)` 与 `frontend (lint + build)`
-# 设为 required(见 docs/release-process.md 的分支保护清单)。
+# 设为 required(见 docs/ops/release-process.md 的分支保护清单)。docs-site job 只校验用户手册能构建(含死链),不进 required。
 #
 # 后端测试(issue #150)拆成两个 job 各占一台 runner 并行,每个 job 内再用 pytest-xdist 开 4 个 worker
 # (public 仓库的 ubuntu-latest 是 4 vCPU):
@@ -129,4 +129,23 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run lint
       - run: npm test
+      - run: npm run build
+
+  docs-site:
+    name: docs-site (vitepress build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs-site
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: docs-site/package-lock.json
+
+      # 读者使用手册(issue #89 / #162);vitepress build 默认校验站内死链,文档改动一合入就能发现(文档整理波 issue #210 D8)
+      - run: npm ci --no-audit --no-fund
       - run: npm run build
