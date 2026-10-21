@@ -371,6 +371,9 @@ def build_article_analysis_user_prompt(
             "signals": [],
         }
     else:
+        if analysis_basis == "paper_abstract":
+            article["analysis_basis"] = "paper_abstract"
+            article["evidence_scope"] = "仅有论文摘要；不要声称已核验全文、实验或图表。"
         if (kind_hint or "").strip():
             article["kind_hint"] = kind_hint.strip()
         if community_signals:

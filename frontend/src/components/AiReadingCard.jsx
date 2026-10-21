@@ -1,5 +1,4 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Headphones, Loader2 } from 'lucide-react';
 import {
   podcastAnalysisBasis,
   podcastAssessmentMeta,
@@ -8,10 +7,6 @@ import {
   scoreTierClass,
 } from '../utils/analysis';
 import { motionReduced } from '../motion';
-import { requestArticleOndemand } from '../api';
-
-const LISTEN_ACTIVE = new Set(['queued', 'narrating', 'synthesizing']);
-const LISTEN_POLL_MS = 4000;
 
 /**
  * 哆啦美速读卡(issue #13 五轮;issue #184 改细线卡):外框色底 + 最弱细线,卡头渐变 ✦ 与分数是卡的身份。
@@ -32,8 +27,7 @@ const LISTEN_POLL_MS = 4000;
  * 都离开、或有新的悬停 / 聚焦进来时复位(codex R1-6)。触屏没有悬停,依据改为卡内常显的一行小字。此前「点数字
  * 翻面看评分依据」的交互随之退役。正文区承接速读、骨架与生成入口。桌面与移动壳共用。
  *
- * 文章点播(issue #124):非播客时，可点播/生成中/失败重试用卡内小胶囊（耳机图标 + 文案）；
- * 音频就绪后的播放条由 ArticleListenBar 承接，不挤进本卡。
+ * 文章「✦ 听导读」(issue #124 起在卡内)自 issue #199 起挪到标题区收听入口,与播客共用全局播放条。
  */
 export default function AiReadingCard({
   article,
@@ -42,10 +36,6 @@ export default function AiReadingCard({
   canGenerate,
   onGenerate,
   podcast = false,
-  aiEnabled = false,
-  ondemandEnabled = false,   // 文章点播能力位(issue #137):总闸 ∧ 本部署真能跑
-  showToast,
-  onArticleRefresh,
 }) {
   // 新分析记录是依据的事实源；旧数据仍由 podcast projection 回退 show_notes。
   const assessment = podcast ? podcastAssessmentMeta(article) : null;
@@ -69,26 +59,6 @@ export default function AiReadingCard({
   const tipTitle = podcast ? podcastReasonTitle : `评分依据 · ${current?.label || ''}`;
   const tipReason = current?.reason || '';
   const tipNote = podcast ? podcastBasisNote : scoreDisclaimer(current?.key);
-  const [listenBusy, setListenBusy] = useState(false);
-
-  const guide = !podcast && article?.listen_guide && typeof article.listen_guide === 'object'
-    ? article.listen_guide
-    : null;
-  const listenStatus = String(guide?.status || '').trim().toLowerCase();
-  const listenReady = Boolean(guide?.audio_ready && guide?.audio_url);
-  const listenActive = !listenReady && LISTEN_ACTIVE.has(listenStatus);
-  const listenFailed = !listenReady && listenStatus === 'failed';
-  const canRequestListen = Boolean(
-    !podcast && aiEnabled && ondemandEnabled
-      && article?.id && !listenReady && !listenActive && !listenBusy,
-  );
-  // 不可点播时不画胶囊;已在生成 / 刚失败的仍给状态与重试,不让读者的请求凭空消失。
-  const showListenAction = Boolean(
-    !podcast && (
-      canRequestListen || listenActive || listenBusy
-      || (listenFailed && aiEnabled && ondemandEnabled)
-    ),
-  );
 
   useEffect(() => { setDimKey(null); setTipDismissed(false); }, [article?.id]);
   useEffect(() => {
@@ -101,35 +71,6 @@ export default function AiReadingCard({
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, []);
-  useEffect(() => { setListenBusy(false); }, [article?.id]);
-  useEffect(() => {
-    if (!listenActive || !onArticleRefresh) return undefined;
-    const timer = window.setInterval(() => {
-      onArticleRefresh().catch(() => {});
-    }, LISTEN_POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [listenActive, article?.id, onArticleRefresh]);
-
-  const handleListenOndemand = async () => {
-    if (!canRequestListen && !(listenFailed && aiEnabled && ondemandEnabled && !listenBusy)) return;
-    setListenBusy(true);
-    try {
-      const result = await requestArticleOndemand(article.id);
-      const outcome = String(result?.outcome || '');
-      if (outcome === 'ready') {
-        showToast?.('导读音频已就绪', 'success');
-      } else if (outcome === 'in_progress') {
-        showToast?.('导读音频正在生成中', 'info');
-      } else {
-        showToast?.('已开始生成导读音频', 'success');
-      }
-      await onArticleRefresh?.();
-    } catch (error) {
-      showToast?.(error?.message || '点播失败，请稍后重试', 'error');
-    } finally {
-      setListenBusy(false);
-    }
-  };
 
   // 同步来的权威初评理论上包含摘要，但即使旧/异常数据只有分数理由，也不能把理由藏掉。
   const primaryText = summary || (podcast ? reason : '');
@@ -201,40 +142,6 @@ export default function AiReadingCard({
             <span className="reader-ai-reason-inline-label">{current.label}依据</span>
             {inlineReason}
           </p>
-        )}
-        {showListenAction && (
-          <div className="reader-ai-listen-action">
-            {listenActive || listenBusy ? (
-              <span className="reader-ai-listen-pill is-busy" role="status" aria-live="polite">
-                <Loader2 className="reader-ai-listen-icon animate-spin" aria-hidden="true" />
-                {listenBusy ? '提交中…' : '生成中…'}
-              </span>
-            ) : listenFailed ? (
-              <>
-                <span className="reader-ai-listen-status" role="status">
-                  {guide?.error || '上次点播失败'}
-                </span>
-                <button
-                  type="button"
-                  className="reader-ai-listen-pill"
-                  onClick={handleListenOndemand}
-                  disabled={listenBusy}
-                >
-                  <Headphones className="reader-ai-listen-icon" aria-hidden="true" />
-                  重新点播
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                className="reader-ai-listen-pill"
-                onClick={handleListenOndemand}
-              >
-                <Headphones className="reader-ai-listen-icon" aria-hidden="true" />
-                听导读
-              </button>
-            )}
-          </div>
         )}
       </div>
     </div>

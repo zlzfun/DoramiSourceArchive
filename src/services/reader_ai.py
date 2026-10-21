@@ -3,6 +3,7 @@
 为用户面（阅读器）提供两项 AI 能力，复用项目既有的 OpenAI 兼容 LLM 客户端：
 
 - translate_article: 整篇正文一键译为简体中文，结果缓存进 extensions_json 复用（省 token）。
+- translate_social_post: 一条推文（主推 + 引用推）一次调用译为中文，缓存 extensions_json.translation_zh_social（issue #84）。
 - summarize_article: 生成 2~3 句中文要点摘要（阅读入口的「AI 总结」卡 + 列表卡摘要），
   缓存约定与翻译完全一致（extensions_json.summary_zh）。
 - answer_question: 基于给定上下文回答读者提问（上下文按 scope 组装，见 assemble_reader_context）。
@@ -24,11 +25,23 @@ from typing import Any, Callable, List, Optional
 
 from config import LLMConfig
 from llm import prompts
-from llm.client import ChatMessage, UsageMeta, chat_completion, client_session
+from llm.client import (
+    ChatMessage,
+    LLMStructuredOutputError,
+    UsageMeta,
+    chat_completion,
+    client_session,
+    parse_json_object,
+)
 from sqlmodel import Session
+from sqlalchemy import update
 
 from services import image_insights as image_insights_service
 from services import user_sources as user_sources_service
+from services.paper_content import paper_metadata, strip_layout_markers
+from services.translation_markdown import (
+    TranslationStructureError, plan_translation, translation_units, restore_translation_units,
+)
 
 # 译文/摘要缓存在 ArticleRecord.extensions_json 下的键；只新增键，不触碰正文。
 TRANSLATION_KEY = "translation_zh"
@@ -37,6 +50,8 @@ SUMMARY_KEY = "summary_zh"
 # 防陈旧译文/速读。存量缓存无指纹——视为有效沿用(不作废、不返工),
 # 只在新一次生成时补写指纹。
 TRANSLATION_FP_KEY = "translation_zh_fp"
+TRANSLATION_VERSION_KEY = "translation_zh_version"
+TRANSLATION_VERSION = 3
 SUMMARY_FP_KEY = "summary_zh_fp"
 # 中文标题(v3.45):与正文译文同缓存于 extensions_json,指纹取标题自身——标题被权威
 # 刷新改写后失配即重译;存量只有正文译文的缓存命中时补译标题(一次小调用)。
@@ -113,33 +128,9 @@ def _ensure_articles_exportable(db_sink: Any, records: List[Any]) -> None:
 
 
 # ==================== 全文翻译 ====================
-def _split_for_translation(body: str, *, segment_chars: int = _TRANSLATE_SEGMENT_CHARS) -> List[str]:
-    """按段落边界把长正文切成若干段，每段尽量不超过 segment_chars。"""
-    body = body.strip()
-    if len(body) <= segment_chars:
-        return [body]
-    segments: List[str] = []
-    buffer = ""
-    for para in body.split("\n\n"):
-        candidate = f"{buffer}\n\n{para}" if buffer else para
-        if len(candidate) <= segment_chars:
-            buffer = candidate
-            continue
-        if buffer:
-            segments.append(buffer)
-        # 单段落本身就超长：硬切。
-        while len(para) > segment_chars:
-            segments.append(para[:segment_chars])
-            para = para[segment_chars:]
-        buffer = para
-    if buffer:
-        segments.append(buffer)
-    return segments
-
-
 async def _translate_title(
     title: str, llm_config: LLMConfig,
-    usage_meta: Optional[UsageMeta] = None, http_client=None,
+    usage_meta: Optional[UsageMeta] = None, http_client=None, *, max_retries: int = 3,
 ) -> str:
     raw = await chat_completion(
         messages=[
@@ -149,6 +140,8 @@ async def _translate_title(
         config=llm_config,
         usage_meta=usage_meta,
         http_client=http_client,
+        require_complete=True,
+        max_retries=max_retries,
     )
     # 只取首个非空行:模型偶尔会附一行说明,标题不该带它
     for line in (raw or "").splitlines():
@@ -160,18 +153,71 @@ async def _translate_title(
 
 async def _translate_segment(
     title: str, segment: str, llm_config: LLMConfig,
-    usage_meta: Optional[UsageMeta] = None, http_client=None,
+    usage_meta: Optional[UsageMeta] = None, http_client=None, *, max_retries: int = 3,
 ) -> str:
+    units = translation_units(segment)
+    if not units:
+        return segment
     raw = await chat_completion(
         messages=[
             ChatMessage(role="system", content=prompts.TRANSLATE_SYSTEM_PROMPT),
-            ChatMessage(role="user", content=prompts.build_translate_user_prompt(title, segment)),
+            ChatMessage(role="user", content=prompts.build_translate_user_prompt(
+                title, json.dumps({"units": units}, ensure_ascii=False),
+            )),
         ],
         config=llm_config,
         usage_meta=usage_meta,
         http_client=http_client,
+        require_complete=True,
+        response_json=True,
+        max_retries=max_retries,
     )
-    return raw.strip()
+    return restore_translation_units(segment, raw)
+
+
+async def _save_translation(
+    db_sink, article_id: str, body: str, title: str, changes: dict,
+    verify_ext: Optional[Callable[[dict], bool]] = None,
+) -> None:
+    """Merge cache fields without overwriting newer metadata or source text.
+
+    verify_ext(issue #84):原文不在 content 里的场景(推文的 reposted / quoted 正文在 extensions_json)
+    用它对最新的 extensions 复核原文未变,返回 False 即 409、不落缓存。
+    """
+    engine = getattr(db_sink, "engine", None)
+    if engine is None:  # Small in-memory adapters used outside the HTTP stack.
+        latest = await db_sink.get(article_id)
+        if latest is None or (latest.content or "").strip() != body or (latest.title or "").strip() != title:
+            raise ReaderAIError("原文已更新，请重新翻译", status_code=409)
+        ext = _load_extensions(latest)
+        if verify_ext is not None and not verify_ext(ext):
+            raise ReaderAIError("原文已更新，请重新翻译", status_code=409)
+        ext.update(changes)
+        await db_sink.update(article_id, {"extensions_json": json.dumps(ext, ensure_ascii=False)})
+        return
+
+    from models.db import ArticleRecord
+    with Session(engine) as session:
+        latest = session.get(ArticleRecord, article_id)
+        if latest is None or (latest.content or "").strip() != body or (latest.title or "").strip() != title:
+            raise ReaderAIError("原文已更新，请重新翻译", status_code=409)
+        ext = _load_extensions(latest)
+        if verify_ext is not None and not verify_ext(ext):
+            raise ReaderAIError("原文已更新，请重新翻译", status_code=409)
+        ext.update(changes)
+        result = session.execute(
+            update(ArticleRecord).where(
+                ArticleRecord.id == article_id,
+                ArticleRecord.content == latest.content,
+                ArticleRecord.title == latest.title,
+                ArticleRecord.extensions_json == latest.extensions_json,
+            ).values(extensions_json=json.dumps(ext, ensure_ascii=False)),
+            execution_options={"synchronize_session": False},
+        )
+        if result.rowcount != 1:
+            session.rollback()
+            raise ReaderAIError("文章已更新，请重新翻译", status_code=409)
+        session.commit()
 
 
 async def translate_article(
@@ -207,6 +253,8 @@ async def translate_article(
     fingerprint = _body_fingerprint(body)
     title_fp = _body_fingerprint(title)
     body_cached = _cache_valid(ext, TRANSLATION_KEY, TRANSLATION_FP_KEY, fingerprint)
+    if paper_metadata(record).get("content_level") in {"fulltext", "partial"}:
+        body_cached = body_cached and ext.get(TRANSLATION_VERSION_KEY) == TRANSLATION_VERSION
     # 中文标题不送翻译:原样即译文(与前端「中文源不画翻译二段」同一启发式)
     title_needed = bool(title) and not looks_chinese(title)
     title_cached = (not title_needed) or _cache_valid(
@@ -218,12 +266,17 @@ async def translate_article(
             "title": ext[TRANSLATION_TITLE_KEY] if title_needed else title,
             "cached": True,
         }
-    if pre_llm_check is not None:
+    try:
+        plan = plan_translation(body, segment_chars=_TRANSLATE_SEGMENT_CHARS) if not body_cached else None
+    except TranslationStructureError as exc:
+        raise ReaderAIError(str(exc), status_code=422) from exc
+    chunks = plan.chunks if plan is not None else ()
+    needs_llm = not title_cached or any(chunk.needs_translation for chunk in chunks)
+    if needs_llm and pre_llm_check is not None:
         pre_llm_check()
 
     concurrency = max(1, getattr(llm_config, "map_concurrency", 4))
     semaphore = asyncio.Semaphore(concurrency)
-    segments = _split_for_translation(body) if not body_cached else []
 
     async def _title_safely(http_client) -> str:
         # 标题翻译失败不拖垮正文:不写缓存、响应 title=None,前端据此下次再补;
@@ -237,14 +290,25 @@ async def translate_article(
 
     # 正文分段与标题并发共享一个连接池,避免逐段重建连接/TLS 握手。
     async with client_session(llm_config) as http_client:
-        async def _guarded(seg: str) -> str:
+        async def _guarded(chunk) -> str:
+            if not chunk.needs_translation:
+                return chunk.text
             async with semaphore:
-                return await _translate_segment(title, seg, llm_config, usage_meta, http_client)
+                translated = await _translate_segment(title, chunk.text, llm_config, usage_meta, http_client)
+                return chunk.validate(translated)
 
-        jobs = [_guarded(seg) for seg in segments]
+        jobs = [asyncio.create_task(_guarded(chunk)) for chunk in chunks]
         if not title_cached:
-            jobs.append(_title_safely(http_client))
-        results = await asyncio.gather(*jobs)
+            jobs.append(asyncio.create_task(_title_safely(http_client)))
+        try:
+            results = await asyncio.gather(*jobs)
+        except BaseException as exc:
+            for job in jobs:
+                job.cancel()
+            await asyncio.gather(*jobs, return_exceptions=True)
+            if isinstance(exc, TranslationStructureError):
+                raise ReaderAIError(str(exc), status_code=502) from exc
+            raise
 
     translated_title = ""
     if not title_cached:
@@ -252,15 +316,23 @@ async def translate_article(
     if body_cached:
         translated = ext[TRANSLATION_KEY]
     else:
-        translated = "\n\n".join(p for p in results if p).strip()
+        try:
+            translated = plan.assemble(results)
+        except TranslationStructureError as exc:
+            raise ReaderAIError(str(exc), status_code=502) from exc
         if not translated:
             raise ReaderAIError("翻译失败，请稍后重试", status_code=502)
         ext[TRANSLATION_KEY] = translated
         ext[TRANSLATION_FP_KEY] = fingerprint
+        ext[TRANSLATION_VERSION_KEY] = TRANSLATION_VERSION
     if translated_title:
         ext[TRANSLATION_TITLE_KEY] = translated_title
         ext[TRANSLATION_TITLE_FP_KEY] = title_fp
-    await db_sink.update(article_id, {"extensions_json": json.dumps(ext, ensure_ascii=False)})
+    keys = (
+        TRANSLATION_KEY, TRANSLATION_FP_KEY, TRANSLATION_VERSION_KEY,
+        TRANSLATION_TITLE_KEY, TRANSLATION_TITLE_FP_KEY,
+    )
+    await _save_translation(db_sink, article_id, body, title, {key: ext[key] for key in keys if key in ext})
 
     if title_needed:
         # 译名不可得(本次失败)→ None:明确告诉前端「没有译名」,勿把原标题当译名缓存
@@ -268,6 +340,219 @@ async def translate_article(
     else:
         resolved_title = title
     return {"translation": translated, "title": resolved_title, "cached": False}
+
+
+# ==================== 推文翻译(issue #84) ====================
+# 缓存与文章译文 translation_zh 分开:后者被文章旁白(article_listen_guides)读取,
+# 且推文要译的原文在 extensions(reposted / quoted)而不只是 content。
+SOCIAL_TRANSLATION_KEY = "translation_zh_social"
+SOCIAL_TRANSLATION_VERSION = 1
+# X 的「无语言内容」判定码:纯链接 / 纯表情 / 纯媒体链接 / 纯提及 / 纯话题等,没有可译文字
+SOCIAL_NO_LANGUAGE_CODES = frozenset({"zxx", "art", "qme", "qam", "qht", "qst", "qct"})
+# 链接到第一个空白或尖括号为止,与实际翻译时的链接保护(translation_markdown._protect)同一分隔规则——
+# 判定说要译、保护却把文字吞进链接,就会出现「没调模型的译文」(检视复检)。空白集合显式写出(前端
+# utils/socialTranslate.js 逐字同一份):各语言的 \s 不等价——
+# Python 含 \x1c-\x1f / \x85、不含 \ufeff,JS 反之(检视 R1-04),依赖 \S 会让两侧对同一段文字给出不同判定。
+_SOCIAL_URL_RE = re.compile(
+    "https?://[^\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff<>]+"
+)
+_SOCIAL_LANG_JUNK_RE = re.compile(r"[^a-z0-9-]")
+
+
+def social_text_needs_translation(text: str, lang: Optional[str] = None) -> bool:
+    """一段推文文字是否需要译成中文。前端 utils/socialTranslate.socialTextNeedsTranslation
+    是同一规则的镜像,两侧须同步。
+
+    去掉链接后没有任何字母 → 否;X 判为中文或无语言内容 → 否;其它明确语言码 → 是;
+    und / 缺失 → 退回中文启发式(引用推、转推的存量记录没有存 lang)。
+    """
+    stripped = _SOCIAL_URL_RE.sub(" ", text or "")
+    # isalpha = Unicode 字母类(L*),与前端 /\p{L}/u 同口径;纯表情 / 数字 / 链接都没有字母
+    if not any(ch.isalpha() for ch in stripped):
+        return False
+    # 语言码只留 [a-z0-9-](X 给的是 ASCII BCP47);不依赖 strip / trim 各自的空白集合
+    code = _SOCIAL_LANG_JUNK_RE.sub("", str(lang or "").lower())
+    if code.startswith("zh") or code in SOCIAL_NO_LANGUAGE_CODES:
+        return False
+    if code and code != "und":
+        return True
+    return not looks_chinese(stripped)
+
+
+def social_translation_sources(content: str, ext: dict) -> dict:
+    """推文卡上需要翻译的原文:{"text": 主推正文, "quoted": 引用推正文},不需要的一侧不出现。
+
+    转推的正文取原推全文 reposted.text(顶层 content 是「RT @xxx: …」截断形式),
+    语言取 reposted.lang、缺失时用顶层 lang;引用推语言取 quoted.lang、缺失时走启发式。
+    """
+    reposted = ext.get("reposted") if isinstance(ext.get("reposted"), dict) else None
+    quoted = ext.get("quoted") if isinstance(ext.get("quoted"), dict) else None
+    if reposted:
+        main_text = str(reposted.get("text") or content or "")
+        main_lang = reposted.get("lang") or ext.get("lang")
+    else:
+        main_text = content or ""
+        main_lang = ext.get("lang")
+    sources = {}
+    if social_text_needs_translation(main_text, main_lang):
+        sources["text"] = main_text.strip()
+    if quoted:
+        quoted_text = str(quoted.get("text") or "")
+        if social_text_needs_translation(quoted_text, quoted.get("lang")):
+            sources["quoted"] = quoted_text.strip()
+    return sources
+
+
+def _social_fingerprint(sources: dict) -> str:
+    return _body_fingerprint(json.dumps(sources, ensure_ascii=False, sort_keys=True))
+
+
+async def _translate_social_batch(batch, llm_config: LLMConfig, usage_meta, http_client) -> dict:
+    """一批片段一次调用,沿用 #206 的逐行单元协议:各片段的行单元编成全局 id 混进同一个 units 列表
+    (主推与引用推同一请求),回包按 id 拆回各片段,交给 restore_translation_units 逐行校验与还原——
+    与文章翻译同一套结构校验,模型多吐 / 少吐一个换行不会让整条失败。"""
+    request_units: list = []
+    owners: dict = {}
+    for key, chunk in batch:
+        for unit in translation_units(chunk.text):
+            owners[len(request_units)] = (key, unit["id"])
+            request_units.append({"id": len(request_units), "text": unit["text"]})
+    raw = await chat_completion(
+        messages=[
+            ChatMessage(role="system", content=prompts.SOCIAL_TRANSLATE_SYSTEM_PROMPT),
+            ChatMessage(role="user", content=prompts.build_social_translate_user_prompt(request_units)),
+        ],
+        config=llm_config,
+        response_json=True,
+        usage_meta=usage_meta,
+        http_client=http_client,
+        require_complete=True,
+    )
+    per_chunk: dict = {key: [] for key, _ in batch}
+    try:
+        payload = parse_json_object(raw)
+        if not isinstance(payload, dict) or set(payload) != {"units"} or not isinstance(payload["units"], list):
+            raise ValueError
+        for unit in payload["units"]:
+            if not isinstance(unit, dict) or set(unit) != {"id", "text"}:
+                raise ValueError
+            if type(unit["id"]) is not int or unit["id"] not in owners:
+                raise ValueError
+            key, line_id = owners[unit["id"]]
+            per_chunk[key].append({"id": line_id, "text": unit["text"]})
+    except (ValueError, TypeError, RecursionError, LLMStructuredOutputError) as exc:
+        raise TranslationStructureError("翻译单元不完整或格式无效，译文未保存") from exc
+    # 缺失 / 重复 / 空串 / 含换行 / 占位符或链接结构变化,都由 restore_translation_units 拒绝
+    return {
+        key: restore_translation_units(chunk.text, json.dumps({"units": per_chunk[key]}, ensure_ascii=False))
+        for key, chunk in batch
+    }
+
+
+async def translate_social_post(
+    db_sink, article_id: str, llm_config: LLMConfig, usage_meta: Optional[UsageMeta] = None,
+    pre_llm_check: Optional[Callable[[], None]] = None,
+) -> dict:
+    """把一条推文的主推与引用推译为中文;返回 {"text", "quoted", "cached"},不需要翻译的一侧为 None。
+
+    一次点击一次调用:两段原文经 plan_translation 保护链接等字面量后,片段的行单元装进同一个 JSON 批次
+    (#206 单元协议;超长推文才按 _TRANSLATE_SEGMENT_CHARS 拆多批)。缓存 extensions_json.translation_zh_social,
+    指纹取两段原文,任一变化即重译。pre_llm_check 同 translate_article:只在缓存未命中、
+    即将发起真实调用时执行。
+    """
+    record = await db_sink.get(article_id)
+    if record is None:
+        # 与隐藏源 / 未订阅私有源的拒绝同形(检视 R1-01):不让响应正文泄露条目是否存在
+        raise ReaderAIError("文章不存在", status_code=404)
+    if record.content_type != "social_post":
+        raise ReaderAIError("只支持翻译社交媒体推文", status_code=400)
+    _ensure_articles_exportable(db_sink, [record])
+    content = (record.content or "").strip()
+    ext = _load_extensions(record)
+    sources = social_translation_sources(content, ext)
+    if not sources:
+        raise ReaderAIError("这条推文没有需要翻译的内容", status_code=400)
+    fingerprint = _social_fingerprint(sources)
+    cached = ext.get(SOCIAL_TRANSLATION_KEY)
+    if (
+        isinstance(cached, dict)
+        and cached.get("fp") == fingerprint
+        and cached.get("v") == SOCIAL_TRANSLATION_VERSION
+    ):
+        return {"text": cached.get("text"), "quoted": cached.get("quoted"), "cached": True}
+
+    try:
+        plans = {
+            name: plan_translation(text, segment_chars=_TRANSLATE_SEGMENT_CHARS)
+            for name, text in sources.items()
+        }
+    except TranslationStructureError as exc:
+        raise ReaderAIError(str(exc), status_code=422) from exc
+    # 兜底(检视复检):判定说要译、分段计划里却没有任何要交给模型的片段(全被保护成字面量)时,这段不出译文;
+    # 一段都没有就按「没有需要翻译的内容」拒绝——绝不把原文当译文缓存
+    plans = {
+        name: plan for name, plan in plans.items()
+        if any(chunk.needs_translation for chunk in plan.chunks)
+    }
+    if not plans:
+        raise ReaderAIError("这条推文没有需要翻译的内容", status_code=400)
+    items = [
+        (f"{name}.{index}", chunk)
+        for name, plan in plans.items()
+        for index, chunk in enumerate(plan.chunks)
+        if chunk.needs_translation
+    ]
+    batches: List[list] = []
+    current: list = []
+    size = 0
+    for key, chunk in items:
+        if current and size + len(chunk.text) > _TRANSLATE_SEGMENT_CHARS:
+            batches.append(current)
+            current, size = [], 0
+        current.append((key, chunk))
+        size += len(chunk.text)
+    if current:
+        batches.append(current)
+    if batches and pre_llm_check is not None:
+        pre_llm_check()
+
+    translated: dict = {}
+    if batches:
+        semaphore = asyncio.Semaphore(max(1, getattr(llm_config, "map_concurrency", 4)))
+        async with client_session(llm_config) as http_client:
+            async def _guarded(batch) -> dict:
+                async with semaphore:
+                    return await _translate_social_batch(batch, llm_config, usage_meta, http_client)
+
+            jobs = [asyncio.create_task(_guarded(batch)) for batch in batches]
+            try:
+                for result in await asyncio.gather(*jobs):
+                    translated.update(result)
+            except BaseException as exc:
+                for job in jobs:
+                    job.cancel()
+                await asyncio.gather(*jobs, return_exceptions=True)
+                if isinstance(exc, TranslationStructureError):
+                    raise ReaderAIError(str(exc), status_code=502) from exc
+                raise
+
+    entry = {"text": None, "quoted": None, "fp": fingerprint, "v": SOCIAL_TRANSLATION_VERSION}
+    try:
+        for name, plan in plans.items():
+            entry[name] = plan.assemble([
+                translated.get(f"{name}.{index}", chunk.text) for index, chunk in enumerate(plan.chunks)
+            ])
+    except TranslationStructureError as exc:
+        raise ReaderAIError(str(exc), status_code=502) from exc
+
+    def _sources_unchanged(latest_ext: dict) -> bool:
+        return _social_fingerprint(social_translation_sources(content, latest_ext)) == fingerprint
+
+    await _save_translation(
+        db_sink, article_id, content, (record.title or "").strip(),
+        {SOCIAL_TRANSLATION_KEY: entry}, verify_ext=_sources_unchanged,
+    )
+    return {"text": entry["text"], "quoted": entry["quoted"], "cached": False}
 
 
 # ==================== 要点摘要 ====================
@@ -329,6 +614,7 @@ async def summarize_article(
     if pre_llm_check is not None:
         pre_llm_check()
 
+    body = strip_layout_markers(body).strip()
     if len(body) > _SUMMARIZE_BODY_CHARS:
         body = body[:_SUMMARIZE_BODY_CHARS] + "\n...(正文已截断)"
     # 配图说明(issue #69,cached-only):速读兜底只在没有分析结果时走到这里,不为它发起识别;
@@ -449,6 +735,7 @@ def build_numbered_context(
             body = (art.get("content") or art.get("content_preview") or "").strip()
         else:
             body = (getattr(art, "content", None) or "").strip()
+        body = strip_layout_markers(body).strip()
         notes = (notes_map.get(_art_field(art, "id")) or "").strip()
         if not body and not notes and not keep_empty:
             continue

@@ -26,6 +26,9 @@ async function handleApiError(response, defaultMsg) {
   const error = new Error(msg);
   error.status = response.status;
   error.code = code;
+  // 429 的 Retry-After(秒):读者 AI 日额度据此按服务端日界恢复入口(issue #84)
+  const retryAfter = Number.parseInt(response.headers?.get?.('Retry-After') ?? '', 10);
+  if (Number.isFinite(retryAfter) && retryAfter >= 0) error.retryAfter = retryAfter;
   throw error;
 }
 
@@ -417,6 +420,24 @@ export function setAiBetaNewUserDefault(enabled) {
 // ── 阅读器 AI（用户面：翻译 / 问答） ──
 export function translateArticle(articleId) {
   return request('/reader/ai/translate', { method: 'POST', body: { article_id: articleId }, errorMsg: '翻译失败，请稍后重试' });
+}
+
+// 推文翻译(issue #84):主推 + 引用推一次译完,返回 { text, quoted, cached },不需要翻译的一侧为 null
+export function translateSocialPost(articleId) {
+  return request(`/reader/ai/social/${enc(articleId)}/translate`, { method: 'POST', errorMsg: '翻译失败，请稍后重试' });
+}
+
+export function startTranslationJob(articleId) {
+  return request('/reader/ai/translation-jobs', { method: 'POST', body: { article_id: articleId }, errorMsg: '无法开始翻译' });
+}
+export function fetchTranslationJob(articleId) {
+  return request(`/reader/ai/translation-jobs?article_id=${enc(articleId)}`, { errorMsg: '无法读取翻译进度' });
+}
+export function resumeTranslationJob(jobId) {
+  return request(`/reader/ai/translation-jobs/${enc(jobId)}/resume`, { method: 'POST', errorMsg: '无法继续翻译' });
+}
+export function cancelTranslationJob(jobId) {
+  return request(`/reader/ai/translation-jobs/${enc(jobId)}/cancel`, { method: 'POST', errorMsg: '无法取消翻译' });
 }
 
 // 生成/读取文章的中文要点摘要(后端缓存于 extensions_json.summary_zh,幂等)

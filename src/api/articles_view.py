@@ -16,6 +16,7 @@ from api.textutils import _date_end_value, _json_loads, _split_csv
 from models.content import BaseContent
 from models.db import ArticleRecord
 from services import content_classification, podcast_premium
+from services.paper_content import strip_layout_markers
 from storage.fts import build_search_components, fts_search_ids
 
 
@@ -293,7 +294,8 @@ def apply_article_query_filters(
 
 
 def serialize_feed_article(record: ArticleRecord, include_content: bool = True) -> Dict[str, Any]:
-    extensions = _json_loads(record.extensions_json, {})
+    from services.paper_content import delivery_body, delivery_metadata
+    extensions = delivery_metadata(record)
     metadata = {
         "id": record.id,
         "title": record.title,
@@ -318,7 +320,7 @@ def serialize_feed_article(record: ArticleRecord, include_content: bool = True) 
         "metadata": metadata,
     }
     if include_content:
-        item["content"] = record.content or ""
+        item["content"] = delivery_body(record)
     return item
 
 
@@ -391,7 +393,7 @@ def serialize_article_list_item(
         "source_group_id": record.source_group_id,
         "run_scope": record.run_scope,
         "has_content": record.has_content,
-        "content_preview": content[:280],
+        "content_preview": strip_layout_markers(content)[:280],
         "summary_zh": summary,
         "read_count": record.read_count or 0,
         "analysis_status": getattr(analysis, "status", None),
@@ -446,6 +448,12 @@ def serialize_article_list_item(
         from services.article_listen_guides import projection_from_extensions
 
         item["listen_guide"] = projection_from_extensions(record.id, ext)
+    # Reader list/cache paths deliberately do not carry the full extensions.
+    # Keep reading provenance small and available before loading the body.
+    paper = ext.get("paper")
+    item["paper"] = ({
+        key: paper.get(key) for key in ("content_level", "arxiv_id", "source_url")
+    } if isinstance(paper, dict) else None)
     if (include_content or include_extensions) and (
         record.content_type != "podcast_episode" or include_podcast_diagnostics
     ):
@@ -463,8 +471,11 @@ def article_recency_order(*prefix_ordering):
     )
 
 
-def article_to_markdown(record: ArticleRecord) -> str:
+def article_to_markdown(record: ArticleRecord, *, external_delivery: bool = False) -> str:
+    from services.paper_content import delivery_body
     metadata = serialize_feed_article(record, include_content=False)["metadata"]
+    if not external_delivery:
+        metadata["extensions"] = _json_loads(record.extensions_json, {})
     frontmatter = json.dumps(metadata, ensure_ascii=False, indent=2)
-    content = record.content or ""
+    content = delivery_body(record) if external_delivery else record.content or ""
     return f"---\n{frontmatter}\n---\n\n# {record.title}\n\n{content}".strip()

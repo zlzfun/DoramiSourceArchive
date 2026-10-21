@@ -332,6 +332,10 @@ class DatabaseStorage(BaseStorage):
                 extensions_json=json.dumps(extensions, ensure_ascii=False),
             )
             session.add(record)
+            # Persist the optional paper task in the same transaction as the
+            # abstract. HTTP/HTML work runs independently after ingestion.
+            from services.paper_fulltext import enqueue as enqueue_paper_fulltext
+            enqueue_paper_fulltext(session, record)
             session.commit()
             return True
 

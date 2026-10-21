@@ -1,0 +1,33 @@
+{
+  "_comment": "推文翻译判定用例(issue #84)。后端 reader_ai.social_text_needs_translation 与前端 utils/socialTranslate.socialTextNeedsTranslation 共用这一份(tests/test_social_translate.py 与 frontend/test/socialTranslate.test.mjs 都读它),两侧规则漂移即双双失败。",
+  "needs_translation": [
+    ["Hello world", "en", true],
+    ["Hello world", null, true],
+    ["Hello world", "", true],
+    ["Hello world", "und", true],
+    ["こんにちは、新しいモデルです", "ja", true],
+    ["GPT-5 is out 发布了", "en", true],
+    ["今天发布了新模型，效果很好", "zh", false],
+    ["今天发布了新模型", "zh-TW", false],
+    ["今天发布了新模型", null, false],
+    ["新模型 GPT-5 发布了，效果很好", null, false],
+    ["https://t.co/R6exTuF7P8", "zxx", false],
+    ["https://t.co/R6exTuF7P8", null, false],
+    ["🚀🚀 https://t.co/NlNLasmvAf", "art", false],
+    ["🚀🚀", null, false],
+    ["@foo @bar", "qam", false],
+    ["#AI #LLM", "qht", false],
+    ["2026 12:00 → 98%", null, false],
+    ["", "en", false],
+    ["it is good now! https://t.co/eiG0VDwrTe", "en", true],
+    ["https://t.co/abc\ufeffHello", "en", true],
+    ["https://t.co/abc\u0085Hello", "en", true],
+    ["https://t.co/abc\u001cHello", "en", true],
+    ["Hello world", " EN\u00a0", true],
+    ["今天发布了新模型", "ZH-cn\ufeff", false]
+  ],
+  "_comment_generated": "长文本按片段拼装(两侧测试各自 repeat 后连接):检视 R1-04 的码点采样边界——2000 码点里汉字恰好过阈值,UTF-16 切片会少取一位而误判。",
+  "generated": [
+    {"parts": [["A", 1665], ["🚀", 1], ["中", 334]], "lang": null, "expected": false}
+  ]
+}

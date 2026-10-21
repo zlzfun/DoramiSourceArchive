@@ -9,6 +9,11 @@
 
 ## 顶层(活跃)
 
+- ◉ [social-translate-plan.md](./social-translate-plan.md) — **社交流翻译（issue #84）**：推文卡片底栏「译为中文」、原文下追加译文、主推 + 引用推一次调用、`lang` 判定与缓存；X API 无翻译能力的核查结论。
+- ◉ [paper-fulltext-plan.md](./paper-fulltext-plan.md) — **论文全文补全（issue #41）**：HF 摘要后补抓官方 arXiv HTML、数学与图表转换、摘要分析成本边界、持久任务/回填与真实样本验证。
+- ◉ [background-translation-plan.md](./background-translation-plan.md) — **后台翻译（#202）**：持久任务、分段检查点、进度恢复、租约去重、预算预留与容量边界。
+- ◇ [r1-translation-validation.md](./r1-translation-validation.md) — **R1 全文真实翻译（#204/#205）**：当前模型的耗时与 token、结构和语义检查、单元协议修复及质量边界。
+
 - ◉ [backend-stall-fix-plan.md](./backend-stall-fix-plan.md) — **生产间歇停顿修复（issue #194）**：逐字稿扫描投影、分析数据库线程隔离、复现证据与本地交叉检视。
 
 - ◉ [visual-refine-plan.md](./visual-refine-plan.md) — **视觉精修波(issue #184,含 #176 W0a + W0b)**:自托管思源宋体(分片随构建打包、内网可用)、三套可选中性色、夜航版式早报、分数身份线、条目行与组件收敛;拍板记录、字体生成链、实现进度与验收。
@@ -179,6 +184,7 @@
 
 静默仪器各工作区改造时的 HTML 设计样页(`dorami-*-quiet.html`),`index.css` 注释以
 「刻度 1:1 取自」引用之;阅读器/设置柜/发现页的后续样页在 Claude Artifact(见各波记录)。
+`podcast-player/`(issue #199,三轮,**现行**):播客区方案 A / B / C × 状态 s1–s6,与全局播放条的条位 × 配色 × 页面对照;拍板 C + 内容区浮层 + 封面模糊 + 正文与音轨解耦,查看方式见其 README。
 `dorami-score-tiers-quiet.html`(v3.54 阅读面小特性波,issue #54):新闻价值分按分值分档着色——三处触点 × 亮暗,
 页顶控件可切灰线(6.0/5.0/不设)、分档 vs 连续插值、档间跨度;拍板 6.0 / 分档 / 陡峭。
 `dorami-interest-axis-quiet.html`(v3.52 兴趣即透镜波,issue #27;**五稿,现行**):左栏一根轴「订阅 | 兴趣」/

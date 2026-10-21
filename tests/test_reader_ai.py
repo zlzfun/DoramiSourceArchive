@@ -150,6 +150,17 @@ def _enable_ai_beta(engine, username="user"):
         accounts_service.set_ai_beta_enabled(session, username, True)
 
 
+def _translation_mock(messages):
+    import json
+    prompt = messages[-1].content
+    if "【待翻译正文】\n" in prompt:
+        payload = json.loads(prompt.split("【待翻译正文】\n", 1)[1])
+        for unit in payload["units"]:
+            unit["text"] = "AI-MOCK-OUTPUT"
+        return json.dumps(payload)
+    return "AI-MOCK-OUTPUT"
+
+
 def _patch_llm(monkeypatch):
     """把 reader_ai / reader_search 用到的 chat_completion 换成可观测的桩，返回 calls 列表。
 
@@ -164,7 +175,7 @@ def _patch_llm(monkeypatch):
 
     async def fake_chat_completion(*, messages, config, **kwargs):
         calls.append([m.content for m in messages])
-        return "AI-MOCK-OUTPUT"
+        return _translation_mock(messages)
 
     monkeypatch.setattr(rai, "chat_completion", fake_chat_completion)
     monkeypatch.setattr(rsearch, "chat_completion", fake_chat_completion)
@@ -230,6 +241,39 @@ def test_translate_caches_result(monkeypatch, tmp_path):
         assert second.json()["title"] == "AI-MOCK-OUTPUT"
         # 命中缓存，不再二次调用 LLM
         assert len(calls) == 2
+
+
+def test_paper_layout_metadata_is_not_sent_to_reader_ai(monkeypatch, tmp_path):
+    import json
+    from models.db import ArticleRecord
+    from services import reader_ai
+
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "paper-layout-ai.db")
+    _configure_llm(sink.engine)
+    _enable_ai_beta(sink.engine)
+    body = "[zqpl]: #zq1.zq4\n\n###### Abstract\n\nVisible evidence."
+    _seed_article(sink.engine, "layout-ai", "rss_x", "中文标题", body)
+    calls = _patch_llm(monkeypatch)
+    with TestClient(app_module.app) as client:
+        _login(client)
+        for action in ("translate", "summarize"):
+            response = client.post(f"/api/reader/ai/{action}", json={"article_id": "layout-ai"})
+            assert response.status_code == 200
+    assert len(calls) == 2
+    for messages in calls:
+        assert "zqpl" not in "\n".join(messages)
+        assert "Visible evidence." in "\n".join(messages)
+    with Session(sink.engine) as session:
+        record = session.get(ArticleRecord, "layout-ai")
+        ext = json.loads(record.extensions_json)
+        assert record.content == body
+        assert ext[reader_ai.TRANSLATION_FP_KEY] == reader_ai._body_fingerprint(body)
+        assert ext[reader_ai.SUMMARY_FP_KEY] == reader_ai._body_fingerprint(body)
+    context, included = reader_ai.build_numbered_context(
+        [{"id": "layout-ai", "title": "Paper", "content": body}], per_article_chars=45,
+    )
+    assert len(included) == 1 and "zqpl" not in context
+    assert "Visible evidence." in context
 
 
 def test_podcast_translation_scope_excludes_transcript_artifacts(monkeypatch, tmp_path):
@@ -976,7 +1020,7 @@ def test_translate_title_failure_returns_none_and_retries_next_call(monkeypatch,
         calls.append([m.content for m in messages])
         if fail_title["on"] and "文章标题翻译成简体中文标题" in messages[0].content:
             raise RuntimeError("title endpoint hiccup")
-        return "AI-MOCK-OUTPUT"
+        return _translation_mock(messages)
 
     monkeypatch.setattr(rai, "chat_completion", fake_chat_completion)
 
@@ -1026,10 +1070,13 @@ def test_translate_title_shares_concurrency_semaphore(monkeypatch):
         in_flight["peak"] = max(in_flight["peak"], in_flight["now"])
         await asyncio.sleep(0.01)
         in_flight["now"] -= 1
-        return "译"
+        return _translation_mock(messages).replace("AI-MOCK-OUTPUT", "译")
 
     monkeypatch.setattr(rai, "chat_completion", fake_chat_completion)
-    monkeypatch.setattr(rai, "_split_for_translation", lambda body, **kw: ["p1", "p2", "p3"])
+    from services.translation_markdown import TranslationChunk, TranslationPlan
+    monkeypatch.setattr(rai, "plan_translation", lambda body, **kw: TranslationPlan(
+        (TranslationChunk("p1"), TranslationChunk("p2", "\n\n"), TranslationChunk("p3", "\n\n")), {}
+    ))
     cfg = LLMConfig(base_url="https://llm.test/v1", api_key="sk", model="m", map_concurrency=1)
 
     result = asyncio.run(rai.translate_article(FakeSink(), "a1", cfg))

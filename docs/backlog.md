@@ -6,6 +6,8 @@
 
 ## 进行中
 
+- ☐ **issue #199 前端细项优化波**(分支 `feat/issue-199-frontend-polish`,记录见 `docs/version-history.md`):撤回源栏每源未读数、取缔条目未读小蓝点、播客区重设计为全局播放条(样页 `docs/design/podcast-player/`)三项已实现并经用户目检,待 Codex 本地检视 → PR 合入。
+  遗留(本波有意不做):Windows 实机看一遍播放条(只做了理论判断);播客导读生成完成后入口要等约 30 秒的分析轮询才刷新;生产里封面代理 302 回源成跨域时回落中性底的路径未端到端;部分播客节目简介里链接文字独占一行——库里存的简介原文即如此断行,是抓取时 HTML 转文本的问题(Interconnects 等 Substack 源可见),与播放器无关。
 - ☐ **issue #178 内容分类与双评分**(方案 `docs/content-classification-plan.md`,样页 `docs/design/dorami-classification-scores-quiet.html`):
   第一波已合入(#180):内容类型 / 事件类型读取时推导 +「动态」并入「文章」+ 类型签 / 筛选带 / 紧凑行 + 词表收口。
   第一波补已合入(#181):`category` 拆出 `admission_status` 后退役、源级 `content_tags` 退役、条目标签不再拼入源级分类。
@@ -137,6 +139,9 @@
   正式抓取统一响应大小上限(用户源已限 5MiB,策展源 55+ 无上限是全站级决策);
   ③多 worker 部署时把用户源成员关系正规化为带唯一约束的表(现进程内写锁,
   单 worker 前提)。
+- ◇ **社交流整流翻译开关**(issue #84 遗留,样页方案 C):社交流头部「原语言 | ✦ 中文」一键翻整屏。
+  首版只做逐卡底栏入口;整流开关开着时每条可译推文进入视口就是一次调用,现行读者 `translate` 日额度 50 次撑不住,
+  要做先定批量合并(一次调用翻多条)或单独额度。见 `docs/social-translate-plan.md` §6。
 - ◇ **跨容器去重**(X 社交波遗留):同一次发布 = 一条推 + 一篇 blog。
   首版不做;观察期用 `x_openai` 对照组量化与 `rss_openai_news` 的重复率后再定策略
   (候选:复用日报的 `dedup_clusters`)。见 `docs/social-x-wave-plan.md` §1「重叠率备案」。
@@ -227,3 +232,5 @@
   只以 `articles` 判「有业务表」,不含 articles 的库会被当空库;改成多表判定即可,顺手时做。
   (同时指出的另一条——`ensure_migrated` 调单数 `get_current_revision()` 在多 head 库会抛——main 已在 `10f9d54 feat(storage): OSS 持久存储、自动缓存与备份及本地回退 (#109)` 改为
   `get_current_heads()`,2026-09-17 同步合入 #111 分支时确认关闭。)
+
+- **issue #202 后台翻译**：本波实现持久化分段续译、刷新/重启恢复、任务去重/取消、调用预留与清理；验证和检视见 [方案](./background-translation-plan.md)。

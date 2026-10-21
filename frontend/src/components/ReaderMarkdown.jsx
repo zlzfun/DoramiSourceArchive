@@ -8,6 +8,7 @@ import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 import { mediaProxyUrl } from '../api';
 import { latinLang } from '../utils/readerText';
+import remarkPaperLayout from '../utils/remarkPaperLayout';
 
 // react-markdown 默认不渲染原始 HTML（无 rehype-raw），无 XSS 风险
 // remark-math + KaTeX:渲染正文里的 $...$ / $$...$$ LaTeX(学术型源如 Lil'Log
@@ -43,7 +44,7 @@ function remarkCurrencyRangeGuard() {
   };
 }
 
-const MARKDOWN_PLUGINS = [remarkGfm, remarkBreaks, remarkMath, remarkCurrencyRangeGuard];
+const MARKDOWN_PLUGINS = [remarkGfm, remarkBreaks, remarkMath, remarkCurrencyRangeGuard, remarkPaperLayout];
 const REHYPE_PLUGINS = [rehypeKatex];
 
 // 灯箱开关注入：img 组件是模块级常量（避免 react-markdown 每次渲染重解析），

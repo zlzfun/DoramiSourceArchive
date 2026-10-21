@@ -26,6 +26,7 @@ from llm.client import ChatMessage, UsageMeta, chat_completion
 from models.db import ArticleRecord
 from services.podcast_artifacts import sniff_audio_mime
 from services.reader_ai import TRANSLATION_KEY
+from services.paper_content import strip_layout_markers
 
 LISTEN_GUIDE_KEY = "listen_guide"
 ACTIVE_STATUSES = frozenset({"queued", "narrating", "synthesizing"})
@@ -436,6 +437,7 @@ async def run_listen_guide(
                 )
             title = (article.title or "").strip() or "未命名文章"
             body, source = resolve_source_body(article)
+            body = strip_layout_markers(body).strip()
             if not body:
                 raise ArticleListenError(
                     "article_ondemand_no_body",

@@ -10,6 +10,7 @@
   这些 helper 不在测试 monkeypatch 名单内，动态调用安全。源目录元数据助手已在 api.sources。
 """
 
+import asyncio
 import datetime
 import hashlib
 import hmac
@@ -77,6 +78,7 @@ from services.article_display_tags import article_ids_for_flexible_label, load_d
 from services import daily_brief as daily_brief_service
 from services import reader_activity as reader_activity_service
 from services import reader_ai as reader_ai_service
+from services import translation_jobs
 from services import reader_ondemand as reader_ondemand_service
 from services import reader_search as reader_search_service
 from services import reader_interests as reader_interests_service
@@ -1692,7 +1694,7 @@ def _require_reader_ai(request: Request):
 _AI_ONDEMAND_DAILY_LIMIT = 5
 _AI_ONDEMAND_PURPOSES = frozenset({"podcast_ondemand", "article_ondemand"})
 _AI_DAILY_CALL_LIMITS = {
-    "translate": 50,
+    "translate": translation_jobs.DAILY_CALL_LIMIT,
     "ask": 100,
     "summarize": 50,
     # 池容量读取键；article_ondemand 走同一池，不单独加限额。
@@ -1714,7 +1716,8 @@ def _enforce_ai_daily_quota(username: str, purpose: str) -> None:
         if not limit:
             return
         purpose_clause = AiUsageRecord.purpose == purpose
-    today = datetime.date.today().isoformat()
+    quota_day = datetime.date.today()
+    today = quota_day.isoformat()
     with Session(deps.get_db_sink().engine) as session:
         used = session.exec(
             select(func.coalesce(func.sum(AiUsageRecord.calls), 0)).where(
@@ -1723,8 +1726,29 @@ def _enforce_ai_daily_quota(username: str, purpose: str) -> None:
                 purpose_clause,
             )
         ).one()
+        if purpose == "translate":
+            from models.db import TranslationCallRecord
+            used += session.exec(select(func.count()).select_from(TranslationCallRecord).where(
+                TranslationCallRecord.day == today, TranslationCallRecord.username == username,
+                TranslationCallRecord.status.in_(("reserved", "unknown")),
+                TranslationCallRecord.recorded == False,  # noqa: E712
+            )).one()
     if int(used or 0) >= limit:
-        raise HTTPException(status_code=429, detail="今日 AI 使用次数已达上限，请明日再试")
+        raise HTTPException(
+            status_code=429, detail="今日 AI 使用次数已达上限，请明日再试", headers=_daily_reset_headers(quota_day),
+        )
+
+
+def _daily_reset_headers(quota_day: datetime.date, now: Optional[datetime.datetime] = None) -> Dict[str, str]:
+    """读者 AI 两类日额度都按服务端本地日期(date.today())计、零点重置。429 带 Retry-After(距服务端下一个
+    本地零点的秒数),客户端据此恢复入口,不必猜服务端时区(issue #84 检视:浏览器按本地日期恢复会在跨时区
+    或零点前后晚到的回包上多锁近一天)。
+
+    恢复点绑定**判额度时用的日期** quota_day,不在查询后重新取日期:查询恰好跨过零点时,旧日的拒绝不能配上
+    新一天的恢复时刻;恢复点已过就给 1 秒,客户端马上重试、按新日重判(检视终审)。"""
+    now = now or datetime.datetime.now()
+    reset = datetime.datetime.combine(quota_day + datetime.timedelta(days=1), datetime.time.min)
+    return {"Retry-After": str(max(1, int((reset - now).total_seconds()) + 1))}
 
 
 def _enforce_ai_cost_gates(username: str, purpose: str) -> None:
@@ -1736,11 +1760,16 @@ def _enforce_ai_cost_gates(username: str, purpose: str) -> None:
     注:check 与计量落库之间存在并发窗口,当前限额语义是**软上限**(恶意并发可
     短暂超出;原子预留-核销的硬上限记 backlog,重构面大而内网收益低)。
     """
+    # 先记下日期再查预算:预算函数内部取的日期只会等于或晚于它,恢复点只会偏早、不会多锁一天
+    quota_day = datetime.date.today()
     with Session(deps.get_db_sink().engine) as session:
         # 全局日 token 预算(v3.34):与逐用户日调用限额互补,护全站总成本
         # (多账户/IM bot 代答渠道的放大器)。0=不限;超限当日全员 429,次日自复。
         if accounts_service.reader_ai_budget_exhausted(session):
-            raise HTTPException(status_code=429, detail="今日 AI 用量已达全站上限，请明日再试")
+            raise HTTPException(
+                status_code=429, detail="今日 AI 用量已达全站上限，请明日再试",
+                headers=_daily_reset_headers(quota_day),
+            )
     _enforce_ai_daily_quota(username, purpose)
 
 
@@ -1754,6 +1783,11 @@ async def reader_ai_translate(params: ReaderTranslateParams, request: Request):
         _deny_hidden_source_article(session, request, article)
         _deny_unsubscribed_user_source_article(session, username, article)
         _deny_nonexportable_article(session, article)
+        # Compatibility for existing short-text callers; all reader UI requests
+        # use the durable endpoint. Long requests must never wait on a proxy.
+        background = article is not None and len(article.content or "") > reader_ai_service._TRANSLATE_SEGMENT_CHARS
+    if background:
+        return await reader_translation_start(params, request)
     try:
         result = await reader_ai_service.translate_article(
             db_sink, params.article_id, llm_config,
@@ -1767,6 +1801,70 @@ async def reader_ai_translate(params: ReaderTranslateParams, request: Request):
     with Session(db_sink.engine) as session:
         accounts_service.record_ai_usage(session, username, "translate")
     return {"status": "success", **result}
+
+
+@router.post("/ai/social/{article_id}/translate")
+async def reader_ai_translate_social(article_id: str, request: Request):
+    """把一条推文（主推 + 引用推）译为简体中文（issue #84，结果缓存复用）。
+
+    门控、隐藏源 / 私有源 / 不可外送拒绝口径与 /ai/translate 相同；额度计入 translate 用途，
+    只在缓存未命中、即将调用模型时判。返回 {text, quoted, cached}，不需要翻译的一侧为 null。
+    """
+    username, llm_config = _require_reader_ai(request)
+    db_sink = deps.get_db_sink()
+    with Session(db_sink.engine) as session:
+        article = session.get(ArticleRecord, article_id)
+        _deny_hidden_source_article(session, request, article)
+        _deny_unsubscribed_user_source_article(session, username, article)
+        _deny_nonexportable_article(session, article)
+    try:
+        result = await reader_ai_service.translate_social_post(
+            db_sink, article_id, llm_config,
+            UsageMeta(purpose="translate", username=username),
+            pre_llm_check=lambda: _enforce_ai_cost_gates(username, "translate"),
+        )
+    except reader_ai_service.ReaderAIError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    except LLMError as exc:
+        raise HTTPException(status_code=502, detail=f"翻译失败：{exc}")
+    with Session(db_sink.engine) as session:
+        accounts_service.record_ai_usage(session, username, "translate")
+    return {"status": "success", **result}
+
+
+async def _translation_call(fn, *args):
+    try:
+        return await asyncio.to_thread(fn, deps.get_db_sink().engine, *args)
+    except reader_ai_service.ReaderAIError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
+@router.post("/ai/translation-jobs")
+async def reader_translation_start(params: ReaderTranslateParams, request: Request):
+    username, _ = _require_reader_ai(request)
+    result = await _translation_call(translation_jobs.request, username, params.article_id)
+    return JSONResponse(result, status_code=200 if result["status"] == "succeeded" else 202)
+
+
+@router.get("/ai/translation-jobs")
+async def reader_translation_status(article_id: str, request: Request):
+    username, _ = _require_reader_ai(request)
+    return await _translation_call(translation_jobs.status, username, article_id)
+
+
+@router.post("/ai/translation-jobs/{job_id}/resume")
+async def reader_translation_resume(job_id: str, request: Request):
+    username, _ = _require_reader_ai(request)
+    result = await _translation_call(translation_jobs.resume, username, job_id)
+    return JSONResponse(result, status_code=200 if result["status"] == "succeeded" else 202)
+
+
+@router.post("/ai/translation-jobs/{job_id}/cancel")
+async def reader_translation_cancel(job_id: str, request: Request):
+    username = _app().current_username(request)
+    if not username:
+        raise HTTPException(status_code=401, detail="需要登录")
+    return await _translation_call(translation_jobs.cancel, username, job_id)
 
 
 @router.post("/ai/podcasts/{episode_id}/translate-transcript")

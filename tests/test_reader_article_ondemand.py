@@ -241,6 +241,38 @@ def test_projection_and_store_roundtrip(tmp_path):
     assert proj["duration_seconds"] >= 0
 
 
+def test_narration_input_excludes_paper_layout_metadata(tmp_path):
+    import asyncio
+    from types import SimpleNamespace
+    from services.article_listen_guides import StoredAudio, run_listen_guide
+
+    sink = _make_sink(tmp_path, "layout-narration.db")
+    body = "[zqpl]: #zq1.zq4\n\n###### Abstract\n\nVisible evidence."
+    _seed_article(sink.engine, content=body)
+    captured = []
+
+    class TextProvider:
+        async def create_narration(self, **kwargs):
+            captured.append(kwargs["body"])
+            return "Mock narration"
+
+    class TtsProvider:
+        async def synthesize(self, text):
+            return SimpleNamespace(data=b"fake-audio", mime="audio/wav")
+
+    class Store:
+        def import_bytes(self, data, **kwargs):
+            return StoredAudio(HASH, "audio/wav", len(data), 1, tmp_path / "fake.wav")
+
+    asyncio.run(run_listen_guide(
+        sink.engine, Store(), article_id="article-ondemand",
+        text_provider=TextProvider(), tts_provider=TtsProvider(),
+    ))
+    assert captured == ["###### Abstract\n\nVisible evidence."]
+    with Session(sink.engine) as session:
+        assert session.get(ArticleRecord, "article-ondemand").content == body
+
+
 def test_api_ready_reuses_without_charge(monkeypatch, tmp_path):
     app_module, sink = _base_setup(monkeypatch, tmp_path, "api-ready.db")
     _seed_article(

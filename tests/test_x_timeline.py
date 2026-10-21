@@ -105,6 +105,7 @@ def _timeline_payload():
                     "note_tweet": {"text": "Quoted full note body"},
                     "author_id": "2",
                     "attachments": {"media_keys": ["m3"]},
+                    "lang": "en",
                 },
                 {
                     "id": "140",
@@ -198,6 +199,7 @@ def test_x_api_mapping_uses_note_text_references_media_and_quota(tmp_path):
         "text": "Quoted full note body",
         "url": "https://x.com/quoted/status/150",
         "media_urls": ["https://img/quote.jpg"],
+        "lang": "en",  # 引用推的 X 检测语言随 expansions 带回(issue #84 推文翻译据此判定)
     }
     assert "reposted" not in first_extensions
 
@@ -213,6 +215,7 @@ def test_x_api_mapping_uses_note_text_references_media_and_quota(tmp_path):
         "text": "Original full note body",  # 不用顶层 RT 截断文本
         "url": "https://x.com/builder/status/140",
         "media_urls": ["https://img/video.jpg"],
+        "lang": "",  # 上游没给语言时存空串,读侧退回启发式
     }
     assert "quoted" not in repost_extensions
     assert repost.content == "RT @builder: useful demo"

@@ -27,7 +27,32 @@ from models.db import (
 )
 from services import podcast_text_reader
 from services.podcast_text_limits import PodcastTextLimitExceeded, validate_text_artifact
-from services.reader_ai import _split_for_translation, looks_chinese
+from services.reader_ai import looks_chinese
+from services.paper_content import strip_layout_markers
+
+
+def _split_for_translation(body: str, *, segment_chars: int = 3500) -> list[str]:
+    """按段落边界把长正文切成若干段，每段尽量不超过 segment_chars。"""
+    body = strip_layout_markers(body).strip()
+    if len(body) <= segment_chars:
+        return [body]
+    segments: list[str] = []
+    buffer = ""
+    for para in body.split("\n\n"):
+        candidate = f"{buffer}\n\n{para}" if buffer else para
+        if len(candidate) <= segment_chars:
+            buffer = candidate
+            continue
+        if buffer:
+            segments.append(buffer)
+        # 单段落本身就超长：硬切。
+        while len(para) > segment_chars:
+            segments.append(para[:segment_chars])
+            para = para[segment_chars:]
+        buffer = para
+    if buffer:
+        segments.append(buffer)
+    return segments
 
 
 SOURCE_KINDS = frozenset({"publisher_transcript", "normalized_transcript"})

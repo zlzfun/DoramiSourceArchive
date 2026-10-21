@@ -84,6 +84,9 @@ def _normalized_reference(
         "text": x_post_text(referenced),
         "url": url,
         "media_urls": x_media_urls_for_item(referenced, media_by_key),
+        # X 检测的语言(expansions 带回的引用推 / 原推同样受 tweet.fields=lang 约束);
+        # 推文翻译据此判定哪一段需要翻译(issue #84),缺失时读侧退回中文启发式
+        "lang": str(referenced.get("lang") or ""),
     }
 
 

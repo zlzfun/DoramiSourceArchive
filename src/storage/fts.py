@@ -118,7 +118,9 @@ END""",
     f"""CREATE TRIGGER IF NOT EXISTS {FTS_TABLE}_ad AFTER DELETE ON {_SOURCE_TABLE} BEGIN
   INSERT INTO {FTS_TABLE}({FTS_TABLE}, rowid, title, content) VALUES('delete', old.rowid, {_OLD_TITLE}, {_OLD_CONTENT});
 END""",
-    f"""CREATE TRIGGER IF NOT EXISTS {FTS_TABLE}_au AFTER UPDATE ON {_SOURCE_TABLE} BEGIN
+    f"""CREATE TRIGGER IF NOT EXISTS {FTS_TABLE}_au AFTER UPDATE ON {_SOURCE_TABLE}
+WHEN old.rowid IS NOT new.rowid OR old.title IS NOT new.title OR old.content IS NOT new.content
+BEGIN
   INSERT INTO {FTS_TABLE}({FTS_TABLE}, rowid, title, content) VALUES('delete', old.rowid, {_OLD_TITLE}, {_OLD_CONTENT});
   INSERT INTO {FTS_TABLE}(rowid, title, content) VALUES (new.rowid, {_NEW_TITLE}, {_NEW_CONTENT});
 END""",
@@ -202,6 +204,31 @@ def ensure_fts(bind) -> bool:
     except Exception as exc:  # noqa: BLE001 —— 建索引失败绝不能拖垮启动/迁移
         logger.warning("FTS5 全文索引不可用，搜索降级为标题 LIKE：%s", exc)
         return False
+
+
+def replace_fts_update_trigger(bind, *, changed_only: bool = True) -> None:
+    """Upgrade the update guard without rebuilding/re-normalizing the index.
+
+    Old databases must run the Alembic migration: ensure_fts deliberately does
+    not replace existing triggers. The indexed payload itself is unchanged.
+    """
+    def run(conn):
+        if not _table_exists(conn):
+            return
+        ddl = _TRIGGER_DDL[-1]
+        if not changed_only:
+            ddl = ddl.replace(
+                "\nWHEN old.rowid IS NOT new.rowid OR old.title IS NOT new.title OR old.content IS NOT new.content",
+                "",
+            )
+        conn.exec_driver_sql(f"DROP TRIGGER IF EXISTS {FTS_TABLE}_au")
+        conn.exec_driver_sql(ddl)
+
+    if isinstance(bind, Engine):
+        with bind.begin() as conn:
+            run(conn)
+    else:
+        run(bind)
 
 
 def drop_fts(bind) -> None:

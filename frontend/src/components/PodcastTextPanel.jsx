@@ -246,15 +246,13 @@ export default function PodcastTextPanel({
   const digestMeta = podcastDigestMeta(digestMode);
   if (!digestVisible && !transcript) return null;
 
+  // 导读稿直接接在正文切换(「节目简介 | ✦ 导读稿」)下面,切换本身就是它的标题;逐字稿仍在分隔线下自成一节
   return (
-    <section className="podcast-text-panel" aria-label="播客文字内容">
+    <>
       {digestVisible && (
         <div className="podcast-text-digest">
-          <div className="podcast-text-heading">
-            <h2>{digestMeta.title}</h2>
-            <span>中文博客 · AI 整理</span>
-          </div>
-          <div className="podcast-guide-body">
+          {/* 与节目简介同一套长文排印(小节标题宋体):导读稿此时就是这一页的正文 */}
+          <div className="podcast-guide-body reader-article-copy markdown-body">
             <ReaderMarkdown>{view.digest.text}</ReaderMarkdown>
             {view.digest.next_cursor && (
               <button
@@ -272,6 +270,7 @@ export default function PodcastTextPanel({
         </div>
       )}
       {transcript && (
+        <section className="podcast-text-panel" aria-label="逐字稿">
         <div className="podcast-text-transcript">
           <button
             type="button"
@@ -351,7 +350,8 @@ export default function PodcastTextPanel({
             </div>
           )}
         </div>
+        </section>
       )}
-    </section>
+    </>
   );
 }

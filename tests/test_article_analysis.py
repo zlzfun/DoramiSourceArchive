@@ -434,6 +434,36 @@ def test_article_analysis_repairs_malformed_json_once(monkeypatch, malformed):
     assert "只修复结构与缺失字段" in calls[1]["messages"][-1].content
 
 
+def test_paper_worker_analyzes_only_abstract_without_vision(storage):
+    article = _article("paper-abstract", source_id="web_huggingface_daily_papers",
+                       content="FULLTEXT MUST NEVER ENTER THE ANALYZER")
+    article.extensions_json = json.dumps({"paper": {
+        "abstract": "A short original abstract.", "content_level": "fulltext",
+    }})
+    with Session(storage.engine) as session:
+        session.add(_tag())
+        session.commit()
+    task = _seed_and_claim(storage, article)
+    vision_calls = []
+
+    async def vision(*args):
+        vision_calls.append(args)
+        return "fulltext image"
+
+    async def analyzer(article_input, _tags, _config):
+        assert article_input.body == "A short original abstract."
+        assert article_input.analysis_basis == "paper_abstract"
+        assert not article_input.image_notes
+        return _payload()
+
+    result = asyncio.run(process_claimed_analysis(
+        storage.engine, task, llm_config=LLM_CONFIG, analyzer=analyzer,
+        image_notes_provider=vision, now_fn=lambda: NOW,
+    ))
+    assert result.status == "succeeded"
+    assert vision_calls == []
+
+
 def test_unrepairable_json_keeps_bounded_backoff_and_terminal_state(
     storage, monkeypatch
 ):

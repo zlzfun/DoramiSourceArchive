@@ -580,6 +580,9 @@ async def lifespan(app: FastAPI):
     if not collector_on:
         print("⏸️ 当前 reader 运行角色不启动抓取调度（仅保留留存清理定时任务）。")
 
+    from services import translation_jobs
+    translation_worker = (asyncio.create_task(translation_jobs.worker_loop(db_sink.engine))
+                          if runtime_reader_enabled() else None)
     try:
         if mcp is not None:
             async with mcp.session_manager.run():
@@ -587,6 +590,9 @@ async def lifespan(app: FastAPI):
         else:
             yield
     finally:
+        if translation_worker is not None:
+            translation_worker.cancel()
+            await asyncio.gather(translation_worker, return_exceptions=True)
         _mcp_gate._app = None
         # AsyncIOScheduler binds to the current event loop. TestClient and clean
         # service restarts create a new loop, so never retain a running scheduler
@@ -2676,6 +2682,13 @@ def load_tasks_to_scheduler():
         max_instances=1,
     )
     _ensure_interval_job(
+        "paper_fulltext",
+        execute_paper_fulltext_job,
+        minutes=1,
+        max_instances=1,
+        coalesce=True,
+    )
+    _ensure_interval_job(
         "taxonomy_retag",
         execute_taxonomy_retag_job,
         minutes=1,
@@ -2701,6 +2714,17 @@ def load_tasks_to_scheduler():
         minutes=1,
         max_instances=1,
     )
+async def execute_paper_fulltext_job():
+    from services.paper_fulltext import run_batch
+
+    try:
+        # Papers may carry dozens of figures. Cache them on reader demand,
+        # rather than growing storage and the shared arXiv queue on ingestion.
+        await run_batch(db_sink.engine)
+    except Exception:
+        _dorami_logger.warning("论文全文任务异常；未完成租约将在后续批次恢复", exc_info=True)
+
+
 async def execute_article_analysis_job():
     """Recover/scan/claim article analysis without coupling it to ingestion."""
 

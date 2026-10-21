@@ -1,0 +1,114 @@
+/* issue #84 社交流翻译 · 提案样式
+   实现时并入 frontend/src/index.css 的「推文卡」段(@layer components),命名沿用 .social-* 前缀。
+   只用既有 token:--dorami-* 色、--grad-ai(AI 触点唯一渐变)、--motion-*;字重只用 400 / 600。 */
+
+/* ── 卡片最后一行(媒体与引用推之后):翻译管的是整张卡片(主推 + 引用推),入口就放在整张卡片的末尾。
+   「显示更多」仍紧贴正文,只管正文折叠——两个位置,两种管辖范围。开合都在这一行,位置不随状态移动 ── */
+.social-tr-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 14px;
+  row-gap: 2px;
+  margin-top: 8px;
+}
+
+/* 翻译入口(方案 A):常显文字钮,不随悬停出现;✦ 是 AI 触点标记,悬停时转 AI 渐变 */
+.social-tr-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 20px;
+  color: var(--dorami-muted);
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+.social-tr-btn svg { width: 12px; height: 12px; flex: none; }
+.social-tr-btn:hover:not(:disabled) { color: var(--dorami-ink); }
+.social-tr-btn:hover:not(:disabled) svg { stroke: url(#ai-grad) var(--dorami-accent); }
+.social-tr-btn:disabled { cursor: default; color: var(--dorami-faint); }
+
+/* 已译标记(只译了引用推 / 替换原文时):✦ + 一句说明,后接「收起 / 显示原文」 */
+.social-tr-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--dorami-faint);
+}
+.social-tr-mark svg { width: 12px; height: 12px; flex: none; stroke: url(#ai-grad) var(--dorami-accent); }
+
+/* 失败 / 额度用尽:就地一句说明;可重试的给「重试」(说明与重试是一句话,收成一组) */
+.social-tr-err { display: inline-flex; align-items: center; gap: 6px; }
+.social-tr-note { font-size: 12.5px; line-height: 20px; color: var(--dorami-faint); }
+.social-tr-retry { font-size: 12.5px; font-weight: 600; line-height: 20px; color: var(--dorami-accent); }
+.social-tr-retry:hover { text-decoration: underline; }
+
+/* ── 译文块(原文下追加):细线隔开,小标签标明是 AI 译文;原文一字不动 ── */
+.social-tr {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--dorami-border-soft);
+  animation: social-tr-in var(--motion-medium) var(--motion-ease) both;
+}
+.social-tr-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dorami-faint);
+}
+.social-tr-head svg { width: 12px; height: 12px; flex: none; stroke: url(#ai-grad) var(--dorami-accent); }
+.social-tr-label { font-weight: 600; }
+.social-tr-hide { margin-left: 6px; font-size: 12px; line-height: 18px; color: var(--dorami-faint); }
+.social-tr-hide:hover { color: var(--dorami-ink-2); text-decoration: underline; }
+.social-tr-text {
+  margin-top: 4px;
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--dorami-ink-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* 读过的卡:译文随原文一起降为 muted */
+.social-post.is-read .social-tr-text { color: var(--dorami-muted); }
+
+/* 引用推里的译文:卡内同样细线隔开。引用卡整卡是原推链接,卡内不放任何按钮,开合由卡片那一行统一管 */
+.social-quote-tr {
+  display: block;
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid var(--dorami-border-soft);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--dorami-muted);   /* 与引用原文同级:引用卡整体是次一级内容 */
+  animation: social-tr-in var(--motion-medium) var(--motion-ease) both;
+}
+
+@keyframes social-tr-in {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: none; }
+}
+:root[data-motion="reduce"] .social-tr,
+:root[data-motion="reduce"] .social-quote-tr { animation: none; }
+
+/* 触屏:文字钮视觉不变,点击区上下各扩 6px(负外边距抵消,不改卡片高度) */
+.m-shell .social-tr-btn,
+.m-shell .social-tr-hide,
+.m-shell .social-tr-retry { padding-block: 6px; margin-block: -6px; }
+
+/* ── 方案 B · 动作区入口:与收藏 / 标读同族(桌面悬停才显,移动端常显);开着译文时常显并转 AI 渐变。
+   「译」用 SVG 文字字形:纯文字的钮会带出文字基线,把整行头部往上带约 3px(星标 / 对勾是 SVG,无基线) ── */
+.social-act-glyph text { fill: currentColor; font-size: 12.5px; font-weight: 600; }
+.social-post .social-act.is-tr { opacity: 1; }
+/* 常显变体:「译」不随悬停出现(收藏 / 标读仍悬停),回应「入口不靠悬停」的拍板 */
+.social-post .social-act.is-pinned { opacity: 1; }
+.social-act.is-tr .social-act-glyph text { fill: url(#ai-grad) var(--dorami-accent); }
+
+/* ── 方案 C · 流头开关:直接复用文章阅读窗的「原语言 | ✦ 中文」二段(.reader-tr-seg),不另造控件 ── */
+.reader-social-actions .reader-tr-seg { margin-right: 4px; }
+.reader-social-actions .reader-tr-seg-btn { font-size: 12.5px; }
+.reader-social-actions .reader-tr-seg-btn svg { width: 13px; height: 13px; flex: none; }

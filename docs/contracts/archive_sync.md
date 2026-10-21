@@ -208,14 +208,27 @@ Since issue #178 wave 2 the payload also carries the second score — `content_k
 additive within v2: a receiver that gets a result from an older producer without
 them clears its copy instead of pairing a new news score with a stale content
 value, and an older receiver ignores them. The local task marker `pending_scope`
-is never exported. Deploy the external producer first, as for any stream change.
+is never exported. This additive-field change used producer-first deployment.
+
+Issue #41 is an explicit exception: upgrade receivers **before** the producer.
+Managed HF papers retain their original abstract-based `content_hash` when their
+reading content becomes full text; other legacy papers retain the previous
+title + body archive hash while automatic model input uses only an abstract.
+An old receiver cannot validate enriched papers' abstract hashes and can clear
+their prior scores. Generation 3 intentionally replays analyses once per target
+after upgrading to restore any affected results. Full paper content/provenance
+is replicated; local `paper_fulltext_jobs` are not.
+
+The articles exporter targets at most 8 MiB per encoded page. A single oversized
+legacy row is sent alone to guarantee progress. Pagination continues via the
+existing snapshot/next_cursor/complete contract, even when count is below limit.
 
 An older receiver drops unknown fields but still advances its checkpoint and its
 per-entity applied revisions, so those rows would never be re-sent after it
 upgrades. The receiver therefore records, per target, which analysis payload
 generation it has pulled (`v2_analysis_payload_generation`, local bookkeeping —
-not a wire field; constant `archive_sync_v2.ANALYSIS_PAYLOAD_GENERATION`, 2 since
-the content-value fields). When the recorded generation is older, the next sync
+not a wire field; constant `archive_sync_v2.ANALYSIS_PAYLOAD_GENERATION`, 3 since
+paper abstract hashes; 2 introduced content-value fields). When the recorded generation is older, the next sync
 preparation clears, in one transaction, the `analyses` checkpoint and that
 authority's `analyses` entity states (otherwise every same-revision row would be
 skipped as not newer), so the run re-pulls the full analyses stream through the
@@ -226,7 +239,7 @@ next run downloads the stream from the beginning again, and the entity states
 rebuilt so far make it skip already-applied, unchanged revisions, applying only
 the remaining or newer rows. Replay is safe and idempotent, but there is no
 network-level page resumption. Bump the constant whenever the analyses payload
-gains fields.
+gains fields or a compatibility change requires replay.
 
 An analysis whose `content_hash` no longer matches the producer's current article
 is exported as a tombstone, and is absent from analysis presence checks. This

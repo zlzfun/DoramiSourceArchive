@@ -92,8 +92,10 @@ CAPABILITIES = ADVERTISED_CAPABILITIES
 # (content_kind / content_value / content_value_reason / content_value_version)。旧版接收端会丢掉它不认识的
 # 字段、同步进度照样前移,升级后那些行不会重发;所以接收端记下自己按哪一代拉过分析流,落后时把分析流
 # checkpoint 清掉、整流重拉一次(逐行覆盖、presence 确认后才删,见 remote_sync.prepare_transaction_revision_consumer)。
-# 以后再给分析流加字段时把它 +1。
-ANALYSIS_PAYLOAD_GENERATION = 2
+# 3 = issue #41 摘要指纹契约；升级接收端时重放可能被旧版正文比较清掉的评分。
+# 以后再给分析流加字段或改变兼容投影时把它 +1。
+ANALYSIS_PAYLOAD_GENERATION = 3
+DEFAULT_ARTICLE_SYNC_PAGE_MAX_BYTES = 8 * 1024 * 1024
 AUTHORITY_ID_KEY = "archive_sync:v2:authority_id"
 CANDIDATE_STAGING_KEY_PREFIX = "archive_sync:v2:candidate_staging:"
 TAXONOMY_SNAPSHOT_DIGEST_KEY = "archive_sync:v2:taxonomy_snapshot_digest"
@@ -835,6 +837,7 @@ def export_page(
     since: str = "",
     after: str = "",
     limit: int = 1000,
+    article_page_max_bytes: int = DEFAULT_ARTICLE_SYNC_PAGE_MAX_BYTES,
     podcast_text_max_bytes: int = DEFAULT_PODCAST_TEXT_ARTIFACT_MAX_BYTES,
     podcast_text_max_chars: int = DEFAULT_PODCAST_TEXT_ARTIFACT_MAX_CHARS,
     podcast_text_page_max_bytes: int = DEFAULT_PODCAST_TEXT_SYNC_PAGE_MAX_BYTES,
@@ -849,6 +852,8 @@ def export_page(
         raise SyncV2Error("snapshot is required when continuing a page")
     authority_id = producer_authority_id(engine)
     limit = min(max(int(limit), 1), 5000)
+    if stream == "articles" and article_page_max_bytes <= 0:
+        raise SyncV2Error("article page byte limit must be positive")
     if stream == "podcast_texts":
         if podcast_text_page_max_bytes <= 0 or podcast_text_page_max_rows <= 0:
             raise SyncV2Error("podcast text page limits must be positive")
@@ -953,6 +958,7 @@ def export_page(
             complete = len(states) <= limit
             rows = []
             podcast_rows_size = 0
+            article_rows_size = 0
             for state in states[:limit]:
                 operation = state.operation
                 payload = None
@@ -980,6 +986,15 @@ def export_page(
                     operation=operation,
                     )
                 )
+                if stream == "articles":
+                    row_size = len(_canonical(rows[-1]).encode("utf-8")) + 1
+                    if article_rows_size + row_size > article_page_max_bytes and len(rows) > 1:
+                        rows.pop()
+                        complete = False
+                        break
+                    # A single large legacy row must still make progress. Do
+                    # not materialize the rest of a 1000-row full-text page.
+                    article_rows_size += row_size
                 if stream == "podcast_texts":
                     # Do not first materialize up to row_limit × artifact_limit
                     # bytes and only then truncate: stop as soon as the next
@@ -1043,6 +1058,18 @@ def export_page(
                 return encoded
             if not rows:
                 raise SyncV2Error("podcast text manifest exceeds the page byte limit")
+            rows.pop()
+            complete = False
+
+    if stream == "articles":
+        while True:
+            encoded = encode_page(_manifest(
+                stream, authority_id, effective_snapshot, after, rows,
+                complete=complete, since=since,
+            ), rows)
+            if len(encoded.encode("utf-8")) <= article_page_max_bytes or len(rows) <= 1:
+                return encoded
+            # Include the manifest/cursor overhead in the aggregate budget.
             rows.pop()
             complete = False
 

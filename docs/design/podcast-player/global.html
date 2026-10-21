@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>全局播放条</title>
+<link rel="stylesheet" href="../../../frontend/public/fonts/dorami-serif-v1/dorami-serif.css">
+<link rel="stylesheet" href="../../../frontend/public/fonts/dorami-latin-v1/dorami-latin.css">
+<link rel="stylesheet" href="assets/app-shell.css">
+<link rel="stylesheet" href="assets/global.css">
+<script>
+  // 首帧前挂主题,避免画框闪白
+  (function () {
+    var q = new URLSearchParams(location.search);
+    if (q.get('theme') !== 'light') document.documentElement.dataset.theme = 'dark';
+    if (q.get('motion') === 'reduce') document.documentElement.dataset.motion = 'reduce';
+  })();
+</script>
+<script src="assets/data.js"></script>
+<script src="assets/global-data.js"></script>
+<script src="assets/ppg-social-data.js"></script>
+<script src="assets/global.js" defer></script>
+</head>
+<body>
+<div id="ppg-root"></div>
+</body>
+</html>

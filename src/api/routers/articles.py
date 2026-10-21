@@ -1031,5 +1031,5 @@ def export_feed_articles_markdown(
         query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(safe_limit)
     ).all()
 
-    markdown = "\n\n---\n\n".join(article_to_markdown(record) for record in records)
+    markdown = "\n\n---\n\n".join(article_to_markdown(record, external_delivery=True) for record in records)
     return Response(content=markdown, media_type="text/markdown; charset=utf-8")

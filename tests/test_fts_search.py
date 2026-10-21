@@ -120,6 +120,76 @@ def test_triggers_sync_insert_update_delete(tmp_path):
     assert _title_ids(sink, "puppies") == set()
 
 
+def _fts_shadow_snapshot(conn):
+    return [
+        conn.exec_driver_sql(f"SELECT * FROM articles_fts_{suffix} ORDER BY 1").fetchall()
+        for suffix in ("data", "idx", "docsize", "config")
+    ]
+
+
+def test_metadata_and_equal_values_do_not_write_fts(tmp_path):
+    sink = _sink(tmp_path)
+    _add(sink, "large", "AI‑Native", "searchable paragraph " * 10000)
+    with sink.engine.begin() as conn:
+        # Isolate FTS write volume from Archive Sync revision bookkeeping.
+        other_triggers = conn.exec_driver_sql(
+            "SELECT name FROM sqlite_master WHERE type='trigger' AND name NOT LIKE 'articles_fts_%'"
+        ).scalars().all()
+        for name in other_triggers:
+            conn.exec_driver_sql('DROP TRIGGER "' + name.replace('"', '""') + '"')
+        before = _fts_shadow_snapshot(conn)
+        for statement in (
+            "UPDATE articles SET read_count=read_count+1",
+            """UPDATE articles SET extensions_json='{"translation_zh":"译文"}'""",
+            "UPDATE articles SET title=title, content=content",
+        ):
+            baseline = conn.exec_driver_sql("SELECT total_changes()").scalar_one()
+            conn.exec_driver_sql(statement)
+            # Exactly the article row changes: no FTS shadow writes at all.
+            assert conn.exec_driver_sql("SELECT total_changes()").scalar_one() - baseline == 1
+            assert _fts_shadow_snapshot(conn) == before
+    assert _title_ids(sink, "AI-Native") == {"large"}
+
+
+def test_guard_migration_preserves_index_and_null_rowid_changes(tmp_path):
+    from alembic import command
+    from sqlalchemy import create_engine
+    from storage.migrations import make_alembic_config
+    from storage.fts import replace_fts_update_trigger
+
+    url = f"sqlite:///{tmp_path / 'guard.db'}"
+    config = make_alembic_config(url)
+    command.upgrade(config, "c41a8e20d610")
+    sink = DatabaseStorage(db_url=url)
+    _add(sink, "m1", "AI‑Native", "original body")
+    # Emulate the old broad trigger even though old migrations import today's DDL.
+    replace_fts_update_trigger(sink.engine, changed_only=False)
+    with sink.engine.connect() as conn:
+        before = _fts_shadow_snapshot(conn)
+    command.upgrade(config, "f41b7c29d602")
+    with sink.engine.begin() as conn:
+        assert _fts_shadow_snapshot(conn) == before
+        baseline = conn.exec_driver_sql("SELECT total_changes()").scalar_one()
+        conn.exec_driver_sql("UPDATE articles SET read_count=1")
+        assert conn.exec_driver_sql("SELECT total_changes()").scalar_one() - baseline == 1
+        conn.exec_driver_sql("UPDATE articles SET content=NULL")
+    assert _title_ids(sink, "original") == set()
+    with sink.engine.begin() as conn:
+        conn.exec_driver_sql("UPDATE articles SET content='new searchable text', rowid=rowid+100")
+    assert _title_ids(sink, "searchable") == {"m1"}
+    assert _title_ids(sink, "AI-Native") == {"m1"}
+    with sink.engine.connect() as conn:
+        before = _fts_shadow_snapshot(conn)
+    command.downgrade(config, "c41a8e20d610")
+    with sink.engine.begin() as conn:
+        assert _fts_shadow_snapshot(conn) == before
+        baseline = conn.exec_driver_sql("SELECT total_changes()").scalar_one()
+        conn.exec_driver_sql("UPDATE articles SET read_count=2")
+        assert conn.exec_driver_sql("SELECT total_changes()").scalar_one() - baseline > 1
+    command.upgrade(config, "f41b7c29d602")
+    sink.engine.dispose()
+
+
 # ------------------------------------------------------------ 命中语义
 
 def test_title_hit(tmp_path):
