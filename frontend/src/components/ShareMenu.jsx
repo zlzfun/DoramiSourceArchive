@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, Copy, Link2, Loader2, Trash2, X } from 'lucide-react';
 import { createArticleShare, fetchArticleShares, revokeArticleShare } from '../api';
 import { copyText } from '../utils/clipboard';
+import { requestLogin } from '../utils/loginPrompt';
 import {
   articleDeepLink,
   publicShareLink,
@@ -24,10 +25,14 @@ import {
  * ③ 字号 bug 修复：初版「生成链接」钮被 button{font:inherit} 未分层规则压成阅读窗
  *    大字（用户当时觉得「违和」的正是 bug 渲染），字号/字重现写在 .share-expiry
  *    容器上靠继承穿透（conventions §3）。
+ *
+ * 游客模式(issue #213,样页 docs/design/guest-mode/ 拍板):总闸开时收到站内链接的人能以游客直接看,
+ * 两组注记随之改为「免登录可看 / 仅这一篇」;游客自己只能复制站内链接,生成公开链接弹登录提示,
+ * 也不拉自己的分享列表(游客没有)。
  */
-export default function ShareMenu({ articleId, onClose, showToast }) {
+export default function ShareMenu({ articleId, onClose, showToast, guest = false, guestAccessEnabled = false }) {
   const [liveShare, setLiveShare] = useState(null);   // 该篇当前存活的公开链接(至多一条)
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!guest);
   const [creating, setCreating] = useState(false);
   const [expiryDays, setExpiryDays] = useState(7);
   const [copiedKey, setCopiedKey] = useState('');
@@ -36,6 +41,7 @@ export default function ShareMenu({ articleId, onClose, showToast }) {
   const copyTimerRef = useRef(null);
 
   const load = useCallback(async () => {
+    if (guest) return;
     try {
       const data = await fetchArticleShares(articleId);
       const items = Array.isArray(data?.items) ? data.items : [];
@@ -46,7 +52,7 @@ export default function ShareMenu({ articleId, onClose, showToast }) {
     } finally {
       setLoading(false);
     }
-  }, [articleId]);
+  }, [articleId, guest]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -117,7 +123,7 @@ export default function ShareMenu({ articleId, onClose, showToast }) {
       {/* ① 站内链接:组头(标题+属性注记,与公开区同构)→ wash 可点行整行即复制 */}
       <div className="share-group-head">
         <span className="micro-label">站内链接</span>
-        <span className="share-group-note">需要登录</span>
+        <span className="share-group-note">{guestAccessEnabled ? '免登录可看' : '需要登录'}</span>
       </div>
       <button
         type="button"
@@ -137,10 +143,20 @@ export default function ShareMenu({ articleId, onClose, showToast }) {
       <div className="share-public">
         <div className="share-group-head">
           <span className="micro-label">公开链接</span>
-          <span className="share-group-note">无需登录</span>
+          <span className="share-group-note">{guestAccessEnabled ? '仅这一篇' : '无需登录'}</span>
         </div>
 
-        {loading ? null : !publicEnabled ? (
+        {guest ? (
+          <div className="share-expiry">
+            <button
+              type="button"
+              className="share-create"
+              onClick={() => requestLogin('publink', { articleId })}
+            >
+              生成公开链接
+            </button>
+          </div>
+        ) : loading ? null : !publicEnabled ? (
           <p className="share-public-off">公开分享已由管理员关闭，可改用上方站内链接。</p>
         ) : (
           <>

@@ -2,6 +2,7 @@ import { cloneElement, isValidElement, useEffect, useMemo, useRef, useState } fr
 import { ArrowDownWideNarrow, ArrowLeft, Check, Loader2, Plus, Search } from 'lucide-react';
 import LogoMark from './LogoMark';
 import AddCustomSourceModal from './AddCustomSourceModal';
+import { requestLogin } from '../utils/loginPrompt';
 import { mediaProxyUrl } from '../api';
 import { SOURCE_ROLES, sourceRoleOf, platformLabelOf, resolveCompany } from '../sourceTaxonomy';
 import { highlightMatch } from '../utils/highlight';
@@ -133,6 +134,8 @@ export default function DiscoverPage({
   // ── 用户自定源(v3.40):总闸开且传入添加动作时,头部出现「添加源」入口 ──
   userSourcesEnabled = false,
   onAddCustomSource = null,
+  // 游客(issue #213):「添加源」照常显示,点了直接弹登录提示,不先打开表单
+  guest = false,
   // ── 兴趣段(issue #27 三稿):发现页第三段「源 · 合集 · 兴趣」——挑源、挑合集、挑标签都是「挑」,
   //    同一个目录页;读东西全在容器。段位受控(tab/onTabChange):首登引导与「我的」入口要能直落兴趣段。
   //    interestsPanel 由上层传入(InterestPage embedded),为 null 时不出第三段。 ──
@@ -364,7 +367,7 @@ export default function DiscoverPage({
                         type="button"
                         className="reader-disc-add"
                         title="贴入 RSS/Atom 地址,添加只有你可见的自定源"
-                        onClick={() => setAddOpen(true)}
+                        onClick={() => (guest ? requestLogin('addsrc') : setAddOpen(true))}
                       >
                         <Plus className="h-[13px] w-[13px]" aria-hidden="true" />
                         {addSourceKind === 'article' ? '添加文章源' : addSourceKind === 'podcast' ? '添加播客' : '添加源'}

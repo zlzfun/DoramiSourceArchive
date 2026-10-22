@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowDownUp, ChevronLeft, ChevronRight, Info, MessageSquare, Package, Palette, Plug2, Rss, User, X } from 'lucide-react';
+import { ArrowDownUp, ChevronLeft, ChevronRight, Info, Lock, MessageSquare, Package, Palette, Plug2, Rss, User, X } from 'lucide-react';
 import { markFeedbackSeen } from '../../api';
 import { useLayerHistory } from '../../hooks/useLayerHistory';
 import AccountSection from '../settings/AccountSection';
@@ -10,11 +10,14 @@ import SkillSection from '../settings/SkillSection';
 import FeedbackSection from '../settings/FeedbackSection';
 import AboutSection from '../settings/AboutSection';
 import OpmlSection, { OpmlPreview } from '../settings/OpmlSection';
+import { GuestAccountSection, GuestGate } from '../settings/GuestSections';
+import { GUEST_LOCKED_SECTIONS } from '../../utils/guestCopy';
 
 // 移动设置栈(移动波 Wave3):桌面 880×576 设置柜的页面栈翻译——一级=分组清单页,
 // 二级=分区页(back 出栈)。分区组件与桌面设置柜完全同源(components/settings/),
 // 门控按移动面口径:移动壳恒为阅读器界面(readerSurface),管理组(数据同步/凭据)
 // 不出现——admin 手机上与读者同观感,管理面回桌面操作;反馈仅读者账号(同柜)。
+// 游客(issue #213)同桌面柜:账户换游客卡 + 登录,需要账号的分区挂小锁、进去是登录入口。
 const HINTS = {
   account: '身份、头像与登录凭据',
   appearance: '主题与动效',
@@ -40,10 +43,13 @@ export default function MobileSettings({
   showToast,
   feedbackUnread = 0,
   onFeedbackSeen,
+  onGuestLogin,
 }) {
   const accountRole = runtimeInfo?.account_role;
   const isAdmin = accountRole === 'admin';
-  const accountRoleLabel = isAdmin ? '管理员' : accountRole === 'user' ? '读者' : '—';
+  const isGuest = accountRole === 'guest';
+  const accountRoleLabel = isAdmin ? '管理员' : accountRole === 'user' ? '读者' : isGuest ? '游客' : '—';
+  const guestLocked = (id) => isGuest && Boolean(GUEST_LOCKED_SECTIONS[id]);
 
   const navGroups = useMemo(() => [
     {
@@ -96,11 +102,11 @@ export default function MobileSettings({
 
   // 打开反馈分区即视为已读(与桌面设置柜同约定)
   useEffect(() => {
-    if (open && sectionId === 'feedback' && feedbackUnread > 0) {
+    if (open && !isGuest && sectionId === 'feedback' && feedbackUnread > 0) {
       markFeedbackSeen();
       onFeedbackSeen?.();
     }
-  }, [open, sectionId, feedbackUnread, onFeedbackSeen]);
+  }, [open, isGuest, sectionId, feedbackUnread, onFeedbackSeen]);
 
   if (!open) return null;
 
@@ -139,7 +145,9 @@ export default function MobileSettings({
             <span className="m-title">{active.label}</span>
           </div>
           <div className="m-page-scroll m-sett-body">
-            {active.id === 'account' && (
+            {isGuest && active.id === 'account' && <GuestAccountSection onLogin={onGuestLogin} />}
+            {guestLocked(active.id) && <GuestGate sectionId={active.id} onLogin={onGuestLogin} />}
+            {!isGuest && active.id === 'account' && (
               <AccountSection
                 username={username}
                 avatar={avatar}
@@ -155,18 +163,18 @@ export default function MobileSettings({
             {active.id === 'appearance' && (
               <AppearanceSection theme={theme} onThemeChange={onThemeChange} />
             )}
-            {active.id === 'opml' && (
+            {active.id === 'opml' && !isGuest && (
               <OpmlSection showToast={showToast} onPushPreview={setOpmlPreview} />
             )}
             {/* 移动壳恒为阅读器观感:isAdmin/canManage 一律走读者口径(adminConsole=false) */}
-            {active.id === 'feed' && (
+            {active.id === 'feed' && !isGuest && (
               <FeedTokenSection showToast={showToast} isAdmin={false} />
             )}
-            {active.id === 'mcp' && (
+            {active.id === 'mcp' && !isGuest && (
               <McpAccessSection showToast={showToast} canManage={false} />
             )}
-            {active.id === 'skill' && <SkillSection />}
-            {active.id === 'feedback' && <FeedbackSection showToast={showToast} />}
+            {active.id === 'skill' && !isGuest && <SkillSection />}
+            {active.id === 'feedback' && !isGuest && <FeedbackSection showToast={showToast} />}
             {active.id === 'about' && (
               <AboutSection accountRoleLabel={accountRoleLabel} isAdmin={false} version={runtimeInfo?.version} build={runtimeInfo?.build} />
             )}
@@ -192,7 +200,8 @@ export default function MobileSettings({
                       {item.id === 'feedback' && feedbackUnread > 0 && (
                         <span className="m-row-badge">{feedbackUnread > 99 ? '99+' : feedbackUnread}</span>
                       )}
-                      <span className="m-row-meta m-sett-hint">{HINTS[item.id]}</span>
+                      <span className="m-row-meta m-sett-hint">{isGuest && item.id === 'account' ? '当前以游客身份浏览' : HINTS[item.id]}</span>
+                      {guestLocked(item.id) && <Lock className="m-row-lock" aria-label="需要登录" />}
                       <span className="m-row-chev" aria-hidden="true"><ChevronRight /></span>
                     </button>
                   ))}

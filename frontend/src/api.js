@@ -1,6 +1,7 @@
 import { API_BASE_URL } from './config';
 import { podcastFullAnalysisCommand } from './utils/podcastFullAnalysis';
 import { podcastPremiumTtsCommand } from './utils/podcastPremiumGuide';
+import { LOGIN_REQUIRED_EVENT, actionForErrorCode } from './utils/loginPrompt';
 
 async function apiFetch(url, options = {}) {
   const response = await fetch(url, {
@@ -26,6 +27,13 @@ async function handleApiError(response, defaultMsg) {
   const error = new Error(msg);
   error.status = response.status;
   error.code = code;
+  // 游客(issue #213):账户写被白名单拦下(403 login_required)或当天 AI 试用用完(429
+  // guest_quota_exhausted)——统一派发登录提示,由 App 弹 LoginPrompt;调用方照常收到错误。
+  const promptAction = actionForErrorCode(code);
+  if (promptAction && typeof window !== 'undefined') {
+    error.loginPrompted = true;
+    window.dispatchEvent(new CustomEvent(LOGIN_REQUIRED_EVENT, { detail: { action: promptAction, code } }));
+  }
   // 429 的 Retry-After(秒):读者 AI 日额度据此按服务端日界恢复入口(issue #84)
   const retryAfter = Number.parseInt(response.headers?.get?.('Retry-After') ?? '', 10);
   if (Number.isFinite(retryAfter) && retryAfter >= 0) error.retryAfter = retryAfter;
@@ -82,6 +90,11 @@ export async function fetchAuthSession() {
   const res = await apiFetch(`${API_BASE_URL}/auth/session`);
   if (!res.ok) return { authenticated: false, user: null };
   return res.json();
+}
+
+// 游客会话(issue #213):entry = deep_link(未登录打开站内链接)| login_page(登录页「先逛逛」)| share_page
+export function startGuestSession(entry) {
+  return request('/auth/guest', { method: 'POST', body: { entry }, errorMsg: '进入游客浏览失败' });
 }
 
 export function fetchRuntimeInfo() {
@@ -811,6 +824,16 @@ export function fetchReaderDefaults() {
 
 export function updateReaderDefaults(sourceIds) {
   return request('/admin/reader-defaults', { method: 'POST', body: { source_ids: sourceIds }, errorMsg: '更新默认订阅名单失败' });
+}
+
+// 游客区(issue #213):设置(总闸 / 游客 AI / 每位游客日额度)+ 默认订阅名单 + 近 N 天聚合统计
+export function fetchAdminGuest(days = 30) {
+  return request(`/admin/guest?days=${days}`, { errorMsg: '获取游客统计失败' });
+}
+
+// body 只带要改的键:{enabled?, ai_enabled?, ai_limits?: {translate|ask|summarize|ondemand: int(0=不限) | null(恢复与读者同额)}}
+export function updateAdminGuestSettings(body) {
+  return request('/admin/guest/settings', { method: 'PUT', body, errorMsg: '更新游客设置失败' });
 }
 
 export function fetchPublicShareGlobal() {

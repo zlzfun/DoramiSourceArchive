@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ExternalLink, Loader2, Link2Off } from 'lucide-react';
+import { ArrowRight, ExternalLink, Loader2, Link2Off } from 'lucide-react';
 import { API_BASE_URL } from '../config';
-import { fetchSharedArticle } from '../api';
+import { fetchAuthSession, fetchSharedArticle, startGuestSession } from '../api';
 import ReaderMarkdown from './ReaderMarkdown';
 import { formatPublishDate } from '../utils/datetime';
 import { stripDuplicateLeadingHeading } from '../utils/markdownTitle';
@@ -14,9 +14,13 @@ import { stripDuplicateLeadingHeading } from '../utils/markdownTitle';
  * 措辞纪律（同 docs 里 reader-facing copy 口径）：这页面对外，读者可能是完全不了解本
  * 系统的同事——不出现「归档 / 采集 / 分发 / 节点」等内部词，也不暴露站内导航入口。
  * 页面只有三样东西：这一篇、它的出处、一个回原文的链接。
+ * 唯一例外（issue #213 游客模式）：游客访问开着、且访客没登录账号时，页尾多一条「在哆啦美里继续逛逛」，
+ * 以游客身份进入阅读器（落早报）；总闸关或已登录账号时不出。
  */
 export default function SharedArticlePage({ token }) {
   const [state, setState] = useState({ status: 'loading', data: null, error: '' });
+  const [guestCta, setGuestCta] = useState(false);
+  const [entering, setEntering] = useState(false);
 
   // 正文图走分享令牌专属的免登录取图端点（护栏与文章端点同套,且只放行这一篇里的图链）——
   // 默认的 /api/media/proxy 对无会话访客是 401,回退直连又被防盗链 CDN 403,整页裂图。
@@ -35,6 +39,31 @@ export default function SharedArticlePage({ token }) {
       });
     return () => { cancelled = true; };
   }, [token]);
+
+  // 游客入口:匿名或已是游客、且总闸开着才出;会话查询失败就不出(分享页照旧只读这一篇)
+  useEffect(() => {
+    let cancelled = false;
+    fetchAuthSession()
+      .then((session) => {
+        if (cancelled) return;
+        const anonymousOrGuest = !session?.authenticated || Boolean(session?.guest);
+        setGuestCta(anonymousOrGuest && Boolean(session?.guest_access_enabled));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  // 进入阅读器:先签游客会话(记入口 share_page),再去掉 #/s/… 整页载入——分享页在 main.jsx 根部分流,
+  // 只改 hash 不会换成 App。签发失败也照样跳:App 会按当时的总闸显示登录页或游客入口。
+  const enterAsGuest = async () => {
+    setEntering(true);
+    try {
+      await startGuestSession('share_page');
+    } catch {
+      // 落到 App 再说
+    }
+    window.location.assign(`${window.location.pathname}${window.location.search}`);
+  };
 
   // 标签页标题跟内容走:收到链接的人开着好几个标签页时能认出这一篇。
   useEffect(() => {
@@ -88,6 +117,16 @@ export default function SharedArticlePage({ token }) {
       <footer className="shared-foot">
         <span>由 {article.shared_by} 分享</span>
       </footer>
+      {guestCta && (
+        <div className="guest-share-cta">
+          <span><b>还想看更多？</b>早报、文章、播客都能直接逛，不用登录</span>
+          <button type="button" onClick={enterAsGuest} disabled={entering} className="action-button action-button-primary min-h-[32px] px-3 text-xs">
+            {entering ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+            在哆啦美里继续逛逛
+            {!entering && <ArrowRight className="h-3.5 w-3.5" />}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -32,6 +32,7 @@ import AnnouncementBanner from '../AnnouncementBanner';
 import MobileArticlePage from './MobileArticlePage';
 import MobileSourceDrawer from './MobileSourceDrawer';
 import MobileMePage from './MobileMePage';
+import { requestLogin } from '../../utils/loginPrompt';
 import ActionSheet from './ActionSheet';
 import { rebuildToast } from '../../utils/briefRebuild';
 import PersonalBriefPage from '../PersonalBriefPage';
@@ -69,6 +70,9 @@ export default function MobileReader({
   onOpenSettings,
   onLogout,
   feedbackUnread = 0,
+  // 游客(issue #213):「我的」页游客卡的登录入口 / 分享菜单的站内链接说明
+  onGuestLogin = null,
+  guestAccessEnabled = false,
   rs,
   view,
 }) {
@@ -143,7 +147,12 @@ export default function MobileReader({
     && account?.role === 'user'
     && account?.interest_onboarding_completed === false;
   // 首登引导(issue #56 方案 B):不再强制落发现页兴趣段,横幅挂在早报页顶;「我的」的兴趣入口红点照旧
-  const openInterests = useCallback(() => { setDiscoverTab('interests'); openDiscover({ shape: 'all' }); }, [openDiscover, setDiscoverTab]);
+  const openInterests = useCallback(() => {
+    // 游客(issue #213)不能设兴趣:弹登录提示,不进兴趣页
+    if (rs.isGuest) { requestLogin('interest'); return; }
+    setDiscoverTab('interests');
+    openDiscover({ shape: 'all' });
+  }, [rs.isGuest, openDiscover, setDiscoverTab]);
   // 「发现更多来源」入口落「源」段(段位粘性,见桌面 ReaderTab 同名函数注释);形态:抽屉=当前容器,「我的」=全部
   const openDiscoverSources = useCallback((opts) => { setDiscoverTab('sources'); openDiscover(opts); }, [openDiscover, setDiscoverTab]);
   // 兴趣页保存回调经 ref 读最新的 discover(PUT 在途时读者可能已走开,闭包值陈旧——codex 检视 P2)
@@ -318,6 +327,8 @@ export default function MobileReader({
             favoriteIds={favoriteIds}
             onToggleFavorite={(articleId) => handleToggleFavorite({ id: articleId })}
             onSubscribeSource={subscribeSourceById}
+            guest={rs.isGuest}
+            onGuestLogin={() => onGuestLogin?.(null)}
             onOpenArticle={async (articleId, ctx) => {
               const opened = await openArticleById(articleId, { silent: true });
               if (!opened) return opened;
@@ -344,12 +355,13 @@ export default function MobileReader({
             feedbackUnread={feedbackUnread}
             themePref={themePref}
             onSetTheme={onSetTheme}
-            onShowFavorites={() => { goFavorites(); setTab(mode); }}
+            onShowFavorites={() => { if (rs.isGuest) { requestLogin('favlist'); return; } goFavorites(); setTab(mode); }}
             onOpenDiscover={() => openDiscoverSources({ shape: 'all' })}
             onManageInterests={personalDigestEnabled ? openInterests : undefined}
             interestAttention={onboardingRequired}
             onOpenSettings={onOpenSettings}
             onLogout={onLogout}
+            onGuestLogin={() => onGuestLogin?.(null)}
           />
         ) : socialView ? (
           <div className="m-social-host">
@@ -584,8 +596,11 @@ export default function MobileReader({
               onSubscribeShape={handleSubscribeShape}
               userSourcesEnabled={userSourcesEnabled}
               onAddCustomSource={handleAddCustomSource}
+              guest={rs.isGuest}
               tab={discoverTab}
-              onTabChange={setDiscoverTab}
+              onTabChange={(next) => (next === 'interests' && rs.isGuest
+                ? requestLogin('interest')
+                : setDiscoverTab(next))}
               shape={discoverShape}
               onShapeChange={setDiscoverShape}
               onOpenRankings={() => { closeDiscover(); setTab('rankings'); }}
@@ -619,6 +634,7 @@ export default function MobileReader({
       {readOpen && (
         <MobileArticlePage
           rs={rs}
+          guestAccessEnabled={guestAccessEnabled}
           aiEnabled={aiEnabled}
           ondemand={ondemand}
           showToast={showToast}

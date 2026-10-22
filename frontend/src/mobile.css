@@ -252,6 +252,11 @@
 .m-page-scroll .reader-disc { min-height: 100%; }
 .m-page-scroll .reader-disc-head-inner,
 .m-page-scroll .reader-disc-body { padding-left: 16px; padding-right: 16px; }
+/* 外层头 / 滚动区的桌面 28px 侧距在窄屏归零,只留内层 16px(此前两层叠成 44px);滚动区锁住横向,
+   左右滑不再让整页漂移(issue #213 顺手修) */
+.m-page-scroll .reader-disc-head,
+.m-page-scroll .reader-disc-scroll { padding-left: 0; padding-right: 0; }
+.m-page-scroll .reader-disc-scroll { overflow-x: hidden; }
 .m-page-scroll .reader-disc-tools { flex-wrap: wrap; }
 .m-page-scroll .reader-disc-search { flex: 1 0 100%; max-width: none; }
 .m-page-scroll .reader-disc-seg { flex: 1; margin-left: 0; }
@@ -602,6 +607,9 @@
   border-right: none;
 }
 .m-social-host .reader-social-col { padding: 0 12px; }
+/* 日期组头的负外距跟着窄屏侧距收成 12px(桌面 -24px 会在两侧各伸出 12px,横向可拖动);滚动区锁住横向(issue #213) */
+.m-social-host .reader-social-day { margin: 0 -12px; padding-left: 12px; padding-right: 12px; }
+.m-social-host .reader-social-scroll { overflow-x: hidden; }
 /* hover 动作钮触屏常显(呈现的诚实:不画摸不到的钮) */
 .m-shell .social-act { opacity: 1; pointer-events: auto; }
 /* 推文翻译底栏(issue #84):文字钮视觉不变,点击区上下各扩 6px(负外边距抵消,不改卡片高度) */
@@ -689,3 +697,9 @@
   font-size: 13px;
 }
 .m-kind-band .reader-kind-chip { flex: none; padding: 4px 10px; }
+
+/* 游客(issue #213):「我的」页账户卡换成游客卡 + 登录 */
+.m-me-card.guest-me-card .guest-login-btn { flex: none; margin-left: auto; }
+.m-avatar.guest-avatar svg { width: 24px; height: 24px; }
+/* 设置栈:需要登录的分区行尾挂一枚小锁(游客) */
+.m-row > .m-row-lock { width: 13px; height: 13px; color: var(--dorami-faint); }
