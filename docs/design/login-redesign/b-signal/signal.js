@@ -78,6 +78,7 @@
   let hm = null;
   (function loadHeightmap() {
     const img = new Image();
+    img.crossOrigin = 'anonymous'; // 在线预览时图片被重定向到另一域名,读像素 / 上传纹理需 CORS
     img.onload = () => {
       try {
         const c = document.createElement('canvas');

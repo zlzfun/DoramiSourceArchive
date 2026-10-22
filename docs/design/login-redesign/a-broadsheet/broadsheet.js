@@ -110,6 +110,7 @@
   function loadImage(src) {
     return new Promise((resolve, reject) => {
       const im = new Image();
+      im.crossOrigin = 'anonymous'; // 在线预览时图片被重定向到另一域名,读像素 / 上传纹理需 CORS
       im.decoding = 'async';
       im.onload = () => resolve(im);
       im.onerror = () => reject(new Error(`无法载入 ${src}`));

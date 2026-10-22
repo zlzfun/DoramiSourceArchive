@@ -954,6 +954,7 @@ void main() {
     greet: $('#greet'), date: $('#meta-date'), time: $('#meta-time'), tz: $('#meta-tz'),
   };
   const img = new Image();
+  img.crossOrigin = 'anonymous'; // 在线预览时图片被重定向到另一域名,读像素 / 上传纹理需 CORS
 
   // 手机没有悬停:透镜默认吸附在表单身后(点按文字场可以把它暂时叫走)
   // 桌面:指针靠近表单时透镜先被「磁吸」过去(进入 12px / 离开 40px 的迟滞),点下去之前玻璃已经就位

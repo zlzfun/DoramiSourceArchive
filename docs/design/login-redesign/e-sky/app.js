@@ -688,6 +688,7 @@
   } catch (e) { /* 忽略 */ }
 
   const moonImg = new Image();
+  moonImg.crossOrigin = 'anonymous'; // 在线预览时图片被重定向到另一域名,读像素 / 上传纹理需 CORS
   moonImg.onload = () => { renderer.setMoonTexture(moonImg); requestFrame(); };
   moonImg.src = 'assets/moon.jpg';
 

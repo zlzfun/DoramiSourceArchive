@@ -90,6 +90,7 @@
   const frames = [];            // Uint32Array(SW*SH) × 5
   let visorMask = null;         // 目镜玻璃格(扫光用)
   const sprite = new Image();
+  sprite.crossOrigin = 'anonymous'; // 在线预览时图片被重定向到另一域名,读像素 / 上传纹理需 CORS
   sprite.decoding = 'async';
   const spriteReady = new Promise((res) => {
     sprite.onload = () => {
