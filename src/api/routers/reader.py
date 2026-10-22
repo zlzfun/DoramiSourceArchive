@@ -1916,6 +1916,13 @@ async def reader_ai_translate_podcast_transcript(
                 config=app.settings.podcast,
                 llm_config=llm_config,
                 usage_meta=UsageMeta(purpose="translate", username=username),
+                # 正式读者有意不设日额度与全站预算(一篇逐字稿的多段调用算一次阅读动作,见
+                # test_reader_ai 两条用例);免登录访客不享受这一豁免(issue #213 检视 F1):
+                # 缓存未命中、即将调模型时按访客的 translate 日额度计一次 + 全站日 token 预算。
+                pre_llm_check=(
+                    (lambda: _enforce_ai_cost_gates(username, "translate"))
+                    if accounts_service.is_guest_visitor(username) else None
+                ),
             )
         )
     except podcast_transcript_translation_service.PodcastTranscriptTranslationError as exc:

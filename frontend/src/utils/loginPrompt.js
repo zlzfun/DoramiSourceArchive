@@ -1,8 +1,8 @@
 /**
  * 游客登录提示(issue #213):需要账号的操作对游客一律走这里,不发请求就弹「登录后即可…」。
  *
- * - 组件里调 `requestLogin(action, { name, articleId })`:派发 `dorami-login-required`,
- *   App 统一弹 LoginPrompt;`articleId` 是登录后要回到的那篇(没有就落早报)。
+ * - 组件里调 `requestLogin(action, { name })`:派发 `dorami-login-required`,App 统一弹 LoginPrompt;
+ *   登录后回到哪里不由调用点指定——App 取打开登录页那一刻眼前正在看的那篇,没有就落早报。
  * - 后端兜底:403 `login_required` / 429 `guest_quota_exhausted` 由 api.js 同一事件接住。
  * - 文案:标题说登录后能做什么,一句说明讲为什么要账号;按钮恒为「继续逛逛 | 登录」。
  */

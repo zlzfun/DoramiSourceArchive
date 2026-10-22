@@ -23,7 +23,7 @@ import TabErrorBoundary from './components/TabErrorBoundary';
 import AiGradientDefs from './components/AiGradientDefs';
 import { useTheme } from './theme';
 import { avatarInitial, avatarHue } from './utils/avatarColor';
-import { fetchAuthSession, fetchFeedbackUnreadCount, fetchFetchers, fetchRuntimeInfo, loginAdmin, logoutAdmin, startGuestSession } from './api';
+import { authGeneration, bumpAuthGeneration, fetchAuthSession, fetchFeedbackUnreadCount, fetchFetchers, fetchRuntimeInfo, loginAdmin, logoutAdmin, startGuestSession } from './api';
 import RunningWidget from './components/RunningWidget';
 import { useRunningProgress } from './hooks/useRunningProgress';
 import { usePolling } from './hooks/usePolling';
@@ -31,6 +31,7 @@ import { useCompactLayout } from './hooks/useCompactLayout';
 import { deepLinkArticleId } from './utils/shareLink';
 import { clearPlayerSession } from './utils/playerCore';
 import { LOGIN_REQUIRED_EVENT } from './utils/loginPrompt';
+import { authQueue, decideAuthExpired } from './utils/authSession';
 
 // Tab 组件按路由惰性加载：各自独立 chunk，登录页与读者态不再下载用不到的重依赖
 // （AdminOpsTab→recharts、ReaderTab/DailyBriefTab→react-markdown）。每个 Tab 挂在独立
@@ -196,8 +197,9 @@ export default function App() {
   // ── 游客(issue #213)──
   // guestAccessEnabled:匿名会话载荷 / runtime 的总闸位,登录页据此显示「先逛逛」。
   // guestLogin:游客点了「登录」——登录页叠在阅读器之上(不卸载阅读器,「返回继续逛逛」原样回来);
-  // returnArticleId 是登录后要回到的那篇。阅读器的 key = readerEpoch + account_role:游客登录成账号后,
-  // 新账号的 runtime 一到(角色变了)就整体重挂一次;readerEpoch 只在游客会话静默续期时手动 +1。
+  // returnArticleId 是登录后要回到的那篇(取打开登录页那一刻「眼前正在看的那篇」,见 visibleArticleRef)。
+  // 游客登录成账号时主界面先卸载、新 runtime 到达后重新挂载(检视 F2),回跳只由新身份的阅读器消费;
+  // readerEpoch 只在游客会话静默续期时手动 +1。
   const [guestAccessEnabled, setGuestAccessEnabled] = useState(false);
   const [guestLogin, setGuestLogin] = useState(null);
   const [loginPrompt, setLoginPrompt] = useState({ open: false, request: null });
@@ -205,6 +207,9 @@ export default function App() {
   const [guestEntryHint, setGuestEntryHint] = useState(false);
   const lastLoginPromptAtRef = useRef(0);
   const guestResumeAtRef = useRef(0);
+  // 眼前正在看的那篇(检视 F3):由阅读器外壳上报——桌面阅读窗可见、移动正文页打开时才有,否则 null
+  const visibleArticleRef = useRef(null);
+  const handleVisibleArticleChange = useCallback((articleId) => { visibleArticleRef.current = articleId || null; }, []);
   const [articlesDirty, setArticlesDirty] = useState(false);
   const [runsDirty, setRunsDirty] = useState(false);
   // 跨页跳转的聚焦上下文：单一通道 { tab, payload }。目标 Tab 自行解释 payload，
@@ -514,7 +519,11 @@ export default function App() {
         // 未登录打开站内链接(issue #213):总闸开时不停在登录卡,直接以游客进入并打开那一篇。
         if (session.guest_access_enabled && deepLinkArticleId(window.location.hash)) {
           try {
-            const guest = await startGuestSession('deep_link');
+            const guest = await authQueue.run(async () => {
+              const issued = await startGuestSession('deep_link');
+              bumpAuthGeneration();
+              return issued;
+            });
             if (!mounted) return;
             setAuthState({ status: 'authenticated', user: guest.user });
             setGuestEntryHint(true);
@@ -540,6 +549,7 @@ export default function App() {
 
   useEffect(() => {
     const resetToAnonymous = () => {
+      bumpAuthGeneration();
       setAuthState({ status: 'anonymous', user: null });
       setAvailableFetchers([]);
       setRuntimeInfo(INITIAL_RUNTIME);
@@ -548,27 +558,42 @@ export default function App() {
       writeStoredSurface(null);
       setGuestLogin(null);
     };
-    const handleAuthExpired = async () => {
-      // 游客会话失效(7 天到期或总闸关过一次):总闸仍开就静默续上同一访客身份,一分钟内至多一次。
-      if (isGuestRef.current && Date.now() - guestResumeAtRef.current > 60000) {
-        guestResumeAtRef.current = Date.now();
-        try {
-          const session = await fetchAuthSession();
-          if (session.guest_access_enabled) {
-            const guest = await startGuestSession('return');
-            setAuthState({ status: 'authenticated', user: guest.user });
-            setRuntimeLoaded(false);
-            setReaderEpoch((n) => n + 1);
+    // 401 处置(检视 F4,规则见 utils/authSession):旧身份发出的请求晚到即忽略;其余排进认证队列,轮到时
+    // 按当时的代次再判一次——同批并发的 401 里第一个续期成功后代次已变,其余自然忽略。游客会话失效
+    // (7 天到期或总闸关过一次)且总闸仍开时静默续上同一访客身份,冷却 60 秒防续期失败的循环。
+    const handleAuthExpired = (event) => {
+      const eventGen = event?.detail?.gen;
+      if (Number.isInteger(eventGen) && eventGen !== authGeneration()) return;
+      authQueue.run(async () => {
+        const decision = decideAuthExpired({
+          eventGen,
+          currentGen: authGeneration(),
+          isGuest: isGuestRef.current,
+          now: Date.now(),
+          lastResumeAt: guestResumeAtRef.current,
+        });
+        if (decision === 'ignore') return;
+        if (decision === 'resume') {
+          guestResumeAtRef.current = Date.now();
+          try {
+            const session = await fetchAuthSession();
+            if (session.guest_access_enabled) {
+              const guest = await startGuestSession('return');
+              bumpAuthGeneration();
+              setAuthState({ status: 'authenticated', user: guest.user });
+              setRuntimeLoaded(false);
+              setReaderEpoch((n) => n + 1);
+              return;
+            }
+            setGuestAccessEnabled(false);
+            resetToAnonymous();
+            showToast('游客浏览已关闭，登录后继续阅读', 'info');
             return;
-          }
-          setGuestAccessEnabled(false);
-          resetToAnonymous();
-          showToast('游客浏览已关闭，登录后继续阅读', 'info');
-          return;
-        } catch { /* 落到下面的常规过期处理 */ }
-      }
-      resetToAnonymous();
-      showToast('登录已过期，请重新登录。', 'error');
+          } catch { /* 落到下面的常规过期处理 */ }
+        }
+        resetToAnonymous();
+        showToast('登录已过期，请重新登录。', 'error');
+      });
     };
     window.addEventListener('dorami-auth-expired', handleAuthExpired);
     return () => window.removeEventListener('dorami-auth-expired', handleAuthExpired);
@@ -577,22 +602,35 @@ export default function App() {
   // 登录拆两拍：onLogin 只做认证请求并返回会话；界面切换延后到 LoginScreen
   // 播完「跃迁」转场后经 onLoginComplete 提交（reduced-motion 时立即提交）。
   // 认证成功即预热 runtime/fetchers——跃迁的 1.2s 足够拉完,闪光退去时直达完整主界面。
-  const handleLogin = async (username, password) => {
+  // 改认证 Cookie 的请求一律经 authQueue 串行,Cookie 换身份的同一刻推进会话代次(检视 F4)。
+  const loginThroughQueue = (username, password) => authQueue.run(async () => {
     const session = await loginAdmin(username, password);
+    bumpAuthGeneration();
+    return session;
+  });
+  const handleLogin = async (username, password) => {
+    const session = await loginThroughQueue(username, password);
     loadRuntimeAndFetchers();
     return session;
   };
+  // 叠层登录(游客 → 账号)不预热 runtime:主界面在登录完成时整体卸载、拉到新 runtime 后再挂载(检视 F2)。
+  const handleGuestOverlayLogin = (username, password) => loginThroughQueue(username, password);
 
   // 登录页「先逛逛」(issue #213):签发游客会话,落到游客版早报。
   const handleGuestEnter = useCallback(async () => {
-    const guest = await startGuestSession('login_page');
+    const guest = await authQueue.run(async () => {
+      const issued = await startGuestSession('login_page');
+      bumpAuthGeneration();
+      return issued;
+    });
     setAuthState({ status: 'authenticated', user: guest.user });
   }, []);
 
-  // 游客点「登录」(轨底 / 我的 / 登录提示):登录页叠在阅读器之上;articleId 是登录后要回到的那篇。
-  const openGuestLogin = useCallback((articleId = null) => {
+  // 游客点「登录」(轨底 / 我的 / 设置柜 / 登录提示 / 入场提示 / 问答行内):登录页叠在阅读器之上;
+  // 回跳目标取这一刻眼前正在看的那篇(检视 F3),没有就落早报。参数一概不用(可直接当 onClick)。
+  const openGuestLogin = useCallback(() => {
     setLoginPrompt((current) => ({ ...current, open: false }));
-    setGuestLogin({ returnArticleId: articleId || null });
+    setGuestLogin({ returnArticleId: visibleArticleRef.current });
   }, []);
   const closeGuestLogin = useCallback(() => setGuestLogin(null), []);
 
@@ -618,8 +656,13 @@ export default function App() {
     const returnArticleId = guestLogin?.returnArticleId || '';
     setGuestLogin(null);
     if (returnArticleId) setDeepLinkArticle(returnArticleId);
+    // 身份切换(检视 F2 / F5):同一批更新里卸载主界面(旧游客阅读器来不及消费回跳)、复位 runtime,
+    // 由载入 effect 拉新账号的 runtime 后重新挂载;管理员这次也落阅读器(回原处),不按默认落地界面去管理台。
+    enterReader();
+    setRuntimeInfo(INITIAL_RUNTIME);
+    setRuntimeLoaded(false);
     handleLoginComplete(session, opts);
-  }, [guestLogin, handleLoginComplete]);
+  }, [guestLogin, handleLoginComplete, enterReader]);
 
   // 登录提示(issue #213):组件经 utils/loginPrompt.requestLogin 或 api.js(后端 403 login_required /
   // 429 guest_quota_exhausted)派发;只对游客弹——正式账号收到这两个码属异常,照常走报错。
@@ -637,8 +680,8 @@ export default function App() {
   useEffect(() => {
     if (!guestEntryHint || !runtimeLoaded) return;
     setGuestEntryHint(false);
-    showToast('正以游客身份浏览', 'info', { action: { label: '登录', onClick: () => openGuestLogin(deepLinkArticle) } });
-  }, [guestEntryHint, runtimeLoaded, showToast, openGuestLogin, deepLinkArticle]);
+    showToast('正以游客身份浏览', 'info', { action: { label: '登录', onClick: openGuestLogin } });
+  }, [guestEntryHint, runtimeLoaded, showToast, openGuestLogin]);
 
   useEffect(() => {
     if (arrival !== 'hold') return undefined;
@@ -679,7 +722,13 @@ export default function App() {
 
   const handleLogout = async () => {
     try {
-      await logoutAdmin();
+      await authQueue.run(async () => {
+        try {
+          await logoutAdmin();
+        } finally {
+          bumpAuthGeneration();
+        }
+      });
     } finally {
       // 退出登录:播放器随阅读器卸载而停止;同一标签页的会话恢复也清掉(issue #199)
       try { clearPlayerSession(window.sessionStorage); } catch { /* 存储不可用即无可清 */ }
@@ -943,14 +992,14 @@ export default function App() {
         open={loginPrompt.open}
         request={loginPrompt.request}
         onClose={() => setLoginPrompt((current) => ({ ...current, open: false }))}
-        onLogin={() => openGuestLogin(loginPrompt.request?.articleId)}
+        onLogin={openGuestLogin}
       />
       {guestLogin && (
         <div className="guest-login-layer">
           <LoginScreen
             logoError={logoError}
             onLogoError={() => setLogoError(true)}
-            onLogin={handleLogin}
+            onLogin={handleGuestOverlayLogin}
             onLoginComplete={handleGuestLoginComplete}
             fromGuest
             onBackToGuest={closeGuestLogin}
@@ -1023,6 +1072,7 @@ export default function App() {
                   initialArticleId={deepLinkArticle}
                   onDeepLinkConsumed={clearDeepLink}
                   onGuestLogin={openGuestLogin}
+                  onVisibleArticleChange={handleVisibleArticleChange}
                   guestAccessEnabled={guestAccessEnabled}
                 />
               </TabBoundary>

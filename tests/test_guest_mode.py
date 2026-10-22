@@ -387,3 +387,164 @@ def test_shared_guest_brief_owner_mapping():
     visitor = accounts_service.guest_visitor_username("visitorCCCCCCCCCCCCCCC")
     assert personal_briefs._username({"sub": visitor}) == accounts_service.GUEST_USERNAME
     assert personal_briefs._username({"sub": "alice"}) == "alice"
+
+
+def _guest_brief_env(monkeypatch, tmp_path):
+    """游客保留账号 + 镜像默认订阅(经 lifespan)+ 个人早报开关打开。"""
+    from models.db import AppSettingRecord
+
+    app_module = _setup_app(monkeypatch, tmp_path)
+    with TestClient(app_module.app):
+        pass
+    engine = app_module.db_sink.engine
+    with Session(engine) as session:
+        session.add(AppSettingRecord(key="personal_digest_enabled", value="true"))
+        session.commit()
+    return engine
+
+
+def _add_guest_edition(engine, *, revision, status="failed", minutes_ago=11):
+    from models.db import PersonalDigestEditionRecord
+    from services import accounts as accounts_service
+    from services import personal_digest as digest_service
+
+    now = datetime.datetime.now(digest_service.SHANGHAI)
+    stamp = (now - datetime.timedelta(minutes=minutes_ago)).isoformat()
+    with Session(engine) as session:
+        session.add(PersonalDigestEditionRecord(
+            owner_username=accounts_service.GUEST_USERNAME, report_date=now.date().isoformat(),
+            revision=revision, status=status, check_after=stamp, cutoff_at=stamp,
+            generation_reason="scheduled", created_at=stamp, updated_at=stamp,
+        ))
+        session.commit()
+
+
+def _guest_revisions(engine):
+    from models.db import PersonalDigestEditionRecord
+    from services import accounts as accounts_service
+
+    with Session(engine) as session:
+        rows = session.exec(
+            select(PersonalDigestEditionRecord)
+            .where(PersonalDigestEditionRecord.owner_username == accounts_service.GUEST_USERNAME)
+            .order_by(PersonalDigestEditionRecord.revision)
+        ).all()
+        return [(r.revision, r.status, r.generation_reason) for r in rows]
+
+
+def test_guest_brief_retry_claims_once_under_write_lock(monkeypatch, tmp_path):
+    """检视 F6:失败版过冷却后只认领一次——新 pending 版本即认领,重复 / 晚到的首开在写锁后重读即跳过。"""
+    from api.routers import personal_briefs
+
+    engine = _guest_brief_env(monkeypatch, tmp_path)
+    _add_guest_edition(engine, revision=1)
+    personal_briefs._retry_failed_guest_edition(engine)
+    personal_briefs._retry_failed_guest_edition(engine)  # 第二个首开:最新版已是 pending,不再重编
+    assert _guest_revisions(engine) == [(1, "failed", "scheduled"), (2, "pending", "manual_rebuild")]
+
+
+def test_guest_brief_retry_skips_stale_request_after_newer_failure(monkeypatch, tmp_path):
+    """E1 认领后又出了新的失败版 E2(冷却期内):针对 E1 的晚到请求在锁内重读到 E2,不回写、不重编。"""
+    from api.routers import personal_briefs
+    from models.db import PersonalDigestEditionRecord
+    from services import personal_digest as digest_service
+
+    engine = _guest_brief_env(monkeypatch, tmp_path)
+    _add_guest_edition(engine, revision=1)
+    personal_briefs._retry_failed_guest_edition(engine)
+    with Session(engine) as session:
+        second = session.exec(select(PersonalDigestEditionRecord).where(PersonalDigestEditionRecord.revision == 2)).one()
+        second.status = "failed"
+        second.updated_at = datetime.datetime.now(digest_service.SHANGHAI).isoformat()
+        session.add(second)
+        session.commit()
+    personal_briefs._retry_failed_guest_edition(engine)
+    assert [r[:2] for r in _guest_revisions(engine)] == [(1, "failed"), (2, "failed")]
+
+
+def test_guest_brief_retry_rolls_back_when_creation_fails(monkeypatch, tmp_path):
+    """认领与建版同一事务:建版前抛错 → 什么都不留,下一次首开仍能认领。"""
+    from api.routers import personal_briefs
+    from services import personal_digest as digest_service
+
+    engine = _guest_brief_env(monkeypatch, tmp_path)
+    _add_guest_edition(engine, revision=1)
+    original = digest_service.start_personal_digest_edition
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("建版前失败")
+
+    monkeypatch.setattr(digest_service, "start_personal_digest_edition", boom)
+    personal_briefs._retry_failed_guest_edition(engine)
+    assert _guest_revisions(engine) == [(1, "failed", "scheduled")]
+    monkeypatch.setattr(digest_service, "start_personal_digest_edition", original)
+    personal_briefs._retry_failed_guest_edition(engine)
+    assert [r[:2] for r in _guest_revisions(engine)] == [(1, "failed"), (2, "pending")]
+
+
+def test_guest_brief_retry_reads_only_after_taking_write_lock(monkeypatch, tmp_path):
+    """确定性交错:另一请求持有写锁时,重试必须卡在拿锁处、还没读;对方把失败版推进冷却期并提交后,
+    重试在锁内重读到新状态即跳过——证明「复核」与「建版」在同一写事务里(无锁先读的旧写法会重编)。"""
+    import threading
+    import time
+
+    from api.routers import personal_briefs
+    from services import personal_digest as digest_service
+
+    engine = _guest_brief_env(monkeypatch, tmp_path)
+    _add_guest_edition(engine, revision=1)
+    holder = engine.raw_connection()
+    try:
+        holder.isolation_level = None  # 显式 BEGIN / COMMIT
+        cursor = holder.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        worker = threading.Thread(target=personal_briefs._retry_failed_guest_edition, args=(engine,))
+        worker.start()
+        time.sleep(0.5)
+        assert worker.is_alive()  # 卡在 BEGIN IMMEDIATE
+        cursor.execute(
+            "UPDATE personal_digest_editions SET updated_at = ? WHERE revision = 1",
+            (datetime.datetime.now(digest_service.SHANGHAI).isoformat(),),
+        )
+        cursor.execute("COMMIT")
+    finally:
+        holder.close()
+    worker.join(timeout=30)
+    assert not worker.is_alive()
+    assert _guest_revisions(engine) == [(1, "failed", "scheduled")]
+
+
+def test_guest_stats_count_conversions_by_event_time(monkeypatch, tmp_path):
+    """检视 F7:八天前逛过、今天直接登录——转化记在八天前那一行,但按 converted_at 算进近 7 天;
+    该访客同时进入窗口访客集合,转化率不超过 100%;窗口外的访问不进访问数与入口。"""
+    from services import guest_access
+
+    app_module = _setup_app(monkeypatch, tmp_path)
+    engine = app_module.db_sink.engine
+    eight_days_ago = (datetime.datetime.now() - datetime.timedelta(days=8)).isoformat()
+    with Session(engine) as session:
+        guest_access.record_entry(session, "visitorEEEEEEEEEEEEEEE", "deep_link", now=eight_days_ago)
+        assert guest_access.record_conversion(session, "visitorEEEEEEEEEEEEEEE", "alice")
+        week = guest_access.guest_stats(session, days=7)
+        month = guest_access.guest_stats(session, days=30)
+    today = datetime.date.today().isoformat()
+    assert week["kpi"]["conversions"] == 1 and week["kpi"]["visitors"] == 1
+    assert week["kpi"]["conversion_rate"] == 1.0
+    assert week["kpi"]["new_visitors"] == 0  # 早于窗口就来过
+    assert week["kpi"]["visits"] == 0 and sum(week["entries"].values()) == 0
+    assert [d for d in week["by_day"] if d["conversions"]] == [{"day": today, "visitors": 0, "visits": 0, "conversions": 1}]
+    assert month["kpi"]["conversions"] == 1 and month["kpi"]["visitors"] == 1
+    assert month["entries"]["deep_link"] == 1
+
+
+def test_guest_conversion_requires_visit_within_30_days(monkeypatch, tmp_path):
+    from services import guest_access
+
+    app_module = _setup_app(monkeypatch, tmp_path)
+    long_ago = (datetime.datetime.now() - datetime.timedelta(days=31)).isoformat()
+    with Session(app_module.db_sink.engine) as session:
+        guest_access.record_entry(session, "visitorFFFFFFFFFFFFFFF", "login_page", now=long_ago)
+        assert not guest_access.record_conversion(session, "visitorFFFFFFFFFFFFFFF", "alice")
+        stats = guest_access.guest_stats(session, days=7)
+    assert stats["kpi"]["visitors"] == 0 and stats["kpi"]["conversions"] == 0
+    assert stats["kpi"]["conversion_rate"] == 0.0

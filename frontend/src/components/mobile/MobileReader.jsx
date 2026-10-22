@@ -72,6 +72,7 @@ export default function MobileReader({
   feedbackUnread = 0,
   // 游客(issue #213):「我的」页游客卡的登录入口 / 分享菜单的站内链接说明
   onGuestLogin = null,
+  onVisibleArticleChange = null,
   guestAccessEnabled = false,
   rs,
   view,
@@ -211,6 +212,9 @@ export default function MobileReader({
   const listView = !['me', 'brief', 'rankings'].includes(tab) && !socialView;
   // 正文页(push 全屏):文章/动态容器里选中了一篇即入栈;社交流直读不进正文页
   const readOpen = listView && !discover && Boolean(activeArticle);
+  // 游客(issue #213 检视 F3):向 App 上报眼前正在看的那篇——登录后回到它;正文页没开就是 null(落早报)
+  const visibleArticleId = readOpen ? activeArticle.id : null;
+  useEffect(() => { onVisibleArticleChange?.(visibleArticleId); }, [visibleArticleId, onVisibleArticleChange]);
 
   // 播放条的底边:列表页在底部 Tab 栏之上;正文页 / 发现页(整页层盖住 Tab 栏)在安全区之上
   const playerPage = readOpen || discover ? 'page' : 'tabs';
@@ -328,7 +332,7 @@ export default function MobileReader({
             onToggleFavorite={(articleId) => handleToggleFavorite({ id: articleId })}
             onSubscribeSource={subscribeSourceById}
             guest={rs.isGuest}
-            onGuestLogin={() => onGuestLogin?.(null)}
+            onGuestLogin={() => onGuestLogin?.()}
             onOpenArticle={async (articleId, ctx) => {
               const opened = await openArticleById(articleId, { silent: true });
               if (!opened) return opened;
@@ -361,7 +365,7 @@ export default function MobileReader({
             interestAttention={onboardingRequired}
             onOpenSettings={onOpenSettings}
             onLogout={onLogout}
-            onGuestLogin={() => onGuestLogin?.(null)}
+            onGuestLogin={() => onGuestLogin?.()}
           />
         ) : socialView ? (
           <div className="m-social-host">

@@ -43,15 +43,15 @@ test('后端错误码 → 提示动作:只认两个游客码,其余不弹', () =
   assert.equal(actionForErrorCode(undefined), null);
 });
 
-test('requestLogin 派发 dorami-login-required,detail 带动作与回跳文章', () => {
+test('requestLogin 派发 dorami-login-required,detail 带动作与来源名', () => {
   const previous = globalThis.window;
   const target = new EventTarget();
   globalThis.window = target;
   try {
     let detail = null;
     target.addEventListener(LOGIN_REQUIRED_EVENT, (event) => { detail = event.detail; });
-    requestLogin('subscribe', { name: 'IT之家 AI', articleId: 'a-1' });
-    assert.deepEqual(detail, { action: 'subscribe', name: 'IT之家 AI', articleId: 'a-1' });
+    requestLogin('subscribe', { name: 'IT之家 AI' });
+    assert.deepEqual(detail, { action: 'subscribe', name: 'IT之家 AI' });
   } finally {
     if (previous === undefined) delete globalThis.window;
     else globalThis.window = previous;

@@ -11,6 +11,7 @@ import datetime as dt
 import hashlib
 import json
 import uuid
+from typing import Callable, Optional
 
 from sqlalchemy import func
 from sqlalchemy.engine import Engine
@@ -296,8 +297,14 @@ async def translate_transcript(
     config: PodcastConfig,
     llm_config: LLMConfig,
     usage_meta: UsageMeta,
+    pre_llm_check: Optional[Callable[[], None]] = None,
 ) -> tuple[PodcastTextArtifactRecord, bool]:
-    """Translate and publish one current transcript, returning artifact + cache flag."""
+    """Translate and publish one current transcript, returning artifact + cache flag.
+
+    ``pre_llm_check`` runs only on a cache miss right before the model call (the cost gates:
+    site-wide daily token budget + per-user / per-visitor quota); it raises to refuse. A cached
+    translation or an already-Chinese transcript never reaches it — zero cost, never 429.
+    """
 
     if source_kind not in SOURCE_KINDS:
         raise PodcastTranscriptTranslationError("不支持的逐字稿来源", status_code=400)
@@ -320,6 +327,8 @@ async def translate_transcript(
         if looks_chinese(source_text):
             translated = source_text
         else:
+            if pre_llm_check is not None:
+                pre_llm_check()
             translated = await _translate(
                 title=title,
                 text=source_text,

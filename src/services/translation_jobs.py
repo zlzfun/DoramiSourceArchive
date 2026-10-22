@@ -315,6 +315,12 @@ def _cost_gate(session, username, reserve_tokens):
         *holds, Call.username == username, Call.recorded == False)).one()  # noqa: E712
     calls = session.exec(select(func.coalesce(func.sum(AiUsageRecord.calls), 0)).where(
         AiUsageRecord.day == today, AiUsageRecord.username == username, AiUsageRecord.purpose == "translate")).one()
+    # 全站预算先判(与读者 AI 的 _enforce_ai_cost_gates 同序):两者同时耗尽时给预算文案——
+    # 登录解决不了全站预算,不能把访客引去登录(issue #213 检视 F9)。
+    budget = accounts.ai_daily_token_budget(session)
+    used = accounts.reader_ai_tokens_today(session)
+    if budget and (used + pending_tokens >= budget or used + pending_tokens + reserve_tokens > budget):
+        raise Error("今日 AI 预算不足，已完成片段会保留，请明日继续", 429)
     if accounts.is_guest_visitor(username):
         # 访客分别计次,额度缺省与读者同额、管理员可调;0 = 不限。
         limit = guest_access.guest_ai_limit(session, "translate", DAILY_CALL_LIMIT)
@@ -322,10 +328,6 @@ def _cost_gate(session, username, reserve_tokens):
             raise GuestQuotaError(guest_access.GUEST_QUOTA_MESSAGE, 429)
     elif calls + pending_calls >= DAILY_CALL_LIMIT:
         raise Error("今日翻译次数已达上限，已完成片段会保留，请明日继续", 429)
-    budget = accounts.ai_daily_token_budget(session)
-    used = accounts.reader_ai_tokens_today(session)
-    if budget and (used + pending_tokens >= budget or used + pending_tokens + reserve_tokens > budget):
-        raise Error("今日 AI 预算不足，已完成片段会保留，请明日继续", 429)
 
 
 def claim(engine):

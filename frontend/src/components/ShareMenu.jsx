@@ -151,7 +151,7 @@ export default function ShareMenu({ articleId, onClose, showToast, guest = false
             <button
               type="button"
               className="share-create"
-              onClick={() => requestLogin('publink', { articleId })}
+              onClick={() => requestLogin('publink')}
             >
               生成公开链接
             </button>

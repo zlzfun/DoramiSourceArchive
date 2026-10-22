@@ -976,10 +976,10 @@ export function useReaderState({
     if (!activeSourceId) loadArticles(0, false);
   };
 
-  // 游客拦截:返回 true 表示已弹登录提示、调用方就此停下;articleId = 登录后要回到的那篇
+  // 游客拦截:返回 true 表示已弹登录提示、调用方就此停下;登录后回到哪里由 App 按眼前正在看的那篇决定
   const guestBlocked = (action, detail = {}) => {
     if (!isGuest) return false;
-    requestLogin(action, { articleId: activeArticle?.id || null, ...detail });
+    requestLogin(action, detail);
     return true;
   };
 
@@ -1163,7 +1163,7 @@ export function useReaderState({
   // ── 收藏 / 取消收藏 ──
   const handleToggleFavorite = async (article, event) => {
     event?.stopPropagation();
-    if (guestBlocked('favorite', { articleId: article?.id || null })) return;
+    if (guestBlocked('favorite')) return;
     const id = article.id;
     if (!id || favTogglingId === id) return;
     const wasFav = favoriteIds.has(id);

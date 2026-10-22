@@ -3,14 +3,25 @@ import { podcastFullAnalysisCommand } from './utils/podcastFullAnalysis';
 import { podcastPremiumTtsCommand } from './utils/podcastPremiumGuide';
 import { LOGIN_REQUIRED_EVENT, actionForErrorCode } from './utils/loginPrompt';
 
+// 会话代次(issue #213 检视 F4):Cookie 每换一次身份(登录 / 游客进入或续期 / 退出)由调用点 +1(见
+// utils/authSession.js)。请求发出时记下当时的代次,401 事件带上它——App 据此忽略「旧身份发出、新身份
+// 生效后才回来」的 401,不把刚登录或刚续期的会话踢回登录页。
+let authGen = 0;
+export const authGeneration = () => authGen;
+export function bumpAuthGeneration() {
+  authGen += 1;
+  return authGen;
+}
+
 async function apiFetch(url, options = {}) {
+  const gen = authGen;
   const response = await fetch(url, {
     credentials: 'same-origin',
     ...options,
   });
   const requestUrl = typeof url === 'string' ? url : '';
   if (response.status === 401 && !requestUrl.includes('/auth/') && typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('dorami-auth-expired'));
+    window.dispatchEvent(new CustomEvent('dorami-auth-expired', { detail: { gen } }));
   }
   return response;
 }

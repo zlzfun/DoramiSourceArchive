@@ -8,6 +8,8 @@
  * - 区头齿轮开「游客设置」抽屉:四类 AI 用途每位游客的日额度(缺省与读者同额,0 = 不限),
  *   默认订阅名单只读展示(在「内容」子页「新账号默认订阅」里改)。
  * 时间窗吃运维页头的近 N 天;设置写回的响应只取 settings / default_sources,统计仍按当前窗口。
+ * 刷新失败而旧快照还在时(检视 F8):区头挂 StaleNotice,所有派生数字(日均分母、走势日期、区头「近 N 天」)
+ * 一律用快照自带的 stats.days,快照与它的窗口始终自洽,不会把七天的数据套上三十天的分母。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, Settings, X } from 'lucide-react';
@@ -26,6 +28,7 @@ import { useMotionReduced } from '../../motion';
 import { useModalA11y } from '../../hooks/useModalA11y';
 import { C_OTHER, C_PRIMARY, CHART_SLOTS, AXIS, GRID, fmtNumLocale as fmt } from '../charts/chartUtils';
 import { Kpi, KpiState } from './Kpi';
+import StaleNotice from './StaleNotice';
 
 const AXIS_TICK = { fill: AXIS, fontSize: 12 };
 const C_CONVERSION = 'var(--state-ok)';
@@ -98,7 +101,8 @@ function ConversionDot({ cx, cy, payload }) {
   return <circle cx={cx} cy={cy - 9} r={4.5} fill={C_CONVERSION} stroke="var(--dorami-surface)" strokeWidth={2} />;
 }
 
-const pct = (part, whole) => (whole > 0 ? `${((part / whole) * 100).toFixed(part / whole >= 0.1 ? 0 : 1)}%` : '0%');
+// 分母为 0 时写「—」:没有访客就谈不上转化率,不能显示成 0%
+const pct = (part, whole) => (whole > 0 ? `${((part / whole) * 100).toFixed(part / whole >= 0.1 ? 0 : 1)}%` : '—');
 // 平均数保留一位小数;非零但不足 0.1 时写「<0.1」,免得「阅读 3 · 人均 0」这种自相矛盾的读数
 const avg = (total, count) => {
   if (!count || !total) return '0';
@@ -134,7 +138,8 @@ export default function GuestZone({ days = 30, showToast, refreshTick = 0 }) {
   const settings = data?.settings || null;
   const stats = data?.stats || null;
   const kpi = stats?.kpi || {};
-  const rows = useMemo(() => dailyRows(stats?.by_day, days, stats?.as_of_day), [stats, days]);
+  const shownDays = stats?.days || days; // 快照自己的窗口
+  const rows = useMemo(() => dailyRows(stats?.by_day, shownDays, stats?.as_of_day), [stats, shownDays]);
   const maxVisitors = rows.reduce((acc, r) => Math.max(acc, r.visitors), 0);
   const entries = stats?.entries || {};
   const entryTotal = ENTRY_ROWS.reduce((acc, [key]) => acc + (entries[key] || 0), 0);
@@ -208,7 +213,8 @@ export default function GuestZone({ days = 30, showToast, refreshTick = 0 }) {
     <>
       <div className="zone-head">
         <span className="zone-title">游客</span>
-        <span className="zone-hint">近 {days} 天 · 不计入上方账户口径</span>
+        <span className="zone-hint">近 {shownDays} 天 · 不计入上方账户口径</span>
+        {stats && <StaleNotice status={error ? 'error' : 'ok'} error={error} onRetry={load} label="游客统计" />}
         <span className="guest-zone-acts">
           <button type="button" className="rowact-btn" title="游客设置" aria-label="游客设置" onClick={openDrawer} disabled={!settings}>
             <Settings />
@@ -251,7 +257,7 @@ export default function GuestZone({ days = 30, showToast, refreshTick = 0 }) {
         <>
           <section className="surface-card kpi-strip" aria-label="游客概览">
             <Kpi num={fmt(kpi.visitors)} label="访客" sub={`新访客 ${fmt(kpi.new_visitors)}`} />
-            <Kpi num={fmt(kpi.visits)} label="访问" sub={`日均 ${avg(kpi.visits, days)}`} />
+            <Kpi num={fmt(kpi.visits)} label="访问" sub={`日均 ${avg(kpi.visits, shownDays)}`} />
             <Kpi num={fmt(kpi.reads)} label="阅读" sub={`人均 ${avg(kpi.reads, kpi.visitors)}`} />
             <Kpi num={fmt(kpi.ai_calls)} label="AI 调用" sub={`tokens ${fmt(kpi.ai_tokens)}`} />
             <Kpi num={fmt(kpi.conversions)} label="转化" sub={`转化率 ${pct(kpi.conversions || 0, kpi.visitors || 0)}`} />

@@ -13502,7 +13502,7 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
     width: 30px;
     height: 30px;
     padding: 6px;
-    border-radius: 9px;
+    border-radius: var(--r-control);
     background: var(--dorami-wash);
   }
   .reader-vrail-btn.guest-rail-login:hover svg { background: var(--dorami-select); }
@@ -13607,7 +13607,8 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
   .guest-zone-acts { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; align-self: center; }
   .guest-trend { margin-top: 12px; }
   .guest-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; font-size: 12px; color: var(--dorami-muted); }
-  .guest-legend i { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 2px; }
+  /* 图例色块:柱 = 直角方块、转化 = 圆点(§5 的 0 / 50% 特例) */
+  .guest-legend i { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 0; }
   .guest-legend i.is-dot { border-radius: 50%; }
   .guest-entry { display: grid; gap: 10px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--dorami-border-soft); }
   .guest-entry-head { display: flex; align-items: baseline; gap: 10px; font-size: 12.5px; font-weight: 600; color: var(--dorami-ink-2); }

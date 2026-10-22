@@ -223,10 +223,19 @@ def _guest_owner_clause(column):
 
 
 def guest_stats(session: Session, *, days: int = 30) -> Dict[str, Any]:
-    """游客区聚合:KPI(访客 / 新访客 / 访问 / 阅读 / AI 调用与 tokens / 转化)、逐日走势、入口分布。"""
+    """游客区聚合:KPI(访客 / 新访客 / 访问 / 阅读 / AI 调用与 tokens / 转化)、逐日走势、入口分布。
+
+    口径(issue #213 检视 F7):访问、入口、逐日访客按访问行的 `day` 落在窗口内;**转化按事件时间**——
+    `converted_at` 落在窗口内即算,不管它记在哪一天的访问行上(转化记在 30 天内最近一行,可能早于窗口)。
+    「访客」= 窗口内有访问行的访客 ∪ 窗口内转化的访客,于是转化人数恒 ≤ 访客人数,转化率 ≤ 100%。
+    """
     since = _since(days)
     rows = list(session.exec(select(GuestVisitRecord).where(GuestVisitRecord.day >= since)).all())
-    visitor_ids = {r.visitor_id for r in rows}
+    conversion_rows = list(session.exec(
+        select(GuestVisitRecord).where(GuestVisitRecord.converted_at >= since)
+    ).all())
+    converted = {r.visitor_id for r in conversion_rows}
+    visitor_ids = {r.visitor_id for r in rows} | converted
     earlier: set[str] = set()
     if visitor_ids:
         earlier = set(session.exec(
@@ -234,7 +243,6 @@ def guest_stats(session: Session, *, days: int = 30) -> Dict[str, Any]:
             .where(GuestVisitRecord.day < since)
             .where(GuestVisitRecord.visitor_id.in_(sorted(visitor_ids)))
         ).all())
-    converted = {r.visitor_id for r in rows if r.converted_at and r.converted_at[:10] >= since}
 
     reads_total = int(session.exec(
         select(func.coalesce(func.sum(ReaderReadRecord.reads), 0))
@@ -252,10 +260,9 @@ def guest_stats(session: Session, *, days: int = 30) -> Dict[str, Any]:
         slot = by_day.setdefault(r.day, {"visitors": 0, "visits": 0, "conversions": 0})
         slot["visitors"] += 1
         slot["visits"] += int(r.visits or 0)
-    for r in rows:
-        if r.converted_at and r.converted_at[:10] >= since:
-            slot = by_day.setdefault(r.converted_at[:10], {"visitors": 0, "visits": 0, "conversions": 0})
-            slot["conversions"] += 1
+    for r in conversion_rows:
+        slot = by_day.setdefault(r.converted_at[:10], {"visitors": 0, "visits": 0, "conversions": 0})
+        slot["conversions"] += 1
     entries = {key: 0 for key in ENTRIES}
     for r in rows:
         entries[r.entry if r.entry in entries else "return"] += 1
