@@ -40,7 +40,8 @@ def _iso(offset_days: int) -> str:
 def _labels():
     # 纯时间窗表 + 条件性清理表（v3.43 M14 扩面：jobs/feedbacks/article_shares）。
     conditional = {label for label, _ in retention._conditional_cleanups(datetime.date.today())}
-    return {t.label for t in retention._TABLES} | conditional
+    # 游客访客个人状态回收(issue #213):先查后删,不是单条 delete 语句,单列一项。
+    return {t.label for t in retention._TABLES} | conditional | {"guest_visitor_state"}
 
 
 def test_returns_summary_structure_on_empty_db(tmp_path):

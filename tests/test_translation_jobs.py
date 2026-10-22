@@ -668,3 +668,27 @@ def test_invalid_persisted_title_layout_is_stale(env, extra):
     asyncio.run(tr.run_once(engine))
     assert not calls
     assert row(engine, tr.Job, job["job_id"]).status == "stale"
+
+
+def test_cost_gate_reports_site_budget_before_guest_quota(env, monkeypatch):
+    """游客(issue #213 检视 F9):全站预算与访客次数同时耗尽时给预算错误——登录解决不了全站预算,
+    不能抛 GuestQuotaError 把访客引去登录;只有访客次数耗尽时才是 GuestQuotaError。"""
+    import datetime as _dt
+
+    from services import accounts as accounts_service
+
+    engine, _, _ = env
+    visitor = accounts_service.guest_visitor_username("visitorQQQQQQQQQQQQQQQ")
+    today = _dt.date.today().isoformat()
+    with Session(engine) as session:
+        session.add(AiUsageRecord(day=today, username=visitor, purpose="translate", model="m",
+                                  calls=tr.DAILY_CALL_LIMIT, total_tokens=100, updated_at=today))
+        session.commit()
+        tr.accounts.set_ai_daily_token_budget(session, 1)
+        with pytest.raises(tr.Error) as exc:
+            tr._cost_gate(session, visitor, 1)
+        assert not isinstance(exc.value, tr.GuestQuotaError)
+        assert "预算" in str(exc.value)
+        tr.accounts.set_ai_daily_token_budget(session, 0)
+        with pytest.raises(tr.GuestQuotaError):
+            tr._cost_gate(session, visitor, 1)

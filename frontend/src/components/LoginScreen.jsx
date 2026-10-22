@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Archive, ArrowRight, Bot, KeyRound, Loader2, Radar, Sparkles, User } from 'lucide-react';
+import { Archive, ArrowLeft, ArrowRight, Bot, KeyRound, Loader2, Radar, Sparkles, User } from 'lucide-react';
 import BrandLogoImage from './BrandLogoImage';
 import { LOGO_COVER_EYES_PATH, LOGO_COVER_EYES_SRC_SET } from '../config';
 
@@ -333,14 +333,21 @@ function mountConstellation(canvas) {
   };
 }
 
-export default function LoginScreen({ logoError, onLogoError, onLogin, onLoginComplete }) {
+// 游客入口(issue #213),只加两个入口、不动表单(登录页另有重设计在做,落地时须保留):
+// - guestEnabled + onGuestEnter:总闸开时登录按钮下方多一行小字「游客登录」(目检拍板:不要整条次级按钮);
+// - fromGuest + onBackToGuest:游客点了「登录」时叠层呈现,开场直接落到登录卡这一幕,卡顶「返回继续逛逛」。
+export default function LoginScreen({
+  logoError, onLogoError, onLogin, onLoginComplete,
+  guestEnabled = false, onGuestEnter = null, fromGuest = false, onBackToGuest = null,
+}) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [passwordFocused, setPasswordFocused] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   // 'title' = 第一幕（居中强调）；'ready' = 第二幕（登录卡浮现）
-  const [phase, setPhase] = useState(() => (prefersReducedMotion() ? 'ready' : 'title'));
+  const [phase, setPhase] = useState(() => (prefersReducedMotion() || fromGuest ? 'ready' : 'title'));
+  const [guestEntering, setGuestEntering] = useState(false);
   // 第三幕：标题变幻为品牌名
   const [branded, setBranded] = useState(false);
   // 终幕：登录成功的跃迁转场（前景退场 + 星点光轨 + 闪光）
@@ -417,6 +424,18 @@ export default function LoginScreen({ logoError, onLogoError, onLogin, onLoginCo
       reset();
     };
   }, [phase, warping]);
+
+  const handleGuestEnter = async () => {
+    if (!onGuestEnter || guestEntering || isSubmitting || warping) return;
+    setError('');
+    setGuestEntering(true);
+    try {
+      await onGuestEnter();
+    } catch (err) {
+      setError(err.message || '进入游客浏览失败');
+      setGuestEntering(false);
+    }
+  };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -538,6 +557,12 @@ export default function LoginScreen({ logoError, onLogoError, onLogin, onLoginCo
             <span className="auth-card-ring" aria-hidden="true" />
             <span className="auth-card-glow" aria-hidden="true" />
             <form onSubmit={handleSubmit} className="auth-form">
+              {fromGuest && onBackToGuest && (
+                <button type="button" className="guest-back" onClick={onBackToGuest} disabled={warping}>
+                  <ArrowLeft aria-hidden="true" />
+                  返回继续逛逛
+                </button>
+              )}
               <p className="auth-card-eyebrow">ACCOUNT ACCESS</p>
               <h2 className="auth-card-title">欢迎回来</h2>
               <p className="auth-card-sub">登录账号，继续浏览你的 AI 资讯。</p>
@@ -577,12 +602,23 @@ export default function LoginScreen({ logoError, onLogoError, onLogin, onLoginCo
                 {error && <p className="auth-error">{error}</p>}
               </div>
 
-              <button type="submit" disabled={isSubmitting || warping} className="auth-submit">
+              <button type="submit" disabled={isSubmitting || warping || guestEntering} className="auth-submit">
                 <span className="auth-submit-gloss" aria-hidden="true" />
                 {isSubmitting ? <Loader2 className="animate-spin" /> : null}
                 <span>{warping ? '正在进入' : isSubmitting ? '正在登录' : '登录'}</span>
                 {!isSubmitting ? <ArrowRight /> : null}
               </button>
+
+              {guestEnabled && onGuestEnter && !fromGuest && (
+                <button
+                  type="button"
+                  className="guest-enter"
+                  onClick={handleGuestEnter}
+                  disabled={guestEntering || isSubmitting || warping}
+                >
+                  {guestEntering ? '正在进入…' : '游客登录'}
+                </button>
+              )}
 
               <p className="auth-foot">受 HMAC 会话保护 · 哆啦美</p>
             </form>

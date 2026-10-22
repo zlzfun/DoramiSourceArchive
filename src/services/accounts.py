@@ -43,6 +43,16 @@ from models.db import (
 VALID_ROLES = ("admin", "user")
 VALID_SURFACES = ("console", "reader")
 
+# 游客(issue #213):第三种会话角色,不可由管理员授予(故不在 VALID_ROLES)。
+GUEST_ROLE = "guest"
+# 共享保留账号:订阅范围、共享游客早报与 AI 授权落在这一行(早报版面外键到 users)。
+# 用户名含冒号——create_user 拒绝冒号,管理员建不出同名账号;密码哈希不可用,无法登录。
+GUEST_USERNAME = "guest:shared"
+# 每位访客的身份前缀:游客会话的用户名即 guest:v:<vid>,已读 / AI 计次 / 阅读计量按它分开
+# (这些表只存用户名字符串、无外键),不建账号行。
+GUEST_VISITOR_PREFIX = "guest:v:"
+_GUEST_PASSWORD_HASH = "!guest"  # 非 pbkdf2 编码串,verify_password 恒为 False
+
 # AI Beta 全局总开关：存 app_settings KV，默认开启。关闭即全员 AI 熔断。
 AI_BETA_GLOBAL_KEY = "ai_beta_global_enabled"
 # 新账号 AI 默认值:存 app_settings KV,默认开——新建账户的逐账户 AI 开关按此播种。
@@ -203,7 +213,99 @@ def get_active_user(session: Session, username: str) -> Optional[UserRecord]:
 
 
 def list_users(session: Session) -> List[UserRecord]:
-    return list(session.exec(select(UserRecord).order_by(UserRecord.username)).all())
+    """全部账户(不含游客保留账号:它不是账户,不进名单、读者数与任何管理操作)。"""
+    return list(session.exec(
+        select(UserRecord).where(UserRecord.role != GUEST_ROLE).order_by(UserRecord.username)
+    ).all())
+
+
+# ==================== 游客身份(issue #213) ====================
+def is_guest_visitor(username: Optional[str]) -> bool:
+    return str(username or "").startswith(GUEST_VISITOR_PREFIX)
+
+
+def is_guest_username(username: Optional[str]) -> bool:
+    """保留账号或访客身份——统计排除与账户面拒绝的单点判定。"""
+    name = str(username or "")
+    return name == GUEST_USERNAME or name.startswith(GUEST_VISITOR_PREFIX)
+
+
+def guest_visitor_username(visitor_id: str) -> str:
+    return f"{GUEST_VISITOR_PREFIX}{visitor_id}"
+
+
+def account_username_for(username: Optional[str]) -> Optional[str]:
+    """访客身份 → 共享保留账号,其余原样。订阅范围、共享早报与授权查账号行时用它。"""
+    return GUEST_USERNAME if is_guest_visitor(username) else username
+
+
+def get_account_for(session: Session, username: Optional[str]) -> Optional[UserRecord]:
+    """按会话用户名取「授权用」账号行:访客身份取保留账号。"""
+    return get_user(session, account_username_for(username) or "")
+
+
+def ensure_guest_account(session: Session, *, enabled: bool) -> UserRecord:
+    """幂等地建好 / 对齐游客保留账号;启用态跟随游客总闸。
+
+    关闸时轮换会话世代:既有游客会话下一次请求即失效(与改密吊销同一机制)。
+    """
+    record = session.get(UserRecord, GUEST_USERNAME)
+    now = _now_iso()
+    if record is None:
+        record = UserRecord(
+            username=GUEST_USERNAME,
+            password_hash=_GUEST_PASSWORD_HASH,
+            role=GUEST_ROLE,
+            is_active=bool(enabled),
+            default_surface="reader",
+            ai_beta_enabled=True,
+            interest_onboarding_completed_at=now,
+            session_epoch=new_session_epoch(),
+            created_at=now,
+            updated_at=now,
+        )
+    else:
+        changed = False
+        if record.role != GUEST_ROLE or record.password_hash != _GUEST_PASSWORD_HASH:
+            record.role = GUEST_ROLE
+            record.password_hash = _GUEST_PASSWORD_HASH
+            changed = True
+        if not record.interest_onboarding_completed_at:
+            record.interest_onboarding_completed_at = now
+            changed = True
+        if record.is_active != bool(enabled):
+            record.is_active = bool(enabled)
+            if not enabled:
+                record.session_epoch = new_session_epoch()
+            changed = True
+        if not changed:
+            return record
+        record.updated_at = now
+    session.add(record)
+    session.commit()
+    session.refresh(record)
+    return record
+
+
+def set_guest_ai_enabled(session: Session, enabled: bool) -> UserRecord:
+    """「游客 AI」开关 = 保留账号的 ai_beta_enabled(账户管理面看不到这一行,只经游客设置改)。"""
+    record = session.get(UserRecord, GUEST_USERNAME)
+    if record is None:
+        raise AccountError("游客账号尚未初始化")
+    record.ai_beta_enabled = bool(enabled)
+    record.updated_at = _now_iso()
+    session.add(record)
+    session.commit()
+    session.refresh(record)
+    return record
+
+
+def _get_manageable_user(session: Session, username: str) -> Optional[UserRecord]:
+    """账户管理操作的取行入口:游客保留账号对管理面一律按不存在处理。"""
+    record = get_user(session, username)
+    if record is None or record.role == GUEST_ROLE:
+        return None
+    return record
 
 
 # ==================== 用户增删改 ====================
@@ -241,7 +343,7 @@ def create_user(session: Session, username: str, password: str, role: str) -> Us
 
 
 def set_password(session: Session, username: str, new_password: str) -> UserRecord:
-    record = get_user(session, username)
+    record = _get_manageable_user(session, username)
     if record is None:
         raise AccountError(f"账户 '{username}' 不存在")
     record.password_hash = hash_password(new_password)
@@ -256,7 +358,7 @@ def set_password(session: Session, username: str, new_password: str) -> UserReco
 
 def set_avatar(session: Session, username: str, avatar: Optional[str]) -> UserRecord:
     """更新账户头像；avatar 为空字符串/None 表示清除（回退到首字母占位）。"""
-    record = get_user(session, username)
+    record = _get_manageable_user(session, username)
     if record is None:
         raise AccountError(f"账户 '{username}' 不存在")
     record.avatar = avatar or None
@@ -268,7 +370,7 @@ def set_avatar(session: Session, username: str, avatar: Optional[str]) -> UserRe
 
 
 def set_role(session: Session, username: str, role: str) -> UserRecord:
-    record = get_user(session, username)
+    record = _get_manageable_user(session, username)
     if record is None:
         raise AccountError(f"账户 '{username}' 不存在")
     role = _normalize_role(role)
@@ -288,7 +390,7 @@ def set_role(session: Session, username: str, role: str) -> UserRecord:
 
 
 def set_active(session: Session, username: str, is_active: bool) -> UserRecord:
-    record = get_user(session, username)
+    record = _get_manageable_user(session, username)
     if record is None:
         raise AccountError(f"账户 '{username}' 不存在")
     # 停用最后一个活跃管理员前守卫。
@@ -305,7 +407,7 @@ def set_active(session: Session, username: str, is_active: bool) -> UserRecord:
 
 def set_ai_beta_enabled(session: Session, username: str, enabled: bool) -> UserRecord:
     """开关该账户的 AI Beta 功能（阅读器内翻译/问答）。无末位管理员约束。"""
-    record = get_user(session, username)
+    record = _get_manageable_user(session, username)
     if record is None:
         raise AccountError(f"账户 '{username}' 不存在")
     record.ai_beta_enabled = bool(enabled)
@@ -348,7 +450,7 @@ def batch_update_users(
         role = _normalize_role(role)
 
     unique_names = list(dict.fromkeys(names))
-    records = [get_user(session, u) for u in unique_names]
+    records = [_get_manageable_user(session, u) for u in unique_names]
     missing = [u for u, r in zip(unique_names, records) if r is None]
     if missing:
         raise AccountError(f"账户不存在：{'、'.join(missing[:5])}{'…' if len(missing) > 5 else ''}")
@@ -390,7 +492,7 @@ def set_default_surface(session: Session, username: str, surface: str) -> UserRe
 
     任意登录账户可为自己设置；user 恒为读者、该字段不生效但仍可写。非法值抛 AccountError。
     """
-    record = get_user(session, username)
+    record = _get_manageable_user(session, username)
     if record is None:
         raise AccountError(f"账户 '{username}' 不存在")
     surface = (surface or "").strip()
@@ -686,7 +788,7 @@ def delete_user(session: Session, username: str) -> None:
     # 背上抓取栈依赖（models → services 单向，无环）。
     from services import user_sources as user_sources_service
 
-    record = get_user(session, username)
+    record = _get_manageable_user(session, username)
     if record is None:
         raise AccountError(f"账户 '{username}' 不存在")
     # 删除最后一个活跃管理员前守卫（非活跃 admin 不计入活跃数，可删）；根管理员恒不可删。
@@ -765,7 +867,8 @@ def seed_root_admin_if_empty(engine) -> bool:
     登录后应立即改密并按需新建其它管理员/读者。幂等：表非空一动不动，存量生产零影响。
     """
     with Session(engine) as session:
-        if session.exec(select(UserRecord)).first() is not None:
+        # 游客保留账号不算「有账户」:它可能先于根管理员建出(启动时按总闸对齐)。
+        if session.exec(select(UserRecord).where(UserRecord.role != GUEST_ROLE)).first() is not None:
             return False
         now = _now_iso()
         session.add(UserRecord(
@@ -794,11 +897,14 @@ def account_growth(session: Session) -> dict:
     rows = session.exec(
         select(day_expr, func.count())
         .select_from(UserRecord)
+        .where(UserRecord.role != GUEST_ROLE)
         .group_by(day_expr)
         .order_by(day_expr)
     ).all()
     series = [{"day": str(day), "new": int(count)} for day, count in rows if day]
-    users = list(session.exec(select(UserRecord.role, UserRecord.is_active)).all())
+    users = list(session.exec(
+        select(UserRecord.role, UserRecord.is_active).where(UserRecord.role != GUEST_ROLE)
+    ).all())
     total = len(users)
     admins = sum(1 for role, _active in users if role == "admin")
     disabled = sum(1 for _role, active in users if not active)

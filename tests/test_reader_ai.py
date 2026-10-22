@@ -444,6 +444,109 @@ def test_translate_podcast_transcript_ignores_global_daily_token_budget(
     assert len(calls) == 1
 
 
+def _guest_client_username(client: TestClient) -> str:
+    resp = client.post("/api/auth/guest", json={"entry": "deep_link"})
+    assert resp.status_code == 200, resp.text
+    return resp.json()["user"]["username"]
+
+
+def test_translate_podcast_transcript_gates_guest_visitor_quota(monkeypatch, tmp_path):
+    """游客(issue #213 检视 F1):读者的逐字稿豁免不给免登录访客——缓存未命中时按访客
+    translate 日额度判,用满即 429 guest_quota_exhausted,且不调模型。"""
+    import datetime as _dt
+
+    from api.routers import reader as reader_router
+    from models.db import AiUsageRecord
+
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "transcript-guest-quota.db")
+    _configure_llm(sink.engine)
+    _seed_podcast_transcript(sink.engine, text="Long English transcript")
+    calls = _patch_llm(monkeypatch)
+    today = _dt.date.today().isoformat()
+
+    with TestClient(app_module.app) as client:
+        visitor = _guest_client_username(client)
+        with Session(sink.engine) as session:
+            session.add(AiUsageRecord(
+                day=today, username=visitor, purpose="translate", model="test-model",
+                calls=reader_router._AI_DAILY_CALL_LIMITS["translate"], total_tokens=1,
+                updated_at=today,
+            ))
+            session.commit()
+        response = client.post(
+            "/api/reader/ai/podcasts/podcast-translation/translate-transcript",
+            json={"source_kind": "publisher_transcript"},
+        )
+
+    assert response.status_code == 429, response.text
+    assert response.json()["code"] == "guest_quota_exhausted"
+    assert calls == []
+
+
+def test_translate_podcast_transcript_gates_guest_by_site_budget(monkeypatch, tmp_path):
+    from services import accounts as accounts_service
+
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "transcript-guest-budget.db")
+    _configure_llm(sink.engine)
+    _seed_podcast_transcript(sink.engine)
+    calls = _patch_llm(monkeypatch)
+    monkeypatch.setattr(accounts_service, "reader_ai_budget_exhausted", lambda _s: True)
+
+    with TestClient(app_module.app) as client:
+        _guest_client_username(client)
+        response = client.post(
+            "/api/reader/ai/podcasts/podcast-translation/translate-transcript",
+            json={"source_kind": "publisher_transcript"},
+        )
+
+    assert response.status_code == 429, response.text
+    assert "全站上限" in response.json()["detail"]
+    assert calls == []
+
+
+def test_translate_podcast_transcript_cache_hit_ignores_guest_gates(monkeypatch, tmp_path):
+    """已有译文时访客额度 / 全站预算都用满也照常读缓存:零成本不该被 429 拦。"""
+    import datetime as _dt
+
+    from api.routers import reader as reader_router
+    from models.db import AiUsageRecord
+    from services import accounts as accounts_service
+
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "transcript-guest-cached.db")
+    _configure_llm(sink.engine)
+    _enable_ai_beta(sink.engine)
+    _seed_podcast_transcript(sink.engine)
+    calls = _patch_llm(monkeypatch)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        first = client.post(
+            "/api/reader/ai/podcasts/podcast-translation/translate-transcript",
+            json={"source_kind": "publisher_transcript"},
+        )
+        assert first.status_code == 200 and first.json()["cached"] is False
+    assert len(calls) == 1
+
+    monkeypatch.setattr(accounts_service, "reader_ai_budget_exhausted", lambda _s: True)
+    with TestClient(app_module.app) as guest:
+        visitor = _guest_client_username(guest)
+        today = _dt.date.today().isoformat()
+        with Session(sink.engine) as session:  # 访客 translate 次数同样用满
+            session.add(AiUsageRecord(
+                day=today, username=visitor, purpose="translate", model="test-model",
+                calls=reader_router._AI_DAILY_CALL_LIMITS["translate"], total_tokens=1,
+                updated_at=today,
+            ))
+            session.commit()
+        again = guest.post(
+            "/api/reader/ai/podcasts/podcast-translation/translate-transcript",
+            json={"source_kind": "publisher_transcript"},
+        )
+    assert again.status_code == 200, again.text
+    assert again.json()["cached"] is True
+    assert len(calls) == 1
+
+
 def test_translate_podcast_transcript_drops_echoed_prompt_headers():
     from services.podcast_transcript_translation import _clean_translated_segment
 

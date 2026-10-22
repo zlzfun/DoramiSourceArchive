@@ -3,7 +3,7 @@
 - ``GET /api/media/proxy?url=`` —— 读者面（READER_API_PREFIXES 含 /api/media）：
   命中缓存回本地文件（长缓存头），未命中即时下载后回文件，失败 302 回源
   优雅降级（media 关闭时亦直接 302 回源）。归档正文原链从不改写，显示层
-  统一经此端点取图。
+  统一经此端点取图。游客会话只取已缓存的图（未命中 302 回源，不下载）。
 - ``GET /api/admin/media/stats`` / ``POST /api/admin/media/backfill`` —— 管理面
   （account_admin_required 匹配 /api/admin 前缀）：缓存统计与存量回填后台 job
   （media_backfill 类型，轮询 GET /api/jobs/{job_id}）。
@@ -20,7 +20,7 @@ import re
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from sqlmodel import Session, func, select
 
@@ -46,14 +46,19 @@ def _redirect_to_origin(url: str) -> RedirectResponse:
 
 
 @router.get("/api/media/proxy")
-async def media_proxy(url: str = Query(..., description="原始图片 URL")):
+async def media_proxy(request: Request, url: str = Query(..., description="原始图片 URL")):
     target = (url or "").strip()
     if not target.lower().startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="仅支持 http/https 图片 URL")
-    store = _app().media_store
+    app = _app()
+    store = app.media_store
     if store is None:
         return _redirect_to_origin(target)
-    record = await store.get_or_fetch(target)
+    # 游客(issue #213)只取已缓存的图,未命中直接回源——服务端不替公网访客去任意地址下载。
+    if app.is_guest_session(app.current_auth_session(request)):
+        record = await store.get_cached(target)
+    else:
+        record = await store.get_or_fetch(target)
     if record is None:
         return _redirect_to_origin(target)
     path = store.file_path_for(record)

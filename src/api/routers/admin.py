@@ -37,6 +37,7 @@ from models.db import (
     SourceConfigRecord,
 )
 from services import accounts as accounts_service
+from services import guest_access as guest_access_service
 from services import ai_usage as ai_usage_service
 from services import article_share as article_share_service
 from services import content_analytics as content_analytics_service
@@ -78,6 +79,13 @@ class UserSourceToggleParams(BaseModel):
 
 class SourceVisibilityParams(BaseModel):
     hidden: bool
+
+
+class GuestSettingsParams(BaseModel):
+    enabled: Optional[bool] = None       # 游客总闸;None = 不改
+    ai_enabled: Optional[bool] = None    # 游客 AI(保留账号的 ai_beta_enabled);None = 不改
+    # 每位游客的 AI 日额度覆盖:{key: int(0 = 不限) | None(恢复与读者同额)};缺省键不改
+    ai_limits: Optional[Dict[str, Optional[int]]] = None
 
 
 @router.get("/rankings/status")
@@ -172,8 +180,10 @@ def admin_overview(
     ask_total = sum(u.ai_ask_count or 0 for u in users)
 
     article_count = session.exec(select(func.count()).select_from(ArticleRecord)).one()
+    # 游客保留账号的订阅是默认名单的镜像(issue #213),不计入订阅规模。
     subscription_count = session.exec(
         select(func.count()).select_from(ReaderSubscriptionRecord)
+        .where(ReaderSubscriptionRecord.owner_username != accounts_service.GUEST_USERNAME)
     ).one()
     feed_token_count = session.exec(
         select(func.count()).select_from(ReaderFeedTokenRecord)
@@ -268,6 +278,7 @@ def admin_list_accounts(
         ).group_by(ReaderSubscriptionRecord.owner_username)
     ).all()
     sub_counts = {owner: int(count) for owner, count in rows}
+    # 三张窗口聚合已在服务层排除游客身份(guest:*,issue #213)——summary 与活跃榜只算账户。
     usage_map = ai_usage_service.usage_by_user(session, days=days)
     reads_map = reader_activity_service.reads_by_user(session, days=days)
     logins_map = accounts_service.logins_by_user(session, days=days)
@@ -368,7 +379,8 @@ def admin_account_activity(
     """单读者活动详情：近 days 天 AI 用量 + 各源阅读/收藏互动 + 登录活跃 + 账户快照。"""
     registry_meta = _registry_source_meta()
     record = accounts_service.get_user(session, username)
-    if record is None:
+    # 游客保留账号不是账户(issue #213):不出单用户抽屉,游客数据看「游客」区。
+    if record is None or record.role == accounts_service.GUEST_ROLE:
         raise HTTPException(status_code=404, detail="账户不存在")
     usage = ai_usage_service.summarize_user(session, username, days=days)
     reads = reader_activity_service.summarize_user_reads(session, username, days=days)
@@ -526,6 +538,9 @@ def admin_content(top: int = 12, session: Session = Depends(deps.get_session)):
         )
     ).all()
     for sub in active_subs:
+        # 游客保留账号的订阅是默认名单的镜像(issue #213),不计入各源订阅数。
+        if accounts_service.is_guest_username(sub.owner_username):
+            continue
         for sid in subscription_source_ids(sub):
             subs_by_source[sid] = subs_by_source.get(sid, 0) + 1
 
@@ -730,7 +745,76 @@ def admin_set_reader_defaults(
                 detail={"message": "名单里有系统不认识的来源", "unknown_source_ids": unknown},
             )
     reader_defaults_service.set_default_source_ids(session, params.source_ids)
+    # 游客的订阅即这份名单(issue #213):同步镜像,有变化时当日游客早报随之重编。
+    importlib.import_module("api.app").ensure_guest_identity()
     return _reader_defaults_payload(session)
+
+
+# ==================== 游客(issue #213) ====================
+# 运维管理 → 用户 →「游客」区:总闸 / 游客 AI / 每位游客的 AI 日额度 + 聚合统计;/api/admin 前缀自动入审计。
+
+
+def _reader_ai_limit_defaults() -> Dict[str, int]:
+    """读者逐用户日额度(游客缺省与之同额;单一事实来源在读者路由常量)。"""
+    reader_router = importlib.import_module("api.routers.reader")
+    limits = reader_router._AI_DAILY_CALL_LIMITS
+    return {
+        "translate": int(limits["translate"]),
+        "ask": int(limits["ask"]),
+        "summarize": int(limits["summarize"]),
+        "ondemand": int(reader_router._AI_ONDEMAND_DAILY_LIMIT),
+    }
+
+
+def _guest_payload(session: Session, days: int) -> Dict[str, Any]:
+    reader_defaults = _reader_ai_limit_defaults()
+    overrides = guest_access_service.guest_ai_limit_overrides(session)
+    registry_meta = _registry_source_meta()
+    default_ids = reader_defaults_service.default_source_ids(session)
+    return {
+        "settings": {
+            "enabled": guest_access_service.guest_access_enabled(session),
+            "ai_enabled": guest_access_service.guest_ai_enabled(session),
+            "ai_limits": {key: overrides.get(key, value) for key, value in reader_defaults.items()},
+            "reader_ai_limits": reader_defaults,
+            "overridden": sorted(overrides),
+        },
+        "default_sources": [
+            {
+                "source_id": sid,
+                "name": DAILY_BRIEF_SOURCE_META["name"] if sid == DAILY_BRIEF_SOURCE_ID
+                else _friendly_source_name(sid, registry_meta),
+            }
+            for sid in default_ids
+        ],
+        "stats": guest_access_service.guest_stats(session, days=days),
+    }
+
+
+@router.get("/guest")
+def admin_get_guest(days: int = 30, session: Session = Depends(deps.get_session)):
+    """游客区取数:设置(总闸 / 游客 AI / 每位游客日额度)+ 默认订阅名单 + 聚合统计。全体管理员可见。"""
+    return _guest_payload(session, max(1, min(int(days or 30), 365)))
+
+
+@router.put("/guest/settings")
+def admin_set_guest_settings(params: GuestSettingsParams, session: Session = Depends(deps.get_session)):
+    """改游客设置。关总闸 = 保留账号停用并轮换世代,在线游客下一次请求即失效。"""
+    if params.ai_limits is not None:
+        try:
+            guest_access_service.set_guest_ai_limit_overrides(session, params.ai_limits)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    if params.enabled is not None:
+        guest_access_service.set_guest_access_enabled(session, params.enabled)
+        if params.enabled:
+            importlib.import_module("api.app").ensure_guest_identity()
+    if params.ai_enabled is not None:
+        accounts_service.ensure_guest_account(
+            session, enabled=guest_access_service.guest_access_enabled(session)
+        )
+        accounts_service.set_guest_ai_enabled(session, params.ai_enabled)
+    return _guest_payload(session, 30)
 
 
 # ==================== 用户自定源治理(v3.40) ====================

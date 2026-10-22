@@ -25,7 +25,7 @@ from models.db import (
     AiUsageRecord, ArticleRecord, TranslationCallRecord as Call,
     TranslationChunkRecord as Chunk, TranslationJobRecord as Job,
 )
-from services import accounts, ai_usage, daily_brief, reader_ai, source_visibility, user_sources
+from services import accounts, ai_usage, daily_brief, guest_access, reader_ai, source_visibility, user_sources
 from services.error_redaction import sanitize_error
 from services.translation_markdown import plan_translation, translation_units, TranslationStructureError
 
@@ -35,6 +35,10 @@ Error = reader_ai.ReaderAIError
 
 class InputChanged(Error):
     """The checkpoint identity no longer describes the current article/config."""
+
+
+class GuestQuotaError(Error):
+    """访客当日翻译额度用尽(issue #213):worker 按预算类错误停任务,请求路径转成游客额度码。"""
 
 
 class LeaseLost(Error):
@@ -90,7 +94,8 @@ def input_key(article, config) -> str:
 
 
 def authorize(session, username, article):
-    user = accounts.get_user(session, username)
+    # 访客身份按游客保留账号授权(issue #213):其 ai_beta_enabled 即「游客 AI」开关。
+    user = accounts.get_account_for(session, username)
     if user is None or not user.is_active:
         raise Error("账户不可用", 403)
     if not accounts.ai_beta_global_enabled(session) or not user.ai_beta_enabled:
@@ -310,12 +315,19 @@ def _cost_gate(session, username, reserve_tokens):
         *holds, Call.username == username, Call.recorded == False)).one()  # noqa: E712
     calls = session.exec(select(func.coalesce(func.sum(AiUsageRecord.calls), 0)).where(
         AiUsageRecord.day == today, AiUsageRecord.username == username, AiUsageRecord.purpose == "translate")).one()
-    if calls + pending_calls >= DAILY_CALL_LIMIT:
-        raise Error("今日翻译次数已达上限，已完成片段会保留，请明日继续", 429)
+    # 全站预算先判(与读者 AI 的 _enforce_ai_cost_gates 同序):两者同时耗尽时给预算文案——
+    # 登录解决不了全站预算,不能把访客引去登录(issue #213 检视 F9)。
     budget = accounts.ai_daily_token_budget(session)
     used = accounts.reader_ai_tokens_today(session)
     if budget and (used + pending_tokens >= budget or used + pending_tokens + reserve_tokens > budget):
         raise Error("今日 AI 预算不足，已完成片段会保留，请明日继续", 429)
+    if accounts.is_guest_visitor(username):
+        # 访客分别计次,额度缺省与读者同额、管理员可调;0 = 不限。
+        limit = guest_access.guest_ai_limit(session, "translate", DAILY_CALL_LIMIT)
+        if limit and calls + pending_calls >= limit:
+            raise GuestQuotaError(guest_access.GUEST_QUOTA_MESSAGE, 429)
+    elif calls + pending_calls >= DAILY_CALL_LIMIT:
+        raise Error("今日翻译次数已达上限，已完成片段会保留，请明日继续", 429)
 
 
 def claim(engine):

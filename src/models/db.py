@@ -2713,6 +2713,29 @@ class LoginEventRecord(SQLModel, table=True):
     at: str = Field(index=True, description="登录时间 ISO 串")
 
 
+class GuestVisitRecord(SQLModel, table=True):
+    """游客访问按天聚合(issue #213):一行 = 某天某位访客。
+
+    访客身份是游客会话的用户名 guest:v:<vid>(不建账号行);阅读与 AI 用量直接落在
+    reader_reads / ai_usage 的 guest:v:* 名下,本表只补它们没有的三件事:当天打开应用的
+    次数、当天首个入口、转化(这位访客在本浏览器登录成了哪个账号)。
+    """
+    __tablename__ = "guest_visits"
+    __table_args__ = (
+        Index("uq_guest_visits_day_visitor", "day", "visitor_id", unique=True),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    day: str = Field(index=True, description="YYYY-MM-DD(本地日期)")
+    visitor_id: str = Field(index=True, description="访客 id(游客会话身份 guest:v:<vid> 的 vid)")
+    entry: str = Field(default="return", description="当天首个入口:deep_link | share_page | login_page | return")
+    visits: int = Field(default=0, description="当天打开应用的次数")
+    first_seen_at: str = Field(description="当天首次出现时间")
+    last_seen_at: str = Field(description="当天最近一次出现时间")
+    converted_username: Optional[str] = Field(default=None, description="在本浏览器登录成的账号")
+    converted_at: Optional[str] = Field(default=None, index=True, description="转化(登录)时间")
+
+
 class AdminAuditRecord(SQLModel, table=True):
     """管理操作审计流：每次穿透到 handler 的管理写请求写一行（多管理员平权后需要
     留痕「谁改了什么」）。故意**不存请求体全文**（防密码等敏感字段落盘）、不存

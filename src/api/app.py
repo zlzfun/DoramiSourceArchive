@@ -39,6 +39,7 @@ from models.db import (
     SourceStateRecord,
     TagRetagJobRecord,
     AppSettingRecord,
+    UserRecord,
 )
 
 # 引入动态抓取器注册中心
@@ -65,6 +66,7 @@ from api.sources import (
     DAILY_BRIEF_SOURCE_META,
     _registry_source_meta,
     _friendly_source_name,
+    subscription_source_ids,
 )
 from api.routers import accounts as accounts_router
 from api.routers import admin as admin_router
@@ -109,6 +111,8 @@ from services import image_insights as image_insights_service
 from services import remote_sync as remote_sync_service
 from services import sync_consumer_policy
 from services import accounts as accounts_service
+from services import guest_access as guest_access_service
+from api import guest_policy
 from services import auth_policy
 from services import admin_audit as admin_audit_service
 from services.collection_nodes import PODCAST_SOURCE_TYPES, resolve_collection_node
@@ -234,8 +238,9 @@ def collector_role_enabled(session: Optional[Dict[str, Any]] = None) -> bool:
 
 def reader_role_enabled(session: Optional[Dict[str, Any]] = None) -> bool:
     # admin 为超级用户（采集+读者通吃）；user 为受限读者；二者都可访问 reader 面。
+    # guest(issue #213)也是读者面角色,但只能走游客白名单里的端点——中间件先于本判定拦截。
     account_role = session.get("role") if session else None
-    return runtime_reader_enabled() and (account_role in (None, "admin", "user"))
+    return runtime_reader_enabled() and (account_role in (None, "admin", "user", accounts_service.GUEST_ROLE))
 
 
 def runtime_capabilities(session: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -266,7 +271,20 @@ def runtime_capabilities(session: Optional[Dict[str, Any]] = None) -> Dict[str, 
         # 密码登录能力位(issue #130):main 恒 True;下游外部身份源只覆盖 services/auth_policy,
         # 前端设置柜据此隐藏改密表单,登录 / 改密端点据此 403。
         "password_login_enabled": _password_login_capability(session),
+        # 游客总闸(issue #213):分享菜单据此改「站内链接」说明;游客会话据 account_role=guest 分面。
+        "guest_access_enabled": _guest_access_capability(),
     }
+
+
+def _guest_access_capability() -> bool:
+    """游客总闸能力位:总闸 ∧ 本部署承担读者面;无 DB / 异常按关(探测不准时不对外放人)。"""
+    if not runtime_reader_enabled() or db_sink is None:
+        return False
+    try:
+        with Session(db_sink.engine) as session:
+            return guest_access_service.guest_access_enabled(session)
+    except Exception:  # noqa: BLE001 - 能力探测不阻断 runtime 接口
+        return False
 
 
 def _password_login_allows(record: Any) -> bool:
@@ -355,7 +373,8 @@ def _ai_capabilities(session: Optional[Dict[str, Any]] = None) -> tuple[bool, bo
             # 全局总开关关闭即视为该账户 AI 不可用（前端入口随之隐藏）。
             global_on = accounts_service.ai_beta_global_enabled(db)
             if username:
-                record = accounts_service.get_user(db, username)
+                # 访客身份按游客保留账号判(其 ai_beta_enabled 即「游客 AI」开关)。
+                record = accounts_service.get_account_for(db, username)
                 if record is not None:
                     ai_beta_enabled = bool(global_on and record.ai_beta_enabled)
                     default_surface = record.default_surface or "console"
@@ -506,6 +525,13 @@ async def lifespan(app: FastAPI):
             "Podcast 本地存储启动对账完成: %s", podcast_cleanup
         )
 
+    # 游客(issue #213):按总闸对齐保留账号,并把其订阅镜像成默认名单(幂等;失败不阻断启动)。
+    if runtime_reader_enabled():
+        try:
+            await asyncio.to_thread(ensure_guest_identity)
+        except Exception:  # noqa: BLE001
+            logging.getLogger("dorami.auth").warning("游客身份初始化失败", exc_info=True)
+
     mcp = None
     if runtime_reader_enabled():
         # Init MCP enabled state from DB
@@ -607,6 +633,17 @@ app = FastAPI(title="Dorami 数据归档中枢 API", lifespan=lifespan)
 @app.exception_handler(ObjectStorageError)
 async def object_storage_unavailable(request: Request, exc: ObjectStorageError):
     return StarletteJSONResponse({"code": str(exc), "detail": "媒体存储暂时不可用，请稍后重试"}, status_code=503)
+
+
+@app.exception_handler(guest_access_service.GuestQuotaExhausted)
+async def guest_quota_exhausted(request: Request, exc: guest_access_service.GuestQuotaExhausted):
+    """访客当日 AI 额度用尽(issue #213):顶层 code 供前端弹「登录后继续使用」,不弹「明日再试」。"""
+    headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after is not None else None
+    return StarletteJSONResponse(
+        {"code": guest_access_service.GUEST_QUOTA_CODE, "detail": str(exc)},
+        status_code=429,
+        headers=headers,
+    )
 
 
 def _is_podcast_text_reader_path(path: str) -> bool:
@@ -1903,12 +1940,72 @@ def read_auth_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
     # Cookie 立即失效；删号后同名重建的新行世代随机，旧 Cookie 不复活。存量行
     # 世代为 ""、历史 token 无 gen 字段，二者按 "" 对齐（升级不强制全员重登）。
     with Session(db_sink.engine) as session:
+        if data.get("role") == accounts_service.GUEST_ROLE:
+            return data if _guest_token_valid(session, data) else None
         record = accounts_service.get_active_user(session, data.get("sub"))
         if record is None or data.get("role") != record.role:
             return None
         if str(data.get("gen") or "") != (record.session_epoch or ""):
             return None
     return data
+
+
+def _guest_token_valid(session: Session, data: Dict[str, Any]) -> bool:
+    """游客令牌(issue #213):sub 是访客身份;保留账号启用、世代一致、总闸开、本部署承担读者面。
+
+    关总闸 = 停用保留账号并轮换世代,既有游客会话在下一次请求即失效(回 401 → 前端回登录页)。
+    """
+    if not guest_access_service.visitor_id_of(data.get("sub")):
+        return False
+    if not runtime_reader_enabled() or not guest_access_service.guest_access_enabled(session):
+        return False
+    record = accounts_service.get_active_user(session, accounts_service.GUEST_USERNAME)
+    if record is None or record.role != accounts_service.GUEST_ROLE:
+        return False
+    return str(data.get("gen") or "") == (record.session_epoch or "")
+
+
+# 访客 id 长效 Cookie:同一浏览器回来沿用同一访客身份(已读 / 额度 / 统计连续),签名防伪造。
+GUEST_VISITOR_COOKIE_NAME = f"{AUTH_COOKIE_NAME}_vid"
+GUEST_VISITOR_COOKIE_SECONDS = 365 * 86400
+
+
+def _sign_visitor_id(visitor_id: str) -> str:
+    return f"{visitor_id}.{_sign_auth_payload(f'guest-vid:{visitor_id}')}"
+
+
+def read_guest_visitor_cookie(request: Request) -> Optional[str]:
+    raw = request.cookies.get(GUEST_VISITOR_COOKIE_NAME) or ""
+    if "." not in raw:
+        return None
+    visitor_id, signature = raw.rsplit(".", 1)
+    if not guest_access_service.valid_visitor_id(visitor_id):
+        return None
+    expected = _sign_visitor_id(visitor_id).rsplit(".", 1)[1]
+    return visitor_id if hmac.compare_digest(signature, expected) else None
+
+
+def set_guest_visitor_cookie(response: Response, visitor_id: str) -> None:
+    response.set_cookie(
+        key=GUEST_VISITOR_COOKIE_NAME,
+        value=_sign_visitor_id(visitor_id),
+        max_age=GUEST_VISITOR_COOKIE_SECONDS,
+        httponly=True,
+        secure=_auth_cookie_secure(),
+        samesite="lax",
+        path="/",
+    )
+
+
+def session_visitor_id(session: Optional[Dict[str, Any]]) -> Optional[str]:
+    """游客会话 → 访客 id;非游客会话 None。"""
+    if not session or session.get("role") != accounts_service.GUEST_ROLE:
+        return None
+    return guest_access_service.visitor_id_of(session.get("sub"))
+
+
+def is_guest_session(session: Optional[Dict[str, Any]]) -> bool:
+    return bool(session) and session.get("role") == accounts_service.GUEST_ROLE
 
 
 _AUTH_SESSION_UNSET = object()
@@ -1960,7 +2057,7 @@ def clear_auth_cookie(response: Response) -> None:
 
 
 def is_public_auth_path(path: str) -> bool:
-    return path in {"/api/auth/login", "/api/auth/logout", "/api/auth/session"}
+    return path in {"/api/auth/login", "/api/auth/logout", "/api/auth/session", "/api/auth/guest"}
 
 
 PUBLIC_HEALTH_PATH = "/api/health"
@@ -1997,6 +2094,10 @@ async def require_admin_session(request: Request, call_next):
             )
         return await call_next(request)
     auth_session = current_auth_session(request)
+    # 游客会话(issue #213)只走白名单:按请求真正落到的路由模板判,不在表里的一律 403 login_required
+    # (含 /mcp 与全部管理 / 采集面);放行的请求按读者面继续走下面的 surface 判定。
+    if is_guest_session(auth_session) and not guest_policy.guest_route_allowed(app.router.routes, request.scope):
+        return StarletteJSONResponse(dict(guest_policy.LOGIN_REQUIRED_BODY), status_code=403)
     if path.startswith("/api/"):
         if auth_session is None:
             if _is_podcast_text_reader_path(path):
@@ -2096,6 +2197,7 @@ async def require_admin_session(request: Request, call_next):
             normalized_method == "POST"
             and path == "/api/admin/ai-beta/global"
         )
+        or (normalized_method == "PUT" and path == "/api/admin/guest/settings")
         or (
             normalized_method == "POST"
             and path == "/api/admin/reader-defaults"
@@ -2169,12 +2271,12 @@ def _auth_user_payload(
 
 
 @app.post("/api/auth/login")
-def login_admin(params: AuthLoginParams, response: Response):
+def login_admin(params: AuthLoginParams, request: Request, response: Response):
     username = params.username.strip()
     with Session(db_sink.engine) as session:
         record = accounts_service.get_user(session, username)
-        # 用户不存在/已停用：仍跑一次占位校验抹平时序，避免用户枚举。
-        if record is None or not record.is_active:
+        # 用户不存在/已停用/游客保留账号：仍跑一次占位校验抹平时序，避免用户枚举。
+        if record is None or not record.is_active or record.role == accounts_service.GUEST_ROLE:
             accounts_service.verify_against_dummy(params.password)
             raise HTTPException(status_code=401, detail="账号或密码错误")
         # 下游外部身份源接管的账号不走密码(issue #130,services/auth_policy 覆盖点);main 上恒不触发。
@@ -2197,6 +2299,14 @@ def login_admin(params: AuthLoginParams, response: Response):
             ensure_default_subscriptions(username)
         except Exception:
             _dorami_logger.warning("登录点播种默认订阅失败，等待 reader 端点兜底", exc_info=True)
+    # 游客转化(issue #213):这台浏览器先前以游客逛过(访客 Cookie 有效)即记一次;计量不阻断登录。
+    visitor_id = read_guest_visitor_cookie(request)
+    if visitor_id:
+        try:
+            with Session(db_sink.engine) as session:
+                guest_access_service.record_conversion(session, visitor_id, username)
+        except Exception:  # noqa: BLE001
+            _dorami_logger.warning("游客转化计量失败", exc_info=True)
     set_auth_cookie(response, username, role, epoch)
     return {
         "authenticated": True,
@@ -2209,15 +2319,73 @@ def login_admin(params: AuthLoginParams, response: Response):
     }
 
 
+GUEST_DISPLAY_NAME = "游客"
+
+
+def _guest_user_payload(username: str) -> Dict[str, Any]:
+    """游客会话对外的账户视图:展示名恒为「游客」,无头像,免兴趣引导。"""
+    return {
+        "username": username,
+        "display_name": GUEST_DISPLAY_NAME,
+        "role": accounts_service.GUEST_ROLE,
+        "avatar": None,
+        "interest_onboarding_completed": True,
+    }
+
+
+class GuestSessionParams(BaseModel):
+    # 入口:deep_link(未登录打开站内链接)| login_page(登录页「游客登录」)| share_page | return
+    entry: str = "login_page"
+
+
+@app.post("/api/auth/guest")
+def start_guest_session(params: GuestSessionParams, request: Request, response: Response):
+    """签发游客会话(issue #213)。总闸关 → 403 guest_disabled;已登录账号 → 409,不降级。
+
+    同一浏览器沿用访客 Cookie 里的访客 id(已读、额度与统计连续);已是游客则续期并记入口。
+    """
+    existing = current_auth_session(request)
+    if existing is not None and not is_guest_session(existing):
+        return StarletteJSONResponse({"code": "already_authenticated", "detail": "已登录"}, status_code=409)
+    with Session(db_sink.engine) as session:
+        if not runtime_reader_enabled() or not guest_access_service.guest_access_enabled(session):
+            return StarletteJSONResponse({"code": "guest_disabled", "detail": "游客访问已关闭"}, status_code=403)
+        record = accounts_service.ensure_guest_account(session, enabled=True)
+        epoch = record.session_epoch or ""
+        visitor_id = (
+            session_visitor_id(existing)
+            or read_guest_visitor_cookie(request)
+            or guest_access_service.new_visitor_id()
+        )
+        try:
+            guest_access_service.record_entry(session, visitor_id, params.entry)
+        except Exception:  # noqa: BLE001 - 计量不阻断进入
+            _dorami_logger.warning("游客入口计量失败", exc_info=True)
+    username = accounts_service.guest_visitor_username(visitor_id)
+    set_auth_cookie(response, username, accounts_service.GUEST_ROLE, epoch)
+    set_guest_visitor_cookie(response, visitor_id)
+    return {"authenticated": True, "guest": True, "user": _guest_user_payload(username)}
+
+
 @app.get("/api/auth/session")
 def get_auth_session(request: Request):
     session = current_auth_session(request)
     if session is None:
         # 匿名可读的全局姿态(issue #130):登录页据此决定是否呈现密码表单;main 恒 True。
+        # guest_access_enabled(issue #213):登录页据此显示「游客登录」,站内深链据此自动以游客进入。
         return {
             "authenticated": False,
             "user": None,
             "password_login_enabled": _password_login_allows(None),
+            "guest_access_enabled": _guest_access_capability(),
+        }
+    if is_guest_session(session):
+        return {
+            "authenticated": True,
+            "guest": True,
+            "user": _guest_user_payload(str(session["sub"])),
+            "password_login_enabled": _password_login_allows(None),
+            "guest_access_enabled": True,
         }
     with Session(db_sink.engine) as db_session:
         record = accounts_service.get_user(db_session, session["sub"])
@@ -2240,7 +2408,16 @@ def get_auth_session(request: Request):
 
 @app.get("/api/runtime")
 def get_runtime(request: Request):
-    return runtime_capabilities(current_auth_session(request))
+    session = current_auth_session(request)
+    # 游客打开一次应用 = 一次访问(前端启动即拉 runtime);计量不阻断。
+    visitor_id = session_visitor_id(session)
+    if visitor_id:
+        try:
+            with Session(db_sink.engine) as db:
+                guest_access_service.record_app_open(db, visitor_id)
+        except Exception:  # noqa: BLE001
+            _dorami_logger.warning("游客访问计量失败", exc_info=True)
+    return runtime_capabilities(session)
 
 
 @app.get(PUBLIC_HEALTH_PATH)
@@ -3768,7 +3945,8 @@ def ensure_default_subscriptions(username: str) -> None:
     由读者门控端点调用，故调用方即可读账号；用每用户一次的 KV 标记守卫，
     保证取消默认订阅后不会被重新加回。
     """
-    if not username:
+    # 游客身份不播种(issue #213):访客没有订阅行,范围取保留账号——其订阅由 sync_guest_subscriptions 镜像。
+    if not username or accounts_service.is_guest_username(username):
         return
     key = f"{DEFAULTS_SEEDED_KEY_PREFIX}:{username}"
     registry_meta = _registry_source_meta()
@@ -3791,6 +3969,66 @@ def ensure_default_subscriptions(username: str) -> None:
             reader_state_service.init_cursor_with_backlog(session, username=username, source_id=source_id)
         # set_setting 内部 commit，会一并提交上面新增的订阅记录。
         daily_brief_service.set_setting(session, key, _now_iso())
+
+
+def sync_guest_subscriptions() -> bool:
+    """游客保留账号的订阅行镜像默认订阅名单(issue #213):增缺删多,返回是否有变化。
+
+    只认本函数建的单源行,多源 / 异形 / 停用行一律删掉重建——保证游客范围恒等于名单。
+    不写水位:已读按访客身份另记,访客首次拉未读数时按 backlog 语义懒初始化(新账号同款)。
+    """
+    owner = accounts_service.GUEST_USERNAME
+    registry_meta = _registry_source_meta()
+    with Session(db_sink.engine) as session:
+        if session.get(UserRecord, owner) is None:
+            return False
+        desired = list(reader_defaults_service.default_source_ids(session))
+        kept: Dict[str, ReaderSubscriptionRecord] = {}
+        changed = False
+        rows = session.exec(
+            select(ReaderSubscriptionRecord).where(ReaderSubscriptionRecord.owner_username == owner)
+        ).all()
+        for row in rows:
+            ids = subscription_source_ids(row)
+            if row.is_active and len(ids) == 1 and ids[0] in desired and ids[0] not in kept:
+                kept[ids[0]] = row
+                continue
+            session.delete(row)
+            changed = True
+        for source_id in desired:
+            if source_id in kept:
+                continue
+            if source_id == DAILY_BRIEF_SOURCE_ID:
+                name = DAILY_BRIEF_SOURCE_META["name"]
+            else:
+                name = _friendly_source_name(source_id, registry_meta)
+            _create_single_source_subscription(session, owner, source_id, name)
+            changed = True
+        if changed:
+            session.commit()
+    return changed
+
+
+def ensure_guest_identity() -> bool:
+    """按总闸对齐游客保留账号并同步其订阅(幂等):启动、开关总闸、改默认名单后调用。
+
+    订阅有变化时替游客早报发起一次当日重编(与下架源扇出同一原因),当天的游客版跟上新名单。
+    返回订阅是否有变化。
+    """
+    if not runtime_reader_enabled():
+        return False
+    with Session(db_sink.engine) as session:
+        enabled = guest_access_service.guest_access_enabled(session)
+        accounts_service.ensure_guest_account(session, enabled=enabled)
+    changed = sync_guest_subscriptions()
+    if changed and enabled:
+        try:
+            personal_briefs_router.trigger_today_revision(
+                db_sink.engine, accounts_service.GUEST_USERNAME, "subscription_changed"
+            )
+        except Exception:  # noqa: BLE001 - 定时 / 首开兜底
+            _dorami_logger.warning("游客早报重编触发失败", exc_info=True)
+    return changed
 
 
 # ==================== 阅读器订阅/收藏/计量（reader 面）====================

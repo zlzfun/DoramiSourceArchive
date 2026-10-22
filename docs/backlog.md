@@ -6,6 +6,8 @@
 
 ## 进行中
 
+- ☐ **issue #213 游客模式**(分支 `feat/issue-213-guest-mode`,方案 `docs/plans/issue-213-guest-mode.md`,样页 `docs/design/guest-mode/`;2026-10-22 两批拍板):已过 Codex 两轮检视与用户目检,**预合入 master 供内网验收**(PR 待合 main);合入后同步 master 时核对内网登录入口仍保留「游客登录」「返回继续逛逛」,并行中的登录页重设计落地时同样保留。
+  有意不做:注册 / 申请开通;游客数据(已读、AI 计次)迁移到登录后的账号;游客限流与反爬(观察期看 `guest_visits` 与访问日志再定);清 Cookie 换新访客身份绕开单人额度(全站日 token 预算兜底,公网部署宜设);用户手册未补游客截图。
 - ☐ **issue #199 前端细项优化波**(分支 `feat/issue-199-frontend-polish`,记录见 `docs/version-history.md`):撤回源栏每源未读数、取缔条目未读小蓝点、播客区重设计为全局播放条(样页 `docs/design/podcast-player/`)三项已实现并经用户目检,待 Codex 本地检视 → PR 合入。
   遗留(本波有意不做):Windows 实机看一遍播放条(只做了理论判断);播客导读生成完成后入口要等约 30 秒的分析轮询才刷新;生产里封面代理 302 回源成跨域时回落中性底的路径未端到端;部分播客节目简介里链接文字独占一行——库里存的简介原文即如此断行,是抓取时 HTML 转文本的问题(Interconnects 等 Substack 源可见),与播放器无关。
 - ☐ **issue #178 内容分类与双评分**(方案 `docs/content-classification-plan.md`,样页 `docs/design/dorami-classification-scores-quiet.html`):
@@ -107,6 +109,8 @@
   x.ai/news 补产品动态[如 Grok Bot];Cloudflare 盾,需 Playwright,与 rss_openai_news 同款处理)
 
 ## 展望(用户表态、未立项)
+
+- ◇ **退役公开分享链接**(issue #215,#213 目检时用户提出):游客总闸开时分享菜单已只留站内链接;待评估彻底退役——停发新链接、`#/s/{token}` 旧链接去向与过渡期、后端路由 / 服务 / 表 / 留存 / 运维总闸 / 公开取图端点与契约清理;先拍板「游客总闸关闭的部署是否仍需免登录单篇分享」。
 
 - ◇ **鸿蒙原生应用套壳**（#85 用户确认的后续方向）：保留现有 Web 阅读器，以鸿蒙原生应用承载。
   本轮不设计桥接、打包或分发，也不将鸿蒙 PWA 安装作为 #85 验收要求。

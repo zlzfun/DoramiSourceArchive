@@ -220,7 +220,9 @@ function AnswerBlock({ turn, onOpenRef }) {
   );
 }
 
-export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onOpenArticle }) {
+// guest(issue #213):检索范围说「默认订阅」;当天试用用完(429 guest_quota_exhausted)时这一问下面给一行
+// 说明 +「登录后继续使用」(api.js 同时已弹登录提示,这里是关掉提示后仍看得见的入口)。
+export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onOpenArticle, guest = false, onGuestLogin = null }) {
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [aiPanelClosing, setAiPanelClosing] = useState(false);
   const [aiPanelLarge, setAiPanelLarge] = useState(() => localStorage.getItem('dorami_reader_ai_panel_large') === '1');
@@ -296,7 +298,7 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
       )));
     } catch (error) {
       setQaThread((prev) => prev.map((m, i) => (
-        i === prev.length - 1 ? { q, a: null, error: error.message || '提问失败，请稍后重试', scope } : m
+        i === prev.length - 1 ? { q, a: null, error: error.message || '提问失败，请稍后重试', errorCode: error.code || '', scope } : m
       )));
     } finally {
       stopPolling();
@@ -342,12 +344,13 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
     });
   }, []);
 
-  // 点击面板外任意处自动收起(目检拍板);正文图灯箱是 body 级 portal,点它不算「外」
+  // 点击面板外任意处自动收起(目检拍板);正文图灯箱是 body 级 portal,点它不算「外」;
+  // 叠在上面的弹窗同理(游客额度用尽时弹的登录提示,issue #213):关掉提示后面板与那行说明仍在
   const panelRef = useRef(null);
   useEffect(() => {
     if (!aiPanelOpen) return undefined;
     const onPointerDown = (e) => {
-      if (e.target.closest?.('.reader-lightbox')) return;
+      if (e.target.closest?.('.reader-lightbox, [data-modal-layer]')) return;
       if (panelRef.current && !panelRef.current.contains(e.target)) closeAiPanel();
     };
     document.addEventListener('mousedown', onPointerDown);
@@ -416,7 +419,7 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
                 <Sparkles className="h-5 w-5" />
                 <div className="reader-ai-empty-title">问问哆啦美</div>
                 <div className="reader-ai-empty-sub">
-                  {qaScope === 'article' ? '基于当前打开的这篇文章作答' : '在你订阅的内容里检索相关文章后作答'}
+                  {qaScope === 'article' ? '基于当前打开的这篇文章作答' : `在${guest ? '默认订阅' : '你订阅'}的内容里检索相关文章后作答`}
                 </div>
                 <SuggestRotator
                   scope={qaScope}
@@ -433,7 +436,14 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
                 {m.pending ? (
                   <PendingBlock scope={m.scope} progress={qaProgress} />
                 ) : m.error ? (
-                  <div className="reader-ai-a-error">{m.error}</div>
+                  <div className="reader-ai-a-error">
+                    {m.errorCode === 'guest_quota_exhausted' ? (
+                      <>
+                        游客今日的 AI 试用已用完 ·
+                        <button type="button" className="guest-inline-login" onClick={() => onGuestLogin?.()}>登录后继续使用</button>
+                      </>
+                    ) : m.error}
+                  </div>
                 ) : (
                   <AnswerBlock turn={m} onOpenRef={handleOpenRef} />
                 )}
@@ -447,7 +457,7 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
               ref={inputRef}
               rows={2}
               value={qaInput}
-              placeholder={qaScope === 'article' ? '问问这篇文章…' : '问问你订阅的内容…'}
+              placeholder={qaScope === 'article' ? '问问这篇文章…' : `问问${guest ? '默认订阅' : '你订阅'}的内容…`}
               onChange={(e) => setQaInput(e.target.value)}
               onCompositionStart={() => { composingRef.current = true; }}
               onCompositionEnd={() => {
@@ -479,10 +489,10 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
                 <button
                   type="button"
                   className={`reader-ai-seg-btn ${qaScope === 'subscription' ? 'is-on' : ''}`}
-                  title="在你订阅的内容里检索相关文章后作答"
+                  title={`在${guest ? '默认订阅' : '你订阅'}的内容里检索相关文章后作答`}
                   onClick={() => switchScope('subscription')}
                 >
-                  我的订阅
+                  {guest ? '默认订阅' : '我的订阅'}
                 </button>
               </div>
               <button

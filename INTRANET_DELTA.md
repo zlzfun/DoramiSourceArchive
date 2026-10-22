@@ -9,7 +9,7 @@
 
 | 字段 | 值 |
 |---|---|
-| `UPSTREAM_BASE` | `v3.61.0`(main `fced005`;2026-09-22 人工合入,sync 工作流因 CLAUDE.md / version-history 冲突失败) |
+| `UPSTREAM_BASE` | `v3.66.0`(main `d887cac`;v3.62–v3.66 经 Sync 工作流无冲突合入,2026-10-23 核对)+ 预合入 #213 游客模式(见下) |
 | 本清单最近核对 | 2026-09-21(GitHub 侧 master,内网侧差异待内网 Agent 补登,见 §4) |
 | 同步方式 | GitHub `Sync main → master` 工作流,**按 main 的版本 tag(`v*`)触发**,`--no-ff` 合并;冲突时任务失败、人工处理 |
 
@@ -27,6 +27,20 @@
 此前三段「预合入」记录对应的内容已随 tag 正式进入 main,三段删除;冲突只在 `CLAUDE.md` 年表与 `docs/version-history.md`
 (按 §1.4:采纳 main、保留顶部须知块),复核 §2/§3 差异范围与冲突原则仍成立。内网接收后 `./deploy.sh --here`
 (已是 release 形态,不再收养);#130 的内网配套(SSO 迁移加 `branch_labels`、拆 `passwordLoginable` 穿线、§4 补登)见 §4 待办。
+
+**2026-10-23 预合入 #213 游客模式**(用户拍板「优先同步到 master,手动同步、不走 GitHub 工作流」;PR 待合 main,随 tag 同步后删本段):
+只把分支 `feat/issue-213-guest-mode`(`aa9165f`)相对其基点 `fa8b254` 的差异 3-way apply 到本分支,不带 main 上 `v3.66.0` 之后的未发布提交
+(文档整理波 #210 等)。因此 #210 之后才有的文档——`docs/architecture/*`、`docs/decisions.md`、`docs/reference/endpoints.md`、`docs/design/README.md`、
+`AGENTS.md` 角色轴一行、`docs/README.md` 索引——未带入;`docs/backlog.md` / `docs/version-history.md` / `docs/frontend/conventions.md` 只补 #213 段;
+代码、测试、前端、用户手册、方案(`docs/plans/issue-213-guest-mode.md`)与样页与分支逐字一致。内网验收注意:
+① 版本号随之为 `3.67.0-alpha`;新迁移 `660028d4ab6f`(`guest_visits`)沿 `upgrade heads` 与内网 SSO 迁移支线并存,不要 merge head。
+② 游客总闸**缺省开**:未登录的人打开站内链接即以游客进入、可读全部内容并试用 AI(每位游客日额度与读者同额);内网若不想开放,
+   到「运维管理 → 用户 → 游客」关掉总闸(关掉即吊销在线游客会话)。
+③ 内网登录页若有 SSO 定制,合并时保留 `LoginScreen` 的两组游客入口:`guestEnabled` / `onGuestEnter`(登录按钮下方小字「游客登录」)与
+   `fromGuest` / `onBackToGuest`(游客点「登录」时叠层登录页上的「返回继续逛逛」)。游客「去登录」用的就是这张登录页。
+④ 游客登录后「回到在看的那篇」依赖前端内存里的回跳目标;SSO 若是整页跳转往返,回来会落早报——要回原处需 SSO 回调带回原 hash。
+⑤ 游客会话的 `password_login_enabled` 走 `auth_policy.password_login_enabled(None)`;保留账号 `guest:shared` 在登录接口按角色拒绝,
+   内网按 `w3_uid` 的覆盖不影响游客。`/mcp` 与全部管理面对游客一律 403 `login_required`。
 
 ## 1. 维护规则
 

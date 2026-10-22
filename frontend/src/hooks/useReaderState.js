@@ -24,6 +24,7 @@ import {
   socialTranslationSignature,
 } from '../utils/socialTranslate';
 import { articleDeepLink } from '../utils/shareLink';
+import { requestLogin } from '../utils/loginPrompt';
 import { stripDuplicateLeadingHeading } from '../utils/markdownTitle';
 import { createBulkSubscribeDeadline, waitForBulkSubscribeSettlement } from '../utils/bulkSubscribe';
 import { readerShapeOf } from '../utils/readerShape';
@@ -169,6 +170,9 @@ export function useReaderState({
   // ── 左栏一根轴(issue #27 五稿):scope = { axis, favorite };下钻项是 activeSourceId / activeTagId。
   //    点源 / 按 id 打开一篇 = 临时进入来源轴(不落盘);回聚合(goContainerAll / goView)读回记住的。 ──
   const scopeUser = account?.username || '';
+  // 游客(issue #213):需要账号的写操作在这里统一拦下,弹登录提示而不发请求——
+  // 桌面、移动壳、早报、发现页的调用点都经过这些处理函数,一处守住。
+  const isGuest = account?.role === 'guest';
   const [storedScope, setScopeState] = useState(() => readStoredScope(scopeUser, 'article'));
   // 能力位关闭时兴趣轴不可达:记住的兴趣轴就地回落到订阅轴(不改写存储,重新开启即恢复)
   const scope = useMemo(
@@ -382,11 +386,12 @@ export function useReaderState({
 
   // 进入阅读器先取一次收藏 ID 集合，让订阅/来源视图的文章卡也能显示收藏态。
   const loadFavoriteIds = useCallback(async () => {
+    if (isGuest) return; // 游客没有收藏
     try {
       const data = await fetchFavorites({}, 1, 0);
       setFavoriteIds(new Set(data.favorite_ids || []));
     } catch { /* 收藏态非关键路径，静默失败 */ }
-  }, []);
+  }, [isGuest]);
 
   useEffect(() => { loadFavoriteIds(); }, [loadFavoriteIds]);
 
@@ -971,7 +976,15 @@ export function useReaderState({
     if (!activeSourceId) loadArticles(0, false);
   };
 
+  // 游客拦截:返回 true 表示已弹登录提示、调用方就此停下;登录后回到哪里由 App 按眼前正在看的那篇决定
+  const guestBlocked = (action, detail = {}) => {
+    if (!isGuest) return false;
+    requestLogin(action, detail);
+    return true;
+  };
+
   const handleSubscribe = async (source) => {
+    if (guestBlocked('subscribe', { name: source?.name })) return;
     setPinningId(source.source_id);
     try {
       applyResult(await subscribeSource(source.source_id));
@@ -988,6 +1001,7 @@ export function useReaderState({
   const handleUnsubscribe = async (source) => {
     // 用户自定源的「退订」= 移除(退订+无人订阅即清理配置与文章);普通退订会留下
     // 无人订阅的孤儿配置行,故两个入口(源栏减号/右键菜单)统一走移除路径。
+    if (guestBlocked('unsub')) return;
     if (source.user_source) return handleRemoveCustomSource(source);
     setPinningId(source.source_id);
     try {
@@ -1006,6 +1020,7 @@ export function useReaderState({
   // ── 用户自定源(v3.40):添加(建源+订阅+首抓)与移除(退订+无人订阅即清) ──
   // 添加错误直接上抛:AddCustomSourceModal 就地渲染错误文案(比 toast 更贴近表单)。
   const handleAddCustomSource = async (url, name, kind) => {
+    if (guestBlocked('addsrc')) return null;
     const result = await createCustomSource(url, name, kind);
     if (result.status === 'exists') {
       // 撞中已收录的系统源:转普通订阅引导(该来源已在目录里)
@@ -1052,6 +1067,7 @@ export function useReaderState({
   // ── 合集批量订阅/退订(批量动作,非持久绑定;见 docs/source-collections-wave-plan.md)──
   // 批量结果不做逐源乐观调整(涉及多源订阅人数),直接重拉源目录校准订阅态与计数。
   const handleSubscribeCollection = async (collection) => {
+    if (guestBlocked('subscribeAll')) return;
     setCollectionPinningId(collection.collection_id);
     try {
       const result = await subscribeCollection(collection.collection_id);
@@ -1069,6 +1085,7 @@ export function useReaderState({
   };
 
   const handleUnsubscribeCollection = async (collection) => {
+    if (guestBlocked('unsub')) return;
     setCollectionPinningId(collection.collection_id);
     try {
       const result = await unsubscribeCollection(collection.collection_id);
@@ -1088,6 +1105,7 @@ export function useReaderState({
 
   // ── 按形态批量订阅:文章/播客共用一个服务端事务,前端不逐源发请求 ──
   const handleSubscribeShape = async (shape) => {
+    if (guestBlocked('subscribeAll')) return;
     if (!['article', 'podcast'].includes(shape) || shapePinningRef.current !== null) return;
     shapePinningRef.current = shape;
     setShapePinning(shape);
@@ -1145,6 +1163,7 @@ export function useReaderState({
   // ── 收藏 / 取消收藏 ──
   const handleToggleFavorite = async (article, event) => {
     event?.stopPropagation();
+    if (guestBlocked('favorite')) return;
     const id = article.id;
     if (!id || favTogglingId === id) return;
     const wasFav = favoriteIds.has(id);
@@ -1502,6 +1521,7 @@ export function useReaderState({
   };
   // 「我的」页收藏入口(移动壳):回聚合并点亮收藏星(轴照记住的)
   const goFavorites = () => {
+    if (guestBlocked('favlist')) return;
     supersedePendingOpen(); setDiscover(false); setActiveSourceId(null); setActiveTagId(null);
     const next = { ...readStoredScope(scopeUserRef.current, modeRef.current), favorite: true };
     writeStoredScope(scopeUserRef.current, modeRef.current, next);
@@ -1510,6 +1530,7 @@ export function useReaderState({
   // 栏头切轴:清掉两根轴的下钻项、落盘;点已点亮的段 = 回该轴全集(与点容器钮回聚合同义)。
   const setAxis = (axis) => {
     if (axis === 'interest' && !interestAxisEnabled) return;
+    if (axis === 'interest' && guestBlocked('interest')) return;
     supersedePendingOpen();
     setDiscover(false);
     setActiveSourceId(null);
@@ -1520,6 +1541,7 @@ export function useReaderState({
   };
   // 列头收藏星:翻转并落盘;与轴 / 下钻项正交,不动它们
   const toggleFavoriteScope = () => {
+    if (!scope.favorite && guestBlocked('favlist')) return;
     supersedePendingOpen();
     const next = { ...scope, favorite: !scope.favorite };
     writeStoredScope(scopeUserRef.current, modeRef.current, next);
@@ -1619,6 +1641,7 @@ export function useReaderState({
   }, []);
 
   return {
+    isGuest,
     // 源目录 / 订阅
     sources, subscribedIds, sourcesLoading, discoverSources, subscribedSources,
     sourceMap, sourceNameMap, shapeOfSource, sidebarGroups, hasNoSubscriptions,

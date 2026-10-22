@@ -56,6 +56,7 @@ import FeedbackInboxPanel from './admin/FeedbackInboxPanel';
 import AnnouncementsPanel from './admin/AnnouncementsPanel';
 import AdminAuditPanel from './admin/AdminAuditPanel';
 import AccountGrowth from './admin/AccountGrowth';
+import GuestZone from './admin/GuestZone';
 import Pager from './admin/Pager';
 import AdminTaxonomyPanel from './admin/AdminTaxonomyPanel';
 import PodcastZone from './admin/PodcastZone';
@@ -69,6 +70,11 @@ import { avatarInitial, avatarHue } from '../utils/avatarColor';
 
 // 账户列表分页大小：超过即翻页，避免成百上千账户一次性平铺。
 const ACCOUNTS_PAGE_SIZE = 15;
+
+// AI 用量「按用户」系列名:哨兵键('other:' / 'guest:')→ 显示名;恰好同名的真实账号加「（用户）」
+const SERIES_SENTINELS = { 'other:': '其它', 'guest:': '游客' };
+const seriesUserLabel = (name) => SERIES_SENTINELS[name]
+  || (Object.values(SERIES_SENTINELS).includes(name) ? `${name}（用户）` : name);
 
 // 媒体库占用空间可读化（去重后落盘字节）。
 function fmtBytes(n) {
@@ -605,10 +611,11 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
   );
   // 后端聚合桶用带冒号 sentinel('other:',用户名禁冒号故不可撞),渲染层映射回
   // 「其它」;真实用户名恰为「其它」时改显「其它（用户）」——两者永不合并,
-  // colorForEntity 的中性槽判定只认映射后的「其它」。
+  // colorForEntity 的中性槽判定只认映射后的「其它」。游客(issue #213)同理:全体访客
+  // 合成一条 'guest:' 系列,显示「游客」,真有叫「游客」的账号改显「游客（用户）」。
   const dayUser = useMemo(() => (usage?.by_day_user ?? []).map((r) => ({
     ...r,
-    username: r.username === 'other:' ? '其它' : (r.username === '其它' ? '其它（用户）' : r.username),
+    username: seriesUserLabel(r.username),
   })), [usage]);
   // 用户维度已由后端裁到 Top-6+「其它」共 ≤7 系,前端 pivot 不再二次裁剪
   // (topN=Infinity;否则按 calls 重排可能再挤掉一个真实用户并回「其它」,
@@ -822,6 +829,8 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
           )}
 
           <AccountGrowth growth={growth} days={days} />
+
+          <GuestZone days={days} showToast={showToast} refreshTick={refreshTick} />
 
           {rootAdmin && (userKpis.reads + userKpis.logins) > 0 && (
             <>

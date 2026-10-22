@@ -29,7 +29,8 @@
 
 刻意不清理：`announcement_dismissals`（行数有界 = 用户数 × 公告数，且承载
 「一次性通知」语义——公告下线再重新上线时，关闭过的读者不应再被打扰；清掉
-行会破坏该语义。公告删除时已级联清理对应行）。
+行会破坏该语义。公告删除时已级联清理对应行）。例外是游客访客（issue #213）：
+访客身份 30 天无访问即视为离开，其已读两表与公告关闭行随 `guest_visitor_state` 一并回收。
 
 时间字段各表不一（见 `_TABLES`）：明细表用 ISO 时间串（`started_at`/`at`），
 聚合表用 `YYYY-MM-DD` 的 `day`。二者都是字典序 == 时间序，故统一用一个
@@ -64,6 +65,7 @@ from models.db import (
     CollectionJobRunRecord,
     FeedbackRecord,
     FetchRunRecord,
+    GuestVisitRecord,
     JobRecord,
     LoginEventRecord,
     PersonalDigestEditionRecord,
@@ -89,6 +91,8 @@ _TABLES: List[_TableRetention] = [
     _TableRetention(FetchRunRecord, FetchRunRecord.started_at, 180, "fetch_runs"),
     _TableRetention(CollectionJobRunRecord, CollectionJobRunRecord.started_at, 180, "collection_job_runs"),
     _TableRetention(LoginEventRecord, LoginEventRecord.at, 365, "login_events"),
+    # 游客访问按天聚合(issue #213):与登录事件同窗。
+    _TableRetention(GuestVisitRecord, GuestVisitRecord.day, 365, "guest_visits"),
     _TableRetention(AdminAuditRecord, AdminAuditRecord.at, 365, "admin_audit_logs"),
     _TableRetention(AiUsageRecord, AiUsageRecord.day, 730, "ai_usage"),
     _TableRetention(ReaderReadRecord, ReaderReadRecord.day, 730, "reader_reads"),
@@ -238,6 +242,17 @@ def run_retention_cleanup(engine: Engine) -> Dict[str, int]:
                 session.rollback()
                 deleted[label] = -1
                 logger.error("明细表清理失败 %s: %s", label, exc)
+        # 游客访客个人状态(issue #213):30 天无访问的访客,其已读两表与公告关闭行一并回收。
+        try:
+            from services import guest_access
+
+            stale = guest_access.stale_visitor_ids(session, today=today)
+            deleted["guest_visitor_state"] = guest_access.purge_visitor_state(session, stale)
+            session.commit()
+        except Exception as exc:  # noqa: BLE001 单项失败不影响其余表
+            session.rollback()
+            deleted["guest_visitor_state"] = -1
+            logger.error("明细表清理失败 guest_visitor_state: %s", exc)
     total = sum(v for v in deleted.values() if v > 0)
     logger.info("明细表滚动窗清理完成：共删除 %s 行，逐表明细=%s", total, deleted)
     return deleted

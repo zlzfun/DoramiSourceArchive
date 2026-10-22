@@ -33,6 +33,7 @@ import { kindKickerLabel } from '../../utils/contentKind';
 // 收听入口(issue #199 方案 C)在署名行下:移动端没有动作行;播放条是全局的,不在这一页里。
 export default function MobileArticlePage({
   rs,
+  guestAccessEnabled = false,
   aiEnabled,
   ondemand = {},   // 点播能力位(issue #137):{podcast, article}
   showToast,
@@ -128,6 +129,7 @@ export default function MobileArticlePage({
               articleId={activeArticle.id}
               onClose={() => setShareOpen(false)}
               showToast={showToast}
+              guestAccessEnabled={guestAccessEnabled}
             />
           )}
         </div>

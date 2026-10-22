@@ -538,8 +538,10 @@ def test_password_login_capability_defaults_true_and_gates_login_and_change_pass
 
     app_module = _setup_app(monkeypatch, tmp_path)
     with TestClient(app_module.app) as client:
+        # guest_access_enabled(issue #213):登录页据此显示「游客登录」,游客总闸缺省开
         assert client.get("/api/auth/session").json() == {
             "authenticated": False, "user": None, "password_login_enabled": True,
+            "guest_access_enabled": True,
         }
         assert _login(client, "user", "user").status_code == 200
         assert client.get("/api/runtime").json()["password_login_enabled"] is True

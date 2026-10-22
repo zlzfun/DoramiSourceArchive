@@ -66,6 +66,7 @@ from models.db import (
     SourceConfigRecord,
 )
 from services import accounts as accounts_service
+from services import guest_access as guest_access_service
 from services import content_classification
 from services import article_listen_guides as article_listen_guide_service
 from services import podcast_premium as podcast_premium_service
@@ -1321,6 +1322,9 @@ def _reader_sources_catalog(
     for record in session.exec(
         select(ReaderSubscriptionRecord).where(ReaderSubscriptionRecord.is_active == True)  # noqa: E712
     ).all():
+        # 游客保留账号的订阅是默认名单的镜像,不是谁选的——不计入「N 人订阅」(issue #213)。
+        if accounts_service.is_guest_username(record.owner_username):
+            continue
         for sid in subscription_source_ids(record):
             subscriber_owners.setdefault(sid, set()).add(record.owner_username or "")
     subscriber_counts = {sid: len(owners) for sid, owners in subscriber_owners.items()}
@@ -1678,7 +1682,8 @@ def _require_reader_ai(request: Request):
     with Session(deps.get_db_sink().engine) as session:
         if not accounts_service.ai_beta_global_enabled(session):
             raise HTTPException(status_code=403, detail="AI 功能已临时关闭，请稍后再试")
-        record = accounts_service.get_user(session, username)
+        # 访客身份按游客保留账号授权(issue #213):其 ai_beta_enabled 即「游客 AI」开关。
+        record = accounts_service.get_account_for(session, username)
         if record is None or not record.ai_beta_enabled:
             raise HTTPException(status_code=403, detail="AI 功能尚未开启，请联系管理员")
         llm_config = daily_brief_service.resolve_llm_config(session)
@@ -1708,17 +1713,25 @@ def _enforce_ai_daily_quota(username: str, purpose: str) -> None:
     admin 不豁免：配额护的是共享 LLM 预算/成本，与账户角色无关，统一限最简单可预期。
     点播用途（播客 + 文章）合计计入同一池。
     """
+    guest = accounts_service.is_guest_visitor(username)
     if purpose in _AI_ONDEMAND_PURPOSES:
         limit = _AI_ONDEMAND_DAILY_LIMIT
+        limit_key = "ondemand"
         purpose_clause = AiUsageRecord.purpose.in_(tuple(_AI_ONDEMAND_PURPOSES))
     else:
         limit = _AI_DAILY_CALL_LIMITS.get(purpose)
+        limit_key = purpose
         if not limit:
             return
         purpose_clause = AiUsageRecord.purpose == purpose
     quota_day = datetime.date.today()
     today = quota_day.isoformat()
     with Session(deps.get_db_sink().engine) as session:
+        if guest:
+            # 游客按访客身份分别计次(issue #213):额度缺省与读者同额、运维可调,0 = 不限。
+            limit = guest_access_service.guest_ai_limit(session, limit_key, limit)
+            if not limit:
+                return
         used = session.exec(
             select(func.coalesce(func.sum(AiUsageRecord.calls), 0)).where(
                 AiUsageRecord.day == today,
@@ -1734,8 +1747,11 @@ def _enforce_ai_daily_quota(username: str, purpose: str) -> None:
                 TranslationCallRecord.recorded == False,  # noqa: E712
             )).one()
     if int(used or 0) >= limit:
+        headers = _daily_reset_headers(quota_day)
+        if guest:
+            raise guest_access_service.GuestQuotaExhausted(retry_after=int(headers["Retry-After"]))
         raise HTTPException(
-            status_code=429, detail="今日 AI 使用次数已达上限，请明日再试", headers=_daily_reset_headers(quota_day),
+            status_code=429, detail="今日 AI 使用次数已达上限，请明日再试", headers=headers,
         )
 
 
@@ -1835,6 +1851,9 @@ async def reader_ai_translate_social(article_id: str, request: Request):
 async def _translation_call(fn, *args):
     try:
         return await asyncio.to_thread(fn, deps.get_db_sink().engine, *args)
+    except translation_jobs.GuestQuotaError:
+        headers = _daily_reset_headers(datetime.date.today())
+        raise guest_access_service.GuestQuotaExhausted(retry_after=int(headers["Retry-After"]))
     except reader_ai_service.ReaderAIError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
 
@@ -1897,6 +1916,13 @@ async def reader_ai_translate_podcast_transcript(
                 config=app.settings.podcast,
                 llm_config=llm_config,
                 usage_meta=UsageMeta(purpose="translate", username=username),
+                # 正式读者有意不设日额度与全站预算(一篇逐字稿的多段调用算一次阅读动作,见
+                # test_reader_ai 两条用例);免登录访客不享受这一豁免(issue #213 检视 F1):
+                # 缓存未命中、即将调模型时按访客的 translate 日额度计一次 + 全站日 token 预算。
+                pre_llm_check=(
+                    (lambda: _enforce_ai_cost_gates(username, "translate"))
+                    if accounts_service.is_guest_visitor(username) else None
+                ),
             )
         )
     except podcast_transcript_translation_service.PodcastTranscriptTranslationError as exc:

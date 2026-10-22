@@ -120,3 +120,77 @@ def test_collector_and_reader_prefixes_are_disjoint_enough():
     # 构建/管理类仍归 collector。
     assert app_module._path_matches("/api/llm/config", app_module.COLLECTOR_API_PREFIXES)
     assert app_module._path_matches("/api/daily-brief/generate", app_module.COLLECTOR_API_PREFIXES)
+
+
+# ==================== 游客白名单(issue #213) ====================
+
+
+def _route_methods(route) -> set[str]:
+    return {m for m in (getattr(route, "methods", None) or set()) if m not in ("HEAD", "OPTIONS")}
+
+
+def test_guest_whitelist_entries_exist():
+    """白名单每一条都对得上真实注册的 (方法, 路由模板)——路由改名时守卫先红,不会静默失效。"""
+    from api import guest_policy
+
+    registered = {
+        (method, route.path)
+        for route in app_module.app.routes
+        for method in _route_methods(route)
+    }
+    missing = sorted(guest_policy.GUEST_ALLOWED_ROUTES - registered)
+    assert not missing, "游客白名单里有不存在的路由:\n  " + "\n  ".join(map(str, missing))
+
+
+def test_guest_whitelist_never_opens_admin_or_collector_surfaces():
+    from api import guest_policy
+
+    for method, path in sorted(guest_policy.GUEST_ALLOWED_ROUTES):
+        assert not app_module.account_admin_required(path), (method, path)
+        assert not app_module._path_matches(path, app_module.COLLECTOR_API_PREFIXES), (method, path)
+        assert not app_module.article_write_requires_collector(path, method), (method, path)
+
+
+def test_guest_session_denied_outside_whitelist(monkeypatch, tmp_path):
+    """游客会话打白名单之外的每一条路由(含 /mcp),一律 403 login_required,且不进处理器。"""
+    import re
+    from dataclasses import replace
+
+    from starlette.testclient import TestClient
+
+    from api import guest_policy
+    from config import RuntimeConfig
+    from tests.conftest import seed_default_accounts
+
+    sink = __import__("storage.impl.db_storage", fromlist=["DatabaseStorage"]).DatabaseStorage(
+        db_url=f"sqlite:///{tmp_path / 'guest_audit.db'}"
+    )
+    monkeypatch.setattr(app_module, "db_sink", sink)
+    monkeypatch.setattr(app_module, "settings", replace(app_module.settings, runtime=RuntimeConfig(role="all")))
+    seed_default_accounts(sink.engine)
+
+    leaked = []
+    with TestClient(app_module.app) as client:
+        assert client.post("/api/auth/guest", json={"entry": "deep_link"}).status_code == 200
+        for route in app_module.app.routes:
+            path = getattr(route, "path", "")
+            for method in sorted(_route_methods(route)):
+                probe = re.sub(r"\{[^}]+\}", "1", path)
+                if (
+                    app_module.is_public_auth_path(probe)
+                    or app_module.is_public_subscription_path(probe)
+                    or app_module.is_public_health_path(probe)
+                ):
+                    continue
+                scope = {"type": "http", "method": method, "path": probe, "root_path": "", "headers": []}
+                if guest_policy.guest_route_allowed(app_module.app.router.routes, scope):
+                    continue  # 放行端点的业务语义由 tests/test_guest_mode.py 覆盖
+                resp = client.request(method, probe)
+                body = {}
+                try:
+                    body = resp.json()
+                except ValueError:
+                    pass
+                if resp.status_code != 403 or body.get("code") != "login_required":
+                    leaked.append(f"{method} {probe} -> {resp.status_code}")
+    assert not leaked, "以下路由对游客会话未按白名单拒绝:\n  " + "\n  ".join(leaked)

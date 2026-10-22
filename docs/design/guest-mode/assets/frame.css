@@ -1,0 +1,19 @@
+/* 样页画框底座:只补静态快照缺的几何(现网靠运行时脚本维持的高度 / 滚动容器),不定义任何方案样式 */
+html, body { height: 100%; margin: 0; }
+body { background: var(--dorami-canvas); color: var(--dorami-ink); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+#root { min-height: 100%; }
+
+/* 快照里的 recharts 容器宽高由运行时测量写入;静态页里保持抓取时的尺寸即可,只防溢出 */
+.recharts-responsive-container { overflow: hidden; }
+
+/* 样页提示条:标明「示意数据」等边界,不属于方案 */
+.gs-sample-note {
+  position: fixed; right: 12px; bottom: 12px; z-index: 400;
+  padding: 4px 10px; border-radius: var(--r-pill);
+  background: var(--dorami-well); color: var(--dorami-muted);
+  font-size: 12px; box-shadow: var(--sh-1); pointer-events: none;
+}
+
+/* 登录页:快照停在开场中途;静态样页直接落终态(背景星座动画不重放) */
+.auth-stage .auth-word, .auth-stage .auth-rise, .auth-stage .auth-feats li { animation: none !important; opacity: 1 !important; filter: none !important; transform: none !important; }
+.auth-stage .auth-title-brand { display: none; }

@@ -31,6 +31,7 @@ import {
   ChevronRight,
   Rss,
   BarChart3,
+  LogIn,
 } from 'lucide-react';
 import LogoMark from './LogoMark';
 import BrandLogoImage from './BrandLogoImage';
@@ -39,6 +40,7 @@ import ReaderMarkdown from './ReaderMarkdown';
 import PaperContentNote from './PaperContentNote';
 import ReaderAiPanel from './ReaderAiPanel';
 import ShareMenu from './ShareMenu';
+import { requestLogin } from '../utils/loginPrompt';
 import ContextMenu from './ContextMenu';
 import { useContextMenu } from '../hooks/useContextMenu';
 import { resolveCompany } from '../sourceTaxonomy';
@@ -386,6 +388,11 @@ export default function ReaderTab({
   onExitReader = null,
   // 反馈有未读管理员回复(读者账号):轨底头像/设置钮挂轻通知点
   feedbackUnread = 0,
+  // 游客(issue #213):轨底头像位换成「登录」;回跳目标由 App 按眼前正在看的那篇决定(onVisibleArticleChange 上报)
+  onGuestLogin = null,
+  onVisibleArticleChange = null,
+  // 游客总闸位:分享菜单据此改「站内链接」说明(对所有账号)
+  guestAccessEnabled = false,
   rs,
   view,
 }) {
@@ -444,6 +451,9 @@ export default function ReaderTab({
     // 上下文菜单 items(桌面右键在此装配弹层)
     buildArticleMenuItems, buildSourceMenuItems, buildSocialMenuItems,
   } = rs;
+  // 游客(issue #213 检视 F3):向 App 上报眼前正在看的那篇(阅读窗可见时)——登录后回到它,否则落早报
+  const visibleArticleId = !pageOpen && !discover && !socialView ? (activeArticle?.id || null) : null;
+  useEffect(() => { onVisibleArticleChange?.(visibleArticleId); }, [visibleArticleId, onVisibleArticleChange]);
 
   // 首登引导(issue #56 方案 B「早报前置、引导内嵌」):不再强制落发现页兴趣段——新账号首屏就是早报,
   // 引导横幅挂在早报页顶(PersonalBriefPage onboarding),发现钮红点照旧挂到完成或跳过
@@ -453,12 +463,13 @@ export default function ReaderTab({
   const openDiscoverSources = useCallback((opts) => { setDiscoverTab('sources'); openDiscover(opts); }, [openDiscover, setDiscoverTab]);
   // 「兴趣」的编辑入口(源栏开关灰态提示 / 引导):直落发现页兴趣段
   const openInterests = useCallback(() => {
+    if (rs.isGuest) { requestLogin('interest'); return; }
     supersedePendingOpen();
     setBriefOpen(false);
     leaveBriefTrail();
     setDiscoverTab('interests');
     openDiscover({ shape: 'all' });
-  }, [supersedePendingOpen, leaveBriefTrail, openDiscover, setBriefOpen, setDiscoverTab]);
+  }, [rs.isGuest, supersedePendingOpen, leaveBriefTrail, openDiscover, setBriefOpen, setDiscoverTab]);
   const openRankings = useCallback(() => {
     supersedePendingOpen();
     closeDiscover();
@@ -756,7 +767,9 @@ export default function ReaderTab({
             {!onExitReader && (
               <button
                 type="button"
-                onClick={() => onOpenSettings?.('feedback')}
+                onClick={() => (rs.isGuest
+                  ? requestLogin('feedback')
+                  : onOpenSettings?.('feedback'))}
                 className="reader-vrail-btn"
                 aria-label={feedbackUnread > 0 ? '反馈与建议(有新回复)' : '反馈与建议'}
               >
@@ -775,12 +788,25 @@ export default function ReaderTab({
               <Settings className="h-[18px] w-[18px]" />
               <span className="reader-vrail-label">设置</span>
             </button>
-            <RailLogoutAvatar
-              avatar={account?.avatar}
-              username={account?.username}
-              onLogout={onLogout}
-              onLogoutHint={() => showToast('再次点击以退出登录', 'info')}
-            />
+            {rs.isGuest ? (
+              <button
+                type="button"
+                onClick={() => onGuestLogin?.()}
+                className="reader-vrail-btn guest-rail-login"
+                aria-label="登录"
+              >
+                <LogIn aria-hidden="true" />
+                <span className="reader-vrail-label">登录</span>
+                <span className="reader-vrail-tip">登录后可收藏、订阅与设置兴趣</span>
+              </button>
+            ) : (
+              <RailLogoutAvatar
+                avatar={account?.avatar}
+                username={account?.username}
+                onLogout={onLogout}
+                onLogoutHint={() => showToast('再次点击以退出登录', 'info')}
+              />
+            )}
           </>
         )}
       </nav>
@@ -934,6 +960,8 @@ export default function ReaderTab({
           favoriteIds={favoriteIds}
           onToggleFavorite={(articleId) => handleToggleFavorite({ id: articleId })}
           onSubscribeSource={onRowSubscribeSource}
+          guest={rs.isGuest}
+          onGuestLogin={() => onGuestLogin?.()}
           onOpenArticle={async (articleId, ctx) => {
             // 结果回传早报页:false=不在库(早报页退到原链),null=被更晚的点击盖过(不动)
             const opened = await openArticleById(articleId, { silent: true });
@@ -979,8 +1007,11 @@ export default function ReaderTab({
           onSubscribeShape={handleSubscribeShape}
           userSourcesEnabled={userSourcesEnabled}
           onAddCustomSource={handleAddCustomSource}
+          guest={rs.isGuest}
           tab={discoverTab}
-          onTabChange={setDiscoverTab}
+          onTabChange={(next) => (next === 'interests' && rs.isGuest
+            ? requestLogin('interest')
+            : setDiscoverTab(next))}
           shape={discoverShape}
           onShapeChange={setDiscoverShape}
           onOpenRankings={openRankings}
@@ -1387,6 +1418,7 @@ export default function ReaderTab({
                     articleId={activeArticle.id}
                     onClose={() => setShareOpen(false)}
                     showToast={showToast}
+                    guestAccessEnabled={guestAccessEnabled}
                   />
                 )}
               </div>
@@ -1553,6 +1585,8 @@ export default function ReaderTab({
           activeArticle={activeArticle}
           showToast={showToast}
           onOpenArticle={openArticleById}
+          guest={rs.isGuest}
+          onGuestLogin={() => onGuestLogin?.()}
         />
       )}
 

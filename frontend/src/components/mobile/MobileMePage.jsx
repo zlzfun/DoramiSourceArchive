@@ -7,10 +7,12 @@ import {
   Star,
   SunMoon,
   Tags,
+  UserRound,
 } from 'lucide-react';
 import { avatarInitial, avatarHue } from '../../utils/avatarColor';
 import { useConfirm } from '../../hooks/useConfirm';
 import InstallApp from '../InstallApp';
+import { requestLogin } from '../../utils/loginPrompt';
 
 // 「我的」页(移动波 Wave2,样页画面③):承接桌面 RailUserFlyout 的全部职责
 // (主题/设置/反馈/退出)+ 收藏与发现入口。退出改确认对话框——触屏上 hover 展开的
@@ -28,9 +30,12 @@ export default function MobileMePage({
   interestAttention = false,
   onOpenSettings,
   onLogout,
+  // 游客(issue #213):账户卡换成游客卡 + 登录;反馈弹登录提示;不显示「退出登录」
+  onGuestLogin = null,
 }) {
   const confirm = useConfirm();
   const isAdmin = account?.role === 'admin';
+  const isGuest = account?.role === 'guest';
 
   const handleLogout = async () => {
     if (await confirm('确定退出登录？')) onLogout?.();
@@ -38,19 +43,36 @@ export default function MobileMePage({
 
   return (
     <div className="m-me" role="region" aria-label="我的">
-      <div className="m-me-card">
-        {account?.avatar ? (
-          <img src={account.avatar} alt="头像" className="m-avatar-img" />
-        ) : (
-          <div className="m-avatar avatar-letter" style={{ '--avatar-h': avatarHue(account?.username) }}>
-            {avatarInitial(account?.username)}
+      {isGuest ? (
+        <div className="m-me-card guest-me-card">
+          <div className="m-avatar guest-avatar" aria-hidden="true"><UserRound /></div>
+          <div className="min-w-0">
+            <div className="m-me-name">游客</div>
+            <div className="m-me-sub">登录后可收藏、订阅、设置兴趣</div>
           </div>
-        )}
-        <div className="min-w-0">
-          <div className="m-me-name">{account?.username || '—'}</div>
-          <div className="m-me-sub">已订阅 {subscribedCount} 个来源</div>
+          <button
+            type="button"
+            className="action-button action-button-primary min-h-[32px] px-3 text-xs guest-login-btn"
+            onClick={onGuestLogin}
+          >
+            登录
+          </button>
         </div>
-      </div>
+      ) : (
+        <div className="m-me-card">
+          {account?.avatar ? (
+            <img src={account.avatar} alt="头像" className="m-avatar-img" />
+          ) : (
+            <div className="m-avatar avatar-letter" style={{ '--avatar-h': avatarHue(account?.username) }}>
+              {avatarInitial(account?.username)}
+            </div>
+          )}
+          <div className="min-w-0">
+            <div className="m-me-name">{account?.username || '—'}</div>
+            <div className="m-me-sub">已订阅 {subscribedCount} 个来源</div>
+          </div>
+        </div>
+      )}
 
       <div className="m-group">
         <button type="button" className="m-row" onClick={onShowFavorites}>
@@ -78,7 +100,11 @@ export default function MobileMePage({
         <InstallApp />
         {/* 反馈是「读者→管理员」通道,admin 会话无此入口(与桌面设置柜同口径) */}
         {!isAdmin && (
-          <button type="button" className="m-row" onClick={() => onOpenSettings?.('feedback')}>
+          <button
+            type="button"
+            className="m-row"
+            onClick={() => (isGuest ? requestLogin('feedback') : onOpenSettings?.('feedback'))}
+          >
             <MessageSquare aria-hidden="true" />
             <span className="m-row-label">反馈与建议</span>
             {feedbackUnread > 0 && <span className="m-row-dot" aria-hidden="true" />}
@@ -111,12 +137,14 @@ export default function MobileMePage({
         </button>
       </div>
 
-      <div className="m-group">
-        <button type="button" className="m-row is-danger" onClick={handleLogout}>
-          <LogOut aria-hidden="true" />
-          <span className="m-row-label">退出登录</span>
-        </button>
-      </div>
+      {!isGuest && (
+        <div className="m-group">
+          <button type="button" className="m-row is-danger" onClick={handleLogout}>
+            <LogOut aria-hidden="true" />
+            <span className="m-row-label">退出登录</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

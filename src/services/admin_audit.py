@@ -129,6 +129,27 @@ def _global_ai_beta(_: re.Match[str], body: dict | None) -> RenderResult:
     return f"{action}全局 AI Beta", None
 
 
+_GUEST_LIMIT_LABELS = {"translate": "翻译", "ask": "问答", "summarize": "速读", "ondemand": "点播"}
+
+
+def _guest_settings(_: re.Match[str], body: dict | None) -> RenderResult:
+    """游客设置(issue #213):总闸 / 游客 AI / 每位游客的 AI 日额度。"""
+    body = body or {}
+    parts: list[str] = []
+    if body.get("enabled") is not None:
+        parts.append("开启游客访问" if body["enabled"] else "关闭游客访问")
+    if body.get("ai_enabled") is not None:
+        parts.append("开启游客 AI" if body["ai_enabled"] else "关闭游客 AI")
+    limits = body.get("ai_limits")
+    if isinstance(limits, dict) and limits:
+        def _fmt(value):
+            return "同读者" if value is None else ("不限" if value == 0 else str(value))
+        parts.append("游客 AI 日额度 " + "、".join(
+            f"{_GUEST_LIMIT_LABELS.get(key, key)}={_fmt(value)}" for key, value in sorted(limits.items())
+        ))
+    return ("更新游客设置:" + ";".join(parts)) if parts else "更新游客设置", None
+
+
 def _reader_defaults(_: re.Match[str], body: dict | None) -> RenderResult:
     ids = (body or {}).get("source_ids")
     if ids is None:
@@ -189,6 +210,7 @@ AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
     ("POST", re.compile(r"^/api/x-api/config$"), lambda _m, _b: ("更新 X API 配置", None)),
     ("POST", re.compile(r"^/api/admin/ai-beta/global$"), _global_ai_beta),
     ("POST", re.compile(r"^/api/admin/reader-defaults$"), _reader_defaults),
+    ("PUT", re.compile(r"^/api/admin/guest/settings$"), _guest_settings),
     (
         "PUT",
         re.compile(r"^/api/admin/analysis/config$"),

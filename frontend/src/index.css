@@ -10119,8 +10119,10 @@ input[type="radio"] {
   .reader-disc-grp-label { padding: 0; }
   .reader-disc-grp-n { font-size: 12px; color: var(--dorami-faint); }
 
-  .reader-disc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  @media (max-width: 1280px) { .reader-disc-grid { grid-template-columns: 1fr; } }
+  /* minmax(0, 1fr):轨道不被卡片的最小内容宽撑大(长名称 / 标签行曾把单列撑到 403px、超出 390px 手机屏,
+     各分组的网格各自被撑成不同宽度——issue #213 顺手修) */
+  .reader-disc-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  @media (max-width: 1280px) { .reader-disc-grid { grid-template-columns: minmax(0, 1fr); } }
 
   /* 卡=纵向 flex 且 main 撑满:网格拉伸等高时高度传导到内层,
      meta 的 margin-top:auto / 右列 space-between 才有施力空间(贴底对齐的前提) */
@@ -13488,4 +13490,153 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
     color: var(--dorami-muted);
     font-family: var(--font-sans);
   }
+}
+
+/* ── 游客模式(issue #213,样页 docs/design/guest-mode/)── */
+@layer components {
+  /* 视图轨底部:头像位换成「登录」——墨靛图标坐在 wash 小方块上,与头像同占位;悬停只加深中性底 */
+  .reader-vrail-btn.guest-rail-login { color: var(--dorami-accent-ink); }
+  .reader-vrail-btn.guest-rail-login .reader-vrail-label { color: var(--dorami-accent-ink); font-weight: 600; }
+  /* 30px 方块 = 头像同尺寸;全局 * 是 border-box,6px 内距后图形正好 18px(与其它轨钮同大) */
+  .reader-vrail-btn.guest-rail-login svg {
+    width: 30px;
+    height: 30px;
+    padding: 6px;
+    border-radius: var(--r-control);
+    background: var(--dorami-wash);
+  }
+  .reader-vrail-btn.guest-rail-login:hover svg { background: var(--dorami-select); }
+
+  /* 游客头像:中性底 + 人形线稿(不用首字母,免得像某个真实账号) */
+  .guest-avatar { display: grid; place-items: center; background: var(--dorami-well); color: var(--dorami-muted); }
+  .sett-avatar.guest-avatar svg { width: 20px; height: 20px; }
+
+  /* 早报说明行打头的「游客版」签(放说明行而非页头:手机页头放不下) */
+  .guest-chip {
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 8px;
+    border-radius: var(--r-pill);
+    background: var(--dorami-wash);
+    color: var(--dorami-accent-ink);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+
+  /* 设置柜:需要登录的分区挂一枚小锁,分区内容换成登录入口 */
+  .sett-nav-btn .guest-lock { width: 12px; height: 12px; margin-left: auto; color: var(--dorami-faint); }
+  .guest-gate { display: grid; justify-items: center; gap: 8px; max-width: 360px; margin: 40px auto 0; text-align: center; }
+  .guest-gate > svg { width: 22px; height: 22px; color: var(--dorami-faint); }
+  .guest-gate-title { margin: 0; font-size: 14px; font-weight: 600; color: var(--dorami-ink); }
+  .guest-gate-sub { margin: 0 0 6px; font-size: 13px; line-height: 1.6; color: var(--dorami-muted); }
+
+  /* 公开分享页页尾:「在哆啦美里继续逛逛」,与 .shared-article / .shared-foot 同栏宽 */
+  .guest-share-cta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 14px;
+    max-width: 46rem;
+    margin: 18px auto 0;
+    padding: 14px 16px;
+    border-radius: var(--r-card);
+    background: var(--dorami-wash);
+    color: var(--dorami-ink-2);
+    font-size: 13px;
+  }
+  .guest-share-cta b { color: var(--dorami-ink); font-weight: 600; }
+  .guest-share-cta .action-button { margin-left: auto; }
+
+  /* 叠层登录页:游客点「登录」时盖在阅读器之上,阅读器不卸载 */
+  .guest-login-layer { position: fixed; inset: 0; z-index: 300; overflow-y: auto; overscroll-behavior: contain; }
+
+  /* 登录卡上的游客入口:登录按钮下方一行小字(目检拍板,品牌面,与 .auth-* 同属豁免配色) */
+  .guest-enter {
+    display: block;
+    margin: 14px auto 0;
+    padding: 2px 4px;
+    border: 0;
+    background: none;
+    color: rgba(190, 196, 230, 0.72);
+    font-size: 13px;
+    font-weight: 400;
+    text-decoration: underline;
+    text-decoration-color: rgba(190, 196, 230, 0.32);
+    text-underline-offset: 3px;
+    cursor: pointer;
+    transition: color 160ms var(--motion-ease), text-decoration-color 160ms var(--motion-ease);
+  }
+  .guest-enter:hover:not(:disabled) { color: rgba(226, 230, 248, 0.95); text-decoration-color: currentColor; }
+  .guest-enter:disabled { cursor: default; opacity: 0.7; }
+  .guest-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin: 0 0 14px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: rgba(190, 196, 230, 0.8);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .guest-back:hover { color: white; }
+  .guest-back svg { width: 14px; height: 14px; }
+
+  /* 问答面板:游客额度用尽的行内「登录后继续使用」 */
+  .guest-inline-login {
+    margin-left: 2px;
+    padding: 0;
+    border: 0;
+    background: none;
+    font-weight: 600;
+    color: var(--dorami-accent-ink);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+  }
+
+  /* 运维「用户」子页:游客区(区头齿轮 / 走势图例 / 入口分布条 / 设置抽屉的额度表与名单) */
+  .guest-zone-acts { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; align-self: center; }
+  .guest-trend { margin-top: 12px; }
+  .guest-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; font-size: 12px; color: var(--dorami-muted); }
+  /* 图例色块:柱 = 直角方块、转化 = 圆点(§5 的 0 / 50% 特例) */
+  .guest-legend i { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 0; }
+  .guest-legend i.is-dot { border-radius: 50%; }
+  .guest-entry { display: grid; gap: 10px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--dorami-border-soft); }
+  .guest-entry-head { display: flex; align-items: baseline; gap: 10px; font-size: 12.5px; font-weight: 600; color: var(--dorami-ink-2); }
+  .guest-entry-bar { display: flex; height: 10px; border-radius: var(--r-pill); overflow: hidden; background: var(--dorami-well); }
+  .guest-entry-bar span { display: block; height: 100%; }
+  .guest-entry-bar span + span { box-shadow: inset 1px 0 0 var(--dorami-surface); }
+  .guest-limit-row {
+    display: grid;
+    grid-template-columns: 1fr 120px;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--dorami-border-soft);
+    font-size: 13px;
+    color: var(--dorami-ink-2);
+  }
+  .guest-limit-row:last-child { border-bottom: 0; }
+  .guest-limit-row small { display: block; font-size: 12px; color: var(--dorami-faint); }
+  .guest-limit-input {
+    width: 100%;
+    height: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--dorami-border);
+    border-radius: var(--r-control);
+    background: var(--dorami-surface);
+    color: var(--dorami-ink);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  .guest-limit-input::placeholder { color: var(--dorami-faint); }
+  .guest-defsrc { display: flex; flex-wrap: wrap; gap: 6px; }
+  .guest-defsrc span { padding: 2px 8px; border-radius: var(--r-pill); background: var(--dorami-well); color: var(--dorami-ink-2); font-size: 12px; }
+  .guest-defsrc-note { margin-top: 10px; }
 }

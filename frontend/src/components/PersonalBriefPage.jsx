@@ -10,6 +10,7 @@ import {
 } from '../api';
 import { flushPendingInterestSaves } from '../utils/interestSaveQueue';
 import { rebuildToast } from '../utils/briefRebuild';
+import { guestEdition } from '../utils/guestCopy';
 import LogoMark from './LogoMark';
 import BriefHistoryCalendar from './BriefHistoryCalendar';
 import { resolveCompany } from '../sourceTaxonomy';
@@ -34,6 +35,8 @@ import { scoreDimensionOf, scoreOf } from '../utils/briefScore';
 // 条目序列},阅读窗出返回带,回来时落回原位并短暂高亮刚读过的那条)、社交条目点开即原链、订阅外条目「+ 订阅」、
 // 首登兴趣引导横幅、空态 / 失败态的「先去看文章」出口、深度阅读 / 播客精选两个按内容价值入选的板块。
 // 桌面占「源栏 + 条目列 + 阅读窗」整幅(grid-column 2 / -1);移动壳同一张页面,单列。
+// 游客(issue #213):看的是按默认订阅编排的共享游客版——眉头下恒为「游客版」说明行 + 登录入口,不出
+// 「重新编排」「立即重编」「重试生成」(游客不能重编;失败的游客版由后端过一阵自动重试),选篇理由改说「默认订阅的」。
 
 const TERMINAL = new Set(['ready', 'degraded', 'failed', 'superseded']);
 // 额外于新闻精选之上的通道:重大事件 + 深度阅读 / 播客精选(「N 篇精选」不数它们)
@@ -300,6 +303,8 @@ export default function PersonalBriefPage({
   onBrowse = null,              // 「去看文章」→ 关早报页落文章容器
   // 从阅读窗「返回我的早报」回来时带的外出上下文 {date, revision, scrollTop, itemId};挂载时一次性读取
   restore = null,
+  guest = false,
+  onGuestLogin = null,
 }) {
   const restoreRef = useRef(restore);
   const [flashId, setFlashId] = useState(null);
@@ -410,7 +415,8 @@ export default function PersonalBriefPage({
     if (sheetRef.current) sheetRef.current.scrollTop = 0;
   }, [viewKey]);
 
-  const edition = usesToday ? todayEdition : (detail.key === viewKey ? detail.edition : null);
+  const shownEdition = usesToday ? todayEdition : (detail.key === viewKey ? detail.edition : null);
+  const edition = useMemo(() => (guest ? guestEdition(shownEdition) : shownEdition), [guest, shownEdition]);
   const detailLoading = !usesToday && (detail.key !== viewKey || detail.loading);
 
   // 返回落位:条目进 DOM 的同一提交里把卷动位置放回去(layout effect,不闪一帧顶部),
@@ -608,7 +614,7 @@ export default function PersonalBriefPage({
     } else {
       fact = (
         <>
-          从你订阅的 {n(scopeCount)} 个来源{followedCount ? <>和 {n(followedCount)} 个兴趣</> : null}
+          {guest ? '从默认订阅的' : '从你订阅的'} {n(scopeCount)} 个来源{followedCount ? <>和 {n(followedCount)} 个兴趣</> : null}
           {stats?.candidate_count != null && <> · {n(stats.candidate_count)} 篇里</>}选出 {n(ownItems.length)} 篇
           {interestCount > 0 && <>，{n(interestCount)} 篇命中你的兴趣{externalHits > 0 && <>（{n(externalHits)} 篇来自订阅外）</>}</>}
           {valueText && <>；{valueText}</>}
@@ -619,7 +625,17 @@ export default function PersonalBriefPage({
 
   // ── 眉头下的状态提示(原编排说明行尾句,一次只显一条:排队 > 未完成 > 已更新) ──
   let notice = null;
-  if (showEdition) {
+  if (showEdition && guest) {
+    notice = {
+      cls: '',
+      body: (
+        <>
+          <span className="guest-chip">游客版</span>按默认订阅编排 ·
+          <button type="button" className="bp-notice-act" onClick={() => onGuestLogin?.()}>登录后按你的订阅与兴趣编排</button>
+        </>
+      ),
+    };
+  } else if (showEdition) {
     const deadlineIncomplete = edition.sync_stale || edition.analysis_incomplete;
     const stale = usesToday && (edition.interest_stale || edition.scope_stale);
     const rebuildAct = (text) => (
@@ -703,7 +719,7 @@ export default function PersonalBriefPage({
       meta: edition?.error || '生成过程遇到问题',
       actions: (
         <>
-          {isToday && <button type="button" className="bp-btn is-primary" onClick={handleRebuild} disabled={working}>{working ? '重试中…' : '重试生成'}</button>}
+          {isToday && !guest && <button type="button" className="bp-btn is-primary" onClick={handleRebuild} disabled={working}>{working ? '重试中…' : '重试生成'}</button>}
           {browseBtn}
         </>
       ),
@@ -714,7 +730,7 @@ export default function PersonalBriefPage({
     posterBody = stateBlock(
       interestOnly
         ? (isToday ? '今天还没有命中你兴趣的内容' : '这一天没有命中你兴趣的内容')
-        : (isToday ? '你的订阅源今天还没有可展示的更新' : '这一天的订阅源没有可展示的更新'),
+        : (isToday ? (guest ? '默认订阅的来源今天还没有可展示的更新' : '你的订阅源今天还没有可展示的更新') : '这一天的订阅源没有可展示的更新'),
       {
         actions: (
           <>
@@ -748,7 +764,7 @@ export default function PersonalBriefPage({
           {interestOnly ? '今天没有命中你兴趣的新内容' : ratioUnfillable ? '今天缺少用于补齐的非兴趣内容' : '今天没有达到入选标准的内容'}
         </h1>
         <p className="bp-sum">
-          {ownItems.length > 0 ? '下面是你订阅来源的最新更新，不计入正式精选' : '下面是按内容价值入选的阅读与收听'}
+          {ownItems.length > 0 ? `下面是${guest ? '默认订阅' : '你订阅'}来源的最新更新，不计入正式精选` : '下面是按内容价值入选的阅读与收听'}
         </p>
       </div>
     );
@@ -812,7 +828,7 @@ export default function PersonalBriefPage({
                 <span className="bp-lbtn-label">回到今天</span>
               </button>
             )}
-            {isToday && (
+            {isToday && !guest && (
               <button
                 type="button"
                 className="bp-lbtn"

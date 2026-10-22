@@ -57,6 +57,7 @@ export default function Modal({
   } : null;
 
   // 滚动锁走全站共用的引用计数锁(多层浮层关闭顺序不对称也不会把 hidden 留在 body 上)。
+  // data-modal-layer:「点外即收起」的浮层(问答面板等)据此把弹窗里的点击(含遮罩)当作上层操作、不收起自己。
   useBodyScrollLock(open);
 
   if (!mounted) return null;
@@ -65,6 +66,7 @@ export default function Modal({
   const node = (
     <div
       className={`modal-overlay ${centered ? 'items-center' : ''} ${closing ? 'is-closing' : ''} ${overlayClassName}`.trim()}
+      data-modal-layer=""
       {...overlayHandlers}
     >
       <PanelTag
