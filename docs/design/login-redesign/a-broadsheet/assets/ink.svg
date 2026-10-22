@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">
+  <!-- 油墨不匀:用作 mask,alpha 只在约 0.93–1 之间起伏——近看有印刷的呼吸,远看仍是实地 -->
+  <filter id="mottle" x="0" y="0" width="100%" height="100%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.32" numOctaves="2" seed="3" stitchTiles="stitch"/>
+    <feColorMatrix values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  -0.12 0 0 0 1.04"/>
+  </filter>
+  <rect width="240" height="240" filter="url(#mottle)"/>
+</svg>

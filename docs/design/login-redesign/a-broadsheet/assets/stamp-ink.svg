@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
+  <!-- 印戳的印泥不匀:比 ink.svg 粗糙,留出少量飞白 -->
+  <filter id="rough" x="0" y="0" width="100%" height="100%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.09" numOctaves="3" seed="21" stitchTiles="stitch"/>
+    <feColorMatrix values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  1.9 0 0 0 -0.62"/>
+    <feComponentTransfer><feFuncA type="table" tableValues="0.18 0.85 1 1"/></feComponentTransfer>
+  </filter>
+  <rect width="200" height="200" filter="url(#rough)"/>
+</svg>

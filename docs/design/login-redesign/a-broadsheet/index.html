@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#f3eee3">
+<title>哆啦美 · 晨刊</title>
+<script src="../shared/sample-kit.js"></script>
+<link rel="stylesheet" href="../../../../frontend/public/fonts/dorami-serif-v1/dorami-serif.css">
+<link rel="stylesheet" href="../../../../frontend/public/fonts/dorami-latin-v1/dorami-latin.css">
+<link rel="preload" href="assets/hedcut-a.png" as="image">
+<link rel="stylesheet" href="broadsheet.css">
+</head>
+<body>
+
+<!-- 落幅:阅读器底色。成功离场时头版翻过去,露出它 -->
+<div class="landing" id="landing" aria-hidden="true">
+  <p class="landing-note">样页到此 · 实际会进入阅读器</p>
+</div>
+
+<main class="sheet is-pre" id="sheet" data-state="idle">
+
+  <!-- 裁切线与套准十字:印刷样张的版边记号(装饰,只在桌面显示) -->
+  <div class="press-marks" aria-hidden="true">
+    <i class="crop crop-tl"></i><i class="crop crop-tr"></i><i class="crop crop-bl"></i><i class="crop crop-br"></i>
+    <svg class="reg reg-l" viewBox="-14 -14 28 28"><g class="reg-k"><circle r="6.5"/><path d="M-13 0H13M0-13V13"/></g><g class="reg-s spot-plate"><circle r="6.5"/><path d="M-13 0H13M0-13V13"/></g></svg>
+    <svg class="reg reg-r" viewBox="-14 -14 28 28"><g class="reg-k"><circle r="6.5"/><path d="M-13 0H13M0-13V13"/></g><g class="reg-s spot-plate"><circle r="6.5"/><path d="M-13 0H13M0-13V13"/></g></svg>
+    <div class="colorbar"><i></i><i></i><i></i><i></i><i class="s"></i><i class="s"></i><i class="s"></i><i class="s"></i></div>
+  </div>
+
+  <header class="masthead">
+    <div class="rule rule-x rule-wenwu" aria-hidden="true"></div>
+
+    <div class="mast-row">
+      <aside class="ear ear-l" aria-label="本报宜忌">
+        <p class="ear-kicker">本报宜忌</p>
+        <dl class="almanac">
+          <div><dt class="yi">宜</dt><dd>慢读　追问　早睡</dd></div>
+          <div><dt>忌</dt><dd>刷屏　焦虑　标题党</dd></div>
+        </dl>
+      </aside>
+
+      <div class="mast-center">
+        <div class="spot-plate mast-plate">
+          <h1 class="mast" aria-label="哆啦美"><span class="mast-ch" aria-hidden="true">哆</span><span class="mast-ch" aria-hidden="true">啦</span><span class="mast-ch" aria-hidden="true">美</span></h1>
+        </div>
+        <p class="motto"><span class="motto-rule" aria-hidden="true"></span><span>为一位读者，排一份报纸</span><span class="motto-rule" aria-hidden="true"></span></p>
+      </div>
+
+      <aside class="ear ear-r" aria-label="本地时间">
+        <p class="ear-kicker">本地时间</p>
+        <p class="clock"><time id="clock" datetime="">--:--</time></p>
+        <p class="ear-sub" id="zone">本地 · 今日版</p>
+      </aside>
+    </div>
+
+    <div class="rule rule-x rule-hair" aria-hidden="true"></div>
+    <div class="dateline">
+      <span class="dl-date" id="date-cn">今日</span>
+      <span class="dl-lunar" id="date-lunar"></span>
+      <span class="dl-page"><span class="dl-latin">Dorami</span>头版</span>
+    </div>
+    <div class="rule rule-x rule-wenwu rule-wenwu-flip" aria-hidden="true"></div>
+  </header>
+
+  <div class="grid" id="grid">
+
+    <!-- 左栏:本报各栏(导读)-->
+    <aside class="col col-index" aria-label="本报各栏">
+      <p class="col-head">本报各栏</p>
+      <ol class="index">
+        <li><b>个人早报</b><span>依你的兴趣排版，每日清晨付印一份。</span></li>
+        <li><b>公共日报</b><span>写给所有读者的一份日报。</span></li>
+        <li><b>AI 翻译</b><span>外文报道一键译成中文，原文常在手边。</span></li>
+        <li><b>问答</b><span>有疑便问，回答逐条注明出处。</span></li>
+        <li><b>播客</b><span>值得听的节目，与值得读的文章同列一版。</span></li>
+        <li><b>兴趣</b><span>你在意什么，版面就留给什么。</span></li>
+      </ol>
+    </aside>
+
+    <!-- 头条:社论 -->
+    <header class="col col-head-area">
+      <p class="kicker">社论</p>
+      <h2 class="headline">世界很吵，<br class="hl-br">早报很静。</h2>
+      <p class="deck">哆啦美替你读完订阅的每一个来源，按你的兴趣，把值得一读的排成一份只属于你的报纸。</p>
+    </header>
+
+    <article class="col col-body" aria-label="社论正文">
+      <div class="body-text">
+        <p class="first"><span class="dropcap" aria-hidden="true">清</span><span class="sr-only">清</span>晨醒来，先迎上来的往往不是消息，而是噪音：重复的转载，夸张的标题，同一件事的无数种说法。哆啦美做的事情很朴素——替你先读一遍。</p>
+        <h3 class="subhead">只排值得一读的</h3>
+        <p>每一篇报道，它都会掂量分量，写下提要，再按你的兴趣排定版面。外文的，替你译成中文；冗长的，先给你要点；读到想追问处，直接问它，回答逐条注明出处。</p>
+        <p>它不催促，不刷屏，不推送你不需要的热闹。你只需在早晨翻开它，像翻开一份为你一人付印的报纸。</p>
+      </div>
+    </article>
+
+    <!-- 肖像:点刻像(墨版位图 + 靛版网点,Canvas 合成) -->
+    <div class="col col-pic">
+      <figure class="pic-figure">
+      <div class="portrait" id="portrait">
+        <canvas id="portrait-canvas" aria-hidden="true"></canvas>
+        <noscript><img src="assets/hedcut-a.png" alt=""></noscript>
+      </div>
+      <figcaption class="caption">
+        <span class="cap-name">本报编辑　哆啦美</span>
+        <span class="cap-line" id="cap-line">她替你读遍订阅的来源，只把值得的排进版面。</span>
+      </figcaption>
+      </figure>
+      <p class="notice"><b>本报声明</b>不刊广告，不贩卖你的注意力；每一个版面，只对你一人负责。</p>
+    </div>
+
+    <!-- 右栏:读者回执(登录)-->
+    <section class="col col-coupon" aria-labelledby="coupon-title">
+      <div class="coupon" id="coupon">
+        <span class="cut" aria-hidden="true">
+          <svg class="scissors" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.1 8.1 20 20M8.1 15.9 20 4"/></svg>
+        </span>
+        <div class="coupon-main">
+        <div class="mini-portrait" aria-hidden="true"><canvas id="mini-canvas"></canvas></div>
+        <p class="kicker">读者回执</p>
+        <h2 class="coupon-title" id="coupon-title">读者登录</h2>
+        <p class="coupon-lede">凭账号与密码，领取你今天的那一份。</p>
+        <div class="coupon-gap" aria-hidden="true"></div>
+
+        <form class="form" id="login-form" novalidate>
+          <div class="fields" id="fields">
+            <div class="field" id="field-user">
+              <label for="username">账号</label>
+              <input id="username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="填写账号" aria-describedby="form-error">
+            </div>
+            <div class="field" id="field-pass">
+              <label for="password">密码</label>
+              <input id="password" name="password" type="password" autocomplete="current-password" placeholder="填写密码" aria-describedby="form-error">
+            </div>
+            <svg class="proof" id="proof" aria-hidden="true"><path id="proof-loop"/><path id="proof-tail"/></svg>
+          </div>
+          <p class="error" id="form-error" aria-live="assertive"></p>
+          <button class="btn" id="submit" type="submit">
+            <span class="btn-plate spot-plate" aria-hidden="true"><span class="btn-roller"></span></span>
+            <span class="btn-label" id="submit-label">登录</span>
+            <svg class="btn-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15M13 6l6 6-6 6"/></svg>
+          </button>
+        </form>
+        <p class="coupon-fine">此回执无需剪下</p>
+        <div class="coupon-gap coupon-gap-end" aria-hidden="true"></div>
+        </div>
+
+        <!-- 存根:骑缝线下的一联;成功时日戳骑缝盖下(真实本地日期)-->
+        <div class="stub" aria-hidden="true">
+          <span class="stub-label">存根</span>
+          <span class="stub-note">此联由读者留存</span>
+          <span class="stamp-slot"><i>日戳</i></span>
+        <div class="stamp" id="stamp">
+          <svg viewBox="0 0 120 120">
+            <defs>
+              <path id="arc-top" d="M 19 60 A 41 41 0 0 1 101 60"/>
+              <path id="arc-bot" d="M 23 60 A 37 37 0 0 0 97 60"/>
+            </defs>
+            <circle cx="60" cy="60" r="56" class="st-ring"/>
+            <circle cx="60" cy="60" r="50.5" class="st-ring-in"/>
+            <text class="st-arc"><textPath href="#arc-top" startOffset="50%" text-anchor="middle">哆啦美 · 读者回执</textPath></text>
+            <path d="M8 49H112M8 71H112" class="st-band"/>
+            <text x="60" y="65.5" text-anchor="middle" class="st-date" id="stamp-date">0000·00·00</text>
+            <text class="st-arc st-arc-bot"><textPath href="#arc-bot" startOffset="50%" text-anchor="middle" id="stamp-time">已核验</textPath></text>
+          </svg>
+        </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <footer class="folio">
+    <div class="rule rule-x rule-hair" aria-hidden="true"></div>
+    <div class="folio-row">
+      <span>哆啦美 <i class="latin">Dorami</i></span>
+      <span class="folio-page">— 头版 —</span>
+      <span>本版编辑 哆啦美　排版 你的兴趣</span>
+    </div>
+  </footer>
+</main>
+
+<canvas class="turn" id="turn" aria-hidden="true"></canvas>
+
+<script src="broadsheet.js"></script>
+</body>
+</html>

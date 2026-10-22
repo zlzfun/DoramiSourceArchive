@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="zh-CN" class="intro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>哆啦美 · 登录 — 样页 E 天色</title>
+<script src="../shared/sample-kit.js"></script>
+<link rel="icon" href="../../../../frontend/public/brand/dorami-logo-32.png">
+<link rel="stylesheet" href="../../../../frontend/public/fonts/dorami-serif-v1/dorami-serif.css">
+<link rel="stylesheet" href="../../../../frontend/public/fonts/dorami-latin-v1/dorami-latin.css">
+<style>
+  :root {
+    --gutter: clamp(22px, 6.9vw, 120px);
+    --hz: min(70vh, calc(100vh - 236px));
+    --ui: #f5f1e8;
+    --ui-dim: rgba(245, 241, 232, .76);
+    --ui-faint: rgba(245, 241, 232, .64);
+    --line: rgba(245, 241, 232, .38);
+    --brand: #5252c5;
+    --brand-2: #6f6bd7;
+    --focus: #bdb9ff;
+    --err: #ffb4a4;
+    --ink: #0e1830;
+    --ink-soft: rgba(14, 24, 48, .78);
+    --halo: rgba(255, 255, 255, .22);
+    --top-ink: #0e1830;
+    --top-halo: rgba(255, 255, 255, .2);
+    --serif-zh: "Dorami Serif", "Songti SC", "STSong", "Noto Serif CJK SC", "Source Han Serif SC", serif;
+    --serif-lat: "Dorami Latin Serif", "Iowan Old Style", Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+    --ease-out: cubic-bezier(.2, .7, .2, 1);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #070a1c; }
+  body {
+    font-family: var(--sans);
+    color: var(--ui);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* ---------- 天空与胶片层 ---------- */
+  #sky { position: fixed; inset: 0; width: 100%; height: 100%; display: block; z-index: 0; }
+  .grain {
+    position: fixed; inset: -100%; width: 300%; height: 300%; z-index: 1; pointer-events: none;
+    background-size: 160px 160px; mix-blend-mode: overlay; opacity: .075;
+    will-change: transform;
+  }
+  html[data-motion="full"] .grain { animation: grain 1.1s steps(1) infinite; }
+  @keyframes grain {
+    0% { transform: translate3d(0, 0, 0); } 12% { transform: translate3d(-3%, 2%, 0); } 24% { transform: translate3d(2%, -4%, 0); }
+    36% { transform: translate3d(-4%, -1%, 0); } 48% { transform: translate3d(3%, 3%, 0); } 60% { transform: translate3d(-1%, 4%, 0); }
+    72% { transform: translate3d(4%, -2%, 0); } 84% { transform: translate3d(-2%, -3%, 0); }
+  }
+  .curtain { position: fixed; inset: 0; z-index: 6; background: #000; pointer-events: none; opacity: 0; }
+  html.intro .curtain { opacity: 1; animation: curtain-fallback .8s ease 5s forwards; } /* 脚本没跑起来时也别一直黑屏 */
+  @keyframes curtain-fallback { to { opacity: 0; } }
+  html.intro .curtain.lift { opacity: 0; transition: opacity 1s cubic-bezier(.2, .55, .3, 1); }
+
+  /* ---------- 版式:地平线把画面分成「天」与「海」 ---------- */
+  .stage {
+    position: relative; z-index: 2;
+    height: 100vh; height: 100dvh;
+    display: grid; grid-template-rows: var(--hz) 1fr;
+    transition: opacity .6s ease, filter .6s ease, transform .8s var(--ease-out);
+  }
+  html.leaving .stage { opacity: 0; filter: blur(4px); transform: translateY(6px); pointer-events: none; }
+  .sky-pane, .sea-pane { position: relative; min-height: 0; }
+
+  .top {
+    position: absolute; z-index: 3; top: 0; left: 0; right: 0;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    padding: 30px var(--gutter) 0;
+    color: var(--top-ink);
+    text-shadow: 0 0 14px var(--top-halo);
+    transition: color .8s ease;
+  }
+  .wordmark { display: flex; align-items: baseline; gap: 14px; }
+  .wordmark .zh { font: 600 19px/1 var(--serif-zh); letter-spacing: .16em; }
+  .wordmark .en { font: 600 12px/1 var(--serif-lat); letter-spacing: .42em; opacity: .82; }
+  .almanac { text-align: right; display: grid; gap: 8px; justify-items: end; }
+  .almanac .clock { display: flex; align-items: baseline; gap: 10px; }
+  .almanac time { font: 600 22px/1 var(--serif-lat); font-variant-numeric: tabular-nums lining-nums; letter-spacing: .03em; }
+  .almanac .phase { font: 600 13px/1 var(--serif-zh); letter-spacing: .3em; margin-right: -.3em; }
+  .almanac .date, .almanac .lunar { font: 600 12px/1.2 var(--serif-zh); letter-spacing: .18em; margin-right: -.18em; opacity: .86; }
+
+  .copy {
+    position: absolute; left: var(--gutter); bottom: clamp(30px, 6.4vh, 60px);
+    color: var(--ink); max-width: min(52vw, 760px);
+    transition: color .8s ease, opacity .25s ease, filter .25s ease;
+    will-change: transform;
+  }
+  .copy.fading { opacity: 0; filter: blur(6px); }
+  .eyebrow {
+    margin: 0 0 10px; color: var(--ink-soft);
+    font: italic 400 clamp(18px, 1.55vw, 24px)/1.2 var(--serif-lat); letter-spacing: .01em;
+    text-shadow: 0 0 18px var(--halo), 0 0 2px var(--halo);
+  }
+  .greet {
+    margin: 0; font: 900 clamp(66px, 8.1vw, 150px)/1.02 var(--serif-zh); letter-spacing: .05em;
+    text-shadow: 0 0 34px var(--halo), 0 0 3px var(--halo);
+    white-space: nowrap;
+  }
+  .greet .ch { display: inline-block; }
+  .sub {
+    margin: 16px 0 0; display: flex; align-items: center; gap: 14px; color: var(--ink-soft);
+    font: 600 clamp(15px, 1.3vw, 19px)/1.5 var(--serif-zh); letter-spacing: .08em;
+    text-shadow: 0 0 16px var(--halo), 0 0 2px var(--halo);
+  }
+  .seal { position: relative; flex: none; width: 28px; height: 28px; border-radius: 7px; box-shadow: 0 0 0 1px rgba(255, 255, 255, .28), 0 4px 14px -4px rgba(10, 8, 40, .5); }
+  .seal img { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 7px; transition: opacity .32s ease; }
+  .seal .eyes { opacity: 0; }
+  html.pw .seal .eyes { opacity: 1; }
+  html.pw .seal .base { opacity: 0; }
+
+  .pixstar { position: absolute; z-index: 1; width: 14px; height: 14px; margin: -7px 0 0 -7px; pointer-events: none; opacity: 0; transition: opacity 1.4s ease; }
+  .pixstar.on { opacity: .92; }
+  html[data-motion="full"] .pixstar.on svg { animation: twinkle 2.6s steps(1) infinite; }
+  @keyframes twinkle { 0% { opacity: 1; } 46% { opacity: .5; } 54% { opacity: 1; } 78% { opacity: .72; } }
+
+  /* ---------- 海面上的表单 ---------- */
+  .login {
+    position: absolute; left: var(--gutter); top: clamp(42px, 7.6vh, 74px);
+    display: grid; grid-template-columns: minmax(0, 236px) minmax(0, 236px) auto; column-gap: 18px; align-items: end;
+  }
+  .field label {
+    display: block; margin-bottom: 9px; color: var(--ui); text-shadow: 0 0 10px rgba(4, 8, 28, .5);
+    font: 600 12px/1 var(--sans); letter-spacing: .22em;
+    transition: color .25s ease;
+  }
+  .field:focus-within label { color: var(--ui); }
+  .field input {
+    width: 100%; height: 46px; padding: 0 14px; margin: 0;
+    border: 0; border-bottom: 1px solid var(--line); border-radius: 6px 6px 2px 2px;
+    background: rgba(245, 241, 232, .07); color: var(--ui); caret-color: var(--focus);
+    font: 400 16px/1 var(--sans); letter-spacing: .02em; outline: none;
+    transition: background .25s ease, border-color .25s ease, box-shadow .25s ease;
+  }
+  .field input:hover { background: rgba(245, 241, 232, .1); }
+  .field input:focus { background: rgba(245, 241, 232, .11); border-bottom-color: var(--focus); box-shadow: inset 0 -1px 0 var(--focus), 0 0 0 1px rgba(189, 185, 255, .34), 0 12px 30px -16px rgba(189, 185, 255, .55); }
+  .field input[aria-invalid="true"] { border-bottom-color: var(--err); }
+  .field input:read-only { opacity: .7; }
+  .go {
+    position: relative; height: 46px; padding: 0 22px 0 28px; border: 0; border-radius: 999px; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; gap: 12px; white-space: nowrap; min-width: 146px;
+    background: linear-gradient(135deg, var(--brand-2), var(--brand)); color: #fff;
+    font: 600 15px/1 var(--sans); letter-spacing: .32em;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22), 0 10px 26px -12px rgba(82, 82, 197, .9);
+    transition: transform .25s var(--ease-out), filter .25s ease, box-shadow .25s ease;
+  }
+  .go:hover { filter: brightness(1.08); transform: translateY(-1px); }
+  .go:active { transform: translateY(0); filter: brightness(.96); }
+  .go:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+  .go .arrow { width: 16px; height: 16px; transition: transform .25s var(--ease-out), opacity .2s ease; }
+  .go:hover .arrow { transform: translateX(3px); }
+  .go .spin { position: absolute; right: 20px; width: 16px; height: 16px; opacity: 0; }
+  .go.is-loading { cursor: progress; }
+  .go.is-loading .arrow { opacity: 0; }
+  .go.is-loading .spin { opacity: 1; }
+  html[data-motion="full"] .go.is-loading .spin { animation: orbit 1s linear infinite; }
+  @keyframes orbit { to { transform: rotate(360deg); } }
+  .err {
+    grid-column: 1 / -1; height: 20px; margin: 12px 0 0; overflow: hidden;
+    color: var(--err); font: 400 13px/20px var(--sans); letter-spacing: .06em;
+  }
+
+  .billing {
+    position: absolute; left: var(--gutter); right: var(--gutter); bottom: 24px; text-shadow: 0 0 10px rgba(4, 8, 28, .45);
+    display: flex; justify-content: space-between; gap: 24px; color: var(--ui-faint);
+    font: 400 12px/1 var(--sans); letter-spacing: .34em;
+  }
+  .billing .tz { letter-spacing: .12em; font-family: var(--serif-lat); font-style: italic; font-size: 13px; }
+
+  /* ---------- 开场显影 ---------- */
+  .rv { transition: opacity 1s var(--ease-out), transform 1.2s var(--ease-out), filter 1.2s var(--ease-out); }
+  html.intro .rv:not(.in) { opacity: 0; transform: translateY(10px); filter: blur(4px); }
+  .greet .ch { transition: opacity 1.5s cubic-bezier(.3, .55, .25, 1), filter 2s cubic-bezier(.2, .6, .2, 1), transform 2s cubic-bezier(.2, .6, .2, 1); transition-delay: calc(var(--i) * 170ms); }
+  html.intro .greet:not(.in) .ch { opacity: 0; filter: blur(20px); transform: translateY(.05em) scale(1.05); }
+  .seal { transition: opacity .45s ease, transform .55s cubic-bezier(.3, 1.7, .5, 1); }
+  html.intro .seal:not(.in) { opacity: 0; transform: scale(1.4); }
+  .top .rv { transition-duration: 1.4s; }
+  html.quick .rv, html.quick .greet .ch, html.quick .seal { transition-duration: .4s !important; transition-delay: 0s !important; }
+  html.instant .rv, html.instant .greet .ch, html.instant .seal, html.instant .curtain, html.instant .copy, html.instant .top { transition: none !important; }
+
+  /* ---------- 交棒 ---------- */
+  .handoff {
+    position: fixed; inset: 0; z-index: 7; pointer-events: none; opacity: 0;
+    display: flex; align-items: flex-end; justify-content: flex-end; padding: 28px 34px;
+    background: #f4f6f9; color: #61656d; transition: opacity 1s cubic-bezier(.4, 0, .2, 1);
+  }
+  .handoff.night { background: #0d0f13; color: #9c9ea5; }
+  .handoff.on { opacity: 1; }
+  .handoff p { margin: 0; font: 400 12px/1 var(--sans); letter-spacing: .16em; opacity: 0; transition: opacity .7s ease; }
+  .handoff p.show { opacity: 1; }
+
+  /* ---------- 样页工具:时刻拨盘 ---------- */
+  /* 共用控制条的 [data-sample-kit] 样式会命中这里,用更高优先级钉在右下角 */
+  .dial[data-sample-kit] {
+    position: fixed; left: 50%; right: auto; top: 12px; bottom: auto; transform: translateX(-50%); z-index: 2147482000; max-width: none; flex-wrap: nowrap;
+    display: flex; align-items: center; gap: 10px; padding: 7px 12px; border-radius: 12px;
+    background: rgba(18, 18, 24, .78); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, .28), inset 0 0 0 1px rgba(255, 255, 255, .08);
+    font: 500 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; color: #e8e8f0;
+    opacity: .42; transition: opacity .2s;
+  }
+  .dial[data-sample-kit]:hover, .dial[data-sample-kit]:focus-within { opacity: 1; }
+  .dial[data-sample-kit][hidden] { display: none; }
+  .dial span { color: #9a9ab0; letter-spacing: .08em; }
+  .dial input { width: 180px; accent-color: #8f8cf0; }
+  .dial output { min-width: 38px; font-variant-numeric: tabular-nums; }
+
+  /* ---------- 手机:竖屏,天在上半,表单在海面 ---------- */
+  @media (max-width: 759px) {
+    :root { --gutter: 24px; --hz: 52svh; }
+    body { overflow-x: hidden; overflow-y: auto; }
+    .stage { height: auto; min-height: 100svh; grid-template-rows: var(--hz) auto; transition: grid-template-rows .4s ease; }
+    .top { padding-top: max(20px, env(safe-area-inset-top)); }
+    .wordmark { gap: 10px; }
+    .wordmark .zh { font-size: 17px; }
+    .wordmark .en { font-size: 11px; letter-spacing: .34em; }
+    .almanac { gap: 6px; }
+    .almanac time { font-size: 18px; }
+    .almanac .lunar { display: none; }
+    .copy { top: 74px; bottom: auto; max-width: none; right: var(--gutter); }
+    .eyebrow { font-size: 16px; margin-bottom: 2px; }
+    .greet { font-size: clamp(46px, 13.6vw, 58px); }
+    .sub { margin-top: 8px; font-size: 14px; letter-spacing: .05em; gap: 10px; }
+    .seal { width: 24px; height: 24px; }
+    .sea-pane { padding: 58px var(--gutter) 64px; }
+    .login { position: static; grid-template-columns: 1fr; row-gap: 14px; }
+    .go { width: 100%; justify-content: center; height: 50px; margin-top: 2px; }
+    .go .spin { right: 22px; }
+    .err { grid-row: 3; margin: -4px 0 0; }
+    .billing { left: var(--gutter); right: var(--gutter); bottom: 22px; letter-spacing: .2em; font-size: 12px; }
+    .billing .tz { display: none; }
+    html.kb { --hz: 26svh; }
+    html.kb .copy .eyebrow, html.kb .copy .sub { display: none; }
+    html.kb .copy { top: 64px; }
+    html.kb .greet { font-size: 40px; }
+    .dial[data-sample-kit] { display: none; } /* 手机上用控制条里的时段按钮或 ?hour= */
+    .pixstar { width: 10px; height: 10px; margin: -5px 0 0 -5px; }
+  }
+  @media (min-width: 760px) and (max-width: 1099px) {
+    .login { grid-template-columns: minmax(0, 210px) minmax(0, 210px) auto; column-gap: 14px; }
+  }
+</style>
+</head>
+<body>
+  <canvas id="sky" aria-hidden="true"></canvas>
+  <div class="grain" aria-hidden="true"></div>
+
+  <main class="stage">
+    <section class="sky-pane">
+      <header class="top">
+        <div class="wordmark rv" aria-label="哆啦美 Dorami"><span class="zh">哆啦美</span><span class="en">DORAMI</span></div>
+        <div class="almanac" aria-live="off">
+          <div class="clock"><span class="phase rv" id="phase">入夜</span><time id="clock">20:00</time></div>
+          <div class="date rv" id="date"></div>
+          <div class="lunar rv" id="lunar"></div>
+        </div>
+      </header>
+      <svg class="pixstar" id="pixstar" viewBox="0 0 7 7" shape-rendering="crispEdges" aria-hidden="true">
+        <rect x="3" y="0" width="1" height="7" fill="#c86bff"/>
+        <rect x="0" y="3" width="7" height="1" fill="#c86bff"/>
+        <rect x="2" y="2" width="3" height="3" fill="#7af2ff"/>
+        <rect x="3" y="3" width="1" height="1" fill="#ffffff"/>
+      </svg>
+      <div class="copy" id="copy">
+        <p class="eyebrow rv" id="eyebrow" lang="en">Good evening,</p>
+        <h1 class="greet" id="greet" aria-label="晚上好">晚上好</h1>
+        <p class="sub rv" id="sub-wrap"><span id="sub">夜里，向 AI 问一个今天的问题。</span><span class="seal" aria-hidden="true"><img class="base" src="../../../../frontend/public/brand/dorami-logo-128.png" alt=""><img class="eyes" src="../../../../frontend/public/brand/dorami-logo-cover-eyes-128.png" alt=""></span></p>
+      </div>
+    </section>
+
+    <section class="sea-pane">
+      <form class="login" id="login" novalidate>
+        <div class="field rv">
+          <label for="u">账号</label>
+          <input id="u" name="username" type="text" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" aria-describedby="err">
+        </div>
+        <div class="field rv">
+          <label for="p">密码</label>
+          <input id="p" name="password" type="password" autocomplete="current-password" aria-describedby="err">
+        </div>
+        <button class="go rv" id="go" type="submit">
+          <span class="go-label" id="go-label">登录</span>
+          <svg class="arrow" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h11M9 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <svg class="spin" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5" fill="none" stroke="rgba(255,255,255,.3)" stroke-width="1.5"/><circle cx="8" cy="2.5" r="1.6" fill="#fff"/></svg>
+        </button>
+        <p class="err" id="err" aria-live="polite"></p>
+      </form>
+      <footer class="billing rv" aria-hidden="true"><span>早报 · 日报 · 订阅 · 播客 · 翻译 · 问答</span><span class="tz" id="tz"></span></footer>
+    </section>
+  </main>
+
+  <div class="curtain" id="curtain" aria-hidden="true"></div>
+  <div class="handoff" id="handoff" aria-hidden="true"><p id="handoff-note">样页到此 · 实际会进入阅读器</p></div>
+
+  <div class="dial" data-sample-kit hidden id="dial">
+    <span>时刻</span>
+    <input type="range" min="0" max="1439" step="1" id="dial-range" aria-label="预览任意时刻(分钟)">
+    <output id="dial-out">--:--</output>
+  </div>
+
+  <script src="sky.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

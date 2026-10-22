@@ -4,6 +4,7 @@
 
 | 样页 | 波次 / issue | 说明 |
 |---|---|---|
+| `login-redesign/`(README + BRIEF + index + 五个方向目录) | issue #214(探索稿,待拍板) | 登录页重设计五方向:A 晨刊 / B 信号 / C 像素 / D 透镜 / E 天色;各目录 NOTES.md 为设计说明 |
 | `podcast-player/`(README + index / global / pane) | issue #199(v3.66) | 播客区方案 A / B / C × 状态 s1–s6,全局播放条条位 × 配色;拍板 C + 内容区浮层 + 封面模糊 |
 | `social-translate/`(README + index / frame) | issue #84(v3.66) | 社交流翻译入口与译文呈现 |
 | `visual-refine-final/`(index / type / color / reader / brief / console / details + shots) | issue #184(v3.65) | 视觉精修定稿:字体 / 中性色三套 / 阅读器 / 夜航早报 / 管理面;字体 data URI 内嵌可离线开 |

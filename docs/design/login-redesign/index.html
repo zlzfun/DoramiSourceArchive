@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录页重设计 · 五方向</title>
+<link rel="stylesheet" href="../../../frontend/public/fonts/dorami-serif-v1/dorami-serif.css">
+<link rel="stylesheet" href="../../../frontend/public/fonts/dorami-latin-v1/dorami-latin.css">
+<style>
+  :root {
+    --bg: #0d0d11; --panel: #15151b; --line: rgba(255,255,255,.08); --ink: #ececf2; --muted: #9a9aa8; --accent: #8f8cf0;
+    --serif: "Dorami Serif", "Songti SC", "Microsoft YaHei UI", serif;
+    --latin: "Dorami Latin Serif", "Dorami Serif", Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 400 14px/1.7 var(--sans); }
+  header { max-width: 1320px; margin: 0 auto; padding: 56px 24px 24px; }
+  header .eyebrow { color: var(--muted); letter-spacing: .2em; font-size: 12px; }
+  header h1 { font: 600 40px/1.2 var(--serif); margin: 10px 0 12px; }
+  header p { color: var(--muted); max-width: 760px; margin: 0; }
+  header .how { margin-top: 14px; font-size: 12px; color: var(--muted); }
+  header kbd { font: 12px var(--sans); padding: 1px 6px; border-radius: 5px; background: var(--panel); border: 1px solid var(--line); color: var(--ink); }
+  nav { position: sticky; top: 0; z-index: 5; background: rgba(13,13,17,.86); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
+  nav ul { max-width: 1320px; margin: 0 auto; padding: 0 24px; list-style: none; display: flex; gap: 4px; overflow-x: auto; }
+  nav a { display: block; padding: 12px 12px; color: var(--muted); text-decoration: none; white-space: nowrap; font-size: 13px; }
+  nav a:hover { color: var(--ink); }
+  nav a b { font: 600 13px var(--latin); color: var(--ink); margin-right: 6px; }
+  main { max-width: 1320px; margin: 0 auto; padding: 8px 24px 96px; }
+  .dir { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 28px; padding: 44px 0; border-bottom: 1px solid var(--line); scroll-margin-top: 48px; }
+  .stage { display: grid; grid-template-columns: minmax(0, 1fr) 150px; gap: 14px; align-items: start; }
+  .poster { position: relative; display: block; border-radius: 10px; overflow: hidden; background: var(--panel); box-shadow: 0 0 0 1px var(--line); }
+  .poster.desk { aspect-ratio: 1440 / 900; }
+  .poster.mob { aspect-ratio: 390 / 844; border-radius: 16px; }
+  .poster img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .6s cubic-bezier(.2,.7,.2,1); }
+  .poster:hover img { transform: scale(1.012); }
+  .poster .missing { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 12px; }
+  .film { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(var(--n, 5), 1fr); gap: 6px; }
+  .film figure { margin: 0; }
+  .film img { width: 100%; aspect-ratio: 1440/900; object-fit: cover; border-radius: 6px; display: block; box-shadow: 0 0 0 1px var(--line); }
+  .film figcaption { font-size: 12px; color: var(--muted); text-align: center; margin-top: 2px; }
+  .states { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .states figure { margin: 0; }
+  .states img { width: 100%; aspect-ratio: 1440/900; object-fit: cover; border-radius: 6px; display: block; box-shadow: 0 0 0 1px var(--line); cursor: zoom-in; }
+  .states figcaption { font-size: 12px; color: var(--muted); text-align: center; margin-top: 2px; }
+  .copy .letter { font: 900 64px/1 var(--latin); color: var(--accent); opacity: .9; }
+  .copy h2 { font: 600 28px/1.25 var(--serif); margin: 12px 0 4px; }
+  .copy h2 small { font: italic 400 16px var(--latin); color: var(--muted); margin-left: 8px; }
+  .copy .concept { font: 600 17px/1.6 var(--serif); margin: 14px 0 12px; }
+  .copy ul { padding-left: 18px; margin: 0 0 16px; color: #c9c9d4; }
+  .copy li { margin: 4px 0; }
+  .copy .meta { font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
+  .copy .meta div { margin: 2px 0; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 14px; }
+  .actions a { color: var(--ink); text-decoration: none; padding: 8px 14px; border-radius: 9px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); font-size: 13px; }
+  .actions a.primary { background: var(--accent); color: #0d0d11; box-shadow: none; font-weight: 600; }
+  .actions a:hover { filter: brightness(1.12); }
+  .lightbox { position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.86); display: none; place-items: center; padding: 24px; cursor: zoom-out; }
+  .lightbox.on { display: grid; }
+  .lightbox img { max-width: 100%; max-height: 100%; border-radius: 8px; }
+  footer { max-width: 1320px; margin: 0 auto; padding: 0 24px 48px; color: var(--muted); font-size: 12px; }
+  @media (max-width: 980px) {
+    .dir { grid-template-columns: 1fr; }
+    .stage { grid-template-columns: minmax(0, 1fr) 110px; }
+    .states { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">DORAMI · LOGIN REDESIGN · 2026-10-22</div>
+  <h1>登录页重设计 · 五个方向</h1>
+  <p>五个方向各自独立成稿:同一套登录语义(账号 / 密码 / 登录中 / 出错 / 成功离场)、同一条品牌记忆(密码聚焦时的隐私动作),不同的视觉语言与动效叙事。点大图打开可交互样页;样页左下角控制条可重播开场、切换动效档位、预演各状态。</p>
+  <div class="how">样页演示账号 <kbd>admin</kbd> / <kbd>admin</kbd> 走成功路径,其它组合走出错路径 · 截图由 <code>shared/shoot.py</code> 统一拍摄(1440×900 / 390×844)</div>
+</header>
+<nav><ul id="nav"></ul></nav>
+<main id="list"></main>
+<footer>任务书 <a href="BRIEF.md" style="color:inherit">BRIEF.md</a> · 每个方向的设计说明见各目录 NOTES.md</footer>
+<div class="lightbox" id="lb"><img alt=""></div>
+
+<script>
+  // 每个方向的文案:取自各目录 NOTES.md 与子代理交付汇报(2026-10-22)
+  const F = (ms) => ({ file: `film-${String(ms).padStart(5, '0')}.jpg`, label: `${(ms / 1000).toFixed(1)}s` });
+  const DIRS = [
+    { slug: 'a-broadsheet', letter: 'A', name: '晨刊', en: 'Broadsheet',
+      concept: '登录 = 翻开今天的头版。暖白新闻纸 + 墨色,品牌靛作「第二色版」;登录表单是版面里一栏带剪裁线的「读者回执」。',
+      points: [
+        '开场像印刷机:报头逐字压印、栏线自上而下拉出、墨辊滚过正文、点刻肖像由粗网点显影、靛版先错位再套准',
+        '密码聚焦:点刻肖像化成网点,再重排成捂眼图,图注换成「输入密码时,本报编辑自觉回避。」',
+        '成功:盖有真实日期时间的日戳骑缝落下,整张头版从右下角掀起,纸背透出反字;出错时像校对符号一样圈出出错的栏',
+      ],
+      meta: [
+        '素材:codex 生成 hedcut 点刻像一对(正常 / 捂眼),各 59 KB;日期行含真实农历',
+        '技术:原生 CSS + Canvas 2D,无库;落 React 约 3–4 人日',
+        '风险:正文也用 Dorami Serif,首访约 1.4 MB 字体分片,需做登录页专用子集',
+        '待拍板:点刻版 / 像素网点版肖像(控制条可切);报头靛 / 墨;约 2 秒离场是否压短;「忌 标题党」类锋芒文案与随钟点变的版次',
+      ],
+      rows: [[F(300), F(900), F(1800), F(3200), F(5000)]] },
+    { slug: 'b-signal', letter: 'B', name: '信号', en: 'Signal',
+      concept: '从噪声里,听见信号。约 57 条层叠脊线(致敬《Unknown Pleasures》),鼠标是调谐器;信号调准时,脊线隆起成哆啦美的头部浮雕。',
+      points: [
+        '账号 / 密码的下划线本身就是两条信号线,一直延伸进信号场;每次按键从光标处发出一道脉冲冲进场里',
+        '调谐:光标附近噪声被抚平、尖峰对齐成列,快升慢落、留余迹;密码聚焦时「静默」从密码那一行向外逐行扩散',
+        '登录中全场同相波向右传播;出错静电爆发;成功时峰群压平,百叶窗般收成一条亮线,再张开成光幕',
+      ],
+      meta: [
+        '素材:codex 生成吉祥物头部深度图 → 5.8 KB 高度图驱动浮雕',
+        '技术:纯 Canvas 2D,无库;交互约 1.9 ms/帧,空闲 20fps,40 秒无操作缓停;落 React 约 1.5–2 人日',
+        '待拍板:浮雕每次出现 / 每日首次 / 只做彩蛋;致敬是否过于显眼;「调谐中」状态词与刻度尺留不留',
+      ],
+      rows: [[F(300), F(900), F(1800), F(3200), F(5000)]] },
+    { slug: 'c-pixel', letter: 'C', name: '像素', en: 'Pixel',
+      concept: '哆啦美从夜城背后升起。整幅画面是一张低分辨率 Canvas 整数倍放大,天空、星、城市、水面与吉祥物共用同一像素尺寸——一部精品独立游戏的标题画面。',
+      points: [
+        '开场:夜空经 Bayer 抖动显影,她从天际线后升起并逐像素成形,标题从粗像素块对焦成清晰宋体',
+        '交互:密码聚焦黄爪捂眼;每输入一个字点亮一颗星(账号金、密码冰蓝);登录中目镜逐格充能;出错「> <」',
+        '成功:开心一跳 → 界面像素化退场 → 场景碎成马赛克,阅读器底色从她脸上向外铺开',
+      ],
+      meta: [
+        '素材:codex 以 logo 为参考生成半身像 + 眨眼 / 开心 / > < / 捂眼四帧,清洗为 8.5 KB 精灵图(32 色)',
+        '技术:Canvas 2D 帧缓冲,单帧 0.2–0.5 ms,空闲 10fps;落 React 约 2–3 人日',
+        '风险:AI 精灵需像素画师精修(目镜与眼周有杂点)',
+        '待拍板:只做夜景(与 E 区分);桌面横排登录条;口号「夜里她替你读资讯,清晨给你一份早报。」',
+      ],
+      rows: [[F(300), F(900), F(1500), F(2050), F(2650), F(3600)]] },
+    { slug: 'd-lens', letter: 'D', name: '透镜', en: 'Lens',
+      concept: '信息如潮,替你看清。满屏失焦的产品能力短句像一页细密印刷品;一枚液态玻璃透镜把底下的字折射、放大、对上焦——它也是哆啦美右眼那枚全息目镜。',
+      points: [
+        '开场:一滴玻璃在题词「看清」上凝结、对焦,边读边漂,再滑到题词与表单之间落定',
+        '透镜弹簧跟随、快速移动有果冻形变;靠近表单磁吸成嵌着表单的玻璃板;密码聚焦时自下而上起雾、带细水珠',
+        '成功:玻璃收圆后极速放大吞没全屏,字放大 2.5 倍像穿过透镜;出错果冻抖动泛暖红;登录中焦散光流转',
+      ],
+      meta: [
+        '素材:codex 生成「钞票凹版」线刻哆啦美(61 KB),藏在文字场里,透镜扫过才看清(控制条「找彩蛋」)',
+        '技术:Canvas 2D 排字 + 单个 WebGL 着色器,静止零帧;无硬件 WebGL 退回 DOM 透镜(控制条「降级预览」);落 React 约 2–3 人日',
+        '待拍板:聚焦后的玻璃板接近现行玻璃卡,可改为只吸附当前输入框;7 秒无操作自动「巡读」;题词画进画布(维护性 vs 折射)',
+      ],
+      rows: [[F(300), F(900), F(1800), F(3200), F(5000)]] },
+    { slug: 'e-sky', letter: 'E', name: '天色', en: 'Sky',
+      concept: '每一次登录,天色都不一样。地平线把画面分成天与海;天色、日月位置、当晚真实月相、问候语全部由读者本地时间算出,品牌靛是全页唯一不随时间变的颜色。',
+      points: [
+        '开场:约 3.4 秒延时摄影,从 3.5 小时前流到此刻;时钟像时间码走字,问候大字像暗房相纸逐字显影',
+        '密码聚焦:一团低云从左侧飘来遮住日或月,海面光路随之熄灭,印章换成捂眼图;失焦后云顺风飘走',
+        '成功:白天日光晕铺满画面,夜里云散、星野拖成同心星轨;出错云影掠过海面,登录中云流加速',
+      ],
+      meta: [
+        '素材:codex 生成写实满月贴图(15.6 KB),shader 叠出当晚月相;天、云、海、星全部程序化',
+        '技术:单个 WebGL1 片元着色器,空闲 24fps,掉帧自动降分辨率;落 React 约 1.5–2 人日',
+        '待拍板:日月位置假定北纬 32° 不请求定位;云每次随机或同日固定;七个时段问候文案',
+        '样页工具:控制条可跳拂晓 / 正午 / 黄昏 / 深夜,顶部有时刻拨盘,URL 支持 ?hour=6.5',
+      ],
+      rows: [
+        [{ file: 'hour-06.jpg', label: '拂晓 06:30' }, { file: 'hour-12.jpg', label: '正午 12:00' }, { file: 'hour-17.jpg', label: '黄昏 17:36' }, { file: 'hour-23.jpg', label: '深夜 23:30' }],
+        [F(300), F(900), F(1800), F(3200), F(5000)],
+      ] },
+  ];
+
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const img = (src, alt) => `<img src="${src}" alt="${esc(alt)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'missing',textContent:'截图待生成'}))">`;
+
+  document.getElementById('nav').innerHTML = DIRS.map((d) => `<li><a href="#${d.slug}"><b>${d.letter}</b>${d.name}</a></li>`).join('');
+  document.getElementById('list').innerHTML = DIRS.map((d) => {
+    const base = `${d.slug}/`;
+    const shots = `${base}shots/`;
+    const film = (d.rows || []).map((row) => `<div class="film" style="--n:${row.length}">${row.map((f) =>
+      `<figure>${img(`${shots}${f.file}`, f.label)}<figcaption>${esc(f.label)}</figcaption></figure>`).join('')}</div>`).join('');
+    const states = [['desktop-password.jpg', '密码聚焦'], ['desktop-loading.jpg', '登录中'], ['desktop-error.jpg', '出错'], ['desktop-success.jpg', '成功离场']];
+    return `<section class="dir" id="${d.slug}">
+      <div class="stage">
+        <a class="poster desk" href="${base}index.html" title="打开可交互样页">${img(`${shots}desktop.jpg`, `${d.name} 桌面`)}</a>
+        <a class="poster mob" href="${base}index.html" title="打开可交互样页">${img(`${shots}mobile.jpg`, `${d.name} 手机`)}</a>
+        ${film}
+        <div class="states">${states.map(([f, l]) => `<figure>${img(`${shots}${f}`, l)}<figcaption>${l}</figcaption></figure>`).join('')}</div>
+      </div>
+      <div class="copy">
+        <div class="letter">${d.letter}</div>
+        <h2>${d.name}<small>${d.en}</small></h2>
+        <div class="concept">${esc(d.concept)}</div>
+        ${d.points.length ? `<ul>${d.points.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>` : ''}
+        <div class="actions">
+          <a class="primary" href="${base}index.html">打开样页</a>
+          <a href="${base}index.html?motion=reduce">减弱动效版</a>
+          <a href="${base}NOTES.md">设计说明</a>
+        </div>
+        <div class="meta">${d.meta.map((m) => `<div>${esc(m)}</div>`).join('')}</div>
+      </div>
+    </section>`;
+  }).join('');
+
+  const lb = document.getElementById('lb');
+  document.addEventListener('click', (e) => {
+    const t = e.target;
+    if (t.matches('.states img, .film img')) { lb.querySelector('img').src = t.src; lb.classList.add('on'); }
+    else if (t.closest('#lb')) lb.classList.remove('on');
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') lb.classList.remove('on'); });
+</script>
+</body>
+</html>

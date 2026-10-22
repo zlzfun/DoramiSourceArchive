@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="zh-CN" class="intro-pending">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>哆啦美 · 登录 — C 像素</title>
+<script src="../shared/sample-kit.js"></script>
+<link rel="stylesheet" href="../../../../frontend/public/fonts/dorami-serif-v1/dorami-serif.css">
+<link rel="stylesheet" href="../../../../frontend/public/fonts/dorami-latin-v1/dorami-latin.css">
+<link rel="preload" href="assets/dorami-sprite.png" as="image">
+<style>
+  /* ── C · 像素 ─────────────────────────────────────────────
+     全场一个像素单位 --u(CSS px,= 整数设备像素 / DPR,由脚本按视口算出);
+     场景是一张低分辨率 Canvas 整数倍放大,界面是矢量,二者共用同一格。 */
+  :root {
+    --u: 5px;
+    --low-top: 62vh;
+
+    --ink-0: #05041a;            /* 最深夜色 / 水面 */
+    --ink-1: #0a0925;
+    --text-1: #f3f1ff;           /* 主文字 */
+    --text-2: #bfbcec;           /* 次文字(对 ink-0 ≈ 10:1) */
+    --text-3: #9895d2;           /* 弱文字(对 ink-0 ≈ 7:1) */
+    --field: #0b0a26;
+    --field-line: #3a3688;
+    --field-line-hover: #57529f;
+    --focus: #b9b5ff;
+    --brand: #5252c5;            /* 品牌墨靛:唯一的界面实色 */
+    --brand-hi: #5d5dd1;
+    --brand-side: #2b2984;       /* 按键侧面 */
+    --gold: #ffd36e;             /* 头罩黄 → 光标 / 用户点亮的星 */
+    --err: #ffa6b0;
+    --reader: #f4f6f9;           /* 阅读器底色(--dorami-canvas) */
+
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+    --serif: "Dorami Serif", "Songti SC", "Microsoft YaHei UI", "Microsoft YaHei", serif;
+  }
+
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--ink-0);
+    color: var(--text-1);
+    font-family: var(--sans);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  #scene {
+    position: fixed; left: 0; top: var(--vv-top, 0px);
+    image-rendering: crisp-edges;
+    image-rendering: pixelated;
+    pointer-events: none;
+  }
+
+  .hud-c { position: fixed; image-rendering: pixelated; pointer-events: none; }
+  #hud-mark { left: 28px; top: calc(26px + var(--vv-top, 0px)); }
+  #hud-clock { right: 28px; top: calc(26px + var(--vv-top, 0px)); }
+
+  .lower {
+    position: absolute; left: 0; right: 0; top: calc(var(--low-top) + var(--vv-top, 0px));
+    display: flex; flex-direction: column; align-items: center;
+    padding: 0 24px;
+  }
+
+  .brand { text-align: center; }
+  .title {
+    display: inline-block; margin: 0 -0.14em 0 0;
+    font: 900 clamp(44px, 3.4vw + 22px, 76px)/1.08 var(--serif);
+    letter-spacing: 0.14em;
+    color: var(--text-1);
+  }
+  .tagline {
+    margin: 12px 0 0;
+    font: 600 17px/1.6 var(--serif);
+    letter-spacing: 0.08em;
+    color: var(--text-2);
+  }
+
+  .login {
+    margin-top: 30px;
+    display: grid;
+    grid-template-columns: 228px 228px auto;
+    column-gap: 12px;
+    align-items: end;
+  }
+  .field label {
+    display: block; margin: 0 0 7px 1px;
+    font-size: 13px; line-height: 1; letter-spacing: 0.06em;
+    color: var(--text-2);
+  }
+  .field input {
+    box-sizing: border-box; width: 100%; height: 46px; margin: 0;
+    padding: 0 14px;
+    background: var(--field);
+    border: 1px solid var(--field-line); border-radius: 0;
+    color: var(--text-1);
+    font: 400 15px/1 var(--sans);
+    letter-spacing: 0.02em;
+    caret-color: var(--gold);
+    outline: none;
+    transition: border-color .12s steps(2, end);
+  }
+  .field input:hover { border-color: var(--field-line-hover); }
+  .field input:focus {
+    border-color: var(--focus);
+    box-shadow: 0 0 0 2px var(--ink-0), 0 0 0 4px var(--focus);
+  }
+  .field input[aria-invalid="true"] { border-color: var(--err); }
+  .field input[aria-invalid="true"]:focus { box-shadow: 0 0 0 2px var(--ink-0), 0 0 0 4px var(--err); }
+  .field input[readonly] { color: var(--text-2); }
+
+  /* 按键:像素圆角(一格缺角)+ 侧面投影,按下时下沉一格 */
+  .submit { position: relative; }
+  .submit:has(button:focus-visible) { outline: 2px solid var(--focus); outline-offset: 5px; }
+  .key { display: block; filter: drop-shadow(0 4px 0 var(--brand-side)); transition: filter .06s steps(1, end); }
+  .key button {
+    --n: 4px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 12px;
+    box-sizing: border-box; height: 46px; width: 156px; margin: 0; padding: 0 0 0 4px;
+    border: 0; border-radius: 0;
+    background: var(--brand); color: #fff;
+    font: 600 15px/1 var(--sans); letter-spacing: 0.16em;
+    cursor: pointer; outline: none;
+    clip-path: polygon(var(--n) 0, calc(100% - var(--n)) 0, calc(100% - var(--n)) var(--n), 100% var(--n),
+      100% calc(100% - var(--n)), calc(100% - var(--n)) calc(100% - var(--n)), calc(100% - var(--n)) 100%,
+      var(--n) 100%, var(--n) calc(100% - var(--n)), 0 calc(100% - var(--n)), 0 var(--n), var(--n) var(--n));
+    transition: transform .06s steps(1, end), background-color .1s steps(1, end);
+  }
+  .key button:hover { background: var(--brand-hi); }
+  .key:has(button:active:not([aria-disabled="true"])) { filter: drop-shadow(0 1px 0 var(--brand-side)); }
+  .key button:active:not([aria-disabled="true"]) { transform: translateY(3px); }
+  .key button[aria-disabled="true"] { cursor: progress; }
+  .go-arrow { width: 14px; height: 14px; shape-rendering: crispEdges; flex: none; }
+  .go-segs { display: none; gap: 3px; }
+  .go-segs i { width: 5px; height: 5px; background: rgba(255,255,255,.28); }
+  .login.is-loading .go-arrow { display: none; }
+  .login.is-loading .go-segs { display: inline-flex; }
+  .login.is-loading .go-segs i { animation: seg 0.9s steps(1, end) infinite; }
+  .login.is-loading .go-segs i:nth-child(2) { animation-delay: .15s; }
+  .login.is-loading .go-segs i:nth-child(3) { animation-delay: .3s; }
+  .login.is-loading .go-segs i:nth-child(4) { animation-delay: .45s; }
+  .login.is-loading .go-segs i:nth-child(5) { animation-delay: .6s; }
+  @keyframes seg { 0% { background: #fff; } 34% { background: rgba(255,255,255,.28); } }
+  [data-motion="reduce"] .login.is-loading .go-segs i { animation: none; background: rgba(255,255,255,.7); }
+
+  .err {
+    grid-column: 1 / -1;
+    height: 20px; margin: 14px 0 0;
+    font-size: 13px; line-height: 20px; letter-spacing: 0.04em; text-align: center;
+    color: var(--err);
+  }
+
+  .caps {
+    position: fixed; right: 28px; bottom: 24px; margin: 0;
+    font-size: 12px; line-height: 1; letter-spacing: 0.3em;
+    color: var(--text-3);
+  }
+
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  /* 交棒落幅:阅读器底色 */
+  .handoff {
+    position: fixed; inset: 0; z-index: 50;
+    display: flex; align-items: flex-end; justify-content: flex-end;
+    padding: 0 28px 24px;
+    background: var(--reader);
+    opacity: 0; visibility: hidden;
+  }
+  .handoff.on { opacity: 1; visibility: visible; }
+  .handoff p { margin: 0; font-size: 12px; line-height: 1; letter-spacing: 0.08em; color: #61656d; opacity: 0; transition: opacity .5s ease .1s; }
+  .handoff.on p { opacity: 1; }
+  [data-motion="reduce"] .handoff { transition: opacity .24s ease, visibility 0s linear .24s; }
+  [data-motion="reduce"] .handoff.on { transition: opacity .24s ease; }
+
+  /* 开场前隐藏界面层(脚本接管显影) */
+  .intro-pending .lower, .intro-pending .caps, .intro-pending .hud-c { visibility: hidden; }
+  .px-veil { position: fixed; pointer-events: none; image-rendering: pixelated; z-index: 5; }
+
+  /* ── 手机 ── */
+  @media (max-width: 719px) {
+    #hud-mark { left: 20px; top: calc(20px + var(--vv-top, 0px)); }
+    #hud-clock { right: 20px; top: calc(20px + var(--vv-top, 0px)); }
+    .title { font-size: 44px; }
+    .tagline { margin-top: 8px; font-size: 15px; }
+    .login { margin-top: 22px; width: min(100%, 342px); grid-template-columns: 1fr; row-gap: 14px; }
+    .key button { width: 100%; height: 48px; }
+    .field input { height: 48px; font-size: 16px; }
+    .submit { margin-top: 6px; }
+    .err { margin-top: 2px; }
+    .caps { left: 0; right: 0; bottom: 18px; text-align: center; letter-spacing: 0.24em; }
+    .compact .tagline { display: none; }
+    .compact .title { font-size: 32px; }
+    .compact .login { margin-top: 16px; row-gap: 10px; }
+  }
+  .compact .caps { display: none; }
+</style>
+</head>
+<body>
+<canvas id="scene" aria-hidden="true"></canvas>
+<canvas id="hud-mark" class="hud-c" aria-hidden="true"></canvas>
+<canvas id="hud-clock" class="hud-c" aria-hidden="true"></canvas>
+
+<main class="lower" id="lower">
+  <header class="brand">
+    <h1 class="title" id="title">哆啦美</h1>
+    <p class="tagline" id="tagline">夜里她替你读资讯，清晨给你一份早报。</p>
+  </header>
+
+  <form class="login" id="login" novalidate>
+    <div class="field" id="f-user">
+      <label for="u">账号</label>
+      <input id="u" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" enterkeyhint="next">
+    </div>
+    <div class="field" id="f-pass">
+      <label for="p">密码</label>
+      <input id="p" name="password" type="password" autocomplete="current-password" enterkeyhint="go">
+    </div>
+    <div class="submit" id="f-btn">
+      <span class="key">
+        <button type="submit" id="go">
+          <span class="go-label" id="go-label">登录</span>
+          <svg class="go-arrow" viewBox="0 0 7 7" aria-hidden="true"><path fill="currentColor" d="M3 0h1v1H3zM4 1h1v1H4zM5 2h1v1H5zM0 3h7v1H0zM5 4h1v1H5zM4 5h1v1H4zM3 6h1v1H3z"/></svg>
+          <span class="go-segs" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+        </button>
+      </span>
+    </div>
+    <p class="err" id="err" role="alert" aria-live="assertive"></p>
+  </form>
+</main>
+
+<p class="caps" id="caps">早报 · 翻译 · 问答 · 播客</p>
+
+<div class="handoff" id="handoff" aria-hidden="true"><p>样页到此 · 实际会进入阅读器</p></div>
+<p class="sr" id="sr-status" aria-live="polite"></p>
+
+<script src="pixel.js"></script>
+</body>
+</html>

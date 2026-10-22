@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>哆啦美 · 登录 — 方向 B 信号</title>
+<script src="../shared/sample-kit.js"></script>
+<link rel="stylesheet" href="../../../../frontend/public/fonts/dorami-serif-v1/dorami-serif.css">
+<link rel="preload" as="image" href="../../../../frontend/public/brand/dorami-logo-128.png">
+<style>
+  :root {
+    --bg: #06070a;
+    --ink: #eef0f6;
+    --ink-2: #b3b7c5;
+    --ink-3: #8b90a3;
+    --rule: rgba(236, 239, 246, .26);
+    --indigo: #5252c5;
+    --indigo-2: #6f6bd7;
+    --indigo-deep: #4745b3;
+    --indigo-hi: #9c99f5;
+    --signal: #ff5148;
+    --error: #ff958c;
+    --reader: #f4f6f9;
+    --pad: clamp(40px, 7.4vw, 132px);
+    --col: clamp(330px, 27vw, 420px);
+    --serif: "Dorami Serif", "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Cascadia Mono", "Liberation Mono", monospace;
+    --ease-out: cubic-bezier(.16, 1, .3, 1);
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; position: relative; min-height: 100vh; min-height: 100svh; overflow-x: hidden;
+    background: var(--bg); color: var(--ink);
+    font: 400 15px/1.6 var(--sans);
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* 画布与暗角:画布铺满整页(手机端随页面滚动) */
+  #field { position: absolute; left: 0; top: 0; display: block; pointer-events: none; }
+  .vignette {
+    position: absolute; inset: 0; pointer-events: none; transition: opacity .4s ease;
+    background:
+      radial-gradient(130% 95% at 64% 52%, transparent 58%, rgba(0, 0, 0, .5) 100%),
+      linear-gradient(180deg, rgba(0, 0, 0, .35), transparent 16%, transparent 84%, rgba(0, 0, 0, .4));
+  }
+
+  /* 顶栏:仪器读数(只用客户端本地时间) */
+  .chrome {
+    position: absolute; z-index: 3; top: 0; left: 0; right: 0;
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 28px var(--pad) 0;
+    font: 400 12px/1 var(--mono); letter-spacing: .16em; color: var(--ink-3);
+    pointer-events: none;
+  }
+  .chrome .id { display: inline-flex; gap: 14px; align-items: center; }
+  .chrome .id b { font-weight: 600; color: var(--ink-2); letter-spacing: .32em; }
+  .readout { display: inline-flex; gap: 22px; align-items: center; }
+  .status { display: inline-flex; gap: 9px; align-items: center; color: var(--ink-2); }
+  .status i {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--signal);
+    box-shadow: 0 0 0 3px rgba(255, 81, 72, .14), 0 0 12px rgba(255, 81, 72, .55);
+    transition: background .3s, box-shadow .3s;
+  }
+  [data-motion="full"] .status i { animation: onair 2.6s ease-in-out infinite; }
+  .status[data-s="mute"] i { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink-3); animation: none; }
+  .status[data-s="sync"] i { background: var(--indigo-hi); box-shadow: 0 0 0 3px rgba(156, 153, 245, .16), 0 0 12px rgba(156, 153, 245, .6); }
+  [data-motion="full"] .status[data-s="sync"] i { animation: onair .5s steps(2, jump-none) infinite; }
+  [data-motion="full"] .status[data-s="jam"] i { animation: jam .12s steps(2, jump-none) 6; }
+  .status[data-s="lock"] i { background: #fff; box-shadow: 0 0 14px rgba(255, 255, 255, .8); animation: none; }
+  @keyframes onair { 50% { opacity: .38; } }
+  @keyframes jam { 50% { opacity: .1; transform: translateX(2px); } }
+
+  /* 版式:左栏题词 + 表单,右侧交给信号场 */
+  .stage {
+    position: relative; z-index: 2; min-height: 100vh; min-height: 100svh;
+    display: grid; grid-template-columns: var(--col) 1fr; align-content: center;
+    padding: 104px var(--pad) 96px;
+  }
+  .panel { width: var(--col); }
+  .badge { display: inline-flex; align-items: center; gap: 14px; }
+  .mark { position: relative; width: 44px; height: 44px; flex: none; border-radius: 11px; overflow: hidden; box-shadow: 0 0 0 1px rgba(255, 255, 255, .08); }
+  .mark img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; transition: opacity .32s ease; }
+  .mark .eyes { opacity: 0; }
+  body.privacy .mark .eyes { opacity: 1; }
+  body.privacy .mark .face { opacity: 0; }
+  .badge span { font: 400 12.5px/1 var(--sans); letter-spacing: .2em; color: var(--ink-3); }
+
+  .wordmark {
+    margin: 26px 0 0; font: 900 clamp(68px, 8.3vw, 132px)/.98 var(--serif);
+    letter-spacing: .015em; color: var(--ink);
+    font-feature-settings: "palt" 0;
+  }
+  .tagline { margin: 26px 0 0; font: 600 clamp(19px, 1.6vw, 23px)/1.45 var(--serif); letter-spacing: .06em; color: #dfe2ea; }
+  .lede { margin: 10px 0 0; font: 400 14px/1.8 var(--sans); color: var(--ink-2); max-width: 25em; }
+
+  .login { margin-top: 46px; max-width: 380px; }
+  .field {
+    position: relative; display: flex; align-items: center; gap: 18px; height: 52px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .field + .field { margin-top: 12px; }
+  .field::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+    background: linear-gradient(90deg, var(--indigo-hi), var(--indigo-2));
+    transform: scaleX(0); transform-origin: 0 50%;
+    transition: transform .5s var(--ease-out);
+  }
+  .field:focus-within::after { transform: scaleX(1); }
+  .field label {
+    flex: none; width: 3em; font: 400 13px/1 var(--sans); letter-spacing: .22em; color: var(--ink-3);
+    transition: color .25s; cursor: text;
+  }
+  .field:focus-within label { color: var(--indigo-hi); }
+  .field input {
+    flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; outline: 0; border-radius: 0;
+    background: transparent; color: var(--ink); caret-color: var(--indigo-hi);
+    font: 400 17px/1 var(--sans); letter-spacing: .02em;
+  }
+  .field input[type="password"] { letter-spacing: .16em; }
+  .field input:-webkit-autofill,
+  .field input:-webkit-autofill:hover,
+  .field input:-webkit-autofill:focus {
+    -webkit-text-fill-color: var(--ink); caret-color: var(--indigo-hi);
+    -webkit-box-shadow: 0 0 0 60px var(--bg) inset; transition: background-color 9999s;
+  }
+  .field .tick {
+    position: absolute; left: 0; bottom: -1px; width: 22px; height: 2px; pointer-events: none;
+    background: linear-gradient(90deg, transparent, rgba(156, 153, 245, .9));
+    animation: tick .62s cubic-bezier(.3, .6, .3, 1) forwards;
+  }
+  @keyframes tick { from { transform: translateX(var(--from, 0)); opacity: 1; } to { transform: translateX(var(--to, 300px)); opacity: 0; } }
+  .field.bad { border-bottom-color: rgba(255, 149, 140, .55); }
+
+  .err {
+    display: flex; align-items: center; gap: 9px; height: 22px; margin: 12px 0 0;
+    font: 400 13px/22px var(--sans); color: var(--error);
+    opacity: 0; transform: translateY(-3px); transition: opacity .2s, transform .2s;
+  }
+  .err.on { opacity: 1; transform: none; }
+  .err svg { flex: none; }
+
+  .go {
+    position: relative; width: 100%; height: 50px; margin-top: 10px; padding: 0 18px 0 22px;
+    display: flex; align-items: center; justify-content: space-between;
+    border: 0; border-radius: 3px; background: var(--indigo); color: #fff; cursor: pointer;
+    font: 600 15px/1 var(--sans); letter-spacing: .34em;
+    transition: background-color .2s, transform .2s;
+    overflow: hidden;
+  }
+  .go:hover { background: var(--indigo-2); }
+  .go:active { background: var(--indigo-deep); transform: translateY(1px); }
+  .go:focus-visible { outline: 2px solid #c3c1ff; outline-offset: 3px; }
+  .go .arrow { transition: transform .3s var(--ease-out); }
+  .go:hover .arrow { transform: translateX(4px); }
+  .go .wave { display: none; }
+  .go[aria-busy="true"] { cursor: progress; background: var(--indigo-deep); }
+  .go[aria-busy="true"] .arrow { display: none; }
+  .go[aria-busy="true"] .wave { display: block; }
+  .go .wave { -webkit-mask-image: linear-gradient(90deg, transparent, #000 30%, #000 70%, transparent); mask-image: linear-gradient(90deg, transparent, #000 30%, #000 70%, transparent); }
+  [data-motion="full"] .go .wave g { animation: wave .7s linear infinite; }
+  @keyframes wave { to { transform: translateX(-20px); } }
+
+  .band { display: none; }
+
+  /* 开场:扫描针经过时才显影(遮罩由脚本驱动 --rv) */
+  body.intro [data-rv] {
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(var(--rv, -40px) - 36px), transparent var(--rv, -40px));
+    mask-image: linear-gradient(90deg, #000 calc(var(--rv, -40px) - 36px), transparent var(--rv, -40px));
+  }
+
+  /* 成功离场 */
+  .stage, .chrome { transition: opacity .38s ease, transform .38s ease; }
+  body.leaving .stage, body.leaving .chrome { opacity: 0; transform: translateY(-6px); pointer-events: none; }
+  body.leaving .vignette { opacity: 0; transition: opacity .5s ease .5s; }
+  .handoff {
+    position: fixed; inset: 0; z-index: 6; background: var(--reader);
+    display: flex; align-items: flex-end; justify-content: flex-end; padding: 28px 32px;
+    opacity: 0; visibility: hidden; transition: opacity .2s linear, visibility 0s .2s;
+  }
+  .handoff.on { opacity: 1; visibility: visible; transition: opacity .2s linear; }
+  .handoff p { margin: 0; font: 400 12px/1.4 var(--sans); letter-spacing: .14em; color: #61656d; opacity: 0; transition: opacity .7s ease .35s; }
+  .handoff.on p { opacity: 1; }
+
+  /* 减弱档:状态切换一律瞬时(静态版不带任何过渡位移) */
+  [data-motion="reduce"] body > :not([data-sample-kit]),
+  [data-motion="reduce"] body > :not([data-sample-kit]) *,
+  [data-motion="reduce"] body > :not([data-sample-kit]) *::after { transition-duration: 0s !important; transition-delay: 0s !important; }
+
+  .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+  /* 1280 档:收一点字号与列宽 */
+  @media (max-width: 1320px) and (min-width: 761px) {
+    :root { --col: clamp(320px, 28vw, 380px); }
+  }
+
+  /* 手机:单列,信号场是题词与表单之间的一条带 */
+  @media (max-width: 760px) {
+    :root { --pad: 22px; }
+    .chrome { padding-top: max(18px, env(safe-area-inset-top)); }
+    .chrome .id b { letter-spacing: .26em; }
+    .readout .clock { display: none; }
+    .stage { display: flex; flex-direction: column; align-content: stretch; padding: 70px var(--pad) 28px; }
+    .panel { width: 100%; display: flex; flex-direction: column; flex: 1; }
+    .badge .mark { width: 36px; height: 36px; border-radius: 9px; }
+    .wordmark { margin-top: 18px; font-size: 62px; }
+    .tagline { margin-top: 16px; font-size: 18px; }
+    .lede { font-size: 13.5px; margin-top: 6px; }
+    .band { display: block; flex: 1 0 auto; height: clamp(170px, 27svh, 280px); }
+    .login { margin-top: 0; max-width: none; }
+    .field { height: 50px; }
+    .err { margin-top: 10px; }
+  }
+</style>
+</head>
+<body class="intro">
+  <canvas id="field" aria-hidden="true"></canvas>
+  <div class="vignette" aria-hidden="true"></div>
+
+  <header class="chrome" aria-hidden="true">
+    <span class="id" data-rv><b>DORAMI</b></span>
+    <span class="readout" data-rv>
+      <span class="clock" id="clock"></span>
+      <span class="status" id="status" data-s="tune"><i></i><span class="st-text">调谐中</span></span>
+    </span>
+  </header>
+
+  <main class="stage">
+    <div class="panel">
+      <div class="badge" data-rv>
+        <span class="mark">
+          <img class="face" src="../../../../frontend/public/brand/dorami-logo-128.png" alt="" width="44" height="44">
+          <img class="eyes" src="../../../../frontend/public/brand/dorami-logo-cover-eyes-128.png" alt="" width="44" height="44">
+        </span>
+        <span>AI 资讯阅读器</span>
+      </div>
+      <h1 class="wordmark" data-rv>哆啦美</h1>
+      <p class="tagline" data-rv>从噪声里，听见信号。</p>
+      <p class="lede" data-rv>早报、日报、翻译与问答——每天替你挑出真正重要的。</p>
+
+      <div class="band" aria-hidden="true"></div>
+
+      <form class="login" id="login" novalidate>
+        <div class="field" id="f-account" data-rv>
+          <label for="account">账号</label>
+          <input id="account" name="username" type="text" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="next">
+        </div>
+        <div class="field" id="f-password" data-rv>
+          <label for="password">密码</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" enterkeyhint="go">
+        </div>
+        <p class="err" id="err" role="status" aria-live="polite">
+          <svg width="16" height="10" viewBox="0 0 16 10" aria-hidden="true"><path d="M0 5h2.5l1.3-4 2.4 8 2.2-7 1.9 5 1.4-2H16" fill="none" stroke="#ff5148" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/></svg>
+          <span id="err-text"></span>
+        </p>
+        <button class="go" id="submit" type="submit" data-rv>
+          <span class="go-label">登录</span>
+          <svg class="arrow" width="18" height="12" viewBox="0 0 18 12" aria-hidden="true"><path d="M0 6h16M11 1l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+          <svg class="wave" width="40" height="12" viewBox="0 0 40 12" aria-hidden="true"><g><path d="M0 6 Q5 0.5 10 6 T20 6 T30 6 T40 6 T50 6 T60 6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></g></svg>
+        </button>
+      </form>
+    </div>
+  </main>
+
+  <div class="handoff" id="handoff" aria-hidden="true"><p>样页到此 · 实际会进入阅读器</p></div>
+  <p class="sr-only" id="sr-live" aria-live="polite"></p>
+
+  <script src="signal.js"></script>
+</body>
+</html>
