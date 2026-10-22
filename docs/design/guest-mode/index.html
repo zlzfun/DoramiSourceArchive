@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>游客模式</title>
+<link rel="stylesheet" href="assets/app.css">
+<style>
+  :root { color-scheme: light dark; }
+  html, body { margin: 0; background: var(--dorami-canvas); color: var(--dorami-ink); font-family: var(--font-sans); }
+  .sh { max-width: 1720px; margin: 0 auto; padding: 28px 24px 64px; }
+  .sh-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin-bottom: 18px; }
+  .sh-head h1 { margin: 0; font-family: var(--font-serif); font-size: 26px; font-weight: 600; }
+  .sh-head span { color: var(--dorami-muted); font-size: 13px; }
+  .sh-bar { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; margin-bottom: 14px; }
+  .sh-label { font-size: 12px; font-weight: 600; color: var(--dorami-muted); margin-right: 6px; }
+  .sh-seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r-control); background: var(--dorami-well); }
+  .sh-seg button { border: 0; background: transparent; color: var(--dorami-muted); font: inherit; font-size: 13px; font-weight: 400; padding: 6px 12px; border-radius: calc(var(--r-control) - 2px); cursor: pointer; }
+  .sh-seg button.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); font-weight: 600; }
+  .sh-seg button:focus-visible, .sh-states button:focus-visible { outline: 2px solid var(--dorami-accent); outline-offset: 1px; }
+  .sh-states { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .sh-states button { border: 1px solid var(--dorami-border); background: var(--dorami-surface); color: var(--dorami-ink-2); font: inherit; font-size: 13px; padding: 6px 12px; border-radius: var(--r-pill); cursor: pointer; }
+  .sh-states button.is-on { border-color: var(--dorami-accent); color: var(--dorami-accent-ink); box-shadow: inset 0 0 0 1px var(--dorami-accent); }
+  .sh-sub { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; min-height: 34px; margin-bottom: 14px; }
+  .sh-desc { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 12px; margin: 0 0 18px; }
+  @media (max-width: 1100px) { .sh-desc { grid-template-columns: 1fr; } }
+  .sh-card { padding: 14px 18px; border-radius: var(--r-card); background: var(--dorami-surface); box-shadow: inset 0 0 0 1px var(--dorami-border-soft); }
+  .sh-card h2 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+  .sh-card h2 small { margin-left: 8px; font-size: 12px; font-weight: 400; color: var(--dorami-faint); }
+  .sh-card p { margin: 0; color: var(--dorami-ink-2); font-size: 13.5px; line-height: 1.7; }
+  .sh-card ul { margin: 6px 0 0; padding-left: 18px; color: var(--dorami-muted); font-size: 13px; line-height: 1.75; }
+  .sh-card .tag { display: inline-block; margin-left: 6px; padding: 0 7px; border-radius: var(--r-pill); background: var(--dorami-wash); color: var(--dorami-accent-ink); font-size: 12px; font-weight: 600; line-height: 20px; vertical-align: 1px; }
+  .sh-card table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 13px; }
+  .sh-card td { padding: 5px 8px 5px 0; vertical-align: top; border-top: 1px solid var(--dorami-border-soft); color: var(--dorami-ink-2); line-height: 1.6; }
+  .sh-card td:first-child { white-space: nowrap; font-weight: 600; color: var(--dorami-ink); width: 1%; }
+  .sh-card td b { color: var(--dorami-accent-ink); font-weight: 600; }
+  .sh-stage { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+  .sh-frame { display: grid; gap: 8px; }
+  .sh-frame > span { font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
+  .sh-scaler { position: relative; overflow: hidden; border-radius: 12px; background: var(--dorami-surface); box-shadow: 0 0 0 1px var(--dorami-border-soft), var(--sh-2); }
+  .sh-scaler iframe { position: absolute; top: 0; left: 0; border: 0; transform-origin: 0 0; }
+  #f-desktop { width: 1440px; height: 900px; }
+  #f-mobile { width: 390px; height: 844px; }
+  #s-mobile { width: 390px; height: 844px; border-radius: 28px; }
+  .sh-rules { margin-top: 22px; }
+  .sh-rules ul { columns: 2 460px; column-gap: 32px; }
+  .sh-rules li { break-inside: avoid; margin-bottom: 4px; }
+  .sh-tip { margin: 0 0 12px; font-size: 12.5px; color: var(--dorami-faint); }
+  code { font-family: var(--font-mono); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="sh">
+  <div class="sh-head"><h1>游客模式</h1><span>issue #213 · 收到站内链接免登录先逛;需要账号的操作再提示登录</span></div>
+  <div class="sh-states" id="scene" role="group" aria-label="场景">
+    <button data-v="deeplink">1 深链直达</button>
+    <button data-v="login">2 登录页</button>
+    <button data-v="prompt">3 登录提示</button>
+    <button data-v="brief">4 游客版早报</button>
+    <button data-v="discover">5 发现页</button>
+    <button data-v="share">6 分享</button>
+    <button data-v="ai">7 AI 试用</button>
+    <button data-v="settings">8 设置 / 我的</button>
+    <button data-v="admin">9 运维 · 游客区</button>
+  </div>
+  <div class="sh-sub" id="sub"></div>
+  <div class="sh-bar">
+    <span><span class="sh-label">主题</span><span class="sh-seg" id="theme" role="group" aria-label="主题">
+      <button data-v="light">亮</button><button data-v="dark">暗</button></span></span>
+    <span><span class="sh-label">配色</span><span class="sh-seg" id="palette" role="group" aria-label="配色">
+      <button data-v="porcelain">瓷</button><button data-v="graphite">墨</button><button data-v="paper">宣</button></span></span>
+    <span><span class="sh-label">画面</span><span class="sh-seg" id="view" role="group" aria-label="画面">
+      <button data-v="both">并排</button><button data-v="desktop">桌面</button><button data-v="mobile">手机</button></span></span>
+  </div>
+  <p class="sh-tip">画面可以直接点:收藏星、订阅、兴趣、反馈、只看收藏都会弹登录提示;提示里的「登录」、轨底「登录」会切到登录页(从游客来时带「返回继续逛逛」);登录页的「先逛逛」落到游客版早报。</p>
+  <section class="sh-desc" id="desc" aria-live="polite"></section>
+  <div class="sh-stage">
+    <div class="sh-frame" id="w-desktop"><span id="l-desktop">桌面 · 1440 × 900(缩放显示)</span><div class="sh-scaler" id="s-desktop"><iframe id="f-desktop" title="桌面画面"></iframe></div></div>
+    <div class="sh-frame" id="w-mobile"><span>手机 · 390 × 844</span><div class="sh-scaler" id="s-mobile"><iframe id="f-mobile" title="手机画面"></iframe></div></div>
+  </div>
+
+  <section class="sh-card sh-rules">
+    <h2>不随画面变化的规则<small>详见 docs/plans/issue-213-guest-mode.md</small></h2>
+    <ul>
+      <li><b>身份</b>:全体游客共用一个保留账号 <code>guest:shared</code>(不能登录、不进账户名单);每位访客另有一个随机 id,只用于统计、已读状态和转化归因。</li>
+      <li><b>门控</b>:游客只能访问白名单里的端点,新端点默认不开放;被拒一律回 403 <code>login_required</code>(不回 401,否则前端会当成登录过期踢回登录页)。</li>
+      <li><b>总闸</b>:运维一键关;关掉后在线游客会话下一次请求就失效,未登录打开站内链接回到登录页。推荐默认关(D1)。</li>
+      <li><b>订阅</b>:游客的订阅就是「新账号默认订阅」名单,改名单游客跟着变,当天游客早报自动重编。</li>
+      <li><b>早报</b>:全体游客共享一版;08:30 定时一并生成,当天第一位游客打开时若还没有就现场生成。</li>
+      <li><b>已读</b>:每位访客各记各的(D5),未读加粗、未读数、全部标已读、「载入 N 篇新文章」对游客照常成立。</li>
+      <li><b>AI</b>:各用途全开,默认不限(D6);管理员可设每日上限与游客日 token 预算,全站日预算对游客同样生效。超出游客上限回 429 <code>guest_quota_exhausted</code>,前端弹登录提示。</li>
+      <li><b>图片</b>:游客只取已缓存的正文图,未命中直接回源站,服务端不替游客下载。</li>
+      <li><b>统计</b>:访客、访问、阅读、AI、入口、转化单列「游客」区,不进账户数、活跃榜、账户增长(D7);「AI」页的总用量照常含游客。</li>
+      <li><b>素材</b>:底稿是 2026-10-22 在本机库沙箱里抓的现网 DOM 与同版编译样式;本机库是 9 月的数据,早报用 9 月 16 日那一版当「今天」;运维游客区数字为示意;登录页背景的星座动画样页不重放;本机测试账户名已换成示意名。</li>
+    </ul>
+  </section>
+</div>
+<script>
+  const DESC = {
+    deeplink: {
+      name: '深链直达', tag: 'D2 推荐',
+      idea: '未登录打开站内链接(<code>#/reader/a/{id}</code>)时,不再停在登录卡,直接以游客进入阅读器并打开这一篇。视图轨底部的头像位换成「登录」,首次进入给一枚可关的提示条。',
+      points: [
+        '游客的「我的订阅」就是默认名单,源栏、文章流、未读都和新账号第一眼一样(D4)。',
+        '收藏星、只看收藏、「兴趣」轴、源行的退订都照常显示,点了弹登录提示(见场景 3)。',
+        '链接指向默认名单之外的文章也能打开,隐藏源、私有源对游客照旧不可见。',
+      ],
+    },
+    login: {
+      name: '登录页', tag: 'D2',
+      idea: '总闸开时,登录卡多一个次级按钮「先逛逛」,落到游客版早报;从游客点「登录」过来时,不显示「先逛逛」,改为左上角「返回继续逛逛」。',
+      points: [
+        '根地址仍落登录页,不自动变成游客——已有账号的同事每天从这里登录,习惯不变。',
+        '登录成功后回到原处:在看文章就回这一篇,其它视图回原 Tab。',
+        '另一条线正在做登录页五方向重设计;本波只加这两个入口,不动表单本身,重设计落地时须保留。',
+      ],
+    },
+    prompt: {
+      name: '登录提示', tag: '',
+      idea: '外形照抄现网确认框:图标圆 + 标题(登录后能做什么)+ 一句说明(为什么要账号);底栏「继续逛逛 | 登录」,点遮罩即关。上方切换不同动作的文案。',
+      points: [
+        '前端先拦,不发请求;后端兜底回 403 <code>login_required</code>,由同一个提示接住,原调用处的报错静默。',
+        '「登录」切到现有登录页,不在弹窗里另造表单:下游的登录入口与登录页重设计都不受影响。',
+        '登录后只回到原处,不替游客补做刚才的操作(D9)。',
+      ],
+    },
+    brief: {
+      name: '游客版早报', tag: '拍板 3',
+      idea: '全体游客共享一版,按默认订阅编排、没有兴趣。页头日期后挂「游客版」,下方一行说明并给「登录」;没有「重新编排」,也没有兴趣引导横幅。',
+      points: [
+        '选篇理由里的「来自你订阅的」改为「来自默认订阅的」,避免对游客说「你订阅」。',
+        '条目上的收藏照常显示,点了弹登录提示;「往期」照常可翻。',
+        '当天这一版若生成失败,游客打开会触发一次系统重试(10 分钟内不重复),不会挂着失败版一整天。',
+      ],
+    },
+    discover: {
+      name: '发现页', tag: 'D4',
+      idea: '游客照常逛发现页、预览任意来源;「订阅」「取消订阅」「添加文章源」「订阅全部文章源」「兴趣」Tab 都弹登录提示。',
+      points: [
+        '默认名单里的来源对游客显示「已订阅」,与新账号一致。',
+        '卡片上的「N 人订阅」不计游客。',
+        '「合集」「榜单」两个 Tab 照常可看。',
+      ],
+    },
+    share: {
+      name: '分享', tag: 'D3 推荐',
+      idea: '游客可以复制站内链接;生成公开链接要账号。总闸开时,所有人看到的「站内链接」说明从「需要登录」改为「免登录可看」,「公开链接」改为「仅这一篇」。公开分享页页尾加「在哆啦美里继续逛逛」,落到游客版早报。',
+      points: [
+        '公开分享页本身不变:仍只给这一篇,不带目录与检索;入口只是一枚按钮,走的仍是游客会话。',
+        '总闸关时,两处文案与页尾按钮都恢复现状。',
+      ],
+    },
+    ai: {
+      name: 'AI 试用', tag: 'D6',
+      idea: '各用途全开(翻译、问答、速读、社交翻译、逐字稿翻译、长文后台翻译、播客 / 文章点播),默认不限。管理员设了上限且游客用满时:问答里一行说明 + 登录提示;其它入口同样弹登录提示,不再弹「明日再试」。',
+      points: [
+        '全体游客合为一个口径计数(拍板 2);长文翻译对游客不设「同时最多 3 篇」的账号上限,只受全站任务上限约束。',
+        '全站日 token 预算耗尽时仍是原文案「今日 AI 用量已达全站上限」,不引导登录——登录也解决不了。',
+        '画面展示的是「已设上限且用满」的情形;默认不限时不会出现。',
+      ],
+    },
+    settings: {
+      name: '设置 / 我的', tag: '',
+      idea: '桌面设置柜:「账户」区换成游客卡 + 登录;「订阅源 OPML」「反馈与建议」和「接入集成」三项挂一枚小锁,点开是登录入口;「外观」「关于」照常。手机「我的」:游客卡 + 登录,收藏 / 我的兴趣 / 反馈弹登录提示,不显示「退出登录」。',
+      points: [
+        '外观(主题、配色、动效)本就只存在本机,游客照常可调。',
+        '视图轨的「反馈」照常显示,点了弹登录提示(D8)。',
+      ],
+    },
+    admin: {
+      name: '运维 · 游客区', tag: 'D1 D7',
+      idea: '「用户」子页在「账户增长」下面加「游客」区,全体管理员可见(聚合口径):总闸 +「游客 AI」两枚开关、五格 KPI、每日走势(访客柱 + 转化点)、入口分布。区头齿轮开「游客设置」抽屉。',
+      points: [
+        '抽屉:翻译 / 问答 / 速读 / 点播四类每日上限与游客日 token 预算,留空即不限;默认订阅名单只读展示,回指「内容」子页里既有的编辑器。',
+        '上方「账户 / 近 30 天活跃 / 登录 / 阅读 / AI」与活跃榜、账户增长都不含游客。',
+        '开关与抽屉的写操作落在 /api/admin 下,自动进操作审计。',
+      ],
+    },
+  };
+  const SUB = {
+    deeplink: { key: 'toast', label: '入场提示', opts: [['on', '有'], ['off', '无']] },
+    login: { key: 'from', label: '从哪来', opts: [['', '直接打开'], ['guest', '游客点了「登录」']] },
+    prompt: { key: 'action', label: '动作', opts: [['favorite', '收藏'], ['favlist', '只看收藏'], ['subscribe', '订阅'], ['unsub', '退订'], ['interest', '兴趣'], ['addsrc', '添加来源'], ['publink', '公开链接'], ['feedback', '反馈'], ['ai', 'AI 额度']] },
+    share: { key: 'view', label: '画面', opts: [['menu', '分享菜单'], ['page', '公开分享页']] },
+    admin: { key: 'drawer', label: '抽屉', opts: [['', '收起'], ['open', '游客设置']] },
+  };
+  const q = new URLSearchParams(location.search);
+  const S = {
+    scene: q.get('scene') || 'deeplink',
+    theme: q.get('theme') || 'light',
+    palette: q.get('palette') || 'porcelain',
+    view: q.get('view') || 'both',
+    sub: {},
+  };
+  Object.entries(SUB).forEach(([scene, cfg]) => { S.sub[scene] = q.get(cfg.key) ?? cfg.opts[0][0]; });
+
+  const $ = (s) => document.querySelector(s);
+  function seg(id, value) { document.querySelectorAll(`#${id} button`).forEach((b) => b.classList.toggle('is-on', b.dataset.v === value)); }
+  function frameUrl(device) {
+    const p = new URLSearchParams({ scene: S.scene, device, theme: S.theme, palette: S.palette });
+    const cfg = SUB[S.scene];
+    if (cfg && S.sub[S.scene]) p.set(cfg.key, S.sub[S.scene]);
+    return `frame.html?${p}`;
+  }
+  function fit() {
+    const desk = $('#s-desktop');
+    const avail = Math.min(document.querySelector('.sh').clientWidth - 48, 1680) - (S.view === 'both' ? 410 : 0);
+    const s = Math.max(0.45, Math.min(1, avail / 1440));
+    desk.style.width = `${Math.round(1440 * s)}px`;
+    desk.style.height = `${Math.round(900 * s)}px`;
+    $('#f-desktop').style.transform = `scale(${s})`;
+    $('#l-desktop').textContent = `桌面 · 1440 × 900${s < 1 ? `(缩放 ${Math.round(s * 100)}% 显示)` : ''}`;
+  }
+  function render() {
+    seg('scene', S.scene); seg('theme', S.theme); seg('palette', S.palette); seg('view', S.view);
+    document.documentElement.dataset.theme = S.theme;
+    document.documentElement.dataset.palette = S.palette;
+    const cfg = SUB[S.scene];
+    $('#sub').innerHTML = cfg
+      ? `<span><span class="sh-label">${cfg.label}</span><span class="sh-seg" id="subseg" role="group" aria-label="${cfg.label}">${cfg.opts.map(([v, t]) => `<button data-v="${v}">${t}</button>`).join('')}</span></span>`
+      : '';
+    if (cfg) seg('subseg', S.sub[S.scene]);
+    const d = DESC[S.scene];
+    $('#desc').innerHTML = `<div class="sh-card"><h2>${d.name}${d.tag ? `<span class="tag">${d.tag}</span>` : ''}</h2><p>${d.idea}</p><ul>${d.points.map((p) => `<li>${p}</li>`).join('')}</ul></div>` + DECISIONS;
+    const showDesktop = S.view !== 'mobile';
+    const showMobile = S.view !== 'desktop' && S.scene !== 'admin';
+    $('#w-desktop').style.display = showDesktop ? '' : 'none';
+    $('#w-mobile').style.display = showMobile ? '' : 'none';
+    if (showDesktop) $('#f-desktop').src = frameUrl('desktop');
+    if (showMobile) $('#f-mobile').src = frameUrl('mobile');
+    fit();
+    const p = new URLSearchParams({ scene: S.scene, theme: S.theme, palette: S.palette, view: S.view });
+    if (cfg && S.sub[S.scene]) p.set(cfg.key, S.sub[S.scene]);
+    history.replaceState(null, '', `?${p}`);
+  }
+  const DECISIONS = `<div class="sh-card"><h2>待拍板<small>方案文档 §0,标「推荐」的是本稿建议</small></h2><table>
+    <tr><td>D1</td><td>游客总闸默认<b>关</b>,管理员在运维一键开(公网部署开了 = 可见内容对任何人开放,且游客 AI 默认不限)</td></tr>
+    <tr><td>D2</td><td>未登录打开站内链接<b>直接以游客进入</b>;根地址仍是登录页 +「先逛逛」</td></tr>
+    <tr><td>D3</td><td>公开分享页页尾<b>加</b>「在哆啦美里继续逛逛」,落早报</td></tr>
+    <tr><td>D4</td><td>游客能逛的范围<b>同正式读者</b>:发现页、榜单、检索照常</td></tr>
+    <tr><td>D5</td><td>已读状态<b>每访客各记各的</b>,30 天无访问回收</td></tr>
+    <tr><td>D6</td><td>AI 各用途<b>默认不限</b>,管理员可设上限与游客日 token 预算</td></tr>
+    <tr><td>D7</td><td>游客<b>单列统计</b>,不进读者数、活跃榜、账户增长</td></tr>
+    <tr><td>D8</td><td>「反馈」<b>照常显示</b>,点了弹登录提示</td></tr>
+    <tr><td>D9</td><td>登录后<b>只回到原处</b>,不替游客补做刚才的操作</td></tr>
+    <tr><td>D10</td><td>公告<b>游客可见</b>,关闭只记在本机</td></tr>
+  </table></div>`;
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-v]');
+    if (!b) return;
+    const group = b.parentElement.id;
+    if (group === 'scene') S.scene = b.dataset.v;
+    else if (group === 'theme') S.theme = b.dataset.v;
+    else if (group === 'palette') S.palette = b.dataset.v;
+    else if (group === 'view') S.view = b.dataset.v;
+    else if (group === 'subseg') S.sub[S.scene] = b.dataset.v;
+    else return;
+    render();
+  });
+  window.addEventListener('resize', fit);
+  render();
+</script>
+</body>
+</html>

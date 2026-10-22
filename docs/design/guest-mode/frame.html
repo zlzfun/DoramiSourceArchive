@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>游客模式画面</title>
+<link rel="stylesheet" href="../../../frontend/public/fonts/dorami-serif-v1/dorami-serif.css">
+<link rel="stylesheet" href="../../../frontend/public/fonts/dorami-latin-v1/dorami-latin.css">
+<link rel="stylesheet" href="assets/app.css">
+<link rel="stylesheet" href="assets/frame.css">
+<link rel="stylesheet" href="assets/guest.css">
+<script>
+  // 首帧前挂主题与配色,避免画框闪白(现网:<html data-theme> + <html data-palette>);登录页恒为深色舞台
+  (function () {
+    var q = new URLSearchParams(location.search);
+    var r = document.documentElement;
+    r.dataset.theme = q.get('theme') === 'dark' || q.get('scene') === 'login' ? 'dark' : 'light';
+    var pal = q.get('palette');
+    r.dataset.palette = pal === 'graphite' || pal === 'paper' ? pal : 'porcelain';
+    r.dataset.motion = 'reduce';
+  })();
+</script>
+<script src="assets/frame.js" defer></script>
+</head>
+<body></body>
+</html>
