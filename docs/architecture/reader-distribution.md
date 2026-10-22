@@ -10,3 +10,7 @@ Reader accounts build a personalized subscription scope over already-archived re
 ## Downloadable Claude skill
 
 `src/api/skill_router.py` zips `src/skill_templates/dorami-daily-brief/` on the fly (templating `{BASE_URL}` into the live host) and serves it at `GET /api/skill/daily-brief`, so a user can install a ready-made Claude skill that talks to this deployment's feed/MCP endpoints.
+
+## 游客的阅读范围(issue #213)
+
+游客的阅读范围 = 保留账号 `guest:shared` 的订阅行(镜像新账号默认订阅;`feed_service.resolve_subscribed_source_ids` 把访客身份映射过去,隐藏源照旧排除);游客没有 feed / MCP 令牌,不能订阅、改兴趣或签发公开分享(白名单外 403 `login_required`)。总闸开时站内链接「免登录可看」:未登录打开即以游客进入并打开那一篇,分享菜单的两组注记随之为「免登录可看 / 仅这一篇」;公开分享页在总闸开且访客没登录账号时页尾多一条「在哆啦美里继续逛逛」(先签游客会话,入口记 `share_page`)。

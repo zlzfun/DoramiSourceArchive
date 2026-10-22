@@ -79,7 +79,7 @@
 
 ## plans/ —— 活跃方案(☐ 进行中 / 排队中;落地后归档)
 
-- ☐ [plans/issue-213-guest-mode.md](./plans/issue-213-guest-mode.md) — **游客模式(issue #213)**:收到站内链接免登录先逛;共享保留账号 + 每访客 id、白名单门控、共享游客早报、每访客已读、AI 默认不限、游客统计;R1 方案 + 样页 `docs/design/guest-mode/` 待拍板。
+- ☐ [plans/issue-213-guest-mode.md](./plans/issue-213-guest-mode.md) — **游客模式(issue #213)**:收到站内链接免登录先逛;访客会话 + 共享保留账号、白名单门控、共享游客早报、每访客已读与 AI 计次(与读者同额)、运维游客区;两批已拍板、实现完成,待检视与目检;样页 `docs/design/guest-mode/`。
 - ☐ [plans/issue-178-content-classification.md](./plans/issue-178-content-classification.md) — **内容分类与双评分(issue #178)**:第一波 / 第一波补 / 第二波 / 3a 已上线(v3.64),3b 播客提示词拆分与 3c 新闻尺子收紧排队,分区空板率与论文名额观察期。
 - ☐ [plans/issue-82-node-watchdog-layer1.md](./plans/issue-82-node-watchdog-layer1.md) — **节点看护第一层:抓取失败判定升级(issue #82)**:R2 稿已拍板,PR-0 已修调度重载 bug,PR-A / B / C(产出轴 `yield_status`、收据先行、看护页)未动工;生产回放校准结论在此。
 - ☐ [plans/issue-97-podcast-cost-and-scoring.md](./plans/issue-97-podcast-cost-and-scoring.md) — **Podcast 成本门控与评分标定(issue #97)**:P0 门控已上线;P1 六组 32 输入黄金集与提示词调整未启动。

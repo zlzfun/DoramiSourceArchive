@@ -110,6 +110,11 @@
 - **总闸** `GET`/`POST /api/admin/public-share`(KV `public_share_enabled`,默认开,读数含 live_count/total_count):**关闭立即让已发出的链接全部 404**——不必逐条撤销,且不销毁签发记录,重开即回归;开关在运维管理 → 内容(与媒体库、X 接入同类:对外的内容出口)
 - 前端:阅读窗工具条 `Share2` 钮 → `ShareMenu.jsx` 浮层(站内链接=wash 可点行整行即复制;公开链接 hairline 之下退一档,两态:未生成=mini-seg 档位+唯一实心 CTA / 已生成=存活点+过期·触达 meta+复制/撤销 rowact 钮;换有效期=撤销后重生成);公开页 `SharedArticlePage.jsx` 在 **`main.jsx` 于 App 之外分流**——访客没有账号不能走登录门,且 App 的历史锚点会把令牌从 hash 里冲掉
 
+**游客(issue #213)**(门控语义见 [游客](../architecture/accounts-and-access.md))
+- `POST /api/auth/guest` — 公开:签发游客会话(body `{entry: deep_link|login_page|share_page|return}`,记当天入口);总闸关 403 `guest_disabled`,已登录账号 409;`GET /api/auth/session` 匿名载荷带 `guest_access_enabled`
+- 游客会话只能访问 `src/api/guest_policy.py` 白名单(读内容、早报读与 `ensure`、已读、公告关闭、`/api/reader/ai/*`、`/api/media/proxy` 仅缓存),其余 **403 `{"code": "login_required"}`**(含 `/mcp`);访客 AI 超额 **429 `{"code": "guest_quota_exhausted"}`** 带 `Retry-After`
+- `GET /api/admin/guest?days=` — 游客设置(总闸 / 游客 AI / 每位游客日额度与读者缺省)+ 默认订阅名单 + 近 N 天聚合统计;`PUT /api/admin/guest/settings` — body 只带要改的键 `{enabled?, ai_enabled?, ai_limits?: {translate|ask|summarize|ondemand: int(0 = 不限) | null(恢复与读者同额)}}`
+
 **Admin Ops** (admin-only via `account_admin_required`, `/api/admin/*` prefix)
 - `GET /api/admin/overview` — account/archive/AI stat board + recent logins
 - `GET /api/admin/accounts?days=` — account list enriched with `subscription_count` + **窗口指标** (`reads`, `logins`, `ai_calls`/`ai_tokens` over the last `days`, `logged_in_window`) + 埋点 fields

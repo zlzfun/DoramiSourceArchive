@@ -35,6 +35,7 @@ Fetcher ──► DataPipeline ──► DatabaseStorage ◄── 阅读器 / �
 ## 5. 角色与权限
 
 - 登录账号角色是主轴:`admin` 超级用户(管理台 + 阅读器双界面),`user` 只读读者;根管理员是平权之上唯一例外(用户级明细只对它可见)。管理写操作全部入审计。外部凭据统一经保管层(只写不回显)。→ [`accounts-and-access.md`](./accounts-and-access.md)
+- 游客 `guest`(issue #213):免登录的读者面浏览 + AI 试用;会话按访客身份 `guest:v:<vid>` 记已读与 AI 计次,订阅范围 / 共享早报 / AI 授权落到保留账号 `guest:shared`;可达端点只认白名单 `src/api/guest_policy.py`,其余 403 `login_required`。→ [`accounts-and-access.md`](./accounts-and-access.md)
 - `[runtime] role` 是可选第二轴,只在把采集与分发拆到两台机时生效。
 
 ## 6. 部署拓扑与同步

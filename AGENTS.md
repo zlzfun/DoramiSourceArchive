@@ -7,7 +7,7 @@
 
 ## 一分钟定向
 
-- **项目**:哆啦美 · DoramiSourceArchive——自托管 AI 资讯阅读器 / 内容聚合 CMS。**采集归档侧**(fetcher → SQLite + FTS5 全文索引)+ **读者分发侧**(订阅制阅读器、个人早报、公共日报、令牌化 feed / MCP 交付、LLM 翻译与问答)。按登录角色分面:`admin` 是超级用户(管理台 + 阅读器),`user` 是只读读者;`[runtime] role` 第二轴只在拆分部署时生效(默认 `all`,可忽略)。
+- **项目**:哆啦美 · DoramiSourceArchive——自托管 AI 资讯阅读器 / 内容聚合 CMS。**采集归档侧**(fetcher → SQLite + FTS5 全文索引)+ **读者分发侧**(订阅制阅读器、个人早报、公共日报、令牌化 feed / MCP 交付、LLM 翻译与问答)。按登录角色分面:`admin` 是超级用户(管理台 + 阅读器),`user` 是只读读者,`guest` 是免登录游客(读者面浏览 + AI 试用,需要账号的操作提示登录);`[runtime] role` 第二轴只在拆分部署时生效(默认 `all`,可忽略)。
 - **技术栈**:Python 3.12 + FastAPI + SQLModel + Alembic + APScheduler(`src/`,`uv` 管依赖);React + Vite + Tailwind v4(`frontend/`);SQLite(`data/cms_data.db`,FTS5 影子表);LLM 走任意 OpenAI 兼容端点(`[llm]`,未配置时采集与阅读照常)。
 - **生产形态**:外网节点 Docker 双容器(`./deploy-docker.sh`,tag 即发布,GitHub Release → 流水线审批部署)+ 内网节点裸机 PM2(`./deploy.sh`,经 Archive Sync 从外网同步;内网适配只进 `master` 分支)。
 - **核心数据流**:`Fetcher → DataPipeline → DatabaseStorage(SQLite)`;入库后分析 worker 评分 / 摘要 / 打标;早报、日报、feed、问答都消费归档与分析结果。检索只有 FTS5(向量 RAG 已退役)。
@@ -56,7 +56,7 @@ python3 scripts/check_docs.py             # 文档守卫(索引覆盖 / 断链 /
 
 | 域 | 不变量(一句话) | 文档 |
 |---|---|---|
-| 整体 | 两侧一库;角色轴 admin / user;生产 = 外网 authority + 内网 replica | [`overview.md`](docs/architecture/overview.md) |
+| 整体 | 两侧一库;角色轴 admin / user / guest;生产 = 外网 authority + 内网 replica | [`overview.md`](docs/architecture/overview.md) |
 | 内容模型 | 每条内容带 `content_type`(数据形状)+ `source_id`(渠道);内容类型 / 事件类型**读取时推导不落库**;`content_shape` 三容器 article / social / podcast 互斥;子类字段进 `extensions_json` | [`content-model.md`](docs/architecture/content-model.md) |
 | 抓取器 | `FetcherRegistry` 自动扫描 `src/fetchers/impl/`;加源 = 硬化 preset fetcher(`generic_*` 模板前端隐藏,`is_template`);每次运行写 `FetchRunRecord` + `SourceStateRecord`;新源进观察期 `incubating` | [`fetchers-and-sources.md`](docs/architecture/fetchers-and-sources.md)、[`docs/sources/`](docs/sources/) |
 | 分析与评分 | 文章级只有一把尺子「新闻价值」(`quality_score`,`llm/article_analysis_prompt.py`)+ 第二维「内容价值」同一次调用产出;日报复用不写回;播客提示词逐字不动;Taxonomy 目录仓库受控、永不自动发布 | [`analysis-and-briefs.md`](docs/architecture/analysis-and-briefs.md) |
@@ -64,7 +64,7 @@ python3 scripts/check_docs.py             # 文档守卫(索引覆盖 / 断链 /
 | 播客 | 只解析 enclosure 元数据**不下载音频**;原音频无公网回源路由;仅四类供应商下载失败才一次性 OSS 中转;简介初评只作付费 ASR 门 | [`podcast.md`](docs/architecture/podcast.md) |
 | 媒体 | 正文原链**永不改写**,显示层经 `/api/media/proxy`;按内容哈希去重;只随文预取不全量回填;OSS / 备份默认关 | [`media-and-storage.md`](docs/architecture/media-and-storage.md) |
 | 检索与问答 | FTS5 是唯一检索基础设施;问答 = LLM 计划检索 + FTS5,降级链自持;`[n]` 引用与 sources 同源同序 | [`search-and-qa.md`](docs/architecture/search-and-qa.md) |
-| 账号与权限 | 账号在 `users` 表,空库首启 `admin/admin`;根管理员是平权之上唯一例外;末位活跃管理员不可降级;管理写操作全入审计;外部凭据经 `services/credentials.py`(只写不回显) | [`accounts-and-access.md`](docs/architecture/accounts-and-access.md) |
+| 账号与权限 | 账号在 `users` 表,空库首启 `admin/admin`;根管理员是平权之上唯一例外;末位活跃管理员不可降级;管理写操作全入审计;游客 = 访客会话 + 保留账号 `guest:shared`,可达端点只认白名单 `src/api/guest_policy.py`(新端点默认对游客 403);外部凭据经 `services/credentials.py`(只写不回显) | [`accounts-and-access.md`](docs/architecture/accounts-and-access.md) |
 | 读者交付 | 订阅 = 阅读范围 + feed / MCP 交付范围;`dsub_` / `dfeed_` 只存 hash,分享 `dshr_` 明文(有意差异);隐藏源全量排除于交付 | [`reader-distribution.md`](docs/architecture/reader-distribution.md)、[`docs/contracts/`](docs/contracts/) |
 | LLM 与读者 AI | `chat_completion` 永不打日志 api_key;三档模型 main / aux / vision;翻译 / 问答受「全局总闸 ∧ 账户开关 ∧ LLM 已配置」门控,日额度软上限 | [`llm-and-ai.md`](docs/architecture/llm-and-ai.md) |
 | 社交(X) | 一账号一 `source_id`;按**返回资源**计费的配额守卫;不展示互动数字 | [`social-x.md`](docs/architecture/social-x.md) |

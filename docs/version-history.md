@@ -13,6 +13,7 @@
 
 > 顺序为迁入时原样(待发布波在前、纪元叙事在中、近期波在后);每行只记「现状是什么 / 落在哪」,详细记录在下文各节。
 
+- **游客模式(issue #213,开发版 3.67.0-alpha,待合入)**:收到站内链接免登录先逛——会话按访客 `guest:v:<vid>`(已读、AI 计次各自独立),订阅范围 / 共享早报 / AI 授权落保留账号 `guest:shared`;白名单门控 `src/api/guest_policy.py`(其余 403 `login_required`);总闸默认开;AI 每位游客与读者同额(429 `guest_quota_exhausted`);登录提示 `LoginPrompt` + 叠层登录页回原处;运维「用户」子页游客区(`components/admin/GuestZone.jsx`)+ 新表 `guest_visits`;顺手修手机发现页卡片撑宽与发现 / 社交页横向漂移;方案 `docs/plans/issue-213-guest-mode.md`,样页 `docs/design/guest-mode/`。
 - **论文全文阅读首期收口(issue #41,v3.66.0；2026-10-22)**：#201 全文阅读/摘要分析/回填/FTS 优化、#206/#207 翻译修复、#208 后台续译已完成；方案归档至 `docs/archive/issue-41-paper-fulltext.md`，后置范围进入 backlog 展望。
 - **文档整理波(issue #210,2026-10-21,待合入)**:L0 = `AGENTS.md` 正文(≤ 220 行)+ `CLAUDE.md` `@AGENTS.md`;Key Design Decisions 等原文迁入 `docs/architecture/` `reference/` `dev/` `ops/`;28 篇完结方案 + `specs/` `artifacts/` + 零引用样页归档;新建 `decisions.md`(ADR-lite)、`docs/dev/workflow.md`、`.claude/rules/` 四枚、项目技能三枚、守卫 `scripts/check_docs.py`;方案 `docs/plans/issue-210-docs-tidy.md`。
 - **社交流翻译(issue #84,待发布)**:推文卡片最后一行「✦ 译为中文」(管整张卡片,「显示更多」仍只管正文折叠),原文一字不动、译文追加在正文下与引用卡内;`POST /api/reader/ai/social/{id}/translate` 主推(转推取 `reposted.text`)+ 引用推一次 JSON 调用、复用 #201 分段 / #206 逐行单元协议与完整输出校验,缓存 `translation_zh_social`(不与文章 `translation_zh` 混用);可译判定按 X `lang` + 中文启发式,前后端共用 `tests/fixtures/social_translate_cases.json`,规范化补存内嵌推文 `lang`;经软准入闸的读者 AI 接口日额度 429 统一带 `Retry-After`(距服务端零点,前端按它恢复入口);X API 无翻译能力;方案 `docs/archive/social-translate-plan.md`,样页 `docs/design/social-translate/`。
@@ -43,6 +44,22 @@
 - **3.58–3.60(2026-09-15–19)**:运维面播客与分析标签重构(#76)/ 移动端读者 E2E(#91)/ 同步修复(#96 / #99)/ PWA 主屏幕安装(#100)/ 弹窗遮罩关闭判定(#104)/ OSS 持久存储与自动备份(#109)/ 聚焦环入 base 层(#108)/ 发现页按形态批量订阅(#113)/ **GitHub Release 自动部署流水线(#102,v3.60.0 首发、v3.60.1 闭环)**:tag 推上去 → 自动建 Release → 串联 `deploy.yml` 停在 Environment `production` 等批准 → SSH forced command 触发生产机仓库外 launcher/worker → 目标 tag 的 `./deploy-docker.sh` → 公网 `/api/health` 核对;上线抓到两坑(checkout 改写 tag 引用 / Environment secrets 须 `secrets: inherit`),见 `docs/archive/auto-deploy-plan.md` §7。
 - **裸机部署回滚(issue #126,2026-09-21,待发布)**:裸机路径改「运行副本版本化」release 形态 + 锁内事务 + 两级健康门告警(不自动回滚)+ `./deploy.sh --rollback`(树外固化执行体,DB 按目标上下文迁移计划分流,`--restore-db` 显式恢复,只回一代)+ 收养 + `--code` / `--status` / `--discard-txn`;extras 钉版 `docker/requirements-crawl4ai.txt`;方案 `docs/archive/baremetal-rollback-plan.md`(codex 四轮设计检视 + §9 实现记录),手册 `docs/ops/deploy-baremetal.md`,桩测试 `tests/test_deploy_baremetal.py`。
 - **Podcast(issue #7 P0–P0.2)**:`source_type=podcast` → `generic_podcast_rss`,单集复用 `ArticleRecord` + `extensions_json`,只解析 enclosure 元数据不下载音频;36 节目策展目录 `services.podcast_catalog` 启动幂等安装、进普通采集任务不设源级开关;边界与后续见 `docs/archive/podcast-wave-plan.md`。
+
+## issue #213 游客模式(分支 `feat/issue-213-guest-mode`,开发版 3.67.0-alpha,版本号以实际发版为准)
+
+站内链接只能发给有账号的人——收到的人没有账号就只看到登录卡。本波让没登录的人先逛:读全部内容、试用 AI、看一份按默认订阅编排的早报,碰到需要账号的操作再提示登录。方案与拍板见 [`issue-213-guest-mode.md`](./plans/issue-213-guest-mode.md),样页 `docs/design/guest-mode/`(九个场景,底稿是真实库沙箱抓的现网界面)。
+
+**两轮拍板**:第一批定下「只提示登录、不做注册」「AI 各用途全开、额度尽可能大」「全体游客共享一版早报」;R1 样页把 AI 做成全体游客合计的游客池 + 游客日 token 预算、总闸默认关,第二批用户改为**总闸默认开**、**AI 按每位游客分别计次**(不要合计总量),并把登录提示里「收藏跟着账号走,换台设备也在」换成平实说法(「收藏会保存到你的账号。」)。每位游客的日额度缺省与正式读者相同(50 / 100 / 50 / 5),运维可调,0 = 不限。
+
+**身份设计**:会话按访客(`guest:v:<vid>`,长效签名 Cookie 记 vid),于是已读、AI 计次与用量、阅读计量、长文翻译任务、公告关闭都天然各自独立,这些链路一行不改;只有三件事落到共享保留账号 `guest:shared`——订阅范围(镜像默认名单)、共享早报(版面外键到 `users`,没有账号行会撞外键并触发无限重试)、AI 授权(几道开关都按账号行查)。门控按 (方法, 路由模板) 白名单 fail-closed,被拒回 403 `login_required` 而不是 401(前端 401 即踢回登录页);守卫钉住「登记项真实存在 + 其余路由对游客一律 403」。媒体代理对游客只回已缓存图片,免得成了公网取图代理。
+
+**前端**:需要账号的入口不隐藏,点了不发请求、弹 `LoginPrompt`(外形照抄确认框,「继续逛逛 | 登录」);后端两个码由 `api.js` 兜底派发同一事件,同一拍里调用方的报错 toast 不再重复。「登录」把登录页叠在阅读器之上(「返回继续逛逛」原样回来),登录成功回到在看的那篇;阅读器 key 含 `account_role`,runtime 先到或后到都只重挂一次。早报游客版:说明行「游客版」+ 登录入口,不出重编 / 重试 / 兴趣引导,选篇理由显示为「默认订阅的」(只改显示)。设置柜:账户换游客卡,OPML / 反馈 / 接入集成挂锁、进去是登录入口。公开分享页页尾在总闸开且访客没登录账号时加「在哆啦美里继续逛逛」。
+
+**运维**:「用户」子页账户增长下加游客区(开关、五格 KPI、访客柱 + 转化点、入口分布、游客设置抽屉);上方账户口径与 AI 看板按用户视图都排除访客(后者合成一条「游客」)。新表 `guest_visits` 记每访客每日的入口、访问与转化,留存 365 天;访客 30 天无访问其已读与公告关闭行回收。
+
+**顺手修(手机端)**:发现页网格 `1fr` 的最小值被卡片内容撑破(390px 屏卡片 403px、「订阅」被裁,各分组宽度不一)→ `minmax(0, 1fr)`;发现页两层侧距叠成 44px → 16px;社交媒体页日期组头的桌面负外距在手机两侧各伸出 12px,整列能横向拖动 → 改 `-12px`;两页滚动容器加横向锁。
+
+**自查**:后端全量通过(新 `tests/test_guest_mode.py` 14 项 + 路由审计 3 项,反向对照确认守卫会咬);前端 lint / 128 项单测 / build 通过。沙箱 Playwright 亮暗 + 手机:深链自动游客与入场提示、收藏与兴趣提示、分享菜单、设置柜挂锁、叠层登录与返回、登录后回到那篇、运维游客区与抽屉(改额度 / 非法值 / 恢复同额 / 关游客 AI)、分享页入口(匿名有、已登录账号无)、AI 额度用尽(`ctx.route` 伪造 429,不打真模型)、手机全部 Tab 横向溢出为零。实现中修了两处样页没暴露的问题:轨底「登录」图标被全局 `border-box` 压成 6px;问答面板把叠在上面的登录提示当作「点外」而一起收起。
 
 ## issue #41 论文全文阅读首期收口（v3.66.0，2026-10-22）
 

@@ -1,6 +1,6 @@
 # 游客模式:收到站内链接免登录先逛(issue #213)方案
 
-> 状态:进行中(R2 已拍板,实现中)
+> 状态:进行中(实现完成,待交叉检视与用户目检)
 > 实现方:Claude Code(Opus 5.5);检视方:Codex(待定)。issue [#213](https://github.com/zlzfun/DoramiSourceArchive/issues/213) · 样页 [`docs/design/guest-mode/`](../design/guest-mode/README.md)
 
 ## 0. 拍板记录
@@ -52,7 +52,7 @@
 
 ### 3.2 门控:游客白名单(fail-closed)
 
-- 新模块 `src/api/guest_policy.py`(待建):游客可达路由的**唯一白名单**,按 (方法, 路由模板) 登记;中间件对游客会话先查白名单,不在其中的一律 **403 `{"code": "login_required"}`**(不回 401,见 §2)。`/mcp` 一并拒绝。
+- 新模块 `src/api/guest_policy.py`:游客可达路由的**唯一白名单**,按 (方法, 路由模板) 登记;中间件对游客会话先查白名单,不在其中的一律 **403 `{"code": "login_required"}`**(不回 401,见 §2)。`/mcp` 一并拒绝。
 - 白名单内的请求按读者面处理:`reader_role_enabled` 增收 guest;collector / admin 判定对游客恒假。
 - 守卫:`tests/test_route_authz_audit.py` 增一条——白名单条目必须真实存在、其余路由对游客会话一律 403 `login_required`。新端点默认不对游客开放。
 - 新公开端点 `POST /api/auth/guest`(`{entry}`):总闸开时签发游客会话并记一次访问;总闸关回 403 `guest_disabled`;已登录账号调用回 409,不降级。
@@ -106,15 +106,15 @@
 ### 3.8 计量与统计
 
 - 阅读与 AI 用量直接复用现有聚合表:`ReaderReadRecord` / `AiUsageRecord` 里 `guest:v:*` 的行就是游客的。
-- 新表 `guest_visits`(待建,配迁移):`(day, visitor_id)` 唯一;`entry`(当天首个入口:`deep_link` / `share_page` / `login_page` / `return`)、`visits`、`first_seen_at`、`last_seen_at`、`converted_username`、`converted_at`。写入点:`POST /api/auth/guest`(建行、记入口);游客打开应用(`/api/runtime`)`visits` +1;游客在本浏览器登录成功时,在其最近一行记转化。留存 365 天(同登录事件)。
+- 新表 `guest_visits`(迁移 `660028d4ab6f`):`(day, visitor_id)` 唯一;`entry`(当天首个入口:`deep_link` / `share_page` / `login_page` / `return`)、`visits`、`first_seen_at`、`last_seen_at`、`converted_username`、`converted_at`。写入点:`POST /api/auth/guest`(建行、记入口);游客打开应用(`/api/runtime`)`visits` +1;游客在本浏览器登录成功时,在其最近一行记转化。留存 365 天(同登录事件)。
 - 指标:访客(去重 vid)/ 新访客、访问、阅读、AI 调用与 tokens、转化与转化率、入口分布、每日走势。
 - 现有口径排除游客:运维「用户」页的账户 / 活跃 / 登录 / 阅读 / AI 五格、活跃榜、账户增长、账户名单与单用户抽屉;「AI」页按用途的总量照常含游客(成本真实),按用户视图里全部访客合成一条「游客」。
 
 ### 3.9 前端
 
 - **启动**:匿名 + 深链 + `guest_access_enabled` → 自动 `POST /api/auth/guest {entry: "deep_link"}`,进阅读器并打开该篇;否则登录页,总闸开时多一个「先逛逛」。已有游客会话直接进阅读器。
-- **登录提示**:新组件 `frontend/src/components/LoginPrompt.jsx`(待建),外形照抄 ConfirmDialog(`<Modal closeOnOverlay centered>`),标题按动作给,按钮「继续逛逛」「登录」;`api.js` 对 403 `login_required`、429 `guest_quota_exhausted` 派发 `dorami-login-required`,由 App 统一弹出,原调用处的报错静默。前端拦截优先(不发请求就弹),后端码兜底。
-- **去登录与回原处**:「登录」切到现有登录页(不另造表单,下游的登录入口、正在进行的登录页重设计都不受影响),登录页对游客多一个「返回继续逛逛」;登录成功后按深链机制回到原处(在看文章就回这篇,其他视图回原 Tab)。
+- **登录提示**:新组件 `frontend/src/components/LoginPrompt.jsx`,外形照抄 ConfirmDialog(`<Modal closeOnOverlay centered>`),标题按动作给,按钮「继续逛逛」「登录」;`api.js` 对 403 `login_required`、429 `guest_quota_exhausted` 派发 `dorami-login-required`,由 App 统一弹出,原调用处的报错静默。前端拦截优先(不发请求就弹),后端码兜底。
+- **去登录与回原处**:「登录」切到现有登录页(不另造表单,下游的登录入口、正在进行的登录页重设计都不受影响),登录页对游客多一个「返回继续逛逛」;登录成功后按深链机制回到原处:在看文章就回这篇,否则落早报——阅读器按新账号整体重挂(key 含 `account_role`),游客态不带进账号。
 - **自动请求**:游客不拉收藏 id、不轮询反馈未读;早报 `ensure` 照常。
 - **各处差异**见 §4;桌面与移动壳同改。分享菜单里「站内链接」的「需要登录」在总闸开时改为「免登录可看」,「公开链接」的「无需登录」改为「仅这一篇」。
 
@@ -126,8 +126,10 @@
 
 ### 3.11 顺手修(手机端)
 
-- 发现页网格 `grid-template-columns: 1fr` 的最小值被卡片内容撑破(列宽 = 卡片最小内容宽,超出容器且各分区不一致)→ `minmax(0, 1fr)`,卡片内层可收缩。
-- 发现页与社交媒体页能左右拖动漂移:锁住移动页滚动容器的横向溢出与横向回弹,并修掉撑宽的元素。
+- 发现页网格 `grid-template-columns: 1fr` 的最小值被卡片内容撑破(列宽 = 卡片最小内容宽,超出容器且各分区不一致)→ `minmax(0, 1fr)`(两列档同改)。实测 390px 屏卡片由 403px(右侧「订阅」被裁)回到 358px 等宽。
+- 发现页窄屏侧距:桌面 `.reader-disc-head` / `.reader-disc-scroll` 的 28px 侧距在手机上与内层 16px 叠成 44px(`mobile.css` 原意是「此处收窄」)→ 外层归零,只留 16px。
+- 社交媒体页日期组头 `.reader-social-day` 用桌面 `margin: 0 -24px` 抵消 24px 列侧距,手机列侧距是 12px → 两侧各伸出 12px,整列可横向拖动 → 手机改 `-12px`。
+- 两页的移动滚动容器加 `overflow-x: hidden` 兜底锁横向。全部手机 Tab 与发现页四个分段逐一测量:任何容器横向可滚宽度为零。
 
 ## 4. 游客界面差异(桌面 / 移动)
 
@@ -152,8 +154,15 @@
 1. 版本:本波是 v3.66.0 之后第一波,开工即改 `3.67.0-alpha`。
 2. 后端:保留账号与访客会话、白名单与中间件、路由审计守卫、账户面排除 → 默认订阅同步与共享早报 → AI 授权映射与访客额度 → 媒体代理 → `guest_visits` 迁移与计量 → 管理端点与排除口径 → 留存清理。
 3. 前端:启动与入口、登录提示与回原处、阅读器各处差异(桌面 + 移动)、设置柜、分享菜单、早报页、公开分享页入口、运维游客区;手机发现页与社交页的横向修复。
-4. 自测:`tests/test_guest_mode.py`(待建)覆盖会话 / 总闸 / 白名单 / 排除 / 共享早报 / 每访客已读 / AI 额度码 / 媒体代理 / 计量与转化;前端纯函数 `node --test`;沙箱 Playwright 截图亮暗 + 移动壳。
+4. 自测:`tests/test_guest_mode.py` 覆盖会话 / 总闸 / 白名单 / 排除 / 共享早报 / 每访客已读 / AI 额度码 / 媒体代理 / 计量与转化;前端纯函数 `node --test`;沙箱 Playwright 截图亮暗 + 移动壳。
 5. 文档同波:`docs/architecture/accounts-and-access.md`(第三角色、访客身份与保留账号)、`docs/architecture/llm-and-ai.md`、`docs/architecture/admin-ops.md`、`docs/architecture/reader-distribution.md`、`docs/architecture/analysis-and-briefs.md`(顺手更正已退役的「公共日报就绪追加」触发)、`docs/reference/endpoints.md`、`docs/frontend/conventions.md`(需账号的操作对游客一律走登录提示)、`AGENTS.md` 架构速览「整体」行的角色轴、用户手册;version-history / backlog / decisions。
+
+### 5.1 落地记录(2026-10-22)
+
+- 后端(提交 `2769c6f`):`services/accounts.py`(游客身份与保留账号、账户面排除)、新 `services/guest_access.py`(总闸 / 每访客额度 KV / 入口与转化计量 / 统计 / 访客状态回收)、新 `api/guest_policy.py`(白名单)、`api/app.py`(中间件门控、`POST /api/auth/guest`、会话与运行时载荷、登录转化、默认订阅镜像与共享早报同步)、`api/feed_service.py`、`api/routers/{reader,personal_briefs,media,admin}.py`、`services/{translation_jobs,ai_usage,reader_activity,analysis_observability,admin_audit,retention}.py`、模型 `GuestVisitRecord` + 迁移 `660028d4ab6f`。
+- 前端:`utils/loginPrompt.js`(文案表 + 事件)、`utils/guestCopy.js`(锁定分区说明 + 早报理由改写)、`components/LoginPrompt.jsx`、`components/settings/GuestSections.jsx`、`components/admin/GuestZone.jsx`;`App.jsx`(启动 / 深链自动游客 / 入场提示 / 叠层登录页 / 回原处 / 会话静默续期)、`api.js`、`LoginScreen.jsx`(「先逛逛」「返回继续逛逛」)、`useReaderState.js`(写操作拦截)、`ReaderTab.jsx` / 移动三页(轨底登录、各入口)、`SettingsModal.jsx` / `MobileSettings.jsx`、`ShareMenu.jsx`、`PersonalBriefPage.jsx`、`SharedArticlePage.jsx`、`ReaderAiPanel.jsx`、`DiscoverPage.jsx`、`Modal.jsx`(叠层标记)、`Toast.jsx`(行内动作)、`AdminOpsTab.jsx`(游客区 + AI 看板「游客」系列)、`index.css` / `mobile.css`。
+- 自测:后端全量通过(含 `tests/test_guest_mode.py` 14 项、路由审计 3 项反向对照);前端 lint / 128 项单测(新 `test/guestMode.test.mjs` 7 项)/ build 通过;沙箱(真实库副本)Playwright:桌面游客流程 16 项 × 亮暗、运维游客区 17 项、分享页入口 7 项、AI 额度(`ctx.route` 伪造 429,不打真模型)4 项、手机游客 12 项、手机横向溢出扫描全部 Tab 与发现页四分段为零,控制台无报错(既有 404 除外)。
+- 实现中的两处修正:轨底「登录」图标被未分层的全局 `* { box-sizing: border-box }` 压成 6px(样页的 `content-box` 在应用里不生效)→ 改为 30px 方块 + 6px 内距;问答面板「点外即收起」把叠在上面的登录提示也算作外部,关掉提示面板跟着收起 → 共用外壳 `Modal.jsx` 的遮罩加 `data-modal-layer` 标记,面板把弹窗里的点击(含遮罩)同灯箱一样当作上层操作(lint 规则 `no-raw-modal-overlay` 不许别处出现遮罩类名,故用标记而非类名);发现页「添加源」对游客改为点按钮即提示,不先打开表单。
 
 ## 6. 风险与取舍
 

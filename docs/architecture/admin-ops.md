@@ -22,3 +22,9 @@ parallel to AI metering but for plain reads — `src/services/reader_activity.py
 ## Login metering (登录计量)
 
 `accounts.touch_login` writes a `LoginEventRecord` (raw event with precise timestamp) on every successful login **in addition to** updating the `UserRecord.last_login_at` snapshot — the event stream backs windowed login counts and the "最近若干次登录时间" list (logins are low-frequency, so raw retention is fine). `accounts.logins_by_user` (windowed per-user count) enriches the account list / 活跃用户 Top's 登录 dimension; `accounts.summarize_user_logins` (count + by_day + recent N timestamps) feeds the per-user drawer's expandable 最近登录 list.
+
+## 游客区与游客计量(issue #213)
+
+运维「用户」子页账户增长之下的「游客」区(`components/admin/GuestZone.jsx`,全体管理员可见、聚合口径,吃页头近 N 天时间窗):总闸 +「游客 AI」两枚开关、五格 KPI(访客 / 新访客、访问 / 日均、阅读 / 人均、AI 调用 / tokens、转化 / 转化率)、每日走势(访客柱 + 当日转化点)、入口分布条;区头齿轮开「游客设置」抽屉(四类用途每位游客的日额度,默认订阅名单只读展示、回指「内容」子页)。端点 `GET /api/admin/guest?days=`、`PUT /api/admin/guest/settings`(`/api/admin` 前缀,自动入审计)。
+
+计量:新表 `guest_visits`(`(day, visitor_id)` 唯一;`entry` = 当天首个入口 `deep_link` / `share_page` / `login_page` / `return`;`visits` 由游客打开应用拉 `/api/runtime` 累加;游客在本浏览器登录成功时在其 30 天内最近一行记 `converted_username` / `converted_at`),留存 365 天(同登录事件);阅读与 AI 用量直接复用 `ReaderReadRecord` / `AiUsageRecord` 里 `guest:v:*` 的行。现有口径排除游客:用户子页的账户 / 活跃 / 登录 / 阅读 / AI 五格、活跃榜、账户增长、账户名单与单用户抽屉(访客活动 404);「AI」子页按用途的总量照常含游客(成本真实),按用户视图里全体访客合成一条「游客」(哨兵 `guest:`,同 `other:` 写法,前端映射显示名);「分析 → 指标」的早报版面数排除游客版。

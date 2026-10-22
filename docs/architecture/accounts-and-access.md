@@ -26,3 +26,16 @@ In the default single-node `all` deployment the only axis that matters is the **
 ## Optional second axis — deployment runtime role
 
 (`[runtime] role`, default `all`): only relevant for a *split deployment* where collection and distribution live on separate hosts (`collector` = collect/archive only, external network; `reader` = distribution only, intranet; they exchange data via *Archive Sync*). It ANDs with the account role (`collector_enabled = runtime allows collector AND account is admin`). For the default `all` single-node setup this axis is inert and `collector_enabled`/`reader_enabled` reduce to the account role above — you can ignore it unless you actually split the deployment.
+
+## 游客(guest,issue #213)
+
+第三种会话角色 `guest`:收到站内链接的人不登录也能逛读者面。**会话按访客,三件事落到共享保留账号**:
+
+- **访客身份** `guest:v:<vid>`(vid 随机 16 字节,签名长效 Cookie `{AUTH_COOKIE_NAME}_vid` 记住,365 天,同一浏览器回来沿用);会话令牌沿用登录 Cookie,载荷 `{"sub": "guest:v:<vid>", "role": "guest", "gen": <保留账号会话世代>}`,有效期同账号会话。已读、AI 计次与用量、阅读计量、长文翻译任务、公告关闭都按访客身份记,天然各自独立;访客 30 天无访问,其已读与公告关闭行随留存清理回收。
+- **共享保留账号** `guest:shared`(`users` 一行,`role = "guest"`,不可登录的密码哈希,免兴趣引导):订阅范围(镜像新账号默认名单)、共享游客早报、AI 授权(`ai_beta_enabled` = 运维「游客 AI」开关)落到它;`accounts.account_username_for` / `get_account_for` 做映射,`accounts.is_guest_username` 是唯一判定(保留账号与 `guest:v:*` 都算)。冒号是系统保留身份的命名空间(用户名禁冒号,同 `deleted:` 墓碑)。
+- **总闸** KV `guest_access_enabled`(`services/guest_access.py`,缺省开):关 = 保留账号停用 + 轮换会话世代,在线游客下一次请求即 401;开总闸 / 改默认名单 / 启动时 `ensure_guest_identity` 同步订阅镜像,名单变化时重编当日游客早报。
+- **门控 fail-closed**:`src/api/guest_policy.py` 的 `GUEST_ALLOWED_ROUTES` 按 (方法, 路由模板) 登记游客可达端点(用 Starlette 路由匹配,与框架分发同序取首个完全匹配,不会因前缀相同误放写端点);其余一律 **403 `{"code": "login_required"}`**——不回 401,因为前端 401 即踢回登录页;`/mcp` 与全部管理 / 采集面同样拒绝。守卫 `tests/test_route_authz_audit.py`:登记项必须真实存在、其余路由对游客一律 403。**新端点默认不对游客开放**,要开放须显式登记。
+- **会话端点**:公开的 `POST /api/auth/guest {entry}`(总闸关 403 `guest_disabled`;已登录账号 409,不降级);`GET /api/auth/session` 匿名载荷带 `guest_access_enabled`,游客会话 `user.role = "guest"`、展示名「游客」;`/api/runtime` 对游客给 `account_role: "guest"`,对所有会话给 `guest_access_enabled`。
+- **账户面排除**:保留账号不进账户名单,批量 / 改角色 / 启停 / 删号 / 重置密码一律拒绝;`seed_root_admin_if_empty` 的空表判定、账户增长、读者数、发现页「N 人订阅」、运维订阅数都不计;登录接口拒绝保留账号名。游客在本浏览器登录成功时记一次转化(运维游客区)。
+- **媒体代理**:游客会话的 `/api/media/proxy` 只回已缓存图片,未命中 302 回源站,不在服务端代为下载(免得成了公网取图代理)。
+- **前端**:游客是读者面的只读角色(`App.jsx` 的 `isGuest`,布局同读者)。需要账号的操作不隐藏入口,点了走 `utils/loginPrompt.requestLogin` 弹 `LoginPrompt`(不发请求),后端 403 `login_required` / 429 `guest_quota_exhausted` 由 `api.js` 派发同一事件兜底;「登录」把登录页叠在阅读器之上(「返回继续逛逛」原样回来),登录成功按深链机制回到在看的那篇;阅读器 key 含 `account_role`,游客登录成账号后整体重挂一次。未登录打开站内链接且总闸开时直接以游客进入并打开那一篇;登录页总闸开时多一个「先逛逛」。
