@@ -23,6 +23,7 @@ from api.textutils import _json_loads
 from api.tokens import hash_subscription_token, normalize_delivery_policy
 from models.db import ArticleRecord, ReaderFeedTokenRecord, ReaderSubscriptionRecord, UserRecord
 from services import source_visibility
+from services.accounts import account_username_for
 
 
 def serialize_subscription(record: ReaderSubscriptionRecord, token: Optional[str] = None) -> Dict[str, Any]:
@@ -123,9 +124,11 @@ def resolve_subscribed_source_ids(
     """
     if not username:
         return []
+    # 游客(issue #213):访客身份没有订阅行,范围一律取保留账号(其订阅镜像默认名单)。
+    owner = account_username_for(username)
     subs = session.exec(
         select(ReaderSubscriptionRecord).where(
-            ReaderSubscriptionRecord.owner_username == username,
+            ReaderSubscriptionRecord.owner_username == owner,
             ReaderSubscriptionRecord.is_active == True,  # noqa: E712
         )
     ).all()

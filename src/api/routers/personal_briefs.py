@@ -24,6 +24,7 @@ from models.db import (
     SourceStateRecord,
     UserRecord,
 )
+from services import accounts as accounts_service
 from services import personal_digest as digest_service
 from services import personal_digest_titles as digest_titles
 from services.article_analysis import source_allows_analysis
@@ -63,7 +64,8 @@ def _username(auth: dict[str, Any]) -> str:
     username = str(auth.get("sub") or auth.get("username") or "").strip()
     if not username:
         raise HTTPException(status_code=401, detail="未登录或登录已过期")
-    return username
+    # 游客(issue #213):全体访客共享游客保留账号名下的一版早报(版面外键到 users)。
+    return accounts_service.account_username_for(username)
 
 
 def _parse_json(raw: str, fallback: Any) -> Any:
@@ -504,14 +506,37 @@ def _ensure(
     }
 
 
+# 游客版当天生成失败后,首开触发系统重编的最短间隔(游客没有「重新编排」,失败版不能挂一整天)。
+GUEST_FAILED_RETRY = dt.timedelta(minutes=10)
+
+
+def _retry_failed_guest_edition(session: Session) -> None:
+    now = dt.datetime.now(digest_service.SHANGHAI)
+    edition = _latest_edition(session, accounts_service.GUEST_USERNAME, now.date().isoformat())
+    if edition is None or edition.status != PersonalDigestStatus.FAILED.value:
+        return
+    failed_at = _parse_time(edition.updated_at)
+    if failed_at is not None and now - failed_at < GUEST_FAILED_RETRY:
+        return
+    try:
+        _ensure(session, accounts_service.GUEST_USERNAME,
+                reason=DigestGenerationReason.MANUAL_REBUILD, first_open=False)
+    except Exception:  # noqa: BLE001 - 重试失败照旧返回失败版,下次首开再试
+        session.rollback()
+        _logger.warning("游客早报失败重编未成功", exc_info=True)
+
+
 @router.post("/today/ensure")
 def ensure_today(
     auth: dict[str, Any] = Depends(deps.require_reader),
     session: Session = Depends(deps.get_session),
 ):
+    username = _username(auth)
+    if username == accounts_service.GUEST_USERNAME:
+        _retry_failed_guest_edition(session)
     return _ensure(
         session,
-        _username(auth),
+        username,
         reason=DigestGenerationReason.FIRST_OPEN,
         first_open=True,
     )

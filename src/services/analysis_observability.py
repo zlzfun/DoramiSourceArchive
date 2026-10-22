@@ -27,6 +27,7 @@ from models.db import (
     PersonalDigestItemRecord,
     TagRetagJobRecord,
 )
+from services.accounts import GUEST_USERNAME
 
 
 FEATURE_FLAG_KEYS = (
@@ -129,10 +130,12 @@ def collect_release_metrics(
     candidates = list(session.exec(select(CmsTagCandidateRecord)).all())
     retag_jobs = list(session.exec(select(TagRetagJobRecord)).all())
 
+    # 游客共享版(issue #213)每天一份,不是某位读者的编排,不进个人早报质量口径。
     editions = list(
         session.exec(
             select(PersonalDigestEditionRecord).where(
-                PersonalDigestEditionRecord.report_date >= since_date
+                PersonalDigestEditionRecord.report_date >= since_date,
+                PersonalDigestEditionRecord.owner_username != GUEST_USERNAME,
             )
         ).all()
     )

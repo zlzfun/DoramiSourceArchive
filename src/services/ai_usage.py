@@ -15,6 +15,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlmodel import Session, func, select
 
 from models.db import AiUsageRecord
+from services.accounts import GUEST_VISITOR_PREFIX
 
 # 计入看板的用途标签（白名单，避免脏数据）。
 # 注意：读者面新增 AI 用途必须同步登记此处 + reader.py _AI_DAILY_CALL_LIMITS +
@@ -124,6 +125,13 @@ BY_DAY_USER_TOP_N = 6
 # 「其它」当聚合身份:它是合法用户名,真有此名用户进 Top 时尾部用户会被并进同名
 # 桶污染其系列(codex 交叉检视实证)。前端在渲染层把 sentinel 映射回「其它」。
 OTHER_SERIES_LABEL = "other:"
+# 游客(issue #213):每位访客是一个 guest:v:<vid> 身份,成本看板按用户视图里合成一条「游客」系列
+# (同 OTHER_SERIES_LABEL 的冒号哨兵写法,前端渲染层映射回「游客」);账户列表 / 活跃榜不计访客。
+GUEST_SERIES_LABEL = "guest:"
+
+
+def _series_user(username: str) -> str:
+    return GUEST_SERIES_LABEL if str(username or "").startswith(GUEST_VISITOR_PREFIX) else username
 
 
 def summarize(session: Session, *, days: int = 30) -> Dict[str, Any]:
@@ -159,10 +167,10 @@ def summarize(session: Session, *, days: int = 30) -> Dict[str, Any]:
         totals["completion_tokens"] += row.completion_tokens
         totals["total_tokens"] += row.total_tokens
         _bump(by_purpose, row.purpose, row)
-        _bump(by_user, row.username, row)
+        _bump(by_user, _series_user(row.username), row)
         _bump(by_day, row.day, row)
         _bump(by_day_purpose, (row.day, row.purpose), row)
-        _bump(by_day_user, (row.day, row.username), row)
+        _bump(by_day_user, (row.day, _series_user(row.username)), row)
 
     def _sorted(bucket: Dict[str, Dict[str, int]], key_name: str, *, by_key: bool = False):
         items = [{key_name: k, **v} for k, v in bucket.items()]
@@ -210,7 +218,8 @@ def summarize(session: Session, *, days: int = 30) -> Dict[str, Any]:
 def usage_by_user(session: Session, *, days: int = 30) -> Dict[str, Dict[str, int]]:
     """窗口内按用户聚合 `{username: {calls, total_tokens}}`，排除系统任务（system）
     与删号墓碑（`deleted:*`，见 accounts.DELETED_USER_PREFIX——账户列表/活跃榜只看
-    现存账户；墓碑消耗仍进 `summarize` 的成本看板口径）。
+    现存账户；墓碑消耗仍进 `summarize` 的成本看板口径）。游客身份（`guest:*`）同样排除,
+    它们在运维「游客」区单列。
 
     v3.41 账户管理 V2（审计 M07）：SQL 端 GROUP BY 聚合，不再把窗口明细行整批载入
     内存 Python 累加。
@@ -227,6 +236,7 @@ def usage_by_user(session: Session, *, days: int = 30) -> Dict[str, Dict[str, in
             AiUsageRecord.day >= since,
             AiUsageRecord.username != SYSTEM_USERNAME,
             AiUsageRecord.username.not_like("deleted:%"),
+            AiUsageRecord.username.not_like("guest:%"),
         )
         .group_by(AiUsageRecord.username)
     ).all()

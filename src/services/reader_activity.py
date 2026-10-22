@@ -72,6 +72,8 @@ def reads_by_user(session: Session, *, days: int = 30) -> Dict[str, int]:
         .where(
             ReaderReadRecord.day >= since,
             ReaderReadRecord.username.not_like("deleted:%"),
+            # 游客身份(guest:v:*,issue #213)不进账户列表 / 活跃榜,在运维「游客」区单列。
+            ReaderReadRecord.username.not_like("guest:%"),
         )
         .group_by(ReaderReadRecord.username)
     ).all()

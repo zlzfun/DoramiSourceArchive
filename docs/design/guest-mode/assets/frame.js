@@ -58,8 +58,8 @@
 
   // ── 登录提示文案:标题说「登录后能做什么」,一句说明讲为什么要账号;按钮恒为「继续逛逛 | 登录」 ──
   const COPY = {
-    favorite: { icon: 'star', title: '登录后即可收藏', msg: '收藏跟着账号走,换台设备也在。' },
-    favlist: { icon: 'star', title: '登录后可查看收藏', msg: '收藏跟着账号走,换台设备也在。' },
+    favorite: { icon: 'star', title: '登录后即可收藏', msg: '收藏会保存到你的账号。' },
+    favlist: { icon: 'star', title: '登录后可查看收藏', msg: '收藏会保存到你的账号。' },
     subscribe: { icon: 'plus', title: '登录后即可订阅「{name}」', msg: '游客看到的是一组默认来源;登录后按你自己的订阅编排早报与文章。' },
     subscribeAll: { icon: 'plus', title: '登录后即可订阅这些来源', msg: '游客看到的是一组默认来源;登录后按你自己的订阅编排早报与文章。' },
     unsub: { icon: 'rss', title: '登录后即可调整订阅', msg: '游客看到的是一组默认来源;登录后按你自己的订阅编排早报与文章。' },
@@ -259,7 +259,7 @@
     const growth = $('section[aria-label="账户增长"]');
     if (!growth) return;
     const zone = el(`<div>
-      <div class="zone-head"><span class="zone-title">游客</span><span class="zone-hint">近 30 天 · 全体游客合计 · 不计入上方账户口径</span><span class="guest-zone-acts"><button type="button" class="rowact-btn" title="游客设置" aria-label="游客设置" data-drawer>${svg(P.gear)}</button></span></div>
+      <div class="zone-head"><span class="zone-title">游客</span><span class="zone-hint">近 30 天 · 不计入上方账户口径</span><span class="guest-zone-acts"><button type="button" class="rowact-btn" title="游客设置" aria-label="游客设置" data-drawer>${svg(P.gear)}</button></span></div>
       <section class="surface-card ai-switchboard is-wrap rounded-[var(--r-card)] mb-4" aria-label="游客开关">
         <span class="ai-light" data-light></span>
         <div class="ai-switch-lbl" title="总闸:关闭后在线游客会话立即失效,未登录打开站内链接回到登录页">游客访问</div>
@@ -268,7 +268,7 @@
         <div class="ai-switch-lbl" title="只关游客的 AI;正式读者不受影响">游客 AI</div>
         <button type="button" role="switch" aria-checked="true" aria-label="游客 AI" class="ledger-switch is-on" data-switch="ai"></button>
         <span class="ai-divider"></span>
-        <span class="tiny-meta" data-meta>未登录打开站内链接直接以游客浏览 · AI 每日上限:不限</span>
+        <span class="tiny-meta" data-meta>未登录打开站内链接直接以游客浏览 · 每位游客的 AI 日额度与读者相同</span>
       </section>
       <section class="surface-card kpi-strip" aria-label="游客概览">
         <div class="kpi"><span class="kpi-num">128</span><span class="kpi-lbl">访客</span><span class="kpi-sub">新访客 96</span></div>
@@ -298,23 +298,22 @@
       $('[data-light]', zone).classList.toggle('is-off', !guestOn);
       $('[data-meta]', zone).textContent = !guestOn
         ? '已关闭:未登录打开站内链接回到登录页,在线游客会话立即失效'
-        : (aiOn ? '未登录打开站内链接直接以游客浏览 · AI 每日上限:不限' : '游客照常浏览;AI 入口对游客隐藏');
+        : (aiOn ? '未登录打开站内链接直接以游客浏览 · 每位游客的 AI 日额度与读者相同' : '游客照常浏览;AI 入口对游客隐藏');
     });
     // 游客设置抽屉(ledger-drawer 语法,同运维用户抽屉)
     const sources = ['哆啦美·AI资讯日报', '量子位', 'IT之家 AI', '新智元', 'The Decoder', 'OpenAI 新闻', 'Anthropic 新闻', 'Google DeepMind 博客', 'X · OpenAI'];
-    const row = (lbl, sub) => `<label class="guest-limit-row"><span>${lbl}${sub ? `<small>${sub}</small>` : ''}</span><input class="guest-limit-input" inputmode="numeric" placeholder="不限" aria-label="${lbl}每日上限"></label>`;
+    const row = (lbl, sub, val) => `<label class="guest-limit-row"><span>${lbl}${sub ? `<small>${sub}</small>` : ''}</span><input class="guest-limit-input" inputmode="numeric" value="${val}" aria-label="${lbl}每日上限"></label>`;
     const drawer = el(`<div>
       <div class="ledger-scrim" data-drawer-close aria-hidden="true"></div>
       <aside class="ledger-drawer" role="dialog" aria-modal="true" aria-label="游客设置">
-        <div class="ledger-drawer-head"><span class="ledger-drawer-title">游客设置<small class="drawer-title-sub">全体游客合计,按服务端日期零点重置</small></span><button type="button" class="icon-button shrink-0" aria-label="关闭" data-drawer-close>${svg(P.x, 'h-5 w-5')}</button></div>
+        <div class="ledger-drawer-head"><span class="ledger-drawer-title">游客设置<small class="drawer-title-sub">每位游客各自计数,按服务端日期零点重置</small></span><button type="button" class="icon-button shrink-0" aria-label="关闭" data-drawer-close>${svg(P.x, 'h-5 w-5')}</button></div>
         <div class="ledger-drawer-body">
           <div>
-            <div class="drawer-sec-title">AI 每日上限 · 留空或 0 = 不限</div>
-            ${row('翻译', '文章 / 社交 / 逐字稿 / 长文后台翻译,按调用计')}
-            ${row('问答', '按提问计')}
-            ${row('速读', '按生成计')}
-            ${row('点播', '播客导读 + 文章旁白,按新开一次生成计')}
-            ${row('日 token 预算', '游客合计;全站日预算对游客同样生效')}
+            <div class="drawer-sec-title">每位游客的 AI 日额度 · 缺省与读者相同,0 = 不限</div>
+            ${row('翻译', '文章 / 社交 / 逐字稿 / 长文后台翻译,按调用计', 50)}
+            ${row('问答', '按提问计', 100)}
+            ${row('速读', '按生成计', 50)}
+            ${row('点播', '播客导读 + 文章旁白,按新开一次生成计', 5)}
           </div>
           <div>
             <div class="drawer-sec-title">游客的订阅 = 新账号默认订阅(9 个来源)</div>

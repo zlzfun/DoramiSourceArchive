@@ -421,6 +421,16 @@ class MediaStore:
 
     # ── 供给主径 ──────────────────────────────────────────────
 
+    async def get_cached(self, url: str) -> Optional[MediaAssetRecord]:
+        """只读取法:已缓存且字节可读才返回,**绝不去源站下载**(游客取图用,issue #213)。"""
+        url = (url or "").strip()
+        if not url.lower().startswith(("http://", "https://")):
+            return None
+        record = await asyncio.to_thread(self._get_record, url_hash_of(url))
+        if record is None or record.status != "cached":
+            return None
+        return record if await self._restore_cached(record) else None
+
     async def get_or_fetch(self, url: str, *, force: bool = False) -> Optional[MediaAssetRecord]:
         """命中缓存或即时下载；成功返回 cached 记录（文件已在盘上），失败 None。
 
