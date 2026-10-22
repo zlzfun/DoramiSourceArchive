@@ -29,7 +29,6 @@ export const LOGIN_PROMPTS = {
   },
   interest: { icon: 'tags', title: '登录后即可设置兴趣', message: '早报会按你的兴趣多挑几篇。' },
   addsrc: { icon: 'plus', title: '登录后即可添加来源', message: '可以添加自己的 RSS 源，或导入 OPML。' },
-  publink: { icon: 'link', title: '登录后即可生成公开链接', message: '站内链接可以直接复制；公开链接要用账号签发。' },
   feedback: { icon: 'message', title: '登录后即可反馈', message: '回复会出现在你的「反馈与建议」里。' },
   ai: { icon: 'sparkles', title: '游客今日的 AI 试用已用完', message: '登录后继续使用翻译、问答与速读。' },
   generic: { icon: 'login', title: '登录后可用', message: '游客可以随意阅读、试用 AI；这一步需要账号。' },

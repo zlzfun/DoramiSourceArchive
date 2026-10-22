@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, Copy, Link2, Loader2, Trash2, X } from 'lucide-react';
 import { createArticleShare, fetchArticleShares, revokeArticleShare } from '../api';
 import { copyText } from '../utils/clipboard';
-import { requestLogin } from '../utils/loginPrompt';
 import {
   articleDeepLink,
   publicShareLink,
@@ -26,13 +25,15 @@ import {
  *    大字（用户当时觉得「违和」的正是 bug 渲染），字号/字重现写在 .share-expiry
  *    容器上靠继承穿透（conventions §3）。
  *
- * 游客模式(issue #213,样页 docs/design/guest-mode/ 拍板):总闸开时收到站内链接的人能以游客直接看,
- * 两组注记随之改为「免登录可看 / 仅这一篇」;游客自己只能复制站内链接,生成公开链接弹登录提示,
- * 也不拉自己的分享列表(游客没有)。
+ * 游客模式(issue #213,目检拍板):游客总闸开时全站内容本就免登录可看,公开链接「只暴露这一篇、
+ * 可撤销、会过期」的意义随之消失——浮层只留站内链接(注记「免登录可看」),公开链接区不渲染、
+ * 也不拉分享列表;总闸关时两档照旧(公开链接是唯一免登录的分享方式)。已发出的公开链接照常有效,
+ * 公开链接整体退役另立 issue 评估。
  */
-export default function ShareMenu({ articleId, onClose, showToast, guest = false, guestAccessEnabled = false }) {
+export default function ShareMenu({ articleId, onClose, showToast, guestAccessEnabled = false }) {
+  const showPublic = !guestAccessEnabled;
   const [liveShare, setLiveShare] = useState(null);   // 该篇当前存活的公开链接(至多一条)
-  const [loading, setLoading] = useState(!guest);
+  const [loading, setLoading] = useState(showPublic);
   const [creating, setCreating] = useState(false);
   const [expiryDays, setExpiryDays] = useState(7);
   const [copiedKey, setCopiedKey] = useState('');
@@ -41,7 +42,7 @@ export default function ShareMenu({ articleId, onClose, showToast, guest = false
   const copyTimerRef = useRef(null);
 
   const load = useCallback(async () => {
-    if (guest) return;
+    if (!showPublic) return;
     try {
       const data = await fetchArticleShares(articleId);
       const items = Array.isArray(data?.items) ? data.items : [];
@@ -52,7 +53,7 @@ export default function ShareMenu({ articleId, onClose, showToast, guest = false
     } finally {
       setLoading(false);
     }
-  }, [articleId, guest]);
+  }, [articleId, showPublic]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -139,24 +140,15 @@ export default function ShareMenu({ articleId, onClose, showToast, guest = false
           : <Copy className="h-3.5 w-3.5 share-primary-copy" />}
       </button>
 
-      {/* ② 公开链接:虚线分隔之下,同构组头 */}
+      {/* ② 公开链接:虚线分隔之下,同构组头;游客总闸开时不出现(见文件头) */}
+      {showPublic && (
       <div className="share-public">
         <div className="share-group-head">
           <span className="micro-label">公开链接</span>
-          <span className="share-group-note">{guestAccessEnabled ? '仅这一篇' : '无需登录'}</span>
+          <span className="share-group-note">无需登录</span>
         </div>
 
-        {guest ? (
-          <div className="share-expiry">
-            <button
-              type="button"
-              className="share-create"
-              onClick={() => requestLogin('publink')}
-            >
-              生成公开链接
-            </button>
-          </div>
-        ) : loading ? null : !publicEnabled ? (
+        {loading ? null : !publicEnabled ? (
           <p className="share-public-off">公开分享已由管理员关闭，可改用上方站内链接。</p>
         ) : (
           <>
@@ -217,6 +209,7 @@ export default function ShareMenu({ articleId, onClose, showToast, guest = false
           </>
         )}
       </div>
+      )}
     </div>
   );
 }

@@ -129,7 +129,6 @@ export default function MobileArticlePage({
               articleId={activeArticle.id}
               onClose={() => setShareOpen(false)}
               showToast={showToast}
-              guest={rs.isGuest}
               guestAccessEnabled={guestAccessEnabled}
             />
           )}

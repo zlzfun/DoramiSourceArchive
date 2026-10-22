@@ -1,4 +1,4 @@
-import { LogIn, Link2, MessageSquare, Plus, Rss, Sparkles, Star, Tags, X } from 'lucide-react';
+import { LogIn, MessageSquare, Plus, Rss, Sparkles, Star, Tags, X } from 'lucide-react';
 import Modal from './Modal';
 import { loginPromptCopy } from '../utils/loginPrompt';
 
@@ -7,7 +7,6 @@ const ICONS = {
   plus: Plus,
   rss: Rss,
   tags: Tags,
-  link: Link2,
   message: MessageSquare,
   sparkles: Sparkles,
   login: LogIn,

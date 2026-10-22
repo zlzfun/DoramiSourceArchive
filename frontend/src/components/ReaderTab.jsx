@@ -1418,7 +1418,6 @@ export default function ReaderTab({
                     articleId={activeArticle.id}
                     onClose={() => setShareOpen(false)}
                     showToast={showToast}
-                    guest={rs.isGuest}
                     guestAccessEnabled={guestAccessEnabled}
                   />
                 )}
