@@ -13,7 +13,7 @@
 
 > 顺序为迁入时原样(待发布波在前、纪元叙事在中、近期波在后);每行只记「现状是什么 / 落在哪」,详细记录在下文各节。
 
-- **游客模式(issue #213,开发版 3.67.0-alpha,待合入)**:收到站内链接免登录先逛——会话按访客 `guest:v:<vid>`(已读、AI 计次各自独立),订阅范围 / 共享早报 / AI 授权落保留账号 `guest:shared`;白名单门控 `src/api/guest_policy.py`(其余 403 `login_required`);总闸默认开;AI 每位游客与读者同额(429 `guest_quota_exhausted`);登录提示 `LoginPrompt` + 叠层登录页回原处;运维「用户」子页游客区(`components/admin/GuestZone.jsx`)+ 新表 `guest_visits`;顺手修手机发现页卡片撑宽与发现 / 社交页横向漂移;方案 `docs/plans/issue-213-guest-mode.md`,样页 `docs/design/guest-mode/`。
+- **游客模式(issue #213,开发版 3.67.0-alpha;2026-10-23 目检放行)**:收到站内链接免登录先逛——会话按访客 `guest:v:<vid>`(已读、AI 计次各自独立),订阅范围 / 共享早报 / AI 授权落保留账号 `guest:shared`;白名单门控 `src/api/guest_policy.py`(其余 403 `login_required`);总闸默认开;AI 每位游客与读者同额(429 `guest_quota_exhausted`);登录提示 `LoginPrompt` + 叠层登录页回原处;运维「用户」子页游客区(`components/admin/GuestZone.jsx`)+ 新表 `guest_visits`;顺手修手机发现页卡片撑宽与发现 / 社交页横向漂移;方案 `docs/archive/issue-213-guest-mode.md`,样页 `docs/design/guest-mode/`;公开链接退役另见 #215。
 - **论文全文阅读首期收口(issue #41,v3.66.0；2026-10-22)**：#201 全文阅读/摘要分析/回填/FTS 优化、#206/#207 翻译修复、#208 后台续译已完成；方案归档至 `docs/archive/issue-41-paper-fulltext.md`，后置范围进入 backlog 展望。
 - **文档整理波(issue #210,2026-10-21,待合入)**:L0 = `AGENTS.md` 正文(≤ 220 行)+ `CLAUDE.md` `@AGENTS.md`;Key Design Decisions 等原文迁入 `docs/architecture/` `reference/` `dev/` `ops/`;28 篇完结方案 + `specs/` `artifacts/` + 零引用样页归档;新建 `decisions.md`(ADR-lite)、`docs/dev/workflow.md`、`.claude/rules/` 四枚、项目技能三枚、守卫 `scripts/check_docs.py`;方案 `docs/plans/issue-210-docs-tidy.md`。
 - **社交流翻译(issue #84,待发布)**:推文卡片最后一行「✦ 译为中文」(管整张卡片,「显示更多」仍只管正文折叠),原文一字不动、译文追加在正文下与引用卡内;`POST /api/reader/ai/social/{id}/translate` 主推(转推取 `reposted.text`)+ 引用推一次 JSON 调用、复用 #201 分段 / #206 逐行单元协议与完整输出校验,缓存 `translation_zh_social`(不与文章 `translation_zh` 混用);可译判定按 X `lang` + 中文启发式,前后端共用 `tests/fixtures/social_translate_cases.json`,规范化补存内嵌推文 `lang`;经软准入闸的读者 AI 接口日额度 429 统一带 `Retry-After`(距服务端零点,前端按它恢复入口);X API 无翻译能力;方案 `docs/archive/social-translate-plan.md`,样页 `docs/design/social-translate/`。
@@ -47,7 +47,7 @@
 
 ## issue #213 游客模式(分支 `feat/issue-213-guest-mode`,开发版 3.67.0-alpha,版本号以实际发版为准)
 
-站内链接只能发给有账号的人——收到的人没有账号就只看到登录卡。本波让没登录的人先逛:读全部内容、试用 AI、看一份按默认订阅编排的早报,碰到需要账号的操作再提示登录。方案与拍板见 [`issue-213-guest-mode.md`](./plans/issue-213-guest-mode.md),样页 `docs/design/guest-mode/`(九个场景,底稿是真实库沙箱抓的现网界面)。
+站内链接只能发给有账号的人——收到的人没有账号就只看到登录卡。本波让没登录的人先逛:读全部内容、试用 AI、看一份按默认订阅编排的早报,碰到需要账号的操作再提示登录。方案与拍板见 [`issue-213-guest-mode.md`](./archive/issue-213-guest-mode.md),样页 `docs/design/guest-mode/`(九个场景,底稿是真实库沙箱抓的现网界面)。
 
 **两轮拍板**:第一批定下「只提示登录、不做注册」「AI 各用途全开、额度尽可能大」「全体游客共享一版早报」;R1 样页把 AI 做成全体游客合计的游客池 + 游客日 token 预算、总闸默认关,第二批用户改为**总闸默认开**、**AI 按每位游客分别计次**(不要合计总量),并把登录提示里「收藏跟着账号走,换台设备也在」换成平实说法(「收藏会保存到你的账号。」)。每位游客的日额度缺省与正式读者相同(50 / 100 / 50 / 5),运维可调,0 = 不限。
 

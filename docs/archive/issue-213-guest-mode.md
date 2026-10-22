@@ -1,7 +1,8 @@
 # 游客模式:收到站内链接免登录先逛(issue #213)方案
 
-> 状态:进行中(实现完成,待交叉检视与用户目检)
-> 实现方:Claude Code(Opus 5.5);检视方:Codex(待定)。issue [#213](https://github.com/zlzfun/DoramiSourceArchive/issues/213) · 样页 [`docs/design/guest-mode/`](../design/guest-mode/README.md)
+> 状态:归档(2026-10-23,用户目检放行;实现随 PR 合入 main,开发版 3.67.0-alpha,版本号以实际发版为准)
+> **归档于 2026-10-23(issue #213,开发版 3.67.0-alpha)**:现状以 `docs/architecture/` 与代码为准,文中路径与状态为当时记录;公开链接退役另见 issue #215。
+> 实现方:Claude Code(Opus 5.5);检视方:Codex(gpt-6-astra,ultra,两轮通过,见 §7)。issue [#213](https://github.com/zlzfun/DoramiSourceArchive/issues/213) · 样页 [`docs/design/guest-mode/`](../design/guest-mode/README.md)
 
 ## 0. 拍板记录
 

@@ -14,7 +14,7 @@ from typing import Any, FrozenSet, Iterable, Optional, Tuple
 
 from starlette.routing import Match
 
-# (方法, 路由模板)。分组即方案 docs/plans/issue-213-guest-mode.md §3.2 的白名单表。
+# (方法, 路由模板)。分组即方案 docs/archive/issue-213-guest-mode.md §3.2 的白名单表。
 GUEST_ALLOWED_ROUTES: FrozenSet[Tuple[str, str]] = frozenset({
     # 会话与能力(/api/auth/{session,logout,guest} 在中间件里本就公开,不必登记)
     ("GET", "/api/runtime"),

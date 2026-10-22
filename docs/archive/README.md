@@ -53,6 +53,10 @@
 
 - [horizon-vs-dorami.md](./horizon-vs-dorami.md) — 与 Thysrael/Horizon 的抓取/日报原理对照。
 
+## 游客模式(2026-10-23,issue #213)
+
+- [issue-213-guest-mode.md](./issue-213-guest-mode.md) — 收到站内链接免登录先逛:访客会话 + 共享保留账号 `guest:shared`、白名单门控、共享游客早报、每访客已读与 AI 计次(与读者同额)、登录提示与叠层登录回原处、运维游客区;三批拍板、Codex 两轮检视(§7)与目检返修(分享菜单收口、小字「游客登录」)。
+
 ## 论文全文阅读（2026-10-22，issue #41 收口）
 
 - [issue-41-paper-fulltext.md](./issue-41-paper-fulltext.md) — HF/arXiv HTML 全文阅读、摘要分析、默认 dry-run 回填、翻译完整性与 FTS 优化；§0 汇总 #201/#206/#207/#208 的完成证据及 PDF/其它源/复杂排版/修订跟踪/授权边界。原方案与检视过程保留供追溯。

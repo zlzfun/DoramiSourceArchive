@@ -1,7 +1,7 @@
 # 游客模式样页(issue #213)
 
 收到站内链接的人不登录也能先逛;需要账号的操作再提示登录。拍板后落到前端,这里是设计记录,不随实现更新;
-实现以 `frontend/src` 为准。方案与待拍板项见 [`docs/plans/issue-213-guest-mode.md`](../../plans/issue-213-guest-mode.md)。
+实现以 `frontend/src` 为准。方案与待拍板项见 [`docs/archive/issue-213-guest-mode.md`](../../archive/issue-213-guest-mode.md)。
 
 ## 文件
 

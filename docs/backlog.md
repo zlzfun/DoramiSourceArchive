@@ -6,8 +6,6 @@
 
 ## 进行中
 
-- ☐ **issue #213 游客模式**(分支 `feat/issue-213-guest-mode`,方案 `docs/plans/issue-213-guest-mode.md`,样页 `docs/design/guest-mode/`;2026-10-22 两批拍板):实现与沙箱自查完成,待 Codex 本地检视 → 用户目检 → 合入;合入后同步 master 时核对内网登录入口仍保留「游客登录」「返回继续逛逛」,并行中的登录页重设计落地时同样保留。
-  有意不做:注册 / 申请开通;游客数据(已读、AI 计次)迁移到登录后的账号;游客限流与反爬(观察期看 `guest_visits` 与访问日志再定);清 Cookie 换新访客身份绕开单人额度(全站日 token 预算兜底,公网部署宜设);用户手册未补游客截图。
 - ☐ **issue #210 文档整理波**(分支 `feat/issue-210-docs-tidy`,方案 `docs/plans/issue-210-docs-tidy.md`;2026-10-21 用户拍板 D1–D10 全按推荐):
   L0 改为 `AGENTS.md` 正文 + `CLAUDE.md` `@AGENTS.md`;CLAUDE.md 的 Key Design Decisions / 目录树 / 端点 / 测试 / 迁移 / 配置 / 年表原文迁入 `docs/{architecture,reference,dev,ops}/` 与 version-history;
   28 篇完结方案归档 + `specs/` `artifacts/` 归档 + 零引用样页归档;新建 `decisions.md`、`docs/dev/workflow.md` 等、四枚 `.claude/rules/`、三枚项目技能、守卫 `scripts/check_docs.py`。
@@ -200,6 +198,9 @@
 - **日报 `per_source_cap=5` 是软配额**:`select_top` 的 overflow 补位可再加同源条目,淡日单源可能超过 5 篇(The Decoder 入名单后更可能出现);若运营要硬上限需改 overflow 语义。
 
 ## 已完结(近期,留档索引;执行记录与更早波次见 `docs/archive/README.md`)
+
+- ☑ **issue #213 游客模式**(开发版 3.67.0-alpha;2026-10-23 目检放行,已预合入 master 供内网验收):访客会话 + 共享保留账号、白名单门控、共享游客早报、每访客已读与 AI 计次(与读者同额)、登录提示与叠层登录回原处、运维游客区;检视与目检记录见 [归档方案](./archive/issue-213-guest-mode.md)。同步 master 时核对内网登录入口仍保留「游客登录」「返回继续逛逛」,并行中的登录页重设计(#214)落地时同样保留。
+  有意不做:注册 / 申请开通;游客数据(已读、AI 计次)迁移到登录后的账号;游客限流与反爬(观察期看 `guest_visits` 与访问日志再定);清 Cookie 换新访客身份绕开单人额度(全站日 token 预算兜底,公网部署宜设);用户手册未补游客截图。公开链接退役见上方展望 #215。
 
 - ☑ **issue #41 论文全文阅读首期**（v3.66.0；2026-10-22 用户确认收口）：HF 官方 arXiv HTML 异步补全、章节/图片/公式/表格与基本排版、失败回退摘要、摘要分析边界、默认 dry-run 回填及 FTS 更新优化由 #201 完成；真实 R1 翻译问题由 #206/#207 修复，后台续译由 #208 完成（#202 已关闭）。测试、目检与交叉审查见 [归档方案](./archive/issue-41-paper-fulltext.md)；后续边界已单列上方展望。
 

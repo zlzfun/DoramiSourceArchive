@@ -4,7 +4,7 @@
 
 | 样页 | 波次 / issue | 说明 |
 |---|---|---|
-| `guest-mode/`(README + index / frame) | issue #213(已拍板,实现中) | 游客模式九个场景:深链直达 / 登录页「先逛逛」/ 登录提示 / 游客版早报 / 发现页 / 分享 / AI 试用 / 设置与我的 / 运维游客区;底稿为现网 DOM 快照 |
+| `guest-mode/`(README + index / frame) | issue #213(已落地) | 游客模式九个场景:深链直达 / 登录页「先逛逛」/ 登录提示 / 游客版早报 / 发现页 / 分享 / AI 试用 / 设置与我的 / 运维游客区;底稿为现网 DOM 快照 |
 | `podcast-player/`(README + index / global / pane) | issue #199(v3.66) | 播客区方案 A / B / C × 状态 s1–s6,全局播放条条位 × 配色;拍板 C + 内容区浮层 + 封面模糊 |
 | `social-translate/`(README + index / frame) | issue #84(v3.66) | 社交流翻译入口与译文呈现 |
 | `visual-refine-final/`(index / type / color / reader / brief / console / details + shots) | issue #184(v3.65) | 视觉精修定稿:字体 / 中性色三套 / 阅读器 / 夜航早报 / 管理面;字体 data URI 内嵌可离线开 |
