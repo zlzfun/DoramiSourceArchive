@@ -506,6 +506,10 @@ def test_translate_podcast_transcript_gates_guest_by_site_budget(monkeypatch, tm
 
 def test_translate_podcast_transcript_cache_hit_ignores_guest_gates(monkeypatch, tmp_path):
     """已有译文时访客额度 / 全站预算都用满也照常读缓存:零成本不该被 429 拦。"""
+    import datetime as _dt
+
+    from api.routers import reader as reader_router
+    from models.db import AiUsageRecord
     from services import accounts as accounts_service
 
     app_module, sink = _base_setup(monkeypatch, tmp_path, "transcript-guest-cached.db")
@@ -525,7 +529,15 @@ def test_translate_podcast_transcript_cache_hit_ignores_guest_gates(monkeypatch,
 
     monkeypatch.setattr(accounts_service, "reader_ai_budget_exhausted", lambda _s: True)
     with TestClient(app_module.app) as guest:
-        _guest_client_username(guest)
+        visitor = _guest_client_username(guest)
+        today = _dt.date.today().isoformat()
+        with Session(sink.engine) as session:  # 访客 translate 次数同样用满
+            session.add(AiUsageRecord(
+                day=today, username=visitor, purpose="translate", model="test-model",
+                calls=reader_router._AI_DAILY_CALL_LIMITS["translate"], total_tokens=1,
+                updated_at=today,
+            ))
+            session.commit()
         again = guest.post(
             "/api/reader/ai/podcasts/podcast-translation/translate-transcript",
             json={"source_kind": "publisher_transcript"},

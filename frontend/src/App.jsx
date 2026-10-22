@@ -451,7 +451,9 @@ export default function App() {
   // 全部 fetchers 的 loadRuntimeAndFetchers。
   const refreshRuntime = useCallback(async () => {
     try {
+      const gen = authGeneration();
       const runtime = await fetchRuntimeInfo();
+      if (gen !== authGeneration()) return null; // 途中换了身份:旧身份的能力位作废
       setRuntimeInfo(runtime);
       return runtime;
     } catch {
@@ -463,7 +465,14 @@ export default function App() {
     if (runtimeLoadingRef.current) return;
     runtimeLoadingRef.current = true;
     try {
-      const runtime = await fetchRuntimeInfo();
+      // 拉取途中 Cookie 换过身份(续期与登录交错,检视 R2 观察项)就丢弃旧身份的能力位、按新身份重拉,
+      // 免得晚到的旧 runtime 盖住新会话。代次只在认证队列里推进,换身份是有限次的,循环必然收敛。
+      let runtime;
+      for (;;) {
+        const gen = authGeneration();
+        runtime = await fetchRuntimeInfo();
+        if (gen === authGeneration()) break;
+      }
       setRuntimeInfo(runtime);
       if (runtime.collector_enabled) {
         // 模板节点(is_template:generic_* 参数驱动通用抓取器)只在后端保留——
