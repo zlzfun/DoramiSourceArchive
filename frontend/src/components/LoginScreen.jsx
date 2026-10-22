@@ -334,7 +334,7 @@ function mountConstellation(canvas) {
 }
 
 // 游客入口(issue #213),只加两个入口、不动表单(登录页另有重设计在做,落地时须保留):
-// - guestEnabled + onGuestEnter:总闸开时登录卡多一个次级按钮「先逛逛」;
+// - guestEnabled + onGuestEnter:总闸开时登录按钮下方多一行小字「游客登录」(目检拍板:不要整条次级按钮);
 // - fromGuest + onBackToGuest:游客点了「登录」时叠层呈现,开场直接落到登录卡这一幕,卡顶「返回继续逛逛」。
 export default function LoginScreen({
   logoError, onLogoError, onLogin, onLoginComplete,
@@ -610,19 +610,14 @@ export default function LoginScreen({
               </button>
 
               {guestEnabled && onGuestEnter && !fromGuest && (
-                <>
-                  <button
-                    type="button"
-                    className="guest-enter"
-                    onClick={handleGuestEnter}
-                    disabled={guestEntering || isSubmitting || warping}
-                  >
-                    {guestEntering ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
-                    {guestEntering ? '正在进入' : '先逛逛'}
-                    {!guestEntering ? <ArrowRight aria-hidden="true" /> : null}
-                  </button>
-                  <p className="guest-enter-note">不登录也能阅读、试用 AI</p>
-                </>
+                <button
+                  type="button"
+                  className="guest-enter"
+                  onClick={handleGuestEnter}
+                  disabled={guestEntering || isSubmitting || warping}
+                >
+                  {guestEntering ? '正在进入…' : '游客登录'}
+                </button>
               )}
 
               <p className="auth-foot">受 HMAC 会话保护 · 哆啦美</p>

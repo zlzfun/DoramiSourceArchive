@@ -23,6 +23,7 @@
 
 9. 游客总闸开时**分享菜单只留站内链接**(「复制链接 · 免登录可看」,公开链接区不出现);总闸关时两档照旧;已发出的公开链接照常有效。公开链接整体退役另立 [#215](https://github.com/zlzfun/DoramiSourceArchive/issues/215) 评估。样页里公开链接「仅这一篇」的注记不再采用。
 10. 每位游客的 AI 日额度确认按读者同额(50 / 100 / 50 / 5)。
+11. 登录页的游客入口不要整条次级按钮「先逛逛」,改为登录按钮下方一行小字「游客登录」(连同其下的说明句一起去掉)。
 
 ## 1. 目标与边界
 
@@ -117,7 +118,7 @@
 
 ### 3.9 前端
 
-- **启动**:匿名 + 深链 + `guest_access_enabled` → 自动 `POST /api/auth/guest {entry: "deep_link"}`,进阅读器并打开该篇;否则登录页,总闸开时多一个「先逛逛」。已有游客会话直接进阅读器。
+- **启动**:匿名 + 深链 + `guest_access_enabled` → 自动 `POST /api/auth/guest {entry: "deep_link"}`,进阅读器并打开该篇;否则登录页,总闸开时登录按钮下方多一行小字「游客登录」(第三批拍板 11;R2 样页为按钮「先逛逛」)。已有游客会话直接进阅读器。
 - **登录提示**:新组件 `frontend/src/components/LoginPrompt.jsx`,外形照抄 ConfirmDialog(`<Modal closeOnOverlay centered>`),标题按动作给,按钮「继续逛逛」「登录」;`api.js` 对 403 `login_required`、429 `guest_quota_exhausted` 派发 `dorami-login-required`,由 App 统一弹出,原调用处的报错静默。前端拦截优先(不发请求就弹),后端码兜底。
 - **去登录与回原处**:「登录」切到现有登录页(不另造表单,下游的登录入口、正在进行的登录页重设计都不受影响),登录页对游客多一个「返回继续逛逛」;登录成功后按深链机制回到原处:在看文章就回这篇,否则落早报——阅读器按新账号整体重挂(key 含 `account_role`),游客态不带进账号。
 - **自动请求**:游客不拉收藏 id、不轮询反馈未读;早报 `ensure` 照常。
@@ -165,7 +166,7 @@
 ### 5.1 落地记录(2026-10-22)
 
 - 后端(提交 `2769c6f`):`services/accounts.py`(游客身份与保留账号、账户面排除)、新 `services/guest_access.py`(总闸 / 每访客额度 KV / 入口与转化计量 / 统计 / 访客状态回收)、新 `api/guest_policy.py`(白名单)、`api/app.py`(中间件门控、`POST /api/auth/guest`、会话与运行时载荷、登录转化、默认订阅镜像与共享早报同步)、`api/feed_service.py`、`api/routers/{reader,personal_briefs,media,admin}.py`、`services/{translation_jobs,ai_usage,reader_activity,analysis_observability,admin_audit,retention}.py`、模型 `GuestVisitRecord` + 迁移 `660028d4ab6f`。
-- 前端:`utils/loginPrompt.js`(文案表 + 事件)、`utils/guestCopy.js`(锁定分区说明 + 早报理由改写)、`components/LoginPrompt.jsx`、`components/settings/GuestSections.jsx`、`components/admin/GuestZone.jsx`;`App.jsx`(启动 / 深链自动游客 / 入场提示 / 叠层登录页 / 回原处 / 会话静默续期)、`api.js`、`LoginScreen.jsx`(「先逛逛」「返回继续逛逛」)、`useReaderState.js`(写操作拦截)、`ReaderTab.jsx` / 移动三页(轨底登录、各入口)、`SettingsModal.jsx` / `MobileSettings.jsx`、`ShareMenu.jsx`、`PersonalBriefPage.jsx`、`SharedArticlePage.jsx`、`ReaderAiPanel.jsx`、`DiscoverPage.jsx`、`Modal.jsx`(叠层标记)、`Toast.jsx`(行内动作)、`AdminOpsTab.jsx`(游客区 + AI 看板「游客」系列)、`index.css` / `mobile.css`。
+- 前端:`utils/loginPrompt.js`(文案表 + 事件)、`utils/guestCopy.js`(锁定分区说明 + 早报理由改写)、`components/LoginPrompt.jsx`、`components/settings/GuestSections.jsx`、`components/admin/GuestZone.jsx`;`App.jsx`(启动 / 深链自动游客 / 入场提示 / 叠层登录页 / 回原处 / 会话静默续期)、`api.js`、`LoginScreen.jsx`(「游客登录」「返回继续逛逛」)、`useReaderState.js`(写操作拦截)、`ReaderTab.jsx` / 移动三页(轨底登录、各入口)、`SettingsModal.jsx` / `MobileSettings.jsx`、`ShareMenu.jsx`、`PersonalBriefPage.jsx`、`SharedArticlePage.jsx`、`ReaderAiPanel.jsx`、`DiscoverPage.jsx`、`Modal.jsx`(叠层标记)、`Toast.jsx`(行内动作)、`AdminOpsTab.jsx`(游客区 + AI 看板「游客」系列)、`index.css` / `mobile.css`。
 - 自测:后端全量通过(含 `tests/test_guest_mode.py` 14 项、路由审计 3 项反向对照);前端 lint / 128 项单测(新 `test/guestMode.test.mjs` 7 项)/ build 通过;沙箱(真实库副本)Playwright:桌面游客流程 16 项 × 亮暗、运维游客区 17 项、分享页入口 7 项、AI 额度(`ctx.route` 伪造 429,不打真模型)4 项、手机游客 12 项、手机横向溢出扫描全部 Tab 与发现页四分段为零,控制台无报错(既有 404 除外)。
 - 实现中的两处修正:轨底「登录」图标被未分层的全局 `* { box-sizing: border-box }` 压成 6px(样页的 `content-box` 在应用里不生效)→ 改为 30px 方块 + 6px 内距;问答面板「点外即收起」把叠在上面的登录提示也算作外部,关掉提示面板跟着收起 → 共用外壳 `Modal.jsx` 的遮罩加 `data-modal-layer` 标记,面板把弹窗里的点击(含遮罩)同灯箱一样当作上层操作(lint 规则 `no-raw-modal-overlay` 不许别处出现遮罩类名,故用标记而非类名);发现页「添加源」对游客改为点按钮即提示,不先打开表单。
 
@@ -173,7 +174,7 @@
 
 - **公网暴露与 AI 成本**:总闸默认开(拍板 4)= 升级后外网可见内容对任何人开放,游客也能用 AI。兜底:每位游客与读者同额的日额度;全站日 token 预算(运维 AI 页,现缺省不限)对游客同样生效;总闸一键关。清 Cookie 能换新访客身份绕开单人额度,公网部署宜设全站预算。
 - **保留账号漏出**:任何遍历 `users` 的新代码都可能把它算进去。用 `accounts.is_guest_username` 单点判定,测试钉住账户名单、增长、KPI、订阅人数四处不含游客。
-- **与登录页重设计并行**:另一条线正在做登录页五方向样页。本波只在登录页加「先逛逛」「返回继续逛逛」两个入口,重设计落地时须保留。
+- **与登录页重设计并行**:另一条线正在做登录页五方向样页。本波只在登录页加「游客登录」「返回继续逛逛」两个入口,重设计落地时须保留。
 - **下游内网分支**:内网登录入口有下游适配;游客「去登录」走现有登录页,同步 master 时核对两个入口仍在。
 - **爬取**:游客会话可遍历可见归档;本波不做限流,观察期看 `guest_visits` 与访问日志再定。
 

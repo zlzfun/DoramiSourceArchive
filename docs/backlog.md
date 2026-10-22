@@ -6,7 +6,7 @@
 
 ## 进行中
 
-- ☐ **issue #213 游客模式**(分支 `feat/issue-213-guest-mode`,方案 `docs/plans/issue-213-guest-mode.md`,样页 `docs/design/guest-mode/`;2026-10-22 两批拍板):实现与沙箱自查完成,待 Codex 本地检视 → 用户目检 → 合入;合入后同步 master 时核对内网登录入口仍保留「先逛逛」「返回继续逛逛」,并行中的登录页重设计落地时同样保留。
+- ☐ **issue #213 游客模式**(分支 `feat/issue-213-guest-mode`,方案 `docs/plans/issue-213-guest-mode.md`,样页 `docs/design/guest-mode/`;2026-10-22 两批拍板):实现与沙箱自查完成,待 Codex 本地检视 → 用户目检 → 合入;合入后同步 master 时核对内网登录入口仍保留「游客登录」「返回继续逛逛」,并行中的登录页重设计落地时同样保留。
   有意不做:注册 / 申请开通;游客数据(已读、AI 计次)迁移到登录后的账号;游客限流与反爬(观察期看 `guest_visits` 与访问日志再定);清 Cookie 换新访客身份绕开单人额度(全站日 token 预算兜底,公网部署宜设);用户手册未补游客截图。
 - ☐ **issue #210 文档整理波**(分支 `feat/issue-210-docs-tidy`,方案 `docs/plans/issue-210-docs-tidy.md`;2026-10-21 用户拍板 D1–D10 全按推荐):
   L0 改为 `AGENTS.md` 正文 + `CLAUDE.md` `@AGENTS.md`;CLAUDE.md 的 Key Design Decisions / 目录树 / 端点 / 测试 / 迁移 / 配置 / 年表原文迁入 `docs/{architecture,reference,dev,ops}/` 与 version-history;

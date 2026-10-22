@@ -45,7 +45,7 @@ const LIMIT_ROWS = [
 // 入口:后端 ENTRIES;回访是中性槽
 const ENTRY_ROWS = [
   ['deep_link', '站内链接', CHART_SLOTS[0]],
-  ['login_page', '登录页「先逛逛」', CHART_SLOTS[1]],
+  ['login_page', '登录页「游客登录」', CHART_SLOTS[1]],
   ['share_page', '公开分享页', CHART_SLOTS[2]],
   ['return', '回访', C_OTHER],
 ];

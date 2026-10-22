@@ -195,7 +195,7 @@ export default function App() {
   const [runtimeLoaded, setRuntimeLoaded] = useState(false);
   const [authState, setAuthState] = useState({ status: 'checking', user: null });
   // ── 游客(issue #213)──
-  // guestAccessEnabled:匿名会话载荷 / runtime 的总闸位,登录页据此显示「先逛逛」。
+  // guestAccessEnabled:匿名会话载荷 / runtime 的总闸位,登录页据此显示「游客登录」。
   // guestLogin:游客点了「登录」——登录页叠在阅读器之上(不卸载阅读器,「返回继续逛逛」原样回来);
   // returnArticleId 是登录后要回到的那篇(取打开登录页那一刻「眼前正在看的那篇」,见 visibleArticleRef)。
   // 游客登录成账号时主界面先卸载、新 runtime 到达后重新挂载(检视 F2),回跳只由新身份的阅读器消费;
@@ -625,7 +625,7 @@ export default function App() {
   // 叠层登录(游客 → 账号)不预热 runtime:主界面在登录完成时整体卸载、拉到新 runtime 后再挂载(检视 F2)。
   const handleGuestOverlayLogin = (username, password) => loginThroughQueue(username, password);
 
-  // 登录页「先逛逛」(issue #213):签发游客会话,落到游客版早报。
+  // 登录页「游客登录」(issue #213):签发游客会话,落到游客版早报。
   const handleGuestEnter = useCallback(async () => {
     const guest = await authQueue.run(async () => {
       const issued = await startGuestSession('login_page');

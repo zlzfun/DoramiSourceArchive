@@ -2334,7 +2334,7 @@ def _guest_user_payload(username: str) -> Dict[str, Any]:
 
 
 class GuestSessionParams(BaseModel):
-    # 入口:deep_link(未登录打开站内链接)| login_page(登录页「先逛逛」)| share_page | return
+    # 入口:deep_link(未登录打开站内链接)| login_page(登录页「游客登录」)| share_page | return
     entry: str = "login_page"
 
 
@@ -2372,7 +2372,7 @@ def get_auth_session(request: Request):
     session = current_auth_session(request)
     if session is None:
         # 匿名可读的全局姿态(issue #130):登录页据此决定是否呈现密码表单;main 恒 True。
-        # guest_access_enabled(issue #213):登录页据此显示「先逛逛」,站内深链据此自动以游客进入。
+        # guest_access_enabled(issue #213):登录页据此显示「游客登录」,站内深链据此自动以游客进入。
         return {
             "authenticated": False,
             "user": None,

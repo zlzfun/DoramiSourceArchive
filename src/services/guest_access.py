@@ -36,7 +36,7 @@ GUEST_AI_LIMITS_KEY = "guest_ai_daily_limits"
 GUEST_AI_LIMIT_KEYS = ("translate", "ask", "summarize", "ondemand")
 GUEST_AI_LIMIT_MAX = 100_000
 
-# 访问入口:当天首个入口记一次(深链 / 公开分享页 / 登录页「先逛逛」/ 已有会话回访)。
+# 访问入口:当天首个入口记一次(深链 / 公开分享页 / 登录页「游客登录」/ 已有会话回访)。
 ENTRIES = ("deep_link", "share_page", "login_page", "return")
 # 访客 30 天无访问即回收其个人状态(已读、公告关闭);访问聚合行保留 365 天(同登录事件)。
 VISITOR_STATE_TTL_DAYS = 30

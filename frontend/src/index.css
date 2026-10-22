@@ -13552,28 +13552,24 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
   /* 叠层登录页:游客点「登录」时盖在阅读器之上,阅读器不卸载 */
   .guest-login-layer { position: fixed; inset: 0; z-index: 300; overflow-y: auto; overscroll-behavior: contain; }
 
-  /* 登录卡上的游客入口(品牌面,与 .auth-* 同属豁免配色) */
+  /* 登录卡上的游客入口:登录按钮下方一行小字(目检拍板,品牌面,与 .auth-* 同属豁免配色) */
   .guest-enter {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    width: 100%;
-    height: 44px;
-    margin-top: 10px;
-    border: 1px solid rgba(160, 168, 204, 0.28);
-    border-radius: var(--r-control);
-    background: transparent;
-    color: rgba(226, 230, 248, 0.86);
-    font-size: 14px;
-    font-weight: 600;
+    display: block;
+    margin: 14px auto 0;
+    padding: 2px 4px;
+    border: 0;
+    background: none;
+    color: rgba(190, 196, 230, 0.72);
+    font-size: 13px;
+    font-weight: 400;
+    text-decoration: underline;
+    text-decoration-color: rgba(190, 196, 230, 0.32);
+    text-underline-offset: 3px;
     cursor: pointer;
-    transition: background-color 160ms var(--motion-ease), border-color 160ms var(--motion-ease);
+    transition: color 160ms var(--motion-ease), text-decoration-color 160ms var(--motion-ease);
   }
-  .guest-enter:hover:not(:disabled) { background: rgba(160, 168, 204, 0.08); border-color: rgba(160, 168, 204, 0.42); }
+  .guest-enter:hover:not(:disabled) { color: rgba(226, 230, 248, 0.95); text-decoration-color: currentColor; }
   .guest-enter:disabled { cursor: default; opacity: 0.7; }
-  .guest-enter svg { width: 15px; height: 15px; }
-  .guest-enter-note { margin: 8px 0 0; text-align: center; font-size: 12px; color: rgba(160, 168, 204, 0.62); }
   .guest-back {
     display: inline-flex;
     align-items: center;

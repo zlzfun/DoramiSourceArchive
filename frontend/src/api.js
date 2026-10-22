@@ -103,7 +103,7 @@ export async function fetchAuthSession() {
   return res.json();
 }
 
-// 游客会话(issue #213):entry = deep_link(未登录打开站内链接)| login_page(登录页「先逛逛」)| share_page
+// 游客会话(issue #213):entry = deep_link(未登录打开站内链接)| login_page(登录页「游客登录」)| share_page
 export function startGuestSession(entry) {
   return request('/auth/guest', { method: 'POST', body: { entry }, errorMsg: '进入游客浏览失败' });
 }
