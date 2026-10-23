@@ -509,7 +509,7 @@ def visible_member_links(
     *,
     limit: int = 10,
 ) -> dict[int, list[dict[str, Any]]]:
-    """event_id → 读者可见成员的链接清单(代表稿序),供个人早报「另见 N 源」快照(issue #103)。
+    """event_id → 读者可见成员的链接清单(代表稿序),供个人早报「另见 N 篇」快照(issue #103)。
 
     只读事件层、只取读者可见成员(隐藏 / 私有 / 凭据源成员一律不出现,与榜单同一判定),
     每事件最多 ``limit`` 条;事件状态不限(早报键命中的事件可能已 closed)。

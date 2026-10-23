@@ -663,7 +663,7 @@ def test_list_events_filters_status_and_title_substring(tmp_path):
 
 
 def test_visible_member_links_lists_reader_visible_members_in_representative_order(tmp_path):
-    """issue #103:早报「另见 N 源」的成员清单——隐藏 / 私有成员不出现、官方代表稿序在前、译题缓存随行、按 limit 截断。"""
+    """issue #103:早报「另见 N 篇」的成员清单——隐藏 / 私有成员不出现、官方代表稿序在前、译题缓存随行、按 limit 截断。"""
     sink = _sink(tmp_path, "links.db")
     with Session(sink.engine) as session:
         session.add(AppSettingRecord(key="reader_hidden_source_ids", value='["hidden-src"]'))

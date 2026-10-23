@@ -102,7 +102,7 @@ SHANGHAI = ZoneInfo("Asia/Shanghai")
 # v2(issue #103):同事件去重消费事件层归属——事件键跨三条通道共享、昨天版面出现过的事件整组抑制、
 # 条目快照带「另见」成员;历史版本的 v1 快照无 event_id / related_sources 键。
 POLICY_VERSION = "personal-digest-v2"
-# 「另见 N 源」每条最多记的同事件成员数(快照体量上限;事件层成员本就以可见成员为准)
+# 「另见 N 篇」每条最多记的同事件成员数(快照体量上限;事件层成员本就以可见成员为准)
 RELATED_SOURCES_LIMIT = 10
 PRIVATE_SOURCE_PREFIX = "user_rss_"
 DEFAULT_PRIVATE_FRESHNESS_MINUTES = 60
@@ -1324,7 +1324,7 @@ def _previous_edition_event_ids(session: Session, article_ids: Iterable[str]) ->
 def _related_sources_by_event(
     session: Session, event_ids: Iterable[int | None]
 ) -> dict[int, list[dict[str, object]]]:
-    """event_id → 读者可见成员链接(代表稿序),条目快照「另见 N 源」的事实来源(issue #103)。"""
+    """event_id → 读者可见成员链接(代表稿序),条目快照「另见 N 篇」的事实来源(issue #103)。"""
 
     from services.event_board import visible_member_links  # 延迟导入:避免服务层环引用
 
@@ -1512,7 +1512,7 @@ def _snapshot(
         "content_value": projection["content_value"],
         "content_value_reason": projection["content_value_reason"] or "",
         "score_dimension": dimension,
-        # issue #103:所属事件与编排时可见的同事件其它报道(「另见 N 源」),不可变快照;
+        # issue #103:所属事件与编排时可见的同事件其它报道(「另见 N 篇」),不可变快照;
         # 历史快照无这两键,页面按缺省处理。
         "event_id": event_id,
         "related_sources": [dict(link) for link in related_sources],
@@ -2456,7 +2456,7 @@ def generate_personal_digest(
 
     item_records: list[PersonalDigestItemRecord] = []
     source_kinds = source_default_kinds()
-    # issue #103:「另见 N 源」= 编排时事件层里该事件的其它可见成员(代表稿序),写进不可变快照
+    # issue #103:「另见 N 篇」= 编排时事件层里该事件的其它可见成员(代表稿序),写进不可变快照
     event_links = _related_sources_by_event(
         session,
         {pool_by_id[aid].event_id for aid in selected_ids if aid in pool_by_id},

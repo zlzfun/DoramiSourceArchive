@@ -2000,3 +2000,27 @@ def test_degraded_fallback_keeps_one_item_per_event(storage):
         assert [item.article_id for item in result.items] == [newest.id, plain.id]
         snapshot = json.loads(result.items[0].snapshot_json)
         assert [row["article_id"] for row in snapshot["related_sources"]] == [older_echo.id]
+
+
+def test_event_that_never_made_yesterdays_edition_is_not_suppressed_today(storage):
+    """跨期抑制只看昨天**版面上出现过**的事件:昨天因分低没上报的事件,今天后续报道分高照常入选,
+    同事件只出一条、早先的低分稿挂在「另见」里(用户 2026-10-23 目检追问的场景)。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        session.flush()
+        early_low = _seed_article(session, 1, score=4.5, published_at=NOW - dt.timedelta(hours=30))   # 昨天没过门槛
+        shown_yesterday = _seed_article(session, 2, score=7.0, published_at=NOW - dt.timedelta(hours=28))
+        followup_high = _seed_article(session, 3, score=9.0, published_at=NOW - dt.timedelta(hours=3))  # 今天的强化报道
+        session.flush()
+        _event_with(session, early_low.id, followup_high.id, hours_ago=30)
+        _past_edition(session, (NOW.date() - dt.timedelta(days=1)).isoformat(), [shown_yesterday.id])
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert [item.article_id for item in result.items] == [followup_high.id]
+        snapshot = json.loads(result.items[0].snapshot_json)
+        assert [row["article_id"] for row in snapshot["related_sources"]] == [early_low.id]
+        stats = json.loads(result.edition.selection_stats_json)
+        assert stats["same_event_previous_day"] == 0
+

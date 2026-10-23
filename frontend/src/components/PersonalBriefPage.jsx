@@ -165,8 +165,8 @@ function WhyMark({ why }) {
   );
 }
 
-// issue #103「另见 N 源」:同一事件的其它报道(编排时的不可变快照,只含读者可见来源);
-// N 数来源,列表逐篇;链接开新窗(是另一来源的稿,不是本条)
+// issue #103「另见 N 篇」:同一事件的其它报道(编排时的不可变快照,只含读者可见来源);
+// N 数篇(用户目检拍板:按来源计会把同源两篇算成一,少报),列表逐篇;链接开新窗(是另一来源的稿,不是本条)
 function relatedOf(snapshot) {
   const rows = Array.isArray(snapshot?.related_sources) ? snapshot.related_sources : [];
   return rows.filter((row) => row && row.url);
@@ -174,7 +174,6 @@ function relatedOf(snapshot) {
 
 function RelatedChip({ links, open, onToggle }) {
   if (!links.length) return null;
-  const count = new Set(links.map((row) => row.source_id || row.url)).size;
   return (
     <button
       type="button"
@@ -183,7 +182,7 @@ function RelatedChip({ links, open, onToggle }) {
       title={open ? '收起同一事件的其它报道' : '同一事件的其它报道'}
       onClick={onToggle}
     >
-      另见 {count} 源
+      另见 {links.length} 篇
     </button>
   );
 }
