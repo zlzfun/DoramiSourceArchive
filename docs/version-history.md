@@ -13,7 +13,7 @@
 
 > 顺序为迁入时原样(待发布波在前、纪元叙事在中、近期波在后);每行只记「现状是什么 / 落在哪」,详细记录在下文各节。
 
-- **Decisions API 新闻裂图(issue #217,待合入)**：OpenAI 浏览器提取补全相对地址，受限静态图片经独立浏览器取图后缓存；存量显示、预取、分享与同步统一解析基址，保留原图且不回写历史内容。方案 `docs/archive/issue-217-decisions-images.md`。
+- **Decisions API 新闻裂图(issue #217,开发版 3.67.0-alpha)**：OpenAI 浏览器提取补全相对地址，受限静态图片经独立浏览器取图后缓存；存量显示、预取、分享与同步统一解析基址，保留原图且不回写历史内容。方案 `docs/archive/issue-217-decisions-images.md`。
 - **游客模式(issue #213,开发版 3.67.0-alpha;2026-10-23 目检放行)**:收到站内链接免登录先逛——会话按访客 `guest:v:<vid>`(已读、AI 计次各自独立),订阅范围 / 共享早报 / AI 授权落保留账号 `guest:shared`;白名单门控 `src/api/guest_policy.py`(其余 403 `login_required`);总闸默认开;AI 每位游客与读者同额(429 `guest_quota_exhausted`);登录提示 `LoginPrompt` + 叠层登录页回原处;运维「用户」子页游客区(`components/admin/GuestZone.jsx`)+ 新表 `guest_visits`;顺手修手机发现页卡片撑宽与发现 / 社交页横向漂移;方案 `docs/archive/issue-213-guest-mode.md`,样页 `docs/design/guest-mode/`;公开链接退役另见 #215。
 - **论文全文阅读首期收口(issue #41,v3.66.0；2026-10-22)**：#201 全文阅读/摘要分析/回填/FTS 优化、#206/#207 翻译修复、#208 后台续译已完成；方案归档至 `docs/archive/issue-41-paper-fulltext.md`，后置范围进入 backlog 展望。
 - **文档整理波(issue #210,2026-10-21,待合入)**:L0 = `AGENTS.md` 正文(≤ 220 行)+ `CLAUDE.md` `@AGENTS.md`;Key Design Decisions 等原文迁入 `docs/architecture/` `reference/` `dev/` `ops/`;28 篇完结方案 + `specs/` `artifacts/` + 零引用样页归档;新建 `decisions.md`(ADR-lite)、`docs/dev/workflow.md`、`.claude/rules/` 四枚、项目技能三枚、守卫 `scripts/check_docs.py`;方案 `docs/plans/issue-210-docs-tidy.md`。
@@ -480,4 +480,4 @@ flags 组合、锁区偏移、错误映射、解锁静默。codex R1 两条 P2 �
 
 ## Decisions API 新闻裂图(issue #217,2026-10-23)
 
-现场确认相对 URL 漏传文章基址、源站普通图片请求被 403 检查双重故障。按用户要求保留图片：新采集补 `base_url`，存量在显示和媒体消费时解析相对地址；文章精确引用的 OpenAI 静态栅格资源遇明确检查时通过独立 Chromium 获取原始字节，禁止重定向、按块限量读取并复用缓存、OSS 与负缓存。分享与同步白名单以完整 URL 精确匹配，游客会话仍只读缓存。沙箱正式预取链路恢复两张原图；不接入实时语音，不回写旧正文。Claude Code 复检与用户目检通过；后端全量 2989、返修定向 225 加排队超时单测、前端 137 均通过。本地 7,194 篇历史扫描后真实回测 57 张全部取回，另发现 HTML figure 字面显示缺口并记 backlog。详细证据与部署顺序见方案，待 CI 通过后合入。
+现场确认相对 URL 漏传文章基址、源站普通图片请求被 403 检查双重故障。按用户要求保留图片：新采集补 `base_url`，存量在显示和媒体消费时解析相对地址；文章精确引用的 OpenAI 静态栅格资源遇明确检查时通过独立 Chromium 获取原始字节，禁止重定向、按块限量读取并复用缓存、OSS 与负缓存。分享与同步白名单以完整 URL 精确匹配，游客会话仍只读缓存。沙箱正式预取链路恢复两张原图；不接入实时语音，不回写旧正文。Claude Code 复检与用户目检通过；后端全量 2989、返修定向 225 加排队超时单测、前端 137 均通过。本地 7,194 篇扫描加获授权只读的近期 86 篇 OpenAI 文章，真实回测 106 个独立图片地址全部取回；累计 211 篇 OpenAI 文章仅本篇出现相对静态资源。另发现 HTML figure 字面显示缺口并记 backlog。详细证据与部署顺序见方案，变更随 PR #219 交付。

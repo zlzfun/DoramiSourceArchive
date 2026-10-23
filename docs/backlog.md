@@ -6,7 +6,7 @@
 
 ## 进行中
 
-- ☐ **issue #217 Decisions API 新闻裂图**（方案 `docs/archive/issue-217-decisions-images.md`）：相对地址解析与 OpenAI 受限静态图浏览器取图已实现，检视和用户目检通过；本地历史 57 张真实取图全部成功，PR #219 待 CI。不做全量回填、实时语音接入。观察期：JSON 行号粘连、源站检查变化、非规范 URL 标准化差异、量增后的引用扫描开销，以及浏览器极端卡死时清理阶段无独立硬超时。两端部署先 replica 后 authority，防旧 GC 误回收相对图媒体。
+- ☐ **issue #217 媒体修复观察期**（方案 `docs/archive/issue-217-decisions-images.md`，PR #219）：相对地址解析与 OpenAI 受限静态图浏览器取图已实现，检视和用户目检通过；本地加近期生产历史共 106 张真实取图全部成功，211 篇 OpenAI 文章仅本篇出现同类地址。不做全量回填、实时语音接入。观察期：JSON 行号粘连、源站检查变化、非规范 URL 标准化差异、量增后的引用扫描开销，以及浏览器极端卡死时清理阶段无独立硬超时。两端部署先 replica 后 authority，防旧 GC 误回收相对图媒体。
 - ☐ **历史 HTML figure 图片转换**（#217 回测发现）：Lilian Weng《Reward Hacking in Reinforcement Learning》两张相对 PNG 已可取回，但旧正文 HTML `<figure>` 在阅读器显示字面标签。另行评估提取 / 读取时的安全 HTML→Markdown 转换；不直接放开任意 HTML。见 [回测记录](./archive/issue-217-decisions-images.md)。
 
 - ☐ **issue #210 文档整理波**(分支 `feat/issue-210-docs-tidy`,方案 `docs/plans/issue-210-docs-tidy.md`;2026-10-21 用户拍板 D1–D10 全按推荐):
