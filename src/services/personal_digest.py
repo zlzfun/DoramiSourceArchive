@@ -1283,18 +1283,22 @@ def _latest_edition(
 
 
 def _previous_edition_article_ids(
-    session: Session, username: str, report_date: str
+    session: Session, username: str, report_date: str, *, lanes: Iterable[str] | None = None
 ) -> set[str]:
+    """昨天最新完成版的条目文章 id;``lanes`` 给定时只取这些通道的条目(issue #103 升级例外只看头条)。"""
+
     previous_date = (dt.date.fromisoformat(report_date) - dt.timedelta(days=1)).isoformat()
     previous = _latest_completed_edition(session, username, previous_date)
     if previous is None or previous.id is None:
         return set()
-    rows = session.exec(
-        select(PersonalDigestItemRecord.article_id).where(
-            PersonalDigestItemRecord.edition_id == previous.id,
-            PersonalDigestItemRecord.article_id.is_not(None),
-        )
-    ).all()
+    query = select(PersonalDigestItemRecord.article_id).where(
+        PersonalDigestItemRecord.edition_id == previous.id,
+        PersonalDigestItemRecord.article_id.is_not(None),
+    )
+    lane_values = sorted({str(lane) for lane in (lanes or ())})
+    if lane_values:
+        query = query.where(PersonalDigestItemRecord.selection_lane.in_(lane_values))
+    rows = session.exec(query).all()
     return {str(article_id) for article_id in rows if article_id}
 
 
@@ -2103,9 +2107,18 @@ def generate_personal_digest(
 
     tag_display_names = _interest_display_names(session, interests)
     previous_article_ids = _previous_edition_article_ids(session, username, report_date)
-    # issue #103:昨天版面(任一分区)上过的事件今天整组抑制——三条通道与降级回退同口径;
-    # 被抑制的候选记下来,进编排说明行的 same_event_previous_day
+    # issue #103:昨天版面(任一分区)上过的事件今天在订阅 ∪ 兴趣池与降级回退整组抑制;
+    # 被抑制的候选记下来,进编排说明行的 same_event_previous_day。
+    # 升级例外(用户 2026-10-23 目检拍板):头条池只剔除昨天**以头条身份**出现过的事件——昨天只是
+    # 精选里一条低分稿、今天同事件出现够头条资格的报道(官方一手 / 多源印证)时,允许以头条出现,
+    # 不然事件升级为重大新闻的那一刻会被整组抑制吞掉;既有的前两期实体抑制照旧叠加。
     previous_event_ids = _previous_edition_event_ids(session, previous_article_ids)
+    previous_headline_event_ids = _previous_edition_event_ids(
+        session,
+        _previous_edition_article_ids(
+            session, username, report_date, lanes=(SelectionLane.BREAKING.value,)
+        ),
+    )
     # 分池记:订阅 ∪ 兴趣池的计数与 candidate_count 同范围进说明行;头条池另记全版口径(codex R1 P2)
     previous_event_dropped: set[str] = set()
     previous_event_dropped_breaking: set[str] = set()
@@ -2113,10 +2126,12 @@ def generate_personal_digest(
     def _without_previous_events(
         pool: Iterable[DigestArticleCandidateDTO],
         dropped: set[str],
+        *,
+        suppressed: set[int],
     ) -> list[DigestArticleCandidateDTO]:
         kept: list[DigestArticleCandidateDTO] = []
         for candidate in pool:
-            if candidate.event_id is not None and candidate.event_id in previous_event_ids:
+            if candidate.event_id is not None and candidate.event_id in suppressed:
                 dropped.add(candidate.article_id)
                 continue
             kept.append(candidate)
@@ -2144,6 +2159,7 @@ def generate_personal_digest(
         return _without_previous_events(
             (candidate for candidate in pool if candidate.article_id not in previous_article_ids),
             previous_event_dropped,
+            suppressed=previous_event_ids,
         )
 
     def _select(pool: Sequence[DigestArticleCandidateDTO]):
@@ -2180,14 +2196,19 @@ def generate_personal_digest(
     breaking_candidates: list[DigestArticleCandidateDTO] = []
     breaking_policy_value = breaking_policy(session)
     if breaking_policy_value.max_items > 0:
+        # 与订阅池同序:先按文章 id 排掉昨天用过的那篇,再做事件剔除(统计里昨天那篇不算「被事件抑制」)
         breaking_candidates = _without_previous_events(
-            load_breaking_candidates(
-                session,
-                cutoff_at=current,
-                window_hours=PERSONAL_DIGEST_BREAKING_WINDOW_HOURS,
-                min_score=breaking_policy_value.min_score - breaking_policy_value.corroboration_slack,
+            (
+                candidate for candidate in load_breaking_candidates(
+                    session,
+                    cutoff_at=current,
+                    window_hours=PERSONAL_DIGEST_BREAKING_WINDOW_HOURS,
+                    min_score=breaking_policy_value.min_score - breaking_policy_value.corroboration_slack,
+                )
+                if candidate.article_id not in previous_article_ids
             ),
             previous_event_dropped_breaking,
+            suppressed=previous_headline_event_ids,
         )
         if breaking_candidates:
             breaking_selections = select_breaking_events(

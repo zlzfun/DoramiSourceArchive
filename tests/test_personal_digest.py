@@ -1624,7 +1624,7 @@ def _seed_valued(
     return article
 
 
-def _past_edition(session: Session, report_date: str, article_ids: list[str]) -> None:
+def _past_edition(session: Session, report_date: str, article_ids: list[str], *, lane: str = "read") -> None:
     stamp = f"{report_date}T08:30:00+08:00"
     edition = PersonalDigestEditionRecord(
         owner_username="alice",
@@ -1644,7 +1644,7 @@ def _past_edition(session: Session, report_date: str, article_ids: list[str]) ->
             edition_id=edition.id,
             article_id=article_id,
             position=position,
-            selection_lane="read",
+            selection_lane=lane,
             quality_score_snapshot=5.0,
             snapshot_json="{}",
             created_at=stamp,
@@ -1906,8 +1906,9 @@ def test_headline_event_is_not_repeated_in_the_curated_lanes(storage):
         assert json.loads(result.edition.selection_stats_json)["same_event_merged"] == 1
 
 
-def test_yesterdays_event_is_suppressed_as_a_whole_today(storage):
-    """昨天版面上过的事件(任一成员)今天整组不入选——兴趣 / 分数通道与头条同口径。"""
+def test_yesterdays_event_is_suppressed_as_a_whole_today_except_an_escalation_headline(storage):
+    """昨天版面上过的事件(任一成员)今天在精选里整组不入选;升级例外:昨天只是精选里一条稿,
+    今天同事件出现够头条资格的官方稿时允许以头条出现,它的「另见」列出昨天那篇(用户目检拍板)。"""
     with Session(storage.engine) as session:
         session.add_all([_user(), _subscribe("alice", "rss_a")])
         session.flush()
@@ -1922,11 +1923,38 @@ def test_yesterdays_event_is_suppressed_as_a_whole_today(storage):
 
         result = generate_personal_digest(session, "alice", now=NOW)
 
+        assert [(item.article_id, item.selection_lane) for item in result.items] == [
+            (official_today.id, "breaking"), (fresh.id, "quality"),
+        ]
+        head = json.loads(result.items[0].snapshot_json)
+        assert {row["article_id"] for row in head["related_sources"]} == {yesterday_pick.id, today_echo.id}
+        stats = json.loads(result.edition.selection_stats_json)
+        # 订阅 ∪ 兴趣池里 today_echo 被昨日事件剔除;头条池不剔(昨天不是头条),它在头条池里算并入头条;
+        # 昨天那篇按文章 id 排除,不计
+        assert stats["same_event_previous_day"] == 1 and stats["same_event_previous_day_all"] == 1
+        assert stats["same_event_merged"] == 0 and stats["same_event_merged_all"] == 1
+
+
+def test_yesterdays_headline_event_stays_suppressed_even_for_an_official_follow_up(storage):
+    """昨天本身就是头条的事件,今天同事件的官方后续不再成头条(与既有前两期实体抑制叠加,无实体标签也生效)。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        session.flush()
+        yesterday_head = _seed_article(
+            session, 1, source="rss_openai_news", score=9.5, published_at=NOW - dt.timedelta(hours=20)
+        )
+        official_today = _seed_article(session, 2, source="rss_openai_news", score=9.6)
+        fresh = _seed_article(session, 3, score=7.0)
+        session.flush()
+        _event_with(session, yesterday_head.id, official_today.id)
+        _past_edition(session, (NOW.date() - dt.timedelta(days=1)).isoformat(), [yesterday_head.id], lane="breaking")
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
         assert [item.article_id for item in result.items] == [fresh.id]
         stats = json.loads(result.edition.selection_stats_json)
-        # 不带后缀只计订阅 ∪ 兴趣池(today_echo);*_all 另计头条池(official_today);昨天那篇按文章 id 排除,不计
-        assert stats["same_event_previous_day"] == 1 and stats["same_event_previous_day_all"] == 2
-        assert stats["same_event_merged"] == 0 and stats["same_event_merged_all"] == 0
+        assert stats["same_event_previous_day"] == 0 and stats["same_event_previous_day_all"] == 1
 
 
 def test_degraded_fallback_skips_the_event_already_headlined(storage):
