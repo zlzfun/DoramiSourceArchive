@@ -84,6 +84,7 @@ from services.digest_selection import (
     DigestSelectionPolicy,
     ValueLanePolicy,
     eligible_for_selection,
+    event_key,
     interest_codes_of,
     interest_only_policy,
     section_for_genre,
@@ -98,7 +99,11 @@ from services.source_naming import friendly_source_name, source_role
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
-POLICY_VERSION = "personal-digest-v1"
+# v2(issue #103):同事件去重消费事件层归属——事件键跨三条通道共享、昨天版面出现过的事件整组抑制、
+# 条目快照带「另见」成员;历史版本的 v1 快照无 event_id / related_sources 键。
+POLICY_VERSION = "personal-digest-v2"
+# 「另见 N 源」每条最多记的同事件成员数(快照体量上限;事件层成员本就以可见成员为准)
+RELATED_SOURCES_LIMIT = 10
 PRIVATE_SOURCE_PREFIX = "user_rss_"
 DEFAULT_PRIVATE_FRESHNESS_MINUTES = 60
 GENERATION_LEASE_SECONDS = 300
@@ -1178,13 +1183,7 @@ def _candidates_from_rows(
         ).all()
     } if primary_ids else {}
     # issue #121 事件层:一篇文章最多属于一个事件,按 article_ids 批量取所属事件 ID
-    event_ids = {
-        row.article_id: row.event_id for row in session.exec(
-            select(EventMemberRecord).where(
-                EventMemberRecord.article_id.in_(article_ids)
-            )
-        ).all()
-    } if article_ids else {}
+    event_ids = _event_id_map(session, article_ids)
     candidates: list[DigestArticleCandidateDTO] = []
     meta = source_meta or {}
     source_kinds = source_default_kinds() if rows else {}
@@ -1297,6 +1296,39 @@ def _previous_edition_article_ids(
         )
     ).all()
     return {str(article_id) for article_id in rows if article_id}
+
+
+def _event_id_map(session: Session, article_ids: Iterable[str]) -> dict[str, int]:
+    """article_id → 所属事件 ID(事件层当前归属;一篇最多属于一个事件)。"""
+
+    ids = sorted({str(value) for value in article_ids if value})
+    if not ids:
+        return {}
+    return {
+        str(row.article_id): int(row.event_id)
+        for row in session.exec(
+            select(EventMemberRecord).where(EventMemberRecord.article_id.in_(ids))
+        ).all()
+    }
+
+
+def _previous_edition_event_ids(session: Session, article_ids: Iterable[str]) -> set[int]:
+    """昨天版面各条目(任一分区)所属的事件:今天整个事件抑制(issue #103)。
+
+    按事件层**当前**归属查,不读昨天的快照——管理员事后合并 / 摘出会改归属,以改后的为准。
+    """
+
+    return set(_event_id_map(session, article_ids).values())
+
+
+def _related_sources_by_event(
+    session: Session, event_ids: Iterable[int | None]
+) -> dict[int, list[dict[str, object]]]:
+    """event_id → 读者可见成员链接(代表稿序),条目快照「另见 N 源」的事实来源(issue #103)。"""
+
+    from services.event_board import visible_member_links  # 延迟导入:避免服务层环引用
+
+    return visible_member_links(session, event_ids, limit=RELATED_SOURCES_LIMIT + 1)
 
 
 def _recent_edition_article_ids(
@@ -1445,6 +1477,8 @@ def _snapshot(
     subscribed: bool = True,
     content_kind: str | None = None,
     score_dimension: str | None = None,
+    event_id: int | None = None,
+    related_sources: Sequence[Mapping[str, object]] = (),
 ) -> dict[str, object]:
     # issue #178 第三波:快照记下卡片显示哪个分(score_dimension)和内容价值。新闻通道显示新闻价值;
     # 「深度阅读」「播客精选」显示内容价值;播客没有新闻价值,任何分区里都显示内容价值(第二波投影)。
@@ -1478,6 +1512,10 @@ def _snapshot(
         "content_value": projection["content_value"],
         "content_value_reason": projection["content_value_reason"] or "",
         "score_dimension": dimension,
+        # issue #103:所属事件与编排时可见的同事件其它报道(「另见 N 源」),不可变快照;
+        # 历史快照无这两键,页面按缺省处理。
+        "event_id": event_id,
+        "related_sources": [dict(link) for link in related_sources],
     }
 
 
@@ -1521,6 +1559,7 @@ def _load_latest_fallback(
     *,
     limit: int,
     excluded_article_ids: Iterable[str] = (),
+    excluded_event_ids: Iterable[int] = (),
 ) -> list[
     tuple[
         ArticleRecord,
@@ -1530,6 +1569,8 @@ def _load_latest_fallback(
         list[dict[str, object]],
     ]
 ]:
+    """降级版面的「订阅源最新更新」:最新 ``limit`` 条,同事件只留最新一条、昨天上过的事件不出(issue #103)。"""
+
     if not source_ids or limit < 1:
         return []
     query = (
@@ -1547,9 +1588,23 @@ def _load_latest_fallback(
     excluded = sorted({str(value) for value in excluded_article_ids if str(value)})
     if excluded:
         query = query.where(ArticleRecord.id.notin_(excluded))
-    rows = session.exec(
-        query.order_by(ArticleRecord.publish_date.desc(), ArticleRecord.id.asc()).limit(limit)
+    # 多取几条再按事件去重,去重后仍不足 limit 就如实少出(不为凑数放回同事件)
+    fetched = session.exec(
+        query.order_by(ArticleRecord.publish_date.desc(), ArticleRecord.id.asc()).limit(limit * 3)
     ).all()
+    event_ids = _event_id_map(session, [article.id for article, _analysis in fetched])
+    excluded_events = {int(value) for value in excluded_event_ids}
+    seen_events: set[int] = set()
+    rows: list[tuple[ArticleRecord, ArticleAnalysisRecord | None]] = []
+    for article, analysis in fetched:
+        event_id = event_ids.get(article.id)
+        if event_id is not None:
+            if event_id in excluded_events or event_id in seen_events:
+                continue
+            seen_events.add(event_id)
+        rows.append((article, analysis))
+        if len(rows) >= limit:
+            break
     article_ids = [article.id for article, _analysis in rows]
     tag_codes, tag_snapshots = _tag_maps(session, article_ids)
     analyses = {article.id: analysis for article, analysis in rows if analysis is not None}
@@ -1569,8 +1624,6 @@ def _load_latest_fallback(
             tag_snapshots.get(article.id, []),
             display_tags.get(article.id, []),
         ))
-        if len(result) >= limit:
-            break
     return result
 
 
@@ -2050,9 +2103,24 @@ def generate_personal_digest(
 
     tag_display_names = _interest_display_names(session, interests)
     previous_article_ids = _previous_edition_article_ids(session, username, report_date)
+    # issue #103:昨天版面(任一分区)上过的事件今天整组抑制——三条通道与降级回退同口径;
+    # 被抑制的候选记下来,进编排说明行的 same_event_previous_day
+    previous_event_ids = _previous_edition_event_ids(session, previous_article_ids)
+    previous_event_dropped: set[str] = set()
+
+    def _without_previous_events(
+        pool: Iterable[DigestArticleCandidateDTO],
+    ) -> list[DigestArticleCandidateDTO]:
+        kept: list[DigestArticleCandidateDTO] = []
+        for candidate in pool:
+            if candidate.event_id is not None and candidate.event_id in previous_event_ids:
+                previous_event_dropped.add(candidate.article_id)
+                continue
+            kept.append(candidate)
+        return kept
 
     def _load_union(window_hours: int) -> list[DigestArticleCandidateDTO]:
-        """订阅池(兴趣 + 质量两通道)∪ 订阅外兴趣池(只进兴趣通道),排除前一日已用条目。"""
+        """订阅池(兴趣 + 质量两通道)∪ 订阅外兴趣池(只进兴趣通道),排除前一日已用条目与其事件。"""
 
         pool = load_digest_candidates(
             session,
@@ -2070,7 +2138,9 @@ def generate_personal_digest(
                 window_hours=window_hours,
                 min_score=policy.external_min_quality_score,
             ))
-        return [candidate for candidate in pool if candidate.article_id not in previous_article_ids]
+        return _without_previous_events(
+            candidate for candidate in pool if candidate.article_id not in previous_article_ids
+        )
 
     def _select(pool: Sequence[DigestArticleCandidateDTO]):
         return select_digest_articles(
@@ -2103,14 +2173,15 @@ def generate_personal_digest(
     # 「重大事件」通道(v3.50):跨订阅范围的头条位,额外于 target 之上。空订阅早已在
     # 上方返回,所以这里永远是「在已有早报之上加头条」,不是「无订阅也出报」。
     breaking_selections: list = []
+    breaking_candidates: list[DigestArticleCandidateDTO] = []
     breaking_policy_value = breaking_policy(session)
     if breaking_policy_value.max_items > 0:
-        breaking_candidates = load_breaking_candidates(
+        breaking_candidates = _without_previous_events(load_breaking_candidates(
             session,
             cutoff_at=current,
             window_hours=PERSONAL_DIGEST_BREAKING_WINDOW_HOURS,
             min_score=breaking_policy_value.min_score - breaking_policy_value.corroboration_slack,
-        )
+        ))
         if breaking_candidates:
             breaking_selections = select_breaking_events(
                 breaking_candidates,
@@ -2129,11 +2200,19 @@ def generate_personal_digest(
             )
 
     # 订阅域里已选中的文章若成为头条代表,从精选里提级到头条位(不重复出现,也不算降级);
-    # 空出的精选名额按同一策略重选补回——头条是额外于 target 之上的,不能占精选位
+    # 空出的精选名额按同一策略重选补回——头条是额外于 target 之上的,不能占精选位。
+    # issue #103:事件键跨通道共享——头条已代表的事件,兴趣 / 分数通道不再出同事件的另一篇
+    # (提级的那篇自身同键,一并剔除)。
     promoted_ids = {selection.article_id for selection in breaking_selections}
     had_own_selections = bool(selections)
-    if promoted_ids.intersection(selection.article_id for selection in selections):
-        remaining = [candidate for candidate in candidates if candidate.article_id not in promoted_ids]
+    breaking_by_id = {candidate.article_id: candidate for candidate in breaking_candidates}
+    breaking_keys = {
+        event_key(breaking_by_id[selection.article_id])
+        for selection in breaking_selections
+        if selection.article_id in breaking_by_id
+    }
+    if breaking_keys and any(event_key(candidate) in breaking_keys for candidate in candidates):
+        remaining = [candidate for candidate in candidates if event_key(candidate) not in breaking_keys]
         selections = _select(remaining)
 
     # 「深度阅读」「播客精选」(issue #178 第三波,方案 §5.1):按内容价值的两个额外分区,不占新闻的
@@ -2147,6 +2226,7 @@ def generate_personal_digest(
     value_selections: dict[str, list] = {}
     value_stats: dict[str, dict[str, object]] = {}
     value_source_names: dict[str, str] = {}
+    value_by_id: dict[str, DigestArticleCandidateDTO] = {}
     for value_lane in (SelectionLane.READ, SelectionLane.LISTEN):
         lane_policy = value_lane_policy(session, value_lane)
         lane_pool = (
@@ -2164,6 +2244,7 @@ def generate_personal_digest(
             session, sorted({candidate.source_id for candidate in lane_pool})
         )
         value_source_names.update(lane_names)
+        value_by_id.update({candidate.article_id: candidate for candidate in lane_pool})
         picked = select_value_lane(
             lane_pool,
             interests,
@@ -2215,6 +2296,22 @@ def generate_personal_digest(
     subscribed_set = set(scope.expected_source_ids)
     candidate_by_id = {candidate.article_id: candidate for candidate in candidates}
     own_selections = list(selections) if had_own_selections else []
+    # issue #103:同事件合并计数——订阅 ∪ 兴趣池与头条池里,事件键已由本期某条代表的其它候选
+    # (按代表条目分别计,进该条目的排障特征;总数进编排说明行)
+    pool_by_id = dict(candidate_by_id)
+    for candidate in breaking_candidates:
+        pool_by_id.setdefault(candidate.article_id, candidate)
+    pool_by_id.update(value_by_id)
+    selected_ids = {selection.article_id for selection in own_selections} | promoted_ids | value_article_ids
+    selected_keys = {event_key(pool_by_id[aid]) for aid in selected_ids if aid in pool_by_id}
+    merged_by_key: dict[str, int] = {}
+    for article_id, candidate in pool_by_id.items():
+        if article_id in selected_ids:
+            continue
+        key = event_key(candidate)
+        if key in selected_keys:
+            merged_by_key[key] = merged_by_key.get(key, 0) + 1
+    same_event_merged = sum(merged_by_key.values())
     selection_stats = {
         "candidate_count": len(candidates),
         "subscribed_candidate_count": sum(1 for candidate in candidates if candidate.subscribed),
@@ -2230,6 +2327,9 @@ def generate_personal_digest(
             and not candidate_by_id[selection.article_id].subscribed
         ),
         "breaking_count": len(breaking_selections),
+        # issue #103:同事件合并到代表条目的候选数;昨天版面上过的事件今天被整组抑制的候选数
+        "same_event_merged": same_event_merged,
+        "same_event_previous_day": len(previous_event_dropped),
         "interest_only": interest_only,
         "external_min_score": policy.external_min_quality_score,
         "external_per_source_max": policy.external_per_source_max,
@@ -2334,6 +2434,28 @@ def generate_personal_digest(
 
     item_records: list[PersonalDigestItemRecord] = []
     source_kinds = source_default_kinds()
+    # issue #103:「另见 N 源」= 编排时事件层里该事件的其它可见成员(代表稿序),写进不可变快照
+    event_links = _related_sources_by_event(
+        session,
+        {pool_by_id[aid].event_id for aid in selected_ids if aid in pool_by_id},
+    )
+
+    def _related(event_id: int | None, article_id: str) -> list[dict[str, object]]:
+        if event_id is None:
+            return []
+        return [
+            link for link in event_links.get(int(event_id), [])
+            if link.get("article_id") != article_id
+        ][:RELATED_SOURCES_LIMIT]
+
+    def _event_features(candidate: DigestArticleCandidateDTO | None) -> dict[str, object]:
+        if candidate is None:
+            return {"event_id": None, "same_event_merged": 0}
+        return {
+            "event_id": candidate.event_id,
+            "same_event_merged": merged_by_key.get(event_key(candidate), 0),
+        }
+
     if breaking_selections:
         breaking_ids = [selection.article_id for selection in breaking_selections]
         breaking_articles = {
@@ -2362,6 +2484,7 @@ def generate_personal_digest(
             analysis = breaking_analyses.get(selection.article_id)
             if article is None or analysis is None:
                 continue
+            dto = breaking_by_id.get(selection.article_id)
             record = PersonalDigestItemRecord(
                 edition_id=edition.id,
                 article_id=article.id,
@@ -2378,6 +2501,7 @@ def generate_personal_digest(
                         "subscribed": article.source_id in set(scope.expected_source_ids),
                     },
                     "event_entity_codes": list(selection.event_entity_codes),
+                    **_event_features(dto),
                 }),
                 coverage_adjustments_json="[]",
                 selection_reason=selection.selection_reason,
@@ -2391,6 +2515,8 @@ def generate_personal_digest(
                     degraded=False,
                     subscribed=article.source_id in subscribed_set,
                     content_kind=_item_kind(article, analysis, source_kinds),
+                    event_id=dto.event_id if dto else None,
+                    related_sources=_related(dto.event_id if dto else None, article.id),
                 )),
                 created_at=generated_at,
             )
@@ -2421,6 +2547,7 @@ def generate_personal_digest(
             if article is None or analysis is None:
                 continue
             in_scope = article.source_id in subscribed_set
+            dto = candidate_by_id.get(selection.article_id)
             record = PersonalDigestItemRecord(
                 edition_id=edition.id,
                 article_id=article.id,
@@ -2432,6 +2559,7 @@ def generate_personal_digest(
                 ranking_features_json=_json({
                     "policy_version": POLICY_VERSION,
                     "subscribed": in_scope,
+                    **_event_features(dto),
                 }),
                 coverage_adjustments_json=_json(list(selection.coverage_adjustments)),
                 selection_reason=selection.selection_reason,
@@ -2445,6 +2573,8 @@ def generate_personal_digest(
                     degraded=False,
                     subscribed=in_scope,
                     content_kind=_item_kind(article, analysis, source_kinds),
+                    event_id=dto.event_id if dto else None,
+                    related_sources=_related(dto.event_id if dto else None, article.id),
                 )),
                 created_at=generated_at,
             )
@@ -2456,7 +2586,10 @@ def generate_personal_digest(
             interests,
             limit=PERSONAL_DIGEST_LATEST_FALLBACK_LIMIT,
             excluded_article_ids=previous_article_ids | value_article_ids,
+            excluded_event_ids=previous_event_ids,
         )
+        fallback_event_ids = _event_id_map(session, [article.id for article, *_rest in latest])
+        event_links.update(_related_sources_by_event(session, fallback_event_ids.values()))
         for position, (article, analysis, codes, tags, display_tags) in enumerate(
             latest, start=len(item_records)
         ):
@@ -2486,6 +2619,7 @@ def generate_personal_digest(
                 ranking_features_json=_json({
                     "degraded": True,
                     "degraded_reason": degraded_reason,
+                    "event_id": fallback_event_ids.get(article.id),
                 }),
                 coverage_adjustments_json="[]",
                 selection_reason=selection_reason,
@@ -2498,6 +2632,8 @@ def generate_personal_digest(
                     selection_reason=selection_reason,
                     degraded=True,
                     content_kind=_item_kind(article, analysis, source_kinds),
+                    event_id=fallback_event_ids.get(article.id),
+                    related_sources=_related(fallback_event_ids.get(article.id), article.id),
                 )),
                 created_at=generated_at,
             )
@@ -2532,6 +2668,7 @@ def generate_personal_digest(
                     continue
                 in_scope = article.source_id in subscribed_set
                 kind = _item_kind(article, analysis, source_kinds)
+                dto = value_by_id.get(selection.article_id)
                 snapshot = _snapshot(
                     article,
                     analysis,
@@ -2543,6 +2680,8 @@ def generate_personal_digest(
                     subscribed=in_scope,
                     content_kind=kind,
                     score_dimension="content",
+                    event_id=dto.event_id if dto else None,
+                    related_sources=_related(dto.event_id if dto else None, article.id),
                 )
                 item_records.append(PersonalDigestItemRecord(
                     edition_id=edition.id,
@@ -2557,6 +2696,7 @@ def generate_personal_digest(
                         "subscribed": in_scope,
                         "content_kind": kind,
                         "content_value": snapshot["content_value"],
+                        **_event_features(dto),
                     }),
                     coverage_adjustments_json="[]",
                     selection_reason=selection.selection_reason,

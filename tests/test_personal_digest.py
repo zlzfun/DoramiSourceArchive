@@ -18,6 +18,8 @@ from models.db import (  # noqa: E402
     ArticleRecord,
     ArticleTagAssignmentRecord,
     CmsTagRecord,
+    EventMemberRecord,
+    EventRecord,
     PersonalDigestEditionRecord,
     PersonalDigestItemRecord,
     ReaderSubscriptionRecord,
@@ -1828,3 +1830,149 @@ def test_assign_positions_orders_value_sections_by_content_value():
     _assign_positions(records)
 
     assert [r.article_id for r in records] == ["news", "fallback", "read-high", "read-low", "pod"]
+
+
+# ── issue #103(事件层 wave 2):个人早报同事件去重消费事件层归属 ──
+
+
+def _event_with(session: Session, *article_ids: str, hours_ago: float = 3.0) -> EventRecord:
+    """把给定文章归成一个事件(直接落 events / event_members,等价于分配服务已判定)。"""
+
+    stamp = (NOW - dt.timedelta(hours=hours_ago)).isoformat()
+    event = EventRecord(
+        status="open", title="", title_source="", first_seen_at=stamp, last_member_at=stamp,
+        member_count=len(article_ids), publisher_count=len(article_ids), created_at=stamp, updated_at=stamp,
+    )
+    session.add(event)
+    session.flush()
+    for article_id in article_ids:
+        session.add(EventMemberRecord(
+            event_id=event.id, article_id=article_id, publisher_key="", report_at=stamp, first_seen_at=stamp,
+            assigned_by="llm", is_representative=False, created_at=stamp,
+        ))
+    session.flush()
+    return event
+
+
+def test_same_event_candidates_collapse_to_one_item_with_related_sources(storage):
+    """同一事件的两篇订阅内候选只出一条;被并掉的那篇挂在代表条目的「另见」里,编排说明行计 1。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a,rss_b")])
+        session.flush()
+        first = _seed_article(session, 1, source="rss_a", score=8.0)
+        echo = _seed_article(session, 2, source="rss_b", score=8.5)   # 同事件、分更高 → 代表
+        other = _seed_article(session, 3, source="rss_a", score=7.0)
+        session.flush()
+        event = _event_with(session, first.id, echo.id)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert result.status == "ready"
+        assert [item.article_id for item in result.items] == [echo.id, other.id]
+        rep = result.items[0]
+        snapshot = json.loads(rep.snapshot_json)
+        assert snapshot["event_id"] == event.id
+        assert [row["article_id"] for row in snapshot["related_sources"]] == [first.id]
+        link = snapshot["related_sources"][0]
+        assert link["url"] == first.source_url and link["source_name"] and link["title"] == first.title
+        assert json.loads(rep.ranking_features_json)["same_event_merged"] == 1
+        assert json.loads(rep.ranking_features_json)["event_id"] == event.id
+        plain = json.loads(result.items[1].snapshot_json)
+        assert plain["event_id"] is None and plain["related_sources"] == []
+        stats = json.loads(result.edition.selection_stats_json)
+        assert stats["same_event_merged"] == 1 and stats["same_event_previous_day"] == 0
+
+
+def test_headline_event_is_not_repeated_in_the_curated_lanes(storage):
+    """头条已代表的事件,兴趣 / 分数通道不再出同事件的另一篇(事件键跨三条通道共享)。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        session.flush()
+        own = _seed_article(session, 1, score=8.0)                                   # 订阅内媒体稿
+        headline = _seed_article(session, 2, source="rss_openai_news", score=9.6)   # 官方,订阅外 → 头条
+        filler = _seed_article(session, 3, score=7.5)
+        session.flush()
+        _event_with(session, own.id, headline.id)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert [(item.article_id, item.selection_lane) for item in result.items] == [
+            (headline.id, "breaking"), (filler.id, "quality"),
+        ]
+        head = json.loads(result.items[0].snapshot_json)
+        assert [row["article_id"] for row in head["related_sources"]] == [own.id]
+        assert json.loads(result.edition.selection_stats_json)["same_event_merged"] == 1
+
+
+def test_yesterdays_event_is_suppressed_as_a_whole_today(storage):
+    """昨天版面上过的事件(任一成员)今天整组不入选——兴趣 / 分数通道与头条同口径。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        session.flush()
+        yesterday_pick = _seed_article(session, 1, score=8.0, published_at=NOW - dt.timedelta(hours=20))
+        today_echo = _seed_article(session, 2, score=8.8, published_at=NOW - dt.timedelta(hours=2))
+        official_today = _seed_article(session, 3, source="rss_openai_news", score=9.6)
+        fresh = _seed_article(session, 4, score=7.0)
+        session.flush()
+        _event_with(session, yesterday_pick.id, today_echo.id, official_today.id)
+        _past_edition(session, (NOW.date() - dt.timedelta(days=1)).isoformat(), [yesterday_pick.id])
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert [item.article_id for item in result.items] == [fresh.id]
+        stats = json.loads(result.edition.selection_stats_json)
+        # today_echo(订阅池)与 official_today(头条池)各计一次;昨天那篇按文章 id 排除,不计
+        assert stats["same_event_previous_day"] == 2 and stats["same_event_merged"] == 0
+
+
+def test_related_sources_only_list_reader_visible_members(storage):
+    """「另见」只列读者可见成员:隐藏源 / 私有源成员不出现;订阅外的可见成员照列。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        session.add(AppSettingRecord(key="reader_hidden_source_ids", value=json.dumps(["rss_hidden"])))
+        session.add(SourceConfigRecord(
+            source_id="user_rss_private01", name="private", source_type="rss",
+            owner_username="bob", created_at=NOW_ISO, updated_at=NOW_ISO,
+        ))
+        session.flush()
+        rep = _seed_article(session, 1, score=8.0)
+        hidden = _seed_article(session, 2, source="rss_hidden", score=7.0)
+        private = _seed_article(session, 3, source="user_rss_private01", score=7.0)
+        visible = _seed_article(session, 4, source="rss_other", score=6.0)
+        session.flush()
+        _event_with(session, rep.id, hidden.id, private.id, visible.id)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert [item.article_id for item in result.items] == [rep.id]
+        links = json.loads(result.items[0].snapshot_json)["related_sources"]
+        assert [row["article_id"] for row in links] == [visible.id]
+        assert json.loads(result.edition.selection_stats_json)["same_event_merged"] == 0
+
+
+def test_degraded_fallback_keeps_one_item_per_event(storage):
+    """降级版面的「订阅源最新更新」同事件只留最新一条,昨天上过的事件不出。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        session.flush()
+        newest = _seed_article(session, 1, score=4.0)
+        older_echo = _seed_article(session, 2, score=4.0)
+        plain = _seed_article(session, 3, score=4.0)
+        stale = _seed_article(session, 4, score=4.0)
+        yesterday_pick = _seed_article(session, 5, score=4.0, published_at=NOW - dt.timedelta(hours=20))
+        session.flush()
+        _event_with(session, newest.id, older_echo.id)
+        _event_with(session, stale.id, yesterday_pick.id)
+        _past_edition(session, (NOW.date() - dt.timedelta(days=1)).isoformat(), [yesterday_pick.id])
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert result.status == "degraded"
+        assert [item.article_id for item in result.items] == [newest.id, plain.id]
+        snapshot = json.loads(result.items[0].snapshot_json)
+        assert [row["article_id"] for row in snapshot["related_sources"]] == [older_echo.id]

@@ -165,6 +165,48 @@ function WhyMark({ why }) {
   );
 }
 
+// issue #103「另见 N 源」:同一事件的其它报道(编排时的不可变快照,只含读者可见来源);
+// N 数来源,列表逐篇;链接开新窗(是另一来源的稿,不是本条)
+function relatedOf(snapshot) {
+  const rows = Array.isArray(snapshot?.related_sources) ? snapshot.related_sources : [];
+  return rows.filter((row) => row && row.url);
+}
+
+function RelatedChip({ links, open, onToggle }) {
+  if (!links.length) return null;
+  const count = new Set(links.map((row) => row.source_id || row.url)).size;
+  return (
+    <button
+      type="button"
+      className={`bp-also ${open ? 'is-open' : ''}`}
+      aria-expanded={open}
+      title={open ? '收起同一事件的其它报道' : '同一事件的其它报道'}
+      onClick={onToggle}
+    >
+      另见 {count} 源
+    </button>
+  );
+}
+
+function RelatedList({ links, open }) {
+  if (!open || !links.length) return null;
+  return (
+    <ul className="bp-also-list">
+      {links.map((row) => {
+        const title = row.title_zh || row.title || row.url;
+        return (
+          <li key={row.article_id || row.url}>
+            <a className="bp-also-link" href={row.url} target="_blank" rel="noopener noreferrer" lang={latinLang(title)}>
+              <span className="bp-also-src">{row.source_name || row.source_id || '来源'}</span>
+              <span className="bp-also-title">{title}</span>
+            </a>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 function FavoriteButton({ articleId, favoriteIds, onToggleFavorite, label = false }) {
   if (!articleId || !onToggleFavorite) return null;
   const on = Boolean(favoriteIds?.has(articleId));
@@ -186,6 +228,8 @@ function FavoriteButton({ articleId, favoriteIds, onToggleFavorite, label = fals
 function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds, onToggleFavorite }) {
   const view = viewOf(item, source);
   const { snapshot } = view;
+  const related = relatedOf(snapshot);
+  const [showRelated, setShowRelated] = useState(false);
   return (
     <article className={`bp-item ${flash ? 'is-just-read' : ''}`}>
       {/* 标题按钮是唯一的「打开」控件:::after 拉伸覆盖整条,点条目任意处即打开;收藏与「+ 订阅」浮在覆盖层之上 */}
@@ -209,8 +253,10 @@ function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds
           </span>
         )}
         <WhyMark why={view.why} />
+        <RelatedChip links={related} open={showRelated} onToggle={() => setShowRelated((value) => !value)} />
         <FavoriteButton articleId={item.article_id} favoriteIds={favoriteIds} onToggleFavorite={onToggleFavorite} />
       </div>
+      <RelatedList links={related} open={showRelated} />
     </article>
   );
 }
@@ -219,6 +265,8 @@ function Headline({ item, kicker, source, flash, restCount, onOpen, onSubscribeS
   const view = viewOf(item, source);
   const { snapshot } = view;
   const selectionReason = item.selection_reason || snapshot.selection_reason || '';
+  const related = relatedOf(snapshot);
+  const [showRelated, setShowRelated] = useState(false);
   return (
     <div className={`bp-head ${flash ? 'is-just-read' : ''}`}>
       <p className="bp-kicker">{kicker}</p>
@@ -237,8 +285,10 @@ function Headline({ item, kicker, source, flash, restCount, onOpen, onSubscribeS
               <span className="bp-time" title={formatDateTime(snapshot.publish_date)}>{formatRelativeTime(snapshot.publish_date, '')}</span>
             )}
             {view.why.cls === 'is-interest' && <WhyMark why={view.why} />}
+            <RelatedChip links={related} open={showRelated} onToggle={() => setShowRelated((value) => !value)} />
           </p>
           {view.summary && <p className="bp-sum">{view.summary}</p>}
+          <RelatedList links={related} open={showRelated} />
           <div className="bp-actions">
             <button type="button" className="bp-btn is-primary" onClick={() => onOpen(item)}>
               阅读全文
@@ -574,6 +624,8 @@ export default function PersonalBriefPage({
   const scopeCount = (edition?.expected_source_ids || []).length;
   const interestOnly = !!edition && scopeCount === 0 && (stats ? !!stats.interest_only : items.length > 0);
   const followedCount = stats?.followed_count ?? null;
+  // issue #103:同事件合并到代表条目的候选数(编排时一次写入;历史版本无值则不提)
+  const mergedCount = Number(stats?.same_event_merged) > 0 ? Number(stats.same_event_merged) : 0;
   const externalHits = ownItems.filter((item) => (item.matched_interest_codes || []).length > 0 && item.snapshot?.subscribed === false).length;
   const valueCount = readCount + listenCount;
   const showEdition = !loading && !detailLoading && !live && !(error && isToday)
@@ -609,6 +661,7 @@ export default function PersonalBriefPage({
         <>
           你还没有订阅来源，本期只按你的{followedCount ? <> {n(followedCount)} 个</> : null}兴趣编排
           {stats?.candidate_count != null && <> · {n(stats.candidate_count)} 篇里</>}选出 {n(ownItems.length)} 篇
+          {mergedCount > 0 && <>，同事件合并 {n(mergedCount)} 篇</>}
         </>
       );
     } else {
@@ -617,6 +670,7 @@ export default function PersonalBriefPage({
           {guest ? '从默认订阅的' : '从你订阅的'} {n(scopeCount)} 个来源{followedCount ? <>和 {n(followedCount)} 个兴趣</> : null}
           {stats?.candidate_count != null && <> · {n(stats.candidate_count)} 篇里</>}选出 {n(ownItems.length)} 篇
           {interestCount > 0 && <>，{n(interestCount)} 篇命中你的兴趣{externalHits > 0 && <>（{n(externalHits)} 篇来自订阅外）</>}</>}
+          {mergedCount > 0 && <>，同事件合并 {n(mergedCount)} 篇</>}
           {valueText && <>；{valueText}</>}
         </>
       );

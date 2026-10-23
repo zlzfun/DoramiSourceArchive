@@ -489,6 +489,44 @@ def _related_views(session: Session, ids: Iterable[int | None]) -> dict[int, _Ev
     return _visible_views(session, _events_by_id(session, ids).values())
 
 
+def _link_payload(view: _MemberView) -> dict[str, Any]:
+    return {
+        "article_id": view.article.id,
+        "title": view.article.title,
+        "title_zh": _translated_title(view.article) or None,
+        "source_id": view.article.source_id,
+        "source_name": view.info.name,
+        "source_role": view.info.role,
+        "content_shape": view.info.shape,
+        "url": view.article.source_url,
+        "publish_date": view.article.publish_date,
+    }
+
+
+def visible_member_links(
+    session: Session,
+    event_ids: Iterable[int | None],
+    *,
+    limit: int = 10,
+) -> dict[int, list[dict[str, Any]]]:
+    """event_id → 读者可见成员的链接清单(代表稿序),供个人早报「另见 N 源」快照(issue #103)。
+
+    只读事件层、只取读者可见成员(隐藏 / 私有 / 凭据源成员一律不出现,与榜单同一判定),
+    每事件最多 ``limit`` 条;事件状态不限(早报键命中的事件可能已 closed)。
+    """
+
+    ids = sorted({int(value) for value in event_ids if value is not None})
+    if not ids:
+        return {}
+    load = _load_member_views(session, ids, reader_scope=True)
+    result: dict[int, list[dict[str, Any]]] = {}
+    for event_id in ids:
+        views = sorted(load.for_event(event_id), key=lambda view: view.order_key())
+        if views:
+            result[event_id] = [_link_payload(view) for view in views[:limit]]
+    return result
+
+
 def _representative_payload(view: _MemberView) -> dict[str, Any]:
     return {
         "article_id": view.article.id,
@@ -963,5 +1001,5 @@ __all__ = [
     "ADMIN_STATUSES", "BOARD_LIMIT", "EMPTY_REASON_NO_EVENTS", "EventBoardError", "MAX_WINDOW_HOURS",
     "MIN_PUBLISHERS", "NEW_HOURS", "SNAPSHOT_CRON", "SNAPSHOT_JOB_ID", "WINDOW_HOURS",
     "build_rank_snapshot", "detach_member", "list_events", "merge_events", "read_board", "read_event",
-    "resolve_redirect", "shanghai_date",
+    "resolve_redirect", "shanghai_date", "visible_member_links",
 ]

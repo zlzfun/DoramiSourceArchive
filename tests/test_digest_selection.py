@@ -230,6 +230,16 @@ def test_breaking_merges_shared_entities_and_prefers_official_article_over_tweet
     assert selected[0].event_entity_codes == ("entity.chatgpt", "entity.openai")
 
 
+def test_breaking_groups_the_same_event_id_even_without_shared_entities():
+    """issue #103:事件层归属恒并——同 event_id 的官方稿与无实体标签的推文是一个事件,只出一条代表。"""
+    official = _candidate(1, score=9.5, tags=("entity.openai",), event=7, role="official")
+    tweet = _candidate(2, score=9.0, event=7, shape="social", source="x_openai")
+    unrelated = _candidate(3, score=9.2, tags=("entity.openai",))   # 同实体仍按既有口径并入分量
+    picked = select_breaking_events([official, tweet, unrelated])
+    assert [item.article_id for item in picked] == [official.article_id]
+    assert picked[0].breaking_source_count == 3
+
+
 def test_breaking_suppresses_entities_seen_in_recent_headlines_and_respects_cap():
     candidates = [
         _candidate(1, source="rss_openai_news", role="official", score=9.6, tags=("entity.openai",)),

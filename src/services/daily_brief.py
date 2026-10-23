@@ -48,7 +48,7 @@ import re
 import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 from urllib.parse import urlparse
 
 from sqlalchemy import and_, case, delete, or_, text, update
@@ -92,6 +92,7 @@ from models.db import (
     ArticleRecord,
     ArticleTagAssignmentRecord,
     CmsTagRecord,
+    EventMemberRecord,
     SourceConfigRecord,
 )
 from services import credentials
@@ -999,14 +1000,53 @@ def precluster_same_event(items: List[ScoredItem]) -> List[ScoredItem]:
     return [it for i, it in enumerate(items) if i not in dropped]
 
 
+def load_event_ids_by_article(engine, article_ids: Iterable[str]) -> Dict[str, int]:
+    """article_id → 事件层归属(issue #121);无归属的不在返回里。日报预聚类的输入。"""
+    ids = sorted({str(value) for value in article_ids if value})
+    if not ids:
+        return {}
+    with Session(engine) as session:
+        rows = session.exec(
+            select(EventMemberRecord.article_id, EventMemberRecord.event_id)
+            .where(EventMemberRecord.article_id.in_(ids))
+        ).all()
+    return {str(article_id): int(event_id) for article_id, event_id in rows}
+
+
+def precluster_by_event(
+    items: List[ScoredItem],
+    event_ids_by_article: Optional[Mapping[str, int]],
+) -> List[ScoredItem]:
+    """事件层预聚类(issue #103,wave 2):同一事件(平台级归属,辅助模型已判定)的条目先机械并簇,
+    代表规则与 LLM 簇相同(官方在分差门限内优先,否则最高分),其余链接进 extra_sources。
+    这一层零 LLM、与机械标题层互补(跨语言 / 措辞迥异的同事件靠它);无归属的条目原样留给后两层。"""
+    if len(items) < 2 or not event_ids_by_article:
+        return items
+    by_event: Dict[int, List[int]] = {}
+    for i, it in enumerate(items):
+        event_id = event_ids_by_article.get(it.candidate.id)
+        if event_id is not None:
+            by_event.setdefault(int(event_id), []).append(i)
+    dropped: set = set()
+    for idxs in by_event.values():
+        if len(idxs) >= 2:
+            _merge_into_representative(items, idxs, dropped)
+    if dropped:
+        logger.info("日报事件层预聚类：%d 条同事件成员机械合并", len(dropped))
+    return [it for i, it in enumerate(items) if i not in dropped]
+
+
 async def dedup_clusters(
     items: List[ScoredItem],
     llm_config: config.LLMConfig,
     usage_username: Optional[str] = None,
+    *,
+    event_ids_by_article: Optional[Mapping[str, int]] = None,
 ) -> List[ScoredItem]:
     """识别同一天里报道同一事件的重复条目，每组只保留 score 最高的代表，
-    其余条目的 source_url 并入代表的 extra_sources。先跑机械预聚类(同厂商高相似标题),
-    LLM 失败时降级为只保留机械层结果，不阻断主流程。"""
+    其余条目的 source_url 并入代表的 extra_sources。先跑两层机械预聚类(事件层归属 → 同厂商
+    高相似标题),LLM 只处理剩余;LLM 失败时降级为只保留机械层结果，不阻断主流程。"""
+    items = precluster_by_event(items, event_ids_by_article)
     items = precluster_same_event(items)
     if len(items) < 2:
         return items
@@ -1612,6 +1652,8 @@ async def merge_same_day(
     new_title_only: List[BriefCandidate],
     llm_config: config.LLMConfig,
     usage_username: Optional[str] = None,
+    *,
+    event_ids_by_article: Optional[Mapping[str, int]] = None,
 ) -> Tuple[List[ScoredItem], List[BriefCandidate]]:
     """当日已有日报时的增量合并:旧∪新(按文章 id 去重)→ 同事件聚类 → 有效分重排。
 
@@ -1621,7 +1663,9 @@ async def merge_same_day(
     seen = {it.candidate.id for it in prior_items}
     combined = prior_items + [it for it in new_items if it.candidate.id not in seen]
     # 早间批与增量批可能各报了同一事件(不同文章 id),再跑一次同事件聚类合并
-    combined = await dedup_clusters(combined, llm_config, usage_username=usage_username)
+    combined = await dedup_clusters(
+        combined, llm_config, usage_username=usage_username, event_ids_by_article=event_ids_by_article,
+    )
     combined.sort(key=_effective_score, reverse=True)
     selected_ids = {it.candidate.id for it in combined}
     seen_titles = {c.id for c in prior_title_only}
@@ -1890,7 +1934,14 @@ async def _generate_daily_brief(
     set_progress("selecting", "同事件去重与择优排序…")
     # 当日已有正文一起进聚类:同日重跑时增量批与早间批报同一事件(不同文章 id)只算一个簇,
     # 缺口不会被重复计数;早间条目本身不进增量管线(由同日合并阶段统一处理)。
-    deduped_all = await dedup_clusters(prior_items + usable + probe, cfg, usage_username=triggered_by)
+    # 事件层归属(issue #103):同事件成员先机械并簇再交模型;早间条目一并带上,同日重跑合并同用
+    event_ids_by_article = load_event_ids_by_article(
+        engine, [it.candidate.id for it in prior_items + usable + probe],
+    )
+    deduped_all = await dedup_clusters(
+        prior_items + usable + probe, cfg, usage_username=triggered_by,
+        event_ids_by_article=event_ids_by_article,
+    )
 
     def _cluster_ids(item: ScoredItem) -> set:
         return {item.candidate.id, *item.merged_ids}
@@ -2015,6 +2066,7 @@ async def _generate_daily_brief(
         logger.info("日报[%s]：当日已有日报（%d 条），执行增量合并", report_date, len(prior_items))
         selected, title_only = await merge_same_day(
             prior_items, selected, prior_title_only, title_only, cfg, usage_username=triggered_by,
+            event_ids_by_article=event_ids_by_article,
         )
     # 补足稿计数在同日合并**之后**算:早间批补进的条目随 items 的 backfilled 标记回来
     backfilled_in_brief = sum(1 for it in selected if it.backfilled)

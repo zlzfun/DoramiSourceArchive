@@ -6,7 +6,7 @@
 
 ## 进行中
 
-- ☐ **issue #121 + #103 事件层 wave 1**(分支 `feat/issue-121-event-layer`,方案 `docs/plans/issue-121-event-layer.md` R2,调研报告同目录):后端(五表 / 分配服务 / 热点榜读取侧 / 管理修正 / 同步流 / 回放脚本)已实现并经 Codex 三轮检视返修;**前端「热点」段搁置**(2026-10-23 用户目检三方向样页后:都待商榷、B 较优非定稿,随之后文章榜 / 播客榜 / 热点前端统一重构再出,样页留档 `docs/design/issue-121-hot-events/`)。本波有意不做:LLM 事件签名、纯向量聚类、日报聚类持久化为事件层、sqlite-vec、事件级综合摘要、外部 embedding API(再评估触发:一中一外同事件漏并率明显高于译中标题通道 top-10 召回 0.68)。观察期:story / follows 跨页补链(wave 2 填链时实现)、`event_board._recompute_event` 与 `event_assignment._recompute_events` 收口为一处、生产供给(每天 ≥ 2 主体事件数,本机语料中位 4 件是下界)、首篇关窗 36h 是否再提精度。wave 2 = #103 早报去重;wave 3 = Agent / MCP 事件查询。
+- ☐ **issue #121 + #103 事件层**(方案 `docs/plans/issue-121-event-layer.md`,调研报告同目录):**wave 1 纯后端已合入 main(PR #220,2026-10-23)**;**wave 2 早报同事件去重(#103)实现中**(分支 `feat/issue-103-brief-event-dedup`,方案 §5.3):事件键跨三条通道、昨日事件整组抑制、「另见 N 源」、说明行计数、日报事件层预聚类;本波不做 story「接前报」链接(随 #221 拍板)。wave 3 = Agent / MCP 事件查询。wave 1 记录:后端经 Codex 四轮检视返修;**前端「热点」段搁置**(2026-10-23 用户目检三方向样页后:都待商榷、B 较优非定稿,随之后文章榜 / 播客榜 / 热点前端统一重构再出,样页留档 `docs/design/issue-121-hot-events/`)。本波有意不做:LLM 事件签名、纯向量聚类、日报聚类持久化为事件层、sqlite-vec、事件级综合摘要、外部 embedding API(再评估触发:一中一外同事件漏并率明显高于译中标题通道 top-10 召回 0.68)。观察期:story / follows 跨页补链(wave 2 填链时实现)、`event_board._recompute_event` 与 `event_assignment._recompute_events` 收口为一处、生产供给(每天 ≥ 2 主体事件数,本机语料中位 4 件是下界)、首篇关窗 36h 是否再提精度。wave 2 = #103 早报去重;wave 3 = Agent / MCP 事件查询。
 - ☐ **issue #221 榜单前端统一重构**(2026-10-23 立项,排队中):文章榜 / 播客榜 / 热点三段一致化,并重审文章榜的定位与展示内容;热点段的事件卡样页(方向 B)作为起点。后端 `GET /api/reader/events` 已就位。
 - ☐ **issue #217 媒体修复观察期**（方案 `docs/archive/issue-217-decisions-images.md`，PR #219）：相对地址解析与 OpenAI 受限静态图浏览器取图已实现，检视和用户目检通过；本地加近期生产历史共 106 张真实取图全部成功，211 篇 OpenAI 文章仅本篇出现同类地址。不做全量回填、实时语音接入。观察期：JSON 行号粘连、源站检查变化、非规范 URL 标准化差异、量增后的引用扫描开销，以及浏览器极端卡死时清理阶段无独立硬超时。两端部署先 replica 后 authority，防旧 GC 误回收相对图媒体。
 - ☐ **历史 HTML figure 图片转换**（#217 回测发现）：Lilian Weng《Reward Hacking in Reinforcement Learning》两张相对 PNG 已可取回，但旧正文 HTML `<figure>` 在阅读器显示字面标签。另行评估提取 / 读取时的安全 HTML→Markdown 转换；不直接放开任意 HTML。见 [回测记录](./archive/issue-217-decisions-images.md)。
@@ -165,9 +165,6 @@
 - ◇ **社交流整流翻译开关**(issue #84 遗留,样页方案 C):社交流头部「原语言 | ✦ 中文」一键翻整屏。
   首版只做逐卡底栏入口;整流开关开着时每条可译推文进入视口就是一次调用,现行读者 `translate` 日额度 50 次撑不住,
   要做先定批量合并(一次调用翻多条)或单独额度。见 `docs/archive/social-translate-plan.md` §6。
-- ◇ **跨容器去重**(X 社交波遗留):同一次发布 = 一条推 + 一篇 blog。
-  首版不做;观察期用 `x_openai` 对照组量化与 `rss_openai_news` 的重复率后再定策略
-  (候选:复用日报的 `dedup_clusters`)。见 `docs/archive/social-x-wave-plan.md` §1「重叠率备案」。
 - ◇ **X 第二批账号**(观察期后按数据决定):候补名单与不收理由见方案文档 §1。
   同脉络的旧待办「管理面账号池(凭据池/轮换/健康探测)」**已作废**——X 改按量付费后
   官方 API 路径不需要真实账号 Cookie,前提消失。
@@ -203,6 +200,8 @@
 - **日报 `per_source_cap=5` 是软配额**:`select_top` 的 overflow 补位可再加同源条目,淡日单源可能超过 5 篇(The Decoder 入名单后更可能出现);若运营要硬上限需改 overflow 语义。
 
 ## 已完结(近期,留档索引;执行记录与更早波次见 `docs/archive/README.md`)
+
+- ☑ **跨容器去重**(X 社交波遗留,「一条推 + 一篇 blog」):由事件层收口——社交帖入事件层(wave 1),个人早报与公共日报按事件归属同事件只出一条代表(wave 2,issue #103,方案 `docs/plans/issue-121-event-layer.md` §5.3)。原备案见 `docs/archive/social-x-wave-plan.md` §1。
 
 - ☑ **issue #213 游客模式**(开发版 3.67.0-alpha;2026-10-23 目检放行,已预合入 master 供内网验收):访客会话 + 共享保留账号、白名单门控、共享游客早报、每访客已读与 AI 计次(与读者同额)、登录提示与叠层登录回原处、运维游客区;检视与目检记录见 [归档方案](./archive/issue-213-guest-mode.md)。同步 master 时核对内网登录入口仍保留「游客登录」「返回继续逛逛」,并行中的登录页重设计(#214)落地时同样保留。
   有意不做:注册 / 申请开通;游客数据(已读、AI 计次)迁移到登录后的账号;游客限流与反爬(观察期看 `guest_visits` 与访问日志再定);清 Cookie 换新访客身份绕开单人额度(全站日 token 预算兜底,公网部署宜设);用户手册未补游客截图。公开链接退役见上方展望 #215。

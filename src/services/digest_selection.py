@@ -174,6 +174,11 @@ def _canonical_url(value: str) -> str:
 
 
 def _event_key(candidate: DigestArticleCandidateDTO) -> str:
+    """同事件键:事件层归属(issue #121)→ 规范化 URL → 归一化标题。
+
+    三条通道(重大事件 / 兴趣 / 分数)与「深度阅读」「播客精选」共用这一把键:同键只出一条代表,
+    编排方据此做跨通道与跨期抑制(issue #103)。
+    """
     if candidate.event_id is not None:
         return f"event:{candidate.event_id}"
     canonical = _canonical_url(candidate.source_url)
@@ -181,6 +186,9 @@ def _event_key(candidate: DigestArticleCandidateDTO) -> str:
         return f"url:{canonical}"
     title = re.sub(r"[^\w\u3400-\u9fff]+", "", candidate.title.casefold())
     return f"title:{title or candidate.article_id}"
+
+
+event_key = _event_key
 
 
 def interest_codes_of(candidate: DigestArticleCandidateDTO) -> tuple[str, ...]:
@@ -607,10 +615,10 @@ def select_value_lane(
 # 对所有读者都是头条的事」。准入全是机械层,不靠 LLM 自觉:
 #   ① 官方一手:source_role == official 且 分数 ≥ T;
 #   ② 多源印证:同一事件下 ≥ N 个不同来源 ≥ T − slack,且至少一条 ≥ T。
-# 同事件按 entity.* 标签连通分量归并(v3.50 实证:当时的 duplicate_groups 从未写入、URL/标题键
-# 分不出 4 条 X·OpenAI 推文是同一件事;issue #121 事件层落地后 _event_key 优先命中 event_id);
-# 无实体标签的候选回落 _event_key。每事件只
-# 出一条代表:官方 > 非社交形态 > 分数 > 发布更早。同实体前几期已上过头条即抑制。
+# 同事件归并 = 同事件键(事件层 event_id → URL → 标题,issue #121 / #103)恒并 + entity.* 标签
+# 连通分量(v3.50 实证:当时的 duplicate_groups 从未写入、URL/标题键分不出 4 条 X·OpenAI 推文是
+# 同一件事,实体码是多源印证的既有口径)。每事件只出一条代表:官方 > 非社交形态 > 分数 > 发布更早。
+# 同实体前几期已上过头条即抑制;昨天版面出现过的事件由编排方先行剔除(issue #103)。
 
 ENTITY_TAG_PREFIX = "entity."
 BREAKING_BASIS_OFFICIAL = "official"
@@ -658,7 +666,7 @@ def _entity_codes(candidate: DigestArticleCandidateDTO) -> frozenset[str]:
 def _group_breaking_events(
     rows: Sequence[DigestArticleCandidateDTO],
 ) -> list[list[DigestArticleCandidateDTO]]:
-    """Union-find over shared entity codes; entity-less rows fall back to _event_key."""
+    """Union-find over the same-event key plus shared entity codes."""
 
     parent: dict[str, str] = {}
 
@@ -674,12 +682,11 @@ def _group_breaking_events(
     for candidate in rows:
         node = f"article:{candidate.article_id}"
         find(node)
-        entities = _entity_codes(candidate)
-        if entities:
-            for code in entities:
-                union(node, f"entity:{code}")
-        else:
-            union(node, f"event:{_event_key(candidate)}")
+        # 同事件键(事件层归属 / URL / 标题)恒并——issue #103:同一事件的两篇即使实体标签
+        # 一有一无也是一簇;实体码在此之上再把同实体的报道连成分量(多源印证的既有口径)。
+        union(node, f"event:{_event_key(candidate)}")
+        for code in _entity_codes(candidate):
+            union(node, f"entity:{code}")
     groups: dict[str, list[DigestArticleCandidateDTO]] = {}
     for candidate in rows:
         groups.setdefault(find(f"article:{candidate.article_id}"), []).append(candidate)
@@ -804,6 +811,7 @@ __all__ = [
     "SECTION_ORDER",
     "ValueLanePolicy",
     "eligible_for_selection",
+    "event_key",
     "interest_codes_of",
     "interest_only_policy",
     "section_for_genre",

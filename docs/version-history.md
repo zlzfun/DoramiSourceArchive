@@ -13,7 +13,8 @@
 
 > 顺序为迁入时原样(待发布波在前、纪元叙事在中、近期波在后);每行只记「现状是什么 / 落在哪」,详细记录在下文各节。
 
-- **事件层 wave 1(issue #121 + #103,分支 `feat/issue-121-event-layer`,开发版 3.67.0-alpha,进行中)**:平台级持久事件层——`events` 五表(退役零写入的 `duplicate_groups`)、分析周期末尾增量分配(URL / 同题直连 → FTS5 三通道 + 实体召回 → 一次辅助模型判全批,首篇关窗 48h、代表稿描述、只标题、回显校验、结构规则、不回溯)、热点榜读取侧(可见发布主体 ≥ 2、最多 10 件、07:00 排名快照)与管理合并 / 摘出、Archive Sync `events` 流(`events_v1`,九流)、回放脚本 `scripts/replay_event_assignment.py`;读者面「热点」段**搁置**(三方向样页留档 `docs/design/issue-121-hot-events/`,随榜单前端统一重构再出);方案 `docs/plans/issue-121-event-layer.md`(R2),调研 `issue-121-event-layer-research.md`。
+- **事件层 wave 2 早报同事件去重(issue #103,分支 `feat/issue-103-brief-event-dedup`,开发版 3.67.0-alpha,进行中)**:个人早报消费事件层归属——事件键跨三条通道共享(头条已代表的事件精选不再出另一篇)、昨天版面出现过的事件今天整组抑制(含头条与降级回退)、条目快照带「另见 N 源」(事件层可见成员,页面 chip 展开逐篇)、编排说明行「同事件合并 N 篇」;公共日报 `dedup_clusters` 前加事件层机械预聚类。`POLICY_VERSION` → v2。方案 `docs/plans/issue-121-event-layer.md` §5.3。
+- **事件层 wave 1(issue #121 + #103,PR #220 `0b47456`,2026-10-23 合入 main,开发版 3.67.0-alpha)**:平台级持久事件层——`events` 五表(退役零写入的 `duplicate_groups`)、分析周期末尾增量分配(URL / 同题直连 → FTS5 三通道 + 实体召回 → 一次辅助模型判全批,首篇关窗 48h、代表稿描述、只标题、回显校验、结构规则、不回溯)、热点榜读取侧(可见发布主体 ≥ 2、最多 10 件、07:00 排名快照)与管理合并 / 摘出、Archive Sync `events` 流(`events_v1`,九流)、回放脚本 `scripts/replay_event_assignment.py`;读者面「热点」段**搁置**(三方向样页留档 `docs/design/issue-121-hot-events/`,随榜单前端统一重构再出);方案 `docs/plans/issue-121-event-layer.md`(R2),调研 `issue-121-event-layer-research.md`。
 - **Decisions API 新闻裂图(issue #217,开发版 3.67.0-alpha)**：OpenAI 浏览器提取补全相对地址，受限静态图片经独立浏览器取图后缓存；存量显示、预取、分享与同步统一解析基址，保留原图且不回写历史内容。方案 `docs/archive/issue-217-decisions-images.md`。
 - **游客模式(issue #213,开发版 3.67.0-alpha;2026-10-23 目检放行)**:收到站内链接免登录先逛——会话按访客 `guest:v:<vid>`(已读、AI 计次各自独立),订阅范围 / 共享早报 / AI 授权落保留账号 `guest:shared`;白名单门控 `src/api/guest_policy.py`(其余 403 `login_required`);总闸默认开;AI 每位游客与读者同额(429 `guest_quota_exhausted`);登录提示 `LoginPrompt` + 叠层登录页回原处;运维「用户」子页游客区(`components/admin/GuestZone.jsx`)+ 新表 `guest_visits`;顺手修手机发现页卡片撑宽与发现 / 社交页横向漂移;方案 `docs/archive/issue-213-guest-mode.md`,样页 `docs/design/guest-mode/`;公开链接退役另见 #215。
 - **论文全文阅读首期收口(issue #41,v3.66.0；2026-10-22)**：#201 全文阅读/摘要分析/回填/FTS 优化、#206/#207 翻译修复、#208 后台续译已完成；方案归档至 `docs/archive/issue-41-paper-fulltext.md`，后置范围进入 backlog 展望。
@@ -490,3 +491,10 @@ flags 组合、锁区偏移、错误映射、解锁静默。codex R1 两条 P2 �
 **自测**:全量套件绿;回放脚本在本机 59 篇样本走通真实 DeepSeek(3 次调用、12k token、3 组归并均合理),回显校验从 12% 失配修到 0。
 **检视**:实现方 Claude Code(Fable 5.1,四个子代理分模块);检视方 Codex(gpt-6-astra,ultra)。R1 报告 5 P1 / 5 P2 / 2 P3(隐藏成员经模型题泄露、同步 payload 私有隔离、合并后迟到分配写入 merged 事件、同步成员缺文章无恢复路径、回放导出写源库;候选集合绕过、同步事件入候选池、tombstone authority 碰撞、入池扫描饥饿、失效译题;story 链可见性、story 跨页补链),除 P3 跨页补链记 wave 2 观察外全部接受成批修复,复检见方案 §11。
 **前端**:Opus 5.5(max)出三方向样页(A 同构榜行 / B 事件卡 / C 头版,桌面 + 手机 + 亮暗 + 四种榜况),用户目检后拍板**搁置**:三者都待商榷,B 较优但非视觉定稿;计划之后统一重构文章榜 / 播客榜 / 热点的前端并重审文章榜定位,热点段届时重出。样页留档 `docs/design/issue-121-hot-events/`。
+
+## 事件层 wave 2 早报同事件去重(issue #103,分支 `feat/issue-103-brief-event-dedup`,开发版 3.67.0-alpha,版本号以实际发版为准)
+
+**设计取舍**:#103 原设想的「实体 ∧ 标题相似」机械层在调研中判同对为 0,改为直接消费 wave 1 的事件层归属(`DigestArticleCandidateDTO.event_id`)。事件键 `digest_selection.event_key` 公开给编排方;头条分组在实体并查集之上恒按事件键并;昨天版面条目所属事件按事件层当前归属整组抑制,**头条也受此抑制**(叠加在既有前两期实体抑制之上,方案 §5.3 记了判断理由);「另见 N 源」取事件层该事件的其它读者可见成员(与榜单同一可见性判定),不取候选池——读者要的是「同一事件还有谁报道了」。`story` 链接(接前报)不在本波,随 issue #221 拍板。
+**实现**:`services/digest_selection.py`(`event_key` 公开、头条分组按事件键并)/ `services/personal_digest.py`(昨日事件集合、三处池剔除、跨通道事件键重选、`related_sources` / `event_id` 入快照、`same_event_merged` / `same_event_previous_day` 入编排统计、降级回退按事件去重、`POLICY_VERSION` v2)/ `services/event_board.visible_member_links` / `services/daily_brief.py`(`precluster_by_event` + `load_event_ids_by_article`,`dedup_clusters` / `merge_same_day` 带 `event_ids_by_article`)/ 前端 `PersonalBriefPage.jsx`(`RelatedChip` / `RelatedList`,说明行「同事件合并 N 篇」)+ `index.css`(`.bp-also*`)。
+**自测**:全量套件 3096 绿(新增 11 个用例:同事件归一 + 另见 + 统计、头条事件不重复进精选、昨日事件整组抑制、另见只列可见成员、降级回退按事件去重、头条按 event_id 分组、日报事件层预聚类 ×3、`visible_member_links`);前端 lint / test / build 绿。沙箱(真实库副本,真实辅助模型跑一轮分配后关掉密钥):09-03 版 10 条里 3 条带「另见」、说明行「同事件合并 5 篇」;09-04 版昨日事件抑制 4 篇;亮 / 暗 / 移动壳零控制台错误、零水平溢出。
+**检视 / 目检**:待记录(检视方 Codex,用户目检沙箱)。

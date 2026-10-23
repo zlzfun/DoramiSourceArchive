@@ -1,6 +1,6 @@
 # 多源事件层:同事件归并、热点榜与早报去重共用一份归属(issue #121 + #103)
 
-> 状态:排队中(R2,2026-10-23;R1 路径设计同日经方向调研实测修订,见 [`issue-121-event-layer-research.md`](./issue-121-event-layer-research.md);仅设计,未实现、未开分支)。
+> 状态:进行中——**wave 1 纯后端已合入 main**(PR #220,2026-10-23);**wave 2 早报同事件去重(#103)实现中**(分支 `feat/issue-103-brief-event-dedup`,落地记录见 §5.3);wave 3 Agent / MCP 排队。R2 路径设计经方向调研实测修订,见 [`issue-121-event-layer-research.md`](./issue-121-event-layer-research.md)。
 > **拍板(2026-10-23,用户,记录于 issue #121 评论)**:主路线 = FTS5 三通道词面召回 + 辅助模型增量分配(首篇关窗 48h、代表稿描述、只标题、回显校验);向量召回(外部 embedding API)不进首版,留再评估触发。其余 §10 条目按「建议」执行,未另行反对。
 > **拍板(2026-10-23 晚,用户目检样页后)**:前端「热点」段**搁置**——三方向样页(`docs/design/issue-121-hot-events/`)都待商榷,B 较优但非视觉定稿;用户计划之后统一重构文章榜 / 播客榜 / 热点的前端并重审文章榜定位,热点段随该重构再出样页。wave 1 以纯后端收口(事件层 + 读者 / 管理 API + 同步流 + 回放脚本)。
 > 关联:[issue #121](https://github.com/zlzfun/DoramiSourceArchive/issues/121)(多源事件聚合与热点榜,2026-09-20 需求记录)·
@@ -152,6 +152,18 @@ publisher_key    = 注册表 source_owner 非空 ? source_owner : source_id;合�
 - 跨期:事件任一成员出现在昨天版面 → 今天整个事件抑制(与重大事件通道前两期实体抑制对齐,头条口径不变)。
 - 公共日报 `dedup_clusters` 前加一步:同事件成员机械并簇,再把剩余交 LLM;LLM 失败兜底不变。
 
+**wave 2 落地记录(2026-10-23,分支 `feat/issue-103-brief-event-dedup`)**:
+
+- 事件键 `digest_selection.event_key`(事件层 `event_id` → 规范 URL → 归一化标题)公开给编排方;头条分组 `_group_breaking_events` 在实体并查集之上**恒按事件键并**(同事件的官方稿与无实体标签的推文此前会被分到两簇)。
+- 跨通道:头条代表的事件键集合传回精选,兴趣 / 分数通道剔除同键候选后按同一策略重选(原「提级文章 id 剔除」是它的子集)。
+- 跨期:昨天版面(任一分区)条目所属事件按事件层**当前归属**查(管理员事后合并 / 摘出以改后为准),今天订阅 ∪ 兴趣池、头条池、降级回退三处整组剔除;**头条也受此抑制**(方案原文「头条口径不变」指既有的前两期实体抑制照旧保留,这里是在其上叠加一条更强的硬规则——读者昨天已在版面上见过的事件,今天不再以头条重复出现);被剔除的候选数记 `selection_stats_json.same_event_previous_day`。
+- 「另见 N 源」= 编排时事件层里该事件的**其它读者可见成员**(`event_board.visible_member_links`,与榜单同一可见性判定:隐藏 / 私有 / 凭据源成员不出现;订阅外可见成员照列),按代表稿序最多 10 条写进条目快照 `snapshot.related_sources`(article_id / title / title_zh / source_id / source_name / source_role / url / publish_date)与 `snapshot.event_id`;不是「候选池里被并掉的那几篇」——读者关心的是同一事件还有谁报道了,与该篇是否过了早报门槛无关。页面 chip 的 N 数**来源**(同源两篇算一),展开逐篇,链接开新窗。
+- `selection_stats_json.same_event_merged` = 订阅 ∪ 兴趣池 + 头条池 + 价值分区池里,事件键已由本期某条代表的其它候选数(按条目分别记入 `ranking_features_json.same_event_merged`);编排说明行出「同事件合并 N 篇」。
+- 降级回退「订阅源最新更新」:多取三倍再按事件去重、剔除昨日事件,去重后不足不补。`POLICY_VERSION` → `personal-digest-v2`;历史 v1 快照无 `event_id` / `related_sources` 键,页面按缺省处理。
+- 公共日报:`precluster_by_event`(按 `event_members` 当前归属机械并簇,代表规则同 LLM 簇)先于 `precluster_same_event`,再交模型;`merge_same_day` 同用一张 `event_ids_by_article`;模型失败时两层机械结果都保留。
+- **有意不做(本波)**:`story_id` / `follows_event_id` 的「接前报」链接——是否做故事线已列入 issue #221 待拍板;「深度阅读」「播客精选」不参与事件键跨通道剔除(论文 / 播客不入事件层,事件键回落 URL / 标题,行为不变)。
+- 本机沙箱自查(真实库副本 + 真实辅助模型分配 2026-09-03 批 237 篇:直连 6、模型归并 4、单例 227,12 次调用 10.8 万 token):09-03 版 31 篇候选选 10 篇、同事件合并 5 篇、三条带「另见」(Gemini 3.8 Flash 官方稿 + DeepMind 博客 + IT之家两篇归一条);09-04 版昨日事件整组抑制 4 篇;09-16 版 web_aiera 与量子位的同一科研报道归一条。亮 / 暗 / 移动壳截图零控制台错误、零水平溢出。
+
 ### 5.4 Agent / MCP(wave 3,按协作者评论)
 
 - `GET /api/public/subscriptions/{id}/events?updated_since=&q=&tag=&limit≤100&cursor=` 与 `GET …/events/{event_id}`:令牌范围内可见成员算出的事件视图;
@@ -176,7 +188,7 @@ publisher_key    = 注册表 source_owner 非空 ? source_owner : source_id;合�
 |---|---|---|
 | 0 回放 | `scripts/replay_event_assignment.py`(从调研脚本改出):对生产 14 天导出跑 §3 全流程(含真实辅助模型;FTS5 召回 vs 向量召回两档),输出事件数、≥ 2 发布主体事件数 / 天、误并 / 漏并抽检、调用成本 | 用户在生产只读导出上跑;误并(抽 50 组目检)≤ 10%、≥ 2 发布主体事件中位 ≥ 4 件 / 天,否则榜单改「今日热点 3–5 件」或只做 #103;本机 52 源语料中位 4 件是下界 |
 | 1 事件层(纯后端) | 表 / 迁移、分配服务、排名快照、读者 / 管理 API、管理员合并 / 摘出、Archive Sync `events` 流、游客白名单、回放脚本;**前端热点段搁置**(随榜单统一重构) | 交叉检视 + 全量套件 + CI 绿;生产观察一周看误并修正次数与每日 ≥ 2 主体事件数 |
-| 2 早报去重 | #103 全部验收项(事件键跨通道、另见 N 源、跨期抑制、编排说明行)+ 日报预聚类消费事件 | 7 天样本回放:4 条 X·OpenAI 同发布推文、GPT-6 官方稿 vs 媒体稿合并正确 |
+| 2 早报去重 | #103 全部验收项(事件键跨通道、另见 N 源、跨期抑制、编排说明行)+ 日报预聚类消费事件(**实现中**,分支 `feat/issue-103-brief-event-dedup`,记录见 §5.3) | 7 天样本回放:4 条 X·OpenAI 同发布推文、GPT-6 官方稿 vs 媒体稿合并正确(需生产导出,待发版后在生产观察期核;本机库副本回放见 §5.3) |
 | 3 Agent 事件查询 | 公共事件端点 + MCP 工具 + 契约文 | 令牌范围隔离测试;合并后旧 ID 可追溯 |
 
 每波按 `dorami-issue-loop` 走:worktree 分支、自测、沙箱、文档同波(`version-history` / `backlog` / `decisions`)、交叉检视、目检、squash。

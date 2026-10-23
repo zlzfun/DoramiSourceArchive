@@ -660,3 +660,34 @@ def test_list_events_filters_status_and_title_substring(tmp_path):
         assert [item["title"] for item in event_board.list_events(session, q="发布")] == ["GPT-6 发布", "Gemini 发布"]
         assert [item["title"] for item in event_board.list_events(session, q="%")] == []  # LIKE 通配符被转义
         assert len(event_board.list_events(session, limit=1)) == 1
+
+
+def test_visible_member_links_lists_reader_visible_members_in_representative_order(tmp_path):
+    """issue #103:早报「另见 N 源」的成员清单——隐藏 / 私有成员不出现、官方代表稿序在前、译题缓存随行、按 limit 截断。"""
+    sink = _sink(tmp_path, "links.db")
+    with Session(sink.engine) as session:
+        session.add(AppSettingRecord(key="reader_hidden_source_ids", value='["hidden-src"]'))
+        _official_source(session, "official-src")
+        event = _event(session, title="GPT-6 发布")
+        fingerprint = _body_fingerprint("Media report")
+        _article(session, "media-1", "media-src", title="Media report", score=8.0, extensions={
+            TRANSLATION_TITLE_KEY: "媒体报道", TRANSLATION_TITLE_FP_KEY: fingerprint,
+        })
+        _article(session, "official-1", "official-src", title="Official post", score=7.0)
+        _article(session, "hidden-1", "hidden-src", title="Hidden", score=9.0)
+        _article(session, "private-1", "user_rss_private", title="Private", score=9.0)
+        for article_id in ("media-1", "official-1", "hidden-1", "private-1"):
+            _member(session, event, article_id)
+        other = _event(session)
+        _article(session, "other-1", "media-src")
+        _member(session, other, "other-1")
+        session.commit()
+
+        links = event_board.visible_member_links(session, [event.id, other.id, None, 999_999])
+        assert set(links) == {event.id, other.id}
+        rows = links[event.id]
+        assert [row["article_id"] for row in rows] == ["official-1", "media-1"]
+        assert rows[0]["source_role"] == "official" and rows[0]["url"] == "https://example.test/official-1"
+        assert rows[1]["title_zh"] == "媒体报道" and rows[0]["title_zh"] is None
+        assert [row["article_id"] for row in event_board.visible_member_links(session, [event.id], limit=1)[event.id]] == ["official-1"]
+        assert event_board.visible_member_links(session, []) == {}
