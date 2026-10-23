@@ -90,13 +90,14 @@ def _article(
     score: float | None = 8.0,
     tagging_status: str = "succeeded",
     genre: str = "industry_news",
+    content_type: str = "rss_article",
 ) -> tuple[ArticleRecord, ArticleAnalysisRecord | None]:
     article_id = f"article-{number:02d}"
     published_at = published_at or NOW - dt.timedelta(hours=number)
     article = ArticleRecord(
         id=article_id,
         title=f"Article {number}",
-        content_type="rss_article",
+        content_type=content_type,
         source_id=source,
         source_url=f"https://example.com/{article_id}",
         publish_date=published_at.isoformat(),
@@ -2074,4 +2075,23 @@ def test_official_member_represents_the_event_in_the_curated_lanes(storage):
         snapshot = json.loads(result.items[0].snapshot_json)
         assert [row["article_id"] for row in snapshot["related_sources"]] == [echo.id]
         assert json.loads(result.edition.selection_stats_json)["same_event_merged"] == 1
+
+
+def test_social_post_from_an_unregistered_source_never_outranks_the_article_as_representative(storage):
+    """来源无配置行也无注册类时,形态按文章 content_type 推(codex 检视 P2):同事件里 8.5 分的推文
+    让位给 8.0 分的文章当代表。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a,x_unknown_account")])
+        session.flush()
+        article = _seed_article(session, 1, source="rss_a", score=8.0)
+        tweet = _seed_article(session, 2, source="x_unknown_account", score=8.5, content_type="social_post")
+        session.flush()
+        _event_with(session, article.id, tweet.id)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert [item.article_id for item in result.items] == [article.id]
+        snapshot = json.loads(result.items[0].snapshot_json)
+        assert [row["article_id"] for row in snapshot["related_sources"]] == [tweet.id]
 
