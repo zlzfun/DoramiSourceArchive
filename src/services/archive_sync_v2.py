@@ -22,6 +22,7 @@ import uuid
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Iterable, Optional
+from urllib.parse import urlsplit
 
 from sqlalchemy import and_, delete, exists, or_, update
 from sqlalchemy.engine import Engine
@@ -413,7 +414,7 @@ def _media_references(session: Session, snapshot: int) -> dict[str, int]:
         )
     ).all()
     for article, revision in articles:
-        for url in extract_image_urls(article.content, article.extensions_json):
+        for url in extract_image_urls(article.content, article.extensions_json, article.source_url):
             urls[url] = max(urls.get(url, 0), int(revision))
     return urls
 
@@ -424,6 +425,13 @@ def is_public_media_reference(session: Session, url: str) -> bool:
     target = str(url or "").strip()
     if not target:
         return False
+    try:
+        filename = urlsplit(target).path.rsplit("/", 1)[-1]
+    except ValueError:
+        return False
+    # Relative references do not contain the full target. Narrow by filename,
+    # then resolve against each article URL and compare exactly below.
+    candidate_text = filename or target
     # Narrow in SQLite first instead of loading/parsing every article body for
     # every binary request. Exact extraction on the tiny candidate set keeps
     # the allow decision faithful while avoiding O(M × N) Python memory churn.
@@ -450,15 +458,15 @@ def is_public_media_reference(session: Session, url: str) -> bool:
                     SourceConfigRecord.collection_authority_id == "",
                 ),
                 or_(
-                    ArticleRecord.content.contains(target, autoescape=True),
-                    ArticleRecord.extensions_json.contains(target, autoescape=True),
+                    ArticleRecord.content.contains(candidate_text, autoescape=True),
+                    ArticleRecord.extensions_json.contains(candidate_text, autoescape=True),
                 ),
             )
             .order_by(ArticleRecord.id)
             .limit(200)
         ).all()
         if any(
-            target in extract_image_urls(row.content, row.extensions_json)
+            target in extract_image_urls(row.content, row.extensions_json, row.source_url)
             for row in candidates
         ):
             return True

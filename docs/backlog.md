@@ -6,6 +6,8 @@
 
 ## 进行中
 
+- ☐ **issue #217 Decisions API 新闻裂图**（方案 `docs/plans/issue-217-decisions-images.md`）：相对地址解析与 OpenAI 受限静态图浏览器取图已实现，原图在沙箱恢复，待验证、检视与用户目检；不做全量回填、实时语音接入。观察期：原文 JSON 代码行号粘连，以及源站检查策略变化导致的取图失败。
+
 - ☐ **issue #210 文档整理波**(分支 `feat/issue-210-docs-tidy`,方案 `docs/plans/issue-210-docs-tidy.md`;2026-10-21 用户拍板 D1–D10 全按推荐):
   L0 改为 `AGENTS.md` 正文 + `CLAUDE.md` `@AGENTS.md`;CLAUDE.md 的 Key Design Decisions / 目录树 / 端点 / 测试 / 迁移 / 配置 / 年表原文迁入 `docs/{architecture,reference,dev,ops}/` 与 version-history;
   28 篇完结方案归档 + `specs/` `artifacts/` 归档 + 零引用样页归档;新建 `decisions.md`、`docs/dev/workflow.md` 等、四枚 `.claude/rules/`、三枚项目技能、守卫 `scripts/check_docs.py`。

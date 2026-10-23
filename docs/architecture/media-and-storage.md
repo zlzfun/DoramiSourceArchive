@@ -7,6 +7,10 @@
 
 正文外链图片的本地缓存层（2026-07 图床波，推翻早前「外链直连、不代理」决策）。**归档正文里的原始图链从不改写**（档案忠实性、导出契约不变）——显示层统一经 `GET /api/media/proxy?url=` 取图，`src/services/media_store.py` 负责「URL → 本地缓存文件」：`MediaAssetRecord` 一行一 URL（主键 `url_hash=sha256(url)`），落盘按 `content_hash=sha256(字节)` **跨 URL 内容去重**（`data/media/{hash[:2]}/{hash}{ext}`，删除文件前需查引用）。供给三径共用 `get_or_fetch`：代理端点命中即回文件（`Cache-Control: immutable`）、未命中**即时下载**、抓取入库后 `schedule_media_prefetch`（挂在 `run_fetcher_with_tracking`，fire-and-forget）**随文预取**新文章图链。下载一律带**推导的站内 Referer**（`_referer_for`：`i.qbitai.com` → `https://qbitai.com/`，剥 i./img./cdn./mmbiz 等子域前缀）——防盗链 CDN 无 Referer 即 403，2026-07-20 实测 qbitai 403→200、一举消掉当时失败量的大头。防护：仅 http(s) + SSRF 拦截（环回/私网/链路本地拒绝；**豁免 198.18.0.0/15 fake-ip 段**——本机代理 DNS 接管时一切域名解析到该段，实测误杀后修正）+ 流式大小上限 + **魔数嗅探**（防把 CF 挑战页缓存成图）；失败行是负缓存（`status=failed`，退避窗口随 fail_count 放大，封顶一天；`force=True` 绕过冷却供定点重抓）。降级三层：后端失败 302 回源 → 前端 `ReaderMarkdown` onError 回退原链直连 → 裂图占位；`[media] enabled=false` 时 `media_store` 为 None，全链路退回外链直连。
 
+## OpenAI 受限静态图片（issue #217）
+
+正文相对图链在读取时用文章 `source_url` 解析，旧正文不回写；显示、预取、分享白名单、识图及 Archive Sync 共用这一口径。OpenAI `/_next/static/(immutable/)media/` 下的栅格图遇 HTTP 403 且 `cf-mitigated: challenge` 时，独立 Chromium 导航取图；只放行目标及站点检查资源，校验公网主机，不用用户 profile、不操作验证码、不启用 service worker。浏览器取图串行、有超时，CDP 按块读取并限制声明 / 实际字节，再经媒体库魔数校验与原有缓存生命周期。游客仍不触发下载。只随文或单篇重试，不全量回填。
+
 ## OSS 持久媒体（issue #92）
 
 ：`[oss]` 为图片和生成音频分别选择 local/oss，默认 local；未启用时无关云参数不影响部署。OSS 上传核验后才登记业务状态，冷文件从私有桶恢复并验 SHA-256；Archive Sync 仍走 ECS 鉴权 API，`object_blobs` 是节点私有位置索引。自动缓存回收按容量目标/最短驻留时间执行，跨进程读取租约保护在途响应，完整远端校验后才删本地副本，不删云端对象。生产使用同地域内网 Endpoint 与 ECS IMDSv2；SQLite、TTS 回执留本地。`scripts/migrate_media_oss.py` 默认 dry-run，真实迁移/恢复/手动回收需 `--apply --offline`。见 [`docs/ops/oss-storage.md`](../../docs/ops/oss-storage.md)。

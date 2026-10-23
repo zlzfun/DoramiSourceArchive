@@ -545,7 +545,7 @@ class OpenAINewsRssFetcher(PresetRssFetcher):
         if not html:
             return None
         html = self._strip_openai_trailers(html)
-        detail = extract_detail_from_html(html, max_chars, detail_min_chars)
+        detail = extract_detail_from_html(html, max_chars, detail_min_chars, base_url=url)
         text = self._strip_render_placeholders(detail.text)
         if text and len(text) >= detail_min_chars:
             return {

@@ -104,7 +104,7 @@ async def get_shared_article_media(
 
     target = (url or "").strip()
     from services.paper_content import delivery_body, delivery_metadata
-    if target not in extract_image_urls(delivery_body(article), delivery_metadata(article)):
+    if target not in extract_image_urls(delivery_body(article), delivery_metadata(article), article.source_url):
         raise HTTPException(status_code=404, detail="分享链接无效或已失效")
 
     def _redirect() -> RedirectResponse:

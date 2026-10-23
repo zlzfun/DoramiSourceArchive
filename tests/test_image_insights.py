@@ -149,6 +149,13 @@ def test_article_image_candidates_carry_alt_and_nearby_and_honor_limit():
     assert ii.article_image_candidates(_article(), limit=0) == []
 
 
+def test_relative_image_candidate_keeps_alt_and_nearby_after_resolution():
+    article = _article(content="This diagram explains the process.\n\n![Process](/figure.webp)")
+    candidate = ii.article_image_candidates(article, limit=1)[0]
+    assert candidate.url == "https://example.test/figure.webp"
+    assert candidate.alt == "Process" and "explains the process" in candidate.nearby
+
+
 def test_render_notes_skips_decorative_and_respects_budget():
     table = ii.ImageInsight("h1", "u1", "table", True, "对比表", "| a | b |\n| 1 | 2 |", "")
     logo = ii.ImageInsight("h2", "u2", "logo", False, "品牌 logo", "", "")

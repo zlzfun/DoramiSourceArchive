@@ -8,6 +8,7 @@ import datetime
 import os
 import sys
 from dataclasses import replace
+import pytest
 
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
@@ -271,7 +272,8 @@ def test_regenerate_rotates_old_link(monkeypatch, tmp_path):
         assert guest.get(f"/api/public/share/{second['token']}").status_code == 200
 
 
-def test_shared_media_serves_only_article_images(monkeypatch, tmp_path):
+@pytest.mark.parametrize("relative", [False, True])
+def test_shared_media_serves_only_article_images(monkeypatch, tmp_path, relative):
     """分享页取图端点：护栏与文章端点同套，且只放行该文章自身的图链。
 
     media_store 置 None 走 302 回源降级路径——既隔离网络，又验证降级契约本身。
@@ -279,6 +281,14 @@ def test_shared_media_serves_only_article_images(monkeypatch, tmp_path):
     app_module = _setup_app(monkeypatch, tmp_path)
     monkeypatch.setattr(app_module, "media_store", None)
     img = "https://img.example.com/pic.png"
+    if relative:
+        from models.db import ArticleRecord
+        with Session(app_module.db_sink.engine) as session:
+            article = session.get(ArticleRecord, "a1")
+            article.source_url = "https://img.example.com/article"
+            article.content = "![配图](/pic.png)"
+            session.add(article)
+            session.commit()
 
     with TestClient(app_module.app) as client:
         _login(client, "alice", "alice")
@@ -291,6 +301,9 @@ def test_shared_media_serves_only_article_images(monkeypatch, tmp_path):
         # 不属于这一篇的 URL → 404:令牌不是开放图片代理的通行证
         assert guest.get(
             f"/api/public/share/{token}/media?url=https://evil.example.com/x.png"
+        ).status_code == 404
+        assert guest.get(
+            f"/api/public/share/{token}/media?url=https://evil.example.com/pic.png"
         ).status_code == 404
         # 坏令牌 → 404
         assert guest.get(f"/api/public/share/dshr_bad/media?url={img}").status_code == 404

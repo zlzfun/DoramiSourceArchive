@@ -604,9 +604,9 @@ export default function ReaderTab({
       {activeBodyLoading ? (
         <PaneBodySkeleton />
       ) : (showTranslation && translatedBody) ? (
-        <ReaderMarkdown>{displayTranslatedBody}</ReaderMarkdown>
+        <ReaderMarkdown sourceUrl={activeArticle?.source_url}>{displayTranslatedBody}</ReaderMarkdown>
       ) : activeBody ? (
-        <ReaderMarkdown>{displayBody}</ReaderMarkdown>
+        <ReaderMarkdown sourceUrl={activeArticle?.source_url}>{displayBody}</ReaderMarkdown>
       ) : (
         podcastView
           ? '该播客暂无文字内容，可收听上方原节目音频。'
