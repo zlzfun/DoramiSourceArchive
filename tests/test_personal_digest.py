@@ -1924,8 +1924,32 @@ def test_yesterdays_event_is_suppressed_as_a_whole_today(storage):
 
         assert [item.article_id for item in result.items] == [fresh.id]
         stats = json.loads(result.edition.selection_stats_json)
-        # today_echo(订阅池)与 official_today(头条池)各计一次;昨天那篇按文章 id 排除,不计
-        assert stats["same_event_previous_day"] == 2 and stats["same_event_merged"] == 0
+        # 不带后缀只计订阅 ∪ 兴趣池(today_echo);*_all 另计头条池(official_today);昨天那篇按文章 id 排除,不计
+        assert stats["same_event_previous_day"] == 1 and stats["same_event_previous_day_all"] == 2
+        assert stats["same_event_merged"] == 0 and stats["same_event_merged_all"] == 0
+
+
+def test_degraded_fallback_skips_the_event_already_headlined(storage):
+    """无合格精选但有同事件头条时,「订阅源最新更新」不再放回同事件的媒体稿(codex R1 P2)。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        session.flush()
+        media = _seed_article(session, 1, score=4.0)                                # 订阅内,低于门槛
+        headline = _seed_article(session, 2, source="rss_openai_news", score=9.6)   # 官方,订阅外 → 头条
+        plain = _seed_article(session, 3, score=4.0)
+        session.flush()
+        _event_with(session, media.id, headline.id)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert result.status == "degraded"
+        assert [(item.article_id, item.selection_lane) for item in result.items] == [
+            (headline.id, "breaking"), (plain.id, "quality"),
+        ]
+        assert {json.loads(item.snapshot_json).get("event_id") for item in result.items} == {
+            json.loads(result.items[0].snapshot_json)["event_id"], None,
+        }
 
 
 def test_related_sources_only_list_reader_visible_members(storage):

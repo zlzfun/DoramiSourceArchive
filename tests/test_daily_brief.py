@@ -1423,15 +1423,20 @@ def test_precluster_by_event_merges_members_and_leaves_unassigned_alone():
 
 
 def test_dedup_clusters_applies_event_layer_before_llm_and_survives_llm_failure(monkeypatch):
+    calls: list = []
+
     async def _boom(*, messages, config, **kwargs):
+        calls.append(1)
         raise RuntimeError("llm down")
 
     _patch_llm(monkeypatch, _boom)
     a = _scored_full(8, item_id="a", company="OpenAI", source_url="https://x/a")
     b = _scored_full(7, item_id="b", company="TechCrunch", source_url="https://x/b")   # 跨厂商标题层并不上
-    a.title_cn, b.title_cn = "OpenAI 发布 GPT-6", "GPT-6 来了:记者手记"
-    out = asyncio.run(dedup_clusters([a, b], CONFIGURED, event_ids_by_article={"a": 3, "b": 3}))
-    assert [it.candidate.id for it in out] == ["a"] and out[0].extra_sources == ["https://x/b"]
+    c = _scored_full(6, item_id="c", company="Other", source_url="https://x/c")        # 异事件,保证模型层真被调用
+    a.title_cn, b.title_cn, c.title_cn = "OpenAI 发布 GPT-6", "GPT-6 来了:记者手记", "某厂发布机器人"
+    out = asyncio.run(dedup_clusters([a, b, c], CONFIGURED, event_ids_by_article={"a": 3, "b": 3}))
+    assert [it.candidate.id for it in out] == ["a", "c"] and out[0].extra_sources == ["https://x/b"]
+    assert len(calls) == 1   # 模型层确实进入并失败,机械层结果保留
 
 
 def test_load_event_ids_by_article_reads_event_members(tmp_path):

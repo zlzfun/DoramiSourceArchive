@@ -2106,15 +2106,18 @@ def generate_personal_digest(
     # issue #103:昨天版面(任一分区)上过的事件今天整组抑制——三条通道与降级回退同口径;
     # 被抑制的候选记下来,进编排说明行的 same_event_previous_day
     previous_event_ids = _previous_edition_event_ids(session, previous_article_ids)
+    # 分池记:订阅 ∪ 兴趣池的计数与 candidate_count 同范围进说明行;头条池另记全版口径(codex R1 P2)
     previous_event_dropped: set[str] = set()
+    previous_event_dropped_breaking: set[str] = set()
 
     def _without_previous_events(
         pool: Iterable[DigestArticleCandidateDTO],
+        dropped: set[str],
     ) -> list[DigestArticleCandidateDTO]:
         kept: list[DigestArticleCandidateDTO] = []
         for candidate in pool:
             if candidate.event_id is not None and candidate.event_id in previous_event_ids:
-                previous_event_dropped.add(candidate.article_id)
+                dropped.add(candidate.article_id)
                 continue
             kept.append(candidate)
         return kept
@@ -2139,7 +2142,8 @@ def generate_personal_digest(
                 min_score=policy.external_min_quality_score,
             ))
         return _without_previous_events(
-            candidate for candidate in pool if candidate.article_id not in previous_article_ids
+            (candidate for candidate in pool if candidate.article_id not in previous_article_ids),
+            previous_event_dropped,
         )
 
     def _select(pool: Sequence[DigestArticleCandidateDTO]):
@@ -2176,12 +2180,15 @@ def generate_personal_digest(
     breaking_candidates: list[DigestArticleCandidateDTO] = []
     breaking_policy_value = breaking_policy(session)
     if breaking_policy_value.max_items > 0:
-        breaking_candidates = _without_previous_events(load_breaking_candidates(
-            session,
-            cutoff_at=current,
-            window_hours=PERSONAL_DIGEST_BREAKING_WINDOW_HOURS,
-            min_score=breaking_policy_value.min_score - breaking_policy_value.corroboration_slack,
-        ))
+        breaking_candidates = _without_previous_events(
+            load_breaking_candidates(
+                session,
+                cutoff_at=current,
+                window_hours=PERSONAL_DIGEST_BREAKING_WINDOW_HOURS,
+                min_score=breaking_policy_value.min_score - breaking_policy_value.corroboration_slack,
+            ),
+            previous_event_dropped_breaking,
+        )
         if breaking_candidates:
             breaking_selections = select_breaking_events(
                 breaking_candidates,
@@ -2210,6 +2217,11 @@ def generate_personal_digest(
         event_key(breaking_by_id[selection.article_id])
         for selection in breaking_selections
         if selection.article_id in breaking_by_id
+    }
+    breaking_event_ids = {
+        breaking_by_id[selection.article_id].event_id
+        for selection in breaking_selections
+        if selection.article_id in breaking_by_id and breaking_by_id[selection.article_id].event_id is not None
     }
     if breaking_keys and any(event_key(candidate) in breaking_keys for candidate in candidates):
         remaining = [candidate for candidate in candidates if event_key(candidate) not in breaking_keys]
@@ -2296,22 +2308,29 @@ def generate_personal_digest(
     subscribed_set = set(scope.expected_source_ids)
     candidate_by_id = {candidate.article_id: candidate for candidate in candidates}
     own_selections = list(selections) if had_own_selections else []
-    # issue #103:同事件合并计数——订阅 ∪ 兴趣池与头条池里,事件键已由本期某条代表的其它候选
-    # (按代表条目分别计,进该条目的排障特征;总数进编排说明行)
+    # issue #103:同事件合并计数 = 事件键已由本期某条(任一通道)代表的其它候选。说明行那句
+    # 「N 篇里选出 M 篇,同事件合并 K 篇」的 N 是订阅 ∪ 兴趣池,K 必须同范围(codex R1 P2);
+    # 含头条池 / 价值分区池的全版口径另记 *_all 供排障,页面不展示。
     pool_by_id = dict(candidate_by_id)
     for candidate in breaking_candidates:
         pool_by_id.setdefault(candidate.article_id, candidate)
     pool_by_id.update(value_by_id)
     selected_ids = {selection.article_id for selection in own_selections} | promoted_ids | value_article_ids
     selected_keys = {event_key(pool_by_id[aid]) for aid in selected_ids if aid in pool_by_id}
-    merged_by_key: dict[str, int] = {}
-    for article_id, candidate in pool_by_id.items():
-        if article_id in selected_ids:
-            continue
-        key = event_key(candidate)
-        if key in selected_keys:
-            merged_by_key[key] = merged_by_key.get(key, 0) + 1
+
+    def _merged_by_key(pool: Mapping[str, DigestArticleCandidateDTO]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for article_id, candidate in pool.items():
+            if article_id in selected_ids:
+                continue
+            key = event_key(candidate)
+            if key in selected_keys:
+                counts[key] = counts.get(key, 0) + 1
+        return counts
+
+    merged_by_key = _merged_by_key(candidate_by_id)
     same_event_merged = sum(merged_by_key.values())
+    same_event_merged_all = sum(_merged_by_key(pool_by_id).values())
     selection_stats = {
         "candidate_count": len(candidates),
         "subscribed_candidate_count": sum(1 for candidate in candidates if candidate.subscribed),
@@ -2327,9 +2346,12 @@ def generate_personal_digest(
             and not candidate_by_id[selection.article_id].subscribed
         ),
         "breaking_count": len(breaking_selections),
-        # issue #103:同事件合并到代表条目的候选数;昨天版面上过的事件今天被整组抑制的候选数
+        # issue #103:同事件合并到代表条目的候选数;昨天版面上过的事件今天被整组抑制的候选数。
+        # 不带后缀 = 订阅 ∪ 兴趣池(与 candidate_count 同范围,进说明行);*_all = 另含头条池 / 价值分区池
         "same_event_merged": same_event_merged,
+        "same_event_merged_all": same_event_merged_all,
         "same_event_previous_day": len(previous_event_dropped),
+        "same_event_previous_day_all": len(previous_event_dropped | previous_event_dropped_breaking),
         "interest_only": interest_only,
         "external_min_score": policy.external_min_quality_score,
         "external_per_source_max": policy.external_per_source_max,
@@ -2585,8 +2607,9 @@ def generate_personal_digest(
             scope.expected_source_ids,
             interests,
             limit=PERSONAL_DIGEST_LATEST_FALLBACK_LIMIT,
-            excluded_article_ids=previous_article_ids | value_article_ids,
-            excluded_event_ids=previous_event_ids,
+            # 本期头条与其事件也排除:无合格精选时,头条已代表的事件不能从回退再进一条(codex R1 P2)
+            excluded_article_ids=previous_article_ids | value_article_ids | promoted_ids,
+            excluded_event_ids=previous_event_ids | breaking_event_ids,
         )
         fallback_event_ids = _event_id_map(session, [article.id for article, *_rest in latest])
         event_links.update(_related_sources_by_event(session, fallback_event_ids.values()))

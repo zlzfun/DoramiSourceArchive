@@ -158,10 +158,10 @@ publisher_key    = 注册表 source_owner 非空 ? source_owner : source_id;合�
 - 跨通道:头条代表的事件键集合传回精选,兴趣 / 分数通道剔除同键候选后按同一策略重选(原「提级文章 id 剔除」是它的子集)。
 - 跨期:昨天版面(任一分区)条目所属事件按事件层**当前归属**查(管理员事后合并 / 摘出以改后为准),今天订阅 ∪ 兴趣池、头条池、降级回退三处整组剔除;**头条也受此抑制**(方案原文「头条口径不变」指既有的前两期实体抑制照旧保留,这里是在其上叠加一条更强的硬规则——读者昨天已在版面上见过的事件,今天不再以头条重复出现);被剔除的候选数记 `selection_stats_json.same_event_previous_day`。
 - 「另见 N 源」= 编排时事件层里该事件的**其它读者可见成员**(`event_board.visible_member_links`,与榜单同一可见性判定:隐藏 / 私有 / 凭据源成员不出现;订阅外可见成员照列),按代表稿序最多 10 条写进条目快照 `snapshot.related_sources`(article_id / title / title_zh / source_id / source_name / source_role / url / publish_date)与 `snapshot.event_id`;不是「候选池里被并掉的那几篇」——读者关心的是同一事件还有谁报道了,与该篇是否过了早报门槛无关。页面 chip 的 N 数**来源**(同源两篇算一),展开逐篇,链接开新窗。
-- `selection_stats_json.same_event_merged` = 订阅 ∪ 兴趣池 + 头条池 + 价值分区池里,事件键已由本期某条代表的其它候选数(按条目分别记入 `ranking_features_json.same_event_merged`);编排说明行出「同事件合并 N 篇」。
-- 降级回退「订阅源最新更新」:多取三倍再按事件去重、剔除昨日事件,去重后不足不补。`POLICY_VERSION` → `personal-digest-v2`;历史 v1 快照无 `event_id` / `related_sources` 键,页面按缺省处理。
+- `selection_stats_json.same_event_merged` = **订阅 ∪ 兴趣池**里事件键已由本期某条(任一通道)代表的其它候选数——与说明行「N 篇里选出 M 篇」的 N 同范围(codex R1 P2);含头条池 / 价值分区池的全版口径另记 `same_event_merged_all`(同理 `same_event_previous_day` / `_all`),只供排障。按条目分别记入 `ranking_features_json.same_event_merged`;编排说明行出「同事件合并 N 篇」。
+- 降级回退「订阅源最新更新」:多取三倍再按事件去重、剔除昨日事件与**本期头条及其事件**(codex R1 P2),去重后不足不补。`POLICY_VERSION` → `personal-digest-v2`;历史 v1 快照无 `event_id` / `related_sources` 键,页面按缺省处理。
 - 公共日报:`precluster_by_event`(按 `event_members` 当前归属机械并簇,代表规则同 LLM 簇)先于 `precluster_same_event`,再交模型;`merge_same_day` 同用一张 `event_ids_by_article`;模型失败时两层机械结果都保留。
-- **有意不做(本波)**:`story_id` / `follows_event_id` 的「接前报」链接——是否做故事线已列入 issue #221 待拍板;「深度阅读」「播客精选」不参与事件键跨通道剔除(论文 / 播客不入事件层,事件键回落 URL / 标题,行为不变)。
+- **有意不做(本波)**:`story_id` / `follows_event_id` 的「接前报」链接——是否做故事线已列入 issue #221 待拍板;「深度阅读」「播客精选」不参与事件键**跨通道**剔除(分区内仍按事件键去重;论文 / 播客不入事件层,教程 / 观点可带 `event_id` 但与新闻通道互不剔除,行为不变)。
 - 本机沙箱自查(真实库副本 + 真实辅助模型分配 2026-09-03 批 237 篇:直连 6、模型归并 4、单例 227,12 次调用 10.8 万 token):09-03 版 31 篇候选选 10 篇、同事件合并 5 篇、三条带「另见」(Gemini 3.8 Flash 官方稿 + DeepMind 博客 + IT之家两篇归一条);09-04 版昨日事件整组抑制 4 篇;09-16 版 web_aiera 与量子位的同一科研报道归一条。亮 / 暗 / 移动壳截图零控制台错误、零水平溢出。
 
 ### 5.4 Agent / MCP(wave 3,按协作者评论)
