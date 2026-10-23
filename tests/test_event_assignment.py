@@ -1053,3 +1053,35 @@ def test_isolated_replay_revalidates_targets_between_commits(tmp_path, monkeypat
     assert outcome["isolated_failures"] == 1 and outcome["retargeted"] == 1
     assert _member(engine, "h1").event_id == target_c and _member(engine, "h3").event_id == target_c
     assert _event(engine, target_b).status == "merged" and _event(engine, target_b).member_count == 0
+
+
+def test_isolated_replay_applies_serial_rule_against_committed_group_members(tmp_path, monkeypatch):
+    """R3 组合路径:批内 g1 / g3 同源同题跨日被模型给了同一 new:1,中间 g2 落库失败触发逐篇隔离重放;
+    g3 复用 g1 已建的组事件时须按「并入已有事件」路径对现有成员做结构校验 → 拆成单例。"""
+    engine = _sink(tmp_path).engine
+    title = "Daily AI digest: the stories you need"
+    _seed(engine, "g1", title, source_id="rss_a", publish=NOW - dt.timedelta(days=1))
+    _seed(engine, "g2", "Broken source article", source_id="rss_bad")
+    _seed(engine, "g3", title, source_id="rss_a", publish=NOW)
+    _seed(engine, "g4", "Daily digest companion piece", source_id="rss_c")
+    real_publisher = ea.publisher_key
+
+    def flaky(source_id, meta):
+        if source_id == "rss_bad":
+            raise RuntimeError("publisher exploded")
+        return real_publisher(source_id, meta)
+
+    monkeypatch.setattr(ea, "publisher_key", flaky)
+    with Session(engine) as session:
+        outcome = ea.apply_assignments(session, [
+            ea.AssignmentDecision(article_id="g1", assigned_by="llm", new_key="new:1", confidence=0.9),
+            ea.AssignmentDecision(article_id="g2", assigned_by="singleton"),
+            ea.AssignmentDecision(article_id="g3", assigned_by="llm", new_key="new:1", confidence=0.9),
+            ea.AssignmentDecision(article_id="g4", assigned_by="llm", new_key="new:1", confidence=0.9),
+        ], now=NOW)
+    assert outcome["isolated_failures"] == 1 and outcome["serial_split"] == 1 and outcome["assigned"] == 3
+    group_event = _member(engine, "g1").event_id
+    assert _member(engine, "g3").event_id != group_event and _member(engine, "g3").assigned_by == "singleton"
+    assert _member(engine, "g4").event_id == group_event          # 组键映射保留给不冲突的后续篇
+    assert _event(engine, group_event).member_count == 2
+    assert _member(engine, "g2") is None and _ledger(engine, "g2").attempts == 1

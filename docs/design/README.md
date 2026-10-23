@@ -5,6 +5,7 @@
 | 样页 | 波次 / issue | 说明 |
 |---|---|---|
 | `guest-mode/`(README + index / frame) | issue #213(已落地) | 游客模式九个场景:深链直达 / 登录页「先逛逛」/ 登录提示 / 游客版早报 / 发现页 / 分享 / AI 试用 / 设置与我的 / 运维游客区;底稿为现网 DOM 快照 |
+| `issue-121-hot-events/`(index + direction-a/b/c) | issue #121(前端搁置,2026-10-23) | 热点事件榜三方向样页:A 同构榜行 / B 事件卡 / C 头版;桌面嵌 RankingsPage 壳、手机壳、亮暗、四种榜况(6 / 7 / 3 件 / 空榜)、「新」与排名变化、「接前报」链;数据为调研金标真实事件。用户目检:三者都待商榷,B 较优但非定稿,留待文章榜 / 播客榜 / 热点统一重构时重出 |
 | `podcast-player/`(README + index / global / pane) | issue #199(v3.66) | 播客区方案 A / B / C × 状态 s1–s6,全局播放条条位 × 配色;拍板 C + 内容区浮层 + 封面模糊 |
 | `social-translate/`(README + index / frame) | issue #84(v3.66) | 社交流翻译入口与译文呈现 |
 | `visual-refine-final/`(index / type / color / reader / brief / console / details + shots) | issue #184(v3.65) | 视觉精修定稿:字体 / 中性色三套 / 阅读器 / 夜航早报 / 管理面;字体 data URI 内嵌可离线开 |

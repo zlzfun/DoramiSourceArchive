@@ -1163,9 +1163,12 @@ def _event_member_shapes(session: Session, event_id: int, now: dt.datetime) -> l
 
 
 def _validate_decisions(session: Session, decisions: Sequence[AssignmentDecision],
-                        articles: Mapping[str, ArticleRecord], *, now: dt.datetime) -> tuple[list[AssignmentDecision], dict[str, int]]:
+                        articles: Mapping[str, ArticleRecord], *, now: dt.datetime,
+                        key_events: Optional[Mapping[str, int]] = None) -> tuple[list[AssignmentDecision], dict[str, int]]:
     """落库前统一校验(直连 / 模型 / 批内组一视同仁,R1 #3 #6):既有事件目标经 redirect / merged / authority / blocked
     重验,并按事件级结构规则(同源同题非同日)复核;``new:*`` 组内同样执行结构规则,冲突成员拆成单例。
+    ``key_events`` 给出已经落库的组键映射(隔离重放):组键已有事件的决定按「并入已有事件」路径校验——跨文章的
+    组内结构状态随前一篇的提交进了库,只校验本篇与组内其它篇就会漏掉(R3 组合路径);冲突篇拆单例,组键映射保留给其它篇。
     返回调整后的决定副本与计数 ``{"invalid_target", "retargeted", "serial_split"}``。"""
     counts = {"invalid_target": 0, "retargeted": 0, "serial_split": 0}
     validated: list[AssignmentDecision] = []
@@ -1178,6 +1181,18 @@ def _validate_decisions(session: Session, decisions: Sequence[AssignmentDecision
             continue
         adjusted = AssignmentDecision(**vars(decision))
         shape = _shape_of(article, now)
+        if adjusted.event_id is None and adjusted.new_key and key_events and adjusted.new_key in key_events:
+            cached = int(key_events[adjusted.new_key])
+            blocked = _blocked_ids(session.get(EventAssignmentLedgerRecord, article.id))
+            event, reason = _resolve_target_event(session, cached, blocked=blocked)
+            if event is None:
+                counts["invalid_target"] += 1
+                logger.info("组键 %s 的事件 %s 不可用(%s),文章 %s 改为单例", adjusted.new_key, cached, reason, article.id)
+                adjusted.new_key, adjusted.assigned_by, adjusted.confidence = None, ASSIGNED_BY_SINGLETON, None
+            else:
+                if int(event.id) != cached:
+                    counts["retargeted"] += 1
+                adjusted.event_id, adjusted.new_key = int(event.id), None   # 转成「并入已有事件」,下面按事件成员复核
         if adjusted.event_id is not None:
             blocked = _blocked_ids(session.get(EventAssignmentLedgerRecord, article.id))
             event, reason = _resolve_target_event(session, adjusted.event_id, blocked=blocked)
@@ -1289,7 +1304,7 @@ def _apply_isolated(session: Session, decision: AssignmentDecision, *, now: dt.d
                     llm_titles: Mapping[str, str], key_events: dict[str, int],
                     key_titles: dict[int, str]) -> tuple[int, set[int], dict[str, int]]:
     """隔离重放的一篇:在本篇自己的事务里重新校验目标后写入并提交。异常原样抛出,由调用方回滚并退避。"""
-    validated, counts = _validate_decisions(session, [decision], articles, now=now)
+    validated, counts = _validate_decisions(session, [decision], articles, now=now, key_events=key_events)
     one_assigned, one_touched = _apply_batch(
         session, validated, now=now, articles=articles, meta=meta,
         llm_titles=llm_titles, key_events=key_events, key_titles=key_titles,

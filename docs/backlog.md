@@ -6,7 +6,8 @@
 
 ## 进行中
 
-- ☐ **issue #121 + #103 事件层 wave 1**(分支 `feat/issue-121-event-layer`,方案 `docs/plans/issue-121-event-layer.md` R2,调研报告同目录):后端(五表 / 分配服务 / 热点榜读取侧 / 管理修正 / 同步流 / 回放脚本)已实现并经 Codex 首轮检视返修中;前端「热点」段待样页拍板。本波有意不做:LLM 事件签名、纯向量聚类、日报聚类持久化为事件层、sqlite-vec、事件级综合摘要、外部 embedding API(再评估触发:一中一外同事件漏并率明显高于译中标题通道 top-10 召回 0.68)。观察期:story / follows 跨页补链(wave 2 填链时实现)、`event_board._recompute_event` 与 `event_assignment._recompute_events` 收口为一处、生产供给(每天 ≥ 2 主体事件数,本机语料中位 4 件是下界)、首篇关窗 36h 是否再提精度。wave 2 = #103 早报去重;wave 3 = Agent / MCP 事件查询。
+- ☐ **issue #121 + #103 事件层 wave 1**(分支 `feat/issue-121-event-layer`,方案 `docs/plans/issue-121-event-layer.md` R2,调研报告同目录):后端(五表 / 分配服务 / 热点榜读取侧 / 管理修正 / 同步流 / 回放脚本)已实现并经 Codex 三轮检视返修;**前端「热点」段搁置**(2026-10-23 用户目检三方向样页后:都待商榷、B 较优非定稿,随之后文章榜 / 播客榜 / 热点前端统一重构再出,样页留档 `docs/design/issue-121-hot-events/`)。本波有意不做:LLM 事件签名、纯向量聚类、日报聚类持久化为事件层、sqlite-vec、事件级综合摘要、外部 embedding API(再评估触发:一中一外同事件漏并率明显高于译中标题通道 top-10 召回 0.68)。观察期:story / follows 跨页补链(wave 2 填链时实现)、`event_board._recompute_event` 与 `event_assignment._recompute_events` 收口为一处、生产供给(每天 ≥ 2 主体事件数,本机语料中位 4 件是下界)、首篇关窗 36h 是否再提精度。wave 2 = #103 早报去重;wave 3 = Agent / MCP 事件查询。
+- ◇ **榜单前端统一重构**(用户 2026-10-23 表态,未立项):文章榜 / 播客榜 / 热点三段一致化,并重审文章榜的定位与展示内容;热点段的事件卡样页(方向 B)作为起点。后端 `GET /api/reader/events` 已就位。
 - ☐ **issue #217 媒体修复观察期**（方案 `docs/archive/issue-217-decisions-images.md`，PR #219）：相对地址解析与 OpenAI 受限静态图浏览器取图已实现，检视和用户目检通过；本地加近期生产历史共 106 张真实取图全部成功，211 篇 OpenAI 文章仅本篇出现同类地址。不做全量回填、实时语音接入。观察期：JSON 行号粘连、源站检查变化、非规范 URL 标准化差异、量增后的引用扫描开销，以及浏览器极端卡死时清理阶段无独立硬超时。两端部署先 replica 后 authority，防旧 GC 误回收相对图媒体。
 - ☐ **历史 HTML figure 图片转换**（#217 回测发现）：Lilian Weng《Reward Hacking in Reinforcement Learning》两张相对 PNG 已可取回，但旧正文 HTML `<figure>` 在阅读器显示字面标签。另行评估提取 / 读取时的安全 HTML→Markdown 转换；不直接放开任意 HTML。见 [回测记录](./archive/issue-217-decisions-images.md)。
 

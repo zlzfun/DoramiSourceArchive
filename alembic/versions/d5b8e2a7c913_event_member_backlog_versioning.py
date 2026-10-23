@@ -1,8 +1,10 @@
 """event member backlog keyed by (authority, article) with a revision basis (issue #121, review R2 N2)
 
 待补账改为同一 authority 下一篇文章只留一行,并记下断言这次归属的事件页行 authority revision,
-重放按新旧归属比较、不再按 event_id 顺序无条件覆盖。表是接收端本地队列:存量行搬到新形状
-(revision 置 0 = 最旧依据,同文章多行只留一行),事件已撤回 / 本地事件的行丢弃。
+重放按新旧归属比较、不再按 event_id 顺序无条件覆盖。表是接收端本地队列:存量行按 (authority, article)
+取 ``updated_at`` 最新(并列取 event_id 大者)的**整行**搬到新形状,revision 取
+``archive_sync_entity_states`` 里该事件已接收的 revision(查不到才 0);被淘汰的冲突行与事件已撤回 /
+本地事件的行都记日志,不静默丢弃(检视 R3)。
 
 Revision ID: d5b8e2a7c913
 Revises: 7c3d9e1f5a24
@@ -11,6 +13,7 @@ Create Date: 2026-10-23
 
 from __future__ import annotations
 
+import logging
 from typing import Sequence, Union
 
 from alembic import op
@@ -25,6 +28,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 TABLE = "event_member_backlog"
 STAGING = "event_member_backlog_v2"
+logger = logging.getLogger("alembic.runtime.migration")
 
 
 def _create_new_shape(name: str) -> None:
@@ -48,6 +52,54 @@ def _create_new_shape(name: str) -> None:
     )
 
 
+def _move_legacy_rows(bind) -> None:
+    """旧形状 → 新形状:每个 (authority, article) 保留最新的一整行,revision 取该事件已接收的 revision。"""
+
+    legacy = bind.exec_driver_sql(
+        "SELECT b.event_id, b.article_id, b.payload_json, b.first_seen_at, b.attempts, "
+        "b.updated_at, e.authority_id, "
+        "(SELECT s.revision FROM archive_sync_entity_states s "
+        " WHERE s.stream = 'events' AND s.identity = CAST(b.event_id AS TEXT) "
+        " AND s.authority_id = e.authority_id) AS applied_revision "
+        f"FROM {TABLE} b LEFT JOIN events e ON e.id = b.event_id"
+    ).fetchall()
+    winners: dict[tuple[str, str], tuple[tuple[str, int], tuple]] = {}
+    discarded: list[tuple[int, str, str]] = []
+    for row in legacy:
+        event_id, article_id, payload_json, first_seen_at, attempts, updated_at, authority, applied = row
+        if not authority:
+            discarded.append((event_id, article_id, "event missing or node-local"))
+            continue
+        key = (str(authority), str(article_id))
+        rank = (str(updated_at or ""), int(event_id))
+        candidate = (
+            str(authority), str(article_id), int(event_id), int(applied or 0),
+            payload_json if payload_json is not None else "{}",
+            str(first_seen_at or updated_at or ""), int(attempts or 0), str(updated_at or ""),
+        )
+        current = winners.get(key)
+        if current is None or rank > current[0]:
+            if current is not None:
+                discarded.append((current[1][2], article_id, f"superseded by event {event_id}"))
+            winners[key] = (rank, candidate)
+        else:
+            discarded.append((event_id, article_id, f"superseded by event {current[1][2]}"))
+    for _rank, values in winners.values():
+        bind.exec_driver_sql(
+            f"INSERT INTO {STAGING}(authority_id, article_id, event_id, revision, "
+            "payload_json, first_seen_at, attempts, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            values,
+        )
+    for event_id, article_id, reason in discarded:
+        logger.warning(
+            "event_member_backlog migration dropped legacy row event=%s article=%s: %s",
+            event_id, article_id, reason,
+        )
+    logger.info(
+        "event_member_backlog migration moved %d of %d legacy rows", len(winners), len(legacy)
+    )
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
@@ -57,14 +109,7 @@ def upgrade() -> None:
         if {"authority_id", "revision"} <= columns:
             return  # create_all 收养:已是新形状
         _create_new_shape(STAGING)
-        bind.exec_driver_sql(
-            f"INSERT INTO {STAGING}(authority_id, article_id, event_id, revision, "
-            "payload_json, first_seen_at, attempts, updated_at) "
-            "SELECT e.authority_id, b.article_id, MIN(b.event_id), 0, "
-            "MIN(b.payload_json), MIN(b.first_seen_at), MAX(b.attempts), MAX(b.updated_at) "
-            f"FROM {TABLE} b JOIN events e ON e.id = b.event_id "
-            "WHERE e.authority_id <> '' GROUP BY e.authority_id, b.article_id"
-        )
+        _move_legacy_rows(bind)
         op.drop_table(TABLE)
         op.rename_table(STAGING, TABLE)
     else:

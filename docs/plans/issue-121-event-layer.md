@@ -2,6 +2,7 @@
 
 > 状态:排队中(R2,2026-10-23;R1 路径设计同日经方向调研实测修订,见 [`issue-121-event-layer-research.md`](./issue-121-event-layer-research.md);仅设计,未实现、未开分支)。
 > **拍板(2026-10-23,用户,记录于 issue #121 评论)**:主路线 = FTS5 三通道词面召回 + 辅助模型增量分配(首篇关窗 48h、代表稿描述、只标题、回显校验);向量召回(外部 embedding API)不进首版,留再评估触发。其余 §10 条目按「建议」执行,未另行反对。
+> **拍板(2026-10-23 晚,用户目检样页后)**:前端「热点」段**搁置**——三方向样页(`docs/design/issue-121-hot-events/`)都待商榷,B 较优但非视觉定稿;用户计划之后统一重构文章榜 / 播客榜 / 热点的前端并重审文章榜定位,热点段随该重构再出样页。wave 1 以纯后端收口(事件层 + 读者 / 管理 API + 同步流 + 回放脚本)。
 > 关联:[issue #121](https://github.com/zlzfun/DoramiSourceArchive/issues/121)(多源事件聚合与热点榜,2026-09-20 需求记录)·
 > [issue #103](https://github.com/zlzfun/DoramiSourceArchive/issues/103)(个人早报不做同事件去重)·
 > #121 协作者评论(2026-09-30,Agent 取用事件:窗口查询 / 稳定 ID / 合并可追溯 / 令牌范围)·
@@ -128,7 +129,7 @@ publisher_key    = 注册表 source_owner 非空 ? source_owner : source_id;合�
 - `GET /api/admin/events?status=&q=&limit=`(管理台抽屉列表)· `POST /api/admin/events/{id}/merge-into/{target}` · `POST /api/admin/events/{id}/members/{article_id}/detach`(摘出成新单成员事件并写 ledger `blocked_event_ids`)——全部入审计。
 - 内部:`services/event_assignment.assign_pending(engine, llm_config)`(分析周期末尾 + 10 分钟兜底 interval job)· `services/event_board.build_rank_snapshot(engine, date)`(cron `0 7 * * *`,job id `event_rank_snapshot`)。
 
-### 5.1 榜单页第三段「热点」(wave 1)
+### 5.1 榜单页第三段「热点」(**搁置**,随榜单前端统一重构;以下为原设想)
 
 - 落点:`RankingsPage.jsx` 的 shape 分段从「文章榜 / 播客榜」加「热点」,不新开页面;发现页「榜单」入口与轨底 `reader-ranking-entry` 不变;移动壳同列表。
 - 行:事件标题 · 来源 N(发布主体)· 热度 · 更新时间 · 排名变化;点开抽屉:代表报道(可进阅读窗)、来源列表(按发布主体分组、可点原文)、
@@ -174,7 +175,7 @@ publisher_key    = 注册表 source_owner 非空 ? source_owner : source_id;合�
 | 波 | 交付 | 门禁 |
 |---|---|---|
 | 0 回放 | `scripts/replay_event_assignment.py`(从调研脚本改出):对生产 14 天导出跑 §3 全流程(含真实辅助模型;FTS5 召回 vs 向量召回两档),输出事件数、≥ 2 发布主体事件数 / 天、误并 / 漏并抽检、调用成本 | 用户在生产只读导出上跑;误并(抽 50 组目检)≤ 10%、≥ 2 发布主体事件中位 ≥ 4 件 / 天,否则榜单改「今日热点 3–5 件」或只做 #103;本机 52 源语料中位 4 件是下界 |
-| 1 事件层 + 热点榜 | 表 / 迁移、分配服务、热度与快照、读者榜「热点」段、管理员合并 / 摘出、Archive Sync `events` 流、游客白名单 | 沙箱 Playwright 验收 + 用户目检;生产观察一周看误并修正次数 |
+| 1 事件层(纯后端) | 表 / 迁移、分配服务、排名快照、读者 / 管理 API、管理员合并 / 摘出、Archive Sync `events` 流、游客白名单、回放脚本;**前端热点段搁置**(随榜单统一重构) | 交叉检视 + 全量套件 + CI 绿;生产观察一周看误并修正次数与每日 ≥ 2 主体事件数 |
 | 2 早报去重 | #103 全部验收项(事件键跨通道、另见 N 源、跨期抑制、编排说明行)+ 日报预聚类消费事件 | 7 天样本回放:4 条 X·OpenAI 同发布推文、GPT-6 官方稿 vs 媒体稿合并正确 |
 | 3 Agent 事件查询 | 公共事件端点 + MCP 工具 + 契约文 | 令牌范围隔离测试;合并后旧 ID 可追溯 |
 
@@ -207,6 +208,11 @@ publisher_key    = 注册表 source_owner 非空 ? source_owner : source_id;合�
 8. 分波顺序 0 → 1 → 2 → 3;wave 0 用生产 14 天导出实测供给与误并,门槛见 §7(建议)。
 9. 不做:LLM 事件签名、纯向量聚类、日报聚类持久化为事件层、sqlite-vec、事件级综合摘要、读者追踪推送、Agent 改归属(建议;前四项有实测依据)。
 
-## 11. 检视记录
+## 11. 检视记录(wave 1 后端,2026-10-23)
 
-(待实现波填写:实现方 / 检视方 / 模型、逐条表态、分歧与结论。)
+- 实现方:Claude Code(Fable 5.1,主代理 + 子代理:模型层 / 分配服务 / 读取侧 / 同步流各一);检视方:Codex(gpt-6-astra,`model_reasoning_effort=ultra`,只读 `codex exec`,全部 findings 附内存 SQLite 复现程序)。往返文件在 worktree `.review/`(不入库)。
+- **R1**(commit `99fc1ca`):5 P1 / 5 P2 / 2 P3。P1:隐藏成员信息经模型拟题泄露;同步 payload 未纳入凭据源且事件元数据未按可导出成员重建;管理员合并后迟到分配仍写入 merged 事件;同步成员缺文章被跳过后无恢复路径;回放脚本「只读导出」实际经 `DatabaseStorage` 写源库。P2:候选集合 / 结构规则可从批并集、同题直连、new 组三处绕过;同步事件进入本地候选池导致整批回滚;远端 tombstone 碰本地同 ID 事件覆盖状态;入池扫描被窗外旧文占满;分配侧采纳失效译题。P3:story 链绕过可见性;story 跨页不补链。表态:除「story 跨页补链」记 wave 2 观察外全部接受,成批修复(commit `bed0463`)。
+- **R2**(对照清单复检):6 已修、5 有缺口、新引入 2 P1——隔离重放复用过时目标写入已合并事件(N1);backlog 新旧待补行互相覆盖丢归属(N2);F1 缺口 = 待补成员 / 本地成员不完整时模型题仍露;F2 缺口 = merged 旧事件保留历史标题导出。表态全部接受(commit `8e3be3e`):读取侧「不完整事件」判定(隐藏 ∨ 待补 ∨ 本地成员数 < 缓存计数)禁模型题;merged 事件剥离导出 + 接收端清空;隔离重放逐篇重验目标;backlog 按 (authority, article) 单行 + revision 依据;回放摘要比较降级告警。
+- **R3**(定向四点):F1、F2 关闭;N1 余一条组合路径(同源跨日同组 + 中间篇失败 + 隔离重放复用 key_events 未对现有成员做结构校验);N2 余迁移搬旧行按最小 ID 取行(只影响本分支开发库)。两条均修并做最后一次定向确认。
+- 分歧:无。观察期:`event_board._recompute_event` 与 `event_assignment._recompute_events` 收口;story 跨页补链随 wave 2;`scan_pending` 日期预筛兼容历史时间格式。
+- 结论待最后确认后填写;前端部分另记。
