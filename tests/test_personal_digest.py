@@ -2052,3 +2052,26 @@ def test_event_that_never_made_yesterdays_edition_is_not_suppressed_today(storag
         stats = json.loads(result.edition.selection_stats_json)
         assert stats["same_event_previous_day"] == 0
 
+
+def test_official_member_represents_the_event_in_the_curated_lanes(storage):
+    """精选通道里同事件的代表按「官方 > 非社交 > 分数 > 更早」(issue #103 验收第一条):订阅内官方稿 8.0
+    压过媒体转述 8.5 当代表,媒体稿进「另见」;官方稿不够头条线,仍走精选。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a,rss_openai_news")])
+        session.flush()
+        official = _seed_article(session, 1, source="rss_openai_news", score=8.0)   # 注册表官方源
+        echo = _seed_article(session, 2, source="rss_a", score=8.5)
+        other = _seed_article(session, 3, source="rss_a", score=7.0)
+        session.flush()
+        _event_with(session, official.id, echo.id)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert [(item.article_id, item.selection_lane) for item in result.items] == [
+            (official.id, "quality"), (other.id, "quality"),
+        ]
+        snapshot = json.loads(result.items[0].snapshot_json)
+        assert [row["article_id"] for row in snapshot["related_sources"]] == [echo.id]
+        assert json.loads(result.edition.selection_stats_json)["same_event_merged"] == 1
+

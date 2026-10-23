@@ -1037,7 +1037,9 @@ def load_digest_candidates(
         window_hours=window_hours,
         exclude_content_types=(PODCAST_CONTENT_TYPE,),
     )
-    return _candidates_from_rows(session, rows, followed_codes=followed_codes)
+    # issue #103:同事件代表按「官方 > 非社交 > 分数 > 更早」,订阅池也要带来源角色 / 形态
+    meta = _source_role_and_shape(session, (article.source_id for article, _analysis in rows))
+    return _candidates_from_rows(session, rows, source_meta=meta, followed_codes=followed_codes)
 
 
 def load_interest_candidates(
@@ -1070,7 +1072,8 @@ def load_interest_candidates(
         exclude_content_types=(PODCAST_CONTENT_TYPE,),
     )
     rows = _reader_visible_rows(session, rows)
-    return _candidates_from_rows(session, rows, followed_codes=codes, subscribed=False)
+    meta = _source_role_and_shape(session, (article.source_id for article, _analysis in rows))
+    return _candidates_from_rows(session, rows, source_meta=meta, followed_codes=codes, subscribed=False)
 
 
 def load_value_candidates(

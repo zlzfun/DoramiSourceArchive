@@ -214,6 +214,23 @@ def eligible_for_selection(
     return any(code in followed for code in interest_codes_of(candidate))
 
 
+def _collapse_same_event(
+    candidates: Sequence[DigestArticleCandidateDTO],
+) -> list[DigestArticleCandidateDTO]:
+    """同事件只留一位代表再分通道(issue #103 验收第一条):代表按「官方 > 非社交 > 分数 > 更早」,
+    与头条通道、事件层榜单同一口径;其余成员不参选(编排方把它们列进代表条目的「另见」)。
+    此前代表是通道排序里先到的那篇(即分数更高者),官方稿 8.0 会让位给媒体转述 8.5。"""
+
+    groups: dict[str, list[DigestArticleCandidateDTO]] = {}
+    for candidate in candidates:
+        groups.setdefault(_event_key(candidate), []).append(candidate)
+    kept = {
+        min(members, key=_representative_key).article_id
+        for members in groups.values()
+    }
+    return [candidate for candidate in candidates if candidate.article_id in kept]
+
+
 def _followed_map(interests: Iterable[UserInterestDTO]) -> dict[str, int]:
     return {interest.tag_code: 1 for interest in interests}
 
@@ -385,6 +402,9 @@ def select_digest_articles(
     Hard rules are never relaxed: minimum score, same-event uniqueness and
     the interest-share ceiling.  Only the per-source cap is relaxed, one step at a
     time, when it is the reason the target cannot otherwise be reached.
+    Same-event candidates collapse to one representative(官方 > 非社交 > 分数 > 更早,
+    issue #103)**before** the lanes are built, so the lane order never picks a
+    lower-ranked member just because it fits.
 
     v3.54「订阅 ∪ 兴趣」: candidates flagged ``subscribed=False`` are admitted only
     into the interest lane, must clear ``external_min_quality_score`` and share a
@@ -396,10 +416,10 @@ def select_digest_articles(
 
     policy = policy or DigestSelectionPolicy()
     followed = _followed_map(interests)
-    eligible = [
+    eligible = _collapse_same_event([
         candidate for candidate in candidates
         if eligible_for_selection(candidate, policy=policy, followed=followed)
-    ]
+    ])
     rows = _ranked(eligible, followed, topic_codes_by_article or {})
     interest_rows = sorted((row for row in rows if row.matched_codes), key=_sort_interest)
     # A matching article belongs to the interest allocation even if its quality is
