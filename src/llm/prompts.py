@@ -642,3 +642,71 @@ def build_image_insight_user_prompt(
         lines.append(nearby_text.strip()[:600])
     lines.append("请识读下面这张图并按要求输出 JSON。")
     return "\n".join(lines)
+
+
+# ==========================================
+# 事件归属判定(issue #121 事件层:辅助模型一次判整批)
+# ==========================================
+# 三件套(方案 §3 / 调研 §5):正向准则 + 禁并规则 + 批内并组须给「含具体产品名 / 版本号」的共同事实;
+# 输入只给标题(不附摘要——实测摘要只换召回、拖精度且贵 11%),候选事件用代表稿描述;
+# 输出回显标题前 12 字做 idx 校验(防滑位)。改提示词同时改 EVENT_ASSIGN_PROMPT_VERSION。
+
+EVENT_ASSIGN_PROMPT_VERSION = "event-assign-v1"
+
+EVENT_ASSIGN_SYSTEM_PROMPT = """你是一位 AI 资讯编辑,负责把新到的文章归入「事件」。事件 = **同一次**发布、公告、报告或事故;不同来源、不同语言、不同角度报道同一次发布都算同一事件,相隔 1–3 天仍可算。
+
+【输入】
+- 「候选事件」:每个带 eid、首篇日期、成员数、代表稿标题与摘要。
+- 「新文章」:每条带 idx、来源角色(官方 / 媒体 / 个人 / 榜单)、日期、召回到的候选 eid(只是线索,不是答案)、标题。
+
+【判定准则】
+1. 归入既有事件(event 写 "e<eid>"):新文章报道的是该事件代表稿所描述的**那一次**发布 / 公告 / 报告 / 事故。
+2. 以下情况**不要并入**,各自另立:后续进展(反应、跟进、补充披露)、评测 / 实测 / 体验、下一个版本或衍生产品、同主题但不同的事、同一来源的日更 / 连载栏目、只是提到同一家公司或同一款产品。
+3. 批内多篇新文章若报道同一次事件,给它们同一个 "new:<k>",并在 fact 里写一句**含具体产品名 / 版本号 / 机构名**的共同事实(例:「Anthropic 发布 Claude Opus 5」);「某公司发布了 AI 产品」这类主题级描述不算,给不出共同事实就不要并。
+4. 拿不准一律 "single"(单独成事):宁可漏并,不可误并。
+
+【输出】只输出一个合法纯净的 JSON 对象,以 { 开始、} 结束,禁止代码围栏与多余文字:
+{"assignments":[{"idx":0,"echo":"原样抄标题开头 12 个字符","event":"e123"|"new:1"|"single","fact":"共同事实(single 可留空)","confidence":0.0-1.0}],"new_events":[{"key":"new:1","title":"事件标题(中文,30 字以内)"}]}
+- 每个 idx 恰好出现一次;echo 必须**原样抄**该文章标题开头的 12 个字符(含空格与标点,不要改写、翻译、补全或缩写;标题不足 12 个字符就抄到标题结束),只用于校验对号。
+- event 只能是候选列表里出现过的 eid、本次 new_events 里声明的 key,或 "single"。
+- confidence 是你对该归属的把握;并入既有事件且文章日期晚于事件首篇 1 天以上时,须能明确指向代表稿那次发布,否则给低置信。"""
+
+
+_EVENT_ROLE_LABELS: Dict[str, str] = {
+    "official": "官方",
+    "media": "媒体",
+    "personal": "个人",
+    "leaderboard": "榜单",
+}
+
+
+def build_event_assign_user_prompt(
+    new_items: List[Dict[str, Any]], candidate_events: List[Dict[str, Any]]
+) -> str:
+    """构造事件归属判定输入。
+
+    ``new_items`` 元素形如 ``{idx, title, role, day, candidates: [eid, ...]}``(只给标题,不附摘要);
+    ``candidate_events`` 元素形如 ``{eid, title, summary, member_count, first_day}``(代表稿描述,摘要截 120 字)。
+    """
+    lines: List[str] = ["【候选事件】"]
+    if not candidate_events:
+        lines.append("(无)")
+    for event in candidate_events:
+        summary = (event.get("summary") or "").strip().replace("\n", " ")[:120]
+        lines.append(
+            f"e{event.get('eid')} | 首篇 {event.get('first_day') or '?'} | 成员 {event.get('member_count') or 1} | "
+            f"{(event.get('title') or '').strip()}"
+        )
+        if summary:
+            lines.append(f"    摘要:{summary}")
+    lines.append("")
+    lines.append("【新文章】")
+    for item in new_items:
+        role = _EVENT_ROLE_LABELS.get(str(item.get("role") or ""), "媒体")
+        eids = [str(e) for e in (item.get("candidates") or [])]
+        hint = ",".join(f"e{e}" for e in eids) if eids else "无"
+        lines.append(
+            f"idx={item.get('idx')} | {role} | {item.get('day') or '?'} | 候选:{hint} | "
+            f"{(item.get('title') or '').strip()}"
+        )
+    return "\n".join(lines)

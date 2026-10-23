@@ -174,8 +174,8 @@ def _canonical_url(value: str) -> str:
 
 
 def _event_key(candidate: DigestArticleCandidateDTO) -> str:
-    if candidate.duplicate_group_id is not None:
-        return f"group:{candidate.duplicate_group_id}"
+    if candidate.event_id is not None:
+        return f"event:{candidate.event_id}"
     canonical = _canonical_url(candidate.source_url)
     if canonical:
         return f"url:{canonical}"
@@ -607,8 +607,9 @@ def select_value_lane(
 # 对所有读者都是头条的事」。准入全是机械层,不靠 LLM 自觉:
 #   ① 官方一手:source_role == official 且 分数 ≥ T;
 #   ② 多源印证:同一事件下 ≥ N 个不同来源 ≥ T − slack,且至少一条 ≥ T。
-# 同事件按 entity.* 标签连通分量归并(生产实证:DuplicateGroup 从未写入、URL/标题键
-# 分不出 4 条 X·OpenAI 推文是同一件事);无实体标签的候选回落 _event_key。每事件只
+# 同事件按 entity.* 标签连通分量归并(v3.50 实证:当时的 duplicate_groups 从未写入、URL/标题键
+# 分不出 4 条 X·OpenAI 推文是同一件事;issue #121 事件层落地后 _event_key 优先命中 event_id);
+# 无实体标签的候选回落 _event_key。每事件只
 # 出一条代表:官方 > 非社交形态 > 分数 > 发布更早。同实体前几期已上过头条即抑制。
 
 ENTITY_TAG_PREFIX = "entity."

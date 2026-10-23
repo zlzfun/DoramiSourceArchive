@@ -56,7 +56,7 @@ from models.db import (
     ArticleTagAssignmentRecord,
     CmsTagRecord,
     CollectionJobRecord,
-    DuplicateGroupMemberRecord,
+    EventMemberRecord,
     PersonalDigestEditionRecord,
     PersonalDigestItemRecord,
     ReaderSubscriptionRecord,
@@ -1177,10 +1177,11 @@ def _candidates_from_rows(
             )
         ).all()
     } if primary_ids else {}
-    duplicate_groups = {
-        row.article_id: row.group_id for row in session.exec(
-            select(DuplicateGroupMemberRecord).where(
-                DuplicateGroupMemberRecord.article_id.in_(article_ids)
+    # issue #121 事件层:一篇文章最多属于一个事件,按 article_ids 批量取所属事件 ID
+    event_ids = {
+        row.article_id: row.event_id for row in session.exec(
+            select(EventMemberRecord).where(
+                EventMemberRecord.article_id.in_(article_ids)
             )
         ).all()
     } if article_ids else {}
@@ -1213,7 +1214,7 @@ def _candidates_from_rows(
             content_genre=genre,
             tag_codes=tag_codes.get(article.id, ()),
             primary_tag_code=primary_code,
-            duplicate_group_id=duplicate_groups.get(article.id),
+            event_id=event_ids.get(article.id),
             source_role=role,
             content_shape=shape,
             subscribed=subscribed,

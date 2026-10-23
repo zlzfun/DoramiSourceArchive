@@ -55,12 +55,15 @@ def upgrade() -> None:
         ["article_id"],
         unique=False,
     )
-    create_index_unless_present(
-        "ix_duplicate_groups_representative_article_id",
-        "duplicate_groups",
-        ["representative_article_id"],
-        unique=False,
-    )
+    # issue #121(ed530f8224f9)退役了 duplicate_groups:新版 create_all 启动后再被收养的库没有该表,
+    # 反射索引会抛 NoSuchTableError;表不在就跳过(退役表上的索引无意义)。
+    if sa.inspect(bind).has_table("duplicate_groups"):
+        create_index_unless_present(
+            "ix_duplicate_groups_representative_article_id",
+            "duplicate_groups",
+            ["representative_article_id"],
+            unique=False,
+        )
 
     # Existing custom RSS rows were created before per-subscriber AI consent
     # existed.  Keep their content local even if the old default was true.

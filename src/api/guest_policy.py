@@ -28,6 +28,8 @@ GUEST_ALLOWED_ROUTES: FrozenSet[Tuple[str, str]] = frozenset({
     ("GET", "/api/reader/rankings"),
     ("GET", "/api/reader/rankings/history"),
     ("GET", "/api/reader/rankings/{date}/tags/{tag_code:path}"),
+    ("GET", "/api/reader/events"),                 # 热点榜(issue #121);详情同下,管理修正默认 403
+    ("GET", "/api/reader/events/{event_id}"),
     ("GET", "/api/reader/announcements"),
     ("GET", "/api/reader/favorites"),            # 游客恒空:前端挂载即拉,放行免得报错
     ("GET", "/api/reader/interests"),            # 同上

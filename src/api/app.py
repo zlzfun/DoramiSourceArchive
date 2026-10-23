@@ -1,6 +1,7 @@
 # /src/api/app.py
 
 import asyncio
+import importlib
 import json
 import logging
 import datetime
@@ -106,6 +107,7 @@ from api.routers import feedback as feedback_router
 from api.routers import announcements as announcements_router
 from api.routers import remote_sync as remote_sync_router
 from api.routers import share as share_router
+from api.routers import events as events_router
 from services import daily_brief as daily_brief_service
 from services import image_insights as image_insights_service
 from services import remote_sync as remote_sync_service
@@ -123,6 +125,7 @@ from services import user_sources as user_sources_service
 from services import reader_defaults as reader_defaults_service
 from services import reader_ondemand as reader_ondemand_service
 from services import rankings as rankings_service
+from services import event_board as event_board_service
 from services import article_analysis as article_analysis_service
 from services import taxonomy as taxonomy_service
 from services import podcast_catalog as podcast_catalog_service
@@ -568,6 +571,8 @@ async def lifespan(app: FastAPI):
         load_tasks_to_scheduler()
     # 标签榜由 reader 本地正式标签派生，拆分部署下也必须在 reader 节点运行。
     reload_ranking_schedule()
+    # 事件热点榜 07:00 日快照(issue #121)同样全角色注册:previous_rank 在 reader 节点现算。
+    reload_event_board_schedule()
     if scheduler.state == STATE_STOPPED:
         scheduler.start()
         print("⏰ APScheduler 定时调度引擎已启动！")
@@ -1813,6 +1818,7 @@ app.include_router(feedback_router.router)
 app.include_router(announcements_router.router)
 app.include_router(remote_sync_router.router)
 app.include_router(share_router.router)
+app.include_router(events_router.router)
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
 RANKING_JOB_ID = "reader_rankings"
@@ -1858,6 +1864,64 @@ def reload_ranking_schedule() -> None:
     """Install the all-role, idempotent 07:00 Asia/Shanghai ranking job."""
 
     add_cron_job(RANKING_JOB_ID, execute_ranking_snapshot_job, "0 7 * * *", [])
+
+
+EVENT_ASSIGNMENT_SWEEP_JOB_ID = "event_assignment_sweep"
+EVENT_ASSIGNMENT_SWEEP_MINUTES = 10
+
+
+async def execute_event_rank_snapshot_job():
+    """事件热点榜日快照(issue #121):按当下榜单落 event_rank_snapshots,供次日 previous_rank。"""
+
+    try:
+        result = await asyncio.to_thread(event_board_service.build_rank_snapshot, db_sink.engine)
+        _dorami_logger.info(
+            "事件热点榜快照已生成 date=%s count=%s",
+            result.get("snapshot_date"),
+            result.get("count"),
+        )
+    except Exception:  # noqa: BLE001 - 下一次 cron 自会重试,快照缺席只影响 previous_rank
+        _dorami_logger.exception("事件热点榜快照生成失败")
+
+
+def _event_assignment_entry():
+    """``services.event_assignment.assign_pending`` 的守卫式取用:模块 / 函数缺席时返回 None。"""
+
+    try:
+        module = importlib.import_module("services.event_assignment")
+    except ImportError:
+        return None
+    return getattr(module, "assign_pending", None)
+
+
+async def execute_event_assignment_sweep_job():
+    """事件分配 10 分钟兜底(issue #121 §3):分析周期末尾那次调用漏掉的 pending 由这里补扫。"""
+
+    assign_pending = _event_assignment_entry()
+    if assign_pending is None:
+        _dorami_logger.debug("事件分配服务未就绪,跳过兜底扫描")
+        return
+
+    def _run():
+        with Session(db_sink.engine) as session:
+            llm_config = daily_brief_service.resolve_llm_config(session)
+        return assign_pending(db_sink.engine, llm_config)
+
+    try:
+        await asyncio.to_thread(_run)
+    except Exception as exc:  # noqa: BLE001 - 分配失败只影响 ledger 重试,不影响分析与采集
+        _dorami_logger.warning("事件分配兜底扫描失败: %s", exc)
+
+
+def reload_event_board_schedule() -> None:
+    """全角色幂等注册事件热点榜 07:00 Asia/Shanghai 日快照(经 add_cron_job,自带 5 分钟宽限 + coalesce)。"""
+
+    add_cron_job(
+        event_board_service.SNAPSHOT_JOB_ID,
+        execute_event_rank_snapshot_job,
+        event_board_service.SNAPSHOT_CRON,
+        [],
+    )
 
 
 COLLECTION_FETCH_CONCURRENCY = 4
@@ -2891,6 +2955,16 @@ def load_tasks_to_scheduler():
         minutes=1,
         max_instances=1,
     )
+    # 事件分配兜底(issue #121):分析周期末尾已调一次 assign_pending,这里每 10 分钟补扫 ledger。
+    _ensure_interval_job(
+        EVENT_ASSIGNMENT_SWEEP_JOB_ID,
+        execute_event_assignment_sweep_job,
+        minutes=EVENT_ASSIGNMENT_SWEEP_MINUTES,
+        max_instances=1,
+        coalesce=True,
+    )
+
+
 async def execute_paper_fulltext_job():
     from services.paper_fulltext import run_batch
 

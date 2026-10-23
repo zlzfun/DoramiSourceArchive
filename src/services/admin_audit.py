@@ -346,6 +346,24 @@ AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
         ),
     ),
     ("POST", re.compile(r"^/api/llm/config$"), lambda _m, _b: ("更新 LLM 配置", None)),
+    # ── 事件层管理修正(issue #121):合并 / 摘出都改写稳定事件 ID 的归属,全入审计 ──
+    (
+        "POST",
+        re.compile(r"^/api/admin/events/(?P<source>[^/]+)/merge-into/(?P<target>[^/]+)$"),
+        lambda match, _body: (
+            f"合并事件 {match.group('source')} → {match.group('target')}",
+            match.group("source"),
+        ),
+    ),
+    (
+        "POST",
+        # 文章 ID 可含斜杠({article_id:path}),规则须吞到最后一个 /detach。
+        re.compile(r"^/api/admin/events/(?P<event>[^/]+)/members/(?P<article>.+)/detach$"),
+        lambda match, _body: (
+            f"从事件 {match.group('event')} 摘出文章 {unquote(match.group('article'))}",
+            match.group("event"),
+        ),
+    ),
     ("POST", re.compile(r"^/api/mcp/toggle$"), lambda _m, _b: ("切换全站 MCP 总闸", None)),
     # ── 归档写入口(v3.42 M11)──
     (

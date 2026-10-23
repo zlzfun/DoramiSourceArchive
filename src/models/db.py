@@ -888,40 +888,96 @@ class TagRetagJobItemRecord(SQLModel, table=True):
     updated_at: str
 
 
-class DuplicateGroupRecord(SQLModel, table=True):
-    """可被公共和个人日报复用的轻量同事件/重复组。"""
-    __tablename__ = "duplicate_groups"
+# ── 事件层(issue #121)──
+# 事件 = 同一次发布 / 公告 / 报告 / 事故在 48 小时内的多源报道集合;一篇文章最多属于一个事件。
+# 取代原 duplicate_groups / duplicate_group_members(全库零写入方,随同一迁移删除)。
+# events / event_members / event_redirects / event_rank_snapshots 由 authority 单写、经 Archive Sync
+# 下发;event_assignment_ledger 是节点本地的分配进度账,永不同步。
+
+
+class EventRecord(SQLModel, table=True):
+    """事件:同一次发布 / 公告 / 报告 / 事故的多源报道集合(issue #121)。
+
+    - ``status``:``open``(距首篇首见 ≤ 48h,接受分配)→ ``closed``(可查不可加,后续同题
+      报道另立并链接)→ ``merged``(已并入他事件,新 ID 见 ``event_redirects``)。
+    - ``title`` 冻结于最近一次代表稿重算;``title_source`` 记标题来源:``zh_member``(中文成员
+      原题)/ ``translation``(代表稿译题缓存)/ ``llm``(模型拟题)/ ``representative``(代表稿原题)。
+    - ``member_count`` / ``publisher_count`` 是成员变动后重算的缓存计数;``first_seen_at`` = 首篇成员
+      首见、``last_member_at`` = 最近一次成员加入,均为 authority 时钟,决定窗口与热度。
+    - ``story_id`` / ``follows_event_id`` 把后续进展链到先前事件(wave 2 填),自引用、删时置空。
+    - ``assignment_version`` 记分配时的提示词 / 规则版本;``authority_id`` 语义同
+      ``ArticleRecord.analysis_authority_id``:空 = 本部署产生,非空 = 由该 Archive Sync producer
+      单写,本机不得改动。
+    """
+    __tablename__ = "events"
     __table_args__ = (
-        UniqueConstraint("fingerprint", name="uq_duplicate_groups_fingerprint"),
-        Index("ix_duplicate_groups_representative_article_id", "representative_article_id"),
+        CheckConstraint(
+            "status IN ('open','closed','merged')",
+            name="ck_events_status",
+        ),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    fingerprint: str = Field(description="规范 URL/标题相似等确定性指纹")
-    strategy: str = Field(default="deterministic_v1")
+    status: str = Field(
+        default="open",
+        index=True,
+        sa_column_kwargs={"server_default": text("'open'")},
+    )
+    title: str = Field(default="", sa_column_kwargs={"server_default": text("''")})
+    title_source: str = Field(
+        default="",
+        sa_column_kwargs={"server_default": text("''")},
+        description="zh_member / translation / llm / representative",
+    )
     representative_article_id: Optional[str] = Field(
         default=None,
         foreign_key="articles.id",
         ondelete="SET NULL",
+        index=True,
+    )
+    member_count: int = Field(default=0, ge=0, sa_column_kwargs={"server_default": text("0")})
+    publisher_count: int = Field(default=0, ge=0, sa_column_kwargs={"server_default": text("0")})
+    first_seen_at: str = Field(index=True, description="首篇成员首见时间(authority 时钟)")
+    last_member_at: str = Field(index=True, description="最近一次成员加入时间(authority 时钟)")
+    story_id: Optional[int] = Field(default=None, foreign_key="events.id", ondelete="SET NULL")
+    follows_event_id: Optional[int] = Field(default=None, foreign_key="events.id", ondelete="SET NULL")
+    assignment_version: str = Field(default="", sa_column_kwargs={"server_default": text("''")})
+    authority_id: str = Field(
+        default="",
+        index=True,
+        sa_column_kwargs={"server_default": text("''")},
+        description="Archive Sync 单写权威 ID;非空时本机不得改动该事件",
     )
     created_at: str
     updated_at: str
 
 
-class DuplicateGroupMemberRecord(SQLModel, table=True):
-    """一篇文章最多属于一个重复组。"""
-    __tablename__ = "duplicate_group_members"
+class EventMemberRecord(SQLModel, table=True):
+    """事件成员:一篇文章最多属于一个事件(``article_id`` 全表唯一)。
+
+    - ``publisher_key``:发布方键(同一来源 / 同一账号的多篇只算一个发布方),``publisher_count`` 据此计。
+    - ``report_at`` = clamp(publish_date, first_seen_at − 72h, first_seen_at):热度与「最新进展」用它,
+      防止回填旧文或缺发布时间的文章重新变热;``first_seen_at`` = authority 首次写入,同步 / 重传不变。
+    - ``assigned_by``:``llm`` 模型归并 / ``url`` 规范 URL 命中 / ``title`` 标题命中 / ``singleton``
+      独立成事 / ``manual`` 管理员修正 / ``sync`` 由 Archive Sync 下发;``confidence`` 只在模型分配时有值。
+    - ``is_representative``:代表稿标记,每次成员变动后按「官方 > 非社交 > 分数 > 发布更早」重算。
+    """
+    __tablename__ = "event_members"
     __table_args__ = (
-        UniqueConstraint("article_id", name="uq_duplicate_group_members_article"),
+        UniqueConstraint("article_id", name="uq_event_members_article"),
         CheckConstraint(
-            "similarity IS NULL OR (similarity >= 0.0 AND similarity <= 1.0)",
-            name="ck_duplicate_group_members_similarity",
+            "assigned_by IN ('llm','url','title','singleton','manual','sync')",
+            name="ck_event_members_assigned_by",
+        ),
+        CheckConstraint(
+            "confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)",
+            name="ck_event_members_confidence",
         ),
     )
 
-    group_id: int = Field(
+    event_id: int = Field(
         primary_key=True,
-        foreign_key="duplicate_groups.id",
+        foreign_key="events.id",
         ondelete="CASCADE",
     )
     article_id: str = Field(
@@ -929,9 +985,94 @@ class DuplicateGroupMemberRecord(SQLModel, table=True):
         foreign_key="articles.id",
         ondelete="CASCADE",
     )
-    similarity: Optional[float] = Field(default=None, ge=0.0, le=1.0)
-    is_representative: bool = Field(default=False)
+    publisher_key: str = Field(
+        default="",
+        index=True,
+        sa_column_kwargs={"server_default": text("''")},
+    )
+    report_at: str = Field(index=True, description="报道时间(钳在 first_seen_at − 72h 与 first_seen_at 之间)")
+    first_seen_at: str = Field(description="authority 首次写入时间,同步 / 重传不变")
+    assigned_by: str = Field(default="llm", sa_column_kwargs={"server_default": text("'llm'")})
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    prompt_version: str = Field(default="", sa_column_kwargs={"server_default": text("''")})
+    is_representative: bool = Field(default=False, sa_column_kwargs={"server_default": text("0")})
     created_at: str
+
+
+class EventRedirectRecord(SQLModel, table=True):
+    """事件合并重定向:``old_event_id`` → ``new_event_id``(事件 ID 稳定,按旧 ID 查询返回 merged_into)。
+
+    合并链可多跳(A → B,B → C),读取方循环解析到不在本表的终点;``reason`` 记合并依据(llm / manual …)。
+    旧事件行本身保留并置 ``status='merged'``,成员已迁往新事件;任一端事件被物理删除时重定向随之删除。
+    """
+    __tablename__ = "event_redirects"
+
+    old_event_id: int = Field(
+        primary_key=True,
+        foreign_key="events.id",
+        ondelete="CASCADE",
+    )
+    new_event_id: int = Field(
+        foreign_key="events.id",
+        ondelete="CASCADE",
+        index=True,
+    )
+    reason: str = Field(default="", sa_column_kwargs={"server_default": text("''")})
+    created_at: str
+
+
+class EventAssignmentLedgerRecord(SQLModel, table=True):
+    """事件分配进度账(节点本地,永不经 Archive Sync 同步)。
+
+    一篇候选文章一行:``pending`` 待分配 → ``assigned`` 已入事件 / ``skipped`` 不进事件层
+    (论文 / 汇编 / 播客 / 私有源)/ ``blocked`` 暂不可分配(多次失败后等 ``next_attempt_at`` 重试,
+    或管理员摘出后禁止自动回流——``blocked_event_ids_json`` 列出不得再并回的事件 ID)。
+    ``attempts`` / ``last_error`` 供排障;worker 按 (status, next_attempt_at) 扫描。
+    """
+    __tablename__ = "event_assignment_ledger"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','assigned','skipped','blocked')",
+            name="ck_event_assignment_ledger_status",
+        ),
+        Index("ix_event_assignment_ledger_status_next_attempt", "status", "next_attempt_at"),
+    )
+
+    article_id: str = Field(
+        primary_key=True,
+        foreign_key="articles.id",
+        ondelete="CASCADE",
+    )
+    status: str = Field(default="pending", sa_column_kwargs={"server_default": text("'pending'")})
+    attempts: int = Field(default=0, ge=0, sa_column_kwargs={"server_default": text("0")})
+    next_attempt_at: str = Field(default="", sa_column_kwargs={"server_default": text("''")})
+    last_error: str = Field(default="", sa_column_kwargs={"server_default": text("''")})
+    blocked_event_ids_json: str = Field(default="[]", sa_column_kwargs={"server_default": text("'[]'")})
+    created_at: str
+    updated_at: str
+
+
+class EventRankSnapshotRecord(SQLModel, table=True):
+    """事件热度榜快照:每个上海日一份,只存上榜行(与趋势榜同刻 07:00 落)。
+
+    ``heat`` 是可复算的热度值(发布方数 / 成员数 / 时间衰减,算法在 services 层);
+    ``publisher_count`` / ``member_count`` 是落榜时刻的计数快照,事件后续变动不回写,保证榜单可回放。
+    同一天重建时整日行事务性替换。
+    """
+    __tablename__ = "event_rank_snapshots"
+    __table_args__ = (
+        UniqueConstraint("snapshot_date", "event_id", name="uq_event_rank_snapshots_date_event"),
+        Index("ix_event_rank_snapshots_date_rank", "snapshot_date", "rank"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    snapshot_date: str = Field(description="Asia/Shanghai YYYY-MM-DD")
+    event_id: int = Field(foreign_key="events.id", ondelete="CASCADE")
+    rank: int = Field(ge=1)
+    publisher_count: int = Field(ge=0)
+    member_count: int = Field(ge=0)
+    heat: float = Field(default=0.0, sa_column_kwargs={"server_default": text("0")})
+    generated_at: str
 
 
 # （实体简化阶段 2）FetchTaskRecord（旧版单节点定时任务）与 NodeGroupRecord（采集范围/
@@ -2601,7 +2742,7 @@ class ArchiveSyncEntityStateRecord(SQLModel, table=True):
         ),
         CheckConstraint(
                 "stream IN ('sources','articles','analyses','media','source_states',"
-                "'podcast_texts','podcast_audio')",
+                "'podcast_texts','podcast_audio','events')",
             name="ck_archive_sync_entity_states_stream",
         ),
         CheckConstraint(

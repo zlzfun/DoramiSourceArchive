@@ -26,7 +26,7 @@ def _candidate(
     score: float = 8.0,
     tags: tuple[str, ...] = (),
     genre: ContentGenre = ContentGenre.INDUSTRY_NEWS,
-    group: int | None = None,
+    event: int | None = None,
     published: str | None = None,
     role: str = "media",
     shape: str = "article",
@@ -43,7 +43,7 @@ def _candidate(
         score_reason="reason",
         content_genre=genre,
         tag_codes=tags,
-        duplicate_group_id=group,
+        event_id=event,
         source_role=role,
         content_shape=shape,
     )
@@ -86,9 +86,9 @@ def test_interest_ceiling_applies_to_actual_sparse_output():
 
 def test_cross_lane_event_conflict_does_not_hide_a_larger_legal_set():
     candidates = [
-        _candidate(1, score=9.5, tags=("agent",), group=7),
+        _candidate(1, score=9.5, tags=("agent",), event=7),
         _candidate(2, score=9.0, tags=("agent",)),
-        _candidate(3, score=8.5, tags=("other",), group=7),
+        _candidate(3, score=8.5, tags=("other",), event=7),
     ]
 
     selected = select_digest_articles(
@@ -128,7 +128,7 @@ def test_no_interests_is_quality_only_and_repeatable():
 
 def test_same_event_never_relaxes_and_source_limit_relaxes_deterministically():
     candidates = [
-        _candidate(i, source="only-source", score=9.5 - i * 0.1, group=7 if i in {0, 1} else None)
+        _candidate(i, source="only-source", score=9.5 - i * 0.1, event=7 if i in {0, 1} else None)
         for i in range(6)
     ]
     policy = DigestSelectionPolicy(target_items=5, per_source_max=2)
@@ -396,8 +396,8 @@ def test_value_lane_ranks_by_content_value_not_news_and_keeps_hard_rules():
         _valued(1, 7.4, score=9.0, source="s1"),
         _valued(2, 8.6, score=3.0, source="s2"),
         _valued(3, 8.1, score=4.0, source="s2"),          # 同源第二篇:每源 1 篇
-        _valued(4, 8.0, score=4.0, source="s3", group=7),
-        _valued(5, 7.9, score=4.0, source="s4", group=7),  # 同事件第二篇
+        _valued(4, 8.0, score=4.0, source="s3", event=7),
+        _valued(5, 7.9, score=4.0, source="s4", event=7),  # 同事件第二篇
         _valued(6, 6.9, score=8.0, source="s5"),          # 门槛之下
         _valued(7, 9.5, kind="news", source="s6"),        # 资讯不进「深度阅读」
         _valued(8, 9.6, source="s7", shape="podcast"),    # 播客不进「深度阅读」

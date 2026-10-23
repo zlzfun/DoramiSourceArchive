@@ -84,6 +84,7 @@ V2_STREAM_ORDER = (
     "taxonomy",
     "articles",
     "analyses",
+    "events",
     "media",
     "podcast_texts",
     "podcast_audio",
@@ -96,6 +97,9 @@ def negotiated_v2_stream_order(capabilities: Sequence[str]) -> tuple[str, ...]:
 
     available = set(capabilities)
     streams = list(V2_LEGACY_STREAM_ORDER)
+    # 事件流(issue #121)紧跟 analyses:成员引用文章、不依赖媒体;旧版生产者不广播就不拉。
+    if archive_sync_v2.EVENTS_CAPABILITY in available:
+        streams.insert(streams.index("analyses") + 1, "events")
     insert_at = streams.index("source_states")
     if archive_sync_v2.PODCAST_TEXT_PUBLICATIONS_CAPABILITY in available:
         streams.insert(insert_at, "podcast_texts")
@@ -942,9 +946,9 @@ async def run_pull_v2(
     stream checkpoint is published only after its terminal page (and, for media,
     all declared binaries) has succeeded.  Replaying committed pages after a
     later failure is intentional and idempotent. All non-Taxonomy streams share
-    one transaction-revision snapshot; ``podcast_texts`` is pulled only when
-    the producer advertises its optional capability, and ``source_states`` is
-    always applied last as the readiness fence.
+    one transaction-revision snapshot; ``events`` and ``podcast_texts`` are
+    pulled only when the producer advertises their optional capabilities, and
+    ``source_states`` is always applied last as the readiness fence.
     """
 
     base = normalize_base_url(base_url)
@@ -993,6 +997,7 @@ async def run_pull_v2(
                 "updated": 0,
                 "deleted": 0,
                 "pruned": 0,
+                "skipped": 0,
                 "media_downloaded": 0,
                 "podcast_audio_downloaded": 0,
                 "media_reused": 0,
@@ -1114,6 +1119,7 @@ async def run_pull_v2(
                 stats["inserted"] += int(applied["inserted"])
                 stats["updated"] += int(applied["updated"])
                 stats["deleted"] += int(applied.get("deleted") or 0)
+                stats["skipped"] += int(applied.get("skipped") or 0)
 
                 if stream in {"media", "podcast_audio"} and rows:
                     if stream == "media" and media_root is None:
@@ -1158,6 +1164,7 @@ async def run_pull_v2(
                     if not since and stream in {
                         "articles",
                         "analyses",
+                        "events",
                         "podcast_texts",
                         "podcast_audio",
                     }:

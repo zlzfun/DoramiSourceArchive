@@ -28,8 +28,10 @@ from models.db import (  # noqa: E402
     CmsTagCandidateEvidenceRecord,
     CmsTagCandidateRecord,
     CmsTagRecord,
-    DuplicateGroupMemberRecord,
-    DuplicateGroupRecord,
+    EventAssignmentLedgerRecord,
+    EventMemberRecord,
+    EventRecord,
+    EventRedirectRecord,
     PersonalDigestEditionRecord,
     PersonalDigestItemRecord,
     TagRetagJobItemRecord,
@@ -258,9 +260,22 @@ def test_article_delete_cascades_analysis_but_preserves_digest_snapshot():
                 created_at=NOW,
                 updated_at=NOW,
             )
-            group = DuplicateGroupRecord(
-                fingerprint="same-story",
+            event = EventRecord(
+                title="Same story",
+                title_source="representative",
                 representative_article_id=article.id,
+                member_count=1,
+                publisher_count=1,
+                first_seen_at=NOW,
+                last_member_at=NOW,
+                created_at=NOW,
+                updated_at=NOW,
+            )
+            # 合并目标事件:验证 redirect 两端随事件级联
+            merged_into = EventRecord(
+                title="Same story (merged target)",
+                first_seen_at=NOW,
+                last_member_at=NOW,
                 created_at=NOW,
                 updated_at=NOW,
             )
@@ -275,7 +290,7 @@ def test_article_delete_cascades_analysis_but_preserves_digest_snapshot():
                 created_at=NOW,
                 updated_at=NOW,
             )
-            session.add_all([analysis, attempt, assignment, candidate, group, edition])
+            session.add_all([analysis, attempt, assignment, candidate, event, merged_into, edition])
             session.flush()
             session.add_all(
                 [
@@ -287,10 +302,26 @@ def test_article_delete_cascades_analysis_but_preserves_digest_snapshot():
                         raw_label="Agentic AI",
                         created_at=NOW,
                     ),
-                    DuplicateGroupMemberRecord(
-                        group_id=group.id,
+                    EventMemberRecord(
+                        event_id=event.id,
                         article_id=article.id,
+                        publisher_key="example.com",
+                        report_at=NOW,
+                        first_seen_at=NOW,
+                        assigned_by="singleton",
                         is_representative=True,
+                        created_at=NOW,
+                    ),
+                    EventAssignmentLedgerRecord(
+                        article_id=article.id,
+                        status="assigned",
+                        created_at=NOW,
+                        updated_at=NOW,
+                    ),
+                    EventRedirectRecord(
+                        old_event_id=event.id,
+                        new_event_id=merged_into.id,
+                        reason="manual",
                         created_at=NOW,
                     ),
                     PersonalDigestItemRecord(
@@ -328,10 +359,16 @@ def test_article_delete_cascades_analysis_but_preserves_digest_snapshot():
                 )
             ).first() is None
             assert session.exec(select(CmsTagCandidateEvidenceRecord)).first() is None
-            assert session.exec(select(DuplicateGroupMemberRecord)).first() is None
+            assert session.exec(select(EventMemberRecord)).first() is None
+            assert session.get(EventAssignmentLedgerRecord, article.id) is None
 
-            group_after = session.get(DuplicateGroupRecord, group.id)
-            assert group_after is not None and group_after.representative_article_id is None
+            event_after = session.get(EventRecord, event.id)
+            assert event_after is not None and event_after.representative_article_id is None
+            # 文章删除不影响事件本身与重定向;删掉事件时重定向随之级联
+            assert session.get(EventRedirectRecord, event.id) is not None
+            session.delete(session.get(EventRecord, merged_into.id))
+            session.commit()
+            assert session.exec(select(EventRedirectRecord)).first() is None
             item_after = session.exec(select(PersonalDigestItemRecord)).one()
             assert item_after.article_id is None
             assert item_after.snapshot_json == '{"title":"Article a1"}'

@@ -282,7 +282,8 @@ class DigestArticleCandidateDTO(ContractModel):
     content_genre: ContentGenre
     tag_codes: tuple[str, ...] = Field(default_factory=tuple)
     primary_tag_code: Optional[str] = None
-    duplicate_group_id: Optional[int] = None
+    # issue #121 事件层:所属事件 ID(event_members.event_id);None = 未分配,去重回落 URL / 标题键。
+    event_id: Optional[int] = None
     # v3.50 重大事件通道用:来源角色(source_naming.source_role)与内容形态;
     # 订阅域选篇不读这两项,默认值保持既有 DTO 构造不变。
     source_role: str = "media"

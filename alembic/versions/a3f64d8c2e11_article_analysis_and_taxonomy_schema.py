@@ -31,12 +31,15 @@ def upgrade() -> None:
         "article_analysis_attempts", "article_tag_assignments",
         "cms_tag_aliases", "cms_tag_candidates",
         "cms_tag_candidate_evidence", "cms_tag_events", "tag_retag_jobs",
-        "duplicate_groups", "duplicate_group_members",
     }
+    # issue #121(ed530f8224f9)退役了 duplicate_groups 两表:新版 create_all 启动后再被收养的库
+    # 天然没有它们,「完整」只按仍存活的十张表判;两表若残存仍计入「部分 schema」判定,
+    # 创建路径照旧建全部十二张(退役两表随后由 ed530f8224f9 删除)。
+    retired = {"duplicate_groups", "duplicate_group_members"}
     if expected.issubset(existing):
         _ensure_source_config_ai_analysis_enabled()
         return
-    overlap = expected & existing
+    overlap = (expected | retired) & existing
     if overlap:
         raise RuntimeError(f"partial article-analysis schema exists: {sorted(overlap)}")
 

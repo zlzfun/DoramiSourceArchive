@@ -2879,6 +2879,7 @@ async def run_analysis_cycle(
     scan_limit: int = DEFAULT_SCAN_LIMIT,
     now_fn: Callable[[], dt.datetime] = _utc_now,
     image_notes_provider: ImageNotesProvider = default_image_notes_provider,
+    assign_events: bool | None = None,
 ) -> list[ProcessResult]:
     """Scheduler integration point for the all-in-one V1 runtime.
 
@@ -2888,6 +2889,12 @@ async def run_analysis_cycle(
     up to ``max_batches`` immediately instead of sleeping a minute after every
     map-sized claim; each batch remains bounded by ``map_concurrency`` so all
     leases start promptly.
+
+    ``assign_events`` 决定批次跑完后是否调用事件层分配(issue #121,
+    ``event_assignment.assign_pending``,自带辅助模型调用)。``None``(默认)=
+    只在 ``analyzer`` 未注入(即 ``analyze_article_with_llm``)时跑——测试 / 冒烟注入
+    替身 analyzer 正是为了不出网,事件分配不应在这时发起真实模型调用;显式
+    ``True`` / ``False`` 覆盖该判定。
     """
 
     backfill_owner = f"{worker_id}:full-analysis"
@@ -2958,6 +2965,16 @@ async def run_analysis_cycle(
             )
         except Exception as exc:  # noqa: BLE001 - analysis results remain authoritative
             logger.warning("Failed to reconcile full-analysis backfill job %s: %s", backfill_job_id, exc)
+    # 事件层(issue #121):批次跑完后把分析成功的文章增量归入事件。独立 try/except,失败只记日志,
+    # 分析结果照常返回。门控语义见 docstring 的 ``assign_events``。
+    run_assignment = (analyzer is analyze_article_with_llm) if assign_events is None else bool(assign_events)
+    if run_assignment:
+        try:
+            from services import event_assignment  # 延迟导入:event_assignment → daily_brief → 本模块
+
+            await asyncio.to_thread(event_assignment.assign_pending, engine, llm_config)
+        except Exception as exc:  # noqa: BLE001 - 事件分配永不影响分析周期
+            logger.warning("事件分配失败(不影响本轮分析结果):%s", exc)
     return results
 
 
