@@ -18,6 +18,7 @@ from models.db import (  # noqa: E402
     ArticleAnalysisRecord,
     ArticleRecord,
     EventAssignmentLedgerRecord,
+    EventMemberBacklogRecord,
     EventMemberRecord,
     EventRankSnapshotRecord,
     EventRecord,
@@ -373,6 +374,74 @@ def test_llm_title_is_dropped_once_any_member_is_hidden_after_formation(tmp_path
     assert detail["title"] == board["title"]
     assert stored["title"] == "Project Cedar 曝光:三方报道"
     assert with_zh["title"] == "Acme 发布新模型" and "Cedar" not in with_zh["title"]
+
+
+def test_llm_title_is_dropped_while_a_member_waits_in_backlog(tmp_path):
+    """codex R2 G1 / V3:接收端第三篇晚到进入待补账,已到的两篇都公开也不能证明模型题只依赖可见成员。"""
+
+    sink = _sink(tmp_path, "llm-title-backlog.db")
+    with Session(sink.engine) as session:
+        event = _event(session, hours_ago=3, title="Acme launches confidential Project Cedar", title_source="llm")
+        event.member_count = 3  # authority 写入值:三篇
+        session.add(event)
+        _article(session, "a", "pub-a", title="Acme launches a new model", score=8.0)
+        _article(session, "b", "pub-b", title="Acme model covered by press", score=6.0)
+        _member(session, event, "a")
+        _member(session, event, "b")
+        session.add(EventMemberBacklogRecord(
+            authority_id=event.authority_id, article_id="c", event_id=event.id, revision=0,
+            payload_json="{}", first_seen_at=_iso(1), updated_at=_iso(1),
+        ))
+        follower = _two_publisher_event(session, "fl", hours_ago=1)
+        follower.follows_event_id = event.id
+        session.add(follower)
+        session.commit()
+        event_id, follower_id = event.id, follower.id
+
+        board = {item["event_id"]: item for item in event_board.read_board(session, now=NOW)["items"]}
+        detail = event_board.read_event(session, event_id, now=NOW)
+        assert board[event_id]["member_count"] == 2
+        assert board[event_id]["title"] == "Acme launches a new model"
+        assert detail["title"] == "Acme launches a new model"
+        assert board[follower_id]["story"] == {"follows_event_id": event_id, "follows_title": "Acme launches a new model"}
+
+        # 第三篇(公开源)到达并重放:待补行删除、成员落库 → 事件完整,模型题恢复。
+        session.delete(session.get(EventMemberBacklogRecord, (event.authority_id, "c")))
+        _article(session, "c", "pub-c", title="Project Cedar revealed", score=9.0)
+        _member(session, event, "c")
+        session.commit()
+        board = {item["event_id"]: item for item in event_board.read_board(session, now=NOW)["items"]}
+        assert board[event_id]["member_count"] == 3
+        assert board[event_id]["title"] == "Acme launches confidential Project Cedar"
+        assert event_board.read_event(session, event_id, now=NOW)["title"] == "Acme launches confidential Project Cedar"
+        assert board[follower_id]["story"]["follows_title"] == "Acme launches confidential Project Cedar"
+
+
+def test_llm_title_is_dropped_when_local_members_are_fewer_than_authority_count(tmp_path):
+    """codex R2 G1:没有隐藏源、没有待补行,但本地成员数 < authority 缓存 member_count 也算不完整。"""
+
+    sink = _sink(tmp_path, "llm-title-count.db")
+    with Session(sink.engine) as session:
+        event = _event(session, hours_ago=3, title="模型题:Project Cedar", title_source="llm")
+        event.member_count = 3
+        session.add(event)
+        _article(session, "a", "pub-a", title="Acme launches a new model", score=8.0)
+        _article(session, "b", "pub-b", title="Acme model covered by press", score=6.0)
+        _member(session, event, "a")
+        _member(session, event, "b")
+        session.commit()
+        event_id = event.id
+
+        short = event_board.read_board(session, now=NOW)["items"][0]
+        assert short["title"] == "Acme launches a new model"
+        assert event_board.read_event(session, event_id, now=NOW)["title"] == "Acme launches a new model"
+
+        event = session.get(EventRecord, event_id)
+        event.member_count = 2  # 缓存与本地一致 → 完整
+        session.add(event)
+        session.commit()
+        full = event_board.read_board(session, now=NOW)["items"][0]
+        assert full["title"] == "模型题:Project Cedar" and full["title_lang"] == "zh"
 
 
 def test_related_events_follow_reader_visibility(tmp_path):

@@ -794,6 +794,23 @@ def _canonical_event_id(value: Any, *, field: str) -> int:
     return value
 
 
+_STRIPPED_EVENT_FIELDS: dict[str, Any] = {
+    "title": "",
+    "title_source": "",
+    "representative_article_id": None,
+    "member_count": 0,
+    "publisher_count": 0,
+}
+
+
+def _stripped_event_wire(record: EventRecord) -> dict[str, Any]:
+    """merged 事件的线值:只保留身份 / 状态 / 时间 / 链接列,内容缓存一律清空。"""
+
+    event = {field: getattr(record, field) for field in _EVENT_WIRE_FIELDS}
+    event.update(_STRIPPED_EVENT_FIELDS)
+    return event
+
+
 def _event_payload(session: Session, record: EventRecord) -> dict[str, Any]:
     """一个事件 + 其公共成员 + 两侧重定向;私有 / 非本机文章的成员在导出时剔除。
 
@@ -801,23 +818,32 @@ def _event_payload(session: Session, record: EventRecord) -> dict[str, Any]:
     无论哪一侧后到都能把 ``event_redirects`` 行补上(两侧可能落在不同页)。
     """
 
-    rows = session.exec(
-        select(EventMemberRecord, ArticleRecord)
-        .join(ArticleRecord, ArticleRecord.id == EventMemberRecord.article_id)
-        .where(EventMemberRecord.event_id == record.id)
-        .order_by(EventMemberRecord.article_id.asc())
-    ).all()
-    exportable = [(member, article) for member, article in rows if _article_is_public(session, article)]
-    event, representative_flags = _exported_event_metadata(
-        session, record, exportable, total_members=len(rows)
-    )
-    members = [
-        {
-            **{field: getattr(member, field) for field in _EVENT_MEMBER_WIRE_FIELDS},
-            "is_representative": representative_flags[member.article_id],
-        }
-        for member, _article in exportable
-    ]
+    if record.status == "merged":
+        # 已合并的旧事件只剩「指向新事件」这一件事(检视 R2 G2):成员已迁走,缓存的标题 / 代表稿 /
+        # 计数再无可导出成员作依据,一律剥离;接收端应用时同样清空旧缓存。合并本身改了 status
+        # 会触发回标,所以剥离记录随合并即刻发出,不等成员来源日后转私有。
+        event = _stripped_event_wire(record)
+        members: list[dict[str, Any]] = []
+    else:
+        rows = session.exec(
+            select(EventMemberRecord, ArticleRecord)
+            .join(ArticleRecord, ArticleRecord.id == EventMemberRecord.article_id)
+            .where(EventMemberRecord.event_id == record.id)
+            .order_by(EventMemberRecord.article_id.asc())
+        ).all()
+        exportable = [
+            (member, article) for member, article in rows if _article_is_public(session, article)
+        ]
+        event, representative_flags = _exported_event_metadata(
+            session, record, exportable, total_members=len(rows)
+        )
+        members = [
+            {
+                **{field: getattr(member, field) for field in _EVENT_MEMBER_WIRE_FIELDS},
+                "is_representative": representative_flags[member.article_id],
+            }
+            for member, _article in exportable
+        ]
     redirects_from = [
         {field: getattr(redirect, field) for field in _EVENT_REDIRECT_WIRE_FIELDS}
         for redirect in session.exec(
@@ -2826,6 +2852,8 @@ def _apply_events(
         data = _validated_event_payload(item["payload"])
         event = data["event"]
         event_id = int(data["id"])
+        revision = _canonical_revision(item["revision"], field="remote revision")
+        merged = event.get("status") == "merged"
         record = session.get(EventRecord, event_id)
         if record is not None and record.authority_id != authority_id:
             owner = record.authority_id or "<local>"
@@ -2858,6 +2886,10 @@ def _apply_events(
             and representative_article.analysis_authority_id == authority_id
             else None
         )
+        if merged:
+            # 与导出侧同一姿态:旧事件只剩重定向,本地残留的旧标题 / 代表稿 / 计数一并清空。
+            for field, value in _STRIPPED_EVENT_FIELDS.items():
+                setattr(record, field, value)
         record.story_id = None
         record.follows_event_id = None
         record.authority_id = authority_id
@@ -2866,38 +2898,61 @@ def _apply_events(
         session.exec(
             delete(EventMemberRecord).where(EventMemberRecord.event_id == event_id)
         )
-        # 成员集整体以本页为准,待补账也随之刷新。
+        # 这个事件的成员集整体以本页为准:它名下的待补行全部作废(仍在成员里的下面重新入账)。
         session.exec(
             delete(EventMemberBacklogRecord).where(
-                EventMemberBacklogRecord.event_id == event_id
+                EventMemberBacklogRecord.authority_id == authority_id,
+                EventMemberBacklogRecord.event_id == event_id,
             )
         )
-        for member in data["members"]:
-            article = session.get(ArticleRecord, member["article_id"])
+        session.flush()
+        for member in [] if merged else data["members"]:
+            article_id = str(member["article_id"])
+            pending = session.get(EventMemberBacklogRecord, (authority_id, article_id))
+            if pending is not None and int(pending.revision) > revision:
+                # 同一篇文章已有更新版本的归属在等文章,本行是旧版本,不能倒退。
+                deferred += 1
+                continue
+            article = session.get(ArticleRecord, article_id)
             if article is None:
-                session.add(
-                    EventMemberBacklogRecord(
+                payload_json = _canonical(
+                    {field: member[field] for field in _EVENT_MEMBER_WIRE_FIELDS}
+                )
+                if pending is None:
+                    pending = EventMemberBacklogRecord(
+                        authority_id=authority_id,
+                        article_id=article_id,
                         event_id=event_id,
-                        article_id=str(member["article_id"]),
-                        payload_json=_canonical(
-                            {field: member[field] for field in _EVENT_MEMBER_WIRE_FIELDS}
-                        ),
+                        revision=revision,
+                        payload_json=payload_json,
                         first_seen_at=now,
                         attempts=0,
                         updated_at=now,
                     )
-                )
+                else:
+                    pending.event_id = event_id
+                    pending.revision = revision
+                    pending.payload_json = payload_json
+                    pending.updated_at = now
+                session.add(pending)
                 deferred += 1
                 continue
             if article.analysis_authority_id != authority_id:
                 skipped += 1
                 continue
-            # 生产端把这篇文章挪去了别的事件:同一 authority 的文章以本页为准,旧归属让位。
-            session.exec(
-                delete(EventMemberRecord).where(
-                    EventMemberRecord.article_id == article.id
-                )
-            )
+            if pending is not None:
+                session.delete(pending)
+            current = session.exec(
+                select(EventMemberRecord).where(EventMemberRecord.article_id == article.id)
+            ).first()
+            if current is not None:
+                if _applied_event_revision(session, authority_id, current.event_id) > revision:
+                    # 本地已落库的归属来自更新的事件版本,本页是旧版本:不倒退。
+                    skipped += 1
+                    continue
+                # 生产端把这篇文章挪去了别的事件:同一 authority 的文章以较新的版本为准,旧归属让位。
+                session.delete(current)
+            session.flush()
             session.add(
                 EventMemberRecord(
                     event_id=event_id,
@@ -2948,6 +3003,15 @@ def _apply_events(
     return inserted, updated, skipped, deferred
 
 
+def _applied_event_revision(session: Session, authority_id: str, event_id: int) -> int:
+    """接收端已应用的该事件页行 revision(同一 authority);没有记录按 -1(最旧)算。"""
+
+    state = session.get(ArchiveSyncEntityStateRecord, ("events", str(event_id)))
+    if state is None or state.authority_id != authority_id:
+        return -1
+    return int(state.revision)
+
+
 def replay_event_member_backlog(
     engine: Engine,
     *,
@@ -2956,9 +3020,10 @@ def replay_event_member_backlog(
 ) -> dict[str, int]:
     """Install backlogged event members whose Articles have since arrived.
 
-    接收端每次 v2 拉取在 articles 流应用之后调用:文章已到且归事件所属 authority → 落成员、删行;
-    文章仍缺 → ``attempts`` +1,入账超过 ``max_age_days`` 的行清理;事件已撤回 / 文章在本地却不归
-    该 authority → 丢弃该行。独立事务,不影响任何流 checkpoint。
+    接收端每次 v2 拉取在 articles 流应用之后调用。一行 = 同一 authority 下某篇文章最新版本的待补归属:
+    文章已到且归该 authority → 落成员、删行,但本地已落库的归属若来自更新的事件版本则不覆盖
+    (``superseded``);目标事件已撤回 / 已合并(重定向走了)/ 不归该 authority → 弃行;文章仍缺 →
+    ``attempts`` +1,入账超过 ``max_age_days`` 清理。独立事务,不影响任何流 checkpoint。
     """
 
     import datetime
@@ -2968,16 +3033,22 @@ def replay_event_member_backlog(
         cutoff = datetime.datetime.fromisoformat(stamp) - datetime.timedelta(days=max_age_days)
     except ValueError as exc:
         raise SyncV2Error("backlog replay clock must be ISO-8601") from exc
-    installed = pending = expired = dropped = 0
+    installed = pending = expired = dropped = superseded = 0
     with Session(engine) as session:
         rows = session.exec(
             select(EventMemberBacklogRecord).order_by(
-                EventMemberBacklogRecord.event_id, EventMemberBacklogRecord.article_id
+                EventMemberBacklogRecord.authority_id, EventMemberBacklogRecord.article_id
             )
         ).all()
         for row in rows:
             event = session.get(EventRecord, row.event_id)
-            if event is None or not event.authority_id:
+            if (
+                event is None
+                or not event.authority_id
+                or event.authority_id != row.authority_id
+                or event.status == "merged"
+                or session.get(EventRedirectRecord, row.event_id) is not None
+            ):
                 session.delete(row)
                 dropped += 1
                 continue
@@ -2998,16 +3069,27 @@ def replay_event_member_backlog(
                 continue
             member = _json_object(row.payload_json, {})
             if (
-                article.analysis_authority_id != event.authority_id
+                article.analysis_authority_id != row.authority_id
                 or str(member.get("article_id") or "") != row.article_id
                 or any(field not in member for field in _EVENT_MEMBER_WIRE_FIELDS)
             ):
                 session.delete(row)
                 dropped += 1
                 continue
-            session.exec(
-                delete(EventMemberRecord).where(EventMemberRecord.article_id == article.id)
-            )
+            current = session.exec(
+                select(EventMemberRecord).where(EventMemberRecord.article_id == article.id)
+            ).first()
+            if current is not None:
+                if current.event_id == row.event_id:
+                    session.delete(row)
+                    dropped += 1
+                    continue
+                if _applied_event_revision(session, row.authority_id, current.event_id) > int(row.revision):
+                    session.delete(row)
+                    superseded += 1
+                    continue
+                session.delete(current)
+                session.flush()
             session.add(
                 EventMemberRecord(
                     event_id=row.event_id,
@@ -3022,6 +3104,7 @@ def replay_event_member_backlog(
         "pending": pending,
         "expired": expired,
         "dropped": dropped,
+        "superseded": superseded,
     }
 
 

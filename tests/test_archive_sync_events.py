@@ -147,6 +147,11 @@ def _state(engine, identity):
         return session.get(ArchiveSyncEntityStateRecord, ("events", str(identity)))
 
 
+def _backlog(engine, authority, article_id):
+    with Session(engine) as session:
+        return session.get(EventMemberBacklogRecord, (authority, article_id))
+
+
 def _member_ids(engine, event_id):
     with Session(engine) as session:
         return sorted(
@@ -302,7 +307,7 @@ def test_pull_negotiates_events_between_analyses_and_media_and_is_incremental(tm
     assert events_checkpoint["skipped"] == 0
     assert events_checkpoint["deferred"] == 0
     assert result["streams"]["articles"]["backlog_replay"] == {
-        "installed": 0, "pending": 0, "expired": 0, "dropped": 0,
+        "installed": 0, "pending": 0, "expired": 0, "dropped": 0, "superseded": 0,
     }
     assert events_checkpoint["snapshot"] == result["streams"]["source_states"]["snapshot"]
     with Session(consumer.engine) as session:
@@ -448,24 +453,31 @@ def test_members_without_local_article_are_deferred_and_local_articles_never_ove
         session.add(_article("a-local", source_id="user_rss_me", title="Private local article"))
         session.commit()
 
-    _raw, applied = _copy(producer, consumer, "events")
+    raw, applied = _copy(producer, consumer, "events")
 
     assert applied["inserted"] == 2
     assert applied["skipped"] == 1
     assert applied["deferred"] == 1
+    authority = archive_sync_v2.producer_authority_id(producer.engine)
+    launch_revision = next(
+        int(row["revision"])
+        for row in archive_sync_v2.parse_page(raw, expected_stream="events")[1]
+        if row["identity"] == str(launch_id)
+    )
     with Session(consumer.engine) as session:
         assert session.get(EventMemberRecord, (launch_id, "a-late")) is None
         assert session.get(EventMemberRecord, (singleton_id, "a-local")) is None
-        backlog = session.get(EventMemberBacklogRecord, (launch_id, "a-late"))
-        assert backlog is not None and backlog.attempts == 0
-        assert json.loads(backlog.payload_json)["publisher_key"] == "meta"
-        assert session.get(EventMemberBacklogRecord, (singleton_id, "a-local")) is None
         local = session.get(ArticleRecord, "a-local")
         assert local.title == "Private local article"
         assert local.analysis_authority_id == ""
         assert local.source_id == "user_rss_me"
         # 计数列照抄 authority 的缓存值,读取侧按本地成员另算
         assert session.get(EventRecord, launch_id).member_count == 2
+    backlog = _backlog(consumer.engine, authority, "a-late")
+    assert backlog is not None and backlog.attempts == 0
+    assert backlog.event_id == launch_id and backlog.revision == launch_revision
+    assert json.loads(backlog.payload_json)["publisher_key"] == "meta"
+    assert _backlog(consumer.engine, authority, "a-local") is None
     assert _member_ids(consumer.engine, launch_id) == ["a-1", "a-2"]
     assert _member_ids(consumer.engine, singleton_id) == ["a-3"]
 
@@ -676,6 +688,77 @@ def test_merge_redirect_resolves_old_id_after_sync_across_page_boundary(tmp_path
     assert _member_ids(consumer.engine, old_id) == []
 
 
+def test_merged_event_is_exported_stripped_and_never_leaks_its_old_title(tmp_path):
+    """检视 R2 V4:合并后旧 ID 只剩重定向;成员来源日后转私有,旧 ID 也不会带出私有标题。"""
+    producer = _sink(tmp_path, "producer-merged-strip.db")
+    consumer = _sink(tmp_path, "consumer-merged-strip.db")
+    launch_id, singleton_id = _seed_producer(producer)
+    with Session(producer.engine) as session:
+        old = session.get(EventRecord, singleton_id)
+        old.title = "Project Cedar confidential roadmap"
+        old.title_source = "llm"
+        session.add(old)
+        session.commit()
+    for stream in ("sources", "articles", "events"):
+        full_raw, _applied = _copy(producer, consumer, stream)
+    full_snapshot = archive_sync_v2.parse_page(full_raw, expected_stream="events")[0]["snapshot"]
+    with Session(consumer.engine) as session:
+        assert session.get(EventRecord, singleton_id).title == "Project Cedar confidential roadmap"
+
+    # 合并:singleton → launch
+    with Session(producer.engine) as session:
+        session.exec(
+            update(EventMemberRecord).where(EventMemberRecord.event_id == singleton_id).values(event_id=launch_id)
+        )
+        old = session.get(EventRecord, singleton_id)
+        old.status = "merged"
+        session.add(old)
+        session.add(EventRedirectRecord(
+            old_event_id=singleton_id, new_event_id=launch_id, reason="manual", created_at=_iso(1),
+        ))
+        session.commit()
+
+    raw = archive_sync_v2.export_page(producer.engine, "events", since=full_snapshot)
+    manifest, rows = archive_sync_v2.parse_page(raw, expected_stream="events")
+    assert "Cedar" not in raw
+    stripped = next(row for row in rows if row["identity"] == str(singleton_id))
+    assert stripped["operation"] == "upsert"
+    assert stripped["payload"]["members"] == []
+    assert stripped["payload"]["merged_into"]["new_event_id"] == launch_id
+    assert {
+        key: stripped["payload"]["event"][key]
+        for key in ("status", "title", "title_source", "representative_article_id", "member_count", "publisher_count")
+    } == {
+        "status": "merged", "title": "", "title_source": "", "representative_article_id": None,
+        "member_count": 0, "publisher_count": 0,
+    }
+    archive_sync_v2.import_page(consumer.engine, raw, expected_stream="events")
+    with Session(consumer.engine) as session:
+        old = session.get(EventRecord, singleton_id)
+        assert old.status == "merged" and old.title == "" and old.representative_article_id is None
+        assert session.get(EventRedirectRecord, singleton_id).new_event_id == launch_id
+    assert _member_ids(consumer.engine, launch_id) == ["a-1", "a-2", "a-3"]
+    assert _member_ids(consumer.engine, singleton_id) == []
+
+    # 原成员来源转私有:新事件撤回;旧 ID 无论全量还是增量导出都不含私有标题
+    with Session(producer.engine) as session:
+        source = session.get(SourceConfigRecord, "rss_platform")
+        source.owner_username = "vendor"
+        session.add(source)
+        session.commit()
+    full_again = archive_sync_v2.export_page(producer.engine, "events")
+    assert "Cedar" not in full_again
+    incremental = archive_sync_v2.export_page(producer.engine, "events", since=manifest["snapshot"])
+    assert "Cedar" not in incremental
+    _inc_manifest, inc_rows = archive_sync_v2.parse_page(incremental, expected_stream="events")
+    assert {(row["identity"], row["operation"]) for row in inc_rows} == {(str(launch_id), "tombstone")}
+    applied = archive_sync_v2.import_page(consumer.engine, incremental, expected_stream="events")
+    assert applied["deleted"] == 1
+    with Session(consumer.engine) as session:
+        assert session.get(EventRecord, launch_id) is None
+        assert session.get(EventRecord, singleton_id).title == ""
+
+
 # ── 围栏 ───────────────────────────────────────────────────────────────────────
 
 
@@ -837,10 +920,11 @@ def test_member_whose_article_arrives_in_the_next_pull_is_recovered_from_the_bac
 
     assert first["streams"]["events"]["deferred"] == 1
     assert first["streams"]["events"]["skipped"] == 0
+    authority = first["authority_id"]
     with Session(consumer.engine) as session:
         assert session.get(ArticleRecord, "a-2") is None
-        backlog = session.get(EventMemberBacklogRecord, (launch_id, "a-2"))
-        assert backlog is not None and backlog.attempts == 0
+    backlog = _backlog(consumer.engine, authority, "a-2")
+    assert backlog is not None and backlog.attempts == 0 and backlog.event_id == launch_id
     assert _member_ids(consumer.engine, launch_id) == ["a-1"]
 
     second = _pull(consumer, remote, tmp_path, checkpoints=first["streams"])
@@ -849,59 +933,147 @@ def test_member_whose_article_arrives_in_the_next_pull_is_recovered_from_the_bac
     assert second["streams"]["events"]["count"] == 0  # 事件本身没变,不会重发
     assert second["streams"]["articles"]["backlog_replay"]["installed"] == 1
     assert _member_ids(consumer.engine, launch_id) == ["a-1", "a-2"]
+    assert _backlog(consumer.engine, authority, "a-2") is None
     with Session(consumer.engine) as session:
-        assert session.get(EventMemberBacklogRecord, (launch_id, "a-2")) is None
         member = session.get(EventMemberRecord, (launch_id, "a-2"))
         assert member.publisher_key == "google" and member.assigned_by == "llm"
 
 
-def test_backlog_replay_expires_stale_rows_and_drops_rows_that_cannot_be_received(tmp_path):
+def test_backlog_replay_expires_stale_rows_and_never_overrides_newer_attributions(tmp_path):
     consumer = _sink(tmp_path, "consumer-backlog-replay.db")
     authority = "producer-x"
+    member_payload = dict(
+        article_id="", publisher_key="openai", report_at=_iso(2), first_seen_at=_iso(2),
+        assigned_by="llm", confidence=0.7, prompt_version="p1", is_representative=False,
+        created_at=_iso(2),
+    )
+
+    def backlog_row(article_id, event_id, *, revision=5, first_seen=None):
+        stamp = first_seen or _iso(1)
+        return EventMemberBacklogRecord(
+            authority_id=authority, article_id=article_id, event_id=event_id, revision=revision,
+            payload_json=json.dumps({**member_payload, "article_id": article_id}),
+            first_seen_at=stamp, attempts=0, updated_at=stamp,
+        )
+
     with Session(consumer.engine) as session:
         session.add(_source())
         session.add(_source("user_rss_me", owner_username="me"))
-        session.add(_article("arrived", analysis_authority_id=authority))
+        for article_id in ("arrived", "settled", "orphan"):
+            session.add(_article(article_id, analysis_authority_id=authority))
         session.add(_article("local-1", source_id="user_rss_me"))
-        event = _event(id=41, title="Synced", authority_id=authority)
-        local_event = _event(id=42, title="Local")
-        session.add_all([event, local_event])
+        session.add_all([
+            _event(id=41, title="Synced", authority_id=authority),
+            _event(id=42, title="Local"),
+            _event(id=43, title="Newer", authority_id=authority),
+            _event(id=44, title="Merged away", status="merged", authority_id=authority),
+        ])
         session.flush()
-        member_payload = {
-            field: value for field, value in dict(
-                article_id="", publisher_key="openai", report_at=_iso(2), first_seen_at=_iso(2),
-                assigned_by="llm", confidence=0.7, prompt_version="p1", is_representative=False,
-                created_at=_iso(2),
-            ).items()
-        }
-        for article_id, first_seen in (
-            ("arrived", _iso(1)),      # 文章已到 → 落成员
-            ("local-1", _iso(1)),      # 文章在本地却是私有订阅 → 丢弃
-            ("never", _iso(24 * 31)),  # 入账超 30 天 → 清理
-            ("waiting", _iso(24)),     # 仍缺 → attempts +1
-        ):
-            session.add(EventMemberBacklogRecord(
-                event_id=41, article_id=article_id,
-                payload_json=json.dumps({**member_payload, "article_id": article_id}),
-                first_seen_at=first_seen, attempts=0, updated_at=first_seen,
-            ))
-        session.add(EventMemberBacklogRecord(  # 本地事件不该有待补行 → 丢弃
-            event_id=42, article_id="arrived",
-            payload_json=json.dumps({**member_payload, "article_id": "arrived"}),
-            first_seen_at=_iso(1), attempts=0, updated_at=_iso(1),
+        # 事件 43 的页行 revision 更新,且已把 settled 落库
+        session.add(ArchiveSyncEntityStateRecord(
+            stream="events", identity="43", authority_id=authority, revision=50, operation="upsert",
         ))
+        session.add(_member(43, "settled"))
+        session.add_all([
+            backlog_row("arrived", 41),                              # 文章已到 → 落成员
+            backlog_row("local-1", 41),                              # 文章在本地却是私有订阅 → 丢弃
+            backlog_row("never", 41, first_seen=_iso(24 * 31)),      # 入账超 30 天 → 清理
+            backlog_row("waiting", 41, first_seen=_iso(24)),         # 仍缺 → attempts +1
+            backlog_row("settled", 41, revision=7),                  # 本地已有更新版本的归属 → 不覆盖
+            backlog_row("arrived-local", 42),                        # 指向本地事件 → 丢弃
+            backlog_row("orphan", 44),                               # 目标事件已合并 → 丢弃
+        ])
         session.commit()
 
     outcome = archive_sync_v2.replay_event_member_backlog(consumer.engine)
 
-    assert outcome == {"installed": 1, "pending": 1, "expired": 1, "dropped": 2}
+    assert outcome == {"installed": 1, "pending": 1, "expired": 1, "dropped": 3, "superseded": 1}
     assert _member_ids(consumer.engine, 41) == ["arrived"]
+    assert _member_ids(consumer.engine, 43) == ["settled"]
     with Session(consumer.engine) as session:
         remaining = session.exec(select(EventMemberBacklogRecord)).all()
         assert [(row.event_id, row.article_id, row.attempts) for row in remaining] == [(41, "waiting", 1)]
         # 事件撤回 → 待补行随 FK 级联删除
         session.delete(session.get(EventRecord, 41))
         session.commit()
+        assert session.exec(select(EventMemberBacklogRecord)).all() == []
+
+
+def test_interleaved_pulls_keep_the_newest_attribution_for_a_backlogged_article(tmp_path):
+    """检视 R2 V6:摘出 / 合并 / 文章刷新 / 源配置修改与四轮拉取交错,归属不丢、不倒退。"""
+    producer = _sink(tmp_path, "producer-interleaved.db")
+    consumer = _sink(tmp_path, "consumer-interleaved.db")
+    with Session(producer.engine) as session:
+        session.add(_source())
+        session.add(_source("rss_other"))
+        for article_id in ("a-1", "a-2", "a-3"):
+            session.add(_article(article_id))
+        session.add(_article("a-4", source_id="rss_other"))
+        session.flush()
+        e1 = _event(title="E1", member_count=2, publisher_count=2)
+        e2 = _event(title="E2", member_count=2, publisher_count=2)
+        session.add_all([e1, e2])
+        session.flush()
+        session.add_all([
+            _member(e1.id, "a-1"), _member(e1.id, "a-2", publisher_key="google"),
+            _member(e2.id, "a-3"), _member(e2.id, "a-4", publisher_key="meta"),
+        ])
+        session.commit()
+        e1_id, e2_id = e1.id, e2.id
+    authority = archive_sync_v2.producer_authority_id(producer.engine)
+    remote = _Remote(producer)
+
+    def refresh_a3():
+        with Session(producer.engine) as session:
+            article = session.get(ArticleRecord, "a-3")
+            article.content += " +"
+            article.archive_updated_at = _iso(0)
+            session.add(article)
+            session.commit()
+
+    # 第一轮:快照固定后 a-3 刷新 → (E2, a-3) 待补
+    remote.hooks["sources"] = refresh_a3
+    first = _pull(consumer, remote, tmp_path)
+    assert first["streams"]["events"]["deferred"] == 1
+    assert _backlog(consumer.engine, authority, "a-3").event_id == e2_id
+
+    # 两轮之间管理员把 a-3 从 E2 摘出并入 E1(E1、E2 都被回标,仍在下一轮快照内)
+    with Session(producer.engine) as session:
+        session.exec(
+            update(EventMemberRecord).where(EventMemberRecord.article_id == "a-3").values(event_id=e1_id)
+        )
+        session.commit()
+
+    # 第二轮:快照固定后 a-3 再次刷新、E2 剩余成员的源配置被改 → a-3 仍缺、E2 的新状态越过快照;只有 E1 到达
+    def refresh_a3_and_touch_e2_source():
+        refresh_a3()
+        with Session(producer.engine) as session:
+            source = session.get(SourceConfigRecord, "rss_other")
+            source.params_json = '{"feed_url":"https://example.test/rss_other.xml","note":"touched"}'
+            session.add(source)
+            session.commit()
+
+    remote.hooks["sources"] = refresh_a3_and_touch_e2_source
+    second = _pull(consumer, remote, tmp_path, checkpoints=first["streams"])
+    assert second["streams"]["events"]["count"] == 1
+    assert second["streams"]["events"]["deferred"] == 1
+    with Session(consumer.engine) as session:
+        rows = session.exec(select(EventMemberBacklogRecord)).all()
+        assert [(row.event_id, row.article_id) for row in rows] == [(e1_id, "a-3")]
+    assert _member_ids(consumer.engine, e2_id) == ["a-4"]  # a-3 从未落库到 E2(第一轮就进了待补账)
+
+    # 第三轮:a-3 到达 → 重放只落 E1;随后 E2 的新成员集(无 a-3)到达,不动 a-3 的归属
+    third = _pull(consumer, remote, tmp_path, checkpoints=second["streams"])
+    assert third["streams"]["articles"]["backlog_replay"]["installed"] == 1
+    assert third["streams"]["events"]["count"] == 1
+    assert _member_ids(consumer.engine, e1_id) == ["a-1", "a-2", "a-3"]
+    assert _member_ids(consumer.engine, e2_id) == ["a-4"]
+
+    # 第四轮:无变化,归属稳定、待补账为空
+    fourth = _pull(consumer, remote, tmp_path, checkpoints=third["streams"])
+    assert fourth["streams"]["events"]["count"] == 0
+    assert _member_ids(consumer.engine, e1_id) == ["a-1", "a-2", "a-3"]
+    with Session(consumer.engine) as session:
         assert session.exec(select(EventMemberBacklogRecord)).all() == []
 
 

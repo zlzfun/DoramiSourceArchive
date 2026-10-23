@@ -939,7 +939,7 @@ def test_stale_translation_title_is_ignored(tmp_path):
     assert "fts_zh" not in channels
 
 
-def test_replay_export_keeps_source_database_bytes(tmp_path):
+def test_replay_export_keeps_source_database_bytes(tmp_path, monkeypatch, capsys):
     """R1 #5:--export 走只读引擎,源库主文件字节与 archive_updated_at 都不变。"""
     import hashlib
     import importlib.util
@@ -960,6 +960,11 @@ def test_replay_export_keeps_source_database_bytes(tmp_path):
     items = replay.load_from_database(f"sqlite:///{db}", today, today)
     assert [item["id"] for item in items] == ["pub1"]
     assert hashlib.sha256(db.read_bytes()).hexdigest() == before
+    # 摘要不一致(活库并发写入)只告警不中断;只读连接拒写仍是硬保证
+    digests = iter(["before", "after"])
+    monkeypatch.setattr(replay, "sqlite_digest", lambda _url: next(digests))
+    assert [item["id"] for item in replay.load_from_database(f"sqlite:///{db}", today, today)] == ["pub1"]
+    assert "摘要不一致" in capsys.readouterr().err
     ro = replay.readonly_engine(f"sqlite:///{db}")
     with Session(ro) as session:
         assert session.get(ArticleRecord, "pub1").archive_updated_at == ""
@@ -970,3 +975,81 @@ def test_replay_export_keeps_source_database_bytes(tmp_path):
             ))
             session.commit()
     ro.dispose()
+
+
+def test_isolated_replay_revalidates_targets_between_commits(tmp_path, monkeypatch):
+    """R2 N1:隔离重放两次提交之间管理员合并了目标,后续篇沿 redirect 落到终点而不是写进 merged 事件。"""
+    from services import event_board
+
+    engine = _sink(tmp_path).engine
+    _seed(engine, "b0", "Claude Opus 5 发布:上下文翻倍", source_id="rss_b", publish=NOW - dt.timedelta(hours=1))
+    with Session(engine) as session:
+        ea.apply_assignments(session, [ea.AssignmentDecision(article_id="b0", assigned_by="singleton")], now=NOW)
+    target_b = _member(engine, "b0").event_id
+    _seed(engine, "g1", "Anthropic launches Claude Opus 5", source_id="rss_a")
+    _seed(engine, "g2", "Broken source article", source_id="rss_bad")
+    _seed(engine, "g3", "Opus 5 arrives with longer context", source_id="rss_c")
+    _seed(engine, "g4", "Opus 5 developer notes", source_id="rss_d")
+    real_publisher = ea.publisher_key
+
+    def flaky(source_id, meta):
+        if source_id == "rss_bad":
+            raise RuntimeError("publisher exploded")
+        return real_publisher(source_id, meta)
+
+    monkeypatch.setattr(ea, "publisher_key", flaky)
+    real_isolated = ea._apply_isolated
+    merged_from: list[int] = []
+
+    def hooked(session, decision, **kwargs):
+        if decision.article_id == "g3" and not merged_from:
+            # g1 已单独提交进 new:1 事件 A;管理员此刻把 A 并入 B(真实 merge_events,独立会话)
+            event_a = kwargs["key_events"]["new:1"]
+            with Session(engine) as other:
+                event_board.merge_events(other, event_a, target_b, now=NOW)
+            merged_from.append(event_a)
+        return real_isolated(session, decision, **kwargs)
+
+    monkeypatch.setattr(ea, "_apply_isolated", hooked)
+    with Session(engine) as session:
+        outcome = ea.apply_assignments(session, [
+            ea.AssignmentDecision(article_id="g1", assigned_by="llm", new_key="new:1", confidence=0.9),
+            ea.AssignmentDecision(article_id="g2", assigned_by="singleton"),
+            ea.AssignmentDecision(article_id="g3", assigned_by="llm", new_key="new:1", confidence=0.9),
+            ea.AssignmentDecision(article_id="g4", assigned_by="llm", event_id=None, confidence=0.9),
+        ], now=NOW)
+    assert outcome["isolated_failures"] == 1 and merged_from
+    event_a = merged_from[0]
+    assert _event(engine, event_a).status == "merged"
+    assert _member(engine, "g1").event_id == target_b          # 随合并迁走
+    assert _member(engine, "g3").event_id == target_b          # 复用组键时验到当前终点 B,不写进 merged A
+    assert _event(engine, target_b).member_count == 3 and _event(engine, event_a).member_count == 0
+    assert _member(engine, "g4").event_id not in {event_a, target_b}
+
+    # 显式 event_id 目标同样在隔离事务里重验:提交间合并 → retargeted 到终点
+    _seed(engine, "h1", "Yet another Opus 5 report", source_id="rss_e")
+    _seed(engine, "h2", "Broken again", source_id="rss_bad")
+    _seed(engine, "h3", "Final Opus 5 report", source_id="rss_f")
+    _seed(engine, "c0", "Opus 5 standalone", source_id="rss_g")
+    with Session(engine) as session:
+        ea.apply_assignments(session, [ea.AssignmentDecision(article_id="c0", assigned_by="singleton")], now=NOW)
+    target_c = _member(engine, "c0").event_id
+    merged_from.clear()
+
+    def hooked_explicit(session, decision, **kwargs):
+        if decision.article_id == "h3" and not merged_from:
+            with Session(engine) as other:
+                event_board.merge_events(other, target_b, target_c, now=NOW)
+            merged_from.append(target_b)
+        return real_isolated(session, decision, **kwargs)
+
+    monkeypatch.setattr(ea, "_apply_isolated", hooked_explicit)
+    with Session(engine) as session:
+        outcome = ea.apply_assignments(session, [
+            ea.AssignmentDecision(article_id="h1", assigned_by="llm", event_id=target_b, confidence=0.9),
+            ea.AssignmentDecision(article_id="h2", assigned_by="singleton"),
+            ea.AssignmentDecision(article_id="h3", assigned_by="llm", event_id=target_b, confidence=0.9),
+        ], now=NOW)
+    assert outcome["isolated_failures"] == 1 and outcome["retargeted"] == 1
+    assert _member(engine, "h1").event_id == target_c and _member(engine, "h3").event_id == target_c
+    assert _event(engine, target_b).status == "merged" and _event(engine, target_b).member_count == 0

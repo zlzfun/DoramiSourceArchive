@@ -446,9 +446,13 @@ receiver copies the id verbatim and fences the row with `authority_id`. Payload:
   original title; the producer's model title is never exported in that case, and
   the representative is the stored one if still exportable, otherwise official >
   score > earliest report > id). An event with no exportable member at all is
-  exported as a tombstone so the receiver withdraws it; a merged event with no
-  members is still exported because only its `merged_into` keeps the old id
-  resolvable.
+  exported as a tombstone so the receiver withdraws it. A `merged` event is
+  always exported as a stripped redirect-only record — `title`, `title_source`,
+  `representative_article_id`, `member_count`, `publisher_count` cleared, no
+  members, only `merged_into` (and `redirects_from` for multi-hop chains) — and
+  the receiver clears its cached copy the same way; because the merge itself
+  changes `status`, the stripped record is emitted at once, so a later privacy
+  change of its former members can never surface through the old id.
 - A merge redirect is carried on both sides: the target's `redirects_from` and
   the merged (old, `status=merged`) event's `merged_into`. Whichever side the
   receiver applies second installs the `event_redirects` row, so a page boundary
@@ -464,11 +468,18 @@ receiver copies the id verbatim and fences the row with `authority_id`. Payload:
   and counted as `deferred`; a member whose Article exists locally but is not
   owned by this authority (for example a local `user_rss_` Article under the
   same id) is skipped and counted as `skipped`; the local Article is never
-  touched. Every v2 pull replays the backlog right after its `articles` stream
-  completes (`backlog_replay` in the articles checkpoint): Articles that arrived
-  install their member and drop the row, rows still waiting bump `attempts`,
-  rows older than 30 days or whose Article turned out not to be receivable are
-  dropped, and a withdrawn event cascades its rows away. An Article the producer
+  touched. The backlog keeps **one row per (authority, article)** carrying the
+  authority revision of the event row that asserted the membership: a newer
+  attribution for the same Article (an installed member or a newer backlog
+  entry) discards the older row, and an older page never overrides a newer
+  installed membership (compared through the applied event revisions). Every
+  v2 pull replays the backlog right after its `articles` stream completes
+  (`backlog_replay` in the articles checkpoint): Articles that arrived install
+  their member and drop the row, rows still waiting bump `attempts`, rows older
+  than 30 days or whose Article turned out not to be receivable are dropped,
+  rows whose event has since been merged (redirected) or withdrawn are dropped,
+  and a row whose Article is already attributed by a newer event version is
+  reported as `superseded` instead of overriding it. An Article the producer
   moved to another event loses its stale local membership. A local or
   foreign-authority event under the same id fails the page closed — for upserts
   and tombstones alike. `story_id` / `follows_event_id` are set only when the

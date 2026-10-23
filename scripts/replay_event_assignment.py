@@ -128,7 +128,7 @@ def sqlite_digest(database_url: str) -> str | None:
 
 def load_from_database(database_url: str, since: str, until: str) -> list[dict[str, Any]]:
     """只读取库里日期窗内分析成功、非私有、本机权威的文章(与 scan_pending 同口径,论文 / 汇编 / 播客留给服务判)。
-    走只读引擎;导出前后比对 SQLite 主文件摘要,变了就报错(守卫,正常永不触发)。"""
+    走只读引擎(拒写是硬保证);导出前后比对 SQLite 主文件摘要,不一致只告警(活库并发写入会让它变)。"""
     start, end = _day_bounds(since, until)
     digest_before = sqlite_digest(database_url)
     engine = readonly_engine(database_url)
@@ -138,7 +138,9 @@ def load_from_database(database_url: str, since: str, until: str) -> list[dict[s
         engine.dispose()
     digest_after = sqlite_digest(database_url)
     if digest_before != digest_after:
-        raise RuntimeError("只读导出改写了源库文件,请检查数据库连接方式")
+        # 只读引擎拒写是硬保证;摘要变化几乎总是别的进程在写活库(抓取 / 分析 / WAL checkpoint),只提示不中断。
+        print("[warn] 导出前后源库主文件摘要不一致:多半是活库有其它进程并发写入;只读连接本身不会写。"
+              "若确认库无人写入,再检查连接方式。", file=sys.stderr)
     return items
 
 

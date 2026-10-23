@@ -28,6 +28,7 @@ from models.db import (
     ArticleAnalysisRecord,
     ArticleRecord,
     EventAssignmentLedgerRecord,
+    EventMemberBacklogRecord,
     EventMemberRecord,
     EventRankSnapshotRecord,
     EventRecord,
@@ -305,16 +306,32 @@ def _resolve_title(
 
 @dataclass
 class _MemberLoad:
-    """按事件分组的成员视图;``partially_hidden`` = 对当前读者至少有一名成员不可见的事件。"""
+    """按事件分组的成员视图与「事件是否完整」的判定材料。
+
+    - ``partially_hidden``:对当前读者至少有一名成员不可见的事件;
+    - ``local_counts``:本地已落库(且文章在库)的成员行数,读者可见性过滤之前;
+    - ``backlog``:在 ``event_member_backlog`` 有待补行的事件(接收端文章晚到)。
+    """
 
     views: dict[int, list[_MemberView]]
     partially_hidden: set[int]
+    local_counts: dict[int, int]
+    backlog: set[int]
 
     def for_event(self, event_id: int | None) -> list[_MemberView]:
         return self.views.get(int(event_id or 0), [])
 
-    def has_hidden(self, event_id: int | None) -> bool:
-        return int(event_id or 0) in self.partially_hidden
+    def incomplete(self, event: EventRecord) -> bool:
+        """读取侧「事件不完整」(codex R1 F1 / R2 G1):任一成员不可见 ∨ 待补账有行 ∨ 本地成员数 <
+        authority 写入的 ``member_count``。不完整即不能证明模型题只依赖可见成员,禁用模型题;
+        榜单 / 详情 / 关联事件共用这一判定。"""
+
+        event_id = int(event.id or 0)
+        return (
+            event_id in self.partially_hidden
+            or event_id in self.backlog
+            or self.local_counts.get(event_id, 0) < int(event.member_count or 0)
+        )
 
 
 def _load_member_views(
@@ -325,7 +342,7 @@ def _load_member_views(
 ) -> _MemberLoad:
     ids = sorted({int(value) for value in event_ids if value is not None})
     if not ids:
-        return _MemberLoad({}, set())
+        return _MemberLoad({}, set(), {}, set())
     rows = session.exec(
         select(EventMemberRecord, ArticleRecord, ArticleAnalysisRecord)
         .join(ArticleRecord, ArticleRecord.id == EventMemberRecord.article_id)
@@ -338,13 +355,24 @@ def _load_member_views(
     infos = _source_infos(session, sources, reader_scope=reader_scope)
     grouped: dict[int, list[_MemberView]] = {}
     partially_hidden: set[int] = set()
+    local_counts: dict[int, int] = {}
     for member, article, analysis in rows:
+        local_counts[int(member.event_id)] = local_counts.get(int(member.event_id), 0) + 1
         info = infos.get(article.source_id)
         if info is None or (reader_scope and not info.visible):
             partially_hidden.add(int(member.event_id))
             continue
         grouped.setdefault(int(member.event_id), []).append(_MemberView(member, article, analysis, info))
-    return _MemberLoad(grouped, partially_hidden)
+    backlog: set[int] = set()
+    if reader_scope:
+        backlog = {
+            int(value) for value in session.exec(
+                select(EventMemberBacklogRecord.event_id)
+                .where(EventMemberBacklogRecord.event_id.in_(ids))
+                .distinct()
+            ).all()
+        }
+    return _MemberLoad(grouped, partially_hidden, local_counts, backlog)
 
 
 def _build_view(
@@ -409,7 +437,7 @@ def _board_entries(
     load = _load_member_views(session, [event.id for event in events], reader_scope=True)
     views: list[_EventView] = []
     for event in events:
-        view = _build_view(event, load.for_event(event.id), allow_llm_title=not load.has_hidden(event.id))
+        view = _build_view(event, load.for_event(event.id), allow_llm_title=not load.incomplete(event))
         if view is None or view.publisher_count < MIN_PUBLISHERS:
             continue
         views.append(view)
@@ -451,7 +479,7 @@ def _visible_views(session: Session, events: Iterable[EventRecord]) -> dict[int,
     load = _load_member_views(session, [event.id for event in rows], reader_scope=True)
     views: dict[int, _EventView] = {}
     for event in rows:
-        view = _build_view(event, load.for_event(event.id), allow_llm_title=not load.has_hidden(event.id))
+        view = _build_view(event, load.for_event(event.id), allow_llm_title=not load.incomplete(event))
         if view is not None:
             views[int(event.id or 0)] = view
     return views
@@ -593,7 +621,7 @@ def read_event(
     if event is None:
         return None
     load = _load_member_views(session, [resolved_id], reader_scope=True)
-    view = _build_view(event, load.for_event(resolved_id), allow_llm_title=not load.has_hidden(resolved_id))
+    view = _build_view(event, load.for_event(resolved_id), allow_llm_title=not load.incomplete(event))
     if view is None:
         return None
     board = _board_entries(session, window_hours=WINDOW_HOURS, limit=BOARD_LIMIT, now=current)

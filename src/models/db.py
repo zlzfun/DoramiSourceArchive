@@ -1076,20 +1076,30 @@ class EventRankSnapshotRecord(SQLModel, table=True):
 
 
 class EventMemberBacklogRecord(SQLModel, table=True):
-    """Archive Sync 接收端的事件成员待补账(节点本地,永不同步;issue #121 检视 R1 #4)。
+    """Archive Sync 接收端的事件成员待补账(节点本地,永不同步;issue #121 检视 R1 #4 / R2 N2)。
 
     事件流到达时成员文章尚未到本地(文章 revision 越过本轮快照、要等下一轮 articles 流)→ 成员线值
-    原样暂存于此;每次 v2 拉取在 articles 流应用之后重放:文章已到且归同一 authority 则落成员并删行,
-    文章仍缺则 ``attempts`` +1,``first_seen_at`` 超 30 天的行清理;事件被撤回时随 FK 级联删除。
+    暂存于此。一篇文章在同一 authority 下只保留**最新版本依据**的一行:``revision`` = 携带这次归属的
+    事件页行的 authority revision;收到同文章更新的归属(落库成员或新待补)就废弃旧行;重放时本地已
+    落库的归属若更新则不覆盖、事件已合并 / 撤回则弃行。每次 v2 拉取在 articles 流应用之后重放:文章已到
+    且归同一 authority 则落成员并删行,仍缺则 ``attempts`` +1,``first_seen_at`` 超 30 天清理;事件撤回时随
+    FK 级联删除。
     """
     __tablename__ = "event_member_backlog"
 
+    authority_id: str = Field(primary_key=True)
+    article_id: str = Field(primary_key=True)
     event_id: int = Field(
-        primary_key=True,
         foreign_key="events.id",
         ondelete="CASCADE",
+        index=True,
     )
-    article_id: str = Field(primary_key=True)
+    revision: int = Field(
+        default=0,
+        ge=0,
+        sa_column_kwargs={"server_default": text("0")},
+        description="断言这次归属的事件页行的 authority revision(新旧归属以此比较)",
+    )
     payload_json: str = Field(default="{}", sa_column_kwargs={"server_default": text("'{}'")})
     first_seen_at: str = Field(description="首次入账时间(本机时钟),超 30 天清理")
     attempts: int = Field(default=0, ge=0, sa_column_kwargs={"server_default": text("0")})

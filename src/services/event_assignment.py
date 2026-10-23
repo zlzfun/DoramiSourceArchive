@@ -1233,6 +1233,15 @@ def _apply_batch(session: Session, decisions: Sequence[AssignmentDecision], *, n
             if event_id is None:
                 key = decision.new_key or f"single:{article.id}"
                 event_id = key_events.get(key)
+                if event_id is not None:
+                    # 跨事务复用的组事件可能已被管理员合并 / 接管:沿 redirect 取当前终点,不合法就另建(R2 N1)
+                    blocked = _blocked_ids(session.get(EventAssignmentLedgerRecord, article.id))
+                    current, _reason = _resolve_target_event(session, event_id, blocked=blocked)
+                    event_id = int(current.id) if current is not None else None
+                    if event_id is None:
+                        key_titles.pop(key_events.pop(key), None)
+                    else:
+                        key_events[key] = event_id
                 if event_id is None:
                     event = EventRecord(
                         status="open", title="", title_source="", member_count=0, publisher_count=0,
@@ -1273,6 +1282,21 @@ def _apply_batch(session: Session, decisions: Sequence[AssignmentDecision], *, n
         session.add(ledger)
     session.flush()
     return assigned, touched
+
+
+def _apply_isolated(session: Session, decision: AssignmentDecision, *, now: dt.datetime,
+                    articles: Mapping[str, ArticleRecord], meta: Mapping[str, SourceMeta],
+                    llm_titles: Mapping[str, str], key_events: dict[str, int],
+                    key_titles: dict[int, str]) -> tuple[int, set[int], dict[str, int]]:
+    """隔离重放的一篇:在本篇自己的事务里重新校验目标后写入并提交。异常原样抛出,由调用方回滚并退避。"""
+    validated, counts = _validate_decisions(session, [decision], articles, now=now)
+    one_assigned, one_touched = _apply_batch(
+        session, validated, now=now, articles=articles, meta=meta,
+        llm_titles=llm_titles, key_events=key_events, key_titles=key_titles,
+    )
+    _recompute_events(session, one_touched, now=now, llm_titles=key_titles)
+    session.commit()
+    return one_assigned, one_touched, counts
 
 
 def apply_assignments(session: Session, decisions: Sequence[AssignmentDecision], *,
@@ -1318,16 +1342,19 @@ def apply_assignments(session: Session, decisions: Sequence[AssignmentDecision],
         key_titles.clear()
         touched = set()
         assigned = 0
-        for decision in validated:
+        counts = {"invalid_target": 0, "retargeted": 0, "serial_split": 0}
+        # 用**原始**决定逐篇重放:两次提交之间管理员可能合并 / 接管了目标,首轮校验结果已过时(R2 N1),
+        # 每篇在自己的事务里重新校验(redirect 终点 / merged / authority / blocked / 结构规则)再写。
+        for decision in decisions:
             try:
-                one_assigned, one_touched = _apply_batch(
-                    session, [decision], now=now, articles=articles, meta=meta,
+                one_assigned, one_touched, one_counts = _apply_isolated(
+                    session, decision, now=now, articles=articles, meta=meta,
                     llm_titles=llm_titles, key_events=key_events, key_titles=key_titles,
                 )
-                _recompute_events(session, one_touched, now=now, llm_titles=key_titles)
-                session.commit()
                 assigned += one_assigned
                 touched |= one_touched
+                for key, value in one_counts.items():
+                    counts[key] += value
             except Exception as inner:  # noqa: BLE001 - 单篇失败只影响它自己
                 session.rollback()
                 isolated_failures += 1
