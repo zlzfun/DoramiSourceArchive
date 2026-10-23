@@ -975,6 +975,75 @@ def _trigger_sql(
         END
     """,
     )
+    # 成员文章的「可导出性」变了(源转私有 / 凭据 / 远端,或文章换源 / 移交 authority)→ 其事件重新
+    # 导出:导出侧按剩余可导出成员重建元数据,一个都不剩就以 tombstone 让接收端撤回(检视 R1 #2)。
+    # 凭据判定在 Python 侧(显式分类 + URL 推断),SQL 里只能按 url / params_json 变化粗判,宁多勿漏。
+    source_change = (
+        "NEW.owner_username IS NOT OLD.owner_username "
+        "OR NEW.collection_authority_id IS NOT OLD.collection_authority_id "
+        "OR NEW.params_json IS NOT OLD.params_json OR NEW.url IS NOT OLD.url"
+    )
+    source_has_event_members = (
+        "EXISTS (SELECT 1 FROM event_members em "
+        "JOIN articles a ON a.id = em.article_id "
+        "JOIN events e ON e.id = em.event_id "
+        "WHERE a.source_id = NEW.source_id AND e.authority_id = '')"
+    )
+    source_event_states = f"""
+          INSERT INTO archive_sync_entity_states(
+            stream, identity, authority_id, revision, operation, updated_at
+          ) SELECT DISTINCT 'events', CAST(e.id AS TEXT), '', {clock}, 'upsert', {now}
+          FROM events e
+          JOIN event_members em ON em.event_id = e.id
+          JOIN articles a ON a.id = em.article_id
+          WHERE a.source_id = NEW.source_id AND e.authority_id = ''
+          ON CONFLICT(stream, identity) DO UPDATE SET authority_id = '',
+            revision = excluded.revision, operation = excluded.operation,
+            updated_at = excluded.updated_at;
+    """
+    yield (
+        "archive_sync_event_source_insert",
+        f"""
+        CREATE TRIGGER archive_sync_event_source_insert AFTER INSERT ON source_configs
+        WHEN {source_has_event_members}
+        BEGIN
+          {tick}
+          {source_event_states}
+        END
+    """,
+    )
+    yield (
+        "archive_sync_event_source_change",
+        f"""
+        CREATE TRIGGER archive_sync_event_source_change AFTER UPDATE ON source_configs
+        WHEN ({source_change}) AND {source_has_event_members}
+        BEGIN
+          {tick}
+          {source_event_states}
+        END
+    """,
+    )
+    yield (
+        "archive_sync_event_article_scope_change",
+        f"""
+        CREATE TRIGGER archive_sync_event_article_scope_change AFTER UPDATE ON articles
+        WHEN (NEW.source_id IS NOT OLD.source_id
+              OR NEW.analysis_authority_id IS NOT OLD.analysis_authority_id)
+          AND EXISTS (SELECT 1 FROM event_members em JOIN events e ON e.id = em.event_id
+                      WHERE em.article_id = NEW.id AND e.authority_id = '')
+        BEGIN
+          {tick}
+          INSERT INTO archive_sync_entity_states(
+            stream, identity, authority_id, revision, operation, updated_at
+          ) SELECT 'events', CAST(em.event_id AS TEXT), '', {clock}, 'upsert', {now}
+          FROM event_members em JOIN events e ON e.id = em.event_id
+          WHERE em.article_id = NEW.id AND e.authority_id = ''
+          ON CONFLICT(stream, identity) DO UPDATE SET authority_id = '',
+            revision = excluded.revision, operation = excluded.operation,
+            updated_at = excluded.updated_at;
+        END
+    """,
+    )
     # 接收端围栏:authority 事件只接受同一 authority 的文章做成员——本机分配(含 user_rss_ 私有文章)
     # 永远进不了同步来的事件。成员的 assigned_by 原样照抄生产端,所以不能拿它当「写者」标记。
     for suffix, action in (
@@ -1015,6 +1084,9 @@ _EVENT_TRIGGER_NAMES = frozenset(
         "archive_sync_event_redirect_insert",
         "archive_sync_event_redirect_update",
         "archive_sync_event_redirect_delete",
+        "archive_sync_event_source_insert",
+        "archive_sync_event_source_change",
+        "archive_sync_event_article_scope_change",
         "event_member_authority_guard_insert",
         "event_member_authority_guard_update",
     }

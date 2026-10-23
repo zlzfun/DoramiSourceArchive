@@ -437,10 +437,18 @@ receiver copies the id verbatim and fences the row with `authority_id`. Payload:
 - `event` carries every `events` column except `authority_id`; `members` carries
   every `event_members` column (`assigned_by`, `confidence`, `prompt_version`
   are preserved verbatim — `sync` is not written by the receiver). Members whose
-  Article is not public on the producer (`user_rss_`, owner-bound or remote
-  sources) are omitted at export time; the cached `member_count` /
-  `publisher_count` are still the producer's values and readers derive visible
-  counts from the local member set.
+  Article is not public on the producer (`user_rss_`, owner-bound, remote or
+  credentialed sources — the same `source_is_credentialed` classification used
+  for MaaS / reader egress) are omitted at export time. When any member was
+  omitted, the exported `title` / `title_source` / `representative_article_id` /
+  `member_count` / `publisher_count` are rebuilt from the exportable members only
+  (Chinese member title → fingerprint-valid translated title → representative's
+  original title; the producer's model title is never exported in that case, and
+  the representative is the stored one if still exportable, otherwise official >
+  score > earliest report > id). An event with no exportable member at all is
+  exported as a tombstone so the receiver withdraws it; a merged event with no
+  members is still exported because only its `merged_into` keeps the old id
+  resolvable.
 - A merge redirect is carried on both sides: the target's `redirects_from` and
   the merged (old, `status=merged`) event's `merged_into`. Whichever side the
   receiver applies second installs the `event_redirects` row, so a page boundary
@@ -450,25 +458,37 @@ receiver copies the id verbatim and fences the row with `authority_id`. Payload:
   (`{"id":123,"tombstone":true}`); the receiver physically deletes its copy and
   SQLite cascades remove members, redirects and local rank snapshot rows.
 - Receiver apply (`_apply_events`): the event row first, then its member set is
-  replaced, then cross-event links. A member whose Article is missing locally,
-  or exists but is not owned by this authority (for example a local `user_rss_`
-  Article under the same id), is skipped and counted (`skipped` in the page
-  result and stream checkpoint); the local Article is never touched. An Article
-  the producer moved to another event loses its stale local membership. A local
-  event (`authority_id=''`) under the same id fails the page closed. `story_id` /
-  `follows_event_id` are set only when the target event is present locally.
+  replaced, then cross-event links. A member whose Article has not arrived yet
+  (its revision moved past the fixed snapshot, so it comes with the next
+  `articles` pull) is stored verbatim in the node-local `event_member_backlog`
+  and counted as `deferred`; a member whose Article exists locally but is not
+  owned by this authority (for example a local `user_rss_` Article under the
+  same id) is skipped and counted as `skipped`; the local Article is never
+  touched. Every v2 pull replays the backlog right after its `articles` stream
+  completes (`backlog_replay` in the articles checkpoint): Articles that arrived
+  install their member and drop the row, rows still waiting bump `attempts`,
+  rows older than 30 days or whose Article turned out not to be receivable are
+  dropped, and a withdrawn event cascades its rows away. An Article the producer
+  moved to another event loses its stale local membership. A local or
+  foreign-authority event under the same id fails the page closed — for upserts
+  and tombstones alike. `story_id` / `follows_event_id` are set only when the
+  target event is present locally.
 - Producer triggers: insert / update / delete on `events`, `event_members` and
   `event_redirects` mark the owning event(s) `upsert`; deleting an event writes
-  `tombstone` after its cascades. Only local events (`authority_id=''`) emit
-  states. Receiver guard trigger: an authority-owned event accepts only member
+  `tombstone` after its cascades. A source config insert, or a change to its
+  `owner_username` / `collection_authority_id` / `url` / `params_json`, and an
+  Article's `source_id` / `analysis_authority_id` change re-mark the events of
+  its members, so the export above re-projects or withdraws them. Only local
+  events (`authority_id=''`) emit states. Receiver guard trigger: an authority-owned event accepts only member
   Articles owned by that same authority, so local assignment can never add a
   member to a synced event.
 - First full pulls use the same presence / prune path as Articles: authority
   owned events without an applied upsert state are confirmed against the
   producer's local events and pruned only when absent.
 - Not synchronized: `event_rank_snapshots` (the receiver rebuilds its daily
-  ranking from local visibility, hidden sources differ per node) and
-  `event_assignment_ledger` (node-local assignment bookkeeping).
+  ranking from local visibility, hidden sources differ per node),
+  `event_assignment_ledger` (node-local assignment bookkeeping) and
+  `event_member_backlog` (receiver-local recovery queue).
 - Deployment order: producer first; an old receiver keeps pulling the other
   streams. `ANALYSIS_PAYLOAD_GENERATION` is untouched — the analyses payload
   did not change.

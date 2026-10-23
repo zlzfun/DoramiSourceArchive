@@ -281,10 +281,14 @@ def _resolve_title(
     event: EventRecord,
     members_sorted: list[_MemberView],
     representative: _MemberView,
+    *,
+    allow_llm_title: bool = True,
 ) -> tuple[str, str]:
     """事件标题优先级(方案 §3 步骤 4):中文成员标题 → 代表稿译题缓存 → 模型拟题 → 代表稿原题。
 
     返回 (标题, title_source);读者面只用标题,管理员重算把 title_source 一并写回。
+    ``allow_llm_title`` 为假时跳过模型拟题(codex R1 F1):拟题可能复述某个成员独有的信息,
+    读者视图里只要有任一成员不可见,就无法证明它只依赖可见成员,退回可见报道标题。
     """
 
     for view in members_sorted:
@@ -294,9 +298,23 @@ def _resolve_title(
     translated = _translated_title(representative.article)
     if translated:
         return translated, "translation"
-    if (event.title or "").strip() and event.title_source == "llm":
+    if allow_llm_title and (event.title or "").strip() and event.title_source == "llm":
         return event.title.strip(), "llm"
     return (representative.article.title or "").strip(), "representative"
+
+
+@dataclass
+class _MemberLoad:
+    """按事件分组的成员视图;``partially_hidden`` = 对当前读者至少有一名成员不可见的事件。"""
+
+    views: dict[int, list[_MemberView]]
+    partially_hidden: set[int]
+
+    def for_event(self, event_id: int | None) -> list[_MemberView]:
+        return self.views.get(int(event_id or 0), [])
+
+    def has_hidden(self, event_id: int | None) -> bool:
+        return int(event_id or 0) in self.partially_hidden
 
 
 def _load_member_views(
@@ -304,10 +322,10 @@ def _load_member_views(
     event_ids: Iterable[int],
     *,
     reader_scope: bool,
-) -> dict[int, list[_MemberView]]:
+) -> _MemberLoad:
     ids = sorted({int(value) for value in event_ids if value is not None})
     if not ids:
-        return {}
+        return _MemberLoad({}, set())
     rows = session.exec(
         select(EventMemberRecord, ArticleRecord, ArticleAnalysisRecord)
         .join(ArticleRecord, ArticleRecord.id == EventMemberRecord.article_id)
@@ -319,15 +337,22 @@ def _load_member_views(
         sources.setdefault(article.source_id, article.content_type or "")
     infos = _source_infos(session, sources, reader_scope=reader_scope)
     grouped: dict[int, list[_MemberView]] = {}
+    partially_hidden: set[int] = set()
     for member, article, analysis in rows:
         info = infos.get(article.source_id)
         if info is None or (reader_scope and not info.visible):
+            partially_hidden.add(int(member.event_id))
             continue
         grouped.setdefault(int(member.event_id), []).append(_MemberView(member, article, analysis, info))
-    return grouped
+    return _MemberLoad(grouped, partially_hidden)
 
 
-def _build_view(event: EventRecord, members: list[_MemberView]) -> _EventView | None:
+def _build_view(
+    event: EventRecord,
+    members: list[_MemberView],
+    *,
+    allow_llm_title: bool = True,
+) -> _EventView | None:
     if not members:
         return None
     ordered = sorted(members, key=lambda view: view.order_key())
@@ -348,7 +373,7 @@ def _build_view(event: EventRecord, members: list[_MemberView]) -> _EventView | 
     ]
     publishers.sort(key=lambda item: (-item.count, item.key))
     latest = max(ordered, key=lambda view: view.first_seen_ts)
-    title, title_source = _resolve_title(event, ordered, representative)
+    title, title_source = _resolve_title(event, ordered, representative, allow_llm_title=allow_llm_title)
     return _EventView(
         event=event,
         members=ordered,
@@ -381,10 +406,10 @@ def _board_entries(
         )
     ).all()
     events = [event for event in candidates if _ts(event.first_seen_at) >= window_start.timestamp()]
-    members_by_event = _load_member_views(session, [event.id for event in events], reader_scope=True)
+    load = _load_member_views(session, [event.id for event in events], reader_scope=True)
     views: list[_EventView] = []
     for event in events:
-        view = _build_view(event, members_by_event.get(int(event.id or 0), []))
+        view = _build_view(event, load.for_event(event.id), allow_llm_title=not load.has_hidden(event.id))
         if view is None or view.publisher_count < MIN_PUBLISHERS:
             continue
         views.append(view)
@@ -419,6 +444,23 @@ def _events_by_id(session: Session, ids: Iterable[int | None]) -> dict[int, Even
     }
 
 
+def _visible_views(session: Session, events: Iterable[EventRecord]) -> dict[int, _EventView]:
+    """读者可见成员视图(codex R1 F11):无可见成员的事件不出现在结果里,标题同样只从可见成员算。"""
+
+    rows = [event for event in events if event is not None and event.status in ("open", "closed")]
+    load = _load_member_views(session, [event.id for event in rows], reader_scope=True)
+    views: dict[int, _EventView] = {}
+    for event in rows:
+        view = _build_view(event, load.for_event(event.id), allow_llm_title=not load.has_hidden(event.id))
+        if view is not None:
+            views[int(event.id or 0)] = view
+    return views
+
+
+def _related_views(session: Session, ids: Iterable[int | None]) -> dict[int, _EventView]:
+    return _visible_views(session, _events_by_id(session, ids).values())
+
+
 def _representative_payload(view: _MemberView) -> dict[str, Any]:
     return {
         "article_id": view.article.id,
@@ -437,12 +479,13 @@ def _item_payload(
     rank: int | None,
     previous_rank: int | None,
     now: dt.datetime,
-    follows: dict[int, EventRecord],
+    follows: dict[int, _EventView],
 ) -> dict[str, Any]:
     event = view.event
     first_seen_ts = _ts(event.first_seen_at)
     is_new = bool(first_seen_ts) and (now.timestamp() - first_seen_ts) <= NEW_HOURS * 3600
-    follows_event = follows.get(int(event.follows_event_id)) if event.follows_event_id is not None else None
+    # 前报对当前读者没有可见成员时整个 story 置空(连 ID 都不给,避免暴露隐藏事件的存在)。
+    follows_view = follows.get(int(event.follows_event_id)) if event.follows_event_id is not None else None
     return {
         "event_id": int(event.id or 0),
         "rank": rank,
@@ -461,8 +504,8 @@ def _item_payload(
             for publisher in view.publishers
         ],
         "story": {
-            "follows_event_id": int(event.follows_event_id) if event.follows_event_id is not None else None,
-            "follows_title": (follows_event.title or None) if follows_event is not None else None,
+            "follows_event_id": int(follows_view.event.id or 0) if follows_view is not None else None,
+            "follows_title": (follows_view.title or None) if follows_view is not None else None,
         },
     }
 
@@ -482,7 +525,7 @@ def read_board(
     current = _utcnow(now)
     views = _board_entries(session, window_hours=window_hours, limit=limit, now=current)
     snapshot_date, previous_ranks = _previous_snapshot(session, before_date=shanghai_date(current))
-    follows = _events_by_id(session, (view.event.follows_event_id for view in views))
+    follows = _related_views(session, (view.event.follows_event_id for view in views))
     items = [
         _item_payload(
             view,
@@ -549,14 +592,14 @@ def read_event(
     event = session.get(EventRecord, resolved_id)
     if event is None:
         return None
-    members = _load_member_views(session, [resolved_id], reader_scope=True).get(resolved_id, [])
-    view = _build_view(event, members)
+    load = _load_member_views(session, [resolved_id], reader_scope=True)
+    view = _build_view(event, load.for_event(resolved_id), allow_llm_title=not load.has_hidden(resolved_id))
     if view is None:
         return None
     board = _board_entries(session, window_hours=WINDOW_HOURS, limit=BOARD_LIMIT, now=current)
     rank = next((index for index, entry in enumerate(board, start=1) if int(entry.event.id or 0) == resolved_id), None)
     _snapshot_date, previous_ranks = _previous_snapshot(session, before_date=shanghai_date(current))
-    follows = _events_by_id(session, [event.follows_event_id])
+    follows = _related_views(session, [event.follows_event_id])
     payload = _item_payload(
         view,
         rank=rank,
@@ -572,15 +615,18 @@ def read_event(
     payload["members"] = [
         _member_payload(item, representative_id=representative_id) for item in ordered_members
     ]
-    followups = session.exec(
+    followups = _visible_views(session, session.exec(
         select(EventRecord).where(
             EventRecord.follows_event_id == resolved_id,
             EventRecord.status.in_(("open", "closed")),
         )
-    ).all()
+    ).all())
     payload["followups"] = [
-        {"event_id": int(item.id or 0), "title": item.title, "first_seen_at": item.first_seen_at}
-        for item in sorted(followups, key=lambda item: (_ts(item.first_seen_at), int(item.id or 0)))
+        {"event_id": int(item.event.id or 0), "title": item.title, "first_seen_at": item.event.first_seen_at}
+        for item in sorted(
+            followups.values(),
+            key=lambda item: (_ts(item.event.first_seen_at), int(item.event.id or 0)),
+        )
     ]
     payload["merged_into"] = merged_into
     return payload
@@ -696,7 +742,7 @@ def _assert_local(event: EventRecord) -> None:
 def _recompute_event(session: Session, event: EventRecord, *, stamp: str) -> None:
     """成员变动后重算代表稿 / 计数 / 首末时间 / 标题(全部成员,不做读者可见性过滤)。"""
 
-    members = _load_member_views(session, [int(event.id or 0)], reader_scope=False).get(int(event.id or 0), [])
+    members = _load_member_views(session, [int(event.id or 0)], reader_scope=False).for_event(event.id)
     event.updated_at = stamp
     if not members:
         event.member_count = 0

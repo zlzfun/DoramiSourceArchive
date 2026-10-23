@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from models.db import (  # noqa: E402
     ArchiveSyncEntityStateRecord,
     ArticleRecord,
+    EventMemberBacklogRecord,
     EventMemberRecord,
     EventRecord,
     EventRedirectRecord,
@@ -25,6 +26,7 @@ from models.db import (  # noqa: E402
 )
 from services import archive_sync_v2  # noqa: E402
 from services import remote_sync as remote_sync_service  # noqa: E402
+from services.reader_ai import _body_fingerprint  # noqa: E402
 from storage.impl.db_storage import DatabaseStorage  # noqa: E402
 from storage.migrations import make_alembic_config  # noqa: E402
 
@@ -172,6 +174,8 @@ class _Remote:
         self.producer = producer
         self.advertise_events = advertise_events
         self.requested_streams = []
+        # 某流的页刚导出之后要在生产端做的事(快照此时已固定),一次性。
+        self.hooks = {}
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -205,6 +209,9 @@ class _Remote:
                     if item != archive_sync_v2.EVENTS_CAPABILITY
                 ]
                 body = "\n".join([json.dumps(manifest), *lines[1:]]) + "\n"
+            hook = self.hooks.pop(stream, None)
+            if hook is not None:
+                hook()
             return httpx.Response(200, text=body)
         if path == "/api/archive/v2/presence":
             payload = json.loads(request.content)
@@ -293,6 +300,10 @@ def test_pull_negotiates_events_between_analyses_and_media_and_is_incremental(tm
     events_checkpoint = result["streams"]["events"]
     assert events_checkpoint["inserted"] == 2
     assert events_checkpoint["skipped"] == 0
+    assert events_checkpoint["deferred"] == 0
+    assert result["streams"]["articles"]["backlog_replay"] == {
+        "installed": 0, "pending": 0, "expired": 0, "dropped": 0,
+    }
     assert events_checkpoint["snapshot"] == result["streams"]["source_states"]["snapshot"]
     with Session(consumer.engine) as session:
         assert session.get(EventRecord, launch_id).authority_id == result["authority_id"]
@@ -417,13 +428,13 @@ def test_event_payload_validation_rejects_non_canonical_values(tmp_path, mutate,
 # ── 成员缺文章 / 私有文章 ──────────────────────────────────────────────────────
 
 
-def test_members_without_local_article_are_skipped_and_local_articles_never_overwritten(tmp_path):
+def test_members_without_local_article_are_deferred_and_local_articles_never_overwritten(tmp_path):
     producer = _sink(tmp_path, "producer-missing-member.db")
     consumer = _sink(tmp_path, "consumer-missing-member.db")
     launch_id, singleton_id = _seed_producer(producer)
     _copy(producer, consumer, "sources")
     _copy(producer, consumer, "articles")
-    # 文章流拉完之后生产端又多了一篇成员文章(下一轮文章流才会到)……
+    # 文章流拉完之后生产端又多了一篇成员文章(下一轮文章流才会到)→ 进待补账……
     with Session(producer.engine) as session:
         session.add(_article("a-late"))
         session.add(_article("a-local"))
@@ -440,10 +451,15 @@ def test_members_without_local_article_are_skipped_and_local_articles_never_over
     _raw, applied = _copy(producer, consumer, "events")
 
     assert applied["inserted"] == 2
-    assert applied["skipped"] == 2
+    assert applied["skipped"] == 1
+    assert applied["deferred"] == 1
     with Session(consumer.engine) as session:
         assert session.get(EventMemberRecord, (launch_id, "a-late")) is None
         assert session.get(EventMemberRecord, (singleton_id, "a-local")) is None
+        backlog = session.get(EventMemberBacklogRecord, (launch_id, "a-late"))
+        assert backlog is not None and backlog.attempts == 0
+        assert json.loads(backlog.payload_json)["publisher_key"] == "meta"
+        assert session.get(EventMemberBacklogRecord, (singleton_id, "a-local")) is None
         local = session.get(ArticleRecord, "a-local")
         assert local.title == "Private local article"
         assert local.analysis_authority_id == ""
@@ -454,17 +470,25 @@ def test_members_without_local_article_are_skipped_and_local_articles_never_over
     assert _member_ids(consumer.engine, singleton_id) == ["a-3"]
 
 
-def test_private_or_owner_bound_articles_never_leave_the_producer_as_members(tmp_path):
+@pytest.mark.parametrize(
+    "source_id, overrides",
+    [
+        ("user_rss_owner", dict(owner_username="owner")),
+        ("rss_team", dict(owner_username="team")),
+        ("rss_signed", dict(
+            params_json='{"feed_url":"https://example.test/feed.xml","credentialed_private":true}',
+        )),
+    ],
+    ids=["user-rss", "owner-bound", "credentialed"],
+)
+def test_private_members_never_leave_the_producer(tmp_path, source_id, overrides):
     producer = _sink(tmp_path, "producer-private-member.db")
     launch_id, _singleton_id = _seed_producer(producer)
     with Session(producer.engine) as session:
-        session.add(_source("user_rss_owner", owner_username="owner"))
-        session.add(_source("rss_team", owner_username="team"))
-        session.add(_article("private-1", source_id="user_rss_owner"))
-        session.add(_article("team-1", source_id="rss_team"))
+        session.add(_source(source_id, **overrides))
+        session.add(_article("hidden-1", source_id=source_id))
         session.flush()
-        session.add(_member(launch_id, "private-1"))
-        session.add(_member(launch_id, "team-1"))
+        session.add(_member(launch_id, "hidden-1", publisher_key="hidden"))
         session.commit()
 
     _manifest, rows = archive_sync_v2.parse_page(
@@ -472,6 +496,96 @@ def test_private_or_owner_bound_articles_never_leave_the_producer_as_members(tmp
     )
     launch = next(row for row in rows if row["identity"] == str(launch_id))
     assert [m["article_id"] for m in launch["payload"]["members"]] == ["a-1", "a-2"]
+    assert launch["payload"]["event"]["member_count"] == 2
+    assert launch["payload"]["event"]["publisher_count"] == 2
+    assert "hidden" not in json.dumps(launch["payload"], ensure_ascii=False)
+
+
+def test_event_metadata_is_rebuilt_from_exportable_members_only(tmp_path):
+    producer = _sink(tmp_path, "producer-metadata.db")
+    consumer = _sink(tmp_path, "consumer-metadata.db")
+    launch_id, _singleton_id = _seed_producer(producer)
+    with Session(producer.engine) as session:
+        # 私有源成员是代表稿,事件题是带着它信息的模型拟题
+        session.add(_source("rss_vendor", owner_username="vendor"))
+        session.add(_article("secret-1", source_id="rss_vendor", title="Project Cedar roadmap"))
+        session.flush()
+        session.add(_member(launch_id, "secret-1", publisher_key="vendor", is_representative=True))
+        for member in session.exec(
+            select(EventMemberRecord).where(EventMemberRecord.event_id == launch_id)
+        ).all():
+            if member.article_id != "secret-1":
+                member.is_representative = False
+                session.add(member)
+        launch = session.get(EventRecord, launch_id)
+        launch.title = "Project Cedar leaks ahead of launch"
+        launch.title_source = "llm"
+        launch.representative_article_id = "secret-1"
+        launch.member_count = 3
+        launch.publisher_count = 3
+        session.add(launch)
+        # 公共成员 a-2 有指纹有效的译题缓存
+        a2 = session.get(ArticleRecord, "a-2")
+        a2.extensions_json = json.dumps({
+            "translation_zh_title": "甲方发布新品",
+            "translation_zh_title_fp": _body_fingerprint(a2.title),
+        })
+        session.add(a2)
+        session.commit()
+    _copy(producer, consumer, "sources")
+    _copy(producer, consumer, "articles")
+
+    raw, applied = _copy(producer, consumer, "events")
+    _manifest, rows = archive_sync_v2.parse_page(raw, expected_stream="events")
+    payload = next(row for row in rows if row["identity"] == str(launch_id))["payload"]
+    assert "Cedar" not in json.dumps(payload, ensure_ascii=False)
+    assert payload["event"]["title"] == "甲方发布新品"
+    assert payload["event"]["title_source"] == "translation"
+    assert payload["event"]["representative_article_id"] == "a-1"
+    assert payload["event"]["member_count"] == 2 and payload["event"]["publisher_count"] == 2
+    assert [(m["article_id"], m["is_representative"]) for m in payload["members"]] == [
+        ("a-1", True), ("a-2", False),
+    ]
+    assert applied["inserted"] == 2
+    with Session(consumer.engine) as session:
+        synced = session.get(EventRecord, launch_id)
+        assert synced.title == "甲方发布新品" and synced.title_source == "translation"
+        assert synced.representative_article_id == "a-1"
+        assert session.get(EventMemberRecord, (launch_id, "a-1")).is_representative is True
+
+
+def test_event_without_exportable_members_is_withdrawn_as_tombstone(tmp_path):
+    producer = _sink(tmp_path, "producer-all-private.db")
+    consumer = _sink(tmp_path, "consumer-all-private.db")
+    launch_id, singleton_id = _seed_producer(producer)
+    for stream in ("sources", "articles", "events"):
+        _copy(producer, consumer, stream)
+    assert _member_ids(consumer.engine, launch_id) == ["a-1", "a-2"]
+
+    # 事件成员的来源整个转为 owner 源 → 一个可导出成员都不剩
+    with Session(producer.engine) as session:
+        source = session.get(SourceConfigRecord, "rss_platform")
+        source.owner_username = "vendor"
+        session.add(source)
+        launch = session.get(EventRecord, launch_id)
+        launch.title = "Confidential roadmap"
+        launch.title_source = "llm"
+        session.add(launch)
+        session.commit()
+
+    raw = archive_sync_v2.export_page(producer.engine, "events")
+    _manifest, rows = archive_sync_v2.parse_page(raw, expected_stream="events")
+    by_identity = {row["identity"]: row for row in rows}
+    assert by_identity[str(launch_id)]["operation"] == "tombstone"
+    assert by_identity[str(singleton_id)]["operation"] == "tombstone"
+    assert "Confidential" not in raw
+
+    applied = archive_sync_v2.import_page(consumer.engine, raw, expected_stream="events")
+    assert applied["deleted"] == 2
+    with Session(consumer.engine) as session:
+        assert session.get(EventRecord, launch_id) is None
+        assert session.get(EventRecord, singleton_id) is None
+    assert _member_ids(consumer.engine, launch_id) == []
 
 
 # ── tombstone / redirect ──────────────────────────────────────────────────────
@@ -634,6 +748,51 @@ def test_local_event_under_a_synced_id_fails_the_page_closed(tmp_path):
         ).all() == []
 
 
+@pytest.mark.parametrize("existing_authority", ["", "third-authority"], ids=["local-event", "third-authority"])
+def test_tombstone_colliding_with_a_foreign_event_fails_the_page_closed(tmp_path, existing_authority):
+    producer = _sink(tmp_path, "producer-tombstone-collision.db")
+    consumer = _sink(tmp_path, "consumer-tombstone-collision.db")
+    launch_id, singleton_id = _seed_producer(producer)
+    _copy(producer, consumer, "sources")
+    _copy(producer, consumer, "articles")
+    full_raw, _applied = _copy(producer, consumer, "events")
+    full_snapshot = archive_sync_v2.parse_page(full_raw, expected_stream="events")[0]["snapshot"]
+    # 接收端把同步来的 launch 换成了一个不归该 authority 的同 ID 事件(本地事件 / 第三 authority)
+    with Session(consumer.engine) as session:
+        session.delete(session.get(EventRecord, launch_id))
+        session.exec(delete(ArchiveSyncEntityStateRecord).where(
+            ArchiveSyncEntityStateRecord.stream == "events",
+            ArchiveSyncEntityStateRecord.identity == str(launch_id),
+        ))
+        session.commit()
+    with Session(consumer.engine) as session:
+        session.add(_event(id=launch_id, title="Foreign", authority_id=existing_authority))
+        session.commit()
+
+    with Session(producer.engine) as session:
+        session.delete(session.get(EventRecord, launch_id))
+        session.commit()
+    raw = archive_sync_v2.export_page(producer.engine, "events", since=full_snapshot)
+    assert [row["operation"] for row in archive_sync_v2.parse_page(raw, expected_stream="events")[1]] == ["tombstone"]
+
+    with pytest.raises(archive_sync_v2.SyncV2Error, match="belongs to another authority"):
+        archive_sync_v2.import_page(consumer.engine, raw, expected_stream="events")
+
+    producer_authority = archive_sync_v2.producer_authority_id(producer.engine)
+    with Session(consumer.engine) as session:
+        foreign = session.get(EventRecord, launch_id)
+        assert foreign.title == "Foreign" and foreign.authority_id == existing_authority
+        state = session.get(ArchiveSyncEntityStateRecord, ("events", str(launch_id)))
+        assert state is None or state.authority_id != producer_authority
+        assert session.get(EventRecord, singleton_id).authority_id == producer_authority
+    if not existing_authority:
+        # 本地事件仍在本节点自己的导出流里
+        _manifest, rows = archive_sync_v2.parse_page(
+            archive_sync_v2.export_page(consumer.engine, "events"), expected_stream="events"
+        )
+        assert [row["identity"] for row in rows] == [str(launch_id)]
+
+
 def test_first_full_pull_prunes_authority_events_absent_from_producer(tmp_path):
     producer = _sink(tmp_path, "producer-prune.db")
     consumer = _sink(tmp_path, "consumer-prune.db")
@@ -652,6 +811,98 @@ def test_first_full_pull_prunes_authority_events_absent_from_producer(tmp_path):
         assert session.get(EventRecord, 998).title == "Local survives"
         assert session.get(EventRecord, launch_id).authority_id == authority
         assert session.get(EventRecord, singleton_id).authority_id == authority
+
+
+# ── 待补账(成员文章晚到) ──────────────────────────────────────────────────────
+
+
+def test_member_whose_article_arrives_in_the_next_pull_is_recovered_from_the_backlog(tmp_path):
+    producer = _sink(tmp_path, "producer-backlog.db")
+    consumer = _sink(tmp_path, "consumer-backlog.db")
+    launch_id, _singleton_id = _seed_producer(producer)
+    remote = _Remote(producer)
+
+    def refresh_a2():
+        # 快照已在 sources 页固定:a-2 此刻更新 → 其 revision 越过快照,本轮 articles 流不含它,
+        # 而事件 revision 仍在快照内、导出时成员里带着 a-2。
+        with Session(producer.engine) as session:
+            article = session.get(ArticleRecord, "a-2")
+            article.content = "refreshed body"
+            article.archive_updated_at = _iso(0)
+            session.add(article)
+            session.commit()
+
+    remote.hooks["sources"] = refresh_a2
+    first = _pull(consumer, remote, tmp_path)
+
+    assert first["streams"]["events"]["deferred"] == 1
+    assert first["streams"]["events"]["skipped"] == 0
+    with Session(consumer.engine) as session:
+        assert session.get(ArticleRecord, "a-2") is None
+        backlog = session.get(EventMemberBacklogRecord, (launch_id, "a-2"))
+        assert backlog is not None and backlog.attempts == 0
+    assert _member_ids(consumer.engine, launch_id) == ["a-1"]
+
+    second = _pull(consumer, remote, tmp_path, checkpoints=first["streams"])
+
+    assert second["streams"]["articles"]["inserted"] == 1
+    assert second["streams"]["events"]["count"] == 0  # 事件本身没变,不会重发
+    assert second["streams"]["articles"]["backlog_replay"]["installed"] == 1
+    assert _member_ids(consumer.engine, launch_id) == ["a-1", "a-2"]
+    with Session(consumer.engine) as session:
+        assert session.get(EventMemberBacklogRecord, (launch_id, "a-2")) is None
+        member = session.get(EventMemberRecord, (launch_id, "a-2"))
+        assert member.publisher_key == "google" and member.assigned_by == "llm"
+
+
+def test_backlog_replay_expires_stale_rows_and_drops_rows_that_cannot_be_received(tmp_path):
+    consumer = _sink(tmp_path, "consumer-backlog-replay.db")
+    authority = "producer-x"
+    with Session(consumer.engine) as session:
+        session.add(_source())
+        session.add(_source("user_rss_me", owner_username="me"))
+        session.add(_article("arrived", analysis_authority_id=authority))
+        session.add(_article("local-1", source_id="user_rss_me"))
+        event = _event(id=41, title="Synced", authority_id=authority)
+        local_event = _event(id=42, title="Local")
+        session.add_all([event, local_event])
+        session.flush()
+        member_payload = {
+            field: value for field, value in dict(
+                article_id="", publisher_key="openai", report_at=_iso(2), first_seen_at=_iso(2),
+                assigned_by="llm", confidence=0.7, prompt_version="p1", is_representative=False,
+                created_at=_iso(2),
+            ).items()
+        }
+        for article_id, first_seen in (
+            ("arrived", _iso(1)),      # 文章已到 → 落成员
+            ("local-1", _iso(1)),      # 文章在本地却是私有订阅 → 丢弃
+            ("never", _iso(24 * 31)),  # 入账超 30 天 → 清理
+            ("waiting", _iso(24)),     # 仍缺 → attempts +1
+        ):
+            session.add(EventMemberBacklogRecord(
+                event_id=41, article_id=article_id,
+                payload_json=json.dumps({**member_payload, "article_id": article_id}),
+                first_seen_at=first_seen, attempts=0, updated_at=first_seen,
+            ))
+        session.add(EventMemberBacklogRecord(  # 本地事件不该有待补行 → 丢弃
+            event_id=42, article_id="arrived",
+            payload_json=json.dumps({**member_payload, "article_id": "arrived"}),
+            first_seen_at=_iso(1), attempts=0, updated_at=_iso(1),
+        ))
+        session.commit()
+
+    outcome = archive_sync_v2.replay_event_member_backlog(consumer.engine)
+
+    assert outcome == {"installed": 1, "pending": 1, "expired": 1, "dropped": 2}
+    assert _member_ids(consumer.engine, 41) == ["arrived"]
+    with Session(consumer.engine) as session:
+        remaining = session.exec(select(EventMemberBacklogRecord)).all()
+        assert [(row.event_id, row.article_id, row.attempts) for row in remaining] == [(41, "waiting", 1)]
+        # 事件撤回 → 待补行随 FK 级联删除
+        session.delete(session.get(EventRecord, 41))
+        session.commit()
+        assert session.exec(select(EventMemberBacklogRecord)).all() == []
 
 
 # ── 生产端触发器 ──────────────────────────────────────────────────────────────

@@ -998,6 +998,7 @@ async def run_pull_v2(
                 "deleted": 0,
                 "pruned": 0,
                 "skipped": 0,
+                "deferred": 0,
                 "media_downloaded": 0,
                 "podcast_audio_downloaded": 0,
                 "media_reused": 0,
@@ -1120,6 +1121,7 @@ async def run_pull_v2(
                 stats["updated"] += int(applied["updated"])
                 stats["deleted"] += int(applied.get("deleted") or 0)
                 stats["skipped"] += int(applied.get("skipped") or 0)
+                stats["deferred"] += int(applied.get("deferred") or 0)
 
                 if stream in {"media", "podcast_audio"} and rows:
                     if stream == "media" and media_root is None:
@@ -1197,6 +1199,12 @@ async def run_pull_v2(
                             stream,
                             authority,
                             absent_identities=confirmed_absent,
+                        )
+                    if stream == "articles":
+                        # 上一轮事件流里文章还没到的成员(event_member_backlog):文章本轮到了就补回,
+                        # 不依赖事件再次变更重发(issue #121 检视 R1 #4)。
+                        stats["backlog_replay"] = await asyncio.to_thread(
+                            archive_sync_v2.replay_event_member_backlog, engine
                         )
                     checkpoint = {
                         "authority_id": authority,

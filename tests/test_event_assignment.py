@@ -32,8 +32,10 @@ from models.db import (  # noqa: E402
     EventAssignmentLedgerRecord,
     EventMemberRecord,
     EventRecord,
+    EventRedirectRecord,
     SourceConfigRecord,
 )
+from services import reader_ai  # noqa: E402
 from services import article_analysis, event_assignment as ea  # noqa: E402
 from storage.impl.db_storage import DatabaseStorage  # noqa: E402
 
@@ -305,7 +307,7 @@ def test_prompt_build_mentions_candidates_and_items():
 def test_parse_rules():
     titles = ["Anthropic ships Claude Opus 5", "Claude Opus 5 发布", "Mistral opens Magistral 2",
               "Magistral 2 权重开放", "Something else entirely", "Late article about Opus"]
-    candidates = {5: _iso(NOW - dt.timedelta(days=3)), 7: _iso(NOW - dt.timedelta(hours=3))}
+    candidates = [{5: _iso(NOW - dt.timedelta(days=3)), 7: _iso(NOW - dt.timedelta(hours=3))}] * len(titles)
     report_ats = [NOW] * len(titles)
     raw = _reply([
         {"idx": 0, "echo": _echo(titles[0]), "event": "e999", "confidence": 0.9},
@@ -404,7 +406,7 @@ def test_title_priority_translation_then_llm_then_representative(tmp_path):
     assert _event(engine, e2.id).title_source == "llm" and _event(engine, e2.id).member_count == 2
 
 
-def test_apply_assignments_is_transactional(tmp_path, monkeypatch):
+def test_apply_assignments_rolls_back_failed_article_and_retries(tmp_path, monkeypatch):
     engine = _sink(tmp_path).engine
     _seed(engine, "x1", "Transactional article one")
 
@@ -412,12 +414,42 @@ def test_apply_assignments_is_transactional(tmp_path, monkeypatch):
         raise RuntimeError("recompute failed")
 
     monkeypatch.setattr(ea, "_recompute_events", boom)
-    with Session(engine) as session, pytest.raises(RuntimeError):
-        ea.apply_assignments(session, [ea.AssignmentDecision(article_id="x1", assigned_by="singleton")], now=NOW)
+    with Session(engine) as session:
+        outcome = ea.apply_assignments(session, [ea.AssignmentDecision(article_id="x1", assigned_by="singleton")], now=NOW)
+    assert outcome["isolated_failures"] == 1 and outcome["assigned"] == 0
     with Session(engine) as session:
         assert session.exec(select(EventRecord)).all() == []
         assert session.exec(select(EventMemberRecord)).all() == []
-        assert session.get(EventAssignmentLedgerRecord, "x1") is None
+    ledger = _ledger(engine, "x1")
+    assert ledger.status == "pending" and ledger.attempts == 1 and "recompute failed" in ledger.last_error
+
+
+def test_apply_assignments_isolates_single_failure(tmp_path, monkeypatch):
+    """R1 #7:整批里一篇落库失败,其它照常提交,失败篇 ledger 退避。"""
+    engine = _sink(tmp_path).engine
+    _seed(engine, "g1", "Anthropic launches Claude Opus 5", source_id="rss_a")
+    _seed(engine, "g2", "Broken source article", source_id="rss_bad")
+    _seed(engine, "g3", "Claude Opus 5 发布", source_id="rss_c")
+    real = ea.publisher_key
+
+    def flaky(source_id, meta):
+        if source_id == "rss_bad":
+            raise RuntimeError("publisher exploded")
+        return real(source_id, meta)
+
+    monkeypatch.setattr(ea, "publisher_key", flaky)
+    with Session(engine) as session:
+        outcome = ea.apply_assignments(session, [
+            ea.AssignmentDecision(article_id="g1", assigned_by="llm", new_key="new:1", confidence=0.9),
+            ea.AssignmentDecision(article_id="g2", assigned_by="singleton"),
+            ea.AssignmentDecision(article_id="g3", assigned_by="llm", new_key="new:1", confidence=0.9),
+        ], now=NOW)
+    assert outcome["isolated_failures"] == 1 and outcome["assigned"] == 2 and outcome["new_events"] == 1
+    assert _member(engine, "g1").event_id == _member(engine, "g3").event_id   # 逐篇重放仍落同一新事件
+    assert _member(engine, "g2") is None
+    assert _ledger(engine, "g2").status == "pending" and _ledger(engine, "g2").attempts == 1
+    assert "publisher exploded" in _ledger(engine, "g2").last_error
+    assert _event(engine, _member(engine, "g1").event_id).member_count == 2
 
 
 # ──────────────── ledger 退避 / 72h 兜底 / 未配置 ────────────────
@@ -699,3 +731,242 @@ def test_echo_check_is_normalized_prefix():
     assert not ea._echo_matches("比尔盖茨", "比尔 · 盖茨：各国政府应当…")    # 只抄了 4 个字
     assert not ea._echo_matches("OpenAI 发布 Claude", "OpenAI 发布 GPT-5.5")  # 不是前缀
     assert not ea._echo_matches(None, "OpenAI 发布 GPT-5.5") and not ea._echo_matches("", "x")
+
+
+# ──────────────── R1 回归:F3 / F5 / F6 / F7 / F9 / F10 ────────────────
+
+def _redirect(engine, old_id, new_id):
+    """模拟管理员合并:成员迁到目标、源事件置 merged、写 redirect。"""
+    with Session(engine) as session:
+        for member in session.exec(select(EventMemberRecord).where(EventMemberRecord.event_id == old_id)).all():
+            member.event_id = new_id
+            session.add(member)
+        old = session.get(EventRecord, old_id)
+        old.status = "merged"
+        old.member_count = 0
+        old.publisher_count = 0
+        session.add(old)
+        session.add(EventRedirectRecord(old_event_id=old_id, new_event_id=new_id, reason="manual", created_at=_iso(NOW)))
+        session.commit()
+
+
+def test_late_assignment_after_merge_follows_redirect_or_singles(tmp_path):
+    """R1 #3:模型等待期间管理员把 A 并入 B,迟到的 A 目标沿 redirect 落到 B;终点 merged / authority / blocked / 缺失 → 单例。"""
+    engine = _sink(tmp_path).engine
+    _seed(engine, "a1", "Anthropic launches Claude Opus 5", source_id="rss_a")
+    _seed(engine, "b1", "Claude Opus 5 发布", source_id="rss_b")
+    with Session(engine) as session:
+        ea.apply_assignments(session, [ea.AssignmentDecision(article_id="a1", assigned_by="singleton")], now=NOW)
+        ea.apply_assignments(session, [ea.AssignmentDecision(article_id="b1", assigned_by="singleton")], now=NOW)
+    event_a, event_b = _member(engine, "a1").event_id, _member(engine, "b1").event_id
+    _redirect(engine, event_a, event_b)
+
+    _seed(engine, "c1", "Late report on Claude Opus 5", source_id="rss_c")
+    with Session(engine) as session:
+        outcome = ea.apply_assignments(session, [
+            ea.AssignmentDecision(article_id="c1", assigned_by="llm", event_id=event_a, confidence=0.9),
+        ], now=NOW)
+    assert outcome["retargeted"] == 1 and _member(engine, "c1").event_id == event_b
+    assert _event(engine, event_b).member_count == 3 and _event(engine, event_a).member_count == 0
+
+    # blocked 终点 → 单例
+    _seed(engine, "d1", "Another late report", source_id="rss_d")
+    with Session(engine) as session:
+        session.add(EventAssignmentLedgerRecord(
+            article_id="d1", status="pending", blocked_event_ids_json=json.dumps([event_b]),
+            created_at=_iso(NOW), updated_at=_iso(NOW),
+        ))
+        session.commit()
+        outcome = ea.apply_assignments(session, [
+            ea.AssignmentDecision(article_id="d1", assigned_by="llm", event_id=event_a, confidence=0.9),
+        ], now=NOW)
+    assert outcome["invalid_target"] == 1
+    assert _member(engine, "d1").event_id not in {event_a, event_b} and _member(engine, "d1").assigned_by == "singleton"
+
+    # 缺失终点 → 单例;authority 事件 → 单例且不被污染
+    _seed(engine, "e1", "Missing target report", source_id="rss_e")
+    _seed(engine, "f1", "Authority target report", source_id="rss_f")
+    with Session(engine) as session:
+        target = session.get(EventRecord, event_b)
+        target.authority_id = "remote-1"
+        session.add(target)
+        session.commit()
+        outcome = ea.apply_assignments(session, [
+            ea.AssignmentDecision(article_id="e1", assigned_by="llm", event_id=999, confidence=0.9),
+            ea.AssignmentDecision(article_id="f1", assigned_by="url", event_id=event_b),
+        ], now=NOW)
+    assert outcome["invalid_target"] == 2
+    assert _member(engine, "e1").assigned_by == "singleton" and _member(engine, "f1").assigned_by == "singleton"
+    assert _event(engine, event_b).member_count == 3
+
+
+def test_parse_validates_per_item_candidates():
+    """R1 #6 ①:A 已排除事件 1(候选为空),同批 B 召回了 1;模型把 A 也分给 e1 → A 单例、B 照常。"""
+    titles = ["A title about Opus launch", "B title about Opus launch"]
+    raw = _reply([
+        {"idx": 0, "echo": _echo(titles[0]), "event": "e1", "confidence": 0.9},
+        {"idx": 1, "echo": _echo(titles[1]), "event": "e1", "confidence": 0.9},
+    ])
+    parsed = ea.parse_event_assign_response(
+        raw, titles=titles, candidates=[{}, {1: _iso(NOW)}], report_ats=[NOW, NOW],
+    )
+    assert parsed.illegal_target == 1
+    assert parsed.assignments[0].target == "single" and parsed.assignments[1].target == "event"
+
+
+def test_title_direct_respects_event_level_serial_rule(tmp_path):
+    """R1 #6 ②:昨日事件含来源 A / B 的同题稿,今日 A 的同题稿不得借 B 的标题直连进去。"""
+    engine = _sink(tmp_path).engine
+    yesterday = NOW - dt.timedelta(days=1)
+    title = "Weekly AI roundup: what mattered this week"
+    _seed(engine, "s1", title, source_id="rss_a", publish=yesterday)
+    _seed(engine, "s2", title, source_id="rss_b", publish=yesterday)
+    ea.assign_pending(engine, UNCONFIGURED, now=yesterday)
+    event = _member(engine, "s1").event_id
+    assert _member(engine, "s2").event_id == event
+    _seed(engine, "s3", title, source_id="rss_a", publish=NOW)
+    stats = ea.assign_pending(engine, UNCONFIGURED, now=NOW)
+    assert stats["direct"] == 0 and _member(engine, "s3").event_id != event
+    assert _member(engine, "s3").assigned_by == "singleton"
+    with Session(engine) as session:   # 事件级结构规则同样把它挡在召回之外(只剩 s3 自己的单例事件)
+        hits = {c.event_id for c in ea.recall_candidates(session, session.get(ArticleRecord, "s3"), now=NOW)}
+    assert event not in hits
+
+
+def test_new_group_serial_members_are_split(tmp_path, monkeypatch):
+    """R1 #6 ③:同批同源同题跨日稿,机械分组拒并后模型仍给同一 new:1 → 落库前结构校验拆开。"""
+    engine = _sink(tmp_path).engine
+    title = "Daily AI digest: the stories you need"
+    _seed(engine, "x1", title, source_id="rss_a", publish=NOW - dt.timedelta(days=1), entities=("entity.acme",))
+    _seed(engine, "x2", title, source_id="rss_a", publish=NOW, entities=("entity.acme",))
+    _patch_llm(monkeypatch, [_reply([
+        {"idx": 0, "echo": _echo(title), "event": "new:1", "fact": "Acme 日报同一期", "confidence": 0.9},
+        {"idx": 1, "echo": _echo(title), "event": "new:1", "fact": "Acme 日报同一期", "confidence": 0.9},
+    ], new_events=[{"key": "new:1", "title": "Acme 日报"}])])
+    stats = ea.assign_pending(engine, LLM, now=NOW)
+    assert stats["llm_calls"] == 1 and stats["serial_split"] == 1
+    assert _member(engine, "x1").event_id != _member(engine, "x2").event_id
+    assert _member(engine, "x2").assigned_by == "singleton"
+
+
+def test_authority_events_are_not_candidates(tmp_path):
+    """R1 #7:同步来的 authority 事件不进候选池;同题本地文章另立事件,ledger 正常收口,远端事件不被碰。"""
+    engine = _sink(tmp_path).engine
+    title = "Anthropic launches Claude Opus 5"
+    _seed(engine, "r1", title, source_id="rss_remote", authority="remote-1", publish=NOW - dt.timedelta(hours=1))
+    stamp = _iso(NOW - dt.timedelta(hours=1))
+    with Session(engine) as session:
+        remote = EventRecord(
+            status="open", title=title, title_source="representative", representative_article_id="r1",
+            member_count=1, publisher_count=1, first_seen_at=stamp, last_member_at=stamp,
+            assignment_version="event-assign-v1", authority_id="remote-1", created_at=stamp, updated_at=stamp,
+        )
+        session.add(remote)
+        session.flush()
+        session.add(EventMemberRecord(
+            event_id=int(remote.id), article_id="r1", publisher_key="rss_remote", report_at=stamp,
+            first_seen_at=stamp, assigned_by="sync", created_at=stamp,
+        ))
+        session.commit()
+        remote_id = int(remote.id)
+    _seed(engine, "l1", title, source_id="rss_local", entities=("entity.anthropic",))
+    stats = ea.assign_pending(engine, UNCONFIGURED, now=NOW)
+    assert stats["direct"] == 0 and stats["singleton"] == 1 and stats["isolated_failures"] == 0
+    assert _member(engine, "l1").event_id != remote_id and _ledger(engine, "l1").status == "assigned"
+    assert _event(engine, remote_id).member_count == 1
+    with Session(engine) as session:
+        hits = {c.event_id for c in ea.recall_candidates(session, session.get(ArticleRecord, "l1"), now=NOW)}
+    assert remote_id not in hits
+
+
+def test_scan_pending_pages_past_old_backlog(tmp_path):
+    """R1 #9:日期前缀宽松范围里 500 篇窗口外旧文不再占满扫描额度;旧文记 skipped 不重扫。"""
+    engine = _sink(tmp_path).engine
+    old = NOW - dt.timedelta(days=7, hours=1)
+    stamp = _iso(NOW)
+    with Session(engine) as session:
+        for i in range(500):
+            session.add(ArticleRecord(
+                id=f"old-{i:03d}", title=f"Old article {i}", content_type="rss_article", source_id="rss_a",
+                source_url=f"https://rss_a.example/old-{i}", publish_date=_iso(old), fetched_date=_iso(old),
+                has_content=False, content="", extensions_json="{}",
+            ))
+        session.flush()
+        for i in range(500):
+            session.add(ArticleAnalysisRecord(
+                article_id=f"old-{i:03d}", status="succeeded", tagging_status="succeeded", quality_score=6.0,
+                analyzed_at=stamp, created_at=stamp, updated_at=stamp,
+            ))
+        session.commit()
+    _seed(engine, "fresh", "A fresh article inside the window", source_id="rss_b")
+    with Session(engine) as session:
+        assert ea.scan_pending(session, now=NOW) == 1
+    assert _ledger(engine, "fresh").status == "pending"
+    with Session(engine) as session:
+        skipped = session.exec(select(EventAssignmentLedgerRecord).where(
+            EventAssignmentLedgerRecord.last_error == "outside_intake_window",
+        )).all()
+        assert len(skipped) == 500
+        assert ea.scan_pending(session, now=NOW) == 0
+
+
+def test_stale_translation_title_is_ignored(tmp_path):
+    """R1 #10:标题刷新后旧译题(指纹不符)不作事件题、不进译中召回;指纹一致或无指纹存量照常采纳。"""
+    engine = _sink(tmp_path).engine
+    stale = {"translation_zh_title": "Acme 旧产品停止服务",
+             "translation_zh_title_fp": reader_ai._body_fingerprint("Acme sunsets Old Product")}
+    fresh_title = "Acme launches New Product v2"
+    fresh = {"translation_zh_title": "Acme 发布新品 v2", "translation_zh_title_fp": reader_ai._body_fingerprint(fresh_title)}
+    _seed(engine, "t1", "Acme launches New Product", source_id="rss_a", extensions=stale)
+    _seed(engine, "t2", fresh_title, source_id="rss_b", extensions=fresh)
+    _seed(engine, "t3", "Legacy cached title article", source_id="rss_c", extensions={"translation_zh_title": "无指纹存量"})
+    with Session(engine) as session:
+        assert ea.translated_title(session.get(ArticleRecord, "t1")) == ""
+        assert ea.translated_title(session.get(ArticleRecord, "t2")) == "Acme 发布新品 v2"
+        assert ea.translated_title(session.get(ArticleRecord, "t3")) == "无指纹存量"
+        ea.apply_assignments(session, [ea.AssignmentDecision(article_id="t1", assigned_by="llm", new_key="new:1")],
+                             now=NOW, llm_titles={"new:1": "Acme 发布新品"})
+        ea.apply_assignments(session, [ea.AssignmentDecision(article_id="t2", assigned_by="singleton")], now=NOW)
+    e1, e2 = _event(engine, _member(engine, "t1").event_id), _event(engine, _member(engine, "t2").event_id)
+    assert (e1.title, e1.title_source) == ("Acme 发布新品", "llm")
+    assert (e2.title, e2.title_source) == ("Acme 发布新品 v2", "translation")
+    # 译中召回:失效译题不进 fts_zh 通道
+    _seed(engine, "old-zh", "Acme sunsets Old Product", source_id="rss_d", content="Acme 旧产品停止服务 公告",
+          publish=NOW - dt.timedelta(hours=2))
+    ea.assign_pending(engine, UNCONFIGURED, now=NOW - dt.timedelta(hours=1))
+    with Session(engine) as session:
+        channels = {c for cand in ea.recall_candidates(session, session.get(ArticleRecord, "t1"), now=NOW) for c in cand.channels}
+    assert "fts_zh" not in channels
+
+
+def test_replay_export_keeps_source_database_bytes(tmp_path):
+    """R1 #5:--export 走只读引擎,源库主文件字节与 archive_updated_at 都不变。"""
+    import hashlib
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "replay_event_assignment_ro",
+        os.path.join(os.path.dirname(__file__), "..", "scripts", "replay_event_assignment.py"),
+    )
+    replay = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(replay)
+    db = tmp_path / "source.db"
+    engine = DatabaseStorage(db_url=f"sqlite:///{db}").engine
+    _seed(engine, "pub1", "Public article for export", source_id="rss_a")
+    _seed(engine, "priv1", "Private article", source_id="user_rss_x")
+    engine.dispose()
+    before = hashlib.sha256(db.read_bytes()).hexdigest()
+    today = NOW.astimezone(ea.SHANGHAI).date().isoformat()
+    items = replay.load_from_database(f"sqlite:///{db}", today, today)
+    assert [item["id"] for item in items] == ["pub1"]
+    assert hashlib.sha256(db.read_bytes()).hexdigest() == before
+    ro = replay.readonly_engine(f"sqlite:///{db}")
+    with Session(ro) as session:
+        assert session.get(ArticleRecord, "pub1").archive_updated_at == ""
+        with pytest.raises(Exception):
+            session.add(ArticleRecord(
+                id="w", title="w", content_type="rss_article", source_id="s", source_url="u",
+                publish_date=_iso(NOW), fetched_date=_iso(NOW), has_content=False, content="", extensions_json="{}",
+            ))
+            session.commit()
+    ro.dispose()

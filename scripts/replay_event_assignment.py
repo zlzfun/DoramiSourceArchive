@@ -13,6 +13,7 @@
     .venv/bin/python scripts/replay_event_assignment.py --jsonl replay.jsonl --dry-run
     # 也可直接从库回放:--database-url … --since … --until …(不带 --export)
 
+源库一律经只读引擎打开(SQLite ``mode=ro``,不经 ``DatabaseStorage`` 的建表 / 升级 / 触发器安装),导出前后比对主文件摘要。
 JSONL 每行字段:id / title / source_id / publish_date / fetched_date / url / summary / entity_codes /
 title_zh / content_type;可选 source_owner / source_role / source_shape / quality_score / content_kind /
 content_genre(导出时自动带上,手工构造可省略)。输出:每天事件数、≥ 2 发布主体事件数、规模直方图、最大簇、
@@ -24,6 +25,7 @@ from __future__ import annotations
 import argparse
 import collections
 import datetime as dt
+import hashlib
 import json
 import logging
 import sys
@@ -37,7 +39,8 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from sqlmodel import Session, select  # noqa: E402
+from sqlalchemy.engine import make_url  # noqa: E402
+from sqlmodel import Session, create_engine, select  # noqa: E402
 
 from config import LLMConfig, settings  # noqa: E402
 from llm import client as llm_client  # noqa: E402
@@ -98,11 +101,49 @@ def _day_bounds(since: str, until: str) -> tuple[dt.datetime, dt.datetime]:
     return start.astimezone(dt.timezone.utc), end.astimezone(dt.timezone.utc)
 
 
+def _sqlite_path(database_url: str) -> Path | None:
+    url = make_url(database_url)
+    if not url.drivername.startswith("sqlite") or not url.database or url.database == ":memory:":
+        return None
+    path = Path(url.database)
+    return path.resolve() if path.is_absolute() else (Path.cwd() / path).resolve()
+
+
+def readonly_engine(database_url: str):
+    """只读引擎:SQLite 走 ``file:…?mode=ro`` URI(连接层拒写),且**不经** ``DatabaseStorage``——它的构造器会
+    create_all / 兼容升级 / 装 FTS 触发器,对「只读导出」的生产库也是写操作(R1 #5)。其它方言原样连接、只发 SELECT。"""
+    path = _sqlite_path(database_url)
+    if path is not None:
+        return create_engine(f"sqlite:///file:{path}?mode=ro&uri=true", connect_args={"check_same_thread": False})
+    return create_engine(database_url)
+
+
+def sqlite_digest(database_url: str) -> str | None:
+    """SQLite 主文件的 SHA-256(导出前后对照的「源库字节不变」守卫);非 SQLite 文件库返回 None。"""
+    path = _sqlite_path(database_url)
+    if path is None or not path.exists():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def load_from_database(database_url: str, since: str, until: str) -> list[dict[str, Any]]:
-    """只读取库里日期窗内分析成功、非私有、本机权威的文章(与 scan_pending 同口径,论文 / 汇编 / 播客留给服务判)。"""
+    """只读取库里日期窗内分析成功、非私有、本机权威的文章(与 scan_pending 同口径,论文 / 汇编 / 播客留给服务判)。
+    走只读引擎;导出前后比对 SQLite 主文件摘要,变了就报错(守卫,正常永不触发)。"""
     start, end = _day_bounds(since, until)
-    storage = DatabaseStorage(db_url=database_url)
-    with Session(storage.engine) as session:
+    digest_before = sqlite_digest(database_url)
+    engine = readonly_engine(database_url)
+    try:
+        items = _load_items(engine, start, end)
+    finally:
+        engine.dispose()
+    digest_after = sqlite_digest(database_url)
+    if digest_before != digest_after:
+        raise RuntimeError("只读导出改写了源库文件,请检查数据库连接方式")
+    return items
+
+
+def _load_items(engine, start: dt.datetime, end: dt.datetime) -> list[dict[str, Any]]:
+    with Session(engine) as session:
         rows = session.exec(
             select(ArticleRecord, ArticleAnalysisRecord)
             .join(ArticleAnalysisRecord, ArticleAnalysisRecord.article_id == ArticleRecord.id)
@@ -137,7 +178,7 @@ def load_from_database(database_url: str, since: str, until: str) -> list[dict[s
                 "publish_date": article.publish_date or "", "fetched_date": article.fetched_date or "",
                 "url": article.source_url or "", "summary": analysis.summary or "",
                 "entity_codes": sorted(entity_codes.get(article.id, ())),
-                "title_zh": ea._translation_title(article), "content_type": article.content_type or "",
+                "title_zh": ea.translated_title(article), "content_type": article.content_type or "",
                 "source_owner": source_meta.owner, "source_role": source_meta.role,
                 "source_shape": source_meta.shape,
                 "quality_score": float(analysis.quality_score) if analysis.quality_score is not None else None,
@@ -257,16 +298,14 @@ def chunked_by_day(items: list[dict[str, Any]], batch_size: int) -> Iterable[lis
 
 def resolve_config(llm_from: str, model_override: str = "") -> LLMConfig:
     """从 ``llm_from`` 指向的库**只读**解析项目 LLM 配置(ini / env 基线 + 该库 ``app_settings`` 的运行期覆盖,
-    与后端 ``daily_brief.resolve_llm_config`` 同一函数)。不经 ``DatabaseStorage``(它会 create_all / 建 FTS),
-    只开普通引擎做 SELECT;库不可用时退回 ini / env。永不打印 api_key。"""
-    from sqlmodel import create_engine
-
+    与后端 ``daily_brief.resolve_llm_config`` 同一函数)。走 :func:`readonly_engine`(SQLite ``mode=ro``,
+    不经 ``DatabaseStorage``);库不可用时退回 ini / env。永不打印 api_key。"""
     from services.daily_brief import resolve_llm_config
 
     cfg = settings.llm
     if llm_from:
         try:
-            engine = create_engine(llm_from, connect_args={"check_same_thread": False} if llm_from.startswith("sqlite") else {})
+            engine = readonly_engine(llm_from)
             with Session(engine) as session:
                 cfg = resolve_llm_config(session)
             engine.dispose()
@@ -279,9 +318,8 @@ def resolve_config(llm_from: str, model_override: str = "") -> LLMConfig:
 
 
 def _sqlite_file_exists(database_url: str) -> bool:
-    if not database_url.startswith("sqlite:///") or database_url == "sqlite:///:memory:":
-        return False
-    return Path(database_url.replace("sqlite:///", "", 1)).exists()
+    path = _sqlite_path(database_url)
+    return path is not None and path.exists()
 
 
 class UsageTotals:

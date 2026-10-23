@@ -46,6 +46,7 @@ from models.db import (
     CmsTagCandidateEvidenceRecord,
     CmsTagCandidateRecord,
     CmsTagRecord,
+    EventMemberBacklogRecord,
     EventMemberRecord,
     EventRecord,
     EventRedirectRecord,
@@ -674,7 +675,13 @@ def _validated_podcast_audio_payload(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _article_is_public(session: Session, article: Optional[ArticleRecord]) -> bool:
-    """导出口径的「公共文章」:本机分析、非 user_rss_、源配置既非私有也非远端——与 articles 流一致。"""
+    """导出口径的「公共文章」:本机分析、非 user_rss_、源配置既非私有 / 远端也非凭据源。
+
+    凭据源判定沿用 ``user_sources.source_is_credentialed``(显式分类 + URL 推断),与 MaaS / 读者
+    面的「内容可否离开本部署」同一口径(检视 R1 #2)。
+    """
+
+    from services.user_sources import source_is_credentialed
 
     if (
         article is None
@@ -683,9 +690,95 @@ def _article_is_public(session: Session, article: Optional[ArticleRecord]) -> bo
     ):
         return False
     source = session.get(SourceConfigRecord, article.source_id)
-    return not (
-        source is not None and (source.owner_username or source.collection_authority_id)
+    if source is not None and (source.owner_username or source.collection_authority_id):
+        return False
+    return not source_is_credentialed(source)
+
+
+def _exported_event_metadata(
+    session: Session,
+    record: EventRecord,
+    exportable: list[tuple[EventMemberRecord, ArticleRecord]],
+    *,
+    total_members: int,
+) -> tuple[dict[str, Any], dict[str, bool]]:
+    """事件元数据的导出投影:成员一个没剔除就照抄缓存列;剔除过就只从可导出成员重建。
+
+    缓存的标题(尤其模型拟题)、代表稿与计数可能带着私有成员的信息,重建时按方案 §3 的标题
+    优先级走但**跳过模型题**:中文成员原题 → 指纹有效的译题缓存 → 代表稿原题;代表稿 = 原代表稿
+    仍可导出就沿用,否则按「官方 > 分数 > 报道更早 > article_id」从可导出成员里挑。
+    """
+
+    event = {field: getattr(record, field) for field in _EVENT_WIRE_FIELDS}
+    if len(exportable) == total_members:
+        return event, {member.article_id: bool(member.is_representative) for member, _ in exportable}
+
+    from services.reader_ai import (
+        TRANSLATION_TITLE_FP_KEY,
+        TRANSLATION_TITLE_KEY,
+        _body_fingerprint,
+        _cache_valid,
+        looks_chinese,
     )
+    from services.source_naming import source_role
+
+    scores: dict[str, float] = {}
+    if exportable:
+        for analysis in session.exec(
+            select(ArticleAnalysisRecord).where(
+                ArticleAnalysisRecord.article_id.in_([article.id for _, article in exportable])
+            )
+        ).all():
+            if analysis.status == "succeeded":
+                scores[analysis.article_id] = float(analysis.quality_score or 0.0)
+
+    def order_key(pair: tuple[EventMemberRecord, ArticleRecord]) -> tuple[Any, ...]:
+        member, article = pair
+        return (
+            source_role(article.source_id) != "official",
+            -scores.get(article.id, 0.0),
+            member.report_at or "",
+            article.id,
+        )
+
+    ordered = sorted(exportable, key=order_key)
+    representative = next(
+        (pair for pair in ordered if pair[1].id == record.representative_article_id),
+        ordered[0] if ordered else None,
+    )
+    if representative is not None:
+        ordered = [representative, *[pair for pair in ordered if pair is not representative]]
+    title, title_source = "", ""
+    for _member, article in ordered:
+        candidate = (article.title or "").strip()
+        if candidate and looks_chinese(candidate):
+            title, title_source = candidate, "zh_member"
+            break
+    if not title:
+        for _member, article in ordered:
+            ext = _json_object(article.extensions_json, {})
+            if _cache_valid(
+                ext,
+                TRANSLATION_TITLE_KEY,
+                TRANSLATION_TITLE_FP_KEY,
+                _body_fingerprint(article.title or ""),
+            ):
+                title, title_source = str(ext.get(TRANSLATION_TITLE_KEY) or "").strip(), "translation"
+                break
+    if not title and representative is not None:
+        title, title_source = (representative[1].title or "").strip(), "representative"
+    event.update(
+        title=title,
+        title_source=title_source,
+        representative_article_id=representative[1].id if representative is not None else None,
+        member_count=len(exportable),
+        publisher_count=len({member.publisher_key for member, _ in exportable}),
+    )
+    flags = {
+        member.article_id: representative is not None and member.article_id == representative[1].id
+        for member, _ in exportable
+    }
+    return event, flags
 
 
 def _canonical_event_id(value: Any, *, field: str) -> int:
@@ -708,19 +801,23 @@ def _event_payload(session: Session, record: EventRecord) -> dict[str, Any]:
     无论哪一侧后到都能把 ``event_redirects`` 行补上(两侧可能落在不同页)。
     """
 
-    members: list[dict[str, Any]] = []
     rows = session.exec(
         select(EventMemberRecord, ArticleRecord)
         .join(ArticleRecord, ArticleRecord.id == EventMemberRecord.article_id)
         .where(EventMemberRecord.event_id == record.id)
         .order_by(EventMemberRecord.article_id.asc())
     ).all()
-    for member, article in rows:
-        if not _article_is_public(session, article):
-            continue
-        members.append(
-            {field: getattr(member, field) for field in _EVENT_MEMBER_WIRE_FIELDS}
-        )
+    exportable = [(member, article) for member, article in rows if _article_is_public(session, article)]
+    event, representative_flags = _exported_event_metadata(
+        session, record, exportable, total_members=len(rows)
+    )
+    members = [
+        {
+            **{field: getattr(member, field) for field in _EVENT_MEMBER_WIRE_FIELDS},
+            "is_representative": representative_flags[member.article_id],
+        }
+        for member, _article in exportable
+    ]
     redirects_from = [
         {field: getattr(redirect, field) for field in _EVENT_REDIRECT_WIRE_FIELDS}
         for redirect in session.exec(
@@ -739,7 +836,7 @@ def _event_payload(session: Session, record: EventRecord) -> dict[str, Any]:
         }
     return {
         "id": record.id,
-        "event": {field: getattr(record, field) for field in _EVENT_WIRE_FIELDS},
+        "event": event,
         "members": members,
         "redirects_from": redirects_from,
         "merged_into": merged_into,
@@ -974,7 +1071,12 @@ def _upsert_payload(
         record = session.get(EventRecord, event_id)
         if record is None or record.authority_id:
             return None
-        return _event_payload(session, record)
+        payload = _event_payload(session, record)
+        # 一个可导出成员都没有(成员全是私有 / 凭据源,或被管理员全部摘出)→ 以 tombstone 导出让
+        # 接收端撤回;已合并的旧事件本就没有成员,只靠 merged_into 让旧 ID 可达,照常导出。
+        if not payload["members"] and record.status != "merged":
+            return None
+        return payload
     raise SyncV2Error(f"unsupported entity-state stream: {stream}")
 
 
@@ -1789,8 +1891,16 @@ def _apply_tombstones(
             record = session.get(
                 EventRecord, _canonical_event_id(identity, field="event identity")
             )
-            if record is not None and record.authority_id == authority_id:
-                # 运行期连接 PRAGMA foreign_keys=ON:成员、重定向与本地榜单快照行随事件级联删除。
+            if record is not None:
+                if record.authority_id != authority_id:
+                    # 与 upsert 同一姿态(检视 R1 #8):撞上本地 / 第三 authority 的事件就整页回滚,
+                    # 不能一边留着本地事件、一边把它的同步状态盖成远端 tombstone。
+                    owner = record.authority_id or "<local>"
+                    raise SyncV2Error(
+                        f"event {identity} belongs to another authority: "
+                        f"existing {owner!r}, incoming {authority_id!r}"
+                    )
+                # 运行期连接 PRAGMA foreign_keys=ON:成员、重定向、待补账与本地榜单快照行随事件级联删除。
                 session.delete(record)
                 deleted += 1
         else:
@@ -2695,18 +2805,21 @@ def _apply_events(
     session: Session,
     rows: list[dict[str, Any]],
     authority_id: str,
-) -> tuple[int, int, int]:
+) -> tuple[int, int, int, int]:
     """Upsert whole events: the row first, then its member set, then cross-event links.
 
-    成员的文章本地不存在(或不归该 authority——例如接收端自己的 ``user_rss_`` 文章撞了同一 ID)
-    时跳过该成员并计数,事件行与其余成员照常落库;成员列(含 ``assigned_by``)原样照抄生产端。
+    成员的文章本地还没到(文章 revision 越过了本轮快照,下一轮 articles 流才到)→ 成员线值进节点本地
+    的 ``event_member_backlog``(``deferred``),每次拉取在 articles 流之后重放补回;文章在本地但不归
+    该 authority(例如接收端自己的 ``user_rss_`` 文章撞了同一 ID)→ 跳过并计数(``skipped``),本地
+    文章一字不动。事件行与其余成员照常落库;成员列(含 ``assigned_by``)原样照抄生产端。
     story / follows 与重定向的对端事件可能落在同一页稍后的行甚至下一页,所以整页先落事件与
     成员,再补链接;对端仍不在本地的链接留空、重定向跳过——重定向同时挂在旧事件(``merged_into``)
     与新事件(``redirects_from``)两侧,后到的一侧会把它补上。本地同 ID 事件(authority 为空)
     一律 fail-closed:整页回滚、checkpoint 不前移,交人工处理。
     """
 
-    inserted = updated = skipped = 0
+    inserted = updated = skipped = deferred = 0
+    now = _now_iso()
     links: list[tuple[int, Any, Any]] = []
     redirects: dict[int, tuple[int, str, str]] = {}
     for item in rows:
@@ -2753,9 +2866,30 @@ def _apply_events(
         session.exec(
             delete(EventMemberRecord).where(EventMemberRecord.event_id == event_id)
         )
+        # 成员集整体以本页为准,待补账也随之刷新。
+        session.exec(
+            delete(EventMemberBacklogRecord).where(
+                EventMemberBacklogRecord.event_id == event_id
+            )
+        )
         for member in data["members"]:
             article = session.get(ArticleRecord, member["article_id"])
-            if article is None or article.analysis_authority_id != authority_id:
+            if article is None:
+                session.add(
+                    EventMemberBacklogRecord(
+                        event_id=event_id,
+                        article_id=str(member["article_id"]),
+                        payload_json=_canonical(
+                            {field: member[field] for field in _EVENT_MEMBER_WIRE_FIELDS}
+                        ),
+                        first_seen_at=now,
+                        attempts=0,
+                        updated_at=now,
+                    )
+                )
+                deferred += 1
+                continue
+            if article.analysis_authority_id != authority_id:
                 skipped += 1
                 continue
             # 生产端把这篇文章挪去了别的事件:同一 authority 的文章以本页为准,旧归属让位。
@@ -2811,7 +2945,84 @@ def _apply_events(
             redirect.reason = reason
             redirect.created_at = created_at
         session.add(redirect)
-    return inserted, updated, skipped
+    return inserted, updated, skipped, deferred
+
+
+def replay_event_member_backlog(
+    engine: Engine,
+    *,
+    now: Optional[str] = None,
+    max_age_days: int = 30,
+) -> dict[str, int]:
+    """Install backlogged event members whose Articles have since arrived.
+
+    接收端每次 v2 拉取在 articles 流应用之后调用:文章已到且归事件所属 authority → 落成员、删行;
+    文章仍缺 → ``attempts`` +1,入账超过 ``max_age_days`` 的行清理;事件已撤回 / 文章在本地却不归
+    该 authority → 丢弃该行。独立事务,不影响任何流 checkpoint。
+    """
+
+    import datetime
+
+    stamp = now or _now_iso()
+    try:
+        cutoff = datetime.datetime.fromisoformat(stamp) - datetime.timedelta(days=max_age_days)
+    except ValueError as exc:
+        raise SyncV2Error("backlog replay clock must be ISO-8601") from exc
+    installed = pending = expired = dropped = 0
+    with Session(engine) as session:
+        rows = session.exec(
+            select(EventMemberBacklogRecord).order_by(
+                EventMemberBacklogRecord.event_id, EventMemberBacklogRecord.article_id
+            )
+        ).all()
+        for row in rows:
+            event = session.get(EventRecord, row.event_id)
+            if event is None or not event.authority_id:
+                session.delete(row)
+                dropped += 1
+                continue
+            article = session.get(ArticleRecord, row.article_id)
+            if article is None:
+                try:
+                    seen = datetime.datetime.fromisoformat(row.first_seen_at)
+                except ValueError:
+                    seen = None
+                if seen is None or seen < cutoff:
+                    session.delete(row)
+                    expired += 1
+                else:
+                    row.attempts = int(row.attempts or 0) + 1
+                    row.updated_at = stamp
+                    session.add(row)
+                    pending += 1
+                continue
+            member = _json_object(row.payload_json, {})
+            if (
+                article.analysis_authority_id != event.authority_id
+                or str(member.get("article_id") or "") != row.article_id
+                or any(field not in member for field in _EVENT_MEMBER_WIRE_FIELDS)
+            ):
+                session.delete(row)
+                dropped += 1
+                continue
+            session.exec(
+                delete(EventMemberRecord).where(EventMemberRecord.article_id == article.id)
+            )
+            session.add(
+                EventMemberRecord(
+                    event_id=row.event_id,
+                    **{field: member[field] for field in _EVENT_MEMBER_WIRE_FIELDS},
+                )
+            )
+            session.delete(row)
+            installed += 1
+        session.commit()
+    return {
+        "installed": installed,
+        "pending": pending,
+        "expired": expired,
+        "dropped": dropped,
+    }
 
 
 def _apply_source_states(
@@ -2914,7 +3125,7 @@ def import_page(
     authority_id = str(manifest["authority_id"])
     with Session(engine) as session:
         try:
-            deleted = skipped = 0
+            deleted = skipped = deferred = 0
             if stream == "taxonomy":
                 apply_taxonomy = _taxonomy_import_is_newer(session, manifest, rows)
                 if not apply_taxonomy:
@@ -3005,7 +3216,7 @@ def import_page(
                         session, upserts, authority_id
                     )
                 elif stream == "events":
-                    inserted, updated, skipped = _apply_events(
+                    inserted, updated, skipped, deferred = _apply_events(
                         session, upserts, authority_id
                     )
                 else:
@@ -3040,8 +3251,10 @@ def import_page(
         "inserted": inserted,
         "updated": updated,
         "deleted": deleted,
-        # 只有 events 流会非零:成员的文章本地不存在 / 不归该 authority 而被跳过的条数。
+        # 只有 events 流会非零:skipped = 成员文章在本地却不归该 authority(不允许接收)而跳过;
+        # deferred = 成员文章尚未到本地,进 event_member_backlog 等下一轮 articles 流后补回。
         "skipped": skipped,
+        "deferred": deferred,
     }
 
 

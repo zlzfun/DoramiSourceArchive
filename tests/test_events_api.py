@@ -164,8 +164,9 @@ def test_reader_board_and_detail_match_contract(monkeypatch, tmp_path):
         assert body["merged_into"] is None and body["rank"] == 1
         assert all(set(member) == MEMBER_KEYS for member in body["members"])
         assert len(body["members"]) == 3 and sum(member["is_representative"] for member in body["members"]) == 1
+        followup_title = client.get(f"/api/reader/events/{ids['followup']}").json()["title"]
         assert body["followups"] == [
-            {"event_id": ids["followup"], "title": "followup stored", "first_seen_at": _iso(1)}
+            {"event_id": ids["followup"], "title": followup_title, "first_seen_at": _iso(1)}
         ]
         assert all(set(item) == FOLLOWUP_KEYS for item in body["followups"])
 
@@ -174,7 +175,7 @@ def test_reader_board_and_detail_match_contract(monkeypatch, tmp_path):
         assert via_old.json()["event_id"] == ids["hot"] and via_old.json()["merged_into"] == ids["hot"]
 
         follow = client.get(f"/api/reader/events/{ids['followup']}").json()
-        assert follow["story"] == {"follows_event_id": ids["hot"], "follows_title": "hot stored"}
+        assert follow["story"] == {"follows_event_id": ids["hot"], "follows_title": body["title"]}
         assert follow["rank"] is None  # 单主体不上榜但可按 ID 查
 
         assert client.get("/api/reader/events/999999").status_code == 404

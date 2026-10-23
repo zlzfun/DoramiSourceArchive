@@ -2855,7 +2855,13 @@ def test_source_admission_status_migration_splits_incubating_out_of_category(tmp
 
         DatabaseStorage(db_url=db_url).engine.dispose()
         with engine.connect() as conn:
-            assert triggers(conn) == before
+            after = triggers(conn)
+        # 旧触发器一个不少;事件层(issue #121)另给 source_configs 加了两条「源转私有 → 事件重导出」触发器
+        assert after >= before
+        assert after - before == {
+            "archive_sync_event_source_insert",
+            "archive_sync_event_source_change",
+        }
 
         command.downgrade(cfg, "7ec8c19b1356")
         with engine.connect() as conn:

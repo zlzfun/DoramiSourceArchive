@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Iterable, Mapping, Optional, Sequence
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from sqlalchemy import literal_column, text
+from sqlalchemy import literal_column, text, tuple_
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
@@ -55,12 +55,19 @@ from models.db import (
     EventAssignmentLedgerRecord,
     EventMemberRecord,
     EventRecord,
+    EventRedirectRecord,
     SourceConfigRecord,
 )
 from services import user_sources
 from services.article_time import SHANGHAI, parse_article_time
 from services.content_classification import classify_item, source_default_kinds
 from services.daily_brief import _DIGIT_RUN_RE, _normalized_title, _titles_look_same
+from services.reader_ai import (
+    TRANSLATION_TITLE_FP_KEY,
+    TRANSLATION_TITLE_KEY,
+    _body_fingerprint,
+    _cache_valid,
+)
 from services.source_naming import source_role
 from storage.fts import FTS_TABLE, MIN_TRIGRAM_CHARS, normalize_for_search
 
@@ -81,6 +88,8 @@ CROSS_DAY_MIN_CONFIDENCE = 0.8
 MIN_FACT_CHARS = 4
 RETRY_BACKOFF_MINUTES = (5, 15, 45)
 SCAN_LIMIT = 500
+SCAN_PAGE_SIZE = 200
+SCAN_MAX_ROWS = 5000                             # 单次入池最多翻看的行数(keyset 翻页上限)
 MAX_BATCHES_PER_RUN = 10
 ECHO_CHARS = 12
 EXCLUDED_KINDS = frozenset({"paper", "digest"})
@@ -160,9 +169,14 @@ def _load_extensions(article: ArticleRecord) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _translation_title(article: ArticleRecord) -> str:
-    value = _load_extensions(article).get("translation_zh_title")
-    return str(value).strip() if isinstance(value, str) else ""
+def translated_title(article: ArticleRecord) -> str:
+    """译题缓存,与阅读窗 / 早报同一指纹口径(``reader_ai._cache_valid``):标题刷新后旧译题失效 → 空串,
+    事件题与译中召回都不采纳;无指纹的存量缓存按兼容口径仍有效。"""
+    ext = _load_extensions(article)
+    fingerprint = _body_fingerprint(article.title or "")
+    if not _cache_valid(ext, TRANSLATION_TITLE_KEY, TRANSLATION_TITLE_FP_KEY, fingerprint):
+        return ""
+    return str(ext[TRANSLATION_TITLE_KEY]).strip()
 
 
 def _is_chinese_title(title: str) -> bool:
@@ -415,54 +429,72 @@ def _intake_reason(article: ArticleRecord, analysis: ArticleAnalysisRecord, *,
     return ""
 
 
-def scan_pending(session: Session, *, now: Optional[dt.datetime] = None, limit: int = SCAN_LIMIT) -> int:
+def scan_pending(session: Session, *, now: Optional[dt.datetime] = None, limit: int = SCAN_LIMIT,
+                 page_size: int = SCAN_PAGE_SIZE) -> int:
     """入池:分析 ``succeeded`` 且无 ledger 行、无成员行、本机权威、7 天内入库的文章 → ledger ``pending``;
-    私有 / 论文 / 汇编 / 播客记 ``skipped``(不再重扫)。返回新写 ``pending`` 的条数。"""
+    不进事件层的(私有 / 论文 / 汇编 / 播客 / 窗口外 / 时间不可解析)记 ``skipped`` 并写原因,不再重扫。
+
+    SQL 只能按日期前缀粗筛(``fetched_date`` 历史格式混杂),精确窗口在 Python 判;按 ``(fetched_date, id)``
+    keyset 翻页直到凑够 ``limit`` 篇 pending 或翻完 ``SCAN_MAX_ROWS`` 行——被排除的行都记了账,
+    不会反复占住扫描额度(R1 #9)。返回新写 ``pending`` 的条数。"""
     now = _as_utc(now)
     cutoff = now - dt.timedelta(days=INTAKE_WINDOW_DAYS)
     prefix = (cutoff - dt.timedelta(days=1)).strftime("%Y-%m-%d")
-    rows = session.exec(
-        select(ArticleRecord, ArticleAnalysisRecord)
-        .join(ArticleAnalysisRecord, ArticleAnalysisRecord.article_id == ArticleRecord.id)
-        .where(
-            ArticleAnalysisRecord.status == "succeeded",
-            ArticleRecord.analysis_authority_id == "",
-            ArticleRecord.fetched_date >= prefix,
-            ArticleRecord.id.not_in(select(EventAssignmentLedgerRecord.article_id)),
-            ArticleRecord.id.not_in(select(EventMemberRecord.article_id)),
-        )
-        .order_by(ArticleRecord.fetched_date.asc())
-        .limit(max(1, int(limit)))
-    ).all()
-    if not rows:
-        return 0
-    source_ids = {article.source_id for article, _analysis in rows}
-    meta = load_source_meta(session, source_ids)
-    configs = {
-        row.source_id: row for chunk in _chunks(sorted(source_ids))
-        for row in session.exec(
-            select(SourceConfigRecord).where(SourceConfigRecord.source_id.in_(list(chunk)))
-        ).all()
-    }
     owner_backed = user_sources.user_source_ids(session)
     source_kinds = source_default_kinds()
+    meta: dict[str, SourceMeta] = {}
+    configs: dict[str, SourceConfigRecord] = {}
     pending = 0
-    for article, analysis in rows:
-        fetched = parse_article_time(article.fetched_date)
-        if fetched is None:
-            session.add(_new_ledger(article.id, LEDGER_SKIPPED, now, "bad_fetched_date"))
-            continue
-        if fetched < cutoff:
-            continue  # 老文章不进池也不记账:7 天前缀预筛已把它们挡在大多数轮次之外
-        if _is_private_source(session, article.source_id, owner_backed, configs):
-            session.add(_new_ledger(article.id, LEDGER_SKIPPED, now, "private_source"))
-            continue
-        reason = _intake_reason(article, analysis, meta=meta, source_kinds=source_kinds)
-        if reason:
-            session.add(_new_ledger(article.id, LEDGER_SKIPPED, now, reason))
-            continue
-        session.add(_new_ledger(article.id, LEDGER_PENDING, now))
-        pending += 1
+    examined = 0
+    last_key: Optional[tuple[str, str]] = None
+    while pending < limit and examined < SCAN_MAX_ROWS:
+        query = (
+            select(ArticleRecord, ArticleAnalysisRecord)
+            .join(ArticleAnalysisRecord, ArticleAnalysisRecord.article_id == ArticleRecord.id)
+            .where(
+                ArticleAnalysisRecord.status == "succeeded",
+                ArticleRecord.analysis_authority_id == "",
+                ArticleRecord.fetched_date >= prefix,
+                ArticleRecord.id.not_in(select(EventAssignmentLedgerRecord.article_id)),
+                ArticleRecord.id.not_in(select(EventMemberRecord.article_id)),
+            )
+            .order_by(ArticleRecord.fetched_date.asc(), ArticleRecord.id.asc())
+            .limit(max(1, int(page_size)))
+        )
+        if last_key is not None:
+            query = query.where(tuple_(ArticleRecord.fetched_date, ArticleRecord.id) > last_key)
+        rows = session.exec(query).all()
+        if not rows:
+            break
+        examined += len(rows)
+        last_key = (rows[-1][0].fetched_date, rows[-1][0].id)
+        wanted = {article.source_id for article, _analysis in rows} - set(meta)
+        if wanted:
+            meta.update(load_source_meta(session, wanted))
+            for chunk in _chunks(sorted(wanted)):
+                for row in session.exec(
+                    select(SourceConfigRecord).where(SourceConfigRecord.source_id.in_(list(chunk)))
+                ).all():
+                    configs[row.source_id] = row
+        for article, analysis in rows:
+            fetched = parse_article_time(article.fetched_date)
+            if fetched is None:
+                session.add(_new_ledger(article.id, LEDGER_SKIPPED, now, "bad_fetched_date"))
+                continue
+            if fetched < cutoff:
+                session.add(_new_ledger(article.id, LEDGER_SKIPPED, now, "outside_intake_window"))
+                continue
+            if _is_private_source(session, article.source_id, owner_backed, configs):
+                session.add(_new_ledger(article.id, LEDGER_SKIPPED, now, "private_source"))
+                continue
+            reason = _intake_reason(article, analysis, meta=meta, source_kinds=source_kinds)
+            if reason:
+                session.add(_new_ledger(article.id, LEDGER_SKIPPED, now, reason))
+                continue
+            session.add(_new_ledger(article.id, LEDGER_PENDING, now))
+            pending += 1
+            if pending >= limit:
+                break
     session.commit()
     return pending
 
@@ -596,8 +628,12 @@ def close_stale_events(session: Session, *, now: Optional[dt.datetime] = None) -
 def _build_open_context(session: Session, now: dt.datetime) -> _OpenContext:
     context = _OpenContext(now=now)
     window_start = now - dt.timedelta(hours=OPEN_WINDOW_HOURS)
+    # 只取本地可写事件(authority_id 为空):同步来的 authority 事件只接受同 authority 的文章做成员,
+    # 进候选池会让直连 / 模型归并撞上围栏(R1 #7)。
     events = [
-        event for event in session.exec(select(EventRecord).where(EventRecord.status == "open")).all()
+        event for event in session.exec(
+            select(EventRecord).where(EventRecord.status == "open", EventRecord.authority_id == "")
+        ).all()
         if (_parse_iso(event.first_seen_at) or now) >= window_start
     ]
     if not events:
@@ -713,7 +749,7 @@ def _pending_item(session: Session, article: ArticleRecord, analysis: Optional[A
         role=source_meta.role,
         shape=source_meta.shape,
         entity_codes=frozenset(entity_codes.get(article.id, ())),
-        title_zh=_translation_title(article),
+        title_zh=translated_title(article),
         canonical=canonical_url(article.source_url) if _url_direct_allowed(article) else "",
         norm_title=_normalized_title(article.title or ""),
         day=_shanghai_day(article.publish_date or article.fetched_date, now),
@@ -866,11 +902,12 @@ def _coerce_confidence(value: Any) -> Optional[float]:
 
 
 def parse_event_assign_response(raw: str, *, titles: Sequence[str],
-                                candidates: Mapping[int, str],
+                                candidates: Sequence[Mapping[int, str]],
                                 report_ats: Sequence[dt.datetime]) -> ParsedResponse:
-    """解析模型输出并机械兜底(方案 §3.3):非法 eid / 未声明的 new 键 → single;echo 与标题前缀不符 → single 并计数;
-    并入既有事件且事件首篇早于本文 report_at 24h 以上且 confidence < 0.8 → single;``new:k`` 组无共同事实 → 各自 single;
-    漏掉的 idx → single。``candidates`` 为 eid → first_seen_at(ISO)。输出 JSON 非法时抛 ``ValueError``(调用方按模型失败退避)。"""
+    """解析模型输出并机械兜底(方案 §3.3):eid 不在**该篇自己的**候选集合(含 blocked 剔除后)→ single(R1 #6 ①);
+    未声明的 new 键 → single;echo 与标题前缀不符 → single 并计数;并入既有事件且事件首篇早于本文 report_at 24h 以上且
+    confidence < 0.8 → single;``new:k`` 组无共同事实 → 各自 single;漏掉的 idx → single。
+    ``candidates[idx]`` 为该篇的 eid → first_seen_at(ISO)。输出 JSON 非法时抛 ``ValueError``(调用方按模型失败退避)。"""
     data = _extract_json(raw)
     parsed = ParsedResponse()
     raw_new = data.get("new_events")
@@ -903,10 +940,11 @@ def parse_event_assign_response(raw: str, *, titles: Sequence[str],
         target = str(entry.get("event") or "single").strip()
         if target.startswith("e") and target[1:].isdigit():
             event_id = int(target[1:])
-            if event_id not in candidates:
+            own = candidates[idx] if idx < len(candidates) else {}
+            if event_id not in own:
                 parsed.illegal_target += 1
             else:
-                first_seen = _parse_iso(candidates[event_id])
+                first_seen = _parse_iso(own[event_id])
                 cross_day = (
                     first_seen is not None
                     and report_ats[idx] - first_seen > dt.timedelta(hours=CROSS_DAY_HOURS)
@@ -998,7 +1036,7 @@ def _choose_title(ordered: Sequence[tuple[EventMemberRecord, ArticleRecord]], *,
         if title and _is_chinese_title(title):
             return title, "zh_member"
     for _member, article in ordered:
-        translated = _translation_title(article)
+        translated = translated_title(article)
         if translated:
             return translated, "translation"
     if llm_title:
@@ -1062,17 +1100,197 @@ def _recompute_events(session: Session, event_ids: Iterable[int], *, now: dt.dat
         session.add(event)
 
 
+def _mark_retry(ledger: EventAssignmentLedgerRecord, *, now: dt.datetime, error: str) -> None:
+    ledger.attempts = int(ledger.attempts or 0) + 1
+    minutes = RETRY_BACKOFF_MINUTES[min(ledger.attempts, len(RETRY_BACKOFF_MINUTES)) - 1]
+    ledger.next_attempt_at = _iso(now + dt.timedelta(minutes=minutes))
+    ledger.last_error = (error or "")[:300]
+    ledger.updated_at = _iso(now)
+
+
+def _resolve_target_event(session: Session, event_id: int, *, blocked: frozenset[int]) -> tuple[Optional[EventRecord], str]:
+    """落库前重验目标(R1 #3):沿 ``event_redirects`` 追到终点;终点须存在、非 ``merged``、本地可写(authority 为空)、
+    不在该文章的 blocked 集合。返回 (终点事件, 不合法原因);原因非空即终点不可用。"""
+    current = int(event_id)
+    seen: set[int] = set()
+    while current not in seen:
+        seen.add(current)
+        redirect = session.get(EventRedirectRecord, current)
+        if redirect is None:
+            break
+        current = int(redirect.new_event_id)
+    else:
+        return None, "redirect_cycle"
+    event = session.get(EventRecord, current)
+    if event is None:
+        return None, "missing"
+    if event.status == "merged":
+        return None, "merged"
+    if (event.authority_id or "").strip():
+        return None, "authority"
+    if current in blocked:
+        return None, "blocked"
+    return event, ""
+
+
+_Shape = tuple[str, str, str]   # (source_id, 归一化标题, 上海日)
+
+
+def _shape_of(article: ArticleRecord, now: dt.datetime) -> _Shape:
+    return (
+        article.source_id,
+        _normalized_title(article.title or ""),
+        _shanghai_day(article.publish_date or article.fetched_date, now),
+    )
+
+
+def _serial_conflict(shape: _Shape, others: Iterable[_Shape]) -> bool:
+    """同源 + 标题全同 + 非同日 → 连载 / 日更栏目,不并。"""
+    source_id, norm_title, day = shape
+    return any(
+        other_source == source_id and _titles_equal(other_title, norm_title) and other_day != day
+        for other_source, other_title, other_day in others
+    )
+
+
+def _event_member_shapes(session: Session, event_id: int, now: dt.datetime) -> list[_Shape]:
+    rows = session.exec(
+        select(ArticleRecord)
+        .join(EventMemberRecord, EventMemberRecord.article_id == ArticleRecord.id)
+        .where(EventMemberRecord.event_id == int(event_id))
+    ).all()
+    return [_shape_of(article, now) for article in rows]
+
+
+def _validate_decisions(session: Session, decisions: Sequence[AssignmentDecision],
+                        articles: Mapping[str, ArticleRecord], *, now: dt.datetime) -> tuple[list[AssignmentDecision], dict[str, int]]:
+    """落库前统一校验(直连 / 模型 / 批内组一视同仁,R1 #3 #6):既有事件目标经 redirect / merged / authority / blocked
+    重验,并按事件级结构规则(同源同题非同日)复核;``new:*`` 组内同样执行结构规则,冲突成员拆成单例。
+    返回调整后的决定副本与计数 ``{"invalid_target", "retargeted", "serial_split"}``。"""
+    counts = {"invalid_target": 0, "retargeted": 0, "serial_split": 0}
+    validated: list[AssignmentDecision] = []
+    group_shapes: dict[str, list[_Shape]] = {}
+    event_shapes: dict[int, list[_Shape]] = {}
+    for decision in decisions:
+        article = articles.get(decision.article_id)
+        if article is None:
+            validated.append(decision)
+            continue
+        adjusted = AssignmentDecision(**vars(decision))
+        shape = _shape_of(article, now)
+        if adjusted.event_id is not None:
+            blocked = _blocked_ids(session.get(EventAssignmentLedgerRecord, article.id))
+            event, reason = _resolve_target_event(session, adjusted.event_id, blocked=blocked)
+            if event is None:
+                counts["invalid_target"] += 1
+                logger.info("事件目标 %s 不可用(%s),文章 %s 改为单例", adjusted.event_id, reason, article.id)
+                adjusted.event_id, adjusted.assigned_by, adjusted.confidence = None, ASSIGNED_BY_SINGLETON, None
+            else:
+                if int(event.id) != int(adjusted.event_id):
+                    counts["retargeted"] += 1
+                    adjusted.event_id = int(event.id)
+                shapes = event_shapes.setdefault(int(event.id), _event_member_shapes(session, int(event.id), now))
+                if _serial_conflict(shape, shapes):
+                    counts["serial_split"] += 1
+                    adjusted.event_id, adjusted.assigned_by, adjusted.confidence = None, ASSIGNED_BY_SINGLETON, None
+                else:
+                    shapes.append(shape)
+        if adjusted.event_id is None and adjusted.new_key:
+            shapes = group_shapes.setdefault(adjusted.new_key, [])
+            if _serial_conflict(shape, shapes):
+                counts["serial_split"] += 1
+                adjusted.new_key, adjusted.assigned_by, adjusted.confidence = None, ASSIGNED_BY_SINGLETON, None
+            else:
+                shapes.append(shape)
+        validated.append(adjusted)
+    return validated, counts
+
+
+def _apply_batch(session: Session, decisions: Sequence[AssignmentDecision], *, now: dt.datetime,
+                 articles: Mapping[str, ArticleRecord], meta: Mapping[str, SourceMeta],
+                 llm_titles: Mapping[str, str], key_events: dict[str, int],
+                 key_titles: dict[int, str]) -> tuple[int, set[int]]:
+    """把一组(已校验的)决定写进会话(不提交):成员、新事件、ledger。``key_events`` 跨调用共享
+    ``new_key → event_id``,逐篇隔离重放时同组成员仍落同一事件。返回 (新成员数, 触及事件 id)。"""
+    stamp = _iso(now)
+    touched: set[int] = set()
+    assigned = 0
+    for decision in decisions:
+        article = articles.get(decision.article_id)
+        ledger = session.get(EventAssignmentLedgerRecord, decision.article_id)
+        if article is None:
+            if ledger is not None:
+                session.delete(ledger)
+            continue
+        existing = session.exec(
+            select(EventMemberRecord).where(EventMemberRecord.article_id == article.id)
+        ).first()
+        if existing is not None:
+            # 已有归属(管理员手工分配 / 并发写入):只收口 ledger,不改成员。
+            touched.add(int(existing.event_id))
+        else:
+            event_id = decision.event_id
+            if event_id is None:
+                key = decision.new_key or f"single:{article.id}"
+                event_id = key_events.get(key)
+                if event_id is None:
+                    event = EventRecord(
+                        status="open", title="", title_source="", member_count=0, publisher_count=0,
+                        first_seen_at=stamp, last_member_at=stamp,
+                        assignment_version=ASSIGNMENT_VERSION, authority_id="",
+                        created_at=stamp, updated_at=stamp,
+                    )
+                    session.add(event)
+                    session.flush()
+                    event_id = int(event.id)
+                    key_events[key] = event_id
+                    if decision.new_key and llm_titles.get(decision.new_key):
+                        key_titles[event_id] = llm_titles[decision.new_key]
+            session.add(EventMemberRecord(
+                event_id=event_id,
+                article_id=article.id,
+                publisher_key=publisher_key(article.source_id, meta.get(article.source_id)),
+                report_at=_iso(report_at_for(article.publish_date, now)),
+                first_seen_at=stamp,
+                assigned_by=decision.assigned_by,
+                confidence=decision.confidence if decision.assigned_by == ASSIGNED_BY_LLM else None,
+                prompt_version=EVENT_ASSIGN_PROMPT_VERSION if decision.assigned_by == ASSIGNED_BY_LLM else "",
+                is_representative=False,
+                created_at=stamp,
+            ))
+            event = session.get(EventRecord, event_id)
+            if event is not None:
+                event.last_member_at = stamp
+                session.add(event)
+            touched.add(event_id)
+            assigned += 1
+        if ledger is None:
+            ledger = _new_ledger(article.id, decision.ledger_status, now, decision.ledger_note)
+        ledger.status = decision.ledger_status
+        ledger.last_error = (decision.ledger_note or "")[:300]
+        ledger.next_attempt_at = ""
+        ledger.updated_at = stamp
+        session.add(ledger)
+    session.flush()
+    return assigned, touched
+
+
 def apply_assignments(session: Session, decisions: Sequence[AssignmentDecision], *,
                       now: Optional[dt.datetime] = None,
                       llm_titles: Optional[Mapping[str, str]] = None,
                       meta: Optional[Mapping[str, SourceMeta]] = None) -> dict[str, Any]:
-    """单事务落库:成员(``report_at`` 钳制、``publisher_key``)、新事件、事件计数 / 代表稿 / 事件题重算、ledger。
-    任一步失败整体回滚并重抛。返回 ``{"assigned", "new_events", "event_ids", "events_by_key"}``。"""
+    """落库:先 :func:`_validate_decisions` 统一重验(redirect / merged / authority / blocked / 结构规则),再整批一个事务写
+    成员、新事件、ledger 并重算事件(计数 / 代表稿 / 事件题)。整批失败时回滚并**逐篇隔离重放**(R1 #7):成功的照常提交,
+    失败的那篇 ledger 退避重试,不拖垮同批其它文章。返回 ``{"assigned", "new_events", "event_ids", "events_by_key",
+    "invalid_target", "retargeted", "serial_split", "isolated_failures"}``。"""
     now = _as_utc(now)
-    stamp = _iso(now)
     llm_titles = dict(llm_titles or {})
+    empty = {
+        "assigned": 0, "new_events": 0, "event_ids": [], "events_by_key": {},
+        "invalid_target": 0, "retargeted": 0, "serial_split": 0, "isolated_failures": 0,
+    }
     if not decisions:
-        return {"assigned": 0, "new_events": 0, "event_ids": [], "events_by_key": {}}
+        return empty
     article_ids = [decision.article_id for decision in decisions]
     articles: dict[str, ArticleRecord] = {}
     for chunk in _chunks(article_ids):
@@ -1080,80 +1298,63 @@ def apply_assignments(session: Session, decisions: Sequence[AssignmentDecision],
             articles[article.id] = article
     if meta is None:
         meta = load_source_meta(session, {article.source_id for article in articles.values()})
+    validated, counts = _validate_decisions(session, decisions, articles, now=now)
+    key_events: dict[str, int] = {}
+    key_titles: dict[int, str] = {}
+    touched: set[int] = set()
+    assigned = 0
+    isolated_failures = 0
     try:
-        touched: set[int] = set()
-        new_by_key: dict[str, int] = {}
-        key_titles: dict[int, str] = {}
-        assigned = 0
-        for decision in decisions:
-            article = articles.get(decision.article_id)
-            ledger = session.get(EventAssignmentLedgerRecord, decision.article_id)
-            if article is None:
-                if ledger is not None:
-                    session.delete(ledger)
-                continue
-            existing = session.exec(
-                select(EventMemberRecord).where(EventMemberRecord.article_id == article.id)
-            ).first()
-            if existing is not None:
-                # 已有归属(管理员手工分配 / 并发写入):只收口 ledger,不改成员。
-                touched.add(int(existing.event_id))
-            else:
-                event_id = decision.event_id
-                if event_id is not None and session.get(EventRecord, event_id) is None:
-                    event_id = None
-                if event_id is None:
-                    key = decision.new_key or f"single:{article.id}"
-                    event_id = new_by_key.get(key)
-                    if event_id is None:
-                        event = EventRecord(
-                            status="open", title="", title_source="", member_count=0, publisher_count=0,
-                            first_seen_at=stamp, last_member_at=stamp,
-                            assignment_version=ASSIGNMENT_VERSION, authority_id="",
-                            created_at=stamp, updated_at=stamp,
-                        )
-                        session.add(event)
-                        session.flush()
-                        event_id = int(event.id)
-                        new_by_key[key] = event_id
-                        if decision.new_key and llm_titles.get(decision.new_key):
-                            key_titles[event_id] = llm_titles[decision.new_key]
-                session.add(EventMemberRecord(
-                    event_id=event_id,
-                    article_id=article.id,
-                    publisher_key=publisher_key(article.source_id, meta.get(article.source_id)),
-                    report_at=_iso(report_at_for(article.publish_date, now)),
-                    first_seen_at=stamp,
-                    assigned_by=decision.assigned_by,
-                    confidence=decision.confidence if decision.assigned_by == ASSIGNED_BY_LLM else None,
-                    prompt_version=EVENT_ASSIGN_PROMPT_VERSION if decision.assigned_by == ASSIGNED_BY_LLM else "",
-                    is_representative=False,
-                    created_at=stamp,
-                ))
-                event = session.get(EventRecord, event_id)
-                if event is not None:
-                    event.last_member_at = stamp
-                    session.add(event)
-                touched.add(event_id)
-                assigned += 1
-            if ledger is None:
-                ledger = _new_ledger(article.id, decision.ledger_status, now, decision.ledger_note)
-            ledger.status = decision.ledger_status
-            ledger.last_error = (decision.ledger_note or "")[:300]
-            ledger.next_attempt_at = ""
-            ledger.updated_at = stamp
-            session.add(ledger)
-        session.flush()
+        assigned, touched = _apply_batch(
+            session, validated, now=now, articles=articles, meta=meta,
+            llm_titles=llm_titles, key_events=key_events, key_titles=key_titles,
+        )
         _recompute_events(session, touched, now=now, llm_titles=key_titles)
         session.commit()
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 - 整批失败 → 逐篇隔离重放
         session.rollback()
-        raise
+        logger.warning("事件落库整批失败,改为逐篇隔离重放:%s: %s", type(exc).__name__, exc)
+        key_events.clear()
+        key_titles.clear()
+        touched = set()
+        assigned = 0
+        for decision in validated:
+            try:
+                one_assigned, one_touched = _apply_batch(
+                    session, [decision], now=now, articles=articles, meta=meta,
+                    llm_titles=llm_titles, key_events=key_events, key_titles=key_titles,
+                )
+                _recompute_events(session, one_touched, now=now, llm_titles=key_titles)
+                session.commit()
+                assigned += one_assigned
+                touched |= one_touched
+            except Exception as inner:  # noqa: BLE001 - 单篇失败只影响它自己
+                session.rollback()
+                isolated_failures += 1
+                # 本篇 flush 出来又被回滚的新事件不能留在键表里(否则同键后续成员会指向不存在的事件、计数虚高)
+                for key in [k for k, v in key_events.items() if session.get(EventRecord, v) is None]:
+                    key_titles.pop(key_events.pop(key), None)
+                message = f"apply: {type(inner).__name__}: {inner}"
+                logger.warning("文章 %s 事件落库失败,退避重试:%s", decision.article_id, message)
+                ledger = session.get(EventAssignmentLedgerRecord, decision.article_id)
+                if ledger is None:
+                    ledger = _new_ledger(decision.article_id, LEDGER_PENDING, now)
+                ledger.status = LEDGER_PENDING
+                _mark_retry(ledger, now=now, error=message)
+                session.add(ledger)
+                try:
+                    session.commit()
+                except Exception:  # noqa: BLE001 - 连记账都失败就放弃这一篇,下轮扫描重来
+                    session.rollback()
     return {
         "assigned": assigned,
-        "new_events": len(new_by_key),
+        "new_events": len(key_events),
         "event_ids": sorted(touched),
-        "events_by_key": new_by_key,
+        "events_by_key": dict(key_events),
+        "invalid_target": counts["invalid_target"],
+        "retargeted": counts["retargeted"],
+        "serial_split": counts["serial_split"],
+        "isolated_failures": isolated_failures,
     }
 
 
@@ -1167,19 +1368,12 @@ def _new_stats() -> dict[str, Any]:
         "failed": 0, "echo_mismatch": 0, "skipped": 0, "closed": 0, "batches": 0,
         "llm_calls": 0, "llm_items": 0, "illegal_target": 0, "low_confidence": 0, "empty_fact": 0,
         "llm_unconfigured": False, "busy": False, "echo_samples": [],
+        "invalid_target": 0, "retargeted": 0, "serial_split": 0, "isolated_failures": 0,
         "recall": {
             "articles": 0, "with_candidates": 0, "candidates_total": 0, "batch_similar": 0,
             "entity": 0, "fts_title": 0, "fts_summary": 0, "fts_zh": 0,
         },
     }
-
-
-def _mark_retry(ledger: EventAssignmentLedgerRecord, *, now: dt.datetime, error: str) -> None:
-    ledger.attempts = int(ledger.attempts or 0) + 1
-    minutes = RETRY_BACKOFF_MINUTES[min(ledger.attempts, len(RETRY_BACKOFF_MINUTES)) - 1]
-    ledger.next_attempt_at = _iso(now + dt.timedelta(minutes=minutes))
-    ledger.last_error = (error or "")[:300]
-    ledger.updated_at = _iso(now)
 
 
 def _sweep_expired_pending(session: Session, *, now: dt.datetime,
@@ -1232,16 +1426,26 @@ def _load_due_batch(session: Session, *, now: dt.datetime, batch_size: int) -> l
 
 
 def _direct_connect(item: PendingItem, context: _OpenContext) -> Optional[tuple[int, str]]:
+    """机械直连;结构规则按**事件级**执行:事件里只要有一篇同源同题非同日的成员,整个事件都不接(R1 #6 ②,
+    否则昨日事件含 A / B 同题稿时,今日 A 的同题稿能借 B 的标题绕过连载规则)。"""
+
+    def _acceptable(event_id: int) -> bool:
+        open_event = context.events.get(event_id)
+        return (
+            open_event is not None
+            and event_id not in item.blocked
+            and not _structurally_excluded(item, open_event)
+        )
+
     if item.canonical:
         event_id = context.by_canonical.get(item.canonical)
-        if event_id is not None and event_id not in item.blocked:
+        if event_id is not None and _acceptable(event_id):
             return event_id, ASSIGNED_BY_URL
     key = _title_direct_key(item.article.title or "")
     if key:
         eligible = [
-            (event_id, day) for event_id, source_id, day in context.by_title.get(key, ())
-            if event_id not in item.blocked
-            and not (source_id == item.article.source_id and day != item.day)  # 同源同题非同日:连载 / 日更栏目
+            (event_id, day) for event_id, _source_id, day in context.by_title.get(key, ())
+            if _acceptable(event_id)
         ]
         if eligible:
             event_id = next((eid for eid, day in eligible if day == item.day), eligible[0][0])
@@ -1255,25 +1459,37 @@ def _mechanical_groups(items: Sequence[PendingItem]) -> dict[str, tuple[PendingI
     不这样做,同一轮到达的同题稿在模型未配置 / 失败时会被拆成两个单例且永不回溯。"""
     heads_by_canonical: dict[str, PendingItem] = {}
     heads_by_title: dict[str, list[PendingItem]] = {}
+    groups: dict[str, list[PendingItem]] = {}          # 组头 id → 组内全部成员(含组头)
     follow: dict[str, tuple[PendingItem, str]] = {}
+
+    def _group_ok(head: PendingItem) -> bool:
+        # 组级结构规则:组里任一成员与本文同源同题非同日 → 整组不接(与事件级同口径)
+        return not any(
+            member.article.source_id == item.article.source_id
+            and _titles_equal(member.norm_title, item.norm_title)
+            and member.day != item.day
+            for member in groups.get(head.article.id, ())
+        )
+
     for item in items:
         head: Optional[PendingItem] = None
         how = ""
         if item.canonical and item.canonical in heads_by_canonical:
-            head, how = heads_by_canonical[item.canonical], ASSIGNED_BY_URL
-        else:
+            candidate = heads_by_canonical[item.canonical]
+            if _group_ok(candidate):
+                head, how = candidate, ASSIGNED_BY_URL
+        if head is None:
             key = _title_direct_key(item.article.title or "")
-            eligible = [
-                candidate for candidate in (heads_by_title.get(key, ()) if key else ())
-                if not (candidate.article.source_id == item.article.source_id and candidate.day != item.day)
-            ]
+            eligible = [c for c in (heads_by_title.get(key, ()) if key else ()) if _group_ok(c)]
             if eligible:
                 # 同题多个组头(如同源日更栏目昨天 / 今天各一篇):优先同日那篇,其次最早的。
                 head = next((c for c in eligible if c.day == item.day), eligible[0])
                 how = ASSIGNED_BY_TITLE
         if head is not None:
             follow[item.article.id] = (head, how)
+            groups.setdefault(head.article.id, [head]).append(item)
             continue
+        groups.setdefault(item.article.id, [item])
         if item.canonical:
             heads_by_canonical.setdefault(item.canonical, item)
         key = _title_direct_key(item.article.title or "")
@@ -1395,7 +1611,7 @@ def _process_batch(session: Session, rows: Sequence[tuple[EventAssignmentLedgerR
                 parsed = parse_event_assign_response(
                     raw,
                     titles=[item.article.title or "" for item in to_judge],
-                    candidates={eid: cand.first_seen_at for eid, cand in candidate_map.items()},
+                    candidates=[{c.event_id: c.first_seen_at for c in item.candidates} for item in to_judge],
                     report_ats=[item.report_at for item in to_judge],
                 )
             except Exception as exc:  # noqa: BLE001 - 模型失败 / 输出非法:退避重试,不抛到调用方
@@ -1456,6 +1672,8 @@ def _process_batch(session: Session, rows: Sequence[tuple[EventAssignmentLedgerR
     # 5. 单事务落库(直连 / 单例的决定不依赖模型,模型失败时照常落)。
     outcome = apply_assignments(session, decisions, now=now, llm_titles=llm_titles, meta=meta)
     stats["new_events"] += int(outcome["new_events"])
+    for key in ("invalid_target", "retargeted", "serial_split", "isolated_failures"):
+        stats[key] += int(outcome[key])
     stats["batches"] += 1
     if failed:
         session.commit()  # 退避账已 add,随本次提交
@@ -1512,6 +1730,7 @@ __all__ = [
     "canonical_url",
     "close_stale_events",
     "entity_codes_by_article",
+    "translated_title",
     "load_source_meta",
     "parse_event_assign_response",
     "publisher_key",

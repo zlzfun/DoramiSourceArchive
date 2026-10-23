@@ -329,11 +329,87 @@ def test_read_event_follows_redirects_orders_members_and_lists_followups(tmp_pat
     assert members["t1"]["title_zh"] == "媒体译题" and members["t2"]["title_zh"] is None
     assert members["t3"]["content_shape"] == "social"
     assert members["t2"]["source_role"] == "official" and members["t2"]["source_name"] == "Official"
+    # 关联事件的标题同样只从可见成员算(F11):不是库里冻结的 stored 题。
     assert direct["followups"] == [
-        {"event_id": followup.id, "title": "followup stored", "first_seen_at": _iso(1)}
+        {"event_id": followup.id, "title": "Title f1", "first_seen_at": _iso(1)}
     ]
-    assert follow["story"] == {"follows_event_id": target.id, "follows_title": "target stored"}
+    assert follow["story"] == {"follows_event_id": target.id, "follows_title": "Title t2"}
     assert closed["rank"] is None and closed["member_count"] == 2
+
+
+def test_llm_title_is_dropped_once_any_member_is_hidden_after_formation(tmp_path):
+    """codex R1 F1:模型拟题可能复述隐藏成员独有的信息;事件形成后隐藏来源,标题不得含隐藏成员信息。"""
+
+    sink = _sink(tmp_path, "llm-title-hidden.db")
+    with Session(sink.engine) as session:
+        event = _event(session, hours_ago=3, title="Project Cedar 曝光:三方报道", title_source="llm")
+        _article(session, "e1", "pub-a", title="Acme ships a new model", score=8.0)
+        _article(session, "e2", "pub-b", title="Acme model covered by press", score=6.0)
+        _article(session, "e3", "cedar-src", title="Project Cedar revealed", score=9.5)
+        for article_id in ("e1", "e2", "e3"):
+            _member(session, event, article_id)
+        session.commit()
+        event_id = event.id
+
+        before = event_board.read_board(session, now=NOW)["items"][0]
+        assert before["title"] == "Project Cedar 曝光:三方报道" and before["member_count"] == 3
+
+        session.add(AppSettingRecord(key="reader_hidden_source_ids", value='["cedar-src"]'))
+        session.commit()
+        board = event_board.read_board(session, now=NOW)["items"][0]
+        detail = event_board.read_event(session, event_id, now=NOW)
+        # 管理员视图不受影响:库内 authority 标题照旧。
+        stored = event_board.list_events(session)[0]
+
+        # 可见中文成员出现后优先用它;译题缓存次之。
+        _article(session, "e4", "pub-c", title="Acme 发布新模型", score=3.0)
+        _member(session, event, "e4")
+        session.commit()
+        with_zh = event_board.read_board(session, now=NOW)["items"][0]
+
+    assert board["member_count"] == 2 and {p["key"] for p in board["publishers"]} == {"pub-a", "pub-b"}
+    assert board["title"] == "Acme ships a new model" and board["title_lang"] == "en"
+    assert "Cedar" not in board["title"] and "Cedar" not in detail["title"]
+    assert detail["title"] == board["title"]
+    assert stored["title"] == "Project Cedar 曝光:三方报道"
+    assert with_zh["title"] == "Acme 发布新模型" and "Cedar" not in with_zh["title"]
+
+
+def test_related_events_follow_reader_visibility(tmp_path):
+    """codex R1 F11:story.follows_title 与 followups 走可见成员视图;无可见成员的关联事件不返回。"""
+
+    sink = _sink(tmp_path, "related-visibility.db")
+    with Session(sink.engine) as session:
+        session.add(AppSettingRecord(key="reader_hidden_source_ids", value='["hidden-src"]'))
+        public = _two_publisher_event(session, "pub", hours_ago=6)
+        hidden_only = _event(session, hours_ago=5, title="hidden stored", follows=public.id)
+        _article(session, "hid1", "hidden-src", hours_ago=5)
+        _member(session, hidden_only, "hid1", hours_ago=5)
+        # 后续事件带模型题且含一名隐藏成员:列在 followups 里时标题也要退回可见报道题。
+        tainted = _event(session, hours_ago=4, title="模型题含隐藏信息", title_source="llm", follows=public.id)
+        _article(session, "ta1", "media-a", hours_ago=4, title="Public follow-up report")
+        _article(session, "ta2", "hidden-src", hours_ago=4, title="Secret follow-up")
+        _member(session, tainted, "ta1", hours_ago=4)
+        _member(session, tainted, "ta2", hours_ago=4)
+        follows_hidden = _two_publisher_event(session, "fh", hours_ago=2)
+        follows_hidden.follows_event_id = hidden_only.id
+        session.add(follows_hidden)
+        follows_public = _two_publisher_event(session, "fp", hours_ago=1)
+        follows_public.follows_event_id = public.id
+        session.add(follows_public)
+        session.commit()
+
+        board = {item["event_id"]: item for item in event_board.read_board(session, now=NOW)["items"]}
+        detail = event_board.read_event(session, public.id, now=NOW)
+        assert event_board.read_event(session, hidden_only.id, now=NOW) is None
+
+    # 隐藏源独占的后续事件不出现;带隐藏成员的后续事件标题退回可见报道题;按首见升序。
+    assert detail["followups"] == [
+        {"event_id": tainted.id, "title": "Public follow-up report", "first_seen_at": _iso(4)},
+        {"event_id": follows_public.id, "title": "Title fp-1", "first_seen_at": _iso(1)},
+    ]
+    assert board[follows_hidden.id]["story"] == {"follows_event_id": None, "follows_title": None}
+    assert board[follows_public.id]["story"] == {"follows_event_id": public.id, "follows_title": "Title pub-1"}
 
 
 def test_build_rank_snapshot_replaces_same_day_rows_transactionally(tmp_path, monkeypatch):

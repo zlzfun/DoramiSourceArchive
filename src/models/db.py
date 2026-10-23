@@ -1075,6 +1075,27 @@ class EventRankSnapshotRecord(SQLModel, table=True):
     generated_at: str
 
 
+class EventMemberBacklogRecord(SQLModel, table=True):
+    """Archive Sync 接收端的事件成员待补账(节点本地,永不同步;issue #121 检视 R1 #4)。
+
+    事件流到达时成员文章尚未到本地(文章 revision 越过本轮快照、要等下一轮 articles 流)→ 成员线值
+    原样暂存于此;每次 v2 拉取在 articles 流应用之后重放:文章已到且归同一 authority 则落成员并删行,
+    文章仍缺则 ``attempts`` +1,``first_seen_at`` 超 30 天的行清理;事件被撤回时随 FK 级联删除。
+    """
+    __tablename__ = "event_member_backlog"
+
+    event_id: int = Field(
+        primary_key=True,
+        foreign_key="events.id",
+        ondelete="CASCADE",
+    )
+    article_id: str = Field(primary_key=True)
+    payload_json: str = Field(default="{}", sa_column_kwargs={"server_default": text("'{}'")})
+    first_seen_at: str = Field(description="首次入账时间(本机时钟),超 30 天清理")
+    attempts: int = Field(default=0, ge=0, sa_column_kwargs={"server_default": text("0")})
+    updated_at: str
+
+
 # （实体简化阶段 2）FetchTaskRecord（旧版单节点定时任务）与 NodeGroupRecord（采集范围/
 # 节点组）已退役：存量数据由 Alembic 迁移（drop 前先内联/转换）合并进 CollectionJobRecord；
 # 历史运行/文章记录中的 task_id / group_id / source_group_id 列保留供回溯。
