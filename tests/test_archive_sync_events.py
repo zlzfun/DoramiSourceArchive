@@ -1265,6 +1265,82 @@ def test_backlog_versioning_migration_keeps_the_newest_whole_row_per_article(tmp
         engine.dispose()
 
 
+def test_backlog_versioning_migration_prefers_applied_revision_over_flattened_timestamps(tmp_path, capfd):
+    """检视 R4:最新归属 E1 的 ID 较小,且迁移前旧版重放已把两行 updated_at 抹成同一轮时间 →
+    迁移按已接收 revision 选行(E1 / 20 胜 E2 / 10);文章到达进 E1,E2 的移除更新后仍在 E1。
+    两行都查不到 revision 的冲突按时间 / ID 兜底并 WARNING「依据不足」。"""
+    db_url = f"sqlite:///{tmp_path / 'backlog-versioning-flat.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "7c3d9e1f5a24")
+    authority = "producer-legacy"
+    flattened = _iso(1)  # 旧版重放在同一轮把所有待补行 updated_at 写成同一时间
+    engine = create_engine(db_url)
+    try:
+        with engine.begin() as conn:
+            for event_id in (1, 2, 4, 5):
+                conn.execute(text(
+                    "INSERT INTO events(id, status, title, title_source, member_count, publisher_count, "
+                    "first_seen_at, last_member_at, assignment_version, authority_id, created_at, updated_at) "
+                    "VALUES (:id, 'open', :title, '', 0, 0, :t, :t, '', :auth, :t, :t)"
+                ), {"id": event_id, "title": f"E{event_id}", "t": _iso(5), "auth": authority})
+            for identity, revision in (("1", 20), ("2", 10)):  # E1 更新,但 ID 更小
+                conn.execute(text(
+                    "INSERT INTO archive_sync_entity_states(stream, identity, authority_id, revision, operation, updated_at) "
+                    "VALUES ('events', :identity, :auth, :revision, 'upsert', :t)"
+                ), {"identity": identity, "auth": authority, "revision": revision, "t": _iso(5)})
+            member = dict(
+                article_id="x", publisher_key="", report_at=_iso(3), first_seen_at=_iso(3),
+                assigned_by="llm", confidence=0.6, prompt_version="p1", is_representative=False,
+                created_at=_iso(3),
+            )
+            for event_id, article_id, publisher in ((1, "x", "new-owner"), (2, "x", "old-owner"), (4, "z", "four"), (5, "z", "five")):
+                conn.execute(text(
+                    "INSERT INTO event_member_backlog(event_id, article_id, payload_json, first_seen_at, attempts, updated_at) "
+                    "VALUES (:event_id, :article_id, :payload, :first_seen, 2, :updated)"
+                ), {
+                    "event_id": event_id, "article_id": article_id,
+                    "payload": json.dumps({**member, "article_id": article_id, "publisher_key": publisher}),
+                    "first_seen": _iso(4), "updated": flattened,
+                })
+
+        capfd.readouterr()
+        command.upgrade(cfg, "heads")
+        logged = capfd.readouterr().err
+        assert "event=2 article=x" in logged and "superseded by event 1" in logged
+        assert "insufficient basis for article=z" in logged and "kept event=5" in logged
+
+        with Session(engine) as session:
+            rows = session.exec(select(EventMemberBacklogRecord).order_by(EventMemberBacklogRecord.article_id)).all()
+            assert [(r.article_id, r.event_id, r.revision) for r in rows] == [("x", 1, 20), ("z", 5, 0)]
+            assert json.loads(rows[0].payload_json)["publisher_key"] == "new-owner"
+
+        with Session(engine) as session:
+            session.add(_source())
+            session.add(_article("x", analysis_authority_id=authority))
+            session.commit()
+        assert archive_sync_v2.replay_event_member_backlog(engine)["installed"] == 1
+        assert _member_ids(engine, 1) == ["x"]
+
+        # E2 的移除更新(revision 30、空成员集)到达 → x 仍在 E1
+        payload = {
+            "id": 2,
+            "event": {
+                "id": 2, "status": "open", "title": "E2", "title_source": "", "representative_article_id": None,
+                "member_count": 0, "publisher_count": 0, "first_seen_at": _iso(5), "last_member_at": _iso(5),
+                "story_id": None, "follows_event_id": None, "assignment_version": "", "created_at": _iso(5),
+                "updated_at": _iso(0),
+            },
+            "members": [], "redirects_from": [], "merged_into": None,
+        }
+        row = archive_sync_v2._line("events", payload, revision="30", identity="2")
+        manifest = archive_sync_v2._manifest("events", authority, "30", "", [row], complete=True)
+        archive_sync_v2.import_page(engine, archive_sync_v2.encode_page(manifest, [row]), expected_stream="events")
+        assert _member_ids(engine, 1) == ["x"]
+        assert _member_ids(engine, 2) == []
+    finally:
+        engine.dispose()
+
+
 def test_events_stream_migration_widens_the_check_and_installs_triggers(tmp_path):
     db_url = f"sqlite:///{tmp_path / 'events-stream-migration.db'}"
     cfg = make_alembic_config(db_url)
