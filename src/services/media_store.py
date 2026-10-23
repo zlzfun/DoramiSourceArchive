@@ -29,7 +29,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
 import httpx
-from sqlalchemy import update
+from sqlalchemy import or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select, func
 
@@ -113,7 +113,8 @@ def resolve_image_url(url: str, source_url: str | None = None) -> str:
     try:
         if not urlparse(url).scheme and source_url and urlparse(source_url).scheme in {"http", "https"}:
             url = urljoin(source_url, url)
-        return url if urlparse(url).scheme in {"http", "https"} else ""
+        parsed = urlparse(url)
+        return url if parsed.scheme in {"http", "https"} and parsed.netloc and parsed.hostname else ""
     except ValueError:
         return ""
 
@@ -346,6 +347,25 @@ class MediaStore:
             lock = self._locks[key] = asyncio.Lock()
         return lock
 
+    def _is_article_image(self, url: str) -> bool:
+        """Expensive browser fetches require an exact, persisted article reference."""
+        filename = urlparse(url).path.rsplit("/", 1)[-1]
+        if not filename:
+            return False
+        cursor = ""
+        with Session(self.engine) as session:
+            while True:
+                rows = session.exec(select(ArticleRecord).where(
+                    ArticleRecord.id > cursor,
+                    or_(ArticleRecord.content.contains(filename, autoescape=True),
+                        ArticleRecord.extensions_json.contains(filename, autoescape=True)),
+                ).order_by(ArticleRecord.id).limit(200)).all()
+                if any(url in extract_image_urls(row.content, row.extensions_json, row.source_url) for row in rows):
+                    return True
+                if len(rows) < 200:
+                    return False
+                cursor = rows[-1].id
+
     def _get_record(self, url_hash: str) -> Optional[MediaAssetRecord]:
         with Session(self.engine) as session:
             row = session.get(MediaAssetRecord, url_hash)
@@ -530,10 +550,16 @@ class MediaStore:
                     body = b"".join(chunks)
                     mime = _sniff_image_mime(body[:64], response.headers.get("content-type", ""))
             if browser_fallback:
-                async with self._browser_download_lock:
-                    body = await download_openai_image(
-                        url, max_bytes=self.max_bytes, timeout_seconds=self.timeout_seconds,
-                    )
+                if not await asyncio.to_thread(self._is_article_image, url):
+                    return await asyncio.to_thread(self._mark_failed, url, key, "HTTP 403；图片未被文章引用")
+                try:
+                    await asyncio.wait_for(self._browser_download_lock.acquire(), timeout=self.timeout_seconds)
+                except TimeoutError:
+                    return await asyncio.to_thread(self._mark_failed, url, key, "浏览器取图排队超时")
+                try:
+                    body = await download_openai_image(url, max_bytes=self.max_bytes, timeout_seconds=self.timeout_seconds)
+                finally:
+                    self._browser_download_lock.release()
                 if not body:
                     return await asyncio.to_thread(self._mark_failed, url, key, "HTTP 403；浏览器取图未成功")
                 if len(body) > self.max_bytes:

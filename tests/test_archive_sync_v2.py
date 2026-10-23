@@ -2349,7 +2349,8 @@ def test_tombstone_wins_when_an_older_upsert_page_is_replayed(tmp_path):
         assert state.revision == int(tombstone_rows[0]["revision"])
 
 
-def test_media_delta_is_driven_by_current_article_reference_revision(tmp_path):
+@pytest.mark.parametrize("relative", [False, True])
+def test_media_delta_is_driven_by_current_article_reference_revision(tmp_path, relative):
     sink = _sink(tmp_path, "media-reference-revision.db")
     url = "https://img.test/reference-driven.jpg"
     key = hashlib.sha256(url.encode()).hexdigest()
@@ -2380,7 +2381,8 @@ def test_media_delta_is_driven_by_current_article_reference_revision(tmp_path):
 
     with Session(sink.engine) as session:
         article = session.get(ArticleRecord, "article-1")
-        article.content = f"![new reference]({url})"
+        article.source_url = "https://img.test/article"
+        article.content = "![new reference](/reference-driven.jpg)" if relative else f"![new reference]({url})"
         session.add(article)
         session.commit()
         article_revision = session.get(

@@ -49,6 +49,15 @@ def _store(engine, tmp_path, transport, **kwargs):
     return MediaStore(engine, tmp_path / "media", transport=transport, **kwargs)
 
 
+def _seed_image(engine, url):
+    now = datetime.datetime.now().isoformat()
+    with Session(engine) as session:
+        session.add(ArticleRecord(id="browser-image", title="Image", content_type="rss_article",
+                                  source_id="rss_openai_news", source_url="https://openai.com/index/demo",
+                                  content=f"![]({url})", publish_date=now, fetched_date=now))
+        session.commit()
+
+
 # ==================== 图链提取 ====================
 
 def test_extract_image_urls_markdown_html_dedup():
@@ -103,6 +112,7 @@ def test_relative_image_urls_resolve_and_deduplicate_without_rewriting_content()
     ]
     assert body.startswith('![](/_next/')
     assert extract_image_urls('![](/image.webp)', source_url='file:///tmp/a') == []
+    assert extract_image_urls('![](https:x) ![](https:/x)') == []
 
 
 def test_relative_images_are_prefetched_and_keep_the_archive_intact(monkeypatch, tmp_path):
@@ -112,6 +122,7 @@ def test_relative_images_are_prefetched_and_keep_the_archive_intact(monkeypatch,
     with Session(sink.engine) as session:
         session.add(ArticleRecord(id="relative", title="Demo", source_id="rss_openai_news", content_type="rss_article",
                                   source_url="https://openai.com/index/demo", content=body,
+                                  publish_date=datetime.datetime.now().isoformat(),
                                   fetched_date=datetime.datetime.now().isoformat()))
         session.commit()
     calls = []
@@ -132,6 +143,7 @@ def test_challenged_openai_image_uses_browser_once_then_cached(monkeypatch, tmp_
     monkeypatch.setattr(ms, "download_openai_image", browser)
     transport = httpx.MockTransport(lambda req: httpx.Response(403, headers={"cf-mitigated": "challenge"}))
     store = _store(_sink(tmp_path).engine, tmp_path, transport)
+    _seed_image(store.engine, url)
     async def run():
         record = await store.get_or_fetch(url)
         assert record.mime == "image/webp" and record.status == "cached"
@@ -170,12 +182,63 @@ def test_browser_failure_or_invalid_bytes_use_negative_cache(monkeypatch, tmp_pa
     transport = httpx.MockTransport(lambda req: httpx.Response(403, headers={"cf-mitigated": "challenge"}))
     store = _store(_sink(tmp_path).engine, tmp_path, transport, max_bytes=100)
     url = "https://openai.com/_next/static/media/a.webp"
+    _seed_image(store.engine, url)
     async def run():
         assert await store.get_or_fetch(url) is None
         assert await store.get_or_fetch(url) is None
     asyncio.run(run())
     assert len(calls) == 1
     assert store._get_record(url_hash_of(url)).status == "failed"
+
+
+def test_browser_requires_exact_persisted_article_reference(monkeypatch, tmp_path):
+    monkeypatch.setattr(ms, "_resolve_is_public", _public_ok)
+    async def forbidden(*args, **kwargs):
+        pytest.fail("unreferenced URLs must never launch Chromium")
+    monkeypatch.setattr(ms, "download_openai_image", forbidden)
+    transport = httpx.MockTransport(lambda req: httpx.Response(403, headers={"cf-mitigated": "challenge"}))
+    store = _store(_sink(tmp_path).engine, tmp_path, transport)
+    url = "https://openai.com/_next/static/media/face.webp"
+    _seed_image(store.engine, url)
+    async def run():
+        assert await store.get_or_fetch(url + "?variant=unreferenced") is None
+        assert await store.get_or_fetch(url.replace("face", "random")) is None
+    asyncio.run(run())
+
+
+def test_browser_queue_timeout_preserves_busy_lock_and_negative_caches(monkeypatch, tmp_path):
+    monkeypatch.setattr(ms, "_resolve_is_public", _public_ok)
+    async def forbidden(*args, **kwargs):
+        pytest.fail("queued timeout must not launch Chromium")
+    monkeypatch.setattr(ms, "download_openai_image", forbidden)
+    transport = httpx.MockTransport(lambda req: httpx.Response(403, headers={"cf-mitigated": "challenge"}))
+    store = _store(_sink(tmp_path).engine, tmp_path, transport, timeout_seconds=0.02)
+    url = "https://openai.com/_next/static/media/face.webp"
+    _seed_image(store.engine, url)
+    async def run():
+        await store._browser_download_lock.acquire()
+        try:
+            assert await asyncio.wait_for(store.get_or_fetch(url), timeout=1) is None
+            assert store._browser_download_lock.locked()
+        finally:
+            store._browser_download_lock.release()
+    asyncio.run(run())
+    record = store._get_record(url_hash_of(url))
+    assert record.status == "failed" and "排队超时" in record.last_error
+
+
+def test_relative_article_reference_retains_synced_media_during_gc(tmp_path):
+    store = _store(_sink(tmp_path).engine, tmp_path, _counting_transport([]))
+    url = "https://openai.com/_next/static/media/face.webp"
+    _seed_image(store.engine, "/_next/static/media/face.webp")
+    assert store._is_article_image(url)
+    old = (datetime.datetime.now() - datetime.timedelta(days=20)).isoformat()
+    with Session(store.engine) as session:
+        session.add(MediaAssetRecord(url_hash=url_hash_of(url), url=url, status="pending_sync",
+                                     sync_authority_id="upstream", created_at=old, updated_at=old))
+        session.commit()
+    store.gc_remote_unreferenced()
+    assert store._get_record(url_hash_of(url)) is not None
 
 
 def test_prefetch_articles_reads_social_media_extensions(monkeypatch, tmp_path):

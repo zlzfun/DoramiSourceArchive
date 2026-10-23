@@ -101,6 +101,14 @@ async def download_openai_image(url: str, *, max_bytes: int, timeout_seconds: fl
                         request_id = event["requestId"]
                         headers = {h["name"].lower(): h["value"] for h in event.get("responseHeaders", [])}
                         logger.debug("Browser image response: %s %s", event.get("responseStatusCode"), headers.get("content-type"))
+                        # Playwright's route callback does not guard every redirect
+                        # hop. Reject redirects for the image AND challenge resources
+                        # at response stage before Chromium follows them.
+                        if 300 <= event.get("responseStatusCode", 0) < 400:
+                            await cdp.send("Fetch.failRequest", {"requestId": request_id, "errorReason": "Aborted"})
+                            if event["request"]["url"] == url and not result.done():
+                                result.set_result(None)
+                            return
                         if (event["request"]["url"] != url or event.get("responseStatusCode") != 200
                                 or not headers.get("content-type", "").lower().startswith("image/")):
                             await cdp.send("Fetch.continueRequest", {"requestId": request_id})
@@ -129,8 +137,8 @@ async def download_openai_image(url: str, *, max_bytes: int, timeout_seconds: fl
                         task.add_done_callback(completed)
 
                     cdp.on("Fetch.requestPaused", schedule)
-                    # Intercept responses only for the target image; challenge JS keeps running.
-                    await cdp.send("Fetch.enable", {"patterns": [{"urlPattern": url, "requestStage": "Response"}]})
+                    # Check all responses for redirects; only the target image body is read.
+                    await cdp.send("Fetch.enable", {"patterns": [{"urlPattern": "*", "requestStage": "Response"}]})
                     async def navigate():
                         # Taking the image stream intentionally aborts navigation.
                         with suppress(Exception):
