@@ -9,7 +9,7 @@
 
 ## OpenAI 受限静态图片（issue #217）
 
-正文相对图链在读取时用文章 `source_url` 解析，旧正文不回写；显示、预取、分享白名单、识图及 Archive Sync 共用这一口径。文章精确引用的 OpenAI `/_next/static/(immutable/)media/` 栅格图遇 HTTP 403 且 `cf-mitigated: challenge` 时，独立 Chromium 导航取图；只放行目标及站点检查资源，校验公网主机，响应阶段拒绝全部重定向，不用用户 profile、不操作验证码、不启用 service worker。浏览器取图串行，排队与取图分别有超时；CDP 按块读取并限制声明 / 实际字节，再经媒体库魔数校验与原有缓存生命周期。游客会话仍不触发下载；公开分享访客仅能为该篇白名单图片触发取图。只随文或单篇重试，不全量回填。两端部署顺序与旧版 GC 注意事项见 [方案](../plans/issue-217-decisions-images.md)。
+正文相对图链在读取时用文章 `source_url` 解析，旧正文不回写；显示、预取、分享白名单、识图及 Archive Sync 共用这一口径。文章精确引用的 OpenAI `/_next/static/(immutable/)media/` 栅格图遇 HTTP 403 且 `cf-mitigated: challenge` 时，独立 Chromium 导航取图；只放行目标及站点检查资源，校验公网主机，响应阶段拒绝全部重定向，不用用户 profile、不操作验证码、不启用 service worker。浏览器取图串行，排队与取图分别有超时；CDP 按块读取并限制声明 / 实际字节，再经媒体库魔数校验与原有缓存生命周期。游客会话仍不触发下载；公开分享访客仅能为该篇白名单图片触发取图。只随文或单篇重试，不全量回填。两端部署顺序与旧版 GC 注意事项见 [方案](../archive/issue-217-decisions-images.md)。
 
 ## OSS 持久媒体（issue #92）
 

@@ -53,6 +53,10 @@
 
 - [horizon-vs-dorami.md](./horizon-vs-dorami.md) — 与 Thysrael/Horizon 的抓取/日报原理对照。
 
+## OpenAI 静态图片(2026-10-23,issue #217)
+
+- [issue-217-decisions-images.md](./issue-217-decisions-images.md) — 相对图链修复、受限静态图片浏览器取图、交叉检视与历史回测记录。
+
 ## 游客模式(2026-10-23,issue #213)
 
 - [issue-213-guest-mode.md](./issue-213-guest-mode.md) — 收到站内链接免登录先逛:访客会话 + 共享保留账号 `guest:shared`、白名单门控、共享游客早报、每访客已读与 AI 计次(与读者同额)、登录提示与叠层登录回原处、运维游客区;三批拍板、Codex 两轮检视(§7)与目检返修(分享菜单收口、小字「游客登录」)。
