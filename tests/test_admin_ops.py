@@ -578,25 +578,46 @@ def test_record_usage_accepts_summarize_and_counts_into_budget(tmp_path):
 
 
 def test_every_usage_purpose_in_source_is_registered_or_explicitly_excluded():
-    """源码里出现的每个 LLM 用量 purpose 字面量都必须在 VALID_PURPOSES 里,否则 record_usage 静默丢行、
-    看板与预算看不见该功能的 token(v3.40.4 summarize、v3.67.0 event_assignment 两次踩坑)。
-    明确不计量的用途列在 EXCLUDED 并写明原因;新增用途要么登记要么在此说明。"""
-    import re
+    """源码里出现的每个 LLM 用量 purpose 都必须在 VALID_PURPOSES 里,否则 record_usage 静默丢行、
+    看板看不见该功能的 token(v3.40.4 summarize、v3.67.0 event_assignment 两次踩坑)。
+    用 AST 扫:UsageMeta(...) / _usage_meta(...) 的 purpose= 与首个位置字符串参数,以及名字含 PURPOSE 的
+    模块级字符串常量(codex 检视 P2:正则漏掉以常量传入的用途)。暂不计量的用途列在 EXCLUDED 并写明原因。"""
+    import ast
     from pathlib import Path
     from services import ai_usage
 
     src = Path(__file__).resolve().parents[1] / "src"
-    pattern = re.compile(r'(?:purpose=|_usage_meta\(|UsageMeta\()"([a-z_]+)"')
-    found = set()
+    found: set[str] = set()
     for path in src.rglob("*.py"):
-        found.update(pattern.findall(path.read_text(encoding="utf-8")))
-    # 既有未登记用途(播客精品导读 / 文章讲解的底层分段调用与 Taxonomy 首装):读者额度按「发起一次生成」
-    # 在 podcast_ondemand / article_ondemand 上计,底层分段刻意不进看板;是否单独计量待拍板(backlog)。
-    excluded = {"article_ondemand_narration", "podcast_premium_blog", "podcast_premium_narration", "taxonomy_bootstrap"}
-    missing = sorted(found - set(ai_usage.VALID_PURPOSES) - excluded)
-    assert found, "没扫到任何 purpose 字面量,正则或目录不对"
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and "PURPOSE" in target.id and isinstance(node.value, ast.Constant) \
+                            and isinstance(node.value.value, str):
+                        found.add(node.value.value)
+            elif isinstance(node, ast.Call):
+                callee = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+                if callee not in {"UsageMeta", "_usage_meta"}:
+                    continue
+                for kw in node.keywords:
+                    if kw.arg == "purpose" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                        found.add(kw.value.value)
+                if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                    found.add(node.args[0].value)
+    # 暂不计量的用途 → 原因(codex 检视 P3:裸集合会让下一个人无感知地扩项;理由必须写清)。
+    excluded = {
+        "article_ondemand_narration": "文章讲解底层分段调用;疑似既有漏登记,是否登记待拍板(backlog)",
+        "podcast_premium_blog": "播客精品导读底层调用;疑似既有漏登记,是否登记待拍板(backlog)",
+        "podcast_premium_narration": "播客精品导读旁白底层调用;疑似既有漏登记,是否登记待拍板(backlog)",
+        "taxonomy_bootstrap": "Taxonomy 首装 CLI,入口未安装用量 recorder,登记也不会入库",
+    }
+    assert all(reason.strip() for reason in excluded.values())
+    assert not set(excluded) & set(ai_usage.VALID_PURPOSES), "已登记的用途不该再留在排除清单里"
+    # 反向对照:以常量传入的两个用途必须被扫到(否则守卫是假绿灯)
+    assert {"auto_title_translate", "personal_digest_title", "event_assignment"} <= found
+    missing = sorted(found - set(ai_usage.VALID_PURPOSES) - set(excluded))
     assert missing == [], f"未登记的用量用途:{missing}"
-    assert "event_assignment" in ai_usage.VALID_PURPOSES
 
 
 # ==================== v3.41 账户管理 V2（审计 M05/M06/M07） ====================
