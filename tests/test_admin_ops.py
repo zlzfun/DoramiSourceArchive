@@ -577,6 +577,28 @@ def test_record_usage_accepts_summarize_and_counts_into_budget(tmp_path):
         assert accounts_service.reader_ai_tokens_today(session) == 100
 
 
+def test_every_usage_purpose_in_source_is_registered_or_explicitly_excluded():
+    """源码里出现的每个 LLM 用量 purpose 字面量都必须在 VALID_PURPOSES 里,否则 record_usage 静默丢行、
+    看板与预算看不见该功能的 token(v3.40.4 summarize、v3.67.0 event_assignment 两次踩坑)。
+    明确不计量的用途列在 EXCLUDED 并写明原因;新增用途要么登记要么在此说明。"""
+    import re
+    from pathlib import Path
+    from services import ai_usage
+
+    src = Path(__file__).resolve().parents[1] / "src"
+    pattern = re.compile(r'(?:purpose=|_usage_meta\(|UsageMeta\()"([a-z_]+)"')
+    found = set()
+    for path in src.rglob("*.py"):
+        found.update(pattern.findall(path.read_text(encoding="utf-8")))
+    # 既有未登记用途(播客精品导读 / 文章讲解的底层分段调用与 Taxonomy 首装):读者额度按「发起一次生成」
+    # 在 podcast_ondemand / article_ondemand 上计,底层分段刻意不进看板;是否单独计量待拍板(backlog)。
+    excluded = {"article_ondemand_narration", "podcast_premium_blog", "podcast_premium_narration", "taxonomy_bootstrap"}
+    missing = sorted(found - set(ai_usage.VALID_PURPOSES) - excluded)
+    assert found, "没扫到任何 purpose 字面量,正则或目录不对"
+    assert missing == [], f"未登记的用量用途:{missing}"
+    assert "event_assignment" in ai_usage.VALID_PURPOSES
+
+
 # ==================== v3.41 账户管理 V2（审计 M05/M06/M07） ====================
 def test_admin_accounts_filters_and_sort(monkeypatch, tmp_path):
     """M06：角色/状态/AI 组合过滤 + 指标排序全部服务端生效；summary 恒全量。"""

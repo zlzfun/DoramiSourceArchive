@@ -41,6 +41,9 @@ VALID_PURPOSES = (
     "image_insight",
     "source_config",
     "detail_profile",
+    # issue #121 事件层:辅助模型增量分配(系统任务,归 system,不进读者预算三处)。v3.67.0 上线后
+    # 发现漏登记——record_usage 静默丢行,事件层 token 在看板里看不见(与 v3.40.4 summarize 同一类)。
+    "event_assignment",
 )
 
 SYSTEM_USERNAME = "system"
