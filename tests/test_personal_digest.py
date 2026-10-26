@@ -2095,3 +2095,29 @@ def test_social_post_from_an_unregistered_source_never_outranks_the_article_as_r
         snapshot = json.loads(result.items[0].snapshot_json)
         assert [row["article_id"] for row in snapshot["related_sources"]] == [tweet.id]
 
+
+def test_event_shown_two_editions_ago_is_still_suppressed_but_three_is_not(storage):
+    """跨期抑制看前两期(与 48h 事件窗、头条前两期实体抑制对齐,生产回放 §13):两天前上过的事件今天
+    仍整组抑制,三天前上过的不再抑制。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        session.flush()
+        two_days_ago = _seed_article(session, 1, score=7.0, published_at=NOW - dt.timedelta(hours=50))
+        echo_of_two = _seed_article(session, 2, score=8.8)
+        three_days_ago = _seed_article(session, 3, score=7.0, published_at=NOW - dt.timedelta(hours=74))
+        echo_of_three = _seed_article(session, 4, score=8.0)
+        fresh = _seed_article(session, 5, score=6.0)
+        session.flush()
+        _event_with(session, two_days_ago.id, echo_of_two.id, hours_ago=50)
+        _event_with(session, three_days_ago.id, echo_of_three.id, hours_ago=74)
+        _past_edition(session, (NOW.date() - dt.timedelta(days=3)).isoformat(), [three_days_ago.id])
+        _past_edition(session, (NOW.date() - dt.timedelta(days=2)).isoformat(), [two_days_ago.id])
+        _past_edition(session, (NOW.date() - dt.timedelta(days=1)).isoformat(), [])
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert [item.article_id for item in result.items] == [echo_of_three.id, fresh.id]
+        stats = json.loads(result.edition.selection_stats_json)
+        assert stats["same_event_previous_day"] == 1
+

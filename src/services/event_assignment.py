@@ -93,6 +93,9 @@ SCAN_MAX_ROWS = 5000                             # 单次入池最多翻看的�
 MAX_BATCHES_PER_RUN = 10
 ECHO_CHARS = 12
 EXCLUDED_KINDS = frozenset({"paper", "digest"})
+# 汇编体裁(GitHub Trending 日榜、Arena 排行榜变更、AINews 日报……)同样不入事件层(方案 §2「汇编不入」):
+# 这类行的内容类型常是 project / news,只按 EXCLUDED_KINDS 判会漏进来,生产 14 天回放里造成日榜跨日误并(方案 §13)。
+EXCLUDED_GENRES = frozenset({"aggregation"})
 PODCAST_CONTENT_TYPE = "podcast_episode"
 URL_DIRECT_EXCLUDED_SOURCE_PREFIXES = ("docs_", "github_")
 URL_DIRECT_EXCLUDED_CONTENT_TYPES = frozenset({"github_release", "github_repository"})
@@ -426,6 +429,9 @@ def _intake_reason(article: ArticleRecord, analysis: ArticleAnalysisRecord, *,
     ).kind
     if kind in EXCLUDED_KINDS:
         return f"kind:{kind}"
+    genre = str(getattr(analysis, "content_genre", "") or "").strip().lower()
+    if genre in EXCLUDED_GENRES:
+        return f"genre:{genre}"
     return ""
 
 

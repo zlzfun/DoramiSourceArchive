@@ -533,12 +533,16 @@ def test_scan_pending_exclusions(tmp_path):
     _article(engine, "unanalyzed", "Not analysed yet")
     _article(engine, "kind_paper", "Model says this is a paper")
     _analysis(engine, "kind_paper", content_kind="paper", genre="research_paper")
+    # 汇编体裁(GitHub Trending 日榜一类):内容类型是 project,靠体裁 aggregation 拦(生产回放发现,方案 §13)
+    _article(engine, "trending", "GitHub Trending 日榜 · 2026-10-11", source_id="github_trending_daily")
+    _analysis(engine, "trending", content_kind="project", genre="aggregation")
     with Session(engine) as session:
         assert ea.scan_pending(session, now=NOW) == 1
     assert _ledger(engine, "ok").status == "pending"
     assert _ledger(engine, "paper").last_error == "kind:paper"
     assert _ledger(engine, "kind_paper").last_error == "kind:paper"
     assert _ledger(engine, "digest").last_error == "kind:digest"
+    assert _ledger(engine, "trending").last_error == "genre:aggregation"
     assert _ledger(engine, "pod").last_error == "podcast"
     for article_id in ("private", "owned", "cred"):
         assert _ledger(engine, article_id).status == "skipped"

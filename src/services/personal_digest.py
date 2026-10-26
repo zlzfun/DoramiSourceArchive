@@ -104,6 +104,10 @@ SHANGHAI = ZoneInfo("Asia/Shanghai")
 POLICY_VERSION = "personal-digest-v2"
 # 「另见 N 篇」每条最多记的同事件成员数(快照体量上限;事件层成员本就以可见成员为准)
 RELATED_SOURCES_LIMIT = 10
+# 跨期事件抑制看最近几期(按日期取每天最新完成版):事件按首篇 48h 关窗,只看昨天会出现
+# 「第 D 天出现、D+1 来了新成员、D+2 再出」(生产 14 天回放 147 条里 6 条,方案 §13);两期与
+# 头条通道的前两期实体抑制同口径。同一篇文章 id 的排除也看这两期(72h 回退窗会把两天前的稿再捞回来)。
+EVENT_SUPPRESS_EDITIONS = PERSONAL_DIGEST_BREAKING_SUPPRESS_EDITIONS
 PRIVATE_SOURCE_PREFIX = "user_rss_"
 DEFAULT_PRIVATE_FRESHNESS_MINUTES = 60
 GENERATION_LEASE_SECONDS = 300
@@ -1306,26 +1310,6 @@ def _latest_edition(
     ).first()
 
 
-def _previous_edition_article_ids(
-    session: Session, username: str, report_date: str, *, lanes: Iterable[str] | None = None
-) -> set[str]:
-    """昨天最新完成版的条目文章 id;``lanes`` 给定时只取这些通道的条目(issue #103 升级例外只看头条)。"""
-
-    previous_date = (dt.date.fromisoformat(report_date) - dt.timedelta(days=1)).isoformat()
-    previous = _latest_completed_edition(session, username, previous_date)
-    if previous is None or previous.id is None:
-        return set()
-    query = select(PersonalDigestItemRecord.article_id).where(
-        PersonalDigestItemRecord.edition_id == previous.id,
-        PersonalDigestItemRecord.article_id.is_not(None),
-    )
-    lane_values = sorted({str(lane) for lane in (lanes or ())})
-    if lane_values:
-        query = query.where(PersonalDigestItemRecord.selection_lane.in_(lane_values))
-    rows = session.exec(query).all()
-    return {str(article_id) for article_id in rows if article_id}
-
-
 def _event_id_map(session: Session, article_ids: Iterable[str]) -> dict[str, int]:
     """article_id → 所属事件 ID(事件层当前归属;一篇最多属于一个事件)。"""
 
@@ -1341,9 +1325,9 @@ def _event_id_map(session: Session, article_ids: Iterable[str]) -> dict[str, int
 
 
 def _previous_edition_event_ids(session: Session, article_ids: Iterable[str]) -> set[int]:
-    """昨天版面各条目(任一分区)所属的事件:今天整个事件抑制(issue #103)。
+    """此前版面各条目(任一分区)所属的事件:今天整个事件抑制(issue #103)。
 
-    按事件层**当前**归属查,不读昨天的快照——管理员事后合并 / 摘出会改归属,以改后的为准。
+    按事件层**当前**归属查,不读当时的快照——管理员事后合并 / 摘出会改归属,以改后的为准。
     """
 
     return set(_event_id_map(session, article_ids).values())
@@ -1365,10 +1349,12 @@ def _recent_edition_article_ids(
     report_date: str,
     *,
     editions: int = PERSONAL_DIGEST_VALUE_SUPPRESS_EDITIONS,
+    lanes: Iterable[str] | None = None,
 ) -> set[str]:
-    """读者此前 N 期(按日期,每天取最新的完成版)早报里出现过的文章,任一分区都算。
+    """读者此前 N 期(按日期,每天取最新的完成版)早报里出现过的文章;``lanes`` 给定时只取这些通道。
 
-    「深度阅读」「播客精选」的窗口是 7 天,同一篇好文不该连着几天出现(issue #178 第三波)。
+    「深度阅读」「播客精选」的窗口是 7 天,同一篇好文不该连着几天出现(issue #178 第三波);
+    事件层跨期抑制看前两期(issue #103)。
     """
 
     if editions <= 0:
@@ -1395,12 +1381,14 @@ def _recent_edition_article_ids(
             break
     if not chosen:
         return set()
-    article_ids = session.exec(
-        select(PersonalDigestItemRecord.article_id).where(
-            PersonalDigestItemRecord.edition_id.in_(list(chosen.values())),
-            PersonalDigestItemRecord.article_id.is_not(None),
-        )
-    ).all()
+    query = select(PersonalDigestItemRecord.article_id).where(
+        PersonalDigestItemRecord.edition_id.in_(list(chosen.values())),
+        PersonalDigestItemRecord.article_id.is_not(None),
+    )
+    lane_values = sorted({str(lane) for lane in (lanes or ())})
+    if lane_values:
+        query = query.where(PersonalDigestItemRecord.selection_lane.in_(lane_values))
+    article_ids = session.exec(query).all()
     return {str(article_id) for article_id in article_ids if article_id}
 
 
@@ -2130,17 +2118,23 @@ def generate_personal_digest(
         policy = interest_only_policy(policy)
 
     tag_display_names = _interest_display_names(session, interests)
-    previous_article_ids = _previous_edition_article_ids(session, username, report_date)
-    # issue #103:昨天版面(任一分区)上过的事件今天在订阅 ∪ 兴趣池与降级回退整组抑制;
-    # 被抑制的候选记下来,进编排说明行的 same_event_previous_day。
-    # 升级例外(用户 2026-10-23 目检拍板):头条池只剔除昨天**以头条身份**出现过的事件——昨天只是
+    previous_article_ids = _recent_edition_article_ids(
+        session, username, report_date, editions=EVENT_SUPPRESS_EDITIONS
+    )
+    # issue #103:前两期版面(任一分区)上过的事件今天在订阅 ∪ 兴趣池与降级回退整组抑制
+    # (只看昨天会让 D+2 再出,方案 §13);被抑制的候选记下来,进编排说明行的 same_event_previous_day。
+    # 升级例外(用户 2026-10-23 目检拍板):头条池只剔除前两期**以头条身份**出现过的事件——此前只是
     # 精选里一条低分稿、今天同事件出现够头条资格的报道(官方一手 / 多源印证)时,允许以头条出现,
     # 不然事件升级为重大新闻的那一刻会被整组抑制吞掉;既有的前两期实体抑制照旧叠加。
-    previous_event_ids = _previous_edition_event_ids(session, previous_article_ids)
+    previous_event_ids = _previous_edition_event_ids(
+        session,
+        _recent_edition_article_ids(session, username, report_date, editions=EVENT_SUPPRESS_EDITIONS),
+    )
     previous_headline_event_ids = _previous_edition_event_ids(
         session,
-        _previous_edition_article_ids(
-            session, username, report_date, lanes=(SelectionLane.BREAKING.value,)
+        _recent_edition_article_ids(
+            session, username, report_date,
+            editions=EVENT_SUPPRESS_EDITIONS, lanes=(SelectionLane.BREAKING.value,),
         ),
     )
     # 分池记:订阅 ∪ 兴趣池的计数与 candidate_count 同范围进说明行;头条池另记全版口径(codex R1 P2)
