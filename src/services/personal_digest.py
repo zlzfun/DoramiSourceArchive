@@ -2126,10 +2126,7 @@ def generate_personal_digest(
     # 升级例外(用户 2026-10-23 目检拍板):头条池只剔除前两期**以头条身份**出现过的事件——此前只是
     # 精选里一条低分稿、今天同事件出现够头条资格的报道(官方一手 / 多源印证)时,允许以头条出现,
     # 不然事件升级为重大新闻的那一刻会被整组抑制吞掉;既有的前两期实体抑制照旧叠加。
-    previous_event_ids = _previous_edition_event_ids(
-        session,
-        _recent_edition_article_ids(session, username, report_date, editions=EVENT_SUPPRESS_EDITIONS),
-    )
+    previous_event_ids = _previous_edition_event_ids(session, previous_article_ids)
     previous_headline_event_ids = _previous_edition_event_ids(
         session,
         _recent_edition_article_ids(
