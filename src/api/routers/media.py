@@ -92,11 +92,11 @@ def _require_store():
 
 
 def _article_url_statuses(store, rows: List[tuple]) -> Dict[str, List[Dict[str, Any]]]:
-    """逐篇提取图链并批量查缓存状态：rows 为 (article_id, content, extensions_json) 列表，
+    """逐篇提取图链并批量查缓存状态：rows 为 (article_id, content, extensions_json, source_url) 列表，
     返回 article_id → [{url, status, error}]。"""
     per_article_urls = {
-        article_id: extract_image_urls(content, extensions_json)
-        for article_id, content, extensions_json in rows
+        article_id: extract_image_urls(content, extensions_json, source_url)
+        for article_id, content, extensions_json, source_url in rows
     }
     all_urls = [u for urls in per_article_urls.values() for u in urls]
     status_map = store.url_status_map(all_urls)
@@ -133,6 +133,7 @@ async def media_heatmap(
                 ArticleRecord.fetched_date,
                 ArticleRecord.content,
                 ArticleRecord.extensions_json,
+                ArticleRecord.source_url,
             )
             .where(ArticleRecord.fetched_date >= cutoff)  # ISO 串字典序即时间序
         )
@@ -147,12 +148,12 @@ async def media_heatmap(
             this_year = datetime.date.today().year
             years = list(range(this_year, first_year - 1, -1))
 
-    statuses = _article_url_statuses(store, [(a[0], a[2], a[3]) for a in articles])
+    statuses = _article_url_statuses(store, [(a[0], a[2], a[3], a[4]) for a in articles])
     day_agg: Dict[str, Dict[str, int]] = defaultdict(
         lambda: {"articles": 0, "with_images": 0, "images_total": 0,
                  "cached": 0, "failed": 0, "pending": 0}
     )
-    for article_id, fetched_date, _content, _extensions_json in articles:
+    for article_id, fetched_date, _content, _extensions_json, _source_url in articles:
         day = (fetched_date or "")[:10]
         if not day:
             continue
@@ -190,12 +191,13 @@ async def media_day_detail(date: str):
                 ArticleRecord.source_id,
                 ArticleRecord.content,
                 ArticleRecord.extensions_json,
+                ArticleRecord.source_url,
             )
             .where(ArticleRecord.fetched_date.like(f"{date}%"))
             .order_by(ArticleRecord.fetched_date)
         ).all()
     statuses = _article_url_statuses(
-        store, [(a.id, a.content, a.extensions_json) for a in articles]
+        store, [(a.id, a.content, a.extensions_json, a.source_url) for a in articles]
     )
     payload = []
     for a in articles:
@@ -230,7 +232,7 @@ async def media_article_prefetch(article_id: str):
         [article_id], concurrency=app_module.settings.media.prefetch_concurrency, force=True
     )
     images = _article_url_statuses(
-        store, [(article.id, article.content, article.extensions_json)]
+        store, [(article.id, article.content, article.extensions_json, article.source_url)]
     )[article_id]
     return {
         "article_id": article_id,
@@ -264,11 +266,11 @@ async def media_backfill():
         for article_id in ids:
             with Session(engine) as session:
                 row = session.exec(
-                    select(ArticleRecord.content, ArticleRecord.extensions_json)
+                    select(ArticleRecord.content, ArticleRecord.extensions_json, ArticleRecord.source_url)
                     .where(ArticleRecord.id == article_id)
                 ).first()
-            content, extensions_json = row if row else (None, None)
-            urls = extract_image_urls(content, extensions_json)
+            content, extensions_json, source_url = row if row else (None, None, None)
+            urls = extract_image_urls(content, extensions_json, source_url)
             if urls:
                 with_images += 1
                 counts = await store.prefetch_urls(urls, concurrency=concurrency)

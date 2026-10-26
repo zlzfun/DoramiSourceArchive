@@ -26,7 +26,7 @@ def _candidate(
     score: float = 8.0,
     tags: tuple[str, ...] = (),
     genre: ContentGenre = ContentGenre.INDUSTRY_NEWS,
-    group: int | None = None,
+    event: int | None = None,
     published: str | None = None,
     role: str = "media",
     shape: str = "article",
@@ -43,7 +43,7 @@ def _candidate(
         score_reason="reason",
         content_genre=genre,
         tag_codes=tags,
-        duplicate_group_id=group,
+        event_id=event,
         source_role=role,
         content_shape=shape,
     )
@@ -84,11 +84,14 @@ def test_interest_ceiling_applies_to_actual_sparse_output():
     assert sum(item.lane == "quality" for item in selected) == 1
 
 
-def test_cross_lane_event_conflict_does_not_hide_a_larger_legal_set():
+def test_cross_lane_same_event_keeps_the_representative_not_the_larger_set():
+    """同事件先定代表再分通道(issue #103):事件 7 的代表是 a01(同为媒体取分高),a03 不再作为
+    「正好能填质量位」的替身入选;此前这里会选 a03 + a02 以凑更大的集合。"""
     candidates = [
-        _candidate(1, score=9.5, tags=("agent",), group=7),
+        _candidate(1, score=9.5, tags=("agent",), event=7),
         _candidate(2, score=9.0, tags=("agent",)),
-        _candidate(3, score=8.5, tags=("other",), group=7),
+        _candidate(3, score=8.5, tags=("other",), event=7),
+        _candidate(4, score=8.0),
     ]
 
     selected = select_digest_articles(
@@ -96,8 +99,22 @@ def test_cross_lane_event_conflict_does_not_hide_a_larger_legal_set():
         [UserInterestDTO(tag_code="agent", stance=InterestStance.FOLLOW)],
     )
 
-    assert [item.article_id for item in selected] == ["a03", "a02"]
-    assert [item.lane for item in selected] == ["quality", "interest"]
+    assert [item.article_id for item in selected] == ["a01", "a04"]
+    assert [item.lane for item in selected] == ["interest", "quality"]
+
+
+def test_same_event_collapses_to_the_representative_by_official_then_non_social_then_score():
+    """issue #103 验收第一条:官方 8.0 压过媒体 8.5;同为官方时非社交的博文压过推文;同为媒体取分高。"""
+    official = _candidate(1, score=8.0, event=7, role="official", source="openai")
+    media = _candidate(2, score=8.5, event=7, source="media-a")
+    tweet = _candidate(3, score=9.0, event=8, role="official", shape="social", source="x-openai")
+    blog = _candidate(4, score=8.2, event=8, role="official", source="openai-blog")
+    lone = _candidate(5, score=7.0)
+
+    selected = select_digest_articles([official, media, tweet, blog, lone])
+
+    assert [item.article_id for item in selected] == ["a04", "a01", "a05"]
+    assert all(item.lane == "quality" for item in selected)
 
 
 def test_quality_threshold_is_a_hard_boundary():
@@ -128,7 +145,7 @@ def test_no_interests_is_quality_only_and_repeatable():
 
 def test_same_event_never_relaxes_and_source_limit_relaxes_deterministically():
     candidates = [
-        _candidate(i, source="only-source", score=9.5 - i * 0.1, group=7 if i in {0, 1} else None)
+        _candidate(i, source="only-source", score=9.5 - i * 0.1, event=7 if i in {0, 1} else None)
         for i in range(6)
     ]
     policy = DigestSelectionPolicy(target_items=5, per_source_max=2)
@@ -228,6 +245,16 @@ def test_breaking_merges_shared_entities_and_prefers_official_article_over_tweet
     assert [item.article_id for item in selected] == ["a02"]
     assert selected[0].breaking_source_count == 4
     assert selected[0].event_entity_codes == ("entity.chatgpt", "entity.openai")
+
+
+def test_breaking_groups_the_same_event_id_even_without_shared_entities():
+    """issue #103:事件层归属恒并——同 event_id 的官方稿与无实体标签的推文是一个事件,只出一条代表。"""
+    official = _candidate(1, score=9.5, tags=("entity.openai",), event=7, role="official")
+    tweet = _candidate(2, score=9.0, event=7, shape="social", source="x_openai")
+    unrelated = _candidate(3, score=9.2, tags=("entity.openai",))   # 同实体仍按既有口径并入分量
+    picked = select_breaking_events([official, tweet, unrelated])
+    assert [item.article_id for item in picked] == [official.article_id]
+    assert picked[0].breaking_source_count == 3
 
 
 def test_breaking_suppresses_entities_seen_in_recent_headlines_and_respects_cap():
@@ -396,8 +423,8 @@ def test_value_lane_ranks_by_content_value_not_news_and_keeps_hard_rules():
         _valued(1, 7.4, score=9.0, source="s1"),
         _valued(2, 8.6, score=3.0, source="s2"),
         _valued(3, 8.1, score=4.0, source="s2"),          # 同源第二篇:每源 1 篇
-        _valued(4, 8.0, score=4.0, source="s3", group=7),
-        _valued(5, 7.9, score=4.0, source="s4", group=7),  # 同事件第二篇
+        _valued(4, 8.0, score=4.0, source="s3", event=7),
+        _valued(5, 7.9, score=4.0, source="s4", event=7),  # 同事件第二篇
         _valued(6, 6.9, score=8.0, source="s5"),          # 门槛之下
         _valued(7, 9.5, kind="news", source="s6"),        # 资讯不进「深度阅读」
         _valued(8, 9.6, source="s7", shape="podcast"),    # 播客不进「深度阅读」

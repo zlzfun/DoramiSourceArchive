@@ -1,4 +1,4 @@
-# 生产部署(issue #102 自动部署流水线,docs/auto-deploy-plan.md §4.1–§4.3)。
+# 生产部署(issue #102 自动部署流水线,docs/archive/auto-deploy-plan.md §4.1–§4.3)。
 #
 # 两个入口共用同一个 job:
 #   · workflow_call —— release.yml 建完 Release 后 `needs: release` 串联调用,带核验过的 tag + target_sha;

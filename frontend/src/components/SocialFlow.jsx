@@ -11,7 +11,7 @@ import { mediaProxyUrl } from '../api';
 
 /* 社交媒体流 —— 阅读器第三容器(shape=social)的呈现形态。
    按 docs/design/dorami-social-quiet.html 样页复刻;设计决策见
-   docs/social-x-wave-plan.md 第 3 节。要点:
+   docs/archive/social-x-wave-plan.md 第 3 节。要点:
    · 占「条目列 + 阅读窗」整幅、单列宽卡、全文直出(推文太短,配阅读窗会空旷);
    · 不展示点赞/转发/评论数 —— 抓取时刻的数字是永久快照,三天后仍显示当时数值
      等于主动展示错误信息(字段照常入库,只是不展示);

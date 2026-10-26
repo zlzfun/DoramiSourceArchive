@@ -68,3 +68,20 @@ def seed_default_accounts(engine, accounts=(("admin", "admin", "admin"), ("user"
     with Session(engine) as session:
         for username, password, role in accounts:
             accounts_service.create_user(session, username, password, role)
+
+
+# Ordinary API tests may configure fake LLM credentials and assert exact request
+# counts. Background title generation is driven explicitly in its service tests;
+# do not let lifespan race the endpoint under test or send an unstubbed request.
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def idle_automatic_title_worker(monkeypatch):
+    import asyncio
+    from services import title_translation
+
+    async def idle(_engine):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(title_translation, "worker_loop", idle)

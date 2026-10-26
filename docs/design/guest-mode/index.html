@@ -80,7 +80,7 @@
   </div>
 
   <section class="sh-card sh-rules">
-    <h2>不随画面变化的规则<small>详见 docs/plans/issue-213-guest-mode.md</small></h2>
+    <h2>不随画面变化的规则<small>详见 docs/archive/issue-213-guest-mode.md</small></h2>
     <ul>
       <li><b>身份</b>:每位访客一个身份 <code>guest:v:&lt;id&gt;</code>,已读、AI 计次、阅读计量都按它分开;订阅范围、共享早报与授权落到保留账号 <code>guest:shared</code>(不能登录、不进账户名单)。</li>
       <li><b>门控</b>:游客只能访问白名单里的端点,新端点默认不开放;被拒一律回 403 <code>login_required</code>(不回 401,否则前端会当成登录过期踢回登录页)。</li>

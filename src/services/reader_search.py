@@ -1,6 +1,6 @@
 """订阅域问答检索 (src/services/reader_search.py) — 「LLM 计划检索 + FTS5」两段式。
 
-v3.30 检索扶正波(方案 docs/rag-retirement-plan.md §2):取代向量 RAG 成为
+v3.30 检索扶正波(方案 docs/archive/rag-retirement-plan.md §2):取代向量 RAG 成为
 scope=subscription 问答的主路径。管线:
 
   意图分流(闲聊/对话元问题 → 不检索纯对话;时效浏览型 → 直接时序窗口,不检索)

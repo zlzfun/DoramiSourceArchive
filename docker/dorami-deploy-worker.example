@@ -383,7 +383,7 @@ step_in_progress() {
         mv "$IN_PROGRESS" "$STATE_DIR/closed-${txn}.json" || die 24 "归档事务 $txn 失败"
         return 0
     fi
-    die 20 "存在已切换未收口的事务 $txn(target $t_tag ${t_sha:0:7}):先按 docs/release-process.md 恢复,再 dorami-deploy-worker --close-in-progress"
+    die 20 "存在已切换未收口的事务 $txn(target $t_tag ${t_sha:0:7}):先按 docs/ops/release-process.md 恢复,再 dorami-deploy-worker --close-in-progress"
 }
 
 BASE_SHA=""; BASE_REF=""; DIRECTION="unknown"; LS_STALE=0; CUR_BACKEND_CID=""; CUR_NGINX_CID=""

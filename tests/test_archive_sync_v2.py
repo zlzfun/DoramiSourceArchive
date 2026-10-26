@@ -1118,6 +1118,18 @@ def test_public_media_reference_scans_past_substring_false_positives(tmp_path):
         assert archive_sync_v2.is_public_media_reference(session, url) is True
 
 
+def test_public_media_reference_resolves_relative_urls_with_exact_origin_scope(tmp_path):
+    sink = _sink(tmp_path, "relative-media.db")
+    with Session(sink.engine) as session:
+        session.add(_article(content="![face](/media/face.webp)", source_url="https://openai.com/index/demo"))
+        session.add(_article("private", source_id="user_rss_private", content="![](/private.webp)",
+                             source_url="https://openai.com/index/demo"))
+        session.commit()
+        assert archive_sync_v2.is_public_media_reference(session, "https://openai.com/media/face.webp")
+        assert not archive_sync_v2.is_public_media_reference(session, "https://evil.test/media/face.webp")
+        assert not archive_sync_v2.is_public_media_reference(session, "https://openai.com/private.webp")
+
+
 def test_media_manifest_rejects_path_traversal_extension(tmp_path):
     sink = _sink(tmp_path, "media-traversal.db")
     body = b"image bytes"
@@ -2337,7 +2349,8 @@ def test_tombstone_wins_when_an_older_upsert_page_is_replayed(tmp_path):
         assert state.revision == int(tombstone_rows[0]["revision"])
 
 
-def test_media_delta_is_driven_by_current_article_reference_revision(tmp_path):
+@pytest.mark.parametrize("relative", [False, True])
+def test_media_delta_is_driven_by_current_article_reference_revision(tmp_path, relative):
     sink = _sink(tmp_path, "media-reference-revision.db")
     url = "https://img.test/reference-driven.jpg"
     key = hashlib.sha256(url.encode()).hexdigest()
@@ -2368,7 +2381,8 @@ def test_media_delta_is_driven_by_current_article_reference_revision(tmp_path):
 
     with Session(sink.engine) as session:
         article = session.get(ArticleRecord, "article-1")
-        article.content = f"![new reference]({url})"
+        article.source_url = "https://img.test/article"
+        article.content = "![new reference](/reference-driven.jpg)" if relative else f"![new reference]({url})"
         session.add(article)
         session.commit()
         article_revision = session.get(

@@ -18,6 +18,8 @@ from models.db import (  # noqa: E402
     ArticleRecord,
     ArticleTagAssignmentRecord,
     CmsTagRecord,
+    EventMemberRecord,
+    EventRecord,
     PersonalDigestEditionRecord,
     PersonalDigestItemRecord,
     ReaderSubscriptionRecord,
@@ -88,13 +90,14 @@ def _article(
     score: float | None = 8.0,
     tagging_status: str = "succeeded",
     genre: str = "industry_news",
+    content_type: str = "rss_article",
 ) -> tuple[ArticleRecord, ArticleAnalysisRecord | None]:
     article_id = f"article-{number:02d}"
     published_at = published_at or NOW - dt.timedelta(hours=number)
     article = ArticleRecord(
         id=article_id,
         title=f"Article {number}",
-        content_type="rss_article",
+        content_type=content_type,
         source_id=source,
         source_url=f"https://example.com/{article_id}",
         publish_date=published_at.isoformat(),
@@ -1622,7 +1625,7 @@ def _seed_valued(
     return article
 
 
-def _past_edition(session: Session, report_date: str, article_ids: list[str]) -> None:
+def _past_edition(session: Session, report_date: str, article_ids: list[str], *, lane: str = "read") -> None:
     stamp = f"{report_date}T08:30:00+08:00"
     edition = PersonalDigestEditionRecord(
         owner_username="alice",
@@ -1642,7 +1645,7 @@ def _past_edition(session: Session, report_date: str, article_ids: list[str]) ->
             edition_id=edition.id,
             article_id=article_id,
             position=position,
-            selection_lane="read",
+            selection_lane=lane,
             quality_score_snapshot=5.0,
             snapshot_json="{}",
             created_at=stamp,
@@ -1828,3 +1831,293 @@ def test_assign_positions_orders_value_sections_by_content_value():
     _assign_positions(records)
 
     assert [r.article_id for r in records] == ["news", "fallback", "read-high", "read-low", "pod"]
+
+
+# ── issue #103(事件层 wave 2):个人早报同事件去重消费事件层归属 ──
+
+
+def _event_with(session: Session, *article_ids: str, hours_ago: float = 3.0) -> EventRecord:
+    """把给定文章归成一个事件(直接落 events / event_members,等价于分配服务已判定)。"""
+
+    stamp = (NOW - dt.timedelta(hours=hours_ago)).isoformat()
+    event = EventRecord(
+        status="open", title="", title_source="", first_seen_at=stamp, last_member_at=stamp,
+        member_count=len(article_ids), publisher_count=len(article_ids), created_at=stamp, updated_at=stamp,
+    )
+    session.add(event)
+    session.flush()
+    for article_id in article_ids:
+        session.add(EventMemberRecord(
+            event_id=event.id, article_id=article_id, publisher_key="", report_at=stamp, first_seen_at=stamp,
+            assigned_by="llm", is_representative=False, created_at=stamp,
+        ))
+    session.flush()
+    return event
+
+
+def test_same_event_candidates_collapse_to_one_item_with_related_sources(storage):
+    """同一事件的两篇订阅内候选只出一条;被并掉的那篇挂在代表条目的「另见」里,编排说明行计 1。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a,rss_b")])
+        session.flush()
+        first = _seed_article(session, 1, source="rss_a", score=8.0)
+        echo = _seed_article(session, 2, source="rss_b", score=8.5)   # 同事件、分更高 → 代表
+        other = _seed_article(session, 3, source="rss_a", score=7.0)
+        session.flush()
+        event = _event_with(session, first.id, echo.id)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert result.status == "ready"
+        assert [item.article_id for item in result.items] == [echo.id, other.id]
+        rep = result.items[0]
+        snapshot = json.loads(rep.snapshot_json)
+        assert snapshot["event_id"] == event.id
+        assert [row["article_id"] for row in snapshot["related_sources"]] == [first.id]
+        link = snapshot["related_sources"][0]
+        assert link["url"] == first.source_url and link["source_name"] and link["title"] == first.title
+        assert json.loads(rep.ranking_features_json)["same_event_merged"] == 1
+        assert json.loads(rep.ranking_features_json)["event_id"] == event.id
+        plain = json.loads(result.items[1].snapshot_json)
+        assert plain["event_id"] is None and plain["related_sources"] == []
+        stats = json.loads(result.edition.selection_stats_json)
+        assert stats["same_event_merged"] == 1 and stats["same_event_previous_day"] == 0
+
+
+def test_headline_event_is_not_repeated_in_the_curated_lanes(storage):
+    """头条已代表的事件,兴趣 / 分数通道不再出同事件的另一篇(事件键跨三条通道共享)。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        session.flush()
+        own = _seed_article(session, 1, score=8.0)                                   # 订阅内媒体稿
+        headline = _seed_article(session, 2, source="rss_openai_news", score=9.6)   # 官方,订阅外 → 头条
+        filler = _seed_article(session, 3, score=7.5)
+        session.flush()
+        _event_with(session, own.id, headline.id)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert [(item.article_id, item.selection_lane) for item in result.items] == [
+            (headline.id, "breaking"), (filler.id, "quality"),
+        ]
+        head = json.loads(result.items[0].snapshot_json)
+        assert [row["article_id"] for row in head["related_sources"]] == [own.id]
+        assert json.loads(result.edition.selection_stats_json)["same_event_merged"] == 1
+
+
+def test_yesterdays_event_is_suppressed_as_a_whole_today_except_an_escalation_headline(storage):
+    """昨天版面上过的事件(任一成员)今天在精选里整组不入选;升级例外:昨天只是精选里一条稿,
+    今天同事件出现够头条资格的官方稿时允许以头条出现,它的「另见」列出昨天那篇(用户目检拍板)。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        session.flush()
+        yesterday_pick = _seed_article(session, 1, score=8.0, published_at=NOW - dt.timedelta(hours=20))
+        today_echo = _seed_article(session, 2, score=8.8, published_at=NOW - dt.timedelta(hours=2))
+        official_today = _seed_article(session, 3, source="rss_openai_news", score=9.6)
+        fresh = _seed_article(session, 4, score=7.0)
+        session.flush()
+        _event_with(session, yesterday_pick.id, today_echo.id, official_today.id)
+        _past_edition(session, (NOW.date() - dt.timedelta(days=1)).isoformat(), [yesterday_pick.id])
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert [(item.article_id, item.selection_lane) for item in result.items] == [
+            (official_today.id, "breaking"), (fresh.id, "quality"),
+        ]
+        head = json.loads(result.items[0].snapshot_json)
+        assert {row["article_id"] for row in head["related_sources"]} == {yesterday_pick.id, today_echo.id}
+        stats = json.loads(result.edition.selection_stats_json)
+        # 订阅 ∪ 兴趣池里 today_echo 被昨日事件剔除;头条池不剔(昨天不是头条),它在头条池里算并入头条;
+        # 昨天那篇按文章 id 排除,不计
+        assert stats["same_event_previous_day"] == 1 and stats["same_event_previous_day_all"] == 1
+        assert stats["same_event_merged"] == 0 and stats["same_event_merged_all"] == 1
+
+
+def test_yesterdays_headline_event_stays_suppressed_even_for_an_official_follow_up(storage):
+    """昨天本身就是头条的事件,今天同事件的官方后续不再成头条(与既有前两期实体抑制叠加,无实体标签也生效)。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        session.flush()
+        yesterday_head = _seed_article(
+            session, 1, source="rss_openai_news", score=9.5, published_at=NOW - dt.timedelta(hours=20)
+        )
+        official_today = _seed_article(session, 2, source="rss_openai_news", score=9.6)
+        fresh = _seed_article(session, 3, score=7.0)
+        session.flush()
+        _event_with(session, yesterday_head.id, official_today.id)
+        _past_edition(session, (NOW.date() - dt.timedelta(days=1)).isoformat(), [yesterday_head.id], lane="breaking")
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert [item.article_id for item in result.items] == [fresh.id]
+        stats = json.loads(result.edition.selection_stats_json)
+        assert stats["same_event_previous_day"] == 0 and stats["same_event_previous_day_all"] == 1
+
+
+def test_degraded_fallback_skips_the_event_already_headlined(storage):
+    """无合格精选但有同事件头条时,「订阅源最新更新」不再放回同事件的媒体稿(codex R1 P2)。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        session.flush()
+        media = _seed_article(session, 1, score=4.0)                                # 订阅内,低于门槛
+        headline = _seed_article(session, 2, source="rss_openai_news", score=9.6)   # 官方,订阅外 → 头条
+        plain = _seed_article(session, 3, score=4.0)
+        session.flush()
+        _event_with(session, media.id, headline.id)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert result.status == "degraded"
+        assert [(item.article_id, item.selection_lane) for item in result.items] == [
+            (headline.id, "breaking"), (plain.id, "quality"),
+        ]
+        assert {json.loads(item.snapshot_json).get("event_id") for item in result.items} == {
+            json.loads(result.items[0].snapshot_json)["event_id"], None,
+        }
+
+
+def test_related_sources_only_list_reader_visible_members(storage):
+    """「另见」只列读者可见成员:隐藏源 / 私有源成员不出现;订阅外的可见成员照列。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        session.add(AppSettingRecord(key="reader_hidden_source_ids", value=json.dumps(["rss_hidden"])))
+        session.add(SourceConfigRecord(
+            source_id="user_rss_private01", name="private", source_type="rss",
+            owner_username="bob", created_at=NOW_ISO, updated_at=NOW_ISO,
+        ))
+        session.flush()
+        rep = _seed_article(session, 1, score=8.0)
+        hidden = _seed_article(session, 2, source="rss_hidden", score=7.0)
+        private = _seed_article(session, 3, source="user_rss_private01", score=7.0)
+        visible = _seed_article(session, 4, source="rss_other", score=6.0)
+        session.flush()
+        _event_with(session, rep.id, hidden.id, private.id, visible.id)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert [item.article_id for item in result.items] == [rep.id]
+        links = json.loads(result.items[0].snapshot_json)["related_sources"]
+        assert [row["article_id"] for row in links] == [visible.id]
+        assert json.loads(result.edition.selection_stats_json)["same_event_merged"] == 0
+
+
+def test_degraded_fallback_keeps_one_item_per_event(storage):
+    """降级版面的「订阅源最新更新」同事件只留最新一条,昨天上过的事件不出。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        session.flush()
+        newest = _seed_article(session, 1, score=4.0)
+        older_echo = _seed_article(session, 2, score=4.0)
+        plain = _seed_article(session, 3, score=4.0)
+        stale = _seed_article(session, 4, score=4.0)
+        yesterday_pick = _seed_article(session, 5, score=4.0, published_at=NOW - dt.timedelta(hours=20))
+        session.flush()
+        _event_with(session, newest.id, older_echo.id)
+        _event_with(session, stale.id, yesterday_pick.id)
+        _past_edition(session, (NOW.date() - dt.timedelta(days=1)).isoformat(), [yesterday_pick.id])
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert result.status == "degraded"
+        assert [item.article_id for item in result.items] == [newest.id, plain.id]
+        snapshot = json.loads(result.items[0].snapshot_json)
+        assert [row["article_id"] for row in snapshot["related_sources"]] == [older_echo.id]
+
+
+def test_event_that_never_made_yesterdays_edition_is_not_suppressed_today(storage):
+    """跨期抑制只看昨天**版面上出现过**的事件:昨天因分低没上报的事件,今天后续报道分高照常入选,
+    同事件只出一条、早先的低分稿挂在「另见」里(用户 2026-10-23 目检追问的场景)。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        session.flush()
+        early_low = _seed_article(session, 1, score=4.5, published_at=NOW - dt.timedelta(hours=30))   # 昨天没过门槛
+        shown_yesterday = _seed_article(session, 2, score=7.0, published_at=NOW - dt.timedelta(hours=28))
+        followup_high = _seed_article(session, 3, score=9.0, published_at=NOW - dt.timedelta(hours=3))  # 今天的强化报道
+        session.flush()
+        _event_with(session, early_low.id, followup_high.id, hours_ago=30)
+        _past_edition(session, (NOW.date() - dt.timedelta(days=1)).isoformat(), [shown_yesterday.id])
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert [item.article_id for item in result.items] == [followup_high.id]
+        snapshot = json.loads(result.items[0].snapshot_json)
+        assert [row["article_id"] for row in snapshot["related_sources"]] == [early_low.id]
+        stats = json.loads(result.edition.selection_stats_json)
+        assert stats["same_event_previous_day"] == 0
+
+
+def test_official_member_represents_the_event_in_the_curated_lanes(storage):
+    """精选通道里同事件的代表按「官方 > 非社交 > 分数 > 更早」(issue #103 验收第一条):订阅内官方稿 8.0
+    压过媒体转述 8.5 当代表,媒体稿进「另见」;官方稿不够头条线,仍走精选。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a,rss_openai_news")])
+        session.flush()
+        official = _seed_article(session, 1, source="rss_openai_news", score=8.0)   # 注册表官方源
+        echo = _seed_article(session, 2, source="rss_a", score=8.5)
+        other = _seed_article(session, 3, source="rss_a", score=7.0)
+        session.flush()
+        _event_with(session, official.id, echo.id)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert [(item.article_id, item.selection_lane) for item in result.items] == [
+            (official.id, "quality"), (other.id, "quality"),
+        ]
+        snapshot = json.loads(result.items[0].snapshot_json)
+        assert [row["article_id"] for row in snapshot["related_sources"]] == [echo.id]
+        assert json.loads(result.edition.selection_stats_json)["same_event_merged"] == 1
+
+
+def test_social_post_from_an_unregistered_source_never_outranks_the_article_as_representative(storage):
+    """来源无配置行也无注册类时,形态按文章 content_type 推(codex 检视 P2):同事件里 8.5 分的推文
+    让位给 8.0 分的文章当代表。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a,x_unknown_account")])
+        session.flush()
+        article = _seed_article(session, 1, source="rss_a", score=8.0)
+        tweet = _seed_article(session, 2, source="x_unknown_account", score=8.5, content_type="social_post")
+        session.flush()
+        _event_with(session, article.id, tweet.id)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert [item.article_id for item in result.items] == [article.id]
+        snapshot = json.loads(result.items[0].snapshot_json)
+        assert [row["article_id"] for row in snapshot["related_sources"]] == [tweet.id]
+
+
+def test_event_shown_two_editions_ago_is_still_suppressed_but_three_is_not(storage):
+    """跨期抑制看前两期(与 48h 事件窗、头条前两期实体抑制对齐,生产回放 §13):两天前上过的事件今天
+    仍整组抑制,三天前上过的不再抑制。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        session.flush()
+        two_days_ago = _seed_article(session, 1, score=7.0, published_at=NOW - dt.timedelta(hours=50))
+        echo_of_two = _seed_article(session, 2, score=8.8)
+        three_days_ago = _seed_article(session, 3, score=7.0, published_at=NOW - dt.timedelta(hours=74))
+        echo_of_three = _seed_article(session, 4, score=8.0)
+        fresh = _seed_article(session, 5, score=6.0)
+        session.flush()
+        _event_with(session, two_days_ago.id, echo_of_two.id, hours_ago=50)
+        _event_with(session, three_days_ago.id, echo_of_three.id, hours_ago=74)
+        _past_edition(session, (NOW.date() - dt.timedelta(days=3)).isoformat(), [three_days_ago.id])
+        _past_edition(session, (NOW.date() - dt.timedelta(days=2)).isoformat(), [two_days_ago.id])
+        _past_edition(session, (NOW.date() - dt.timedelta(days=1)).isoformat(), [])
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert [item.article_id for item in result.items] == [echo_of_three.id, fresh.id]
+        stats = json.loads(result.edition.selection_stats_json)
+        assert stats["same_event_previous_day"] == 1
+

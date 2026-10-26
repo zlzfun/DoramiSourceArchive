@@ -110,7 +110,7 @@ export default function SharedArticlePage({ token }) {
         </header>
         <div className="shared-body markdown-body">
           {body
-            ? <ReaderMarkdown resolveImageSrc={resolveImageSrc}>{body}</ReaderMarkdown>
+            ? <ReaderMarkdown sourceUrl={article.source_url} resolveImageSrc={resolveImageSrc}>{body}</ReaderMarkdown>
             : <p className="shared-empty-hint">这篇内容没有正文，点上方「查看原文」阅读完整内容。</p>}
         </div>
       </article>

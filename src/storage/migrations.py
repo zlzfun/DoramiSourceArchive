@@ -164,7 +164,7 @@ def ensure_migrated(db_url: str) -> None:
 # 路径在 begin_transaction 内先 drop 再 reinstall Archive Sync 触发器且 BEGIN IMMEDIATE——
 # 不是只读。本函数只用 MigrationContext 读 alembic_version(复数 heads)与 ScriptDirectory
 # 的 revision 图做 DAG 闭包比较,SQLite 连接 PRAGMA query_only,库文件不存在时不连接(否则
-# sqlite 会把它建出来)。状态语义(与 docs/auto-deploy-plan.md §4.6 一致):
+# sqlite 会把它建出来)。状态语义(与 docs/archive/auto-deploy-plan.md §4.6 一致):
 #   fresh                    无库文件 / 无业务表:pending 为完整目标链;是否放行由部署侧首装门决定
 #   legacy_adoption_required 有业务表无 alembic_version:ensure_migrated 会对齐基线并收养
 #   compatible               DB 当前 heads 都在目标图里:pending = 目标闭包 − 已应用闭包(拓扑序;多头/merge 自然成立)
@@ -337,7 +337,7 @@ def plan_migrations(db_url: str, *, script_location: Optional[str] = None) -> di
         return finish(
             "incompatible",
             f"数据库当前 revision 不在目标代码的迁移图里: {unknown}——可能是 DB 领先于目标代码、"
-            "目标缺少支线或迁移文件损坏;按 docs/release-process.md 恢复对应备份后重跑",
+            "目标缺少支线或迁移文件损坏;按 docs/ops/release-process.md 恢复对应备份后重跑",
             extra=unknown,
         )
     applied = _revision_closure(script, current_heads)

@@ -5,7 +5,7 @@
 把「看图」做成与文本调用同等的一等能力,但**只以文字形态**交付给消费方:入库分析、
 公共日报(补评 + 编辑)、读者问答、速读兜底拿到的都是一段「【图片内容】…」文本,
 有则并入正文补充、无则原样——未配置视觉模型时这段文本恒为空,各链路与今天逐字一致,
-读者面没有任何「配图已识别 / 未识别」的标记。方案见 docs/image-understanding-wave-plan.md。
+读者面没有任何「配图已识别 / 未识别」的标记。方案见 docs/archive/image-understanding-wave-plan.md。
 
 存储形态
 --------
@@ -56,7 +56,7 @@ from llm.client import (
     text_part,
 )
 from models.db import AppSettingRecord, ArticleRecord, ImageInsightRecord, MediaAssetRecord
-from services.media_store import extract_image_urls, url_hash_of
+from services.media_store import extract_image_urls, resolve_image_url, url_hash_of
 from services import error_redaction
 from services import user_sources as user_sources_service
 
@@ -228,12 +228,13 @@ def article_image_candidates(article: ArticleRecord, *, limit: int) -> List[Imag
             before = _strip_images(content[max(0, match.start() - 300):match.start()])
             positioned.append((match.start(), url, (attrs.get("alt") or "").strip(), before[-300:]))
     positioned.sort(key=lambda item: item[0])
-    allowed = set(extract_image_urls(content, article.extensions_json))
+    allowed = set(extract_image_urls(content, article.extensions_json, article.source_url))
     social_text = _strip_images(content)[:400]
     candidates: List[ImageCandidate] = []
     seen: set = set()
 
     def _push(url: str, alt: str, nearby: str) -> None:
+        url = resolve_image_url(url, article.source_url)
         if url in seen or url not in allowed:
             return
         seen.add(url)
@@ -243,7 +244,7 @@ def article_image_candidates(article: ArticleRecord, *, limit: int) -> List[Imag
         if len(candidates) >= limit:
             break
         _push(url, alt, nearby)
-    for url in extract_image_urls(content, article.extensions_json):
+    for url in extract_image_urls(content, article.extensions_json, article.source_url):
         if len(candidates) >= limit:
             break
         _push(url, "", social_text)

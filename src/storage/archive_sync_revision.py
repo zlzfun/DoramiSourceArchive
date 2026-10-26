@@ -63,6 +63,26 @@ def _state_values(
     """
 
 
+def _local_event(expr: str) -> str:
+    """``expr`` 指向的事件是本机产生的(authority_id = ''),才需要进 events 流。"""
+
+    return f"EXISTS (SELECT 1 FROM events e WHERE e.id = {expr} AND e.authority_id = '')"
+
+
+def _local_event_state(expr: str, clock: str, now: str) -> str:
+    """把 ``expr`` 指向的事件标为 upsert——仅当它是本机事件;供一条触发器同时归到两个事件用。"""
+
+    return f"""
+        INSERT INTO archive_sync_entity_states(
+          stream, identity, authority_id, revision, operation, updated_at
+        ) SELECT 'events', CAST({expr} AS TEXT), '', {clock}, 'upsert', {now}
+        WHERE {_local_event(expr)}
+        ON CONFLICT(stream, identity) DO UPDATE SET
+          authority_id = '', revision = excluded.revision,
+          operation = excluded.operation, updated_at = excluded.updated_at;
+    """
+
+
 def _trigger_sql(
     *, include_podcast_integrity: bool = True
 ) -> Iterable[tuple[str, str]]:
@@ -845,6 +865,249 @@ def _trigger_sql(
     """,
     )
 
+    # ── 事件层(issue #121):events / event_members / event_redirects 的变更一律归到所属事件
+    # (identity = events.id 文本化),只对本机产生的事件(authority_id = '')触发;事件物理删除落
+    # tombstone。events 删除用 AFTER:SQLite 先跑 FK 级联(成员 / 重定向的删除触发器会把父事件
+    # 标 upsert),再跑 AFTER 触发器,tombstone 最后落笔、不会被级联写回覆盖。
+    yield (
+        "archive_sync_event_insert",
+        f"""
+        CREATE TRIGGER archive_sync_event_insert AFTER INSERT ON events
+        WHEN NEW.authority_id = ''
+        BEGIN
+          {tick}
+          {_state_values("events", "CAST(NEW.id AS TEXT)", "upsert", clock, now)}
+        END
+    """,
+    )
+    yield (
+        "archive_sync_event_update",
+        f"""
+        CREATE TRIGGER archive_sync_event_update AFTER UPDATE ON events
+        WHEN OLD.authority_id = '' AND NEW.authority_id = ''
+        BEGIN
+          {tick}
+          {_state_values("events", "CAST(NEW.id AS TEXT)", "upsert", clock, now)}
+        END
+    """,
+    )
+    yield (
+        "archive_sync_event_delete",
+        f"""
+        CREATE TRIGGER archive_sync_event_delete AFTER DELETE ON events
+        WHEN OLD.authority_id = ''
+        BEGIN
+          {tick}
+          {_state_values("events", "CAST(OLD.id AS TEXT)", "tombstone", clock, now)}
+        END
+    """,
+    )
+    yield (
+        "archive_sync_event_member_insert",
+        f"""
+        CREATE TRIGGER archive_sync_event_member_insert AFTER INSERT ON event_members
+        WHEN {_local_event("NEW.event_id")}
+        BEGIN
+          {tick}
+          {_state_values("events", "CAST(NEW.event_id AS TEXT)", "upsert", clock, now)}
+        END
+    """,
+    )
+    yield (
+        "archive_sync_event_member_update",
+        f"""
+        CREATE TRIGGER archive_sync_event_member_update AFTER UPDATE ON event_members
+        WHEN {_local_event("NEW.event_id")} OR {_local_event("OLD.event_id")}
+        BEGIN
+          {tick}
+          {_local_event_state("NEW.event_id", clock, now)}
+          {_local_event_state("OLD.event_id", clock, now)}
+        END
+    """,
+    )
+    yield (
+        "archive_sync_event_member_delete",
+        f"""
+        CREATE TRIGGER archive_sync_event_member_delete AFTER DELETE ON event_members
+        WHEN {_local_event("OLD.event_id")}
+        BEGIN
+          {tick}
+          {_state_values("events", "CAST(OLD.event_id AS TEXT)", "upsert", clock, now)}
+        END
+    """,
+    )
+    yield (
+        "archive_sync_event_redirect_insert",
+        f"""
+        CREATE TRIGGER archive_sync_event_redirect_insert AFTER INSERT ON event_redirects
+        WHEN {_local_event("NEW.old_event_id")} OR {_local_event("NEW.new_event_id")}
+        BEGIN
+          {tick}
+          {_local_event_state("NEW.old_event_id", clock, now)}
+          {_local_event_state("NEW.new_event_id", clock, now)}
+        END
+    """,
+    )
+    yield (
+        "archive_sync_event_redirect_update",
+        f"""
+        CREATE TRIGGER archive_sync_event_redirect_update AFTER UPDATE ON event_redirects
+        WHEN {_local_event("NEW.old_event_id")} OR {_local_event("NEW.new_event_id")}
+          OR {_local_event("OLD.old_event_id")} OR {_local_event("OLD.new_event_id")}
+        BEGIN
+          {tick}
+          {_local_event_state("NEW.old_event_id", clock, now)}
+          {_local_event_state("NEW.new_event_id", clock, now)}
+          {_local_event_state("OLD.old_event_id", clock, now)}
+          {_local_event_state("OLD.new_event_id", clock, now)}
+        END
+    """,
+    )
+    yield (
+        "archive_sync_event_redirect_delete",
+        f"""
+        CREATE TRIGGER archive_sync_event_redirect_delete AFTER DELETE ON event_redirects
+        WHEN {_local_event("OLD.old_event_id")} OR {_local_event("OLD.new_event_id")}
+        BEGIN
+          {tick}
+          {_local_event_state("OLD.old_event_id", clock, now)}
+          {_local_event_state("OLD.new_event_id", clock, now)}
+        END
+    """,
+    )
+    # 成员文章的「可导出性」变了(源转私有 / 凭据 / 远端,或文章换源 / 移交 authority)→ 其事件重新
+    # 导出:导出侧按剩余可导出成员重建元数据,一个都不剩就以 tombstone 让接收端撤回(检视 R1 #2)。
+    # 凭据判定在 Python 侧(显式分类 + URL 推断),SQL 里只能按 url / params_json 变化粗判,宁多勿漏。
+    source_change = (
+        "NEW.owner_username IS NOT OLD.owner_username "
+        "OR NEW.collection_authority_id IS NOT OLD.collection_authority_id "
+        "OR NEW.params_json IS NOT OLD.params_json OR NEW.url IS NOT OLD.url"
+    )
+    source_has_event_members = (
+        "EXISTS (SELECT 1 FROM event_members em "
+        "JOIN articles a ON a.id = em.article_id "
+        "JOIN events e ON e.id = em.event_id "
+        "WHERE a.source_id = NEW.source_id AND e.authority_id = '')"
+    )
+    source_event_states = f"""
+          INSERT INTO archive_sync_entity_states(
+            stream, identity, authority_id, revision, operation, updated_at
+          ) SELECT DISTINCT 'events', CAST(e.id AS TEXT), '', {clock}, 'upsert', {now}
+          FROM events e
+          JOIN event_members em ON em.event_id = e.id
+          JOIN articles a ON a.id = em.article_id
+          WHERE a.source_id = NEW.source_id AND e.authority_id = ''
+          ON CONFLICT(stream, identity) DO UPDATE SET authority_id = '',
+            revision = excluded.revision, operation = excluded.operation,
+            updated_at = excluded.updated_at;
+    """
+    yield (
+        "archive_sync_event_source_insert",
+        f"""
+        CREATE TRIGGER archive_sync_event_source_insert AFTER INSERT ON source_configs
+        WHEN {source_has_event_members}
+        BEGIN
+          {tick}
+          {source_event_states}
+        END
+    """,
+    )
+    yield (
+        "archive_sync_event_source_change",
+        f"""
+        CREATE TRIGGER archive_sync_event_source_change AFTER UPDATE ON source_configs
+        WHEN ({source_change}) AND {source_has_event_members}
+        BEGIN
+          {tick}
+          {source_event_states}
+        END
+    """,
+    )
+    yield (
+        "archive_sync_event_article_scope_change",
+        f"""
+        CREATE TRIGGER archive_sync_event_article_scope_change AFTER UPDATE ON articles
+        WHEN (NEW.source_id IS NOT OLD.source_id
+              OR NEW.analysis_authority_id IS NOT OLD.analysis_authority_id)
+          AND EXISTS (SELECT 1 FROM event_members em JOIN events e ON e.id = em.event_id
+                      WHERE em.article_id = NEW.id AND e.authority_id = '')
+        BEGIN
+          {tick}
+          INSERT INTO archive_sync_entity_states(
+            stream, identity, authority_id, revision, operation, updated_at
+          ) SELECT 'events', CAST(em.event_id AS TEXT), '', {clock}, 'upsert', {now}
+          FROM event_members em JOIN events e ON e.id = em.event_id
+          WHERE em.article_id = NEW.id AND e.authority_id = ''
+          ON CONFLICT(stream, identity) DO UPDATE SET authority_id = '',
+            revision = excluded.revision, operation = excluded.operation,
+            updated_at = excluded.updated_at;
+        END
+    """,
+    )
+    # 接收端围栏:authority 事件只接受同一 authority 的文章做成员——本机分配(含 user_rss_ 私有文章)
+    # 永远进不了同步来的事件。成员的 assigned_by 原样照抄生产端,所以不能拿它当「写者」标记。
+    for suffix, action in (
+        ("insert", "INSERT"),
+        ("update", "UPDATE OF event_id, article_id"),
+    ):
+        yield (
+            f"event_member_authority_guard_{suffix}",
+            f"""
+            CREATE TRIGGER event_member_authority_guard_{suffix}
+            BEFORE {action} ON event_members
+            WHEN EXISTS (
+              SELECT 1 FROM events e
+              WHERE e.id = NEW.event_id AND e.authority_id <> ''
+                AND NOT EXISTS (
+                  SELECT 1 FROM articles a
+                  WHERE a.id = NEW.article_id
+                    AND a.analysis_authority_id = e.authority_id
+                )
+            )
+            BEGIN
+              SELECT RAISE(ABORT, 'authority-owned event accepts only articles of the same authority');
+            END
+        """,
+        )
+
+
+_EVENT_TABLES = frozenset({"events", "event_members", "event_redirects"})
+
+_EVENT_TRIGGER_NAMES = frozenset(
+    {
+        "archive_sync_event_insert",
+        "archive_sync_event_update",
+        "archive_sync_event_delete",
+        "archive_sync_event_member_insert",
+        "archive_sync_event_member_update",
+        "archive_sync_event_member_delete",
+        "archive_sync_event_redirect_insert",
+        "archive_sync_event_redirect_update",
+        "archive_sync_event_redirect_delete",
+        "archive_sync_event_source_insert",
+        "archive_sync_event_source_change",
+        "archive_sync_event_article_scope_change",
+        "event_member_authority_guard_insert",
+        "event_member_authority_guard_update",
+    }
+)
+
+
+def _event_schema_ready(connection: Connection, tables: set[str]) -> bool:
+    """事件三表齐全,且 archive_sync_entity_states 的 stream CHECK 已含 'events'。
+
+    迁移链里 ed530f8224f9 建事件表、0919431adfa8 才放宽 CHECK;两者之间若装了事件触发器,
+    一次成员写入就会撞 CHECK。按 DDL 文本判断比沿迁移链传旗子更不易漏。
+    """
+
+    if not _EVENT_TABLES <= tables:
+        return False
+    row = connection.exec_driver_sql(
+        "SELECT sql FROM sqlite_master "
+        "WHERE type = 'table' AND name = 'archive_sync_entity_states'"
+    ).fetchone()
+    return bool(row and row[0] and "'events'" in str(row[0]))
+
 
 _PODCAST_TRIGGER_NAMES = frozenset(
     {
@@ -914,11 +1177,14 @@ def install_archive_sync_revision_triggers(
         "podcast_text_publications",
         "podcast_artifacts",
     } <= tables
+    event_schema_ready = _event_schema_ready(connection, tables)
     for name, statement in _trigger_sql(
         include_podcast_integrity=include_podcast_integrity
     ):
         connection.exec_driver_sql(f'DROP TRIGGER IF EXISTS "{name}"')
         if name in _PODCAST_TRIGGER_NAMES and not podcast_text_schema_ready:
+            continue
+        if name in _EVENT_TRIGGER_NAMES and not event_schema_ready:
             continue
         # Historical migrations rebuild podcast_artifacts. Only the final audio
         # stream migration, or a fresh create_all schema, may install triggers

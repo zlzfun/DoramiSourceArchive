@@ -1137,3 +1137,56 @@ def test_hn_ambiguous_brand_words_in_body_or_url_are_not_discovery_signals():
     f = HackerNewsAiRssFetcher(); f._active_min_points = 10; f._active_min_comments = 0
     assert f._algolia_entry(_hn_api_hit(title='Working with databases', story_text='move the cursor', url='https://example.test/codex'), 0) is None
     assert f._algolia_entry(_hn_api_hit(title='zcode uploads source history'), 0) is not None
+
+
+def test_openai_rendered_detail_resolves_relative_media_and_links():
+    # issue #217: browser-rendered /_next images used to point at Dorami itself.
+    from services.media_store import extract_image_urls
+
+    html = """<article><div><h1>Decisions API</h1></div><div>
+      <p>A real article with a relative image and a relative documentation link.</p>
+      <img src="/_next/static/immutable/media/neutral.webp" alt="Neutral">
+      <img src="./diagram.png" alt="Diagram">
+      <img src="//images.example.com/absolute.webp" alt="CDN">
+      <p><a href="/docs/decisions">Documentation</a></p>
+    </div><div>Keep reading</div></article>"""
+    for prefix in ("crawl4ai", "playwright"):
+        detail = OpenAINewsRssFetcher()._detail_from_rendered_html(
+            html, "https://openai.com/index/decisions-api", 12000, 50, prefix,
+        )
+        assert extract_image_urls(detail["text"]) == [
+            "https://openai.com/_next/static/immutable/media/neutral.webp",
+            "https://openai.com/index/diagram.png",
+            "https://images.example.com/absolute.webp",
+        ]
+        assert "[Documentation](https://openai.com/docs/decisions)" in detail["text"]
+
+
+def test_openai_rendered_detail_preserves_interactive_demo_images():
+    from services.media_store import extract_image_urls
+
+    html = """<article><div><h1>Decisions API</h1></div><div>
+      <p>Article prose before the demo stays readable.</p>
+      <img src="/diagram.webp" alt="Architecture">
+      <h2>Try Decisions with GPT-Live for yourself</h2>
+      <section aria-label="Live voice and reactions">
+        <img src="/_next/static/immutable/media/neutral.webp">
+        <img src="/_next/static/immutable/media/thinking-bulb.webp">
+        <p>Mic off</p><h2>Expression palette</h2><p>Connecting</p>
+      </section>
+      <h2>Build and evaluate your first decision</h2>
+      <p>Keep the conclusion after the interactive demo.</p>
+      <section aria-label="Another demo"><p>Unrelated section stays.</p></section>
+    </div><div>Keep reading</div></article>"""
+    for prefix in ("crawl4ai", "playwright"):
+        detail = OpenAINewsRssFetcher()._detail_from_rendered_html(
+            html, "https://openai.com/index/decisions-api", 12000, 50, prefix,
+        )
+        text = detail["text"]
+        assert "Mic off" in text and "Expression palette" in text
+        assert "Keep the conclusion" in text and "Unrelated section stays." in text
+        assert extract_image_urls(text) == [
+            "https://openai.com/diagram.webp",
+            "https://openai.com/_next/static/immutable/media/neutral.webp",
+            "https://openai.com/_next/static/immutable/media/thinking-bulb.webp",
+        ]

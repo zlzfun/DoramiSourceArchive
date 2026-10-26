@@ -451,17 +451,23 @@ export function translateSocialPost(articleId) {
   return request(`/reader/ai/social/${enc(articleId)}/translate`, { method: 'POST', errorMsg: '翻译失败，请稍后重试' });
 }
 
+// 正文后台翻译(issue #218 渐进阅读):响应 { status, job, result, preview };preview_cursor 是上一份预览的
+// 不透明游标,原样回传即只拿新就绪的块。前端不再提供取消入口(服务端取消接口保留兼容)。
+const translationQuery = (articleId, cursor) => (
+  `article_id=${enc(articleId)}${cursor ? `&preview_cursor=${enc(cursor)}` : ''}`
+);
 export function startTranslationJob(articleId) {
   return request('/reader/ai/translation-jobs', { method: 'POST', body: { article_id: articleId }, errorMsg: '无法开始翻译' });
 }
-export function fetchTranslationJob(articleId) {
-  return request(`/reader/ai/translation-jobs?article_id=${enc(articleId)}`, { errorMsg: '无法读取翻译进度' });
+export function fetchTranslationJob(articleId, cursor = null) {
+  return request(`/reader/ai/translation-jobs?${translationQuery(articleId, cursor)}`, { errorMsg: '无法读取翻译进度' });
 }
 export function resumeTranslationJob(jobId) {
   return request(`/reader/ai/translation-jobs/${enc(jobId)}/resume`, { method: 'POST', errorMsg: '无法继续翻译' });
 }
-export function cancelTranslationJob(jobId) {
-  return request(`/reader/ai/translation-jobs/${enc(jobId)}/cancel`, { method: 'POST', errorMsg: '无法取消翻译' });
+/** 同一篇的进度推送(SSE,事件名 snapshot,数据同 fetchTranslationJob)。由调用方 new EventSource(url, { withCredentials: true })。 */
+export function translationEventsUrl(articleId, cursor = null) {
+  return `${API_BASE_URL}/reader/ai/translation-jobs/events?${translationQuery(articleId, cursor)}`;
 }
 
 // 生成/读取文章的中文要点摘要(后端缓存于 extensions_json.summary_zh,幂等)

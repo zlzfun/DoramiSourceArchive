@@ -1,6 +1,6 @@
 """用户自定 RSS 源(v3.40):读者自助添加未列入公共目录的消息来源。
 
-设计方案见 docs/user-custom-rss-wave-plan.md。核心定调:
+设计方案见 docs/archive/user-custom-rss-wave-plan.md。核心定调:
 
 - **订阅者可见、目录不收录**:不进公共发现页目录、不进
   scope=all 检索域、不进日报、不进 archive sync export。隔离面各消费点经

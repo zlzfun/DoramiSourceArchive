@@ -165,6 +165,11 @@ def import_archive_sync_jsonl(raw_text: str) -> Dict[str, Any]:
     changed_article_ids: list[str] = []
 
     with Session(deps.get_db_sink().engine) as session:
+        # V1 has no per-record authority receipt. This transaction is an archive
+        # import, not a new local collection, regardless of its historical dates.
+        from services.title_translation import SUPPRESS_ENQUEUE_KEY
+        from services.title_cache import preserve_title_receipt, extensions as title_extensions
+        session.info[SUPPRESS_ENQUEUE_KEY] = True
         # Unicode separators inside article text are not JSONL record boundaries.
         for line_number, raw_line in enumerate(raw_text.split("\n"), start=1):
             line = raw_line.strip()
@@ -254,7 +259,9 @@ def import_archive_sync_jsonl(raw_text: str) -> Dict[str, Any]:
                     existing.run_scope = incoming.run_scope
                     existing.has_content = True
                     existing.content = incoming.content
-                    existing.extensions_json = incoming.extensions_json
+                    existing.extensions_json = json.dumps(preserve_title_receipt(
+                        existing, title_extensions(incoming), title=incoming.title,
+                    ), ensure_ascii=False)
                     session.add(existing)
                     updated_count += 1
                     changed_article_ids.append(existing.id)

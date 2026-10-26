@@ -107,7 +107,7 @@ incubation rules above. Two things differ from web/RSS sources:
 
 The full V0 roster with per-account rationale, the rejected candidates with reasons,
 and the observation-window exit criteria live in
-[`docs/social-x-wave-plan.md`](../social-x-wave-plan.md) §1 / §5.
+[`docs/archive/social-x-wave-plan.md`](../archive/social-x-wave-plan.md) §1 / §5.
 
 ## Candidate Queue
 

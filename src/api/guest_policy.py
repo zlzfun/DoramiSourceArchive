@@ -14,7 +14,7 @@ from typing import Any, FrozenSet, Iterable, Optional, Tuple
 
 from starlette.routing import Match
 
-# (方法, 路由模板)。分组即方案 docs/plans/issue-213-guest-mode.md §3.2 的白名单表。
+# (方法, 路由模板)。分组即方案 docs/archive/issue-213-guest-mode.md §3.2 的白名单表。
 GUEST_ALLOWED_ROUTES: FrozenSet[Tuple[str, str]] = frozenset({
     # 会话与能力(/api/auth/{session,logout,guest} 在中间件里本就公开,不必登记)
     ("GET", "/api/runtime"),
@@ -28,6 +28,8 @@ GUEST_ALLOWED_ROUTES: FrozenSet[Tuple[str, str]] = frozenset({
     ("GET", "/api/reader/rankings"),
     ("GET", "/api/reader/rankings/history"),
     ("GET", "/api/reader/rankings/{date}/tags/{tag_code:path}"),
+    ("GET", "/api/reader/events"),                 # 热点榜(issue #121);详情同下,管理修正默认 403
+    ("GET", "/api/reader/events/{event_id}"),
     ("GET", "/api/reader/announcements"),
     ("GET", "/api/reader/favorites"),            # 游客恒空:前端挂载即拉,放行免得报错
     ("GET", "/api/reader/interests"),            # 同上
@@ -56,6 +58,7 @@ GUEST_ALLOWED_ROUTES: FrozenSet[Tuple[str, str]] = frozenset({
     ("POST", "/api/reader/ai/social/{article_id}/translate"),
     ("POST", "/api/reader/ai/translation-jobs"),
     ("GET", "/api/reader/ai/translation-jobs"),
+    ("GET", "/api/reader/ai/translation-jobs/events"),
     ("POST", "/api/reader/ai/translation-jobs/{job_id}/resume"),
     ("POST", "/api/reader/ai/translation-jobs/{job_id}/cancel"),
     ("POST", "/api/reader/ai/podcasts/{episode_id}/translate-transcript"),

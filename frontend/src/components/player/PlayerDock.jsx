@@ -23,10 +23,12 @@ import {
   formatRate,
   framesSayLite,
   isPlayingIntent,
+  playerItemTitle,
   playerTrackLabel,
   playerTrackSpeech,
   speakClock,
 } from '../../utils/playerCore';
+import { useTitlePreference } from '../../hooks/useTitlePreference';
 import { PLAYER_MOTION, playerEasings } from '../../utils/playerSpring';
 import { loadCoverTone, resolveVarColor, veilAlphaFor } from '../../utils/coverTone';
 import { mediaProxyUrl } from '../../api';
@@ -94,6 +96,9 @@ export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs
   const { item, form, status, buffering, rate } = state;
   const playing = isPlayingIntent(state);
   const itemKey = item?.key || '';
+  // 标题随「默认显示中文标题」(issue #218):条目带中文译名且偏好开时显示译名
+  const { preferChinese } = useTitlePreference();
+  const shownTitle = playerItemTitle(item, preferChinese);
 
   const layerRef = useRef(null);
   const dockRef = useRef(null);
@@ -690,7 +695,7 @@ export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs
               ref={barRef}
               className="player-bar"
               role="region"
-              aria-label={`正在播放：${item.title}${item.ai ? '（AI 生成）' : ''}`}
+              aria-label={`正在播放：${shownTitle.title}${item.ai ? '（AI 生成）' : ''}`}
               hidden={form !== 'bar'}
               onDragStart={(event) => event.preventDefault()}
               {...barPointer}
@@ -700,12 +705,12 @@ export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs
                 <button
                   type="button"
                   className="player-info"
-                  aria-label={`打开：${item.title}`}
+                  aria-label={`打开：${shownTitle.title}`}
                   onClick={() => onOpenItem?.(item)}
                 >
                   <span className="player-art"><span className="player-art-slot">{art}</span></span>
                   <span className="player-info-slot">
-                    <span className="player-title" lang={item.lang || undefined}>{item.title}</span>
+                    <span className="player-title" lang={shownTitle.lang || undefined}>{shownTitle.title}</span>
                     <span className="player-sub">
                       {item.ai ? (
                         <>
@@ -782,7 +787,7 @@ export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs
               ref={miniRef}
               className="player-mini"
               role="region"
-              aria-label={`正在播放（已缩小）：${item.title}`}
+              aria-label={`正在播放（已缩小）：${shownTitle.title}`}
               hidden={form !== 'mini'}
             >
               {bgLayers}

@@ -5,7 +5,7 @@
 # 用法:./deploy-docker.sh            部署版本号最新的 v* tag(一键)
 #      ./deploy-docker.sh v3.55.0    部署指定版本
 #      ./deploy-docker.sh --here     部署当前工作树(非发布版,联调/应急;输出会标注)
-# 发布流程、回滚与「tag 即发布」的来龙去脉见 docs/release-process.md;自动部署流水线见 docs/auto-deploy-plan.md。
+# 发布流程、回滚与「tag 即发布」的来龙去脉见 docs/ops/release-process.md;自动部署流水线见 docs/archive/auto-deploy-plan.md。
 #
 # 本脚本只做**它自己这一版**的构建与验证;跨版本的状态与门禁(锁的 owner、in-progress / last-success 事务、
 # 方向判定与单调护栏、首装门)由仓库外的 dorami-deploy-worker 承担(DORAMI_DEPLOY_ORIGIN=pipeline 时)。
@@ -143,7 +143,7 @@ case "$plan_status" in
         fi ;;
     incompatible)
         printf '%s' "$plan_out" | json_field detail | sed 's/^/    /'
-        fail "数据库与目标代码的迁移图不兼容(典型:DB 领先于旧 tag,降级撞迁移);先按 docs/release-process.md 恢复对应备份再重跑" ;;
+        fail "数据库与目标代码的迁移图不兼容(典型:DB 领先于旧 tag,降级撞迁移);先按 docs/ops/release-process.md 恢复对应备份再重跑" ;;
     *)
         printf '%s' "$plan_out" | print_report_messages
         fail "迁移计划失败(status=${plan_status:-none})" ;;
@@ -215,4 +215,4 @@ deploy_meta health failed
 echo "健康检查未通过(预算 ${BUDGET}s,尝试 ${attempt} 次):${last_verdict:-无响应};当前容器状态:" >&2
 docker compose ps >&2
 docker compose logs --tail 50 backend >&2
-fail "部署未通过健康验证(不自动回滚:流水线来源下 in-progress 事务保留,可重试或按 docs/release-process.md 恢复)"
+fail "部署未通过健康验证(不自动回滚:流水线来源下 in-progress 事务保留,可重试或按 docs/ops/release-process.md 恢复)"

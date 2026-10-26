@@ -23,6 +23,8 @@ import {
 import { useLongPress } from '../../hooks/useLongPress';
 import { useLayerHistory } from '../../hooks/useLayerHistory';
 import { articleDeepLink } from '../../utils/shareLink';
+import { displayTitle } from '../../utils/titleDisplay';
+import { useTitlePreference } from '../../hooks/useTitlePreference';
 import { ArticleRow, ArticleCardsSkeleton } from '../ReaderTab';
 import { buildListPlan } from '../../utils/listPlan';
 import { kindFilterOptions } from '../../utils/contentKind';
@@ -86,6 +88,7 @@ export default function MobileReader({
   const playingId = player.form !== 'none' ? (player.item?.articleId || '') : '';
   const playingState = nowPlayingFor(player, playingId);
   const playingAi = Boolean(player.item?.ai);
+  const { preferChinese } = useTitlePreference();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sheet, setSheet] = useState(null); // { title, items, anchorKey }
   const {
@@ -194,7 +197,8 @@ export default function MobileReader({
         },
       });
     }
-    setSheet({ title: article.title || '（无标题）', items, anchorKey: `article:${article.id}` });
+    // 动作单标题随「默认显示中文标题」(issue #218);系统分享面板仍带原题(对外内容,分享页也只有原题)
+    setSheet({ title: displayTitle(article, preferChinese), items, anchorKey: `article:${article.id}` });
   };
   const openSourceSheet = (source) => setSheet({
     title: source.name || source.source_id,

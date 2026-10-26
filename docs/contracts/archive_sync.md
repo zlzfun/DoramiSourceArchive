@@ -112,6 +112,25 @@ triggers on insert/update and are intentionally not part of the sync payload.
 (历史注记:v3.31 前此处还有 `is_vectorized` 重置语义,已随向量层退役删除——
 该字段从未进入线格式,新旧版本部署间同步互通不受影响。)
 
+### Verified local translation preservation (v2 import, issue #218)
+
+Title-only updates still use the existing articles stream and extension fields;
+no new stream or analysis payload generation is introduced. Automatic title
+translation runs on the owning node, never on imported replica articles.
+
+Before v2 import replaces extensions for the same nonempty authority, article ID,
+source and content type, `translation_sync.preserve_local_translations` preserves
+only an existing valid local final body/social cache if the incoming cache is not
+valid. Body identity uses the actual unchanged stripped content, independent of
+title/analysis hashes; social identity uses the same main/repost/quoted source
+snapshot as the translation writer. Exact current fingerprints and integer
+versions are required. Valid remote caches win; legacy caches without fingerprints,
+changed content/authority and unknown extension fields are not preserved. Titles
+remain strict fingerprint caches. This does not change v1 duplicate handling.
+
+Account title preferences, automatic-title jobs, partial body checkpoints, leases
+and usage reservations remain node-local. It does not add cross-node task control.
+
 ## Preserved Fields
 
 The sync payload preserves:
@@ -184,17 +203,18 @@ semantics.
 ### Streams and readiness fence
 
 The receiver pulls the following independent streams in this exact order when
-the producer advertises the Podcast capabilities (older compatible peers omit
-the two Podcast streams):
+the producer advertises the Podcast and Events capabilities (older compatible
+peers omit the two Podcast streams and/or the Events stream):
 
 1. `sources`
 2. `taxonomy`
 3. `articles`
 4. `analyses`
-5. `media`
-6. `podcast_texts`
-7. `podcast_audio`
-8. `source_states`
+5. `events` (capability `events_v1`, issue #121)
+6. `media`
+7. `podcast_texts`
+8. `podcast_audio`
+9. `source_states`
 
 The `analyses` payload carries the complete authoritative scoring contract,
 including `analysis_basis`, the SHA-256 `analysis_input_hash` of the exact model
@@ -405,6 +425,103 @@ Podcast audio remains a publisher link and is never added to the replication
 manifest. ASR validation may download it only into ephemeral external staging;
 the bytes are deleted after validation, while a lightweight `source_media_snapshot`
 remains as local processing evidence and is not an audio artifact stream.
+
+### Events stream (issue #121)
+
+The `events` stream replicates the event layer (multi-source coverage of one
+release / announcement / report / incident) from the external authority to the
+internal replica. It is negotiated by the optional capability `events_v1`: a
+receiver that pulls from a producer without it simply never requests the stream
+(no error, no checkpoint), and an older receiver ignores the capability. The
+stream sits between `analyses` and `media` because members reference Articles
+and nothing in `media` depends on it; `source_states` remains last.
+
+Entity = one event with its member set and merge redirects. Identity is the
+authority-assigned integer `events.id`, carried as a string on the wire; the
+receiver copies the id verbatim and fences the row with `authority_id`. Payload:
+
+```json
+{"id":123,
+ "event":{"id":123,"status":"open","title":"…","title_source":"zh_member",
+          "representative_article_id":"article-id","member_count":3,"publisher_count":2,
+          "first_seen_at":"…","last_member_at":"…","story_id":null,"follows_event_id":null,
+          "assignment_version":"v1","created_at":"…","updated_at":"…"},
+ "members":[{"article_id":"…","publisher_key":"openai","report_at":"…","first_seen_at":"…",
+             "assigned_by":"llm","confidence":0.9,"prompt_version":"…","is_representative":true,
+             "created_at":"…"}],
+ "redirects_from":[{"old_event_id":45,"reason":"llm","created_at":"…"}],
+ "merged_into":null}
+```
+
+- `event` carries every `events` column except `authority_id`; `members` carries
+  every `event_members` column (`assigned_by`, `confidence`, `prompt_version`
+  are preserved verbatim — `sync` is not written by the receiver). Members whose
+  Article is not public on the producer (`user_rss_`, owner-bound, remote or
+  credentialed sources — the same `source_is_credentialed` classification used
+  for MaaS / reader egress) are omitted at export time. When any member was
+  omitted, the exported `title` / `title_source` / `representative_article_id` /
+  `member_count` / `publisher_count` are rebuilt from the exportable members only
+  (Chinese member title → fingerprint-valid translated title → representative's
+  original title; the producer's model title is never exported in that case, and
+  the representative is the stored one if still exportable, otherwise official >
+  score > earliest report > id). An event with no exportable member at all is
+  exported as a tombstone so the receiver withdraws it. A `merged` event is
+  always exported as a stripped redirect-only record — `title`, `title_source`,
+  `representative_article_id`, `member_count`, `publisher_count` cleared, no
+  members, only `merged_into` (and `redirects_from` for multi-hop chains) — and
+  the receiver clears its cached copy the same way; because the merge itself
+  changes `status`, the stripped record is emitted at once, so a later privacy
+  change of its former members can never surface through the old id.
+- A merge redirect is carried on both sides: the target's `redirects_from` and
+  the merged (old, `status=merged`) event's `merged_into`. Whichever side the
+  receiver applies second installs the `event_redirects` row, so a page boundary
+  between the two events cannot lose the redirect. Old ids therefore stay
+  resolvable after sync.
+- Tombstone = physical deletion of the event on the producer
+  (`{"id":123,"tombstone":true}`); the receiver physically deletes its copy and
+  SQLite cascades remove members, redirects and local rank snapshot rows.
+- Receiver apply (`_apply_events`): the event row first, then its member set is
+  replaced, then cross-event links. A member whose Article has not arrived yet
+  (its revision moved past the fixed snapshot, so it comes with the next
+  `articles` pull) is stored verbatim in the node-local `event_member_backlog`
+  and counted as `deferred`; a member whose Article exists locally but is not
+  owned by this authority (for example a local `user_rss_` Article under the
+  same id) is skipped and counted as `skipped`; the local Article is never
+  touched. The backlog keeps **one row per (authority, article)** carrying the
+  authority revision of the event row that asserted the membership: a newer
+  attribution for the same Article (an installed member or a newer backlog
+  entry) discards the older row, and an older page never overrides a newer
+  installed membership (compared through the applied event revisions). Every
+  v2 pull replays the backlog right after its `articles` stream completes
+  (`backlog_replay` in the articles checkpoint): Articles that arrived install
+  their member and drop the row, rows still waiting bump `attempts`, rows older
+  than 30 days or whose Article turned out not to be receivable are dropped,
+  rows whose event has since been merged (redirected) or withdrawn are dropped,
+  and a row whose Article is already attributed by a newer event version is
+  reported as `superseded` instead of overriding it. An Article the producer
+  moved to another event loses its stale local membership. A local or
+  foreign-authority event under the same id fails the page closed — for upserts
+  and tombstones alike. `story_id` / `follows_event_id` are set only when the
+  target event is present locally.
+- Producer triggers: insert / update / delete on `events`, `event_members` and
+  `event_redirects` mark the owning event(s) `upsert`; deleting an event writes
+  `tombstone` after its cascades. A source config insert, or a change to its
+  `owner_username` / `collection_authority_id` / `url` / `params_json`, and an
+  Article's `source_id` / `analysis_authority_id` change re-mark the events of
+  its members, so the export above re-projects or withdraws them. Only local
+  events (`authority_id=''`) emit states. Receiver guard trigger: an authority-owned event accepts only member
+  Articles owned by that same authority, so local assignment can never add a
+  member to a synced event.
+- First full pulls use the same presence / prune path as Articles: authority
+  owned events without an applied upsert state are confirmed against the
+  producer's local events and pruned only when absent.
+- Not synchronized: `event_rank_snapshots` (the receiver rebuilds its daily
+  ranking from local visibility, hidden sources differ per node),
+  `event_assignment_ledger` (node-local assignment bookkeeping) and
+  `event_member_backlog` (receiver-local recovery queue).
+- Deployment order: producer first; an old receiver keeps pulling the other
+  streams. `ANALYSIS_PAYLOAD_GENERATION` is untouched — the analyses payload
+  did not change.
 
 After pulling, internal Dorami may upload minimized Candidate evidence containing
 only label, facet kind, confidence, an opaque article fingerprint, source

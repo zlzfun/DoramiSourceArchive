@@ -41,7 +41,7 @@
 
 ## 内容从哪里来
 
-- **60 多个内置来源**：OpenAI、Anthropic、Google DeepMind、Qwen、Mistral 等官方博客，Claude Code、Codex、Cursor、DeepSeek API 等工具与平台的更新日志，量子位、IT之家、新智元、The Decoder 等媒体，Simon Willison、Import AI 与 HN 人气博客榜上的个人博客，Hugging Face Daily Papers、GitHub Trending、Arena 排行榜等榜单，以及 OpenAI、DeepSeek、Karpathy 等 X 账号的时间线；另有 36 个精选播客节目。每个来源都经过采集器适配与正文质检，抓下来的是干净的 Markdown 正文。
+- **60 多个内置来源**：OpenAI、Anthropic、Google DeepMind、Qwen、Mistral 等官方博客，Claude Code、Codex、Cursor、DeepSeek API 等工具与平台的更新日志，量子位、IT之家、新智元、The Decoder 等媒体，Simon Willison、Import AI 与 HN 人气博客榜上的个人博客，Hugging Face Daily Papers、GitHub Trending、Arena 排行榜等榜单，以及 OpenAI、DeepSeek、Karpathy 等 X 账号的时间线；另有 37 个精选播客节目。每个来源都经过采集器适配与正文质检，抓下来的是干净的 Markdown 正文。
 - **入库即分析**：每篇文章落盘后由后台 worker 用大模型打新闻价值分、写摘要、按受治理的标签目录（主题 / 行业 / 实体）打标。文章配图可以交给视觉模型识别成文字说明，一并喂给摘要与问答。
 - **公共 AI 日报**：管理员可以按 cron 生成全站视角的每日资讯日报，同一把评分尺子，去重后确定性排版。
 - **对外交付**：每个读者都有一个聚合 Feed 令牌，可以用 JSON 或 Markdown 拉取自己订阅范围内的内容；同一范围也通过 MCP 暴露给 Claude、IM 机器人等 Agent，并提供可下载的 Claude 技能包。
@@ -70,10 +70,10 @@ cd frontend && npm install && npm run dev
 .venv/bin/python -m pytest tests/
 
 # 生产部署:Docker(推荐)或裸机 PM2,均按发布 tag 部署
-./deploy-docker.sh          # 详见 docs/deploy-docker.md
-./deploy.sh                 # 详见 docs/deploy-baremetal.md
+./deploy-docker.sh          # 详见 docs/ops/deploy-docker.md
+./deploy.sh                 # 详见 docs/ops/deploy-baremetal.md
 ```
 
 ## 给开发者与 Agent
 
-架构简报、开发命令与全部工程约定在 [`CLAUDE.md`](./CLAUDE.md)；通用 Agent 入口是 [`AGENTS.md`](./AGENTS.md)；文档总索引在 [`docs/README.md`](./docs/README.md)。
+Agent 与开发者的入口是 [`AGENTS.md`](./AGENTS.md)（定向、命令、硬规则、协作流程、架构不变量；`CLAUDE.md` 经 `@AGENTS.md` 引入它）；设计说明在 [`docs/architecture/`](./docs/architecture/overview.md)，文档总索引在 [`docs/README.md`](./docs/README.md)，决策总表在 [`docs/decisions.md`](./docs/decisions.md)。面向读者的使用手册在 [`docs-site/`](./docs-site/)（VitePress）。

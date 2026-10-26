@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useId, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -9,6 +9,7 @@ import 'katex/dist/katex.min.css';
 import { mediaProxyUrl } from '../api';
 import { latinLang } from '../utils/readerText';
 import remarkPaperLayout from '../utils/remarkPaperLayout';
+import remarkArticleImages from '../utils/remarkArticleImages';
 
 // react-markdown 默认不渲染原始 HTML（无 rehype-raw），无 XSS 风险
 // remark-math + KaTeX:渲染正文里的 $...$ / $$...$$ LaTeX(学术型源如 Lil'Log
@@ -192,7 +193,11 @@ function ImageLightbox({ src, alt, onClose }) {
 // 传入方需保证引用稳定（useCallback），否则每次渲染都会打散图片组件的 state。
 // citations（可选，AI 问答）：{ titleFor(n) → 标题, onCite(n) } —— 激活行内引用 chip 渲染；
 // 同样要求引用稳定（useMemo/useCallback）。
-export default function ReaderMarkdown({ children, resolveImageSrc, citations }) {
+export default function ReaderMarkdown({ children, resolveImageSrc, citations, sourceUrl }) {
+  const markdownPlugins = useMemo(
+    () => [...MARKDOWN_PLUGINS, [remarkArticleImages, { sourceUrl }]],
+    [sourceUrl],
+  );
   const [lightbox, setLightbox] = useState(null); // { src, alt } | null
   const triggerRef = useRef(null); // 触发放大的 button，关闭后焦点归还
 
@@ -213,7 +218,7 @@ export default function ReaderMarkdown({ children, resolveImageSrc, citations })
     <ImageSrcContext.Provider value={resolveImageSrc || mediaProxyUrl}>
       <CitationContext.Provider value={citations || null}>
         <LightboxContext.Provider value={openLightbox}>
-          <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
+          <ReactMarkdown remarkPlugins={markdownPlugins} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
             {children || ''}
           </ReactMarkdown>
           {lightbox ? (

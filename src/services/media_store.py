@@ -26,10 +26,10 @@ import tempfile
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
-from sqlalchemy import update
+from sqlalchemy import or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select, func
 
@@ -37,6 +37,7 @@ from config import settings
 from models.db import ArticleRecord, MediaAssetRecord
 from services.arxiv_access import arxiv_request
 from services.object_storage import ObjectStorage, ObjectStorageError, hash_file
+from services.openai_media import download_openai_image, is_openai_image
 
 logger = logging.getLogger("dorami.media")
 
@@ -105,9 +106,24 @@ def url_hash_of(url: str) -> str:
     return hashlib.sha256(url.encode("utf-8")).hexdigest()
 
 
+def resolve_image_url(url: str, source_url: str | None = None) -> str:
+    """Resolve relative references without changing an archived absolute URL."""
+    url = url.strip()
+    if not url or url.startswith("#"):
+        return ""
+    try:
+        if not urlparse(url).scheme and source_url and urlparse(source_url).scheme in {"http", "https"}:
+            url = urljoin(source_url, url)
+        parsed = urlparse(url)
+        return url if parsed.scheme in {"http", "https"} and parsed.netloc and parsed.hostname else ""
+    except ValueError:
+        return ""
+
+
 def extract_image_urls(
     content: Optional[str],
     extensions_json: Optional[str | Dict[str, Any]] = None,
+    source_url: Optional[str] = None,
 ) -> List[str]:
     """从正文及扩展字段提取全部 http(s) 图链，保序去重。
 
@@ -148,7 +164,7 @@ def extract_image_urls(
             for url in media_urls:
                 if isinstance(url, str):
                     seen.setdefault(url.strip(), None)
-    return [u for u in seen if u.lower().startswith(("http://", "https://"))]
+    return list(dict.fromkeys(resolved for u in seen if (resolved := resolve_image_url(u, source_url))))
 
 
 def _sniff_image_mime(head: bytes, content_type: str) -> Optional[str]:
@@ -281,6 +297,7 @@ class MediaStore:
         self._client: Optional[httpx.AsyncClient] = None
         # 同一 URL 的并发请求串行化（首个下载，其余命中缓存）
         self._locks: Dict[str, asyncio.Lock] = {}
+        self._browser_download_lock = asyncio.Lock()
 
     # ── 基础设施 ──────────────────────────────────────────────
 
@@ -331,6 +348,25 @@ class MediaStore:
         if lock is None:
             lock = self._locks[key] = asyncio.Lock()
         return lock
+
+    def _is_article_image(self, url: str) -> bool:
+        """Expensive browser fetches require an exact, persisted article reference."""
+        filename = urlparse(url).path.rsplit("/", 1)[-1]
+        if not filename:
+            return False
+        cursor = ""
+        with Session(self.engine) as session:
+            while True:
+                rows = session.exec(select(ArticleRecord).where(
+                    ArticleRecord.id > cursor,
+                    or_(ArticleRecord.content.contains(filename, autoescape=True),
+                        ArticleRecord.extensions_json.contains(filename, autoescape=True)),
+                ).order_by(ArticleRecord.id).limit(200)).all()
+                if any(url in extract_image_urls(row.content, row.extensions_json, row.source_url) for row in rows):
+                    return True
+                if len(rows) < 200:
+                    return False
+                cursor = rows[-1].id
 
     def _get_record(self, url_hash: str) -> Optional[MediaAssetRecord]:
         with Session(self.engine) as session:
@@ -495,23 +531,44 @@ class MediaStore:
             # 对不校验的站点无副作用，故统一带上而非失败后重试，省一轮往返。
             headers = {"Referer": _referer_for(url)}
             gate = arxiv_request() if host == "arxiv.org" else nullcontext()
+            browser_fallback = False
             async with gate, self._get_client().stream("GET", url, headers=headers) as response:
-                if response.status_code != 200:
+                browser_fallback = (response.status_code == 403
+                                    and response.headers.get("cf-mitigated") == "challenge"
+                                    and is_openai_image(url))
+                if response.status_code != 200 and not browser_fallback:
                     return await asyncio.to_thread(self._mark_failed, url, key, f"HTTP {response.status_code}")
-                declared = int(response.headers.get("content-length") or 0)
-                if declared > self.max_bytes:
-                    return await asyncio.to_thread(self._mark_failed, url, key, f"超出大小上限（声明 {declared} 字节）")
-                chunks: List[bytes] = []
-                size = 0
-                async for chunk in response.aiter_bytes():
-                    size += len(chunk)
-                    if size > self.max_bytes:
-                        return await asyncio.to_thread(self._mark_failed, url, key, "超出大小上限")
-                    chunks.append(chunk)
-                body = b"".join(chunks)
-                mime = _sniff_image_mime(body[:64], response.headers.get("content-type", ""))
-                if not body or mime is None:
-                    return await asyncio.to_thread(self._mark_failed, url, key, "响应不是图片")
+                if not browser_fallback:
+                    declared = int(response.headers.get("content-length") or 0)
+                    if declared > self.max_bytes:
+                        return await asyncio.to_thread(self._mark_failed, url, key, f"超出大小上限（声明 {declared} 字节）")
+                    chunks: List[bytes] = []
+                    size = 0
+                    async for chunk in response.aiter_bytes():
+                        size += len(chunk)
+                        if size > self.max_bytes:
+                            return await asyncio.to_thread(self._mark_failed, url, key, "超出大小上限")
+                        chunks.append(chunk)
+                    body = b"".join(chunks)
+                    mime = _sniff_image_mime(body[:64], response.headers.get("content-type", ""))
+            if browser_fallback:
+                if not await asyncio.to_thread(self._is_article_image, url):
+                    return await asyncio.to_thread(self._mark_failed, url, key, "HTTP 403；图片未被文章引用")
+                try:
+                    await asyncio.wait_for(self._browser_download_lock.acquire(), timeout=self.timeout_seconds)
+                except TimeoutError:
+                    return await asyncio.to_thread(self._mark_failed, url, key, "浏览器取图排队超时")
+                try:
+                    body = await download_openai_image(url, max_bytes=self.max_bytes, timeout_seconds=self.timeout_seconds)
+                finally:
+                    self._browser_download_lock.release()
+                if not body:
+                    return await asyncio.to_thread(self._mark_failed, url, key, "HTTP 403；浏览器取图未成功")
+                if len(body) > self.max_bytes:
+                    return await asyncio.to_thread(self._mark_failed, url, key, "超出大小上限")
+                mime = _sniff_image_mime(body[:64], "")
+            if not body or mime is None:
+                return await asyncio.to_thread(self._mark_failed, url, key, "响应不是图片")
         except httpx.HTTPError as exc:
             return await asyncio.to_thread(self._mark_failed, url, key, f"{type(exc).__name__}: {exc}")
 
@@ -595,11 +652,12 @@ class MediaStore:
                     ArticleRecord.id,
                     ArticleRecord.content,
                     ArticleRecord.extensions_json,
+                    ArticleRecord.source_url,
                 ).where(ArticleRecord.id.in_(ids))
             ).all()
         urls: List[str] = []
-        for _, content, extensions_json in rows:
-            urls.extend(extract_image_urls(content, extensions_json))
+        for _, content, extensions_json, source_url in rows:
+            urls.extend(extract_image_urls(content, extensions_json, source_url))
         counts = await self.prefetch_urls(urls, concurrency=concurrency, force=force)
         return {"articles": len(rows), **counts}
 
@@ -662,7 +720,7 @@ class MediaStore:
                 for article in articles:
                     referenced_hashes.update(
                         url_hash_of(url)
-                        for url in extract_image_urls(article.content, article.extensions_json)
+                        for url in extract_image_urls(article.content, article.extensions_json, article.source_url)
                     )
                 cursor_id = articles[-1].id
 

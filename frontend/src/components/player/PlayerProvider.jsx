@@ -4,6 +4,7 @@ import {
   initialPlayerState,
   isPlayingIntent,
   nextRate,
+  playerItemTitle,
   playerReducer,
   playerTrackLabel,
   readPlayerSession,
@@ -12,6 +13,7 @@ import {
 } from '../../utils/playerCore';
 import { readPodcastPosition, writePodcastPosition } from '../../utils/podcastPlayback';
 import { mediaProxyUrl } from '../../api';
+import { useTitlePreference } from '../../hooks/useTitlePreference';
 
 // 全局播放器(issue #199):全站唯一的 <audio> 与播放状态。挂在阅读器工作区外壳(ReaderWorkspace),
 // 桌面阅读器 ⇄ 移动壳互切、换文章、换容器、进出早报 / 发现 / 榜单都不卸载;不放进按文章重挂载的阅读窗。
@@ -40,6 +42,8 @@ function initPlayer(username) {
 export default function PlayerProvider({ username = '', active = true, children }) {
   const [state, dispatch] = useReducer(playerReducer, username, initPlayer);
   const [announcement, setAnnouncement] = useState('');
+  // 播报与系统媒体控件的标题随「默认显示中文标题」(issue #218)
+  const { preferChinese } = useTitlePreference();
   const audioRef = useRef(null);
   const stateRef = useRef(state);
   const loadedRef = useRef(null);        // 已装进 <audio> 的条目(恢复的会话在首次播放时才装)
@@ -190,8 +194,8 @@ export default function PlayerProvider({ username = '', active = true, children 
     dockRef.current?.beforeChange?.(kind, { originEl, input: inputRef.current });
     loadInto(item, { play: true });
     dispatch({ type: 'load', item });
-    announce(`正在播放：${item.title}${item.ai ? '，AI 生成' : ''}`);
-  }, [announce, loadInto, toggle]);
+    announce(`正在播放：${playerItemTitle(item, preferChinese).title}${item.ai ? '，AI 生成' : ''}`);
+  }, [announce, loadInto, toggle, preferChinese]);
 
   const pause = useCallback(() => { audioRef.current?.pause(); }, []);
 
@@ -315,12 +319,12 @@ export default function PlayerProvider({ username = '', active = true, children 
       return;
     }
     ms.metadata = new window.MediaMetadata({
-      title: item.title,
+      title: playerItemTitle(item, preferChinese).title,
       artist: item.show || '',
       album: playerTrackLabel(item),
       artwork: item.cover ? [{ src: mediaProxyUrl(item.cover), sizes: '512x512' }] : [],
     });
-  }, [itemKey]);
+  }, [itemKey, preferChinese]);
   useEffect(() => {
     const ms = typeof navigator !== 'undefined' ? navigator.mediaSession : null;
     if (!ms || !itemKey) return;

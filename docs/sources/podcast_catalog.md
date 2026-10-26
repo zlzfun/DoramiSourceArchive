@@ -88,7 +88,7 @@ source ID；前者产生 `rss_article`，后者产生 `podcast_episode`，从而
 ## 权利与衍生内容
 
 公开 RSS 可以支撑节目发现、原音频链接播放与 show notes 聚合，但不自动等于允许重新托管、
-全文转录、翻译、改写或发布合成音频。长播客精华仍按 `docs/podcast-wave-plan.md` 的 rights
+全文转录、翻译、改写或发布合成音频。长播客精华仍按 `docs/archive/podcast-wave-plan.md` 的 rights
 gate 执行：优先发布方 transcript；没有明确衍生授权时，只做登录态内部辅助或链接回原节目，
 不发布新的公开音频/RSS。
 

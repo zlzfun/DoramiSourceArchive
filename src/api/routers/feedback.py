@@ -3,7 +3,7 @@
 - 读者面(/api/reader/feedback,中间件 reader 门控自动覆盖):提交/查看自己的/撤回 open 态。
 - 管理面(/api/admin/feedback,中间件 admin 前缀自动覆盖):全量列表 + 状态流转 + 回复。
 
-设计见 docs/engage-sync-wave-plan.md。数据访问经 deps.get_session()。
+设计见 docs/archive/engage-sync-wave-plan.md。数据访问经 deps.get_session()。
 """
 
 import importlib

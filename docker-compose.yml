@@ -1,5 +1,5 @@
-# Dorami 生产部署(推荐路径)。用法见 docs/deploy-docker.md;一键部署:./deploy-docker.sh
-# 装不了 Docker 的机器走裸机路径 ./deploy.sh(docs/deploy-baremetal.md)。
+# Dorami 生产部署(推荐路径)。用法见 docs/ops/deploy-docker.md;一键部署:./deploy-docker.sh
+# 装不了 Docker 的机器走裸机路径 ./deploy.sh(docs/ops/deploy-baremetal.md)。
 services:
   backend:
     build:

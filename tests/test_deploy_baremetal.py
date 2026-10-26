@@ -1,4 +1,4 @@
-"""裸机部署 release 形态 / 事务 / 回滚的进程级测试(issue #126,docs/baremetal-rollback-plan.md §6)。
+"""裸机部署 release 形态 / 事务 / 回滚的进程级测试(issue #126,docs/archive/baremetal-rollback-plan.md §6)。
 
 对象:真 deploy.sh + scripts/deploy-lib.sh + scripts/deploy-baremetal.sh(取自本工作树),跑在一个**迷你项目**上——
 它只提供部署脚本真正依赖的目标代码表面(src/config.py 的路径解析、src/storage/migrations.py 的 ensure_migrated、

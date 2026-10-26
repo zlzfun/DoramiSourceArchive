@@ -17,6 +17,8 @@ import { resolveCompany } from '../sourceTaxonomy';
 import { formatDateTime, formatRelativeTime } from '../utils/datetime';
 import { fmtDayKey, WEEKDAY_CHARS } from '../utils/readerTime';
 import { latinLang } from '../utils/readerText';
+import { titleView } from '../utils/titleDisplay';
+import { useTitlePreference } from '../hooks/useTitlePreference';
 import { qualityScoreText, scoreTierClass, scoreDisclaimer, SCORE_DIMENSION_LABELS } from '../utils/analysis';
 import { scoreDimensionOf, scoreOf } from '../utils/briefScore';
 
@@ -111,15 +113,16 @@ function pickHeadline(groups, degraded) {
   return best;
 }
 
-// 一条的展示要素:标题(中文译名优先)、摘要、来源、分数与维度、理由、订阅态——海报头条与板块条目共用
-function viewOf(item, source) {
+// 一条的展示要素:标题(按偏好选中文译名或原题)、摘要、来源、分数与维度、理由、订阅态——海报头条与板块条目共用
+function viewOf(item, source, preferChinese) {
   const snapshot = item.snapshot || {};
   const dimension = scoreDimensionOf(item);
   const shownScore = scoreOf(item);
   const interest = interestLabelOf(item, snapshot);
   const sourceName = snapshot.source_name || source?.name || snapshot.source_id || '未知来源';
-  // 中文标题(v3.52.1,issue #33 §4):编排后补的 title_zh 作主标题,原标题降为其下小字
-  const titleZh = snapshot.title_zh && snapshot.title_zh !== snapshot.title ? snapshot.title_zh : '';
+  // 中文标题(v3.52.1,issue #33 §4):编排后补的 title_zh 作主标题,原标题降为其下小字;
+  // 「默认显示中文标题」关闭时只显示快照原题(issue #218,只选不改,版面快照不动)
+  const titles = titleView(snapshot, preferChinese);
   return {
     snapshot,
     dimension,
@@ -134,8 +137,8 @@ function viewOf(item, source) {
     summary: snapshot.summary || snapshot.one_sentence_summary || '',
     sourceName,
     company: source ? resolveCompany(source) : resolveCompany({ source_id: snapshot.source_id, name: sourceName, user_source: true }),
-    title: titleZh || snapshot.title || '（无标题）',
-    titleOrig: titleZh ? snapshot.title : '',
+    title: titles.title,
+    titleOrig: titles.orig,
     // 订阅外(v3.54「订阅 ∪ 兴趣」):快照事实 subscribed=false,且当前仍未订阅(订阅后即不再画,不必等重编)
     unsubscribed: snapshot.subscribed === false && !(source && source.subscribed) && !!snapshot.source_id,
   };
@@ -165,6 +168,47 @@ function WhyMark({ why }) {
   );
 }
 
+// issue #103「另见 N 篇」:同一事件的其它报道(编排时的不可变快照,只含读者可见来源);
+// N 数篇(用户目检拍板:按来源计会把同源两篇算成一,少报),列表逐篇;链接开新窗(是另一来源的稿,不是本条)
+function relatedOf(snapshot) {
+  const rows = Array.isArray(snapshot?.related_sources) ? snapshot.related_sources : [];
+  return rows.filter((row) => row && row.url);
+}
+
+function RelatedChip({ links, open, onToggle }) {
+  if (!links.length) return null;
+  return (
+    <button
+      type="button"
+      className={`bp-also ${open ? 'is-open' : ''}`}
+      aria-expanded={open}
+      title={open ? '收起同一事件的其它报道' : '同一事件的其它报道'}
+      onClick={onToggle}
+    >
+      另见 {links.length} 篇
+    </button>
+  );
+}
+
+function RelatedList({ links, open }) {
+  if (!open || !links.length) return null;
+  return (
+    <ul className="bp-also-list">
+      {links.map((row) => {
+        const title = row.title_zh || row.title || row.url;
+        return (
+          <li key={row.article_id || row.url}>
+            <a className="bp-also-link" href={row.url} target="_blank" rel="noopener noreferrer" lang={latinLang(title)}>
+              <span className="bp-also-src">{row.source_name || row.source_id || '来源'}</span>
+              <span className="bp-also-title">{title}</span>
+            </a>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 function FavoriteButton({ articleId, favoriteIds, onToggleFavorite, label = false }) {
   if (!articleId || !onToggleFavorite) return null;
   const on = Boolean(favoriteIds?.has(articleId));
@@ -184,8 +228,11 @@ function FavoriteButton({ articleId, favoriteIds, onToggleFavorite, label = fals
 }
 
 function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds, onToggleFavorite }) {
-  const view = viewOf(item, source);
+  const { preferChinese } = useTitlePreference();
+  const view = viewOf(item, source, preferChinese);
   const { snapshot } = view;
+  const related = relatedOf(snapshot);
+  const [showRelated, setShowRelated] = useState(false);
   return (
     <article className={`bp-item ${flash ? 'is-just-read' : ''}`}>
       {/* 标题按钮是唯一的「打开」控件:::after 拉伸覆盖整条,点条目任意处即打开;收藏与「+ 订阅」浮在覆盖层之上 */}
@@ -209,16 +256,21 @@ function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds
           </span>
         )}
         <WhyMark why={view.why} />
+        <RelatedChip links={related} open={showRelated} onToggle={() => setShowRelated((value) => !value)} />
         <FavoriteButton articleId={item.article_id} favoriteIds={favoriteIds} onToggleFavorite={onToggleFavorite} />
       </div>
+      <RelatedList links={related} open={showRelated} />
     </article>
   );
 }
 
 function Headline({ item, kicker, source, flash, restCount, onOpen, onSubscribeSource, favoriteIds, onToggleFavorite }) {
-  const view = viewOf(item, source);
+  const { preferChinese } = useTitlePreference();
+  const view = viewOf(item, source, preferChinese);
   const { snapshot } = view;
   const selectionReason = item.selection_reason || snapshot.selection_reason || '';
+  const related = relatedOf(snapshot);
+  const [showRelated, setShowRelated] = useState(false);
   return (
     <div className={`bp-head ${flash ? 'is-just-read' : ''}`}>
       <p className="bp-kicker">{kicker}</p>
@@ -237,8 +289,10 @@ function Headline({ item, kicker, source, flash, restCount, onOpen, onSubscribeS
               <span className="bp-time" title={formatDateTime(snapshot.publish_date)}>{formatRelativeTime(snapshot.publish_date, '')}</span>
             )}
             {view.why.cls === 'is-interest' && <WhyMark why={view.why} />}
+            <RelatedChip links={related} open={showRelated} onToggle={() => setShowRelated((value) => !value)} />
           </p>
           {view.summary && <p className="bp-sum">{view.summary}</p>}
+          <RelatedList links={related} open={showRelated} />
           <div className="bp-actions">
             <button type="button" className="bp-btn is-primary" onClick={() => onOpen(item)}>
               阅读全文
@@ -542,7 +596,14 @@ export default function PersonalBriefPage({
       // 序列按页面显示序(头条 + 板块顺序 + 板块内分数序),「早报下一条」才与读者眼前的顺序一致
       const sequence = [...(headline ? [headline] : []), ...acts.flatMap((group) => group.items)]
         .filter((row) => row.article_id && !isSocialRow(row))
-        .map((row) => ({ id: row.id ?? row.position, article_id: row.article_id, title: row.snapshot?.title || '', source_url: row.snapshot?.source_url || '' }));
+        .map((row) => ({
+          id: row.id ?? row.position,
+          article_id: row.article_id,
+          title: row.snapshot?.title || '',
+          // 「早报下一条」提示同样按标题偏好选快照里的中文译名或原题(issue #218)
+          title_zh: row.snapshot?.title_zh || null,
+          source_url: row.snapshot?.source_url || '',
+        }));
       const opened = await onOpenArticle(item.article_id, {
         date: selDate,
         revision: edition?.revision ?? null,
@@ -574,6 +635,8 @@ export default function PersonalBriefPage({
   const scopeCount = (edition?.expected_source_ids || []).length;
   const interestOnly = !!edition && scopeCount === 0 && (stats ? !!stats.interest_only : items.length > 0);
   const followedCount = stats?.followed_count ?? null;
+  // issue #103:同事件合并到代表条目的候选数(编排时一次写入;历史版本无值则不提)
+  const mergedCount = Number(stats?.same_event_merged) > 0 ? Number(stats.same_event_merged) : 0;
   const externalHits = ownItems.filter((item) => (item.matched_interest_codes || []).length > 0 && item.snapshot?.subscribed === false).length;
   const valueCount = readCount + listenCount;
   const showEdition = !loading && !detailLoading && !live && !(error && isToday)
@@ -609,6 +672,7 @@ export default function PersonalBriefPage({
         <>
           你还没有订阅来源，本期只按你的{followedCount ? <> {n(followedCount)} 个</> : null}兴趣编排
           {stats?.candidate_count != null && <> · {n(stats.candidate_count)} 篇里</>}选出 {n(ownItems.length)} 篇
+          {mergedCount > 0 && <>，同事件合并 {n(mergedCount)} 篇</>}
         </>
       );
     } else {
@@ -617,6 +681,7 @@ export default function PersonalBriefPage({
           {guest ? '从默认订阅的' : '从你订阅的'} {n(scopeCount)} 个来源{followedCount ? <>和 {n(followedCount)} 个兴趣</> : null}
           {stats?.candidate_count != null && <> · {n(stats.candidate_count)} 篇里</>}选出 {n(ownItems.length)} 篇
           {interestCount > 0 && <>，{n(interestCount)} 篇命中你的兴趣{externalHits > 0 && <>（{n(externalHits)} 篇来自订阅外）</>}</>}
+          {mergedCount > 0 && <>，同事件合并 {n(mergedCount)} 篇</>}
           {valueText && <>；{valueText}</>}
         </>
       );

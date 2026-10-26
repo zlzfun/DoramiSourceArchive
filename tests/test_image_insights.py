@@ -1,7 +1,7 @@
 """图片理解波(issue #69):选图护栏 / 内容哈希去重 / 负缓存 / 预算 / 消费方接入。
 
 全程不打真网:媒体库经 httpx.MockTransport 供图,视觉调用打桩在 services.image_insights.chat_completion。
-方案见 docs/image-understanding-wave-plan.md §3。
+方案见 docs/archive/image-understanding-wave-plan.md §3。
 """
 
 from __future__ import annotations
@@ -147,6 +147,13 @@ def test_article_image_candidates_carry_alt_and_nearby_and_honor_limit():
     tweet = ii.article_image_candidates(social, limit=4)
     assert [c.url for c in tweet] == ["https://cdn.example.com/b.png"] and tweet[0].nearby == "推文正文 一句话"
     assert ii.article_image_candidates(_article(), limit=0) == []
+
+
+def test_relative_image_candidate_keeps_alt_and_nearby_after_resolution():
+    article = _article(content="This diagram explains the process.\n\n![Process](/figure.webp)")
+    candidate = ii.article_image_candidates(article, limit=1)[0]
+    assert candidate.url == "https://example.test/figure.webp"
+    assert candidate.alt == "Process" and "explains the process" in candidate.nearby
 
 
 def test_render_notes_skips_decorative_and_respects_budget():

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowDownUp, FileText, Info, KeyRound, Lock, MessageSquare, Package, Palette, Plug2, Rss, User, X } from 'lucide-react';
+import { ArrowDownUp, BookOpenText, FileText, Info, KeyRound, Lock, MessageSquare, Package, Palette, Plug2, Rss, User, X } from 'lucide-react';
 import Modal from './Modal';
 import { markFeedbackSeen } from '../api';
 import AccountSection from './settings/AccountSection';
 import AppearanceSection from './settings/AppearanceSection';
+import ReadingSection from './settings/ReadingSection';
 import FeedTokenSection from './settings/FeedTokenSection';
 import McpAccessSection from './settings/McpAccessSection';
 import SkillSection from './settings/SkillSection';
@@ -26,6 +27,7 @@ import { GUEST_LOCKED_SECTIONS } from '../utils/guestCopy';
 const HINTS = {
   account: '身份、头像与登录凭据',
   appearance: '主题与动效',
+  reading: '标题语言等阅读偏好',
   opml: '用 OPML 在哆啦美与其他阅读器之间迁移订阅',
   feed: '一枚 dfeed_ 令牌与聚合拉取接口', // 角色差异(订阅范围/全库)在分区文案内分支
   mcp: '把内容接进你的 Agent 工具',
@@ -59,6 +61,8 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
       items: [
         { id: 'account', label: '账户', icon: User },
         { id: 'appearance', label: '外观', icon: Palette },
+        // 阅读偏好(issue #218):标题语言;游客也可用(只存本机),不挂锁。
+        { id: 'reading', label: '阅读', icon: BookOpenText },
         { id: 'opml', label: '订阅源 OPML', icon: ArrowDownUp },
         // 反馈是「读者→管理员」的通道:admin 账号不向自己反馈,两个界面均不显。
         { id: 'feedback', label: '反馈与建议', icon: MessageSquare, show: !isAdmin },
@@ -167,6 +171,7 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
             {activeSection.id === 'appearance' && (
               <AppearanceSection theme={theme} onThemeChange={onThemeChange} />
             )}
+            {activeSection.id === 'reading' && <ReadingSection />}
             {activeSection.id === 'opml' && !isGuest && (
               <OpmlSection showToast={showToast} />
             )}

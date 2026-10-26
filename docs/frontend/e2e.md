@@ -1,6 +1,6 @@
 # 阅读器端到端测试
 
-[Issue #90](https://github.com/zlzfun/DoramiSourceArchive/issues/90) 的首个切片：移动读者主链路，兼顾 [#86](https://github.com/zlzfun/DoramiSourceArchive/issues/86) 响应式导航和 [#2](https://github.com/zlzfun/DoramiSourceArchive/issues/2) 登录门深链回归，并覆盖 [#85 PWA 安装层](./pwa.md) 和 [#93 标签检索](../issue-93-tag-search-plan.md)。使用已有 Python Playwright；管理端、个人早报和 CI 集成留在 #90 后续范围。
+[Issue #90](https://github.com/zlzfun/DoramiSourceArchive/issues/90) 的首个切片：移动读者主链路，兼顾 [#86](https://github.com/zlzfun/DoramiSourceArchive/issues/86) 响应式导航和 [#2](https://github.com/zlzfun/DoramiSourceArchive/issues/2) 登录门深链回归，并覆盖 [#85 PWA 安装层](./pwa.md) 和 [#93 标签检索](../archive/issue-93-tag-search-plan.md)。使用已有 Python Playwright；管理端、个人早报和 CI 集成留在 #90 后续范围。
 
 ## 一条命令
 

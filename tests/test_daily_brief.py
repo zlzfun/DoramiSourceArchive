@@ -1409,6 +1409,56 @@ def test_precluster_merges_obvious_duplicates_only():
     assert out[0].extra_sources == ["https://x/a"]
 
 
+def test_precluster_by_event_merges_members_and_leaves_unassigned_alone():
+    """事件层预聚类(issue #103):同 event_id 的条目机械并簇(代表规则同 LLM 簇),无归属的原样留下。"""
+    a = _scored_full(7, item_id="a", company="OpenAI", source_url="https://x/a")
+    b = _scored_full(8, item_id="b", company="媒体", source_url="https://x/b")
+    b.candidate.source_role = "official"
+    c = _scored_full(7, item_id="c", company="Other", source_url="https://x/c")
+    out = db.precluster_by_event([a, b, c], {"a": 11, "b": 11, "zzz": 11})
+    assert [it.candidate.id for it in out] == ["b", "c"]
+    assert out[0].extra_sources == ["https://x/a"] and out[0].merged_ids == ["a"]
+    assert db.precluster_by_event([a, c], None) == [a, c]
+    assert db.precluster_by_event([a, c], {"a": 1, "c": 2}) == [a, c]
+
+
+def test_dedup_clusters_applies_event_layer_before_llm_and_survives_llm_failure(monkeypatch):
+    calls: list = []
+
+    async def _boom(*, messages, config, **kwargs):
+        calls.append(1)
+        raise RuntimeError("llm down")
+
+    _patch_llm(monkeypatch, _boom)
+    a = _scored_full(8, item_id="a", company="OpenAI", source_url="https://x/a")
+    b = _scored_full(7, item_id="b", company="TechCrunch", source_url="https://x/b")   # 跨厂商标题层并不上
+    c = _scored_full(6, item_id="c", company="Other", source_url="https://x/c")        # 异事件,保证模型层真被调用
+    a.title_cn, b.title_cn, c.title_cn = "OpenAI 发布 GPT-6", "GPT-6 来了:记者手记", "某厂发布机器人"
+    out = asyncio.run(dedup_clusters([a, b, c], CONFIGURED, event_ids_by_article={"a": 3, "b": 3}))
+    assert [it.candidate.id for it in out] == ["a", "c"] and out[0].extra_sources == ["https://x/b"]
+    assert len(calls) == 1   # 模型层确实进入并失败,机械层结果保留
+
+
+def test_load_event_ids_by_article_reads_event_members(tmp_path):
+    from models.db import EventMemberRecord, EventRecord
+
+    sink = _make_sink(tmp_path, "events.db")
+    _seed(sink.engine, "a1", "s1", "2026-06-05T09:00:00+08:00")
+    _seed(sink.engine, "a2", "s2", "2026-06-05T09:00:00+08:00")
+    with Session(sink.engine) as session:
+        stamp = "2026-06-05T10:00:00+00:00"
+        event = EventRecord(status="open", first_seen_at=stamp, last_member_at=stamp, created_at=stamp, updated_at=stamp)
+        session.add(event)
+        session.flush()
+        session.add(EventMemberRecord(
+            event_id=event.id, article_id="a1", report_at=stamp, first_seen_at=stamp, created_at=stamp,
+        ))
+        session.commit()
+        event_id = event.id
+    assert db.load_event_ids_by_article(sink.engine, ["a1", "a2", ""]) == {"a1": event_id}
+    assert db.load_event_ids_by_article(sink.engine, []) == {}
+
+
 def test_dedup_clusters_keeps_mechanical_merge_when_llm_fails(monkeypatch):
     async def _boom(*, messages, config, **kwargs):
         raise RuntimeError("llm down")

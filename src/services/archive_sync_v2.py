@@ -22,8 +22,9 @@ import uuid
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Iterable, Optional
+from urllib.parse import urlsplit
 
-from sqlalchemy import and_, delete, exists, or_, update
+from sqlalchemy import String, and_, cast, delete, exists, or_, update
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
@@ -45,6 +46,10 @@ from models.db import (
     CmsTagCandidateEvidenceRecord,
     CmsTagCandidateRecord,
     CmsTagRecord,
+    EventMemberBacklogRecord,
+    EventMemberRecord,
+    EventRecord,
+    EventRedirectRecord,
     MediaAssetRecord,
     PODCAST_TEXT_ARTIFACT_KINDS,
     PodcastArtifactRecord,
@@ -76,6 +81,8 @@ TRANSACTION_REVISION_CAPABILITY = "transaction-revision-tombstone-v1"
 AUTHORITATIVE_PRESENCE_CAPABILITY = "authoritative-presence-v1"
 PODCAST_TEXT_PUBLICATIONS_CAPABILITY = "podcast-text-publications-v1"
 PODCAST_AUDIO_PUBLICATIONS_CAPABILITY = "podcast-audio-publications-v1"
+# 事件层(issue #121):按能力协商的可选流,旧版接收端缺它就跳过 events 流。
+EVENTS_CAPABILITY = "events_v1"
 REQUIRED_CAPABILITIES = (
     TRANSACTION_REVISION_CAPABILITY,
     AUTHORITATIVE_PRESENCE_CAPABILITY,
@@ -84,6 +91,7 @@ ADVERTISED_CAPABILITIES = (
     *REQUIRED_CAPABILITIES,
     PODCAST_TEXT_PUBLICATIONS_CAPABILITY,
     PODCAST_AUDIO_PUBLICATIONS_CAPABILITY,
+    EVENTS_CAPABILITY,
 )
 # Compatibility alias for integrations that display the producer's advertised
 # feature set. Capability validation must use REQUIRED_CAPABILITIES instead.
@@ -104,6 +112,7 @@ STREAMS = (
     "taxonomy",
     "articles",
     "analyses",
+    "events",
     "media",
     "source_states",
     "podcast_texts",
@@ -111,6 +120,37 @@ STREAMS = (
 )
 _USER_SOURCE_PREFIX = "user_rss_"
 _SAFE_MEDIA_EXT = re.compile(r"^\.[a-z0-9]{1,10}$", re.IGNORECASE)
+# ── 事件流线格式(issue #121):实体 = 一个事件 + 其公共成员 + 两侧合并重定向;identity = events.id ──
+_EVENT_STATUSES = frozenset({"open", "closed", "merged"})
+_EVENT_MEMBER_ASSIGNED_BY = frozenset({"llm", "url", "title", "singleton", "manual", "sync"})
+_EVENT_WIRE_FIELDS = (
+    "id",
+    "status",
+    "title",
+    "title_source",
+    "representative_article_id",
+    "member_count",
+    "publisher_count",
+    "first_seen_at",
+    "last_member_at",
+    "story_id",
+    "follows_event_id",
+    "assignment_version",
+    "created_at",
+    "updated_at",
+)
+_EVENT_MEMBER_WIRE_FIELDS = (
+    "article_id",
+    "publisher_key",
+    "report_at",
+    "first_seen_at",
+    "assigned_by",
+    "confidence",
+    "prompt_version",
+    "is_representative",
+    "created_at",
+)
+_EVENT_REDIRECT_WIRE_FIELDS = ("old_event_id", "reason", "created_at")
 
 
 class SyncV2Error(ValueError):
@@ -413,7 +453,7 @@ def _media_references(session: Session, snapshot: int) -> dict[str, int]:
         )
     ).all()
     for article, revision in articles:
-        for url in extract_image_urls(article.content, article.extensions_json):
+        for url in extract_image_urls(article.content, article.extensions_json, article.source_url):
             urls[url] = max(urls.get(url, 0), int(revision))
     return urls
 
@@ -424,6 +464,13 @@ def is_public_media_reference(session: Session, url: str) -> bool:
     target = str(url or "").strip()
     if not target:
         return False
+    try:
+        filename = urlsplit(target).path.rsplit("/", 1)[-1]
+    except ValueError:
+        return False
+    # Relative references do not contain the full target. Narrow by filename,
+    # then resolve against each article URL and compare exactly below.
+    candidate_text = filename or target
     # Narrow in SQLite first instead of loading/parsing every article body for
     # every binary request. Exact extraction on the tiny candidate set keeps
     # the allow decision faithful while avoiding O(M × N) Python memory churn.
@@ -450,15 +497,15 @@ def is_public_media_reference(session: Session, url: str) -> bool:
                     SourceConfigRecord.collection_authority_id == "",
                 ),
                 or_(
-                    ArticleRecord.content.contains(target, autoescape=True),
-                    ArticleRecord.extensions_json.contains(target, autoescape=True),
+                    ArticleRecord.content.contains(candidate_text, autoescape=True),
+                    ArticleRecord.extensions_json.contains(candidate_text, autoescape=True),
                 ),
             )
             .order_by(ArticleRecord.id)
             .limit(200)
         ).all()
         if any(
-            target in extract_image_urls(row.content, row.extensions_json)
+            target in extract_image_urls(row.content, row.extensions_json, row.source_url)
             for row in candidates
         ):
             return True
@@ -481,6 +528,11 @@ def _canonical_revision(value: Any, *, field: str, allow_empty: bool = False) ->
 
 
 def _tombstone_payload(stream: str, identity: str) -> dict[str, Any]:
+    if stream == "events":
+        return {
+            "id": _canonical_event_id(identity, field="event identity"),
+            "tombstone": True,
+        }
     field = {
         "sources": "source_id",
         "articles": "id",
@@ -622,6 +674,294 @@ def _validated_podcast_audio_payload(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _article_is_public(session: Session, article: Optional[ArticleRecord]) -> bool:
+    """导出口径的「公共文章」:本机分析、非 user_rss_、源配置既非私有 / 远端也非凭据源。
+
+    凭据源判定沿用 ``user_sources.source_is_credentialed``(显式分类 + URL 推断),与 MaaS / 读者
+    面的「内容可否离开本部署」同一口径(检视 R1 #2)。
+    """
+
+    from services.user_sources import source_is_credentialed
+
+    if (
+        article is None
+        or article.analysis_authority_id
+        or not _public_source(article.source_id)
+    ):
+        return False
+    source = session.get(SourceConfigRecord, article.source_id)
+    if source is not None and (source.owner_username or source.collection_authority_id):
+        return False
+    return not source_is_credentialed(source)
+
+
+def _exported_event_metadata(
+    session: Session,
+    record: EventRecord,
+    exportable: list[tuple[EventMemberRecord, ArticleRecord]],
+    *,
+    total_members: int,
+) -> tuple[dict[str, Any], dict[str, bool]]:
+    """事件元数据的导出投影:成员一个没剔除就照抄缓存列;剔除过就只从可导出成员重建。
+
+    缓存的标题(尤其模型拟题)、代表稿与计数可能带着私有成员的信息,重建时按方案 §3 的标题
+    优先级走但**跳过模型题**:中文成员原题 → 指纹有效的译题缓存 → 代表稿原题;代表稿 = 原代表稿
+    仍可导出就沿用,否则按「官方 > 分数 > 报道更早 > article_id」从可导出成员里挑。
+    """
+
+    event = {field: getattr(record, field) for field in _EVENT_WIRE_FIELDS}
+    if len(exportable) == total_members:
+        return event, {member.article_id: bool(member.is_representative) for member, _ in exportable}
+
+    from services.reader_ai import (
+        TRANSLATION_TITLE_FP_KEY,
+        TRANSLATION_TITLE_KEY,
+        _body_fingerprint,
+        _cache_valid,
+        looks_chinese,
+    )
+    from services.source_naming import source_role
+
+    scores: dict[str, float] = {}
+    if exportable:
+        for analysis in session.exec(
+            select(ArticleAnalysisRecord).where(
+                ArticleAnalysisRecord.article_id.in_([article.id for _, article in exportable])
+            )
+        ).all():
+            if analysis.status == "succeeded":
+                scores[analysis.article_id] = float(analysis.quality_score or 0.0)
+
+    def order_key(pair: tuple[EventMemberRecord, ArticleRecord]) -> tuple[Any, ...]:
+        member, article = pair
+        return (
+            source_role(article.source_id) != "official",
+            -scores.get(article.id, 0.0),
+            member.report_at or "",
+            article.id,
+        )
+
+    ordered = sorted(exportable, key=order_key)
+    representative = next(
+        (pair for pair in ordered if pair[1].id == record.representative_article_id),
+        ordered[0] if ordered else None,
+    )
+    if representative is not None:
+        ordered = [representative, *[pair for pair in ordered if pair is not representative]]
+    title, title_source = "", ""
+    for _member, article in ordered:
+        candidate = (article.title or "").strip()
+        if candidate and looks_chinese(candidate):
+            title, title_source = candidate, "zh_member"
+            break
+    if not title:
+        for _member, article in ordered:
+            ext = _json_object(article.extensions_json, {})
+            if _cache_valid(
+                ext,
+                TRANSLATION_TITLE_KEY,
+                TRANSLATION_TITLE_FP_KEY,
+                _body_fingerprint(article.title or ""),
+            ):
+                title, title_source = str(ext.get(TRANSLATION_TITLE_KEY) or "").strip(), "translation"
+                break
+    if not title and representative is not None:
+        title, title_source = (representative[1].title or "").strip(), "representative"
+    event.update(
+        title=title,
+        title_source=title_source,
+        representative_article_id=representative[1].id if representative is not None else None,
+        member_count=len(exportable),
+        publisher_count=len({member.publisher_key for member, _ in exportable}),
+    )
+    flags = {
+        member.article_id: representative is not None and member.article_id == representative[1].id
+        for member, _ in exportable
+    }
+    return event, flags
+
+
+def _canonical_event_id(value: Any, *, field: str) -> int:
+    """事件 ID 是 authority 分配的正整数;线上 identity 以文本出现,也接受规范十进制串。"""
+
+    if isinstance(value, bool) or not isinstance(value, int):
+        raw = str(value if value is not None else "")
+        if not raw.isdigit() or str(int(raw)) != raw:
+            raise SyncV2Error(f"{field} must be a positive integer")
+        value = int(raw)
+    if value <= 0:
+        raise SyncV2Error(f"{field} must be a positive integer")
+    return value
+
+
+_STRIPPED_EVENT_FIELDS: dict[str, Any] = {
+    "title": "",
+    "title_source": "",
+    "representative_article_id": None,
+    "member_count": 0,
+    "publisher_count": 0,
+}
+
+
+def _stripped_event_wire(record: EventRecord) -> dict[str, Any]:
+    """merged 事件的线值:只保留身份 / 状态 / 时间 / 链接列,内容缓存一律清空。"""
+
+    event = {field: getattr(record, field) for field in _EVENT_WIRE_FIELDS}
+    event.update(_STRIPPED_EVENT_FIELDS)
+    return event
+
+
+def _event_payload(session: Session, record: EventRecord) -> dict[str, Any]:
+    """一个事件 + 其公共成员 + 两侧重定向;私有 / 非本机文章的成员在导出时剔除。
+
+    重定向同时挂在两侧——新事件的 ``redirects_from`` 与旧事件的 ``merged_into``——接收端
+    无论哪一侧后到都能把 ``event_redirects`` 行补上(两侧可能落在不同页)。
+    """
+
+    if record.status == "merged":
+        # 已合并的旧事件只剩「指向新事件」这一件事(检视 R2 G2):成员已迁走,缓存的标题 / 代表稿 /
+        # 计数再无可导出成员作依据,一律剥离;接收端应用时同样清空旧缓存。合并本身改了 status
+        # 会触发回标,所以剥离记录随合并即刻发出,不等成员来源日后转私有。
+        event = _stripped_event_wire(record)
+        members: list[dict[str, Any]] = []
+    else:
+        rows = session.exec(
+            select(EventMemberRecord, ArticleRecord)
+            .join(ArticleRecord, ArticleRecord.id == EventMemberRecord.article_id)
+            .where(EventMemberRecord.event_id == record.id)
+            .order_by(EventMemberRecord.article_id.asc())
+        ).all()
+        exportable = [
+            (member, article) for member, article in rows if _article_is_public(session, article)
+        ]
+        event, representative_flags = _exported_event_metadata(
+            session, record, exportable, total_members=len(rows)
+        )
+        members = [
+            {
+                **{field: getattr(member, field) for field in _EVENT_MEMBER_WIRE_FIELDS},
+                "is_representative": representative_flags[member.article_id],
+            }
+            for member, _article in exportable
+        ]
+    redirects_from = [
+        {field: getattr(redirect, field) for field in _EVENT_REDIRECT_WIRE_FIELDS}
+        for redirect in session.exec(
+            select(EventRedirectRecord)
+            .where(EventRedirectRecord.new_event_id == record.id)
+            .order_by(EventRedirectRecord.old_event_id.asc())
+        ).all()
+    ]
+    merged = session.get(EventRedirectRecord, record.id)
+    merged_into = None
+    if merged is not None:
+        merged_into = {
+            "new_event_id": merged.new_event_id,
+            "reason": merged.reason,
+            "created_at": merged.created_at,
+        }
+    return {
+        "id": record.id,
+        "event": event,
+        "members": members,
+        "redirects_from": redirects_from,
+        "merged_into": merged_into,
+    }
+
+
+def _require_text(
+    container: dict[str, Any], field: str, *, label: str, allow_empty: bool = False
+) -> str:
+    value = container.get(field)
+    if not isinstance(value, str) or (not value and not allow_empty):
+        raise SyncV2Error(f"{label} {field} is required")
+    return value
+
+
+def _validated_event_payload(data: dict[str, Any]) -> dict[str, Any]:
+    """Validate the complete event wire value before any database write."""
+
+    event_id = _canonical_event_id(data.get("id"), field="event id")
+    event = data.get("event")
+    if not isinstance(event, dict):
+        raise SyncV2Error("event object is required")
+    if _canonical_event_id(event.get("id"), field="event.id") != event_id:
+        raise SyncV2Error("event id does not match payload identity")
+    if event.get("status") not in _EVENT_STATUSES:
+        raise SyncV2Error("event status is not canonical")
+    for field in ("title", "title_source", "assignment_version"):
+        _require_text(event, field, label="event", allow_empty=True)
+    for field in ("first_seen_at", "last_member_at", "created_at", "updated_at"):
+        _require_text(event, field, label="event")
+    for field in ("member_count", "publisher_count"):
+        value = event.get(field)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise SyncV2Error(f"event {field} must be a non-negative integer")
+    representative = event.get("representative_article_id")
+    if representative is not None and (
+        not isinstance(representative, str) or not representative
+    ):
+        raise SyncV2Error(
+            "event representative_article_id must be a non-empty string or null"
+        )
+    for field in ("story_id", "follows_event_id"):
+        if event.get(field) is not None:
+            _canonical_event_id(event.get(field), field=f"event {field}")
+    members = data.get("members")
+    if not isinstance(members, list):
+        raise SyncV2Error("event members must be a list")
+    seen: set[str] = set()
+    for member in members:
+        if not isinstance(member, dict):
+            raise SyncV2Error("event member must be an object")
+        article_id = _require_text(member, "article_id", label="event member")
+        if article_id in seen:
+            raise SyncV2Error(f"event member {article_id} is duplicated")
+        seen.add(article_id)
+        for field in ("publisher_key", "prompt_version"):
+            _require_text(member, field, label="event member", allow_empty=True)
+        for field in ("report_at", "first_seen_at", "created_at"):
+            _require_text(member, field, label="event member")
+        if member.get("assigned_by") not in _EVENT_MEMBER_ASSIGNED_BY:
+            raise SyncV2Error("event member assigned_by is not canonical")
+        confidence = member.get("confidence")
+        if confidence is not None and (
+            isinstance(confidence, bool)
+            or not isinstance(confidence, (int, float))
+            or not 0.0 <= confidence <= 1.0
+        ):
+            raise SyncV2Error("event member confidence must be null or within [0, 1]")
+        if not isinstance(member.get("is_representative"), bool):
+            raise SyncV2Error("event member is_representative must be boolean")
+    redirects = data.get("redirects_from", [])
+    if not isinstance(redirects, list):
+        raise SyncV2Error("event redirects_from must be a list")
+    old_ids: set[int] = set()
+    for redirect in redirects:
+        if not isinstance(redirect, dict):
+            raise SyncV2Error("event redirect must be an object")
+        old_id = _canonical_event_id(
+            redirect.get("old_event_id"), field="event redirect old_event_id"
+        )
+        if old_id == event_id or old_id in old_ids:
+            raise SyncV2Error("event redirect old_event_id is not canonical")
+        old_ids.add(old_id)
+        _require_text(redirect, "reason", label="event redirect", allow_empty=True)
+        _require_text(redirect, "created_at", label="event redirect")
+    merged_into = data.get("merged_into")
+    if merged_into is not None:
+        if not isinstance(merged_into, dict):
+            raise SyncV2Error("event merged_into must be an object or null")
+        new_id = _canonical_event_id(
+            merged_into.get("new_event_id"), field="event merged_into new_event_id"
+        )
+        if new_id == event_id:
+            raise SyncV2Error("event cannot redirect to itself")
+        _require_text(merged_into, "reason", label="event merged_into", allow_empty=True)
+        _require_text(merged_into, "created_at", label="event merged_into")
+    return data
+
+
 def _upsert_payload(
     session: Session,
     stream: str,
@@ -749,6 +1089,20 @@ def _upsert_payload(
         ):
             return None
         return _validated_podcast_audio_payload(_podcast_audio_payload(record))
+    if stream == "events":
+        try:
+            event_id = _canonical_event_id(identity, field="event identity")
+        except SyncV2Error:
+            return None
+        record = session.get(EventRecord, event_id)
+        if record is None or record.authority_id:
+            return None
+        payload = _event_payload(session, record)
+        # 一个可导出成员都没有(成员全是私有 / 凭据源,或被管理员全部摘出)→ 以 tombstone 导出让
+        # 接收端撤回;已合并的旧事件本就没有成员,只靠 merged_into 让旧 ID 可达,照常导出。
+        if not payload["members"] and record.status != "merged":
+            return None
+        return payload
     raise SyncV2Error(f"unsupported entity-state stream: {stream}")
 
 
@@ -1272,6 +1626,11 @@ def parse_page(
                 )
         if stream == "podcast_audio" and operation == "upsert":
             _validated_podcast_audio_payload(payload)
+        if stream == "events":
+            if operation == "upsert":
+                _validated_event_payload(payload)
+            else:
+                _canonical_event_id(identity, field=f"line {number} event identity")
         if stream != "taxonomy":
             if since_revision >= 0 and revision_number <= since_revision:
                 raise SyncV2Error(f"line {number}: revision is not newer than since")
@@ -1554,6 +1913,22 @@ def _apply_tombstones(
                     record.updated_at = record.withdrawn_at
                     session.add(record)
                     deleted += 1
+        elif stream == "events":
+            record = session.get(
+                EventRecord, _canonical_event_id(identity, field="event identity")
+            )
+            if record is not None:
+                if record.authority_id != authority_id:
+                    # 与 upsert 同一姿态(检视 R1 #8):撞上本地 / 第三 authority 的事件就整页回滚,
+                    # 不能一边留着本地事件、一边把它的同步状态盖成远端 tombstone。
+                    owner = record.authority_id or "<local>"
+                    raise SyncV2Error(
+                        f"event {identity} belongs to another authority: "
+                        f"existing {owner!r}, incoming {authority_id!r}"
+                    )
+                # 运行期连接 PRAGMA foreign_keys=ON:成员、重定向、待补账与本地榜单快照行随事件级联删除。
+                session.delete(record)
+                deleted += 1
         else:
             raise SyncV2Error(f"{stream} does not support tombstones")
     return deleted
@@ -1952,6 +2327,7 @@ def _apply_articles(
     authority_id: str,
 ) -> tuple[int, int]:
     from api.routers.archive_sync import build_import_article_record
+    from services.translation_sync import preserve_local_translations
 
     inserted = updated = 0
     for item in rows:
@@ -1995,6 +2371,7 @@ def _apply_articles(
             and existing.analysis_authority_id != authority_id
         ):
             raise SyncV2Error(f"article {incoming.id} belongs to another authority")
+        incoming.extensions_json = preserve_local_translations(existing, incoming, authority_id)
         taking_authority = not bool(existing.analysis_authority_id)
         previous_content_hash = compute_content_hash(existing)
         existing.analysis_authority_id = authority_id
@@ -2441,6 +2818,298 @@ def _apply_podcast_audio(
     return inserted, updated
 
 
+def _owned_event_id(session: Session, value: Any, authority_id: str) -> Optional[int]:
+    """本地存在且归该 authority 的事件 ID;缺失(跨页 / 已删)时返回 None 让链接留空。"""
+
+    if value is None:
+        return None
+    record = session.get(EventRecord, int(value))
+    if record is None or record.authority_id != authority_id:
+        return None
+    return record.id
+
+
+def _apply_events(
+    session: Session,
+    rows: list[dict[str, Any]],
+    authority_id: str,
+) -> tuple[int, int, int, int]:
+    """Upsert whole events: the row first, then its member set, then cross-event links.
+
+    成员的文章本地还没到(文章 revision 越过了本轮快照,下一轮 articles 流才到)→ 成员线值进节点本地
+    的 ``event_member_backlog``(``deferred``),每次拉取在 articles 流之后重放补回;文章在本地但不归
+    该 authority(例如接收端自己的 ``user_rss_`` 文章撞了同一 ID)→ 跳过并计数(``skipped``),本地
+    文章一字不动。事件行与其余成员照常落库;成员列(含 ``assigned_by``)原样照抄生产端。
+    story / follows 与重定向的对端事件可能落在同一页稍后的行甚至下一页,所以整页先落事件与
+    成员,再补链接;对端仍不在本地的链接留空、重定向跳过——重定向同时挂在旧事件(``merged_into``)
+    与新事件(``redirects_from``)两侧,后到的一侧会把它补上。本地同 ID 事件(authority 为空)
+    一律 fail-closed:整页回滚、checkpoint 不前移,交人工处理。
+    """
+
+    inserted = updated = skipped = deferred = 0
+    now = _now_iso()
+    links: list[tuple[int, Any, Any]] = []
+    redirects: dict[int, tuple[int, str, str]] = {}
+    for item in rows:
+        data = _validated_event_payload(item["payload"])
+        event = data["event"]
+        event_id = int(data["id"])
+        revision = _canonical_revision(item["revision"], field="remote revision")
+        merged = event.get("status") == "merged"
+        record = session.get(EventRecord, event_id)
+        if record is not None and record.authority_id != authority_id:
+            owner = record.authority_id or "<local>"
+            raise SyncV2Error(
+                f"event {event_id} belongs to another authority: "
+                f"existing {owner!r}, incoming {authority_id!r}"
+            )
+        if record is None:
+            record = EventRecord(
+                id=event_id,
+                first_seen_at=str(event["first_seen_at"]),
+                last_member_at=str(event["last_member_at"]),
+                created_at=str(event["created_at"]),
+                updated_at=str(event["updated_at"]),
+            )
+            inserted += 1
+        else:
+            updated += 1
+        for field in _EVENT_WIRE_FIELDS:
+            if field in {"id", "representative_article_id", "story_id", "follows_event_id"}:
+                continue
+            setattr(record, field, event[field])
+        representative = event.get("representative_article_id")
+        representative_article = (
+            session.get(ArticleRecord, representative) if representative else None
+        )
+        record.representative_article_id = (
+            representative
+            if representative_article is not None
+            and representative_article.analysis_authority_id == authority_id
+            else None
+        )
+        if merged:
+            # 与导出侧同一姿态:旧事件只剩重定向,本地残留的旧标题 / 代表稿 / 计数一并清空。
+            for field, value in _STRIPPED_EVENT_FIELDS.items():
+                setattr(record, field, value)
+        record.story_id = None
+        record.follows_event_id = None
+        record.authority_id = authority_id
+        session.add(record)
+        session.flush()
+        session.exec(
+            delete(EventMemberRecord).where(EventMemberRecord.event_id == event_id)
+        )
+        # 这个事件的成员集整体以本页为准:它名下的待补行全部作废(仍在成员里的下面重新入账)。
+        session.exec(
+            delete(EventMemberBacklogRecord).where(
+                EventMemberBacklogRecord.authority_id == authority_id,
+                EventMemberBacklogRecord.event_id == event_id,
+            )
+        )
+        session.flush()
+        for member in [] if merged else data["members"]:
+            article_id = str(member["article_id"])
+            pending = session.get(EventMemberBacklogRecord, (authority_id, article_id))
+            if pending is not None and int(pending.revision) > revision:
+                # 同一篇文章已有更新版本的归属在等文章,本行是旧版本,不能倒退。
+                deferred += 1
+                continue
+            article = session.get(ArticleRecord, article_id)
+            if article is None:
+                payload_json = _canonical(
+                    {field: member[field] for field in _EVENT_MEMBER_WIRE_FIELDS}
+                )
+                if pending is None:
+                    pending = EventMemberBacklogRecord(
+                        authority_id=authority_id,
+                        article_id=article_id,
+                        event_id=event_id,
+                        revision=revision,
+                        payload_json=payload_json,
+                        first_seen_at=now,
+                        attempts=0,
+                        updated_at=now,
+                    )
+                else:
+                    pending.event_id = event_id
+                    pending.revision = revision
+                    pending.payload_json = payload_json
+                    pending.updated_at = now
+                session.add(pending)
+                deferred += 1
+                continue
+            if article.analysis_authority_id != authority_id:
+                skipped += 1
+                continue
+            if pending is not None:
+                session.delete(pending)
+            current = session.exec(
+                select(EventMemberRecord).where(EventMemberRecord.article_id == article.id)
+            ).first()
+            if current is not None:
+                if _applied_event_revision(session, authority_id, current.event_id) > revision:
+                    # 本地已落库的归属来自更新的事件版本,本页是旧版本:不倒退。
+                    skipped += 1
+                    continue
+                # 生产端把这篇文章挪去了别的事件:同一 authority 的文章以较新的版本为准,旧归属让位。
+                session.delete(current)
+            session.flush()
+            session.add(
+                EventMemberRecord(
+                    event_id=event_id,
+                    **{field: member[field] for field in _EVENT_MEMBER_WIRE_FIELDS},
+                )
+            )
+        links.append((event_id, event.get("story_id"), event.get("follows_event_id")))
+        for redirect in data.get("redirects_from") or []:
+            redirects[int(redirect["old_event_id"])] = (
+                event_id,
+                str(redirect["reason"]),
+                str(redirect["created_at"]),
+            )
+        merged_into = data.get("merged_into")
+        if merged_into:
+            redirects[event_id] = (
+                int(merged_into["new_event_id"]),
+                str(merged_into["reason"]),
+                str(merged_into["created_at"]),
+            )
+    session.flush()
+    for event_id, story_id, follows_event_id in links:
+        record = session.get(EventRecord, event_id)
+        record.story_id = _owned_event_id(session, story_id, authority_id)
+        record.follows_event_id = _owned_event_id(
+            session, follows_event_id, authority_id
+        )
+        session.add(record)
+    for old_id, (new_id, reason, created_at) in redirects.items():
+        if (
+            _owned_event_id(session, old_id, authority_id) is None
+            or _owned_event_id(session, new_id, authority_id) is None
+        ):
+            continue
+        redirect = session.get(EventRedirectRecord, old_id)
+        if redirect is None:
+            redirect = EventRedirectRecord(
+                old_event_id=old_id,
+                new_event_id=new_id,
+                reason=reason,
+                created_at=created_at,
+            )
+        else:
+            redirect.new_event_id = new_id
+            redirect.reason = reason
+            redirect.created_at = created_at
+        session.add(redirect)
+    return inserted, updated, skipped, deferred
+
+
+def _applied_event_revision(session: Session, authority_id: str, event_id: int) -> int:
+    """接收端已应用的该事件页行 revision(同一 authority);没有记录按 -1(最旧)算。"""
+
+    state = session.get(ArchiveSyncEntityStateRecord, ("events", str(event_id)))
+    if state is None or state.authority_id != authority_id:
+        return -1
+    return int(state.revision)
+
+
+def replay_event_member_backlog(
+    engine: Engine,
+    *,
+    now: Optional[str] = None,
+    max_age_days: int = 30,
+) -> dict[str, int]:
+    """Install backlogged event members whose Articles have since arrived.
+
+    接收端每次 v2 拉取在 articles 流应用之后调用。一行 = 同一 authority 下某篇文章最新版本的待补归属:
+    文章已到且归该 authority → 落成员、删行,但本地已落库的归属若来自更新的事件版本则不覆盖
+    (``superseded``);目标事件已撤回 / 已合并(重定向走了)/ 不归该 authority → 弃行;文章仍缺 →
+    ``attempts`` +1,入账超过 ``max_age_days`` 清理。独立事务,不影响任何流 checkpoint。
+    """
+
+    import datetime
+
+    stamp = now or _now_iso()
+    try:
+        cutoff = datetime.datetime.fromisoformat(stamp) - datetime.timedelta(days=max_age_days)
+    except ValueError as exc:
+        raise SyncV2Error("backlog replay clock must be ISO-8601") from exc
+    installed = pending = expired = dropped = superseded = 0
+    with Session(engine) as session:
+        rows = session.exec(
+            select(EventMemberBacklogRecord).order_by(
+                EventMemberBacklogRecord.authority_id, EventMemberBacklogRecord.article_id
+            )
+        ).all()
+        for row in rows:
+            event = session.get(EventRecord, row.event_id)
+            if (
+                event is None
+                or not event.authority_id
+                or event.authority_id != row.authority_id
+                or event.status == "merged"
+                or session.get(EventRedirectRecord, row.event_id) is not None
+            ):
+                session.delete(row)
+                dropped += 1
+                continue
+            article = session.get(ArticleRecord, row.article_id)
+            if article is None:
+                try:
+                    seen = datetime.datetime.fromisoformat(row.first_seen_at)
+                except ValueError:
+                    seen = None
+                if seen is None or seen < cutoff:
+                    session.delete(row)
+                    expired += 1
+                else:
+                    row.attempts = int(row.attempts or 0) + 1
+                    row.updated_at = stamp
+                    session.add(row)
+                    pending += 1
+                continue
+            member = _json_object(row.payload_json, {})
+            if (
+                article.analysis_authority_id != row.authority_id
+                or str(member.get("article_id") or "") != row.article_id
+                or any(field not in member for field in _EVENT_MEMBER_WIRE_FIELDS)
+            ):
+                session.delete(row)
+                dropped += 1
+                continue
+            current = session.exec(
+                select(EventMemberRecord).where(EventMemberRecord.article_id == article.id)
+            ).first()
+            if current is not None:
+                if current.event_id == row.event_id:
+                    session.delete(row)
+                    dropped += 1
+                    continue
+                if _applied_event_revision(session, row.authority_id, current.event_id) > int(row.revision):
+                    session.delete(row)
+                    superseded += 1
+                    continue
+                session.delete(current)
+                session.flush()
+            session.add(
+                EventMemberRecord(
+                    event_id=row.event_id,
+                    **{field: member[field] for field in _EVENT_MEMBER_WIRE_FIELDS},
+                )
+            )
+            session.delete(row)
+            installed += 1
+        session.commit()
+    return {
+        "installed": installed,
+        "pending": pending,
+        "expired": expired,
+        "dropped": dropped,
+        "superseded": superseded,
+    }
+
+
 def _apply_source_states(
     session: Session,
     rows: list[dict[str, Any]],
@@ -2541,7 +3210,7 @@ def import_page(
     authority_id = str(manifest["authority_id"])
     with Session(engine) as session:
         try:
-            deleted = 0
+            deleted = skipped = deferred = 0
             if stream == "taxonomy":
                 apply_taxonomy = _taxonomy_import_is_newer(session, manifest, rows)
                 if not apply_taxonomy:
@@ -2631,6 +3300,10 @@ def import_page(
                     inserted, updated = _apply_podcast_audio(
                         session, upserts, authority_id
                     )
+                elif stream == "events":
+                    inserted, updated, skipped, deferred = _apply_events(
+                        session, upserts, authority_id
+                    )
                 else:
                     inserted, updated = _apply_source_states(
                         session, upserts, authority_id
@@ -2663,6 +3336,10 @@ def import_page(
         "inserted": inserted,
         "updated": updated,
         "deleted": deleted,
+        # 只有 events 流会非零:skipped = 成员文章在本地却不归该 authority(不允许接收)而跳过;
+        # deferred = 成员文章尚未到本地,进 event_member_backlog 等下一轮 articles 流后补回。
+        "skipped": skipped,
+        "deferred": deferred,
     }
 
 
@@ -2700,6 +3377,19 @@ def _authority_scope_predicates(stream: str, authority_id: str):
     return identity_column, remote_upsert, article_is_eligible
 
 
+def _event_remote_upsert(authority_id: str):
+    """该 authority 对某事件已应用 upsert 状态(identity 是 events.id 的文本形式)。"""
+
+    return exists(
+        select(ArchiveSyncEntityStateRecord.identity).where(
+            ArchiveSyncEntityStateRecord.stream == "events",
+            ArchiveSyncEntityStateRecord.identity == cast(EventRecord.id, String),
+            ArchiveSyncEntityStateRecord.authority_id == authority_id,
+            ArchiveSyncEntityStateRecord.operation == "upsert",
+        )
+    )
+
+
 def full_authority_stale_identities(
     engine: Engine,
     stream: str,
@@ -2709,12 +3399,25 @@ def full_authority_stale_identities(
 
     authority_id = str(authority_id or "").strip()
     if (
-        stream not in {"articles", "analyses", "podcast_texts", "podcast_audio"}
+        stream not in {"articles", "analyses", "podcast_texts", "podcast_audio", "events"}
         or not authority_id
     ):
         raise SyncV2Error(
-            "full authority finalization supports articles/analyses/podcast_texts/podcast_audio only"
+            "full authority finalization supports articles/analyses/podcast_texts/podcast_audio/events only"
         )
+    if stream == "events":
+        with Session(engine) as session:
+            return [
+                str(identity)
+                for identity in session.exec(
+                    select(EventRecord.id)
+                    .where(
+                        EventRecord.authority_id == authority_id,
+                        ~_event_remote_upsert(authority_id),
+                    )
+                    .order_by(EventRecord.id)
+                ).all()
+            ]
     if stream == "podcast_audio":
         with Session(engine) as session:
             return [
@@ -2799,14 +3502,30 @@ def authority_present_identities(
 ) -> list[str]:
     """Confirm which candidate identities currently exist in public authority scope."""
 
-    if stream not in {"articles", "analyses", "podcast_texts", "podcast_audio"}:
+    if stream not in {"articles", "analyses", "podcast_texts", "podcast_audio", "events"}:
         raise SyncV2Error(
-            "presence supports articles/analyses/podcast_texts/podcast_audio only"
+            "presence supports articles/analyses/podcast_texts/podcast_audio/events only"
         )
     requested = list(dict.fromkeys(str(value or "").strip() for value in identities))
     if not requested or any(not value for value in requested) or len(requested) > 1000:
         raise SyncV2Error("presence identities must contain 1..1000 non-empty values")
     with Session(engine) as session:
+        if stream == "events":
+            wanted: dict[int, str] = {}
+            for value in requested:
+                try:
+                    wanted[_canonical_event_id(value, field="event identity")] = value
+                except SyncV2Error:
+                    continue
+            if not wanted:
+                return []
+            present_ids = session.exec(
+                select(EventRecord.id).where(
+                    EventRecord.id.in_(list(wanted)),
+                    EventRecord.authority_id == "",
+                )
+            ).all()
+            return sorted(wanted[int(value)] for value in present_ids)
         if stream == "podcast_audio":
             return sorted(
                 artifact_id
@@ -2901,17 +3620,38 @@ def finalize_full_authority_stream(
 
     authority_id = str(authority_id or "").strip()
     if (
-        stream not in {"articles", "analyses", "podcast_texts", "podcast_audio"}
+        stream not in {"articles", "analyses", "podcast_texts", "podcast_audio", "events"}
         or not authority_id
     ):
         raise SyncV2Error(
-            "full authority finalization supports articles/analyses/podcast_texts/podcast_audio only"
+            "full authority finalization supports articles/analyses/podcast_texts/podcast_audio/events only"
         )
     confirmed_absent = list(
         dict.fromkeys(str(value or "").strip() for value in absent_identities)
         )
     if not confirmed_absent:
         return 0
+    if stream == "events":
+        event_ids: list[int] = []
+        for value in confirmed_absent:
+            try:
+                event_ids.append(_canonical_event_id(value, field="event identity"))
+            except SyncV2Error:
+                continue
+        with Session(engine) as session:
+            pruned = 0
+            for start in range(0, len(event_ids), 900):
+                batch = event_ids[start:start + 900]
+                result = session.exec(
+                    delete(EventRecord).where(
+                        EventRecord.id.in_(batch),
+                        EventRecord.authority_id == authority_id,
+                        ~_event_remote_upsert(authority_id),
+                    )
+                )
+                pruned += max(int(getattr(result, "rowcount", 0) or 0), 0)
+            session.commit()
+            return pruned
     if stream == "podcast_audio":
         now = _now_iso()
         with Session(engine) as session:

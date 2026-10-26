@@ -35,6 +35,7 @@ from models.db import (
     TaxonomyVersionRecord,
 )
 from services.article_time import SHANGHAI, parse_article_time
+from services.title_cache import cached_title
 from services import content_classification, source_visibility, user_sources
 
 
@@ -668,6 +669,7 @@ def _content_payload(
     return {
         "id": article.id,
         "title": article.title,
+        "title_zh": cached_title(article),
         "source_id": article.source_id,
         "content_type": article.content_type,
         "publish_date": article.publish_date,
@@ -767,6 +769,7 @@ def _all_time_high_scores(
         {
             "id": article.id,
             "title": article.title,
+            "title_zh": cached_title(article),
             "source_id": article.source_id,
             "content_type": article.content_type,
             "publish_date": article.publish_date,

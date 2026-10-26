@@ -1,6 +1,6 @@
 """源合集(策展合集)测试:注册表校验 + 目录端点 + 批量订阅/退订端到端。
 
-定调见 docs/source-collections-wave-plan.md:合集是目录呈现层的批量动作,
+定调见 docs/archive/source-collections-wave-plan.md:合集是目录呈现层的批量动作,
 不是订阅实体——这里验证的正是「批量 = 逐成员复刻单源订阅语义」。
 """
 

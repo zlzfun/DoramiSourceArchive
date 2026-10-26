@@ -12,11 +12,15 @@ import {
   rankingTrendPath,
   scoreBasisLabel,
 } from '../utils/rankings';
+import { displayTitle } from '../utils/titleDisplay';
+import { useTitlePreference } from '../hooks/useTitlePreference';
 
 function ContentList({
   items, onOpenArticle, sourceMap, must = false,
   emptyText = '还没有达到公开门槛的内容，明早 7 点再来看看',
 }) {
+  // 标题语言(issue #218):条目带 title_zh 且偏好开时显示中文译名,否则原题
+  const { preferChinese } = useTitlePreference();
   if (!items?.length) {
     return <p className="ranking-empty">{emptyText}</p>;
   }
@@ -27,7 +31,7 @@ function ContentList({
           <button type="button" className="ranking-content-row" onClick={() => onOpenArticle?.(item.id)}>
             <span className="ranking-content-rank">{index + 1}</span>
             <span className="ranking-content-main">
-              <span className="ranking-content-title">{item.title}</span>
+              <span className="ranking-content-title">{displayTitle(item, preferChinese, '')}</span>
               <span className="ranking-content-meta">
                 {sourceMap?.[item.source_id]?.name || item.source_id}
                 {item.score_basis ? ` · ${scoreBasisLabel(item.score_basis)}` : ''}

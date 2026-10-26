@@ -197,3 +197,70 @@ def test_credentialed_private_sources_never_reach_external_llm(storage, monkeypa
     assert "title_zh" not in snaps["a-secret"] and "title_zh" not in snaps["a-orphan"]
     assert TRANSLATION_TITLE_KEY not in secret_ext
     assert stats == {"chinese": 0, "cached": 1, "public_brief": 0, "translated": 1, "fallback": 2}
+
+
+def test_retained_name_receipt_never_adds_duplicate_subtitle_or_calls_llm(storage, monkeypatch):
+    calls = []
+    _fake_translate(monkeypatch, {}, calls=calls)
+    ext = {TRANSLATION_TITLE_KEY: "Deepseek", TRANSLATION_TITLE_FP_KEY: _body_fingerprint("Deepseek")}
+    with Session(storage.engine) as session:
+        edition = _seed(session, {"retained": ("Deepseek", ext)})
+        for _ in range(2):
+            stats = titles.localize_edition_titles(session, edition, llm_config=CONFIGURED)
+            assert "title_zh" not in _snapshots(session, edition.id)["retained"]
+            assert stats["translated"] == 0 and stats["fallback"] == 1
+    assert calls == []
+
+
+def test_retained_name_can_still_reuse_public_brief_editorial_title(storage, monkeypatch):
+    calls = []
+    _fake_translate(monkeypatch, {}, calls=calls)
+    ext = {TRANSLATION_TITLE_KEY: "Deepseek", TRANSLATION_TITLE_FP_KEY: _body_fingerprint("Deepseek")}
+    with Session(storage.engine) as session:
+        edition = _seed(session, {"retained": ("Deepseek", ext)})
+        now = dt.datetime.now(dt.timezone.utc).isoformat()
+        session.add(ArticleRecord(id="brief-retained", title="中文日报", content_type="daily_brief",
+            source_id=titles.PUBLIC_DAILY_BRIEF_SOURCE_ID, source_url="", publish_date=now,
+            fetched_date=now, content="日报", extensions_json=json.dumps({"items":[{"id":"retained","title_cn":"深度求索的新进展"}]})))
+        session.commit()
+        stats = titles.localize_edition_titles(session, edition, llm_config=CONFIGURED)
+        assert _snapshots(session, edition.id)["retained"]["title_zh"] == "深度求索的新进展"
+        assert stats["public_brief"] == 1 and stats["translated"] == 0
+    assert calls == []
+
+
+def test_digest_title_keeps_system_policy_when_reader_ai_global_switch_is_off(storage, monkeypatch):
+    from models.db import AppSettingRecord
+    from services import accounts
+    calls = []
+    _fake_translate(monkeypatch, {"A digest English headline": "早报系统标题"}, calls=calls)
+    with Session(storage.engine) as session:
+        session.add(AppSettingRecord(key=accounts.AI_BETA_GLOBAL_KEY, value="false"))
+        edition = _seed(session, {"system-title": "A digest English headline"})
+        stats = titles.localize_edition_titles(session, edition, llm_config=CONFIGURED)
+        assert stats["translated"] == 1
+        assert _snapshots(session, edition.id)["system-title"]["title_zh"] == "早报系统标题"
+        ext = json.loads(session.get(ArticleRecord, "system-title").extensions_json)
+        assert ext[TRANSLATION_TITLE_KEY] == "早报系统标题"
+        assert ext[TRANSLATION_TITLE_FP_KEY] == _body_fingerprint("A digest English headline")
+    assert calls == [("A digest English headline", "aux", "personal_digest_title")]
+
+
+def test_digest_policy_still_rechecks_private_source_before_publication(storage, monkeypatch):
+    from models.db import AppSettingRecord, SourceConfigRecord
+    from services import accounts
+    async def became_private(*args, **kwargs):
+        now = dt.datetime.now(dt.timezone.utc).isoformat()
+        with Session(storage.engine) as session:
+            session.add(SourceConfigRecord(source_id="rss_a", name="now private", source_type="rss",
+                url="https://example.com/feed?token=secret", created_at=now, updated_at=now))
+            session.commit()
+        return "不能写入的结果"
+    monkeypatch.setattr(titles, "_translate_title", became_private)
+    with Session(storage.engine) as session:
+        session.add(AppSettingRecord(key=accounts.AI_BETA_GLOBAL_KEY, value="false"))
+        edition = _seed(session, {"policy-title": "A digest headline"})
+        stats = titles.localize_edition_titles(session, edition, llm_config=CONFIGURED)
+        assert stats["translated"] == 0 and stats["fallback"] == 1
+        assert "title_zh" not in _snapshots(session, edition.id)["policy-title"]
+        assert TRANSLATION_TITLE_KEY not in json.loads(session.get(ArticleRecord, "policy-title").extensions_json)

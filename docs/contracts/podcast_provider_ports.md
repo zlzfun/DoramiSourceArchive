@@ -42,7 +42,7 @@
   `bailian_tts_calls` 授权记录，成功后下载并缓存音频。签名 URL 仅在本机受保护的回执目录，
   不进入业务 API / Archive Sync；最终音频仍由精品导读服务执行媒体 QA 和 CAS 发布。
   这条路径的 TTS 预算独立于通用 ASR 账本，不把两者合计伪装成一个总预算。
-  详见 [部署和恢复规则](../bailian-singapore-deployment.md)。
+  详见 [部署和恢复规则](../ops/bailian-singapore-deployment.md)。
 - TTS 通用 Plan 只携带 `ProviderUsagePlan`；字符计数属于 Aliyun adapter 内部实现。
 - 当前持久化额度支持 ASR 秒数和 TTS 字符数。若新供应商按其他单位计费，应先扩展
   `ProviderUsageUnit`、数据库约束/迁移和账本测试，不能把 token 假装成字符。

@@ -14,6 +14,7 @@ from models.db import (
 )
 from services.podcast_metadata import merge_podcast_publisher_metadata
 from services import sync_consumer_policy
+from services.title_cache import extensions as title_extensions, preserve_title_receipt
 from services.collection_nodes import PODCAST_SOURCE_TYPES, is_public_podcast_source
 from services.podcast_stage_policy import PodcastStageDenied, require_stage as require_podcast_stage
 
@@ -68,6 +69,8 @@ class DatabaseStorage(BaseStorage):
             # 老 SQLite 无 trigram 时内部吞异常降级为标题 LIKE，不影响启动。
             from storage.fts import ensure_fts
             ensure_fts(self.engine)
+        from services import title_translation
+        title_translation.initialize(self.engine)
         self.logger.info(f"🗄️ 关系型数据库已连接: {db_url}")
 
     def _queue_refreshed_podcast_analysis(self, article_id: str) -> None:
@@ -267,7 +270,9 @@ class DatabaseStorage(BaseStorage):
                     )
                     existing.has_content = True
                     existing.content = item.content
-                    existing.extensions_json = json.dumps(raw_metadata.get("extensions", {}), ensure_ascii=False)
+                    existing.extensions_json = json.dumps(preserve_title_receipt(
+                        existing, raw_metadata.get("extensions", {}), title=item.title,
+                    ), ensure_ascii=False)
                     session.add(existing)
                     session.commit()
                     return True
@@ -369,6 +374,12 @@ class DatabaseStorage(BaseStorage):
             record = session.get(ArticleRecord, item_id)
             if not record:
                 return False
+            updates = dict(updates)
+            if "extensions_json" in updates:
+                incoming = title_extensions({"extensions_json": updates["extensions_json"]})
+                updates["extensions_json"] = json.dumps(preserve_title_receipt(
+                    record, incoming, title=updates.get("title", record.title),
+                ), ensure_ascii=False)
             for key, value in updates.items():
                 if hasattr(record, key):
                     setattr(record, key, value)

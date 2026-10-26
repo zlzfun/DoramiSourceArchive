@@ -1444,7 +1444,7 @@ def test_intermediate_pr_data_cleanup_is_scoped_and_privacy_minimizing(tmp_path)
                 if "id" in table.c and getattr(model, "id", None) is None:
                     model.id = result.inserted_primary_key[0]
 
-            session.add(UserRecord(
+            insert_against_physical_schema(UserRecord(
                 username="alice",
                 password_hash="test",
                 created_at=stamp,
@@ -2855,7 +2855,13 @@ def test_source_admission_status_migration_splits_incubating_out_of_category(tmp
 
         DatabaseStorage(db_url=db_url).engine.dispose()
         with engine.connect() as conn:
-            assert triggers(conn) == before
+            after = triggers(conn)
+        # 旧触发器一个不少;事件层(issue #121)另给 source_configs 加了两条「源转私有 → 事件重导出」触发器
+        assert after >= before
+        assert after - before == {
+            "archive_sync_event_source_insert",
+            "archive_sync_event_source_change",
+        }
 
         command.downgrade(cfg, "7ec8c19b1356")
         with engine.connect() as conn:

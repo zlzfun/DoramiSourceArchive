@@ -5,7 +5,7 @@ GET /api/archive/export/articles.jsonl → 本地 import_archive_sync_jsonl 幂�
 端点全落 /api/admin/remote-sync/*,中间件 admin 前缀自动门控(改写整库,admin-only)。
 核心实现在 services/remote_sync.py;拉取跑在持久化后台 job(services/jobs.py),
 凭据只进任务内存,job payload 与 KV 游标绝不含密码。
-设计见 docs/engage-sync-wave-plan.md。
+设计见 docs/archive/engage-sync-wave-plan.md。
 """
 
 import importlib
