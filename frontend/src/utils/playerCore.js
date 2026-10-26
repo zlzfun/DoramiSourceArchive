@@ -2,6 +2,7 @@
 // 组件(components/player/*)只做 DOM 与音频;这里不碰 window,便于 node --test。
 import { podcastOf } from './podcast.js';
 import { latinLang } from './readerText.js';
+import { chineseTitleOf } from './titleDisplay.js';
 
 export const PLAYER_TRACKS = Object.freeze(['original', 'digest', 'article_narration']);
 export const PLAYER_RATES = Object.freeze([1, 1.25, 1.5, 2]);
@@ -15,6 +16,12 @@ const positive = (value) => {
 
 export function playerItemKey(articleId, track) {
   return `${articleId}:${track}`;
+}
+
+/** 播放条上显示的标题(issue #218):偏好开且条目带中文译名时显示译名(不标 lang),否则原题。 */
+export function playerItemTitle(item, preferChinese) {
+  if (preferChinese && item?.titleZh) return { title: item.titleZh, lang: '' };
+  return { title: item?.title || '', lang: item?.lang || '' };
 }
 
 /** 播客单集的一条音轨:original = 发布方原节目;digest = AI 精品导读。没有可播地址返回 null。 */
@@ -32,6 +39,7 @@ export function podcastTrackItem(article, track = 'original', showFallback = '')
     shape: 'podcast',
     src: src.trim(),
     title,
+    titleZh: chineseTitleOf(article),
     lang: latinLang(title) || '',
     show: podcast.show_title || showFallback || '',
     cover: isHttp(podcast.image_url) ? podcast.image_url.trim() : '',
@@ -52,6 +60,7 @@ export function articleNarrationItem(article, sourceName = '') {
     shape: 'article',
     src: guide.audio_url.trim(),
     title,
+    titleZh: chineseTitleOf(article),
     lang: latinLang(title) || '',
     show: sourceName || '',
     cover: '',
@@ -229,6 +238,7 @@ export function sanitizeItem(item) {
     shape: track === 'article_narration' ? 'article' : 'podcast',
     src: item.src.trim(),
     title: String(item.title || '（无标题）'),
+    titleZh: typeof item.titleZh === 'string' ? item.titleZh : '',
     lang: item.lang === 'en' ? 'en' : '',
     show: String(item.show || ''),
     cover: isHttp(item.cover) ? item.cover.trim() : '',

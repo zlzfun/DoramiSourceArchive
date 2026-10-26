@@ -32,6 +32,7 @@ import { deepLinkArticleId } from './utils/shareLink';
 import { clearPlayerSession } from './utils/playerCore';
 import { LOGIN_REQUIRED_EVENT } from './utils/loginPrompt';
 import { authQueue, decideAuthExpired } from './utils/authSession';
+import { TitlePreferenceContext, useTitlePreferenceState } from './hooks/useTitlePreference';
 
 // Tab 组件按路由惰性加载：各自独立 chunk，登录页与读者态不再下载用不到的重依赖
 // （AdminOpsTab→recharts、ReaderTab/DailyBriefTab→react-markdown）。每个 Tab 挂在独立
@@ -729,6 +730,11 @@ export default function App() {
     ));
   }, []);
 
+  // 「默认显示中文标题」(issue #218):账号存服务端(乐观切换、失败回滚),游客只存本机;下发给阅读器与设置
+  const titlePreference = useTitlePreferenceState({
+    isGuest, user: authState.user, onUserUpdated: handleUserUpdated, showToast,
+  });
+
   const handleLogout = async () => {
     try {
       await authQueue.run(async () => {
@@ -849,6 +855,7 @@ export default function App() {
   }
 
   return (
+    <TitlePreferenceContext.Provider value={titlePreference}>
     <div className={`${isMobile ? 'm-root' : 'app-shell'} font-sans${arrival === 'fading' ? ' app-arriving' : ''}`}>
       <AiGradientDefs />
       {arrivalOverlay}
@@ -1175,5 +1182,6 @@ export default function App() {
         </div>
       </main>
     </div>
+    </TitlePreferenceContext.Provider>
   );
 }

@@ -53,6 +53,10 @@
 
 - [horizon-vs-dorami.md](./horizon-vs-dorami.md) — 与 Thysrael/Horizon 的抓取/日报原理对照。
 
+## 标题自动翻译与逐段阅读(2026-10-26,issue #218)
+
+- [issue-218-title-translation-progressive-reading.md](./issue-218-title-translation-progressive-reading.md) — R2标题自动翻译、默认中文标题开关、手动正文逐块骨架与SSE、预算及同步保护；双向检视与用户验收通过，未部署。
+
 ## OpenAI 静态图片(2026-10-23,issue #217)
 
 - [issue-217-decisions-images.md](./issue-217-decisions-images.md) — 相对图链修复、受限静态图片浏览器取图、交叉检视与历史回测记录。

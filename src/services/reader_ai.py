@@ -257,9 +257,8 @@ async def translate_article(
         body_cached = body_cached and ext.get(TRANSLATION_VERSION_KEY) == TRANSLATION_VERSION
     # 中文标题不送翻译:原样即译文(与前端「中文源不画翻译二段」同一启发式)
     title_needed = bool(title) and not looks_chinese(title)
-    title_cached = (not title_needed) or _cache_valid(
-        ext, TRANSLATION_TITLE_KEY, TRANSLATION_TITLE_FP_KEY, title_fp
-    )
+    from services.title_cache import title_receipt
+    title_cached = (not title_needed) or title_receipt(record) is not None
     if body_cached and title_cached:
         return {
             "translation": ext[TRANSLATION_KEY],
@@ -283,7 +282,13 @@ async def translate_article(
         # 与正文分段同过并发信号量(codex 检视:map_concurrency=1 时曾并发两请求)
         try:
             async with semaphore:
-                return await _translate_title(title, llm_config, usage_meta, http_client)
+                async def call():
+                    return await _translate_title(title, llm_config, usage_meta, http_client)
+                engine = getattr(db_sink, "engine", None)
+                if engine is None:
+                    return await call()
+                from services.title_translation import translate_shared
+                return await translate_shared(engine, article_id, title, call)
         except Exception as exc:  # noqa: BLE001
             logger.warning("标题翻译失败 article=%s: %s", article_id, exc)
             return ""
@@ -328,10 +333,9 @@ async def translate_article(
     if translated_title:
         ext[TRANSLATION_TITLE_KEY] = translated_title
         ext[TRANSLATION_TITLE_FP_KEY] = title_fp
-    keys = (
-        TRANSLATION_KEY, TRANSLATION_FP_KEY, TRANSLATION_VERSION_KEY,
-        TRANSLATION_TITLE_KEY, TRANSLATION_TITLE_FP_KEY,
-    )
+    keys = (TRANSLATION_KEY, TRANSLATION_FP_KEY, TRANSLATION_VERSION_KEY)
+    if title_cached or translated_title:
+        keys += (TRANSLATION_TITLE_KEY, TRANSLATION_TITLE_FP_KEY)
     await _save_translation(db_sink, article_id, body, title, {key: ext[key] for key in keys if key in ext})
 
     if title_needed:
@@ -668,12 +672,14 @@ def build_sources_payload(records: List[Any], *, notes_by_id: Optional[dict] = N
     作答侧据此决定是否追加图片说明的 system 规则,**不靠嗅探正文里的哨兵字符串**
     (正文可被攻击者写入「【图片内容】」,codex 检视 F8)。"""
     from services.source_naming import friendly_source_name
+    from services.title_cache import cached_title
 
     notes = notes_by_id or {}
     return [
         {
             "id": _art_field(r, "id"),
             "title": _art_field(r, "title"),
+            "title_zh": cached_title(r),
             "source_id": _art_field(r, "source_id"),
             "source_name": friendly_source_name(_art_field(r, "source_id") or ""),
             "source_url": _art_field(r, "source_url"),

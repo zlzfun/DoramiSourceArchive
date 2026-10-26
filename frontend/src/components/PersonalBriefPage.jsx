@@ -17,6 +17,8 @@ import { resolveCompany } from '../sourceTaxonomy';
 import { formatDateTime, formatRelativeTime } from '../utils/datetime';
 import { fmtDayKey, WEEKDAY_CHARS } from '../utils/readerTime';
 import { latinLang } from '../utils/readerText';
+import { titleView } from '../utils/titleDisplay';
+import { useTitlePreference } from '../hooks/useTitlePreference';
 import { qualityScoreText, scoreTierClass, scoreDisclaimer, SCORE_DIMENSION_LABELS } from '../utils/analysis';
 import { scoreDimensionOf, scoreOf } from '../utils/briefScore';
 
@@ -111,15 +113,16 @@ function pickHeadline(groups, degraded) {
   return best;
 }
 
-// 一条的展示要素:标题(中文译名优先)、摘要、来源、分数与维度、理由、订阅态——海报头条与板块条目共用
-function viewOf(item, source) {
+// 一条的展示要素:标题(按偏好选中文译名或原题)、摘要、来源、分数与维度、理由、订阅态——海报头条与板块条目共用
+function viewOf(item, source, preferChinese) {
   const snapshot = item.snapshot || {};
   const dimension = scoreDimensionOf(item);
   const shownScore = scoreOf(item);
   const interest = interestLabelOf(item, snapshot);
   const sourceName = snapshot.source_name || source?.name || snapshot.source_id || '未知来源';
-  // 中文标题(v3.52.1,issue #33 §4):编排后补的 title_zh 作主标题,原标题降为其下小字
-  const titleZh = snapshot.title_zh && snapshot.title_zh !== snapshot.title ? snapshot.title_zh : '';
+  // 中文标题(v3.52.1,issue #33 §4):编排后补的 title_zh 作主标题,原标题降为其下小字;
+  // 「默认显示中文标题」关闭时只显示快照原题(issue #218,只选不改,版面快照不动)
+  const titles = titleView(snapshot, preferChinese);
   return {
     snapshot,
     dimension,
@@ -134,8 +137,8 @@ function viewOf(item, source) {
     summary: snapshot.summary || snapshot.one_sentence_summary || '',
     sourceName,
     company: source ? resolveCompany(source) : resolveCompany({ source_id: snapshot.source_id, name: sourceName, user_source: true }),
-    title: titleZh || snapshot.title || '（无标题）',
-    titleOrig: titleZh ? snapshot.title : '',
+    title: titles.title,
+    titleOrig: titles.orig,
     // 订阅外(v3.54「订阅 ∪ 兴趣」):快照事实 subscribed=false,且当前仍未订阅(订阅后即不再画,不必等重编)
     unsubscribed: snapshot.subscribed === false && !(source && source.subscribed) && !!snapshot.source_id,
   };
@@ -225,7 +228,8 @@ function FavoriteButton({ articleId, favoriteIds, onToggleFavorite, label = fals
 }
 
 function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds, onToggleFavorite }) {
-  const view = viewOf(item, source);
+  const { preferChinese } = useTitlePreference();
+  const view = viewOf(item, source, preferChinese);
   const { snapshot } = view;
   const related = relatedOf(snapshot);
   const [showRelated, setShowRelated] = useState(false);
@@ -261,7 +265,8 @@ function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds
 }
 
 function Headline({ item, kicker, source, flash, restCount, onOpen, onSubscribeSource, favoriteIds, onToggleFavorite }) {
-  const view = viewOf(item, source);
+  const { preferChinese } = useTitlePreference();
+  const view = viewOf(item, source, preferChinese);
   const { snapshot } = view;
   const selectionReason = item.selection_reason || snapshot.selection_reason || '';
   const related = relatedOf(snapshot);
@@ -591,7 +596,14 @@ export default function PersonalBriefPage({
       // 序列按页面显示序(头条 + 板块顺序 + 板块内分数序),「早报下一条」才与读者眼前的顺序一致
       const sequence = [...(headline ? [headline] : []), ...acts.flatMap((group) => group.items)]
         .filter((row) => row.article_id && !isSocialRow(row))
-        .map((row) => ({ id: row.id ?? row.position, article_id: row.article_id, title: row.snapshot?.title || '', source_url: row.snapshot?.source_url || '' }));
+        .map((row) => ({
+          id: row.id ?? row.position,
+          article_id: row.article_id,
+          title: row.snapshot?.title || '',
+          // 「早报下一条」提示同样按标题偏好选快照里的中文译名或原题(issue #218)
+          title_zh: row.snapshot?.title_zh || null,
+          source_url: row.snapshot?.source_url || '',
+        }));
       const opened = await onOpenArticle(item.article_id, {
         date: selDate,
         revision: edition?.revision ?? null,

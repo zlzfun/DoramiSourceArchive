@@ -1,0 +1,377 @@
+/* ════════════════════════════════════════════════════════════════════
+   issue #218 R2 交互样页专用样式。只由 r2-preview.html → main.jsx 引入,生产入口不加载。
+   选择器一律挂在 .r2-* 前缀或 .r2-html / .r2-root 之下,不改任何现网类的全局规则;
+   颜色、圆角、阴影、动效全部引用 index.css 的 token,字号不小于 12px、字重只用 400 / 600。
+   产品界面本身全部复用现网类(.reader-* / .m-* / .sett-* / .skeleton),这里只有三类东西:
+   ① 样页外壳(反色说明条 + 演示控制,刻意与产品界面区分);② 把阅读器壳塞进说明条下方的布局适配;
+   ③ R2 新增的产品样式:逐段占位(未完成片按原文块结构画的原位骨架)、连续展示的推进边界(单个 4 行骨架)、
+   两者共用的一行动作 / 原因与停止态静止骨架,以及新出现片的淡入。
+   ════════════════════════════════════════════════════════════════════ */
+
+.r2-html,
+.r2-html body,
+.r2-html #root {
+  height: 100%;
+}
+.r2-html {
+  overflow: hidden;
+  scrollbar-gutter: auto;
+}
+.r2-html body {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.r2-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  height: 100dvh;
+  color: var(--dorami-ink);
+  font-family: var(--font-sans);
+}
+
+/* ── ① 样页外壳:反色常驻说明条(高于弹窗遮罩,设置柜打开时仍清晰) ── */
+.r2-strip {
+  position: relative;
+  z-index: 95;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  padding: 4px 6px 4px 14px;
+  background: var(--dorami-ink);
+  color: var(--dorami-canvas);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.r2-strip-text {
+  flex: 1;
+  min-width: 0;
+}
+.r2-strip-btn,
+.r2-demo-btn,
+.r2-demo-close,
+.r2-demo-seg button {
+  font-size: 12px;
+  font-weight: 400;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+}
+.r2-strip-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: var(--r-pill);
+  background: color-mix(in oklab, var(--dorami-canvas) 16%, var(--dorami-ink));
+  color: var(--dorami-canvas);
+  font-weight: 600;
+}
+.r2-strip-btn:hover,
+.r2-strip-btn[aria-expanded="true"] {
+  background: color-mix(in oklab, var(--dorami-canvas) 26%, var(--dorami-ink));
+}
+.r2-strip-btn svg {
+  width: 14px;
+  height: 14px;
+}
+.r2-strip :focus-visible {
+  outline: 2px solid var(--dorami-canvas);
+  outline-offset: 2px;
+}
+
+/* 演示控制:说明条下的非模态面板,同为反色,与产品界面分区 */
+.r2-demo {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 8px;
+  width: min(360px, calc(100vw - 16px));
+  max-height: min(78vh, 640px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 14px 14px;
+  border-radius: var(--r-card);
+  background: var(--dorami-ink);
+  color: var(--dorami-canvas);
+  box-shadow: var(--sh-3);
+  font-weight: 400;
+}
+.r2-demo-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.r2-demo-heading {
+  font-size: 13px;
+  font-weight: 600;
+}
+.r2-demo-note,
+.r2-demo-tip,
+.r2-demo-label,
+.r2-demo-target {
+  color: color-mix(in oklab, var(--dorami-canvas) 72%, var(--dorami-ink));
+}
+.r2-demo-note {
+  flex: 1;
+  min-width: 0;
+}
+.r2-demo-close {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-sm);
+  color: var(--dorami-canvas);
+}
+.r2-demo-close:hover {
+  background: color-mix(in oklab, var(--dorami-canvas) 14%, var(--dorami-ink));
+}
+.r2-demo-close svg {
+  width: 15px;
+  height: 15px;
+}
+.r2-demo-sec {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in oklab, var(--dorami-canvas) 18%, var(--dorami-ink));
+}
+.r2-demo-title {
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.r2-demo-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 10px;
+  margin-top: 6px;
+}
+.r2-demo-seg {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--r-control);
+  background: color-mix(in oklab, var(--dorami-canvas) 12%, var(--dorami-ink));
+}
+.r2-demo-seg button {
+  min-height: 24px;
+  padding: 0 9px;
+  border-radius: var(--r-sm);
+  color: color-mix(in oklab, var(--dorami-canvas) 80%, var(--dorami-ink));
+}
+.r2-demo-seg button:hover:not(:disabled):not([aria-pressed="true"]) {
+  color: var(--dorami-canvas);
+}
+.r2-demo-seg button[aria-pressed="true"] {
+  background: var(--dorami-canvas);
+  color: var(--dorami-ink);
+}
+.r2-demo-target {
+  margin-top: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 「后台各片」只在演示控制里可见:产品界面不显示进度,评审靠它看清已完成却未接上的片 */
+.r2-demo-chunks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.r2-demo-chunk-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.r2-demo-chunk {
+  padding: 1px 7px;
+  border-radius: var(--r-sm);
+  background: color-mix(in oklab, var(--dorami-canvas) 12%, var(--dorami-ink));
+  color: color-mix(in oklab, var(--dorami-canvas) 85%, var(--dorami-ink));
+}
+.r2-demo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.r2-demo-btn {
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: var(--r-control);
+  background: color-mix(in oklab, var(--dorami-canvas) 14%, var(--dorami-ink));
+  color: var(--dorami-canvas);
+}
+.r2-demo-btn:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--dorami-canvas) 24%, var(--dorami-ink));
+}
+.r2-demo-btn:disabled,
+.r2-demo-seg button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.r2-demo-tip {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.r2-demo :focus-visible {
+  outline: 2px solid var(--dorami-canvas);
+  outline-offset: 2px;
+}
+
+/* ── ② 布局适配:阅读器壳原本按「视口 − 应用导轨」铺满,这里改为铺满说明条下方的舞台 ── */
+.r2-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.r2-stage > .reader-shell {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border-top: 0;
+}
+/* 手机壳的 .m-shell / .m-read / .m-page 都是 position:fixed;宿主带 transform 成为它们的包含块,
+   整套移动层就落在说明条之下(手机框模式下落在框内) */
+.r2-mobile-host {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  transform: translateZ(0);
+}
+.r2-mobile-host .m-shell {
+  height: auto;
+}
+.r2-stage.is-framed {
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: var(--dorami-canvas);
+}
+.r2-stage.is-framed .r2-mobile-host {
+  position: relative;
+  inset: auto;
+  width: 390px;
+  max-width: 100%;
+  height: min(844px, 100%);
+  border-radius: var(--r-overlay);
+  box-shadow: var(--sh-3), 0 0 0 1px var(--dorami-border);
+}
+
+/* 阅读锚点由样页自己补偿(ArticleBody 的 ScrollAnchor),关掉浏览器的滚动锚定以免两套叠加 */
+.r2-root .reader-pane,
+.r2-root .m-read-scroll {
+  overflow-anchor: none;
+}
+
+/* ── ③ R2 新增产品样式 ── */
+/* 片多包了两层(.r2-seg > .r2-seg-body),首片首块的上边距与现网 .markdown-body > :first-child 同口径归零 */
+.r2-seg:first-child > .r2-seg-body > :first-child {
+  margin-top: 0;
+}
+/* 新接上的片一次淡入(反馈动效,不位移、不改高度);减少动效时直接出现 */
+.r2-seg-body.is-fresh {
+  animation: r2-seg-in var(--motion-slow) var(--motion-ease) both;
+}
+@keyframes r2-seg-in {
+  from { opacity: 0.2; }
+  to { opacity: 1; }
+}
+:root[data-motion="reduce"] .r2-seg-body.is-fresh {
+  animation: none;
+}
+
+/* 推进边界:连续译文之后的单个 4 行正文骨架(行条用现网 .skeleton,行形同 PaneBodySkeleton)+ 一行动作。
+   淡入沿用 .skeleton-delay(150ms 内补齐不闪);两态几何一致,进行中 ⇄ 停止不跳。 */
+.r2-frontier {
+  margin: 4px 0 16px;
+}
+.r2-frontier-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  min-height: 20px;
+  margin-top: 14px;
+  color: var(--dorami-muted);
+}
+/* 停止态(失败 / 暂停 / 取消):骨架停走,外观与减少动效下的静止骨架一致(亮色同 --dorami-soft 实底) */
+.r2-frontier.is-stopped .skeleton,
+.r2-slot.is-stopped .skeleton {
+  animation: none;
+}
+:root:not([data-theme="dark"]) .r2-frontier.is-stopped .skeleton,
+:root:not([data-theme="dark"]) .r2-slot.is-stopped .skeleton {
+  background: var(--dorami-soft);
+}
+
+/* 逐段占位:未完成片在原位置按原文顶层块逐块画骨架。块元素与正文同为 p / h2 / h3 / ul / blockquote / pre / table,
+   外边距、行高、缩进、表格边线都由现网 .markdown-body 给出;每行占一个正文行高(1lh),条高 0.8em。
+   整篇唯一的一行动作 / 原因跟在第一个未完成片之后。 */
+.r2-seg:first-child > .r2-slot > :first-child {
+  margin-top: 0;
+}
+.r2-seg > .r2-frontier-foot {
+  margin: 0 0 20px;
+}
+.r2-slot-line {
+  display: flex;
+  align-items: center;
+  height: 1.85em;
+  height: 1lh;
+}
+.r2-slot-line > .skeleton {
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 0.8em;
+}
+.r2-slot .r2-slot-list {
+  list-style: none;
+}
+.r2-slot-list > li {
+  position: relative;
+}
+/* 列表点落在缩进区,与真实列表符号同位 */
+.r2-slot .r2-slot-dot {
+  position: absolute;
+  left: -0.95em;
+  top: 0.72em;
+  top: calc(0.5lh - 0.2em);
+  width: 0.4em;
+  height: 0.4em;
+  border-radius: var(--r-pill);
+}
+/* 代码块:沿用 pre 的内边距与圆角,浅底换成细线框(浅底上的骨架条看不清);行长按等宽字符(ch)计 */
+.r2-slot .r2-slot-pre {
+  font-family: var(--font-mono);
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--dorami-border);
+}
+.r2-slot-math {
+  display: flex;
+  justify-content: center;
+  margin: 1em 0;
+}
+.r2-slot-math > .skeleton {
+  height: 2.2em;
+}
+.r2-slot-image > .skeleton {
+  display: block;
+  width: 100%;
+  max-height: 280px;
+  aspect-ratio: 16 / 9;
+  margin: 16px 0;
+  border-radius: var(--r-control);
+}

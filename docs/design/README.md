@@ -4,6 +4,7 @@
 
 | 样页 | 波次 / issue | 说明 |
 |---|---|---|
+| [issue-218-title-translation/](./issue-218-title-translation/README.md) | issue #218（R2 正式版已验收） | 默认中文标题设置、标题待译回退、正文手动翻译、连续前缀与逐段骨架原位替换两种呈现对比；桌面/手机、亮暗主题，模拟数据与进度，未接后台 |
 | `guest-mode/`(README + index / frame) | issue #213(已落地) | 游客模式九个场景:深链直达 / 登录页「先逛逛」/ 登录提示 / 游客版早报 / 发现页 / 分享 / AI 试用 / 设置与我的 / 运维游客区;底稿为现网 DOM 快照 |
 | `issue-121-hot-events/`(index + direction-a/b/c) | issue #121(前端搁置,2026-10-23) | 热点事件榜三方向样页:A 同构榜行 / B 事件卡 / C 头版;桌面嵌 RankingsPage 壳、手机壳、亮暗、四种榜况(6 / 7 / 3 件 / 空榜)、「新」与排名变化、「接前报」链;数据为调研金标真实事件。用户目检:三者都待商榷,B 较优但非定稿,留待文章榜 / 播客榜 / 热点统一重构时重出 |
 | `podcast-player/`(README + index / global / pane) | issue #199(v3.66) | 播客区方案 A / B / C × 状态 s1–s6,全局播放条条位 × 配色;拍板 C + 内容区浮层 + 封面模糊 |

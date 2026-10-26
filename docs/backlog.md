@@ -60,6 +60,7 @@
   §4 中文标题已落地(v3.52.1,`docs/archive/personal-brief-title-localization.md`);
   余下 §3 页面「个性化/智能化」(样页先行,把 §5 的过期提示行并入编排说明头)。
 
+
 ## 排队中(用户拍板、未动工)
 
 - ☐ **issue #132 智能管家**(2026-09-24 用户确定 Clowder AI;[R1 设计方案](./plans/issue-132-intelligent-butler.md)):
@@ -165,6 +166,7 @@
 - ◇ **社交流整流翻译开关**(issue #84 遗留,样页方案 C):社交流头部「原语言 | ✦ 中文」一键翻整屏。
   首版只做逐卡底栏入口;整流开关开着时每条可译推文进入视口就是一次调用,现行读者 `translate` 日额度 50 次撑不住,
   要做先定批量合并(一次调用翻多条)或单独额度。见 `docs/archive/social-translate-plan.md` §6。
+  2026-10-23 #218 R1 曾考虑以系统预译解决整流展示，已被 [R2](./archive/issue-218-title-translation-progressive-reading.md) 收敛：仅自动译标题，社交正文仍手动；本条仍为展望。
 - ◇ **X 第二批账号**(观察期后按数据决定):候补名单与不收理由见方案文档 §1。
   同脉络的旧待办「管理面账号池(凭据池/轮换/健康探测)」**已作废**——X 改按量付费后
   官方 API 路径不需要真实账号 Cookie,前提消失。
@@ -200,6 +202,8 @@
 - **日报 `per_source_cap=5` 是软配额**:`select_top` 的 overflow 补位可再加同源条目,淡日单源可能超过 5 篇(The Decoder 入名单后更可能出现);若运营要硬上限需改 overflow 语义。
 
 ## 已完结(近期,留档索引;执行记录与更早波次见 `docs/archive/README.md`)
+
+- ☑ **issue #218 标题自动翻译与正文分段阅读**（2026-10-26 用户验收通过，未部署）：标题自动译、中文标题偏好默认开、正文手动逐块骨架原位替换、预算去重与同步保护；双向交叉检视通过，记录见 [R2归档](./archive/issue-218-title-translation-progressive-reading.md)。观察社交标题预算占比、租约等待、极大预览与旧客户端流量；内网本地标题回执保留、事件legacy缓存、日文识别、历史回填、正文预译、逐字稿机制改造及预算专门管理UI均不扩本波。
 
 - ☑ **跨容器去重**(X 社交波遗留,「一条推 + 一篇 blog」):由事件层收口——社交帖入事件层(wave 1),个人早报与公共日报按事件归属同事件只出一条代表(wave 2,issue #103,方案 `docs/plans/issue-121-event-layer.md` §5.3)。原备案见 `docs/archive/social-x-wave-plan.md` §1。
 

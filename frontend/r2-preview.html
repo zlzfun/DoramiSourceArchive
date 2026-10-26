@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN" class="r2-html">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=2" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="robots" content="noindex" />
+    <title>R2 样页 · 标题中文化与分段阅读（issue #218）</title>
+    <!-- 与现网同源自托管字体(宋体 / 西文衬线),不请求外部字体域名 -->
+    <link rel="stylesheet" href="/fonts/dorami-serif-v1/dorami-serif.css" />
+    <link rel="stylesheet" href="/fonts/dorami-latin-v1/dorami-latin.css" />
+    <!-- 首帧主题:样页用独立键 dorami-r2-preview:theme;首次打开只读现网 dorami-theme / 中性色 / 动效偏好,不写回 -->
+    <script>
+      (function () {
+        var root = document.documentElement;
+        try {
+          var saved = localStorage.getItem('dorami-r2-preview:theme') || localStorage.getItem('dorami-theme') || 'system';
+          var dark = saved === 'dark' ||
+            (saved === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          root.setAttribute('data-theme', dark ? 'dark' : 'light');
+          if (localStorage.getItem('dorami-motion') === 'reduce') root.setAttribute('data-motion', 'reduce');
+          var palette = localStorage.getItem('dorami-palette');
+          root.setAttribute('data-palette', palette === 'graphite' || palette === 'paper' ? palette : 'porcelain');
+        } catch (e) {
+          root.setAttribute('data-theme', 'light');
+          root.setAttribute('data-palette', 'porcelain');
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/design-preview/issue-218/main.jsx"></script>
+  </body>
+</html>

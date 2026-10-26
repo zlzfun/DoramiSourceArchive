@@ -692,3 +692,31 @@ def test_cost_gate_reports_site_budget_before_guest_quota(env, monkeypatch):
         tr.accounts.set_ai_daily_token_budget(session, 0)
         with pytest.raises(tr.GuestQuotaError):
             tr._cost_gate(session, visitor, 1)
+
+
+def test_auto_retained_name_receipt_avoids_manual_title_dispatch_and_quota(env, monkeypatch):
+    from services import title_translation
+    from services.title_cache import cached_title
+    engine, calls, _ = env
+    with Session(engine) as session:
+        session.get(ArticleRecord, "a").title = "Deepseek"
+        session.commit()
+    title_calls = []
+    async def retained(title, config, meta=None, http_client=None, **kwargs):
+        title_calls.append(title)
+        meta.recorder(meta, {"total_tokens": 10}, config.model)
+        return title
+    monkeypatch.setattr(reader_ai, "_translate_title", retained)
+    assert asyncio.run(title_translation.run_once(engine))
+    job = start(engine)
+    asyncio.run(tr.run_once(engine))
+    result = tr.status(engine, "user", "a")
+    assert result["status"] == "succeeded" and result["result"]["title"] == "Deepseek"
+    assert len(calls) == job["total"]
+    assert all("【待翻译正文】" in call["messages"][-1]["content"] for call in calls)
+    assert title_calls == ["Deepseek"]
+    with Session(engine) as session:
+        assert cached_title(session.get(ArticleRecord, "a")) is None
+        usage = {row.purpose: row for row in session.exec(select(AiUsageRecord)).all()}
+        assert usage["auto_title_translate"].calls == 1
+        assert usage["translate"].calls == len(calls)

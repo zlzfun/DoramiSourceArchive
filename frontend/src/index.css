@@ -13486,18 +13486,95 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 /* 发现页栏名不折行:兴趣段的 hint 较长,窄屏下标题曾被挤成竖排 */
 .reader-disc-title-row .reader-disc-title { flex: none; white-space: nowrap; }
 
-@layer components {
-  .reader-translation-progress {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem 0.75rem;
-    margin-block: 0.75rem;
-    padding-block: 0.5rem;
-    border-block: 1px solid var(--dorami-border);
-    color: var(--dorami-muted);
-    font-family: var(--font-sans);
-  }
+/* ── 正文渐进翻译(issue #218 第三稿「逐段占位、完成后原位替换」,样页 docs/design/issue-218-title-translation/)──
+   放在层外:停止态要压过层外的 .skeleton 流光,代码骨架要压过组件层 .markdown-body pre 的浅底。
+   骨架块元素与正文同为 p / h2 / h3 / ul / blockquote / pre / table,外边距、行高、缩进、表格边线都由 .markdown-body 给出;
+   每行占一个正文行高(1lh),条高 0.8em。进行中没有状态行,只有「中文」上的小圈圈。 */
+/* 未完成块不参与浏览器滚动锚定:骨架高度会变,锚在上面会把下方正在读的译文推走;图片加载等其余变化仍由原生锚定处理 */
+.reader-tr-block[data-tr-pending] {
+  overflow-anchor: none;
+}
+/* 块多包了一层(.reader-tr-block > 译文 / 骨架),首块首元素的上边距与 .markdown-body > :first-child 同口径归零 */
+.reader-tr-block:first-child > .reader-tr-block-body > :first-child,
+.reader-tr-block:first-child > .reader-tr-slot > :first-child {
+  margin-top: 0;
+}
+/* 新就绪的块换入时淡入一次(反馈动效,不位移、不改高度);减少动效时直接出现 */
+.reader-tr-block-body.is-fresh {
+  animation: reader-tr-block-in var(--motion-slow) var(--motion-ease) both;
+}
+@keyframes reader-tr-block-in {
+  from { opacity: 0.2; }
+  to { opacity: 1; }
+}
+:root[data-motion="reduce"] .reader-tr-block-body.is-fresh {
+  animation: none;
+}
+/* 停止态(失败 / 额度用尽 / 取消):骨架停走,外观与减少动效下的静止骨架一致(亮色同 --dorami-soft 实底) */
+.reader-tr-slot.is-stopped .skeleton {
+  animation: none;
+}
+:root:not([data-theme="dark"]) .reader-tr-slot.is-stopped .skeleton {
+  background: var(--dorami-soft);
+}
+/* 停止态那一行:一句原因 + 可用动作,整篇只在第一个未完成块下出现一次 */
+.reader-tr-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  min-height: 20px;
+  margin: 0 0 20px;
+  color: var(--dorami-muted);
+}
+.reader-tr-slot-line {
+  display: flex;
+  align-items: center;
+  height: 1.85em;
+  height: 1lh;
+}
+.reader-tr-slot-line > .skeleton {
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 0.8em;
+}
+.reader-tr-slot .reader-tr-slot-list {
+  list-style: none;
+}
+.reader-tr-slot-list > li {
+  position: relative;
+}
+/* 列表点落在缩进区,与真实列表符号同位 */
+.reader-tr-slot .reader-tr-slot-dot {
+  position: absolute;
+  left: -0.95em;
+  top: 0.72em;
+  top: calc(0.5lh - 0.2em);
+  width: 0.4em;
+  height: 0.4em;
+  border-radius: var(--r-pill);
+}
+/* 代码块:沿用 pre 的内边距与圆角,浅底换成细线框(浅底上的骨架条看不清);行长按等宽字符(ch)计 */
+.reader-tr-slot .reader-tr-slot-pre {
+  font-family: var(--font-mono);
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--dorami-border);
+}
+.reader-tr-slot-math {
+  display: flex;
+  justify-content: center;
+  margin: 1em 0;
+}
+.reader-tr-slot-math > .skeleton {
+  height: 2.2em;
+}
+.reader-tr-slot-image > .skeleton {
+  display: block;
+  width: 100%;
+  max-height: 280px;
+  aspect-ratio: 16 / 9;
+  margin: 16px 0;
+  border-radius: var(--r-control);
 }
 
 /* ── 游客模式(issue #213,样页 docs/design/guest-mode/)── */

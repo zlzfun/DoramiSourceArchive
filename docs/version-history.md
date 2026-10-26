@@ -16,6 +16,8 @@
 - **事件层 wave 2 早报同事件去重(issue #103,PR #222 `7f899c2`,2026-10-24 合入 main,开发版 3.67.0-alpha)**:个人早报消费事件层归属——事件键跨三条通道共享(头条已代表的事件精选不再出另一篇)、昨天版面出现过的事件今天整组抑制(含降级回退;头条池只认昨天的头条事件,升级例外)、条目快照带「另见 N 篇」(事件层可见成员,页面 chip 展开逐篇)、编排说明行「同事件合并 N 篇」;公共日报 `dedup_clusters` 前加事件层机械预聚类。`POLICY_VERSION` → v2。方案 `docs/plans/issue-121-event-layer.md` §5.3。
 - **事件层 wave 1(issue #121 + #103,PR #220 `0b47456`,2026-10-23 合入 main,开发版 3.67.0-alpha)**:平台级持久事件层——`events` 五表(退役零写入的 `duplicate_groups`)、分析周期末尾增量分配(URL / 同题直连 → FTS5 三通道 + 实体召回 → 一次辅助模型判全批,首篇关窗 48h、代表稿描述、只标题、回显校验、结构规则、不回溯)、热点榜读取侧(可见发布主体 ≥ 2、最多 10 件、07:00 排名快照)与管理合并 / 摘出、Archive Sync `events` 流(`events_v1`,九流)、回放脚本 `scripts/replay_event_assignment.py`;读者面「热点」段**搁置**(三方向样页留档 `docs/design/issue-121-hot-events/`,随榜单前端统一重构再出);方案 `docs/plans/issue-121-event-layer.md`(R2),调研 `issue-121-event-layer-research.md`。
 - **Decisions API 新闻裂图(issue #217,开发版 3.67.0-alpha)**：OpenAI 浏览器提取补全相对地址，受限静态图片经独立浏览器取图后缓存；存量显示、预取、分享与同步统一解析基址，保留原图且不回写历史内容。方案 `docs/archive/issue-217-decisions-images.md`。
+- **标题自动翻译与正文分段阅读（issue #218，2026-10-26；R2 用户验收通过）**：新增标题自动译、中文标题开关默认开、正文手动逐段骨架原位替换，去掉取消按钮；包含独立预算、共享去重、同步保护与 SSE。原 Claude Code Opus 5.5 max 同会话完成前端，双向检视通过；用户授权 CI 绿后合入，先不部署。[方案](./archive/issue-218-title-translation-progressive-reading.md)。
+
 - **游客模式(issue #213,开发版 3.67.0-alpha;2026-10-23 目检放行)**:收到站内链接免登录先逛——会话按访客 `guest:v:<vid>`(已读、AI 计次各自独立),订阅范围 / 共享早报 / AI 授权落保留账号 `guest:shared`;白名单门控 `src/api/guest_policy.py`(其余 403 `login_required`);总闸默认开;AI 每位游客与读者同额(429 `guest_quota_exhausted`);登录提示 `LoginPrompt` + 叠层登录页回原处;运维「用户」子页游客区(`components/admin/GuestZone.jsx`)+ 新表 `guest_visits`;顺手修手机发现页卡片撑宽与发现 / 社交页横向漂移;方案 `docs/archive/issue-213-guest-mode.md`,样页 `docs/design/guest-mode/`;公开链接退役另见 #215。
 - **论文全文阅读首期收口(issue #41,v3.66.0；2026-10-22)**：#201 全文阅读/摘要分析/回填/FTS 优化、#206/#207 翻译修复、#208 后台续译已完成；方案归档至 `docs/archive/issue-41-paper-fulltext.md`，后置范围进入 backlog 展望。
 - **文档整理波(issue #210,2026-10-21,待合入)**:L0 = `AGENTS.md` 正文(≤ 220 行)+ `CLAUDE.md` `@AGENTS.md`;Key Design Decisions 等原文迁入 `docs/architecture/` `reference/` `dev/` `ops/`;28 篇完结方案 + `specs/` `artifacts/` + 零引用样页归档;新建 `decisions.md`(ADR-lite)、`docs/dev/workflow.md`、`.claude/rules/` 四枚、项目技能三枚、守卫 `scripts/check_docs.py`;方案 `docs/plans/issue-210-docs-tidy.md`。
@@ -463,6 +465,18 @@ flags 组合、锁区偏移、错误映射、解锁静默。codex R1 两条 P2 �
 
 **CI 后端测试并行化(issue #150,2026-09-23;版本号以实际发版为准)**:PR 的 CI 动辄 20~30 min。实测(run 35752430622)三个 job 里只有 `backend (pytest)` 是关键路径:2411 用例串行 26.2 min,frontend 0.7、actionlint 0.1、uv 装依赖 0(缓存命中)、ffmpeg apt 0.4。按 CI 日志时间戳反推:`test_deploy_baremetal / deploy_scripts / deploy_checks / deploy_lib` 约 200 用例占 ~13 min(一次 `deploy.sh --here` 在 xtrace 里约 390 次外部进程——86 次 python、36 次 python 写的 sudo 桩、19 次 git;首装本地 8.8 s、二次 2.9 s;58 个 baremetal 用例 39 个以 `_deploy_v1` 完整首装开场,单用例 10~26 s),`test_migrations` ~2 min,其余 ~2150 用例 ~11 min(0.3 s 一个;固定开销都小:文件库 `DatabaseStorage` 0.09 s、TestClient lifespan 0.05 s、PBKDF2 0.02 s)。runner(public 仓库 ubuntu-latest)4 vCPU 只用了 1 个。本地把 pytest-xdist 装到临时目录试跑:`-n 4` 默认 `load` 调度 13:03(CPU 113%——按连续块分发,收集顺序里连成片的部署用例整块落到单 worker、其余三个空转),`-n 4 --dist worksteal` 5:50(部署 5 文件 3:52、其余 2201 用例 1:28 且 CPU 386%),2405 全过;试跑首轮在收集期 `database is locked`——`tests/conftest.py` 只在 `DORAMI_CONFIG_FILE` 未设时建沙箱,worker 继承主进程已设的值共用一库,`import api.app` 期 `create_all` 与播种互撞。落地:① `ci.yml` 后端拆 `backend-unit`(`tests` 减 `--ignore-glob=tests/test_deploy_*.py --ignore=tests/test_migrations.py`)与 `backend-deploy`(正向同一组模式)两 job 各占一台 runner,各 `-n 4 --dist worksteal --durations=25`,ffmpeg 只装 unit 侧(部署测试用 PATH 桩);`backend (pytest)` 改为汇总门 job,`needs` 两者、`if: always()` 逐项核对 `needs.*.result`——分支保护里既有的 required 名继续有效,且上游失败时不会因 skip 被当成通过;② conftest 以 `DORAMI_TEST_SANDBOX=1` 标记「这个值是 conftest 铸的」,worker(`PYTEST_XDIST_WORKER`)见标记即另铸带 worker id 的沙箱,外部显式注入(无标记)在 worker 里仍被尊重;③ 守卫 `tests/test_ci_workflow.py`:两 job 划分逐字同源、每个模式至少命中一个文件且都在 `tests/test_*.py` 内、`-n` + `worksteal` 在位、汇总门名字 / needs / always 在位;沙箱规则用子进程 `runpy.run_path` 跑 conftest 顶层验证四种环境组合,另起两 worker 跑 `test_admin_ops.py` 端到端确认不再互撞;④ `pytest-xdist` 进 pyproject 两个 dev 列表,`-n` 只写在 CI 命令不进 `addopts`,本地单文件调试仍单进程。预期 PR 一次 CI 从 ~28 min 到 ~5–6 min(unit ≈ 2 min、deploy ≈ 4–5 min,墙钟取最大;地板约 3 min 是 runner 启动 / checkout / 装依赖)。**暂缓**(并行后墙钟收益只剩 ~1 min):39 个 baremetal 用例共享「已首装」快照(状态文件与 symlink 烤了 tmp_path 绝对路径,搬迁需改写)、sudo 桩改 sh;ffmpeg 换静态包 / apt 缓存;路径过滤(近 40 个合入 PR 仅 4 个 docs / frontend-only;若做须 job 级 `if` + paths-filter,不能 workflow 级 `paths-ignore`,否则 required check 不出现会卡合并)。**对新增测试的约束**:worker 内仍串行,同进程共享与今天一致;只需继续不写固定路径、不绑固定端口、不依赖执行顺序;固定 `sleep` 后断言的时序型用例在 4 vCPU 高负载下可能偶发抖动,上线后观察、抖的改轮询。**顺带发现**:入库的 `uv.lock` 早已陈旧(仍含 v3.31 退役的 chromadb / torch,缺 oss2),CI 与 Docker 都只读 `docker/requirements.txt`,本波不动它。实现 Claude Code(Claude Fable 5.1);检视 codex(gpt-6-astra ultra,本地 Herdr)。**codex R1(2026-09-23)**:0 P1 / 2 P2 / 1 P3,全部成立、全部接受,都落在「守卫承诺与实现的落差」而非 ci.yml 本身(它把工作流复制到临时目录做突变,证明首版守卫对 `always()` 挪到 step、成功判定换 `echo`、glob 改 `--ignore=`、末尾追加 `-n 0` 四种退化全部放行;另实测 pytest 9.1.1 `--ignore` 只做绝对路径相等、`--ignore-glob` 才 fnmatch,`--collect-only` 三路比对 2419 例交集 0 / 缺失 0,门禁 shell 16 种组合只有 success/success 返回 0,cancel-in-progress 下汇总门可能是 cancelled 而非 failure 但不等于通过)。修法:守卫拆成以工作流文本为输入的三个检查函数——划分按 pytest 语义分别算 unit / deploy 文件集合再断言互斥与覆盖(`--ignore=` 含通配符即拒)、并行参数拒绝重复 `-n` / `--dist`、汇总门只认 job 层键且真跑门禁 shell 16 种组合并禁止 step 层 `if` / `continue-on-error`;并把它的突变脚本收进仓库常驻为 11 种**反向对照**(每种突变必须被对应守卫拒绝)。其余关注面结论:conftest 四种组合正确、`DORAMI_TEST_SANDBOX` 传进部署子进程无消费者、全仓无固定端口 / 固定路径 / 真网络共享,固定 `sleep` 时序型用例清单记观察期(`test_deploy_scripts.py` 359 / 1086 / 1107 一带最窄,`test_personal_digest_titles.py:151` 的 `< 3s` 绝对上界慢 runner 下重点看)。**R2 复检**(对照三条清单,codex 此时已因周额度自动降档为 gpt-5.6-luna medium——R1 在 astra ultra 下完成,降档已如实告知用户):三条 ✓、11 种反向对照 ✓、16 组门禁语义 ✓、无新增 P1/P2,结论「可以进入用户验收」;保留一条维护性观察:守卫是受控格式解析器,`--ignore-glob value` / `--durations 25` 这类拆开写法会被拒,ci.yml 注释已要求命令单行、`=` 连写。检视文件:worktree `.review/{prompt,report-codex,response,prompt-recheck,recheck-codex}-r1.md`。**PR #151 CI 实测(run 35826295282)**:整次 run 墙钟 **6.0 min**(此前 28.1 min):backend-unit 5.3 min(Run tests 4:47,2226 例;4 vCPU 上比本机 18 核的 1:32 慢得多,CPU 密集段按核数缩放)、backend-deploy 5.8 min(Run tests 5:40,204 例;最慢单例 33.6 s)、汇总门 0.1 min、frontend 0.6、actionlint 0.1;用户 2026-09-23 拍板「这类问题难以目检,本地已验证即直接开 PR 合入」,以 PR CI 为验收。**第二轮 CI(run 35826876920,只改了文档)backend-deploy 红了两例,汇总门如设计跟着红**——并行高负载首次暴露两类既有脆弱点:① `test_tag_mode_checks_out_and_reexecs_target_script`:`bm_pre_exec_check` 的 `git show … 2>/dev/null | grep -qE` 在 `pipefail` 下有竞态——git `stream_blob_to_fd` 按 16 KB 分块写,声明在 deploy-lib.sh 第 3450 字节,grep 读完首块命中即退,负载下 git 被抢占后第二次写吃 SIGPIPE(141)让 `if !` 翻转成「没有裸机事务能力」(首轮 CI 同一用例是过的;macOS 本机 400 次未复现,Linux 唤醒抢占更易命中)。修法:先 `lib="$(git show … 2>&1)"` 读进变量,读取失败与「未宣告」分开报且带 git stderr,再 `grep -q <<<"$lib"`;同类 `if … | grep -q` 另五处(deploy.sh 两处 `nginx -T`、deploy-baremetal.sh `nginx -T` 与 `systemctl list-unit-files`、deploy-lib.sh 备份引用判定)一并改为读到 EOF / here-string——这是生产部署脚本里的潜在假失败类(条件翻转只会让部署以错误理由停下,不会误操作),顺手收口。② `test_health_budget_covers_site_gate_and_stability_window`:1 s 预算要放下门①②本身的耗时,4 vCPU 上门①先把预算耗尽,错误信息变成「预算已耗尽,站点链路门未执行」;改 8 s 预算 / 30 s 稳定窗,断言只依赖「剩余 < 稳定窗」。
 
+## 中文优先与新增内容预翻译方案（issue #218，2026-10-23，R1，已被 R2 取代）
+
+用户确认继续 DeepSeek，优先中文展示与新增普通资讯、社交内容后台预译，本阶段只整理方案。曾形成 R1 方案（现已由同 issue 的 [R2 方案](./archive/issue-218-title-translation-progressive-reading.md) 替换），明确持久偏好与缓存读取权限、自动资格和新增水位、论文摘要/全文与播客简介/逐字稿边界、独立系统预算及任务优先级。日 ¥10/月 ¥300、长度限制和默认展示均为待评审建议，未记为已批准配置。
+
+只读核对确认现有 Archive Sync v3 文章触发器可捕捉译文扩展更新，但接收端整体替换扩展会覆盖内网本地缓存；方案选择复用文章流、接收端先升级、单独保存本地译文覆盖，播客逐字稿继续走现有 podcast_texts 流。同步补索引、待办与本次明确授权的决策记录；文档守卫包含新增方案检查，无代码实现、运行配置变更、付费调用或发布。方案细节未跨模型检视，后续实现仍需按流程验收。
+
+## 标题自动翻译与正文分段阅读（issue #218，2026-10-23，R2，仅方案）
+
+用户提出用更小范围替代 R1：所有新增内容标题入库自动翻译；阅读设置增加默认开启的中文标题开关；正文等其它翻译继续手动；每个正文片段完成后立即分阶段展示。方案改名为 [issue-218-title-translation-progressive-reading.md](./archive/issue-218-title-translation-progressive-reading.md)，撤销 R1 的正文/论文摘要/播客简介预译、默认中文正文、全文预算和本地覆盖表。
+
+核对发现现有检查点带受保护占位符，片段也可能跨表格/列表边界；R2 建议保留整篇原文结构，已校验片段按原位置替换，未译部分保留原文，乱序完成也能各自显示，最终完整缓存仍按原流程整篇校验。标题复用现有缓存与同步，补窄范围导入保护，防止仅标题更新擦掉内网正文缓存。更新 issue、索引、待办和决策取代记录；仅文档改动，未执行代码、付费调用或配置修改。文档守卫包含新方案，详细参数和实施仍待评审。
+
 ## 文档整理波(issue #210,分支 `feat/issue-210-docs-tidy`,2026-10-21)
 
 **起因**:用户要求整体性文档整理——所有文档有效 / 过时 / 冗余 / 命名 / 目录索引,CLAUDE.md 冗余与迁出,自动记忆与文件联合审视,开发规范与生产信息是否成技能且不入库。盘点数字:162 篇 Markdown;`CLAUDE.md` 500 行 / 158 KB(估算 4–5 万 token,每会话必载,5 月起改了 154 次);`docs/` 顶层 50 篇方案中约 28 篇对应波次已合入 / 发版但索引仍标活跃;4 篇漏收;`docs-site/`、`specs/`、`artifacts/` 不在任何索引;22 处失效路径引用;11 页样页零引用;自动记忆 40 条约 165 KB。
@@ -499,3 +513,29 @@ flags 组合、锁区偏移、错误映射、解锁静默。codex R1 两条 P2 �
 **自测**:全量套件 3097 绿(新增 13 个用例:同事件归一 + 另见 + 统计、头条事件不重复进精选、昨日事件整组抑制、昨天没上报的事件今天不受抑制、另见只列可见成员、降级回退按事件去重与排除本期头条事件、头条按 event_id 分组、日报事件层预聚类 ×3、`visible_member_links`);前端 lint / test / build 绿。沙箱(真实库副本,真实辅助模型跑一轮分配后关掉密钥):09-03 版 10 条里 3 条带「另见」、说明行「同事件合并 5 篇」;09-04 版昨日事件抑制 4 篇;亮 / 暗 / 移动壳零控制台错误、零水平溢出。
 **检视 / 目检**:Codex(gpt-6-astra,ultra)R1 2 P2 / 1 P3 全修、R2 通过;用户沙箱目检满意,拍板「另见 N 篇」按篇计与跨期抑制的升级例外(头条池只剔除昨天的头条事件),48h 事件窗维持现状;2026-10-24 squash 合入(PR #222)。记录在方案 §12。
 **合入后补**(PR #224 `cc38f24`,2026-10-24,#103 验收第一条):精选通道同事件代表改为分通道前按「官方 > 非社交 > 分数 > 更早」定(`_collapse_same_event`),订阅池带来源角色 / 形态,来源无配置无注册类时形态按文章 `content_type` 推(Codex 单轮检视 1 P2 已修);此前代表是通道里先到的高分稿。
+
+## 标题自动翻译与正文分段阅读（issue #218）
+
+### issue #218 R2 开工与样页（2026-10-24）
+
+用户明确授权按 R2 开始实施，并指定前端/视觉由 Claude Code Opus 5.5 max 负责，先生成样页。从最新 origin/main 建立隔离分支 `feat/issue-218-title-translation`，保留主仓未提交文档；标题与正文状态独立、乱序片段就地展示、手机与亮暗主题进入样页核对清单。样页使用模拟数据与进度，不调用 DeepSeek、不启用生产配置；Claude Code Opus 5.5 max 已完成可交互样页（`frontend/r2-preview.html`、`docs/design/issue-218-title-translation/`）；Codex 浏览器检查通过标题偏好、乱序显示、失败续译、手机设置、滚动锚点和亮暗布局。前端 lint、137 项测试、build 通过；仅样页与文档，业务实现待用户目检样页后继续。
+
+
+### issue #218 R2 样页第二稿（2026-10-24）
+
+首稿目检后，用户指出乱序译文打断阅读、段数与完成提示冗余，并建议复用中栏/早报骨架风格。原 Claude Code Opus 5.5 max 会话完成分析后，用户明确授权制作第二稿：后台并发保持，显示只取连续完成前缀；末尾固定少量正文骨架，正常状态只保留中文控件圈圈，失败/暂停保留恢复入口。原文可随时完整阅读；标题默认中文和正文手动边界不变。第二稿已完成；Codex 桌面/手机交互与亮暗目检通过，原文位置恢复和新增译文不滚动通过。137 项前端测试、lint、build 与 Claude 的 48 项定向自检通过；生产 CSS 对照一致。电脑重启清掉临时进程和日志后，从原 Claude 会话及已保存代码恢复，重启同端口样页服务并补手机 12 项检查，未重做源码。业务后端未改、未调用 DeepSeek，继续交用户目检。
+
+
+### issue #218 R2 逐段骨架对照探索（2026-10-26）
+
+用户提出每个未完成段落用骨架原位占位，哪段完成就替换哪段，重新观察乱序完成是否更易理解。沿用原 Claude Code Opus 5.5 max 会话制作第三稿，保留第二稿连续前缀作为演示面板中的对照模式；正常进度文案继续删除，中文圈圈保留，正文仍手动触发。此次仍为交互探索，尚未决定生产显示策略；真实 API 片与 Markdown 块的映射、安全还原、后台标题与同步均未实现。
+
+第三稿由同一 Opus 5.5 max 会话完成，默认逐段占位、演示面板可切第二稿连续展示，两种模式共用任务进度。Codex 复核桌面 28 项、手机 12 项全过及亮暗截图；交叉复核发现前方骨架替换使后段移动 13～17px，Opus 接受并修为优先锚定可见译文，复检手机 0px、桌面不足 1px。全量前端 lint、137 测试、生产 build 通过，样页定向自检和生产 CSS 对照通过。仅样页与文档，待用户目检比较。
+
+### issue #218 R2 正式实施（2026-10-26，用户验收通过）
+
+用户目检后选定每个未完成块用骨架占位、哪个完成就原位替换，并明确删除“取消翻译”。前端继续原 Opus 5.5 max 会话，后端由 Codex 主代理和子代理实现。新增标题同事务待办、共享 lease、严格指纹缓存及独立每日预算；中文标题账户偏好默认开，游客由浏览器保存；同步仅窄范围保护同源有效正文/社交缓存。正文仍手动，完整 Markdown 块的依赖全部就绪才通过增量预览与 SSE 原位展示，最终缓存继续整篇校验。
+
+定向检查已覆盖迁移、偏好、同步、任务和 Markdown；内部核对发现的 SSE 身份过期、引用响应放大与列表内代码/公式分块问题已接受并修复。后端全量 3,214 项通过，新增组件登记后文档测试 7 项复测通过。Claude Opus 5.5 max 后端交叉检视已接受并修复回执重复付费、补抓丢标题、v1误入队、预算空转、早报门控与预览性能，清单复检通过。原Opus会话前端与Codex交叉检视已完成；153项前端测试、lint/build通过。桌面/手机正常路径、失败续译、偏好串行保存和额度到期刷新已验收，断流完整结果切换位移由263.5px修至0.164px；未修改生产配置、调用真实 DeepSeek 或部署。
+
+2026-10-26 用户确认 R2 正式版验收通过，授权提交、开 PR、CI 通过后合入，明确先不部署。方案归档至 `docs/archive/issue-218-title-translation-progressive-reading.md`；后续发版仍须按接收端先升级缓存保护的顺序执行。

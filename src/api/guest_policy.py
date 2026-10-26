@@ -58,6 +58,7 @@ GUEST_ALLOWED_ROUTES: FrozenSet[Tuple[str, str]] = frozenset({
     ("POST", "/api/reader/ai/social/{article_id}/translate"),
     ("POST", "/api/reader/ai/translation-jobs"),
     ("GET", "/api/reader/ai/translation-jobs"),
+    ("GET", "/api/reader/ai/translation-jobs/events"),
     ("POST", "/api/reader/ai/translation-jobs/{job_id}/resume"),
     ("POST", "/api/reader/ai/translation-jobs/{job_id}/cancel"),
     ("POST", "/api/reader/ai/podcasts/{episode_id}/translate-transcript"),

@@ -487,23 +487,39 @@ def batch_update_users(
     return {"updated": updated, "unchanged": len(records) - updated, "total": len(records)}
 
 
-def set_default_surface(session: Session, username: str, surface: str) -> UserRecord:
-    """设置账户登录默认落地界面（console 管理台 / reader 阅读器）。
+def set_preferences(
+    session: Session, username: str, *, default_surface: Optional[str] = None,
+    prefer_chinese_titles: Optional[bool] = None,
+) -> UserRecord:
+    """Patch only supplied account preferences in one transaction.
 
-    任意登录账户可为自己设置；user 恒为读者、该字段不生效但仍可写。非法值抛 AccountError。
+    Guest preferences live in their browser, never in the shared guest account.
+    Validate the complete patch before mutating either field.
     """
     record = _get_manageable_user(session, username)
     if record is None:
         raise AccountError(f"账户 '{username}' 不存在")
-    surface = (surface or "").strip()
-    if surface not in VALID_SURFACES:
-        raise AccountError(f"默认落地界面必须是 {VALID_SURFACES} 之一")
-    record.default_surface = surface
-    record.updated_at = _now_iso()
-    session.add(record)
-    session.commit()
-    session.refresh(record)
+    if default_surface is not None:
+        default_surface = default_surface.strip()
+        if default_surface not in VALID_SURFACES:
+            raise AccountError(f"默认落地界面必须是 {VALID_SURFACES} 之一")
+    if prefer_chinese_titles is not None and type(prefer_chinese_titles) is not bool:
+        raise AccountError("中文标题偏好必须是布尔值")
+    if default_surface is not None:
+        record.default_surface = default_surface
+    if prefer_chinese_titles is not None:
+        record.prefer_chinese_titles = prefer_chinese_titles
+    if default_surface is not None or prefer_chinese_titles is not None:
+        record.updated_at = _now_iso()
+        session.add(record)
+        session.commit()
+        session.refresh(record)
     return record
+
+
+def set_default_surface(session: Session, username: str, surface: str) -> UserRecord:
+    """Compatibility wrapper for the existing landing-page preference."""
+    return set_preferences(session, username, default_surface=surface or "")
 
 
 # ==================== 运维埋点 ====================

@@ -21,7 +21,7 @@ import uuid
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import literal_column, or_
 from sqlmodel import Session, func, select
@@ -79,7 +79,7 @@ from services.article_display_tags import article_ids_for_flexible_label, load_d
 from services import daily_brief as daily_brief_service
 from services import reader_activity as reader_activity_service
 from services import reader_ai as reader_ai_service
-from services import translation_jobs
+from services import translation_jobs, translation_updates
 from services import reader_ondemand as reader_ondemand_service
 from services import reader_search as reader_search_service
 from services import reader_interests as reader_interests_service
@@ -1866,9 +1866,55 @@ async def reader_translation_start(params: ReaderTranslateParams, request: Reque
 
 
 @router.get("/ai/translation-jobs")
-async def reader_translation_status(article_id: str, request: Request):
+async def reader_translation_status(article_id: str, request: Request, preview_cursor: str | None = None):
     username, _ = _require_reader_ai(request)
-    return await _translation_call(translation_jobs.status, username, article_id)
+    return await _translation_call(translation_jobs.status, username, article_id, preview_cursor)
+
+
+@router.get("/ai/translation-jobs/events")
+async def reader_translation_events(article_id: str, request: Request, preview_cursor: str | None = None):
+    username, _ = _require_reader_ai(request)
+    engine = deps.get_db_sink().engine
+    cursor = request.headers.get("last-event-id") or preview_cursor
+    # Validate before sending SSE headers, so denied requests retain their HTTP
+    # status and the existing guest quota/login behaviour.
+    await _translation_call(translation_jobs.status, username, article_id, cursor)
+
+    async def stream():
+        nonlocal cursor
+        async with translation_updates.watch(engine, article_id) as changed:
+            while True:
+                if await request.is_disconnected():
+                    break
+                changed.clear()
+                try:
+                    # An SSE connection outlives a normal HTTP request. Bypass
+                    # request.state's cached identity on *every* snapshot so
+                    # password/epoch changes and token expiry revoke the stream.
+                    app = _app()
+                    auth = await asyncio.to_thread(app.read_auth_token, request.cookies.get(app.AUTH_COOKIE_NAME))
+                    if not auth or auth.get("sub") != username:
+                        raise HTTPException(status_code=401, detail="登录状态已失效")
+                    request.state.dorami_auth_session = auth
+                    _require_reader_ai(request)
+                    data = await _translation_call(translation_jobs.status, username, article_id, cursor)
+                except HTTPException as exc:
+                    yield "event: error\ndata: " + json.dumps({"status": exc.status_code}) + "\n\n"
+                    break
+                preview = data.get("preview")
+                if preview:
+                    cursor = preview["cursor"]
+                event_id = f"id: {cursor}\n" if cursor else ""
+                yield event_id + "event: snapshot\ndata: " + json.dumps(data, ensure_ascii=False) + "\n\n"
+                if data["status"] not in {"queued", "running"}:
+                    break
+                try:
+                    await asyncio.wait_for(changed.wait(), timeout=translation_jobs.POLL_SECONDS)
+                except asyncio.TimeoutError:
+                    pass
+    return StreamingResponse(stream(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-store", "X-Accel-Buffering": "no",
+    })
 
 
 @router.post("/ai/translation-jobs/{job_id}/resume")

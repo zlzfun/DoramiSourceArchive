@@ -1,4 +1,3 @@
-import TranslationProgress from './TranslationProgress';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Search,
@@ -36,7 +35,7 @@ import {
 import LogoMark from './LogoMark';
 import BrandLogoImage from './BrandLogoImage';
 import RailLogoutAvatar from './RailLogoutAvatar';
-import ReaderMarkdown from './ReaderMarkdown';
+import ArticleCopy from './ArticleCopy';
 import PaperContentNote from './PaperContentNote';
 import ReaderAiPanel from './ReaderAiPanel';
 import ShareMenu from './ShareMenu';
@@ -59,6 +58,8 @@ import InterestPage from './InterestPage';
 import RankingsPage from './RankingsPage';
 import AnalysisTagChip from './AnalysisTagChip';
 import { excerptOf, hostOf, latinLang } from '../utils/readerText';
+import { displayTitle, titleView } from '../utils/titleDisplay';
+import { useTitlePreference } from '../hooks/useTitlePreference';
 import { highlightMatch } from '../utils/highlight';
 import { dayLabelOf } from '../utils/readerTime';
 import { buildListPlan } from '../utils/listPlan';
@@ -234,6 +235,9 @@ export const ArticleRow = memo(function ArticleRow({
   // issue #199 全局播放条:这一期正在播 / 已暂停('playing' | 'paused' | '');AI 音轨的律动条走渐变两端色
   nowPlaying = '', nowPlayingAi = false,
 }) {
+  // 标题语言(issue #218):偏好开且有可用译名时显示中文标题,否则原题;移动列表复用本行
+  const { preferChinese } = useTitlePreference();
+  const title = displayTitle(article, preferChinese);
   // 版本更新用紧凑行(单行标题、无摘要),由条目的内容类型决定(issue #178,取代「动态」容器)
   const compact = !entryPodcast && isCompactKind(article);
   const excerpt = compact
@@ -304,7 +308,7 @@ export const ArticleRow = memo(function ArticleRow({
                 )}
               </span>
               <span className="reader-entry-titlerow">
-                <span className="reader-entry-title">{searchQuery ? highlightMatch(article.title || '（无标题）', searchQuery) : (article.title || '（无标题）')}</span>
+                <span className="reader-entry-title">{searchQuery ? highlightMatch(title, searchQuery) : title}</span>
                 {article.is_premium_podcast && <span className="podcast-premium-badge">优质播客</span>}
                 {favoriteControl}
               </span>
@@ -358,7 +362,7 @@ export const ArticleRow = memo(function ArticleRow({
             </span>
             {/* 标题行内收藏控件复用 span role=button，避免 button 嵌套。 */}
             <span className="reader-entry-titlerow">
-              <span className="reader-entry-title">{searchQuery ? highlightMatch(article.title || '（无标题）', searchQuery) : (article.title || '（无标题）')}</span>
+              <span className="reader-entry-title">{searchQuery ? highlightMatch(title, searchQuery) : title}</span>
               {favoriteControl}
             </span>
             {/* 摘要行:AI 要点摘要(summary_zh)优先——正文截断对英文长文几乎无信息量 */}
@@ -444,13 +448,16 @@ export default function ReaderTab({
     // 分享
     shareOpen, setShareOpen,
     // AI(翻译 / 速读)
-    showTranslation, translating, translatedBody, translatedTitle, activeIsChinese, handleTranslate,
-    translationJob, translationPollError, cancelTranslation, resumeTranslation,
+    showTranslation, translating, hasTranslation, translationReady, translation, activeIsChinese,
+    handleTranslate, resumeTranslation, restartTranslation,
     activeSummary, summarizing, handleSummarize,
     socialTranslations, toggleSocialTranslation,
     // 上下文菜单 items(桌面右键在此装配弹层)
     buildArticleMenuItems, buildSourceMenuItems, buildSocialMenuItems,
   } = rs;
+  // 标题语言偏好(issue #218):阅读窗标题、上下篇、早报下一条提示统一按它选中文译名或原题
+  const { preferChinese } = useTitlePreference();
+  const paneTitle = activeArticle ? titleView(activeArticle, preferChinese) : null;
   // 游客(issue #213 检视 F3):向 App 上报眼前正在看的那篇(阅读窗可见时)——登录后回到它,否则落早报
   const visibleArticleId = !pageOpen && !discover && !socialView ? (activeArticle?.id || null) : null;
   useEffect(() => { onVisibleArticleChange?.(visibleArticleId); }, [visibleArticleId, onVisibleArticleChange]);
@@ -530,8 +537,11 @@ export default function ReaderTab({
     && (activeArticle.source_url || activeArticle.is_premium_podcast || (aiEnabled && !activeIsChinese))
     && (
     <>
+      {/* 「原语言 | 中文」二段(issue #218):已有任务或译文时第二段叫「中文」,只切视图;没有时叫「译为中文」,
+          点了立即进入中文视图并开始翻译。进行中两段都可点,切回原文不取消后台任务。小圈圈 = 后台任务排队或
+          进行中(不论当前看哪种语言),是正常进行中唯一的进度表达。 */}
       {aiEnabled && !activeIsChinese && (
-        <div className="reader-tr-seg" role="group" aria-label="正文语言">
+        <div className="reader-tr-seg" role="group" aria-label={podcastView ? '节目简介语言' : '正文语言'}>
           <button
             type="button"
             className={`reader-tr-seg-btn ${showTranslation ? '' : 'is-on'}`}
@@ -544,16 +554,15 @@ export default function ReaderTab({
             type="button"
             className={`reader-tr-seg-btn ${showTranslation ? 'is-on is-ai' : ''}`}
             aria-pressed={showTranslation}
-            disabled={translating || activeBodyLoading || !activeBody}
-            title={showTranslation ? '当前显示中文译文' : podcastView ? '将节目简介和逐字稿译为中文' : '将正文译为中文'}
+            disabled={activeBodyLoading || !activeBody}
+            title={showTranslation ? '当前显示中文' : hasTranslation ? '查看中文' : podcastView ? '将节目简介译为中文' : '将正文译为中文'}
             onClick={() => { if (!showTranslation) handleTranslate(); }}
           >
             {translating
               ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
               : <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />}
-            <span className={showTranslation ? 'ai-grad-text' : ''}>
-              {translating ? '翻译中…' : showTranslation ? '中文' : '译为中文'}
-            </span>
+            <span className={showTranslation ? 'ai-grad-text' : ''}>{hasTranslation || showTranslation ? '中文' : '译为中文'}</span>
+            {translating && <span className="sr-only">，翻译中</span>}
           </button>
         </div>
       )}
@@ -592,27 +601,25 @@ export default function ReaderTab({
       {paneTools}
     </div>
   ) : null;
-  // 正文容器(翻译作用域):文章直接用;播客交给 PodcastExperiencePanel 放在「节目简介」视图里
+  // 正文容器(翻译作用域):文章直接用;播客交给 PodcastExperiencePanel 放在「节目简介」视图里。
+  // 中文视图按块渐进显示(未完成块原位骨架、就绪即原位替换),见 ArticleCopy。
   const paneCopy = activeArticle ? (
-    <div
-      className="reader-article-copy markdown-body"
-      data-ai-translation-scope="article-body"
-      lang={(showTranslation && translatedBody) ? undefined : latinLang(activeBody)}
-    >
-      <TranslationProgress job={translationJob} pollingError={translationPollError}
-        onResume={resumeTranslation} onCancel={cancelTranslation} />
-      {activeBodyLoading ? (
-        <PaneBodySkeleton />
-      ) : (showTranslation && translatedBody) ? (
-        <ReaderMarkdown sourceUrl={activeArticle?.source_url}>{displayTranslatedBody}</ReaderMarkdown>
-      ) : activeBody ? (
-        <ReaderMarkdown sourceUrl={activeArticle?.source_url}>{displayBody}</ReaderMarkdown>
-      ) : (
-        podcastView
-          ? '该播客暂无文字内容，可收听上方原节目音频。'
-          : '该文章暂无正文内容，点击「查看原文」阅读完整内容。'
-      )}
-    </div>
+    <ArticleCopy
+      title={activeArticle.title}
+      body={activeBody ? displayBody : ''}
+      rawBody={activeBody}
+      loading={activeBodyLoading}
+      loadingFallback={<PaneBodySkeleton />}
+      emptyText={podcastView
+        ? '该播客暂无文字内容，可收听上方原节目音频。'
+        : '该文章暂无正文内容，点击「查看原文」阅读完整内容。'}
+      sourceUrl={activeArticle.source_url}
+      zhView={showTranslation && Boolean(activeBody)}
+      translation={translation}
+      translatedBody={displayTranslatedBody}
+      onResume={resumeTranslation}
+      onRestart={restartTranslation}
+    />
   ) : null;
 
   // ── 右键上下文菜单(v3.28,样页 dorami-context-menu-quiet) ──
@@ -1334,7 +1341,7 @@ export default function ReaderTab({
                 <button
                   type="button"
                   className="reader-brief-trail-btn is-next"
-                  title={next.title || undefined}
+                  title={displayTitle(next, preferChinese, '') || undefined}
                   onClick={async () => {
                     const opened = await openArticleById(next.article_id, { silent: true });
                     if (opened) setBriefReturn((prev) => (prev ? { ...prev, index: prev.index + 1, itemId: next.id } : prev));
@@ -1449,12 +1456,11 @@ export default function ReaderTab({
                   </button>
                 )}
               </div>
-              {/* 译文态(v3.45):大标题换中文译名,原标题降为其下一行小字 */}
-              <h1 className="reader-pane-title" lang={latinLang((showTranslation && translatedTitle) ? translatedTitle : activeArticle.title)}>
-                {(showTranslation && translatedTitle) ? translatedTitle : (activeArticle.title || '（无标题）')}
-              </h1>
-              {showTranslation && translatedTitle && activeArticle.title && translatedTitle !== activeArticle.title && (
-                <div className="reader-pane-title-orig" lang={latinLang(activeArticle.title)}>{activeArticle.title}</div>
+              {/* 标题语言(issue #218):只看「默认显示中文标题」偏好,与正文语言无关;用了中文译名时
+                  原标题降为其下一行小字(沿用 v3.45 译文态的位置与西文衬线斜体),原文随时可见 */}
+              <h1 className="reader-pane-title" lang={latinLang(paneTitle.title)}>{paneTitle.title}</h1>
+              {paneTitle.orig && (
+                <div className="reader-pane-title-orig" lang={latinLang(paneTitle.orig)}>{paneTitle.orig}</div>
               )}
               <div className="reader-pane-byline">
               <div className="reader-pane-meta">
@@ -1522,7 +1528,7 @@ export default function ReaderTab({
               {podcastView ? (
                 <PodcastExperiencePanel
                   article={activeArticle}
-                  showTranslation={showTranslation}
+                  showTranslation={translationReady}
                   showNotesHead={!activeBodyLoading && Boolean(activeBody)}
                 >
                   {paneCopy}
@@ -1551,7 +1557,7 @@ export default function ReaderTab({
                   onClick={() => prevArticle && selectArticle(prevArticle)}
                 >
                   <span className="reader-pager-dir">← 上一篇</span>
-                  <span className="reader-pager-title">{prevArticle ? (prevArticle.title || '（无标题）') : '已是最新一篇'}</span>
+                  <span className="reader-pager-title">{prevArticle ? displayTitle(prevArticle, preferChinese) : '已是最新一篇'}</span>
                 </button>
                 <button
                   type="button"
@@ -1560,7 +1566,7 @@ export default function ReaderTab({
                   onClick={() => nextArticle && selectArticle(nextArticle)}
                 >
                   <span className="reader-pager-dir">下一篇 →</span>
-                  <span className="reader-pager-title">{nextArticle ? (nextArticle.title || '（无标题）') : '已到列表末尾'}</span>
+                  <span className="reader-pager-title">{nextArticle ? displayTitle(nextArticle, preferChinese) : '已到列表末尾'}</span>
                 </button>
               </nav>
             )}

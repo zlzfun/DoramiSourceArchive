@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+from dataclasses import replace
 import json
 import logging
 from typing import Any, Awaitable, Mapping, Sequence
@@ -31,11 +32,8 @@ from config import LLMConfig
 from llm.client import UsageMeta, client_session
 from models.db import ArticleRecord, PersonalDigestEditionRecord, PersonalDigestItemRecord
 from services import user_sources as user_sources_service
+from services.title_cache import title_receipt
 from services.reader_ai import (
-    TRANSLATION_TITLE_FP_KEY,
-    TRANSLATION_TITLE_KEY,
-    _body_fingerprint,
-    _cache_valid,
     _translate_title,
     looks_chinese,
 )
@@ -120,10 +118,11 @@ async def _translate_batch(
     *,
     username: str | None,
     budget_seconds: float,
+    engine=None,
 ) -> dict[str, str]:
     """并发译一批标题,整体受预算约束;超时/失败的条目缺席(回退原标题)。"""
 
-    config = llm_config.for_aux()
+    config = replace(llm_config.for_aux(), thinking_mode="disabled", max_tokens=512)
     concurrency = max(1, getattr(config, "map_concurrency", 4))
     semaphore = asyncio.Semaphore(concurrency)
     usage_meta = UsageMeta(purpose=USAGE_PURPOSE, username=username)
@@ -132,7 +131,14 @@ async def _translate_batch(
     async def _one(article_id: str, title: str, http_client) -> None:
         try:
             async with semaphore:
-                translated = await _translate_title(title, config, usage_meta, http_client)
+                async def call():
+                    return await _translate_title(title, config, usage_meta, http_client)
+                if engine is None:
+                    translated = await call()
+                else:
+                    from services.title_translation import translate_shared
+                    translated = await translate_shared(engine, article_id, title, call,
+                                                        wait_seconds=budget_seconds, require_ai_gate=False)
         except Exception as exc:  # noqa: BLE001 - 单条失败只回退原标题
             logger.warning("早报标题翻译失败 article=%s: %s", article_id, exc)
             return
@@ -193,6 +199,7 @@ def localize_edition_titles(
         return stats
 
     resolved: dict[str, str] = {}
+    retained_names: set[str] = set()
     records = {
         row.id: row for row in session.exec(
             select(ArticleRecord).where(ArticleRecord.id.in_(sorted(pending)))
@@ -203,12 +210,14 @@ def localize_edition_titles(
         record = records.get(article_id)
         if record is None:
             continue
-        ext = _extensions(record)
-        if _cache_valid(ext, TRANSLATION_TITLE_KEY, TRANSLATION_TITLE_FP_KEY, _body_fingerprint(title)):
-            cached = str(ext[TRANSLATION_TITLE_KEY]).strip()
-            if cached and cached != title:
-                resolved[article_id] = cached
-                stats["cached"] += 1
+        cached = title_receipt(record, title=title)
+        if cached == title:
+            # A valid retained-name receipt stops further provider work but
+            # does not add an identical subtitle to the frozen edition.
+            retained_names.add(article_id)
+        elif cached:
+            resolved[article_id] = cached
+            stats["cached"] += 1
     # ② 近期公共日报同篇的编辑标题
     remaining = [aid for aid in pending if aid not in resolved]
     for article_id, title_cn in _recent_public_brief_titles(session, remaining).items():
@@ -218,7 +227,7 @@ def localize_edition_titles(
     # 与阅读窗 translate/summarize 的 _ensure_articles_exportable 同一道闸(codex 检视 P1):
     # 早报会收录读者自己的私有源,其标题若送外部 LLM 就泄露了;这类条目只走 ①②,否则原标题。
     # 文章行缺失时来源不可判定,同样不送(fail closed)。
-    remaining = {aid: pending[aid] for aid in pending if aid not in resolved}
+    remaining = {aid: pending[aid] for aid in pending if aid not in resolved and aid not in retained_names}
     if remaining:
         exportable = set(user_sources_service.external_ai_allowed_source_ids(
             session, [records[aid].source_id for aid in remaining if aid in records],
@@ -229,20 +238,18 @@ def localize_edition_titles(
         }
     config = llm_config if llm_config is not None else _llm_config(session)
     if remaining and config.configured:
+        # The shared title publisher uses a fresh write transaction. Release
+        # this read snapshot before it runs (SQLite WAL read-upgrade fence), then
+        # reload items/metadata instead of writing stale article extensions.
+        engine = session.get_bind()
+        session.rollback()
         translated = _run_async(_translate_batch(
-            remaining, config, username=None, budget_seconds=budget_seconds,
+            remaining, config, username=None, budget_seconds=budget_seconds, engine=engine,
         ))
         for article_id, title_zh in translated.items():
             resolved[article_id] = title_zh
             stats["translated"] += 1
-            record = records.get(article_id)
-            if record is None:
-                continue
-            ext = _extensions(record)
-            ext[TRANSLATION_TITLE_KEY] = title_zh
-            ext[TRANSLATION_TITLE_FP_KEY] = _body_fingerprint(remaining[article_id])
-            record.extensions_json = json.dumps(ext, ensure_ascii=False)
-            session.add(record)
+            # translate_shared already published against the current title and source.
     stats["fallback"] += sum(1 for aid in pending if aid not in resolved)
 
     for article_id, title_zh in resolved.items():

@@ -1,4 +1,3 @@
-import TranslationProgress from '../TranslationProgress';
 import {
   ChevronLeft,
   ExternalLink,
@@ -7,7 +6,7 @@ import {
   Share2,
   Star,
 } from 'lucide-react';
-import ReaderMarkdown from '../ReaderMarkdown';
+import ArticleCopy from '../ArticleCopy';
 import PaperContentNote from '../PaperContentNote';
 import ShareMenu from '../ShareMenu';
 import PodcastExperiencePanel from '../PodcastExperiencePanel';
@@ -25,6 +24,8 @@ import { articleListenEntries, podcastListenEntries } from '../../utils/listenEn
 import AiReadingCard from '../AiReadingCard';
 import { hostOf, latinLang } from '../../utils/readerText';
 import { kindKickerLabel } from '../../utils/contentKind';
+import { displayTitle, titleView } from '../../utils/titleDisplay';
+import { useTitlePreference } from '../../hooks/useTitlePreference';
 
 // 正文页(移动波 Wave2,样页画面②):push 全屏页——无底部 Tab,返回即出栈。
 // 衬线标题/kicker/meta/速读卡/进度线/上一下一篇 全部复用阅读窗语法类
@@ -46,12 +47,13 @@ export default function MobileArticlePage({
     sourceNameMap, displayBody, displayTranslatedBody, bodyStats, podcastView,
     favoriteIds, favTogglingId, handleToggleFavorite,
     shareOpen, setShareOpen,
-    showTranslation, translating, translatedBody, translatedTitle, activeIsChinese, handleTranslate,
-    translationJob, translationPollError, cancelTranslation, resumeTranslation,
+    showTranslation, translating, hasTranslation, translationReady, translation, activeIsChinese,
+    handleTranslate, resumeTranslation, restartTranslation,
     activeSummary, summarizing, handleSummarize,
     prevArticle, nextArticle, activeIndex, selectArticle, searchForTag,
     refreshActiveArticle,
   } = rs;
+  const { preferChinese } = useTitlePreference();
 
   if (!activeArticle) return null;
   const isFav = favoriteIds.has(activeArticle.id);
@@ -60,26 +62,28 @@ export default function MobileArticlePage({
     ? podcastListenEntries(activeArticle, { aiEnabled, ondemandEnabled: ondemand.podcast === true })
     : articleListenEntries(activeArticle, { aiEnabled, ondemandEnabled: ondemand.article === true });
   const durationOnEntry = listenList.some((entry) => entry.track === 'original');
+  // 标题语言(issue #218):只看「默认显示中文标题」偏好,不随顶栏「译」切换
+  const paneTitle = titleView(activeArticle, preferChinese);
+  // 顶栏译钮切的是正文语言;后台任务排队 / 进行中时圈圈替换「译」字(不论当前看原文还是中文),停止即恢复
+  const translateLabel = showTranslation ? '显示原文'
+    : hasTranslation ? '显示中文' : podcastView ? '将节目简介译为中文' : '译为中文';
   const copy = (
-    <div
-      className="reader-article-copy markdown-body"
-      data-ai-translation-scope="article-body"
-      lang={(showTranslation && translatedBody) ? undefined : latinLang(activeBody)}
-    >
-      <TranslationProgress job={translationJob} pollingError={translationPollError}
-        onResume={resumeTranslation} onCancel={cancelTranslation} />
-      {activeBodyLoading ? (
-        <PaneBodySkeleton />
-      ) : (showTranslation && translatedBody) ? (
-        <ReaderMarkdown sourceUrl={activeArticle?.source_url}>{displayTranslatedBody}</ReaderMarkdown>
-      ) : activeBody ? (
-        <ReaderMarkdown sourceUrl={activeArticle?.source_url}>{displayBody}</ReaderMarkdown>
-      ) : (
-        podcastView
-          ? '该播客暂无文字内容，可收听上方原节目音频。'
-          : '该文章暂无正文内容，点击「查看原文」阅读完整内容。'
-      )}
-    </div>
+    <ArticleCopy
+      title={activeArticle.title}
+      body={activeBody ? displayBody : ''}
+      rawBody={activeBody}
+      loading={activeBodyLoading}
+      loadingFallback={<PaneBodySkeleton />}
+      emptyText={podcastView
+        ? '该播客暂无文字内容，可收听上方原节目音频。'
+        : '该文章暂无正文内容，点击「查看原文」阅读完整内容。'}
+      sourceUrl={activeArticle.source_url}
+      zhView={showTranslation && Boolean(activeBody)}
+      translation={translation}
+      translatedBody={displayTranslatedBody}
+      onResume={resumeTranslation}
+      onRestart={restartTranslation}
+    />
   );
 
   return (
@@ -138,9 +142,9 @@ export default function MobileArticlePage({
             type="button"
             className={`m-iconbtn ${showTranslation ? 'is-ai' : ''}`}
             onClick={handleTranslate}
-            disabled={translating || activeBodyLoading || !activeBody}
-            title={showTranslation ? '当前显示中文译文，点击切回原文' : podcastView ? '将节目简介和逐字稿译为中文' : '将正文译为中文'}
-            aria-label={showTranslation ? '显示原文' : podcastView ? '将节目简介和逐字稿译为中文' : '译为中文'}
+            disabled={activeBodyLoading || !activeBody}
+            title={translateLabel}
+            aria-label={translating ? `${translateLabel}（翻译中）` : translateLabel}
             aria-pressed={showTranslation}
           >
             {translating ? <Loader2 className="animate-spin" /> : <span className="reader-tr-glyph" aria-hidden="true">译</span>}
@@ -162,12 +166,10 @@ export default function MobileArticlePage({
             {(sourceNameMap[activeArticle.source_id] || activeArticle.source_id)}
             {kindKickerLabel(activeArticle) ? ` · ${kindKickerLabel(activeArticle)}` : ''}
           </div>
-          <h1 className="reader-pane-title" lang={latinLang((showTranslation && translatedTitle) ? translatedTitle : activeArticle.title)}>
-            {(showTranslation && translatedTitle) ? translatedTitle : (activeArticle.title || '（无标题）')}
-          </h1>
+          <h1 className="reader-pane-title" lang={latinLang(paneTitle.title)}>{paneTitle.title}</h1>
           {activeArticle.is_premium_podcast && <span className="podcast-premium-badge is-title">优质播客</span>}
-          {showTranslation && translatedTitle && activeArticle.title && translatedTitle !== activeArticle.title && (
-            <div className="reader-pane-title-orig" lang={latinLang(activeArticle.title)}>{activeArticle.title}</div>
+          {paneTitle.orig && (
+            <div className="reader-pane-title-orig" lang={latinLang(paneTitle.orig)}>{paneTitle.orig}</div>
           )}
           <div className="reader-pane-meta">
             {activeArticle.publish_date && (
@@ -236,7 +238,7 @@ export default function MobileArticlePage({
           {podcastView ? (
             <PodcastExperiencePanel
               article={activeArticle}
-              showTranslation={showTranslation}
+              showTranslation={translationReady}
               showNotesHead={!activeBodyLoading && Boolean(activeBody)}
             >
               {copy}
@@ -264,7 +266,7 @@ export default function MobileArticlePage({
               onClick={() => prevArticle && selectArticle(prevArticle)}
             >
               <span className="m-pager-k">上一篇</span>
-              <span className="m-pager-t">{prevArticle ? (prevArticle.title || '（无标题）') : '已是最新一篇'}</span>
+              <span className="m-pager-t">{prevArticle ? displayTitle(prevArticle, preferChinese) : '已是最新一篇'}</span>
             </button>
             <button
               type="button"
@@ -273,7 +275,7 @@ export default function MobileArticlePage({
               onClick={() => nextArticle && selectArticle(nextArticle)}
             >
               <span className="m-pager-k">下一篇</span>
-              <span className="m-pager-t">{nextArticle ? (nextArticle.title || '（无标题）') : '已到列表末尾'}</span>
+              <span className="m-pager-t">{nextArticle ? displayTitle(nextArticle, preferChinese) : '已到列表末尾'}</span>
             </button>
           </nav>
         )}

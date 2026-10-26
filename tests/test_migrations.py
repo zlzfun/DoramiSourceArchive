@@ -1444,7 +1444,7 @@ def test_intermediate_pr_data_cleanup_is_scoped_and_privacy_minimizing(tmp_path)
                 if "id" in table.c and getattr(model, "id", None) is None:
                     model.id = result.inserted_primary_key[0]
 
-            session.add(UserRecord(
+            insert_against_physical_schema(UserRecord(
                 username="alice",
                 password_hash="test",
                 created_at=stamp,

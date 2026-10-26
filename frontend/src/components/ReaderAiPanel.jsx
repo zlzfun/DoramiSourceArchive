@@ -10,6 +10,8 @@ import {
 } from 'lucide-react';
 import ReaderMarkdown from './ReaderMarkdown';
 import { askReaderAi, fetchAskProgress } from '../api';
+import { displayTitle } from '../utils/titleDisplay';
+import { useTitlePreference } from '../hooks/useTitlePreference';
 
 // 阅读器 AI 问答浮层(v3.32 方案 A 重设计,样页 docs/design/dorami-ask-quiet.html):
 // 常态收起于右下角 FAB,点击展开。读者问句保留右缘 wash 胶囊,哆啦美的回答**去框化**
@@ -168,15 +170,17 @@ function PendingBlock({ scope, progress }) {
 // 检索是宽召回,注入上下文的不等于支撑了回答,弱相关文章照单全列会稀释出处的可信度;
 // 回答通篇无标记时退回列全量(此时「参考」而非「引用」,文案随之切换)。
 function AnswerBlock({ turn, onOpenRef }) {
+  // 引用标题随「默认显示中文标题」(issue #218):出处带 title_zh 时按偏好选,缺字段即原题
+  const { preferChinese } = useTitlePreference();
   const sources = useMemo(() => turn.sources || [], [turn.sources]);
   const markdown = useMemo(() => withCitationLinks(turn.a, sources.length), [turn.a, sources.length]);
   const citations = useMemo(() => {
     if (!sources.length) return null;
     return {
-      titleFor: (n) => sources[n - 1]?.title || '',
+      titleFor: (n) => displayTitle(sources[n - 1], preferChinese, ''),
       onCite: (n) => onOpenRef(sources[n - 1]),
     };
-  }, [sources, onOpenRef]);
+  }, [sources, onOpenRef, preferChinese]);
   const listed = useMemo(() => {
     const rows = sources.map((s, i) => ({ s, num: i + 1 }));
     if (!rows.length) return { rows, cited: false };
@@ -208,7 +212,7 @@ function AnswerBlock({ turn, onOpenRef }) {
               title={s.id ? '在阅读器中打开' : '打开原文'}
             >
               <span className="reader-ai-ref-num">{num}</span>
-              <span className="reader-ai-ref-title">{s.title || s.source_id}</span>
+              <span className="reader-ai-ref-title">{displayTitle(s, preferChinese, '') || s.source_id}</span>
               <span className="reader-ai-ref-meta">
                 {[s.source_name, (s.publish_date || '').slice(5)].filter(Boolean).join(' · ')}
               </span>

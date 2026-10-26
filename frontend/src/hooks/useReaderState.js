@@ -26,6 +26,7 @@ import {
 import { articleDeepLink } from '../utils/shareLink';
 import { requestLogin } from '../utils/loginPrompt';
 import { stripDuplicateLeadingHeading } from '../utils/markdownTitle';
+import { titleZhFromResult } from '../utils/titleDisplay';
 import { createBulkSubscribeDeadline, waitForBulkSubscribeSettlement } from '../utils/bulkSubscribe';
 import { readerShapeOf } from '../utils/readerShape';
 import { withFreshAnalysis } from '../utils/analysisProjection';
@@ -304,10 +305,24 @@ export function useReaderState({
   const deepLinkKeepRef = useRef(false);               // 深链落地中:作用域清场保留右栏(见 useLayoutEffect)
 
   // ── 用户面 AI · 译为中文（问答浮层已抽到 ReaderAiPanel，自持其状态）──
+  // 正文任务带回的中文标题就地回填当前文章与列表行的 title_zh(issue #218):不为标题另发请求,
+  // 阅读窗与列表行随偏好统一显示。
+  const patchTitleZh = useCallback((id, resultTitle) => {
+    const apply = (item) => {
+      if (!item || item.id !== id) return item;
+      const zh = titleZhFromResult(item, resultTitle);
+      return zh && zh !== item.title_zh ? { ...item, title_zh: zh } : item;
+    };
+    setActiveArticle((prev) => apply(prev));
+    setArticles((prev) => {
+      const next = prev.map(apply);
+      return next.some((item, index) => item !== prev[index]) ? next : prev;
+    });
+  }, []);
   const {
-    showTranslation, translating, translatedBody, translatedTitle, handleTranslate,
-    translationJob, translationPollError, cancelTranslation, resumeTranslation,
-  } = useArticleTranslation(activeArticle?.id, aiEnabled, showToast);
+    showTranslation, translating, hasTranslation, translationReady, translatedBody, translatedTitle,
+    translation, handleTranslate, resumeTranslation, restartTranslation,
+  } = useArticleTranslation(activeArticle?.id, aiEnabled, showToast, patchTitleZh);
 
   // ── 用户面 AI · 推文翻译(issue #84):社交流逐卡开合,桌面卡片 / 右键菜单 / 移动长按共用一份 ──
   // id → { status: 'loading' | 'done' | 'error' | 'quota', open, text, quoted, message, sig, until }
@@ -1683,8 +1698,8 @@ export function useReaderState({
     // 分享
     shareOpen, setShareOpen,
     // AI(翻译 / 速读)
-    showTranslation, translating, translatedBody, translatedTitle, activeIsChinese, handleTranslate,
-    translationJob, translationPollError, cancelTranslation, resumeTranslation,
+    showTranslation, translating, hasTranslation, translationReady, translatedBody, translatedTitle,
+    translation, activeIsChinese, handleTranslate, resumeTranslation, restartTranslation,
     activeSummary, summarizing, handleSummarize,
     socialTranslations, toggleSocialTranslation,
     // 上下文菜单 items(桌面右键 / 移动长按共用)

@@ -2327,6 +2327,7 @@ def _apply_articles(
     authority_id: str,
 ) -> tuple[int, int]:
     from api.routers.archive_sync import build_import_article_record
+    from services.translation_sync import preserve_local_translations
 
     inserted = updated = 0
     for item in rows:
@@ -2370,6 +2371,7 @@ def _apply_articles(
             and existing.analysis_authority_id != authority_id
         ):
             raise SyncV2Error(f"article {incoming.id} belongs to another authority")
+        incoming.extensions_json = preserve_local_translations(existing, incoming, authority_id)
         taking_authority = not bool(existing.analysis_authority_id)
         previous_content_hash = compute_content_hash(existing)
         existing.analysis_authority_id = authority_id

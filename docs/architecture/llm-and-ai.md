@@ -15,6 +15,14 @@
 
 阅读器走 `services/translation_jobs.py` 的本地持久任务，按输入/模型/流程版本去重，片段检查点支持刷新与重启恢复；reader/all lifespan worker 全站单任务租约、段内有界并发，逐调用预留额度并按返回 usage 核销，取消/权限变化/输入更新均阻止发布。只有所有片段通过既有结构校验才写最终文章缓存，成功即清检查点；容量和保留期限见 [`docs/archive/background-translation-plan.md`](../../docs/archive/background-translation-plan.md)。旧 `/ai/translate` 仅短文保留同步兼容，长文返回后台任务。
 
+### R2 标题与分段预览（issue #218）
+
+`title_translation` 在新增/原标题变更事务内写轻量待办，只在内容的本地权威节点调用已配置辅助模型（明确关闭思考），不扫描历史、不自动翻正文。标题专用缓存严格匹配原标题指纹；自动任务、早报补题、手动标题共享短租约，发布时重读扩展以免擦正文缓存。独立 `auto_title_translate` 计量与预留，默认每日 200,000 token、自动并发 1、最多 3 次尝试；`auto_title_translation_enabled` 与 `auto_title_translation_daily_tokens` 为 AppSetting 控制项。手动正文队列优先；未知调用用量保留当日预留，超预算排队。除全局 AI 总闸、模型配置外，自动任务还遵守来源外送与 authority/consumer 门控。
+
+账户 `prefer_chinese_titles` 默认 true，仅影响站内标题显示，读取合法缓存不要求账号开启 AI；游客偏好在浏览器保存。普通文章载荷 `title_zh` 只含当前指纹合法的译名，缺失回退原标题。正文继续手动；论文摘要/全文、播客简介/独立逐字稿、社交逐卡翻译的触发边界不扩大。
+
+`translation_preview` 还原源文后解析完整 Markdown 块并映射检查点依赖，全部依赖有效才原位显示对应译文。`preview` 首次返回布局、后续按任务/完成位图增量；不写最终缓存。`translation_updates` 在检查点提交后唤醒 SSE `snapshot`，2 秒持久状态轮询兜底；流内每次重验 cookie、权限和输入。前端未完成块各有骨架、正常状态只保留中文圈圈；没有取消入口，旧 cancel API 保留兼容。最终整篇校验、任务保留/清理规则不变。
+
 ## Reader-facing AI Beta (用户面翻译 + 问答助手)
 
 `src/services/reader_ai.py` gives the 阅读器 two LLM features over the **same global `resolve_llm_config()`** the Daily Brief uses: `translate_article()` (full-body → 简体中文, paragraph-split + concurrent, cached under `extensions_json.translation_zh` so it never re-translates) and `answer_question()` (multi-turn QA; **范围四档,v3.32 核心层统一为「文章名单 → 编号上下文 + sources」**:scope=article/articles 显式名单直取正文[article 是 n=1 特例,单篇也带出处;articles ≤12 篇上限、缺失跳过、全缺 404,供上层功能圈定任意一批文章问答],scope=subscription/all 走 **`services/reader_search.py` 的「LLM 计划检索 + FTS5」两段式**——规划→FTS 召回→选篇→全文注入,降级链自持[规划失败→原词 FTS→零命中→时序窗口],跨期盘点型问题在已订阅日报源时「日报即索引」,两档只差检索域[订阅并集 vs `resolve_all_visible_source_ids` 全库可见源——与发现页预览同口径,隐藏源照旧排除];v3.30 检索扶正波奠基,见 `docs/archive/rag-retirement-plan.md` §2;**后端四档全量落地,前端仅露 article/subscription**,all/articles 是后续功能的预留原语。**引用联动(v3.32)**:上下文编号 `[n]` 即引用锚——sources 载荷带 `id`/`source_name`/`publish_date` 且与上下文**同源同序**,QA 提示词要求行内 `[n]` 标记且禁止自列清单,前端把 `[n]` 转成可点引用 chip[站内跳转走 `openArticleById`,与 v3.25 深链落地同路]并按 sources 确定性渲染末尾出处列表[保底必有,不靠 LLM]). Endpoints `POST /api/reader/ai/translate|ask` are gated by `_require_reader_ai()`, which checks **global master switch AND per-account flag AND LLM configured** (else 403). Access is **two-layer**: a per-account `UserRecord.ai_beta_enabled` flag ⊕ a global master switch `ai_beta_global_enabled` (`AppSettingRecord` KV, default on) — the master switch is a kill/gray-out 总闸 that instantly suspends everyone without touching per-account flags; `_ai_capabilities()` ANDs the two into the `runtime.ai_beta_enabled` the frontend reads (so the 阅读器 entry auto-hides when either is off). Prompts (translate/QA, 哆啦美 persona) live in `src/llm/prompts.py`.
@@ -22,3 +30,5 @@
 ## 游客 AI 试用(issue #213)
 
 授权 = 全局总闸 ∧ 保留账号 `guest:shared` 的 `ai_beta_enabled`(运维游客区「游客 AI」开关)∧ LLM 已配置;`_require_reader_ai` 与 `translation_jobs.authorize` 经 `accounts.get_account_for` 把访客身份映射到保留账号。各用途全开(翻译 / 社交翻译 / 逐字稿翻译 / 长文后台翻译 / 速读 / 问答 / 播客与文章点播)。**额度按每位访客分别计次**——计数照旧按 `AiUsageRecord.username`(即 `guest:v:<vid>`),`_enforce_ai_daily_quota` 与长文翻译的 `_cost_gate` 对访客改读 KV `guest_ai_daily_limits`(translate / ask / summarize / ondemand 四键,缺省与正式读者相同 50 / 100 / 50 / 5,0 = 不限,上限 100000;运维「游客设置」抽屉可调,与读者同额即不留覆盖)。超额回 **429 `{"code": "guest_quota_exhausted"}`**(带 `Retry-After`),前端弹「登录后继续使用」、问答里留一行说明;全站日 token 预算对游客同样生效,耗尽时仍是原文案(登录解决不了,不引导登录);长文后台翻译的成本闸先判全站预算、再判逐用户 / 逐访客次数,两者同时耗尽时给预算文案。**逐字稿翻译**对正式读者有意不设日额度与全站预算(一篇逐字稿的多段调用算一次阅读动作,`tests/test_reader_ai.py` 两条用例钉住),这一豁免不给访客:缓存未命中、即将调模型时按访客 translate 额度计一次并受全站预算约束,已有译文照常读缓存。已知取舍:清 Cookie 即新访客、额度重置,全站预算是最终兜底。
+
+自动标题预算 `auto_title_translation_daily_tokens=0` 表示暂停自动调用，区别于部分读者额度的“不限额”口径。首次发布必须先更新内网接收端的缓存保护，再启用外网自动标题；具体顺序见 [R2 方案](../archive/issue-218-title-translation-progressive-reading.md#131-首次发布顺序后端交叉检视-f7)。

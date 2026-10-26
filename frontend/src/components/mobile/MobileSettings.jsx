@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowDownUp, ChevronLeft, ChevronRight, Info, Lock, MessageSquare, Package, Palette, Plug2, Rss, User, X } from 'lucide-react';
+import { ArrowDownUp, BookOpenText, ChevronLeft, ChevronRight, Info, Lock, MessageSquare, Package, Palette, Plug2, Rss, User, X } from 'lucide-react';
 import { markFeedbackSeen } from '../../api';
 import { useLayerHistory } from '../../hooks/useLayerHistory';
 import AccountSection from '../settings/AccountSection';
 import AppearanceSection from '../settings/AppearanceSection';
+import ReadingSection from '../settings/ReadingSection';
 import FeedTokenSection from '../settings/FeedTokenSection';
 import McpAccessSection from '../settings/McpAccessSection';
 import SkillSection from '../settings/SkillSection';
@@ -21,6 +22,7 @@ import { GUEST_LOCKED_SECTIONS } from '../../utils/guestCopy';
 const HINTS = {
   account: '身份、头像与登录凭据',
   appearance: '主题与动效',
+  reading: '标题语言等阅读偏好',
   opml: 'OPML 迁移',
   feed: '一枚 dfeed_ 令牌与聚合拉取接口',
   mcp: '把内容接进你的 Agent 工具',
@@ -57,6 +59,7 @@ export default function MobileSettings({
       items: [
         { id: 'account', label: '账户', icon: User },
         { id: 'appearance', label: '外观', icon: Palette },
+        { id: 'reading', label: '阅读', icon: BookOpenText },
         { id: 'opml', label: '订阅源 OPML', icon: ArrowDownUp },
         { id: 'feedback', label: '反馈与建议', icon: MessageSquare, show: !isAdmin },
       ],
@@ -163,6 +166,7 @@ export default function MobileSettings({
             {active.id === 'appearance' && (
               <AppearanceSection theme={theme} onThemeChange={onThemeChange} />
             )}
+            {active.id === 'reading' && <ReadingSection />}
             {active.id === 'opml' && !isGuest && (
               <OpmlSection showToast={showToast} onPushPreview={setOpmlPreview} />
             )}

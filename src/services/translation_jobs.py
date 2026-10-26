@@ -26,6 +26,7 @@ from models.db import (
     TranslationChunkRecord as Chunk, TranslationJobRecord as Job,
 )
 from services import accounts, ai_usage, daily_brief, guest_access, reader_ai, source_visibility, user_sources
+from services import translation_preview, translation_updates
 from services.error_redaction import sanitize_error
 from services.translation_markdown import plan_translation, translation_units, TranslationStructureError
 
@@ -137,14 +138,9 @@ def _cached_body(article):
 
 
 def _cached_title(article):
-    ext = reader_ai._load_extensions(article)
+    from services.title_cache import title_receipt
     title = (article.title or "").strip()
-    if title and not reader_ai.looks_chinese(title):
-        if not reader_ai._cache_valid(ext, reader_ai.TRANSLATION_TITLE_KEY,
-                                     reader_ai.TRANSLATION_TITLE_FP_KEY, reader_ai._body_fingerprint(title)):
-            return None
-        title = ext[reader_ai.TRANSLATION_TITLE_KEY]
-    return title
+    return title_receipt(article) if title and not reader_ai.looks_chinese(title) else title
 
 
 def cached_result(article, _config=None):
@@ -173,13 +169,34 @@ def _plan(article, key, *, total=None):
     return plan, title_needed
 
 
-def _payload(job, username):
+def _payload(job, username, session=None):
+    can_resume = job.status in {"failed", "cancelled"}
+    retry_after = None
+    if can_resume and session is not None:
+        try:
+            _cost_gate(session, username, 0)
+        except Error as exc:
+            if exc.status_code == 429:
+                can_resume = False
+                tomorrow = dt.datetime.combine(dt.date.today() + dt.timedelta(days=1), dt.time.min)
+                retry_after = max(1, int((tomorrow - dt.datetime.now()).total_seconds()))
     return {
         "job_id": job.id, "article_id": job.article_id, "status": job.status,
         "completed": job.completed, "total": job.total, "error": job.error,
         "can_cancel": job.created_by == username and job.status in {"queued", "running"},
-        "can_resume": job.status in {"failed", "cancelled"},
+        "can_resume": can_resume, "retry_after": retry_after,
     }
+
+
+def _preview(session, article, job, cursor=None):
+    if job is None or job.status == "stale" or _cached_body(article) is not None:
+        return None
+    plan, _ = _plan(article, job.input_key, total=job.total)
+    rows = session.exec(select(Chunk).where(Chunk.job_id == job.id)).all()
+    return translation_preview.project(
+        plan, {row.ordinal: row.text for row in rows if row.text},
+        job_id=job.id, input_key=job.input_key, cursor=cursor,
+    )
 
 
 def _cleanup(session, now):
@@ -207,7 +224,7 @@ def _user_slot(session, username, exclude_id=""):
         oldest = next((item for item in rows if item.status in {"failed", "cancelled", "stale"}
                        and item.lease_until <= time.time()), None)
         if oldest is None:
-            raise Error("已有 3 篇文章正在翻译，请完成或取消后再试", 429)
+            raise Error("已有 3 篇文章正在翻译，请等待完成后再试", 429)
         _delete_jobs(session, [oldest.id])
         rows.remove(oldest)
         evicted = True
@@ -231,9 +248,11 @@ def request(engine, username, article_id, *, resume_id=None):
         if resume_id and (job is None or job.id != resume_id):
             raise Error("原文或模型配置已更新，请重新发起翻译", 409)
         if job and job.status in {"queued", "running"}:
-            return {"status": job.status, "job": _payload(job, username), "result": cached}
+            return {"status": job.status, "job": _payload(job, username, session), "result": cached,
+                    "preview": _preview(session, article, job)}
         if job and job.status in {"failed", "cancelled", "stale"} and not resume_id:
-            return {"status": job.status, "job": _payload(job, username), "result": cached}
+            return {"status": job.status, "job": _payload(job, username, session), "result": cached,
+                    "preview": _preview(session, article, job)}
         # Check before allocating persistent storage. Recheck/reserve each actual
         # provider call in the worker; joining an existing job has no cost.
         plan, title_needed = _plan(article, key, total=job.total if job else None)
@@ -270,21 +289,23 @@ def request(engine, username, article_id, *, resume_id=None):
             job.created_by, job.status, job.error, job.retry_at = username, "queued", "", 0
             job.updated_at = now
         session.flush()
-        return {"status": job.status, "job": _payload(job, username), "result": cached,
-                "evicted_progress": evicted}
+        return {"status": job.status, "job": _payload(job, username, session), "result": cached,
+                "preview": _preview(session, article, job), "evicted_progress": evicted}
 
 
-def status(engine, username, article_id):
+def status(engine, username, article_id, preview_cursor=None):
     with Session(engine) as session:
         article = session.get(ArticleRecord, article_id)
         authorize(session, username, article)
         config = daily_brief.resolve_llm_config(session)
+        if not config.configured:
+            raise Error("AI 服务暂未就绪", 403)
         cached = cached_result(article, config)
         job = session.exec(select(Job).where(Job.input_key == input_key(article, config))).first()
         if cached and cached["title"] is not None:
-            return {"status": "succeeded", "result": cached, "job": _payload(job, username) if job else None}
-        return {"status": job.status if job else "idle", "job": _payload(job, username) if job else None,
-                "result": cached}
+            return {"status": "succeeded", "result": cached, "job": _payload(job, username, session) if job else None}
+        return {"status": job.status if job else "idle", "job": _payload(job, username, session) if job else None,
+                "result": cached, "preview": _preview(session, article, job, preview_cursor)}
 
 
 def cancel(engine, username, job_id):
@@ -295,7 +316,10 @@ def cancel(engine, username, job_id):
         # Cancelling sends no content externally; allow it even after AI is gated.
         if job.status in {"queued", "running"}:
             job.status, job.error, job.updated_at = "cancelled", "", time.time()
-        return {"status": job.status, "job": _payload(job, username)}
+        result = {"status": job.status, "job": _payload(job, username, session)}
+        article_id = job.article_id
+    translation_updates.notify(engine, article_id)
+    return result
 
 
 def resume(engine, username, job_id):
@@ -432,6 +456,8 @@ def _checkpoint(engine, job_id, token, ordinal, value):
             job.completed += 1
         row.text, row.size_bytes = value, encoded
         job.updated_at = time.time()
+        article_id = job.article_id
+    translation_updates.notify(engine, article_id)
 
 
 def _planned_title(total, plan):
@@ -478,7 +504,9 @@ def _finish(engine, job_id, token, plan):
         # transaction, serialized against cancellation and source replacement.
         article.extensions_json = json.dumps(ext, ensure_ascii=False)
         session.exec(delete(Chunk).where(Chunk.job_id == job_id))
+        article_id = job.article_id
         session.delete(job)
+    translation_updates.notify(engine, article_id)
 
 
 async def run_job(engine, job_id, token):
@@ -493,14 +521,14 @@ async def run_job(engine, job_id, token):
             article, config = _current(session, job)
             plan, _ = _plan(article, job.input_key, total=job.total)
             title = (article.title or "").strip()
-            return config, plan, title
+            return config, plan, title, article.id
 
     def missing_chunks():
         with Session(engine) as session:
             return session.exec(select(Chunk).where(Chunk.job_id == job_id, Chunk.text == "")).all()
 
     async def work():
-        config, plan, title = await asyncio.to_thread(load_work)
+        config, plan, title, article_id = await asyncio.to_thread(load_work)
         semaphore = asyncio.Semaphore(max(1, min(8, config.map_concurrency)))
         stopping_error = None
         async with client_session(config) as client:
@@ -518,40 +546,49 @@ async def run_job(engine, job_id, token):
                     if chunk is not None and not translation_units(chunk.text):
                         await asyncio.to_thread(_checkpoint, engine, job_id, token, ordinal, chunk.text)
                         return
-                    prompt = (prompts.TRANSLATE_SYSTEM_PROMPT + prompts.build_translate_user_prompt(
-                        title, json.dumps({"units": translation_units(chunk.text)}, ensure_ascii=False))
-                        if chunk is not None else prompts.TRANSLATE_TITLE_SYSTEM_PROMPT
-                        + prompts.build_translate_title_user_prompt(title))
-                    # UTF-8 bytes conservatively bound input tokens without a
-                    # provider-specific tokenizer; max_tokens bounds output.
-                    hold = len(prompt.encode()) + max(1, config.max_tokens) + 256
-                    call_id, username = await asyncio.to_thread(_reserve, engine, job_id, token, ordinal, hold)
-                    receipts = []
-                    meta = UsageMeta("translate", username,
-                                     recorder=lambda _meta, usage, model: receipts.append((usage, model)))
-                    rejected = False
-                    try:
-                        if chunk is not None:
-                            value = await reader_ai._translate_segment(title, chunk.text, config, meta, client, max_retries=1)
-                            value = chunk.validate(value)
-                        else:
-                            value = await reader_ai._translate_title(title, config, meta, client, max_retries=1)
-                        if not value.strip():
-                            raise TranslationStructureError("翻译片段为空")
-                        for usage, model in receipts:
-                            await asyncio.to_thread(_settle, engine, call_id, usage, model)
-                        await asyncio.to_thread(_checkpoint, engine, job_id, token, ordinal, value)
-                    except LLMHTTPError as exc:
-                        rejected = 400 <= exc.status_code < 500 and exc.status_code != 408
-                        if not exc.retryable:
-                            stopping_error = exc
-                        raise
-                    finally:
-                        for usage, model in receipts:
-                            await asyncio.to_thread(_settle, engine, call_id, usage, model)
-                        if rejected:
-                            await asyncio.to_thread(_release, engine, call_id)
-                        await asyncio.to_thread(_unknown, engine, call_id)
+                    async def call_provider():
+                        nonlocal stopping_error
+                        prompt = (prompts.TRANSLATE_SYSTEM_PROMPT + prompts.build_translate_user_prompt(
+                            title, json.dumps({"units": translation_units(chunk.text)}, ensure_ascii=False))
+                            if chunk is not None else prompts.TRANSLATE_TITLE_SYSTEM_PROMPT
+                            + prompts.build_translate_title_user_prompt(title))
+                        # UTF-8 bytes conservatively bound input tokens without a
+                        # provider-specific tokenizer; max_tokens bounds output.
+                        hold = len(prompt.encode()) + max(1, config.max_tokens) + 256
+                        call_id, username = await asyncio.to_thread(_reserve, engine, job_id, token, ordinal, hold)
+                        receipts = []
+                        meta = UsageMeta("translate", username,
+                                         recorder=lambda _meta, usage, model: receipts.append((usage, model)))
+                        rejected = False
+                        try:
+                            if chunk is not None:
+                                value = await reader_ai._translate_segment(title, chunk.text, config, meta, client, max_retries=1)
+                                value = chunk.validate(value)
+                            else:
+                                value = await reader_ai._translate_title(title, config, meta, client, max_retries=1)
+                            if not value.strip():
+                                raise TranslationStructureError("翻译片段为空")
+                            for usage, model in receipts:
+                                await asyncio.to_thread(_settle, engine, call_id, usage, model)
+                            return value
+                        except LLMHTTPError as exc:
+                            rejected = 400 <= exc.status_code < 500 and exc.status_code != 408
+                            if not exc.retryable:
+                                stopping_error = exc
+                            raise
+                        finally:
+                            for usage, model in receipts:
+                                await asyncio.to_thread(_settle, engine, call_id, usage, model)
+                            if rejected:
+                                await asyncio.to_thread(_release, engine, call_id)
+                            await asyncio.to_thread(_unknown, engine, call_id)
+
+                    if chunk is None:
+                        from services.title_translation import translate_shared
+                        value = await translate_shared(engine, article_id, title, call_provider)
+                    else:
+                        value = await call_provider()
+                    await asyncio.to_thread(_checkpoint, engine, job_id, token, ordinal, value)
 
             for cycle in range(MAX_ATTEMPTS):
                 missing = await asyncio.to_thread(missing_chunks)
@@ -608,6 +645,9 @@ async def run_job(engine, job_id, token):
                     job.error = sanitize_error(error)
                     job.updated_at = time.time()
                 job.lease_token, job.lease_until = "", 0
+            article_id = job.article_id if job else None
+        if article_id:
+            translation_updates.notify(engine, article_id)
 
 
 async def run_once(engine):

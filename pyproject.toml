@@ -11,6 +11,7 @@ dependencies = [
     "feedparser>=6.0.10",
     "httpx>=0.25.0",
     "lxml>=4.9.0",
+    "markdown-it-py>=4.2,<5",
     # 上限是硬约束:代码用 1.x 的 mcp.server.fastmcp.FastMCP,2.0(2026-07-28)把它
     # 改名为 MCPServer 并变更 API。裸机路径现解依赖曾因此装到 2.x 而起不来。
     "mcp>=1.27.1,<2",

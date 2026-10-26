@@ -17,6 +17,7 @@ from models.content import BaseContent
 from models.db import ArticleRecord
 from services import content_classification, podcast_premium
 from services.paper_content import strip_layout_markers
+from services.title_cache import cached_title
 from storage.fts import build_search_components, fts_search_ids
 
 
@@ -381,6 +382,7 @@ def serialize_article_list_item(
     item = {
         "id": record.id,
         "title": record.title,
+        "title_zh": cached_title(record),
         "content_type": record.content_type,
         "content_type_label": content_classification.content_type_label(record.content_type),
         "source_id": record.source_id,

@@ -108,6 +108,47 @@ class PaperFulltextJobRecord(SQLModel, table=True):
     updated_at: str
 
 
+class TitleTranslationJobRecord(SQLModel, table=True):
+    """Local automatic-title outbox; committed with the source article."""
+    __tablename__ = "title_translation_jobs"
+    __table_args__ = (
+        CheckConstraint("status IN ('pending','running','succeeded','failed','skipped')", name="ck_title_translation_job_status"),
+        Index("ix_title_translation_jobs_due", "status", "retry_at"),
+    )
+    article_id: str = Field(primary_key=True, foreign_key="articles.id", ondelete="CASCADE")
+    title_fp: str
+    status: str = "pending"
+    attempts: int = 0
+    retry_at: float = 0
+    updated_at: float
+    error: str = ""
+
+
+class TitleTranslationLeaseRecord(SQLModel, table=True):
+    """Shared title-generation claim for automatic, digest and reader calls."""
+    __tablename__ = "title_translation_leases"
+    article_id: str = Field(primary_key=True, foreign_key="articles.id", ondelete="CASCADE")
+    title_fp: str
+    token: str
+    until: float
+
+
+class TitleTranslationCallRecord(SQLModel, table=True):
+    """Automatic-title cost holds, deliberately outside reader translation quota."""
+    __tablename__ = "title_translation_calls"
+    __table_args__ = (
+        CheckConstraint("status IN ('reserved','settled','unknown','released')", name="ck_title_translation_call_status"),
+        Index("ix_title_translation_calls_budget", "day", "status"),
+    )
+    id: str = Field(primary_key=True)
+    article_id: str
+    day: str
+    reserved_tokens: int
+    status: str = "reserved"
+    recorded: bool = False
+    created_at: float
+
+
 class TranslationJobRecord(SQLModel, table=True):
     """Reader-local durable translation; never part of Archive Sync."""
     __tablename__ = "translation_jobs"
@@ -3003,6 +3044,10 @@ class UserRecord(SQLModel, table=True):
     # 登录默认落地界面：admin 可在 console（管理台）/ reader（阅读器）间选择；
     # user 恒为读者、该字段不生效。server_default 由迁移补，兼容存量行。
     default_surface: str = Field(default="console", description="登录默认落地界面：console | reader")
+    prefer_chinese_titles: bool = Field(
+        default=True, sa_column_kwargs={"server_default": text("1")},
+        description="读者标题默认显示有效中文译名；仅账户本地偏好",
+    )
     ai_beta_enabled: bool = Field(default=False, index=True, description="是否为该用户开启 AI Beta 功能（阅读器内翻译/问答）")
     interest_onboarding_completed_at: Optional[str] = Field(
         default=None,

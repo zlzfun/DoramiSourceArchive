@@ -112,6 +112,25 @@ triggers on insert/update and are intentionally not part of the sync payload.
 (历史注记:v3.31 前此处还有 `is_vectorized` 重置语义,已随向量层退役删除——
 该字段从未进入线格式,新旧版本部署间同步互通不受影响。)
 
+### Verified local translation preservation (v2 import, issue #218)
+
+Title-only updates still use the existing articles stream and extension fields;
+no new stream or analysis payload generation is introduced. Automatic title
+translation runs on the owning node, never on imported replica articles.
+
+Before v2 import replaces extensions for the same nonempty authority, article ID,
+source and content type, `translation_sync.preserve_local_translations` preserves
+only an existing valid local final body/social cache if the incoming cache is not
+valid. Body identity uses the actual unchanged stripped content, independent of
+title/analysis hashes; social identity uses the same main/repost/quoted source
+snapshot as the translation writer. Exact current fingerprints and integer
+versions are required. Valid remote caches win; legacy caches without fingerprints,
+changed content/authority and unknown extension fields are not preserved. Titles
+remain strict fingerprint caches. This does not change v1 duplicate handling.
+
+Account title preferences, automatic-title jobs, partial body checkpoints, leases
+and usage reservations remain node-local. It does not add cross-node task control.
+
 ## Preserved Fields
 
 The sync payload preserves:

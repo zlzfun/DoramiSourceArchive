@@ -17,7 +17,7 @@ from fastapi import FastAPI, HTTPException, Response, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictBool
 from typing import Optional, List, Dict, Any
 from sqlmodel import Session, select
 from sqlalchemy import delete
@@ -264,6 +264,7 @@ def runtime_capabilities(session: Optional[Dict[str, Any]] = None) -> Dict[str, 
         "llm_configured": llm_configured,
         # 登录默认落地界面（admin 双界面切换用；无会话/异常时回落 console）。
         "default_surface": default_surface,
+        "prefer_chinese_titles": _chinese_title_preference(session),
         # 用户自定源总闸(v3.40):关闭时前端隐藏「添加源」入口(端点侧另有 403)。
         "user_sources_enabled": _user_sources_capability(),
         # 个人早报发布闸：关闭时读者端隐藏页面入口，端点侧继续以 404 防守。
@@ -384,6 +385,23 @@ def _ai_capabilities(session: Optional[Dict[str, Any]] = None) -> tuple[bool, bo
     except Exception:  # 能力探测不应阻断 runtime 接口
         return False, False, "console"
     return ai_beta_enabled, llm_configured, default_surface
+
+
+def _chinese_title_preference(session: Optional[Dict[str, Any]] = None) -> bool:
+    """Reading preference is independent of AI generation gates.
+
+    Guests use browser-local state; never derive their preference from the shared
+    guest row. An absent account/database retains the default-on presentation.
+    """
+    username = str(session.get("sub") or "") if session else ""
+    if not username or accounts_service.is_guest_username(username) or db_sink is None:
+        return True
+    try:
+        with Session(db_sink.engine) as db:
+            record = accounts_service.get_active_user(db, username)
+            return bool(record.prefer_chinese_titles) if record else True
+    except Exception:
+        return True
 
 
 COLLECTOR_API_PREFIXES = (
@@ -611,7 +629,8 @@ async def lifespan(app: FastAPI):
     if not collector_on:
         print("⏸️ 当前 reader 运行角色不启动抓取调度（仅保留留存清理定时任务）。")
 
-    from services import translation_jobs
+    from services import translation_jobs, title_translation
+    title_worker = asyncio.create_task(title_translation.worker_loop(db_sink.engine))
     translation_worker = (asyncio.create_task(translation_jobs.worker_loop(db_sink.engine))
                           if runtime_reader_enabled() else None)
     try:
@@ -621,6 +640,8 @@ async def lifespan(app: FastAPI):
         else:
             yield
     finally:
+        title_worker.cancel()
+        await asyncio.gather(title_worker, return_exceptions=True)
         if translation_worker is not None:
             translation_worker.cancel()
             await asyncio.gather(translation_worker, return_exceptions=True)
@@ -1953,7 +1974,8 @@ class AvatarUpdateParams(BaseModel):
 
 class PreferencesUpdateParams(BaseModel):
     # 登录默认落地界面：console（管理台）| reader（阅读器）。
-    default_surface: str
+    default_surface: Optional[str] = None
+    prefer_chinese_titles: Optional[StrictBool] = None
 
 
 def _auth_cookie_secure() -> bool:
@@ -2321,12 +2343,14 @@ def _auth_user_payload(
     avatar: Optional[str] = None,
     *,
     interest_onboarding_completed_at: Optional[str] = None,
+    prefer_chinese_titles: bool = True,
 ) -> Dict[str, Any]:
     """登录态对外暴露的账户视图：含头像，供前端头像展示。"""
     return {
         "username": username,
         "role": role,
         "avatar": avatar or None,
+        "prefer_chinese_titles": prefer_chinese_titles,
         # 管理员进入阅读器时不打断其运维会话；首次引导只面向普通读者。
         "interest_onboarding_completed": (
             role == "admin" or bool(interest_onboarding_completed_at)
@@ -2352,6 +2376,7 @@ def login_admin(params: AuthLoginParams, request: Request, response: Response):
         avatar = record.avatar
         epoch = record.session_epoch or ""
         interest_onboarding_completed_at = record.interest_onboarding_completed_at
+        prefer_chinese_titles = record.prefer_chinese_titles
         accounts_service.touch_login(session, username)
     # 预置订阅在登录点播种（而非仅首个 reader 请求）：登录响应先于前端阅读器挂载，
     # 消除新账号首屏的竞态——此前播种只挂在 GET /api/reader/sources，与它并行的
@@ -2379,6 +2404,7 @@ def login_admin(params: AuthLoginParams, request: Request, response: Response):
             role,
             avatar,
             interest_onboarding_completed_at=interest_onboarding_completed_at,
+            prefer_chinese_titles=prefer_chinese_titles,
         ),
     }
 
@@ -2391,6 +2417,7 @@ def _guest_user_payload(username: str) -> Dict[str, Any]:
     return {
         "username": username,
         "display_name": GUEST_DISPLAY_NAME,
+        "prefer_chinese_titles": True,
         "role": accounts_service.GUEST_ROLE,
         "avatar": None,
         "interest_onboarding_completed": True,
@@ -2458,6 +2485,7 @@ def get_auth_session(request: Request):
             record.interest_onboarding_completed_at if record else None
         )
         password_login = _password_login_allows(record)
+        prefer_chinese_titles = record.prefer_chinese_titles if record else True
     return {
         "authenticated": True,
         "user": _auth_user_payload(
@@ -2465,6 +2493,7 @@ def get_auth_session(request: Request):
             session["role"],
             avatar,
             interest_onboarding_completed_at=interest_onboarding_completed_at,
+            prefer_chinese_titles=prefer_chinese_titles,
         ),
         "password_login_enabled": password_login,
     }
@@ -2551,25 +2580,32 @@ def update_own_avatar(params: AvatarUpdateParams, request: Request):
             record.role,
             record.avatar,
             interest_onboarding_completed_at=record.interest_onboarding_completed_at,
+            prefer_chinese_titles=record.prefer_chinese_titles,
         )
     return {"ok": True, "user": result}
 
 
 @app.post("/api/auth/preferences")
 def update_own_preferences(params: PreferencesUpdateParams, request: Request):
-    """任意已登录账户设置自己的登录默认落地界面（console | reader）。"""
+    """只更新明确提交的账户偏好，保存标题偏好不改登录落地界面。"""
     username = current_username(request)
     if not username:
         raise HTTPException(status_code=401, detail="未登录或登录已过期")
+    values = params.model_dump(exclude_unset=True)
+    if any(value is None for value in values.values()):
+        raise HTTPException(status_code=400, detail="偏好值不能为空")
     with Session(db_sink.engine) as session:
         record = accounts_service.get_active_user(session, username)
         if record is None:
             raise HTTPException(status_code=401, detail="账户不存在或已停用")
         try:
-            record = accounts_service.set_default_surface(session, username, params.default_surface)
+            record = accounts_service.set_preferences(session, username, **values)
         except accounts_service.AccountError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-        return {"ok": True, "default_surface": record.default_surface}
+        return {
+            "ok": True, "default_surface": record.default_surface,
+            "prefer_chinese_titles": record.prefer_chinese_titles,
+        }
 
 
 # ==================== 账户管理（仅 admin） ====================
