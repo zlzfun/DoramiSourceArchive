@@ -132,6 +132,13 @@ def _safe_name(name):
     return bool(match and match[1] == match[2][:2])
 
 
+# manifest.json 的原始 JSON 上限(创建与恢复同一常量;恢复侧是有界读取,防敌意归档)。外部对象条目只放恢复需要的
+# 七个字段(约 270 字节 / 条):整行 object_blobs 约 470 字节,生产 24,937 个 OSS 对象时 11.7 MB 撞上旧的 8 MiB
+# (issue #236,2026-10-27;10-05 最后一次成功时 17,060 个正好贴着上限)。64 MiB 约可容 24 万个对象。
+_MANIFEST_MAX_BYTES = 64 * 1024 * 1024
+_EXTERNAL_OBJECT_FIELDS = ("namespace", "content_hash", "ext", "size_bytes", "bucket", "region", "object_key")
+
+
 # 付费 WAV 在回执目录里有两种形态:原始 `<id>.wav`,或被 TTS 缓存回收压成的 `<id>.wav.zlib`(issue #143 起,
 # 压缩后原文件删除;生产 2026-10-13 升 v3.63.0 后全部 `succeeded` 都是后者,备份因此连续失败——issue #231)。
 # 两种都原样收进归档;校验口径与 `bailian_tts` 读取侧一致:解压后的字节 sha256 == `audio_hash`。
@@ -187,7 +194,7 @@ def _inspect_restore(archive, target, *, expected_sha256, max_bytes):
         raise BackupError("backup_archive_checksum_mismatch")
     with tarfile.open(archive, "r:gz") as tar:
         first = tar.next()
-        if not first or first.name != "manifest.json" or not first.isfile() or first.size > 8 * 1024 * 1024:
+        if not first or first.name != "manifest.json" or not first.isfile() or first.size > _MANIFEST_MAX_BYTES:
             raise BackupError("backup_manifest_invalid")
         manifest = json.load(tar.extractfile(first))
         if manifest.get("format") != "dorami-backup-v1" or not isinstance(manifest.get("files"), dict):
@@ -390,7 +397,7 @@ class BackupService:
                         if (remote["content_hash"] != digest or remote["size_bytes"] != size
                                 or remote["namespace"] != namespace or remote["ext"] != ext):
                             raise BackupError("backup_blob_registry_conflict")
-                        external.append(dict(remote))
+                        external.append({key: remote[key] for key in _EXTERNAL_OBJECT_FIELDS if key in remote.keys()})
                     else:
                         store = self.object_stores.get(namespace)
                         with store.pin(digest) if store is not None else nullcontext():
@@ -590,7 +597,7 @@ class BackupService:
             partial = staging / "archive.part"
             with tarfile.open(partial, "w:gz") as tar:
                 body = json.dumps(manifest, sort_keys=True).encode()
-                if len(body) > 8 * 1024 * 1024:
+                if len(body) > _MANIFEST_MAX_BYTES:
                     raise BackupError("backup_manifest_too_large")
                 info = tarfile.TarInfo("manifest.json")
                 info.size, info.mode = len(body), 0o600
