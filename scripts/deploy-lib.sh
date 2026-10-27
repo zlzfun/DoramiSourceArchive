@@ -399,10 +399,16 @@ backup_sqlite_db() {
         [ -f "${db_path}-wal" ] && cp "${db_path}-wal" "${backup_file}-wal"
     fi
     echo "    DB backup: $backup_file"
-    # 保留数可配(DORAMI_DEPLOY_BACKUP_KEEP,默认 10)。流水线来源下本函数不被调用(worker 做事务备份);
-    # 手工来源下计数清理必须**排除 manifest 引用的备份**——流水线失败留下的 in-progress 事务备份是恢复材料,
-    # 手工多跑几次不能把它删掉(codex 脚本层检视 P1-6)。
-    local keep="${DORAMI_DEPLOY_BACKUP_KEEP:-10}" referenced n=0 f
+    # 保留数读 conf(DORAMI_DEPLOY_BACKUP_KEEP,环境变量优先,默认 10)。流水线来源下本函数不被调用(worker 做事务备份)。
+    prune_sqlite_backups "$db_path" "$(deploy_conf_value DORAMI_DEPLOY_BACKUP_KEEP 10)"
+}
+
+# 部署前备份的计数清理:保留最近 keep 份,**manifest 引用的备份永不参与计数**——流水线失败留下的 in-progress 事务备份
+# 是恢复材料,手工多跑几次不能把它删掉(codex 脚本层检视 P1-6)。手工备份之后与预检回收(issue #232)共用。
+prune_sqlite_backups() {  # db_path keep
+    local db_path="$1" keep="$2" referenced n=0 f
+    [[ "$keep" =~ ^[0-9]+$ ]] || keep=10
+    [ -n "$db_path" ] && [ -d backups ] || return 0
     referenced="$(_deploy_lib_referenced_backups)"
     while IFS= read -r f; do
         [ -n "$f" ] || continue
@@ -411,8 +417,57 @@ backup_sqlite_db() {
         fi
         n=$((n + 1))
         [ "$n" -le "$keep" ] && continue
-        rm -f "$f"
+        rm -f "$f" && echo "    rm ${f}(超保留数 ${keep})"
     done < <(ls -1t backups/"$(basename "$db_path")".* 2>/dev/null | grep -v -- '-wal$')
+}
+
+# 构建缓存按上限回收(DORAMI_DEPLOY_BUILD_CACHE_KEEP_GB,默认 2):最近用过的层(依赖层 / Chromium 层)留在上限内,
+# 旧构建的中间层才被回收。2026-10-27 生产实测:不设上限时构建缓存涨到 7.5 GB(5.2 GB 可回收),是部署前「磁盘不足」
+# 的最大单项(issue #232)。成功部署后与预检回收各跑一次;worker 自身的清理不碰构建缓存(职责不变、不用重装)。
+# 带超时(DORAMI_DEPLOY_PRUNE_TIMEOUT_SECONDS,默认 300):成功路径上卡住的 docker CLI 会让 worker 停在 wait、晋升不了
+# last-success 也放不开部署锁(codex R1 P2);python3 的 subprocess 超时会杀掉 CLI 并等它退出,进程组不留后代
+# (worker 把残留后代判为未干净收口),daemon 侧未完成的回收由下次再做。失败 / 超时只记一行,不影响部署结论。
+deploy_prune_build_cache() {
+    local keep_gb out
+    keep_gb="$(deploy_conf_value DORAMI_DEPLOY_BUILD_CACHE_KEEP_GB 2)"
+    [[ "$keep_gb" =~ ^[0-9]+$ ]] || keep_gb=2
+    out="$(python3 - "$keep_gb" "${DORAMI_DEPLOY_PRUNE_TIMEOUT_SECONDS:-300}" <<'PY'
+import subprocess, sys
+keep, timeout = sys.argv[1], float(sys.argv[2])
+try:
+    r = subprocess.run(["docker", "builder", "prune", "-f", f"--keep-storage={keep}G"],
+                       capture_output=True, text=True, timeout=timeout)
+    lines = [line.strip() for line in r.stdout.splitlines() if line.strip()]
+    print(lines[-1] if lines else f"docker builder prune 退出码 {r.returncode}")
+except subprocess.TimeoutExpired:
+    print(f"超时 {int(timeout)}s,已终止 CLI(daemon 侧未完成的部分下次再回收)")
+except Exception as exc:  # docker 不存在等
+    print(f"未执行({type(exc).__name__})")
+PY
+)" || out=""
+    echo "    构建缓存回收(上限 ${keep_gb} GB):${out:-docker builder prune 未执行}"
+}
+
+# 预检不足时的安全回收(issue #232):悬空镜像、超上限的构建缓存、超保留数的部署前备份(manifest 引用的不动)。
+# 不删任何带 tag 的镜像(managed / rollback 由 worker 按 manifest 管)、不碰 data/(每日归档归 [backup] 自己轮换)。
+deploy_reclaim_disk() {  # db_path(可空:非 sqlite 时只回收 docker 侧)
+    echo "    先回收:悬空镜像 / 构建缓存超上限部分 / 超保留数的部署前备份(manifest 引用的不动)"
+    docker image prune -f >/dev/null 2>&1 || true
+    deploy_prune_build_cache
+    prune_sqlite_backups "${1:-}" "$(deploy_conf_value DORAMI_DEPLOY_BACKUP_KEEP 10)"
+    return 0
+}
+
+# 磁盘去向一览:回收后仍不足时打印,让人一眼看到剩下该动什么(旧回滚镜像 / 每日归档 / 扩盘)。
+deploy_disk_breakdown() {
+    docker system df --format '    docker {{.Type}}: {{.Size}}(可回收 {{.Reclaimable}})' 2>/dev/null || true
+    if [ -d backups ]; then
+        echo "    backups/: $(ls -1 backups 2>/dev/null | wc -l | tr -d ' ') 个文件,$(du -sh backups 2>/dev/null | cut -f1)"
+    fi
+    if [ -d data ]; then
+        echo "    data/: $(du -sh data 2>/dev/null | cut -f1)(其中 data/backups 每日归档由 [backup] retain_local 轮换,本脚本不碰)"
+    fi
+    return 0
 }
 
 # 仓库外状态目录(/etc/dorami-deploy.conf 的 STATE_DIR);没有 conf 的开发机返回空串。
@@ -420,6 +475,17 @@ deploy_state_dir() {
     local conf="${DORAMI_DEPLOY_CONF:-/etc/dorami-deploy.conf}"
     [ -r "$conf" ] || return 0
     ( set +u; STATE_DIR=""; source "$conf" >/dev/null 2>&1; printf '%s' "${STATE_DIR:-}" )
+}
+
+# 读 conf 里的单个键:环境变量(worker 显式传入的)优先,其次 /etc/dorami-deploy.conf,都没有给默认值。手工路径与流水线
+# 自此共用同一份保留数 / 磁盘阈值 / 构建缓存上限(issue #232:此前手工路径按默认 keep=10 攒下 6 份 700 MB 备份)。
+deploy_conf_value() {  # KEY DEFAULT
+    local key="$1" default="$2" conf="${DORAMI_DEPLOY_CONF:-/etc/dorami-deploy.conf}" v
+    v="${!key:-}"
+    if [ -z "$v" ] && [ -r "$conf" ]; then
+        v="$( set +u; unset "$key"; source "$conf" >/dev/null 2>&1; printf '%s' "${!key:-}" )"
+    fi
+    printf '%s' "${v:-$default}"
 }
 
 # in-progress / last-success 引用的备份文件(绝对路径,一行一个)。分别读 Docker worker 的状态目录

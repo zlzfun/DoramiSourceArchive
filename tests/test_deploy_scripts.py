@@ -101,6 +101,18 @@ if args[:1] == ["rmi"]:
     sys.exit(0)
 if args[:2] == ["image", "prune"]:
     sys.exit(0)
+if args[:2] == ["builder", "prune"]:
+    # 回收「腾出」空间:把 FAKE_PRUNE_SETS_AVAIL_KB 写进假 df 读的文件,预检复测就能看到变化
+    f, v = os.environ.get("FAKE_DF_AVAIL_FILE", ""), os.environ.get("FAKE_PRUNE_SETS_AVAIL_KB", "")
+    if f and v:
+        open(f, "w").write(v)
+    if os.environ.get("FAKE_PRUNE_SLEEP"):   # 模拟卡住的 docker CLI
+        import time; time.sleep(float(os.environ["FAKE_PRUNE_SLEEP"]))
+    if rc("prune_rc"):
+        sys.stderr.write("fake prune failure\n"); sys.exit(rc("prune_rc"))
+    print("Total reclaimed space: 1.5GB"); sys.exit(0)
+if args[:2] == ["system", "df"]:
+    print("    docker Images: 10GB(可回收 7GB)"); sys.exit(0)
 sys.stderr.write("fake docker: unhandled " + " ".join(args) + "\n")
 sys.exit(1)
 '''
@@ -115,7 +127,12 @@ sys.exit(7)
 
 FAKE_DF = r'''#!/usr/bin/env python3
 import os, sys
+if os.environ.get("FAKE_DF_RC"):   # 模拟 df 本身失败(挂载点读不到 / 权限)
+    sys.stderr.write("fake df failure\n"); sys.exit(int(os.environ["FAKE_DF_RC"]))
 avail = os.environ.get("FAKE_DF_AVAIL_KB", str(100 * 1024 * 1024))
+_f = os.environ.get("FAKE_DF_AVAIL_FILE", "")
+if _f and os.path.exists(_f):
+    avail = open(_f).read().strip() or avail
 mode = os.environ.get("FAKE_DF_MODE", "gnu")
 ifree = os.environ.get("FAKE_DF_IFREE", "999000")
 if "-Pi" in sys.argv:
@@ -616,13 +633,110 @@ def test_deploy_docker_pipeline_origin_skips_backup_touches_switch_mark_and_chec
 def test_deploy_docker_preflight_failures_stop_before_build(real: Env):
     _health(real, "v9.9.9")
     r = _run_deploy(real, "v9.9.9", FAKE_DF_AVAIL_KB=str(100 * 1024))  # 100MB
-    assert r.returncode != 0 and "磁盘不足" in r.stderr
-    assert not any(c.startswith("compose build") for c in real.calls())
+    assert r.returncode != 0 and "磁盘不足" in r.stderr and "回收后仍不足" in r.stderr
+    assert "可回收" in r.stdout, "仍不足时打印 docker system df 去向"
+    calls = real.calls()
+    assert "image prune -f" in calls and "builder prune -f --keep-storage=2G" in calls, "fail 之前先做过安全回收"
+    assert not any(c.startswith("compose build") for c in calls)
     real.fake_write("config_rc", "1")
     r = _run_deploy(real, "v9.9.9")
     assert r.returncode != 0 and "docker compose config 校验失败" in r.stderr
     assert "required variable DORAMI_PODCAST_AUTHORITY_ID is missing" in r.stdout
     assert not any(c.startswith("compose build") for c in real.calls())
+
+
+def _aged_backups(bdir: Path, n: int) -> list[Path]:
+    bdir.mkdir(exist_ok=True)
+    out = []
+    for i in range(1, n + 1):   # 序号越大越新(mtime 递增)
+        p = bdir / f"cms_data.db.202601{i:02d}-000000"
+        p.write_bytes(b"x")
+        os.utime(p, (1_700_000_000 + i, 1_700_000_000 + i))
+        out.append(p)
+    return out
+
+
+def test_deploy_docker_preflight_reclaims_then_proceeds(real: Env):
+    # issue #232:预检不足 → 回收(悬空镜像 / 构建缓存上限 / 备份计数)→ 复测够了 → 正常部署,回收在 build 之前
+    _health(real, "v9.9.9")
+    avail = real.tmp / "df_avail"; avail.write_text(str(100 * 1024))
+    r = _run_deploy(real, "v9.9.9", FAKE_DF_AVAIL_FILE=str(avail), FAKE_PRUNE_SETS_AVAIL_KB=str(50 * 1024 * 1024))
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = real.calls()
+    assert calls.index("builder prune -f --keep-storage=2G") < calls.index("compose build")
+    assert "回收后复测" in r.stdout and "Deploy complete" in r.stdout
+    # 预检阈值也读 conf:conf 写 1 GB、df 报 1.5 GB → 不回收直接过
+    (real.fake / "calls.log").unlink()
+    avail.write_text(str(1536 * 1024))
+    r = _run_deploy(real, "v9.9.9", FAKE_DF_AVAIL_FILE=str(avail))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "回收后复测" not in r.stdout
+
+
+def test_deploy_docker_preflight_df_failure_fails_closed(real: Env):
+    # codex R1 P2:disk_free_ok 在 `if !` 里跑、errexit 不生效,df 失败不能被当成「够」
+    _health(real, "v9.9.9")
+    r = _run_deploy(real, "v9.9.9", FAKE_DF_RC="1")
+    assert r.returncode != 0 and "无法判断磁盘余量" in r.stderr
+    assert not any(c.startswith(("compose build", "compose up")) for c in real.calls())
+
+
+def test_success_path_prune_timeout_and_failure_do_not_fail_deploy(real: Env):
+    # codex R1 P2:成功后的 builder prune 卡住 / 失败都只记一行,部署仍成功收口且进程组不留后代
+    _health(real, "v9.9.9")
+    t0 = time.monotonic()
+    r = _run_deploy(real, "v9.9.9", FAKE_PRUNE_SLEEP="30", DORAMI_DEPLOY_PRUNE_TIMEOUT_SECONDS="1")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert time.monotonic() - t0 < 25, "超时应终止卡住的 prune,而不是等它 30 秒"
+    assert "超时 1s" in r.stdout and "Deploy complete" in r.stdout
+    real.fake_write("prune_rc", "7")
+    r = _run_deploy(real, "v9.9.9")
+    assert r.returncode == 0 and "退出码 7" in r.stdout
+
+
+def test_preflight_backup_trim_honors_conf_keep_and_manifest_pins(real: Env):
+    _health(real, "v9.9.9")
+    bdir = real.repo.clone / "backups"
+    old = _aged_backups(bdir, 5)
+    pinned = old[0]   # 最老的一份被 in-progress 事务引用,计数清理永不碰
+    real.state.mkdir(parents=True, exist_ok=True)
+    (real.state / "in-progress.json").write_text(json.dumps({"prev": {"db_backup": str(pinned)}}))
+    avail = real.tmp / "df_avail"; avail.write_text(str(100 * 1024))
+    r = _run_deploy(real, "v9.9.9", FAKE_DF_AVAIL_FILE=str(avail), FAKE_PRUNE_SETS_AVAIL_KB=str(50 * 1024 * 1024))
+    assert r.returncode == 0, r.stdout + r.stderr
+    remaining = sorted(p.name for p in bdir.glob("cms_data.db.*"))
+    # conf keep=2(环境未给):预检留最新 2 份 + 被引用的;随后手工备份新做 1 份再按 2 计数 → 被引用 + 最新 1 旧 + 新做
+    assert pinned.name in remaining and old[4].name in remaining and len(remaining) == 3, remaining
+    assert f"rm backups/{old[1].name}" in r.stdout and f"rm backups/{old[2].name}" in r.stdout
+
+
+def test_manual_backup_count_reads_conf_keep_when_env_absent(real: Env):
+    _health(real, "v9.9.9")
+    bdir = real.repo.clone / "backups"
+    _aged_backups(bdir, 4)
+    r = _run_deploy(real, "v9.9.9")   # 环境未给 DORAMI_DEPLOY_BACKUP_KEEP → 读 conf 的 2,而不是旧默认 10
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert len(list(bdir.glob("cms_data.db.*"))) == 2
+    # 环境变量优先于 conf
+    _aged_backups(bdir, 4)
+    r = _run_deploy(real, "v9.9.9", DORAMI_DEPLOY_BACKUP_KEEP="3")
+    assert r.returncode == 0 and len(list(bdir.glob("cms_data.db.*"))) == 3
+
+
+def test_success_path_prunes_build_cache_with_conf_limit(real: Env):
+    _health(real, "v9.9.9")
+    real.conf.write_text(real.conf.read_text() + "DORAMI_DEPLOY_BUILD_CACHE_KEEP_GB=3\n")
+    r = _run_deploy(real, "v9.9.9")
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = real.calls()
+    assert calls.index("compose up -d --remove-orphans switch_mark_present=0") < calls.index("builder prune -f --keep-storage=3G")
+    assert "构建缓存回收(上限 3 GB)" in r.stdout
+    # 健康验证失败时不动构建缓存(失败路径只保留现场)
+    (real.fake / "calls.log").unlink()
+    (real.fake / "health.json").unlink()
+    r = _run_deploy(real, "v9.9.9", DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS="2")
+    assert r.returncode != 0
+    assert not any(c.startswith("builder prune") for c in real.calls())
 
 
 def test_deploy_docker_check_config_and_plan_gate_before_up(real: Env):

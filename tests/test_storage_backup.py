@@ -13,6 +13,7 @@ import sys
 import tarfile
 import threading
 from types import SimpleNamespace
+import zlib
 
 import pytest
 
@@ -102,6 +103,82 @@ def test_round_trip_wal_database_receipts_paid_audio_local_blobs(service, tmp_pa
     assert (restored / "media" / image_hash[:2] / image.name).read_bytes() == image.read_bytes()
     assert (restored / "podcast" / audio_digest[:2] / audio.name).read_bytes() == audio.read_bytes()
     assert not (restored / "receipts" / ".lock").exists()
+
+
+def test_compressed_paid_audio_is_archived_and_hash_checked_after_inflate(service, tmp_path):
+    # issue #231:TTS 缓存回收把已发布节目的 WAV 压成 `<id>.wav.zlib` 并删原文件(#143),备份必须认这种形态。
+    data = b"already-paid audio frame " * 4000
+    call_id = "f" * 64
+    audio_hash = hashlib.sha256(data).hexdigest()
+    with sqlite3.connect(service._database()) as connection:
+        connection.execute("INSERT INTO bailian_tts_calls VALUES (?,?,?)", (call_id, "succeeded", audio_hash))
+    service.receipt_root.mkdir()
+    (service.receipt_root / f"{call_id}.json").write_text('{"paid":"receipt"}')
+    packed = service.receipt_root / f"{call_id}.wav.zlib"
+    packed.write_bytes(zlib.compress(data, 6))
+    state = service.run()
+    assert state["status"] == "succeeded", state
+    with tarfile.open(service.directory / state["archive"]) as archive:
+        assert f"receipts/{call_id}.wav.zlib" in archive.getnames()
+    restored = tmp_path / "restored"
+    result = restore_backup(service.directory / state["archive"], restored, expected_sha256=state["sha256"], offline=True)
+    assert result["status"] == "restored"
+    assert zlib.decompress((restored / "receipts" / f"{call_id}.wav.zlib").read_bytes()) == data
+    # 解压后哈希不符、不是 zlib 流、流被截断(去掉末尾 adler32:原文能解全、但 eof 为假——单独守住 eof 检查,
+    # codex R1 P2)、流后有尾随字节:都按「付费音频缺失或损坏」fail closed,不冒泡异常
+    compressed = zlib.compress(data, 6)
+    assert zlib.decompressobj().decompress(compressed[:-4]) == data, "截断样本须能解出完整原文,才是在测 eof 而不是哈希"
+    for payload in (zlib.compress(b"different bytes"), b"not a zlib stream", compressed[:-4], compressed[:-16], compressed + b"trailing"):
+        packed.write_bytes(payload)
+        state = service.run()
+        assert state["status"] == "failed" and state["error"] == "backup_paid_audio_missing_or_corrupt", payload[:12]
+    # 原始 WAV 与压缩档并存(回收在删原文件前被打断)时任一形态哈希相符即可
+    (service.receipt_root / f"{call_id}.wav").write_bytes(data)
+    assert service.run()["status"] == "succeeded"
+
+
+def test_inflated_sha256_bounds_output_and_rejects_trailing_bytes(tmp_path):
+    data = b"\0" * (64 * 1024)
+    path = tmp_path / "x.wav.zlib"
+    path.write_bytes(zlib.compress(data))
+    assert backup_module._inflated_sha256(path) == hashlib.sha256(data).hexdigest()
+    assert backup_module._inflated_sha256(path, limit=len(data) - 1) is None, "解压产物超限按损坏"
+    assert backup_module._inflated_sha256(path, limit=len(data)) == hashlib.sha256(data).hexdigest()
+    path.write_bytes(zlib.compress(data)[:-4])
+    assert backup_module._inflated_sha256(path) is None, "原文解全但流未结束(eof 为假)按损坏"
+    path.write_bytes(zlib.compress(data) + b"trailing")
+    assert backup_module._inflated_sha256(path) is None
+    # 尾随数据在流结束后立刻停读:8 MiB 垃圾不会被整段读进 unused_data(codex R1 P2)
+    path.write_bytes(zlib.compress(b"x") + b"\xff" * (8 * 1024 * 1024))
+    reads = []
+    real_open = Path.open
+    def counting_open(self, *a, **k):
+        f = real_open(self, *a, **k)
+        orig = f.read
+        def read(n=-1):
+            b = orig(n); reads.append(len(b)); return b
+        f.read = read
+        return f
+    Path.open = counting_open
+    try:
+        assert backup_module._inflated_sha256(path, limit=64) is None
+    finally:
+        Path.open = real_open
+    assert sum(reads) <= 1024 * 1024 + 1, reads
+    assert backup_module._paid_audio_verified(tmp_path, {"receipts/" + "a" * 64 + ".wav.zlib": {}}, "a" * 64, None) is False
+
+
+def test_stale_staging_directories_are_swept_under_lock(service):
+    service.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    stale = service.directory / ".backup-crashed1"
+    stale.mkdir()
+    (stale / "database.sqlite3").write_bytes(b"half-written snapshot")
+    download = service.directory / ".backup-download-abc"
+    download.write_bytes(b"partial download in another process")
+    assert service.run()["status"] == "succeeded"
+    assert not stale.exists(), "持锁期间残留的暂存目录是崩溃半成品,开始新备份前清掉"
+    assert download.exists(), "下载临时文件不属于暂存目录,不动"
+    assert not list(service.directory.glob(".backup-*/")), "本次的暂存目录用完即清"
 
 
 def test_runtime_receipt_root_override_and_busy_spool(service, tmp_path):

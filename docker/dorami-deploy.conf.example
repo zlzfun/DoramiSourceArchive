@@ -31,8 +31,13 @@ DEPLOY_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # 部署脚本预检:每个相关文件系统(docker root / 仓库 / data / backups)至少要有这么多 GB 可用
 DORAMI_DEPLOY_MIN_FREE_GB=5
 
-# 备份保留数(手工路径 deploy-lib 的计数清理与 worker 的计数清理共用;被 manifest 引用的备份永不参与计数)
+# 备份保留数(手工路径 deploy-lib 的计数清理、worker 成功后的计数清理、预检不足时的回收共用;被 manifest 引用的备份永不参与计数)
+# 按库大小与盘大小调:40 GB 盘、库 0.8 GB 时生产用 3
 DORAMI_DEPLOY_BACKUP_KEEP=10
+
+# 构建缓存上限(GB):部署成功后与预检不足时 `docker builder prune -f --keep-storage=<N>G`,最近用过的依赖层 / Chromium 层
+# 留在上限内,旧构建的中间层才被回收(不设上限时 40 GB 盘上实测涨到 7.5 GB,issue #232)
+DORAMI_DEPLOY_BUILD_CACHE_KEEP_GB=2
 
 # 部署脚本健康核对的本机入口(经容器 nginx;生产 .env 里 DORAMI_HTTP_LISTEN=127.0.0.1:8080 即此)
 DORAMI_HTTP_LISTEN=127.0.0.1:8080

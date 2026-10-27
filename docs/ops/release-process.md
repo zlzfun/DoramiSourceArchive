@@ -97,7 +97,7 @@ in-progress 事务、方向与单调护栏、首装门),worker 再跑目标 tag 
 ## 回滚
 
 代码回滚是一句话:`./deploy-docker.sh v3.55.0`。但 **Alembic 迁移不一定可逆**(已有不可逆的
-Podcast 迁移),所以每次部署前脚本都把 SQLite 在线备份到 `backups/`(保留 10 份;`sqlite3 .backup`
+Podcast 迁移),所以每次部署前脚本都把 SQLite 在线备份到 `backups/`(保留 `DORAMI_DEPLOY_BACKUP_KEEP` 份,conf 默认 10、生产按盘与库大小调,manifest 引用的不计数;`sqlite3 .backup`
 在线一致快照,WAL 模式下裸 `cp` 会丢最近写入)。完整回滚 = 切回上一 tag **+** 用对应备份覆盖库文件:
 
 ```bash

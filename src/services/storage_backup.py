@@ -21,6 +21,7 @@ import tarfile
 import tempfile
 import time
 import uuid
+import zlib
 
 from sqlalchemy.engine import make_url
 
@@ -125,10 +126,60 @@ def _integrity(connection):
 def _safe_name(name):
     if name == "database.sqlite3":
         return True
-    if re.fullmatch(r"receipts/[0-9a-f]{64}\.(?:json|wav)", name):
+    if re.fullmatch(r"receipts/[0-9a-f]{64}\.(?:json|wav|wav\.zlib)", name):
         return True
     match = re.fullmatch(r"(?:media|podcast)/([0-9a-f]{2})/([0-9a-f]{64})\.[a-z0-9]{1,8}", name)
     return bool(match and match[1] == match[2][:2])
+
+
+# 付费 WAV 在回执目录里有两种形态:原始 `<id>.wav`,或被 TTS 缓存回收压成的 `<id>.wav.zlib`(issue #143 起,
+# 压缩后原文件删除;生产 2026-10-13 升 v3.63.0 后全部 `succeeded` 都是后者,备份因此连续失败——issue #231)。
+# 两种都原样收进归档;校验口径与 `bailian_tts` 读取侧一致:解压后的字节 sha256 == `audio_hash`。
+_PAID_AUDIO_INFLATE_LIMIT = 1024 ** 3
+
+
+def _inflated_sha256(path, *, limit=_PAID_AUDIO_INFLATE_LIMIT):
+    """zlib 流式解压并哈希;超限、流不完整、尾随杂字节、读失败一律返回 None(按损坏处理,不冒泡原始异常)。
+
+    流结束(``eof``)后立即停读:``unused_data`` 不受产物上限约束,继续喂会把尾随字节整段攒进内存
+    (codex R1 P2);流后还有任何字节都按损坏。
+    """
+    decoder = zlib.decompressobj()
+    digest = hashlib.sha256()
+    total = 0
+    try:
+        with path.open("rb") as stream:
+            while True:
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                out = decoder.decompress(chunk, limit - total + 1)
+                total += len(out)
+                if total > limit or decoder.unconsumed_tail or decoder.unused_data:
+                    return None
+                digest.update(out)
+                if decoder.eof:
+                    if stream.read(1):
+                        return None
+                    break
+        tail = decoder.flush()
+    except (OSError, zlib.error):
+        return None
+    total += len(tail)
+    if total > limit or not decoder.eof or decoder.unused_data:
+        return None
+    digest.update(tail)
+    return digest.hexdigest()
+
+
+def _paid_audio_verified(staging, files, call_id, audio_hash):
+    if not re.fullmatch(r"[0-9a-f]{64}", str(audio_hash or "")):
+        return False
+    plain = files.get(f"receipts/{call_id}.wav")
+    if plain and plain["sha256"] == audio_hash:
+        return True
+    name = f"receipts/{call_id}.wav.zlib"
+    return name in files and _inflated_sha256(staging / name) == audio_hash
 
 
 def _inspect_restore(archive, target, *, expected_sha256, max_bytes):
@@ -306,17 +357,17 @@ class BackupService:
                 if self._receipt_directory(snapshot) != receipt_root:
                     raise BackupError("backup_receipt_root_changed")
                 for path in sorted(receipt_root.iterdir()):
-                    if re.fullmatch(r"[0-9a-f]{64}\.(json|wav)", path.name):
+                    if re.fullmatch(r"[0-9a-f]{64}\.(json|wav|wav\.zlib)", path.name):
                         name = "receipts/" + path.name
                         self._copy(path, staging / name, files, name, root=receipt_root)
                 if _has_table(snapshot, "bailian_tts_calls"):
                     for row in snapshot.execute("SELECT id,status,audio_hash FROM bailian_tts_calls"):
                         if row["status"] in {"generated", "succeeded"} and f"receipts/{row['id']}.json" not in files:
                             raise BackupError("backup_paid_receipt_missing")
-                        if row["status"] == "succeeded":
-                            audio = files.get(f"receipts/{row['id']}.wav")
-                            if not audio or audio["sha256"] != row["audio_hash"]:
-                                raise BackupError("backup_paid_audio_missing_or_corrupt")
+                        if row["status"] == "succeeded" and not _paid_audio_verified(
+                            staging, files, row["id"], row["audio_hash"],
+                        ):
+                            raise BackupError("backup_paid_audio_missing_or_corrupt")
         checksum, size = _hash(staging / "database.sqlite3")
         files["database.sqlite3"] = {"sha256": checksum, "size": size}
         external = []
@@ -518,9 +569,18 @@ class BackupService:
             return self._failure(exc)
         return self.status()
 
+    def _sweep_stale_staging(self):
+        # 持 `.backup.lock` 期间不会有别的备份在写本目录的暂存区,残留的 `.backup-*` 目录只能是进程被杀 /
+        # 容器重启时 TemporaryDirectory 没来得及清的半成品(生产 2026-10-26 部署重启留下一份 790 MB 库快照)。
+        # 只删目录;`.backup-download-*` 临时文件、归档与 sha256 不碰。
+        for path in self.directory.iterdir():
+            if path.name.startswith(".backup-") and not path.is_symlink() and path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+
     def _create_archive(self):
         stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         archive = self.directory / f"dorami-{stamp}-{uuid.uuid4().hex}.tar.gz"
+        self._sweep_stale_staging()
         with tempfile.TemporaryDirectory(prefix=".backup-", dir=self.directory) as staging:
             staging = Path(staging)
             manifest = self._snapshot(staging)
