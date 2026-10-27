@@ -57,7 +57,8 @@
 - **做法**:(1)`scripts/deploy-lib.sh` 加 `deploy_conf_value`(环境变量 > conf > 默认)、`prune_sqlite_backups`(从 `backup_sqlite_db` 抽出,manifest 引用的永不计数)、`deploy_prune_build_cache`(`docker builder prune -f --keep-storage=<N>G`)、`deploy_reclaim_disk`、`deploy_disk_breakdown`;(2)`deploy-docker.sh` 预检拆成 `disk_free_ok` + `preflight_disk`:不足 → 回收 → 复测 → 仍不足才 fail(信息带去向);健康通过后再压一次构建缓存,失败路径不动现场;(3)conf 样例加 `DORAMI_DEPLOY_BUILD_CACHE_KEEP_GB=2`。worker(仓外脚本)职责不变、不用重装。
 - **有意不做**:预检不删任何带 tag 的镜像(managed / rollback 由 worker 按 manifest 管)、不碰 `data/`(每日归档归 `[backup] retain_local`);不把每份 700 MB 的部署前备份改成压缩格式(恢复步骤会多一步,先靠保留数);不改 worker 清理语义。
 - **生产侧(用户执行)**:`[backup] retain_local 7 → 2`(云端已有)、删被取代的每日归档与崩溃残留的 `.backup-*` 目录、conf 加 `DORAMI_DEPLOY_BUILD_CACHE_KEEP_GB=2`;建议把 40 GB 盘在线扩到 60 ～ 80 GB(稳态约 25 GB、部署峰值再加约 3.5 GB、库每月 +1 GB)。
-- **测试**:`tests/test_deploy_scripts.py` 新增预检回收后继续 / 仍不足带去向、备份计数读 conf 且 manifest 引用存活、环境变量优先、成功后按 conf 上限压缩缓存且失败路径不动。
+- **测试**:`tests/test_deploy_scripts.py` 新增预检回收后继续 / 仍不足带去向、`df` 失败 fail closed、备份计数读 conf 且 manifest 引用存活、环境变量优先、成功后按 conf 上限压缩缓存且失败路径不动、prune 卡住(超时)与非零退出不影响收口。
+- **检视**:实现 Claude Code(Fable 5.1),检视 Codex gpt-6-astra(ultra)本地协商式两轮——R1 0 P1 / 2 P2(`disk_free_ok` 在 `if !` 里跑、`df` 失败会被当成「够」;成功后的 `builder prune` 没超时会让 worker 停在 wait、放不开部署锁)/ 1 P3(`retain_local` 配置位置写错),全部接受并修复(两次 `df` 显式 fail closed;prune 经 python3 `subprocess.run(timeout=)` 杀 CLI 并等待);R2 对照清单复检「可合入」,无新引入 P1。
 
 ## issue #213 游客模式(分支 `feat/issue-213-guest-mode`,开发版 3.67.0-alpha,版本号以实际发版为准)
 
