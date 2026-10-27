@@ -22,6 +22,16 @@
 - 方向页顶部是一台能点的试玩机:点条目进正文、长按(或右键)出动作单、点来源范围开源抽屉;右侧按钮做同样的事,另有「游客视角」。
 - 单屏参数(总览页 iframe 与截图都用它):`direction-x.html?embed=1&screen=feed|read|read-end|drawer|sheet|me|settings|brief|xplayer&theme=light|dark&palette=porcelain|graphite|paper&motion=reduce&frame=0&guest=1`。
 
+## 分享:单文件版 `all-in-one.html`
+
+四个 HTML 彼此只用相对路径引用(总览页用 iframe 内嵌方向页、链接互跳),本机 file:// 打开在 Chromium / WebKit 都正常;但传到别处后若被改名、被聊天工具内置预览打开、或浏览器策略禁止本地 iframe,总览就会空白或跳不动。要发给别人看,传 `all-in-one.html` 一个文件即可:三方向页原文内嵌(srcdoc),参数经 `<head>` 注入,「打开方向页」在页内层里打开,方向页顶部目录经 postMessage 切换,Esc / 「返回总览」关闭;约 1.3 MB,不依赖任何外部文件。
+
+它由 `build_bundle.py` 从 `index.html` + `direction-*.html` 生成,**不要手改**;改了样页后重新打包:
+
+```bash
+.venv/bin/python docs/design/issue-230-mobile/build_bundle.py docs/design/issue-230-mobile
+```
+
 ## 共同前提
 
 - **数据是真的**:条目、标题、摘要、分数、评分依据、标签、早报编排取自 `docs/design/visual-refine-final/assets/data.js`(本地库快照,9 月 16 日那一期,相对时间按当天 9:00 计);播放坞节目与封面取自 `docs/design/podcast-player`(Interconnects 一期)。示意的只有三处:版本更新条目「Claude Code 2.0.37」、正文页的英文原文与中文译文段落(据该文真实摘要改写,事实不出摘要)、读者名「阿澈」与收藏数。
