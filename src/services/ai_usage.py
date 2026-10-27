@@ -44,6 +44,11 @@ VALID_PURPOSES = (
     # issue #121 事件层:辅助模型增量分配(系统任务,归 system,不进读者预算三处)。v3.67.0 上线后
     # 发现漏登记——record_usage 静默丢行,事件层 token 在看板里看不见(与 v3.40.4 summarize 同一类)。
     "event_assignment",
+    # 2026-10-27(用户拍板,PR #228 检视发现):播客精品导读 / 文章讲解的底层分段调用此前漏登记——读者次数
+    # 额度按「发起一次生成」在 *_ondemand 上计,这里只补 token 可见,不重复扣读者次数。
+    "podcast_premium_blog",
+    "podcast_premium_narration",
+    "article_ondemand_narration",
 )
 
 SYSTEM_USERNAME = "system"

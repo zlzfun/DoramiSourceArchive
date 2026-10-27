@@ -607,15 +607,12 @@ def test_every_usage_purpose_in_source_is_registered_or_explicitly_excluded():
                     found.add(node.args[0].value)
     # 暂不计量的用途 → 原因(codex 检视 P3:裸集合会让下一个人无感知地扩项;理由必须写清)。
     excluded = {
-        "article_ondemand_narration": "文章讲解底层分段调用;疑似既有漏登记,是否登记待拍板(backlog)",
-        "podcast_premium_blog": "播客精品导读底层调用;疑似既有漏登记,是否登记待拍板(backlog)",
-        "podcast_premium_narration": "播客精品导读旁白底层调用;疑似既有漏登记,是否登记待拍板(backlog)",
         "taxonomy_bootstrap": "Taxonomy 首装 CLI,入口未安装用量 recorder,登记也不会入库",
     }
     assert all(reason.strip() for reason in excluded.values())
     assert not set(excluded) & set(ai_usage.VALID_PURPOSES), "已登记的用途不该再留在排除清单里"
     # 反向对照:以常量传入的两个用途必须被扫到(否则守卫是假绿灯)
-    assert {"auto_title_translate", "personal_digest_title", "event_assignment"} <= found
+    assert {"auto_title_translate", "personal_digest_title", "event_assignment", "podcast_premium_blog"} <= found
     missing = sorted(found - set(ai_usage.VALID_PURPOSES) - set(excluded))
     assert missing == [], f"未登记的用量用途:{missing}"
 
