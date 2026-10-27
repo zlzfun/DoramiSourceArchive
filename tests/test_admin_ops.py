@@ -577,6 +577,46 @@ def test_record_usage_accepts_summarize_and_counts_into_budget(tmp_path):
         assert accounts_service.reader_ai_tokens_today(session) == 100
 
 
+def test_every_usage_purpose_in_source_is_registered_or_explicitly_excluded():
+    """源码里出现的每个 LLM 用量 purpose 都必须在 VALID_PURPOSES 里,否则 record_usage 静默丢行、
+    看板看不见该功能的 token(v3.40.4 summarize、v3.67.0 event_assignment 两次踩坑)。
+    用 AST 扫:UsageMeta(...) / _usage_meta(...) 的 purpose= 与首个位置字符串参数,以及名字含 PURPOSE 的
+    模块级字符串常量(codex 检视 P2:正则漏掉以常量传入的用途)。暂不计量的用途列在 EXCLUDED 并写明原因。"""
+    import ast
+    from pathlib import Path
+    from services import ai_usage
+
+    src = Path(__file__).resolve().parents[1] / "src"
+    found: set[str] = set()
+    for path in src.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and "PURPOSE" in target.id and isinstance(node.value, ast.Constant) \
+                            and isinstance(node.value.value, str):
+                        found.add(node.value.value)
+            elif isinstance(node, ast.Call):
+                callee = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+                if callee not in {"UsageMeta", "_usage_meta"}:
+                    continue
+                for kw in node.keywords:
+                    if kw.arg == "purpose" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                        found.add(kw.value.value)
+                if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                    found.add(node.args[0].value)
+    # 暂不计量的用途 → 原因(codex 检视 P3:裸集合会让下一个人无感知地扩项;理由必须写清)。
+    excluded = {
+        "taxonomy_bootstrap": "Taxonomy 首装 CLI,入口未安装用量 recorder,登记也不会入库",
+    }
+    assert all(reason.strip() for reason in excluded.values())
+    assert not set(excluded) & set(ai_usage.VALID_PURPOSES), "已登记的用途不该再留在排除清单里"
+    # 反向对照:以常量传入的两个用途必须被扫到(否则守卫是假绿灯)
+    assert {"auto_title_translate", "personal_digest_title", "event_assignment", "podcast_premium_blog"} <= found
+    missing = sorted(found - set(ai_usage.VALID_PURPOSES) - set(excluded))
+    assert missing == [], f"未登记的用量用途:{missing}"
+
+
 # ==================== v3.41 账户管理 V2（审计 M05/M06/M07） ====================
 def test_admin_accounts_filters_and_sort(monkeypatch, tmp_path):
     """M06：角色/状态/AI 组合过滤 + 指标排序全部服务端生效；summary 恒全量。"""
