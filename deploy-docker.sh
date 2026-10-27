@@ -35,8 +35,11 @@ echo "=================================================="
 deploy_meta build_ref "$DORAMI_BUILD_REF"; deploy_meta build_sha "$DORAMI_BUILD_SHA"; deploy_meta origin "$ORIGIN"
 
 # ── 预检助手 ──
-preflight_disk() {
-    local min_gb="${DORAMI_DEPLOY_MIN_FREE_GB:-5}" min_kb docker_root checked="" p fs avail iavail
+# 每个相关文件系统可用空间 ≥ 阈值(整数 GB,DORAMI_DEPLOY_MIN_FREE_GB,conf 默认 5);不足时先做安全回收再复测
+# (issue #232:连续四次发版都停在这一步靠人腾盘),仍不足才 fail 并打印磁盘去向。
+disk_free_ok() {  # min_gb → 0 够 / 1 不够(原因记 DISK_SHORT)
+    local min_gb="$1" min_kb docker_root checked="" p fs avail iavail
+    DISK_SHORT=""
     min_kb=$((min_gb * 1024 * 1024))
     docker_root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)"
     for p in "$docker_root" "$PWD" "$PWD/data" "$PWD/backups"; do
@@ -50,12 +53,30 @@ preflight_disk() {
         iavail="$(df -Pi "$p" 2>/dev/null | awk 'NR==1{for(i=1;i<=NF;i++) if(tolower($i)=="ifree") c=i} NR==2 && c {print $c}')"
         [[ "$iavail" =~ ^[0-9]+$ ]] || iavail=""
         echo "    $fs($p): 可用 $((avail / 1024 / 1024)) GB${iavail:+, 空闲 inode $iavail}${iavail:-, inode 列未识别(跳过 inode 检查)}"
-        [ "$avail" -ge "$min_kb" ] \
-            || fail "磁盘不足:$p 所在文件系统可用 $((avail / 1024 / 1024)) GB < ${min_gb} GB(DORAMI_DEPLOY_MIN_FREE_GB);先清理(docker image prune / 旧备份)再部署"
+        if [ "$avail" -lt "$min_kb" ]; then
+            DISK_SHORT="磁盘不足:$p 所在文件系统可用 $((avail / 1024 / 1024)) GB < ${min_gb} GB(DORAMI_DEPLOY_MIN_FREE_GB)"
+            return 1
+        fi
         if [ -n "$iavail" ] && [ "$iavail" -lt 10000 ]; then
             fail "inode 不足:$p 所在文件系统只剩 $iavail 个空闲 inode"
         fi
     done
+    return 0
+}
+
+preflight_disk() {
+    local min_gb
+    min_gb="$(deploy_conf_value DORAMI_DEPLOY_MIN_FREE_GB 5)"
+    [[ "$min_gb" =~ ^[0-9]+$ ]] || min_gb=5
+    if ! disk_free_ok "$min_gb"; then
+        echo "    ${DISK_SHORT}"
+        deploy_reclaim_disk "$(sqlite_path_from_ini "$CONFIG_FILE")"
+        echo "    回收后复测:"
+        if ! disk_free_ok "$min_gb"; then
+            deploy_disk_breakdown
+            fail "${DISK_SHORT};回收后仍不足——剩下的是旧回滚镜像(worker 按 manifest 管)、data/backups 每日归档([backup] retain_local)或扩盘"
+        fi
+    fi
     if command -v free >/dev/null 2>&1; then
         echo "    swap: $(free -h 2>/dev/null | awk '/[Ss]wap/{print $2" 总 / "$3" 用"}')"
     fi
@@ -202,6 +223,8 @@ last_verdict="$DEPLOY_HEALTH_LAST_VERDICT"
 
 if [ -n "$health_ok" ]; then
     deploy_meta health ok
+    # 成功后把构建缓存压回上限(issue #232):最近用过的层留着,旧构建的中间层不再无限攒
+    deploy_prune_build_cache
     echo ""
     if [ "${DORAMI_DEPLOY_MODE}" = "tag" ]; then
         echo "Deploy complete. 发布版 ${DORAMI_BUILD_REF}(${DORAMI_BUILD_SHA:0:7})"

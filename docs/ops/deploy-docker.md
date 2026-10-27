@@ -60,7 +60,7 @@ EOF
 # 处理开关、stage 和 target 会默认关闭，且内网不注入 ASR/TTS 凭据。
 
 # 部署 / 升级:默认由 GitHub Actions 流水线在批准后经 SSH 触发(见下方「自动部署流水线」);以下是手工兜底,
-# 与流水线共用同一把锁。流程:站到发布版 tag → 预检 → 构建 → 目标镜像只读自检 / 迁移计划 → 备份 DB → 起容器 → 健康核对
+# 与流水线共用同一把锁。流程:站到发布版 tag → 预检(磁盘不足先回收再复测)→ 构建 → 目标镜像只读自检 / 迁移计划 → 备份 DB → 起容器 → 健康核对 → 构建缓存压回上限
 ./deploy-docker.sh              # 版本号最新的发布版(一键)
 ./deploy-docker.sh v3.56.0      # 指定版本;回滚也是这一句(+ 恢复 backups/ 里的库备份)
 ./deploy-docker.sh --here       # 部署当前工作树(非发布版,联调/应急;设置 → 关于 会如实标注)
@@ -131,6 +131,7 @@ cat /root/prod_known_hosts.txt                                           # 相�
   v3.60.0 首次流水线部署即如此(基线 v3.59.0,来源 container,方向 forward,`allow_downgrade` 没起作用);只有容器没有构建身份
   (更早的镜像)或没有容器时基线才是「未知」,那时须在 Run workflow 勾 `allow_downgrade`(人为确认)。
 - 恢复哪份备份看代际(`in-progress` 撤销失败升级 / `last-success` 回退上次成功),见 `docs/ops/release-process.md`「回滚」。
+- **磁盘回收分工**(issue #232):worker 成功后删不被 manifest 引用的 managed 镜像、`docker image prune -f`、备份按 `DORAMI_DEPLOY_BACKUP_KEEP` 计数;目标脚本在预检不足时回收(悬空镜像 / 构建缓存超 `DORAMI_DEPLOY_BUILD_CACHE_KEEP_GB` / 超保留数的备份)并在成功后把构建缓存压回上限;`data/backups` 每日归档只归 `[backup] retain_local`。三个键都在 `/etc/dorami-deploy.conf`,手工路径也读它。
 - 升级 launcher / worker 是显式手工步骤(重新 cp);目标 tag 的 `scripts/deploy-lib.sh` 用 `DORAMI_DEPLOY_PROTOCOL` 宣告
   契约版本,worker 不认识的版本拒绝部署。
 - 手工 `./deploy-docker.sh` 与流水线共用锁 `/run/lock/dorami-deploy.lock`,互斥。
