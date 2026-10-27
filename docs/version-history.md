@@ -13,6 +13,7 @@
 
 > 顺序为迁入时原样(待发布波在前、纪元叙事在中、近期波在后);每行只记「现状是什么 / 落在哪」,详细记录在下文各节。
 
+- **每日备份认 `.wav.zlib` 回执音频(issue #231,2026-10-27,待发布)**:生产 `[backup]` 自 2026-10-06 起连续失败(先是磁盘不足,10-13 升 v3.63.0 后 TTS 缓存回收把全部已发布 WAV 压成 `<id>.wav.zlib`,备份只认 `.wav`);快照与恢复都收 `.wav.zlib`、校验改为解压后 sha256 == `audio_hash`,备份开始前清崩溃残留的 `.backup-*` 暂存目录。详细见下文。
 - **生产磁盘治理(issue #232,2026-10-27,待发布)**:连续四次发版停在「磁盘不足」靠人腾盘——`deploy-docker.sh` 预检不足时先回收(悬空镜像、构建缓存超 `DORAMI_DEPLOY_BUILD_CACHE_KEEP_GB`、超保留数的部署前备份,manifest 引用的不动)再复测,仍不足才 fail 并打印去向;成功后构建缓存压回上限;手工路径的保留数 / 阈值改读 `/etc/dorami-deploy.conf`(此前默认 keep=10 攒了 6 份备份)。worker 不改。详细见下文。
 - **事件层 wave 2 早报同事件去重(issue #103,PR #222 `7f899c2`,2026-10-24 合入 main,开发版 3.67.0-alpha)**:个人早报消费事件层归属——事件键跨三条通道共享(头条已代表的事件精选不再出另一篇)、昨天版面出现过的事件今天整组抑制(含降级回退;头条池只认昨天的头条事件,升级例外)、条目快照带「另见 N 篇」(事件层可见成员,页面 chip 展开逐篇)、编排说明行「同事件合并 N 篇」;公共日报 `dedup_clusters` 前加事件层机械预聚类。`POLICY_VERSION` → v2。方案 `docs/plans/issue-121-event-layer.md` §5.3。
 - **事件层 wave 1(issue #121 + #103,PR #220 `0b47456`,2026-10-23 合入 main,开发版 3.67.0-alpha)**:平台级持久事件层——`events` 五表(退役零写入的 `duplicate_groups`)、分析周期末尾增量分配(URL / 同题直连 → FTS5 三通道 + 实体召回 → 一次辅助模型判全批,首篇关窗 48h、代表稿描述、只标题、回显校验、结构规则、不回溯)、热点榜读取侧(可见发布主体 ≥ 2、最多 10 件、07:00 排名快照)与管理合并 / 摘出、Archive Sync `events` 流(`events_v1`,九流)、回放脚本 `scripts/replay_event_assignment.py`;读者面「热点」段**搁置**(三方向样页留档 `docs/design/issue-121-hot-events/`,随榜单前端统一重构再出);方案 `docs/plans/issue-121-event-layer.md`(R2),调研 `issue-121-event-layer-research.md`。
@@ -51,6 +52,14 @@
 - **裸机部署回滚(issue #126,2026-09-21,待发布)**:裸机路径改「运行副本版本化」release 形态 + 锁内事务 + 两级健康门告警(不自动回滚)+ `./deploy.sh --rollback`(树外固化执行体,DB 按目标上下文迁移计划分流,`--restore-db` 显式恢复,只回一代)+ 收养 + `--code` / `--status` / `--discard-txn`;extras 钉版 `docker/requirements-crawl4ai.txt`;方案 `docs/archive/baremetal-rollback-plan.md`(codex 四轮设计检视 + §9 实现记录),手册 `docs/ops/deploy-baremetal.md`,桩测试 `tests/test_deploy_baremetal.py`。
 - **Podcast(issue #7 P0–P0.2)**:`source_type=podcast` → `generic_podcast_rss`,单集复用 `ArticleRecord` + `extensions_json`,只解析 enclosure 元数据不下载音频;36 节目策展目录 `services.podcast_catalog` 启动幂等安装、进普通采集任务不设源级开关;边界与后续见 `docs/archive/podcast-wave-plan.md`。
 
+## issue #231 每日备份认 `.wav.zlib` 回执音频(分支 `feat/issue-231-backup-wav-zlib`,待发布,版本号以实际发版为准)
+
+- **怎么发现的**:2026-10-27 发 v3.67.1 时流水线又在「磁盘不足 < 5 GB」上停下,盘点 40 GB 盘发现 `data/backups/` 占 5.3 GB——7 份 09-28 ～ 10-05 的归档一直没被 `retain_local` 轮换(轮换只在成功后跑),外加一个 790 MB 的 `.backup-*` 暂存目录(10-26 手工部署重启容器时留下)。`status.json`:`last_success_at = 2026-10-05`,此后每次 `backup_paid_audio_missing_or_corrupt`,失败后每 10 分钟重试、每次先写一份约 790 MB 的库快照再失败。
+- **根因**:issue #143(v3.63.0)给百炼 TTS 回执缓存加了回收——已发布节目的 WAV 压成 `<id>.wav.zlib` 后删原文件;`services/storage_backup.py` 的快照只收 `receipts/<id>.(json|wav)`,对 `succeeded` 行要求 `<id>.wav` 的 sha256 等于 `audio_hash`。生产 10-13 升 v3.63.0 之后 140 条 `succeeded` 全部只剩 `.wav.zlib`,备份从此永久失败(10-06 ～ 10-13 是磁盘不足 `backup_insufficient_space`)。
+- **修法**:快照收 `*.wav.zlib` 原样打包;校验改为「`<id>.wav` 的 sha256 == audio_hash,或 `<id>.wav.zlib` 解压后的 sha256 == audio_hash」(`_inflated_sha256` 流式解压、1 GiB 上限、流不完整 / 尾随杂字节 / 超限一律按损坏;与 `bailian_tts` 读取侧同一口径),两者都没有仍 fail closed;`restore_backup` 的成员名白名单同步放行(否则新归档恢复会被当敌意归档拒绝);`_create_archive` 在持 `.backup.lock` 后先清别的 `.backup-*` 目录(只删目录,不碰 `.backup-download-*` 临时文件)。
+- **测试**:`tests/test_storage_backup.py` 新增压缩回执往返 + 恢复、哈希不符 / 非 zlib / 截断三种 fail closed、原始与压缩并存、`_inflated_sha256` 上限与尾随字节、暂存目录清扫。
+- **有意不做**(记 backlog):#143 的紧急回收可删「不可压缩」的 WAV、以已发布制品为持久副本,与备份「succeeded 必须有本地音频」的不变量冲突,真发生时备份仍会失败——是否认已发布制品为替代副本待拍板。
+- **检视**:实现 Claude Code(Fable 5.1),检视 Codex gpt-6-astra(ultra)本地协商式两轮——R1 0 P1 / 2 P2(尾随数据在流结束后仍被读进 `unused_data` 无上限;截断样本没独立守住 `eof`)/ 1 P3(清扫时机文案),全部接受并修复(流结束即停读、去 adler32 的截断样本、8 MiB 尾随读取计数);R2 对照清单复检「可合入」,无新引入 P1。
 ## issue #232 生产磁盘治理(分支 `feat/issue-232-prod-disk`,待发布,版本号以实际发版为准)
 
 - **盘点(2026-10-27,v3.67.1 部署成功后的 40 GB 盘)**:Docker 镜像两代约 4.9 GB;**构建缓存 7.5 GB、其中 5.2 GB 可回收**(旧构建的中间层,worker 清理有意不碰);`backups/` 部署前备份清理前 4.3 GB——手工路径按 `${DORAMI_DEPLOY_BACKUP_KEEP:-10}` 的默认 10 计数,根本没读 conf 里的 3;`data/backups` 每日归档 5.3 GB(备份故障三周未轮换,issue #231);媒体 / 播客缓存在 OSS 缓存上限内;库 0.8 GB 日增约 30 MB。
