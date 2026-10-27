@@ -106,6 +106,10 @@ if args[:2] == ["builder", "prune"]:
     f, v = os.environ.get("FAKE_DF_AVAIL_FILE", ""), os.environ.get("FAKE_PRUNE_SETS_AVAIL_KB", "")
     if f and v:
         open(f, "w").write(v)
+    if os.environ.get("FAKE_PRUNE_SLEEP"):   # 模拟卡住的 docker CLI
+        import time; time.sleep(float(os.environ["FAKE_PRUNE_SLEEP"]))
+    if rc("prune_rc"):
+        sys.stderr.write("fake prune failure\n"); sys.exit(rc("prune_rc"))
     print("Total reclaimed space: 1.5GB"); sys.exit(0)
 if args[:2] == ["system", "df"]:
     print("    docker Images: 10GB(可回收 7GB)"); sys.exit(0)
@@ -123,6 +127,8 @@ sys.exit(7)
 
 FAKE_DF = r'''#!/usr/bin/env python3
 import os, sys
+if os.environ.get("FAKE_DF_RC"):   # 模拟 df 本身失败(挂载点读不到 / 权限)
+    sys.stderr.write("fake df failure\n"); sys.exit(int(os.environ["FAKE_DF_RC"]))
 avail = os.environ.get("FAKE_DF_AVAIL_KB", str(100 * 1024 * 1024))
 _f = os.environ.get("FAKE_DF_AVAIL_FILE", "")
 if _f and os.path.exists(_f):
@@ -665,6 +671,27 @@ def test_deploy_docker_preflight_reclaims_then_proceeds(real: Env):
     r = _run_deploy(real, "v9.9.9", FAKE_DF_AVAIL_FILE=str(avail))
     assert r.returncode == 0, r.stdout + r.stderr
     assert "回收后复测" not in r.stdout
+
+
+def test_deploy_docker_preflight_df_failure_fails_closed(real: Env):
+    # codex R1 P2:disk_free_ok 在 `if !` 里跑、errexit 不生效,df 失败不能被当成「够」
+    _health(real, "v9.9.9")
+    r = _run_deploy(real, "v9.9.9", FAKE_DF_RC="1")
+    assert r.returncode != 0 and "无法判断磁盘余量" in r.stderr
+    assert not any(c.startswith(("compose build", "compose up")) for c in real.calls())
+
+
+def test_success_path_prune_timeout_and_failure_do_not_fail_deploy(real: Env):
+    # codex R1 P2:成功后的 builder prune 卡住 / 失败都只记一行,部署仍成功收口且进程组不留后代
+    _health(real, "v9.9.9")
+    t0 = time.monotonic()
+    r = _run_deploy(real, "v9.9.9", FAKE_PRUNE_SLEEP="30", DORAMI_DEPLOY_PRUNE_TIMEOUT_SECONDS="1")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert time.monotonic() - t0 < 25, "超时应终止卡住的 prune,而不是等它 30 秒"
+    assert "超时 1s" in r.stdout and "Deploy complete" in r.stdout
+    real.fake_write("prune_rc", "7")
+    r = _run_deploy(real, "v9.9.9")
+    assert r.returncode == 0 and "退出码 7" in r.stdout
 
 
 def test_preflight_backup_trim_honors_conf_keep_and_manifest_pins(real: Env):

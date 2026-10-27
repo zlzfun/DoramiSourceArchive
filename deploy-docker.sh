@@ -37,18 +37,20 @@ deploy_meta build_ref "$DORAMI_BUILD_REF"; deploy_meta build_sha "$DORAMI_BUILD_
 # ── 预检助手 ──
 # 每个相关文件系统可用空间 ≥ 阈值(整数 GB,DORAMI_DEPLOY_MIN_FREE_GB,conf 默认 5);不足时先做安全回收再复测
 # (issue #232:连续四次发版都停在这一步靠人腾盘),仍不足才 fail 并打印磁盘去向。
-disk_free_ok() {  # min_gb → 0 够 / 1 不够(原因记 DISK_SHORT)
+disk_free_ok() {  # min_gb → 0 够 / 1 不够(原因记 DISK_SHORT);df 读不到一律 fail(本函数在 `if !` 里跑,errexit 不生效,
+                  # 所以读取失败必须显式退出,不能让空值当「够」——codex R1 P2)
     local min_gb="$1" min_kb docker_root checked="" p fs avail iavail
     DISK_SHORT=""
     min_kb=$((min_gb * 1024 * 1024))
     docker_root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)"
     for p in "$docker_root" "$PWD" "$PWD/data" "$PWD/backups"; do
         [ -e "$p" ] || continue
-        fs="$(df -Pk "$p" 2>/dev/null | awk 'NR==2{print $1}')"
-        [ -n "$fs" ] || continue
+        fs="$(df -Pk "$p" 2>/dev/null | awk 'NR==2{print $1}')" || fail "df 读取 ${p} 失败,无法判断磁盘余量"
+        [ -n "$fs" ] || fail "df 对 ${p} 无输出,无法判断磁盘余量"
         case " $checked " in *" $fs "*) continue ;; esac
         checked="$checked $fs"
-        avail="$(df -Pk "$p" | awk 'NR==2{print $4}')"
+        avail="$(df -Pk "$p" 2>/dev/null | awk 'NR==2{print $4}')" || fail "df 读取 ${p} 失败,无法判断磁盘余量"
+        [[ "$avail" =~ ^[0-9]+$ ]] || fail "df 对 ${p} 的可用列无法解析(${avail:-空}),无法判断磁盘余量"
         # inode 空闲列按表头名定位(GNU 是第 4 列 IFree,macOS 是第 7 列 ifree);找不到就跳过 inode 检查
         iavail="$(df -Pi "$p" 2>/dev/null | awk 'NR==1{for(i=1;i<=NF;i++) if(tolower($i)=="ifree") c=i} NR==2 && c {print $c}')"
         [[ "$iavail" =~ ^[0-9]+$ ]] || iavail=""

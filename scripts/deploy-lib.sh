@@ -424,11 +424,27 @@ prune_sqlite_backups() {  # db_path keep
 # 构建缓存按上限回收(DORAMI_DEPLOY_BUILD_CACHE_KEEP_GB,默认 2):最近用过的层(依赖层 / Chromium 层)留在上限内,
 # 旧构建的中间层才被回收。2026-10-27 生产实测:不设上限时构建缓存涨到 7.5 GB(5.2 GB 可回收),是部署前「磁盘不足」
 # 的最大单项(issue #232)。成功部署后与预检回收各跑一次;worker 自身的清理不碰构建缓存(职责不变、不用重装)。
+# 带超时(DORAMI_DEPLOY_PRUNE_TIMEOUT_SECONDS,默认 300):成功路径上卡住的 docker CLI 会让 worker 停在 wait、晋升不了
+# last-success 也放不开部署锁(codex R1 P2);python3 的 subprocess 超时会杀掉 CLI 并等它退出,进程组不留后代
+# (worker 把残留后代判为未干净收口),daemon 侧未完成的回收由下次再做。失败 / 超时只记一行,不影响部署结论。
 deploy_prune_build_cache() {
     local keep_gb out
     keep_gb="$(deploy_conf_value DORAMI_DEPLOY_BUILD_CACHE_KEEP_GB 2)"
     [[ "$keep_gb" =~ ^[0-9]+$ ]] || keep_gb=2
-    out="$(docker builder prune -f --keep-storage="${keep_gb}G" 2>/dev/null | tail -1)" || out=""
+    out="$(python3 - "$keep_gb" "${DORAMI_DEPLOY_PRUNE_TIMEOUT_SECONDS:-300}" <<'PY'
+import subprocess, sys
+keep, timeout = sys.argv[1], float(sys.argv[2])
+try:
+    r = subprocess.run(["docker", "builder", "prune", "-f", f"--keep-storage={keep}G"],
+                       capture_output=True, text=True, timeout=timeout)
+    lines = [line.strip() for line in r.stdout.splitlines() if line.strip()]
+    print(lines[-1] if lines else f"docker builder prune 退出码 {r.returncode}")
+except subprocess.TimeoutExpired:
+    print(f"超时 {int(timeout)}s,已终止 CLI(daemon 侧未完成的部分下次再回收)")
+except Exception as exc:  # docker 不存在等
+    print(f"未执行({type(exc).__name__})")
+PY
+)" || out=""
     echo "    构建缓存回收(上限 ${keep_gb} GB):${out:-docker builder prune 未执行}"
 }
 
