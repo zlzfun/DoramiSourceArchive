@@ -58,6 +58,7 @@
 - **修法**:快照收 `*.wav.zlib` 原样打包;校验改为「`<id>.wav` 的 sha256 == audio_hash,或 `<id>.wav.zlib` 解压后的 sha256 == audio_hash」(`_inflated_sha256` 流式解压、1 GiB 上限、流不完整 / 尾随杂字节 / 超限一律按损坏;与 `bailian_tts` 读取侧同一口径),两者都没有仍 fail closed;`restore_backup` 的成员名白名单同步放行(否则新归档恢复会被当敌意归档拒绝);`_create_archive` 在持 `.backup.lock` 后先清别的 `.backup-*` 目录(只删目录,不碰 `.backup-download-*` 临时文件)。
 - **测试**:`tests/test_storage_backup.py` 新增压缩回执往返 + 恢复、哈希不符 / 非 zlib / 截断三种 fail closed、原始与压缩并存、`_inflated_sha256` 上限与尾随字节、暂存目录清扫。
 - **有意不做**(记 backlog):#143 的紧急回收可删「不可压缩」的 WAV、以已发布制品为持久副本,与备份「succeeded 必须有本地音频」的不变量冲突,真发生时备份仍会失败——是否认已发布制品为替代副本待拍板。
+- **检视**:实现 Claude Code(Fable 5.1),检视 Codex gpt-6-astra(ultra)本地协商式两轮——R1 0 P1 / 2 P2(尾随数据在流结束后仍被读进 `unused_data` 无上限;截断样本没独立守住 `eof`)/ 1 P3(清扫时机文案),全部接受并修复(流结束即停读、去 adler32 的截断样本、8 MiB 尾随读取计数);R2 对照清单复检「可合入」,无新引入 P1。
 
 ## issue #213 游客模式(分支 `feat/issue-213-guest-mode`,开发版 3.67.0-alpha,版本号以实际发版为准)
 
