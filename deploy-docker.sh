@@ -54,7 +54,12 @@ disk_free_ok() {  # min_gb → 0 够 / 1 不够(原因记 DISK_SHORT);df 读不�
         # inode 空闲列按表头名定位(GNU 是第 4 列 IFree,macOS 是第 7 列 ifree);找不到就跳过 inode 检查
         iavail="$(df -Pi "$p" 2>/dev/null | awk 'NR==1{for(i=1;i<=NF;i++) if(tolower($i)=="ifree") c=i} NR==2 && c {print $c}')"
         [[ "$iavail" =~ ^[0-9]+$ ]] || iavail=""
-        echo "    $fs($p): 可用 $((avail / 1024 / 1024)) GB${iavail:+, 空闲 inode $iavail}${iavail:-, inode 列未识别(跳过 inode 检查)}"
+        # 注意不能写 ${iavail:-文案}:非空时它展开成值本身,日志里 inode 数会打印两遍(v3.67.1 / v3.67.2 部署日志实录)
+        if [ -n "$iavail" ]; then
+            echo "    $fs($p): 可用 $((avail / 1024 / 1024)) GB, 空闲 inode ${iavail}"
+        else
+            echo "    $fs($p): 可用 $((avail / 1024 / 1024)) GB, inode 列未识别(跳过 inode 检查)"
+        fi
         if [ "$avail" -lt "$min_kb" ]; then
             DISK_SHORT="磁盘不足:$p 所在文件系统可用 $((avail / 1024 / 1024)) GB < ${min_gb} GB(DORAMI_DEPLOY_MIN_FREE_GB)"
             return 1
@@ -70,6 +75,9 @@ preflight_disk() {
     local min_gb
     min_gb="$(deploy_conf_value DORAMI_DEPLOY_MIN_FREE_GB 5)"
     [[ "$min_gb" =~ ^[0-9]+$ ]] || min_gb=5
+    # 每次部署开头先把构建缓存压回上限:上一次部署的旧中间层此刻才真正无人引用(成功路径那次回收时旧镜像还在,
+    # worker 清掉旧镜像是之后的事——v3.67.2 发版实测成功后回收 0B、worker 清理后又有 2.9 GB 可回收)。有上限、带超时。
+    deploy_prune_build_cache
     if ! disk_free_ok "$min_gb"; then
         echo "    ${DISK_SHORT}"
         deploy_reclaim_disk "$(sqlite_path_from_ini "$CONFIG_FILE")"

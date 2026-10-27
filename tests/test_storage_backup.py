@@ -228,6 +228,40 @@ def test_remote_blobs_are_explicit_restore_dependencies(service, tmp_path):
     assert manifest["external_objects"][0]["content_hash"] == digest
 
 
+def test_manifest_with_many_remote_objects_stays_compact_and_within_limit(service, tmp_path, monkeypatch):
+    # issue #236:生产 24,937 个 OSS 对象、整行 object_blobs 约 470 字节 / 条 → 11.7 MB 撞旧的 8 MiB 上限。
+    # 造 4 万条带 mime / created_at 的宽行(生产表形状):紧凑条目下清单约 10 MB,旧上限会拒、新上限放行。
+    with sqlite3.connect(service._database()) as connection:
+        connection.execute("ALTER TABLE object_blobs ADD COLUMN mime TEXT")
+        connection.execute("ALTER TABLE object_blobs ADD COLUMN created_at TEXT")
+        rows = []
+        for i in range(40_000):
+            digest = hashlib.sha256(str(i).encode()).hexdigest()
+            rows.append((f"media:{digest}.png", "media", digest, ".png", 1000 + i, "private-bucket",
+                         "ap-southeast-1", f"prod/media/{digest[:2]}/{digest}.png", "image/png", "2026-10-27T00:00:00+00:00"))
+            connection.execute("INSERT INTO media_assets VALUES (?,?,?,'cached')", (digest, ".png", 1000 + i))
+        connection.executemany("INSERT INTO object_blobs VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
+    state = service.run()
+    assert state["status"] == "succeeded" and state["external_objects"] == 40_000, state
+    with tarfile.open(service.directory / state["archive"]) as archive:
+        first = archive.next()
+        assert first.name == "manifest.json"
+        body = archive.extractfile(first).read()
+    assert 8 * 1024 * 1024 < len(body) <= backup_module._MANIFEST_MAX_BYTES, "样本须超过旧上限、落在新上限内"
+    manifest = json.loads(body)
+    entry = manifest["external_objects"][0]
+    assert set(entry) == set(backup_module._EXTERNAL_OBJECT_FIELDS), "只带恢复需要的字段:id / mime / created_at 不进清单"
+    assert len(json.dumps(entry)) <= 300, "单条约 270 字节,别再长回去"
+    restored = tmp_path / "restored"
+    result = restore_backup(service.directory / state["archive"], restored, expected_sha256=state["sha256"], offline=True)
+    assert result["external_objects"] == 40_000
+    # 恢复侧仍是有界读取:把上限压到 1 KiB,同一份归档按敌意清单拒绝
+    monkeypatch.setattr(backup_module, "_MANIFEST_MAX_BYTES", 1024)
+    with pytest.raises(BackupError, match="manifest_invalid"):
+        restore_backup(service.directory / state["archive"], tmp_path / "restored2", expected_sha256=state["sha256"], offline=True)
+    assert not (tmp_path / "restored2").exists()
+
+
 def test_restore_requires_offline_empty_destination_checksum_and_size(service, tmp_path):
     state = service.run()
     archive = service.directory / state["archive"]

@@ -100,12 +100,13 @@ if args[:1] == ["rmi"]:
     open(os.path.join(d, "images"), "w").write("".join(l + "\n" for l in lines))
     sys.exit(0)
 if args[:2] == ["image", "prune"]:
-    sys.exit(0)
-if args[:2] == ["builder", "prune"]:
-    # 回收「腾出」空间:把 FAKE_PRUNE_SETS_AVAIL_KB 写进假 df 读的文件,预检复测就能看到变化
-    f, v = os.environ.get("FAKE_DF_AVAIL_FILE", ""), os.environ.get("FAKE_PRUNE_SETS_AVAIL_KB", "")
+    # 「不足时回收」腾出空间:把 FAKE_RECLAIM_SETS_AVAIL_KB 写进假 df 读的文件,预检复测就能看到变化
+    # (挂在 image prune 而不是 builder prune 上,因为 builder prune 每次部署开头都会无条件跑一次)
+    f, v = os.environ.get("FAKE_DF_AVAIL_FILE", ""), os.environ.get("FAKE_RECLAIM_SETS_AVAIL_KB", "")
     if f and v:
         open(f, "w").write(v)
+    sys.exit(0)
+if args[:2] == ["builder", "prune"]:
     if os.environ.get("FAKE_PRUNE_SLEEP"):   # 模拟卡住的 docker CLI
         import time; time.sleep(float(os.environ["FAKE_PRUNE_SLEEP"]))
     if rc("prune_rc"):
@@ -638,6 +639,7 @@ def test_deploy_docker_preflight_failures_stop_before_build(real: Env):
     calls = real.calls()
     assert "image prune -f" in calls and "builder prune -f --keep-storage=2G" in calls, "fail 之前先做过安全回收"
     assert not any(c.startswith("compose build") for c in calls)
+    assert "空闲 inode 999000" in r.stdout and "999000999000" not in r.stdout, "inode 数只打印一遍"
     real.fake_write("config_rc", "1")
     r = _run_deploy(real, "v9.9.9")
     assert r.returncode != 0 and "docker compose config 校验失败" in r.stderr
@@ -660,10 +662,10 @@ def test_deploy_docker_preflight_reclaims_then_proceeds(real: Env):
     # issue #232:预检不足 → 回收(悬空镜像 / 构建缓存上限 / 备份计数)→ 复测够了 → 正常部署,回收在 build 之前
     _health(real, "v9.9.9")
     avail = real.tmp / "df_avail"; avail.write_text(str(100 * 1024))
-    r = _run_deploy(real, "v9.9.9", FAKE_DF_AVAIL_FILE=str(avail), FAKE_PRUNE_SETS_AVAIL_KB=str(50 * 1024 * 1024))
+    r = _run_deploy(real, "v9.9.9", FAKE_DF_AVAIL_FILE=str(avail), FAKE_RECLAIM_SETS_AVAIL_KB=str(50 * 1024 * 1024))
     assert r.returncode == 0, r.stdout + r.stderr
     calls = real.calls()
-    assert calls.index("builder prune -f --keep-storage=2G") < calls.index("compose build")
+    assert calls.index("image prune -f") < calls.index("compose build")
     assert "回收后复测" in r.stdout and "Deploy complete" in r.stdout
     # 预检阈值也读 conf:conf 写 1 GB、df 报 1.5 GB → 不回收直接过
     (real.fake / "calls.log").unlink()
@@ -702,7 +704,7 @@ def test_preflight_backup_trim_honors_conf_keep_and_manifest_pins(real: Env):
     real.state.mkdir(parents=True, exist_ok=True)
     (real.state / "in-progress.json").write_text(json.dumps({"prev": {"db_backup": str(pinned)}}))
     avail = real.tmp / "df_avail"; avail.write_text(str(100 * 1024))
-    r = _run_deploy(real, "v9.9.9", FAKE_DF_AVAIL_FILE=str(avail), FAKE_PRUNE_SETS_AVAIL_KB=str(50 * 1024 * 1024))
+    r = _run_deploy(real, "v9.9.9", FAKE_DF_AVAIL_FILE=str(avail), FAKE_RECLAIM_SETS_AVAIL_KB=str(50 * 1024 * 1024))
     assert r.returncode == 0, r.stdout + r.stderr
     remaining = sorted(p.name for p in bdir.glob("cms_data.db.*"))
     # conf keep=2(环境未给):预检留最新 2 份 + 被引用的;随后手工备份新做 1 份再按 2 计数 → 被引用 + 最新 1 旧 + 新做
@@ -729,14 +731,18 @@ def test_success_path_prunes_build_cache_with_conf_limit(real: Env):
     r = _run_deploy(real, "v9.9.9")
     assert r.returncode == 0, r.stdout + r.stderr
     calls = real.calls()
-    assert calls.index("compose up -d --remove-orphans switch_mark_present=0") < calls.index("builder prune -f --keep-storage=3G")
+    prunes = [i for i, c in enumerate(calls) if c == "builder prune -f --keep-storage=3G"]
+    # 每次部署开头无条件压一次(在 build 之前),成功后再压一次(在 up 之后)
+    assert len(prunes) == 2 and prunes[0] < calls.index("compose build") < calls.index("compose up -d --remove-orphans switch_mark_present=0") < prunes[1]
     assert "构建缓存回收(上限 3 GB)" in r.stdout
     # 健康验证失败时不动构建缓存(失败路径只保留现场)
     (real.fake / "calls.log").unlink()
     (real.fake / "health.json").unlink()
     r = _run_deploy(real, "v9.9.9", DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS="2")
     assert r.returncode != 0
-    assert not any(c.startswith("builder prune") for c in real.calls())
+    calls = real.calls()
+    prunes = [i for i, c in enumerate(calls) if c.startswith("builder prune")]
+    assert len(prunes) == 1 and prunes[0] < calls.index("compose build"), "失败路径只有开头那一次,up 之后不动现场"
 
 
 def test_deploy_docker_check_config_and_plan_gate_before_up(real: Env):

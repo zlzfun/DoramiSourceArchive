@@ -13,6 +13,7 @@
 
 > 顺序为迁入时原样(待发布波在前、纪元叙事在中、近期波在后);每行只记「现状是什么 / 落在哪」,详细记录在下文各节。
 
+- **备份清单上限与紧凑条目(issue #236,2026-10-27,待发布)**:#231 上线后备份改报 `backup_manifest_too_large`——外部对象条目是整行 `object_blobs`(约 470 字节),生产 24,937 个 OSS 对象的清单 11.7 MB 撞 8 MiB;条目只留恢复需要的七个字段,创建 / 恢复共用 64 MiB 上限。详细见下文。
 - **每日备份认 `.wav.zlib` 回执音频(issue #231,2026-10-27,待发布)**:生产 `[backup]` 自 2026-10-06 起连续失败(先是磁盘不足,10-13 升 v3.63.0 后 TTS 缓存回收把全部已发布 WAV 压成 `<id>.wav.zlib`,备份只认 `.wav`);快照与恢复都收 `.wav.zlib`、校验改为解压后 sha256 == `audio_hash`,备份开始前清崩溃残留的 `.backup-*` 暂存目录。详细见下文。
 - **生产磁盘治理(issue #232,2026-10-27,待发布)**:连续四次发版停在「磁盘不足」靠人腾盘——`deploy-docker.sh` 预检不足时先回收(悬空镜像、构建缓存超 `DORAMI_DEPLOY_BUILD_CACHE_KEEP_GB`、超保留数的部署前备份,manifest 引用的不动)再复测,仍不足才 fail 并打印去向;成功后构建缓存压回上限;手工路径的保留数 / 阈值改读 `/etc/dorami-deploy.conf`(此前默认 keep=10 攒了 6 份备份)。worker 不改。详细见下文。
 - **事件层 wave 2 早报同事件去重(issue #103,PR #222 `7f899c2`,2026-10-24 合入 main,开发版 3.67.0-alpha)**:个人早报消费事件层归属——事件键跨三条通道共享(头条已代表的事件精选不再出另一篇)、昨天版面出现过的事件今天整组抑制(含降级回退;头条池只认昨天的头条事件,升级例外)、条目快照带「另见 N 篇」(事件层可见成员,页面 chip 展开逐篇)、编排说明行「同事件合并 N 篇」;公共日报 `dedup_clusters` 前加事件层机械预聚类。`POLICY_VERSION` → v2。方案 `docs/plans/issue-121-event-layer.md` §5.3。
@@ -52,6 +53,13 @@
 - **裸机部署回滚(issue #126,2026-09-21,待发布)**:裸机路径改「运行副本版本化」release 形态 + 锁内事务 + 两级健康门告警(不自动回滚)+ `./deploy.sh --rollback`(树外固化执行体,DB 按目标上下文迁移计划分流,`--restore-db` 显式恢复,只回一代)+ 收养 + `--code` / `--status` / `--discard-txn`;extras 钉版 `docker/requirements-crawl4ai.txt`;方案 `docs/archive/baremetal-rollback-plan.md`(codex 四轮设计检视 + §9 实现记录),手册 `docs/ops/deploy-baremetal.md`,桩测试 `tests/test_deploy_baremetal.py`。
 - **Podcast(issue #7 P0–P0.2)**:`source_type=podcast` → `generic_podcast_rss`,单集复用 `ArticleRecord` + `extensions_json`,只解析 enclosure 元数据不下载音频;36 节目策展目录 `services.podcast_catalog` 启动幂等安装、进普通采集任务不设源级开关;边界与后续见 `docs/archive/podcast-wave-plan.md`。
 
+## issue #236 备份清单上限与紧凑条目(分支 `feat/backup-manifest-size`,待发布,版本号以实际发版为准)
+
+- **怎么发现的**:v3.67.2(#231)上线后首次重试,付费音频校验通过,打包清单时 `backup_manifest_too_large`。`object_blobs` 现有 24,912 media + 25 podcast,每条外部对象条目是整行(`id` / `mime` / `created_at` / 桶 / 区域 / 键……约 470 字节),清单约 11.7 MB > 8 MiB;10-05 最后一次成功时 17,060 个正好贴着上限,所以 10-06 起的首个失败多半就是它,被磁盘不足与 `.wav.zlib` 盖住。媒体对象每天约 +350 个。
+- **修法**:条目只带 `namespace` / `content_hash` / `ext` / `size_bytes` / `bucket` / `region` / `object_key`(`id` 可推导,`mime` / `created_at` 恢复不需要);`_MANIFEST_MAX_BYTES = 64 MiB` 创建与恢复共用(恢复侧仍是有界读取)。错误码不变。
+- **测试**:4 万条宽行(含 mime / created_at)→ 清单超过旧 8 MiB、落在新上限内、备份成功、条目键集 = 七字段、单条 ≤ 300 字节、恢复得 40,000 个依赖;上限压到 1 KiB 时恢复按敌意清单拒绝且目标目录不留痕。
+- **有意不做**:桶 / 区域提到清单顶层再省一层(条目已够小,恢复侧读取方式不改);清单分页或拆成独立成员。
+
 ## issue #231 每日备份认 `.wav.zlib` 回执音频(分支 `feat/issue-231-backup-wav-zlib`,待发布,版本号以实际发版为准)
 
 - **怎么发现的**:2026-10-27 发 v3.67.1 时流水线又在「磁盘不足 < 5 GB」上停下,盘点 40 GB 盘发现 `data/backups/` 占 5.3 GB——7 份 09-28 ～ 10-05 的归档一直没被 `retain_local` 轮换(轮换只在成功后跑),外加一个 790 MB 的 `.backup-*` 暂存目录(10-26 手工部署重启容器时留下)。`status.json`:`last_success_at = 2026-10-05`,此后每次 `backup_paid_audio_missing_or_corrupt`,失败后每 10 分钟重试、每次先写一份约 790 MB 的库快照再失败。
@@ -67,6 +75,7 @@
 - **有意不做**:预检不删任何带 tag 的镜像(managed / rollback 由 worker 按 manifest 管)、不碰 `data/`(每日归档归 `[backup] retain_local`);不把每份 700 MB 的部署前备份改成压缩格式(恢复步骤会多一步,先靠保留数);不改 worker 清理语义。
 - **生产侧(用户执行)**:`[backup] retain_local 7 → 2`(云端已有)、删被取代的每日归档与崩溃残留的 `.backup-*` 目录、conf 加 `DORAMI_DEPLOY_BUILD_CACHE_KEEP_GB=2`;建议把 40 GB 盘在线扩到 60 ～ 80 GB(稳态约 25 GB、部署峰值再加约 3.5 GB、库每月 +1 GB)。
 - **测试**:`tests/test_deploy_scripts.py` 新增预检回收后继续 / 仍不足带去向、`df` 失败 fail closed、备份计数读 conf 且 manifest 引用存活、环境变量优先、成功后按 conf 上限压缩缓存且失败路径不动、prune 卡住(超时)与非零退出不影响收口。
+- **补(v3.67.2 发版实测)**:成功路径那次回收报 0B——此刻旧镜像仍引用缓存,worker 清掉旧镜像后才有 2.9 GB 可回收;改为每次部署开头无条件先压一次(有上限、带超时),成功后那次保留。顺手修预检文案 `${iavail:-…}` 非空时展开成值、inode 数打印两遍的旧错。
 - **检视**:实现 Claude Code(Fable 5.1),检视 Codex gpt-6-astra(ultra)本地协商式两轮——R1 0 P1 / 2 P2(`disk_free_ok` 在 `if !` 里跑、`df` 失败会被当成「够」;成功后的 `builder prune` 没超时会让 worker 停在 wait、放不开部署锁)/ 1 P3(`retain_local` 配置位置写错),全部接受并修复(两次 `df` 显式 fail closed;prune 经 python3 `subprocess.run(timeout=)` 杀 CLI 并等待);R2 对照清单复检「可合入」,无新引入 P1。
 
 ## issue #213 游客模式(分支 `feat/issue-213-guest-mode`,开发版 3.67.0-alpha,版本号以实际发版为准)
