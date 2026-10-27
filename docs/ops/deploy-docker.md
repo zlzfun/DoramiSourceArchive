@@ -131,7 +131,7 @@ cat /root/prod_known_hosts.txt                                           # 相�
   v3.60.0 首次流水线部署即如此(基线 v3.59.0,来源 container,方向 forward,`allow_downgrade` 没起作用);只有容器没有构建身份
   (更早的镜像)或没有容器时基线才是「未知」,那时须在 Run workflow 勾 `allow_downgrade`(人为确认)。
 - 恢复哪份备份看代际(`in-progress` 撤销失败升级 / `last-success` 回退上次成功),见 `docs/ops/release-process.md`「回滚」。
-- **磁盘回收分工**(issue #232):worker 成功后删不被 manifest 引用的 managed 镜像、`docker image prune -f`、备份按 `DORAMI_DEPLOY_BACKUP_KEEP` 计数;目标脚本在预检不足时回收(悬空镜像 / 构建缓存超 `DORAMI_DEPLOY_BUILD_CACHE_KEEP_GB` / 超保留数的备份)并在成功后把构建缓存压回上限;`data/backups` 每日归档只归 `config/production.ini` 的 `[backup] retain_local`。磁盘阈值 / 部署备份保留数 / 构建缓存上限三个 `DORAMI_DEPLOY_*` 键在 `/etc/dorami-deploy.conf`,手工路径也读它;成功后的缓存回收带超时(`DORAMI_DEPLOY_PRUNE_TIMEOUT_SECONDS`,默认 300),卡住只记一行不影响收口。
+- **磁盘回收分工**(issue #232):worker 成功后删不被 manifest 引用的 managed 镜像、`docker image prune -f`、备份按 `DORAMI_DEPLOY_BACKUP_KEEP` 计数;目标脚本每次部署开头先把构建缓存压回 `DORAMI_DEPLOY_BUILD_CACHE_KEEP_GB`(上一次部署的旧中间层此刻才无人引用),预检不足时再回收(悬空镜像 / 构建缓存 / 超保留数的备份),成功后再压一次(通常为 0);`data/backups` 每日归档只归 `config/production.ini` 的 `[backup] retain_local`。磁盘阈值 / 部署备份保留数 / 构建缓存上限三个 `DORAMI_DEPLOY_*` 键在 `/etc/dorami-deploy.conf`,手工路径也读它;成功后的缓存回收带超时(`DORAMI_DEPLOY_PRUNE_TIMEOUT_SECONDS`,默认 300),卡住只记一行不影响收口。
 - 升级 launcher / worker 是显式手工步骤(重新 cp);目标 tag 的 `scripts/deploy-lib.sh` 用 `DORAMI_DEPLOY_PROTOCOL` 宣告
   契约版本,worker 不认识的版本拒绝部署。
 - 手工 `./deploy-docker.sh` 与流水线共用锁 `/run/lock/dorami-deploy.lock`,互斥。

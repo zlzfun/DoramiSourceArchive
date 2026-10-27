@@ -32,7 +32,7 @@
 
 ## 部署前后核对(Docker 路径)
 
-- **磁盘**:worker 先做库备份再进预检,预检按整数 GB 向下取整要求每个相关文件系统 ≥ `DORAMI_DEPLOY_MIN_FREE_GB`(conf,默认 5),所以实际要留 ≥ 阈值 + 库大小 + 余量。**不足时脚本先自行回收再复测**(issue #232):悬空镜像、构建缓存超 `DORAMI_DEPLOY_BUILD_CACHE_KEEP_GB` 的部分、超 `DORAMI_DEPLOY_BACKUP_KEEP` 的部署前备份(manifest 引用的不动;手工路径同样读 conf);仍不足才 fail 并打印 `docker system df` 与 backups / data 去向——那时人工能动的是旧回滚镜像(worker 按 manifest 管)、`data/backups` 每日归档(`[backup] retain_local`)、或扩盘。部署成功后构建缓存也压回上限。
+- **磁盘**:worker 先做库备份再进预检,预检按整数 GB 向下取整要求每个相关文件系统 ≥ `DORAMI_DEPLOY_MIN_FREE_GB`(conf,默认 5),所以实际要留 ≥ 阈值 + 库大小 + 余量。**不足时脚本先自行回收再复测**(issue #232):悬空镜像、构建缓存超 `DORAMI_DEPLOY_BUILD_CACHE_KEEP_GB` 的部分、超 `DORAMI_DEPLOY_BACKUP_KEEP` 的部署前备份(manifest 引用的不动;手工路径同样读 conf);仍不足才 fail 并打印 `docker system df` 与 backups / data 去向——那时人工能动的是旧回滚镜像(worker 按 manifest 管)、`data/backups` 每日归档(`[backup] retain_local`)、或扩盘。每次部署开头先把构建缓存压回上限(上一次部署留下的旧中间层在此回收;成功后那次通常为 0,因旧镜像要等 worker 清理)。
 - 部署成功 ≠ 静态资源可读:**部署后 curl 公网 `/fonts/*.css`、`/manifest.webmanifest`、`/brand/pwa-*.png` 看 200**,不能只看 `/api/health`(#192:`umask 077` 检出的文件 0600 进 nginx 镜像,字体 / manifest / PWA 图标 403 了四周)。
 - 流水线失败在 `up` 之前时系统未动、事务保留;同 target 重试复用事务且不重做备份,`gh run rerun <release run> --failed` 再批准(`gh api -X POST …/pending_deployments -F "environment_ids[]=<id>" -f state=approved`)。`gh run watch` 会因网络断提前 exit 1,别当部署失败。
 - 新版 compose 的 `:?` 必填变量(`DORAMI_ARCHIVE_AUTHORITY_ID`、`DORAMI_PODCAST_INSTALLATION` / `DORAMI_PODCAST_AUTHORITY_ID`)缺了 build / config 直接拒绝;authority id 一旦设定**永不改**。
