@@ -124,9 +124,11 @@ def test_compressed_paid_audio_is_archived_and_hash_checked_after_inflate(servic
     result = restore_backup(service.directory / state["archive"], restored, expected_sha256=state["sha256"], offline=True)
     assert result["status"] == "restored"
     assert zlib.decompress((restored / "receipts" / f"{call_id}.wav.zlib").read_bytes()) == data
-    # 解压后哈希不符、不是 zlib 流、流被截断:都按「付费音频缺失或损坏」fail closed,不冒泡异常
-    truncated = zlib.compress(data, 6)[:-16]
-    for payload in (zlib.compress(b"different bytes"), b"not a zlib stream", truncated):
+    # 解压后哈希不符、不是 zlib 流、流被截断(去掉末尾 adler32:原文能解全、但 eof 为假——单独守住 eof 检查,
+    # codex R1 P2)、流后有尾随字节:都按「付费音频缺失或损坏」fail closed,不冒泡异常
+    compressed = zlib.compress(data, 6)
+    assert zlib.decompressobj().decompress(compressed[:-4]) == data, "截断样本须能解出完整原文,才是在测 eof 而不是哈希"
+    for payload in (zlib.compress(b"different bytes"), b"not a zlib stream", compressed[:-4], compressed[:-16], compressed + b"trailing"):
         packed.write_bytes(payload)
         state = service.run()
         assert state["status"] == "failed" and state["error"] == "backup_paid_audio_missing_or_corrupt", payload[:12]
@@ -142,8 +144,27 @@ def test_inflated_sha256_bounds_output_and_rejects_trailing_bytes(tmp_path):
     assert backup_module._inflated_sha256(path) == hashlib.sha256(data).hexdigest()
     assert backup_module._inflated_sha256(path, limit=len(data) - 1) is None, "解压产物超限按损坏"
     assert backup_module._inflated_sha256(path, limit=len(data)) == hashlib.sha256(data).hexdigest()
+    path.write_bytes(zlib.compress(data)[:-4])
+    assert backup_module._inflated_sha256(path) is None, "原文解全但流未结束(eof 为假)按损坏"
     path.write_bytes(zlib.compress(data) + b"trailing")
     assert backup_module._inflated_sha256(path) is None
+    # 尾随数据在流结束后立刻停读:8 MiB 垃圾不会被整段读进 unused_data(codex R1 P2)
+    path.write_bytes(zlib.compress(b"x") + b"\xff" * (8 * 1024 * 1024))
+    reads = []
+    real_open = Path.open
+    def counting_open(self, *a, **k):
+        f = real_open(self, *a, **k)
+        orig = f.read
+        def read(n=-1):
+            b = orig(n); reads.append(len(b)); return b
+        f.read = read
+        return f
+    Path.open = counting_open
+    try:
+        assert backup_module._inflated_sha256(path, limit=64) is None
+    finally:
+        Path.open = real_open
+    assert sum(reads) <= 1024 * 1024 + 1, reads
     assert backup_module._paid_audio_verified(tmp_path, {"receipts/" + "a" * 64 + ".wav.zlib": {}}, "a" * 64, None) is False
 
 

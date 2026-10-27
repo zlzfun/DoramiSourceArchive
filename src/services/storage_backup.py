@@ -139,7 +139,11 @@ _PAID_AUDIO_INFLATE_LIMIT = 1024 ** 3
 
 
 def _inflated_sha256(path, *, limit=_PAID_AUDIO_INFLATE_LIMIT):
-    """zlib 流式解压并哈希;超限、流不完整、尾随杂字节、读失败一律返回 None(按损坏处理,不冒泡原始异常)。"""
+    """zlib 流式解压并哈希;超限、流不完整、尾随杂字节、读失败一律返回 None(按损坏处理,不冒泡原始异常)。
+
+    流结束(``eof``)后立即停读:``unused_data`` 不受产物上限约束,继续喂会把尾随字节整段攒进内存
+    (codex R1 P2);流后还有任何字节都按损坏。
+    """
     decoder = zlib.decompressobj()
     digest = hashlib.sha256()
     total = 0
@@ -151,9 +155,13 @@ def _inflated_sha256(path, *, limit=_PAID_AUDIO_INFLATE_LIMIT):
                     break
                 out = decoder.decompress(chunk, limit - total + 1)
                 total += len(out)
-                if total > limit or decoder.unconsumed_tail:
+                if total > limit or decoder.unconsumed_tail or decoder.unused_data:
                     return None
                 digest.update(out)
+                if decoder.eof:
+                    if stream.read(1):
+                        return None
+                    break
         tail = decoder.flush()
     except (OSError, zlib.error):
         return None
