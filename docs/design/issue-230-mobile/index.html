@@ -5,53 +5,47 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>移动端方向 C · 夜航</title>
 <!--
-issue #230 手机端视觉方向 · 方向 C「夜航」单页样页(团队 2026-10-28 选定 C;A 纸面 / B 仪器已舍弃);第 3 轮返修:视图切换定为转盘、取消视图未读点
+issue #230 手机端视觉方向 · 方向 C「夜航」单页样页(团队 2026-10-28 选定 C;A 纸面 / B 仪器已舍弃);第 4 轮返修:早报独立 Tab、往期底页月历、正文去底部坞
 
 一、设计陈述
-  内容铺满全屏,顶栏、TabBar、播放坞是浮在内容上的磨砂镀层,往下读时退场、往上一划就回来;长按时那一条先「抬起」;正文页没有顶栏,动作落在拇指够得着的浮动坞里。第 2 轮返修参考 Folo 手机版的功能组织:底栏从内容类型改成功能模块 内容 · 订阅 · 榜单 · 设置;早报 / 文章 / 播客 / 社交 上移到「内容」顶栏中间的转盘(第 3 轮定 B,视图上不挂未读点);来源底页变成「订阅」Tab,「我的」并进「设置」Tab。
+  内容铺满全屏,顶栏、TabBar、播放坞是浮在内容上的磨砂镀层,往下读时退场、往上一划就回来;长按时那一条先「抬起」;正文页没有顶栏也没有底部坞,动作都在右上的磨砂钮里。底栏是功能模块 早报 · 内容 · 订阅 · 榜单 · 设置;内容 Tab 顶栏中间的转盘切 文章 / 播客 / 社交;第 4 轮定稿:早报独立成 Tab、往期只留底页月历、正文的翻译与查看原文进「⋯」菜单。
 
 二、逐屏要点(修 = 本轮修复 · 删 · 新 · 简 · 留 · 需落地)
-  · 内容 · 早报 [新] 底栏从内容类型改成功能模块:内容 · 订阅 · 榜单 · 设置。早报 / 文章 / 播客 / 社交 收进顶栏中间的转盘(第 3 轮定 B,见细节样页 view-switcher):当前视图放大居中,邻居淡出半截;点邻居、横拖或 ← → 切换,每个刊名命中区 64 × 44。
-  · 内容 · 早报 [新] 页头左上是头像(点了去「设置」);早报视图里「只看未读 / 全部标读 / 搜索」三枚钮留位不显示(早报没有未读概念),转盘不会因此跳位。
-  · 内容 · 早报 [新] 页顶「早报位置」可切到「独立 Tab」:五个 Tab(早报 · 内容 · 订阅 · 榜单 · 设置),内容里只剩 文章 / 播客 / 社交。
-  · 内容 · 早报 [留] 早报版式、长按动作单、往期三方案、早报卡进正文的路径都沿用第 1 轮;只改入口。
-  · 内容 · 文章 [新] 「全部 / 未读」收成顶栏一枚开关图标:空心圈 = 显示全部,带点的圈 = 只看未读;开着时转盘下面写「只看未读」,切换时有提示条。它管的是整个内容 Tab(现网 unreadOnly 本来就是一个全局状态)。
-  · 内容 · 文章 [修] 第 1 轮的两条根因在新形态下都不存在:开关在固定的顶栏里,不在任何横滑轨里;它只有 aria-pressed / class 两态,没有要量宽度的拇指。自检照第 1 轮的 10 个步骤复测。
-  · 内容 · 文章 [简] 页头只剩一排(视图切换并进顶栏),列表上方只有类型胶囊一条(只有文章有类型)。大标题下的「全部来源 ⌄」移走,按来源看去「订阅」Tab;顶栏的收藏筛选移到「订阅」Tab 的「收藏」。
-  · 内容 · 文章 [删] 视图上的未读点取消(第 3 轮):转盘上不挂点;条目自身仍靠标题字重与墨色区分已读未读。
-  · 内容 · 文章 [留] 卡片、按压、长按抬起、类型胶囊横滑不变;按类型筛选时收起「全部标读」(与现网同口径)。
+  · 早报 · 早报 [新] 第 4 轮定稿:早报独立成 Tab,底栏固定为 早报 · 内容 · 订阅 · 榜单 · 设置;启用个人早报时默认落在这里。眉头写「早报 — 日期」。
+  · 早报 · 早报 [留] 版式沿用第 1 轮:头条整块可点 +「全文 ›」、卡上不放收藏、早报卡长按出动作单;看往期时眉头右侧换成「回到今天」。
+  · 早报 · 往期月历 [新] 往期定为底页月历(第 4 轮):日期只分两态,靠数字颜色区分——有早报(墨色,可点)/ 没有(灰,不可点)。失败日按「没有」处理(与桌面月历不同:桌面标红、可点)。
+  · 早报 · 往期月历 [留] 正在看的那天是实底圆(选中态);今天一个蓝点;编排中的今天呼吸;当天多版时版次排在月历下方再选。
+  · 早报 · 往期月历 [删] 底部四个图例(有早报 / 没有 / 失败 / 今天)与「回到今天」文字钮撤掉;看往期时眉头右侧已有「回到今天」。多版角标、未来日期的更淡一档也撤掉,只留两态。
+  · 内容 · 文章 [新] 视图在顶栏中间的转盘里切(第 3 轮定 B):当前视图放大居中,邻居淡出半截;点邻居、横拖或 ← → 切换;第 4 轮起固定三项 文章 / 播客 / 社交。视图上不挂未读点。
+  · 内容 · 文章 [新] 「全部 / 未读」是顶栏一枚开关图标:空心圈 = 显示全部,带点的圈 = 只看未读;开着时转盘下面写「只看未读」,切换时有提示条。它管的是整个内容 Tab(现网 unreadOnly 本来就是一个全局状态)。
+  · 内容 · 文章 [简] 页头只剩一排,列表上方只有类型胶囊一条(只有文章有类型)。按来源看去「订阅」Tab;收藏筛选在「订阅」Tab 的「收藏」。
+  · 内容 · 文章 [留] 卡片、按压、长按抬起、类型胶囊横滑不变;按类型筛选时收起「全部标读」(与现网同口径);条目靠标题字重与墨色区分已读未读。
   · 内容 · 播客 [新] 最小可用版:沿用现网播客行的字段(封面 · 节目名 · 时间 · 分数 / 标题两行 / 播放中 · 时长),套夜航卡面;正在播放的那期带「播放中」。
   · 内容 · 播客 [简] 精品导读状态、简介初评签等其余字段沿用现网卡片,样页没画;点卡片进节目页(样页给提示条),长按出动作单。
   · 内容 · 社交 [新] 最小可用版:沿用 SocialFlow 卡的字段(头像 · 名字 · @handle · 时间 / 原文 / 配图 / 译为中文),长文折叠成六行 +「显示更多」;长按出推文动作。
   · 内容 · 社交 [留] 不展示互动数字;只订阅了一个平台时不挂平台角标(conventions §4.2);读过的卡文字降一档。
-  · 正文 · 正文 [留] 第 1 轮结果不变:无顶栏,返回 / 收藏 · 分享 · 更多 是浮在内容上的磨砂钮;拇指区 上一篇 · 原文 | 中文 · 下一篇;「听导读」已撤。
+  · 正文 · 正文 [删] 底部浮动坞(上一篇 · 原文 | 中文 · 下一篇)整组撤掉,给它留的底部空白一并收回(第 4 轮)。
+  · 正文 · 正文 [留] 无顶栏:左上返回,右上 收藏 · 分享 · ⋯ 是浮在内容上的磨砂钮,往下读时淡出;翻译与查看原文在「⋯」菜单里;「听导读」已撤。
   · 正文 · 正文 [留] 入口不变:内容 Tab 的条目卡、早报卡、订阅 Tab 推入页里的卡、榜单里的条目,点开都是同一个正文页;从卡片矩形长出来,返回收回原位。
-  · 正文 · 读到文末 [留] 读到文末:镀层退场(沉浸态),进度线满格;文末「下一篇」大卡,往上一划镀层回来。
-  · 正文 · 长按 [留] 被长按的那一条先抬起成预览卡,动作组按 items 的分组断成三块,图标在行尾;文章卡 = buildArticleMenuItems 同构。
-  · 正文 · 长按 [新] 播客卡、社交卡也接长按;社交卡的动作:标为已读 / 收藏 / 打开原推 / 标记该账号全部已读(沿用现网推文动作)。
+  · 正文 · 读到文末 [留] 读到文末:镀层退场(沉浸态),进度线满格;文末「查看原文 ↗」与「下一篇」大卡保留(上一篇入口随底部坞撤掉),往上一划镀层回来。
+  · 正文 · ⋯ 菜单 [新] 正文右上「⋯」打开的底页只有菜单,不带文章预览卡(列表里长按时的抬起预览卡不变)。
+  · 正文 · ⋯ 菜单 [新] 菜单按使用频率排:译为中文 / 显示原文(只对有英文原文的文章)· 查看原文 | 复制站内链接 · 分享给… | 标为未读 · 标记该源全部已读。收藏是右上的星,分享浮层是右上的分享钮,菜单里不重复。
+  · 正文 · 长按 [留] 列表里长按:被长按的那一条先抬起成预览卡,动作组按 items 的分组断成三块,图标在行尾;文章卡 = buildArticleMenuItems 同构。
+  · 正文 · 长按 [留] 播客卡、社交卡也接长按;社交卡的动作:标为已读 / 收藏 / 打开原推 / 标记该账号全部已读(沿用现网推文动作)。
   · 订阅 · 订阅 [新] 订阅 Tab = 原来源底页 + 发现更多来源 + 我的兴趣 + 收藏。顶部分段 订阅 | 兴趣;右上「+」与列表尾都进「发现更多来源」整页。
-  · 订阅 · 订阅 [新] 最上面是「全部」「收藏」两个汇总入口(收藏从「我的」搬来),下面按 官方 / 媒体 / 个人 / 榜单 / 播客 / 社交 分组列出所有订阅;点一行推入该来源的条目流。
-  · 订阅 · 订阅 [留] 未读只靠源名字重(conventions:源栏不显示每源未读数,也不画点);暂不可用的来源灰显并写「暂不可用」。
-  · 订阅 · 订阅 [新] 游客(页顶「身份」切):列表是默认订阅,顶上一张登录引导;「+」、收藏、兴趣都提示登录。
-  · 订阅 · 来源流 [新] 在订阅 Tab 里推入的整页:来源头(徽标 · 名字 · 角色 · 形态)+ 该来源的条目;右上 只看未读 · 全部标读 是这一页自己的状态,不动「内容」Tab。
-  · 订阅 · 来源流 [新] 返回钮 / Esc / 系统返回出栈;推入页盖住 TabBar,点卡片照常进正文页(正文页在它上面)。「全部」「收藏」「兴趣」推入的是同一种页,全部 / 收藏的顶栏中段是同一个转盘(文章 / 播客 / 社交)。
+  · 订阅 · 订阅 [新] 最上面是「全部」「收藏」两个汇总入口,下面按 官方 / 媒体 / 个人 / 榜单 / 播客 / 社交 分组列出所有订阅;点一行推入该来源的条目流。
+  · 订阅 · 订阅 [留] 未读只靠源名字重(conventions:源栏不显示每源未读数,也不画点);暂不可用的来源灰显并写「暂不可用」。游客:列表是默认订阅,顶上一张登录引导。
+  · 订阅 · 来源流 [新] 在订阅 Tab 里推入的整页:来源头 + 该来源的条目;右上 只看未读 · 全部标读 是这一页自己的状态,不动「内容」Tab。「全部」「收藏」页的顶栏中段是同一个转盘(文章 / 播客 / 社交)。
   · 订阅 · 来源流 [需落地] 落地要第二个列表实例:现网 useReaderState 只有一条列表,来源过滤是这条列表上的修饰符;推入页要独立于内容 Tab,得另起一份列表状态(纯前端,接口不变)。
-  · 订阅 · 兴趣 [新] 兴趣段 = 现网 InterestPage 的移动档:点击即保存(回执「保存中… / 已保存」)、搜索标签、主题 / 行业 / 实体三段、目录卡点一下加入、再点取消(不画勾选框)。
-  · 订阅 · 兴趣 [新] 「我的兴趣」每行可点:推入该兴趣的条目流(即原来源底页的兴趣轴),行尾 × 移出。
-  · 订阅 · 兴趣 [留] 只画现网已有的能力;目录 94 个标签取自规范目录。兴趣只在启用个人早报时出现,与现网「我的兴趣」同条件。
+  · 订阅 · 兴趣 [新] 兴趣段 = 现网 InterestPage 的移动档:点击即保存、搜索标签、主题 / 行业 / 实体三段、目录卡点一下加入再点取消;「我的兴趣」每行可点读它的条目流,行尾 × 移出。
+  · 订阅 · 兴趣 [留] 只画现网已有的能力;兴趣只在启用个人早报时出现,与现网「我的兴趣」同条件。
   · 榜单 · 榜单 [留] 只换壳:沿用 RankingsPage 的分段与区块(文章榜 | 播客榜 × 话题 / 产业 / 实体;标签榜 → 标签高分内容与 30 日趋势 → 全局高分榜 → 必读文章);版式与文章榜定位归 #221。
-  · 榜单 · 榜单 [新] 套夜航壳:大标题 + 分段、圆角分组卡、行高 ≥ 44、字号 ≥ 12。Tab 名用「榜单」;也可以叫「发现」,但「发现」现网已指「发现更多来源」。
-  · 设置 · 设置 [新] 设置 Tab = 原「我的」(资料卡、反馈与建议、添加到主屏幕、退出登录)+ 原设置栈一级页(通用 / 接入集成 / 关于);收藏、发现更多来源、我的兴趣搬去「订阅」。
-  · 设置 · 设置 [简] 原「我的」里的外观三态分段与设置栈的「外观」合成一行,行尾写当前值,点进二级页(主题之外还有中性色与减少动效)。
+  · 设置 · 设置 [新] 设置 Tab = 原「我的」(资料卡、反馈与建议、添加到主屏幕、退出登录)+ 原设置栈一级页(通用 / 接入集成 / 关于);外观合成一行,点进二级页。
   · 设置 · 设置 [留] 二级页沿用现网 MobileSettings 各分区;游客:资料卡换成登录引导,锁住的分区挂锁,没有退出登录。
-  · 设置 · 设置栈 [留] 从设置 Tab 推入的二级页,以「外观」为例:主题三态、中性色三选一、减少动效(现网 AppearanceSection 原样,动效开关与页顶「动效」是同一个 data-motion)。返回 / Esc / 系统返回出栈。
-  · 往期 · ① 底页月历 [留] 第 1 轮原样:点「往期」从底部升起月历(可拖拽关闭,Esc / 系统返回也关);一屏一个月、周一起、格子 44px;多版的日子版次排在月历下方。
-  · 往期 · ② 日期条 [留] 第 1 轮原样:眉头下常驻一条最近两周的日期条,点一天就地切换;最左「月历」进底页月历看更早的。
-  · 往期 · ③ 往期列表 [留] 第 1 轮原样:「往期 ›」推入整页列表,按月分组;每行 = 日期块 + 版次 · 编排时刻 · 篇数 + 状态签。
-  · 往期 · ③ 往期列表 [需落地] 每期一行头条标题:列表端点现在不带条目(include_items=False),需要后端补 headline 字段;今天那一期的头条来自今日接口,现成。
+  · 设置 · 设置栈 [留] 从设置 Tab 推入的二级页,以「外观」为例:主题三态、中性色三选一、减少动效(现网 AppearanceSection 原样)。返回 / Esc / 系统返回出栈。
 
 三、动效清单(名称 | 触发 | 时长 · 缓动 | 目的 | 减少动效时)
-  镀层退场 | 列表 / 正文向下滚(越过 140px 且速度 > 6px/帧) | 420ms · --motion-sheet(弹簧) | TabBar、播放坞、正文动作把整屏让给内容;往上一划就回来 | 常显,不退场
+  镀层退场 | 列表 / 正文向下滚(越过 140px 且速度 > 6px/帧) | 420ms · --motion-sheet(弹簧) | TabBar、播放坞、正文右上的钮把整屏让给内容;往上一划就回来 | 常显,不退场
   大标题收拢 | 订阅 / 榜单 / 设置 滚过 44px | 240ms · --motion-medium | 栏名从页面收进顶栏,顶栏换上磨砂 | 只剩显隐
   转盘转动 | 点邻居 / 横拖 / ← → | 420ms · --motion-sheet;横拖时跟手,松手按最近一项弹簧回位 | 当前项放大居中,邻居淡出半截 | 瞬切
   推入页 | 订阅 Tab 点来源 / 全部 / 收藏 / 兴趣;设置 Tab 点外观 | 420ms 弹簧 translateX(32px → 0)+ 240ms 淡入;返回反向 | 层级感:这是 Tab 里的下一层 | 1ms
@@ -75,7 +69,7 @@ issue #230 手机端视觉方向 · 方向 C「夜航」单页样页(团队 2026
     也没有要量宽度的拇指,第 1 轮那两条根因(被横滑轨带出屏、隐藏视图里量出 0 宽)在新形态下都不存在。
 
 样页说明:单文件,离线可开;字体为自托管 Dorami Serif / Dorami Latin Serif 按本页用字取的子集(data URI)。
-页面参数(可选):?screen=content-brief|content-article|content-podcast|content-social|read|read-end|sheet|subs|subs-src|interest|rankings|settings|settings-stack|hist-sheet|hist-strip|hist-list&width=360|390|430&cols=both|light|dark&brief=view|tab&guest=0|1&motion=reduce
+页面参数(可选):?screen=brief|hist-sheet|content-article|content-podcast|content-social|read|read-end|read-menu|sheet|subs|subs-src|interest|rankings|settings|settings-stack&width=360|390|430&cols=both|light|dark&guest=0|1&motion=reduce
 -->
 <script>
   /* 首帧挂主题 / 中性色 / 减少动效(现网:index.html 内联脚本挂 <html data-theme data-palette data-motion>) */
@@ -630,7 +624,7 @@ img { display: block; }
 .m-dock { position: absolute; z-index: 45; left: 0; right: 0; }
 .m-drawer-layer, .m-sheet-layer, .m-xplayer-layer { position: absolute; inset: 0; }
 .m-drawer-layer { z-index: 50; }
-.m-sett, .m-histlist { position: absolute; inset: 0; z-index: 55; }
+.m-sett { position: absolute; inset: 0; z-index: 55; }
 .m-srcpage { position: absolute; inset: 0; z-index: 35; }   /* 订阅 Tab 推入页:盖住 TabBar,正文页(40)仍在它上面 */
 .m-hist-layer { position: absolute; inset: 0; z-index: 52; }
 .m-sheet-layer { z-index: 60; }
@@ -758,10 +752,11 @@ code { font-family: var(--font-mono); font-size: max(12px, 0.88em); padding: 1px
 [data-dir="c"] .ic { --ic-stroke: 1.8; }
 
 /* ── 镀层件:磨砂圆钮 / 磨砂胶囊 / 镜片拇指 ── */
-[data-dir="c"] .c-glass, [data-dir="c"] .c-gbtn-in, [data-dir="c"] .c-gpill, [data-dir="c"] .c-tabbar, [data-dir="c"] .c-read-dock, [data-dir="c"] .c-hist-in, [data-dir="c"] .c-today-in, [data-dir="c"] .c-search-field {
+[data-dir="c"] .c-glass, [data-dir="c"] .c-gbtn-in, [data-dir="c"] .c-gpill, [data-dir="c"] .c-tabbar, [data-dir="c"] .c-hist-in, [data-dir="c"] .c-today-in, [data-dir="c"] .c-search-field {
   background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
   box-shadow: var(--glass-ring), var(--glass-edge);
 }
+
 [data-dir="c"] .c-gbtn { display: grid; place-items: center; flex: none; width: 44px; height: 44px; border-radius: 50%; color: var(--dorami-ink); }
 [data-dir="c"] .c-gbtn-in { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; transition: transform var(--motion-medium) var(--motion-sheet-ease); }
 [data-dir="c"] .c-gbtn:active .c-gbtn-in { transform: scale(0.9); }
@@ -858,7 +853,7 @@ code { font-family: var(--font-mono); font-size: max(12px, 0.88em); padding: 1px
 /* 有播放坞时渐隐一直垫到坞的上沿:坞与 TabBar 之间那 8px 缝里不再透出正文 */
 [data-dir="c"] .m-screen[data-player="bar"] .m-shell::after { height: calc(var(--sab) + var(--c-float) * 3 + var(--c-tab-h) + var(--c-dock-h) + 20px); background: linear-gradient(to top, var(--dorami-canvas) 0, var(--dorami-canvas) calc(100% - 56px), transparent); }
 [data-dir="c"] .m-screen[data-player="bar"].is-receded .m-shell::after { height: calc(var(--sab) + var(--c-float) * 2 + var(--c-dock-h) + 20px); }
-[data-dir="c"] .m-read::after { height: calc(var(--sab) + 84px); }
+[data-dir="c"] .m-read::after { height: calc(var(--sab) + 16px); }
 /* 正文页没有顶栏:状态栏下垫一段渐隐,正文滚上去时不和时间 / 电量叠字 */
 [data-dir="c"] .m-read::before { content: ""; position: absolute; z-index: 4; left: 0; right: 0; top: 0; height: calc(var(--sat) + 18px); pointer-events: none; background: linear-gradient(to bottom, var(--dorami-canvas) 62%, color-mix(in oklab, var(--dorami-canvas) 0%, transparent)); }
 
@@ -872,7 +867,7 @@ code { font-family: var(--font-mono); font-size: max(12px, 0.88em); padding: 1px
 [data-dir="c"] .m-screen.is-receded .c-tabbar { transform: translateY(calc(100% + var(--c-float) + var(--sab))); }
 [data-dir="c"] .m-dock { left: var(--c-gutter); right: var(--c-gutter); bottom: calc(var(--sab) + var(--c-float) * 2 + var(--c-tab-h)); transition: transform var(--motion-sheet) var(--motion-sheet-ease); }
 [data-dir="c"] .m-screen.is-receded .m-dock, [data-dir="c"] .m-dock[data-page="page"] { transform: translateY(calc(var(--c-tab-h) + var(--c-float))); }
-[data-dir="c"] .m-screen.is-reading .m-dock[data-page="page"] { transform: translateY(calc(var(--c-tab-h) + var(--c-float) * 2 - 56px - 24px)); }   /* 正文页:停在拇指区浮动坞之上 */
+   /* 正文页:停在拇指区浮动坞之上 */
 [data-dir="c"] .c-dock { position: relative; display: flex; align-items: center; gap: 6px; height: var(--c-dock-h); padding: 0 8px 0 8px; border-radius: var(--r-pill); overflow: hidden; box-shadow: var(--glass-ring), var(--glass-shadow); isolation: isolate; }
 /* 封面模糊底(issue #199 的 tone=blur 做法:封面放大模糊 + 按主题的遮罩,不用 backdrop-filter) */
 [data-dir="c"] .c-dock-tone, [data-dir="c"] .c-xp-tone { position: absolute; inset: -30px; z-index: -1; background: linear-gradient(color-mix(in oklab, var(--dorami-raised) 66%, transparent), color-mix(in oklab, var(--dorami-raised) 66%, transparent)), var(--cover) center / cover; filter: blur(18px) saturate(1.2); }
@@ -900,7 +895,8 @@ code { font-family: var(--font-mono); font-size: max(12px, 0.88em); padding: 1px
 [data-dir="c"] .c-gpill { display: flex; align-items: center; height: 44px; padding: 0 2px; border-radius: var(--r-pill); }
 [data-dir="c"] .c-gpill-btn { display: grid; place-items: center; width: 44px; height: 44px; color: var(--dorami-ink); }
 [data-dir="c"] .c-gpill-btn .ic { width: 18px; height: 18px; }
-[data-dir="c"] .c-read-scroll { padding-bottom: calc(var(--sab) + 96px); }
+[data-dir="c"] .c-read-scroll { padding-bottom: calc(var(--sab) + 28px); }   /* 第 4 轮撤掉底部坞,留白收回;有播放坞时让出坞的高度 */
+[data-dir="c"] .m-screen[data-player="bar"] .c-read-scroll { padding-bottom: calc(var(--sab) + var(--c-float) * 2 + var(--c-dock-h) + 20px); }
 [data-dir="c"] .c-paper { padding: calc(var(--sat) + 64px) 22px 24px; }
 [data-dir="c"] .c-kicker { margin: 0 0 12px; font-size: 13px; font-weight: 600; letter-spacing: 0.06em; color: var(--dorami-accent-ink); }
 [data-dir="c"] .c-rtitle { margin: 0; font-family: var(--font-serif); font-size: 29px; font-weight: 600; line-height: 1.36; color: var(--dorami-ink); text-wrap: pretty; }
@@ -927,15 +923,8 @@ code { font-family: var(--font-mono); font-size: max(12px, 0.88em); padding: 1px
 [data-dir="c"] .c-next-k { font-size: 12px; letter-spacing: 0.12em; color: var(--dorami-faint); }
 [data-dir="c"] .c-next-t { font-family: var(--font-serif); font-size: 18px; font-weight: 600; line-height: 1.5; color: var(--dorami-ink); }
 [data-dir="c"] .c-next-by { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dorami-faint); }
-[data-dir="c"] .c-read-dock { position: absolute; z-index: 5; left: 50%; bottom: calc(var(--sab) + 10px); display: flex; align-items: center; gap: 2px; width: max-content; height: 56px; padding: 0 6px; border-radius: var(--r-pill); transform: translateX(-50%); box-shadow: var(--glass-ring), var(--glass-edge), var(--glass-shadow); transition: transform var(--motion-sheet) var(--motion-sheet-ease); }
-[data-dir="c"] .is-immersed .c-read-dock { transform: translate(-50%, calc(100% + var(--sab) + 20px)); }
-[data-dir="c"] .c-dock-btn { display: grid; place-items: center; flex: none; width: 44px; height: 44px; border-radius: 50%; color: var(--dorami-ink); }   /* flex: none:坞按内容定宽,窄屏不把翻页钮压到 44 以下 */
-[data-dir="c"] .c-dock-btn[aria-disabled="true"] { opacity: 0.35; }
-[data-dir="c"] .c-dock-btn .ic { width: 20px; height: 20px; }
-[data-dir="c"] .c-dock-note { padding: 0 12px; font-size: 13px; color: var(--dorami-muted); }
-[data-dir="c"] .c-langseg::before { display: none; }
-[data-dir="c"] .c-langseg .c-seg-btn.is-on[data-v="zh"] { background: var(--grad-ai); -webkit-background-clip: text; background-clip: text; color: transparent; }
-[data-dir="c"] .c-langseg:has(.is-on[data-v="zh"]) .c-lens { background: var(--dorami-surface) var(--grad-ai-wash); }
+
+   /* flex: none:坞按内容定宽,窄屏不把翻页钮压到 44 以下 */
 
 /* ── 遮罩 + 底页:弹簧入场,按住把手往下拖可关 ── */
 [data-dir="c"] .c-dim { position: absolute; inset: 0; background: rgba(8, 10, 14, 0.36); opacity: 0; transition: opacity var(--motion-medium) var(--motion-ease); }
@@ -1039,6 +1028,12 @@ code { font-family: var(--font-mono); font-size: max(12px, 0.88em); padding: 1px
 [data-dir="c"] .c-eyebrow b { font-family: var(--font-serif); font-size: 15px; letter-spacing: 0.2em; color: var(--dorami-ink); }
 [data-dir="c"] .c-eyebrow i { width: 14px; height: 1px; background: var(--dorami-border-strong); }
 [data-dir="c"] .c-hist, [data-dir="c"] .c-today { display: inline-flex; align-items: center; min-height: 44px; }
+/* 看往期时眉头写「几月几日 周几 · 第几版」,右侧是 往期 + 回到今天:一行放不下就把两枚钮挪到第二行靠右(窄屏不挤成两行字) */
+[data-dir="c"] .c-hist-in, [data-dir="c"] .c-today-in { white-space: nowrap; }
+[data-dir="c"] .c-bp-top.is-past { flex-wrap: wrap; }
+[data-dir="c"] .c-bp-top.is-past .c-eyebrow { flex: 1 0 100%; min-height: 40px; }
+[data-dir="c"] .c-bp-top.is-past .c-sp { display: none; }
+[data-dir="c"] .c-bp-top.is-past .c-hist { margin-left: auto; }
 [data-dir="c"] .c-today-in { display: inline-flex; align-items: center; gap: 5px; height: 34px; padding: 0 12px 0 10px; border-radius: var(--r-pill); font-size: 13px; color: var(--dorami-ink); }
 [data-dir="c"] .c-today-in .ic { width: 14px; height: 14px; }
 [data-dir="c"] .c-hist-in { display: inline-flex; align-items: center; gap: 5px; height: 34px; padding: 0 10px 0 12px; border-radius: var(--r-pill); font-size: 13px; color: var(--dorami-ink); }
@@ -1075,7 +1070,7 @@ code { font-family: var(--font-mono); font-size: max(12px, 0.88em); padding: 1px
 [data-dir="c"] .c-credits dt { color: var(--dorami-faint); }
 [data-dir="c"] .c-credits dd { margin: 0; color: var(--dorami-ink-2); }
 
-/* ══ 往期(第 1 轮返修):三种移动端方案。字段全部来自 /reader/briefs 列表(日期 / 版次 / 状态 / 编排时刻 / selection_stats),
+/* ══ 往期(第 4 轮定稿:底页月历,日期只分有 / 没有两态)。字段全部来自 /reader/briefs 列表(日期 / 版次 / 状态 / 编排时刻 / selection_stats),
    只有「往期列表」里的每期头条标题需要后端补字段 ══ */
 /* 版次:当天多版时排在月历 / 日期条下方(桌面 bp-cal-revs 同语) */
 [data-dir="c"] .c-revs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 8px; }
@@ -1086,25 +1081,6 @@ code { font-family: var(--font-mono); font-size: max(12px, 0.88em); padding: 1px
 [data-dir="c"] .c-rev.is-on { color: var(--dorami-surface); font-weight: 600; }
 [data-dir="c"] .c-rev.is-on::before { background: var(--dorami-ink); box-shadow: none; }
 [data-dir="c"] .c-rev.is-on i { color: inherit; opacity: 0.75; }
-
-/* ② 日期条:眉头下一条横滑的最近两周,最右是今天;最左「月历」进底页月历 */
-[data-dir="c"] .c-strip { display: flex; align-items: stretch; gap: 6px; margin: 6px -20px 0; padding-left: 20px; }
-[data-dir="c"] .c-strip-cal { flex: none; display: grid; place-content: center; justify-items: center; gap: 2px; width: 52px; min-height: 64px; border-radius: var(--r-card); background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); box-shadow: var(--glass-ring), var(--glass-edge); font-size: 12px; color: var(--dorami-ink-2); }
-[data-dir="c"] .c-strip-cal .ic { width: 18px; height: 18px; }
-[data-dir="c"] .c-strip-days { display: flex; gap: 4px; flex: 1; min-width: 0; padding-right: 20px;
-  -webkit-mask: linear-gradient(to right, transparent 0, #000 16px); mask: linear-gradient(to right, transparent 0, #000 16px); }
-[data-dir="c"] .c-sday { flex: none; display: grid; justify-items: center; align-content: center; gap: 1px; width: 46px; min-height: 64px; border-radius: var(--r-card); color: var(--dorami-faint); font-variant-numeric: tabular-nums; transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
-[data-dir="c"] .c-sday-w { font-size: 12px; }
-[data-dir="c"] .c-sday-d { font-size: 17px; font-weight: 600; line-height: 1.2; }
-[data-dir="c"] .c-sday-n { min-height: 16px; font-size: 12px; line-height: 16px; }
-[data-dir="c"] .c-sday.is-has { color: var(--dorami-ink); }
-[data-dir="c"] .c-sday.is-has .c-sday-w, [data-dir="c"] .c-sday.is-has .c-sday-n { color: var(--dorami-muted); }
-[data-dir="c"] .c-sday:not(.is-has) { opacity: 0.5; }
-[data-dir="c"] .c-sday.is-bad .c-sday-d, [data-dir="c"] .c-sday.is-bad .c-sday-n { color: var(--state-bad); }
-[data-dir="c"] .c-sday.is-on { background: var(--dorami-ink); color: var(--dorami-surface); }
-[data-dir="c"] .c-sday.is-on .c-sday-w, [data-dir="c"] .c-sday.is-on .c-sday-n, [data-dir="c"] .c-sday.is-on .c-sday-d { color: inherit; }
-[data-dir="c"] .c-sday[aria-current="date"]:not(.is-on) .c-sday-w { color: var(--dorami-accent-ink); font-weight: 600; }
-[data-dir="c"] .c-poster > .c-revs { margin-top: 4px; }
 
 /* ① 底页月历:桌面月历的手机翻译——一屏一个月(周一起),格子 44px;下方是当天的版次与图例 */
 [data-dir="c"] .c-histsheet { padding-bottom: 0; }
@@ -1118,49 +1094,16 @@ code { font-family: var(--font-mono); font-size: max(12px, 0.88em); padding: 1px
 [data-dir="c"] .c-cal-day { position: relative; width: 44px; height: 44px; border-radius: 50%; font-size: 15px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; transition: background var(--motion-fast) var(--motion-ease); }
 [data-dir="c"] .c-cal-day.is-has { color: var(--dorami-ink); }
 [data-dir="c"] .c-cal-day:not(.is-has) { opacity: 0.5; }
-[data-dir="c"] .c-cal-day.is-future { opacity: 0.28; }
-[data-dir="c"] .c-cal-day.is-bad { color: var(--state-bad); }
+
 [data-dir="c"] .c-cal-day.is-on { background: var(--dorami-ink); color: var(--dorami-surface); font-weight: 600; }
 [data-dir="c"] .c-cal-dot { position: absolute; left: 50%; bottom: 5px; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: var(--dorami-accent); }
 [data-dir="c"] .c-cal-day.is-on .c-cal-dot { background: currentColor; }
 [data-dir="c"] .c-cal-dot.is-live { animation: c-breathe 1.4s var(--motion-ease) infinite; }
-[data-dir="c"] .c-cal-multi { position: absolute; top: 7px; right: 7px; width: 6px; height: 6px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px currentColor; opacity: 0.7; }
+
 @keyframes c-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
 [data-dir="c"] .c-histsheet .c-revs { padding: 4px 16px 0; }
-[data-dir="c"] .c-cal-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 6px; padding: 6px 16px calc(var(--sab) + 6px); box-shadow: inset 0 0.5px 0 var(--dorami-border); }
-[data-dir="c"] .c-legend { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dorami-muted); }
-[data-dir="c"] .c-legend i { width: 8px; height: 8px; border-radius: 50%; }
-[data-dir="c"] .c-legend i.is-has { background: var(--dorami-ink); }
-[data-dir="c"] .c-legend i.is-none { background: var(--dorami-faint); opacity: 0.45; }
-[data-dir="c"] .c-legend i.is-bad { background: var(--state-bad); }
-[data-dir="c"] .c-legend i.is-today { width: 5px; height: 5px; background: var(--dorami-accent); }
-[data-dir="c"] .c-textbtn.is-accent { color: var(--dorami-accent-ink); font-weight: 600; }
-
-/* ③ 往期列表:整页按月分组;每行 = 日期块 + 头条(需后端补字段)+ 版次 · 编排时刻 · 篇数 + 状态签 */
-[data-dir="c"] .m-histlist { display: flex; flex-direction: column; background: radial-gradient(130% 46% at 50% 0%, color-mix(in oklab, var(--dorami-surface) 88%, transparent), transparent 72%), var(--dorami-canvas); }
-[data-dir="c"] .c-histlist-scroll { flex: 1; min-height: 0; padding: 0 var(--c-gutter) calc(var(--sab) + 24px); }
-[data-dir="c"] .c-histlist-scroll .c-hero { padding-left: 8px; padding-right: 8px; }
-[data-dir="c"] .c-hl-count { margin: 6px 0 0; font-size: 13px; color: var(--dorami-muted); font-variant-numeric: tabular-nums; }
-[data-dir="c"] .c-hl-note { display: flex; align-items: baseline; gap: 8px; margin: 8px 8px 0; font-size: 12px; line-height: 1.6; color: var(--dorami-faint); }
-[data-dir="c"] .c-need { flex: none; display: inline-block; padding: 0 6px; border-radius: var(--r-sm); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--state-warn) 55%, transparent); background: var(--state-warn-bg); color: var(--state-warn); font-size: 12px; font-style: normal; font-weight: 400; line-height: 1.6; font-family: var(--font-sans); }
-[data-dir="c"] .c-hl-head .c-need { margin-right: 6px; vertical-align: 1px; }
-[data-dir="c"] .c-hl-item + .c-hl-item { box-shadow: inset 0 0.5px 0 var(--dorami-border); }
-[data-dir="c"] .c-hl-item.is-on { background: color-mix(in oklab, var(--dorami-ink) 4%, transparent); }
-[data-dir="c"] .c-hl-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 64px; padding: 10px 14px 10px 10px; text-align: left; }
-[data-dir="c"] .c-hl-row:active { background: var(--dorami-hover); }
-[data-dir="c"] .c-hl-date { flex: none; display: grid; justify-items: center; width: 42px; }
-[data-dir="c"] .c-hl-date b { font-size: 20px; font-weight: 600; line-height: 1.2; color: var(--dorami-ink); font-variant-numeric: tabular-nums; }
-[data-dir="c"] .c-hl-date i { font-size: 12px; font-style: normal; color: var(--dorami-faint); }
-[data-dir="c"] .c-hl-main { flex: 1; min-width: 0; display: grid; gap: 3px; }
-[data-dir="c"] .c-hl-head { font-family: var(--font-serif); font-size: 15px; font-weight: 600; line-height: 1.5; color: var(--dorami-ink); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-[data-dir="c"] .c-hl-meta { font-size: 12px; color: var(--dorami-muted); font-variant-numeric: tabular-nums; }
-[data-dir="c"] .c-hl-tags { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
-[data-dir="c"] .c-hl-tag { padding: 1px 7px; border-radius: var(--r-pill); background: var(--dorami-well); font-size: 12px; color: var(--dorami-muted); white-space: nowrap; }
-[data-theme="dark"][data-dir="c"] .c-hl-tag { background: color-mix(in oklab, var(--dorami-ink) 10%, transparent); }
-[data-dir="c"] .c-hl-tag.is-today { background: var(--dorami-wash); color: var(--dorami-accent-ink); }
-[data-dir="c"] .c-hl-tag.is-bad { background: var(--state-bad-bg); color: var(--state-bad); }
-[data-dir="c"] .c-hl-sub { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 44px; padding: 0 14px 0 64px; font-size: 13px; color: var(--dorami-ink-2); font-variant-numeric: tabular-nums; box-shadow: inset 64px 0.5px 0 -63.5px var(--dorami-border-soft); }
-[data-dir="c"] .c-hl-sub .ic { width: 14px; height: 14px; color: var(--dorami-faint); }
+/* 第 4 轮撤掉底部图例行后,底页没了下沿留白:版次钮会压到 Home 指示条,底页自己让出安全区 */
+[data-dir="c"] .c-histsheet { padding-bottom: calc(var(--sab) + 16px); }
 
 /* ── 提示条:磨砂胶囊,弹簧浮起 ── */
 [data-dir="c"] .m-toast { bottom: calc(var(--sab) + var(--c-float) * 3 + var(--c-tab-h) + var(--c-dock-h) + 8px); padding: 10px 18px; border-radius: var(--r-pill); background: var(--glass-strong); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); box-shadow: var(--glass-ring), var(--glass-shadow); color: var(--dorami-ink); font-size: 13px; opacity: 0; transform: translate(-50%, 14px) scale(0.96); transition: opacity var(--motion-medium) var(--motion-ease), transform var(--motion-sheet) var(--motion-sheet-ease); }
@@ -1171,7 +1114,7 @@ code { font-family: var(--font-mono); font-size: max(12px, 0.88em); padding: 1px
 /* ── 减少动效:镀层不退场、大标题不联动、正文不展开、底页无弹簧(全局 1ms 兜底 + 终态) ── */
 :root[data-motion="reduce"] [data-dir="c"] .m-screen.is-reading .m-shell { transform: none; opacity: 1; }
 :root[data-motion="reduce"] [data-dir="c"] .is-immersed .c-read-top { opacity: 1; transform: none; pointer-events: auto; }
-:root[data-motion="reduce"] [data-dir="c"] .is-immersed .c-read-dock { transform: translateX(-50%); }
+
 :root[data-motion="reduce"] [data-dir="c"] .c-cal-dot.is-live { animation: none; }
 
 /* ══ 第 2 轮返修(2026-10-28):底栏 = 功能模块;内容类型上移成「内容」页头的视图胶囊 ══ */
@@ -1183,7 +1126,7 @@ code { font-family: var(--font-mono); font-size: max(12px, 0.88em); padding: 1px
 [data-dir="c"] .c-me-av.is-guest { background: var(--dorami-well); color: var(--dorami-muted); }
 [data-dir="c"] .c-me-av .ic { width: 17px; height: 17px; }
 [data-dir="c"] .c-cbar-acts { display: flex; align-items: center; }
-[data-dir="c"] .c-cbar-acts.is-ghost { visibility: hidden; }   /* 早报视图:三枚钮留位不显示,转盘不跳 */
+   /* 早报视图:三枚钮留位不显示,转盘不跳 */
 /* 转盘(第 3 轮定 B,同细节样页 B):当前放大居中、邻居淡出半截;--i = 第几项,--drag = 横拖跟手;远端被两侧渐隐裁掉 */
 [data-dir="c"] .c-dialbox { position: relative; flex: 1; min-width: 0; align-self: stretch; display: flex; }
 [data-dir="c"] .c-dial { position: relative; flex: 1; overflow: hidden; touch-action: pan-y; cursor: grab;
@@ -1203,7 +1146,6 @@ code { font-family: var(--font-mono); font-size: max(12px, 0.88em); padding: 1px
 [data-dir="c"] .c-unread.is-on .ic.is-on { display: block; color: var(--dorami-accent); }
 [data-dir="c"] .c-gbtn.c-unread.is-on .c-gbtn-in { background: var(--dorami-wash); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--dorami-accent) 35%, transparent); }
 
-
 /* 每个视图一条独立的流(现网没有混合流接口);内容从页头下面滚过 */
 [data-dir="c"] .c-pane { position: absolute; inset: 0; display: flex; flex-direction: column; }
 [data-dir="c"] .c-pane[hidden] { display: none; }
@@ -1212,9 +1154,6 @@ code { font-family: var(--font-mono); font-size: max(12px, 0.88em); padding: 1px
 [data-dir="c"] .c-kinds-row { display: flex; padding: 0 0 2px 12px; }
 [data-dir="c"] .c-kinds-row .c-kinds { padding-left: 0; -webkit-mask: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
 /* 早报在内容里:版式不变,只是从页头下面开始;环境光往上铺到页头后面 */
-[data-dir="c"] .c-pane .c-poster { padding-top: 0; }
-[data-dir="c"] .c-pane .c-light { top: calc(-1 * (var(--sat) + 56px)); }
-[data-dir="c"] .c-pane .c-act-head { top: calc(var(--sat) + 58px); }
 
 /* 播客卡(ArticleRow entryPodcast 的字段):封面 · 节目名 · 时间 · 分数 / 标题两行 / 播放中 · 时长 */
 [data-dir="c"] .c-pod { display: flex; align-items: flex-start; gap: 12px; }
@@ -1375,17 +1314,15 @@ code { font-family: var(--font-mono); font-size: max(12px, 0.88em); padding: 1px
 </div></header>
 <main class="pg-wrap">
 <section class="pg-hero">
-  <p class="pg-eyebrow"><b>方向 C · 已选定</b> · issue #230 手机端(H5 / 窄屏)视觉方向 · 第 3 轮返修:视图切换定为转盘</p>
+  <p class="pg-eyebrow"><b>方向 C · 已选定</b> · issue #230 手机端(H5 / 窄屏)视觉方向 · 第 4 轮返修:早报 / 往期 / 正文定稿</p>
   <h1 class="pg-title">夜航</h1>
-  <p class="pg-lede">内容铺满全屏,顶栏、TabBar、播放坞是浮在内容上的磨砂镀层,往下读时退场、往上一划就回来;长按时那一条先「抬起」;正文页没有顶栏,动作落在拇指够得着的浮动坞里。第 2 轮返修参考 Folo 手机版的功能组织:底栏从内容类型改成功能模块 内容 · 订阅 · 榜单 · 设置;早报 / 文章 / 播客 / 社交 上移到「内容」顶栏中间的转盘(第 3 轮定 B,视图上不挂未读点);来源底页变成「订阅」Tab,「我的」并进「设置」Tab。</p>
-  <div class="pg-facts"><span>屏<b>16 个(含往期三方案)</b></span><span>底栏<b>内容 · 订阅 · 榜单 · 设置(备选:早报独立成 Tab)</b></span><span>机型宽度<b>360 / 390 / 430</b></span><span>数据<b>9 月 16 日本地库快照 + 播客 / 社交真实条目</b></span></div>
+  <p class="pg-lede">内容铺满全屏,顶栏、TabBar、播放坞是浮在内容上的磨砂镀层,往下读时退场、往上一划就回来;长按时那一条先「抬起」;正文页没有顶栏也没有底部坞,动作都在右上的磨砂钮里。底栏是功能模块 早报 · 内容 · 订阅 · 榜单 · 设置;内容 Tab 顶栏中间的转盘切 文章 / 播客 / 社交;第 4 轮定稿:早报独立成 Tab、往期只留底页月历、正文的翻译与查看原文进「⋯」菜单。</p>
+  <div class="pg-facts"><span>屏<b>15 个(含往期三方案)</b></span><span>底栏<b>早报 · 内容 · 订阅 · 榜单 · 设置</b></span><span>机型宽度<b>360 / 390 / 430</b></span><span>数据<b>9 月 16 日本地库快照 + 播客 / 社交真实条目</b></span></div>
 </section>
 <section class="pg-sec" id="stage-sec">
   <div class="st-bar">
-    <div class="st-tabs" role="tablist" aria-label="屏幕"><span class="st-group" role="presentation"><span class="st-group-label" aria-hidden="true">内容</span><button type="button" class="st-tab" data-screen="content-brief" role="tab" aria-selected="false" aria-label="内容 · 早报">早报</button><button type="button" class="st-tab" data-screen="content-article" role="tab" aria-selected="false" aria-label="内容 · 文章">文章</button><button type="button" class="st-tab" data-screen="content-podcast" role="tab" aria-selected="false" aria-label="内容 · 播客">播客</button><button type="button" class="st-tab" data-screen="content-social" role="tab" aria-selected="false" aria-label="内容 · 社交">社交</button></span><span class="st-group" role="presentation"><span class="st-group-label" aria-hidden="true">正文</span><button type="button" class="st-tab" data-screen="read" role="tab" aria-selected="false" aria-label="正文 · 正文">正文</button><button type="button" class="st-tab" data-screen="read-end" role="tab" aria-selected="false" aria-label="正文 · 读到文末">读到文末</button><button type="button" class="st-tab" data-screen="sheet" role="tab" aria-selected="false" aria-label="正文 · 长按">长按</button></span><span class="st-group" role="presentation"><span class="st-group-label" aria-hidden="true">订阅</span><button type="button" class="st-tab" data-screen="subs" role="tab" aria-selected="false" aria-label="订阅 · 订阅">订阅</button><button type="button" class="st-tab" data-screen="subs-src" role="tab" aria-selected="false" aria-label="订阅 · 来源流">来源流</button><button type="button" class="st-tab" data-screen="interest" role="tab" aria-selected="false" aria-label="订阅 · 兴趣">兴趣</button></span><span class="st-group" role="presentation"><span class="st-group-label" aria-hidden="true">榜单</span><button type="button" class="st-tab" data-screen="rankings" role="tab" aria-selected="false" aria-label="榜单 · 榜单">榜单</button></span><span class="st-group" role="presentation"><span class="st-group-label" aria-hidden="true">设置</span><button type="button" class="st-tab" data-screen="settings" role="tab" aria-selected="false" aria-label="设置 · 设置">设置</button><button type="button" class="st-tab" data-screen="settings-stack" role="tab" aria-selected="false" aria-label="设置 · 设置栈">设置栈</button></span><span class="st-group" role="presentation"><span class="st-group-label" aria-hidden="true">往期</span><button type="button" class="st-tab" data-screen="hist-sheet" role="tab" aria-selected="false" aria-label="往期 · ① 底页月历">① 底页月历</button><button type="button" class="st-tab" data-screen="hist-strip" role="tab" aria-selected="false" aria-label="往期 · ② 日期条">② 日期条</button><button type="button" class="st-tab" data-screen="hist-list" role="tab" aria-selected="false" aria-label="往期 · ③ 往期列表">③ 往期列表</button></span></div>
+    <div class="st-tabs" role="tablist" aria-label="屏幕"><span class="st-group" role="presentation"><span class="st-group-label" aria-hidden="true">早报</span><button type="button" class="st-tab" data-screen="brief" role="tab" aria-selected="false" aria-label="早报 · 早报">早报</button><button type="button" class="st-tab" data-screen="hist-sheet" role="tab" aria-selected="false" aria-label="早报 · 往期月历">往期月历</button></span><span class="st-group" role="presentation"><span class="st-group-label" aria-hidden="true">内容</span><button type="button" class="st-tab" data-screen="content-article" role="tab" aria-selected="false" aria-label="内容 · 文章">文章</button><button type="button" class="st-tab" data-screen="content-podcast" role="tab" aria-selected="false" aria-label="内容 · 播客">播客</button><button type="button" class="st-tab" data-screen="content-social" role="tab" aria-selected="false" aria-label="内容 · 社交">社交</button></span><span class="st-group" role="presentation"><span class="st-group-label" aria-hidden="true">正文</span><button type="button" class="st-tab" data-screen="read" role="tab" aria-selected="false" aria-label="正文 · 正文">正文</button><button type="button" class="st-tab" data-screen="read-end" role="tab" aria-selected="false" aria-label="正文 · 读到文末">读到文末</button><button type="button" class="st-tab" data-screen="read-menu" role="tab" aria-selected="false" aria-label="正文 · ⋯ 菜单">⋯ 菜单</button><button type="button" class="st-tab" data-screen="sheet" role="tab" aria-selected="false" aria-label="正文 · 长按">长按</button></span><span class="st-group" role="presentation"><span class="st-group-label" aria-hidden="true">订阅</span><button type="button" class="st-tab" data-screen="subs" role="tab" aria-selected="false" aria-label="订阅 · 订阅">订阅</button><button type="button" class="st-tab" data-screen="subs-src" role="tab" aria-selected="false" aria-label="订阅 · 来源流">来源流</button><button type="button" class="st-tab" data-screen="interest" role="tab" aria-selected="false" aria-label="订阅 · 兴趣">兴趣</button></span><span class="st-group" role="presentation"><span class="st-group-label" aria-hidden="true">榜单</span><button type="button" class="st-tab" data-screen="rankings" role="tab" aria-selected="false" aria-label="榜单 · 榜单">榜单</button></span><span class="st-group" role="presentation"><span class="st-group-label" aria-hidden="true">设置</span><button type="button" class="st-tab" data-screen="settings" role="tab" aria-selected="false" aria-label="设置 · 设置">设置</button><button type="button" class="st-tab" data-screen="settings-stack" role="tab" aria-selected="false" aria-label="设置 · 设置栈">设置栈</button></span></div>
     <div class="st-ctrls">
-      <div class="pg-sw" role="group" aria-label="早报位置"><span>早报位置</span><button type="button" data-pg="briefpos" data-v="view" aria-pressed="true">内容内视图</button><button type="button" data-pg="briefpos" data-v="tab" aria-pressed="false">独立 Tab</button></div>
-      <div class="pg-sw" role="group" aria-label="往期方案" data-only-hist hidden><span>往期方案</span><button type="button" data-pg="hist" data-v="sheet" aria-pressed="true">① 底页月历</button><button type="button" data-pg="hist" data-v="strip" aria-pressed="false">② 日期条</button><button type="button" data-pg="hist" data-v="list" aria-pressed="false">③ 往期列表</button></div>
       <div class="pg-sw" role="group" aria-label="身份"><span>身份</span><button type="button" data-pg="guest" data-v="0" aria-pressed="true">读者</button><button type="button" data-pg="guest" data-v="1" aria-pressed="false">游客</button></div>
       <div class="pg-sw" role="group" aria-label="显示"><span>显示</span><button type="button" data-pg="cols" data-v="both" aria-pressed="true">亮暗并排</button><button type="button" data-pg="cols" data-v="light" aria-pressed="false">亮</button><button type="button" data-pg="cols" data-v="dark" aria-pressed="false">暗</button></div>
       <button type="button" class="st-reset" data-reset>重置</button>
@@ -1397,14 +1334,14 @@ code { font-family: var(--font-mono); font-size: max(12px, 0.88em); padding: 1px
       <figure><div data-phone="dark"></div><figcaption>暗</figcaption></figure>
     </div>
     <aside class="st-side" aria-label="当前屏说明">
-      <div data-notes="content-brief" hidden><h3>内容 · 早报</h3><p class="st-sub">内容 Tab 的第一个视图;启用个人早报时默认落在这里。早报版式沿用第 1 轮,往期入口按下方「往期方案」切换</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>底栏从内容类型改成功能模块:内容 · 订阅 · 榜单 · 设置。早报 / 文章 / 播客 / 社交 收进顶栏中间的转盘(第 3 轮定 B,见细节样页 view-switcher):当前视图放大居中,邻居淡出半截;点邻居、横拖或 ← → 切换,每个刊名命中区 64 × 44。</li><li><span class="pg-tag is-new">新</span>页头左上是头像(点了去「设置」);早报视图里「只看未读 / 全部标读 / 搜索」三枚钮留位不显示(早报没有未读概念),转盘不会因此跳位。</li><li><span class="pg-tag is-new">新</span>页顶「早报位置」可切到「独立 Tab」:五个 Tab(早报 · 内容 · 订阅 · 榜单 · 设置),内容里只剩 文章 / 播客 / 社交。</li><li><span class="pg-tag ">留</span>早报版式、长按动作单、往期三方案、早报卡进正文的路径都沿用第 1 轮;只改入口。</li></ul></div><div data-notes="content-article" hidden><h3>内容 · 文章</h3><p class="st-sub">页头一排 = 头像 · 转盘 · 只看未读 / 全部标读 / 搜索;列表上方只有类型胶囊一条</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>「全部 / 未读」收成顶栏一枚开关图标:空心圈 = 显示全部,带点的圈 = 只看未读;开着时转盘下面写「只看未读」,切换时有提示条。它管的是整个内容 Tab(现网 unreadOnly 本来就是一个全局状态)。</li><li><span class="pg-tag is-fix">修</span>第 1 轮的两条根因在新形态下都不存在:开关在固定的顶栏里,不在任何横滑轨里;它只有 aria-pressed / class 两态,没有要量宽度的拇指。自检照第 1 轮的 10 个步骤复测。</li><li><span class="pg-tag ">简</span>页头只剩一排(视图切换并进顶栏),列表上方只有类型胶囊一条(只有文章有类型)。大标题下的「全部来源 ⌄」移走,按来源看去「订阅」Tab;顶栏的收藏筛选移到「订阅」Tab 的「收藏」。</li><li><span class="pg-tag is-cut">删</span>视图上的未读点取消(第 3 轮):转盘上不挂点;条目自身仍靠标题字重与墨色区分已读未读。</li><li><span class="pg-tag ">留</span>卡片、按压、长按抬起、类型胶囊横滑不变;按类型筛选时收起「全部标读」(与现网同口径)。</li></ul></div><div data-notes="content-podcast" hidden><h3>内容 · 播客</h3><p class="st-sub">最小可用版:现网播客行的字段套夜航卡面</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>最小可用版:沿用现网播客行的字段(封面 · 节目名 · 时间 · 分数 / 标题两行 / 播放中 · 时长),套夜航卡面;正在播放的那期带「播放中」。</li><li><span class="pg-tag ">简</span>精品导读状态、简介初评签等其余字段沿用现网卡片,样页没画;点卡片进节目页(样页给提示条),长按出动作单。</li></ul></div><div data-notes="content-social" hidden><h3>内容 · 社交</h3><p class="st-sub">最小可用版:现网社交卡的字段套夜航卡面</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>最小可用版:沿用 SocialFlow 卡的字段(头像 · 名字 · @handle · 时间 / 原文 / 配图 / 译为中文),长文折叠成六行 +「显示更多」;长按出推文动作。</li><li><span class="pg-tag ">留</span>不展示互动数字;只订阅了一个平台时不挂平台角标(conventions §4.2);读过的卡文字降一档。</li></ul></div><div data-notes="read" hidden><h3>正文</h3><p class="st-sub">第 1 轮结果不变,只是入口多了订阅 Tab 的推入页</p><ul class="pg-notes"><li><span class="pg-tag ">留</span>第 1 轮结果不变:无顶栏,返回 / 收藏 · 分享 · 更多 是浮在内容上的磨砂钮;拇指区 上一篇 · 原文 | 中文 · 下一篇;「听导读」已撤。</li><li><span class="pg-tag ">留</span>入口不变:内容 Tab 的条目卡、早报卡、订阅 Tab 推入页里的卡、榜单里的条目,点开都是同一个正文页;从卡片矩形长出来,返回收回原位。</li></ul></div><div data-notes="read-end" hidden><h3>正文 · 读到文末</h3><p class="st-sub">读到文末时镀层退场(沉浸态),进度线满格,文末「下一篇」大卡</p><ul class="pg-notes"><li><span class="pg-tag ">留</span>读到文末:镀层退场(沉浸态),进度线满格;文末「下一篇」大卡,往上一划镀层回来。</li></ul></div><div data-notes="sheet" hidden><h3>正文 · 长按</h3><p class="st-sub">被长按的那一条先抬起成预览卡,动作组按桌面右键菜单的分组</p><ul class="pg-notes"><li><span class="pg-tag ">留</span>被长按的那一条先抬起成预览卡,动作组按 items 的分组断成三块,图标在行尾;文章卡 = buildArticleMenuItems 同构。</li><li><span class="pg-tag is-new">新</span>播客卡、社交卡也接长按;社交卡的动作:标为已读 / 收藏 / 打开原推 / 标记该账号全部已读(沿用现网推文动作)。</li></ul></div><div data-notes="subs" hidden><h3>订阅</h3><p class="st-sub">原来源底页 + 发现更多来源 + 我的兴趣 + 收藏;顶部分段 订阅 | 兴趣</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>订阅 Tab = 原来源底页 + 发现更多来源 + 我的兴趣 + 收藏。顶部分段 订阅 | 兴趣;右上「+」与列表尾都进「发现更多来源」整页。</li><li><span class="pg-tag is-new">新</span>最上面是「全部」「收藏」两个汇总入口(收藏从「我的」搬来),下面按 官方 / 媒体 / 个人 / 榜单 / 播客 / 社交 分组列出所有订阅;点一行推入该来源的条目流。</li><li><span class="pg-tag ">留</span>未读只靠源名字重(conventions:源栏不显示每源未读数,也不画点);暂不可用的来源灰显并写「暂不可用」。</li><li><span class="pg-tag is-new">新</span>游客(页顶「身份」切):列表是默认订阅,顶上一张登录引导;「+」、收藏、兴趣都提示登录。</li></ul></div><div data-notes="subs-src" hidden><h3>订阅 · 来源流</h3><p class="st-sub">点一个来源,在订阅 Tab 里推入它的条目流整页;不动内容 Tab 的状态</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>在订阅 Tab 里推入的整页:来源头(徽标 · 名字 · 角色 · 形态)+ 该来源的条目;右上 只看未读 · 全部标读 是这一页自己的状态,不动「内容」Tab。</li><li><span class="pg-tag is-new">新</span>返回钮 / Esc / 系统返回出栈;推入页盖住 TabBar,点卡片照常进正文页(正文页在它上面)。「全部」「收藏」「兴趣」推入的是同一种页,全部 / 收藏的顶栏中段是同一个转盘(文章 / 播客 / 社交)。</li><li><span class="pg-tag is-cut">需落地</span>落地要第二个列表实例:现网 useReaderState 只有一条列表,来源过滤是这条列表上的修饰符;推入页要独立于内容 Tab,得另起一份列表状态(纯前端,接口不变)。</li></ul></div><div data-notes="interest" hidden><h3>订阅 · 兴趣</h3><p class="st-sub">现网 InterestPage 的移动档,外加原来源底页的兴趣轴</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>兴趣段 = 现网 InterestPage 的移动档:点击即保存(回执「保存中… / 已保存」)、搜索标签、主题 / 行业 / 实体三段、目录卡点一下加入、再点取消(不画勾选框)。</li><li><span class="pg-tag is-new">新</span>「我的兴趣」每行可点:推入该兴趣的条目流(即原来源底页的兴趣轴),行尾 × 移出。</li><li><span class="pg-tag ">留</span>只画现网已有的能力;目录 94 个标签取自规范目录。兴趣只在启用个人早报时出现,与现网「我的兴趣」同条件。</li></ul></div><div data-notes="rankings" hidden><h3>榜单</h3><p class="st-sub">只换夜航壳,版式与文章榜定位归 #221</p><ul class="pg-notes"><li><span class="pg-tag ">留</span>只换壳:沿用 RankingsPage 的分段与区块(文章榜 | 播客榜 × 话题 / 产业 / 实体;标签榜 → 标签高分内容与 30 日趋势 → 全局高分榜 → 必读文章);版式与文章榜定位归 #221。</li><li><span class="pg-tag is-new">新</span>套夜航壳:大标题 + 分段、圆角分组卡、行高 ≥ 44、字号 ≥ 12。Tab 名用「榜单」;也可以叫「发现」,但「发现」现网已指「发现更多来源」。</li></ul></div><div data-notes="settings" hidden><h3>设置</h3><p class="st-sub">原「我的」+ 原设置栈一级页;外观合成一行,点进二级页</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>设置 Tab = 原「我的」(资料卡、反馈与建议、添加到主屏幕、退出登录)+ 原设置栈一级页(通用 / 接入集成 / 关于);收藏、发现更多来源、我的兴趣搬去「订阅」。</li><li><span class="pg-tag ">简</span>原「我的」里的外观三态分段与设置栈的「外观」合成一行,行尾写当前值,点进二级页(主题之外还有中性色与减少动效)。</li><li><span class="pg-tag ">留</span>二级页沿用现网 MobileSettings 各分区;游客:资料卡换成登录引导,锁住的分区挂锁,没有退出登录。</li></ul></div><div data-notes="settings-stack" hidden><h3>设置 · 设置栈</h3><p class="st-sub">从设置 Tab 推入的二级页(以「外观」为例,现网 AppearanceSection 原样)</p><ul class="pg-notes"><li><span class="pg-tag ">留</span>从设置 Tab 推入的二级页,以「外观」为例:主题三态、中性色三选一、减少动效(现网 AppearanceSection 原样,动效开关与页顶「动效」是同一个 data-motion)。返回 / Esc / 系统返回出栈。</li></ul></div><div data-notes="hist-sheet" hidden><h3>往期 · ① 底页月历</h3><p class="st-sub">点「往期」从底部升起月历:一屏一个月,多版排在月历下方</p><ul class="pg-notes"><li><span class="pg-tag ">留</span>第 1 轮原样:点「往期」从底部升起月历(可拖拽关闭,Esc / 系统返回也关);一屏一个月、周一起、格子 44px;多版的日子版次排在月历下方。</li></ul></div><div data-notes="hist-strip" hidden><h3>往期 · ② 日期条</h3><p class="st-sub">眉头下常驻最近两周的日期条,最左「月历」看更早的</p><ul class="pg-notes"><li><span class="pg-tag ">留</span>第 1 轮原样:眉头下常驻一条最近两周的日期条,点一天就地切换;最左「月历」进底页月历看更早的。</li></ul></div><div data-notes="hist-list" hidden><h3>往期 · ③ 往期列表</h3><p class="st-sub">整页列表,按月分组;每期一行头条标题(需后端补字段)</p><ul class="pg-notes"><li><span class="pg-tag ">留</span>第 1 轮原样:「往期 ›」推入整页列表,按月分组;每行 = 日期块 + 版次 · 编排时刻 · 篇数 + 状态签。</li><li><span class="pg-tag is-cut">需落地</span>每期一行头条标题:列表端点现在不带条目(include_items=False),需要后端补 headline 字段;今天那一期的头条来自今日接口,现成。</li></ul></div>
-      <p class="st-hint">两台手机都能点:底栏切模块、顶栏转盘切视图(点邻居或横拖)、点卡片进正文、长按(或右键)出动作单、订阅 Tab 点来源推入它的条目流、设置 Tab 点外观进二级页、早报点「往期」看所选方案;Esc 或浏览器返回关最上面那层。顶栏可切页面主题、中性色、动效(完整 / 减少)与机型宽度;舞台上方切早报位置与身份(读者 / 游客)。</p>
+      <div data-notes="brief" hidden><h3>早报</h3><p class="st-sub">早报是独立 Tab(第 4 轮定稿),版式沿用第 1 轮;往期 = 底页月历</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>第 4 轮定稿:早报独立成 Tab,底栏固定为 早报 · 内容 · 订阅 · 榜单 · 设置;启用个人早报时默认落在这里。眉头写「早报 — 日期」。</li><li><span class="pg-tag ">留</span>版式沿用第 1 轮:头条整块可点 +「全文 ›」、卡上不放收藏、早报卡长按出动作单;看往期时眉头右侧换成「回到今天」。</li></ul></div><div data-notes="hist-sheet" hidden><h3>早报 · 往期月历</h3><p class="st-sub">点「往期」从底部升起月历:日期只分有 / 没有两态,今天一个蓝点</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>往期定为底页月历(第 4 轮):日期只分两态,靠数字颜色区分——有早报(墨色,可点)/ 没有(灰,不可点)。失败日按「没有」处理(与桌面月历不同:桌面标红、可点)。</li><li><span class="pg-tag ">留</span>正在看的那天是实底圆(选中态);今天一个蓝点;编排中的今天呼吸;当天多版时版次排在月历下方再选。</li><li><span class="pg-tag is-cut">删</span>底部四个图例(有早报 / 没有 / 失败 / 今天)与「回到今天」文字钮撤掉;看往期时眉头右侧已有「回到今天」。多版角标、未来日期的更淡一档也撤掉,只留两态。</li></ul></div><div data-notes="content-article" hidden><h3>内容 · 文章</h3><p class="st-sub">页头一排 = 头像 · 转盘 · 只看未读 / 全部标读 / 搜索;列表上方只有类型胶囊一条</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>视图在顶栏中间的转盘里切(第 3 轮定 B):当前视图放大居中,邻居淡出半截;点邻居、横拖或 ← → 切换;第 4 轮起固定三项 文章 / 播客 / 社交。视图上不挂未读点。</li><li><span class="pg-tag is-new">新</span>「全部 / 未读」是顶栏一枚开关图标:空心圈 = 显示全部,带点的圈 = 只看未读;开着时转盘下面写「只看未读」,切换时有提示条。它管的是整个内容 Tab(现网 unreadOnly 本来就是一个全局状态)。</li><li><span class="pg-tag ">简</span>页头只剩一排,列表上方只有类型胶囊一条(只有文章有类型)。按来源看去「订阅」Tab;收藏筛选在「订阅」Tab 的「收藏」。</li><li><span class="pg-tag ">留</span>卡片、按压、长按抬起、类型胶囊横滑不变;按类型筛选时收起「全部标读」(与现网同口径);条目靠标题字重与墨色区分已读未读。</li></ul></div><div data-notes="content-podcast" hidden><h3>内容 · 播客</h3><p class="st-sub">最小可用版:现网播客行的字段套夜航卡面</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>最小可用版:沿用现网播客行的字段(封面 · 节目名 · 时间 · 分数 / 标题两行 / 播放中 · 时长),套夜航卡面;正在播放的那期带「播放中」。</li><li><span class="pg-tag ">简</span>精品导读状态、简介初评签等其余字段沿用现网卡片,样页没画;点卡片进节目页(样页给提示条),长按出动作单。</li></ul></div><div data-notes="content-social" hidden><h3>内容 · 社交</h3><p class="st-sub">最小可用版:现网社交卡的字段套夜航卡面</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>最小可用版:沿用 SocialFlow 卡的字段(头像 · 名字 · @handle · 时间 / 原文 / 配图 / 译为中文),长文折叠成六行 +「显示更多」;长按出推文动作。</li><li><span class="pg-tag ">留</span>不展示互动数字;只订阅了一个平台时不挂平台角标(conventions §4.2);读过的卡文字降一档。</li></ul></div><div data-notes="read" hidden><h3>正文</h3><p class="st-sub">无顶栏、无底部坞;右上 收藏 · 分享 · ⋯</p><ul class="pg-notes"><li><span class="pg-tag is-cut">删</span>底部浮动坞(上一篇 · 原文 | 中文 · 下一篇)整组撤掉,给它留的底部空白一并收回(第 4 轮)。</li><li><span class="pg-tag ">留</span>无顶栏:左上返回,右上 收藏 · 分享 · ⋯ 是浮在内容上的磨砂钮,往下读时淡出;翻译与查看原文在「⋯」菜单里;「听导读」已撤。</li><li><span class="pg-tag ">留</span>入口不变:内容 Tab 的条目卡、早报卡、订阅 Tab 推入页里的卡、榜单里的条目,点开都是同一个正文页;从卡片矩形长出来,返回收回原位。</li></ul></div><div data-notes="read-end" hidden><h3>正文 · 读到文末</h3><p class="st-sub">读到文末时镀层退场(沉浸态),进度线满格,文末 查看原文 + 「下一篇」大卡</p><ul class="pg-notes"><li><span class="pg-tag ">留</span>读到文末:镀层退场(沉浸态),进度线满格;文末「查看原文 ↗」与「下一篇」大卡保留(上一篇入口随底部坞撤掉),往上一划镀层回来。</li></ul></div><div data-notes="read-menu" hidden><h3>正文 · ⋯ 菜单</h3><p class="st-sub">正文右上「⋯」:只出菜单,不带预览卡;翻译与查看原文在这里</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>正文右上「⋯」打开的底页只有菜单,不带文章预览卡(列表里长按时的抬起预览卡不变)。</li><li><span class="pg-tag is-new">新</span>菜单按使用频率排:译为中文 / 显示原文(只对有英文原文的文章)· 查看原文 | 复制站内链接 · 分享给… | 标为未读 · 标记该源全部已读。收藏是右上的星,分享浮层是右上的分享钮,菜单里不重复。</li></ul></div><div data-notes="sheet" hidden><h3>正文 · 长按</h3><p class="st-sub">列表里长按:那一条先抬起成预览卡,动作组按桌面右键菜单的分组</p><ul class="pg-notes"><li><span class="pg-tag ">留</span>列表里长按:被长按的那一条先抬起成预览卡,动作组按 items 的分组断成三块,图标在行尾;文章卡 = buildArticleMenuItems 同构。</li><li><span class="pg-tag ">留</span>播客卡、社交卡也接长按;社交卡的动作:标为已读 / 收藏 / 打开原推 / 标记该账号全部已读(沿用现网推文动作)。</li></ul></div><div data-notes="subs" hidden><h3>订阅</h3><p class="st-sub">原来源底页 + 发现更多来源 + 我的兴趣 + 收藏;顶部分段 订阅 | 兴趣</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>订阅 Tab = 原来源底页 + 发现更多来源 + 我的兴趣 + 收藏。顶部分段 订阅 | 兴趣;右上「+」与列表尾都进「发现更多来源」整页。</li><li><span class="pg-tag is-new">新</span>最上面是「全部」「收藏」两个汇总入口,下面按 官方 / 媒体 / 个人 / 榜单 / 播客 / 社交 分组列出所有订阅;点一行推入该来源的条目流。</li><li><span class="pg-tag ">留</span>未读只靠源名字重(conventions:源栏不显示每源未读数,也不画点);暂不可用的来源灰显并写「暂不可用」。游客:列表是默认订阅,顶上一张登录引导。</li></ul></div><div data-notes="subs-src" hidden><h3>订阅 · 来源流</h3><p class="st-sub">点一个来源,在订阅 Tab 里推入它的条目流整页;不动内容 Tab 的状态</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>在订阅 Tab 里推入的整页:来源头 + 该来源的条目;右上 只看未读 · 全部标读 是这一页自己的状态,不动「内容」Tab。「全部」「收藏」页的顶栏中段是同一个转盘(文章 / 播客 / 社交)。</li><li><span class="pg-tag is-cut">需落地</span>落地要第二个列表实例:现网 useReaderState 只有一条列表,来源过滤是这条列表上的修饰符;推入页要独立于内容 Tab,得另起一份列表状态(纯前端,接口不变)。</li></ul></div><div data-notes="interest" hidden><h3>订阅 · 兴趣</h3><p class="st-sub">现网 InterestPage 的移动档,外加原来源底页的兴趣轴</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>兴趣段 = 现网 InterestPage 的移动档:点击即保存、搜索标签、主题 / 行业 / 实体三段、目录卡点一下加入再点取消;「我的兴趣」每行可点读它的条目流,行尾 × 移出。</li><li><span class="pg-tag ">留</span>只画现网已有的能力;兴趣只在启用个人早报时出现,与现网「我的兴趣」同条件。</li></ul></div><div data-notes="rankings" hidden><h3>榜单</h3><p class="st-sub">只换夜航壳,版式与文章榜定位归 #221</p><ul class="pg-notes"><li><span class="pg-tag ">留</span>只换壳:沿用 RankingsPage 的分段与区块(文章榜 | 播客榜 × 话题 / 产业 / 实体;标签榜 → 标签高分内容与 30 日趋势 → 全局高分榜 → 必读文章);版式与文章榜定位归 #221。</li></ul></div><div data-notes="settings" hidden><h3>设置</h3><p class="st-sub">原「我的」+ 原设置栈一级页;外观合成一行,点进二级页</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>设置 Tab = 原「我的」(资料卡、反馈与建议、添加到主屏幕、退出登录)+ 原设置栈一级页(通用 / 接入集成 / 关于);外观合成一行,点进二级页。</li><li><span class="pg-tag ">留</span>二级页沿用现网 MobileSettings 各分区;游客:资料卡换成登录引导,锁住的分区挂锁,没有退出登录。</li></ul></div><div data-notes="settings-stack" hidden><h3>设置 · 设置栈</h3><p class="st-sub">从设置 Tab 推入的二级页(以「外观」为例,现网 AppearanceSection 原样)</p><ul class="pg-notes"><li><span class="pg-tag ">留</span>从设置 Tab 推入的二级页,以「外观」为例:主题三态、中性色三选一、减少动效(现网 AppearanceSection 原样)。返回 / Esc / 系统返回出栈。</li></ul></div>
+      <p class="st-hint">两台手机都能点:底栏切模块、顶栏转盘切视图(点邻居或横拖)、点卡片进正文、长按(或右键)出动作单、订阅 Tab 点来源推入它的条目流、设置 Tab 点外观进二级页、早报点「往期」开月历、正文点「⋯」出菜单;Esc 或浏览器返回关最上面那层。顶栏可切页面主题、中性色、动效(完整 / 减少)与机型宽度;舞台上方切身份(读者 / 游客)。</p>
     </aside>
   </div>
 </section>
 <section class="pg-sec" id="motion">
   <h2>动效清单 <small>全部挂 &lt;html data-motion&gt;,不读 OS 媒体查询</small></h2>
-  <div class="pg-tw"><table class="pg-table"><thead><tr><th>动效</th><th>触发</th><th>时长 · 缓动</th><th>目的</th><th>减少动效时</th></tr></thead><tbody><tr><td>镀层退场</td><td>列表 / 正文向下滚(越过 140px 且速度 > 6px/帧)</td><td class="num">420ms · --motion-sheet(弹簧)</td><td>TabBar、播放坞、正文动作把整屏让给内容;往上一划就回来</td><td>常显,不退场</td></tr><tr><td>大标题收拢</td><td>订阅 / 榜单 / 设置 滚过 44px</td><td class="num">240ms · --motion-medium</td><td>栏名从页面收进顶栏,顶栏换上磨砂</td><td>只剩显隐</td></tr><tr><td>转盘转动</td><td>点邻居 / 横拖 / ← →</td><td class="num">420ms · --motion-sheet;横拖时跟手,松手按最近一项弹簧回位</td><td>当前项放大居中,邻居淡出半截</td><td>瞬切</td></tr><tr><td>推入页</td><td>订阅 Tab 点来源 / 全部 / 收藏 / 兴趣;设置 Tab 点外观</td><td class="num">420ms 弹簧 translateX(32px → 0)+ 240ms 淡入;返回反向</td><td>层级感:这是 Tab 里的下一层</td><td>1ms</td></tr><tr><td>容器展开</td><td>点卡片 / 早报卡 → 正文;返回</td><td class="num">420ms 弹簧 clip-path + 90ms 后正文淡入;返回 320ms 收回原卡</td><td>来处即去处</td><td>120ms 淡入</td></tr><tr><td>底页弹簧</td><td>往期月历 / 动作组 / 播放展开</td><td class="num">420ms · --motion-sheet(超调 2.5%)</td><td>物理感,与拖拽同一套参数</td><td>1ms</td></tr><tr><td>跟手拖拽</td><td>按住把手下拉底页</td><td class="num">跟手;松手 > 96px 或速度 > 0.6px/ms 即关,否则弹回</td><td>直接操纵</td><td>拖拽照常,无回弹</td></tr><tr><td>抬起预览</td><td>长按卡片(文章、早报、播客、社交)</td><td class="num">420ms · --motion-sheet(0.96 → 1)+ 原卡淡到 35%</td><td>告诉你「选中的是这一条」</td><td>无缩放</td></tr><tr><td>按压纵深</td><td>按住卡片 / 早报头条 / 磨砂钮</td><td class="num">100ms 压到 0.985(头条 0.99),松手弹回</td><td>触感</td><td>无</td></tr><tr><td>镜片拇指</td><td>TabBar / 订阅 | 兴趣 / 榜单分段 / 主题 / 语言</td><td class="num">420ms · --motion-sheet,按第几项定位</td><td>连续</td><td>瞬移</td></tr></tbody></table></div>
+  <div class="pg-tw"><table class="pg-table"><thead><tr><th>动效</th><th>触发</th><th>时长 · 缓动</th><th>目的</th><th>减少动效时</th></tr></thead><tbody><tr><td>镀层退场</td><td>列表 / 正文向下滚(越过 140px 且速度 > 6px/帧)</td><td class="num">420ms · --motion-sheet(弹簧)</td><td>TabBar、播放坞、正文右上的钮把整屏让给内容;往上一划就回来</td><td>常显,不退场</td></tr><tr><td>大标题收拢</td><td>订阅 / 榜单 / 设置 滚过 44px</td><td class="num">240ms · --motion-medium</td><td>栏名从页面收进顶栏,顶栏换上磨砂</td><td>只剩显隐</td></tr><tr><td>转盘转动</td><td>点邻居 / 横拖 / ← →</td><td class="num">420ms · --motion-sheet;横拖时跟手,松手按最近一项弹簧回位</td><td>当前项放大居中,邻居淡出半截</td><td>瞬切</td></tr><tr><td>推入页</td><td>订阅 Tab 点来源 / 全部 / 收藏 / 兴趣;设置 Tab 点外观</td><td class="num">420ms 弹簧 translateX(32px → 0)+ 240ms 淡入;返回反向</td><td>层级感:这是 Tab 里的下一层</td><td>1ms</td></tr><tr><td>容器展开</td><td>点卡片 / 早报卡 → 正文;返回</td><td class="num">420ms 弹簧 clip-path + 90ms 后正文淡入;返回 320ms 收回原卡</td><td>来处即去处</td><td>120ms 淡入</td></tr><tr><td>底页弹簧</td><td>往期月历 / 动作组 / 播放展开</td><td class="num">420ms · --motion-sheet(超调 2.5%)</td><td>物理感,与拖拽同一套参数</td><td>1ms</td></tr><tr><td>跟手拖拽</td><td>按住把手下拉底页</td><td class="num">跟手;松手 > 96px 或速度 > 0.6px/ms 即关,否则弹回</td><td>直接操纵</td><td>拖拽照常,无回弹</td></tr><tr><td>抬起预览</td><td>长按卡片(文章、早报、播客、社交)</td><td class="num">420ms · --motion-sheet(0.96 → 1)+ 原卡淡到 35%</td><td>告诉你「选中的是这一条」</td><td>无缩放</td></tr><tr><td>按压纵深</td><td>按住卡片 / 早报头条 / 磨砂钮</td><td class="num">100ms 压到 0.985(头条 0.99),松手弹回</td><td>触感</td><td>无</td></tr><tr><td>镜片拇指</td><td>TabBar / 订阅 | 兴趣 / 榜单分段 / 主题 / 语言</td><td class="num">420ms · --motion-sheet,按第几项定位</td><td>连续</td><td>瞬移</td></tr></tbody></table></div>
   <p class="pg-foot">--motion-sheet 超出现有 token 区间(150–300),落地时需像 #199 播放条形变一样登记「具名例外」;护栏同播放条:只动 transform / opacity / clip-path。</p>
 </section>
 <section class="pg-sec" id="tokens">
@@ -1756,16 +1693,16 @@ const RANKINGS = {
    往期做三种移动端方案(底页月历 / 日期条 / 往期列表);正文页撤「听导读」。
    第 2 轮返修(2026-10-28,参考 Folo 手机版的功能组织):底栏从内容类型改成功能模块 内容 · 订阅 · 榜单 · 设置;
    内容类型上移成「内容」页头的视图切换(第 3 轮定为顶栏中段的转盘,视图上不挂未读点);
-   「全部 / 未读」收进顶栏图标;来源底页变成「订阅」Tab(吸收发现更多来源、我的兴趣、收藏);「我的」并进「设置」Tab。 */
+   「全部 / 未读」收进顶栏图标;来源底页变成「订阅」Tab(吸收发现更多来源、我的兴趣、收藏);「我的」并进「设置」Tab。
+   第 4 轮(2026-10-29)定稿:早报独立成 Tab;往期只留底页月历(有 / 没有两态);正文去底部坞,翻译与查看原文进「⋯」菜单。 */
 
 /* 底栏 = 功能模块;早报位置两种:内容里的第一个视图(默认)/ 独立 Tab(备选,五个 Tab) */
-function cTabs(st) {
-  const core = [['content', '内容', 'layers'], ['subs', '订阅', 'library'], ['rankings', '榜单', 'chart'], ['settings', '设置', 'settings']];
-  return st.briefPos === 'tab' ? [['brief', '早报', 'newspaper'], ...core] : core;
+function cTabs() {   // 第 4 轮定稿:早报独立成 Tab
+  return [['brief', '早报', 'newspaper'], ['content', '内容', 'layers'], ['subs', '订阅', 'library'], ['rankings', '榜单', 'chart'], ['settings', '设置', 'settings']];
 }
 /* 内容 Tab 的视图(现网三条流各自独立,没有混合流接口:一个视图 = 一条流) */
 const VIEWS = { brief: ['早报', 'newspaper'], article: ['文章', 'fileText'], podcast: ['播客', 'podcast'], social: ['社交', 'atSign'] };
-const cViewIds = (st) => (st.briefPos === 'tab' ? ['article', 'podcast', 'social'] : ['brief', 'article', 'podcast', 'social']);
+const cViewIds = () => ['article', 'podcast', 'social'];   // 第 4 轮:早报不再是内容里的视图
 /* 来源行未读:样页里有条目的来源按条目算,其余按快照标记 */
 function srcUnread(st, id) {
   const items = allItems().filter((e) => e.src === id);
@@ -1849,13 +1786,13 @@ function histInfo(key) {
   const list = histDays().get(key) || [];
   const isToday = key === HISTORY.today;
   const latest = list[0] || null;
-  const has = isToday || list.length > 0;
+  const has = isToday || list.some((r) => r.status !== 'failed');   // 第 4 轮:失败日按「没有」处理(灰、不可点;桌面月历标红、可点)
   const failed = latest?.status === 'failed';
   const live = latest && (latest.status === 'pending' || latest.status === 'generating');
   return { key, list, latest, has, failed, live, isToday, count: list.length };
 }
 function histDayLabel(info, on) {
-  const notes = [info.isToday ? '今天' : '', on ? '正在看' : '', !info.has ? '没有早报' : info.live ? '编排中' : info.failed ? '失败' : info.count > 1 ? `共 ${info.count} 版` : ''].filter(Boolean);
+  const notes = [info.isToday ? '今天' : '', on ? '正在看' : '', !info.has ? '没有早报' : info.live ? '编排中' : info.count > 1 ? `共 ${info.count} 版` : ''].filter(Boolean);
   return `${histMd(info.key)} ${histWeek(info.key)}${notes.length ? `，${notes.join('，')}` : ''}`;
 }
 function cRevs(st, key) {
@@ -2000,7 +1937,6 @@ const DIR = {
   },
 
   pane(id, st) {
-    if (id === 'brief') return `<div class="m-scroll c-brief c-pane-scroll">${DIR.briefInner(st)}</div>`;
     if (id === 'article') {
       const kinds = KINDS.map((k) => `<button type="button" class="c-pill" data-act="kind" data-v="${k.kind}" aria-pressed="false">${k.label}</button>`).join('');
       return `<div class="m-scroll c-list c-pane-scroll"><div class="c-kinds-row"><div class="c-kinds m-hscroll" role="group" aria-label="按内容类型筛选">${kinds}</div></div>${cFeedList()}</div>`;
@@ -2055,7 +1991,6 @@ const DIR = {
 
   read(a, st) {
     const fav = st.fav.has(a.id);
-    const prev = a.prev ? feedById(a.prev) : null;
     const next = a.next ? feedById(a.next) : null;
     const tags = a.tags.map((t) => `<button type="button" class="c-tag" data-act="noop" data-v="样页:检索「${esc(t)}」并回到列表" aria-label="检索「${esc(t)}」">${esc(t)}</button>`).join('<span class="c-dot" aria-hidden="true">·</span>');
     return `<span class="c-progress" aria-hidden="true"></span>
@@ -2084,23 +2019,18 @@ const DIR = {
         <button type="button" class="c-origin" data-act="noop" data-v="样页:此处在新窗口打开原文">查看原文 ↗${a.host ? `<span> · ${esc(a.host)}</span>` : ''}</button>
         ${next ? `<button type="button" class="c-next" data-act="next"><span class="c-next-k">下一篇</span><span class="c-next-t"${langAttr(next.title)}>${esc(next.title)}</span><span class="c-next-by">${logo(next.src, 16)}${esc(srcName(next.src))} · ${esc(next.time)}</span></button>` : ''}
       </article>
-    </div>
-    <nav class="c-read-dock" aria-label="正文工具">
-      <button type="button" class="c-dock-btn" data-act="prev"${prev ? '' : ' aria-disabled="true"'} aria-label="上一篇">${ICON('chevronLeft')}</button>
-      ${a.en ? cSeg([['en', '原文', st.lang === 'en'], ['zh', '中文', st.lang === 'zh']], 'lang', { cls: 'c-langseg', label: '正文语言', role: 'radiogroup', itemRole: 'radio' }) : '<span class="c-dock-note">中文原文</span>'}
-      <button type="button" class="c-dock-btn" data-act="next"${next ? '' : ' aria-disabled="true"'} aria-label="下一篇">${ICON('chevronRight')}</button>
-    </nav>`;
+    </div>`;
   },
 
   /* 长按:被长按的那一条先抬起成预览卡,动作组按 items 的分组断成三块(文章 = buildArticleMenuItems 同构;社交卡沿用现网推文动作) */
-  sheet(e) {
+  sheet(e, st, phone, opts = {}) {
     const groups = [];
     let cur = [];
-    DIR.sheetItems(e).forEach((it) => { if (it.type === 'sep') { groups.push(cur); cur = []; } else cur.push(it); });
+    (opts.menuOnly ? DIR.readMenu(e, st) : DIR.sheetItems(e)).forEach((it) => { if (it.type === 'sep') { groups.push(cur); cur = []; } else cur.push(it); });
     groups.push(cur);
     return `<div class="m-dim c-dim" data-act="scrim" aria-hidden="true"></div>
     <div class="c-ctx">
-      <div class="c-peek" aria-hidden="true">${cPeekInner(e)}</div>
+      ${opts.menuOnly ? '' : `<div class="c-peek" aria-hidden="true">${cPeekInner(e)}</div>`}
       <div class="c-menu" role="menu" aria-label="${esc(e.title || e.author)}" data-drag-panel>
         <div class="c-grab-zone is-menu" data-drag><span class="c-grab"></span></div>
         ${groups.map((g) => `<div class="c-menu-group">${g.map((it) => `<button type="button" class="c-menu-item" role="menuitem" data-act="sheet-item" data-v="${it.key}"><span>${esc(it.label)}</span>${ICON(it.icon)}</button>`).join('')}</div>`).join('')}
@@ -2119,6 +2049,22 @@ const DIR = {
     ];
   },
 
+  /* 正文「⋯」底页的菜单(第 4 轮):只留菜单、不带预览卡;按使用频率排——翻译(只对有英文原文的文章)· 查看原文 | 复制站内链接 · 分享给… | 标为未读 · 标记该源全部已读。
+     收藏在右上角的星,分享浮层在右上角的分享钮,这里不重复 */
+  readMenu(e, st) {
+    const a = articleFor(e.id);
+    return [
+      ...(a?.en ? [{ key: 'lang', label: st.lang === 'zh' ? '显示原文' : '译为中文', icon: 'languages' }] : []),
+      { key: 'open', label: '查看原文', icon: 'externalLink' },
+      { type: 'sep' },
+      { key: 'copy', label: '复制站内链接', icon: 'link' },
+      { key: 'sysshare', label: '分享给…', icon: 'share' },
+      { type: 'sep' },
+      { key: 'read', label: e.read ? '标为未读' : '标为已读', icon: e.read ? 'undo' : 'check' },
+      { key: 'markall', label: '标记该源全部已读', icon: 'checkCheck' },
+    ];
+  },
+
   /* ── 早报:版式沿用第 1 轮(头条整块可点 + 「全文 ›」、卡上不放收藏、往期三方案);第 2 轮只改入口 ── */
   briefInner(st) {
     const h = BRIEF.head;
@@ -2126,10 +2072,7 @@ const DIR = {
     const info = histInfo(st.briefDate);
     const rev = st.briefRev ?? info.latest?.rev ?? null;
     const dateText = `${histMd(st.briefDate)} ${histWeek(st.briefDate)}${isToday ? ' · 今天' : ''}${info.count > 1 && rev ? ` · 第 ${rev} 版` : ''}`;
-    const trigger = st.hist === 'strip' ? ''
-      : st.hist === 'list'
-        ? `<button type="button" class="c-hist" data-act="hist" aria-haspopup="true"><span class="c-hist-in">往期${ICON('chevronRight')}</span></button>`
-        : `<button type="button" class="c-hist" data-act="hist" aria-haspopup="dialog"><span class="c-hist-in">${ICON('calendar')}往期</span></button>`;
+    const trigger = `<button type="button" class="c-hist" data-act="hist" aria-haspopup="dialog"><span class="c-hist-in">${ICON('calendar')}往期</span></button>`;
     const side = isToday
       ? `<button type="button" class="c-gbtn" data-act="${st.guest ? 'login' : 'noop'}" data-v="已开始重新编排今日早报" aria-label="重新编排今日早报"><span class="c-gbtn-in">${ICON('refresh')}</span></button>`
       : `<button type="button" class="c-today" data-act="hist-today"><span class="c-today-in">${ICON('undo')}回到今天</span></button>`;
@@ -2140,12 +2083,11 @@ const DIR = {
     </article>`;
     return `<section class="c-poster" aria-label="头条">
         <span class="c-light" aria-hidden="true"></span>
-        <div class="c-bp-top">
-          <p class="c-eyebrow">${st.briefPos === 'tab' ? '<b>早报</b><i aria-hidden="true"></i>' : ''}<span>${dateText}</span></p>
+        <div class="c-bp-top${isToday ? '' : ' is-past'}">
+          <p class="c-eyebrow"><b>早报</b><i aria-hidden="true"></i><span>${dateText}</span></p>
           <span class="c-sp"></span>
           ${trigger}${side}
         </div>
-        ${st.hist === 'strip' ? DIR.histStrip(st) : ''}
         <div class="c-bp-head" data-press="${h.id}" data-act="brief-open" data-v="${h.id}" role="button" tabindex="0" aria-label="阅读全文：${esc(h.title)}">
           <p class="c-bp-kicker">头条 · ${h.section}</p>
           <h1 class="c-bp-title" data-w900>${esc(h.title)}</h1>
@@ -2165,7 +2107,7 @@ const DIR = {
         <dl><dt>编排</dt><dd><b class="ai-grad-text">哆啦美</b> · ${BRIEF.date} ${BRIEF.generated} · 第 ${BRIEF.revision} 版</dd><dt>入选</dt><dd>${st.guest ? BRIEF.fact.replace('你订阅的', '默认订阅的') : BRIEF.fact}</dd></dl>
       </section>`;
   },
-  /* 早报做独立 Tab(备选):第 1 轮的早报页原样,没有视图胶囊 */
+  /* 早报 Tab(第 4 轮定稿):第 1 轮的早报页 */
   briefView(st) {
     return `<div class="c-veil" aria-hidden="true"></div>
     <header class="c-bar is-plain"><span class="c-bar-title is-static">早报 · ${histMd(st.briefDate)}</span></header>
@@ -2355,28 +2297,6 @@ const DIR = {
       </div>
     </div>`;
   },
-  /* 往期 ② 日期条:眉头下一条横滑的最近 14 天,最左「月历」进底页月历(更早的日子) */
-  histStrip(st) {
-    const days = [];
-    const end = histDate(HISTORY.today);
-    for (let i = 13; i >= 0; i -= 1) {
-      const d = new Date(end); d.setDate(end.getDate() - i);
-      days.push(histDayKey(d.getFullYear(), d.getMonth() + 1, d.getDate()));
-    }
-    const chips = days.map((key) => {
-      const info = histInfo(key);
-      const on = key === st.briefDate;
-      return `<button type="button" class="c-sday${info.has ? ' is-has' : ''}${on ? ' is-on' : ''}${info.failed ? ' is-bad' : ''}" data-act="hist-day" data-v="${key}"${info.has ? '' : ' aria-disabled="true"'} aria-label="${histDayLabel(info, on)}"${info.isToday ? ' aria-current="date"' : ''}>
-        <span class="c-sday-w">${info.isToday ? '今天' : WEEK_CHARS[histDate(key).getDay()]}</span><span class="c-sday-d">${Number(key.slice(8, 10))}</span><span class="c-sday-n">${info.count > 1 ? `${info.count} 版` : info.failed ? '失败' : ''}</span>
-      </button>`;
-    }).join('');
-    return `<div class="c-strip">
-      <button type="button" class="c-strip-cal" data-act="hist-cal" aria-haspopup="dialog" aria-label="打开月历,看更早的早报">${ICON('calendar')}<span>月历</span></button>
-      <div class="c-strip-days m-hscroll" role="group" aria-label="最近两周的早报">${chips}</div>
-    </div>
-    ${cRevs(st, st.briefDate)}`;
-  },
-
   /* 往期 ① 底页月历:桌面 BriefHistoryCalendar 的手机翻译(周一起;有早报可点 / 没有灰显;正在看实底;今天一个点;失败标红;多版排在月历下方) */
   histSheet(st) {
     const month = st.histMonth;
@@ -2388,9 +2308,8 @@ const DIR = {
     const cells = monthKeys(month).map((key) => {
       if (!key) return '<span class="c-cal-pad" aria-hidden="true"></span>';
       const info = histInfo(key);
-      const future = key > HISTORY.today;
       const on = key === pick;
-      return `<button type="button" class="c-cal-day${info.has ? ' is-has' : ''}${on ? ' is-on' : ''}${info.failed ? ' is-bad' : ''}${future ? ' is-future' : ''}" data-act="hist-day" data-v="${key}"${info.has ? '' : ' aria-disabled="true"'} aria-label="${histDayLabel(info, on)}"${info.isToday ? ' aria-current="date"' : ''}>${Number(key.slice(8, 10))}${info.isToday || info.live ? `<i class="c-cal-dot${info.live ? ' is-live' : ''}" aria-hidden="true"></i>` : ''}${info.count > 1 ? '<i class="c-cal-multi" aria-hidden="true"></i>' : ''}</button>`;
+      return `<button type="button" class="c-cal-day${info.has ? ' is-has' : ''}${on ? ' is-on' : ''}" data-act="hist-day" data-v="${key}"${info.has ? '' : ' aria-disabled="true"'} aria-label="${histDayLabel(info, on)}"${info.isToday ? ' aria-current="date"' : ''}>${Number(key.slice(8, 10))}${info.isToday || info.live ? `<i class="c-cal-dot${info.live ? ' is-live' : ''}" aria-hidden="true"></i>` : ''}</button>`;
     }).join('');
     const pickInfo = histInfo(pick);
     return `<div class="m-dim c-dim" data-act="scrim" aria-hidden="true"></div>
@@ -2410,44 +2329,7 @@ const DIR = {
         <div class="c-cal-grid" role="group" aria-label="${y}年${m}月">${cells}</div>
       </div>
       ${pickInfo.count > 1 ? cRevs({ ...st, briefDate: pick, briefRev: st.briefDate === pick ? st.briefRev : null }, pick) : ''}
-      <div class="c-cal-foot">
-        <span class="c-legend"><i class="is-has"></i>有早报</span><span class="c-legend"><i class="is-none"></i>没有</span><span class="c-legend"><i class="is-bad"></i>失败</span><span class="c-legend"><i class="is-today"></i>今天</span>
-        <span class="c-sp"></span>
-        ${pick === HISTORY.today && st.briefDate === HISTORY.today ? '' : '<button type="button" class="c-textbtn is-accent" data-act="hist-today">回到今天</button>'}
-      </div>
     </section>`;
-  },
-
-  /* 往期 ③ 往期列表:整页按月分组;每期的头条标题列表端点现在没有 → 标「需后端补字段」 */
-  histList(st) {
-    const days = histDays();
-    const keys = [...days.keys()].sort((a, b) => (a < b ? 1 : -1));
-    const byMonth = new Map();
-    keys.forEach((k) => { const mk = k.slice(0, 7); const l = byMonth.get(mk) || []; l.push(k); byMonth.set(mk, l); });
-    const row = (key) => {
-      const info = histInfo(key);
-      const latest = info.latest;
-      const on = key === st.briefDate;
-      const tags = [info.isToday ? '<span class="c-hl-tag is-today">今天</span>' : '', on && !info.isToday ? '<span class="c-hl-tag">正在看</span>' : '', latest.status !== 'ready' ? `<span class="c-hl-tag${latest.status === 'failed' ? ' is-bad' : ''}">${HIST_STATUS[latest.status]}</span>` : ''].join('');
-      const meta = latest.status === 'failed' ? `${latest.at} 编排失败` : [`第 ${latest.rev} 版`, `${latest.at} 编排`, latest.selected ? `${latest.selected} 篇精选` : '', latest.breaking ? `含 ${latest.breaking} 条重大事件` : ''].filter(Boolean).join(' · ');
-      const head = latest.headline ? `<span class="c-hl-head">${latest.headlineLive ? '' : '<em class="c-need">需后端补字段</em>'}${esc(latest.headline)}</span>` : '';
-      const older = info.list.slice(1).map((r) => `<button type="button" class="c-hl-sub" data-act="hist-rev" data-v="${key}#${r.rev}"><span>第 ${r.rev} 版 · ${r.at} 编排${r.selected ? ` · ${r.selected} 篇精选` : ''}</span>${ICON('chevronRight')}</button>`).join('');
-      return `<div class="c-hl-item${on ? ' is-on' : ''}">
-        <button type="button" class="c-hl-row" data-act="hist-rev" data-v="${key}#${latest.rev}" aria-label="${histDayLabel(info, on)}">
-          <span class="c-hl-date"><b>${Number(key.slice(8, 10))}</b><i>${histWeek(key)}</i></span>
-          <span class="c-hl-main">${head}<span class="c-hl-meta">${meta}</span></span>
-          <span class="c-hl-tags">${tags}</span>
-        </button>${older}
-      </div>`;
-    };
-    const total = HISTORY.editions.length;
-    const first = keys[keys.length - 1];
-    return `<div class="c-sett-top"><button type="button" class="c-gbtn" data-act="back" aria-label="返回早报"><span class="c-gbtn-in">${ICON('chevronLeft')}</span></button></div>
-    <div class="m-scroll c-histlist-scroll">
-      <div class="c-hero is-sett"><h1 class="c-hero-title">往期早报</h1><p class="c-hl-count">${keys.length} 天 · ${total} 版 · 最早 ${histMd(first)}</p></div>
-      <p class="c-hl-note"><em class="c-need">需后端补字段</em>每期一行头条标题:列表端点现在不带条目(include_items=False),今天那一期取自今日接口,其余行要补 headline 才能显示</p>
-      ${[...byMonth.entries()].map(([mk, ks]) => `<p class="c-group-label">${Number(mk.slice(5, 7))} 月</p><div class="c-group c-hl-group">${ks.map(row).join('')}</div>`).join('')}
-    </div>`;
   },
 
   /* ── 状态同步:顶栏视图名 / 「只看未读」副标、视图胶囊未读点、订阅行未读、空态文案 ── */
@@ -2455,11 +2337,9 @@ const DIR = {
     const st = phone.state;
     const scr = phone.screen;
     const sub = scr.querySelector('[data-slot="vsub"]');
-    const filtered = st.unreadOnly && st.view !== 'brief';
+    const filtered = st.unreadOnly;
     if (sub) sub.hidden = !filtered;
     scr.querySelectorAll('.m-view[data-view="content"] .c-dial').forEach((d) => d.classList.toggle('is-filtered', filtered));
-    const acts = scr.querySelector('[data-slot="vacts"]');
-    if (acts) acts.classList.toggle('is-ghost', st.view === 'brief');   // 早报视图三枚钮留位不显示,转盘不跳(细节页 B 同做法)
     DIR.syncDials(phone);
     scr.querySelectorAll('[data-src-row]').forEach((r) => {
       const u = srcUnread(st, r.dataset.srcRow);
@@ -2549,11 +2429,8 @@ const DIR = {
   },
 
   afterShell(phone) { DIR.afterBrief(phone); DIR.bindDials(phone); },
-  afterBrief(phone) {
-    // 日期条:滚到最右(今天);首帧不动画
-    const strip = phone.screen.querySelector('.c-strip-days');
-    if (strip) strip.scrollLeft = strip.scrollWidth;
-  },
+  afterBrief() {},
+
   onTab(phone) {
     phone.screen.classList.remove('is-receded');
     const st = phone.state;
@@ -2587,7 +2464,7 @@ const DIR = {
   onLayer(phone, name, open, el) {
     if (!open) return;
     if (name === 'xplayer' || name === 'hist') cBindDrag(phone, el, name);
-    if (name === 'histlist' || name === 'srcpage' || name === 'settings') phone.bindScroll(el);
+    if (name === 'srcpage' || name === 'settings') phone.bindScroll(el);
   },
   onSheet(phone, el) { cBindDrag(phone, el, 'sheet'); },
   /* 容器展开:正文页从被点的那张卡片的矩形长出来(clip-path 弹簧),卡片原地压下 */
@@ -2637,7 +2514,7 @@ const DIR = {
 /* ════ 原型引擎 ════
    画手机、管状态、接交互;模板与样式在 DIR(方向 C「夜航」)。类名对齐现网 .m-* 语法。
    · 每台手机 = .m-device[data-theme][data-palette] > .m-screen(宽 360 / 390 / 430,--sat / --sab 模拟安全区);
-   · 层:.m-shell(视图 + TabBar)/ .m-read(正文 push 页)/ .m-dock(播放坞)/ .m-layer(底页 / 动作组 / 往期)/ .m-page(订阅推入页、设置栈二级页、往期列表);
+   · 层:.m-shell(视图 + TabBar)/ .m-read(正文 push 页)/ .m-dock(播放坞)/ .m-layer(底页 / 动作组 / 往期)/ .m-page(订阅推入页、设置栈二级页);
    · 交互一律走 data-act 委托;长按 = [data-press] 按住 450ms(右键同效,对应 useLongPress 的 contextmenu 兜底);
    · 分段控件的拇指只认「第几项」(--i),不量像素——第 1 轮返修的「全部 / 未读」根因之一就是在隐藏状态下量出 0 宽;
    · 开着的层登记进页面历史:系统返回(popstate)与 Esc 都关最上面那层(useLayerHistory 同语义);
@@ -2737,16 +2614,14 @@ const itemById = (id) => allItems().find((e) => e.id === id);
 const viewOfId = (id) => (PODCASTS.some((e) => e.id === id) ? 'podcast' : POSTS.some((e) => e.id === id) ? 'social' : 'article');
 const itemsOfView = (v) => (v === 'podcast' ? PODCASTS : v === 'social' ? POSTS : FEED);
 
-/* 屏 → 初始状态(第 2 轮:底栏 = 功能模块;内容 Tab 的视图胶囊切 早报 / 文章 / 播客 / 社交;早报也可做独立 Tab) */
-function screenState(s, briefPos) {
-  const briefish = s === 'content-brief' || s.startsWith('hist');
+/* 屏 → 初始状态(第 4 轮定稿:底栏 早报 · 内容 · 订阅 · 榜单 · 设置;内容 Tab 的转盘切 文章 / 播客 / 社交) */
+function screenState(s) {
   let tab = 'content';
-  if (briefish && briefPos === 'tab') tab = 'brief';
+  if (s === 'brief' || s.startsWith('hist')) tab = 'brief';
   if (s === 'subs' || s === 'subs-src' || s === 'interest') tab = 'subs';
   if (s === 'rankings') tab = 'rankings';
   if (s === 'settings' || s === 'settings-stack') tab = 'settings';
   let view = 'article';
-  if (briefish && briefPos !== 'tab') view = 'brief';
   if (s === 'content-podcast') view = 'podcast';
   if (s === 'content-social') view = 'social';
   return { tab, view, subsSeg: s === 'interest' ? 'interest' : 'subs' };
@@ -2754,25 +2629,24 @@ function screenState(s, briefPos) {
 
 class Phone {
   constructor(host, opts = {}) {
-    this.opts = { theme: 'light', palette: 'porcelain', screen: 'content-brief', width: 390, live: true, hist: 'sheet', briefPos: 'view', guest: false, ...opts };
+    this.opts = { theme: 'light', palette: 'porcelain', screen: 'brief', width: 390, live: true, guest: false, ...opts };
     const o = this.opts;
     const s = o.screen;
     this.state = {
-      ...screenState(s, o.briefPos), briefPos: o.briefPos,
+      ...screenState(s),
       unreadOnly: false, kind: '', search: false,
       read: new Set(allItems().filter((e) => e.read).map((e) => e.id)),
       fav: new Set(allItems().filter((e) => e.fav).map((e) => e.id)),
       article: null, lang: 'zh', playing: true, guest: Boolean(o.guest), theme: o.theme, themePref: o.theme, palette: o.palette,
-      dock: s === 'read' || s === 'read-end' ? 'none' : 'bar',
-      // 往期:方案(sheet 底页月历 / strip 日期条 / list 往期列表)、正在看的那期、月历翻到的月份
-      hist: s === 'hist-strip' ? 'strip' : s === 'hist-list' ? 'list' : s === 'hist-sheet' ? 'sheet' : o.hist,
+      dock: s.startsWith('read') ? 'none' : 'bar',
+      // 往期(第 4 轮定稿:底页月历):正在看的那期、月历翻到的月份
       briefDate: HISTORY.today, briefRev: null, histMonth: HISTORY.today.slice(0, 7), histPick: HISTORY.today,
       // 订阅 Tab 推入页(来源 / 兴趣 / 全部 / 收藏),状态独立于内容 Tab
       sp: { kind: 'src', id: 'decoder', view: 'article', unreadOnly: false },
       follow: new Set(INTEREST.follow), intFacet: 'topic', intQ: '', intSave: 'saved',
       rankShape: 'article', rankAxis: 'topic', rankTag: '',
     };
-    this.layers = { sheet: null, settings: false, xplayer: false, hist: false, histlist: false, srcpage: false };
+    this.layers = { sheet: null, settings: false, xplayer: false, hist: false, srcpage: false };
     this.el = document.createElement('div');
     this.el.className = 'm-device no-anim';
     this.el.dataset.theme = o.theme;
@@ -2787,7 +2661,6 @@ class Phone {
       <div class="m-dock" hidden></div>
       <div class="m-layer m-hist-layer" hidden></div>
       <div class="m-page m-sett" hidden></div>
-      <div class="m-page m-histlist" hidden></div>
       <div class="m-layer m-sheet-layer" hidden></div>
       <div class="m-layer m-xplayer-layer" hidden></div>
       <div class="m-toast" role="status" hidden></div>
@@ -2801,17 +2674,18 @@ class Phone {
     this.renderDock();
     this.bind();
     // 静态屏:直接落到目标状态(不播动效、不进页面历史)
-    if (s === 'read' || s === 'read-end') this.openArticle(o.article || 'anthropic', null, true);
+    if (s === 'read-menu') this.state.lang = 'en';   // 「⋯」菜单屏:停在英文原文,菜单里是「译为中文」
+    if (s.startsWith('read')) this.openArticle(o.article || 'anthropic', null, true);
     if (s === 'read-end') {
       const sc = this.$('.m-read .m-scroll');
       if (sc) { sc.scrollTop = sc.scrollHeight; sc.dispatchEvent(new Event('scroll')); }
     }
+    if (s === 'read-menu') this.openSheet(this.state.article, true, { menuOnly: true });
     if (s === 'sheet') this.openSheet(o.sheetFor || 'nvidia', true);
     if (s === 'subs-src') this.openLayer('srcpage', true);
     if (s === 'settings-stack') this.openLayer('settings', true);
     if (s === 'xplayer') this.openLayer('xplayer', true);
     if (s === 'hist-sheet') { this.state.histPick = '2026-09-15'; this.openLayer('hist', true); }
-    if (s === 'hist-list') this.openLayer('histlist', true);
     requestAnimationFrame(() => requestAnimationFrame(() => this.el.classList.remove('no-anim')));
     PHONES.push(this);
   }
@@ -2830,7 +2704,7 @@ class Phone {
     const shell = this.$('.m-shell');
     shell.innerHTML = `
       <div class="m-view" data-view="content">${DIR.contentView(st, this)}</div>
-      ${st.briefPos === 'tab' ? `<div class="m-view" data-view="brief">${DIR.briefView(st, this)}</div>` : ''}
+      <div class="m-view" data-view="brief">${DIR.briefView(st, this)}</div>
       <div class="m-view" data-view="subs">${DIR.subsView(st, this)}</div>
       <div class="m-view" data-view="rankings">${DIR.rankingsView(st, this)}</div>
       <div class="m-view" data-view="settings">${DIR.settingsView(st, this)}</div>
@@ -2842,9 +2716,9 @@ class Phone {
   }
   renderBrief() {
     const st = this.state;
-    const host = st.briefPos === 'tab' ? this.$('.m-view[data-view="brief"]') : this.$('[data-pane="brief"]');
+    const host = this.$('.m-view[data-view="brief"]');
     if (!host) return;
-    host.innerHTML = st.briefPos === 'tab' ? DIR.briefView(st, this) : DIR.pane('brief', st, this);
+    host.innerHTML = DIR.briefView(st, this);
     this.bindScroll(host);
     this.syncSegs();
     DIR.afterBrief?.(this);
@@ -2870,7 +2744,7 @@ class Phone {
     this.syncDockPage();
   }
   syncDockPage() {
-    const page = this.state.article || this.layers.settings || this.layers.histlist || this.layers.srcpage ? 'page' : 'tabs';
+    const page = this.state.article || this.layers.settings || this.layers.srcpage ? 'page' : 'tabs';
     this.$('.m-dock').dataset.page = page;
     this.screen.dataset.dockPage = page;
   }
@@ -2942,14 +2816,13 @@ class Phone {
 
   /* ── 层 ── */
   layerEl(name) {
-    return this.$({ settings: '.m-sett', xplayer: '.m-xplayer-layer', sheet: '.m-sheet-layer', hist: '.m-hist-layer', histlist: '.m-histlist', srcpage: '.m-srcpage' }[name]);
+    return this.$({ settings: '.m-sett', xplayer: '.m-xplayer-layer', sheet: '.m-sheet-layer', hist: '.m-hist-layer', srcpage: '.m-srcpage' }[name]);
   }
   renderLayer(name) {
     const el = this.layerEl(name);
     if (name === 'settings') el.innerHTML = DIR.settingsPage(this.state, this);
     if (name === 'xplayer') el.innerHTML = DIR.xplayer(this.state, this);
     if (name === 'hist') el.innerHTML = DIR.histSheet(this.state, this);
-    if (name === 'histlist') el.innerHTML = DIR.histList(this.state, this);
     if (name === 'srcpage') { el.innerHTML = DIR.srcPage(this.state, this); this.applyFilters(); }
     this.syncSegs();
   }
@@ -2959,7 +2832,7 @@ class Phone {
     this.renderLayer(name);
     this.layers[name] = true;
     this.show(el, instant);
-    if (name === 'settings' || name === 'histlist' || name === 'srcpage') this.syncDockPage();
+    if (name === 'settings' || name === 'srcpage') this.syncDockPage();
     if (!instant) lhPush(this, name);
     DIR.onLayer?.(this, name, true, el);
   }
@@ -2968,17 +2841,16 @@ class Phone {
     if (!el || el.hidden) return;
     if (name === 'sheet') this.layers.sheet = null; else this.layers[name] = false;
     this.hide(el);
-    if (name === 'settings' || name === 'histlist' || name === 'srcpage') this.syncDockPage();
+    if (name === 'settings' || name === 'srcpage') this.syncDockPage();
     if (name === 'sheet') this.screen.querySelectorAll('.is-ctx-anchor').forEach((n) => n.classList.remove('is-ctx-anchor'));
     if (!viaHistory) lhDrop(this, name);
     DIR.onLayer?.(this, name, false, el);
   }
-  /* 最上面那层(动作单 → 播放展开 → 往期底页 → 往期列表 → 设置栈 → 正文 → 订阅推入页) */
+  /* 最上面那层(动作单 → 播放展开 → 往期月历 → 设置栈 → 正文 → 订阅推入页) */
   topLayer() {
     if (this.layers.sheet) return 'sheet';
     if (this.layers.xplayer) return 'xplayer';
     if (this.layers.hist) return 'hist';
-    if (this.layers.histlist) return 'histlist';
     if (this.layers.settings) return 'settings';
     if (this.state.article) return 'read';
     if (this.layers.srcpage) return 'srcpage';
@@ -3001,14 +2873,14 @@ class Phone {
     if (motionReduced()) { done(); return; }
     setTimeout(done, DIR.closeMs || 320);
   }
-  openSheet(entryId, instant = false) {
+  openSheet(entryId, instant = false, opts = {}) {
     const entry = itemById(entryId);
     if (!entry) return;
     const live = { ...entry, read: this.state.read.has(entry.id), fav: this.state.fav.has(entry.id) };
     const el = this.$('.m-sheet-layer');
-    el.innerHTML = DIR.sheet(live, this.state, this);
+    el.innerHTML = DIR.sheet(live, this.state, this, opts);   // opts.menuOnly:正文「⋯」只出菜单,不带预览卡
     this.layers.sheet = entryId;
-    this.screen.querySelectorAll(`[data-entry="${entryId}"], [data-press="${entryId}"]`).forEach((n) => n.classList.add('is-ctx-anchor'));
+    if (!opts.menuOnly) this.screen.querySelectorAll(`[data-entry="${entryId}"], [data-press="${entryId}"]`).forEach((n) => n.classList.add('is-ctx-anchor'));
     this.show(el, instant);
     if (!instant) lhPush(this, 'sheet');
     DIR.onSheet?.(this, el, instant);
@@ -3198,7 +3070,7 @@ class Phone {
         el.textContent = open ? '收起' : '显示更多';
         break;
       }
-      case 'more': if (st.article) this.openSheet(st.article); break;
+      case 'more': if (st.article) this.openSheet(st.article, false, { menuOnly: true }); break;
       case 'sheet-item': this.sheetItem(v); break;
       case 'fav-article': {
         const id = st.article;
@@ -3238,13 +3110,11 @@ class Phone {
       case 'dock-close': st.dock = 'none'; this.closeLayer('xplayer'); this.renderDock(); this.toast('已停止播放'); break;
       case 'brief-open': this.openArticle(v || 'navier', el); break;
       /* 往期 */
-      case 'hist': if (st.hist === 'list') this.openLayer('histlist'); else this.openLayer('hist'); break;
-      case 'hist-cal': this.openLayer('hist'); break;
+      case 'hist': this.openLayer('hist'); break;
       case 'hist-day': {
         const list = histDays().get(v) || [];
-        if (!list.length && v !== HISTORY.today) break;
+        if (!histInfo(v).has) break;   // 没有早报(含失败日)的日子不可点
         st.histPick = v;
-        if (this.layers.histlist) { this.closeLayer('histlist'); this.pickBrief(v); break; }
         if (this.layers.hist && list.length > 1) { this.pickBrief(v); break; }   // 多版:留在月历里挑版次
         if (this.layers.hist) { this.closeLayer('hist'); this.pickBrief(v); break; }
         this.pickBrief(v);
@@ -3253,7 +3123,6 @@ class Phone {
       case 'hist-rev': {
         const [date, rev] = String(v).split('#');
         if (this.layers.hist) this.closeLayer('hist');
-        if (this.layers.histlist) this.closeLayer('histlist');
         this.pickBrief(date, Number(rev));
         break;
       }
@@ -3296,6 +3165,7 @@ class Phone {
       this.applyFilters();
     } else if (key === 'copy') this.toast('已复制站内链接');
     else if (key === 'sysshare') this.toast('样页:此处调起系统分享面板');
+    else if (key === 'lang') { const to = st.lang === 'zh' ? 'en' : 'zh'; this.act('lang', to); this.toast(to === 'zh' ? '已译为中文' : '已显示原文'); }
     else if (key === 'open') this.toast(viewOfId(id) === 'social' ? '样页:此处在新窗口打开原推' : '样页:此处在新窗口打开原文');
     else if (key === 'markall') {
       allItems().filter((x) => x.src === e.src).forEach((x) => st.read.add(x.id));
@@ -3364,9 +3234,9 @@ class Phone {
 }
 
 /* ════ 页面:手机框 + 屏幕切换 + 亮 / 暗(另有中性色、动效、机型宽度、早报位置、身份几个开关,都存 localStorage) ════ */
-const PG = { screen: 'content-brief', cols: 'both', width: 390, hist: 'sheet', theme: 'light', palette: 'porcelain', motion: 'full', briefpos: 'view', guest: '0' };
+const PG = { screen: 'brief', cols: 'both', width: 390, theme: 'light', palette: 'porcelain', motion: 'full', guest: '0' };
 /* 第 1 轮的屏 id(旧链接 / 本机存的值)映射到新结构 */
-const SCREEN_ALIAS = { feed: 'content-article', brief: 'content-brief', me: 'settings', drawer: 'subs' };
+const SCREEN_ALIAS = { feed: 'content-article', 'content-brief': 'brief', 'hist-strip': 'hist-sheet', 'hist-list': 'hist-sheet', me: 'settings', drawer: 'subs' };
 const store = (k, v) => { try { localStorage.setItem(`m230c-${k}`, v); } catch (e) { /* 无痕窗口可能拒绝 */ } };
 const load = (k) => { try { return localStorage.getItem(`m230c-${k}`); } catch (e) { return null; } };
 
@@ -3378,12 +3248,11 @@ function renderStage() {
     const mode = slot.dataset.phone;
     slot.closest('figure').hidden = PG.cols !== 'both' && PG.cols !== mode;
     slot.innerHTML = '';
-    new Phone(slot, { theme: mode, palette: PG.palette, screen: PG.screen, width: PG.width, hist: PG.hist, briefPos: PG.briefpos, guest: PG.guest === '1' });
+    new Phone(slot, { theme: mode, palette: PG.palette, screen: PG.screen, width: PG.width, guest: PG.guest === '1' });
   });
   document.querySelectorAll('[data-notes]').forEach((n) => { n.hidden = n.dataset.notes !== PG.screen; });
   document.querySelectorAll('[data-screen]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.screen === PG.screen)));
   document.querySelectorAll('[data-pg]').forEach((b) => b.setAttribute('aria-pressed', String(String(PG[b.dataset.pg]) === b.dataset.v)));
-  document.querySelectorAll('[data-only-hist]').forEach((n) => { n.hidden = PG.screen !== 'content-brief'; });
   stage.dataset.width = String(PG.width);
 }
 
@@ -3409,12 +3278,10 @@ function bootPage() {
   PG.width = Number(q.get('width') || load('width') || 390);
   if (!DEVICES[PG.width]) PG.width = 390;
   PG.cols = q.get('cols') || load('cols') || 'both';
-  PG.hist = load('hist') || 'sheet';
-  PG.briefpos = (q.get('brief') || load('briefpos')) === 'tab' ? 'tab' : 'view';
   PG.guest = (q.get('guest') || load('guest')) === '1' ? '1' : '0';
-  const sc = q.get('screen') || load('screen') || 'content-brief';
+  const sc = q.get('screen') || load('screen') || 'brief';
   PG.screen = SCREEN_ALIAS[sc] || sc;
-  if (!document.querySelector(`[data-screen="${PG.screen}"]`)) PG.screen = 'content-brief';
+  if (!document.querySelector(`[data-screen="${PG.screen}"]`)) PG.screen = 'brief';
   applyPage();
   renderStage();
   document.querySelectorAll('[data-screen]').forEach((b) => b.addEventListener('click', () => {
