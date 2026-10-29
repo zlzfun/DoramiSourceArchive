@@ -992,6 +992,17 @@ code { font-family: var(--font-mono); font-size: max(12px, 0.88em); padding: 1px
 [data-dir="c"] .c-switch[aria-checked="true"] i::after { transform: translateX(20px); }
 :root[data-motion="reduce"] [data-dir="c"] .c-eq i { animation: none; }
 :root[data-motion="reduce"] [data-dir="c"] .m-screen.is-reading .m-srcpage { transform: none; opacity: 1; }
+[data-dir="c"] .c-bar .c-lead { position: absolute; left: 8px; top: 4px; }
+[data-dir="c"] .c-bbar, [data-dir="c"] .c-mebar { padding: 0 6px 0 8px; }
+[data-dir="c"] .c-bbar .c-bar-title, [data-dir="c"] .c-mebar .c-bar-title { position: absolute; left: 0; right: 0; width: max-content; margin: 0 auto; }
+[data-dir="c"] .c-bbar .c-hist { margin-right: 2px; }
+[data-dir="c"] .c-bbar.is-past .c-bar-title { display: none; }
+[data-dir="c"] .c-poster.is-2row { padding-top: calc(var(--sat) + 52px); }
+[data-dir="c"] .c-poster.is-2row .c-bp-top { min-height: 30px; }
+[data-dir="c"] .m-mepage { position: absolute; inset: 0; z-index: 50; display: flex; flex-direction: column; background: radial-gradient(130% 46% at 50% 0%, color-mix(in oklab, var(--dorami-surface) 88%, transparent), transparent 72%), var(--dorami-canvas); transform: translateX(32px); opacity: 0; transition: transform var(--motion-sheet) var(--motion-sheet-ease), opacity var(--motion-medium) var(--motion-ease); }
+[data-dir="c"] .m-mepage.is-open { transform: none; opacity: 1; }
+[data-dir="c"] .m-mepage[hidden] { display: none; }
+[data-dir="c"] .m-mepage .c-me { padding-bottom: calc(var(--sab) + 24px); }
 .d-status { display: inline-block; margin: 14px 0 0; padding: 4px 12px; border-radius: var(--r-pill); background: var(--state-ok-bg); font-size: 13px; font-weight: 600; color: var(--state-ok); }
 .d-status.is-pending { background: var(--dorami-wash); color: var(--dorami-accent-ink); }
 .d-sum { margin-top: 28px; }
@@ -1079,7 +1090,7 @@ code { font-family: var(--font-mono); font-size: max(12px, 0.88em); padding: 1px
 <section class="pg-hero">
   <p class="pg-eyebrow"><b>细节样页</b> · issue #230 · 夜航 · 手机底栏五项拥挤:设置进头像 / 榜单并入订阅 / 两者都做 / 五项不变只减负</p>
   <h1 class="pg-title">底栏怎么分</h1>
-  <p class="d-status is-pending">状态:待选</p>
+  <p class="d-status">状态:已选 A(2026-10-29),已回写主样页</p>
   <p class="pg-lede">用户原话:「内容列表底栏的五个元素有点拥挤;我在考虑是否将榜单作为订阅的一部分,或者将设置安插到点击用户头像之类的入口。」这里给四个方向,另加一行现状五项当尺子。每个方向画两台整屏手机(亮暗各一套,都能点、能切 Tab):第 1 台是底栏 + 内容 Tab 的第一屏(嫌挤的就是这里);第 2 台是被挪走的那一项现在住在哪、怎么进去;A / C 再加一列「页头一览」,看头像是不是在每个 Tab 的同一位置。页顶「身份」可切游客。文中尺寸都是 Playwright 在 360 宽实测的 bounding box。</p>
   <div class="pg-facts"><span>方向<b>4 个 + 现状对照</b></span><span>每个方向<b>亮暗两套 · 底栏 + 内容 Tab / 挪走的那一项 / 页头一览(A、C)</b></span><span>选定后回写<b>主样页底栏(全部屏)、早报 / 订阅 / 榜单 / 设置各屏页头与设置栈;README 拍板 16、19、20、21</b></span></div>
 </section>
