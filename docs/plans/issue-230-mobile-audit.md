@@ -255,7 +255,7 @@ CSS 自定义属性不能直接写进 `@media`,落地可选 Tailwind v4 `@custom
 | 问答面板 | `ReaderAiPanel` 只挂在桌面 `ReaderTab.jsx:1588-1596`,移动壳无入口(M-17) | 底部 sheet(正文页「问这篇」+ 列表页「问订阅」),经 `useLayerHistory` 握手;形态待拍板 |
 | 翻译入口 | 顶栏第 4 个无文字「译」图标,只在非中文文章出现(`MobileArticlePage.jsx:140-152`);逐段骨架与原位替换在手机正常 | 是否下沉到标题区尾行(backlog「译钮下沉」)待拍板(M-19) |
 | 长按 | 文章行 / 源行长按松手即关(M-01);社交卡无触屏长按(M-04) | 遮罩改「按下与松开同在遮罩」;社交卡接 `useLongPress` |
-| 手势 | 无左滑关抽屉、无下拉关动作单(有抓手装饰)、无下拉刷新(滚动区 `overscroll-behavior:contain` 同时挡掉了浏览器下拉刷新)、无边缘右滑返回(浏览器模式靠系统,iOS PWA 独立窗口没有系统返回手势) | 抓手要么能拖要么去掉;iOS PWA 下每层必须有可见返回 / 关闭(抽屉现在没有)(M-34);下拉刷新要不要做待拍板(M-44) |
+| 手势 | 无左滑关抽屉、无下拉关动作单(有抓手装饰)、无下拉刷新(滚动区 `overscroll-behavior:contain` 同时挡掉了浏览器下拉刷新)、无边缘右滑返回(浏览器模式靠系统,iOS PWA 独立窗口没有系统返回手势) | 抓手要么能拖要么去掉;iOS PWA 下每层必须有一个不靠系统返回、也不靠拖动的出口(卡外能点即算,整屏推入的页面要返回钮;抽屉现在没有)(M-34;2026-10-29 拍板改写,原为「可见返回 / 关闭」);下拉刷新要不要做待拍板(M-44) |
 | 返回键 | 已接:正文页、发现页、合集详情、抽屉、动作单、设置栈三层(`data/special-backkey.json` 全部关得掉且不离站);未接:见 M-05 | 统一层原语 |
 | 键盘 | 移动壳只有搜索与表单输入;动作单 `role="menu"` 不移焦、无方向键,自挂 document Esc(违反 conventions §8「只用 useModalA11y」) | 随层原语一起收(M-35) |
 
@@ -288,7 +288,7 @@ CSS 自定义属性不能直接写进 `@media`,落地可选 Tailwind v4 `@custom
 | R-08 | Safari 地址栏伸缩 + `100vh` 残留 | 静态命中 `.modal-panel` / `.shared-page` / 灯箱 | 打开登录提示、退出确认、图片灯箱、分享页,滚动让地址栏收起 / 展开,看是否跳动或被裁 |
 | R-09 | 橡皮筋 / 下拉刷新 | 滚动区 `overscroll-behavior:contain` | 列表顶部下拉:不应拖动整个壳;确认没有下拉刷新这件事是否可接受 |
 | R-10 | 系统返回(Android 返回键 / iOS 边缘右滑) | `history.back` 矩阵见 M-05 | 依次打开 正文 / 抽屉 / 动作单 / 发现 / 设置分区 / 月历 / 分享浮层 / 安装指引 / 搜索,各按一次返回 |
-| R-11 | iOS PWA 独立窗口无系统返回 | — | 独立窗口里打开抽屉、灯箱、分享浮层,确认每层都有可见关闭 |
+| R-11 | iOS PWA 独立窗口无系统返回 | — | 独立窗口里打开抽屉、灯箱、分享浮层、播放悬浮卡,确认每层都有不靠系统返回、也不靠拖动的出口(卡外能点,或可见的关闭 / 返回钮) |
 | R-12 | 华为浏览器 | 安装入口按 UA 隐藏(`pwa.js:8`) | 鸿蒙 / 华为浏览器:安装入口不出现、长按 / 键盘 / 安全区同 R-01 ~ R-05 |
 | R-13 | 微信内置浏览器 | `installGuide` 给 embedded 文案 | 微信打开站内深链:游客自动进入、返回键关层、底部工具栏与 TabBar 叠放 |
 | R-14 | 播放连续性(锁屏 / 后台 / 切 App) | 应用内切 Tab / 进出正文 / 跨版式核过 | 播放中锁屏 1 分钟、切到别的 App 再回来、来电打断后恢复 |
@@ -340,7 +340,7 @@ CSS 自定义属性不能直接写进 `@media`,落地可选 Tailwind v4 `@custom
 | M-31 | BP | P3 | 断点散落:`@media` 宽度 10 个取值(480 / 560 / 720 / 767 / 880 / 900 / 1023 / 1024 / 1120 / 1280)+ 容器查询 5 个(420 / 640 / 680 / 900 / 960)+ JS 1024,1023 / 1024 双口径,无命名 token(§1) | 命名断点(§1.3) | `index.css` 全文、`useCompactLayout.js:4` | 本波(规范) |
 | M-32 | PG | P3 | `theme-color` 只跟系统深浅,应用内切暗色 / 三套中性色时浏览器地址栏与 PWA 状态栏不跟;manifest `background_color` 只有亮色 | 运行时按 `data-theme` / `data-palette` 改写 meta | `frontend/index.html:11-12`、`manifest.webmanifest` | 本波 |
 | M-33 | PF | P3 | 抽屉 / 动作单只有入场无退场;正文页入栈 / 出栈、设置分区切换无过渡(`data/special-motion.json`) | 随视觉方向拍板定「合理动效」 | `mobile.css:375-380 / 450-455` | 待拍板 |
-| M-34 | TA | P3 | 抽屉无关闭钮、不能左滑关;动作单有抓手但不能下拉关(假 affordance);iOS PWA 独立窗口没有系统返回 | 可见关闭 + 手势或去掉抓手 | `MobileSourceDrawer.jsx:47-131`、`ActionSheet.jsx:23` | 本波 |
+| M-34 | TA | P3 | 抽屉无关闭钮、不能左滑关;动作单有抓手但不能下拉关(假 affordance);iOS PWA 独立窗口没有系统返回 | 抓手能拖、能点、读屏念得出;每层有不靠系统返回、也不靠拖动的出口(卡外能点即算,整屏推入页要返回钮)——2026-10-29 拍板(设计 README 拍板 33),原建议「可见关闭 + 手势或去掉抓手」 | `MobileSourceDrawer.jsx:47-131`、`ActionSheet.jsx:23` | 本波 |
 | M-35 | TA | P3 | 无障碍:动作单 `role="menu"` 不移焦、无方向键、自挂 document Esc;源抽屉无 dialog 语义 / 焦点管理 / Esc;移动设置 `aria-modal` 无焦点陷阱;正文页打开后下层列表未 `inert`;列表行 `button` 内嵌 `span[role=button]` 星标 | 层原语统一挂 `useModalA11y` | `ActionSheet.jsx:10-15 / 22`、`MobileSourceDrawer.jsx:47-49`、`MobileSettings.jsx:141`、`ReaderTab.jsx`(ArticleRow 星标) | 本波 |
 | M-36 | BP | P3 | 跨版式丢早报往期:9月16日 @1500px → 切桌面再切回变成今天 @0;iPad 旋转即触发(`data/special-crosslayout.json`) | 早报选中日期上提到 `ReaderWorkspace` 共享态 | `PersonalBriefPage.jsx`(日期为组件内状态)、`ReaderWorkspace.jsx:58-91`(只记列表 / 正文) | 本波 |
 | M-37 | PG | P3 | `mobile.css` 规范违例:`#f59e0b` ×2、遮罩 `rgba` ×2、`border-radius:12px`;死样式 `.m-agg-row` 族 23 行,抽屉头注释仍写「聚合入口」 | token 化 + 清扫 | `mobile.css:83 / 231 / 359 / 361 / 394-416`、`MobileSourceDrawer.jsx:10` | 本波 |
