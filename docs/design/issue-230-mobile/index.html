@@ -8,7 +8,7 @@
 issue #230 手机端视觉方向 · 方向 C「夜航」单页样页(团队 2026-10-28 选定 C;A 纸面 / B 仪器已舍弃);第 4 轮返修:早报独立 Tab、往期底页月历、正文去底部坞
 
 一、设计陈述
-  内容铺满全屏,顶栏、TabBar、播放坞是浮在内容上的磨砂镀层,往下读时退场、往上一划就回来;长按时那一条先「抬起」;正文页没有顶栏也没有底部坞,动作都在右上的磨砂钮里。底栏是功能模块 早报 · 内容 · 订阅 · 榜单 · 设置;内容 Tab 顶栏中间的转盘切 文章 / 播客 / 社交;第 4 轮定稿:早报独立成 Tab、往期只留底页月历、正文的翻译与查看原文进「⋯」菜单。
+  内容铺满全屏,顶栏、TabBar、播放坞是浮在内容上的磨砂镀层,往下读时退场、往上一划就回来;长按时那一条先「抬起」;正文页没有顶栏也没有底部坞,动作都在右上的磨砂钮里。底栏是功能模块 早报 · 内容 · 订阅 · 榜单 · 设置;内容 Tab 顶栏中间切 文章 / 播客 / 社交(三项固定位,当前项放大);第 4 轮定稿:早报独立成 Tab、往期只留底页月历、正文的翻译与查看原文进「⋯」菜单。
 
 二、逐屏要点(修 = 本轮修复 · 删 · 新 · 简 · 留 · 需落地)
   · 早报 · 早报 [新] 第 4 轮定稿:早报独立成 Tab,底栏固定为 早报 · 内容 · 订阅 · 榜单 · 设置;启用个人早报时默认落在这里。眉头写「早报 — 日期」。
@@ -16,8 +16,8 @@ issue #230 手机端视觉方向 · 方向 C「夜航」单页样页(团队 2026
   · 早报 · 往期月历 [新] 往期定为底页月历(第 4 轮):日期只分两态,靠数字颜色区分——有早报(墨色,可点)/ 没有(灰,不可点)。失败日按「没有」处理(与桌面月历不同:桌面标红、可点)。
   · 早报 · 往期月历 [留] 正在看的那天是实底圆(选中态);今天一个蓝点;编排中的今天呼吸;当天多版时版次排在月历下方再选。
   · 早报 · 往期月历 [删] 底部四个图例(有早报 / 没有 / 失败 / 今天)与「回到今天」文字钮撤掉;看往期时眉头右侧已有「回到今天」。多版角标、未来日期的更淡一档也撤掉,只留两态。
-  · 内容 · 文章 [新] 视图在顶栏中间的转盘里切(第 3 轮定 B):当前视图放大居中,邻居淡出半截;点邻居、横拖或 ← → 切换;第 4 轮起固定三项 文章 / 播客 / 社交。视图上不挂未读点。
-  · 内容 · 文章 [新] 「全部 / 未读」是顶栏一枚开关图标:空心圈 = 显示全部,带点的圈 = 只看未读;开着时转盘下面写「只看未读」,切换时有提示条。它管的是整个内容 Tab(现网 unreadOnly 本来就是一个全局状态)。
+  · 内容 · 文章 [新] 视图在顶栏中间切(第 3 轮定 B 转盘,第 5 轮改为三项固定位):文章 / 播客 / 社交 各占一个等宽槽位、位置不动,当前项在原位放大一档、转墨色,其余两项灰;点任一项或 ← → 切换,不再横拖。视图上不挂未读点。
+  · 内容 · 文章 [新] 「全部 / 未读」是顶栏一枚开关图标:空心圈 = 显示全部,带点的圈 = 只看未读;开着时当前视图名下面写「只看未读」,切换时有提示条。它管的是整个内容 Tab(现网 unreadOnly 本来就是一个全局状态)。
   · 内容 · 文章 [简] 页头只剩一排,列表上方只有类型胶囊一条(只有文章有类型)。按来源看去「订阅」Tab;收藏筛选在「订阅」Tab 的「收藏」。
   · 内容 · 文章 [留] 卡片、按压、长按抬起、类型胶囊横滑不变;按类型筛选时收起「全部标读」(与现网同口径);条目靠标题字重与墨色区分已读未读。
   · 内容 · 播客 [新] 最小可用版:沿用现网播客行的字段(封面 · 节目名 · 时间 · 分数 / 标题两行 / 播放中 · 时长),套夜航卡面;正在播放的那期带「播放中」。
@@ -35,7 +35,7 @@ issue #230 手机端视觉方向 · 方向 C「夜航」单页样页(团队 2026
   · 订阅 · 订阅 [新] 订阅 Tab = 原来源底页 + 发现更多来源 + 我的兴趣 + 收藏。顶部分段 订阅 | 兴趣;右上「+」与列表尾都进「发现更多来源」整页。
   · 订阅 · 订阅 [新] 最上面是「全部」「收藏」两个汇总入口,下面按 官方 / 媒体 / 个人 / 榜单 / 播客 / 社交 分组列出所有订阅;点一行推入该来源的条目流。
   · 订阅 · 订阅 [留] 未读只靠源名字重(conventions:源栏不显示每源未读数,也不画点);暂不可用的来源灰显并写「暂不可用」。游客:列表是默认订阅,顶上一张登录引导。
-  · 订阅 · 来源流 [新] 在订阅 Tab 里推入的整页:来源头 + 该来源的条目;右上 只看未读 · 全部标读 是这一页自己的状态,不动「内容」Tab。「全部」「收藏」页的顶栏中段是同一个转盘(文章 / 播客 / 社交)。
+  · 订阅 · 来源流 [新] 在订阅 Tab 里推入的整页:来源头 + 该来源的条目;右上 只看未读 · 全部标读 是这一页自己的状态,不动「内容」Tab。「全部」「收藏」页的顶栏中段是同一组视图切换(文章 / 播客 / 社交)。
   · 订阅 · 来源流 [需落地] 落地要第二个列表实例:现网 useReaderState 只有一条列表,来源过滤是这条列表上的修饰符;推入页要独立于内容 Tab,得另起一份列表状态(纯前端,接口不变)。
   · 订阅 · 兴趣 [新] 兴趣段 = 现网 InterestPage 的移动档:点击即保存、搜索标签、主题 / 行业 / 实体三段、目录卡点一下加入再点取消;「我的兴趣」每行可点读它的条目流,行尾 × 移出。
   · 订阅 · 兴趣 [留] 只画现网已有的能力;兴趣只在启用个人早报时出现,与现网「我的兴趣」同条件。
@@ -47,7 +47,7 @@ issue #230 手机端视觉方向 · 方向 C「夜航」单页样页(团队 2026
 三、动效清单(名称 | 触发 | 时长 · 缓动 | 目的 | 减少动效时)
   镀层退场 | 列表 / 正文向下滚(越过 140px 且速度 > 6px/帧) | 420ms · --motion-sheet(弹簧) | TabBar、播放坞、正文右上的钮把整屏让给内容;往上一划就回来 | 常显,不退场
   大标题收拢 | 订阅 / 榜单 / 设置 滚过 44px | 240ms · --motion-medium | 栏名从页面收进顶栏,顶栏换上磨砂 | 只剩显隐
-  转盘转动 | 点邻居 / 横拖 / ← → | 420ms · --motion-sheet;横拖时跟手,松手按最近一项弹簧回位 | 当前项放大居中,邻居淡出半截 | 瞬切
+  视图切换 | 点任一项 / ← → | 放大 420ms · --motion-sheet;颜色 --motion-medium | 当前项在原位放大一档、转墨色,位置不动 | 瞬切
   推入页 | 订阅 Tab 点来源 / 全部 / 收藏 / 兴趣;设置 Tab 点外观 | 420ms 弹簧 translateX(32px → 0)+ 240ms 淡入;返回反向 | 层级感:这是 Tab 里的下一层 | 1ms
   容器展开 | 点卡片 / 早报卡 → 正文;返回 | 420ms 弹簧 clip-path + 90ms 后正文淡入;返回 320ms 收回原卡 | 来处即去处 | 120ms 淡入
   底页弹簧 | 往期月历 / 动作组 / 播放展开 | 420ms · --motion-sheet(超调 2.5%) | 物理感,与拖拽同一套参数 | 1ms
@@ -1127,18 +1127,19 @@ code { font-family: var(--font-mono); font-size: max(12px, 0.88em); padding: 1px
 [data-dir="c"] .c-me-av .ic { width: 17px; height: 17px; }
 [data-dir="c"] .c-cbar-acts { display: flex; align-items: center; }
    /* 早报视图:三枚钮留位不显示,转盘不跳 */
-/* 转盘(第 3 轮定 B,同细节样页 B):当前放大居中、邻居淡出半截;--i = 第几项,--drag = 横拖跟手;远端被两侧渐隐裁掉 */
-[data-dir="c"] .c-dialbox { position: relative; flex: 1; min-width: 0; align-self: stretch; display: flex; }
-[data-dir="c"] .c-dial { position: relative; flex: 1; overflow: hidden; touch-action: pan-y; cursor: grab;
-  -webkit-mask: linear-gradient(to right, transparent, #000 22px, #000 calc(100% - 22px), transparent); mask: linear-gradient(to right, transparent, #000 22px, #000 calc(100% - 22px), transparent); }
-[data-dir="c"] .c-dial-track { position: absolute; top: 4px; left: 50%; display: flex; overflow: visible; transform: translateX(calc(-1 * (var(--i, 0) + 0.5) * 64px + var(--drag, 0px))); transition: transform var(--motion-sheet) var(--motion-sheet-ease), top var(--motion-fast) var(--motion-ease); }
-[data-dir="c"] .c-dial.is-drag .c-dial-track { transition: none; }
+/* 视图切换(第 3 轮定 B 转盘;第 5 轮改为三项固定位):文章 / 播客 / 社交 各占一个等宽槽位,位置永远不动;
+   当前项宋体在原位放大一档、转墨色,其余两项 faint 灰(达 AA);槽宽 --slot = 切换区宽 / 项数,夹在 52–64px
+   (360 宽约 57px,390 / 430 宽 64px);选中只动 transform 与颜色,不改任何尺寸,左右两项不会被挤动;
+   「只看未读」副标按 --i 落在当前项正下方;--i / --n 由 syncDials 写在 .c-dialbox 上,不量像素 */
+[data-dir="c"] .c-dialbox { position: relative; flex: 1; min-width: 0; align-self: stretch; display: flex; container-type: inline-size; --slot: clamp(52px, calc(100cqw / var(--n, 3)), 64px); }
+[data-dir="c"] .c-dial { position: relative; flex: 1; }
+[data-dir="c"] .c-dial-track { position: absolute; top: 4px; left: 50%; display: flex; overflow: visible; transform: translateX(-50%); transition: top var(--motion-fast) var(--motion-ease); }
 [data-dir="c"] .c-dial.is-filtered .c-dial-track { top: 0; }
-[data-dir="c"] .c-dial-tab { display: grid; place-items: center; flex: none; width: 64px; height: 44px; font-family: var(--font-serif); font-size: 16px; font-weight: 600; letter-spacing: 0.04em; color: var(--dorami-ink); }
-[data-dir="c"] .c-dial-name { display: inline-block; transform: scale(0.88); opacity: 0.18; transition: transform var(--motion-sheet) var(--motion-sheet-ease), opacity var(--motion-medium) var(--motion-ease); }
-[data-dir="c"] .c-dial-tab.is-near .c-dial-name { transform: none; opacity: 0.42; }
-[data-dir="c"] .c-dial-tab.is-on .c-dial-name { transform: scale(1.3); opacity: 1; }
-[data-dir="c"] .c-dial-sub { position: absolute; left: 50%; bottom: 2px; transform: translateX(-50%); font-size: 12px; line-height: 1.2; color: var(--dorami-accent-ink); white-space: nowrap; pointer-events: none; }
+[data-dir="c"] .c-dial-tab { display: grid; place-items: center; flex: none; width: var(--slot); height: 44px; font-family: var(--font-serif); font-size: 16px; font-weight: 600; letter-spacing: 0.04em; color: var(--dorami-faint); transition: color var(--motion-medium) var(--motion-ease); }
+[data-dir="c"] .c-dial-name { display: inline-block; transition: transform var(--motion-sheet) var(--motion-sheet-ease); }
+[data-dir="c"] .c-dial-tab.is-on { color: var(--dorami-ink); }
+[data-dir="c"] .c-dial-tab.is-on .c-dial-name { transform: scale(1.3); }
+[data-dir="c"] .c-dial-sub { position: absolute; left: 50%; bottom: 2px; transform: translateX(calc(-50% + (var(--i, 0) - (var(--n, 3) - 1) / 2) * var(--slot))); transition: transform var(--motion-sheet) var(--motion-sheet-ease); font-size: 12px; line-height: 1.2; color: var(--dorami-accent-ink); white-space: nowrap; pointer-events: none; }
 [data-dir="c"] .c-sp-top .c-dialbox { height: 44px; }
 [data-dir="c"] .c-sp-top .c-dial-track { top: 0; }
 /* 只看未读:空心圈 = 显示全部,带点的圈 = 只看未读(与视图胶囊的未读点同一枚点);状态只在 class / aria-pressed 上,不量任何尺寸 */
@@ -1316,7 +1317,7 @@ code { font-family: var(--font-mono); font-size: max(12px, 0.88em); padding: 1px
 <section class="pg-hero">
   <p class="pg-eyebrow"><b>方向 C · 已选定</b> · issue #230 手机端(H5 / 窄屏)视觉方向 · 第 4 轮返修:早报 / 往期 / 正文定稿</p>
   <h1 class="pg-title">夜航</h1>
-  <p class="pg-lede">内容铺满全屏,顶栏、TabBar、播放坞是浮在内容上的磨砂镀层,往下读时退场、往上一划就回来;长按时那一条先「抬起」;正文页没有顶栏也没有底部坞,动作都在右上的磨砂钮里。底栏是功能模块 早报 · 内容 · 订阅 · 榜单 · 设置;内容 Tab 顶栏中间的转盘切 文章 / 播客 / 社交;第 4 轮定稿:早报独立成 Tab、往期只留底页月历、正文的翻译与查看原文进「⋯」菜单。</p>
+  <p class="pg-lede">内容铺满全屏,顶栏、TabBar、播放坞是浮在内容上的磨砂镀层,往下读时退场、往上一划就回来;长按时那一条先「抬起」;正文页没有顶栏也没有底部坞,动作都在右上的磨砂钮里。底栏是功能模块 早报 · 内容 · 订阅 · 榜单 · 设置;内容 Tab 顶栏中间切 文章 / 播客 / 社交(三项固定位,当前项放大);第 4 轮定稿:早报独立成 Tab、往期只留底页月历、正文的翻译与查看原文进「⋯」菜单。</p>
   <div class="pg-facts"><span>屏<b>15 个(含往期三方案)</b></span><span>底栏<b>早报 · 内容 · 订阅 · 榜单 · 设置</b></span><span>机型宽度<b>360 / 390 / 430</b></span><span>数据<b>9 月 16 日本地库快照 + 播客 / 社交真实条目</b></span></div>
 </section>
 <section class="pg-sec" id="stage-sec">
@@ -1334,14 +1335,14 @@ code { font-family: var(--font-mono); font-size: max(12px, 0.88em); padding: 1px
       <figure><div data-phone="dark"></div><figcaption>暗</figcaption></figure>
     </div>
     <aside class="st-side" aria-label="当前屏说明">
-      <div data-notes="brief" hidden><h3>早报</h3><p class="st-sub">早报是独立 Tab(第 4 轮定稿),版式沿用第 1 轮;往期 = 底页月历</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>第 4 轮定稿:早报独立成 Tab,底栏固定为 早报 · 内容 · 订阅 · 榜单 · 设置;启用个人早报时默认落在这里。眉头写「早报 — 日期」。</li><li><span class="pg-tag ">留</span>版式沿用第 1 轮:头条整块可点 +「全文 ›」、卡上不放收藏、早报卡长按出动作单;看往期时眉头右侧换成「回到今天」。</li></ul></div><div data-notes="hist-sheet" hidden><h3>早报 · 往期月历</h3><p class="st-sub">点「往期」从底部升起月历:日期只分有 / 没有两态,今天一个蓝点</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>往期定为底页月历(第 4 轮):日期只分两态,靠数字颜色区分——有早报(墨色,可点)/ 没有(灰,不可点)。失败日按「没有」处理(与桌面月历不同:桌面标红、可点)。</li><li><span class="pg-tag ">留</span>正在看的那天是实底圆(选中态);今天一个蓝点;编排中的今天呼吸;当天多版时版次排在月历下方再选。</li><li><span class="pg-tag is-cut">删</span>底部四个图例(有早报 / 没有 / 失败 / 今天)与「回到今天」文字钮撤掉;看往期时眉头右侧已有「回到今天」。多版角标、未来日期的更淡一档也撤掉,只留两态。</li></ul></div><div data-notes="content-article" hidden><h3>内容 · 文章</h3><p class="st-sub">页头一排 = 头像 · 转盘 · 只看未读 / 全部标读 / 搜索;列表上方只有类型胶囊一条</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>视图在顶栏中间的转盘里切(第 3 轮定 B):当前视图放大居中,邻居淡出半截;点邻居、横拖或 ← → 切换;第 4 轮起固定三项 文章 / 播客 / 社交。视图上不挂未读点。</li><li><span class="pg-tag is-new">新</span>「全部 / 未读」是顶栏一枚开关图标:空心圈 = 显示全部,带点的圈 = 只看未读;开着时转盘下面写「只看未读」,切换时有提示条。它管的是整个内容 Tab(现网 unreadOnly 本来就是一个全局状态)。</li><li><span class="pg-tag ">简</span>页头只剩一排,列表上方只有类型胶囊一条(只有文章有类型)。按来源看去「订阅」Tab;收藏筛选在「订阅」Tab 的「收藏」。</li><li><span class="pg-tag ">留</span>卡片、按压、长按抬起、类型胶囊横滑不变;按类型筛选时收起「全部标读」(与现网同口径);条目靠标题字重与墨色区分已读未读。</li></ul></div><div data-notes="content-podcast" hidden><h3>内容 · 播客</h3><p class="st-sub">最小可用版:现网播客行的字段套夜航卡面</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>最小可用版:沿用现网播客行的字段(封面 · 节目名 · 时间 · 分数 / 标题两行 / 播放中 · 时长),套夜航卡面;正在播放的那期带「播放中」。</li><li><span class="pg-tag ">简</span>精品导读状态、简介初评签等其余字段沿用现网卡片,样页没画;点卡片进节目页(样页给提示条),长按出动作单。</li></ul></div><div data-notes="content-social" hidden><h3>内容 · 社交</h3><p class="st-sub">最小可用版:现网社交卡的字段套夜航卡面</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>最小可用版:沿用 SocialFlow 卡的字段(头像 · 名字 · @handle · 时间 / 原文 / 配图 / 译为中文),长文折叠成六行 +「显示更多」;长按出推文动作。</li><li><span class="pg-tag ">留</span>不展示互动数字;只订阅了一个平台时不挂平台角标(conventions §4.2);读过的卡文字降一档。</li></ul></div><div data-notes="read" hidden><h3>正文</h3><p class="st-sub">无顶栏、无底部坞;右上 收藏 · 分享 · ⋯</p><ul class="pg-notes"><li><span class="pg-tag is-cut">删</span>底部浮动坞(上一篇 · 原文 | 中文 · 下一篇)整组撤掉,给它留的底部空白一并收回(第 4 轮)。</li><li><span class="pg-tag ">留</span>无顶栏:左上返回,右上 收藏 · 分享 · ⋯ 是浮在内容上的磨砂钮,往下读时淡出;翻译与查看原文在「⋯」菜单里;「听导读」已撤。</li><li><span class="pg-tag ">留</span>入口不变:内容 Tab 的条目卡、早报卡、订阅 Tab 推入页里的卡、榜单里的条目,点开都是同一个正文页;从卡片矩形长出来,返回收回原位。</li></ul></div><div data-notes="read-end" hidden><h3>正文 · 读到文末</h3><p class="st-sub">读到文末时镀层退场(沉浸态),进度线满格,文末 查看原文 + 「下一篇」大卡</p><ul class="pg-notes"><li><span class="pg-tag ">留</span>读到文末:镀层退场(沉浸态),进度线满格;文末「查看原文 ↗」与「下一篇」大卡保留(上一篇入口随底部坞撤掉),往上一划镀层回来。</li></ul></div><div data-notes="read-menu" hidden><h3>正文 · ⋯ 菜单</h3><p class="st-sub">正文右上「⋯」:只出菜单,不带预览卡;翻译与查看原文在这里</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>正文右上「⋯」打开的底页只有菜单,不带文章预览卡(列表里长按时的抬起预览卡不变)。</li><li><span class="pg-tag is-new">新</span>菜单按使用频率排:译为中文 / 显示原文(只对有英文原文的文章)· 查看原文 | 复制站内链接 · 分享给… | 标为未读 · 标记该源全部已读。收藏是右上的星,分享浮层是右上的分享钮,菜单里不重复。</li></ul></div><div data-notes="sheet" hidden><h3>正文 · 长按</h3><p class="st-sub">列表里长按:那一条先抬起成预览卡,动作组按桌面右键菜单的分组</p><ul class="pg-notes"><li><span class="pg-tag ">留</span>列表里长按:被长按的那一条先抬起成预览卡,动作组按 items 的分组断成三块,图标在行尾;文章卡 = buildArticleMenuItems 同构。</li><li><span class="pg-tag ">留</span>播客卡、社交卡也接长按;社交卡的动作:标为已读 / 收藏 / 打开原推 / 标记该账号全部已读(沿用现网推文动作)。</li></ul></div><div data-notes="subs" hidden><h3>订阅</h3><p class="st-sub">原来源底页 + 发现更多来源 + 我的兴趣 + 收藏;顶部分段 订阅 | 兴趣</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>订阅 Tab = 原来源底页 + 发现更多来源 + 我的兴趣 + 收藏。顶部分段 订阅 | 兴趣;右上「+」与列表尾都进「发现更多来源」整页。</li><li><span class="pg-tag is-new">新</span>最上面是「全部」「收藏」两个汇总入口,下面按 官方 / 媒体 / 个人 / 榜单 / 播客 / 社交 分组列出所有订阅;点一行推入该来源的条目流。</li><li><span class="pg-tag ">留</span>未读只靠源名字重(conventions:源栏不显示每源未读数,也不画点);暂不可用的来源灰显并写「暂不可用」。游客:列表是默认订阅,顶上一张登录引导。</li></ul></div><div data-notes="subs-src" hidden><h3>订阅 · 来源流</h3><p class="st-sub">点一个来源,在订阅 Tab 里推入它的条目流整页;不动内容 Tab 的状态</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>在订阅 Tab 里推入的整页:来源头 + 该来源的条目;右上 只看未读 · 全部标读 是这一页自己的状态,不动「内容」Tab。「全部」「收藏」页的顶栏中段是同一个转盘(文章 / 播客 / 社交)。</li><li><span class="pg-tag is-cut">需落地</span>落地要第二个列表实例:现网 useReaderState 只有一条列表,来源过滤是这条列表上的修饰符;推入页要独立于内容 Tab,得另起一份列表状态(纯前端,接口不变)。</li></ul></div><div data-notes="interest" hidden><h3>订阅 · 兴趣</h3><p class="st-sub">现网 InterestPage 的移动档,外加原来源底页的兴趣轴</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>兴趣段 = 现网 InterestPage 的移动档:点击即保存、搜索标签、主题 / 行业 / 实体三段、目录卡点一下加入再点取消;「我的兴趣」每行可点读它的条目流,行尾 × 移出。</li><li><span class="pg-tag ">留</span>只画现网已有的能力;兴趣只在启用个人早报时出现,与现网「我的兴趣」同条件。</li></ul></div><div data-notes="rankings" hidden><h3>榜单</h3><p class="st-sub">只换夜航壳,版式与文章榜定位归 #221</p><ul class="pg-notes"><li><span class="pg-tag ">留</span>只换壳:沿用 RankingsPage 的分段与区块(文章榜 | 播客榜 × 话题 / 产业 / 实体;标签榜 → 标签高分内容与 30 日趋势 → 全局高分榜 → 必读文章);版式与文章榜定位归 #221。</li></ul></div><div data-notes="settings" hidden><h3>设置</h3><p class="st-sub">原「我的」+ 原设置栈一级页;外观合成一行,点进二级页</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>设置 Tab = 原「我的」(资料卡、反馈与建议、添加到主屏幕、退出登录)+ 原设置栈一级页(通用 / 接入集成 / 关于);外观合成一行,点进二级页。</li><li><span class="pg-tag ">留</span>二级页沿用现网 MobileSettings 各分区;游客:资料卡换成登录引导,锁住的分区挂锁,没有退出登录。</li></ul></div><div data-notes="settings-stack" hidden><h3>设置 · 设置栈</h3><p class="st-sub">从设置 Tab 推入的二级页(以「外观」为例,现网 AppearanceSection 原样)</p><ul class="pg-notes"><li><span class="pg-tag ">留</span>从设置 Tab 推入的二级页,以「外观」为例:主题三态、中性色三选一、减少动效(现网 AppearanceSection 原样)。返回 / Esc / 系统返回出栈。</li></ul></div>
-      <p class="st-hint">两台手机都能点:底栏切模块、顶栏转盘切视图(点邻居或横拖)、点卡片进正文、长按(或右键)出动作单、订阅 Tab 点来源推入它的条目流、设置 Tab 点外观进二级页、早报点「往期」开月历、正文点「⋯」出菜单;Esc 或浏览器返回关最上面那层。顶栏可切页面主题、中性色、动效(完整 / 减少)与机型宽度;舞台上方切身份(读者 / 游客)。</p>
+      <div data-notes="brief" hidden><h3>早报</h3><p class="st-sub">早报是独立 Tab(第 4 轮定稿),版式沿用第 1 轮;往期 = 底页月历</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>第 4 轮定稿:早报独立成 Tab,底栏固定为 早报 · 内容 · 订阅 · 榜单 · 设置;启用个人早报时默认落在这里。眉头写「早报 — 日期」。</li><li><span class="pg-tag ">留</span>版式沿用第 1 轮:头条整块可点 +「全文 ›」、卡上不放收藏、早报卡长按出动作单;看往期时眉头右侧换成「回到今天」。</li></ul></div><div data-notes="hist-sheet" hidden><h3>早报 · 往期月历</h3><p class="st-sub">点「往期」从底部升起月历:日期只分有 / 没有两态,今天一个蓝点</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>往期定为底页月历(第 4 轮):日期只分两态,靠数字颜色区分——有早报(墨色,可点)/ 没有(灰,不可点)。失败日按「没有」处理(与桌面月历不同:桌面标红、可点)。</li><li><span class="pg-tag ">留</span>正在看的那天是实底圆(选中态);今天一个蓝点;编排中的今天呼吸;当天多版时版次排在月历下方再选。</li><li><span class="pg-tag is-cut">删</span>底部四个图例(有早报 / 没有 / 失败 / 今天)与「回到今天」文字钮撤掉;看往期时眉头右侧已有「回到今天」。多版角标、未来日期的更淡一档也撤掉,只留两态。</li></ul></div><div data-notes="content-article" hidden><h3>内容 · 文章</h3><p class="st-sub">页头一排 = 头像 · 文章 / 播客 / 社交 · 只看未读 / 全部标读 / 搜索;列表上方只有类型胶囊一条</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>视图在顶栏中间切(第 3 轮定 B 转盘,第 5 轮改为三项固定位):文章 / 播客 / 社交 各占一个等宽槽位、位置不动,当前项在原位放大一档、转墨色,其余两项灰;点任一项或 ← → 切换,不再横拖。视图上不挂未读点。</li><li><span class="pg-tag is-new">新</span>「全部 / 未读」是顶栏一枚开关图标:空心圈 = 显示全部,带点的圈 = 只看未读;开着时当前视图名下面写「只看未读」,切换时有提示条。它管的是整个内容 Tab(现网 unreadOnly 本来就是一个全局状态)。</li><li><span class="pg-tag ">简</span>页头只剩一排,列表上方只有类型胶囊一条(只有文章有类型)。按来源看去「订阅」Tab;收藏筛选在「订阅」Tab 的「收藏」。</li><li><span class="pg-tag ">留</span>卡片、按压、长按抬起、类型胶囊横滑不变;按类型筛选时收起「全部标读」(与现网同口径);条目靠标题字重与墨色区分已读未读。</li></ul></div><div data-notes="content-podcast" hidden><h3>内容 · 播客</h3><p class="st-sub">最小可用版:现网播客行的字段套夜航卡面</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>最小可用版:沿用现网播客行的字段(封面 · 节目名 · 时间 · 分数 / 标题两行 / 播放中 · 时长),套夜航卡面;正在播放的那期带「播放中」。</li><li><span class="pg-tag ">简</span>精品导读状态、简介初评签等其余字段沿用现网卡片,样页没画;点卡片进节目页(样页给提示条),长按出动作单。</li></ul></div><div data-notes="content-social" hidden><h3>内容 · 社交</h3><p class="st-sub">最小可用版:现网社交卡的字段套夜航卡面</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>最小可用版:沿用 SocialFlow 卡的字段(头像 · 名字 · @handle · 时间 / 原文 / 配图 / 译为中文),长文折叠成六行 +「显示更多」;长按出推文动作。</li><li><span class="pg-tag ">留</span>不展示互动数字;只订阅了一个平台时不挂平台角标(conventions §4.2);读过的卡文字降一档。</li></ul></div><div data-notes="read" hidden><h3>正文</h3><p class="st-sub">无顶栏、无底部坞;右上 收藏 · 分享 · ⋯</p><ul class="pg-notes"><li><span class="pg-tag is-cut">删</span>底部浮动坞(上一篇 · 原文 | 中文 · 下一篇)整组撤掉,给它留的底部空白一并收回(第 4 轮)。</li><li><span class="pg-tag ">留</span>无顶栏:左上返回,右上 收藏 · 分享 · ⋯ 是浮在内容上的磨砂钮,往下读时淡出;翻译与查看原文在「⋯」菜单里;「听导读」已撤。</li><li><span class="pg-tag ">留</span>入口不变:内容 Tab 的条目卡、早报卡、订阅 Tab 推入页里的卡、榜单里的条目,点开都是同一个正文页;从卡片矩形长出来,返回收回原位。</li></ul></div><div data-notes="read-end" hidden><h3>正文 · 读到文末</h3><p class="st-sub">读到文末时镀层退场(沉浸态),进度线满格,文末 查看原文 + 「下一篇」大卡</p><ul class="pg-notes"><li><span class="pg-tag ">留</span>读到文末:镀层退场(沉浸态),进度线满格;文末「查看原文 ↗」与「下一篇」大卡保留(上一篇入口随底部坞撤掉),往上一划镀层回来。</li></ul></div><div data-notes="read-menu" hidden><h3>正文 · ⋯ 菜单</h3><p class="st-sub">正文右上「⋯」:只出菜单,不带预览卡;翻译与查看原文在这里</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>正文右上「⋯」打开的底页只有菜单,不带文章预览卡(列表里长按时的抬起预览卡不变)。</li><li><span class="pg-tag is-new">新</span>菜单按使用频率排:译为中文 / 显示原文(只对有英文原文的文章)· 查看原文 | 复制站内链接 · 分享给… | 标为未读 · 标记该源全部已读。收藏是右上的星,分享浮层是右上的分享钮,菜单里不重复。</li></ul></div><div data-notes="sheet" hidden><h3>正文 · 长按</h3><p class="st-sub">列表里长按:那一条先抬起成预览卡,动作组按桌面右键菜单的分组</p><ul class="pg-notes"><li><span class="pg-tag ">留</span>列表里长按:被长按的那一条先抬起成预览卡,动作组按 items 的分组断成三块,图标在行尾;文章卡 = buildArticleMenuItems 同构。</li><li><span class="pg-tag ">留</span>播客卡、社交卡也接长按;社交卡的动作:标为已读 / 收藏 / 打开原推 / 标记该账号全部已读(沿用现网推文动作)。</li></ul></div><div data-notes="subs" hidden><h3>订阅</h3><p class="st-sub">原来源底页 + 发现更多来源 + 我的兴趣 + 收藏;顶部分段 订阅 | 兴趣</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>订阅 Tab = 原来源底页 + 发现更多来源 + 我的兴趣 + 收藏。顶部分段 订阅 | 兴趣;右上「+」与列表尾都进「发现更多来源」整页。</li><li><span class="pg-tag is-new">新</span>最上面是「全部」「收藏」两个汇总入口,下面按 官方 / 媒体 / 个人 / 榜单 / 播客 / 社交 分组列出所有订阅;点一行推入该来源的条目流。</li><li><span class="pg-tag ">留</span>未读只靠源名字重(conventions:源栏不显示每源未读数,也不画点);暂不可用的来源灰显并写「暂不可用」。游客:列表是默认订阅,顶上一张登录引导。</li></ul></div><div data-notes="subs-src" hidden><h3>订阅 · 来源流</h3><p class="st-sub">点一个来源,在订阅 Tab 里推入它的条目流整页;不动内容 Tab 的状态</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>在订阅 Tab 里推入的整页:来源头 + 该来源的条目;右上 只看未读 · 全部标读 是这一页自己的状态,不动「内容」Tab。「全部」「收藏」页的顶栏中段是同一组视图切换(文章 / 播客 / 社交)。</li><li><span class="pg-tag is-cut">需落地</span>落地要第二个列表实例:现网 useReaderState 只有一条列表,来源过滤是这条列表上的修饰符;推入页要独立于内容 Tab,得另起一份列表状态(纯前端,接口不变)。</li></ul></div><div data-notes="interest" hidden><h3>订阅 · 兴趣</h3><p class="st-sub">现网 InterestPage 的移动档,外加原来源底页的兴趣轴</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>兴趣段 = 现网 InterestPage 的移动档:点击即保存、搜索标签、主题 / 行业 / 实体三段、目录卡点一下加入再点取消;「我的兴趣」每行可点读它的条目流,行尾 × 移出。</li><li><span class="pg-tag ">留</span>只画现网已有的能力;兴趣只在启用个人早报时出现,与现网「我的兴趣」同条件。</li></ul></div><div data-notes="rankings" hidden><h3>榜单</h3><p class="st-sub">只换夜航壳,版式与文章榜定位归 #221</p><ul class="pg-notes"><li><span class="pg-tag ">留</span>只换壳:沿用 RankingsPage 的分段与区块(文章榜 | 播客榜 × 话题 / 产业 / 实体;标签榜 → 标签高分内容与 30 日趋势 → 全局高分榜 → 必读文章);版式与文章榜定位归 #221。</li></ul></div><div data-notes="settings" hidden><h3>设置</h3><p class="st-sub">原「我的」+ 原设置栈一级页;外观合成一行,点进二级页</p><ul class="pg-notes"><li><span class="pg-tag is-new">新</span>设置 Tab = 原「我的」(资料卡、反馈与建议、添加到主屏幕、退出登录)+ 原设置栈一级页(通用 / 接入集成 / 关于);外观合成一行,点进二级页。</li><li><span class="pg-tag ">留</span>二级页沿用现网 MobileSettings 各分区;游客:资料卡换成登录引导,锁住的分区挂锁,没有退出登录。</li></ul></div><div data-notes="settings-stack" hidden><h3>设置 · 设置栈</h3><p class="st-sub">从设置 Tab 推入的二级页(以「外观」为例,现网 AppearanceSection 原样)</p><ul class="pg-notes"><li><span class="pg-tag ">留</span>从设置 Tab 推入的二级页,以「外观」为例:主题三态、中性色三选一、减少动效(现网 AppearanceSection 原样)。返回 / Esc / 系统返回出栈。</li></ul></div>
+      <p class="st-hint">两台手机都能点:底栏切模块、顶栏点 文章 / 播客 / 社交 切视图、点卡片进正文、长按(或右键)出动作单、订阅 Tab 点来源推入它的条目流、设置 Tab 点外观进二级页、早报点「往期」开月历、正文点「⋯」出菜单;Esc 或浏览器返回关最上面那层。顶栏可切页面主题、中性色、动效(完整 / 减少)与机型宽度;舞台上方切身份(读者 / 游客)。</p>
     </aside>
   </div>
 </section>
 <section class="pg-sec" id="motion">
   <h2>动效清单 <small>全部挂 &lt;html data-motion&gt;,不读 OS 媒体查询</small></h2>
-  <div class="pg-tw"><table class="pg-table"><thead><tr><th>动效</th><th>触发</th><th>时长 · 缓动</th><th>目的</th><th>减少动效时</th></tr></thead><tbody><tr><td>镀层退场</td><td>列表 / 正文向下滚(越过 140px 且速度 > 6px/帧)</td><td class="num">420ms · --motion-sheet(弹簧)</td><td>TabBar、播放坞、正文右上的钮把整屏让给内容;往上一划就回来</td><td>常显,不退场</td></tr><tr><td>大标题收拢</td><td>订阅 / 榜单 / 设置 滚过 44px</td><td class="num">240ms · --motion-medium</td><td>栏名从页面收进顶栏,顶栏换上磨砂</td><td>只剩显隐</td></tr><tr><td>转盘转动</td><td>点邻居 / 横拖 / ← →</td><td class="num">420ms · --motion-sheet;横拖时跟手,松手按最近一项弹簧回位</td><td>当前项放大居中,邻居淡出半截</td><td>瞬切</td></tr><tr><td>推入页</td><td>订阅 Tab 点来源 / 全部 / 收藏 / 兴趣;设置 Tab 点外观</td><td class="num">420ms 弹簧 translateX(32px → 0)+ 240ms 淡入;返回反向</td><td>层级感:这是 Tab 里的下一层</td><td>1ms</td></tr><tr><td>容器展开</td><td>点卡片 / 早报卡 → 正文;返回</td><td class="num">420ms 弹簧 clip-path + 90ms 后正文淡入;返回 320ms 收回原卡</td><td>来处即去处</td><td>120ms 淡入</td></tr><tr><td>底页弹簧</td><td>往期月历 / 动作组 / 播放展开</td><td class="num">420ms · --motion-sheet(超调 2.5%)</td><td>物理感,与拖拽同一套参数</td><td>1ms</td></tr><tr><td>跟手拖拽</td><td>按住把手下拉底页</td><td class="num">跟手;松手 > 96px 或速度 > 0.6px/ms 即关,否则弹回</td><td>直接操纵</td><td>拖拽照常,无回弹</td></tr><tr><td>抬起预览</td><td>长按卡片(文章、早报、播客、社交)</td><td class="num">420ms · --motion-sheet(0.96 → 1)+ 原卡淡到 35%</td><td>告诉你「选中的是这一条」</td><td>无缩放</td></tr><tr><td>按压纵深</td><td>按住卡片 / 早报头条 / 磨砂钮</td><td class="num">100ms 压到 0.985(头条 0.99),松手弹回</td><td>触感</td><td>无</td></tr><tr><td>镜片拇指</td><td>TabBar / 订阅 | 兴趣 / 榜单分段 / 主题 / 语言</td><td class="num">420ms · --motion-sheet,按第几项定位</td><td>连续</td><td>瞬移</td></tr></tbody></table></div>
+  <div class="pg-tw"><table class="pg-table"><thead><tr><th>动效</th><th>触发</th><th>时长 · 缓动</th><th>目的</th><th>减少动效时</th></tr></thead><tbody><tr><td>镀层退场</td><td>列表 / 正文向下滚(越过 140px 且速度 > 6px/帧)</td><td class="num">420ms · --motion-sheet(弹簧)</td><td>TabBar、播放坞、正文右上的钮把整屏让给内容;往上一划就回来</td><td>常显,不退场</td></tr><tr><td>大标题收拢</td><td>订阅 / 榜单 / 设置 滚过 44px</td><td class="num">240ms · --motion-medium</td><td>栏名从页面收进顶栏,顶栏换上磨砂</td><td>只剩显隐</td></tr><tr><td>视图切换</td><td>点任一项 / ← →</td><td class="num">放大 420ms · --motion-sheet;颜色 --motion-medium</td><td>当前项在原位放大一档、转墨色,位置不动</td><td>瞬切</td></tr><tr><td>推入页</td><td>订阅 Tab 点来源 / 全部 / 收藏 / 兴趣;设置 Tab 点外观</td><td class="num">420ms 弹簧 translateX(32px → 0)+ 240ms 淡入;返回反向</td><td>层级感:这是 Tab 里的下一层</td><td>1ms</td></tr><tr><td>容器展开</td><td>点卡片 / 早报卡 → 正文;返回</td><td class="num">420ms 弹簧 clip-path + 90ms 后正文淡入;返回 320ms 收回原卡</td><td>来处即去处</td><td>120ms 淡入</td></tr><tr><td>底页弹簧</td><td>往期月历 / 动作组 / 播放展开</td><td class="num">420ms · --motion-sheet(超调 2.5%)</td><td>物理感,与拖拽同一套参数</td><td>1ms</td></tr><tr><td>跟手拖拽</td><td>按住把手下拉底页</td><td class="num">跟手;松手 > 96px 或速度 > 0.6px/ms 即关,否则弹回</td><td>直接操纵</td><td>拖拽照常,无回弹</td></tr><tr><td>抬起预览</td><td>长按卡片(文章、早报、播客、社交)</td><td class="num">420ms · --motion-sheet(0.96 → 1)+ 原卡淡到 35%</td><td>告诉你「选中的是这一条」</td><td>无缩放</td></tr><tr><td>按压纵深</td><td>按住卡片 / 早报头条 / 磨砂钮</td><td class="num">100ms 压到 0.985(头条 0.99),松手弹回</td><td>触感</td><td>无</td></tr><tr><td>镜片拇指</td><td>TabBar / 订阅 | 兴趣 / 榜单分段 / 主题 / 语言</td><td class="num">420ms · --motion-sheet,按第几项定位</td><td>连续</td><td>瞬移</td></tr></tbody></table></div>
   <p class="pg-foot">--motion-sheet 超出现有 token 区间(150–300),落地时需像 #199 播放条形变一样登记「具名例外」;护栏同播放条:只动 transform / opacity / clip-path。</p>
 </section>
 <section class="pg-sec" id="tokens">
@@ -1864,8 +1865,9 @@ function cPeekInner(e) {
   return `<div class="c-card is-peek">${cCardInner(e)}</div>`;
 }
 
-/* 转盘(第 3 轮定 B,细节样页 details/view-switcher.html 的 B):顶栏中段一圈刊名,当前放大居中、邻居淡出半截;
-   点邻居、横拖或 ← → 切换;位置只认第几项(--i,横拖时另加 --drag 跟手),不量像素;视图上不挂未读点(第 3 轮取消) */
+/* 视图切换(第 3 轮定 B 转盘,细节样页 details/view-switcher.html 的 B;第 5 轮改为三项固定位):三项全在眼前、位置不动,
+   当前项在原位放大一档、转墨色;点任一项或 ← → / Home / End 切换,不再横拖;位置只认第几项(--i / --n),不量像素;
+   视图上不挂未读点(第 3 轮取消) */
 function cDial(ids, cur, act) {
   return `<div class="c-dial" role="tablist" aria-label="内容视图"><div class="c-dial-track m-hscroll">${ids.map((v) => {
     const on = v === cur;
@@ -2376,12 +2378,12 @@ const DIR = {
       const tabs = [...d.querySelectorAll('[role="tab"]')];
       const cur = tabs[0]?.dataset.act === 'sp-view' ? st.sp.view : st.view;
       const i = Math.max(0, tabs.findIndex((t) => t.dataset.v === cur));
-      d.style.setProperty('--i', String(i));
+      const box = d.closest('.c-dialbox') || d;   // 槽宽与「只看未读」副标都在 .c-dialbox 上按 --i / --n 算
+      box.style.setProperty('--i', String(i));
+      box.style.setProperty('--n', String(tabs.length));
       tabs.forEach((t, k) => {
         const on = k === i;
         t.classList.toggle('is-on', on);
-        t.classList.toggle('is-near', Math.abs(k - i) === 1);
-        t.classList.toggle('is-far', Math.abs(k - i) > 1);
         t.setAttribute('aria-selected', String(on));
         t.tabIndex = on ? 0 : -1;
       });
@@ -2391,28 +2393,7 @@ const DIR = {
     if (phone._dials) return;
     phone._dials = true;
     const scr = phone.screen;
-    let drag = null;
-    // 只有真的拖起来(> 6px)才抓指针:一开始就抓会把随后的 click 目标改成转盘本身,点邻居就不灵了
-    scr.addEventListener('pointerdown', (ev) => { const dial = ev.target.closest('.c-dial'); if (dial) drag = { dial, x0: ev.clientX, dx: 0, moved: false, id: ev.pointerId }; });
-    scr.addEventListener('pointermove', (ev) => {
-      if (!drag) return;
-      drag.dx = ev.clientX - drag.x0;
-      if (!drag.moved && Math.abs(drag.dx) > 6) { drag.moved = true; drag.dial.classList.add('is-drag'); drag.dial.setPointerCapture?.(drag.id); }
-      if (drag.moved) drag.dial.style.setProperty('--drag', `${drag.dx}px`);
-    });
-    const end = () => {
-      if (!drag) return;
-      const d = drag; drag = null;
-      d.dial.classList.remove('is-drag');
-      d.dial.style.setProperty('--drag', '0px');
-      if (!d.moved) return;
-      const tabs = [...d.dial.querySelectorAll('[role="tab"]')];
-      const i = tabs.findIndex((t) => t.classList.contains('is-on'));
-      const to = Math.max(0, Math.min(tabs.length - 1, i - Math.round(d.dx / 64)));
-      if (to !== i) phone.act(tabs[to].dataset.act, tabs[to].dataset.v, tabs[to]);
-    };
-    scr.addEventListener('pointerup', end);
-    scr.addEventListener('pointercancel', end);
+    // 第 5 轮起三项固定位:点按走 data-act 委托,这里只管 tablist 的方向键(← → Home End,漫游 tabindex)
     scr.addEventListener('keydown', (ev) => {
       const tab = ev.target.closest('.c-dial [role="tab"]');
       if (!tab) return;
