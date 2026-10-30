@@ -9,6 +9,7 @@ import {
   Inbox,
   Compass,
   BookOpenText,
+  Headphones,
   FileText,
   AtSign,
   Star,
@@ -245,7 +246,8 @@ export const ArticleRow = memo(function ArticleRow({
     : excerptOf(article.summary_zh || article.content_preview || article.content);
   const kindLabel = kindChipLabel(article);
   const podcast = entryPodcast ? podcastOf(article) : null;
-  const podcastStatus = podcastListAvailabilityMeta(podcast);
+  const podcastAvailability = entryPodcast ? podcastListAvailabilityMeta(podcast) : null;
+  const podcastDuration = entryPodcast ? formatPodcastDuration(podcast?.duration_seconds) : '';
   // 分数位显示主分(issue #178 第二波:内容类型决定默认维度,新闻价值 ≥ 8.5 例外);列表不标维度,悬停说明。
   const primaryScore = primaryScoreOf(article);
   const score = primaryScore?.text || '';
@@ -253,6 +255,9 @@ export const ArticleRow = memo(function ArticleRow({
   const scoreTitle = primaryScore ? `${primaryScore.label} ${score}。${scoreDisclaimer(primaryScore.key)}` : '';
   const analysisStatus = analysisStatusMeta(article, { podcast: entryPodcast });
   const podcastAssessment = entryPodcast ? podcastAssessmentMeta(article) : null;
+  const podcastScoreTitle = podcastAssessment
+    ? `${scoreTitle} ${podcastAssessment.label}：${podcastAssessment.note}`
+    : scoreTitle;
   // 内容类型(论文 / 教程 / 观点 / 版本更新…):源名后的一个词,资讯不挂(issue #178)。
   // issue #184:列表不再挂主题标签,内容类型也不画框——标签只在阅读窗出现,条目行只回答「谁发的、说了什么、值不值得点开」。
   const kindTag = kindLabel ? <span className="reader-entry-kind">{kindLabel}</span> : null;
@@ -293,8 +298,7 @@ export const ArticleRow = memo(function ArticleRow({
             <PodcastCover src={podcast?.image_url} className="reader-podcast-cover" />
             <span className="reader-podcast-copy">
               <span className="reader-entry-top">
-                <span className="reader-entry-src">{podcast?.show_title || sourceName}</span>
-                {kindTag}
+                <span className="reader-entry-src" title={podcast?.show_title || sourceName}>{podcast?.show_title || sourceName}</span>
                 <span
                   className="reader-entry-time"
                   title={formatPublishDateTime(article.publish_date || article.fetched_date)}
@@ -302,25 +306,30 @@ export const ArticleRow = memo(function ArticleRow({
                   {formatRelativeTime(article.publish_date || article.fetched_date, '')}
                 </span>
                 {score && (
-                  <span className={`reader-entry-score ai-grad-text ${scoreTier}`} title={scoreTitle}>
+                  <span className={`reader-entry-score ai-grad-text ${scoreTier}`} title={podcastScoreTitle}>
                     {score}
+                    {podcastAssessment && <span className="sr-only">（{podcastAssessment.label}）</span>}
                   </span>
                 )}
               </span>
               <span className="reader-entry-titlerow">
                 <span className="reader-entry-title">{searchQuery ? highlightMatch(title, searchQuery) : title}</span>
-                {article.is_premium_podcast && <span className="podcast-premium-badge">优质播客</span>}
                 {favoriteControl}
               </span>
               <span className="reader-podcast-meta">
                 <NowPlayingTag state={nowPlaying} ai={nowPlayingAi} />
-                {formatPodcastDuration(podcast?.duration_seconds) && (
-                  <span>{formatPodcastDuration(podcast.duration_seconds)}</span>
+                {podcastDuration && <span className="reader-podcast-duration">{podcastDuration}</span>}
+                {article.is_premium_podcast && <span className="podcast-premium-badge">优质播客</span>}
+                {podcastAvailability && (
+                  <span className="reader-podcast-availability">
+                    {podcastAvailability.kind === 'audio'
+                      ? <Headphones aria-hidden="true" />
+                      : podcastAvailability.kind === 'text'
+                        ? <BookOpenText aria-hidden="true" />
+                        : <Loader2 aria-hidden="true" />}
+                    <span>{podcastAvailability.label}</span>
+                  </span>
                 )}
-                <span className={`podcast-status is-${podcastStatus.tone}`}>
-                  {podcastStatus.label}
-                </span>
-                {podcastAssessment && <span className="stamp stamp-idle" role="status">{podcastAssessment.label}</span>}
               </span>
             </span>
           </span>

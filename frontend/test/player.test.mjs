@@ -33,6 +33,7 @@ import {
   podcastListenEntries,
 } from '../src/utils/listenEntries.js';
 import { podcastPlaybackKey } from '../src/utils/podcastPlayback.js';
+import { podcastListAvailabilityMeta } from '../src/utils/podcast.js';
 
 const episode = (podcast = {}, extra = {}) => ({
   id: 'ep-1',
@@ -82,6 +83,35 @@ test('音轨条目:原节目 / 精品导读 / 文章导读;没有可播地址不
   assert.equal(narration.show, 'IT之家');
   assert.equal(playerTrackSpeech(narration), '文章导读，AI 生成');
   assert.equal(articleNarrationItem({ ...article, listen_guide: { audio_ready: false } }), null);
+});
+
+test('站内音频地址:列表可听提示、收听入口、实际音轨与刷新恢复一致(issue #239)', () => {
+  const guideUrl = '/api/reader/podcast-artifacts/local-guide/audio';
+  const local = episode({ audio_url: '/media/original.mp3', condensed_audio_url: guideUrl });
+  assert.equal(podcastListAvailabilityMeta(local.podcast).kind, 'audio');
+  assert.deepEqual(podcastListenEntries(local).map((entry) => entry.track), ['original', 'digest']);
+  assert.equal(podcastTrackItem(local).src, '/media/original.mp3');
+  const item = podcastTrackItem(local, 'digest');
+  assert.equal(item.src, guideUrl);
+  assert.equal(sanitizeItem(item).src, guideUrl);
+  const storage = memoryStorage();
+  writePlayerSession(storage, 'reader', { item, form: 'bar', rate: 1 });
+  assert.equal(readPlayerSession(storage, 'reader').item.src, guideUrl);
+
+  const article = { id: 'a-local', listen_guide: { audio_ready: true, audio_url: '/api/reader/article-audio/1' } };
+  assert.equal(articleListenEntries(article)[0].kind, 'play');
+  assert.equal(articleNarrationItem(article).src, article.listen_guide.audio_url);
+});
+
+test('非法/协议相对音频不承诺可听，也不能进入音轨与会话恢复', () => {
+  for (const src of ['javascript:alert(1)', 'data:audio/mp3;base64,AA', '//outside.example/audio', '/\\outside.example/audio', '/\t/outside.example/audio', 'https://', '', null]) {
+    const bad = episode({ audio_url: src, condensed_audio_url: src });
+    assert.equal(podcastListAvailabilityMeta(bad.podcast), null, String(src));
+    assert.deepEqual(podcastListenEntries(bad), [], String(src));
+    assert.equal(podcastTrackItem(bad), null, String(src));
+    assert.equal(podcastTrackItem(bad, 'digest'), null, String(src));
+    assert.equal(sanitizeItem({ articleId: 'bad', track: 'digest', src }), null, String(src));
+  }
 });
 
 test('状态机:首次播放展开成条;迷你态换台保持迷你;失败不被随后的 pause 冲掉;关闭保留倍速', () => {

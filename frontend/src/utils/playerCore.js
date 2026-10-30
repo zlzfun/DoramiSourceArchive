@@ -3,6 +3,7 @@
 import { podcastOf } from './podcast.js';
 import { latinLang } from './readerText.js';
 import { chineseTitleOf } from './titleDisplay.js';
+import { isPlayableAudioUrl } from './playbackUrl.js';
 
 export const PLAYER_TRACKS = Object.freeze(['original', 'digest', 'article_narration']);
 export const PLAYER_RATES = Object.freeze([1, 1.25, 1.5, 2]);
@@ -30,7 +31,7 @@ export function podcastTrackItem(article, track = 'original', showFallback = '')
   if (!article?.id || !podcast) return null;
   const digest = track === 'digest';
   const src = digest ? podcast.condensed_audio_url : podcast.audio_url;
-  if (!isHttp(src)) return null;
+  if (!isPlayableAudioUrl(src)) return null;
   const title = article.title || '（无标题）';
   return {
     key: playerItemKey(article.id, digest ? 'digest' : 'original'),
@@ -51,7 +52,7 @@ export function podcastTrackItem(article, track = 'original', showFallback = '')
 /** 文章的 AI 导读旁白(listen_guide)。没有封面:条上画 ✦ 方块。 */
 export function articleNarrationItem(article, sourceName = '') {
   const guide = article?.listen_guide && typeof article.listen_guide === 'object' ? article.listen_guide : null;
-  if (!article?.id || !guide?.audio_ready || !isHttp(guide.audio_url)) return null;
+  if (!article?.id || !guide?.audio_ready || !isPlayableAudioUrl(guide.audio_url)) return null;
   const title = article.title || '（无标题）';
   return {
     key: playerItemKey(article.id, 'article_narration'),
@@ -224,7 +225,7 @@ function validItem(item) {
     item && typeof item === 'object'
     && typeof item.articleId === 'string' && item.articleId
     && PLAYER_TRACKS.includes(item.track)
-    && isHttp(item.src),
+    && isPlayableAudioUrl(item.src),
   );
 }
 
