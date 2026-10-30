@@ -8466,7 +8466,7 @@ input[type="radio"] {
           linear-gradient(to right, #000 calc(100% - 40px), transparent) bottom / 100% 1.55em no-repeat;
   }
 
-  /* ── 播客条目:封面 + 节目名/单集标题/时长/精简处理状态 ── */
+  /* ── 播客条目(issue #239):标题独立，时长/优质标识/一条导读能力提示共用尾行 ── */
   .reader-entry.is-podcast {
     padding: 10px 6px 10px 12px;
     contain-intrinsic-size: auto 96px;
@@ -8516,6 +8516,18 @@ input[type="radio"] {
     color: var(--dorami-faint);
     font-variant-numeric: tabular-nums;
   }
+
+  .reader-podcast-duration { white-space: nowrap; }
+
+  /* 可读/可听是辅助信息，不画第二枚状态章；宽度不足时整组换行。 */
+  .reader-podcast-availability {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+  }
+
+  .reader-podcast-availability svg { width: 12px; height: 12px; flex: none; }
 
   .podcast-status {
     display: inline-flex;
@@ -13239,11 +13251,10 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
   display: inline-flex;
   align-items: center;
   flex: none;
-  border: 1px solid color-mix(in srgb, var(--dorami-accent) 45%, transparent);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   padding: 2px 7px;
-  color: #8b6cff;
-  background: color-mix(in srgb, var(--dorami-accent) 12%, transparent);
+  color: var(--dorami-accent-ink);
+  background: var(--dorami-wash);
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;

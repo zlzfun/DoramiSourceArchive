@@ -33,33 +33,33 @@ test('正文文字面板的键:只在导读稿就绪那一次变化,无关刷新
   assert.equal(podcastBodyKey(null), ':notes');
 });
 
-test('readable text without audio uses one neutral label', () => {
+test('readable text survives audio generation, retries and failures with one quiet label', () => {
   const guide = { blog_ready: true, status: 'failed' };
   for (const status of ['queued', 'synthesizing', 'retry_wait', 'failed', '']) {
     assert.deepEqual(
       podcastListAvailabilityMeta({ premium_guide: { ...guide, status } }),
-      { label: '中文导读可阅读', tone: 'idle' },
+      { label: '中文导读', kind: 'text' },
       status,
     );
   }
   assert.equal(
     podcastListAvailabilityMeta({ condensed_audio_url: '/audio', premium_guide: guide }).label,
-    '精品导读音频已就绪',
+    '有声导读',
   );
 });
 
-test('no guide text distinguishes generating from a quiet original-only row', () => {
+test('a pending guide stays visible; original-only rows have no availability label', () => {
   for (const status of ['queued', 'summarizing', 'synthesizing']) {
     assert.deepEqual(
       podcastListAvailabilityMeta({ premium_guide: { blog_ready: false, status } }),
-      { label: '精品导读生成中…', tone: 'run' },
+      { label: '导读生成中…', kind: 'generating' },
       status,
     );
   }
-  for (const status of ['failed', 'retry_wait', '']) {
+  for (const status of ['failed', 'retry_wait', 'not_requested', 'ready', 'unknown', '']) {
     assert.deepEqual(
       podcastListAvailabilityMeta({ premium_guide: { status } }),
-      { label: '仅提供原节目', tone: 'idle' },
+      null,
       status,
     );
   }
@@ -74,8 +74,23 @@ test('reader labels never say failure', () => {
     podcastListAvailabilityMeta({ premium_guide: { status: 'failed' } }),
     podcastListAvailabilityMeta({ premium_guide: { status: 'retry_wait' } }),
   ];
-  for (const meta of samples) assert.equal(meta.label.includes('失败'), false);
+  for (const meta of samples) assert.equal(Boolean(meta?.label.includes('失败')), false);
   assert.deepEqual(podcastProcessingMeta('failed'), { label: '仅提供原节目', tone: 'idle' });
+});
+
+test('list availability uses available artifacts, independently of premium verdict or mode', () => {
+  for (const mode of ['brief_zh', 'tts_zh', '']) {
+    assert.deepEqual(podcastListAvailabilityMeta({
+      final_premium: false,
+      premium_guide: { mode, blog_ready: true, status: 'ready' },
+    }), { label: '中文导读', kind: 'text' });
+  }
+  assert.equal(podcastListAvailabilityMeta({ premium_guide: { audio_ready: true, status: 'ready' } }), null);
+  assert.deepEqual(podcastListAvailabilityMeta({
+    condensed_audio_url: '/audio',
+    premium_guide: { blog_ready: false, status: 'failed' },
+  }), { label: '有声导读', kind: 'audio' });
+  for (const value of [undefined, null, {}, false]) assert.equal(podcastListAvailabilityMeta(value), null);
 });
 
 test('tts retry_wait is a warn stamp with the planned retry, apart from failure', () => {

@@ -207,8 +207,8 @@ test('podcast lists keep topic tags and pipeline status out of list rows', async
     reader.indexOf(') : (', reader.indexOf('{entryPodcast ? (')),
   );
 
-  // issue #184「静」:条目行只留「源 · 内容类型 · 时间 …… 分数」,主题标签只在阅读窗出现
-  assert.match(podcastBranch, /\{kindTag\}/);
+  // issue #239:播客顶行只留「节目名 · 时间 …… 分数」,不再叠加内容类型
+  assert.doesNotMatch(podcastBranch, /\{kindTag\}/);
   assert.doesNotMatch(reader, /reader-entry-tag|analysisTag/);
   assert.match(reader, /podcastListAvailabilityMeta/);
   assert.doesNotMatch(podcastBranch, /podcastFullProcessingMeta|analysisStatus\.label/);

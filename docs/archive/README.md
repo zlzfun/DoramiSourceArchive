@@ -5,6 +5,10 @@
 > `docs/frontend/conventions.md` / `docs/sources/curation_policy.md` 等活跃文档。
 > 按「故事」分组索引;文内常含 ☐/☑ 进度符,均为当时状态。
 
+## 播客列表精简(2026-10,issue #239)
+
+- [issue-239-podcast-list.md](./issue-239-podcast-list.md) — 用户验收采用的方案、验证边界与待完成的交叉检视记录。
+
 ## 阅读器演进(2026-07,v3.2 → v3.10)
 
 - [reader-reshell-plan.md](./reader-reshell-plan.md) — **主档**:按设计样页重构四带式阅读器的五轮记录

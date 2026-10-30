@@ -1,3 +1,5 @@
+import { isPlayableAudioUrl } from './playbackUrl.js';
+
 const READY_STATUSES = new Set(['ready', 'audio_ready', 'condensed_ready', 'completed', 'complete', 'succeeded', 'success']);
 const FAILED_STATUSES = new Set(['failed', 'error']);
 
@@ -60,20 +62,22 @@ export function podcastProcessingMeta(status, hasCondensedAudio = false) {
 
 const GENERATING_WITHOUT_TEXT = new Set(['queued', 'summarizing', 'synthesizing']);
 
-/** The same audio/text/task projection is used by list and detail. */
+/**
+ * 列表只提示可用导读或读者正在等待的生成任务，不重复「只有原节目」的默认态。
+ * 音频须有实际地址，文字须 blog_ready；任务完成不等于产物可用。
+ * 全文/简介评分依据与生成过程仍由详情页承接。
+ */
 export function podcastListAvailabilityMeta(podcast = {}) {
-  if (typeof podcast === 'boolean') return podcastProcessingMeta('', podcast);
+  if (typeof podcast === 'boolean') return podcast ? { label: '有声导读', kind: 'audio' } : null;
   const guide = podcast?.premium_guide || {};
-  if (podcast?.condensed_audio_url) return { label: '精品导读音频已就绪', tone: 'ok' };
-  const status = String(guide.status || '').toLowerCase();
-  const mode = String(guide.mode || '').toLowerCase();
+  if (isPlayableAudioUrl(podcast?.condensed_audio_url)) return { label: '有声导读', kind: 'audio' };
+  const status = String(guide.status || '').trim().toLowerCase();
   if (guide.blog_ready) {
-    if (mode === 'brief_zh') return { label: '中文导读已生成', tone: 'ok' };
-    // 文字已可读、音频尚未就绪：排队、合成、等待重试、失败与待生成同一句，中性。
-    return { label: '中文导读可阅读', tone: 'idle' };
+    // 文字已可读时，音频失败/重试不掩盖阅读能力；brief_zh 也不暗示会有音频。
+    return { label: '中文导读', kind: 'text' };
   }
   if (GENERATING_WITHOUT_TEXT.has(status)) {
-    return { label: '精品导读生成中…', tone: 'run' };
+    return { label: '导读生成中…', kind: 'generating' };
   }
-  return { label: '仅提供原节目', tone: 'idle' };
+  return null;
 }
