@@ -174,8 +174,11 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   // 设置柜深链:读者头像菜单「接入集成」直落聚合接口分区;常规入口落账户区。
   const [settingsSection, setSettingsSection] = useState('account');
-  const openSettings = useCallback((section = 'account') => {
+  // 手机设置页的资料卡读数(issue #230:「我的」并进设置页,订阅数由阅读器在点头像时带过来)
+  const [settingsMeta, setSettingsMeta] = useState(null);
+  const openSettings = useCallback((section = 'account', meta = null) => {
     setSettingsSection(section);
+    setSettingsMeta(meta);
     setSettingsOpen(true);
   }, []);
   const [mountedTabs, setMountedTabs] = useState(() => {
@@ -1040,6 +1043,7 @@ export default function App() {
         <SettingsPanel
           open={settingsOpen}
           initialSection={settingsSection}
+          subscribedCount={settingsMeta?.subscribedCount ?? null}
           onClose={() => setSettingsOpen(false)}
           theme={theme}
           onThemeChange={setTheme}
@@ -1084,7 +1088,7 @@ export default function App() {
                   onUserUpdated={handleUserUpdated}
                   themeDark={effective === 'dark'}
                   onToggleTheme={toggleTheme}
-                  onOpenSettings={(section) => openSettings(section)}
+                  onOpenSettings={(section, meta) => openSettings(section, meta)}
                   onLogout={handleLogout}
                   onExitReader={isAdminRole ? exitReader : undefined}
                   feedbackUnread={feedbackUnread}

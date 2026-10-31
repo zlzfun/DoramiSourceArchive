@@ -52,7 +52,8 @@ def run_tag_search_flows(browser, base_url, database, artifacts, result):
                 assert "search" not in query and query.get("shape") == ["article"], query
                 expect(page.locator(".reader-entry")).to_have_count(2)
                 cases.append({"viewport": name, "tag": label, "check": "identity_and_noise_exclusion", "query": query})
-                page.get_by_role("button", name="关闭搜索", exact=True).click()
+                # 手机页头的搜索态收起钮是「取消」(issue #230 拍板 31 第 12 条),桌面列头仍是 × 「关闭搜索」
+                page.get_by_role("button", name="取消" if mobile else "关闭搜索", exact=True).click()
                 expect(page.locator(".reader-entry")).to_have_count(30)
 
                 # Use the browser's timer to exercise the actual <300ms debounce window,
@@ -67,7 +68,7 @@ def run_tag_search_flows(browser, base_url, database, artifacts, result):
                         const started = performance.now();
                         el.click();
                         setTimeout(() => {
-                            const close = document.querySelector('button[aria-label="关闭搜索"]');
+                            const close = document.querySelector('button[aria-label="关闭搜索"], button[data-search-cancel]');
                             if (!close) { reject(new Error('search close control missing')); return; }
                             close.click();
                             resolve(performance.now() - started);

@@ -23,16 +23,33 @@
   --rd-pane-bg: var(--dorami-soft);
 }
 
+/* issue #230 第 2 批:页头与底栏是浮在内容上的镀层,内容铺满全屏(从页头、底栏下面滚过)——
+   壳不再给安全区垫顶,各滚动区自己让出 --m-head-clear(页头下沿 + 4)与 --m-tab-clear(底栏 + 两道间距) */
 .m-shell {
   position: fixed;
   inset: 0;
   display: flex;
   flex-direction: column;
   height: 100dvh;
-  padding-top: env(safe-area-inset-top);
   background: var(--rd-list-bg);
   overflow: hidden;
 }
+/* 浮动镀层下的内容渐隐(样页):内容从底栏与播放坞下面滚过,底部一段渐隐到底色,镀层边缘才干净 */
+.m-shell::after {
+  content: "";
+  position: absolute;
+  z-index: 4;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(var(--m-tab-clear) + max(24px, var(--player-clear-end, 0px)));
+  background: linear-gradient(to top, var(--rd-list-bg) 18%, color-mix(in oklab, var(--rd-list-bg) 70%, transparent) 52%, transparent);
+  pointer-events: none;
+  transition: height var(--motion-sheet) var(--motion-sheet-ease);
+}
+.m-shell[data-receded]::after { height: calc(var(--sab) + var(--m-float) + max(24px, var(--player-clear-end, 0px))); }
+/* 早报整页是纸面(surface),渐隐到同一底色,不在头条下面压出一条灰带 */
+.m-shell[data-tab="brief"]::after { background: linear-gradient(to top, var(--dorami-surface) 18%, color-mix(in oklab, var(--dorami-surface) 70%, transparent) 52%, transparent); }
 
 /* 提示浮在底栏上方：收藏/请求失败后的反馈仍可见，也不挡住中间的导航按钮。
    底栏约 64px，额外留 16px；仅作用移动壳，桌面提示位置不变。 */
@@ -109,19 +126,22 @@
 
 /* ── 内容区 / 条目流 ── */
 .m-content {
+  position: relative;   /* 页头(.m-head / .m-veil)的定位基准 */
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
-/* 榜单是移动端一级 Tab；桌面页在这里收敛为单列并接管内容区滚动。 */
+/* 榜单是移动端一级 Tab；桌面页在这里收敛为单列并接管内容区滚动。页头标题位接管「榜单」与类型分段,范围说明是第一块 */
 .m-content > .rankings-page {
   grid-column: auto;
   flex: 1;
   min-height: 0;
-  padding: 14px 12px calc(max(26px, var(--player-clear-end, 0px)) + env(safe-area-inset-bottom));
+  padding: var(--m-head-clear) var(--m-gutter) calc(var(--m-tab-clear) + max(16px, var(--player-clear-end, 0px)));
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
+.m-content > .rankings-page.is-mobile > .ranking-head-note { margin: 0; padding: 4px 8px 0; font-size: var(--m-fs-xs); line-height: 1.6; color: var(--dorami-faint); }
 .m-content .ranking-head { align-items: center; gap: 10px; }
 .m-content .ranking-head .reader-disc-title { font-size: 20px; }
 .m-content .ranking-head-note { font-size: 12px; }
@@ -138,17 +158,31 @@
 .m-content .ranking-trend svg { width: 120px; }
 .m-content .ranking-section-head > div { align-items: flex-start; flex-direction: column; gap: 2px; }
 .m-content .ranking-content-row { grid-template-columns: 20px minmax(0, 1fr) 34px; padding-inline: 4px; }
-/* 我的早报(issue #184 夜航版式):与桌面同一张页面,单列,页面自己滚;眉头即顶栏 */
-.m-content > .bp-sheet { flex: 1; min-height: 0; overflow-y: auto; }
-.bp-sheet.is-mobile { padding-bottom: calc(max(24px, var(--player-clear-end, 0px)) + env(safe-area-inset-bottom)); }
+/* 我的早报(issue #184 夜航版式):与桌面同一张页面,单列,页面自己滚;issue #230 第 2 批起眉头并进手机页头
+   (头像 · 早报 · 日期钮 = 往期 · 重新编排 / 回到今天),头条从页头下第一块起,环境光往上铺到页头后面 */
+.m-content > .bp-sheet { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.bp-sheet.is-mobile {
+  padding-bottom: calc(var(--m-tab-clear) + max(16px, var(--player-clear-end, 0px)));
+}
+.bp-sheet.is-mobile .bp-poster { padding-top: 0; }
+.bp-sheet.is-mobile .bp-light { top: calc(-1 * var(--m-head-clear)); }
+.bp-sheet.is-mobile .bp-notice { margin-top: 0; }
 .m-list {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 0 6px max(12px, var(--player-clear-end, 0px));   /* 播放条出现时让位(issue #199) */
+  padding: 0 6px calc(var(--m-tab-clear) + max(12px, var(--player-clear-end, 0px)));   /* 底栏 / 播放坞让位 */
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
 }
+/* 页头让位用一块垫片而不是 padding-top:粘性定位的 top 在 Chromium 里从滚动区的内边距框量起,垫在 padding 里会让
+   吸顶的日期头再往下错 56px(压住第一条);垫片在内容流里,top 就是「离屏顶多远」,与页头下沿对齐 */
+.m-list::before,
+.m-social-host .reader-social-scroll::before,
+.m-subs-scroll::before,
+.bp-sheet.is-mobile::before { content: ""; display: block; height: var(--m-head-clear); }
+.m-list .reader-date-label { top: calc(var(--sat) + var(--m-head-h)); }
+.m-list .reader-fresh-pill { top: calc(var(--sat) + var(--m-head-h) + 6px); }
 .m-load-sentinel { min-height: 8px; }
 /* 长按包装:抑制 iOS 原生 callout/选词(动作单是长按的语义占位) */
 .m-press {
@@ -157,38 +191,56 @@
   user-select: none;
 }
 
-/* ── 底部 TabBar:视图轨的横向翻译(选中=wash 块+accent-ink,轨语言§4) ── */
+/* ── 底栏(issue #230 第 2 批,拍板 16;样页「浮动磨砂胶囊 + 镜片拇指」):功能模块 早报 · 内容 · 订阅 · 榜单。
+   浮在内容上(左右 --m-gutter、离屏底 sab + 8,高 62),镜片拇指只按「第几项」定位(--i / --n,不量像素),弹簧滑动;
+   往下读越过 140px 退场、往上一划回来(壳上的 data-receded;减少动效时不退场) ── */
 .m-tabbar {
-  flex: none;
+  position: absolute;
+  z-index: 20;
+  left: calc(var(--m-gutter) + var(--sal));
+  right: calc(var(--m-gutter) + var(--sar));
+  bottom: calc(var(--sab) + var(--m-float));
   display: flex;
-  align-items: stretch;
-  padding: 5px 8px calc(5px + env(safe-area-inset-bottom));
-  background: var(--rd-pane-bg);
-  border-top: 1px solid var(--dorami-border-soft);
+  height: var(--m-tab-h);
+  padding: 0 4px;
+  border-radius: var(--r-pill);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-ring), var(--glass-edge), var(--glass-shadow);
+  transition: transform var(--motion-sheet) var(--motion-sheet-ease);
 }
+.m-shell[data-receded] .m-tabbar { transform: translateY(calc(100% + var(--m-float) + var(--sab))); }
+.m-tab-lens {
+  position: absolute;
+  left: 4px;
+  top: 6px;
+  bottom: 6px;
+  width: calc((100% - 8px) / var(--n, 4));
+  border-radius: var(--r-pill);
+  background: color-mix(in oklab, var(--dorami-ink) 7%, transparent);
+  transform: translateX(calc(var(--i, 0) * 100%));
+  transition: transform var(--motion-sheet) var(--motion-sheet-ease);
+  pointer-events: none;
+}
+[data-theme="dark"] .m-tab-lens { background: color-mix(in oklab, var(--dorami-ink) 12%, transparent); }
 .m-tab {
+  position: relative;
+  z-index: 1;
   flex: 1;
-  min-width: 0;
+  min-width: var(--tap);
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 2px;
-  padding: 2px 0 3px;
+  border-radius: var(--r-pill);
   color: var(--dorami-faint);
   transition: color var(--motion-fast) var(--motion-ease);
 }
-.m-tab-ic {
-  width: min(46px, 100%);
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border-radius: var(--r-control);
-  transition: background var(--motion-fast) var(--motion-ease);
-}
-.m-tab svg { width: 20px; height: 20px; }
-.m-tab-label { font-size: 12px; font-weight: 600; }
-.m-tab.is-on { color: var(--dorami-ink); font-weight: 600; }  /* 选中 = 墨色 + 中性加深(issue #184) */
-.m-tab.is-on .m-tab-ic { background: var(--dorami-select); }
+.m-tab svg { width: 22px; height: 22px; }
+.m-tab-label { font-size: var(--m-fs-xs); font-weight: 600; }
+.m-tab.is-on { color: var(--dorami-ink); }   /* 选中 = 镜片(中性加深)+ 墨色;字重恒 600,不跳 */
 
 /* ── 整页层(发现页等 push 页):盖过内容与 TabBar ── */
 .m-page {
@@ -406,51 +458,6 @@
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
 }
-/* 聚合入口(全部XX=品牌靛 / 只看收藏=琥珀星):桌面源栏聚合行语法的移动版 */
-.m-agg-row {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  min-height: 40px;
-  padding: 0 10px;
-  border-radius: var(--r-control);
-  text-align: left;
-  color: var(--dorami-muted);
-  font-size: 13px;
-  font-weight: 400;
-}
-.m-agg-row svg { width: 16px; height: 16px; flex: none; color: var(--dorami-faint); }
-.m-agg-row.is-on {
-  background: var(--dorami-surface);
-  box-shadow: var(--sh-1);
-  color: var(--dorami-ink);
-  font-weight: 600;
-}
-.m-agg-row.is-on svg { color: var(--dorami-accent); }
-.m-agg-row.m-agg-fav.is-on svg { color: #f59e0b; }
-/* 抽屉内源行加高到触摸档(桌面 .reader-source-row 语法不变,只调纵向) */
-.m-drawer .reader-source-row { min-height: 40px; }
-.m-drawer-foot {
-  flex: none;
-  padding: 6px 2px calc(8px + env(safe-area-inset-bottom));
-  border-top: 1px solid var(--dorami-border-soft);
-}
-.m-drawer-disc {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  min-height: 44px;
-  padding: 0 10px;
-  border-radius: var(--r-control);
-  text-align: left;
-  font-size: 13px;
-  font-weight: 400;
-  color: var(--dorami-ink-2);
-}
-.m-drawer-disc svg { width: 16px; height: 16px; color: var(--dorami-muted); }
-
 /* ── 长按动作单(桌面右键菜单的 bottom-sheet 翻译;items 契约同 ContextMenu) ── */
 .m-sheet-layer { position: fixed; inset: 0; z-index: 60; }
 .m-sheet {
@@ -538,75 +545,121 @@
   color: var(--dorami-faint);
 }
 
-/* ── 「我的」页 ── */
-.m-me {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-  padding: 4px 14px max(16px, var(--player-clear-end, 0px));
+/* ── 设置页的分组卡与行(issue #230 第 2 批;样页「设置(从头像进入)」:圆角分组卡,图标住在中性方块里) ── */
+.m-group-label {
+  margin: 0;
+  padding: 16px 8px 6px;
+  font-size: var(--m-fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--dorami-faint);
 }
-.m-me-card {
+.m-group {
+  margin-top: 10px;
+  background: var(--m-card);
+  border-radius: var(--r-card);
+  box-shadow: var(--sh-1);
+  overflow: hidden;
+}
+.m-group-label + .m-group { margin-top: 0; }
+.m-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 14px;
-  background: var(--dorami-surface);
-  border: 1px solid var(--dorami-card-bd);
-  border-radius: var(--r-card);
-  box-shadow: var(--sh-2), inset 0 1px 0 var(--dorami-edge);
-}
-.m-avatar {
-  width: 44px;
-  height: 44px;
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--r-pill);
-  font-size: 18px;
-}
-.m-avatar-img {
-  width: 44px;
-  height: 44px;
-  flex: none;
-  border-radius: var(--r-pill);
-  object-fit: cover;
-}
-.m-me-name { font-size: 15px; font-weight: 600; color: var(--dorami-ink); }
-.m-me-sub { font-size: 12px; font-weight: 400; color: var(--dorami-faint); }
-.m-group {
-  margin-top: 14px;
-  background: var(--dorami-surface);
-  border: 1px solid var(--dorami-card-bd);
-  border-radius: var(--r-card);
-  box-shadow: var(--sh-2), inset 0 1px 0 var(--dorami-edge);
-  overflow: hidden;
-}
-.m-row {
-  display: flex;
-  align-items: center;
-  gap: 11px;
   width: 100%;
-  min-height: 46px;
-  padding: 0 14px;
+  min-height: 52px;
+  padding: 0 12px;
   text-align: left;
 }
-.m-row + .m-row { border-top: 1px solid var(--dorami-border-soft); }
-.m-row > svg { width: 18px; height: 18px; flex: none; color: var(--dorami-muted); }
-.m-row-label { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 400; color: var(--dorami-ink-2); }
-.m-row-meta { font-size: 12px; font-weight: 400; color: var(--dorami-faint); }
-.m-row-chev svg { width: 15px; height: 15px; color: var(--dorami-faint); }
-.m-row-dot {
-  width: 7px;
-  height: 7px;
-  flex: none;
-  border-radius: var(--r-pill);
-  background: var(--dorami-accent);
+.m-row + .m-row::before,
+.m-press + .m-press > .m-src-row::before {
+  content: "";
+  position: absolute;
+  left: 54px;
+  right: 0;
+  top: 0;
+  height: 0.5px;
+  background: var(--dorami-border);
 }
-.m-row.is-danger .m-row-label,
-.m-row.is-danger > svg { color: var(--state-bad); }
+.m-row:active,
+.m-src-row:active { background: var(--dorami-hover); }
+.m-row:disabled { opacity: 0.55; }
+/* 行首图标 = 30 见方的中性方块(svg 自身加内边距与底色,InstallApp 的行也同样生效) */
+.m-row > svg:first-child {
+  flex: none;
+  box-sizing: content-box;
+  width: 17px;
+  height: 17px;
+  padding: 6.5px;
+  border-radius: var(--r-sm);
+  background: var(--dorami-well);
+  color: var(--dorami-ink-2);
+}
+[data-theme="dark"] .m-row > svg:first-child { background: color-mix(in oklab, var(--dorami-ink) 10%, transparent); }
+/* 订阅 Tab 的汇总行 / 兴趣行:图标不进方块(样页 .c-agg-ic) */
+.m-row.is-plain > svg:first-child { padding: 3.5px; background: none; color: var(--dorami-ink-2); }
+.m-row.is-plain > svg.is-star { color: var(--state-warn); }
+.m-row-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--m-fs-base);
+  font-weight: 400;
+  color: var(--dorami-ink);
+}
+.m-row-meta {
+  flex: none;
+  font-size: var(--m-fs-sm);
+  font-weight: 400;
+  color: var(--dorami-faint);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.m-row-chev { flex: none; display: grid; place-items: center; }
+.m-row-chev svg { width: 16px; height: 16px; color: var(--dorami-faint); }
+.m-row.is-danger .m-row-label { color: var(--state-bad); }
+.m-row.is-danger > svg:first-child { color: var(--state-bad); background: var(--state-bad-bg); }
+/* 资料卡(原「我的」页账户卡):头像 60 + 名字(宋体)+ 订阅数;游客换游客卡 + 登录 */
+.m-profile {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 0;
+  padding: 18px;
+  border-radius: var(--r-overlay);
+  background: var(--m-card);
+  box-shadow: var(--sh-1);
+}
+.m-profile-av {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 60px;
+  height: 60px;
+  border-radius: var(--r-pill);
+  object-fit: cover;
+  font-size: 24px;
+  font-weight: 600;
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--dorami-ink) 6%, transparent);
+}
+.m-profile-av.is-guest { background: var(--dorami-well); color: var(--dorami-muted); }
+.m-profile-av.is-guest svg { width: 26px; height: 26px; }
+.m-profile-txt { flex: 1; min-width: 0; }
+.m-profile-name {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-serif);
+  font-size: var(--m-fs-xl);
+  font-weight: 600;
+  color: var(--dorami-ink);
+}
+.m-profile-sub { margin: 2px 0 0; font-size: var(--m-fs-sm); color: var(--dorami-muted); text-wrap: pretty; }
+.m-note-btn { flex: none; min-height: var(--tap); padding: 0 16px; font-size: var(--m-fs-md); }
 /* 外观三态(亮/暗/跟随):字号写容器,继承穿透(§3) */
 .m-seg3 {
   display: inline-flex;
@@ -644,9 +697,13 @@
   border-right: none;
 }
 .m-social-host .reader-social-col { padding: 0 12px; }
-/* 日期组头的负外距跟着窄屏侧距收成 12px(桌面 -24px 会在两侧各伸出 12px,横向可拖动);滚动区锁住横向(issue #213) */
-.m-social-host .reader-social-day { margin: 0 -12px; padding-left: 12px; padding-right: 12px; }
-.m-social-host .reader-social-scroll { overflow-x: hidden; }
+/* 日期组头的负外距跟着窄屏侧距收成 12px(桌面 -24px 会在两侧各伸出 12px,横向可拖动);滚动区锁住横向(issue #213);
+   issue #230:滚动区让出页头与底栏,吸顶的日期组头落在页头下沿 */
+.m-social-host .reader-social-day { top: calc(var(--sat) + var(--m-head-h)); margin: 0 -12px; padding-left: 12px; padding-right: 12px; }
+.m-social-host .reader-social-scroll {
+  overflow-x: hidden;
+  padding-bottom: calc(var(--m-tab-clear) + max(12px, var(--player-clear-end, 0px)));
+}
 /* hover 动作钮触屏常显(呈现的诚实:不画摸不到的钮) */
 .m-shell .social-act { opacity: 1; pointer-events: auto; }
 /* 推文翻译底栏(issue #84):文字钮视觉不变,点击区上下各扩 6px(负外边距抵消,不改卡片高度) */
@@ -660,22 +717,32 @@
 .m-list .reader-podcast-cover { width: 64px; height: 64px; }
 .m-list .reader-podcast-copy .reader-entry-time { margin-right: 0; }
 
-/* ── 公告横幅:悬浮带避开刘海(桌面 .reader-ann-band 语法原样复用) ── */
-.m-shell .reader-ann-band { top: calc(10px + env(safe-area-inset-top)); }
+/* ── 公告横幅:悬浮带避开刘海(桌面 .reader-ann-band 语法原样复用);issue #230 第 2 批起浮在页头下沿之下,
+   不盖住头像与标题位转盘(「占位式、可收起」归审计 M-11 的后续批次) ── */
+.m-shell .reader-ann-band { top: calc(var(--sat) + var(--m-head-h) + 6px); }
 
 /* ── 分享浮层(ShareMenu 复用):窄屏钳制,不超出视口 ── */
 .m-read .share-menu { max-width: calc(100vw - 24px); }
 
-/* ── 移动设置栈(Wave3,桌面设置柜的页面栈翻译) ── */
-.m-sett { z-index: 55; }
-.m-sett-list { padding: 4px 14px calc(16px + env(safe-area-inset-bottom)); }
-.m-sett-group {
-  padding: 14px 4px 6px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--dorami-faint);
+/* ── 设置页(issue #230 第 2 批:从头像推入的整页,盖住底栏与播放坞;返回钮在头像原位,页头一行 52)──
+   页头浮在内容上,内容从页头下滚过(第一块从 sat + 56 起);整页从右推入(弹簧 + 淡入),分区页同样往里推 ── */
+.m-sett {
+  z-index: 55;
+  padding-top: 0;
+  background: var(--rd-list-bg);
+  animation: dorami-m-push-in var(--motion-sheet) var(--motion-sheet-ease) both, dorami-m-fade-in var(--motion-medium) var(--motion-ease) both;
 }
+.m-sett-pane { animation: dorami-m-push-in var(--motion-sheet) var(--motion-sheet-ease) both, dorami-m-fade-in var(--motion-medium) var(--motion-ease) both; }
+@keyframes dorami-m-push-in {
+  from { transform: translateX(32px); }
+  to { transform: translateX(0); }
+}
+@keyframes dorami-m-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.m-sett.is-scrolled .m-veil { opacity: 1; }
+.m-sett-list { padding: var(--m-head-clear) var(--m-gutter) calc(24px + var(--sab)); }
 /* 分区行说明(HINTS):右对齐灰签,放不下按省略截断,不挤压标签 */
 .m-sett-hint {
   max-width: 46%;
@@ -686,17 +753,17 @@
 }
 .m-row-badge {
   flex: none;
-  min-width: 18px;
-  padding: 1px 6px;
+  min-width: 22px;
+  padding: 1px 7px;
   border-radius: var(--r-pill);
   background: var(--dorami-wash);
   color: var(--dorami-accent-ink);
-  font-size: 12px;
+  font-size: var(--m-fs-xs);
   font-weight: 600;
   text-align: center;
 }
 /* 分区页正文:分区组件与桌面设置柜同源,窄屏给统一留白;栅格已由 ≤767 断点塌陷 */
-.m-sett-body { padding: 14px 16px calc(24px + env(safe-area-inset-bottom)); background: var(--rd-pane-bg); }
+.m-sett-body { padding: var(--m-head-clear) 16px calc(24px + var(--sab)); background: var(--rd-pane-bg); }
 /* OPML 导入预览是设置栈里单独一屏:列表在滚动区,确认条贴底 */
 .m-page-scroll.opml-mobile-scroll {
   padding: 12px 16px 16px;
@@ -715,10 +782,7 @@
 }
 .opml-mobile-bar .action-button { width: 100%; }
 
-/* ── 兴趣即透镜(issue #27 五稿):抽屉栏头轴切换加高到触摸档;顶栏标题副文案;嵌入态兴趣页 ── */
-.m-axis { margin: 0 12px 6px; }
-.m-axis .reader-axis-btn { height: 34px; font-size: 13px; }
-.m-drawer .reader-axis-empty { margin: 6px 12px 0; }
+/* ── 兴趣即透镜(issue #27 五稿):顶栏标题副文案;嵌入态兴趣页 ── */
 .m-title-sub { margin-left: 8px; font-size: 12px; font-weight: 400; color: var(--dorami-faint); }
 .interest-m.is-embedded .interest-m-head { padding-top: 8px; }
 .interest-m .interest-onb { flex-direction: column; align-items: stretch; gap: 10px; margin: 0 0 6px; }
@@ -735,8 +799,324 @@
 }
 .m-kind-band .reader-kind-chip { flex: none; padding: 4px 10px; }
 
-/* 游客(issue #213):「我的」页账户卡换成游客卡 + 登录 */
-.m-me-card.guest-me-card .guest-login-btn { flex: none; margin-left: auto; }
-.m-avatar.guest-avatar svg { width: 24px; height: 24px; }
-/* 设置栈:需要登录的分区行尾挂一枚小锁(游客) */
-.m-row > .m-row-lock { width: 13px; height: 13px; color: var(--dorami-faint); }
+/* 设置页 / 订阅 Tab:需要登录的行尾挂一枚小锁(游客) */
+.m-row > .m-row-lock { flex: none; width: 14px; height: 14px; color: var(--dorami-faint); }
+
+/* ════ issue #230 阶段 3 第 2 批:一行页头(拍板 31 B「标题即切换」)、列表顶一行、订阅 Tab、迁移提示 ════ */
+
+/* ── 页头:一行 52px = 领位(头像 / 返回钮,左 8、顶栏中线)· 标题位 · 弹性空白 · 动作(右沿 6,命中 44)。
+   浮在内容上(页头本身透明,内容从它下面滚过);滚过 4px 换镀层底 .m-veil(Tab 页看壳的 data-scrolled,设置页看 .is-scrolled)。
+   页头是容器(container-type),标题位转盘的槽宽按它的内容宽算(cqw) ── */
+.m-veil {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: calc(var(--sat) + var(--m-head-h));
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: inset 0 -0.5px 0 var(--dorami-border);
+  opacity: 0;
+  transition: opacity var(--motion-medium) var(--motion-ease);
+  pointer-events: none;
+}
+.m-shell[data-scrolled] .m-content .m-veil,
+.m-veil.is-on { opacity: 1; }
+.m-head {
+  position: absolute;
+  z-index: 5;
+  top: var(--sat);
+  left: var(--sal);
+  right: var(--sar);
+  display: flex;
+  align-items: center;
+  height: var(--m-head-h);
+  padding: 0 6px 0 8px;
+  container-type: inline-size;
+  pointer-events: none;
+}
+.m-head > * { pointer-events: auto; }
+.m-head-sp { flex: 1; min-width: 0; }
+/* 头像:命中 44,看得见 32 的圆(字母头像沿用 .avatar-letter 的色相);游客是人形图标 */
+.m-me-btn {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--tap);
+  height: var(--tap);
+  border-radius: var(--r-pill);
+}
+.m-me-av {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-pill);
+  object-fit: cover;
+  font-size: var(--m-fs-md);
+  font-weight: 600;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--dorami-ink) 6%, transparent);
+  transition: transform var(--motion-medium) var(--motion-sheet-ease);
+}
+.m-me-btn:active .m-me-av { transform: scale(0.9); }
+.m-me-av.is-guest { background: var(--dorami-well); color: var(--dorami-muted); }
+.m-me-av.is-guest svg { width: 17px; height: 17px; }
+/* 标题位:宋体 600 16px,当前项以左沿为原点放大 1.3 倍(= 20.8)、墨色,其余 faint;第一项字形左沿 = 8 + 44 + 10 = 62 */
+.m-htitle,
+.m-dial-tab {
+  display: grid;
+  align-items: center;
+  justify-items: start;
+  height: var(--tap);
+  margin: 0;
+  padding: 0 0 0 10px;
+  font-family: var(--font-serif);
+  font-size: var(--m-fs-lg);
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.m-htitle { flex: none; color: var(--dorami-ink); }
+.m-hname { display: inline-block; transform-origin: 0 50%; transition: transform var(--motion-sheet) var(--motion-sheet-ease); }
+.m-htitle .m-hname { transform: scale(1.3); margin-right: calc(var(--tch, 2) * 0.312em); }
+/* 转盘:各项固定槽位;槽宽 = clamp(44, (页头内容宽 − 预留) / 项数, 字数 × 1.352em + 20);不支持 cqw 时退回按字宽排 */
+.m-dial {
+  --slot: calc(var(--ch, 2) * 1.352em + 20px);
+  flex: none;
+  display: flex;
+  height: var(--tap);
+  font-size: var(--m-fs-lg);
+}
+@supports (width: 1cqw) {
+  .m-dial { --slot: clamp(44px, calc((100cqw - var(--reserve, 176px)) / var(--n, 3)), calc(var(--ch, 2) * 1.352em + 20px)); }
+}
+.m-dial-tab { flex: none; width: var(--slot); color: var(--dorami-faint); transition: color var(--motion-medium) var(--motion-ease); }
+.m-dial-tab.is-on { color: var(--dorami-ink); }
+.m-dial-tab.is-on .m-hname { transform: scale(1.3); }
+/* 磨砂圆钮:命中 44,看得见 36 的镀层圆 */
+.m-gbtn {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--tap);
+  height: var(--tap);
+  border-radius: var(--r-pill);
+  color: var(--dorami-ink);
+}
+.m-gbtn-in,
+.m-pill-in {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-ring), var(--glass-edge);
+}
+.m-gbtn-in {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-pill);
+  transition: transform var(--motion-medium) var(--motion-sheet-ease);
+}
+.m-gbtn:active .m-gbtn-in { transform: scale(0.9); }
+.m-gbtn:disabled { opacity: 0.45; }
+.m-gbtn svg { width: 18px; height: 18px; }
+/* 只看未读:空心圈 = 显示全部,带点的圈 = 只看未读(状态只在 aria-pressed / class 上) */
+.m-gbtn.m-unread.is-on { color: var(--dorami-accent); }
+.m-gbtn.m-unread.is-on .m-gbtn-in { background: var(--dorami-wash); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--dorami-accent) 35%, transparent); }
+/* 胶囊钮(早报日期 = 往期入口 / 回到今天):命中 44,看得见 34 高 */
+.m-pill { flex: none; display: inline-flex; align-items: center; min-height: var(--tap); color: var(--dorami-ink); }
+.m-pill-in {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: var(--r-pill);
+  font-size: var(--m-fs-sm);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.m-pill-in svg { width: 14px; height: 14px; flex: none; }
+.m-hist[aria-expanded="true"] .m-pill-in { background: var(--dorami-select); }
+.m-brief-acts { position: relative; display: flex; align-items: center; gap: 2px; }
+.m-brief-acts .bp-pop { right: 0; }   /* 往期月历锚在日期钮下,右沿对齐页头右沿,不出屏 */
+/* 搜索态:搜索框盖住整行(头像让位),「取消」收起并清空 */
+.m-head-search { gap: 4px; padding: 0 8px 0 12px; }
+.m-search-field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--tap);
+  padding: 0 14px;
+  border-radius: var(--r-pill);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-ring), var(--glass-edge);
+  color: var(--dorami-faint);
+  transition: box-shadow var(--motion-fast) var(--motion-ease);
+}
+.m-search-field svg { width: 16px; height: 16px; flex: none; }
+.m-search-field input {
+  flex: 1;
+  min-width: 0;
+  height: var(--tap);
+  border: 0;
+  outline: none;
+  background: transparent;
+  font-size: var(--m-fs-lg);   /* ≥ 16:iOS 聚焦不放大整页 */
+  color: var(--dorami-ink);
+}
+.m-search-field input::placeholder { color: var(--dorami-faint); }
+.m-search-field input::-webkit-search-cancel-button { display: none; }
+/* 聚焦指示(issue #108 同法):框自己画环,输入框不画 */
+.m-search-field:focus-within { box-shadow: inset 0 0 0 1.5px var(--dorami-accent), var(--glass-edge); }
+.m-textbtn { flex: none; min-width: var(--tap); min-height: var(--tap); padding: 0 10px; font-size: var(--m-fs-md); color: var(--dorami-ink-2); }
+
+/* ── 内容 Tab 列表顶一行(拍板 31 第 9 条):「◉ 只看未读」+ 当前筛选胶囊(点 × 清除);页头一像素不动 ── */
+.m-scope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-height: 32px;
+  padding: 0 14px 4px;
+}
+.m-only {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--m-fs-xs);
+  color: var(--dorami-accent-ink);
+}
+.m-only svg { width: 13px; height: 13px; color: var(--dorami-accent); }
+.m-scope-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  height: 28px;
+  padding: 0 8px 0 12px;
+  border-radius: var(--r-pill);
+  background: var(--dorami-wash);
+  font-size: var(--m-fs-xs);
+  color: var(--dorami-accent-ink);
+}
+.m-scope-chip::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: var(--tap); transform: translateY(-50%); }
+.m-scope-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-scope-chip svg { flex: none; width: 13px; height: 13px; }
+.m-social-host .m-scope { padding-top: 0; }
+
+/* ── 订阅 Tab(第 2 批最小可用版;第 3a 批改成样页的推入页):分组卡列出全部订阅,兴趣段嵌兴趣页 ── */
+.m-subs-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 var(--m-gutter) calc(var(--m-tab-clear) + max(16px, var(--player-clear-end, 0px)));
+}
+.m-subs-scroll > :first-child { margin-top: 0; }
+.m-src-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 50px;
+  padding: 0 14px;
+  text-align: left;
+}
+/* 分隔细线从图标右侧起:方块图标行 54,汇总行 / 兴趣行 / 来源行(图标 24 上下)50 */
+.m-row.is-plain + .m-row.is-plain::before,
+.m-press + .m-press > .m-src-row::before { left: 50px; }
+.m-src-row.is-off { opacity: 0.62; }
+.m-src-row.is-ctx-anchor { background: var(--dorami-select); }
+.m-src-avatar { flex: none; width: 22px; height: 22px; border-radius: var(--r-pill); object-fit: cover; }
+.m-src-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--m-fs-base);
+  color: var(--dorami-muted);
+}
+.m-src-row.has-unread .m-src-name { color: var(--dorami-ink); font-weight: 600; }   /* 未读只靠源名字重(不计数、不画点) */
+.m-src-off { flex: none; font-size: var(--m-fs-xs); color: var(--dorami-faint); }
+.m-subs-skel .m-src-row { gap: 10px; }
+.m-subs-hint { margin: 14px 8px 0; font-size: var(--m-fs-sm); line-height: 1.6; color: var(--dorami-faint); }
+.m-wide {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 50px;
+  margin-top: 14px;
+  border-radius: var(--r-card);
+  background: var(--m-card);
+  box-shadow: var(--sh-1);
+  font-size: var(--m-fs-base);
+  color: var(--dorami-ink);
+}
+.m-wide svg { width: 18px; height: 18px; }
+.m-wide:active { background: var(--dorami-hover); }
+.m-note {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 12px 12px 12px 16px;
+  border-radius: var(--r-card);
+  background: var(--dorami-wash);
+  color: var(--dorami-ink-2);
+}
+.m-note p { flex: 1; margin: 0; font-size: var(--m-fs-sm); line-height: 1.6; }
+.m-tagdot { flex: none; display: grid; place-items: center; width: 24px; height: 24px; }   /* 与汇总行的 24 图标同宽,标签名对齐 */
+.m-tagdot::before { content: ""; width: 7px; height: 7px; border-radius: var(--r-pill); background: var(--dorami-accent); opacity: 0.75; }
+/* 兴趣段:兴趣页(移动档)不再自带滚动,跟订阅页一起滚;分面分段吸在页头下沿 */
+.m-subs-int .interest-m { display: block; margin-top: 10px; background: none; }
+.m-subs-int .interest-m-head { padding: 4px 4px 10px; background: none; }
+.m-subs-int .interest-mseg { top: calc(var(--sat) + var(--m-head-h)); margin: 0 calc(-1 * var(--m-gutter)); padding-inline: var(--m-gutter); }
+.m-subs-int .interest-mlist { overflow: visible; padding: 8px 0 0; }
+
+/* ── 老读者迁移提示(拍板 30):头像下一个小气泡「设置在这里」,点任意处即消失 ── */
+.m-hint {
+  position: absolute;
+  z-index: 25;
+  top: calc(var(--sat) + var(--m-head-h) + 4px);
+  left: calc(var(--sal) + 10px);
+  padding: 8px 12px;
+  border-radius: var(--r-control);
+  background: var(--dorami-ink);
+  color: var(--dorami-surface);
+  font-size: var(--m-fs-sm);
+  box-shadow: var(--glass-shadow);
+  pointer-events: none;
+  animation: dorami-m-fade-in var(--motion-medium) var(--motion-ease) both;
+}
+.m-hint::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: 16px;
+  width: 10px;
+  height: 10px;
+  background: inherit;
+  transform: rotate(45deg);
+}
+
+/* ══ 播放器段(issue #230 批 3d;播放器其余样式在 index.css「手机播放器」段——那里在 @layer components 里,
+   压不过本文件的壳规则,所以和壳的 data-receded 打交道的几条放这里)══
+   底栏随滚动退场(壳上的 data-receded):坞跟着落到安全区之上 --m-float;悬浮卡开着时把底栏叫回来,卡总在底栏之上 8px(样页) */
+.m-shell[data-receded]:not(:has(.player-layer[data-card="open"])) .player-layer.is-mobile[data-page="tabs"] { --player-floor: calc(var(--sab) + var(--m-float)); }
+.m-shell[data-receded]:not(:has(.player-layer[data-card="open"])) .player-layer.is-mobile[data-page="tabs"] .player-dock { transform: none; }
+.m-shell[data-receded]:has(.player-layer[data-card="open"]) .m-tabbar { transform: none; }

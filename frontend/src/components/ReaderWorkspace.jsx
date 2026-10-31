@@ -43,7 +43,8 @@ export default function ReaderWorkspace({ mobile, surfaceActive = true, ...props
   const setTab = useCallback((next) => {
     setPage((current) => {
       const value = typeof next === 'function' ? next(current || rs.mode) : next;
-      return value === 'brief' || value === 'rankings' || value === 'me' ? value : null;
+      // 手机壳的四个 Tab(issue #230):早报 / 订阅 / 榜单是页,内容 = 当前容器(rs.mode);其它值一律回内容
+      return value === 'brief' || value === 'rankings' || value === 'subs' ? value : null;
     });
   }, [rs.mode]);
   // 工作区根:滚动位置恢复的查询范围,也是播放条写「让位 / 浮钮避让」变量的宿主

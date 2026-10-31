@@ -13,6 +13,7 @@ import { rebuildToast } from '../utils/briefRebuild';
 import { guestEdition } from '../utils/guestCopy';
 import LogoMark from './LogoMark';
 import BriefHistoryCalendar from './BriefHistoryCalendar';
+import { GlassBtn, HeadTitle, MobileHeader } from './mobile/MobileHeader';
 import { resolveCompany } from '../sourceTaxonomy';
 import { formatDateTime, formatRelativeTime } from '../utils/datetime';
 import { fmtDayKey, WEEKDAY_CHARS } from '../utils/readerTime';
@@ -359,6 +360,8 @@ export default function PersonalBriefPage({
   restore = null,
   guest = false,
   onGuestLogin = null,
+  // 手机壳页头的领位(issue #230 第 2 批,拍板 31 B):头像钮由 MobileReader 传入;只有手机传,桌面眉头不动
+  mobileLead = null,
 }) {
   const restoreRef = useRef(restore);
   const [flashId, setFlashId] = useState(null);
@@ -867,6 +870,7 @@ export default function PersonalBriefPage({
       <div className="bp-light" aria-hidden="true" />
       <div className="bp-wrap">
         {onboardingBanner}
+        {!mobile && (
         <div className="bp-top">
           <p className="bp-eyebrow">
             <b>早报</b>
@@ -921,6 +925,7 @@ export default function PersonalBriefPage({
             )}
           </div>
         </div>
+        )}
         {notice && <p className={`bp-notice ${notice.cls}`} role="status">{notice.body}</p>}
         {posterBody}
       </div>
@@ -986,7 +991,61 @@ export default function PersonalBriefPage({
     </section>
   );
 
+  // 手机页头(issue #230 第 2 批,拍板 31 B):一行 = 头像 ·「早报」· 日期钮(就是往期入口,点开月历)· 重新编排 / 回到今天;
+  // 原眉头「早报 — 日期」与「· 今天」去掉;看往期时日期钮写那一天,右侧换「回到今天」。「第 N 版」只在月历与文末「本期编排」。
+  // 往期月历仍是锚定在日期钮下的浮层(底页版式归第 3b 批)。
+  const dayText = `${dateTextOf(selDate)} ${weekdayOf(selDate)}`;
+  const mobileHead = mobile && (
+    <MobileHeader
+      lead={mobileLead}
+      title={<HeadTitle>早报</HeadTitle>}
+      actions={(
+        <div className="m-brief-acts">
+          <button
+            ref={histTriggerRef}
+            type="button"
+            className="m-pill m-hist"
+            aria-haspopup="dialog"
+            aria-expanded={histOpen}
+            aria-label={`往期早报，正在看 ${dayText}`}
+            onClick={() => setHistOpen((open) => !open)}
+          >
+            <span className="m-pill-in"><CalendarDays aria-hidden="true" />{dayText}</span>
+          </button>
+          {isToday ? (!guest && (
+            <GlassBtn
+              label={live ? '今日早报正在准备' : '重新编排今日早报'}
+              onClick={handleRebuild}
+              disabled={working || loading || live}
+            >
+              <RefreshCw className={working || live ? 'animate-spin' : ''} aria-hidden="true" />
+            </GlassBtn>
+          )) : (
+            <button type="button" className="m-pill m-today" onClick={() => pickDay(todayKey)}>
+              <span className="m-pill-in"><Undo2 aria-hidden="true" />回到今天</span>
+            </button>
+          )}
+          {histOpen && (
+            <BriefHistoryCalendar
+              days={days}
+              todayKey={todayKey}
+              selDate={selDate}
+              selRevision={edition?.revision ?? selRevision}
+              live={live}
+              onPickDay={pickDay}
+              onPickRevision={pickRevision}
+              onClose={closeHistory}
+              triggerRef={histTriggerRef}
+            />
+          )}
+        </div>
+      )}
+    />
+  );
+
   return (
+    <>
+    {mobileHead}
     <section className={`bp-sheet ${mobile ? 'is-mobile' : ''}`} aria-label="我的早报" ref={sheetRef}>
       {poster}
       <div className="bp-wrap">
@@ -1015,5 +1074,6 @@ export default function PersonalBriefPage({
         {credits}
       </div>
     </section>
+    </>
   );
 }

@@ -287,6 +287,13 @@
   --vh-full: 100vh;
   /* 浮动镀层与屏边、彼此之间的间距(样页 --c-float) */
   --m-float: 8px;
+  /* 壳的几何(issue #230 第 2 批;样页 --c-gutter / --c-tab-h 与页头 52):页头一行 52,页头下第一块从 sat + 56 起;
+     底栏浮动胶囊高 62、离屏底 sab + 8,滚动区底部至少让出 --m-tab-clear */
+  --m-gutter: 12px;
+  --m-head-h: 52px;
+  --m-head-clear: calc(var(--sat) + var(--m-head-h) + 4px);
+  --m-tab-h: 62px;
+  --m-tab-clear: calc(var(--sab) + var(--m-float) * 2 + var(--m-tab-h));
   /* 夜航卡面:亮色即 surface,暗色抬一档 */
   --m-card: var(--dorami-surface);
   /* 镀层(磨砂):不支持 backdrop-filter 时 --glass-bg 退 94%、--glass-strong 退实色(见下方 @supports) */

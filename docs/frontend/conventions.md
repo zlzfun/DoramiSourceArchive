@@ -309,6 +309,7 @@
 | `--r-card` | 14px | 卡片、面板、列表容器 |
 | `--r-overlay` | 16px | 模态、浮层、hero/全屏面 |
 | `--r-pill` | 9999px | 胶囊、头像、圆形控件 |
+| `--r-float` | 24px | 手机悬浮卡(播放器展开态,issue #230 拍板 32 / 34;只在手机壳) |
 
 一个视图内只用同一圆角家族，勿混圆与方。Tailwind 具名 `rounded-lg/xl/2xl/full` 为标准梯度可共存；
 `50%`（正圆）/`0`（显式去角）等特例保留。
@@ -525,6 +526,15 @@ issue #230 起 `Modal` 与移动层都经层原语 `components/layer/useLayer`(�
 **镀层**:磨砂只用 `--glass-bg`(surface 72%)/ `--glass-strong`(95%,底页与动作组)+ `--glass-blur` + `--glass-ring` /
 `--glass-edge` / `--glass-shadow`;不支持 `backdrop-filter` 时 token 在 `index.css` 的 `@supports` 里自动退成 94% / 实色,
 组件不另写降级。卡面 `--m-card`(亮 = surface,暗抬一档 raised),遮罩 `--m-scrim`。
+
+**壳与页头(issue #230 第 2 批,样页拍板 16 / 27 / 31 B)**:底栏 = 功能模块 早报 · 内容 · 订阅 · 榜单(浮动磨砂胶囊,左右 `--m-gutter`、
+离屏底 `--sab` + `--m-float`、高 `--m-tab-h` 62,镜片拇指只按第几项定位);每个 Tab 与设置页只有一行页头(`components/mobile/MobileHeader`:
+领位 = 头像 / 返回钮,左 8、命中 44 · 标题位 · 动作;标题位就是本页的主切换 `TitleDial`,左锚定、当前项以左沿放大 1.3 倍,字形左沿 62)。
+页头与底栏浮在内容上:滚动区顶部让出 `--m-head-clear`(sat + 56,页头下第一块从这里起)、底部让出 `--m-tab-clear` + 播放坞;
+滚过 4px 页头换镀层底(壳上 `data-scrolled`),越过 140px 往下读底栏退场(`data-receded`,减少动效时不退场)。
+有吸顶子元素的滚动区(条目流 / 社交流 / 订阅页)用 `::before` 垫片让出页头、不用 `padding-top`——粘性定位的 `top` 在 Chromium 里从
+滚动区的内边距框量起,垫在 padding 里会让吸顶头再错下 56px;吸顶头的 `top` 写 `calc(var(--sat) + var(--m-head-h))`。
+设置从页头头像推入(整页、盖住底栏与播放坞、返回钮落在头像原位);新增的整页推入页沿用同一页头件。
 
 **层原语(`components/layer/`)**——移动端的层只有四种,外加 Modal 外壳,全部经 `useLayer`(缺省值表在 `utils/layerKinds.js`):
 

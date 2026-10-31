@@ -1542,6 +1542,14 @@ export function useReaderState({
     writeStoredScope(scopeUserRef.current, modeRef.current, next);
     setScopeState(next);
   };
+  // 手机订阅 Tab 的「全部」入口(issue #230 第 2 批):回到当前容器的订阅全集——清下钻、搜索与收藏星,轴回订阅,落盘。
+  const goAll = () => {
+    supersedePendingOpen(); setDiscover(false); setActiveSourceId(null); setActiveTagId(null);
+    setSearchOpen(false); setSearchInput('');
+    const next = { axis: 'subscribed', favorite: false };
+    writeStoredScope(scopeUserRef.current, modeRef.current, next);
+    setScopeState(next);
+  };
   // 栏头切轴:清掉两根轴的下钻项、落盘;点已点亮的段 = 回该轴全集(与点容器钮回聚合同义)。
   const setAxis = (axis) => {
     if (axis === 'interest' && !interestAxisEnabled) return;
@@ -1671,7 +1679,7 @@ export function useReaderState({
     // 视图 / 导航
     mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover, discoverShape, setDiscoverShape,
     socialView, podcastView, railActive, listTitle, listSubtitle,
-    goView, goSource, goTag, goContainerAll, goFavorites,
+    goView, goSource, goTag, goContainerAll, goFavorites, goAll,
     // 内容类型筛选(issue #178)
     kindFilter, setKindFilter, kindFacetItems,
     // 左栏一根轴(issue #27 五稿)

@@ -392,6 +392,8 @@ export default function SocialFlow({
   // 移动壳(v3.29 Wave3):头部控件(seg/标读/搜索)由移动顶栏承担,本组件只出卡片流;
   // 自绘浮层滚动条一并关闭——它解决的是桌面 macOS gutter 占位,移动端原生即 overlay。
   headless = false,
+  // 手机壳列表顶一行(issue #230:只看未读 / 当前筛选),放在滚动区最上面;桌面不传
+  topSlot = null,
 }) {
   const showPlatform = platformCount > 1;
   const scopeName = activeSourceId ? (sourceNameMap[activeSourceId] || activeSourceId) : null;
@@ -503,6 +505,7 @@ export default function SocialFlow({
 
       <div className="reader-scrollwrap">
       <div className="reader-social-scroll" ref={socialScrollRef}>
+        {topSlot}
         <div className="reader-social-col">
           {loading ? (
             <SocialCardsSkeleton count={3} />

@@ -23,10 +23,8 @@ def viewport_metrics(page):
             bar: {top: bar.top, bottom: bar.bottom, left: bar.left, right: bar.right},
             root: [root.scrollWidth, root.scrollHeight], client: [root.clientWidth, root.clientHeight],
             scroll: [scrollX, scrollY],
-            filterLines: [...document.querySelectorAll('.m-topbar .mini-seg-btn')].map(button => {
-                const range = document.createRange(); range.selectNodeContents(button);
-                return range.getClientRects().length;
-            }),
+            // issue #230:每个 Tab 只有一行 52px 页头(拍板 31 B)
+            heads: [...document.querySelectorAll('.m-content .m-head')].map(head => head.getBoundingClientRect().height),
             targets: [...document.querySelectorAll('.m-tabbar .m-tab')].map(button => {
                 const box = button.getBoundingClientRect();
                 return {name: button.getAttribute('aria-label'),
@@ -36,14 +34,25 @@ def viewport_metrics(page):
     }""")
 
 
+def reveal_chrome(page):
+    """底栏随滚动退场(issue #230 样页 11):往下读越过 140px 底栏收起,往上一划回来。"""
+    if page.locator(".m-shell[data-receded]").count():
+        page.mouse.wheel(0, -40)
+        expect(page.locator(".m-shell[data-receded]")).to_have_count(0)
+    # 等底栏的回位过渡跑完再量(退场 / 回来都是 transform 弹簧);只等动画结束、不预设位置,几何仍由下面的断言判
+    page.wait_for_function("() => document.querySelector('.m-tabbar').getAnimations().length === 0")
+
+
 def assert_viewport(page):
+    reveal_chrome(page)
     expect(page.locator(".m-tabbar")).to_be_visible()
     metrics = viewport_metrics(page)
-    assert abs(metrics["bar"]["bottom"] - metrics["visibleBottom"]) <= 1, metrics
+    # 底栏是浮动胶囊(issue #230):离可见区底边 8px(测试视口无安全区)
+    assert abs(metrics["visibleBottom"] - metrics["bar"]["bottom"] - 8) <= 1, metrics
     assert 0 <= metrics["bar"]["left"] < metrics["bar"]["right"] <= metrics["client"][0] + 1, metrics
     assert all(scroll <= client + 1 for scroll, client in zip(metrics["root"], metrics["client"])), metrics
     assert metrics["scroll"] == [0, 0], metrics
-    assert all(lines == 1 for lines in metrics["filterLines"]), metrics
+    assert all(height == 52 for height in metrics["heads"]), metrics
     assert metrics["targets"] and all(target["reachable"] for target in metrics["targets"]), metrics
     expect(page.locator(".reader-vrail")).to_have_count(0)
     return metrics
@@ -128,17 +137,18 @@ def login(page, password=PASSWORD):
 
 
 def pick_source(page, source):
-    page.get_by_role("button", name="订阅源", exact=True).tap()
-    drawer = page.get_by_role("dialog", name="过滤条件与来源")
-    expect(drawer).to_be_visible()
+    # issue #230:源抽屉退役,来源列在底栏「订阅」Tab;点一行回到「内容」Tab 并带上来源筛选(列表顶的筛选胶囊)
+    page.locator(".m-tabbar .m-tab", has_text="订阅").tap()
+    rows = page.locator(".m-subs-scroll .m-src-row", has_text=SOURCE_NAMES[source])
+    expect(rows).to_have_count(1)
     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/articles"
                               and f"source_id={source}" in response.url) as response:
-        drawer.get_by_role("button", name=SOURCE_NAMES[source]).tap()
+        rows.tap()
     assert response.value.status == 200
     data = response.value.json()
     assert data["items"] and all(item["source_id"] == source for item in data["items"]), data
-    expect(drawer).to_have_count(0)
-    expect(page.locator(".m-title")).to_have_text(SOURCE_NAMES[source])
+    expect(page.locator('.m-tab[aria-current="page"]')).to_have_attribute("aria-label", "内容")
+    expect(page.locator(".m-scope-chip .m-scope-name")).to_have_text(SOURCE_NAMES[source])
 
 
 def scroll_content(page, selector, distance):
@@ -184,14 +194,18 @@ def run_flows(browser, base_url, database, artifacts, result):
         assert_viewport(page)
         page.set_viewport_size({"width": 390, "height": 844})
         assert_viewport(page)
-        checks.append("source selection closes the drawer and changes real API results and visible content")
+        checks.append("source selection in the subscriptions tab returns to content and changes real API results")
 
         scroll_content(page, ".m-list", 650)
+        expect(page.locator(".m-shell[data-receded]")).to_have_count(1)   # 往下读:底栏退场
         assert_viewport(page)
+        # 列表从浮动页头与底栏下面滚过(issue #230):只挑页头下沿与底栏上沿之间完整露出的一条
         title = page.locator(".m-list").evaluate("""el => {
             const box = el.getBoundingClientRect();
+            const top = document.querySelector('.m-content .m-head').getBoundingClientRect().bottom;
+            const bottom = document.querySelector('.m-tabbar').getBoundingClientRect().top;
             return [...el.querySelectorAll('.reader-entry')].find(row => {
-                const r = row.getBoundingClientRect(); return r.top >= box.top && r.bottom <= box.bottom;
+                const r = row.getBoundingClientRect(); return r.top >= Math.max(box.top, top) && r.bottom <= Math.min(box.bottom, bottom);
             }).querySelector('.reader-entry-title').textContent;
         }""")
         before_open = page.locator(".m-list").evaluate("el => el.scrollTop")
@@ -256,7 +270,7 @@ def run_flows(browser, base_url, database, artifacts, result):
         checks.append("real server pagination loads the next page without scrolling the document")
 
         # issue #178 撤销「动态」容器后,用无订阅内容的播客容器覆盖空容器的视口约束
-        page.get_by_role("button", name="播客", exact=True).tap()
+        page.get_by_role("tab", name="播客", exact=True).tap()
         expect(page.get_by_text("暂无播客", exact=True)).to_be_visible()
         expect(page.locator(".reader-entry")).to_have_count(0)
         for width, height in ((320, 568), (900, 700), (844, 390), (390, 844)):
@@ -272,7 +286,7 @@ def run_flows(browser, base_url, database, artifacts, result):
         page.context.set_offline(True)
         try:
             with page.expect_event("requestfailed", predicate=lambda request: urlsplit(request.url).path == "/api/articles"):
-                page.get_by_role("button", name="文章", exact=True).tap()
+                page.get_by_role("tab", name="文章", exact=True).tap()
             expect(page.locator(".toast-pop")).to_contain_text(re.compile(r"fetch|fail|network|失败|网络", re.I))
             expect(page.locator(".reader-entry")).to_have_count(0)
             assert_viewport(page)
@@ -284,17 +298,22 @@ def run_flows(browser, base_url, database, artifacts, result):
         expect(page.locator(".reader-entry")).to_have_count(30)
         checks.append("offline request failure shows feedback without stale rows; switching source recovers")
 
-        page.get_by_role("button", name="我的", exact=True).tap()
-        expect(page.get_by_role("region", name="我的", exact=True)).to_be_visible()
-        page.get_by_role("button", name="设置", exact=False).tap()
-        expect(page.get_by_role("dialog", name="设置", exact=True)).to_be_visible()
+        # issue #230:「我的」Tab 退役,设置从页头头像推入(盖住底栏);手机设置不列 OPML 与接入集成
+        avatar = page.get_by_role("button", name=re.compile("打开设置$"))
+        avatar_box = avatar.bounding_box()
+        avatar.tap()
+        settings = page.get_by_role("dialog", name="设置", exact=True)
+        expect(settings).to_be_visible()
+        expect(settings).not_to_contain_text("OPML")
+        expect(settings).not_to_contain_text("接入集成")
+        # 返回钮落在头像原位(拍板 27);设置页从右推入,等推入动画落定再比
+        page.wait_for_function("""box => { const r = document.querySelector('.m-sett .m-head-lead').getBoundingClientRect();
+            return Math.abs(r.x - box.x) < 0.5 && Math.abs(r.y - box.y) < 0.5 && r.width === box.width && r.height === box.height; }""",
+                               arg=avatar_box)
         page.go_back()
         expect(page.get_by_role("dialog", name="设置", exact=True)).to_have_count(0)
-        # 回到文章容器会重拉列表与未读数;等两者落地再重载,否则重载会把在途请求打断成 ERR_ABORTED(时序竞争,与被测行为无关)
-        with page.expect_response(lambda response: urlsplit(response.url).path == "/api/articles"), \
-                page.expect_response(lambda response: urlsplit(response.url).path == "/api/reader/unread-counts"):
-            page.get_by_role("button", name="文章", exact=True).tap()
-        expect(page.locator('.m-tab[aria-current="page"]')).to_have_attribute("aria-label", "文章")
+        expect(page.locator('.m-tab[aria-current="page"]')).to_have_attribute("aria-label", "内容")
+        expect(page.get_by_role("tab", name="文章", exact=True)).to_have_attribute("aria-selected", "true")
         page.reload()
         expect(page.locator(".reader-entry")).to_have_count(30)
         page.get_by_text(title, exact=True).tap()

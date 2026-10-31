@@ -165,6 +165,20 @@
 - 样页没画:缓冲 / 出错 / 长标题(只在细节页 player-card)、播客节目页收听入口、听导读失败 / 重试态;导读时长、优质播客与导读分布、往期候选篇数是示意数据。
 - 观察项:降级那期的入选文案「今天没有达到入选标准…」看往期时也这么写,措辞可议(样页照搬现网)。
 
+**批 2 壳与页头(10-31,实现 Claude Opus 5.5 子代理)**
+
+- 底栏 早报 · 内容 · 订阅 · 榜单(浮动胶囊高 62、离底 sab + 8);「我的」Tab 退役(删 `MobileMePage.jsx`、`MobileSourceDrawer.jsx`)。新页头件 `mobile/MobileHeader.jsx`(`MobileHeader` / `HeadAvatar` / `HeadBack` / `HeadTitle` / `TitleDial` / `GlassBtn`):一行 52、领位 (8,4) 44×44、标题字形左沿 62、第一块从 56 起;转盘 内容 文章 / 播客 / 社交、订阅 订阅 / 兴趣、榜单 文章榜 / 播客榜(点按、← →、Home / End)。纯逻辑 `utils/titleDial.js` / `mobileChrome.js` / `subsGroups.js`。
+- 头像 → 设置栈整页右推(z 55 盖住底栏与坞,返回钮与头像同矩形);拍板 35 已落(`MobileSettings.jsx` 重写,桌面设置柜与 `GUEST_LOCKED_SECTIONS` 键不动,单测护栏)。订阅数经 `App.openSettings(section, meta)` 传给资料卡。迁移提示「设置在这里」只给非游客、一次性(键 `dorami-m-settings-hint`,存储不可用不提示)。
+- 早报:页头一行,日期并进往期钮、看往期时「回到今天」;`PersonalBriefPage` 新增 `mobileLead` 插槽,手机档不渲染 `.bp-top`。榜单:`RankingsPage` 的 `shape` 可受控、新增 `mobile`;文章榜 / 播客榜与内容 Tab 视图解耦(原 `onShapeChange={goView}` 联动)。
+- 订阅 Tab 过渡形态 `MobileSubsPage.jsx`:全部 / 收藏 / 合表来源 / 兴趣段(「按兴趣读」+ 嵌入现网 InterestPage);点来源 / 全部 / 收藏 / 兴趣 = 回内容 Tab 带筛选(原源抽屉语义),内容列表顶多一行可清除筛选胶囊,与「只看未读」同行——批 3a 换推入页后撤掉。兴趣入口(早报「调整兴趣」、首登「设置兴趣」)改落订阅 Tab 兴趣段。
+- 镀层:滚过 4px 页头换磨砂底(页头不退场);只有底栏随读者自己往下滚退场(近 1 秒内有滚轮 / 触摸 / 按键 / 按下才算,阈值 140px),往上一划回来,切 Tab 复位,程序性滚动(位置恢复、换期回顶)不退场,减少动效时不退场。内容 Tab 再点 = 回当前视图聚合。搜索态用「取消」文字钮,系统返回也能收起。公告横幅改到页头下沿之下。
+- 坑(已写进 conventions §10):Chromium 粘性定位 `top` 从滚动区内边距框量起,页头让位用 `padding-top` 会让吸顶头再错 56px——有吸顶子元素的滚动区一律用 `::before` 垫片。
+- 偏差:头像沿用现网 `.avatar-letter`(不新造 oklch 实底色);行图标方块圆角 `--r-sm`(样页 8);设置页只有推入动画、无反向退场;游客早报页头无「重新编排」(现网口径);InterestPage 内「我的兴趣」每行 × 未做。
+- 验证:lint 0、`npm test` 201/201(新增 `mobileShell` 11 条)、构建过、`check_docs` 0;沙箱 418/418(360 / 390 / 430 × 亮暗每组 66 + 游客 + 迁移提示 + 减少动效),兴趣段补测 6/6,WebKit 几何抽查一致;e2e 四流程连续两次全过(改 `mobile_reader` / `tag_search` / `focus_ring` / `pwa`);桌面 1280 亮暗 × 5 状态仅阅读量读数差。截图 `tmp/issue-230/impl-b2/`。
+- 推迟:早报吸顶分区头 → 3b(`.bp-sheet` 已改垫片,3b 只写 `top: calc(var(--sat) + var(--m-head-h) + 4px)`);订阅推入页 → 3a;设置页退场动画;平板版心;`OpmlSection` 的 `layout="mobile"` 分支与 `.opml-mobile-*` 成死代码、`scripts/check_mobile_navigation.py` 仍是五 Tab 选择器(`mobile-navigation.md` 已加注)、`design-preview/issue-218` 旧样页底栏走样 → 批 4 清理。
+- 观察:外观分区 360 宽「中性色」说明列被色板挤成一字一行(现网分区组件,非本批引入);外观分区与「关于」组都有「添加到主屏幕」。
+- 真机待验:iOS Safari 磨砂 + 地址栏伸缩 + 底栏退场叠加;低端安卓 / 微信 X5 降级观感;退场阈值手感;iOS 15 无 `cqw` 时转盘退回按字宽;迁移提示气泡在刘海屏的位置;设置页在主屏独立窗口的返回;搜索框 16px 不触发 iOS 放大;横屏左右安全区。
+
 ## 7. 检视节
 
 (待)

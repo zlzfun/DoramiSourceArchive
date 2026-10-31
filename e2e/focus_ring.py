@@ -190,9 +190,9 @@ def run_focus_flows(browser, base_url: str, artifacts, result: dict):
         assert login(page).status == 200
         expect(page.locator(".m-tabbar")).to_be_visible(timeout=30000)
         install_helpers(page)
-        page.locator(".m-tabbar .m-tab", has_text="文章").first.click()
-        page.get_by_role("button", name=re.compile("搜索")).first.click()
-        assert_container_ring(page, "mobile-search", ".m-search-inline input", None, checks)
+        page.locator(".m-tabbar .m-tab", has_text="内容").first.click()
+        page.get_by_role("button", name="搜索", exact=True).first.click()
+        assert_container_ring(page, "mobile-search", ".m-search-field input", ".m-search-field", checks)
         assert not errors, errors
     except Exception:
         page.screenshot(path=str(artifacts / "focus-ring-mobile-failure.png"))

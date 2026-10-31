@@ -63,10 +63,17 @@ function Trend({ points }) {
   );
 }
 
+// shape 可受控(issue #230 手机壳:页头标题位转盘 文章榜 / 播客榜 在页外);不传则按 initialShape 自管。
+// mobile:页头的「榜单」标题与类型分段由手机页头接管,这里只留范围说明(作页头下第一块)。
 export default function RankingsPage({
   sourceMap = {}, onOpenArticle, onShapeChange, embedded = false, initialShape = 'article',
+  shape: shapeProp, mobile = false,
 }) {
-  const [shape, setShape] = useState(initialShape);
+  const [shapeState, setShapeState] = useState(initialShape);
+  const shape = shapeProp ?? shapeState;
+  const setShape = (next) => {
+    if (shapeProp == null) setShapeState(next);
+  };
   const [axis, setAxis] = useState('topic');
   const [data, setData] = useState(null);
   const [selectedCode, setSelectedCode] = useState('');
@@ -131,7 +138,10 @@ export default function RankingsPage({
   const shapeName = shape === 'podcast' ? '播客榜' : '文章榜';
 
   return (
-    <main className={`rankings-page ${embedded ? 'is-embedded' : ''}`} aria-label="榜单">
+    <main className={`rankings-page ${embedded ? 'is-embedded' : ''} ${mobile ? 'is-mobile' : ''}`} aria-label="榜单">
+      {mobile ? (
+        <p className="ranking-head-note">{RANKING_SCOPE_NOTE}</p>
+      ) : (
       <header className="ranking-head">
         <div>
           <span className="reader-disc-title">榜单</span>
@@ -154,6 +164,7 @@ export default function RankingsPage({
           ))}
         </div>
       </header>
+      )}
 
       <div className="ranking-axis" role="tablist" aria-label={`${shapeName}分类`}>
         {RANKING_AXES.map(([key, label]) => (
