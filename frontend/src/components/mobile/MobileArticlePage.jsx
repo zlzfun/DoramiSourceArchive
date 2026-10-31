@@ -26,12 +26,16 @@ import { hostOf, latinLang } from '../../utils/readerText';
 import { kindKickerLabel } from '../../utils/contentKind';
 import { displayTitle, titleView } from '../../utils/titleDisplay';
 import { useTitlePreference } from '../../hooks/useTitlePreference';
+import LayerPage from '../layer/LayerPage';
 
 // 正文页(移动波 Wave2,样页画面②):push 全屏页——无底部 Tab,返回即出栈。
 // 衬线标题/kicker/meta/速读卡/进度线/上一下一篇 全部复用阅读窗语法类
 // (.reader-kicker/.reader-pane-title/.reader-ai-summary/markdown-body,单一事实来源);
 // 顶栏动作 = 原文/收藏/分享/译/更多(更多=与长按同款动作单,由父级 onMore 装配)。
 // 收听入口(issue #199 方案 C)在署名行下:移动端没有动作行;播放条是全局的,不在这一页里。
+// 层的行为走层原语 LayerPage(issue #230):打开即入层栈(系统返回关这一页、不离站)、Esc 返回列表、
+// 焦点落在页面上、关闭还给列表里点开它的那一行;下层列表 / 顶栏 / 底栏整片 inert(审计 M-35),
+// 页面层之上的播放条保留可达。
 export default function MobileArticlePage({
   rs,
   guestAccessEnabled = false,
@@ -87,7 +91,7 @@ export default function MobileArticlePage({
   );
 
   return (
-    <div className="m-read" role="region" aria-label="正文">
+    <LayerPage className="m-read" label="正文" onClose={onBack}>
       <div className="m-topbar on-pane">
         <button type="button" className="m-iconbtn" onClick={onBack} aria-label="返回列表">
           <ChevronLeft />
@@ -292,6 +296,6 @@ export default function MobileArticlePage({
           </nav>
         )}
       </div>
-    </div>
+    </LayerPage>
   );
 }

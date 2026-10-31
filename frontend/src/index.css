@@ -13,6 +13,19 @@
    否则所有 dark: 补丁会退化成系统偏好媒体查询、在浅色系统下整体失效。 */
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
+/* ── 命名断点(issue #230 移动规范;conventions「移动端」§断点)──
+   CSS 与 JS 共用一份口径:JS 侧 utils/breakpoints.js 的 MEDIA,test/breakpoints.test.mjs 核对逐字一致。
+   写法:样式里 `@variant bp-phone { … }`(可套在 @layer 内、也可嵌进规则),JSX 里 `bp-phone:` 前缀。
+   不用 `@custom-media`:它只在生产构建(Lightning CSS)里展开,开发服务器原样输出、浏览器不认。
+   新增宽度断点先进本表;裸 `@media (max-width / min-width …)` 由守卫拦(私有例外须带 bp-exempt 注记)。
+   容器查询(早报 960 / 680 / 420、播放条 640 / 900)按容器宽排版,不属于本表。 */
+@custom-variant bp-phone-s (@media (max-width: 480px));
+@custom-variant bp-phone (@media (max-width: 767px));
+@custom-variant bp-tablet (@media (min-width: 768px) and (max-width: 1024px));
+@custom-variant bp-shell (@media (max-width: 1024px));
+@custom-variant bp-desktop (@media (min-width: 1025px));
+@custom-variant bp-desktop-m (@media (max-width: 1280px));
+
 /* —— 登录页专用字体子集(仅含登录页用字:让AI资讯有处可栖。哆啦美平台DORAMI + A–Z) ——
    思源宋体 ~4KB/字重、Plex Mono ~2KB,本地打包不走外网;缺字按字形回退到后续字体栈。
    来源:Google Fonts text= 子集接口(OFL 许可),完整字重不入仓。 */
@@ -238,7 +251,7 @@
   --heat-3: rgba(var(--dorami-accent-rgb), 0.66);
   --heat-4: var(--dorami-accent);
   --heat-empty: rgba(22, 25, 34, 0.035);
-  /* lg+ 的导轨几何覆盖见本文件 :root 块后的 @media (min-width: 1024px) */
+  /* 桌面壳(bp-desktop,≥ 1025)的导轨几何覆盖见本文件 :root 块后的 @variant bp-desktop */
 
   /* 工作区动效收敛（P4）：功能态向 Geist 节奏靠拢（状态~150 / 浮层~200-240 / 面板~300）。
      品牌/登录页的 aurora/流星/光束/逐词浮现用各自硬编码秒级时长，不受这些 token 影响。 */
@@ -248,6 +261,63 @@
   --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --motion-smooth: cubic-bezier(0.22, 1, 0.36, 1);
   --motion-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ── 移动 token(issue #230 移动规范,conventions「移动端」节;取自样页 docs/design/issue-230-mobile「token 与落地注记」)──
+   只给手机壳与层原语用,桌面不引用。三套中性色与亮暗都靠派生(color-mix / 既有 token)跟随,不写死底色。 */
+:root {
+  /* 触控:主要动作命中 ≥ --tap;行内次要可见 ≥ --tap-inline,命中经 .tap-hit 扩到 --tap */
+  --tap: 44px;
+  --tap-inline: 32px;
+  /* 字号刻度(手机壳只用这 8 档;分数身份线与早报头条的展示字号另按 §3 / §早报,不在此列) */
+  --m-fs-xs: 12px;        /* 元信息 / 时间 / 底栏名 */
+  --m-fs-sm: 13px;        /* 次要文字 / 胶囊 / 眉头 / 署名行 */
+  --m-fs-md: 14px;        /* 摘要 / 说明 / 文字钮 */
+  --m-fs-base: 15px;      /* 列表行 / 设置行 / 速读正文 */
+  --m-fs-lg: 16px;        /* 卡片标题 / 菜单项 / 输入框(iOS 聚焦不放大的下限) */
+  --m-fs-read: 17px;      /* 长文正文 */
+  --m-fs-xl: 20px;        /* 页头标题位 / 底页标题 / 正文小节 */
+  --m-fs-display: 29px;   /* 正文页宋体大标题 */
+  /* 安全区(四向;横屏左右也要垫) */
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  /* 视口高:移动可达的高度一律走它(dvh,不支持时退 vh) */
+  --vh-full: 100vh;
+  /* 浮动镀层与屏边、彼此之间的间距(样页 --c-float) */
+  --m-float: 8px;
+  /* 夜航卡面:亮色即 surface,暗色抬一档 */
+  --m-card: var(--dorami-surface);
+  /* 镀层(磨砂):不支持 backdrop-filter 时 --glass-bg 退 94%、--glass-strong 退实色(见下方 @supports) */
+  --glass-bg: color-mix(in oklab, var(--dorami-surface) 72%, transparent);
+  --glass-strong: color-mix(in oklab, var(--dorami-surface) 95%, transparent);
+  --glass-blur: saturate(1.7) blur(22px);
+  --glass-ring: inset 0 0 0 0.5px color-mix(in oklab, var(--dorami-ink) 14%, transparent);
+  --glass-edge: inset 0 1px 0 var(--dorami-edge);
+  --glass-shadow: 0 10px 30px -12px rgba(22, 25, 34, 0.30);
+  /* 层的遮罩(抽屉 / 动作单;Modal 另有 .modal-overlay 口径) */
+  --m-scrim: rgba(11, 18, 32, 0.32);
+  /* 弹簧:阻尼 0.76、超调 2.5%,与 utils/playerSpring.js 同一种采样法(具名例外,见 conventions §7) */
+  --motion-sheet: 420ms;
+  --motion-sheet-ease: linear(0, 0.047, 0.157, 0.296, 0.44, 0.575, 0.693, 0.791, 0.868, 0.926, 0.967, 0.995, 1.012, 1.021, 1.025, 1.025, 1.023, 1.02, 1.016, 1.013, 1.009, 1.007, 1.004, 1.003, 1);
+}
+[data-theme="dark"] {
+  --m-card: var(--dorami-raised);
+  --glass-shadow: 0 12px 32px -10px rgba(0, 0, 0, 0.65);
+  --m-scrim: rgba(0, 0, 0, 0.5);
+}
+@supports (height: 100dvh) {
+  :root { --vh-full: 100dvh; }
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root {
+    --glass-bg: color-mix(in oklab, var(--dorami-surface) 94%, transparent);
+    --glass-strong: var(--dorami-surface);
+  }
+}
+@supports not (transition-timing-function: linear(0, 1)) {
+  :root { --motion-sheet-ease: var(--motion-ease); }
 }
 
 /* Tab 面板的隐藏改用 class(原内联 display:none)::has() 不看 display,
@@ -264,8 +334,9 @@ html:has(.tab-panel:not(.is-off) :is(.ledger-shell, .nodes-shell, .reader-shell,
   scrollbar-gutter: auto;
 }
 
-/* 壳层几何:lg+ 启用左导轨、撤顶栏(与 :root 基础值同为未分层,媒体命中即胜出) */
-@media (min-width: 1024px) {
+/* 壳层几何:桌面壳(bp-desktop,≥ 1025)启用左导轨、撤顶栏(与 :root 基础值同为未分层,媒体命中即胜出)。
+   issue #230 前是 min-width: 1024px,1024 那一档与手机壳(≤ 1024)同时成立;那一档只渲染手机壳,不读这两个变量。 */
+@variant bp-desktop {
   :root {
     --rail-w: 64px; /* 与阅读器视图轨同宽(导轨风格向视图轨靠拢;v3.45 微标签态 56→64) */
     --app-top: 0px;
@@ -1796,7 +1867,7 @@ input[type="radio"] {
     animation-delay: var(--d, 0ms);
   }
 
-  @media (max-width: 880px) {
+  @media (max-width: 880px) {   /* bp-exempt: 登录页私有断点,登录页版式归 #214 */
     .auth-shell {
       grid-template-columns: 1fr;
       max-width: 460px;
@@ -1826,7 +1897,7 @@ input[type="radio"] {
   /* ── 登录页 ≤480 轻档(移动波 Wave3):收纳排版,不动演出——
      星座保留环境漂移(pointermove 缺席时的既有基础),跃迁终幕原样;
      手机上「静谧版」而非「残缺版」。 ── */
-  @media (max-width: 480px) {
+  @variant bp-phone-s {
     .auth-stage {
       padding: 20px 18px calc(20px + env(safe-area-inset-bottom));
     }
@@ -3241,7 +3312,7 @@ input[type="radio"] {
   .ledger-pipeline-step.is-now.is-err { background: #e11d48; color: #fff; }
 
   /* 移动端(<lg):分面栏移到顶部横向排布,表格横向滚动,不溢出页面 */
-  @media (max-width: 1023px) {
+  @variant bp-shell {
     .ledger-shell { width: auto; margin: 0; height: auto; overflow: visible; }
     .ledger-head { padding: 0 0 4px; }
     .ledger-work { flex-direction: column; margin: 14px 0 0; }
@@ -3623,7 +3694,7 @@ input[type="radio"] {
   .flow-skel td:first-child { padding-left: 16px; }
 
   /* 移动端 <lg:时刻表折顶,纸纵排(照台账移动端范式) */
-  @media (max-width: 1023px) {
+  @variant bp-shell {
     .runs-shell { width: auto; margin: 0; height: auto; overflow: visible; }
     .runs-shell > .page-head { padding: 0 0 4px; min-height: 0; }
     .runs-work { flex-direction: column; margin: 14px 0 0; }
@@ -3857,7 +3928,7 @@ input[type="radio"] {
   .scope-note summary:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: 2px; border-radius: var(--r-sm); }
   .scope-note p { margin-top: 8px; }
 
-  @media (max-width: 1023px) {
+  @variant bp-shell {
     .channels-pair, .brief-card { grid-template-columns: 1fr; }
     .brief-col + .brief-col { border-left: none; border-top: 1px solid var(--dorami-border); }
   }
@@ -4168,7 +4239,7 @@ input[type="radio"] {
   .sett-kv dt { color: var(--dorami-faint); font-size: 12px; font-weight: 600; padding-top: 1px; }
   .sett-kv dd { color: var(--dorami-ink-2); font-weight: 400; font-family: var(--mono); font-size: 12px; }
 
-  @media (max-width: 767px) {
+  @variant bp-phone {
     .modal-panel.sett-cab { flex-direction: column; height: 92vh; }
     .sett-nav { width: 100%; flex-direction: row; overflow-x: auto; padding: 8px;
       border-right: none; border-bottom: 1px solid var(--dorami-border); }
@@ -4444,7 +4515,7 @@ input[type="radio"] {
   .heat-year-btn:hover:not(.is-on) { background: var(--dorami-well); color: var(--dorami-ink-2); }
   .heat-year-btn.is-on { background: var(--dorami-blue); color: #fff; font-weight: 600; }
   /* 窄屏:年份轨换行到格阵下方横排,避免挤压可滚动格阵 */
-  @media (max-width: 900px) {
+  @variant bp-shell {
     .heat-body { flex-direction: column; gap: 10px; }
     .heat-years { flex-direction: row; flex-wrap: wrap; padding-top: 0; }
   }
@@ -4541,7 +4612,7 @@ input[type="radio"] {
     font-variant-numeric: tabular-nums; color: var(--dorami-ink);
   }
 
-  @media (max-width: 1023px) {
+  @variant bp-shell {
     .ai-switchboard, .model-fields { flex-wrap: wrap; }
     .admin-grid { grid-template-columns: 1fr; }
     .kpi-strip { flex-direction: column; }
@@ -4786,6 +4857,24 @@ input[type="radio"] {
     font-weight: 600;
   }
 
+  /* ── 层原语(issue #230,components/layer;conventions「移动端」§层)──
+     面板容器(data-layer-panel,tabIndex=-1)只是焦点落点,不是控件:指针打开的层把焦点放在这里,
+     键盘用户的下一个 Tab 才进控件——容器自身不画焦点环(UA 的 :focus-visible 默认环会把整页框起来)。 */
+  [data-layer-panel]:focus-visible,
+  .m-sheet-menu:focus-visible { outline: none; }
+  /* 行内次要动作的命中扩区:可见尺寸不变,命中至少 --tap 见方(conventions「移动端」§触控);
+     元素自身的 ::after 已有它用时不要挂 */
+  .tap-hit { position: relative; }
+  .tap-hit::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, var(--tap));
+    height: max(100%, var(--tap));
+    transform: translate(-50%, -50%);
+  }
+
   /* ── Modal ── */
 
   .modal-overlay {
@@ -4809,6 +4898,7 @@ input[type="radio"] {
   .modal-panel {
     display: flex;
     max-height: calc(100vh - 120px);
+    max-height: calc(var(--vh-full) - 120px);   /* 手机地址栏伸缩时按可见高(dvh;桌面 dvh = vh,无变化) */
     width: 100%;
     flex-direction: column;
     overflow: hidden;
@@ -7002,7 +7092,7 @@ input[type="radio"] {
   }
 
   /* ── 移动端（<lg）：检视器降级为底部抽屉，调度板单列 ── */
-  @media (max-width: 1023px) {
+  @variant bp-shell {
     .board-node {
       grid-template-columns: 14px minmax(0, 1fr) auto;
     }
@@ -9845,7 +9935,7 @@ input[type="radio"] {
     font-size: 12px;
   }
 
-  @media (max-width: 1120px) {
+  @media (max-width: 1120px) {   /* bp-exempt: 榜单桌面两栏的私有断点(1025–1120 单栏),并入 bp-desktop-m 会改桌面观感;版式归 #221 */
     .ranking-layout { grid-template-columns: 1fr; }
   }
 
@@ -10134,7 +10224,7 @@ input[type="radio"] {
   /* minmax(0, 1fr):轨道不被卡片的最小内容宽撑大(长名称 / 标签行曾把单列撑到 403px、超出 390px 手机屏,
      各分组的网格各自被撑成不同宽度——issue #213 顺手修) */
   .reader-disc-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-  @media (max-width: 1280px) { .reader-disc-grid { grid-template-columns: minmax(0, 1fr); } }
+  @variant bp-desktop-m { .reader-disc-grid { grid-template-columns: minmax(0, 1fr); } }
 
   /* 卡=纵向 flex 且 main 撑满:网格拉伸等高时高度传导到内层,
      meta 的 margin-top:auto / 右列 space-between 才有施力空间(贴底对齐的前提) */
@@ -10240,7 +10330,7 @@ input[type="radio"] {
   .reader-disc-viewseg { flex: none; }
 
   .reader-disc-coll-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  @media (max-width: 1280px) { .reader-disc-coll-grid { grid-template-columns: 1fr; } }
+  @variant bp-desktop-m { .reader-disc-coll-grid { grid-template-columns: 1fr; } }
 
   /* 合集卡:纵排(头像堆叠行 → 名称行 → 简介 → 来源注),整卡可点进详情 */
   .reader-disc-coll-card { flex-direction: column; gap: 8px; cursor: pointer; }
@@ -10936,16 +11026,39 @@ input[type="radio"] {
     backdrop-filter: blur(8px) saturate(1.3);
     cursor: zoom-out;
     animation: dorami-fade-in var(--motion-medium) var(--motion-ease) both;
+    touch-action: none;   /* 触屏双指缩放 / 平移归灯箱自己(issue #230 M-40),不缩放整页 */
   }
   .reader-lightbox-img {
     max-width: 92vw;
     max-height: 92vh;
+    max-height: calc(var(--vh-full) * 0.92);
     object-fit: contain;
     border-radius: var(--r-overlay);
     box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
     cursor: zoom-out;
-    animation: dorami-lightbox-in var(--motion-medium) var(--motion-ease) both;
+    /* backwards 而非 both:终帧不保持,入场后行内 transform(双指缩放)才生效;终帧即自然态,观感不变 */
+    animation: dorami-lightbox-in var(--motion-medium) var(--motion-ease) backwards;
+    transition: transform var(--motion-medium) var(--motion-ease);   /* 松手归位 / 轻点复位 */
+    -webkit-user-drag: none;
   }
+  .reader-lightbox-img.is-gesturing { transition: none; }   /* 双指跟手 */
+  /* 手机壳的关闭钮(拍板 33 的出口:读屏与 iOS 主屏幕独立窗口);遮罩是主题恒定的深色 */
+  .reader-lightbox-close {
+    position: absolute;   /* 灯箱本身 fixed 满屏;不用 fixed——useModalA11y 按 offsetParent 认可聚焦元素,fixed 元素会被漏掉 */
+    top: calc(var(--sat) + 8px);
+    right: calc(var(--sar) + 8px);
+    display: grid;
+    place-items: center;
+    width: var(--tap);
+    height: var(--tap);
+    z-index: 1;   /* 放大后的图片在它下面 */
+    border-radius: var(--r-pill);
+    background: rgba(11, 18, 32, 0.55);   /* 深底白叉 + 一圈弱白环:压在放大后的亮图上也看得见 */
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2);
+    color: #fff;
+    cursor: pointer;
+  }
+  .reader-lightbox-close svg { width: 20px; height: 20px; }
   @keyframes dorami-lightbox-in {
     from { opacity: 0; transform: scale(0.94); }
     to { opacity: 1; transform: scale(1); }
@@ -11117,7 +11230,7 @@ input[type="radio"] {
   .m-listen .listen-entry { height: 40px; padding: 0 14px 0 12px; font-size: 14px; }
   .m-listen .listen-len { font-size: 13px; }
   .m-listen .listen-entries.is-podcast .listen-entry { flex: 1 1 auto; }
-  @media (min-width: 560px) { .m-listen .listen-entries.is-podcast .listen-entry { flex: none; } }   /* 平板宽度:回到按内容宽 */
+  @variant bp-tablet { .m-listen .listen-entries.is-podcast .listen-entry { flex: none; } }   /* 平板宽度:回到按内容宽(issue #230 由 560 并入 bp-tablet) */
 
   /* AI 身份 ✦(四角星蒙版 + --grad-ai)与律动条 */
   .player-spark {
@@ -11620,7 +11733,7 @@ input[type="radio"] {
 
 /* ── Responsive ── */
 
-@media (max-width: 1024px) {
+@variant bp-shell {
   .catalog-topbar .section-title {
     width: 100%;
     margin-right: 0;
@@ -11667,7 +11780,7 @@ input[type="radio"] {
 }
 
 /* ── Responsive: 公司部门栅格 ── */
-@media (max-width: 900px) {
+@variant bp-shell {
   .dept-grid {
     grid-template-columns: 1fr;
   }
@@ -13043,7 +13156,7 @@ input[type="radio"] {
 .reader-brief-trail + .reader-progress { top: 34px; }
 /* ≤1024 时 ReaderWorkspace 经 useCompactLayout 换成移动壳(MobileReader),桌面阅读器壳不渲染;
    这条只在桌面壳被强行渲染(窄窗口调试)时兜底:单列网格里 .bp-sheet 的 2/-1 会挤出隐式列,故取消跨列 */
-@media (max-width: 1024px) {
+@variant bp-shell {
   .bp-sheet { grid-column: auto; overflow: visible; }
 }
 
@@ -13156,7 +13269,7 @@ input[type="radio"] {
 .interest-btn.is-primary { background: var(--dorami-accent); color: #fff; box-shadow: var(--sh-1); }
 .interest-btn.is-primary:hover { background: var(--dorami-accent-ink); color: #fff; }
 /* ≤1024 单列堆叠(同 .bp-sheet 的理由) */
-@media (max-width: 1024px) {
+@variant bp-shell {
   .interest-ledger, .interest-sheet { grid-column: auto; }
   .interest-sheet { overflow: visible; }
   .interest-ledger-scroll { max-height: 320px; }
@@ -13244,7 +13357,7 @@ input[type="radio"] {
 .alias-add .form-input-inline { width: 100%; }
 /* 试听链接是 <a> 不是 button:全局焦点环只覆盖表单件,补同款可见焦点(归并稿 P2 #20) */
 a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-offset: 1px; opacity: 1; }
-@media (max-width: 1024px) {
+@variant bp-shell {
   .knob-cards { grid-template-columns: 1fr; }
   .knob-span-2 { grid-column: auto; }
 }
@@ -13424,7 +13537,7 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 .interest-embed-tools .interest-search { width: 240px; }
 .interest-embed .interest-sec { margin-top: 22px; }
 .interest-embed .interest-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-@media (max-width: 1280px) { .interest-embed .interest-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@variant bp-desktop-m { .interest-embed .interest-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 /* 我的兴趣 chip 行(顶替左槽台账):accent 实点,悬停浮出 × */
 .interest-picks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 0 4px; }
 .interest-picks-label { font-size: 12px; letter-spacing: 0.12em; color: var(--dorami-faint); margin-right: 4px; }
@@ -13486,7 +13599,7 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 /* 早报首屏的引导横幅(issue #56):同一形制,报头之上;按钮组右对齐,窄屏折行到下方 */
 .brief-onb { margin: 0 0 22px; }
 .brief-onb-acts { display: inline-flex; gap: 8px; flex: none; }
-@media (max-width: 720px) {
+@variant bp-phone {
   .brief-onb { flex-direction: column; align-items: stretch; gap: 10px; }
   .brief-onb-acts { justify-content: flex-end; }
 }

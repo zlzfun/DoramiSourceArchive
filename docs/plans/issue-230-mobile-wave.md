@@ -135,6 +135,23 @@
 | 4 审计收尾与守卫 | 本波默认修余项、M-14 拆包、e2e 扩四档(M-18)、沙箱全量走查 | 散 | 最后 |
 | 5 检视与目检 | Codex 交叉检视(两轮封顶)→ 用户目检(含真机)→ PR `Closes #230` | — | — |
 
+### 8.1 批次实录
+
+**批 1 规范与层原语(10-31,实现 Claude Opus 5.5 子代理)**
+
+- 层原语:`components/layer/useLayer.js` 统一返回键(只在手机壳入层栈)、Esc 与焦点(`useModalA11y`)、下层 inert(`utils/inertOthers` 引用计数,Toast `data-layer-keep="always"`、播放条 `"dock"`)、滚动锁、popover 点外面即关;五种 kind 缺省在 `utils/layerKinds.js`;组件 `Sheet`(抓手真按钮 `SheetGrab`)/ `Drawer` / `LayerPage` / `LayerScrim` / `useSheetDrag`;遮罩判定抽成 `hooks/useOverlayClose.js`,Modal 与 LayerScrim 共用;lint `dorami/no-raw-modal-overlay` 扩到 `.m-dim`,`components/layer/**` 豁免。
+- 迁移:Modal 全量;动作单 → Sheet;源抽屉 → Drawer(补 44px 关闭钮、role=dialog);往期月历、分享浮层 → popover;灯箱 → modal 类(手机壳关闭钮、双指缩放与平移、dvh);正文页、发现页、设置栈、游客叠层登录 → LayerPage。
+- 审计:M-01 / M-05 / M-34 / M-40 已修;M-35 余列表行内嵌收藏星(`button` 套 `span[role=button]`);顺带 M-20、M-30 一部分(`.modal-panel` 与灯箱 dvh)。
+- 断点:`index.css` 顶部 `@custom-variant bp-phone-s / bp-phone / bp-tablet / bp-shell / bp-desktop(≥1025) / bp-desktop-m`,JS 侧 `utils/breakpoints.js`,守卫 `test/breakpoints.test.mjs`(CSS 与 JS 逐字一致、样式表无裸宽度 `@media`、JS 不手写宽度查询)。**`@custom-media` 否决**:只在生产构建展开,开发服务器原样输出、浏览器不认。收编:1023 ×5 / 900 ×2(管理面)/ 1024 ×4 → bp-shell;导轨几何 `min-width:1024` → bp-desktop;767 / 720 → bp-phone;480 → bp-phone-s;1280 ×3 → bp-desktop-m;560 → bp-tablet。私有例外两处(行内 `bp-exempt` 注记):登录页 880(归 #214)、榜单 1120(归 #221)。
+- 有意的手机内行为差:560–767 横屏播客收听入口由按内容宽变拉伸;721–767 早报首登引导横幅改竖排。桌面无视觉差的行为变化:Modal 打开时下层 inert;灯箱打开焦点落容器;分享浮层开着时再点分享钮即关。
+- token:`--tap` / `--tap-inline`、8 档 `--m-fs-*`(12 / 13 / 14 / 15 / 16 / 17 / 20 / 29)、`--sat / --sab / --sal / --sar`、`--vh-full`、`--m-float`(样页 `--c-float` 落地改名)、`--m-card`、`--glass-*`(`@supports` 降级)、`--m-scrim`、`--motion-sheet(-ease)`、`.tap-hit`。conventions 新增 §10「移动端」;§4 镀层口径(动态配色仍不用,移动镀层允许带降级);§7 `--motion-sheet` 具名例外。**字号映射**(18→17、21 / 22→20、28→29,分数身份线与早报头条除外)待批 3b / 3c 落版式时确认。
+- 桌面等价:1280 亮暗 × 8 状态前后对比,像素唯一差是沙箱阅读量读数;767 / 768 / 1024 / 1025 边界像素零差。
+- e2e:抽屉选择器 complementary → dialog(本批引起);另修 HEAD 上即红的两处——切回文章后立刻重载打断在途请求(改等列表与未读数响应落地)、标签检索收尾 `reader_subscriptions == 2` 被启动时给 `guest:shared` 种的默认订阅打破(改只数夹具读者)。
+- 验证:lint 0、`npm test` 184/184(新增 `layerPrimitives` 18 条、`breakpoints` 4 条)、build 过、e2e 四流程过;沙箱 360 / 390 / 430 × 亮暗每组 64 项 + 游客 390 × 亮暗每组 7 项共 398 项全过;截图 `tmp/issue-230/impl-b1/`(不入库)。
+- 推迟:M-35 收藏星;悬停守卫(lint 或计数棘轮)→ 批 4;平板 640–720 版心与 `(pointer: coarse)`、存量字号收刻度 → 各页批次;样页 `--c-tab-h` / `--c-dock-h` / `--c-gutter` → 批 2 / 3d;往期月历手机底页版式 → 批 3b;分享浮层改 sheet(M-28)→ 随 #215。灯箱放大态关闭钮在浅色图上对比偏弱 → 批 3c 顺手。
+- 真机待验:R-01 iOS 长按松手不关;R-10 系统返回矩阵(含灯箱 / 搜索 / 分享 / 确认框 / 叠层登录);R-11 iOS 主屏独立窗口每层有出口;iOS Safari 灯箱 `touch-action:none` 双指缩放与系统整页缩放是否冲突。
+- 归档注意:conventions §10 引用 `docs/plans/issue-230-mobile-audit.md` §6,方案归档时随之改路径。
+
 ## 7. 检视节
 
 (待)

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ArrowDownUp, BookOpenText, ChevronLeft, ChevronRight, Info, Lock, MessageSquare, Package, Palette, Plug2, Rss, User, X } from 'lucide-react';
 import { markFeedbackSeen } from '../../api';
 import { useLayerHistory } from '../../hooks/useLayerHistory';
+import LayerPage from '../layer/LayerPage';
 import AccountSection from '../settings/AccountSection';
 import AppearanceSection from '../settings/AppearanceSection';
 import ReadingSection from '../settings/ReadingSection';
@@ -98,10 +99,15 @@ export default function MobileSettings({
     if (!open || sectionId !== 'opml') setOpmlPreview(null);
   }, [open, sectionId]);
 
-  // 返回键握手:设置根一层 + 分区页一层 + 预览一层
-  useLayerHistory(open, onClose);
+  // 返回键握手:设置根一层(层原语 LayerPage 登记)+ 分区页一层 + 预览一层(子页,本组件自己登记;
+  // 根先开、子页后开,返回由内向外逐级退)。Esc 与返回同序:先退预览、再退分区、最后关设置。
   useLayerHistory(open && Boolean(sectionId), () => setSectionId(null));
   useLayerHistory(open && Boolean(opmlPreview), () => setOpmlPreview(null));
+  const stepBack = () => {
+    if (opmlPreview) setOpmlPreview(null);
+    else if (sectionId) setSectionId(null);
+    else onClose?.();
+  };
 
   // 打开反馈分区即视为已读(与桌面设置柜同约定)
   useEffect(() => {
@@ -115,31 +121,37 @@ export default function MobileSettings({
 
   const active = sections.find((s) => s.id === sectionId) || null;
 
-  if (opmlPreview) {
-    return (
-      <div className="m-page m-sett" role="dialog" aria-modal="true" aria-label="导入预览">
-        <div className="m-topbar on-pane">
-          <button type="button" className="m-iconbtn" onClick={() => setOpmlPreview(null)} aria-label="返回订阅源 OPML">
-            <ChevronLeft />
-          </button>
-          <span className="m-title">导入预览</span>
-        </div>
-        <OpmlPreview
-          layout="mobile"
-          filename={opmlPreview.filename}
-          opml={opmlPreview.opml}
-          plan={opmlPreview.plan}
-          showToast={showToast}
-          onCancel={() => setOpmlPreview(null)}
-          onDone={() => setOpmlPreview(null)}
-        />
-      </div>
-    );
-  }
-
+  // 整页层(LayerPage):dialog 语义、焦点落在面板、下层(含播放条——设置盖住它)整片 inert。
+  // 三级共用同一个根元素,焦点范围与 inert 不随级别换节点。
   return (
-    <div className="m-page m-sett" role="dialog" aria-modal="true" aria-label="设置">
-      {active ? (
+    <LayerPage
+      className="m-page m-sett"
+      role="dialog"
+      modal
+      inert="all"
+      label={opmlPreview ? '导入预览' : '设置'}
+      onClose={onClose}
+      onEscape={stepBack}
+    >
+      {opmlPreview ? (
+        <>
+          <div className="m-topbar on-pane">
+            <button type="button" className="m-iconbtn" onClick={() => setOpmlPreview(null)} aria-label="返回订阅源 OPML">
+              <ChevronLeft />
+            </button>
+            <span className="m-title">导入预览</span>
+          </div>
+          <OpmlPreview
+            layout="mobile"
+            filename={opmlPreview.filename}
+            opml={opmlPreview.opml}
+            plan={opmlPreview.plan}
+            showToast={showToast}
+            onCancel={() => setOpmlPreview(null)}
+            onDone={() => setOpmlPreview(null)}
+          />
+        </>
+      ) : active ? (
         <>
           <div className="m-topbar on-pane">
             <button type="button" className="m-iconbtn" onClick={() => setSectionId(null)} aria-label="返回设置">
@@ -215,6 +227,6 @@ export default function MobileSettings({
           </div>
         </>
       )}
-    </div>
+    </LayerPage>
   );
 }

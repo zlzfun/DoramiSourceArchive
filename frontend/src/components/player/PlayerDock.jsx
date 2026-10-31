@@ -675,12 +675,14 @@ export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs
     </span>
   );
 
+  // data-layer-keep(层原语,issue #230):整屏推入页(正文 / 发现,z 低于本条)把下层 inert 时保留播放条;盖住它的层照常 inert
   return (
     <div
       ref={layerRef}
       className={`player-layer ${mobile ? 'is-mobile' : 'is-desktop'}`}
       data-form={form}
       data-page={mobile ? mobilePage : undefined}
+      data-layer-keep="dock"
       data-tone={tone ? 'blur' : 'neutral'}
       data-playing={playing ? '' : undefined}
       data-buffering={playing && buffering ? '' : undefined}

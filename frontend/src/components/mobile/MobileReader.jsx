@@ -36,6 +36,7 @@ import MobileSourceDrawer from './MobileSourceDrawer';
 import MobileMePage from './MobileMePage';
 import { requestLogin } from '../../utils/loginPrompt';
 import ActionSheet from './ActionSheet';
+import LayerPage from '../layer/LayerPage';
 import { rebuildToast } from '../../utils/briefRebuild';
 import PersonalBriefPage from '../PersonalBriefPage';
 import InterestPage from '../InterestPage';
@@ -223,13 +224,13 @@ export default function MobileReader({
   // 播放条的底边:列表页在底部 Tab 栏之上;正文页 / 发现页(整页层盖住 Tab 栏)在安全区之上
   const playerPage = readOpen || discover ? 'page' : 'tabs';
 
-  // ── 返回键握手(Wave3):层开着时按返回=关层,不是退出站点(微信内浏览器的肌肉记忆)──
-  useLayerHistory(readOpen, closeArticle);
-  useLayerHistory(discover, closeDiscover);
-  // 合集详情是发现页之上的一层:返回先退详情、再退发现页(注册序在 discover 之后)
+  // ── 返回键握手(Wave3;issue #230 起正文页 / 发现页 / 抽屉 / 动作单都走层原语 components/layer,
+  //    各自在打开时入层栈:系统返回先关最上层,不退出站点)。合集详情是发现页里的子页,仍单独登记一层:
+  //    发现页先开、详情后开,返回先退详情、再退发现页。──
   useLayerHistory(Boolean(discoverCollectionId), () => setDiscoverCollectionId(null));
-  useLayerHistory(drawerOpen, () => setDrawerOpen(false));
-  useLayerHistory(Boolean(sheet), () => setSheet(null));
+  // 顶栏就地搜索(审计 M-05):展开着按返回 = 收起搜索(同顶栏 × 钮,清空输入),不退出站点;
+  // 只在顶栏可见(内容 Tab)时登记,切去早报 / 榜单 / 我的即消费掉这一步,回来再登记。
+  useLayerHistory(searchOpen && !['me', 'brief', 'rankings'].includes(tab), () => { if (searchOpen) toggleSearch(); });
 
   return (
     <div className="m-shell font-sans">
@@ -572,7 +573,7 @@ export default function MobileReader({
 
       {/* ── 发现页(整页层:低频目的地,从 我的/抽屉 进入) ── */}
       {discover && (
-        <div className="m-page" role="region" aria-label="发现">
+        <LayerPage className="m-page" label="发现" onClose={closeDiscover}>
           <div className="m-topbar on-pane">
             <button
               type="button"
@@ -635,7 +636,7 @@ export default function MobileReader({
               ) : null}
             />
           </div>
-        </div>
+        </LayerPage>
       )}
 
       {/* ── 正文页(push 全屏,无 TabBar) ── */}

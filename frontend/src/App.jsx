@@ -17,6 +17,7 @@ import Toast from './components/Toast';
 import SettingsModal from './components/SettingsModal';
 import LoginScreen from './components/LoginScreen';
 import LoginPrompt from './components/LoginPrompt';
+import LayerPage from './components/layer/LayerPage';
 import BrandLogoImage from './components/BrandLogoImage';
 import RailLogoutAvatar from './components/RailLogoutAvatar';
 import TabErrorBoundary from './components/TabErrorBoundary';
@@ -1003,7 +1004,9 @@ export default function App() {
       <Toast show={toast.show} message={toast.message} type={toast.type} action={toast.action} onClose={hideToast} />
 
       {/* 游客(issue #213):登录提示与叠层登录页。登录页叠在阅读器之上而非替换它——
-          「返回继续逛逛」原样回到原处;登录成功后阅读器换 key 重挂。 */}
+          「返回继续逛逛」原样回到原处;登录成功后阅读器换 key 重挂。
+          issue #230:叠层登录走层原语 LayerPage(手机壳里系统返回只关登录页、不关下面的正文;Esc 同「返回继续逛逛」;
+          下层整片 inert)。 */}
       <LoginPrompt
         open={loginPrompt.open}
         request={loginPrompt.request}
@@ -1011,7 +1014,7 @@ export default function App() {
         onLogin={openGuestLogin}
       />
       {guestLogin && (
-        <div className="guest-login-layer">
+        <LayerPage className="guest-login-layer" role="dialog" modal inert="all" label="登录" onClose={closeGuestLogin}>
           <LoginScreen
             logoError={logoError}
             onLogoError={() => setLogoError(true)}
@@ -1020,7 +1023,7 @@ export default function App() {
             fromGuest
             onBackToGuest={closeGuestLogin}
           />
-        </div>
+        </LayerPage>
       )}
 
       {!isMobile && globalRunningIds.size > 0 && (

@@ -352,13 +352,12 @@
   white-space: nowrap;
 }
 
-/* ── 遮罩(抽屉/动作单共用) ── */
+/* ── 遮罩(抽屉/动作单共用;元素只由层原语 components/layer/LayerScrim 渲染,点按判定见 hooks/useOverlayClose) ── */
 .m-dim {
   position: absolute;
   inset: 0;
-  background: rgba(11, 18, 32, 0.32);
+  background: var(--m-scrim);   /* 亮 rgba(11,18,32,.32) / 暗 rgba(0,0,0,.5),见 index.css 移动 token */
 }
-[data-theme="dark"] .m-dim { background: rgba(0, 0, 0, 0.5); }
 
 /* ── 源抽屉(过滤器,左滑入) ── */
 .m-drawer-layer { position: fixed; inset: 0; z-index: 50; }
@@ -384,6 +383,22 @@
   font-weight: 600;
   color: var(--dorami-ink);
 }
+/* 标题行 + 关闭钮(issue #230 审计 M-34:读屏与 iOS 主屏幕独立窗口不靠系统返回、不靠拖动的出口)。
+   钮 44×44,上下负外边距吃进抽屉顶内边距,标题行高度不变 */
+.m-drawer-head { display: flex; align-items: center; padding: 0 0 10px; }
+.m-drawer-head .m-drawer-title { flex: 1; min-width: 0; padding-bottom: 0; }
+.m-drawer-close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--tap);
+  height: var(--tap);
+  margin: -12px 0;
+  border-radius: var(--r-control);
+  color: var(--dorami-muted);
+}
+.m-drawer-close:active { background: var(--dorami-soft); }
+.m-drawer-close svg { width: 18px; height: 18px; }
 .m-drawer-scroll {
   flex: 1;
   min-height: 0;
@@ -448,15 +463,37 @@
   border-radius: var(--r-overlay) var(--r-overlay) 0 0;
   box-shadow: var(--sh-3);
   animation: dorami-m-sheet-in var(--motion-medium) var(--motion-ease);
+  transition: transform var(--motion-medium) var(--motion-ease);   /* 下拖不够远时回弹(减少动效时全局兜底压到 1ms) */
 }
+.m-sheet.is-dragging { transition: none; }   /* 跟手 */
 @keyframes dorami-m-sheet-in {
   from { transform: translateY(24px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
 }
+/* 抓手区(issue #230 层原语,样页拍板 33):头部整块可下拖(useSheetDrag,触屏不让给滚动);
+   抓手是真按钮(名字写清对象,点按即关),可见仍是 36×5 的条,命中经 ::after 扩到 44 高,版面高度与旧条一致(4 + 5 + 8) */
+.m-sheet-head { touch-action: none; }
 .m-sheet-grab {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 4px 0 8px;
+  border-radius: var(--r-control);
+}
+.m-sheet-grab::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: var(--tap);
+  transform: translateY(-50%);
+}
+.m-sheet-grab-bar {
+  display: block;
   width: 36px;
   height: 5px;
-  margin: 4px auto 8px;
+  margin: 0 auto;
   border-radius: var(--r-pill);
   background: var(--dorami-border-strong);
 }
@@ -468,10 +505,10 @@
   font-weight: 400;
   line-height: 1.5;
   color: var(--dorami-faint);
-  display: -webkit-box;
-  -webkit-line-clamp: 1;
-  -webkit-box-orient: vertical;
+  /* 单行省略(审计 M-20):line-clamp 只裁内容框,第二行会从下内边距里漏出半截 */
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* 字号字重写在容器,继承穿透 button{font:inherit}(§3 未分层陷阱,#184 已退役;容器写法仍有效) */
 .m-sheet-item {

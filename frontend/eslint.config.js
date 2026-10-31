@@ -71,13 +71,19 @@ function checkCeremony(context, raw, node) {
 // 面板内拖选文字松手落到遮罩就会把弹窗关掉。这个 token 在业务代码里没有任何合法出处(元素类名 /
 // 选择器 / 常量 / clsx 键都不该出现),故与另外三条 dorami 规则同一扫描面:所有字符串与模板字面量
 // (codex R1:只看 className 属性会被 `className={CONST}` / `clsx({ 'modal-overlay': x })` / `join()` 绕过)。
-// Modal.jsx 本体在配置末尾按文件豁免;移动壳 .m-dim 是面板的兄弟节点、不叫 modal-overlay,不在此列。
+// Modal.jsx 本体在配置末尾按文件豁免。
+// issue #230 层原语:移动壳的遮罩 .m-dim(抽屉 / 动作单)同样只许层原语 components/layer/LayerScrim 渲染——
+// 审计 M-01(长按松手即关)就是业务代码各自 onClick={onClose} 的遮罩;components/layer/ 按目录豁免。
 const MODAL_OVERLAY_RE = /\bmodal-overlay\b/
+const LAYER_SCRIM_RE = /\bm-dim\b/
 
 function checkModalOverlay(context, raw, node) {
   if (typeof raw !== 'string') return
   if (MODAL_OVERLAY_RE.test(raw)) {
     context.report({ node, message: '不要自写 .modal-overlay 元素:遮罩关闭判定只在 components/Modal.jsx(按下与松开同在遮罩才关),请改用 <Modal closeOnOverlay>(docs/frontend/conventions.md §8 弹窗外壳)' })
+  }
+  if (LAYER_SCRIM_RE.test(raw)) {
+    context.report({ node, message: '不要自写 .m-dim 遮罩:移动层一律走层原语 components/layer(Sheet / Drawer / LayerScrim),遮罩判定在 hooks/useOverlayClose(docs/frontend/conventions.md「移动端」§层)' })
   }
 }
 
@@ -87,7 +93,7 @@ export const doramiPlugin = {
     'no-raw-modal-overlay': {
       meta: {
         type: 'problem',
-        docs: { description: '弹窗遮罩只在 components/Modal.jsx 一处:业务弹窗用 <Modal closeOnOverlay>,不得自写 .modal-overlay 元素(issue #104)' },
+        docs: { description: '弹窗遮罩只在 components/Modal.jsx 一处:业务弹窗用 <Modal closeOnOverlay>,不得自写 .modal-overlay 元素(issue #104);移动层遮罩 .m-dim 只在 components/layer(issue #230)' },
         schema: [],
       },
       create(context) {
@@ -186,8 +192,8 @@ export default defineConfig([
     },
   },
   {
-    // 共用外壳是遮罩元素的唯一合法出处
-    files: ['src/components/Modal.jsx'],
+    // 共用外壳与层原语是遮罩元素的唯一合法出处
+    files: ['src/components/Modal.jsx', 'src/components/layer/**'],
     rules: { 'dorami/no-raw-modal-overlay': 'off' },
   },
 ])

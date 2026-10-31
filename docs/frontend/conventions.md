@@ -240,7 +240,8 @@
   会得到 hue = none、按 0° 渲染,整片泛粉(WebKit 无此问题)。
 - **运行时动态配色(issue #199,播放条的封面模糊底)**:JS 只写 CSS 变量(模糊位图、遮罩浓度),颜色仍由 token 的
   oklab 混色给出;浓度按最差像素算到文字 ≥ 4.5:1、图标 ≥ 3:1,切主题 / 中性色时重算;整套包在
-  `@supports (color: color-mix(in oklab, red, blue))` 里,不支持就回中性底。不用 `backdrop-filter`。
+  `@supports (color: color-mix(in oklab, red, blue))` 里,不支持就回中性底。动态配色不用 `backdrop-filter`
+  (issue #230 起移动壳的**镀层**允许磨砂,但只经 `--glass-*` token 且自带降级,见 §10)。
 - **语义状态 token(2026-07)**:ok/warn/bad/run/idle 五态一律引用 `--state-*` / `--state-*-bg`
   成对 token(亮暗自动翻转),不再散写 emerald/rose/amber hex。
 - **热度/密度色阶(图床波 v3.11)**:需要「连续量深浅」的可视化(热点图等)用 `--heat-0…4`
@@ -359,6 +360,9 @@
   起点不在视口退为淡入;减少动效 = 120ms 淡入;软件渲染器或首次形变 p95 帧间隔 > 24ms 时本会话改轻量档
   (淡入 + 12px 位移)。每秒多次写的 CSS 变量(进度)只挂在进度元素自身,不写在条根或带模糊位图的祖先上
   (会连带重光栅)。不作为新增动效的先例。
+  **具名例外·移动弹簧(issue #230,样页夜航 `docs/design/issue-230-mobile/`)**:`--motion-sheet`(420ms)/ `--motion-sheet-ease`
+  (阻尼 0.76、超调 2.5% 的 `linear()`,与 `utils/playerSpring.js` 同法;不支持 `linear()` 时退 `--motion-ease`)只给手机壳的
+  底页进出、推入页、镜片拇指、镀层随滚动退场与长按抬起;拖拽跟手、松手回弹。减少动效时照常落终态(拖拽照常、没有回弹)。不作为桌面先例。
 - **品牌/登录页**：电影感动画（秒级、硬编码）保留，不引用上述 token，不收敛。
 - **减少动效是应用内开关，不读 OS 查询（issue #73，2026-09-14 拍板）**：`设置 → 外观 → 减少动效`
   在 `<html>` 上挂 `data-motion="reduce"`（`frontend/src/motion.js`，首帧由 `index.html` 内联脚本设置），
@@ -420,11 +424,12 @@
 (`utils/overlayClose.js`,pointer 事件,鼠标 / 触屏一套):面板内拖选文字松手落到遮罩、遮罩按下
 拖进面板松手都不关,面板不需要 `stopPropagation`(弹窗内嵌靠 document mousedown 点外关闭的浮层
 照常)。业务代码不得自写 `.modal-overlay` 元素——那意味着又一套 onClick 关闭判定,lint
-`dorami/no-raw-modal-overlay` 拦增量;移动壳 `.m-dim` 是面板的兄弟节点,不在此列。**body 滚动锁
+`dorami/no-raw-modal-overlay` 拦增量;移动层的遮罩 `.m-dim` 同理只在层原语 `LayerScrim`(issue #230,§10)。**body 滚动锁
 只用 `hooks/useBodyScrollLock`**(全站一把引用计数锁,外壳与抽屉共用):自写「存旧值 → 还旧值」
 的锁在多层浮层关闭顺序不对称时会把 `hidden` 留在 body 上。**Esc / 焦点陷阱只用 `hooks/useModalA11y`**,
 它带模块级层栈:多层浮层同时激活(抽屉上开确认框 / 表单弹窗)时 Esc 与 Tab 只由最上层消费,上层关闭后
 焦点回到下层触发控件、下层保持打开;业务代码不要再挂自己的 document / window 级 Esc 监听去关模态层。
+issue #230 起 `Modal` 与移动层都经层原语 `components/layer/useLayer`(它组合 `useModalA11y` / 返回键握手 / 下层 inert / 滚动锁),见 §10。
 
 **全局播放器(issue #199)**:
 - 阅读器工作区只有一个 `<audio>`(`components/player/PlayerProvider.jsx`,挂在 `ReaderWorkspace`,桌面 ⇄ 手机互切、
@@ -485,6 +490,82 @@
 
 **登录/品牌页（`.auth-*` / `.login-panel`）刻意豁免**——不做暗色适配改写，品牌面保持自身的电影感配色。
 
+## 10. 移动端(issue #230,样页 `docs/design/issue-230-mobile/`)
+
+手机壳 = `bp-shell`(≤ 1024)渲染的 `MobileReader` 与 `.m-*` 一族。桌面四栏不受本节的版式约束,但共用组件(Modal、灯箱、
+往期月历、分享浮层)的层行为同走层原语。token 在 `index.css`「移动 token」段,桌面不引用。
+
+**断点(命名,CSS 与 JS 一份口径)**:
+
+| 名 | 条件 | 用途 |
+|---|---|---|
+| `bp-phone-s` | ≤ 480 | 小屏手机微调 |
+| `bp-phone` | ≤ 767 | 手机竖屏主档 |
+| `bp-tablet` | 768–1024 | 平板竖屏 / 大屏手机横屏(仍是手机壳) |
+| `bp-shell` | ≤ 1024 | 手机壳 ⇄ 桌面四栏开关(`useCompactLayout`) |
+| `bp-desktop` | ≥ 1025 | 桌面壳(导轨几何);恰是 `bp-shell` 的反面 |
+| `bp-desktop-m` | ≤ 1280 | 桌面内部收窄 |
+
+- CSS 写 `@variant bp-phone { … }`(可套在 `@layer` 里、可嵌进规则),JSX 写 `bp-phone:`;JS 用 `utils/breakpoints.js` 的
+  `MEDIA` / `mediaMatches()`,壳开关只用 `useCompactLayout`。定义在 `index.css` 顶部 `@custom-variant bp-*`,与 JS 逐字一致
+  (`test/breakpoints.test.mjs`)。不用 `@custom-media`:它只在生产构建里展开,开发服务器原样输出。
+- 不写裸 `@media (max-width / min-width …)`(守卫拦);确属私有的例外在同一行写 `bp-exempt:` 注记与归属
+  (现仅登录页 880 → #214、榜单桌面 1120 → #221,并入命名档会改观感)。JS 不手写宽度媒体查询字符串。
+- 容器查询(早报 960 / 680 / 420、播放条 640 / 900)按容器宽排版,不属断点表;Tailwind 默认 `sm/md/lg/xl:` 只留在管理面存量。
+- 平板档:768–1024 竖屏用手机壳、版心 640–720 居中;1025+ 触屏在 `(pointer: coarse)` 下补触屏路径(落地随各页批次)。
+
+**触控**:主要动作命中 ≥ `--tap`(44);行内次要动作可见 ≥ `--tap-inline`(32),命中挂 `.tap-hit` 扩到 44
+(元素的 `::after` 已有他用时改用内边距 + 负外边距);列表行 / 源行 ≥ 44(48 更佳)。**输入控件字号 ≥ 16px**(`--m-fs-lg`;
+低于 16 iOS 聚焦即整页放大)。
+
+**悬停三分法**:① 装饰性 `:hover`(换底、描边、提亮)包 `@media (hover: hover)`(JSX 的 Tailwind `hover:` 已自带此守卫);
+② 功能性悬停入口(悬停才出现 / 才改文案 / 才位移的钮)在触屏**常显**,写在 `@media (hover: none)`(范例:速读卡评分依据、
+条目「+ 订阅」);③ 破坏性动作在触屏不靠悬停预警,改两击确认或 toast 撤销。
+
+**镀层**:磨砂只用 `--glass-bg`(surface 72%)/ `--glass-strong`(95%,底页与动作组)+ `--glass-blur` + `--glass-ring` /
+`--glass-edge` / `--glass-shadow`;不支持 `backdrop-filter` 时 token 在 `index.css` 的 `@supports` 里自动退成 94% / 实色,
+组件不另写降级。卡面 `--m-card`(亮 = surface,暗抬一档 raised),遮罩 `--m-scrim`。
+
+**层原语(`components/layer/`)**——移动端的层只有四种,外加 Modal 外壳,全部经 `useLayer`(缺省值表在 `utils/layerKinds.js`):
+
+| kind | 组件 | 用于 | Tab | 下层 inert | 打开时焦点 |
+|---|---|---|---|---|---|
+| sheet | `Sheet` + `SheetGrab` | 动作单、往期底页、播放卡 | 困住 | 全部 | 键盘 → 首个控件;指针 → 面板 |
+| drawer | `Drawer` | 源抽屉 | 困住 | 全部 | 同上 |
+| page | `LayerPage` | 正文页、发现页、设置栈、叠层登录 | 不困(下层已 inert) | 保留页面层之上的播放条 | 面板 |
+| popover | `useLayer({ kind: 'popover' })` | 往期月历、分享浮层 | 不困 | 无 | 首个控件 / 指定 |
+| modal | `Modal` | 居中弹窗 | 困住 | 全部 | 首个控件(桌面行为不变) |
+
+- `useLayer` 统一接管:**返回键握手**(手机壳里打开即入层栈,系统返回先关最上层、不离站;桌面不挂)、**Esc 与焦点**
+  (`useModalA11y` 层栈,只有最上层消费;关闭还焦)、**下层 `inert`**(`utils/inertOthers`,引用计数;先还原 inert 再还焦)、
+  popover 点外面即关(触发钮除外)。业务代码不自挂 document 级 Esc / mousedown,不直接调 `useLayerHistory`
+  (同一层里的子页——设置分区、合集详情——例外)。
+- **遮罩**:`.modal-overlay` 只在 `Modal`,`.m-dim` 只在 `LayerScrim`(lint `dorami/no-raw-modal-overlay` 两个都拦);点按只认
+  「按下与松开同在遮罩」(`hooks/useOverlayClose`)——长按弹出的层不会被松手的合成 click 关掉;遮罩的 mousedown 不改焦点。
+- **出口(样页拍板 33)**:每层都要有一个不靠系统返回、也不靠拖动的出口——卡外能点即算,整屏推入的页面要有返回钮;
+  读屏的出口是真按钮:底页抓手 `SheetGrab` 是 `<button>`,名字写清对象(「关闭「…」的操作」「收起播放器」),点按即关;
+  抽屉标题行、手机壳的灯箱各有关闭钮。
+- **下拖**:抓手所在的头部可下拖(`useSheetDrag`,状态机 `utils/sheetDrag.js`):4px 防抖,只跟手向下,松手越过 96px 或末段
+  > 0.6px/ms 即关、否则回弹;拖过之后吞掉那次 click。头部 `touch-action: none`。
+- Toast 与页面层之上的播放条不被 inert:`data-layer-keep="always"` / `"dock"`,新增「永远可达」的浮层照此标。
+  面板容器(`data-layer-panel`,`tabIndex={-1}`)只是焦点落点,不画焦点环。
+
+**视口与安全区**:移动可达的高度一律 `var(--vh-full)`(= `100dvh`,不支持退 `100vh`;直接写时先写 `vh` 兜底再写 `dvh`);
+壳、底栏、顶栏、坞垫与贴边层四向垫 `--sat / --sab / --sal / --sar`(`env(safe-area-inset-*)`),横屏左右也要垫;
+浮动镀层与屏边、彼此之间的间距 `--m-float`(8)。
+
+**字号刻度**:手机壳只用 8 档——`--m-fs-xs` 12 元信息 · `--m-fs-sm` 13 次要 / 胶囊 / 眉头 · `--m-fs-md` 14 摘要 ·
+`--m-fs-base` 15 列表行 · `--m-fs-lg` 16 卡片标题 / 菜单 / 输入 · `--m-fs-read` 17 正文 · `--m-fs-xl` 20 页头 / 底页标题 / 小节 ·
+`--m-fs-display` 29 正文页宋体标题;分数身份线(§3)与早报头条的展示字号不在此列。字重 400 / 600(早报头条 900),
+字体栈只用 `--font-sans` / `--font-serif`(英文 `--font-serif-latin`)。存量 22 档随各页批次收进刻度。
+
+**动效**:全部受 `<html data-motion>`(§7);层的进出场与拖拽回弹走 CSS,减少动效时全局兜底压到 1ms;弹簧是 §7 的具名例外;
+退场与入场成对。
+
+**验证基线**:交互改动接 `scripts/check_mobile_reader_e2e.py`;每批沙箱自查 360 / 390 / 430 × 亮暗,层逐个过——系统返回只关
+最上层且不离站、Esc、点遮罩、抓手点按与下拖、焦点进出与读屏名、下层 inert;桌面 1280 截图前后比对并量关键元素。
+真机清单见 `docs/plans/issue-230-mobile-audit.md` §6(R-01 ~ R-20)。
+
 ---
 
 ### 验收:build 通过不等于渲染正常
@@ -509,3 +590,4 @@
 - [ ] 暗色下没有「亮色残块 / 黑字黑底」？硬编码原子类（尤其 `bg-white`、双角色 slate）已就地补 `dark:` 变体？（§9）
 - [ ] 输入框复用了 `.form-input`，或手搓串里背景 token 与 `text-`/`placeholder:text-` token 成对？（§9）
 - [ ] 新增收听入口走 `usePlayer()`?新增滚动区接了播放条留白变量?(§8)
+- [ ] 移动端:断点用 `bp-*`、层走 `components/layer`、输入 ≥ 16px、主要动作 ≥ 44、装饰性 hover 有 `(hover: hover)` 守卫?(§10)

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { useModalA11y } from '../hooks/useModalA11y';
+import { useLayer } from './layer/useLayer';
 import { formatDateTime } from '../utils/datetime';
 import {
   addMonths,
@@ -18,6 +18,8 @@ import {
 // 非模态浮层:Esc 与层栈复用 useModalA11y(§8)但不困住 Tab,焦点先落在正在看的那天;
 // 月历按 WAI-ARIA APG 日期网格走键盘(utils/briefCalendar.moveByKey),焦点走出本月时月历跟着翻,
 // 范围夹在「最早一期所在月的 1 日 … 今天」;Tab 出浮层或在外面按下鼠标即关闭,触发钮自身的点击由它切换。
+// issue #230:层的行为走层原语 useLayer(kind='popover'):Esc 层栈、点外面关闭(触发钮除外)、
+// 手机壳里入返回键层栈(系统返回先关月历、不离开页面,审计 M-05)。手机档的底页月历版式归后续批次。
 const WEEK_HEAD = ['一', '二', '三', '四', '五', '六', '日'];
 const LIVE = new Set(['pending', 'generating']);
 const STATUS_LABEL = { degraded: '降级', failed: '失败', pending: '准备中', generating: '编排中' };
@@ -48,15 +50,14 @@ export default function BriefHistoryCalendar({
   const [month, setMonth] = useState(() => monthOf(clampKey(selDate, minKey, todayKey)));
   const moveFocusRef = useRef(false);
 
-  useModalA11y(true, onClose, panelRef, { trapFocus: false, initialFocus: focusTarget });
-  useEffect(() => {
-    const onDown = (event) => {
-      if (panelRef.current?.contains(event.target) || triggerRef.current?.contains(event.target)) return;
-      onClose();
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [onClose, triggerRef]);
+  useLayer({
+    open: true,
+    onClose,
+    kind: 'popover',
+    panelRef,
+    initialFocus: focusTarget,
+    outsideIgnore: [triggerRef],
+  });
   // 键盘移动后把焦点落到新的那天(跨月时那颗按钮要等这次渲染才进 DOM)
   useEffect(() => {
     if (!moveFocusRef.current) return;

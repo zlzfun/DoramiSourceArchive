@@ -1,5 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -10,6 +11,9 @@ import { mediaProxyUrl } from '../api';
 import { latinLang } from '../utils/readerText';
 import remarkPaperLayout from '../utils/remarkPaperLayout';
 import remarkArticleImages from '../utils/remarkArticleImages';
+import { useLayer } from './layer/useLayer';
+import { useCompactLayout } from '../hooks/useCompactLayout';
+import { distance, midpoint, pinchTransform, settleTransform } from '../utils/pinchZoom';
 
 // react-markdown 默认不渲染原始 HTML（无 rehype-raw），无 XSS 风险
 // remark-math + KaTeX:渲染正文里的 $...$ / $$...$$ LaTeX(学术型源如 Lil'Log
@@ -162,27 +166,134 @@ const MARKDOWN_COMPONENTS = {
 
 // 图片灯箱：全屏深色遮罩居中放大原图；点任意处或 Esc 关闭。挂到 document.body
 // （portal）以避开阅读器内可能的 transform 祖先成为 fixed 包含块的坑。
+// issue #230(审计 M-40):层的行为走层原语 useLayer(kind='modal',不锁 body 滚动——与此前一致):
+// Esc 经层栈、下层 inert、焦点进出,手机壳里入返回键层栈(系统返回关灯箱、不关正文页);
+// 手机壳另有一枚关闭钮(读屏与 iOS 主屏幕独立窗口的出口,拍板 33);触屏双指缩放 / 放大后单指平移,
+// 几何在 utils/pinchZoom.js;轻点:未放大即关闭、已放大先复位。鼠标与桌面行为不变(点任意处关)。
 function ImageLightbox({ src, alt, onClose }) {
-  useEffect(() => {
-    // 仅在打开期间监听 Esc，关闭时清理
-    const onKey = (e) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  const rootRef = useRef(null);
+  const imgRef = useRef(null);
+  const compact = useCompactLayout();
+  useLayer({
+    open: true,
+    onClose,
+    kind: 'modal',
+    panelRef: rootRef,
+    scrollLock: false,
+    initialFocus: (panel, { keyboard }) => (keyboard ? panel?.querySelector('.reader-lightbox-close') : null) || panel,
+  });
 
-  // 无内部交互元素，Esc + 焦点归还即可，不做完整焦点陷阱
+  // 触屏手势(只认 pointerType === 'touch';鼠标走 onClick)
+  const pointers = useRef(new Map());
+  const gesture = useRef(null);
+  const xf = useRef({ s: 1, tx: 0, ty: 0 });
+  const lastPointer = useRef('mouse');
+  const apply = (animate) => {
+    const img = imgRef.current;
+    if (!img) return;
+    img.classList.toggle('is-gesturing', !animate);
+    const { s, tx, ty } = xf.current;
+    img.style.transform = s === 1 && tx === 0 && ty === 0 ? '' : `translate(${tx}px, ${ty}px) scale(${s})`;
+  };
+  const beginPinch = () => {
+    const [a, b] = Array.from(pointers.current.values());
+    const rect = imgRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const { s, tx, ty } = xf.current;
+    gesture.current = {
+      kind: 'pinch',
+      start: { s0: s, t0: { x: tx, y: ty }, m0: midpoint(a, b), d0: distance(a, b) },
+      // 变换原点在图片中心:变换后外框的中心 = 原中心 + 平移
+      center: { x: rect.left + rect.width / 2 - tx, y: rect.top + rect.height / 2 - ty },
+    };
+  };
+  const beginPan = (point, tap) => {
+    gesture.current = { kind: tap ? 'tap' : 'pan', p0: point, t0: Date.now(), moved: false, from: { ...xf.current } };
+  };
+  const onCloseButton = (event) => Boolean(event.target.closest?.('.reader-lightbox-close'));
+  const handlers = {
+    onPointerDown: (event) => {
+      lastPointer.current = event.pointerType;
+      if (event.pointerType !== 'touch' || onCloseButton(event)) return;
+      pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (pointers.current.size === 1) beginPan({ x: event.clientX, y: event.clientY }, true);
+      else if (pointers.current.size === 2) beginPinch();
+    },
+    onPointerMove: (event) => {
+      if (event.pointerType !== 'touch' || !pointers.current.has(event.pointerId)) return;
+      pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      const g = gesture.current;
+      if (!g) return;
+      if (g.kind === 'pinch' && pointers.current.size >= 2) {
+        const [a, b] = Array.from(pointers.current.values());
+        xf.current = pinchTransform(g.start, g.center, midpoint(a, b), distance(a, b));
+        apply(false);
+        return;
+      }
+      const dx = event.clientX - g.p0.x;
+      const dy = event.clientY - g.p0.y;
+      if (!g.moved && Math.hypot(dx, dy) > 8) g.moved = true;
+      if (g.moved && xf.current.s > 1) {
+        xf.current = { s: xf.current.s, tx: g.from.tx + dx, ty: g.from.ty + dy };
+        apply(false);
+      }
+    },
+    onPointerUp: (event) => {
+      if (event.pointerType !== 'touch' || !pointers.current.has(event.pointerId)) return;
+      pointers.current.delete(event.pointerId);
+      const g = gesture.current;
+      const left = pointers.current.size;
+      if (left === 1) {
+        // 双指放开一指:剩下那指接着平移
+        beginPan(Array.from(pointers.current.values())[0], false);
+        return;
+      }
+      if (left > 0) return;
+      gesture.current = null;
+      if (g?.kind === 'tap' && !g.moved && Date.now() - g.t0 < 400) {
+        if (xf.current.s > 1) { xf.current = { s: 1, tx: 0, ty: 0 }; apply(true); }
+        else onClose();
+        return;
+      }
+      const img = imgRef.current;
+      xf.current = settleTransform(xf.current, { width: img?.offsetWidth || 0, height: img?.offsetHeight || 0 });
+      apply(true);
+    },
+    onPointerCancel: (event) => {
+      pointers.current.delete(event.pointerId);
+      if (pointers.current.size === 0) {
+        gesture.current = null;
+        const img = imgRef.current;
+        xf.current = settleTransform(xf.current, { width: img?.offsetWidth || 0, height: img?.offsetHeight || 0 });
+        apply(true);
+      }
+    },
+  };
+
   return createPortal(
     <div
+      ref={rootRef}
       className="reader-lightbox"
       role="dialog"
       aria-modal="true"
       aria-label={alt || '图片预览'}
-      onClick={onClose}
+      tabIndex={-1}
+      data-layer-panel=""
+      {...handlers}
+      // 鼠标 / 键盘:点任意处关闭(点图片本身也关闭,cursor: zoom-out);触屏由上面的手势判定,不走 click
+      onClick={() => { if (lastPointer.current !== 'touch') onClose(); }}
     >
-      {/* 点图片本身也关闭（cursor: zoom-out），故无需 stopPropagation */}
-      <img className="reader-lightbox-img" src={src} alt={alt || ''} referrerPolicy="no-referrer" />
+      <img ref={imgRef} className="reader-lightbox-img" src={src} alt={alt || ''} referrerPolicy="no-referrer" draggable={false} />
+      {compact && (
+        <button
+          type="button"
+          className="reader-lightbox-close"
+          aria-label="关闭图片预览"
+          onClick={(event) => { event.stopPropagation(); onClose(); }}
+        >
+          <X aria-hidden="true" />
+        </button>
+      )}
     </div>,
     document.body,
   );

@@ -129,7 +129,7 @@ def login(page, password=PASSWORD):
 
 def pick_source(page, source):
     page.get_by_role("button", name="订阅源", exact=True).tap()
-    drawer = page.get_by_role("complementary", name="过滤条件与来源")
+    drawer = page.get_by_role("dialog", name="过滤条件与来源")
     expect(drawer).to_be_visible()
     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/articles"
                               and f"source_id={source}" in response.url) as response:
@@ -290,7 +290,10 @@ def run_flows(browser, base_url, database, artifacts, result):
         expect(page.get_by_role("dialog", name="设置", exact=True)).to_be_visible()
         page.go_back()
         expect(page.get_by_role("dialog", name="设置", exact=True)).to_have_count(0)
-        page.get_by_role("button", name="文章", exact=True).tap()
+        # 回到文章容器会重拉列表与未读数;等两者落地再重载,否则重载会把在途请求打断成 ERR_ABORTED(时序竞争,与被测行为无关)
+        with page.expect_response(lambda response: urlsplit(response.url).path == "/api/articles"), \
+                page.expect_response(lambda response: urlsplit(response.url).path == "/api/reader/unread-counts"):
+            page.get_by_role("button", name="文章", exact=True).tap()
         expect(page.locator('.m-tab[aria-current="page"]')).to_have_attribute("aria-label", "文章")
         page.reload()
         expect(page.locator(".reader-entry")).to_have_count(30)

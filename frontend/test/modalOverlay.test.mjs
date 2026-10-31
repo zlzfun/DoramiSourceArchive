@@ -89,6 +89,7 @@ test('护栏:裸 .modal-overlay 被拦——含 codex R1 指出的间接写法(�
 test('护栏:共用外壳本体豁免,<Modal> 调用方与其它类名不报', () => {
   assert.equal(lintRuleHits('export const A = () => <div className="modal-overlay" />;', 'src/components/Modal.jsx'), 0);
   assert.equal(lintRuleHits('export const A = () => <div className="modal-panel form-sheet" />;'), 0);
-  assert.equal(lintRuleHits('export const A = ({ close }) => <div className="m-dim" onClick={close} />;'), 0);
+  // issue #230:移动层遮罩 .m-dim 也归这条护栏管,只在层原语目录放行(业务文件被拦见 layerPrimitives.test.mjs)
+  assert.equal(lintRuleHits('export const A = ({ close }) => <div className="m-dim" onClick={close} />;', 'src/components/layer/LayerScrim.jsx'), 0);
   assert.equal(lintRuleHits('export const A = ({ Modal }) => <Modal closeOnOverlay overlayClassName="py-6 pwa-overlay" />;'), 0);
 });
