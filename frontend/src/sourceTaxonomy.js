@@ -191,6 +191,8 @@ export const LOGO_SIZES = {
   s15: { box: 15, radius: 4.5, font: 7.5, img: 10 },
   s17: { box: 17, radius: 5.5, font: 8, img: 11 },
   s20: { box: 20, radius: 6, font: 9, img: 13 },
+  /* s18:手机壳夜航卡的顶行源标(issue #230 批 4c,样页 .c-card-top .logo 18) */
+  s18: { box: 18, radius: 5.5, font: 8, img: 12 },
   /* s34:发现页源卡刻度 */
   s34: { box: 34, radius: 9, font: 13, img: 21 },
   xs: { box: 22, radius: 7, font: 9, img: 14 },

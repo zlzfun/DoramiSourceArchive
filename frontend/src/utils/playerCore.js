@@ -98,9 +98,63 @@ export function formatRate(value) {
   return `${normalizeRate(value)}×`;
 }
 
+/** 手机悬浮卡倍速钮的可访问名:读出当前档位,并说明点按会切到下一档(issue #230 拍板 34)。 */
+export function rateSpeech(value) {
+  return `播放速度 ${normalizeRate(value)} 倍，点按切换`;
+}
+
+// ── 手机播放器:坞与悬浮卡的手势(issue #230 阶段 3 批 3d,样页拍板 32 / 33 / 34)──
+// 坞上往上拖过 24px 松手 = 展开;卡上往下拖:动过 4px 才算拖(拖起来才捕获指针),
+// 跟手按 0.6 倍,松手位移过 56px 或末段速度 > 0.6px/ms 即收起,否则回弹。
+// 判定交给 utils/sheetDrag 的状态机(createSheetDrag(PLAYER_CARD_DRAG)),follow 只给组件算跟手位移。
+export const PLAYER_DOCK_SWIPE = 24;
+export const PLAYER_CARD_DRAG = Object.freeze({ slop: 4, distance: 56, velocity: 0.6, window: 100, follow: 0.6 });
+
+/** 坞上的竖向位移(终点 − 起点,往上为负)够不够展开。 */
+export function dockSwipeOpens(dy) {
+  const n = Number(dy);
+  return Number.isFinite(n) && n < -PLAYER_DOCK_SWIPE;
+}
+
+/** 悬浮卡「这一期」那块的读屏名:文章导读推入文章,播客推入这一期。 */
+export function playerOpenLabel(item, title) {
+  return `${item?.shape === 'article' ? '打开这篇文章' : '打开这一期'}：${title || ''}`;
+}
+
+// ── 停止 + 撤销(手机悬浮卡的「停止」,提示条带「撤销」)──
+// 停止那一刻记下 { item, t, playing };撤销按当时的状态决定怎么回来:
+//   none          没有可撤销的(快照为空)
+//   ignore        已经在放别的(撤销前又点了别的收听):不覆盖读者更新的选择
+//   cancel-close  收起动画还没走完、原来是暂停:撤掉收起即可,位置与状态都没变
+//   resume        收起动画还没走完、原来在放:撤掉收起并接着放(音频仍装着,不重设位置)
+//   play          已经收起:重新装这一条,从停止时的位置接着放(撤销是一次点按,iOS 允许在这一拍里 play)
+//   restore       已经收起、原来是暂停:恢复成暂停态的坞,位置落在停止时的地方
+export function stopSnapshot(state, t) {
+  if (!state?.item || state.form === 'none') return null;
+  const pos = Number(t);
+  return {
+    item: state.item,
+    t: Number.isFinite(pos) && pos > 0 ? pos : 0,
+    playing: isPlayingIntent(state),
+  };
+}
+
+export function resumePlan(snapshot, state, { closing = false } = {}) {
+  if (!snapshot?.item) return 'none';
+  const sameKey = state?.item?.key === snapshot.item.key;
+  if (closing && sameKey) return snapshot.playing ? 'resume' : 'cancel-close';
+  if (state?.item && state.form !== 'none') return 'ignore';
+  return snapshot.playing ? 'play' : 'restore';
+}
+
 // ── 状态机 ──
 // status:idle(无条目)| loading(读者要求播放、尚未出声)| playing | paused | error(音频加载失败)。
 // form:none(只有标题区入口)| bar(底部浮条)| mini(右下角小胶囊)。
+// 手机壳(issue #230)把 bar 画成一行的坞、另有悬浮卡;mini 在手机上按 bar 画(手机退役迷你,见 mobileForm)。
+export function mobileForm(form) {
+  return form === 'mini' ? 'bar' : form;
+}
+
 export const initialPlayerState = Object.freeze({
   item: null,
   form: 'none',

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowRight, ArrowUpRight, CalendarDays, ChevronDown, Clock3, Loader2, RefreshCw, Star, Undo2, Zap } from 'lucide-react';
+import { ArrowDown, ArrowRight, ArrowUpRight, CalendarDays, ChevronDown, ChevronRight, Clock3, Loader2, RefreshCw, Star, Undo2, Zap } from 'lucide-react';
 import {
   completeInterestOnboarding,
   ensurePersonalBrief,
@@ -12,7 +12,12 @@ import { flushPendingInterestSaves } from '../utils/interestSaveQueue';
 import { rebuildToast } from '../utils/briefRebuild';
 import { guestEdition } from '../utils/guestCopy';
 import LogoMark from './LogoMark';
-import BriefHistoryCalendar from './BriefHistoryCalendar';
+import BriefHistoryCalendar, { BriefHistorySheet } from './BriefHistoryCalendar';
+import { GlassBtn, HeadTitle, MobileHeader } from './mobile/MobileHeader';
+import { useLongPress } from '../hooks/useLongPress';
+import { compactLayoutMatches } from '../hooks/useCompactLayout';
+import { briefSelectionCounts, VALUE_LANES } from '../utils/briefStats';
+import { briefMenuArticle } from '../utils/briefMenu';
 import { resolveCompany } from '../sourceTaxonomy';
 import { formatDateTime, formatRelativeTime } from '../utils/datetime';
 import { fmtDayKey, WEEKDAY_CHARS } from '../utils/readerTime';
@@ -39,11 +44,11 @@ import { scoreDimensionOf, scoreOf } from '../utils/briefScore';
 // 桌面占「源栏 + 条目列 + 阅读窗」整幅(grid-column 2 / -1);移动壳同一张页面,单列。
 // 游客(issue #213):看的是按默认订阅编排的共享游客版——眉头下恒为「游客版」说明行 + 登录入口,不出
 // 「重新编排」「立即重编」「重试生成」(游客不能重编;失败的游客版由后端过一阵自动重试),选篇理由改说「默认订阅的」。
+// 手机档(issue #230 批 3b,样页 docs/design/issue-230-mobile/ 早报屏):头条整块可点(按下压暗、缩 0.99,摘要下文字级「全文 ›」,
+// 没有实底「阅读全文」与收藏钮)、板块条目是夜航卡(不带英文原标题与收藏星,头条保留原标题)、收藏等动作走长按动作单
+// (onItemMenu,MobileReader 复用文章动作单;动作单上方是抬起的预览卡)、板块名吸在页头之下、往期是底页月历(BriefHistorySheet)。
 
 const TERMINAL = new Set(['ready', 'degraded', 'failed', 'superseded']);
-// 额外于新闻精选之上的通道:重大事件 + 深度阅读 / 播客精选(「N 篇精选」不数它们)
-const EXTRA_LANES = new Set(['breaking', 'read', 'listen']);
-const VALUE_LANES = new Set(['read', 'listen']);
 const LIVE = new Set(['pending', 'generating']);
 const HISTORY_LIMIT = 100;
 const POLL_MS = 8000;
@@ -227,19 +232,26 @@ function FavoriteButton({ articleId, favoriteIds, onToggleFavorite, label = fals
   );
 }
 
-function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds, onToggleFavorite }) {
+// 板块条目。手机档(issue #230 批 3b,样页拍板 13 / 14):不带英文原标题与收藏星(收藏走长按动作单与正文页),
+// 分数挪到元信息行尾;整卡可点(标题按钮 ::after 拉伸)、可长按(press = useLongPress 的绑定),anchored = 动作单正指着它
+function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds, onToggleFavorite, mobile = false, press = null, anchored = false }) {
   const { preferChinese } = useTitlePreference();
   const view = viewOf(item, source, preferChinese);
   const { snapshot } = view;
   const related = relatedOf(snapshot);
   const [showRelated, setShowRelated] = useState(false);
+  const score = view.score && (
+    <span className="bp-score" title={`${view.dimensionLabel} ${view.score}。${scoreDisclaimer(view.dimension)}`} aria-label={`${view.dimensionLabel}分 ${view.score}`}>
+      <span className={`ai-grad-text ${view.scoreTier}`}>{view.score}</span>
+    </span>
+  );
   return (
-    <article className={`bp-item ${flash ? 'is-just-read' : ''}`}>
+    <article className={`bp-item ${flash ? 'is-just-read' : ''}${anchored ? ' is-ctx-anchor' : ''}`} {...(press || {})}>
       {/* 标题按钮是唯一的「打开」控件:::after 拉伸覆盖整条,点条目任意处即打开;收藏与「+ 订阅」浮在覆盖层之上 */}
       <h3 className="bp-item-title" lang={latinLang(view.title)}>
         <button type="button" className="bp-item-open" onClick={() => onOpen(item)}>{view.title}</button>
       </h3>
-      {view.titleOrig && <p className="bp-item-orig" lang={latinLang(view.titleOrig)}>{view.titleOrig}</p>}
+      {!mobile && view.titleOrig && <p className="bp-item-orig" lang={latinLang(view.titleOrig)}>{view.titleOrig}</p>}
       {view.summary && <p className="bp-item-sum">{view.summary}</p>}
       <div className="bp-item-meta">
         <span className="bp-src">
@@ -250,17 +262,79 @@ function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds
         {snapshot.publish_date && (
           <span className="bp-time" title={formatDateTime(snapshot.publish_date)}>{formatRelativeTime(snapshot.publish_date, '')}</span>
         )}
-        {view.score && (
-          <span className="bp-score" title={`${view.dimensionLabel} ${view.score}。${scoreDisclaimer(view.dimension)}`} aria-label={`${view.dimensionLabel}分 ${view.score}`}>
-            <span className={`ai-grad-text ${view.scoreTier}`}>{view.score}</span>
-          </span>
-        )}
+        {!mobile && score}
         <WhyMark why={view.why} />
         <RelatedChip links={related} open={showRelated} onToggle={() => setShowRelated((value) => !value)} />
-        <FavoriteButton articleId={item.article_id} favoriteIds={favoriteIds} onToggleFavorite={onToggleFavorite} />
+        {mobile ? score : <FavoriteButton articleId={item.article_id} favoriteIds={favoriteIds} onToggleFavorite={onToggleFavorite} />}
       </div>
       <RelatedList links={related} open={showRelated} />
     </article>
+  );
+}
+
+// 手机档头条(issue #230 批 3b,样页第 1 轮返修第 2 条):整块可点——标题按钮的 ::after 铺满头条块,按下整块压暗一档、缩到 0.99;
+// 摘要下只有文字级「全文 ›」提示(没有实底「阅读全文」与收藏钮,收藏走长按);英文原标题保留(拍板 14 只撤板块条目的);
+// 评分栏在可点块之外。可长按(press),anchored = 动作单正指着它。
+function MobileHeadline({ item, kicker, source, flash, onOpen, onSubscribeSource, press = null, anchored = false }) {
+  const { preferChinese } = useTitlePreference();
+  const view = viewOf(item, source, preferChinese);
+  const { snapshot } = view;
+  const related = relatedOf(snapshot);
+  const [showRelated, setShowRelated] = useState(false);
+  return (
+    <div className={`bp-head is-m ${flash ? 'is-just-read' : ''}`}>
+      <div className={`bp-mhead${anchored ? ' is-ctx-anchor' : ''}`} {...(press || {})}>
+        <p className="bp-kicker">{kicker}</p>
+        <h1 className="bp-title" lang={latinLang(view.title)}>
+          <button type="button" className="bp-head-open" onClick={() => onOpen(item)}>{view.title}</button>
+        </h1>
+        {view.titleOrig && <p className="bp-orig" lang={latinLang(view.titleOrig)}>{view.titleOrig}</p>}
+        <p className="bp-meta">
+          <span className="bp-src">
+            <LogoMark company={view.company} size="s17" emoji={source?.icon} />
+            <span className="bp-src-name">{view.sourceName}</span>
+          </span>
+          <SubscribeChip view={view} onSubscribeSource={onSubscribeSource} />
+          {snapshot.publish_date && (
+            <span className="bp-time" title={formatDateTime(snapshot.publish_date)}>{formatRelativeTime(snapshot.publish_date, '')}</span>
+          )}
+          {view.why.cls === 'is-interest' && <WhyMark why={view.why} />}
+          <RelatedChip links={related} open={showRelated} onToggle={() => setShowRelated((value) => !value)} />
+        </p>
+        {view.summary && <p className="bp-sum">{view.summary}</p>}
+        <RelatedList links={related} open={showRelated} />
+        <span className="bp-more" aria-hidden="true">全文<ChevronRight aria-hidden="true" /></span>
+      </div>
+      {view.score && (
+        <aside className="bp-verdict" aria-label={view.dimensionLabel}>
+          <p className="bp-verdict-label">{view.dimensionLabel}</p>
+          <p className="bp-verdict-score" title={scoreDisclaimer(view.dimension)}>
+            <span className={`ai-grad-text ${view.scoreTier}`}>{view.score}</span>
+          </p>
+          {view.reason && <p className="bp-verdict-reason">{view.reason}</p>}
+        </aside>
+      )}
+    </div>
+  );
+}
+
+// 长按动作单上方的预览卡(issue #230 批 3b,样页拍板 5「长按写清对象 = 抬起预览卡」):与板块条目同一张卡面(标题 · 两行摘要 · 来源 · 时间 · 分数),
+// 只读、不可点(aria-hidden,读屏由动作单名「「标题」的操作」说清对象)
+export function BriefPeek({ item, source = null }) {
+  const { preferChinese } = useTitlePreference();
+  const view = viewOf(item, source, preferChinese);
+  const { snapshot } = view;
+  return (
+    <div className="bp-peek">
+      <p className="bp-peek-title" lang={latinLang(view.title)}>{view.title}</p>
+      {view.summary && <p className="bp-peek-sum">{view.summary}</p>}
+      <div className="bp-peek-meta">
+        <LogoMark company={view.company} size="s17" emoji={source?.icon} />
+        <span className="bp-src-name">{view.sourceName}</span>
+        {snapshot.publish_date && <span className="bp-time">{formatRelativeTime(snapshot.publish_date, '')}</span>}
+        {view.score && <span className="bp-score"><span className={`ai-grad-text ${view.scoreTier}`}>{view.score}</span></span>}
+      </div>
+    </div>
   );
 }
 
@@ -357,8 +431,17 @@ export default function PersonalBriefPage({
   onBrowse = null,              // 「去看文章」→ 关早报页落文章容器
   // 从阅读窗「返回我的早报」回来时带的外出上下文 {date, revision, scrollTop, itemId};挂载时一次性读取
   restore = null,
+  // 跨版式交接(审计 M-36,issue #230 批 4a):ReaderWorkspace 的 {keep, take}。换版式(跨 1024)卸载前交出正在看的那一期
+  // 与读到的比例 {date, revision, progress},另一种版式的早报页挂载时取走接着看;切 Tab / 关早报这类卸载不交接(仍是「新开」)
+  placeKeeper = null,
   guest = false,
   onGuestLogin = null,
+  // 手机壳页头的领位(issue #230 第 2 批,拍板 31 B):头像钮由 MobileReader 传入;只有手机传,桌面眉头不动
+  mobileLead = null,
+  // 手机档长按动作单(issue #230 批 3b,拍板 13 / 5):onItemMenu(文章形状, {anchorKey, preview}) 由 MobileReader 打开动作单;
+  // menuAnchorKey = 动作单正指着的条目(`brief:<条目 id>`),那张卡淡到 35%
+  onItemMenu = null,
+  menuAnchorKey = null,
 }) {
   const restoreRef = useRef(restore);
   const [flashId, setFlashId] = useState(null);
@@ -372,6 +455,9 @@ export default function PersonalBriefPage({
   )); // date=null → 今天
   const [detail, setDetail] = useState({ key: '', edition: null, loading: false, error: '' });
   const [histOpen, setHistOpen] = useState(false);
+  // 手机往期底页每次打开都是新实例(月份、版次回到正在看的那天),关的时候不立刻卸载、留给 Sheet 播退场(审计 M-33,批 4a)
+  const [histSession, setHistSession] = useState(0);
+  useLayoutEffect(() => { if (histOpen) setHistSession((n) => n + 1); }, [histOpen]);
   const histTriggerRef = useRef(null);
   const cacheRef = useRef(new Map()); // 终态 edition 不可变,按 date#revision 缓存
   const sheetRef = useRef(null);
@@ -394,6 +480,15 @@ export default function PersonalBriefPage({
       return null;
     }
   }, [loadHistory]);
+
+  // 挂载时取走另一种版式交过来的位置。它比外出上下文(restore)新:交接器只在真跨 1024 卸载时存、下一次挂载即取走,
+  // 而父级的 restore 是从正文返回那次留下的、之后没清——正文返回 → 换日期 / 版次 → 跨版式时,以交接的这份为准
+  // (codex 检视第 1 轮 P2,审计 M-36 漏掉的路径)。StrictMode 的二次挂载取到空,不覆盖
+  useEffect(() => {
+    const place = placeKeeper?.take?.();
+    if (place) restoreRef.current = place;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     setLoading(true);
@@ -480,13 +575,31 @@ export default function PersonalBriefPage({
     const r = restoreRef.current;
     if (!r || !cardsReady) return undefined;
     restoreRef.current = null;
-    if (sheetRef.current) sheetRef.current.scrollTop = r.scrollTop || 0;
+    const sheet = sheetRef.current;
+    // 跨版式交接按比例落(两种版式的版面高不同);外出返回按像素
+    if (sheet) sheet.scrollTop = r.progress != null ? r.progress * Math.max(0, sheet.scrollHeight - sheet.clientHeight) : (r.scrollTop || 0);
     if (r.itemId == null) return undefined;
     setFlashId(r.itemId);
     const timer = window.setTimeout(() => setFlashId(null), 1800);
     return () => window.clearTimeout(timer);
   }, [cardsReady]);
   const status = usesToday ? (todayStatus || edition?.status) : edition?.status;
+
+  // 换版式卸载时交出位置(审计 M-36):读到的比例在滚动时记下——浏览器会先按新宽度重排旧视图、把滚动位置夹没,
+  // 卸载那一刻再量就晚了,所以只认版式还没翻过去时的滚动(与 ReaderWorkspace 的列表 / 正文位置同一条规矩);
+  // 媒体查询已经翻过去(compactLayoutMatches() 与本页的 mobile 不一致)才算换版式,这时交出 {date, revision, progress}
+  const selRef = useRef(sel);
+  useEffect(() => { selRef.current = sel; });
+  const progressRef = useRef(0);
+  const recordProgress = (event) => {
+    if (compactLayoutMatches() !== mobile) return;
+    const sheet = event.currentTarget;
+    progressRef.current = sheet.scrollTop / Math.max(1, sheet.scrollHeight - sheet.clientHeight);
+  };
+  useLayoutEffect(() => () => {
+    if (!placeKeeper || compactLayoutMatches() === mobile) return;
+    placeKeeper.keep({ date: selRef.current.date, revision: selRef.current.revision, progress: progressRef.current });
+  }, [placeKeeper, mobile]);
 
   const closeHistory = useCallback(() => setHistOpen(false), []);
   const pickDay = (key) => {
@@ -495,6 +608,11 @@ export default function PersonalBriefPage({
   };
   const pickRevision = (revision) => {
     setSel((prev) => ({ ...prev, revision }));
+    setHistOpen(false);
+  };
+  // 手机底页月历:点单版的日子 = 那天最新一版;多版的日子在月历下方选版次(可以不是正在看的那天)
+  const pickEdition = (key, revision) => {
+    setSel({ date: key === todayKey ? null : key, revision: revision ?? null });
     setHistOpen(false);
   };
 
@@ -622,23 +740,25 @@ export default function PersonalBriefPage({
     openExternal(snapshot);
   };
 
-  const items = edition?.items || [];
-  // 重大事件与深度阅读 / 播客精选额外于精选之上(前者可能来自订阅外),「N 篇精选」只数用户自己那份新闻精选
-  const readCount = items.filter((item) => item.selection_lane === 'read').length;
-  const listenCount = items.filter((item) => item.selection_lane === 'listen').length;
-  const ownItems = items.filter((item) => !EXTRA_LANES.has(item.selection_lane));
-  const interestCount = ownItems.filter((item) => (item.matched_interest_codes || []).length > 0).length;
+  // 手机档长按 → 文章动作单(MobileReader 复用 buildArticleMenuItems);没有 article_id 的条目不出
+  const anchorKeyOf = (item) => `brief:${item.id ?? item.position}`;
+  const openItemMenu = (item) => {
+    const source = sourceMap[item.snapshot?.source_id];
+    const article = briefMenuArticle(item, source);
+    if (!article || !onItemMenu) return;
+    onItemMenu(article, { anchorKey: anchorKeyOf(item), preview: <BriefPeek item={item} source={source} /> });
+  };
+  const pressBind = useLongPress(openItemMenu);
+  const pressOf = (item) => (mobile && onItemMenu && item.article_id ? pressBind(item) : null);
+  const anchoredOf = (item) => mobile && menuAnchorKey != null && menuAnchorKey === anchorKeyOf(item);
+
+  // 重大事件与深度阅读 / 播客精选额外于精选之上(前者可能来自订阅外),「N 篇精选」只数用户自己那份新闻精选;
+  // v3.54 选篇统计编排时一次写入(历史版本无值则事实句省略「M 篇里」)。全部取正在看的这一期自己的快照(utils/briefStats)
+  const {
+    items, ownItems, readCount, listenCount, valueCount, interestCount, externalHits,
+    stats, scopeCount, interestOnly, followedCount, mergedCount, ratioUnfillable,
+  } = useMemo(() => briefSelectionCounts(edition), [edition]);
   const live = isToday && LIVE.has(status);
-  const ratioUnfillable = edition?.degraded_reason === 'insufficient_non_interest_content';
-  // v3.54:选篇统计(编排时一次写入;历史版本无值则事实句省略「M 篇里」);订阅为空只按兴趣编排 = interest_only
-  const stats = edition?.selection_stats || null;
-  const scopeCount = (edition?.expected_source_ids || []).length;
-  const interestOnly = !!edition && scopeCount === 0 && (stats ? !!stats.interest_only : items.length > 0);
-  const followedCount = stats?.followed_count ?? null;
-  // issue #103:同事件合并到代表条目的候选数(编排时一次写入;历史版本无值则不提)
-  const mergedCount = Number(stats?.same_event_merged) > 0 ? Number(stats.same_event_merged) : 0;
-  const externalHits = ownItems.filter((item) => (item.matched_interest_codes || []).length > 0 && item.snapshot?.subscribed === false).length;
-  const valueCount = readCount + listenCount;
   const showEdition = !loading && !detailLoading && !live && !(error && isToday)
     && !(isToday && todayStatus === 'empty_subscriptions') && !(!usesToday && detail.error)
     && status !== 'failed' && !!edition;
@@ -653,20 +773,22 @@ export default function PersonalBriefPage({
   );
 
   // ── 入选事实句(v3.54 §3,原编排说明行):降级只说新闻那份(issue #178 第三波) ──
+  // 看往期时说「这一天」(issue #230 批 4a,批 3b 观察;与「这一天没有命中你兴趣的内容」一致),今天那期才说「今天」
+  const dayWord = isToday ? '今天' : '这一天';
   let fact = null;
   if (showEdition) {
     const scopeText = scopeCount > 0 ? <> {n(scopeCount)} 个订阅来源</> : '订阅来源';
     if (edition.degraded_reason && valueCount > 0) {
       const head = interestOnly
-        ? <>今天没有命中你兴趣的新闻{followedCount ? <>（{n(followedCount)} 个兴趣）</> : null}</>
-        : (ratioUnfillable ? '今天缺少用于补齐的非兴趣新闻' : '今天没有达到入选标准的新闻');
+        ? <>{`${dayWord}没有命中你兴趣的新闻`}{followedCount ? <>（{n(followedCount)} 个兴趣）</> : null}</>
+        : `${dayWord}${ratioUnfillable ? '缺少用于补齐的非兴趣新闻' : '没有达到入选标准的新闻'}`;
       fact = ownItems.length > 0
         ? <>{head}，「订阅源最新更新」是{scopeText}的最新内容，不计入正式精选；{valueText}</>
         : <>{head}，{valueText}</>;
     } else if (edition.degraded_reason) {
       fact = interestOnly
-        ? <>今天没有命中你兴趣的新内容{followedCount ? <>（{n(followedCount)} 个兴趣）</> : null}</>
-        : <>{ratioUnfillable ? '今天缺少用于补齐的非兴趣内容' : '今天没有达到入选标准的内容'}，以下是{scopeText}的最新更新，不计入正式精选</>;
+        ? <>{`${dayWord}没有命中你兴趣的新内容`}{followedCount ? <>（{n(followedCount)} 个兴趣）</> : null}</>
+        : <>{`${dayWord}${ratioUnfillable ? '缺少用于补齐的非兴趣内容' : '没有达到入选标准的内容'}`}，以下是{scopeText}的最新更新，不计入正式精选</>;
     } else if (interestOnly) {
       fact = (
         <>
@@ -805,6 +927,20 @@ export default function PersonalBriefPage({
         ),
       },
     );
+  } else if (headline && mobile) {
+    const headWhy = whyOf(headline, headline.snapshot || {}, '');
+    posterBody = (
+      <MobileHeadline
+        item={headline}
+        kicker={headline.selection_lane === 'breaking' ? `头条 · ${headWhy.text}` : `头条 · ${headSection}`}
+        source={sourceMap[headline.snapshot?.source_id]}
+        flash={flashId != null && (headline.id ?? headline.position) === flashId}
+        onOpen={openItem}
+        onSubscribeSource={onSubscribeSource}
+        press={pressOf(headline)}
+        anchored={anchoredOf(headline)}
+      />
+    );
   } else if (headline) {
     const headWhy = whyOf(headline, headline.snapshot || {}, '');
     posterBody = (
@@ -824,9 +960,9 @@ export default function PersonalBriefPage({
     // 降级版面:不设头条,头条位如实说明
     posterBody = (
       <div className="bp-head is-note">
-        <p className="bp-kicker">{ownItems.length > 0 ? '最新更新' : '今日早报'}</p>
+        <p className="bp-kicker">{ownItems.length > 0 ? '最新更新' : (isToday ? '今日早报' : '这一天的早报')}</p>
         <h1 className="bp-title is-note">
-          {interestOnly ? '今天没有命中你兴趣的新内容' : ratioUnfillable ? '今天缺少用于补齐的非兴趣内容' : '今天没有达到入选标准的内容'}
+          {`${dayWord}${interestOnly ? '没有命中你兴趣的新内容' : ratioUnfillable ? '缺少用于补齐的非兴趣内容' : '没有达到入选标准的内容'}`}
         </h1>
         <p className="bp-sum">
           {ownItems.length > 0 ? `下面是${guest ? '默认订阅' : '你订阅'}来源的最新更新，不计入正式精选` : '下面是按内容价值入选的阅读与收听'}
@@ -867,6 +1003,7 @@ export default function PersonalBriefPage({
       <div className="bp-light" aria-hidden="true" />
       <div className="bp-wrap">
         {onboardingBanner}
+        {!mobile && (
         <div className="bp-top">
           <p className="bp-eyebrow">
             <b>早报</b>
@@ -921,6 +1058,7 @@ export default function PersonalBriefPage({
             )}
           </div>
         </div>
+        )}
         {notice && <p className={`bp-notice ${notice.cls}`} role="status">{notice.body}</p>}
         {posterBody}
       </div>
@@ -986,8 +1124,62 @@ export default function PersonalBriefPage({
     </section>
   );
 
+  // 手机页头(issue #230 第 2 批,拍板 31 B):一行 = 头像 ·「早报」· 日期钮(就是往期入口,点开月历)· 重新编排 / 回到今天;
+  // 原眉头「早报 — 日期」与「· 今天」去掉;看往期时日期钮写那一天,右侧换「回到今天」。「第 N 版」只在月历与文末「本期编排」。
+  // 往期 = 底页月历(批 3b,拍板 12;BriefHistorySheet,portal 到 body)。
+  const dayText = `${dateTextOf(selDate)} ${weekdayOf(selDate)}`;
+  const mobileHead = mobile && (
+    <MobileHeader
+      lead={mobileLead}
+      title={<HeadTitle>早报</HeadTitle>}
+      actions={(
+        <div className="m-brief-acts">
+          <button
+            ref={histTriggerRef}
+            type="button"
+            className="m-pill m-hist"
+            aria-haspopup="dialog"
+            aria-expanded={histOpen}
+            aria-label={`往期早报，正在看 ${dayText}`}
+            onClick={() => setHistOpen((open) => !open)}
+          >
+            <span className="m-pill-in"><CalendarDays aria-hidden="true" />{dayText}</span>
+          </button>
+          {isToday ? (!guest && (
+            <GlassBtn
+              label={live ? '今日早报正在准备' : '重新编排今日早报'}
+              onClick={handleRebuild}
+              disabled={working || loading || live}
+            >
+              <RefreshCw className={working || live ? 'animate-spin' : ''} aria-hidden="true" />
+            </GlassBtn>
+          )) : (
+            <button type="button" className="m-pill m-today" onClick={() => pickDay(todayKey)}>
+              <span className="m-pill-in"><Undo2 aria-hidden="true" />回到今天</span>
+            </button>
+          )}
+          {histSession > 0 && (
+            <BriefHistorySheet
+              key={histSession}
+              open={histOpen}
+              days={days}
+              todayKey={todayKey}
+              selDate={selDate}
+              selRevision={edition?.revision ?? selRevision}
+              live={live}
+              onPickEdition={pickEdition}
+              onClose={closeHistory}
+            />
+          )}
+        </div>
+      )}
+    />
+  );
+
   return (
-    <section className={`bp-sheet ${mobile ? 'is-mobile' : ''}`} aria-label="我的早报" ref={sheetRef}>
+    <>
+    {mobileHead}
+    <section className={`bp-sheet ${mobile ? 'is-mobile' : ''}`} aria-label="我的早报" ref={sheetRef} onScroll={recordProgress}>
       {poster}
       <div className="bp-wrap">
         {showEdition && acts.map((group) => (
@@ -1007,6 +1199,9 @@ export default function PersonalBriefPage({
                   onSubscribeSource={onSubscribeSource}
                   favoriteIds={favoriteIds}
                   onToggleFavorite={onToggleFavorite}
+                  mobile={mobile}
+                  press={pressOf(item)}
+                  anchored={anchoredOf(item)}
                 />
               ))}
             </div>
@@ -1015,5 +1210,6 @@ export default function PersonalBriefPage({
         {credits}
       </div>
     </section>
+    </>
   );
 }

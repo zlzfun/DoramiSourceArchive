@@ -140,7 +140,7 @@
 
 **分数的身份线(2026-09-06 issue #23;v3.48 起分数语义=新闻价值;issue #184 字体换 `--font-score`)**:分数是数字,不是标签——
 全站只用一种画法:宋体齐线数字 + AI 渐变,按位置取大小:早报海报评分栏 44px → 速读卡卡头 22px → 早报条目 17px →
-阅读器条目行 14px(`.reader-entry-score.ai-grad-text`,推到元信息行尾)。不做分数胶囊。
+阅读器条目行 14px(`.reader-entry-score.ai-grad-text`,推到元信息行尾;手机壳的夜航卡上 19px,issue #230 批 4c)。不做分数胶囊。
 此前的 Charter 栈在 Windows 上没有,落到 Cambria 字形不同,#184 起统一为自托管宋体(Mac / Windows 一致)。
 **分数按分值分档着色(2026-09-10,issue #54,样页 `dorami-score-tiers-quiet.html`)**:只改颜色,大小与字体不动;
 灰线 6.0 以下退成与旁边元信息同一个 `--dorami-faint`、不画身份色,其上按整数分一档(`is-score-1..4`,渐变两端色各自向 faint
@@ -240,7 +240,8 @@
   会得到 hue = none、按 0° 渲染,整片泛粉(WebKit 无此问题)。
 - **运行时动态配色(issue #199,播放条的封面模糊底)**:JS 只写 CSS 变量(模糊位图、遮罩浓度),颜色仍由 token 的
   oklab 混色给出;浓度按最差像素算到文字 ≥ 4.5:1、图标 ≥ 3:1,切主题 / 中性色时重算;整套包在
-  `@supports (color: color-mix(in oklab, red, blue))` 里,不支持就回中性底。不用 `backdrop-filter`。
+  `@supports (color: color-mix(in oklab, red, blue))` 里,不支持就回中性底。动态配色不用 `backdrop-filter`
+  (issue #230 起移动壳的**镀层**允许磨砂,但只经 `--glass-*` token 且自带降级,见 §10)。
 - **语义状态 token(2026-07)**:ok/warn/bad/run/idle 五态一律引用 `--state-*` / `--state-*-bg`
   成对 token(亮暗自动翻转),不再散写 emerald/rose/amber hex。
 - **热度/密度色阶(图床波 v3.11)**:需要「连续量深浅」的可视化(热点图等)用 `--heat-0…4`
@@ -308,6 +309,7 @@
 | `--r-card` | 14px | 卡片、面板、列表容器 |
 | `--r-overlay` | 16px | 模态、浮层、hero/全屏面 |
 | `--r-pill` | 9999px | 胶囊、头像、圆形控件 |
+| `--r-float` | 24px | 手机悬浮卡(播放器展开态,issue #230 拍板 32 / 34;只在手机壳) |
 
 一个视图内只用同一圆角家族，勿混圆与方。Tailwind 具名 `rounded-lg/xl/2xl/full` 为标准梯度可共存；
 `50%`（正圆）/`0`（显式去角）等特例保留。
@@ -359,6 +361,9 @@
   起点不在视口退为淡入;减少动效 = 120ms 淡入;软件渲染器或首次形变 p95 帧间隔 > 24ms 时本会话改轻量档
   (淡入 + 12px 位移)。每秒多次写的 CSS 变量(进度)只挂在进度元素自身,不写在条根或带模糊位图的祖先上
   (会连带重光栅)。不作为新增动效的先例。
+  **具名例外·移动弹簧(issue #230,样页夜航 `docs/design/issue-230-mobile/`)**:`--motion-sheet`(420ms)/ `--motion-sheet-ease`
+  (阻尼 0.76、超调 2.5% 的 `linear()`,与 `utils/playerSpring.js` 同法;不支持 `linear()` 时退 `--motion-ease`)只给手机壳的
+  底页进出、推入页、镜片拇指、镀层随滚动退场与长按抬起;拖拽跟手、松手回弹。减少动效时照常落终态(拖拽照常、没有回弹)。不作为桌面先例。
 - **品牌/登录页**：电影感动画（秒级、硬编码）保留，不引用上述 token，不收敛。
 - **减少动效是应用内开关，不读 OS 查询（issue #73，2026-09-14 拍板）**：`设置 → 外观 → 减少动效`
   在 `<html>` 上挂 `data-motion="reduce"`（`frontend/src/motion.js`，首帧由 `index.html` 内联脚本设置），
@@ -420,11 +425,12 @@
 (`utils/overlayClose.js`,pointer 事件,鼠标 / 触屏一套):面板内拖选文字松手落到遮罩、遮罩按下
 拖进面板松手都不关,面板不需要 `stopPropagation`(弹窗内嵌靠 document mousedown 点外关闭的浮层
 照常)。业务代码不得自写 `.modal-overlay` 元素——那意味着又一套 onClick 关闭判定,lint
-`dorami/no-raw-modal-overlay` 拦增量;移动壳 `.m-dim` 是面板的兄弟节点,不在此列。**body 滚动锁
+`dorami/no-raw-modal-overlay` 拦增量;移动层的遮罩 `.m-dim` 同理只在层原语 `LayerScrim`(issue #230,§10)。**body 滚动锁
 只用 `hooks/useBodyScrollLock`**(全站一把引用计数锁,外壳与抽屉共用):自写「存旧值 → 还旧值」
 的锁在多层浮层关闭顺序不对称时会把 `hidden` 留在 body 上。**Esc / 焦点陷阱只用 `hooks/useModalA11y`**,
 它带模块级层栈:多层浮层同时激活(抽屉上开确认框 / 表单弹窗)时 Esc 与 Tab 只由最上层消费,上层关闭后
 焦点回到下层触发控件、下层保持打开;业务代码不要再挂自己的 document / window 级 Esc 监听去关模态层。
+issue #230 起 `Modal` 与移动层都经层原语 `components/layer/useLayer`(它组合 `useModalA11y` / 返回键握手 / 下层 inert / 滚动锁),见 §10。
 
 **全局播放器(issue #199)**:
 - 阅读器工作区只有一个 `<audio>`(`components/player/PlayerProvider.jsx`,挂在 `ReaderWorkspace`,桌面 ⇄ 手机互切、
@@ -485,6 +491,148 @@
 
 **登录/品牌页（`.auth-*` / `.login-panel`）刻意豁免**——不做暗色适配改写，品牌面保持自身的电影感配色。
 
+## 10. 移动端(issue #230,样页 `docs/design/issue-230-mobile/`)
+
+手机壳 = `bp-shell`(≤ 1024)渲染的 `MobileReader` 与 `.m-*` 一族。桌面四栏不受本节的版式约束,但共用组件(Modal、灯箱、
+往期月历、分享浮层)的层行为同走层原语。token 在 `index.css`「移动 token」段,桌面不引用。
+
+**断点(命名,CSS 与 JS 一份口径)**:
+
+| 名 | 条件 | 用途 |
+|---|---|---|
+| `bp-phone-s` | ≤ 480 | 小屏手机微调 |
+| `bp-phone` | ≤ 767 | 手机竖屏主档 |
+| `bp-tablet` | 768–1024 | 平板竖屏 / 大屏手机横屏(仍是手机壳) |
+| `bp-shell` | ≤ 1024 | 手机壳 ⇄ 桌面四栏开关(`useCompactLayout`) |
+| `bp-desktop` | ≥ 1025 | 桌面壳(导轨几何);恰是 `bp-shell` 的反面 |
+| `bp-desktop-m` | ≤ 1280 | 桌面内部收窄 |
+
+- CSS 写 `@variant bp-phone { … }`(可套在 `@layer` 里、可嵌进规则),JSX 写 `bp-phone:`;JS 用 `utils/breakpoints.js` 的
+  `MEDIA` / `mediaMatches()`,壳开关只用 `useCompactLayout`。定义在 `index.css` 顶部 `@custom-variant bp-*`,与 JS 逐字一致
+  (`test/breakpoints.test.mjs`)。不用 `@custom-media`:它只在生产构建里展开,开发服务器原样输出。
+- 不写裸 `@media (max-width / min-width …)`(守卫拦);确属私有的例外在同一行写 `bp-exempt:` 注记与归属
+  (现仅登录页 880 → #214、榜单桌面 1120 → #221,并入命名档会改观感)。JS 不手写宽度媒体查询字符串。
+- 容器查询(早报 960 / 680 / 420、播放条 640 / 900)按容器宽排版,不属断点表;Tailwind 默认 `sm/md/lg/xl:` 只留在管理面存量。
+- 平板档(批 4a 落地):`bp-tablet`(768–1024,含横屏手机)仍是手机壳,内容收进 `--m-col`(680)版心居中——贴左右的几何一律用
+  `--m-side-l / -r`(= max(安全区, 版心外留白),手机竖屏只剩安全区),页头、底栏、坞、底页、滚动区都随版心,不拉满宽。
+  ≥ 1025 触屏在 `(pointer: coarse)` 下补触屏路径:列表星常显可点;`hooks/useTouchHoldMenu` 让触屏长按条目行 / 源行 / 社交卡
+  在手指处派发合成 `contextmenu`,沿用既有右键菜单(鼠标、触控板零变化)。
+
+**触控**:主要动作命中 ≥ `--tap`(44);行内次要动作可见 ≥ `--tap-inline`(32),命中挂 `.tap-hit` 扩到 44
+(元素的 `::after` 已有他用时改用内边距 + 负外边距);列表行 / 源行 ≥ 44(48 更佳)。**输入控件字号 ≥ 16px**(`--m-fs-lg`;
+低于 16 iOS 聚焦即整页放大)。
+
+**悬停三分法**:① 装饰性 `:hover`(换底、描边、提亮)包 `@media (hover: hover)`(JSX 的 Tailwind `hover:` 已自带此守卫);
+② 功能性悬停入口(悬停才出现 / 才改文案 / 才位移的钮)在触屏**常显**,写在 `@media (hover: none)`(范例:速读卡评分依据、
+条目「+ 订阅」);③ 破坏性动作在触屏不靠悬停预警,改两击确认或 toast 撤销。守卫:`test/hoverGuard.test.mjs` 把 `index.css` /
+`mobile.css` 里未守卫的 `:hover` 冻结成计数棘轮——新增的必须带守卫;把存量包进 `@media (hover: hover)` 后把基线一起调低
+(手机页面实际命中的装饰性悬停已于批 4b 包完,余下是 is-on、disabled 的「悬停复原」)。
+列表收藏:手机上星只作「已收藏」标记(只画在收藏过的条目上),收藏走长按动作单与正文页;条目行里不放嵌套的 `role=button`——
+行内的星、「+ 订阅」是 `aria-hidden` 装饰,点到它们由整行点击分流,读屏行名补「已收藏 / 未订阅」(审计 M-02 / M-35)。
+
+**列表条目 = 夜航卡(批 4c,样页 `.c-card` / `.c-pod` / `.c-post` / `.c-day`)**:内容 Tab、订阅推入页与长按预览卡里的条目一律是
+`ArticleRow` 的 `card` 版式(`.reader-entry.is-card`;桌面不传,DOM 不变;源标 18 = `LOGO_SIZES.s18`)。卡面 `--m-card` + `--r-card`,
+亮色 `--sh-1` / 暗色 `inset 0 1px 0 var(--dorami-edge)`,内边距 14 / 16 / 15、卡间 10;卡面画在按钮上,间距给外层 `.m-press`
+(列表 6px 内边距再让 6px = `--m-gutter`,平板随 `--m-side-*`);按下缩到 0.985(减少动效改为压暗一档),被长按的卡淡到 35% 并保留卡面。
+日期组头 `.m-day` 在长按包装之外、**不吸顶**(社交流的组头同样式);骨架传 `card="article" | "podcast"` 画卡形——减少动效时 shimmer
+停成 `--dorami-soft`,与壳底同色,卡上改用 `--dorami-select`。社交卡是现网字段套同一张卡面:署名两行(名字 / @handle · 时间)、正文与
+配图通栏,收藏 / 标读钮绝对定位在署名右侧(长名字不再把它们挤出屏)。新增的手机列表照此;`test/mobileWave4c.test.mjs` 守批 4c 段的
+选择器都锚在手机壳上(`.is-card` / `.m-*`)。
+
+**镀层**:磨砂只用 `--glass-bg`(surface 72%)/ `--glass-strong`(95%,底页与动作组)+ `--glass-blur` + `--glass-ring` /
+`--glass-edge` / `--glass-shadow`;不支持 `backdrop-filter` 时 token 在 `index.css` 的 `@supports` 里自动退成 94% / 实色,
+组件不另写降级。卡面 `--m-card`(亮 = surface,暗抬一档 raised),遮罩 `--m-scrim`。
+
+**壳与页头(issue #230 第 2 批,样页拍板 16 / 27 / 31 B)**:底栏 = 功能模块 早报 · 内容 · 订阅 · 榜单(浮动磨砂胶囊,左右 `--m-gutter`、
+离屏底 `--sab` + `--m-float`、高 `--m-tab-h` 62,镜片拇指只按第几项定位);每个 Tab 与设置页只有一行页头(`components/mobile/MobileHeader`:
+领位 = 头像 / 返回钮,左 8、命中 44 · 标题位 · 动作;标题位就是本页的主切换 `TitleDial`,左锚定、当前项以左沿放大 1.3 倍,字形左沿 62)。
+页头与底栏浮在内容上:滚动区顶部让出 `--m-head-clear`(sat + 56,页头下第一块从这里起)、底部让出 `--m-tab-clear` + 播放坞;
+滚过 4px 页头换镀层底(壳上 `data-scrolled`),越过 140px 往下读底栏退场(`data-receded`,减少动效时不退场)。
+有吸顶子元素的滚动区(条目流的「载入 N 篇」胶囊 / 订阅页的分面分段)用 `::before` 垫片让出页头、不用 `padding-top`——粘性定位的
+`top` 在 Chromium 里从滚动区的内边距框量起,垫在 padding 里会让吸顶头再错下 56px;吸顶头的 `top` 写 `calc(var(--sat) + var(--m-head-h))`。
+设置从页头头像推入(整页、盖住底栏与播放坞、返回钮落在头像原位);新增的整页推入页沿用同一页头件。
+订阅 Tab 的推入页(来源 / 全部 / 收藏 / 兴趣,批 3a)是**第二个列表实例**:列表走 `hooks/useArticleList`(纯逻辑 `utils/articleList`),
+推入页自己的视图、只看未读、翻页与滚动不改写内容 Tab;对一篇 / 一个源的改动(正文回读、取消收藏、按源标读)经数据层的实例登记处
+(`rs.listRegistry`)同步。任一实例里「全部标读」后**所有实例**一起对齐(检视第 1 轮):来源 / 订阅全集按 `utils/articleList.markReadMatcher`
+把各实例里同范围的条目转已读;兴趣轴后端逐篇写、批次封顶,前端不猜范围,不在只看未读的实例按原窗口静默重取读态(`refreshReadState`,
+不动顺序 / 滚动 / 加载态);只看未读的实例一律重拉。内容 Tab 只放订阅聚合 + 只看未读 / 类型 / 搜索——手机壳里记住的兴趣轴 / 收藏星就地回落
+(`aggregateOnly`,不改写存储),按 id 打开一篇留下的来源收窄在离开正文时撤掉、换版式进手机时没开正文就当场撤(`dropNarrowing`);
+新的收窄入口进推入页,不回到内容 Tab 挂筛选。推入页里读的那篇形态可能与主列表容器不同:从正文发起标签检索、或换版式进桌面时,
+主列表先切到它的容器(`alignModeToArticle`;进桌面保留右栏)。
+正文入栈从被点的卡片矩形展开、返回收回原卡(`utils/readTransition`,起点认 `[data-read-origin], .reader-entry, .bp-item, .bp-head,
+.ranking-content-row`):**新增推入页 / 列表里的可点卡片若不是这几类,要标 `data-read-origin`**,否则正文退回普通推入、返回时也收不回原卡。
+
+**层原语(`components/layer/`)**——移动端的层只有四种,外加 Modal 外壳,全部经 `useLayer`(缺省值表在 `utils/layerKinds.js`):
+
+| kind | 组件 | 用于 | Tab | 下层 inert | 打开时焦点 |
+|---|---|---|---|---|---|
+| sheet | `Sheet` + `SheetGrab` | 动作单、往期底页、播放卡 | 困住 | 全部 | 键盘 → 首个控件;指针 → 面板 |
+| drawer | `Drawer` | 源抽屉 | 困住 | 全部 | 同上 |
+| page | `LayerPage` | 正文页、发现页、设置栈、叠层登录 | 不困(下层已 inert) | 保留页面层之上的播放条 | 面板 |
+| popover | `useLayer({ kind: 'popover' })` | 往期月历、分享浮层 | 不困 | 无 | 首个控件 / 指定 |
+| modal | `Modal` | 居中弹窗 | 困住 | 全部 | 首个控件(桌面行为不变) |
+
+- `useLayer` 统一接管:**返回键握手**(手机壳里打开即入层栈,系统返回先关最上层、不离站;桌面不挂)、**Esc 与焦点**
+  (`useModalA11y` 层栈,只有最上层消费;关闭还焦;困住 Tab 时边界只认 Tab 真能走到的——`tabIndex ≥ 0` 且不在 inert 子树,
+  漫游菜单的 -1 项与长按预览卡里的按钮不算)、**下层 `inert`**(`utils/inertOthers`,引用计数;原本就 inert 的节点跳过不登记;先还原 inert 再还焦)、
+  popover 点外面即关(触发钮除外)。业务代码不自挂 document 级 Esc / mousedown,不直接调 `useLayerHistory`
+  (同一层里的子页——设置分区、合集详情——例外)。
+- **遮罩**:`.modal-overlay` 只在 `Modal`,`.m-dim` 只在 `LayerScrim`(lint `dorami/no-raw-modal-overlay` 两个都拦);点按只认
+  「按下与松开同在遮罩」(`hooks/useOverlayClose`)——长按弹出的层不会被松手的合成 click 关掉;遮罩的 mousedown 不改焦点。
+- **出口(样页拍板 33)**:每层都要有一个不靠系统返回、也不靠拖动的出口——卡外能点即算,整屏推入的页面要有返回钮;
+  读屏的出口是真按钮:底页抓手 `SheetGrab` 是 `<button>`,名字写清对象(「关闭「…」的操作」「收起播放器」),点按即关;
+  抽屉标题行、手机壳的灯箱各有关闭钮。
+- **下拖**:抓手所在的头部可下拖(`useSheetDrag`,状态机 `utils/sheetDrag.js`):4px 防抖,只跟手向下,松手越过 96px 或末段
+  > 0.6px/ms 即关、否则回弹;拖过之后吞掉那次 click。头部 `touch-action: none`。
+- Toast 与页面层之上的播放条不被 inert:`data-layer-keep="always"` / `"dock"`,新增「永远可达」的浮层照此标。
+- **播放卡是 inert 的例外**(批 3d):卡按 sheet 入层栈,但下层 inert 自己算——`useLayer` 传 `inert: false`,另用 `inertOthers`
+  保留播放器自身、卡外遮罩与 `data-layer-keep="always"`(Toast、播报区),列表页另留底栏(卡开着时底栏仍可点,切 Tab 即收卡)。
+  列表页的卡外遮罩 z 15,**底栏 z 必须 > 15**(现为 20),否则遮罩盖住底栏;正文页 / 推入页上的遮罩 z 42 盖住整页。
+  `--player-tabbar` = 底栏顶边到视口底的距离(含安全区,JS 按布局位置量出),列表页坞与卡浮在它之上 `--m-float`;正文页 /
+  推入页没有底栏,坞与卡落在 `--sab` + `--m-float`。
+  面板容器(`data-layer-panel`,`tabIndex={-1}`)只是焦点落点,不画焦点环。
+- **长按单**(批 4a):文章 / 播客 / 社交 / 来源 / 早报的长按动作单一律 `is-float` 浮动圆角卡;条目类带预览卡
+  (`mobile/EntryPeek`、`SocialPeek`),走 `Sheet` 的 `aside` 槽(浮在面板上方、不随拖动区、矮屏按剩余高度裁掉卡的下半),
+  被按的卡淡到 35%。长按松手时浏览器补发的 click 落在手指下的菜单项 / 抓手上不算数(批 4c:矮屏菜单正盖在手指处),
+  由 `Sheet` 每次打开建的 `utils/overlayClose.createSpillClickGuard` 在层根捕获阶段吞掉;点按打开的底页与键盘不受影响。
+- **退场**:`Sheet` 关闭后还挂约 260ms 播退场(`.m-sheet-layer.is-leaving`)——关的时候不要清空它的内容;整页推入的层
+  (设置页、设置分区、订阅推入页)用 `LayerPage exit="push"`,卸载时留一个替身(`utils/layerExit`,inert + aria-hidden)反向推出,
+  状态当场切回、不等动画。
+
+**视口与安全区**:移动可达的高度一律 `var(--vh-full)`(= `100dvh`,不支持退 `100vh`;直接写时先写 `vh` 兜底再写 `dvh`);
+壳、底栏、顶栏、坞垫与贴边层四向垫 `--sat / --sab / --sal / --sar`(`env(safe-area-inset-*)`),横屏左右也要垫;
+浮动镀层与屏边、彼此之间的间距 `--m-float`(8)。公告带是占位式(审计 M-11):贴页头下沿,高度写进壳上的 `--m-ann-h`,
+Tab 根页的页头让位加上它——**新增 Tab 根滚动区要把 `--m-ann-h` 加进顶部垫片,并登记进 `MobileReader` 的 `CHROME_SCROLLERS`**
+(页头镀层、底栏退场、公告随滚动上移都认这张表)。手机壳挂着时 `theme-color` 跟壳底色(`utils/themeColor`,随主题与中性色;
+桌面与 manifest 不变)。守卫:`test/viewportUnits.test.mjs`(`mobile.css` 不写裸 `vh`;`index.css` 里没有
+dvh 兜底的裸 `vh` 冻结成计数,只许减不许增——存量是桌面 / 管理面整屏壳与登录页演出)。
+
+**首屏分包(审计 M-14)**:登录页只载入口 + `vendor-react`,读者首屏再加阅读器 chunk;图表(recharts)只随运维台懒加载,
+Markdown / KaTeX 只经 `components/ReaderMarkdown`(轻入口,按需拉 `ReaderMarkdownView`,读者首屏落定 5 秒后空闲预取,省流量 / 2G 不预取),
+分享页自成 chunk(`SharedArticleEntry`)。新增重依赖照此走懒加载、不在入口静态 import;要「骨架不闪」的调用方用
+`useReaderMarkdownReady()` 把渲染器未就绪并进自己的加载态(同一个骨架元素接着画)。`vite.config.js` 的分组必须显式排优先级
+(rolldown 会把组内模块的依赖递归并进组,同级时 react 会被 recharts 拖进 `vendor-charts`);入口闭包由 `test/chunkSplit.test.mjs`
+对真实构建产物守。
+
+**字号刻度**:手机壳只用 8 档——`--m-fs-xs` 12 元信息 · `--m-fs-sm` 13 次要 / 胶囊 / 眉头 · `--m-fs-md` 14 摘要 ·
+`--m-fs-base` 15 列表行 · `--m-fs-lg` 16 卡片标题 / 菜单 / 输入 · `--m-fs-read` 17 正文 · `--m-fs-xl` 20 页头 / 底页标题 / 小节 ·
+`--m-fs-display` 29 正文页宋体标题;分数身份线(§3)与早报头条的展示字号不在此列。字重 400 / 600(早报头条 900),
+字体栈只用 `--font-sans` / `--font-serif`(英文 `--font-serif-latin`)。存量 22 档随各页批次收进刻度。
+
+**动效**:全部受 `<html data-motion>`(§7);层的进出场与拖拽回弹走 CSS,减少动效时全局兜底压到 1ms;弹簧是 §7 的具名例外;
+退场与入场成对。
+
+**空态**:手机列表 / 社交流为空时给第一个动作(`utils/emptyAction`):搜索无果 → 清除搜索、只看未读 → 显示全部、
+按类型筛 → 显示全部类型、视图本来就空 → 去发现页找来源(审计 M-41)。
+
+**验证基线**:交互改动接 `scripts/check_mobile_reader_e2e.py`;其中 `guards` 流程(`e2e/mobile_guards.py`)在 360 × 780 / 375 × 667 /
+390 × 844 / 430 × 932 四档并行跑:返回键矩阵(往期底页、播放卡、长按动作单、设置栈、推入页 → 正文 → ⋯ 逐层出栈,不离站)、
+长按松手动作单不关(M-01)、各层主要控件有效命中 ≥ 44 抽样、输入 ≥ 16px、无横向溢出;390 档另测长列表滚到 200 条 DOM < 6000(M-46)
+与 1024 / 1025 首启分流。已知未修的审计项写进 `KNOWN_OPEN`(照测照记、不判失败;修好后不再复现即要求删条目)。
+每批沙箱自查 360 / 390 / 430 × 亮暗,层逐个过——系统返回只关最上层且不离站、Esc、点遮罩、抓手点按与下拖、焦点进出与读屏名、
+下层 inert;桌面 1280 截图前后比对并量关键元素。
+真机清单见 `docs/archive/issue-230-mobile-audit.md` §6(R-01 ~ R-20)。
+
 ---
 
 ### 验收:build 通过不等于渲染正常
@@ -509,3 +657,5 @@
 - [ ] 暗色下没有「亮色残块 / 黑字黑底」？硬编码原子类（尤其 `bg-white`、双角色 slate）已就地补 `dark:` 变体？（§9）
 - [ ] 输入框复用了 `.form-input`，或手搓串里背景 token 与 `text-`/`placeholder:text-` token 成对？（§9）
 - [ ] 新增收听入口走 `usePlayer()`?新增滚动区接了播放条留白变量?(§8)
+- [ ] 移动端:断点用 `bp-*`、层走 `components/layer`、输入 ≥ 16px、主要动作 ≥ 44、装饰性 hover 有 `(hover: hover)` 守卫、
+  高度用 `--vh-full`、重依赖不进入口?(§10)

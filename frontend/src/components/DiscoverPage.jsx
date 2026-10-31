@@ -33,8 +33,29 @@ function nameCarriesPlatform(source) {
 // 单源卡(源视图分组网格 与 合集详情成员网格 共用同一渲染)。
 // showArticleChip:文章源是否也挂「文章」形态标——多形态混排的上下文(全部视图/
 // 合集详情)才标,已按形态过滤时不标(每卡同词是纯噪声)。
+// 退订的两击确认只给触屏(审计 M-03;conventions §10 悬停三分法 ③,issue #230 批 4a):桌面靠悬停先翻成红字「取消订阅」
+// 预警,触屏没有这一拍——第一下只翻成「取消订阅」,4 秒内再点才退订(自定源的「移除」会清掉配置与文章,更不能一点即退)。
+// 鼠标与键盘照旧一下即退。
+const CONFIRM_MS = 4000;
+
 function SourceCard({ source, subbed, pinning, query, showArticleChip, onSubscribe, onUnsubscribe, onPreview }) {
   const q = (query || '').trim();
+  const [confirming, setConfirming] = useState(false);
+  const pointerRef = useRef('');
+  useEffect(() => {
+    if (!confirming) return undefined;
+    const timer = window.setTimeout(() => setConfirming(false), CONFIRM_MS);
+    return () => window.clearTimeout(timer);
+  }, [confirming]);
+  useEffect(() => { if (!subbed) setConfirming(false); }, [subbed]);
+  const onSubClick = () => {
+    const touch = pointerRef.current === 'touch' || pointerRef.current === 'pen';
+    pointerRef.current = '';
+    if (!subbed) { onSubscribe(source); return; }
+    if (touch && !confirming) { setConfirming(true); return; }
+    setConfirming(false);
+    onUnsubscribe(source);
+  };
   return (
     <div className="reader-disc-card">
       <div className="reader-disc-card-main">
@@ -82,9 +103,11 @@ function SourceCard({ source, subbed, pinning, query, showArticleChip, onSubscri
         <div className="reader-disc-card-side">
           <button
             type="button"
-            className={`reader-disc-sub ${subbed ? 'is-subbed' : ''}`}
+            className={`reader-disc-sub ${subbed ? 'is-subbed' : ''}${confirming ? ' is-confirm' : ''}`}
             disabled={pinning}
-            onClick={() => (subbed ? onUnsubscribe(source) : onSubscribe(source))}
+            onPointerDown={(e) => { pointerRef.current = e.pointerType; }}
+            onClick={onSubClick}
+            onBlur={() => setConfirming(false)}
           >
             {pinning
               ? <Loader2 className="h-3 w-3 animate-spin" />

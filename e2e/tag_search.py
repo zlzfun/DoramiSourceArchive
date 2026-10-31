@@ -7,7 +7,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import expect
 from e2e.mobile_reader import login
-from e2e.reader_fixture import FREE_LABEL, TAG_LABEL, TAG_MATCH_IDS
+from e2e.reader_fixture import FREE_LABEL, TAG_LABEL, TAG_MATCH_IDS, USERNAME
 
 
 def run_tag_search_flows(browser, base_url, database, artifacts, result):
@@ -52,7 +52,8 @@ def run_tag_search_flows(browser, base_url, database, artifacts, result):
                 assert "search" not in query and query.get("shape") == ["article"], query
                 expect(page.locator(".reader-entry")).to_have_count(2)
                 cases.append({"viewport": name, "tag": label, "check": "identity_and_noise_exclusion", "query": query})
-                page.get_by_role("button", name="关闭搜索", exact=True).click()
+                # 手机页头的搜索态收起钮是「取消」(issue #230 拍板 31 第 12 条),桌面列头仍是 × 「关闭搜索」
+                page.get_by_role("button", name="取消" if mobile else "关闭搜索", exact=True).click()
                 expect(page.locator(".reader-entry")).to_have_count(30)
 
                 # Use the browser's timer to exercise the actual <300ms debounce window,
@@ -67,7 +68,7 @@ def run_tag_search_flows(browser, base_url, database, artifacts, result):
                         const started = performance.now();
                         el.click();
                         setTimeout(() => {
-                            const close = document.querySelector('button[aria-label="关闭搜索"]');
+                            const close = document.querySelector('button[aria-label="关闭搜索"], button[data-search-cancel]');
                             if (!close) { reject(new Error('search close control missing')); return; }
                             close.click();
                             resolve(performance.now() - started);
@@ -96,5 +97,7 @@ def run_tag_search_flows(browser, base_url, database, artifacts, result):
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT count(*) FROM article_tag_assignments").fetchone()[0] == 1
         assert connection.execute("SELECT count(*) FROM user_interest_tags").fetchone()[0] == 0
-        assert connection.execute("SELECT count(*) FROM reader_subscriptions").fetchone()[0] == 2
+        # 只数夹具读者自己的订阅:后端启动时会给游客保留账号 guest:shared 种默认订阅(游客总闸未配置视为开启)
+        assert connection.execute("SELECT count(*) FROM reader_subscriptions WHERE owner_username = ?",
+                                  (USERNAME,)).fetchone()[0] == 2
     (artifacts / "tag-search-checks.json").write_text(json.dumps(cases, ensure_ascii=False, indent=2)+"\n")

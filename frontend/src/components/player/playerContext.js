@@ -9,7 +9,7 @@ const NOOP_PLAYER = Object.freeze({
   state: initialPlayerState,
   api: Object.freeze({
     play() {}, toggle() {}, pause() {}, seekBy() {}, seekTo() {}, cycleRate() {},
-    minimize() {}, expand() {}, close() {}, retry() {},
+    minimize() {}, expand() {}, close() {}, retry() {}, stop() { return null; }, resume() {},
   }),
 });
 

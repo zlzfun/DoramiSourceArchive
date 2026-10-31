@@ -1,6 +1,9 @@
+import { useLayoutEffect, useRef, useState } from 'react';
 import {
-  ChevronLeft,
+  CheckCheck,
   ExternalLink,
+  Languages,
+  Link,
   Loader2,
   MoreHorizontal,
   Share2,
@@ -24,14 +27,42 @@ import { articleListenEntries, podcastListenEntries } from '../../utils/listenEn
 import AiReadingCard from '../AiReadingCard';
 import { hostOf, latinLang } from '../../utils/readerText';
 import { kindKickerLabel } from '../../utils/contentKind';
-import { displayTitle, titleView } from '../../utils/titleDisplay';
+import { titleView } from '../../utils/titleDisplay';
 import { useTitlePreference } from '../../hooks/useTitlePreference';
+import { articleDeepLink } from '../../utils/shareLink';
+import { readHeadHidden, readMenuSpec } from '../../utils/readPage';
+import {
+  installReadOriginTracker,
+  playReadEnter,
+  playReadExit,
+  takeReadOrigin,
+} from '../../utils/readTransition';
+import { motionReduced } from '../../motion';
+import LayerPage from '../layer/LayerPage';
+import ActionSheet from './ActionSheet';
+import { HeadBack } from './MobileHeader';
 
-// 正文页(移动波 Wave2,样页画面②):push 全屏页——无底部 Tab,返回即出栈。
-// 衬线标题/kicker/meta/速读卡/进度线/上一下一篇 全部复用阅读窗语法类
-// (.reader-kicker/.reader-pane-title/.reader-ai-summary/markdown-body,单一事实来源);
-// 顶栏动作 = 原文/收藏/分享/译/更多(更多=与长按同款动作单,由父级 onMore 装配)。
-// 收听入口(issue #199 方案 C)在署名行下:移动端没有动作行;播放条是全局的,不在这一页里。
+// 入栈动效的「来处」要在点卡片那一下记下(正文页那时还没挂载):模块加载时装一次捕获阶段监听(幂等)
+installReadOriginTracker();
+
+const MENU_ICONS = {
+  translate: Languages,
+  open: ExternalLink,
+  copy: Link,
+  sysshare: Share2,
+  markall: CheckCheck,
+};
+const INTENT_MS = 1000;
+
+// 正文页(移动波 Wave2 起;issue #230 批 3c 按夜航样页「正文 / 读到文末 / ⋯ 菜单」屏重做):push 全屏页,无底部 Tab。
+// - 没有顶栏:左上返回钮在头像原位,右上一枚磨砂胶囊 收藏 · 分享 · ⋯(拍板 7);「译」撤出顶栏(拍板 3),
+//   翻译与查看原文进「⋯」底页(只出菜单、不带预览卡;抓手真按钮「关闭更多操作」,拍板 33)。
+// - 往下读时右上与返回钮退场、往上一划回来(样页镀层退场;减少动效时常显)。
+// - 入栈 = 从被点的卡片矩形展开,返回收回原卡(拍板 8,utils/readTransition;减少动效时无动效)。
+// - 文末只留「查看原文 ↗ · 域名」(第 5 轮),没有上一篇 / 下一篇、没有底部工具条(拍板 26,审计 M-45)。
+// - 文章「听导读」住 AI 速读卡卡头之下一行(#238);播客的收听入口仍在署名行下。播放条是全局的,不在这一页里。
+// 标题区 / 速读卡 / 正文排印复用阅读窗语法类(.reader-kicker / .reader-pane-title / .reader-ai-summary / .markdown-body),
+// 手机档的尺寸在 mobile.css「批 3c」段覆盖。层的行为走层原语 LayerPage(返回键 / Esc / 焦点 / 下层 inert)。
 export default function MobileArticlePage({
   rs,
   guestAccessEnabled = false,
@@ -39,8 +70,7 @@ export default function MobileArticlePage({
   ondemand = {},   // 点播能力位(issue #137):{podcast, article}
   showToast,
   onBack,
-  onLeaveForSearch = null, // 标签检索离开正文页的专用出口(不走早报返回)
-  onMore,
+  onLeaveForSearch = null, // 标签检索离开正文页的专用出口(不走早报返回,也不播收回动效)
 }) {
   const {
     activeArticle, activeBody, activeBodyLoading,
@@ -50,23 +80,108 @@ export default function MobileArticlePage({
     showTranslation, translating, hasTranslation, translationReady, translation, activeIsChinese,
     handleTranslate, resumeTranslation, restartTranslation,
     activeSummary, summarizing, handleSummarize,
-    prevArticle, nextArticle, activeIndex, selectArticle, searchForTag,
+    searchForTag, isArticleUnread, buildArticleMenuItems,
     refreshActiveArticle,
   } = rs;
   const { preferChinese } = useTitlePreference();
+  const [moreOpen, setMoreOpen] = useState(false);
+  const headRef = useRef(null);
+  // 入栈的来处(挂载时取走一次;StrictMode 重跑 effect 时沿用同一份)。只对打开时的那一篇有效
+  const originRef = useRef(undefined);
+  const mountIdRef = useRef(activeArticle?.id ?? null);
+  // 右上镀层钮退场:滚动位置、是否已藏、最近一次读者输入的时刻(程序性滚动不算)
+  const headState = useRef({ y: 0, hidden: false, inputAt: -Infinity });
+
+  const panelOf = () => headRef.current?.closest('.m-read') || null;
+
+  useLayoutEffect(() => {
+    const panel = headRef.current?.closest('.m-read');
+    if (originRef.current === undefined) {
+      const origin = takeReadOrigin();
+      originRef.current = origin ? { ...origin, articleId: mountIdRef.current } : null;
+    }
+    const animations = playReadEnter(panel, originRef.current);
+    return () => animations.forEach((animation) => animation.cancel());
+  }, []);
+
+  // 换篇(滚动区按 id 重建)= 回到顶部:镀层钮回来
+  const articleId = activeArticle?.id;
+  useLayoutEffect(() => {
+    headState.current.y = 0;
+    headState.current.hidden = false;
+    headRef.current?.closest('.m-read')?.removeAttribute('data-immersed');
+  }, [articleId]);
 
   if (!activeArticle) return null;
+
+  // 所有出口(返回钮 / Esc / 系统返回)都经这里:先留一个替身收回原卡,再让列表回来
+  const leave = () => {
+    const origin = originRef.current;
+    playReadExit(panelOf(), origin && origin.articleId === activeArticle.id ? origin : null);
+    onBack?.();
+  };
+
+  const markIntent = () => { headState.current.inputAt = performance.now(); };
+  const onReadScroll = (event) => {
+    const el = event.currentTarget;
+    const state = headState.current;
+    const y = el.scrollTop;
+    const dy = y - state.y;
+    state.y = y;
+    const next = readHeadHidden(state.hidden, {
+      y,
+      dy,
+      reduced: motionReduced(),
+      intent: performance.now() - state.inputAt < INTENT_MS,
+    });
+    if (next === state.hidden) return;
+    state.hidden = next;
+    panelOf()?.toggleAttribute('data-immersed', next);
+  };
+
   const isFav = favoriteIds.has(activeArticle.id);
   const analysisStatus = analysisStatusMeta(activeArticle, { podcast: podcastView });
   const listenList = podcastView
     ? podcastListenEntries(activeArticle, { aiEnabled, ondemandEnabled: ondemand.podcast === true })
     : articleListenEntries(activeArticle, { aiEnabled, ondemandEnabled: ondemand.article === true });
   const durationOnEntry = listenList.some((entry) => entry.track === 'original');
-  // 标题语言(issue #218):只看「默认显示中文标题」偏好,不随顶栏「译」切换
+  // 标题语言(issue #218):只看「默认显示中文标题」偏好,不随正文的译文 / 原文切换
   const paneTitle = titleView(activeArticle, preferChinese);
-  // 顶栏译钮切的是正文语言;后台任务排队 / 进行中时圈圈替换「译」字(不论当前看原文还是中文),停止即恢复
-  const translateLabel = showTranslation ? '显示原文'
-    : hasTranslation ? '显示中文' : podcastView ? '将节目简介译为中文' : '译为中文';
+  const tags = displayAnalysisTags(activeArticle);
+
+  // 「⋯」菜单:项与顺序见 utils/readPage.readMenuSpec;动作与长按动作单同源(buildArticleMenuItems)
+  const buildMenu = () => {
+    const base = Object.fromEntries(buildArticleMenuItems(activeArticle)
+      .filter((item) => item.key)
+      .map((item) => [item.key, item]));
+    const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+    const actions = {
+      translate: handleTranslate,
+      open: base.open?.onClick,
+      copy: base.copy?.onClick,
+      sysshare: () => {
+        navigator.share({ title: activeArticle.title || '哆啦美', url: articleDeepLink(activeArticle.id) }).catch(() => {});
+      },
+      read: base.read?.onClick,
+      markall: base.markall?.onClick,
+    };
+    return readMenuSpec({
+      translatable: Boolean(aiEnabled) && !activeIsChinese,
+      translationOn: showTranslation,
+      hasTranslation,
+      translating,
+      bodyReady: !activeBodyLoading && Boolean(activeBody),
+      podcast: podcastView,
+      canShare,
+      unread: isArticleUnread(activeArticle),
+      hasSource: Boolean(activeArticle.source_url),
+    }).map((item) => (item.type ? item : {
+      ...item,
+      icon: item.key === 'read' ? base.read?.icon : MENU_ICONS[item.key],
+      onClick: actions[item.key],
+    }));
+  };
+
   const copy = (
     <ArticleCopy
       title={activeArticle.title}
@@ -87,81 +202,71 @@ export default function MobileArticlePage({
   );
 
   return (
-    <div className="m-read" role="region" aria-label="正文">
-      <div className="m-topbar on-pane">
-        <button type="button" className="m-iconbtn" onClick={onBack} aria-label="返回列表">
-          <ChevronLeft />
-        </button>
-        <div className="m-topbar-sp" />
-        {activeArticle.source_url && (
-          <a
-            href={activeArticle.source_url}
-            target="_blank"
-            rel="noreferrer"
-            className="m-iconbtn"
-            title="查看来源"
-            aria-label="查看来源"
-          >
-            <ExternalLink />
-          </a>
-        )}
-        <button
-          type="button"
-          className={`m-iconbtn ${isFav ? 'is-amber' : ''}`}
-          onClick={(e) => handleToggleFavorite(activeArticle, e)}
-          disabled={favTogglingId === activeArticle.id}
-          title={isFav ? '取消收藏' : '收藏'}
-          aria-label={isFav ? '取消收藏' : '收藏'}
-        >
-          {favTogglingId === activeArticle.id
-            ? <Loader2 className="animate-spin" />
-            : <Star fill={isFav ? 'currentColor' : 'none'} />}
-        </button>
-        <div className="reader-share-anchor">
+    <LayerPage className="m-read" label="正文" onClose={leave}>
+      {/* 浮在正文上的镀层钮:返回(头像原位)· 收藏 · 分享 · ⋯ */}
+      <div className="m-head m-read-head" ref={headRef}>
+        <HeadBack label="返回列表" onClick={leave} />
+        <span className="m-head-sp" />
+        <div className="m-read-acts">
           <button
             type="button"
-            className={`m-iconbtn ${shareOpen ? 'is-blue' : ''}`}
-            onClick={() => setShareOpen((v) => !v)}
-            title="分享"
-            aria-label="分享"
-            aria-expanded={shareOpen}
+            className={`m-read-act ${isFav ? 'is-on' : ''}`}
+            onClick={(e) => handleToggleFavorite(activeArticle, e)}
+            disabled={favTogglingId === activeArticle.id}
+            aria-label={isFav ? '取消收藏' : '收藏'}
           >
-            <Share2 />
+            {favTogglingId === activeArticle.id
+              ? <Loader2 className="animate-spin" aria-hidden="true" />
+              : <Star fill={isFav ? 'currentColor' : 'none'} aria-hidden="true" />}
           </button>
-          {shareOpen && (
-            <ShareMenu
-              articleId={activeArticle.id}
-              onClose={() => setShareOpen(false)}
-              showToast={showToast}
-              guestAccessEnabled={guestAccessEnabled}
-            />
-          )}
+          {/* 分享仍是锚定浮层(样页同;分享去留归 #215) */}
+          <div className="reader-share-anchor">
+            <button
+              type="button"
+              className={`m-read-act ${shareOpen ? 'is-open' : ''}`}
+              onClick={() => setShareOpen((v) => !v)}
+              aria-label="分享"
+              aria-expanded={shareOpen}
+            >
+              <Share2 aria-hidden="true" />
+            </button>
+            {shareOpen && (
+              <ShareMenu
+                articleId={activeArticle.id}
+                onClose={() => setShareOpen(false)}
+                showToast={showToast}
+                guestAccessEnabled={guestAccessEnabled}
+              />
+            )}
+          </div>
+          <button
+            type="button"
+            className="m-read-act"
+            onClick={() => setMoreOpen(true)}
+            aria-label="更多操作"
+            aria-haspopup="dialog"
+            aria-expanded={moreOpen}
+          >
+            <MoreHorizontal aria-hidden="true" />
+          </button>
         </div>
-        {aiEnabled && !activeIsChinese && (
-          <button
-            type="button"
-            className={`m-iconbtn ${showTranslation ? 'is-ai' : ''}`}
-            onClick={handleTranslate}
-            disabled={activeBodyLoading || !activeBody}
-            title={translateLabel}
-            aria-label={translating ? `${translateLabel}（翻译中）` : translateLabel}
-            aria-pressed={showTranslation}
-          >
-            {translating ? <Loader2 className="animate-spin" /> : <span className="reader-tr-glyph" aria-hidden="true">译</span>}
-          </button>
-        )}
-        <button type="button" className="m-iconbtn" onClick={onMore} title="更多操作" aria-label="更多操作">
-          <MoreHorizontal />
-        </button>
       </div>
 
       {/* 阅读进度线(scroll-timeline 渐进增强,同阅读窗;不支持的浏览器隐形) */}
       {!activeBodyLoading && activeBody ? <div className="m-read-progress" aria-hidden="true" /> : null}
 
-      {/* 换篇由 key 重建滚动区域；跨版式同篇的进度由 ReaderWorkspace 恢复。 */}
-      <div className="m-read-scroll" key={activeArticle.id}>
+      {/* 换篇由 key 重建滚动区域;跨版式同篇的进度由 ReaderWorkspace 恢复。 */}
+      <div
+        className="m-read-scroll"
+        key={activeArticle.id}
+        onScroll={onReadScroll}
+        onWheel={markIntent}
+        onTouchMove={markIntent}
+        onKeyDown={markIntent}
+        onPointerDown={markIntent}
+      >
         <header className="reader-pane-head">
-          {/* 标题区与桌面同源(眉头「源 · 类型」/ 标题 / 署名行 / 标签小签);动作行不渲染,顶栏译钮承担 */}
+          {/* 标题区与桌面同源(眉头「源 · 类型」/ 标题 / 原标题 / 署名行 / 标签);动作行不渲染,动作在右上镀层钮与「⋯」 */}
           <div className="reader-kicker">
             {(sourceNameMap[activeArticle.source_id] || activeArticle.source_id)}
             {kindKickerLabel(activeArticle) ? ` · ${kindKickerLabel(activeArticle)}` : ''}
@@ -202,9 +307,9 @@ export default function MobileArticlePage({
               />
             </div>
           )}
-          {displayAnalysisTags(activeArticle).length > 0 && (
+          {tags.length > 0 && (
             <div className="reader-pane-foot"><div className="reader-pane-tags">
-              {displayAnalysisTags(activeArticle).map((tag, index) => (
+              {tags.map((tag, index) => (
                 <AnalysisTagChip
                   key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
                   tag={tag}
@@ -218,7 +323,7 @@ export default function MobileArticlePage({
           )}
         </header>
         <div className="m-read-body">
-          {/* 速读卡常驻:正文与音轨解耦,在听哪条音轨都不收起它(issue #199) */}
+          {/* 速读卡常驻:正文与音轨解耦,在听哪条音轨都不收起它(issue #199);文章听导读在卡头之下一行(#238) */}
           {!activeBodyLoading && ((!podcastView && listenList.length > 0) || shouldShowAiReadingCard(activeArticle, {
             summary: activeSummary,
             aiEnabled,
@@ -256,7 +361,7 @@ export default function MobileArticlePage({
               {copy}
             </PodcastExperiencePanel>
           ) : copy}
-          {/* 正文尾部原文行(v3.45 推全站,与桌面阅读窗同口径):无 source_url 不画 */}
+          {/* 读到文末(样页第 5 轮):只留「查看原文 ↗ · 域名」;无 source_url 不画 */}
           {!activeBodyLoading && activeArticle.source_url && (
             <p className="reader-pane-origin">
               <a href={activeArticle.source_url} target="_blank" rel="noreferrer">
@@ -268,30 +373,16 @@ export default function MobileArticlePage({
             </p>
           )}
         </div>
-        {/* 上一篇/下一篇:沿当前列表序的真实翻页(选中项不在列表时隐藏) */}
-        {activeIndex >= 0 && (prevArticle || nextArticle) && (
-          <nav className="m-read-pager" aria-label="上一篇 / 下一篇">
-            <button
-              type="button"
-              className="m-pager-btn"
-              disabled={!prevArticle}
-              onClick={() => prevArticle && selectArticle(prevArticle)}
-            >
-              <span className="m-pager-k">上一篇</span>
-              <span className="m-pager-t">{prevArticle ? displayTitle(prevArticle, preferChinese) : '已是最新一篇'}</span>
-            </button>
-            <button
-              type="button"
-              className="m-pager-btn is-next"
-              disabled={!nextArticle}
-              onClick={() => nextArticle && selectArticle(nextArticle)}
-            >
-              <span className="m-pager-k">下一篇</span>
-              <span className="m-pager-t">{nextArticle ? displayTitle(nextArticle, preferChinese) : '已到列表末尾'}</span>
-            </button>
-          </nav>
-        )}
       </div>
-    </div>
+
+      {/* 「⋯」底页:只有菜单(样页 read-menu);浮动磨砂卡,抓手念「关闭更多操作」 */}
+      <ActionSheet
+        open={moreOpen}
+        label="更多操作"
+        className="is-float"
+        items={buildMenu()}   // 关着也给:底页关掉后还要播退场(批 4a),退场期间不画成空菜单
+        onClose={() => setMoreOpen(false)}
+      />
+    </LayerPage>
   );
 }
