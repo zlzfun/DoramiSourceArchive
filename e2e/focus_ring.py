@@ -37,8 +37,10 @@ HELPERS = """() => {
     }).join('#');
     window.__ring = el => read(el, RING);
     window.__any = el => read(el, ANY);
+    // 祖先看四层:发现页源卡的焦点环画在卡片上(.reader-disc-card:has(.reader-disc-open:focus-visible)),
+    // 离名称按钮正好四层(name-row → card-mid → card-main → card);只看三层时这批停靠点必判「无焦点指示」。
     window.__ancestors = el => { const out = []; let e = el.parentElement;
-        for (let i = 0; i < 3 && e && e !== document.body; i++) { out.push(e); e = e.parentElement; } return out; };
+        for (let i = 0; i < 4 && e && e !== document.body; i++) { out.push(e); e = e.parentElement; } return out; };
     window.__children = el => [...el.children].slice(0, 6);
 }"""
 
@@ -86,7 +88,7 @@ def assert_container_ring(page, name, input_selector, container_selector, checks
     checks.append(f"focus-ring:{name}")
 
 
-def assert_tab_stops_visible(page, name, checks, limit=200):
+def assert_tab_stops_visible(page, name, checks, limit=400):
     """Tab through the whole page; see the module docstring for what counts as a pass."""
     # 把顺序聚焦起点重置到文档开头(否则从刚点过的输入框往后扫,只覆盖半页)。
     page.evaluate("""() => { window.__focusStops = []; scrollTo(0, 0);
@@ -168,6 +170,10 @@ def run_focus_flows(browser, base_url: str, artifacts, result: dict):
         expect(page.locator(".reader-vrail")).to_be_visible(timeout=30000)
         install_helpers(page)
         page.get_by_role("button", name=re.compile("^发现")).first.click()
+        # 等源目录真正画出来再扫(issue #230 批 4b 查清的偶发失败):此前扫描与目录请求赛跑——目录晚到时只扫了
+        # 页头十几个停靠点(源卡一张没覆盖,于是「通过」);目录先到时源卡全在,而祖先只看三层够不着卡片上的环,
+        # 每张卡都报「无焦点指示」。负载越高目录越晚,看上去就像随机失败。
+        expect(page.locator(".reader-disc-card .reader-disc-open").first).to_be_visible(timeout=30000)
         assert_container_ring(page, "discover-filter", ".reader-disc-search input", ".reader-disc-search", checks)
         assert_tab_stops_visible(page, "discover", checks)
         page.get_by_role("button", name=re.compile("^文章")).first.click()

@@ -398,8 +398,6 @@
 @media (hover: none) {
   .bp-sheet.is-mobile .bp-unsub { color: var(--dorami-accent-ink); }
   .bp-sheet.is-mobile .bp-unsub::before { content: "+ 订阅"; }
-  /* 桌面的装饰性悬停(换底)在触屏上会在点过之后粘住 */
-  .bp-sheet.is-mobile .bp-chip:hover { background: none; color: var(--dorami-ink-2); }
 }
 /* 本期编排:一张卡;入选句按正在看的那一期写(utils/briefStats),往期日期胶囊命中 44 */
 .bp-sheet.is-mobile .bp-credits { display: block; margin: 8px var(--m-gutter) 0; padding: 16px 18px; border-radius: var(--r-card); background: var(--m-card); box-shadow: var(--sh-1); }
@@ -804,7 +802,7 @@
 .m-read-body .reader-article-copy pre code { font-size: inherit; }   /* 0.9em 会把代码块压到 11.7 */
 .m-read-body .reader-article-copy :not(pre) > code { font-size: var(--m-fs-base); }
 .m-read-body .reader-article-copy table { font-size: var(--m-fs-md); }
-.m-read-body .podcast-text-transcript-body { max-height: 55vh; }
+.m-read-body .podcast-text-transcript-body { max-height: calc(var(--vh-full) * 0.55); }
 .m-read-body .podcast-text-panel { margin-top: 24px; padding-top: 18px; }
 .m-read-body .podcast-text-toggle strong { font-size: var(--m-fs-read); }
 .m-read-body .podcast-text-sources { width: 100%; max-width: none; margin-inline: 0; }
@@ -1236,23 +1234,6 @@
 }
 /* 分区页正文:分区组件与桌面设置柜同源,窄屏给统一留白;栅格已由 ≤767 断点塌陷 */
 .m-sett-body { padding: var(--m-head-clear) 16px calc(24px + var(--sab)); background: var(--rd-pane-bg); }
-/* OPML 导入预览是设置栈里单独一屏:列表在滚动区,确认条贴底 */
-.m-page-scroll.opml-mobile-scroll {
-  padding: 12px 16px 16px;
-  background: var(--rd-pane-bg);
-}
-.opml-mobile-scroll .opml-list { flex: none; overflow: visible; }
-.opml-mobile-scroll .opml-filemeta { margin-left: 0; }
-.opml-mobile-bar {
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 16px calc(12px + env(safe-area-inset-bottom));
-  border-top: 1px solid var(--dorami-border);
-  background: var(--rd-pane-bg);
-}
-.opml-mobile-bar .action-button { width: 100%; }
 
 /* ── 兴趣即透镜(issue #27 五稿):顶栏标题副文案;嵌入态兴趣页 ── */
 .m-title-sub { margin-left: 8px; font-size: 12px; font-weight: 400; color: var(--dorami-faint); }

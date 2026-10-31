@@ -8055,7 +8055,7 @@ input[type="radio"] {
     transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
   }
 
-  .reader-kind-chip:hover { background: var(--dorami-hover); color: var(--dorami-ink); }
+  @media (hover: hover) { .reader-kind-chip:hover { background: var(--dorami-hover); color: var(--dorami-ink); } }
 
   .reader-kind-chip.is-on,
   .reader-kind-chip.is-on:hover {
@@ -8359,19 +8359,21 @@ input[type="radio"] {
     transition: opacity 200ms ease;
     z-index: 6;
   }
-  .reader-scrollwrap:hover .ovl-thumb,
   .ovl-thumb.is-visible {
     opacity: 1;
     pointer-events: auto;
   }
+  @media (hover: hover) { .reader-scrollwrap:hover .ovl-thumb { opacity: 1; pointer-events: auto; } }
   .ovl-thumb.is-dragging,
   .ovl-thumb:hover { background: rgba(100, 116, 139, 0.62); }
 
   /* 源栏 / 发现页仍用全局标准细滚动条(悬停浮出更淡的 slate);它们非「满宽卡片流」,
      无右缘留白诉求,不必上浮层方案。 */
-  .reader-source-scroll:hover,
-  .reader-disc-scroll:hover {
-    scrollbar-color: rgba(100, 116, 139, 0.35) transparent;
+  @media (hover: hover) {
+    .reader-source-scroll:hover,
+    .reader-disc-scroll:hover {
+      scrollbar-color: rgba(100, 116, 139, 0.35) transparent;
+    }
   }
 
   /* 日期分组小节头:中文日期「9月15日 周二」(issue #184 不再用等宽),sticky 底色与列底相同 */
@@ -8420,7 +8422,7 @@ input[type="radio"] {
   .reader-entry:hover::before, .reader-entry:hover + .reader-entry::before,
   .reader-entry.is-active::before, .reader-entry.is-active + .reader-entry::before { opacity: 0; }
 
-  .reader-entry:hover { background: var(--dorami-hover); }
+  @media (hover: hover) { .reader-entry:hover { background: var(--dorami-hover); } }
 
   /* 选中 = 中性加深一档(与源行同语法;issue #184) */
   .reader-entry.is-active {
@@ -8695,9 +8697,11 @@ input[type="radio"] {
      让收到链接的人一眼看出这是「一篇正经内容」而非某个系统的截图。 */
   .shared-page {
     min-height: 100vh;
+    min-height: var(--vh-full);   /* 手机地址栏伸缩按可见高(issue #230 M-30;桌面 dvh = vh) */
     background: var(--dorami-surface);
     color: var(--dorami-ink);
-    padding: 48px 20px 64px;
+    /* 四向垫安全区:主屏幕独立窗口 / 横屏不贴刘海与底部横条(桌面 env() = 0,不变) */
+    padding: calc(48px + var(--sat)) calc(20px + var(--sar)) calc(64px + var(--sab)) calc(20px + var(--sal));
   }
 
   .shared-page-center {
@@ -9556,7 +9560,7 @@ input[type="radio"] {
     text-decoration: none;
     transition: color var(--motion-fast) var(--motion-ease);
   }
-  a.social-time:hover { color: var(--dorami-accent); text-decoration: underline; }
+  @media (hover: hover) { a.social-time:hover { color: var(--dorami-accent); text-decoration: underline; } }
   .social-head-sp { flex: 1; min-width: 8px; }
 
   /* 收藏 / 标读 —— 全卡仅有的两个动作(本系统对 X 只有读权限) */
@@ -9575,7 +9579,7 @@ input[type="radio"] {
   }
   .social-post:hover .social-act,
   .social-act:focus-visible { opacity: 1; }
-  .social-act:hover { background: var(--dorami-well); color: var(--dorami-ink); }
+  @media (hover: hover) { .social-act:hover { background: var(--dorami-well); color: var(--dorami-ink); } }
   /* 收藏是持久状态,不随悬停消失 */
   .social-post .social-act.is-fav { opacity: 1; color: var(--state-warn); }
 
@@ -9596,7 +9600,7 @@ input[type="radio"] {
     overflow: hidden;
   }
   .social-more { margin-top: 4px; color: var(--dorami-accent); }
-  .social-more:hover { text-decoration: underline; }
+  @media (hover: hover) { .social-more:hover { text-decoration: underline; } }
 
   /* 图片网格:1/2/3/4 张四种布局。图一律经 mediaProxyUrl(媒体库三层降级) */
   .social-media {
@@ -9638,7 +9642,7 @@ input[type="radio"] {
     text-align: left;
     text-decoration: none;
   }
-  .social-quote:hover { background: color-mix(in srgb, var(--dorami-ink) 4.5%, transparent); }
+  @media (hover: hover) { .social-quote:hover { background: color-mix(in srgb, var(--dorami-ink) 4.5%, transparent); } }
   .social-quote-head { display: flex; align-items: center; gap: 6px; }
   .social-quote-name { font-size: 12.5px; font-weight: 600; color: var(--dorami-ink); }
   .social-quote-meta { font-size: 12px; color: var(--dorami-faint); }
@@ -9836,7 +9840,7 @@ input[type="radio"] {
     transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
   }
 
-  .ranking-axis button:hover { color: var(--dorami-ink); background: var(--dorami-hover); }
+  @media (hover: hover) { .ranking-axis button:hover { color: var(--dorami-ink); background: var(--dorami-hover); } }
   /* 选中 = 中性加深一档 + 墨色 + 600(issue #184 全站选中语法,撤 wash 选中块) */
   .ranking-axis button.is-on { color: var(--dorami-ink); background: var(--dorami-select); font-weight: 600; }
 
@@ -9924,7 +9928,7 @@ input[type="radio"] {
     border-top: 1px solid var(--dorami-border-soft);
     text-align: left;
   }
-  .ranking-content-row:hover { background: var(--dorami-soft); }
+  @media (hover: hover) { .ranking-content-row:hover { background: var(--dorami-soft); } }
   .ranking-content-rank { color: var(--dorami-faint); font-size: 12px; }
   .ranking-content-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
   .ranking-content-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dorami-ink); font-size: 13px; font-weight: 600; }
@@ -10013,9 +10017,11 @@ input[type="radio"] {
     transition: color var(--motion-fast) var(--motion-ease),
       background-color var(--motion-fast) var(--motion-ease);
   }
-  .reader-disc-sort:hover {
-    color: var(--dorami-ink-2);
-    background: color-mix(in srgb, var(--dorami-ink) 6%, transparent);
+  @media (hover: hover) {
+    .reader-disc-sort:hover {
+      color: var(--dorami-ink-2);
+      background: color-mix(in srgb, var(--dorami-ink) 6%, transparent);
+    }
   }
   .reader-disc-sort.is-on {
     color: var(--dorami-accent-ink);
@@ -10039,18 +10045,22 @@ input[type="radio"] {
     transition: background-color var(--motion-fast) var(--motion-ease),
       border-color var(--motion-fast) var(--motion-ease);
   }
-  .reader-disc-add:hover {
-    background: var(--dorami-soft);
-    border-color: var(--dorami-border-strong);
+  @media (hover: hover) {
+    .reader-disc-add:hover {
+      background: var(--dorami-soft);
+      border-color: var(--dorami-border-strong);
+    }
   }
   .reader-disc-add:disabled {
     color: var(--dorami-faint);
     cursor: default;
     opacity: 0.72;
   }
-  .reader-disc-add:disabled:hover {
-    background: transparent;
-    border-color: var(--dorami-border);
+  @media (hover: hover) {
+    .reader-disc-add:disabled:hover {
+      background: transparent;
+      border-color: var(--dorami-border);
+    }
   }
 
   /* ── 添加自定源浮层(阅读器 quiet 浮层语法,自持类族)──
@@ -10222,7 +10232,7 @@ input[type="radio"] {
     font-weight: 600;
     text-decoration: none;
   }
-  .reader-pane-origin a:hover { text-decoration: underline; }
+  @media (hover: hover) { .reader-pane-origin a:hover { text-decoration: underline; } }
 
   .reader-disc-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 28px max(40px, var(--player-clear-end, 0px)); }
   .reader-disc-body { width: 100%; }
@@ -10250,7 +10260,7 @@ input[type="radio"] {
     transition: box-shadow var(--motion-fast) var(--motion-ease);
   }
 
-  .reader-disc-card:hover { box-shadow: inset 0 0 0 1px var(--dorami-border-strong); }
+  @media (hover: hover) { .reader-disc-card:hover { box-shadow: inset 0 0 0 1px var(--dorami-border-strong); } }
   .reader-disc-card:has(.reader-disc-open:focus-visible) { box-shadow: 0 0 0 2px var(--dorami-focus); }
 
   .reader-disc-card-main { flex: 1; display: flex; gap: 11px; }
@@ -11033,6 +11043,7 @@ input[type="radio"] {
     align-items: center;
     justify-content: center;
     padding: 4vh 4vw;
+    padding: calc(var(--vh-full) * 0.04) 4vw;
     background: rgba(11, 18, 32, 0.82);
     backdrop-filter: blur(8px) saturate(1.3);
     cursor: zoom-out;
@@ -11088,7 +11099,7 @@ input[type="radio"] {
     text-underline-offset: 3px;
     word-break: break-all;
   }
-  .markdown-body a:hover { text-decoration-color: currentColor; }
+  @media (hover: hover) { .markdown-body a:hover { text-decoration-color: currentColor; } }
   .markdown-body blockquote {
     margin: 0 0 16px;
     padding: 4px 0 4px 14px;
@@ -12820,10 +12831,12 @@ input[type="radio"] {
   border: 0;
   cursor: pointer;
 }
-.reader-tag-chip.is-actionable:hover {
-  color: var(--dorami-accent-ink);
-  background: var(--dorami-wash);
-  outline: 1px solid var(--dorami-border-strong);
+@media (hover: hover) {
+  .reader-tag-chip.is-actionable:hover {
+    color: var(--dorami-accent-ink);
+    background: var(--dorami-wash);
+    outline: 1px solid var(--dorami-border-strong);
+  }
 }
 .reader-tag-chip.is-actionable:focus-visible {
   outline: 2px solid var(--dorami-focus);
@@ -12875,14 +12888,16 @@ input[type="radio"] {
 }
 .reader-pane-tags .reader-tag-chip.is-extracted { color: var(--dorami-faint); }
 /* 旧胶囊规则的 :hover 会把 outline-style 置 solid(默认 medium 宽 + currentColor,呈粗黑框),这里必须显式关掉 */
-.reader-pane-tags .reader-tag-chip.is-actionable:hover {
-  color: var(--dorami-ink);
-  border-color: transparent;
-  background: transparent;
-  outline: none;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  text-decoration-color: var(--dorami-border-strong);
+@media (hover: hover) {
+  .reader-pane-tags .reader-tag-chip.is-actionable:hover {
+    color: var(--dorami-ink);
+    border-color: transparent;
+    background: transparent;
+    outline: none;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-color: var(--dorami-border-strong);
+  }
 }
 .reader-pane-tags .reader-tag-chip.is-actionable:focus-visible {
   color: var(--dorami-ink);
@@ -12999,7 +13014,7 @@ input[type="radio"] {
   text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
   cursor: pointer;
 }
-.bp-notice-act:hover { text-decoration-color: currentColor; }
+@media (hover: hover) { .bp-notice-act:hover { text-decoration-color: currentColor; } }
 .bp-notice-act:disabled { cursor: default; opacity: 0.6; text-decoration: none; }
 
 /* 头条 */
@@ -13162,10 +13177,10 @@ input[type="radio"] {
 .bp-credits dd b.bp-by { color: transparent; }   /* AI 身份:渐变「哆啦美」(.ai-grad-text 需要透明字色) */
 .bp-credits-act { display: inline-flex; align-items: center; gap: 3px; margin-left: 10px; padding: 0; border: 0; background: none; font: inherit; font-weight: 600; color: var(--dorami-accent-ink); white-space: nowrap; cursor: pointer; }
 .bp-credits-act svg { width: 14px; height: 14px; }
-.bp-credits-act:hover { text-decoration: underline; text-underline-offset: 3px; }
+@media (hover: hover) { .bp-credits-act:hover { text-decoration: underline; text-underline-offset: 3px; } }
 .bp-chips { display: inline-flex; flex-wrap: wrap; gap: 8px; }
 .bp-chip { height: 28px; padding: 0 12px; border: 0; border-radius: var(--r-pill); background: none; box-shadow: inset 0 0 0 1px var(--dorami-border); font: inherit; font-size: 13px; color: var(--dorami-ink-2); cursor: pointer; font-variant-numeric: tabular-nums; }
-.bp-chip:hover { background: var(--dorami-hover); color: var(--dorami-ink); }
+@media (hover: hover) { .bp-chip:hover { background: var(--dorami-hover); color: var(--dorami-ink); } }
 
 /* 「往期」日历浮层(目检返修:按月分组的日期列表 → 月历,components/BriefHistoryCalendar.jsx) */
 .bp-pop {

@@ -10,6 +10,7 @@ import {
   podcastTextView,
 } from '../utils/podcastTextReader';
 import ReaderMarkdown from './ReaderMarkdown';
+import { loadReaderMarkdownView } from '../utils/readerMarkdownLoader';
 
 const NO_HIDDEN_TRANSCRIPT_KINDS = Object.freeze([]);
 
@@ -32,6 +33,8 @@ export default function PodcastTextPanel({
   });
   const requestGroup = useRef({ episodeId: null, controllers: new Set() });
   const transcriptBodyId = useId();
+  // 导读 Markdown 的渲染器按需加载(issue #230 M-14):与文稿请求并行拉
+  useEffect(() => { loadReaderMarkdownView().catch(() => {}); }, []);
 
   useEffect(() => {
     const group = { episodeId, controllers: new Set() };

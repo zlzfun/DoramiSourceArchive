@@ -17,18 +17,12 @@
 
 ## 验证入口
 
-真实后端端到端测试已补入 [E2E 说明](./e2e.md)，关联 #90。下面保留快速的前端合成 API 回归。
+真实后端端到端测试见 [E2E 说明](./e2e.md)(#90):`cd frontend && npm run test:e2e`。移动壳的守卫在其 `guards` 流程里——
+360 / 375 / 390 / 430 四档的返回键矩阵、长按动作单、触控与输入字号抽样、长列表 DOM 上限,以及 1024 / 1025 首启分流。
 
-在仓库根目录运行，目标为已启动的本地 Vite 开发或构建预览服务：
-
-```bash
-.venv/bin/python scripts/check_mobile_navigation.py --base-url http://127.0.0.1:5186 --output tmp/issue-86/browser
-cd frontend && npm run lint && npm test && npm run build
-```
-
-> 注:本脚本的底栏 / 抽屉选择器仍是 issue #230 第 2 批之前的五 Tab 形态,待随 #230 收尾批(e2e 扩四档)改写;真实后端的 `scripts/check_mobile_reader_e2e.py` 已跟上新壳。
-
-浏览器脚本使用本机 Chrome；API 请求由合成数据拦截，不登录真实账户、不写业务库。输出包含检查结果与长列表、正文、亮暗色截图。自动检查覆盖窄屏启动、宽窄往返、底栏可见与点击、内容滚动、正文进度、返回栈、无限滚动和触屏模拟；这是前端回归，不替代真机及后端验收。
+原先的前端合成 API 回归 `scripts/check_mobile_navigation.py` 已于 issue #230 批 4b 退役:它的选择器停在第 2 批之前的五 Tab /
+源抽屉形态,覆盖面(宽窄往返保留同一篇与进度、断点两侧首启、返回栈、无限滚动、暗色)已全部由真实后端 E2E 接住,
+不再维护两套会各自漂移的选择器。
 
 ## 收口状态
 

@@ -4,6 +4,7 @@ import { compactLayoutMatches } from '../hooks/useCompactLayout';
 import ReaderTab from './ReaderTab';
 import MobileReader from './mobile/MobileReader';
 import PlayerProvider from './player/PlayerProvider';
+import { prefetchReaderMarkdownWhenIdle } from '../utils/readerMarkdownLoader';
 
 // 数据、当前位置与早报返回路径只保留一份。宽度变化只替换视图，不重新加载阅读器。
 // 全局播放器(issue #199)也挂在这一层:桌面 ⇄ 手机互切、换文章 / 容器 / 页面都不卸载,播放不中断。
@@ -22,6 +23,8 @@ export default function ReaderWorkspace({ mobile, surfaceActive = true, ...props
   useEffect(() => {
     if (!personalDigestEnabled) setPage((current) => current === 'brief' ? null : current);
   }, [personalDigestEnabled]);
+  // 正文 Markdown 渲染器不进首屏(issue #230 M-14),首屏落定后空闲预取,第一次打开一篇时多半已就绪
+  useEffect(() => prefetchReaderMarkdownWhenIdle(), []);
 
   const rs = useReaderState({
     showToast,

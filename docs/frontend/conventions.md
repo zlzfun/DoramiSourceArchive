@@ -521,7 +521,9 @@ issue #230 起 `Modal` 与移动层都经层原语 `components/layer/useLayer`(�
 
 **悬停三分法**:① 装饰性 `:hover`(换底、描边、提亮)包 `@media (hover: hover)`(JSX 的 Tailwind `hover:` 已自带此守卫);
 ② 功能性悬停入口(悬停才出现 / 才改文案 / 才位移的钮)在触屏**常显**,写在 `@media (hover: none)`(范例:速读卡评分依据、
-条目「+ 订阅」);③ 破坏性动作在触屏不靠悬停预警,改两击确认或 toast 撤销。
+条目「+ 订阅」);③ 破坏性动作在触屏不靠悬停预警,改两击确认或 toast 撤销。守卫:`test/hoverGuard.test.mjs` 把 `index.css` /
+`mobile.css` 里未守卫的 `:hover` 冻结成计数棘轮——新增的必须带守卫;把存量包进 `@media (hover: hover)` 后把基线一起调低
+(手机页面实际命中的装饰性悬停已于批 4b 包完,余下的是收藏星 / 发现页翻退订 / 公告关闭钮与 is-on、disabled 的「悬停复原」)。
 
 **镀层**:磨砂只用 `--glass-bg`(surface 72%)/ `--glass-strong`(95%,底页与动作组)+ `--glass-blur` + `--glass-ring` /
 `--glass-edge` / `--glass-shadow`;不支持 `backdrop-filter` 时 token 在 `index.css` 的 `@supports` 里自动退成 94% / 实色,
@@ -539,6 +541,8 @@ issue #230 起 `Modal` 与移动层都经层原语 `components/layer/useLayer`(�
 推入页自己的视图、只看未读、翻页与滚动不改写内容 Tab;对一篇 / 一个源的改动(正文回读、取消收藏、按源标读)经数据层的实例登记处
 (`rs.listRegistry`)同步。内容 Tab 只放订阅聚合 + 只看未读 / 类型 / 搜索——手机壳里记住的兴趣轴 / 收藏星就地回落(`aggregateOnly`,不改写存储),
 按 id 打开一篇留下的来源收窄在离开正文时撤掉;新的收窄入口进推入页,不回到内容 Tab 挂筛选。
+正文入栈从被点的卡片矩形展开、返回收回原卡(`utils/readTransition`,起点认 `[data-read-origin], .reader-entry, .bp-item, .bp-head,
+.ranking-content-row`):**新增推入页 / 列表里的可点卡片若不是这几类,要标 `data-read-origin`**,否则正文退回普通推入、返回时也收不回原卡。
 
 **层原语(`components/layer/`)**——移动端的层只有四种,外加 Modal 外壳,全部经 `useLayer`(缺省值表在 `utils/layerKinds.js`):
 
@@ -562,11 +566,24 @@ issue #230 起 `Modal` 与移动层都经层原语 `components/layer/useLayer`(�
 - **下拖**:抓手所在的头部可下拖(`useSheetDrag`,状态机 `utils/sheetDrag.js`):4px 防抖,只跟手向下,松手越过 96px 或末段
   > 0.6px/ms 即关、否则回弹;拖过之后吞掉那次 click。头部 `touch-action: none`。
 - Toast 与页面层之上的播放条不被 inert:`data-layer-keep="always"` / `"dock"`,新增「永远可达」的浮层照此标。
+- **播放卡是 inert 的例外**(批 3d):卡按 sheet 入层栈,但下层 inert 自己算——`useLayer` 传 `inert: false`,另用 `inertOthers`
+  保留播放器自身、卡外遮罩与 `data-layer-keep="always"`(Toast、播报区),列表页另留底栏(卡开着时底栏仍可点,切 Tab 即收卡)。
+  列表页的卡外遮罩 z 15,**底栏 z 必须 > 15**(现为 20),否则遮罩盖住底栏;正文页 / 推入页上的遮罩 z 42 盖住整页。
+  `--player-tabbar` = 底栏顶边到视口底的距离(含安全区,JS 按布局位置量出),列表页坞与卡浮在它之上 `--m-float`;正文页 /
+  推入页没有底栏,坞与卡落在 `--sab` + `--m-float`。
   面板容器(`data-layer-panel`,`tabIndex={-1}`)只是焦点落点,不画焦点环。
 
 **视口与安全区**:移动可达的高度一律 `var(--vh-full)`(= `100dvh`,不支持退 `100vh`;直接写时先写 `vh` 兜底再写 `dvh`);
 壳、底栏、顶栏、坞垫与贴边层四向垫 `--sat / --sab / --sal / --sar`(`env(safe-area-inset-*)`),横屏左右也要垫;
-浮动镀层与屏边、彼此之间的间距 `--m-float`(8)。
+浮动镀层与屏边、彼此之间的间距 `--m-float`(8)。守卫:`test/viewportUnits.test.mjs`(`mobile.css` 不写裸 `vh`;`index.css` 里没有
+dvh 兜底的裸 `vh` 冻结成计数,只许减不许增——存量是桌面 / 管理面整屏壳与登录页演出)。
+
+**首屏分包(审计 M-14)**:登录页只载入口 + `vendor-react`,读者首屏再加阅读器 chunk;图表(recharts)只随运维台懒加载,
+Markdown / KaTeX 只经 `components/ReaderMarkdown`(轻入口,按需拉 `ReaderMarkdownView`,读者首屏落定 5 秒后空闲预取,省流量 / 2G 不预取),
+分享页自成 chunk(`SharedArticleEntry`)。新增重依赖照此走懒加载、不在入口静态 import;要「骨架不闪」的调用方用
+`useReaderMarkdownReady()` 把渲染器未就绪并进自己的加载态(同一个骨架元素接着画)。`vite.config.js` 的分组必须显式排优先级
+(rolldown 会把组内模块的依赖递归并进组,同级时 react 会被 recharts 拖进 `vendor-charts`);入口闭包由 `test/chunkSplit.test.mjs`
+对真实构建产物守。
 
 **字号刻度**:手机壳只用 8 档——`--m-fs-xs` 12 元信息 · `--m-fs-sm` 13 次要 / 胶囊 / 眉头 · `--m-fs-md` 14 摘要 ·
 `--m-fs-base` 15 列表行 · `--m-fs-lg` 16 卡片标题 / 菜单 / 输入 · `--m-fs-read` 17 正文 · `--m-fs-xl` 20 页头 / 底页标题 / 小节 ·
@@ -576,8 +593,12 @@ issue #230 起 `Modal` 与移动层都经层原语 `components/layer/useLayer`(�
 **动效**:全部受 `<html data-motion>`(§7);层的进出场与拖拽回弹走 CSS,减少动效时全局兜底压到 1ms;弹簧是 §7 的具名例外;
 退场与入场成对。
 
-**验证基线**:交互改动接 `scripts/check_mobile_reader_e2e.py`;每批沙箱自查 360 / 390 / 430 × 亮暗,层逐个过——系统返回只关
-最上层且不离站、Esc、点遮罩、抓手点按与下拖、焦点进出与读屏名、下层 inert;桌面 1280 截图前后比对并量关键元素。
+**验证基线**:交互改动接 `scripts/check_mobile_reader_e2e.py`;其中 `guards` 流程(`e2e/mobile_guards.py`)在 360 × 780 / 375 × 667 /
+390 × 844 / 430 × 932 四档并行跑:返回键矩阵(往期底页、播放卡、长按动作单、设置栈、推入页 → 正文 → ⋯ 逐层出栈,不离站)、
+长按松手动作单不关(M-01)、各层主要控件有效命中 ≥ 44 抽样、输入 ≥ 16px、无横向溢出;390 档另测长列表滚到 200 条 DOM < 6000(M-46)
+与 1024 / 1025 首启分流。已知未修的审计项写进 `KNOWN_OPEN`(照测照记、不判失败;修好后不再复现即要求删条目)。
+每批沙箱自查 360 / 390 / 430 × 亮暗,层逐个过——系统返回只关最上层且不离站、Esc、点遮罩、抓手点按与下拖、焦点进出与读屏名、
+下层 inert;桌面 1280 截图前后比对并量关键元素。
 真机清单见 `docs/plans/issue-230-mobile-audit.md` §6(R-01 ~ R-20)。
 
 ---
@@ -604,4 +625,5 @@ issue #230 起 `Modal` 与移动层都经层原语 `components/layer/useLayer`(�
 - [ ] 暗色下没有「亮色残块 / 黑字黑底」？硬编码原子类（尤其 `bg-white`、双角色 slate）已就地补 `dark:` 变体？（§9）
 - [ ] 输入框复用了 `.form-input`，或手搓串里背景 token 与 `text-`/`placeholder:text-` token 成对？（§9）
 - [ ] 新增收听入口走 `usePlayer()`?新增滚动区接了播放条留白变量?(§8)
-- [ ] 移动端:断点用 `bp-*`、层走 `components/layer`、输入 ≥ 16px、主要动作 ≥ 44、装饰性 hover 有 `(hover: hover)` 守卫?(§10)
+- [ ] 移动端:断点用 `bp-*`、层走 `components/layer`、输入 ≥ 16px、主要动作 ≥ 44、装饰性 hover 有 `(hover: hover)` 守卫、
+  高度用 `--vh-full`、重依赖不进入口?(§10)
