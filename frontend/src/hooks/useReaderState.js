@@ -260,6 +260,7 @@ export function useReaderState({
   // 手动「标为未读」=覆盖未读(标题复原未读态)。无覆盖时以服务端 article.unread 为准。
   const [readOverrides, setReadOverrides] = useState(() => new Map());
   const readOverridesRef = useRef(new Map());
+  const readToggleSeqRef = useRef(0);   // 手动标读 / 标未读的次数:兴趣轴读态校准据此认出响应在途期间的新改动
   const [markingRead, setMarkingRead] = useState(false);
   const [paneReadToggling, setPaneReadToggling] = useState(false);
   const [socialReadToggling, setSocialReadToggling] = useState(null); // 社交流按条标读中的 id
@@ -1013,10 +1014,13 @@ export function useReaderState({
   };
   // 兴趣轴标读后的校准:不在只看未读的实例(主列表 + 推入页)静默重取窗口读态;服务端说已读、本会话却覆盖成未读的
   // (早先手动「标为未读」)撤掉覆盖,不再遮蔽服务端结果。本会话覆盖成已读的保留(打开即读的写入可能还在路上)
+  // 校准在途期间读者又手动标过(复检 P2):那次改动比响应新,这一轮不撤任何覆盖
   const calibrateReadState = () => {
+    const seq = readToggleSeqRef.current;
     const jobs = listRegistry.refreshReadState();
     if (!unreadOnly) jobs.push(refreshReadState());
     Promise.all(jobs).then((results) => {
+      if (readToggleSeqRef.current !== seq) return;
       let changed = false;
       for (const flags of results) {
         for (const [id, unread] of flags) {
@@ -1092,6 +1096,7 @@ export function useReaderState({
       }
     };
     // 乐观更新 + 失败回滚
+    readToggleSeqRef.current += 1;
     readOverridesRef.current.set(id, !toUnread);
     setReadOverrides(new Map(readOverridesRef.current));
     bump(toUnread ? 1 : -1);

@@ -20,6 +20,11 @@ test('P1-1:推入页标读不再自带 reload / unreadOnly,由数据层对齐所
   assert.match(body, /listRegistry\.reloadUnreadOnly\(\)/);
   assert.match(body, /if \(!match\) calibrateReadState\(\)/);
   assert.match(body, /partial \? \[\] : listArticles/, '兴趣轴没写满时发起窗口不乐观清点');
+  // 复检 P2:校准在途期间的手动标读 / 标未读比响应新,那一轮不撤覆盖
+  const calib = state.slice(state.indexOf('const calibrateReadState'), state.indexOf('const handleMarkAllRead'));
+  assert.match(calib, /const seq = readToggleSeqRef\.current;/);
+  assert.match(calib, /if \(readToggleSeqRef\.current !== seq\) return;/);
+  assert.match(state, /readToggleSeqRef\.current \+= 1;\s*readOverridesRef\.current\.set\(id, !toUnread\);/);
 });
 
 test('P1-2 / P2-3:正文那篇的容器在标签检索与换版式时对齐;进手机撤掉没开正文时的下钻', () => {
