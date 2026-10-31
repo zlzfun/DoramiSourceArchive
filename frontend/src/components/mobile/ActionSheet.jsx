@@ -12,22 +12,25 @@ const shortTitle = (text) => (text.length > GRAB_TITLE_MAX ? `${text.slice(0, GR
 // 层的行为全在 Sheet:遮罩「按下与松开同在遮罩」才关(长按松手不再立刻关掉,审计 M-01)、返回键 / Esc / 抓手点按与下拖、
 // 下层 inert、焦点进出。菜单按 WAI-ARIA APG(审计 M-35):键盘打开焦点落首项、指针打开落在菜单上,
 // ↑ ↓ / Home / End 走项(漫游 tabindex),Esc 由层栈消费,不再自挂 document 监听。
-export default function ActionSheet({ open, title = '', items = [], onClose }) {
+// 正文「⋯」底页(issue #230 批 3c)不带对象标题:label 直接给层名(「更多操作」,抓手念「关闭更多操作」),
+// className 给面板换样式(is-float = 样页 read-menu 的浮动磨砂卡)。
+export default function ActionSheet({ open, title = '', items = [], onClose, label: labelProp = '', className = '' }) {
   const menuRef = useRef(null);
-  const label = title ? `「${shortTitle(title)}」的操作` : '操作';
+  const label = labelProp || (title ? `「${shortTitle(title)}」的操作` : '操作');
   return (
     <Sheet
       open={open}
       onClose={onClose}
       label={label}
       grabLabel={`关闭${label}`}
+      className={className}
       head={title ? <div className="m-sheet-obj">{title}</div> : null}
       initialFocus={(panel, { keyboard }) => (keyboard
         ? menuRef.current?.querySelector('[role="menuitem"]')
         : menuRef.current) || panel}
     >
       {/* Sheet 关着时不渲染 children:菜单每次打开都是新实例,漫游起点回到首项 */}
-      <ActionMenu menuRef={menuRef} title={title} items={items} onClose={onClose} />
+      <ActionMenu menuRef={menuRef} title={title || labelProp} items={items} onClose={onClose} />
     </Sheet>
   );
 }

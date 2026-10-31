@@ -803,7 +803,6 @@ export default function MobileReader({
           showToast={showToast}
           onBack={closeArticle}
           onLeaveForSearch={leaveArticleForSearch}
-          onMore={() => openArticleSheet(activeArticle)}
         />
       )}
 

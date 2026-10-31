@@ -100,10 +100,6 @@
 .m-iconbtn:active { background: var(--dorami-soft); }
 .m-iconbtn:disabled { opacity: 0.45; }
 .m-iconbtn svg { width: 19px; height: 19px; }
-.m-iconbtn.is-amber { color: #f59e0b; }
-.m-iconbtn.is-blue { color: var(--dorami-accent-ink); }
-/* 译钮激活态(v3.33 AI 家族渐变,与桌面 .reader-pane-iconbtn.is-ai 同语) */
-.m-iconbtn.is-ai { background: var(--grad-ai-wash); }
 /* 搜索就地展开:输入框顶替标题(§4.1.2,与桌面列头同法) */
 .m-search-inline {
   flex: 1;
@@ -317,17 +313,20 @@
 .m-page-scroll .reader-disc-seg { flex: 1; margin-left: 0; }
 .m-page-scroll .reader-disc-seg .reader-seg-btn { flex: 1; }
 
-/* ── 正文页(push 全屏,无 TabBar) ── */
+/* ══ 批 3c · 正文页(issue #230;样页「正文 / 读到文末 / ⋯ 菜单」屏,拍板 3 / 7 / 8 / 26,审计 M-45)══
+   push 全屏、无 TabBar、没有顶栏:返回钮(头像原位)与右上磨砂胶囊 收藏 · 分享 · ⋯ 浮在正文上,往下读时退场;
+   内容铺满全屏,眉头从 sat + 64 起;文末只留「查看原文 ↗ · 域名」,没有上一篇 / 下一篇、没有底部工具条。
+   标题区 / 速读卡 / 正文复用阅读窗语法类(index.css),这里只写手机档的尺寸(8 档字号刻度)与几何,桌面不受影响。 */
 .m-read {
   position: fixed;
   inset: 0;
   z-index: 40;
   display: flex;
   flex-direction: column;
-  padding-top: env(safe-area-inset-top);
   background: var(--rd-pane-bg);
 }
-.m-read .m-topbar { flex: none; }
+/* 容器展开的替身(utils/readTransition):克隆的正文页,不接点击、不进读屏,收回原卡后移除 */
+.m-read.is-ghost { pointer-events: none; }
 .m-read-scroll {
   position: relative;
   flex: 1;
@@ -335,27 +334,58 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
-  padding: 20px 20px calc(max(32px, var(--player-clear-end, 0px)) + env(safe-area-inset-bottom));
+  padding: calc(var(--sat) + 64px) calc(22px + var(--sar)) calc(max(28px, var(--player-clear-end, 0px)) + var(--sab)) calc(22px + var(--sal));
 }
-/* 正文排印:标题刻度收档(阅读窗 27px → 移动 23px),余下沿 .reader-pane-* 语法 */
-.m-read-scroll .reader-pane-title { font-size: 23px; }
-.m-read-scroll .reader-pane-head { max-width: none; }
-.m-read-body { padding-top: 16px; }
-.m-read-body .podcast-text-transcript-body { max-height: 55vh; }
-.m-read-body .podcast-text-panel { margin-top: 24px; padding-top: 18px; }
-.m-read-body .podcast-text-toggle strong { font-size: 17px; }
-.m-read-body .podcast-text-sources { width: 100%; max-width: none; margin-inline: 0; }
-.m-read-body .podcast-text-sources .mini-seg-btn { padding-inline: 6px; }
-/* 阅读进度线(scroll-timeline 渐进增强,与阅读窗同法同 keyframes;不支持则隐形) */
+
+/* ── 浮在正文上的镀层钮:沿用页头几何(.m-head:一行 52,领位左 8、右沿 6),返回钮与 Tab 页头像同矩形 ── */
+.m-read-head {
+  transition: opacity var(--motion-medium) var(--motion-ease), transform var(--motion-medium) var(--motion-ease);
+}
+/* 往下读时退场、往上一划回来(样页镀层退场);键盘焦点在里面或分享浮层开着时不退场;减少动效时常显 */
+.m-read[data-immersed] .m-read-head:not(:focus-within):not(:has(.share-menu)) { opacity: 0; transform: translateY(-10px); }
+.m-read[data-immersed] .m-read-head:not(:focus-within):not(:has(.share-menu)) > * { pointer-events: none; }
+:root[data-motion="reduce"] .m-read[data-immersed] .m-read-head { opacity: 1; transform: none; }
+:root[data-motion="reduce"] .m-read[data-immersed] .m-read-head > * { pointer-events: auto; }
+/* 右上磨砂胶囊:三枚 44 钮;分享浮层以胶囊右沿为锚(.reader-share-anchor 在这里不做定位祖先) */
+.m-read-acts {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: var(--tap);
+  padding: 0 2px;
+  border-radius: var(--r-pill);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-ring), var(--glass-edge);
+}
+.m-read-acts .reader-share-anchor { position: static; }
+.m-read-act {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--tap);
+  height: var(--tap);
+  border-radius: var(--r-pill);
+  color: var(--dorami-ink);
+}
+.m-read-act svg { width: 18px; height: 18px; transition: transform var(--motion-medium) var(--motion-sheet-ease); }
+.m-read-act:active svg { transform: scale(0.88); }
+.m-read-act:disabled { opacity: 0.45; }
+.m-read-act.is-on { color: var(--color-amber-500); }   /* 收藏星(与条目卡上的星同色) */
+.m-read-act.is-open { color: var(--dorami-accent-ink); }
+.m-read .share-menu { max-width: calc(100vw - 24px); }
+
+/* 阅读进度线(scroll-timeline 渐进增强,与阅读窗同法同 keyframes;不支持则隐形):贴在状态栏下沿 */
 @supports (animation-timeline: scroll()) {
   .m-read { timeline-scope: --m-read-scroll; }
   .m-read-scroll { scroll-timeline-name: --m-read-scroll; }
   .m-read-progress {
     position: absolute;
-    top: calc(48px + env(safe-area-inset-top));
+    top: var(--sat);
     left: 0;
     right: 0;
-    z-index: 5;
+    z-index: 6;
     height: 2px;
     background: var(--dorami-accent);
     transform: scaleX(0);
@@ -369,43 +399,144 @@
     to { transform: scaleX(1); }
   }
 }
-/* 上一篇/下一篇(样页画面②:双卡并排,soft 底) */
-.m-read-pager {
+
+/* ── 标题区(样页 .c-kicker / .c-rtitle / .c-orig / .c-meta / .c-tags):不画分隔线 ── */
+.m-read-scroll .reader-pane-head { max-width: none; padding-bottom: 0; border-bottom: 0; }
+.m-read-scroll .reader-kicker { margin-bottom: 12px; font-size: var(--m-fs-sm); }
+.m-read-scroll .reader-pane-title { margin: 0; font-size: var(--m-fs-display); line-height: 1.36; text-wrap: pretty; }
+.m-read-scroll .reader-pane-title-orig { margin: 10px 0 0; font-size: var(--m-fs-lg); }
+.m-read-scroll .reader-pane-meta { margin-top: 14px; font-size: var(--m-fs-sm); }
+.m-read-scroll .reader-pane-foot { margin-top: 4px; }
+/* 标签:每行 44 高(可点检索),窄的标签命中横向也扩到 44(::before 是中点分隔,::after 留给命中区) */
+.m-read-scroll .reader-pane-tags { margin-top: 0; }
+.m-read-scroll .reader-pane-tags .reader-tag-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  font-size: var(--m-fs-sm);
+}
+.m-read-scroll .reader-pane-tags .reader-tag-chip.is-actionable::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(100%, var(--tap));
+  height: var(--tap);
+  transform: translate(-50%, -50%);
+}
+
+/* ── 速读卡(样页 .c-ai):夜航卡面 + 细环,圆角一档大;听导读在卡头之下一行(#238),入口看得见 36、命中 44 ── */
+.m-read-body { padding-top: 16px; }
+.m-read-scroll .reader-ai-summary {
+  margin: 0 0 28px;
+  padding: 16px 18px 18px;
+  border-radius: var(--r-overlay);
+  background: var(--m-card);
+  box-shadow: var(--sh-1), inset 0 0 0 0.5px var(--dorami-border-soft);
+}
+.m-read-scroll .reader-ai-listen { margin: 8px 0 4px -2px; }
+.m-read-scroll .reader-ai-listen .listen-entries { gap: 4px 10px; }
+.m-read-scroll .reader-ai-listen .listen-entry { height: 36px; padding: 0 14px 0 12px; font-size: var(--m-fs-md); }
+.m-read-scroll .reader-ai-listen .listen-len { font-size: var(--m-fs-sm); }
+.m-read-scroll .reader-ai-listen .listen-note { font-size: var(--m-fs-xs); }
+/* 收听入口(速读卡里的听导读、播客署名行下的两枚)命中一律扩到 44,可见尺寸不变 */
+.m-read .listen-entry { position: relative; }
+.m-read .listen-entry::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: max(100%, var(--tap));
+  transform: translateY(-50%);
+}
+
+/* ── 正文排印:手机档收进 8 档刻度——正文 17(--m-fs-read)、小节 h1 / h2 20(--m-fs-xl)、h3–h6 17、
+   代码块 13、行内代码 15、表格 14;其余(引文、列表)随正文 ── */
+.m-read-body .reader-article-copy { font-size: var(--m-fs-read); line-height: 1.9; }
+.m-read-body .reader-article-copy h1,
+.m-read-body .reader-article-copy h2 { font-size: var(--m-fs-xl); line-height: 1.45; }
+.m-read-body .reader-article-copy h3,
+.m-read-body .reader-article-copy h4,
+.m-read-body .reader-article-copy h5,
+.m-read-body .reader-article-copy h6 { font-size: var(--m-fs-read); }
+.m-read-body .reader-article-copy pre { font-size: var(--m-fs-sm); }
+.m-read-body .reader-article-copy pre code { font-size: inherit; }   /* 0.9em 会把代码块压到 11.7 */
+.m-read-body .reader-article-copy :not(pre) > code { font-size: var(--m-fs-base); }
+.m-read-body .reader-article-copy table { font-size: var(--m-fs-md); }
+.m-read-body .podcast-text-transcript-body { max-height: 55vh; }
+.m-read-body .podcast-text-panel { margin-top: 24px; padding-top: 18px; }
+.m-read-body .podcast-text-toggle strong { font-size: var(--m-fs-read); }
+.m-read-body .podcast-text-sources { width: 100%; max-width: none; margin-inline: 0; }
+.m-read-body .podcast-text-sources .mini-seg-btn { padding-inline: 6px; }
+
+/* ── 读到文末(样页 .c-origin,第 5 轮):只留「查看原文 ↗ · 域名」,整行 44 高 ── */
+.m-read-scroll .reader-pane-origin {
   display: flex;
-  gap: 10px;
-  margin-top: 28px;
-  padding-top: 14px;
-  border-top: 1px solid var(--dorami-border);
+  flex-wrap: wrap;
+  align-items: center;
+  min-height: var(--tap);
+  margin-top: 20px;
+  font-size: var(--m-fs-md);
 }
-.m-pager-btn {
-  flex: 1;
-  min-width: 0;
-  min-height: 44px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 1px;
-  padding: 6px 12px;
-  border-radius: var(--r-control);
-  background: var(--dorami-soft);
-  text-align: left;
+.m-read-scroll .reader-pane-origin a { display: inline-flex; align-items: center; min-height: var(--tap); }
+.m-read-scroll .reader-pane-origin-host { margin-left: 4px; font-size: var(--m-fs-xs); }
+
+/* ── 「⋯」底页(样页 read-menu):浮在屏边 gutter 内的磨砂卡,只有菜单;抓手是真按钮(命中 120 × 44,
+   上沿伸出卡外 16px,拍板 33),卡里第一项从 28px 起;菜单字在左、图标在右,组间 6px 色带,组内细线 ── */
+.m-sheet.is-float {
+  left: calc(var(--m-gutter) + var(--sal));
+  right: calc(var(--m-gutter) + var(--sar));
+  bottom: calc(var(--sab) + var(--m-float));
+  padding: 0;
+  border-radius: var(--r-overlay);
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-ring), var(--glass-edge), var(--sh-3);
 }
-.m-pager-btn:disabled { opacity: 0.55; }
-.m-pager-btn.is-next { text-align: right; }
-.m-pager-k {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  color: var(--dorami-faint);
+.m-sheet.is-float .m-sheet-head { position: relative; height: 28px; cursor: grab; }
+.m-sheet.is-float .m-sheet-grab {
+  position: absolute;
+  z-index: 1;
+  top: -16px;
+  left: 50%;
+  display: grid;
+  align-content: start;
+  width: 120px;
+  height: var(--tap);
+  margin-left: -60px;
+  padding: 0;
+  border-radius: var(--r-pill);
 }
-.m-pager-t {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--dorami-ink-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.m-sheet.is-float .m-sheet-grab::after { content: none; }
+.m-sheet.is-float .m-sheet-grab-bar { margin-top: 25px; }
+.m-sheet.is-float .m-sheet-menu { overflow: hidden; border-radius: 0 0 var(--r-overlay) var(--r-overlay); }
+.m-sheet.is-float .m-sheet-item {
+  position: relative;
+  flex-direction: row-reverse;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 0 18px;
+  border-radius: 0;
+  font-size: var(--m-fs-lg);
+  color: var(--dorami-ink);
 }
+.m-sheet.is-float .m-sheet-item + .m-sheet-item::before {
+  content: "";
+  position: absolute;
+  left: 18px;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: var(--dorami-border-soft);
+}
+.m-sheet.is-float .m-sheet-item:active { background: var(--dorami-hover); }
+.m-sheet.is-float .m-sheet-item svg { width: 19px; height: 19px; color: var(--dorami-ink-2); }
+.m-sheet.is-float .m-sheet-sep { height: 6px; margin: 0; background: color-mix(in oklab, var(--dorami-ink) 6%, transparent); }
+/* ══ 批 3c 正文页段结束 ══ */
 
 /* ── 遮罩(抽屉/动作单共用;元素只由层原语 components/layer/LayerScrim 渲染,点按判定见 hooks/useOverlayClose) ── */
 .m-dim {
@@ -725,8 +856,6 @@
    不盖住头像与标题位转盘(「占位式、可收起」归审计 M-11 的后续批次) ── */
 .m-shell .reader-ann-band { top: calc(var(--sat) + var(--m-head-h) + 6px); }
 
-/* ── 分享浮层(ShareMenu 复用):窄屏钳制,不超出视口 ── */
-.m-read .share-menu { max-width: calc(100vw - 24px); }
 
 /* ── 设置页(issue #230 第 2 批:从头像推入的整页,盖住底栏与播放坞;返回钮在头像原位,页头一行 52)──
    页头浮在内容上,内容从页头下滚过(第一块从 sat + 56 起);整页从右推入(弹簧 + 淡入),分区页同样往里推 ── */

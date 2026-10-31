@@ -153,6 +153,11 @@ def pick_source(page, source):
 
 def scroll_content(page, selector, distance):
     area = page.locator(selector)
+    # issue #230 批 3c: the article page enters by expanding a clip-path from the tapped card (420ms); until it settles
+    # a wheel at the page centre can land on the still-uncovered (inert) list. Wait for the read layer to finish moving.
+    # (Script-driven Animation objects only: the reading-progress line is a CSS scroll-timeline animation that always runs.)
+    page.wait_for_function("""() => !document.getAnimations().some(a => a.constructor === Animation && a.playState === 'running'
+        && a.effect && a.effect.target && a.effect.target.matches && a.effect.target.matches('.m-read, .m-read-scroll'))""")
     box = area.bounding_box()
     before = area.evaluate("el => el.scrollTop")
     page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)

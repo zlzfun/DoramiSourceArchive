@@ -11064,8 +11064,12 @@ input[type="radio"] {
     height: var(--tap);
     z-index: 1;   /* 放大后的图片在它下面 */
     border-radius: var(--r-pill);
-    background: rgba(11, 18, 32, 0.55);   /* 深底白叉 + 一圈弱白环:压在放大后的亮图上也看得见 */
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2);
+    /* 深底白叉 + 白环 + 外投影(issue #230 批 3c):放大后压在浅色图上,圆底对白图约 7:1、白叉对圆底同样;
+       暗图上靠白环勾边。原 55% 底 + 20% 白环在白图上只有约 4:1、边缘糊进图里 */
+    background: rgba(11, 18, 32, 0.72);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.32), 0 2px 10px rgba(0, 0, 0, 0.35);
     color: #fff;
     cursor: pointer;
   }
