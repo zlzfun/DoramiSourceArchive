@@ -7646,13 +7646,14 @@ input[type="radio"] {
     transition: color 130ms var(--motion-ease), background 130ms var(--motion-ease);
   }
 
-  .reader-fav-icon:hover {
-    color: #f59e0b;
-    background: color-mix(in srgb, var(--dorami-ink) 6%, transparent);
-  }
-
   .reader-fav-icon.is-on { color: #f59e0b; }
-  .reader-fav-icon.is-on:hover { color: #d97706; }
+  @media (hover: hover) {
+    .reader-fav-icon:hover {
+      color: #f59e0b;
+      background: color-mix(in srgb, var(--dorami-ink) 6%, transparent);
+    }
+    .reader-fav-icon.is-on:hover { color: #d97706; }
+  }
 
   /* 「发现更多来源」触发行(样页 .src-more):虚线框幽灵行 */
   .reader-src-more {
@@ -8472,8 +8473,11 @@ input[type="radio"] {
     transition: opacity 140ms ease, color 140ms ease;
   }
 
-  .reader-entry:hover .reader-entry-fav { opacity: 1; pointer-events: auto; }
-  .reader-entry-fav:hover { color: #f59e0b; }
+  /* 悬停浮出只给有悬停的指针;触屏走下面的 (pointer: coarse) 常显 / 手机壳的 .is-mark */
+  @media (hover: hover) {
+    .reader-entry:hover .reader-entry-fav { opacity: 1; pointer-events: auto; }
+    .reader-entry-fav:hover { color: #f59e0b; }
+  }
   .reader-entry-fav.is-on { opacity: 1; pointer-events: auto; color: #f59e0b; }
   /* 触屏(审计 M-02 / M-15;issue #230 批 4a):≥ 1025 的桌面壳也可能是触屏(iPad 横屏),没有悬停可浮出——星常显、可点
      (点到星由整行的点击分流成收藏,见 ArticleRow);鼠标(pointer: fine)观感不变。手机壳的星只是「已收藏」标记(.is-mark) */
@@ -10355,14 +10359,17 @@ input[type="radio"] {
   }
   .reader-disc-sub svg { width: 14px; height: 14px; }
   .reader-disc-sub .t-on { display: inline-flex; align-items: center; gap: 4px; }
-  .reader-disc-sub:hover { background: var(--dorami-hover); }
+  @media (hover: hover) { .reader-disc-sub:hover { background: var(--dorami-hover); } }
   .reader-disc-sub:active { transform: scale(0.96); }
   .reader-disc-sub:disabled { opacity: 0.6; cursor: default; }
   .reader-disc-sub.is-subbed { background: transparent; box-shadow: none; color: var(--dorami-muted); }
-  .reader-disc-sub.is-subbed:hover { color: var(--state-bad); background: transparent; }
   .reader-disc-sub.is-subbed .t-off { display: none; }
-  .reader-disc-sub.is-subbed:hover .t-on { display: none; }
-  .reader-disc-sub.is-subbed:hover .t-off { display: inline; }
+  /* 悬停翻成「取消订阅」只给有悬停的指针(悬停三分法 ③):触屏走两击确认(审计 M-03,批 4a),不靠粘滞悬停预警 */
+  @media (hover: hover) {
+    .reader-disc-sub.is-subbed:hover { color: var(--state-bad); background: transparent; }
+    .reader-disc-sub.is-subbed:hover .t-on { display: none; }
+    .reader-disc-sub.is-subbed:hover .t-off { display: inline; }
+  }
 
   /* 「预览」钮已退役(issue #184):整卡点开即预览(Folo 语义,直接跳到该源的条目列表) */
 
@@ -12680,7 +12687,7 @@ input[type="radio"] {
 .ann-text strong { font-weight: 600; }
 /* 链接随档位文字色走(彩底卡上引入第二饱和色会撞色),下划线承载可点性 */
 .ann-text a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
-.ann-text a:hover { opacity: 0.82; }   /* hover 只允许同族变化,不引入新色 */
+@media (hover: hover) { .ann-text a:hover { opacity: 0.82; } }   /* hover 只允许同族变化,不引入新色 */
 
 .ann-close {
   flex: none;
@@ -12694,7 +12701,7 @@ input[type="radio"] {
   transition: opacity var(--motion-fast) var(--motion-ease), background var(--motion-fast) var(--motion-ease);
 }
 /* hover 底用 currentColor 淡染(不引入不透明底,保玻璃通透),跟随档位色,亮暗两主题都可见 */
-.ann-close:hover { opacity: 1; background: color-mix(in srgb, currentColor 10%, transparent); }
+@media (hover: hover) { .ann-close:hover { opacity: 1; background: color-mix(in srgb, currentColor 10%, transparent); } }
 .ann-close svg { width: 14px; height: 14px; }
 
 /* ── 管理面:撰写 + 预览 + 已发列表 ── */

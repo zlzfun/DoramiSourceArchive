@@ -41,13 +41,8 @@ LONG_LIST = 200
 SILENCE = "/e2e-silence.wav"
 # 已知未修(审计项归并行的批 4a):照常测量、写进 result.json,但不判失败;条目必须仍在至少一档复现,
 # 否则整个流程失败并提示把它删掉(严格 xfail——修好之后守卫自动收紧)。键 = (检查点, 元素名)。
-KNOWN_OPEN = {
-    ("discover filter", "筛选来源"): "M-06",
-    ("account section", "当前密码"): "M-06",
-    ("account section", "新密码"): "M-06",
-    ("account section", "确认新密码"): "M-06",
-    ("feedback section", "反馈内容"): "M-06",
-}
+# 批 4a 修好 M-06(发现页筛选、改密三框、反馈框 16px)后清空;机制保留给以后的已知未修项。
+KNOWN_OPEN = {}
 
 PLAYER_SESSION = {
     "item": {"articleId": f"{SOURCE_A}-00", "track": "original", "src": SILENCE,
