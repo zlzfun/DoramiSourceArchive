@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { CheckCheck, Circle, CircleDot, CloudOff, Inbox, Loader2, Star, Tags } from 'lucide-react';
 import LayerPage from '../layer/LayerPage';
 import LogoMark from '../LogoMark';
@@ -7,6 +7,7 @@ import { ArticleRow, ArticleCardsSkeleton } from '../ReaderTab';
 import { HeadBack, MobileHeader, TitleDial } from './MobileHeader';
 import { useArticleList } from '../../hooks/useArticleList';
 import { buildListPlan } from '../../utils/listPlan';
+import { dayLabelOf } from '../../utils/readerTime';
 import { pushListQuery, pushMarkReadPlan, pushMode, pushViewItems } from '../../utils/articleList';
 import { resolveCompany, roleLabelOf } from '../../sourceTaxonomy';
 import { mediaProxyUrl } from '../../api';
@@ -219,7 +220,7 @@ export default function MobileSubsFlow({
           {banner}
           <div key={mode} className="m-flow-body">
             {articlesLoading ? (
-              <ArticleCardsSkeleton />
+              <ArticleCardsSkeleton card={podcast ? 'podcast' : 'article'} />
             ) : hidden || articles.length === 0 ? (
               <div className="reader-empty">
                 <EmptyIcon className="h-6 w-6 text-slate-300" />
@@ -229,38 +230,43 @@ export default function MobileSubsFlow({
               <>
                 {listPlan.map((entry) => {
                   const { article } = entry;
+                  // 夜航卡(批 4c):与内容 Tab 同一种卡与日期组头(组头在长按包装之外)
                   return (
-                    <div key={article.id} className="m-press" {...pressBind(article)}>
-                      <ArticleRow
-                        article={article}
-                        active={false}
-                        isUnread={isArticleUnread(article)}
-                        isFav={favoriteIds.has(article.id)}
-                        entryPodcast={podcast}
-                        showLabel={entry.showLabel}
-                        dayKey={entry.dayKey}
-                        searchQuery=""
-                        source={sourceMap[article.source_id]}
-                        sourceName={sourceNameMap[article.source_id] || article.source_id}
-                        onSelect={selectArticle}
-                        onPrefetchEnter={schedulePrefetch}
-                        onPrefetchLeave={cancelPrefetch}
-                        onToggleFavorite={handleToggleFavorite}
-                        onContextMenu={noopContextMenu}
-                        ctxAnchor={sheetAnchorKey === `article:${article.id}`}
-                        favIndicator
-                        interestHit={kind !== 'tag' ? (article.interest_hits?.[0] || '') : ''}
-                        unsubscribed={interestish && !subscribedIds.has(article.source_id)}
-                        onSubscribeSource={subscribeSourceById}
-                        nowPlaying={article.id === playingId ? playingState : ''}
-                        nowPlayingAi={article.id === playingId && playingAi}
-                      />
-                    </div>
+                    <Fragment key={article.id}>
+                      {entry.showLabel && <div className="m-day">{dayLabelOf(entry.dayKey)}</div>}
+                      <div className="m-press" {...pressBind(article)}>
+                        <ArticleRow
+                          article={article}
+                          active={false}
+                          isUnread={isArticleUnread(article)}
+                          isFav={favoriteIds.has(article.id)}
+                          entryPodcast={podcast}
+                          showLabel={false}
+                          dayKey={entry.dayKey}
+                          searchQuery=""
+                          source={sourceMap[article.source_id]}
+                          sourceName={sourceNameMap[article.source_id] || article.source_id}
+                          onSelect={selectArticle}
+                          onPrefetchEnter={schedulePrefetch}
+                          onPrefetchLeave={cancelPrefetch}
+                          onToggleFavorite={handleToggleFavorite}
+                          onContextMenu={noopContextMenu}
+                          ctxAnchor={sheetAnchorKey === `article:${article.id}`}
+                          favIndicator
+                          card
+                          interestHit={kind !== 'tag' ? (article.interest_hits?.[0] || '') : ''}
+                          unsubscribed={interestish && !subscribedIds.has(article.source_id)}
+                          onSubscribeSource={subscribeSourceById}
+                          nowPlaying={article.id === playingId ? playingState : ''}
+                          nowPlayingAi={article.id === playingId && playingAi}
+                        />
+                      </div>
+                    </Fragment>
                   );
                 })}
                 {hasMore && (
                   <div ref={sentinelRef} className="m-load-sentinel" aria-hidden="true">
-                    {loadingMore && <ArticleCardsSkeleton count={3} delayed={false} />}
+                    {loadingMore && <ArticleCardsSkeleton count={3} delayed={false} card={podcast ? 'podcast' : 'article'} />}
                   </div>
                 )}
               </>

@@ -140,7 +140,7 @@
 
 **分数的身份线(2026-09-06 issue #23;v3.48 起分数语义=新闻价值;issue #184 字体换 `--font-score`)**:分数是数字,不是标签——
 全站只用一种画法:宋体齐线数字 + AI 渐变,按位置取大小:早报海报评分栏 44px → 速读卡卡头 22px → 早报条目 17px →
-阅读器条目行 14px(`.reader-entry-score.ai-grad-text`,推到元信息行尾)。不做分数胶囊。
+阅读器条目行 14px(`.reader-entry-score.ai-grad-text`,推到元信息行尾;手机壳的夜航卡上 19px,issue #230 批 4c)。不做分数胶囊。
 此前的 Charter 栈在 Windows 上没有,落到 Cambria 字形不同,#184 起统一为自托管宋体(Mac / Windows 一致)。
 **分数按分值分档着色(2026-09-10,issue #54,样页 `dorami-score-tiers-quiet.html`)**:只改颜色,大小与字体不动;
 灰线 6.0 以下退成与旁边元信息同一个 `--dorami-faint`、不画身份色,其上按整数分一档(`is-score-1..4`,渐变两端色各自向 faint
@@ -530,6 +530,15 @@ issue #230 起 `Modal` 与移动层都经层原语 `components/layer/useLayer`(�
 列表收藏:手机上星只作「已收藏」标记(只画在收藏过的条目上),收藏走长按动作单与正文页;条目行里不放嵌套的 `role=button`——
 行内的星、「+ 订阅」是 `aria-hidden` 装饰,点到它们由整行点击分流,读屏行名补「已收藏 / 未订阅」(审计 M-02 / M-35)。
 
+**列表条目 = 夜航卡(批 4c,样页 `.c-card` / `.c-pod` / `.c-post` / `.c-day`)**:内容 Tab、订阅推入页与长按预览卡里的条目一律是
+`ArticleRow` 的 `card` 版式(`.reader-entry.is-card`;桌面不传,DOM 不变;源标 18 = `LOGO_SIZES.s18`)。卡面 `--m-card` + `--r-card`,
+亮色 `--sh-1` / 暗色 `inset 0 1px 0 var(--dorami-edge)`,内边距 14 / 16 / 15、卡间 10;卡面画在按钮上,间距给外层 `.m-press`
+(列表 6px 内边距再让 6px = `--m-gutter`,平板随 `--m-side-*`);按下缩到 0.985(减少动效改为压暗一档),被长按的卡淡到 35% 并保留卡面。
+日期组头 `.m-day` 在长按包装之外、**不吸顶**(社交流的组头同样式);骨架传 `card="article" | "podcast"` 画卡形——减少动效时 shimmer
+停成 `--dorami-soft`,与壳底同色,卡上改用 `--dorami-select`。社交卡是现网字段套同一张卡面:署名两行(名字 / @handle · 时间)、正文与
+配图通栏,收藏 / 标读钮绝对定位在署名右侧(长名字不再把它们挤出屏)。新增的手机列表照此;`test/mobileWave4c.test.mjs` 守批 4c 段的
+选择器都锚在手机壳上(`.is-card` / `.m-*`)。
+
 **镀层**:磨砂只用 `--glass-bg`(surface 72%)/ `--glass-strong`(95%,底页与动作组)+ `--glass-blur` + `--glass-ring` /
 `--glass-edge` / `--glass-shadow`;不支持 `backdrop-filter` 时 token 在 `index.css` 的 `@supports` 里自动退成 94% / 实色,
 组件不另写降级。卡面 `--m-card`(亮 = surface,暗抬一档 raised),遮罩 `--m-scrim`。
@@ -539,8 +548,8 @@ issue #230 起 `Modal` 与移动层都经层原语 `components/layer/useLayer`(�
 领位 = 头像 / 返回钮,左 8、命中 44 · 标题位 · 动作;标题位就是本页的主切换 `TitleDial`,左锚定、当前项以左沿放大 1.3 倍,字形左沿 62)。
 页头与底栏浮在内容上:滚动区顶部让出 `--m-head-clear`(sat + 56,页头下第一块从这里起)、底部让出 `--m-tab-clear` + 播放坞;
 滚过 4px 页头换镀层底(壳上 `data-scrolled`),越过 140px 往下读底栏退场(`data-receded`,减少动效时不退场)。
-有吸顶子元素的滚动区(条目流 / 社交流 / 订阅页)用 `::before` 垫片让出页头、不用 `padding-top`——粘性定位的 `top` 在 Chromium 里从
-滚动区的内边距框量起,垫在 padding 里会让吸顶头再错下 56px;吸顶头的 `top` 写 `calc(var(--sat) + var(--m-head-h))`。
+有吸顶子元素的滚动区(条目流的「载入 N 篇」胶囊 / 订阅页的分面分段)用 `::before` 垫片让出页头、不用 `padding-top`——粘性定位的
+`top` 在 Chromium 里从滚动区的内边距框量起,垫在 padding 里会让吸顶头再错下 56px;吸顶头的 `top` 写 `calc(var(--sat) + var(--m-head-h))`。
 设置从页头头像推入(整页、盖住底栏与播放坞、返回钮落在头像原位);新增的整页推入页沿用同一页头件。
 订阅 Tab 的推入页(来源 / 全部 / 收藏 / 兴趣,批 3a)是**第二个列表实例**:列表走 `hooks/useArticleList`(纯逻辑 `utils/articleList`),
 推入页自己的视图、只看未读、翻页与滚动不改写内容 Tab;对一篇 / 一个源的改动(正文回读、取消收藏、按源标读)经数据层的实例登记处
@@ -579,7 +588,8 @@ issue #230 起 `Modal` 与移动层都经层原语 `components/layer/useLayer`(�
   面板容器(`data-layer-panel`,`tabIndex={-1}`)只是焦点落点,不画焦点环。
 - **长按单**(批 4a):文章 / 播客 / 社交 / 来源 / 早报的长按动作单一律 `is-float` 浮动圆角卡;条目类带预览卡
   (`mobile/EntryPeek`、`SocialPeek`),走 `Sheet` 的 `aside` 槽(浮在面板上方、不随拖动区、矮屏按剩余高度裁掉卡的下半),
-  被按的卡淡到 35%。
+  被按的卡淡到 35%。长按松手时浏览器补发的 click 落在手指下的菜单项 / 抓手上不算数(批 4c:矮屏菜单正盖在手指处),
+  由 `Sheet` 每次打开建的 `utils/overlayClose.createSpillClickGuard` 在层根捕获阶段吞掉;点按打开的底页与键盘不受影响。
 - **退场**:`Sheet` 关闭后还挂约 260ms 播退场(`.m-sheet-layer.is-leaving`)——关的时候不要清空它的内容;整页推入的层
   (设置页、设置分区、订阅推入页)用 `LayerPage exit="push"`,卸载时留一个替身(`utils/layerExit`,inert + aria-hidden)反向推出,
   状态当场切回、不等动画。

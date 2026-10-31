@@ -113,7 +113,8 @@ function SourceRowsSkeleton() {
 // 条目卡：首行短条 + 标题条 + 摘要条（形状贴近 .reader-entry）
 // count/delayed 可调:初次加载走 5 条 + 150ms 延迟显现(快路径不闪);
 // 无限滚动追加走少量、即时(已在触发点,给即时反馈)。
-export function ArticleCardsSkeleton({ count = 5, delayed = true }) {
+// card(issue #230 批 4c):手机壳传 'article' | 'podcast',画成夜航卡形(mobile.css .m-skel-card);桌面不传,DOM 不变。
+export function ArticleCardsSkeleton({ count = 5, delayed = true, card = '' }) {
   const cards = [
     { title: 'w-3/4', excerpt: 'w-1/2' },
     { title: 'w-5/6', excerpt: 'w-2/3' },
@@ -121,6 +122,22 @@ export function ArticleCardsSkeleton({ count = 5, delayed = true }) {
     { title: 'w-4/5', excerpt: 'w-1/2' },
     { title: 'w-3/5', excerpt: 'w-2/3' },
   ].slice(0, count);
+  if (card) {
+    return (
+      <div className={`m-skel-cards${delayed ? ' skeleton-delay' : ''}`} aria-hidden="true">
+        {cards.map((c, i) => (
+          <div key={i} className={`m-skel-card${card === 'podcast' ? ' is-podcast' : ''}`}>
+            {card === 'podcast' && <div className="skeleton m-skel-cover" />}
+            <div className="m-skel-copy">
+              <div className="skeleton m-skel-meta" />
+              <div className={`skeleton m-skel-title ${c.title}`} />
+              <div className={`skeleton m-skel-line ${c.excerpt}`} />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
   return (
     <div className={delayed ? 'skeleton-delay' : ''} aria-hidden="true">
       {cards.map((c, i) => (
@@ -239,6 +256,8 @@ export const ArticleRow = memo(function ArticleRow({
   // 手机壳(issue #230 批 4a,样页 c-fav):星只是「已收藏」的标记,只画在收藏了的条目上——文章在元信息行分数前,
   // 播客在标题行尾;收藏走长按动作单与正文页。桌面不传
   favIndicator = false,
+  // 手机壳(issue #230 批 4c,样页 c-card):条目画成夜航卡(.is-card,版式在 mobile.css「批 4c」段),源标 18。桌面不传
+  card = false,
 }) {
   // 标题语言(issue #218):偏好开且有可用译名时显示中文标题,否则原题;移动列表复用本行
   const { preferChinese } = useTitlePreference();
@@ -302,7 +321,7 @@ export const ArticleRow = memo(function ArticleRow({
         onMouseEnter={() => onPrefetchEnter(article)}
         onMouseLeave={onPrefetchLeave}
         onContextMenu={(e) => onContextMenu(e, article, 'article')}
-        className={`reader-entry ${compact ? 'is-compact' : ''} ${entryPodcast ? 'is-podcast' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'} ${isFav ? 'is-fav' : ''} ${ctxAnchor ? 'is-ctx-anchor' : ''}${favIndicator ? ' has-fav-mark' : ''}`}
+        className={`reader-entry ${compact ? 'is-compact' : ''} ${entryPodcast ? 'is-podcast' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'} ${isFav ? 'is-fav' : ''} ${ctxAnchor ? 'is-ctx-anchor' : ''}${favIndicator ? ' has-fav-mark' : ''}${card ? ' is-card' : ''}`}
       >
         {/* 读态只由标题字重与墨色表达(is-read),不另画未读点(issue #199);读屏补一句「未读」与之对等 */}
         {isUnread && <span className="sr-only">未读，</span>}
@@ -352,7 +371,7 @@ export const ArticleRow = memo(function ArticleRow({
             <span className="reader-entry-top">
               {source && (
                 <span className="reader-entry-logo" aria-hidden="true">
-                  <LogoMark company={resolveCompany(source)} size="s15" emoji={source.icon} />
+                  <LogoMark company={resolveCompany(source)} size={card ? 's18' : 's15'} emoji={source.icon} />
                 </span>
               )}
               <span className="reader-entry-src">{sourceName}</span>

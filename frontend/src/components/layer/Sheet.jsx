@@ -4,6 +4,7 @@ import { useLayer } from './useLayer';
 import { useSheetDrag } from './useSheetDrag';
 import LayerScrim from './LayerScrim';
 import { motionReduced } from '../../motion';
+import { createSpillClickGuard } from '../../utils/overlayClose';
 
 // 退场时长(issue #230 批 4a,审计 M-33「退场与入场成对」):底页滑回屏外、遮罩淡出,跑完再卸载。
 // 与 mobile.css「批 4a」段 .m-sheet-layer.is-leaving 的过渡同长;减少动效时不播、当场卸载。
@@ -49,6 +50,27 @@ export default function Sheet({
   const panelRef = useRef(null);
   useLayer({ open, onClose, kind: 'sheet', panelRef, rootRef, initialFocus });
   const { handleProps, consumeClick } = useSheetDrag(panelRef, onClose);
+  // 长按松手的溢出点击(批 4c 查出,审计 M-01 余项):长按出来的底页在手指还按着时就弹出,松手补发的 click 落在
+  // 手指下的菜单项 / 抓手上,会被当成点了它(执行动作或把底页关掉)。每次打开一个判定器,窗口捕获阶段看 pointerdown / up,
+  // 层根的捕获阶段把那一下吞掉(utils/overlayClose.createSpillClickGuard;点按打开的底页与键盘不受影响)
+  const spillRef = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const guard = createSpillClickGuard();
+    spillRef.current = guard;
+    window.addEventListener('pointerdown', guard.onPointerDown, true);
+    window.addEventListener('pointerup', guard.onPointerUp, true);
+    return () => {
+      window.removeEventListener('pointerdown', guard.onPointerDown, true);
+      window.removeEventListener('pointerup', guard.onPointerUp, true);
+      if (spillRef.current === guard) spillRef.current = null;
+    };
+  }, [open]);
+  const onClickCapture = (event) => {
+    if (!spillRef.current?.shouldSwallow(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+  };
 
   // open 由真变假的那一次渲染里就进入退场(渲染期按上一次的 open 调整状态,React 推荐的写法):
   // 这样关的那次提交不摘 DOM,面板与遮罩是同一批元素,过渡才接得上
@@ -74,7 +96,7 @@ export default function Sheet({
 
   if ((!open && !leaving) || typeof document === 'undefined') return null;
   return createPortal(
-    <div className={`m-sheet-layer${open ? '' : ' is-leaving'}`} ref={rootRef} inert={!open || undefined}>
+    <div className={`m-sheet-layer${open ? '' : ' is-leaving'}`} ref={rootRef} inert={!open || undefined} onClickCapture={onClickCapture}>
       <LayerScrim onClose={onClose} />
       <div
         ref={panelRef}

@@ -457,7 +457,6 @@
 .m-social-host .reader-social-scroll::before,
 .m-subs-scroll::before,
 .bp-sheet.is-mobile::before { content: ""; display: block; height: var(--m-head-clear); }
-.m-list .reader-date-label { top: calc(var(--sat) + var(--m-head-h)); }
 .m-list .reader-fresh-pill { top: calc(var(--sat) + var(--m-head-h) + 6px); }
 .m-load-sentinel { min-height: 8px; }
 /* 长按包装:抑制 iOS 原生 callout/选词(动作单是长按的语义占位) */
@@ -1501,7 +1500,6 @@
   -webkit-overflow-scrolling: touch;
 }
 .m-flow-scroll::before { content: ""; display: block; height: var(--m-head-clear); }
-.m-flow-scroll .reader-date-label { top: calc(var(--sat) + var(--m-head-h)); }
 .m-flow-scroll .reader-entry-time { margin-right: 0; }
 .m-flow-scroll .reader-entry-fav { right: 2px; }
 .m-flow-scroll .reader-podcast-cover { width: 64px; height: 64px; }
@@ -1873,3 +1871,201 @@ body:has(> .m-sheet-layer:not(.is-leaving)) .m-root .toast-pop { top: calc(var(-
 .is-ghost .m-sett-pane,
 .m-sett-pane.is-ghost,
 .is-ghost .m-flow-body { animation: none; }
+
+/* ════ issue #230 阶段 3 批 4c:内容列表换成夜航卡(样页 docs/design/issue-230-mobile/ 的 内容 · 文章 / 播客 / 社交、来源流与长按预览;
+      样页 .c-card / .c-pod / .c-post / .c-day)════
+   条目 = ArticleRow 的 card 版式(.reader-entry.is-card,只有手机壳传 card;桌面 DOM 与样式不变),卡面画在按钮自己身上;
+   卡与卡的间距给外层长按包装 .m-press——列表已有 6px 内边距,再让 6px = 离屏边 --m-gutter 12,平板随 --m-side-* 落在版心里。
+   社交卡是 SocialFlow 的现网字段套同一张卡面(样页 c-post:署名两行、正文通栏)。本段只追加覆盖,不改前几批的段。 */
+
+/* ── 卡面:surface 底(暗色抬一档 raised)、--r-card、亮色 --sh-1 浅投影 / 暗色一道内描边;按下缩到 0.985,松手弹回 ── */
+.reader-entry.is-card {
+  padding: 14px 16px 15px;
+  border-radius: var(--r-card);
+  background: var(--m-card);
+  box-shadow: var(--sh-1);
+  -webkit-tap-highlight-color: transparent;
+  contain-intrinsic-size: auto 150px;
+  transition: transform var(--motion-medium) var(--motion-sheet-ease), opacity var(--motion-medium) var(--motion-ease);
+}
+[data-theme="dark"] .reader-entry.is-card { box-shadow: inset 0 1px 0 var(--dorami-edge); }
+.reader-entry.is-card:active { transform: scale(0.985); transition-duration: 100ms; }
+/* 减少动效:不缩放,按下只压暗一档 */
+:root[data-motion="reduce"] .reader-entry.is-card:active { transform: none; background-color: color-mix(in srgb, var(--dorami-ink) 4.5%, var(--m-card)); }
+.m-list > div > .m-press,
+.m-flow-body > .m-press { margin: 0 6px 10px; }
+/* 长按时被按的卡淡到 35%:卡面保留(批 4a 的 is-ctx-anchor 规则会把底色抹掉) */
+.m-shell .reader-entry.is-card.is-ctx-anchor { background: var(--m-card); }
+
+/* ── 日期分组头(样页 .c-day):「今天 · 10月31日 / 昨天 · 9月15日 / 9月14日 周一」,在长按包装之外、不吸顶;字左沿 20 ── */
+.m-day {
+  padding: 14px 14px 8px;
+  font-size: var(--m-fs-sm);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--dorami-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 文章卡:顶行 源标 18 · 源名 · 类型 · 兴趣 · 时间 …… ★ 分数;标题 16 三行;摘要 14 两行、末行尾部渐隐 ── */
+.reader-entry.is-card .reader-entry-top { gap: 6px; height: 22px; margin-bottom: 0; font-size: var(--m-fs-xs); color: var(--dorami-faint); }
+.reader-entry.is-card .reader-entry-logo { margin-right: 2px; }
+.reader-entry.is-card .reader-entry-src { font-size: var(--m-fs-sm); color: var(--dorami-ink-2); }
+.reader-entry.is-card .reader-entry-top > :is(.reader-entry-kind, .reader-entry-hit, .reader-entry-time)::before { margin-right: 6px; }
+.reader-entry.is-card .reader-entry-time { margin-right: 0; color: var(--dorami-faint); }
+/* 分数身份线(§3):宋体齐线数字 + AI 渐变分档(.ai-grad-text + 档位类给色),卡上 19;分析在途「分析中」12 黑体 faint */
+.reader-entry.is-card .reader-entry-score { min-width: 2em; margin-right: 0; font-size: 19px; }
+.reader-entry.is-card .reader-entry-score.is-pending { min-width: 0; font-size: var(--m-fs-xs); }
+.reader-entry.is-card .reader-entry-top > .reader-entry-fav.is-mark + .reader-entry-score { margin-left: 4px; }
+.reader-entry.is-card .reader-entry-titlerow { margin-top: 8px; }
+.reader-entry.is-card .reader-entry-title { font-size: var(--m-fs-lg); line-height: 1.5; -webkit-line-clamp: 3; }
+.reader-entry.is-card .reader-entry-excerpt {
+  margin-top: 6px;
+  font-size: var(--m-fs-md);
+  line-height: 1.65;
+  max-height: 3.3em;
+  -webkit-mask: linear-gradient(black, black) top / 100% calc(100% - 1.65em) no-repeat,
+                linear-gradient(to right, black calc(100% - 44px), transparent) bottom / 100% 1.65em no-repeat;
+  mask: linear-gradient(black, black) top / 100% calc(100% - 1.65em) no-repeat,
+        linear-gradient(to right, black calc(100% - 44px), transparent) bottom / 100% 1.65em no-repeat;
+}
+/* 读态仍只由标题字重与墨色表达;已读卡的摘要再退一档(样页) */
+.reader-entry.is-card.is-read .reader-entry-excerpt { color: var(--dorami-faint); }
+/* 紧凑卡(版本更新):单行标题、无摘要 */
+.reader-entry.is-card.is-compact { padding-top: 11px; padding-bottom: 12px; }
+.reader-entry.is-card.is-compact .reader-entry-titlerow { margin-top: 4px; }
+.reader-entry.is-card.is-compact .reader-entry-title { font-size: var(--m-fs-base); -webkit-line-clamp: 1; }
+
+/* ── 播客卡(样页 .c-pod;#239 的字段与提示逻辑不动):封面 60 · 节目名 · 时间 · 分数 / 标题 15 两行(收藏星跟标题)/
+      尾行 播放中 · 时长 · 优质播客 · 导读提示,窄屏整组换行 ── */
+.reader-entry.is-card.is-podcast { padding: 14px 16px 15px; contain-intrinsic-size: auto 100px; }
+.reader-entry.is-card .reader-podcast-layout { gap: 12px; }
+.reader-entry.is-card .reader-podcast-cover {
+  width: 60px;
+  height: 60px;
+  margin-top: 2px;
+  border-radius: var(--r-control);
+  outline: 0.5px solid color-mix(in oklab, var(--dorami-ink) 12%, transparent);
+  outline-offset: -0.5px;
+}
+.reader-entry.is-card .reader-podcast-copy { padding-top: 0; }
+.reader-entry.is-card .reader-podcast-copy .reader-entry-titlerow { margin-top: 4px; }
+.reader-entry.is-card.has-fav-mark .reader-podcast-copy .reader-entry-titlerow { gap: 6px; }
+.reader-entry.is-card .reader-podcast-copy .reader-entry-title { font-size: var(--m-fs-base); -webkit-line-clamp: 2; }
+.reader-entry.is-card .reader-podcast-meta { gap: 4px 10px; margin-top: 6px; font-size: var(--m-fs-xs); }
+.reader-entry.is-card .podcast-premium-badge { padding: 1px 7px; line-height: 1.5; }
+
+/* ── 长按预览卡(EntryPeek = 同一张卡):卡面仍由 .m-peek-card 画(投影 --sh-3),里面的卡不再画第二层底色与投影 ── */
+.m-peek-card .reader-entry.is-card { background: none; box-shadow: none; transform: none; }
+
+/* ── 卡形骨架(ArticleCardsSkeleton card):与卡同底同距;减少动效时 shimmer 停成 --dorami-soft,与壳底同色会看不见,
+      卡上改用中性加深一档 ── */
+.m-skel-card {
+  display: flex;
+  gap: 12px;
+  margin: 0 6px 10px;
+  padding: 14px 16px 15px;
+  border-radius: var(--r-card);
+  background: var(--m-card);
+  box-shadow: var(--sh-1);
+}
+[data-theme="dark"] .m-skel-card { box-shadow: inset 0 1px 0 var(--dorami-edge); }
+.m-skel-copy { flex: 1; min-width: 0; }
+.m-skel-card .m-skel-cover { flex: none; width: 60px; height: 60px; margin-top: 2px; border-radius: var(--r-control); }
+.m-skel-card .m-skel-meta { width: 42%; height: 12px; margin: 5px 0; }
+.m-skel-card .m-skel-title { height: 16px; margin-top: 12px; }
+.m-skel-card .m-skel-line { height: 13px; margin-top: 12px; }
+.m-skel-card.is-podcast .m-skel-title { margin-top: 8px; }
+.m-skel-card.is-podcast .m-skel-line { margin-top: 10px; }
+:root[data-motion="reduce"] :is(.m-skel-card, .m-shell .social-skel) .skeleton { background: var(--dorami-select); }
+
+/* ── 空态与「载入 N 篇新文章」:空态一句话 14 faint(样页 .c-empty)+ 批 4a 的第一个动作;新文章胶囊是浮在卡上的镀层胶囊,
+      看得见 36 高、命中扩到 44 ── */
+:is(.m-list, .m-flow-body, .m-social-host) .reader-empty { padding: 48px 20px; font-size: var(--m-fs-md); font-weight: 400; }
+.m-list .reader-fresh-pill {
+  min-height: 36px;
+  margin: 2px auto 10px;
+  padding: 0 16px;
+  background: color-mix(in oklab, var(--dorami-accent) 10%, var(--glass-strong));
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-ring), var(--glass-edge), var(--glass-shadow);
+  font-size: var(--m-fs-sm);
+}
+.m-list .reader-fresh-pill::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: var(--tap); transform: translateY(-50%); }
+
+/* ── 社交卡(样页 .c-post:SocialFlow 的现网字段套夜航卡面):头像 36 · 名字一行 / @handle · 时间一行,收藏与标读两枚钮在右
+      (批 4a M-07:看得见 32、命中 44);正文、配图、引用推、「译为中文」通栏;长推文六行渐隐;日期组头同 .m-day、不吸顶 ── */
+.m-shell .reader-social-col > .social-post {
+  margin: 0 0 10px;
+  padding: 14px 16px 15px;
+  border: 0;
+  border-radius: var(--r-card);
+  background: var(--m-card);
+  box-shadow: var(--sh-1);
+  contain-intrinsic-size: auto 240px;
+  transition: opacity var(--motion-medium) var(--motion-ease);
+}
+[data-theme="dark"] .m-shell .reader-social-col > .social-post { box-shadow: inset 0 1px 0 var(--dorami-edge); }
+.m-shell .reader-social-col > .social-post.is-ctx-anchor { background: var(--m-card); }
+.m-social-host .reader-social-col { max-width: none; }   /* 平板:与文章卡同宽(原 680 上限再减版心内边距会窄一截) */
+.m-social-host .reader-social-day {
+  position: static;
+  margin: 0;
+  padding: 14px 8px 8px;
+  background: none;
+  font-size: var(--m-fs-sm);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--dorami-ink-2);
+}
+:is(.m-shell .social-post, .m-peek-social) .social-body { grid-template-columns: 36px minmax(0, 1fr); gap: 0 10px; align-items: center; }
+/* 内层列拆开(display: contents):头部在头像右侧,其余各块跨满两列 */
+:is(.m-shell .social-post, .m-peek-social) .social-body > div { display: contents; }
+:is(.m-shell .social-post, .m-peek-social) .social-body > div > * { grid-column: 1 / -1; }
+:is(.m-shell .social-post, .m-peek-social) .social-body > div > .social-post-head { grid-column: 2; }
+:is(.m-shell .social-post, .m-peek-social) .social-body > div > .social-more { justify-self: start; }
+:is(.m-shell .social-post, .m-peek-social) .social-avatar-wrap { display: grid; place-items: center; width: 36px; height: 36px; }
+:is(.m-shell .social-post, .m-peek-social) :is(.social-avatar-img, .social-initial) { width: 36px; height: 36px; }
+/* 署名两行:名字独占一行(长名省略),@handle · 时间在第二行(handle 先缩);两枚钮绝对定位在右侧,不再把一行挤出屏 */
+:is(.m-shell .social-post, .m-peek-social) .social-post-head {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, max-content) auto auto minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: 4px;
+  line-height: 1.35;
+}
+.m-shell .social-post .social-post-head { padding-right: 84px; }
+:is(.m-shell .social-post, .m-peek-social) .social-name { grid-column: 1 / -1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* 只截 handle(时间是原推链接,::after 把命中扩到 44,不能 overflow 裁掉) */
+:is(.m-shell .social-post, .m-peek-social) .social-post-head > .social-handle { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+:is(.m-shell .social-post, .m-peek-social) .social-head-sp { min-width: 0; }
+.m-shell .social-post .social-acts { position: absolute; top: 50%; right: -4px; margin: 0; transform: translateY(-50%); }
+.m-shell .social-post .social-repost { margin-left: 46px; }
+:is(.m-shell .social-post, .m-peek-social) .social-text { margin-top: 10px; line-height: 1.65; color: var(--dorami-ink); }
+.m-shell .social-post.is-read .social-text { color: var(--dorami-muted); }
+.m-shell .social-text.is-clamped,
+.m-peek-social .social-text.m-peek-text {
+  display: block;
+  -webkit-line-clamp: unset;
+  max-height: calc(1.65em * 6);
+  overflow: hidden;
+  -webkit-mask: linear-gradient(black calc(100% - 1.65em), transparent);
+  mask: linear-gradient(black calc(100% - 1.65em), transparent);
+}
+.m-peek-social .social-text.m-peek-text { max-height: calc(1.65em * 3); }
+.m-peek-social { padding: 14px 16px 15px; }
+/* 社交卡骨架:同一张卡面 */
+.m-shell .social-skel {
+  grid-template-columns: 36px minmax(0, 1fr);
+  margin: 0 0 10px;
+  padding: 14px 16px 15px;
+  border: 0;
+  border-radius: var(--r-card);
+  background: var(--m-card);
+  box-shadow: var(--sh-1);
+}
+[data-theme="dark"] .m-shell .social-skel { box-shadow: inset 0 1px 0 var(--dorami-edge); }
+.m-shell .social-skel-avatar { width: 36px; height: 36px; border-radius: var(--r-pill); }   /* 圆头像(全局 .skeleton 的 --r-sm 原先压过了它) */
+/* ════ 批 4c 结束 ════ */
