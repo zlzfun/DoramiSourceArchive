@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import hmac
 import json
 from dataclasses import replace
 
@@ -429,3 +431,91 @@ def test_reader_text_limits_are_configurable_and_environment_overridable(
     assert configured.text_sync_page_max_bytes == 101
     assert configured.text_sync_page_max_rows == 3
     assert configured.reader_cursor_secret == "0123456789abcdef0123456789abcdef"
+
+
+def test_existing_word_transcript_reads_as_paragraphs_without_changing_ai_input(
+    monkeypatch, tmp_path
+):
+    from services import podcast_text_reader, podcast_transcript_translation
+
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    sentence = "I just happened to have some real world experience with this just recently."
+    answer = "Yes, that matches."
+    words = [("SPEAKER_01", word) for word in sentence.split()]
+    words += [("SPEAKER_02", word) for word in answer.split()]
+    body = json.dumps({"segments": [
+        {"speaker": speaker, "body": word, "startTime": index / 2, "endTime": (index + 1) / 2}
+        for index, (speaker, word) in enumerate(words)
+    ]})
+    artifact = _artifact("episode-reader", "publisher_transcript", body, version=2)
+    artifact.provenance_json = json.dumps({"format": "json"})
+    with Session(sink.engine) as session:
+        session.add(artifact)
+        session.commit()
+        publication = session.get(PodcastTextPublicationRecord, "episode-reader:publisher_transcript")
+        publication.artifact_id = artifact.id
+        session.add(publication)
+        session.commit()
+    original_hash = hashlib.sha256(body.encode()).hexdigest()
+    config = replace(app_module.settings.podcast, reader_text_max_chars=100, reader_text_query_max_chars=30)
+    monkeypatch.setattr(app_module, "settings", replace(app_module.settings, podcast=config))
+    expected = f"SPEAKER_01: {sentence}\n\nSPEAKER_02: {answer}"
+    with TestClient(app_module.app) as client:
+        _login(client)
+        url = "/api/podcasts/episodes/episode-reader/texts"
+        params = {"kind": "publisher_transcript", "limit": 37}
+        parts = []
+        offset = 0
+        while True:
+            response = client.get(url, params=params)
+            assert response.status_code == 200, response.text
+            item = response.json()["items"][0]
+            assert item["range_start"] == offset
+            assert item["content_hash"] == original_hash
+            assert item["total_chars"] == len(expected)
+            parts.append(item["text"])
+            offset = item["range_end"]
+            if not item["next_cursor"]:
+                break
+            params["cursor"] = item["next_cursor"]
+        assert "".join(parts) == expected
+        search = client.get(url, params={"kind": "publisher_transcript", "q": "real world experience", "limit": 80})
+        assert search.status_code == 200
+        assert "real world experience" in search.json()["items"][0]["text"]
+    with Session(sink.engine) as session:
+        saved = session.get(PodcastTextArtifactRecord, "text-publisher_transcript-2")
+        assert saved.inline_text == body
+        assert saved.content_hash == original_hash
+        assert saved.version == 2
+        old_projection = "\n".join(f"{speaker}: {word}" for speaker, word in words)
+        assert podcast_text_reader._plain_text(saved, config) == old_projection
+        _, source, translation_input = podcast_transcript_translation._load_input(
+            session, episode_id="episode-reader", source_kind="publisher_transcript", config=config,
+        )
+        assert source.id == saved.id
+        assert translation_input == old_projection
+        assert len(session.exec(select(PodcastTextArtifactRecord)).all()) == 6
+        assert session.exec(select(PodcastProcessingRecord)).all() == []
+        assert session.exec(select(PodcastStageAttemptRecord)).all() == []
+
+
+def test_reader_cursor_rejects_changed_projection_and_legacy_offsets():
+    import pytest
+    from services import podcast_text_reader as reader
+
+    artifact = _artifact("episode-reader", "publisher_transcript", "immutable source")
+    args = {"query": "", "limit": 5, "cursor_secret": "test-secret"}
+    first = reader._page(artifact, text="one two three", cursor="", **args)
+    assert reader._page(artifact, text="one two three", cursor=first["next_cursor"], **args)["text"] == "wo th"
+    with pytest.raises(reader.PodcastTextReaderBadRequest, match="失效"):
+        reader._page(artifact, text="ONE TWO THREE", cursor=first["next_cursor"], **args)
+
+    # A genuinely signed pre-fix cursor can have an in-range offset while
+    # pointing at a different word; deployment must force a first-page refresh.
+    legacy_payload = {"v": 2, "a": artifact.id, "h": artifact.content_hash, "k": artifact.kind,
+                      "o": 5, "q": hashlib.sha256(b"").hexdigest()}
+    encoded = base64.urlsafe_b64encode(json.dumps(legacy_payload).encode()).decode().rstrip("=")
+    signature = hmac.new(b"test-secret", f"podcast-text-cursor-v2.{encoded}".encode(), hashlib.sha256).digest()
+    legacy = encoded + "." + base64.urlsafe_b64encode(signature).decode().rstrip("=")
+    with pytest.raises(reader.PodcastTextReaderBadRequest):
+        reader._page(artifact, text="one two three", cursor=legacy, **args)

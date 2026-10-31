@@ -123,8 +123,8 @@ class ParsedTranscript:
     # Validated publisher document after UTF-8 BOM/line-ending normalization.
     # This is the immutable evidence stored and hashed by the text artifact.
     source_text: str
-    # Plain text is a bounded QA/summary projection only; it must never replace
-    # timing/speaker-bearing publisher evidence in the artifact.
+    # Plain text is a bounded QA/summary projection (or opt-in reading view);
+    # it must never replace timing/speaker-bearing evidence in the artifact.
     text: str
     segment_count: int
 
@@ -333,7 +333,105 @@ def _json_time(segment: dict[str, Any], names: tuple[str, ...]) -> Any:
     return None
 
 
-def _parse_json(value: str, *, max_segments: int, max_text_chars: int) -> ParsedTranscript:
+# Reading is an opt-in projection: ingestion and downstream QA retain the exact
+# original line-per-segment projection and its validation limits.
+_READING_PARAGRAPH_CHARS = 600
+_READING_SENTENCE_BREAK_CHARS = 300
+_CJK = re.compile(r"[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]")
+_SENTENCE_END = re.compile(r"[.!?。！？][\"'”’）)]*$")
+_ABBREVIATION = re.compile(r"(?:[A-Za-z]\.){2,}$|\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|vs|etc)\.$", re.I)
+
+
+@dataclass(frozen=True)
+class _ReadingSegment:
+    text: str
+    speaker: str
+    start: float | None
+    end: float | None
+
+
+def _word_sized(text: str) -> bool:
+    # A local run of short, single-token segments is strong evidence of word
+    # timestamps. Never merge ordinary multiword sentence/paragraph segments.
+    return not any(char.isspace() for char in text) and len(text) <= (
+        4 if _CJK.search(text) else 40
+    )
+
+
+def _sentence_end(text: str) -> bool:
+    return bool(_SENTENCE_END.search(text)) and not _ABBREVIATION.search(text)
+
+
+def _join_reading_token(previous: str, token: str) -> str:
+    if not previous:
+        return token
+    if token == '"':
+        return previous + ('"' if previous.count('"') % 2 else ' "')
+    if (
+        token[0] in ",.;:!?，。；：！？、)]}）】》”’"
+        or previous[-1] in "([{（【《“‘"
+        or (previous[-1] in "'’" and token.lower() in {"m", "re", "ve", "ll", "d", "s", "t"})
+        or token.startswith(("'", "’"))
+        or token.lower() in {"n't", "n’t"}
+        or (previous[-1] == '"' and previous.count('"') % 2)
+        or (_CJK.search(token[0]) and (
+            _CJK.search(previous[-1]) or previous[-1] in "，。；：！？、）】》”"
+        ))
+    ):
+        return previous + token
+    return previous + " " + token
+
+
+def _reading_word_run(segments: list[_ReadingSegment]) -> list[str]:
+    paragraphs: list[str] = []
+    body = ""
+    previous: _ReadingSegment | None = None
+    for segment in segments:
+        joined = _join_reading_token(body, segment.text)
+        if previous is not None and (
+            segment.speaker != previous.speaker
+            or (segment.start is not None and previous.end is not None
+                and segment.start - previous.end > 2.0)
+            or (len(body) >= _READING_SENTENCE_BREAK_CHARS and _sentence_end(body)
+                and segment.text[0] not in "\"'”’）)],.;:!?，。；：！？")
+            or len(joined) + (len(segment.speaker) + 2 if segment.speaker else 0)
+            > _READING_PARAGRAPH_CHARS
+        ):
+            paragraphs.append(f"{previous.speaker}: {body}" if previous.speaker else body)
+            body = segment.text
+        else:
+            body = joined
+        previous = segment
+    if previous is not None:
+        paragraphs.append(f"{previous.speaker}: {body}" if previous.speaker else body)
+    return paragraphs
+
+
+def _json_reading_text(segments: list[_ReadingSegment]) -> str:
+    lines: list[str] = []
+    index = 0
+    while index < len(segments):
+        end = index
+        while end < len(segments) and _word_sized(segments[end].text):
+            end += 1
+        run = segments[index:end]
+        if len(run) >= 4 and sum(not _sentence_end(item.text) for item in run) > len(run) / 2:
+            # Blank lines mark paragraphs only for confirmed word-level runs.
+            lines.append("\n\n".join(_reading_word_run(run)))
+            index = end
+        else:
+            # Consume rejected runs in one pass as well (many short complete
+            # sentences must not make the conservative detector quadratic).
+            end = max(end, index + 1)
+            for segment in segments[index:end]:
+                lines.append(f"{segment.speaker}: {segment.text}" if segment.speaker else segment.text)
+            index = end
+    return "\n".join(lines)
+
+
+def _parse_json(
+    value: str, *, max_segments: int, max_text_chars: int, for_reading: bool = False
+) -> ParsedTranscript:
     try:
         document = json.loads(value)
     except (json.JSONDecodeError, ValueError, RecursionError) as exc:
@@ -347,6 +445,7 @@ def _parse_json(value: str, *, max_segments: int, max_text_chars: int) -> Parsed
     if len(segments) > max_segments:
         raise PublisherTranscriptMalformed("发布者逐字稿超过 segment 数量上限")
     texts: list[str] = []
+    reading_segments: list[_ReadingSegment] = []
     previous_start = -1.0
     for segment in segments:
         if not isinstance(segment, dict):
@@ -358,6 +457,7 @@ def _parse_json(value: str, *, max_segments: int, max_text_chars: int) -> Parsed
         end_value = _json_time(segment, ("endTime", "end_time", "end"))
         if (start_value is None) != (end_value is None):
             raise PublisherTranscriptMalformed("Podcasting 2.0 segment 时间码不完整")
+        start = end = None
         if start_value is not None:
             start, end = _timestamp(start_value), _timestamp(end_value)
             if end < start or start < previous_start:
@@ -370,12 +470,20 @@ def _parse_json(value: str, *, max_segments: int, max_text_chars: int) -> Parsed
             raise PublisherTranscriptMalformed("Podcasting 2.0 segment 内容为空")
         speaker = str(segment.get("speaker") or "").strip()
         texts.append(f"{speaker}: {text}" if speaker else text)
-    return _bounded_segments(
+        if for_reading:
+            reading_segments.append(_ReadingSegment(text, speaker, start, end))
+    parsed = _bounded_segments(
         texts,
         source_text=value,
         max_segments=max_segments,
         max_text_chars=max_text_chars,
     )
+    if not for_reading:
+        return parsed
+    reading_text = _json_reading_text(reading_segments)
+    if len(reading_text) > max_text_chars:
+        raise PublisherTranscriptMalformed("发布者逐字稿超过文本字符上限")
+    return ParsedTranscript(parsed.source_text, reading_text, parsed.segment_count)
 
 
 def parse_transcript(
@@ -384,6 +492,7 @@ def parse_transcript(
     *,
     max_segments: int,
     max_text_chars: int,
+    for_reading: bool = False,
 ) -> ParsedTranscript:
     value = _decode(body, max_text_chars=max_text_chars)
     if format == "vtt":
@@ -391,7 +500,10 @@ def parse_transcript(
     if format == "srt":
         return _parse_srt(value, max_segments=max_segments, max_text_chars=max_text_chars)
     if format == "json":
-        return _parse_json(value, max_segments=max_segments, max_text_chars=max_text_chars)
+        return _parse_json(
+            value, max_segments=max_segments, max_text_chars=max_text_chars,
+            for_reading=for_reading,
+        )
     if format == "text":
         probe = value.lstrip().lower()
         if probe.startswith("<!doctype") or probe.startswith("<html"):

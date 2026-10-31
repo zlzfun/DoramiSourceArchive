@@ -79,6 +79,8 @@
 
 ## plans/ —— 活跃方案(☐ 进行中 / 排队中;落地后归档)
 
+- ☐ [issue-246-transcript-paragraphs.md](plans/issue-246-transcript-paragraphs.md) — 发布方词级 JSON 逐字稿阅读分段、游标兼容与历史稿验证。
+
 - ☐ [plans/issue-121-event-layer-research.md](./plans/issue-121-event-layer-research.md) — **issue #121 方向调研报告(2026-10-23)**:48 天本机语料 + 三轮精修金标上实测规则 / 词面召回 + 模型 / 向量召回 + 模型 / 纯向量 / LLM 签名 / 日报复用六条路线与产品供给、热度、事件链模拟;结论已回写方案 R2。
 - ☐ [plans/issue-121-event-layer.md](./plans/issue-121-event-layer.md) — **多源事件层:同事件归并、热点榜与早报去重共用一份归属(issue #121 + #103,R1 路径)**:平台级持久事件层、机械召回 + 辅助模型归属、48h/24h 半衰热度、四波(回放 → 事件层 + 榜 → 早报去重 → Agent 查询);2026-10-23 拍板主路线 = FTS5 召回 + 辅助模型(不引入 embedding),排队中。
 - ☐ [plans/issue-178-content-classification.md](./plans/issue-178-content-classification.md) — **内容分类与双评分(issue #178)**:第一波 / 第一波补 / 第二波 / 3a 已上线(v3.64),3b 播客提示词拆分与 3c 新闻尺子收紧排队,分区空板率与论文名额观察期。
