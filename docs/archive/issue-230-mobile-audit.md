@@ -1,6 +1,7 @@
 # 手机端审计清单(issue #230 阶段 1 · A)
 
-> 状态:进行中(2026-10-27 审计产出,待阶段 2 拍板取舍)。父方案 [`issue-230-mobile-wave.md`](./issue-230-mobile-wave.md)。
+> **归档于 2026-10-31(issue #230,开发版 3.67.4-alpha,待用户目检与发布)**:现状以 docs/architecture/、`docs/frontend/conventions.md` §10「移动端」与代码为准,文中路径与状态为当时记录。
+> 状态:已落地待发布(2026-10-27 审计产出;46 条逐条处理状态见表内「状态」列,§6 真机项待用户真机验收)。父方案 [`issue-230-mobile-wave.md`](./issue-230-mobile-wave.md)。
 > 审计方:Claude Opus 5.5 子代理(只审不修,未改 `src/` / `frontend/src/`)。基线:`feat/issue-230-mobile-wave` @ `6f825e7`(v3.67.1 之上的开工提交,3.68.0-alpha)。
 
 ## 方法与复跑

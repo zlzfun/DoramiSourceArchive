@@ -631,7 +631,7 @@ Markdown / KaTeX 只经 `components/ReaderMarkdown`(轻入口,按需拉 `ReaderM
 与 1024 / 1025 首启分流。已知未修的审计项写进 `KNOWN_OPEN`(照测照记、不判失败;修好后不再复现即要求删条目)。
 每批沙箱自查 360 / 390 / 430 × 亮暗,层逐个过——系统返回只关最上层且不离站、Esc、点遮罩、抓手点按与下拖、焦点进出与读屏名、
 下层 inert;桌面 1280 截图前后比对并量关键元素。
-真机清单见 `docs/plans/issue-230-mobile-audit.md` §6(R-01 ~ R-20)。
+真机清单见 `docs/archive/issue-230-mobile-audit.md` §6(R-01 ~ R-20)。
 
 ---
 

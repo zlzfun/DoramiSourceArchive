@@ -81,8 +81,6 @@
 
 - ☐ [plans/issue-121-event-layer-research.md](./plans/issue-121-event-layer-research.md) — **issue #121 方向调研报告(2026-10-23)**:48 天本机语料 + 三轮精修金标上实测规则 / 词面召回 + 模型 / 向量召回 + 模型 / 纯向量 / LLM 签名 / 日报复用六条路线与产品供给、热度、事件链模拟;结论已回写方案 R2。
 - ☐ [plans/issue-121-event-layer.md](./plans/issue-121-event-layer.md) — **多源事件层:同事件归并、热点榜与早报去重共用一份归属(issue #121 + #103,R1 路径)**:平台级持久事件层、机械召回 + 辅助模型归属、48h/24h 半衰热度、四波(回放 → 事件层 + 榜 → 早报去重 → Agent 查询);2026-10-23 拍板主路线 = FTS5 召回 + 辅助模型(不引入 embedding),排队中。
-- ☐ [plans/issue-230-mobile-wave.md](./plans/issue-230-mobile-wave.md) — **手机端(H5 / 窄屏)系统性前端优化波(issue #230)**:定向 / 同期边界 / 编排 / 审计取舍 / 移动规范草案 / 拍板清单;阶段 1 已出审计;视觉方向选定 C 夜航,样页在 `design/issue-230-mobile/`(第 7 轮返修)。
-- ☐ [plans/issue-230-mobile-audit.md](./plans/issue-230-mobile-audit.md) — **#230 阶段 1 手机端审计清单**:46 条发现(P1 1 / P2 18 / P3 27)、断点清单、触控量化、逐页走查、功能缺口、性能、20 项真机待验;截图与脚本在 worktree `tmp/`。
 - ☐ [plans/issue-178-content-classification.md](./plans/issue-178-content-classification.md) — **内容分类与双评分(issue #178)**:第一波 / 第一波补 / 第二波 / 3a 已上线(v3.64),3b 播客提示词拆分与 3c 新闻尺子收紧排队,分区空板率与论文名额观察期。
 - ☐ [plans/issue-82-node-watchdog-layer1.md](./plans/issue-82-node-watchdog-layer1.md) — **节点看护第一层:抓取失败判定升级(issue #82)**:R2 稿已拍板,PR-0 已修调度重载 bug,PR-A / B / C(产出轴 `yield_status`、收据先行、看护页)未动工;生产回放校准结论在此。
 - ☐ [plans/issue-97-podcast-cost-and-scoring.md](./plans/issue-97-podcast-cost-and-scoring.md) — **Podcast 成本门控与评分标定(issue #97)**:P0 门控已上线;P1 六组 32 输入黄金集与提示词调整未启动。
@@ -95,6 +93,7 @@
 
 ## archive/ —— 已完结方案与执行记录(⊘ 归档;索引 [archive/README.md](./archive/README.md))
 
+- ⊘ [issue-230-mobile-wave.md](archive/issue-230-mobile-wave.md) — 手机端系统性重构(issue #230):定向、样页九轮拍板、分批实录(§8.1)与 Codex 两轮检视(§7);审计 46 条在 [issue-230-mobile-audit.md](archive/issue-230-mobile-audit.md)。实现与检视完成,待用户目检与发布。
 - ⊘ [issue-246-transcript-paragraphs.md](archive/issue-246-transcript-paragraphs.md) — 发布方词级 JSON 阅读与翻译分段；英文、真实中文展示均经用户验收，已授权提交 MR，未合入、未发布。
 
 计划已落地或被取代的文档,按「故事」分组:2026-07 的阅读器演进五轮 / 源扩容 / 静默仪器重构 / 前后端重构 / 实体简化 / crawl4ai 选型 / 竞品对照,以及 2026-10-21 归档的 28 篇 2026-07 → 2026-10 波次方案(评分与早报 / 检索与翻译 / 播客 / 来源 / 管理面 / 部署运维 / 视觉),Podcast Intelligence 的 spec-kit 规格与报告在 `archive/podcast-intelligence/`。**查决策来龙去脉才来这里;判断现状看 `docs/architecture/` 与代码。**

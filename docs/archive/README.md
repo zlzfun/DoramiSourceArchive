@@ -5,6 +5,11 @@
 > `docs/frontend/conventions.md` / `docs/sources/curation_policy.md` 等活跃文档。
 > 按「故事」分组索引;文内常含 ☐/☑ 进度符,均为当时状态。
 
+## 手机端系统性重构(2026-10,issue #230)
+
+- [issue-230-mobile-wave.md](./issue-230-mobile-wave.md) — 主档:用户口径与同期边界、样页九轮返修与拍板(§6)、默认表(§8)、批 1 → 4c 逐批实录与偏差 / 真机待验(§8.1)、Codex 两轮交叉检视(§7)。
+- [issue-230-mobile-audit.md](./issue-230-mobile-audit.md) — 阶段 1 审计:46 条发现(P1 1 / P2 18 / P3 27)及逐条处理状态、断点 / 触控 / 性能量化、20 项真机待验(§6)。
+
 ## 发布方逐字稿阅读与翻译分段(2026-10,issue #246)
 
 - [issue-246-transcript-paragraphs.md](./issue-246-transcript-paragraphs.md) — 词级 JSON 分段、翻译缓存升级、179 项回归与真实翻译记录；英文及中文页面验收通过，用户已授权提交 MR，未合入、未发布。
