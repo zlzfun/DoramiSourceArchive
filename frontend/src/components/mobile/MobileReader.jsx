@@ -816,7 +816,8 @@ export default function MobileReader({
       />
 
       {/* ── 全局播放条(issue #199):挂在本外壳里,层级在正文页(40)之上、抽屉 / 动作单(50 / 60)之下 ── */}
-      <PlayerDock mobile hostRef={playerHostRef} mobilePage={playerPage} onOpenItem={openPlayingItem} />
+      {/* routeKey = 底栏 Tab(mTab):只在切底栏 Tab 时悬浮卡一并收起;showToast:停止播放后的「撤销」提示条(issue #230 批 3d) */}
+      <PlayerDock mobile hostRef={playerHostRef} mobilePage={playerPage} onOpenItem={openPlayingItem} routeKey={mTab} showToast={showToast} />
     </div>
   );
 }

@@ -211,6 +211,7 @@
   --r-card: 14px;       /* 卡片、面板、列表容器 */
   --r-overlay: 16px;    /* 模态、浮层、hero/全屏面 */
   --r-pill: 9999px;     /* 胶囊、头像、圆形控件 */
+  --r-float: 24px;      /* 手机悬浮卡(播放器展开态,issue #230 拍板 32 / 34) */
 
   /* ── 壳层几何(布局波 L1)──
      lg+ 为左侧固定导轨(--rail-w)且无顶栏(--app-top:0);
@@ -11680,42 +11681,256 @@ input[type="radio"] {
   .player-fx-ticker { display: flex; overflow: hidden; }
   .player-fx-ticker.player-info-slot { flex-direction: column; justify-content: center; }
 
-  /* ── 手机:列表页条在底部 Tab 栏之上,push 页贴安全区之上;推页时一起平移(transform,可合成) ── */
-  .player-layer.is-mobile { z-index: 45; left: 0; }   /* 正文页(40)之上;抽屉 50 / 设置柜 55 / 动作单 60 之下 */
-  .player-layer.is-mobile .player-dock { transition: transform var(--player-settle-dur, 420ms) var(--player-settle-ease, var(--motion-ease)); }
-  .player-layer.is-mobile[data-page="tabs"] .player-dock { transform: translateY(calc(-1 * var(--player-tabbar, 0px))); }
-  .player-layer.is-mobile .player-bar {
-    left: 8px;
-    right: 8px;
-    bottom: calc(8px + env(safe-area-inset-bottom));
-    height: auto;
-    touch-action: none;   /* 往下拖缩小:手势归条,不滚页面 */
-    -webkit-touch-callout: none;
-    user-select: none;
-  }
-  .player-layer.is-mobile .player-mini { right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); }
-  /* 移动壳(视口 ≤ 1024,触屏)的触控命中区,与容器宽度无关(容器查询只管排版):按钮宽 ≥ 40、播放钮 44;
-     其余控件命中区一律 42px 高、以控件中线为心(中心上下 20px 都落在控件上),只在条内、左右不外扩,不压相邻控件 */
-  .player-layer.is-mobile .player-bar-in .player-btn { min-width: 40px; }
-  .player-layer.is-mobile .player-bar-in .player-play { width: 44px; height: 44px; }
-  .player-layer.is-mobile .player-retry { position: relative; }
-  .player-layer.is-mobile .player-bar-in :is(.player-btn, .player-retry)::after {
-    content: '';
-    position: absolute;
-    top: 50%;
-    right: 0;
+  /* ══ 手机播放器(issue #230 阶段 3 批 3d;样页 docs/design/issue-230-mobile 拍板 32 / 33 / 34,细节页 details/player-card.html B1)══
+     坞 = 一行 60px 浮动胶囊(封面进度环 · 标题 / 副行 · 一枚播放钮);点坞身或往上拖展开成悬浮卡(player/usePlayerCard.js)。
+     列表页坞与卡浮在底栏之上 --m-float(--player-tabbar = 底栏顶到视口底,JS 按布局位置量),正文页 / 推入页在安全区之上
+     --m-float;卡底 = 坞底;推页时一起平移(transform,可合成)。手机退役迷你(mini 在手机上按坞画)。
+     坞与卡都垫实色(--player-bg = raised,封面模糊底叠在上面):文章导读没有封面时背后的正文不会透出。
+     本段之外的播放条规则(.player-bar-in / .player-mini / 容器查询)只在桌面渲染,手机不出这些元素。 ══ */
+  .player-layer.is-mobile {
+    z-index: 45;   /* 正文页(40)之上;抽屉 50 / 设置柜 55 / 动作单 60 之下 */
     left: 0;
-    height: 42px;
-    margin-top: -21px;
+    --player-dock-h: 60px;
+    --player-gutter: var(--m-gutter, 12px);   /* 与浮动底栏同宽(样页 --c-gutter) */
+    --player-floor: calc(var(--sab) + var(--m-float));   /* 坞底 / 卡底到视口底 */
+    --player-c-well: color-mix(in oklab, var(--dorami-ink) 8%, transparent);       /* ±15 的浅底 */
+    --player-c-well-on: color-mix(in oklab, var(--dorami-ink) 15%, transparent);   /* 倍速 ≠ 1 */
+    --player-hair: color-mix(in oklab, var(--dorami-ink) 14%, transparent);        /* 细环 / 竖细线 */
   }
-  .player-layer.is-mobile .player-track { height: 32px; }
-  .player-layer.is-mobile .player-track-in { top: 50%; bottom: auto; height: 42px; margin-top: -21px; }
+  .player-layer.is-mobile[data-page="tabs"] { --player-floor: calc(var(--player-tabbar, var(--sab)) + var(--m-float)); }
+  .player-layer.is-mobile .player-dock { transition: transform var(--player-settle-dur, 420ms) var(--player-settle-ease, var(--motion-ease)); }
+  .player-layer.is-mobile[data-page="tabs"] .player-dock { transform: translateY(calc(var(--sab) - var(--player-tabbar, var(--sab)))); }
+  /* 底栏随滚动退场时坞跟着落、卡开着时叫回底栏:见 mobile.css 末尾的「播放器段」(要压过壳的无层级规则) */
+  .player-layer.is-mobile :is(.player-bar, .player-card) {
+    left: calc(var(--player-gutter) + var(--sal));
+    right: calc(var(--player-gutter) + var(--sar));
+    bottom: calc(var(--sab) + var(--m-float));
+  }
+
+  /* ── 坞 ── */
+  .player-layer.is-mobile .player-bar {
+    height: var(--player-dock-h);
+    border-radius: var(--r-pill);
+    box-shadow: var(--glass-ring), var(--glass-shadow);
+    touch-action: none;   /* 往上拖展开:手势归坞,不滚页面 */
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    transition: opacity var(--motion-medium) var(--motion-ease) 100ms, visibility 0s;
+  }
+  /* 卡开着:坞在卡底下淡出、随后藏起(读屏与 Tab 都不进);收起时 100ms 后淡回 */
+  .player-layer.is-mobile[data-card="open"] .player-bar {
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity var(--motion-fast) var(--motion-ease), visibility 0s linear var(--motion-fast);
+  }
+  .player-dock-row { position: relative; z-index: 1; display: flex; align-items: center; height: 100%; padding: 0 8px; }
+  .player-layer.is-mobile .player-dock-row .player-info { flex: 1; gap: 10px; min-height: 48px; margin: 0; padding: 0; border-radius: var(--r-pill); }
+  .player-layer.is-mobile .player-dock-row .player-art { position: relative; width: 44px; height: 44px; }
+  .player-layer.is-mobile .player-dock-row .player-art-slot { position: absolute; inset: 4px; width: auto; height: auto; }
+  .player-layer.is-mobile .player-dock-row .player-cover { border-radius: var(--r-pill); }
+  .player-layer.is-mobile .player-dock-row .player-ring { width: 44px; height: 44px; }
+  .player-layer.is-mobile .player-dock-row .player-info-slot { flex: 1; gap: 1px; }
+  .player-layer.is-mobile .player-dock-row .player-title { font-size: var(--m-fs-sm); }
+  /* 副行(拍板 34 第 9 条):节目名单独截断,倍速(≠ 1 时)/「AI 生成」/ 时间常显 */
+  .player-layer.is-mobile .player-sub { gap: 0; font-size: var(--m-fs-xs); font-variant-numeric: tabular-nums; }
+  .player-layer.is-mobile :is(.player-sub, .player-ident-sub) > * { flex: none; }
+  .player-layer.is-mobile :is(.player-sub, .player-ident-sub) > .player-sub-text { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .player-layer.is-mobile :is(.player-sub, .player-ident-sub) .player-dot { margin: 0 4px; }
+  .player-layer.is-mobile :is(.player-sub, .player-ident-sub) .player-spark { width: 11px; height: 11px; margin-right: 3px; vertical-align: -1px; }
+  .player-rate-tag {
+    margin-right: 6px;
+    padding: 0 5px;
+    border-radius: var(--r-sm);
+    background: var(--player-c-well-on);
+    color: var(--player-fg);
+    font-weight: 600;
+    line-height: 16px;
+  }
+  .player-sub-err { color: var(--player-fg); font-weight: 600; }
+  .player-layer.is-mobile .player-dock-row .player-play { width: var(--tap); height: var(--tap); margin: 0 0 0 4px; }
+  .player-layer.is-mobile .player-dock-row :is(.player-play-ico, .player-play-ico svg) { width: 16px; height: 16px; }
+
+  /* ── 悬浮卡(B1):外层管影子与抓手(抓手不进裁切层,命中区才能伸出卡外),里层管圆角裁切与开合的 clip-path ── */
+  .player-card {
+    position: absolute;
+    z-index: 2;
+    border-radius: var(--r-float);
+    pointer-events: auto;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    transition: box-shadow 260ms var(--motion-ease);
+  }
+  .player-card[hidden] { display: none; }
+  .player-card[data-settled] { box-shadow: var(--glass-ring), var(--sh-3); }
+  .player-card:focus { outline: none; }   /* 指针打开时焦点落在卡本身(读屏念出「播放器」),不画焦点环 */
+  .player-card-clip {
+    position: relative;
+    overflow: hidden auto;
+    isolation: isolate;
+    max-height: calc(var(--vh-full) - var(--sat) - 12px - var(--player-floor));   /* 卡最高到状态栏下 12px,超了卡内滚 */
+    border-radius: inherit;
+    background-color: var(--player-bg);
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+  }
+  .player-card-in { position: relative; z-index: 1; padding: 28px 16px 14px; }
+  /* 整卡可往下拖收起:手势归卡;卡内要滚(大字号)时竖向让给滚动,下拖只认抓手 */
+  .player-card,
+  .player-card-clip,
+  .player-card-in { touch-action: none; }
+  .player-card[data-scrolls] :is(.player-card-clip, .player-card-in) { touch-action: pan-y; }
+  /* 抓手(拍板 33):真按钮,看得见的胶囊 38 × 5、离卡顶 9px;命中区 120 × 44,上沿伸出卡外 16px */
+  .player-grab {
+    position: absolute;
+    z-index: 3;
+    top: -16px;
+    left: 50%;
+    display: grid;
+    align-content: start;
+    width: 120px;
+    height: var(--tap);
+    margin-left: -60px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-pill);
+    background: transparent;
+    cursor: grab;
+    touch-action: none;
+  }
+  .player-grab-bar {
+    display: block;
+    width: 38px;
+    height: 5px;
+    margin: 25px auto 0;
+    border-radius: var(--r-pill);
+    background: var(--dorami-border-strong);
+    transition: background-color var(--motion-fast) var(--motion-ease), transform var(--motion-fast) var(--motion-ease);
+  }
+  .player-grab:active .player-grab-bar { background: color-mix(in oklab, var(--dorami-ink) 30%, transparent); transform: scaleX(1.15); }
+  .player-grab:focus-visible { outline: none; }
+  .player-grab:focus-visible .player-grab-bar { outline: 2px solid var(--dorami-focus); outline-offset: 4px; }
+  /* 这一期:封面 48 + 标题(宋体 600 16 / 23,两行截断)+「节目 · 音轨 ›」;整块推入这一期 / 这篇文章 */
+  .player-ident {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
+    min-height: var(--tap);
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .player-ident-art { flex: none; display: block; width: 48px; height: 48px; margin-top: 2px; }
+  .player-ident-art .player-cover { border-radius: var(--r-control); box-shadow: var(--sh-1); }
+  .player-ident-art .player-cover.is-ai { box-shadow: none; }
+  .player-ident-text { flex: 1; display: grid; gap: 2px; min-width: 0; }
+  .player-ident-title {
+    display: -webkit-box;
+    overflow: hidden;
+    color: var(--player-fg);
+    font-family: var(--font-serif);
+    font-size: var(--m-fs-lg);
+    font-weight: 600;
+    line-height: 23px;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+  .player-ident-sub {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--player-fg-2);
+    font-size: var(--m-fs-xs);
+    line-height: 18px;
+    white-space: nowrap;
+  }
+  .player-sub-track { display: inline-flex; align-items: center; }
+  .player-ident-go { width: 13px; height: 13px; margin-left: 2px; }
+  /* 进度行:时间黑体 tabular,轨命中区 44 高;两端与下面一排钮的外沿对齐 */
+  .player-card-seek { display: flex; align-items: center; gap: 10px; height: var(--tap); margin-top: 6px; }
+  .player-card-seek .player-time { min-width: 34px; font-size: var(--m-fs-xs); }
+  .player-card-seek .player-cur { text-align: left; }
+  .player-card-seek .player-dur { text-align: right; }
+  .player-card-seek .player-track { height: var(--tap); min-width: 0; }
+  .player-card-seek .player-track-in { inset: 0; }
+  .player-layer[data-error] .player-card-seek { justify-content: center; gap: 8px; }
+  .player-card-seek .player-retry { position: relative; height: var(--tap-inline); padding: 0 14px; font-size: var(--m-fs-sm); }
+  .player-card-seek .player-retry::after { content: ''; position: absolute; inset: -6px 0; }
+  /* B1 一排五钮:倍速(细环,写当前档位)· | · −15 · 播放 · +15 · | · 停止(细环);倍速左沿 / 停止右沿对齐进度行两端,
+     中间三枚居中(组内 10),两道竖细线分三组,组间距随宽度(360 宽 22) */
+  .player-card-row { display: flex; align-items: center; justify-content: space-between; margin-top: 2px; }
+  .player-ctrio { display: flex; align-items: center; gap: 10px; }
+  .player-cdiv { flex: none; width: 1px; height: 22px; background: var(--player-hair); }
+  .player-cbtn {
+    position: relative;
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 48px;
+    height: 48px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-pill);
+    background: transparent;
+    color: var(--player-fg);
+    cursor: pointer;
+    transition: transform var(--motion-fast) var(--motion-ease), background-color var(--motion-fast) var(--motion-ease);
+  }
+  .player-cbtn.is-well { background: var(--player-c-well); }
+  .player-cbtn.is-ring { box-shadow: inset 0 0 0 1px var(--player-hair); color: var(--dorami-ink-2); }
+  .player-crate.is-on { background: var(--player-c-well-on); box-shadow: none; color: var(--player-fg); }
+  .player-crate span { font-size: var(--m-fs-sm); font-weight: 600; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+  .player-cstop svg { width: 14px; height: 14px; }
+  .player-cskip-g { position: relative; display: grid; place-items: center; width: 26px; height: 26px; }
+  .player-cskip-g svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .player-cskip-g b { position: relative; top: 0.5px; font-size: var(--m-fs-xs); font-weight: 600; line-height: 1; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+  .player-layer.is-mobile .player-card-row .player-play {
+    width: 48px;
+    height: 48px;
+    margin: 0;
+    transition: transform var(--motion-fast) var(--motion-ease), background-color var(--motion-fast) var(--motion-ease);
+  }
+  .player-layer.is-mobile .player-card-row :is(.player-play-ico, .player-play-ico svg) { width: 17px; height: 17px; }
+  .player-layer.is-mobile :is(.player-cbtn, .player-card-row .player-play):active { transform: scale(0.92); }
+  @media (hover: hover) {
+    .player-cbtn:is(.is-well, .is-ring):hover { background: var(--player-c-well-on); }
+    .player-ident:hover .player-ident-title {
+      text-decoration: underline;
+      text-decoration-color: color-mix(in oklab, var(--player-fg) 30%, transparent);
+      text-underline-offset: 3px;
+    }
+  }
+
+  /* ── 卡外的淡压暗:列表页压在列表之上、底栏之下(z 15,底栏要高于它);正文页 / 推入页整屏压在页之上、卡之下(z 42) ── */
+  /* 遮罩色比层原语的 --m-scrim 淡(样页 .c-pscrim):在包层上改写变量,.m-dim(mobile.css,无层级)读到的就是这一档 */
+  .player-scrim {
+    --m-scrim: rgba(8, 10, 14, 0.18);
+    position: absolute;
+    inset: 0;
+    z-index: 15;
+    opacity: 0;
+    pointer-events: none;
+    touch-action: none;   /* 背后不滚 */
+    transition: opacity var(--motion-medium) var(--motion-ease);
+  }
+  [data-theme="dark"] .player-scrim { --m-scrim: rgba(0, 0, 0, 0.42); }
+  .player-scrim.is-on { opacity: 1; pointer-events: auto; animation: player-scrim-in var(--motion-medium) var(--motion-ease); }
+  .player-scrim[data-page="page"] { z-index: 42; }
+  @keyframes player-scrim-in { from { opacity: 0; } }
+  :root[data-motion="reduce"] .player-layer.is-mobile :is(.player-cbtn, .player-card-row .player-play):active { transform: none; }
 
   /* ── 让位:各滚动区底部留出条的位置(宿主 .reader-ws 上的 data-player;容器侧用 max() 取较大者) ── */
   .reader-ws.is-desktop[data-player="bar"] { --player-clear: calc(var(--player-bar-h, 72px) + 28px); --player-clear-end: var(--player-clear); }
   .reader-ws.is-desktop[data-player="mini"] { --player-clear-end: 88px; }
-  .reader-ws.is-mobile[data-player="bar"] { --player-clear-end: calc(var(--player-bar-h, 94px) + 24px); }
-  .reader-ws.is-mobile[data-player="mini"] { --player-clear-end: 84px; }
+  .reader-ws.is-mobile[data-player="bar"] { --player-clear-end: calc(var(--player-bar-h, 60px) + var(--m-float) + 16px); }   /* 手机只有坞(迷你已退役) */
   /* 问哆啦美浮钮:条出现时让到条之上,迷你时让到迷你左边;落点压住静止指针时先不接指针事件 */
   .reader-ws[data-fab-settling] .reader-ai-fab { pointer-events: none; }
 
@@ -11723,7 +11938,10 @@ input[type="radio"] {
      画布色:进度轨 / 已播段 / 拖柄(与迷你的进度环)改用系统色区分,滑块的聚焦从拖柄外圈的阴影改成系统色 outline */
   @media (forced-colors: active) {
     .player-bar,
-    .player-mini { border: 1px solid CanvasText; }
+    .player-mini,
+    .player-card { border: 1px solid CanvasText; }
+    .player-cbtn { border: 1px solid ButtonText; }
+    .player-grab-bar { background: CanvasText; }
     .player-play { border: 1px solid ButtonText; }
     .player-rail { background: GrayText; }
     .player-fill { background: Highlight; }
