@@ -14,7 +14,9 @@ const shortTitle = (text) => (text.length > GRAB_TITLE_MAX ? `${text.slice(0, GR
 // ↑ ↓ / Home / End 走项(漫游 tabindex),Esc 由层栈消费,不再自挂 document 监听。
 // 正文「⋯」底页(issue #230 批 3c)不带对象标题:label 直接给层名(「更多操作」,抓手念「关闭更多操作」),
 // className 给面板换样式(is-float = 样页 read-menu 的浮动磨砂卡)。
-export default function ActionSheet({ open, title = '', items = [], onClose, label: labelProp = '', className = '' }) {
+// preview(issue #230 批 3b,样页拍板 5「长按写清对象」):给了就在动作单上方浮一张抬起的预览卡,代替一行对象标题;
+// 预览卡只读(aria-hidden、不接指针,点它等于点遮罩),读屏仍由动作单名说清对象。
+export default function ActionSheet({ open, title = '', items = [], onClose, label: labelProp = '', className = '', preview = null }) {
   const menuRef = useRef(null);
   const label = labelProp || (title ? `「${shortTitle(title)}」的操作` : '操作');
   return (
@@ -24,7 +26,9 @@ export default function ActionSheet({ open, title = '', items = [], onClose, lab
       label={label}
       grabLabel={`关闭${label}`}
       className={className}
-      head={title ? <div className="m-sheet-obj">{title}</div> : null}
+      head={preview
+        ? <div className="m-sheet-peek" aria-hidden="true">{preview}</div>
+        : title ? <div className="m-sheet-obj">{title}</div> : null}
       initialFocus={(panel, { keyboard }) => (keyboard
         ? menuRef.current?.querySelector('[role="menuitem"]')
         : menuRef.current) || panel}

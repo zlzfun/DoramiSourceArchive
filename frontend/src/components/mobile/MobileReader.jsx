@@ -40,6 +40,7 @@ import { motionReduced } from '../../motion';
 import ActionSheet from './ActionSheet';
 import LayerPage from '../layer/LayerPage';
 import { rebuildToast } from '../../utils/briefRebuild';
+import { briefMenuItems } from '../../utils/briefMenu';
 import PersonalBriefPage from '../PersonalBriefPage';
 import InterestPage from '../InterestPage';
 import RankingsPage from '../RankingsPage';
@@ -280,6 +281,11 @@ export default function MobileReader({
     // 动作单标题随「默认显示中文标题」(issue #218);系统分享面板仍带原题(对外内容,分享页也只有原题)
     setSheet({ title: displayTitle(article, preferChinese), items, anchorKey: `article:${article.id}` });
   };
+  // 早报卡长按(issue #230 批 3b,拍板 13 / 5):同一张文章动作单;早报快照不带读态,读态一项不给;上方是抬起的预览卡
+  const openBriefSheet = (article, { anchorKey, preview }) => {
+    openArticleSheet(article);
+    setSheet((current) => current && { ...current, items: briefMenuItems(current.items), anchorKey, preview });
+  };
   const openSourceSheet = (source) => setSheet({
     title: source.name || source.source_id,
     items: buildSourceMenuItems(source),
@@ -501,6 +507,8 @@ export default function MobileReader({
             onBrowse={() => setTab(mode)}
             favoriteIds={favoriteIds}
             onToggleFavorite={(articleId) => handleToggleFavorite({ id: articleId })}
+            onItemMenu={openBriefSheet}
+            menuAnchorKey={sheet?.anchorKey || null}
             onSubscribeSource={subscribeSourceById}
             guest={rs.isGuest}
             onGuestLogin={() => onGuestLogin?.()}
@@ -835,6 +843,7 @@ export default function MobileReader({
         open={Boolean(sheet)}
         title={sheet?.title || ''}
         items={sheet?.items || []}
+        preview={sheet?.preview || null}
         onClose={() => setSheet(null)}
       />
 

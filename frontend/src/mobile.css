@@ -48,11 +48,9 @@
   transition: height var(--motion-sheet) var(--motion-sheet-ease);
 }
 .m-shell[data-receded]::after { height: calc(var(--sab) + var(--m-float) + max(24px, var(--player-clear-end, 0px))); }
-/* 早报整页是纸面(surface),渐隐到同一底色,不在头条下面压出一条灰带 */
-.m-shell[data-tab="brief"]::after { background: linear-gradient(to top, var(--dorami-surface) 18%, color-mix(in oklab, var(--dorami-surface) 70%, transparent) 52%, transparent); }
-/* 有坞时(样页):底栏与坞之间那 8px 缝不透出正文——底色一直铺到渐隐层顶上 56px 才淡出(坞自身垫实色) */
+/* 有坞时(样页):底栏与坞之间那 8px 缝不透出正文——底色一直铺到渐隐层顶上 56px 才淡出(坞自身垫实色);
+   早报与内容 Tab 同一画布底(批 3b),不再单列纸面色 */
 .reader-ws[data-player="bar"] .m-shell::after { background: linear-gradient(to top, var(--rd-list-bg) calc(100% - 56px), transparent); }
-.reader-ws[data-player="bar"] .m-shell[data-tab="brief"]::after { background: linear-gradient(to top, var(--dorami-surface) calc(100% - 56px), transparent); }
 
 /* 提示浮在底栏上方：收藏/请求失败后的反馈仍可见，也不挡住中间的导航按钮。
    底栏约 64px，额外留 16px；仅作用移动壳，桌面提示位置不变。 */
@@ -131,7 +129,14 @@
   display: flex;
   flex-direction: column;
 }
-/* 榜单是移动端一级 Tab；桌面页在这里收敛为单列并接管内容区滚动。页头标题位接管「榜单」与类型分段,范围说明是第一块 */
+/* ════ 批 3b 早报与榜单(issue #230 阶段 3;样页 docs/design/issue-230-mobile/ 的 早报 / 往期月历 / 榜单 屏)════
+   只作用手机壳:早报 = .bp-sheet.is-mobile(PersonalBriefPage mobile)、往期底页 = .m-hist-sheet、长按预览卡 = .m-sheet-peek、
+   榜单 = .rankings-page.is-mobile;桌面早报 / 往期浮层 / 榜单不受影响。
+   index.css 的 .bp-* / .bp-cal-* 是未分层且排在本文件之后的规则,这里一律多挂一级类名压过它们(.bp-sheet.is-mobile … / .m-sheet.m-hist-sheet …)。
+   字号只用 --m-fs-* 八档(conventions §10);刻度之外的只有早报头条的展示字号(37)与分数身份线(评分栏 40)。 */
+
+/* ── 榜单 Tab:页头标题位接管「榜单」与 文章榜 / 播客榜(批 2),范围说明是页头下第一块,
+      话题 / 产业 / 实体 是带镜片拇指的宽分段,榜卡是夜航卡面(样页 rankings 屏)── */
 .m-content > .rankings-page {
   grid-column: auto;
   flex: 1;
@@ -140,32 +145,366 @@
   overflow-y: auto;
   overscroll-behavior: contain;
 }
-.m-content > .rankings-page.is-mobile > .ranking-head-note { margin: 0; padding: 4px 8px 0; font-size: var(--m-fs-xs); line-height: 1.6; color: var(--dorami-faint); }
-.m-content .ranking-head { align-items: center; gap: 10px; }
-.m-content .ranking-head .reader-disc-title { font-size: 20px; }
-.m-content .ranking-head-note { font-size: 12px; }
-.m-content .ranking-head .reader-seg-btn { padding-inline: 9px; }
-.m-content .ranking-axis { margin-top: 14px; overflow-x: auto; }
-.m-content .ranking-axis button { flex: 1; min-width: 74px; }
-.m-content .ranking-layout { grid-template-columns: minmax(0, 1fr); gap: 10px; margin-top: 10px; }
-.m-content .ranking-tags,
-.m-content .ranking-detail,
-.m-content .ranking-must,
-.m-content .ranking-global { padding: 12px; }
-.m-content .ranking-must,
-.m-content .ranking-global { margin-top: 10px; }
-.m-content .ranking-trend svg { width: 120px; }
-.m-content .ranking-section-head > div { align-items: flex-start; flex-direction: column; gap: 2px; }
-.m-content .ranking-content-row { grid-template-columns: 20px minmax(0, 1fr) 34px; padding-inline: 4px; }
-/* 我的早报(issue #184 夜航版式):与桌面同一张页面,单列,页面自己滚;issue #230 第 2 批起眉头并进手机页头
-   (头像 · 早报 · 日期钮 = 往期 · 重新编排 / 回到今天),头条从页头下第一块起,环境光往上铺到页头后面 */
+.rankings-page.is-mobile > .ranking-head-note { width: auto; margin: 4px 8px 2px; padding: 0; font-size: var(--m-fs-xs); line-height: 1.6; color: var(--dorami-faint); }
+/* 宽分段:磨砂槽 + 镜片拇指,拇指只按第几项定位(--i / --n 由 RankingsPage 写),弹簧滑动;字重恒 400,选中只换墨色 */
+.rankings-page.is-mobile .ranking-axis {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr));
+  align-items: center;
+  gap: 0;
+  width: auto;
+  height: var(--tap);
+  margin: 6px 0 0;
+  padding: 0 3px;
+  border-bottom: 0;
+  overflow: visible;
+}
+.rankings-page.is-mobile .ranking-axis::before {
+  content: "";
+  position: absolute;
+  inset: 4px 0;
+  border-radius: var(--r-pill);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-ring), var(--glass-edge);
+}
+.rankings-page.is-mobile .ranking-axis::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 7px;
+  bottom: 7px;
+  width: calc((100% - 6px) / var(--n, 3));
+  border-radius: var(--r-pill);
+  background: var(--dorami-surface);
+  box-shadow: var(--sh-1), inset 0 0 0 0.5px var(--dorami-border-soft);
+  transform: translateX(calc(var(--i, 0) * 100%));
+  transition: transform var(--motion-sheet) var(--motion-sheet-ease);
+  pointer-events: none;
+}
+[data-theme="dark"] .rankings-page.is-mobile .ranking-axis::after { background: color-mix(in oklab, var(--dorami-ink) 16%, transparent); box-shadow: var(--glass-edge); }
+.rankings-page.is-mobile .ranking-axis button,
+.rankings-page.is-mobile .ranking-axis button:hover,
+.rankings-page.is-mobile .ranking-axis button.is-on {
+  position: relative;
+  z-index: 1;
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0 8px;
+  background: none;
+  font-size: var(--m-fs-sm);
+  font-weight: 400;
+  color: var(--dorami-muted);
+}
+.rankings-page.is-mobile .ranking-axis button.is-on { color: var(--dorami-ink); }
+.rankings-page.is-mobile .ranking-coverage-note { width: auto; margin: 12px 0 0; }
+.rankings-page.is-mobile .ranking-state { width: auto; min-height: calc(var(--vh-full) * 0.44); font-size: var(--m-fs-sm); }
+.rankings-page.is-mobile .ranking-layout { display: block; width: auto; margin: 0; }
+.rankings-page.is-mobile .ranking-tags,
+.rankings-page.is-mobile .ranking-detail,
+.rankings-page.is-mobile .ranking-global,
+.rankings-page.is-mobile .ranking-must {
+  width: auto;
+  margin: 12px 0 0;
+  padding: 0 0 6px;
+  border: 0;
+  border-radius: var(--r-card);
+  background: var(--m-card);
+  box-shadow: var(--sh-1);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  overflow: hidden;
+}
+.rankings-page.is-mobile .ranking-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px 8px;
+  min-height: 0;
+  margin: 0;
+  padding: 14px 16px 6px;
+}
+.rankings-page.is-mobile .ranking-section-head > div { display: contents; }
+.rankings-page.is-mobile .ranking-must .ranking-section-head { display: grid; justify-content: stretch; }
+.rankings-page.is-mobile .ranking-section-head .card-title { font-size: var(--m-fs-base); line-height: 1.4; }
+.rankings-page.is-mobile .ranking-section-head .card-title svg { width: 16px; height: 16px; color: var(--dorami-accent-ink); }
+.rankings-page.is-mobile .ranking-section-head .tiny-meta { font-size: var(--m-fs-xs); line-height: 1.55; color: var(--dorami-faint); }
+.rankings-page.is-mobile .ranking-tags ol { margin: 0; }
+.rankings-page.is-mobile .ranking-tag-row,
+.rankings-page.is-mobile .ranking-tag-row:hover {
+  grid-template-columns: 24px minmax(0, 1fr) auto 32px;
+  gap: 10px;
+  min-height: var(--tap);
+  padding: 0 16px;
+  border-radius: 0;
+  background: none;
+  color: var(--dorami-ink);
+}
+.rankings-page.is-mobile .ranking-tag-row:active { background: var(--dorami-hover); }
+.rankings-page.is-mobile .ranking-tag-row.is-on { background: var(--dorami-wash); }
+.rankings-page.is-mobile .ranking-tag-rank,
+.rankings-page.is-mobile .ranking-content-rank {
+  font-family: var(--font-score);
+  font-size: var(--m-fs-lg);
+  font-weight: 600;
+  text-align: center;
+  color: var(--dorami-faint);
+  font-variant-numeric: lining-nums tabular-nums;
+}
+.rankings-page.is-mobile .ranking-tag-name { font-size: var(--m-fs-base); font-weight: 400; }
+.rankings-page.is-mobile .ranking-tag-row.is-on .ranking-tag-name { font-weight: 600; }
+.rankings-page.is-mobile .ranking-tag-row strong { font-size: var(--m-fs-md); font-weight: 600; color: var(--dorami-ink-2); }
+.rankings-page.is-mobile .ranking-move { font-size: var(--m-fs-xs); white-space: nowrap; }
+.rankings-page.is-mobile .ranking-move.is-new { color: var(--dorami-accent-ink); }
+/* 30 日趋势:标题行在上、折线铺满卡宽(样页 .c-trend),不再是浅底小块 */
+.rankings-page.is-mobile .ranking-trend { display: block; min-height: 0; margin: 2px 16px 6px; padding: 0; border-radius: 0; background: none; color: var(--dorami-accent); }
+.rankings-page.is-mobile .ranking-trend > div { flex-direction: row; justify-content: space-between; margin: 0 0 4px; }
+.rankings-page.is-mobile .ranking-trend .section-title,
+.rankings-page.is-mobile .ranking-trend .tiny-meta { font-size: var(--m-fs-xs); font-weight: 400; line-height: 1.5; color: var(--dorami-faint); }
+.rankings-page.is-mobile .ranking-trend svg { display: block; width: 100%; height: 42px; }
+.rankings-page.is-mobile .ranking-content-row,
+.rankings-page.is-mobile .ranking-content-row:hover {
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: 10px;
+  min-height: 56px;
+  padding: 8px 16px;
+  border-top: 0;
+  background: none;
+}
+.rankings-page.is-mobile .ranking-content-row:active { background: var(--dorami-hover); }
+.rankings-page.is-mobile .ranking-content-main { gap: 2px; }
+.rankings-page.is-mobile .ranking-content-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  white-space: normal;
+  font-size: var(--m-fs-md);
+  font-weight: 400;
+  line-height: 1.5;
+}
+.rankings-page.is-mobile .ranking-content-meta { font-size: var(--m-fs-xs); }
+/* 分数身份线(§3):宋体齐线数字 + AI 渐变分档(.ai-grad-text + 档位类,颜色由它们给) */
+.rankings-page.is-mobile .ranking-content-score { font-family: var(--font-score); font-size: var(--m-fs-read); font-weight: 600; line-height: 1; font-variant-numeric: lining-nums tabular-nums; }
+.rankings-page.is-mobile .ranking-empty { margin: 0; padding: 8px 16px 12px; font-size: var(--m-fs-sm); }
+
+/* ── 早报 Tab(样页 brief 屏):画布底 + 夜航卡;页面自己滚,页头让位用 ::before 垫片(见下方 .m-list::before 一组) ── */
 .m-content > .bp-sheet { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .bp-sheet.is-mobile {
+  background: transparent;
   padding-bottom: calc(var(--m-tab-clear) + max(16px, var(--player-clear-end, 0px)));
 }
-.bp-sheet.is-mobile .bp-poster { padding-top: 0; }
+.bp-sheet.is-mobile > .bp-wrap { padding: 0; }
+.bp-sheet.is-mobile .bp-poster { padding: 0 0 28px; }
+.bp-sheet.is-mobile .bp-poster > .bp-wrap { padding: 0 20px; }
 .bp-sheet.is-mobile .bp-light { top: calc(-1 * var(--m-head-clear)); }
-.bp-sheet.is-mobile .bp-notice { margin-top: 0; }
+/* 状态提示行:图标与首行文字同行(审计 M-23:flex 换行时图标独占一行),就地动作的命中扩到 44 高 */
+.bp-sheet.is-mobile .bp-notice { display: block; margin: 0 0 14px; font-size: var(--m-fs-sm); line-height: 1.6; }
+.bp-sheet.is-mobile .bp-notice svg { display: inline-block; margin-right: 6px; vertical-align: -2px; }
+.bp-sheet.is-mobile .bp-notice-act { position: relative; margin-left: 6px; }
+.bp-sheet.is-mobile .bp-notice-act::after { content: ""; position: absolute; inset: -12px -6px; }
+/* 头条:整块可点(标题按钮的 ::after 铺满 .bp-mhead),按下压暗一档、缩到 0.99;摘要下文字级「全文 ›」 */
+.bp-sheet.is-mobile .bp-head.is-m { padding: 0; }
+.bp-sheet.is-mobile .bp-mhead {
+  position: relative;
+  margin: 0 -12px;
+  padding: 4px 12px 12px;
+  border-radius: var(--r-card);
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: background-color var(--motion-fast) var(--motion-ease), transform var(--motion-medium) var(--motion-sheet-ease), opacity var(--motion-medium) var(--motion-ease);
+}
+.bp-sheet.is-mobile .bp-mhead:has(.bp-head-open:active) { background: var(--dorami-hover); transform: scale(0.99); transition-duration: 100ms; }
+.bp-sheet.is-mobile .bp-mhead:has(.bp-head-open:focus-visible) { outline: 2px solid var(--dorami-focus); outline-offset: 2px; }
+.bp-sheet.is-mobile .bp-mhead.is-ctx-anchor { background: none; opacity: 0.35; }
+.bp-sheet.is-mobile .bp-kicker { margin: 8px 0 14px; font-size: var(--m-fs-sm); letter-spacing: 0.16em; }
+.bp-sheet.is-mobile .bp-title { max-width: none; font-size: 37px; line-height: 1.17; cursor: auto; }   /* 早报头条展示字号(刻度之外,样页 37) */
+.bp-sheet.is-mobile .bp-head-open { display: inline; padding: 0; border: 0; background: none; font: inherit; color: inherit; letter-spacing: inherit; text-align: left; cursor: pointer; }
+.bp-sheet.is-mobile .bp-head-open::after { content: ""; position: absolute; inset: 0; border-radius: var(--r-card); }
+.bp-sheet.is-mobile .bp-head-open:focus-visible { outline: none; }
+.bp-sheet.is-mobile .bp-orig { margin: 14px 0 0; font-size: var(--m-fs-base); }
+.bp-sheet.is-mobile .bp-meta { gap: 4px 6px; margin: 16px 0 0; font-size: var(--m-fs-sm); color: var(--dorami-faint); }
+.bp-sheet.is-mobile .bp-meta .bp-src { gap: 6px; }
+.bp-sheet.is-mobile .bp-sum { margin: 10px 0 0; max-width: none; font-size: var(--m-fs-lg); line-height: 1.8; -webkit-line-clamp: 4; text-wrap: pretty; }
+.bp-sheet.is-mobile .bp-head.is-note .bp-sum { margin-top: 12px; }
+.bp-sheet.is-mobile .bp-title.is-note { font-size: var(--m-fs-display); line-height: 1.3; }
+.bp-sheet.is-mobile .bp-more { display: inline-flex; align-items: center; gap: 2px; margin-top: 12px; font-size: var(--m-fs-sm); color: var(--dorami-muted); }
+.bp-sheet.is-mobile .bp-more svg { width: 14px; height: 14px; }
+.bp-sheet.is-mobile .bp-verdict { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 16px; align-items: center; margin-top: 14px; padding: 0; box-shadow: none; }
+.bp-sheet.is-mobile .bp-verdict-label { grid-column: 1 / -1; font-size: var(--m-fs-xs); }
+.bp-sheet.is-mobile .bp-verdict-score { grid-row: 2; margin: 4px 0 0; font-size: 40px; }   /* 分数身份线(刻度之外,样页 40) */
+.bp-sheet.is-mobile .bp-verdict-reason { grid-row: 2; font-size: var(--m-fs-sm); line-height: 1.7; }
+/* 状态块(编排中 / 失败 / 没有早报):标题收进刻度,高度走 --vh-full(审计 M-30),动作钮命中 44 */
+.bp-sheet.is-mobile .bp-state { min-height: calc(var(--vh-full) * 0.46); }
+.bp-sheet.is-mobile .bp-state-title { font-size: var(--m-fs-xl); }
+.bp-sheet.is-mobile .bp-state-meta { font-size: var(--m-fs-base); }
+.bp-sheet.is-mobile .bp-btn { height: var(--tap); font-size: var(--m-fs-md); }
+/* 板块:板块名是吸在页头之下的磨砂胶囊(样页第 9 轮回填第 10 条:top = 页头下沿 + 4,不钻进页头镀层) */
+.bp-sheet.is-mobile .bp-act { display: block; padding: 6px 0 10px; box-shadow: none; }
+.bp-sheet.is-mobile .bp-act-head {
+  position: sticky;
+  top: var(--m-head-clear);
+  z-index: 3;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: fit-content;
+  margin: 10px 0 6px var(--m-gutter);
+  padding: 8px 16px;
+  border-radius: var(--r-pill);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-ring), var(--glass-edge);
+}
+.bp-sheet.is-mobile .bp-act-name { font-size: var(--m-fs-read); line-height: 1.3; letter-spacing: 0.08em; }
+.bp-sheet.is-mobile .bp-act-count { margin: 0; font-size: var(--m-fs-xs); letter-spacing: 0; }
+.bp-sheet.is-mobile .bp-items { display: block; }
+/* 条目 = 夜航卡:整卡可点(标题按钮 ::after 铺满卡)、按下缩到 0.985、可长按;没有英文原标题与收藏星(拍板 13 / 14) */
+.bp-sheet.is-mobile .bp-item {
+  margin: 0 var(--m-gutter) 10px;
+  padding: 14px 16px 12px;
+  border-radius: var(--r-card);
+  background: var(--m-card);
+  box-shadow: var(--sh-1);
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: transform var(--motion-medium) var(--motion-sheet-ease), opacity var(--motion-medium) var(--motion-ease);
+}
+.bp-sheet.is-mobile .bp-item:has(.bp-item-open:active) { transform: scale(0.985); transition-duration: 100ms; }
+.bp-sheet.is-mobile .bp-item:has(.bp-item-open:focus-visible) { outline-offset: 2px; }
+.bp-sheet.is-mobile .bp-item.is-ctx-anchor { background: var(--m-card); opacity: 0.35; }
+.bp-sheet.is-mobile .bp-item-open::after { inset: 0; border-radius: var(--r-card); }
+.bp-sheet.is-mobile .bp-item-title { font-size: var(--m-fs-read); line-height: 1.5; letter-spacing: 0; }
+.bp-sheet.is-mobile .bp-item-sum { margin: 6px 0 0; font-size: var(--m-fs-md); line-height: 1.7; }
+.bp-sheet.is-mobile .bp-item-meta { gap: 4px 6px; min-height: 22px; margin-top: 8px; font-size: var(--m-fs-xs); }
+.bp-sheet.is-mobile .bp-item-meta .bp-src { gap: 6px; }
+.bp-sheet.is-mobile .bp-item-meta .bp-src-name { font-size: var(--m-fs-sm); }
+.bp-sheet.is-mobile .bp-meta > .bp-time::before,
+.bp-sheet.is-mobile .bp-meta > .bp-why::before,
+.bp-sheet.is-mobile .bp-meta > .bp-also::before,
+.bp-sheet.is-mobile .bp-item-meta > .bp-time::before,
+.bp-sheet.is-mobile .bp-item-meta > .bp-why::before,
+.bp-sheet.is-mobile .bp-item-meta > .bp-also::before { margin-right: 6px; font-size: inherit; }
+.bp-sheet.is-mobile .bp-item-meta > .bp-score { margin-left: auto; padding-left: 4px; }
+.bp-sheet.is-mobile .bp-item-meta > .bp-score::before { content: none; }
+/* 行内次要钮(「+ 订阅」「另见 N 篇」)命中扩到 44 高;触屏没有悬停,「+ 订阅」常显(conventions §10 悬停三分法 ②) */
+.bp-sheet.is-mobile .bp-unsub::after,
+.bp-sheet.is-mobile .bp-also::after { content: ""; position: absolute; inset: -11px -4px; }
+@media (hover: none) {
+  .bp-sheet.is-mobile .bp-unsub { color: var(--dorami-accent-ink); }
+  .bp-sheet.is-mobile .bp-unsub::before { content: "+ 订阅"; }
+  /* 桌面的装饰性悬停(换底)在触屏上会在点过之后粘住 */
+  .bp-sheet.is-mobile .bp-chip:hover { background: none; color: var(--dorami-ink-2); }
+}
+/* 本期编排:一张卡;入选句按正在看的那一期写(utils/briefStats),往期日期胶囊命中 44 */
+.bp-sheet.is-mobile .bp-credits { display: block; margin: 8px var(--m-gutter) 0; padding: 16px 18px; border-radius: var(--r-card); background: var(--m-card); box-shadow: var(--sh-1); }
+.bp-sheet.is-mobile .bp-credits-title { margin: 0 0 8px; font-size: var(--m-fs-lg); line-height: 1.4; letter-spacing: 0.08em; }
+.bp-sheet.is-mobile .bp-credits dl { grid-template-columns: 48px minmax(0, 1fr); gap: 6px 10px; font-size: var(--m-fs-sm); }
+.bp-sheet.is-mobile .bp-credits dt { padding-top: 0; font-size: var(--m-fs-sm); letter-spacing: 0; }
+.bp-sheet.is-mobile .bp-credits dd { line-height: 1.6; }
+.bp-sheet.is-mobile .bp-credits-act { position: relative; margin-left: 6px; }
+.bp-sheet.is-mobile .bp-credits-act::after { content: ""; position: absolute; inset: -12px -6px; }
+.bp-sheet.is-mobile .bp-chip { position: relative; height: 32px; font-size: var(--m-fs-sm); }
+.bp-sheet.is-mobile .bp-chip::after { content: ""; position: absolute; inset: -6px -4px; }
+
+/* ── 往期底页月历(样页拍板 12「往期月历(定稿)」;BriefHistorySheet = 层原语 Sheet):
+      标题行 往期早报 · ‹ 月份 ›;格子 44 圆,只分有(墨色)/ 没有(灰)两态,正在看 = 实底圆,今天一个蓝点;多版的版次排在月历下方 ── */
+.m-hist-head { display: flex; align-items: center; gap: 12px; padding: 2px 0 4px 10px; }
+.m-hist-title { flex: 1; margin: 0; font-size: var(--m-fs-xl); font-weight: 600; line-height: 1.3; color: var(--dorami-ink); }
+.m-hist-nav { display: flex; align-items: center; }
+/* 翻月钮压在抓手命中区之上:抓手条整宽、命中 44,会盖住标题行上沿几像素 */
+.m-hist-navbtn { position: relative; z-index: 1; }
+.m-hist-navbtn[aria-disabled="true"] { opacity: 0.35; }
+.m-hist-month { min-width: 96px; margin: 0; text-align: center; font-size: var(--m-fs-base); font-weight: 600; color: var(--dorami-ink); font-variant-numeric: tabular-nums; }
+.m-hist-body { padding: 0 4px; }
+.m-sheet.m-hist-sheet .bp-cal-grid { width: 100%; border-collapse: separate; border-spacing: 0 2px; table-layout: fixed; }
+.m-sheet.m-hist-sheet .bp-cal-grid th { height: 28px; font-size: var(--m-fs-xs); }
+.m-sheet.m-hist-sheet .bp-cal-day,
+.m-sheet.m-hist-sheet .bp-cal-day:hover {
+  width: var(--tap);
+  height: var(--tap);
+  border-radius: 50%;
+  background: none;
+  font-size: var(--m-fs-base);
+  color: var(--dorami-faint);
+  transition: background-color var(--motion-fast) var(--motion-ease);
+}
+.m-sheet.m-hist-sheet .bp-cal-day[aria-disabled="true"] { opacity: 0.5; }
+.m-sheet.m-hist-sheet .bp-cal-day.has-ed { color: var(--dorami-ink); }
+.m-sheet.m-hist-sheet .bp-cal-day.has-ed:active { background: var(--dorami-hover); }
+.m-sheet.m-hist-sheet .bp-cal-day.is-on,
+.m-sheet.m-hist-sheet .bp-cal-day.is-on:hover { background: var(--dorami-ink); color: var(--dorami-surface); font-weight: 600; }
+.m-sheet.m-hist-sheet .bp-cal-day:focus-visible { outline-offset: 2px; }
+.m-sheet.m-hist-sheet .bp-cal-dot { bottom: 5px; }
+.m-sheet.m-hist-sheet .bp-cal-day.is-on .bp-cal-dot { background: currentColor; }
+.m-sheet.m-hist-sheet .bp-cal-revs { margin-top: 4px; padding: 4px 6px 0; box-shadow: none; }
+.m-sheet.m-hist-sheet .bp-cal-revs-label { margin: 0; font-size: var(--m-fs-xs); }
+.m-sheet.m-hist-sheet .bp-cal-rev-list { gap: 0 8px; }
+.m-sheet.m-hist-sheet .bp-cal-rev,
+.m-sheet.m-hist-sheet .bp-cal-rev:hover {
+  position: relative;
+  isolation: isolate;
+  height: var(--tap);
+  padding: 0 14px;
+  background: none;
+  box-shadow: none;
+  font-size: var(--m-fs-sm);
+  color: var(--dorami-ink-2);
+}
+/* 看得见的胶囊 32 高,命中整钮 44 */
+.m-sheet.m-hist-sheet .bp-cal-rev::before { content: ""; position: absolute; z-index: -1; inset: 6px 0; border-radius: var(--r-pill); box-shadow: inset 0 0 0 1px var(--dorami-border-strong); }
+.m-sheet.m-hist-sheet .bp-cal-rev.is-on { color: var(--dorami-surface); font-weight: 600; }
+.m-sheet.m-hist-sheet .bp-cal-rev.is-on::before { background: var(--dorami-ink); box-shadow: none; }
+.m-sheet.m-hist-sheet .bp-cal-rev.is-on .bp-cal-aux { color: inherit; opacity: 0.75; }
+
+/* ── 长按动作单上方的预览卡(样页拍板 5「长按写清对象 = 抬起预览卡」;ActionSheet preview):
+      浮在动作单之上 10px,左右同卡片外距;只读、不接指针(点它等于点遮罩);抬起 0.96 → 1 用弹簧 ── */
+.m-sheet-peek {
+  position: absolute;
+  left: calc(var(--m-gutter) + var(--sal));
+  right: calc(var(--m-gutter) + var(--sar));
+  bottom: calc(100% + 10px);
+  pointer-events: none;
+  animation: m-peek-lift var(--motion-sheet) var(--motion-sheet-ease) both;
+}
+@keyframes m-peek-lift {
+  from { transform: translateY(18px) scale(0.96); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+.bp-peek { padding: 14px 16px 12px; border-radius: var(--r-card); background: var(--m-card); box-shadow: var(--sh-3); }
+.bp-peek-title {
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-family: var(--font-serif);
+  font-size: var(--m-fs-read);
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--dorami-ink);
+}
+.bp-peek-title[lang="en"] { font-family: var(--font-serif-latin); }
+.bp-peek-sum {
+  margin: 6px 0 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--m-fs-md);
+  line-height: 1.7;
+  color: var(--dorami-ink-2);
+}
+.bp-peek-meta { display: flex; align-items: center; gap: 6px; min-height: 22px; margin-top: 8px; font-size: var(--m-fs-xs); color: var(--dorami-faint); white-space: nowrap; }
+.bp-peek-meta .bp-src-name { min-width: 0; font-size: var(--m-fs-sm); color: var(--dorami-ink-2); }
+.bp-peek-meta .bp-time::before { content: "·"; margin-right: 6px; }
+.bp-peek-meta .bp-score { margin-left: auto; padding-left: 4px; }
+/* ════ 批 3b 结束 ════ */
 .m-list {
   flex: 1;
   min-height: 0;
@@ -1076,7 +1415,6 @@
 .m-pill-in svg { width: 14px; height: 14px; flex: none; }
 .m-hist[aria-expanded="true"] .m-pill-in { background: var(--dorami-select); }
 .m-brief-acts { position: relative; display: flex; align-items: center; gap: 2px; }
-.m-brief-acts .bp-pop { right: 0; }   /* 往期月历锚在日期钮下,右沿对齐页头右沿,不出屏 */
 /* 搜索态:搜索框盖住整行(头像让位),「取消」收起并清空 */
 .m-head-search { gap: 4px; padding: 0 8px 0 12px; }
 .m-search-field {

@@ -81,3 +81,20 @@ export function clampKey(key, min, max) {
 export function monthLabel(monthKey) {
   return `${Number(monthKey.slice(0, 4))} 年 ${Number(monthKey.slice(5, 7))} 月`;
 }
+
+// 某一天在月历上的状态(桌面浮层与手机底页共用)。day = {revisions, latest} | undefined(没有早报);
+// todayLive = 今日早报正在编排。
+// - 桌面:有任何一版即可点;最新一版失败的日子标红(仍可点,点开看失败说明)。
+// - 手机底页(issue #230 拍板 12,twoState):只分「有 / 没有」两态——失败日按「没有」灰显不可点;
+//   某天只要有一版不是失败就算有;今天恒算有(编排中 / 还没编排也能点开看状态);编排中的往期也算有。
+const LIVE_STATUS = new Set(['pending', 'generating']);
+export function calendarDayState(day, { isToday = false, todayLive = false, twoState = false } = {}) {
+  const revisions = day?.revisions || [];
+  const count = revisions.length;
+  const live = isToday ? Boolean(todayLive) : LIVE_STATUS.has(day?.latest?.status);
+  const latestFailed = !live && day?.latest?.status === 'failed';
+  const has = isToday || (twoState
+    ? revisions.some((rev) => rev.status !== 'failed')
+    : count > 0);
+  return { has, live, failed: !twoState && latestFailed, count };
+}
