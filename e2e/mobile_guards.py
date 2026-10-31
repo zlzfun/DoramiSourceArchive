@@ -119,6 +119,20 @@ class Guard:
         bad = [row for row in data["shell"] if row[1] > row[2] + 1]
         assert data["doc"][0] <= data["doc"][1] + 1 and not bad, (self.width, label, data)
 
+    def tab_trapped(self, container, label):
+        # Keyboard Tab / Shift+Tab keep cycling inside the layer and never escape it: roving menu items (tabIndex -1)
+        # and the inert preview card are not tab boundaries (codex review round 1, P2).
+        stops = container.evaluate("""el => [...el.closest('[data-layer-panel]').querySelectorAll(
+            'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]')]
+            .filter(e => e.tabIndex >= 0 && e.offsetParent !== null && !e.closest('[inert]')).length""")
+        assert stops > 0, (self.width, label, "no tab stop")
+        for key in ("Tab", "Shift+Tab"):
+            for step in range(stops + 2):
+                self.page.keyboard.press(key)
+                inside = container.evaluate("el => document.activeElement !== document.body && el.contains(document.activeElement)")
+                assert inside, (self.width, label, key, step)
+        return stops
+
     def long_press(self, locator, hold=750):
         box = locator.bounding_box()
         x, y = box["x"] + box["width"] / 2, box["y"] + min(box["height"] / 2, 40)
@@ -218,6 +232,8 @@ def run_viewport(launch, base_url, artifacts, width, height, out):
             g.settle()
             g.taps(".m-sheet [role=menuitem], .m-sheet .m-sheet-grab", "action sheet")
             g.note("long-press: the action sheet stays open after the finger lifts")
+            g.tab_trapped(action, "action sheet")
+            g.note("action sheet: Tab / Shift+Tab wrap inside the sheet (roving items and the preview card are not tab stops)")
             g.back()
             expect(action).to_have_count(0)
             expect(entries.first).to_be_visible()
@@ -338,9 +354,19 @@ def negative_controls(page, g, out):
     finally:
         field.evaluate("el => el.style.removeProperty('font-size')")
     g.back()
-    assert rejected == ["tap target", "input font"], rejected
+    # The Tab check must notice focus leaving its container: the menu alone is too small a box (Tab wraps to the grab)
+    g.long_press(page.locator(".m-list .reader-entry").nth(1))
+    expect(sheet(page)).to_be_visible()
+    g.settle()
+    try:
+        g.tab_trapped(page.locator(".m-sheet .m-sheet-menu"), "negative control: menu box")
+    except AssertionError:
+        rejected.append("tab trap")
+    g.back()
+    expect(sheet(page)).to_have_count(0)
+    assert rejected == ["tap target", "input font", "tab trap"], rejected
     out["negative_controls"] = rejected
-    g.note("negative controls: a half-size tab and a 13px input are rejected")
+    g.note("negative controls: a half-size tab, a 13px input and focus leaving a too-small box are rejected")
 
 
 def long_list_and_breakpoints(page, base_url, context, g, out):

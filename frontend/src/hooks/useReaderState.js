@@ -39,7 +39,7 @@ import {
   analysisTagSearch,
   preferredAnalysisSummary,
 } from '../utils/analysis';
-import { createListRegistry } from '../utils/articleList';
+import { createListRegistry, markReadMatcher } from '../utils/articleList';
 import { SOURCE_ROLES, sourceRoleOf } from '../sourceTaxonomy';
 import { usePolling } from './usePolling';
 import { useDebouncedValue } from './useDebouncedValue';
@@ -705,7 +705,7 @@ export function useReaderState({
     }
   }, []);
   const onListFresh = useCallback(() => setFreshCount(0), []);
-  const { loadArticles, handleLoadMore, hasMore } = useListLoader(listWindow, {
+  const { loadArticles, handleLoadMore, hasMore, refreshReadState } = useListLoader(listWindow, {
     query: listQuery,
     hidden: activeSourceHidden,
     showToast,
@@ -977,9 +977,12 @@ export function useReaderState({
   // ── 全部标读(当前范围:某来源 / 本容器 / 今日全订阅)──
   // 同一枚钮、同一份读态的两条写路:订阅轴(含单源)按源推水位;兴趣轴按范围逐篇写行——
   // 兴趣是跨源透镜,推水位会把源里未命中兴趣的文章一并标掉,越出读者看见的范围。
-  // plan = { sourceId, shape, interest, tagId };listArticles / unreadOnly / reload 是发起标读的那个列表实例
-  // (主列表或手机推入页,utils/articleList.pushMarkReadPlan),本页在列条目乐观清点。
-  const markListAllRead = async (plan, { listArticles = [], unreadOnly: listUnreadOnly = false, reload = null } = {}) => {
+  // plan = { sourceId, shape, interest, tagId };listArticles 是发起标读的那个列表实例(主列表或手机推入页,
+  // utils/articleList.pushMarkReadPlan)在列的条目。标完各实例一起对齐(codex 检视第 1 轮 P1-1:推入页标完回内容 Tab,
+  // 主列表不能还挂着已读条目):来源 / 订阅全集按 markReadMatcher 把各实例里同范围的条目转已读;兴趣轴后端逐篇写、
+  // 批次封顶,只有写满时发起实例在列的可乐观清点,其余实例(与没写满时的发起实例)按服务端读态静默校准;
+  // 只看未读的实例(含发起者)一律重拉。
+  const markListAllRead = async (plan, { listArticles = [] } = {}) => {
     if (markingRead || !plan) return;
     setMarkingRead(true);
     try {
@@ -987,18 +990,44 @@ export function useReaderState({
         ? await markScopeRead(plan.shape, plan.tagId)
         : await markAllRead(plan.sourceId, plan.sourceId ? null : plan.shape);
       const partial = Boolean(data?.has_more); // 兴趣轴批次封顶未写完:如实说,不谎称「已全部」
-      // 后端返回更新后的统计;本页在列条目全部乐观清点(标题即转已读态)。
+      // 后端返回更新后的统计
       prevScopeUnreadRef.current = null;
       applyUnreadCounts(data);
-      for (const a of listArticles) readOverridesRef.current.set(a.id, true);
+      const match = markReadMatcher(plan, { subscribedIds, shapeOf: shapeOfSource });
+      const ids = partial ? [] : listArticles.map((a) => a.id);
+      if (match) {
+        for (const a of articles) if (match(a)) ids.push(a.id);
+        ids.push(...listRegistry.idsWhere(match));
+      }
+      for (const id of ids) readOverridesRef.current.set(id, true);
       setReadOverrides(new Map(readOverridesRef.current));
-      if (listUnreadOnly) reload?.(); // 只看未读视图下列表应清空重拉
+      if (unreadOnly) loadArticles(0, false);   // 只看未读的视图应清空重拉
+      listRegistry.reloadUnreadOnly();
+      if (!match) calibrateReadState();
       showToast(partial ? '已标记一批,仍有未读,请再点一次' : '已全部标为已读', partial ? 'info' : 'success');
     } catch (error) {
       showToast(error.message || '标记已读失败', 'error');
     } finally {
       setMarkingRead(false);
     }
+  };
+  // 兴趣轴标读后的校准:不在只看未读的实例(主列表 + 推入页)静默重取窗口读态;服务端说已读、本会话却覆盖成未读的
+  // (早先手动「标为未读」)撤掉覆盖,不再遮蔽服务端结果。本会话覆盖成已读的保留(打开即读的写入可能还在路上)
+  const calibrateReadState = () => {
+    const jobs = listRegistry.refreshReadState();
+    if (!unreadOnly) jobs.push(refreshReadState());
+    Promise.all(jobs).then((results) => {
+      let changed = false;
+      for (const flags of results) {
+        for (const [id, unread] of flags) {
+          if (!unread && readOverridesRef.current.get(id) === false) {
+            readOverridesRef.current.delete(id);
+            changed = true;
+          }
+        }
+      }
+      if (changed) setReadOverrides(new Map(readOverridesRef.current));
+    });
   };
   // 主列表的范围(桌面列头 / 手机内容 Tab 页头的那枚钮;onClick 直接挂,忽略事件参数)
   const handleMarkAllRead = () => markListAllRead(
@@ -1008,7 +1037,7 @@ export function useReaderState({
       interest: scope.axis === 'interest' && !activeSourceId,
       tagId: activeTagId,
     },
-    { listArticles: articles, unreadOnly, reload: () => loadArticles(0, false) },
+    { listArticles: articles },
   );
 
   // ── 按源全部标读(右键菜单入口:不依赖当前视图范围,按条目/源行携带的 source_id)──
@@ -1306,9 +1335,23 @@ export function useReaderState({
 
   // 收藏入口(源栏,与「全部XX」并列):看本容器全部收藏(容器级、不逐源)。
   // Folo 语义——收藏是与「全部」并列的一级过滤,不再挂在列头逐源。
-  const goContainerAll = () => {
-    supersedePendingOpen(); setDiscover(false); setActiveSourceId(null); setActiveTagId(null);
+  // 只撤来源 / 兴趣下钻、读回记住的轴(不动发现页与在途的按 id 打开;换版式进手机时 ReaderWorkspace 直接用它)
+  const dropNarrowing = () => {
+    setActiveSourceId(null); setActiveTagId(null);
     setScopeState(readStoredScope(scopeUserRef.current, modeRef.current)); // 离开下钻:恢复记住的轴
+  };
+  const goContainerAll = () => {
+    supersedePendingOpen(); setDiscover(false); dropNarrowing();
+  };
+  // 正文那篇与主列表容器不一致时,主列表切到它的容器(codex 检视第 1 轮 P1-2):手机推入页里读的一篇,形态可能与内容 Tab
+  // 当前视图不同——从正文发起标签检索要落在它所属的容器;跨到桌面版式时阅读窗按主列表容器画(播客 / 文章,社交不开阅读窗)。
+  // keepArticle:经 deepLinkKeepRef 让这次换作用域保留右栏;modeRef 当场写,同一事件里随后的 goContainerAll 读到的是新容器
+  const alignModeToArticle = (article, { keepArticle = false } = {}) => {
+    const next = article?.source_id ? shapeOfSource(article.source_id) : null;
+    if (!next || next === modeRef.current) return;
+    if (keepArticle) deepLinkKeepRef.current = true;
+    modeRef.current = next;
+    applyMode(next);
   };
   // 栏头切轴:清掉两根轴的下钻项、落盘;点已点亮的段 = 回该轴全集(与点容器钮回聚合同义)。
   const setAxis = (axis) => {
@@ -1439,7 +1482,7 @@ export function useReaderState({
     // 视图 / 导航
     mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover, discoverShape, setDiscoverShape,
     socialView, podcastView, railActive, listTitle, listSubtitle,
-    goView, goSource, goTag, goContainerAll,
+    goView, goSource, goTag, goContainerAll, dropNarrowing, alignModeToArticle,
     // 内容类型筛选(issue #178)
     kindFilter, setKindFilter, kindFacetItems,
     // 左栏一根轴(issue #27 五稿)

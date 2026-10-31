@@ -481,10 +481,12 @@ export default function PersonalBriefPage({
     }
   }, [loadHistory]);
 
-  // 挂载时取走另一种版式交过来的位置(没有外出上下文时才用);StrictMode 的二次挂载取到空,不覆盖
+  // 挂载时取走另一种版式交过来的位置。它比外出上下文(restore)新:交接器只在真跨 1024 卸载时存、下一次挂载即取走,
+  // 而父级的 restore 是从正文返回那次留下的、之后没清——正文返回 → 换日期 / 版次 → 跨版式时,以交接的这份为准
+  // (codex 检视第 1 轮 P2,审计 M-36 漏掉的路径)。StrictMode 的二次挂载取到空,不覆盖
   useEffect(() => {
     const place = placeKeeper?.take?.();
-    if (place && !restoreRef.current) restoreRef.current = place;
+    if (place) restoreRef.current = place;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

@@ -11,7 +11,7 @@ import { createOverlayCloseGuard } from '../src/utils/overlayClose.js';
 import { createSheetDrag, SHEET_DRAG } from '../src/utils/sheetDrag.js';
 import { nextMenuIndex } from '../src/utils/menuNav.js';
 import { LAYER_KINDS, INERT_KEEP_SELECTOR, initialFocusTarget } from '../src/utils/layerKinds.js';
-import { inertOthers, resetInertState } from '../src/utils/inertOthers.js';
+import { inertOthers, inertStateSize, resetInertState } from '../src/utils/inertOthers.js';
 import { pinchTransform, settleTransform, clampScale, PINCH } from '../src/utils/pinchZoom.js';
 import eslintConfig from '../eslint.config.js';
 
@@ -270,6 +270,24 @@ test('inert:两层叠放按引用计数,上层关了下层的 inert 还在;原�
   assert.deepEqual(inertNames([list, root, preset]).sort(), ['list', 'preset'], '上层还原后正文页的 inert 仍在');
   releasePage();
   assert.deepEqual(inertNames([list, root, preset]), ['preset'], '原本就 inert 的节点保持原样');
+});
+
+test('inert:原本就 inert 的节点只跳过不登记——反复叠层不泄漏;它日后解除 inert 再被获取,还原照常(codex 检视 P2)', () => {
+  resetInertState();
+  const page = node('page');
+  const leaving = node('leaving');   // 正在播退场的底页:自己带着 inert
+  leaving.setAttribute('inert', '');
+  const body = node('body', [page, leaving]);
+  for (let i = 0; i < 100; i += 1) inertOthers([page], body)();
+  assert.equal(inertStateSize(), 0, '每层放手后登记清空,不攥着退场底页');
+  assert.deepEqual(inertNames([leaving]), ['leaving'], '原本的 inert 没被动');
+  // 同一个节点后来解除了 inert(重新打开),再被上层获取 / 释放:inert 能被摘掉
+  leaving.removeAttribute('inert');
+  const release = inertOthers([page], body);
+  assert.deepEqual(inertNames([leaving]), ['leaving']);
+  release();
+  assert.deepEqual(inertNames([leaving]), [], '旧版会因 preset 标记留下永久 inert');
+  assert.equal(inertStateSize(), 0);
 });
 
 // ── ⑦ 灯箱双指缩放(M-40) ──

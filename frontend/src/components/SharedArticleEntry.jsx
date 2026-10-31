@@ -1,5 +1,6 @@
 import { lazy, Suspense } from 'react';
 import { Loader2 } from 'lucide-react';
+import TabErrorBoundary from './TabErrorBoundary';
 
 // 公开分享页的入口壳(issue #230 审计 M-14 · 分享页独立入口):分享页自成一个 chunk,只有打开 #/s/… 的访客
 // 才下载它与它要的 Markdown / KaTeX 渲染器;此前 main.jsx 静态引入 SharedArticlePage,把这两样带进了每个人的入口包。
@@ -14,10 +15,14 @@ const FALLBACK = (
   </div>
 );
 
+// 分享分支在 App 的错误边界之外:chunk 拉取失败(断网 / 发版后旧资源失效)不能击穿到根白屏(codex 检视第 1 轮 P2)。
+// TabErrorBoundary 先「重试」,React.lazy 缓存了拒绝仍失败就变「刷新页面」整页重取;令牌在 hash 里,刷新不丢
 export default function SharedArticleEntry({ token }) {
   return (
-    <Suspense fallback={FALLBACK}>
-      <SharedArticlePage token={token} />
-    </Suspense>
+    <TabErrorBoundary>
+      <Suspense fallback={FALLBACK}>
+        <SharedArticlePage token={token} />
+      </Suspense>
+    </TabErrorBoundary>
   );
 }

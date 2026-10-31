@@ -16,7 +16,16 @@ const src = path.resolve(here, '../src');
 // 余下命中手机页面的只有收藏星(M-02)、发现页「已订阅」翻退订(M-03)、公告关闭钮(M-11)与 is-on / disabled 的「悬停复原」规则
 export const BASELINE = { 'index.css': 217, 'mobile.css': 6 };
 
-const GUARD = /^@media\b[^{]*\((?:any-)?hover\s*:\s*hover\)|^@media\b[^{]*\(pointer\s*:\s*fine\)|^@variant\s+hover\b/;
+const GUARD_FEATURE = /\((?:any-)?hover\s*:\s*hover\)|\(pointer\s*:\s*fine\)/;
+
+// 守卫 = @variant hover,或 @media 的每一段查询(逗号是「或」)都带守卫特性、且不以 not 开头(codex 检视第 1 轮 P3:
+// 只要整串里出现过守卫特性就放行,会把 `not (hover: hover)`、`(hover: hover), (pointer: coarse)` 误当成守卫)
+function isGuard(head) {
+  if (/^@variant\s+hover\b/.test(head)) return true;
+  const media = /^@media\b(.*)$/.exec(head);
+  if (!media) return false;
+  return media[1].split(',').every((query) => !/^\s*not\b/.test(query) && GUARD_FEATURE.test(query));
+}
 
 // 返回未守卫的 :hover 规则:[{ line, selector }]。按块解析(跳过注释与字符串),一条规则(选择器列表)记一次。
 export function unguardedHover(css) {
@@ -45,7 +54,7 @@ export function unguardedHover(css) {
     if (ch === '{') {
       const head = prelude.trim().replace(/\s+/g, ' ');
       const parentGuarded = stack.length ? stack[stack.length - 1].guarded : false;
-      const guarded = parentGuarded || GUARD.test(head);
+      const guarded = parentGuarded || isGuard(head);
       if (!guarded && !head.startsWith('@') && head.includes(':hover')) out.push({ line: preludeLine, selector: head });
       stack.push({ prelude: head, guarded });
       prelude = '';
@@ -85,7 +94,10 @@ test('悬停守卫:解析器的反向对照——裸 :hover 记一条,守卫内�
     '@media (hover: none) { .i:hover { color: red; } }',
     '@variant hover { .j:hover {} }',
     '@media (max-width: 767px) and (hover: hover) { .k:hover {} }',
+    '@media not (hover: hover) { .l:hover {} }',
+    '@media (hover: hover), (pointer: coarse) { .m:hover {} }',
+    '@media (hover: hover), (any-hover: hover) { .n:hover {} }',
   ].join('\n');
-  assert.deepEqual(unguardedHover(css).map((h) => h.selector), ['.a:hover', '.c:hover, .c:focus', '&:hover', '.i:hover']);
-  assert.deepEqual(unguardedHover(css).map((h) => h.line), [1, 3, 5, 6]);
+  assert.deepEqual(unguardedHover(css).map((h) => h.selector), ['.a:hover', '.c:hover, .c:focus', '&:hover', '.i:hover', '.l:hover', '.m:hover']);
+  assert.deepEqual(unguardedHover(css).map((h) => h.line), [1, 3, 5, 6, 9, 10]);
 });

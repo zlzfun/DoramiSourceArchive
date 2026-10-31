@@ -2,7 +2,7 @@
 // 不支持时退 100vh)或 dvh / svh——裸 vh 在手机上按「地址栏收起时」的最大视口算,弹窗 / 灯箱 / 整页会被地址栏裁掉一截。
 //   ① mobile.css(只在手机壳生效)不写裸 vh;
 //   ② index.css 里没有 dvh 兜底的裸 vh 冻结成计数,只许减不许增(存量是桌面 / 管理面整屏壳与登录页演出,登录页归 #214)。
-// 「有兜底」= 同一条规则里紧接着用 dvh / svh / var(--vh-full) 重写了同一个属性(先写 vh 再写 dvh 的写法)。
+// 「有兜底」= 同一个声明块里后面又用 dvh / svh / var(--vh-full) 重写了同一个属性(先写 vh 再写 dvh 的写法)。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -18,18 +18,50 @@ export const INDEX_BARE_VH_BASELINE = 13;
 
 const BARE_VH = /(?<![a-z-])\d*\.?\d+vh\b/;
 
+// 按声明块解析(codex 检视第 1 轮 P3:旧版逐行看「本行余下 + 下一行」,会把下一条独立规则里的同名 dvh 当兜底,
+// 也认不出换行的属性值):逐字符走,注释换成等长空白、跳过字符串,每层块收自己的声明,块结束时判定。
 export function bareViewportHeights(css) {
-  const lines = css.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' ')).split('\n');
+  const text = css.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
   const out = [];
-  lines.forEach((text, index) => {
-    for (const decl of text.matchAll(/([a-z-]+)\s*:\s*([^;{}]*)/g)) {
-      if (decl[1].startsWith('--') || !BARE_VH.test(decl[2])) continue;   // token 定义本身(--vh-full 的 vh 兜底)不算
-      // 兜底:同一行余下部分或下一行紧接着用 dvh / svh / var(--vh-full) 重写同一个属性
-      const rest = text.slice(decl.index + decl[0].length) + '\n' + (lines[index + 1] || '');
-      const twin = new RegExp(`(^|[;{\\s])${decl[1]}\\s*:[^;{}]*(\\d+(?:d|s)vh\\b|var\\(--vh-full\\))`).test(rest);
-      if (!twin) out.push({ line: index + 1, text: text.trim() });
+  const stack = [[]];   // 每层块的声明 { prop, value, line }
+  let buf = '';
+  let bufLine = 1;
+  let line = 1;
+  const flush = () => {
+    const decl = /^\s*([a-zA-Z-]+)\s*:\s*([\s\S]*?)\s*$/.exec(buf);
+    if (decl) {
+      const lead = buf.slice(0, buf.search(/\S/));
+      stack[stack.length - 1].push({
+        prop: decl[1].toLowerCase(),
+        value: decl[2].replace(/\s+/g, ' '),
+        line: bufLine + (lead.match(/\n/g) || []).length,
+      });
     }
+    buf = '';
+  };
+  const judge = (decls) => decls.forEach((d, i) => {
+    if (d.prop.startsWith('--') || !BARE_VH.test(d.value)) return;   // token 定义本身(--vh-full 的 vh 兜底)不算
+    const covered = decls.slice(i + 1)
+      .some((e) => e.prop === d.prop && /\d+(?:d|s)vh\b|var\(--vh-full\)/.test(e.value));
+    if (!covered) out.push({ line: d.line, text: `${d.prop}: ${d.value}` });
   });
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === '"' || ch === "'") {
+      let j = i + 1;
+      while (j < text.length && text[j] !== ch) { if (text[j] === '\\') j += 1; j += 1; }
+      if (buf === '') bufLine = line;
+      buf += text.slice(i, j + 1);
+      i = j;
+      continue;
+    }
+    if (ch === '{') { buf = ''; stack.push([]); continue; }
+    if (ch === '}') { flush(); if (stack.length > 1) judge(stack.pop()); continue; }
+    if (ch === ';') { flush(); continue; }
+    if (buf === '') bufLine = line;
+    buf += ch;
+    if (ch === '\n') line += 1;
+  }
   return out;
 }
 
@@ -60,6 +92,14 @@ test('视口单位:护栏的反向对照', () => {
     '}',
     '.c { max-height: 90vh; max-height: 90dvh; }',
     '.d { top: 16vh } .e { width: 100vw; }',
+    '.f { height: 80vh; }',
+    '.g { height: 80dvh; }',
+    '.h {',
+    '  max-height:',
+    '    70vh;',
+    '}',
+    '.i { min-height: 100vh; &:hover { color: red; } content: "}"; min-height: 100svh; }',
   ].join('\n');
-  assert.deepEqual(bareViewportHeights(css).map((h) => h.line), [1, 8, 11]);
+  // .f 的兜底不能来自下一条独立规则 .g;跨行的属性值按它起头那行记;嵌套规则与字符串里的括号不打断外层的块
+  assert.deepEqual(bareViewportHeights(css).map((h) => h.line), [1, 8, 11, 12, 15]);
 });

@@ -746,6 +746,8 @@ export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs
       tabIndex={-1}
       data-layer-panel=""
       hidden={cardState === 'closed'}
+      // 收起动画期间只剩视觉:inert 移出读屏、不接指针(点按落到下面已恢复的坞),同 Sheet 退场(codex 检视第 1 轮 P2)
+      inert={cardState === 'closing' || undefined}
       {...pc.cardHandlers}
     >
       {/* 抓手(拍板 33):真按钮,命中区 120 × 44、上沿伸出卡外 16px(不进裁切层);点按收起,往下拖整卡也收起 */}

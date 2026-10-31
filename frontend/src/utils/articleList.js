@@ -82,6 +82,16 @@ export function pushMarkReadPlan(spec, mode) {
   }
 }
 
+// 「全部标读」的范围在各列表实例里认哪些条目(codex 检视第 1 轮 P1):与后端同口径——来源 plan 推该源水位;订阅全集 plan
+// 推「已订阅且形态相符」各源的水位(mark_all_read 的源集合)。兴趣 plan 返回 null:后端逐篇写行、批次封顶(has_more),
+// 前端不知道实际写了哪些,不做乐观清点,交给各实例按服务端读态静默校准。
+export function markReadMatcher(plan, { subscribedIds, shapeOf }) {
+  if (!plan || plan.interest) return null;
+  if (plan.sourceId) return (item) => item?.source_id === plan.sourceId;
+  return (item) => Boolean(item?.source_id) && subscribedIds.has(item.source_id)
+    && (!plan.shape || shapeOf(item.source_id) === plan.shape);
+}
+
 // 推入页实例的身份:换一个来源 / 兴趣就是新实例(状态从头来,与样页「每次推入都是新的一页」同)
 export const pushSpecKey = (spec) => (spec ? `${spec.kind}:${spec.id ?? ''}` : '');
 
@@ -102,7 +112,7 @@ export function withoutItem(items, id) {
 }
 
 // ── 实例登记处 ──
-// 每个实例登记一份入口:{ query(), getArticles(), setArticles(updater), setArticlesTotal(updater), reload() }。
+// 每个实例登记一份入口:{ query(), getArticles(), setArticles(updater), setArticlesTotal(updater), reload(), refreshReadState() }。
 // 数据层只经它做「对一篇 / 一个源」的改动,从不改写实例的查询,也不碰实例的滚动位置。
 export function createListRegistry() {
   const lists = new Set();
@@ -127,16 +137,26 @@ export function createListRegistry() {
         list.setArticlesTotal((total) => Math.max(0, total - 1));
       });
     },
-    // 按源全部标读:各实例里该源的条目 id(调用方据此写本会话读态覆盖);只看未读的实例随后重拉
-    idsOfSource(sourceId) {
+    // 全部标读:各实例里命中范围的条目 id(调用方据此写本会话读态覆盖);只看未读的实例随后重拉
+    idsWhere(match) {
       const ids = [];
       lists.forEach((list) => {
-        for (const item of list.getArticles()) if (item?.source_id === sourceId) ids.push(item.id);
+        for (const item of list.getArticles()) if (match(item)) ids.push(item.id);
       });
       return ids;
     },
+    idsOfSource(sourceId) {
+      return this.idsWhere((item) => item?.source_id === sourceId);
+    },
     reloadUnreadOnly() {
       lists.forEach((list) => { if (list.query()?.unreadOnly) list.reload(); });
+    },
+    // 兴趣轴标读后:不在只看未读的实例按原窗口静默重取读态(只看未读的由 reloadUnreadOnly 重拉);
+    // 返回各实例的 Promise<Map<id, unread>>
+    refreshReadState() {
+      const jobs = [];
+      lists.forEach((list) => { if (!list.query()?.unreadOnly) jobs.push(list.refreshReadState()); });
+      return jobs;
     },
   };
 }

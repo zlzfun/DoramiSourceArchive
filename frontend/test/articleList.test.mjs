@@ -8,6 +8,7 @@ import path from 'node:path';
 import {
   buildListFilters,
   createListRegistry,
+  markReadMatcher,
   patchListItems,
   pushListQuery,
   pushMarkReadPlan,
@@ -103,7 +104,7 @@ test('窗口就地改动:没命中时原样返回(免一次重渲染),命中只�
 
 // 一个假实例:窗口就是一份普通状态,setter 接受 updater(与 React useState 同形)
 function fakeList(query, articles) {
-  const state = { query, articles, total: articles.length, reloads: 0 };
+  const state = { query, articles, total: articles.length, reloads: 0, refreshes: 0 };
   return {
     state,
     entry: {
@@ -112,6 +113,7 @@ function fakeList(query, articles) {
       setArticles: (next) => { state.articles = typeof next === 'function' ? next(state.articles) : next; },
       setArticlesTotal: (next) => { state.total = typeof next === 'function' ? next(state.total) : next; },
       reload: () => { state.reloads += 1; },
+      refreshReadState: () => { state.refreshes += 1; return Promise.resolve(new Map()); },
     },
   };
 }
@@ -158,6 +160,40 @@ test('登记处:按源标读收集各实例里该源的条目,只看未读的实
   registry.reloadUnreadOnly();
   assert.equal(unread.state.reloads, 1);
   assert.equal(plain.state.reloads, 0);
+});
+
+test('全部标读的范围匹配器(codex 检视第 1 轮 P1-1):来源 = 同源;订阅全集 = 已订阅且形态相符;兴趣轴不做前端匹配', () => {
+  const subscribedIds = new Set(['s1', 'pod']);
+  const ctx = { subscribedIds, shapeOf };
+  const items = [
+    { id: 'a1', source_id: 's1' },
+    { id: 'a2', source_id: 's2' },          // 未订阅
+    { id: 'p1', source_id: 'pod' },         // 播客形态
+    { id: 'x1' },                           // 没有来源
+  ];
+  const pick = (plan) => items.filter(markReadMatcher(plan, ctx)).map((x) => x.id);
+  assert.deepEqual(pick(pushMarkReadPlan({ kind: 'source', id: 's2' }, 'article')), ['a2'], '来源:未订阅的预览源也按源推水位');
+  assert.deepEqual(pick(pushMarkReadPlan({ kind: 'all' }, 'article')), ['a1']);
+  assert.deepEqual(pick(pushMarkReadPlan({ kind: 'all' }, 'podcast')), ['p1']);
+  assert.deepEqual(pick({ sourceId: null, shape: null, interest: false }), ['a1', 'p1'], '不带形态 = 全部订阅');
+  assert.equal(markReadMatcher(pushMarkReadPlan({ kind: 'tag', id: 't1' }, 'article'), ctx), null);
+  assert.equal(markReadMatcher(pushMarkReadPlan({ kind: 'interest' }, 'article'), ctx), null);
+  assert.equal(markReadMatcher(null, ctx), null);
+});
+
+test('登记处:按匹配器收集各实例条目;读态静默校准只发给不在只看未读的实例', async () => {
+  const registry = createListRegistry();
+  const unread = fakeList(pushListQuery({ kind: 'all' }, { mode: 'article', unreadOnly: true }), [{ id: 'a1', source_id: 's1' }]);
+  const plain = fakeList(pushListQuery({ kind: 'tag', id: 't1' }, { mode: 'article' }), [{ id: 'a2', source_id: 's2' }, { id: 'a3', source_id: 's1' }]);
+  registry.add(unread.entry);
+  registry.add(plain.entry);
+  assert.deepEqual(registry.idsWhere((x) => x.source_id === 's1').sort(), ['a1', 'a3']);
+  assert.deepEqual(registry.idsOfSource('s2'), ['a2'], 'idsOfSource 仍可用(按源标读)');
+  const jobs = registry.refreshReadState();
+  assert.equal(jobs.length, 1);
+  await Promise.all(jobs);
+  assert.equal(plain.state.refreshes, 1);
+  assert.equal(unread.state.refreshes, 0, '只看未读的实例由 reloadUnreadOnly 重拉,不重复校准');
 });
 
 test('源码护栏:推入页只用自己的列表实例,不调主列表的导航(否则会改写内容 Tab)', () => {

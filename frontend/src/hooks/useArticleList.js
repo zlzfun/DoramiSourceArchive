@@ -250,6 +250,36 @@ export function useListLoader(win, {
     enabled: analysisPollingEnabled,
   });
 
+  // ── 读态静默校准(codex 检视第 1 轮 P1-1)──
+  // 兴趣轴「全部标读」是后端逐篇写行、批次封顶,前端不知道写了哪些:不在只看未读的窗口按原长度静默重取一次,
+  // 只把每条的 unread 换成服务端的——不动顺序、总数、加载态与滚动位置。返回 Map<id, unread>(调用方据此撤掉
+  // 会遮蔽服务端读态的本会话覆盖);失败、或期间有过列表加载(换作用域 / 刷新 / 翻页)时返回空表,不改窗口。
+  const refreshReadState = useCallback(async () => {
+    const empty = new Map();
+    if (hidden || articles.length === 0) return empty;
+    const versionAtStart = listVersionRef.current;
+    let data;
+    try {
+      data = await fetchArticles(
+        buildListFilters(query),
+        Math.max(LIST_PAGE_SIZE, articles.length),
+        0,
+        false,
+        { includeContent: false },
+      );
+    } catch {
+      return empty;
+    }
+    if (listVersionRef.current !== versionAtStart) return empty;
+    const flags = new Map(analysisItemsFromResponse(data).map((item) => [item.id, Boolean(item.unread)]));
+    setArticles((current) => current.map((article) => (
+      flags.has(article.id) && Boolean(article.unread) !== flags.get(article.id)
+        ? { ...article, unread: flags.get(article.id) }
+        : article
+    )));
+    return flags;
+  }, [hidden, articles.length, query, listVersionRef, setArticles]);
+
   // 换作用域 → 重置列表、回顶(主列表另清阅读窗)
   // 用 useLayoutEffect：在绘制前同步进入加载态，避免「切源瞬间旧列表被画出一帧」的陈旧帧闪现
   useLayoutEffect(() => {
@@ -286,7 +316,7 @@ export function useListLoader(win, {
     return () => io.disconnect();
   }, [sentinel, hasMore, loadingMore, articlesLoading, articles.length, loadArticles]);
 
-  return { loadArticles, handleLoadMore, hasMore };
+  return { loadArticles, handleLoadMore, hasMore, refreshReadState };
 }
 
 /**
@@ -296,8 +326,10 @@ export function useListLoader(win, {
 export function useArticleList(query, { registry = null, ...opts } = {}) {
   const win = useListWindow();
   const loader = useListLoader(win, { query, ...opts });
-  const latestRef = useRef({ query, articles: win.articles, reload: loader.loadArticles });
-  useEffect(() => { latestRef.current = { query, articles: win.articles, reload: loader.loadArticles }; });
+  const latestRef = useRef({ query, articles: win.articles, reload: loader.loadArticles, refreshReadState: loader.refreshReadState });
+  useEffect(() => {
+    latestRef.current = { query, articles: win.articles, reload: loader.loadArticles, refreshReadState: loader.refreshReadState };
+  });
   const { setArticles, setArticlesTotal } = win;
   useEffect(() => {
     if (!registry) return undefined;
@@ -307,6 +339,7 @@ export function useArticleList(query, { registry = null, ...opts } = {}) {
       setArticles,
       setArticlesTotal,
       reload: () => latestRef.current.reload(0, false),
+      refreshReadState: () => latestRef.current.refreshReadState(),
     });
   }, [registry, setArticles, setArticlesTotal]);
   return { ...win, ...loader };

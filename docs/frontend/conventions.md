@@ -553,8 +553,12 @@ issue #230 起 `Modal` 与移动层都经层原语 `components/layer/useLayer`(�
 设置从页头头像推入(整页、盖住底栏与播放坞、返回钮落在头像原位);新增的整页推入页沿用同一页头件。
 订阅 Tab 的推入页(来源 / 全部 / 收藏 / 兴趣,批 3a)是**第二个列表实例**:列表走 `hooks/useArticleList`(纯逻辑 `utils/articleList`),
 推入页自己的视图、只看未读、翻页与滚动不改写内容 Tab;对一篇 / 一个源的改动(正文回读、取消收藏、按源标读)经数据层的实例登记处
-(`rs.listRegistry`)同步。内容 Tab 只放订阅聚合 + 只看未读 / 类型 / 搜索——手机壳里记住的兴趣轴 / 收藏星就地回落(`aggregateOnly`,不改写存储),
-按 id 打开一篇留下的来源收窄在离开正文时撤掉;新的收窄入口进推入页,不回到内容 Tab 挂筛选。
+(`rs.listRegistry`)同步。任一实例里「全部标读」后**所有实例**一起对齐(检视第 1 轮):来源 / 订阅全集按 `utils/articleList.markReadMatcher`
+把各实例里同范围的条目转已读;兴趣轴后端逐篇写、批次封顶,前端不猜范围,不在只看未读的实例按原窗口静默重取读态(`refreshReadState`,
+不动顺序 / 滚动 / 加载态);只看未读的实例一律重拉。内容 Tab 只放订阅聚合 + 只看未读 / 类型 / 搜索——手机壳里记住的兴趣轴 / 收藏星就地回落
+(`aggregateOnly`,不改写存储),按 id 打开一篇留下的来源收窄在离开正文时撤掉、换版式进手机时没开正文就当场撤(`dropNarrowing`);
+新的收窄入口进推入页,不回到内容 Tab 挂筛选。推入页里读的那篇形态可能与主列表容器不同:从正文发起标签检索、或换版式进桌面时,
+主列表先切到它的容器(`alignModeToArticle`;进桌面保留右栏)。
 正文入栈从被点的卡片矩形展开、返回收回原卡(`utils/readTransition`,起点认 `[data-read-origin], .reader-entry, .bp-item, .bp-head,
 .ranking-content-row`):**新增推入页 / 列表里的可点卡片若不是这几类,要标 `data-read-origin`**,否则正文退回普通推入、返回时也收不回原卡。
 
@@ -569,7 +573,8 @@ issue #230 起 `Modal` 与移动层都经层原语 `components/layer/useLayer`(�
 | modal | `Modal` | 居中弹窗 | 困住 | 全部 | 首个控件(桌面行为不变) |
 
 - `useLayer` 统一接管:**返回键握手**(手机壳里打开即入层栈,系统返回先关最上层、不离站;桌面不挂)、**Esc 与焦点**
-  (`useModalA11y` 层栈,只有最上层消费;关闭还焦)、**下层 `inert`**(`utils/inertOthers`,引用计数;先还原 inert 再还焦)、
+  (`useModalA11y` 层栈,只有最上层消费;关闭还焦;困住 Tab 时边界只认 Tab 真能走到的——`tabIndex ≥ 0` 且不在 inert 子树,
+  漫游菜单的 -1 项与长按预览卡里的按钮不算)、**下层 `inert`**(`utils/inertOthers`,引用计数;原本就 inert 的节点跳过不登记;先还原 inert 再还焦)、
   popover 点外面即关(触发钮除外)。业务代码不自挂 document 级 Esc / mousedown,不直接调 `useLayerHistory`
   (同一层里的子页——设置分区、合集详情——例外)。
 - **遮罩**:`.modal-overlay` 只在 `Modal`,`.m-dim` 只在 `LayerScrim`(lint `dorami/no-raw-modal-overlay` 两个都拦);点按只认

@@ -127,7 +127,7 @@ export default function MobileReader({
     // 视图 / 导航
     mode, activeSourceId, discover, openDiscover, closeDiscover, discoverShape, setDiscoverShape,
     socialView, podcastView,
-    goView, goContainerAll,
+    goView, goContainerAll, alignModeToArticle,
     kindFilter, setKindFilter, kindFacetItems,
     scope, activeTagId, refreshInterests,
     grouping,
@@ -169,13 +169,15 @@ export default function MobileReader({
   }, [selectArticle, supersedePendingOpen, briefReturn, setBriefRestore, setBriefReturn, setTab, residualNarrowing, goContainerAll]);
   // 正文页点标签检索(codex 检视 P2):目的地是过滤后的内容列表,不是早报——从早报进来的也丢掉
   // 返回带、落到所属容器 Tab,否则检索结果被早报页盖住看不见。
+  // 推入页里读的那篇形态可能与内容 Tab 当前视图不同:检索落在它所属的容器(codex 检视第 1 轮 P1-2;检索条件不动)
   const leaveArticleForSearch = useCallback(() => {
     setBriefReturn(null);
     setFlow(null);   // 从推入页读进来的:检索结果在内容 Tab,推入页一并出栈
     setTab('content');
+    alignModeToArticle(activeArticle);
     selectArticle(null);
     if (residualNarrowing) goContainerAll();   // 只撤收窄,不动刚设下的检索
-  }, [selectArticle, setBriefReturn, setTab, residualNarrowing, goContainerAll]);
+  }, [selectArticle, setBriefReturn, setTab, residualNarrowing, goContainerAll, alignModeToArticle, activeArticle]);
 
   const onboardingRequired = personalDigestEnabled
     && account?.role === 'user'

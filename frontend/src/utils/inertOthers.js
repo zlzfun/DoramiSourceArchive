@@ -2,18 +2,18 @@
 // 点不到;层关闭时还原。做法同 aria-hidden 的「hideOthers」:从 body 往下走,含有「保留元素」的节点
 // 往里递归,其余兄弟节点整棵设 inert;保留元素(层面板自身、Toast、页面层之上的播放条)及其祖先不动。
 //
-// 多层叠放时同一个节点可能被几层各设一次,按引用计数:最后一层放手才去掉 inert,原本就带 inert 的节点
-// 不碰。新挂载的节点(之后打开的上层、portal)不在任何一次计算里,天然不受影响。
+// 多层叠放时同一个节点可能被几层各设一次,按引用计数:最后一层放手才去掉 inert。原本就带 inert 的节点
+// (比如正在播退场的底页)不碰、也不登记——只跳过;登记它会让模块级集合永远攥着已卸载的子树,节点日后解除
+// inert 再被获取时还会挡住还原(codex 检视 P2)。新挂载的节点(之后打开的上层、portal)不在任何一次计算里,天然不受影响。
 // 纯 DOM 操作、不依赖 React;只用 children / contains / tagName / get|set|removeAttribute,
 // test/layerPrimitives.test.mjs 用假节点树核对。
-const counts = new Map();   // 节点 → 被设 inert 的次数
-const preset = new Set();   // 打开前就带 inert 的节点(不归我们管)
+const counts = new Map();   // 节点 → 被设 inert 的次数(只记我们设过的)
 const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'LINK', 'TEMPLATE', 'META', 'NOSCRIPT']);
 
 function acquire(node) {
   const n = counts.get(node) || 0;
   if (n === 0) {
-    if (node.hasAttribute('inert')) { preset.add(node); return false; }
+    if (node.hasAttribute('inert')) return false;   // 原本就 inert:不归我们管
     node.setAttribute('inert', '');
   }
   counts.set(node, n + 1);
@@ -24,7 +24,7 @@ function release(node) {
   const n = counts.get(node) || 0;
   if (n <= 1) {
     counts.delete(node);
-    if (!preset.has(node)) node.removeAttribute('inert');
+    node.removeAttribute('inert');
     return;
   }
   counts.set(node, n - 1);
@@ -56,5 +56,7 @@ export function inertOthers(keep, root = (typeof document !== 'undefined' ? docu
 // 测试用:清空模块级计数(只在单测里调)
 export function resetInertState() {
   counts.clear();
-  preset.clear();
 }
+
+// 测试用:当前登记在册的节点数(核对没有泄漏)
+export const inertStateSize = () => counts.size;

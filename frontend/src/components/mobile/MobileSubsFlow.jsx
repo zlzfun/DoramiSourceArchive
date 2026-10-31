@@ -73,11 +73,8 @@ export default function MobileSubsFlow({
     const el = event.target;
     if (el instanceof Element && el.matches(FLOW_SCROLLERS)) setScrolled(el.scrollTop > 4);
   };
-  const markAll = () => markListAllRead(plan, {
-    listArticles: articles,
-    unreadOnly,
-    reload: () => list.loadArticles(0, false),
-  });
+  // 标完各实例(含内容 Tab 主列表)由数据层一起对齐、只看未读的重拉(useReaderState.markListAllRead)
+  const markAll = () => markListAllRead(plan, { listArticles: articles });
 
   // ── 标题与副标(来源头图 / 「全部」「收藏」「兴趣」的名字与一行说明) ──
   let title;

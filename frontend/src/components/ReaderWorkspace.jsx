@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useReaderState } from '../hooks/useReaderState';
 import { compactLayoutMatches } from '../hooks/useCompactLayout';
 import ReaderTab from './ReaderTab';
@@ -108,6 +108,22 @@ export default function ReaderWorkspace({ mobile, surfaceActive = true, ...props
       }
     }
   }, [mobile, articleKey, listKey]);
+
+  // 换版式时的主列表交接(codex 检视第 1 轮 P1-2 / P2-3),在绘制前做,不闪一帧错的版式:
+  //  进桌面——手机推入页里读的那篇形态可能 ≠ 主列表容器,桌面阅读窗按容器画版式(播客 / 文章,社交容器不开阅读窗),
+  //    主列表切到它的容器并保留右栏;
+  //  进手机——内容 Tab 只放订阅聚合、没有来源筛选提示:没开正文时桌面留下的来源 / 兴趣下钻当场撤掉
+  //    (开着正文的由 MobileReader.closeArticle 离开正文时撤,同一条规则)。只改会话状态,不写持久存储。
+  const handoffLayoutRef = useRef(mobile);
+  useLayoutEffect(() => {
+    if (handoffLayoutRef.current === mobile) return;
+    handoffLayoutRef.current = mobile;
+    if (!mobile) {
+      if (rs.activeArticle) rs.alignModeToArticle(rs.activeArticle, { keepArticle: true });
+    } else if (!rs.activeArticle && (rs.activeSourceId || rs.activeTagId)) {
+      rs.dropNarrowing();
+    }
+  }, [mobile, rs]);
 
   const View = mobile ? MobileReader : ReaderTab;
   return (
