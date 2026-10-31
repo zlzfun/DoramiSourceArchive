@@ -240,7 +240,7 @@
 - 清理:`OpmlSection` `layout="mobile"` 分支与 `.opml-mobile-*` 删除;`check_mobile_navigation.py` 退役(覆盖面已由真实后端 e2e 接住,断点首启并进 `guards`);#218 旧样页只加注释说明走样、不补样式快照(快照会随壳改动继续漂移)。conventions §10 补播放卡 inert 例外、`data-read-origin`、`--player-tabbar`、两条棘轮、首屏分包、`guards` 基线。
 - 验证:lint 0、`npm test` 238/238(新增 9 条)、构建过、`check_docs` 0;e2e(含 `guards`)定稿后连跑两次过;桌面 1280 亮暗 × 6 状态前后比对仅计数与 logo 亚像素差。摘入波次分支无冲突,摘入后 orchestrator 复跑 lint 0、`npm test` 238/238、构建过、e2e 整套过(107 s)。
 - 推迟 / 留给 4a:M-06 余项(发现页筛选框 12.5px、改密 3 框 13px、反馈 textarea 13px,列在 `KNOWN_OPEN`;添加自定源地址框、安装指引平台下拉未入守卫);往期底页抓手有效命中 81 × 32 ~ 43(被翻月钮压住,样页 120 × 44 未落地)。设置模态内管理员专用分区(约 25 KB)仍在读者入口 → 进 backlog。
-- 观察(后端,不在本波):同一账号并发首次请求 `/api/reader/unread-counts` 时两请求同建已读游标、撞 `reader_read_cursors`(owner + source)唯一约束返回 500,新账号同开两标签页 / 两设备可触发,宜改 upsert,另开 issue;runner `stop_process` 负载下偶发 killpg EPERM 盖掉原始错误(既有)。
+- 观察(后端,不在本波):同一账号并发首次请求 `/api/reader/unread-counts` 时两请求同建已读游标、撞 `reader_read_cursors`(owner + source)唯一约束返回 500,新账号同开两标签页 / 两设备可触发,根因是 `reader_state.ensure_cursors()` 先读后插,宜改 `ON CONFLICT DO NOTHING` → **已开 #251**(10-31 用户同意);runner `stop_process` 负载下偶发 killpg EPERM 盖掉原始错误(既有)。
 - 真机待验:4G / 内网冷启动预取前首开一篇的等待与骨架连续性;iOS 粘滞悬停(R-07)在列表行 / 类型标签 / 发现卡 / 榜单行 / 标签 chip;分享页主屏独立窗口与横屏安全区;地址栏伸缩时灯箱内边距与文稿高度;Android 省流量不预取(iOS 无 `navigator.connection`,一律预取)。
 
 ## 7. 检视节
