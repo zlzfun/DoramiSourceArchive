@@ -5,6 +5,10 @@
 > `docs/frontend/conventions.md` / `docs/sources/curation_policy.md` 等活跃文档。
 > 按「故事」分组索引;文内常含 ☐/☑ 进度符,均为当时状态。
 
+## 播客逐字稿问答(2026-10,issue #248)
+
+- [issue-248-podcast-qa.md](./issue-248-podcast-qa.md) — 发布方/ASR原稿懒索引、本文与订阅问答、可核对引用及在途撤稿防护；真实点播与单集深题 13/13 已核对，检视返修/用户验收结果待补。
+
 ## 发布方逐字稿阅读与翻译分段(2026-10,issue #246)
 
 - [issue-246-transcript-paragraphs.md](./issue-246-transcript-paragraphs.md) — 词级 JSON 分段、翻译缓存升级、179 项回归与真实翻译记录；英文及中文页面验收通过，用户已授权提交 MR，未合入、未发布。

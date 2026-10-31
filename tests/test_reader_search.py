@@ -88,6 +88,13 @@ def test_plan_query_failure_returns_none(monkeypatch):
     assert run(reader_search.plan_query("q", _LLM)) is None
 
 
+def test_passage_terms_keep_subquestions_separate_from_episode_discovery(monkeypatch):
+    _patch_chat(monkeypatch, '{"keywords":["Episode title"],"passage_keywords":[" crons ","six services","crons",null,"x"]}')
+    plan = run(reader_search.plan_query("compare the workflow with its architecture", _LLM))
+    assert plan["keywords"] == ["Episode title"]
+    assert plan["passage_keywords"] == ["crons", "six services"]
+
+
 # ──────────────── FTS 召回 ────────────────
 
 def test_fetch_candidates_union_and_scope():

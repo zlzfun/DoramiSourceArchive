@@ -7,9 +7,37 @@
 
 向量 RAG 子系统(ChromaDB + sentence-transformers/TEI、双状态列、对账巡检)已于 v3.31 **退役清仓**,全程记录 [`docs/archive/rag-retirement-plan.md`](../../docs/archive/rag-retirement-plan.md)(审视结论存档/目标架构/两波清单/重新引入触发器)。核心论证:生产从未运行(0 向量化)且生产硬件(1.6GB 内存)跑不起推理栈;FTS5 已就绪且结构性零漂移;增长曲线下向量形态运维成本涨得比收益快。现行检索栈:**FTS5 全文检索是唯一检索基础设施**;读者问答 scope=subscription 走 `services/reader_search.py` 的「LLM 计划检索 + FTS5」两段式(规划[中英关键词改写+日期窗+意图分流]→ FTS 召回[订阅域∩日期窗]→ 选篇[标题+引子挑 ≤8 篇]→ 全文注入;降级链自持:规划失败→原词 FTS→零命中→时序窗口;「日报即索引」:跨期盘点型问题在已订阅日报源时收敛检索日报正文);MCP `search_articles`/`get_rag_context` 与 `POST /api/public/subscriptions/{id}/vector/search`(路径留存换 FTS 芯,出入参兼容)同源复用 `mcp_server._search_articles_impl`。取名运行时单点 `friendly_source_name` 已迁至 `services/source_naming.py`。**重新引入触发器**(方案 §4,同时满足才重启评估):语料 ≫10 万篇 **且** ask 用量数据证明模糊语义查询成为真实模式——届时按「派生数据、外部推理、可随时全量重建」的轻形态重建,不恢复双状态机/对账架构。
 
+## 播客原稿问答（issue #248，3.67.4-alpha）
+
+`services/podcast_qa.py` 将当前已发布的 `publisher_transcript`（发布方原稿）与
+`normalized_transcript`（ASR 原稿）接入站内问答。`transcript_zh` 译稿与 `digest_blog_zh`
+AI 导读不参与本波检索或作答证据；无可用原稿时明确退回节目简介，不声称读取了音频。
+
+- 显式 `article/articles` 对普通文章仍直取正文；遇到播客则规划关键词，从完整原稿中寻找相关片段，
+  不限于开头。`subscription/all` 将文章召回与播客片段召回按单集 ID 做倒数排名融合，
+  空简介单集也能进入候选。查询规划将发现单集的 `keywords` 与定位集内论据的 `passage_keywords` 分开，
+  后者缺失时兼容回退到前者。原有来源范围、日期条件、选篇和降级说明继续适用。
+- `podcast_qa_indexes` 与 `podcast_qa_chunks` 是可重建本地投影，`podcast_qa_fts` 使用 FTS5 trigram；
+  查询时只为允许来源内缺失/版本变化的原稿懒建索引，复用既有安全阅读投影并校验内容哈希。
+  片段默认 1,600 字符、重叠 200；每集最终最多六段，按总字符预算动态调整上限，去重并优先覆盖查询概念。
+  预算允许时补足命中位置前后的原文，保留论据与说话人上下文；截短后同步更新范围。
+  最终资料含播客时总预算为 24,000 字符；纯文章显式问答仍为 12,000、订阅检索仍为 14,000 字符。
+  FTS 不可用时回退片段文字 LIKE，不引入向量服务。
+- 迁移 `b248c7a10e31` 与运行时共用 `storage/podcast_qa_fts.py` 的索引安装逻辑。
+  发布指针/状态/authority/发布时间变化触发投影失效，删除单集级联清理；索引不新增 Archive Sync 流。
+- 外送限制、隐藏源、私有源订阅与当前检索域在模型调用前后复核。每条证据绑定原稿 ID、种类、哈希；
+  作答中撤稿或换稿返回 409，请读者重新提问，不返回旧答案或旧引用。
+- `sources` 的播客条目增加 `content_type`、`basis_label`、`evidence`；后者包含
+  `kind/artifact_id/content_hash/range_start/range_end/text`，对应实际进入模型的原文。
+  范围是阅读投影的字符位置，不是原始 JSON 偏移或音频秒数。前端在原有单集跳转下提供「查看依据」，
+  无原稿时显示「节目简介」，不伪造时间定位。
+
+问答只消费资料，不主动点播、下载音频或触发 ASR/TTS。MCP 和公共订阅搜索端点本波不新增独立
+逐字稿检索协议。实现、验证及后置项见 [#248 记录](../archive/issue-248-podcast-qa.md)。
+
 ## 技术栈与原理报告(快照 v3.36.0,2026-08-17)
 
-> 快照基线:v3.36.0(2026-08-17)。本报告是对现行实现的**说明性快照**,
+> 快照基线:v3.36.0(2026-08-17)。本报告保留文章检索链路的**历史说明性快照**；播客分支以本页上节为准,
 > 权威事实来源始终是代码本身:`src/services/reader_search.py`(检索编排)、
 > `src/storage/fts.py`(FTS5 索引层)、`src/services/reader_ai.py`(上下文组装与引用)。
 > 历史决策与重新引入向量的条件见 [rag-retirement-plan.md](../archive/rag-retirement-plan.md)。
@@ -69,7 +97,7 @@ flowchart TD
     WINDOW --> SEL
 
     subgraph 阶段四 · 全文注入
-        CTX[build_numbered_context<br/>总预算 14000 字符,单篇预算按篇数摊分<br/>块头带「来源名 · 发布日期」]
+        CTX[build_numbered_context<br/>纯文章 14000 / 含播客 24000 字符<br/>单篇预算按篇数摊分<br/>块头带「来源名 · 发布日期」]
         SRC[build_sources_payload<br/>与上下文同源同序,编号 n 即引用锚]
     end
     SEL --> CTX --> SRC
@@ -156,8 +184,9 @@ flowchart LR
 
 ### 4.3 上下文注入与引用联动
 
-- 总预算 14000 字符;**单篇预算按选中篇数摊分**(下限 2000)——单篇长文问答
-  不再只喂开头 2000 字符(v3.34);
+- 订阅检索纯文章总预算 14,000 字符，最终资料含播客时为 24,000；显式问答纯文章为 12,000，
+  含播客时也为 24,000。**单篇预算按选中篇数摊分**，订阅检索下限 2,000 字符；
+  播客最多六个命中起点可补足相邻原文，避免仅有命中词而缺少后续解释。
 - 每块头部带「来源名 | 发布日期」,QA/选篇 prompt 均注入今天日期,系统提示词
   含时效甄别原则(v3.32 四轮返修:此前作答层既无今天日期也看不到各篇发布日期,
   「最近一周」类问题可能把旧闻当新闻);
@@ -196,7 +225,7 @@ flowchart TD
 | 消费方 | 范围 | 说明 |
 |---|---|---|
 | `POST /api/reader/ai/ask` | `subscription` / `all` | 检索圈定型,走本管线;订阅域 = 订阅源并集,all = 全库可见源(隐藏源均排除) |
-| 同上 | `article` / `articles` | 显式名单直取正文,**不走检索**(article 是 n=1 特例;articles ≤12 篇,多选问答的预留原语) |
+| 同上 | `article` / `articles` | 普通文章显式名单直取正文；播客按上节检索原稿片段(article 是 n=1 特例;articles ≤12 篇) |
 | MCP `search_articles` / `get_rag_context` | 令牌订阅域 | v3.30 同名换芯,出入参兼容(distance 退役) |
 | `POST /api/public/subscriptions/{id}/vector/search` | 单订阅 | 路径留存,FTS 芯,与 MCP 同源 |
 | IM 机器人代答 | `all` | v3.33.2 拍板由 subscription 改 all |
@@ -209,7 +238,9 @@ flowchart TD
 | `SELECT_POOL` | 60 | 送入选篇 prompt 的候选池上限 |
 | `SELECT_MAX` | 8 | 选篇上限 |
 | `_LEAD_CHARS` | 160 | 候选行引子长度 |
-| `_CONTEXT_TOTAL` / `_CONTEXT_PER_ARTICLE` | 14000 / 2000(下限) | 注入预算,单篇按篇数摊分 |
+| `reader_search._CONTEXT_TOTAL` / `_CONTEXT_PER_ARTICLE` | 14000 / 2000(下限) | 订阅检索纯文章预算，单篇按篇数摊分 |
+| `reader_ai._LIST_TOTAL_CHARS` | 12000 | 显式问答纯文章总预算 |
+| `podcast_qa.CONTEXT_CHARS` | 24000 | 显式/订阅问答最终资料含播客时的总预算 |
 | `MIN_TRIGRAM_CHARS` | 3 | trigram 命中硬下限,短词走 LIKE 补召回 |
 | `_MAX_FTS_IDS` | 10000 | `rowid IN (...)` 防御上限(SQLite 变量数限制) |
 

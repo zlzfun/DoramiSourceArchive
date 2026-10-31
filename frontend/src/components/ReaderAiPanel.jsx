@@ -12,6 +12,8 @@ import ReaderMarkdown from './ReaderMarkdown';
 import { askReaderAi, fetchAskProgress } from '../api';
 import { displayTitle } from '../utils/titleDisplay';
 import { useTitlePreference } from '../hooks/useTitlePreference';
+import { podcastOf } from '../utils/podcast';
+import { qaBasisLabel, qaEvidence } from '../utils/qaEvidence';
 
 // 阅读器 AI 问答浮层(v3.32 方案 A 重设计,样页 docs/design/dorami-ask-quiet.html):
 // 常态收起于右下角 FAB,点击展开。读者问句保留右缘 wash 胶囊,哆啦美的回答**去框化**
@@ -46,6 +48,14 @@ const SUGGEST_POOL = {
     '文中提到了哪些关键数据?',
     '这篇文章有什么值得商榷的地方?',
     '这对行业意味着什么?',
+  ],
+  podcast: [
+    '本期最重要的主张是什么？哪些原话支持它？',
+    '嘉宾的结论依赖哪些前提？节目有没有讨论反例？',
+    '哪些是节目给出的事实，哪些是嘉宾的推断？请引用依据。',
+    '本期的两个主要观点是否存在张力？如何理解？',
+    '节目中的案例能支持多大范围的结论？有哪些局限？',
+    '围绕核心问题，节目还缺少哪些证据？请区分原话与分析。',
   ],
   subscription: [
     '最近有哪些值得关注的进展?',
@@ -127,22 +137,22 @@ const SEARCH_STAGE_TEXT = {
     },
   },
   search: {
-    doing: '正在检索文章…',
-    done: (by) => `已完成检索${by.select?.candidates ? `(${by.select.candidates} 篇候选)` : ''}`,
+    doing: '正在检索内容…',
+    done: (by) => `已完成检索${by.select?.candidates ? `(${by.select.candidates} 条候选)` : ''}`,
   },
   select: {
-    doing: '正在挑选相关文章…',
-    done: (by) => (by.answer?.articles ? `已选出 ${by.answer.articles} 篇` : '已挑选文章'),
+    doing: '正在挑选相关内容…',
+    done: (by) => (by.answer?.articles ? `已选出 ${by.answer.articles} 条资料` : '已挑选相关内容'),
   },
   answer: { doing: '正在组织回答…', done: () => '回答完成' },
 };
 
 // 等待态:检索型 scope 画动态阶段清单,显式名单 scope(article/articles)只有作答一步
-function PendingBlock({ scope, progress }) {
+function PendingBlock({ scope, progress, podcast }) {
   if (scope !== 'subscription' && scope !== 'all') {
     return (
       <div className="reader-ai-wait">
-        <div className="reader-ai-wait-row is-active"><span className="reader-ai-wait-dot" />正在阅读文章并组织回答…</div>
+        <div className="reader-ai-wait-row is-active"><span className="reader-ai-wait-dot" />{podcast ? '正在查阅本期播客资料并组织回答…' : '正在阅读文章并组织回答…'}</div>
       </div>
     );
   }
@@ -162,6 +172,25 @@ function PendingBlock({ scope, progress }) {
         );
       })}
     </div>
+  );
+}
+
+function SourceEvidence({ source }) {
+  const evidence = qaEvidence(source);
+  const basis = qaBasisLabel(source);
+  if (!evidence.length) {
+    return basis ? <div className="reader-ai-evidence-basis tiny-meta">依据：{basis}</div> : null;
+  }
+  return (
+    <details className="reader-ai-evidence">
+      <summary className="tiny-meta">查看依据{basis ? `（${basis}）` : ''}</summary>
+      {evidence.map((item, index) => (
+        <div className="reader-ai-evidence-item" key={index}>
+          <div className="tiny-meta">{item.label}{evidence.length > 1 ? ` · 片段 ${index + 1}` : ''}</div>
+          <blockquote>{item.text}</blockquote>
+        </div>
+      ))}
+    </details>
   );
 }
 
@@ -204,19 +233,21 @@ function AnswerBlock({ turn, onOpenRef }) {
         <div className="reader-ai-refs">
           <div className="reader-ai-refs-label">{listed.cited ? '本次回答引用' : '本次回答参考'}</div>
           {listed.rows.map(({ s, num }) => (
-            <button
-              key={num}
-              type="button"
-              className="reader-ai-ref-row"
-              onClick={() => onOpenRef(s)}
-              title={s.id ? '在阅读器中打开' : '打开原文'}
-            >
-              <span className="reader-ai-ref-num">{num}</span>
-              <span className="reader-ai-ref-title">{displayTitle(s, preferChinese, '') || s.source_id}</span>
-              <span className="reader-ai-ref-meta">
-                {[s.source_name, (s.publish_date || '').slice(5)].filter(Boolean).join(' · ')}
-              </span>
-            </button>
+            <div key={num}>
+              <button
+                type="button"
+                className="reader-ai-ref-row"
+                onClick={() => onOpenRef(s)}
+                title={s.id ? '在阅读器中打开' : '打开原文'}
+              >
+                <span className="reader-ai-ref-num">{num}</span>
+                <span className="reader-ai-ref-title">{displayTitle(s, preferChinese, '') || s.source_id}</span>
+                <span className="reader-ai-ref-meta">
+                  {[s.source_name, (s.publish_date || '').slice(5)].filter(Boolean).join(' · ')}
+                </span>
+              </button>
+              <SourceEvidence source={s} />
+            </div>
           ))}
         </div>
       )}
@@ -227,6 +258,7 @@ function AnswerBlock({ turn, onOpenRef }) {
 // guest(issue #213):检索范围说「默认订阅」;当天试用用完(429 guest_quota_exhausted)时这一问下面给一行
 // 说明 +「登录后继续使用」(api.js 同时已弹登录提示,这里是关掉提示后仍看得见的入口)。
 export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onOpenArticle, guest = false, onGuestLogin = null }) {
+  const activePodcast = Boolean(podcastOf(activeArticle));
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [aiPanelClosing, setAiPanelClosing] = useState(false);
   const [aiPanelLarge, setAiPanelLarge] = useState(() => localStorage.getItem('dorami_reader_ai_panel_large') === '1');
@@ -275,7 +307,7 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
     const askId = genAskId();
     setQaLoading(true);
     setQaProgress(null);
-    setQaThread((prev) => [...prev, { q, a: null, sources: [], pending: true, scope }]);
+    setQaThread((prev) => [...prev, { q, a: null, sources: [], pending: true, scope, podcast: activePodcast }]);
     setQaInput('');
     // 阶段化等待态:检索型 scope 轮询后端进度(显式名单只有作答一步,不轮询)
     if (scope === 'subscription') {
@@ -309,7 +341,7 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
       setQaProgress(null);
       setQaLoading(false);
     }
-  }, [qaInput, qaLoading, qaScope, qaThread, activeArticle, showToast, stopPolling]);
+  }, [qaInput, qaLoading, qaScope, qaThread, activeArticle, activePodcast, showToast, stopPolling]);
 
   // 发起新对话:清空多轮历史与输入(切换范围/点「新对话」时调用)
   const resetConversation = useCallback(() => {
@@ -423,10 +455,10 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
                 <Sparkles className="h-5 w-5" />
                 <div className="reader-ai-empty-title">问问哆啦美</div>
                 <div className="reader-ai-empty-sub">
-                  {qaScope === 'article' ? '基于当前打开的这篇文章作答' : `在${guest ? '默认订阅' : '你订阅'}的内容里检索相关文章后作答`}
+                  {qaScope === 'article' ? (activePodcast ? '基于本期播客的可用资料作答，回答附原文依据' : '基于当前打开的这篇文章作答') : `在${guest ? '默认订阅' : '你订阅'}的内容里检索相关资料后作答`}
                 </div>
                 <SuggestRotator
-                  scope={qaScope}
+                  scope={qaScope === 'article' && activePodcast ? 'podcast' : qaScope}
                   onPick={(text) => {
                     setQaInput(text);
                     inputRef.current?.focus();
@@ -438,7 +470,7 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
               <div key={i} className="reader-ai-turn">
                 <div className="reader-ai-q">{m.q}</div>
                 {m.pending ? (
-                  <PendingBlock scope={m.scope} progress={qaProgress} />
+                  <PendingBlock scope={m.scope} progress={qaProgress} podcast={m.podcast} />
                 ) : m.error ? (
                   <div className="reader-ai-a-error">
                     {m.errorCode === 'guest_quota_exhausted' ? (
@@ -461,7 +493,7 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
               ref={inputRef}
               rows={2}
               value={qaInput}
-              placeholder={qaScope === 'article' ? '问问这篇文章…' : `问问${guest ? '默认订阅' : '你订阅'}的内容…`}
+              placeholder={qaScope === 'article' ? (activePodcast ? '问问本期播客…' : '问问这篇文章…') : `问问${guest ? '默认订阅' : '你订阅'}的内容…`}
               onChange={(e) => setQaInput(e.target.value)}
               onCompositionStart={() => { composingRef.current = true; }}
               onCompositionEnd={() => {
@@ -485,15 +517,15 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
                   type="button"
                   className={`reader-ai-seg-btn ${qaScope === 'article' ? 'is-on' : ''}`}
                   disabled={!activeArticle}
-                  title={activeArticle ? '只基于当前打开的这篇文章作答' : '先从中间选择一篇文章'}
+                  title={activeArticle ? (activePodcast ? '只基于本期播客的可用资料作答' : '只基于当前打开的这篇文章作答') : '先从中间选择一篇文章'}
                   onClick={() => switchScope('article')}
                 >
-                  本文
+                  {activePodcast ? '本期播客' : '本文'}
                 </button>
                 <button
                   type="button"
                   className={`reader-ai-seg-btn ${qaScope === 'subscription' ? 'is-on' : ''}`}
-                  title={`在${guest ? '默认订阅' : '你订阅'}的内容里检索相关文章后作答`}
+                  title={`在${guest ? '默认订阅' : '你订阅'}的内容里检索相关资料后作答`}
                   onClick={() => switchScope('subscription')}
                 >
                   {guest ? '默认订阅' : '我的订阅'}

@@ -2309,15 +2309,35 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
     # 上下文组装下沉到 reader_ai.assemble_reader_context；此处注入检索闭包
     # （承载鉴权作用域与 LLM 配置），使组装逻辑与 HTTP 请求解耦、可独立单测（D11）。
     # 检索的规划/选篇两次 LLM 调用计费归因并入 ask。
-    async def _search_fetch(question: str, user: str):
+    def _current_source_ids():
         with Session(db_sink.engine) as session:
             if scope == "all":
                 source_ids = app.resolve_all_visible_source_ids(session)
             else:
-                source_ids = app.resolve_subscribed_source_ids(session, user)
-            source_ids = user_sources_service.external_ai_allowed_source_ids(
+                source_ids = app.resolve_subscribed_source_ids(session, username)
+            return user_sources_service.external_ai_allowed_source_ids(
                 session, source_ids
             )
+
+    def _validate_sources(sources):
+        from services import podcast_qa
+
+        allowed = set(_current_source_ids()) if scope in ("subscription", "all") else None
+        with Session(db_sink.engine) as session:
+            for source in sources:
+                article = session.get(ArticleRecord, source.get("id"))
+                if article is None:
+                    raise HTTPException(status_code=409, detail="参考资料已更新，请重新提问")
+                _deny_hidden_source_article(session, request, article)
+                _deny_unsubscribed_user_source_article(session, username, article)
+                _deny_nonexportable_article(session, article)
+                if allowed is not None and article.source_id not in allowed:
+                    raise HTTPException(status_code=409, detail="可阅读范围已更新，请重新提问")
+        if len(podcast_qa.revalidate_records(db_sink.engine, sources)) != len(sources):
+            raise HTTPException(status_code=409, detail="播客逐字稿已更新，请重新提问")
+
+    async def _search_fetch(question: str, user: str):
+        source_ids = _current_source_ids()
         return await reader_search_service.subscription_context(
             question,
             engine=db_sink.engine,
@@ -2330,6 +2350,7 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
             corpus_label="哆啦美收录内容" if scope == "all" else "读者订阅内容",
             # 与作答侧同一份多轮历史:规划器据此还原追问/指代(v3.34)。
             history=params.history,
+            source_ids_fetch=_current_source_ids,
         )
 
     try:
@@ -2345,6 +2366,7 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
                 # 显式篇目的配图识别(issue #69):缺则识,归属提问读者(只作成本可见,不限额)
                 llm_config=llm_config,
                 usage_meta=UsageMeta(purpose="image_insight", username=username),
+                history=params.history,
             )
         except reader_ai_service.ReaderAIError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc))
@@ -2353,6 +2375,7 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
         # 内部控制位只在服务端用一次,对外 sources 形状与 main 一致(读者面无「配图已识别」标记)
         with_image_notes = reader_ai_service.sources_have_image_notes(sources)
         sources = reader_ai_service.public_sources(sources)
+        _validate_sources(sources)
         history = [{"role": t.role, "content": t.content} for t in (params.history or [])]
         try:
             answer = await reader_ai_service.answer_question(
@@ -2361,6 +2384,7 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
                 # 图片说明使用边界只在上下文真的带了说明时追加(sources 的显式布尔元数据,不嗅探正文)
                 with_image_notes=with_image_notes,
             )
+            _validate_sources(sources)
         except reader_ai_service.ReaderAIError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc))
         except LLMError as exc:
