@@ -306,6 +306,9 @@
   --glass-shadow: 0 10px 30px -12px rgba(22, 25, 34, 0.30);
   /* 层的遮罩(抽屉 / 动作单;Modal 另有 .modal-overlay 口径) */
   --m-scrim: rgba(11, 18, 32, 0.32);
+  /* 层的抓手条(拍板 33):对卡面与底页底色 ≥ 3:1(原用的 --dorami-border-strong 只有 1.4–1.7:1);按下深一档 */
+  --m-grab: color-mix(in oklab, var(--dorami-ink) 52%, transparent);
+  --m-grab-active: color-mix(in oklab, var(--dorami-ink) 64%, transparent);
   /* 弹簧:阻尼 0.76、超调 2.5%,与 utils/playerSpring.js 同一种采样法(具名例外,见 conventions §7) */
   --motion-sheet: 420ms;
   --motion-sheet-ease: linear(0, 0.047, 0.157, 0.296, 0.44, 0.575, 0.693, 0.791, 0.868, 0.926, 0.967, 0.995, 1.012, 1.021, 1.025, 1.025, 1.023, 1.02, 1.016, 1.013, 1.009, 1.007, 1.004, 1.003, 1);
@@ -11805,10 +11808,10 @@ input[type="radio"] {
     height: 5px;
     margin: 25px auto 0;
     border-radius: var(--r-pill);
-    background: var(--dorami-border-strong);
+    background: var(--m-grab);
     transition: background-color var(--motion-fast) var(--motion-ease), transform var(--motion-fast) var(--motion-ease);
   }
-  .player-grab:active .player-grab-bar { background: color-mix(in oklab, var(--dorami-ink) 30%, transparent); transform: scaleX(1.15); }
+  .player-grab:active .player-grab-bar { background: var(--m-grab-active); transform: scaleX(1.15); }
   .player-grab:focus-visible { outline: none; }
   .player-grab:focus-visible .player-grab-bar { outline: 2px solid var(--dorami-focus); outline-offset: 4px; }
   /* 这一期:封面 48 + 标题(宋体 600 16 / 23,两行截断)+「节目 · 音轨 ›」;整块推入这一期 / 这篇文章 */

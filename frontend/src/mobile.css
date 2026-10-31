@@ -50,6 +50,9 @@
 .m-shell[data-receded]::after { height: calc(var(--sab) + var(--m-float) + max(24px, var(--player-clear-end, 0px))); }
 /* 早报整页是纸面(surface),渐隐到同一底色,不在头条下面压出一条灰带 */
 .m-shell[data-tab="brief"]::after { background: linear-gradient(to top, var(--dorami-surface) 18%, color-mix(in oklab, var(--dorami-surface) 70%, transparent) 52%, transparent); }
+/* 有坞时(样页):底栏与坞之间那 8px 缝不透出正文——底色一直铺到渐隐层顶上 56px 才淡出(坞自身垫实色) */
+.reader-ws[data-player="bar"] .m-shell::after { background: linear-gradient(to top, var(--rd-list-bg) calc(100% - 56px), transparent); }
+.reader-ws[data-player="bar"] .m-shell[data-tab="brief"]::after { background: linear-gradient(to top, var(--dorami-surface) calc(100% - 56px), transparent); }
 
 /* 提示浮在底栏上方：收藏/请求失败后的反馈仍可见，也不挡住中间的导航按钮。
    底栏约 64px，额外留 16px；仅作用移动壳，桌面提示位置不变。 */
@@ -502,8 +505,9 @@
   height: 5px;
   margin: 0 auto;
   border-radius: var(--r-pill);
-  background: var(--dorami-border-strong);
+  background: var(--m-grab);
 }
+.m-sheet-grab:active .m-sheet-grab-bar { background: var(--m-grab-active); }
 .m-sheet-obj {
   margin-bottom: 4px;
   padding: 2px 10px 10px;

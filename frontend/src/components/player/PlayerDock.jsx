@@ -468,6 +468,10 @@ export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs
     run(fx);
   }, [form, itemKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 首次挂载(同一标签页恢复的会话):宿主是祖先元素,它的 ref 在子组件的 layout effect 之后才挂上,上面那次让位量不到宿主;
+  // 落定后(passive effect,ref 已挂)补一次。applyClearance 对已就位的形态是空操作
+  useEffect(() => { applyClearance(formRef.current); }, [applyClearance]);
+
   // 卸载:撤掉宿主上的让位 / 避让变量与 Toast 抬升。必须是 layout 清理:桌面 ⇄ 手机互切时旧条与新条共用同一个宿主,
   // React 的顺序是「旧实例 layout 清理 → 新实例 layout 设置 → 旧实例 passive 清理」,写成 passive 会把新条刚写好的
   // data-player 一并删掉(开发构建的 StrictMode 二次挂载会把它补回来,所以只在生产构建里露出来)
