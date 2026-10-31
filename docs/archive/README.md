@@ -5,6 +5,10 @@
 > `docs/frontend/conventions.md` / `docs/sources/curation_policy.md` 等活跃文档。
 > 按「故事」分组索引;文内常含 ☐/☑ 进度符,均为当时状态。
 
+## 发布方逐字稿阅读与翻译分段(2026-10,issue #246)
+
+- [issue-246-transcript-paragraphs.md](./issue-246-transcript-paragraphs.md) — 词级 JSON 分段、翻译缓存升级、179 项回归与真实翻译记录；英文及中文页面验收通过，用户已授权提交 MR，未合入、未发布。
+
 ## 导读状态与模型配置(2026-10,issue #238 / #242 / #243 / #244)
 
 - [issue-238-guides-models.md](./issue-238-guides-models.md) — 用户验收后的四方案取舍、配置生效与错误脱敏边界、集成验证及交叉检视记录。

@@ -93,6 +93,8 @@
 
 ## archive/ —— 已完结方案与执行记录(⊘ 归档;索引 [archive/README.md](./archive/README.md))
 
+- ⊘ [issue-246-transcript-paragraphs.md](archive/issue-246-transcript-paragraphs.md) — 发布方词级 JSON 阅读与翻译分段；英文、真实中文展示均经用户验收，已授权提交 MR，未合入、未发布。
+
 计划已落地或被取代的文档,按「故事」分组:2026-07 的阅读器演进五轮 / 源扩容 / 静默仪器重构 / 前后端重构 / 实体简化 / crawl4ai 选型 / 竞品对照,以及 2026-10-21 归档的 28 篇 2026-07 → 2026-10 波次方案(评分与早报 / 检索与翻译 / 播客 / 来源 / 管理面 / 部署运维 / 视觉),Podcast Intelligence 的 spec-kit 规格与报告在 `archive/podcast-intelligence/`。**查决策来龙去脉才来这里;判断现状看 `docs/architecture/` 与代码。**
 
 #41 于 2026-10-22 按首期范围收口，见 [论文全文阅读归档](./archive/issue-41-paper-fulltext.md)：HF/arXiv HTML 阅读、摘要分析、回填、FTS 优化与后续翻译修复均已落地；PDF/其它源/复杂排版等后续边界保留在待办展望。
