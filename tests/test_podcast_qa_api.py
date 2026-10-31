@@ -88,7 +88,7 @@ def _assert_evidence(payload, prompt, body, artifact_id, content_hash):
 
 def test_article_finds_late_caveat_and_returns_exact_prompt_evidence(monkeypatch, tmp_path):
     app, sink = _setup(monkeypatch, tmp_path)
-    body = ("Opening background without the requested condition. " * 800
+    body = (("Opening background without the requested condition. " * 800).rstrip()
             + "\n[zqpl]: ORCHIDLIMIT holds only for independently sampled participants.\n"
             + "Closing remarks. " * 100).strip()
     artifact_id, content_hash = _episode(sink.engine, body=body, notes="A broad interview about research.")
