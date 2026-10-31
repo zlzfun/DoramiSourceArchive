@@ -433,7 +433,7 @@ def test_reader_text_limits_are_configurable_and_environment_overridable(
     assert configured.reader_cursor_secret == "0123456789abcdef0123456789abcdef"
 
 
-def test_existing_word_transcript_reads_as_paragraphs_without_changing_ai_input(
+def test_existing_word_transcript_reads_and_translates_as_paragraphs_without_rewriting_source(
     monkeypatch, tmp_path
 ):
     from services import podcast_text_reader, podcast_transcript_translation
@@ -493,7 +493,7 @@ def test_existing_word_transcript_reads_as_paragraphs_without_changing_ai_input(
             session, episode_id="episode-reader", source_kind="publisher_transcript", config=config,
         )
         assert source.id == saved.id
-        assert translation_input == old_projection
+        assert translation_input == expected
         assert len(session.exec(select(PodcastTextArtifactRecord)).all()) == 6
         assert session.exec(select(PodcastProcessingRecord)).all() == []
         assert session.exec(select(PodcastStageAttemptRecord)).all() == []

@@ -130,8 +130,8 @@ def _plain_text(
     *,
     for_reading: bool = False,
 ) -> str:
-    # Translation also consumes this function. Keep its historical input unless
-    # the Reader explicitly requests the presentation-only paragraph projection.
+    # Reader display and translation explicitly opt into readable paragraphs.
+    # The default preserves the historical projection for other consumers.
     try:
         validate_text_artifact(
             artifact.inline_text,
