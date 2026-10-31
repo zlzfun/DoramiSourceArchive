@@ -43,6 +43,7 @@ import ShareMenu from './ShareMenu';
 import { requestLogin } from '../utils/loginPrompt';
 import ContextMenu from './ContextMenu';
 import { useContextMenu } from '../hooks/useContextMenu';
+import { useTouchHoldMenu } from '../hooks/useTouchHoldMenu';
 import { resolveCompany } from '../sourceTaxonomy';
 import DiscoverPage from './DiscoverPage';
 import SocialFlow from './SocialFlow';
@@ -235,6 +236,9 @@ export const ArticleRow = memo(function ArticleRow({
   interestHit = '', unsubscribed = false, onSubscribeSource = null,
   // issue #199 全局播放条:这一期正在播 / 已暂停('playing' | 'paused' | '');AI 音轨的律动条走渐变两端色
   nowPlaying = '', nowPlayingAi = false,
+  // 手机壳(issue #230 批 4a,样页 c-fav):星只是「已收藏」的标记,只画在收藏了的条目上——文章在元信息行分数前,
+  // 播客在标题行尾;收藏走长按动作单与正文页。桌面不传
+  favIndicator = false,
 }) {
   // 标题语言(issue #218):偏好开且有可用译名时显示中文标题,否则原题;移动列表复用本行
   const { preferChinese } = useTitlePreference();
@@ -261,38 +265,48 @@ export const ArticleRow = memo(function ArticleRow({
   // 内容类型(论文 / 教程 / 观点 / 版本更新…):源名后的一个词,资讯不挂(issue #178)。
   // issue #184:列表不再挂主题标签,内容类型也不画框——标签只在阅读窗出现,条目行只回答「谁发的、说了什么、值不值得点开」。
   const kindTag = kindLabel ? <span className="reader-entry-kind">{kindLabel}</span> : null;
-  const favoriteControl = (
-    <span
-      role="button"
-      tabIndex={0}
-      aria-label={isFav ? '取消收藏' : '收藏'}
-      title={isFav ? '取消收藏' : '收藏'}
-      onClick={(e) => { e.stopPropagation(); onToggleFavorite(article, e); }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          e.stopPropagation();
-          onToggleFavorite(article, e);
-        }
-      }}
-      className={`reader-entry-fav ${isFav ? 'is-on' : ''}`}
-    >
-      <Star className="h-[15px] w-[15px]" fill={isFav ? 'currentColor' : 'none'} />
-    </span>
-  );
+  // 收藏星(审计 M-02 / M-35,issue #230 批 4a):不再是嵌在整行 <button> 里的 span[role=button](嵌套交互)。
+  // 桌面:星是行里的装饰元素(aria-hidden),点到它由整行的点击分流成「收藏 / 取消收藏」;鼠标悬停浮出、
+  // 触屏(pointer: coarse)常显(index.css);键盘与读屏走右键菜单(ContextMenu 键)与阅读窗的收藏钮,行名补一句「已收藏」。
+  // 手机(favIndicator):只是标记,见上。
+  const favoriteControl = favIndicator
+    ? (isFav ? (
+      <span className="reader-entry-fav is-on is-mark" aria-hidden="true">
+        <Star className="h-[14px] w-[14px]" fill="currentColor" />
+      </span>
+    ) : null)
+    : (
+      <span aria-hidden="true" title={isFav ? '取消收藏' : '收藏'} className={`reader-entry-fav ${isFav ? 'is-on' : ''}`}>
+        <Star className="h-[15px] w-[15px]" fill={isFav ? 'currentColor' : 'none'} />
+      </span>
+    );
+  const onRowClick = (e) => {
+    const hit = e.target instanceof Element ? e.target : null;
+    if (!favIndicator && hit?.closest('.reader-entry-fav')) {
+      onToggleFavorite(article, e);
+      return;
+    }
+    if (unsubscribed && onSubscribeSource && hit?.closest('.reader-entry-unsub')) {
+      e.stopPropagation();
+      onSubscribeSource(article.source_id);
+      return;
+    }
+    onSelect(article);
+  };
   return (
     <>
       {showLabel && <div className="reader-date-label">{dayLabelOf(dayKey)}</div>}
       <button
         type="button"
-        onClick={() => onSelect(article)}
+        onClick={onRowClick}
         onMouseEnter={() => onPrefetchEnter(article)}
         onMouseLeave={onPrefetchLeave}
         onContextMenu={(e) => onContextMenu(e, article, 'article')}
-        className={`reader-entry ${compact ? 'is-compact' : ''} ${entryPodcast ? 'is-podcast' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'} ${isFav ? 'is-fav' : ''} ${ctxAnchor ? 'is-ctx-anchor' : ''}`}
+        className={`reader-entry ${compact ? 'is-compact' : ''} ${entryPodcast ? 'is-podcast' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'} ${isFav ? 'is-fav' : ''} ${ctxAnchor ? 'is-ctx-anchor' : ''}${favIndicator ? ' has-fav-mark' : ''}`}
       >
         {/* 读态只由标题字重与墨色表达(is-read),不另画未读点(issue #199);读屏补一句「未读」与之对等 */}
         {isUnread && <span className="sr-only">未读，</span>}
+        {isFav && <span className="sr-only">已收藏，</span>}
         {entryPodcast ? (
           <span className="reader-podcast-layout">
             <PodcastCover src={podcast?.image_url} className="reader-podcast-cover" />
@@ -344,16 +358,9 @@ export const ArticleRow = memo(function ArticleRow({
               <span className="reader-entry-src">{sourceName}</span>
               {/* 订阅外文章(订阅谓词关着的全站范围):源名后 faint「未订阅」,悬停卡片翻成「+ 订阅」——
                   发现的动作发生在阅读现场,不必去发现页 */}
-              {unsubscribed && (
-                <span
-                  role="button"
-                  tabIndex={0}
-                  className="reader-entry-unsub"
-                  title="订阅这个来源"
-                  onClick={(e) => { e.stopPropagation(); onSubscribeSource?.(article.source_id); }}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onSubscribeSource?.(article.source_id); } }}
-                />
-              )}
+              {/* 同收藏星(批 4a):不再是嵌在整行按钮里的 role=button,点到它由整行的点击分流成「订阅」;读屏补一句「未订阅」 */}
+              {unsubscribed && <span aria-hidden="true" className="reader-entry-unsub" title="订阅这个来源" />}
+              {unsubscribed && <span className="sr-only">，未订阅</span>}
               {kindTag}
               {/* 命中兴趣:写命中的那个兴趣标签(命中多个取第一个);它是透镜的产物,与开关无关 */}
               {interestHit && <span className="reader-entry-hit">{interestHit}</span>}
@@ -364,15 +371,15 @@ export const ArticleRow = memo(function ArticleRow({
                 {formatRelativeTime(article.publish_date || article.fetched_date, '')}
               </span>
               <NowPlayingTag state={nowPlaying} ai={nowPlayingAi} />
+              {favIndicator && favoriteControl}
               {/* 分数(身份线:宋体数字 + AI 渐变分档)推到行尾;分析在途时先以「分析中」占位,落地即换成数 */}
               {score
                 ? <span className={`reader-entry-score ai-grad-text ${scoreTier}`} title={scoreTitle}>{score}</span>
                 : (analysisStatus && <span className="reader-entry-score is-pending" role="status">分析中</span>)}
             </span>
-            {/* 标题行内收藏控件复用 span role=button，避免 button 嵌套。 */}
             <span className="reader-entry-titlerow">
               <span className="reader-entry-title">{searchQuery ? highlightMatch(title, searchQuery) : title}</span>
-              {favoriteControl}
+              {!favIndicator && favoriteControl}
             </span>
             {/* 摘要行:AI 要点摘要(summary_zh)优先——正文截断对英文长文几乎无信息量 */}
             {excerpt && <span className="reader-entry-excerpt">{searchQuery ? highlightMatch(excerpt, searchQuery) : excerpt}</span>}
@@ -412,7 +419,7 @@ export default function ReaderTab({
   const [brandFailed, setBrandFailed] = useState(false);
   const {
     briefOpen, setBriefOpen, rankingsOpen, setRankingsOpen,
-    briefReturn, setBriefReturn, briefRestore, setBriefRestore,
+    briefReturn, setBriefReturn, briefRestore, setBriefRestore, briefPlace,
     discoverTab, setDiscoverTab, interestVersion, setInterestVersion,
   } = view;
   const leaveBriefTrail = useCallback(() => setBriefReturn(null), [setBriefReturn]);
@@ -674,8 +681,12 @@ export default function ReaderTab({
     };
   });
 
+  // 触屏长按 = 右键菜单(iPad 横屏等 ≥ 1025 的触屏走桌面四栏,审计 M-15;issue #230 批 4a):条目行、源行、社交卡
+  const shellRef = useRef(null);
+  useTouchHoldMenu(shellRef, '.reader-entry, .reader-source-row, .social-post');
+
   return (
-    <div className="reader-shell">
+    <div className="reader-shell" ref={shellRef}>
       {/* ── 管理员公告横幅(v3.18):无公告时渲染 null,:has 不命中,四带布局逐像素不变 ── */}
       <AnnouncementBanner />
       {/* ── 视图轨 · 一级视图导航(样页:品牌标 + 图标下常显微标签 + 轨底头像)。
@@ -967,6 +978,7 @@ export default function ReaderTab({
           interestVersion={interestVersion}
           sourceMap={sourceMap}
           restore={briefRestore}
+          placeKeeper={briefPlace}
           supersedePendingOpen={supersedePendingOpen}
           onManageSubscriptions={() => { setBriefOpen(false); leaveBriefTrail(); openDiscoverSources({ shape: 'all' }); }}
           onManageInterests={openInterests}

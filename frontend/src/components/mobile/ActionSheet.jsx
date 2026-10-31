@@ -15,7 +15,8 @@ const shortTitle = (text) => (text.length > GRAB_TITLE_MAX ? `${text.slice(0, GR
 // 正文「⋯」底页(issue #230 批 3c)不带对象标题:label 直接给层名(「更多操作」,抓手念「关闭更多操作」),
 // className 给面板换样式(is-float = 样页 read-menu 的浮动磨砂卡)。
 // preview(issue #230 批 3b,样页拍板 5「长按写清对象」):给了就在动作单上方浮一张抬起的预览卡,代替一行对象标题;
-// 预览卡只读(aria-hidden、不接指针,点它等于点遮罩),读屏仍由动作单名说清对象。
+// 预览卡只读(aria-hidden + inert、不接指针,点它等于点遮罩),读屏仍由动作单名说清对象。
+// 批 4a:预览卡走 Sheet 的 aside 槽(浮在面板上方、不在拖动区里);长按出来的动作单一律是浮动圆角卡(className="is-float")。
 export default function ActionSheet({ open, title = '', items = [], onClose, label: labelProp = '', className = '', preview = null }) {
   const menuRef = useRef(null);
   const label = labelProp || (title ? `「${shortTitle(title)}」的操作` : '操作');
@@ -26,9 +27,8 @@ export default function ActionSheet({ open, title = '', items = [], onClose, lab
       label={label}
       grabLabel={`关闭${label}`}
       className={className}
-      head={preview
-        ? <div className="m-sheet-peek" aria-hidden="true">{preview}</div>
-        : title ? <div className="m-sheet-obj">{title}</div> : null}
+      aside={preview ? <div className="m-sheet-peek" aria-hidden="true" inert>{preview}</div> : null}
+      head={!preview && title ? <div className="m-sheet-obj">{title}</div> : null}
       initialFocus={(panel, { keyboard }) => (keyboard
         ? menuRef.current?.querySelector('[role="menuitem"]')
         : menuRef.current) || panel}

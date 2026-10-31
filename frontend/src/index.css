@@ -293,6 +293,16 @@
   --m-gutter: 12px;
   --m-head-h: 52px;
   --m-head-clear: calc(var(--sat) + var(--m-head-h) + 4px);
+  /* 版心与左右让位(issue #230 批 4a,审计 M-08 / M-12;方案 §8 平板档 a):平板档(bp-tablet,768–1024,含大屏手机横屏)
+     内容收进 --m-col 宽的版心居中,--m-col-pad 是版心外每侧的留白,手机竖屏为 0。
+     --m-side-l / -r = max(安全区, 版心留白):手机壳里贴左右的东西(页头、底栏、坞、底页、各滚动区的内边距)一律按它让,
+     横屏刘海与平板版心同一条口径 */
+  --m-col: 680px;
+  --m-col-pad: 0px;
+  --m-side-l: max(var(--sal), var(--m-col-pad));
+  --m-side-r: max(var(--sar), var(--m-col-pad));
+  /* 公告带(审计 M-11)占位的高度:有公告时 MobileReader 写到 .m-shell 上,Tab 根页的页头让位加上它 */
+  --m-ann-h: 0px;
   --m-tab-h: 62px;
   --m-tab-clear: calc(var(--sab) + var(--m-float) * 2 + var(--m-tab-h));
   /* 夜航卡面:亮色即 surface,暗色抬一档 */
@@ -320,6 +330,10 @@
 }
 @supports (height: 100dvh) {
   :root { --vh-full: 100dvh; }
+}
+/* 平板档版心(批 4a):768–1024 仍是手机壳,内容 680 居中;--m-side-l / -r 在 :root 上随它重算 */
+@variant bp-tablet {
+  :root { --m-col-pad: max(0px, calc((100vw - var(--m-col)) / 2)); }
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   :root {
@@ -8461,6 +8475,13 @@ input[type="radio"] {
   .reader-entry:hover .reader-entry-fav { opacity: 1; pointer-events: auto; }
   .reader-entry-fav:hover { color: #f59e0b; }
   .reader-entry-fav.is-on { opacity: 1; pointer-events: auto; color: #f59e0b; }
+  /* 触屏(审计 M-02 / M-15;issue #230 批 4a):≥ 1025 的桌面壳也可能是触屏(iPad 横屏),没有悬停可浮出——星常显、可点
+     (点到星由整行的点击分流成收藏,见 ArticleRow);鼠标(pointer: fine)观感不变。手机壳的星只是「已收藏」标记(.is-mark) */
+  @media (pointer: coarse) {
+    .reader-entry-fav { opacity: 1; pointer-events: auto; }
+    /* 触屏长按 = 右键菜单(hooks/useTouchHoldMenu):行里的字不被长按选中、不弹系统气泡 */
+    .reader-shell :is(.reader-entry, .reader-source-row, .social-post) { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+  }
 
   .reader-entry-top {
     display: flex;

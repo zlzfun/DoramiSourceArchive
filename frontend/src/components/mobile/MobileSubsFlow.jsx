@@ -33,7 +33,7 @@ export default function MobileSubsFlow({
   onBack,
   aiEnabled = false,
   pressBind,
-  onSocialPress,
+  socialPressBind = null,   // 社交卡长按(useLongPress 的 bind;批 4a,审计 M-04)
   sheetAnchorKey = null,
   playingId = '',
   playingState = '',
@@ -149,6 +149,7 @@ export default function MobileSubsFlow({
       onClose={onBack}
       onScrollCapture={onScrollCapture}
       data-own-list=""
+      exit="push"
     >
       <MobileHeader
         lead={<HeadBack label="返回订阅" onClick={onBack} />}
@@ -195,7 +196,7 @@ export default function MobileSubsFlow({
             favOnly={kind === 'fav'}
             readTogglingId={socialReadToggling}
             onToggleRead={handleToggleSocialRead}
-            onPostContextMenu={(e, entity) => { e.preventDefault(); onSocialPress?.(entity); }}
+            pressBind={socialPressBind}
             ctxAnchorKey={sheetAnchorKey}
             onMarkAllRead={markAll}
             markingRead={markingRead}
@@ -247,6 +248,7 @@ export default function MobileSubsFlow({
                         onToggleFavorite={handleToggleFavorite}
                         onContextMenu={noopContextMenu}
                         ctxAnchor={sheetAnchorKey === `article:${article.id}`}
+                        favIndicator
                         interestHit={kind !== 'tag' ? (article.interest_hits?.[0] || '') : ''}
                         unsubscribed={interestish && !subscribedIds.has(article.source_id)}
                         onSubscribeSource={subscribeSourceById}

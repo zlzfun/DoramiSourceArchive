@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpenText, ChevronRight, Info, Lock, LogOut, MessageSquare, Palette, User, UserRound } from 'lucide-react';
 import { markFeedbackSeen } from '../../api';
 import { useLayerHistory } from '../../hooks/useLayerHistory';
 import { useConfirm } from '../../hooks/useConfirm';
 import { avatarHue, avatarInitial } from '../../utils/avatarColor';
 import LayerPage from '../layer/LayerPage';
+import { playPushExit } from '../../utils/layerExit';
 import InstallApp from '../InstallApp';
 import AccountSection from '../settings/AccountSection';
 import AppearanceSection from '../settings/AppearanceSection';
@@ -88,9 +89,15 @@ export default function MobileSettings({
 
   // 返回键握手:设置根一层(层原语 LayerPage 登记)+ 分区页一层(子页,本组件自己登记;根先开、子页后开,返回由内向外逐级退)。
   // Esc 与返回同序:先退分区、再关设置。
-  useLayerHistory(open && Boolean(sectionId), () => setSectionId(null));
+  // 退回一级页时分区页反向推出(批 4a,审计 M-33 / 批 2 遗留「设置页只有推入、无反向退场」):换掉之前留一个替身往右退并淡出
+  const paneRef = useRef(null);
+  const backToRoot = () => {
+    playPushExit(paneRef.current, { absolute: true });
+    setSectionId(null);
+  };
+  useLayerHistory(open && Boolean(sectionId), backToRoot);
   const stepBack = () => {
-    if (sectionId) setSectionId(null);
+    if (sectionId) backToRoot();
     else onClose?.();
   };
 
@@ -160,14 +167,15 @@ export default function MobileSettings({
       label="设置"
       onClose={onClose}
       onEscape={stepBack}
+      exit="push"
     >
       {active ? (
         <>
           <MobileHeader
-            lead={<HeadBack label="返回设置" onClick={() => setSectionId(null)} />}
+            lead={<HeadBack label="返回设置" onClick={backToRoot} />}
             title={<HeadTitle>{active.label}</HeadTitle>}
           />
-          <div key={active.id} className="m-page-scroll m-sett-body m-sett-pane" onScroll={onScroll}>
+          <div key={active.id} ref={paneRef} className="m-page-scroll m-sett-body m-sett-pane" onScroll={onScroll}>
             {isGuest && active.id === 'account' && <GuestAccountSection onLogin={onGuestLogin} />}
             {guestLocked(active.id) && <GuestGate sectionId={active.id} onLogin={onGuestLogin} />}
             {!isGuest && active.id === 'account' && (

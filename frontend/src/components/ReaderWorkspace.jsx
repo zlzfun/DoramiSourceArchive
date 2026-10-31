@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useReaderState } from '../hooks/useReaderState';
 import { compactLayoutMatches } from '../hooks/useCompactLayout';
 import ReaderTab from './ReaderTab';
@@ -17,6 +17,17 @@ export default function ReaderWorkspace({ mobile, surfaceActive = true, ...props
   const [briefRestore, setBriefRestore] = useState(null);
   const [discoverTab, setDiscoverTab] = useState('sources');
   const [interestVersion, setInterestVersion] = useState(0);
+  // 早报正在看的那一期与读到的位置(审计 M-36,issue #230 批 4a):跨 1024 换版式时早报页随视图卸载重挂,
+  // 旧的那份卸载前把 {date, revision, progress} 交到这里,新的那份挂载时取走接着看(iPad 旋转不再跳回今天、回到顶)
+  const briefPlaceRef = useRef(null);
+  const briefPlace = useMemo(() => ({
+    keep: (place) => { briefPlaceRef.current = place; },
+    take: () => {
+      const place = briefPlaceRef.current;
+      briefPlaceRef.current = null;
+      return place;
+    },
+  }), []);
   const closePage = useCallback(() => setPage(null), []);
   const setBriefOpen = useCallback((open) => setPage(open ? 'brief' : null), []);
   const setRankingsOpen = useCallback((open) => setPage(open ? 'rankings' : null), []);
@@ -57,7 +68,7 @@ export default function ReaderWorkspace({ mobile, surfaceActive = true, ...props
   const view = {
     briefOpen: page === 'brief', setBriefOpen,
     rankingsOpen: page === 'rankings', setRankingsOpen,
-    briefReturn, setBriefReturn, briefRestore, setBriefRestore,
+    briefReturn, setBriefReturn, briefRestore, setBriefRestore, briefPlace,
     discoverTab, setDiscoverTab, interestVersion, setInterestVersion,
     tab, setTab, playerHostRef: rootRef, openPlayingItem,
   };

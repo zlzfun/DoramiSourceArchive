@@ -15,6 +15,7 @@ import LogoMark from './LogoMark';
 import BriefHistoryCalendar, { BriefHistorySheet } from './BriefHistoryCalendar';
 import { GlassBtn, HeadTitle, MobileHeader } from './mobile/MobileHeader';
 import { useLongPress } from '../hooks/useLongPress';
+import { compactLayoutMatches } from '../hooks/useCompactLayout';
 import { briefSelectionCounts, VALUE_LANES } from '../utils/briefStats';
 import { briefMenuArticle } from '../utils/briefMenu';
 import { resolveCompany } from '../sourceTaxonomy';
@@ -430,6 +431,9 @@ export default function PersonalBriefPage({
   onBrowse = null,              // 「去看文章」→ 关早报页落文章容器
   // 从阅读窗「返回我的早报」回来时带的外出上下文 {date, revision, scrollTop, itemId};挂载时一次性读取
   restore = null,
+  // 跨版式交接(审计 M-36,issue #230 批 4a):ReaderWorkspace 的 {keep, take}。换版式(跨 1024)卸载前交出正在看的那一期
+  // 与读到的比例 {date, revision, progress},另一种版式的早报页挂载时取走接着看;切 Tab / 关早报这类卸载不交接(仍是「新开」)
+  placeKeeper = null,
   guest = false,
   onGuestLogin = null,
   // 手机壳页头的领位(issue #230 第 2 批,拍板 31 B):头像钮由 MobileReader 传入;只有手机传,桌面眉头不动
@@ -451,6 +455,9 @@ export default function PersonalBriefPage({
   )); // date=null → 今天
   const [detail, setDetail] = useState({ key: '', edition: null, loading: false, error: '' });
   const [histOpen, setHistOpen] = useState(false);
+  // 手机往期底页每次打开都是新实例(月份、版次回到正在看的那天),关的时候不立刻卸载、留给 Sheet 播退场(审计 M-33,批 4a)
+  const [histSession, setHistSession] = useState(0);
+  useLayoutEffect(() => { if (histOpen) setHistSession((n) => n + 1); }, [histOpen]);
   const histTriggerRef = useRef(null);
   const cacheRef = useRef(new Map()); // 终态 edition 不可变,按 date#revision 缓存
   const sheetRef = useRef(null);
@@ -473,6 +480,13 @@ export default function PersonalBriefPage({
       return null;
     }
   }, [loadHistory]);
+
+  // 挂载时取走另一种版式交过来的位置(没有外出上下文时才用);StrictMode 的二次挂载取到空,不覆盖
+  useEffect(() => {
+    const place = placeKeeper?.take?.();
+    if (place && !restoreRef.current) restoreRef.current = place;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     setLoading(true);
@@ -559,13 +573,31 @@ export default function PersonalBriefPage({
     const r = restoreRef.current;
     if (!r || !cardsReady) return undefined;
     restoreRef.current = null;
-    if (sheetRef.current) sheetRef.current.scrollTop = r.scrollTop || 0;
+    const sheet = sheetRef.current;
+    // 跨版式交接按比例落(两种版式的版面高不同);外出返回按像素
+    if (sheet) sheet.scrollTop = r.progress != null ? r.progress * Math.max(0, sheet.scrollHeight - sheet.clientHeight) : (r.scrollTop || 0);
     if (r.itemId == null) return undefined;
     setFlashId(r.itemId);
     const timer = window.setTimeout(() => setFlashId(null), 1800);
     return () => window.clearTimeout(timer);
   }, [cardsReady]);
   const status = usesToday ? (todayStatus || edition?.status) : edition?.status;
+
+  // 换版式卸载时交出位置(审计 M-36):读到的比例在滚动时记下——浏览器会先按新宽度重排旧视图、把滚动位置夹没,
+  // 卸载那一刻再量就晚了,所以只认版式还没翻过去时的滚动(与 ReaderWorkspace 的列表 / 正文位置同一条规矩);
+  // 媒体查询已经翻过去(compactLayoutMatches() 与本页的 mobile 不一致)才算换版式,这时交出 {date, revision, progress}
+  const selRef = useRef(sel);
+  useEffect(() => { selRef.current = sel; });
+  const progressRef = useRef(0);
+  const recordProgress = (event) => {
+    if (compactLayoutMatches() !== mobile) return;
+    const sheet = event.currentTarget;
+    progressRef.current = sheet.scrollTop / Math.max(1, sheet.scrollHeight - sheet.clientHeight);
+  };
+  useLayoutEffect(() => () => {
+    if (!placeKeeper || compactLayoutMatches() === mobile) return;
+    placeKeeper.keep({ date: selRef.current.date, revision: selRef.current.revision, progress: progressRef.current });
+  }, [placeKeeper, mobile]);
 
   const closeHistory = useCallback(() => setHistOpen(false), []);
   const pickDay = (key) => {
@@ -739,20 +771,22 @@ export default function PersonalBriefPage({
   );
 
   // ── 入选事实句(v3.54 §3,原编排说明行):降级只说新闻那份(issue #178 第三波) ──
+  // 看往期时说「这一天」(issue #230 批 4a,批 3b 观察;与「这一天没有命中你兴趣的内容」一致),今天那期才说「今天」
+  const dayWord = isToday ? '今天' : '这一天';
   let fact = null;
   if (showEdition) {
     const scopeText = scopeCount > 0 ? <> {n(scopeCount)} 个订阅来源</> : '订阅来源';
     if (edition.degraded_reason && valueCount > 0) {
       const head = interestOnly
-        ? <>今天没有命中你兴趣的新闻{followedCount ? <>（{n(followedCount)} 个兴趣）</> : null}</>
-        : (ratioUnfillable ? '今天缺少用于补齐的非兴趣新闻' : '今天没有达到入选标准的新闻');
+        ? <>{`${dayWord}没有命中你兴趣的新闻`}{followedCount ? <>（{n(followedCount)} 个兴趣）</> : null}</>
+        : `${dayWord}${ratioUnfillable ? '缺少用于补齐的非兴趣新闻' : '没有达到入选标准的新闻'}`;
       fact = ownItems.length > 0
         ? <>{head}，「订阅源最新更新」是{scopeText}的最新内容，不计入正式精选；{valueText}</>
         : <>{head}，{valueText}</>;
     } else if (edition.degraded_reason) {
       fact = interestOnly
-        ? <>今天没有命中你兴趣的新内容{followedCount ? <>（{n(followedCount)} 个兴趣）</> : null}</>
-        : <>{ratioUnfillable ? '今天缺少用于补齐的非兴趣内容' : '今天没有达到入选标准的内容'}，以下是{scopeText}的最新更新，不计入正式精选</>;
+        ? <>{`${dayWord}没有命中你兴趣的新内容`}{followedCount ? <>（{n(followedCount)} 个兴趣）</> : null}</>
+        : <>{`${dayWord}${ratioUnfillable ? '缺少用于补齐的非兴趣内容' : '没有达到入选标准的内容'}`}，以下是{scopeText}的最新更新，不计入正式精选</>;
     } else if (interestOnly) {
       fact = (
         <>
@@ -924,9 +958,9 @@ export default function PersonalBriefPage({
     // 降级版面:不设头条,头条位如实说明
     posterBody = (
       <div className="bp-head is-note">
-        <p className="bp-kicker">{ownItems.length > 0 ? '最新更新' : '今日早报'}</p>
+        <p className="bp-kicker">{ownItems.length > 0 ? '最新更新' : (isToday ? '今日早报' : '这一天的早报')}</p>
         <h1 className="bp-title is-note">
-          {interestOnly ? '今天没有命中你兴趣的新内容' : ratioUnfillable ? '今天缺少用于补齐的非兴趣内容' : '今天没有达到入选标准的内容'}
+          {`${dayWord}${interestOnly ? '没有命中你兴趣的新内容' : ratioUnfillable ? '缺少用于补齐的非兴趣内容' : '没有达到入选标准的内容'}`}
         </h1>
         <p className="bp-sum">
           {ownItems.length > 0 ? `下面是${guest ? '默认订阅' : '你订阅'}来源的最新更新，不计入正式精选` : '下面是按内容价值入选的阅读与收听'}
@@ -1122,8 +1156,10 @@ export default function PersonalBriefPage({
               <span className="m-pill-in"><Undo2 aria-hidden="true" />回到今天</span>
             </button>
           )}
-          {histOpen && (
+          {histSession > 0 && (
             <BriefHistorySheet
+              key={histSession}
+              open={histOpen}
               days={days}
               todayKey={todayKey}
               selDate={selDate}
@@ -1141,7 +1177,7 @@ export default function PersonalBriefPage({
   return (
     <>
     {mobileHead}
-    <section className={`bp-sheet ${mobile ? 'is-mobile' : ''}`} aria-label="我的早报" ref={sheetRef}>
+    <section className={`bp-sheet ${mobile ? 'is-mobile' : ''}`} aria-label="我的早报" ref={sheetRef} onScroll={recordProgress}>
       {poster}
       <div className="bp-wrap">
         {showEdition && acts.map((group) => (

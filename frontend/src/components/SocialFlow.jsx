@@ -192,6 +192,48 @@ function SocialTranslateRow({ article, translation, withQuote, onToggle }) {
   return <div className="social-tr-row" aria-live="polite">{body}</div>;
 }
 
+// 转推:顶层 author_* 是转推者,reposted.* 是原作者(后端契约);顶层 text 在转推时是 "RT @xxx: …" 截断形式,
+// 故正文取 reposted.text。卡片与长按预览卡共用这一份取法。
+function postAuthorOf(article, ext, source, sourceName) {
+  const reposted = ext.reposted && typeof ext.reposted === 'object' ? ext.reposted : null;
+  return {
+    reposted,
+    authorName: reposted?.author_name || ext.author_name || sourceName || article.source_id,
+    authorHandle: reposted?.author_handle || ext.author_handle || '',
+    // 头像:大图优先(X 默认 _normal 是 48px,后端已派生 _400x400);转推取原作者的
+    avatarUrl: reposted
+      ? (reposted.author_avatar_url_large || reposted.author_avatar_url || '')
+      : (ext.author_avatar_url_large || ext.author_avatar_url || source?.avatar_url || ''),
+    text: (reposted?.text || article.content || '').trim(),
+  };
+}
+
+// 长按预览卡(issue #230 批 4a;样页拍板 5「长按写清对象 = 抬起预览卡」、拍板 22「长按扩到播客卡与社交卡」):
+// 只读小卡——头像 · 作者 · @handle · 时间 / 正文前几行;没有动作钮、配图与译文(动作就在下面的动作单里)
+export function SocialPeek({ article, source = null, sourceName = '' }) {
+  const ext = parseExt(article);
+  const { reposted, authorName, authorHandle, avatarUrl, text } = postAuthorOf(article, ext, source, sourceName);
+  const stamp = article.publish_date || article.fetched_date;
+  return (
+    <div className="m-peek-card m-peek-social">
+      <div className="social-body">
+        <span className="social-avatar-wrap">
+          <SocialAvatar avatarUrl={avatarUrl} source={reposted ? null : source} fallbackName={authorName} />
+        </span>
+        <div className="min-w-0">
+          <div className="social-post-head">
+            <span className="social-name">{authorName}</span>
+            {authorHandle && <span className="social-handle">@{authorHandle}</span>}
+            <span className="social-dot">·</span>
+            <span className="social-handle">{formatRelativeTime(stamp, '')}</span>
+          </div>
+          {text && <p className="social-text m-peek-text">{text}</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // memo:未读轮询/搜索键入等高频父级渲染下,仅 props 实际变化的卡片重渲
 // (回调经 ReaderTab latest-ref 稳定包装,article 引用在增量追加下不变)。
 const SocialPost = memo(function SocialPost({
@@ -207,6 +249,9 @@ const SocialPost = memo(function SocialPost({
   onToggleFavorite,
   onToggleRead,
   onContextMenu,
+  // 手机壳的长按(issue #230 批 4a,审计 M-04):useLongPress 的 bind 工厂(稳定引用,memo 不失效)。
+  // 给了就由它接管长按与 contextmenu(iOS 不派发 contextmenu,只能靠触摸计时),onContextMenu 不再单挂
+  press = null,
   ctxAnchor = false,
   translateEnabled = false,
   translation = null,
@@ -225,18 +270,9 @@ const SocialPost = memo(function SocialPost({
   const tr = currentSocialTranslation(translation, trSig);
   const trOpen = tr?.status === 'done' && tr.open;
 
-  // 转推:顶层 author_* 是转推者,reposted.* 是原作者(后端契约)。
-  // 顶层 text 在转推时是 "RT @xxx: …" 截断形式,故正文取 reposted.text。
-  const reposted = ext.reposted && typeof ext.reposted === 'object' ? ext.reposted : null;
+  // 转推者 / 原作者、头像与正文的取法见 postAuthorOf(长按预览卡共用)
+  const { reposted, authorName, authorHandle, avatarUrl, text } = postAuthorOf(article, ext, source, sourceName);
   const quoted = ext.quoted && typeof ext.quoted === 'object' ? ext.quoted : null;
-
-  const authorName = reposted?.author_name || ext.author_name || sourceName || article.source_id;
-  const authorHandle = reposted?.author_handle || ext.author_handle || '';
-  // 头像:大图优先(X 默认 _normal 是 48px,后端已派生 _400x400);转推取原作者的
-  const avatarUrl = reposted
-    ? (reposted.author_avatar_url_large || reposted.author_avatar_url || '')
-    : (ext.author_avatar_url_large || ext.author_avatar_url || source?.avatar_url || '');
-  const text = (reposted?.text || article.content || '').trim();
   const mediaUrls = reposted?.media_urls?.length ? reposted.media_urls : ext.media_urls;
 
   const clamped = !expanded && text.length > CLAMP_CHARS;
@@ -244,8 +280,9 @@ const SocialPost = memo(function SocialPost({
 
   return (
     <article
-      className={`social-post ${unread ? '' : 'is-read'} ${ctxAnchor ? 'is-ctx-anchor' : ''}`}
-      onContextMenu={onContextMenu ? (e) => onContextMenu(e, article, 'social') : undefined}
+      className={`social-post ${unread ? '' : 'is-read'} ${ctxAnchor ? 'is-ctx-anchor' : ''}${press ? ' m-press' : ''}`}
+      onContextMenu={!press && onContextMenu ? (e) => onContextMenu(e, article, 'social') : undefined}
+      {...(press ? press(article) : null)}
     >
       {/* 读态由整卡文字降 muted 表达(is-read),不另画未读点(issue #199);读屏补一句「未读」 */}
       {unread && <span className="sr-only">未读</span>}
@@ -375,6 +412,8 @@ export default function SocialFlow({
   readTogglingId,
   onToggleRead,
   onPostContextMenu,
+  // 手机壳:卡片长按的 bind 工厂(useLongPress;issue #230 批 4a,审计 M-04),给了就不再走 onPostContextMenu
+  pressBind = null,
   ctxAnchorKey = null,
   onMarkAllRead,
   markingRead = false,
@@ -385,6 +424,8 @@ export default function SocialFlow({
   platformCount = 1,
   activeSourceId = null,
   emptyHint = '暂无动态',
+  // 空态的第一个动作(issue #230 批 4a,审计 M-41;conventions §1):{ label, onClick },不给就只有一句话
+  emptyAction = null,
   // 推文翻译(issue #84):AI 可用才出底栏;translations 是 useReaderState 的逐卡状态
   translateEnabled = false,
   translations = {},
@@ -517,6 +558,11 @@ export default function SocialFlow({
                   ? '这里还没有收藏，卡片右上角点星标即可收藏'
                   : unreadOnly ? '没有未读动态，都看完啦' : emptyHint}
               </span>
+              {emptyAction && (
+                <button type="button" className="action-button action-button-secondary reader-empty-act" onClick={emptyAction.onClick}>
+                  {emptyAction.label}
+                </button>
+              )}
             </div>
           ) : (
             <>
@@ -539,6 +585,7 @@ export default function SocialFlow({
                       onToggleFavorite={onToggleFavorite}
                       onToggleRead={onToggleRead}
                       onContextMenu={onPostContextMenu}
+                      press={pressBind}
                       ctxAnchor={ctxAnchorKey === `social:${article.id}`}
                       translateEnabled={translateEnabled}
                       translation={translations[article.id] || null}

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import {
   ChartColumn,
   CheckCheck,
-  ChevronLeft,
   Circle,
   CircleDot,
   Compass,
@@ -24,14 +23,15 @@ import { useTitlePreference } from '../../hooks/useTitlePreference';
 import { ArticleRow, ArticleCardsSkeleton } from '../ReaderTab';
 import { buildListPlan } from '../../utils/listPlan';
 import { kindFilterOptions } from '../../utils/contentKind';
-import SocialFlow from '../SocialFlow';
+import SocialFlow, { SocialPeek } from '../SocialFlow';
 import DiscoverPage from '../DiscoverPage';
 import AnnouncementBanner from '../AnnouncementBanner';
 import MobileArticlePage from './MobileArticlePage';
 import MobileSubsPage from './MobileSubsPage';
 import MobileSubsFlow from './MobileSubsFlow';
+import EntryPeek from './EntryPeek';
 import { pushSpecKey } from '../../utils/articleList';
-import { GlassBtn, HeadAvatar, HeadTitle, MobileHeader, TitleDial } from './MobileHeader';
+import { GlassBtn, HeadAvatar, HeadBack, HeadTitle, MobileHeader, TitleDial } from './MobileHeader';
 import { requestLogin } from '../../utils/loginPrompt';
 import { SOURCE_ROLES, sourceRoleOf } from '../../sourceTaxonomy';
 import { subscriptionGroups } from '../../utils/subsGroups';
@@ -47,6 +47,8 @@ import RankingsPage from '../RankingsPage';
 import { usePlayer } from '../player/playerContext';
 import PlayerDock from '../player/PlayerDock';
 import { nowPlayingFor } from '../../utils/playerCore';
+import { installThemeColorSync } from '../../utils/themeColor';
+import { EMPTY_ACTION_LABELS, emptyActionKind } from '../../utils/emptyAction';
 
 // 静态 noop:ArticleRow 的 onContextMenu 契约位——移动端 contextmenu 由外层
 // .m-press 包装统一接管(useLongPress 的 onContextMenu 覆盖 Android 长按/桌面右键),
@@ -92,7 +94,7 @@ export default function MobileReader({
   view,
 }) {
   const {
-    tab, setTab, briefReturn, setBriefReturn, briefRestore, setBriefRestore,
+    tab, setTab, briefReturn, setBriefReturn, briefRestore, setBriefRestore, briefPlace,
     discoverTab, setDiscoverTab, interestVersion, setInterestVersion, playerHostRef, openPlayingItem,
   } = view;
   // 全局播放条(issue #199):列表行「播放中 / 已暂停」
@@ -101,7 +103,11 @@ export default function MobileReader({
   const playingState = nowPlayingFor(player, playingId);
   const playingAi = Boolean(player.item?.ai);
   const { preferChinese } = useTitlePreference();
-  const [sheet, setSheet] = useState(null); // { title, items, anchorKey }
+  const [sheet, setSheet] = useState(null); // { title, items, anchorKey, preview }
+  // 关掉之后底页还要播一小段退场(Sheet 的 is-leaving,批 4a):退场期间照旧画上一份内容,不画成空菜单
+  const [lastSheet, setLastSheet] = useState(null);
+  if (sheet && sheet !== lastSheet) setLastSheet(sheet);
+  const shownSheet = sheet || lastSheet;
   // 底栏四个 Tab(拍板 16):早报 / 订阅 / 榜单是页,内容 = 当前容器(tab 即 rs.mode)
   const mTab = tab === 'brief' || tab === 'subs' || tab === 'rankings' ? tab : 'content';
   const contentTab = mTab === 'content';
@@ -219,7 +225,11 @@ export default function MobileReader({
   }, [supersedePendingOpen]);
   const closeFlow = useCallback(() => setFlow(null), []);
   // 订阅 Tab 的「+」与「发现更多来源」:游客改订阅要登录(拍板 21),不进发现页
-  const discoverFromSubs = () => (rs.isGuest ? requestLogin('subscribeAll') : openDiscoverSources({ shape: 'all' }));
+  const discoverFor = (shape) => (rs.isGuest ? requestLogin('subscribeAll') : openDiscoverSources({ shape }));
+  const discoverFromSubs = () => discoverFor('all');
+  // 发现页滚过 4px 页头换镀层底(与设置页 / 推入页同一规则);关掉即复位
+  const [discScrolled, setDiscScrolled] = useState(false);
+  useEffect(() => { if (!discover) setDiscScrolled(false); }, [discover]);
   const subsActions = {
     onAll: () => openFlow({ kind: 'all' }),
     onFavorites: () => {
@@ -263,7 +273,18 @@ export default function MobileReader({
   };
   const avatar = <HeadAvatar account={account} onClick={openSettings} />;
 
-  const openArticleSheet = (article) => {
+  // 长按预览卡(批 4a,样页拍板 5 / 22):被按的那一条原样抬起来(EntryPeek = 同一个 ArticleRow,文章 / 播客两种版式)
+  const articlePeek = (article) => (
+    <EntryPeek
+      article={article}
+      podcast={shapeOfSource(article.source_id) === 'podcast'}
+      source={sourceMap[article.source_id]}
+      sourceName={sourceNameMap[article.source_id] || article.source_id}
+      isUnread={isArticleUnread(article)}
+      isFav={favoriteIds.has(article.id)}
+    />
+  );
+  const openArticleSheet = (article, { preview } = {}) => {
     const items = buildArticleMenuItems(article);
     // 系统分享(Wave3):支持 Web Share 的环境(手机浏览器/微信内)在链接组补一项
     // 「分享给…」——调起系统分享面板,载荷即站内深链;不支持则不画(呈现的诚实)。
@@ -279,12 +300,17 @@ export default function MobileReader({
       });
     }
     // 动作单标题随「默认显示中文标题」(issue #218);系统分享面板仍带原题(对外内容,分享页也只有原题)
-    setSheet({ title: displayTitle(article, preferChinese), items, anchorKey: `article:${article.id}` });
+    setSheet({
+      title: displayTitle(article, preferChinese),
+      items,
+      anchorKey: `article:${article.id}`,
+      preview: preview === undefined ? articlePeek(article) : preview,
+    });
   };
   // 早报卡长按(issue #230 批 3b,拍板 13 / 5):同一张文章动作单;早报快照不带读态,读态一项不给;上方是抬起的预览卡
   const openBriefSheet = (article, { anchorKey, preview }) => {
-    openArticleSheet(article);
-    setSheet((current) => current && { ...current, items: briefMenuItems(current.items), anchorKey, preview });
+    openArticleSheet(article, { preview });
+    setSheet((current) => current && { ...current, items: briefMenuItems(current.items), anchorKey });
   };
   const openSourceSheet = (source) => setSheet({
     title: source.name || source.source_id,
@@ -295,9 +321,12 @@ export default function MobileReader({
     title: article.title || '推文',
     items: buildSocialMenuItems(article),
     anchorKey: `social:${article.id}`,
+    preview: <SocialPeek article={article} source={sourceMap[article.source_id]} sourceName={sourceNameMap[article.source_id]} />,
   });
 
   const pressBind = useLongPress(openArticleSheet);
+  // 社交卡长按(审计 M-04;批 4a):与文章行同一条路径——iOS 不派发 contextmenu,靠触摸计时
+  const socialPressBind = useLongPress(openSocialSheet);
 
   const listView = contentTab && !socialView;
   // 正文页(push 全屏):文章/动态容器里选中了一篇即入栈;社交流直读不进正文页。
@@ -345,6 +374,22 @@ export default function MobileReader({
     state.scrolled = next.scrolled;
     state.receded = next.receded;
   }, []);
+  // ── 公告带(审计 M-11,方案 §8「占位式」;批 4a):贴在页头下沿,Tab 根页的页头让位加上它的高度(--m-ann-h,内容从横幅
+  //    下面开始、不被盖住);随当前滚动区一起往上走(直接写 transform,不为滚动重渲染),滚过去就藏到页头镀层底下。
+  //    整页层(正文 / 发现 / 推入页)开着时照旧让开(mobile.css)。上滑横幅收起、关闭钮不再提示,见 AnnouncementBanner ──
+  const followAnn = useCallback(() => {
+    const band = shellRef.current?.querySelector(':scope > .reader-ann-band');
+    if (!band) return;
+    const y = chromeRef.current.el ? chromeRef.current.el.scrollTop : 0;
+    band.style.transform = y > 0 ? `translateY(${-Math.round(y)}px)` : '';
+  }, []);
+  const setAnnHeight = useCallback((height) => {
+    const shell = shellRef.current;
+    if (!shell) return;
+    if (height > 0) shell.style.setProperty('--m-ann-h', `${Math.ceil(height) + 8}px`);
+    else shell.style.removeProperty('--m-ann-h');
+    followAnn();
+  }, [followAnn]);
   const onContentScroll = useCallback((event) => {
     const el = event.target;
     if (!(el instanceof Element) || !el.matches(CHROME_SCROLLERS)) return;
@@ -355,7 +400,8 @@ export default function MobileReader({
     state.y = y;
     const intent = performance.now() - inputAtRef.current < 1000;
     applyChrome(nextChrome(state, { y, dy, reduced: motionReduced(), intent }));
-  }, [applyChrome]);
+    followAnn();
+  }, [applyChrome, followAnn]);
   // ── 内容 Tab 的列表位置(批 3a):切去早报 / 订阅 / 榜单时列表不渲染,回来按同一份查询落回原处——推入页与内容 Tab 各记各的。
   //    离开时记下页头下沿第一条的序号与离滚动区顶的距离;回来先落 scrollTop,再按那一条对齐。刚挂载的几帧里版面还有几像素的微动,
   //    浏览器的滚动锚定会跟着把位置挪开约 10px:对齐窗口内先关掉锚定,版面落定后再对齐一次、还原;要在下面的镀层重算之前 ──
@@ -404,7 +450,23 @@ export default function MobileReader({
     chromeRef.current.el = el;
     chromeRef.current.y = el ? el.scrollTop : 0;
     applyChrome({ scrolled: (el?.scrollTop || 0) > CHROME.scrolledAt, receded: false });
-  }, [mTab, mode, subsSeg, searchOpen, applyChrome]);
+    followAnn();
+  }, [mTab, mode, subsSeg, searchOpen, applyChrome, followAnn]);
+  // 浏览器地址栏 / PWA 状态栏的颜色跟手机壳底色(审计 M-32;utils/themeColor):壳挂着时盯主题与中性色,卸下即还原
+  useEffect(() => installThemeColorSync(), []);
+
+  // ── 空态指向第一个动作(审计 M-41;conventions §1,批 4a):搜索无果 → 清除搜索;只看未读 → 显示全部;
+  //    按类型筛 → 显示全部类型;这个视图还没有内容 → 去发现页找来源(游客点了提示登录)──
+  const emptyActionOf = ({ noSources = false, social = false } = {}) => {
+    const kind = emptyActionKind({ searchQuery, unreadOnly, kindFilter: social ? '' : kindFilter, noSources });
+    const run = {
+      clearSearch: () => setSearchInput(''),
+      showAll: () => setUnreadOnly(false),
+      allKinds: () => setKindFilter(''),
+    }[kind] || (() => discoverFor(mode));
+    return { label: EMPTY_ACTION_LABELS[kind], onClick: run };
+  };
+  const listEmptyAction = emptyActionOf();
 
   // ── 内容 Tab 列表顶一行(拍板 31 第 9 条):只看未读开着时「◉ 只看未读」(页头一像素不动)。
   //    批 2 过渡形态里这一行还列来源 / 收藏 / 兴趣筛选胶囊;批 3a 起这些收窄都在订阅 Tab 的推入页,内容 Tab 只剩订阅聚合 ──
@@ -474,7 +536,7 @@ export default function MobileReader({
 
   return (
     <div className="m-shell font-sans" ref={shellRef} data-tab={mTab}>
-      <AnnouncementBanner />
+      <AnnouncementBanner mobile onHeight={setAnnHeight} />
 
       {/* 老读者迁移提示(拍板 30):升级后第一次进来,在头像下提示一次;点任意处或进一次设置即消失 */}
       {settingsHint && !readOpen && !discover && !flow && !(contentTab && searchOpen) && (
@@ -498,6 +560,7 @@ export default function MobileReader({
             showToast={showToast}
             interestVersion={interestVersion}
             restore={briefRestore}
+            placeKeeper={briefPlace}
             supersedePendingOpen={supersedePendingOpen}
             onManageSubscriptions={() => openDiscoverSources({ shape: 'all' })}
             onManageInterests={openInterests}
@@ -602,7 +665,7 @@ export default function MobileReader({
               onToggleSearch={toggleSearch}
               readTogglingId={socialReadToggling}
               onToggleRead={handleToggleSocialRead}
-              onPostContextMenu={(e, entity) => { e.preventDefault(); openSocialSheet(entity); }}
+              pressBind={socialPressBind}
               ctxAnchorKey={sheet?.anchorKey || null}
               onMarkAllRead={handleMarkAllRead}
               markingRead={markingRead}
@@ -612,7 +675,8 @@ export default function MobileReader({
               onLoadMore={handleLoadMore}
               platformCount={platformCount}
               headless
-              emptyHint={socialSources.length === 0 ? '还没有订阅社交账号，去「发现」看看' : '暂无动态'}
+              emptyHint={socialSources.length === 0 ? '还没有订阅社交账号，去「发现」看看' : searchQuery ? '没有匹配的动态' : '暂无动态'}
+              emptyAction={emptyActionOf({ noSources: socialSources.length === 0, social: true })}
               translateEnabled={aiEnabled}
               translations={socialTranslations}
               onToggleTranslation={toggleSocialTranslation}
@@ -674,6 +738,11 @@ export default function MobileReader({
                         ? '当前范围没有这一类内容'
                         : (mode === 'podcast' ? '暂无播客' : '暂无文章')}
                 </span>
+                {listEmptyAction && (
+                  <button type="button" className="action-button action-button-secondary reader-empty-act" onClick={listEmptyAction.onClick}>
+                    {listEmptyAction.label}
+                  </button>
+                )}
               </div>
             ) : (
               <div key={`${activeSourceId ?? '__all__'}|${activeTagId ?? ''}|${mode}|${scope.axis}${scope.favorite ? '+f' : ''}|${kindFilter}`}>
@@ -698,6 +767,7 @@ export default function MobileReader({
                         onToggleFavorite={handleToggleFavorite}
                         onContextMenu={noopContextMenu}
                         ctxAnchor={sheet?.anchorKey === `article:${article.id}`}
+                        favIndicator
                         interestHit={article.interest_hits?.[0] || ''}
                         unsubscribed={false}
                         onSubscribeSource={subscribeSourceById}
@@ -740,19 +810,10 @@ export default function MobileReader({
 
       {/* ── 发现页(整页层:低频目的地,从订阅 Tab 的「+」/「发现更多来源」进入) ── */}
       {discover && (
-        <LayerPage className="m-page" label="发现" onClose={closeDiscover}>
-          <div className="m-topbar on-pane">
-            <button
-              type="button"
-              className="m-iconbtn"
-              onClick={closeDiscover}
-              aria-label="返回"
-            >
-              <ChevronLeft />
-            </button>
-            <span className="m-title">发现</span>
-          </div>
-          <div className="m-page-scroll">
+        <LayerPage className={`m-page m-disc ${discScrolled ? 'is-scrolled' : ''}`} label="发现" onClose={closeDiscover}>
+          {/* 页头与设置页 / 推入页同一件(审计 M-21:原顶栏「发现」+ 页头「发现」双标题;返回钮落在头像原位) */}
+          <MobileHeader lead={<HeadBack label="返回" onClick={closeDiscover} />} title={<HeadTitle>发现</HeadTitle>} />
+          <div className="m-page-scroll" onScroll={(event) => setDiscScrolled(event.currentTarget.scrollTop > 4)}>
             <DiscoverPage
               sources={discoverSources}
               subscribedIds={subscribedIds}
@@ -816,7 +877,7 @@ export default function MobileReader({
           onBack={closeFlow}
           aiEnabled={aiEnabled}
           pressBind={pressBind}
-          onSocialPress={openSocialSheet}
+          socialPressBind={socialPressBind}
           sheetAnchorKey={sheet?.anchorKey || null}
           playingId={playingId}
           playingState={playingState}
@@ -841,9 +902,10 @@ export default function MobileReader({
       {/* ── 长按动作单(桌面右键菜单的 bottom-sheet 翻译) ── */}
       <ActionSheet
         open={Boolean(sheet)}
-        title={sheet?.title || ''}
-        items={sheet?.items || []}
-        preview={sheet?.preview || null}
+        title={shownSheet?.title || ''}
+        items={shownSheet?.items || []}
+        preview={shownSheet?.preview || null}
+        className="is-float"
         onClose={() => setSheet(null)}
       />
 

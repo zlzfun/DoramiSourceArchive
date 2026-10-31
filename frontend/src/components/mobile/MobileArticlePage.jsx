@@ -380,7 +380,7 @@ export default function MobileArticlePage({
         open={moreOpen}
         label="更多操作"
         className="is-float"
-        items={moreOpen ? buildMenu() : []}
+        items={buildMenu()}   // 关着也给:底页关掉后还要播退场(批 4a),退场期间不画成空菜单
         onClose={() => setMoreOpen(false)}
       />
     </LayerPage>

@@ -228,6 +228,7 @@ export default function BriefHistoryCalendar({
 // 实底圆 = 正在看的那天;点多版的日子把实底圆移过去、版次排在月历下方再选;单版的日子点了即关底页载入。
 // onPickEdition(dayKey, revision | null):revision 为 null 时载入那天的最新一版。
 export function BriefHistorySheet({
+  open = true,   // 关了仍挂着一小会儿,让 Sheet 播退场(批 4a);PersonalBriefPage 每次打开换 key 拿新实例
   days,
   todayKey,
   selDate,
@@ -248,7 +249,7 @@ export function BriefHistorySheet({
 
   return (
     <Sheet
-      open
+      open={open}
       onClose={onClose}
       label="往期早报"
       grabLabel="关闭往期早报"

@@ -417,6 +417,11 @@ export default function App() {
         if (SUBVIEW_TABS.has(h.tab) && h.view) views[h.tab] = h.view;
         route = { tab: h.tab, views, focus: null };
       }
+      // 深链取走后把这条历史的地址改回常规路由(issue #230 批 4a,批 3a 观察):否则读完「返回列表」(层的程序性回退)
+      // 回到这条记录时地址仍是 #/reader/a/{id},又被当成新深链把正文重新打开。登录后首屏的深链由 commitNav 的 replace 播种同样改掉
+      if (deepId) {
+        try { window.history.replaceState({ tab: route.tab, views: route.views, focus: null }, '', routeToHash(route.tab, route.views)); } catch { /* 禁用 history 的沙箱:照旧 */ }
+      }
       navRef.current = route;
       setNav(route);
       setMountedTabs(prev => (prev.has(route.tab) ? prev : new Set(prev).add(route.tab)));
