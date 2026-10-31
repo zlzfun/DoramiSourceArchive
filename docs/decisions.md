@@ -482,6 +482,15 @@
 - 不做:早报条目配图缩略图;登录页与品牌演出(豁免);text-autospace 暂缓;尾区历史钉法并层;管理面死类清扫 — §5 / §3.2
 - 触发:自托管黑体——Windows 实机验收发现粘连/层级难辨/截断再议(#176 门槛) — §5
 
+### 手机端系统性重构(issue #230) — [方案](plans/issue-230-mobile-wave.md) · [审计](plans/issue-230-mobile-audit.md)
+
+- 决策:视觉方向 C 夜航(磨砂镀层带 `@supports` 降级);底栏 早报 · 内容 · 订阅 · 榜单,设置进头像,一行页头「标题即切换」;手机设置不带 OPML 与接入集成 — §6 返修 1–9 轮
+- 决策:移动层只有 sheet / drawer / page / popover 四种 + Modal 外壳,全部经 `components/layer/useLayer`;每层要有不靠系统返回、也不靠拖动的出口,抓手能点能拖 — §8 · conventions §10
+- 决策:平板 768–1024 用手机壳 + 640–720 版心居中,≥ 1025 触屏走 `(pointer: coarse)` 补触屏路径;断点只用 `bp-*`(CSS `@custom-variant` 与 `utils/breakpoints.js` 逐字一致) — §8
+- 决策:首屏只载入口 + `vendor-react`;图表随运维台懒加载,Markdown / KaTeX 按需 + 首屏落定 5 秒后空闲预取(省流量 / 2G 不预取);分享页独立 chunk,不另起 HTML 入口 — §8.1 批 4b
+- 不做:`@custom-media`(只在生产构建展开);下拉刷新;正文底部工具条;问答下放拆 #249 — §8
+- 触发:M-39 软键盘下底栏 / 播放条去向待真机 R-04;粘滞悬停、镀层性能、`:has()`(iOS < 15.4)等真机项不过再议 — 审计 §6
+
 ## OpenAI 静态图片(issue #217,2026-10-23)
 
 - 决策：保留原图；补新采集基址与旧正文读取时解析，对 OpenAI 静态栅格图的明确 403 检查启用独立 Chromium，限流限时限字节后纳入原有媒体库 — [方案](archive/issue-217-decisions-images.md)。
