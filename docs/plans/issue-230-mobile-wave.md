@@ -175,7 +175,7 @@
 - 坑(已写进 conventions §10):Chromium 粘性定位 `top` 从滚动区内边距框量起,页头让位用 `padding-top` 会让吸顶头再错 56px——有吸顶子元素的滚动区一律用 `::before` 垫片。
 - 偏差:头像沿用现网 `.avatar-letter`(不新造 oklch 实底色);行图标方块圆角 `--r-sm`(样页 8);设置页只有推入动画、无反向退场;游客早报页头无「重新编排」(现网口径);InterestPage 内「我的兴趣」每行 × 未做。
 - 验证:lint 0、`npm test` 201/201(新增 `mobileShell` 11 条)、构建过、`check_docs` 0;沙箱 418/418(360 / 390 / 430 × 亮暗每组 66 + 游客 + 迁移提示 + 减少动效),兴趣段补测 6/6,WebKit 几何抽查一致;e2e 四流程连续两次全过(改 `mobile_reader` / `tag_search` / `focus_ring` / `pwa`);桌面 1280 亮暗 × 5 状态仅阅读量读数差。截图 `tmp/issue-230/impl-b2/`。
-- 推迟:早报吸顶分区头 → 3b(`.bp-sheet` 已改垫片,3b 只写 `top: calc(var(--sat) + var(--m-head-h) + 4px)`);订阅推入页 → 3a;设置页退场动画;平板版心;`OpmlSection` 的 `layout="mobile"` 分支与 `.opml-mobile-*` 成死代码、`scripts/check_mobile_navigation.py` 仍是五 Tab 选择器(`mobile-navigation.md` 已加注)、`design-preview/issue-218` 旧样页底栏走样 → 批 4 清理。
+- 推迟:早报吸顶分区头 → 3b(`.bp-sheet` 已改垫片,3b 只写 `top: calc(var(--sat) + var(--m-head-h) + 4px)`);订阅推入页 → 3a;设置页退场动画;平板版心;`OpmlSection` 的 `layout="mobile"` 分支与 `.opml-mobile-*` 成死代码、`check_mobile_navigation.py`(已删) 仍是五 Tab 选择器(`mobile-navigation.md` 已加注)、`design-preview/issue-218` 旧样页底栏走样 → 批 4 清理。
 - 观察:外观分区 360 宽「中性色」说明列被色板挤成一字一行(现网分区组件,非本批引入);外观分区与「关于」组都有「添加到主屏幕」。
 - 真机待验:iOS Safari 磨砂 + 地址栏伸缩 + 底栏退场叠加;低端安卓 / 微信 X5 降级观感;退场阈值手感;iOS 15 无 `cqw` 时转盘退回按字宽;迁移提示气泡在刘海屏的位置;设置页在主屏独立窗口的返回;搜索框 16px 不触发 iOS 放大;横屏左右安全区。
 
@@ -230,6 +230,18 @@
 - 推迟到批 4:M-36 跨版式丢早报日期(选中日期上提到 `ReaderWorkspace`);内容列表 / 播客 / 社交卡长按的预览卡与动作单浮动卡统一。
 - 观察:降级那期看往期时措辞仍写「今天」(入选句「今天没有达到入选标准的内容,以下是 N 个订阅来源的最新更新…」「今天缺少用于补齐的…」「今天没有命中你兴趣的…」与头条位说明),建议看往期时改「这一天」,与现有「这一天没有命中你兴趣的内容」一致 → 批 4 按建议默认;游客早报下沙箱两条公告浮在早报内容之上(M-11)。
 - 真机待验:iOS 长按早报卡系统气泡是否被抑制、松手点击是否被吞;按下压暗依赖 `:has(...:active)`(iOS 15.4+);磨砂吸顶分区头滚动性能与低端安卓 / 微信降级观感;往期底页 Home 指示条安全区、翻月钮靠近抓手是否被误触成拖动;37px 头条在 360 宽真机折行;360 × 640 或横屏下长菜单 + 预览卡总高是否把预览卡顶出屏外。
+
+**批 4b 工程与守卫(10-31,实现 Claude Opus 5.5 子代理;独立 worktree `wip/issue-230-b4b` 开发后摘入,与 4a 并行)**
+
+- M-14 根因在分组规则而非 import:rolldown 分组默认把组内模块的依赖递归并进组,原三组同级按发现顺序抢,react 被 recharts 拖进 `vendor-charts`,入口为拿 react 静态依赖整包图表库。`vite.config.js` 改 `codeSplitting.groups` 显式排优先级(react 30 > charts 20 > markdown 10)。`ReaderMarkdown` 改轻入口,实现搬到 `ReaderMarkdownView`(`utils/readerMarkdownLoader` 单例按需拉,失败不缓存、退纯文本分段);`useReaderMarkdownReady` 让正文容器与分享页把「渲染器未就绪」并进自己的加载态(同一骨架元素,不闪);读者首屏落定 5 s 后空闲预取,省流量 / 2G 不预取(与「首开才拉」原口径略偏,删 `ReaderWorkspace` 一行即回原口径)。分享页独立 chunk `SharedArticleEntry`,**不另起 HTML 入口**(`/#/s/{token}` 是对外契约)。护栏 `test/chunkSplit.test.mjs` 对真实构建产物守入口闭包(带反向对照)。
+- 数字(gzip):登录页入口闭包 353 → 122 KB(6 → 4 文件)、阅读器路由静态闭包 459 → 229 KB;实测登录页脚本 357 → 125 KB、读者首屏脚本 469 → 238 KB;限速 1.6 Mbps + CPU 4× 下登录页 LCP 3324 → 2156 ms、读者早报 LCP 4772 → 3580 ms。代价:限速下预取前首开一篇,正文出现 0.25 → 约 0.98 s(骨架连续)。KaTeX 157 处 / 块级 14 / 代码块 10 / 表格 3 / 分享页公式 / 运维图表 3 张前后一致;应用无语法高亮。
+- M-18:`e2e/mobile_guards.py`(`guards` 流程)360 × 780 / 375 × 667 / 390 × 844 / 430 × 932 四档并行(审计原 412 换成本波沙箱一致的 430;768 待 4a 平板版心定后再进):返回键矩阵(往期底页、播放卡、长按动作单、设置栈、推入页 → 正文 → ⋯ 逐层出栈不离站)、长按松手不关(M-01)、`elementFromPoint` 实测命中 ≥ 44、输入 ≥ 16、无横溢;390 档另测 210 条长列表 DOM ≈ 3017 < 6000(M-46)与 1024 / 1025 首启分流。两条反向对照(半尺寸 Tab、13px 输入)必判失败。夹具按需播种(`DORAMI_E2E_GUARDS=1`);已知未修项进 `KNOWN_OPEN`(照测照记,修好不复现即要求删条目)。focus 偶发失败根因:扫描与发现页目录请求赛跑(目录晚到只扫 18 个停靠点、零源卡而「通过」;早到时源卡焦点环在第 4 层祖先、只查 3 层报无指示)→ 等源卡 30 s、祖先查 4 层,现稳定 142 个停靠点。整套 e2e 约 107 s(基线 95 s)。
+- M-29:`test/hoverGuard.test.mjs` 计数棘轮(index.css 248 → 227、mobile.css 7 → 6,带反向对照与突变验证);手机页面实际命中的 21 条装饰性悬停包 `(hover: hover)`,触屏「点过的行残留底色」消失,桌面无变化。留给 4a:收藏星(M-02)、发现页翻退订(M-03)、公告关闭钮(M-11)。M-30:分享页 / 灯箱 / 文稿高度改 `--vh-full`,`test/viewportUnits.test.mjs` 棘轮(mobile.css 禁裸 vh、index.css 存量 13 冻结);登录页演出 3 处归 #214。M-31 复核无残留。
+- 清理:`OpmlSection` `layout="mobile"` 分支与 `.opml-mobile-*` 删除;`check_mobile_navigation.py` 退役(覆盖面已由真实后端 e2e 接住,断点首启并进 `guards`);#218 旧样页只加注释说明走样、不补样式快照(快照会随壳改动继续漂移)。conventions §10 补播放卡 inert 例外、`data-read-origin`、`--player-tabbar`、两条棘轮、首屏分包、`guards` 基线。
+- 验证:lint 0、`npm test` 238/238(新增 9 条)、构建过、`check_docs` 0;e2e(含 `guards`)定稿后连跑两次过;桌面 1280 亮暗 × 6 状态前后比对仅计数与 logo 亚像素差。摘入波次分支无冲突,摘入后 orchestrator 复跑 lint 0、`npm test` 238/238、构建过、e2e 整套过(107 s)。
+- 推迟 / 留给 4a:M-06 余项(发现页筛选框 12.5px、改密 3 框 13px、反馈 textarea 13px,列在 `KNOWN_OPEN`;添加自定源地址框、安装指引平台下拉未入守卫);往期底页抓手有效命中 81 × 32 ~ 43(被翻月钮压住,样页 120 × 44 未落地)。设置模态内管理员专用分区(约 25 KB)仍在读者入口 → 进 backlog。
+- 观察(后端,不在本波):同一账号并发首次请求 `/api/reader/unread-counts` 时两请求同建已读游标、撞 `reader_read_cursors`(owner + source)唯一约束返回 500,新账号同开两标签页 / 两设备可触发,宜改 upsert,另开 issue;runner `stop_process` 负载下偶发 killpg EPERM 盖掉原始错误(既有)。
+- 真机待验:4G / 内网冷启动预取前首开一篇的等待与骨架连续性;iOS 粘滞悬停(R-07)在列表行 / 类型标签 / 发现卡 / 榜单行 / 标签 chip;分享页主屏独立窗口与横屏安全区;地址栏伸缩时灯箱内边距与文稿高度;Android 省流量不预取(iOS 无 `navigator.connection`,一律预取)。
 
 ## 7. 检视节
 
