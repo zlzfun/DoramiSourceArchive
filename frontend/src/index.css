@@ -11073,6 +11073,9 @@ input[type="radio"] {
   .reader-pane-actions.has-listen { flex: 1 1 100%; }
   .reader-pane-actions > .listen-entries { margin-right: auto; }
   .m-listen { margin-top: 14px; }
+  .reader-ai-listen { margin: 10px 0 14px; }
+  .listen-note { color: var(--dorami-muted); font-size: var(--text-xs); }
+  .reader-ai-listen .listen-note { flex: 1 1 180px; }
   .listen-entries { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   .listen-entry {
     display: inline-flex;

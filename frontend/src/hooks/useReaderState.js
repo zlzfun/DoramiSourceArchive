@@ -567,8 +567,8 @@ export function useReaderState({
   }, [cancelPrefetch]);
 
   // ── 选中文章 → 按需拉全文 ──
-  // 列表项已不含正文（include_content=false），仅 meta 即时渲染；正文命中缓存直接用，
-  // 否则拉 GET /api/articles/{id}，回来时比对最新选中 id，丢弃过期响应。
+  // 列表项已不含正文（include_content=false），正文缓存先渲染，详情仍回读最新状态；
+  // 回来时比对最新选中 id，丢弃过期响应。
   const selectArticle = useCallback((article) => {
     supersedePendingOpen();
     const prevId = activeIdRef.current;
@@ -605,12 +605,11 @@ export function useReaderState({
       article.summary_zh,
     ) : null);
     if (!id) { setActiveBody(null); setActiveBodyLoading(false); return; }
-    // 兜底：若列表项偶然已带正文（如详情接口回填），直接用
-    if (article.content != null) { setActiveBody(article.content); setActiveBodyLoading(false); return; }
     const cached = bodyCacheRef.current.get(id);
-    if (cached !== undefined) { setActiveBody(cached); setActiveBodyLoading(false); return; }
-    setActiveBody(null);
-    setActiveBodyLoading(true);
+    const knownBody = article.content ?? cached;
+    setActiveBody(knownBody ?? null);
+    setActiveBodyLoading(knownBody === undefined);
+    // 正文缓存不代表导读状态仍新鲜:换篇再回来也必须回读详情。
     fetchArticle(id)
       .then((data) => {
         const body = data?.content || '';
@@ -636,9 +635,10 @@ export function useReaderState({
       })
       .catch((error) => {
         if (activeIdRef.current === id) {
-          setActiveBody(null);
+          // 状态回读失败也保留已经可读的正文,不因新增回读把缓存文章清空。
+          setActiveBody(knownBody ?? null);
           setActiveBodyLoading(false);
-          showToast(error.message || '获取文章正文失败', 'error');
+          showToast(error.message || (knownBody === undefined ? '获取文章正文失败' : '状态刷新失败，请稍后重试'), 'error');
         }
       });
   }, [showToast, supersedePendingOpen]);
@@ -663,8 +663,8 @@ export function useReaderState({
 
   // 点播等会改 podcast.premium_guide / condensed_audio_url 的动作后，主动拉一次详情
   // 以便状态徽标立刻切换；后续仍由 analysisNeedsPolling 续轮询。
-  const refreshActiveArticle = useCallback(async () => {
-    const id = activeIdRef.current;
+  const refreshActiveArticle = useCallback(async (requestedId) => {
+    const id = requestedId || activeIdRef.current;
     if (!id) return null;
     try {
       const data = await fetchArticle(id);

@@ -31,6 +31,8 @@ export const ANALYSIS_PROJECTION_KEYS = [
   'tags',
   'display_tags',
   'podcast',
+  // 点播状态与音频就绪必须随详情回读更新,否则提交后不会启动轮询(issue #238)。
+  'listen_guide',
   'paper',
   // 兴趣标注随分析轮询刷新:pending 篇拿到标签后,命中胶囊不必等整列重载(codex 检视 P2)
   'interest_hits',

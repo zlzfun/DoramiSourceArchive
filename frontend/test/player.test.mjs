@@ -322,10 +322,10 @@ test('文章「✦ 听导读」:就绪可播 / 可点播 / 生成中;失败回�
   assert.deepEqual(articleListenEntries(base, opts).map((e) => e.kind), ['request']);
   assert.deepEqual(articleListenEntries(base, { aiEnabled: true, ondemandEnabled: false }), []);
   const active = { ...base, listen_guide: { status: 'narrating' } };
-  assert.deepEqual(articleListenEntries(active, { aiEnabled: false }).map((e) => e.label), ['导读生成中…']);
+  assert.deepEqual(articleListenEntries(active, { aiEnabled: false }).map((e) => e.label), ['正在编写导读…']);
   assert.equal(articleListenActive(active), true);
   const failed = { ...base, listen_guide: { status: 'failed', error: '内部原因' } };
-  assert.deepEqual(articleListenEntries(failed, opts).map((e) => e.label), ['听导读']);
+  assert.deepEqual(articleListenEntries(failed, opts).map((e) => e.label), ['重试导读']);
   const ready = { ...base, listen_guide: { audio_ready: true, audio_url: 'https://cdn.example.com/n.mp3', duration_seconds: 188 } };
   const [entry] = articleListenEntries(ready, opts);
   assert.equal(entry.track, 'article_narration');

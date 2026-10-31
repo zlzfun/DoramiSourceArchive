@@ -16,6 +16,7 @@ from services.bailian_speech_client import (
     BailianSpeechClient,
     BailianSpeechError,
     download_result,
+    provider_error_code,
     task_id as valid_task_id,
 )
 from services.podcast_provider_ports import AsrProviderPlan, AsrPlanningUnavailable
@@ -235,7 +236,7 @@ class BailianAsrAdapter:
             if status in {"FAILED", "CANCELED"}:
                 return TaskFailed(
                     task_id,
-                    failure("task_failed"),
+                    failure(":".join(filter(None, ("task_failed", provider_error_code(output))))),
                     NormalizedUsage(
                         cost_minor=reserved_cost_minor,
                         audio_duration_ms=audio_duration_ms,
@@ -250,7 +251,7 @@ class BailianAsrAdapter:
             if item["subtask_status"] != "SUCCEEDED":
                 return TaskFailed(
                     task_id,
-                    failure("subtask_failed"),
+                    failure(":".join(filter(None, ("subtask_failed", provider_error_code(item))))),
                     NormalizedUsage(
                         cost_minor=reserved_cost_minor,
                         audio_duration_ms=audio_duration_ms,
@@ -283,6 +284,12 @@ class BailianAsrAdapter:
                         (duration * 1000).to_integral_value(rounding=ROUND_CEILING)
                     ),
                 ),
+            )
+        except BailianSpeechError as exc:
+            return Indeterminate(
+                task_id,
+                failure(exc.code, retryable=True),
+                self.config.asr_poll_interval_seconds,
             )
         except Exception:
             # Failed polls/downloads never justify another paid submission.

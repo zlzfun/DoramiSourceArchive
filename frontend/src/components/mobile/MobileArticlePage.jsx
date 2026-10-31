@@ -188,9 +188,10 @@ export default function MobileArticlePage({
             )}
             {analysisStatus && <span role="status">{analysisStatus.label}</span>}
           </div>
-          {listenList.length > 0 && (
+          {podcastView && listenList.length > 0 && (
             <div className="m-listen">
               <ListenEntries
+                key={activeArticle.id}
                 article={activeArticle}
                 podcast={podcastView}
                 aiEnabled={aiEnabled}
@@ -218,17 +219,28 @@ export default function MobileArticlePage({
         </header>
         <div className="m-read-body">
           {/* 速读卡常驻:正文与音轨解耦,在听哪条音轨都不收起它(issue #199) */}
-          {!activeBodyLoading && shouldShowAiReadingCard(activeArticle, {
+          {!activeBodyLoading && ((!podcastView && listenList.length > 0) || shouldShowAiReadingCard(activeArticle, {
             summary: activeSummary,
             aiEnabled,
             body: activeBody,
-          }) && (
+          })) && (
             <AiReadingCard
               article={activeArticle}
               summary={activeSummary}
               summarizing={summarizing}
               canGenerate={aiEnabled && Boolean(activeBody)}
               onGenerate={handleSummarize}
+              listen={!podcastView && listenList.length > 0 ? (
+                <ListenEntries
+                  key={activeArticle.id}
+                  article={activeArticle}
+                  aiEnabled={aiEnabled}
+                  ondemand={ondemand}
+                  sourceName={sourceNameMap[activeArticle.source_id] || ''}
+                  showToast={showToast}
+                  onRefresh={refreshActiveArticle}
+                />
+              ) : null}
               podcast={podcastView}
             />
           )}
