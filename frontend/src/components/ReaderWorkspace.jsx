@@ -31,6 +31,8 @@ export default function ReaderWorkspace({ mobile, surfaceActive = true, ...props
     onBeforeOpenArticle: closePage,
     interestAxisEnabled: personalDigestEnabled,
     aiEnabled: props.aiEnabled,
+    // 手机壳的内容 Tab 只放订阅聚合;来源 / 收藏 / 兴趣在订阅 Tab 的推入页(issue #230 批 3a)
+    aggregateOnly: mobile,
   });
   const tab = page || rs.mode;
   // 点播放条的标题 / 封面 = 打开正在播的那一期(切到所在容器,关掉早报 / 榜单 / 发现;手机即入栈正文页)
@@ -64,6 +66,8 @@ export default function ReaderWorkspace({ mobile, surfaceActive = true, ...props
   const listKey = JSON.stringify([rs.mode, rs.activeSourceId, rs.activeTagId, rs.scope, rs.searchQuery, rs.unreadOnly, rs.kindFilter]);
   const captureScroll = (event) => {
     const el = event.target;
+    // 手机订阅 Tab 的推入页是另一个列表实例(issue #230 批 3a):它的滚动不是主列表的位置
+    if (el.closest?.('[data-own-list]')) return;
     const kind = el.matches('.reader-pane, .m-read-scroll') ? 'article'
       : el.matches('.reader-list-scroll, .m-list, .reader-social-scroll') ? 'list' : null;
     if (!kind) return;

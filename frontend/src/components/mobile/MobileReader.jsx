@@ -5,7 +5,6 @@ import {
   ChevronLeft,
   Circle,
   CircleDot,
-  CloudOff,
   Compass,
   Inbox,
   Layers,
@@ -16,9 +15,6 @@ import {
   RefreshCw,
   Search,
   Share2,
-  Star,
-  Tags,
-  X,
 } from 'lucide-react';
 import { useLongPress } from '../../hooks/useLongPress';
 import { useLayerHistory } from '../../hooks/useLayerHistory';
@@ -33,6 +29,8 @@ import DiscoverPage from '../DiscoverPage';
 import AnnouncementBanner from '../AnnouncementBanner';
 import MobileArticlePage from './MobileArticlePage';
 import MobileSubsPage from './MobileSubsPage';
+import MobileSubsFlow from './MobileSubsFlow';
+import { pushSpecKey } from '../../utils/articleList';
 import { GlassBtn, HeadAvatar, HeadTitle, MobileHeader, TitleDial } from './MobileHeader';
 import { requestLogin } from '../../utils/loginPrompt';
 import { SOURCE_ROLES, sourceRoleOf } from '../../sourceTaxonomy';
@@ -60,6 +58,9 @@ const SUBS_ITEMS = [['subs', '订阅'], ['interest', '兴趣']];
 const RANK_ITEMS = [['article', '文章榜'], ['podcast', '播客榜']];
 // 镀层随滚动看的滚动区:内容列表 / 社交流 / 早报 / 榜单 / 订阅
 const CHROME_SCROLLERS = '.m-list, .reader-social-scroll, .bp-sheet, .rankings-page, .m-subs-scroll';
+// 内容 Tab 的条目行(列表 / 社交流)与「页头下沿」:离开时按页头下第一条记位置
+const CONTENT_ROWS = '.m-list > div > .m-press, .reader-social-col > article';
+const CONTENT_ANCHOR_LINE = 60;
 
 /**
  * 移动壳(移动波 Wave2 起;issue #230 夜航样页 docs/design/issue-230-mobile/ 第 2 批改壳与页头)。
@@ -68,7 +69,8 @@ const CHROME_SCROLLERS = '.m-list, .reader-social-scroll, .bp-sheet, .rankings-p
  * 底栏 = 功能模块 早报 · 内容 · 订阅 · 榜单(拍板 16);内容 Tab 的三个容器(文章 / 播客 / 社交)在页头标题位转盘里切,
  * 四容器模型原样保留;每个 Tab 只有一行页头(拍板 31 B:头像 · 标题位 · 动作),页头与底栏是浮在内容上的镀层,
  * 滚过 4px 页头换磨砂底、往下读时底栏退场(样页 10 / 11);设置从页头头像推入(拍板 27,「我的」并进设置页)。
- * 订阅 Tab 列出全部订阅与兴趣(拍板 19 / 25);正文页 = push 全屏页;
+ * 订阅 Tab 列出全部订阅与兴趣(拍板 19 / 25),点来源 / 全部 / 收藏 / 兴趣推入它自己的条目流(批 3a:MobileSubsFlow,
+ * 第二个列表实例;内容 Tab 只放订阅聚合,不再挂来源 / 收藏筛选);正文页 = push 全屏页;
  * 桌面右键菜单 → 长按底部动作单(items 与 useReaderState 三份构建器同源,跨端肌肉记忆)。
  * ReaderWorkspace 持有共享数据与阅读位置，本文件只写移动 JSX 与触屏交互。
  */
@@ -103,6 +105,9 @@ export default function MobileReader({
   const mTab = tab === 'brief' || tab === 'subs' || tab === 'rankings' ? tab : 'content';
   const contentTab = mTab === 'content';
   const [subsSeg, setSubsSeg] = useState('subs');   // 订阅 Tab 页头转盘:订阅 / 兴趣
+  // 订阅 Tab 的推入页(issue #230 批 3a):{ kind: source | all | fav | interest | tag, id?, name?, facet?, count? };
+  // 页内是独立的列表实例(MobileSubsFlow),不动内容 Tab
+  const [flow, setFlow] = useState(null);
   const {
     // 源目录 / 订阅
     sourcesLoading, discoverSources, subscribedIds, sourceMap, sourceNameMap, shapeOfSource,
@@ -112,13 +117,12 @@ export default function MobileReader({
     collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
     shapePinning, handleSubscribeShape,
     // 视图 / 导航
-    mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover, discoverShape, setDiscoverShape,
-    socialView, podcastView, listTitle,
-    goView, goSource, goTag, goFavorites, goAll,
+    mode, activeSourceId, discover, openDiscover, closeDiscover, discoverShape, setDiscoverShape,
+    socialView, podcastView,
+    goView, goContainerAll,
     kindFilter, setKindFilter, kindFacetItems,
-    scope, setAxis, toggleFavoriteScope, activeTagId, interestGroups, hasInterests, refreshInterests,
-    showUnsubscribedMark, showInterestHit,
-    activeSourceHidden, activeUnsubscribed, grouping,
+    scope, activeTagId, refreshInterests,
+    grouping,
     // 搜索
     searchOpen, searchInput, setSearchInput, searchQuery, toggleSearch,
     // 未读体系
@@ -141,6 +145,10 @@ export default function MobileReader({
     subscribedSources,
   } = rs;
   const [rankShape, setRankShape] = useState(() => (mode === 'podcast' ? 'podcast' : 'article'));   // 榜单 Tab 页头转盘
+  // 按 id 打开一篇(早报卡 / 榜单 / 播放条 / 深链)会把主列表临时收窄到那篇的来源(useReaderState.openArticleById);
+  // 手机内容 Tab 没有来源筛选(收窄都在订阅 Tab 的推入页,issue #230 批 3a),离开正文时把这层收窄撤掉,
+  // 回到那个容器的订阅聚合——否则内容 Tab 会悄悄只剩一个来源、又没有任何地方写着
+  const residualNarrowing = Boolean(activeSourceId || activeTagId);
   const closeArticle = useCallback(() => {
     supersedePendingOpen(); // 返回时作废在途的按 id 打开(早报卡 / 深链),迟到响应不再把页面拉回去
     if (briefReturn) {
@@ -149,14 +157,17 @@ export default function MobileReader({
       setTab('brief');
     }
     selectArticle(null);
-  }, [selectArticle, supersedePendingOpen, briefReturn, setBriefRestore, setBriefReturn, setTab]);
+    if (residualNarrowing) goContainerAll();
+  }, [selectArticle, supersedePendingOpen, briefReturn, setBriefRestore, setBriefReturn, setTab, residualNarrowing, goContainerAll]);
   // 正文页点标签检索(codex 检视 P2):目的地是过滤后的内容列表,不是早报——从早报进来的也丢掉
   // 返回带、落到所属容器 Tab,否则检索结果被早报页盖住看不见。
   const leaveArticleForSearch = useCallback(() => {
     setBriefReturn(null);
+    setFlow(null);   // 从推入页读进来的:检索结果在内容 Tab,推入页一并出栈
     setTab('content');
     selectArticle(null);
-  }, [selectArticle, setBriefReturn, setTab]);
+    if (residualNarrowing) goContainerAll();   // 只撤收窄,不动刚设下的检索
+  }, [selectArticle, setBriefReturn, setTab, residualNarrowing, goContainerAll]);
 
   const onboardingRequired = personalDigestEnabled
     && account?.role === 'user'
@@ -187,6 +198,7 @@ export default function MobileReader({
   const subscribeSourceById = (sid) => handleSubscribe(sourceMap[sid] || { source_id: sid, name: sourceNameMap[sid] || sid });
 
   const goTab = (t) => {
+    if (contentTab && t !== 'content') saveContentPlace();
     supersedePendingOpen(); // 任何主动切 Tab 都作废在途的按 id 打开,迟到响应不再把人拉走
     setBriefReturn(null); // 主动切 Tab = 结束这一程外出
     if (t === 'brief') setBriefRestore(null); // 点 Tab 进早报是新开,不落回旧位
@@ -195,40 +207,29 @@ export default function MobileReader({
     setTab(t);
   };
 
-  // ── 订阅 Tab(过渡形态,第 3a 批改成 Tab 内推入页):点来源 / 全部 / 收藏 / 兴趣 = 回「内容」Tab 并带上对应筛选 ──
+  // ── 订阅 Tab:点来源 / 全部 / 收藏 / 兴趣 = 推入它自己的条目流(第二个列表实例,不动内容 Tab;拍板 19 / 24)──
   const subsGroups = useMemo(
     () => subscriptionGroups(subscribedSources, { shapeOf: shapeOfSource, roleOf: sourceRoleOf, roles: SOURCE_ROLES }),
     [subscribedSources, shapeOfSource],
   );
-  const readIn = (navigate) => { navigate(); setTab('content'); };
-  // 兴趣轴只在文章 / 播客容器上有(社交没有标签):在社交里点兴趣先切到文章,等这一轮提交的副作用都跑完再切轴——
-  // setAxis 按 useReaderState 的 modeRef 落盘,而 modeRef 在父层(ReaderWorkspace)的副作用里才更新,比本组件的晚
-  const [pendingInterestAxis, setPendingInterestAxis] = useState(false);
-  const setAxisRef = useRef(setAxis);
-  useEffect(() => { setAxisRef.current = setAxis; });
-  useEffect(() => {
-    if (!pendingInterestAxis || socialView) return undefined;
-    const timer = window.setTimeout(() => {
-      setPendingInterestAxis(false);
-      setAxisRef.current('interest');
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [pendingInterestAxis, socialView]);
+  const openFlow = useCallback((spec) => {
+    supersedePendingOpen();
+    setFlow(spec);
+  }, [supersedePendingOpen]);
+  const closeFlow = useCallback(() => setFlow(null), []);
+  // 订阅 Tab 的「+」与「发现更多来源」:游客改订阅要登录(拍板 21),不进发现页
+  const discoverFromSubs = () => (rs.isGuest ? requestLogin('subscribeAll') : openDiscoverSources({ shape: 'all' }));
   const subsActions = {
-    onAll: () => readIn(goAll),
+    onAll: () => openFlow({ kind: 'all' }),
     onFavorites: () => {
       if (rs.isGuest) { requestLogin('favlist'); return; }
-      readIn(goFavorites);
+      openFlow({ kind: 'fav' });
     },
-    onSource: (sid) => readIn(() => goSource(sid)),
-    onInterestAxis: () => readIn(() => {
-      if (socialView) { goView('article'); setPendingInterestAxis(true); } else setAxis('interest');
-    }),
-    onTag: (tagId) => readIn(() => {
-      if (socialView) goView('article');
-      goTag(tagId);
-    }),
+    onSource: (sid) => openFlow({ kind: 'source', id: sid }),
   };
+  // 兴趣段「我的兴趣」:每行读它的条目流,「全部兴趣内容」读全站兴趣命中(InterestPage 的手机嵌入档传上来)
+  const readInterestTag = (tag) => openFlow({ kind: 'tag', id: tag.id, name: tag.name_zh, facet: tag.kind });
+  const readInterestAll = (count) => openFlow({ kind: 'interest', count });
   const tabRef = useRef(mTab);
   useEffect(() => { tabRef.current = mTab; }, [mTab]);
   const onSubsInterestSaved = ({ onboardingCompleted, briefRebuildStatus } = {}) => {
@@ -293,14 +294,27 @@ export default function MobileReader({
   const pressBind = useLongPress(openArticleSheet);
 
   const listView = contentTab && !socialView;
-  // 正文页(push 全屏):文章/动态容器里选中了一篇即入栈;社交流直读不进正文页
-  const readOpen = listView && !discover && Boolean(activeArticle);
+  // 正文页(push 全屏):文章/动态容器里选中了一篇即入栈;社交流直读不进正文页。
+  // 订阅 Tab 的推入页里点开的一篇同样入栈(叠在推入页之上,返回后推入页原位还在);
+  // 推入页随版式切换卸载后,订阅 Tab 上仍选中的那篇照样显示,不留看不见的阅读态
+  const readFromFlow = Boolean(flow) || mTab === 'subs';
+  const readOpen = !discover && Boolean(activeArticle) && (listView || readFromFlow);
+  // 推入页里读的那篇不在主列表里:正文页按这篇自己的形态画(播客 / 文章,不看内容 Tab 当前视图),不画上一篇 / 下一篇
+  const readRs = readOpen && readFromFlow
+    ? {
+      ...rs,
+      podcastView: shapeOfSource(activeArticle.source_id) === 'podcast',
+      activeIndex: -1,
+      prevArticle: null,
+      nextArticle: null,
+    }
+    : rs;
   // 游客(issue #213 检视 F3):向 App 上报眼前正在看的那篇——登录后回到它;正文页没开就是 null(落早报)
   const visibleArticleId = readOpen ? activeArticle.id : null;
   useEffect(() => { onVisibleArticleChange?.(visibleArticleId); }, [visibleArticleId, onVisibleArticleChange]);
 
   // 播放条的底边:列表页在底部 Tab 栏之上;正文页 / 发现页(整页层盖住 Tab 栏)在安全区之上
-  const playerPage = readOpen || discover ? 'page' : 'tabs';
+  const playerPage = readOpen || discover || flow ? 'page' : 'tabs';
 
   // ── 返回键握手(Wave3;issue #230 起正文页 / 发现页 / 抽屉 / 动作单都走层原语 components/layer,
   //    各自在打开时入层栈:系统返回先关最上层,不退出站点)。合集详情是发现页里的子页,仍单独登记一层:
@@ -336,6 +350,48 @@ export default function MobileReader({
     const intent = performance.now() - inputAtRef.current < 1000;
     applyChrome(nextChrome(state, { y, dy, reduced: motionReduced(), intent }));
   }, [applyChrome]);
+  // ── 内容 Tab 的列表位置(批 3a):切去早报 / 订阅 / 榜单时列表不渲染,回来按同一份查询落回原处——推入页与内容 Tab 各记各的。
+  //    离开时记下页头下沿第一条的序号与离滚动区顶的距离;回来先落 scrollTop,再按那一条对齐。刚挂载的几帧里版面还有几像素的微动,
+  //    浏览器的滚动锚定会跟着把位置挪开约 10px:对齐窗口内先关掉锚定,版面落定后再对齐一次、还原;要在下面的镀层重算之前 ──
+  const contentListKey = JSON.stringify([mode, activeSourceId, activeTagId, scope, searchQuery, unreadOnly, kindFilter]);
+  const contentScrollRef = useRef(null);
+  const contentScroller = () => shellRef.current?.querySelector('.m-content :is(.m-list, .reader-social-scroll)') || null;
+  const saveContentPlace = () => {
+    const el = contentScroller();
+    if (!el) { contentScrollRef.current = null; return; }
+    const top = el.getBoundingClientRect().top;
+    const rows = el.querySelectorAll(CONTENT_ROWS);
+    let anchor = null;
+    for (let i = 0; i < rows.length; i += 1) {
+      const box = rows[i].getBoundingClientRect();
+      if (box.bottom > top + CONTENT_ANCHOR_LINE) { anchor = { i, offset: box.top - top }; break; }
+    }
+    contentScrollRef.current = { key: contentListKey, top: el.scrollTop, anchor };
+  };
+  const lastTabRef = useRef(mTab);
+  useLayoutEffect(() => {
+    const entered = mTab === 'content' && lastTabRef.current !== 'content';
+    lastTabRef.current = mTab;
+    const saved = contentScrollRef.current;
+    if (!entered || articlesLoading || !saved?.top || saved.key !== contentListKey) return undefined;
+    const el = contentScroller();
+    if (!el) return undefined;
+    const align = () => {
+      const row = saved.anchor && el.querySelectorAll(CONTENT_ROWS)[saved.anchor.i];
+      if (!row) return;
+      el.scrollTop += (row.getBoundingClientRect().top - el.getBoundingClientRect().top) - saved.anchor.offset;
+    };
+    el.style.overflowAnchor = 'none';
+    el.scrollTop = saved.top;
+    align();
+    const frame = requestAnimationFrame(align);
+    const settle = window.setTimeout(() => { align(); el.style.overflowAnchor = ''; }, 240);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(settle);
+      el.style.overflowAnchor = '';
+    };
+  }, [mTab, contentListKey, articlesLoading]);
   // 切 Tab / 视图 / 订阅段 / 搜索:底栏叫回来,页头镀层按新滚动区的位置重算
   useLayoutEffect(() => {
     const el = shellRef.current?.querySelector(`.m-content :is(${CHROME_SCROLLERS})`) || null;
@@ -344,22 +400,11 @@ export default function MobileReader({
     applyChrome({ scrolled: (el?.scrollTop || 0) > CHROME.scrolledAt, receded: false });
   }, [mTab, mode, subsSeg, searchOpen, applyChrome]);
 
-  // ── 内容 Tab 列表顶一行(拍板 31 第 9 条):只看未读开着时「◉ 只看未读」;另把当前筛选列成可清除的胶囊
-  //    (过渡形态:来源 / 标签 / 兴趣轴 / 收藏在第 3a 批改成订阅 Tab 里的推入页之前,仍是内容 Tab 上的筛选) ──
-  const scopeChips = [];
-  if (activeSourceId) scopeChips.push(['source', sourceNameMap[activeSourceId] || activeSourceId, () => goView(mode)]);
-  else if (activeTagId) scopeChips.push(['tag', listTitle, () => goView(mode)]);
-  else if (!socialView && scope.axis === 'interest') scopeChips.push(['axis', '兴趣 · 全站', () => setAxis('subscribed')]);
-  if (favOnly) scopeChips.push(['fav', '收藏', toggleFavoriteScope]);
-  const scopeRow = (unreadOnly || scopeChips.length > 0) ? (
+  // ── 内容 Tab 列表顶一行(拍板 31 第 9 条):只看未读开着时「◉ 只看未读」(页头一像素不动)。
+  //    批 2 过渡形态里这一行还列来源 / 收藏 / 兴趣筛选胶囊;批 3a 起这些收窄都在订阅 Tab 的推入页,内容 Tab 只剩订阅聚合 ──
+  const scopeRow = unreadOnly ? (
     <div className="m-scope" role="group" aria-label="当前筛选">
-      {unreadOnly && <span className="m-only"><CircleDot aria-hidden="true" />只看未读</span>}
-      {scopeChips.map(([key, label, clear]) => (
-        <button key={key} type="button" className="m-scope-chip" onClick={clear} aria-label={`清除筛选：${label}`}>
-          <span className="m-scope-name">{label}</span>
-          <X aria-hidden="true" />
-        </button>
-      ))}
+      <span className="m-only"><CircleDot aria-hidden="true" />只看未读</span>
     </div>
   ) : null;
 
@@ -401,7 +446,7 @@ export default function MobileReader({
               按内容类型筛选时收起——推水位会连同没显示的其它类型一并标掉 */}
           {!kindFilter && (
             <GlassBtn
-              label={activeSourceId ? '本来源全部标为已读' : scope.axis === 'interest' ? '兴趣全部标为已读' : '本视图全部标为已读'}
+              label="本视图全部标为已读"
               onClick={handleMarkAllRead}
               disabled={markingRead}
             >
@@ -426,7 +471,7 @@ export default function MobileReader({
       <AnnouncementBanner />
 
       {/* 老读者迁移提示(拍板 30):升级后第一次进来,在头像下提示一次;点任意处或进一次设置即消失 */}
-      {settingsHint && !readOpen && !discover && !(contentTab && searchOpen) && (
+      {settingsHint && !readOpen && !discover && !flow && !(contentTab && searchOpen) && (
         <div className="m-hint" role="status">设置在这里</div>
       )}
 
@@ -492,7 +537,7 @@ export default function MobileReader({
                 ? <TitleDial items={SUBS_ITEMS} value={subsSeg} onChange={setSubsSeg} label="订阅与兴趣" actions={1} />
                 : <HeadTitle>订阅</HeadTitle>}
               actions={(
-                <GlassBtn label="发现更多来源" onClick={() => openDiscoverSources({ shape: 'all' })}>
+                <GlassBtn label="发现更多来源" onClick={discoverFromSubs}>
                   <Plus aria-hidden="true" />
                 </GlassBtn>
               )}
@@ -509,9 +554,7 @@ export default function MobileReader({
               hasNoSubscriptions={hasNoSubscriptions}
               sheetAnchorKey={sheet?.anchorKey || null}
               onSourcePress={openSourceSheet}
-              onDiscover={() => openDiscoverSources({ shape: 'all' })}
-              hasInterests={hasInterests}
-              interestGroups={interestGroups}
+              onDiscover={discoverFromSubs}
               interestPanel={personalDigestEnabled && !rs.isGuest ? (
                 <InterestPage
                   mobile
@@ -519,6 +562,8 @@ export default function MobileReader({
                   onboarding={onboardingRequired}
                   showToast={showToast}
                   onSaved={onSubsInterestSaved}
+                  onReadTag={readInterestTag}
+                  onReadAll={readInterestAll}
                 />
               ) : null}
               {...subsActions}
@@ -542,7 +587,6 @@ export default function MobileReader({
               favoriteIds={favoriteIds}
               favTogglingId={favTogglingId}
               onToggleFavorite={handleToggleFavorite}
-              favOnly={favOnly}
               searchOpen={searchOpen}
               searchInput={searchInput}
               searchQuery={searchQuery}
@@ -559,13 +603,8 @@ export default function MobileReader({
               loadingMore={loadingMore}
               onLoadMore={handleLoadMore}
               platformCount={platformCount}
-              activeSourceId={activeSourceId}
               headless
-              emptyHint={
-                activeSourceHidden
-                  ? '该账号暂时不可用'
-                  : socialSources.length === 0 ? '还没有订阅社交账号，去「发现」看看' : '暂无动态'
-              }
+              emptyHint={socialSources.length === 0 ? '还没有订阅社交账号，去「发现」看看' : '暂无动态'}
               translateEnabled={aiEnabled}
               translations={socialTranslations}
               onToggleTranslation={toggleSocialTranslation}
@@ -598,21 +637,8 @@ export default function MobileReader({
                 ))}
               </div>
             )}
-            {/* 预览未订阅源:显眼订阅横幅(Folo 的「＋ 订阅」条),订阅成功即消失 */}
-            {activeUnsubscribed && (
-              <button
-                type="button"
-                className="reader-sub-banner"
-                disabled={pinningId === activeUnsubscribed.source_id}
-                onClick={() => handleSubscribe(activeUnsubscribed)}
-              >
-                {pinningId === activeUnsubscribed.source_id
-                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  : null}
-                订阅「{activeUnsubscribed.name || activeUnsubscribed.source_id}」
-              </button>
-            )}
-            {!favOnly && scope.axis === 'subscribed' && !articlesLoading && freshCount > 0 && (
+            {/* 预览未订阅的来源改在订阅 Tab 的推入页(批 3a):内容 Tab 只放订阅聚合 */}
+            {scope.axis === 'subscribed' && !articlesLoading && freshCount > 0 && (
               <button type="button" className="reader-fresh-pill" onClick={handleRefreshFresh}>
                 <RefreshCw className="h-3 w-3" />
                 {podcastView ? `载入 ${freshCount} 期新播客` : `载入 ${freshCount} 篇新文章`}
@@ -620,7 +646,7 @@ export default function MobileReader({
             )}
             {articlesLoading ? (
               <ArticleCardsSkeleton />
-            ) : scope.axis === 'subscribed' && !favOnly && hasNoSubscriptions && !activeSourceId ? (
+            ) : hasNoSubscriptions && !activeSourceId ? (
               <div className="reader-empty reader-empty-tall">
                 <Compass className="h-7 w-7 text-slate-300" />
                 <span>你还没有订阅任何来源</span>
@@ -628,38 +654,17 @@ export default function MobileReader({
                   去发现来源
                 </button>
               </div>
-            ) : scope.axis === 'interest' && !favOnly && !hasInterests && !activeSourceId ? (
-              <div className="reader-empty reader-empty-tall">
-                <Tags className="h-7 w-7 text-slate-300" />
-                <span>还没有设置兴趣</span>
-                <button type="button" className="action-button action-button-primary" onClick={openInterests}>
-                  去选几个感兴趣的方向
-                </button>
-              </div>
-            ) : activeSourceHidden ? (
-              <div className="reader-empty reader-empty-tall">
-                <CloudOff className="h-7 w-7 text-slate-300" />
-                <span>该来源暂时不可用</span>
-              </div>
             ) : articles.length === 0 ? (
               <div className="reader-empty">
-                {favOnly ? <Star className="h-6 w-6 text-slate-300" /> : <Inbox className="h-6 w-6 text-slate-300" />}
+                <Inbox className="h-6 w-6 text-slate-300" />
                 <span>
                   {searchQuery
                     ? (podcastView ? '没有匹配的播客' : '没有匹配的文章')
-                    : favOnly
-                      ? '当前范围还没有收藏，阅读时点星标即可收藏'
-                      : activeTagId
-                        ? '还没有命中这个兴趣的文章'
-                      : scope.axis === 'interest'
-                        ? '还没有命中兴趣的文章'
-                      : unreadOnly
-                        ? '没有未读内容，都看完啦'
-                        : activeSourceId
-                          ? '该来源暂无内容'
-                          : kindFilter
-                            ? '当前范围没有这一类内容'
-                          : (mode === 'podcast' ? '暂无播客' : '暂无文章')}
+                    : unreadOnly
+                      ? '没有未读内容，都看完啦'
+                      : kindFilter
+                        ? '当前范围没有这一类内容'
+                        : (mode === 'podcast' ? '暂无播客' : '暂无文章')}
                 </span>
               </div>
             ) : (
@@ -685,8 +690,8 @@ export default function MobileReader({
                         onToggleFavorite={handleToggleFavorite}
                         onContextMenu={noopContextMenu}
                         ctxAnchor={sheet?.anchorKey === `article:${article.id}`}
-                        interestHit={showInterestHit ? (article.interest_hits?.[0] || '') : ''}
-                        unsubscribed={showUnsubscribedMark && !subscribedIds.has(article.source_id)}
+                        interestHit={article.interest_hits?.[0] || ''}
+                        unsubscribed={false}
                         onSubscribeSource={subscribeSourceById}
                         nowPlaying={article.id === playingId ? playingState : ''}
                         nowPlayingAi={article.id === playingId && playingAi}
@@ -747,7 +752,7 @@ export default function MobileReader({
               pinningId={pinningId}
               onSubscribe={handleSubscribe}
               onUnsubscribe={handleUnsubscribe}
-              onPreview={(source) => goSource(source.source_id)}
+              onPreview={(source) => { closeDiscover(); openFlow({ kind: 'source', id: source.source_id }); }}
               collections={collections}
               activeCollectionId={discoverCollectionId}
               onOpenCollection={(c) => setDiscoverCollectionId(c.collection_id)}
@@ -793,10 +798,29 @@ export default function MobileReader({
         </LayerPage>
       )}
 
+      {/* ── 订阅 Tab 的推入页(批 3a):来源 / 全部 / 收藏 / 兴趣各一条流,独立的列表实例;盖住底栏,正文页叠在它之上 ── */}
+      {flow && (
+        <MobileSubsFlow
+          key={pushSpecKey(flow)}
+          spec={flow}
+          rs={rs}
+          showToast={showToast}
+          onBack={closeFlow}
+          aiEnabled={aiEnabled}
+          pressBind={pressBind}
+          onSocialPress={openSocialSheet}
+          sheetAnchorKey={sheet?.anchorKey || null}
+          playingId={playingId}
+          playingState={playingState}
+          playingAi={playingAi}
+          subscribeSourceById={subscribeSourceById}
+        />
+      )}
+
       {/* ── 正文页(push 全屏,无 TabBar) ── */}
       {readOpen && (
         <MobileArticlePage
-          rs={rs}
+          rs={readRs}
           guestAccessEnabled={guestAccessEnabled}
           aiEnabled={aiEnabled}
           ondemand={ondemand}

@@ -535,6 +535,10 @@ issue #230 起 `Modal` 与移动层都经层原语 `components/layer/useLayer`(�
 有吸顶子元素的滚动区(条目流 / 社交流 / 订阅页)用 `::before` 垫片让出页头、不用 `padding-top`——粘性定位的 `top` 在 Chromium 里从
 滚动区的内边距框量起,垫在 padding 里会让吸顶头再错下 56px;吸顶头的 `top` 写 `calc(var(--sat) + var(--m-head-h))`。
 设置从页头头像推入(整页、盖住底栏与播放坞、返回钮落在头像原位);新增的整页推入页沿用同一页头件。
+订阅 Tab 的推入页(来源 / 全部 / 收藏 / 兴趣,批 3a)是**第二个列表实例**:列表走 `hooks/useArticleList`(纯逻辑 `utils/articleList`),
+推入页自己的视图、只看未读、翻页与滚动不改写内容 Tab;对一篇 / 一个源的改动(正文回读、取消收藏、按源标读)经数据层的实例登记处
+(`rs.listRegistry`)同步。内容 Tab 只放订阅聚合 + 只看未读 / 类型 / 搜索——手机壳里记住的兴趣轴 / 收藏星就地回落(`aggregateOnly`,不改写存储),
+按 id 打开一篇留下的来源收窄在离开正文时撤掉;新的收窄入口进推入页,不回到内容 Tab 挂筛选。
 
 **层原语(`components/layer/`)**——移动端的层只有四种,外加 Modal 外壳,全部经 `useLayer`(缺省值表在 `utils/layerKinds.js`):
 

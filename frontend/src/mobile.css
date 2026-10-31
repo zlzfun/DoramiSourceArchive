@@ -1112,7 +1112,7 @@
 .m-search-field:focus-within { box-shadow: inset 0 0 0 1.5px var(--dorami-accent), var(--glass-edge); }
 .m-textbtn { flex: none; min-width: var(--tap); min-height: var(--tap); padding: 0 10px; font-size: var(--m-fs-md); color: var(--dorami-ink-2); }
 
-/* ── 内容 Tab 列表顶一行(拍板 31 第 9 条):「◉ 只看未读」+ 当前筛选胶囊(点 × 清除);页头一像素不动 ── */
+/* ── 内容 Tab 列表顶一行(拍板 31 第 9 条):「◉ 只看未读」;页头一像素不动(批 2 的筛选胶囊批 3a 撤掉,收窄都在订阅 Tab 推入页) ── */
 .m-scope {
   display: flex;
   flex-wrap: wrap;
@@ -1129,25 +1129,9 @@
   color: var(--dorami-accent-ink);
 }
 .m-only svg { width: 13px; height: 13px; color: var(--dorami-accent); }
-.m-scope-chip {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  max-width: 100%;
-  height: 28px;
-  padding: 0 8px 0 12px;
-  border-radius: var(--r-pill);
-  background: var(--dorami-wash);
-  font-size: var(--m-fs-xs);
-  color: var(--dorami-accent-ink);
-}
-.m-scope-chip::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: var(--tap); transform: translateY(-50%); }
-.m-scope-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.m-scope-chip svg { flex: none; width: 13px; height: 13px; }
 .m-social-host .m-scope { padding-top: 0; }
 
-/* ── 订阅 Tab(第 2 批最小可用版;第 3a 批改成样页的推入页):分组卡列出全部订阅,兴趣段嵌兴趣页 ── */
+/* ── 订阅 Tab(第 2 批起;推入页见下方「批 3a」段):分组卡列出全部订阅,兴趣段嵌兴趣页 ── */
 .m-subs-scroll {
   flex: 1;
   min-height: 0;
@@ -1220,6 +1204,124 @@
 .m-subs-int .interest-m-head { padding: 4px 4px 10px; background: none; }
 .m-subs-int .interest-mseg { top: calc(var(--sat) + var(--m-head-h)); margin: 0 calc(-1 * var(--m-gutter)); padding-inline: var(--m-gutter); }
 .m-subs-int .interest-mlist { overflow: visible; padding: 8px 0 0; }
+
+/* ════ issue #230 阶段 3 批 3a:订阅 Tab 的推入页(样页「订阅 · 来源流」,拍板 19 / 24)与兴趣段「我的兴趣」行 ════
+   推入页 = 整页层(盖住底栏,正文页叠在它之上),页内是第二个列表实例;页头与设置页同一套(返回钮在头像原位),
+   滚过 4px 换镀层底;列表从页头下滚过,第一块是来源头图(logo + 名称 + 角色,内容身份不算页头) ── */
+.m-flow {
+  padding-top: 0;
+  background: var(--rd-list-bg);
+  animation: dorami-m-push-in var(--motion-sheet) var(--motion-sheet-ease) both, dorami-m-fade-in var(--motion-medium) var(--motion-ease) both;
+}
+.m-flow.is-scrolled .m-veil { opacity: 1; }
+/* 页头右侧胶囊:只看未读 · 全部标读(样页 .c-gpill:看得见 44 高的镀层胶囊,两枚 44 钮) */
+.m-gpill {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: var(--tap);
+  padding: 0 2px;
+  border-radius: var(--r-pill);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-ring), var(--glass-edge);
+  color: var(--dorami-ink);
+}
+.m-gpill-btn { display: grid; place-items: center; width: var(--tap); height: var(--tap); border-radius: var(--r-pill); }
+.m-gpill-btn svg { width: 18px; height: 18px; }
+.m-gpill-btn:disabled { opacity: 0.45; }
+.m-gpill-btn.m-unread.is-on { color: var(--dorami-accent); }
+/* 条目流:与内容 Tab 的 .m-list 同一种卡与日期组头;没有底栏,底部只让出安全区与播放坞 */
+.m-flow-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 6px calc(var(--sab) + max(16px, var(--player-clear-end, 0px)));
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.m-flow-scroll::before { content: ""; display: block; height: var(--m-head-clear); }
+.m-flow-scroll .reader-date-label { top: calc(var(--sat) + var(--m-head-h)); }
+.m-flow-scroll .reader-entry-time { margin-right: 0; }
+.m-flow-scroll .reader-entry-fav { right: 2px; }
+.m-flow-scroll .reader-podcast-cover { width: 64px; height: 64px; }
+.m-flow-scroll .reader-podcast-copy .reader-entry-time { margin-right: 0; }
+.m-flow-social .reader-social-scroll { padding-bottom: calc(var(--sab) + max(16px, var(--player-clear-end, 0px))); }
+/* 换视图:列表淡入一次(页头不重挂,转盘的原位放大自己有过渡) */
+.m-flow-body { animation: dorami-m-flow-in var(--motion-sheet) var(--motion-sheet-ease) both; }
+@keyframes dorami-m-flow-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+/* 来源头图:logo 44 · 宋体名 · 一行说明(角色 · 形态 · 订阅态;只看未读开着时多一枚小签) */
+.m-flow-hero { display: grid; justify-items: start; gap: 8px; padding: 4px 14px 12px; }
+.m-flow-social .m-flow-hero { padding-inline: 20px; }
+.m-flow-title {
+  margin: 0;
+  max-width: 100%;
+  font-family: var(--font-serif);
+  font-size: var(--m-fs-display);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: 0.03em;
+  color: var(--dorami-ink);
+  overflow-wrap: anywhere;
+}
+.m-flow-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: -2px 0 0; font-size: var(--m-fs-sm); color: var(--dorami-muted); }
+.m-flow-sub em {
+  padding: 1px 8px;
+  border-radius: var(--r-pill);
+  background: var(--dorami-wash);
+  font-size: var(--m-fs-xs);
+  font-style: normal;
+  color: var(--dorami-accent-ink);
+}
+.m-flow-avatar { width: 44px; height: 44px; border-radius: var(--r-pill); object-fit: cover; }
+.m-flow-tagdot { width: 12px; height: 12px; margin: 6px 0 2px; border-radius: var(--r-pill); background: var(--dorami-accent); opacity: 0.8; }
+.m-flow .reader-sub-banner { width: calc(100% - 16px); min-height: var(--tap); margin: 0 8px 10px; border-bottom: 0; border-radius: var(--r-card); font-size: var(--m-fs-md); }
+.m-flow-social .reader-sub-banner { width: calc(100% - 24px); margin-inline: 12px; }
+/* 公告带(z 45,浮在 Tab 页头下沿)只属于 Tab 根页:推入页 / 发现页 / 正文页这类整页层开着时让开,不压在头图与正文上 */
+.m-shell:has(> .m-page, > .m-read) .reader-ann-band { visibility: hidden; }
+
+/* ── 兴趣段(InterestPage 手机嵌入档的「我的兴趣」行):一句定位 + 保存回执 · 我的兴趣(每行读它的条目流,行尾 × 移出)· 全部标签 ── */
+.m-int-lede { display: flex; align-items: baseline; gap: 8px; margin: 0 8px; font-size: var(--m-fs-sm); color: var(--dorami-muted); }
+.m-int-lede .interest-save-state { margin-left: auto; font-size: var(--m-fs-xs); }
+.m-int-row { position: relative; display: flex; align-items: center; }
+.m-row.is-plain + .m-int-row::before,
+.m-int-row + .m-int-row::before {
+  content: "";
+  position: absolute;
+  left: 50px;
+  right: 0;
+  top: 0;
+  height: 0.5px;
+  background: var(--dorami-border);
+}
+.m-int-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 0 4px 0 12px; text-align: left; }
+.m-int-main:active { background: var(--dorami-hover); }
+.m-int-x { flex: none; display: grid; place-items: center; width: var(--tap); height: var(--tap); margin-right: 4px; border-radius: var(--r-pill); color: var(--dorami-faint); }
+.m-int-x svg { width: 16px; height: 16px; }
+.m-int-empty { margin: 0; padding: 14px 16px; font-size: var(--m-fs-sm); color: var(--dorami-faint); }
+/* 搜索标签:镀层胶囊,输入 16px(iOS 聚焦不放大整页,审计 M-06) */
+.interest-m.is-rows .interest-search {
+  display: flex;
+  width: auto;
+  max-width: none;
+  height: var(--tap);
+  margin-bottom: 10px;
+  padding: 0 14px;
+  border-radius: var(--r-pill);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-ring), var(--glass-edge);
+}
+.interest-m.is-rows .interest-search > svg { width: 16px; height: 16px; }
+.interest-m.is-rows .interest-search input { font-size: var(--m-fs-lg); }
+.interest-m.is-rows .interest-search:focus-within { box-shadow: inset 0 0 0 1.5px var(--dorami-accent), var(--glass-edge); }
+.interest-m.is-rows .interest-search-clear { width: var(--tap); height: var(--tap); margin-right: -14px; }
 
 /* ── 老读者迁移提示(拍板 30):头像下一个小气泡「设置在这里」,点任意处即消失 ── */
 .m-hint {

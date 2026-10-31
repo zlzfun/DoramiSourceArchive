@@ -137,7 +137,8 @@ def login(page, password=PASSWORD):
 
 
 def pick_source(page, source):
-    # issue #230:源抽屉退役,来源列在底栏「订阅」Tab;点一行回到「内容」Tab 并带上来源筛选(列表顶的筛选胶囊)
+    # issue #230 批 3a:来源列在底栏「订阅」Tab;点一行在订阅 Tab 里推入它自己的条目流(第二个列表实例,
+    # 盖住底栏、不动「内容」Tab);留在推入页,由调用方 leave_source 出栈
     page.locator(".m-tabbar .m-tab", has_text="订阅").tap()
     rows = page.locator(".m-subs-scroll .m-src-row", has_text=SOURCE_NAMES[source])
     expect(rows).to_have_count(1)
@@ -147,8 +148,23 @@ def pick_source(page, source):
     assert response.value.status == 200
     data = response.value.json()
     assert data["items"] and all(item["source_id"] == source for item in data["items"]), data
+    flow = page.get_by_role("dialog", name=SOURCE_NAMES[source], exact=True)
+    expect(flow).to_be_visible()
+    expect(flow.locator(".m-flow-title")).to_have_text(SOURCE_NAMES[source])
+    expect(page.locator('.m-tab[aria-current="page"]')).to_have_attribute("aria-label", "订阅")
+    return flow
+
+
+def leave_source(page):
+    """系统返回出栈:推入页关掉,回到订阅 Tab 根页(底栏重新可达)。"""
+    page.go_back()
+    expect(page.locator(".m-flow")).to_have_count(0)
+    expect(page.locator('.m-tab[aria-current="page"]')).to_have_attribute("aria-label", "订阅")
+
+
+def open_content(page):
+    page.locator(".m-tabbar .m-tab", has_text="内容").tap()
     expect(page.locator('.m-tab[aria-current="page"]')).to_have_attribute("aria-label", "内容")
-    expect(page.locator(".m-scope-chip .m-scope-name")).to_have_text(SOURCE_NAMES[source])
 
 
 def scroll_content(page, selector, distance):
@@ -190,16 +206,24 @@ def run_flows(browser, base_url, database, artifacts, result):
         assert_viewport(page)
         checks.append("real login: wrong password rejected, correct password opens the mobile reader")
 
-        pick_source(page, SOURCE_B)
-        expect(page.locator(".reader-entry-title")).to_have_count(3)
-        assert all(title.startswith("另一来源") for title in page.locator(".reader-entry-title").all_text_contents())
-        pick_source(page, SOURCE_A)
-        expect(page.locator(".reader-entry")).to_have_count(30)
+        first_content_title = page.locator(".m-list .reader-entry-title").first.text_content()
+        flow = pick_source(page, SOURCE_B)
+        expect(flow.locator(".reader-entry-title")).to_have_count(3)
+        assert all(title.startswith("另一来源") for title in flow.locator(".reader-entry-title").all_text_contents())
+        leave_source(page)
+        flow = pick_source(page, SOURCE_A)
+        expect(flow.locator(".reader-entry")).to_have_count(30)
+        leave_source(page)
         page.set_viewport_size({"width": 320, "height": 568})
         assert_viewport(page)
         page.set_viewport_size({"width": 390, "height": 844})
         assert_viewport(page)
-        checks.append("source selection in the subscriptions tab returns to content and changes real API results")
+        # 内容 Tab 仍是订阅聚合(两个来源),没有被推入页改写
+        open_content(page)
+        expect(page.locator(".m-list .reader-entry")).to_have_count(30)
+        expect(page.locator(".m-list .reader-entry-title").first).to_have_text(first_content_title)
+        expect(page.locator(".m-scope-chip")).to_have_count(0)
+        checks.append("sources in the subscriptions tab push their own real-API list; the content tab is unchanged")
 
         scroll_content(page, ".m-list", 650)
         expect(page.locator(".m-shell[data-receded]")).to_have_count(1)   # 往下读:底栏退场
@@ -269,8 +293,12 @@ def run_flows(browser, base_url, database, artifacts, result):
         assert_viewport(page)
         checks.append("after resizing, Back returns to the same article nearby with reachable bottom navigation")
 
+        # 内容 Tab = 两个来源的订阅聚合(甲 60 + 乙 3):三页,滚到底两次
         scroll_content(page, ".m-list", 10000)
-        expect(page.locator(".reader-entry")).to_have_count(ARTICLE_COUNT)
+        page.wait_for_function("n => document.querySelectorAll('.m-list .reader-entry').length >= n", arg=ARTICLE_COUNT)
+        if page.locator(".reader-entry").count() < ARTICLE_COUNT + 3:
+            scroll_content(page, ".m-list", 10000)
+        expect(page.locator(".reader-entry")).to_have_count(ARTICLE_COUNT + 3)
         assert_viewport(page)
         checks.append("real server pagination loads the next page without scrolling the document")
 
@@ -299,9 +327,16 @@ def run_flows(browser, base_url, database, artifacts, result):
         finally:
             page.context.set_offline(False)
             audit["offline"] = False
-        pick_source(page, SOURCE_A)
-        expect(page.locator(".reader-entry")).to_have_count(30)
-        checks.append("offline request failure shows feedback without stale rows; switching source recovers")
+        flow = pick_source(page, SOURCE_A)
+        expect(flow.locator(".reader-entry")).to_have_count(30)
+        leave_source(page)
+        # 回内容 Tab 再点一次「内容」= 回当前视图聚合并重拉:失败后的空列表恢复
+        open_content(page)
+        with page.expect_response(lambda response: urlsplit(response.url).path == "/api/articles"
+                                  and response.status == 200):
+            page.locator(".m-tabbar .m-tab", has_text="内容").tap()
+        expect(page.locator(".m-list .reader-entry")).to_have_count(30)
+        checks.append("offline request failure shows feedback without stale rows; a source page and the content tab both recover")
 
         # issue #230:「我的」Tab 退役,设置从页头头像推入(盖住底栏);手机设置不列 OPML 与接入集成
         avatar = page.get_by_role("button", name=re.compile("打开设置$"))
