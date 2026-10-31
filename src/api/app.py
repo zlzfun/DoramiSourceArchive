@@ -60,6 +60,7 @@ from api.feed_service import (
     resolve_subscribed_source_ids,
     resolve_all_visible_source_ids,  # noqa: F401 -- router compatibility export
     resolve_subscription_sources_by_token,
+    resolve_delivery_token_owner,
 )
 from api.articles_view import apply_article_query_filters  # noqa: F401 -- compatibility export
 from api.sources import (
@@ -565,7 +566,20 @@ async def lifespan(app: FastAPI):
             else:
                 _mcp_enabled = rec.value.lower() == "true"
         # Build fresh FastMCP instance (session_manager can only be run() once per instance)
-        mcp = build_mcp_app(db_sink, subscription_resolver=resolve_subscription_sources_by_token)
+        mcp = build_mcp_app(
+            db_sink,
+            subscription_resolver=resolve_subscription_sources_by_token,
+            token_owner_resolver=resolve_delivery_token_owner,
+            user_context_limits={
+                "interest_tag_limit": settings.mcp_user_context.interest_tag_limit,
+                "favorite_limit": settings.mcp_user_context.favorite_limit,
+                "favorite_days": settings.mcp_user_context.favorite_days,
+                "source_limit": settings.mcp_user_context.source_limit,
+                "source_days": settings.mcp_user_context.source_days,
+                "subscription_limit": settings.mcp_user_context.subscription_limit,
+                "max_tokens": settings.mcp_user_context.max_tokens,
+            },
+        )
         _mcp_gate._app = mcp.streamable_http_app()
     else:
         _mcp_gate._app = None
@@ -4239,6 +4253,8 @@ _MCP_TOOLS_MANIFEST = [
      "description": "列出所有已知数据来源，获取可用的 source_id 和 content_type（无需令牌）"},
     {"name": "get_rag_context",
      "description": "关键词检索后组装格式化上下文字符串；必须携带 subscription_token，结果限定到订阅范围"},
+    {"name": "get_user_context",
+     "description": "实时拼装令牌归属用户本人的阅读侧上下文（兴趣标签/近期收藏/常读来源/启用订阅）；必须携带 subscription_token，只返回该用户自己的数据"},
 ]
 
 

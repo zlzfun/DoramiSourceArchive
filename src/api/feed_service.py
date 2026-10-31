@@ -179,6 +179,29 @@ def resolve_feed_token_owner(session: Session, token: str) -> Optional[str]:
     return record.owner_username if record else None
 
 
+def resolve_delivery_token_owner(token: str) -> Optional[str]:
+    """交付令牌 → 归属用户名(供 MCP get_user_context 等需定位用户的工具使用)。
+
+    与 ``resolve_subscription_sources_by_token`` 同一对令牌语义:dsub_ 单订阅
+    令牌取订阅行 owner;dfeed_ 个人聚合令牌取令牌行 owner。无效返回 None;
+    历史全局订阅(owner_username 为空串)返回空串,由调用方按「无归属用户」处理,
+    不会放大成 admin 视图。
+    """
+    if not token:
+        return None
+    token_hash = hash_subscription_token(token)
+    with Session(deps.get_db_sink().engine) as session:
+        record = session.exec(
+            select(ReaderSubscriptionRecord).where(
+                ReaderSubscriptionRecord.token_hash == token_hash,
+                ReaderSubscriptionRecord.is_active == True,  # noqa: E712
+            )
+        ).first()
+        if record:
+            return record.owner_username
+        return resolve_feed_token_owner(session, token)
+
+
 def resolve_subscription_sources_by_token(token: str) -> Optional[List[str]]:
     """令牌 → 检索可见的 source_id 列表（供 MCP 个性化作用域使用）。
 
