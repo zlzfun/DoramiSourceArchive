@@ -12,6 +12,7 @@ import {
   testXApiConfig,
 } from '../../api';
 import SecretField from '../SecretField';
+import { deepseekFlashGuidance, llmUpdates } from '../../utils/llmSettings';
 
 /**
  * 凭据区(v3.27 凭据整合台,设置柜 → 管理组):外部凭据的**单点编辑台**。
@@ -58,7 +59,7 @@ export default function CredentialsSection({ showToast, onNavigate, onOpenAdminP
   const [schedule, setSchedule] = useState(null);
   const [overview, setOverview] = useState(null);
 
-  const loadLlm = useCallback(() => getLLMConfig().then((d) => {
+  const applyLlmConfig = useCallback((d) => {
     setLlmStatus(d);
     setLlmForm((f) => ({
       ...f,
@@ -71,7 +72,8 @@ export default function CredentialsSection({ showToast, onNavigate, onOpenAdminP
       vision_model: d.vision_model || '',
       api_key: '', // 后端永不回显明文,输入框始终空值起步 = 不改
     }));
-  }).catch(() => {}), []);
+  }, []);
+  const loadLlm = useCallback(() => getLLMConfig().then(applyLlmConfig).catch(() => {}), [applyLlmConfig]);
 
   const loadX = useCallback(() => getXApiConfig().then((d) => {
     setXStatus(d);
@@ -101,17 +103,9 @@ export default function CredentialsSection({ showToast, onNavigate, onOpenAdminP
   const canTestLlm = Boolean(llmForm.base_url.trim() && llmForm.model.trim() && (llmForm.api_key.trim() || llmStatus?.api_key_set));
 
   const persistLlm = async () => {
-    const payload = {
-      base_url: llmForm.base_url.trim(),
-      model: llmForm.model.trim(),
-      temperature: Number(llmForm.temperature),
-      max_tokens: Number(llmForm.max_tokens),
-      thinking_mode: llmForm.thinking_mode, // ''=不发送思考参数(回落基线)
-      aux_model: llmForm.aux_model.trim(), // ''=清除覆盖(不启用辅助档)
-      vision_model: llmForm.vision_model.trim(), // ''=清除覆盖(配图识别关闭)
-    };
-    if (llmForm.api_key.trim()) payload.api_key = llmForm.api_key.trim();
-    await saveLLMConfig(payload);
+    const payload = llmUpdates(llmForm, llmStatus);
+    // 保存响应已经包含有效值和来源;后续探针失败也不能显示保存前的配置。
+    applyLlmConfig(await saveLLMConfig(payload));
   };
 
   const handleSaveLlm = async () => {
@@ -119,7 +113,6 @@ export default function CredentialsSection({ showToast, onNavigate, onOpenAdminP
     try {
       await persistLlm();
       showToast('已保存模型配置', 'success');
-      await loadLlm();
     } catch (error) {
       showToast(error.message || '保存失败', 'error');
     } finally {
@@ -132,14 +125,16 @@ export default function CredentialsSection({ showToast, onNavigate, onOpenAdminP
     try {
       await persistLlm();
       const r = await testLLMConfig();
-      await loadLlm();
+      // 供应商响应里的自报名称只帮助核对兼容路由,不能证明底层模型身份。
+      const served = r.served_model && r.served_model !== r.model
+        ? `（供应商自报 ${r.served_model}，非底层模型身份验证）` : '';
       // 视觉档单独探测(issue #69):主模型通、视觉不通时如实转述,不把整体报成失败
       if (r.vision && !r.vision.ok) {
-        showToast(`已连接 · ${r.model} · ${r.latency_ms}ms;视觉模型 ${r.vision.model} 不可用:${r.vision.error || '未知错误'}`, 'info');
+        showToast(`已连接 · ${r.model}${served} · ${r.latency_ms}ms;视觉模型 ${r.vision.model} 不可用:${r.vision.error || '未知错误'}`, 'info');
       } else if (r.vision) {
-        showToast(`已连接 · ${r.model} · ${r.latency_ms}ms · 视觉 ${r.vision.model} · ${r.vision.latency_ms}ms`, 'success');
+        showToast(`已连接 · ${r.model}${served} · ${r.latency_ms}ms · 视觉 ${r.vision.model} · ${r.vision.latency_ms}ms`, 'success');
       } else {
-        showToast(`已连接 · ${r.model} · ${r.latency_ms}ms`, 'success');
+        showToast(`已连接 · ${r.model}${served} · ${r.latency_ms}ms`, 'success');
       }
     } catch (error) {
       showToast(error.message || '连接失败', 'error');
@@ -194,6 +189,7 @@ export default function CredentialsSection({ showToast, onNavigate, onOpenAdminP
   };
 
   const scheduleConfigured = Boolean(schedule?.password_set);
+  const flashGuidance = deepseekFlashGuidance(llmForm.base_url, llmForm.model);
 
   return (
     <div>
@@ -210,15 +206,15 @@ export default function CredentialsSection({ showToast, onNavigate, onOpenAdminP
         <p className="cred-sub">日报生成、读者翻译/问答共用的 OpenAI 兼容接口</p>
         <div className="cred-fields">
           <label className="sett-field cred-field-wide">
-            <span className="sett-field-lbl">base_url</span>
+            <span className="sett-field-lbl">base_url <SrcBadge source={llmStatus?.field_sources?.base_url} /></span>
             <input className="form-input font-mono" value={llmForm.base_url} onChange={(e) => updateLlm('base_url', e.target.value)} placeholder="https://api.deepseek.com/v1" />
           </label>
           <label className="sett-field">
-            <span className="sett-field-lbl">model</span>
-            <input className="form-input font-mono" value={llmForm.model} onChange={(e) => updateLlm('model', e.target.value)} placeholder="deepseek-chat" />
+            <span className="sett-field-lbl">model <SrcBadge source={llmStatus?.field_sources?.model} /></span>
+            <input className="form-input font-mono" value={llmForm.model} onChange={(e) => updateLlm('model', e.target.value)} placeholder="deepseek-flash" />
           </label>
           <label className="sett-field">
-            <span className="sett-field-lbl">api_key</span>
+            <span className="sett-field-lbl">api_key <SrcBadge source={llmStatus?.field_sources?.api_key} /></span>
             <SecretField
               className="form-input font-mono"
               value={llmForm.api_key}
@@ -229,25 +225,25 @@ export default function CredentialsSection({ showToast, onNavigate, onOpenAdminP
             />
           </label>
           <label className="sett-field">
-            <span className="sett-field-lbl">temperature</span>
+            <span className="sett-field-lbl">temperature <SrcBadge source={llmStatus?.field_sources?.temperature} /></span>
             <input className="form-input font-mono" type="number" step="0.1" min="0" max="2" value={llmForm.temperature} onChange={(e) => updateLlm('temperature', e.target.value)} />
           </label>
           <label className="sett-field">
-            <span className="sett-field-lbl">max_tokens</span>
+            <span className="sett-field-lbl">max_tokens <SrcBadge source={llmStatus?.field_sources?.max_tokens} /></span>
             <input className="form-input font-mono" type="number" step="256" min="256" value={llmForm.max_tokens} onChange={(e) => updateLlm('max_tokens', e.target.value)} />
           </label>
-          <label className="sett-field" title="可选:同端点下的第二个模型名,供检索规划/选篇、日报单篇概括与去重聚类这类轻量调用使用——主模型走旗舰/思考档时它们不必陪跑高延迟高成本;问答作答与翻译仍走主模型。留空 = 全部调用走主模型">
-            <span className="sett-field-lbl">辅助轻模型</span>
-            <input className="form-input font-mono" value={llmForm.aux_model} onChange={(e) => updateLlm('aux_model', e.target.value)} placeholder="留空 = 不启用" />
+          <label className="sett-field" title="可选:同端点下的第二个模型名,供检索规划/选篇、日报单篇概括与去重聚类这类轻量调用使用——主模型走旗舰/思考档时它们不必陪跑高延迟高成本;问答作答与翻译仍走主模型。留空清除运行时覆盖,回落环境变量/配置文件;基线也未配置时全部调用走主模型">
+            <span className="sett-field-lbl">辅助轻模型 <SrcBadge source={llmStatus?.field_sources?.aux_model} /></span>
+            <input className="form-input font-mono" value={llmForm.aux_model} onChange={(e) => updateLlm('aux_model', e.target.value)} placeholder="留空 = 跟随基线" />
           </label>
-          <label className="sett-field" title="可选:同端点下支持图片输入的模型名(DeepSeek 为 deepseek-flash),用于识别文章配图并把图里的表格/图表/截图内容并入分析、日报与问答的参考资料。留空 = 不识别配图,所有链路只看正文">
-            <span className="sett-field-lbl">视觉模型</span>
-            <input className="form-input font-mono" value={llmForm.vision_model} onChange={(e) => updateLlm('vision_model', e.target.value)} placeholder="留空 = 不识别配图" />
+          <label className="sett-field" title="可选:同端点下支持图片输入的模型名(DeepSeek 为 deepseek-flash),用于识别文章配图并把图里的表格/图表/截图内容并入分析、日报与问答的参考资料。留空清除运行时覆盖,回落环境变量/配置文件;基线也未配置时不识别配图">
+            <span className="sett-field-lbl">视觉模型 <SrcBadge source={llmStatus?.field_sources?.vision_model} /></span>
+            <input className="form-input font-mono" value={llmForm.vision_model} onChange={(e) => updateLlm('vision_model', e.target.value)} placeholder="留空 = 跟随基线" />
           </label>
-          <label className="sett-field" title="思考型模型(如 DeepSeek V4 系)默认开思考,长输出可能被思考耗尽 max_tokens;不支持该参数的端点请留「不发送」">
-            <span className="sett-field-lbl">思考模式</span>
+          <label className="sett-field" title="思考型模型(如 DeepSeek V4.1 Flash)默认开思考,长输出可能被思考耗尽 max_tokens;「跟随基线配置」回落环境变量/配置文件,基线为空才不发送思考参数">
+            <span className="sett-field-lbl">思考模式 <SrcBadge source={llmStatus?.field_sources?.thinking_mode} /></span>
             <select className="form-input font-mono" value={llmForm.thinking_mode} onChange={(e) => updateLlm('thinking_mode', e.target.value)}>
-              <option value="">不发送(默认)</option>
+              <option value="">跟随基线配置</option>
               <option value="disabled">关闭思考</option>
               <option value="low">思考·low</option>
               <option value="high">思考·high</option>
@@ -255,13 +251,20 @@ export default function CredentialsSection({ showToast, onNavigate, onOpenAdminP
             </select>
           </label>
         </div>
+        {flashGuidance && (
+          <div className="cred-sub">
+            <a href="https://api-docs.deepseek.com/quick_start/pricing/" target="_blank" rel="noreferrer">DeepSeek {flashGuidance.version}</a>
+            {flashGuidance.legacy ? '：旧 Flash 名称已由官方转发到新版' : '：官方 API 名称 deepseek-flash'}
+            {flashGuidance.legacy && <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs ml-2" onClick={() => updateLlm('model', 'deepseek-flash')}>采用 deepseek-flash</button>}
+          </div>
+        )}
         <div className="sett-sync-foot">
-          <span className="cred-ref-meta">用量与总闸见 运维管理 → AI</span>
+          <span className="cred-ref-meta" role="status">当前生效：{llmStatus?.model || '未配置'} · {SRC_LABELS[llmStatus?.field_sources?.model] || '来源待读取'}</span>
           <div className="ml-auto flex items-center gap-2">
-            <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={handleTestLlm} disabled={testingLlm || savingLlm || !canTestLlm}>
-              {testingLlm ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />} 测试连通
+            <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={handleTestLlm} disabled={testingLlm || savingLlm || !canTestLlm || !llmStatus}>
+              {testingLlm ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />} 保存并测试（计费）
             </button>
-            <button type="button" className="action-button action-button-primary min-h-[32px] px-3 text-xs" onClick={handleSaveLlm} disabled={savingLlm}>
+            <button type="button" className="action-button action-button-primary min-h-[32px] px-3 text-xs" onClick={handleSaveLlm} disabled={savingLlm || testingLlm || !llmStatus}>
               {savingLlm ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} 保存
             </button>
           </div>

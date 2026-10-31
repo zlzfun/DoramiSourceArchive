@@ -15,6 +15,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 import struct
 import time
 import zlib
@@ -167,6 +168,20 @@ async def client_session(config: LLMConfig):
         yield client
 
 
+def _served_model(data: Any, config: LLMConfig) -> str:
+    """Accept only bounded model identifiers, never arbitrary provider diagnostics."""
+    value = data.get("model") if isinstance(data, dict) else None
+    if not isinstance(value, str) or not 1 <= len(value) <= 200:
+        return ""
+    # Do not coerce objects, truncate secrets into plausible IDs, or echo URLs.
+    if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/@+\-]*", value)
+            or "://" in value
+            or re.search(r"(?:^|[/@:])sk-", value, re.IGNORECASE)
+            or (config.api_key and config.api_key in value)):
+        return ""
+    return value
+
+
 async def chat_completion(
     *,
     messages: List[ChatMessage],
@@ -178,6 +193,7 @@ async def chat_completion(
     usage_meta: Optional[UsageMeta] = None,
     http_client: Optional[httpx.AsyncClient] = None,
     require_complete: bool = False,
+    response_meta: Optional[Dict[str, Any]] = None,
 ) -> str:
     """调用 chat completions，返回 choices[0].message.content。
 
@@ -189,7 +205,11 @@ async def chat_completion(
     - http_client：可选的共享连接（见 client_session）；传入时本函数不负责其生命周期。
     - require_complete：翻译等完整输出任务使用，仅接受 finish_reason=stop；
       已返回的非空截断响应先计量再抛错，其它消费方默认保留旧行为。
+    - response_meta：可选出参，成功时提供有界的供应商自报 served_model；
+      不证明底层模型身份，也不改变配置。每次调用先清除旧 served_model。
     """
+    if response_meta is not None:
+        response_meta.pop("served_model", None)
     if not config.configured:
         raise LLMNotConfigured("LLM 未配置（需 base_url / api_key / model）")
 
@@ -198,14 +218,14 @@ async def chat_completion(
             http_client, messages=messages, config=config, temperature=temperature,
             max_tokens=max_tokens, response_json=response_json,
             max_retries=max_retries, usage_meta=usage_meta,
-            require_complete=require_complete,
+            require_complete=require_complete, response_meta=response_meta,
         )
     async with httpx.AsyncClient(timeout=config.timeout_seconds, follow_redirects=True) as client:
         return await _chat_completion_on(
             client, messages=messages, config=config, temperature=temperature,
             max_tokens=max_tokens, response_json=response_json,
             max_retries=max_retries, usage_meta=usage_meta,
-            require_complete=require_complete,
+            require_complete=require_complete, response_meta=response_meta,
         )
 
 
@@ -220,6 +240,7 @@ async def _chat_completion_on(
     max_retries: int,
     usage_meta: Optional[UsageMeta],
     require_complete: bool = False,
+    response_meta: Optional[Dict[str, Any]] = None,
 ) -> str:
     url = _endpoint(config)
     headers = {
@@ -288,6 +309,10 @@ async def _chat_completion_on(
                 raise LLMIncompleteOutput(
                     "模型未确认完整输出，译文未保存；请缩短输入或调整模型输出上限后重试"
                 )
+            if response_meta is not None:
+                served = _served_model(data, config)
+                if served:
+                    response_meta["served_model"] = served
             return content
 
         body_preview = resp.text[:500]
@@ -415,7 +440,7 @@ def parse_json_object(text: str) -> dict:
 
 
 async def ping(config: LLMConfig) -> dict:
-    """测试连接：发一条极短 prompt，返回 {ok, model, latency_ms, sample}。"""
+    """有界连接探针；model 是请求配置名，served_model 可选且仅为端点自报。"""
     if not config.configured:
         raise LLMNotConfigured("LLM 未配置（需 base_url / api_key / model）")
     started = time.monotonic()
@@ -423,19 +448,24 @@ async def ping(config: LLMConfig) -> dict:
     # (deepseek-flash)且未配 thinking_mode 时,思考先吃掉几十 token,16 的上限让 content 空产、
     # 探针误报「连接失败」。256 是有界上限不是固定消费,实测足以越过默认思考回出正文;
     # 探针不替主模型关思考——它要验证的正是当前主模型配置的真实可用性(codex 检视 F11 拍板)。
+    meta: Dict[str, Any] = {}
     content = await chat_completion(
         messages=[ChatMessage(role="user", content="ping，请只回复 pong")],
         config=config,
         max_tokens=PING_MAX_TOKENS,
         max_retries=1,
+        response_meta=meta,
     )
     latency_ms = int((time.monotonic() - started) * 1000)
-    return {
+    result = {
         "ok": True,
         "model": config.model,
         "latency_ms": latency_ms,
         "sample": (content or "").strip()[:120],
     }
+    if meta.get("served_model"):
+        result["served_model"] = meta["served_model"]
+    return result
 
 
 def _solid_png(width: int, height: int, rgb: tuple[int, int, int]) -> bytes:

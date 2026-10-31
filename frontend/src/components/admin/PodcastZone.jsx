@@ -418,6 +418,17 @@ export default function PodcastZone({ showToast, refreshTick = 0 }) {
             <span className="tools-title">ASR 配额策略</span>
             {quotaData && <span className={`stamp ${quotaData.usage_status === 'frozen' ? 'stamp-warn' : 'stamp-idle'}`}>{asrProviderLabel(quotaData.provider)}</span>}
           </div>
+          {quotaData?.speech_models?.length > 0 && (
+            <div className="grid gap-2 px-4 pb-4" aria-label="当前语音模型">
+              {quotaData.speech_models.map((item) => (
+                <div key={item.field} className="tiny-meta">
+                  <span className="micro-label">{item.field === 'asr_model' ? 'ASR' : 'TTS'}</span>
+                  {' '}{item.model} · {ASR_SOURCE_LABELS[item.source] || item.source}
+                  {item.retired && <span className="text-[var(--state-warn)]" role="status"> · 已列入退役名单，请在有效配置来源改为 {item.replacement}</span>}
+                </div>
+              ))}
+            </div>
+          )}
           {quotaData ? (
             <div className="grid gap-3 px-4 pb-4 md:grid-cols-2 xl:grid-cols-4">
               <label className="sett-field">

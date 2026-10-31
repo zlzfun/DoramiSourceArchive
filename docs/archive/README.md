@@ -5,6 +5,10 @@
 > `docs/frontend/conventions.md` / `docs/sources/curation_policy.md` 等活跃文档。
 > 按「故事」分组索引;文内常含 ☐/☑ 进度符,均为当时状态。
 
+## 导读状态与模型配置(2026-10,issue #238 / #242 / #243 / #244)
+
+- [issue-238-guides-models.md](./issue-238-guides-models.md) — 用户验收后的四方案取舍、配置生效与错误脱敏边界、集成验证及交叉检视记录。
+
 ## 播客列表精简(2026-10,issue #239)
 
 - [issue-239-podcast-list.md](./issue-239-podcast-list.md) — 用户验收采用的方案、验证边界与待完成的交叉检视记录。

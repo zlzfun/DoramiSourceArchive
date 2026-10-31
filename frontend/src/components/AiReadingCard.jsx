@@ -27,7 +27,7 @@ import { motionReduced } from '../motion';
  * 都离开、或有新的悬停 / 聚焦进来时复位(codex R1-6)。触屏没有悬停,依据改为卡内常显的一行小字。此前「点数字
  * 翻面看评分依据」的交互随之退役。正文区承接速读、骨架与生成入口。桌面与移动壳共用。
  *
- * 文章「✦ 听导读」(issue #124 起在卡内)自 issue #199 起挪到标题区收听入口,与播客共用全局播放条。
+ * 文章听导读与 AI 速读同卡呈现,音轨仍使用全局播放条(issue #238)。
  */
 export default function AiReadingCard({
   article,
@@ -36,6 +36,7 @@ export default function AiReadingCard({
   canGenerate,
   onGenerate,
   podcast = false,
+  listen = null,
 }) {
   // 新分析记录是依据的事实源；旧数据仍由 podcast projection 回退 show_notes。
   const assessment = podcast ? podcastAssessmentMeta(article) : null;
@@ -118,6 +119,7 @@ export default function AiReadingCard({
           </div>
         )}
       </div>
+      {listen && <div className="reader-ai-listen">{listen}</div>}
       <div className="reader-ai-summary-main">
         {primaryText ? (
           <div className="reader-ai-layer reader-ai-layer-summary">

@@ -522,7 +522,7 @@ export default function ReaderTab({
   const listenList = !activeArticle ? [] : podcastView
     ? podcastListenEntries(activeArticle, { aiEnabled, ondemandEnabled: ondemand.podcast === true })
     : articleListenEntries(activeArticle, { aiEnabled, ondemandEnabled: ondemand.article === true });
-  const hasListen = listenList.length > 0;
+  const hasListen = podcastView && listenList.length > 0;
   // 原节目时长已写在入口上,署名行不再重复
   const durationOnEntry = listenList.some((entry) => entry.track === 'original');
 
@@ -598,6 +598,7 @@ export default function ReaderTab({
     <div className={`reader-pane-actions ${hasListen ? 'has-listen' : ''}`}>
       {hasListen && (
         <ListenEntries
+          key={activeArticle.id}
           article={activeArticle}
           podcast={podcastView}
           aiEnabled={aiEnabled}
@@ -1516,17 +1517,28 @@ export default function ReaderTab({
             </header>
             <div className="reader-pane-body">
               {/* 已落库分析始终可读(播客与文章都常驻,与在听哪条音轨无关);本端 AI 开启时才额外给现场生成入口 */}
-              {!activeBodyLoading && shouldShowAiReadingCard(activeArticle, {
+              {!activeBodyLoading && ((!podcastView && listenList.length > 0) || shouldShowAiReadingCard(activeArticle, {
                 summary: activeSummary,
                 aiEnabled,
                 body: activeBody,
-              }) && (
+              })) && (
                 <AiReadingCard
                   article={activeArticle}
                   summary={activeSummary}
                   summarizing={summarizing}
                   canGenerate={aiEnabled && Boolean(activeBody)}
                   onGenerate={handleSummarize}
+                  listen={!podcastView && listenList.length > 0 ? (
+                    <ListenEntries
+                      key={activeArticle.id}
+                      article={activeArticle}
+                      aiEnabled={aiEnabled}
+                      ondemand={ondemand}
+                      sourceName={sourceNameMap[activeArticle.source_id] || ''}
+                      showToast={showToast}
+                      onRefresh={refreshActiveArticle}
+                    />
+                  ) : null}
                   podcast={podcastView}
                 />
               )}
