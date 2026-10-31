@@ -31,9 +31,11 @@ from config import LLMConfig
 from llm import prompts
 from llm.client import ChatMessage, UsageMeta, chat_completion, parse_json_object
 from models.db import ArticleRecord
-from services.reader_ai import build_numbered_context, build_sources_payload
+from services.reader_ai import build_numbered_context, build_sources_payload, _art_field
 from services import image_insights as image_insights_service
 from services import user_sources as user_sources_service
+from services import podcast_qa
+from services import source_visibility
 from storage.fts import fts_search_ranked
 
 logger = logging.getLogger(__name__)
@@ -58,14 +60,17 @@ _MAX_FTS_IDS = 10000
 
 def _exportable_source_ids(engine, source_ids: List[str]) -> List[str]:
     with Session(engine) as session:
-        return user_sources_service.external_ai_allowed_source_ids(session, source_ids)
+        hidden = source_visibility.reader_unavailable_source_ids(session)
+        return user_sources_service.external_ai_allowed_source_ids(
+            session, [sid for sid in source_ids if sid not in hidden],
+        )
 
 
 def _exportable_articles(engine, articles: List[ArticleRecord]) -> List[ArticleRecord]:
     allowed = set(_exportable_source_ids(
-        engine, [str(article.source_id or "") for article in articles]
+        engine, [str(_art_field(article, "source_id") or "") for article in articles]
     ))
-    return [article for article in articles if article.source_id in allowed]
+    return [article for article in articles if _art_field(article, "source_id") in allowed]
 
 
 # ==================== 查询规划 ====================
@@ -131,7 +136,7 @@ async def plan_query(
             return value.strip()[:10]
         return None
 
-    return {
+    result = {
         "keywords": keywords[:6],
         "date_gte": _date("date_gte"),
         "date_lte": _date("date_lte"),
@@ -139,6 +144,15 @@ async def plan_query(
         "use_brief": bool(data.get("use_brief")),
         "chat": bool(data.get("chat")),
     }
+    # Episode discovery and locating an argument inside a long transcript need
+    # different terms. Keep this optional for older planners and fallback paths.
+    passage_keywords = data.get("passage_keywords")
+    if isinstance(passage_keywords, list):
+        result["passage_keywords"] = list(dict.fromkeys(
+            k.strip() for k in passage_keywords
+            if isinstance(k, str) and 2 <= len(k.strip()) <= 80
+        ))[:12]
+    return result
 
 
 # ==================== 候选召回 ====================
@@ -245,17 +259,50 @@ def fetch_recent_window(
         return list(session.exec(query).all())
 
 
+def _merge_candidates(article_hits, podcast_hits, *, limit=CANDIDATE_LIMIT):
+    """Fuse independent ranked lists without comparing unrelated BM25 scales."""
+    scores = {}
+    records = {}
+    for hits in (article_hits, podcast_hits):
+        for rank, record in enumerate(hits, start=1):
+            key = _art_field(record, "id")
+            scores[key] = scores.get(key, 0.0) + 1.0 / (60 + rank)
+            # Podcast hits contain the matching evidence used by the selector.
+            records[key] = record
+    ordered = sorted(scores, key=lambda key: scores[key], reverse=True)
+    return [records[key] for key in ordered[:limit]]
+
+
+def fetch_qa_candidates(engine, *, keywords, source_ids, date_gte=None, date_lte=None):
+    options = dict(keywords=keywords, source_ids=source_ids,
+                   date_gte=date_gte, date_lte=date_lte)
+    articles = fetch_candidates(engine, **options)
+    episodes = podcast_qa.search_episodes(engine, **options, limit=CANDIDATE_LIMIT)
+    return _merge_candidates(articles, episodes)
+
+
+def fetch_qa_recent_window(engine, source_ids):
+    articles = fetch_recent_window(engine, source_ids)
+    episodes = podcast_qa.search_episodes(
+        engine, keywords=[], source_ids=source_ids, limit=CANDIDATE_LIMIT,
+    )
+    merged = _merge_candidates(articles, episodes, limit=CANDIDATE_LIMIT * 2)
+    merged.sort(key=lambda r: _art_field(r, "fetched_date") or "", reverse=True)
+    return merged[:CANDIDATE_LIMIT]
+
+
 # ==================== 选篇 ====================
 
 def _lead(record: ArticleRecord) -> str:
     """候选行引子:正文开头压成单行截断(帮 LLM 判断相关性,非展示文案)。"""
-    body = " ".join((record.content or "").split())
-    return body[:_LEAD_CHARS]
+    body = " ".join((_art_field(record, "content") or "").split())
+    return body[:600 if _art_field(record, "qa_evidence") else _LEAD_CHARS]
 
 
 def _candidate_line(idx: int, record: ArticleRecord) -> str:
-    date = (record.publish_date or "")[:10]
-    return f"[{idx}] {record.title or '(无标题)'} | {record.source_id} | {date}\n    {_lead(record)}"
+    date = (_art_field(record, "publish_date") or "")[:10]
+    return (f"[{idx}] {_art_field(record, 'title') or '(无标题)'} | "
+            f"{_art_field(record, 'source_id')} | {date}\n    {_lead(record)}")
 
 
 async def select_articles(
@@ -334,6 +381,7 @@ async def subscription_context(
     progress: Optional[Any] = None,
     corpus_label: str = "读者订阅内容",
     history: Optional[List[Any]] = None,
+    source_ids_fetch: Optional[Any] = None,
 ) -> tuple:
     """检索圈定型问答(scope=subscription/all)的上下文组装,返回 ``(context, sources)``。
 
@@ -355,6 +403,10 @@ async def subscription_context(
 
     _notify(progress, "plan")
     plan = await plan_query(question, aux_config, usage_meta, history_text=_history_text(history))
+    if source_ids_fetch is not None:
+        source_ids = _exportable_source_ids(engine, source_ids_fetch())
+        if not source_ids:
+            return "", []
     if plan is not None and plan.get("chat"):
         # 闲聊/对话元问题(v3.32 二轮返修):与资讯内容无关,不检索不注入,纯对话作答
         # ——等待态由此从「理解问题」直接跳到「组织回答」,不画未发生的检索阶段。
@@ -371,7 +423,7 @@ async def subscription_context(
     notice = ""
     if plan is None:
         # 规划失败:用户原词直接检索(FTS 内部自带 LIKE 回退)。
-        candidates = fetch_candidates(
+        candidates = fetch_qa_candidates(
             engine, keywords=[question.strip()], source_ids=source_ids
         )
     elif not plan["temporal"] and plan["keywords"]:
@@ -379,7 +431,7 @@ async def subscription_context(
         search_source_ids = source_ids
         if plan["use_brief"] and BRIEF_SOURCE_ID in set(source_ids):
             search_source_ids = [BRIEF_SOURCE_ID]
-        candidates = fetch_candidates(
+        candidates = fetch_qa_candidates(
             engine,
             keywords=plan["keywords"],
             source_ids=search_source_ids,
@@ -388,7 +440,7 @@ async def subscription_context(
         )
         if not candidates and (plan["date_gte"] or plan["date_lte"]):
             # 窗口内零命中 ≠ 库里没有该主题:先放宽日期窗保主题,好过直接丢主题看最新。
-            candidates = fetch_candidates(
+            candidates = fetch_qa_candidates(
                 engine, keywords=plan["keywords"], source_ids=search_source_ids
             )
             if candidates:
@@ -400,7 +452,7 @@ async def subscription_context(
 
     # 时效浏览型 / 零命中兜底:订阅域时序窗口。
     if not candidates:
-        candidates = fetch_recent_window(engine, source_ids)
+        candidates = fetch_qa_recent_window(engine, source_ids)
         if candidates and not (plan and plan["temporal"]):
             notice = (
                 f"(检索说明:没有检索到与问题直接相关的文章;以下是{corpus_label}里最新的一批条目,"
@@ -412,23 +464,34 @@ async def subscription_context(
     # Recheck after retrieval so a source reclassified during query planning
     # cannot leak its lead text into the selection prompt.
     candidates = _exportable_articles(engine, candidates)
+    candidates = podcast_qa.revalidate_records(engine, candidates)
     if not candidates:
         return "", []
 
     _notify(progress, "select", {"candidates": len(candidates)})
     chosen = await select_articles(question, candidates, aux_config, usage_meta)
+    if source_ids_fetch is not None:
+        current_ids = set(source_ids_fetch())
+        chosen = [r for r in chosen if _art_field(r, "source_id") in current_ids]
     # Recheck once more before constructing the answer context.
     chosen = _exportable_articles(engine, chosen)
     # 上下文与 sources 必须同源同序(编号 [n] 即引用锚,见 reader_ai 核心层)。
     # 单篇预算按选中篇数摊分(下限保底):选中少时长文能带出更多正文,
     # 不再固定每篇 2000 字符只喂开头(v3.34)。
-    per_article = max(_CONTEXT_PER_ARTICLE, _CONTEXT_TOTAL // max(1, len(chosen)))
+    total_chars = podcast_qa.CONTEXT_CHARS if any(_art_field(r, "content_type") == "podcast_episode" for r in chosen) else _CONTEXT_TOTAL
+    per_article = max(_CONTEXT_PER_ARTICLE, total_chars // max(1, len(chosen)))
+    keywords = (plan.get("passage_keywords") or plan["keywords"]) if plan else [question.strip()]
+    chosen = podcast_qa.prepare_records(
+        engine, chosen, keywords=keywords, per_episode_chars=per_article,
+    )
+    chosen = podcast_qa.revalidate_records(engine, _exportable_articles(engine, chosen))
     # 配图说明(issue #69)只读缓存:检索档 ≤8 篇不在请求路径上发起识别(最坏 32 次视觉调用)。
     notes_by_id = image_insights_service.cached_notes_map(
-        [str(record.id) for record in chosen], llm_config,
+        [str(_art_field(record, "id")) for record in chosen
+         if _art_field(record, "content_type") != "podcast_episode"], llm_config,
     )
     context, included = build_numbered_context(
-        chosen, per_article_chars=per_article, total_chars=_CONTEXT_TOTAL,
+        chosen, per_article_chars=per_article, total_chars=total_chars,
         notes_by_id=notes_by_id,
     )
     if notice:

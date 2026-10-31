@@ -69,6 +69,8 @@ class DatabaseStorage(BaseStorage):
             # 老 SQLite 无 trigram 时内部吞异常降级为标题 LIKE，不影响启动。
             from storage.fts import ensure_fts
             ensure_fts(self.engine)
+            from storage.podcast_qa_fts import ensure_podcast_qa_fts
+            ensure_podcast_qa_fts(self.engine)
         from services import title_translation
         title_translation.initialize(self.engine)
         self.logger.info(f"🗄️ 关系型数据库已连接: {db_url}")
