@@ -327,10 +327,10 @@ def test_mcp_status_returns_correct_structure(monkeypatch, tmp_path):
         assert "url" in data
         assert data["url"].endswith("/mcp")
         assert "tools" in data
-        assert len(data["tools"]) == 5
+        assert len(data["tools"]) == 6
         tool_names = {t["name"] for t in data["tools"]}
         assert tool_names == {"list_sources", "browse_articles", "get_article",
-                              "search_articles", "get_rag_context"}
+                              "search_articles", "get_rag_context", "get_user_context"}
 
 
 def test_daily_brief_skill_download_embeds_live_prompt(monkeypatch, tmp_path):
