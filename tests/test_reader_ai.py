@@ -765,6 +765,7 @@ def test_ask_subscription_uses_search_pipeline(monkeypatch, tmp_path):
     app_module, sink = _base_setup(monkeypatch, tmp_path, "ask_sub_search.db")
     _configure_llm(sink.engine)
     _enable_ai_beta(sink.engine)
+    _seed_article(sink.engine, "retrieved-article", "s", "T")
     calls = _patch_llm(monkeypatch)
 
     import services.reader_search as rsearch
@@ -772,18 +773,19 @@ def test_ask_subscription_uses_search_pipeline(monkeypatch, tmp_path):
     async def fake_subscription_context(question, **kwargs):
         assert question == "问题"
         assert "engine" in kwargs and "source_ids" in kwargs
-        return "SEARCH-RETRIEVED-CTX", [{"title": "T", "source_id": "s", "source_url": "u"}]
+        return "SEARCH-RETRIEVED-CTX", [{"id": "retrieved-article", "title": "T", "source_id": "s", "source_url": "u"}]
 
     monkeypatch.setattr(rsearch, "subscription_context", fake_subscription_context)
 
     with TestClient(app_module.app) as client:
         _login(client)
+        assert client.post("/api/reader/sources/s/subscribe").status_code == 200
         resp = client.post(
             "/api/reader/ai/ask",
             json={"question": "问题", "scope": "subscription"},
         )
         assert resp.status_code == 200
-        assert resp.json()["sources"] == [{"title": "T", "source_id": "s", "source_url": "u"}]
+        assert resp.json()["sources"] == [{"id": "retrieved-article", "title": "T", "source_id": "s", "source_url": "u"}]
         user_prompt = calls[-1][-1]
         assert "SEARCH-RETRIEVED-CTX" in user_prompt
 

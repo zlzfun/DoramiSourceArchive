@@ -333,10 +333,10 @@ def fts_search_ranked(bind, search: Optional[str]) -> Optional[dict]:
 def fts_include_object(obj, name, type_, reflected, compare_to) -> bool:
     """Alembic autogenerate `include_object` 过滤：排除 FTS 虚拟表及其 shadow 表。
 
-    `articles_fts` 及 `articles_fts_data/_idx/_docsize/_config` 不在 SQLModel
-    metadata 里，不排除会被误报为「多出的表」漂移。**只排 `articles_fts` 前缀**，
+    `articles_fts` / `podcast_qa_fts` 及其 shadow 表不在 SQLModel
+    metadata 里，不排除会被误报为「多出的表」漂移。只排这两个 FTS 前缀，
     其它一切照常比较——真实模型漂移仍被漂移测试捕获。
     """
-    if type_ == "table" and name and name.startswith(FTS_TABLE):
+    if type_ == "table" and name and name.startswith((FTS_TABLE, "podcast_qa_fts")):
         return False
     return True

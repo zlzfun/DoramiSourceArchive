@@ -14127,3 +14127,38 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
   .guest-defsrc span { padding: 2px 8px; border-radius: var(--r-pill); background: var(--dorami-well); color: var(--dorami-ink-2); font-size: 12px; }
   .guest-defsrc-note { margin-top: 10px; }
 }
+
+/* issue #248: answer evidence, quoted verbatim below the existing episode link. */
+@layer components {
+  .reader-ai-evidence,
+  .reader-ai-evidence-basis {
+    margin: 2px 0 10px 24px;
+    color: var(--dorami-muted);
+  }
+  .reader-ai-evidence summary {
+    width: fit-content;
+    padding: 3px 0;
+    cursor: pointer;
+    border-radius: var(--r-sm);
+  }
+  @media (hover: hover) {
+    .reader-ai-evidence summary:hover { color: var(--dorami-ink); }
+  }
+  .reader-ai-evidence summary:focus-visible {
+    outline: 2px solid var(--dorami-accent);
+    outline-offset: 3px;
+  }
+  .reader-ai-evidence-item {
+    margin-top: 8px;
+    padding-left: 10px;
+    border-left: 2px solid var(--dorami-border);
+  }
+  .reader-ai-evidence blockquote {
+    margin: 4px 0 0;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--dorami-ink-2);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+}

@@ -2747,6 +2747,33 @@ class PodcastTextPublicationRecord(SQLModel, table=True):
     updated_at: str
 
 
+class PodcastQaIndexRecord(SQLModel, table=True):
+    """Rebuildable local projection manifest; never an Archive Sync payload."""
+
+    __tablename__ = "podcast_qa_indexes"
+    artifact_id: str = Field(primary_key=True, foreign_key="podcast_text_artifacts.id", ondelete="CASCADE")
+    episode_id: str = Field(foreign_key="articles.id", ondelete="CASCADE", index=True)
+    content_hash: str
+    projection_version: int
+    valid: bool = Field(default=True)
+
+
+class PodcastQaChunkRecord(SQLModel, table=True):
+    """Bounded transcript passages, derived from an immutable published artifact."""
+
+    __tablename__ = "podcast_qa_chunks"
+    __table_args__ = (
+        UniqueConstraint("artifact_id", "chunk_index", name="uq_podcast_qa_chunks_artifact_index"),
+    )
+    id: Optional[int] = Field(default=None, primary_key=True)
+    artifact_id: str = Field(foreign_key="podcast_qa_indexes.artifact_id", ondelete="CASCADE", index=True)
+    episode_id: str = Field(foreign_key="articles.id", ondelete="CASCADE", index=True)
+    chunk_index: int
+    range_start: int
+    range_end: int
+    content: str
+
+
 class BailianTtsCallRecord(SQLModel, table=True):
     """Local-only paid speech receipt; retained when episodes are deleted.
 
