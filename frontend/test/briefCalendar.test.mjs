@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   addDays,
   addMonths,
+  calendarDayState,
   clampKey,
   daysInMonth,
   monthGrid,
@@ -74,4 +75,30 @@ test('西文标记:英文标 en,中文与无字母文本沿用页面语言', () 
   assert.equal(latinLang('2026 · 03'), undefined);
   assert.equal(latinLang(''), undefined);
   assert.equal(latinLang(null), undefined);
+});
+
+// issue #230 批 3b:手机往期底页只分「有 / 没有」两态(样页拍板 12),桌面月历照旧标红失败日
+test('月历日格状态:桌面标失败、手机两态把失败日当没有', () => {
+  const rev = (revision, status) => ({ revision, status });
+  const day = (...revisions) => ({ revisions, latest: revisions[0] });
+  const failedOnly = day(rev(1, 'failed'));
+  const failedLatest = day(rev(2, 'failed'), rev(1, 'ready'));
+  const ready = day(rev(1, 'degraded'));
+  const generating = day(rev(1, 'generating'));
+
+  // 桌面:有版即可点,最新一版失败标红
+  assert.deepEqual(calendarDayState(failedOnly), { has: true, live: false, failed: true, count: 1 });
+  assert.deepEqual(calendarDayState(failedLatest), { has: true, live: false, failed: true, count: 2 });
+  assert.deepEqual(calendarDayState(undefined), { has: false, live: false, failed: false, count: 0 });
+
+  // 手机两态:只有失败版的日子 = 没有;有一版不是失败就算有;没有「失败」标记
+  const two = { twoState: true };
+  assert.deepEqual(calendarDayState(failedOnly, two), { has: false, live: false, failed: false, count: 1 });
+  assert.deepEqual(calendarDayState(failedLatest, two), { has: true, live: false, failed: false, count: 2 });
+  assert.equal(calendarDayState(ready, two).has, true);
+  // 编排中的往期算有,点会呼吸
+  assert.deepEqual(calendarDayState(generating, two), { has: true, live: true, failed: false, count: 1 });
+  // 今天恒算有(还没编排、编排中、失败都能点开看状态);编排中看 todayLive
+  assert.deepEqual(calendarDayState(undefined, { ...two, isToday: true, todayLive: true }), { has: true, live: true, failed: false, count: 0 });
+  assert.equal(calendarDayState(failedOnly, { ...two, isToday: true }).has, true);
 });

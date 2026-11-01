@@ -9,6 +9,11 @@
 
 - [issue-248-podcast-qa.md](./issue-248-podcast-qa.md) — 发布方/ASR原稿懒索引、本文与订阅问答、可核对引用及在途撤稿防护；真实点播与单集深题 13/13 已核对，PR #252 代码检视与 CI 通过；新增一次 ASR 成功，扩样付费问答暂停、用户验收待完成，未合入发布。
 
+## 手机端系统性重构(2026-10,issue #230)
+
+- [issue-230-mobile-wave.md](./issue-230-mobile-wave.md) — 主档:用户口径与同期边界、样页九轮返修与拍板(§6)、默认表(§8)、批 1 → 4c 逐批实录与偏差 / 真机待验(§8.1)、Codex 两轮交叉检视(§7)。
+- [issue-230-mobile-audit.md](./issue-230-mobile-audit.md) — 阶段 1 审计:46 条发现(P1 1 / P2 18 / P3 27)及逐条处理状态、断点 / 触控 / 性能量化、20 项真机待验(§6)。
+
 ## 发布方逐字稿阅读与翻译分段(2026-10,issue #246)
 
 - [issue-246-transcript-paragraphs.md](./issue-246-transcript-paragraphs.md) — 词级 JSON 分段、翻译缓存升级、179 项回归与真实翻译记录；英文及中文页面验收通过，用户已授权提交 MR，未合入、未发布。

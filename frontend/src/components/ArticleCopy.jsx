@@ -1,5 +1,5 @@
 import { Component, memo, useEffect, useMemo, useRef, useState } from 'react';
-import ReaderMarkdown from './ReaderMarkdown';
+import ReaderMarkdown, { useReaderMarkdownReady } from './ReaderMarkdown';
 import TranslationSkeleton from './TranslationSkeleton';
 import { useCopyMetrics } from '../hooks/useCopyMetrics';
 import { latinLang } from '../utils/readerText';
@@ -145,6 +145,9 @@ export default function ArticleCopy({
 }) {
   const copyRef = useRef(null);
   const metrics = useCopyMetrics(copyRef);
+  // Markdown 渲染器按需加载(issue #230 M-14):挂载即与正文请求并行拉取;没到之前与「正文在途」同走加载态——
+  // 同一个骨架元素接着画,不重挂、不重放 150ms 显现延迟,正文与渲染器谁晚到都不闪
+  const markdownReady = useReaderMarkdownReady();
   const status = translation?.status || 'idle';
   const job = translation?.job || null;
   const announcement = useTerminalAnnouncement(status, job);
@@ -173,7 +176,8 @@ export default function ArticleCopy({
   let content;
   let version = view;
 
-  if (loading) {
+  // 没有正文(只显示 emptyText)时不必等渲染器
+  if (loading || (!markdownReady && (Boolean(body) || zhView))) {
     content = loadingFallback;
     version = 'loading';
   } else if (!zhView) {

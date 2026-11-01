@@ -1,12 +1,12 @@
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useModalTransition } from '../hooks/useModalTransition';
-import { useModalA11y } from '../hooks/useModalA11y';
-import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
-import { createOverlayCloseGuard } from '../utils/overlayClose';
+import { useOverlayClose } from '../hooks/useOverlayClose';
+import { useLayer } from './layer/useLayer';
 
-// 统一 modal 外壳：封装进退场动画（useModalTransition）+ body 滚动锁 + 可访问性
-// （Esc 关闭 / 焦点陷阱 / role=dialog aria-modal，见 useModalA11y）+ .modal-overlay/.modal-panel 结构。
+// 统一 modal 外壳：封装进退场动画（useModalTransition）+ .modal-overlay/.modal-panel 结构;
+// 层的行为(issue #230 起)走层原语 components/layer/useLayer(kind='modal'):Esc / 焦点陷阱与归还、
+// body 滚动锁、下层 inert,手机壳里另接返回键握手(系统返回先关这一层、不离站;桌面不挂)。
 // 各 modal 只需把 header/body/footer 作为 children 传入，不再各自重复这套样板。
 //
 // 遮罩关闭判定只在这里一处(issue #104):closeOnOverlay 时按「按下与松开同在遮罩」核对,
@@ -43,28 +43,22 @@ export default function Modal({
   children,
 }) {
   const { mounted, closing } = useModalTransition(open, transitionMs);
+  const overlayRef = useRef(null);
   const panelRef = useRef(null);
-  // 退场动画期间（open=false 但仍 mounted）不再抢焦点/拦 Esc，交由离场；故用 open 而非 mounted。
-  useModalA11y(open && mounted, onClose, panelRef);
-
-  // 判定状态机只建一次、跨渲染持有 pointer 序列;它只判定不动作,关不关在 onClick 里决定。
-  const [overlayGuard] = useState(createOverlayCloseGuard);
-  const overlayHandlers = closeOnOverlay ? {
-    onPointerDown: overlayGuard.onPointerDown,
-    onPointerUp: overlayGuard.onPointerUp,
-    onPointerCancel: overlayGuard.onPointerCancel,
-    onClick: (event) => { if (overlayGuard.shouldClose(event)) onClose?.(); },
-  } : null;
-
+  // 退场动画期间（open=false 但仍 mounted）不再抢焦点/拦 Esc/inert，交由离场；故用 open 而非 mounted。
   // 滚动锁走全站共用的引用计数锁(多层浮层关闭顺序不对称也不会把 hidden 留在 body 上)。
+  useLayer({ open: open && mounted, onClose, kind: 'modal', panelRef, rootRef: overlayRef });
+
+  // 遮罩判定(hooks/useOverlayClose):只认「按下与松开同在遮罩」;不需要面板 stopPropagation。
   // data-modal-layer:「点外即收起」的浮层(问答面板等)据此把弹窗里的点击(含遮罩)当作上层操作、不收起自己。
-  useBodyScrollLock(open);
+  const overlayHandlers = useOverlayClose(onClose, closeOnOverlay);
 
   if (!mounted) return null;
 
   const sizeClass = SIZE_CLASS[size] ?? SIZE_CLASS['2xl'];
   const node = (
     <div
+      ref={overlayRef}
       className={`modal-overlay ${centered ? 'items-center' : ''} ${closing ? 'is-closing' : ''} ${overlayClassName}`.trim()}
       data-modal-layer=""
       {...overlayHandlers}

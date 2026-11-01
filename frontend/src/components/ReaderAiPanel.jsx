@@ -9,6 +9,7 @@ import {
   SquarePen,
 } from 'lucide-react';
 import ReaderMarkdown from './ReaderMarkdown';
+import { loadReaderMarkdownView } from '../utils/readerMarkdownLoader';
 import { askReaderAi, fetchAskProgress } from '../api';
 import { displayTitle } from '../utils/titleDisplay';
 import { useTitlePreference } from '../hooks/useTitlePreference';
@@ -385,6 +386,8 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
   const panelRef = useRef(null);
   useEffect(() => {
     if (!aiPanelOpen) return undefined;
+    // 回答用的 Markdown 渲染器按需加载(issue #230 M-14):面板一打开就拉,等读者打完问题早已就绪
+    loadReaderMarkdownView().catch(() => {});
     const onPointerDown = (e) => {
       if (e.target.closest?.('.reader-lightbox, [data-modal-layer]')) return;
       if (panelRef.current && !panelRef.current.contains(e.target)) closeAiPanel();

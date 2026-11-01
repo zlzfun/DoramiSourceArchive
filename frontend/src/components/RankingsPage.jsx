@@ -14,9 +14,12 @@ import {
 } from '../utils/rankings';
 import { displayTitle } from '../utils/titleDisplay';
 import { useTitlePreference } from '../hooks/useTitlePreference';
+import { scoreTierClass } from '../utils/analysis';
+import { latinLang } from '../utils/readerText';
 
+// mobile(issue #230 批 3b,样页榜单屏):分数是身份线(宋体齐线数字 + AI 渐变分档,与早报 / 条目同一种),标题两行;桌面不变
 function ContentList({
-  items, onOpenArticle, sourceMap, must = false,
+  items, onOpenArticle, sourceMap, must = false, mobile = false,
   emptyText = '还没有达到公开门槛的内容，明早 7 点再来看看',
 }) {
   // 标题语言(issue #218):条目带 title_zh 且偏好开时显示中文译名,否则原题
@@ -26,27 +29,33 @@ function ContentList({
   }
   return (
     <ol className="ranking-content-list">
-      {items.map((item, index) => (
+      {items.map((item, index) => {
+        const title = displayTitle(item, preferChinese, '');
+        return (
         <li key={item.id}>
           <button type="button" className="ranking-content-row" onClick={() => onOpenArticle?.(item.id)}>
             <span className="ranking-content-rank">{index + 1}</span>
             <span className="ranking-content-main">
-              <span className="ranking-content-title">{displayTitle(item, preferChinese, '')}</span>
+              <span className="ranking-content-title" lang={mobile ? latinLang(title) : undefined}>{title}</span>
               <span className="ranking-content-meta">
                 {sourceMap?.[item.source_id]?.name || item.source_id}
                 {item.score_basis ? ` · ${scoreBasisLabel(item.score_basis)}` : ''}
                 {must ? ` · 命中 ${item.appearance_count} 个榜内标签` : ''}
               </span>
             </span>
-            <span className="ranking-content-score">{Number(item.score || 0).toFixed(1)}</span>
+            <span className={mobile ? `ranking-content-score ai-grad-text ${scoreTierClass(Number(item.score || 0))}` : 'ranking-content-score'}>
+              {Number(item.score || 0).toFixed(1)}
+            </span>
           </button>
         </li>
-      ))}
+        );
+      })}
     </ol>
   );
 }
 
-function Trend({ points }) {
+// mobile:折线铺满卡宽(样页 .c-trend),所以手机档按 none 拉伸;桌面 160 × 42 与 viewBox 同比例,不受影响
+function Trend({ points, mobile = false }) {
   const path = rankingTrendPath(points);
   return (
     <div className="ranking-trend">
@@ -55,7 +64,7 @@ function Trend({ points }) {
         <span className="tiny-meta">每日 07:00 快照</span>
       </div>
       {path ? (
-        <svg viewBox="0 0 160 42" role="img" aria-label="标签近 30 日出现次数趋势">
+        <svg viewBox="0 0 160 42" preserveAspectRatio={mobile ? 'none' : undefined} role="img" aria-label="标签近 30 日出现次数趋势">
           <path d={path} fill="none" stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke" />
         </svg>
       ) : <span className="tiny-meta">趋势将在多个快照后出现</span>}
@@ -63,10 +72,18 @@ function Trend({ points }) {
   );
 }
 
+// shape 可受控(issue #230 手机壳:页头标题位转盘 文章榜 / 播客榜 在页外);不传则按 initialShape 自管。
+// mobile:页头的「榜单」标题与类型分段由手机页头接管,这里只留范围说明(作页头下第一块);
+// 批 3b 起 话题 / 产业 / 实体 是带镜片拇指的宽分段(拇指只按第几项定位,--i / --n),榜卡是夜航卡面(样页榜单屏)。
 export default function RankingsPage({
   sourceMap = {}, onOpenArticle, onShapeChange, embedded = false, initialShape = 'article',
+  shape: shapeProp, mobile = false,
 }) {
-  const [shape, setShape] = useState(initialShape);
+  const [shapeState, setShapeState] = useState(initialShape);
+  const shape = shapeProp ?? shapeState;
+  const setShape = (next) => {
+    if (shapeProp == null) setShapeState(next);
+  };
   const [axis, setAxis] = useState('topic');
   const [data, setData] = useState(null);
   const [selectedCode, setSelectedCode] = useState('');
@@ -131,7 +148,10 @@ export default function RankingsPage({
   const shapeName = shape === 'podcast' ? '播客榜' : '文章榜';
 
   return (
-    <main className={`rankings-page ${embedded ? 'is-embedded' : ''}`} aria-label="榜单">
+    <main className={`rankings-page ${embedded ? 'is-embedded' : ''} ${mobile ? 'is-mobile' : ''}`} aria-label="榜单">
+      {mobile ? (
+        <p className="ranking-head-note">{RANKING_SCOPE_NOTE}</p>
+      ) : (
       <header className="ranking-head">
         <div>
           <span className="reader-disc-title">榜单</span>
@@ -154,8 +174,14 @@ export default function RankingsPage({
           ))}
         </div>
       </header>
+      )}
 
-      <div className="ranking-axis" role="tablist" aria-label={`${shapeName}分类`}>
+      <div
+        className="ranking-axis"
+        role="tablist"
+        aria-label={`${shapeName}分类`}
+        style={mobile ? { '--n': RANKING_AXES.length, '--i': Math.max(0, RANKING_AXES.findIndex(([key]) => key === axis)) } : undefined}
+      >
         {RANKING_AXES.map(([key, label]) => (
           <button
             key={key}
@@ -216,11 +242,11 @@ export default function RankingsPage({
                   {selectedTag && <span className="tiny-meta">{selectedTag.occurrence_count} 次出现 · {selectedTag.distinct_source_count} 个来源</span>}
                 </div>
               </div>
-              <Trend points={history} />
+              <Trend points={history} mobile={mobile} />
               {detailLoading ? (
                 <div className="ranking-state"><Loader2 className="animate-spin" />高分内容加载中…</div>
               ) : (
-                <ContentList items={detail?.contents || []} onOpenArticle={onOpenArticle} sourceMap={sourceMap} />
+                <ContentList items={detail?.contents || []} onOpenArticle={onOpenArticle} sourceMap={sourceMap} mobile={mobile} />
               )}
             </section>
           </div>
@@ -234,6 +260,7 @@ export default function RankingsPage({
               items={data?.all_time_high_score || []}
               onOpenArticle={onOpenArticle}
               sourceMap={sourceMap}
+              mobile={mobile}
               emptyText="还没有可展示的历史评分内容"
             />
           </section>
@@ -243,7 +270,7 @@ export default function RankingsPage({
               <span className="card-title"><Trophy aria-hidden="true" />{shape === 'podcast' ? '必听播客' : '必读文章'}</span>
               <span className="tiny-meta">同时进入至少 2 个独立榜内标签 Top 10，且相关趋势覆盖至少 2 个来源</span>
             </div>
-            <ContentList items={data?.must_read || []} onOpenArticle={onOpenArticle} sourceMap={sourceMap} must />
+            <ContentList items={data?.must_read || []} onOpenArticle={onOpenArticle} sourceMap={sourceMap} must mobile={mobile} />
           </section>
         </>
       )}

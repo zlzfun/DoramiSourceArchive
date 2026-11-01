@@ -57,8 +57,10 @@ export function useModalA11y(active, onClose, panelRef, { trapFocus = true, init
     layers.push(layer);
     const isTop = () => layers[layers.length - 1] === layer;
 
+    // 只算 Tab 真能走到的:漫游焦点里 tabIndex -1 的菜单项、inert 子树(长按预览卡)里的按钮不是 Tab 边界(codex 检视 P2)
     const focusables = () => (panel
-      ? Array.from(panel.querySelectorAll(FOCUSABLE)).filter((el) => el.offsetParent !== null)
+      ? Array.from(panel.querySelectorAll(FOCUSABLE))
+        .filter((el) => el.offsetParent !== null && el.tabIndex >= 0 && !el.closest('[inert]'))
       : []);
 
     // 焦点移入：React autoFocus 已把焦点落进面板内则不打扰；否则优先还给上次 setup 记住的面板内元素
@@ -81,7 +83,8 @@ export function useModalA11y(active, onClose, panelRef, { trapFocus = true, init
       if (items.length === 0) { e.preventDefault(); return; }
       const first = items[0];
       const last = items[items.length - 1];
-      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      // 焦点在面板本身(tabIndex -1 的落点)时 Shift+Tab 也回绕,不从面板前沿退出去
+      if (e.shiftKey && (document.activeElement === first || document.activeElement === panel)) { e.preventDefault(); last.focus(); }
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     };
     document.addEventListener('keydown', onKeyDown, true);

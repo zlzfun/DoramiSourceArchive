@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, Loader2, Search, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Loader2, Search, Tags, X } from 'lucide-react';
 import { fetchInterestCatalog, fetchInterests, saveInterests } from '../api';
 import { enqueueSave, flushPendingInterestSaves } from '../utils/interestSaveQueue';
 import { scrollBehavior } from '../motion';
@@ -102,6 +102,11 @@ export default function InterestPage({
   externalQuery = null,
   onSaved,
   showToast,
+  // 手机订阅 Tab 的兴趣段(issue #230 批 3a;样页「订阅 · 兴趣」):传了就把「我的兴趣」画成常开的分组卡——
+  // 每行点了读它的条目流(onReadTag(tag)),行尾 × 移出;组首一行「全部兴趣内容」(onReadAll(n))读全站兴趣命中。
+  // 不传(发现页的兴趣段)沿用折叠台账
+  onReadTag = null,
+  onReadAll = null,
 }) {
   const [catalog, setCatalog] = useState(null);
   const [draft, setDraft] = useState({});
@@ -412,6 +417,87 @@ export default function InterestPage({
     const section = sectionOf(activeKind);
     const searching = Boolean(needle);
     const visibleKinds = searching ? KINDS.filter((k) => sectionOf(k).filtered.length > 0) : [activeKind];
+    const readRows = embedded && onReadTag;
+    // 分面分段(吸在页头下沿)+ 行式目录:两种手机档共用
+    const catalogNode = (
+      <>
+        {catalog && !searching && (
+          <div className="interest-mseg" role="tablist" aria-label="兴趣分面">
+            {KINDS.map((kind) => (
+              <button key={kind} type="button" role="tab" aria-selected={activeKind === kind} className={activeKind === kind ? 'is-on' : ''} onClick={() => setActiveKind(kind)}>
+                {KIND_META[kind].label}<small>{(facets[kind] || []).length}</small>
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="interest-mlist">
+          {!readRows && stateNode}
+          {catalog && visibleKinds.map((kind) => {
+            const sec = searching ? sectionOf(kind) : section;
+            return (
+              <div key={kind} className="interest-mgroup">
+                {searching && <div className="brief-sec-head"><span className="brief-sec-title">{KIND_META[kind].label}</span><span className="brief-sec-count">{sec.filtered.length}</span><span className="brief-sec-rule" /></div>}
+                {sec.rows.map((tag) => (
+                  <TagCard key={keyOf(tag)} tag={tag} selected={Boolean(draft[keyOf(tag)])} onToggle={toggleFollow} compact />
+                ))}
+                {sec.capped && (
+                  <button type="button" className="interest-more" onClick={() => setExpanded((prev) => ({ ...prev, [kind]: true }))}>
+                    <ChevronDown aria-hidden="true" />展开全部 {sec.all.length} 个{KIND_META[kind].label}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          {catalog && searching && visibleKinds.length === 0 && (
+            <div className="brief-state">没有匹配「{effectiveQuery.trim()}」的标签</div>
+          )}
+        </div>
+      </>
+    );
+    const catalogTotal = KINDS.reduce((sum, kind) => sum + (facets[kind] || []).length, 0);
+    if (readRows) {
+      return (
+        <div className="interest-m is-embedded is-rows" aria-label="我的兴趣">
+          {onboardingBanner}
+          <p className="m-int-lede">
+            <span>兴趣内容将在早报中优先呈现</span>
+            {saveStateNode}
+          </p>
+          {stateNode}
+          {catalog && (
+            <section aria-label="我的兴趣">
+              <p className="m-group-label">我的兴趣 · {picks.follow.length}</p>
+              <div className="m-group">
+                {picks.follow.length > 0 && onReadAll && (
+                  <button type="button" className="m-row is-plain" onClick={() => onReadAll(picks.follow.length)}>
+                    <Tags aria-hidden="true" />
+                    <span className="m-row-label">全部兴趣内容</span>
+                    <span className="m-row-meta">全站</span>
+                    <span className="m-row-chev" aria-hidden="true"><ChevronRight /></span>
+                  </button>
+                )}
+                {picks.follow.map((tag) => (
+                  <div key={keyOf(tag)} className="m-int-row">
+                    <button type="button" className="m-int-main" onClick={() => onReadTag(tag)}>
+                      <span className="m-tagdot" aria-hidden="true" />
+                      <span className="m-row-label">{tag.name_zh}</span>
+                      <span className="m-row-meta">{KIND_META[tag.kind]?.label}</span>
+                    </button>
+                    <button type="button" className="m-int-x" aria-label={`移出 ${tag.name_zh}`} onClick={() => setSelected(tag, false)}>
+                      <X aria-hidden="true" />
+                    </button>
+                  </div>
+                ))}
+                {picks.follow.length === 0 && <p className="m-int-empty">点击下方标签加入兴趣。</p>}
+              </div>
+              <p className="m-group-label">全部标签 · {catalogTotal}</p>
+              {searchNode}
+            </section>
+          )}
+          {catalogNode}
+        </div>
+      );
+    }
     return (
       <div className={`interest-m ${embedded ? 'is-embedded' : ''}`} aria-label="我的兴趣">
         <div className="interest-m-head">
@@ -442,37 +528,7 @@ export default function InterestPage({
             </div>
           )}
         </div>
-        {catalog && !searching && (
-          <div className="interest-mseg" role="tablist" aria-label="兴趣分面">
-            {KINDS.map((kind) => (
-              <button key={kind} type="button" role="tab" aria-selected={activeKind === kind} className={activeKind === kind ? 'is-on' : ''} onClick={() => setActiveKind(kind)}>
-                {KIND_META[kind].label}<small>{(facets[kind] || []).length}</small>
-              </button>
-            ))}
-          </div>
-        )}
-        <div className="interest-mlist">
-          {stateNode}
-          {catalog && visibleKinds.map((kind) => {
-            const sec = searching ? sectionOf(kind) : section;
-            return (
-              <div key={kind} className="interest-mgroup">
-                {searching && <div className="brief-sec-head"><span className="brief-sec-title">{KIND_META[kind].label}</span><span className="brief-sec-count">{sec.filtered.length}</span><span className="brief-sec-rule" /></div>}
-                {sec.rows.map((tag) => (
-                  <TagCard key={keyOf(tag)} tag={tag} selected={Boolean(draft[keyOf(tag)])} onToggle={toggleFollow} compact />
-                ))}
-                {sec.capped && (
-                  <button type="button" className="interest-more" onClick={() => setExpanded((prev) => ({ ...prev, [kind]: true }))}>
-                    <ChevronDown aria-hidden="true" />展开全部 {sec.all.length} 个{KIND_META[kind].label}
-                  </button>
-                )}
-              </div>
-            );
-          })}
-          {catalog && searching && visibleKinds.length === 0 && (
-            <div className="brief-state">没有匹配「{effectiveQuery.trim()}」的标签</div>
-          )}
-        </div>
+        {catalogNode}
       </div>
     );
   }

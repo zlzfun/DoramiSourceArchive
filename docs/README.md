@@ -95,6 +95,7 @@
 
 - ⊘ [issue-248-podcast-qa.md](archive/issue-248-podcast-qa.md) — 播客原稿片段检索、可核对引用、权限与发布复核；实现完成，真实点播与单集深题 13/13 已核对，PR #252 代码检视与 CI 通过；新增一次 ASR 成功，扩样付费问答暂停、用户验收待完成，未合入发布。
 
+- ⊘ [issue-230-mobile-wave.md](archive/issue-230-mobile-wave.md) — 手机端系统性重构(issue #230):定向、样页九轮拍板、分批实录(§8.1)与 Codex 两轮检视(§7);审计 46 条在 [issue-230-mobile-audit.md](archive/issue-230-mobile-audit.md)。PR #253,用户目检放行,待发布。
 - ⊘ [issue-246-transcript-paragraphs.md](archive/issue-246-transcript-paragraphs.md) — 发布方词级 JSON 阅读与翻译分段；英文、真实中文展示均经用户验收，已授权提交 MR，未合入、未发布。
 
 计划已落地或被取代的文档,按「故事」分组:2026-07 的阅读器演进五轮 / 源扩容 / 静默仪器重构 / 前后端重构 / 实体简化 / crawl4ai 选型 / 竞品对照,以及 2026-10-21 归档的 28 篇 2026-07 → 2026-10 波次方案(评分与早报 / 检索与翻译 / 播客 / 来源 / 管理面 / 部署运维 / 视觉),Podcast Intelligence 的 spec-kit 规格与报告在 `archive/podcast-intelligence/`。**查决策来龙去脉才来这里;判断现状看 `docs/architecture/` 与代码。**

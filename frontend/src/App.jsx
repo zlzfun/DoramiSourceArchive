@@ -17,6 +17,7 @@ import Toast from './components/Toast';
 import SettingsModal from './components/SettingsModal';
 import LoginScreen from './components/LoginScreen';
 import LoginPrompt from './components/LoginPrompt';
+import LayerPage from './components/layer/LayerPage';
 import BrandLogoImage from './components/BrandLogoImage';
 import RailLogoutAvatar from './components/RailLogoutAvatar';
 import TabErrorBoundary from './components/TabErrorBoundary';
@@ -173,8 +174,11 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   // 设置柜深链:读者头像菜单「接入集成」直落聚合接口分区;常规入口落账户区。
   const [settingsSection, setSettingsSection] = useState('account');
-  const openSettings = useCallback((section = 'account') => {
+  // 手机设置页的资料卡读数(issue #230:「我的」并进设置页,订阅数由阅读器在点头像时带过来)
+  const [settingsMeta, setSettingsMeta] = useState(null);
+  const openSettings = useCallback((section = 'account', meta = null) => {
     setSettingsSection(section);
+    setSettingsMeta(meta);
     setSettingsOpen(true);
   }, []);
   const [mountedTabs, setMountedTabs] = useState(() => {
@@ -412,6 +416,11 @@ export default function App() {
         const views = { ...navRef.current.views };
         if (SUBVIEW_TABS.has(h.tab) && h.view) views[h.tab] = h.view;
         route = { tab: h.tab, views, focus: null };
+      }
+      // 深链取走后把这条历史的地址改回常规路由(issue #230 批 4a,批 3a 观察):否则读完「返回列表」(层的程序性回退)
+      // 回到这条记录时地址仍是 #/reader/a/{id},又被当成新深链把正文重新打开。登录后首屏的深链由 commitNav 的 replace 播种同样改掉
+      if (deepId) {
+        try { window.history.replaceState({ tab: route.tab, views: route.views, focus: null }, '', routeToHash(route.tab, route.views)); } catch { /* 禁用 history 的沙箱:照旧 */ }
       }
       navRef.current = route;
       setNav(route);
@@ -1003,7 +1012,9 @@ export default function App() {
       <Toast show={toast.show} message={toast.message} type={toast.type} action={toast.action} onClose={hideToast} />
 
       {/* 游客(issue #213):登录提示与叠层登录页。登录页叠在阅读器之上而非替换它——
-          「返回继续逛逛」原样回到原处;登录成功后阅读器换 key 重挂。 */}
+          「返回继续逛逛」原样回到原处;登录成功后阅读器换 key 重挂。
+          issue #230:叠层登录走层原语 LayerPage(手机壳里系统返回只关登录页、不关下面的正文;Esc 同「返回继续逛逛」;
+          下层整片 inert)。 */}
       <LoginPrompt
         open={loginPrompt.open}
         request={loginPrompt.request}
@@ -1011,7 +1022,7 @@ export default function App() {
         onLogin={openGuestLogin}
       />
       {guestLogin && (
-        <div className="guest-login-layer">
+        <LayerPage className="guest-login-layer" role="dialog" modal inert="all" label="登录" onClose={closeGuestLogin}>
           <LoginScreen
             logoError={logoError}
             onLogoError={() => setLogoError(true)}
@@ -1020,7 +1031,7 @@ export default function App() {
             fromGuest
             onBackToGuest={closeGuestLogin}
           />
-        </div>
+        </LayerPage>
       )}
 
       {!isMobile && globalRunningIds.size > 0 && (
@@ -1037,6 +1048,7 @@ export default function App() {
         <SettingsPanel
           open={settingsOpen}
           initialSection={settingsSection}
+          subscribedCount={settingsMeta?.subscribedCount ?? null}
           onClose={() => setSettingsOpen(false)}
           theme={theme}
           onThemeChange={setTheme}
@@ -1081,7 +1093,7 @@ export default function App() {
                   onUserUpdated={handleUserUpdated}
                   themeDark={effective === 'dark'}
                   onToggleTheme={toggleTheme}
-                  onOpenSettings={(section) => openSettings(section)}
+                  onOpenSettings={(section, meta) => openSettings(section, meta)}
                   onLogout={handleLogout}
                   onExitReader={isAdminRole ? exitReader : undefined}
                   feedbackUnread={feedbackUnread}

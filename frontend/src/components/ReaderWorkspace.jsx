@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useReaderState } from '../hooks/useReaderState';
 import { compactLayoutMatches } from '../hooks/useCompactLayout';
 import ReaderTab from './ReaderTab';
 import MobileReader from './mobile/MobileReader';
 import PlayerProvider from './player/PlayerProvider';
+import { prefetchReaderMarkdownWhenIdle } from '../utils/readerMarkdownLoader';
 
 // 数据、当前位置与早报返回路径只保留一份。宽度变化只替换视图，不重新加载阅读器。
 // 全局播放器(issue #199)也挂在这一层:桌面 ⇄ 手机互切、换文章 / 容器 / 页面都不卸载,播放不中断。
@@ -16,12 +17,25 @@ export default function ReaderWorkspace({ mobile, surfaceActive = true, ...props
   const [briefRestore, setBriefRestore] = useState(null);
   const [discoverTab, setDiscoverTab] = useState('sources');
   const [interestVersion, setInterestVersion] = useState(0);
+  // 早报正在看的那一期与读到的位置(审计 M-36,issue #230 批 4a):跨 1024 换版式时早报页随视图卸载重挂,
+  // 旧的那份卸载前把 {date, revision, progress} 交到这里,新的那份挂载时取走接着看(iPad 旋转不再跳回今天、回到顶)
+  const briefPlaceRef = useRef(null);
+  const briefPlace = useMemo(() => ({
+    keep: (place) => { briefPlaceRef.current = place; },
+    take: () => {
+      const place = briefPlaceRef.current;
+      briefPlaceRef.current = null;
+      return place;
+    },
+  }), []);
   const closePage = useCallback(() => setPage(null), []);
   const setBriefOpen = useCallback((open) => setPage(open ? 'brief' : null), []);
   const setRankingsOpen = useCallback((open) => setPage(open ? 'rankings' : null), []);
   useEffect(() => {
     if (!personalDigestEnabled) setPage((current) => current === 'brief' ? null : current);
   }, [personalDigestEnabled]);
+  // 正文 Markdown 渲染器不进首屏(issue #230 M-14),首屏落定后空闲预取,第一次打开一篇时多半已就绪
+  useEffect(() => prefetchReaderMarkdownWhenIdle(), []);
 
   const rs = useReaderState({
     showToast,
@@ -31,6 +45,8 @@ export default function ReaderWorkspace({ mobile, surfaceActive = true, ...props
     onBeforeOpenArticle: closePage,
     interestAxisEnabled: personalDigestEnabled,
     aiEnabled: props.aiEnabled,
+    // 手机壳的内容 Tab 只放订阅聚合;来源 / 收藏 / 兴趣在订阅 Tab 的推入页(issue #230 批 3a)
+    aggregateOnly: mobile,
   });
   const tab = page || rs.mode;
   // 点播放条的标题 / 封面 = 打开正在播的那一期(切到所在容器,关掉早报 / 榜单 / 发现;手机即入栈正文页)
@@ -43,7 +59,8 @@ export default function ReaderWorkspace({ mobile, surfaceActive = true, ...props
   const setTab = useCallback((next) => {
     setPage((current) => {
       const value = typeof next === 'function' ? next(current || rs.mode) : next;
-      return value === 'brief' || value === 'rankings' || value === 'me' ? value : null;
+      // 手机壳的四个 Tab(issue #230):早报 / 订阅 / 榜单是页,内容 = 当前容器(rs.mode);其它值一律回内容
+      return value === 'brief' || value === 'rankings' || value === 'subs' ? value : null;
     });
   }, [rs.mode]);
   // 工作区根:滚动位置恢复的查询范围,也是播放条写「让位 / 浮钮避让」变量的宿主
@@ -51,7 +68,7 @@ export default function ReaderWorkspace({ mobile, surfaceActive = true, ...props
   const view = {
     briefOpen: page === 'brief', setBriefOpen,
     rankingsOpen: page === 'rankings', setRankingsOpen,
-    briefReturn, setBriefReturn, briefRestore, setBriefRestore,
+    briefReturn, setBriefReturn, briefRestore, setBriefRestore, briefPlace,
     discoverTab, setDiscoverTab, interestVersion, setInterestVersion,
     tab, setTab, playerHostRef: rootRef, openPlayingItem,
   };
@@ -63,6 +80,8 @@ export default function ReaderWorkspace({ mobile, surfaceActive = true, ...props
   const listKey = JSON.stringify([rs.mode, rs.activeSourceId, rs.activeTagId, rs.scope, rs.searchQuery, rs.unreadOnly, rs.kindFilter]);
   const captureScroll = (event) => {
     const el = event.target;
+    // 手机订阅 Tab 的推入页是另一个列表实例(issue #230 批 3a):它的滚动不是主列表的位置
+    if (el.closest?.('[data-own-list]')) return;
     const kind = el.matches('.reader-pane, .m-read-scroll') ? 'article'
       : el.matches('.reader-list-scroll, .m-list, .reader-social-scroll') ? 'list' : null;
     if (!kind) return;
@@ -89,6 +108,22 @@ export default function ReaderWorkspace({ mobile, surfaceActive = true, ...props
       }
     }
   }, [mobile, articleKey, listKey]);
+
+  // 换版式时的主列表交接(codex 检视第 1 轮 P1-2 / P2-3),在绘制前做,不闪一帧错的版式:
+  //  进桌面——手机推入页里读的那篇形态可能 ≠ 主列表容器,桌面阅读窗按容器画版式(播客 / 文章,社交容器不开阅读窗),
+  //    主列表切到它的容器并保留右栏;
+  //  进手机——内容 Tab 只放订阅聚合、没有来源筛选提示:没开正文时桌面留下的来源 / 兴趣下钻当场撤掉
+  //    (开着正文的由 MobileReader.closeArticle 离开正文时撤,同一条规则)。只改会话状态,不写持久存储。
+  const handoffLayoutRef = useRef(mobile);
+  useLayoutEffect(() => {
+    if (handoffLayoutRef.current === mobile) return;
+    handoffLayoutRef.current = mobile;
+    if (!mobile) {
+      if (rs.activeArticle) rs.alignModeToArticle(rs.activeArticle, { keepArticle: true });
+    } else if (!rs.activeArticle && (rs.activeSourceId || rs.activeTagId)) {
+      rs.dropNarrowing();
+    }
+  }, [mobile, rs]);
 
   const View = mobile ? MobileReader : ReaderTab;
   return (
