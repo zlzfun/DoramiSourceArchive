@@ -10,6 +10,8 @@ import asyncio
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from sqlmodel import Session  # noqa: E402
@@ -79,6 +81,7 @@ def test_plan_query_parses_and_cleans(monkeypatch):
     assert plan["temporal"] is False
     assert plan["use_brief"] is True
     assert plan["chat"] is False  # 缺省字段清洗为 False
+    assert plan["single_episode"] is False
 
 
 def test_plan_query_failure_returns_none(monkeypatch):
@@ -86,6 +89,13 @@ def test_plan_query_failure_returns_none(monkeypatch):
     assert run(reader_search.plan_query("q", _LLM)) is None
     _patch_chat(monkeypatch, RuntimeError("网络失败"))
     assert run(reader_search.plan_query("q", _LLM)) is None
+
+
+@pytest.mark.parametrize("value,expected", [(True, True), (False, False), ("true", False), (1, False), (None, False)])
+def test_plan_single_episode_requires_explicit_boolean(monkeypatch, value, expected):
+    import json
+    _patch_chat(monkeypatch, json.dumps({"keywords": ["robot sales"], "single_episode": value}))
+    assert run(reader_search.plan_query("Locate an episode", _LLM))["single_episode"] is expected
 
 
 def test_passage_terms_keep_subquestions_separate_from_episode_discovery(monkeypatch):
@@ -207,7 +217,128 @@ def test_select_articles_failure_falls_back(monkeypatch):
     assert chosen == candidates[: reader_search.SELECT_MAX]
 
 
+@pytest.mark.parametrize("count", [2, 8, 12])
+def test_single_episode_always_selects_among_multiple_candidates(monkeypatch, count):
+    calls = _patch_chat(monkeypatch, '{"selected": [true, 0, 1]}')
+    candidates = _fake_records(count)
+    chosen = run(reader_search.select_articles(
+        "Which episode explains the findings and their limits?", candidates, _LLM,
+        single_episode=True,
+    ))
+    assert [r.id for r in chosen] == ["r0"]
+    assert len(calls) == 1
+    assert "最多 1 个 idx" in calls[0][-1]
+
+
+@pytest.mark.parametrize("reply", ['{"selected": []}', 'not json', RuntimeError("offline failure")])
+def test_single_episode_does_not_expand_on_empty_or_failed_selection(monkeypatch, reply):
+    _patch_chat(monkeypatch, reply)
+    assert run(reader_search.select_articles(
+        "Find the episode", _fake_records(8), _LLM, single_episode=True,
+    )) == []
+
+
+def test_explicit_multi_episode_comparison_keeps_multiple_sources(monkeypatch):
+    calls = _patch_chat(monkeypatch, '{"selected": [2, 1, 0]}')
+    candidates = _fake_records(12)
+    chosen = run(reader_search.select_articles(
+        "Compare several episodes on robot demand", candidates, _LLM, single_episode=False,
+    ))
+    assert [r.id for r in chosen] == ["r2", "r1", "r0"]
+    assert "最多 1 个 idx" not in calls[0][-1]
+
+
+def test_podcast_selector_sees_late_hits_from_multiple_passages():
+    record = {"content": "unrelated beginning " * 500, "qa_evidence": [
+        {"text": "first surrounding discussion " * 200 + "uniquealpha measures disclosures"},
+        {"text": "second surrounding discussion " * 200 + "uniquebeta compares ordinary fixes"},
+    ]}
+    lead = reader_search._lead(record, ["uniquealpha", "uniquebeta"])
+    assert "uniquealpha measures disclosures" in lead
+    assert "uniquebeta compares ordinary fixes" in lead
+    assert len(lead) <= 600
+
+
+@pytest.mark.parametrize("other_count", [7, 10])
+def test_subscription_discovers_podcast_by_argument_and_selects_late_evidence(monkeypatch, other_count):
+    import datetime as dt
+    import hashlib
+    import json
+    import re
+    from models.db import PodcastTextArtifactRecord, PodcastTextPublicationRecord
+
+    sink = make_sink()
+    for index in range(other_count):
+        seed(sink.engine, f"other{index}", "src_a", f"Other item {index}", "ambiguousentity story")
+    stamp = dt.datetime.now(dt.timezone.utc).isoformat()
+    body = "Unrelated introduction.\n" * 250 + "The security patches observation compares disclosure rates."
+    raw = json.dumps({"audio_duration_ms": 1000, "language": "en", "text": body,
+        "segments": [{"channel": 0, "start_ms": 0, "end_ms": 1000, "text": body, "words": []}]})
+    with Session(sink.engine) as session:
+        session.add(ArticleRecord(id="target", title="Uninformative episode title", source_id="src_a",
+            content_type="podcast_episode", source_url="https://example.test/target", content="",
+            has_content=False, publish_date=stamp, fetched_date=stamp))
+        session.commit()
+        session.add(PodcastTextArtifactRecord(id="target-asr", episode_id="target",
+            kind="normalized_transcript", version=1, language="en", authority_id="public-test",
+            content_hash=hashlib.sha256(raw.encode()).hexdigest(), inline_text=raw,
+            provenance_json=json.dumps({"format": "json"}), created_at=stamp))
+        session.commit()
+        session.add(PodcastTextPublicationRecord(identity="target:normalized_transcript",
+            episode_id="target", kind="normalized_transcript", artifact_id="target-asr",
+            authority_id="public-test", status="published", published_at=stamp, updated_at=stamp))
+        session.commit()
+
+    async def fake_plan(*args, **kwargs):
+        return {"keywords": ["ambiguousentity"], "passage_keywords": ["security patches"],
+                "single_episode": True, "date_gte": None, "date_lte": None, "temporal": False, "use_brief": False}
+
+    selections = []
+    async def fake_chat(*, messages, **kwargs):
+        prompt = messages[-1].content
+        match = re.search(r"\[(\d+)\] Uninformative episode title[^\n]*\n([^\n]+)", prompt)
+        assert match and "security patches observation" in match[2], prompt
+        selections.append(prompt)
+        return json.dumps({"selected": [int(match[1])]})
+
+    monkeypatch.setattr(reader_search, "plan_query", fake_plan)
+    monkeypatch.setattr(reader_search, "chat_completion", fake_chat)
+    context, sources = run(reader_search.subscription_context(
+        "Which episode compares disclosures?", engine=sink.engine, source_ids=["src_a"], llm_config=_LLM))
+    assert len(selections) == 1
+    assert [source["id"] for source in sources] == ["target"]
+    assert "security patches observation" in context
+    assert sources[0]["evidence"][0]["artifact_id"] == "target-asr"
+
+
 # ──────────────── 编排(降级链) ────────────────
+
+def test_subscription_uses_passage_only_plan_before_recent_fallback(monkeypatch):
+    sink = make_sink()
+    seed(sink.engine, "target", "src_a", "A relevant episode", "original supporting details")
+    with Session(sink.engine) as session:
+        target = session.get(ArticleRecord, "target")
+    seen = []
+    async def fake_plan(*args, **kwargs):
+        return {"keywords": [], "passage_keywords": ["security patches"],
+                "single_episode": True, "date_gte": None, "date_lte": None,
+                "temporal": False, "use_brief": False}
+    def fetch(engine, **kwargs):
+        seen.append(kwargs)
+        return [target]
+    def no_recent(*args, **kwargs):
+        raise AssertionError("A passage-only topic must be searched before recent fallback")
+    monkeypatch.setattr(reader_search, "plan_query", fake_plan)
+    monkeypatch.setattr(reader_search, "fetch_qa_candidates", fetch)
+    monkeypatch.setattr(reader_search, "fetch_qa_recent_window", no_recent)
+    context, sources = run(reader_search.subscription_context(
+        "Which episode discusses security patches?", engine=sink.engine,
+        source_ids=["src_a"], llm_config=_LLM,
+    ))
+    assert len(seen) == 1 and seen[0]["passage_keywords"] == ["security patches"]
+    assert [source["id"] for source in sources] == ["target"]
+    assert "original supporting details" in context
+
 
 def test_subscription_context_empty_subscription():
     sink = make_sink()

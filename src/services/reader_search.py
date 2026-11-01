@@ -143,6 +143,7 @@ async def plan_query(
         "temporal": bool(data.get("temporal")),
         "use_brief": bool(data.get("use_brief")),
         "chat": bool(data.get("chat")),
+        "single_episode": data.get("single_episode") is True,
     }
     # Episode discovery and locating an argument inside a long transcript need
     # different terms. Keep this optional for older planners and fallback paths.
@@ -273,11 +274,17 @@ def _merge_candidates(article_hits, podcast_hits, *, limit=CANDIDATE_LIMIT):
     return [records[key] for key in ordered[:limit]]
 
 
-def fetch_qa_candidates(engine, *, keywords, source_ids, date_gte=None, date_lte=None):
+def fetch_qa_candidates(engine, *, keywords, source_ids, date_gte=None, date_lte=None,
+                        passage_keywords=None):
     options = dict(keywords=keywords, source_ids=source_ids,
                    date_gte=date_gte, date_lte=date_lte)
     articles = fetch_candidates(engine, **options)
-    episodes = podcast_qa.search_episodes(engine, **options, limit=CANDIDATE_LIMIT)
+    # Argument words can identify an episode even when its title or an ASR
+    # rendering of the proper name does not match the discovery terms.
+    transcript_keywords = list(dict.fromkeys((passage_keywords or []) + keywords))[:12]
+    episodes = podcast_qa.search_episodes(
+        engine, **{**options, "keywords": transcript_keywords}, limit=CANDIDATE_LIMIT,
+    )
     return _merge_candidates(articles, episodes)
 
 
@@ -293,16 +300,46 @@ def fetch_qa_recent_window(engine, source_ids):
 
 # ==================== 选篇 ====================
 
-def _lead(record: ArticleRecord) -> str:
+def _lead(record: ArticleRecord, keywords=()) -> str:
     """候选行引子:正文开头压成单行截断(帮 LLM 判断相关性,非展示文案)。"""
-    body = " ".join((_art_field(record, "content") or "").split())
-    return body[:600 if _art_field(record, "qa_evidence") else _LEAD_CHARS]
+    evidence = _art_field(record, "qa_evidence") or []
+    if not evidence:
+        body = " ".join((_art_field(record, "content") or "").split())
+        return body[:_LEAD_CHARS]
+    # Expanded evidence may begin thousands of characters before a match.
+    # Give the selector bounded hit windows, not the unrelated start of it.
+    passages = [" ".join(item.get("text", "").split()) for item in evidence]
+    windows = []
+    for keyword in keywords:
+        words = keyword.lower().split()
+        if not words:
+            continue
+        for index, passage in enumerate(passages):
+            positions = [passage.lower().find(word) for word in words]
+            if any(position < 0 for position in positions):
+                continue
+            start = max(0, min(positions) - 50)
+            end = min(len(passage), start + 148)
+            if any(index == old_index and start < old_end and end > old_start
+                   for old_index, old_start, old_end in windows):
+                continue
+            windows.append((index, start, end))
+            break
+        if len(windows) == 4:
+            break
+    # Temporal queries and unmatched terms still get several passage samples.
+    for index, passage in enumerate(passages):
+        if len(windows) == 4:
+            break
+        if passage and not any(index == old_index for old_index, _, _ in windows):
+            windows.append((index, 0, min(148, len(passage))))
+    return " … ".join(passages[i][start:end] for i, start, end in windows)[:600]
 
 
-def _candidate_line(idx: int, record: ArticleRecord) -> str:
+def _candidate_line(idx: int, record: ArticleRecord, keywords=()) -> str:
     date = (_art_field(record, "publish_date") or "")[:10]
     return (f"[{idx}] {_art_field(record, 'title') or '(无标题)'} | "
-            f"{_art_field(record, 'source_id')} | {date}\n    {_lead(record)}")
+            f"{_art_field(record, 'source_id')} | {date}\n    {_lead(record, keywords)}")
 
 
 async def select_articles(
@@ -310,24 +347,34 @@ async def select_articles(
     candidates: List[ArticleRecord],
     llm_config: LLMConfig,
     usage_meta: Optional[UsageMeta] = None,
+    *, keywords=(), single_episode: bool = False,
 ) -> List[ArticleRecord]:
-    """让 LLM 从候选中挑最相关的若干篇;候选不多时跳过调用,失败时取前 N 篇。
+    """让 LLM 从候选中挑最相关的若干篇;广泛检索候选不多时跳过调用。
+
+    明确定位单期时,多个候选必须选篇且最多返回一期;失败空选,不扩回候选列表。
 
     LLM 明确判定「无一相关」(selected=[])时如实返回空列表——此时问答会基于
     空资料诚实回答「无法确定」,好过硬塞不相关的内容。
     """
     if not candidates:
         return []
-    if len(candidates) <= SELECT_MAX:
+    selection_limit = 1 if single_episode is True else SELECT_MAX
+    if len(candidates) <= selection_limit:
         return candidates
     pool = candidates[:SELECT_POOL]
-    lines = [_candidate_line(i, record) for i, record in enumerate(pool)]
+    lines = [_candidate_line(i, record, keywords) for i, record in enumerate(pool)]
+    selection_question = question
+    if single_episode is True:
+        selection_question += (
+            "\n本轮任务是定位一期节目：只选最符合上述全部线索的一期（最多 1 个 idx）；"
+            "没有充分证据则返回空数组，不用其他仅沾边的节目补充。"
+        )
     try:
         raw = await chat_completion(
             messages=[
                 ChatMessage(role="system", content=prompts.SEARCH_SELECT_SYSTEM_PROMPT),
                 ChatMessage(role="user", content=prompts.build_search_select_user_prompt(
-                    question, lines, today=datetime.now().strftime("%Y-%m-%d"),
+                    selection_question, lines, today=datetime.now().strftime("%Y-%m-%d"),
                 )),
             ],
             config=llm_config,
@@ -340,14 +387,17 @@ async def select_articles(
             raise ValueError("selected 不是数组")
         picked: List[ArticleRecord] = []
         for idx in selected:
-            if isinstance(idx, int) and 0 <= idx < len(pool):
+            if type(idx) is int and 0 <= idx < len(pool):
                 record = pool[idx]
                 if record not in picked:
                     picked.append(record)
-            if len(picked) >= SELECT_MAX:
+            if len(picked) >= selection_limit:
                 break
         return picked
-    except Exception as exc:  # noqa: BLE001 — 选篇是精排增强,失败退回截断
+    except Exception as exc:  # noqa: BLE001 — 广泛检索失败退回截断,定位单期失败不能扩大范围
+        if single_episode is True:
+            logger.warning("单期定位选篇失败,不返回未经确认的节目: %s", exc)
+            return []
         logger.warning("检索选篇失败,退回候选前 %s 篇: %s", SELECT_MAX, exc)
         return candidates[:SELECT_MAX]
 
@@ -426,7 +476,7 @@ async def subscription_context(
         candidates = fetch_qa_candidates(
             engine, keywords=[question.strip()], source_ids=source_ids
         )
-    elif not plan["temporal"] and plan["keywords"]:
+    elif not plan["temporal"] and (plan["keywords"] or plan.get("passage_keywords")):
         # 「日报即索引」:跨期盘点型且已订阅日报源时,改检索日报正文。
         search_source_ids = source_ids
         if plan["use_brief"] and BRIEF_SOURCE_ID in set(source_ids):
@@ -437,11 +487,13 @@ async def subscription_context(
             source_ids=search_source_ids,
             date_gte=plan["date_gte"],
             date_lte=plan["date_lte"],
+            passage_keywords=plan.get("passage_keywords"),
         )
         if not candidates and (plan["date_gte"] or plan["date_lte"]):
             # 窗口内零命中 ≠ 库里没有该主题:先放宽日期窗保主题,好过直接丢主题看最新。
             candidates = fetch_qa_candidates(
-                engine, keywords=plan["keywords"], source_ids=search_source_ids
+                engine, keywords=plan["keywords"], source_ids=search_source_ids,
+                passage_keywords=plan.get("passage_keywords"),
             )
             if candidates:
                 notice = (
@@ -469,7 +521,13 @@ async def subscription_context(
         return "", []
 
     _notify(progress, "select", {"candidates": len(candidates)})
-    chosen = await select_articles(question, candidates, aux_config, usage_meta)
+    selection_keywords = list(dict.fromkeys(
+        (plan.get("passage_keywords") or []) + plan["keywords"]
+    )) if plan else [question.strip()]
+    chosen = await select_articles(
+        question, candidates, aux_config, usage_meta, keywords=selection_keywords,
+        single_episode=bool(plan and plan.get("single_episode") is True),
+    )
     if source_ids_fetch is not None:
         current_ids = set(source_ids_fetch())
         chosen = [r for r in chosen if _art_field(r, "source_id") in current_ids]

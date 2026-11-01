@@ -32,7 +32,9 @@ CHUNK_CHARS = 1600
 CHUNK_OVERLAP = 200
 # Spoken arguments span multiple turns. Keep bounded retrieval, while allowing
 # six seeds plus their neighboring explanations in a deep, multi-part question.
-CONTEXT_CHARS = 24000
+# Long-form podcast arguments need surrounding qualifications and counterexamples.
+# Keep a fixed total cap; ordinary article context limits remain separate.
+CONTEXT_CHARS = 64000
 _INDEX_LOCK = threading.RLock()
 
 
@@ -251,9 +253,72 @@ def _surrounding_evidence(session, item, allowance):
             "text": value[start - origin:end - origin]}
 
 
+def _complete_original(session, record, budget):
+    """Reuse a current, bounded projection in full, preferring the publisher.
+
+    Check its indexed extent before loading chunks. This never reparses an
+    immutable artifact, and the same publication/authority joins as retrieval
+    keep stale versions out. Callers have already checked the reader's scope.
+    """
+    base = _chunk_query([_get(record, "source_id")], [_get(record, "id")])
+    for kind in KINDS:
+        query = base.where(Publication.kind == kind)
+        last = session.exec(query.order_by(Chunk.range_end.desc()).limit(1)).first()
+        if last is None:
+            continue
+        extent = last[0].range_end
+        label = f"【{LABELS[kind]}｜全文 0–{extent} 字】\n"
+        if extent + len(label) > budget:
+            # Do not replace a preferred publisher original with a smaller ASR
+            # rendition merely to fit it. Fall back to ranked excerpts.
+            return None
+        rows = session.exec(query.where(Chunk.artifact_id == last[0].artifact_id)
+                            .order_by(Chunk.range_start)).all()
+        body = ""
+        for row in rows:
+            chunk = row[0]
+            overlap = len(body) - chunk.range_start
+            if (overlap < 0 or overlap > len(chunk.content)
+                    or chunk.range_end - chunk.range_start != len(chunk.content)
+                    or (overlap and body[chunk.range_start:] != chunk.content[:overlap])):
+                return None  # A broken cache must not invent or omit text.
+            body += chunk.content[overlap:]
+        if len(body) != extent:
+            return None
+        return label, {**_evidence(last), "range_start": 0, "range_end": extent, "text": body}
+    return None
+
+
+def _uncovered_evidence(item, included):
+    """Remove already supplied source ranges after neighboring-window expansion."""
+    ranges = [(item["range_start"], item["range_end"])]
+    for old in included:
+        if old["artifact_id"] != item["artifact_id"]:
+            continue
+        remaining = []
+        for start, end in ranges:
+            left, right = max(start, old["range_start"]), min(end, old["range_end"])
+            if left >= right:
+                remaining.append((start, end))
+            else:
+                if start < left:
+                    remaining.append((start, left))
+                if right < end:
+                    remaining.append((right, end))
+        ranges = remaining
+    return [{**item, "range_start": start, "range_end": end,
+             "text": item["text"][start - item["range_start"]:end - item["range_start"]]}
+            for start, end in ranges]
+
+
 def _pack(record, evidence, budget, keywords=(), session=None):
     result = _as_dict(record)
     budget = max(0, int(budget))
+    complete = _complete_original(session, record, budget) if session is not None else None
+    if complete is not None:
+        label, item = complete
+        result.update(content=label + item["text"], qa_basis=LABELS[item["kind"]], qa_evidence=[item])
+        return result
     if not evidence:
         notice = "【节目简介】尚无可用的已发布逐字稿；以下仅是简介，未读取音频，不能据此确认节目细节。\n"
         result.update(content=(notice + (result.get("content") or ""))[:budget], qa_basis="节目简介", qa_evidence=[])
@@ -296,14 +361,17 @@ def _pack(record, evidence, budget, keywords=(), session=None):
             continue
         selected = {**item, "text": value, "range_start": item["range_start"] + start,
                     "range_end": item["range_start"] + start + len(value)}
-        label = f"【{LABELS[item['kind']]}｜相关片段 {selected['range_start']}–{selected['range_end']} 字（节选，非全文）】\n"
-        block = label + value
-        separator = "\n\n" if blocks else ""
-        if len(separator) + len(block) > remaining:
-            continue
-        blocks.append(separator + block)
-        included.append(selected)
-        remaining -= len(separator) + len(block)
+        # Seeds can be distinct while their expanded windows overlap heavily.
+        # Spend each source character once; unused share goes to later concepts.
+        for fragment in _uncovered_evidence(selected, included):
+            label = f"【{LABELS[item['kind']]}｜相关片段 {fragment['range_start']}–{fragment['range_end']} 字（节选，非全文）】\n"
+            block = label + fragment["text"]
+            separator = "\n\n" if blocks else ""
+            if len(separator) + len(block) > remaining:
+                continue
+            blocks.append(separator + block)
+            included.append(fragment)
+            remaining -= len(separator) + len(block)
     result.update(content="".join(blocks), qa_evidence=included,
                   qa_basis="、".join(dict.fromkeys(LABELS[e["kind"]] for e in included)))
     return result

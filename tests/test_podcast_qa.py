@@ -4,6 +4,7 @@ import datetime as dt
 import hashlib
 import json
 
+import pytest
 from sqlalchemy import text
 from sqlmodel import Session, select
 
@@ -215,3 +216,139 @@ def test_short_token_does_not_broaden_multiword_phrase():
     _seed(sink.engine, "PR comments improve our review workflow.")
     _seed(sink.engine, "PR invitations mention unrelated travel.", episode_id="distractor")
     assert [r["id"] for r in _search(sink.engine, ["PR comments"])] == ["episode"]
+
+
+def _normalized(body):
+    return json.dumps({"audio_duration_ms": 1000, "language": "en", "text": body,
+        "segments": [{"channel": 0, "start_ms": 0, "end_ms": 1000, "text": body, "words": []}]})
+
+
+def test_complete_asr_projection_fits_realistic_budget_without_reparsing(monkeypatch):
+    sink = _sink()
+    body = "openingneedle " + "x" * (22761 - len("openingneedle final qualification")) + "final qualification"
+    assert len(body) == 22761
+    raw = _normalized(body)
+    artifact_id = _seed(sink.engine, raw, kind="normalized_transcript")
+    hits = _search(sink.engine, ["openingneedle"])
+    # Repeated reads must use the lazy projection already built by discovery.
+    def unexpected_parse(*args, **kwargs):
+        raise AssertionError("existing projection was reparsed")
+    monkeypatch.setattr(podcast_qa, "_plain_text", unexpected_parse)
+    prepared = podcast_qa.prepare_records(sink.engine, hits, keywords=["openingneedle"], per_episode_chars=24000)[0]
+    assert len(prepared["content"]) <= 24000
+    assert "全文 0–22761 字" in prepared["content"]
+    assert "非全文" not in prepared["content"]
+    assert prepared["content"].endswith("final qualification")
+    assert prepared["qa_evidence"] == [{"kind": "normalized_transcript", "artifact_id": artifact_id,
+        "content_hash": hashlib.sha256(raw.encode()).hexdigest(), "range_start": 0,
+        "range_end": len(body), "text": body}]
+    with Session(sink.engine) as session:
+        assert session.get(PodcastTextArtifactRecord, artifact_id).inline_text == raw
+        assert session.get(ArticleRecord, "episode").content == "节目简介"
+
+
+def test_single_fifty_thousand_character_asr_remains_complete_in_answer_context():
+    from services.reader_ai import assemble_articles_context
+
+    sink = _sink()
+    opening = "openingneedle: an initial claim.\n"
+    ending = "\nFinal caveat: the observation alone does not establish causality."
+    middle_chars = 50000 - len(opening) - len(ending)
+    body = opening + ("Neutral spoken context. " * 3000)[:middle_chars] + ending
+    assert len(body) == 50000
+    raw = _normalized(body)
+    artifact_id = _seed(sink.engine, raw, kind="normalized_transcript")
+    with Session(sink.engine) as session:
+        record = session.get(ArticleRecord, "episode")
+        prepared = podcast_qa.prepare_records(
+            sink.engine, [record], keywords=["openingneedle"],
+            per_episode_chars=podcast_qa.CONTEXT_CHARS,
+        )[0]
+    assert len(prepared["content"]) <= podcast_qa.CONTEXT_CHARS
+    assert len(prepared["qa_evidence"]) == 1
+    evidence = prepared["qa_evidence"][0]
+    assert evidence["artifact_id"] == artifact_id
+    assert evidence["content_hash"] == hashlib.sha256(raw.encode()).hexdigest()
+    assert (evidence["range_start"], evidence["range_end"], evidence["text"]) == (0, 50000, body)
+    # Exercise the actual local answer-context assembly as well as the service;
+    # a larger service allowance is useless if a downstream default clips it.
+    context, sources = assemble_articles_context([prepared])
+    assert body in context
+    assert ending in context
+    assert "【引用 [1]｜ASR逐字稿｜全文 0–50000 字】" in context
+    assert len(context) <= podcast_qa.CONTEXT_CHARS
+    assert sources[0]["evidence"] == [evidence]
+    with Session(sink.engine) as session:
+        assert session.get(PodcastTextArtifactRecord, artifact_id).inline_text == raw
+
+
+@pytest.mark.parametrize("body_chars", [9800, 23900, 63900])
+@pytest.mark.parametrize("budget_delta", [-1, 0])
+def test_complete_projection_counts_actual_label_at_exact_budget_boundary(body_chars, budget_delta):
+    sink = _sink()
+    body = "z" * (body_chars - len("tailneedle")) + "tailneedle"
+    _seed(sink.engine, _normalized(body), kind="normalized_transcript")
+    with Session(sink.engine) as session:
+        record = session.get(ArticleRecord, "episode")
+        label = f"【ASR逐字稿｜全文 0–{body_chars} 字】\n"
+        budget = body_chars + len(label) + budget_delta
+        prepared = podcast_qa.prepare_records(sink.engine, [record], keywords=["tailneedle"], per_episode_chars=budget)[0]
+    assert len(prepared["content"]) <= budget
+    assert "tailneedle" in prepared["content"]
+    if budget_delta == 0:
+        assert prepared["content"] == label + body
+        assert len(prepared["qa_evidence"]) == 1
+    else:
+        assert "非全文" in prepared["content"]
+        assert sum(len(e["text"]) for e in prepared["qa_evidence"]) < len(body)
+    for evidence in prepared["qa_evidence"]:
+        assert evidence["text"] == body[evidence["range_start"]:evidence["range_end"]]
+
+
+def test_complete_original_prefers_current_publisher_and_honors_hidden_scope():
+    from services import source_visibility
+    sink = _sink()
+    _seed(sink.engine, "withdrawn publisher draft", version=1)
+    publisher = _seed(sink.engine, "Current publisher original and final caveat.", version=2)
+    _seed(sink.engine, _normalized("ASR-only needle and different rendition."), kind="normalized_transcript")
+    with Session(sink.engine) as session:
+        record = session.get(ArticleRecord, "episode")
+        prepared = podcast_qa.prepare_records(sink.engine, [record], keywords=["needle"], per_episode_chars=1000)[0]
+        assert prepared["qa_evidence"][0]["artifact_id"] == publisher
+        assert prepared["qa_evidence"][0]["text"] == "Current publisher original and final caveat."
+        source_visibility.set_source_hidden(session, "podcast-public", True)
+        assert podcast_qa.prepare_records(sink.engine, [record], keywords=[], per_episode_chars=24000) == []
+
+
+def test_expanded_window_subtraction_keeps_multiple_discontinuous_ranges():
+    body = "0123456789" * 10
+    item = {"artifact_id": "original", "range_start": 0, "range_end": len(body), "text": body}
+    included = [{"artifact_id": "original", "range_start": 20, "range_end": 30},
+                {"artifact_id": "original", "range_start": 60, "range_end": 70},
+                {"artifact_id": "other", "range_start": 0, "range_end": 100}]
+    fragments = podcast_qa._uncovered_evidence(item, included)
+    assert [(e["range_start"], e["range_end"]) for e in fragments] == [(0, 20), (30, 60), (70, 100)]
+    for fragment in fragments:
+        assert fragment["text"] == body[fragment["range_start"]:fragment["range_end"]]
+
+
+def test_over_budget_windows_spend_saved_overlap_on_later_evidence():
+    sink = _sink()
+    body = "x" * 40000
+    artifact_id = _seed(sink.engine, body)
+    podcast_qa._ensure_indexes(sink.engine, source_ids=["podcast-public"])
+    evidence = [{"kind": "publisher_transcript", "artifact_id": artifact_id,
+                 "content_hash": hashlib.sha256(body.encode()).hexdigest(),
+                 "range_start": start, "range_end": start + 1600, "text": body[start:start + 1600]}
+                for start in (1500, 4500, 27000)]
+    with Session(sink.engine) as session:
+        record = session.get(ArticleRecord, "episode")
+        prepared = podcast_qa._pack(record, evidence, 12000, session=session)
+    selected = prepared["qa_evidence"]
+    assert "非全文" in prepared["content"]
+    assert len(prepared["content"]) <= 12000
+    assert len(selected[-1]["text"]) > 12000 // 3  # reclaimed overlap reaches the later concept
+    for index, item in enumerate(selected):
+        assert item["text"] == body[item["range_start"]:item["range_end"]]
+        for other in selected[:index]:
+            assert min(item["range_end"], other["range_end"]) <= max(item["range_start"], other["range_start"])

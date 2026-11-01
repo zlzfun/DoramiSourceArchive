@@ -81,14 +81,16 @@ def _assert_evidence(payload, prompt, body, artifact_id, content_hash):
         assert item["kind"] == "publisher_transcript"
         assert item["text"] == body[item["range_start"]:item["range_end"]]
         assert item["text"] in prompt
-        assert f'【引用 [1]｜来源逐字稿｜相关片段 {item["range_start"]}–{item["range_end"]}' in prompt
+        full = item["range_start"] == 0 and item["range_end"] == len(body) and item["text"] == body
+        label = "全文" if full else "相关片段"
+        assert f'【引用 [1]｜来源逐字稿｜{label} {item["range_start"]}–{item["range_end"]}' in prompt
         assert "start_seconds" not in item
     assert f'[1] {source["title"]}' in prompt
 
 
 def test_article_finds_late_caveat_and_returns_exact_prompt_evidence(monkeypatch, tmp_path):
     app, sink = _setup(monkeypatch, tmp_path)
-    body = (("Opening background without the requested condition. " * 800).rstrip()
+    body = (("Opening background without the requested condition. " * 1600).rstrip()
             + "\n[zqpl]: ORCHIDLIMIT holds only for independently sampled participants.\n"
             + "Closing remarks. " * 100).strip()
     artifact_id, content_hash = _episode(sink.engine, body=body, notes="A broad interview about research.")
