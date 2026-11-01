@@ -19,6 +19,22 @@
 - 本机 dev 库通常没有播客单集:走接口最省事——各账号 `POST /api/reader/sources/{id}/subscribe`(**先订阅后抓** = 新单集全部未读)→ 管理员 `POST /api/source-configs/{id}/fetch` body `{"params":{"limit":5}}`(同步返回,公开 RSS 不花钱)。默认 `processing_enabled=false`,landing 整轮跳过。
 - AI 导读类状态沙箱不接模型:用 Playwright `ctx.route` 改响应造出来。
 
+### 本地真实付费调试（2026-11-01 补充）
+
+用户控制每批付费调试：执行前明确是本地沙箱还是现网，并说明对象、模型、最多新提交次数、估算费用、预算上限与授权期限；获准后只执行该范围，完成后报告实际调用、用量、预占和本地记账。已有明确授权不重复询问，追加单集、重提未知任务、提高预算或延长期限须另行确认。模拟回归、读取已有产物与本地检索不产生供应商费用，和真实模型调用分别记录。
+
+三个费用口径不能合并理解：ASR 受本地授权期限、音频额度及 Podcast 人民币预算控制；百炼精品导读 TTS 另有月度/单次人民币预算；普通读者问答的次数与 token 限额不是人民币硬上限。后台全文分析、自动标题翻译也可能调用 LLM，不能由 ASR/TTS 预算推导出总费用上限。云端最终账单与本地 token/费用记录分开对账。
+
+保留本地预览前必须关闭**全部自动付费入口**，不能只写 `article_analysis_enabled=false`：
+
+- 默认令 `[podcast] processing_enabled=false`。播客全文分析由独立 worker 执行，不受普通文章分析开关控制；同一 tick 还会检查精品导读候选。
+- 显式写入 `auto_title_translation_enabled=false`、`auto_title_translation_daily_tokens=0`。标题 worker 在 reader 角色也会启动，缺失开关默认开启。
+- 停用沙箱采集任务、用户源自动刷新（`user_sources_enabled=false`）和远程同步，保留数据与台账。继续关闭普通文章分析、日报、个人早报和论文自动任务；仅改运行角色不足以阻止全部 LLM 调用。
+- 获准测试单次 ASR 时才临时启用处理，阶段限于 `fetch,asr,local_publish`、目标限于 `transcript`，并确保无其它可运行任务。严格限制新供应商提交次数；旧 TaskId 的轮询与下载不等于授权新任务。
+- 完成后恢复原 ASR 授权期限，关闭处理与自动任务，再保留阅读预览。对照前后台账并跨至少两个 worker tick 验证无新增自动 LLM 调用；不得通过删除台账或更换回执目录来归零用量。
+
+本轮发现的实际遗漏与处理记录见 [issue #248 验证记录](../archive/issue-248-podcast-qa.md)。
+
 ## 3. Playwright 自查
 
 - 登录选择器 `input[autocomplete="username"]` / `input[autocomplete="current-password"]` / `.auth-submit`;登录动画后 `.reader-vrail-btn:has-text("运维")` 进管理台;管理员进阅读器 `button[aria-label="进入阅读器"]`;发现页 `button[aria-label^="发现"]`;添加自定源 `button.reader-disc-add`。

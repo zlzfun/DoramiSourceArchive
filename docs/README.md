@@ -93,7 +93,7 @@
 
 ## archive/ —— 已完结方案与执行记录(⊘ 归档;索引 [archive/README.md](./archive/README.md))
 
-- ⊘ [issue-248-podcast-qa.md](archive/issue-248-podcast-qa.md) — 播客原稿片段检索、可核对引用、权限与发布复核；实现完成，真实点播与单集深题 13/13 已核对，检视返修/用户验收待补，未合入发布。
+- ⊘ [issue-248-podcast-qa.md](archive/issue-248-podcast-qa.md) — 播客原稿片段检索、可核对引用、权限与发布复核；实现完成，真实点播与单集深题 13/13 已核对，PR #252 代码检视与 CI 通过；新增一次 ASR 成功，扩样付费问答暂停、用户验收待完成，未合入发布。
 
 - ⊘ [issue-246-transcript-paragraphs.md](archive/issue-246-transcript-paragraphs.md) — 发布方词级 JSON 阅读与翻译分段；英文、真实中文展示均经用户验收，已授权提交 MR，未合入、未发布。
 
