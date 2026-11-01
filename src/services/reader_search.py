@@ -21,6 +21,7 @@ LIKE;零命中 → 订阅域时序窗口;选篇失败 → 取候选前 N 篇。�
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -93,6 +94,11 @@ def _history_text(history: Optional[List[Any]]) -> str:
     return "\n".join(lines)
 
 
+def _structured_search_config(config: LLMConfig) -> LLMConfig:
+    """Bound JSON retrieval tasks independently of the final answer's thinking mode."""
+    return replace(config, thinking_mode="disabled", max_tokens=min(config.max_tokens, 4096))
+
+
 async def plan_query(
     question: str,
     llm_config: LLMConfig,
@@ -116,7 +122,7 @@ async def plan_query(
                     question, today=today, history_text=history_text,
                 )),
             ],
-            config=llm_config,
+            config=_structured_search_config(llm_config),
             response_json=True,
             usage_meta=usage_meta,
         )
@@ -377,7 +383,7 @@ async def select_articles(
                     selection_question, lines, today=datetime.now().strftime("%Y-%m-%d"),
                 )),
             ],
-            config=llm_config,
+            config=_structured_search_config(llm_config),
             response_json=True,
             usage_meta=usage_meta,
         )

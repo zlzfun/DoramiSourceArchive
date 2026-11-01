@@ -93,7 +93,7 @@
 
 ## archive/ —— 已完结方案与执行记录(⊘ 归档;索引 [archive/README.md](./archive/README.md))
 
-- ⊘ [issue-248-podcast-qa.md](archive/issue-248-podcast-qa.md) — 播客原稿片段检索、可核对引用、权限与发布复核；实现完成，真实点播与单集深题 13/13 已核对，PR #252 代码检视与 CI 通过；新增一次 ASR 成功，扩样付费问答暂停、用户验收待完成，未合入发布。
+- ⊘ [issue-248-podcast-qa.md](archive/issue-248-podcast-qa.md) — 播客原稿片段检索、可核对引用、权限与发布复核；实现完成，真实点播与单集深题 13/13 已核对，PR #252 代码检视与 CI 通过；新增一次 ASR 成功，三期 ASR 六题思考对照 28.5/30、仍有细节遗漏、用户验收待完成，未合入发布。
 
 - ⊘ [issue-230-mobile-wave.md](archive/issue-230-mobile-wave.md) — 手机端系统性重构(issue #230):定向、样页九轮拍板、分批实录(§8.1)与 Codex 两轮检视(§7);审计 46 条在 [issue-230-mobile-audit.md](archive/issue-230-mobile-audit.md)。PR #253,用户目检放行,待发布。
 - ⊘ [issue-246-transcript-paragraphs.md](archive/issue-246-transcript-paragraphs.md) — 发布方词级 JSON 阅读与翻译分段；英文、真实中文展示均经用户验收，已授权提交 MR，未合入、未发布。

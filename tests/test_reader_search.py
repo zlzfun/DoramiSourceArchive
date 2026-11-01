@@ -105,6 +105,53 @@ def test_passage_terms_keep_subquestions_separate_from_episode_discovery(monkeyp
     assert plan["passage_keywords"] == ["crons", "six services"]
 
 
+@pytest.mark.parametrize("max_tokens,aux_model,expected_limit", [
+    (16384, "", 4096),
+    (16384, "main-model", 4096),
+    (1024, "", 1024),
+    (16384, "aux-model", 4096),
+])
+def test_structured_retrieval_is_lightweight_without_changing_answer_config(
+    monkeypatch, max_tokens, aux_model, expected_limit,
+):
+    from dataclasses import asdict
+    from services import reader_ai
+
+    main = LLMConfig(
+        base_url="https://llm.test/v1", api_key="offline-key", model="main-model",
+        thinking_mode="high", max_tokens=max_tokens, aux_model=aux_model,
+        timeout_seconds=91, temperature=0.2, map_concurrency=3,
+    )
+    before = asdict(main)
+    effective = main.for_aux()
+    effective_before = asdict(effective)
+    calls = []
+    async def fake_chat(*, config, response_json=False, **kwargs):
+        calls.append((config, response_json))
+        return '{"keywords": ["robot sales"], "selected": [0]}' if response_json else "Final answer"
+    monkeypatch.setattr(reader_search, "chat_completion", fake_chat)
+    monkeypatch.setattr(reader_ai, "chat_completion", fake_chat)
+
+    assert run(reader_search.plan_query("Find the episode", effective))["keywords"] == ["robot sales"]
+    chosen = run(reader_search.select_articles("Find the episode", _fake_records(12), effective))
+    assert [r.id for r in chosen] == ["r0"]
+    assert run(reader_ai.answer_question(
+        "Explain the evidence", "Original evidence", scope="subscription", llm_config=main,
+    )) == "Final answer"
+
+    assert len(calls) == 3
+    for config, response_json in calls[:2]:
+        assert response_json is True
+        assert config is not effective
+        assert asdict(config) == {
+            **effective_before, "thinking_mode": "disabled", "max_tokens": expected_limit,
+        }
+    assert calls[2] == (main, False)
+    assert calls[2][0] is main
+    assert asdict(main) == before
+    assert asdict(effective) == effective_before
+
+
 # ──────────────── FTS 召回 ────────────────
 
 def test_fetch_candidates_union_and_scope():

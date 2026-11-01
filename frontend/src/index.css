@@ -14141,7 +14141,9 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
     cursor: pointer;
     border-radius: var(--r-sm);
   }
-  .reader-ai-evidence summary:hover { color: var(--dorami-ink); }
+  @media (hover: hover) {
+    .reader-ai-evidence summary:hover { color: var(--dorami-ink); }
+  }
   .reader-ai-evidence summary:focus-visible {
     outline: 2px solid var(--dorami-accent);
     outline-offset: 3px;
