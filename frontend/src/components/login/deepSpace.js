@@ -16,7 +16,8 @@
 // 交互沿用旧版的灵魂:鼠标横移 = 偏航转头,纵移 = 推轨;另加指针位置的微视差。
 // 触屏:只认同一次按压之内的滑动(横滑转头),两次轻触之间不算位移;不做指针视差(手指位置不是视线)。
 // 跃迁离场时偏航与视差归零,光轨严格从屏幕中心放射——竖屏上焦点不跑偏。
-// 无 WebGL 时退成 Canvas 2D 静止一帧(live = false,调用方据此跳过跃迁)。
+// 无 WebGL / 初始化失败时退成 Canvas 2D 静止一帧(live = false,调用方据此跳过跃迁),画在调用方提供的
+// 回退画布上(React 管理的节点,引擎不替换 DOM)。片元着色器没有 highp 时不烘焙星云、不做抖动(中间量会超 fp16)。
 
 const TAU = Math.PI * 2;
 
@@ -57,11 +58,14 @@ const easeOut = (t) => 1 - Math.pow(1 - t, 3);
 
 // ————————————————————————————— 着色器 —————————————————————————————
 
+// 抖动的哈希中间量远超 fp16 上限,只在片元有 highp 时做
 const PREC = `
 #ifdef GL_FRAGMENT_PRECISION_HIGH
 precision highp float;
+float dither() { return (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0; }
 #else
 precision mediump float;
+float dither() { return 0.0; }
 #endif
 `;
 
@@ -117,8 +121,7 @@ void main() {
   vec3 col = mix(indigo, violet, smoothstep(0.38, 0.68, fbm(p * 0.7 + 13.0)));
   col = mix(col, cyan, 0.55 * smoothstep(0.60, 0.84, fbm(p * 0.9 + 21.0)));
   vec3 c = col * k * 0.15 + vec3(0.62, 0.64, 0.98) * band * (0.010 + 0.016 * n);
-  float d = (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0;
-  gl_FragColor = vec4(clamp(c * 4.0 + d, 0.0, 1.0), 1.0);
+  gl_FragColor = vec4(clamp(c * 4.0 + dither(), 0.0, 1.0), 1.0);
 }`;
 
 const BG_FS = `${PREC}
@@ -153,7 +156,7 @@ void main() {
   col += vec3(0.56, 0.56, 1.0) * uSpeed * 0.16 * exp(-r * r * 7.0);
   col += vec3(0.80, 0.78, 1.0) * uCore * uSpeed * uSpeed * 0.34 * exp(-r * r * 70.0);
   col *= uExpo;
-  col += (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0;
+  col += dither();
   gl_FragColor = vec4(col, 1.0);
 }`;
 
@@ -201,13 +204,23 @@ function compile(gl, type, src) {
   return sh;
 }
 
+// 链接后立即拆掉着色器对象(程序留着二进制即可);任何一步失败都把这一步建的对象删干净再抛
 function program(gl, vs, fs, attribs) {
+  const shaders = [];
   const p = gl.createProgram();
-  gl.attachShader(p, compile(gl, gl.VERTEX_SHADER, vs));
-  gl.attachShader(p, compile(gl, gl.FRAGMENT_SHADER, fs));
-  attribs.forEach((name, i) => gl.bindAttribLocation(p, i, name));
-  gl.linkProgram(p);
-  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(`deepSpace link: ${gl.getProgramInfoLog(p)}`);
+  try {
+    shaders.push(compile(gl, gl.VERTEX_SHADER, vs));
+    shaders.push(compile(gl, gl.FRAGMENT_SHADER, fs));
+    shaders.forEach((sh) => gl.attachShader(p, sh));
+    attribs.forEach((name, i) => gl.bindAttribLocation(p, i, name));
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(`deepSpace link: ${gl.getProgramInfoLog(p)}`);
+  } catch (err) {
+    shaders.forEach((sh) => gl.deleteShader(sh));
+    gl.deleteProgram(p);
+    throw err;
+  }
+  shaders.forEach((sh) => { gl.detachShader(p, sh); gl.deleteShader(sh); });
   const u = {};
   const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
   for (let i = 0; i < n; i++) {
@@ -305,9 +318,32 @@ function mountStatic(canvas) {
   };
 }
 
+// 回退:静止一帧画在调用方的回退画布上并显示它,WebGL 画布藏起来;cleanup 还原显隐(StrictMode 重挂载会再来一遍)。
+// 没给回退画布时:WebGL 画布没拿到过上下文就直接画在它上面,拿到过(2D 取不到)就只藏起来、露出 CSS 底。
+function mountFallback(glCanvas, fallbackCanvas, hadContext) {
+  if (fallbackCanvas) {
+    glCanvas.style.visibility = 'hidden';
+    fallbackCanvas.classList.add('is-on');
+    const api = mountStatic(fallbackCanvas);
+    const base = api.cleanup;
+    api.cleanup = () => {
+      base();
+      fallbackCanvas.classList.remove('is-on');
+      glCanvas.style.visibility = '';
+    };
+    return api;
+  }
+  if (!hadContext) return mountStatic(glCanvas);
+  glCanvas.style.visibility = 'hidden';
+  const api = mountStatic(document.createElement('canvas'));
+  const base = api.cleanup;
+  api.cleanup = () => { base(); glCanvas.style.visibility = ''; };
+  return api;
+}
+
 // ————————————————————————————— 主引擎 —————————————————————————————
 
-export function mountDeepSpace(canvas, { arrival = true } = {}) {
+export function mountDeepSpace(canvas, { arrival = true, fallbackCanvas = null } = {}) {
   let gl = null;
   try {
     gl = canvas.getContext('webgl', {
@@ -315,7 +351,7 @@ export function mountDeepSpace(canvas, { arrival = true } = {}) {
       premultipliedAlpha: true, preserveDrawingBuffer: false, powerPreference: 'high-performance',
     });
   } catch { gl = null; }
-  if (!gl) return mountStatic(canvas);
+  if (!gl) return mountFallback(canvas, fallbackCanvas, false);
 
   // —— 视口 ——
   let W = 0, H = 0, F = 600, dprCap = 2, dpr = 1;
@@ -324,7 +360,7 @@ export function mountDeepSpace(canvas, { arrival = true } = {}) {
   let nDust = 0, nField = 0;
   let dustStride = 1;           // 低画质档:尘埃隔一画一
   // —— 镜头 ——
-  const cam = { x: 0, y: 0, z: 0, yaw: rand(0, TAU), yawV: 0, vz: 0, lx: 0, ly: 0, has: false };
+  const cam = { x: 0, y: 0, z: 0, yaw: rand(0, TAU), yawV: 0, vz: 0, lx: 0, ly: 0, has: false, pid: -1 };
   const look = { x: 0, y: 0, tx: 0, ty: 0 };
   const dof = { a: DOF_IDLE.a, zf: DOF_IDLE.zf };
   const glow = { x: 0, y: 0, w: 0, h: 0, tx: -1, ty: 0, tw: 0, th: 0 };
@@ -338,7 +374,7 @@ export function mountDeepSpace(canvas, { arrival = true } = {}) {
   let perfSum = 0, perfN = 0, perfDone = false;
 
   // —— GL 资源 ——
-  let bgProg, spriteProg, panoTex, fullBuf, vbuf, ibuf;
+  let bgProg = null, spriteProg = null, panoTex = null, fullBuf = null, vbuf = null, ibuf = null;
   const CAP = 5200;
   const FLOATS = 12;            // aPos2 aLocal2 aShape4 aColor4
   const verts = new Float32Array(CAP * 4 * FLOATS);
@@ -367,8 +403,20 @@ export function mountDeepSpace(canvas, { arrival = true } = {}) {
     panoTex = bakePano();
   }
 
+  // 主动释放本实例建的 GL 对象(正常清理与初始化失败都走这里;上下文已丢时调用是空操作)
+  function releaseGL() {
+    if (bgProg) gl.deleteProgram(bgProg.p);
+    if (spriteProg) gl.deleteProgram(spriteProg.p);
+    [fullBuf, vbuf, ibuf].forEach((b) => { if (b) gl.deleteBuffer(b); });
+    if (panoTex) gl.deleteTexture(panoTex);
+    bgProg = spriteProg = panoTex = fullBuf = vbuf = ibuf = null;
+  }
+
   function bakePano() {
     const PW = 1024, PH = 512;
+    // 片元没有 highp(老移动 GPU):噪声哈希的中间量会超 fp16,星云不烘焙(留 1×1 黑),其余照常
+    const hp = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT);
+    const fragHighp = !!hp && hp.precision > 0;
     const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, PW, PH, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
@@ -379,7 +427,7 @@ export function mountDeepSpace(canvas, { arrival = true } = {}) {
     const fb = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
-    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE) {
+    if (fragHighp && gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE) {
       const pano = program(gl, FULL_VS, PANO_FS, ['aPos']);
       gl.viewport(0, 0, PW, PH);
       gl.useProgram(pano.p);
@@ -391,7 +439,7 @@ export function mountDeepSpace(canvas, { arrival = true } = {}) {
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       gl.deleteProgram(pano.p);
     } else {
-      // 帧缓冲不可用:星云留空(1×1 黑)
+      // 帧缓冲不可用 / 片元无 highp:星云留空(1×1 黑)
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
     }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -748,8 +796,8 @@ export function mountDeepSpace(canvas, { arrival = true } = {}) {
   function resize() {
     W = window.innerWidth; H = window.innerHeight;
     dpr = Math.min(window.devicePixelRatio || 1, dprCap);
-    // 超大屏封顶像素量
-    if (W * H * dpr * dpr > 7.2e6) dpr = Math.max(1, Math.sqrt(7.2e6 / (W * H)));
+    // 超大屏封顶像素量:渲染倍率可低于 1(CSS 显示尺寸不变),下限 0.5
+    if (W * H * dpr * dpr > 7.2e6) dpr = Math.max(0.5, Math.sqrt(7.2e6 / (W * H)));
     canvas.width = Math.floor(W * dpr); canvas.height = Math.floor(H * dpr);
     canvas.style.width = `${W}px`; canvas.style.height = `${H}px`;
     const prevF = F;
@@ -768,8 +816,8 @@ export function mountDeepSpace(canvas, { arrival = true } = {}) {
     const now = performance.now();
     lastInputAt = now;
     const touch = e.pointerType !== 'mouse';
-    // 触屏:手指没按着时不会有 pointermove;按下才起算(onDown),两次轻触之间的跳变不注入
-    if (touch && !cam.has) return;
+    // 触屏:手指没按着时不会有 pointermove;按下才起算(onDown),两次轻触之间的跳变不注入;只认第一根手指
+    if (touch && (!cam.has || e.pointerId !== cam.pid)) return;
     if (cam.has && !warp) {
       const dx = e.clientX - cam.lx, dy = e.clientY - cam.ly;
       cam.yawV = clamp(cam.yawV + dx * KYAW * (touch ? 1.6 : 1), -YAWMAX, YAWMAX);
@@ -781,11 +829,13 @@ export function mountDeepSpace(canvas, { arrival = true } = {}) {
     look.ty = (e.clientY / Math.max(1, H) - 0.5) * 0.035;
   };
   const onDown = (e) => {
-    if (e.pointerType === 'mouse') return;
-    cam.lx = e.clientX; cam.ly = e.clientY; cam.has = true;
+    if (e.pointerType === 'mouse' || (cam.has && cam.pid !== e.pointerId)) return;
+    cam.lx = e.clientX; cam.ly = e.clientY; cam.has = true; cam.pid = e.pointerId;
     lastInputAt = performance.now();
   };
-  const onUp = (e) => { if (e.pointerType !== 'mouse') cam.has = false; };
+  const onUp = (e) => {
+    if (e.pointerType !== 'mouse' && e.pointerId === cam.pid) { cam.has = false; cam.pid = -1; }
+  };
   const onLeave = () => { cam.has = false; };
   const onLost = (e) => { e.preventDefault(); lost = true; running = false; cancelAnimationFrame(rafId); };
   const onRestored = () => {
@@ -796,10 +846,9 @@ export function mountDeepSpace(canvas, { arrival = true } = {}) {
   try {
     initGL();
   } catch {
-    // 着色器 / 资源初始化失败:放弃 WebGL。同一画布已持有 webgl 上下文,回退画在一张新画布上
-    const fresh = canvas.cloneNode(false);
-    canvas.replaceWith(fresh);
-    return mountStatic(fresh);
+    // 着色器 / 资源初始化失败:放弃 WebGL。同一画布已持有 webgl 上下文(取不到 2D),回退画在调用方的回退画布上
+    releaseGL();
+    return mountFallback(canvas, fallbackCanvas, true);
   }
   resize();
   window.addEventListener('resize', resize);
@@ -825,6 +874,7 @@ export function mountDeepSpace(canvas, { arrival = true } = {}) {
       window.removeEventListener('pointerleave', onLeave);
       canvas.removeEventListener('webglcontextlost', onLost);
       canvas.removeEventListener('webglcontextrestored', onRestored);
+      releaseGL();
       // 画布真正离开文档才释放上下文(StrictMode 开发期会在同一画布上卸载再挂载,不能提前弄丢)
       setTimeout(() => {
         if (canvas.isConnected) return;

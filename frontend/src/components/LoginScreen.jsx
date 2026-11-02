@@ -151,6 +151,7 @@ export default function LoginScreen({
   // 触屏键盘态:品牌区收起、底页上提(只在手机竖屏的样式里生效)
   const [kbd, setKbd] = useState(false);
   const canvasRef = useRef(null);
+  const staticRef = useRef(null);   // 无 WebGL / 初始化失败时的静止回退画布(React 管理,引擎只切显隐)
   const sceneRef = useRef(null);
   const shellRef = useRef(null);
   const heroRef = useRef(null);
@@ -159,13 +160,14 @@ export default function LoginScreen({
   const timersRef = useRef([]);
   const kbdTimerRef = useRef(0);
   const flipRef = useRef(null);
+  const flipAnimsRef = useRef([]);   // 进行中的键盘态 FLIP(离场前要先收掉,免得与跃迁抢 transform)
   const warpingRef = useRef(false);
   const passwordFocused = focus === 'pass';
 
   // 背景场景:挂载即运行;叠层登录(游客 → 账号)不演跃迁抵达
   useEffect(() => {
     if (!canvasRef.current) return undefined;
-    const api = mountDeepSpace(canvasRef.current, { arrival: !fromGuest });
+    const api = mountDeepSpace(canvasRef.current, { arrival: !fromGuest, fallbackCanvas: staticRef.current });
     sceneRef.current = api;
     return () => { api.cleanup(); sceneRef.current = null; };
   }, [fromGuest]);
@@ -181,9 +183,12 @@ export default function LoginScreen({
     if (!hero || !shell) return;
     const sr = shell.getBoundingClientRect();
     const hx = sr.left + hero.offsetLeft + hero.offsetWidth / 2;
-    // 题词可见部分 = 品牌行顶 → 引言底(手机上品牌区在半屏里垂直居中,顶部不一定是 0)
+    // 题词可见部分 = 品牌行顶 → 引言底(手机上品牌区在半屏里垂直居中,顶部不一定是 0);
+    // 矮屏引言被收起(display:none,offset 全 0)时以标题底为界
     const top = hero.firstElementChild ? hero.firstElementChild.offsetTop : 0;
-    const bottom = lede ? lede.offsetTop + lede.offsetHeight : hero.offsetHeight;
+    const title = hero.querySelector('.auth-title');
+    const edge = lede && lede.offsetHeight > 0 ? lede : title;
+    const bottom = edge ? edge.offsetTop + edge.offsetHeight : hero.offsetHeight;
     const hy = sr.top + hero.offsetTop + (top + bottom) / 2;
     hero.style.setProperty('--hero-dx', `${Math.round(window.innerWidth / 2 - hx)}px`);
     hero.style.setProperty('--hero-dy', `${Math.round(window.innerHeight / 2 - hy)}px`);
@@ -223,11 +228,15 @@ export default function LoginScreen({
     const prev = flipRef.current;
     flipRef.current = null;
     if (!prev) return;
+    flipAnimsRef.current.forEach((a) => a.cancel());
+    flipAnimsRef.current = [];
     const ease = 'cubic-bezier(0.2, 0.8, 0.2, 1)';
     const slot = cardRef.current?.parentElement;
     if (slot && prev.slot && typeof slot.animate === 'function') {
       const dy = prev.slot.top - slot.getBoundingClientRect().top;
-      if (Math.abs(dy) > 1) slot.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 420, easing: ease });
+      if (Math.abs(dy) > 1) {
+        flipAnimsRef.current.push(slot.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 420, easing: ease }));
+      }
     }
     const logo = heroRef.current?.querySelector('.auth-logo-shell');
     if (logo && prev.logo && typeof logo.animate === 'function') {
@@ -236,7 +245,7 @@ export default function LoginScreen({
       const dy = prev.logo.top + prev.logo.height / 2 - (r.top + r.height / 2);
       const k = r.width ? prev.logo.width / r.width : 1;
       if (Math.abs(dx) + Math.abs(dy) > 1 || Math.abs(k - 1) > 0.01) {
-        logo.animate([{ transform: `translate(${dx}px, ${dy}px) scale(${k})` }, { transform: 'none' }], { duration: 420, easing: ease });
+        flipAnimsRef.current.push(logo.animate([{ transform: `translate(${dx}px, ${dy}px) scale(${k})` }, { transform: 'none' }], { duration: 420, easing: ease }));
       }
     }
   }, [kbd]);
@@ -368,6 +377,9 @@ export default function LoginScreen({
       // 离场:收起软键盘;手机上 logo 要飞到屏幕中心(跃迁的消失点),先量出位移
       warpingRef.current = true;
       clearTimeout(kbdTimerRef.current);
+      // 键盘态 FLIP 还没走完就收掉:否则量到的是带补间残余的位置,且 WAAPI 会压过离场的 CSS 动画
+      flipAnimsRef.current.forEach((a) => a.cancel());
+      flipAnimsRef.current = [];
       if (document.activeElement && typeof document.activeElement.blur === 'function') document.activeElement.blur();
       const logo = heroRef.current?.querySelector('.auth-logo-shell');
       if (logo) {
@@ -400,6 +412,7 @@ export default function LoginScreen({
       <div className="auth-scene-inner" aria-hidden="true">
         <div className="auth-bg" />
         <canvas className="auth-net" ref={canvasRef} />
+        <canvas className="auth-net auth-net-static" ref={staticRef} />
         <span className="auth-grain" />
         <span className="auth-vignette" />
       </div>

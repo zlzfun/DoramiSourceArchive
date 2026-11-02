@@ -1349,6 +1349,10 @@ input[type="radio"] {
     height: 100%;
     display: block;
   }
+  /* 静止回退画布:无 WebGL / 初始化失败时引擎画一帧星空并加 .is-on */
+  .auth-net-static:not(.is-on) {
+    display: none;
+  }
 
   .auth-grain {
     position: absolute;
@@ -1590,6 +1594,7 @@ input[type="radio"] {
     font-size: 12px;
     font-weight: 600;
     letter-spacing: 0.34em;
+    white-space: nowrap;
     color: var(--auth-accent);
   }
   .auth-eyebrow::before {
@@ -1684,6 +1689,11 @@ input[type="radio"] {
     font-size: 15px;
     line-height: 1.8;
     color: var(--auth-mute);
+  }
+  /* 引言分句成块:放不下一行时在分句处换行,不把「检索」这类词拆开 */
+  .auth-lede > span {
+    display: inline-block;
+    vertical-align: top;   /* 不让行盒因基线对齐长高 */
   }
 
   .auth-feats {
@@ -2182,9 +2192,6 @@ input[type="radio"] {
         max-width: 19em;
         font-size: 14px;
         line-height: 1.7;
-      }
-      .auth-lede > span {
-        display: inline-block;
       }
 
       /* 底页:贴底、顶部圆角、透出星空;顶沿一道光唇代替桌面卡的一周描边 */
