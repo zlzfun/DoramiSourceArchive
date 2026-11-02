@@ -425,25 +425,32 @@ export function mountDeepSpace(canvas, { arrival = true, fallbackCanvas = null }
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     const fb = gl.createFramebuffer();
-    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
-    if (fragHighp && gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE) {
-      const pano = program(gl, FULL_VS, PANO_FS, ['aPos']);
-      gl.viewport(0, 0, PW, PH);
-      gl.useProgram(pano.p);
-      gl.uniform3f(pano.u.uSeed, rand(0, 40), rand(0, 40), rand(0, 40));
-      gl.bindBuffer(gl.ARRAY_BUFFER, fullBuf);
-      gl.enableVertexAttribArray(0);
-      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-      gl.disable(gl.BLEND);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
-      gl.deleteProgram(pano.p);
-    } else {
-      // 帧缓冲不可用 / 片元无 highp:星云留空(1×1 黑)
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
+    try {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      if (fragHighp && gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE) {
+        const pano = program(gl, FULL_VS, PANO_FS, ['aPos']);
+        gl.viewport(0, 0, PW, PH);
+        gl.useProgram(pano.p);
+        gl.uniform3f(pano.u.uSeed, rand(0, 40), rand(0, 40), rand(0, 40));
+        gl.bindBuffer(gl.ARRAY_BUFFER, fullBuf);
+        gl.enableVertexAttribArray(0);
+        gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+        gl.disable(gl.BLEND);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        gl.deleteProgram(pano.p);
+      } else {
+        // 帧缓冲不可用 / 片元无 highp:星云留空(1×1 黑)
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
+      }
+    } catch (err) {
+      // 星云程序编译 / 链接失败:本函数建的纹理还没交出去,自己删掉再抛给 initGL
+      gl.deleteTexture(tex);
+      throw err;
+    } finally {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.deleteFramebuffer(fb);
     }
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.deleteFramebuffer(fb);
     return tex;
   }
 
@@ -796,8 +803,8 @@ export function mountDeepSpace(canvas, { arrival = true, fallbackCanvas = null }
   function resize() {
     W = window.innerWidth; H = window.innerHeight;
     dpr = Math.min(window.devicePixelRatio || 1, dprCap);
-    // 超大屏封顶像素量:渲染倍率可低于 1(CSS 显示尺寸不变),下限 0.5
-    if (W * H * dpr * dpr > 7.2e6) dpr = Math.max(0.5, Math.sqrt(7.2e6 / (W * H)));
+    // 超大屏封顶像素量:渲染倍率直接由像素预算反推,可低于 1(CSS 显示尺寸不变)
+    if (W * H * dpr * dpr > 7.2e6) dpr = Math.sqrt(7.2e6 / (W * H));
     canvas.width = Math.floor(W * dpr); canvas.height = Math.floor(H * dpr);
     canvas.style.width = `${W}px`; canvas.style.height = `${H}px`;
     const prevF = F;
@@ -817,7 +824,7 @@ export function mountDeepSpace(canvas, { arrival = true, fallbackCanvas = null }
     lastInputAt = now;
     const touch = e.pointerType !== 'mouse';
     // 触屏:手指没按着时不会有 pointermove;按下才起算(onDown),两次轻触之间的跳变不注入;只认第一根手指
-    if (touch && (!cam.has || e.pointerId !== cam.pid)) return;
+    if (touch && e.pointerId !== cam.pid) return;
     if (cam.has && !warp) {
       const dx = e.clientX - cam.lx, dy = e.clientY - cam.ly;
       cam.yawV = clamp(cam.yawV + dx * KYAW * (touch ? 1.6 : 1), -YAWMAX, YAWMAX);
@@ -829,7 +836,8 @@ export function mountDeepSpace(canvas, { arrival = true, fallbackCanvas = null }
     look.ty = (e.clientY / Math.max(1, H) - 0.5) * 0.035;
   };
   const onDown = (e) => {
-    if (e.pointerType === 'mouse' || (cam.has && cam.pid !== e.pointerId)) return;
+    // 只看「有没有活动的触屏指针」,不看 cam.has(鼠标移过也会置 has,二合一设备上不能因此拒掉第一根手指)
+    if (e.pointerType === 'mouse' || (cam.pid >= 0 && cam.pid !== e.pointerId)) return;
     cam.lx = e.clientX; cam.ly = e.clientY; cam.has = true; cam.pid = e.pointerId;
     lastInputAt = performance.now();
   };
