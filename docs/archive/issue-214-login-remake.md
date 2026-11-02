@@ -1,8 +1,9 @@
 # 登录页「深空剧场」重制(issue #214)方案
 
-> 状态:进行中
+> **归档于 2026-11-02(issue #214,PR #255,开发版 3.67.4-alpha,用户目检放行、待发布)**:现状以 docs/architecture/、`docs/frontend/conventions.md` 与代码为准,文中路径与状态为当时记录。
+> 状态:已落地待发布(2026-11-02 桌面与 Chrome 手机模式目检放行,Codex 两轮交叉检视、CI 全绿后 PR #255 squash 合入 main;真机项见 §5)
 > 实现方:Claude Code(Opus 5.5);检视方:Codex(见 §6)。issue [#214](https://github.com/zlzfun/DoramiSourceArchive/issues/214) · 分镜剧本 [`docs/design/dorami-login-constellation-script.md`](../design/dorami-login-constellation-script.md)(v2 节)
-> 分支 `feat/issue-214-login-remake`,自 origin/main `712f18f6` 拉出;五方向样页分支 `feat/issue-214-login-redesign` 原样保留未动(§7)。
+> 分支 `feat/issue-214-login-remake`,自 origin/main `712f18f6` 拉出;五方向样页分支 `feat/issue-214-login-redesign` 已按用户拍板删除(§7)。
 
 ## 0. 拍板记录
 
@@ -92,4 +93,4 @@
 
 ## 7. 遗留
 
-- 五方向样页分支 `feat/issue-214-login-redesign`(已推送,约 40 MB 截图)如何处置(删除 / 精简后留档 / 保留)由用户拍板。
+- 五方向样页分支 `feat/issue-214-login-redesign`(约 40 MB 截图,未合入 main):2026-11-02 用户拍板删除,本地与远端分支、样页 worktree 同日删除。issue #214 正文里的 githack「在线查看」链接随之失效,评论里按提交 SHA 引用的截图在 GitHub 回收不可达提交后也会失效;五个方向的取向概要仍在 issue 正文。

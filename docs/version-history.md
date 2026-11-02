@@ -15,7 +15,7 @@
 
 - **发布方逐字稿阅读分段（#246，2026-10-31，用户验收通过）**：词级 JSON 在阅读与手动翻译时合成自然段，保留说话人边界、原稿与分析输入；分页游标绑定显示文本，历史稿刷新即可生效。见 [方案](archive/issue-246-transcript-paragraphs.md)。
 
-- **登录页「深空剧场」重制(issue #214,2026-11-02,桌面与手机目检放行、待检视合入)**:保留深空主题与三幕演出,背景改 WebGL 场景引擎 `frontend/src/components/login/deepSpace.js`(三维星图、全景星云、景深、运动光轨,跃迁抵达 / 失焦 / 信号 / 撞偏 / 跃迁离场);手机竖屏改原生形态——上半屏品牌区 + 贴底玻璃底页、触屏键盘态品牌区收成 logo、离场 logo 没入屏幕中心的消失点,首屏按真实可视高度不滚动(收口 #230 审计 M-16);880 私有断点并入命名档。方案 `docs/plans/issue-214-login-remake.md`,剧本 v2 节。
+- **登录页「深空剧场」重制(issue #214,PR #255,2026-11-02 目检放行、已合入待发布)**:保留深空主题与三幕演出,背景改 WebGL 场景引擎 `frontend/src/components/login/deepSpace.js`(三维星图、全景星云、景深、运动光轨,跃迁抵达 / 失焦 / 信号 / 撞偏 / 跃迁离场);手机竖屏改原生形态——上半屏品牌区 + 贴底玻璃底页、触屏键盘态品牌区收成 logo、离场 logo 没入屏幕中心的消失点,首屏按真实可视高度不滚动(收口 #230 审计 M-16);880 私有断点并入命名档。方案 `docs/archive/issue-214-login-remake.md`,剧本 v2 节。
 
 > 顺序为迁入时原样(待发布波在前、纪元叙事在中、近期波在后);每行只记「现状是什么 / 落在哪」,详细记录在下文各节。
 
@@ -62,9 +62,9 @@
 - **裸机部署回滚(issue #126,2026-09-21,待发布)**:裸机路径改「运行副本版本化」release 形态 + 锁内事务 + 两级健康门告警(不自动回滚)+ `./deploy.sh --rollback`(树外固化执行体,DB 按目标上下文迁移计划分流,`--restore-db` 显式恢复,只回一代)+ 收养 + `--code` / `--status` / `--discard-txn`;extras 钉版 `docker/requirements-crawl4ai.txt`;方案 `docs/archive/baremetal-rollback-plan.md`(codex 四轮设计检视 + §9 实现记录),手册 `docs/ops/deploy-baremetal.md`,桩测试 `tests/test_deploy_baremetal.py`。
 - **Podcast(issue #7 P0–P0.2)**:`source_type=podcast` → `generic_podcast_rss`,单集复用 `ArticleRecord` + `extensions_json`,只解析 enclosure 元数据不下载音频;36 节目策展目录 `services.podcast_catalog` 启动幂等安装、进普通采集任务不设源级开关;边界与后续见 `docs/archive/podcast-wave-plan.md`。
 
-## issue #214 登录页「深空剧场」重制(分支 `feat/issue-214-login-remake`,待发布,版本号以实际发版为准)
+## issue #214 登录页「深空剧场」重制(PR #255,待发布,版本号以实际发版为准)
 
-10-22 先出了五个方向的样页(分支 `feat/issue-214-login-redesign`),用户都没选,11-02 改口:现行登录页就很好,只是老旧了,让 Opus 5.5 理解它的风格与效果、不照搬、重新实现同一主题。于是保留深空剧场的骨架(鼠标运镜、左题词右玻璃卡、三幕演出、蒙眼彩蛋、失败撞偏、成功跃迁交 App 抵达幕的时序),其余重做。方案 [`issue-214-login-remake.md`](./plans/issue-214-login-remake.md),分镜写进剧本 v2 节。
+10-22 先出了五个方向的样页(分支 `feat/issue-214-login-redesign`,11-02 按用户拍板删除),用户都没选,11-02 改口:现行登录页就很好,只是老旧了,让 Opus 5.5 理解它的风格与效果、不照搬、重新实现同一主题。于是保留深空剧场的骨架(鼠标运镜、左题词右玻璃卡、三幕演出、蒙眼彩蛋、失败撞偏、成功跃迁交 App 抵达幕的时序),其余重做。方案 [`issue-214-login-remake.md`](./archive/issue-214-login-remake.md),分镜写进剧本 v2 节。
 
 **背景引擎**:旧版按屏幕距离临时连线,镜头一动星座就重组闪烁;固定盒子绕中心转,偏航久了推轨会变成横移。新引擎是以摄像机为中心、环面回绕的三维星场,星座是三维里成组存在的星图(有视差、不重组),开场在 GPU 上烘焙一张圆柱全景星云,景深让近处星化成柔焦光斑、运动时有快门光轨;WebGL1 两个程序、一次 drawElements。演出首尾呼应:开场「跃迁抵达」、密码聚焦时整片星空失焦(与 logo 捂眼同一出哑剧)、键入时一道信号沿星图跑过、失败撞偏、成功「跃迁离场」。兜底:帧率偏低自动降画质、无 WebGL 退静止一帧且直接登录、context lost 可恢复。
 
@@ -73,6 +73,8 @@
 **其他变更**:徽标「语义检索」→「AI 问答」;标题字重 700 → 600、「让 AI 资讯」补空格;logo 旋转光环 → 轨道环 + 卫星;Caps Lock 提示;自动填充保持深色;独立登录页 `scrollbar-gutter: auto`(经典滚动条系统右侧不再露浅色槽);880 私有断点并入 `bp-phone` / 竖屏 `bp-tablet`;登录页改用 dvh,`index.css` 裸 vh 基线 13 → 11。
 
 **自查**:前端 lint / 260 项单测 / build、文档守卫通过。沙箱 Playwright:桌面 1440、平板横竖、五档手机可视高度(375×553 / 360×640 / 390×664 / 430×740 / 412×839)与两档横屏一屏放下,三幕、键入、失焦、出错、跃迁、键盘进出、手机与桌面游客叠层全流程无报错。用户以 Chrome 手机模式视检通过;真机软键盘、Windows / Safari、低端显卡待真机。
+
+**检视**:实现方 Claude Code(Opus 5.5),检视方 Codex(`gpt-6-astra` ultra)两轮。首轮无 P1,5 项 P2 / 2 项 P3 全部接受:键盘态 FLIP 与离场争用、矮屏引言隐藏后居中基准、引擎用 `replaceWith` 替换 React 节点(改为常驻回退画布)、`mediump` 精度越界、像素上限失效、多指不分、GL 资源未释放;复检无新引入问题,两项残留(8K 视口像素预算、星云着色器失败时的局部资源)与一条二合一设备触屏观察按检视方的形状修好,未开第三轮。CI 六项全绿后 PR #255 squash 合入。
 
 ## issue #236 备份清单上限与紧凑条目(分支 `feat/backup-manifest-size`,待发布,版本号以实际发版为准)
 
