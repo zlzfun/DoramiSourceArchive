@@ -15,6 +15,8 @@
 
 - **发布方逐字稿阅读分段（#246，2026-10-31，用户验收通过）**：词级 JSON 在阅读与手动翻译时合成自然段，保留说话人边界、原稿与分析输入；分页游标绑定显示文本，历史稿刷新即可生效。见 [方案](archive/issue-246-transcript-paragraphs.md)。
 
+- **登录页「深空剧场」重制(issue #214,2026-11-02,桌面与手机目检放行、待检视合入)**:保留深空主题与三幕演出,背景改 WebGL 场景引擎 `frontend/src/components/login/deepSpace.js`(三维星图、全景星云、景深、运动光轨,跃迁抵达 / 失焦 / 信号 / 撞偏 / 跃迁离场);手机竖屏改原生形态——上半屏品牌区 + 贴底玻璃底页、触屏键盘态品牌区收成 logo、离场 logo 没入屏幕中心的消失点,首屏按真实可视高度不滚动(收口 #230 审计 M-16);880 私有断点并入命名档。方案 `docs/plans/issue-214-login-remake.md`,剧本 v2 节。
+
 > 顺序为迁入时原样(待发布波在前、纪元叙事在中、近期波在后);每行只记「现状是什么 / 落在哪」,详细记录在下文各节。
 
 - **手机端系统性重构(issue #230,PR #253,2026-10-27 起,2026-10-31 用户目检放行、待发布)**:夜航视觉(方向 C,磨砂镀层带降级);底栏 早报 · 内容 · 订阅 · 榜单、设置进头像、一行页头「标题即切换」;层原语 `components/layer/`(sheet / drawer / page / popover 统一返回键、遮罩、焦点、下层 inert、抓手点按与下拖);播放器单钮坞 + 悬浮卡一排五钮;订阅推入页 = 第二个列表实例;列表条目 = 夜航卡;往期底页月历;正文从卡片矩形展开、「⋯」收翻译与原文;命名断点 `bp-*`、8 档字号刻度与 conventions §10「移动端」;首屏分包(登录页脚本 357 → 125 KB gzip);e2e `guards` 四档守卫与悬停 / `vh` 棘轮。问答拆 #249。方案 `docs/archive/issue-230-mobile-wave.md`、审计 `docs/archive/issue-230-mobile-audit.md`、样页 `docs/design/issue-230-mobile/`。
@@ -59,6 +61,18 @@
 - **3.58–3.60(2026-09-15–19)**:运维面播客与分析标签重构(#76)/ 移动端读者 E2E(#91)/ 同步修复(#96 / #99)/ PWA 主屏幕安装(#100)/ 弹窗遮罩关闭判定(#104)/ OSS 持久存储与自动备份(#109)/ 聚焦环入 base 层(#108)/ 发现页按形态批量订阅(#113)/ **GitHub Release 自动部署流水线(#102,v3.60.0 首发、v3.60.1 闭环)**:tag 推上去 → 自动建 Release → 串联 `deploy.yml` 停在 Environment `production` 等批准 → SSH forced command 触发生产机仓库外 launcher/worker → 目标 tag 的 `./deploy-docker.sh` → 公网 `/api/health` 核对;上线抓到两坑(checkout 改写 tag 引用 / Environment secrets 须 `secrets: inherit`),见 `docs/archive/auto-deploy-plan.md` §7。
 - **裸机部署回滚(issue #126,2026-09-21,待发布)**:裸机路径改「运行副本版本化」release 形态 + 锁内事务 + 两级健康门告警(不自动回滚)+ `./deploy.sh --rollback`(树外固化执行体,DB 按目标上下文迁移计划分流,`--restore-db` 显式恢复,只回一代)+ 收养 + `--code` / `--status` / `--discard-txn`;extras 钉版 `docker/requirements-crawl4ai.txt`;方案 `docs/archive/baremetal-rollback-plan.md`(codex 四轮设计检视 + §9 实现记录),手册 `docs/ops/deploy-baremetal.md`,桩测试 `tests/test_deploy_baremetal.py`。
 - **Podcast(issue #7 P0–P0.2)**:`source_type=podcast` → `generic_podcast_rss`,单集复用 `ArticleRecord` + `extensions_json`,只解析 enclosure 元数据不下载音频;36 节目策展目录 `services.podcast_catalog` 启动幂等安装、进普通采集任务不设源级开关;边界与后续见 `docs/archive/podcast-wave-plan.md`。
+
+## issue #214 登录页「深空剧场」重制(分支 `feat/issue-214-login-remake`,待发布,版本号以实际发版为准)
+
+10-22 先出了五个方向的样页(分支 `feat/issue-214-login-redesign`),用户都没选,11-02 改口:现行登录页就很好,只是老旧了,让 Opus 5.5 理解它的风格与效果、不照搬、重新实现同一主题。于是保留深空剧场的骨架(鼠标运镜、左题词右玻璃卡、三幕演出、蒙眼彩蛋、失败撞偏、成功跃迁交 App 抵达幕的时序),其余重做。方案 [`issue-214-login-remake.md`](./plans/issue-214-login-remake.md),分镜写进剧本 v2 节。
+
+**背景引擎**:旧版按屏幕距离临时连线,镜头一动星座就重组闪烁;固定盒子绕中心转,偏航久了推轨会变成横移。新引擎是以摄像机为中心、环面回绕的三维星场,星座是三维里成组存在的星图(有视差、不重组),开场在 GPU 上烘焙一张圆柱全景星云,景深让近处星化成柔焦光斑、运动时有快门光轨;WebGL1 两个程序、一次 drawElements。演出首尾呼应:开场「跃迁抵达」、密码聚焦时整片星空失焦(与 logo 捂眼同一出哑剧)、键入时一道信号沿星图跑过、失败撞偏、成功「跃迁离场」。兜底:帧率偏低自动降画质、无 WebGL 退静止一帧且直接登录、context lost 可恢复。
+
+**手机原生形态(目检返修)**:桌面目检认可后,用户点出旧版手机三病——卡太大按钮溢出要滑、像桌面移植、离场「歪」焦点散。复查发现上一轮只在 390×844 全屏验过,按浏览器去掉地址栏的可视高度(390×664)一量,重制版同样溢出 90–200px。改为:上半屏品牌区 + 贴底玻璃底页(按钮在拇指区,去掉眉题 / 字段名 / 页脚,控件 52 高,顶沿光唇代替一周描边),矮屏按高度收引言与副题;触屏聚焦输入框进入键盘态,品牌区收成一枚 logo、底页上提,FLIP 补间(收起用隐身而非 `display:none`,否则标题动画会在展开时重播);离场时偏航与视差归零、光轨严格从中心放射,logo 压在下沉的底页之上飞到屏幕中心、没入光核。顺手:触屏输入框 16px 防 iOS 聚焦放大;引擎触屏只认同一次按压内的滑动(两次轻触之间的跳变曾被当成转头);矮横屏紧凑双列。
+
+**其他变更**:徽标「语义检索」→「AI 问答」;标题字重 700 → 600、「让 AI 资讯」补空格;logo 旋转光环 → 轨道环 + 卫星;Caps Lock 提示;自动填充保持深色;独立登录页 `scrollbar-gutter: auto`(经典滚动条系统右侧不再露浅色槽);880 私有断点并入 `bp-phone` / 竖屏 `bp-tablet`;登录页改用 dvh,`index.css` 裸 vh 基线 13 → 11。
+
+**自查**:前端 lint / 260 项单测 / build、文档守卫通过。沙箱 Playwright:桌面 1440、平板横竖、五档手机可视高度(375×553 / 360×640 / 390×664 / 430×740 / 412×839)与两档横屏一屏放下,三幕、键入、失焦、出错、跃迁、键盘进出、手机与桌面游客叠层全流程无报错。用户以 Chrome 手机模式视检通过;真机软键盘、Windows / Safari、低端显卡待真机。
 
 ## issue #236 备份清单上限与紧凑条目(分支 `feat/backup-manifest-size`,待发布,版本号以实际发版为准)
 

@@ -1,7 +1,7 @@
 // 视口单位护栏(issue #230 审计 M-30 · conventions §10「视口与安全区」):移动可达的高度一律 var(--vh-full)(= 100dvh,
 // 不支持时退 100vh)或 dvh / svh——裸 vh 在手机上按「地址栏收起时」的最大视口算,弹窗 / 灯箱 / 整页会被地址栏裁掉一截。
 //   ① mobile.css(只在手机壳生效)不写裸 vh;
-//   ② index.css 里没有 dvh 兜底的裸 vh 冻结成计数,只许减不许增(存量是桌面 / 管理面整屏壳与登录页演出,登录页归 #214)。
+//   ② index.css 里没有 dvh 兜底的裸 vh 冻结成计数,只许减不许增(存量是桌面 / 管理面整屏壳与跃迁抵达幕;登录页已随 #214 改用 dvh)。
 // 「有兜底」= 同一个声明块里后面又用 dvh / svh / var(--vh-full) 重写了同一个属性(先写 vh 再写 dvh 的写法)。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,9 +12,10 @@ import path from 'node:path';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const src = path.resolve(here, '../src');
 
-// 冻结于 2026-10-31(issue #230 批 4b):桌面 / 管理面整屏壳(app-top 系 4、台账 1、设置柜 2)、登录页演出 3(归 #214)、
-// 桌面早报 .bp-top 1、榜单 / 早报状态块 2(手机档在 mobile.css 以 --vh-full 覆盖)
-export const INDEX_BARE_VH_BASELINE = 13;
+// 冻结于 2026-10-31(issue #230 批 4b):桌面 / 管理面整屏壳(app-top 系 4、台账 1、设置柜 2)、跃迁抵达幕 1、
+// 桌面早报 .bp-top 1、榜单 / 早报状态块 2(手机档在 mobile.css 以 --vh-full 覆盖);
+// 2026-11-02 #214 登录页重制改用 dvh,13 → 11
+export const INDEX_BARE_VH_BASELINE = 11;
 
 const BARE_VH = /(?<![a-z-])\d*\.?\d+vh\b/;
 

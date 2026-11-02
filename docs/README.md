@@ -85,6 +85,7 @@
 - ☐ [plans/issue-82-node-watchdog-layer1.md](./plans/issue-82-node-watchdog-layer1.md) — **节点看护第一层:抓取失败判定升级(issue #82)**:R2 稿已拍板,PR-0 已修调度重载 bug,PR-A / B / C(产出轴 `yield_status`、收据先行、看护页)未动工;生产回放校准结论在此。
 - ☐ [plans/issue-97-podcast-cost-and-scoring.md](./plans/issue-97-podcast-cost-and-scoring.md) — **Podcast 成本门控与评分标定(issue #97)**:P0 门控已上线;P1 六组 32 输入黄金集与提示词调整未启动。
 - ☐ [plans/issue-132-intelligent-butler.md](./plans/issue-132-intelligent-butler.md) — **智能管家(issue #132,Clowder AI,R1 设计稿)**:Mac mini 常驻 agent、运行日报 / 主动预警 / 投递回执 / 反馈归并 / 自愈;排队中,未部署。
+- ☐ [plans/issue-214-login-remake.md](./plans/issue-214-login-remake.md) — **登录页「深空剧场」重制(issue #214)**:保留主题、WebGL 场景引擎重写;手机竖屏改原生形态(品牌区 + 贴底底页 + 触屏键盘态)、离场收束到屏幕中心;桌面与手机均已目检放行,待交叉检视与合入。
 - ☐ [plans/issue-210-docs-tidy.md](./plans/issue-210-docs-tidy.md) — **文档整理波(issue #210)**:盘点数字、三层分发模型、CLAUDE.md 节级去向、逐文件与记忆逐条裁决、拍板 D1–D10、执行清单(文中路径为迁移前)。
 
 ## design/ —— 设计样页(◇ 参考;索引 [design/README.md](./design/README.md))
