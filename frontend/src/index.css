@@ -376,6 +376,11 @@ html {
   scrollbar-gutter: stable;
 }
 
+/* 独立登录页不预留滚动条槽位(否则经典滚动条系统上右侧露一条浅色边);叠层登录下面还挂着阅读器,不动 */
+html:has(.auth-stage):not(:has(.guest-login-layer)) {
+  scrollbar-gutter: auto;
+}
+
 /* ── 滚动条范式(全局,新滚动容器自动继承,勿逐处自定义)──
    常态隐形;指针悬停在滚动容器上(:hover 链)时该容器的滚动条才显现。
    现代 Chrome/Firefox/Safari18.2+ 走 scrollbar-color 双值;旧 WebKit 走伪元素兜底,
@@ -532,146 +537,243 @@ input[type="radio"] {
   50% { transform: translateY(-12px) scale(1.04); opacity: 1; }
 }
 
-@keyframes aurora-float-a {
-  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.75; }
-  50% { transform: translate(36px, -28px) scale(1.12); opacity: 1; }
-}
-
-@keyframes aurora-float-b {
-  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.65; }
-  50% { transform: translate(-44px, 24px) scale(1.16); opacity: 0.95; }
-}
-
+/* —— 登录页 · 深空剧场(issue #214 重制)keyframes —— */
 @keyframes auth-rise-in {
   from {
     opacity: 0;
-    transform: translateY(26px) scale(0.985);
-    filter: blur(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-    filter: blur(0);
-  }
-}
-
-/* 标题逐词浮现 */
-@keyframes auth-word-in {
-  from {
-    opacity: 0;
-    transform: translateY(0.5em) rotate(1.5deg);
+    transform: translateY(18px);
     filter: blur(8px);
   }
   to {
     opacity: 1;
-    transform: translateY(0) rotate(0);
+    transform: none;
     filter: blur(0);
   }
 }
 
-/* 开场一次性光幕斜掠 */
-@keyframes auth-sweep-once {
-  from { background-position: 180% 0; }
-  to { background-position: -120% 0; }
+/* 第一幕逐字显影:自字身下沉处升起、模糊转清 */
+@keyframes auth-ch-in {
+  0% {
+    opacity: 0;
+    transform: translateY(0.42em) scale(0.96);
+    filter: blur(12px);
+  }
+  55% { opacity: 1; }
+  100% {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+  }
 }
 
-/* 流星斜掠 */
-@keyframes auth-meteor-fall {
-  0% { opacity: 0; transform: rotate(28deg) translateX(-260px); }
-  3% { opacity: 1; }
-  16% { opacity: 1; }
-  22% { opacity: 0; transform: rotate(28deg) translateX(920px); }
-  100% { opacity: 0; transform: rotate(28deg) translateX(920px); }
+/* 第三幕:原标题逐字散去 / 品牌名逐字凝聚、字距由松收拢,成形后强调字一次辉光 */
+@keyframes auth-ch-out {
+  to {
+    opacity: 0;
+    transform: translateY(-0.24em);
+    filter: blur(10px);
+  }
 }
 
-/* 网格扫描光束自上而下 */
-@keyframes auth-beam-scan {
-  0% { transform: translateY(-120%); opacity: 0; }
-  18% { opacity: 1; }
-  82% { opacity: 1; }
-  100% { transform: translateY(320%); opacity: 0; }
+@keyframes auth-bch-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.32em);
+    filter: blur(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+  }
 }
 
-/* 星尘闪烁漂移 */
-@keyframes auth-twinkle {
-  0% { opacity: 0; transform: scale(var(--pd, 1)) translateY(8px); }
-  25% { opacity: 0.9; }
-  50% { opacity: 0.35; transform: scale(var(--pd, 1)) translateY(-10px); }
-  75% { opacity: 0.95; }
-  100% { opacity: 0; transform: scale(var(--pd, 1)) translateY(-26px); }
+@keyframes auth-brand-track {
+  from { letter-spacing: 0.22em; }
+  to { letter-spacing: 0.02em; }
 }
 
-/* 标题渐变流光 */
-@keyframes auth-text-shimmer {
-  0%, 100% { background-position: 0% 0; }
-  50% { background-position: 100% 0; }
+@keyframes auth-bch-glow {
+  0%, 100% { text-shadow: 0 0 26px rgba(124, 108, 245, 0.45); }
+  45% { text-shadow: 0 0 22px rgba(196, 188, 255, 0.95), 0 0 48px rgba(124, 108, 245, 0.75); }
 }
 
-/* logo 光环旋转与呼吸 */
-@keyframes auth-spin {
+/* logo 轨道环 */
+@keyframes auth-orbit {
   to { transform: rotate(360deg); }
 }
 
-@keyframes auth-halo-pulse {
-  0%, 100% { opacity: 0.6; filter: blur(7px); }
-  50% { opacity: 1; filter: blur(10px); }
+/* 登录卡从景深里浮上来(只动 translate/opacity/filter;卡片自身的倾斜 transform 不受影响) */
+@keyframes auth-card-in {
+  from {
+    opacity: 0;
+    transform: translate3d(40px, 12px, -200px) rotateY(-12deg);
+    filter: blur(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+  }
 }
 
-/* 按钮高光斜掠 */
-@keyframes auth-gloss-sweep {
-  to { transform: translateX(320%) skewX(-18deg); }
+/* 单列版式:登录卡自下方景深浮上 */
+@keyframes auth-card-in-up {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 36px, -160px) rotateX(10deg);
+    filter: blur(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+  }
 }
 
-/* 高光「快扫慢歇」：16% 时间内干脆扫过,其余静息——高光是偶发的,不是常驻缓移的 */
-@keyframes auth-gloss-rest {
-  0% { transform: translateX(-180%) skewX(-18deg); }
-  16%, 100% { transform: translateX(320%) skewX(-18deg); }
+/* 卡内条目错峰就位(用独立的 translate 属性,不与 hover 的 transform 打架) */
+@keyframes auth-item-in {
+  from {
+    opacity: 0;
+    translate: 0 10px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
 }
 
-/* 登录失败:卡片摇头(配合星座震镜) */
-@keyframes auth-card-shake {
-  20% { transform: translateX(-6px); }
-  40% { transform: translateX(5px); }
-  60% { transform: translateX(-3px); }
-  80% { transform: translateX(2px); }
+@keyframes auth-pill-in {
+  from {
+    opacity: 0;
+    translate: 0 10px;
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+    filter: blur(0);
+  }
 }
 
-/* 卡片描边流光环绕（@property 让 conic 角度可平滑动画） */
+/* 描边:先沿卡片一周「画」出来,画笔的光头随后变成环绕的彗星 */
+@property --auth-draw {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
 @property --auth-angle {
   syntax: "<angle>";
   initial-value: 0deg;
   inherits: false;
 }
 
-@keyframes auth-ring-rotate {
+@keyframes auth-frame-draw {
+  from { --auth-draw: 0deg; }
+  to { --auth-draw: 360deg; }
+}
+
+@keyframes auth-comet-draw {
+  from { --auth-angle: 0deg; opacity: 1; }
+  to { --auth-angle: 360deg; opacity: 1; }
+}
+
+@keyframes auth-comet-orbit {
+  from { --auth-angle: 0deg; }
   to { --auth-angle: 360deg; }
 }
 
-/* 第三幕：主标题优雅变幻为品牌名——旧字整体轻抬淡出 / 新字自下缓升、模糊转清、字距由松收拢 */
-@keyframes auth-brand-out {
-  to {
-    opacity: 0;
-    transform: translateY(-10px);
-    filter: blur(6px);
-  }
-}
-
-@keyframes auth-brand-in {
+/* 键入:输入框底线掠过一道光 */
+@keyframes auth-glint {
   0% {
     opacity: 0;
-    transform: translateY(16px);
-    filter: blur(12px);
+    transform: translateX(-40%);
   }
+  25% { opacity: 1; }
   100% {
-    opacity: 1;
-    transform: translateY(0);
-    filter: blur(0);
+    opacity: 0;
+    transform: translateX(260%);
   }
 }
 
-@keyframes auth-brand-track {
-  from { letter-spacing: 0.24em; }
-  to { letter-spacing: 0.02em; }
+/* 按钮高光:偶发快扫,hover 立即再扫一次 */
+@keyframes auth-gloss-sweep {
+  to { transform: translateX(320%) skewX(-18deg); }
+}
+
+@keyframes auth-gloss-rest {
+  0% { transform: translateX(-180%) skewX(-18deg); }
+  16%, 100% { transform: translateX(320%) skewX(-18deg); }
+}
+
+/* 登录失败:卡片摇头(配合镜头撞偏;用 translate,不覆盖倾斜) */
+@keyframes auth-card-shake {
+  20% { translate: -7px 0; }
+  40% { translate: 6px 0; }
+  60% { translate: -3px 0; }
+  80% { translate: 2px 0; }
+}
+
+/* 手机竖屏:底页自屏底滑上 */
+@keyframes auth-sheet-in {
+  from {
+    opacity: 0.4;
+    transform: translateY(100%);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 底页顶沿光唇:自中点向两侧亮开;之后偶尔一道光沿顶沿扫过 */
+@property --auth-lip {
+  syntax: "<percentage>";
+  initial-value: 0%;
+  inherits: false;
+}
+
+@keyframes auth-lip-draw {
+  from { --auth-lip: 0%; }
+  to { --auth-lip: 64%; }
+}
+
+@keyframes auth-lip-glint {
+  0% { background-position: -50% 0; }
+  24%, 100% { background-position: 150% 0; }
+}
+
+/* 手机离场:logo 先飞到屏幕中心(消失点)、略放大,再加速没入远方 */
+@keyframes auth-logo-launch {
+  0% {
+    transform: none;
+    animation-timing-function: cubic-bezier(0.45, 0, 0.2, 1);
+  }
+  42% {
+    transform: translate(var(--warp-dx, 0px), var(--warp-dy, 0px)) scale(1.14);
+    opacity: 1;
+    filter: blur(0);
+    animation-timing-function: cubic-bezier(0.7, 0, 0.9, 0.45);
+  }
+  100% {
+    transform: translate(var(--warp-dx, 0px), var(--warp-dy, 0px)) scale(0.02);
+    opacity: 0;
+    filter: blur(1.5px);
+  }
+}
+
+/* 轨道环在起飞时向外荡开(用独立 scale 属性,与旋转叠加) */
+@keyframes auth-orbit-burst {
+  to {
+    scale: 2.4;
+    opacity: 0;
+  }
+}
+
+@keyframes auth-hint-breathe {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
 }
 
 /* (静默仪器:entrance-stagger keyframes 已随仪式性入场退场) */
@@ -1179,9 +1281,30 @@ input[type="radio"] {
     color: var(--dorami-ink);
   }
 
-  /* ── Login · cinematic midnight archive ── */
+  /* ── Login · 深空剧场(issue #214 重制;剧本 docs/design/dorami-login-constellation-script.md) ──
+     品牌面:配色与动效时长刻意硬编码、不走工作区 token,不随暗色 / 减少动效改写(conventions §7 / §9 豁免)。 */
 
   .auth-stage {
+    --auth-ink: #eef0ff;
+    --auth-ink-2: rgba(214, 219, 246, 0.86);
+    --auth-mute: rgba(178, 186, 226, 0.66);
+    --auth-faint: rgba(160, 168, 210, 0.5);
+    --auth-accent: #a9a3ff;
+    --auth-hair: rgba(170, 178, 255, 0.14);
+    --auth-ease: cubic-bezier(0.4, 0, 0.2, 1);
+    --auth-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --auth-logo: 64px;
+    /* 版式开关:双列(默认)/ 单列(手机、平板竖屏,见文末两个 variant) */
+    --auth-cols: minmax(0, 1fr) minmax(340px, 432px);
+    --auth-shell-max: 1140px;
+    --auth-gap: clamp(48px, 8vw, 136px);
+    --auth-items: normal;
+    --auth-align: start;
+    --auth-justify: flex-start;
+    --auth-lede-mx: 0;
+    --auth-rule: block;
+    --auth-title-scale: 1.1;
+    --auth-card-in: auth-card-in;
     position: relative;
     isolation: isolate;
     display: flex;
@@ -1191,35 +1314,34 @@ input[type="radio"] {
     min-height: 100dvh;
     padding: clamp(24px, 5vw, 72px);
     overflow: hidden;
-    color: #edeefb;
+    color: var(--auth-ink);
     background: #04040e;
   }
 
-  /* —— layered atmosphere —— */
-  /* 舞台开场“落定”微缩放：背景容器整体 1.05 → 1 */
+  /* —— 场景层:视口固定(内容超出一屏时背景不断档),第二幕「落定」1.03 → 1 —— */
   .auth-scene-inner {
-    position: absolute;
+    position: fixed;
     inset: 0;
     z-index: -1;
     pointer-events: none;
-    transform: scale(1.05);
+    transform: scale(1.03);
     transition: transform 2600ms cubic-bezier(0.22, 0.61, 0.36, 1);
   }
   .is-ready .auth-scene-inner {
-    transform: scale(1);
+    transform: none;
   }
 
-  /* —— 背景：近黑 + 朝登录卡一侧的极淡靛辉 —— */
+  /* CSS 底:WebGL 首帧前 / 静止回退时可见,与场景着色器的底色一致 */
   .auth-bg {
     position: absolute;
     inset: 0;
     background:
-      radial-gradient(58% 70% at 74% 50%, rgba(91, 84, 232, 0.15) 0%, transparent 60%),
+      radial-gradient(58% 70% at 74% 50%, rgba(91, 84, 232, 0.13) 0%, transparent 60%),
       radial-gradient(92% 82% at 50% -12%, #100e28 0%, #04040e 62%),
       #04040e;
   }
 
-  /* —— 信号星座（三维摄像机：横move=偏航 / 纵move=推进，见 LoginScreen 的 canvas effect）—— */
+  /* 场景画布(login/deepSpace.js:WebGL 星场 + 全景星云) */
   .auth-net {
     position: absolute;
     inset: 0;
@@ -1227,11 +1349,15 @@ input[type="radio"] {
     height: 100%;
     display: block;
   }
+  /* 静止回退画布:无 WebGL / 初始化失败时引擎画一帧星空并加 .is-on */
+  .auth-net-static:not(.is-on) {
+    display: none;
+  }
 
   .auth-grain {
     position: absolute;
     inset: 0;
-    opacity: 0.5;
+    opacity: 0.32;
     mix-blend-mode: overlay;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/%3E%3C/svg%3E");
   }
@@ -1239,30 +1365,35 @@ input[type="radio"] {
   .auth-vignette {
     position: absolute;
     inset: 0;
-    background: radial-gradient(120% 120% at 50% 50%, transparent 52%, rgba(2, 4, 12, 0.72) 100%);
+    background: radial-gradient(120% 120% at 50% 50%, transparent 54%, rgba(2, 3, 10, 0.72) 100%);
   }
 
-  /* —— layout shell: open, asymmetric, no dividing panel —— */
+  /* —— 版式:左题词 / 右登录卡,无分隔面板 —— */
   .auth-shell {
     position: relative;
     display: grid;
-    grid-template-columns: 1.05fr 0.95fr;
+    grid-template-columns: var(--auth-cols);
+    justify-items: var(--auth-items);
     align-items: center;
-    gap: clamp(40px, 7vw, 120px);
+    gap: var(--auth-gap);
     width: 100%;
-    max-width: 1180px;
-    transition: opacity 1250ms var(--motion-ease), transform 1600ms var(--motion-ease);
+    max-width: var(--auth-shell-max);
+    transition:
+      opacity 1200ms var(--auth-ease),
+      transform 1600ms var(--auth-ease),
+      filter 1200ms var(--auth-ease);
   }
 
-  /* —— 终幕「跃迁」:登录成功后前景整体缓缓消散,星座光轨 + 闪光收束(见 LoginScreen) —— */
+  /* —— 终幕「跃迁离场」:前景整体缓缓消散,星场光轨加速;最后一拍幕布淡入(见 LoginScreen) —— */
   .is-warping .auth-shell {
     opacity: 0;
-    transform: scale(0.97);
+    transform: scale(0.965);
+    filter: blur(6px);
     pointer-events: none;
   }
 
-  /* 跃迁收尾改全局隐出(2026-07-24 拍板:弃用「中心白光团 + 暗角」的径向闪光——
-     登录页整体淡入平色主题幕布,与 App 抵达幕同色,切换仍藏在幕布全亮帧背后)。 */
+  /* 跃迁收尾全局隐出(2026-07-24 拍板):登录页整体淡入平色主题幕布,与 App 抵达幕同色,
+     切换藏在幕布全亮帧背后。 */
   .auth-warp-flash {
     position: fixed;
     inset: 0;
@@ -1332,81 +1463,96 @@ input[type="radio"] {
     }
   }
 
-  /* —— hero (left, floating in open space) —— */
+  /* —— 题词(左) —— */
   .auth-hero {
-    max-width: 560px;
-    transition: transform 1500ms cubic-bezier(0.22, 1, 0.36, 1);
+    position: relative;
+    width: fit-content;
+    max-width: 600px;
+    text-align: var(--auth-align);
+    transition: transform 1500ms var(--auth-ease-out);
   }
 
-  /* 第一幕：标题独占舞台，平移到画面中心并显著放大、featured。
-     对齐方式始终保持左对齐（仅靠 transform 居中），避免 text-align
-     在两幕间无法过渡而产生的生硬跳变。 */
+  /* 第一幕:题词独占舞台,按实测位移居中并放大(--hero-dx/--hero-dy 由组件量出)。
+     对齐方式始终不变,只靠 transform 居中——两幕之间没有对齐跳变。 */
   .is-title .auth-hero {
-    transform: translateX(58%) scale(1.2);
+    transform: translate(var(--hero-dx, 0px), var(--hero-dy, 0px)) scale(var(--auth-title-scale));
   }
-  .is-ready .auth-hero {
-    transform: none;
+
+  .auth-rise {
+    animation: auth-rise-in 1100ms var(--auth-ease-out) backwards;
+    animation-delay: var(--d, 0ms);
   }
 
   .auth-brandrow {
     display: flex;
     align-items: center;
-    gap: 16px;
+    justify-content: var(--auth-justify);
+    gap: 20px;
   }
 
   .auth-logo-shell {
     position: relative;
     display: inline-flex;
-    height: 72px;
-    width: 72px;
+    width: var(--auth-logo);
+    height: var(--auth-logo);
     flex-shrink: 0;
   }
 
-  /* 旋转极光光环：在 logo 背后缓慢回转 + 呼吸脉冲 */
-  .auth-logo-halo {
+  /* logo 背后的柔光 */
+  .auth-logo-shell::before {
+    content: "";
     position: absolute;
-    inset: -8px;
-    border-radius: var(--r-overlay);
-    background: conic-gradient(
-      from 0deg,
-      rgba(91, 84, 232, 0),
-      rgba(167, 159, 241, 0.9),
-      rgba(56, 182, 245, 0.6),
-      rgba(91, 84, 232, 0)
-    );
-    filter: blur(7px);
-    opacity: 0.85;
-    animation: auth-spin 6s linear infinite, auth-halo-pulse 3.4s ease-in-out infinite;
+    inset: -22px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(124, 108, 245, 0.42), transparent 64%);
+    filter: blur(4px);
+  }
+
+  /* 轨道环:细环 + 一颗绕行的小卫星 */
+  .auth-logo-orbit {
+    position: absolute;
+    inset: -14px;
+    border-radius: 50%;
+    border: 1px solid rgba(167, 160, 255, 0.2);
+    animation: auth-orbit 9s linear infinite;
+  }
+  .auth-logo-orbit i {
+    position: absolute;
+    top: -3px;
+    left: 50%;
+    width: 5px;
+    height: 5px;
+    margin-left: -2.5px;
+    border-radius: 50%;
+    background: #ecebff;
+    box-shadow: 0 0 6px 2px rgba(167, 160, 255, 0.9), 0 0 16px 4px rgba(124, 108, 245, 0.45);
   }
 
   .auth-logo {
     position: relative;
-    height: 72px;
-    width: 72px;
+    width: var(--auth-logo);
+    height: var(--auth-logo);
     border-radius: var(--r-overlay);
     object-fit: contain;
     background: linear-gradient(135deg, var(--dorami-blue), var(--dorami-blue-2));
     box-shadow:
-      0 0 0 1px rgba(170, 180, 255, 0.18),
-      0 16px 40px rgba(91, 84, 232, 0.5),
+      0 0 0 1px rgba(180, 186, 255, 0.2),
+      0 14px 36px rgba(91, 84, 232, 0.45),
       inset 0 1px 0 rgba(255, 255, 255, 0.35);
   }
 
-  /* 蒙眼彩蛋图：默认叠在基础 logo 之上、不可见；密码框聚焦时交叉淡入 */
-  /* 加载门控：解码完成前保持透明（避免大图自上而下「半张」渲染），
-     onLoad 后 .is-loaded 整张淡入+轻微放大，呼应入场电影感。
-     is-covering 交叉淡入规则类名更具体（见下），聚焦时仍能盖过 .is-loaded 把 base 淡出。 */
+  /* 加载门控:解码完成前透明(杜绝大图「半张」渲染),onLoad 后整张淡入 */
   .auth-logo-base {
     opacity: 0;
     transform: scale(0.96);
     transition: opacity 0.36s ease, transform 0.5s var(--motion-ease);
   }
-
   .auth-logo-base.is-loaded {
     opacity: 1;
     transform: scale(1);
   }
 
+  /* 蒙眼彩蛋:密码框聚焦时交叉淡入,失焦淡出 */
   .auth-logo-cover {
     position: absolute;
     inset: 0;
@@ -1415,11 +1561,9 @@ input[type="radio"] {
     transition: opacity 0.32s ease, transform 0.32s ease;
     pointer-events: none;
   }
-
   .auth-logo-shell.is-covering .auth-logo-base {
     opacity: 0;
   }
-
   .auth-logo-shell.is-covering .auth-logo-cover {
     opacity: 1;
     transform: scale(1);
@@ -1433,62 +1577,55 @@ input[type="radio"] {
 
   .auth-wordmark {
     font-family: "Dorami Login Serif", var(--font-serif);
-    font-size: 27px;
+    font-size: 24px;
     font-weight: 600;
-    letter-spacing: 0.14em;
-    color: rgba(232, 235, 255, 0.95);
-    text-indent: 0.14em;
+    letter-spacing: 0.2em;
+    text-indent: 0.2em;
+    color: rgba(236, 238, 255, 0.95);
   }
 
   .auth-eyebrow {
-    margin-top: clamp(36px, 6vh, 64px);
+    display: flex;
+    align-items: center;
+    justify-content: var(--auth-justify);
+    gap: 14px;
+    margin-top: clamp(32px, 5.5dvh, 56px);
     font-family: "Dorami Login Mono", var(--mono);
     font-size: 12px;
     font-weight: 600;
     letter-spacing: 0.34em;
-    text-indent: 0.34em;
-    color: rgba(150, 142, 244, 0.95);
+    white-space: nowrap;
+    color: var(--auth-accent);
+  }
+  .auth-eyebrow::before {
+    content: "";
+    display: var(--auth-rule);
+    width: 28px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, currentColor);
   }
 
   .auth-title {
-    margin-top: 18px;
+    position: relative;
+    margin-top: 16px;
     font-family: "Dorami Login Serif", var(--font-serif);
-    font-size: clamp(42px, 6.2vw, 72px);
-    font-weight: 700;
-    line-height: 1.1;
+    font-size: clamp(44px, 5.4vw, 74px);
+    font-weight: 600;
+    line-height: 1.12;
     letter-spacing: 0.01em;
-    color: #f6f7ff;
-    text-shadow: 0 2px 40px rgba(91, 84, 232, 0.35);
+    color: #f5f6ff;
+    text-shadow: 0 2px 40px rgba(91, 84, 232, 0.3);
   }
 
   .auth-title-line {
     display: block;
+    white-space: nowrap;
   }
 
-  /* 逐词浮现：模糊上浮入场 */
-  .auth-word {
-    display: inline-block;
-    opacity: 0;
-    will-change: transform, opacity, filter;
-    animation: auth-word-in 1200ms cubic-bezier(0.22, 1, 0.36, 1) both;
-    animation-delay: var(--d, 0ms);
-  }
-
-  .auth-title-accent {
-    background: linear-gradient(100deg, #8f8bf6 0%, #6d5cf0 46%, #5b54e8 100%);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    filter: drop-shadow(0 4px 26px rgba(109, 92, 240, 0.5));
-  }
-
-  /* —— 第三幕：主标题变幻为品牌名（brand 层叠在原标题上，收束成形） —— */
-  .auth-title-swap {
-    position: relative;
-  }
   .auth-title-orig {
     display: block;
   }
+
   .auth-title-brand {
     position: absolute;
     inset: 0;
@@ -1496,168 +1633,203 @@ input[type="radio"] {
     pointer-events: none;
     letter-spacing: 0.02em;
   }
-  .auth-brandchar {
+
+  /* 逐字单元:拉丁词与中文之间留细空(行首不留) */
+  .auth-ch,
+  .auth-bch {
     display: inline-block;
-    opacity: 0;
     will-change: transform, opacity, filter;
   }
-  .auth-brandchar.is-accent {
-    color: #a8a4ff;
-    text-shadow: 0 2px 26px rgba(109, 92, 240, 0.55);
+  .auth-ch.is-latin,
+  .auth-bch.is-latin {
+    margin-inline: 0.14em;
   }
-  .is-branded .auth-title-orig {
-    animation: auth-brand-out 640ms var(--motion-ease) forwards;
+  .auth-title-line > .is-latin:first-child {
+    margin-left: 0;
   }
-  .is-branded .auth-title-brand {
-    animation: auth-brand-track 1500ms var(--motion-ease) both;
+  .auth-ch.is-accent,
+  .auth-bch.is-accent {
+    text-shadow: 0 0 26px rgba(124, 108, 245, 0.45);
   }
-  .is-branded .auth-brandchar {
-    animation: auth-brand-in 1000ms var(--motion-ease) both;
+
+  .auth-ch {
+    animation: auth-ch-in 1100ms var(--auth-ease-out) backwards;
     animation-delay: var(--d, 0ms);
   }
+  .is-branded .auth-ch {
+    animation: auth-ch-out 560ms var(--auth-ease) forwards;
+    animation-delay: var(--o, 0ms);
+  }
 
-  /* (登录页 reduced-motion 降级规则已删——品牌豁免,见文件末尾全局规则的说明) */
+  .auth-bch {
+    opacity: 0;
+  }
+  /* 叠层登录:原标题只占位不出场,品牌名直接凝聚 */
+  .is-overlay .auth-title-orig {
+    visibility: hidden;
+  }
+  .is-branded .auth-title-brand {
+    animation: auth-brand-track 1500ms var(--auth-ease-out) 300ms both;
+  }
+  .is-branded .auth-bch {
+    animation: auth-bch-in 1000ms var(--auth-ease-out) both;
+    animation-delay: var(--d, 0ms);
+  }
+  .is-branded .auth-bch.is-accent {
+    animation:
+      auth-bch-in 1000ms var(--auth-ease-out) both,
+      auth-bch-glow 1600ms var(--auth-ease) 1500ms;
+    animation-delay: var(--d, 0ms), calc(var(--d, 0ms) + 1300ms);
+  }
 
   .auth-lede {
-    margin-top: 22px;
-    max-width: 460px;
+    margin-top: 20px;
+    margin-inline: var(--auth-lede-mx);
+    max-width: 27em;
     font-size: 15px;
-    font-weight: 500;
     line-height: 1.8;
-    color: rgba(198, 204, 233, 0.78);
+    color: var(--auth-mute);
+  }
+  /* 引言分句成块:放不下一行时在分句处换行,不把「检索」这类词拆开 */
+  .auth-lede > span {
+    display: inline-block;
+    vertical-align: top;   /* 不让行盒因基线对齐长高 */
   }
 
   .auth-feats {
     display: flex;
     flex-wrap: wrap;
-    gap: 10px;
-    margin-top: 34px;
-    transition:
-      transform 1100ms cubic-bezier(0.22, 1, 0.36, 1) 450ms,
-      opacity 1100ms var(--motion-ease) 450ms;
+    justify-content: var(--auth-justify);
+    gap: 8px;
+    margin-top: 30px;
   }
-  /* 第二幕才亮起 */
-  .is-title .auth-feats {
-    opacity: 0;
-    transform: translateY(16px);
-  }
-  .is-ready .auth-feats {
-    opacity: 1;
-    transform: none;
-  }
-
   .auth-feats li {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 9px 15px;
+    gap: 7px;
+    padding: 7px 14px;
     border-radius: var(--r-pill);
-    border: 1px solid rgba(170, 180, 255, 0.16);
-    background: rgba(120, 130, 220, 0.08);
+    border: 1px solid var(--auth-hair);
+    background: rgba(120, 128, 230, 0.06);
     backdrop-filter: blur(6px);
     font-size: 13px;
-    font-weight: 700;
-    color: rgba(216, 221, 250, 0.9);
+    font-weight: 600;
+    color: var(--auth-ink-2);
   }
-
   .auth-feats svg {
-    width: 15px;
-    height: 15px;
-    color: var(--dorami-blue-2);
+    width: 14px;
+    height: 14px;
+    color: var(--auth-accent);
+  }
+  /* 第二幕才亮起 */
+  .is-title .auth-feats li {
+    opacity: 0;
+  }
+  .is-ready .auth-feats li {
+    animation: auth-pill-in 900ms var(--auth-ease-out) backwards;
+    animation-delay: calc(520ms + var(--i, 0) * 90ms);
   }
 
-  /* —— card slot: 景深透视容器 + 第二幕浮现 —— */
+  /* —— 登录卡(右):景深透视容器 + 第二幕浮现 —— */
   .auth-card-slot {
-    perspective: 1300px;
-    transition:
-      opacity 1300ms var(--motion-ease),
-      transform 1500ms cubic-bezier(0.22, 1, 0.36, 1),
-      filter 1300ms var(--motion-ease);
+    width: 100%;
+    perspective: 1200px;
   }
   .is-title .auth-card-slot {
+    visibility: hidden;
     opacity: 0;
-    transform: translateX(70px) scale(0.9);
-    filter: blur(14px);
     pointer-events: none;
   }
   .is-ready .auth-card-slot {
-    opacity: 1;
-    transform: none;
-    filter: blur(0);
+    animation: auth-card-in 1400ms var(--auth-ease-out) 120ms backwards;
+    animation-name: var(--auth-card-in);
   }
 
-  /* —— auth card (right, frosted glass, luminous edge) —— */
   .auth-card {
     position: relative;
-    padding: clamp(30px, 3.4vw, 44px);
-    border-radius: var(--r-overlay);
-    border: 1px solid rgba(170, 180, 255, 0.16);
-    background:
-      linear-gradient(165deg, rgba(28, 31, 58, 0.82), rgba(14, 16, 34, 0.72));
-    backdrop-filter: blur(26px) saturate(1.3);
-    -webkit-backdrop-filter: blur(26px) saturate(1.3);
+    isolation: isolate;
+    padding: 38px 36px 28px;
+    border-radius: 20px;
+    background: linear-gradient(160deg, rgba(26, 28, 60, 0.8) 0%, rgba(13, 14, 32, 0.76) 55%, rgba(9, 10, 24, 0.82) 100%);
+    backdrop-filter: blur(24px) saturate(1.45);
+    -webkit-backdrop-filter: blur(24px) saturate(1.45);
     box-shadow:
-      0 1px 0 rgba(255, 255, 255, 0.1) inset,
-      0 -1px 0 rgba(0, 0, 0, 0.4) inset,
-      0 40px 90px rgba(4, 6, 18, 0.7),
-      0 0 60px rgba(91, 84, 232, 0.16);
-    overflow: hidden;
-    /* 3D 倾斜跟随:JS 写入 --tilt-x/--tilt-y(±3° 内),外层 slot 的 perspective 终于派上用场 */
+      inset 0 1px 0 rgba(255, 255, 255, 0.07),
+      0 40px 90px -20px rgba(2, 3, 12, 0.78),
+      0 0 80px rgba(91, 84, 232, 0.12);
+    /* 3D 倾斜跟随:组件写入 --tilt-x / --tilt-y(±3° 内) */
     transform: rotateY(calc(var(--tilt-x, 0) * 1deg)) rotateX(calc(var(--tilt-y, 0) * 1deg));
-    transition: transform 0.35s var(--motion-ease);
+    transition: transform 450ms var(--auth-ease-out);
     will-change: transform;
   }
-
   .auth-card.is-shaking {
-    animation: auth-card-shake 0.42s var(--motion-ease);
+    animation: auth-card-shake 0.44s var(--auth-ease);
   }
 
-  .auth-card::before {
-    content: "";
-    position: absolute;
-    inset: 0 0 auto 0;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(167, 159, 241, 0.85), transparent);
-    /* 卡顶高光线随倾角反向微移,制造玻璃厚度 */
-    transform: translateX(calc(var(--tilt-x, 0) * -6px));
-    transition: transform 0.35s var(--motion-ease);
-  }
-
-  .auth-card-glow {
-    position: absolute;
-    top: -40%;
-    right: -30%;
-    width: 70%;
-    height: 80%;
-    border-radius: 50%;
-    background: radial-gradient(circle, rgba(91, 84, 232, 0.4), transparent 64%);
-    filter: blur(50px);
-    pointer-events: none;
-    transform: translate(calc(var(--tilt-x, 0) * -8px), calc(var(--tilt-y, 0) * 8px));
-    transition: transform 0.35s var(--motion-ease);
-  }
-
-  /* 卡片描边流光：一束亮点沿圆角边框缓慢环绕 */
-  .auth-card-ring {
+  /* 玻璃反光:指针附近一团冷光,离卡越近越亮 */
+  .auth-card-sheen {
     position: absolute;
     inset: 0;
-    border-radius: var(--r-overlay);
+    z-index: -1;
+    border-radius: inherit;
+    pointer-events: none;
+    background: radial-gradient(380px circle at var(--px, 78%) var(--py, 0%), rgba(150, 140, 255, 0.14), transparent 62%);
+    opacity: calc(0.25 + var(--lit, 0) * 0.75);
+    transition: opacity 400ms var(--auth-ease);
+  }
+
+  /* 描边:1px 细线,第二幕沿卡片一周「画」出来(conic 揭示 ∩ 边框环遮罩) */
+  .auth-card-frame,
+  .auth-card-comet {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
     padding: 1px;
     pointer-events: none;
+  }
+  .auth-card-frame {
+    background: linear-gradient(180deg, rgba(200, 198, 255, 0.44), rgba(170, 170, 255, 0.12) 42%, rgba(170, 170, 255, 0.08));
+    -webkit-mask:
+      conic-gradient(from -90deg, #000 var(--auth-draw), transparent var(--auth-draw)),
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask:
+      conic-gradient(from -90deg, #000 var(--auth-draw), transparent var(--auth-draw)),
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    /* 合成方式必须写在 mask 简写之后(简写会把它重置为 add):自下而上先「整块 − 内容区」得边框环,再与揭示扇区取交 */
+    -webkit-mask-composite: source-in, xor;
+    mask-composite: intersect, exclude;
+  }
+  .is-ready .auth-card-frame {
+    animation: auth-frame-draw 1100ms var(--auth-ease-out) 380ms both;
+  }
+
+  /* 画笔光头:随描边画完一周后放慢,成为沿边环绕的彗星 */
+  .auth-card-comet {
+    opacity: 0;
     background: conic-gradient(
-      from var(--auth-angle, 0deg),
+      from calc(var(--auth-angle) - 90deg),
       transparent 0deg,
-      transparent 70deg,
-      rgba(143, 139, 246, 0.9) 110deg,
-      rgba(91, 84, 232, 0.7) 130deg,
-      transparent 170deg,
+      transparent 250deg,
+      rgba(150, 142, 255, 0.5) 330deg,
+      rgba(242, 240, 255, 1) 357deg,
       transparent 360deg
     );
-    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
     -webkit-mask-composite: xor;
-    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
     mask-composite: exclude;
-    animation: auth-ring-rotate 7s linear infinite;
+  }
+  .is-ready .auth-card-comet {
+    opacity: 1;
+    animation:
+      auth-comet-draw 1100ms var(--auth-ease-out) 380ms backwards,
+      auth-comet-orbit 11s linear 1480ms infinite;
   }
 
   .auth-form {
@@ -1665,82 +1837,88 @@ input[type="radio"] {
     display: flex;
     flex-direction: column;
   }
+  /* 卡内条目错峰就位 */
+  .is-ready .auth-form > * {
+    animation: auth-item-in 700ms var(--auth-ease-out) backwards;
+    animation-delay: calc(560ms + var(--i, 6) * 70ms);
+  }
 
   .auth-card-eyebrow {
     font-family: "Dorami Login Mono", var(--mono);
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.3em;
-    text-indent: 0.3em;
-    color: rgba(150, 142, 244, 0.95);
+    color: var(--auth-accent);
   }
 
   .auth-card-title {
     margin-top: 12px;
-    font-size: 28px;
-    font-weight: 800;
-    letter-spacing: -0.01em;
-    color: #f4f5ff;
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: var(--auth-ink);
   }
 
   .auth-card-sub {
-    margin-top: 8px;
+    margin-top: 6px;
     margin-bottom: 26px;
     font-size: 13.5px;
-    font-weight: 500;
     line-height: 1.6;
-    color: rgba(190, 196, 228, 0.66);
+    color: var(--auth-mute);
   }
 
   .auth-field {
     display: block;
-    margin-bottom: 18px;
+    margin-bottom: 16px;
   }
 
   .auth-field-label {
     display: block;
-    margin-bottom: 9px;
+    margin-bottom: 8px;
     font-size: 12.5px;
-    font-weight: 700;
-    letter-spacing: 0.02em;
-    color: rgba(206, 212, 240, 0.82);
+    font-weight: 600;
+    color: var(--auth-ink-2);
+    transition: color 200ms var(--auth-ease);
+  }
+  .auth-field.is-focus .auth-field-label {
+    color: #dcd9ff;
   }
 
   .auth-input-wrap {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 12px;
     height: 50px;
     padding: 0 16px;
-    border-radius: var(--r-card);
-    border: 1px solid rgba(170, 180, 255, 0.16);
-    background: rgba(8, 10, 24, 0.55);
+    overflow: hidden;
+    border-radius: 12px;
+    border: 1px solid var(--auth-hair);
+    background: rgba(6, 8, 22, 0.52);
     box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
     transition:
-      border-color var(--motion-fast) var(--motion-ease),
-      box-shadow var(--motion-fast) var(--motion-ease),
-      background var(--motion-fast) var(--motion-ease);
+      border-color 200ms var(--auth-ease),
+      box-shadow 260ms var(--auth-ease),
+      background 200ms var(--auth-ease);
   }
-
   .auth-input-wrap:focus-within {
-    border-color: rgba(123, 108, 240, 0.7);
-    background: rgba(12, 14, 32, 0.7);
+    border-color: rgba(140, 128, 255, 0.55);
+    background: rgba(10, 12, 30, 0.66);
     box-shadow:
       inset 0 1px 2px rgba(0, 0, 0, 0.35),
-      0 0 0 4px rgba(91, 84, 232, 0.18),
-      0 8px 24px rgba(91, 84, 232, 0.22);
+      0 0 0 3px rgba(91, 84, 232, 0.16),
+      0 10px 28px -8px rgba(91, 84, 232, 0.42);
   }
 
   .auth-input-icon {
     width: 18px;
     height: 18px;
     flex-shrink: 0;
-    color: rgba(150, 142, 244, 0.95);
-    transition: color var(--motion-fast) var(--motion-ease);
+    color: rgba(160, 152, 248, 0.9);
+    transition: color 200ms var(--auth-ease);
   }
-
   .auth-input-wrap:focus-within .auth-input-icon {
-    color: var(--dorami-blue-2);
+    color: #c3bdff;
   }
 
   .auth-input {
@@ -1749,15 +1927,45 @@ input[type="radio"] {
     border: 0;
     background: transparent;
     outline: none;
-    /* 品牌豁免(issue #184):全局未分层的 font: inherit 退役后,这里原写的 14.5px / 600 会第一次生效、改变登录页;
-       就地保持此前的实际渲染(继承 16px / 400) */
     font: inherit;
     color: #f1f2ff;
+    caret-color: #bdb7ff;
   }
-
   .auth-input::placeholder {
     color: rgba(150, 158, 196, 0.5);
-    font-weight: 500;
+  }
+  /* 浏览器自动填充:保持深色底与亮字,不刷成浅蓝 */
+  .auth-input:-webkit-autofill,
+  .auth-input:-webkit-autofill:focus {
+    -webkit-text-fill-color: #f1f2ff;
+    caret-color: #bdb7ff;
+    transition: background-color 600000s 0s, color 600000s 0s;
+  }
+
+  /* 聚焦:底线自中心向两侧亮起;键入:一道光掠过底线 */
+  .auth-input-line {
+    position: absolute;
+    left: 14px;
+    right: 14px;
+    bottom: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(196, 190, 255, 0.9), transparent);
+    transform: scaleX(0);
+    transition: transform 520ms var(--auth-ease-out);
+    pointer-events: none;
+  }
+  .auth-input-wrap:focus-within .auth-input-line {
+    transform: scaleX(1);
+  }
+  .auth-input-glint {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    width: 38%;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.95), transparent);
+    pointer-events: none;
+    animation: auth-glint 640ms var(--auth-ease-out) forwards;
   }
 
   .auth-error-slot {
@@ -1765,11 +1973,14 @@ input[type="radio"] {
     display: flex;
     align-items: center;
   }
-
   .auth-error {
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 600;
     color: #ff8fa3;
+  }
+  .auth-caps {
+    font-size: 12.5px;
+    color: rgba(244, 199, 138, 0.9);
   }
 
   .auth-submit {
@@ -1779,174 +1990,481 @@ input[type="radio"] {
     align-items: center;
     justify-content: center;
     gap: 10px;
-    height: 52px;
-    margin-top: 6px;
+    height: 50px;
+    margin-top: 4px;
     border: 0;
-    border-radius: var(--r-card);
+    border-radius: 12px;
     cursor: pointer;
-    /* 品牌豁免(issue #184):同 .auth-input,保持此前的实际渲染(继承 16px / 400),原写的 15.5px / 800 从未生效 */
     font: inherit;
-    letter-spacing: 0.01em;
+    font-weight: 600;
+    letter-spacing: 0.06em;
     color: #fff;
-    background: linear-gradient(135deg, var(--dorami-blue) 0%, var(--dorami-blue-2) 100%);
+    background: linear-gradient(120deg, #6d62f3 0%, #5b54e8 48%, #8479f6 100%);
     box-shadow:
-      0 14px 34px rgba(91, 84, 232, 0.45),
-      inset 0 1px 0 rgba(255, 255, 255, 0.28);
+      0 14px 34px -10px rgba(91, 84, 232, 0.75),
+      inset 0 1px 0 rgba(255, 255, 255, 0.28),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.2);
     transition:
-      transform var(--motion-fast) var(--motion-spring),
-      box-shadow var(--motion-fast) var(--motion-ease),
-      filter var(--motion-fast) var(--motion-ease);
+      transform 220ms var(--motion-spring),
+      box-shadow 220ms var(--auth-ease),
+      filter 220ms var(--auth-ease);
   }
-
   .auth-submit:hover:not(:disabled) {
     filter: brightness(1.08);
     transform: translateY(-2px);
     box-shadow:
-      0 20px 46px rgba(91, 84, 232, 0.55),
-      inset 0 1px 0 rgba(255, 255, 255, 0.3);
+      0 20px 44px -10px rgba(91, 84, 232, 0.85),
+      inset 0 1px 0 rgba(255, 255, 255, 0.3),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.2);
   }
-
   .auth-submit:active:not(:disabled) {
     transform: translateY(0);
   }
-
   .auth-submit:disabled {
     cursor: progress;
-    opacity: 0.78;
+    opacity: 0.8;
   }
-
   .auth-submit:focus-visible {
-    outline: 2px solid var(--dorami-blue-2);
+    outline: 2px solid #b4aeff;
     outline-offset: 3px;
   }
-
   .auth-submit svg {
     position: relative;
     width: 18px;
     height: 18px;
-    transition: transform var(--motion-fast) var(--motion-ease);
+    transition: transform 220ms var(--auth-ease);
   }
-
   .auth-submit > span:not(.auth-submit-gloss) {
     position: relative;
   }
-
   .auth-submit:hover:not(:disabled) svg:last-child {
     transform: translateX(3px);
   }
-
-  /* 按钮光泽：一束高光定期斜掠，hover 时立即再扫一次 */
   .auth-submit-gloss {
     position: absolute;
     top: 0;
     left: 0;
     width: 60%;
     height: 100%;
-    background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+    background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.4), transparent);
     transform: translateX(-180%) skewX(-18deg);
-    animation: auth-gloss-rest 5.6s var(--motion-ease) 2.2s infinite;
+    animation: auth-gloss-rest 6.4s var(--auth-ease) 3.2s infinite;
   }
-
   .auth-submit:hover:not(:disabled) .auth-submit-gloss {
     animation: auth-gloss-sweep 0.9s ease-out;
   }
 
   .auth-foot {
-    margin-top: 22px;
+    margin-top: 20px;
     text-align: center;
     font-family: var(--mono);
     font-size: 11px;
-    letter-spacing: 0.04em;
-    color: rgba(160, 168, 204, 0.5);
+    letter-spacing: 0.06em;
+    color: var(--auth-faint);
   }
 
-  /* —— 开场跳过提示（第二幕后隐去）—— */
+  /* —— 开场跳过提示(仅第一幕;触屏换说法) —— */
   .auth-hint {
     position: absolute;
-    bottom: clamp(20px, 4vh, 36px);
     left: 50%;
+    bottom: clamp(20px, 4dvh, 36px);
     transform: translateX(-50%);
     z-index: 2;
     font-family: var(--mono);
     font-size: 11px;
     letter-spacing: 0.3em;
-    text-transform: uppercase;
-    color: rgba(150, 158, 196, 0.5);
+    text-indent: 0.3em;
+    white-space: nowrap;
+    color: var(--auth-faint);
     opacity: 0;
-    animation: auth-rise-in 800ms var(--motion-ease) 2200ms both;
-    transition: opacity 500ms var(--motion-ease);
+    pointer-events: none;
+    transition: opacity 500ms var(--auth-ease);
+  }
+  .is-title .auth-hint {
+    opacity: 1;
+    animation: auth-rise-in 900ms var(--auth-ease) 2600ms backwards;
   }
   .auth-hint b {
-    color: rgba(143, 139, 246, 0.95);
     font-weight: 600;
+    color: var(--auth-accent);
+    animation: auth-hint-breathe 2.6s var(--auth-ease) infinite;
   }
-  .is-ready .auth-hint {
-    opacity: 0 !important;
-    pointer-events: none;
+  .auth-hint-touch {
+    display: none;
   }
-
-  /* —— orchestrated staggered entrance —— */
-  .auth-rise {
-    opacity: 0;
-    animation: auth-rise-in 1100ms var(--motion-ease) both;
-    animation-delay: var(--d, 0ms);
+  @media (hover: none) {
+    .auth-hint-key { display: none; }
+    .auth-hint-touch { display: inline; }
   }
 
-  @media (max-width: 880px) {   /* bp-exempt: 登录页私有断点,登录页版式归 #214 */
-    .auth-shell {
-      grid-template-columns: 1fr;
-      max-width: 460px;
-      gap: 40px;
-    }
-    .auth-hero {
-      text-align: center;
-      margin: 0 auto;
-    }
-    .auth-brandrow,
-    .auth-feats {
-      justify-content: center;
-    }
-    .auth-lede {
-      margin-left: auto;
-      margin-right: auto;
-    }
-    /* 单列时第一幕不做水平平移，仅轻微放大 */
-    .is-title .auth-hero {
-      transform: scale(1.04);
-    }
-    .is-title .auth-card-slot {
-      transform: translateY(40px) scale(0.94);
+  /* 触屏输入框至少 16px:低于它 iOS Safari 聚焦时会把整页放大 */
+  @media (pointer: coarse) {
+    .auth-input {
+      font-size: 16px;
     }
   }
 
-  /* ── 登录页 ≤480 轻档(移动波 Wave3):收纳排版,不动演出——
-     星座保留环境漂移(pointermove 缺席时的既有基础),跃迁终幕原样;
-     手机上「静谧版」而非「残缺版」。 ── */
-  @variant bp-phone-s {
+  /* —— 单列:题词居中在上、登录卡在下(平板竖屏;手机竖屏另有底页形态,见下;平板横屏仍是双列) —— */
+  @variant bp-phone {
     .auth-stage {
-      padding: 20px 18px calc(20px + env(safe-area-inset-bottom));
+      --auth-cols: minmax(0, 1fr);
+      --auth-shell-max: 440px;
+      --auth-gap: 34px;
+      --auth-items: center;
+      --auth-align: center;
+      --auth-justify: center;
+      --auth-lede-mx: auto;
+      --auth-rule: none;
+      --auth-title-scale: 1.04;
+      --auth-card-in: auth-card-in-up;
     }
-    .auth-shell {
-      max-width: 400px;
-      gap: 26px;
+  }
+  @variant bp-tablet {
+    @media (orientation: portrait) {
+      .auth-stage {
+        --auth-cols: minmax(0, 1fr);
+        --auth-shell-max: 440px;
+        --auth-gap: 34px;
+        --auth-items: center;
+        --auth-align: center;
+        --auth-justify: center;
+        --auth-lede-mx: auto;
+        --auth-rule: none;
+        --auth-title-scale: 1.04;
+        --auth-card-in: auth-card-in-up;
+      }
+    }
+  }
+
+  /* —— 手机竖屏:原生形态,不是桌面卡的缩小版 ——
+     上半屏是品牌区(logo / 字标 / 标题 / 引言,在剩余空间里垂直居中),登录表单是贴底的玻璃底页,按钮落在拇指区;
+     首屏不滚动(矮屏按高度逐级收起引言与副题)。触屏聚焦输入框 = 软键盘要占掉下半屏:.is-kbd 把品牌区收成一枚 logo、
+     底页上提贴住它,输入框与按钮都在键盘之上。离场:底页沉下,logo 飞到屏幕中心没入跃迁的消失点。 */
+  @variant bp-phone {
+    @media (orientation: portrait) {
+      .auth-stage {
+        --auth-logo: 60px;
+        --auth-card-in: auth-sheet-in;
+        align-items: stretch;
+        padding: 0;
+        /* 横滑交给星空转头(引擎只认同一次按压内的位移);竖向仍归浏览器 */
+        touch-action: pan-y pinch-zoom;
+      }
+      .auth-shell {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+        min-height: var(--vh-full);
+        max-width: none;
+      }
+
+      /* 品牌区 */
+      .auth-hero {
+        flex: 1 0 auto;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        max-width: none;
+        padding: calc(env(safe-area-inset-top) + 24px) 24px 22px;
+      }
+      .auth-brandrow {
+        flex-direction: column;
+        gap: 14px;
+      }
+      .auth-wordmark {
+        font-size: 15px;
+        letter-spacing: 0.5em;
+        text-indent: 0.5em;
+        color: rgba(214, 219, 246, 0.82);
+      }
+      .auth-eyebrow,
+      .auth-feats {
+        display: none;
+      }
+      .auth-title {
+        margin-top: 16px;
+        font-size: clamp(32px, 9.6vw, 40px);
+      }
+      .auth-lede {
+        margin-top: 12px;
+        max-width: 19em;
+        font-size: 14px;
+        line-height: 1.7;
+      }
+
+      /* 底页:贴底、顶部圆角、透出星空;顶沿一道光唇代替桌面卡的一周描边 */
+      .auth-card-slot {
+        width: min(100%, 560px);
+        align-self: center;
+        perspective: none;
+      }
+      .is-ready .auth-card-slot {
+        animation-duration: 1000ms;
+      }
+      .auth-card {
+        padding: 22px max(22px, env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(22px, env(safe-area-inset-left));
+        border-radius: 28px 28px 0 0;
+        background: linear-gradient(180deg, rgba(26, 28, 62, 0.72) 0%, rgba(12, 13, 30, 0.86) 58%, rgba(8, 9, 22, 0.92) 100%);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.06),
+          0 -30px 70px -24px rgba(2, 3, 12, 0.8),
+          0 -18px 60px -12px rgba(91, 84, 232, 0.16);
+        transform: none;
+        will-change: auto;
+      }
+      .auth-card-frame {
+        background: linear-gradient(180deg, rgba(206, 202, 255, 0.58), rgba(170, 170, 255, 0.16) 44px, transparent 130px);
+        -webkit-mask:
+          linear-gradient(90deg, transparent calc(50% - var(--auth-lip) - 12%), #000 calc(50% - var(--auth-lip)), #000 calc(50% + var(--auth-lip)), transparent calc(50% + var(--auth-lip) + 12%)),
+          linear-gradient(#000 0 0) content-box,
+          linear-gradient(#000 0 0);
+        mask:
+          linear-gradient(90deg, transparent calc(50% - var(--auth-lip) - 12%), #000 calc(50% - var(--auth-lip)), #000 calc(50% + var(--auth-lip)), transparent calc(50% + var(--auth-lip) + 12%)),
+          linear-gradient(#000 0 0) content-box,
+          linear-gradient(#000 0 0);
+        -webkit-mask-composite: source-in, xor;
+        mask-composite: intersect, exclude;
+      }
+      .is-ready .auth-card-frame {
+        animation: auth-lip-draw 1200ms var(--auth-ease-out) 480ms both;
+      }
+      .auth-card-comet {
+        inset: 0 30px auto;
+        height: 1px;
+        padding: 0;
+        border-radius: 0;
+        -webkit-mask: none;
+        mask: none;
+        background: linear-gradient(90deg, transparent, rgba(242, 240, 255, 0.95), transparent) no-repeat;
+        background-size: 32% 100%;
+        background-position: -50% 0;
+      }
+      .is-ready .auth-card-comet {
+        animation: auth-lip-glint 7.5s var(--auth-ease) 1700ms infinite;
+      }
+
+      /* 底页里的表单:去掉桌面的眉题与页脚,字段名只留给读屏(图标 + 占位已说明),控件 52 高 */
+      .auth-card-eyebrow,
+      .auth-foot {
+        display: none;
+      }
+      .auth-card-title {
+        margin-top: 0;
+        font-size: 20px;
+      }
+      .auth-card-sub {
+        margin-top: 4px;
+        margin-bottom: 16px;
+        font-size: 13px;
+      }
+      .auth-field {
+        margin-bottom: 12px;
+      }
+      .auth-field-label {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: 0;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
+      .auth-input-wrap {
+        height: 52px;
+        border-radius: 14px;
+      }
+      .auth-error-slot {
+        min-height: 22px;
+      }
+      .auth-submit {
+        height: 52px;
+        margin-top: 2px;
+        border-radius: 14px;
+      }
+      .auth-stage .guest-enter {
+        display: flex;
+        align-items: center;
+        min-height: 44px;
+        margin-top: 2px;
+        padding: 0 16px;
+      }
+      .auth-stage .guest-back {
+        min-height: 32px;
+        margin-bottom: 8px;
+      }
+
+      /* 矮屏逐级收起:先收引言,再收副题与字标 */
+      @media (max-height: 660px) {
+        .auth-stage {
+          --auth-logo: 54px;
+        }
+        .auth-hero {
+          padding-top: calc(env(safe-area-inset-top) + 18px);
+          padding-bottom: 18px;
+        }
+        .auth-brandrow {
+          gap: 10px;
+        }
+        .auth-title {
+          margin-top: 12px;
+          font-size: clamp(30px, 8.8vw, 36px);
+        }
+        .auth-lede {
+          display: none;
+        }
+      }
+      @media (max-height: 580px) {
+        .auth-card-sub {
+          display: none;
+        }
+        .auth-card-title {
+          margin-bottom: 14px;
+        }
+        .auth-wordmark {
+          font-size: 13px;
+        }
+      }
+
+      /* 键盘态:品牌区收成一枚 logo(蒙眼彩蛋仍看得见),底页上提、铺到底 */
+      .auth-stage.is-kbd {
+        --auth-logo: 46px;
+      }
+      .is-kbd .auth-hero {
+        flex: 0 0 auto;
+        padding-top: calc(env(safe-area-inset-top) + 14px);
+        padding-bottom: 14px;
+      }
+      /* 收起用「脱离文档流 + 隐身」而不是 display:none——后者会让标题逐字显影 / 品牌凝聚 / 条目就位的动画在展开时重播 */
+      .auth-hero > :not(.auth-brandrow),
+      .auth-wordmark,
+      .auth-card-title,
+      .auth-card-sub {
+        transition: opacity 360ms var(--auth-ease) 140ms;
+      }
+      .is-kbd .auth-hero > :not(.auth-brandrow),
+      .is-kbd .auth-wordmark,
+      .is-kbd .auth-card-title,
+      .is-kbd .auth-card-sub {
+        position: absolute;
+        visibility: hidden;
+        opacity: 0;
+        pointer-events: none;
+        transition: none;
+      }
+      .is-kbd .auth-card-slot {
+        flex: 1 0 auto;
+        display: flex;
+        flex-direction: column;
+      }
+      .is-kbd .auth-card {
+        flex: 1 0 auto;
+        padding-top: 18px;
+      }
+
+      /* 离场:底页沉下、文字散去,logo 飞到屏幕中心(组件量出 --warp-dx/dy)后没入消失点 */
+      .is-warping .auth-shell {
+        opacity: 1;
+        transform: none;
+        filter: none;
+      }
+      .is-warping .auth-card-slot {
+        transform: translateY(105%);
+        transition: transform 600ms cubic-bezier(0.5, 0, 0.75, 0);
+      }
+      /* logo 飞向中心的路上压在下沉的底页之上 */
+      .is-warping .auth-hero {
+        z-index: 2;
+      }
+      .is-warping .auth-hero > :not(.auth-brandrow),
+      .is-warping .auth-wordmark {
+        opacity: 0;
+        filter: blur(6px);
+        transition: opacity 460ms var(--auth-ease), filter 460ms var(--auth-ease);
+      }
+      .is-warping .auth-logo-shell {
+        animation: auth-logo-launch 1450ms both;
+      }
+      .is-warping .auth-logo-orbit {
+        animation:
+          auth-orbit 9s linear infinite,
+          auth-orbit-burst 700ms var(--auth-ease-out) forwards;
+      }
+    }
+  }
+
+  /* —— 矮横屏(手机横握 / 很矮的窗口):双列紧凑,题词只留品牌与标题,登录卡去掉眉题 / 副题 / 字段名 / 页脚 —— */
+  @media (orientation: landscape) and (max-height: 500px) {
+    .auth-stage {
+      --auth-cols: minmax(0, 1fr) minmax(300px, 360px);
+      --auth-shell-max: 980px;
+      --auth-gap: clamp(24px, 5vw, 64px);
+      --auth-items: normal;
+      --auth-align: start;
+      --auth-justify: flex-start;
+      --auth-lede-mx: 0;
+      --auth-rule: block;
+      --auth-title-scale: 1.04;
+      --auth-card-in: auth-card-in;
+      --auth-logo: 48px;
+      padding:
+        max(14px, env(safe-area-inset-top))
+        max(24px, env(safe-area-inset-right))
+        max(14px, env(safe-area-inset-bottom))
+        max(24px, env(safe-area-inset-left));
+    }
+    .auth-brandrow {
+      gap: 16px;
+    }
+    .auth-wordmark {
+      font-size: 20px;
+    }
+    .auth-eyebrow,
+    .auth-lede,
+    .auth-feats,
+    .auth-card-eyebrow,
+    .auth-card-sub,
+    .auth-foot {
+      display: none;
     }
     .auth-title {
-      margin-top: 12px;
-      font-size: clamp(32px, 9.5vw, 42px);
-    }
-    .auth-lede {
       margin-top: 14px;
-      font-size: 13.5px;
-      line-height: 1.7;
+      font-size: clamp(28px, 4.4vw, 42px);
     }
     .auth-card {
-      padding: 26px 22px;
+      padding: 20px 22px 12px;
+    }
+    .auth-card-title {
+      margin-top: 0;
+      margin-bottom: 14px;
+      font-size: 20px;
+    }
+    .auth-field {
+      margin-bottom: 10px;
+    }
+    .auth-field-label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: 0;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+    .auth-input-wrap {
+      height: 46px;
+    }
+    .auth-error-slot {
+      min-height: 20px;
+    }
+    .auth-submit {
+      height: 46px;
+    }
+    .auth-stage .guest-enter {
+      margin-top: 6px;
     }
   }
-
-  /* (登录页/抵达幕 reduced-motion 降级规则已删——品牌豁免,2026-07-25 拍板:
-     登录电影感不随 OS「减少动画」降级,Windows 关动画效果时也完整呈现;
-     LoginScreen 的 prefersReducedMotion() 同步恒为 false,工作区规则不受影响) */
 
   /* ── Segmented control ── */
 

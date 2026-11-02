@@ -5,6 +5,10 @@
 > `docs/frontend/conventions.md` / `docs/sources/curation_policy.md` 等活跃文档。
 > 按「故事」分组索引;文内常含 ☐/☑ 进度符,均为当时状态。
 
+## 登录页「深空剧场」重制(2026-11,issue #214)
+
+- [issue-214-login-remake.md](./issue-214-login-remake.md) — 保留深空主题与三幕演出、WebGL 场景引擎重写;手机竖屏改原生形态(品牌区 + 贴底底页 + 触屏键盘态)、离场收束到屏幕中心;Codex 两轮交叉检视(§6);PR #255 合入、待发布;五方向样页分支已删除(§7)。
+
 ## 播客逐字稿问答(2026-10,issue #248)
 
 - [issue-248-podcast-qa.md](./issue-248-podcast-qa.md) — 发布方/ASR原稿懒索引、本文与订阅问答、可核对引用及在途撤稿防护；真实点播与单集深题 13/13 已核对，PR #252 代码检视与 CI 通过；新增一次 ASR 成功，三期 ASR 六题思考对照 28.5/30、仍有细节遗漏、用户验收待完成，未合入发布。

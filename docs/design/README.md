@@ -27,6 +27,6 @@
 | `dorami-pane-head-quiet.html` | issue #23 第三项 | 阅读窗标题区 |
 | `dorami-integrations-quiet.html` / `dorami-settings-quiet.html` | v3.9 | 接入集成并入设置柜 |
 | `dorami-admin-quiet.html` / `dorami-runs-quiet.html` / `dorami-job-roster-quiet.html` / `dorami-job-editor-quiet.html` | v3.0 静默仪器 | 运维 / 运行页 / 采集任务名册与编辑器 |
-| `dorami-login-constellation-script.md` | v3.13 | 登录页星座演出的分镜脚本(品牌豁免动效,实现 `LoginScreen.jsx`) |
+| `dorami-login-constellation-script.md` | v3.13 / #214 重制 | 登录页「深空剧场」分镜脚本:v1 为 v3.13 原剧本,v2 为 #214 重制(WebGL 场景 `login/deepSpace.js` + `LoginScreen.jsx`) |
 
 未入库的样页:`dorami-admin-ia-quiet.html`(issue #114 运维页信息架构,未立项)、`dorami-dept-pies-quiet.html`、`dorami-search-scope-quiet.html`(issue #94,待拍板)等仍在各会话工作区,拍板后随波次入库。

@@ -511,7 +511,7 @@ issue #230 起 `Modal` 与移动层都经层原语 `components/layer/useLayer`(�
   `MEDIA` / `mediaMatches()`,壳开关只用 `useCompactLayout`。定义在 `index.css` 顶部 `@custom-variant bp-*`,与 JS 逐字一致
   (`test/breakpoints.test.mjs`)。不用 `@custom-media`:它只在生产构建里展开,开发服务器原样输出。
 - 不写裸 `@media (max-width / min-width …)`(守卫拦);确属私有的例外在同一行写 `bp-exempt:` 注记与归属
-  (现仅登录页 880 → #214、榜单桌面 1120 → #221,并入命名档会改观感)。JS 不手写宽度媒体查询字符串。
+  (现仅榜单桌面 1120 → #221,并入命名档会改观感;登录页 880 已随 #214 重制并入命名档:单列 = bp-phone 与竖屏 bp-tablet)。JS 不手写宽度媒体查询字符串。
 - 容器查询(早报 960 / 680 / 420、播放条 640 / 900)按容器宽排版,不属断点表;Tailwind 默认 `sm/md/lg/xl:` 只留在管理面存量。
 - 平板档(批 4a 落地):`bp-tablet`(768–1024,含横屏手机)仍是手机壳,内容收进 `--m-col`(680)版心居中——贴左右的几何一律用
   `--m-side-l / -r`(= max(安全区, 版心外留白),手机竖屏只剩安全区),页头、底栏、坞、底页、滚动区都随版心,不拉满宽。
