@@ -10395,7 +10395,7 @@ input[type="radio"] {
     .rk-row:hover::before,
     .rk-row:hover + .rk-row::before { border-top-color: transparent; }
   }
-  /* 整行点开:透明命中钮铺满整行,其余内容不接指针(焦点环画在行内) */
+  /* 整行点开:透明命中钮铺满整行,给焦点环与读屏名(点击由行冒泡接住,见下) */
   .rk-hit {
     position: absolute;
     inset: 0;
@@ -10407,9 +10407,11 @@ input[type="radio"] {
     cursor: pointer;
   }
   .rk-hit:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: -2px; }
+  /* 点击由 <li> 冒泡接住(RankingsPage RankRow),内容照常接指针:名次变化、时间、分数的 title 悬停可见 */
+  .rk-row { cursor: pointer; }
   .rk-rank,
   .rk-main,
-  .rk-side { position: relative; pointer-events: none; }
+  .rk-side { position: relative; }
 
   /* 名次列:宋体齐线数字(与手机榜单、早报同一种身份线),变化写在下方 */
   .rk-rank { display: flex; flex-direction: column; align-items: center; gap: 3px; padding-top: 1px; }

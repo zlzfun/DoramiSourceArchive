@@ -129,7 +129,7 @@ publisher_key    = 注册表 source_owner 非空 ? source_owner : source_id;合�
 - `GET /api/admin/events?status=&q=&limit=`(管理台抽屉列表)· `POST /api/admin/events/{id}/merge-into/{target}` · `POST /api/admin/events/{id}/members/{article_id}/detach`(摘出成新单成员事件并写 ledger `blocked_event_ids`)——全部入审计。
 - 内部:`services/event_assignment.assign_pending(engine, llm_config)`(分析周期末尾 + 10 分钟兜底 interval job)· `services/event_board.build_rank_snapshot(engine, date)`(cron `0 7 * * *`,job id `event_rank_snapshot`)。
 - **issue #221 改动**(契约以 [`issue-221-rankings-unify.md`](./issue-221-rankings-unify.md) §5 为准):读者默认窗口改 168、详情收 `window_hours`;快照按 168 / 48 两窗各写一份,`previous_rank` 比同窗口、生成于当前之前的最近一份(今早 07:00);
-  条目加 `latest` / `first_report_at` / `is_recent` / `publishers[].source_id`,成员加 `publisher_key`。
+  条目加 `latest` / `first_report_at` / `is_recent` / `publishers[].source_id`,成员加 `publisher_key` / `published_at`(展示用有效发布时间,`report_at` 仍是归组用截断值)。
 
 ### 5.1 榜单页第三段「热点」(**搁置**,随榜单前端统一重构 issue #221;以下为原设想)
 

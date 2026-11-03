@@ -49,6 +49,9 @@ def _item(
     hours_ago=24.0,
     content_type="rss_article",
     version=CONTENT_VALUE_SCORING_VERSION,
+    status="succeeded",
+    analyzed=True,
+    basis="",
 ):
     stamp = _iso(hours_ago)
     session.add(ArticleRecord(
@@ -58,7 +61,8 @@ def _item(
     ))
     session.flush()
     session.add(ArticleAnalysisRecord(
-        article_id=article_id, status="succeeded", quality_score=news, summary=f"Summary {article_id}",
+        article_id=article_id, status=status, quality_score=news, summary=f"Summary {article_id}",
+        analyzed_at=stamp if analyzed else None, analysis_basis=basis,
         content_genre="industry_news", content_kind=kind, content_value=value,
         content_value_reason="reason" if value is not None else "",
         content_value_version=version if value is not None else "",
@@ -150,6 +154,40 @@ def test_podcast_picks_rank_episodes_by_podcast_score(tmp_path):
     assert listen["min_value"] == 7.5 and listen["items"][0]["content_value"] == 8.4
     assert listen["items"][0]["event_id"] is None
     assert empty["items"] == [] and empty["empty_reason"] == "no_items"
+
+
+def test_picks_keep_prior_authoritative_result_while_reanalysis_runs_or_fails(tmp_path):
+    """检视 R1 #1:与早报候选池同一条件——强制重分析期间(pending / running / failed)上一次的权威结果仍有效。"""
+
+    sink = _sink(tmp_path, "reanalysis.db")
+    with Session(sink.engine) as session:
+        for status in ("pending", "running", "failed"):
+            _item(session, f"read-{status}", "media-a", kind="paper", value=8.0, status=status)
+            _item(session, f"ep-{status}", "pod-a", news=8.0, content_type="podcast_episode", status=status)
+        # 从没分析成功过的 pending 行没有权威结果:不进
+        _item(session, "never", "media-a", kind="paper", value=9.0, status="pending", analyzed=False)
+        session.commit()
+        reads = ranking_picks.read_picks(session, shape="article", now=NOW)
+        listens = ranking_picks.read_picks(session, shape="podcast", now=NOW)
+
+    assert sorted(_ids(reads)) == ["read-failed", "read-pending", "read-running"]
+    assert sorted(_ids(listens)) == ["ep-failed", "ep-pending", "ep-running"]
+
+
+def test_podcast_picks_carry_public_full_analysis_fact(tmp_path):
+    """检视 R1 #3:播客评分依据(仅基于节目简介 / 基于整期内容)要给前端;文章条目不带这个字段。"""
+
+    sink = _sink(tmp_path, "basis.db")
+    with Session(sink.engine) as session:
+        _item(session, "ep-full", "pod-a", news=8.4, content_type="podcast_episode", basis="asr_transcript")
+        _item(session, "ep-notes", "pod-b", news=8.0, content_type="podcast_episode", basis="podcast_show_notes")
+        _item(session, "paper", "media-a", kind="paper", value=8.0)
+        session.commit()
+        listens = ranking_picks.read_picks(session, shape="podcast", now=NOW)
+        reads = ranking_picks.read_picks(session, shape="article", now=NOW)
+
+    assert {item["id"]: item["full_analysis_ready"] for item in listens["items"]} == {"ep-full": True, "ep-notes": False}
+    assert "full_analysis_ready" not in reads["items"][0]
 
 
 def test_guest_reads_picks_endpoint(monkeypatch, tmp_path):

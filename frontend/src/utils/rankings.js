@@ -165,9 +165,10 @@ export function logoStack(list, max = 3) {
 }
 
 // ── 事件详情 ──
-const timeOf = (member) => member?.report_at || member?.publish_date || '';
+// 成员的展示时间:接口的有效发布时间 published_at(发布时间可信时即它,否则是归组用的 report_at);旧响应退回 report_at / publish_date
+export const memberTime = (member) => member?.published_at || member?.report_at || member?.publish_date || '';
 const msOf = (member) => {
-  const ts = Date.parse(timeOf(member));
+  const ts = Date.parse(memberTime(member));
   return Number.isNaN(ts) ? -Infinity : ts;
 };
 
@@ -195,7 +196,7 @@ export function firstReportAt(detail) {
   let best = '';
   let bestMs = Infinity;
   for (const member of detail?.members || []) {
-    const raw = member?.publish_date || member?.report_at || '';
+    const raw = memberTime(member);
     const ts = Date.parse(raw);
     if (!Number.isNaN(ts) && ts < bestMs) { bestMs = ts; best = raw; }
   }
@@ -234,12 +235,12 @@ export function publisherGroups(detail) {
 export function timelineDays(members, now = Date.now()) {
   const days = [];
   for (const member of members || []) {
-    const key = beijingDayKey(timeOf(member)) || 'unknown';
+    const key = beijingDayKey(memberTime(member)) || 'unknown';
     const last = days[days.length - 1];
     if (last && last.key === key) {
       last.items.push(member);
     } else {
-      days.push({ key, label: key === 'unknown' ? '时间未知' : beijingDayLabel(timeOf(member), now), items: [member] });
+      days.push({ key, label: key === 'unknown' ? '时间未知' : beijingDayLabel(memberTime(member), now), items: [member] });
     }
   }
   return days;

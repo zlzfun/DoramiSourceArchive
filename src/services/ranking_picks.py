@@ -7,7 +7,8 @@
   热点事件 7 天榜上已有的事件整件不出现(读者在热点事件里已经看到它)。
 - 播客精选 = 播客单集;播客不入事件层(#121),不做事件去重。
 - 读取时现算(读者面滚动 7 天窗,不落快照):可见性与热点事件榜同一判定(隐藏 / 私有 / 凭据源不出现),
-  公共日报记录不出现。
+  公共日报记录不出现;分析行与早报候选池同一条件(重新分析进行中 / 失败时沿用上一次的权威结果)。
+- 播客条目带公开事实 ``full_analysis_ready``(评分依据是整期内容还是节目简介,与 ``articles_view`` 同判定)。
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ MIN_VALUE: dict[str, float] = {
     "podcast": PERSONAL_DIGEST_LISTEN_MIN_VALUE,
 }
 EMPTY_REASON_NO_ITEMS = "no_items"
+FULL_ANALYSIS_BASES = frozenset({"publisher_transcript", "asr_transcript"})
 
 
 def _utcnow(now: dt.datetime | None) -> dt.datetime:
@@ -66,7 +68,9 @@ def _candidate_rows(
         .where(
             func.substr(ArticleRecord.publish_date, 1, 10) >= coarse_start,
             func.substr(ArticleRecord.publish_date, 1, 10) <= coarse_end,
-            ArticleAnalysisRecord.status == "succeeded",
+            # 与早报候选池同一条件:强制重分析期间(pending / running / failed)上一次的权威结果仍有效
+            or_(ArticleAnalysisRecord.status == "succeeded", ArticleAnalysisRecord.analyzed_at.is_not(None)),
+            ArticleAnalysisRecord.quality_score.is_not(None),
             ArticleRecord.source_id.is_not(None),
             ArticleRecord.source_id.not_like(f"{PRIVATE_SOURCE_PREFIX}%"),
             ArticleRecord.source_id.notin_(EXCLUDED_SOURCE_IDS),
@@ -75,7 +79,6 @@ def _candidate_rows(
     if shape == "podcast":
         query = query.where(
             ArticleRecord.content_type == PODCAST_CONTENT_TYPE,
-            ArticleAnalysisRecord.quality_score.is_not(None),
             ArticleAnalysisRecord.quality_score >= min_value,
         )
     else:
@@ -155,7 +158,7 @@ def read_picks(
             if event_id in on_board or event_id in seen_events:
                 continue
             seen_events.add(event_id)
-        items.append({
+        item = {
             "id": article.id,
             "title": article.title,
             "title_zh": cached_title(article),
@@ -168,7 +171,10 @@ def read_picks(
             "kind_label": ITEM_KIND_LABELS.get(kind) or None,
             "summary": str(analysis.summary or ""),
             "event_id": event_id,
-        })
+        }
+        if shape == "podcast":
+            item["full_analysis_ready"] = str(getattr(analysis, "analysis_basis", "") or "") in FULL_ANALYSIS_BASES
+        items.append(item)
         if len(items) >= limit:
             break
     return {

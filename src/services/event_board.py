@@ -222,6 +222,21 @@ class _MemberView:
         return self.member.report_at if _ts(self.member.report_at) else (self.article.publish_date or "")
 
     @property
+    def published_at(self) -> str:
+        """展示用的发布时间(issue #221「首报」「最新」、详情时间线):``publish_date`` 可解析且不晚于该成员首见时用它,
+        否则退回 ``report_at``。``report_at`` 是归组用的截断值(首见前 72 小时内),晚入库的旧稿会被它挪近、打乱先后。"""
+
+        published = _ts(self.article.publish_date)
+        first_seen = self.first_seen_ts
+        if published and (not first_seen or published <= first_seen):
+            return self.article.publish_date or ""
+        return self.report_at
+
+    @property
+    def published_ts(self) -> float:
+        return _ts(self.published_at)
+
+    @property
     def first_seen_ts(self) -> float:
         return _ts(self.member.first_seen_at)
 
@@ -254,8 +269,8 @@ class _EventView:
     publishers: list[_Publisher]        # 按稿数 ↓、键 ↑
     latest_at: str
     latest_ts: float
-    latest_report: _MemberView          # 发布时间最晚的一篇(卡面「最新 X」)
-    first_report: _MemberView           # 发布时间最早的一篇(详情「首报」)
+    latest_report: _MemberView          # 发布时间最晚的一篇(卡面「最新 X」;按 published_at)
+    first_report: _MemberView           # 发布时间最早的一篇(详情「首报」;按 published_at)
     title: str
     title_lang: str
 
@@ -421,8 +436,8 @@ def _build_view(
         publishers=publishers,
         latest_at=latest.member.first_seen_at,
         latest_ts=latest.first_seen_ts,
-        latest_report=max(ordered, key=lambda view: (view.report_ts, view.first_seen_ts, view.article.id)),
-        first_report=min(ordered, key=lambda view: (view.report_ts, view.first_seen_ts, view.article.id)),
+        latest_report=max(ordered, key=lambda view: (view.published_ts, view.first_seen_ts, view.article.id)),
+        first_report=min(ordered, key=lambda view: (view.published_ts, view.first_seen_ts, view.article.id)),
         title=title,
         # 译题缓存按来源即中文(短译题里英文专名占比高,字符占比启发式会误判成 en);其余按占比判。
         title_lang="zh" if title_source == "translation" else _title_lang(title),
@@ -588,7 +603,7 @@ def _latest_payload(view: _MemberView) -> dict[str, Any]:
         "title_zh": _translated_title(view.article) or None,
         "source_id": view.article.source_id,
         "source_name": view.info.name,
-        "report_at": view.report_at,
+        "published_at": view.published_at,
     }
 
 
@@ -629,7 +644,7 @@ def _item_payload(
         "publisher_count": view.publisher_count,
         "member_count": view.member_count,
         "first_seen_at": event.first_seen_at,
-        "first_report_at": view.first_report.report_at,
+        "first_report_at": view.first_report.published_at,
         "latest_at": view.latest_at,
         "latest": _latest_payload(view.latest_report),
         "is_new": is_new,
@@ -710,6 +725,7 @@ def _member_payload(view: _MemberView, *, representative_id: str) -> dict[str, A
         "url": view.article.source_url,
         "publish_date": view.article.publish_date,
         "report_at": view.member.report_at,
+        "published_at": view.published_at,
         "publisher_key": view.publisher_key,
         "is_representative": view.article.id == representative_id,
         "summary": view.summary,

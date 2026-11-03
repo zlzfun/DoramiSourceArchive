@@ -36,13 +36,13 @@ ITEM_KEYS = {
     "member_count", "first_seen_at", "first_report_at", "latest_at", "latest", "is_new", "is_recent",
     "representative", "publishers", "story",
 }
-LATEST_KEYS = {"article_id", "title", "title_zh", "source_id", "source_name", "report_at"}
+LATEST_KEYS = {"article_id", "title", "title_zh", "source_id", "source_name", "published_at"}
 REPRESENTATIVE_KEYS = {"article_id", "title", "source_id", "source_name", "source_role", "url", "publish_date"}
 PUBLISHER_KEYS = {"key", "name", "count", "source_id"}
 STORY_KEYS = {"follows_event_id", "follows_title"}
 MEMBER_KEYS = {
     "article_id", "title", "title_zh", "source_id", "source_name", "source_role", "content_shape",
-    "url", "publish_date", "report_at", "publisher_key", "is_representative", "summary",
+    "url", "publish_date", "report_at", "published_at", "publisher_key", "is_representative", "summary",
 }
 FOLLOWUP_KEYS = {"event_id", "title", "first_seen_at"}
 DETAIL_KEYS = ITEM_KEYS | {"members", "followups", "merged_into"}

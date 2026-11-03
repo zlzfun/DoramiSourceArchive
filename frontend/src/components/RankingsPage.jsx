@@ -12,6 +12,7 @@ import {
   eventWindowHours,
   latestUpdate,
   logoStack,
+  memberTime,
   membersByTime,
   normalizeEventRange,
   normalizeRankingSegment,
@@ -26,7 +27,7 @@ import {
 } from '../utils/rankings';
 import { displayTitle, titleView } from '../utils/titleDisplay';
 import { useTitlePreference } from '../hooks/useTitlePreference';
-import { qualityScoreText, scoreTierClass } from '../utils/analysis';
+import { podcastReaderBasisText, qualityScoreText, scoreTierClass } from '../utils/analysis';
 import { latinLang } from '../utils/readerText';
 import { formatPublishDateTime, formatRelativeTime } from '../utils/datetime';
 import { SOURCE_ROLES, resolveCompany } from '../sourceTaxonomy';
@@ -36,15 +37,13 @@ import Sheet from './layer/Sheet';
 
 // ── 榜单(issue #221 收敛版,2026-11-03 拍板;设计稿 docs/design/issue-221-rankings/converge.html 第 2 节「收敛后」)──
 // 三段 热点事件 · 深度阅读 · 播客精选,三段同一套卡片语法(方案 §3):名次列(宋体齐线数字 + 下方变化)·
-// 主体(标题两行 → 一行摘要 → 一行元信息)· 右栏(来源徽标叠放 + 一个度量)。整行点开:标题钮铺满整行(.rk-hit)。
+// 主体(标题两行 → 一行摘要 → 一行元信息)· 右栏(来源徽标叠放 + 一个度量)。整行点开:命中钮 .rk-hit 铺满整行给焦点与读屏名,点击由行接住。
 // 热点事件点开 = 事件详情(桌面右侧抽屉 / 手机底部层,同一份内容,层原语 Drawer / Sheet);文章与单集直接进阅读窗。
 // 段与热点事件的时间范围由外层持有(ReaderWorkspace 的 view:关掉再打开回到上次的段,桌面 ⇄ 手机互切也不丢);
 // 手机:页头标题位转盘就是三段切换(MobileReader),这里只画范围说明(页头下第一块)与列表(夜航卡面)。
 
 const SEGMENT_ICONS = { events: Flame, reads: FileText, listens: Headphones };
 const ROLE_LABEL = Object.fromEntries(SOURCE_ROLES.map((role) => [role.key, role.label]));
-
-const timeOf = (member) => member?.report_at || member?.publish_date || '';
 
 // 来源徽标:目录里有这个源用它的品牌标识;没有(未订阅 / 目录未载入)按源名派生字母徽标,与早报同一兜底
 function SourceLogo({ sourceMap, sourceId, name, size = 's18' }) {
@@ -93,11 +92,12 @@ function MetaLine({ parts }) {
   );
 }
 
-// 行骨架(样页 CARDS.row):名次列与右栏只是视觉,读屏的完整说法在整行命中钮的名字里
+// 行骨架(样页 CARDS.row):名次列与右栏只是视觉,读屏的完整说法在整行命中钮的名字里。
+// 点击由 <li> 接住(命中钮的 click 冒泡上来,键盘 / 读屏激活只开一次),行内名次变化、时间、分数照常接指针,title 悬停可见
 function RankRow({ rank, move = null, title, summary, meta, side, label, onOpen, className = '' }) {
   return (
-    <li className={`rk-row ${className}`.trim()}>
-      <button type="button" className="rk-hit" aria-label={label} onClick={onOpen} />
+    <li className={`rk-row ${className}`.trim()} onClick={onOpen}>
+      <button type="button" className="rk-hit" aria-label={label} />
       <div className="rk-rank" aria-hidden="true">
         <span className="rk-num">{rank}</span>
         {move}
@@ -130,7 +130,7 @@ function EventRow({ item, range, snapshotDate, sourceMap, onOpen }) {
           parts={[
             showRecentFlag(range, item) ? <span className="rk-new" title="首次出现在近 48 小时内">近 2 天</span> : null,
             latest?.source_name ? `最新 ${latest.source_name}` : null,
-            latest?.report_at ? <RelTime value={latest.report_at} /> : null,
+            latest?.published_at ? <RelTime value={latest.published_at} /> : null,
           ]}
         />
       )}
@@ -152,6 +152,11 @@ function PickRow({ item, rank, shape, sourceMap, preferChinese, onOpen }) {
   const score = qualityScoreText(item.content_value);
   const sourceName = item.source_name || sourceMap?.[item.source_id]?.name || item.source_id || '';
   const kind = shape !== 'podcast' && item.kind_label && item.kind_label !== '资讯' ? item.kind_label : null;
+  // 播客的评分依据(「仅基于节目简介 / 基于整期内容」)随分数 title 与读屏名给出,不占元信息行(conventions §播客条目)
+  const basis = shape === 'podcast'
+    ? podcastReaderBasisText({ content_type: 'podcast_episode', podcast: { full_analysis_ready: item.full_analysis_ready === true } })
+    : '';
+  const scoreNote = score ? `内容价值 ${score}${basis ? ` · ${basis}` : ''}` : '';
   return (
     <RankRow
       className={`is-content ${shape === 'podcast' ? 'is-podcast' : ''}`}
@@ -163,11 +168,11 @@ function PickRow({ item, rank, shape, sourceMap, preferChinese, onOpen }) {
         <>
           <LogoStack sourceMap={sourceMap} logos={[{ key: item.source_id || 'source', sourceId: item.source_id, name: sourceName }]} />
           {score && (
-            <span className={`rk-score ai-grad-text ${scoreTierClass(item.content_value)}`} title={`内容价值 ${score}`}>{score}</span>
+            <span className={`rk-score ai-grad-text ${scoreTierClass(item.content_value)}`} title={scoreNote}>{score}</span>
           )}
         </>
       )}
-      label={`第 ${rank} ${shape === 'podcast' ? '集' : '篇'}：${title}${score ? `，内容价值 ${score}` : ''}，打开`}
+      label={`第 ${rank} ${shape === 'podcast' ? '集' : '篇'}：${title}${scoreNote ? `，${scoreNote}` : ''}，打开`}
       onOpen={() => onOpen(item.id)}
     />
   );
@@ -231,7 +236,7 @@ function EventDetailBody({ detail, sourceMap, preferChinese, onOpenArticle }) {
   const rep = representativeOf(data);
   const repTitle = rep ? titleView(rep, preferChinese, '') : null;
   const repSummary = data.summary || rep?.summary || '';
-  const repTime = rep ? timeOf(rep) : '';
+  const repTime = rep ? memberTime(rep) : '';
   const groups = publisherGroups(data);
   const members = membersByTime(data);
   const days = timelineDays(members);
@@ -302,7 +307,7 @@ function EventDetailBody({ detail, sourceMap, preferChinese, onOpenArticle }) {
                           data-read-origin=""
                           onClick={() => open(member.article_id)}
                         >
-                          <span className="rk-tl-time">{beijingTime(timeOf(member))}</span>
+                          <span className="rk-tl-time">{beijingTime(memberTime(member))}</span>
                           <span className="rk-tl-main">
                             <span className="rk-tl-src">
                               <SourceLogo sourceMap={sourceMap} sourceId={member.source_id} name={member.source_name} size="s15" />
@@ -329,7 +334,7 @@ function EventDetailBody({ detail, sourceMap, preferChinese, onOpenArticle }) {
             <SourceLogo sourceMap={sourceMap} sourceId={latest.source_id} name={latest.source_name} size="s15" />
             {latest.source_name}
             <span className="rk-dot" aria-hidden="true">·</span>
-            <RelTime value={timeOf(latest)} />
+            <RelTime value={memberTime(latest)} />
           </p>
           {latest.summary && <p className="rk-latest-sum" lang={latinLang(latest.summary)}>{latest.summary}</p>}
           <button type="button" className="rk-latest-link" data-read-origin="" onClick={() => open(latest.article_id)}>

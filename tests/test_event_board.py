@@ -260,6 +260,32 @@ def test_is_new_and_previous_rank_compare_with_latest_same_window_snapshot(tmp_p
     assert {item["event_id"]: item["previous_rank"] for item in before_seven["items"]}[older.id] == 3
 
 
+def test_first_and_latest_report_use_publish_time_not_the_clamped_report_at(tmp_path):
+    """检视 R1 #2:report_at 是归组用的截断值(首见前 72h 内),晚入库的旧稿会被挪近;首报 / 最新按有效发布时间。"""
+
+    sink = _sink(tmp_path, "late-ingest.db")
+    with Session(sink.engine) as session:
+        event = _event(session, hours_ago=3)
+        _article(session, "old", "media-a", hours_ago=24 * 8)      # 八天前发布、两小时前入库
+        _article(session, "mid", "media-b", hours_ago=24 * 4)      # 四天前发布、三小时前入库
+        _article(session, "future", "media-c", hours_ago=-5)       # 发布时间晚于入库(回填 / 时区错):不可信
+        for article_id, seen, report in (("old", 2, 74), ("mid", 3, 75), ("future", 1, 1)):
+            session.add(EventMemberRecord(
+                event_id=event.id, article_id=article_id, publisher_key="", report_at=_iso(report),
+                first_seen_at=_iso(seen), assigned_by="llm", created_at=_iso(seen),
+            ))
+        session.commit()
+        item = event_board.read_board(session, now=NOW)["items"][0]
+        detail = event_board.read_event(session, event.id, now=NOW)
+
+    assert item["first_report_at"] == _iso(24 * 8)
+    assert item["latest"]["article_id"] == "future" and item["latest"]["published_at"] == _iso(1)
+    published = {member["article_id"]: member["published_at"] for member in detail["members"]}
+    assert published == {"old": _iso(24 * 8), "mid": _iso(24 * 4), "future": _iso(1)}
+    # 归组用的 report_at 原样保留
+    assert {member["article_id"]: member["report_at"] for member in detail["members"]}["old"] == _iso(74)
+
+
 def test_board_item_carries_latest_and_first_report_from_publish_times(tmp_path):
     """卡面「最新 X」与详情「首报」按发布时间(report_at),不按入库时间(issue #221 拍板 9 / 10)。"""
 
@@ -280,7 +306,7 @@ def test_board_item_carries_latest_and_first_report_from_publish_times(tmp_path)
         item = event_board.read_board(session, now=NOW)["items"][0]
 
     assert item["first_report_at"] == _iso(6)
-    assert item["latest"]["article_id"] == "e2" and item["latest"]["report_at"] == _iso(4)
+    assert item["latest"]["article_id"] == "e2" and item["latest"]["published_at"] == _iso(4)
     assert item["latest"]["source_name"] and item["latest"]["source_id"] == "media-b"
     assert sorted(publisher["source_id"] for publisher in item["publishers"]) == ["media-a", "media-b", "media-c"]
 

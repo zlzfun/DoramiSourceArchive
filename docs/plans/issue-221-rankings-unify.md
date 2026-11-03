@@ -145,9 +145,11 @@ R1 三者共用 §3 的卡片语法(以 #121 方向 B 的事件卡为起点精�
   `event_board.WINDOW_HOURS = 48` 保留原义(事件开放窗口 / 近 2 天视图),新增 `READER_WINDOW_HOURS = 168`、`SNAPSHOT_WINDOWS = (168, 48)`、`RECENT_HOURS = 48`。
 - **快照按窗口**:`event_rank_snapshots` 加 `window_hours` 列(迁移 `8166665976c4`,存量行 = 48,唯一键 / 名次索引带窗口);07:00 任务两个窗口各写一份,同日重建整日替换。表不同步(接收端自建),Archive Sync 无改动。
 - **名次对比今早 07:00**:`_previous_snapshot` 取同窗口、`snapshot_date ≤ 今天` 且生成时刻 ≤ 当前的最近一份;7 点前落到昨天那份;没有快照的窗口(如 72h)`previous_rank` / `snapshot_date` 为空。
-- **榜单项新字段**:`latest`(发布时间最晚一篇的 article_id / title / title_zh / source_id / source_name / report_at)、`first_report_at`(成员最早发布时间,详情「首报」)、`is_recent`(首见 ≤ 48h,7 天视图「近 2 天」签)、`publishers[].source_id`(主体代表渠道,徽标用);详情成员加 `publisher_key`。`story.follows_first_seen_at` 随「接前报」推迟。
+- **榜单项新字段**:`latest`(发布时间最晚一篇的 article_id / title / title_zh / source_id / source_name / published_at)、`first_report_at`(成员最早发布时间,详情「首报」)、`is_recent`(首见 ≤ 48h,7 天视图「近 2 天」签)、`publishers[].source_id`(主体代表渠道,徽标用);详情成员加 `publisher_key` 与 `published_at`。`story.follows_first_seen_at` 随「接前报」推迟。
+  「发布时间」= 有效发布时间:`publish_date` 可解析且不晚于该成员首见时用它,否则退回 `report_at`——`report_at` 是归组用的截断值(首见前 72h 内),晚入库的旧稿会被它挪近(检视 R1 #2)。
 - **深度阅读 / 播客精选**:新端点 `GET /api/reader/rankings/picks?shape=article|podcast`(`services/ranking_picks.py`,游客白名单),读取时现算、滚动 7 天窗:
   深度阅读 = 非播客、推导内容类型 ∈ `READ_KINDS`、当前版本内容价值 ≥ 7.0,同事件留内容价值最高的一篇、热点事件 7 天榜上的事件整件剔除;播客精选 = 播客单集、播客分 ≥ 7.5。
+  分析行与早报候选池同一条件(`succeeded` 或 `analyzed_at` 非空,重分析期间沿用上一次权威结果);播客条目带公开事实 `full_analysis_ready`,前端拼进分数 title 与读屏名(「仅基于节目简介 / 基于整期内容」)。
   门槛取早报默认值常量(不读早报的管理面旋钮,免得调早报牵动全站榜单);可见性与热点事件榜同一判定;公共日报记录排除。条目带 `event_id`,不带「另 N 家」(样页卡面没有)。
 - **读者面不再消费** `axes` / `must_read` / `all_time_high_score` 与标签详情 / 趋势端点:接口与 07:00 标签快照保留(去处另议,见 backlog),前端调用已删。
 

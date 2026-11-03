@@ -15,6 +15,7 @@ import {
   firstReportAt,
   latestUpdate,
   logoStack,
+  memberTime,
   membersByTime,
   normalizeRankingSegment,
   publisherGroups,
@@ -141,6 +142,17 @@ test('代表报道固定取成员里标记的那篇(带中文标题与摘要);�
   assert.equal(representativeOf({ members: [] }), null);
 });
 
+test('成员时间:先读有效发布时间 published_at(晚入库的旧稿不按归组用的截断值排),旧响应退回 report_at / publish_date', () => {
+  const late = { article_id: 'late', published_at: '2026-10-24T02:00:00Z', report_at: '2026-10-30T04:00:00Z' };
+  const fresh = { article_id: 'fresh', published_at: '2026-10-28T02:00:00Z', report_at: '2026-10-29T00:00:00Z' };
+  assert.equal(memberTime(late), '2026-10-24T02:00:00Z');
+  assert.equal(memberTime({ report_at: 'r', publish_date: 'p' }), 'r');
+  assert.equal(memberTime({ publish_date: 'p' }), 'p');
+  assert.deepEqual(membersByTime({ members: [late, fresh] }).map((m) => m.article_id), ['fresh', 'late']);
+  assert.equal(firstReportAt({ members: [fresh, late] }), '2026-10-24T02:00:00Z');
+  assert.deepEqual(timelineDays([fresh, late], NOW).map((day) => day.items[0].article_id), ['fresh', 'late']);
+});
+
 test('最新进展:最新一篇不是代表报道时才有', () => {
   assert.equal(latestUpdate(DETAIL).article_id, 'l1');
   assert.equal(latestUpdate({ ...DETAIL, members: DETAIL.members.slice(3) }), null);
@@ -201,4 +213,14 @@ test('标签榜的旧样式随读者面撤出一并删除', () => {
   for (const gone of ['.ranking-tag-row', '.ranking-trend', '.ranking-content-row', '.ranking-must', '.ranking-global', '.ranking-layout']) {
     assert.ok(!css.includes(gone), `样式表不应再有 ${gone}`);
   }
+});
+
+test('行可悬停:点击由 <li> 接住、内容不再整片关指针;播客分数的 title / 读屏名带评分依据', () => {
+  const page = read('../src/components/RankingsPage.jsx');
+  assert.match(page, /<li className=\{`rk-row[^`]*`\.trim\(\)\} onClick=\{onOpen\}>/);
+  assert.match(page, /<button type="button" className="rk-hit" aria-label=\{label\} \/>/);
+  assert.match(page, /podcastReaderBasisText\(/);
+  assert.match(page, /title=\{scoreNote\}/);
+  const css = read('../src/index.css');
+  assert.ok(!/\.rk-side \{[^}]*pointer-events: none/.test(css), '.rk-side 不应再整片关指针(挡住 title)');
 });
