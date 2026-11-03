@@ -93,10 +93,15 @@ function MetaLine({ parts }) {
 }
 
 // 行骨架(样页 CARDS.row):名次列与右栏只是视觉,读屏的完整说法在整行命中钮的名字里。
-// 点击由 <li> 接住(命中钮的 click 冒泡上来,键盘 / 读屏激活只开一次),行内名次变化、时间、分数照常接指针,title 悬停可见
+// 点击由 <li> 接住(命中钮的 click 冒泡上来,键盘 / 读屏激活只开一次),行内名次变化、时间、分数照常接指针,title 悬停可见。
+// 鼠标点在行内文字上时先把焦点交给本行命中钮:详情层关掉后焦点回到这一行(层原语按打开时的焦点还焦;检视 R2 P3)
 function RankRow({ rank, move = null, title, summary, meta, side, label, onOpen, className = '' }) {
+  const onClick = (event) => {
+    event.currentTarget.querySelector('.rk-hit')?.focus({ preventScroll: true });
+    onOpen?.();
+  };
   return (
-    <li className={`rk-row ${className}`.trim()} onClick={onOpen}>
+    <li className={`rk-row ${className}`.trim()} onClick={onClick}>
       <button type="button" className="rk-hit" aria-label={label} />
       <div className="rk-rank" aria-hidden="true">
         <span className="rk-num">{rank}</span>

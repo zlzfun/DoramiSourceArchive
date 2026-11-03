@@ -217,7 +217,8 @@ test('标签榜的旧样式随读者面撤出一并删除', () => {
 
 test('行可悬停:点击由 <li> 接住、内容不再整片关指针;播客分数的 title / 读屏名带评分依据', () => {
   const page = read('../src/components/RankingsPage.jsx');
-  assert.match(page, /<li className=\{`rk-row[^`]*`\.trim\(\)\} onClick=\{onOpen\}>/);
+  assert.match(page, /<li className=\{`rk-row[^`]*`\.trim\(\)\} onClick=\{onClick\}>/);
+  assert.match(page, /querySelector\('\.rk-hit'\)\?\.focus\(/);
   assert.match(page, /<button type="button" className="rk-hit" aria-label=\{label\} \/>/);
   assert.match(page, /podcastReaderBasisText\(/);
   assert.match(page, /title=\{scoreNote\}/);
