@@ -5,6 +5,7 @@
 
 **Articles**
 - `GET /api/articles` — list/query (filters: `content_type`, `source_id`, `has_content`, `search`(FTS5 全文,标题+正文), `publish_date_start/end`, `fetched_date_start/end`, `subscribed_scope` = `off`|`only`|`prioritize`, `skip`, `limit`)
+  - `podcast_guide=any|readable|listenable`：播客已发布中文导读的任一/文字/音频能力；省略则不限，非法值 422。与其它范围条件相交，在计数和分页前生效；任务就绪标记、未发布或已撤下产物不计入。
 - `POST /api/articles` — manual entry
 - `PUT /api/articles/{id}` — update
 - `DELETE /api/articles/{id}` — delete(必要时回退日报游标)

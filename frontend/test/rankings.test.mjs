@@ -36,8 +36,8 @@ test('trend path handles empty, singleton and changing series without NaN', () =
 });
 
 test('podcast score basis never presents show notes as a full score', () => {
-  assert.equal(scoreBasisLabel('show_notes'), '简介初评');
-  assert.equal(scoreBasisLabel('full_transcript'), '全文终评');
+  assert.equal(scoreBasisLabel('show_notes'), '仅基于节目简介');
+  assert.equal(scoreBasisLabel('full_transcript'), '基于整期内容');
 });
 
 test('tag selection clears stale detail before loading the next tag', () => {

@@ -1,3 +1,4 @@
+import PodcastGuideFilter from '../PodcastGuideFilter';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ChartColumn,
@@ -128,7 +129,7 @@ export default function MobileReader({
     mode, activeSourceId, discover, openDiscover, closeDiscover, discoverShape, setDiscoverShape,
     socialView, podcastView,
     goView, goContainerAll, alignModeToArticle,
-    kindFilter, setKindFilter, kindFacetItems,
+    kindFilter, setKindFilter, kindFacetItems, podcastGuideFilter, setPodcastGuideFilter,
     scope, activeTagId, refreshInterests,
     grouping,
     // 搜索
@@ -408,7 +409,7 @@ export default function MobileReader({
   // ── 内容 Tab 的列表位置(批 3a):切去早报 / 订阅 / 榜单时列表不渲染,回来按同一份查询落回原处——推入页与内容 Tab 各记各的。
   //    离开时记下页头下沿第一条的序号与离滚动区顶的距离;回来先落 scrollTop,再按那一条对齐。刚挂载的几帧里版面还有几像素的微动,
   //    浏览器的滚动锚定会跟着把位置挪开约 10px:对齐窗口内先关掉锚定,版面落定后再对齐一次、还原;要在下面的镀层重算之前 ──
-  const contentListKey = JSON.stringify([mode, activeSourceId, activeTagId, scope, searchQuery, unreadOnly, kindFilter]);
+  const contentListKey = JSON.stringify([mode, activeSourceId, activeTagId, scope, searchQuery, unreadOnly, kindFilter, podcastGuideFilter]);
   const contentScrollRef = useRef(null);
   const contentScroller = () => shellRef.current?.querySelector('.m-content :is(.m-list, .reader-social-scroll)') || null;
   const saveContentPlace = () => {
@@ -469,7 +470,8 @@ export default function MobileReader({
     }[kind] || (() => discoverFor(mode));
     return { label: EMPTY_ACTION_LABELS[kind], onClick: run };
   };
-  const listEmptyAction = emptyActionOf();
+  const listEmptyAction = podcastGuideFilter
+    ? { label: '清除导读筛选', onClick: () => setPodcastGuideFilter('') } : emptyActionOf();
 
   // ── 内容 Tab 列表顶一行(拍板 31 第 9 条):只看未读开着时「◉ 只看未读」(页头一像素不动)。
   //    批 2 过渡形态里这一行还列来源 / 收藏 / 兴趣筛选胶囊;批 3a 起这些收窄都在订阅 Tab 的推入页,内容 Tab 只剩订阅聚合 ──
@@ -515,7 +517,7 @@ export default function MobileReader({
           </GlassBtn>
           {/* 全部标读两根轴同一枚钮(hook 内按轴分流:推水位 / 逐篇写行);
               按内容类型筛选时收起——推水位会连同没显示的其它类型一并标掉 */}
-          {!kindFilter && (
+          {!kindFilter && !podcastGuideFilter && (
             <GlassBtn
               label="本视图全部标为已读"
               onClick={handleMarkAllRead}
@@ -688,6 +690,7 @@ export default function MobileReader({
           ) : (
           <div className="m-list" ref={listRef}>
             {scopeRow}
+            {podcastView && searchOpen && <PodcastGuideFilter mobile value={podcastGuideFilter} onChange={setPodcastGuideFilter} />}
             {/* 内容类型筛选带(issue #178):与桌面同一组件语法,放在列表顶而非顶栏(顶栏须保持单行) */}
             {kindOptions.length > 0 && (
               <div className="reader-kind-band m-kind-band" role="group" aria-label="按内容类型筛选">
@@ -733,7 +736,7 @@ export default function MobileReader({
               <div className="reader-empty">
                 <Inbox className="h-6 w-6 text-slate-300" />
                 <span>
-                  {searchQuery
+                  {(searchQuery || podcastGuideFilter)
                     ? (podcastView ? '没有匹配的播客' : '没有匹配的文章')
                     : unreadOnly
                       ? '没有未读内容，都看完啦'
@@ -748,7 +751,7 @@ export default function MobileReader({
                 )}
               </div>
             ) : (
-              <div key={`${activeSourceId ?? '__all__'}|${activeTagId ?? ''}|${mode}|${scope.axis}${scope.favorite ? '+f' : ''}|${kindFilter}`}>
+              <div key={`${activeSourceId ?? '__all__'}|${activeTagId ?? ''}|${mode}|${scope.axis}${scope.favorite ? '+f' : ''}|${kindFilter}|${podcastGuideFilter}`}>
                 {listPlan.map((entry) => {
                   const { article } = entry;
                   // 夜航卡(批 4c,样页 c-card / c-day):日期组头在长按包装之外、不吸顶;卡与卡间距由 .m-press 给

@@ -101,15 +101,24 @@ function podcastTranscriptBasisText(value) {
   return label.startsWith('ASR') ? `基于 ${label}` : `基于${label}`;
 }
 
-/** 播客唯一分数的输入依据标签；不返回任何第二套分值。 */
+function podcastHasFullAnalysis(article) {
+  return podcastProjection(article).full_analysis_ready === true
+    || TRANSCRIPT_ANALYSIS_BASES.has(podcastAnalysisBasis(article));
+}
+
+/** 阅读面只解释资料范围，处理阶段与诊断标签留在管理台。 */
+export function podcastReaderBasisText(article) {
+  if (article?.content_type !== 'podcast_episode') return '';
+  return podcastHasFullAnalysis(article) ? '基于整期内容' : '仅基于节目简介';
+}
+
+/** 管理面播客唯一分数的输入依据标签；不返回任何第二套分值。 */
 export function podcastAssessmentMeta(article) {
   if (article?.content_type !== 'podcast_episode') return null;
   if (!qualityScoreText(article?.quality_score) && !String(article?.score_reason || '').trim()) {
     return null;
   }
-  const basis = podcastAnalysisBasis(article);
-  if (podcastProjection(article).full_analysis_ready === true
-      || TRANSCRIPT_ANALYSIS_BASES.has(basis)) {
+  if (podcastHasFullAnalysis(article)) {
     return {
       label: '全文深度分析',
       note: 'AI 已分析整期内容，关键结论可回到原节目核验',
@@ -322,7 +331,7 @@ export function hasReadableAnalysis(article) {
   );
 }
 
-const PODCAST_GUIDE_ACTIVE = new Set(['queued', 'summarizing', 'synthesizing']);
+const PODCAST_GUIDE_ACTIVE = new Set(['queued', 'summarizing', 'synthesizing', 'retry_wait']);
 
 export function analysisNeedsPolling(article) {
   const status = article?.analysis_status;

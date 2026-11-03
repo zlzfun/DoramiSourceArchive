@@ -140,7 +140,7 @@ export default function MobileArticlePage({
   };
 
   const isFav = favoriteIds.has(activeArticle.id);
-  const analysisStatus = analysisStatusMeta(activeArticle, { podcast: podcastView });
+  const analysisStatus = podcastView ? null : analysisStatusMeta(activeArticle);
   const listenList = podcastView
     ? podcastListenEntries(activeArticle, { aiEnabled, ondemandEnabled: ondemand.podcast === true })
     : articleListenEntries(activeArticle, { aiEnabled, ondemandEnabled: ondemand.article === true });

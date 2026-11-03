@@ -81,8 +81,8 @@ export function polledKindChanges(articles, fresh) {
  * 扣总数(翻页可能已拿到服务端的新总数),调用方应整窗重拉一份带总数与分面的快照。
  * 不带筛选时分析结果不影响成员,返回 false。
  */
-export function polledMembershipChanged(articles, inFlightIds, polledIds, { kindFilter = '', tagSearch = false } = {}) {
-  if (!kindFilter && !tagSearch) return false;
+export function polledMembershipChanged(articles, inFlightIds, polledIds, { kindFilter = '', tagSearch = false, podcastGuideFilter = '' } = {}) {
+  if (!kindFilter && !tagSearch && !podcastGuideFilter) return false;
   if (!Array.isArray(articles) || !inFlightIds || !polledIds) return false;
   return articles.some((article) => inFlightIds.has(article?.id) && !polledIds.has(article?.id));
 }

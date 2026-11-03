@@ -32,7 +32,7 @@ export function rankingTrendPath(points, width = 160, height = 42) {
 }
 
 export function scoreBasisLabel(value) {
-  if (value === 'full_transcript') return '全文终评';
-  if (value === 'show_notes') return '简介初评';
+  if (value === 'full_transcript') return '基于整期内容';
+  if (value === 'show_notes') return '仅基于节目简介';
   return '全文评分';
 }

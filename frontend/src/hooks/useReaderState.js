@@ -667,14 +667,21 @@ export function useReaderState({
   const setKindFilter = useCallback((kind) => {
     setKindChoice({ key: kindScopeKey, kind: kind || '' });
   }, [kindScopeKey, setKindChoice]);
+  const [guideChoice, setGuideChoice] = useState({ key: '', value: '' });
+  if (guideChoice.key && guideChoice.key !== kindScopeKey) setGuideChoice({ key: '', value: '' });
+  const podcastGuideFilter = mode === 'podcast' && searchOpen && guideChoice.key === kindScopeKey
+    ? guideChoice.value : '';
+  const setPodcastGuideFilter = useCallback((value) => {
+    setGuideChoice({ key: kindScopeKey, value });
+  }, [kindScopeKey]);
   // gen = 列表首页加载代次:分析轮询的分面增量只应用到它开始时的那一代(见 refreshAnalysisStates)
   const [kindFacets, setKindFacets] = useState({ key: '', gen: 0, items: [] });
 
   // ── 文章列表(主列表实例;列表本身在 hooks/useArticleList,issue #230 批 3a 拆出,手机推入页另起一个实例)──
   // 查询对象的身份 = 作用域:任一字段(含 scope 对象本身)换了即清场重拉,与拆分前 loadArticles 的依赖同一组
   const listQuery = useMemo(
-    () => ({ activeSourceId, activeTagId, mode, scope, tagSearch, searchQuery, unreadOnly, kindFilter }),
-    [activeSourceId, activeTagId, mode, scope, tagSearch, searchQuery, unreadOnly, kindFilter],
+    () => ({ activeSourceId, activeTagId, mode, scope, tagSearch, searchQuery, unreadOnly, kindFilter, podcastGuideFilter }),
+    [activeSourceId, activeTagId, mode, scope, tagSearch, searchQuery, unreadOnly, kindFilter, podcastGuideFilter],
   );
   // 换作用域清场:清右栏(深链落地那一次保留——分享深链要「切作用域 + 选中该篇」一次完成,
   // 而清场会把刚 selectArticle 的右栏立刻抹掉);新内容增量检测重新起算
@@ -1259,6 +1266,7 @@ export function useReaderState({
     setActiveSourceId(null);
     setActiveTagId(null);
     setSearchOpen(false);
+    setGuideChoice({ key: '', value: '' });
     setSearchInput('');
   };
   // 单源=来源轴的下钻:源所属容器自动点亮。从发现页预览 / 文章行源名进来时可能停在兴趣轴上,
@@ -1313,6 +1321,7 @@ export function useReaderState({
       setDiscover(false);
       setActiveSourceId(article.source_id || null);
       setActiveTagId(null);
+      setGuideChoice({ key: '', value: '' });
       setKindChoice(EMPTY_KIND_CHOICE); // 导航到具体一篇:退出类型筛选,作用域 key 不变时也不留旧筛选
       const nextMode = ctx.shapeOfSource(article.source_id);
       setMode(nextMode);
@@ -1380,7 +1389,10 @@ export function useReaderState({
   };
   // 搜索开关(条目列头就地展开):关闭即清词与标签过滤,列表回到无过滤。
   const toggleSearch = () => {
-    if (searchOpen) setSearchInput('');
+    if (searchOpen) {
+      setSearchInput('');
+      setGuideChoice({ key: '', value: '' });
+    }
     setSearchOpen(!searchOpen);
   };
   // 视图轨激活态 = 发现页 或 当前容器(源内保持点亮——层级关系,不再互斥)
@@ -1489,7 +1501,7 @@ export function useReaderState({
     socialView, podcastView, railActive, listTitle, listSubtitle,
     goView, goSource, goTag, goContainerAll, dropNarrowing, alignModeToArticle,
     // 内容类型筛选(issue #178)
-    kindFilter, setKindFilter, kindFacetItems,
+    kindFilter, setKindFilter, kindFacetItems, podcastGuideFilter, setPodcastGuideFilter,
     // 左栏一根轴(issue #27 五稿)
     scope, setAxis, toggleFavoriteScope, activeTagId, activeTagName, interestGroups, hasInterests, refreshInterests,
     interestAxisEnabled, showUnsubscribedMark, showInterestHit,

@@ -8814,7 +8814,7 @@ input[type="radio"] {
     display: flex; flex-direction: column; gap: 9px;
     transition: opacity 480ms var(--motion-ease), transform 480ms var(--motion-ease);
   }
-  /* 卡头小标:渐变 ✦ +「AI 速读」(播客为「全文导读 / 简介导读」) */
+  /* 卡头小标:渐变 ✦ +「AI 速读」;播客只有评分理由时标「评分参考」 */
   .reader-ai-layer-title {
     display: flex; align-items: center; gap: 7px; min-width: 0;
     color: var(--dorami-ink-2); font-size: 13px; font-weight: 600; letter-spacing: 0.02em;
@@ -13395,8 +13395,7 @@ input[type="radio"] {
   background: var(--dorami-soft);
   color: var(--dorami-ink-2);
 }
-/* (合流 issue-7 播客打磨:「简介初评」提示行随阅读窗分析框一起退役,语义并入 AiReadingCard
-   的 podcast 变体——摘要层「简介导读」+ 依据层「简介初评」;.reader-analysis-basis 类删除) */
+/* 播客处理阶段留管理面;阅读窗使用 AI 速读卡,资料范围只随评分说明给出(issue #245)。 */
 .reader-analysis-top { display: flex; align-items: center; gap: 12px; }
 .reader-analysis-score { display: inline-flex; flex: none; align-items: baseline; gap: 6px; }
 .reader-analysis-score strong { color: var(--dorami-accent-ink); font-size: 22px; line-height: 1; font-variant-numeric: tabular-nums; }

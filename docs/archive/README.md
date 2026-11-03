@@ -30,6 +30,10 @@
 
 - [issue-239-podcast-list.md](./issue-239-podcast-list.md) — 用户验收采用的方案、验证边界与待完成的交叉检视记录。
 
+## 播客读者语义与导读筛选(2026-11,issue #245)
+
+- [issue-245-reader-summary.md](./issue-245-reader-summary.md) — 统一 AI 速读与评分依据，保留优质/导读标签，书本和耳机表示能力；搜索筛选、测试矩阵及用户验收与检视记录，未合入发布。
+
 ## 阅读器演进(2026-07,v3.2 → v3.10)
 
 - [reader-reshell-plan.md](./reader-reshell-plan.md) — **主档**:按设计样页重构四带式阅读器的五轮记录

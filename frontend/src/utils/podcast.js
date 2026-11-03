@@ -60,7 +60,7 @@ export function podcastProcessingMeta(status, hasCondensedAudio = false) {
     : { label: '仅提供原节目', tone: 'idle' };
 }
 
-const GENERATING_WITHOUT_TEXT = new Set(['queued', 'summarizing', 'synthesizing']);
+const GENERATING_WITHOUT_TEXT = new Set(['queued', 'summarizing', 'synthesizing', 'retry_wait']);
 
 /**
  * 列表只提示可用导读或读者正在等待的生成任务，不重复「只有原节目」的默认态。

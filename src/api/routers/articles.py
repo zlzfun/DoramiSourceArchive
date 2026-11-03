@@ -15,7 +15,7 @@ current_username 经 _app() 延迟动态调用。
 
 import importlib
 import json
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
@@ -70,6 +70,30 @@ from services import user_sources as user_sources_service
 from services import sync_consumer_policy
 
 router = APIRouter(tags=["articles"])
+
+
+def podcast_guide_condition(availability: str):
+    """Use the same published artifacts as reader projections, before pagination."""
+    readable = ArticleRecord.id.in_(
+        select(PodcastTextPublicationRecord.episode_id)
+        .join(PodcastTextArtifactRecord, PodcastTextArtifactRecord.id == PodcastTextPublicationRecord.artifact_id)
+        .where(
+            PodcastTextPublicationRecord.kind == "digest_blog_zh",
+            PodcastTextPublicationRecord.status == "published",
+            PodcastTextPublicationRecord.published_at.is_not(None),
+            PodcastTextArtifactRecord.episode_id == PodcastTextPublicationRecord.episode_id,
+            PodcastTextArtifactRecord.kind == PodcastTextPublicationRecord.kind,
+            PodcastTextArtifactRecord.authority_id == PodcastTextPublicationRecord.authority_id,
+        )
+    )
+    listenable = ArticleRecord.id.in_(select(PodcastArtifactRecord.episode_id).where(
+        PodcastArtifactRecord.kind == "digest_audio_zh",
+        PodcastArtifactRecord.status == "published",
+    ))
+    condition = {"readable": readable, "listenable": listenable}.get(availability)
+    if condition is None:
+        condition = or_(readable, listenable)
+    return and_(ArticleRecord.content_type == "podcast_episode", condition)
 
 
 def _app():
@@ -302,6 +326,7 @@ def get_articles(
         with_interest: bool = False,  # 给返回条目附 interest_hits(列表命中胶囊)
         shape: Optional[str] = None,  # article | social | podcast：阅读器容器（旧值 bulletin 视同 article）
         kind: Optional[str] = None,  # CSV：内容类型（issue #178），如 paper,tutorial
+        podcast_guide: Optional[Literal["any", "readable", "listenable"]] = None,
         kind_facets: bool = False,  # 附带当前范围（不含 kind 自身）的各内容类型计数，供筛选条取选项
         unread_only: bool = False,  # 只看未读（按当前用户订阅源的水位+逐篇已读判定）
         with_unread: bool = False,  # 给返回条目附 unread 标记（页级，reader 列表用）
@@ -464,6 +489,10 @@ def get_articles(
         cond = content_shape_condition(shape_value, session)
         query = query.where(cond)
         count_query = count_query.where(cond)
+    if podcast_guide:
+        guide_cond = podcast_guide_condition(podcast_guide)
+        query = query.where(guide_cond)
+        count_query = count_query.where(guide_cond)
     if unread_only:
         # 未读 = 订阅源内 fetched_date 越过水位 ∧ 未逐篇读过；无可判定源时显式空集。
         # 订阅谓词关掉(全站范围)时,订阅外的源没有水位:按逐篇读态判定(没读过即未读)。

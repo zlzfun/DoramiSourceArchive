@@ -77,7 +77,7 @@ export default function ReaderWorkspace({ mobile, surfaceActive = true, ...props
   const scrollRef = useRef({});
   const previousLayout = useRef(mobile);
   const articleKey = rs.activeArticle?.id;
-  const listKey = JSON.stringify([rs.mode, rs.activeSourceId, rs.activeTagId, rs.scope, rs.searchQuery, rs.unreadOnly, rs.kindFilter]);
+  const listKey = JSON.stringify([rs.mode, rs.activeSourceId, rs.activeTagId, rs.scope, rs.searchQuery, rs.unreadOnly, rs.kindFilter, rs.podcastGuideFilter]);
   const captureScroll = (event) => {
     const el = event.target;
     // 手机订阅 Tab 的推入页是另一个列表实例(issue #230 批 3a):它的滚动不是主列表的位置
