@@ -1,3 +1,4 @@
+import PodcastGuideFilter from './PodcastGuideFilter';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Search,
@@ -71,7 +72,7 @@ import { isCompactKind, kindChipLabel, kindFilterOptions, kindKickerLabel } from
 import {
   analysisStatusMeta,
   displayAnalysisTags,
-  podcastAssessmentMeta,
+  podcastReaderBasisText,
   primaryScoreOf,
   scoreDisclaimer,
   scoreTierClass,
@@ -277,9 +278,9 @@ export const ArticleRow = memo(function ArticleRow({
   const scoreTier = scoreTierClass(primaryScore?.value);   // issue #54:按分值分档着色
   const scoreTitle = primaryScore ? `${primaryScore.label} ${score}。${scoreDisclaimer(primaryScore.key)}` : '';
   const analysisStatus = analysisStatusMeta(article, { podcast: entryPodcast });
-  const podcastAssessment = entryPodcast ? podcastAssessmentMeta(article) : null;
-  const podcastScoreTitle = podcastAssessment
-    ? `${scoreTitle} ${podcastAssessment.label}：${podcastAssessment.note}`
+  const podcastBasis = entryPodcast ? podcastReaderBasisText(article) : '';
+  const podcastScoreTitle = podcastBasis
+    ? `${scoreTitle} ${podcastBasis}`
     : scoreTitle;
   // 内容类型(论文 / 教程 / 观点 / 版本更新…):源名后的一个词,资讯不挂(issue #178)。
   // issue #184:列表不再挂主题标签,内容类型也不画框——标签只在阅读窗出现,条目行只回答「谁发的、说了什么、值不值得点开」。
@@ -341,7 +342,7 @@ export const ArticleRow = memo(function ArticleRow({
                 {score && (
                   <span className={`reader-entry-score ai-grad-text ${scoreTier}`} title={podcastScoreTitle}>
                     {score}
-                    {podcastAssessment && <span className="sr-only">（{podcastAssessment.label}）</span>}
+                    {podcastBasis && <span className="sr-only">（{podcastBasis}）</span>}
                   </span>
                 )}
               </span>
@@ -356,11 +357,17 @@ export const ArticleRow = memo(function ArticleRow({
                 {podcastAvailability && (
                   <span className="reader-podcast-availability">
                     {podcastAvailability.kind === 'audio'
-                      ? <Headphones aria-hidden="true" />
+                      ? <>
+                        {podcast?.premium_guide?.blog_ready && <BookOpenText aria-hidden="true" />}
+                        <Headphones aria-hidden="true" />
+                      </>
                       : podcastAvailability.kind === 'text'
                         ? <BookOpenText aria-hidden="true" />
                         : <Loader2 aria-hidden="true" />}
                     <span>{podcastAvailability.label}</span>
+                    {podcastAvailability.kind === 'audio' && podcast?.premium_guide?.blog_ready && (
+                      <span className="sr-only">（也可阅读中文导读）</span>
+                    )}
                   </span>
                 )}
               </span>
@@ -459,7 +466,7 @@ export default function ReaderTab({
     mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover, discoverShape, setDiscoverShape,
     socialView, podcastView, railActive, listTitle, listSubtitle,
     goView, goSource, goTag,
-    kindFilter, setKindFilter, kindFacetItems,
+    kindFilter, setKindFilter, kindFacetItems, podcastGuideFilter, setPodcastGuideFilter,
     scope, setAxis, toggleFavoriteScope, activeTagId, interestGroups, hasInterests, refreshInterests,
     interestAxisEnabled, showUnsubscribedMark, showInterestHit,
     activeSourceHidden, activeUnsubscribed, grouping,
@@ -564,7 +571,7 @@ export default function ReaderTab({
   // 列表内容高度变化(切源/追加/加载态)后重算浮层滚动条滑块
   useEffect(() => { resyncListScrollbar(); }, [articles, articlesLoading, activeArticle, resyncListScrollbar]);
 
-  const activeAnalysisStatus = analysisStatusMeta(activeArticle, { podcast: podcastView });
+  const activeAnalysisStatus = podcastView ? null : analysisStatusMeta(activeArticle);
   // 标题区尾行动作(语言二段 + 查看原文):有标签时住尾行右缘,无标签时并入署名行右缘——
   // 标题下不留一片只挂着两个钮的空白(样页「分析在途」帧即此形态)。
   const paneTags = activeArticle ? displayAnalysisTags(activeArticle) : [];
@@ -1184,7 +1191,7 @@ export default function ReaderTab({
               </button>
               {/* 全部标读两根轴同一枚钮:订阅轴推源水位,兴趣轴按范围逐篇写行(hook 内分流)。
                   按内容类型筛选时收起:标读按源水位推进,会连同没显示的其它类型一并标掉。 */}
-              {!kindFilter && (
+              {!kindFilter && !podcastGuideFilter && (
                 <button
                   type="button"
                   onClick={handleMarkAllRead}
@@ -1210,6 +1217,8 @@ export default function ReaderTab({
             {searchOpen ? <X className="h-4 w-4" /> : <Search className="h-4 w-4" />}
           </button>
         </div>
+
+        {podcastView && searchOpen && <PodcastGuideFilter value={podcastGuideFilter} onChange={setPodcastGuideFilter} />}
 
         {/* 内容类型筛选带(issue #178):列头下的过滤器带,只在文章容器出现;选项来自列表首页的
             分面计数(不含 kind 自身的同一范围),计数为 0 的类型不列。单选,再点一次取消。 */}
@@ -1288,7 +1297,7 @@ export default function ReaderTab({
             <div className="reader-empty">
               {favOnly ? <Star className="h-6 w-6 text-slate-300" /> : <Inbox className="h-6 w-6 text-slate-300" />}
               <span>
-                {searchQuery
+                {(searchQuery || podcastGuideFilter)
                   ? (podcastView ? '没有匹配的播客' : '没有匹配的文章')
                   : favOnly
                     ? '当前范围还没有收藏，阅读时点右上角星标即可收藏'
@@ -1307,7 +1316,7 @@ export default function ReaderTab({
             </div>
           ) : (
             /* key 按视图范围重挂载,切源/切容器时列表整体淡入(A1) */
-            <div key={`${activeSourceId ?? '__all__'}|${activeTagId ?? ''}|${mode}|${scope.axis}${scope.favorite ? '+f' : ''}|${kindFilter}`} className="reader-list-enter">
+            <div key={`${activeSourceId ?? '__all__'}|${activeTagId ?? ''}|${mode}|${scope.axis}${scope.favorite ? '+f' : ''}|${kindFilter}|${podcastGuideFilter}`} className="reader-list-enter">
               {listPlan.map((entry) => {
                 const { article } = entry;
                 return (

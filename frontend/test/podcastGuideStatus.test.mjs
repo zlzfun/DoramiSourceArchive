@@ -49,14 +49,14 @@ test('readable text survives audio generation, retries and failures with one qui
 });
 
 test('a pending guide stays visible; original-only rows have no availability label', () => {
-  for (const status of ['queued', 'summarizing', 'synthesizing']) {
+  for (const status of ['queued', 'summarizing', 'synthesizing', 'retry_wait']) {
     assert.deepEqual(
       podcastListAvailabilityMeta({ premium_guide: { blog_ready: false, status } }),
       { label: '导读生成中…', kind: 'generating' },
       status,
     );
   }
-  for (const status of ['failed', 'retry_wait', 'not_requested', 'ready', 'unknown', '']) {
+  for (const status of ['failed', 'not_requested', 'ready', 'unknown', '']) {
     assert.deepEqual(
       podcastListAvailabilityMeta({ premium_guide: { status } }),
       null,

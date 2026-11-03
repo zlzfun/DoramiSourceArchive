@@ -7,7 +7,7 @@
 import { formatPodcastDuration, podcastOf } from './podcast.js';
 import { isPlayableAudioUrl } from './playbackUrl.js';
 
-const GUIDE_ACTIVE = new Set(['queued', 'summarizing', 'synthesizing']);
+const GUIDE_ACTIVE = new Set(['queued', 'summarizing', 'synthesizing', 'retry_wait']);
 const LISTEN_ACTIVE = new Set(['queued', 'narrating', 'synthesizing']);
 
 const lower = (value) => String(value || '').trim().toLowerCase();

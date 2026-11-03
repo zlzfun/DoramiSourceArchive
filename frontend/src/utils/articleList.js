@@ -13,7 +13,7 @@ const FAVORITES = Object.freeze({ axis: 'subscribed', favorite: true });
 const INTEREST = Object.freeze({ axis: 'interest', favorite: false });
 
 // 列表请求参数的单一拼装点:轴 + 下钻项 + 收藏 + 容器形态 + 读态 + 搜索(列表首拉与分析轮询共用)
-export function buildListFilters({ activeSourceId, activeTagId, mode, scope, tagSearch, searchQuery, unreadOnly, kindFilter }) {
+export function buildListFilters({ activeSourceId, activeTagId, mode, scope, tagSearch, searchQuery, unreadOnly, kindFilter, podcastGuideFilter }) {
   const filters = {};
   if (activeSourceId) filters.source_id = activeSourceId;
   else filters.shape = mode; // 容器分流(文章/播客/社交各取自己那类)
@@ -33,6 +33,7 @@ export function buildListFilters({ activeSourceId, activeTagId, mode, scope, tag
   filters.with_interest = 'true';  // 条目附命中的兴趣标签名(命中胶囊)
   if (unreadOnly) filters.unread_only = 'true';
   if (kindFilter) filters.kind = kindFilter; // 内容类型筛选(issue #178),单选
+  if (mode === 'podcast' && podcastGuideFilter) filters.podcast_guide = podcastGuideFilter;
   return filters;
 }
 
