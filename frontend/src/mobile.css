@@ -75,8 +75,9 @@
    index.css 的 .bp-* / .bp-cal-* 是未分层且排在本文件之后的规则,这里一律多挂一级类名压过它们(.bp-sheet.is-mobile … / .m-sheet.m-hist-sheet …)。
    字号只用 --m-fs-* 八档(conventions §10);刻度之外的只有早报头条的展示字号(37)与分数身份线(评分栏 40)。 */
 
-/* ── 榜单 Tab:页头标题位接管「榜单」与 文章榜 / 播客榜(批 2),范围说明是页头下第一块,
-      话题 / 产业 / 实体 是带镜片拇指的宽分段,榜卡是夜航卡面(样页 rankings 屏)── */
+/* ── 榜单 Tab(issue #221 收敛版,设计稿 docs/design/issue-221-rankings/converge.html):页头标题位转盘 = 热点事件 / 深度阅读 / 播客精选
+      (页头下不再有第二个「榜单」标题,#230 审计 M-21);范围说明是页头下第一块;热点事件的 本周 / 近 2 天 是带镜片拇指的宽分段;
+      每段列表是一张夜航卡面(.rk-card)。卡片语法与桌面同一套 .rk-row(index.css),这里只改手机刻度(--m-fs-* 八档 + 分数身份线 19px)── */
 .m-content > .rankings-page {
   grid-column: auto;
   flex: 1;
@@ -125,110 +126,77 @@
   pointer-events: none;
 }
 [data-theme="dark"] .rankings-page.is-mobile .ranking-axis::after { background: color-mix(in oklab, var(--dorami-ink) 16%, transparent); box-shadow: var(--glass-edge); }
-.rankings-page.is-mobile .ranking-axis button,
-.rankings-page.is-mobile .ranking-axis button:hover,
-.rankings-page.is-mobile .ranking-axis button.is-on {
+.rankings-page.is-mobile .ranking-axis button {
   position: relative;
   z-index: 1;
   min-width: var(--tap);
   min-height: var(--tap);
   padding: 0 8px;
+  border-radius: var(--r-pill);
   background: none;
   font-size: var(--m-fs-sm);
   font-weight: 400;
   color: var(--dorami-muted);
+  transition: color var(--motion-fast) var(--motion-ease);
 }
 .rankings-page.is-mobile .ranking-axis button.is-on { color: var(--dorami-ink); }
-.rankings-page.is-mobile .ranking-coverage-note { width: auto; margin: 12px 0 0; }
 .rankings-page.is-mobile .ranking-state { width: auto; min-height: calc(var(--vh-full) * 0.44); font-size: var(--m-fs-sm); }
-.rankings-page.is-mobile .ranking-layout { display: block; width: auto; margin: 0; }
-.rankings-page.is-mobile .ranking-tags,
-.rankings-page.is-mobile .ranking-detail,
-.rankings-page.is-mobile .ranking-global,
-.rankings-page.is-mobile .ranking-must {
-  width: auto;
-  margin: 12px 0 0;
-  padding: 0 0 6px;
-  border: 0;
+.rankings-page.is-mobile .rk-card {
+  --rk-bg: var(--m-card);
+  margin: 8px 0 0;
   border-radius: var(--r-card);
   background: var(--m-card);
   box-shadow: var(--sh-1);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
   overflow: hidden;
 }
-.rankings-page.is-mobile .ranking-section-head {
+[data-theme="dark"] .rankings-page.is-mobile .rk-card { box-shadow: inset 0 1px 0 var(--dorami-edge); }
+.rankings-page.is-mobile .rk-list { margin: 0; }
+.rankings-page.is-mobile .rk-row { grid-template-columns: 26px minmax(0, 1fr) auto; column-gap: 10px; padding: 12px 14px 12px 8px; border-radius: 0; }
+.rankings-page.is-mobile .rk-row + .rk-row::before { left: 44px; right: 0; }
+.rankings-page.is-mobile .rk-row:active { background: var(--dorami-hover); }
+.rankings-page.is-mobile .rk-num { font-size: var(--m-fs-lg); }
+.rankings-page.is-mobile .rk-move,
+.rankings-page.is-mobile .rk-new { font-size: var(--m-fs-xs); }
+.rankings-page.is-mobile .rk-title { font-size: var(--m-fs-base); }
+.rankings-page.is-mobile .rk-sum { font-size: var(--m-fs-sm); }
+.rankings-page.is-mobile .rk-meta { font-size: var(--m-fs-xs); }
+.rankings-page.is-mobile .rk-side { min-width: 44px; }
+.rankings-page.is-mobile .rk-score { font-size: 19px; }
+.rankings-page.is-mobile .rk-metric { font-size: var(--m-fs-xs); }
+.rankings-page.is-mobile .rk-metric b { font-size: var(--m-fs-md); }
+.rankings-page.is-mobile .rk-empty { padding: 48px 16px; }
+.rankings-page.is-mobile .rk-empty p { font-size: var(--m-fs-md); }
+
+/* ── 热点事件详情 = 底部层(层原语 Sheet,portal 到 body;抓手是真按钮、头部可下拖关):头部(眉头 / 标题 / 元信息)在抓手下、
+      同属可拖区;正文自己滚。内容与桌面抽屉同一份(index.css .rk-rep / .rk-pubs / .rk-tl),这里换手机刻度与 44 命中 ── */
+.m-sheet.rk-sheet {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 2px 8px;
+  flex-direction: column;
+  max-height: calc(var(--vh-full) - var(--sat) - 48px);
+  padding: 6px 0 0;
+}
+.rk-shead-row { padding: 0 18px 12px; border-bottom: 1px solid var(--dorami-border-soft); }
+.rk-sheet .rk-kicker { font-size: var(--m-fs-xs); }
+.rk-sheet .rk-dtitle { font-size: var(--m-fs-xl); }
+.rk-sheet .rk-dmeta { font-size: var(--m-fs-xs); }
+.rk-sbody {
+  --rk-bg: var(--dorami-surface);
+  flex: 1;
   min-height: 0;
-  margin: 0;
-  padding: 14px 16px 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 16px 18px calc(24px + var(--sab));
 }
-.rankings-page.is-mobile .ranking-section-head > div { display: contents; }
-.rankings-page.is-mobile .ranking-must .ranking-section-head { display: grid; justify-content: stretch; }
-.rankings-page.is-mobile .ranking-section-head .card-title { font-size: var(--m-fs-base); line-height: 1.4; }
-.rankings-page.is-mobile .ranking-section-head .card-title svg { width: 16px; height: 16px; color: var(--dorami-accent-ink); }
-.rankings-page.is-mobile .ranking-section-head .tiny-meta { font-size: var(--m-fs-xs); line-height: 1.55; color: var(--dorami-faint); }
-.rankings-page.is-mobile .ranking-tags ol { margin: 0; }
-.rankings-page.is-mobile .ranking-tag-row,
-.rankings-page.is-mobile .ranking-tag-row:hover {
-  grid-template-columns: 24px minmax(0, 1fr) auto 32px;
-  gap: 10px;
-  min-height: var(--tap);
-  padding: 0 16px;
-  border-radius: 0;
-  background: none;
-  color: var(--dorami-ink);
-}
-.rankings-page.is-mobile .ranking-tag-row:active { background: var(--dorami-hover); }
-.rankings-page.is-mobile .ranking-tag-row.is-on { background: var(--dorami-wash); }
-.rankings-page.is-mobile .ranking-tag-rank,
-.rankings-page.is-mobile .ranking-content-rank {
-  font-family: var(--font-score);
-  font-size: var(--m-fs-lg);
-  font-weight: 600;
-  text-align: center;
-  color: var(--dorami-faint);
-  font-variant-numeric: lining-nums tabular-nums;
-}
-.rankings-page.is-mobile .ranking-tag-name { font-size: var(--m-fs-base); font-weight: 400; }
-.rankings-page.is-mobile .ranking-tag-row.is-on .ranking-tag-name { font-weight: 600; }
-.rankings-page.is-mobile .ranking-tag-row strong { font-size: var(--m-fs-md); font-weight: 600; color: var(--dorami-ink-2); }
-.rankings-page.is-mobile .ranking-move { font-size: var(--m-fs-xs); white-space: nowrap; }
-.rankings-page.is-mobile .ranking-move.is-new { color: var(--dorami-accent-ink); }
-/* 30 日趋势:标题行在上、折线铺满卡宽(样页 .c-trend),不再是浅底小块 */
-.rankings-page.is-mobile .ranking-trend { display: block; min-height: 0; margin: 2px 16px 6px; padding: 0; border-radius: 0; background: none; color: var(--dorami-accent); }
-.rankings-page.is-mobile .ranking-trend > div { flex-direction: row; justify-content: space-between; margin: 0 0 4px; }
-.rankings-page.is-mobile .ranking-trend .section-title,
-.rankings-page.is-mobile .ranking-trend .tiny-meta { font-size: var(--m-fs-xs); font-weight: 400; line-height: 1.5; color: var(--dorami-faint); }
-.rankings-page.is-mobile .ranking-trend svg { display: block; width: 100%; height: 42px; }
-.rankings-page.is-mobile .ranking-content-row,
-.rankings-page.is-mobile .ranking-content-row:hover {
-  grid-template-columns: 24px minmax(0, 1fr) auto;
-  gap: 10px;
-  min-height: 56px;
-  padding: 8px 16px;
-  border-top: 0;
-  background: none;
-}
-.rankings-page.is-mobile .ranking-content-row:active { background: var(--dorami-hover); }
-.rankings-page.is-mobile .ranking-content-main { gap: 2px; }
-.rankings-page.is-mobile .ranking-content-title {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  white-space: normal;
-  font-size: var(--m-fs-md);
-  font-weight: 400;
-  line-height: 1.5;
-}
-.rankings-page.is-mobile .ranking-content-meta { font-size: var(--m-fs-xs); }
-/* 分数身份线(§3):宋体齐线数字 + AI 渐变分档(.ai-grad-text + 档位类,颜色由它们给) */
-.rankings-page.is-mobile .ranking-content-score { font-family: var(--font-score); font-size: var(--m-fs-read); font-weight: 600; line-height: 1; font-variant-numeric: lining-nums tabular-nums; }
-.rankings-page.is-mobile .ranking-empty { margin: 0; padding: 8px 16px 12px; font-size: var(--m-fs-sm); }
+.rk-sbody .drawer-sec-title { font-size: var(--m-fs-sm); }
+.rk-sbody :is(.rk-rep-src, .rk-rep-sum, .rk-latest-sum, .rk-tl-title, .rk-pubs li, .rk-link, .rk-latest-link, .rk-sec-state) { font-size: var(--m-fs-md); }
+.rk-sbody .rk-rep-title { font-size: var(--m-fs-lg); }
+.rk-sbody .rk-rep-orig { font-size: var(--m-fs-sm); }
+.rk-sbody :is(.rk-role, .rk-pub-n, .rk-pub-name small, .rk-rep-k, .rk-rep-time, .rk-tl-daylabel, .rk-tl-time, .rk-tl-src, .rk-latest-src) { font-size: var(--m-fs-xs); }
+.rk-sbody :is(.rk-pubs li, .rk-tl-item, .rk-btn, .rk-link, .rk-latest-link) { min-height: var(--tap); }
+.rk-sbody :is(.rk-tl-item, .rk-latest-link):active { background: var(--dorami-hover); }
 
 /* ── 早报 Tab(样页 brief 屏):画布底 + 夜航卡;页面自己滚,页头让位用 ::before 垫片(见下方 .m-list::before 一组) ── */
 .m-content > .bp-sheet { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }

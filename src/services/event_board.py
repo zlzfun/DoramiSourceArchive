@@ -3,8 +3,9 @@
 读取时现算:隐藏源 / 私有源(``user_rss_`` 前缀、``owner_username`` 非空、凭据源)的成员在读取时剔除,
 标题 / 摘要 / 来源名单 / 计数全部只从可见成员算;可见发布主体 < 2 的事件不上榜。
 排序 = 可见发布主体数 ↓ → 最新成员首见 ↓(方案 §4 首版口径);热度值 ``heat`` 只写进日快照供回放,
-不参与排序、不进读者 API。07:00 日快照(``event_rank_snapshots``)供 ``previous_rank``;
-没有前一日快照时 ``previous_rank`` 为 null、``snapshot_date`` 为 null。
+不参与排序、不进读者 API。读者面默认窗口 7 天、可切近 2 天(issue #221);07:00 日快照(``event_rank_snapshots``)
+按这两个窗口各写一份,``previous_rank`` 只与同窗口、生成于当前之前的最近一份比(早上 7 点后即今早那份);
+窗口没有快照时 ``previous_rank`` 为 null、``snapshot_date`` 为 null。
 
 管理员修正(合并 / 摘出)只在 authority 节点允许(``EventRecord.authority_id`` 为空);成员迁移后按
 「官方 > 非社交 > 分数 > 发布更早」重算代表稿与计数;合并写 ``event_redirects``,旧 ID 查询返回新事件并带
@@ -49,7 +50,10 @@ from services.source_naming import friendly_source_names, source_role
 
 logger = logging.getLogger("dorami.event_board")
 
-WINDOW_HOURS = 48
+WINDOW_HOURS = 48                    # 事件开放窗口(摘出成员时据此判 open / closed),也是「近 2 天」视图
+READER_WINDOW_HOURS = 24 * 7         # 读者面热点事件默认窗口(issue #221 拍板 4)
+SNAPSHOT_WINDOWS = (READER_WINDOW_HOURS, WINDOW_HOURS)
+RECENT_HOURS = 48                    # 7 天视图里「近 2 天」标记:按首见(入库)时间
 MAX_WINDOW_HOURS = 24 * 14
 BOARD_LIMIT = 10
 NEW_HOURS = 6
@@ -214,6 +218,10 @@ class _MemberView:
         return _ts(self.member.report_at) or _ts(self.article.publish_date)
 
     @property
+    def report_at(self) -> str:
+        return self.member.report_at if _ts(self.member.report_at) else (self.article.publish_date or "")
+
+    @property
     def first_seen_ts(self) -> float:
         return _ts(self.member.first_seen_at)
 
@@ -233,6 +241,7 @@ class _MemberView:
 class _Publisher:
     key: str
     name: str
+    source_id: str                      # 该主体代表渠道(徽标用)
     count: int
     latest_first_seen_ts: float
 
@@ -245,6 +254,8 @@ class _EventView:
     publishers: list[_Publisher]        # 按稿数 ↓、键 ↑
     latest_at: str
     latest_ts: float
+    latest_report: _MemberView          # 发布时间最晚的一篇(卡面「最新 X」)
+    first_report: _MemberView           # 发布时间最早的一篇(详情「首报」)
     title: str
     title_lang: str
 
@@ -394,6 +405,7 @@ def _build_view(
             # 键是某个 source_id 时直接取该源的名;键是 source_owner(多渠道合一)时借代表稿序
             # 最靠前那篇的来源名。
             name=next((v.info.name for v in views if v.info.source_id == key), views[0].info.name),
+            source_id=next((v.info.source_id for v in views if v.info.source_id == key), views[0].info.source_id),
             count=len(views),
             latest_first_seen_ts=max(v.first_seen_ts for v in views),
         )
@@ -409,6 +421,8 @@ def _build_view(
         publishers=publishers,
         latest_at=latest.member.first_seen_at,
         latest_ts=latest.first_seen_ts,
+        latest_report=max(ordered, key=lambda view: (view.report_ts, view.first_seen_ts, view.article.id)),
+        first_report=min(ordered, key=lambda view: (view.report_ts, view.first_seen_ts, view.article.id)),
         title=title,
         # 译题缓存按来源即中文(短译题里英文专名占比高,字符占比启发式会误判成 en);其余按占比判。
         title_lang="zh" if title_source == "translation" else _title_lang(title),
@@ -445,21 +459,61 @@ def _board_entries(
     return views[:limit]
 
 
-def _previous_snapshot(session: Session, *, before_date: str) -> tuple[str | None, dict[int, int]]:
-    """``before_date`` 之前最近一份日快照:(日期, event_id → rank);没有则 (None, {})。"""
+def _previous_snapshot(
+    session: Session,
+    *,
+    window_hours: int,
+    now: dt.datetime,
+) -> tuple[str | None, dict[int, int]]:
+    """同窗口、生成于 ``now`` 之前的最近一份日快照:(日期, event_id → rank);没有则 (None, {})。
 
-    date = session.exec(
-        select(EventRankSnapshotRecord.snapshot_date)
-        .where(EventRankSnapshotRecord.snapshot_date < before_date)
+    issue #221 拍板 7:早上 7 点之后比的是今早那份(原口径「今天之前」= 昨天 07:00,
+    今天新上榜的全无变化);7 点之前今天的还没写,自然落到昨天那份。只按日期取最近几份再逐份核生成时刻,
+    库内时间戳格式可能混杂,不拿字符串比时刻。
+    """
+
+    today = shanghai_date(now)
+    stamps = session.exec(
+        select(EventRankSnapshotRecord.snapshot_date, EventRankSnapshotRecord.generated_at)
+        .where(
+            EventRankSnapshotRecord.window_hours == int(window_hours),
+            EventRankSnapshotRecord.snapshot_date <= today,
+        )
+        .group_by(EventRankSnapshotRecord.snapshot_date, EventRankSnapshotRecord.generated_at)
         .order_by(EventRankSnapshotRecord.snapshot_date.desc())
-        .limit(1)
-    ).first()
-    if not date:
+        .limit(8)
+    ).all()
+    now_ts = now.timestamp()
+    date = next((str(day) for day, generated in stamps if 0 < _ts(generated) <= now_ts), None)
+    if date is None:
         return None, {}
     rows = session.exec(
-        select(EventRankSnapshotRecord).where(EventRankSnapshotRecord.snapshot_date == date)
+        select(EventRankSnapshotRecord).where(
+            EventRankSnapshotRecord.snapshot_date == date,
+            EventRankSnapshotRecord.window_hours == int(window_hours),
+        )
     ).all()
-    return str(date), {int(row.event_id): int(row.rank) for row in rows}
+    return date, {int(row.event_id): int(row.rank) for row in rows}
+
+
+def board_event_ids(
+    session: Session,
+    *,
+    window_hours: int = READER_WINDOW_HOURS,
+    limit: int = BOARD_LIMIT,
+    now: dt.datetime | None = None,
+) -> list[int]:
+    """当前读者榜单上的事件 ID(名次序);榜单页「深度阅读」据此剔除热点事件里已有的事件(issue #221)。"""
+
+    views = _board_entries(session, window_hours=window_hours, limit=limit, now=_utcnow(now))
+    return [int(view.event.id or 0) for view in views]
+
+
+def reader_source_infos(session: Session, source_ids: Iterable[str]) -> dict[str, tuple[str, bool]]:
+    """source_id → (读者面来源名, 读者可见);与榜单成员同一套可见性判定(隐藏 / 私有 / 凭据源不可见)。"""
+
+    infos = _source_infos(session, {source_id: "" for source_id in source_ids if source_id}, reader_scope=True)
+    return {source_id: (info.name, info.visible) for source_id, info in infos.items()}
 
 
 def _events_by_id(session: Session, ids: Iterable[int | None]) -> dict[int, EventRecord]:
@@ -527,6 +581,17 @@ def visible_member_links(
     return result
 
 
+def _latest_payload(view: _MemberView) -> dict[str, Any]:
+    return {
+        "article_id": view.article.id,
+        "title": view.article.title,
+        "title_zh": _translated_title(view.article) or None,
+        "source_id": view.article.source_id,
+        "source_name": view.info.name,
+        "report_at": view.report_at,
+    }
+
+
 def _representative_payload(view: _MemberView) -> dict[str, Any]:
     return {
         "article_id": view.article.id,
@@ -549,7 +614,9 @@ def _item_payload(
 ) -> dict[str, Any]:
     event = view.event
     first_seen_ts = _ts(event.first_seen_at)
-    is_new = bool(first_seen_ts) and (now.timestamp() - first_seen_ts) <= NEW_HOURS * 3600
+    age = now.timestamp() - first_seen_ts
+    is_new = bool(first_seen_ts) and age <= NEW_HOURS * 3600
+    is_recent = bool(first_seen_ts) and age <= RECENT_HOURS * 3600
     # 前报对当前读者没有可见成员时整个 story 置空(连 ID 都不给,避免暴露隐藏事件的存在)。
     follows_view = follows.get(int(event.follows_event_id)) if event.follows_event_id is not None else None
     return {
@@ -562,11 +629,14 @@ def _item_payload(
         "publisher_count": view.publisher_count,
         "member_count": view.member_count,
         "first_seen_at": event.first_seen_at,
+        "first_report_at": view.first_report.report_at,
         "latest_at": view.latest_at,
+        "latest": _latest_payload(view.latest_report),
         "is_new": is_new,
+        "is_recent": is_recent,
         "representative": _representative_payload(view.representative),
         "publishers": [
-            {"key": publisher.key, "name": publisher.name, "count": publisher.count}
+            {"key": publisher.key, "name": publisher.name, "count": publisher.count, "source_id": publisher.source_id}
             for publisher in view.publishers
         ],
         "story": {
@@ -582,15 +652,15 @@ def _item_payload(
 def read_board(
     session: Session,
     *,
-    window_hours: int = WINDOW_HOURS,
+    window_hours: int = READER_WINDOW_HOURS,
     limit: int = BOARD_LIMIT,
     now: dt.datetime | None = None,
 ) -> dict[str, Any]:
-    """热点榜(方案 §5.0 契约):最多 ``limit`` 件,不足不填;空榜 ``empty_reason="no_events"``。"""
+    """热点事件榜(方案 §5.0 契约,issue #221 默认 7 天):最多 ``limit`` 件,不足不填;空榜 ``empty_reason="no_events"``。"""
 
     current = _utcnow(now)
     views = _board_entries(session, window_hours=window_hours, limit=limit, now=current)
-    snapshot_date, previous_ranks = _previous_snapshot(session, before_date=shanghai_date(current))
+    snapshot_date, previous_ranks = _previous_snapshot(session, window_hours=window_hours, now=current)
     follows = _related_views(session, (view.event.follows_event_id for view in views))
     items = [
         _item_payload(
@@ -640,6 +710,7 @@ def _member_payload(view: _MemberView, *, representative_id: str) -> dict[str, A
         "url": view.article.source_url,
         "publish_date": view.article.publish_date,
         "report_at": view.member.report_at,
+        "publisher_key": view.publisher_key,
         "is_representative": view.article.id == representative_id,
         "summary": view.summary,
     }
@@ -649,9 +720,13 @@ def read_event(
     session: Session,
     event_id: int,
     *,
+    window_hours: int = READER_WINDOW_HOURS,
     now: dt.datetime | None = None,
 ) -> dict[str, Any] | None:
-    """事件详情:榜单字段 + 可见成员(report_at 倒序)+ 后续事件 + merged_into;不存在或无可见成员返回 None。"""
+    """事件详情:榜单字段 + 可见成员(report_at 倒序)+ 后续事件 + merged_into;不存在或无可见成员返回 None。
+
+    ``rank`` / ``previous_rank`` 按 ``window_hours`` 那个榜算(读者从哪个视图点进来就按哪个)。
+    """
 
     current = _utcnow(now)
     resolved_id, merged_into = resolve_redirect(session, event_id)
@@ -662,9 +737,9 @@ def read_event(
     view = _build_view(event, load.for_event(resolved_id), allow_llm_title=not load.incomplete(event))
     if view is None:
         return None
-    board = _board_entries(session, window_hours=WINDOW_HOURS, limit=BOARD_LIMIT, now=current)
+    board = _board_entries(session, window_hours=window_hours, limit=BOARD_LIMIT, now=current)
     rank = next((index for index, entry in enumerate(board, start=1) if int(entry.event.id or 0) == resolved_id), None)
-    _snapshot_date, previous_ranks = _previous_snapshot(session, before_date=shanghai_date(current))
+    _snapshot_date, previous_ranks = _previous_snapshot(session, window_hours=window_hours, now=current)
     follows = _related_views(session, [event.follows_event_id])
     payload = _item_payload(
         view,
@@ -718,28 +793,43 @@ def build_rank_snapshot(
     date: str | None = None,
     now: dt.datetime | None = None,
 ) -> dict[str, Any]:
-    """按当下榜单写一份日快照(同日重建 = 同一事务内整日替换);只存上榜行。"""
+    """按当下榜单给每个读者窗口(``SNAPSHOT_WINDOWS``)各写一份日快照;同日重建 = 同一事务内整日(各窗口)替换,只存上榜行。
+
+    ``count`` 是读者默认窗口(7 天)的上榜数,``counts`` 按窗口给全。
+    """
 
     current = _utcnow(now)
     snapshot_date = (date or "").strip() or shanghai_date(current)
     generated_at = _iso(current)
+    counts: dict[int, int] = {}
     with Session(engine) as session:
-        views = _board_entries(session, window_hours=WINDOW_HOURS, limit=BOARD_LIMIT, now=current)
+        boards = {
+            window: _board_entries(session, window_hours=window, limit=BOARD_LIMIT, now=current)
+            for window in SNAPSHOT_WINDOWS
+        }
         session.exec(
             delete(EventRankSnapshotRecord).where(EventRankSnapshotRecord.snapshot_date == snapshot_date)
         )
-        for rank, view in enumerate(views, start=1):
-            session.add(EventRankSnapshotRecord(
-                snapshot_date=snapshot_date,
-                event_id=int(view.event.id or 0),
-                rank=rank,
-                publisher_count=view.publisher_count,
-                member_count=view.member_count,
-                heat=_heat(view, current),
-                generated_at=generated_at,
-            ))
+        for window, views in boards.items():
+            counts[window] = len(views)
+            for rank, view in enumerate(views, start=1):
+                session.add(EventRankSnapshotRecord(
+                    snapshot_date=snapshot_date,
+                    window_hours=window,
+                    event_id=int(view.event.id or 0),
+                    rank=rank,
+                    publisher_count=view.publisher_count,
+                    member_count=view.member_count,
+                    heat=_heat(view, current),
+                    generated_at=generated_at,
+                ))
         session.commit()
-    return {"snapshot_date": snapshot_date, "generated_at": generated_at, "count": len(views)}
+    return {
+        "snapshot_date": snapshot_date,
+        "generated_at": generated_at,
+        "count": counts.get(READER_WINDOW_HOURS, 0),
+        "counts": {str(window): count for window, count in counts.items()},
+    }
 
 
 # ── 管理员 ──
@@ -999,7 +1089,8 @@ def detach_member(
 
 __all__ = [
     "ADMIN_STATUSES", "BOARD_LIMIT", "EMPTY_REASON_NO_EVENTS", "EventBoardError", "MAX_WINDOW_HOURS",
-    "MIN_PUBLISHERS", "NEW_HOURS", "SNAPSHOT_CRON", "SNAPSHOT_JOB_ID", "WINDOW_HOURS",
-    "build_rank_snapshot", "detach_member", "list_events", "merge_events", "read_board", "read_event",
-    "resolve_redirect", "shanghai_date", "visible_member_links",
+    "MIN_PUBLISHERS", "NEW_HOURS", "READER_WINDOW_HOURS", "RECENT_HOURS", "SNAPSHOT_CRON", "SNAPSHOT_JOB_ID",
+    "SNAPSHOT_WINDOWS", "WINDOW_HOURS",
+    "board_event_ids", "build_rank_snapshot", "detach_member", "list_events", "merge_events", "read_board",
+    "read_event", "reader_source_infos", "resolve_redirect", "shanghai_date", "visible_member_links",
 ]

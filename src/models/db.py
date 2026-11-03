@@ -1094,20 +1094,26 @@ class EventAssignmentLedgerRecord(SQLModel, table=True):
 
 
 class EventRankSnapshotRecord(SQLModel, table=True):
-    """事件热度榜快照:每个上海日一份,只存上榜行(与趋势榜同刻 07:00 落)。
+    """事件热度榜快照:每个上海日、每个读者窗口(7 天 / 近 2 天)一份,只存上榜行(与趋势榜同刻 07:00 落)。
 
     ``heat`` 是可复算的热度值(发布方数 / 成员数 / 时间衰减,算法在 services 层);
     ``publisher_count`` / ``member_count`` 是落榜时刻的计数快照,事件后续变动不回写,保证榜单可回放。
-    同一天重建时整日行事务性替换。
+    同一天重建时整日行(各窗口)事务性替换;``previous_rank`` 只与同窗口的快照比(issue #221)。
     """
     __tablename__ = "event_rank_snapshots"
     __table_args__ = (
-        UniqueConstraint("snapshot_date", "event_id", name="uq_event_rank_snapshots_date_event"),
-        Index("ix_event_rank_snapshots_date_rank", "snapshot_date", "rank"),
+        UniqueConstraint("snapshot_date", "window_hours", "event_id", name="uq_event_rank_snapshots_date_window_event"),
+        Index("ix_event_rank_snapshots_date_window_rank", "snapshot_date", "window_hours", "rank"),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     snapshot_date: str = Field(description="Asia/Shanghai YYYY-MM-DD")
+    window_hours: int = Field(
+        default=48,
+        ge=1,
+        sa_column_kwargs={"server_default": text("48")},
+        description="榜单窗口(小时);issue #221 之前的行都是 48",
+    )
     event_id: int = Field(foreign_key="events.id", ondelete="CASCADE")
     rank: int = Field(ge=1)
     publisher_count: int = Field(ge=0)

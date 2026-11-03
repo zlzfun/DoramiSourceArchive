@@ -112,7 +112,7 @@ publisher_key    = 注册表 source_owner 非空 ? source_owner : source_id;合�
 - 实测(研究报告 §3.5):半衰期 12 / 24 / 48h 的 top-5 集合 38 / 39、33 / 39 天相同;热度 vs 纯来源数 35 / 39 天相同 → 热度值不进首版 API(AIHOT 也不公开热度值,只给 sourceCount / latestAt)。
 - 同一机构多个采集渠道只计一份;同一文章被两个源重复收录已被机械直连并掉;按篇数计数时 17% 的 top-10 席位是单主体多发,去重必须。
 - 角色不加权;价值分不进排序,只决定代表稿。点赞 / 转发 / 讨论人数不进首版。
-- 入榜:当前 48 小时窗内 ≥ 2 个可见发布主体;**榜最多 10 件,不足不填**;「新」标签 = 首篇首见 6 小时内。
+- 入榜:当前 48 小时窗内 ≥ 2 个可见发布主体;**榜最多 10 件,不足不填**;「新」标签 = 首篇首见 6 小时内。(issue #221 起读者默认 7 天窗、可切近 2 天;事件开放窗仍 48h。)
 - 时间一律 `first_seen_at`:多源 `publish_date` 是抓取回填值(aiera 75%、anthropic 77%、openai 46% 落在 08:00–08:02),用它衰减与打「新」都是假的。
 - 读取时现算;07:00 落 `event_rank_snapshots` 供 `previous_rank` 与趋势;少于 2 个快照不画趋势。
 - 榜头注明统计范围「哆啦美监测范围内的报道热度」;采集覆盖变化不做补偿。
@@ -128,6 +128,8 @@ publisher_key    = 注册表 source_owner 非空 ? source_owner : source_id;合�
 - `GET /api/reader/events/{id}` → 榜单字段 + `members: [{article_id, title, title_zh|null, source_id, source_name, source_role, content_shape, url, publish_date, report_at, is_representative, summary}]`(report_at 倒序,只含可见成员)+ `followups: [{event_id, title, first_seen_at}]` + `merged_into: null|event_id`(旧 ID 命中 redirect 时返回新事件并带此字段)。
 - `GET /api/admin/events?status=&q=&limit=`(管理台抽屉列表)· `POST /api/admin/events/{id}/merge-into/{target}` · `POST /api/admin/events/{id}/members/{article_id}/detach`(摘出成新单成员事件并写 ledger `blocked_event_ids`)——全部入审计。
 - 内部:`services/event_assignment.assign_pending(engine, llm_config)`(分析周期末尾 + 10 分钟兜底 interval job)· `services/event_board.build_rank_snapshot(engine, date)`(cron `0 7 * * *`,job id `event_rank_snapshot`)。
+- **issue #221 改动**(契约以 [`issue-221-rankings-unify.md`](./issue-221-rankings-unify.md) §5 为准):读者默认窗口改 168、详情收 `window_hours`;快照按 168 / 48 两窗各写一份,`previous_rank` 比同窗口、生成于当前之前的最近一份(今早 07:00);
+  条目加 `latest` / `first_report_at` / `is_recent` / `publishers[].source_id`,成员加 `publisher_key`。
 
 ### 5.1 榜单页第三段「热点」(**搁置**,随榜单前端统一重构 issue #221;以下为原设想)
 

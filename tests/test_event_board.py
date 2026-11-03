@@ -1,5 +1,6 @@
-"""事件热点榜读取侧(issue #121 wave 1)服务层测试:可见性过滤、< 2 主体剔除、排序、is_new、
-previous_rank、标题优先级、redirect、日快照事务替换、管理员合并 / 摘出语义。造数据一律相对时间。"""
+"""事件热点榜读取侧(issue #121 wave 1;#221 默认 7 天 / 快照按窗口)服务层测试:可见性过滤、< 2 主体剔除、排序、
+is_new / is_recent、previous_rank(同窗口、今早 07:00)、标题优先级、redirect、日快照事务替换、管理员合并 / 摘出语义。
+造数据一律相对时间。"""
 
 from __future__ import annotations
 
@@ -198,44 +199,90 @@ def test_board_orders_by_publisher_count_then_latest_and_honours_window_status_l
         _two_publisher_event(session, "old", hours_ago=50)
         session.commit()
 
-        board = event_board.read_board(session, now=NOW)
+        board = event_board.read_board(session, now=NOW, window_hours=48)
         assert [item["event_id"] for item in board["items"]] == [three.id, fresh.id, stale.id, closed.id]
         assert [item["rank"] for item in board["items"]] == [1, 2, 3, 4]
         assert board["window_hours"] == 48
 
-        capped = event_board.read_board(session, now=NOW, limit=2)
+        capped = event_board.read_board(session, now=NOW, window_hours=48, limit=2)
         assert [item["event_id"] for item in capped["items"]] == [three.id, fresh.id]
 
         wide = event_board.read_board(session, now=NOW, window_hours=72)
         assert any(item["event_id"] != closed.id and item["first_seen_at"] == _iso(50) for item in wide["items"])
 
+        # 读者默认窗口 7 天(issue #221):50 小时前的事件也在榜上,「近 2 天」标记只给 48 小时内首见的。
+        week = event_board.read_board(session, now=NOW)
+        assert week["window_hours"] == 168 and len(week["items"]) == 5
+        recent = {item["event_id"]: item["is_recent"] for item in week["items"]}
+        assert recent[closed.id] is True and [value for value in recent.values()].count(False) == 1
+        assert event_board.board_event_ids(session, now=NOW) == [item["event_id"] for item in week["items"]]
+
         empty = event_board.read_board(session, now=NOW + dt.timedelta(days=30))
     assert empty["items"] == [] and empty["empty_reason"] == "no_events"
 
 
-def test_is_new_and_previous_rank_come_from_prior_day_snapshot(tmp_path):
+def _snapshot_row(session, *, date, event_id, rank, window, generated):
+    session.add(EventRankSnapshotRecord(
+        snapshot_date=date, window_hours=window, event_id=event_id, rank=rank, publisher_count=2,
+        member_count=2, heat=1.0, generated_at=generated,
+    ))
+
+
+def test_is_new_and_previous_rank_compare_with_latest_same_window_snapshot(tmp_path):
+    """issue #221 拍板 7:previous_rank 比的是同窗口、生成于当前之前的最近一份(早上 7 点后即今早那份)。"""
+
     sink = _sink(tmp_path, "previous.db")
     with Session(sink.engine) as session:
         new_event = _two_publisher_event(session, "new", hours_ago=2)
         older = _two_publisher_event(session, "older", hours_ago=10)
         today = event_board.shanghai_date(NOW)
         yesterday = (dt.date.fromisoformat(today) - dt.timedelta(days=1)).isoformat()
-        for date, event_id, rank in ((yesterday, older.id, 3), (today, older.id, 1)):
-            session.add(EventRankSnapshotRecord(
-                snapshot_date=date, event_id=event_id, rank=rank, publisher_count=2,
-                member_count=2, heat=1.0, generated_at=_iso(20),
-            ))
+        _snapshot_row(session, date=yesterday, event_id=older.id, rank=3, window=168, generated=_iso(25))
+        _snapshot_row(session, date=today, event_id=older.id, rank=1, window=168, generated=_iso(1))
+        _snapshot_row(session, date=today, event_id=older.id, rank=5, window=48, generated=_iso(1))
         session.commit()
 
         board = event_board.read_board(session, now=NOW)
+        near = event_board.read_board(session, now=NOW, window_hours=48)
+        custom = event_board.read_board(session, now=NOW, window_hours=72)
+        # 今天那份还没到生成时刻(7 点前读榜):落到昨天那份。
+        before_seven = event_board.read_board(session, now=NOW - dt.timedelta(hours=2))
 
     by_id = {item["event_id"]: item for item in board["items"]}
     assert by_id[new_event.id]["is_new"] is True
     assert by_id[older.id]["is_new"] is False
-    # 只认「前一日」快照:今天 07:00 那份(rank 1)不作 previous_rank。
-    assert by_id[older.id]["previous_rank"] == 3
+    assert by_id[older.id]["previous_rank"] == 1 and board["snapshot_date"] == today
     assert by_id[new_event.id]["previous_rank"] is None
-    assert board["snapshot_date"] == yesterday
+    # 窗口互不串:近 2 天视图比近 2 天那份;没有快照的窗口不给名次变化。
+    assert {item["event_id"]: item["previous_rank"] for item in near["items"]}[older.id] == 5
+    assert custom["snapshot_date"] is None and all(item["previous_rank"] is None for item in custom["items"])
+    assert before_seven["snapshot_date"] == yesterday
+    assert {item["event_id"]: item["previous_rank"] for item in before_seven["items"]}[older.id] == 3
+
+
+def test_board_item_carries_latest_and_first_report_from_publish_times(tmp_path):
+    """卡面「最新 X」与详情「首报」按发布时间(report_at),不按入库时间(issue #221 拍板 9 / 10)。"""
+
+    sink = _sink(tmp_path, "latest.db")
+    with Session(sink.engine) as session:
+        event = _event(session, hours_ago=6)
+        _article(session, "e1", "media-a", hours_ago=6)
+        _article(session, "e2", "media-b", hours_ago=4)
+        _article(session, "e3", "media-c", hours_ago=5)
+        _member(session, event, "e1", hours_ago=6)
+        _member(session, event, "e2", hours_ago=4)
+        _member(session, event, "e3", hours_ago=5)
+        # e3 入库最早(6 小时前首见)但发布在中间:首见不影响首报 / 最新。
+        member = session.get(EventMemberRecord, (event.id, "e3"))
+        member.first_seen_at = _iso(7)
+        session.add(member)
+        session.commit()
+        item = event_board.read_board(session, now=NOW)["items"][0]
+
+    assert item["first_report_at"] == _iso(6)
+    assert item["latest"]["article_id"] == "e2" and item["latest"]["report_at"] == _iso(4)
+    assert item["latest"]["source_name"] and item["latest"]["source_id"] == "media-b"
+    assert sorted(publisher["source_id"] for publisher in item["publishers"]) == ["media-a", "media-b", "media-c"]
 
 
 def test_title_precedence_zh_member_translation_cache_llm_then_representative(tmp_path):
@@ -315,7 +362,8 @@ def test_read_event_follows_redirects_orders_members_and_lists_followups(tmp_pat
         via_old = event_board.read_event(session, old.id, now=NOW)
         via_older = event_board.read_event(session, older.id, now=NOW)
         follow = event_board.read_event(session, followup.id, now=NOW)
-        closed = event_board.read_event(session, out_of_window.id, now=NOW)
+        closed = event_board.read_event(session, out_of_window.id, now=NOW, window_hours=48)
+        week_rank = event_board.read_event(session, out_of_window.id, now=NOW)["rank"]
         assert event_board.read_event(session, 99999, now=NOW) is None
         assert event_board.read_event(session, all_hidden.id, now=NOW) is None
 
@@ -336,6 +384,8 @@ def test_read_event_follows_redirects_orders_members_and_lists_followups(tmp_pat
     ]
     assert follow["story"] == {"follows_event_id": target.id, "follows_title": "Title t2"}
     assert closed["rank"] is None and closed["member_count"] == 2
+    assert week_rank == 2  # 80 小时前的事件不在近 2 天榜上,在默认 7 天榜上
+    assert members["t1"]["publisher_key"] == "media-src"
 
 
 def test_llm_title_is_dropped_once_any_member_is_hidden_after_formation(tmp_path):
@@ -492,9 +542,12 @@ def test_build_rank_snapshot_replaces_same_day_rows_transactionally(tmp_path, mo
     result = event_board.build_rank_snapshot(sink.engine, now=NOW)
     today = event_board.shanghai_date(NOW)
     assert result["snapshot_date"] == today and result["count"] == 2
+    assert result["counts"] == {"168": 2, "48": 2}
     with Session(sink.engine) as session:
         rows = session.exec(
-            select(EventRankSnapshotRecord).order_by(EventRankSnapshotRecord.rank)
+            select(EventRankSnapshotRecord)
+            .where(EventRankSnapshotRecord.window_hours == 168)
+            .order_by(EventRankSnapshotRecord.rank)
         ).all()
         assert [(row.event_id, row.rank, row.publisher_count) for row in rows] == [
             (first_id, 1, 3), (second_id, 2, 2),
@@ -508,8 +561,10 @@ def test_build_rank_snapshot_replaces_same_day_rows_transactionally(tmp_path, mo
     assert rebuilt["count"] == 3
     with Session(sink.engine) as session:
         rows = session.exec(select(EventRankSnapshotRecord)).all()
-        assert len(rows) == 3 and {row.snapshot_date for row in rows} == {today}
-        assert [row.rank for row in sorted(rows, key=lambda row: row.rank)] == [1, 2, 3]
+        assert len(rows) == 6 and {row.snapshot_date for row in rows} == {today}
+        for window in (168, 48):
+            ranks = sorted(row.rank for row in rows if row.window_hours == window)
+            assert ranks == [1, 2, 3], window
         # 次日读榜:previous_rank 来自今天这份快照。
         tomorrow_board = event_board.read_board(session, now=NOW + dt.timedelta(days=1))
     assert tomorrow_board["snapshot_date"] == today
@@ -523,7 +578,7 @@ def test_build_rank_snapshot_replaces_same_day_rows_transactionally(tmp_path, mo
         event_board.build_rank_snapshot(sink.engine, now=NOW, date="2000-01-01")
     monkeypatch.undo()
     with Session(sink.engine) as session:
-        assert len(session.exec(select(EventRankSnapshotRecord)).all()) == 3
+        assert len(session.exec(select(EventRankSnapshotRecord)).all()) == 6
 
 
 def test_merge_events_moves_members_writes_redirect_and_recomputes_target(tmp_path):

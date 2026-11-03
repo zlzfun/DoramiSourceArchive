@@ -1,5 +1,6 @@
-"""事件热点榜端点(issue #121 wave 1)TestClient 测试:读者 / 游客 / 管理端点、403 边界、审计落表、
-合并 / 摘出语义与返回字段逐字段对齐方案 §5.0。显式建 tmp sink;造数据相对时间。"""
+"""事件热点榜端点(issue #121 wave 1;#221 默认 7 天)TestClient 测试:读者 / 游客 / 管理端点、403 边界、审计落表、
+合并 / 摘出语义与返回字段逐字段对齐方案 §5.0(#221 加 latest / first_report_at / is_recent / 主体 source_id)。
+显式建 tmp sink;造数据相对时间。"""
 
 from __future__ import annotations
 
@@ -32,14 +33,16 @@ NOW = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
 BOARD_KEYS = {"generated_at", "window_hours", "snapshot_date", "empty_reason", "items"}
 ITEM_KEYS = {
     "event_id", "rank", "previous_rank", "title", "title_lang", "summary", "publisher_count",
-    "member_count", "first_seen_at", "latest_at", "is_new", "representative", "publishers", "story",
+    "member_count", "first_seen_at", "first_report_at", "latest_at", "latest", "is_new", "is_recent",
+    "representative", "publishers", "story",
 }
+LATEST_KEYS = {"article_id", "title", "title_zh", "source_id", "source_name", "report_at"}
 REPRESENTATIVE_KEYS = {"article_id", "title", "source_id", "source_name", "source_role", "url", "publish_date"}
-PUBLISHER_KEYS = {"key", "name", "count"}
+PUBLISHER_KEYS = {"key", "name", "count", "source_id"}
 STORY_KEYS = {"follows_event_id", "follows_title"}
 MEMBER_KEYS = {
     "article_id", "title", "title_zh", "source_id", "source_name", "source_role", "content_shape",
-    "url", "publish_date", "report_at", "is_representative", "summary",
+    "url", "publish_date", "report_at", "publisher_key", "is_representative", "summary",
 }
 FOLLOWUP_KEYS = {"event_id", "title", "first_seen_at"}
 DETAIL_KEYS = ITEM_KEYS | {"members", "followups", "merged_into"}
@@ -110,6 +113,11 @@ def _seed(engine) -> dict[str, int]:
         for article_id, source in (("w1", "media-a"), ("w2", "media-d")):
             _article(session, article_id, source, hours_ago=5)
             _member(session, warm, article_id, hours_ago=5)
+        # 4 天前的事件:默认 7 天榜上有,近 2 天榜上没有(issue #221)。
+        week = _event(session, hours_ago=96, status="closed", title="week stored")
+        for article_id, source in (("k1", "media-a"), ("k2", "media-b")):
+            _article(session, article_id, source, hours_ago=96)
+            _member(session, week, article_id, hours_ago=96)
         old = _event(session, hours_ago=6, status="merged")
         session.add(EventRedirectRecord(old_event_id=old.id, new_event_id=hot.id, reason="manual", created_at=_iso(1)))
         single = _event(session, hours_ago=1, title="single stored")
@@ -119,7 +127,10 @@ def _seed(engine) -> dict[str, int]:
         _article(session, "f1", "media-f", hours_ago=1)
         _member(session, followup, "f1", hours_ago=1)
         session.commit()
-        return {"hot": hot.id, "warm": warm.id, "old": old.id, "single": single.id, "followup": followup.id}
+        return {
+            "hot": hot.id, "warm": warm.id, "week": week.id, "old": old.id, "single": single.id,
+            "followup": followup.id,
+        }
 
 
 def _login(client, username, password):
@@ -142,16 +153,24 @@ def test_reader_board_and_detail_match_contract(monkeypatch, tmp_path):
         assert board.status_code == 200
         payload = board.json()
         assert set(payload) == BOARD_KEYS
-        assert payload["window_hours"] == 48 and payload["empty_reason"] is None
-        assert [item["event_id"] for item in payload["items"]] == [ids["hot"], ids["warm"]]
+        assert payload["window_hours"] == 168 and payload["empty_reason"] is None
+        assert [item["event_id"] for item in payload["items"]] == [ids["hot"], ids["warm"], ids["week"]]
         for item in payload["items"]:
             assert set(item) == ITEM_KEYS
             assert set(item["representative"]) == REPRESENTATIVE_KEYS
+            assert set(item["latest"]) == LATEST_KEYS
             assert set(item["story"]) == STORY_KEYS
             assert item["publishers"] and all(set(publisher) == PUBLISHER_KEYS for publisher in item["publishers"])
         hot = payload["items"][0]
         assert hot["rank"] == 1 and hot["is_new"] is True and hot["publisher_count"] == 3
         assert hot["previous_rank"] is None and payload["snapshot_date"] is None
+        assert hot["is_recent"] is True and payload["items"][2]["is_recent"] is False
+        assert {publisher["source_id"] for publisher in hot["publishers"]} == {"media-a", "media-b", "media-c"}
+        assert hot["latest"]["source_id"] in {"media-a", "media-b", "media-c"} and hot["first_report_at"] == _iso(2)
+
+        near = client.get("/api/reader/events?window_hours=48").json()
+        assert near["window_hours"] == 48
+        assert [item["event_id"] for item in near["items"]] == [ids["hot"], ids["warm"]]
 
         assert client.get("/api/reader/events?limit=11").status_code == 400
         assert client.get("/api/reader/events?window_hours=0").status_code == 400
@@ -163,6 +182,11 @@ def test_reader_board_and_detail_match_contract(monkeypatch, tmp_path):
         assert set(body) == DETAIL_KEYS
         assert body["merged_into"] is None and body["rank"] == 1
         assert all(set(member) == MEMBER_KEYS for member in body["members"])
+        assert {member["publisher_key"] for member in body["members"]} == {"media-a", "media-b", "media-c"}
+        # 名次按读者所在视图的窗口算:4 天前的事件在 7 天榜第 3,近 2 天榜上没有。
+        assert client.get(f"/api/reader/events/{ids['week']}").json()["rank"] == 3
+        assert client.get(f"/api/reader/events/{ids['week']}?window_hours=48").json()["rank"] is None
+        assert client.get(f"/api/reader/events/{ids['week']}?window_hours=0").status_code == 400
         assert len(body["members"]) == 3 and sum(member["is_representative"] for member in body["members"]) == 1
         followup_title = client.get(f"/api/reader/events/{ids['followup']}").json()["title"]
         assert body["followups"] == [
@@ -253,7 +277,7 @@ def test_admin_list_merge_detach_are_applied_and_audited(monkeypatch, tmp_path):
         assert via_warm["event_id"] == ids["hot"] and via_warm["merged_into"] == ids["hot"]
         assert via_warm["member_count"] == 4
         board_ids = [item["event_id"] for item in client.get("/api/reader/events").json()["items"]]
-        assert board_ids == [ids["hot"]]
+        assert board_ids == [ids["hot"], ids["week"]]
 
     with Session(app_module.db_sink.engine) as session:
         assert session.get(EventRedirectRecord, ids["warm"]).new_event_id == ids["hot"]

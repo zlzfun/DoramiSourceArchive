@@ -5,6 +5,7 @@ import ReaderTab from './ReaderTab';
 import MobileReader from './mobile/MobileReader';
 import PlayerProvider from './player/PlayerProvider';
 import { prefetchReaderMarkdownWhenIdle } from '../utils/readerMarkdownLoader';
+import { DEFAULT_EVENT_RANGE, DEFAULT_RANKING_SEGMENT } from '../utils/rankings';
 
 // 数据、当前位置与早报返回路径只保留一份。宽度变化只替换视图，不重新加载阅读器。
 // 全局播放器(issue #199)也挂在这一层:桌面 ⇄ 手机互切、换文章 / 容器 / 页面都不卸载,播放不中断。
@@ -17,6 +18,14 @@ export default function ReaderWorkspace({ mobile, surfaceActive = true, ...props
   const [briefRestore, setBriefRestore] = useState(null);
   const [discoverTab, setDiscoverTab] = useState('sources');
   const [interestVersion, setInterestVersion] = useState(0);
+  // 榜单(issue #221):当前段与热点事件的时间范围放在这一层——关掉再打开回到上次的段,桌面 ⇄ 手机互切不丢;
+  // 默认热点事件 · 本周,不随当前视图(文章 / 播客)选段。rankingCounts 记各视图上次载入的条数,给桌面源栏入口的副标题用
+  const [rankingSegment, setRankingSegment] = useState(DEFAULT_RANKING_SEGMENT);
+  const [rankingRange, setRankingRange] = useState(DEFAULT_EVENT_RANGE);
+  const [rankingCounts, setRankingCounts] = useState({});
+  const noteRankingCount = useCallback((key, count) => {
+    setRankingCounts((current) => (current[key] === count ? current : { ...current, [key]: count }));
+  }, []);
   // 早报正在看的那一期与读到的位置(审计 M-36,issue #230 批 4a):跨 1024 换版式时早报页随视图卸载重挂,
   // 旧的那份卸载前把 {date, revision, progress} 交到这里,新的那份挂载时取走接着看(iPad 旋转不再跳回今天、回到顶)
   const briefPlaceRef = useRef(null);
@@ -68,6 +77,7 @@ export default function ReaderWorkspace({ mobile, surfaceActive = true, ...props
   const view = {
     briefOpen: page === 'brief', setBriefOpen,
     rankingsOpen: page === 'rankings', setRankingsOpen,
+    rankingSegment, setRankingSegment, rankingRange, setRankingRange, rankingCounts, noteRankingCount,
     briefReturn, setBriefReturn, briefRestore, setBriefRestore, briefPlace,
     discoverTab, setDiscoverTab, interestVersion, setInterestVersion,
     tab, setTab, playerHostRef: rootRef, openPlayingItem,

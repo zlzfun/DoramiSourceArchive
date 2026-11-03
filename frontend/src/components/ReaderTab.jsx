@@ -59,6 +59,7 @@ import { rebuildToast } from '../utils/briefRebuild';
 import PersonalBriefPage from './PersonalBriefPage';
 import InterestPage from './InterestPage';
 import RankingsPage from './RankingsPage';
+import { rankingDataKey, rankingEntrySub } from '../utils/rankings';
 import AnalysisTagChip from './AnalysisTagChip';
 import { excerptOf, hostOf, latinLang } from '../utils/readerText';
 import { displayTitle, titleView } from '../utils/titleDisplay';
@@ -445,6 +446,7 @@ export default function ReaderTab({
   const [brandFailed, setBrandFailed] = useState(false);
   const {
     briefOpen, setBriefOpen, rankingsOpen, setRankingsOpen,
+    rankingSegment, setRankingSegment, rankingRange, setRankingRange, rankingCounts, noteRankingCount,
     briefReturn, setBriefReturn, briefRestore, setBriefRestore, briefPlace,
     discoverTab, setDiscoverTab, interestVersion, setInterestVersion,
   } = view;
@@ -888,8 +890,8 @@ export default function ReaderTab({
           >
             <span className="reader-ranking-entry-ic"><BarChart3 aria-hidden="true" /></span>
             <span>
-              <strong>{podcastView ? '播客榜' : '文章榜'}</strong>
-              <small>近 7 天标签趋势</small>
+              <strong>榜单</strong>
+              <small>{rankingEntrySub(rankingSegment, rankingCounts[rankingDataKey(rankingSegment, rankingRange)])}</small>
             </span>
           </button>
         )}
@@ -1028,11 +1030,15 @@ export default function ReaderTab({
         />
       )}
 
+      {/* 榜单(issue #221):段与时间范围在 ReaderWorkspace 的 view 里,与视图轨(文章 / 播客)无关 */}
       {rankingsOpen && (
         <RankingsPage
           sourceMap={sourceMap}
-          initialShape={podcastView ? 'podcast' : 'article'}
-          onShapeChange={goView}
+          segment={rankingSegment}
+          onSegmentChange={setRankingSegment}
+          range={rankingRange}
+          onRangeChange={setRankingRange}
+          onLoaded={noteRankingCount}
           onOpenArticle={async (articleId) => {
             const opened = await openArticleById(articleId, { silent: true });
             if (opened) setRankingsOpen(false);
