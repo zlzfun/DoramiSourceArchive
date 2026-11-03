@@ -73,7 +73,7 @@
    只作用手机壳:早报 = .bp-sheet.is-mobile(PersonalBriefPage mobile)、往期底页 = .m-hist-sheet、长按预览卡 = .m-sheet-peek、
    榜单 = .rankings-page.is-mobile;桌面早报 / 往期浮层 / 榜单不受影响。
    index.css 的 .bp-* / .bp-cal-* 是未分层且排在本文件之后的规则,这里一律多挂一级类名压过它们(.bp-sheet.is-mobile … / .m-sheet.m-hist-sheet …)。
-   字号只用 --m-fs-* 八档(conventions §10);刻度之外的只有早报头条的展示字号(37)与分数身份线(评分栏 40)。 */
+   字号只用 --m-fs-* 八档(conventions §10);刻度之外的只有早报头条的展示字号(32)与分数身份线(评分栏 40)。 */
 
 /* ── 榜单 Tab:页头标题位接管「榜单」与 文章榜 / 播客榜(批 2),范围说明是页头下第一块,
       话题 / 产业 / 实体 是带镜片拇指的宽分段,榜卡是夜航卡面(样页 rankings 屏)── */
@@ -261,7 +261,7 @@
 .bp-sheet.is-mobile .bp-mhead:has(.bp-head-open:focus-visible) { outline: 2px solid var(--dorami-focus); outline-offset: 2px; }
 .bp-sheet.is-mobile .bp-mhead.is-ctx-anchor { background: none; opacity: 0.35; }
 .bp-sheet.is-mobile .bp-kicker { margin: 8px 0 14px; font-size: var(--m-fs-sm); letter-spacing: 0.16em; }
-.bp-sheet.is-mobile .bp-title { max-width: none; font-size: 37px; line-height: 1.17; cursor: auto; }   /* 早报头条展示字号(刻度之外,样页 37) */
+.bp-sheet.is-mobile .bp-title { max-width: none; font-size: 32px; line-height: 1.25; cursor: auto; }   /* 早报头条展示字号(issue #256 收小一档) */
 .bp-sheet.is-mobile .bp-head-open { display: inline; padding: 0; border: 0; background: none; font: inherit; color: inherit; letter-spacing: inherit; text-align: left; cursor: pointer; }
 .bp-sheet.is-mobile .bp-head-open::after { content: ""; position: absolute; inset: 0; border-radius: var(--r-card); }
 .bp-sheet.is-mobile .bp-head-open:focus-visible { outline: none; }

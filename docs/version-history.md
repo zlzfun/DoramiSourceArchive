@@ -11,6 +11,8 @@
 
 ## 年表(一行一波;自 `CLAUDE.md` 迁入 2026-10-21,**新波次在此加一行**,L0 不再逐波改)
 
+- **早报头条中西混排（#256，2026-11-02，用户目检通过）**：西文与数字采用现有 Source Serif 4，字号为中文的 0.96；压缩标题标点空白，名称版本共同行内排版。桌面与手机共用实现，未合入、未发布。详细记录见下节。
+
 - **播客逐字稿问答（#248，2026-10-31，PR #252，代码检视/CI 通过，扩样付费问答暂停、用户验收待完成）**：发布方与 ASR 原稿片段进入本文/订阅检索，引用可展开真实依据；本地懒索引、权限与发布指针复核，撤稿后旧回答不返回。沿用 `3.67.4-alpha`，未合入发布。见 [实现记录](archive/issue-248-podcast-qa.md)。
 
 - **发布方逐字稿阅读分段（#246，2026-10-31，用户验收通过）**：词级 JSON 在阅读与手动翻译时合成自然段，保留说话人边界、原稿与分析输入；分页游标绑定显示文本，历史稿刷新即可生效。见 [方案](archive/issue-246-transcript-paragraphs.md)。
@@ -61,6 +63,18 @@
 - **3.58–3.60(2026-09-15–19)**:运维面播客与分析标签重构(#76)/ 移动端读者 E2E(#91)/ 同步修复(#96 / #99)/ PWA 主屏幕安装(#100)/ 弹窗遮罩关闭判定(#104)/ OSS 持久存储与自动备份(#109)/ 聚焦环入 base 层(#108)/ 发现页按形态批量订阅(#113)/ **GitHub Release 自动部署流水线(#102,v3.60.0 首发、v3.60.1 闭环)**:tag 推上去 → 自动建 Release → 串联 `deploy.yml` 停在 Environment `production` 等批准 → SSH forced command 触发生产机仓库外 launcher/worker → 目标 tag 的 `./deploy-docker.sh` → 公网 `/api/health` 核对;上线抓到两坑(checkout 改写 tag 引用 / Environment secrets 须 `secrets: inherit`),见 `docs/archive/auto-deploy-plan.md` §7。
 - **裸机部署回滚(issue #126,2026-09-21,待发布)**:裸机路径改「运行副本版本化」release 形态 + 锁内事务 + 两级健康门告警(不自动回滚)+ `./deploy.sh --rollback`(树外固化执行体,DB 按目标上下文迁移计划分流,`--restore-db` 显式恢复,只回一代)+ 收养 + `--code` / `--status` / `--discard-txn`;extras 钉版 `docker/requirements-crawl4ai.txt`;方案 `docs/archive/baremetal-rollback-plan.md`(codex 四轮设计检视 + §9 实现记录),手册 `docs/ops/deploy-baremetal.md`,桩测试 `tests/test_deploy_baremetal.py`。
 - **Podcast(issue #7 P0–P0.2)**:`source_type=podcast` → `generic_podcast_rss`,单集复用 `ArticleRecord` + `extensions_json`,只解析 enclosure 元数据不下载音频;36 节目策展目录 `services.podcast_catalog` 启动幂等安装、进普通采集任务不设源级开关;边界与后续见 `docs/archive/podcast-wave-plan.md`。
+
+## issue #256 早报头条中西混排（用户目检通过）
+
+2026-11-02，用户指出截图中的中文、西文与数字需要按字体字面调整字号。原实现将中文混排标题整句交给思源宋体，只有纯英文标题使用西文衬线。
+
+本地分支 `feat/issue-256-brief-title-optical` 保留中文思源宋体 900。`HeadlineText` 为混排标题中的拉丁字母与数字建立行内块，使用现有自托管 Source Serif 4 900，字号为中文的 0.96，两侧各留 0.08em。名称和紧随的数字版本共同行内排版；容器过窄时仍允许块内折行。标题启用 `palt` 比例标点，缩小全角逗号等带来的过大空白。桌面与手机头条共用此实现。用户随后指出整体字号仍然过大；桌面头条从约 73px 收至约 60px（版心内容宽的 5.4%，行高 1.2），手机从 37px 收至 32px（行高 1.25），混排字号比例保留。桌面标题最大宽度改为 16em，避免缩小字号后标题栏同步变窄。纯英文标题同步缩小，字体与分词方式沿用原实现。板块标题、正文、评分与存储内容不改。
+
+使用真实 `PersonalBriefPage` 组件、现有样式和字体渲染本地小样；接口使用固定数据，原标题来自用户截图。检查 1440×900、390×844、320×740，以及中文、纯英文、版本名称和长标题，截图均为 DPR 2，无控制台错误、横向溢出或图片加载失败。主 Agent 已查看相关截图。前端 lint、260 项前端测试（含 8 项字体检查）、build 和文档守卫通过；未新增只镜像样式的测试。2026-11-02 用户确认缩小后的版本“不错”，授权提交 issue + PR。尚未验证真实登录入口、Windows 和 Safari 实机；未合入、未发布。
+
+检视：实现方 Codex（codex/gpt-6.1-sol），独立检视方为另一 Codex 会话（codex/gpt-6.1-sol）。检视覆盖分段保真、CSS 级联、窄屏换行及英文/降级分支，8 类字符串保真断言通过，无阻断发现。尝试本机 Claude CLI 跨模型检视时返回“Not logged in”；因此本轮只有独立同模型补充检视，跨模型合入门禁尚未完成。用户本次授权创建 PR，不包含合入与部署。
+
+PR #257 正文已附桌面字号前后对比和手机最终效果图，验收图保存于 `docs/design/issue-256-headline/`。
 
 ## issue #214 登录页「深空剧场」重制(PR #255,待发布,版本号以实际发版为准)
 

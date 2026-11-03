@@ -13568,17 +13568,30 @@ input[type="radio"] {
 .bp-kicker::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--grad-ai); }
 .bp-title {
   margin: 0;
-  max-width: 13.4em;
+  max-width: 16em;
   font-family: var(--font-serif);
-  /* 原「夜航」:版心内容宽的 6.6%(1200 版心 → 约 73px)。容器是整张 .bp-sheet,减去两侧 48px 留白折回版心宽 */
-  font-size: clamp(36px, calc((min(100cqi, 1200px) - 96px) * 0.066), 84px);
+  /* 头条收至版心内容宽的 5.4%,宽屏约 60px。栏宽保留,减少海报感。 */
+  font-size: clamp(32px, calc((min(100cqi, 1200px) - 96px) * 0.054), 60px);
   font-weight: 900;
-  line-height: 1.13;
+  line-height: 1.2;
   letter-spacing: 0;
   color: var(--dorami-ink);
   text-wrap: balance;
   overflow-wrap: anywhere;
   cursor: pointer;
+}
+/* 头条标点用比例字宽。西文按字面缩放,两侧留少量混排空距。 */
+.bp-title:not([lang="en"]) { font-feature-settings: "palt"; }
+.bp-title-latin {
+  display: inline-block;
+  max-width: 100%;
+  margin-inline: 0.08em;
+  font-family: var(--font-serif-latin);
+  font-size: 0.96em;
+  line-height: 1;
+  letter-spacing: 0;
+  vertical-align: baseline;
+  text-wrap: wrap;
 }
 .bp-title[lang="en"] { letter-spacing: -0.01em; }
 .bp-title.is-note { max-width: 18em; font-size: clamp(26px, 3cqi, 36px); font-weight: 600; line-height: 1.3; cursor: default; }
@@ -13854,7 +13867,7 @@ input[type="radio"] {
   .bp-eyebrow i { width: 16px; }
   .bp-notice { margin: -12px 0 22px; }
   .bp-kicker { margin-bottom: 16px; font-size: 12.5px; letter-spacing: 0.16em; }
-  .bp-title { font-size: clamp(30px, calc((100cqi - 40px) * 0.094), 40px); line-height: 1.2; }
+  .bp-title { font-size: clamp(28px, calc((100cqi - 40px) * 0.084), 34px); line-height: 1.25; }
   .bp-orig { margin-top: 14px; font-size: 15px; }
   .bp-lower { grid-template-columns: minmax(0, 1fr); gap: 22px; margin-top: 26px; }
   .bp-sum { font-size: 15.5px; line-height: 1.8; -webkit-line-clamp: 4; }
