@@ -272,6 +272,15 @@ function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds
   );
 }
 
+// 混排头条按字种校准字号。版本号跟随名称,纯英文沿用整句西文排版。
+function HeadlineText({ text }) {
+  if (!/\p{Script=Han}/u.test(text)) return text;
+  const parts = text.split(/([\p{Script=Latin}\p{N}]+(?:[.+/'’:&-][\p{Script=Latin}\p{N}]+)*(?:[ \u00a0]+\p{N}+(?:[.-]\p{N}+)*)?)/u);
+  return parts.map((part, index) => index % 2 === 1
+    ? <span className="bp-title-latin" key={index}>{part}</span>
+    : part);
+}
+
 // 手机档头条(issue #230 批 3b,样页第 1 轮返修第 2 条):整块可点——标题按钮的 ::after 铺满头条块,按下整块压暗一档、缩到 0.99;
 // 摘要下只有文字级「全文 ›」提示(没有实底「阅读全文」与收藏钮,收藏走长按);英文原标题保留(拍板 14 只撤板块条目的);
 // 评分栏在可点块之外。可长按(press),anchored = 动作单正指着它。
@@ -286,7 +295,7 @@ function MobileHeadline({ item, kicker, source, flash, onOpen, onSubscribeSource
       <div className={`bp-mhead${anchored ? ' is-ctx-anchor' : ''}`} {...(press || {})}>
         <p className="bp-kicker">{kicker}</p>
         <h1 className="bp-title" lang={latinLang(view.title)}>
-          <button type="button" className="bp-head-open" onClick={() => onOpen(item)}>{view.title}</button>
+          <button type="button" className="bp-head-open" onClick={() => onOpen(item)}><HeadlineText text={view.title} /></button>
         </h1>
         {view.titleOrig && <p className="bp-orig" lang={latinLang(view.titleOrig)}>{view.titleOrig}</p>}
         <p className="bp-meta">
@@ -349,7 +358,7 @@ function Headline({ item, kicker, source, flash, restCount, onOpen, onSubscribeS
     <div className={`bp-head ${flash ? 'is-just-read' : ''}`}>
       <p className="bp-kicker">{kicker}</p>
       {/* 标题可点(鼠标的直觉);键盘与读屏走下方「阅读全文」,标题本身不重复成第二个按钮 */}
-      <h1 className="bp-title" lang={latinLang(view.title)} onClick={() => onOpen(item)}>{view.title}</h1>
+      <h1 className="bp-title" lang={latinLang(view.title)} onClick={() => onOpen(item)}><HeadlineText text={view.title} /></h1>
       {view.titleOrig && <p className="bp-orig" lang={latinLang(view.titleOrig)}>{view.titleOrig}</p>}
       <div className={`bp-lower ${view.score ? '' : 'is-solo'}`}>
         <div className="bp-lower-main">
