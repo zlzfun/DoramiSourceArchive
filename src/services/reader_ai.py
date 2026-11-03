@@ -945,23 +945,16 @@ def _sanitize_history(history: Optional[List[Any]]) -> List[ChatMessage]:
     return cleaned[-MAX_HISTORY_MESSAGES:]
 
 
-async def answer_question(
+def build_qa_messages(
     question: str,
     context: str,
     *,
     scope: str,
-    llm_config: LLMConfig,
     history: Optional[List[Any]] = None,
-    usage_meta: Optional[UsageMeta] = None,
     with_image_notes: bool = False,
-) -> str:
-    """基于给定上下文 + 多轮历史回答提问。上下文为空时仍调用，由提示词约束模型如实说明资料不足。
-
-    消息结构：system → 历史轮次（纯文本问答）→ 当前问题（附本轮参考资料）。
-    历史让模型支持「追问/指代」，参考资料只随当前问题刷新，token 预算可控。
-    ``with_image_notes``(issue #69)由调用方按 sources 的显式布尔元数据给出(见
-    :func:`sources_have_image_notes`),为 True 时 system 追加图片说明使用边界;不嗅探 context。
-    """
+    today: Optional[str] = None,
+) -> List[ChatMessage]:
+    """运行时与离线评测共用输入构造；评测可冻结日期，不调用模型或改写资料。"""
     question = (question or "").strip()
     if not question:
         raise ReaderAIError("请输入你的问题", status_code=400)
@@ -977,9 +970,30 @@ async def answer_question(
             # 资料头部的发布日期甄别新旧(检索规划侧同样拿到 today)。
             content=prompts.build_qa_user_prompt(
                 question, context, scope=scope,
-                today=datetime.now().strftime("%Y-%m-%d"),
+                today=today if today is not None else datetime.now().strftime("%Y-%m-%d"),
             ),
         )
+    )
+    return messages
+
+
+async def answer_question(
+    question: str,
+    context: str,
+    *,
+    scope: str,
+    llm_config: LLMConfig,
+    history: Optional[List[Any]] = None,
+    usage_meta: Optional[UsageMeta] = None,
+    with_image_notes: bool = False,
+) -> str:
+    """一次作答调用；上下文为空时仍由模型说明缺口，不额外启动核对循环。
+
+    图片说明边界由 sources 的显式元数据控制，不嗅探 context。
+    历史仅供理解追问，本轮参考资料随当前问题刷新。
+    """
+    messages = build_qa_messages(
+        question, context, scope=scope, history=history, with_image_notes=with_image_notes,
     )
     raw = await chat_completion(messages=messages, config=llm_config, usage_meta=usage_meta)
     answer = raw.strip()
