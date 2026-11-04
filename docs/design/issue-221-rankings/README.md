@@ -1,6 +1,6 @@
 # 榜单统一 · R1 样页(issue #221)
 
-> R1 样页,待拍板。规格见方案 [`docs/plans/issue-221-rankings-unify.md`](../../plans/issue-221-rankings-unify.md) §0–§6。
+> R1 样页(2026-11-03 由 `converge.html` 收敛版拍板取代;已落地 PR #259)。规格见方案 [`docs/archive/issue-221-rankings-unify.md`](../../archive/issue-221-rankings-unify.md) §0–§6。
 > 上一轮热点样页留档在 [`../issue-121-hot-events/`](../issue-121-hot-events/index.html)(B 较优、非定稿),本轮以它的 B 事件卡为起点精简。
 > 三段命名与风向签已由 converge 页的拍板取代(2026-11-03,见文末「收敛对照页」);下面 R1 各节保持当时的原样。
 

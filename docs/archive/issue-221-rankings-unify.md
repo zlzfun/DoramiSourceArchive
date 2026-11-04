@@ -1,8 +1,9 @@
 # 榜单前端统一重构:热点 / 文章榜 / 播客榜(issue #221)方案
 
-> 状态:进行中——方向已拍板(2026-11-03,收敛版:热点事件 · 深度阅读 · 播客精选,见 §2.0 / §4);2026-11-03 实现完成(前后端),交叉检视两轮通过(§7);2026-11-04 用户目检提六条修订、已改(§4 第 12 项),待复目检。
+> **归档于 2026-11-04(issue #221,PR #259,开发版 3.67.4-alpha,用户目检放行、待发布)**:现状以 docs/architecture/、`docs/frontend/conventions.md` 与代码为准,文中路径与状态为当时记录。
+> 状态:已落地待发布——方向已拍板(2026-11-03,收敛版:热点事件 · 深度阅读 · 播客精选,见 §2.0 / §4);2026-11-03 实现完成(前后端),交叉检视两轮通过(§7);2026-11-04 用户目检三轮修订(§4 第 12 项)后放行,PR #259。
 > 关联:[issue #221](https://github.com/zlzfun/DoramiSourceArchive/issues/221) ·
-> 事件层契约 [`issue-121-event-layer.md`](./issue-121-event-layer.md) §5.0 / §5.1(热点段原设想)·
+> 事件层契约 [`issue-121-event-layer.md`](../plans/issue-121-event-layer.md) §5.0 / §5.1(热点段原设想)·
 > 标签趋势榜 #154(`services/rankings.py`)· 手机壳 #230(审计 M-21 与榜单桌面 1120 断点例外归此)·
 > 上一轮热点样页留档 [`docs/design/issue-121-hot-events/`](../design/issue-121-hot-events/index.html)(B 较优、非定稿)·
 > 本轮样页 `docs/design/issue-221-rankings/`。
