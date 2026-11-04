@@ -18,7 +18,6 @@ import {
   memberTime,
   membersByTime,
   normalizeRankingSegment,
-  publisherGroups,
   rankingDataKey,
   rankingEmptyText,
   rankingEntrySub,
@@ -48,17 +47,16 @@ test('热点事件:本周 = 168 小时(默认),近 2 天 = 48 小时;两档各�
   assert.equal(rankingDataKey('reads', 'recent'), 'reads');
 });
 
-test('范围说明:三段都写明全站、与个人订阅无关;深度阅读写清只收四种内容类型', () => {
+test('范围说明:三段都写明全站与时间窗;不写排序依据、同事件留一篇与「与个人订阅无关」(2026-11-04 目检删去)', () => {
   for (const [seg] of RANKING_SEGMENTS) {
     const note = rankingScopeNote(seg, 'week');
-    assert.match(note, /^全站/);
-    assert.match(note, /与个人订阅无关/);
-    assert.doesNotMatch(note, /标签|归档|采集|分发/);
+    assert.match(note, /^全站近 7 天/);
+    assert.doesNotMatch(note, /个人订阅|排序|只留一篇|标签|归档|采集|分发/);
   }
-  assert.equal(rankingScopeNote('events', 'week'), '全站近 7 天被两家以上报道的事件，按报道的发布主体数排序，与个人订阅无关');
-  assert.match(rankingScopeNote('events', 'recent'), /^全站近 2 天/);
-  assert.equal(rankingScopeNote('reads'), '全站近 7 天按内容价值挑选的论文、教程、观点与汇编，同一件事只留一篇，与个人订阅无关');
-  assert.equal(rankingScopeNote('listens'), '全站近 7 天按内容价值挑选的单集，与个人订阅无关');
+  assert.equal(rankingScopeNote('events', 'week'), '全站近 7 天被两家以上报道的事件');
+  assert.equal(rankingScopeNote('events', 'recent'), '全站近 2 天被两家以上报道的事件');
+  assert.equal(rankingScopeNote('reads'), '全站近 7 天按内容价值挑选的论文、教程、观点与汇编');
+  assert.equal(rankingScopeNote('listens'), '全站近 7 天按内容价值挑选的单集');
 });
 
 test('空榜各一句话', () => {
@@ -118,20 +116,6 @@ const DETAIL = {
   ],
 };
 
-test('来源分组:按发布主体,同主体多渠道括注;有官方渠道即官方;徽标用主体代表渠道', () => {
-  const groups = publisherGroups(DETAIL);
-  assert.deepEqual(groups.map((g) => [g.key, g.name, g.count, g.role, g.sourceId]), [
-    ['google', 'Gemini 模型公告', 2, 'official', 'gemini'],
-    ['arena', 'Arena 排行榜更新', 1, 'leaderboard', 'arena'],
-    ['ls', 'Latent Space', 1, 'personal', 'latent'],
-  ]);
-  assert.deepEqual(groups[0].channels, ['Google DeepMind 博客']);
-  assert.deepEqual(groups[1].channels, []);
-  // 不在 publishers 里的主体也有自己的一组
-  const extra = publisherGroups({ ...DETAIL, members: [...DETAIL.members, { article_id: 'x', source_id: 'it', source_name: 'IT之家', publisher_key: 'ithome', source_role: 'media' }] });
-  assert.equal(extra.at(-1).name, 'IT之家');
-});
-
 test('代表报道固定取成员里标记的那篇(带中文标题与摘要);首报 = 成员最早发布时间', () => {
   const rep = representativeOf(DETAIL);
   assert.equal(rep.article_id, 'g1');
@@ -160,7 +144,7 @@ test('最新进展:最新一篇不是代表报道时才有', () => {
   assert.equal(membersByTime({ members: [...DETAIL.members].reverse() })[0].article_id, 'l1');
 });
 
-test('报道时间线按北京时间分日:今天 / 昨天 / M月D日 周X', () => {
+test('时间线按北京时间分日:今天 / 昨天 / M月D日 周X', () => {
   const days = timelineDays(membersByTime(DETAIL), NOW);
   assert.deepEqual(days.map((d) => [d.label, d.items.map((m) => m.article_id)]), [
     ['今天 · 11月2日', ['l1']],          // 11-01T17:30Z = 北京 11-02 01:30
@@ -197,9 +181,19 @@ test('榜单页结构:三段分段、无标签三轴 / 30 日趋势 / 全局高�
   assert.match(page, /fetchReaderEvents\(/);
   assert.match(page, /fetchReaderEvent\(/);
   assert.match(page, /fetchReaderPicks\(/);
-  // 详情走层原语:桌面 Drawer、手机 Sheet
-  assert.match(page, /<Drawer[^>]*className="rk-drawer"/);
+  // 详情:桌面在榜单页内原地换成事件页(2026-11-04 目检由右侧抽屉改来)、手机走层原语 Sheet
+  assert.ok(!page.includes('<Drawer'), '桌面事件详情不再是抽屉');
+  assert.match(page, /className="rk-wrap rk-event"/);
+  assert.match(page, /返回榜单/);
   assert.match(page, /<Sheet[\s\S]*?className="rk-sheet"/);
+  // 详情正文:代表报道 → 最新进展(卡片)→ 时间线;「来源」节取消,「阅读全文」不用实心主按钮
+  const rep = page.indexOf('aria-label="代表报道"');
+  const latest = page.indexOf('aria-label="最新进展"');
+  const timeline = page.indexOf('时间线 · {');
+  assert.ok(rep > 0 && rep < latest && latest < timeline, '详情顺序应为 代表报道 → 最新进展 → 时间线');
+  for (const gone of ['报道时间线', '来源 · {', 'action-button-primary']) {
+    assert.ok(!page.includes(gone), `详情不应再有:${gone}`);
+  }
   const api = read('../src/api.js');
   for (const gone of ['fetchReaderRankings', 'fetchReaderRankingTag', 'fetchReaderRankingHistory']) {
     assert.ok(!api.includes(gone), `api.js 不应再有 ${gone}`);
@@ -217,7 +211,7 @@ test('标签榜的旧样式随读者面撤出一并删除', () => {
 
 test('行可悬停:点击由 <li> 接住、内容不再整片关指针;播客分数的 title / 读屏名带评分依据', () => {
   const page = read('../src/components/RankingsPage.jsx');
-  assert.match(page, /<li className=\{`rk-row[^`]*`\.trim\(\)\} onClick=\{onClick\}>/);
+  assert.match(page, /<li className=\{`rk-row[^`]*`\.trim\(\)\} data-row=\{rowKey\} onClick=\{onClick\}>/);
   assert.match(page, /querySelector\('\.rk-hit'\)\?\.focus\(/);
   assert.match(page, /<button type="button" className="rk-hit" aria-label=\{label\} \/>/);
   assert.match(page, /podcastReaderBasisText\(/);

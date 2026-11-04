@@ -1,5 +1,5 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowUpRight, BookOpen, ChevronRight, FileText, Flame, Headphones, Loader2, X } from 'lucide-react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { ArrowUpRight, ChevronLeft, ChevronRight, FileText, Flame, Headphones, Loader2 } from 'lucide-react';
 import { fetchReaderEvent, fetchReaderEvents, fetchReaderPicks } from '../api';
 import {
   EVENT_RANGES,
@@ -17,7 +17,6 @@ import {
   normalizeEventRange,
   normalizeRankingSegment,
   picksShapeOf,
-  publisherGroups,
   rankingDataKey,
   rankingEmptyText,
   rankingScopeNote,
@@ -32,13 +31,13 @@ import { latinLang } from '../utils/readerText';
 import { formatPublishDateTime, formatRelativeTime } from '../utils/datetime';
 import { SOURCE_ROLES, resolveCompany } from '../sourceTaxonomy';
 import LogoMark from './LogoMark';
-import Drawer from './layer/Drawer';
 import Sheet from './layer/Sheet';
 
 // ── 榜单(issue #221 收敛版,2026-11-03 拍板;设计稿 docs/design/issue-221-rankings/converge.html 第 2 节「收敛后」)──
 // 三段 热点事件 · 深度阅读 · 播客精选,三段同一套卡片语法(方案 §3):名次列(宋体齐线数字 + 下方变化)·
 // 主体(标题两行 → 一行摘要 → 一行元信息)· 右栏(来源徽标叠放 + 一个度量)。整行点开:命中钮 .rk-hit 铺满整行给焦点与读屏名,点击由行接住。
-// 热点事件点开 = 事件详情(桌面右侧抽屉 / 手机底部层,同一份内容,层原语 Drawer / Sheet);文章与单集直接进阅读窗。
+// 热点事件点开 = 事件详情,同一份内容两种容器:桌面在榜单页内原地换成事件页(版心与列表同宽,「返回榜单」/ Esc 回到列表原位,
+// 2026-11-04 目检由右侧抽屉改来——抽屉 500 宽局促);手机是底部层(层原语 Sheet)。文章与单集直接进阅读窗。
 // 段与热点事件的时间范围由外层持有(ReaderWorkspace 的 view:关掉再打开回到上次的段,桌面 ⇄ 手机互切也不丢);
 // 手机:页头标题位转盘就是三段切换(MobileReader),这里只画范围说明(页头下第一块)与列表(夜航卡面)。
 
@@ -95,13 +94,13 @@ function MetaLine({ parts }) {
 // 行骨架(样页 CARDS.row):名次列与右栏只是视觉,读屏的完整说法在整行命中钮的名字里。
 // 点击由 <li> 接住(命中钮的 click 冒泡上来,键盘 / 读屏激活只开一次),行内名次变化、时间、分数照常接指针,title 悬停可见。
 // 鼠标点在行内文字上时先把焦点交给本行命中钮:详情层关掉后焦点回到这一行(层原语按打开时的焦点还焦;检视 R2 P3)
-function RankRow({ rank, move = null, title, summary, meta, side, label, onOpen, className = '' }) {
+function RankRow({ rank, move = null, title, summary, meta, side, label, onOpen, rowKey, className = '' }) {
   const onClick = (event) => {
     event.currentTarget.querySelector('.rk-hit')?.focus({ preventScroll: true });
     onOpen?.();
   };
   return (
-    <li className={`rk-row ${className}`.trim()} onClick={onClick}>
+    <li className={`rk-row ${className}`.trim()} data-row={rowKey} onClick={onClick}>
       <button type="button" className="rk-hit" aria-label={label} />
       <div className="rk-rank" aria-hidden="true">
         <span className="rk-num">{rank}</span>
@@ -126,6 +125,7 @@ function EventRow({ item, range, snapshotDate, sourceMap, onOpen }) {
   return (
     <RankRow
       className="is-event"
+      rowKey={item.event_id}
       rank={item.rank}
       move={move ? <span className={`rk-move is-${move.direction}`} title={move.title}>{move.label}</span> : null}
       title={item.title}
@@ -216,20 +216,23 @@ function RangeSwitch({ range, onChange, mobile }) {
   );
 }
 
-function EventDetailHead({ detail }) {
+// 桌面事件页打开时焦点落在标题上(titleRef;读屏先听到这件事是什么),手机底部层的焦点由层原语管
+function EventDetailHead({ detail, titleRef = null }) {
   const shown = detail.data || detail.item || {};
   const rank = detail.data ? detail.data.rank : detail.item?.rank;
   const meta = eventMetaParts(shown);
   return (
     <div className="rk-dh">
       <p className="rk-kicker">{eventKicker(detail.range, rank)}</p>
-      <h2 className="rk-dtitle" lang={latinLang(shown.title)}>{shown.title}</h2>
+      <h2 className="rk-dtitle" lang={latinLang(shown.title)} ref={titleRef} tabIndex={titleRef ? -1 : undefined}>{shown.title}</h2>
       {meta.length > 0 && <p className="rk-dmeta">{meta.join(' · ')}</p>}
     </div>
   );
 }
 
-// 事件详情正文(拍板 9):代表报道固定首位 → 来源(按发布主体)→ 报道时间线(按北京时间分日)→ 最新进展
+// 事件详情正文(拍板 9;2026-11-04 目检修订):代表报道固定首位 → 最新进展(一张卡,标题为主、摘要截两行)→ 时间线
+// (按北京时间分日,左侧纵线串起每一篇)。「来源」节取消:谁报道了在时间线里逐篇可见,家数在抬头。
+// 「阅读全文」是安静的文字动作(与卡片同一套墨色),不用实心主按钮
 function EventDetailBody({ detail, sourceMap, preferChinese, onOpenArticle }) {
   if (detail.status === 'loading') {
     return <p className="rk-sec-state"><Loader2 className="animate-spin" aria-hidden="true" />详情加载中…</p>;
@@ -242,7 +245,6 @@ function EventDetailBody({ detail, sourceMap, preferChinese, onOpenArticle }) {
   const repTitle = rep ? titleView(rep, preferChinese, '') : null;
   const repSummary = data.summary || rep?.summary || '';
   const repTime = rep ? memberTime(rep) : '';
-  const groups = publisherGroups(data);
   const members = membersByTime(data);
   const days = timelineDays(members);
   const latest = latestUpdate(data);
@@ -256,14 +258,14 @@ function EventDetailBody({ detail, sourceMap, preferChinese, onOpenArticle }) {
             <SourceLogo sourceMap={sourceMap} sourceId={rep.source_id} name={rep.source_name} size="s20" />
             <span className="rk-rep-name">{rep.source_name}</span>
             {ROLE_LABEL[rep.source_role] && <span className="rk-role">{ROLE_LABEL[rep.source_role]}</span>}
-            <span className="rk-rep-k">代表报道</span>
+            <span className="rk-card-k">代表报道</span>
           </p>
           <p className="rk-rep-title" lang={latinLang(repTitle.title)}>{repTitle.title}</p>
           {repTitle.orig && <p className="rk-rep-orig" lang={latinLang(repTitle.orig)}>{repTitle.orig}</p>}
           {repSummary && <p className="rk-rep-sum" lang={latinLang(repSummary)}>{repSummary}</p>}
           <div className="rk-rep-actions">
-            <button type="button" className="action-button action-button-primary rk-btn" data-read-origin="" onClick={() => open(rep.article_id)}>
-              <BookOpen aria-hidden="true" />阅读全文
+            <button type="button" className="rk-read" data-read-origin="" onClick={() => open(rep.article_id)}>
+              阅读全文<ChevronRight aria-hidden="true" />
             </button>
             {rep.url && (
               <a className="rk-link" href={rep.url} target="_blank" rel="noopener noreferrer">
@@ -275,32 +277,35 @@ function EventDetailBody({ detail, sourceMap, preferChinese, onOpenArticle }) {
         </section>
       )}
 
-      {groups.length > 0 && (
-        <section className="rk-sec">
-          <h3 className="drawer-sec-title">来源 · {Number(data.publisher_count) || groups.length} 家</h3>
-          <ul className="rk-pubs">
-            {groups.map((group) => (
-              <li key={group.key}>
-                <SourceLogo sourceMap={sourceMap} sourceId={group.sourceId} name={group.name} size="s18" />
-                <span className="rk-pub-name">
-                  {group.name}
-                  {group.channels.length > 0 && <small>（还有 {group.channels.join('、')}）</small>}
-                </span>
-                {ROLE_LABEL[group.role] && <span className="rk-role">{ROLE_LABEL[group.role]}</span>}
-                <span className="rk-pub-n">{group.count} 篇</span>
-              </li>
-            ))}
-          </ul>
+      {latest && (
+        <section className="rk-sec" aria-label="最新进展">
+          <button
+            type="button"
+            className="rk-latest"
+            data-read-origin=""
+            aria-label={`最新进展：${latestTitle}，${latest.source_name || ''}，打开`}
+            onClick={() => open(latest.article_id)}
+          >
+            <span className="rk-latest-src">
+              <SourceLogo sourceMap={sourceMap} sourceId={latest.source_id} name={latest.source_name} size="s15" />
+              <span className="rk-latest-name">{latest.source_name}</span>
+              <span className="rk-dot" aria-hidden="true">·</span>
+              <RelTime value={memberTime(latest)} />
+              <span className="rk-card-k">最新进展</span>
+            </span>
+            <span className="rk-latest-title" lang={latinLang(latestTitle)}>{latestTitle}</span>
+            {latest.summary && <span className="rk-latest-sum" lang={latinLang(latest.summary)}>{latest.summary}</span>}
+          </button>
         </section>
       )}
 
       {days.length > 0 && (
         <section className="rk-sec">
-          <h3 className="drawer-sec-title">报道时间线 · {Number(data.member_count) || members.length} 篇</h3>
+          <h3 className="drawer-sec-title">时间线 · {Number(data.member_count) || members.length} 篇</h3>
           <ol className="rk-tl">
             {days.map((day) => (
               <li key={day.key} className="rk-tl-day">
-                <p className="rk-tl-daylabel">{day.label}</p>
+                <p className="rk-tl-daylabel"><span className="rk-tl-node" aria-hidden="true" /><span>{day.label}</span></p>
                 <ol>
                   {day.items.map((member) => {
                     const title = displayTitle(member, preferChinese, '');
@@ -313,6 +318,7 @@ function EventDetailBody({ detail, sourceMap, preferChinese, onOpenArticle }) {
                           onClick={() => open(member.article_id)}
                         >
                           <span className="rk-tl-time">{beijingTime(memberTime(member))}</span>
+                          <span className="rk-tl-dot" aria-hidden="true" />
                           <span className="rk-tl-main">
                             <span className="rk-tl-src">
                               <SourceLogo sourceMap={sourceMap} sourceId={member.source_id} name={member.source_name} size="s15" />
@@ -329,22 +335,6 @@ function EventDetailBody({ detail, sourceMap, preferChinese, onOpenArticle }) {
               </li>
             ))}
           </ol>
-        </section>
-      )}
-
-      {latest && (
-        <section className="rk-sec">
-          <h3 className="drawer-sec-title">最新进展</h3>
-          <p className="rk-latest-src">
-            <SourceLogo sourceMap={sourceMap} sourceId={latest.source_id} name={latest.source_name} size="s15" />
-            {latest.source_name}
-            <span className="rk-dot" aria-hidden="true">·</span>
-            <RelTime value={memberTime(latest)} />
-          </p>
-          {latest.summary && <p className="rk-latest-sum" lang={latinLang(latest.summary)}>{latest.summary}</p>}
-          <button type="button" className="rk-latest-link" data-read-origin="" onClick={() => open(latest.article_id)}>
-            <span lang={latinLang(latestTitle)}>{latestTitle}</span><ChevronRight aria-hidden="true" />
-          </button>
         </section>
       )}
     </>
@@ -401,8 +391,15 @@ export default function RankingsPage({
   const [detailOpen, setDetailOpen] = useState(false);
   const [detail, setDetail] = useState(null);   // { seq, id, range, item, status, data, error }
   const seqRef = useRef(0);
+  // 桌面事件页:进页时记下列表滚到哪、点的是哪一行;返回时回到原位,焦点回到该行
+  const mainRef = useRef(null);
+  const titleRef = useRef(null);
+  const listScrollRef = useRef(0);
+  const returnRowRef = useRef(null);
   const openEvent = useCallback((item) => {
     seqRef.current += 1;
+    listScrollRef.current = mainRef.current?.scrollTop || 0;
+    returnRowRef.current = item.event_id;
     setDetail({ seq: seqRef.current, id: item.event_id, range: rng, item, status: 'loading', data: null, error: '' });
     setDetailOpen(true);
   }, [rng]);
@@ -427,6 +424,34 @@ export default function RankingsPage({
       });
     return () => controller.abort();
   }, [detailSeq, detailId, detailRange]);
+
+  const pageOpen = !mobile && detailOpen && detail != null;
+  useLayoutEffect(() => {
+    const main = mainRef.current;
+    if (mobile || !main) return;
+    if (pageOpen) {
+      main.scrollTop = 0;
+      titleRef.current?.focus({ preventScroll: true });
+      return;
+    }
+    const row = returnRowRef.current;
+    if (row == null) return;
+    returnRowRef.current = null;
+    main.scrollTop = listScrollRef.current;
+    main.querySelector(`.rk-row[data-row="${row}"] .rk-hit`)?.focus({ preventScroll: true });
+  }, [pageOpen, mobile]);
+  // Esc 返回榜单;上面若还有弹窗,它的层栈先在 document 捕获阶段消费掉 Esc,这里收不到。输入框里的 Esc 留给输入框
+  useEffect(() => {
+    if (!pageOpen) return undefined;
+    const onKey = (event) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      closeEvent();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [pageOpen, closeEvent]);
 
   const openArticle = (articleId) => { if (articleId) onOpenArticle?.(articleId); };
   const note = rankingScopeNote(seg, rng);
@@ -468,20 +493,27 @@ export default function RankingsPage({
   }
   const range_ = seg === 'events' ? <RangeSwitch range={rng} onChange={onRangeChange} mobile={mobile} /> : null;
 
-  const head = detail ? <EventDetailHead detail={detail} /> : null;
   const detailBody = detail ? (
     <EventDetailBody detail={detail} sourceMap={sourceMap} preferChinese={preferChinese} onOpenArticle={openArticle} />
   ) : null;
   const detailTitle = (detail?.data || detail?.item)?.title || '';
 
   return (
-    <main className={`rankings-page rk-page ${mobile ? 'is-mobile' : ''}`.trim()} aria-label="榜单">
+    <main ref={mainRef} className={`rankings-page rk-page ${mobile ? 'is-mobile' : ''}`.trim()} aria-label="榜单">
       {mobile ? (
         <>
           <p className="ranking-head-note">{note}</p>
           {range_}
           {body}
         </>
+      ) : pageOpen ? (
+        <article className="rk-wrap rk-event" aria-label="热点事件详情">
+          <button type="button" className="rk-back" onClick={closeEvent}>
+            <ChevronLeft aria-hidden="true" />返回榜单
+          </button>
+          <EventDetailHead detail={detail} titleRef={titleRef} />
+          <div className="rk-ebody">{detailBody}</div>
+        </article>
       ) : (
         <div className="rk-wrap">
           <header className="ranking-head rk-head">
@@ -511,21 +543,6 @@ export default function RankingsPage({
         </div>
       )}
 
-      {!mobile && (
-        <Drawer open={detailOpen} onClose={closeEvent} label="热点事件详情" className="rk-drawer">
-          {detail && (
-            <>
-              <div className="rk-dhead">
-                {head}
-                <button type="button" className="icon-button rk-close" onClick={closeEvent} aria-label="关闭详情">
-                  <X aria-hidden="true" />
-                </button>
-              </div>
-              <div className="rk-dbody">{detailBody}</div>
-            </>
-          )}
-        </Drawer>
-      )}
       {mobile && detail && (
         <Sheet
           open={detailOpen}
@@ -533,7 +550,7 @@ export default function RankingsPage({
           label="热点事件详情"
           grabLabel={`关闭「${detailTitle}」的详情`}
           className="rk-sheet"
-          head={<div className="rk-shead-row">{head}</div>}
+          head={<div className="rk-shead-row"><EventDetailHead detail={detail} /></div>}
         >
           <div className="rk-sbody">{detailBody}</div>
         </Sheet>

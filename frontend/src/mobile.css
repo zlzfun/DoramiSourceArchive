@@ -168,7 +168,7 @@
 .rankings-page.is-mobile .rk-empty p { font-size: var(--m-fs-md); }
 
 /* ── 热点事件详情 = 底部层(层原语 Sheet,portal 到 body;抓手是真按钮、头部可下拖关):头部(眉头 / 标题 / 元信息)在抓手下、
-      同属可拖区;正文自己滚。内容与桌面抽屉同一份(index.css .rk-rep / .rk-pubs / .rk-tl),这里换手机刻度与 44 命中 ── */
+      同属可拖区;正文自己滚。内容与桌面事件页同一份(index.css .rk-rep / .rk-latest / .rk-tl),这里换手机刻度与 44 命中 ── */
 .m-sheet.rk-sheet {
   display: flex;
   flex-direction: column;
@@ -191,12 +191,12 @@
   padding: 16px 18px calc(24px + var(--sab));
 }
 .rk-sbody .drawer-sec-title { font-size: var(--m-fs-sm); }
-.rk-sbody :is(.rk-rep-src, .rk-rep-sum, .rk-latest-sum, .rk-tl-title, .rk-pubs li, .rk-link, .rk-latest-link, .rk-sec-state) { font-size: var(--m-fs-md); }
+.rk-sbody :is(.rk-rep-src, .rk-rep-sum, .rk-tl-title, .rk-link, .rk-read, .rk-latest-title, .rk-sec-state) { font-size: var(--m-fs-md); }
 .rk-sbody .rk-rep-title { font-size: var(--m-fs-lg); }
-.rk-sbody .rk-rep-orig { font-size: var(--m-fs-sm); }
-.rk-sbody :is(.rk-role, .rk-pub-n, .rk-pub-name small, .rk-rep-k, .rk-rep-time, .rk-tl-daylabel, .rk-tl-time, .rk-tl-src, .rk-latest-src) { font-size: var(--m-fs-xs); }
-.rk-sbody :is(.rk-pubs li, .rk-tl-item, .rk-btn, .rk-link, .rk-latest-link) { min-height: var(--tap); }
-.rk-sbody :is(.rk-tl-item, .rk-latest-link):active { background: var(--dorami-hover); }
+.rk-sbody :is(.rk-rep-orig, .rk-latest-sum) { font-size: var(--m-fs-sm); }
+.rk-sbody :is(.rk-role, .rk-card-k, .rk-rep-time, .rk-tl-daylabel, .rk-tl-time, .rk-tl-src, .rk-latest-src) { font-size: var(--m-fs-xs); }
+.rk-sbody :is(.rk-tl-item, .rk-read, .rk-link) { min-height: var(--tap); }
+.rk-sbody :is(.rk-tl-item, .rk-latest):active { background: var(--dorami-hover); }
 
 /* ── 早报 Tab(样页 brief 屏):画布底 + 夜航卡;页面自己滚,页头让位用 ::before 垫片(见下方 .m-list::before 一组) ── */
 .m-content > .bp-sheet { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }

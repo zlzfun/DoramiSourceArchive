@@ -1,6 +1,6 @@
 // 榜单(issue #221 收敛版,2026-11-03 拍板;设计稿 docs/design/issue-221-rankings/converge.html):
 // 热点事件 · 深度阅读 · 播客精选三段的纯逻辑——范围说明、空态、入口副标题、名次变化、徽标叠放、
-// 事件详情的发布主体分组与报道时间线(按北京时间分日)。组件只取用,node:test 直接核对。
+// 事件详情的时间线(按北京时间分日)。组件只取用,node:test 直接核对。
 
 export const RANKING_SEGMENTS = [
   ['events', '热点事件'],
@@ -38,13 +38,14 @@ export function rankingDataKey(segment, range) {
   return seg === 'events' ? `events:${normalizeEventRange(range)}` : seg;
 }
 
-// 页头下的范围说明一句(只出现一次;都写明「全站」「与个人订阅无关」——深度阅读 / 播客精选与早报分区同名同尺子)
+// 页头下的范围说明一句(只出现一次;写明「全站」与时间窗、收什么。2026-11-04 目检:排序依据、同事件留一篇、
+// 「与个人订阅无关」三句删去——卡片右栏的度量已经说明排序,深度阅读 / 播客精选与早报分区同名同尺子)
 export function rankingScopeNote(segment, range) {
   const seg = normalizeRankingSegment(segment);
-  if (seg === 'reads') return '全站近 7 天按内容价值挑选的论文、教程、观点与汇编，同一件事只留一篇，与个人订阅无关';
-  if (seg === 'listens') return '全站近 7 天按内容价值挑选的单集，与个人订阅无关';
+  if (seg === 'reads') return '全站近 7 天按内容价值挑选的论文、教程、观点与汇编';
+  if (seg === 'listens') return '全站近 7 天按内容价值挑选的单集';
   const days = normalizeEventRange(range) === 'recent' ? '2' : '7';
-  return `全站近 ${days} 天被两家以上报道的事件，按报道的发布主体数排序，与个人订阅无关`;
+  return `全站近 ${days} 天被两家以上报道的事件`;
 }
 
 export function rankingEmptyText(segment, range) {
@@ -203,35 +204,7 @@ export function firstReportAt(detail) {
   return best;
 }
 
-// 来源 · N 家:按 publisher_key 分组,只写发布主体;同主体多渠道括注其余渠道名;
-// 角色有一篇来自官方渠道即「官方」;徽标用主体的代表渠道(publishers[].source_id)
-export function publisherGroups(detail) {
-  const groups = new Map();
-  for (const p of detail?.publishers || []) {
-    if (!p?.key || groups.has(p.key)) continue;
-    groups.set(p.key, { key: p.key, name: p.name || p.key, sourceId: p.source_id || '', listed: Number(p.count) || 0, items: [] });
-  }
-  for (const member of detail?.members || []) {
-    const key = member?.publisher_key || member?.source_id || '';
-    if (!key) continue;
-    if (!groups.has(key)) groups.set(key, { key, name: member.source_name || key, sourceId: member.source_id || '', listed: 0, items: [] });
-    groups.get(key).items.push(member);
-  }
-  return [...groups.values()].map((g) => {
-    const channels = [...new Set(g.items.map((m) => m.source_name).filter(Boolean))].filter((name) => name !== g.name);
-    const role = g.items.some((m) => m.source_role === 'official') ? 'official' : (g.items[0]?.source_role || '');
-    return {
-      key: g.key,
-      name: g.name,
-      sourceId: g.sourceId || g.items[0]?.source_id || '',
-      channels,
-      role,
-      count: g.items.length || g.listed,
-    };
-  });
-}
-
-// 报道时间线 · M 篇:按北京时间分日(报道时间倒序),每日一组
+// 时间线 · M 篇:按北京时间分日(发布时间倒序),每日一组
 export function timelineDays(members, now = Date.now()) {
   const days = [];
   for (const member of members || []) {

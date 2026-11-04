@@ -10296,8 +10296,8 @@ input[type="radio"] {
      docs/design/issue-221-rankings/converge.html 第 2 节「收敛后」):一级目的地,占满条目列 + 阅读窗,版心 820 居中。
      三段同一套卡片语法 .rk-row(方案 §3):名次列(宋体齐线数字 + 下方变化)· 主体(标题两行 → 一行摘要 → 一行元信息)·
      右栏(来源徽标叠放 + 一个度量);行间一条内缩细线 + 留白,不给每张卡底色与阴影。
-     热点事件详情:桌面 = 层原语 Drawer 改成右侧抽屉(.rk-drawer;几何在文件尾未分层段,要压过 mobile.css 的 .m-drawer),
-     手机 = 底部层 Sheet(mobile.css);详情正文的 .rk-rep / .rk-pubs / .rk-tl 两端共用,手机字号在 mobile.css 改刻度。 ── */
+     热点事件详情:桌面 = 榜单页内原地换成事件页(.rk-event,版心同列表;2026-11-04 目检由右侧抽屉改来),
+     手机 = 底部层 Sheet(mobile.css);详情正文的 .rk-rep / .rk-latest / .rk-tl 两端共用,手机字号在 mobile.css 改刻度。 ── */
   .rankings-page {
     --rk-bg: var(--rd-list-bg);
     grid-column: 3 / -1;
@@ -10502,69 +10502,153 @@ input[type="radio"] {
     font-variant-numeric: lining-nums tabular-nums;
   }
 
-  /* ── 热点事件详情(桌面右侧抽屉 / 手机底部层同一份内容)── */
-  .rk-dhead {
-    flex: none;
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    padding: 18px 16px 14px 22px;
-    border-bottom: 1px solid var(--dorami-border-soft);
+  /* ── 热点事件详情(桌面原地事件页 / 手机底部层同一份内容)。2026-11-04 目检修订:抽屉 500 宽局促 → 原地事件页;
+     「来源」节取消;「阅读全文」由实心主按钮改文字动作;最新进展做成卡片(标题为主、摘要截两行),排在时间线之前;
+     时间线左侧一条纵线串起每一篇 ── */
+  .rk-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin: 0 0 16px -6px;
+    padding: 4px 10px 4px 4px;
+    border: 0;
+    border-radius: var(--r-control);
+    background: none;
+    font-size: 13px;
+    color: var(--dorami-muted);
+    cursor: pointer;
   }
+  .rk-back svg { width: 16px; height: 16px; }
+  @media (hover: hover) { .rk-back:hover { background: var(--dorami-hover); color: var(--dorami-ink); } }
+  .rk-back:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: 1px; }
   .rk-dh { flex: 1; min-width: 0; }
   .rk-kicker { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
   .rk-dtitle { margin: 0; font-size: 18px; font-weight: 600; line-height: 1.4; color: var(--dorami-ink); overflow-wrap: anywhere; }
+  .rk-dtitle:focus { outline: none; }   /* 进事件页时程序把焦点放在标题上(读屏先读到这件事),标题本身不可操作 */
   .rk-dmeta { margin: 6px 0 0; font-size: 12px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
-  .rk-close { flex: none; }
-  .rk-close svg { width: 18px; height: 18px; }
-  .rk-dbody {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-    padding: 18px 22px 32px;
-  }
+  .rk-event .rk-kicker { font-size: 13px; }
+  .rk-event .rk-dtitle { font-size: 22px; line-height: 1.38; }
+  .rk-event .rk-dmeta { margin-top: 8px; font-size: 13px; }
+  .rk-ebody { display: flex; flex-direction: column; gap: 22px; margin-top: 22px; }
   .rk-sec-state { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; color: var(--dorami-muted); }
   .rk-sec-state svg { width: 16px; height: 16px; }
   .rk-sec-state.is-error { color: var(--state-bad); }
   .rk-role { font-size: 12px; color: var(--dorami-faint); white-space: nowrap; }
+  .rk-card-k { margin-left: auto; flex: none; font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
 
   .rk-rep { padding: 14px 16px; border-radius: var(--r-card); background: var(--dorami-soft); }
   .rk-rep-src { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; color: var(--dorami-ink-2); }
   .rk-rep-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .rk-rep-k { margin-left: auto; flex: none; font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
   .rk-rep-title { margin: 10px 0 0; font-size: 15px; font-weight: 600; line-height: 1.5; color: var(--dorami-ink); overflow-wrap: anywhere; }
   .rk-rep-orig { margin: 2px 0 0; font-family: var(--font-serif-latin); font-style: italic; font-weight: 400; font-size: 13px; color: var(--dorami-muted); overflow-wrap: anywhere; }
   .rk-rep-sum { margin: 8px 0 0; font-size: 13px; line-height: 1.65; color: var(--dorami-ink-2); overflow-wrap: anywhere; }
-  .rk-rep-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 12px; }
+  .rk-event .rk-rep { padding: 16px 20px; }
+  .rk-event .rk-rep-title { font-size: 16px; }
+  .rk-event .rk-rep-sum { font-size: 14px; line-height: 1.7; }
+  .rk-rep-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-top: 12px; }
   .rk-rep-actions > * { white-space: nowrap; }
-  .rk-btn { display: inline-flex; align-items: center; gap: 6px; }
-  .rk-btn svg { width: 15px; height: 15px; }
+  .rk-read {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    padding: 0;
+    border: 0;
+    background: none;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--dorami-ink);
+    cursor: pointer;
+  }
+  .rk-read svg { width: 14px; height: 14px; color: var(--dorami-muted); }
+  @media (hover: hover) { .rk-read:hover { text-decoration: underline; text-underline-offset: 3px; } }
   .rk-link { display: inline-flex; align-items: center; gap: 3px; font-size: 13px; color: var(--dorami-muted); text-decoration: none; }
   .rk-link svg { width: 13px; height: 13px; }
   @media (hover: hover) { .rk-link:hover { color: var(--dorami-ink); } }
   .rk-rep-time { margin-left: auto; font-size: 12px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
 
-  .rk-pubs { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; margin: 0; padding: 0; list-style: none; }
-  .rk-pubs li { display: flex; align-items: center; gap: 8px; min-height: 30px; font-size: 13px; color: var(--dorami-ink-2); }
-  .rk-pubs .logo-mark { flex: none; }
-  .rk-pub-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .rk-pub-name small { font-size: 12px; color: var(--dorami-faint); }
-  .rk-pub-n { margin-left: auto; flex: none; font-size: 12px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+  /* 最新进展:整张卡一个按钮;来源行 → 标题(两行)→ 摘要(两行,淡) */
+  .rk-latest {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    width: 100%;
+    padding: 12px 16px 14px;
+    border: 1px solid var(--dorami-border);
+    border-radius: var(--r-card);
+    background: none;
+    color: var(--dorami-ink);
+    text-align: left;
+    cursor: pointer;
+    transition: background var(--motion-fast) var(--motion-ease);
+  }
+  @media (hover: hover) { .rk-latest:hover { background: var(--dorami-hover); } }
+  .rk-latest:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: 1px; }
+  .rk-latest-src { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; color: var(--dorami-muted); }
+  .rk-latest-src :is(.logo-mark, time) { flex: none; }
+  .rk-latest-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rk-latest-title,
+  .rk-latest-sum {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+  }
+  .rk-latest-title { font-size: 14px; font-weight: 600; line-height: 1.5; color: var(--dorami-ink); }
+  .rk-latest-sum { font-size: 13px; line-height: 1.6; color: var(--dorami-muted); }
 
+  /* 时间线:时刻 · 纵线与圆点 · 来源与标题三列;纵线逐段画在每一行上(行间不留缝,连成一条),
+     首日从日期节点画起,末一篇画到圆点为止;代表报道的圆点用强调色 */
   .rk-tl,
   .rk-tl ol { margin: 0; padding: 0; list-style: none; }
-  .rk-tl-daylabel { margin: 12px 0 2px; font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
-  .rk-tl-day:first-child .rk-tl-daylabel { margin-top: 0; }
+  .rk-tl {
+    --tl-pad: 8px;
+    --tl-time: 40px;
+    --tl-rail: 22px;
+    --tl-x: calc(var(--tl-pad) + var(--tl-time) + var(--tl-rail) / 2);
+  }
+  .rk-tl-daylabel,
+  .rk-tl-day li { position: relative; }
+  .rk-tl-daylabel::before,
+  .rk-tl-day li::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: calc(var(--tl-x) - 0.5px);
+    width: 1px;
+    background: var(--dorami-border);
+  }
+  .rk-tl-day:first-child .rk-tl-daylabel::before { top: 50%; }
+  .rk-tl-day:last-child li:last-child::before { bottom: auto; height: 17px; }
+  .rk-tl-daylabel {
+    display: grid;
+    grid-template-columns: var(--tl-time) var(--tl-rail) minmax(0, 1fr);
+    align-items: center;
+    margin: 0;
+    padding: 14px 0 4px var(--tl-pad);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--dorami-muted);
+  }
+  .rk-tl-day:first-child .rk-tl-daylabel { padding-top: 0; }
+  .rk-tl-daylabel > span:last-child { grid-column: 3; padding-left: 4px; }
+  .rk-tl-node {
+    grid-column: 2;
+    justify-self: center;
+    position: relative;
+    z-index: 1;
+    width: 9px;
+    height: 9px;
+    border: 1.5px solid var(--dorami-faint);
+    border-radius: 50%;
+    background: var(--rk-bg, var(--dorami-surface));
+  }
   .rk-tl-item {
     display: grid;
-    grid-template-columns: 42px minmax(0, 1fr);
-    gap: 8px;
+    grid-template-columns: var(--tl-time) var(--tl-rail) minmax(0, 1fr);
     width: 100%;
-    padding: 7px 8px 7px 0;
+    padding: 8px 10px 8px var(--tl-pad);
     border: 0;
     border-radius: var(--r-control);
     background: none;
@@ -10573,31 +10657,24 @@ input[type="radio"] {
     cursor: pointer;
   }
   @media (hover: hover) { .rk-tl-item:hover { background: var(--dorami-hover); } }
-  .rk-tl-time { padding-top: 1px; font-size: 12px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
-  .rk-tl-main { min-width: 0; }
-  .rk-tl-src { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dorami-muted); }
+  .rk-tl-time { font-size: 12px; line-height: 18px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+  .rk-tl-dot {
+    justify-self: center;
+    position: relative;
+    z-index: 1;
+    width: 7px;
+    height: 7px;
+    margin-top: 5.5px;
+    border-radius: 50%;
+    background: var(--dorami-faint);
+  }
+  .rk-tl-item.is-rep .rk-tl-dot { background: var(--dorami-accent); box-shadow: 0 0 0 3px rgba(var(--dorami-accent-rgb), 0.18); }
+  .rk-tl-main { min-width: 0; padding-left: 4px; }
+  .rk-tl-src { display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 18px; color: var(--dorami-muted); }
   .rk-tl-src .logo-mark { flex: none; }
   .rk-tl-tag { margin-left: 2px; color: var(--dorami-faint); }
   .rk-tl-title { display: block; margin-top: 2px; font-size: 13px; line-height: 1.55; color: var(--dorami-ink); overflow-wrap: anywhere; }
-
-  .rk-latest-src { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12px; color: var(--dorami-muted); }
-  .rk-latest-sum { margin: 6px 0 0; font-size: 13px; line-height: 1.65; color: var(--dorami-ink-2); overflow-wrap: anywhere; }
-  .rk-latest-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    margin-top: 6px;
-    padding: 0;
-    border: 0;
-    background: none;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--dorami-ink);
-    text-align: left;
-    cursor: pointer;
-  }
-  .rk-latest-link svg { flex: none; width: 14px; height: 14px; color: var(--dorami-muted); }
-  @media (hover: hover) { .rk-latest-link:hover span { text-decoration: underline; text-underline-offset: 3px; } }
+  .rk-event .rk-tl-title { font-size: 14px; }
 
   .reader-disc-head {
     flex: none;
@@ -14780,22 +14857,4 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
-}
-
-/* issue #221 榜单的热点事件详情(桌面):层原语 Drawer 的面板改成右侧抽屉(宽 500,贴右,左侧两角圆,从右滑入)。
-   未分层——.m-drawer(mobile.css,未分层)是手机左侧源抽屉的几何,写进 @layer 压不过它。遮罩仍是层原语的 .m-dim。 */
-.m-drawer.rk-drawer {
-  left: auto;
-  right: 0;
-  width: min(500px, 92vw);
-  padding: 0;
-  overflow: hidden;
-  background: var(--dorami-surface);
-  border-radius: var(--r-overlay) 0 0 var(--r-overlay);
-  box-shadow: var(--sh-3);
-  animation: dorami-rk-drawer-in var(--motion-slow) var(--motion-ease);
-}
-@keyframes dorami-rk-drawer-in {
-  from { transform: translateX(32px); opacity: 0; }
-  to { transform: none; opacity: 1; }
 }
