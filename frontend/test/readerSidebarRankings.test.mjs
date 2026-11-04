@@ -89,3 +89,31 @@ test('mobile rankings are a full-screen tab, so the desktop source-list gate is 
   assert.match(mobile, /tab === 'rankings'/);
   assert.match(mobile, /<RankingsPage/);
 });
+
+// issue #221 目检:从榜单点进站内原文后能回去——与早报同一条外出返回带(ctx.from === 'rankings'),
+// 桌面阅读窗顶「返回热点事件 / 返回榜单」、手机正文页返回都把 ctx 作为 restore 交回榜单页;点入口 / 点 Tab 是新开
+test('opening an article from rankings leaves a return trail that reopens rankings where the reader was', () => {
+  assert.match(workspace, /const \[rankingRestore, setRankingRestore\] = useState\(null\)/);
+  const page = between(desktop, '{rankingsOpen && (', '/>');
+  assert.match(page, /restore=\{rankingRestore\}/);
+  assert.match(page, /onOpenArticle=\{async \(articleId, ctx\) =>/);
+  assert.match(page, /setBriefReturn\(ctx \|\| null\)/);
+  const trail = between(desktop, "{briefReturn?.from === 'rankings' && (", '</nav>');
+  assert.match(trail, /setRankingRestore\(briefReturn\)/);
+  assert.match(trail, /setBriefReturn\(null\)/);
+  assert.match(trail, /setRankingsOpen\(true\)/);
+  assert.match(trail, /返回热点事件/);
+  // 早报那条带不给榜单的 ctx 画「早报下一条」
+  assert.match(desktop, /\{briefReturn && briefReturn\.from !== 'rankings' && \(\(\) => \{/);
+  const openRankings = between(desktop, 'const openRankings = useCallback(() => {', '}, [');
+  assert.match(openRankings, /setRankingRestore\(null\)/);
+
+  const close = between(mobile, 'const closeArticle = useCallback(() => {', '}, [');
+  assert.match(close, /briefReturn\?\.from === 'rankings'/);
+  assert.match(close, /setRankingRestore\(briefReturn\)/);
+  assert.match(close, /setTab\('rankings'\)/);
+  const mobilePage = between(mobile, '<RankingsPage', '/>');
+  assert.match(mobilePage, /restore=\{rankingRestore\}/);
+  assert.match(mobilePage, /setBriefReturn\(ctx \|\| null\)/);
+  assert.match(mobile, /if \(t === 'rankings'\) setRankingRestore\(null\)/);
+});

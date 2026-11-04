@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowUpRight, ChevronLeft, ChevronRight, FileText, Flame, Headphones, Loader2 } from 'lucide-react';
+import { ArrowUpRight, ChevronLeft, FileText, Flame, Headphones, Loader2 } from 'lucide-react';
 import { fetchReaderEvent, fetchReaderEvents, fetchReaderPicks } from '../api';
 import {
   EVENT_RANGES,
@@ -38,6 +38,8 @@ import Sheet from './layer/Sheet';
 // 主体(标题两行 → 一行摘要 → 一行元信息)· 右栏(来源徽标叠放 + 一个度量)。整行点开:命中钮 .rk-hit 铺满整行给焦点与读屏名,点击由行接住。
 // 热点事件点开 = 事件详情,同一份内容两种容器:桌面在榜单页内原地换成事件页(版心与列表同宽,「返回榜单」/ Esc 回到列表原位,
 // 2026-11-04 目检由右侧抽屉改来——抽屉 500 宽局促);手机是底部层(层原语 Sheet)。文章与单集直接进阅读窗。
+// 从榜单点进站内原文时把「从哪来」交给外层(onOpenArticle 的 ctx,与早报同一条外出返回带):阅读窗顶「返回」/ 手机正文页返回
+// 时外层带着 restore 重开本页——事件页(手机底部层)回到那件事与读到的位置,列表回到原滚动位置、焦点回到点开的那一行。
 // 段与热点事件的时间范围由外层持有(ReaderWorkspace 的 view:关掉再打开回到上次的段,桌面 ⇄ 手机互切也不丢);
 // 手机:页头标题位转盘就是三段切换(MobileReader),这里只画范围说明(页头下第一块)与列表(夜航卡面)。
 
@@ -165,6 +167,7 @@ function PickRow({ item, rank, shape, sourceMap, preferChinese, onOpen }) {
   return (
     <RankRow
       className={`is-content ${shape === 'podcast' ? 'is-podcast' : ''}`}
+      rowKey={item.id}
       rank={rank}
       title={title}
       summary={item.summary}
@@ -217,6 +220,12 @@ function RangeSwitch({ range, onChange, mobile }) {
 }
 
 // 桌面事件页打开时焦点落在标题上(titleRef;读屏先听到这件事是什么),手机底部层的焦点由层原语管
+// 焦点回到某一行的命中钮(事件页返回列表 / 从阅读窗返回榜单)
+function focusRow(root, row) {
+  if (!root || row == null) return;
+  root.querySelector(`.rk-row[data-row="${CSS.escape(String(row))}"] .rk-hit`)?.focus({ preventScroll: true });
+}
+
 function EventDetailHead({ detail, titleRef = null }) {
   const shown = detail.data || detail.item || {};
   const rank = detail.data ? detail.data.rank : detail.item?.rank;
@@ -232,8 +241,8 @@ function EventDetailHead({ detail, titleRef = null }) {
 
 // 事件详情正文(拍板 9;2026-11-04 目检修订):代表报道固定首位 → 最新进展(一张卡,标题为主、摘要截两行)→ 时间线
 // (按北京时间分日,左侧纵线串起每一篇)。「来源」节取消:谁报道了在时间线里逐篇可见,家数在抬头。
-// 三节同一种小节标题(左上,卡外);两张卡首行同一种写法:来源在左、时间在右。
-// 「阅读全文」是安静的文字动作(站内,卡底左),「官方原文 ↗」是外链(卡底右),不挤在一起
+// 三节同一种小节标题(左上,卡外);两张卡首行同一种写法:来源在左、时间在右;两张卡都整卡可点进站内原文。
+// 代表报道卡的命中钮铺满整卡(给焦点与读屏名,点击由卡接住,同 RankRow);卡底只留外链「官方原文 ↗」,压在命中钮之上、不冒泡
 function EventDetailBody({ detail, sourceMap, preferChinese, onOpenArticle }) {
   if (detail.status === 'loading') {
     return <p className="rk-sec-state"><Loader2 className="animate-spin" aria-hidden="true" />详情加载中…</p>;
@@ -256,26 +265,39 @@ function EventDetailBody({ detail, sourceMap, preferChinese, onOpenArticle }) {
       {rep && (
         <section className="rk-sec" aria-label="代表报道">
           <h3 className="drawer-sec-title">代表报道</h3>
-          <div className="rk-rep">
-            <p className="rk-card-head">
-              <SourceLogo sourceMap={sourceMap} sourceId={rep.source_id} name={rep.source_name} size="s18" />
-              <span className="rk-card-name">{rep.source_name}</span>
-              {ROLE_LABEL[rep.source_role] && <span className="rk-role">{ROLE_LABEL[rep.source_role]}</span>}
-              {repTime && <time className="rk-card-time" dateTime={repTime}>{beijingStamp(repTime)}</time>}
-            </p>
-            <p className="rk-rep-title" lang={latinLang(repTitle.title)}>{repTitle.title}</p>
-            {repTitle.orig && <p className="rk-rep-orig" lang={latinLang(repTitle.orig)}>{repTitle.orig}</p>}
-            {repSummary && <p className="rk-rep-sum" lang={latinLang(repSummary)}>{repSummary}</p>}
-            <div className="rk-rep-actions">
-              <button type="button" className="rk-read" data-read-origin="" onClick={() => open(rep.article_id)}>
-                阅读全文<ChevronRight aria-hidden="true" />
-              </button>
-              {rep.url && (
-                <a className="rk-link" href={rep.url} target="_blank" rel="noopener noreferrer">
+          <div
+            className="rk-rep"
+            data-read-origin=""
+            onClick={(event) => {
+              event.currentTarget.querySelector('.rk-hit')?.focus({ preventScroll: true });
+              open(rep.article_id);
+            }}
+          >
+            <button type="button" className="rk-hit" aria-label={`代表报道：${repTitle.title}，${rep.source_name || ''}，打开`} />
+            <div className="rk-rep-body">
+              <p className="rk-card-head">
+                <SourceLogo sourceMap={sourceMap} sourceId={rep.source_id} name={rep.source_name} size="s18" />
+                <span className="rk-card-name">{rep.source_name}</span>
+                {ROLE_LABEL[rep.source_role] && <span className="rk-role">{ROLE_LABEL[rep.source_role]}</span>}
+                {repTime && <time className="rk-card-time" dateTime={repTime}>{beijingStamp(repTime)}</time>}
+              </p>
+              <p className="rk-rep-title" lang={latinLang(repTitle.title)}>{repTitle.title}</p>
+              {repTitle.orig && <p className="rk-rep-orig" lang={latinLang(repTitle.orig)}>{repTitle.orig}</p>}
+              {repSummary && <p className="rk-rep-sum" lang={latinLang(repSummary)}>{repSummary}</p>}
+            </div>
+            {rep.url && (
+              <p className="rk-rep-foot">
+                <a
+                  className="rk-link"
+                  href={rep.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(event) => event.stopPropagation()}
+                >
                   {rep.source_role === 'official' ? '官方原文' : '原文'}<ArrowUpRight aria-hidden="true" />
                 </a>
-              )}
-            </div>
+              </p>
+            )}
           </div>
         </section>
       )}
@@ -352,6 +374,7 @@ export default function RankingsPage({
   onLoaded,
   sourceMap = {},
   onOpenArticle,
+  restore = null,   // 从阅读窗返回时外层交回的外出上下文(见文件头),只在挂载时读一次
   mobile = false,
 }) {
   const seg = normalizeRankingSegment(segment);
@@ -390,15 +413,24 @@ export default function RankingsPage({
   const status = list.key === key ? list.status : 'loading';
   const items = status === 'ok' && Array.isArray(list.data?.items) ? list.data.items : [];
 
-  // 事件详情:关的时候只收层、不清内容(底部层要带着内容播退场)
-  const [detailOpen, setDetailOpen] = useState(false);
-  const [detail, setDetail] = useState(null);   // { seq, id, range, item, status, data, error }
-  const seqRef = useRef(0);
+  // 事件详情:关的时候只收层、不清内容(底部层要带着内容播退场)。带 restore.event 挂载 = 从阅读窗返回,直接回到那件事
+  const [detailOpen, setDetailOpen] = useState(() => Boolean(restore?.event));
+  const [detail, setDetail] = useState(() => (restore?.event ? {   // { seq, id, range, item, status, data, error }
+    seq: 1, id: restore.event.event_id, range: normalizeEventRange(restore.range), item: restore.event, status: 'loading', data: null, error: '',
+  } : null));
+  const seqRef = useRef(restore?.event ? 1 : 0);
   // 桌面事件页:进页时记下列表滚到哪、点的是哪一行;返回时回到原位,焦点回到该行
   const mainRef = useRef(null);
   const titleRef = useRef(null);
-  const listScrollRef = useRef(0);
-  const returnRowRef = useRef(null);
+  const sheetBodyRef = useRef(null);
+  const listScrollRef = useRef(restore?.listScroll || 0);
+  const returnRowRef = useRef(restore?.event ? restore.event.event_id : null);
+  // 从阅读窗返回:详情载入后回到读到的位置(桌面事件页 / 手机底部层正文);列表载入后回到原滚动位置、焦点回到点开的那一行。
+  // 桌面带事件返回时列表藏在事件页后面,位置由「返回榜单」那一步还(listScrollRef / returnRowRef)
+  const pendingPageScrollRef = useRef(restore?.event ? (restore.pageScroll || 0) : null);
+  const pendingListRef = useRef(restore && !(restore.event && !mobile)
+    ? { scroll: restore.listScroll || 0, row: restore.event ? restore.event.event_id : restore.row }
+    : null);
   const openEvent = useCallback((item) => {
     seqRef.current += 1;
     listScrollRef.current = mainRef.current?.scrollTop || 0;
@@ -429,20 +461,38 @@ export default function RankingsPage({
   }, [detailSeq, detailId, detailRange]);
 
   const pageOpen = !mobile && detailOpen && detail != null;
+  const wasPageRef = useRef(false);
   useLayoutEffect(() => {
     const main = mainRef.current;
-    if (mobile || !main) return;
+    const was = wasPageRef.current;
+    wasPageRef.current = pageOpen;
+    if (mobile || !main || pageOpen === was) return;
     if (pageOpen) {
       main.scrollTop = 0;
       titleRef.current?.focus({ preventScroll: true });
       return;
     }
-    const row = returnRowRef.current;
-    if (row == null) return;
-    returnRowRef.current = null;
     main.scrollTop = listScrollRef.current;
-    main.querySelector(`.rk-row[data-row="${row}"] .rk-hit`)?.focus({ preventScroll: true });
+    focusRow(main, returnRowRef.current);
+    returnRowRef.current = null;
   }, [pageOpen, mobile]);
+  const detailReady = detail?.status === 'ok';
+  useLayoutEffect(() => {
+    const pending = pendingPageScrollRef.current;
+    const box = mobile ? sheetBodyRef.current : mainRef.current;
+    if (pending == null || !detailReady || !box) return;
+    pendingPageScrollRef.current = null;
+    box.scrollTop = pending;
+  }, [detailReady, mobile]);
+  const listReady = status === 'ok';
+  useLayoutEffect(() => {
+    const pending = pendingListRef.current;
+    const main = mainRef.current;
+    if (!pending || !listReady || pageOpen || !main) return;
+    pendingListRef.current = null;
+    main.scrollTop = pending.scroll;
+    if (!detailOpen) focusRow(main, pending.row);
+  }, [listReady, pageOpen, detailOpen]);
   // Esc 返回榜单;上面若还有弹窗,它的层栈先在 document 捕获阶段消费掉 Esc,这里收不到。输入框里的 Esc 留给输入框
   useEffect(() => {
     if (!pageOpen) return undefined;
@@ -456,7 +506,23 @@ export default function RankingsPage({
     return () => window.removeEventListener('keydown', onKey);
   }, [pageOpen, closeEvent]);
 
-  const openArticle = (articleId) => { if (articleId) onOpenArticle?.(articleId); };
+  // 点进站内原文时带上「从哪来」(外层存进外出返回带,返回时作为 restore 交回)
+  const segLabel = RANKING_SEGMENTS.find(([k]) => k === seg)?.[1] || '榜单';
+  const openArticle = (articleId) => {
+    if (!articleId) return;
+    onOpenArticle?.(articleId, {
+      from: 'rankings', segment: seg, range: rng, event: null, label: segLabel,
+      listScroll: mainRef.current?.scrollTop || 0, row: articleId,
+    });
+  };
+  const openFromEvent = (articleId) => {
+    if (!articleId || !detail) return;
+    const box = mobile ? sheetBodyRef.current : mainRef.current;
+    onOpenArticle?.(articleId, {
+      from: 'rankings', segment: 'events', range: detail.range, event: detail.item,
+      label: (detail.data || detail.item)?.title || '', listScroll: listScrollRef.current, pageScroll: box?.scrollTop || 0,
+    });
+  };
   const note = rankingScopeNote(seg, rng);
   const shape = picksShapeOf(seg);
 
@@ -497,7 +563,7 @@ export default function RankingsPage({
   const range_ = seg === 'events' ? <RangeSwitch range={rng} onChange={onRangeChange} mobile={mobile} /> : null;
 
   const detailBody = detail ? (
-    <EventDetailBody detail={detail} sourceMap={sourceMap} preferChinese={preferChinese} onOpenArticle={openArticle} />
+    <EventDetailBody detail={detail} sourceMap={sourceMap} preferChinese={preferChinese} onOpenArticle={openFromEvent} />
   ) : null;
   const detailTitle = (detail?.data || detail?.item)?.title || '';
 
@@ -555,7 +621,7 @@ export default function RankingsPage({
           className="rk-sheet"
           head={<div className="rk-shead-row"><EventDetailHead detail={detail} /></div>}
         >
-          <div className="rk-sbody">{detailBody}</div>
+          <div className="rk-sbody" ref={sheetBodyRef}>{detailBody}</div>
         </Sheet>
       )}
     </main>

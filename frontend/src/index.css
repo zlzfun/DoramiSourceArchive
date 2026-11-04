@@ -10503,7 +10503,7 @@ input[type="radio"] {
   }
 
   /* ── 热点事件详情(桌面原地事件页 / 手机底部层同一份内容)。2026-11-04 目检修订:抽屉 500 宽局促 → 原地事件页;
-     「来源」节取消;「阅读全文」由实心主按钮改文字动作;最新进展做成卡片(标题为主、摘要截两行),排在时间线之前;
+     「来源」节取消;代表报道与最新进展两张卡都整卡可点(「阅读全文」撤掉,卡底只留外链);最新进展标题为主、摘要截两行,排在时间线之前;
      时间线左侧一条纵线串起每一篇 ── */
   .rk-back {
     display: inline-flex;
@@ -10540,30 +10540,26 @@ input[type="radio"] {
   .rk-card-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rk-card-time { margin-left: auto; flex: none; padding-left: 8px; font-size: 12px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-  .rk-rep { padding: 14px 16px; border-radius: var(--r-card); background: var(--dorami-soft); }
+  /* 代表报道卡:整卡可点(命中钮 .rk-hit 铺满,点击由卡接住,同 .rk-row);正文与卡底外链压在命中钮之上 */
+  .rk-rep {
+    position: relative;
+    padding: 14px 16px;
+    border-radius: var(--r-card);
+    background: var(--dorami-soft);
+    cursor: pointer;
+    transition: box-shadow var(--motion-fast) var(--motion-ease);
+  }
+  @media (hover: hover) { .rk-rep:hover { box-shadow: inset 0 0 0 100vmax var(--dorami-hover); } }
+  .rk-rep-body,
+  .rk-rep-foot { position: relative; }
+  .rk-rep-foot { display: flex; justify-content: flex-end; margin: 10px 0 0; }
   .rk-rep-title { margin: 8px 0 0; font-size: 15px; font-weight: 600; line-height: 1.5; color: var(--dorami-ink); overflow-wrap: anywhere; }
   .rk-rep-orig { margin: 2px 0 0; font-family: var(--font-serif-latin); font-style: italic; font-weight: 400; font-size: 13px; color: var(--dorami-muted); overflow-wrap: anywhere; }
   .rk-rep-sum { margin: 8px 0 0; font-size: 13px; line-height: 1.65; color: var(--dorami-ink-2); overflow-wrap: anywhere; }
   .rk-event :is(.rk-rep, .rk-latest) { padding: 16px 20px; }
   .rk-event .rk-rep-title { font-size: 16px; }
   .rk-event .rk-rep-sum { font-size: 14px; line-height: 1.7; }
-  .rk-rep-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 16px; margin-top: 12px; }
-  .rk-rep-actions > * { white-space: nowrap; }
-  .rk-read {
-    display: inline-flex;
-    align-items: center;
-    gap: 1px;
-    padding: 0;
-    border: 0;
-    background: none;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--dorami-ink);
-    cursor: pointer;
-  }
-  .rk-read svg { width: 14px; height: 14px; color: var(--dorami-muted); }
-  @media (hover: hover) { .rk-read:hover { text-decoration: underline; text-underline-offset: 3px; } }
-  .rk-link { display: inline-flex; align-items: center; gap: 3px; font-size: 13px; color: var(--dorami-muted); text-decoration: none; }
+  .rk-link { white-space: nowrap; display: inline-flex; align-items: center; gap: 3px; font-size: 13px; color: var(--dorami-muted); text-decoration: none; }
   .rk-link svg { width: 13px; height: 13px; }
   @media (hover: hover) { .rk-link:hover { color: var(--dorami-ink); } }
 
@@ -14121,6 +14117,10 @@ input[type="radio"] {
 .reader-brief-trail-btn small { font-size: 12px; font-weight: 400; color: var(--dorami-muted); font-variant-numeric: tabular-nums; }
 .reader-brief-trail-btn.is-next small { margin-left: 2px; }
 .reader-brief-trail-end { font-size: 12px; font-weight: 400; color: var(--dorami-faint); }
+/* 从榜单返回(issue #221):只有左侧一枚,标签可能是一整句事件标题——按钮可占满整条,标签单行截断 */
+.reader-brief-trail-btn.is-wide { max-width: 100%; }
+.reader-brief-trail-btn.is-wide > span { flex: none; }
+.reader-brief-trail-btn.is-wide small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 阅读进度线锚在栏顶;有返回带时压到带下缘 */
 .reader-brief-trail + .reader-progress { top: 34px; }
 /* ≤1024 时 ReaderWorkspace 经 useCompactLayout 换成移动壳(MobileReader),桌面阅读器壳不渲染;

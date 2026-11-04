@@ -191,7 +191,7 @@ test('榜单页结构:三段分段、无标签三轴 / 30 日趋势 / 全局高�
   const latest = page.indexOf('aria-label="最新进展"');
   const timeline = page.indexOf('时间线 · {');
   assert.ok(rep > 0 && rep < latest && latest < timeline, '详情顺序应为 代表报道 → 最新进展 → 时间线');
-  for (const gone of ['报道时间线', '来源 · {', 'action-button-primary', 'rk-card-k']) {
+  for (const gone of ['报道时间线', '来源 · {', 'action-button-primary', 'rk-card-k', 'rk-read', '阅读全文']) {
     assert.ok(!page.includes(gone), `详情不应再有:${gone}`);
   }
   // 三节同一种小节标题(左上,卡外);两张卡首行同一种写法(来源在左、时间在右)
@@ -200,6 +200,14 @@ test('榜单页结构:三段分段、无标签三轴 / 30 日趋势 / 全局高�
   }
   assert.equal((page.match(/className="rk-card-head"/g) || []).length, 2);
   assert.equal((page.match(/className="rk-card-time"/g) || []).length, 2);
+  // 代表报道整卡可点(命中钮给焦点与读屏名,点击由卡接住);卡底外链不冒泡,不会顺带打开站内原文
+  const repCard = page.slice(page.indexOf('className="rk-rep"'), page.indexOf('{latest && ('));
+  assert.match(repCard, /<button type="button" className="rk-hit"/);
+  assert.match(repCard, /onClick=\{\(event\) => event\.stopPropagation\(\)\}/);
+  // 点进站内原文带上「从哪来」,返回时由 restore 交回
+  assert.match(page, /from: 'rankings', segment: seg/);
+  assert.match(page, /from: 'rankings', segment: 'events'/);
+  assert.match(page, /restore = null/);
   const api = read('../src/api.js');
   for (const gone of ['fetchReaderRankings', 'fetchReaderRankingTag', 'fetchReaderRankingHistory']) {
     assert.ok(!api.includes(gone), `api.js 不应再有 ${gone}`);

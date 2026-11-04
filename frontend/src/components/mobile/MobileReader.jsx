@@ -98,7 +98,7 @@ export default function MobileReader({
   const {
     tab, setTab, briefReturn, setBriefReturn, briefRestore, setBriefRestore, briefPlace,
     discoverTab, setDiscoverTab, interestVersion, setInterestVersion, playerHostRef, openPlayingItem,
-    rankingSegment, setRankingSegment, rankingRange, setRankingRange, noteRankingCount,
+    rankingSegment, setRankingSegment, rankingRange, setRankingRange, noteRankingCount, rankingRestore, setRankingRestore,
   } = view;
   // 全局播放条(issue #199):列表行「播放中 / 已暂停」
   const { state: player } = usePlayer();
@@ -160,14 +160,21 @@ export default function MobileReader({
   const residualNarrowing = Boolean(activeSourceId || activeTagId);
   const closeArticle = useCallback(() => {
     supersedePendingOpen(); // 返回时作废在途的按 id 打开(早报卡 / 深链),迟到响应不再把页面拉回去
-    if (briefReturn) {
+    if (briefReturn?.from === 'rankings') {
+      // 从榜单点进来的(issue #221):回榜单 Tab,热点事件重开那件事的底部层、列表回原位
+      setRankingRestore(briefReturn);
+      if (briefReturn.segment) setRankingSegment(briefReturn.segment);
+      if (briefReturn.range) setRankingRange(briefReturn.range);
+      setBriefReturn(null);
+      setTab('rankings');
+    } else if (briefReturn) {
       setBriefRestore(briefReturn);
       setBriefReturn(null);
       setTab('brief');
     }
     selectArticle(null);
     if (residualNarrowing) goContainerAll();
-  }, [selectArticle, supersedePendingOpen, briefReturn, setBriefRestore, setBriefReturn, setTab, residualNarrowing, goContainerAll]);
+  }, [selectArticle, supersedePendingOpen, briefReturn, setBriefRestore, setBriefReturn, setRankingRestore, setRankingSegment, setRankingRange, setTab, residualNarrowing, goContainerAll]);
   // 正文页点标签检索(codex 检视 P2):目的地是过滤后的内容列表,不是早报——从早报进来的也丢掉
   // 返回带、落到所属容器 Tab,否则检索结果被早报页盖住看不见。
   // 推入页里读的那篇形态可能与内容 Tab 当前视图不同:检索落在它所属的容器(codex 检视第 1 轮 P1-2;检索条件不动)
@@ -213,6 +220,7 @@ export default function MobileReader({
     supersedePendingOpen(); // 任何主动切 Tab 都作废在途的按 id 打开,迟到响应不再把人拉走
     setBriefReturn(null); // 主动切 Tab = 结束这一程外出
     if (t === 'brief') setBriefRestore(null); // 点 Tab 进早报是新开,不落回旧位
+    if (t === 'rankings') setRankingRestore(null); // 榜单同理
     // 已在内容 Tab 再点「内容」= 回到当前视图的聚合(清来源 / 标签 / 搜索,与桌面视图轨同语义);从别的 Tab 回来保留原状
     if (t === 'content' && contentTab) goView(mode);
     setTab(t);
@@ -601,9 +609,12 @@ export default function MobileReader({
               range={rankingRange}
               onRangeChange={setRankingRange}
               onLoaded={noteRankingCount}
-              onOpenArticle={async (articleId) => {
+              restore={rankingRestore}
+              onOpenArticle={async (articleId, ctx) => {
                 const opened = await openArticleById(articleId, { silent: true });
-                if (opened) setTab(mode);
+                if (!opened) return;
+                setBriefReturn(ctx || null);   // 正文页返回回到榜单(closeArticle)
+                setTab(mode);
               }}
             />
           </>

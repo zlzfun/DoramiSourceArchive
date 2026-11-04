@@ -191,12 +191,13 @@
   padding: 16px 18px calc(24px + var(--sab));
 }
 .rk-sbody .drawer-sec-title { font-size: var(--m-fs-sm); }
-.rk-sbody :is(.rk-card-head, .rk-rep-sum, .rk-tl-title, .rk-link, .rk-read, .rk-latest-title, .rk-sec-state) { font-size: var(--m-fs-md); }
+.rk-sbody :is(.rk-card-head, .rk-rep-sum, .rk-tl-title, .rk-link, .rk-latest-title, .rk-sec-state) { font-size: var(--m-fs-md); }
 .rk-sbody .rk-rep-title { font-size: var(--m-fs-lg); }
 .rk-sbody :is(.rk-rep-orig, .rk-latest-sum) { font-size: var(--m-fs-sm); }
 .rk-sbody :is(.rk-role, .rk-card-time, .rk-tl-daylabel, .rk-tl-time, .rk-tl-src) { font-size: var(--m-fs-xs); }
-.rk-sbody :is(.rk-tl-item, .rk-read, .rk-link) { min-height: var(--tap); }
+.rk-sbody :is(.rk-tl-item, .rk-link) { min-height: var(--tap); }
 .rk-sbody :is(.rk-tl-item, .rk-latest):active { background: var(--dorami-hover); }
+.rk-sbody .rk-rep:active { box-shadow: inset 0 0 0 100vmax var(--dorami-hover); }
 
 /* ── 早报 Tab(样页 brief 屏):画布底 + 夜航卡;页面自己滚,页头让位用 ::before 垫片(见下方 .m-list::before 一组) ── */
 .m-content > .bp-sheet { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }

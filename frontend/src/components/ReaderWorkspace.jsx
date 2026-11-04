@@ -7,15 +7,18 @@ import PlayerProvider from './player/PlayerProvider';
 import { prefetchReaderMarkdownWhenIdle } from '../utils/readerMarkdownLoader';
 import { DEFAULT_EVENT_RANGE, DEFAULT_RANKING_SEGMENT } from '../utils/rankings';
 
-// 数据、当前位置与早报返回路径只保留一份。宽度变化只替换视图，不重新加载阅读器。
+// 数据、当前位置与外出返回路径(早报 / 榜单)只保留一份。宽度变化只替换视图，不重新加载阅读器。
 // 全局播放器(issue #199)也挂在这一层:桌面 ⇄ 手机互切、换文章 / 容器 / 页面都不卸载,播放不中断。
 // 播放条本身由两个视图各自挂在自己的外壳里(.reader-shell / .m-shell):手机外壳是 fixed 的层叠上下文,
 // 条要排在正文页(40)之上、抽屉 / 动作单(50 / 60)之下,只能与它们同在一个上下文里。
 export default function ReaderWorkspace({ mobile, surfaceActive = true, ...props }) {
   const { personalDigestEnabled, initialArticleId, showToast, account, onDeepLinkConsumed } = props;
   const [page, setPage] = useState(() => personalDigestEnabled && !initialArticleId ? 'brief' : null);
+  // 外出返回带:从早报或榜单点进站内原文的这一程(ctx.from === 'rankings' 是榜单,否则是早报),阅读窗顶「返回」/ 手机正文页返回用它;
+  // 返回时把它交给对应页面的 restore(早报落回同一版同一卷动位置;榜单回到那件事 / 那一段与原位置)
   const [briefReturn, setBriefReturn] = useState(null);
   const [briefRestore, setBriefRestore] = useState(null);
+  const [rankingRestore, setRankingRestore] = useState(null);
   const [discoverTab, setDiscoverTab] = useState('sources');
   const [interestVersion, setInterestVersion] = useState(0);
   // 榜单(issue #221):当前段与热点事件的时间范围放在这一层——关掉再打开回到上次的段,桌面 ⇄ 手机互切不丢;
@@ -78,6 +81,7 @@ export default function ReaderWorkspace({ mobile, surfaceActive = true, ...props
     briefOpen: page === 'brief', setBriefOpen,
     rankingsOpen: page === 'rankings', setRankingsOpen,
     rankingSegment, setRankingSegment, rankingRange, setRankingRange, rankingCounts, noteRankingCount,
+    rankingRestore, setRankingRestore,
     briefReturn, setBriefReturn, briefRestore, setBriefRestore, briefPlace,
     discoverTab, setDiscoverTab, interestVersion, setInterestVersion,
     tab, setTab, playerHostRef: rootRef, openPlayingItem,

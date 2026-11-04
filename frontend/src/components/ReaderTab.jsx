@@ -447,6 +447,7 @@ export default function ReaderTab({
   const {
     briefOpen, setBriefOpen, rankingsOpen, setRankingsOpen,
     rankingSegment, setRankingSegment, rankingRange, setRankingRange, rankingCounts, noteRankingCount,
+    rankingRestore, setRankingRestore,
     briefReturn, setBriefReturn, briefRestore, setBriefRestore, briefPlace,
     discoverTab, setDiscoverTab, interestVersion, setInterestVersion,
   } = view;
@@ -527,8 +528,9 @@ export default function ReaderTab({
     if (socialView) goView('article');
     setBriefOpen(false);
     leaveBriefTrail();
+    setRankingRestore(null); // 点入口是新开,不落回旧位
     setRankingsOpen(true);
-  }, [closeDiscover, goView, leaveBriefTrail, setBriefOpen, setRankingsOpen, socialView, supersedePendingOpen]);
+  }, [closeDiscover, goView, leaveBriefTrail, setBriefOpen, setRankingRestore, setRankingsOpen, socialView, supersedePendingOpen]);
   const listPlan = useMemo(
     () => buildListPlan(articles, grouping),
     [articles, grouping],
@@ -1039,9 +1041,12 @@ export default function ReaderTab({
           range={rankingRange}
           onRangeChange={setRankingRange}
           onLoaded={noteRankingCount}
-          onOpenArticle={async (articleId) => {
+          restore={rankingRestore}
+          onOpenArticle={async (articleId, ctx) => {
             const opened = await openArticleById(articleId, { silent: true });
-            if (opened) setRankingsOpen(false);
+            if (!opened) return;
+            setRankingsOpen(false);
+            setBriefReturn(ctx || null);   // 与早报同一条外出返回带:阅读窗顶「返回热点事件 / 返回榜单」
           }}
         />
       )}
@@ -1373,8 +1378,29 @@ export default function ReaderTab({
       {!pageOpen && !discover && !socialView && (
       <section className="reader-col reader-col-read">
         {/* 早报外出返回带(issue #23 三稿):从早报点进来的这一程里常驻阅读窗顶部,不随文章切换重绘。
-            左=返回我的早报(落回同一版同一卷动位置),右=早报下一条(顺着本版读完不必回早报)。 */}
-        {briefReturn && (() => {
+            左=返回我的早报(落回同一版同一卷动位置),右=早报下一条(顺着本版读完不必回早报)。
+            从榜单点进来的(issue #221)同一条带:只有左侧返回——热点事件回到那件事的事件页与读到的位置,深度阅读 / 播客精选回到那一段原位置 */}
+        {briefReturn?.from === 'rankings' && (
+          <nav className="reader-brief-trail" aria-label="来自榜单">
+            <button
+              type="button"
+              className="reader-brief-trail-btn is-wide"
+              onClick={() => {
+                supersedePendingOpen();
+                setRankingRestore(briefReturn);
+                if (briefReturn.segment) setRankingSegment(briefReturn.segment);
+                if (briefReturn.range) setRankingRange(briefReturn.range);
+                setBriefReturn(null);
+                setRankingsOpen(true);
+              }}
+            >
+              <ChevronLeft aria-hidden="true" />
+              <span>{briefReturn.event ? '返回热点事件' : '返回榜单'}</span>
+              {briefReturn.label && <small>{briefReturn.label}</small>}
+            </button>
+          </nav>
+        )}
+        {briefReturn && briefReturn.from !== 'rankings' && (() => {
           const seq = briefReturn.sequence || [];
           const next = seq[briefReturn.index + 1] || null;
           return (
