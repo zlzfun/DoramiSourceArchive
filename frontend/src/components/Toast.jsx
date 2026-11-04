@@ -8,6 +8,7 @@ const STYLES = {
 };
 
 // action(可选,issue #213):行内一个次动作,如游客入场提示里的「登录」;点了即执行并收起。
+// data-layer-keep="always"(issue #230):模态层把下层设 inert 时保留 Toast——读屏照常播报、动作钮照常可点。
 export default function Toast({ show, message, type = 'info', onClose, action = null }) {
   // 退出时保持挂载 260ms 播放离场动画，避免「瞬间消失」的生硬感。
   const { mounted, closing } = useModalTransition(show, 260);
@@ -21,6 +22,7 @@ export default function Toast({ show, message, type = 'info', onClose, action = 
     <div
       className={`toast-pop ${closing ? 'is-leaving' : ''} fixed left-1/2 z-[200] flex w-max max-w-[90vw] items-center gap-3 rounded-[var(--r-card)] py-3.5 pl-5 pr-3 text-white shadow-2xl ${bg}`}
       role="status"
+      data-layer-keep="always"
     >
       <Icon className="h-5 w-5 shrink-0" />
       <span className="text-sm font-semibold">{message}</span>

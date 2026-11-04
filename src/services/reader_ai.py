@@ -685,6 +685,11 @@ def build_sources_payload(records: List[Any], *, notes_by_id: Optional[dict] = N
             "source_url": _art_field(r, "source_url"),
             "publish_date": (_art_field(r, "publish_date") or "")[:10],
             "has_image_notes": bool((notes.get(_art_field(r, "id")) or "").strip()),
+            **({
+                "content_type": "podcast_episode",
+                "basis_label": _art_field(r, "qa_basis") or "节目简介",
+                "evidence": _art_field(r, "qa_evidence") or [],
+            } if _art_field(r, "content_type") == "podcast_episode" else {}),
         }
         for r in records
     ]
@@ -741,7 +746,8 @@ def build_numbered_context(
             body = (art.get("content") or art.get("content_preview") or "").strip()
         else:
             body = (getattr(art, "content", None) or "").strip()
-        body = strip_layout_markers(body).strip()
+        if not _art_field(art, "qa_evidence"):
+            body = strip_layout_markers(body).strip()
         notes = (notes_map.get(_art_field(art, "id")) or "").strip()
         if not body and not notes and not keep_empty:
             continue
@@ -763,6 +769,12 @@ def build_numbered_context(
         publish_date = (_art_field(art, "publish_date") or "")[:10]
         meta = " | ".join(part for part in (source_name, publish_date) if part)
         header = f"[{len(included) + 1}] {title}" + (f" | {meta}" if meta else "")
+        if _art_field(art, "qa_evidence"):
+            # Several excerpts still form ONE source. Repeat its assigned
+            # citation at each excerpt boundary so the model cannot mistake
+            # passage order for the public sources numbering.
+            body = body.replace("【来源逐字稿｜", f"【引用 [{len(included) + 1}]｜来源逐字稿｜")
+            body = body.replace("【ASR逐字稿｜", f"【引用 [{len(included) + 1}]｜ASR逐字稿｜")
         block = f"{header}\n{body}".rstrip()
         # 超预算即止；但至少收一篇，避免「单篇预算=总预算」的边界产出空上下文
         if included and used + len(block) > total_chars:
@@ -774,10 +786,13 @@ def build_numbered_context(
 
 
 def assemble_articles_context(
-    records: List[Any], *, total_chars: int = _LIST_TOTAL_CHARS,
+    records: List[Any], *, total_chars: Optional[int] = None,
     notes_by_id: Optional[dict] = None,
 ) -> tuple:
     """显式名单的上下文组装：单篇预算按篇数摊分（n=1 独享全额），返回 (context, sources)。"""
+    if total_chars is None:
+        from services.podcast_qa import CONTEXT_CHARS
+        total_chars = CONTEXT_CHARS if any(_art_field(r, "content_type") == "podcast_episode" for r in records) else _LIST_TOTAL_CHARS
     per_article = max(_LIST_PER_ARTICLE_CHARS, total_chars // max(1, len(records)))
     context, included = build_numbered_context(
         records, per_article_chars=per_article, total_chars=total_chars,
@@ -794,12 +809,41 @@ async def _explicit_image_notes(
     新文章通常 worker 已识完,这里多为零成本命中;存量文章被显式打开时按需补识。
     任何失败都退回空 map——识图是补充,不能让问答 5xx。
     """
-    ids = [str(_art_field(r, "id") or "") for r in records]
+    ids = [str(_art_field(r, "id") or "") for r in records
+           if _art_field(r, "content_type") != "podcast_episode"]
     return await image_insights_service.ensure_notes_map(
         ids, llm_config, usage_meta=usage_meta,
         budget_seconds=image_insights_service.QA_ENSURE_BUDGET_SECONDS,
         max_chars=_NOTES_PER_ARTICLE_CHARS,
     )
+
+
+async def _prepare_explicit_podcasts(
+    records, *, question, history, db_sink, username, llm_config,
+):
+    """Search the entire published transcript even for an explicitly opened episode."""
+    if not any(_art_field(r, "content_type") == "podcast_episode" for r in records):
+        return records
+    engine = getattr(db_sink, "engine", None)
+    if engine is None:
+        return records
+    from services import podcast_qa, reader_search
+
+    keywords = [question.strip()]
+    if llm_config is not None:
+        titles = "、".join(str(_art_field(r, "title") or "") for r in records)
+        plan = await reader_search.plan_query(
+            f"当前指定内容：{titles}\n读者问题：{question}", llm_config.for_aux(),
+            UsageMeta(purpose="ask", username=username),
+            history_text=reader_search._history_text(history),
+        )
+        if plan is not None:
+            keywords = plan.get("passage_keywords") or plan["keywords"]
+    prepared = podcast_qa.prepare_records(
+        engine, records, keywords=keywords, username=username,
+        per_episode_chars=max(_LIST_PER_ARTICLE_CHARS, podcast_qa.CONTEXT_CHARS // len(records)),
+    )
+    return podcast_qa.revalidate_records(engine, prepared)
 
 
 async def assemble_reader_context(
@@ -813,6 +857,7 @@ async def assemble_reader_context(
     article_ids: Optional[List[str]] = None,
     llm_config: Optional[LLMConfig] = None,
     usage_meta: Optional[UsageMeta] = None,
+    history: Optional[List[Any]] = None,
 ) -> tuple:
     """按 scope 组装 reader 问答上下文，返回 ``(context, sources)``。
 
@@ -837,8 +882,12 @@ async def assemble_reader_context(
         if record is None:
             raise ReaderAIError("文章不存在", status_code=404)
         _ensure_articles_exportable(db_sink, [record])
-        notes = await _explicit_image_notes([record], llm_config, usage_meta)
-        return assemble_articles_context([record], notes_by_id=notes)
+        records = await _prepare_explicit_podcasts(
+            [record], question=question, history=history, db_sink=db_sink,
+            username=username, llm_config=llm_config,
+        )
+        notes = await _explicit_image_notes(records, llm_config, usage_meta)
+        return assemble_articles_context(records, notes_by_id=notes)
 
     if scope == "articles":
         ids: List[str] = []
@@ -856,6 +905,10 @@ async def assemble_reader_context(
         if not records:
             raise ReaderAIError("文章不存在", status_code=404)
         _ensure_articles_exportable(db_sink, records)
+        records = await _prepare_explicit_podcasts(
+            records, question=question, history=history, db_sink=db_sink,
+            username=username, llm_config=llm_config,
+        )
         notes = await _explicit_image_notes(records, llm_config, usage_meta)
         return assemble_articles_context(records, notes_by_id=notes)
 

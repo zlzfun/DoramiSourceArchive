@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
@@ -54,6 +55,7 @@ def test_admin_can_read_and_update_independent_asr_audio_limits(monkeypatch, tmp
         assert initial.status_code == 200
         assert set(initial.json()) == {
             "provider",
+            "speech_models",
             "configured",
             "daily_audio_seconds_limit",
             "daily_audio_hours_limit",
@@ -198,14 +200,16 @@ def test_runtime_single_file_limit_applies_to_source_media_validation_immediatel
     assert observed_limits == [1]
 
 
-def test_quota_readback_uses_bailian_window_and_default_limits(monkeypatch, tmp_path):
+@pytest.mark.parametrize("tts_model", ["qwen3-tts-flash", "qwen3-tts-flash-2025-11-27"])
+def test_quota_readback_uses_bailian_window_and_default_limits(monkeypatch, tmp_path, tts_model):
     app_module, _sink = _setup(monkeypatch, tmp_path)
     import api.routers.podcasts as podcasts_router
 
     config = BailianSpeechConfig(
         api_key="test-key",
         account_scope="account-a",
-        asr_entitlement_ends_at="2030-01-01T00:00:00Z",
+        tts_model=tts_model,
+        asr_entitlement_ends_at=(dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=30)).isoformat(),
     )
     monkeypatch.setattr(
         podcasts_router.podcast_speech_config_service,
@@ -218,6 +222,8 @@ def test_quota_readback_uses_bailian_window_and_default_limits(monkeypatch, tmp_
         lambda _session: {
             "asr_daily_audio_seconds_limit": "default",
             "asr_max_audio_seconds_per_file": "default",
+            "asr_model": "default",
+            "tts_model": "default",
         },
     )
     with TestClient(app_module.app) as client:
@@ -232,3 +238,9 @@ def test_quota_readback_uses_bailian_window_and_default_limits(monkeypatch, tmp_
     assert payload["usage_status"] == "available"
     assert payload["quota_timezone"] == "Asia/Singapore"
     assert payload["quota_window_end_at"]
+
+    assert payload["speech_models"] == [
+        {"field": "asr_model", "model": "fun-asr", "source": "default", "retired": False, "replacement": "fun-asr"},
+        {"field": "tts_model", "model": tts_model, "source": "default", "retired": tts_model != "qwen3-tts-flash", "replacement": "qwen3-tts-flash"},
+    ]
+    assert "test-key" not in response.text

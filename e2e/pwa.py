@@ -1,5 +1,6 @@
 """Production-build PWA checks. Browser-event/UA simulations are NOT device certification."""
 from pathlib import Path
+import re
 
 from playwright.sync_api import expect
 
@@ -18,6 +19,18 @@ def assert_install_visible(page):
             reachable: el.contains(document.elementFromPoint(close.x + close.width/2, close.y + close.height/2))};
     }""")
     assert metrics["inside"] and metrics["reachable"], metrics
+
+
+def open_mobile_settings(page):
+    """issue #230:「我的」Tab 退役,「添加到主屏幕」在页头头像推入的设置页(关于组)里。"""
+    page.get_by_role("button", name=re.compile("打开设置$")).click()
+    expect(page.get_by_role("dialog", name="设置", exact=True)).to_be_visible()
+
+
+def close_mobile_settings(page):
+    """切到桌面宽度前先关掉手机设置页(否则设置开关保持打开,桌面直接弹出设置柜)。"""
+    page.get_by_role("dialog", name="设置", exact=True).get_by_role("button", name="返回", exact=True).click()
+    expect(page.get_by_role("dialog", name="设置", exact=True)).to_have_count(0)
 
 
 def run_pwa_flows(browser, base_url: str, site: Path, artifacts: Path, result: dict):
@@ -40,7 +53,7 @@ def run_pwa_flows(browser, base_url: str, site: Path, artifacts: Path, result: d
         assert page.evaluate("async () => (await caches.keys()).length") == 0
         manifest = page.request.get(base_url + "/manifest.webmanifest")
         assert manifest.ok and manifest.json()["display"] == "standalone"
-        page.get_by_role("button", name="我的", exact=True).click()
+        open_mobile_settings(page)
         install = page.get_by_role("button", name="添加到主屏幕", exact=False)
         expect(install).to_be_visible()
         # A deliberately rejected/cancelled browser prompt, not an API response mock.
@@ -93,6 +106,7 @@ def run_pwa_flows(browser, base_url: str, site: Path, artifacts: Path, result: d
         assert_install_visible(page)
         close.click()
         expect(dialog).to_have_count(0)
+        close_mobile_settings(page)
         page.emulate_media(color_scheme="light")
         page.set_viewport_size({"width": 1365, "height": 900})
         page.get_by_role("button", name="设置", exact=True).click()
@@ -119,7 +133,7 @@ def run_pwa_flows(browser, base_url: str, site: Path, artifacts: Path, result: d
         checks.append("real SW update: offers refresh without replacing current document; login survives refresh")
 
         page.set_viewport_size({"width": 390, "height": 844})
-        page.get_by_role("button", name="我的", exact=True).click()
+        open_mobile_settings(page)
         prompt("accepted")
         install.click()
         page.evaluate("window.dispatchEvent(new Event('appinstalled'))")
@@ -163,7 +177,7 @@ def run_pwa_flows(browser, base_url: str, site: Path, artifacts: Path, result: d
             app = standalone.new_page()
             app.goto(base_url)
             expect(app.locator(".m-tabbar")).to_be_visible(timeout=30000)
-            app.get_by_role("button", name="我的", exact=True).click()
+            open_mobile_settings(app)
             expect(app.get_by_role("button", name="添加到主屏幕", exact=False)).to_have_count(0)
             checks.append("simulated standalone launch: persisted session, installation entry hidden")
         finally:
@@ -184,7 +198,7 @@ def run_pwa_flows(browser, base_url: str, site: Path, artifacts: Path, result: d
                 app.goto(base_url)
                 expect(app.locator(".m-tabbar")).to_be_visible(timeout=30000)
                 app.wait_for_function("navigator.serviceWorker.controller !== null")
-                app.get_by_role("button", name="我的", exact=True).click()
+                open_mobile_settings(app)
                 assert app.evaluate("""() => {
                     window.__promptCalls = 0;
                     for (let i = 0; i < 3; i++) {
@@ -197,6 +211,7 @@ def run_pwa_flows(browser, base_url: str, site: Path, artifacts: Path, result: d
                     return true;
                 }""")
                 expect(app.get_by_role("button", name="添加到主屏幕", exact=False)).to_have_count(0)
+                close_mobile_settings(app)
                 app.set_viewport_size({"width": 1365, "height": 900})
                 app.get_by_role("button", name="设置", exact=True).click()
                 drawer = app.get_by_role("dialog", name="设置", exact=True)

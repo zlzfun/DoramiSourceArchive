@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, RotateCcw, RotateCw, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, RotateCcw, RotateCw, X } from 'lucide-react';
 import { usePlayer } from './playerContext';
 import PodcastCover from '../PodcastCover';
-import { PlayGlyph, PauseGlyph, Spark } from './PlayerGlyphs';
+import LayerScrim from '../layer/LayerScrim';
+import { PlayGlyph, PauseGlyph, SkipGlyph, Spark, StopGlyph } from './PlayerGlyphs';
+import { usePlayerCard } from './usePlayerCard';
 import {
   createFx,
   expandMorph,
@@ -23,9 +25,12 @@ import {
   formatRate,
   framesSayLite,
   isPlayingIntent,
+  mobileForm,
   playerItemTitle,
+  playerOpenLabel,
   playerTrackLabel,
   playerTrackSpeech,
+  rateSpeech,
   speakClock,
 } from '../../utils/playerCore';
 import { useTitlePreference } from '../../hooks/useTitlePreference';
@@ -37,10 +42,13 @@ import { motionReduced } from '../../motion';
 // 播放条(issue #199,样页 global.html?layout=float&tone=blur):桌面是内容区浮层——视图轨右缘到窗口右缘、
 // 四周留 12px 的浮层卡,横跨源栏 / 条目列 / 阅读窗;手机列表页在底部 Tab 栏之上,正文页在安全区之上。
 // 形态 none(只有标题区入口)→ bar ⇄ mini;关闭回到 none。形变见 playerFx.js。
+// 手机壳(issue #230 批 3d,样页 docs/design/issue-230-mobile 拍板 32 / 33 / 34):bar 画成一行 60px 的坞
+// (封面进度环 · 标题 / 副行 · 一枚播放钮),点坞身或往上拖展开成悬浮卡(usePlayerCard);手机退役迷你
+// (mini 在手机上按 bar 画,桌面照旧);桌面播放条本波不动。
 
 const SCROLLERS = [
   '.reader-pane', '.reader-list-scroll', '.reader-source-scroll', '.reader-social-scroll', '.reader-disc-scroll',
-  '.rankings-page', '.bp-sheet', '.m-list', '.m-read-scroll', '.m-page-scroll', '.m-me',
+  '.rankings-page', '.bp-sheet', '.m-list', '.m-read-scroll', '.m-page-scroll', '.m-subs-scroll',
 ].join(', ');
 const FX_OVERRIDE_KEY = 'dorami-player-fx';
 const FX_LITE_KEY = 'dorami-player-lite';
@@ -79,6 +87,20 @@ function fxTier() {
   });
 }
 
+/** 手机列表页:底栏顶边(按布局位置,不算它自己的 transform)到视口底的距离;坞与卡浮在它之上 --m-float。 */
+function tabbarLift(host, layer) {
+  const tabbar = host.querySelector('.m-tabbar');
+  if (!tabbar || !tabbar.getClientRects().length) return null;
+  const r = tabbar.getBoundingClientRect();
+  let ty = 0;
+  try {
+    const t = getComputedStyle(tabbar).transform;
+    if (t && t !== 'none') ty = new DOMMatrixReadOnly(t).m42;
+  } catch { /* 不认的 transform:按当前位置量 */ }
+  const floor = layer.getBoundingClientRect().bottom;
+  return Math.max(0, Math.round(floor - (r.top - ty)));
+}
+
 /** 浮钮的静止矩形(没有避让位移时):它在 .reader-shell 里右 22 / 下 22 绝对定位。
  *  不读浮钮当前的矩形——避让动画进行中读到的是半路的位置,累加起来会越让越远。 */
 function hostFabRect(host) {
@@ -91,9 +113,10 @@ function hostFabRect(host) {
   return { left: s.right - 22 - width, right: s.right - 22, top: s.bottom - 22 - height, bottom: s.bottom - 22, width, height };
 }
 
-export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs', onOpenItem }) {
+export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs', onOpenItem, routeKey = '', showToast = null }) {
   const { state, api } = usePlayer();
-  const { item, form, status, buffering, rate } = state;
+  const { item, status, buffering, rate } = state;
+  const form = mobile ? mobileForm(state.form) : state.form;   // 手机退役迷你:mini 按坞画
   const playing = isPlayingIntent(state);
   const itemKey = item?.key || '';
   // 标题随「默认显示中文标题」(issue #218):条目带中文译名且偏好开时显示译名
@@ -111,6 +134,12 @@ export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs
   const curRef = useRef(null);
   const durRef = useRef(null);
   const sliderRef = useRef(null);
+  const clockRef = useRef(null);      // 手机坞副行的「已播 / 总长」
+  const cardRef = useRef(null);       // 手机悬浮卡(外层:影子与抓手)
+  const clipRef = useRef(null);       // 悬浮卡裁切层(开合的 clip-path 形变)
+  const cardInRef = useRef(null);
+  const grabRef = useRef(null);
+  const scrimRef = useRef(null);
   const fxRef = useRef(null);
   const pendingRef = useRef(null);
   const prevRef = useRef({ form, key: itemKey });
@@ -201,11 +230,12 @@ export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs
     const miniRect = f === 'mini' && mini && !mini.hidden ? mini.getBoundingClientRect() : null;
     if (barRect) host.style.setProperty('--player-bar-h', `${Math.round(barRect.height)}px`);
     if (layer && mobile) {
-      const tabbar = host.querySelector('.m-tabbar');
-      layer.style.setProperty('--player-tabbar', `${tabbar ? tabbar.offsetHeight : 0}px`);
+      const lift = tabbarLift(host, layer);
+      if (lift !== null) layer.style.setProperty('--player-tabbar', `${lift}px`);
     }
-    // Toast 浮在条之上(桌面的迷你在右下角,与居中的 Toast 不重叠)
-    const top = barRect || (mobile ? miniRect : null);
+    // Toast 浮在条之上(桌面的迷你在右下角,与居中的 Toast 不重叠);手机悬浮卡开着时浮在卡之上
+    const card = mobile && cardRef.current && !cardRef.current.hidden ? cardRef.current.getBoundingClientRect() : null;
+    const top = card || barRect || (mobile ? miniRect : null);
     document.documentElement.style.setProperty('--player-top', top ? `${Math.round(window.innerHeight - top.top)}px` : '0px');
     if (mobile) return;
     const fabStatic = hostFabRect(host);
@@ -338,7 +368,7 @@ export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs
     const M = PLAYER_MOTION;
     const under = underRef.current;
     const over = overRef.current;
-    if (!layer || !bar || !mini || !under || !over) return;
+    if (!layer || !bar || (!mobile && !mini) || !under || !over) return;   // 手机没有迷你
 
     const run = (fx, { onLand, measureFrames = false } = {}) => {
       fxRef.current = fx;
@@ -438,6 +468,10 @@ export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs
     run(fx);
   }, [form, itemKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 首次挂载(同一标签页恢复的会话):宿主是祖先元素,它的 ref 在子组件的 layout effect 之后才挂上,上面那次让位量不到宿主;
+  // 落定后(passive effect,ref 已挂)补一次。applyClearance 对已就位的形态是空操作
+  useEffect(() => { applyClearance(formRef.current); }, [applyClearance]);
+
   // 卸载:撤掉宿主上的让位 / 避让变量与 Toast 抬升。必须是 layout 清理:桌面 ⇄ 手机互切时旧条与新条共用同一个宿主,
   // React 的顺序是「旧实例 layout 清理 → 新实例 layout 设置 → 旧实例 passive 清理」,写成 passive 会把新条刚写好的
   // data-player 一并删掉(开发构建的 StrictMode 二次挂载会把它补回来,所以只在生产构建里露出来)
@@ -462,11 +496,14 @@ export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs
     const bar = barRef.current;
     const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => syncChrome()) : null;
     if (bar && ro) ro.observe(bar);
+    // 手机:底栏高度变了(字号 / 横竖屏),坞与卡跟着换底边
+    const tabbar = mobile ? hostRef?.current?.querySelector('.m-tabbar') : null;
+    if (tabbar && ro) ro.observe(tabbar);
     return () => {
       window.removeEventListener('resize', onResize);
       ro?.disconnect();
     };
-  }, [form, syncChrome]);
+  }, [form, hostRef, mobile, syncChrome]);
   useEffect(() => {
     if (form === 'none') return undefined;
     // 推页 / 返回时条随页面换底边(CSS 过渡 420ms),落定后再量一次
@@ -489,6 +526,7 @@ export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs
       ringRef.current?.style.setProperty('--player-p', v);
       if (curRef.current) curRef.current.textContent = formatClock(t);
       if (durRef.current) durRef.current.textContent = d > 0 ? formatClock(d) : '--:--';
+      if (clockRef.current) clockRef.current.textContent = `${formatClock(t)} / ${d > 0 ? formatClock(d) : '--:--'}`;
       const slider = sliderRef.current;
       if (slider) {
         slider.setAttribute('aria-valuemax', String(Math.round(d || 0)));
@@ -594,51 +632,24 @@ export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs
     },
   };
 
-  // ── 手机:在条上往下拖 = 缩小(跟手、不够回弹、拖后吞掉那一次点击);⌄ 按钮始终在 ──
-  const swipeRef = useRef(null);
-  const barPointer = mobile ? {
-    onPointerDown: (event) => {
-      if (event.button !== 0 && event.pointerType === 'mouse') return;
-      if (event.target.closest('.player-track-in, .player-ctrl button, .player-row2 button')) return;
-      swipeRef.current = { y0: event.clientY, dy: 0, id: event.pointerId };
-    },
-    onPointerMove: (event) => {
-      const g = swipeRef.current;
-      if (!g || g.id !== event.pointerId) return;
-      g.dy = Math.max(0, event.clientY - g.y0);
-      if (g.dy <= 4 || !barRef.current) return;
-      // 拖动开始才捕获指针:手指滑出条外照样跟手;轻点不捕获,「打开这一期」的点击落在原按钮上
-      if (!g.captured) {
-        g.captured = true;
-        try { barRef.current.setPointerCapture(event.pointerId); } catch { /* 指针已结束 */ }
-      }
-      barRef.current.style.transform = `translateY(${(g.dy * 0.6).toFixed(1)}px)`;
-    },
-    onPointerUp: (event) => {
-      const g = swipeRef.current;
-      if (!g || g.id !== event.pointerId) return;
-      swipeRef.current = null;
-      const bar = barRef.current;
-      if (g.dy > 8) {
-        const eat = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
-        window.addEventListener('click', eat, { capture: true, once: true });
-        window.setTimeout(() => window.removeEventListener('click', eat, { capture: true }), 350);
-      }
-      if (g.dy > 36) {
-        api.minimize();   // 从拖到的位置形变成迷你(量矩形时带着位移)
-        if (bar) bar.style.transform = '';
-        return;
-      }
-      if (!bar?.style.transform) return;
-      const from = bar.style.transform;
-      bar.style.transform = '';
-      if (!motionReduced()) bar.animate([{ transform: from }, { transform: 'none' }], { duration: 320, easing: easings.settle });
-    },
-    onPointerCancel: () => {
-      swipeRef.current = null;
-      if (barRef.current) barRef.current.style.transform = '';
-    },
-  } : {};
+  // ── 手机:坞 ⇄ 悬浮卡(开合、手势、层、停止 + 撤销都在 usePlayerCard) ──
+  const pc = usePlayerCard({
+    enabled: mobile && Boolean(item) && form === 'bar',
+    mobilePage,
+    routeKey,
+    api,
+    showToast,
+    onOpenItem,
+    tier: fxTier,
+    easings,
+    refs: { layerRef, barRef, cardRef, clipRef, innerRef: cardInRef, grabRef, scrimRef },
+  });
+  const cardState = pc.card;
+  // 卡开合:Toast 抬升改按卡 / 坞重算
+  useEffect(() => {
+    if (mobile && form !== 'none') syncChrome();
+  }, [cardState, form, mobile, syncChrome]);
+  const barPointer = mobile ? pc.dockHandlers : {};
 
   const toneStyle = (t) => {
     if (!t) return undefined;
@@ -675,12 +686,146 @@ export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs
     </span>
   );
 
-  return (
+  // ── 手机:坞(一行)与悬浮卡(B1:这一期 · 进度 · 倍速 / −15 / 播放 / +15 / 停止 五枚 48 圆钮) ──
+  const trackSub = (withShow) => (item?.ai ? (
+    <>
+      {withShow && item.show ? <><span className="player-sub-text">{item.show}</span><span className="player-dot" aria-hidden="true">·</span></> : null}
+      <span className={withShow ? 'player-sub-track' : 'player-sub-text'}><Spark />{playerTrackLabel(item)}</span>
+      <span className="player-dot" aria-hidden="true">·</span>
+      <span className="player-ai">AI 生成</span>
+    </>
+  ) : withShow ? (
+    <>
+      {item?.show ? <><span className="player-sub-text">{item.show}</span><span className="player-dot" aria-hidden="true">·</span></> : null}
+      <span className="player-sub-track">{playerTrackLabel(item)}</span>
+    </>
+  ) : (
+    <span className="player-sub-text">{item?.show || playerTrackLabel(item)}</span>
+  ));
+  const dockRow = mobile && item ? (
+    <div className="player-dock-row">
+      <button
+        type="button"
+        className="player-info"
+        aria-label={`展开播放器：${shownTitle.title}`}
+        aria-haspopup="dialog"
+        aria-expanded={cardState === 'open'}
+        onClick={pc.open}
+      >
+        <span className="player-art">
+          <svg ref={ringRef} className="player-ring" viewBox="0 0 44 44" aria-hidden="true">
+            <circle className="player-ring-track" cx="22" cy="22" r="20.75" />
+            <circle className="player-ring-fill" cx="22" cy="22" r="20.75" pathLength="100" />
+          </svg>
+          <span className="player-art-slot">{art}</span>
+        </span>
+        <span className="player-info-slot">
+          <span className="player-title" lang={shownTitle.lang || undefined}>{shownTitle.title}</span>
+          <span className="player-sub">
+            {rate !== 1 ? <span className="player-rate-tag">{formatRate(rate)}</span> : null}
+            {trackSub(false)}
+            <span className="player-dot" aria-hidden="true">·</span>
+            {status === 'error'
+              ? <span className="player-sub-err">无法播放</span>
+              : <span ref={clockRef} className="player-clock">00:00 / --:--</span>}
+          </span>
+        </span>
+      </button>
+      <button type="button" className="player-play" aria-label={playLabel} onClick={api.toggle}>
+        {playGlyph}
+      </button>
+    </div>
+  ) : null;
+  const cardEl = mobile && item ? (
+    <div
+      ref={cardRef}
+      className="player-card"
+      role="dialog"
+      aria-modal="true"
+      aria-label="播放器"
+      tabIndex={-1}
+      data-layer-panel=""
+      hidden={cardState === 'closed'}
+      // 收起动画期间只剩视觉:inert 移出读屏、不接指针(点按落到下面已恢复的坞),同 Sheet 退场(codex 检视第 1 轮 P2)
+      inert={cardState === 'closing' || undefined}
+      {...pc.cardHandlers}
+    >
+      {/* 抓手(拍板 33):真按钮,命中区 120 × 44、上沿伸出卡外 16px(不进裁切层);点按收起,往下拖整卡也收起 */}
+      <button ref={grabRef} type="button" className="player-grab" aria-label="收起播放器" onClick={() => pc.close()}>
+        <span className="player-grab-bar" aria-hidden="true" />
+      </button>
+      <div ref={clipRef} className="player-card-clip">
+        {bgLayers}
+        <div ref={cardInRef} className="player-card-in">
+          <button type="button" className="player-ident" aria-label={playerOpenLabel(item, shownTitle.title)} onClick={() => pc.openItem(item)}>
+            <span className="player-ident-art">{art}</span>
+            <span className="player-ident-text">
+              <span className="player-ident-title" lang={shownTitle.lang || undefined}>{shownTitle.title}</span>
+              <span className="player-ident-sub">{trackSub(true)}<ChevronRight className="player-ident-go" aria-hidden="true" /></span>
+            </span>
+          </button>
+          <div ref={seekRef} className="player-card-seek">
+            {status === 'error' ? (
+              <>
+                <span className="player-error" role="status">无法播放</span>
+                <button type="button" className="player-retry" onClick={api.retry}>重试</button>
+              </>
+            ) : (
+              <>
+                <span ref={curRef} className="player-time player-cur">00:00</span>
+                <div className="player-track">
+                  <div
+                    ref={sliderRef}
+                    className="player-track-in"
+                    role="slider"
+                    tabIndex={0}
+                    aria-label="播放进度"
+                    aria-valuemin={0}
+                    {...sliderHandlers}
+                  >
+                    <span className="player-rail"><span className="player-fill" /></span>
+                    <span className="player-thumb" />
+                  </div>
+                </div>
+                <span ref={durRef} className="player-time player-dur">--:--</span>
+              </>
+            )}
+          </div>
+          <div className="player-card-row">
+            <button type="button" className={`player-cbtn is-ring player-crate${rate !== 1 ? ' is-on' : ''}`} aria-label={rateSpeech(rate)} onClick={api.cycleRate}>
+              <span>{formatRate(rate)}</span>
+            </button>
+            <span className="player-cdiv" aria-hidden="true" />
+            <div className="player-ctrio">
+              <button type="button" className="player-cbtn is-well" aria-label="后退 15 秒" onClick={() => api.seekBy(-15)}>
+                <SkipGlyph back />
+              </button>
+              <button type="button" className="player-play" aria-label={playLabel} onClick={api.toggle}>
+                {playGlyph}
+              </button>
+              <button type="button" className="player-cbtn is-well" aria-label="前进 15 秒" onClick={() => api.seekBy(15)}>
+                <SkipGlyph />
+              </button>
+            </div>
+            <span className="player-cdiv" aria-hidden="true" />
+            <button type="button" className="player-cbtn is-ring player-cstop" aria-label="停止播放（播放条一并收起）" onClick={pc.stop}>
+              <StopGlyph />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
+  // data-layer-keep(层原语,issue #230):整屏推入页(正文 / 发现,z 低于本条)把下层 inert 时保留播放条;盖住它的层照常 inert
+  const layer = (
     <div
       ref={layerRef}
       className={`player-layer ${mobile ? 'is-mobile' : 'is-desktop'}`}
       data-form={form}
       data-page={mobile ? mobilePage : undefined}
+      data-card={mobile ? cardState : undefined}
+      data-layer-keep="dock"
       data-tone={tone ? 'blur' : 'neutral'}
       data-playing={playing ? '' : undefined}
       data-buffering={playing && buffering ? '' : undefined}
@@ -701,6 +846,7 @@ export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs
               {...barPointer}
             >
               {bgLayers}
+              {mobile ? dockRow : (
               <div className="player-bar-in">
                 <button
                   type="button"
@@ -782,7 +928,9 @@ export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs
                   </div>
                 </div>
               </div>
+              )}
             </div>
+            {mobile ? cardEl : (
             <div
               ref={miniRef}
               className="player-mini"
@@ -802,10 +950,24 @@ export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs
                 {playGlyph}
               </button>
             </div>
+            )}
           </>
         )}
       </div>
       <div ref={overRef} className="player-fx is-over" aria-hidden="true" />
     </div>
+  );
+  if (!mobile) return layer;
+  // 卡外的淡压暗(拍板 32):列表页压在列表之上、底栏之下(底栏照常能点,切 Tab 时卡一并收起);
+  // 正文页 / 推入页没有底栏,整屏压在页之上、卡之下。点了只收卡、不穿透(LayerScrim:按下与松开同在遮罩才算)
+  return (
+    <>
+      {cardState !== 'closed' ? (
+        <div ref={scrimRef} className={`player-scrim${cardState === 'open' ? ' is-on' : ''}`} data-page={mobilePage}>
+          <LayerScrim onClose={() => pc.close()} />
+        </div>
+      ) : null}
+      {layer}
+    </>
   );
 }

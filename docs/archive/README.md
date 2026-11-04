@@ -5,6 +5,43 @@
 > `docs/frontend/conventions.md` / `docs/sources/curation_policy.md` 等活跃文档。
 > 按「故事」分组索引;文内常含 ☐/☑ 进度符,均为当时状态。
 
+## 运维管理信息架构(2026-11,issue #114)
+
+- [issue-114-admin-ia.md](./issue-114-admin-ia.md) — 五档 segmented 平铺 → 首页即目录(12 列不等大 bento,样页 v4「A 精修」)+ 8 个满幅功能页、面包屑横切与板块深链;只读聚合端点 `GET /api/admin/home`;拍板记录与默认处理表(§1)、Codex 两轮交叉检视(§9);PR #260 合入、待发布;归属规则已回流 `architecture/admin-ops.md`。
+
+## 榜单收敛:热点事件 · 深度阅读 · 播客精选(2026-11,issue #221)
+
+- [issue-221-rankings-unify.md](./issue-221-rankings-unify.md) — 读者面 13 个列表收成三段;生产读者接口实拉的现状与收敛论证(§0)、拍板记录(§4,含目检三轮修订第 12 项:原地事件页、时间线纵线、两张整卡、返回带、入口挪到视图轨)、接口改动(事件榜 7 天 / 快照按窗口 / picks 新端点,§5)、Codex 两轮交叉检视(§7);PR #259,待发布。
+
+## 登录页「深空剧场」重制(2026-11,issue #214)
+
+- [issue-214-login-remake.md](./issue-214-login-remake.md) — 保留深空主题与三幕演出、WebGL 场景引擎重写;手机竖屏改原生形态(品牌区 + 贴底底页 + 触屏键盘态)、离场收束到屏幕中心;Codex 两轮交叉检视(§6);PR #255 合入、待发布;五方向样页分支已删除(§7)。
+
+## 播客逐字稿问答(2026-10,issue #248)
+
+- [issue-248-podcast-qa.md](./issue-248-podcast-qa.md) — 发布方/ASR原稿懒索引、本文与订阅问答、可核对引用及在途撤稿防护；真实点播与单集深题 13/13 已核对，PR #252 代码检视与 CI 通过；新增一次 ASR 成功，三期 ASR 六题思考对照 28.5/30、仍有细节遗漏、用户验收待完成，未合入发布。
+
+## 手机端系统性重构(2026-10,issue #230)
+
+- [issue-230-mobile-wave.md](./issue-230-mobile-wave.md) — 主档:用户口径与同期边界、样页九轮返修与拍板(§6)、默认表(§8)、批 1 → 4c 逐批实录与偏差 / 真机待验(§8.1)、Codex 两轮交叉检视(§7)。
+- [issue-230-mobile-audit.md](./issue-230-mobile-audit.md) — 阶段 1 审计:46 条发现(P1 1 / P2 18 / P3 27)及逐条处理状态、断点 / 触控 / 性能量化、20 项真机待验(§6)。
+
+## 发布方逐字稿阅读与翻译分段(2026-10,issue #246)
+
+- [issue-246-transcript-paragraphs.md](./issue-246-transcript-paragraphs.md) — 词级 JSON 分段、翻译缓存升级、179 项回归与真实翻译记录；英文及中文页面验收通过，用户已授权提交 MR，未合入、未发布。
+
+## 导读状态与模型配置(2026-10,issue #238 / #242 / #243 / #244)
+
+- [issue-238-guides-models.md](./issue-238-guides-models.md) — 用户验收后的四方案取舍、配置生效与错误脱敏边界、集成验证及交叉检视记录。
+
+## 播客列表精简(2026-10,issue #239)
+
+- [issue-239-podcast-list.md](./issue-239-podcast-list.md) — 用户验收采用的方案、验证边界与待完成的交叉检视记录。
+
+## 播客读者语义与导读筛选(2026-11,issue #245)
+
+- [issue-245-reader-summary.md](./issue-245-reader-summary.md) — 统一 AI 速读与评分依据，保留优质/导读标签，书本和耳机表示能力；搜索筛选、测试矩阵及用户验收与检视记录，未合入发布。
+
 ## 阅读器演进(2026-07,v3.2 → v3.10)
 
 - [reader-reshell-plan.md](./reader-reshell-plan.md) — **主档**:按设计样页重构四带式阅读器的五轮记录

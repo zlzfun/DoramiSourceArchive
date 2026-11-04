@@ -58,7 +58,9 @@ def _split_for_translation(body: str, *, segment_chars: int = 3500) -> list[str]
 
 SOURCE_KINDS = frozenset({"publisher_transcript", "normalized_transcript"})
 OUTPUT_KIND = "transcript_zh"
-PIPELINE_VERSION = "reader-transcript-translation-v2"
+# v3 translates the reading projection; v2 cached word-per-line inputs must
+# not be reused even when the immutable publisher source hash is unchanged.
+PIPELINE_VERSION = "reader-transcript-translation-v3"
 
 
 class PodcastTranscriptTranslationError(RuntimeError):
@@ -158,7 +160,9 @@ def _load_input(
         label = "来源方逐字稿" if source_kind == "publisher_transcript" else "ASR 逐字稿"
         raise PodcastTranscriptTranslationError(f"{label}尚未就绪", status_code=409)
     try:
-        text = podcast_text_reader._plain_text(source, config)  # noqa: SLF001
+        text = podcast_text_reader._plain_text(
+            source, config, for_reading=True
+        )  # noqa: SLF001
     except podcast_text_reader.PodcastTextReaderMalformed as exc:
         raise PodcastTranscriptTranslationError(str(exc), status_code=422) from exc
     maximum = min(config.premium_transcript_max_chars, config.text_artifact_max_chars)

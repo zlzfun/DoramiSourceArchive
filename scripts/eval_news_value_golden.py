@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """新闻价值评分黄金集门禁(issue #33):用当前提示词给 62 篇黄金集重评,与两位评审的均值比对。
 
-    .venv/bin/python scripts/eval_news_value_golden.py [--model deepseek-v4-flash] [--limit N] [--out FILE]
+    .venv/bin/python scripts/eval_news_value_golden.py [--model deepseek-flash] [--limit N] [--out FILE]
 
 读 tests/fixtures/golden_news_value.json(生产文章 + Claude/codex 独立打分 + 夹具里记录的基线,2026-10-12 起为 v6),
 调 `analyze_article_with_llm`(与 worker/日报同一函数、同一标签闭集召回),打印:
@@ -24,7 +24,7 @@ def band(s: float) -> str:
 
 async def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default="", help="覆盖模型名(默认用配置的模型;生产对齐用 deepseek-v4-flash)")
+    ap.add_argument("--model", default="", help="覆盖模型名(默认用配置的模型;生产对齐用 deepseek-flash)")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--concurrency", type=int, default=6)
     ap.add_argument("--out", default="", help="逐篇结果 JSON 输出路径")

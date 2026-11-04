@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ArrowRight, ExternalLink, Loader2, Link2Off } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import { fetchAuthSession, fetchSharedArticle, startGuestSession } from '../api';
-import ReaderMarkdown from './ReaderMarkdown';
+import ReaderMarkdown, { useReaderMarkdownReady } from './ReaderMarkdown';
 import { formatPublishDate } from '../utils/datetime';
 import { stripDuplicateLeadingHeading } from '../utils/markdownTitle';
 
@@ -21,6 +21,8 @@ export default function SharedArticlePage({ token }) {
   const [state, setState] = useState({ status: 'loading', data: null, error: '' });
   const [guestCta, setGuestCta] = useState(false);
   const [entering, setEntering] = useState(false);
+  // 渲染器与分享数据并行拉(issue #230 M-14),两者都到才出正文,中途只有「正在打开…」一种加载态
+  const markdownReady = useReaderMarkdownReady();
 
   // 正文图走分享令牌专属的免登录取图端点（护栏与文章端点同套,且只放行这一篇里的图链）——
   // 默认的 /api/media/proxy 对无会话访客是 401,回退直连又被防盗链 CDN 403,整页裂图。
@@ -70,7 +72,7 @@ export default function SharedArticlePage({ token }) {
     if (state.status === 'ok' && state.data?.title) document.title = state.data.title;
   }, [state]);
 
-  if (state.status === 'loading') {
+  if (state.status === 'loading' || (state.status === 'ok' && !markdownReady)) {
     return (
       <div className="shared-page shared-page-center">
         <Loader2 className="h-5 w-5 animate-spin" />

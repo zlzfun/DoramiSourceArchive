@@ -14,3 +14,12 @@ Podcast RSS uses `source_type=podcast` and `fetcher_id=generic_podcast_rss`. Epi
 ## Podcast 全文处理自动入队(landing,issue #68 返修)
 
 简介初评 ≥ 5.0 的播客集由 `execute_podcast_landing_job`(独立 APScheduler interval 1 min,`max_instances=1`,并发上限 3)自动送入全文处理,**不再**由 `execute_article_analysis_job` 每分钟全表重放。纯逻辑在 `services/podcast_landing.py`,三层防线:① **复合 keyset 游标** `podcast_landing:cursor`(`(updated_at, article_id)` JSON,旧纯时间戳游标自动收养)只扫新更新的 succeeded 播客分析行 + **轮转 sweep 游标** `podcast_landing:sweep_cursor` 每轮再看 40 行全量(只做 DB 读),兜住不改分析行但改变输入 revision 的变更(RSS transcript locator / publisher transcript 发布 / source-media snapshot / archive sync 收养);② **失败记忆** `podcast_landing:attempts` 按 episode 记 revision/次数/类别/`retry_at`——瞬时失败 5 min 起指数退避封顶 6 h、8 次后长停;确定性失败(媒体不合规/过长/not_found)24 h 后重核或 revision 变化即放行;**守门类**(`podcast_provider_unavailable`/`StorageFull`/`PodcastLandingGated`)是配置或容量问题,10 min 回访;**入队成功记 `enqueued` + 重算后的最终 revision**(同 revision 永不再入队,豁免 30 天 prune,对账为 settled 才清除);每个 id 都解析为 eligible/settled/failed,到期但已不合格的条目当轮清除;每条结果**立即 checkpoint**,游标只在轮末推进;③ **轮级守门** `podcast_landing_gate`:运行时未就绪整轮跳过不动状态;需要下载源音频的集在 ASR **新提交 admission**(`stage_admission_ready`,比轮询就绪严格:app_key + 计费配置)未就绪、或产物库可预留余量(`reservable_bytes` = 配额余量 ∧ 磁盘 minimum-free 线之上余量)不足本集 `download_limit` 时记 `gated`。自动入队的幂等键由 `request_processing` **在锁内**按实际选中输入派生(`full-analysis:auto:<episode>:<content_hash[:16]>`,`idempotency_key_prefix` 形态),重启重算同输入即 replay 同一记录,不撞 conflict;手动 API 仍传显式 key。`enqueue_podcast_processing_with_input`(手动 API 同路)publisher transcript 只试一次,失败后进源音频回退前**再次**检查 admission + 本集容量,不满足抛 `PodcastLandingGated`(503);同步 DB/入队/ffprobe 全部经 `asyncio.to_thread`。cron 类任务(`add_cron_job`)统一 `misfire_grace_time=300`+`coalesce`——2026-09-14 生产实录:默认 1 s 宽限撞上一次事件循环阻塞,日报与四个采集任务整天缺席。
+
+
+## 原稿进入问答（issue #248）
+
+站内问答消费当前已发布的发布方原稿和 ASR 原稿，按阅读投影懒建本地片段索引，
+可回答单集与订阅范围内的问题，并提供本次实际使用的原文片段。中文译稿与 AI 导读本波不作为
+问答证据；只有简介时明确降级。发布/撤稿沿现有指针生效，回答前后复核，问答不触发 ASR/TTS。
+字符范围只用于核对阅读文本，不生成音频时间戳。见 [检索实现](./search-and-qa.md) 与
+[#248 实现记录](../archive/issue-248-podcast-qa.md)。

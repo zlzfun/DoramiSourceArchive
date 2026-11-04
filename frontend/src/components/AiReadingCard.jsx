@@ -1,7 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import {
-  podcastAnalysisBasis,
-  podcastAssessmentMeta,
+  podcastReaderBasisText,
   scoreDimensions,
   scoreDisclaimer,
   scoreTierClass,
@@ -27,7 +26,7 @@ import { motionReduced } from '../motion';
  * 都离开、或有新的悬停 / 聚焦进来时复位(codex R1-6)。触屏没有悬停,依据改为卡内常显的一行小字。此前「点数字
  * 翻面看评分依据」的交互随之退役。正文区承接速读、骨架与生成入口。桌面与移动壳共用。
  *
- * 文章「✦ 听导读」(issue #124 起在卡内)自 issue #199 起挪到标题区收听入口,与播客共用全局播放条。
+ * 文章听导读与 AI 速读同卡呈现,音轨仍使用全局播放条(issue #238)。
  */
 export default function AiReadingCard({
   article,
@@ -36,16 +35,9 @@ export default function AiReadingCard({
   canGenerate,
   onGenerate,
   podcast = false,
+  listen = null,
 }) {
-  // 新分析记录是依据的事实源；旧数据仍由 podcast projection 回退 show_notes。
-  const assessment = podcast ? podcastAssessmentMeta(article) : null;
-  const analysisBasis = podcast ? podcastAnalysisBasis(article) : '';
-  const transcriptBacked = analysisBasis === 'publisher_transcript' || analysisBasis === 'asr_transcript';
-  const podcastSummaryTitle = transcriptBacked ? '全文导读' : '简介导读';
-  const podcastReasonTitle = assessment?.label || (transcriptBacked ? '全文深度分析' : '简介初评');
-  const podcastBasisNote = assessment?.note || (transcriptBacked
-    ? 'AI 基于完整逐字稿分析，关键结论可回到原节目时间码核验'
-    : 'AI 基于节目简介的初步评估，尚未分析完整音频，仅用于辅助筛选');
+  const podcastBasis = podcast ? podcastReaderBasisText(article) : '';
   const dims = scoreDimensions(article);
   const [dimKey, setDimKey] = useState(null);   // null = 主分
   const current = dims.find((d) => d.key === dimKey) || dims[0] || null;
@@ -56,9 +48,9 @@ export default function AiReadingCard({
   const tipId = useId();
   const sideRef = useRef(null);
   const [tipDismissed, setTipDismissed] = useState(false);
-  const tipTitle = podcast ? podcastReasonTitle : `评分依据 · ${current?.label || ''}`;
+  const tipTitle = `评分依据 · ${current?.label || ''}`;
   const tipReason = current?.reason || '';
-  const tipNote = podcast ? podcastBasisNote : scoreDisclaimer(current?.key);
+  const tipNote = podcast ? podcastBasis : scoreDisclaimer(current?.key);
 
   useEffect(() => { setDimKey(null); setTipDismissed(false); }, [article?.id]);
   useEffect(() => {
@@ -74,9 +66,7 @@ export default function AiReadingCard({
 
   // 同步来的权威初评理论上包含摘要，但即使旧/异常数据只有分数理由，也不能把理由藏掉。
   const primaryText = summary || (podcast ? reason : '');
-  const primaryTitle = summary
-    ? (podcast ? podcastSummaryTitle : 'AI 速读')
-    : (podcast ? podcastReasonTitle : 'AI 速读');
+  const primaryTitle = !summary && podcast && reason ? '评分参考' : 'AI 速读';
   // 播客无摘要时理由已作正文,不再重复成依据行。
   const inlineReason = tipReason && !(podcast && !summary) ? tipReason : '';
   return (
@@ -118,15 +108,11 @@ export default function AiReadingCard({
           </div>
         )}
       </div>
+      {listen && <div className="reader-ai-listen">{listen}</div>}
       <div className="reader-ai-summary-main">
         {primaryText ? (
           <div className="reader-ai-layer reader-ai-layer-summary">
             <p className="reader-ai-layer-text">{primaryText}</p>
-            {podcast && (
-              <span className="reader-ai-layer-note">
-                {summary ? `${podcastReasonTitle} · ${podcastBasisNote}` : podcastBasisNote}
-              </span>
-            )}
           </div>
         ) : summarizing ? (
           <div className="reader-ai-summary-skel" role="status" aria-label="正在生成速读">
@@ -134,12 +120,13 @@ export default function AiReadingCard({
           </div>
         ) : canGenerate ? (
           <button type="button" onClick={onGenerate} className="reader-ai-summary-generate">
-            {podcast ? '生成节目简介导读' : '生成本文要点速读'}
+            {podcast ? '生成本期要点速读' : '生成本文要点速读'}
           </button>
         ) : null}
-        {score && inlineReason && (
+        {score && (inlineReason || podcastBasis) && (
           <p className="reader-ai-reason-inline">
             <span className="reader-ai-reason-inline-label">{current.label}依据</span>
+            {podcastBasis && <>{podcastBasis}{inlineReason ? '。' : ''}</>}
             {inlineReason}
           </p>
         )}

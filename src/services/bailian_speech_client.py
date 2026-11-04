@@ -11,6 +11,21 @@ from config_bailian import BailianSpeechConfig
 from services import http_safety
 
 
+# 只保留已知供应商错误码;响应 message/URL/未知字符串可能回显凭据或签名链接。
+_PROVIDER_CODES = frozenset({
+    "ModelNotFound", "InvalidModel", "ModelUnavailable", "InvalidApiKey",
+    "InvalidParameter", "InvalidParameter.ModelNotFound",
+    "InvalidParameter.UnsupportedModel", "AccessDenied", "Forbidden",
+    "Throttling", "Throttling.RateQuota", "QuotaExhausted",
+    "DataInspectionFailed", "InternalError", "ServiceUnavailable",
+})
+
+
+def provider_error_code(payload):
+    code = payload.get("code") if isinstance(payload, dict) else None
+    return code if isinstance(code, str) and code in _PROVIDER_CODES else ""
+
+
 class BailianSpeechError(ValueError):
     def __init__(self, code, *, unknown=False):
         self.code = code
@@ -91,21 +106,36 @@ class BailianSpeechClient:
             raise BailianSpeechError(
                 "transport_error", unknown=method == "POST"
             ) from None
-        if response.status_code >= 500 or response.status_code in (408, 409):
-            raise BailianSpeechError("server_error", unknown=method == "POST")
         if not 200 <= response.status_code < 300:
-            raise BailianSpeechError(f"http_{response.status_code}")
+            provider_code = ""
+            if len(response.content) <= 2 * 1024 * 1024:
+                try:
+                    provider_code = provider_error_code(response.json())
+                except ValueError:
+                    pass
+            code = f"http_{response.status_code}"
+            if provider_code:
+                code += f":{provider_code}"
+            # 服务端错误/超时/冲突仍可能已经计费,不得因有错误码改成可重提。
+            unknown = method == "POST" and (response.status_code >= 500 or response.status_code in (408, 409))
+            raise BailianSpeechError(code, unknown=unknown)
         try:
             if len(response.content) > 2 * 1024 * 1024:
                 raise ValueError()
             payload = response.json()
-            if not isinstance(payload, dict) or payload.get("code"):
+            if not isinstance(payload, dict):
                 raise ValueError()
-            return payload
         except (ValueError, TypeError):
             raise BailianSpeechError(
                 "invalid_response", unknown=method == "POST"
             ) from None
+        if payload.get("code"):
+            code = provider_error_code(payload)
+            raise BailianSpeechError(
+                f"invalid_response:{code}" if code else "invalid_response",
+                unknown=method == "POST",
+            )
+        return payload
 
     def submit_asr(self, file_url):
         return self.request(

@@ -1,3 +1,4 @@
+import PodcastGuideFilter from './PodcastGuideFilter';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Search,
@@ -9,6 +10,7 @@ import {
   Inbox,
   Compass,
   BookOpenText,
+  Headphones,
   FileText,
   AtSign,
   Star,
@@ -29,7 +31,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Rss,
-  BarChart3,
+  ChartColumn,
   LogIn,
 } from 'lucide-react';
 import LogoMark from './LogoMark';
@@ -42,6 +44,7 @@ import ShareMenu from './ShareMenu';
 import { requestLogin } from '../utils/loginPrompt';
 import ContextMenu from './ContextMenu';
 import { useContextMenu } from '../hooks/useContextMenu';
+import { useTouchHoldMenu } from '../hooks/useTouchHoldMenu';
 import { resolveCompany } from '../sourceTaxonomy';
 import DiscoverPage from './DiscoverPage';
 import SocialFlow from './SocialFlow';
@@ -69,7 +72,7 @@ import { isCompactKind, kindChipLabel, kindFilterOptions, kindKickerLabel } from
 import {
   analysisStatusMeta,
   displayAnalysisTags,
-  podcastAssessmentMeta,
+  podcastReaderBasisText,
   primaryScoreOf,
   scoreDisclaimer,
   scoreTierClass,
@@ -111,7 +114,8 @@ function SourceRowsSkeleton() {
 // 条目卡：首行短条 + 标题条 + 摘要条（形状贴近 .reader-entry）
 // count/delayed 可调:初次加载走 5 条 + 150ms 延迟显现(快路径不闪);
 // 无限滚动追加走少量、即时(已在触发点,给即时反馈)。
-export function ArticleCardsSkeleton({ count = 5, delayed = true }) {
+// card(issue #230 批 4c):手机壳传 'article' | 'podcast',画成夜航卡形(mobile.css .m-skel-card);桌面不传,DOM 不变。
+export function ArticleCardsSkeleton({ count = 5, delayed = true, card = '' }) {
   const cards = [
     { title: 'w-3/4', excerpt: 'w-1/2' },
     { title: 'w-5/6', excerpt: 'w-2/3' },
@@ -119,6 +123,22 @@ export function ArticleCardsSkeleton({ count = 5, delayed = true }) {
     { title: 'w-4/5', excerpt: 'w-1/2' },
     { title: 'w-3/5', excerpt: 'w-2/3' },
   ].slice(0, count);
+  if (card) {
+    return (
+      <div className={`m-skel-cards${delayed ? ' skeleton-delay' : ''}`} aria-hidden="true">
+        {cards.map((c, i) => (
+          <div key={i} className={`m-skel-card${card === 'podcast' ? ' is-podcast' : ''}`}>
+            {card === 'podcast' && <div className="skeleton m-skel-cover" />}
+            <div className="m-skel-copy">
+              <div className="skeleton m-skel-meta" />
+              <div className={`skeleton m-skel-title ${c.title}`} />
+              <div className={`skeleton m-skel-line ${c.excerpt}`} />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
   return (
     <div className={delayed ? 'skeleton-delay' : ''} aria-hidden="true">
       {cards.map((c, i) => (
@@ -234,6 +254,11 @@ export const ArticleRow = memo(function ArticleRow({
   interestHit = '', unsubscribed = false, onSubscribeSource = null,
   // issue #199 全局播放条:这一期正在播 / 已暂停('playing' | 'paused' | '');AI 音轨的律动条走渐变两端色
   nowPlaying = '', nowPlayingAi = false,
+  // 手机壳(issue #230 批 4a,样页 c-fav):星只是「已收藏」的标记,只画在收藏了的条目上——文章在元信息行分数前,
+  // 播客在标题行尾;收藏走长按动作单与正文页。桌面不传
+  favIndicator = false,
+  // 手机壳(issue #230 批 4c,样页 c-card):条目画成夜航卡(.is-card,版式在 mobile.css「批 4c」段),源标 18。桌面不传
+  card = false,
 }) {
   // 标题语言(issue #218):偏好开且有可用译名时显示中文标题,否则原题;移动列表复用本行
   const { preferChinese } = useTitlePreference();
@@ -245,56 +270,69 @@ export const ArticleRow = memo(function ArticleRow({
     : excerptOf(article.summary_zh || article.content_preview || article.content);
   const kindLabel = kindChipLabel(article);
   const podcast = entryPodcast ? podcastOf(article) : null;
-  const podcastStatus = podcastListAvailabilityMeta(podcast);
+  const podcastAvailability = entryPodcast ? podcastListAvailabilityMeta(podcast) : null;
+  const podcastDuration = entryPodcast ? formatPodcastDuration(podcast?.duration_seconds) : '';
   // 分数位显示主分(issue #178 第二波:内容类型决定默认维度,新闻价值 ≥ 8.5 例外);列表不标维度,悬停说明。
   const primaryScore = primaryScoreOf(article);
   const score = primaryScore?.text || '';
   const scoreTier = scoreTierClass(primaryScore?.value);   // issue #54:按分值分档着色
   const scoreTitle = primaryScore ? `${primaryScore.label} ${score}。${scoreDisclaimer(primaryScore.key)}` : '';
   const analysisStatus = analysisStatusMeta(article, { podcast: entryPodcast });
-  const podcastAssessment = entryPodcast ? podcastAssessmentMeta(article) : null;
+  const podcastBasis = entryPodcast ? podcastReaderBasisText(article) : '';
+  const podcastScoreTitle = podcastBasis
+    ? `${scoreTitle} ${podcastBasis}`
+    : scoreTitle;
   // 内容类型(论文 / 教程 / 观点 / 版本更新…):源名后的一个词,资讯不挂(issue #178)。
   // issue #184:列表不再挂主题标签,内容类型也不画框——标签只在阅读窗出现,条目行只回答「谁发的、说了什么、值不值得点开」。
   const kindTag = kindLabel ? <span className="reader-entry-kind">{kindLabel}</span> : null;
-  const favoriteControl = (
-    <span
-      role="button"
-      tabIndex={0}
-      aria-label={isFav ? '取消收藏' : '收藏'}
-      title={isFav ? '取消收藏' : '收藏'}
-      onClick={(e) => { e.stopPropagation(); onToggleFavorite(article, e); }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          e.stopPropagation();
-          onToggleFavorite(article, e);
-        }
-      }}
-      className={`reader-entry-fav ${isFav ? 'is-on' : ''}`}
-    >
-      <Star className="h-[15px] w-[15px]" fill={isFav ? 'currentColor' : 'none'} />
-    </span>
-  );
+  // 收藏星(审计 M-02 / M-35,issue #230 批 4a):不再是嵌在整行 <button> 里的 span[role=button](嵌套交互)。
+  // 桌面:星是行里的装饰元素(aria-hidden),点到它由整行的点击分流成「收藏 / 取消收藏」;鼠标悬停浮出、
+  // 触屏(pointer: coarse)常显(index.css);键盘与读屏走右键菜单(ContextMenu 键)与阅读窗的收藏钮,行名补一句「已收藏」。
+  // 手机(favIndicator):只是标记,见上。
+  const favoriteControl = favIndicator
+    ? (isFav ? (
+      <span className="reader-entry-fav is-on is-mark" aria-hidden="true">
+        <Star className="h-[14px] w-[14px]" fill="currentColor" />
+      </span>
+    ) : null)
+    : (
+      <span aria-hidden="true" title={isFav ? '取消收藏' : '收藏'} className={`reader-entry-fav ${isFav ? 'is-on' : ''}`}>
+        <Star className="h-[15px] w-[15px]" fill={isFav ? 'currentColor' : 'none'} />
+      </span>
+    );
+  const onRowClick = (e) => {
+    const hit = e.target instanceof Element ? e.target : null;
+    if (!favIndicator && hit?.closest('.reader-entry-fav')) {
+      onToggleFavorite(article, e);
+      return;
+    }
+    if (unsubscribed && onSubscribeSource && hit?.closest('.reader-entry-unsub')) {
+      e.stopPropagation();
+      onSubscribeSource(article.source_id);
+      return;
+    }
+    onSelect(article);
+  };
   return (
     <>
       {showLabel && <div className="reader-date-label">{dayLabelOf(dayKey)}</div>}
       <button
         type="button"
-        onClick={() => onSelect(article)}
+        onClick={onRowClick}
         onMouseEnter={() => onPrefetchEnter(article)}
         onMouseLeave={onPrefetchLeave}
         onContextMenu={(e) => onContextMenu(e, article, 'article')}
-        className={`reader-entry ${compact ? 'is-compact' : ''} ${entryPodcast ? 'is-podcast' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'} ${isFav ? 'is-fav' : ''} ${ctxAnchor ? 'is-ctx-anchor' : ''}`}
+        className={`reader-entry ${compact ? 'is-compact' : ''} ${entryPodcast ? 'is-podcast' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'} ${isFav ? 'is-fav' : ''} ${ctxAnchor ? 'is-ctx-anchor' : ''}${favIndicator ? ' has-fav-mark' : ''}${card ? ' is-card' : ''}`}
       >
         {/* 读态只由标题字重与墨色表达(is-read),不另画未读点(issue #199);读屏补一句「未读」与之对等 */}
         {isUnread && <span className="sr-only">未读，</span>}
+        {isFav && <span className="sr-only">已收藏，</span>}
         {entryPodcast ? (
           <span className="reader-podcast-layout">
             <PodcastCover src={podcast?.image_url} className="reader-podcast-cover" />
             <span className="reader-podcast-copy">
               <span className="reader-entry-top">
-                <span className="reader-entry-src">{podcast?.show_title || sourceName}</span>
-                {kindTag}
+                <span className="reader-entry-src" title={podcast?.show_title || sourceName}>{podcast?.show_title || sourceName}</span>
                 <span
                   className="reader-entry-time"
                   title={formatPublishDateTime(article.publish_date || article.fetched_date)}
@@ -302,25 +340,36 @@ export const ArticleRow = memo(function ArticleRow({
                   {formatRelativeTime(article.publish_date || article.fetched_date, '')}
                 </span>
                 {score && (
-                  <span className={`reader-entry-score ai-grad-text ${scoreTier}`} title={scoreTitle}>
+                  <span className={`reader-entry-score ai-grad-text ${scoreTier}`} title={podcastScoreTitle}>
                     {score}
+                    {podcastBasis && <span className="sr-only">（{podcastBasis}）</span>}
                   </span>
                 )}
               </span>
               <span className="reader-entry-titlerow">
                 <span className="reader-entry-title">{searchQuery ? highlightMatch(title, searchQuery) : title}</span>
-                {article.is_premium_podcast && <span className="podcast-premium-badge">优质播客</span>}
                 {favoriteControl}
               </span>
               <span className="reader-podcast-meta">
                 <NowPlayingTag state={nowPlaying} ai={nowPlayingAi} />
-                {formatPodcastDuration(podcast?.duration_seconds) && (
-                  <span>{formatPodcastDuration(podcast.duration_seconds)}</span>
+                {podcastDuration && <span className="reader-podcast-duration">{podcastDuration}</span>}
+                {article.is_premium_podcast && <span className="podcast-premium-badge">优质播客</span>}
+                {podcastAvailability && (
+                  <span className="reader-podcast-availability">
+                    {podcastAvailability.kind === 'audio'
+                      ? <>
+                        {podcast?.premium_guide?.blog_ready && <BookOpenText aria-hidden="true" />}
+                        <Headphones aria-hidden="true" />
+                      </>
+                      : podcastAvailability.kind === 'text'
+                        ? <BookOpenText aria-hidden="true" />
+                        : <Loader2 aria-hidden="true" />}
+                    <span>{podcastAvailability.label}</span>
+                    {podcastAvailability.kind === 'audio' && podcast?.premium_guide?.blog_ready && (
+                      <span className="sr-only">（也可阅读中文导读）</span>
+                    )}
+                  </span>
                 )}
-                <span className={`podcast-status is-${podcastStatus.tone}`}>
-                  {podcastStatus.label}
-                </span>
-                {podcastAssessment && <span className="stamp stamp-idle" role="status">{podcastAssessment.label}</span>}
               </span>
             </span>
           </span>
@@ -329,22 +378,15 @@ export const ArticleRow = memo(function ArticleRow({
             <span className="reader-entry-top">
               {source && (
                 <span className="reader-entry-logo" aria-hidden="true">
-                  <LogoMark company={resolveCompany(source)} size="s15" emoji={source.icon} />
+                  <LogoMark company={resolveCompany(source)} size={card ? 's18' : 's15'} emoji={source.icon} />
                 </span>
               )}
               <span className="reader-entry-src">{sourceName}</span>
               {/* 订阅外文章(订阅谓词关着的全站范围):源名后 faint「未订阅」,悬停卡片翻成「+ 订阅」——
                   发现的动作发生在阅读现场,不必去发现页 */}
-              {unsubscribed && (
-                <span
-                  role="button"
-                  tabIndex={0}
-                  className="reader-entry-unsub"
-                  title="订阅这个来源"
-                  onClick={(e) => { e.stopPropagation(); onSubscribeSource?.(article.source_id); }}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onSubscribeSource?.(article.source_id); } }}
-                />
-              )}
+              {/* 同收藏星(批 4a):不再是嵌在整行按钮里的 role=button,点到它由整行的点击分流成「订阅」;读屏补一句「未订阅」 */}
+              {unsubscribed && <span aria-hidden="true" className="reader-entry-unsub" title="订阅这个来源" />}
+              {unsubscribed && <span className="sr-only">，未订阅</span>}
               {kindTag}
               {/* 命中兴趣:写命中的那个兴趣标签(命中多个取第一个);它是透镜的产物,与开关无关 */}
               {interestHit && <span className="reader-entry-hit">{interestHit}</span>}
@@ -355,15 +397,15 @@ export const ArticleRow = memo(function ArticleRow({
                 {formatRelativeTime(article.publish_date || article.fetched_date, '')}
               </span>
               <NowPlayingTag state={nowPlaying} ai={nowPlayingAi} />
+              {favIndicator && favoriteControl}
               {/* 分数(身份线:宋体数字 + AI 渐变分档)推到行尾;分析在途时先以「分析中」占位,落地即换成数 */}
               {score
                 ? <span className={`reader-entry-score ai-grad-text ${scoreTier}`} title={scoreTitle}>{score}</span>
                 : (analysisStatus && <span className="reader-entry-score is-pending" role="status">分析中</span>)}
             </span>
-            {/* 标题行内收藏控件复用 span role=button，避免 button 嵌套。 */}
             <span className="reader-entry-titlerow">
               <span className="reader-entry-title">{searchQuery ? highlightMatch(title, searchQuery) : title}</span>
-              {favoriteControl}
+              {!favIndicator && favoriteControl}
             </span>
             {/* 摘要行:AI 要点摘要(summary_zh)优先——正文截断对英文长文几乎无信息量 */}
             {excerpt && <span className="reader-entry-excerpt">{searchQuery ? highlightMatch(excerpt, searchQuery) : excerpt}</span>}
@@ -403,7 +445,9 @@ export default function ReaderTab({
   const [brandFailed, setBrandFailed] = useState(false);
   const {
     briefOpen, setBriefOpen, rankingsOpen, setRankingsOpen,
-    briefReturn, setBriefReturn, briefRestore, setBriefRestore,
+    rankingSegment, setRankingSegment, rankingRange, setRankingRange,
+    rankingRestore, setRankingRestore,
+    briefReturn, setBriefReturn, briefRestore, setBriefRestore, briefPlace,
     discoverTab, setDiscoverTab, interestVersion, setInterestVersion,
   } = view;
   const leaveBriefTrail = useCallback(() => setBriefReturn(null), [setBriefReturn]);
@@ -424,7 +468,7 @@ export default function ReaderTab({
     mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover, discoverShape, setDiscoverShape,
     socialView, podcastView, railActive, listTitle, listSubtitle,
     goView, goSource, goTag,
-    kindFilter, setKindFilter, kindFacetItems,
+    kindFilter, setKindFilter, kindFacetItems, podcastGuideFilter, setPodcastGuideFilter,
     scope, setAxis, toggleFavoriteScope, activeTagId, interestGroups, hasInterests, refreshInterests,
     interestAxisEnabled, showUnsubscribedMark, showInterestHit,
     activeSourceHidden, activeUnsubscribed, grouping,
@@ -483,8 +527,9 @@ export default function ReaderTab({
     if (socialView) goView('article');
     setBriefOpen(false);
     leaveBriefTrail();
+    setRankingRestore(null); // 点入口是新开,不落回旧位
     setRankingsOpen(true);
-  }, [closeDiscover, goView, leaveBriefTrail, setBriefOpen, setRankingsOpen, socialView, supersedePendingOpen]);
+  }, [closeDiscover, goView, leaveBriefTrail, setBriefOpen, setRankingRestore, setRankingsOpen, socialView, supersedePendingOpen]);
   const listPlan = useMemo(
     () => buildListPlan(articles, grouping),
     [articles, grouping],
@@ -513,7 +558,7 @@ export default function ReaderTab({
   const listenList = !activeArticle ? [] : podcastView
     ? podcastListenEntries(activeArticle, { aiEnabled, ondemandEnabled: ondemand.podcast === true })
     : articleListenEntries(activeArticle, { aiEnabled, ondemandEnabled: ondemand.article === true });
-  const hasListen = listenList.length > 0;
+  const hasListen = podcastView && listenList.length > 0;
   // 原节目时长已写在入口上,署名行不再重复
   const durationOnEntry = listenList.some((entry) => entry.track === 'original');
 
@@ -529,7 +574,7 @@ export default function ReaderTab({
   // 列表内容高度变化(切源/追加/加载态)后重算浮层滚动条滑块
   useEffect(() => { resyncListScrollbar(); }, [articles, articlesLoading, activeArticle, resyncListScrollbar]);
 
-  const activeAnalysisStatus = analysisStatusMeta(activeArticle, { podcast: podcastView });
+  const activeAnalysisStatus = podcastView ? null : analysisStatusMeta(activeArticle);
   // 标题区尾行动作(语言二段 + 查看原文):有标签时住尾行右缘,无标签时并入署名行右缘——
   // 标题下不留一片只挂着两个钮的空白(样页「分析在途」帧即此形态)。
   const paneTags = activeArticle ? displayAnalysisTags(activeArticle) : [];
@@ -589,6 +634,7 @@ export default function ReaderTab({
     <div className={`reader-pane-actions ${hasListen ? 'has-listen' : ''}`}>
       {hasListen && (
         <ListenEntries
+          key={activeArticle.id}
           article={activeArticle}
           podcast={podcastView}
           aiEnabled={aiEnabled}
@@ -664,8 +710,12 @@ export default function ReaderTab({
     };
   });
 
+  // 触屏长按 = 右键菜单(iPad 横屏等 ≥ 1025 的触屏走桌面四栏,审计 M-15;issue #230 批 4a):条目行、源行、社交卡
+  const shellRef = useRef(null);
+  useTouchHoldMenu(shellRef, '.reader-entry, .reader-source-row, .social-post');
+
   return (
-    <div className="reader-shell">
+    <div className="reader-shell" ref={shellRef}>
       {/* ── 管理员公告横幅(v3.18):无公告时渲染 null,:has 不命中,四带布局逐像素不变 ── */}
       <AnnouncementBanner />
       {/* ── 视图轨 · 一级视图导航(样页:品牌标 + 图标下常显微标签 + 轨底头像)。
@@ -725,9 +775,20 @@ export default function ReaderTab({
             {short !== label && <span className="reader-vrail-tip">{label}</span>}
           </button>
         ))}
-        {/* 发现:整页源目录(取代源栏内联「发现更多来源」)。与上方三个内容容器
-            语义有别(读内容 vs 找内容),以分隔线分组。 */}
+        {/* 榜单 + 发现:看订阅之外的全站——榜单是全站的热点事件 / 深度阅读 / 播客精选(issue #221 收敛后不再分文章 / 播客,
+            2026-11-04 目检由源栏顶挪到这里,与手机底栏「榜单」同级),发现是整页源目录(取代源栏内联「发现更多来源」)。
+            与上方三个内容容器语义有别(读订阅 vs 看全站),以分隔线分组。 */}
         <span className="reader-vrail-divider" aria-hidden="true" />
+        <button
+          type="button"
+          aria-label="榜单"
+          aria-pressed={rankingsOpen}
+          onClick={openRankings}
+          className={`reader-vrail-btn ${rankingsOpen ? 'is-on' : ''}`}
+        >
+          <ChartColumn className="h-[18px] w-[18px]" />
+          <span className="reader-vrail-label">榜单</span>
+        </button>
         <button
           type="button"
           aria-label={onboardingRequired && !discover ? '发现(兴趣待设置)' : '发现'}
@@ -832,22 +893,7 @@ export default function ReaderTab({
           )}
         </div>
 
-        {!socialView && (
-          <button
-            type="button"
-            aria-pressed={rankingsOpen}
-            className={`reader-ranking-entry ${rankingsOpen ? 'is-on' : ''}`}
-            onClick={openRankings}
-          >
-            <span className="reader-ranking-entry-ic"><BarChart3 aria-hidden="true" /></span>
-            <span>
-              <strong>{podcastView ? '播客榜' : '文章榜'}</strong>
-              <small>近 7 天标签趋势</small>
-            </span>
-          </button>
-        )}
-
-        {/* 榜单打开时源列表保持在场。点源、标签或「发现更多来源」会先关掉榜单再进入，
+        {/* 榜单打开时源列表保持在场(入口在视图轨,2026-11-04 目检由源栏顶挪过去)。点源、标签或「发现更多来源」会先关掉榜单再进入，
             与视图轨文章/播客/发现按钮同一套 setRankingsOpen(false)。 */}
         <div className="reader-source-scroll">
           {sourcesLoading ? (
@@ -957,6 +1003,7 @@ export default function ReaderTab({
           interestVersion={interestVersion}
           sourceMap={sourceMap}
           restore={briefRestore}
+          placeKeeper={briefPlace}
           supersedePendingOpen={supersedePendingOpen}
           onManageSubscriptions={() => { setBriefOpen(false); leaveBriefTrail(); openDiscoverSources({ shape: 'all' }); }}
           onManageInterests={openInterests}
@@ -980,14 +1027,20 @@ export default function ReaderTab({
         />
       )}
 
+      {/* 榜单(issue #221):段与时间范围在 ReaderWorkspace 的 view 里,与视图轨(文章 / 播客)无关 */}
       {rankingsOpen && (
         <RankingsPage
           sourceMap={sourceMap}
-          initialShape={podcastView ? 'podcast' : 'article'}
-          onShapeChange={goView}
-          onOpenArticle={async (articleId) => {
+          segment={rankingSegment}
+          onSegmentChange={setRankingSegment}
+          range={rankingRange}
+          onRangeChange={setRankingRange}
+          restore={rankingRestore}
+          onOpenArticle={async (articleId, ctx) => {
             const opened = await openArticleById(articleId, { silent: true });
-            if (opened) setRankingsOpen(false);
+            if (!opened) return;
+            setRankingsOpen(false);
+            setBriefReturn(ctx || null);   // 与早报同一条外出返回带:阅读窗顶「返回热点事件 / 返回榜单」
           }}
         />
       )}
@@ -1021,7 +1074,6 @@ export default function ReaderTab({
             : setDiscoverTab(next))}
           shape={discoverShape}
           onShapeChange={setDiscoverShape}
-          onOpenRankings={openRankings}
           interestsPanel={personalDigestEnabled ? (
             <InterestPage
               embedded
@@ -1143,7 +1195,7 @@ export default function ReaderTab({
               </button>
               {/* 全部标读两根轴同一枚钮:订阅轴推源水位,兴趣轴按范围逐篇写行(hook 内分流)。
                   按内容类型筛选时收起:标读按源水位推进,会连同没显示的其它类型一并标掉。 */}
-              {!kindFilter && (
+              {!kindFilter && !podcastGuideFilter && (
                 <button
                   type="button"
                   onClick={handleMarkAllRead}
@@ -1169,6 +1221,8 @@ export default function ReaderTab({
             {searchOpen ? <X className="h-4 w-4" /> : <Search className="h-4 w-4" />}
           </button>
         </div>
+
+        {podcastView && searchOpen && <PodcastGuideFilter value={podcastGuideFilter} onChange={setPodcastGuideFilter} />}
 
         {/* 内容类型筛选带(issue #178):列头下的过滤器带,只在文章容器出现;选项来自列表首页的
             分面计数(不含 kind 自身的同一范围),计数为 0 的类型不列。单选,再点一次取消。 */}
@@ -1247,7 +1301,7 @@ export default function ReaderTab({
             <div className="reader-empty">
               {favOnly ? <Star className="h-6 w-6 text-slate-300" /> : <Inbox className="h-6 w-6 text-slate-300" />}
               <span>
-                {searchQuery
+                {(searchQuery || podcastGuideFilter)
                   ? (podcastView ? '没有匹配的播客' : '没有匹配的文章')
                   : favOnly
                     ? '当前范围还没有收藏，阅读时点右上角星标即可收藏'
@@ -1266,7 +1320,7 @@ export default function ReaderTab({
             </div>
           ) : (
             /* key 按视图范围重挂载,切源/切容器时列表整体淡入(A1) */
-            <div key={`${activeSourceId ?? '__all__'}|${activeTagId ?? ''}|${mode}|${scope.axis}${scope.favorite ? '+f' : ''}|${kindFilter}`} className="reader-list-enter">
+            <div key={`${activeSourceId ?? '__all__'}|${activeTagId ?? ''}|${mode}|${scope.axis}${scope.favorite ? '+f' : ''}|${kindFilter}|${podcastGuideFilter}`} className="reader-list-enter">
               {listPlan.map((entry) => {
                 const { article } = entry;
                 return (
@@ -1317,8 +1371,29 @@ export default function ReaderTab({
       {!pageOpen && !discover && !socialView && (
       <section className="reader-col reader-col-read">
         {/* 早报外出返回带(issue #23 三稿):从早报点进来的这一程里常驻阅读窗顶部,不随文章切换重绘。
-            左=返回我的早报(落回同一版同一卷动位置),右=早报下一条(顺着本版读完不必回早报)。 */}
-        {briefReturn && (() => {
+            左=返回我的早报(落回同一版同一卷动位置),右=早报下一条(顺着本版读完不必回早报)。
+            从榜单点进来的(issue #221)同一条带:只有左侧返回——热点事件回到那件事的事件页与读到的位置,深度阅读 / 播客精选回到那一段原位置 */}
+        {briefReturn?.from === 'rankings' && (
+          <nav className="reader-brief-trail" aria-label="来自榜单">
+            <button
+              type="button"
+              className="reader-brief-trail-btn is-wide"
+              onClick={() => {
+                supersedePendingOpen();
+                setRankingRestore(briefReturn);
+                if (briefReturn.segment) setRankingSegment(briefReturn.segment);
+                if (briefReturn.range) setRankingRange(briefReturn.range);
+                setBriefReturn(null);
+                setRankingsOpen(true);
+              }}
+            >
+              <ChevronLeft aria-hidden="true" />
+              <span>{briefReturn.event ? '返回热点事件' : '返回榜单'}</span>
+              {briefReturn.label && <small>{briefReturn.label}</small>}
+            </button>
+          </nav>
+        )}
+        {briefReturn && briefReturn.from !== 'rankings' && (() => {
           const seq = briefReturn.sequence || [];
           const next = seq[briefReturn.index + 1] || null;
           return (
@@ -1507,17 +1582,28 @@ export default function ReaderTab({
             </header>
             <div className="reader-pane-body">
               {/* 已落库分析始终可读(播客与文章都常驻,与在听哪条音轨无关);本端 AI 开启时才额外给现场生成入口 */}
-              {!activeBodyLoading && shouldShowAiReadingCard(activeArticle, {
+              {!activeBodyLoading && ((!podcastView && listenList.length > 0) || shouldShowAiReadingCard(activeArticle, {
                 summary: activeSummary,
                 aiEnabled,
                 body: activeBody,
-              }) && (
+              })) && (
                 <AiReadingCard
                   article={activeArticle}
                   summary={activeSummary}
                   summarizing={summarizing}
                   canGenerate={aiEnabled && Boolean(activeBody)}
                   onGenerate={handleSummarize}
+                  listen={!podcastView && listenList.length > 0 ? (
+                    <ListenEntries
+                      key={activeArticle.id}
+                      article={activeArticle}
+                      aiEnabled={aiEnabled}
+                      ondemand={ondemand}
+                      sourceName={sourceNameMap[activeArticle.source_id] || ''}
+                      showToast={showToast}
+                      onRefresh={refreshActiveArticle}
+                    />
+                  ) : null}
                   podcast={podcastView}
                 />
               )}

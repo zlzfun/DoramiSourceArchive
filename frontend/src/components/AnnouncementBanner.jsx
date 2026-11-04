@@ -45,9 +45,16 @@ export function AnnouncementCard({ item, onDismiss }) {
 const AUTO_HIDE_MS = 8000;
 const RESUME_MIN_MS = 1500; // 移开后至少再留一小段,避免「刚移开就消失」
 
+// 上滑多远算「收起」(手机壳,issue #230 批 4a)
+const SWIPE_UP_PX = 28;
+
 // 读者面横幅:自管数据(挂载时拉取,失败静默——横幅不出现,阅读器照常);
 // 悬浮不占布局(定位在 index.css),无公告或本次会话已自动收起时渲染 null。
-export default function AnnouncementBanner() {
+// 手机壳(mobile,审计 M-11 / 方案 §8「占位式」;issue #230 批 4a):贴在页头下沿、不覆盖内容——横幅高度经 onHeight 报给
+// MobileReader,Tab 根页的页头让位加上这一段(内容从横幅下面开始,随内容一起滚走);不自动收起(占位的横幅自己消失会让
+// 内容跳一下),读者上滑横幅即收起(本次会话不再出现,同自动收起;不写 dismiss),关闭钮照旧是「不再提示」。
+// 横幅跟着滚动区平移由 MobileReader 直接写在 .reader-ann-band 上(不为每次滚动重渲染)。
+export default function AnnouncementBanner({ mobile = false, onHeight = null }) {
   const [items, setItems] = useState([]);
   // entering(入场动画中)→ shown(稳态,**无 animation**)→ leaving → hidden(本次会话)。
   // 稳态必须摘除动画类:fill-mode 残留会让容器持续成为合成层/backdrop root,
@@ -73,7 +80,7 @@ export default function AnnouncementBanner() {
         if (!alive) return;
         const list = Array.isArray(res?.items) ? res.items : [];
         setItems(list);
-        if (list.length) startTimer(AUTO_HIDE_MS);
+        if (list.length && !mobile) startTimer(AUTO_HIDE_MS);
       })
       .catch(() => {});
     return () => { alive = false; clearTimer(); };
@@ -87,6 +94,7 @@ export default function AnnouncementBanner() {
     clearTimer();
   };
   const resume = () => {
+    if (mobile) return;   // 手机壳不自动收起
     if ((phase === 'entering' || phase === 'shown') && !timerRef.current) startTimer(remainingRef.current);
   };
 
@@ -112,10 +120,47 @@ export default function AnnouncementBanner() {
     return undefined;
   }, [phase, items.length]);
 
-  if (items.length === 0 || phase === 'hidden') return null;
+  // 手机壳:横幅占多高(收起中 / 没有横幅 = 0),交给页头让位
+  const visible = items.length > 0 && phase !== 'hidden';
+  const bandElRef = useRef(null);
+  const heightRef = useRef(onHeight);
+  useEffect(() => { heightRef.current = onHeight; });
+  const occupying = mobile && visible && phase !== 'leaving';
+  useEffect(() => {
+    const report = (h) => heightRef.current?.(h);
+    const el = bandElRef.current;
+    if (!occupying || !el) { report(0); return undefined; }
+    report(el.offsetHeight);
+    if (typeof ResizeObserver === 'undefined') return () => report(0);
+    const ro = new ResizeObserver(() => report(el.offsetHeight));
+    ro.observe(el);
+    return () => { ro.disconnect(); report(0); };
+  }, [occupying, items.length]);
+
+  // 手机壳:上滑横幅 = 收起(按下记起点,松手时往上移过 SWIPE_UP_PX 即收;横幅 touch-action: none,手势归它)。
+  // 动起来才捕获指针(按下就捕获的话 Chromium 把那次点击派给横幅,关闭钮与链接收不到)
+  const swipeRef = useRef(null);
+  const swipeProps = mobile ? {
+    onPointerDown: (e) => { swipeRef.current = { y: e.clientY, id: e.pointerId, captured: false }; },
+    onPointerMove: (e) => {
+      const start = swipeRef.current;
+      if (!start || start.id !== e.pointerId || start.captured || Math.abs(start.y - e.clientY) < 6) return;
+      start.captured = true;
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* 指针已结束 */ }
+    },
+    onPointerUp: (e) => {
+      const start = swipeRef.current;
+      swipeRef.current = null;
+      if (start && start.id === e.pointerId && start.y - e.clientY > SWIPE_UP_PX) setPhase('leaving');
+    },
+    onPointerCancel: () => { swipeRef.current = null; },
+  } : null;
+
+  if (!visible) return null;
 
   return (
     <div
+      ref={bandElRef}
       className={`reader-ann-band ${phase === 'entering' ? 'is-entering' : ''} ${phase === 'leaving' ? 'is-leaving' : ''}`}
       role="region"
       aria-label="公告"
@@ -123,6 +168,7 @@ export default function AnnouncementBanner() {
       onMouseLeave={resume}
       onFocusCapture={pause}
       onBlurCapture={resume}
+      {...swipeProps}
     >
       {items.map((item) => (
         <AnnouncementCard key={item.id} item={item} onDismiss={handleDismiss} />

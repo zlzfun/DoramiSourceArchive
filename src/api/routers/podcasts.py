@@ -177,6 +177,7 @@ class PodcastAsrQuotaResponse(BaseModel):
     used_audio_seconds: int | None = None
     reserved_audio_seconds: int | None = None
     remaining_audio_seconds: int | None = None
+    speech_models: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class PodcastAsrQuotaUpdate(BaseModel):
@@ -265,6 +266,7 @@ def _asr_quota_response(session: Session) -> PodcastAsrQuotaResponse:
         quota_timezone=config.asr_quota_timezone,
         source=sources["asr_daily_audio_seconds_limit"],
         max_audio_per_file_source=sources["asr_max_audio_seconds_per_file"],
+        speech_models=podcast_speech_config_service.model_diagnostics(config, sources),
         **usage,
     )
 

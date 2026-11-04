@@ -72,11 +72,10 @@ function notifySubscriptionsChanged() {
   window.dispatchEvent(new CustomEvent('dorami-subscriptions-changed'));
 }
 
-export function OpmlPreview({
+function OpmlPreview({
   filename,
   opml,
   plan,
-  layout = 'desktop',
   showToast,
   onCancel,
   onDone,
@@ -182,9 +181,7 @@ export function OpmlPreview({
   const confirmButton = (
     <button
       type="button"
-      className={layout === 'mobile'
-        ? 'action-button action-button-primary'
-        : 'action-button action-button-primary min-h-[32px] px-3 text-xs'}
+      className="action-button action-button-primary min-h-[32px] px-3 text-xs"
       disabled={!canConfirm}
       onClick={handleConfirm}
     >
@@ -192,26 +189,6 @@ export function OpmlPreview({
       {confirming ? '正在导入' : label}
     </button>
   );
-
-  if (layout === 'mobile') {
-    return (
-      <>
-        <div className="m-page-scroll opml-mobile-scroll">
-          <div className="opml-back-row">
-            <span className="sett-stat opml-filemeta">{filename} · {items.length} 条</span>
-          </div>
-          {chipRow}
-          {quotaNote}
-          {duplicate}
-          {list}
-        </div>
-        <div className="opml-mobile-bar">
-          <span className="opml-foot-note">尚未写入任何订阅</span>
-          {confirmButton}
-        </div>
-      </>
-    );
-  }
 
   return (
     <div className="opml-preview">
@@ -239,8 +216,8 @@ export function OpmlPreview({
   );
 }
 
-// 设置 → 通用 → 订阅源 OPML。桌面预览留在本分区;手机由 onPushPreview 推到独立一屏。
-export default function OpmlSection({ showToast, onPushPreview }) {
+// 设置 → 通用 → 订阅源 OPML,只在桌面设置柜(手机设置自 issue #230 起不列 OPML 与接入集成,拍板 35);预览留在本分区。
+export default function OpmlSection({ showToast }) {
   const [summary, setSummary] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [exporting, setExporting] = useState(false);
@@ -299,9 +276,7 @@ export default function OpmlSection({ showToast, onPushPreview }) {
     setPreviewing(true);
     try {
       const plan = await previewOpmlImport(text, controller.signal);
-      const payload = { opml: text, filename: file.name, plan };
-      if (onPushPreview) onPushPreview(payload);
-      else setPreview(payload);
+      setPreview({ opml: text, filename: file.name, plan });
     } catch (error) {
       if (error?.name === 'AbortError') return;
       showToast(error.message || '预览导入失败', 'error');
@@ -310,7 +285,7 @@ export default function OpmlSection({ showToast, onPushPreview }) {
     }
   };
 
-  if (preview && !onPushPreview) {
+  if (preview) {
     return (
       <OpmlPreview
         filename={preview.filename}

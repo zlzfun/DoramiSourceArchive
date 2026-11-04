@@ -8,6 +8,7 @@ import {
   shareStatusText,
   SHARE_EXPIRY_OPTIONS,
 } from '../utils/shareLink';
+import { useLayer } from './layer/useLayer';
 
 /**
  * 分享浮层（阅读窗工具条锚定）——初版方案（2026-07-29 数轮重设计后用户拍板回归）
@@ -57,20 +58,20 @@ export default function ShareMenu({ articleId, onClose, showToast, guestAccessEn
 
   useEffect(() => { load(); }, [load]);
 
-  // 浮层生命周期：点外部或 Esc 关闭（与全站浮层一致）。
-  useEffect(() => {
-    const onDown = (e) => {
-      if (panelRef.current && !panelRef.current.contains(e.target)) onClose?.();
-    };
-    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose?.(); } };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-    };
-  }, [onClose]);
+  // 浮层生命周期(issue #230 起走层原语 useLayer,kind='popover'):点外面或 Esc 关闭(Esc 经层栈,只关最上层);
+  // 锚点容器(.reader-share-anchor,含触发钮)里的按下不算外面——触发钮自己的点击负责开合,不再「先关再被点开」;
+  // 手机壳里入返回键层栈:系统返回只关浮层,不把下面的正文页一起关掉(审计 M-05)。
+  // 焦点:键盘打开落到「复制链接」,指针打开不挪(留在触发钮上,不给 Safari 画多余的环);关闭时还给触发钮。
+  const anchorRef = { get current() { return panelRef.current?.parentElement || null; } };
+  useLayer({
+    open: true,
+    onClose,
+    kind: 'popover',
+    panelRef,
+    outsideIgnore: [anchorRef],
+    initialFocus: (panel, { keyboard }) => (keyboard ? panel?.querySelector('.share-primary') : panel),
+  });
+  useEffect(() => () => { if (copyTimerRef.current) clearTimeout(copyTimerRef.current); }, []);
 
   const copy = async (text, key, label) => {
     try {

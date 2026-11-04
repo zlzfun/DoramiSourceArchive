@@ -9,6 +9,8 @@ import {
   playerTrackLabel,
   readPlayerSession,
   resolveStartPosition,
+  resumePlan,
+  stopSnapshot,
   writePlayerSession,
 } from '../../utils/playerCore';
 import { readPodcastPosition, writePodcastPosition } from '../../utils/podcastPlayback';
@@ -267,6 +269,36 @@ export default function PlayerProvider({ username = '', active = true, children 
     dispatch({ type: 'close' });
   }, [persist]);
 
+  // 手机悬浮卡的「停止」(issue #230 批 3d):先记下快照再关闭,调用方把快照交给提示条的「撤销」
+  const stop = useCallback(() => {
+    const snapshot = stopSnapshot(stateRef.current, positionOf());
+    if (snapshot) close();
+    return snapshot;
+  }, [close, positionOf]);
+
+  // 撤销停止:按 resumePlan 的几种情形回来(见 utils/playerCore);撤销钮的点按就是这一拍的手势,play() 在这里同步调用
+  const resume = useCallback((snapshot) => {
+    const plan = resumePlan(snapshot, stateRef.current, { closing: closingRef.current });
+    if (plan === 'none' || plan === 'ignore') return;
+    if (plan === 'cancel-close') {
+      closingRef.current = false;
+      dockRef.current?.cancelExit?.();
+      return;
+    }
+    if (plan === 'resume') {
+      play(snapshot.item);   // 收起途中:play 先撤掉收起,同一条按播放 / 暂停切换(音频仍装着,位置不动)
+      return;
+    }
+    // 已经收起:音频已卸下,下一次装载从停止时的位置起(显式位置,元数据到了才用掉)
+    explicitSeekRef.current = { key: snapshot.item.key, t: snapshot.t };
+    if (plan === 'play') {
+      play(snapshot.item);
+      return;
+    }
+    dockRef.current?.beforeChange?.('open', { input: inputRef.current });
+    dispatch({ type: 'restore', item: snapshot.item, form: 'bar', rate: stateRef.current.rate });
+  }, [play]);
+
   const retry = useCallback(() => {
     const cur = stateRef.current;
     if (!cur.item) return;
@@ -392,7 +424,7 @@ export default function PlayerProvider({ username = '', active = true, children 
   };
 
   const api = useMemo(() => ({
-    play, toggle, pause, seekTo, seekBy, cycleRate, minimize, expand, close, retry,
+    play, toggle, pause, seekTo, seekBy, cycleRate, minimize, expand, close, retry, stop, resume,
     subscribeProgress,
     progress: () => ({ t: positionOf(), d: durationOf() }),
     registerDock: (dock) => {
@@ -400,7 +432,7 @@ export default function PlayerProvider({ username = '', active = true, children 
       return () => { if (dockRef.current === dock) dockRef.current = null; };
     },
     lastInput: () => inputRef.current,
-  }), [close, cycleRate, durationOf, expand, minimize, pause, play, positionOf, retry, seekBy, seekTo, subscribeProgress, toggle]);
+  }), [close, cycleRate, durationOf, expand, minimize, pause, play, positionOf, resume, retry, seekBy, seekTo, stop, subscribeProgress, toggle]);
 
   const value = useMemo(() => ({ state, api }), [state, api]);
 
@@ -409,7 +441,8 @@ export default function PlayerProvider({ username = '', active = true, children 
       {children}
       {/* 全站唯一的音频元素;src 由播放器在点击这一拍里赋值(见 loadInto) */}
       <audio ref={audioRef} preload="metadata" hidden {...audioHandlers} />
-      <div className="sr-only" aria-live="polite">{announcement}</div>
+      {/* 播报区不随模态层 inert(层原语 data-layer-keep,issue #230):卡 / 弹窗开着时「无法播放」照常念出 */}
+      <div className="sr-only" aria-live="polite" data-layer-keep="always">{announcement}</div>
     </PlayerContext.Provider>
   );
 }

@@ -124,7 +124,14 @@ def _publisher_format(artifact: PodcastTextArtifactRecord) -> str:
     return "text"
 
 
-def _plain_text(artifact: PodcastTextArtifactRecord, config: PodcastConfig) -> str:
+def _plain_text(
+    artifact: PodcastTextArtifactRecord,
+    config: PodcastConfig,
+    *,
+    for_reading: bool = False,
+) -> str:
+    # Reader display and translation explicitly opt into readable paragraphs.
+    # The default preserves the historical projection for other consumers.
     try:
         validate_text_artifact(
             artifact.inline_text,
@@ -166,6 +173,7 @@ def _plain_text(artifact: PodcastTextArtifactRecord, config: PodcastConfig) -> s
                 config.transcript_max_text_chars,
                 config.text_artifact_max_chars,
             ),
+            for_reading=for_reading,
         ).text
         validate_text_artifact(
             projected,
@@ -189,13 +197,15 @@ def _cursor_encode(
     offset: int,
     query: str,
     secret: str,
+    projection_hash: str,
 ) -> str:
     payload = json.dumps(
         {
-            "v": 2,
+            "v": 3,
             "a": artifact.id,
             "h": artifact.content_hash,
             "k": artifact.kind,
+            "p": projection_hash,
             "o": offset,
             "q": hashlib.sha256(query.encode("utf-8")).hexdigest(),
         },
@@ -205,7 +215,7 @@ def _cursor_encode(
     encoded = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
     signature = hmac.new(
         secret.encode("utf-8"),
-        f"podcast-text-cursor-v2.{encoded}".encode("ascii"),
+        f"podcast-text-cursor-v3.{encoded}".encode("ascii"),
         hashlib.sha256,
     ).digest()
     encoded_signature = (
@@ -221,6 +231,7 @@ def _cursor_offset(
     query: str,
     text_length: int,
     secret: str,
+    projection_hash: str,
 ) -> int:
     if not cursor:
         return 0
@@ -234,7 +245,7 @@ def _cursor_offset(
         )
         expected_signature = hmac.new(
             secret.encode("utf-8"),
-            f"podcast-text-cursor-v2.{encoded}".encode("ascii"),
+            f"podcast-text-cursor-v3.{encoded}".encode("ascii"),
             hashlib.sha256,
         ).digest()
         if not hmac.compare_digest(signature, expected_signature):
@@ -255,10 +266,11 @@ def _cursor_offset(
     ) as exc:
         raise PodcastTextReaderBadRequest("Podcast 文本游标无效") from exc
     expected = {
-        "v": 2,
+        "v": 3,
         "a": artifact.id,
         "h": artifact.content_hash,
         "k": artifact.kind,
+        "p": projection_hash,
         "q": hashlib.sha256(query.encode("utf-8")).hexdigest(),
     }
     if (
@@ -282,12 +294,16 @@ def _page(
     limit: int,
     cursor_secret: str,
 ) -> dict[str, Any] | None:
+    # The immutable source hash does not identify presentation offsets. Bind the
+    # cursor to the actual projection too, so changed formatting cannot skip text.
+    projection_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
     offset = _cursor_offset(
         cursor,
         artifact,
         query=query,
         text_length=len(text),
         secret=cursor_secret,
+        projection_hash=projection_hash,
     )
     if query:
         # Regex IGNORECASE reports spans in the original string. Searching a
@@ -322,6 +338,7 @@ def _page(
                 offset=next_offset,
                 query=query,
                 secret=cursor_secret,
+                projection_hash=projection_hash,
             )
             if has_more
             else None
@@ -408,7 +425,7 @@ def read_episode_texts(
             continue
         projected = _page(
             artifact,
-            text=_plain_text(artifact, config),
+            text=_plain_text(artifact, config, for_reading=True),
             query=query,
             cursor=cursor if kind else "",
             limit=page_limit,

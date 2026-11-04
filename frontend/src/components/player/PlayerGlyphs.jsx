@@ -28,6 +28,37 @@ export function PauseGlyph() {
   );
 }
 
+/** 停止播放(手机悬浮卡,issue #230):实心圆角方块,与播放 / 暂停同一套 24 栅格。 */
+export function StopGlyph() {
+  return (
+    <svg {...svgProps}>
+      <rect x="5" y="5" width="14" height="14" rx="3" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+/** ±15 秒(手机悬浮卡,拍板 34):圆弧箭头里写秒数,弧心 = 图标中心。 */
+export function SkipGlyph({ back = false, seconds = 15 }) {
+  return (
+    <span className="player-cskip-g" aria-hidden="true">
+      <svg {...svgProps} strokeWidth={1.7}>
+        {back ? (
+          <>
+            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+            <path d="M3 3v5h5" />
+          </>
+        ) : (
+          <>
+            <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+            <path d="M21 3v5h-5" />
+          </>
+        )}
+      </svg>
+      <b>{seconds}</b>
+    </span>
+  );
+}
+
 /** AI 身份 ✦(四角星蒙版 + --grad-ai):只上 AI 触点,不铺底。 */
 export function Spark({ breathing = false, className = '' }) {
   return <span className={`player-spark${breathing ? ' is-breathing' : ''}${className ? ` ${className}` : ''}`} aria-hidden="true" />;

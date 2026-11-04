@@ -15,8 +15,8 @@ class BailianSpeechConfig:
     api_key: str = field(default="", repr=False)
     base_url: str = "https://dashscope-intl.aliyuncs.com/api/v1"
     account_scope: str = ""
-    asr_model: str = "fun-asr-2025-11-07"
-    tts_model: str = "qwen3-tts-flash-2025-11-27"
+    asr_model: str = "fun-asr"
+    tts_model: str = "qwen3-tts-flash"
     tts_voice: str = "Cherry"
     voice_profile: str = "narrator_zh"
     request_timeout_seconds: int = 120

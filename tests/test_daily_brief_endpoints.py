@@ -225,3 +225,29 @@ def test_delete_latest_brief_preserves_backlog_and_requeues_old_included_item(mo
         assert brief.read_cursor(session) == '2026-06-08'
         assert all(session.get(DailyBriefCandidateRecord, name).status == 'pending' for name in ('pending','included','recent'))
         assert {c.id for c in brief.collect_candidates(session, cursor=brief.read_cursor(session))[0]} == {'pending','included','recent'}
+
+
+def test_flash_model_update_preserves_policy_and_reports_effective_source(monkeypatch, tmp_path):
+    from config import LLMConfig
+    from services import daily_brief, credentials
+    from dataclasses import replace
+    from sqlmodel import Session
+    app_module = _setup(monkeypatch, tmp_path)
+    baseline = LLMConfig(base_url='https://api.deepseek.com/v1', api_key='fixture-private-key', model='deepseek-flash', thinking_mode='disabled', max_tokens=4096)
+    monkeypatch.setattr(daily_brief.config, 'settings', replace(daily_brief.config.settings, llm=baseline))
+    with Session(app_module.db_sink.engine) as session:
+        credentials.set_setting(session, 'llm_model', 'deepseek-v4-flash')
+    with TestClient(app_module.app) as client:
+        _login(client)
+        before = client.get('/api/llm/config').json()
+        assert before['model'] == 'deepseek-v4-flash'
+        assert before['field_sources']['model'] == 'runtime_kv'
+        response = client.post('/api/llm/config', json={'model': 'deepseek-flash'})
+        assert response.status_code == 200
+        after = response.json()
+        assert after['model'] == 'deepseek-flash'
+        assert after['thinking_mode'] == 'disabled' and after['max_tokens'] == 4096
+        assert after['aux_model'] == after['vision_model'] == ''
+        for field in ['thinking_mode', 'max_tokens', 'aux_model', 'vision_model', 'api_key']:
+            assert after['field_sources'][field] == before['field_sources'][field]
+        assert 'fixture-private-key' not in response.text

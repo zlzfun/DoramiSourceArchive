@@ -213,3 +213,75 @@ def test_shared_http_client_reused(monkeypatch):
         messages=[ChatMessage("user", "again")], config=CONFIGURED, http_client=shared))
     assert (out1, out2) == ("one", "two")
     assert len(shared.calls) == 2  # 两次调用共用同一连接
+
+
+def test_ping_reports_served_model_without_changing_request_policy(monkeypatch):
+    cfg = LLMConfig(base_url="https://api.example.com/v1", api_key="fixture-secret",
+                    model="deepseek-v4-flash", thinking_mode="disabled", max_tokens=4096,
+                    aux_model="aux-private", vision_model="vision-private", temperature=0.3)
+    _patch_client(monkeypatch, [_FakeResponse(200, {
+        "model": "deepseek-flash",
+        "choices": [{"message": {"content": "pong"}, "finish_reason": "stop"}],
+    })])
+    result = asyncio.run(llm_client.ping(cfg))
+    assert result["model"] == "deepseek-v4-flash"
+    assert result["served_model"] == "deepseek-flash"
+    assert result["sample"] == "pong"
+    calls = _FakeAsyncClient.instances[0].calls
+    assert len(calls) == 1
+    assert calls[0]["json"]["model"] == cfg.model
+    assert calls[0]["json"]["thinking"] == {"type": "disabled"}
+    assert calls[0]["json"]["max_tokens"] == llm_client.PING_MAX_TOKENS
+    assert calls[0]["json"]["temperature"] == 0.3
+    assert cfg.max_tokens == 4096 and cfg.aux_model == "aux-private"
+    assert cfg.vision_model == "vision-private"
+
+
+@pytest.mark.parametrize("reported", [
+    None, "", "   ", 123, {"name": "model"}, ["model"], "m" * 201,
+    "model\nprivate", "model\x1b[31m", "https://private.example/audio?signature=fake",
+    "https://private.example/audio", "sk-fake-provider-key", "provider/sk-fake-key",
+    "prefix-fixture-secret-suffix",
+])
+def test_ping_omits_untrusted_model_metadata(monkeypatch, reported):
+    cfg = LLMConfig(base_url="https://api.example.com/v1", api_key="fixture-secret", model="configured")
+    _patch_client(monkeypatch, [_FakeResponse(200, {
+        "model": reported, "choices": [{"message": {"content": "pong"}}],
+    })])
+    result = asyncio.run(llm_client.ping(cfg))
+    assert result["ok"] is True
+    assert result["model"] == "configured"
+    assert "served_model" not in result
+    assert "fixture-secret" not in json.dumps(result)
+    assert len(_FakeAsyncClient.instances[0].calls) == 1
+
+
+def test_response_meta_is_optional_and_does_not_reuse_stale_model(monkeypatch):
+    # Shared clients and caller-owned metadata retain their original contracts.
+    shared = _FakeAsyncClient([
+        _FakeResponse(200, {"model": "org/model:v1", "choices": [{"message": {"content": "one"}}]}),
+        _chat_ok("two"), _chat_ok("three"),
+    ])
+    meta = {"served_model": "stale", "caller_marker": "keep"}
+    kwargs = dict(messages=[ChatMessage("user", "hi")], config=CONFIGURED, http_client=shared)
+    assert asyncio.run(chat_completion(**kwargs, response_meta=meta)) == "one"
+    assert meta == {"served_model": "org/model:v1", "caller_marker": "keep"}
+    assert asyncio.run(chat_completion(**kwargs, response_meta=meta)) == "two"
+    assert meta == {"caller_marker": "keep"}
+    assert asyncio.run(chat_completion(**kwargs)) == "three"
+    assert len(shared.calls) == 3
+
+
+@pytest.mark.parametrize("content,finish_reason,require_complete", [
+    ("", "stop", False), ("partial", "length", True),
+])
+def test_failed_completion_does_not_publish_served_model(monkeypatch, content, finish_reason, require_complete):
+    _patch_client(monkeypatch, [_FakeResponse(200, {
+        "model": "new-model",
+        "choices": [{"message": {"content": content}, "finish_reason": finish_reason}],
+    })])
+    meta = {"served_model": "stale"}
+    with pytest.raises(LLMError):
+        asyncio.run(chat_completion(messages=[ChatMessage("user", "hi")], config=CONFIGURED,
+                                    require_complete=require_complete, response_meta=meta))
+    assert meta == {}

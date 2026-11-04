@@ -36,3 +36,23 @@ export function createOverlayCloseGuard() {
     },
   };
 }
+
+// 长按松手的「溢出点击」(审计 M-01 余项;issue #230 批 4c 查出):长按出来的动作单在手指还按着时就已弹出,
+// 松手时浏览器补发的 mousedown / mouseup / click 落在手指下面的新元素上——矮屏(横屏手机、360 × 640)菜单项正好
+// 或抓手盖在手指处,这一下会被当成点了菜单项(悄悄执行「标为已读」之类)或点了抓手(底页随即关掉)。遮罩那条路已由上面的
+// guard 挡住,底页里其余的由它挡:打开之后先等到一次「没有对应按下的松手」= 打开它的那次长按还按着,紧随其后的那一下指针
+// click 吞掉;打开后有过新的按下(真点)、或键盘激活(click.detail 为 0)都照常。只判定不动作:components/layer/Sheet
+// 每次打开建一个,pointerdown / pointerup 挂在 window 捕获阶段,层根的捕获阶段问 shouldSwallow。
+export function createSpillClickGuard() {
+  let sawDown = false;
+  let heldOpen = false;
+  return {
+    onPointerDown() { sawDown = true; heldOpen = false; },
+    onPointerUp() { if (!sawDown) heldOpen = true; },
+    shouldSwallow(event) {
+      const swallow = heldOpen && !sawDown && (event?.detail ?? 0) > 0;
+      heldOpen = false;
+      return swallow;
+    },
+  };
+}

@@ -394,15 +394,18 @@ vision_model =        ; 视觉模型(issue #69,可选):同端点同 api_key 下�
   思考 token 计入 `max_tokens`——日报 reduce 这类长输出任务可能被思考耗尽配额导致正文
   空产。对策:`thinking_mode = disabled`,或保留思考但把 `max_tokens` 调大(≥16384)。
   空正文自 v3.33.1 起会被判为调用失败(不写库、不推游标),不再静默落成空日报。
-- **运行时可在「运维管理」页编辑并持久化**(存 `AppSettingRecord` KV,优先级高于 ini);
+- **运行时可在「设置 → 凭据 → 大模型」编辑并持久化**(存 `AppSettingRecord` KV,优先级高于 ini);
   三者(base_url+api_key+model)齐备才算已配置,前端各 AI 入口据此显隐。
 - 兼容 OpenAI/DeepSeek/Kimi/智谱/通义/火山方舟/OpenRouter/Ollama/vLLM 等任意 `/chat/completions` 端点。
 
-### 模型注意事项(DeepSeek,2026-09 实测;改主模型时先看)
+### DeepSeek 主模型规范与核验（2026-10-30，issue #243）
 
-- `deepseek-flash`(V4.1-Flash,原生多模态:`image_url` 分片仅限 user 消息,base64 data URL 可用,单图封顶 1024 token)**默认开思考**——16 token 探针会被 reasoning 吃满、`finish_reason=length` 且 content 空;`deepseek-chat` 别名路由到同一模型却**默认不思考**。把主模型改成 `deepseek-flash` 时必须同时 `thinking_mode=disabled`(或按需 low / high)并把 `max_tokens` 提到 16384 量级,日报曾因思考吃满 8192 空产。
-- `deepseek-v4-pro` 不支持图片;旧名 `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` 已退役临时转发。`vision_model` 走 `LLMConfig.for_vision()` 显式关思考(见 `docs/architecture/llm-and-ai.md`)。
-- 连通探针 `/api/llm/config/test` 回 16 token 出 pong 即证非思考生效;`vision_model` 非空时附 `vision` 子结果。
+- 官方 API 名称为 `deepseek-flash`，当前对应 V4.1-Flash-1017。旧 `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` 请求仍会由官方转发到新版；看到旧名不能断言底层仍是 V4。[官方模型说明](https://api-docs.deepseek.com/quick_start/pricing/)
+- 设置 → 凭据 → 大模型显示当前有效值及逐字段来源。优先级是 **runtime_kv > 环境变量 > INI > 默认值**，只改 INI 不能覆盖已有 KV。官方 Flash 配置可点「采用 deepseek-flash」再保存；只改主模型字段，不自动改第三方别名、`deepseek-v4-pro` 或辅助/视觉模型。该按钮仅修改表单，保存后看「当前生效」与 model 的来源徽记。
+- 保留已有显式 `thinking_mode`、`max_tokens`、温度和 aux/vision 配置。例如原来 `disabled` + `4096`，本次规范名称继续沿用。官方默认开启思考；如要调整思考或长输出预算，应单独评估，不把模型输出上限当应用预算。[官方思考模式](https://api-docs.deepseek.com/guides/thinking_mode/)
+- `GET /api/llm/config`（管理员）可回读有效值与 `field_sources`，不返回明文密钥。表单保存仅提交编辑过的字段；普通字段空串清除该字段 KV 覆盖、回落启动时的环境/INI 基线，密钥留空保留。改环境/INI 后需重启，KV 保存即生效。
+- 「保存并测试（计费）」调用 `/api/llm/config/test`，使用有效配置与独立 256 token 探针上限，保留思考策略；有视觉配置才附带视觉测试。返回的 `model` 是**请求配置名**；可选 `served_model` 是经过类型、长度和敏感内容检查的**供应商自报名称**，两者都不是底层路由版本的独立证明。缺失或不合规的自报字段省略，不影响正常正文；正文返回也不能证明关闭了思考。仅保存/回读不产生模型调用。
+- 2026-10-30 测评在隔离环境完成真实文章与指定播客的生成、播放；CLI 自测和集成回归分别留证，不互相代替。本次代码整理没有读取或修改生产配置，也没有新增付费模型调用。生产核验应在授权环境回读配置来源，再做限额探针；记录请求模型、显式策略与供应商结果，不记录凭据。
 
 ## `[oss]`——图片与生成音频的持久对象
 

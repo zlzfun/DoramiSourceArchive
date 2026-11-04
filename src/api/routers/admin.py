@@ -37,6 +37,7 @@ from models.db import (
     SourceConfigRecord,
 )
 from services import accounts as accounts_service
+from services import admin_home as admin_home_service
 from services import guest_access as guest_access_service
 from services import ai_usage as ai_usage_service
 from services import article_share as article_share_service
@@ -161,6 +162,34 @@ def admin_account_growth(session: Session = Depends(deps.get_session)):
     """账户增长曲线（v3.55 issue #31）：按创建日新增数 + 现存总量分布。聚合口径、不含个人信息，
     全体管理员可见（与 /api/admin/accounts 的逐账户名单不同，后者仅根管理员）。"""
     return accounts_service.account_growth(session)
+
+
+@router.get("/home")
+def admin_home(days: int = 30, top: int = 8, session: Session = Depends(deps.get_session)):
+    """运维首页聚合(issue #114):逐日活跃账户 + 窗口内各源阅读排行 + 全量分析回填失败汇总。
+    口径见 services/admin_home.py。纯聚合、不含逐账户明细,全体管理员可见
+    (与 account-growth 同类,不进 root_admin_required)。"""
+    days = admin_home_service.clamp_days(days)
+    top = max(1, min(int(top or 8), 50))
+    by_source = admin_home_service.reads_by_source(session, days=days)
+    registry_meta = _registry_source_meta()
+
+    def _name(source_id: str) -> str:
+        meta = registry_meta.get(source_id, {})
+        if source_id == DAILY_BRIEF_SOURCE_ID:
+            meta = {**DAILY_BRIEF_SOURCE_META, **meta}
+        return meta.get("name") or _friendly_source_name(source_id, registry_meta)
+
+    ranked = sorted(by_source.items(), key=lambda kv: (-kv[1], kv[0]))[:top]
+    return {
+        "days": days,
+        "active": admin_home_service.active_accounts(session, days=days),
+        "reads": {
+            "total": sum(by_source.values()),
+            "by_source": [{"source_id": sid, "name": _name(sid), "reads": n} for sid, n in ranked],
+        },
+        "backfills": admin_home_service.backfill_summary(session),
+    }
 
 
 @router.get("/overview")

@@ -17,6 +17,7 @@ import Toast from './components/Toast';
 import SettingsModal from './components/SettingsModal';
 import LoginScreen from './components/LoginScreen';
 import LoginPrompt from './components/LoginPrompt';
+import LayerPage from './components/layer/LayerPage';
 import BrandLogoImage from './components/BrandLogoImage';
 import RailLogoutAvatar from './components/RailLogoutAvatar';
 import TabErrorBoundary from './components/TabErrorBoundary';
@@ -29,6 +30,7 @@ import { useRunningProgress } from './hooks/useRunningProgress';
 import { usePolling } from './hooks/usePolling';
 import { useCompactLayout } from './hooks/useCompactLayout';
 import { deepLinkArticleId } from './utils/shareLink';
+import { formatOpsPath, parseOpsPath } from './utils/opsNav';
 import { clearPlayerSession } from './utils/playerCore';
 import { LOGIN_REQUIRED_EVENT } from './utils/loginPrompt';
 import { authQueue, decideAuthExpired } from './utils/authSession';
@@ -73,8 +75,9 @@ const ALL_TABS = ['reader', 'data', 'fetch', 'runs', 'brief', 'admin'];
 const FEEDBACK_UNREAD_POLL_MS = 5 * 60 * 1000; // 反馈回复角标轮询:回复非即时通讯,低频足够
 // runs 的双视图已随运行波(调度台)退役:旧书签 #/runs/history、#/runs/jobs 在
 // hashToRoute 里因 runs 不再是 SUBVIEW 而自然归一到 #/runs,无需特判。
-const TAB_DEFAULT_VIEW = { fetch: 'catalog' };
-const SUBVIEW_TABS = new Set(['fetch']);
+// 运维管理(issue #114)的子视图 = 页 / 板块路径(`#/admin/<页>/<板块>`),空串 = 首页;解析与校验在 utils/opsNav。
+const TAB_DEFAULT_VIEW = { fetch: 'catalog', admin: '' };
+const SUBVIEW_TABS = new Set(['fetch', 'admin']);
 
 // 运行能力的非乐观初始/重置值：能力未知（未登录 / 登出 / 会话过期）时按「都未启用」，
 // 避免在 fetchRuntimeInfo 返回前把 collector 界面闪给读者。初始化与两处重置共用同一形状，
@@ -107,7 +110,7 @@ function writeStoredSurface(value) {
 }
 
 function defaultViews() {
-  return { fetch: 'catalog' };
+  return { fetch: 'catalog', admin: '' };
 }
 
 function routeToHash(tab, views) {
@@ -121,6 +124,8 @@ function hashToRoute(hash) {
   if (parts[0] === 'mcp') parts[0] = 'brief';
   const tab = ALL_TABS.includes(parts[0]) ? parts[0] : 'data';
   let view = SUBVIEW_TABS.has(tab) ? (parts[1] || TAB_DEFAULT_VIEW[tab]) : null;
+  // 运维页的视图是两段路径(页 / 板块);未知页归一到首页,未知板块只留页。
+  if (tab === 'admin') view = formatOpsPath(parseOpsPath(parts.slice(1).join('/')));
   // 已下线的子视图归一到默认视图，兼容陈旧书签：#/fetch/groups（「采集范围」，实体简化阶段 1 移除）。
   if (tab === 'fetch' && view === 'groups') view = TAB_DEFAULT_VIEW.fetch;
   return { tab, view };
@@ -129,7 +134,7 @@ function hashToRoute(hash) {
 function navFromHash() {
   const r = typeof window !== 'undefined' && window.location.hash ? hashToRoute(window.location.hash) : { tab: 'data', view: null };
   const views = defaultViews();
-  if (SUBVIEW_TABS.has(r.tab) && r.view) views[r.tab] = r.view;
+  if (SUBVIEW_TABS.has(r.tab)) views[r.tab] = r.view || TAB_DEFAULT_VIEW[r.tab];
   return { tab: r.tab, views, focus: null };
 }
 
@@ -173,8 +178,11 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   // 设置柜深链:读者头像菜单「接入集成」直落聚合接口分区;常规入口落账户区。
   const [settingsSection, setSettingsSection] = useState('account');
-  const openSettings = useCallback((section = 'account') => {
+  // 手机设置页的资料卡读数(issue #230:「我的」并进设置页,订阅数由阅读器在点头像时带过来)
+  const [settingsMeta, setSettingsMeta] = useState(null);
+  const openSettings = useCallback((section = 'account', meta = null) => {
     setSettingsSection(section);
+    setSettingsMeta(meta);
     setSettingsOpen(true);
   }, []);
   const [mountedTabs, setMountedTabs] = useState(() => {
@@ -326,6 +334,11 @@ export default function App() {
 
   const goTab = useCallback((tab, options = {}) => {
     const cur = navRef.current;
+    // 已在运维功能页时再点左轨「运维」= 回运维首页(issue #114:首页即目录)。
+    if (cur.tab === 'admin' && tab === 'admin' && cur.views.admin && !options.replace) {
+      commitNav({ tab, views: { ...cur.views, admin: '' }, focus: null });
+      return;
+    }
     if (cur.tab === tab && !options.replace) return; // 点击当前标签：不重复入栈
     commitNav({ tab, views: cur.views, focus: null }, options);
   }, [commitNav]);
@@ -344,13 +357,15 @@ export default function App() {
 
   const openAdminPodcastQuota = useCallback(() => {
     setSettingsOpen(false);
-    jumpWithFocus('admin', null, {
+    // 视图写进地址(#/admin/podcast/asr);focus 让「已停在同一板块」时也重新落位高亮。
+    jumpWithFocus('admin', 'podcast/asr', {
       tab: 'admin',
-      payload: { sub: 'content', zone: 'podcast-asr-quota' },
+      payload: { page: 'podcast', block: 'asr' },
     });
   }, [jumpWithFocus]);
 
   const setFetchView = useCallback((v) => goView('fetch', v), [goView]);
+  const setAdminView = useCallback((v) => goView('admin', v), [goView]);
 
   const markArticlesDirty = useCallback(() => setArticlesDirty(true), []);
   const clearArticlesDirty = useCallback(() => setArticlesDirty(false), []);
@@ -410,8 +425,14 @@ export default function App() {
       if (!route) {
         const h = hashToRoute(window.location.hash);
         const views = { ...navRef.current.views };
-        if (SUBVIEW_TABS.has(h.tab) && h.view) views[h.tab] = h.view;
+        // 运维首页的视图是空串,也要写回(否则从功能页地址栏退回 #/admin 会停在上一页)。
+        if (SUBVIEW_TABS.has(h.tab)) views[h.tab] = h.view || TAB_DEFAULT_VIEW[h.tab];
         route = { tab: h.tab, views, focus: null };
+      }
+      // 深链取走后把这条历史的地址改回常规路由(issue #230 批 4a,批 3a 观察):否则读完「返回列表」(层的程序性回退)
+      // 回到这条记录时地址仍是 #/reader/a/{id},又被当成新深链把正文重新打开。登录后首屏的深链由 commitNav 的 replace 播种同样改掉
+      if (deepId) {
+        try { window.history.replaceState({ tab: route.tab, views: route.views, focus: null }, '', routeToHash(route.tab, route.views)); } catch { /* 禁用 history 的沙箱:照旧 */ }
       }
       navRef.current = route;
       setNav(route);
@@ -1003,7 +1024,9 @@ export default function App() {
       <Toast show={toast.show} message={toast.message} type={toast.type} action={toast.action} onClose={hideToast} />
 
       {/* 游客(issue #213):登录提示与叠层登录页。登录页叠在阅读器之上而非替换它——
-          「返回继续逛逛」原样回到原处;登录成功后阅读器换 key 重挂。 */}
+          「返回继续逛逛」原样回到原处;登录成功后阅读器换 key 重挂。
+          issue #230:叠层登录走层原语 LayerPage(手机壳里系统返回只关登录页、不关下面的正文;Esc 同「返回继续逛逛」;
+          下层整片 inert)。 */}
       <LoginPrompt
         open={loginPrompt.open}
         request={loginPrompt.request}
@@ -1011,7 +1034,7 @@ export default function App() {
         onLogin={openGuestLogin}
       />
       {guestLogin && (
-        <div className="guest-login-layer">
+        <LayerPage className="guest-login-layer" role="dialog" modal inert="all" label="登录" onClose={closeGuestLogin}>
           <LoginScreen
             logoError={logoError}
             onLogoError={() => setLogoError(true)}
@@ -1020,7 +1043,7 @@ export default function App() {
             fromGuest
             onBackToGuest={closeGuestLogin}
           />
-        </div>
+        </LayerPage>
       )}
 
       {!isMobile && globalRunningIds.size > 0 && (
@@ -1037,6 +1060,7 @@ export default function App() {
         <SettingsPanel
           open={settingsOpen}
           initialSection={settingsSection}
+          subscribedCount={settingsMeta?.subscribedCount ?? null}
           onClose={() => setSettingsOpen(false)}
           theme={theme}
           onThemeChange={setTheme}
@@ -1081,7 +1105,7 @@ export default function App() {
                   onUserUpdated={handleUserUpdated}
                   themeDark={effective === 'dark'}
                   onToggleTheme={toggleTheme}
-                  onOpenSettings={(section) => openSettings(section)}
+                  onOpenSettings={(section, meta) => openSettings(section, meta)}
                   onLogout={handleLogout}
                   onExitReader={isAdminRole ? exitReader : undefined}
                   feedbackUnread={feedbackUnread}
@@ -1172,6 +1196,8 @@ export default function App() {
                   currentUsername={authState.user?.username}
                   rootAdmin={!!runtimeInfo.root_admin}
                   onRefreshRuntime={refreshRuntime}
+                  view={nav.views.admin}
+                  setView={setAdminView}
                   pendingFocus={pendingFocus?.tab === 'admin' ? pendingFocus.payload : null}
                   onPendingFocusApplied={clearPendingFocus}
                   onOpenCredentials={() => openSettings('credentials')}

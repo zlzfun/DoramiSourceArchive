@@ -1061,3 +1061,225 @@ def test_asr_admission_is_independent_of_tts_and_secret():
     assert admission_fingerprint(cfg) != admission_fingerprint(
         replace(cfg, account_scope="other")
     )
+
+
+def test_current_default_models_keep_wire_contract_and_voice():
+    cfg = configuration()
+    assert cfg.asr_model == 'fun-asr'
+    assert cfg.tts_model == 'qwen3-tts-flash'
+    requests = []
+    def handle(req):
+        requests.append(req)
+        return httpx.Response(200, json={"output": {}})
+    client = BailianSpeechClient(cfg, transport=httpx.MockTransport(handle))
+    try:
+        client.submit_asr('https://example.com/sample.mp3')
+        client.synthesize('本地测试。')
+    finally:
+        client.close()
+    assert requests[0].url.path.endswith('/services/audio/asr/transcription')
+    assert json.loads(requests[0].content) == {
+        'model': 'fun-asr', 'input': {'file_urls': ['https://example.com/sample.mp3']},
+        'parameters': {'channel_id': [0]},
+    }
+    assert requests[0].headers['X-DashScope-Async'] == 'enable'
+    assert requests[1].url.path.endswith('/services/aigc/multimodal-generation/generation')
+    assert json.loads(requests[1].content) == {
+        'model': 'qwen3-tts-flash', 'input': {'text': '本地测试。', 'voice': 'Cherry', 'language_type': 'Auto'},
+    }
+
+
+@pytest.mark.parametrize('status,unknown', [(404, False), (403, False), (429, False), (408, True), (409, True), (503, True)])
+def test_provider_failure_diagnostics_are_safe_and_never_retry(status, unknown):
+    calls = []
+    def handle(req):
+        calls.append(req)
+        return httpx.Response(status, json={
+            'code': 'ModelNotFound',
+            'message': 'secret-test https://result.example/audio?signature=private',
+            'request_id': 'secret-test',
+        })
+    client = BailianSpeechClient(configuration(), transport=httpx.MockTransport(handle))
+    try:
+        with pytest.raises(BailianSpeechError) as caught:
+            client.synthesize('测试。')
+        assert caught.value.code == f'http_{status}:ModelNotFound'
+        assert caught.value.unknown is unknown
+        assert 'secret-test' not in str(caught.value)
+        assert 'signature' not in str(caught.value)
+        assert len(calls) == 1
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize('payload', [{'code': 'secret-test'}, {'code': ['ModelNotFound']}, {'message': 'secret-test'}])
+def test_unknown_provider_error_fields_are_not_echoed(payload):
+    client = BailianSpeechClient(configuration(), transport=httpx.MockTransport(lambda req: httpx.Response(404, json=payload)))
+    try:
+        with pytest.raises(BailianSpeechError, match='http_404$'):
+            client.synthesize('测试。')
+    finally:
+        client.close()
+
+
+def test_explicit_retired_models_remain_resolvable_with_source_diagnostics(tmp_path, monkeypatch):
+    import configparser
+    from services import bailian_speech_config as service, credentials
+    from storage.impl.db_storage import DatabaseStorage
+    parser = configparser.ConfigParser()
+    parser.read_dict({'bailian_speech': {'asr_model': 'fun-asr-2025-11-07', 'tts_model': 'qwen3-tts-flash-2025-11-27'}})
+    monkeypatch.delenv('DORAMI_BAILIAN_ASR_MODEL', raising=False)
+    monkeypatch.delenv('DORAMI_BAILIAN_TTS_MODEL', raising=False)
+    old = load_bailian_config(parser)
+    monkeypatch.setattr(service.config, '_read_config_file', lambda: parser)
+    monkeypatch.setattr(service.config, 'settings', SimpleNamespace(bailian_speech=replace(old, enabled=True)))
+    sink = DatabaseStorage(db_url=f'sqlite:///{tmp_path / "config.db"}')
+    with Session(sink.engine) as session:
+        resolved = service.resolve_config(session)
+        assert resolved.tts_model == 'qwen3-tts-flash-2025-11-27'
+        before = service.model_diagnostics(resolved, service.field_sources(session))
+        assert all(item['retired'] and item['source'] == 'ini' for item in before)
+        credentials.save_updates(session, service.NAMESPACE, {'tts_model': 'qwen3-tts-flash'})
+        resolved = service.resolve_config(session)
+        after = service.model_diagnostics(resolved, service.field_sources(session))
+        assert after[0]['retired'] and after[0]['source'] == 'ini'
+        assert not after[1]['retired'] and after[1]['source'] == 'runtime_kv'
+        assert resolved.tts_voice == old.tts_voice
+        assert resolved.tts_monthly_budget_minor == old.tts_monthly_budget_minor
+        assert resolved.pricing_revision == old.pricing_revision
+        assert 'api_key' not in str(after)
+
+
+def test_success_status_with_provider_error_stays_unknown_and_redacted():
+    client = BailianSpeechClient(configuration(), transport=httpx.MockTransport(
+        lambda _: httpx.Response(200, json={'code': 'ModelNotFound', 'message': 'secret-test'})
+    ))
+    try:
+        with pytest.raises(BailianSpeechError) as caught:
+            client.synthesize('测试。')
+        assert caught.value.code == 'invalid_response:ModelNotFound'
+        assert caught.value.unknown is True
+        assert 'secret-test' not in str(caught.value)
+    finally:
+        client.close()
+
+
+def test_asr_poll_error_keeps_task_identity_and_provider_code_without_resubmit():
+    cfg = configuration()
+    requests = []
+    def handle(req):
+        requests.append(req)
+        return httpx.Response(404, json={'code': 'ModelNotFound', 'message': 'secret-test'})
+    client = BailianSpeechClient(cfg, transport=httpx.MockTransport(handle))
+    try:
+        adapter = BailianAsrAdapter(cfg, url_resolver=lambda _: None, client=client)
+        result = adapter.poll(task_id='task-1', identity=asr_identity(cfg), audio_duration_ms=60000, reserved_cost_minor=2)
+        assert isinstance(result, Indeterminate)
+        assert result.task_id == 'task-1'
+        assert result.failure.code == 'bailian_http_404:ModelNotFound'
+        assert [req.method for req in requests] == ['GET']
+        assert 'secret-test' not in result.failure.message
+    finally:
+        client.close()
+
+
+def test_asr_task_failure_diagnostic_retains_conservative_usage():
+    from services.podcast_worker_contracts import TaskFailed
+    cfg = configuration()
+    payload = {'output': {'task_id': 'task-1', 'task_status': 'FAILED', 'code': 'ModelNotFound', 'message': 'secret-test'}}
+    client = BailianSpeechClient(cfg, transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload)))
+    try:
+        adapter = BailianAsrAdapter(cfg, url_resolver=lambda _: None, client=client)
+        result = adapter.poll(task_id='task-1', identity=asr_identity(cfg), audio_duration_ms=60000, reserved_cost_minor=2)
+        assert isinstance(result, TaskFailed)
+        assert result.failure.code == 'bailian_task_failed:ModelNotFound'
+        assert result.usage.cost_minor == 2 and result.usage.audio_duration_ms == 60000
+        assert result.release_unused_reservation is False
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize('field', ['code', 'request_id'])
+@pytest.mark.parametrize('sensitive_value', [
+    'sk-FAKE_TEST_KEY_00000000',
+    'https://private.invalid/FAKE_ACCESS_TOKEN',
+], ids=['whole_key', 'whole_private_url'])
+def test_provider_diagnostic_fields_never_echo_whole_sensitive_values(field, sensitive_value):
+    # Identifier-shaped values still can be secrets; a character whitelist is insufficient.
+    cfg = configuration(api_key='sk-FAKE_TEST_KEY_00000000')
+    payload = {'code': 'ModelNotFound', 'request_id': 'fake-request'}
+    payload[field] = sensitive_value
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(404, json=payload)
+
+    client = BailianSpeechClient(cfg, transport=httpx.MockTransport(handle))
+    try:
+        with pytest.raises(BailianSpeechError) as caught:
+            client.synthesize('测试。')
+        error = caught.value
+        assert error.unknown is False
+        assert sensitive_value not in str(error)
+        assert sensitive_value not in json.dumps(vars(error), default=str)
+        assert error.code == ('http_404:ModelNotFound' if field == 'request_id' else 'http_404')
+        assert len(requests) == 1
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize('stage', ['rejected_submit', 'unknown_submit', 'poll_error', 'task_failed', 'subtask_failed'])
+@pytest.mark.parametrize('sensitive_value', [
+    'sk-FAKE_TEST_KEY_00000000',
+    'https://private.invalid/FAKE_ACCESS_TOKEN',
+], ids=['whole_key', 'whole_private_url'])
+def test_asr_failure_diagnostics_remain_safe_without_changing_accounting(stage, sensitive_value):
+    from services.podcast_worker_contracts import TaskFailed
+
+    cfg = configuration(api_key='sk-FAKE_TEST_KEY_00000000')
+    fields = {'code': sensitive_value, 'request_id': sensitive_value, 'message': sensitive_value}
+    status = 503 if stage == 'unknown_submit' else 404
+    payload = fields
+    if stage == 'task_failed':
+        status = 200
+        payload = {'output': {'task_id': 'task-1', 'task_status': 'FAILED', **fields}}
+    elif stage == 'subtask_failed':
+        status = 200
+        payload = {'output': {'task_id': 'task-1', 'task_status': 'SUCCEEDED',
+                              'results': [{'subtask_status': 'FAILED', **fields}]}}
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(status, json=payload)
+
+    client = BailianSpeechClient(cfg, transport=httpx.MockTransport(handle))
+    adapter = BailianAsrAdapter(cfg, url_resolver=lambda _: 'https://example.com/audio.mp3', client=client)
+    try:
+        if stage.endswith('_submit'):
+            result = adapter.submit(SimpleNamespace(identity=asr_identity(cfg)), provider_request_key='unused')
+            assert isinstance(result, Unknown if stage == 'unknown_submit' else Rejected)
+            assert [r.method for r in requests] == ['POST']
+        else:
+            result = adapter.poll(task_id='task-1', identity=asr_identity(cfg),
+                                  audio_duration_ms=60000, reserved_cost_minor=2)
+            assert result.task_id == 'task-1'
+            assert [r.method for r in requests] == ['GET']
+            if stage == 'poll_error':
+                assert isinstance(result, Indeterminate)
+            else:
+                assert isinstance(result, TaskFailed)
+                assert result.usage.cost_minor == 2
+                assert result.usage.audio_duration_ms == 60000
+                assert result.release_unused_reservation is False
+        assert sensitive_value not in str(result)
+        assert sensitive_value not in json.dumps(vars(result.failure), default=str)
+        expected_code = {
+            'rejected_submit': 'bailian_http_404', 'unknown_submit': 'bailian_http_503',
+            'poll_error': 'bailian_http_404', 'task_failed': 'bailian_task_failed',
+            'subtask_failed': 'bailian_subtask_failed',
+        }[stage]
+        assert result.failure.code == expected_code
+    finally:
+        client.close()

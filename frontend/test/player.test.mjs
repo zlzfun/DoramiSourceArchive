@@ -11,10 +11,19 @@ import {
   framesSayLite,
   initialPlayerState,
   isPlayingIntent,
+  dockSwipeOpens,
+  formatRate,
+  mobileForm,
   nextRate,
   nowPlayingFor,
+  playerOpenLabel,
   playerReducer,
   playerTrackSpeech,
+  rateSpeech,
+  resumePlan,
+  stopSnapshot,
+  PLAYER_CARD_DRAG,
+  PLAYER_RATES,
   podcastTrackItem,
   readPlayerSession,
   rendererIsSoftware,
@@ -33,6 +42,8 @@ import {
   podcastListenEntries,
 } from '../src/utils/listenEntries.js';
 import { podcastPlaybackKey } from '../src/utils/podcastPlayback.js';
+import { createSheetDrag } from '../src/utils/sheetDrag.js';
+import { podcastListAvailabilityMeta } from '../src/utils/podcast.js';
 
 const episode = (podcast = {}, extra = {}) => ({
   id: 'ep-1',
@@ -82,6 +93,35 @@ test('音轨条目:原节目 / 精品导读 / 文章导读;没有可播地址不
   assert.equal(narration.show, 'IT之家');
   assert.equal(playerTrackSpeech(narration), '文章导读，AI 生成');
   assert.equal(articleNarrationItem({ ...article, listen_guide: { audio_ready: false } }), null);
+});
+
+test('站内音频地址:列表可听提示、收听入口、实际音轨与刷新恢复一致(issue #239)', () => {
+  const guideUrl = '/api/reader/podcast-artifacts/local-guide/audio';
+  const local = episode({ audio_url: '/media/original.mp3', condensed_audio_url: guideUrl });
+  assert.equal(podcastListAvailabilityMeta(local.podcast).kind, 'audio');
+  assert.deepEqual(podcastListenEntries(local).map((entry) => entry.track), ['original', 'digest']);
+  assert.equal(podcastTrackItem(local).src, '/media/original.mp3');
+  const item = podcastTrackItem(local, 'digest');
+  assert.equal(item.src, guideUrl);
+  assert.equal(sanitizeItem(item).src, guideUrl);
+  const storage = memoryStorage();
+  writePlayerSession(storage, 'reader', { item, form: 'bar', rate: 1 });
+  assert.equal(readPlayerSession(storage, 'reader').item.src, guideUrl);
+
+  const article = { id: 'a-local', listen_guide: { audio_ready: true, audio_url: '/api/reader/article-audio/1' } };
+  assert.equal(articleListenEntries(article)[0].kind, 'play');
+  assert.equal(articleNarrationItem(article).src, article.listen_guide.audio_url);
+});
+
+test('非法/协议相对音频不承诺可听，也不能进入音轨与会话恢复', () => {
+  for (const src of ['javascript:alert(1)', 'data:audio/mp3;base64,AA', '//outside.example/audio', '/\\outside.example/audio', '/\t/outside.example/audio', 'https://', '', null]) {
+    const bad = episode({ audio_url: src, condensed_audio_url: src });
+    assert.equal(podcastListAvailabilityMeta(bad.podcast), null, String(src));
+    assert.deepEqual(podcastListenEntries(bad), [], String(src));
+    assert.equal(podcastTrackItem(bad), null, String(src));
+    assert.equal(podcastTrackItem(bad, 'digest'), null, String(src));
+    assert.equal(sanitizeItem({ articleId: 'bad', track: 'digest', src }), null, String(src));
+  }
 });
 
 test('状态机:首次播放展开成条;迷你态换台保持迷你;失败不被随后的 pause 冲掉;关闭保留倍速', () => {
@@ -292,10 +332,10 @@ test('文章「✦ 听导读」:就绪可播 / 可点播 / 生成中;失败回�
   assert.deepEqual(articleListenEntries(base, opts).map((e) => e.kind), ['request']);
   assert.deepEqual(articleListenEntries(base, { aiEnabled: true, ondemandEnabled: false }), []);
   const active = { ...base, listen_guide: { status: 'narrating' } };
-  assert.deepEqual(articleListenEntries(active, { aiEnabled: false }).map((e) => e.label), ['导读生成中…']);
+  assert.deepEqual(articleListenEntries(active, { aiEnabled: false }).map((e) => e.label), ['正在编写导读…']);
   assert.equal(articleListenActive(active), true);
   const failed = { ...base, listen_guide: { status: 'failed', error: '内部原因' } };
-  assert.deepEqual(articleListenEntries(failed, opts).map((e) => e.label), ['听导读']);
+  assert.deepEqual(articleListenEntries(failed, opts).map((e) => e.label), ['重试导读']);
   const ready = { ...base, listen_guide: { audio_ready: true, audio_url: 'https://cdn.example.com/n.mp3', duration_seconds: 188 } };
   const [entry] = articleListenEntries(ready, opts);
   assert.equal(entry.track, 'article_narration');
@@ -303,4 +343,108 @@ test('文章「✦ 听导读」:就绪可播 / 可点播 / 生成中;失败回�
   assert.equal(listenEntrySpeech(entry), '听导读，3 分钟，AI 生成');
   assert.equal(articleListenActive(ready), false);
   assert.deepEqual(articleListenEntries(episode(), opts), [], '播客不出文章导读入口');
+});
+
+// ── 手机播放器(issue #230 批 3d:坞 + 悬浮卡 B1)──
+
+test('手机:迷你退役——mini 按坞画,其余形态原样;桌面状态机不变', () => {
+  assert.equal(mobileForm('mini'), 'bar');
+  assert.equal(mobileForm('bar'), 'bar');
+  assert.equal(mobileForm('none'), 'none');
+  // 恢复的会话可能带着桌面的 mini:状态里仍是 mini(切回桌面照旧是迷你),手机只是按坞画
+  const item = podcastTrackItem(episode(), 'original');
+  const s = playerReducer(initialPlayerState, { type: 'restore', item, form: 'mini', rate: 1 });
+  assert.equal(s.form, 'mini');
+  assert.equal(mobileForm(s.form), 'bar');
+});
+
+test('悬浮卡倍速钮:1 → 1.25 → 1.5 → 2 → 1 循环,读屏名读出当前档位', () => {
+  const seen = [];
+  let r = 1;
+  for (let i = 0; i < PLAYER_RATES.length + 1; i += 1) {
+    seen.push(formatRate(r));
+    r = nextRate(r);
+  }
+  assert.deepEqual(seen, ['1×', '1.25×', '1.5×', '2×', '1×']);
+  assert.equal(rateSpeech(1), '播放速度 1 倍，点按切换');
+  assert.equal(rateSpeech(1.25), '播放速度 1.25 倍，点按切换');
+  assert.equal(rateSpeech(3), '播放速度 1 倍，点按切换', '不认识的档位按 1 倍读');
+  assert.equal(nextRate(3), 1.25, '不认识的档位从 1 倍往下切');
+});
+
+test('悬浮卡「这一期」的读屏名:文章导读推入文章,播客推入这一期', () => {
+  const pod = podcastTrackItem(episode(), 'original');
+  const narr = articleNarrationItem({ id: 'a-1', title: 'Anthropic', listen_guide: { audio_ready: true, audio_url: 'https://cdn.example.com/n.mp3' } }, 'The Decoder');
+  assert.equal(playerOpenLabel(pod, 'Meta shakes up the frontiers'), '打开这一期：Meta shakes up the frontiers');
+  assert.equal(playerOpenLabel(narr, 'Anthropic'), '打开这篇文章：Anthropic');
+});
+
+test('坞上往上拖:过 24px 才展开;往下拖、轻点、非数都不展开', () => {
+  assert.equal(dockSwipeOpens(-25), true);
+  assert.equal(dockSwipeOpens(-24), false);
+  assert.equal(dockSwipeOpens(-3), false);
+  assert.equal(dockSwipeOpens(40), false);
+  assert.equal(dockSwipeOpens(Number.NaN), false);
+});
+
+test('悬浮卡下拖(层原语状态机 + 卡的参数):4px 防抖、位移过 56 或甩动即收、不够回弹、拖后吞点击', () => {
+  assert.equal(PLAYER_CARD_DRAG.slop, 4);
+  assert.equal(PLAYER_CARD_DRAG.follow, 0.6);
+  const d = createSheetDrag(PLAYER_CARD_DRAG);
+  // 轻点:不算拖、不吞点击(抓手 / 钮的 click 照常)
+  d.start(100, 0);
+  assert.deepEqual(d.move(103, 40), { dragging: false, offset: 0 });
+  assert.deepEqual(d.end(103, 80), { dragged: false, close: false });
+  assert.equal(d.consumeClick(), false);
+  // 慢拖 50px:不够 56、末段慢,回弹;随后的 click 吞掉一次
+  d.start(100, 0);
+  for (let t = 1; t <= 10; t += 1) d.move(100 + t * 5, t * 100);
+  assert.deepEqual(d.end(150, 1100), { dragged: true, close: false });
+  assert.equal(d.consumeClick(), true);
+  assert.equal(d.consumeClick(), false);
+  // 慢拖 60px:过 56 即收(层原语默认是 96,卡更矮所以更近)
+  d.start(100, 0);
+  for (let t = 1; t <= 12; t += 1) d.move(100 + t * 5, t * 100);
+  assert.equal(d.end(160, 1300).close, true);
+  // 甩:20px / 20ms(1px/ms > 0.6)即收
+  d.start(100, 0);
+  d.move(110, 10);
+  assert.equal(d.end(120, 20).close, true);
+  // 往上拖不跟手(位移夹到 0),不收
+  d.start(100, 0);
+  assert.equal(d.move(60, 50).offset, 0);
+  assert.equal(d.end(40, 100).close, false);
+});
+
+test('停止 + 撤销:停止时记下条目 / 位置 / 是否在放;撤销按当时情形决定怎么回来', () => {
+  const item = podcastTrackItem(episode(), 'original');
+  const other = podcastTrackItem(episode({}, { id: 'ep-2' }), 'original');
+  const playing = playerReducer(playerReducer(initialPlayerState, { type: 'load', item }), { type: 'playing' });
+  const paused = playerReducer(playing, { type: 'paused' });
+  const errored = playerReducer(playing, { type: 'error' });
+  const closed = playerReducer(playing, { type: 'close' });
+
+  assert.equal(stopSnapshot(closed, 10), null, '没有在播的不出快照');
+  assert.equal(stopSnapshot(initialPlayerState, 10), null);
+  assert.deepEqual(stopSnapshot(playing, 267.4), { item, t: 267.4, playing: true });
+  assert.deepEqual(stopSnapshot(paused, 30), { item, t: 30, playing: false });
+  assert.equal(stopSnapshot(errored, 30).playing, false, '失败态撤销回暂停,不自动重试');
+  assert.equal(stopSnapshot(playing, -5).t, 0);
+  assert.equal(stopSnapshot(playing, Number.NaN).t, 0);
+
+  const snapPlaying = stopSnapshot(playing, 267);
+  const snapPaused = stopSnapshot(paused, 30);
+  assert.equal(resumePlan(null, closed), 'none');
+  // 已经收起:原来在放就接着放,原来暂停就恢复成暂停的坞
+  assert.equal(resumePlan(snapPlaying, closed), 'play');
+  assert.equal(resumePlan(snapPaused, closed), 'restore');
+  // 收起动画还没走完(条目仍是这一条)
+  assert.equal(resumePlan(snapPlaying, playing, { closing: true }), 'resume');
+  assert.equal(resumePlan(snapPaused, paused, { closing: true }), 'cancel-close');
+  // 撤销之前又点了别的收听:不覆盖
+  const swapped = playerReducer(closed, { type: 'load', item: other });
+  assert.equal(resumePlan(snapPlaying, swapped), 'ignore');
+  assert.equal(resumePlan(snapPlaying, swapped, { closing: true }), 'ignore');
+  // 关闭保留倍速:撤销后倍速不变
+  assert.equal(playerReducer(playerReducer(playing, { type: 'rate', rate: 1.5 }), { type: 'close' }).rate, 1.5);
 });

@@ -1,7 +1,7 @@
 # 新加坡百炼播客语音接入
 
-本方案在新加坡 ECS 调用百炼新加坡业务空间，ASR 使用 `fun-asr-2025-11-07`，
-TTS 使用 `qwen3-tts-flash-2025-11-27`。它是 PR64 传统 ISI 方案之外的明确选择，
+本方案在新加坡 ECS 调用百炼新加坡业务空间，ASR 默认使用 `fun-asr`，
+TTS 默认使用 `qwen3-tts-flash`（2026-10-30 更新，见下方迁移节）。它是 PR64 传统 ISI 方案之外的明确选择，
 不需要上海 NLS AppKey，也不需要为本次样本另购 OSS Bucket。
 
 ## 地域与接口
@@ -34,6 +34,8 @@ TTS 使用 `qwen3-tts-flash-2025-11-27`。它是 PR64 传统 ISI 方案之外的
 enabled = true
 base_url = https://<workspace-id>.ap-southeast-1.maas.aliyuncs.com/api/v1
 account_scope = <account-id>:<workspace-id>
+asr_model = fun-asr
+tts_model = qwen3-tts-flash
 asr_daily_audio_seconds_limit = 1800
 asr_entitlement_ends_at = <带时区的未来截止时间>
 tts_monthly_budget_minor = 100
@@ -54,6 +56,22 @@ TTS 预算为零时不允许调用。选择器 `enabled` 需重启生效；默�
 ASR 还需要现有 `[podcast]` 的 `processing_enabled`、`allowed_stages`、转写目标、
 月度/单次人民币预算全部就绪。精品导读还需要既有 LLM 配置，逻辑 voice alias 必须与
 `[podcast] default_voice_profile` 一致（默认 `narrator_zh`，映射为 `Cherry`）。
+
+## 旧快照迁移与诊断（2026-10-30，issue #244）
+
+`fun-asr-2025-11-07` 与 `qwen3-tts-flash-2025-11-27` 已列入 2026-10-10 退役名单。
+[官方退役公告](https://www.alibabacloud.com/en/notice/model_studio_notice_of_retirement_for_selected_legacy_models_7d9)
+给 TTS 推荐的 CosyVoice 涉及不同适配、音色和价格，本次不直接替换成该模型。
+现行 [Qwen-TTS HTTP 文档](https://help.aliyun.com/zh/model-studio/qwen-tts-api) 仍提供 `qwen3-tts-flash`，
+[Fun-ASR HTTP 文档](https://www.alibabacloud.com/help/en/model-studio/fun-asr-recorded-speech-recognition-http-api)
+使用 `fun-asr`，与本项目既有请求体和返回处理兼容。默认改用这两个名称，不改端点、Cherry 音色、voice alias 或价格/预算。
+可用性和价格仍需在实际业务空间核验；这不是生产升级声明。
+
+1. 管理员在运维管理 → 播客 → ASR 配额策略查看「当前语音模型」，或读取 `GET /api/admin/podcast-asr-quota` 的 `speech_models`。它列出 ASR/TTS 的有效名称、来源及旧快照退役提示；纯本地读取，不调用供应商。旧显式值继续保留并提示，不在启动时偷偷改写。
+2. 配置优先级是 **runtime_kv > 环境变量 > INI > 默认值**。来源为 INI/env 时分别改 `asr_model`、`tts_model` 或 `DORAMI_BAILIAN_ASR_MODEL`、`DORAMI_BAILIAN_TTS_MODEL` 后重启。来源为 runtime_kv 时，由运维按现有 `services.credentials.save_updates(session, NAMESPACE, updates)` 入口更新，`updates` 仅传 `asr_model` / `tts_model` 字段（namespace 在 `services.bailian_speech_config`，对应存储键为 `bailian_speech_asr_model` / `bailian_speech_tts_model`）；空串清覆盖后才回落基线。仅改默认值或 INI 不会覆盖 KV。回读上述端点确认；不要导出完整配置或密钥。
+3. 先停止接收新生成，排空原 ASR TaskId，并备份数据库和回执。**模型参与任务身份与 TTS 幂等键**，换模型不等于原请求重试；先核实原 `authorized`/未知状态，不能用改模型、改 scope、换回执目录、删账本规避冻结。旧 rejected 行保留；确认未计费后，新模型调用是新的付费授权。已发布音频继续可播。
+4. `http_404:ModelNotFound` 等错误保留 HTTP 状态及允许名单中的供应商错误码；未知/非 JSON 错误仅保留 HTTP 状态。原始 message、密钥和签名链接不进入异常。单独 404 不能唯一判定模型退役，应同时检查地域、路径、模型权限与有效模型来源。POST 5xx/408/409 仍按结果未知处理，保持原预占和禁止重复提交语义；不增加自动重试。
+5. 获准后以原样小样本核验 ASR/TTS 和同账本重放，再逐步恢复。官方模型文档与预检的集中小样本支持本次兼容选择。2026-10-30 已在隔离环境验证真实文章及指定播客生成、播放；指定播客使用发布方逐字稿，不能据此宣称执行了 ASR。候选自身请求桩/预算/幂等测试与评估器真实调用分别留证；2026-10-31 集成回归不新增付费请求，不代表生产已升级。
 
 ## 计费与恢复
 
@@ -112,7 +130,7 @@ DORAMI_CONFIG_FILE=/secure/validation.ini PYTHONPATH=src \
 正式上线仍按 `docs/ops/release-process.md` 的发布 tag 流程进行，升级前备份数据库及回执目录。
 新迁移位于既有单向迁移边界之后，回滚使用升级前数据库备份。
 
-## 2026-09-15 实测记录
+## 2026-09-15 实测记录（历史快照，不代表退役后的可用性）
 
 已从新加坡 ECS 的独立样本目录调用两个固定版本模型，真实账号和模型权限均可用：
 
