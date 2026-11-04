@@ -12,7 +12,7 @@ import { motionReduced } from '../motion.js';
 // 原地盖住,再让替身收回卡片后移除——状态当场就切回列表(返回键、焦点归还、位置恢复都不等动画)。
 // 替身里的滚动位置用子元素平移冻结(不给替身设 scrollTop,免得派发滚动事件被阅读位置记录当成真的滚动)。
 
-export const READ_ORIGIN_SELECTOR = '[data-read-origin], .reader-entry, .bp-item, .bp-head, .ranking-content-row';
+export const READ_ORIGIN_SELECTOR = '[data-read-origin], .reader-entry, .bp-item, .bp-head, .rk-row';
 export const READ_ORIGIN_MAX_AGE = 4000;
 // 露出部分小于这个边长就不算可见的来处(卡片滚出屏外 / 被裁成一条线)
 const MIN_SIDE = 12;

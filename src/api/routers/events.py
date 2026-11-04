@@ -24,19 +24,23 @@ def _raise(exc: event_board_service.EventBoardError) -> None:
 # ── 读者面 ──
 
 
-@router.get("/api/reader/events")
-def get_reader_events(
-    window_hours: int = event_board_service.WINDOW_HOURS,
-    limit: int = event_board_service.BOARD_LIMIT,
-    session: Session = Depends(deps.get_session),
-):
-    """今日热点:当前窗内可见发布主体 ≥ 2 的事件,最多 10 件,不足不填。"""
-
+def _check_window(window_hours: int) -> None:
     if not 1 <= window_hours <= event_board_service.MAX_WINDOW_HOURS:
         raise HTTPException(
             status_code=400,
             detail=f"窗口须在 1 到 {event_board_service.MAX_WINDOW_HOURS} 小时之间",
         )
+
+
+@router.get("/api/reader/events")
+def get_reader_events(
+    window_hours: int = event_board_service.READER_WINDOW_HOURS,
+    limit: int = event_board_service.BOARD_LIMIT,
+    session: Session = Depends(deps.get_session),
+):
+    """热点事件:当前窗内(默认 7 天,榜单页可切近 2 天)可见发布主体 ≥ 2 的事件,最多 10 件,不足不填。"""
+
+    _check_window(window_hours)
     if not 1 <= limit <= event_board_service.BOARD_LIMIT:
         raise HTTPException(
             status_code=400,
@@ -46,10 +50,15 @@ def get_reader_events(
 
 
 @router.get("/api/reader/events/{event_id}")
-def get_reader_event(event_id: int, session: Session = Depends(deps.get_session)):
-    """事件详情;旧 ID 命中 redirect 时返回新事件并带 ``merged_into``。"""
+def get_reader_event(
+    event_id: int,
+    window_hours: int = event_board_service.READER_WINDOW_HOURS,
+    session: Session = Depends(deps.get_session),
+):
+    """事件详情;旧 ID 命中 redirect 时返回新事件并带 ``merged_into``;名次按 ``window_hours`` 那个榜算。"""
 
-    result = event_board_service.read_event(session, event_id)
+    _check_window(window_hours)
+    result = event_board_service.read_event(session, event_id, window_hours=window_hours)
     if result is None:
         raise HTTPException(status_code=404, detail="事件不存在")
     return result

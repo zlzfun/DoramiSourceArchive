@@ -22,7 +22,6 @@
 - ☐ **生产盘扩容与备份体积**(issue #232 盘点,2026-10-27):40 GB 盘稳态约 25 GB、部署峰值再加约 3.5 GB、库每月 +1 GB,建议在线扩到 60 ～ 80 GB(用户在云控制台操作 + `growpart` / `resize2fs`);部署前备份每份约 0.8 GB,若保留数仍嫌紧再评估压缩格式(恢复多一步解压)。
 - ◇ **AI 用量看板的未登记用途**(2026-10-26 守卫用例发现):`article_ondemand_narration` / `podcast_premium_blog` / `podcast_premium_narration` 已于 2026-10-27 按用户拍板登记(只补 token 可见,读者次数仍按 `*_ondemand` 计);剩 `taxonomy_bootstrap`——CLI 入口未装用量 recorder,登记也不入库,要计量须先给 CLI 装 recorder,暂记观察。
 - ☐ **issue #121 + #103 事件层**(方案 `docs/plans/issue-121-event-layer.md`,调研报告同目录):**wave 1 纯后端已合入 main(PR #220,2026-10-23)**;**wave 2 早报同事件去重(#103)已合入 main(PR #222,2026-10-24)**(方案 §5.3):事件键跨三条通道、昨日事件整组抑制(头条升级例外)、「另见 N 篇」、说明行计数、日报事件层预聚类;本波不做 story「接前报」链接与官方多形态发布关联(随 #221 拍板)。精选通道代表规则(官方 > 非社交 > 分数 > 更早)已随 PR #224 补齐。**生产 14 天回放已做(2026-10-26,方案 §13)**:#103 点名案例全部正确、误并率 2–7%、每日 ≥2 主体事件中位 6、早报机械层前重复率 32.9% → 0;36 / 48 / 72h 对比后 48h 维持。后补已合入(PR #226):汇编体裁不入事件层、早报跨期抑制与文章排除看前两期;**#103 已关闭(2026-10-26)**。观察期:「低分官方代表拉低整事件排名」;辅助档 token 实测约 5.3 万 / 天。#121 已关闭(2026-10-24);wave 3 = Agent / MCP 事件查询 → issue #223。wave 1 记录:后端经 Codex 四轮检视返修;**前端「热点」段搁置**(2026-10-23 用户目检三方向样页后:都待商榷、B 较优非定稿,随之后文章榜 / 播客榜 / 热点前端统一重构再出,样页留档 `docs/design/issue-121-hot-events/`)。本波有意不做:LLM 事件签名、纯向量聚类、日报聚类持久化为事件层、sqlite-vec、事件级综合摘要、外部 embedding API(再评估触发:一中一外同事件漏并率明显高于译中标题通道 top-10 召回 0.68)。观察期:story / follows 跨页补链(wave 2 填链时实现)、`event_board._recompute_event` 与 `event_assignment._recompute_events` 收口为一处、生产供给(每天 ≥ 2 主体事件数,本机语料中位 4 件是下界)、首篇关窗 36h 是否再提精度。wave 2 = #103 早报去重;wave 3 = Agent / MCP 事件查询。
-- ☐ **issue #221 榜单前端统一重构**(2026-10-23 立项,排队中):文章榜 / 播客榜 / 热点三段一致化,并重审文章榜的定位与展示内容;热点段的事件卡样页(方向 B)作为起点。后端 `GET /api/reader/events` 已就位。
 - ☐ **issue #217 媒体修复观察期**（方案 `docs/archive/issue-217-decisions-images.md`，PR #219）：相对地址解析与 OpenAI 受限静态图浏览器取图已实现，检视和用户目检通过；本地加近期生产历史共 106 张真实取图全部成功，211 篇 OpenAI 文章仅本篇出现同类地址。不做全量回填、实时语音接入。观察期：JSON 行号粘连、源站检查变化、非规范 URL 标准化差异、量增后的引用扫描开销，以及浏览器极端卡死时清理阶段无独立硬超时。两端部署先 replica 后 authority，防旧 GC 误回收相对图媒体。
 - ☐ **历史 HTML figure 图片转换**（#217 回测发现）：Lilian Weng《Reward Hacking in Reinforcement Learning》两张相对 PNG 已可取回，但旧正文 HTML `<figure>` 在阅读器显示字面标签。另行评估提取 / 读取时的安全 HTML→Markdown 转换；不直接放开任意 HTML。见 [回测记录](./archive/issue-217-decisions-images.md)。
 
@@ -216,6 +215,10 @@
 - **日报 `per_source_cap=5` 是软配额**:`select_top` 的 overflow 补位可再加同源条目,淡日单源可能超过 5 篇(The Decoder 入名单后更可能出现);若运营要硬上限需改 overflow 语义。
 
 ## 已完结(近期,留档索引;执行记录与更早波次见 `docs/archive/README.md`)
+
+- ☑ **issue #221 榜单收敛**(PR #259,2026-11-04 用户目检放行,待发布):读者面 13 个列表收成「热点事件 · 深度阅读 · 播客精选」,方案 [archive/issue-221-rankings-unify.md](archive/issue-221-rankings-unify.md)。遗留与观察:「接前报」故事线与多形态关联(播客挂到事件)未做;标签榜接口与 07:00 标签快照保留、去处另议;深度阅读长期不足 10 篇时再评估门槛;榜单返回带不做「下一条」。
+  有意不做的遗留:「接前报」故事线(`story_id` / `follows_event_id` 没有写入方;也是 7 天尺度按事件去重的前提——同一件事跨 48h 会碎成几个事件)、多形态关联(同一发布的播客 / 论文;播客挂到事件,例:Anthropic IPO 在热点事件第 3,播客精选里两集讲同一件事,事件详情里看不到)、
+  标签快照与 `/api/reader/rankings*` 的去处(读者面已不消费,07:00 仍在算;下一波定撤还是挪到管理面)、深度阅读每次请求现算 7 天热点榜(与热点事件段各算一次,规模涨了再缓存)。
 
 - ☑ **issue #214 登录页「深空剧场」重制**(PR #255,2026-11-02 用户目检放行,待发布):方案 [archive/issue-214-login-remake.md](archive/issue-214-login-remake.md)。待真机:iOS / 安卓软键盘下的键盘态、Windows 与 Safari 描边遮罩、低端显卡流畅度。五方向样页分支 `feat/issue-214-login-redesign` 按用户拍板删除(issue 里的在线预览链接随之失效)。
 

@@ -84,6 +84,7 @@ from services import reader_ondemand as reader_ondemand_service
 from services import reader_search as reader_search_service
 from services import reader_interests as reader_interests_service
 from services import rankings as rankings_service
+from services import ranking_picks as ranking_picks_service
 from services import reader_state as reader_state_service
 from services import source_collections as source_collections_service
 from services import subscription_mutations as subscription_mutations_service
@@ -140,6 +141,16 @@ def get_reader_rankings(
     if result is None:
         raise HTTPException(status_code=404, detail="榜单快照尚未生成")
     return result
+
+
+@router.get("/rankings/picks")
+def get_reader_ranking_picks(
+    shape: Literal["article", "podcast"],
+    session: Session = Depends(deps.get_session),
+):
+    """榜单页「深度阅读」(article)/「播客精选」(podcast):全站近 7 天按内容价值的前 10(issue #221)。"""
+
+    return ranking_picks_service.read_picks(session, shape=shape)
 
 
 @router.get("/rankings/history")

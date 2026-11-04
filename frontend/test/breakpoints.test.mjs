@@ -41,7 +41,7 @@ test('断点:样式表里没有裸宽度 @media(私有例外带 bp-exempt 注记
     assert.deepEqual(hits, [], `${name}: ${hits.map((h) => `${h.n}: ${h.line.trim()}`).join(' | ')}`);
   }
   const exempt = Object.values(SHEETS).join('\n').split('\n').filter((line) => /bp-exempt:/.test(line));
-  assert.ok(exempt.length <= 1, `私有例外只剩榜单 1120(#221;登录页 880 已随 #214 重制并入命名档):${exempt.join(' | ')}`);
+  assert.deepEqual(exempt, [], `私有例外已清零(榜单 1120 随 #221 收敛版删除;登录页 880 已随 #214 重制并入命名档):${exempt.join(' | ')}`);
 });
 
 test('断点:护栏的反向对照——裸 @media 与漂移的 variant 都能被抓到', () => {

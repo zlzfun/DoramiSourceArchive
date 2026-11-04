@@ -773,22 +773,20 @@ export function fetchReaderSources() {
   return request('/reader/sources', { errorMsg: '获取内容源目录失败' });
 }
 
-export function fetchReaderRankings(shape = 'article', date = 'latest', options = {}) {
-  const params = new URLSearchParams({ shape, date });
-  return request(`/reader/rankings?${params}`, { ...options, errorMsg: '获取榜单失败' });
+// 榜单(issue #221 收敛版):热点事件(默认近 7 天 = 168,近 2 天 = 48)· 事件详情 · 深度阅读 / 播客精选。游客可读。
+export function fetchReaderEvents(windowHours = 168, options = {}) {
+  const params = new URLSearchParams({ window_hours: windowHours, limit: 10 });
+  return request(`/reader/events?${params}`, { ...options, errorMsg: '获取热点事件失败' });
 }
 
-export function fetchReaderRankingTag(date, tagCode, shape, options = {}) {
+export function fetchReaderEvent(eventId, windowHours = 168, options = {}) {
+  const params = new URLSearchParams({ window_hours: windowHours });
+  return request(`/reader/events/${enc(eventId)}?${params}`, { ...options, errorMsg: '获取事件详情失败' });
+}
+
+export function fetchReaderPicks(shape = 'article', options = {}) {
   const params = new URLSearchParams({ shape });
-  return request(`/reader/rankings/${enc(date)}/tags/${enc(tagCode)}?${params}`, {
-    ...options,
-    errorMsg: '获取标签内容失败',
-  });
-}
-
-export function fetchReaderRankingHistory(tagCode, shape, days = 30, options = {}) {
-  const params = new URLSearchParams({ tag_code: tagCode, shape, days });
-  return request(`/reader/rankings/history?${params}`, { ...options, errorMsg: '获取趋势失败' });
+  return request(`/reader/rankings/picks?${params}`, { ...options, errorMsg: '获取榜单失败' });
 }
 
 export function fetchFavorites(filters = {}, limit = 100, skip = 0, options = {}) {

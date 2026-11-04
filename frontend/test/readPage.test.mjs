@@ -114,7 +114,7 @@ test('来处:点到卡片以外不覆盖上一次的记录', () => {
 });
 
 test('来处:条目卡 / 早报条目与头条 / 榜单行都算,另留 data-read-origin 给推入页', () => {
-  for (const part of ['[data-read-origin]', '.reader-entry', '.bp-item', '.bp-head', '.ranking-content-row']) {
+  for (const part of ['[data-read-origin]', '.reader-entry', '.bp-item', '.bp-head', '.rk-row']) {
     assert.ok(READ_ORIGIN_SELECTOR.includes(part), part);
   }
 });
