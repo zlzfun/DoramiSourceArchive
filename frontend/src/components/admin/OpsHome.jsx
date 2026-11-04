@@ -29,21 +29,30 @@ const pct = (x) => `${Math.round((x || 0) * 100)}%`;
 const DASH = '—';
 
 // 首页数据:窗口类随 days 重取,其余只随 refreshTick 重取;每个键独立代次守卫,迟到响应不覆盖新快照。
+// 窗口类快照记下查询窗口(`<key>@`),消费时窗口不一致即视为未知——切窗失败不能把旧窗口的数挂在新窗口标题下(codex r1 #3)。
+const WINDOWED = ['home', 'guest', 'usage', 'analysis'];
+// 「状态」磁贴的告警来源:都读到才敢说「无待处理」
+const ALERT_KEYS = ['storage', 'podTasks', 'podStats', 'home', 'aiGlobal', 'xQuota', 'asr', 'usrc', 'feedback', 'taxonomy'];
+const KEY_NAMES = {
+  home: '首页聚合', guest: '游客', usage: 'AI 用量', analysis: '分析指标', growth: '账户增长', content: '内容看板', rank: '榜单',
+  aiGlobal: 'AI 总闸', podStats: '播客音频', podTasks: '播客单集', media: '媒体库', storage: '存储与备份', xQuota: 'X API',
+  usrc: '自定源', feedback: '反馈', notices: '公告', taxonomy: '标签目录', asr: 'ASR 配额', ondemand: '读者点播', share: '公开分享',
+};
 function useHomeData(days, refreshTick) {
   const [snap, setSnap] = useState({});
   const gens = useRef({});
-  const load = useCallback((key, fn) => {
+  const load = useCallback((key, fn, tag = null) => {
     const gen = (gens.current[key] || 0) + 1;
     gens.current[key] = gen;
     fn()
-      .then((v) => { if (gens.current[key] === gen) setSnap((s) => ({ ...s, [key]: v, [`${key}Err`]: false })); })
+      .then((v) => { if (gens.current[key] === gen) setSnap((s) => ({ ...s, [key]: v, [`${key}@`]: tag, [`${key}Err`]: false })); })
       .catch(() => { if (gens.current[key] === gen) setSnap((s) => ({ ...s, [`${key}Err`]: true })); });
   }, []);
   useEffect(() => {
-    load('home', () => fetchAdminHome(days, 8));
-    load('guest', () => fetchAdminGuest(days));
-    load('usage', () => fetchAiUsage(days));
-    load('analysis', () => fetchAnalysisMetrics(days));
+    load('home', () => fetchAdminHome(days, 8), days);
+    load('guest', () => fetchAdminGuest(days), days);
+    load('usage', () => fetchAiUsage(days), days);
+    load('analysis', () => fetchAnalysisMetrics(days), days);
   }, [load, days, refreshTick]);
   useEffect(() => {
     load('growth', () => fetchAdminAccountGrowth());
@@ -63,7 +72,13 @@ function useHomeData(days, refreshTick) {
     load('ondemand', () => fetchReaderOndemandGlobal());
     load('share', () => fetchPublicShareGlobal());
   }, [load, refreshTick]);
-  return snap;
+  // 窗口类只认本窗口的快照;失败键清单给页头的条件性提示
+  return useMemo(() => {
+    const view = { ...snap };
+    for (const k of WINDOWED) view[k] = snap[`${k}@`] === days ? snap[k] : undefined;
+    const failed = Object.keys(KEY_NAMES).filter((k) => snap[`${k}Err`]);
+    return { view, failed };
+  }, [snap, days]);
 }
 
 /* ── 磁贴件 ── */
@@ -107,12 +122,15 @@ function Num({ label, value, hero = false, tone = '', tipBuild = null, unit = ''
 }
 
 /* ── 状态磁贴:按严重度排的待处理 + 8 个全站开关点(只读,点击跳所在板块) ── */
-function StatusTile({ items, dots, onGo }) {
+function StatusTile({ items, dots, onGo, ready, failed }) {
+  // 告警来源没读全时不下「无待处理」的结论;有接口失败时给条件性小章(§8.x 允许条件性状态警示)
+  const failedTitle = failed.length ? `读取失败:${failed.map((k) => KEY_NAMES[k]).join('、')}` : '';
   return (
     <section className={`surface-card ops-tile ops-status t-status${items.length ? '' : ' is-calm'}`} aria-label="状态">
       <div className="ops-tile-head">
         <OpsIcon name="activity" className="ops-tile-icon" />
         <h2 className="card-title ops-status-title">状态</h2>
+        {failed.length > 0 && <span className="stamp stamp-warn ops-status-stale" title={failedTitle}>{failed.length} 项读取失败</span>}
         {items.length > 0 && <span className="ops-count" title="待处理">{items.length}</span>}
       </div>
       {items.length ? (
@@ -126,8 +144,10 @@ function StatusTile({ items, dots, onGo }) {
             </button>
           ))}
         </div>
-      ) : (
+      ) : ready ? (
         <div className="ops-pend-none"><span className="ai-light" aria-hidden="true" />无待处理</div>
+      ) : (
+        <div className="ops-pend-none is-pending"><span className="ai-light is-unknown" aria-hidden="true" />{failed.some((k) => ALERT_KEYS.includes(k)) ? '待处理未读全' : '读取中…'}</div>
       )}
       <div className="ops-dots" aria-label="全站开关">
         {dots.map((d) => {
@@ -152,7 +172,8 @@ function StatusTile({ items, dots, onGo }) {
 }
 
 export default function OpsHome({ days, refreshTick, onGo }) {
-  const s = useHomeData(days, refreshTick);
+  const { view: s, failed } = useHomeData(days, refreshTick);
+  const alertsReady = ALERT_KEYS.every((k) => s[k] !== undefined);
   const today = windowDays(1)[0];
   const items = useMemo(() => pendingItems(s), [s]);
   const marks = useMemo(() => pageMarks(items), [items]);
@@ -323,7 +344,7 @@ export default function OpsHome({ days, refreshTick, onGo }) {
           </div>
         </section>
 
-        <StatusTile items={items} dots={dots} onGo={onGo} />
+        <StatusTile items={items} dots={dots} onGo={onGo} ready={alertsReady} failed={failed} />
 
         <section className="surface-card ops-tile is-s t-external" aria-label="存储与外部资源">
           <TileHead page="external" onGo={onGo} meta={backupDot} tipBuild={extTip} />

@@ -40,10 +40,11 @@ export const OPS_PAGES = [
 ];
 
 export const OPS_PAGE_IDS = OPS_PAGES.map((p) => p.id);
-const PAGE_BY_ID = Object.fromEntries(OPS_PAGES.map((p) => [p.id, p]));
+// Map 查找:普通对象会让 `constructor` / `__proto__` 这类地址命中继承属性(codex r1 #4)。
+const PAGE_BY_ID = new Map(OPS_PAGES.map((p) => [p.id, p]));
 
 export function opsPage(id) {
-  return PAGE_BY_ID[id] || null;
+  return PAGE_BY_ID.get(id) || null;
 }
 
 export function opsBlocks(pageId, { rootAdmin = true } = {}) {
@@ -70,18 +71,21 @@ export function normalizeOpsTarget(target) {
   if (!target) return { page: null, block: null };
   let { page = null, block = null } = target;
   if (!page && (target.sub || target.zone)) {
-    const legacy = target.zone ? LEGACY_ZONE[target.zone] : null;
+    const legacy = target.zone && Object.hasOwn(LEGACY_ZONE, target.zone) ? LEGACY_ZONE[target.zone] : null;
     if (legacy) [page, block] = legacy;
-    else page = LEGACY_SUB_PAGE[target.sub] || null;
+    else page = Object.hasOwn(LEGACY_SUB_PAGE, target.sub || '') ? LEGACY_SUB_PAGE[target.sub] : null;
   }
-  if (!PAGE_BY_ID[page]) return { page: null, block: null };
-  const known = PAGE_BY_ID[page].blocks.some(([id]) => id === block);
+  const hit = PAGE_BY_ID.get(page);
+  if (!hit) return { page: null, block: null };
+  const known = hit.blocks.some(([id]) => id === block);
   return { page, block: known ? block : null };
 }
 
 // hash 路径段(`#/admin/<page>/<block>` 去掉 `#/admin` 之后)↔ 目标。
 export function parseOpsPath(rest) {
-  const parts = String(rest || '').split('/').filter(Boolean).map((s) => decodeURIComponent(s));
+  // 非法百分号编码(如 `%`)不能抛到 App 初始导航里:解不开就当没给(回退合法路由)
+  const decode = (s) => { try { return decodeURIComponent(s); } catch { return ''; } };
+  const parts = String(rest || '').split('/').filter(Boolean).map(decode);
   return normalizeOpsTarget({ page: parts[0] || null, block: parts[1] || null });
 }
 

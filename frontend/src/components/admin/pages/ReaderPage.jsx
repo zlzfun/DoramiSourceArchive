@@ -31,6 +31,18 @@ const SERIES_SENTINELS = { 'other:': '其它', 'guest:': '游客' };
 const seriesUserLabel = (name) => SERIES_SENTINELS[name]
   || (Object.values(SERIES_SENTINELS).includes(name) ? `${name}（用户）` : name);
 
+// 新账号默认订阅是「整集替换」写:切页会重挂本页,新实例不得在旧写落地前基于旧名单再写一次
+// (两次整集替换会互相带回旧集合,codex r1 #1)。在途写登记在模块级,跨实例共享;新实例取名单前先等它落地。
+let defaultsPending = null;
+const pendingDefaultsWrite = () => defaultsPending;
+function trackDefaultsWrite(request) {
+  const tracked = request.then(() => {}, () => {}).finally(() => {
+    if (defaultsPending === tracked) defaultsPending = null;
+  });
+  defaultsPending = tracked;
+  return request;
+}
+
 export default function ReaderPage({ showToast, days, refreshTick = 0, rootAdmin = false, onOpenCredentials }) {
   const [globalAi, setGlobalAi] = useState(null);
   const [aiBudget, setAiBudget] = useState(null);  // {daily_token_budget, tokens_used_today}(读者面 AI 日预算,0=不限)
@@ -84,6 +96,12 @@ export default function ReaderPage({ showToast, days, refreshTick = 0, rootAdmin
       if (fresh()) setPublicShare(share);
     } catch { /* 读不到就保持 null,卡片显示「正在读取…」且开关禁用 */ }
     try {
+      const inflight = pendingDefaultsWrite();
+      if (inflight) {
+        if (fresh()) setDefaultsBusy(true);
+        await inflight;
+        if (fresh()) setDefaultsBusy(false);
+      }
       const defaults = await fetchReaderDefaults();
       if (fresh()) setReaderDefaults(defaults);
     } catch { /* 同上:名单卡显示读取中 */ }
@@ -95,11 +113,13 @@ export default function ReaderPage({ showToast, days, refreshTick = 0, rootAdmin
 
   // 新账号默认订阅名单(issue #56):增删即写,null = 恢复代码缺省;只影响此后新建账号
   const saveReaderDefaults = async (sourceIds, okMsg) => {
-    if (defaultsBusy) return; // 一次只允许一项操作:整集替换语义下并发写会互相带回旧集合
+    // 一次只允许一项操作:整集替换语义下并发写会互相带回旧集合;模块级在途写同样拦(切页重挂的新实例)
+    if (defaultsBusy || pendingDefaultsWrite()) return;
     const gen = ++defaultsGenRef.current;
     setDefaultsBusy(true);
+    const request = trackDefaultsWrite(updateReaderDefaults(sourceIds));
     try {
-      const res = await updateReaderDefaults(sourceIds);
+      const res = await request;
       if (gen !== defaultsGenRef.current) return;
       setReaderDefaults(res);
       showToast(okMsg, 'success');

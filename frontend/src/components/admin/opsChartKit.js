@@ -1,6 +1,6 @@
 // 运维首页图表件的共用工具(issue #114):格式化、柱形路径、容器实测、浮层上下文与 hook。
 // 与组件分文件放(react-refresh 要求组件文件只导出组件)。
-import { createContext, useCallback, useContext, useLayoutEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useLayoutEffect, useState } from 'react';
 
 const WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 export const fmt = (n) => Number(n || 0).toLocaleString('en-US');
@@ -27,11 +27,11 @@ export function colPath(x, y, w, h, r) {
 }
 
 // 容器实测宽高(图按像素重画,不靠 viewBox 拉伸,字号恒为真实 12px)。
+// callback ref:空态 → 数据态换了节点也会重新挂观察器(codex r1 #7)。
 export function useBox() {
-  const ref = useRef(null);
+  const [el, ref] = useState(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
   useLayoutEffect(() => {
-    const el = ref.current;
     if (!el) return undefined;
     const read = () => setBox((prev) => {
       const w = Math.floor(el.clientWidth); const h = Math.floor(el.clientHeight);
@@ -42,7 +42,7 @@ export function useBox() {
     const ro = new ResizeObserver(read);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [el]);
   return [ref, box];
 }
 

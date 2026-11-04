@@ -210,7 +210,7 @@ export function BarList({ id, rows, unit, metric, total, onOpen }) {
   const fit = h ? Math.max(3, Math.floor((h + BLIST_GAP) / (BLIST_ROW + BLIST_GAP))) : rows.length;
   const shown = rows.slice(0, fit);
   const max = Math.max(1, ...shown.map((r) => r.value));
-  if (!rows.length) return <div className="ops-chart-box is-static ops-empty" data-chart={id}>暂无阅读</div>;
+  if (!rows.length) return <div ref={ref} className="ops-chart-box is-static ops-empty" data-chart={id}>暂无阅读</div>;
   return (
     <div ref={ref} className="ops-chart-box" data-chart={id} onClick={onOpen} title="打开完整排行">
       <div className="ops-blist" role="list">

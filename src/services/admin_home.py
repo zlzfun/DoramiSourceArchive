@@ -7,8 +7,9 @@
   ``/api/admin/content`` 的各源阅读同口径(含游客阅读),区别只在加了时间窗;
   ``/content`` 给的是累计值。
 - **全量分析回填的失败汇总**:``tag_retag_jobs`` 里 ``operation='full_analysis'`` 的任务。
-  「未解决的失败」= 最近一次成功之后结束于 failed / partial_failed 的任务数,
-  新的一次成功即视为已处理;另给进行中数与最近一条任务。
+  「未解决的失败」= 终态时间(``updated_at``)晚于最近一次成功的 failed / partial_failed 任务数,
+  新的一次成功即视为已处理;按时间而非 id 比较——「重试失败项」沿用原任务 id,旧任务重试后再失败也要算(codex r1 #2)。
+  另给进行中数与最近更新的一条任务。
 
 只读、纯聚合,不含逐账户明细,全体管理员可见(与 ``account-growth`` 同类)。
 """
@@ -48,10 +49,12 @@ def active_accounts(session: Session, *, days: int, today: Optional[datetime.dat
     since, until = day_list[0], day_list[-1]
     by_day: Dict[str, set] = {}
 
+    # 过滤用原列范围(走 ix_login_events_at),只在投影上截日期;函数包住索引列会退化成全表扫(codex r1 #6)。
+    after_until = (datetime.date.fromisoformat(until) + datetime.timedelta(days=1)).isoformat()
     login_day = func.substr(LoginEventRecord.at, 1, 10)
     login_rows = session.exec(
         select(login_day, LoginEventRecord.username)
-        .where(login_day >= since, login_day <= until)
+        .where(LoginEventRecord.at >= since, LoginEventRecord.at < after_until)
         .distinct()
     ).all()
     read_rows = session.exec(
@@ -92,14 +95,16 @@ def backfill_summary(session: Session) -> Dict[str, Any]:
     active = session.exec(
         select(func.count(jobs.id)).where(base, jobs.status.in_(_ACTIVE_JOB_STATUSES))
     ).one()
-    last_success_id = session.exec(
-        select(func.max(jobs.id)).where(base, jobs.status == "succeeded")
+    last_success_at = session.exec(
+        select(func.max(jobs.updated_at)).where(base, jobs.status == "succeeded")
     ).one()
     failed_query = select(func.count(jobs.id)).where(base, jobs.status.in_(_FAILED_JOB_STATUSES))
-    if last_success_id is not None:
-        failed_query = failed_query.where(jobs.id > last_success_id)
+    if last_success_at is not None:
+        failed_query = failed_query.where(jobs.updated_at > last_success_at)
     unresolved_failed = session.exec(failed_query).one()
-    latest = session.exec(select(jobs).where(base).order_by(jobs.id.desc()).limit(1)).first()
+    latest = session.exec(
+        select(jobs).where(base).order_by(jobs.updated_at.desc(), jobs.id.desc()).limit(1)
+    ).first()
     return {
         "active": int(active or 0),
         "unresolved_failed": int(unresolved_failed or 0),

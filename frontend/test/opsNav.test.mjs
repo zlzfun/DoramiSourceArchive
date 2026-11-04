@@ -31,6 +31,18 @@ test('hash 路径往返:首页、页、页 + 板块;未知页回首页,未知板
   }
 });
 
+test('非法地址不抛错、统一回退:继承属性名与坏的百分号编码(codex r1 #4)', () => {
+  for (const bad of ['constructor', '__proto__', 'toString', 'hasOwnProperty', 'podcast/%', '%E4%B8', 'accounts/constructor']) {
+    assert.doesNotThrow(() => parseOpsPath(bad), bad);
+  }
+  assert.deepEqual(parseOpsPath('constructor'), { page: null, block: null });
+  assert.deepEqual(parseOpsPath('__proto__/x'), { page: null, block: null });
+  assert.deepEqual(parseOpsPath('podcast/%'), { page: 'podcast', block: null });
+  assert.deepEqual(parseOpsPath('accounts/constructor'), { page: 'accounts', block: null });
+  assert.deepEqual(normalizeOpsTarget({ sub: 'constructor' }), { page: null, block: null });
+  assert.deepEqual(normalizeOpsTarget({ sub: 'content', zone: '__proto__' }), { page: 'reading', block: null });
+});
+
 test('旧五档载荷 { sub, zone } 落到新页 / 板块(设置柜「ASR 配额」回指等)', () => {
   assert.deepEqual(normalizeOpsTarget({ sub: 'content', zone: 'podcast-asr-quota' }), { page: 'podcast', block: 'asr' });
   assert.deepEqual(normalizeOpsTarget({ sub: 'user' }), { page: 'accounts', block: null });

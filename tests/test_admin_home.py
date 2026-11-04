@@ -44,15 +44,21 @@ def _read(session, username, source_id, offset, reads=1):
     session.add(ReaderReadRecord(day=_day(offset), username=username, source_id=source_id, reads=reads, updated_at=f"{_day(offset)}T10:00:00"))
 
 
+_TICK = [0]
+
+
 def _job(session, status, operation="full_analysis", failed=0):
     from models.db import TagRetagJobRecord
 
-    stamp = f"{_day(0)}T00:00:00+00:00"
-    session.add(TagRetagJobRecord(
+    _TICK[0] += 1  # 每条任务的终态时间依次推后一分钟
+    stamp = f"{_day(0)}T00:{_TICK[0]:02d}:00+00:00"
+    job = TagRetagJobRecord(
         operation=operation, status=status, taxonomy_version=1, affected_count=0, failed_count=failed,
         scope_json="{}", created_at=stamp, updated_at=stamp,
-    ))
+    )
+    session.add(job)
     session.commit()
+    return job
 
 
 def test_active_accounts_union_dedup_and_exclusions(tmp_path):
@@ -68,6 +74,7 @@ def test_active_accounts_union_dedup_and_exclusions(tmp_path):
         _read(session, "guest:v:abc", "src-a", 1)  # 游客身份不计
         _login_at(session, "deleted:old", 1)        # 删号墓碑不计
         _login_at(session, "user", 12)              # 窗外
+        _login_at(session, "admin", -1)             # 明天(时钟漂移造的)不进窗口
         _read(session, "user", "src-a", 2, reads=0)  # reads=0 的行不算活跃
         session.commit()
 
@@ -118,6 +125,26 @@ def test_backfill_summary_unresolved_after_last_success(tmp_path):
         summary = admin_home.backfill_summary(session)
         assert summary["active"] == 1 and summary["unresolved_failed"] == 1
         assert summary["latest"]["status"] == "running"
+
+
+def test_backfill_summary_counts_retry_of_older_job_by_time(tmp_path):
+    """「重试失败项」沿用原任务 id:#1 失败 → #2 成功 → 重试 #1 再失败,应算未解决(按终态时间而非 id,codex r1 #2)。"""
+    from models.db import TaxonomyVersionRecord
+    from services import admin_home
+
+    engine = _engine(tmp_path)
+    with Session(engine) as session:
+        session.add(TaxonomyVersionRecord(version=1, status="active", created_at=f"{_day(0)}T00:00:00"))
+        session.commit()
+        first = _job(session, "partial_failed", failed=2)
+        _job(session, "succeeded")
+        assert admin_home.backfill_summary(session)["unresolved_failed"] == 0
+        first.updated_at = f"{_day(0)}T23:59:00+00:00"  # 重试后再次结束于部分失败
+        session.add(first)
+        session.commit()
+        summary = admin_home.backfill_summary(session)
+        assert summary["unresolved_failed"] == 1
+        assert summary["latest"]["id"] == first.id
 
 
 def _setup_app(monkeypatch, tmp_path):

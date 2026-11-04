@@ -89,8 +89,11 @@ export default function AdminOpsTab({
   // ── 板块落位:视图里的板块变化 / 跨页 pendingFocus(如设置柜「ASR 配额」回指)都触发一次 ──
   const [landing, setLanding] = useState(null); // { page, block, n }
   const landSeq = useRef(0);
+  const landed = useRef(0); // 已落位的请求序号:同一请求不重放(codex r1 #5)
   useEffect(() => {
+    // 普通导航(不带板块)作废旧落位请求,否则回到该页时会被拽到上次的板块
     if (target.block) setLanding({ page: target.page, block: target.block, n: (landSeq.current += 1) });
+    else setLanding(null);
   }, [target.page, target.block]);
   useEffect(() => {
     if (!pendingFocus) return;
@@ -104,22 +107,29 @@ export default function AdminOpsTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 只响应新到的 pendingFocus
   }, [pendingFocus]);
   useEffect(() => {
-    if (!landing || landing.page !== target.page) return undefined;
+    if (!landing || landing.page !== target.page || landing.n === landed.current) return undefined;
     const id = opsBlockId(landing.page, landing.block);
-    let raf = 0; let tries = 0; let timer = 0;
+    let raf = 0; let tries = 0; let timer = 0; let flashed = null;
     // 板块可能等数据到了才渲染(根专属区、面板装载):逐帧找,约 1.5s 内找不到就放弃。
     const attempt = () => {
       const el = document.getElementById(id);
-      if (!el) { if ((tries += 1) < 90) raf = requestAnimationFrame(attempt); return; }
+      if (!el) {
+        if ((tries += 1) < 90) raf = requestAnimationFrame(attempt);
+        else landed.current = landing.n;
+        return;
+      }
+      landed.current = landing.n;
       el.scrollIntoView({ block: 'start', behavior: scrollBehavior() });
       el.focus({ preventScroll: true });
       el.classList.remove('ops-flash');
       void el.offsetWidth;
       el.classList.add('ops-flash');
-      timer = window.setTimeout(() => el.classList.remove('ops-flash'), FLASH_MS);
+      flashed = el;
+      timer = window.setTimeout(() => { el.classList.remove('ops-flash'); flashed = null; }, FLASH_MS);
     };
     raf = requestAnimationFrame(attempt);
-    return () => { cancelAnimationFrame(raf); window.clearTimeout(timer); };
+    // 取消(换页 / 作废)时连同本次高亮一起清掉
+    return () => { cancelAnimationFrame(raf); window.clearTimeout(timer); flashed?.classList.remove('ops-flash'); };
   }, [landing, target.page]);
   // 换页且不带板块:回到页顶。
   const lastPage = useRef(target.page);
