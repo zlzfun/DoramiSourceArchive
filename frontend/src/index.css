@@ -10310,40 +10310,6 @@ input[type="radio"] {
   }
   .rk-wrap { width: min(820px, 100%); margin-inline: auto; }
 
-  /* 「榜单」入口:普通导航行,与来源行同高同语法(issue #184 撤淡紫卡片);选中同样是中性加深一档;
-     副标题随当前段(issue #221:「热点事件 10 件」,没载入过写段名) */
-  .reader-ranking-entry {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    margin: 8px 12px 2px 10px;
-    padding: 6px 8px;
-    border: 0;
-    border-radius: var(--r-control);
-    background: transparent;
-    color: var(--dorami-ink-2);
-    text-align: left;
-    transition: background var(--motion-fast) var(--motion-ease);
-  }
-  .reader-ranking-entry:hover { background: var(--dorami-hover); color: var(--dorami-ink); }
-  .reader-ranking-entry.is-on { background: var(--dorami-select); color: var(--dorami-ink); }
-  .reader-ranking-entry-ic {
-    width: 20px;
-    height: 20px;
-    flex: none;
-    display: grid;
-    place-items: center;
-    color: var(--dorami-muted);
-  }
-  .reader-ranking-entry-ic svg { width: 15px; height: 15px; }
-  .reader-ranking-entry > span:last-child {
-    flex: 1; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0;
-  }
-  .reader-ranking-entry strong { font-size: 13px; font-weight: 400; }
-  .reader-ranking-entry.is-on strong { font-weight: 600; }
-  .reader-ranking-entry small { color: var(--dorami-faint); font-size: 12px; white-space: nowrap; }
-
   /* 页头:「榜单」栏名 + 当前段的范围说明一句 · 右侧三段分段 */
   .ranking-head {
     display: flex;

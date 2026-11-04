@@ -98,7 +98,7 @@ export default function MobileReader({
   const {
     tab, setTab, briefReturn, setBriefReturn, briefRestore, setBriefRestore, briefPlace,
     discoverTab, setDiscoverTab, interestVersion, setInterestVersion, playerHostRef, openPlayingItem,
-    rankingSegment, setRankingSegment, rankingRange, setRankingRange, noteRankingCount, rankingRestore, setRankingRestore,
+    rankingSegment, setRankingSegment, rankingRange, setRankingRange, rankingRestore, setRankingRestore,
   } = view;
   // 全局播放条(issue #199):列表行「播放中 / 已暂停」
   const { state: player } = usePlayer();
@@ -608,7 +608,6 @@ export default function MobileReader({
               segment={rankingSegment}
               range={rankingRange}
               onRangeChange={setRankingRange}
-              onLoaded={noteRankingCount}
               restore={rankingRestore}
               onOpenArticle={async (articleId, ctx) => {
                 const opened = await openArticleById(articleId, { silent: true });
@@ -864,7 +863,6 @@ export default function MobileReader({
                 : setDiscoverTab(next))}
               shape={discoverShape}
               onShapeChange={setDiscoverShape}
-              onOpenRankings={() => { closeDiscover(); setTab('rankings'); }}
               interestsPanel={personalDigestEnabled ? (
                 <InterestPage
                   mobile

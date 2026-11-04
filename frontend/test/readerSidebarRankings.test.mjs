@@ -21,18 +21,24 @@ const sidebar = between(
   '{/* ── 我的早报',
 );
 
-test('rankings keep the desktop subscription list mounted and the ranking entry on', () => {
+test('rankings keep the desktop subscription list mounted', () => {
   assert.doesNotMatch(sidebar, /!rankingsOpen\s*&&/);
   assert.match(sidebar, /<div className="reader-source-scroll">/);
-  assert.match(sidebar, /aria-pressed=\{rankingsOpen\}/);
-  assert.match(sidebar, /reader-ranking-entry \$\{rankingsOpen \? 'is-on' : ''\}/);
 });
 
-// issue #221:源栏轨底只有一个「榜单」入口,不再随视图写文章榜 / 播客榜;副标题随当前段
-test('the sidebar has one 榜单 entry whose subtitle follows the current segment', () => {
-  assert.match(sidebar, /<strong>榜单<\/strong>/);
-  assert.doesNotMatch(sidebar, /文章榜|播客榜|标签趋势/);
-  assert.match(sidebar, /rankingEntrySub\(rankingSegment, rankingCounts\[rankingDataKey\(rankingSegment, rankingRange\)\]\)/);
+// issue #221 目检(2026-11-04):榜单收敛后不分文章 / 播客,入口从源栏顶挪到视图轨,与发现同组(看全站)、排在发现之前;
+// 源栏里不再有榜单入口,也不随视图写文章榜 / 播客榜
+test('the 榜单 entry sits on the view rail right before 发现, not in the source sidebar', () => {
+  assert.doesNotMatch(sidebar, /榜单<\/strong>|reader-ranking-entry|openRankings/);
+  const rail = between(desktop, '{/* 榜单 + 发现:', 'aria-label={onboardingRequired');
+  assert.match(rail, /aria-label="榜单"\s+aria-pressed=\{rankingsOpen\}\s+onClick=\{openRankings\}/);
+  assert.match(rail, /<span className="reader-vrail-label">榜单<\/span>/);
+  assert.ok(rail.indexOf('aria-label="榜单"') < rail.lastIndexOf('<button'), '榜单在发现之前');
+  assert.doesNotMatch(desktop, /文章榜|播客榜|标签趋势|rankingEntrySub|rankingCounts/);
+  // 与发现并列,不再嵌在发现页里:发现页的「榜单」跳转页签撤掉(桌面与手机)
+  const discover = readFileSync(new URL('../src/components/DiscoverPage.jsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(discover, /onOpenRankings|'rankings', '榜单'/);
+  assert.doesNotMatch(desktop + mobile, /onOpenRankings/);
 });
 
 // issue #221:段与时间范围提到 ReaderWorkspace(关掉再打开回到上次的段,桌面 ⇄ 手机互切不丢),默认热点事件;

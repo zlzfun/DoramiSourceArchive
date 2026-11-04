@@ -20,7 +20,6 @@ import {
   normalizeRankingSegment,
   rankingDataKey,
   rankingEmptyText,
-  rankingEntrySub,
   rankingScopeNote,
   representativeOf,
   showRecentFlag,
@@ -64,14 +63,6 @@ test('空榜各一句话', () => {
   assert.equal(rankingEmptyText('events', 'recent'), '近 2 天还没有被两家以上报道的事件');
   assert.equal(rankingEmptyText('reads'), '近 7 天还没有达到门槛的深度内容');
   assert.equal(rankingEmptyText('listens'), '近 7 天还没有达到门槛的单集');
-});
-
-test('源栏入口副标题随段;没载入过或空榜写段名,不写「0 件」', () => {
-  assert.equal(rankingEntrySub('events', 10), '热点事件 10 件');
-  assert.equal(rankingEntrySub('reads', 9), '深度阅读 9 篇');
-  assert.equal(rankingEntrySub('listens', 10), '播客精选 10 集');
-  assert.equal(rankingEntrySub('events', undefined), '热点事件');
-  assert.equal(rankingEntrySub('listens', 0), '播客精选');
 });
 
 test('名次变化:对比快照 ↑ 绿 / ↓ 红 / 相等留空;没对比名次但有快照 = 进榜;没有快照留空', () => {

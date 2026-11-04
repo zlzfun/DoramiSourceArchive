@@ -371,7 +371,6 @@ export default function RankingsPage({
   onSegmentChange,
   range,
   onRangeChange,
-  onLoaded,
   sourceMap = {},
   onOpenArticle,
   restore = null,   // 从阅读窗返回时外层交回的外出上下文(见文件头),只在挂载时读一次
@@ -385,8 +384,6 @@ export default function RankingsPage({
 
   // 列表:每个视图一份,本次打开期间缓存(来回切段不再闪加载)
   const cacheRef = useRef(new Map());
-  const onLoadedRef = useRef(onLoaded);
-  useEffect(() => { onLoadedRef.current = onLoaded; });
   const [list, setList] = useState({ key: '', status: 'loading', data: null, error: '' });
   useEffect(() => {
     const cached = cacheRef.current.get(key);
@@ -403,7 +400,6 @@ export default function RankingsPage({
       if (controller.signal.aborted) return;
       cacheRef.current.set(key, data);
       setList({ key, status: 'ok', data, error: '' });
-      onLoadedRef.current?.(key, Array.isArray(data?.items) ? data.items.length : 0);
     }).catch((reason) => {
       if (controller.signal.aborted || reason?.name === 'AbortError') return;
       setList({ key, status: 'error', data: null, error: reason?.message || '榜单加载失败，请稍后重试' });

@@ -165,7 +165,6 @@ export default function DiscoverPage({
   tab: controlledTab = null,
   onTabChange = null,
   interestsPanel = null,
-  onOpenRankings = null,
   // ── 形态过滤受控(issue #55):从哪个容器进入就落在哪个形态,由上层(useReaderState.discoverShape)
   //    随 openDiscover 写入;是初值不是锁定,页内 seg 仍可切。不传时退回页内局部态(初值「全部」)。 ──
   shape: controlledShape = null,
@@ -355,15 +354,13 @@ export default function DiscoverPage({
                     ['sources', '源'],
                     ['collections', '合集'],
                     ...(interestsPanel ? [['interests', '兴趣']] : []),
-                    ...(onOpenRankings ? [['rankings', '榜单']] : []),
                   ].map(([key, label]) => (
                     <button
                       key={key}
                       type="button"
                       className={`reader-seg-btn ${activeTab === key ? 'is-on' : ''}`}
                       onClick={() => {
-                        if (key === 'rankings') onOpenRankings();
-                        else setTab(key);
+                        setTab(key);
                         disarmConfirm();
                       }}
                     >

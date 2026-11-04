@@ -1,5 +1,5 @@
 // 榜单(issue #221 收敛版,2026-11-03 拍板;设计稿 docs/design/issue-221-rankings/converge.html):
-// 热点事件 · 深度阅读 · 播客精选三段的纯逻辑——范围说明、空态、入口副标题、名次变化、徽标叠放、
+// 热点事件 · 深度阅读 · 播客精选三段的纯逻辑——范围说明、空态、名次变化、徽标叠放、
 // 事件详情的时间线(按北京时间分日)。组件只取用,node:test 直接核对。
 
 export const RANKING_SEGMENTS = [
@@ -32,7 +32,7 @@ export function picksShapeOf(segment) {
   return segment === 'listens' ? 'podcast' : 'article';
 }
 
-// 一个视图一份数据:热点事件按时间范围各算一份,另两段各一份(入口副标题的计数也按它记)
+// 一个视图一份数据:热点事件按时间范围各算一份,另两段各一份
 export function rankingDataKey(segment, range) {
   const seg = normalizeRankingSegment(segment);
   return seg === 'events' ? `events:${normalizeEventRange(range)}` : seg;
@@ -53,17 +53,6 @@ export function rankingEmptyText(segment, range) {
   if (seg === 'reads') return '近 7 天还没有达到门槛的深度内容';
   if (seg === 'listens') return '近 7 天还没有达到门槛的单集';
   return `近 ${normalizeEventRange(range) === 'recent' ? '2' : '7'} 天还没有被两家以上报道的事件`;
-}
-
-// 桌面源栏「榜单」入口的副标题:随当前段;没加载过(或空榜)写段名,不写「0 件」
-export function rankingEntrySub(segment, count) {
-  const seg = normalizeRankingSegment(segment);
-  const name = RANKING_SEGMENTS.find(([key]) => key === seg)[1];
-  const n = Number(count);
-  if (count == null || !Number.isInteger(n) || n <= 0) return name;
-  if (seg === 'reads') return `${name} ${n} 篇`;
-  if (seg === 'listens') return `${name} ${n} 集`;
-  return `${name} ${n} 件`;
 }
 
 // ── 时间:详情里的日期时刻与分日一律按北京时间(读者在国内;样页同口径)──
