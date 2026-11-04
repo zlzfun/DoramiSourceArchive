@@ -121,6 +121,7 @@
 
 **Admin Ops** (admin-only via `account_admin_required`, `/api/admin/*` prefix)
 - `GET /api/admin/overview` — account/archive/AI stat board + recent logins
+- `GET /api/admin/home?days=&top=` — 运维首页聚合(issue #114,全体管理员可见,纯聚合不含逐账户明细):`active`(逐日活跃账户 `series[{day,accounts}]` 补零 + 窗口去重合计 `accounts`;活跃 = 当天登录或阅读,排除 `guest:*` / `deleted:*`)、`reads`(窗口内各源阅读 `total` + 排行 `by_source[{source_id,name,reads}]` 取前 `top`,含游客,与 `/admin/content` 同口径只多时间窗)、`backfills`(全量分析回填:`active` 进行中数、`unresolved_failed` 最近一次成功之后的失败任务数、`latest` 最近一条)
 - `GET /api/admin/accounts?days=` — account list enriched with `subscription_count` + **窗口指标** (`reads`, `logins`, `ai_calls`/`ai_tokens` over the last `days`, `logged_in_window`) + 埋点 fields
 - `GET /api/admin/accounts/{username}/activity?days=` — per-reader activity detail: windowed AI usage (`ai_usage.summarize_user`) + reads (`reader_activity.summarize_user_reads`) + logins (`accounts.summarize_user_logins`: count/by_day/recent) + `source_engagement` (per-source reads ∪ favorites, friendly-named) + `favorites_total` + account/subscription snapshot
 - `GET /api/admin/ai-usage?days=` — AI usage dashboard (calls + tokens by 用途/用户/日期)

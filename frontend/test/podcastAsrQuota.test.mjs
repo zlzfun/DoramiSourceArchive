@@ -33,15 +33,16 @@ test('未知用量不显示为 0，Bailian 与 ISI 名称可辨', () => {
   assert.equal(asrProviderLabel('aliyun_isi'), '阿里云 ISI');
 });
 
-test('额度编辑只在内容管理，凭据页保留直达回指', async () => {
+test('额度编辑只在运维 · 播客页，凭据页保留直达回指(issue #114 新路由)', async () => {
   const [zone, credentials, app] = await Promise.all([
     readFile(new URL('../src/components/admin/PodcastZone.jsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/components/settings/CredentialsSection.jsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
   ]);
-  assert.match(zone, /id="admin-podcast-asr-quota"/);
+  assert.match(zone, /id=\{opsBlockId\('podcast', 'asr'\)\}/);
   assert.match(zone, /updatePodcastAsrQuota/);
   assert.doesNotMatch(credentials, /updatePodcastAsrQuota/);
-  assert.match(credentials, /前往 内容 → 播客/);
-  assert.match(app, /zone: 'podcast-asr-quota'/);
+  assert.match(credentials, /前往 运维管理 → 播客/);
+  assert.match(app, /jumpWithFocus\('admin', 'podcast\/asr'/);
+  assert.match(app, /payload: \{ page: 'podcast', block: 'asr' \}/);
 });

@@ -4956,7 +4956,7 @@ input[type="radio"] {
   .ai-switchboard { display: flex; align-items: center; gap: 14px; flex-wrap: nowrap; padding: 13px 18px; }
   .ai-light { width: 8px; height: 8px; border-radius: var(--r-pill); background: var(--state-ok); flex: none; }
   .ai-light.is-off { background: var(--state-warn); }
-  .ai-switch-lbl { font-size: 13px; font-weight: 600; color: var(--dorami-ink); }
+  .ai-switch-lbl { font-size: 13px; font-weight: 600; color: var(--dorami-ink); white-space: nowrap; flex-shrink: 0; } /* 中文最小内容宽只有 1 个字:不禁折行会被邻近说明挤成竖排 */
   .ai-divider { width: 1px; height: 26px; background: var(--dorami-border); }
   .model-fields { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; flex: 1; min-width: 0; }
   .model-field:has(.model-input-grow) { flex: 1; min-width: 0; }
@@ -14086,13 +14086,13 @@ input[type="radio"] {
 }
 .knob input:focus { outline: none; box-shadow: inset 0 0 0 1px var(--dorami-accent); }
 .knob input:disabled { opacity: 0.55; }
-.knob.is-fixed strong { font-family: var(--mono); font-size: 12px; color: var(--dorami-ink-2); }
+.knob.is-fixed strong { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--dorami-ink-2); } /* 显式 600:preflight 的 bolder 会把 600 的父级推成 900 */
 /* 表单卡(拍板③):三卡并排,卡内 2 列字段栅格,脚部一枚 secondary 保存 */
 .knob-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 4px; }
 .knob-span-2 { grid-column: span 2; }
 .knob-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .knob-field { display: grid; gap: 5px; min-width: 0; }
-.knob-field > span { font-size: 12px; font-weight: 600; color: var(--dorami-faint); }
+.knob-field > span { font-size: 12px; font-weight: 600; color: var(--dorami-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* 窄卡里不折行,同排输入框保持对齐;全文在 title */
 .knob-field .form-input { width: 100%; }
 .knob-field textarea.form-input { min-height: 68px; resize: vertical; }
 .card-foot { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
@@ -14677,5 +14677,237 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
     color: var(--dorami-ink-2);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+  }
+}
+
+/* ══ issue #114 运维信息架构:首页即目录(bento 磁贴,样页 v4「A 精修」)+ 功能页面包屑与板块落位 ══
+   规则全部用 token;字重 400 / 600;字号 ≥ 12px;位移动效挂 data-motion(reduce 时只留颜色 / 不透明度)。
+   首页数字字号档(conventions §3 已登记):L 主角 40 / L 次级 22 / M 主角 32 / S 主角 20,一律 tabular-nums。 */
+@layer components {
+  /* ── 首页栅格:12 列 × 3 行,16px 缝;行 3 固定 56px,行 1 : 行 2 = 1.58 : 1 分余量(高度跟视口走,1280×800 不滚动) ── */
+  .ops-bento {
+    display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 16px;
+    grid-template-rows: minmax(300px, 1.58fr) minmax(190px, 1fr) 56px;
+    height: max(578px, calc(100vh - 130px));
+    height: max(578px, calc(100dvh - 130px));
+  }
+  .ops-bento > .t-accounts { grid-column: 1 / span 7; grid-row: 1; }
+  .ops-bento > .t-reading { grid-column: 8 / span 5; grid-row: 1; }
+  .ops-bento > .t-reader { grid-column: 1 / span 3; grid-row: 2; }
+  .ops-bento > .t-podcast { grid-column: 4 / span 3; grid-row: 2; }
+  .ops-bento > .t-analysis { grid-column: 7 / span 3; grid-row: 2; }
+  .ops-bento > .t-status { grid-column: 10 / span 3; grid-row: 2 / span 2; }
+  .ops-bento > .t-external { grid-column: 1 / span 3; grid-row: 3; }
+  .ops-bento > .t-usrc { grid-column: 4 / span 3; grid-row: 3; }
+  .ops-bento > .t-inbox { grid-column: 7 / span 3; grid-row: 3; }
+
+  /* 磁贴通则:整块是入口(页名链接的 ::after 铺满);hover 轻抬 = 阴影 + 1px 上移 */
+  .ops-tile {
+    display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden;
+    padding: 18px 20px 16px; border-radius: var(--r-card);
+    transition: box-shadow var(--motion-fast) var(--motion-ease), transform var(--motion-fast) var(--motion-ease);
+  }
+  .ops-tile:has(.ops-tile-name:focus-visible) { box-shadow: var(--sh-2), 0 0 0 2px var(--dorami-focus); }
+
+  /* ① 单行页头:图标 + 页名居左,右侧时间窗文字 + 状态点 */
+  .ops-tile-head { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 22px; flex: none; }
+  .ops-tile-icon { width: 15px; height: 15px; flex: none; color: var(--dorami-faint); }
+  .ops-tile-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; outline: none; font-size: 14px; color: var(--dorami-ink-2); }
+  .ops-tile-name::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
+  .ops-status-title { font-size: 14px; color: var(--dorami-ink-2); }
+  .ops-tile-meta { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; flex: none; }
+  .ops-win { font-size: 12px; color: var(--dorami-faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .ops-count { margin-left: auto; font-size: 12px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+  .ops-tile-dot { position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; flex: none; cursor: help; }
+  /* 待处理状态点:形状 + 色双通道(▲ 警示 / ◆ 故障) */
+  .ops-mark { display: inline-block; width: 8px; height: 7px; flex: none; background: var(--state-warn); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+  .ops-mark.is-bad { width: 7px; height: 7px; clip-path: none; transform: rotate(45deg); background: var(--state-bad); }
+
+  /* ② 数字:标签在上、数字在下(S 磁贴同一行);被削的说明进 hover / 焦点浮层 */
+  .ops-kpi { position: relative; display: inline-flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; white-space: nowrap; border-radius: 4px; }
+  .ops-kpi.has-tip { z-index: 1; cursor: default; } /* 压过页名链接铺满磁贴的 ::after,数字才接得到 hover */
+  .ops-kpi.has-tip:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: 2px; }
+  .ops-kpi-lbl { font-size: 12px; line-height: 16px; color: var(--dorami-muted); transition: color var(--motion-fast) var(--motion-ease); }
+  .ops-kpi-num { font-size: 22px; line-height: 28px; font-weight: 600; letter-spacing: -0.02em; color: var(--dorami-ink); font-variant-numeric: tabular-nums; }
+  .ops-kpi-num small { margin-left: 3px; font-size: 12px; font-weight: 400; letter-spacing: 0; color: var(--dorami-muted); }
+  .ops-kpi-num.is-warn { color: var(--state-warn); }
+  .ops-kpi.is-hero .ops-kpi-num { font-size: 40px; line-height: 44px; letter-spacing: -0.03em; }
+  .ops-okdot { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: var(--r-pill); background: var(--state-ok); vertical-align: 0.2em; }
+  .ops-okdot.is-warn { background: var(--state-warn); }
+  .ops-okdot.is-run { background: var(--state-run); }
+  .ops-okdot.is-idle { background: var(--state-idle); }
+  /* L:KPI 一行,标签顶对齐,列间发丝竖线;主角列占 1.55 份 */
+  .ops-kpis { display: grid; grid-template-columns: minmax(0, 1.55fr) repeat(3, minmax(0, 1fr)); align-items: start; margin-top: 16px; flex: none; }
+  .ops-kpis > .ops-kpi { padding-left: 16px; border-left: 1px solid var(--dorami-border-soft); border-radius: 0; }
+  .ops-kpis > .ops-kpi:first-child { padding-left: 0; border-left: 0; }
+  /* ③ 图:L 全宽随行高拉伸;M 数字压在左下角 + 小图居右 */
+  .ops-tile-chart { position: relative; z-index: 1; flex: 1; min-height: 72px; margin-top: 18px; }
+  .ops-mrow { display: flex; align-items: stretch; gap: 16px; flex: 1; min-height: 0; margin-top: 10px; }
+  .ops-mrow > .ops-kpi { align-self: flex-end; flex: none; }
+  .ops-mrow > .ops-kpi.is-hero .ops-kpi-num { font-size: 32px; line-height: 36px; letter-spacing: -0.025em; }
+  .ops-mrow > .ops-tile-chart { flex: 1; margin: 0; min-width: 72px; min-height: 48px; }
+  /* S:一行 = 页名居左,1 个数字居右;3 列磁贴在 1280 下内容盒约 246px,窄时收起图标 */
+  .ops-tile.is-s { flex-direction: row; align-items: center; gap: 12px; padding: 0 16px; container-type: inline-size; }
+  @container (max-width: 270px) { .ops-tile.is-s .ops-tile-icon { display: none; } }
+  .ops-tile.is-s .ops-tile-head { flex: none; min-width: 0; max-width: 58%; }
+  .ops-tile.is-s .ops-tile-meta { margin-left: 0; }
+  .ops-srt { position: relative; z-index: 1; display: flex; justify-content: flex-end; flex: 1; min-width: 0; }
+  .ops-srt > .ops-kpi { flex-direction: row; align-items: baseline; gap: 8px; }
+  .ops-srt > .ops-kpi.is-hero .ops-kpi-num { font-size: 20px; line-height: 24px; letter-spacing: -0.02em; }
+
+  /* 状态磁贴:待处理(名称 + 数字 + ›)+ 底部 8 个开关点(关着的常显名称,其余 hover 浮出) */
+  .ops-status { padding-bottom: 14px; }
+  .ops-pendlist { display: flex; flex-direction: column; flex: 1; min-height: 0; margin-top: 8px; overflow: hidden; }
+  .ops-pend {
+    display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 0 6px; margin: 0 -6px;
+    border-radius: var(--r-control); text-align: left; font-size: 13px; color: var(--dorami-ink-2);
+    transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+  }
+  .ops-pend-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ops-pend-num { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .ops-pend.is-bad .ops-pend-num { color: var(--state-bad); }
+  .ops-pend.is-warn .ops-pend-num { color: var(--state-warn); }
+  .ops-pend > svg { width: 14px; height: 14px; flex: none; color: var(--dorami-faint); transition: transform var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
+  .ops-pend-none { display: flex; align-items: center; gap: 8px; min-height: 28px; margin-top: 8px; font-size: 13px; color: var(--dorami-muted); }
+  .ops-status.is-calm .ops-pendlist { flex: none; }
+  .ops-dots { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; flex: none; margin-top: auto; padding-top: 10px; border-top: 1px solid var(--dorami-border-soft); min-height: 32px; }
+  .ops-dot { position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 20px; padding: 0 2px; border-radius: 4px; font-size: 12px; line-height: 16px; color: var(--dorami-muted); white-space: nowrap; }
+  .ops-dot .ai-light.is-unknown { background: var(--dorami-border-strong); }
+  .ops-dot-name {
+    position: absolute; left: 50%; bottom: calc(100% + 6px); z-index: 3; transform: translate(-50%, 3px);
+    padding: 5px 8px; border-radius: var(--r-sm); background: var(--dorami-ink); color: var(--dorami-surface);
+    font-size: 12px; line-height: 1; opacity: 0; pointer-events: none;
+    transition: opacity var(--motion-fast) var(--motion-ease), transform var(--motion-fast) var(--motion-ease);
+  }
+  .ops-dot.is-off .ops-dot-name { position: static; transform: none; opacity: 1; padding: 0; background: none; color: var(--dorami-ink-2); pointer-events: auto; transition: none; } /* 关着的常显名称:例外才显眼 */
+  :root[data-motion="reduce"] .ops-dot-name { transform: translate(-50%, 0); }
+
+  /* ── 图表件(首页):随容器实测重画;颜色全走 token;逐日柱强调末柱(今天),其余退一档 ── */
+  .ops-chart-box { position: relative; width: 100%; height: 100%; min-height: 48px; cursor: pointer; }
+  .ops-chart-box.is-static { cursor: default; }
+  .ops-chart-box.ops-empty { display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--dorami-faint); }
+  .ops-chart { display: block; overflow: visible; }
+  .ops-chart text { font-size: 12px; fill: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+  .ops-chart text.is-ink { fill: var(--dorami-ink-2); }
+  .ops-gl { stroke: var(--dorami-border-soft); stroke-width: 1; }
+  .ops-gl.is-base { stroke: var(--dorami-border-strong); }
+  .ops-hit { fill: transparent; }
+  .ops-cur { fill: var(--dorami-hover); }
+  .ops-bar { fill: color-mix(in oklab, var(--dorami-accent) 42%, var(--dorami-card-solid)); }
+  .ops-bar.is-now { fill: var(--dorami-accent); }
+  .ops-bar.is-reader { fill: var(--dorami-accent); }
+  .ops-bar.is-system { fill: color-mix(in oklab, var(--dorami-accent) 30%, var(--dorami-card-solid)); }
+  .ops-empty-dot { fill: var(--dorami-border-strong); }
+  .ops-step { fill: none; stroke: var(--dorami-accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .ops-step-dot { fill: var(--dorami-card-solid); stroke: var(--dorami-accent); stroke-width: 1.6; }
+  .ops-xhair { stroke: var(--dorami-border-strong); stroke-width: 1; }
+  .ops-xdot { fill: var(--dorami-accent); stroke: var(--dorami-card-solid); stroke-width: 2; }
+  .ops-mark-line { stroke: var(--dorami-ink-2); stroke-width: 1; }
+  /* 直方图:靛色序数阶(分越高越深) */
+  .ops-hbar.is-h1 { fill: color-mix(in oklab, var(--dorami-accent) 18%, var(--dorami-card-solid)); }
+  .ops-hbar.is-h2 { fill: color-mix(in oklab, var(--dorami-accent) 20%, var(--dorami-card-solid)); }
+  .ops-hbar.is-h3 { fill: color-mix(in oklab, var(--dorami-accent) 24%, var(--dorami-card-solid)); }
+  .ops-hbar.is-h4 { fill: color-mix(in oklab, var(--dorami-accent) 30%, var(--dorami-card-solid)); }
+  .ops-hbar.is-h5 { fill: color-mix(in oklab, var(--dorami-accent) 40%, var(--dorami-card-solid)); }
+  .ops-hbar.is-h6 { fill: color-mix(in oklab, var(--dorami-accent) 55%, var(--dorami-card-solid)); }
+  .ops-hbar.is-h7 { fill: color-mix(in oklab, var(--dorami-accent) 72%, var(--dorami-card-solid)); }
+  .ops-hbar.is-h8 { fill: color-mix(in oklab, var(--dorami-accent) 88%, var(--dorami-card-solid)); }
+  .ops-hbar.is-h9 { fill: var(--dorami-accent); }
+  /* 排行条(Tremor BarList / Plausible):名字压在淡靛条上,值单独右列;行高 34、行距 8,按容器高放 3–8 条 */
+  .ops-blist { display: flex; flex-direction: column; gap: 8px; height: 100%; overflow: hidden; }
+  .ops-blist-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "bar val"; align-items: center; column-gap: 12px; height: 34px; flex: none; font-size: 13px; }
+  .ops-blist-track { grid-area: bar; align-self: stretch; display: block; }
+  .ops-blist-bar { display: block; height: 100%; border-radius: 4px; background: color-mix(in oklab, var(--dorami-accent) 14%, transparent); transition: background var(--motion-fast) var(--motion-ease); }
+  .ops-blist-name { grid-area: bar; z-index: 1; padding-left: 10px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dorami-ink-2); pointer-events: none; }
+  .ops-blist-val { grid-area: val; min-width: 44px; text-align: right; font-weight: 600; color: var(--dorami-ink); font-variant-numeric: tabular-nums; }
+  /* 环图(播客阶段构成):环厚为半径 25%;hover 段高亮其余淡出;中心 = 真实像素字号的总数 + 标签 */
+  .ops-donut-box { display: flex; align-items: center; justify-content: flex-end; }
+  .ops-donut-wrap { position: relative; flex: none; }
+  .ops-donut { display: block; width: 100%; height: 100%; }
+  .ops-donut-p { transition: opacity var(--motion-fast) var(--motion-ease); }
+  .ops-donut.has-hot .ops-donut-p:not(.is-hot) { opacity: 0.4; }
+  .ops-donut-p.is-ok { stroke: var(--state-ok); }
+  .ops-donut-p.is-run { stroke: var(--state-run); }
+  .ops-donut-p.is-idle { stroke: color-mix(in oklab, var(--dorami-ink) 16%, var(--dorami-card-solid)); }
+  .ops-donut-p.is-new { stroke: color-mix(in oklab, var(--dorami-ink) 7%, var(--dorami-card-solid)); }
+  .ops-donut-p.is-bad { stroke: var(--state-bad); }
+  .ops-donut-c { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; pointer-events: none; }
+  .ops-donut-n { font-size: 17px; line-height: 20px; font-weight: 600; letter-spacing: -0.02em; color: var(--dorami-ink); font-variant-numeric: tabular-nums; }
+  .ops-donut-l { font-size: 12px; line-height: 14px; color: var(--dorami-faint); }
+
+  /* ── 共用浮层(图元贴指针 / 数字锚在下方):头 → 行(固定顺序)→ 合计;数值右对齐等宽 ── */
+  .ops-tip {
+    position: fixed; z-index: 90; min-width: 168px; max-width: 300px; padding: 8px 10px 7px;
+    border-radius: var(--r-card); border: 1px solid var(--dorami-border); background: var(--dorami-card-solid);
+    box-shadow: var(--sh-2); font-size: 12px; line-height: 18px; pointer-events: none;
+  }
+  .ops-tip-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 3px; font-weight: 600; color: var(--dorami-ink-2); white-space: nowrap; }
+  .ops-tip-unit { margin-left: auto; font-weight: 400; color: var(--dorami-faint); }
+  .ops-tip-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; white-space: nowrap; }
+  .ops-tip-name { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--dorami-muted); overflow: hidden; text-overflow: ellipsis; }
+  .ops-tip-val { font-weight: 600; color: var(--dorami-ink); font-variant-numeric: tabular-nums; }
+  .ops-tip-row.is-zero .ops-tip-val, .ops-tip-row.is-zero .ops-tip-name { color: var(--dorami-faint); font-weight: 400; }
+  .ops-tip-row.is-warn .ops-tip-val { color: var(--state-warn); }
+  .ops-tip-row.is-total { margin-top: 3px; padding-top: 3px; border-top: 1px solid var(--dorami-border); }
+  /* 浮层行的系列线键(短横,不用实心方块) */
+  .ops-sw { width: 10px; height: 3px; border-radius: 2px; flex: none; }
+  .ops-sw.is-none { background: transparent; }
+  .ops-sw.is-accent, .ops-sw.is-reader, .ops-sw.is-h9, .ops-sw.is-h8 { background: var(--dorami-accent); }
+  .ops-sw.is-system, .ops-sw.is-h1, .ops-sw.is-h2, .ops-sw.is-h3, .ops-sw.is-h4, .ops-sw.is-h5, .ops-sw.is-h6, .ops-sw.is-h7 { background: color-mix(in oklab, var(--dorami-accent) 40%, var(--dorami-card-solid)); }
+  .ops-sw.is-ok { background: var(--state-ok); }
+  .ops-sw.is-run { background: var(--state-run); }
+  .ops-sw.is-idle { background: color-mix(in oklab, var(--dorami-ink) 22%, var(--dorami-card-solid)); }
+  .ops-sw.is-new { background: color-mix(in oklab, var(--dorami-ink) 12%, var(--dorami-card-solid)); }
+  .ops-sw.is-bad { background: var(--state-bad); }
+
+  /* ── 功能页页头:面包屑「运维管理 › 页 ▾」;▾ 弹层横切 8 页 ── */
+  .ops-crumb { position: relative; display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .ops-crumb-root { font: inherit; color: var(--dorami-faint); font-weight: 400; border-radius: var(--r-sm); }
+  .ops-crumb-sep { width: 18px; height: 18px; flex: none; color: var(--dorami-faint); }
+  .ops-crumb-cur { display: inline-flex; align-items: center; gap: 4px; margin: -2px -6px; padding: 2px 6px; border-radius: var(--r-control); font: inherit; color: var(--dorami-ink); }
+  .ops-crumb-cur svg { width: 18px; height: 18px; color: var(--dorami-muted); }
+  .ops-pop {
+    position: absolute; z-index: 70; padding: 6px; border-radius: var(--r-card);
+    background: var(--dorami-surface); border: 1px solid var(--dorami-border); box-shadow: var(--sh-3);
+    animation: ops-pop-in var(--motion-fast) var(--motion-ease);
+  }
+  @keyframes ops-pop-in { from { opacity: 0; transform: translateY(-4px); } }
+  :root[data-motion="reduce"] .ops-pop { animation: none; }
+  .ops-crumb-pop { top: calc(100% + 8px); left: 0; display: grid; gap: 2px; min-width: 212px; line-height: 1.4; }
+  .ops-crumb-item { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 10px; border-radius: 8px; font-size: 13px; font-weight: 400; color: var(--dorami-ink-2); white-space: nowrap; text-align: left; }
+  .ops-crumb-item svg { width: 14px; height: 14px; flex: none; color: var(--dorami-faint); }
+  .ops-crumb-item.is-cur { background: var(--dorami-select); color: var(--dorami-ink); font-weight: 600; }
+  .ops-crumb-item .ops-crumb-check { margin-left: auto; color: var(--dorami-ink-2); }
+
+  /* ── 功能页板块:可深链锚点;落位后短促 wash(§7 瞬态定位高亮白名单) ── */
+  .ops-block { position: relative; display: block; scroll-margin-top: 18px; }
+  .ops-block:focus { outline: none; }
+  .ops-page-body > .ops-block + .ops-block { margin-top: 4px; }
+  .ops-flash::before {
+    content: ""; position: absolute; inset: -8px -10px; z-index: -1; border-radius: var(--r-card);
+    background: var(--dorami-wash); pointer-events: none;
+    animation: ops-flash 1.6s var(--motion-ease) forwards;
+  }
+  @keyframes ops-flash { 0%, 35% { opacity: 1; } 100% { opacity: 0; } }
+  :root[data-motion="reduce"] .ops-flash::before { animation-duration: 1ms; animation-delay: 900ms; }
+  /* 键盘焦点 / 展开态与悬停同效果,但不受 (hover: hover) 门控 */
+  .ops-kpi.has-tip:focus-visible .ops-kpi-lbl { color: var(--dorami-ink-2); text-decoration: underline dotted; text-underline-offset: 3px; }
+  .ops-dot:focus-visible .ai-light { box-shadow: 0 0 0 3px color-mix(in oklab, currentColor 18%, transparent); }
+  .ops-dot:focus-visible .ops-dot-name { opacity: 1; transform: translate(-50%, 0); }
+  .ops-crumb-cur[aria-expanded="true"] { background: var(--dorami-hover); }
+  /* 悬停反馈统一包进 (hover: hover):触屏不出黏住的悬停态(conventions §10 悬停守卫) */
+  @media (hover: hover) {
+    .ops-tile:not(.ops-status):hover { box-shadow: var(--sh-3), inset 0 1px 0 var(--dorami-edge); transform: translateY(-1px); }
+    :root[data-motion="reduce"] .ops-tile:not(.ops-status):hover { transform: none; }
+    .ops-kpi.has-tip:hover .ops-kpi-lbl { color: var(--dorami-ink-2); text-decoration: underline dotted; text-underline-offset: 3px; }
+    .ops-pend:hover { background: var(--dorami-hover); color: var(--dorami-ink); }
+    .ops-pend:hover > svg { transform: translateX(2px); color: var(--dorami-ink-2); }
+    :root[data-motion="reduce"] .ops-pend:hover > svg { transform: none; }
+    .ops-dot:hover .ai-light { box-shadow: 0 0 0 3px color-mix(in oklab, currentColor 18%, transparent); }
+    .ops-dot:hover .ops-dot-name { opacity: 1; transform: translate(-50%, 0); }
+    .ops-blist-row:hover .ops-blist-bar { background: color-mix(in oklab, var(--dorami-accent) 26%, transparent); }
+    .ops-crumb-root:hover { color: var(--dorami-ink-2); }
+    .ops-crumb-cur:hover { background: var(--dorami-hover); }
+    .ops-crumb-item:hover { background: var(--dorami-hover); color: var(--dorami-ink); }
   }
 }

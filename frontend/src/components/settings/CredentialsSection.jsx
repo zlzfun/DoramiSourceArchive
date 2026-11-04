@@ -313,7 +313,7 @@ export default function CredentialsSection({ showToast, onNavigate, onOpenAdminP
           </label>
         </div>
         <div className="sett-sync-foot">
-          <span className="cred-ref-meta">配额与本月开销见 运维管理 → 内容 · 测试约 $0.005,当日已见资源为 $0</span>
+          <span className="cred-ref-meta">配额与本月开销见 运维管理 → 存储与外部资源 · 测试约 $0.005,当日已见资源为 $0</span>
           <div className="ml-auto flex items-center gap-2">
             <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={handleTestX} disabled={testingX || savingX || !xTokenReady}>
               {testingX ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />} 测试连通
@@ -343,7 +343,7 @@ export default function CredentialsSection({ showToast, onNavigate, onOpenAdminP
               : '当前策略尚未读取'}
           </span>
           <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={onOpenAdminPodcast}>
-            前往 内容 → 播客 <ChevronRight className="h-3.5 w-3.5" />
+            前往 运维管理 → 播客 <ChevronRight className="h-3.5 w-3.5" />
           </button>
         </div>
       </section>
