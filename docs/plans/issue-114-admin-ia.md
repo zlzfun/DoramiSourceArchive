@@ -1,6 +1,6 @@
 # issue #114 运维管理信息架构:首页即目录 → 满幅功能页
 
-> 状态:进行中(2026-11-04 开工)。分支 `feat/issue-114-admin-ia`,worktree `~/Codes/worktrees/DoramiSourceArchive/issue-114-admin-ia`。
+> 状态:进行中(2026-11-04 开工;两轮交叉检视通过,待用户目检)。分支 `feat/issue-114-admin-ia`,worktree `~/Codes/worktrees/DoramiSourceArchive/issue-114-admin-ia`。
 > 样页:[`docs/design/issue-114-admin-ia/`](../design/issue-114-admin-ia/)(v1–v4;实现以 v4 的 **A 精修** 为准)。
 > 实现:Claude Code(Opus 5.5);检视:Codex(按 `docs/dev/workflow.md` 交叉检视,模型与轮次记在 §9)。
 
@@ -95,4 +95,16 @@ version-history / backlog / decisions;conventions §3 新字号档;`docs/archite
 
 ## 9. 检视
 
-(待检视后补:实现方 / 检视方 / 模型 / 轮次 / 分歧与结论。)
+- 实现方:Claude Code(Opus 5.5);检视方:Codex CLI 0.153.4,`gpt-6-astra` + `model_reasoning_effort=ultra`,`codex exec` 只读沙箱;任务书、报告、表态与修复清单在 worktree `.review/`(不入库)。
+- **第 1 轮**(检视 `2b6bc4bf`):3 项 P1 + 6 项 P2,**全部接受、无分歧**,修复提交 `c7ff8a85`:
+  1. P1 切页重挂绕过「新账号默认订阅」的串行写保护(整集替换写可互相覆盖)→ 模块级在途写,新实例等它落地再取名单(不改成页面常驻:常驻会让账户页抽屉的 body 滚动锁跨页残留)。
+  2. P1 回填「未解决失败」按 id 判先后,漏报旧任务重试后的新失败 → 按 `updated_at` 比较。
+  3. P1 首页切窗失败仍显示旧窗口数据、告警未读到时显示「无待处理」→ 窗口类快照带查询窗口;告警来源读全才下结论;失败给「N 项读取失败」条件性小章。
+  4. P2 `#/admin/constructor`、`__proto__`、坏的百分号编码会抛错 → `Map` 查找 + 解码兜底。
+  5. P2 深链落位请求在之后普通进入该页时重放 → 普通导航清空、已落位不重放。
+  6. P2 登录窗口过滤 `substr(at)` 绕过时间索引 → 原列范围过滤。
+  7. P2 排行条首次空态未挂尺寸观察器 → `useBox` 改 callback ref。
+  8. P2 待处理多时被裁 → 列表内部滚动。
+  9. P2 关闭态开关名称被浮层定位规则左移 → 定位规则限定 `:not(.is-off)`。
+- **第 2 轮**(复检 `c7ff8a85`,最后一轮,只对照修复清单):9 项全部「已修」,未发现修复引入的 P1,无新增观察;Codex 定向复验前端 20 / 20、后端 5 / 5。
+- 观察(未修):落位发生在板块上方内容装载前时,内容随后撑高会让落点下移。
