@@ -1892,7 +1892,7 @@ EVENT_ASSIGNMENT_SWEEP_MINUTES = 10
 
 
 async def execute_event_rank_snapshot_job():
-    """事件热点榜日快照(issue #121):按当下榜单落 event_rank_snapshots,供次日 previous_rank。"""
+    """事件热点榜日快照(issue #121;#221 起 7 天 / 近 2 天各一份):按当下榜单落 event_rank_snapshots,供 previous_rank。"""
 
     try:
         result = await asyncio.to_thread(event_board_service.build_rank_snapshot, db_sink.engine)

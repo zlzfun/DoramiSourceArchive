@@ -2937,3 +2937,49 @@ def test_main_chain_heads_flags_an_unlabeled_fork(tmp_path):
     """未声明 label 的分叉一律按 main 自己分叉计(下游忘记加 label 也会被这条守卫拦下,有意如此)。"""
     _, script = _script_with_extra_revision(tmp_path, down_revision=BASELINE_REVISION, labels=None)
     assert sorted(main_chain_heads(script)) == sorted([_head_revision(), "aaaaextra001"])
+
+
+def test_event_rank_snapshot_window_migration_keeps_rows_as_48h_and_round_trips(tmp_path):
+    """issue #221:快照按读者窗口各写一份;存量行是 48 小时窗写的,升级后 window_hours=48,唯一键带窗口。"""
+
+    db_url = f"sqlite:///{tmp_path / 'event-rank-window.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "b248c7a10e31")
+    stamp = "2026-11-02T23:00:00+00:00"
+    snapshot = (
+        "INSERT INTO event_rank_snapshots "
+        "(snapshot_date, {extra}event_id, rank, publisher_count, member_count, heat, generated_at) "
+        "VALUES ('2026-11-03', {value}1, :rank, 2, 2, 1.0, :stamp)"
+    )
+    engine = create_engine(db_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO events (id, first_seen_at, last_member_at, created_at, updated_at) "
+                "VALUES (1, :stamp, :stamp, :stamp, :stamp)"
+            ), {"stamp": stamp})
+            conn.execute(text(snapshot.format(extra="", value="")), {"rank": 3, "stamp": stamp})
+    finally:
+        engine.dispose()
+
+    command.upgrade(cfg, "8166665976c4")
+    engine = create_engine(db_url)
+    try:
+        with engine.begin() as conn:
+            assert conn.execute(text("SELECT window_hours, rank FROM event_rank_snapshots")).all() == [(48, 3)]
+            conn.execute(text(snapshot.format(extra="window_hours, ", value="168, ")), {"rank": 1, "stamp": stamp})
+        with pytest.raises(IntegrityError):
+            with engine.begin() as conn:
+                conn.execute(text(snapshot.format(extra="window_hours, ", value="168, ")), {"rank": 2, "stamp": stamp})
+    finally:
+        engine.dispose()
+
+    command.downgrade(cfg, "b248c7a10e31")
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT rank FROM event_rank_snapshots")).all() == [(3,)]
+            assert "window_hours" not in {column["name"] for column in inspect(conn).get_columns("event_rank_snapshots")}
+    finally:
+        engine.dispose()
+    command.upgrade(cfg, "heads")

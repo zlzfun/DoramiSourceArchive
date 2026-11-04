@@ -10292,9 +10292,14 @@ input[type="radio"] {
     background: var(--rd-list-bg);
   }
 
-  /* ── 读者榜单(issue #154):一级目的地,占满源栏/条目列/阅读窗。
-     数字是主信息,卡片只分组不制造仪表盘噪音；详情在宽屏并排、窄屏自然下落。 ── */
+  /* ── 读者榜单(issue #154 起;issue #221 收敛版 2026-11-03:热点事件 · 深度阅读 · 播客精选,设计稿
+     docs/design/issue-221-rankings/converge.html 第 2 节「收敛后」):一级目的地,占满条目列 + 阅读窗,版心 820 居中。
+     三段同一套卡片语法 .rk-row(方案 §3):名次列(宋体齐线数字 + 下方变化)· 主体(标题两行 → 一行摘要 → 一行元信息)·
+     右栏(来源徽标叠放 + 一个度量);行间一条内缩细线 + 留白,不给每张卡底色与阴影。
+     热点事件详情:桌面 = 榜单页内原地换成事件页(.rk-event,版心同列表;2026-11-04 目检由右侧抽屉改来),
+     手机 = 底部层 Sheet(mobile.css);详情正文的 .rk-rep / .rk-latest / .rk-tl 两端共用,手机字号在 mobile.css 改刻度。 ── */
   .rankings-page {
+    --rk-bg: var(--rd-list-bg);
     grid-column: 3 / -1;
     min-width: 0;
     min-height: 0;
@@ -10303,199 +10308,333 @@ input[type="radio"] {
     background: var(--rd-list-bg);
     color: var(--dorami-ink);
   }
+  .rk-wrap { width: min(820px, 100%); margin-inline: auto; }
 
-  .ranking-head,
-  .ranking-axis,
-  .ranking-layout,
-  .ranking-must,
-  .ranking-global,
-  .ranking-coverage-note,
-  .ranking-state {
-    width: min(1080px, 100%);
-    margin-inline: auto;
-  }
-
-  /* 「文章榜 / 播客榜」入口:普通导航行,与来源行同高同语法(issue #184 撤淡紫卡片);
-     选中同样是中性加深一档 */
-  .reader-ranking-entry {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    margin: 8px 12px 2px 10px;
-    padding: 6px 8px;
-    border: 0;
-    border-radius: var(--r-control);
-    background: transparent;
-    color: var(--dorami-ink-2);
-    text-align: left;
-    transition: background var(--motion-fast) var(--motion-ease);
-  }
-  .reader-ranking-entry:hover { background: var(--dorami-hover); color: var(--dorami-ink); }
-  .reader-ranking-entry.is-on { background: var(--dorami-select); color: var(--dorami-ink); }
-  .reader-ranking-entry-ic {
-    width: 20px;
-    height: 20px;
-    flex: none;
-    display: grid;
-    place-items: center;
-    color: var(--dorami-muted);
-  }
-  .reader-ranking-entry-ic svg { width: 15px; height: 15px; }
-  .reader-ranking-entry > span:last-child {
-    flex: 1; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0;
-  }
-  .reader-ranking-entry strong { font-size: 13px; font-weight: 400; }
-  .reader-ranking-entry.is-on strong { font-weight: 600; }
-  .reader-ranking-entry small { color: var(--dorami-faint); font-size: 12px; white-space: nowrap; }
-
+  /* 页头:「榜单」栏名 + 当前段的范围说明一句 · 右侧三段分段 */
   .ranking-head {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
     gap: 20px;
   }
-
+  .rk-head-l { min-width: 0; }
   .ranking-head-note {
     margin-top: 5px;
     color: var(--dorami-muted);
     font-size: 12px;
   }
-
   .ranking-head .reader-seg { flex: none; }
   .ranking-head .reader-seg-btn { display: inline-flex; align-items: center; gap: 5px; }
   .ranking-head .reader-seg-btn svg { width: 14px; height: 14px; }
+  .rk-range { margin-top: 18px; }
 
-  .ranking-axis {
-    display: flex;
-    gap: 6px;
-    margin-top: 20px;
-    padding-bottom: 14px;
-    border-bottom: 1px solid var(--dorami-border-soft);
-  }
-
-  .ranking-axis button {
-    padding: 6px 14px;
-    border-radius: var(--r-pill);
-    color: var(--dorami-muted);
-    font-size: 13px;
-    font-weight: 400;
-    transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
-  }
-
-  @media (hover: hover) { .ranking-axis button:hover { color: var(--dorami-ink); background: var(--dorami-hover); } }
-  /* 选中 = 中性加深一档 + 墨色 + 600(issue #184 全站选中语法,撤 wash 选中块) */
-  .ranking-axis button.is-on { color: var(--dorami-ink); background: var(--dorami-select); font-weight: 600; }
-
-  .ranking-layout {
-    display: grid;
-    grid-template-columns: minmax(280px, 0.8fr) minmax(380px, 1.2fr);
-    gap: 14px;
-    margin-top: 16px;
-  }
-
-  .ranking-tags,
-  .ranking-detail,
-  .ranking-must,
-  .ranking-global { padding: 16px; }
-
-  .ranking-section-head {
-    min-height: 24px;
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 10px;
-  }
-
-  .ranking-section-head > div { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-  .ranking-section-head .card-title { display: inline-flex; align-items: center; gap: 6px; }
-  .ranking-section-head .card-title svg { width: 15px; height: 15px; color: var(--dorami-accent); }
-
-  .ranking-tags ol,
-  .ranking-content-list { margin: 0; padding: 0; list-style: none; }
-
-  .ranking-tag-row {
-    width: 100%;
-    min-height: 42px;
-    display: grid;
-    grid-template-columns: 28px minmax(0, 1fr) auto 32px;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 8px;
-    border-radius: var(--r-control);
-    color: var(--dorami-ink-2);
-    text-align: left;
-  }
-
-  .ranking-tag-row:hover { background: var(--dorami-soft); }
-  .ranking-tag-row.is-on { background: var(--dorami-wash); color: var(--dorami-ink); }
-  .ranking-tag-rank,
-  .ranking-content-rank,
-  .ranking-content-score {
-    font-variant-numeric: tabular-nums;
-  }
-  .ranking-tag-rank { color: var(--dorami-faint); font-size: 12px; }
-  .ranking-tag-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 600; }
-  .ranking-tag-row strong { justify-self: end; font-size: 13px; font-variant-numeric: tabular-nums; }
-  .ranking-move { min-width: 24px; font-size: 12px; text-align: right; }
-  .ranking-move.is-up { color: var(--state-ok); }
-  .ranking-move.is-down { color: var(--state-bad); }
-  .ranking-move.is-flat,
-  .ranking-move.is-new { color: var(--dorami-faint); }
-
-  .ranking-trend {
-    min-height: 54px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    margin: 3px 0 8px;
-    padding: 8px 10px;
-    border-radius: var(--r-control);
-    background: var(--dorami-soft);
-    color: var(--dorami-accent);
-  }
-  .ranking-trend > div { display: flex; flex-direction: column; gap: 2px; }
-  .ranking-trend .section-title { color: var(--dorami-ink-2); font-size: 12px; font-weight: 600; }
-  .ranking-trend svg { width: 160px; height: 42px; overflow: visible; }
-
-  .ranking-content-row {
-    width: 100%;
-    min-height: 52px;
-    display: grid;
-    grid-template-columns: 24px minmax(0, 1fr) 38px;
-    align-items: center;
-    gap: 9px;
-    padding: 7px 8px;
-    border-top: 1px solid var(--dorami-border-soft);
-    text-align: left;
-  }
-  @media (hover: hover) { .ranking-content-row:hover { background: var(--dorami-soft); } }
-  .ranking-content-rank { color: var(--dorami-faint); font-size: 12px; }
-  .ranking-content-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-  .ranking-content-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dorami-ink); font-size: 13px; font-weight: 600; }
-  .ranking-content-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dorami-faint); font-size: 12px; }
-  .ranking-content-score { justify-self: end; color: var(--dorami-accent-ink); font-size: 12px; font-weight: 600; }
-
-  .ranking-must,
-  .ranking-global { margin-top: 14px; }
-  .ranking-empty { margin: 18px 8px; color: var(--dorami-faint); font-size: 12px; line-height: 1.6; }
   .ranking-state { min-height: 44vh; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--dorami-muted); font-size: 13px; }
   .ranking-state svg { width: 17px; height: 17px; }
   .ranking-state.is-error { color: var(--state-bad); }
-  .ranking-coverage-note {
-    margin-top: 14px;
-    padding: 8px 11px;
+  /* 空榜 / 薄榜:一句话,不补位、不拉伸 */
+  .rk-empty { padding: 64px 12px; text-align: center; }
+  .rk-empty p { margin: 0; font-size: 14px; color: var(--dorami-muted); }
+
+  /* ── 共用卡片语法 ── */
+  .rk-list { margin: 10px 0 0; padding: 0; list-style: none; }
+  .rk-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+    column-gap: 14px;
+    align-items: start;
+    padding: 13px 12px 13px 4px;
     border-radius: var(--r-control);
-    background: var(--state-warn-bg);
-    color: var(--state-warn);
+  }
+  /* 行间一条内缩细线(从标题列起),悬停时相邻细线隐去 */
+  .rk-row + .rk-row::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 52px;
+    right: 12px;
+    border-top: 1px solid var(--dorami-border-soft);
+    pointer-events: none;
+  }
+  @media (hover: hover) {
+    .rk-row:hover { background: var(--dorami-hover); }
+    .rk-row:hover::before,
+    .rk-row:hover + .rk-row::before { border-top-color: transparent; }
+  }
+  /* 整行点开:透明命中钮铺满整行,给焦点环与读屏名(点击由行冒泡接住,见下) */
+  .rk-hit {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    padding: 0;
+    border: 0;
+    border-radius: inherit;
+    background: none;
+    cursor: pointer;
+  }
+  .rk-hit:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: -2px; }
+  /* 点击由 <li> 冒泡接住(RankingsPage RankRow),内容照常接指针:名次变化、时间、分数的 title 悬停可见 */
+  .rk-row { cursor: pointer; }
+  .rk-rank,
+  .rk-main,
+  .rk-side { position: relative; }
+
+  /* 名次列:宋体齐线数字(与手机榜单、早报同一种身份线),变化写在下方 */
+  .rk-rank { display: flex; flex-direction: column; align-items: center; gap: 3px; padding-top: 1px; }
+  .rk-num {
+    font-family: var(--font-score);
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 1.1;
+    color: var(--dorami-muted);
+    font-variant-numeric: lining-nums tabular-nums;
+  }
+  .rk-move { font-size: 12px; line-height: 1.3; color: var(--dorami-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .rk-move.is-up { color: var(--state-ok); }
+  .rk-move.is-down { color: var(--state-bad); }
+  /* 「近 2 天」签:wash 底 + accent-ink 字(chip 激活态语法) */
+  .rk-new {
+    display: inline-block;
+    padding: 0 5px;
+    border-radius: var(--r-sm);
+    background: var(--dorami-wash);
+    color: var(--dorami-accent-ink);
     font-size: 12px;
+    font-weight: 600;
+    line-height: 18px;
   }
 
-  @media (max-width: 1120px) {   /* bp-exempt: 榜单桌面两栏的私有断点(1025–1120 单栏),并入 bp-desktop-m 会改桌面观感;版式归 #221 */
-    .ranking-layout { grid-template-columns: 1fr; }
+  /* 主体:标题(两行内)→ 一行摘要 → 一行元信息 */
+  .rk-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .rk-title {
+    margin: 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.45;
+    color: var(--dorami-ink);
+    overflow-wrap: anywhere;
   }
+  .rk-sum {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--dorami-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    /* 摘要一行,行尾渐隐(不用「…」:它恒定落在右下角,会被误认成按钮) */
+    -webkit-mask: linear-gradient(to right, black calc(100% - 3em), transparent);
+    mask: linear-gradient(to right, black calc(100% - 3em), transparent);
+  }
+  .rk-meta {
+    margin: 1px 0 0;
+    display: flex;
+    align-items: baseline;
+    gap: 0 6px;
+    min-width: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--dorami-faint);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .rk-meta > span:first-child { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .rk-meta > span:has(.rk-new) { flex: none; overflow: visible; }
+  .rk-dot { color: var(--dorami-faint); }
+
+  /* 右栏:来源徽标叠放 + 一个带单位的度量(N 家报道 / 内容价值分) */
+  .rk-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; min-width: 64px; padding-top: 2px; }
+  .rk-logos { display: inline-flex; align-items: center; }
+  /* 叠放的描边环与底色同色(压住后一枚的边),徽标自身的细环照留 */
+  .rk-logos .logo-mark { position: relative; box-shadow: 0 0 0 2px var(--rk-bg, var(--dorami-surface)), inset 0 0 0 1px var(--dorami-logo-ring); }
+  .rk-logos .logo-mark + .logo-mark { margin-left: -4px; }
+  /* 叠放时前一枚压在后一枚上(第一枚 = 本条自己的来源 / 第一个发布主体) */
+  .rk-logos .logo-mark:nth-child(1) { z-index: 3; }
+  .rk-logos .logo-mark:nth-child(2) { z-index: 2; }
+  .rk-logos .logo-mark:nth-child(3) { z-index: 1; }
+  .rk-logos-more { margin-left: 4px; font-size: 12px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+  .rk-metric { font-size: 12px; line-height: 1.2; color: var(--dorami-faint); white-space: nowrap; }
+  .rk-metric b { margin-right: 2px; font-size: 15px; font-weight: 600; color: var(--dorami-ink-2); font-variant-numeric: tabular-nums; }
+  /* 内容价值分 = 分数身份线(宋体齐线数字 + AI 渐变分档,颜色由 .ai-grad-text + 档位类给) */
+  .rk-score {
+    font-family: var(--font-score);
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 1;
+    font-variant-numeric: lining-nums tabular-nums;
+  }
+
+  /* ── 热点事件详情(桌面原地事件页 / 手机底部层同一份内容)。2026-11-04 目检修订:抽屉 500 宽局促 → 原地事件页;
+     「来源」节取消;代表报道与最新进展两张卡都整卡可点(「阅读全文」撤掉,卡底只留外链);最新进展标题为主、摘要截两行,排在时间线之前;
+     时间线左侧一条纵线串起每一篇 ── */
+  .rk-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin: 0 0 16px -6px;
+    padding: 4px 10px 4px 4px;
+    border: 0;
+    border-radius: var(--r-control);
+    background: none;
+    font-size: 13px;
+    color: var(--dorami-muted);
+    cursor: pointer;
+  }
+  .rk-back svg { width: 16px; height: 16px; }
+  @media (hover: hover) { .rk-back:hover { background: var(--dorami-hover); color: var(--dorami-ink); } }
+  .rk-back:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: 1px; }
+  .rk-dh { flex: 1; min-width: 0; }
+  .rk-kicker { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
+  .rk-dtitle { margin: 0; font-size: 18px; font-weight: 600; line-height: 1.4; color: var(--dorami-ink); overflow-wrap: anywhere; }
+  .rk-dtitle:focus { outline: none; }   /* 进事件页时程序把焦点放在标题上(读屏先读到这件事),标题本身不可操作 */
+  .rk-dmeta { margin: 6px 0 0; font-size: 12px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+  .rk-event .rk-kicker { font-size: 13px; }
+  .rk-event .rk-dtitle { font-size: 22px; line-height: 1.38; }
+  .rk-event .rk-dmeta { margin-top: 8px; font-size: 13px; }
+  .rk-ebody { display: flex; flex-direction: column; gap: 22px; margin-top: 22px; }
+  .rk-sec-state { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; color: var(--dorami-muted); }
+  .rk-sec-state svg { width: 16px; height: 16px; }
+  .rk-sec-state.is-error { color: var(--state-bad); }
+  .rk-role { font-size: 12px; color: var(--dorami-faint); white-space: nowrap; }
+  /* 两张卡的首行同一种写法:徽标 · 来源名 · 角色 …… 时间(右) */
+  .rk-card-head { display: flex; align-items: center; gap: 8px; min-width: 0; margin: 0; font-size: 13px; color: var(--dorami-ink-2); }
+  .rk-card-head .logo-mark { flex: none; }
+  .rk-card-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rk-card-time { margin-left: auto; flex: none; padding-left: 8px; font-size: 12px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  /* 代表报道卡:整卡可点(命中钮 .rk-hit 铺满,点击由卡接住,同 .rk-row);正文与卡底外链压在命中钮之上 */
+  .rk-rep {
+    position: relative;
+    padding: 14px 16px;
+    border-radius: var(--r-card);
+    background: var(--dorami-soft);
+    cursor: pointer;
+    transition: box-shadow var(--motion-fast) var(--motion-ease);
+  }
+  @media (hover: hover) { .rk-rep:hover { box-shadow: inset 0 0 0 100vmax var(--dorami-hover); } }
+  .rk-rep-body,
+  .rk-rep-foot { position: relative; }
+  .rk-rep-foot { display: flex; justify-content: flex-end; margin: 10px 0 0; }
+  .rk-rep-title { margin: 8px 0 0; font-size: 15px; font-weight: 600; line-height: 1.5; color: var(--dorami-ink); overflow-wrap: anywhere; }
+  .rk-rep-orig { margin: 2px 0 0; font-family: var(--font-serif-latin); font-style: italic; font-weight: 400; font-size: 13px; color: var(--dorami-muted); overflow-wrap: anywhere; }
+  .rk-rep-sum { margin: 8px 0 0; font-size: 13px; line-height: 1.65; color: var(--dorami-ink-2); overflow-wrap: anywhere; }
+  .rk-event :is(.rk-rep, .rk-latest) { padding: 16px 20px; }
+  .rk-event .rk-rep-title { font-size: 16px; }
+  .rk-event .rk-rep-sum { font-size: 14px; line-height: 1.7; }
+  .rk-link { white-space: nowrap; display: inline-flex; align-items: center; gap: 3px; font-size: 13px; color: var(--dorami-muted); text-decoration: none; }
+  .rk-link svg { width: 13px; height: 13px; }
+  @media (hover: hover) { .rk-link:hover { color: var(--dorami-ink); } }
+
+  /* 最新进展:整张卡一个按钮;首行(同代表报道)→ 标题(两行)→ 摘要(两行,淡) */
+  .rk-latest {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+    padding: 14px 16px;
+    border: 1px solid var(--dorami-border);
+    border-radius: var(--r-card);
+    background: none;
+    color: var(--dorami-ink);
+    text-align: left;
+    cursor: pointer;
+    transition: background var(--motion-fast) var(--motion-ease);
+  }
+  @media (hover: hover) { .rk-latest:hover { background: var(--dorami-hover); } }
+  .rk-latest:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: 1px; }
+  .rk-latest-title,
+  .rk-latest-sum {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+  }
+  .rk-latest-title { font-size: 14px; font-weight: 600; line-height: 1.5; color: var(--dorami-ink); }
+  .rk-latest-sum { font-size: 13px; line-height: 1.6; color: var(--dorami-muted); }
+
+  /* 时间线:时刻 · 纵线与圆点 · 来源与标题三列;纵线逐段画在每一行上(行间不留缝,连成一条),
+     首日从日期节点画起,末一篇画到圆点为止;代表报道的圆点用强调色 */
+  .rk-tl,
+  .rk-tl ol { margin: 0; padding: 0; list-style: none; }
+  .rk-tl {
+    --tl-pad: 8px;
+    --tl-time: 40px;
+    --tl-rail: 22px;
+    --tl-x: calc(var(--tl-pad) + var(--tl-time) + var(--tl-rail) / 2);
+  }
+  .rk-tl-daylabel,
+  .rk-tl-day li { position: relative; }
+  .rk-tl-daylabel::before,
+  .rk-tl-day li::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: calc(var(--tl-x) - 0.5px);
+    width: 1px;
+    background: var(--dorami-border);
+  }
+  .rk-tl-day:first-child .rk-tl-daylabel::before { top: 50%; }
+  .rk-tl-day:last-child li:last-child::before { bottom: auto; height: 17px; }
+  .rk-tl-daylabel {
+    display: grid;
+    grid-template-columns: var(--tl-time) var(--tl-rail) minmax(0, 1fr);
+    align-items: center;
+    margin: 0;
+    padding: 14px 0 4px var(--tl-pad);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--dorami-muted);
+  }
+  .rk-tl-day:first-child .rk-tl-daylabel { padding-top: 0; }
+  .rk-tl-daylabel > span:last-child { grid-column: 3; padding-left: 4px; }
+  .rk-tl-node {
+    grid-column: 2;
+    justify-self: center;
+    position: relative;
+    z-index: 1;
+    width: 9px;
+    height: 9px;
+    border: 1.5px solid var(--dorami-faint);
+    border-radius: 50%;
+    background: var(--rk-bg, var(--dorami-surface));
+  }
+  .rk-tl-item {
+    display: grid;
+    grid-template-columns: var(--tl-time) var(--tl-rail) minmax(0, 1fr);
+    width: 100%;
+    padding: 8px 10px 8px var(--tl-pad);
+    border: 0;
+    border-radius: var(--r-control);
+    background: none;
+    color: var(--dorami-ink);
+    text-align: left;
+    cursor: pointer;
+  }
+  @media (hover: hover) { .rk-tl-item:hover { background: var(--dorami-hover); } }
+  .rk-tl-time { font-size: 12px; line-height: 18px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+  .rk-tl-dot {
+    justify-self: center;
+    position: relative;
+    z-index: 1;
+    width: 7px;
+    height: 7px;
+    margin-top: 5.5px;
+    border-radius: 50%;
+    background: var(--dorami-faint);
+  }
+  .rk-tl-item.is-rep .rk-tl-dot { background: var(--dorami-accent); box-shadow: 0 0 0 3px rgba(var(--dorami-accent-rgb), 0.18); }
+  .rk-tl-main { min-width: 0; padding-left: 4px; }
+  .rk-tl-src { display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 18px; color: var(--dorami-muted); }
+  .rk-tl-src .logo-mark { flex: none; }
+  .rk-tl-tag { margin-left: 2px; color: var(--dorami-faint); }
+  .rk-tl-title { display: block; margin-top: 2px; font-size: 13px; line-height: 1.55; color: var(--dorami-ink); overflow-wrap: anywhere; }
+  .rk-event .rk-tl-title { font-size: 14px; }
 
   .reader-disc-head {
     flex: none;
@@ -13944,6 +14083,10 @@ input[type="radio"] {
 .reader-brief-trail-btn small { font-size: 12px; font-weight: 400; color: var(--dorami-muted); font-variant-numeric: tabular-nums; }
 .reader-brief-trail-btn.is-next small { margin-left: 2px; }
 .reader-brief-trail-end { font-size: 12px; font-weight: 400; color: var(--dorami-faint); }
+/* 从榜单返回(issue #221):只有左侧一枚,标签可能是一整句事件标题——按钮可占满整条,标签单行截断 */
+.reader-brief-trail-btn.is-wide { max-width: 100%; }
+.reader-brief-trail-btn.is-wide > span { flex: none; }
+.reader-brief-trail-btn.is-wide small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 阅读进度线锚在栏顶;有返回带时压到带下缘 */
 .reader-brief-trail + .reader-progress { top: 34px; }
 /* ≤1024 时 ReaderWorkspace 经 useCompactLayout 换成移动壳(MobileReader),桌面阅读器壳不渲染;

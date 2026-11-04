@@ -46,6 +46,7 @@ import { briefMenuItems } from '../../utils/briefMenu';
 import PersonalBriefPage from '../PersonalBriefPage';
 import InterestPage from '../InterestPage';
 import RankingsPage from '../RankingsPage';
+import { RANKING_SEGMENTS } from '../../utils/rankings';
 import { usePlayer } from '../player/playerContext';
 import PlayerDock from '../player/PlayerDock';
 import { nowPlayingFor } from '../../utils/playerCore';
@@ -57,10 +58,9 @@ import { EMPTY_ACTION_LABELS, emptyActionKind } from '../../utils/emptyAction';
 // 行内回调不再各自拦截。
 const noopContextMenu = () => {};
 
-// 页头标题位转盘的三组项(拍板 31 B):内容 = 三个容器;订阅 = 订阅 / 兴趣;榜单 = 文章榜 / 播客榜
+// 页头标题位转盘的三组项(拍板 31 B):内容 = 三个容器;订阅 = 订阅 / 兴趣;榜单 = 热点事件 / 深度阅读 / 播客精选(issue #221)
 const VIEW_ITEMS = [['article', '文章'], ['podcast', '播客'], ['social', '社交']];
 const SUBS_ITEMS = [['subs', '订阅'], ['interest', '兴趣']];
-const RANK_ITEMS = [['article', '文章榜'], ['podcast', '播客榜']];
 // 镀层随滚动看的滚动区:内容列表 / 社交流 / 早报 / 榜单 / 订阅
 const CHROME_SCROLLERS = '.m-list, .reader-social-scroll, .bp-sheet, .rankings-page, .m-subs-scroll';
 // 内容 Tab 的条目行(列表 / 社交流)与「页头下沿」:离开时按页头下第一条记位置
@@ -98,6 +98,7 @@ export default function MobileReader({
   const {
     tab, setTab, briefReturn, setBriefReturn, briefRestore, setBriefRestore, briefPlace,
     discoverTab, setDiscoverTab, interestVersion, setInterestVersion, playerHostRef, openPlayingItem,
+    rankingSegment, setRankingSegment, rankingRange, setRankingRange, rankingRestore, setRankingRestore,
   } = view;
   // 全局播放条(issue #199):列表行「播放中 / 已暂停」
   const { state: player } = usePlayer();
@@ -153,21 +154,27 @@ export default function MobileReader({
     // 订阅数(设置页资料卡 / 订阅 Tab「全部」)
     subscribedSources,
   } = rs;
-  const [rankShape, setRankShape] = useState(() => (mode === 'podcast' ? 'podcast' : 'article'));   // 榜单 Tab 页头转盘
   // 按 id 打开一篇(早报卡 / 榜单 / 播放条 / 深链)会把主列表临时收窄到那篇的来源(useReaderState.openArticleById);
   // 手机内容 Tab 没有来源筛选(收窄都在订阅 Tab 的推入页,issue #230 批 3a),离开正文时把这层收窄撤掉,
   // 回到那个容器的订阅聚合——否则内容 Tab 会悄悄只剩一个来源、又没有任何地方写着
   const residualNarrowing = Boolean(activeSourceId || activeTagId);
   const closeArticle = useCallback(() => {
     supersedePendingOpen(); // 返回时作废在途的按 id 打开(早报卡 / 深链),迟到响应不再把页面拉回去
-    if (briefReturn) {
+    if (briefReturn?.from === 'rankings') {
+      // 从榜单点进来的(issue #221):回榜单 Tab,热点事件重开那件事的底部层、列表回原位
+      setRankingRestore(briefReturn);
+      if (briefReturn.segment) setRankingSegment(briefReturn.segment);
+      if (briefReturn.range) setRankingRange(briefReturn.range);
+      setBriefReturn(null);
+      setTab('rankings');
+    } else if (briefReturn) {
       setBriefRestore(briefReturn);
       setBriefReturn(null);
       setTab('brief');
     }
     selectArticle(null);
     if (residualNarrowing) goContainerAll();
-  }, [selectArticle, supersedePendingOpen, briefReturn, setBriefRestore, setBriefReturn, setTab, residualNarrowing, goContainerAll]);
+  }, [selectArticle, supersedePendingOpen, briefReturn, setBriefRestore, setBriefReturn, setRankingRestore, setRankingSegment, setRankingRange, setTab, residualNarrowing, goContainerAll]);
   // 正文页点标签检索(codex 检视 P2):目的地是过滤后的内容列表,不是早报——从早报进来的也丢掉
   // 返回带、落到所属容器 Tab,否则检索结果被早报页盖住看不见。
   // 推入页里读的那篇形态可能与内容 Tab 当前视图不同:检索落在它所属的容器(codex 检视第 1 轮 P1-2;检索条件不动)
@@ -213,6 +220,7 @@ export default function MobileReader({
     supersedePendingOpen(); // 任何主动切 Tab 都作废在途的按 id 打开,迟到响应不再把人拉走
     setBriefReturn(null); // 主动切 Tab = 结束这一程外出
     if (t === 'brief') setBriefRestore(null); // 点 Tab 进早报是新开,不落回旧位
+    if (t === 'rankings') setRankingRestore(null); // 榜单同理
     // 已在内容 Tab 再点「内容」= 回到当前视图的聚合(清来源 / 标签 / 搜索,与桌面视图轨同语义);从别的 Tab 回来保留原状
     if (t === 'content' && contentTab) goView(mode);
     setTab(t);
@@ -592,16 +600,20 @@ export default function MobileReader({
           <>
             <MobileHeader
               lead={avatar}
-              title={<TitleDial items={RANK_ITEMS} value={rankShape} onChange={setRankShape} label="榜单类型" />}
+              title={<TitleDial items={RANKING_SEGMENTS} value={rankingSegment} onChange={setRankingSegment} label="榜单分段" />}
             />
             <RankingsPage
               mobile
               sourceMap={sourceMap}
-              shape={rankShape}
-              onShapeChange={setRankShape}
-              onOpenArticle={async (articleId) => {
+              segment={rankingSegment}
+              range={rankingRange}
+              onRangeChange={setRankingRange}
+              restore={rankingRestore}
+              onOpenArticle={async (articleId, ctx) => {
                 const opened = await openArticleById(articleId, { silent: true });
-                if (opened) setTab(mode);
+                if (!opened) return;
+                setBriefReturn(ctx || null);   // 正文页返回回到榜单(closeArticle)
+                setTab(mode);
               }}
             />
           </>
@@ -851,7 +863,6 @@ export default function MobileReader({
                 : setDiscoverTab(next))}
               shape={discoverShape}
               onShapeChange={setDiscoverShape}
-              onOpenRankings={() => { closeDiscover(); setTab('rankings'); }}
               interestsPanel={personalDigestEnabled ? (
                 <InterestPage
                   mobile

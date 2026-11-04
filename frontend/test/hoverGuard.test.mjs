@@ -14,7 +14,8 @@ const src = path.resolve(here, '../src');
 
 // 冻结于 2026-10-31(issue #230 批 4b;原 248 + 7):存量多在桌面四栏 / 管理面;手机页面实际命中的装饰性悬停已包进守卫,
 // 余下命中手机页面的只有收藏星(M-02)、发现页「已订阅」翻退订(M-03)、公告关闭钮(M-11)与 is-on / disabled 的「悬停复原」规则
-export const BASELINE = { 'index.css': 217, 'mobile.css': 6 };
+// 2026-11-03 issue #221 榜单收敛:标签榜行的悬停与手机榜单的「悬停复原」随旧版式删除,217 / 6 → 216 / 3
+export const BASELINE = { 'index.css': 216, 'mobile.css': 3 };
 
 const GUARD_FEATURE = /\((?:any-)?hover\s*:\s*hover\)|\(pointer\s*:\s*fine\)/;
 

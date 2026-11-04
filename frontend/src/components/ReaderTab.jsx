@@ -31,7 +31,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Rss,
-  BarChart3,
+  ChartColumn,
   LogIn,
 } from 'lucide-react';
 import LogoMark from './LogoMark';
@@ -445,6 +445,8 @@ export default function ReaderTab({
   const [brandFailed, setBrandFailed] = useState(false);
   const {
     briefOpen, setBriefOpen, rankingsOpen, setRankingsOpen,
+    rankingSegment, setRankingSegment, rankingRange, setRankingRange,
+    rankingRestore, setRankingRestore,
     briefReturn, setBriefReturn, briefRestore, setBriefRestore, briefPlace,
     discoverTab, setDiscoverTab, interestVersion, setInterestVersion,
   } = view;
@@ -525,8 +527,9 @@ export default function ReaderTab({
     if (socialView) goView('article');
     setBriefOpen(false);
     leaveBriefTrail();
+    setRankingRestore(null); // 点入口是新开,不落回旧位
     setRankingsOpen(true);
-  }, [closeDiscover, goView, leaveBriefTrail, setBriefOpen, setRankingsOpen, socialView, supersedePendingOpen]);
+  }, [closeDiscover, goView, leaveBriefTrail, setBriefOpen, setRankingRestore, setRankingsOpen, socialView, supersedePendingOpen]);
   const listPlan = useMemo(
     () => buildListPlan(articles, grouping),
     [articles, grouping],
@@ -772,9 +775,20 @@ export default function ReaderTab({
             {short !== label && <span className="reader-vrail-tip">{label}</span>}
           </button>
         ))}
-        {/* 发现:整页源目录(取代源栏内联「发现更多来源」)。与上方三个内容容器
-            语义有别(读内容 vs 找内容),以分隔线分组。 */}
+        {/* 榜单 + 发现:看订阅之外的全站——榜单是全站的热点事件 / 深度阅读 / 播客精选(issue #221 收敛后不再分文章 / 播客,
+            2026-11-04 目检由源栏顶挪到这里,与手机底栏「榜单」同级),发现是整页源目录(取代源栏内联「发现更多来源」)。
+            与上方三个内容容器语义有别(读订阅 vs 看全站),以分隔线分组。 */}
         <span className="reader-vrail-divider" aria-hidden="true" />
+        <button
+          type="button"
+          aria-label="榜单"
+          aria-pressed={rankingsOpen}
+          onClick={openRankings}
+          className={`reader-vrail-btn ${rankingsOpen ? 'is-on' : ''}`}
+        >
+          <ChartColumn className="h-[18px] w-[18px]" />
+          <span className="reader-vrail-label">榜单</span>
+        </button>
         <button
           type="button"
           aria-label={onboardingRequired && !discover ? '发现(兴趣待设置)' : '发现'}
@@ -879,22 +893,7 @@ export default function ReaderTab({
           )}
         </div>
 
-        {!socialView && (
-          <button
-            type="button"
-            aria-pressed={rankingsOpen}
-            className={`reader-ranking-entry ${rankingsOpen ? 'is-on' : ''}`}
-            onClick={openRankings}
-          >
-            <span className="reader-ranking-entry-ic"><BarChart3 aria-hidden="true" /></span>
-            <span>
-              <strong>{podcastView ? '播客榜' : '文章榜'}</strong>
-              <small>近 7 天标签趋势</small>
-            </span>
-          </button>
-        )}
-
-        {/* 榜单打开时源列表保持在场。点源、标签或「发现更多来源」会先关掉榜单再进入，
+        {/* 榜单打开时源列表保持在场(入口在视图轨,2026-11-04 目检由源栏顶挪过去)。点源、标签或「发现更多来源」会先关掉榜单再进入，
             与视图轨文章/播客/发现按钮同一套 setRankingsOpen(false)。 */}
         <div className="reader-source-scroll">
           {sourcesLoading ? (
@@ -1028,14 +1027,20 @@ export default function ReaderTab({
         />
       )}
 
+      {/* 榜单(issue #221):段与时间范围在 ReaderWorkspace 的 view 里,与视图轨(文章 / 播客)无关 */}
       {rankingsOpen && (
         <RankingsPage
           sourceMap={sourceMap}
-          initialShape={podcastView ? 'podcast' : 'article'}
-          onShapeChange={goView}
-          onOpenArticle={async (articleId) => {
+          segment={rankingSegment}
+          onSegmentChange={setRankingSegment}
+          range={rankingRange}
+          onRangeChange={setRankingRange}
+          restore={rankingRestore}
+          onOpenArticle={async (articleId, ctx) => {
             const opened = await openArticleById(articleId, { silent: true });
-            if (opened) setRankingsOpen(false);
+            if (!opened) return;
+            setRankingsOpen(false);
+            setBriefReturn(ctx || null);   // 与早报同一条外出返回带:阅读窗顶「返回热点事件 / 返回榜单」
           }}
         />
       )}
@@ -1069,7 +1074,6 @@ export default function ReaderTab({
             : setDiscoverTab(next))}
           shape={discoverShape}
           onShapeChange={setDiscoverShape}
-          onOpenRankings={openRankings}
           interestsPanel={personalDigestEnabled ? (
             <InterestPage
               embedded
@@ -1367,8 +1371,29 @@ export default function ReaderTab({
       {!pageOpen && !discover && !socialView && (
       <section className="reader-col reader-col-read">
         {/* 早报外出返回带(issue #23 三稿):从早报点进来的这一程里常驻阅读窗顶部,不随文章切换重绘。
-            左=返回我的早报(落回同一版同一卷动位置),右=早报下一条(顺着本版读完不必回早报)。 */}
-        {briefReturn && (() => {
+            左=返回我的早报(落回同一版同一卷动位置),右=早报下一条(顺着本版读完不必回早报)。
+            从榜单点进来的(issue #221)同一条带:只有左侧返回——热点事件回到那件事的事件页与读到的位置,深度阅读 / 播客精选回到那一段原位置 */}
+        {briefReturn?.from === 'rankings' && (
+          <nav className="reader-brief-trail" aria-label="来自榜单">
+            <button
+              type="button"
+              className="reader-brief-trail-btn is-wide"
+              onClick={() => {
+                supersedePendingOpen();
+                setRankingRestore(briefReturn);
+                if (briefReturn.segment) setRankingSegment(briefReturn.segment);
+                if (briefReturn.range) setRankingRange(briefReturn.range);
+                setBriefReturn(null);
+                setRankingsOpen(true);
+              }}
+            >
+              <ChevronLeft aria-hidden="true" />
+              <span>{briefReturn.event ? '返回热点事件' : '返回榜单'}</span>
+              {briefReturn.label && <small>{briefReturn.label}</small>}
+            </button>
+          </nav>
+        )}
+        {briefReturn && briefReturn.from !== 'rankings' && (() => {
           const seq = briefReturn.sequence || [];
           const next = seq[briefReturn.index + 1] || null;
           return (

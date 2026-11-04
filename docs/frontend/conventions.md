@@ -522,7 +522,7 @@ issue #230 起 `Modal` 与移动层都经层原语 `components/layer/useLayer`(�
   `MEDIA` / `mediaMatches()`,壳开关只用 `useCompactLayout`。定义在 `index.css` 顶部 `@custom-variant bp-*`,与 JS 逐字一致
   (`test/breakpoints.test.mjs`)。不用 `@custom-media`:它只在生产构建里展开,开发服务器原样输出。
 - 不写裸 `@media (max-width / min-width …)`(守卫拦);确属私有的例外在同一行写 `bp-exempt:` 注记与归属
-  (现仅榜单桌面 1120 → #221,并入命名档会改观感;登录页 880 已随 #214 重制并入命名档:单列 = bp-phone 与竖屏 bp-tablet)。JS 不手写宽度媒体查询字符串。
+  (现已清零:榜单桌面 1120 随 #221 收敛版删除,登录页 880 已随 #214 重制并入命名档:单列 = bp-phone 与竖屏 bp-tablet)。JS 不手写宽度媒体查询字符串。
 - 容器查询(早报 960 / 680 / 420、播放条 640 / 900)按容器宽排版,不属断点表;Tailwind 默认 `sm/md/lg/xl:` 只留在管理面存量。
 - 平板档(批 4a 落地):`bp-tablet`(768–1024,含横屏手机)仍是手机壳,内容收进 `--m-col`(680)版心居中——贴左右的几何一律用
   `--m-side-l / -r`(= max(安全区, 版心外留白),手机竖屏只剩安全区),页头、底栏、坞、底页、滚动区都随版心,不拉满宽。
@@ -571,7 +571,7 @@ issue #230 起 `Modal` 与移动层都经层原语 `components/layer/useLayer`(�
 新的收窄入口进推入页,不回到内容 Tab 挂筛选。推入页里读的那篇形态可能与主列表容器不同:从正文发起标签检索、或换版式进桌面时,
 主列表先切到它的容器(`alignModeToArticle`;进桌面保留右栏)。
 正文入栈从被点的卡片矩形展开、返回收回原卡(`utils/readTransition`,起点认 `[data-read-origin], .reader-entry, .bp-item, .bp-head,
-.ranking-content-row`):**新增推入页 / 列表里的可点卡片若不是这几类,要标 `data-read-origin`**,否则正文退回普通推入、返回时也收不回原卡。
+.rk-row`(榜单三段的行,#221)):**新增推入页 / 列表里的可点卡片若不是这几类,要标 `data-read-origin`**,否则正文退回普通推入、返回时也收不回原卡。
 
 **层原语(`components/layer/`)**——移动端的层只有四种,外加 Modal 外壳,全部经 `useLayer`(缺省值表在 `utils/layerKinds.js`):
 
