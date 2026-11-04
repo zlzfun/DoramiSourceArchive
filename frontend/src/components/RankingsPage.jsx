@@ -232,7 +232,8 @@ function EventDetailHead({ detail, titleRef = null }) {
 
 // 事件详情正文(拍板 9;2026-11-04 目检修订):代表报道固定首位 → 最新进展(一张卡,标题为主、摘要截两行)→ 时间线
 // (按北京时间分日,左侧纵线串起每一篇)。「来源」节取消:谁报道了在时间线里逐篇可见,家数在抬头。
-// 「阅读全文」是安静的文字动作(与卡片同一套墨色),不用实心主按钮
+// 三节同一种小节标题(左上,卡外);两张卡首行同一种写法:来源在左、时间在右。
+// 「阅读全文」是安静的文字动作(站内,卡底左),「官方原文 ↗」是外链(卡底右),不挤在一起
 function EventDetailBody({ detail, sourceMap, preferChinese, onOpenArticle }) {
   if (detail.status === 'loading') {
     return <p className="rk-sec-state"><Loader2 className="animate-spin" aria-hidden="true" />详情加载中…</p>;
@@ -253,32 +254,35 @@ function EventDetailBody({ detail, sourceMap, preferChinese, onOpenArticle }) {
   return (
     <>
       {rep && (
-        <section className="rk-sec rk-rep" aria-label="代表报道">
-          <p className="rk-rep-src">
-            <SourceLogo sourceMap={sourceMap} sourceId={rep.source_id} name={rep.source_name} size="s20" />
-            <span className="rk-rep-name">{rep.source_name}</span>
-            {ROLE_LABEL[rep.source_role] && <span className="rk-role">{ROLE_LABEL[rep.source_role]}</span>}
-            <span className="rk-card-k">代表报道</span>
-          </p>
-          <p className="rk-rep-title" lang={latinLang(repTitle.title)}>{repTitle.title}</p>
-          {repTitle.orig && <p className="rk-rep-orig" lang={latinLang(repTitle.orig)}>{repTitle.orig}</p>}
-          {repSummary && <p className="rk-rep-sum" lang={latinLang(repSummary)}>{repSummary}</p>}
-          <div className="rk-rep-actions">
-            <button type="button" className="rk-read" data-read-origin="" onClick={() => open(rep.article_id)}>
-              阅读全文<ChevronRight aria-hidden="true" />
-            </button>
-            {rep.url && (
-              <a className="rk-link" href={rep.url} target="_blank" rel="noopener noreferrer">
-                {rep.source_role === 'official' ? '官方原文' : '原文'}<ArrowUpRight aria-hidden="true" />
-              </a>
-            )}
-            {repTime && <time className="rk-rep-time" dateTime={repTime}>{beijingStamp(repTime)}</time>}
+        <section className="rk-sec" aria-label="代表报道">
+          <h3 className="drawer-sec-title">代表报道</h3>
+          <div className="rk-rep">
+            <p className="rk-card-head">
+              <SourceLogo sourceMap={sourceMap} sourceId={rep.source_id} name={rep.source_name} size="s18" />
+              <span className="rk-card-name">{rep.source_name}</span>
+              {ROLE_LABEL[rep.source_role] && <span className="rk-role">{ROLE_LABEL[rep.source_role]}</span>}
+              {repTime && <time className="rk-card-time" dateTime={repTime}>{beijingStamp(repTime)}</time>}
+            </p>
+            <p className="rk-rep-title" lang={latinLang(repTitle.title)}>{repTitle.title}</p>
+            {repTitle.orig && <p className="rk-rep-orig" lang={latinLang(repTitle.orig)}>{repTitle.orig}</p>}
+            {repSummary && <p className="rk-rep-sum" lang={latinLang(repSummary)}>{repSummary}</p>}
+            <div className="rk-rep-actions">
+              <button type="button" className="rk-read" data-read-origin="" onClick={() => open(rep.article_id)}>
+                阅读全文<ChevronRight aria-hidden="true" />
+              </button>
+              {rep.url && (
+                <a className="rk-link" href={rep.url} target="_blank" rel="noopener noreferrer">
+                  {rep.source_role === 'official' ? '官方原文' : '原文'}<ArrowUpRight aria-hidden="true" />
+                </a>
+              )}
+            </div>
           </div>
         </section>
       )}
 
       {latest && (
         <section className="rk-sec" aria-label="最新进展">
+          <h3 className="drawer-sec-title">最新进展</h3>
           <button
             type="button"
             className="rk-latest"
@@ -286,12 +290,11 @@ function EventDetailBody({ detail, sourceMap, preferChinese, onOpenArticle }) {
             aria-label={`最新进展：${latestTitle}，${latest.source_name || ''}，打开`}
             onClick={() => open(latest.article_id)}
           >
-            <span className="rk-latest-src">
-              <SourceLogo sourceMap={sourceMap} sourceId={latest.source_id} name={latest.source_name} size="s15" />
-              <span className="rk-latest-name">{latest.source_name}</span>
-              <span className="rk-dot" aria-hidden="true">·</span>
-              <RelTime value={memberTime(latest)} />
-              <span className="rk-card-k">最新进展</span>
+            <span className="rk-card-head">
+              <SourceLogo sourceMap={sourceMap} sourceId={latest.source_id} name={latest.source_name} size="s18" />
+              <span className="rk-card-name">{latest.source_name}</span>
+              {ROLE_LABEL[latest.source_role] && <span className="rk-role">{ROLE_LABEL[latest.source_role]}</span>}
+              <RelTime className="rk-card-time" value={memberTime(latest)} />
             </span>
             <span className="rk-latest-title" lang={latinLang(latestTitle)}>{latestTitle}</span>
             {latest.summary && <span className="rk-latest-sum" lang={latinLang(latest.summary)}>{latest.summary}</span>}

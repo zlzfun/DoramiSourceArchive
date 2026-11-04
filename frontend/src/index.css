@@ -10534,18 +10534,20 @@ input[type="radio"] {
   .rk-sec-state svg { width: 16px; height: 16px; }
   .rk-sec-state.is-error { color: var(--state-bad); }
   .rk-role { font-size: 12px; color: var(--dorami-faint); white-space: nowrap; }
-  .rk-card-k { margin-left: auto; flex: none; font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
+  /* 两张卡的首行同一种写法:徽标 · 来源名 · 角色 …… 时间(右) */
+  .rk-card-head { display: flex; align-items: center; gap: 8px; min-width: 0; margin: 0; font-size: 13px; color: var(--dorami-ink-2); }
+  .rk-card-head .logo-mark { flex: none; }
+  .rk-card-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rk-card-time { margin-left: auto; flex: none; padding-left: 8px; font-size: 12px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
   .rk-rep { padding: 14px 16px; border-radius: var(--r-card); background: var(--dorami-soft); }
-  .rk-rep-src { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; color: var(--dorami-ink-2); }
-  .rk-rep-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .rk-rep-title { margin: 10px 0 0; font-size: 15px; font-weight: 600; line-height: 1.5; color: var(--dorami-ink); overflow-wrap: anywhere; }
+  .rk-rep-title { margin: 8px 0 0; font-size: 15px; font-weight: 600; line-height: 1.5; color: var(--dorami-ink); overflow-wrap: anywhere; }
   .rk-rep-orig { margin: 2px 0 0; font-family: var(--font-serif-latin); font-style: italic; font-weight: 400; font-size: 13px; color: var(--dorami-muted); overflow-wrap: anywhere; }
   .rk-rep-sum { margin: 8px 0 0; font-size: 13px; line-height: 1.65; color: var(--dorami-ink-2); overflow-wrap: anywhere; }
-  .rk-event .rk-rep { padding: 16px 20px; }
+  .rk-event :is(.rk-rep, .rk-latest) { padding: 16px 20px; }
   .rk-event .rk-rep-title { font-size: 16px; }
   .rk-event .rk-rep-sum { font-size: 14px; line-height: 1.7; }
-  .rk-rep-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-top: 12px; }
+  .rk-rep-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 16px; margin-top: 12px; }
   .rk-rep-actions > * { white-space: nowrap; }
   .rk-read {
     display: inline-flex;
@@ -10564,15 +10566,14 @@ input[type="radio"] {
   .rk-link { display: inline-flex; align-items: center; gap: 3px; font-size: 13px; color: var(--dorami-muted); text-decoration: none; }
   .rk-link svg { width: 13px; height: 13px; }
   @media (hover: hover) { .rk-link:hover { color: var(--dorami-ink); } }
-  .rk-rep-time { margin-left: auto; font-size: 12px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
 
-  /* 最新进展:整张卡一个按钮;来源行 → 标题(两行)→ 摘要(两行,淡) */
+  /* 最新进展:整张卡一个按钮;首行(同代表报道)→ 标题(两行)→ 摘要(两行,淡) */
   .rk-latest {
     display: flex;
     flex-direction: column;
-    gap: 5px;
+    gap: 6px;
     width: 100%;
-    padding: 12px 16px 14px;
+    padding: 14px 16px;
     border: 1px solid var(--dorami-border);
     border-radius: var(--r-card);
     background: none;
@@ -10583,9 +10584,6 @@ input[type="radio"] {
   }
   @media (hover: hover) { .rk-latest:hover { background: var(--dorami-hover); } }
   .rk-latest:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: 1px; }
-  .rk-latest-src { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; color: var(--dorami-muted); }
-  .rk-latest-src :is(.logo-mark, time) { flex: none; }
-  .rk-latest-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rk-latest-title,
   .rk-latest-sum {
     display: -webkit-box;
