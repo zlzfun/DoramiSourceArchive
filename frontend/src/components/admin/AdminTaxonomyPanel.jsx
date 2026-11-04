@@ -15,6 +15,7 @@ import { Kpi, KpiState } from './Kpi';
 import StaleNotice from './StaleNotice';
 import TaxonomyLedger from './TaxonomyLedger';
 import { formatStamp } from './adminUtils';
+import { opsBlockId } from '../../utils/opsNav';
 
 const FLAG_META = {
   article_analysis_enabled: ['文章分析', '关闭只停止创建与消费分析任务，不删已有结果'],
@@ -154,8 +155,8 @@ export default function AdminTaxonomyPanel({ showToast, days = 7, refreshTick = 
 
   return (
     <div>
-      {/* ══ 分析链路 ══ */}
-      <div className="zone-head zone-head-first">
+      {/* ══ 分析链路 ══(issue #114:三段各是一个可深链板块)*/}
+      <div className="zone-head zone-head-first ops-block" id={opsBlockId('analysis', 'metrics')} tabIndex={-1}>
         <span className="zone-title">分析链路</span>
         <span className="zone-hint">近 {days} 天</span>
         {config.data && <StaleNotice status={config.status} error={config.error} onRetry={loadConfig} label="分析配置" />}
@@ -212,11 +213,13 @@ export default function AdminTaxonomyPanel({ showToast, days = 7, refreshTick = 
           <ScoreHistogram histogram={analysis.score_histogram} windowDays={metrics.data.window_days} total={histogramTotal} />
         )}
 
-        <FullAnalysisBackfillCard showToast={showToast} refreshTick={refreshTick} />
+        <div id={opsBlockId('analysis', 'backfill')} className="ops-block" tabIndex={-1}>
+          <FullAnalysisBackfillCard showToast={showToast} refreshTick={refreshTick} />
+        </div>
       </div>
 
       {/* ══ 标签治理 ══ */}
-      <div className="zone-head">
+      <div className="zone-head ops-block" id={opsBlockId('analysis', 'catalog')} tabIndex={-1}>
         <span className="zone-title">标签治理</span>
         {gov && <StaleNotice status={taxonomyState.status} error={taxonomyState.error} onRetry={loadTaxonomyState} label="目录版本" />}
         {gov?.publish_blockers?.length > 0 && !(gov.active_version > 0) && (

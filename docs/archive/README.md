@@ -5,6 +5,10 @@
 > `docs/frontend/conventions.md` / `docs/sources/curation_policy.md` 等活跃文档。
 > 按「故事」分组索引;文内常含 ☐/☑ 进度符,均为当时状态。
 
+## 运维管理信息架构(2026-11,issue #114)
+
+- [issue-114-admin-ia.md](./issue-114-admin-ia.md) — 五档 segmented 平铺 → 首页即目录(12 列不等大 bento,样页 v4「A 精修」)+ 8 个满幅功能页、面包屑横切与板块深链;只读聚合端点 `GET /api/admin/home`;拍板记录与默认处理表(§1)、Codex 两轮交叉检视(§9);PR #260 合入、待发布;归属规则已回流 `architecture/admin-ops.md`。
+
 ## 榜单收敛:热点事件 · 深度阅读 · 播客精选(2026-11,issue #221)
 
 - [issue-221-rankings-unify.md](./issue-221-rankings-unify.md) — 读者面 13 个列表收成三段;生产读者接口实拉的现状与收敛论证(§0)、拍板记录(§4,含目检三轮修订第 12 项:原地事件页、时间线纵线、两张整卡、返回带、入口挪到视图轨)、接口改动(事件榜 7 天 / 快照按窗口 / picks 新端点,§5)、Codex 两轮交叉检视(§7);PR #259,待发布。

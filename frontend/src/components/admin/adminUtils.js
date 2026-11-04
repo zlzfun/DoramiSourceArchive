@@ -21,6 +21,7 @@ export const PURPOSE_LABELS = {
   article_ondemand: '文章·点播',
   article_ondemand_narration: '文章·点播旁白',
   taxonomy_bootstrap: '标签·目录初始化',
+  event_assignment: '事件·归并', // issue #121 事件层:新文章归入事件的模型判定(系统用途)
   source_config: '节点·配置',
   detail_profile: '节点·详情',
 };

@@ -190,6 +190,11 @@ export function fetchAdminAccountGrowth() {
   return request('/admin/account-growth', { errorMsg: '获取账户增长失败' });
 }
 
+// 运维首页聚合(issue #114):逐日活跃账户 + 窗口内各源阅读排行 + 全量分析回填失败汇总;聚合口径、全体管理员可见。
+export function fetchAdminHome(days = 30, top = 8) {
+  return request(`/admin/home?days=${enc(days)}&top=${enc(top)}`, { errorMsg: '获取运维首页失败' });
+}
+
 export function fetchAccountActivity(username, days = 30) {
   return request(`/admin/accounts/${enc(username)}/activity?days=${enc(days)}`, { errorMsg: '获取用户活动详情失败' });
 }

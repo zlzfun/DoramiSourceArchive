@@ -30,6 +30,7 @@ import { useRunningProgress } from './hooks/useRunningProgress';
 import { usePolling } from './hooks/usePolling';
 import { useCompactLayout } from './hooks/useCompactLayout';
 import { deepLinkArticleId } from './utils/shareLink';
+import { formatOpsPath, parseOpsPath } from './utils/opsNav';
 import { clearPlayerSession } from './utils/playerCore';
 import { LOGIN_REQUIRED_EVENT } from './utils/loginPrompt';
 import { authQueue, decideAuthExpired } from './utils/authSession';
@@ -74,8 +75,9 @@ const ALL_TABS = ['reader', 'data', 'fetch', 'runs', 'brief', 'admin'];
 const FEEDBACK_UNREAD_POLL_MS = 5 * 60 * 1000; // 反馈回复角标轮询:回复非即时通讯,低频足够
 // runs 的双视图已随运行波(调度台)退役:旧书签 #/runs/history、#/runs/jobs 在
 // hashToRoute 里因 runs 不再是 SUBVIEW 而自然归一到 #/runs,无需特判。
-const TAB_DEFAULT_VIEW = { fetch: 'catalog' };
-const SUBVIEW_TABS = new Set(['fetch']);
+// 运维管理(issue #114)的子视图 = 页 / 板块路径(`#/admin/<页>/<板块>`),空串 = 首页;解析与校验在 utils/opsNav。
+const TAB_DEFAULT_VIEW = { fetch: 'catalog', admin: '' };
+const SUBVIEW_TABS = new Set(['fetch', 'admin']);
 
 // 运行能力的非乐观初始/重置值：能力未知（未登录 / 登出 / 会话过期）时按「都未启用」，
 // 避免在 fetchRuntimeInfo 返回前把 collector 界面闪给读者。初始化与两处重置共用同一形状，
@@ -108,7 +110,7 @@ function writeStoredSurface(value) {
 }
 
 function defaultViews() {
-  return { fetch: 'catalog' };
+  return { fetch: 'catalog', admin: '' };
 }
 
 function routeToHash(tab, views) {
@@ -122,6 +124,8 @@ function hashToRoute(hash) {
   if (parts[0] === 'mcp') parts[0] = 'brief';
   const tab = ALL_TABS.includes(parts[0]) ? parts[0] : 'data';
   let view = SUBVIEW_TABS.has(tab) ? (parts[1] || TAB_DEFAULT_VIEW[tab]) : null;
+  // 运维页的视图是两段路径(页 / 板块);未知页归一到首页,未知板块只留页。
+  if (tab === 'admin') view = formatOpsPath(parseOpsPath(parts.slice(1).join('/')));
   // 已下线的子视图归一到默认视图，兼容陈旧书签：#/fetch/groups（「采集范围」，实体简化阶段 1 移除）。
   if (tab === 'fetch' && view === 'groups') view = TAB_DEFAULT_VIEW.fetch;
   return { tab, view };
@@ -130,7 +134,7 @@ function hashToRoute(hash) {
 function navFromHash() {
   const r = typeof window !== 'undefined' && window.location.hash ? hashToRoute(window.location.hash) : { tab: 'data', view: null };
   const views = defaultViews();
-  if (SUBVIEW_TABS.has(r.tab) && r.view) views[r.tab] = r.view;
+  if (SUBVIEW_TABS.has(r.tab)) views[r.tab] = r.view || TAB_DEFAULT_VIEW[r.tab];
   return { tab: r.tab, views, focus: null };
 }
 
@@ -330,6 +334,11 @@ export default function App() {
 
   const goTab = useCallback((tab, options = {}) => {
     const cur = navRef.current;
+    // 已在运维功能页时再点左轨「运维」= 回运维首页(issue #114:首页即目录)。
+    if (cur.tab === 'admin' && tab === 'admin' && cur.views.admin && !options.replace) {
+      commitNav({ tab, views: { ...cur.views, admin: '' }, focus: null });
+      return;
+    }
     if (cur.tab === tab && !options.replace) return; // 点击当前标签：不重复入栈
     commitNav({ tab, views: cur.views, focus: null }, options);
   }, [commitNav]);
@@ -348,13 +357,15 @@ export default function App() {
 
   const openAdminPodcastQuota = useCallback(() => {
     setSettingsOpen(false);
-    jumpWithFocus('admin', null, {
+    // 视图写进地址(#/admin/podcast/asr);focus 让「已停在同一板块」时也重新落位高亮。
+    jumpWithFocus('admin', 'podcast/asr', {
       tab: 'admin',
-      payload: { sub: 'content', zone: 'podcast-asr-quota' },
+      payload: { page: 'podcast', block: 'asr' },
     });
   }, [jumpWithFocus]);
 
   const setFetchView = useCallback((v) => goView('fetch', v), [goView]);
+  const setAdminView = useCallback((v) => goView('admin', v), [goView]);
 
   const markArticlesDirty = useCallback(() => setArticlesDirty(true), []);
   const clearArticlesDirty = useCallback(() => setArticlesDirty(false), []);
@@ -414,7 +425,8 @@ export default function App() {
       if (!route) {
         const h = hashToRoute(window.location.hash);
         const views = { ...navRef.current.views };
-        if (SUBVIEW_TABS.has(h.tab) && h.view) views[h.tab] = h.view;
+        // 运维首页的视图是空串,也要写回(否则从功能页地址栏退回 #/admin 会停在上一页)。
+        if (SUBVIEW_TABS.has(h.tab)) views[h.tab] = h.view || TAB_DEFAULT_VIEW[h.tab];
         route = { tab: h.tab, views, focus: null };
       }
       // 深链取走后把这条历史的地址改回常规路由(issue #230 批 4a,批 3a 观察):否则读完「返回列表」(层的程序性回退)
@@ -1184,6 +1196,8 @@ export default function App() {
                   currentUsername={authState.user?.username}
                   rootAdmin={!!runtimeInfo.root_admin}
                   onRefreshRuntime={refreshRuntime}
+                  view={nav.views.admin}
+                  setView={setAdminView}
                   pendingFocus={pendingFocus?.tab === 'admin' ? pendingFocus.payload : null}
                   onPendingFocusApplied={clearPendingFocus}
                   onOpenCredentials={() => openSettings('credentials')}

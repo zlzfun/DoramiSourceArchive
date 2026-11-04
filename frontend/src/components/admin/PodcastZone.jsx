@@ -38,6 +38,7 @@ import PodcastAudioTable, { PODCAST_AUDIO_PAGE_SIZE } from './PodcastAudioTable'
 import PodcastEpisodeDrawer from './PodcastEpisodeDrawer';
 import PodcastTasksTable, { PODCAST_TASKS_PAGE_SIZE } from './PodcastTasksTable';
 import StaleNotice from './StaleNotice';
+import { opsBlockId } from '../../utils/opsNav';
 
 const TASK_FILTERS_INIT = { q: '', stage: '', verdict: '', tts: '', sort: 'publish', order: 'desc', page: 1 };
 const AUDIO_FILTERS_INIT = { q: '', status: '', sort: 'created', order: 'desc', page: 1 };
@@ -338,8 +339,9 @@ export default function PodcastZone({ showToast, refreshTick = 0 }) {
 
   return (
     <>
-      <div className="zone-head">
-        <span className="zone-title">播客</span>
+      {/* issue #114:播客是独立功能页,页名已在面包屑里,区头改称「概览」并作为 overview 板块锚点 */}
+      <div className="zone-head zone-head-first ops-block" id={opsBlockId('podcast', 'overview')} tabIndex={-1}>
+        <span className="zone-title">概览</span>
         {statsData?.storage_pressure && <span className="stamp stamp-bad">存储容量保护中</span>}
         {statsData && <StaleNotice status={stats.status} error={stats.error} onRetry={() => loadStats()} label="音频统计" />}
         {quotaData && <StaleNotice status={quota.status} error={quota.error} onRetry={() => loadQuota()} label="ASR 配额" />}
@@ -409,7 +411,7 @@ export default function PodcastZone({ showToast, refreshTick = 0 }) {
         </section>
 
         <section
-          id="admin-podcast-asr-quota"
+          id={opsBlockId('podcast', 'asr')}
           tabIndex="-1"
           className="surface-card rounded-[var(--r-card)]"
           aria-label="ASR 配额策略"
@@ -513,6 +515,7 @@ export default function PodcastZone({ showToast, refreshTick = 0 }) {
           </button>
         </section>
 
+        <div id={opsBlockId('podcast', 'tasks')} className="ops-block" tabIndex={-1}>
         <PodcastTasksTable
           state={tasks}
           filters={taskFilters}
@@ -525,7 +528,9 @@ export default function PodcastZone({ showToast, refreshTick = 0 }) {
           running={running}
           onRetryLoad={() => loadTasks(taskQuery)}
         />
+        </div>
 
+        <div id={opsBlockId('podcast', 'audio')} className="ops-block" tabIndex={-1}>
         <PodcastAudioTable
           state={audio}
           stats={statsData}
@@ -540,6 +545,7 @@ export default function PodcastZone({ showToast, refreshTick = 0 }) {
           gcBusy={gcBusy}
           onRetryLoad={() => loadAudio(audioQuery)}
         />
+        </div>
       </div>
 
       <PodcastEpisodeDrawer

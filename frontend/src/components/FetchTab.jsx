@@ -937,7 +937,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
             </dl>
 
             <p className="inspector-hint">
-              订阅人数、停用与删除等治理动作在 运维管理 → 内容 → 用户自定源。
+              订阅人数、停用与删除等治理动作在 运维管理 → 自定源。
             </p>
           </div>
         </>

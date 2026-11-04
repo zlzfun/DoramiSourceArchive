@@ -11,6 +11,8 @@
 
 ## 年表(一行一波;自 `CLAUDE.md` 迁入 2026-10-21,**新波次在此加一行**,L0 不再逐波改)
 
+- **运维管理信息架构重设计(issue #114,PR #260,2026-11-04 目检放行、已合入待发布)**:五档 segmented 平铺 → **首页即目录**(不等大 bento 磁贴,样页 v4「A 精修」)+ **8 个满幅功能页**(面包屑横切、`#/admin/<页>/<板块>` 深链落位);新增只读聚合端点 `GET /api/admin/home`(逐日活跃账户 / 窗口内各源阅读 / 回填失败汇总,用户拍板突破原「不改后端」边界);`AdminOpsTab.jsx` 1603 行拆成外壳 + `admin/pages/*`;顺修 AI 用途缺「事件·归并」、播客 `<strong>` 字重 900、开关板标签折行、X API 超预算数字不变红。样页 `docs/design/issue-114-admin-ia/`,方案 `docs/archive/issue-114-admin-ia.md`。
+
 - **榜单收敛:热点事件 · 深度阅读 · 播客精选(#221,PR #259,2026-11-04 用户目检放行,待发布)**:读者面 13 个列表收成三段;事件榜默认 7 天可切近 2 天、快照按窗口、名次比今早 07:00;新端点 `GET /api/reader/rankings/picks`(深度阅读与早报同口径:论文 / 教程 / 观点 / 汇编,内容价值 ≥ 7.0;播客精选 ≥ 7.5);标签三轴 / 30 日趋势 / 全局高分榜 / 必读必听撤出读者面。迁移 `8166665976c4`。沿用 `3.67.4-alpha`,未发布。
 
 - **播客速读、标签与导读筛选（#245，2026-11-03，用户目检与检视通过，待合入）**：短摘要统一「AI 速读」，分析阶段留管理台；保留优质与导读标签，书本/耳机表示可读/可听，无导读不挂标签。搜索新增导读可用性筛选。沿用 `3.67.4-alpha`，代码已提交，未合入或发布。
@@ -65,6 +67,20 @@
 - **3.58–3.60(2026-09-15–19)**:运维面播客与分析标签重构(#76)/ 移动端读者 E2E(#91)/ 同步修复(#96 / #99)/ PWA 主屏幕安装(#100)/ 弹窗遮罩关闭判定(#104)/ OSS 持久存储与自动备份(#109)/ 聚焦环入 base 层(#108)/ 发现页按形态批量订阅(#113)/ **GitHub Release 自动部署流水线(#102,v3.60.0 首发、v3.60.1 闭环)**:tag 推上去 → 自动建 Release → 串联 `deploy.yml` 停在 Environment `production` 等批准 → SSH forced command 触发生产机仓库外 launcher/worker → 目标 tag 的 `./deploy-docker.sh` → 公网 `/api/health` 核对;上线抓到两坑(checkout 改写 tag 引用 / Environment secrets 须 `secrets: inherit`),见 `docs/archive/auto-deploy-plan.md` §7。
 - **裸机部署回滚(issue #126,2026-09-21,待发布)**:裸机路径改「运行副本版本化」release 形态 + 锁内事务 + 两级健康门告警(不自动回滚)+ `./deploy.sh --rollback`(树外固化执行体,DB 按目标上下文迁移计划分流,`--restore-db` 显式恢复,只回一代)+ 收养 + `--code` / `--status` / `--discard-txn`;extras 钉版 `docker/requirements-crawl4ai.txt`;方案 `docs/archive/baremetal-rollback-plan.md`(codex 四轮设计检视 + §9 实现记录),手册 `docs/ops/deploy-baremetal.md`,桩测试 `tests/test_deploy_baremetal.py`。
 - **Podcast(issue #7 P0–P0.2)**:`source_type=podcast` → `generic_podcast_rss`,单集复用 `ArticleRecord` + `extensions_json`,只解析 enclosure 元数据不下载音频;36 节目策展目录 `services.podcast_catalog` 启动幂等安装、进普通采集任务不设源级开关;边界与后续见 `docs/archive/podcast-wave-plan.md`。
+
+## issue #114 运维管理信息架构重设计(PR #260,待发布,版本号以实际发版为准)
+
+运维管理此前是五档 segmented,每档卡片纵向平铺,1603 行压在 `AdminOpsTab.jsx` 一个文件里。11-02 先出的 R1「域 → 子页侧栏」样页被否:分得太碎,侧栏挤正文。之后四轮样页收敛到**首页即目录 → 满幅功能页**:v1 定两层结构;v2 定不等大 bento,功能页 10 → 8,图表按 Carbon 画法;v3 定三档磁贴解剖,重要度 账户 > 阅读与榜单 > 其它,不要搜功能框;v4 对首页卡片内部排版、字体与图表画风做五套对照,用户选「A 精修」。方案 [`docs/archive/issue-114-admin-ia.md`](archive/issue-114-admin-ia.md),样页 `docs/design/issue-114-admin-ia/`。
+
+**结构**:首页 `admin/OpsHome.jsx` 是 12 列不等大 bento,含 8 块磁贴和一块「状态」磁贴。状态磁贴按严重度排待处理,另有 8 个全站总闸只读点。首页零说明句,被削掉的数进 hover 浮层。8 个满幅功能页按重要度是:账户、阅读与榜单、读者功能、播客、分析与标签、存储与外部资源、自定源、反馈与公告。路由 `#/admin/<页>/<板块>`,页与板块注册表在 `utils/opsNav.js`;深链落位后短促 wash 高亮,面包屑 `运维管理 › 页 ▾` 横切 8 页。外壳 `AdminOpsTab.jsx` 降到约 190 行,四个功能页自旧文件原样迁出到 `admin/pages/*`,播客、分析等直接挂既有面板。图表 `admin/OpsCharts.jsx` 全部手写 SVG:今天高亮的逐日柱、阶梯线、名字压在色条上的排行条、环图、带 P50 线的直方图,共用一个浮层。板块归属规则回流到 [`architecture/admin-ops.md`](architecture/admin-ops.md)。
+
+**后端**:新增只读聚合端点 `GET /api/admin/home`(`services/admin_home.py`),给出逐日活跃账户(登录 ∪ 阅读,排除游客与删号)、窗口内各源阅读、全量分析回填失败汇总,全体管理员可见。issue 原定「不改后端」,加端点是用户拍板放开的。
+
+**默认处理**(用户目检时保留):首页图表不做首帧生长动画(conventions §7),只在切时间窗时让数字滚动;大号数字仍用 `tabular-nums`;功能页本波不按样页深度重排,留待另议。
+
+**自查**:后端全量 3386 项、前端 302 项通过,lint / build / 文档守卫通过。沙箱用真实库副本,补了 45 天示意数据,模型地址改死、采集停用,Playwright 核对:1440 / 1280 宽首页 9 块磁贴一屏完整、无横向滚动、字号 ≥ 12px、字重只有 400 / 600;亮暗主题、根与非根管理员控制台零报错;深链落位、非法 hash 回落、切窗失败显示「—」后可恢复。
+
+**检视**:实现方 Claude Code(Opus 5.5),检视方 Codex(`gpt-6-astra` ultra)两轮。首轮 3 项 P1 + 6 项 P2,全部接受。三项 P1:切页重挂绕过默认订阅的串行写保护;回填「未解决失败」按 id 判先后;切窗失败沿用旧窗口数据并误报「无待处理」。P2 有非法 hash 抛错、落位请求重放、登录过滤绕过时间索引等。复检 9 项全部确认修好,没有新引入问题。一条观察未修:深链落位后上方内容晚到,会让落点下移。11-04 用户沙箱目检放行,CI 通过后 PR #260 squash 合入。
 
 ## issue #214 登录页「深空剧场」重制(PR #255,待发布,版本号以实际发版为准)
 
