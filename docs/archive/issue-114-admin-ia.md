@@ -1,6 +1,7 @@
 # issue #114 运维管理信息架构:首页即目录 → 满幅功能页
 
-> 状态:进行中(2026-11-04 开工;两轮交叉检视通过,待用户目检)。分支 `feat/issue-114-admin-ia`,worktree `~/Codes/worktrees/DoramiSourceArchive/issue-114-admin-ia`。
+> **归档于 2026-11-04(issue #114,PR #260,开发版 3.67.4-alpha,用户目检放行、待发布)**:现状以 docs/architecture/(`admin-ops.md` 信息架构节与板块归属规则)、`docs/frontend/conventions.md` 与代码为准,文中路径与状态为当时记录。
+> 状态:已落地待发布(2026-11-04 开工;Codex 两轮交叉检视通过,同日用户沙箱目检放行,CI 通过后 PR #260 squash 合入 main)。分支 `feat/issue-114-admin-ia`。
 > 样页:[`docs/design/issue-114-admin-ia/`](../design/issue-114-admin-ia/)(v1–v4;实现以 v4 的 **A 精修** 为准)。
 > 实现:Claude Code(Opus 5.5);检视:Codex(按 `docs/dev/workflow.md` 交叉检视,模型与轮次记在 §9)。
 
@@ -47,6 +48,8 @@
 
 ### 2.1 板块归属规则(新增板块按此落位)
 
+> 现行版本已回流 [`docs/architecture/admin-ops.md`](../architecture/admin-ops.md)「板块归属规则」,以那里为准。
+
 1. **先问「这是谁的事」**,按对象归页:账户与游客 → 账户;读者看到的内容与榜单 → 阅读与榜单;读者能用的能力、默认与额度 → 读者功能;播客流水线 → 播客;读者自己加的源 → 自定源;存储、备份、媒体库、付费外部 API → 存储与外部资源;分析、评分、标签目录 → 分析与标签;读者来信与站内公告 → 反馈与公告。
 2. **同页内按「观测 → 策略 → 台账」排序**:看板(KPI + 图)在上,开关 / 默认 / 阈值居中,表格类台账铺满在下。
 3. **告警不进板块**:需要处理的事项只在首页「状态」磁贴出现一次(待处理列表),板块里只给状态点。
@@ -80,18 +83,20 @@
 
 ## 6. 自测与验收
 
-- 后端:`tests/test_admin_home.py` 4 项(活跃按天去重与排除、窗口阅读含游客、回填未解决失败、端点形状与门控 / days 收口)。
-- 前端:`npm test` 全过(新增 `opsNav.test.mjs` 7 项、`opsHome.test.mjs` 8 项;`podcastAsrQuota.test.mjs` 改为新路由);`npm run lint`、`npm run build` 通过;守卫反向对照:删掉「事件·归并」标签,用途覆盖测试即失败。
+- 后端:`tests/test_admin_home.py` 5 项(活跃按天去重与排除、窗口阅读含游客、回填未解决失败、旧任务重试后再失败按时间计入、端点形状与门控 / days 收口);全量 3386 项通过。
+- 前端:`npm test` 302 项全过(新增 `opsNav.test.mjs` 8 项、`opsHome.test.mjs` 8 项;`podcastAsrQuota.test.mjs` 改为新路由);`npm run lint`、`npm run build` 通过;守卫反向对照:删掉「事件·归并」标签,用途覆盖测试即失败。
 - 沙箱(真实库副本 + 8089 / 5174,模型地址改死、采集任务停用,补 45 天登录 / 阅读 / AI 用量示意数据):首页 1440×900 / 1280×800 全部 9 块磁贴完整可见、无横向滚动、字号 ≥ 12px、字重只 400 / 600、控制台零报错;亮 / 暗;根 / 非根(非根账户页只见聚合);8 页面包屑名正确;`#/admin/podcast/asr` 深链落位并聚焦;面包屑 ▾ 列 8 页、点选换页、「运维管理」回首页。截图在 worktree `tmp/issue-114/impl-shots/`(不入库)。
 
 ## 7. 遗留与不做
 
 - 首页图表首帧生长动画(见 §1 表)。
+- 功能页按样页 v2 / v3 深度重排(账户页 KPI 横排在主图上方、读者功能页开关网格、功能页去卡片):本波只把现有面板换了位置,留待后续另议。
 - 读者功能迷你柱在 90 天窗口下偏密(一根约 2px)。
+- 观察:深链落位发生在板块上方内容装载前时,内容随后撑高会让落点下移(§9)。
 
 ## 8. 文档同波
 
-version-history / backlog / decisions;conventions §3 新字号档;`docs/architecture/admin-ops.md` 改写信息架构一节;`docs/design/README.md` 登记样页;R1 未跟踪样页 `dorami-admin-ia-quiet.html` 删除。
+version-history / backlog / decisions;conventions §3 新字号档;`docs/architecture/admin-ops.md` 改写信息架构一节并收入 §2.1 归属规则;`docs/design/README.md` 登记样页;R1 未跟踪样页 `dorami-admin-ia-quiet.html` 删除;合入时本文归档。
 
 ## 9. 检视
 
@@ -108,3 +113,8 @@ version-history / backlog / decisions;conventions §3 新字号档;`docs/archite
   9. P2 关闭态开关名称被浮层定位规则左移 → 定位规则限定 `:not(.is-off)`。
 - **第 2 轮**(复检 `c7ff8a85`,最后一轮,只对照修复清单):9 项全部「已修」,未发现修复引入的 P1,无新增观察;Codex 定向复验前端 20 / 20、后端 5 / 5。
 - 观察(未修):落位发生在板块上方内容装载前时,内容随后撑高会让落点下移。
+
+## 10. 目检与合入
+
+- 2026-11-04 用户在沙箱(真实库副本 + 示意数据,8089 / 5174)目检首页、8 个功能页、面包屑、深链与非根视图后放行,未提返修;§1 默认处理表(不做生长动画、等宽数字、功能页不深度重排)按默认保留。
+- PR #260 推送、CI 通过后 squash 合入 main;版本号不动(沿用 `3.67.4-alpha`),上线随下次发版。

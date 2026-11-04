@@ -462,7 +462,7 @@ issue #230 起 `Modal` 与移动层都经层原语 `components/layer/useLayer`(�
 - **高危操作不放表格行内**(易误触),收进详情抽屉;可逆操作(如 AI 开关)可一键。整行点击开抽屉,不设编辑列。
 - **像素级验收**:列宽跳动、列名纵向参差、表头行高变化、聚焦环溢出行界都会被点名;交付前用 Playwright 量 bounding box(中线差 ≤ 1–2px、行高 diff = 0)并贴放大截图(流程见 `docs/dev/sandbox-acceptance.md`)。
 - **头部布局要平衡**:左(标题行 + 其下搜索框)右(两行 mini-seg)各两行;大片空白会被打回。
-- **信息架构(issue #114)**:运维页 = 首页即目录(不等大 bento 磁贴)+ 8 个满幅功能页,路由 `#/admin/<页>/<板块>`,页 / 板块注册表在 `utils/opsNav.js`;新增板块按 [方案 §2.1 归属规则](../plans/issue-114-admin-ia.md) 落位,首页磁贴只留 1 个主角数字(L 另 ≤ 3 个次级)+ 1 张图,告警只在「状态」磁贴出现一次。
+- **信息架构(issue #114)**:运维页 = 首页即目录(不等大 bento 磁贴)+ 8 个满幅功能页,路由 `#/admin/<页>/<板块>`,页 / 板块注册表在 `utils/opsNav.js`;新增板块按 [`architecture/admin-ops.md`「板块归属规则」](../architecture/admin-ops.md) 落位,首页磁贴只留 1 个主角数字(L 另 ≤ 3 个次级)+ 1 张图,告警只在「状态」磁贴出现一次。
 - loader 纪律:实例级代次守卫、保留旧快照并经 `admin/StaleNotice.jsx` 就地提示「刷新失败 / 未接入(404)」;KPI 失败不挡同页分区。
 
 ## 9. 暗色主题（已落地）

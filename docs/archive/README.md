@@ -5,6 +5,10 @@
 > `docs/frontend/conventions.md` / `docs/sources/curation_policy.md` 等活跃文档。
 > 按「故事」分组索引;文内常含 ☐/☑ 进度符,均为当时状态。
 
+## 运维管理信息架构(2026-11,issue #114)
+
+- [issue-114-admin-ia.md](./issue-114-admin-ia.md) — 五档 segmented 平铺 → 首页即目录(12 列不等大 bento,样页 v4「A 精修」)+ 8 个满幅功能页、面包屑横切与板块深链;只读聚合端点 `GET /api/admin/home`;拍板记录与默认处理表(§1)、Codex 两轮交叉检视(§9);PR #260 合入、待发布;归属规则已回流 `architecture/admin-ops.md`。
+
 ## 登录页「深空剧场」重制(2026-11,issue #214)
 
 - [issue-214-login-remake.md](./issue-214-login-remake.md) — 保留深空主题与三幕演出、WebGL 场景引擎重写;手机竖屏改原生形态(品牌区 + 贴底底页 + 触屏键盘态)、离场收束到屏幕中心;Codex 两轮交叉检视(§6);PR #255 合入、待发布;五方向样页分支已删除(§7)。

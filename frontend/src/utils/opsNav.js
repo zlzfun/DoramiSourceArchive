@@ -1,6 +1,6 @@
 // 运维管理信息架构(issue #114):首页即目录 → 8 个满幅功能页;页内板块可深链。
 // 本文件是页 / 板块的单一注册表 + 路由解析,纯函数、无 React 依赖(frontend/test/opsNav.test.mjs)。
-// 归属规则见 docs/plans/issue-114-admin-ia.md §2.1:先按「这是谁的事」归页,页内按 观测 → 策略 → 台账 排序。
+// 归属规则见 docs/architecture/admin-ops.md「板块归属规则」:先按「这是谁的事」归页,页内按 观测 → 策略 → 台账 排序。
 
 // 页按重要度排序(面包屑 ▾ 弹层即此顺序):账户 > 阅读与榜单 > 其它。
 // blocks:[id, 名称, { root?: 仅根管理员可见 }];id 即深链末段,页内 DOM 锚点 = opsBlockId(page, block)。
