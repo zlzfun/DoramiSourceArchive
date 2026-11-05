@@ -33,6 +33,7 @@ from services import user_sources as user_sources_service
 from services import sync_consumer_policy
 from services.collection_nodes import (
     build_source_fetch_params,
+    default_fetcher_id_for_source_type,
     is_public_podcast_source,
     parse_json_object,
     resolve_source_fetcher_id,
@@ -262,7 +263,8 @@ def create_source_config(params: SourceConfigCreate, session: Session = Depends(
         source_type=source_type,
         url=params.url.strip(),
         admission_status=admission_status_of(params.admission_status),
-        fetcher_id=params.fetcher_id.strip(),
+        # 采集绑定写实(issue #262 R1b):没指定就按类型落默认模板,不留给运行期推导。
+        fetcher_id=params.fetcher_id.strip() or default_fetcher_id_for_source_type(source_type),
         description=params.description.strip(),
         source_owner=params.source_owner.strip(),
         source_brand=params.source_brand.strip(),
@@ -349,6 +351,14 @@ def update_source_config(
 
     if requested_type in {"podcast", "podcast_rss"}:
         record.source_type = "podcast"
+    if (
+        "fetcher_id" not in update_data
+        and requested_type != previous_type
+        and (record.fetcher_id or "") in {"", default_fetcher_id_for_source_type(previous_type)}
+    ):
+        # 改类型时跟着换默认绑定(R1b 后绑定是写实的,不会再按新类型自动推导)。
+        record.fetcher_id = default_fetcher_id_for_source_type(record.source_type or requested_type)
+    if requested_type in {"podcast", "podcast_rss"}:
         if not record.owner_username:
             record.is_active = True
             record.fetch_interval_minutes = None

@@ -36,10 +36,13 @@ def parse_json_object(raw_json: str) -> Dict[str, Any]:
         return {}
 
 
-def resolve_source_fetcher_id(source_config: SourceConfigRecord) -> str:
-    if source_config.fetcher_id:
-        return source_config.fetcher_id
-    source_type = (source_config.source_type or "").strip().lower()
+def default_fetcher_id_for_source_type(source_type: str) -> str:
+    """``source_type`` → 默认采集绑定的模板 id;没有对应模板返回空串。
+
+    创建 / 改类型时用它把绑定写实(issue #262 R1b:迁移 c5e1a7b3d9f2 已把存量行写实),
+    使「``fetcher_id`` 为空 = 没有采集绑定」逐步成立。
+    """
+    source_type = (source_type or "").strip().lower()
     if source_type in PODCAST_SOURCE_TYPES:
         return "generic_podcast_rss"
     if source_type in {"rss", "atom"}:
@@ -49,6 +52,12 @@ def resolve_source_fetcher_id(source_config: SourceConfigRecord) -> str:
     if source_type in X_SOURCE_TYPES:
         return "generic_x_timeline"
     return ""
+
+
+def resolve_source_fetcher_id(source_config: SourceConfigRecord) -> str:
+    if source_config.fetcher_id:
+        return source_config.fetcher_id
+    return default_fetcher_id_for_source_type(source_config.source_type or "")
 
 
 def _configured_x_handle(source_config: SourceConfigRecord, params: Dict[str, Any]) -> str:

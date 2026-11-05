@@ -767,7 +767,8 @@ def prepare_user_source(
         name=(name or "").strip()[:80] or canonical,
         source_type="podcast" if normalized_kind == "podcast" else "rss",
         url=canonical,
-        fetcher_id="",  # resolve_source_fetcher_id 按 source_type 路由 RSS / Podcast 抓取器
+        # 采集绑定写实(issue #262 R1b):RSS / Podcast 自定源各绑通用模板。
+        fetcher_id="generic_podcast_rss" if normalized_kind == "podcast" else "generic_rss",
         description="",
         owner_username=username,
         # Public custom feeds are analyzed once on the internal authority.  A
