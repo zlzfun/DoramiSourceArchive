@@ -1,6 +1,7 @@
 # issue #261 节点同步控制台
 
-> 状态:进行中(2026-11-05 开工;实现中,待检视与目检)。
+> **归档于 2026-11-05(issue #261,PR #265,开发版 3.67.5-alpha,用户目检放行、待发布)**:现状以 docs/architecture/(`admin-ops.md`、`archive-sync.md`)、`docs/contracts/archive_sync.md` 与代码为准,文中路径与状态为当时记录。
+> 状态:已落地待发布(2026-11-05 开工;Codex 两轮交叉检视通过,同日用户沙箱目检放行,CI 通过后 PR #265 squash 合入 main)。分支 `feat/issue-261-sync-console`。
 > 相关:issue #261 · 样页 [`../design/issue-261-sync-console/`](../design/issue-261-sync-console/README.md)(方向 A 流水线)· 协议 [`../contracts/archive_sync.md`](../contracts/archive_sync.md) · 运维页信息架构 [`../architecture/admin-ops.md`](../architecture/admin-ops.md)
 > 实现方:Claude Code(Opus 5.5;后端本会话,前端子代理)· 检视方:Codex(见 §6)
 

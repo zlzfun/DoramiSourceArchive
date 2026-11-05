@@ -11,7 +11,7 @@
 
 ## 年表(一行一波;自 `CLAUDE.md` 迁入 2026-10-21,**新波次在此加一行**,L0 不再逐波改)
 
-- **节点同步控制台(issue #261,2026-11-05 起,开发版 3.67.5-alpha,实现中、待检视与目检)**:Archive Sync 从「设置 → 数据同步」迁到运维新页「节点同步」(`#/admin/sync`,样页方向 A 流水线):9 流 + 回传分组阶段线(当前流进度 / 失败流与页)· 运行记录 · 连接与定时 · 逐流 / 运行 / 高危抽屉(重置单流、重放分析流、v1 兼容导入导出)、首页 S 磁贴;外网每流首页 manifest 附 `pending`、`sources` 首页附 `pending_by_stream`(附加字段,老接收端忽略),接收端进度带 `stream_total` / `page` / `streams_done`;新增 `GET /api/admin/remote-sync/inventory`、`POST /api/admin/remote-sync/streams/{stream}/reset`,status 带 `console` 块。只读本机、页面不探测远端,出网请求种类与字段不变。[方案](plans/issue-261-sync-console.md)。
+- **节点同步控制台(issue #261,2026-11-05,开发版 3.67.5-alpha,PR #265 合入、待发布)**:Archive Sync 从「设置 → 数据同步」迁到运维新页「节点同步」(`#/admin/sync`,样页方向 A 流水线):9 流 + 回传分组阶段线(当前流进度 / 失败流与页)· 运行记录 · 连接与定时 · 逐流 / 运行 / 高危抽屉(重置单流、重放分析流、v1 兼容导入导出)、首页 S 磁贴;外网每流首页 manifest 附 `pending`、`sources` 首页附 `pending_by_stream`(附加字段,老接收端忽略),接收端进度带 `stream_total` / `page` / `streams_done`;新增 `GET /api/admin/remote-sync/inventory`、`POST /api/admin/remote-sync/streams/{stream}/reset`,status 带 `console` 块。只读本机、页面不探测远端,出网请求种类与字段不变。[方案](archive/issue-261-sync-console.md)。
 
 - **运维管理信息架构重设计(issue #114,PR #260,2026-11-04 目检放行、已合入待发布)**:五档 segmented 平铺 → **首页即目录**(不等大 bento 磁贴,样页 v4「A 精修」)+ **8 个满幅功能页**(面包屑横切、`#/admin/<页>/<板块>` 深链落位);新增只读聚合端点 `GET /api/admin/home`(逐日活跃账户 / 窗口内各源阅读 / 回填失败汇总,用户拍板突破原「不改后端」边界);`AdminOpsTab.jsx` 1603 行拆成外壳 + `admin/pages/*`;顺修 AI 用途缺「事件·归并」、播客 `<strong>` 字重 900、开关板标签折行、X API 超预算数字不变红。样页 `docs/design/issue-114-admin-ia/`,方案 `docs/archive/issue-114-admin-ia.md`。
 
