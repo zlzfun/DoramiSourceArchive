@@ -301,6 +301,38 @@ Stream results retain `media_reused`/`podcast_audio_reused`, the corresponding
 `*_downloaded` counts and `reused_bytes`/`downloaded_bytes` for the final summary.
 Progress is observational and never advances a replication checkpoint.
 
+Issue #261 (sync console) adds observational counts and progress fields; none of
+them changes request kinds, request fields or checkpoint semantics:
+
+- **Producer.** The first page (`after` empty) of every non-Taxonomy stream adds
+  `pending`: the number of rows that stream will export in `(since, snapshot]`
+  (tombstones included; for `media`, the candidate count of the media manifest).
+  This equals the receiver's `stream_processed` once the stream completes. The
+  first `sources` page additionally adds `pending_by_stream` for every stream
+  except `taxonomy` and `media` (media would require scanning every public body),
+  computed with that request's `since`. Both fields are additive: older receivers
+  ignore unknown manifest keys, and receivers treat a missing or non-integer value
+  as unknown.
+- **Receiver progress.** `progress` also carries `order` (negotiated order, null
+  before the first `sources` page), `stream_total` (the current stream's `pending`,
+  null until its first page or from older producers), `page` (1-based page being
+  fetched or applied; 0 before the first request), `stream_started_at`,
+  `streams_done` (summaries of streams whose checkpoint has already been recorded)
+  and `run_pending` (the first `sources` page's `pending_by_stream`). A failed job
+  has no `result`; its failing stream and page are `progress.stream` / `progress.page`.
+  `result.streams[*]` adds `pending`, `started_at` and `completed_at`.
+- **Probe.** The connection probe sends the target's completed `sources` snapshot
+  as `since` (the same pagination parameter every pull sends). If the producer
+  rejects it (for example after a producer rollback) the probe retries with an
+  empty `since` and reports `pending_since=""`. The probe result, without
+  credentials, is stored locally in KV `remote_sync:probes`.
+- **Stream reset.** `POST /api/admin/remote-sync/streams/{stream}/reset` clears
+  that stream's checkpoint and the receiver's entity states for the target
+  authority (Taxonomy: checkpoint only), exactly as the automatic analyses replay
+  does. The next pull downloads the stream from the beginning, reapplies every row
+  and finishes with the usual presence-confirmed prune. It is rejected while a
+  remote-sync job is queued or running. Replaying analyses is `stream=analyses`.
+
 Endpoints:
 
 ```http

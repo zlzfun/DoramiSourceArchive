@@ -1,7 +1,8 @@
 /**
- * 运维管理(issue #114 信息架构重设计):首页即目录 → 8 个满幅功能页。
+ * 运维管理(issue #114 信息架构重设计):首页即目录 → 9 个满幅功能页(issue #261 加「节点同步」)。
  * - 路由:App 的子视图 `#/admin/<页>/<板块>`(空 = 首页),注册表与解析在 utils/opsNav;本组件只做外壳——
- *   页头(首页 = 「运维管理」;功能页 = 面包屑 `运维管理 › 页 ▾`,▾ 横切 8 页)、时间窗、刷新时机、板块落位。
+ *   页头(首页 = 「运维管理」;功能页 = 面包屑 `运维管理 › 页 ▾`,▾ 横切各页)、时间窗、刷新时机、板块落位。
+ *   节点同步页的页头是两行变体(面包屑 + 对端身份 / 动作 + 定时),由 SyncPage 自绘,面包屑从这里传进去。
  * - 各页自持状态与 loader(admin/pages/*、admin/*Panel);切页即重挂 = 重取(与旧版切档语义一致)。
  * - 时间窗(days)跨页保留,只在用到它的页显示(首页 / 账户 / 读者功能 / 分析与标签)。
  * - 刷新语义(v3.43 M15):Tab 常驻不重挂,从其它 Tab 切回时 refreshTick 自增,当前页各 loader 重取、不重挂(不丢草稿)。
@@ -19,13 +20,14 @@ import AccountsPage from './admin/pages/AccountsPage';
 import ReaderPage from './admin/pages/ReaderPage';
 import ReadingPage from './admin/pages/ReadingPage';
 import ExternalPage from './admin/pages/ExternalPage';
+import SyncPage from './admin/pages/SyncPage';
 import { OpsIcon } from './admin/opsIcons';
 import { OPS_PAGES, formatOpsPath, normalizeOpsTarget, opsBlockId, opsPage, parseOpsPath } from '../utils/opsNav';
 import { scrollBehavior } from '../motion';
 
 const FLASH_MS = 1700;
 
-// 面包屑:`运维管理 › 页 ▾`;▾ 弹层按重要度列 8 页(当前页打勾),Esc / 点外面关闭。
+// 面包屑:`运维管理 › 页 ▾`;▾ 弹层按重要度列各页(当前页打勾),Esc / 点外面关闭。
 function OpsCrumb({ page, onGo }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
@@ -68,7 +70,7 @@ function OpsCrumb({ page, onGo }) {
 
 export default function AdminOpsTab({
   showToast, active = true, currentUsername = '', rootAdmin = false, onRefreshRuntime = null,
-  view = '', setView, pendingFocus = null, onPendingFocusApplied, onOpenCredentials,
+  view = '', setView, pendingFocus = null, onPendingFocusApplied, onOpenCredentials, onArticlesChanged,
 }) {
   const target = useMemo(() => parseOpsPath(view), [view]);
   const page = opsPage(target.page);
@@ -143,7 +145,7 @@ export default function AdminOpsTab({
 
   return (
     <div className={`admin-page${page ? ' ops-page' : ' ops-home'}`}>
-      <div className="page-head">
+      {page?.id !== 'sync' && <div className="page-head">
         {page ? <OpsCrumb page={page} onGo={go} /> : <h1 className="page-title">运维管理</h1>}
         <div className="page-head-actions">
           {showWindow && (
@@ -157,7 +159,7 @@ export default function AdminOpsTab({
             </>
           )}
         </div>
-      </div>
+      </div>}
 
       {!page && <OpsHome days={days} refreshTick={refreshTick} onGo={go} />}
 
@@ -176,6 +178,9 @@ export default function AdminOpsTab({
       {page?.id === 'podcast' && <PodcastZone showToast={showToast} refreshTick={refreshTick} />}
       {page?.id === 'analysis' && <AdminTaxonomyPanel showToast={showToast} days={days} refreshTick={refreshTick} />}
       {page?.id === 'external' && <ExternalPage showToast={showToast} refreshTick={refreshTick} onOpenCredentials={onOpenCredentials} />}
+      {page?.id === 'sync' && (
+        <SyncPage crumb={<OpsCrumb page={page} onGo={go} />} showToast={showToast} refreshTick={refreshTick} onArticlesChanged={onArticlesChanged} />
+      )}
       {page?.id === 'user-sources' && (
         <section id={opsBlockId('user-sources', 'sources')} className="ops-block" tabIndex={-1} aria-label="自定源">
           <UserSourcesPanel showToast={showToast} refreshTick={refreshTick} />

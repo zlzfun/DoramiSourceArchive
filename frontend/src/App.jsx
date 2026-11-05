@@ -364,6 +364,15 @@ export default function App() {
     });
   }, [jumpWithFocus]);
 
+  // 设置柜「凭据 → 定时同步」回指(issue #261):数据同步区已迁到运维 · 节点同步,落到「连接与定时」板块
+  const openAdminSyncLink = useCallback(() => {
+    setSettingsOpen(false);
+    jumpWithFocus('admin', 'sync/link', {
+      tab: 'admin',
+      payload: { page: 'sync', block: 'link' },
+    });
+  }, [jumpWithFocus]);
+
   const setFetchView = useCallback((v) => goView('fetch', v), [goView]);
   const setAdminView = useCallback((v) => goView('admin', v), [goView]);
 
@@ -1075,6 +1084,7 @@ export default function App() {
           feedbackUnread={feedbackUnread}
           onFeedbackSeen={handleFeedbackSeen}
           onOpenAdminPodcast={openAdminPodcastQuota}
+          onOpenAdminSync={openAdminSyncLink}
           onGuestLogin={() => { setSettingsOpen(false); openGuestLogin(); }}
         />
       </Suspense>
@@ -1201,6 +1211,7 @@ export default function App() {
                   pendingFocus={pendingFocus?.tab === 'admin' ? pendingFocus.payload : null}
                   onPendingFocusApplied={clearPendingFocus}
                   onOpenCredentials={() => openSettings('credentials')}
+                  onArticlesChanged={markArticlesDirty}
                 />
               </TabBoundary>
             </div>

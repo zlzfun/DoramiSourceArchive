@@ -20,6 +20,7 @@ from api import deps
 from api.textutils import _now_iso
 from services import jobs
 from services import remote_sync as remote_sync_service
+from services import sync_console
 from services import sync_consumer_policy
 from services.remote_sync import REMOTE_SYNC_JOB_TYPE, RemoteSyncError
 from models.db import JobRecord
@@ -30,6 +31,17 @@ router = APIRouter(tags=["remote-sync"])
 def _app():
     """延迟取 api.app(避免导入环 + 兼容测试 monkeypatch)。"""
     return importlib.import_module("api.app")
+
+
+def _local_store_ready() -> Dict[str, bool]:
+    store = getattr(_app(), "media_store", None)
+    podcast_store = getattr(_app(), "podcast_artifact_store", None)
+    return {
+        "media_store_ready": store is not None and getattr(store, "root", None) is not None,
+        "podcast_store_ready": (
+            podcast_store is not None and getattr(podcast_store, "root", None) is not None
+        ),
+    }
 
 
 def _require_v2_local_media_store() -> None:
@@ -67,12 +79,31 @@ class RemoteSyncScheduleParams(BaseModel):
     protocol: str = "v2"
 
 
+def _saved_schedule_password(base_url: str, username: str) -> str:
+    """同一远端、同一账号已存的定时同步密码(只在服务端内部使用,从不回传)。
+
+    控制台的「测试连接 / 立即同步」拿不到只写不回显的密码(issue #261);密码留空且地址与账号
+    都与定时配置一致时复用已存密码,换了地址或账号就仍须重新输入。
+    """
+    schedule = remote_sync_service.load_schedule(deps.get_db_sink().engine, include_secret=True)
+    try:
+        scheduled_base = remote_sync_service.normalize_base_url(str(schedule.get("base_url") or ""))
+    except RemoteSyncError:
+        return ""
+    if scheduled_base != base_url or str(schedule.get("username") or "").strip() != username:
+        return ""
+    return str(schedule.get("password") or "")
+
+
 def _validated_credentials(params: RemoteSyncCredentials) -> Dict[str, str]:
     base_url = remote_sync_service.normalize_base_url(params.base_url)
     username = (params.username or "").strip()
-    if not username or not params.password:
+    password = params.password or (
+        _saved_schedule_password(base_url, username) if username else ""
+    )
+    if not username or not password:
         raise HTTPException(status_code=400, detail="远端管理员账号与密码不能为空")
-    return {"base_url": base_url, "username": username, "password": params.password}
+    return {"base_url": base_url, "username": username, "password": password}
 
 
 def launch_remote_sync_job(
@@ -230,17 +261,24 @@ def launch_remote_sync_job(
 
 @router.post("/api/admin/remote-sync/test")
 async def test_remote_sync(params: RemoteSyncCredentials):
-    """「测试连接」:登录远端 → 版本/契约/总量探针。凭据不落任何存储。"""
+    """「测试连接」:登录远端 → 版本/契约/总量探针。凭据不落任何存储。
+
+    v2 成功结果(不含凭据)按 base_url 落 KV,控制台页头常驻显示远端版本与待同步(issue #261)。
+    """
     try:
         creds = _validated_credentials(params)
-        return await remote_sync_service.probe(
+        engine = deps.get_db_sink().engine
+        result = await remote_sync_service.probe(
             creds["base_url"],
             creds["username"],
             creds["password"],
             protocol=params.protocol,
+            since=sync_console.sync_checkpoint_since(engine, creds["base_url"]),
         )
     except RemoteSyncError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    sync_console.record_probe(engine, result, probed_at=_now_iso())
+    return result
 
 
 @router.post("/api/admin/remote-sync/start")
@@ -271,12 +309,14 @@ async def start_remote_sync(params: RemoteSyncStartParams, request: Request):
                 creds["username"],
                 creds["password"],
                 protocol="v2",
+                since=sync_console.sync_checkpoint_since(engine, creds["base_url"]),
             )
         except RemoteSyncError as exc:
             # Capability is checked before launch_remote_sync_job installs the
             # local consumer fence. A deterministic old-peer rejection must not
             # quiesce this node or be retried as a background transport failure.
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        sync_console.record_probe(engine, v2_probe, probed_at=_now_iso())
 
     try:
         job = launch_remote_sync_job(
@@ -380,9 +420,37 @@ async def set_remote_sync_schedule(params: RemoteSyncScheduleParams):
 
 @router.get("/api/admin/remote-sync/status")
 def remote_sync_status():
-    """同步目标游标(KV)+ 最近同步任务列表,供管理界面展示与「增量自上次」预填。"""
+    """同步目标游标(KV)+ 最近同步任务列表 + 控制台块(issue #261,只读本机,不探测远端)。"""
     engine = deps.get_db_sink().engine
+    job_list = jobs.list_jobs(engine, job_type=REMOTE_SYNC_JOB_TYPE, limit=10)
+    creators = sync_console.job_creators(engine, [job["job_id"] for job in job_list])
     return {
         "state": remote_sync_service.load_sync_state(engine),
-        "jobs": jobs.list_jobs(engine, job_type=REMOTE_SYNC_JOB_TYPE, limit=10),
+        "jobs": [{**job, "created_by": creators.get(job["job_id"])} for job in job_list],
+        "console": sync_console.console_status(engine, **_local_store_ready()),
     }
+
+
+@router.get("/api/admin/remote-sync/inventory")
+def remote_sync_inventory():
+    """本机各类同步内容条数(issue #261);打开控制台与任务结束时取,不随进度轮询。"""
+    return sync_console.inventory(deps.get_db_sink().engine)
+
+
+@router.post("/api/admin/remote-sync/streams/{stream}/reset")
+def reset_remote_sync_stream(stream: str, request: Request):
+    """重置当前目标某条流:清 checkpoint + 该 authority 的逐行记账,下次整流重拉(issue #261)。
+
+    重放分析流 = ``stream=analyses``。运行中的同步任务存在时 409。
+    """
+    if stream not in remote_sync_service.V2_STREAM_ORDER:
+        raise HTTPException(status_code=404, detail="未知的同步流")
+    try:
+        return sync_console.reset_stream(
+            deps.get_db_sink().engine,
+            stream,
+            by=_app().current_username(request) or "",
+            at=_now_iso(),
+        )
+    except sync_console.SyncConsoleError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
