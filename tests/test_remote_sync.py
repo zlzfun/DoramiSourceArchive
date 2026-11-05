@@ -342,11 +342,21 @@ def test_endpoints_admin_gated(monkeypatch, tmp_path):
         assert client.get("/api/admin/remote-sync/status").status_code == 403
         assert client.post("/api/admin/remote-sync/test", json={}).status_code == 403
         assert client.post("/api/admin/remote-sync/start", json={}).status_code == 403
+        assert client.get("/api/admin/remote-sync/inventory").status_code == 403
+        assert client.post("/api/admin/remote-sync/streams/articles/reset").status_code == 403
     with TestClient(app_module.app) as client:
         _login(client, "admin", "admin")
         res = client.get("/api/admin/remote-sync/status")
         assert res.status_code == 200
-        assert res.json() == {"state": {"targets": {}}, "jobs": []}
+        body = res.json()
+        assert body["state"] == {"targets": {}} and body["jobs"] == []
+        # 控制台块(issue #261):空库 = 未接入,只读本机。
+        assert body["console"]["configured"] is False
+        assert body["console"]["target"] is None
+        assert body["console"]["all_streams"] == list(remote_sync_service.V2_STREAM_ORDER)
+        assert client.get("/api/admin/remote-sync/inventory").json()["items"] == {}
+        assert client.post("/api/admin/remote-sync/streams/articles/reset").status_code == 409
+        assert client.post("/api/admin/remote-sync/streams/nope/reset").status_code == 404
         # 参数校验:坏地址/空凭据 400。
         assert client.post(
             "/api/admin/remote-sync/test",
@@ -824,3 +834,61 @@ def test_reload_remote_sync_schedule_registers_and_removes(monkeypatch, tmp_path
     )
     app_module.reload_remote_sync_schedule()
     assert fake.get_job("remote_sync") is None
+
+
+def test_status_jobs_carry_creator_and_console_block(monkeypatch, tmp_path):
+    """issue #261:任务列表补发起人(定时 = system),控制台块只读本机。"""
+    import time as _time
+
+    from models.db import JobRecord
+    from sqlmodel import Session
+
+    app_module = _setup_app(monkeypatch, tmp_path)
+    with Session(app_module.db_sink.engine) as session:
+        session.add(JobRecord(
+            id="job-manual", type=remote_sync_service.REMOTE_SYNC_JOB_TYPE, status="succeeded",
+            created_by="admin", created_at=_time.time() - 10,
+        ))
+        session.add(JobRecord(
+            id="job-timer", type=remote_sync_service.REMOTE_SYNC_JOB_TYPE, status="failed",
+            created_by="system", created_at=_time.time(),
+        ))
+        session.commit()
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        body = client.get("/api/admin/remote-sync/status").json()
+    assert [(job["job_id"], job["created_by"]) for job in body["jobs"]] == [
+        ("job-timer", "system"), ("job-manual", "admin"),
+    ]
+    assert set(body["console"]["local_stores"]) == {"media", "podcast"}
+
+
+def test_test_and_start_reuse_saved_schedule_password_only_for_same_target(monkeypatch, tmp_path):
+    """issue #261:控制台拿不到只写不回显的密码;地址与账号都与定时配置一致时服务端复用已存密码。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    remote_sync_service.save_schedule(app_module.db_sink.engine, {
+        "enabled": False, "cron": "0 3 * * *", "base_url": "https://remote.test",
+        "username": "sync", "password": "stored-secret", "source_ids": [], "protocol": "v2",
+    }, updated_at="2026-11-05T00:00:00+00:00")
+    seen = []
+
+    async def fake_probe(base_url, username, password, **kwargs):
+        seen.append((base_url, username, password))
+        return {"ok": True, "base_url": base_url, "protocol": "v1"}
+
+    monkeypatch.setattr(remote_sync_service, "probe", fake_probe)
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        ok = client.post("/api/admin/remote-sync/test", json={
+            "base_url": "https://remote.test/", "username": "sync", "password": "", "protocol": "v1",
+        })
+        assert ok.status_code == 200
+        assert seen[-1] == ("https://remote.test", "sync", "stored-secret")
+        for other in (
+            {"base_url": "https://other.test", "username": "sync"},
+            {"base_url": "https://remote.test", "username": "someone-else"},
+        ):
+            res = client.post("/api/admin/remote-sync/test", json={**other, "password": "", "protocol": "v1"})
+            assert res.status_code == 400
+    assert len(seen) == 1
+    assert "stored-secret" not in json.dumps(ok.json())

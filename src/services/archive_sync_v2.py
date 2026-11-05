@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 from urllib.parse import urlsplit
 
-from sqlalchemy import String, and_, cast, delete, exists, or_, update
+from sqlalchemy import String, and_, cast, delete, exists, func, or_, update
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
@@ -235,6 +235,7 @@ def _manifest(
     *,
     complete: bool,
     since: str = "",
+    extra: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     next_cursor = after
     if rows:
@@ -253,7 +254,47 @@ def _manifest(
         "generated_at": _now_iso(),
         "capabilities": list(ADVERTISED_CAPABILITIES),
     }
+    if extra:
+        # 附加、可缺省的观测字段(issue #261 计数):老接收端忽略未知 manifest 键。
+        manifest.update(extra)
     return manifest
+
+
+# 首页计数(issue #261):媒体计数要全量扫公共正文引用,只在 media 自己的首页给。
+PENDING_BY_STREAM_STREAMS = tuple(s for s in STREAMS if s not in {"taxonomy", "media"})
+
+
+def pending_state_counts(
+    session: Session,
+    streams: Iterable[str],
+    *,
+    since_revision: int,
+    snapshot_revision: int,
+) -> dict[str, int]:
+    """``(since, snapshot]`` 内本机(authority 为空)各流将导出的实体数。
+
+    非媒体流每个实体状态恰好导出一行(upsert 取不到载荷时退成 tombstone),所以这就是
+    接收端该流的处理量分母;走 ``(stream, authority_id, revision)`` 索引。
+    """
+
+    names = list(dict.fromkeys(streams))
+    counts = {name: 0 for name in names}
+    if not names:
+        return counts
+    query = select(
+        ArchiveSyncEntityStateRecord.stream, func.count()
+    ).where(
+        ArchiveSyncEntityStateRecord.stream.in_(names),
+        ArchiveSyncEntityStateRecord.authority_id == "",
+        ArchiveSyncEntityStateRecord.revision <= snapshot_revision,
+    )
+    if since_revision >= 0:
+        query = query.where(ArchiveSyncEntityStateRecord.revision > since_revision)
+    for name, count in session.exec(
+        query.group_by(ArchiveSyncEntityStateRecord.stream)
+    ).all():
+        counts[str(name)] = int(count)
+    return counts
 
 
 def encode_page(manifest: dict[str, Any], rows: Iterable[dict[str, Any]]) -> str:
@@ -1132,10 +1173,10 @@ def _export_media_rows(
     cursor_revision: int,
     cursor_id: str,
     limit: int,
-) -> tuple[list[dict[str, Any]], bool]:
+) -> tuple[list[dict[str, Any]], bool, int]:
     references = _media_references(session, snapshot)
     if not references:
-        return [], True
+        return [], True, 0
     media_records = session.exec(
         select(MediaAssetRecord, ArchiveSyncEntityStateRecord)
         .join(
@@ -1180,7 +1221,8 @@ def _export_media_rows(
             "updated_at": record.updated_at,
         }
         rows.append(_line("media", payload, revision=str(revision), identity=identity))
-    return rows, complete
+    # 首页(无游标)时 candidates 即本次快照内全部待导出项,长度就是 media 的分母。
+    return rows, complete, len(candidates)
 
 
 def export_page(
@@ -1282,8 +1324,23 @@ def export_page(
         if cursor_revision > snapshot_revision:
             raise SyncV2Error("cursor revision cannot exceed snapshot")
 
+        extra: dict[str, Any] = {}
+        if not after and stream != "media":
+            extra["pending"] = pending_state_counts(
+                session,
+                (stream,),
+                since_revision=since_revision,
+                snapshot_revision=snapshot_revision,
+            )[stream]
+            if stream == "sources":
+                extra["pending_by_stream"] = pending_state_counts(
+                    session,
+                    PENDING_BY_STREAM_STREAMS,
+                    since_revision=since_revision,
+                    snapshot_revision=snapshot_revision,
+                )
         if stream == "media":
-            rows, complete = _export_media_rows(
+            rows, complete, media_total = _export_media_rows(
                 session,
                 snapshot=snapshot_revision,
                 since_revision=since_revision,
@@ -1291,6 +1348,8 @@ def export_page(
                 cursor_id=cursor_id,
                 limit=limit,
             )
+            if not after:
+                extra["pending"] = media_total
         else:
             query = select(ArchiveSyncEntityStateRecord).where(
                 ArchiveSyncEntityStateRecord.stream == stream,
@@ -1361,6 +1420,7 @@ def export_page(
                         rows,
                         complete=False,
                         since=since,
+                        extra=extra,
                     )
                     try:
                         row_size = len(_canonical(rows[-1]).encode("utf-8")) + 1
@@ -1398,6 +1458,7 @@ def export_page(
                 rows,
                 complete=complete,
                 since=since,
+                extra=extra,
             )
             encoded = encode_page(manifest, rows)
             try:
@@ -1419,7 +1480,7 @@ def export_page(
         while True:
             encoded = encode_page(_manifest(
                 stream, authority_id, effective_snapshot, after, rows,
-                complete=complete, since=since,
+                complete=complete, since=since, extra=extra,
             ), rows)
             if len(encoded.encode("utf-8")) <= article_page_max_bytes or len(rows) <= 1:
                 return encoded
@@ -1436,6 +1497,7 @@ def export_page(
         rows,
         complete=complete,
         since=since,
+        extra=extra,
         ),
         rows,
     )

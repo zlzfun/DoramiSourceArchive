@@ -19,7 +19,7 @@ import { deepseekFlashGuidance, llmUpdates } from '../../utils/llmSettings';
  * - LLM / X API 两张编辑卡:与后端 services/credentials 统一保管契约对应
  *   (来源徽记=field_sources、掩码占位=只写不回显、空 secret=保留);
  * - 播客 ASR 策略只读回指到内容管理；「其它凭据」只读回指:定时同步凭据与 cron 同属一个工作流,编辑留在
- *   数据同步区(柜内一跳);GitHub Token 部署级 env-only,无面板编辑;
+ *   运维管理 → 节点同步(定时弹层,issue #261 自设置柜迁出);GitHub Token 部署级 env-only,无面板编辑;
  * - 消费页(AI 日报页头 / 运维内容页 X 区头)的 chip 跳到本区;用量/配额等
  *   观测面留在运维管理——「设置=写入口,运维=观测面」(2026-07-31 拍板 B)。
  */
@@ -39,7 +39,7 @@ function CredStamp({ ok }) {
   return <span className={`stamp ${ok ? 'stamp-ok' : 'stamp-idle'}`}>{ok ? '已配置' : '未配置'}</span>;
 }
 
-export default function CredentialsSection({ showToast, onNavigate, onOpenAdminPodcast }) {
+export default function CredentialsSection({ showToast, onOpenAdminPodcast, onOpenAdminSync }) {
   // ── 大模型 ──
   const [llmStatus, setLlmStatus] = useState(null);
   const [llmForm, setLlmForm] = useState({ base_url: '', model: '', api_key: '', temperature: 0.3, max_tokens: 4096, thinking_mode: '', aux_model: '', vision_model: '' });
@@ -361,8 +361,8 @@ export default function CredentialsSection({ showToast, onNavigate, onOpenAdminP
                 : '尚未保存远端凭据'}
             </span>
             <span className="cred-ref-act">
-              <button type="button" className="sett-link inline-flex items-center gap-0.5" onClick={() => onNavigate?.('sync')}>
-                前往 数据同步 <ChevronRight className="h-3.5 w-3.5" />
+              <button type="button" className="sett-link inline-flex items-center gap-0.5" onClick={() => onOpenAdminSync?.()}>
+                前往 运维管理 → 节点同步 <ChevronRight className="h-3.5 w-3.5" />
               </button>
             </span>
           </div>

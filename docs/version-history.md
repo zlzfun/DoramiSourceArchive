@@ -11,6 +11,8 @@
 
 ## 年表(一行一波;自 `CLAUDE.md` 迁入 2026-10-21,**新波次在此加一行**,L0 不再逐波改)
 
+- **节点同步控制台(issue #261,2026-11-05,开发版 3.67.5-alpha,PR #265 合入、待发布)**:Archive Sync 从「设置 → 数据同步」迁到运维新页「节点同步」(`#/admin/sync`,样页方向 A 流水线):9 流 + 回传分组阶段线(当前流进度 / 失败流与页)· 运行记录 · 连接与定时 · 逐流 / 运行 / 高危抽屉(重置单流、重放分析流、v1 兼容导入导出)、首页 S 磁贴;外网每流首页 manifest 附 `pending`、`sources` 首页附 `pending_by_stream`(附加字段,老接收端忽略),接收端进度带 `stream_total` / `page` / `streams_done`;新增 `GET /api/admin/remote-sync/inventory`、`POST /api/admin/remote-sync/streams/{stream}/reset`,status 带 `console` 块。只读本机、页面不探测远端,出网请求种类与字段不变。[方案](archive/issue-261-sync-console.md)。
+
 - **运维管理信息架构重设计(issue #114,PR #260,2026-11-04 目检放行、已合入待发布)**:五档 segmented 平铺 → **首页即目录**(不等大 bento 磁贴,样页 v4「A 精修」)+ **8 个满幅功能页**(面包屑横切、`#/admin/<页>/<板块>` 深链落位);新增只读聚合端点 `GET /api/admin/home`(逐日活跃账户 / 窗口内各源阅读 / 回填失败汇总,用户拍板突破原「不改后端」边界);`AdminOpsTab.jsx` 1603 行拆成外壳 + `admin/pages/*`;顺修 AI 用途缺「事件·归并」、播客 `<strong>` 字重 900、开关板标签折行、X API 超预算数字不变红。样页 `docs/design/issue-114-admin-ia/`,方案 `docs/archive/issue-114-admin-ia.md`。
 
 - **榜单收敛:热点事件 · 深度阅读 · 播客精选(#221,PR #259,2026-11-04 用户目检放行,待发布)**:读者面 13 个列表收成三段;事件榜默认 7 天可切近 2 天、快照按窗口、名次比今早 07:00;新端点 `GET /api/reader/rankings/picks`(深度阅读与早报同口径:论文 / 教程 / 观点 / 汇编,内容价值 ≥ 7.0;播客精选 ≥ 7.5);标签三轴 / 30 日趋势 / 全局高分榜 / 必读必听撤出读者面。迁移 `8166665976c4`。沿用 `3.67.4-alpha`,未发布。
@@ -693,3 +695,12 @@ Buzzsprout 的单词级 JSON 原先每个词单独换行并重复说话人。阅
 - **交叉检视**(Codex `gpt-6-astra` ultra,两轮,方案 §7):R1 无 P1、3 × P2 + 1 × P3 全部接受——重分析期间沿用权威结果、首报 / 最新改用有效发布时间(`latest.published_at`、成员 `published_at`)、播客评分依据进分数 title 与读屏名、行点击改由 `<li>` 接住恢复悬停;R2 确认修好,P3「点行内文字后关详情焦点不回行」一行修掉。
 - **有意不做**(见 backlog):接前报故事线、多形态关联(播客挂到事件,用户 2026-11-03 明确先搁置)、标签快照去处、深度阅读每次现算 7 天榜。
 
+## 节点同步控制台(issue #261,2026-11-05 起,版本号以实际发版为准)
+
+**为什么**:外网 authority → 内网 replica 的 Archive Sync 已长到 9 条流,原文之外还有评分 / 速读 / AI 标签 / 翻译 / 事件 / 播客文本与音频 / 治理数据,但管理员只能在设置弹窗里看到「正在同步 X…」与本阶段条数:看不出同步了什么、跑到哪、失败在哪一页。
+
+**样页与拍板**:三方向样页(`docs/design/issue-261-sync-console/`,A 流水线 / B 台账 / C 两端对照 × 五种状态),用户 2026-11-05「十分满意」并拍板:只做 A;计数第一期就做,但只能放在**已有 export GET 的首页 manifest** 里(不新增请求、不多带出网信息);各节点一致显示「本机作为接收端」的同步,不做生产端「谁拉过」视图(没拉过就显示接入卡);高危抽屉只做重置单流 + 重放分析流 + v1 兼容导入导出,「更换远端并重新基线」不做;出网不扩大由方案保证,控制台与文档不额外体现出网。
+
+**后端**:`archive_sync_v2.export_page` 首页(`after` 为空)附 `pending` = `(since, snapshot]` 内将导出的行数(非媒体流按实体状态计,tombstone 也是一行;media 为候选数),`sources` 首页另附 `pending_by_stream`(不含 taxonomy / media——媒体计数要全量扫公共正文引用)。`remote_sync.run_pull_v2` 进度多报 `order` / `stream_total` / `page` / `stream_started_at` / `streams_done`(checkpoint 落定后才记完成)/ `run_pending`,`result.streams[*]` 带起止时间与分母;失败任务没有 result,失败流与页从进度读。测试连接以目标 sources checkpoint 为 `since`(每次同步本就发出的翻页参数;生产端回滚导致 since 超前时退回空 since),结果落 KV `remote_sync:probes` 供页头常驻显示。新模块 `services/sync_console.py`:status 的 `console` 块、本机条数 inventory、单流重置(与 #178 自动重放分析流同一做法推广到任一流:清 checkpoint + 该 authority 的逐行记账,taxonomy 只清 checkpoint;运行中 409;入审计)、首页摘要。实现方 Claude Code(Opus 5.5;后端主会话、前端子代理),检视方 Codex(见方案 §6)。
+
+**目检追问**:用户问「如何确定某端是接收端还是发送端」,本意是节点不分角色。代码本无角色配置(每台都开导出、配了来源的那台在拉),页面去掉「接收端 / 生产端」措辞;首次 v2 同步与启用 v2 定时会让本机进入 consumer 模式(公共源采集与分析停止、界面不可撤回),补确认框 / 二次确认。「被拉取」视图维持不做;协议层「中转 / 互拉 / 多来源」另议 #263,联调发现的坏图导出另开 #264。

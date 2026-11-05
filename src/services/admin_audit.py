@@ -420,6 +420,16 @@ AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
     ),
     (
         "POST",
+        re.compile(r"^/api/admin/remote-sync/streams/(?P<stream>[a-z_]+)/reset$"),
+        lambda match, _b: (
+            "重放分析同步流"
+            if match.group("stream") == "analyses"
+            else f"重置同步流 {match.group('stream')}",
+            match.group("stream"),
+        ),
+    ),
+    (
+        "POST",
         re.compile(r"^/api/admin/remote-sync/schedule$"),
         # 绝不读 body 的 password 字段——仅记开关状态。
         lambda _m, body: (
