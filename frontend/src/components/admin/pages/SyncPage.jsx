@@ -1,8 +1,9 @@
 /**
  * 运维 · 节点同步页(issue #261,样页 docs/design/issue-261-sync-console/ 方向 A 流水线):
  * 页头(面包屑 + 对端身份;测试连接 · ⋯ 高危 · 立即同步 + 定时胶囊)· 流水线卡 · 运行记录 · 连接与定时;
- * 逐流 / 运行 / 高危三种抽屉;定时 / 测试连接浮层。未配置 = 页顶「接入生产端」卡,其余板块空态变淡。
- * 一致显示「本机作为接收端从其它 server 拉取」的同步(拍板 #3);不做生产端视图、数据来源角标、更换远端。
+ * 逐流 / 运行 / 高危三种抽屉;定时 / 测试连接浮层。未配置 = 页顶「接入远端」卡,其余板块空态变淡。
+ * 节点不分角色:每台都一致显示「本机从其它 server 拉取」的同步(拍板 #3),没拉过显示接入卡;不做「被拉取」视图
+ * (2026-11-05 用户:一台同时拉与被拉罕见)、数据来源角标、更换远端。
  * 出网不扩大(方案 §3):打开页面只读本机(status / inventory),不自动测试连接;运行中轮询 GET /api/jobs/{id}。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -261,7 +262,7 @@ export default function SyncPage({ crumb, showToast, refreshTick = 0, onArticles
             onTest={testProbe}
           />
         )}
-        schedPop={<SchedPop open={pop === 'sched'} onClose={() => setPop('')} sched={sched} target={con?.target || ''} onSave={saveSched} />}
+        schedPop={<SchedPop open={pop === 'sched'} onClose={() => setPop('')} sched={sched} target={con?.target || ''} fenceActive={Boolean(con?.consumer_fence?.active)} onSave={saveSched} />}
         credPop={<CredPop open={pop === 'cred'} onClose={() => setPop('')} savedUser={savedUser} message={credMsg} onStart={startWithCred} />}
       />
       {statusErr && (
@@ -270,7 +271,7 @@ export default function SyncPage({ crumb, showToast, refreshTick = 0, onArticles
       {status && (
         <div className="ops-page-body sync-page">
           {!configured && (
-            <section className="ops-block" aria-label="接入生产端">
+            <section className="ops-block" aria-label="接入远端">
               <SyncConnect con={con} sched={sched} onTest={connectTest} onStart={connectStart} starting={starting} />
             </section>
           )}

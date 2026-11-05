@@ -1,8 +1,10 @@
-// 未配置态的「接入生产端」卡(样页 A-none):地址 / 账号 / 密码 / 协议 + 测试连接 + 开始首次同步;
+// 未配置态的「接入远端」卡(样页 A-none):地址 / 账号 / 密码 / 协议 + 测试连接 + 开始首次同步;
+// 首次 v2 同步会让本机进入 consumer 模式(公共源采集与分析停止、界面不可撤回),先过确认框。
 // 测试结果一行 + 前置条件。密码只在本次请求里用,不落存储(定时凭据另在定时弹层)。
 import { useEffect, useState } from 'react';
 import { CircleAlert, CircleCheck, Download, LoaderCircle, PlugZap } from 'lucide-react';
-import { REQUIRED_CAPABILITIES, fmt, shortId, withV } from '../../../utils/syncCatalog';
+import { REQUIRED_CAPABILITIES, fmt, hostOf, shortId, withV } from '../../../utils/syncCatalog';
+import { SyncConfirm } from './SyncPops';
 
 function Check({ ok, children }) {
   return <span className={ok ? '' : 'is-miss'}>{ok ? <CircleCheck aria-hidden="true" /> : <CircleAlert aria-hidden="true" />}{children}</span>;
@@ -14,6 +16,8 @@ export default function SyncConnect({ con, sched, onTest, onStart, starting = fa
   const [probing, setProbing] = useState(false);
   const [probe, setProbe] = useState(null);
   const [err, setErr] = useState('');
+  const [ask, setAsk] = useState(false);
+  const fenceOn = Boolean(con?.consumer_fence?.active);
   // 定时配置里的远端 / 账号预填(console.schedule;没有就用目标与最近账号)
   useEffect(() => {
     const baseUrl = sched?.base_url || con?.target || '';
@@ -34,6 +38,7 @@ export default function SyncConnect({ con, sched, onTest, onStart, starting = fa
     }
   };
   const start = async () => {
+    setAsk(false);
     setErr('');
     try {
       await onStart(form.baseUrl.trim(), form.username.trim(), form.password, protocol);
@@ -47,8 +52,8 @@ export default function SyncConnect({ con, sched, onTest, onStart, starting = fa
   const stores = con?.local_stores || null;
 
   return (
-    <section className="surface-card sync-connect" aria-label="接入生产端">
-      <div className="sync-card-head"><span className="card-title">接入生产端</span></div>
+    <section className="surface-card sync-connect" aria-label="接入远端">
+      <div className="sync-card-head"><span className="card-title">接入远端</span></div>
       <div className="sync-connect-row">
         <label><span className="form-label">远端地址</span><input className="form-input" value={form.baseUrl} onChange={set('baseUrl')} placeholder="https://主机" aria-label="远端地址" /></label>
         <label><span className="form-label">远端管理员账号</span><input className="form-input" value={form.username} onChange={set('username')} autoComplete="off" aria-label="远端管理员账号" /></label>
@@ -65,7 +70,7 @@ export default function SyncConnect({ con, sched, onTest, onStart, starting = fa
           <button type="button" className="action-button action-button-secondary min-h-[36px] px-3 text-xs" disabled={!ready || probing || starting} onClick={test}>
             {probing ? <LoaderCircle className="sync-spin" /> : <PlugZap />}{probing ? '连接中…' : '测试连接'}
           </button>
-          <button type="button" className="action-button action-button-primary min-h-[36px] px-3 text-xs" disabled={!ready || starting} onClick={start}>
+          <button type="button" className="action-button action-button-primary min-h-[36px] px-3 text-xs" disabled={!ready || starting} onClick={() => (protocol === 'v2' && !fenceOn ? setAsk(true) : start())}>
             {starting ? <LoaderCircle className="sync-spin" /> : <Download />}{starting ? '启动中…' : '开始首次同步'}
           </button>
         </div>
@@ -98,6 +103,19 @@ export default function SyncConnect({ con, sched, onTest, onStart, starting = fa
           )}
         </>
       )}
+      <SyncConfirm
+        open={ask}
+        onClose={() => setAsk(false)}
+        title="开始首次同步"
+        kv={[
+          ['远端', <span key="h" className="sync-mono" title={form.baseUrl.trim()}>{hostOf(form.baseUrl.trim()) || '—'}</span>],
+          ['本机此后', '只采集与分析自定 RSS,公共源停止'],
+          ['撤回', '界面上不可撤回'],
+        ]}
+        okText="开始首次同步"
+        onOk={start}
+        busy={starting}
+      />
     </section>
   );
 }

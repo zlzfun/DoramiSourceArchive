@@ -282,7 +282,7 @@ export function RunDrawer({ open, onClose, run, order, now, onRetry, retryBusy =
   );
 }
 
-/* ── v1 文章归档(兼容):导出常可用;本机进入 v2 接收模式后导入禁用(后端会 409) ── */
+/* ── v1 文章归档(兼容):导出常可用;本机做过 v2 同步(consumer 模式)后导入禁用(后端会 409) ── */
 function todayRange() {
   const now = new Date();
   const p = (n) => String(n).padStart(2, '0');
@@ -361,14 +361,14 @@ function V1Section({ importLocked, showToast, onArticlesChanged }) {
           type="button"
           className="action-button action-button-secondary min-h-[32px] px-3 text-xs"
           disabled={importLocked || Boolean(busy)}
-          title={importLocked ? '本机已进入 v2 接收模式,v1 导入会被拒绝' : undefined}
+          title={importLocked ? '本机已做过 v2 同步,v1 导入会被拒绝' : undefined}
           onClick={() => fileRef.current?.click()}
         >
           {busy === 'import' ? <LoaderCircle className="sync-spin" /> : <Upload />}导入 .jsonl
         </button>
         <input ref={fileRef} type="file" className="sync-file" accept=".jsonl,.gz,.jsonl.gz,application/x-ndjson,application/gzip" onChange={(e) => doImport(e.target.files?.[0])} />
         <span className="flex-1" />
-        {importLocked && <span className="tiny-meta">v2 接收端不可导入</span>}
+        {importLocked && <span className="tiny-meta">已 v2 同步 · 不可导入</span>}
       </div>
     </section>
   );

@@ -32,7 +32,7 @@ export default function SyncHead({
         <div className="sync-peer">
           {configured ? (
             <>
-              <span className="sync-role"><ArrowDownToLine aria-hidden="true" />接收端</span>
+              <span className="sync-role"><ArrowDownToLine aria-hidden="true" />已接入</span>
               <PeerItem k="拉取自" v={hostOf(con.target)} mono title={con.target} />
               {con.authority_id && <PeerItem k="authority" v={shortId(con.authority_id)} mono title={con.authority_id} />}
               {version && <PeerItem k="远端" v={withV(version)} />}
@@ -82,7 +82,7 @@ export default function SyncHead({
               type="button"
               className={`action-button action-button-primary min-h-[32px] px-3 text-xs${busy ? ' is-busy' : ''}`}
               disabled={!configured || busy || starting}
-              title={configured ? undefined : '先在下方接入生产端'}
+              title={configured ? undefined : '先在下方接入远端'}
               aria-haspopup={configured && !busy ? 'dialog' : undefined}
               aria-expanded={configured && !busy ? pop === 'cred' : undefined}
               onClick={onSync}

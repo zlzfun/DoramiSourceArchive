@@ -28,9 +28,10 @@ function usePopLayer(open, onClose) {
 }
 
 /* ── 定时同步:开关 / 频率 / cron / 协议 / 账号(密码只写不回显) ── */
-export function SchedPop({ open, onClose, sched, target = '', onSave }) {
+export function SchedPop({ open, onClose, sched, target = '', fenceActive = false, onSave }) {
   const ref = usePopLayer(open, onClose);
   const [form, setForm] = useState(null);
+  const [armed, setArmed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
   // 只在打开时取一次快照:编辑途中 status 刷新(任务结束等)不冲掉草稿
@@ -50,9 +51,11 @@ export function SchedPop({ open, onClose, sched, target = '', onSave }) {
       editCred: !(s0?.username && s0?.password_set),
     });
     setErr('');
+    setArmed(false);
   }, [open]);
   if (!open || !form) return null;
-  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const set = (k, v) => { setArmed(false); setForm((f) => ({ ...f, [k]: v })); };
+  const needsFence = form.enabled && form.protocol === 'v2' && !fenceActive;
   const cron = cronFromFreq(form.freq, form.dailyTime, form.customCron);
   const next = form.enabled ? nextCronRun(cron) : null;
   const knownBase = Boolean(sched?.base_url || target);
@@ -64,6 +67,7 @@ export function SchedPop({ open, onClose, sched, target = '', onSave }) {
       if (!form.password && !sched?.password_set) { setErr('首次启用需要填写远端密码'); return; }
       if (!cron) { setErr('请填写 cron 表达式'); return; }
     }
+    if (needsFence && !armed) { setErr(''); setArmed(true); return; }
     setSaving(true);
     setErr('');
     try {
@@ -95,7 +99,7 @@ export function SchedPop({ open, onClose, sched, target = '', onSave }) {
           <div className="sync-pop-warn" role="alert"><TriangleAlert aria-hidden="true" />升级前的来源过滤配置已安全停用 · 选定协议并保存后再启用</div>
         )}
         {sched?.protocol_downgrade_blocked && (
-          <div className="sync-pop-warn" role="alert"><TriangleAlert aria-hidden="true" />本机已是 v2 接收端,v1 定时不会运行 · 改选 v2 保存</div>
+          <div className="sync-pop-warn" role="alert"><TriangleAlert aria-hidden="true" />本机已做过 v2 同步,v1 定时不会运行 · 改选 v2 保存</div>
         )}
         <div className="sync-pop-row">
           <span className="sync-pop-k">频率</span>
@@ -151,12 +155,15 @@ export function SchedPop({ open, onClose, sched, target = '', onSave }) {
           </div>
         )}
       </div>
+      {armed && needsFence && (
+        <div className="sync-pop-warn" role="alert"><TriangleAlert aria-hidden="true" />启用后本机只采集与分析自定 RSS,公共源停止 · 界面上不可撤回</div>
+      )}
       {err && <p className="sync-pop-err" role="alert">{err}</p>}
       <div className="sync-pop-foot">
         <span className="sync-meta">{next ? `下次 ${fmtDay(next)}` : form.enabled ? '下次 —' : '未启用'}</span>
         <button type="button" className="action-button action-button-quiet min-h-[32px] px-3 text-xs" onClick={onClose}>取消</button>
-        <button type="button" className="action-button action-button-primary min-h-[32px] px-3 text-xs" disabled={saving} onClick={save}>
-          {saving && <LoaderCircle className="sync-spin" />}保存
+        <button type="button" className={`action-button ${armed && needsFence ? 'action-button-danger' : 'action-button-primary'} min-h-[32px] px-3 text-xs`} disabled={saving} onClick={save}>
+          {saving && <LoaderCircle className="sync-spin" />}{armed && needsFence ? '确认启用' : '保存'}
         </button>
       </div>
     </div>

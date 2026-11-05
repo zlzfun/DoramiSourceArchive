@@ -24,8 +24,8 @@ export default function SyncLink({ con, sched, onSched }) {
             <dt>协议</dt><dd>{configured ? `v2 · ${con.schema_version || '—'}` : dash}</dd>
             <dt>能力</dt><dd title={caps.join('\n') || undefined}>{configured && caps.length ? `${caps.length} 项 · ${order.length} / ${STREAM_ORDER.length} 流` : dash}</dd>
             <dt>authority</dt><dd className="sync-kv-mono" title={con?.authority_id || undefined}>{configured && con.authority_id ? con.authority_id : dash}</dd>
-            <dt>接收端围栏</dt>
-            <dd>{fence?.active ? [fence.activated_at ? `${fmtDay(fence.activated_at)} 起` : '', fence.reason].filter(Boolean).join(' · ') || '已启用' : '未启用'}</dd>
+            <dt>本地采集</dt>
+            <dd title={fence?.active && fence.reason ? fence.reason : undefined}>{fence?.active ? ['仅自定 RSS', fence.activated_at ? `${fmtDay(fence.activated_at)} 起` : ''].filter(Boolean).join(' · ') : '照常'}</dd>
           </dl>
         </section>
         <section>

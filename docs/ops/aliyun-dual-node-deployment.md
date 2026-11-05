@@ -276,7 +276,7 @@ docker compose logs --tail=200 backend
 1. 在接入卡填写外网 HTTPS base URL、专用同步管理员账号和密码。
 2. 协议选择 v2（Archive Sync v3 transaction protocol）。
 3. 先“测试连接”，核对 schema、capabilities 和外网 authority ID。
-4. 手动执行首次全量拉取；流水线各站都显示完成即各流 checkpoint 已落定。
+4. 手动执行首次全量拉取（会先确认：本机此后进入 consumer 模式，只采集与分析自定 RSS，公共源停止，界面不可撤回——**外网节点不要点**）；流水线各站都显示完成即各流 checkpoint 已落定。
 5. 立即再执行一次；无新数据时各站条数应全为 0。
 6. 再在页头定时胶囊里开启定时同步，观察至少一个调度周期。
 
