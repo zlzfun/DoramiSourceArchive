@@ -242,18 +242,20 @@ const LEADERBOARD_SCOPES = new Set([
 const MEDIA_SCOPES = new Set(['ai_media', 'tech_media']);
 
 /* 源 → 信息角色 key。仅看策展元数据(provenance_tier / source_scope),不看形态。
-   用户自定源(user_rss_ 前缀/user_source 标记)最先短路进「自定」组——它们没有策展
-   元数据,不判定会全部回落「官方」。 */
+   用户自定源(user_rss_ 前缀/user_source 标记)最先短路进「自定」组。
+   没有任何策展元数据的源(只在归档里出现、未登记)与后端 DEFAULT_SOURCE_ROLE 一致
+   归「媒体」——官方待遇只给身份可考的策展源(issue #262 B7:此前前端回落「官方」)。 */
 export const sourceRoleOf = (source) => {
   if (source?.user_source || String(source?.source_id || '').startsWith('user_rss_')) return 'custom';
   const scope = source?.source_scope || '';
-  if (source?.provenance_tier === 'tier2_personal_social' || PERSONAL_SCOPES.has(scope)) return 'personal';
+  const tier = source?.provenance_tier || '';
+  if (tier === 'tier2_personal_social' || PERSONAL_SCOPES.has(scope)) return 'personal';
   if (LEADERBOARD_SCOPES.has(scope)) return 'leaderboard';
-  if (MEDIA_SCOPES.has(scope) || source?.provenance_tier === 'tier1_curated') return 'media';
-  return 'official';
+  if (MEDIA_SCOPES.has(scope) || tier === 'tier1_curated') return 'media';
+  return scope || tier ? 'official' : 'media';
 };
 
-export const roleLabelOf = (source) => ROLE_LABEL[sourceRoleOf(source)] || '官方';
+export const roleLabelOf = (source) => ROLE_LABEL[sourceRoleOf(source)] || '媒体';
 export const roleToneOf = (source) => ROLE_TONE[sourceRoleOf(source)] || 'slate';
 
 /* ── 社交平台标签(shape=social 的源)──

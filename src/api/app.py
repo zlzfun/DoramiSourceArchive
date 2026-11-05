@@ -2266,6 +2266,7 @@ async def require_admin_session(request: Request, call_next):
         (normalized_method == "POST" and path == "/api/accounts")
         or (normalized_method == "POST" and path == "/api/accounts/batch")
         or (normalized_method == "POST" and path == "/api/articles")
+        or (normalized_method == "POST" and path == "/api/import/social-posts")
         or (normalized_method == "POST" and path == "/api/articles/batch-delete")
         or (normalized_method == "POST" and path == "/api/fetch/batch")
         or (normalized_method == "PUT" and path == "/api/admin/analysis/config")

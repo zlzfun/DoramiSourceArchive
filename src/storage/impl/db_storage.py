@@ -31,6 +31,28 @@ def _is_placeholder_article_title(value: str) -> bool:
     return (value or "").strip().casefold() in _PLACEHOLDER_ARTICLE_TITLES
 
 
+# ``save_with_outcome`` results.  Only the first three count as "stored" for the
+# fetch pipeline's saved_count / downstream queues (historic ``save() -> True``).
+SAVE_CREATED = "created"
+SAVE_CONTENT_FILLED = "content_filled"
+SAVE_METADATA_REPAIRED = "metadata_repaired"
+SAVE_DUPLICATE = "duplicate"
+SAVE_REFRESHED = "refreshed"
+SAVE_ID_CONFLICT = "id_conflict"
+SAVE_REJECTED_AUTHORITY = "rejected_authority"
+SAVE_REJECTED_PODCAST_SOURCE = "rejected_podcast_source"
+SAVE_REJECTED_PODCAST_STAGE = "rejected_podcast_stage"
+SAVE_STORED_OUTCOMES = frozenset({SAVE_CREATED, SAVE_CONTENT_FILLED, SAVE_METADATA_REPAIRED})
+SAVE_OUTCOMES = SAVE_STORED_OUTCOMES | {
+    SAVE_DUPLICATE,
+    SAVE_REFRESHED,
+    SAVE_ID_CONFLICT,
+    SAVE_REJECTED_AUTHORITY,
+    SAVE_REJECTED_PODCAST_SOURCE,
+    SAVE_REJECTED_PODCAST_STAGE,
+}
+
+
 class DatabaseStorage(BaseStorage):
     def __init__(self, db_url: str = "sqlite:///./data/cms_data.db"):
         super().__init__()
@@ -216,13 +238,23 @@ class DatabaseStorage(BaseStorage):
                         conn.execute(text(f"ALTER TABLE source_configs ADD COLUMN {column_name} {column_sql}"))
 
     async def save(self, item: BaseContent) -> bool:
+        """Pipeline insertion signal: true only when a row was created or filled."""
+        return (await self.save_with_outcome(item)) in SAVE_STORED_OUTCOMES
+
+    async def save_with_outcome(self, item: BaseContent) -> str:
+        """Persist one item and report why it was (not) stored.
+
+        Outcomes are listed in ``SAVE_OUTCOMES``; ``save()`` keeps the historic
+        boolean contract for the fetch pipeline, while ingest endpoints map the
+        string to a precise error instead of a blanket "ID already exists".
+        """
         with Session(self.engine) as session:
             if not sync_consumer_policy.local_source_operation_allowed(
                 session, item.source_id, operation="collection"
             ):
                 # A fetch that started before an Archive Sync authority handoff
                 # or v2 consumer activation must not commit afterwards.
-                return False
+                return SAVE_REJECTED_AUTHORITY
             if getattr(item, "content_type", "") == "podcast_episode":
                 source = session.get(SourceConfigRecord, item.source_id)
                 if (
@@ -234,13 +266,18 @@ class DatabaseStorage(BaseStorage):
                     # Podcast episode becomes durable.  False tells the pipeline
                     # that no item was committed and keeps it out of downstream
                     # analysis/media queues.
-                    return False
+                    return SAVE_REJECTED_PODCAST_SOURCE
                 try:
                     require_podcast_stage("fetch", boundary="commit")
                 except PodcastStageDenied:
-                    return False
+                    return SAVE_REJECTED_PODCAST_STAGE
             existing = session.get(ArticleRecord, item.id)
             if existing:
+                if (existing.source_id or "") != (item.source_id or ""):
+                    # Item ids are only unique per source by convention.  A row
+                    # owned by another source is never rewritten in place (that
+                    # would move a faithful archive entry under a foreign body).
+                    return SAVE_ID_CONFLICT
                 if (
                     existing.content_type == "podcast_episode"
                     and getattr(item, "content_type", "") == "podcast_episode"
@@ -251,7 +288,7 @@ class DatabaseStorage(BaseStorage):
                         item,
                         raw_metadata.get("extensions", {}),
                     ):
-                        return False
+                        return SAVE_DUPLICATE
                     existing.archive_updated_at = next_article_archive_revision(
                         existing.archive_updated_at
                     )
@@ -260,7 +297,7 @@ class DatabaseStorage(BaseStorage):
                     self._queue_refreshed_podcast_analysis(existing.id)
                     # ``save`` is the pipeline's insertion signal.  The refresh was
                     # persisted, but must not inflate saved_count/saved_content_ids.
-                    return False
+                    return SAVE_REFRESHED
                 if not existing.has_content and item.has_content and item.content:
                     raw_metadata = serialize_to_metadata(item)
                     existing.title = item.title
@@ -277,7 +314,7 @@ class DatabaseStorage(BaseStorage):
                     ), ensure_ascii=False)
                     session.add(existing)
                     session.commit()
-                    return True
+                    return SAVE_CONTENT_FILLED
                 # 两条极窄的元数据自愈路径：① 旧标题明确是 CTA/占位文案；
                 # ② 抓取器显式声明官方元数据权威。普通源默认仍幂等跳过，
                 # 绝不因上游改标题而改写忠实归档；两路都不覆盖正文。
@@ -312,8 +349,8 @@ class DatabaseStorage(BaseStorage):
                     )
                     session.add(existing)
                     session.commit()
-                    return True
-                return False
+                    return SAVE_METADATA_REPAIRED
+                return SAVE_DUPLICATE
 
             raw_metadata = serialize_to_metadata(item)
             extensions = raw_metadata.get("extensions", {})
@@ -344,7 +381,7 @@ class DatabaseStorage(BaseStorage):
             from services.paper_fulltext import enqueue as enqueue_paper_fulltext
             enqueue_paper_fulltext(session, record)
             session.commit()
-            return True
+            return SAVE_CREATED
 
     async def existing_content_flags(self, item_ids: Iterable[str]) -> Dict[str, bool]:
         """批量查询给定 id 是否已入库及是否已有正文。

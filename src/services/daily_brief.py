@@ -610,6 +610,12 @@ def _collect_candidate_batch(session, *, cursor, max_total=120, per_source_cap=D
         .where(~ArticleRecord.source_id.startswith(USER_SOURCE_PREFIX, autoescape=True)))
     if source_ids:
         base = base.where(ArticleRecord.source_id.in_(list(source_ids)))
+    # 隐藏源全量排除于交付,公共日报候选池也不例外(issue #262 B6)。
+    from services.source_visibility import reader_unavailable_source_ids
+
+    hidden = reader_unavailable_source_ids(session)
+    if hidden:
+        base = base.where(ArticleRecord.source_id.notin_(sorted(hidden)))
     unseen = DailyBriefCandidateRecord.article_id.is_(None)
     if cursor:
         fresh = and_(unseen, ArticleRecord.fetched_date >= cursor)
