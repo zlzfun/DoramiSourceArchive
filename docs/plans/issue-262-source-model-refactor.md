@@ -1,6 +1,6 @@
 # issue #262 配套:源模型重构——源 / 采集绑定 / 抓取器三层分离(R2)
 
-> 状态:排队中(R2 设计稿,2026-11-05;已过 Codex R1 检视,11 条意见全部接受并按 §11 修订,R2 复检中;§8 拍板项待用户拍板)。
+> 状态:排队中(R2 设计稿,2026-11-05;已过 Codex 两轮检视——R1 的 11 条全部接受,R2 复检未闭合的 F1 / F5 / F6 与新增 F12、F13 已按 §11 修订,未再开第三轮;§8 拍板项待用户拍板)。
 > 关系:本稿展开 [issue-262-agent-ingest-sources.md](./issue-262-agent-ingest-sources.md) 的 §5.1 / §5.4 / §6 波 2,取代那里「2a → 2b → 2c」的粗分;#262 的推送通道(波 1)依赖本稿 R1c 与 R4。
 > 执行:主代理 Claude Code(Opus 5.5)。§2 的分档来自对注册表全部 69 个类的反射盘点(只看类自身 `__dict__` 里定义的方法与数据属性),检视方已独立复核。
 > 基线:`main` @ `454f90da`(v3.67.4)。文中 `file:line` 均对此版本。
@@ -12,7 +12,7 @@
 3. **能一并改,分两件事**:**身份出代码**对 62 个一视同仁(身份字段全是类属性字面量);**代码收拢**只针对 30 个纯数据类(删类、绑通用模板),另 32 个保留为无身份的站点适配器。
 4. **节点 ID 不变**:采集任务存的节点 ID 本来就等于 `source_id`。`FetchRunRecord.fetcher_id` 记逻辑节点 ID(不变),`SourceStateRecord.fetcher_id` 记执行抓取器 ID(R3 后会变,历史保留),两者语义不同(§6 R3)。
 5. **最大风险在源表的消费方、源的生命周期和同步**,不在抓取器:`src/` 里 94 处读(39 处枚举 + 55 处主键查),另有构造、ORM 修改与 SQL 触发器;其中一部分依赖「查不到行」的语义。R1 因此拆成 R1a / R1b / R1c 三步,不是纯加法。
-6. **同步保持「外网是唯一写者」**:内网从不在本地写公共源行;内网拉取时声明能力,外网**按请求投影**——新内网拿到完整源目录,旧内网拿到与今天相同的导出。两种混版本窗口都安全(§6.1)。
+6. **同步保持「外网是唯一写者」**:内网从不在本地写公共源行;内网拉取时声明能力,外网**按请求投影**——新内网拿到完整源目录,旧内网拿到与今天相同的导出。投影整轮固定、切换时重放;内网在拿到完整目录之前用只读兼容视图。两种混版本窗口都安全(§3.4、§6.1)。
 7. **分步**:R0 → R1a → R1b → R1c → R4 →(#262 波 1)→ R2 → R3a → R3b;每步写明回退路径。
 
 ## 1. 三层模型
@@ -49,7 +49,7 @@
 1. **每个 `articles.source_id` 恰有一行源**,并覆盖完整生命周期:
    - 所有写入路径在**同一事务里**确保源行存在:`DatabaseStorage.save`、公共日报直写(`daily_brief.py:2193-2200`)、推送、手工录入;
    - 被文章引用的源**不再物理删除**,改为保留身份的退役(`retired_at` 非空 + `is_active=false`);
-   - 在内网,源行只经同步到达(外网唯一写者,不变量 6);
+   - 在内网,源行只经同步到达(不变量 6);严格的「缺行即错」只在协商到 `catalog-v1` 投影、且 sources 全量重放完成之后启用,此前用只读兼容视图(§3.4-4);
    - 守卫测试扫描全库孤儿。
 2. **抓取器不声明身份**(R3 之后):注册表元数据只剩抓取器 id、种类、产出 `content_type`、`platform`、参数表。
 3. **条目的 `source_id` 来自执行上下文**:上下文在进入 `DataPipeline` 之前建立(Pipeline 在调用 `fetch()` 之前就读 `fetcher.source_id` 作进度键,`pipeline/core.py:97`),同模板多源并发时进度互不串。
@@ -80,7 +80,7 @@
 - A 档迁移的参数缺口:
   - 已有模板只缺一个:`generic_rss` 的 `feed_content_as_markdown`(RSS 16 个里 14 个用到);GitHub 的 `default_include_prereleases` 对应已有参数 `include_prereleases`;X 的 `handle` / `user_id` 已在参数表(`x_timeline_fetcher.py:118`)。
   - 新模板要补参数化:`DevsiteReleaseNotesFetcher` 的参数表今天只有 `limit`(`curated_core_fetcher.py:455`),执行还读 `page_url`、`site_name`、`source_section`、`listing_source_label`(`:540` 起),这些都要成为静态参数。
-- 关键事实:不论哪档,身份字段(`source_id / name / icon / description / admission_status / content_shape / default_kind / platform / source_owner / source_brand / source_scope / source_channel / source_url / provenance_tier / signal_strength / noise_risk / fetch_reliability`)都是类属性字面量。
+- 关键事实:不论哪档,身份字段(`source_id / name / icon / description / admission_status / content_shape / default_kind / platform / source_owner / source_brand / source_scope / source_channel / source_url / provenance_tier / signal_strength / noise_risk / fetch_reliability`)都是类属性字面量。 但有执行路径会把 `name` 写进输出:`feed_name`(`rss_fetcher.py:398`)、`site_name` 兜底(`webpage_fetcher.py:527`、`curated_core_fetcher.py:141`)、标题前缀(`curated_core_fetcher.py:527`)——所以 R2 迁走身份时必须回投(§6 R2)。
 
 ### 2.3 散在代码里的源级策展常量
 
@@ -152,17 +152,18 @@ shape = "article"
 
 ### 3.4 同步:接收端声明能力 + 外网按请求投影(E3)
 
-内网拉取是普通 GET:`/api/archive/v2/export/{stream}.jsonl?snapshot=&since=&after=&limit=`(`api/routers/archive_sync.py:421`),由 `remote_sync.run_pull_v2` 发起。FastAPI 默认忽略不认识的查询参数,所以可以向后兼容地加一个参数:
+内网拉取是普通 GET:`/api/archive/v2/export/{stream}.jsonl?snapshot=&since=&after=&limit=`(`api/routers/archive_sync.py:421`),由 `remote_sync.run_pull_v2` 发起。端点没有拒绝额外查询参数的模型,所以可以向后兼容地加一个参数。
 
-1. **接收端声明**:新版内网拉取时带 `receiver_capabilities=source-catalog-v1`。旧外网忽略它。
-2. **外网按请求投影** sources 与 source_states 两流:
-   - **声明了能力**:导出全部公共源行(目录行、legacy 行、临时源行),带新字段;退役 = upsert(带 `retired_at`);转正(`origin` 变为 `catalog`)只是一次普通 upsert。
-   - **未声明(旧内网)**:导出集合与今天完全相同——不含 62 个目录镜像行与 legacy 行,播客目录行照旧导出;退役 = tombstone(旧端按今天的删除语义处理);`source_states.fetcher_id` 投影为逻辑节点 ID。
-   - 投影只能是「换一种载荷」或「不在本页出现」;实现上不得返回空 payload(当前导出会把空 payload 变成 tombstone)。
-   - presence(authoritative presence)按同一投影计算。
-3. **外网广播** `source-catalog-v1` 能力(`ADVERTISED_CAPABILITIES`);新内网据此判断对端是否会给完整目录。对端未广播时,新内网的读服务保持「行优先、注册表兜底」的兼容模式,不启用「缺行即错」。
-4. **升级后重拉**:sources 载荷代次 +1;内网首次以新能力拉取时重置 sources 流 checkpoint,全量重拉(行数约数百)。
-5. **不再触发的副作用**:因为内网从不本地建公共源行,`_apply_sources` 的接管(删本地状态、把文章分析转 pending 并清租约,`archive_sync_v2.py:2008-2056`)和文章流给本地行盖权威标记并删状态(`:2355-2361`)都不会被本稿触发;首次同步准备把公共源行置 inactive(`remote_sync.py:270-279`)之后,随即由全量 upsert 恢复——与今天的配置源同一路径。
+1. **只有两种有效投影**:`legacy` 与 `catalog-v1`。内网拉取时带 `receiver_capabilities=source-catalog-v1`;外网据此选定**一个**有效投影,在 manifest 里回显,**整轮同步固定不变**;内网把实际协商成功的投影记进同步进度。旧外网忽略参数、不回显 → 内网按 `legacy` 记账,不得提前标记为已切换。
+2. **两种投影的内容**(只作用于 sources 与 source_states 两流):
+   - `catalog-v1`:导出全部公共源行(目录行、legacy 行、临时源行),带新字段;退役 = upsert(带 `retired_at`),状态照常导出。
+   - `legacy`:**成员资格稳定**——只导出「重构前就会导出的行」,用持久列 `legacy_export` 标记(R1c 迁移时给已有的公共源行置真;之后新建的非目录行置真;镜像行与 legacy 回填行置假;转正**不改**这一列,原本已导出的管理员源转成目录行后照旧导出)。退役 = sources tombstone,同时该源的 source_states 也按 tombstone 投影,避免后置的状态 upsert 在接收端把状态重新建出来;`source_states.fetcher_id` 投影为逻辑节点 ID。
+   - 投影只能「换一种载荷」或「不出现在输出里」,实现上不得返回空 payload(当前导出会把空 payload 变成 tombstone)。
+3. **分页契约不变**:现在是取 `limit+1` 条原始记录、游标取最后一条输出记录,接收端拒绝空的非终页(`archive_sync_v2.py:1306`、`:1647`)。投影过滤必须**先过滤后分页**(或继续扫描到有输出或真正结束),游标仍取最后一条输出记录,不得改成最后扫描位置。
+4. **只读兼容视图**:外网未回显 `catalog-v1`(旧外网,或协商失败)时,新内网的读服务使用「同步来的源行 + 本地目录文件 + 文章 / 订阅占位」的只读视图——目录文件只读、占位是虚拟的,**不落库**。注册表兜底只在 R2 之前有效,所以兼容视图不能依赖它。
+5. **切换时重放**:投影从 `legacy` 切到 `catalog-v1` 是协议变化,沿分析代次的做法(`remote_sync.py:136-150`):在同一事务里清掉该 authority 的 sources 与 source_states 两流 checkpoint **和**逐行应用记账(`ArchiveSyncEntityStateRecord`,否则同一 revision 会被当成已应用跳过,`archive_sync_v2.py:1800-1805`),然后全量重拉。重放完成后才启用严格不变量。
+6. **presence 不扩展**:sources / source_states 今天不参与 presence 查询与全量清理(`archive_sync_v2.py:3505`),本稿保持这一点,只靠明确的 upsert / tombstone 生命周期。
+7. **不再触发的副作用**:内网从不本地建公共源行,所以 `_apply_sources` 的接管(删本地状态、把文章分析转 pending 并清租约,`archive_sync_v2.py:2008-2056`)与文章流给本地行盖权威标记并删状态(`:2355-2361`)都不会被本稿触发;首次同步准备把公共源行置 inactive(`remote_sync.py:270-279`)之后,随即由全量 upsert 恢复——与今天的配置源同一路径。
 
 ## 4. 卡片 = 源的视图
 
@@ -212,11 +213,11 @@ shape = "article"
 |---|---|---|---|
 | **R0 前置修复** | #262 波 0 里与本稿相关的:B4(X 模板身份,先写失败用例)、B7(前后端角色兜底统一)、B8(事件归并形态兜底) | **有**,属预期缺陷修正:未登记源的角色分组、事件归并结果会变 | 代码回退 |
 | **R1a 兼容读服务** | 新增 `source_catalog`,按今天的优先级读「注册表 + 配置行」;§5 的消费方改读它;不改任何数据 | 无(生产库副本上 `/api/reader/sources`、`/api/fetchers`、早报构建、日报构建前后 diff 为空) | 代码回退 |
-| **R1b 显式绑定** | 迁移:空 `fetcher_id` 的配置行按 `resolve_source_fetcher_id` 写实(跳过带 `collection_authority_id` 的同步行——它们按设计没有绑定);此后空值 = 无绑定;节点枚举改按「有绑定 ∧ 本机允许」 | 无 | 写实的值与推导结果相同,旧代码照常工作,无需回退数据 |
-| **R1c 源表成为全集** | Alembic 加列(`origin`、`shape`、`platform`、`icon`、`avatar_url`、`homepage_url`、`default_kind`、`language`、`daily`、`retired_at` 已有);外网启动时为 62 个预设类生成镜像行(`origin=catalog`,绑定 = 自身类 id);回填三类(公共孤儿 → `legacy`;`user_rss_*` 孤儿 → 私有隔离行,`ai_analysis_enabled=false`、凭证状态未知按「带凭证」处理、永不列出、禁外发与分享;只在订阅里出现的 id 一并回填);墓碑 7 个 → 退役;生命周期(写入时确保、被引用不物理删);同步投影(§3.4);94 处语义审计;写入闸强制 | 无(镜像行与类属性逐字段相等;`daily` 集合与今天的每日任务集合逐个相等) | Alembic down:删除本步生成的行(按 `origin` 标记)并删列;退役行保留为 `is_active=false`(旧代码按停用源处理) |
+| **R1b 显式绑定** | 迁移:空 `fetcher_id` 的配置行按 `resolve_source_fetcher_id` 写实(跳过带 `collection_authority_id` 的同步行——它们按设计没有绑定);此后空值 = 无绑定;节点枚举改按「有绑定 ∧ 本机允许」 | 无(每日任务集合与 `/api/fetchers` 集合逐个相等,测试钉住) | 写实的值与推导结果相同,旧代码照常工作,无需回退数据 |
+| **R1c 源表成为全集** | Alembic 加列(`origin`、`shape`、`platform`、`icon`、`avatar_url`、`homepage_url`、`default_kind`、`language`、`daily`、`legacy_export`;`retired_at` 已有);外网启动时为 62 个预设类生成镜像行(`origin=catalog`,绑定 = 自身类 id);回填三类(公共孤儿 → `legacy`;`user_rss_*` 孤儿 → 私有隔离行,`ai_analysis_enabled=false`、凭证状态未知按「带凭证」处理、永不列出、禁外发与分享;只在订阅里出现的 id 一并回填);墓碑 7 个 → 退役;生命周期(写入时确保、被引用不物理删);同步投影(§3.4);94 处语义审计;写入闸强制;本步新建的每一行记进**迁移台账**(id + 前像);新读模型带运行时开关 `[sources] model = compat \| full` | 无(镜像行与类属性逐字段相等;`daily` 集合与今天的每日任务集合逐个相等) | **正常回退 = 保留 R1c 的结构、数据与兼容导出层,把开关切回 `compat`**,不回退到 R1c 之前的代码;确需 down 时只按迁移台账里的精确 id 处理,先保住升级前已有的 `SourceStateRecord`(源删除触发器会连带删 `authority_id=''` 的状态并产生 tombstone,`archive_sync_revision.py:116-124`),并处理同步记账——**不得按 `origin` 批量删除** |
 | **R4 卡片视图收口** | 目录只读源表;资格 / 展示状态分算;前端删兜底;隐藏覆盖交付全路径;合集仍在代码 | 发现页应无变化(需目检);B6 补齐属预期修正 | 代码回退 |
 | **#262 波 1** | 推送通道、临时源(`unlisted`) | 有(新功能) | 见 #262 方案 |
-| **R2 目录文件** | **只迁描述性身份**:名称、策展维度、准入等搬进 `src/sources/catalog/*.toml`,类上的 `source_id` 作为注册键保留(兼容投影);镜像行改由文件对账;收编 §2.3 常量(播客先出差异报告);管理面对目录字段只读 | 管理面只读态(小,需目检) | 代码回退 + 用前像恢复被覆盖的库内字段 |
+| **R2 目录文件** | **只迁描述性身份**:名称、策展维度、准入等搬进 `src/sources/catalog/*.toml`,类上的 `source_id` 作为注册键保留;注册时把目录值**回投**到类属性(`name`、`site_name` 等仍被执行路径读取的字段),输出逐条对拍不变;镜像行改由文件对账;收编 §2.3 常量(播客先出差异报告);管理面对目录字段只读 | 管理面只读态(小,需目检) | 正常回退 = 保留目录文件与回投层,把对账切回只读报告;被覆盖的库内字段按前像恢复 |
 | **R3a 执行机制原子切换** | 一次切换:注册键改为抓取器 id(B / C 档改名 `site_*`,旧 id 进**别名表**过渡期可解析);目录与非目录配置行里引用旧 id 的绑定一并迁移;执行上下文在进 Pipeline 前建立;参数锁定(绑定参数优先,只放行各抓取器声明的可覆盖白名单,取代 `base.py:129-137` 依赖预设类的规则);MCP / monitoring 改按 `source_id` 关联 | 无(62 个源全量对拍:条目 id、血统、输出逐条相等;同模板多源并发进度隔离) | 代码回退 + 别名表反向映射还原绑定 |
 | **R3b A 档删类** | A 档 30 个分批删类、绑定改指通用模板(X 7 → GitHub / HF 6 → RSS 16 → Gemma 1);`generic_rss` 加 `feed_content_as_markdown`,Devsite 模板参数化 | 无(每批对拍) | 每批单独回退 |
 
@@ -228,9 +229,9 @@ shape = "article"
 |---|---|---|---|
 | R0 | 只改外网采集与展示判定;线格式不变 | 无影响 | 任意顺序 |
 | R1a / R1b | 节点本地;R1b 跳过同步行 | 同左 | 任意顺序 |
-| R1c | 旧内网不声明能力 → 拿到与今天相同的导出;退役按 tombstone | 旧外网不认能力参数、也不广播能力 → 新内网保持「行优先、注册表兜底」兼容模式 | 任意顺序 |
+| R1c | 旧内网不声明能力 → `legacy` 投影,与今天的导出相同;退役按 tombstone(状态同步投影) | 旧外网不认参数、不回显 → 新内网按 `legacy` 记账,用只读兼容视图,严格不变量不启用 | 任意顺序 |
 | R4 | 节点本地 | 新内网在兼容模式下运行,目录与今天一致 | 任意顺序;窗口期两端目录可能不同 |
-| #262 波 1 | 临时源的 `provisional` 到了旧内网会被当成正式源;旧内网也会把推送条目的源当成「只在 articles 里的源」列进发现页 | — | **外网不能先放开**:推送开关默认关,内网升级后再开(#218 先例);或内网先升级 |
+| #262 波 1 | 临时源的 `provisional` 到了旧内网会被当成正式源;旧内网也会把推送条目的源当成「只在 articles 里的源」列进发现页 | — | **外网不能先放开**:推送是新功能,开关默认关,内网升级到 `catalog-v1` 并完成重放后再开;或内网先升级。对照 #218:那里功能默认开,外网若须先上要先显式关开关 |
 | R2 | 播客目录行照旧导出(值来自目录文件);62 个目录行仍只给声明能力的内网 | 新内网收不到目录行 → 兼容模式 | 任意顺序 |
 | R3a / R3b | `source_states.fetcher_id` 对旧内网投影为逻辑节点 ID,旧版 MCP `list_sources` 的状态关联不断 | 内网不采集,无影响 | 任意顺序 |
 
@@ -240,7 +241,7 @@ shape = "article"
 
 - **后端**:§5 全部位置;`fetchers/registry.py`(注册键、元数据瘦身、删常量、别名表)、`fetchers/base.py`(血统覆写改读上下文、参数锁定)、`pipeline/core.py`、`services/collection_nodes.py`、`services/source_collections.py`、`services/reader_defaults.py`、`services/podcast_catalog.py`、`services/podcast_source_adoption.py`、`services/archive_sync_v2.py`、`services/remote_sync.py`、`api/routers/archive_sync.py`、`storage/impl/db_storage.py`、`services/daily_brief.py`(直写路径)、Alembic 迁移。
 - **前端**:`DiscoverPage.jsx`、`sourceTaxonomy.js`、`FetchTab.jsx`、`CustomNodeBuilder.jsx`(只露可覆盖参数)、`FetchRunsTab.jsx`、`admin/TaxonomyLedger.jsx`。
-- **测试**:A 档类级测试改为「模板 + 参数」并保留行为断言;B / C 档跟随改名;新增镜像相等、`daily` 集合相等、回填三类、生命周期(删除变退役)、同步投影双向、载荷代次重拉、对账幂等与实例身份参数不可覆盖、墓碑快照、62 源对拍、并发进度隔离、跨版本实测。
+- **测试**:A 档类级测试改为「模板 + 参数」并保留行为断言;B / C 档跟随改名;新增镜像相等、`daily` 集合相等(覆盖 R1b / R1c)、回填三类、生命周期(删除变退役)、同步投影双向(成员资格、退役与状态、分页、重放)、兼容视图、迁移台账回退、R2 回投输出对拍、对账幂等与实例身份参数不可覆盖、墓碑快照、62 源对拍、并发进度隔离、跨版本实测。
 - **契约与文档**:`docs/contracts/archive_sync.md`(接收端能力参数、按请求投影、sources 载荷代次、退役语义);`AGENTS.md` 抓取器一行(「加源 = 硬化 preset fetcher」→「加策展源 = 目录文件一条;代码只写站点适配器」);`docs/architecture/fetchers-and-sources.md`、`content-model.md`、`reader-distribution.md`、`archive-sync.md`;`docs/sources/curation_policy.md`、`node_audit_playbook.md`;`decisions.md` 第 318 行(双路径 preset 类 + config 源)与第 333 行(合集存代码注册表)标为被取代并加新决策行。
 - **内网 `master`**:`origin/master` 相对 `main` 在 `src/fetchers/` 只差 `base.py`(3 增 1 删)与 `web_content/legacy_backend.py`(2 增),没有内网独有的抓取器、合集或播客目录;R0 / R3a 改 `base.py` 时 tag 同步会冲突,按 `INTRANET_DELTA.md` 处理。
 
@@ -261,7 +262,7 @@ shape = "article"
 ## 9. 风险
 
 - **R1c 审计面与生命周期**:94 处读 + 构造与触发器;删除变退役改变了运维面「删除」的含义。缓解:每处先写钉子测试再改;R1c 合入前在生产库副本上做前后 diff;运维面「删除」按钮文案与确认框同步改。
-- **同步投影**:同一 revision 对不同接收端有不同载荷,投影必须是确定性的纯函数;presence 与投影不一致会误删。缓解:双向跨版本实测;投影单测覆盖「退役 → tombstone」「转正 → upsert」「状态 fetcher_id 映射」。
+- **同步投影**:同一 revision 对不同接收端有不同载荷,投影必须是确定性的纯函数,且整轮固定;切换投影须清 checkpoint 与逐行记账后重放;过滤不得破坏分页契约。缓解:双向跨版本实测;投影单测覆盖「退役 → tombstone(含状态)」「转正后 legacy 成员资格不变」「状态 fetcher_id 映射」「先过滤后分页、无空的非终页」「切换投影后重放不被逐行记账跳过」。
 - **性能**:注册表是进程内常量,改读库后热路径可能 N+1;缓存失效时机见 §5。
 - **抓取稳定性**:R3a 一次切换 62 个线上节点的注册与执行路径。缓解:全量对拍、R3a 只换机制不删类、R3b 分批;前后对比一周每源入库数。
 - **播客语义变化**:从「只插不改」到「以文件为准」。缓解:差异报告逐条拍板、实例身份参数不可覆盖、前像可恢复。
@@ -295,4 +296,12 @@ shape = "article"
 
 事实核对更正已并入正文:94 处(不是约 93,且只有一部分依赖缺行语义);`_apply_sources` 接管时 `preserve_result=True` 保留旧结果、转 pending;R0 的 B7 / B8 有可见变化。
 
-**R2 复检**:(待补记)
+**R2 复检(最后一轮)**:同一会话 resume,`gpt-6-astra` / `ultra` / 只读。结论:F2、F3、F4、F7–F11 与事实更正判「够」;F1、F5、F6 判「不够」;新增 F12(P1)、F13(P3)。按轮次封顶,以下修订按检视方给出的形状直接落实,未再开第三轮。
+
+| # | 级 | 检视方意见 | 修订 |
+|---|---|---|---|
+| F1 | P1 余项 | 严格不变量的启用时机、兼容视图与降级路径未定 | 内网只在协商到 `catalog-v1` 且 sources 全量重放完成后启用严格不变量;此前用只读兼容视图(§1.3-1、§3.4-4) |
+| F5 | P1 余项 | R2 不能只保留 `source_id`,执行路径还读 `name` 等 | R2 注册时把目录值回投到类属性,输出逐条对拍(§2.2、§6 R2) |
+| F6 | P2 余项 | 只清 checkpoint 不够;注册表兜底会随 R2 / R3 消失;legacy 成员资格要稳定;退役须协调状态流;过滤不得破坏分页;presence 不能直接复用 | 两种有效投影整轮固定并回显记账;切换时同事务清 checkpoint 与逐行记账后重放;兼容视图 = 源行 + 本地目录文件 + 虚拟占位;`legacy_export` 持久列;legacy 退役连带状态 tombstone;先过滤后分页;presence 不扩展(§3.4) |
+| F12 | P1(新) | 按 `origin` 删生成行不是安全回退,删除触发器还会连带删已有状态并发 tombstone | 正常回退 = 保留 R1c 数据与兼容导出层、开关切回 `compat`;硬回退只按迁移台账精确 id,先保住已有状态并处理记账(§6 R1c) |
+| F13 | P3 | 仓内规则两处口径:「未知键安全」要限定范围(candidate evidence 拒绝未知字段);#218 是「须先显式关开关」而非「默认关」 | 已改 `AGENTS.md` 硬规则 12 与 `docs/dev/workflow.md` §0;本稿 §6.1 #262 行同步改 |
