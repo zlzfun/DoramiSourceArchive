@@ -36,6 +36,7 @@ python3 scripts/check_docs.py             # 文档守卫(索引覆盖 / 断链 /
 9. **测试**:造数据用相对时间(滚动窗 + 固定日期 = 时间炸弹);涉及 DNS 公网性判定的用例一律打桩(开发机 fake-ip 代理会掩盖);测试命令 `cmd > log 2>&1; rc=$?` 不走管道;新 TestClient 测试显式建 tmp sink → `docs/dev/testing.md`。
 10. **改「系统记录」的语义前先 grep 消费方**:日报记录的分析行被个人早报与 readiness 消费;给 Archive Sync 分析流加字段时 `archive_sync_v2.ANALYSIS_PAYLOAD_GENERATION` +1;`ScoredItem.to_reduce_dict` 字段被内网神灯流水线消费(只读 `extensions.items`)。
 11. **文档同波**:每波改 `docs/version-history.md`(年表加一行 + 详细一段)、`docs/backlog.md`(有意不做的遗留)、`docs/decisions.md`(拍板 / 不做 / 触发各一行);方案落地后 `git mv` 到 `docs/archive/` 并加归档注;新方案文件名 `docs/plans/issue-<N>-<slug>.md`。跑 `scripts/check_docs.py`。
+12. **跨节点改动先写「部署顺序与混版本」**:外网按 tag 先上,内网经 `master` 同步再手工部署、常晚几天,外网也可能回滚;Archive Sync 是内网拉取,外网看不到内网版本。凡改同步流字段 / 枚举取值 / 导出范围 / 删除语义,方案须写清「新外网 + 旧内网」「旧外网 + 新内网」各会怎样——旧端对未知键安全、对未知枚举值不安全(`admission_status_of` 未知即 admitted);不能双向兼容就写明接收端先升级或开关门控,合入前做跨版本实测 → `docs/dev/workflow.md` §0。
 
 ## 协作流程(分支 / 检视 / 合入;全文与「为什么」在 `docs/dev/workflow.md`)
 
