@@ -136,7 +136,8 @@ export default function SyncPage({ crumb, showToast, refreshTick = 0, onArticles
   }, [status, liveJob]);
   const runs = useMemo(() => jobs.map((j) => runOf(j, order)).filter(Boolean), [jobs, order]);
   const cardRun = runs[0] || (configured ? runFromCheckpoints(con.checkpoints, order) : null);
-  const lastOkAt = runs.find((r) => r.status === 'succeeded')?.endAt || '';
+  // 整次成功:最近 10 次里的成功任务,否则后端记的 v2_last_success_at(逐流推进时间不算,检视 R1 #4)
+  const lastOkAt = runs.find((r) => r.status === 'succeeded')?.endAt || con?.last_success_at || '';
   const active = Boolean(cardRun?.active);
 
   // 运行中每秒走一次「已用」
@@ -149,7 +150,8 @@ export default function SyncPage({ crumb, showToast, refreshTick = 0, onArticles
   // ── 动作 ──
   const savedUser = sched?.username || con?.username || '';
   const hasSaved = Boolean(sched?.password_set && savedUser && (!sched?.base_url || sameUrl(sched.base_url, con?.target)));
-  const protocol = sched?.protocol || 'v2';
+  // 已接入 v2 后手动「立即同步 / 测试连接」固定 v2;旧 v1 定时协议只在定时弹层里管理(检视 R1 #2)。
+  const protocol = configured ? 'v2' : (sched?.protocol || 'v2');
 
   const launch = useCallback(async (baseUrl, username, password, proto = 'v2') => {
     const { job_id: jobId } = await startRemoteSync(baseUrl, username, password, { protocol: proto });

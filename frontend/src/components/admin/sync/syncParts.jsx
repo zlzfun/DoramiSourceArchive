@@ -23,6 +23,7 @@ export function ResultStamp({ run }) {
   if (run.status === 'running') return <span className="stamp stamp-run">运行中</span>;
   if (run.status === 'failed') return <span className="stamp stamp-bad">失败</span>;
   if (run.status === 'cancelled') return <span className="stamp stamp-idle">已取消</span>;
+  if (run.status === 'checkpoint') return <span className="stamp stamp-idle is-hollow">各流进度</span>;
   return <span className="stamp stamp-ok">成功</span>;
 }
 
@@ -66,6 +67,7 @@ export function SyncDrawerShell({ open, onClose, icon, bad = false, title, sub =
         aria-modal="true"
         aria-label={label}
         aria-hidden={!open}
+        inert={!open}
         tabIndex={-1}
       >
         <div className="ledger-drawer-head">

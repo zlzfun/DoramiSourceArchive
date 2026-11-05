@@ -135,7 +135,11 @@ test('未配置:各站一律待跑 · 首次整流', () => {
 
 test('没有任务记录时用 KV checkpoint 拼「上次同步」', () => {
   const run = runFromCheckpoints({ sources: { snapshot: '12', count: 3, completed_at: '2026-11-05T12:00:03' }, taxonomy: { snapshot: '12', count: 0 } }, order);
-  assert.equal(run.status, 'succeeded');
+  // 只展示各流已知进度,不冒充整次成功(检视 R1 #4):没有 checkpoint 的流仍是未跑
+  assert.equal(run.status, 'checkpoint');
+  assert.equal(streamStateIn(run, 'sources'), 'done');
+  assert.equal(streamStateIn(run, 'articles'), 'todo');
+  assert.equal(streamStateIn(run, 'candidate_evidence'), 'todo');
   assert.equal(stationOf(run, 'taxonomy').num, '未变');
   assert.deepEqual(stationOf(run, 'taxonomy').sub, ['v12']);
   assert.equal(runFromCheckpoints({}, order), null);

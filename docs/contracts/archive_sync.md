@@ -305,9 +305,12 @@ Issue #261 (sync console) adds observational counts and progress fields; none of
 them changes request kinds, request fields or checkpoint semantics:
 
 - **Producer.** The first page (`after` empty) of every non-Taxonomy stream adds
-  `pending`: the number of rows that stream will export in `(since, snapshot]`
-  (tombstones included; for `media`, the candidate count of the media manifest).
-  This equals the receiver's `stream_processed` once the stream completes. The
+  `pending`: a first-page estimate of the rows that stream will export in
+  `(since, snapshot]` (tombstones included; for `media`, the candidate count of the
+  media manifest). For a static stream it equals the receiver's final
+  `stream_processed`; an entity modified again while the stream is being paged moves
+  beyond the fixed snapshot and arrives in the next incremental pull, so the
+  processed count is at most `pending`. The
   first `sources` page additionally adds `pending_by_stream` for every stream
   except `taxonomy` and `media` (media would require scanning every public body),
   computed with that request's `since`. Both fields are additive: older receivers
@@ -318,7 +321,10 @@ them changes request kinds, request fields or checkpoint semantics:
   null until its first page or from older producers), `page` (1-based page being
   fetched or applied; 0 before the first request), `stream_started_at`,
   `streams_done` (summaries of streams whose checkpoint has already been recorded)
-  and `run_pending` (the first `sources` page's `pending_by_stream`). A failed job
+  and `run_pending` (the first `sources` page's `pending_by_stream`, restricted to
+  streams whose starting checkpoint equals the `sources` `since`; the others are
+  unknown until their own first page). Progress is also published right after a
+  first page's manifest is validated, before it is imported. A failed job
   has no `result`; its failing stream and page are `progress.stream` / `progress.page`.
   `result.streams[*]` adds `pending`, `started_at` and `completed_at`.
 - **Probe.** The connection probe sends the target's completed `sources` snapshot
@@ -331,7 +337,11 @@ them changes request kinds, request fields or checkpoint semantics:
   authority (Taxonomy: checkpoint only), exactly as the automatic analyses replay
   does. The next pull downloads the stream from the beginning, reapplies every row
   and finishes with the usual presence-confirmed prune. It is rejected while a
-  remote-sync job is queued or running. Replaying analyses is `stream=analyses`.
+  remote-sync job is queued or running; the check-and-reset and the job launch's
+  check-and-enqueue share one per-database lock, so a reset can never interleave
+  with a launch reading the old checkpoint. Replaying analyses is `stream=analyses`.
+  A run that completes every negotiated stream records `v2_last_success_at`;
+  per-stream `last_synced_at` alone is not a whole-run success.
 
 Endpoints:
 

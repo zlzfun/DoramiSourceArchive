@@ -33,6 +33,7 @@ import asyncio
 import datetime as dt
 import json
 import logging
+import threading
 from typing import Any, Callable, Dict, List, Optional, Sequence
 from urllib.parse import urlparse
 
@@ -116,6 +117,40 @@ _MAX_RETRIES = 3
 
 class RemoteSyncError(Exception):
     """远端不可达 / 登录失败 / 契约不符等,消息面向管理员界面直接展示。"""
+
+
+_CONTROL_LOCKS: Dict[Any, threading.Lock] = {}
+_CONTROL_LOCKS_GUARD = threading.Lock()
+
+
+def sync_control_lock(engine) -> threading.Lock:
+    """同一库上「启动同步任务」与「重置单流」的互斥(issue #261 检视 R1 #1)。
+
+    两者都是「先查有没有排队 / 运行中的任务,再改同步状态」;不串行时,重置可能夹在
+    启动的检查与任务读 checkpoint 之间,被随后增量写回的 checkpoint 抵消。部署为单进程 +
+    进程内 APScheduler(既有「只允许一个同步任务」检查同一假设),按 engine 的进程内锁即可。
+    """
+
+    with _CONTROL_LOCKS_GUARD:
+        return _CONTROL_LOCKS.setdefault(engine, threading.Lock())
+
+
+def record_v2_run_success(engine, *, base_url: str, synced_at: str) -> None:
+    """整次 v2 同步(全部协商流)成功的时间;逐流推进的 ``last_synced_at`` 不代表整次成功。"""
+
+    with Session(engine) as session:
+        record = session.get(AppSettingRecord, REMOTE_SYNC_STATE_KEY)
+        state = _decode_sync_state_record(record)
+        target = dict(state["targets"].get(base_url) or {})
+        target["v2_last_success_at"] = synced_at
+        state["targets"][base_url] = target
+        value = json.dumps(state, ensure_ascii=False)
+        if record is None:
+            record = AppSettingRecord(key=REMOTE_SYNC_STATE_KEY, value=value)
+        else:
+            record.value = value
+        session.add(record)
+        session.commit()
 
 
 def _utc_now_iso() -> str:
@@ -1190,7 +1225,16 @@ async def run_pull_v2(
                 if stream_page == 1:
                     stream_total = _manifest_int(manifest.get("pending"))
                     if stream == "sources":
-                        run_pending = _manifest_counts(manifest.get("pending_by_stream"))
+                        counted = _manifest_counts(manifest.get("pending_by_stream"))
+                        # pending_by_stream 全按 sources 的 since 计;只有起始 checkpoint 与它相同的流
+                        # 才是真实待处理量(重置 / 上次中途失败的流各自首页到达前未知,检视 R1 #3)。
+                        run_pending = {
+                            name: count
+                            for name, count in (counted or {}).items()
+                            if str((checkpoints.get(name) or {}).get("snapshot") or "") == since
+                        } or None
+                    # 分母与协商结果先落进度,首页导入失败时终态也保留(检视 R1 #6)。
+                    report_progress()
                 try:
                     applied = await asyncio.to_thread(
                         archive_sync_v2.import_page,

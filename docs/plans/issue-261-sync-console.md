@@ -40,7 +40,7 @@
 
 | 字段 | 出现位置 | 语义 |
 |---|---|---|
-| `pending: int` | 每条非 taxonomy 流的首页(`after==""`) | `(since, snapshot]` 内该流将导出的行数(含 tombstone;media 为引用中的候选数) |
+| `pending: int` | 每条非 taxonomy 流的首页(`after==""`) | 首页预计量:`(since, snapshot]` 内该流将导出的行数(含 tombstone;media 为引用中的候选数);分页期间被再次修改的实体移出本快照、下次增量到,故实际处理量 ≤ `pending` |
 | `pending_by_stream: {stream: int}` | `sources` 首页 | 同一 `since`、同一 `snapshot` 下各流计数;不含 `taxonomy` / `media`(media 计数需全量扫正文,只在 media 首页给) |
 
 ### 4.2 `GET /api/jobs/{id}` 的 `progress`(v2 远程同步)
@@ -54,7 +54,7 @@
 | `page: int` | 当前流正在处理的页序号(从 1 起;0 = 尚未发出首页请求);失败时即「第 N 页」 |
 | `stream_started_at: str` | 当前流开始时间(ISO) |
 | `streams_done: {stream: {...}}` | 本次已完成各流:`count` / `inserted` / `updated` / `deleted` / `pruned` / `skipped` / `deferred` / `pages` / `downloaded` / `reused` / `downloaded_bytes` / `reused_bytes` / `pending` / `started_at` / `completed_at` |
-| `run_pending: {stream: int} \| null` | 本次 sources 首页给的 `pending_by_stream`(未开始各站的「待同步」) |
+| `run_pending: {stream: int} \| null` | 本次 sources 首页给的 `pending_by_stream`,只保留起始 checkpoint 与 sources `since` 相同的流(未开始各站的「待同步」;其余流首页到达前未知) |
 
 `result.streams[stream]` 同样带 `started_at` / `completed_at` / `pending`。失败任务 `result` 为空,逐流结果取 `progress.streams_done`,失败流 = `progress.stream`,页 = `progress.page`。
 

@@ -378,3 +378,153 @@ def test_v1_only_legacy_target_is_not_a_v2_console_target(tmp_path):
     assert (status["target"], status["configured"], status["protocol"]) == ("https://old.test", False, "v1")
     assert status["username"] == "admin"
     assert sync_console.home_summary(sink.engine)["configured"] is False
+
+
+# ── 检视 R1 回归 ──
+
+def _run_in_thread(fn):
+    import threading
+
+    box = {}
+
+    def target():
+        try:
+            box["value"] = fn()
+        except Exception as exc:  # noqa: BLE001
+            box["error"] = exc
+
+    thread = threading.Thread(target=target, daemon=True)
+    thread.start()
+    return thread, box
+
+
+def test_reset_and_launch_share_one_control_lock(tmp_path, monkeypatch):
+    """R1 #1:重置与启动任务串行;持锁期间两者都等,释放后各自完成。"""
+    import importlib
+
+    producer = _sink(tmp_path, "producer.db")
+    consumer = _sink(tmp_path, "consumer.db")
+    _seed_producer(producer, articles=1)
+    _prepare_and_pull(consumer, producer, _V2Remote(producer), tmp_path, label="first")
+    lock = remote_sync_service.sync_control_lock(consumer.engine)
+    assert lock is remote_sync_service.sync_control_lock(consumer.engine)
+
+    lock.acquire()
+    thread, box = _run_in_thread(
+        lambda: sync_console.reset_stream(consumer.engine, "analyses", by="admin", at=NOW)
+    )
+    thread.join(0.3)
+    assert thread.is_alive()                       # 被锁挡住,还没清任何东西
+    target = remote_sync_service.load_sync_state(consumer.engine)["targets"][BASE_URL]
+    assert "analyses" in target["v2_streams"]
+    lock.release()
+    thread.join(5)
+    assert box["value"]["stream"] == "analyses"
+
+    router = importlib.import_module("api.routers.remote_sync")
+    launched = []
+    monkeypatch.setattr(router.jobs, "launch", lambda *a, **k: launched.append(k) or object())
+    # 跳过锁外的 v1 降级检查,让启动走进「查活动任务 → 落任务」临界区
+    monkeypatch.setattr(router.sync_consumer_policy, "v2_receiver_state_present", lambda session: False)
+    other = _sink(tmp_path, "other.db")
+    lock.acquire()
+    thread, box = _run_in_thread(lambda: router.launch_remote_sync_job(
+        other.engine, base_url="https://v1.test", username="a", password="b", protocol="v1",
+    ))
+    thread.join(2)
+    assert not thread.is_alive() and len(launched) == 1     # 锁按 engine 区分,别的库不受影响
+    thread, box = _run_in_thread(lambda: router.launch_remote_sync_job(
+        consumer.engine, base_url=BASE_URL, username="a", password="b", protocol="v1",
+    ))
+    thread.join(0.3)
+    assert thread.is_alive() and len(launched) == 1          # 同一库:启动在锁外等
+    lock.release()
+    thread.join(5)
+    assert len(launched) == 2 and "error" not in box
+
+
+def test_run_pending_keeps_only_streams_sharing_the_sources_since(tmp_path):
+    """R1 #3:重置 analyses 后,sources 首页的 pending_by_stream 不能当成 analyses 的待处理量。"""
+    producer = _sink(tmp_path, "producer.db")
+    consumer = _sink(tmp_path, "consumer.db")
+    _seed_producer(producer, articles=3)
+    _prepare_and_pull(consumer, producer, _V2Remote(producer), tmp_path, label="first")
+    sync_console.reset_stream(consumer.engine, "analyses", by="admin", at=NOW)
+    target = remote_sync_service.load_sync_state(consumer.engine)["targets"][BASE_URL]
+    snapshots = []
+    asyncio.run(remote_sync_service.run_pull_v2(
+        engine=consumer.engine, base_url=BASE_URL, username="admin", password="secret",
+        media_root=tmp_path / "media", checkpoints=target["v2_streams"],
+        on_progress=lambda progress: snapshots.append(json.loads(json.dumps(progress))),
+        transport=httpx.MockTransport(_V2Remote(producer).handler),
+    ))
+    run_pending = next(item["run_pending"] for item in snapshots if item["run_pending"])
+    assert "analyses" not in run_pending and run_pending["articles"] == 0
+    analyses = [item for item in snapshots if item["stream"] == "analyses" and item["stream_total"] is not None]
+    assert analyses[-1]["stream_total"] == 3 and analyses[-1]["stream_processed"] == 3
+
+
+def test_first_page_import_failure_keeps_known_totals_in_final_progress(tmp_path, monkeypatch):
+    """R1 #6:sources 首页 manifest 已给出分母与协商结果,导入失败时终态进度不能退回请求前快照。"""
+    producer = _sink(tmp_path, "producer.db")
+    consumer = _sink(tmp_path, "consumer.db")
+    _seed_producer(producer, articles=2)
+
+    def boom(*args, **kwargs):
+        raise archive_sync_v2.SyncV2Error("injected import failure")
+
+    monkeypatch.setattr(archive_sync_v2, "import_page", boom)
+    snapshots = []
+    with pytest.raises(remote_sync_service.RemoteSyncError):
+        asyncio.run(remote_sync_service.run_pull_v2(
+            engine=consumer.engine, base_url=BASE_URL, username="admin", password="secret",
+            media_root=tmp_path / "media",
+            on_progress=lambda progress: snapshots.append(json.loads(json.dumps(progress))),
+            transport=httpx.MockTransport(_V2Remote(producer).handler),
+        ))
+    last = snapshots[-1]
+    assert (last["stream"], last["page"], last["stream_total"]) == ("sources", 1, 1)
+    assert last["order"] == list(remote_sync_service.V2_STREAM_ORDER)
+    assert last["run_pending"]["articles"] == 2
+
+
+def test_pending_is_a_first_page_estimate_when_rows_change_between_pages(tmp_path):
+    """R1 #7:分页期间被再次修改的实体移出本快照(处理量 ≤ pending),下次增量拿到,不丢数据。"""
+    producer = _sink(tmp_path, "producer.db")
+    _seed_producer(producer, articles=3, analyses=False)
+    first = archive_sync_v2.export_page(producer.engine, "articles", limit=2)
+    manifest = _manifest(first)
+    assert manifest["pending"] == 3
+    exported = {json.loads(line)["identity"] for line in _rows(first)}
+    remaining = ({"article-0", "article-1", "article-2"} - exported).pop()
+    with Session(producer.engine) as session:
+        row = session.get(ArticleRecord, remaining)
+        row.title = "changed between pages"
+        session.add(row)
+        session.commit()
+    second = archive_sync_v2.export_page(
+        producer.engine, "articles", snapshot=manifest["snapshot"], after=manifest["next_cursor"], limit=2,
+    )
+    assert _manifest(second)["complete"] is True and _rows(second) == []
+    assert len(exported) == 2 <= manifest["pending"]
+    later = archive_sync_v2.export_page(producer.engine, "articles", since=manifest["snapshot"])
+    assert [json.loads(line)["identity"] for line in _rows(later)] == [remaining]
+
+
+def test_whole_run_success_is_separate_from_per_stream_progress(tmp_path):
+    """R1 #4:只有逐流推进(首流成功后续失败)不算整次成功;成功后才记 v2_last_success_at。"""
+    producer = _sink(tmp_path, "producer.db")
+    consumer = _sink(tmp_path, "consumer.db")
+    _seed_producer(producer, articles=1)
+    _prepare_and_pull(consumer, producer, _V2Remote(producer), tmp_path, label="first")
+    target = remote_sync_service.load_sync_state(consumer.engine)["targets"][BASE_URL]
+    assert target["last_synced_at"] and "v2_last_success_at" not in target
+    assert sync_console.home_summary(consumer.engine)["last_success_at"] == ""
+    assert sync_console.console_status(
+        consumer.engine, media_store_ready=True, podcast_store_ready=True,
+    )["last_success_at"] == ""
+    remote_sync_service.record_v2_run_success(consumer.engine, base_url=BASE_URL, synced_at=NOW)
+    assert sync_console.home_summary(consumer.engine)["last_success_at"] == NOW
+    assert sync_console.console_status(
+        consumer.engine, media_store_ready=True, podcast_store_ready=True,
+    )["last_success_at"] == NOW

@@ -178,6 +178,8 @@ def console_status(
         "capabilities": capabilities,
         "username": str(target.get("username") or ""),
         "last_synced_at": str(target.get("last_synced_at") or ""),
+        # 整次成功时间;逐流推进的 last_synced_at 不代表整次成功(检视 R1 #4)。
+        "last_success_at": str(target.get("v2_last_success_at") or ""),
         "rebased_at": str(target.get("v2_rebased_at") or ""),
         "checkpoints": {
             stream: checkpoint
@@ -351,52 +353,54 @@ def reset_stream(engine, stream: str, *, by: str, at: str) -> Dict[str, Any]:
 
     if stream not in remote_sync.V2_STREAM_ORDER:
         raise ValueError(f"unknown stream: {stream}")
-    schedule = remote_sync.load_schedule(engine)
-    with Session(engine) as session:
-        active = session.exec(
-            select(JobRecord.id).where(
-                JobRecord.type == remote_sync.REMOTE_SYNC_JOB_TYPE,
-                JobRecord.status.in_(_ACTIVE_JOB_STATUSES),
-            )
-        ).first()
-        if active is not None:
-            raise SyncConsoleError("同步任务运行中,不能重置")
-        record = session.get(AppSettingRecord, remote_sync.REMOTE_SYNC_STATE_KEY)
-        state = remote_sync._decode_sync_state_record(record)
-        base_url = resolve_target(state, schedule)
-        targets = dict(state["targets"])
-        target = dict(targets.get(base_url) or {}) if base_url else {}
-        authority = str(target.get("v2_authority_id") or "")
-        if not authority:
-            raise SyncConsoleError("尚未与远端建立 v2 同步")
-        capabilities = list(target.get("v2_capabilities") or [])
-        if capabilities and stream not in remote_sync.negotiated_v2_stream_order(capabilities):
-            raise SyncConsoleError("远端未协商这条流")
-        streams = dict(target.get("v2_streams") or {})
-        streams.pop(stream, None)
-        target["v2_streams"] = streams
-        if stream != "taxonomy":
-            session.exec(
-                delete(ArchiveSyncEntityStateRecord).where(
-                    ArchiveSyncEntityStateRecord.stream == stream,
-                    ArchiveSyncEntityStateRecord.authority_id == authority,
+    # 与启动同步任务串行:检查无活动任务 → 提交重置之间不能插进新任务(检视 R1 #1)。
+    with remote_sync.sync_control_lock(engine):
+        schedule = remote_sync.load_schedule(engine)
+        with Session(engine) as session:
+            active = session.exec(
+                select(JobRecord.id).where(
+                    JobRecord.type == remote_sync.REMOTE_SYNC_JOB_TYPE,
+                    JobRecord.status.in_(_ACTIVE_JOB_STATUSES),
                 )
-            )
-        resets = dict(target.get("v2_stream_resets") or {})
-        resets[stream] = {"at": at, "by": by}
-        target["v2_stream_resets"] = resets
-        if stream == "analyses":
-            target["v2_analysis_refetch_at"] = at
-            target["v2_analysis_refetch_by"] = by
-        targets[base_url] = target
-        state["targets"] = targets
-        value = json.dumps(state, ensure_ascii=False)
-        if record is None:
-            record = AppSettingRecord(key=remote_sync.REMOTE_SYNC_STATE_KEY, value=value)
-        else:
-            record.value = value
-        session.add(record)
-        session.commit()
+            ).first()
+            if active is not None:
+                raise SyncConsoleError("同步任务运行中,不能重置")
+            record = session.get(AppSettingRecord, remote_sync.REMOTE_SYNC_STATE_KEY)
+            state = remote_sync._decode_sync_state_record(record)
+            base_url = resolve_target(state, schedule)
+            targets = dict(state["targets"])
+            target = dict(targets.get(base_url) or {}) if base_url else {}
+            authority = str(target.get("v2_authority_id") or "")
+            if not authority:
+                raise SyncConsoleError("尚未与远端建立 v2 同步")
+            capabilities = list(target.get("v2_capabilities") or [])
+            if capabilities and stream not in remote_sync.negotiated_v2_stream_order(capabilities):
+                raise SyncConsoleError("远端未协商这条流")
+            streams = dict(target.get("v2_streams") or {})
+            streams.pop(stream, None)
+            target["v2_streams"] = streams
+            if stream != "taxonomy":
+                session.exec(
+                    delete(ArchiveSyncEntityStateRecord).where(
+                        ArchiveSyncEntityStateRecord.stream == stream,
+                        ArchiveSyncEntityStateRecord.authority_id == authority,
+                    )
+                )
+            resets = dict(target.get("v2_stream_resets") or {})
+            resets[stream] = {"at": at, "by": by}
+            target["v2_stream_resets"] = resets
+            if stream == "analyses":
+                target["v2_analysis_refetch_at"] = at
+                target["v2_analysis_refetch_by"] = by
+            targets[base_url] = target
+            state["targets"] = targets
+            value = json.dumps(state, ensure_ascii=False)
+            if record is None:
+                record = AppSettingRecord(key=remote_sync.REMOTE_SYNC_STATE_KEY, value=value)
+            else:
+                record.value = value
+            session.add(record)
+            session.commit()
     return {"stream": stream, "reset_at": at, "target": base_url}
 
 
@@ -429,8 +433,8 @@ def home_summary(engine) -> Dict[str, Any]:
     last_success = next((job for job in jobs if job.status == "succeeded"), None)
     if last_success is not None and last_success.ended_at:
         summary["last_success_at"] = _epoch_iso(last_success.ended_at)
-    elif target.get("last_synced_at"):
-        summary["last_success_at"] = str(target.get("last_synced_at"))
+    elif target.get("v2_last_success_at"):
+        summary["last_success_at"] = str(target.get("v2_last_success_at"))
     latest = jobs[0] if jobs else None
     if latest is None:
         summary["status"] = "idle"

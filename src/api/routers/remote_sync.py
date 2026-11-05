@@ -155,108 +155,114 @@ def launch_remote_sync_job(
                 raise RemoteSyncError(
                     "本机已进入 v2 consumer 模式，不能降级启动 v1 同步"
                 )
-    with Session(engine) as session:
-        active = session.exec(
-            select(JobRecord).where(
-                JobRecord.type == REMOTE_SYNC_JOB_TYPE,
-                JobRecord.status.in_(["queued", "running"]),
-            )
-        ).all()
-        if active:
-            raise RemoteSyncError("已有同步任务运行中；单一 authority 同步必须串行")
-    if protocol == "v2":
-        # The writer fence, old-checkpoint reset and authority-scoped rebase are
-        # one durable transition before the background job becomes visible.
+    # 「查活动任务 → 准备 v2 状态 → 落 queued 任务」与单流重置串行(issue #261 检视 R1 #1)。
+    with remote_sync_service.sync_control_lock(engine):
         with Session(engine) as session:
-            sync_consumer_policy.activate_v2_consumer_mode(
-                session,
-                reason="v2_pull",
-                commit=False,
-            )
-            remote_sync_service.prepare_transaction_revision_consumer(
-                session,
-                base_url=base_url,
-                username=username,
-                authority_id=str((v2_probe or {})["authority_id"]),
-                schema_version=str((v2_probe or {})["schema_version"]),
-                prepared_at=_now_iso(),
-                capabilities=list((v2_probe or {}).get("capabilities") or []),
-            )
-            session.commit()
-
-    async def _work(job: jobs.Job) -> Dict[str, Any]:
+            active = session.exec(
+                select(JobRecord).where(
+                    JobRecord.type == REMOTE_SYNC_JOB_TYPE,
+                    JobRecord.status.in_(["queued", "running"]),
+                )
+            ).all()
+            if active:
+                raise RemoteSyncError("已有同步任务运行中；单一 authority 同步必须串行")
         if protocol == "v2":
-            app_module = _app()
-            store = getattr(app_module, "media_store", None)
-            podcast_store = getattr(app_module, "podcast_artifact_store", None)
-            state = remote_sync_service.load_sync_state(engine)
-            target = (state.get("targets") or {}).get(base_url) or {}
-
-            def _record_stream(stream: str, checkpoint: Dict[str, Any]) -> None:
-                remote_sync_service.record_v2_stream_success(
-                    engine,
+            # The writer fence, old-checkpoint reset and authority-scoped rebase are
+            # one durable transition before the background job becomes visible.
+            with Session(engine) as session:
+                sync_consumer_policy.activate_v2_consumer_mode(
+                    session,
+                    reason="v2_pull",
+                    commit=False,
+                )
+                remote_sync_service.prepare_transaction_revision_consumer(
+                    session,
                     base_url=base_url,
                     username=username,
-                    stream=stream,
-                    checkpoint=checkpoint,
-                    synced_at=_now_iso(),
+                    authority_id=str((v2_probe or {})["authority_id"]),
+                    schema_version=str((v2_probe or {})["schema_version"]),
+                    prepared_at=_now_iso(),
+                    capabilities=list((v2_probe or {}).get("capabilities") or []),
                 )
+                session.commit()
 
-            return await remote_sync_service.run_pull_v2(
-                engine=engine,
+        async def _work(job: jobs.Job) -> Dict[str, Any]:
+            if protocol == "v2":
+                app_module = _app()
+                store = getattr(app_module, "media_store", None)
+                podcast_store = getattr(app_module, "podcast_artifact_store", None)
+                state = remote_sync_service.load_sync_state(engine)
+                target = (state.get("targets") or {}).get(base_url) or {}
+
+                def _record_stream(stream: str, checkpoint: Dict[str, Any]) -> None:
+                    remote_sync_service.record_v2_stream_success(
+                        engine,
+                        base_url=base_url,
+                        username=username,
+                        stream=stream,
+                        checkpoint=checkpoint,
+                        synced_at=_now_iso(),
+                    )
+
+                v2_result = await remote_sync_service.run_pull_v2(
+                    engine=engine,
+                    base_url=base_url,
+                    username=username,
+                    password=password,
+                    media_root=getattr(store, "root", None),
+                    media_object_storage=getattr(store, "object_storage", None),
+                    media_max_bytes=getattr(store, "max_bytes", 20 * 1024 * 1024),
+                    podcast_artifact_store=podcast_store,
+                    page_size=page_size,
+                    checkpoints=target.get("v2_streams") or {},
+                    expected_authority_id=str((v2_probe or {})["authority_id"]),
+                    expected_capabilities=list((v2_probe or {}).get("capabilities") or []),
+                    podcast_text_max_bytes=(
+                        app_module.settings.podcast.text_artifact_max_bytes
+                    ),
+                    podcast_text_max_chars=(
+                        app_module.settings.podcast.text_artifact_max_chars
+                    ),
+                    podcast_text_page_max_bytes=(
+                        app_module.settings.podcast.text_sync_page_max_bytes
+                    ),
+                    podcast_text_page_max_rows=(
+                        app_module.settings.podcast.text_sync_page_max_rows
+                    ),
+                    on_progress=job.set_progress,
+                    on_stream_complete=_record_stream,
+                )
+                remote_sync_service.record_v2_run_success(
+                    engine, base_url=base_url, synced_at=_now_iso()
+                )
+                return v2_result
+            result = await remote_sync_service.run_pull(
                 base_url=base_url,
                 username=username,
                 password=password,
-                media_root=getattr(store, "root", None),
-                media_object_storage=getattr(store, "object_storage", None),
-                media_max_bytes=getattr(store, "max_bytes", 20 * 1024 * 1024),
-                podcast_artifact_store=podcast_store,
+                fetched_date_start=fetched_date_start,
+                source_ids=source_ids,
                 page_size=page_size,
-                checkpoints=target.get("v2_streams") or {},
-                expected_authority_id=str((v2_probe or {})["authority_id"]),
-                expected_capabilities=list((v2_probe or {}).get("capabilities") or []),
-                podcast_text_max_bytes=(
-                    app_module.settings.podcast.text_artifact_max_bytes
-                ),
-                podcast_text_max_chars=(
-                    app_module.settings.podcast.text_artifact_max_chars
-                ),
-                podcast_text_page_max_bytes=(
-                    app_module.settings.podcast.text_sync_page_max_bytes
-                ),
-                podcast_text_page_max_rows=(
-                    app_module.settings.podcast.text_sync_page_max_rows
-                ),
-                on_progress=job.set_progress,
-                on_stream_complete=_record_stream,
+                import_fn=archive_sync_router.import_archive_sync_jsonl,
+                on_total=job.set_total,
+                on_advance=job.advance,
             )
-        result = await remote_sync_service.run_pull(
-            base_url=base_url,
-            username=username,
-            password=password,
-            fetched_date_start=fetched_date_start,
-            source_ids=source_ids,
-            page_size=page_size,
-            import_fn=archive_sync_router.import_archive_sync_jsonl,
-            on_total=job.set_total,
-            on_advance=job.advance,
-        )
-        remote_sync_service.record_sync_success(engine, result, synced_at=_now_iso())
-        return result
+            remote_sync_service.record_sync_success(engine, result, synced_at=_now_iso())
+            return result
 
-    return jobs.launch(
-        engine,
-        REMOTE_SYNC_JOB_TYPE,
-        _work,
-        created_by=created_by,
-        payload={
-            "base_url": base_url,
-            "username": username,
-            "fetched_date_start": fetched_date_start or "",
-            "source_ids": source_ids or [],
-            "protocol": protocol,
-        },
-    )
+        return jobs.launch(
+            engine,
+            REMOTE_SYNC_JOB_TYPE,
+            _work,
+            created_by=created_by,
+            payload={
+                "base_url": base_url,
+                "username": username,
+                "fetched_date_start": fetched_date_start or "",
+                "source_ids": source_ids or [],
+                "protocol": protocol,
+            },
+        )
 
 
 @router.post("/api/admin/remote-sync/test")

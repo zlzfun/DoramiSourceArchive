@@ -277,7 +277,8 @@ export function runFromCheckpoints(checkpoints, order) {
   if (!Object.keys(streams).length) return null;
   const done = Object.values(streams).map((s) => s.completedAt).filter(Boolean).sort();
   return {
-    id: '', status: 'succeeded', active: false, v1: false, fromCheckpoint: true,
+    // 任务记录已清理时只按各流 checkpoint 展示已知进度,不推断整次成功(检视 R1 #4)
+    id: '', status: 'checkpoint', active: false, v1: false, fromCheckpoint: true,
     startAt: '', createdAt: '', endAt: done.at(-1) || '', trigger: '', order: validOrder(order) || STREAM_ORDER,
     streams, cur: null, page: null, processed: 0, streamProcessed: 0, streamTotal: null, streamStartedAt: '',
     downloaded: 0, reused: 0, downloadedBytes: 0, reusedBytes: 0, runPending: null, evidence: null, error: '', v1Result: null,
