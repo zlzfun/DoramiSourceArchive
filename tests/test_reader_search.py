@@ -537,6 +537,39 @@ def test_subscription_context_temporal_has_no_notice(monkeypatch):
     assert ctx.startswith("[1] 最新文章")
 
 
+@pytest.mark.parametrize("relax_dates", [True, False])
+def test_structured_context_preserves_search_notice_without_evidence_id(monkeypatch, relax_dates):
+    from datetime import datetime, timedelta, timezone
+    from services.qa_contract import QAState
+    from services.reader_ai import build_qa_messages
+
+    now = datetime.now(timezone.utc)
+    sink = make_sink()
+    seed(sink.engine, "older", "src_a", "Older model launch", "model launch details",
+         publish_date=(now - timedelta(days=14)).date().isoformat())
+    question = "最近有什么发布，有哪些局限？"
+    s = QAState(question)
+
+    async def fake_plan(*args, **kwargs):
+        return {"keywords": ["model launch" if relax_dates else "NoSuchTopicZZZ"],
+                "date_gte": (now - timedelta(days=7)).date().isoformat() if relax_dates else None,
+                "date_lte": None, "temporal": False, "use_brief": False,
+                "subquestions": [{"question": "有什么发布？"}, {"question": "有哪些局限？"}]}
+
+    monkeypatch.setattr(reader_search, "plan_query", fake_plan)
+    context, sources = run(reader_search.subscription_context(
+        question, engine=sink.engine, source_ids=["src_a"], llm_config=_LLM, qa_state=s))
+    assert sources and s.context_notice and context.startswith(s.context_notice)
+    expected = "读者要求的时间范围" if relax_dates else "没有检索到与问题直接相关的文章"
+    assert expected in s.context_notice
+    messages = build_qa_messages(question, context, scope="subscription", qa_state=s)
+    assert s.context_notice in messages[-1].content
+    assert messages[-1].content.index(s.context_notice) < messages[-1].content.index('{"sources":')
+    assert all(s.context_notice not in item["text"] for item in s.evidence_catalog.values())
+    ordinary = build_qa_messages(question, context, scope="subscription")
+    assert context in ordinary[-1].content  # ordinary path retains its original context
+
+
 def test_subscription_context_use_brief_scopes_to_daily_brief(monkeypatch):
     sink = make_sink()
     seed(sink.engine, "b1", reader_search.BRIEF_SOURCE_ID, "八月第一周日报", "weekly recap of AI events")

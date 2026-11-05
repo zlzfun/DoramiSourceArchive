@@ -12,6 +12,7 @@ import time
 import uuid
 
 from llm.client import LLMStructuredOutputError, parse_json_object
+from services.qa_evidence import CONTRACT_VERSION, build_catalog, fingerprint
 
 MAX_PARTS = 12
 _CITATION = re.compile(r"\[(\d+)\]")
@@ -95,6 +96,9 @@ class QAState:
     stages: dict = field(default_factory=dict)
     calls: list[dict] = field(default_factory=list)
     checked_parts: list[dict] = field(default_factory=list)
+    evidence_catalog: dict = field(default_factory=dict)
+    catalog_source_hash: str = ""
+    context_notice: str = ""
     outcome: str = "in_progress"
 
     def __post_init__(self):
@@ -110,10 +114,21 @@ class QAState:
         self.intent = "chat" if plan.get("chat") is True else "evidence"
         self.parts = clean_parts(plan.get("subquestions"), self.question)
 
-    def capture_source(self, record, body: str):
+    def capture_source(self, record, body: str, *, header: str = ""):
         get = record.get if isinstance(record, dict) else lambda key, default=None: getattr(record, key, default)
-        self.sources.append({"id": get("id"), "body": body,
+        self.sources.append({"id": get("id"), "body": body, "header": header,
                              "evidence": get("qa_evidence") or []})
+        self.evidence_catalog = {}
+        self.catalog_source_hash = ""
+
+    def prepare_evidence(self) -> str:
+        try:
+            context, catalog = build_catalog(self.sources)
+        except (ValueError, KeyError, TypeError) as exc:
+            raise LLMStructuredOutputError("qa_source_invalid", "本轮资料暂时无法核对，请稍后重试") from exc
+        self.evidence_catalog = catalog
+        self.catalog_source_hash = fingerprint(self.sources)
+        return context
 
     def lexical_hits(self, body: str) -> list[str]:
         """Diagnostic search-term hits, explicitly NOT semantic coverage."""
@@ -129,6 +144,8 @@ class QAState:
             "trace_id": self.trace_id, "outcome": self.outcome, "intent": self.intent,
             "elapsed_ms": round((time.monotonic() - self.started) * 1000),
             "planned_parts": len(self.parts), "stages": dict(self.stages),
+            "contract_version": CONTRACT_VERSION,
+            "catalog_entries": len(self.evidence_catalog),
             "calls": list(self.calls), "checked_parts": list(self.checked_parts),
             "sources": [{"id": source["id"], "chars": len(source["body"]),
                          "sha256": _hash(source["body"]),
@@ -142,7 +159,7 @@ class QAState:
 
 
 def render_structured_answer(raw: str, state: QAState) -> str:
-    """Validate every planned ID and bind quotations to current source text.
+    """Validate every planned ID and references into the exact injected catalog.
 
     No repair call, no second model rewrite. A matching quote does NOT prove the
     answer follows from it; missing/contradictory evidence remains a semantic eval.
@@ -150,6 +167,9 @@ def render_structured_answer(raw: str, state: QAState) -> str:
     def reject(code):
         raise LLMStructuredOutputError(code, "回答的依据或完整性检查未通过，请重新提问")
 
+    state.checked_parts = []
+    if not state.catalog_source_hash or state.catalog_source_hash != fingerprint(state.sources):
+        reject("qa_catalog_changed")
     data = parse_json_object(raw)
     rows = data.get("parts")
     expected = [part["id"] for part in state.parts]
@@ -163,42 +183,32 @@ def render_structured_answer(raw: str, state: QAState) -> str:
         part_id = row["id"]
         if part_id not in expected or part_id in by_id:
             reject("qa_parts_invalid")
-        status, answer, evidence = row.get("status"), row.get("answer"), row.get("evidence")
+        status, answer = row.get("status"), row.get("answer")
+        evidence, metadata = row.get("evidence_ids"), row.get("metadata_ids", [])
         if status not in ("answered", "partial", "insufficient") or not isinstance(answer, str) or not answer.strip():
             reject("qa_part_empty")
-        if len(answer) > 12000 or not isinstance(evidence, list) or len(evidence) > 8:
+        if (len(answer) > 12000 or not isinstance(evidence, list) or not isinstance(metadata, list)
+                or len(evidence) + len(metadata) > 8):
             reject("qa_part_invalid")
-        if status != "insufficient" and not evidence:
+        if status != "insufficient" and not evidence and not metadata:
             reject("qa_evidence_missing")
         refs, proofs = set(), []
-        for entry in evidence:
-            if not isinstance(entry, dict):
-                reject("qa_evidence_invalid")
-            n, quote = entry.get("source"), entry.get("quote")
-            if type(n) is not int or not 1 <= n <= len(state.sources):
-                reject("qa_citation")
-            if not isinstance(quote, str) or not 2 <= len(quote.strip()) <= 1000:
-                reject("qa_quote_invalid")
-            source = state.sources[n - 1]
-            # Exact substring; no normalization that might erase negations or
-            # merge speaker turns, and no match against another source.
-            if quote not in source["body"]:
-                reject("qa_quote_missing")
-            proof = {"source": n, "quote_sha256": _hash(quote)}
-            if source["evidence"]:
-                fragment = next((e for e in source["evidence"] if quote in e["text"]), None)
-                if fragment is None:
-                    reject("qa_quote_missing")
-                start = fragment["range_start"] + fragment["text"].index(quote)
-                if start + len(quote) > fragment["range_end"]:
-                    reject("qa_range_invalid")
-                proof.update(artifact_id=fragment["artifact_id"], content_hash=fragment["content_hash"],
-                             range_start=start, range_end=start + len(quote))
-            refs.add(n)
-            proofs.append(proof)
+        seen = set()
+        for kind, keys in (("content", evidence), ("metadata", metadata)):
+            for key in keys:
+                if not isinstance(key, str) or key in seen or key not in state.evidence_catalog:
+                    reject("qa_evidence_id")
+                seen.add(key)
+                entry = state.evidence_catalog[key]
+                if entry["kind"] != kind:
+                    reject("qa_evidence_kind")
+                refs.add(entry["source"])
+                proofs.append({"id": key, **{name: entry[name] for name in (
+                    "source", "source_id", "kind", "text_sha256", "body_start", "body_end",
+                    "artifact_id", "content_hash", "range_start", "range_end") if name in entry}})
         cited = validate_citations(answer, len(state.sources))
         if not cited.issubset(refs):
-            reject("qa_citation_without_quote")
+            reject("qa_citation_without_evidence")
         # The model writes the user-facing prose once. Only missing source links
         # are appended mechanically; no removal of conditions or limitations.
         by_id[part_id] = answer.strip() + "".join(f"[{n}]" for n in sorted(refs - cited))

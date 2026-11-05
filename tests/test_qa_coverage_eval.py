@@ -84,8 +84,8 @@ def test_empty_question_rejected_before_call(monkeypatch):
 
 
 def test_contract_eval_uses_runtime_messages_and_checks_all_parts(tmp_path):
-    item = {**case(), "subquestions": [{"question": "解释机制"}, {"question": "说明局限"}],
-            "qa_sources": [{"id": "one", "body": "Uncertain evidence.", "evidence": []}]}
+    item = {**case(), "context": "[1] Title\nUncertain evidence.", "subquestions": [{"question": "解释机制"}, {"question": "说明局限"}],
+            "qa_sources": [{"id": "one", "header": "[1] Title", "body": "Uncertain evidence.", "evidence": []}]}
     bundle = qa_eval.prepare([item], today="2026-11-03", runs=1, contract=True, baseline="BASELINE")
     jobs = bundle["payload"]["jobs"]
     expected = reader_ai.build_qa_messages(item["question"], item["context"], scope="article", today="2026-11-03",
@@ -93,7 +93,7 @@ def test_contract_eval_uses_runtime_messages_and_checks_all_parts(tmp_path):
     assert jobs[0]["messages"] == [m.to_dict() for m in expected]
     assert "待回答子问题" not in jobs[1]["messages"][-1]["content"]
     assert "GRADING_ONLY_SENTINEL" not in json.dumps(jobs)
-    replies = [{"parts": [{"id": "q1", "status": "answered", "answer": "解释。", "evidence": [{"source": 1, "quote": "Uncertain evidence."}]}]}, "baseline [1]"]
+    replies = [{"parts": [{"id": "q1", "status": "answered", "answer": "解释。", "evidence_ids": []}]}, "baseline [1]"]
     def handler(request):
         body = json.loads(request.content)
         value = replies.pop(0)
@@ -110,6 +110,30 @@ def test_contract_eval_rejects_invented_source_before_http():
     item = {**case(), "subquestions": [{"question": "解释"}], "qa_sources": [{"body": "not in context"}]}
     with pytest.raises(ValueError, match="verbatim"):
         qa_eval.prepare([item], today="2026-11-03", contract=True)
+
+
+@pytest.mark.parametrize("mutation,error", [
+    (lambda c: c.pop("version"), "contract version"),
+    (lambda c: c.update(catalog_sha256="stale"), "catalog mismatch"),
+])
+def test_old_or_changed_contract_is_rejected_before_any_http(tmp_path, mutation, error):
+    item = {**case(), "context": "[1] Title\nUncertain evidence.",
+            "subquestions": [{"question": "解释机制"}, {"question": "说明局限"}],
+            "qa_sources": [{"id": "one", "header": "[1] Title", "body": "Uncertain evidence.", "evidence": []}]}
+    bundle = qa_eval.prepare([item], today="2026-11-05", runs=1, contract=True)
+    mutation(bundle["payload"]["jobs"][0]["contract"])
+    bundle["sha256"] = qa_eval.digest(bundle["payload"])
+    with pytest.raises(ValueError, match=error):
+        run(tmp_path, lambda request: pytest.fail("must reject before provider HTTP"), bundle=bundle)
+    assert not (tmp_path / "run").exists()
+
+
+def test_contract_metadata_header_must_already_be_in_frozen_context():
+    item = {**case(), "context": "[1] True title\nUncertain evidence.",
+            "subquestions": [{"question": "解释"}],
+            "qa_sources": [{"id": "one", "header": "[1] Invented title", "body": "Uncertain evidence.", "evidence": []}]}
+    with pytest.raises(ValueError, match="explicit header"):
+        qa_eval.prepare([item], today="2026-11-05", contract=True)
 
 
 @pytest.mark.parametrize("context,bodies", [

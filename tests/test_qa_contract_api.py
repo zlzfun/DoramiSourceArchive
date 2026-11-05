@@ -5,6 +5,7 @@ Only provider HTTP is mocked. Each test owns an isolated SQLite database.
 from collections import deque
 from datetime import datetime, timezone
 import json
+import re
 
 from fastapi.testclient import TestClient
 import httpx
@@ -39,17 +40,24 @@ def setup(monkeypatch, tmp_path, *, failure=None):
                      "subquestions": PARTS, "single_episode": True}
             reason = "stop"
         else:
+            ids = re.findall(r'"id":"(s1p[^" ]+)"', payload["messages"][-1]["content"])
+            assert ids
             value = {"parts": [
                 {"id": "q1", "status": "answered", "answer": "密钥外置保护凭据。",
-                 "evidence": [{"source": 1, "quote": "External secrets protect credentials."}]},
+                 "evidence_ids": ids[:1]},
                 {"id": "q2", "status": "answered", "answer": "仍需独立授权范围。",
-                 "evidence": [{"source": 1, "quote": "Separate scope is still needed."}]},
+                 "evidence_ids": ids[:1]},
             ]}
             reason = "stop"
             if failure == "omission":
                 value["parts"].pop()
-            elif failure == "wrong_quote":
-                value["parts"][1]["evidence"][0]["quote"] = "Scope is unnecessary."
+            elif failure == "wrong_id":
+                value["parts"][1]["evidence_ids"] = ["s1p999-invented"]
+            elif failure == "missing_ids":
+                value["parts"][1].pop("evidence_ids")
+            elif failure == "metadata_as_content":
+                value["parts"][1]["evidence_ids"] = re.findall(
+                    r'"id":"(s1m-[^" ]+)"', payload["messages"][-1]["content"])
             elif failure == "length":
                 reason = "length"
             elif failure == "withdraw":
@@ -59,8 +67,11 @@ def setup(monkeypatch, tmp_path, *, failure=None):
                     p.unpublished_at = datetime.now(timezone.utc).isoformat()
                     session.add(p)
                     session.commit()
+        content = json.dumps(value)
+        if failure == "bad_json" and "parts" in value:
+            content = '{"parts":[{id:"q1"}]}'
         return httpx.Response(200, json={"model": "fixture-served", "choices": [{
-            "message": {"content": json.dumps(value)}, "finish_reason": reason,
+            "message": {"content": content}, "finish_reason": reason,
         }], "usage": {"prompt_tokens": 100, "completion_tokens": 50}})
 
     async def completion(**kwargs):
@@ -84,7 +95,7 @@ def test_real_pipeline_returns_natural_answer_bound_to_current_transcript(monkey
         data = response.json()
         assert data["answer"] == "密钥外置保护凭据。[1]\n\n仍需独立授权范围。[1]"
         assert len(requests) == 2 and len(data["sources"]) == 1
-        assert BODY in requests[-1]["messages"][-1]["content"]
+        assert json.dumps(BODY)[1:-1] in requests[-1]["messages"][-1]["content"]
         assert data["sources"][0]["evidence"][0]["artifact_id"].startswith("episode-")
         assert "checked_parts" not in data and "q1" not in data["answer"]
         assert client.get("/api/reader/ai/ask/progress?ask_id=contract-test").json()["stage"] is None
@@ -101,7 +112,8 @@ def test_real_pipeline_returns_natural_answer_bound_to_current_transcript(monkey
         assert row["sources"][0]["lexical_part_hits"] == ["q1", "q2"]
 
 
-@pytest.mark.parametrize("failure,status", [("omission", 502), ("wrong_quote", 502), ("length", 502), ("withdraw", 409)])
+@pytest.mark.parametrize("failure,status", [("omission", 502), ("wrong_id", 502), ("length", 502),
+    ("missing_ids", 502), ("metadata_as_content", 502), ("bad_json", 502), ("withdraw", 409)])
 def test_invalid_or_revoked_result_never_returns_partial_success(monkeypatch, tmp_path, failure, status):
     app, _, requests = setup(monkeypatch, tmp_path, failure=failure)
     with TestClient(app.app) as client:

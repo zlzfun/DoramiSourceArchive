@@ -28,6 +28,7 @@ from config import LLMConfig
 from llm.client import ChatMessage, chat_completion
 from services.reader_ai import build_qa_messages
 from services.qa_contract import QAState, render_structured_answer, validate_citations
+from services.qa_evidence import CONTRACT_VERSION
 
 
 def digest(value):
@@ -64,7 +65,12 @@ def contract_state(case):
             or headers[-1].group(1) != str(index)):
             raise ValueError("source bodies must be unique, nonoverlapping and follow their numbered headers")
         previous_end = start + len(body)
+        header = source.get("header")
+        if (not isinstance(header, str) or not header.startswith(f"[{index}] ")
+                or context[headers[-1].start():start].rstrip() != header):
+            raise ValueError("explicit header must match the numbered source header verbatim")
     state.sources = [{"id": source.get("id"), "body": source["body"],
+                      "header": source["header"],
                       "evidence": source.get("evidence", [])} for source in sources]
     if state.intent != "chat":
         parts = case.get("subquestions")
@@ -109,7 +115,9 @@ def prepare(cases, *, today, runs=3, baseline=None, contract=False):
                              "messages": variants[variant], "source_count": case["source_count"],
                              "messages_sha256": digest(variants[variant])})
                 if contract and variant == "candidate":
-                    jobs[-1]["contract"] = {"parts": state.parts, "sources": state.sources, "intent": state.intent}
+                    jobs[-1]["contract"] = {"version": CONTRACT_VERSION, "parts": state.parts,
+                                           "sources": state.sources, "intent": state.intent,
+                                           "catalog_sha256": digest(state.evidence_catalog)}
     payload = {"schema_version": 1, "today": today, "cases": cases, "jobs": jobs,
                "scope": ("frozen_context_and_subquestions_answer_only; planner and retrieval not evaluated" if contract
                          else "frozen_context_answer_only; retrieval not evaluated")}
@@ -208,6 +216,17 @@ class RecordingTransport(httpx.AsyncBaseTransport):
 
 async def run_batch(bundle, *, config, out, max_attempts, max_cny, input_rate, output_rate, inner=None):
     payload = verify_bundle(bundle)
+    # A frozen v1 quote-copy batch must not silently run against the v2 checker.
+    for job in payload["jobs"]:
+        contract = job.get("contract")
+        if contract and contract.get("version") != CONTRACT_VERSION:
+            raise ValueError("unsupported frozen QA contract version; prepare a new batch")
+        if contract and contract["intent"] != "chat" and len(contract["parts"]) > 1:
+            state = QAState("frozen evaluation")
+            state.sources = contract["sources"]
+            state.prepare_evidence()
+            if digest(state.evidence_catalog) != contract["catalog_sha256"]:
+                raise ValueError("frozen QA evidence catalog mismatch")
     if not config.configured or config.max_tokens <= 0 or not math.isfinite(config.timeout_seconds) or config.timeout_seconds <= 0:
         raise ValueError("explicit configured model and positive output/timeout limits required")
     out = Path(out)
@@ -246,6 +265,7 @@ async def run_batch(bundle, *, config, out, max_attempts, max_cny, input_rate, o
                 if structured:
                     state = QAState("frozen evaluation")
                     state.parts, state.sources = contract["parts"], contract["sources"]
+                    state.prepare_evidence()
                     row["raw_answer"] = answer
                     answer = render_structured_answer(answer, state)
                     row["checked_parts"] = state.checked_parts

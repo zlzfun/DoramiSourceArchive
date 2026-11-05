@@ -20,13 +20,15 @@ def state():
         "text": "External secrets. Separate scope is still needed.", "range_start": 300,
         "range_end": 300 + len("External secrets. Separate scope is still needed."), "artifact_id": "artifact-current", "content_hash": "current-hash",
     }]}]
+    result.prepare_evidence()
     return result
 
 
 def answer():
+    ids = list(state().evidence_catalog)
     return {"parts": [
-        {"id": "q1", "status": "answered", "answer": "密钥外置。", "evidence": [{"source": 1, "quote": "External secrets."}]},
-        {"id": "q2", "status": "partial", "answer": "仍需独立授权，资料未提供效果百分比。", "evidence": [{"source": 1, "quote": "Separate scope is still needed."}]},
+        {"id": "q1", "status": "answered", "answer": "密钥外置。", "evidence_ids": ids},
+        {"id": "q2", "status": "partial", "answer": "仍需独立授权，资料未提供效果百分比。", "evidence_ids": ids},
     ]}
 
 
@@ -47,10 +49,10 @@ def test_render_preserves_limitations_order_and_exact_evidence_ranges():
     (lambda a: a["parts"][1].update(id="q1"), "qa_parts_invalid"),
     (lambda a: a["parts"][1].update(id="q9"), "qa_parts_invalid"),
     (lambda a: a["parts"][1].update(answer=" "), "qa_part_empty"),
-    (lambda a: a["parts"][1].update(evidence=[]), "qa_evidence_missing"),
-    (lambda a: a["parts"][1]["evidence"][0].update(source=True), "qa_citation"),
-    (lambda a: a["parts"][1]["evidence"][0].update(source=99), "qa_citation"),
-    (lambda a: a["parts"][1]["evidence"][0].update(quote="Separate scope is NOT needed."), "qa_quote_missing"),
+    (lambda a: a["parts"][1].update(evidence_ids=[]), "qa_evidence_missing"),
+    (lambda a: a["parts"][1].update(evidence_ids=[True]), "qa_evidence_id"),
+    (lambda a: a["parts"][1].update(evidence_ids=["s99p1-unknown"]), "qa_evidence_id"),
+    (lambda a: a["parts"][1].pop("evidence_ids"), "qa_part_invalid"),
     (lambda a: a["parts"][1].update(answer="不安全。[99]"), "qa_citation"),
 ])
 def test_invalid_answer_is_rejected_as_a_whole(mutation, code):
@@ -62,29 +64,28 @@ def test_invalid_answer_is_rejected_as_a_whole(mutation, code):
     assert s.checked_parts == []
 
 
-def test_quote_must_belong_to_cited_source_and_survive_context_budget():
-    s, data = state(), answer()
-    s.sources.append({"id": "a2", "body": "Different article", "evidence": []})
-    data["parts"][0]["evidence"][0]["source"] = 2
-    with pytest.raises(client.LLMStructuredOutputError, match="qa_quote_missing"):
-        render_structured_answer(json.dumps(data), s)
+def test_catalog_must_be_prepared_from_current_budgeted_sources():
     s = state()
-    s.sources[0]["body"] = "External secrets."  # artifact still contains the rest
-    with pytest.raises(client.LLMStructuredOutputError, match="qa_quote_missing"):
+    s.sources[0]["body"] = "External secrets."
+    with pytest.raises(client.LLMStructuredOutputError, match="qa_catalog_changed"):
+        render_structured_answer(json.dumps(answer()), s)
+    s.prepare_evidence()
+    with pytest.raises(client.LLMStructuredOutputError, match="qa_evidence_id"):
         render_structured_answer(json.dumps(answer()), s)
 
 
 def test_citation_cannot_use_evidence_only_from_another_part():
     s, data = state(), answer()
     s.sources.append({"id": "a2", "body": "Other evidence", "evidence": []})
+    s.prepare_evidence()
     data["parts"][1]["answer"] += "[2]"
-    with pytest.raises(client.LLMStructuredOutputError, match="qa_citation_without_quote"):
+    with pytest.raises(client.LLMStructuredOutputError, match="qa_citation_without_evidence"):
         render_structured_answer(json.dumps(data), s)
 
 
 def test_insufficient_part_is_kept_and_does_not_hide_answered_part():
     data = answer()
-    data["parts"][1].update(status="insufficient", evidence=[], answer="资料未给出对照实验，无法确定提升比例。")
+    data["parts"][1].update(status="insufficient", evidence_ids=[], answer="资料未给出对照实验，无法确定提升比例。")
     result = render_structured_answer(json.dumps(data), state())
     assert result.startswith("密钥外置。[1]") and "无法确定提升比例" in result
 

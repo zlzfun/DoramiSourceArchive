@@ -784,7 +784,7 @@ def build_numbered_context(
         blocks.append(block)
         included.append(art)
         if qa_state is not None:
-            qa_state.capture_source(art, body)
+            qa_state.capture_source(art, body, header=header)
         used += len(block)
     return "\n\n".join(blocks), included
 
@@ -986,6 +986,9 @@ def build_qa_messages(
     structured = qa_state is not None and len(qa_state.parts) > 1
     if structured:
         system_prompt += prompts.QA_STRUCTURED_RULE
+        context = qa_state.prepare_evidence()
+        if qa_state.context_notice:
+            context = f"{qa_state.context_notice}\n\n{context}"
     if with_image_notes:
         system_prompt = system_prompt + prompts.IMAGE_NOTES_UNTRUSTED_RULE
     messages = [ChatMessage(role="system", content=system_prompt)]

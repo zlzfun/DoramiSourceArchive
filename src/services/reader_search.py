@@ -580,6 +580,8 @@ async def subscription_context(
         notes_by_id=notes_by_id,
         qa_state=qa_state,
     )
+    if qa_state is not None:
+        qa_state.context_notice = notice
     if notice:
         context = f"{notice}\n\n{context}" if context else notice
     return context, build_sources_payload(included, notes_by_id=notes_by_id)
