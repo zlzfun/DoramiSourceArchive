@@ -13,7 +13,7 @@ import importlib
 import os
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlmodel import Session, func, select
 
@@ -155,6 +155,20 @@ def set_source_visibility(
 
 def _is_root_admin(session: Session, auth: Optional[Dict[str, Any]]) -> bool:
     return bool(auth) and accounts_service.is_root_admin(session, auth.get("sub"))
+
+
+@router.get("/qa-diagnostics")
+def admin_qa_diagnostics(
+    response: Response,
+    session: Session = Depends(deps.get_session),
+    auth: Optional[Dict[str, Any]] = Depends(deps.get_current_session),
+):
+    """Root-only, bounded diagnostics: source IDs can reveal private reading interests."""
+    if not _is_root_admin(session, auth):
+        raise HTTPException(status_code=403, detail="仅根管理员可查看问答诊断")
+    response.headers["Cache-Control"] = "no-store"
+    from services import qa_diagnostics
+    return qa_diagnostics.recent()
 
 
 @router.get("/account-growth")

@@ -82,7 +82,7 @@
 - `GET /api/reader/ai/translation-jobs/events?article_id=…&preview_cursor=…` — 同权限 SSE `snapshot`，支持 Last-Event-ID；流内重验 cookie/权限，终态后关闭；普通 GET 可兜底
 - `POST /api/auth/preferences` — 可选 patch `default_surface` / `prefer_chinese_titles`，只更新明确字段；中文标题默认 true，游客仅浏览器本地偏好
 - `POST /api/reader/ai/social/{article_id}/translate` — 推文(主推 + 引用推)一次调用译为中文,返回 `{text, quoted, cached}`,缓存 `extensions_json.translation_zh_social`(issue #84)
-- `POST /api/reader/ai/ask` — multi-turn QA,scope 四档 `article|articles|subscription|all`(v3.32:显式名单 vs 检索圈定;检索档走「LLM 计划检索 + FTS5」两段式);响应 `sources` 与上下文编号 [n] 同源同序(行内引用锚);可带 `ask_id` 登记阶段进度
+- `POST /api/reader/ai/ask` — multi-turn QA,scope 四档 `article|articles|subscription|all`(v3.32:显式名单 vs 检索圈定;检索档走「LLM 计划检索 + FTS5」两段式);响应 `sources` 与上下文编号 [n] 同源同序(行内引用锚);可带 `ask_id` 登记阶段进度；响应含 `trace_id` 对应根管理员诊断，截断/结构或引用检查失败不返回半截答案
 - `GET /api/reader/ai/ask/progress?ask_id=` — ask 阶段进度轮询(plan→search→select→answer,内存瞬时态,完成即清;阶段化等待态数据源)
 - `POST /api/reader/ai/podcasts/{episode_id}/ondemand`、`POST /api/reader/ai/articles/{article_id}/ondemand` — 读者点播精品导读 / 文章精简旁白，共用每日额度。总闸 `GET`/`POST /api/admin/reader-ondemand`（KV `reader_ondemand_enabled`，缺省开）在运维管理 → 内容；关闭只收读者入口并 403 新请求，已有音频与排队不动。能不能跑不由这个开关改：`/api/runtime` 的 `ondemand.podcast` / `ondemand.article` 还要求 LLM、TTS 和默认音色，播客侧另要求处理阶段授权。缺阶段时读者只看到「当前部署未开启播客点播」，缺什么列在管理面 `blockers`。
 
@@ -124,6 +124,7 @@
 - `GET /api/admin/home?days=&top=` — 运维首页聚合(issue #114,全体管理员可见,纯聚合不含逐账户明细):`active`(逐日活跃账户 `series[{day,accounts}]` 补零 + 窗口去重合计 `accounts`;活跃 = 当天登录或阅读,排除 `guest:*` / `deleted:*`)、`reads`(窗口内各源阅读 `total` + 排行 `by_source[{source_id,name,reads}]` 取前 `top`,含游客,与 `/admin/content` 同口径只多时间窗)、`backfills`(全量分析回填:`active` 进行中数、`unresolved_failed` 最近一次成功之后的失败任务数、`latest` 最近一条)
 - `GET /api/admin/accounts?days=` — account list enriched with `subscription_count` + **窗口指标** (`reads`, `logins`, `ai_calls`/`ai_tokens` over the last `days`, `logged_in_window`) + 埋点 fields
 - `GET /api/admin/accounts/{username}/activity?days=` — per-reader activity detail: windowed AI usage (`ai_usage.summarize_user`) + reads (`reader_activity.summarize_user_reads`) + logins (`accounts.summarize_user_logins`: count/by_day/recent) + `source_engagement` (per-source reads ∪ favorites, friendly-named) + `favorites_total` + account/subscription snapshot
+- `GET /api/admin/qa-diagnostics` — 仅根管理员；最近最多 100 条/1 小时的进程内问答诊断（来源指纹/范围、结构检查、调用配置/结束状态/token/耗时，无提问/正文/答案；不代表语义正确）。重启清空，多进程各自窗口。
 - `GET /api/admin/ai-usage?days=` — AI usage dashboard (calls + tokens by 用途/用户/日期)
 - `GET /api/admin/audit-log?days=&limit=` — 管理操作审计(v3.19):中间件落行的管理写操作,按时间倒序(见 [Admin audit log](../architecture/accounts-and-access.md))
 - `GET`/`POST /api/admin/ai-beta/global` — read/set the AI Beta global master switch

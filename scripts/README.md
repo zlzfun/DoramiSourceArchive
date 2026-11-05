@@ -42,7 +42,7 @@
 |---|---|---|
 | [`check_mobile_reader_e2e.py`](./check_mobile_reader_e2e.py) | #90 / #86 移动读者真实端到端测试(+ #108 聚焦环回归:全局环须在 `@layer base`、容器画环的输入框无内框;+ #230 手机守卫 `guards`:四档返回键矩阵、长按、触控 / 输入字号抽样、长列表 DOM 上限),入口 `cd frontend && npm run test:e2e`，见 [说明](../docs/frontend/e2e.md)。原 `check_mobile_navigation.py`(合成 API 移动导航回归)已于 #230 批 4b 退役并入此处。 | 自建临时 FastAPI/SQLite + 构建预览；不接外部服务，不改开发库，结束清理所属进程。 |
 | [`check_listen_guide_e2e.py`](./check_listen_guide_e2e.py) | #238 文章听导读的真实 React 浏览器回归：提交、暂时回读失败、重复请求及切篇隔离。 | 隔离 FastAPI/SQLite + 新构建前端；生成/状态/WAV 为显式桩，不调用付费供应商，结束清理所属进程与临时库。 |
-| [`eval_qa_coverage.py`](./eval_qa_coverage.py) | #254 冻结问答输入与评分表、新旧提示词对照；语义需人工评分，见 [方案](../docs/plans/issue-254-qa-coverage.md)。 | `prepare` 离线，`run` 显式付费并限制实际 HTTP 次数/估算费用；只写新目录，不启动业务库、ASR/TTS，保留失败回执。 |
+| [`eval_qa_coverage.py`](./eval_qa_coverage.py) | #254 冻结问答输入与评分表、新旧提示词及 `--contract` 子问题/证据协议对照（后者不测规划/检索）；语义需人工评分，见 [方案](../docs/plans/issue-254-qa-coverage.md)。 | `prepare` 离线，`run` 显式付费并限制实际 HTTP 次数/估算费用；只写新目录，不启动业务库、ASR/TTS，保留失败回执。 |
 | [`smoke_analysis_release.py`](./smoke_analysis_release.py) | 真实/合成 RSS、可选真实 LLM、租约重启恢复、SQLite 并发和个人早报 15 分钟降级。 | 强制使用非生产文件型 SQLite。 |
 | [`smoke_full_analysis_backfill.py`](./smoke_full_analysis_backfill.py) | 估算并可选调用真实模型执行小批量 `full_analysis`。 | 拒绝当前配置库并限制最大文章数。 |
 | [`replay_event_assignment.py`](./replay_event_assignment.py) | 事件层(issue #121)回放:从库只读导出日期窗 JSONL,或在临时库里按批重放「召回 + 辅助模型 + 规则 + 落库」,输出每日事件数 / ≥ 2 主体事件数 / 规模直方图 / 多成员事件成员标题 / 调用与 token;`--dry-run` 只做召回统计。 | 源库只读;只写临时目录;真实模型配置从 `--llm-from` 指向的库只读解析(ini / env + 该库 `app_settings` 覆盖;`--database-url` 模式默认同一库),不打印密钥。 |

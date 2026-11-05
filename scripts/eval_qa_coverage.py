@@ -27,6 +27,7 @@ import httpx
 from config import LLMConfig
 from llm.client import ChatMessage, chat_completion
 from services.reader_ai import build_qa_messages
+from services.qa_contract import QAState, render_structured_answer, validate_citations
 
 
 def digest(value):
@@ -41,7 +42,40 @@ def write_new(path, value):
         os.fsync(stream.fileno())
 
 
-def prepare(cases, *, today, runs=3, baseline=None):
+def contract_state(case):
+    """Frozen, explicit source boundaries and subquestions; no parsing body markers.
+
+    This isolates answer generation. It does not test whether a real planner
+    would produce these subquestions or whether retrieval finds the same text.
+    """
+    state = QAState(case["question"], parts=case.get("subquestions", []))
+    sources = case.get("qa_sources")
+    if not isinstance(sources, list) or len(sources) != case["source_count"]:
+        raise ValueError("contract cases require explicit qa_sources matching source_count")
+    for source in sources:
+        if not isinstance(source, dict) or not isinstance(source.get("body"), str) or not source["body"] or source["body"] not in case["context"]:
+            raise ValueError("each source body must occur verbatim in frozen context")
+    previous_end = 0
+    for index, source in enumerate(sources, 1):
+        body, context = source["body"], case["context"]
+        start = context.find(body)
+        headers = list(re.finditer(r"(?m)^\[(\d+)\](?:[ \t]|$)", context[:start]))
+        if (context.count(body) != 1 or start < previous_end or not headers
+            or headers[-1].group(1) != str(index)):
+            raise ValueError("source bodies must be unique, nonoverlapping and follow their numbered headers")
+        previous_end = start + len(body)
+    state.sources = [{"id": source.get("id"), "body": source["body"],
+                      "evidence": source.get("evidence", [])} for source in sources]
+    if state.intent != "chat":
+        parts = case.get("subquestions")
+        if (not isinstance(parts, list) or not 1 <= len(parts) <= 12
+            or any(not isinstance(p, dict) or not isinstance(p.get("question"), str)
+                   or not p["question"].strip() or len(p["question"].strip()) > 1000 for p in parts)):
+            raise ValueError("contract cases require valid frozen subquestions")
+    return state
+
+
+def prepare(cases, *, today, runs=3, baseline=None, contract=False):
     if not cases or not 1 <= runs <= 10:
         raise ValueError("nonempty cases and 1..10 repeats required")
     seen = set()
@@ -57,6 +91,12 @@ def prepare(cases, *, today, runs=3, baseline=None):
             history=case.get("history"), today=today,
         )]
         variants = {"candidate": messages}
+        state = contract_state(case) if contract else None
+        if contract:
+            variants["candidate"] = [m.to_dict() for m in build_qa_messages(
+                case["question"], case["context"], scope=case.get("scope", "article"),
+                history=case.get("history"), today=today, qa_state=state,
+            )]
         if baseline is not None:
             if not baseline.strip():
                 raise ValueError("baseline prompt must not be empty")
@@ -68,8 +108,11 @@ def prepare(cases, *, today, runs=3, baseline=None):
                 jobs.append({"case_id": case["id"], "variant": variant, "repeat": repeat + 1,
                              "messages": variants[variant], "source_count": case["source_count"],
                              "messages_sha256": digest(variants[variant])})
+                if contract and variant == "candidate":
+                    jobs[-1]["contract"] = {"parts": state.parts, "sources": state.sources, "intent": state.intent}
     payload = {"schema_version": 1, "today": today, "cases": cases, "jobs": jobs,
-               "scope": "frozen_context_answer_only; retrieval not evaluated"}
+               "scope": ("frozen_context_and_subquestions_answer_only; planner and retrieval not evaluated" if contract
+                         else "frozen_context_answer_only; retrieval not evaluated")}
     return {"payload": payload, "sha256": digest(payload)}
 
 
@@ -192,11 +235,22 @@ async def run_batch(bundle, *, config, out, max_attempts, max_cny, input_rate, o
             meta = {}
             row = {k: v for k, v in job.items() if k != "messages"}
             try:
+                contract = job.get("contract")
+                structured = bool(contract and contract["intent"] != "chat" and len(contract["parts"]) > 1)
                 answer = await chat_completion(
                     messages=[ChatMessage(**message) for message in job["messages"]],
                     config=config, http_client=client, max_retries=1,
                     require_complete=True, response_meta=meta,
+                    response_json=structured,
                 )
+                if structured:
+                    state = QAState("frozen evaluation")
+                    state.parts, state.sources = contract["parts"], contract["sources"]
+                    row["raw_answer"] = answer
+                    answer = render_structured_answer(answer, state)
+                    row["checked_parts"] = state.checked_parts
+                if contract:
+                    validate_citations(answer, job["source_count"])
                 row.update(status="answered", answer=answer,
                            citations=citation_check(answer, job["source_count"]))
             except BudgetExceeded:
@@ -226,6 +280,7 @@ def main():
     prep.add_argument("--today", required=True)
     prep.add_argument("--runs", type=int, default=3)
     prep.add_argument("--baseline-prompt", type=Path)
+    prep.add_argument("--contract", action="store_true", help="use frozen subquestions and explicit qa_sources")
     prep.add_argument("--out", type=Path, required=True)
     run = commands.add_parser("run", help="paid: execute only an explicitly authorized frozen batch")
     run.add_argument("--batch", type=Path, required=True)
@@ -243,7 +298,8 @@ def main():
     args = parser.parse_args()
     if args.command == "prepare":
         batch = prepare(json.loads(args.cases.read_text()), today=args.today, runs=args.runs,
-                        baseline=args.baseline_prompt.read_text() if args.baseline_prompt else None)
+                        baseline=args.baseline_prompt.read_text() if args.baseline_prompt else None,
+                        contract=args.contract)
         write_new(args.out, batch)
         print(json.dumps({"jobs": len(batch["payload"]["jobs"]), "sha256": batch["sha256"], "provider_calls": 0}))
     else:

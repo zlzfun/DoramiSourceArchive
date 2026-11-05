@@ -83,6 +83,48 @@ def test_empty_question_rejected_before_call(monkeypatch):
         asyncio.run(reader_ai.answer_question("  ", "", scope="article", llm_config=config()))
 
 
+def test_contract_eval_uses_runtime_messages_and_checks_all_parts(tmp_path):
+    item = {**case(), "subquestions": [{"question": "解释机制"}, {"question": "说明局限"}],
+            "qa_sources": [{"id": "one", "body": "Uncertain evidence.", "evidence": []}]}
+    bundle = qa_eval.prepare([item], today="2026-11-03", runs=1, contract=True, baseline="BASELINE")
+    jobs = bundle["payload"]["jobs"]
+    expected = reader_ai.build_qa_messages(item["question"], item["context"], scope="article", today="2026-11-03",
+                                          qa_state=qa_eval.contract_state(item))
+    assert jobs[0]["messages"] == [m.to_dict() for m in expected]
+    assert "待回答子问题" not in jobs[1]["messages"][-1]["content"]
+    assert "GRADING_ONLY_SENTINEL" not in json.dumps(jobs)
+    replies = [{"parts": [{"id": "q1", "status": "answered", "answer": "解释。", "evidence": [{"source": 1, "quote": "Uncertain evidence."}]}]}, "baseline [1]"]
+    def handler(request):
+        body = json.loads(request.content)
+        value = replies.pop(0)
+        assert (body.get("response_format") is not None) is isinstance(value, dict)
+        return response(json.dumps(value) if isinstance(value, dict) else value)
+    report = run(tmp_path, handler, bundle=bundle)
+    assert report["results"][0]["status"] == "failed"
+    assert "raw_answer" in report["results"][0]
+    assert report["results"][1]["status"] == "answered"
+    assert report["http_attempts"] == 2  # no repair loop
+
+
+def test_contract_eval_rejects_invented_source_before_http():
+    item = {**case(), "subquestions": [{"question": "解释"}], "qa_sources": [{"body": "not in context"}]}
+    with pytest.raises(ValueError, match="verbatim"):
+        qa_eval.prepare([item], today="2026-11-03", contract=True)
+
+
+@pytest.mark.parametrize("context,bodies", [
+    ("[1] A\nFirst evidence\n[2] B\nSecond evidence", ["Second evidence", "First evidence"]),
+    ("[1] A\nSame evidence\n[2] B\nSame evidence", ["Same evidence", "Same evidence"]),
+    ("[9] A\nFirst evidence", ["First evidence"]),
+    ("prefix [1] A\nFirst evidence", ["First evidence"]),
+])
+def test_contract_eval_rejects_ambiguous_or_misaligned_sources(context, bodies):
+    item = {**case(), "context": context, "source_count": len(bodies),
+            "subquestions": [{"question": "解释"}], "qa_sources": [{"body": b} for b in bodies]}
+    with pytest.raises(ValueError, match="numbered headers"):
+        qa_eval.prepare([item], today="2026-11-03", contract=True)
+
+
 def test_success_retains_identity_usage_and_does_not_claim_quality(tmp_path):
     report = run(tmp_path, lambda req: response())
     row = report["results"][0]
