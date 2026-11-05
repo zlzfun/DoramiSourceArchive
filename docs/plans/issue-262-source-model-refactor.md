@@ -1,20 +1,19 @@
-# issue #262 配套:源模型重构——源 / 采集绑定 / 抓取器三层分离(R1)
+# issue #262 配套:源模型重构——源 / 采集绑定 / 抓取器三层分离(R2)
 
-> 状态:排队中(R1 设计稿,2026-11-05;§8 拍板项待用户拍板;Codex 检视见 §11)。
-> 关系:本稿展开 [issue-262-agent-ingest-sources.md](./issue-262-agent-ingest-sources.md) 的 §5.1 / §5.4 / §6 波 2,取代那里「2a → 2b → 2c」的粗分;#262 的推送通道(波 1)依赖本稿 R1。
-> 执行:主代理 Claude Code(Opus 5.5)。§2 的分档来自对注册表全部 69 个类的反射盘点(只看类自身 `__dict__` 里定义的方法与数据属性),不是人工估计。
+> 状态:排队中(R2 设计稿,2026-11-05;已过 Codex R1 检视,11 条意见全部接受并按 §11 修订,R2 复检中;§8 拍板项待用户拍板)。
+> 关系:本稿展开 [issue-262-agent-ingest-sources.md](./issue-262-agent-ingest-sources.md) 的 §5.1 / §5.4 / §6 波 2,取代那里「2a → 2b → 2c」的粗分;#262 的推送通道(波 1)依赖本稿 R1c 与 R4。
+> 执行:主代理 Claude Code(Opus 5.5)。§2 的分档来自对注册表全部 69 个类的反射盘点(只看类自身 `__dict__` 里定义的方法与数据属性),检视方已独立复核。
 > 基线:`main` @ `454f90da`(v3.67.4)。文中 `file:line` 均对此版本。
 
 ## 0. 结论
 
-1. **三层**:**源**(谁说的、长什么样、给谁看)/ **采集绑定**(源 → 抓取器 + 参数,0..1 个)/ **抓取器**(怎么拿,只有代码、不带身份)。另有两个相邻概念:**卡片**是源的读者视图,**条目来路**是条目上的事实(#262 波 1)。
-2. **适用于所有源家族,不只 X**。管理员配置源、读者自定 RSS、37 个播客目录源本来就是三层;Archive Sync 接收的行恰好是「0 个绑定的源」(sources 流本来就不带 fetcher / params)。只有 62 个预设类把三层压进一个 Python 类。
-3. **能一并改,但要分两件事看**:
-   - **身份出代码**:62 个预设类的身份字段全部是纯类属性,没有一个由代码计算 → 全部机械地搬进目录文件,可以一次做完。
-   - **代码收拢**:只有 30 个类自身不含任何方法 → 删类、绑定通用模板;另 32 个有自己的解析代码 → 保留为无身份的站点适配器。三层分离不要求消灭代码。
-4. **节点 ID 不变**:采集任务、运行记录存的节点 ID 本来就等于 `source_id`(配置源已是如此),迁移后任务不用改;变的只是「节点 ID 解析到哪个抓取器」。
-5. **最大风险不在抓取器,在源表的消费方**:约 93 处代码(38 处枚举 + 55 处按主键查)默认「`source_configs` 里有这一行 = 它不是预设源」。往表里补 62 行预设源不是零风险的纯加法,R1 必须逐处审计(§6、§9)。
-6. **分五步 R0–R4**,每步可单独合入、可回退;R1 之后,不变量「每个 `source_id` 恰有一行」成立。
+1. **三层**:**源**(谁说的、长什么样、给谁看)/ **采集绑定**(源 → 抓取器 + 参数,0..1 个)/ **抓取器**(怎么拿,只有代码、不带身份)。另有两个相邻概念:**卡片**是源在读者面的视图,**条目来路**是条目上的事实(#262 波 1)。
+2. **适用于所有源家族,不只 X**。管理员配置源、读者自定 RSS、37 个播客目录源本来就是三层;Archive Sync 接收的行恰好是「0 个绑定的源」。只有 62 个预设类把三层压进一个 Python 类。
+3. **能一并改,分两件事**:**身份出代码**对 62 个一视同仁(身份字段全是类属性字面量);**代码收拢**只针对 30 个纯数据类(删类、绑通用模板),另 32 个保留为无身份的站点适配器。
+4. **节点 ID 不变**:采集任务存的节点 ID 本来就等于 `source_id`。`FetchRunRecord.fetcher_id` 记逻辑节点 ID(不变),`SourceStateRecord.fetcher_id` 记执行抓取器 ID(R3 后会变,历史保留),两者语义不同(§6 R3)。
+5. **最大风险在源表的消费方、源的生命周期和同步**,不在抓取器:`src/` 里 94 处读(39 处枚举 + 55 处主键查),另有构造、ORM 修改与 SQL 触发器;其中一部分依赖「查不到行」的语义。R1 因此拆成 R1a / R1b / R1c 三步,不是纯加法。
+6. **同步保持「外网是唯一写者」**:内网从不在本地写公共源行;内网拉取时声明能力,外网**按请求投影**——新内网拿到完整源目录,旧内网拿到与今天相同的导出。两种混版本窗口都安全(§6.1)。
+7. **分步**:R0 → R1a → R1b → R1c → R4 →(#262 波 1)→ R2 → R3a → R3b;每步写明回退路径。
 
 ## 1. 三层模型
 
@@ -22,17 +21,16 @@
 
 | 层 | 回答 | 承载 | 带身份 | 谁定义 |
 |---|---|---|---|---|
-| **源** Source | 谁说的;名称、头像、形态、策展、可见性 | `source_configs` 表(沿用物理表名,加列;见 E1) | 是,`source_id` | 目录文件(策展源)/ 管理员 / 读者 / Agent / 同步 |
+| **源** Source | 谁说的;名称、头像、形态、策展、可见性 | `source_configs` 表(沿用物理表名,加列;E1) | 是,`source_id` | 目录文件(策展源)/ 管理员 / 读者 / Agent / 同步 |
 | **采集绑定** Binding | 怎么定期拿到它的内容 | 源行上的 `fetcher_id` + `params_json`,0..1 个 | 否 | 目录文件 / 管理员 / 读者(自定 RSS) |
-| **抓取器** Fetcher | 拿内容的代码 | `FetcherRegistry`,按 `fetcher_id` 登记 | 否 | 代码 |
+| **抓取器** Fetcher | 拿内容的代码 | `FetcherRegistry`,按抓取器 id 登记 | 否 | 代码 |
 
-抓取器分两种:
-- **通用模板** `generic_*`:参数化,任何源都能绑,如 `generic_rss`、`generic_x_timeline`;
-- **站点适配器** `site_*`:为某个站点的结构写的专用代码,通常只有一个源绑它,但同样不带身份。
-
-两个相邻概念(不在三层里,但要和三层对齐):
-- **卡片**:源在读者面的视图,由源的属性决定是否出现、怎么出现(§4)。
-- **条目来路**:这一条经哪条通道进来(fetch / push / manual / sync),落在 `articles` 上(#262 波 1)。推送、手工录入、同步都是**通道**,不是绑定。
+- 抓取器分**通用模板** `generic_*`(参数化,任何源都能绑)与**站点适配器** `site_*`(为某站点结构写的专用代码,通常只有一个源绑它,同样不带身份)。
+- **绑定参数分三类**:
+  - **静态参数**:目录或管理员写定的抓取配置,如 `feed_url`、`handle`、`page_url`;
+  - **实例身份参数**:由部署历史形成、决定条目主键的参数,如播客收养留下的 `entry_id_namespace`(`podcast_catalog.py:240-245`、`podcast_rss_fetcher.py:451`)——一经写入,对账与编辑都不得覆盖;
+  - **可临时覆盖参数**:每个抓取器在参数表里显式声明的白名单(如 `limit`、测试限额),只有它们能被单次运行覆盖,管理表单也只公开它们。
+- 两个相邻概念:**卡片**(§4)与**条目来路**(fetch / push / manual / sync,落在 `articles`,#262 波 1)。推送、手工录入、同步都是**通道**,不是绑定。
 
 ### 1.2 关系与基数
 
@@ -41,16 +39,23 @@
                                    抓取器 1 ──── 0..N 采集绑定
 ```
 
-- **0 个绑定**:Agent 推送的临时源、手工导入源、内网 replica 上的同步源(绑定只在 authority)、`dorami_daily_brief`(系统生成)。
-- **为什么是 0..1 而不是 0..N**:现在没有一个源需要两种定时抓法,推送也不算绑定。等真出现「同一个源两条抓取通道」(如 RSS 为主、网页兜底)再拆 `source_bindings` 表;触发条件写进 `decisions.md`(E2)。
+- **0 个绑定**:Agent 推送的临时源、手工导入源、内网上的同步源(同步不带绑定,接收端还会清空 `fetcher_id` / `params_json`,`archive_sync_v2.py:2059-2060`)、`dorami_daily_brief`。
+- **「有绑定」≠「本机可以执行」**:后者由 `sync_consumer_policy.local_source_operation_allowed` 决定(内网只允许本地自定 RSS);节点枚举、执行、内网权限统一按「有绑定 ∧ 本机允许」。
+- **为什么 0..1**:现在没有一个源需要两种定时抓法。出现「同一源两条抓取通道」再拆 `source_bindings` 表(E2)。
+- **前提**:今天空 `fetcher_id` 并不表示无绑定——`resolve_source_fetcher_id` 会按 `source_type` 推导模板,模型默认类型还是 `rss`(`collection_nodes.py:39-51`)。R1b 先把隐式绑定写实,之后空值才表示无绑定。
 
 ### 1.3 不变量
 
-1. `articles.source_id` 的每个取值,源表里都恰有一行(回填迁移 + 写入闸 + 守卫测试)。
-2. 抓取器不声明身份:注册表元数据只剩 `fetcher_id`、种类(template / adapter)、产出的 `content_type`、`platform`、参数表;`name / description / source_owner / admission_status / …` 全部离开代码。
-3. 条目的 `source_id` 来自绑定上下文(执行时的源行),不来自抓取器类属性 —— 从结构上消灭 #262 的 B4。
-4. 消费方只读源行上的显式属性;删除所有「查不到即 X」的兜底(§5)。
-5. 节点 ID = `source_id`;只有带绑定的源才是采集节点。
+1. **每个 `articles.source_id` 恰有一行源**,并覆盖完整生命周期:
+   - 所有写入路径在**同一事务里**确保源行存在:`DatabaseStorage.save`、公共日报直写(`daily_brief.py:2193-2200`)、推送、手工录入;
+   - 被文章引用的源**不再物理删除**,改为保留身份的退役(`retired_at` 非空 + `is_active=false`);
+   - 在内网,源行只经同步到达(外网唯一写者,不变量 6);
+   - 守卫测试扫描全库孤儿。
+2. **抓取器不声明身份**(R3 之后):注册表元数据只剩抓取器 id、种类、产出 `content_type`、`platform`、参数表。
+3. **条目的 `source_id` 来自执行上下文**:上下文在进入 `DataPipeline` 之前建立(Pipeline 在调用 `fetch()` 之前就读 `fetcher.source_id` 作进度键,`pipeline/core.py:97`),同模板多源并发时进度互不串。
+4. **消费方只读源行上的显式属性**:删除「查不到即 X」的兜底(§5);但 `user_rss_` 前缀保护是**结构性规则**,不是兜底,保留。
+5. **节点 ID = `source_id`**;节点 = 有绑定 ∧ 本机允许执行的源。
+6. **内网不在本地写公共源行**:Archive Sync「外网 authority 唯一写者」不变量保持;内网对源目录只读(§3.4)。
 
 ## 2. 适用面:逐家族盘点
 
@@ -60,42 +65,42 @@
 |---|---|---|
 | 管理员配置源 | 运行时数据 | 行 + `fetcher_id` / `params_json`;`resolve_collection_node` 执行前解析到模板(`collection_nodes.py:117`);`build_source_fetch_params` 在 overrides 之后强制回写 `source_id` / `feed_url`(`:67`) |
 | 读者自定 RSS | 每人 ≤ 20 | 同上,`owner_username` 非空 |
-| 播客目录 | 37 | 代码常量 `PODCAST_CATALOG` → 行,绑 `generic_podcast_rss`(`podcast_catalog.py:213`);**只插不改**(`update_existing=False`,`:258-290`) |
-| 同步接收行(replica) | 运行时数据 | 只有源、没有绑定:`_source_payload` 有意不带 fetcher / params(`archive_sync_v2.py:292-299`),接收端还会把 `fetcher_id` / `params_json` 清空(`:2059-2060`) |
+| 播客目录 | 37 | 代码常量 `PODCAST_CATALOG` → 行,绑 `generic_podcast_rss`(`podcast_catalog.py:213`);启动导入只插不改(`ensure_default_podcast_sources`,`update_existing=False`),管理员显式更新时保留 `entry_id_namespace` |
+| 同步接收行(内网) | 运行时数据 | 只有源、没有绑定(`_source_payload`,`archive_sync_v2.py:292-299`) |
 
 ### 2.2 压成一层的 62 个预设类
 
 | 档 | 数 | 构成 → 去向 |
 |---|---|---|
-| **A 纯数据**(类自身 0 个方法) | 30 | X 7(只有 `handle` / `user_id`)→ `generic_x_timeline`;GitHub Releases 3、GitHub 仓库 1、HF 模型 2 → 各自已有的模板;RSS 16(`feed_url` + 几个默认值)→ `generic_rss`;`docs_gemma_release_notes` 1 → 把 `DevsiteReleaseNotesFetcher` 登记为模板 `generic_devsite_release_notes` |
+| **A 纯数据**(类自身 0 个方法) | 30 | X 7(只有 `handle` / `user_id`)→ `generic_x_timeline`;GitHub Releases 3、GitHub 仓库 1、HF 模型 2 → 各自已有的模板;RSS 16 → `generic_rss`;`docs_gemma_release_notes` 1 → 新模板 `generic_devsite_release_notes` |
 | **B 少量覆写**(1–3 个方法,多为正文清洗 / 详情选择) | 15 | RSS 10:apple_mlr、deepmind_blog、hf_blog、lilianweng、mistral_news、the_decoder、geoffrey_litt、import_ai、reddit_localllama、microsoft_ai_models;网页 4:cursor_changelog、claude_blog、minimax_research、artificial_analysis;`docs_deepseek_api_changelog` 1 |
-| **C 自有抓取逻辑**(自写 `_run` 或 ≥ 4 个方法) | 17 | rss_openai_news(浏览器渲染)、rss_hn_ai(Algolia)、web_aiera(WP REST)、web_qbitai、web_anthropic_news、web_ithome_ai、web_qwen_blog、web_kimi_research、web_meta_ai_blog、7 个单页拆分类(arena / claude_code / codex / xai / zai / bytedance_seed / hf_daily_papers)、github_trending_daily |
+| **C 自有抓取逻辑**(自写 `_run` 或 ≥ 4 个方法) | 17 | rss_openai_news、rss_hn_ai、web_aiera、web_qbitai、web_anthropic_news、web_ithome_ai、web_qwen_blog、web_kimi_research、web_meta_ai_blog、7 个单页拆分类(arena / claude_code / codex / xai / zai / bytedance_seed / hf_daily_papers)、github_trending_daily |
 
-- B、C 两档 32 个 → 站点适配器:去掉身份属性,改按 `site_*` 登记(E6);身份照样进目录文件。
-- B 档**不**改成「模板 + 声明式清洗正则」:正则写进数据文件会失去单测与可读性,收益只是少十几个类(E5)。
-- A 档迁移需要的模板参数缺口:`generic_rss` 缺 `feed_content_as_markdown`(16 个里 14 个用到);GitHub 的 `default_include_prereleases` 对应已有参数 `include_prereleases`;X 的 `handle` / `user_id` 已在参数表里。(#262 方案 §5.4 说「补两个参数」,实为一个。)
-
-关键事实:不论哪一档,身份字段(`source_id / name / icon / description / admission_status / content_shape / default_kind / platform / source_owner / source_brand / source_scope / source_channel / source_url / provenance_tier / signal_strength / noise_risk / fetch_reliability`)都是类属性字面量。所以「身份出代码」对 62 个一视同仁。
+- B、C 两档 32 个 → 站点适配器(E5、E6);身份照样进目录文件。B 档不改成「模板 + 声明式清洗正则」。
+- A 档迁移的参数缺口:
+  - 已有模板只缺一个:`generic_rss` 的 `feed_content_as_markdown`(RSS 16 个里 14 个用到);GitHub 的 `default_include_prereleases` 对应已有参数 `include_prereleases`;X 的 `handle` / `user_id` 已在参数表(`x_timeline_fetcher.py:118`)。
+  - 新模板要补参数化:`DevsiteReleaseNotesFetcher` 的参数表今天只有 `limit`(`curated_core_fetcher.py:455`),执行还读 `page_url`、`site_name`、`source_section`、`listing_source_label`(`:540` 起),这些都要成为静态参数。
+- 关键事实:不论哪档,身份字段(`source_id / name / icon / description / admission_status / content_shape / default_kind / platform / source_owner / source_brand / source_scope / source_channel / source_url / provenance_tier / signal_strength / noise_risk / fetch_reliability`)都是类属性字面量。
 
 ### 2.3 散在代码里的源级策展常量
 
 | 常量 | 现状 | 去向 |
 |---|---|---|
-| `ESSENTIAL_FETCHER_IDS`(62) | 恰好等于全部预设源;只喂 `get_all_metadata()` 的 `default_visible` / `curation_reason`,**运行时没有任何消费方**(只有测试与文档引用) | 删除。它表达的「进过审阅」改由 `origin=catalog` + `admission_status` 表达 |
+| `ESSENTIAL_FETCHER_IDS`(62) | 恰好等于全部预设源;注册表用它生成 `default_visible` / `curation_reason`,这两个输出字段没有运行时行为消费方 | 删除;「进过审阅」由 `origin=catalog` + `admission_status` 表达 |
 | `FOCUSED_FETCHER_CURATION` | 空字典 | 删除 |
-| `DECOMMISSIONED_FETCHER_IDS`(7) | 两处重复(`registry.py:103`、`source_naming.py:19-29`) | 目录文件墓碑段 → 行上 `retired_at` 非空 |
-| `SOURCE_COLLECTIONS` | 代码注册表(`source_collections.py`) | 目录文件合集段 |
+| `DECOMMISSIONED_FETCHER_IDS`(7) | 两处重复(`registry.py:103`、`source_naming.py:19-29`) | 目录文件墓碑段 → 行上 `retired_at` |
+| `SOURCE_COLLECTIONS` | 代码注册表 | R2 搬进目录文件合集段;R4 期间仍在代码 |
 | `DEFAULT_SUBSCRIPTION_SOURCE_IDS`(9) | 代码缺省 + KV 覆盖(`reader_defaults.py:29-39`) | 缺省进目录文件;KV 覆盖保留(运维拥有) |
-| `PODCAST_CATALOG`(37) | 常量 → 行,只插不改 | 目录文件播客段;字段归属与并入方式见 E4 |
+| `PODCAST_CATALOG`(37) | 常量 → 行 | 目录文件播客段;并入方式见 §3.2 |
 | `dorami_daily_brief` | 特殊常量 | 目录文件系统段(`origin=system`,无绑定) |
+| 每日采集默认范围 | 脚本按「注册表里非模板、非观察期」枚举(`ensure_daily_collection_job.py:103`) | **独立政策**:目录条目显式 `daily = true`;R1c 投影与今天的集合逐个相等,扩围另行拍板 |
 
-## 3. 目录文件
+## 3. 目录文件与同步
 
 ### 3.1 形态
 
 - 路径:`src/sources/catalog/*.toml`(待建),按家族分文件:`x.toml`、`rss.toml`、`web.toml`、`docs.toml`、`github.toml`、`podcasts.toml`、`collections.toml`、`system.toml`(含墓碑)。Python 3.12 自带 `tomllib`,零依赖。
-- 为什么分文件:约 100 个源加上合集与墓碑,放一个文件会有一千多行,PR 审阅与合并冲突都难。
-- 为什么用 TOML 而不是 Python 数据模块:TOML 写不了代码,「目录只是数据」由格式本身保证。
+- 分文件是为了 PR 审阅与合并冲突;用 TOML 而不是 Python 数据模块,是让「目录只是数据」由格式本身保证。
 
 ```toml
 [[source]]                       # A 档:身份 + 通用模板绑定
@@ -104,6 +109,7 @@ name = "X · DeepSeek"
 shape = "social"
 platform = "x"
 admission = "incubating"
+daily = false
 owner = "deepseek"
 brand = "deepseek"
 scope = "frontier_ai_lab"
@@ -117,7 +123,7 @@ id = "web_anthropic_news"
 name = "Anthropic 新闻"
 shape = "article"
 admission = "admitted"
-# …策展维度…
+daily = true
 binding = { fetcher = "site_anthropic_news" }
 
 [[source]]                       # 系统源:无绑定
@@ -127,106 +133,166 @@ name = "哆啦美·AI资讯日报"
 shape = "article"
 ```
 
-### 3.2 对账
+### 3.2 对账(只在外网)
 
-- **时机**:节点启动时,`ensure_migrated` 之后(沿 taxonomy reconcile 与播客目录导入的先例)。
-- **在哪对账(E3,推荐)**:**每个节点都从自带的目录文件本地对账;sources 流不再导出 `origin=catalog` 的行**。理由:
-  - 目录文件随代码发版,同版本节点的目录数据天然一致;今天预设源也是「随代码到内网」,语义不变。
-  - 避开接收端的**接管副作用**:`_apply_sources` 遇到本地已有、无权威标记的同 id 行时会接管它,并删本地 `SourceStateRecord`、把该源**全部文章**的本地分析标为作废(`archive_sync_v2.py:2008-2056`)。如果 replica 先本地建了目录行、之后又经同步收到同 id 行,就会触发这条路径。
-  - 避开混版本:新 authority 若开始导出 62 行,旧版 replica 上那 93 处消费方会突然多出 62 行、且不认识 `origin` 列。
-  - 需要处理的边角:一个源从 `origin=admin` 改成 `origin=catalog`(转正)时,导出过滤不得发 tombstone(否则 replica 删行);replica 上已有的同步行保留权威标记,只更新目录拥有的字段。
-- **字段归属(E4,推荐)**:目录拥有身份 / 呈现 / 策展维度 / 准入 / 身份键 / 绑定,对账时以文件为准;运维拥有 `is_active`、隐藏、`ai_analysis_enabled`、调度,对账不碰。管理面对目录行的目录字段只读。
-- **删除**:目录里删掉一个源,必须同时写进墓碑段,对账才把行标 `retired_at`;守卫测试比对上一版快照,「消失但没进墓碑」直接失败。对账永不物理删行。
-- **播客目录并入**:播客目录今天是「只插不改」,生产上可能有管理员改过的名称或简介。并入前先跑一次**只读差异报告**(目录值 vs 库内值),逐条拍板后再切成「以文件为准」。
+- **时机与位置**:外网 authority 启动时,`ensure_migrated` 之后;内网 consumer 节点**不对账**(不变量 6)。
+- **字段归属(E4)**:
+  - 目录拥有:身份、呈现、策展维度、准入、身份键、`daily`、绑定的**静态参数**;对账以文件为准。
+  - 不可覆盖:**实例身份参数**(`entry_id_namespace` 等);已有值时对账跳过并在差异报告里列出。
+  - 运维拥有:`is_active`、隐藏、`ai_analysis_enabled`、调度;对账不碰。
+  - 管理面对目录行的目录字段只读。
+- **播客目录并入**:先跑一次只读差异报告(名称、简介、参数、准入、收养状态,目录值 vs 库内值),逐条拍板后才切成「以文件为准」;覆盖前把被改字段的旧值存成前像,供回退。
+- **删除**:目录里删掉一个源必须同时写进墓碑段,对账把行标为退役;守卫比对上一版快照,「消失但没进墓碑」直接失败。对账永不物理删行。
 
 ### 3.3 守卫
 
-- 结构:id 唯一、身份键唯一、`shape` / `admission` / `origin` 取值合法、绑定的抓取器存在、参数通过该抓取器的参数表。
-- 墓碑:墓碑 id 不得复用;快照比对见上。
-- 取代钉在 `tests/test_rss_fetcher.py` 的准入快照,以及 `test_fetcher_curation.py` / `test_source_admission.py` 里针对 `ESSENTIAL_FETCHER_IDS` 的断言。
+- 结构:id 唯一、身份键唯一、`shape` / `admission` / `origin` 取值合法、绑定的抓取器存在、静态参数通过该抓取器的参数表。
+- 墓碑不得复用;`daily = true` 的集合与上一版快照一致(变化须显式更新快照);实例身份参数不可被覆盖。
+- 取代 `tests/test_rss_fetcher.py` 的准入快照,以及 `test_fetcher_curation.py` / `test_source_admission.py` 里针对 `ESSENTIAL_FETCHER_IDS` 的断言。
+
+### 3.4 同步:接收端声明能力 + 外网按请求投影(E3)
+
+内网拉取是普通 GET:`/api/archive/v2/export/{stream}.jsonl?snapshot=&since=&after=&limit=`(`api/routers/archive_sync.py:421`),由 `remote_sync.run_pull_v2` 发起。FastAPI 默认忽略不认识的查询参数,所以可以向后兼容地加一个参数:
+
+1. **接收端声明**:新版内网拉取时带 `receiver_capabilities=source-catalog-v1`。旧外网忽略它。
+2. **外网按请求投影** sources 与 source_states 两流:
+   - **声明了能力**:导出全部公共源行(目录行、legacy 行、临时源行),带新字段;退役 = upsert(带 `retired_at`);转正(`origin` 变为 `catalog`)只是一次普通 upsert。
+   - **未声明(旧内网)**:导出集合与今天完全相同——不含 62 个目录镜像行与 legacy 行,播客目录行照旧导出;退役 = tombstone(旧端按今天的删除语义处理);`source_states.fetcher_id` 投影为逻辑节点 ID。
+   - 投影只能是「换一种载荷」或「不在本页出现」;实现上不得返回空 payload(当前导出会把空 payload 变成 tombstone)。
+   - presence(authoritative presence)按同一投影计算。
+3. **外网广播** `source-catalog-v1` 能力(`ADVERTISED_CAPABILITIES`);新内网据此判断对端是否会给完整目录。对端未广播时,新内网的读服务保持「行优先、注册表兜底」的兼容模式,不启用「缺行即错」。
+4. **升级后重拉**:sources 载荷代次 +1;内网首次以新能力拉取时重置 sources 流 checkpoint,全量重拉(行数约数百)。
+5. **不再触发的副作用**:因为内网从不本地建公共源行,`_apply_sources` 的接管(删本地状态、把文章分析转 pending 并清租约,`archive_sync_v2.py:2008-2056`)和文章流给本地行盖权威标记并删状态(`:2355-2361`)都不会被本稿触发;首次同步准备把公共源行置 inactive(`remote_sync.py:270-279`)之后,随即由全量 upsert 恢复——与今天的配置源同一路径。
 
 ## 4. 卡片 = 源的视图
 
-现在发现目录(`_reader_sources_catalog`,`reader.py:1299`)在读取时从**三处并集**拼出来:注册表、配置行、`articles` 里出现过的 `source_id`。可见性规则散在 `ESSENTIAL_FETCHER_IDS`、`DECOMMISSIONED_FETCHER_IDS`、KV 隐藏名单、`owner_username`、准入状态等多处。不变量 1 成立后,目录只读源表一处,由一个服务端函数算出每个源的**列出状态**:
+现在发现目录(`_reader_sources_catalog`,`reader.py:1299`)在读取时从注册表、配置行、`articles` 里出现过的 `source_id` 三处拼出来,另外还包含「只有订阅、没有文章也没有注册」的源(`reader.py:1420`)。可见性规则散在多处。重构后分两件事计算:
 
-| 列出状态 | 条件 | 发现页 | 源页 / 已订阅者 | 交付(feed / MCP / 早报 / 日报) |
-|---|---|---|---|---|
-| `retired` | `retired_at` 非空(含墓碑) | 不列 | 已订阅者可见以便退订(现行口子) | 不再产出 |
-| `hidden` | 在 KV 隐藏名单 | 不列 | 不可见 | **全量排除**(补 #262 B6:日报候选池、`/api/feed/articles`) |
-| `private` | `owner_username` 非空 | 只对创建者 / 订阅者 | 同左 | 只对订阅者 |
-| `unlisted` | `provisional`(#262 波 1) | 不列 | 可经条目上的来源名进入、可单独订阅 | 按 #262 D2 / D3 |
-| `listed` | 其余 | 列 | 可见 | 正常 |
+### 4.1 资格(按 viewer 计算,不做全局缓存)
 
-- **卡片类型**有两种:源卡片、合集卡片(聚合多个 `listed` 源;合集成员不得是非 `listed` 源,守卫校验)。
-- **卡片上的属性由服务端算好下发**:名称、图标 / 头像、角色、分组、形态、平台、列出状态、能否订阅。前端 `sourceTaxonomy.js` 只保留「分组 → 文案」的展示映射,删掉 `sourceRoleOf` 等推导与兜底;下发的 `registered` / `configured` 两个无人消费的标志(`reader.py:1378-1379`)换成 `origin` / `listing`。
-- **历史「只在 articles 里的源」**(如 `manual`、`import_social_posts`):R1 回填为 `origin=legacy` 的行,先保持 `listed`(无可见变化);#262 波 1 上线 `provisional` 后,按 D2 拍板改为 `unlisted`。
+| 资格 | 规则 |
+|---|---|
+| 能否看见源页 / 条目 | 公共源:所有人(含游客);私有源:**只认订阅关系**,`owner_username` 只用于溯源、不授予权限(`models/db.py:1307`);隐藏源:不可见 |
+| 能否订阅 | `listed` 与 `unlisted` 的公共源;私有源按自定 RSS 现行规则 |
+| 能否交付(feed / MCP / 早报 / 日报 / 分享) | 隐藏源**全量排除**(补 #262 B6:日报候选池、`/api/feed/articles`);退役源停止新增,历史条目照旧可读、可搜;私有与凭证源沿 `dshr_` 现行检查 |
 
-## 5. 要删的「查不到即 X」与注册表冒充源目录
+### 4.2 展示状态
+
+| 状态 | 条件 | 发现页 | 已订阅者 |
+|---|---|---|---|
+| `retired` | `retired_at` 非空(含墓碑) | 不列 | 保留退订入口(现行) |
+| `hidden` | 在 KV 隐藏名单 | 不列 | **保留灰显退订入口**(现行,`reader.py:1324`) |
+| `private` | 私有源 | 只对订阅者 | 正常 |
+| `unlisted` | 临时源(#262 波 1) | 不列 | 可经条目上的来源名进入、可单独订阅 |
+| `listed` | 其余 | 列 | 正常 |
+
+- 孤儿订阅(订阅了已不存在或无权访问的源)保留管理视图,供退订。
+- 合集:静态守卫只校验成员存在且不是私有源;运行时动态过滤隐藏 / 退役成员,不要求成员永远 `listed`。R4 期间合集仍在代码里,R2 再搬进目录文件。
+- 卡片属性(名称、图标 / 头像、角色、分组、形态、平台、展示状态、能否订阅)由服务端算好下发;前端 `sourceTaxonomy.js` 只保留「分组 → 文案」映射,删掉推导与兜底;`registered` / `configured` 两个无人消费的标志(`reader.py:1378-1379`)换成 `origin` / `listing`。
+- 必须一并对齐、不能只靠一个展示状态替代的消费方:冻结的订阅名称与早报版面快照;游客默认订阅的差量镜像;`dshr_` 分享的隐藏与凭证检查;OPML 导出里的隐藏订阅备份与稳定 feed URL;匿名 MCP `list_sources`(无 viewer)。
+
+## 5. 要删的兜底、要改的消费方
 
 | 类别 | 位置 |
 |---|---|
-| 角色 / 名称兜底 | `source_naming.py:45,71,84,115`(`DEFAULT_SOURCE_ROLE`)、`:135-145`(名称退回裸 id);`frontend/src/sourceTaxonomy.js:247-254`(角色退回 official) |
-| 形态 / 类型兜底 | `api/sources.py:87-100`(按 `content_type` 猜形态)、`:103-150`(按 `source_type` 猜形态 / 类型 / 平台);`articles.py:271`;`event_assignment.py:376-383`、`event_board.py:168-171` |
-| 信任兜底 | `user_sources.py:235-243`、`article_analysis.py:397-403`(「无配置行 = 平台源」) |
-| 注册表被当成源目录 | `mcp_server.py:57-59`(`list_sources`,且状态按 `SourceStateRecord.fetcher_id` 建索引,配置源共用模板时会撞);`x_api.py:95,140`;`content_classification.py:277`;`user_sources.py:454`;`ingest.py:59`;`personal_digest.py:978-985`;`event_board.py:149-156`;`opml.py:159`;`source_naming.py:90,126`;`event_assignment.py:346`;`api/sources.py:168`;`collection_nodes.py:192`;`reader.py:1407` |
-| 脚本 | `scripts/ensure_daily_collection_job.py:103`(每日任务 = 「注册表里非模板、非观察期」,改为「有绑定、`origin=catalog`、`admitted`」);`smoke_analysis_release.py:95`;`collect_taxonomy_bootstrap_sources.py:76` |
-| 运维面 | `monitoring.py:214`(按 `SourceStateRecord.fetcher_id` 过滤) |
+| 角色 / 名称兜底 | `source_naming.py:45,71,84,115`(`DEFAULT_SOURCE_ROLE`)、`:135-145`(名称退回裸 id);`frontend/src/sourceTaxonomy.js:247-254` |
+| 形态 / 类型兜底 | `api/sources.py:87-100`、`:103-150`;`articles.py:271`;`event_assignment.py:376-383`、`event_board.py:168-171` |
+| 信任兜底 | `user_sources.py:235-243`、`article_analysis.py:397-403`(「无配置行 = 平台源」);**保留** `user_rss_` 前缀的结构性保护(`user_sources.py:232`) |
+| 注册表被当成源目录 | `mcp_server.py:57-62`(`list_sources`;状态按 `SourceStateRecord.fetcher_id` 对注册表 id 建索引);`x_api.py:95,140`;`content_classification.py:277`;`user_sources.py:454`;`ingest.py:59`;`personal_digest.py:978-985`;`event_board.py:149-156`;`opml.py:159`;`source_naming.py:90,126`;`event_assignment.py:346`;`api/sources.py:168`;`collection_nodes.py:185-206`;`reader.py:1407` |
+| 执行与同步边界 | `pipeline/core.py:97`(进度键);`remote_sync.py:270-279`(首次同步准备);`sync_consumer_policy.py:116`;`podcast_source_adoption.py`(收养改写 id 与 `entry_id_namespace`);`archive_sync_v2.py`(导出投影、`_SOURCE_FIELDS`、载荷代次) |
+| 脚本 | `scripts/ensure_daily_collection_job.py:103`;`smoke_analysis_release.py:95`;`collect_taxonomy_bootstrap_sources.py:76` |
+| 运维面 | `monitoring.py:214,245`(按 `SourceStateRecord.fetcher_id` 过滤,并兼容旧记录) |
 
-替代物:新服务 `services/source_catalog.py`,提供 `get_source(sid)`、`list_sources(...)`、`listing_of(source, viewer)`。注册表今天是进程内常量,改读库后,热路径(早报评分、事件归并)要有进程内缓存,写入时按版本号失效,避免 N+1。
+- 94 处 `SourceConfigRecord` 读(39 select + 55 get)另加 4 处构造、ORM 修改与 SQL 触发器,**按消费语义逐处审计**:只取名称 / 权限 / 配置的照常;依赖「缺行」语义的改为读显式属性;不机械地给所有查询加 `origin != catalog`。
+- 新服务 `services/source_catalog.py`:`get_source(sid)`、`list_sources(...)`、`eligibility(source, viewer)`、`display_state(source, viewer)`。进程内缓存只缓存源行本身,**在事务提交后**按版本号失效,覆盖 CRUD、同步、对账、收养、隐藏操作;按 viewer 计算的资格不缓存成全局结果。
 
 ## 6. 分步路径
 
-| 步 | 内容 | 可见变化 | 依赖 |
+| 步 | 内容 | 可见变化 | 回退 |
 |---|---|---|---|
-| **R0 前置修复** | 即 #262 波 0 中与本稿相关的:B4(X 模板身份,先写失败用例)、B7(前后端角色兜底统一)、B8(事件归并形态兜底) | 无 | 无 |
-| **R1 源表成为全集** | Alembic 加列(`origin`、`shape`、`platform`、`icon`、`avatar_url`、`homepage_url`、`default_kind`、`language`);每个节点启动时为注册表里 62 个预设类各生成一行(`origin=catalog`,属性取自类属性,绑定 = 自身类 id),为 `articles` 里无行的 `source_id` 回填 `origin=legacy` 行,墓碑 7 个回填为 `retired`;sources 流导出排除 `origin=catalog`;新增 `source_catalog` 读服务,§5 的注册表消费方改读它;**逐处审计约 93 处 `SourceConfigRecord` 读写**,枚举处显式写出 `origin` 谓词(默认排除目录行以保持现行为);写入闸先只记日志与计数 | 无(镜像行与类属性逐字段相等,有测试钉住) | R0 |
-| **R2 目录文件** | 身份从类属性搬进 `src/sources/catalog/*.toml`;镜像行的来源从类属性切到文件;类删掉身份属性;收编 §2.3 全部常量(播客先跑差异报告);守卫测试;管理面对目录行的目录字段只读 | 管理面只读态(小,需目检) | R1;E3 / E4 |
-| **R3 能力化** | A 档 30 个删类、绑定改指通用模板;`generic_rss` 加 `feed_content_as_markdown`、Devsite 基类登记为模板;B / C 档 32 个改名 `site_*` 登记为适配器;**参数锁定**:绑定参数优先于运行时覆盖,只放行白名单(`limit`、测试限额),取代 2026-07「非模板节点只接受自身参数表」那条依赖预设类的规则(`base.py:129-137`);状态表与运行记录里「执行抓取器 id」的消费方(`mcp_server.py:59`、`monitoring.py:214`)改按 `source_id` | 无 | R2 |
-| **R4 卡片视图收口** | 目录只读源表 + 列出状态函数;前端删兜底;合集来自目录文件;隐藏名单覆盖交付全路径 | 发现页应无变化(需目检) | R1(可与 R2 / R3 并行) |
+| **R0 前置修复** | #262 波 0 里与本稿相关的:B4(X 模板身份,先写失败用例)、B7(前后端角色兜底统一)、B8(事件归并形态兜底) | **有**,属预期缺陷修正:未登记源的角色分组、事件归并结果会变 | 代码回退 |
+| **R1a 兼容读服务** | 新增 `source_catalog`,按今天的优先级读「注册表 + 配置行」;§5 的消费方改读它;不改任何数据 | 无(生产库副本上 `/api/reader/sources`、`/api/fetchers`、早报构建、日报构建前后 diff 为空) | 代码回退 |
+| **R1b 显式绑定** | 迁移:空 `fetcher_id` 的配置行按 `resolve_source_fetcher_id` 写实(跳过带 `collection_authority_id` 的同步行——它们按设计没有绑定);此后空值 = 无绑定;节点枚举改按「有绑定 ∧ 本机允许」 | 无 | 写实的值与推导结果相同,旧代码照常工作,无需回退数据 |
+| **R1c 源表成为全集** | Alembic 加列(`origin`、`shape`、`platform`、`icon`、`avatar_url`、`homepage_url`、`default_kind`、`language`、`daily`、`retired_at` 已有);外网启动时为 62 个预设类生成镜像行(`origin=catalog`,绑定 = 自身类 id);回填三类(公共孤儿 → `legacy`;`user_rss_*` 孤儿 → 私有隔离行,`ai_analysis_enabled=false`、凭证状态未知按「带凭证」处理、永不列出、禁外发与分享;只在订阅里出现的 id 一并回填);墓碑 7 个 → 退役;生命周期(写入时确保、被引用不物理删);同步投影(§3.4);94 处语义审计;写入闸强制 | 无(镜像行与类属性逐字段相等;`daily` 集合与今天的每日任务集合逐个相等) | Alembic down:删除本步生成的行(按 `origin` 标记)并删列;退役行保留为 `is_active=false`(旧代码按停用源处理) |
+| **R4 卡片视图收口** | 目录只读源表;资格 / 展示状态分算;前端删兜底;隐藏覆盖交付全路径;合集仍在代码 | 发现页应无变化(需目检);B6 补齐属预期修正 | 代码回退 |
+| **#262 波 1** | 推送通道、临时源(`unlisted`) | 有(新功能) | 见 #262 方案 |
+| **R2 目录文件** | **只迁描述性身份**:名称、策展维度、准入等搬进 `src/sources/catalog/*.toml`,类上的 `source_id` 作为注册键保留(兼容投影);镜像行改由文件对账;收编 §2.3 常量(播客先出差异报告);管理面对目录字段只读 | 管理面只读态(小,需目检) | 代码回退 + 用前像恢复被覆盖的库内字段 |
+| **R3a 执行机制原子切换** | 一次切换:注册键改为抓取器 id(B / C 档改名 `site_*`,旧 id 进**别名表**过渡期可解析);目录与非目录配置行里引用旧 id 的绑定一并迁移;执行上下文在进 Pipeline 前建立;参数锁定(绑定参数优先,只放行各抓取器声明的可覆盖白名单,取代 `base.py:129-137` 依赖预设类的规则);MCP / monitoring 改按 `source_id` 关联 | 无(62 个源全量对拍:条目 id、血统、输出逐条相等;同模板多源并发进度隔离) | 代码回退 + 别名表反向映射还原绑定 |
+| **R3b A 档删类** | A 档 30 个分批删类、绑定改指通用模板(X 7 → GitHub / HF 6 → RSS 16 → Gemma 1);`generic_rss` 加 `feed_content_as_markdown`,Devsite 模板参数化 | 无(每批对拍) | 每批单独回退 |
 
-- **R3 分批**:X 7(依赖 B4)→ GitHub / HF 6 → RSS 16 → Gemma 1;B / C 档只是改名与去身份,一批完成。
-- **R3 对拍**:每个从类迁到「模板 + 参数」的源,在录制样本上比对旧类与新绑定:条目 id 集合相等、正文逐字节相等(`generic_web` 当初的验证方式)。
-- **与 #262 的顺序(E7,推荐)**:R0 → R1 → R4 → #262 波 1(推送)→ R2 → R3。推送需要「每个源都有行」(R1)和 `unlisted` 列出状态(R4);目录文件与能力化不阻塞推送。
+### 6.1 部署顺序与混版本
+
+前提:外网按 tag 部署先上,内网经 `master` 同步再手工部署,常晚几天,外网也可能回滚;同步是内网拉取。旧接收端对未知**字段**安全(`_apply_sources` 只遍历本端 `_SOURCE_FIELDS`),对未知**枚举值**不安全(`admission_status_of()` 把未知值当 `admitted`,`registry.py:130-133`)。
+
+| 步 | 新外网 + 旧内网(默认窗口) | 旧外网 + 新内网 | 结论 |
+|---|---|---|---|
+| R0 | 只改外网采集与展示判定;线格式不变 | 无影响 | 任意顺序 |
+| R1a / R1b | 节点本地;R1b 跳过同步行 | 同左 | 任意顺序 |
+| R1c | 旧内网不声明能力 → 拿到与今天相同的导出;退役按 tombstone | 旧外网不认能力参数、也不广播能力 → 新内网保持「行优先、注册表兜底」兼容模式 | 任意顺序 |
+| R4 | 节点本地 | 新内网在兼容模式下运行,目录与今天一致 | 任意顺序;窗口期两端目录可能不同 |
+| #262 波 1 | 临时源的 `provisional` 到了旧内网会被当成正式源;旧内网也会把推送条目的源当成「只在 articles 里的源」列进发现页 | — | **外网不能先放开**:推送开关默认关,内网升级后再开(#218 先例);或内网先升级 |
+| R2 | 播客目录行照旧导出(值来自目录文件);62 个目录行仍只给声明能力的内网 | 新内网收不到目录行 → 兼容模式 | 任意顺序 |
+| R3a / R3b | `source_states.fetcher_id` 对旧内网投影为逻辑节点 ID,旧版 MCP `list_sources` 的状态关联不断 | 内网不采集,无影响 | 任意顺序 |
+
+验证:R1c、R3a、#262 波 1 合入前各做一次跨版本实测(旧 tag 起接收端、新代码起生产端,再反过来),沿 #178 的做法;发版说明写部署顺序。
 
 ## 7. 影响面
 
-- **后端**:§5 全部位置;`fetchers/registry.py`(元数据瘦身、删常量)、`fetchers/base.py`(血统覆写改读上下文)、`services/collection_nodes.py`、`services/source_collections.py`、`services/reader_defaults.py`、`services/podcast_catalog.py`、`services/archive_sync_v2.py`(导出过滤、`_SOURCE_FIELDS`)、`storage/impl/db_storage.py`(写入闸)、Alembic 迁移。
-- **前端**:`DiscoverPage.jsx`、`sourceTaxonomy.js`、`FetchTab.jsx`(节点列表 = 有绑定的源)、`CustomNodeBuilder.jsx`、`FetchRunsTab.jsx`、`admin/TaxonomyLedger.jsx`。
-- **测试**:A 档 30 个的类级测试改为「模板 + 参数」;B / C 档测试跟随改名;准入快照与 `ESSENTIAL_FETCHER_IDS` 断言改为目录守卫;新增镜像相等、93 处审计的行为钉子、对拍、对账幂等、墓碑快照。
-- **契约与文档**:`docs/contracts/archive_sync.md`(sources 流导出范围与新字段);`AGENTS.md` 抓取器那一行(「加源 = 硬化 preset fetcher」→「加策展源 = 目录文件一条;代码只写站点适配器」,L0 改动);`docs/architecture/fetchers-and-sources.md`、`content-model.md`、`reader-distribution.md`;`docs/sources/curation_policy.md`、`node_audit_playbook.md`;`decisions.md` 第 318 行(双路径 preset 类 + config 源)与第 333 行(合集存代码注册表)标为被取代并加新决策行。
-- **内网 `master`**:已核 `origin/master` 相对 `main` 在 `src/fetchers/` 只差 `base.py` 4 行与 `web_content/legacy_backend.py` 2 行,没有内网独有的抓取器、合集或播客目录;R0 / R3 改 `base.py` 时 tag 同步会有冲突,按 `INTRANET_DELTA.md` 处理。
+- **后端**:§5 全部位置;`fetchers/registry.py`(注册键、元数据瘦身、删常量、别名表)、`fetchers/base.py`(血统覆写改读上下文、参数锁定)、`pipeline/core.py`、`services/collection_nodes.py`、`services/source_collections.py`、`services/reader_defaults.py`、`services/podcast_catalog.py`、`services/podcast_source_adoption.py`、`services/archive_sync_v2.py`、`services/remote_sync.py`、`api/routers/archive_sync.py`、`storage/impl/db_storage.py`、`services/daily_brief.py`(直写路径)、Alembic 迁移。
+- **前端**:`DiscoverPage.jsx`、`sourceTaxonomy.js`、`FetchTab.jsx`、`CustomNodeBuilder.jsx`(只露可覆盖参数)、`FetchRunsTab.jsx`、`admin/TaxonomyLedger.jsx`。
+- **测试**:A 档类级测试改为「模板 + 参数」并保留行为断言;B / C 档跟随改名;新增镜像相等、`daily` 集合相等、回填三类、生命周期(删除变退役)、同步投影双向、载荷代次重拉、对账幂等与实例身份参数不可覆盖、墓碑快照、62 源对拍、并发进度隔离、跨版本实测。
+- **契约与文档**:`docs/contracts/archive_sync.md`(接收端能力参数、按请求投影、sources 载荷代次、退役语义);`AGENTS.md` 抓取器一行(「加源 = 硬化 preset fetcher」→「加策展源 = 目录文件一条;代码只写站点适配器」);`docs/architecture/fetchers-and-sources.md`、`content-model.md`、`reader-distribution.md`、`archive-sync.md`;`docs/sources/curation_policy.md`、`node_audit_playbook.md`;`decisions.md` 第 318 行(双路径 preset 类 + config 源)与第 333 行(合集存代码注册表)标为被取代并加新决策行。
+- **内网 `master`**:`origin/master` 相对 `main` 在 `src/fetchers/` 只差 `base.py`(3 增 1 删)与 `web_content/legacy_backend.py`(2 增),没有内网独有的抓取器、合集或播客目录;R0 / R3a 改 `base.py` 时 tag 同步会冲突,按 `INTRANET_DELTA.md` 处理。
 
 ## 8. 拍板项
 
 | # | 问题 | 选项(推荐在前) |
 |---|---|---|
-| E1 | 源实体落在哪 | **扩 `source_configs` 加列,R1 逐处审计约 93 处读写** / 新建 `sources` 表、`source_configs` 退为配置表(审计面小,但过渡期两张表都表达「源」,同步触发器与契约要重做) |
-| E2 | 绑定基数 | **行上 0..1;出现「一源两条抓取通道」再拆表** / 现在就建 `source_bindings` 0..N |
-| E3 | 目录行怎么到内网 | **每个节点从自带目录文件本地对账,sources 流不导出目录行** / 只在 authority 对账、经 sources 流同步(要处理接管副作用与混版本) |
-| E4 | 字段归属 | **目录拥有身份 / 呈现 / 策展 / 准入 / 绑定,管理面对这些字段只读;播客并入前先出差异报告** / 只插不改(播客现状,目录改了不生效于已有行) |
+| E1 | 源实体落在哪 | **扩 `source_configs` 加列,按消费语义审计 94 处**(检视方同意)/ 新建 `sources` 表(权限、同步、生命周期审计一样免不了,过渡期两张表都表达「源」) |
+| E2 | 绑定基数 | **行上 0..1,先把隐式绑定写实;出现「一源两条抓取通道」再拆表** / 现在就建 `source_bindings` 0..N |
+| E3 | 目录行怎么到内网 | **内网声明能力、外网按请求投影,内网不本地写公共源行**(R1 稿的「每个节点本地对账」已撤回:违背外网唯一写者,并会触发接管与停用副作用)/ 不下发目录行,内网长期按注册表兜底 |
+| E4 | 字段归属 | **目录拥有静态身份 / 呈现 / 策展 / 准入 / `daily` / 静态参数;实例身份参数不可覆盖;运维字段归库;播客并入前先出差异报告并存前像** / 只插不改(播客现状) |
 | E5 | B 档 15 个 | **保留为站点适配器** / 给模板加声明式清洗参数后收为纯数据 |
-| E6 | 适配器 id | **新命名空间 `site_*`**(节点 ID 是 `source_id`,适配器 id 只被绑定引用,改名免费)/ 沿用旧源 id(适配器 id 与源 id 同名,易混) |
-| E7 | 与 #262 的顺序 | **R0 → R1 → R4 → #262 波 1 → R2 → R3** / 先做完 R1–R4 再做推送 |
+| E6 | 适配器 id | **新命名空间 `site_*` + 别名表**,迁移所有引用旧 id 的绑定,历史运行记录保留原值 / 沿用旧源 id(适配器与源同名,易混) |
+| E7 | 顺序 | **R0 → R1a → R1b → R1c → R4 → #262 波 1 → R2 → R3a → R3b** / 先做完 R1–R4 与 R2 / R3 再做推送 |
 
 #262 方案的 D6(源目录数据化做到哪)与 D7(转正的事实来源)由本稿 E1–E4 细化;若采纳本稿,D6 / D7 随之定。
 
 ## 9. 风险
 
-- **R1 审计面**:约 93 处读写把「有配置行」当作「非预设源」。缓解:枚举处显式写 `origin` 谓词;对每处的现行为写钉子测试再改;R1 合入前全量套件 + 生产库副本上跑一次 `/api/reader/sources`、`/api/fetchers`、早报构建、日报构建,前后输出 diff 为空。
-- **性能**:注册表是进程内常量,改读库后热路径可能 N+1;`source_catalog` 带进程缓存与版本号失效。
-- **抓取稳定性**:R3 改了 62 个线上节点的执行路径。缓解:逐源对拍、分批、每批可单独回退;R3 前后对比一周的每源入库数。
-- **播客语义变化**:从「只插不改」到「以文件为准」可能覆盖生产上的人工修改。缓解:差异报告 + 逐条拍板。
-- **混版本**:E3 推荐方案下 sources 流对目录行静默;需确认接收端对新增字段「忽略未知键」(`_apply_sources` 只遍历本端 `_SOURCE_FIELDS`,静态看成立)。
-- **测试搬迁量大**:A 档 30 个类的测试要改写;B / C 档测试只跟随改名。
+- **R1c 审计面与生命周期**:94 处读 + 构造与触发器;删除变退役改变了运维面「删除」的含义。缓解:每处先写钉子测试再改;R1c 合入前在生产库副本上做前后 diff;运维面「删除」按钮文案与确认框同步改。
+- **同步投影**:同一 revision 对不同接收端有不同载荷,投影必须是确定性的纯函数;presence 与投影不一致会误删。缓解:双向跨版本实测;投影单测覆盖「退役 → tombstone」「转正 → upsert」「状态 fetcher_id 映射」。
+- **性能**:注册表是进程内常量,改读库后热路径可能 N+1;缓存失效时机见 §5。
+- **抓取稳定性**:R3a 一次切换 62 个线上节点的注册与执行路径。缓解:全量对拍、R3a 只换机制不删类、R3b 分批;前后对比一周每源入库数。
+- **播客语义变化**:从「只插不改」到「以文件为准」。缓解:差异报告逐条拍板、实例身份参数不可覆盖、前像可恢复。
+- **测试搬迁量大**:保留行为断言,不只是替换类名。
 
 ## 10. 不做
 
-- 不消灭站点适配器代码:C 档的浏览器渲染、私有 API、内嵌 JSON 解析本来就该是代码。
+- 不消灭站点适配器代码;不把正文清洗正则写进数据文件(E5)。
 - 不把策展源的事实来源放进数据库 + 管理面 CRUD:失去 PR 审阅、`git` 即审计、开发机与新部署开箱一致。
-- 不改 `source_configs` 表名、不改 `source_id` 取值、不迁历史条目 id。
+- 不改 `source_configs` 表名、不改 `source_id` 取值、不迁历史条目 id、不改写历史运行记录。
 - 不做 0..N 绑定(E2 触发条件出现前)。
-- 不把正文清洗正则写进数据文件(E5)。
+- 内网不本地对账目录文件(E3)。
 
 ## 11. 检视
 
-(待 Codex 检视后补记:检视方、模型、轮次、逐条表态与结论。)
+**R1(2026-11-05)**:检视方 Codex CLI,模型 `gpt-6-astra`,`model_reasoning_effort=ultra`,只读沙箱;实现方 Claude Code(Opus 5.5)。检视方复核了反射分档、AST 统计与 `master` 差异,未跑 pytest。结论:方向成立,R1 稿不能直接作为实现任务书。
+
+| # | 级 | 问题 | 表态与修订 |
+|---|---|---|---|
+| F1 | P1 | R1 不能持续保证「每篇文章都有源行」:删源仍物理删除,另有直写路径 | 接受:不变量覆盖生命周期(§1.3-1),被引用的源改退役,写入闸覆盖全部写入路径 |
+| F2 | P1 | 统一回填 legacy 行会解除孤儿 `user_rss_*` 的外发保护 | 接受:回填分三类,私有孤儿隔离;前缀保护保留(§5、§6 R1c) |
+| F3 | P1 | 内网本地建目录行会被首次同步准备停用,并被文章流接管删状态 | 接受,与 F6 合并为 E3 改形:内网不本地写公共源行(§3.4) |
+| F4 | P1 | 目录全量覆盖绑定参数会改变已收养播客的条目 id | 接受:实例身份参数不可覆盖(§1.1、§3.2) |
+| F5 | P1 | R2 删类身份后缺少可独立运行的兼容阶段;Pipeline 在 `fetch()` 前读进度键 | 接受:R2 只迁描述性身份,R3a 原子切换注册键与执行上下文(§6) |
+| F6 | P2 | 混版本协议不完整:载荷代次、空 payload 变 tombstone、反向混部 | 接受:接收端能力 + 按请求投影 + 载荷代次重拉(§3.4、§6.1);补充:旧内网收不到新目录源与今天新增预设类时相同,非新回归 |
+| F7 | P2 | 空 `fetcher_id` 今天会被推导成模板,不是「无绑定」 | 接受:R1b 先写实隐式绑定 |
+| F8 | P2 | 列出状态不等价于现有可见性规则 | 接受:资格与展示分算,保留隐藏已订阅的退订入口,`owner_username` 不授权,补消费方清单(§4) |
+| F9 | P2 | Gemma 不是「登记基类即可」 | 接受:Devsite 模板参数化;参数分绑定参数与可覆盖参数(§1.1、§2.2) |
+| F10 | P2 | `site_*` 改名不免费;两张记录表的 `fetcher_id` 语义不同 | 接受:别名表、迁移非目录绑定、字段语义表(§0-4、§6 R3a) |
+| F11 | P2 | 每日任务与 `/api/fetchers` 的新枚举会改变范围 | 接受:每日范围作为独立政策(`daily`),R1c 投影与旧集合相等 |
+
+事实核对更正已并入正文:94 处(不是约 93,且只有一部分依赖缺行语义);`_apply_sources` 接管时 `preserve_result=True` 保留旧结果、转 pending;R0 的 B7 / B8 有可见变化。
+
+**R2 复检**:(待补记)
