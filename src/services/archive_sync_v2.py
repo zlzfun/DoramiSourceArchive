@@ -65,6 +65,7 @@ from services.article_analysis import compute_content_hash
 from services.media_store import (
     SNIFF_HEAD_BYTES,
     extract_image_urls,
+    mark_cached_failed,
     validate_synced_image,
 )
 from services.podcast_artifacts import withdraw_digest_audio_for_script_change
@@ -1189,6 +1190,29 @@ MEDIA_EXPORT_UNAVAILABLE = "unavailable"
 MediaExportCheck = Callable[[MediaAssetRecord], str]
 
 
+def _cold_copy_state(storage, digest: str, ext: str, size: int, mime: str) -> str:
+    """OSS 登记状态:``none`` 无登记 / ``valid`` 可由冷副本供出 / ``unusable`` 有登记但对不上。
+
+    ``unusable``(OSS 已关、大小 / MIME / bucket / region 不符)时 ``materialize`` 会失败,
+    而读者路径见有登记又禁止回源重下——调用方不能把它当「缺文件」静默跳过。
+    """
+    if storage is None:
+        return "none"
+    location = storage.location(digest, ext)
+    if location is None:
+        return "none"
+    config = getattr(storage, "config", None)
+    if (
+        storage.enabled
+        and location.size_bytes == size
+        and location.mime == mime.split(";", 1)[0].strip().lower()
+        and location.bucket == getattr(config, "bucket", None)
+        and location.region == getattr(config, "region", None)
+    ):
+        return "valid"
+    return "unusable"
+
+
 def media_export_verdict(
     record: MediaAssetRecord, media_root: Path, *, object_storage=None,
 ) -> str:
@@ -1199,88 +1223,74 @@ def media_export_verdict(
     agree). Otherwise one bad row fails its page on every run, the checkpoint
     never advances, and every later stream is starved.
 
-    - ``invalid``: the local copy is present but is not the declared image, or
-      the row cannot be addressed safely. Permanent — the caller marks the row
-      ``failed`` so the reader also stops serving it and a later re-download
-      (now content-sniffed) may repair it.
-    - ``unavailable``: the binary endpoint could not serve a verifiable copy
-      (working copy missing without OSS, or size differs from the record).
-      Skipped without touching the row; any later repair updates the row,
-      which bumps its revision and exports it again.
-    - A missing working copy with OSS enabled is trusted: the cold copy is
-      served by the binary endpoint, and fetching every header from OSS on
-      each export page is not worth it.
+    - ``ok``: a full-size local working copy passes validation, or the working
+      copy is missing / wrong-sized but a matching OSS registration lets the
+      binary endpoint restore it (cold copies are not header-checked).
+    - ``invalid``: the local copy is not the declared image, or the row cannot
+      be addressed safely. Permanent — the caller marks the row ``failed``; a
+      later content-sniffed re-download may repair it.
+    - ``unavailable``: working copy missing or wrong-sized and no OSS
+      registration at all. Skipped without touching the row. Recovery is a
+      re-download (reader access or media backfill: the cached row lacks a
+      usable file, so it is fetched again, which updates the row and advances its
+      revision), or, after restoring files by hand, resetting the receiver's
+      media stream.
+
+    Raises ``SyncV2Error`` (the page fails and the checkpoint stays) when the
+    state may heal without any database write: a filesystem error other than
+    absence, or an OSS registration that exists but is unusable.
     """
 
     digest = str(record.content_hash or "")
     ext = str(record.ext or "")
     if re.fullmatch(r"[0-9a-f]{64}", digest) is None or _SAFE_MEDIA_EXT.fullmatch(ext) is None:
         return MEDIA_EXPORT_INVALID
+    size = int(record.size_bytes or 0)
     # 与二进制端点 MediaStore.file_path_for 同一寻址(扩展名原样)。
     target = Path(media_root) / digest[:2] / f"{digest}{ext}"
     try:
         info = target.lstat()
     except FileNotFoundError:
-        enabled = bool(getattr(object_storage, "enabled", False))
-        return MEDIA_EXPORT_OK if enabled else MEDIA_EXPORT_UNAVAILABLE
-    except OSError:
-        return MEDIA_EXPORT_UNAVAILABLE
-    if not stat.S_ISREG(info.st_mode) or info.st_size != int(record.size_bytes or 0):
-        return MEDIA_EXPORT_UNAVAILABLE
-    try:
-        with target.open("rb") as handle:
-            header = handle.read(SNIFF_HEAD_BYTES)
-    except OSError:
-        return MEDIA_EXPORT_UNAVAILABLE
-    try:
-        validate_synced_image(
-            header,
-            declared_mime=str(record.mime or ""),
-            declared_ext=ext,
-            max_bytes=SNIFF_HEAD_BYTES,
-        )
-    except ValueError:
-        return MEDIA_EXPORT_INVALID
-    return MEDIA_EXPORT_OK
+        info = None
+    except OSError as exc:
+        raise SyncV2Error(f"media file unreadable on producer: {type(exc).__name__}") from exc
+    if info is not None and stat.S_ISREG(info.st_mode) and info.st_size == size:
+        try:
+            with target.open("rb") as handle:
+                header = handle.read(SNIFF_HEAD_BYTES)
+        except OSError as exc:
+            raise SyncV2Error(f"media file unreadable on producer: {type(exc).__name__}") from exc
+        try:
+            validate_synced_image(
+                header,
+                declared_mime=str(record.mime or ""),
+                declared_ext=ext,
+                max_bytes=SNIFF_HEAD_BYTES,
+            )
+        except ValueError:
+            return MEDIA_EXPORT_INVALID
+        return MEDIA_EXPORT_OK
+    state = _cold_copy_state(object_storage, digest, ext, size, str(record.mime or ""))
+    if state == "valid":
+        return MEDIA_EXPORT_OK
+    if state == "unusable":
+        raise SyncV2Error("media cold copy registration does not match the cached record")
+    return MEDIA_EXPORT_UNAVAILABLE
 
 
 def _mark_media_export_invalid(engine: Engine, records: list[MediaAssetRecord]) -> int:
     """Best-effort: stop serving locally cached bytes that are not the declared image.
 
-    Conditional on the exact cached identity so a concurrent re-download or a
-    sync handoff is never overwritten. Failure only means the row is checked
-    (and skipped) again on the next export page.
+    Failure only means the row is checked (and skipped) again on the next page.
     """
 
     if not records:
         return 0
-    now = _now_iso()
-    marked = 0
     try:
-        with Session(engine) as session:
-            for record in records:
-                result = session.exec(
-                    update(MediaAssetRecord)
-                    .where(
-                        MediaAssetRecord.url_hash == record.url_hash,
-                        MediaAssetRecord.status == "cached",
-                        MediaAssetRecord.content_hash == record.content_hash,
-                        MediaAssetRecord.sync_authority_id == "",
-                    )
-                    .values(
-                        status="failed",
-                        fail_count=func.coalesce(MediaAssetRecord.fail_count, 0) + 1,
-                        last_error="缓存内容不是声明的图片(同步导出自检)",
-                        updated_at=now,
-                    )
-                    .execution_options(synchronize_session=False)
-                )
-                marked += max(int(getattr(result, "rowcount", 0) or 0), 0)
-            session.commit()
+        return mark_cached_failed(engine, records, "缓存内容不是声明的图片(同步导出自检)")
     except Exception:  # noqa: BLE001 - 导出页已成形,标记失败只影响下次重检
         logger.warning("同步导出自检:标记坏图失败", exc_info=True)
         return 0
-    return marked
 
 
 def _export_media_rows(
@@ -4020,11 +4030,7 @@ def _registered_cold_copy(storage, target: Path, digest: str, ext: str,
         return False
     else:
         return False
-    location = storage.location(digest, ext)
-    return bool(location and location.size_bytes == size
-                and location.mime == mime.split(";", 1)[0].strip().lower()
-                and location.bucket == storage.config.bucket
-                and location.region == storage.config.region)
+    return _cold_copy_state(storage, digest, ext, size, mime) == "valid"
 
 
 def _atomic_install(target: Path, body: bytes) -> None:

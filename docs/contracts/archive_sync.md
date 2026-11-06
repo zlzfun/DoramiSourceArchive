@@ -449,13 +449,19 @@ The producer vets each cached image before listing it (issue #264), using the
 receiver's own rule (`validate_synced_image` on the first 512 bytes: content
 signature, declared MIME and extension agree). Content that is not the declared
 image, or a row that cannot be addressed safely, is skipped and its local cache row
-becomes `failed`; bytes the binary endpoint could not serve (working copy missing
-without object storage, size mismatch, media store disabled) are skipped without
-changing the row. A working copy evicted to object storage is trusted. A skipped
-row is listed again once a later local write repairs it and advances its revision.
-The first-page `pending` remains the candidate count and may exceed the rows
-actually listed. Image caching itself trusts content only, never the response
-`Content-Type`, so the two sides cannot diverge.
+becomes `failed`. A working copy that is missing or has the wrong size is served
+from object storage only when a matching registration exists (size, MIME, bucket,
+region; cold copies are not header-checked). Without any registration such a row is
+skipped without changing it: the next reader access or media backfill re-downloads
+it, which advances its revision so the next incremental page lists it; after
+restoring files by hand, reset the receiver's media stream. States that can heal
+without a database write fail the page instead, keeping the checkpoint: filesystem
+errors other than absence, a registration that exists but does not match (or object
+storage disabled), and a disabled media store while candidates exist (with no
+candidates the page is empty and complete). The first-page `pending` remains the
+candidate count and may exceed the rows actually listed. Image caching itself
+trusts content only, never the response `Content-Type`, and treats a wrong-sized
+working copy as a miss, so the two sides cannot diverge.
 
 A receiver that downloads bytes matching the declared size and SHA-256 that still
 fail image validation records the row `failed`, counts it under the stream's

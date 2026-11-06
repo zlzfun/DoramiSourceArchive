@@ -432,6 +432,56 @@ def test_content_decides_mime_even_when_header_disagrees(tmp_path, monkeypatch):
     ) == ("image/png", ".png")
 
 
+def test_export_marked_cache_degrades_then_refetches_after_cooling(tmp_path, monkeypatch):
+    """导出自检标 failed(issue #264)后:冷却内不抛、回源降级;冷却过后按内容口径重下。"""
+    monkeypatch.setattr(ms, "_resolve_is_public", _public_ok)
+    engine = _sink(tmp_path).engine
+    calls = []
+    url = "https://cdn.example.com/was-junk.jpg"
+    store = _store(engine, tmp_path, _counting_transport(calls))
+    record = asyncio.run(store.get_or_fetch(url))
+    assert ms.mark_cached_failed(engine, [record], "缓存内容不是声明的图片(同步导出自检)") == 1
+    assert ms.mark_cached_failed(engine, [record], "重复标记") == 0  # 条件更新:已不是同一份 cached
+
+    assert asyncio.run(store.get_or_fetch(url)) is None
+    assert len(calls) == 1  # 冷却窗口内不回源
+    with Session(engine) as session:
+        row = session.get(MediaAssetRecord, url_hash_of(url))
+        row.updated_at = (datetime.datetime.now() - datetime.timedelta(days=2)).isoformat()
+        session.add(row)
+        session.commit()
+    refetched = asyncio.run(store.get_or_fetch(url))
+    assert refetched is not None and refetched.status == "cached" and len(calls) == 2
+
+
+def test_failed_cooling_accepts_timezone_aware_timestamps(tmp_path):
+    """同步接收行的 updated_at 可能带时区(_now_iso):冷却判定不得抛 TypeError。"""
+    engine = _sink(tmp_path).engine
+    store = _store(engine, tmp_path, _counting_transport([]))
+    aware = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    stale = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=2)).isoformat()
+    assert store._failed_still_cooling(MediaAssetRecord(
+        url_hash="a", url="https://x/a.png", status="failed", fail_count=1, updated_at=aware, created_at=aware))
+    assert not store._failed_still_cooling(MediaAssetRecord(
+        url_hash="b", url="https://x/b.png", status="failed", fail_count=1, updated_at=stale, created_at=stale))
+
+
+def test_truncated_cache_file_is_refetched_and_overwritten(tmp_path, monkeypatch):
+    """截断的本地副本不当命中(issue #264 检视 R1):重下并原子覆写同名 CAS 文件。"""
+    monkeypatch.setattr(ms, "_resolve_is_public", _public_ok)
+    engine = _sink(tmp_path).engine
+    calls = []
+    url = "https://cdn.example.com/p.png"
+    store = _store(engine, tmp_path, _counting_transport(calls))
+    record = asyncio.run(store.get_or_fetch(url))
+    path = store.file_path_for(record)
+    path.write_bytes(PNG_BYTES[:5])
+
+    again = asyncio.run(store.get_or_fetch(url))
+    assert again is not None and len(calls) == 2
+    assert path.read_bytes() == PNG_BYTES
+
+
 def test_http_error_and_size_cap_fail(tmp_path, monkeypatch):
     monkeypatch.setattr(ms, "_resolve_is_public", _public_ok)
     engine = _sink(tmp_path).engine

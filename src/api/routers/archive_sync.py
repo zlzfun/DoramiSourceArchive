@@ -449,14 +449,17 @@ def export_archive_v2_jsonl(
     return Response(content=body, media_type="application/x-ndjson; charset=utf-8")
 
 
-def _media_export_check():
-    """manifest 只列二进制端点供得出、且接收端会认的图片(issue #264)。
+def _media_store_disabled(_record):
+    # 有候选却供不出字节:整页失败、checkpoint 不动,重开媒体库后同一游标重导出;
+    # 若静默跳过,增量会永久越过这些图(issue #264 检视 R1)。没有候选时不会被调用。
+    raise archive_sync_v2.SyncV2Error("producer media store is disabled; cannot serve media binaries")
 
-    媒体库关闭时二进制端点一律 404,列出来只会让接收端整流失败,故全部跳过。
-    """
+
+def _media_export_check():
+    """manifest 只列二进制端点供得出、且接收端会认的图片(issue #264)。"""
     store = getattr(importlib.import_module("api.app"), "media_store", None)
     if store is None:
-        return lambda _record: archive_sync_v2.MEDIA_EXPORT_UNAVAILABLE
+        return _media_store_disabled
     return functools.partial(
         archive_sync_v2.media_export_verdict,
         media_root=store.root,
