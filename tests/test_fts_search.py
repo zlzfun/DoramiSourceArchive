@@ -71,6 +71,15 @@ def _title_ids(sink, term):
         return {r.id for r in session.exec(query).all()}
 
 
+def _title_ids_old_schema(sink, term):
+    """同上,但只取 id 列:库停在旧迁移版本时,今天的 ORM 全列 select 会撞上之后才加的列。"""
+    with Session(sink.engine) as session:
+        query = apply_article_query_filters(
+            select(ArticleRecord.id), search=term, session=session
+        )
+        return set(session.exec(query).all())
+
+
 # ---------------------------------------------------------------- DDL / 探测
 
 def test_ensure_fts_idempotent_and_available(tmp_path):
@@ -161,7 +170,15 @@ def test_guard_migration_preserves_index_and_null_rowid_changes(tmp_path):
     config = make_alembic_config(url)
     command.upgrade(config, "c41a8e20d610")
     sink = DatabaseStorage(db_url=url)
-    _add(sink, "m1", "AI‑Native", "original body")
+    # 库停在旧版本:用原生 SQL 插入,不让今天的 ORM 模型(含之后迁移加的列)碰旧表结构。
+    with sink.engine.begin() as conn:
+        conn.exec_driver_sql(
+            "INSERT INTO articles (id, title, content_type, source_id, source_url, publish_date, "
+            "fetched_date, run_scope, has_content, content, extensions_json) VALUES "
+            "('m1', ?, 'web_article', 'src_a', 'http://x', '2026-06-01', '2026-06-01', 'ad_hoc', 1, "
+            "'original body', '{}')",
+            ("AI\u2011Native",),
+        )
     # Emulate the old broad trigger even though old migrations import today's DDL.
     replace_fts_update_trigger(sink.engine, changed_only=False)
     with sink.engine.connect() as conn:
@@ -173,11 +190,11 @@ def test_guard_migration_preserves_index_and_null_rowid_changes(tmp_path):
         conn.exec_driver_sql("UPDATE articles SET read_count=1")
         assert conn.exec_driver_sql("SELECT total_changes()").scalar_one() - baseline == 1
         conn.exec_driver_sql("UPDATE articles SET content=NULL")
-    assert _title_ids(sink, "original") == set()
+    assert _title_ids_old_schema(sink, "original") == set()
     with sink.engine.begin() as conn:
         conn.exec_driver_sql("UPDATE articles SET content='new searchable text', rowid=rowid+100")
-    assert _title_ids(sink, "searchable") == {"m1"}
-    assert _title_ids(sink, "AI-Native") == {"m1"}
+    assert _title_ids_old_schema(sink, "searchable") == {"m1"}
+    assert _title_ids_old_schema(sink, "AI-Native") == {"m1"}
     with sink.engine.connect() as conn:
         before = _fts_shadow_snapshot(conn)
     command.downgrade(config, "c41a8e20d610")
@@ -422,13 +439,15 @@ def test_normalization_migration_upgrade_and_downgrade(tmp_path):
     command.upgrade(config, "d4e8a1b7c603")
     engine = create_engine(url)
     try:
-        with Session(engine) as session:
-            session.add(ArticleRecord(
-                id="m1", title="AI\u2011Native Systems", content_type="web_article",
-                source_id="src_a", source_url="http://x", publish_date="2026-06-01",
-                fetched_date="2026-06-01", has_content=True, content="body",
-            ))
-            session.commit()
+        # 库停在旧版本:原生 SQL 插入,不让今天的 ORM 模型(含之后迁移加的列)碰旧表结构。
+        with engine.begin() as conn:
+            conn.exec_driver_sql(
+                "INSERT INTO articles (id, title, content_type, source_id, source_url, publish_date, "
+                "fetched_date, run_scope, has_content, content, extensions_json) VALUES "
+                "('m1', ?, 'web_article', 'src_a', 'http://x', '2026-06-01', '2026-06-01', "
+                "'ad_hoc', 1, 'body', '{}')",
+                ("AI\u2011Native Systems",),
+            )
         with engine.begin() as conn:
             _install_legacy_fts(conn)  # 模拟生产存量库：原文 trigger + 原文索引
         assert _raw_match_count(engine, "AI-Native") == 0

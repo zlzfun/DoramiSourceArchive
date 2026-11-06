@@ -54,9 +54,18 @@ def default_fetcher_id_for_source_type(source_type: str) -> str:
     return ""
 
 
+# 没有采集通道的来路:注入通道建的临时源、R1c 回填的存量 id、系统源。它们的 source_type
+# 只描述形态(x / podcast / archive),不能再被推导成「绑定了某个模板」(issue #262 F7)。
+_UNBOUND_ORIGINS = frozenset({"agent", "legacy", "system"})
+
+
 def resolve_source_fetcher_id(source_config: SourceConfigRecord) -> str:
     if source_config.fetcher_id:
         return source_config.fetcher_id
+    if str(getattr(source_config, "origin", "") or "").strip().lower() in _UNBOUND_ORIGINS:
+        return ""
+    if getattr(source_config, "retired_at", None):
+        return ""
     return default_fetcher_id_for_source_type(source_config.source_type or "")
 
 
@@ -210,6 +219,9 @@ def collection_node_catalog(
     metadata.extend(
         configured_source_metadata(record)
         for record in records
+        # 节点 = 有绑定 ∧ 未退役(issue #262 R1c):注入通道建的播客临时源没有采集通道。
         if record.source_id not in existing_ids
+        and not record.retired_at
+        and resolve_source_fetcher_id(record)
     )
     return metadata

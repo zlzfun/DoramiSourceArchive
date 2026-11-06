@@ -177,6 +177,77 @@ def _refetch_outdated_analysis_payloads(
     return True
 
 
+_SOURCE_PROJECTED_STREAMS = ("sources", "source_states")
+
+
+def _switch_source_projection(
+    session: Session,
+    target: Dict[str, Any],
+    *,
+    base_url: str,
+    authority_id: str,
+    capabilities: Optional[List[str]],
+    prepared_at: str,
+) -> bool:
+    """按生产者能力决定 sources / source_states 的有效投影;切到 catalog-v1 时重放两流。
+
+    投影从 legacy 切到 catalog-v1 是协议变化(issue #262 R1c,方案 §3.4-5):沿分析代次的做法,
+    在同一事务里清掉两流 checkpoint **和**本机对这个权威的逐行应用记账——否则同一 revision
+    会被当成「已应用」跳过,旧投影下应用成 tombstone 的行永远拿不到新载荷。生产者不再广播
+    (外网回滚)时记回 legacy,不重放:旧载荷只是少了新字段,已应用的新字段保持不动。
+    返回是否触发了重放。
+    """
+
+    if capabilities is None:
+        return False
+    desired = (
+        archive_sync_v2.SOURCE_PROJECTION_CATALOG
+        if archive_sync_v2.SOURCE_CATALOG_CAPABILITY in capabilities
+        else archive_sync_v2.SOURCE_PROJECTION_LEGACY
+    )
+    recorded = str(
+        target.get("v2_source_projection") or archive_sync_v2.SOURCE_PROJECTION_LEGACY
+    )
+    if desired == recorded:
+        return False
+    target["v2_source_projection"] = desired
+    target["v2_source_projection_changed_at"] = prepared_at
+    target.pop("v2_source_catalog_ready_at", None)
+    if desired != archive_sync_v2.SOURCE_PROJECTION_CATALOG:
+        return False
+    streams = dict(target.get("v2_streams") or {})
+    for stream in _SOURCE_PROJECTED_STREAMS:
+        streams.pop(stream, None)
+    target["v2_streams"] = streams
+    session.exec(
+        delete(ArchiveSyncEntityStateRecord).where(
+            ArchiveSyncEntityStateRecord.stream.in_(_SOURCE_PROJECTED_STREAMS),
+            ArchiveSyncEntityStateRecord.authority_id == authority_id,
+        )
+    )
+    _logger.info(
+        "remote sync %s: source projection switched to %s, replaying sources/source_states",
+        base_url,
+        desired,
+    )
+    return True
+
+
+def source_catalog_ready(engine_or_session) -> bool:
+    """接收端是否已按 catalog-v1 投影完整重放过 sources 流(严格不变量的启用条件)。"""
+
+    if isinstance(engine_or_session, Session):
+        record = engine_or_session.get(AppSettingRecord, REMOTE_SYNC_STATE_KEY)
+    else:
+        with Session(engine_or_session) as session:
+            record = session.get(AppSettingRecord, REMOTE_SYNC_STATE_KEY)
+    targets = _decode_sync_state_record(record).get("targets") or {}
+    return any(
+        isinstance(target, dict) and target.get("v2_source_catalog_ready_at")
+        for target in targets.values()
+    )
+
+
 def prepare_transaction_revision_consumer(
     session: Session,
     *,
@@ -242,6 +313,14 @@ def prepare_transaction_revision_consumer(
                 authority_id=authority_id,
                 prepared_at=prepared_at,
             )
+            _switch_source_projection(
+                session,
+                target,
+                base_url=base_url,
+                authority_id=authority_id,
+                capabilities=normalized_capabilities,
+                prepared_at=prepared_at,
+            )
             targets[base_url] = target
             state["targets"] = targets
             value = json.dumps(state, ensure_ascii=False)
@@ -304,8 +383,15 @@ def prepare_transaction_revision_consumer(
             "v2_streams": {},
             # 首次 rebase 本来就整流拉取分析,拉到的即当前字段代次。
             "v2_analysis_payload_generation": archive_sync_v2.ANALYSIS_PAYLOAD_GENERATION,
+            # 同理:全量拉取的源目录投影即协商到的投影,不需要另行重放。
+            "v2_source_projection": (
+                archive_sync_v2.SOURCE_PROJECTION_CATALOG
+                if archive_sync_v2.SOURCE_CATALOG_CAPABILITY in (normalized_capabilities or [])
+                else archive_sync_v2.SOURCE_PROJECTION_LEGACY
+            ),
         }
     )
+    target.pop("v2_source_catalog_ready_at", None)
     targets[base_url] = target
     state["targets"] = targets
     value = json.dumps(state, ensure_ascii=False)
@@ -472,6 +558,8 @@ async def _fetch_v2_page(
         params["after"] = after
     if max_bytes is not None:
         params["page_max_bytes"] = max_bytes
+    # 接收端能力声明(issue #262 R1c):旧生产者忽略这个查询参数。
+    params["receiver_capabilities"] = archive_sync_v2.SOURCE_CATALOG_CAPABILITY
     last_error: Optional[Exception] = None
     for attempt in range(1, _MAX_RETRIES + 1):
         try:
@@ -1098,6 +1186,17 @@ async def run_pull_v2(
                 expected_authority = authority
                 if snapshot and manifest.get("snapshot") != snapshot:
                     raise RemoteSyncError(f"v2 {stream} snapshot 在翻页中发生变化")
+                if stream in archive_sync_v2.SOURCE_PROJECTED_STREAMS:
+                    # 有效投影整轮固定:以生产者回显为准(旧生产者不回显 = legacy),翻页或两流之间
+                    # 变化即拒绝写入、不推进 checkpoint。回显随 checkpoint 记账,「源目录已就绪」
+                    # 只认实际按 catalog-v1 完成的 sources 流。
+                    echoed = str(
+                        manifest.get("source_projection")
+                        or archive_sync_v2.SOURCE_PROJECTION_LEGACY
+                    )
+                    if result.get("source_projection") not in {None, echoed}:
+                        raise RemoteSyncError(f"v2 {stream} 源目录投影在同步中发生变化")
+                    result["source_projection"] = echoed
                 snapshot = str(manifest.get("snapshot") or "")
                 if stream == "sources":
                     generation_snapshot = snapshot
@@ -1213,6 +1312,10 @@ async def run_pull_v2(
                         "completed_at": "",  # caller stamps its local clock
                         **stats,
                     }
+                    if stream in archive_sync_v2.SOURCE_PROJECTED_STREAMS:
+                        checkpoint["source_projection"] = result.get(
+                            "source_projection", archive_sync_v2.SOURCE_PROJECTION_LEGACY
+                        )
                     result["streams"][stream] = checkpoint
                     if on_stream_complete is not None:
                         on_stream_complete(stream, checkpoint)
@@ -1355,6 +1458,14 @@ def record_v2_stream_success(
     target.update(
         {"username": username, "last_synced_at": synced_at, "v2_streams": streams}
     )
+    if (
+        stream == "sources"
+        and target.get("v2_source_projection") == archive_sync_v2.SOURCE_PROJECTION_CATALOG
+        and checkpoint.get("source_projection") == archive_sync_v2.SOURCE_PROJECTION_CATALOG
+        and not target.get("v2_source_catalog_ready_at")
+    ):
+        # 切换后的第一次 sources 流完成 = catalog-v1 全量重放完成。
+        target["v2_source_catalog_ready_at"] = synced_at
     state["targets"][base_url] = target
     with Session(engine) as session:
         row = session.get(AppSettingRecord, REMOTE_SYNC_STATE_KEY)

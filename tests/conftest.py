@@ -70,6 +70,31 @@ def seed_default_accounts(engine, accounts=(("admin", "admin", "admin"), ("user"
             accounts_service.create_user(session, username, password, role)
 
 
+def add_on_current_schema(session, *records):
+    """在停在旧迁移版本的库里插入今天的 ORM 对象:只写库里已有的列。
+
+    迁移测试常先 ``upgrade`` 到某个旧版本再造数据;之后的迁移给同一张表加的列(如 issue #262 给
+    ``articles`` 加的来路列)在那个版本还不存在,直接 ``session.add`` 会撞上 ``no such column``。
+    按当前库表结构裁掉多出来的列,用 Core insert 写入(不触发 ORM 事件;数据库触发器照常)。
+    """
+    from sqlalchemy import column as sa_column, insert, inspect as sa_inspect, table as sa_table
+
+    bind = session.get_bind()
+    for record in records:
+        table = record.__table__
+        existing = {column["name"] for column in sa_inspect(bind).get_columns(table.name)}
+        values = {
+            column.name: getattr(record, column.key, None)
+            for column in table.columns
+            if column.name in existing
+            # 与 ORM 同口径:值为 None 且列有 server_default 时交给数据库默认值。
+            and not (getattr(record, column.key, None) is None and column.server_default is not None)
+        }
+        # 轻量 table 对象:不带模型列的 Python 侧默认值,Core 不会替缺席的列补值。
+        light = sa_table(table.name, *(sa_column(name) for name in values))
+        session.execute(insert(light).values(**values))
+
+
 # Ordinary API tests may configure fake LLM credentials and assert exact request
 # counts. Background title generation is driven explicitly in its service tests;
 # do not let lifespan race the endpoint under test or send an unstubbed request.

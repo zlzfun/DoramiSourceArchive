@@ -27,6 +27,7 @@ from sqlalchemy.exc import IntegrityError  # noqa: E402
 from sqlalchemy.engine import Engine  # noqa: E402
 from sqlmodel import Session, select  # noqa: E402
 
+from tests.conftest import add_on_current_schema  # noqa: E402
 from models.db import (  # noqa: E402
     ArticleRecord,
     PodcastArtifactRecord,
@@ -117,7 +118,7 @@ def _insert_source_audio_migration_case(
     content_hash = ("b" if suffix == "valid" else "d") * 64
     try:
         with Session(engine) as session:
-            session.add(ArticleRecord(
+            add_on_current_schema(session, ArticleRecord(
                 id=episode_id,
                 title="Snapshot migration",
                 content_type="podcast_episode",
@@ -424,7 +425,7 @@ def test_normalized_transcript_publication_migration_backfills_successful_output
     engine = create_engine(db_url)
     try:
         with Session(engine) as session:
-            session.add(ArticleRecord(
+            add_on_current_schema(session, ArticleRecord(
                 id="normalized-publication-episode",
                 title="Normalized publication migration",
                 content_type="podcast_episode",
@@ -948,7 +949,7 @@ def test_active_podcast_audio_migration_withdraws_older_duplicates(tmp_path):
     engine = create_engine(db_url)
     try:
         with Session(engine) as session:
-            session.add(ArticleRecord(
+            add_on_current_schema(session, ArticleRecord(
                 id="migration-audio-episode",
                 title="Migration audio",
                 content_type="podcast_episode",

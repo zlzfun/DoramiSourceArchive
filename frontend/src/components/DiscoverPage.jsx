@@ -195,6 +195,8 @@ export default function DiscoverPage({
     const q = query.trim().toLowerCase();
     const buckets = {};
     for (const s of sources) {
+      // 临时源(Agent 收录建的,issue #262)不进发现目录;已订阅的照常列出,便于管理。
+      if (s.listing === 'unlisted' && !subscribedIds.has(s.source_id)) continue;
       const sShape = readerShapeOf(s);
       if (activeShape !== 'all' && sShape !== activeShape) continue;
       if (q && !`${s.name || ''} ${s.description || ''} ${s.source_id}`.toLowerCase().includes(q)) continue;
@@ -208,7 +210,7 @@ export default function DiscoverPage({
     return SOURCE_ROLES
       .map((r) => ({ ...r, list: buckets[r.key] || [] }))
       .filter((g) => g.list.length > 0);
-  }, [sources, activeShape, query, sortBySubs]);
+  }, [sources, subscribedIds, activeShape, query, sortBySubs]);
 
   // 合集视图模型:成员与订阅计数由 sources 目录 join(隐藏源上游已滤,join 不到即不渲染)
   const sourceById = useMemo(() => {

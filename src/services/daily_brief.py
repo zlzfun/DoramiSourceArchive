@@ -616,6 +616,12 @@ def _collect_candidate_batch(session, *, cursor, max_total=120, per_source_cap=D
     hidden = reader_unavailable_source_ids(session)
     if hidden:
         base = base.where(ArticleRecord.source_id.notin_(sorted(hidden)))
+    # 临时源默认不进公共日报候选池;管理员「列入」(→ 观察期)后才参与(issue #262 D3)。
+    from services.source_catalog import provisional_source_ids
+
+    provisional = provisional_source_ids(session)
+    if provisional:
+        base = base.where(ArticleRecord.source_id.notin_(sorted(provisional)))
     unseen = DailyBriefCandidateRecord.article_id.is_(None)
     if cursor:
         fresh = and_(unseen, ArticleRecord.fetched_date >= cursor)
@@ -2197,6 +2203,10 @@ async def _persist_brief(storage, content_obj: DailyBriefContent, *, session) ->
     if not sync_consumer_policy.local_source_operation_allowed(session, content_obj.source_id, operation="collection"):
         raise RuntimeError("当前节点不允许写入公共日报")
     metadata = serialize_to_metadata(content_obj)
+    # 源表全集不变量(issue #262 R1c):日报直写同样在同一事务里确保系统源行存在。
+    from services import source_rows
+
+    source_rows.ensure_source_row(session, content_obj.source_id, content_type=content_obj.content_type)
     record = session.get(ArticleRecord, content_obj.id)
     if record is None:
         record = ArticleRecord(id=content_obj.id, title=content_obj.title,

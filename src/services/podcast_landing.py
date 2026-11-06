@@ -32,7 +32,7 @@ from typing import Iterable, Sequence
 from sqlalchemy import and_, func, or_
 from sqlmodel import Session, select
 
-from models.db import AppSettingRecord, ArticleAnalysisRecord, ArticleRecord
+from models.db import AppSettingRecord, ArticleAnalysisRecord, ArticleRecord, SourceConfigRecord
 from services import podcast_artifacts, podcast_processing_admin, podcast_source_media
 
 CURSOR_KEY = "podcast_landing:cursor"
@@ -254,6 +254,13 @@ def _landing_rows_statement():
         )
         .where(
             ArticleRecord.content_type == "podcast_episode",
+            # 付费 ASR / 全文处理不对临时源(Agent 收录建的,issue #262)放开:只到元数据与简介初评;
+            # 管理员「列入」(→ 观察期)后才进入自动入队。读者点播依赖全文终评,同样被这道门挡住。
+            ArticleRecord.source_id.notin_(
+                select(SourceConfigRecord.source_id).where(
+                    SourceConfigRecord.admission_status == "provisional"
+                )
+            ),
             or_(
                 and_(
                     ArticleAnalysisRecord.status == "succeeded",

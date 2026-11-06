@@ -40,7 +40,7 @@ from api.sources import (
     PODCAST_CONTENT_TYPES,
     SOCIAL_CONTENT_TYPES,
     VALID_CONTENT_SHAPES,
-    configured_source_shape,
+    row_shape,
     normalize_shape,
     registry_source_ids_for_shape,
 )
@@ -263,7 +263,7 @@ def _source_ids_by_shape(session: Optional[Session] = None) -> dict[str, set[str
         for record in records:
             if record.source_id in registered_ids:
                 continue  # registry 是源级形态的第一事实源
-            result[configured_source_shape(record.source_type, record.fetcher_id)].add(
+            result[row_shape(record)].add(
                 record.source_id
             )
     return result
@@ -806,7 +806,7 @@ async def get_article(article_id: str, request: Request):
 
 
 @router.post("/api/articles")
-async def create_article_manual(params: dict = Body(...)):
+async def create_article_manual(request: Request, params: dict = Body(...)):
     """接收前端传来的手工录入数据并入库"""
     source_id = str(params.get("source_id", "manual") or "manual").strip() or "manual"
     reserved = ingest_policy.reserved_source_id_reason(source_id, allow_daily_brief=True)
@@ -844,6 +844,14 @@ async def create_article_manual(params: dict = Body(...)):
     content_obj.source_id = source_id
     if extensions:
         content_obj.extra_extensions = extensions
+    # 未登记的来源在同一事务里建成临时源(不进发现目录,管理面「收录源」可列入,issue #262)。
+    content_obj._source_hint = {
+        "origin": "agent",
+        "admission_status": "provisional",
+        "name": str(params.get("source_name") or "").strip(),
+    }
+    content_obj._ingest_channel = "manual"
+    content_obj._ingest_actor = _app().current_username(request) or ""
 
     outcome = await deps.get_db_sink().save_with_outcome(content_obj)
     error = ingest_policy.outcome_error(outcome)

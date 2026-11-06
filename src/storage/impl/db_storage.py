@@ -13,7 +13,7 @@ from models.db import (
     next_article_archive_revision,
 )
 from services.podcast_metadata import merge_podcast_publisher_metadata
-from services import sync_consumer_policy
+from services import source_catalog, source_rows, sync_consumer_policy
 from services.title_cache import extensions as title_extensions, preserve_title_receipt
 from services.collection_nodes import PODCAST_SOURCE_TYPES, is_public_podcast_source
 from services.podcast_stage_policy import PodcastStageDenied, require_stage as require_podcast_stage
@@ -352,6 +352,21 @@ class DatabaseStorage(BaseStorage):
                     return SAVE_METADATA_REPAIRED
                 return SAVE_DUPLICATE
 
+            # 源表全集不变量(issue #262 R1c):新条目入库前在同一事务里确保源行存在。注入通道
+            # 经 ``_source_hint`` 带出处描述(名称 / 头像 / 平台 / 来路);抓取路径不带,未登记的
+            # id 按存量口径记 legacy(与今天「只在 articles 里出现的源」同样列出)。接收端不建。
+            hint = dict(getattr(item, "_source_hint", None) or {})
+            if not hint:
+                hint = {
+                    "origin": source_catalog.ORIGIN_LEGACY,
+                    "admission_status": "admitted",
+                }
+            source_rows.ensure_source_row(
+                session,
+                item.source_id,
+                content_type=getattr(item, "content_type", "") or "",
+                **hint,
+            )
             raw_metadata = serialize_to_metadata(item)
             extensions = raw_metadata.get("extensions", {})
             actual_content = item.content if item.content else extensions.get("summary")
@@ -374,6 +389,9 @@ class DatabaseStorage(BaseStorage):
                 has_content=item.has_content,
                 content=actual_content,
                 extensions_json=json.dumps(extensions, ensure_ascii=False),
+                # 条目来路(issue #262 波 1):只由服务端注入通道挂在实例上,不进 extensions。
+                ingest_channel=str(getattr(item, "_ingest_channel", "") or "")[:20],
+                ingest_actor=str(getattr(item, "_ingest_actor", "") or "")[:80],
             )
             session.add(record)
             # Persist the optional paper task in the same transaction as the

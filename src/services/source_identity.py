@@ -97,6 +97,15 @@ def x_identity_index(session: Session) -> dict[str, str]:
             user_id=str(params.get("user_id") or ""),
         ):
             index.setdefault(key, row.source_id)
+    try:
+        from models.db import SourceIdentityKeyRecord
+
+        for row in session.exec(
+            select(SourceIdentityKeyRecord).where(SourceIdentityKeyRecord.key.startswith("x:"))
+        ).all():
+            index.setdefault(row.key, row.source_id)
+    except Exception:  # noqa: BLE001 - 身份键表缺失(旧库)时只按行与注册表解析
+        pass
     for source_id, handle, user_id in _registry_x_sources():
         for key in social_identity_keys(X_PLATFORM, handle=handle, user_id=user_id):
             index[key] = source_id

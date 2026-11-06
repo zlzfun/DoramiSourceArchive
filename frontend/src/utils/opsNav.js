@@ -30,8 +30,8 @@ export const OPS_PAGES = [
     blocks: [['storage', '存储与备份'], ['media', '媒体库'], ['xapi', 'X API']],
   },
   {
-    id: 'user-sources', name: '自定源', icon: 'rss', usesDays: false,
-    blocks: [['sources', '自定源']],
+    id: 'user-sources', name: '自定源与收录', icon: 'rss', usesDays: false,
+    blocks: [['sources', '自定源'], ['ingest', 'Agent 收录']],
   },
   {
     id: 'inbox', name: '反馈与公告', icon: 'message', usesDays: false,

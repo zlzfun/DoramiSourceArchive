@@ -11,6 +11,8 @@
 
 ## 年表(一行一波;自 `CLAUDE.md` 迁入 2026-10-21,**新波次在此加一行**,L0 不再逐波改)
 
+- **源模型重构与 Agent 收录(issue #262,开发版 3.68.0-alpha,2026-11-06 起,实施中)**:源 / 采集绑定 / 抓取器三层;源表成为全集(预设镜像行、系统行、墓碑、孤儿回填,写入闸同事务补建,删除改退役);Archive Sync 按接收端能力投影 `source-catalog-v1`,两种混版本窗口都安全;Agent 推送端点 `POST /api/public/ingest/v1/items` + 收录令牌 `ding_`,认不出的出处建临时源(不进发现目录、不计入多源印证、默认不进日报与付费处理),运维「自定源与收录 → Agent 收录」管理;另修注入入口 12 项缺陷(波 0)。见 [重构方案](plans/issue-262-source-model-refactor.md) §12、[收录方案](plans/issue-262-agent-ingest-sources.md) §10。
+
 - **运维管理信息架构重设计(issue #114,PR #260,2026-11-04 目检放行、已合入待发布)**:五档 segmented 平铺 → **首页即目录**(不等大 bento 磁贴,样页 v4「A 精修」)+ **8 个满幅功能页**(面包屑横切、`#/admin/<页>/<板块>` 深链落位);新增只读聚合端点 `GET /api/admin/home`(逐日活跃账户 / 窗口内各源阅读 / 回填失败汇总,用户拍板突破原「不改后端」边界);`AdminOpsTab.jsx` 1603 行拆成外壳 + `admin/pages/*`;顺修 AI 用途缺「事件·归并」、播客 `<strong>` 字重 900、开关板标签折行、X API 超预算数字不变红。样页 `docs/design/issue-114-admin-ia/`,方案 `docs/archive/issue-114-admin-ia.md`。
 
 - **榜单收敛:热点事件 · 深度阅读 · 播客精选(#221,PR #259,2026-11-04 用户目检放行,待发布)**:读者面 13 个列表收成三段;事件榜默认 7 天可切近 2 天、快照按窗口、名次比今早 07:00;新端点 `GET /api/reader/rankings/picks`(深度阅读与早报同口径:论文 / 教程 / 观点 / 汇编,内容价值 ≥ 7.0;播客精选 ≥ 7.5);标签三轴 / 30 日趋势 / 全局高分榜 / 必读必听撤出读者面。迁移 `8166665976c4`。沿用 `3.67.4-alpha`,未发布。
@@ -67,6 +69,18 @@
 - **3.58–3.60(2026-09-15–19)**:运维面播客与分析标签重构(#76)/ 移动端读者 E2E(#91)/ 同步修复(#96 / #99)/ PWA 主屏幕安装(#100)/ 弹窗遮罩关闭判定(#104)/ OSS 持久存储与自动备份(#109)/ 聚焦环入 base 层(#108)/ 发现页按形态批量订阅(#113)/ **GitHub Release 自动部署流水线(#102,v3.60.0 首发、v3.60.1 闭环)**:tag 推上去 → 自动建 Release → 串联 `deploy.yml` 停在 Environment `production` 等批准 → SSH forced command 触发生产机仓库外 launcher/worker → 目标 tag 的 `./deploy-docker.sh` → 公网 `/api/health` 核对;上线抓到两坑(checkout 改写 tag 引用 / Environment secrets 须 `secrets: inherit`),见 `docs/archive/auto-deploy-plan.md` §7。
 - **裸机部署回滚(issue #126,2026-09-21,待发布)**:裸机路径改「运行副本版本化」release 形态 + 锁内事务 + 两级健康门告警(不自动回滚)+ `./deploy.sh --rollback`(树外固化执行体,DB 按目标上下文迁移计划分流,`--restore-db` 显式恢复,只回一代)+ 收养 + `--code` / `--status` / `--discard-txn`;extras 钉版 `docker/requirements-crawl4ai.txt`;方案 `docs/archive/baremetal-rollback-plan.md`(codex 四轮设计检视 + §9 实现记录),手册 `docs/ops/deploy-baremetal.md`,桩测试 `tests/test_deploy_baremetal.py`。
 - **Podcast(issue #7 P0–P0.2)**:`source_type=podcast` → `generic_podcast_rss`,单集复用 `ArticleRecord` + `extensions_json`,只解析 enclosure 元数据不下载音频;36 节目策展目录 `services.podcast_catalog` 启动幂等安装、进普通采集任务不设源级开关;边界与后续见 `docs/archive/podcast-wave-plan.md`。
+
+## issue #262 源模型重构与 Agent 收录(开发版 3.68.0-alpha,实施中,版本号以实际发版为准)
+
+起因:用户的主动式 Agent 要把自己发现的文章 / 推文 / 播客推进平台,来源常常是平台从未定义过的。审视发现平台没有「源」实体,只有被十几张表冗余引用的 `source_id`,缺失时各处兜底口径相反(分析当可信平台源、评分当媒体、前端当官方)。2026-11-05 出两份方案并经 Codex 两轮检视;11-06 用户按推荐拍板 D1–D8 与 E1–E7,要求「满足增量场景,同时历史存量兼容没有问题」。
+
+**首个 PR 的范围**:波 0 缺陷修复 12 项(社交导入一账号一源、存储层确切结果与跨源 id 冲突闸、X 模板身份、接收端 409、隐藏源排除于 feed 与日报候选、角色 / 形态兜底统一、审计、两入口测试);R1b 写实采集绑定;R1c 源表成为全集(三个迁移,`services/source_rows.py` 外网对账,写入闸,删除改退役,配置源入口只列管理员配置的源);同步按接收端能力投影(`source-catalog-v1`,契约 archive_sync.md 新节);R4 最小闭环(目录条目 `origin` / `listing`,临时源 `unlisted`,前端「收录」组);波 1 推送通道(收录令牌、身份解析、服务端 id、跨源去重与收录记录、条目来路、临时源的下游策略、运维「Agent 收录」板块;契约 agent_ingest.md)。
+
+**相对方案的简化**:legacy 投影对非成员与退役行发 tombstone 而不过滤(旧端空操作,分页契约不变);注入通道建的源不向旧内网导出(表现与改动前导入内容相同),因此推送不需要等内网升级的开关;接收端回显核对以实际为准、就绪标记只认按 catalog-v1 完成的 sources 流。X 预设镜像行记 `source_type=x_timeline`,外网回滚到旧版时旧代码也不会把它们判成文章。
+
+**存量兼容的对拍**:对账前后阅读器目录逐项相同;节点目录、个人早报角色 / 形态、事件归并源元数据逐源相同;每日默认采集集合与注册表口径相等;预期差异只有两处——只在 articles 里出现的社交源有了平台与图标,主人不可考的 `user_rss_` 孤儿只对订阅者可见。停在旧迁移版本、用今天 ORM 造数据的迁移用例改用 `tests/conftest.py::add_on_current_schema`。
+
+**后续**:R1a 其余消费方迁到 `source_catalog`、R2 目录文件、R3a / R3b 抓取器去身份,另开 PR。
 
 ## issue #114 运维管理信息架构重设计(PR #260,待发布,版本号以实际发版为准)
 

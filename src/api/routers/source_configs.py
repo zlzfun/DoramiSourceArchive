@@ -24,7 +24,7 @@ from api import deps
 from api.sources import configured_source_platform, configured_source_shape
 from api.textutils import _json_dumps, _now_iso
 from fetchers.registry import admission_status_of
-from models.db import SourceConfigRecord
+from models.db import ArticleRecord, SourceConfigRecord
 from services import accounts as accounts_service
 from services import jobs
 from services import article_analysis as article_analysis_service
@@ -45,6 +45,22 @@ router = APIRouter(tags=["source-configs"])
 def _app():
     """延迟取 api.app（避免导入环；动态调用留守的采集核心 run_*_collection*）。"""
     return importlib.import_module("api.app")
+
+
+# 不经「配置源」入口管理的来路(issue #262 R1c)。
+NON_CONFIG_ORIGINS = frozenset({"legacy", "system", "agent"})
+
+
+def _require_config_managed(record: SourceConfigRecord) -> None:
+    """预设镜像行、系统行、存量回填行的目录字段只读;临时源走收录源入口。"""
+    from services.source_rows import is_mirror_row
+
+    origin = (record.origin or "").strip().lower()
+    if (record.source_type or "") == "preset" or is_mirror_row(record) or origin in {"legacy", "system"}:
+        raise HTTPException(
+            status_code=409,
+            detail="该源由策展目录或系统管理，不能在配置源里修改或删除",
+        )
 
 
 def _require_local_source_governance(
@@ -194,7 +210,19 @@ def get_source_configs(
         auth: Optional[Dict[str, Any]] = Depends(deps.get_current_session),
 ):
     mask = not _viewer_is_root_admin(session, auth)
-    query = select(SourceConfigRecord)
+    # 配置源列表只列「管理员配置的源」:预设镜像行、系统行、存量回填行与注入通道建的临时源
+    # 是源表全集的一部分(issue #262 R1c),但各有自己的入口(节点目录 / 收录源),不在这里出现。
+    from services import source_catalog
+
+    preset_ids = source_catalog.registry_source_ids()
+    query = select(SourceConfigRecord).where(
+        SourceConfigRecord.origin.notin_(sorted(NON_CONFIG_ORIGINS)),
+        ~(
+            (SourceConfigRecord.origin == "catalog")
+            & SourceConfigRecord.source_id.in_(preset_ids)
+        ),
+        SourceConfigRecord.source_type != "preset",
+    )
     if source_type:
         query = query.where(SourceConfigRecord.source_type == source_type)
     if admission_status:
@@ -305,6 +333,7 @@ def update_source_config(
         raise HTTPException(status_code=404, detail="数据源配置不存在")
     _require_root_for_user_source(session, record, auth)
     _require_local_source_governance(session, record)
+    _require_config_managed(record)
     update_data = params.model_dump(exclude_unset=True)
     retired_public_podcast_fields = {"is_active", "fetch_interval_minutes"} & update_data.keys()
     if is_public_podcast_source(record) and retired_public_podcast_fields:
@@ -394,6 +423,7 @@ def toggle_source_config(
         raise HTTPException(status_code=404, detail="数据源配置不存在")
     _require_root_for_user_source(session, record, auth)
     _require_local_source_governance(session, record)
+    _require_config_managed(record)
     if is_public_podcast_source(record):
         raise HTTPException(
             status_code=400,
@@ -419,6 +449,7 @@ def delete_source_config(
         raise HTTPException(status_code=404, detail="数据源配置不存在")
     _require_root_for_user_source(session, record, auth)
     _require_local_source_governance(session, record)
+    _require_config_managed(record)
     if record.owner_username:
         # 用户自定源分流(v3.40 检视返修 F8):通用删除只删配置行会留下文章与订阅
         # 孤儿——改走专用强删路径(级联清订阅/水位/文章/分享,与 admin 面同语义)。
@@ -427,11 +458,25 @@ def delete_source_config(
         result = user_sources_service.admin_delete_user_source(session, source_id)
         return {"status": "success", **result}
     # Preserve the established product distinction: toggle is a reversible
-    # soft stop, while DELETE physically removes the source configuration.
+    # soft stop, while DELETE removes the source configuration.  A source that
+    # archived articles still reference keeps its identity and is retired
+    # instead (issue #262 R1c: every articles.source_id has exactly one row);
+    # legacy receivers still get a tombstone through the legacy projection.
+    referenced = session.exec(
+        select(ArticleRecord.id).where(ArticleRecord.source_id == source_id).limit(1)
+    ).first()
+    if referenced is not None:
+        now = _now_iso()
+        record.retired_at = record.retired_at or now
+        record.is_active = False
+        record.updated_at = now
+        session.add(record)
+        session.commit()
+        return {"status": "success", "disposition": "retired"}
     # Archive Sync emits a source tombstone from this transaction.
     session.delete(record)
     session.commit()
-    return {"status": "success"}
+    return {"status": "success", "disposition": "deleted"}
 
 
 # ==================== 触发抓取 ====================

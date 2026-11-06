@@ -392,10 +392,9 @@ def load_source_meta(session: Session, source_ids: Iterable[str]) -> dict[str, S
                 source_scope=config.source_scope or "",
                 provenance_tier=config.provenance_tier or "",
             )
-            source_type = str(config.source_type or "").strip().lower()
-            config_shape = "social" if source_type in {"x", "x_timeline"} else (
-                "podcast" if user_sources.source_content_kind(config) == "podcast" else "article"
-            )
+            from api.sources import row_shape
+
+            config_shape = row_shape(config)
         else:
             role = source_role(source_id)
             config_shape = fallback_shapes.get(source_id, "article")

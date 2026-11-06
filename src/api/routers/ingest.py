@@ -163,6 +163,25 @@ def resolve_social_post_source_id(
     raise ValueError("缺少作者 handle,无法确定来源")
 
 
+def social_source_hint(post: SocialPostImportItem) -> dict:
+    """未登记账号建临时源时的出处描述(名称 / 头像 / 主页 / 身份键,issue #262)。"""
+    platform = (post.platform or "x").strip().lower() or "x"
+    handle = source_identity.normalize_handle(post.author_handle)
+    homepage = f"https://x.com/{post.author_handle.strip().lstrip('@')}" if platform == "x" and handle else ""
+    display = (post.author_name or "").strip() or (post.author_handle or "").strip().lstrip("@")
+    return {
+        "origin": "agent",
+        "admission_status": "provisional",
+        "name": f"X · {display}" if platform == "x" and display else display,
+        "platform": platform,
+        "avatar_url": (post.author_avatar_url_large or post.author_avatar_url or "").strip(),
+        "homepage_url": homepage,
+        "identity_keys": source_identity.social_identity_keys(
+            platform, handle=post.author_handle, user_id=post.author_id
+        ),
+    }
+
+
 def build_social_post_content(
     post: SocialPostImportItem, batch_source_id: str, source_id: str
 ) -> SocialPostContent:
@@ -245,6 +264,8 @@ async def import_social_posts(params: SocialPostImportParams):
             continue
         try:
             content = build_social_post_content(post, params.source_id, source_id)
+            content._source_hint = social_source_hint(post)
+            content._ingest_channel = "import"
             outcome = await db_sink.save_with_outcome(content)
             if outcome in db_storage.SAVE_STORED_OUTCOMES:
                 saved_count += 1

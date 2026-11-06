@@ -1,0 +1,110 @@
+# Agent 收录推送契约(issue #262 波 1)
+
+外部主动式 Agent 把它发现的文章、推文、播客单集推进外网 authority。平台负责**认出出处**:认得的
+归到已有源,认不出的自动建**临时源**(不进发现目录、不计入多源印证、默认不进公共日报,管理员可在
+运维「自定源与收录 → Agent 收录」列入 / 下架 / 改名)。
+
+## 鉴权
+
+- 管理员在运维「自定源与收录 → Agent 收录」签发**收录令牌**(`ding_` 前缀;明文只在签发时显示一次,
+  库里只存 HMAC hash),每个令牌绑定一个 actor 名(写进条目来路与审计)和日额度(默认 500 条)。
+- 请求头 `Authorization: Bearer ding_…`。令牌只放行推送端点,不能读任何数据。
+- 内网 replica 一律 409:只推外网 authority。
+
+## 端点
+
+`POST /api/public/ingest/v1/items`
+
+```json
+{
+  "items": [
+    {
+      "kind": "social_post",
+      "post_id": "1900000000000000001",
+      "content": "推文正文",
+      "url": "https://x.com/new_lab/status/1900000000000000001",
+      "publish_date": "2026-11-06T08:00:00Z",
+      "author": {"handle": "new_lab", "user_id": "9001", "name": "New Lab", "avatar_url": "https://…"},
+      "note": "收录理由(可选)"
+    },
+    {
+      "kind": "article",
+      "url": "https://blog.example.com/p/1",
+      "title": "标题",
+      "content": "正文(markdown,可选)",
+      "summary": "摘要(可选)",
+      "source": {"name": "Example Blog"},
+      "extensions": {"author": "A", "tags": ["agents"]}
+    },
+    {
+      "kind": "podcast_episode",
+      "title": "EP1",
+      "guid": "ep-1",
+      "audio_url": "https://cdn.example.com/ep1.mp3",
+      "summary": "简介",
+      "duration_seconds": 3600,
+      "source": {"feed_url": "https://pod.example.com/feed.xml", "name": "节目名"}
+    }
+  ]
+}
+```
+
+- 每批 ≤ 100 条;`kind` ∈ `article` / `social_post` / `podcast_episode`。
+- **出处描述 `source`**(三选一,社交帖不给时用 `author` 填):
+  - `{"source_id": "…"}`:必须是已存在、接受推送的源;
+  - `{"platform": "x", "handle": "…", "user_id": "…", "name": "…", "avatar_url": "…"}`;
+  - `{"url" | "site" | "feed_url": "…", "name": "…"}`。
+- 服务端决定、调用方不能写的字段:条目 id、`content_type`(按 `kind`)、来路(`ingest_channel=push`、
+  `ingest_actor`=令牌 actor)。`extensions` 按 `kind` 走键白名单(文章:`author` / `site_name` /
+  `summary` / `tags` / `language` / `image_url`;社交:`lang` / `tags` / `media_urls`;播客:`author` /
+  `tags` / `image_url` / `episode` / `season`),其余键丢弃。
+
+## 身份解析(认出已有源)
+
+1. 显式 `source_id`:校验存在、非保留(读者自定源 `user_rss_*`、抓取模板 `generic_*`、公共日报、
+   已下线源)、非同步行、未退役、未下架。
+2. 社交:身份键 `x:user_id:…` 优先、`x:handle:…`(小写)次之——命中预设(如 `Kimi_Moonshot` →
+   `x_moonshot_ai`)、配置源或此前建的临时源;都不中则建 `x_<handle>`。
+3. 网页:`feed_url` 规范地址 → 已有 RSS 源;条目 / 站点链接按「主机 + 路径前缀」匹配已有源
+   (`anthropic.com/news/*` → `web_anthropic_news`);都不中则按站点建 `web_<host>`。多租户主机
+   (github.com、medium.com、huggingface.co、youtube.com、arxiv.org 等)按「主机 + 首段路径」建
+   (`web_github_com_openai`)。
+4. 播客:按节目 `feed_url` 认;都不中则建 `podcast_<host>_<hash6>` 临时播客源(只到元数据与简介
+   初评,付费 ASR / TTS 不对临时源放开)。
+
+## 条目 id 与去重
+
+- 与抓取器同一公式:社交 `{source_id}_{post_id}`;文章 `{source_id}_{sha1(guid 或 url)[:16]}`;
+  播客 `{source_id}_{sha1(guid 或 audio_url)[:16]}`。Agent 先推、抓取器后抓(或反之)天然合流。
+- 同一链接已在**别的源**里:不新建,返回 `duplicate_url` 与已有条目 id,只记一条收录记录。
+
+## 回执
+
+```json
+{
+  "status": "success",
+  "actor": "research-agent",
+  "counts": {"created": 2, "duplicate_url": 1},
+  "results": [
+    {"index": 0, "kind": "social_post", "status": "created", "id": "x_new_lab_19…", "source_id": "x_new_lab", "source_created": true},
+    {"index": 1, "kind": "article", "status": "duplicate_url", "id": "rss_simonwillison_…", "source_id": "rss_simonwillison"},
+    {"index": 2, "kind": "article", "status": "rejected", "reason": "文章需要链接"}
+  ]
+}
+```
+
+`status`:`created` / `duplicate`(同一条已存在)/ `duplicate_url`(同一链接在别的源)/ `refreshed`
+(已有条目被补正文或刷新元数据)/ `rejected`(`reason` 给原因,含「超出今日收录额度」)。
+
+## 临时源在各环节的行为
+
+| 环节 | 行为 |
+|---|---|
+| 发现目录 / 批量订阅 | 不列;条目卡片上的来源名可进源页单独订阅,订阅者源栏归「收录」组 |
+| 全站列表 / 搜索 / 详情 / 问答 | 正常可见 |
+| 个人早报重大事件、榜单「必读」、事件榜发布主体 | 不计入独立来源数 |
+| 公共日报 | 不进候选池;管理员「列入」(→ 观察期)后参与 |
+| 分析 / 外发 AI | 照常;`kind_hint` 只来自服务端规则 |
+| Archive Sync | 新版内网(`source-catalog-v1`)收到完整源行(名称 / 头像);旧版内网收不到这些行,条目照常同步,与改动前导入内容的表现相同 |
+
+收录与管理操作都入审计(推送记在 `ingest:<actor>` 名下)。

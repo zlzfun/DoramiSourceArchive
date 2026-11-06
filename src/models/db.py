@@ -37,6 +37,8 @@ class ArticleRecord(SQLModel, table=True):
     # （阅读器源栏、feed 交付、热点图逐源统计）走复合索引即可命中，免二次排序。
     __table_args__ = (
         Index("ix_articles_source_id_fetched_date", "source_id", "fetched_date"),
+        # Agent 收录的跨源同链接去重按 source_url 精确查(issue #262 波 1)。
+        Index("ix_articles_source_url", "source_url"),
     )
 
     id: str = Field(primary_key=True, description="唯一序号")
@@ -83,6 +85,20 @@ class ArticleRecord(SQLModel, table=True):
     # 计量一并 +1。与 ReaderReadRecord（日×用户×来源聚合，运维口径）互补——
     # 本列是文章粒度的轻量计数器，供阅读窗标题下直接展示，免去逐请求聚合。
     read_count: int = Field(default=0, description="全站累计阅读次数")
+
+    # 条目来路(issue #262 波 1):这一条经哪条通道、由谁送进来。服务端写,调用方不可控。
+    # 空串 = 抓取(或来路字段出现之前的存量);push = Agent 推送;manual = 管理员手工录入;
+    # import = 外部社交动态导入。不随 Archive Sync 导出。
+    ingest_channel: str = Field(
+        default="",
+        sa_column_kwargs={"server_default": text("''")},
+        description="条目来路:''=抓取 / push / manual / import",
+    )
+    ingest_actor: str = Field(
+        default="",
+        sa_column_kwargs={"server_default": text("''")},
+        description="送入者:收录令牌的 actor 名或管理员账号",
+    )
 
 
 class PaperFulltextJobRecord(SQLModel, table=True):
@@ -1337,8 +1353,118 @@ class SourceConfigRecord(SQLModel, table=True):
     )
     params_json: str = Field(default="{}", description="抓取参数 JSON")
 
+    # ── 源模型重构(issue #262 R1c):源表成为全集,属性显式而不是靠「查不到」推导 ──
+    # 来路:catalog 策展目录 / admin 管理员 / reader 读者自定 / agent 注入通道 / legacy 重构前只在
+    # articles 里出现的 id / system 系统源;空串 = R1c 之前的存量行或同步来的行(按配置源处理)。
+    origin: str = Field(
+        default="",
+        index=True,
+        sa_column_kwargs={"server_default": text("''")},
+        description="源行来路:catalog/admin/reader/agent/legacy/system;空=存量或同步行",
+    )
+    shape: str = Field(
+        default="",
+        sa_column_kwargs={"server_default": text("''")},
+        description="内容形态 article/social/podcast;空=按绑定与 source_type 推导",
+    )
+    platform: str = Field(
+        default="",
+        sa_column_kwargs={"server_default": text("''")},
+        description="社交平台标识,如 x",
+    )
+    icon: str = Field(default="", sa_column_kwargs={"server_default": text("''")}, description="展示图标")
+    avatar_url: str = Field(
+        default="", sa_column_kwargs={"server_default": text("''")}, description="头像原链(社交源)",
+    )
+    homepage_url: str = Field(
+        default="", sa_column_kwargs={"server_default": text("''")}, description="出处主页",
+    )
+    default_kind: str = Field(
+        default="", sa_column_kwargs={"server_default": text("''")}, description="内容类型先验",
+    )
+    language: str = Field(default="", sa_column_kwargs={"server_default": text("''")}, description="主要语言")
+    # 每日默认采集范围是独立政策(方案 §2.3):R1c 镜像行按「注册表非观察期」投影,与今天的每日任务集合相等。
+    daily: bool = Field(
+        default=False,
+        sa_column_kwargs={"server_default": text("0")},
+        description="是否属于每日默认采集范围",
+    )
+    # 旧版 Archive Sync 接收端(legacy 投影)的导出成员资格:R1c 之前就存在的公共行为真;
+    # 镜像行与 legacy 回填行为假(旧接收端靠注册表认识它们)。转正不改这一列。
+    legacy_export: bool = Field(
+        default=True,
+        sa_column_kwargs={"server_default": text("1")},
+        description="是否向未声明 source-catalog-v1 的旧接收端导出",
+    )
+
     created_at: str = Field(description="创建时间")
     updated_at: str = Field(description="更新时间")
+
+
+class SourceIdentityKeyRecord(SQLModel, table=True):
+    """源身份键 → source_id(issue #262):认出「这是同一个出处」,不靠字符串推导。
+
+    键的规范写法见 ``services.source_identity.identity_key``(``x:user_id:123``、
+    ``x:handle:deepseek_ai``、``web:feed:https://…``)。一个键只属于一个源。不随 Archive Sync 同步:
+    身份解析只发生在外网收录入口。
+    """
+
+    __tablename__ = "source_identity_keys"
+
+    key: str = Field(primary_key=True, description="规范化身份键")
+    source_id: str = Field(index=True, description="所属源")
+    created_at: str = Field(description="登记时间")
+
+
+class IngestTokenRecord(SQLModel, table=True):
+    """Agent 收录令牌(issue #262 波 1):``ding_`` 前缀,与 ``dsub_`` 同法只存 HMAC hash。
+
+    作用域只放行推送端点;绑定一个 actor 名,写进条目来路与审计;日额度为软上限(条)。
+    """
+
+    __tablename__ = "ingest_tokens"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    actor: str = Field(index=True, description="送入者名称(写入条目来路)")
+    token_hash: str = Field(index=True, unique=True, description="令牌 HMAC-SHA256")
+    token_preview: str = Field(default="", description="令牌尾部预览")
+    daily_limit: int = Field(default=500, description="每日最多收录条数")
+    is_active: bool = Field(default=True, index=True)
+    created_by: str = Field(default="", description="签发的管理员")
+    created_at: str = Field(description="签发时间")
+    last_used_at: Optional[str] = Field(default=None, description="最近一次推送")
+    revoked_at: Optional[str] = Field(default=None, description="吊销时间")
+
+
+class ArticlePickRecord(SQLModel, table=True):
+    """收录记录(issue #262 D4):谁在什么时候「收」了这一条;已存在的内容不重复入库。"""
+
+    __tablename__ = "article_picks"
+    __table_args__ = (UniqueConstraint("article_id", "actor", name="uq_article_picks_article_actor"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    article_id: str = Field(index=True, description="被收录的条目")
+    actor: str = Field(index=True, description="收录者")
+    channel: str = Field(default="push", description="收录通道")
+    note: str = Field(default="", description="收录理由")
+    picked_at: str = Field(index=True, description="收录时间")
+
+
+class SourceMigrationLedgerRecord(SQLModel, table=True):
+    """源模型迁移台账(issue #262 R1c F12):本步新建 / 改写的每一行记 id 与前像。
+
+    正常回退不删数据(把 ``[sources] model`` 切回 compat);确需硬回退时只按这里的精确 id 处理,
+    绝不按 ``origin`` 批量删除。
+    """
+
+    __tablename__ = "source_migration_ledger"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    batch: str = Field(index=True, description="迁移批次,如 r1c")
+    source_id: str = Field(index=True, description="被创建或改写的源")
+    action: str = Field(description="created / adopted / retired")
+    pre_image_json: str = Field(default="{}", description="改写前的行(新建为空对象)")
+    created_at: str = Field(description="记账时间")
 
 
 PODCAST_PROCESSING_STAGES = (

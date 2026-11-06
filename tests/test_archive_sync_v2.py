@@ -1305,7 +1305,10 @@ def test_fetch_v2_podcast_page_streams_with_a_hard_byte_limit():
 
     with pytest.raises(remote_sync_service.RemoteSyncError, match="页面超过字节上限"):
         asyncio.run(exercise())
-    assert requested == [{"limit": "1", "page_max_bytes": "32"}]
+    # receiver_capabilities:接收端能力声明(issue #262 R1c),旧生产者忽略。
+    assert requested == [{
+        "limit": "1", "page_max_bytes": "32", "receiver_capabilities": "source-catalog-v1",
+    }]
 
 
 class _V2Remote:

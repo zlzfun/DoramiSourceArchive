@@ -175,6 +175,15 @@ def _id_target(
     return f"{action}{noun} {target}", target
 
 
+def _agent_ingest_summary(body: dict | None) -> str:
+    try:
+        from services.agent_ingest import audit_summary_text
+
+        return audit_summary_text(body or {})
+    except Exception:  # noqa: BLE001 - 摘要失败不影响审计落库
+        return "Agent 收录"
+
+
 def _social_import_summary(body: dict | None) -> RenderResult:
     if body is None:
         return "导入社交动态（数量未知，请求体未采集）", None
@@ -409,6 +418,45 @@ AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
         "POST",
         re.compile(r"^/api/import/social-posts$"),
         lambda _m, body: _social_import_summary(body),
+    ),
+    # issue #262 波 1:Agent 收录推送(令牌鉴权,端点自行记账)与收录管理。
+    (
+        "POST",
+        re.compile(r"^/api/public/ingest/v1/items$"),
+        lambda _m, body: (_agent_ingest_summary(body), str((body or {}).get("actor") or "") or None),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/ingest/tokens$"),
+        lambda _m, body: (
+            f"签发收录令牌 {str((body or {}).get('actor') or '')[:60]}".rstrip(),
+            str((body or {}).get("actor") or "") or None,
+        ),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/ingest/tokens/(?P<target>[^/]+)/revoke$"),
+        lambda match, body: _id_target(match, body, noun="收录令牌", action="吊销"),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/ingest/sources/(?P<target>[^/]+)/admit$"),
+        lambda match, body: _id_target(match, body, noun="收录源", action="列入"),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/ingest/sources/(?P<target>[^/]+)/hide$"),
+        lambda match, body: _id_target(match, body, noun="收录源", action="下架"),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/ingest/sources/(?P<target>[^/]+)/unhide$"),
+        lambda match, body: _id_target(match, body, noun="收录源", action="恢复"),
+    ),
+    (
+        "PATCH",
+        re.compile(r"^/api/admin/ingest/sources/(?P<target>[^/]+)$"),
+        lambda match, body: _id_target(match, body, noun="收录源", action="改名"),
     ),
     # 文章路由是 {article_id:path}(手工录入 ID 可含斜杠),规则须吞完整剩余路径,
     # 否则含 / 的合法 ID 退化为空摘要(v3.43.2 codex 检视)。
