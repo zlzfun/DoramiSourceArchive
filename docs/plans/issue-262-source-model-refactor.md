@@ -328,3 +328,14 @@ shape = "article"
 
 **已知回退边界**:外网回滚到 R1c 之前的版本时,旧代码会把镜像行、回填行、系统行当成普通配置行——配置源列表多出这些行,墓碑源可能在旧版发现页出现。为了不错判形态,镜像行的 `source_type` 对 X 预设记 `x_timeline`、其余记 `preset`(旧代码「配置行优先、只按类型判形态」也判对,`preset` 不被任何按类型枚举的旧入口执行;测试钉住)。正常回退仍按 F12:保留数据、`[sources] model` 切回 compat,不回滚代码版本。
 
+**跨版本实测(2026-11-06,§6.1 要求)**:`v3.67.4` 检出到临时 worktree,与本分支互为生产端 / 接收端,在全新库上导入真实导出页(脚本在会话草稿区,未入库):
+
+| 组合 | sources 页 | 终态 |
+|---|---|---|
+| 旧 → 旧(基线) | 1 upsert | 1 个源(`rss_admin`)、2 条状态 |
+| 新外网 → 旧内网(legacy) | 1 upsert + 72 tombstone(镜像 / 回填 / 系统 / 墓碑 / 临时源) | 与基线逐项相同;72 条 tombstone 应用删除数 0 |
+| 旧外网 → 新内网 | 1 upsert(无回显 = legacy) | 与基线逐项相同 |
+| 新 → 新(catalog-v1) | 73 upsert,回显 `catalog-v1` | 73 个源(含 `manual` 回填、`web_pushed` 临时源、`x_openrouter` 墓碑、`dorami_daily_brief` 系统行) |
+
+接收端的 tombstone 应用代码(`_apply_tombstones`)本 PR 未改,新旧接收端对退役 tombstone 的处理相同。
+
