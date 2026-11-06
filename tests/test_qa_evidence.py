@@ -9,6 +9,10 @@ from services.qa_evidence import PASSAGE_CHARS, build_catalog
 from services.reader_ai import build_qa_messages, build_numbered_context
 
 
+def render_current(raw, state):
+    return render_structured_answer(raw, state, expected_binding=state.answer_binding())
+
+
 def state(body, *, original=None, header="[1] 合成节目", offset=70):
     original = body if original is None else original
     s = QAState("这是什么节目？机制与局限是什么？", parts=[
@@ -37,7 +41,7 @@ def answer(s):
 ])
 def test_ids_preserve_original_linebreaks_numbers_repetitions_and_negations(body):
     s = state(body)
-    response = render_structured_answer(json.dumps(answer(s)), s)
+    response = render_current(json.dumps(answer(s)), s)
     assert response.endswith("不能据此保证收益。[1]")
     proof = s.checked_parts[1]["evidence"][0]
     selected = s.evidence_catalog[proof["id"]]["text"]
@@ -49,16 +53,16 @@ def test_ids_preserve_original_linebreaks_numbers_repetitions_and_negations(body
 
 def test_metadata_reference_does_not_pretend_to_be_transcript_evidence():
     s = state("Income was not measured.")
-    render_structured_answer(json.dumps(answer(s)), s)
+    render_current(json.dumps(answer(s)), s)
     identity = s.checked_parts[0]["evidence"][0]
     assert identity["kind"] == "metadata" and "artifact_id" not in identity
     data = answer(s)
     data["parts"][1]["evidence_ids"] = data["parts"][0]["metadata_ids"]
     with pytest.raises(LLMStructuredOutputError, match="qa_evidence_kind"):
-        render_structured_answer(json.dumps(data), s)
+        render_current(json.dumps(data), s)
 
 
-def test_wrong_source_citation_stale_id_and_changed_publication_are_rejected():
+def test_wrong_source_citation_and_changed_publication_are_rejected():
     s = state("First source fact.")
     old = answer(s)
     s.sources.append({"id": "other", "body": "Second source fact.", "header": "[2] Other", "evidence": []})
@@ -67,11 +71,12 @@ def test_wrong_source_citation_stale_id_and_changed_publication_are_rejected():
     data["parts"][1]["evidence_ids"] = old["parts"][1]["evidence_ids"]
     data["parts"][1]["answer"] += "[2]"
     with pytest.raises(LLMStructuredOutputError, match="qa_citation_without_evidence"):
-        render_structured_answer(json.dumps(data), s)
+        render_current(json.dumps(data), s)
+    binding = s.answer_binding()
     s.sources[0]["evidence"][0]["artifact_id"] = "new-publication"
     s.prepare_evidence()
-    with pytest.raises(LLMStructuredOutputError, match="qa_evidence_id"):
-        render_structured_answer(json.dumps(old), s)
+    with pytest.raises(LLMStructuredOutputError, match="qa_catalog_changed"):
+        render_structured_answer(json.dumps(old), s, expected_binding=binding)
 
 
 def test_unseen_artifact_tail_cannot_get_an_id_even_when_present_in_original():
@@ -125,12 +130,12 @@ def test_missing_fields_and_invalid_ids_are_not_repaired(mutation, code):
     data = answer(s)
     mutation(data)
     with pytest.raises(LLMStructuredOutputError, match=code):
-        render_structured_answer(json.dumps(data), s)
+        render_current(json.dumps(data), s)
 
 
 def test_malformed_json_still_fails_without_fallback_to_raw_text():
     with pytest.raises(LLMStructuredOutputError, match="json_decode_error"):
-        render_structured_answer('{"parts":[{id:"q1"}]}', state("Evidence."))
+        render_current('{"parts":[{id:"q1"}]}', state("Evidence."))
 
 
 def test_valid_evidence_ids_do_not_claim_to_check_entailment():
@@ -138,5 +143,5 @@ def test_valid_evidence_ids_do_not_claim_to_check_entailment():
     data = answer(s)
     data["parts"][1]["answer"] = "提升百分之百。"
     # Honest boundary: source/structure checking cannot prove this claim true.
-    assert "提升百分之百" in render_structured_answer(json.dumps(data), s)
+    assert "提升百分之百" in render_current(json.dumps(data), s)
     assert s.diagnostic()["semantic_status"] == "not_evaluated"

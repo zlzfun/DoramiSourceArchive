@@ -114,6 +114,7 @@ def test_contract_eval_rejects_invented_source_before_http():
 
 @pytest.mark.parametrize("mutation,error", [
     (lambda c: c.pop("version"), "contract version"),
+    (lambda c: c.update(version="evidence_ids_v2"), "contract version"),
     (lambda c: c.update(catalog_sha256="stale"), "catalog mismatch"),
 ])
 def test_old_or_changed_contract_is_rejected_before_any_http(tmp_path, mutation, error):

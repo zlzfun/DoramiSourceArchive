@@ -216,7 +216,7 @@ class RecordingTransport(httpx.AsyncBaseTransport):
 
 async def run_batch(bundle, *, config, out, max_attempts, max_cny, input_rate, output_rate, inner=None):
     payload = verify_bundle(bundle)
-    # A frozen v1 quote-copy batch must not silently run against the v2 checker.
+    # A frozen quote-copy or hashed-ID batch must not run against a new checker.
     for job in payload["jobs"]:
         contract = job.get("contract")
         if contract and contract.get("version") != CONTRACT_VERSION:
@@ -256,6 +256,11 @@ async def run_batch(bundle, *, config, out, max_attempts, max_cny, input_rate, o
             try:
                 contract = job.get("contract")
                 structured = bool(contract and contract["intent"] != "chat" and len(contract["parts"]) > 1)
+                if structured:
+                    state = QAState("frozen evaluation")
+                    state.parts, state.sources = contract["parts"], contract["sources"]
+                    state.prepare_evidence()
+                    binding = state.answer_binding()
                 answer = await chat_completion(
                     messages=[ChatMessage(**message) for message in job["messages"]],
                     config=config, http_client=client, max_retries=1,
@@ -263,11 +268,8 @@ async def run_batch(bundle, *, config, out, max_attempts, max_cny, input_rate, o
                     response_json=structured,
                 )
                 if structured:
-                    state = QAState("frozen evaluation")
-                    state.parts, state.sources = contract["parts"], contract["sources"]
-                    state.prepare_evidence()
                     row["raw_answer"] = answer
-                    answer = render_structured_answer(answer, state)
+                    answer = render_structured_answer(answer, state, expected_binding=binding)
                     row["checked_parts"] = state.checked_parts
                 if contract:
                     validate_citations(answer, job["source_count"])

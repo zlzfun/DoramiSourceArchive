@@ -15,7 +15,12 @@ from llm.client import LLMStructuredOutputError, parse_json_object
 from services.qa_evidence import CONTRACT_VERSION, build_catalog, fingerprint
 
 MAX_PARTS = 12
+MAX_EVIDENCE_IDS = 8
+MAX_METADATA_IDS = 8
 _CITATION = re.compile(r"\[(\d+)\]")
+_CODE = re.compile(r"(?P<fence>```|~~~)[\s\S]*?(?P=fence)|(?P<ticks>`+)(?:(?!(?P=ticks))[\s\S])*?(?P=ticks)")
+_EVIDENCE_MARKER = re.compile(r"\[(s[0-9]+(?:p[0-9]+|m))\]")
+_INTERNAL_ID = re.compile(r"(?<![A-Za-z0-9_])s[0-9]+[pm][A-Za-z0-9_-]*(?![A-Za-z0-9_])")
 _GREETING = re.compile(r"(?:(?:你好|您好|谢谢你?|多谢|辛苦了|早上好|晚上好|再见|hi|hello|thanks|thank you)[\s，,。.!！?？、]*)+", re.I)
 
 
@@ -51,8 +56,7 @@ def part_keywords(parts: list[dict]) -> list[str]:
 
 def validate_citations(answer: str, source_count: int) -> set[int]:
     # Code samples such as array[99] are not source references.
-    prose = re.sub(r"(```|~~~)[\s\S]*?\1", "", answer)
-    prose = re.sub(r"(`+)([^`]|(?!\1)`)*?\1", "", prose)
+    prose = _CODE.sub("", answer)
     tokens = _CITATION.findall(prose)
     if any(len(n) > 9 for n in tokens):
         raise LLMStructuredOutputError("qa_citation", "回答引用与本轮资料不一致，请重新提问")
@@ -60,6 +64,32 @@ def validate_citations(answer: str, source_count: int) -> set[int]:
     if any(n < 1 or n > source_count for n in numbers):
         raise LLMStructuredOutputError("qa_citation", "回答引用与本轮资料不一致，请重新提问")
     return numbers
+
+
+def _render_evidence_markers(answer: str, selected: dict) -> str:
+    """Convert only exact, selected IDs in prose; preserve literal code.
+
+    Never infer a passage from a number, strip a hash suffix, or fix a typo.
+    The source number is taken from the application-owned catalog.
+    """
+    def prose(text):
+        def marker(match):
+            key = match.group(1)
+            if (key not in selected or text[match.end():].lstrip().startswith(("(", ":"))
+                    or text[max(0, match.start() - 1):match.start()] in ("\\", "[", "!")):
+                raise LLMStructuredOutputError("qa_evidence_marker", "回答的引用检查未通过，请重新提问")
+            return f"[{selected[key]['source']}]"
+        text = _EVIDENCE_MARKER.sub(marker, text)
+        if _INTERNAL_ID.search(text):
+            raise LLMStructuredOutputError("qa_evidence_marker", "回答的引用检查未通过，请重新提问")
+        return text
+
+    chunks, end = [], 0
+    for code in _CODE.finditer(answer):
+        chunks.extend((prose(answer[end:code.start()]), code.group()))
+        end = code.end()
+    chunks.append(prose(answer[end:]))
+    return "".join(chunks)
 
 
 def _hash(text: str) -> str:
@@ -130,6 +160,15 @@ class QAState:
         self.catalog_source_hash = fingerprint(self.sources)
         return context
 
+    def answer_binding(self) -> str:
+        """Capture before awaiting the model, never ask the model to copy it.
+
+        Short IDs may repeat in another request. Bind this completion to this
+        request, its question plan, sources, and exact catalog instead.
+        """
+        return fingerprint({"request": self.trace_id, "question": self.question,
+                            "parts": self.parts, "sources": self.sources, "catalog": self.evidence_catalog})
+
     def lexical_hits(self, body: str) -> list[str]:
         """Diagnostic search-term hits, explicitly NOT semantic coverage."""
         from storage.fts import normalize_for_search
@@ -158,17 +197,18 @@ class QAState:
         }
 
 
-def render_structured_answer(raw: str, state: QAState) -> str:
+def render_structured_answer(raw: str, state: QAState, *, expected_binding: str) -> str:
     """Validate every planned ID and references into the exact injected catalog.
 
-    No repair call, no second model rewrite. A matching quote does NOT prove the
+    No repair call, no second model rewrite. A matching ID does NOT prove the
     answer follows from it; missing/contradictory evidence remains a semantic eval.
     """
     def reject(code):
         raise LLMStructuredOutputError(code, "回答的依据或完整性检查未通过，请重新提问")
 
     state.checked_parts = []
-    if not state.catalog_source_hash or state.catalog_source_hash != fingerprint(state.sources):
+    if (not state.catalog_source_hash or state.catalog_source_hash != fingerprint(state.sources)
+            or expected_binding != state.answer_binding()):
         reject("qa_catalog_changed")
     data = parse_json_object(raw)
     rows = data.get("parts")
@@ -188,11 +228,11 @@ def render_structured_answer(raw: str, state: QAState) -> str:
         if status not in ("answered", "partial", "insufficient") or not isinstance(answer, str) or not answer.strip():
             reject("qa_part_empty")
         if (len(answer) > 12000 or not isinstance(evidence, list) or not isinstance(metadata, list)
-                or len(evidence) + len(metadata) > 8):
+                or len(evidence) > MAX_EVIDENCE_IDS or len(metadata) > MAX_METADATA_IDS):
             reject("qa_part_invalid")
         if status != "insufficient" and not evidence and not metadata:
             reject("qa_evidence_missing")
-        refs, proofs = set(), []
+        refs, proofs, selected = set(), [], {}
         seen = set()
         for kind, keys in (("content", evidence), ("metadata", metadata)):
             for key in keys:
@@ -203,9 +243,11 @@ def render_structured_answer(raw: str, state: QAState) -> str:
                 if entry["kind"] != kind:
                     reject("qa_evidence_kind")
                 refs.add(entry["source"])
+                selected[key] = entry
                 proofs.append({"id": key, **{name: entry[name] for name in (
-                    "source", "source_id", "kind", "text_sha256", "body_start", "body_end",
+                    "source", "source_id", "kind", "binding_sha256", "text_sha256", "body_start", "body_end",
                     "artifact_id", "content_hash", "range_start", "range_end") if name in entry}})
+        answer = _render_evidence_markers(answer, selected)
         cited = validate_citations(answer, len(state.sources))
         if not cited.issubset(refs):
             reject("qa_citation_without_evidence")

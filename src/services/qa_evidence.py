@@ -9,7 +9,7 @@ import hashlib
 import json
 import re
 
-CONTRACT_VERSION = "evidence_ids_v2"
+CONTRACT_VERSION = "evidence_ids_v3"
 PASSAGE_CHARS = 800
 
 
@@ -92,8 +92,9 @@ def build_catalog(sources):
         header = source.get("header", "")
         if header:
             identity = {"source": number, "source_id": source["id"], "kind": "metadata", "text": header}
-            key = f"s{number}m-{fingerprint(identity)[:12]}"
-            index[key] = {**identity, "text_sha256": hashlib.sha256(header.encode()).hexdigest()}
+            key = f"s{number}m"
+            index[key] = {**identity, "binding_sha256": fingerprint(identity),
+                          "text_sha256": hashlib.sha256(header.encode()).hexdigest()}
             document["metadata"] = {"id": key, "text": header}
         for i, piece in enumerate(pieces, 1):
             text = body[piece["body_start"]:piece["body_end"]]
@@ -101,8 +102,9 @@ def build_catalog(sources):
                 document["passages"].append({"kind": "context_only", "text": text})
                 continue
             identity = {"source": number, "source_id": source["id"], **piece, "text": text}
-            key = f"s{number}p{i}-{fingerprint(identity)[:12]}"
-            index[key] = {**identity, "text_sha256": hashlib.sha256(text.encode()).hexdigest()}
+            key = f"s{number}p{i}"
+            index[key] = {**identity, "binding_sha256": fingerprint(identity),
+                          "text_sha256": hashlib.sha256(text.encode()).hexdigest()}
             document["passages"].append({"id": key, "text": text})
         documents.append(document)
     return json.dumps({"sources": documents}, ensure_ascii=False, separators=(",", ":")), index

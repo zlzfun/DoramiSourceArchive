@@ -24,11 +24,11 @@ PARTS = [{"question": "密钥如何处理？", "keywords": ["External secrets"]}
          {"question": "还需要什么限制？", "keywords": ["Separate scope"]}]
 
 
-def setup(monkeypatch, tmp_path, *, failure=None):
+def setup(monkeypatch, tmp_path, *, failure=None, body=BODY):
     app, sink = _base_setup(monkeypatch, tmp_path, "contract.db")
     _configure_llm(sink.engine)
     _enable_ai_beta(sink.engine)
-    _seed_podcast_transcript(sink.engine, episode_id="episode", text=BODY)
+    _seed_podcast_transcript(sink.engine, episode_id="episode", text=body)
     monkeypatch.setattr(qa_diagnostics, "_records", deque(maxlen=100))
     requests = []
 
@@ -57,7 +57,15 @@ def setup(monkeypatch, tmp_path, *, failure=None):
                 value["parts"][1].pop("evidence_ids")
             elif failure == "metadata_as_content":
                 value["parts"][1]["evidence_ids"] = re.findall(
-                    r'"id":"(s1m-[^" ]+)"', payload["messages"][-1]["content"])
+                    r'"id":"(s1m)"', payload["messages"][-1]["content"])
+            elif failure == "inline_ids":
+                for part in value["parts"]:
+                    part["answer"] += f"[{ids[0]}]"
+            elif failure == "unknown_marker":
+                value["parts"][1]["answer"] += "[s1p999]"
+            elif failure == "eight_plus_title":
+                assert len(ids) >= 8
+                value["parts"][0].update(evidence_ids=ids[:8], metadata_ids=["s1m"])
             elif failure == "length":
                 reason = "length"
             elif failure == "withdraw":
@@ -83,8 +91,9 @@ def setup(monkeypatch, tmp_path, *, failure=None):
 
 
 @pytest.mark.parametrize("scope", ["article", "subscription", "all"])
-def test_real_pipeline_returns_natural_answer_bound_to_current_transcript(monkeypatch, tmp_path, scope):
-    app, sink, requests = setup(monkeypatch, tmp_path)
+@pytest.mark.parametrize("presentation", [None, "inline_ids"])
+def test_real_pipeline_returns_natural_answer_bound_to_current_transcript(monkeypatch, tmp_path, scope, presentation):
+    app, sink, requests = setup(monkeypatch, tmp_path, failure=presentation)
     with TestClient(app.app) as client:
         _login(client)
         assert client.post("/api/reader/sources/podcast-source/subscribe").status_code == 200
@@ -113,7 +122,7 @@ def test_real_pipeline_returns_natural_answer_bound_to_current_transcript(monkey
 
 
 @pytest.mark.parametrize("failure,status", [("omission", 502), ("wrong_id", 502), ("length", 502),
-    ("missing_ids", 502), ("metadata_as_content", 502), ("bad_json", 502), ("withdraw", 409)])
+    ("missing_ids", 502), ("metadata_as_content", 502), ("unknown_marker", 502), ("bad_json", 502), ("withdraw", 409)])
 def test_invalid_or_revoked_result_never_returns_partial_success(monkeypatch, tmp_path, failure, status):
     app, _, requests = setup(monkeypatch, tmp_path, failure=failure)
     with TestClient(app.app) as client:
@@ -126,6 +135,20 @@ def test_invalid_or_revoked_result_never_returns_partial_success(monkeypatch, tm
         assert len(requests) == 2  # no corrective paid loop
         assert client.get("/api/reader/ai/ask/progress?ask_id=contract-fail").json()["stage"] is None
     assert qa_diagnostics.recent()["items"][0]["outcome"] != "returned"
+
+
+def test_real_transcript_allows_eight_content_ids_and_one_title(monkeypatch, tmp_path):
+    body = "\n".join(f"SPEAKER_{i}: External secrets. Separate scope. " + "x" * 740 for i in range(8))
+    app, _, requests = setup(monkeypatch, tmp_path, failure="eight_plus_title", body=body)
+    with TestClient(app.app) as client:
+        _login(client)
+        response = client.post("/api/reader/ai/ask", json={"scope": "article", "article_id": "episode",
+                               "question": "密钥如何处理，还需要什么限制？"})
+        assert response.status_code == 200, response.text
+        assert response.json()["answer"] == "密钥外置保护凭据。[1]\n\n仍需独立授权范围。[1]"
+    assert len(requests) == 2
+    trace = qa_diagnostics.recent()["items"][0]
+    assert len(trace["checked_parts"][0]["evidence"]) == 9
 
 
 def test_explicit_greeting_skips_planning_and_source_loading(monkeypatch, tmp_path):

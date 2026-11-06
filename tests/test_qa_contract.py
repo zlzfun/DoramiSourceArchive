@@ -11,6 +11,10 @@ from services import qa_diagnostics, reader_ai, reader_search
 from services.qa_contract import QAState, clean_parts, render_structured_answer, validate_citations
 
 
+def render_current(raw, state):
+    return render_structured_answer(raw, state, expected_binding=state.answer_binding())
+
+
 def state():
     result = QAState("机制是什么？有哪些局限？", parts=[
         {"question": "机制是什么？", "keywords": ["secrets"]},
@@ -36,7 +40,7 @@ def test_render_preserves_limitations_order_and_exact_evidence_ranges():
     s = state()
     data = answer()
     data["parts"].reverse()
-    rendered = render_structured_answer(json.dumps(data), s)
+    rendered = render_current(json.dumps(data), s)
     assert rendered == "密钥外置。[1]\n\n仍需独立授权，资料未提供效果百分比。[1]"
     proof = s.checked_parts[1]["evidence"][0]
     assert proof["artifact_id"] == "artifact-current" and proof["range_start"] == 300
@@ -59,19 +63,20 @@ def test_invalid_answer_is_rejected_as_a_whole(mutation, code):
     data, s = answer(), state()
     mutation(data)
     with pytest.raises(client.LLMStructuredOutputError) as exc:
-        render_structured_answer(json.dumps(data), s)
+        render_current(json.dumps(data), s)
     assert exc.value.code == code
     assert s.checked_parts == []
 
 
 def test_catalog_must_be_prepared_from_current_budgeted_sources():
     s = state()
+    binding = s.answer_binding()
     s.sources[0]["body"] = "External secrets."
     with pytest.raises(client.LLMStructuredOutputError, match="qa_catalog_changed"):
-        render_structured_answer(json.dumps(answer()), s)
+        render_current(json.dumps(answer()), s)
     s.prepare_evidence()
-    with pytest.raises(client.LLMStructuredOutputError, match="qa_evidence_id"):
-        render_structured_answer(json.dumps(answer()), s)
+    with pytest.raises(client.LLMStructuredOutputError, match="qa_catalog_changed"):
+        render_structured_answer(json.dumps(answer()), s, expected_binding=binding)
 
 
 def test_citation_cannot_use_evidence_only_from_another_part():
@@ -80,13 +85,13 @@ def test_citation_cannot_use_evidence_only_from_another_part():
     s.prepare_evidence()
     data["parts"][1]["answer"] += "[2]"
     with pytest.raises(client.LLMStructuredOutputError, match="qa_citation_without_evidence"):
-        render_structured_answer(json.dumps(data), s)
+        render_current(json.dumps(data), s)
 
 
 def test_insufficient_part_is_kept_and_does_not_hide_answered_part():
     data = answer()
     data["parts"][1].update(status="insufficient", evidence_ids=[], answer="资料未给出对照实验，无法确定提升比例。")
-    result = render_structured_answer(json.dumps(data), state())
+    result = render_current(json.dumps(data), state())
     assert result.startswith("密钥外置。[1]") and "无法确定提升比例" in result
 
 
@@ -166,7 +171,7 @@ def test_diagnostics_are_bounded_expiring_snapshots_without_content(monkeypatch)
     monkeypatch.setattr(qa_diagnostics.time, "monotonic", lambda: now[0])
     for _ in range(105):
         s = state()
-        render_structured_answer(json.dumps(answer()), s)
+        render_current(json.dumps(answer()), s)
         qa_diagnostics.record(s)
     result = qa_diagnostics.recent()
     assert len(result["items"]) == 100

@@ -1031,11 +1031,12 @@ async def answer_question(
         qa_state=qa_state,
     )
     structured = qa_state is not None and qa_state.intent != "chat" and len(qa_state.parts) > 1
+    binding = qa_state.answer_binding() if structured else ""
     raw = await traced_completion(chat_completion, state=qa_state, stage="answer",
                                   messages=messages, config=llm_config, usage_meta=usage_meta,
                                   response_json=structured)
     if structured:
-        return render_structured_answer(raw, qa_state)
+        return render_structured_answer(raw, qa_state, expected_binding=binding)
     answer = raw.strip()
     if not answer:
         raise ReaderAIError("AI 暂时没有返回内容，请稍后重试", status_code=502)
