@@ -151,6 +151,23 @@ class StorageConfig:
 
 
 @dataclass(frozen=True)
+class McpUserContextConfig:
+    """MCP get_user_context 工具的拼装上限(issue #175 v1,内部调试用)。
+
+    段优先级固定在实现里(兴趣 > 收藏 > 常读来源 > 订阅名),这里只管每段
+    条目上限、时间窗与整体 token 预算;token 以 CJK 字符 ≈1、其他字符 ≈0.5 估算。
+    """
+
+    interest_tag_limit: int = 20
+    favorite_limit: int = 10
+    favorite_days: int = 14
+    source_limit: int = 8
+    source_days: int = 14
+    subscription_limit: int = 10
+    max_tokens: int = 800
+
+
+@dataclass(frozen=True)
 class CorsConfig:
     allow_origins: list[str]
     allow_credentials: bool = True
@@ -895,6 +912,7 @@ class AppConfig:
     bailian_speech: BailianSpeechConfig = field(default_factory=BailianSpeechConfig)
     oss: OssConfig = field(default_factory=OssConfig)
     backup: BackupConfig = field(default_factory=BackupConfig)
+    mcp_user_context: McpUserContextConfig = field(default_factory=McpUserContextConfig)
 
     def apply_process_environment(self) -> None:
         if self.network.disable_ca_bundle:
@@ -959,6 +977,17 @@ def _environment_boolean(name: str) -> bool | None:
     if normalized in {"0", "false", "no", "off"}:
         return False
     raise ValueError(f"Invalid boolean value for {name}")
+
+
+def _mcp_user_context_option(
+    parser: configparser.ConfigParser,
+    option: str,
+    fallback: int,
+) -> int:
+    env = os.getenv(f"DORAMI_MCP_USER_CONTEXT_{option.upper()}")
+    return int(env) if env is not None and env.strip() else parser.getint(
+        "mcp_user_context", option, fallback=fallback
+    )
 
 
 def load_config() -> AppConfig:
@@ -1114,6 +1143,15 @@ def load_config() -> AppConfig:
         ),
         storage=StorageConfig(
             database_url=_database_url(parser.get("storage", "database_url", fallback=storage_db)),
+        ),
+        mcp_user_context=McpUserContextConfig(
+            interest_tag_limit=_mcp_user_context_option(parser, "interest_tag_limit", 20),
+            favorite_limit=_mcp_user_context_option(parser, "favorite_limit", 10),
+            favorite_days=_mcp_user_context_option(parser, "favorite_days", 14),
+            source_limit=_mcp_user_context_option(parser, "source_limit", 8),
+            source_days=_mcp_user_context_option(parser, "source_days", 14),
+            subscription_limit=_mcp_user_context_option(parser, "subscription_limit", 10),
+            max_tokens=_mcp_user_context_option(parser, "max_tokens", 800),
         ),
         cors=CorsConfig(
             allow_origins=_csv(parser.get("cors", "allow_origins", fallback="*")),
