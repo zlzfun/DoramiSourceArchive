@@ -72,8 +72,10 @@ test('导读筛选与关键词、来源、未读、收藏相交；不污染文�
 
 test('列表真实组件：优质与导读能力正交，书本/耳机分别表达可看/可听', async (t) => {
   const cacheDir = mkdtempSync(join(tmpdir(), 'dorami-podcast-list-'));
+  // SSR-only: skip unused client prebundling; avoids local rolldown native
+  // teardown crashes. The underlying native root cause is not established.
   const server = await createServer({ root: fileURLToPath(new URL('..', import.meta.url)), cacheDir,
-    logLevel: 'silent', server: { middlewareMode: true }, appType: 'custom' });
+    logLevel: 'silent', optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true }, appType: 'custom' });
   try {
     const { ArticleRow } = await server.ssrLoadModule('/src/components/ReaderTab.jsx');
     const cases = [
@@ -106,7 +108,9 @@ test('列表真实组件：优质与导读能力正交，书本/耳机分别表�
 test('真实速读卡渲染：读者/游客缺诊断字段也不误标，摘要与评分理由不混用', async () => {
   const root = fileURLToPath(new URL('..', import.meta.url));
   const cacheDir = mkdtempSync(join(tmpdir(), 'dorami-podcast-render-'));
-  const server = await createServer({ root, cacheDir, logLevel: 'silent', server: { middlewareMode: true }, appType: 'custom' });
+  // SSR-only: skip unused client prebundling; avoids local rolldown native
+  // teardown crashes. The underlying native root cause is not established.
+  const server = await createServer({ root, cacheDir, logLevel: 'silent', optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true }, appType: 'custom' });
   try {
     const { default: Card } = await server.ssrLoadModule('/src/components/AiReadingCard.jsx');
     for (const full_analysis_ready of [false, true]) {

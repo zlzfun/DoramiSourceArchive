@@ -9,6 +9,7 @@ import {
   SquarePen,
 } from 'lucide-react';
 import ReaderMarkdown from './ReaderMarkdown';
+import QaReferenceContext from './QaReferenceContext';
 import { loadReaderMarkdownView } from '../utils/readerMarkdownLoader';
 import { askReaderAi, fetchAskProgress } from '../api';
 import { displayTitle } from '../utils/titleDisplay';
@@ -207,13 +208,25 @@ function SourceEvidence({ source, initiallyOpen = false }) {
           <EvidenceExcerpt item={item} />
         </div>
       ))}
+      <QaReferenceContext source={source} />
     </details>
   );
 }
 
 // 单轮回答:去框正文 + 行内引用 + 末尾出处列表(sources 确定性渲染)。
 // 引用与补充参考分开呈现；未引用来源仍可展开，不能假装支持了答案。
-function AnswerBlock({ turn, onOpenRef }) {
+function NarrowQuestion({ turn, onPick, disabled }) {
+  return <details className="reader-ai-narrow">
+    <summary className="tiny-meta">缩小问题</summary>
+    <p className="tiny-meta">先选一个具体问题，可修改后发送。</p>
+    {(turn.refinementQuestions || []).map((question) => <button type="button" className="reader-ai-narrow-option" key={question}
+      disabled={disabled} onClick={() => onPick(turn, question)}>{question}</button>)}
+    <button type="button" className="reader-ai-evidence-toggle tiny-meta" disabled={disabled} onClick={() => onPick(turn, turn.q)}>编辑原问题</button>
+    <p className="tiny-meta">可以限定一个对象、一个时间段，或只问一个结论及其依据。</p>
+  </details>;
+}
+
+function AnswerBlock({ turn, onOpenRef, onNarrow, disabled }) {
   // 引用标题随「默认显示中文标题」(issue #218):出处带 title_zh 时按偏好选,缺字段即原题
   const { preferChinese } = useTitlePreference();
   const sources = useMemo(() => turn.sources || [], [turn.sources]);
@@ -259,6 +272,7 @@ function AnswerBlock({ turn, onOpenRef }) {
           )}
         </div>
       )}
+      {['partial', 'references_only'].includes(turn.answerMode) && <NarrowQuestion turn={turn} onPick={onNarrow} disabled={disabled} />}
     </div>
   );
 }
@@ -272,6 +286,7 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
   const [aiPanelLarge, setAiPanelLarge] = useState(() => localStorage.getItem('dorami_reader_ai_panel_large') === '1');
   const [qaScope, setQaScope] = useState('article');             // article | subscription(前端两档;后端另有 articles/all)
   const [qaInput, setQaInput] = useState('');
+  const [qaFreshQuestion, setQaFreshQuestion] = useState(false);
   const [qaThread, setQaThread] = useState([]);                  // {q, a, sources, error, pending, scope}
   const [qaLoading, setQaLoading] = useState(false);
   const [qaProgress, setQaProgress] = useState(null);            // {stage, byStage} 阶段化等待态
@@ -301,6 +316,19 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
     if (source.source_url) window.open(source.source_url, '_blank', 'noopener');
   }, [onOpenArticle]);
 
+  const handleNarrow = useCallback((turn, question) => {
+    if (qaLoading) return;
+    if (qaInput.trim()) { showToast('输入框中已有草稿，请先发送或清空', 'info'); return; }
+    if (turn.scope === 'article' && turn.articleId !== activeArticle?.id) {
+      showToast('请先打开这轮问答的原文，再缩小问题', 'info');
+      return;
+    }
+    setQaScope(turn.scope);
+    setQaInput(question);
+    setQaFreshQuestion(true);
+    inputRef.current?.focus();
+  }, [qaInput, qaLoading, activeArticle, showToast]);
+
   // ── 问答(基于本文 / 基于我的订阅) ──
   const handleAsk = useCallback(async () => {
     const q = qaInput.trim();
@@ -309,12 +337,14 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
     const articleId = activeArticle?.id || null;
     if (scope === 'article' && !articleId) { showToast('请先从中间选择一篇文章', 'error'); return; }
     // 多轮:把此前已完成的问答展开成 user/assistant 历史(不含本轮,未完成/出错的轮次跳过)
-    const history = qaHistory(qaThread);
+    const historyReset = qaFreshQuestion;
+    const history = historyReset ? [] : qaHistory(qaThread);
     const askId = genAskId();
     setQaLoading(true);
     setQaProgress(null);
-    setQaThread((prev) => [...prev, { q, a: null, sources: [], pending: true, scope, podcast: activePodcast }]);
+    setQaThread((prev) => [...prev, { q, a: null, sources: [], pending: true, scope, historyReset, podcast: activePodcast }]);
     setQaInput('');
+    setQaFreshQuestion(false);
     // 阶段化等待态:检索型 scope 轮询后端进度(显式名单只有作答一步,不轮询)
     if (scope === 'subscription') {
       pollRef.current = setInterval(async () => {
@@ -336,23 +366,26 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
     try {
       const data = await askReaderAi({ question: q, scope, articleId, history, askId });
       setQaThread((prev) => prev.map((m, i) => (
-        i === prev.length - 1 ? { q, a: data.answer, sources: data.sources || [], answerMode: data.answer_mode, scope } : m
+        i === prev.length - 1 ? { q, a: data.answer, sources: data.sources || [], answerMode: data.answer_mode,
+          refinementQuestions: data.refinement_questions || [], scope, articleId, historyReset } : m
       )));
     } catch (error) {
       setQaThread((prev) => prev.map((m, i) => (
-        i === prev.length - 1 ? { q, a: null, error: error.message || '提问失败，请稍后重试', errorCode: error.code || '', scope } : m
+        i === prev.length - 1 ? { q, a: null, error: error.message || '提问失败，请稍后重试', errorCode: error.code || '',
+          canRefine: error.status >= 500 || error.status === 409, scope, articleId, historyReset } : m
       )));
     } finally {
       stopPolling();
       setQaProgress(null);
       setQaLoading(false);
     }
-  }, [qaInput, qaLoading, qaScope, qaThread, activeArticle, activePodcast, showToast, stopPolling]);
+  }, [qaInput, qaLoading, qaScope, qaThread, qaFreshQuestion, activeArticle, activePodcast, showToast, stopPolling]);
 
   // 发起新对话:清空多轮历史与输入(切换范围/点「新对话」时调用)
   const resetConversation = useCallback(() => {
     setQaThread([]);
     setQaInput('');
+    setQaFreshQuestion(false);
   }, []);
 
   const switchScope = useCallback((next) => {
@@ -487,15 +520,17 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
                         <button type="button" className="guest-inline-login" onClick={() => onGuestLogin?.()}>登录后继续使用</button>
                       </>
                     ) : m.error}
+                    {m.canRefine && <NarrowQuestion turn={m} onPick={handleNarrow} disabled={qaLoading} />}
                   </div>
                 ) : (
-                  <AnswerBlock turn={m} onOpenRef={handleOpenRef} />
+                  <AnswerBlock turn={m} onOpenRef={handleOpenRef} onNarrow={handleNarrow} disabled={qaLoading} />
                 )}
               </div>
             ))}
           </div>
 
           <div className="reader-ai-composer">
+            {qaFreshQuestion && <p className="tiny-meta" role="status">可修改后发送，将单独回答这个问题</p>}
             <textarea
               className="reader-ai-input"
               ref={inputRef}

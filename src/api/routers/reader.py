@@ -2437,6 +2437,10 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
     if answer_mode != "references_only":
         with Session(db_sink.engine) as session:
             accounts_service.record_ai_usage(session, username, "ask")
+    from services.qa_reference import reference_sources, refinement_questions
+    sources = reference_sources(sources, qa_state, secret=AUTH_SECRET,
+                                accepted=answer_mode != "references_only")
     return {"status": "references_only" if answer_mode == "references_only" else "success",
             "answer_mode": answer_mode, "answer": answer, "sources": sources, "scope": scope,
+            "refinement_questions": refinement_questions(qa_state, answer_mode),
             "trace_id": qa_state.trace_id}

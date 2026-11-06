@@ -34,7 +34,8 @@ export function qaReferenceGroups(answer, sources = []) {
 
 /** A fallback has no usable model answer to carry into the next question. */
 export function qaHistory(turns) {
-  return turns.filter((turn) => turn.a && !turn.error && !turn.pending && turn.answerMode !== 'references_only')
+  const start = Math.max(0, turns.findLastIndex((turn) => turn.historyReset));
+  return turns.slice(start).filter((turn) => turn.a && !turn.error && !turn.pending && turn.answerMode !== 'references_only')
     .flatMap((turn) => [{ role: 'user', content: turn.q }, { role: 'assistant', content: turn.a }]);
 }
 

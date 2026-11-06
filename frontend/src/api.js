@@ -296,6 +296,13 @@ export function fetchPodcastEpisodeTexts(episodeId, filters = {}, options = {}) 
   });
 }
 
+export function fetchQaReferenceContext(episodeId, token, options = {}) {
+  return request(`/podcasts/episodes/${enc(episodeId)}/reference-context?token=${enc(token)}`, {
+    errorMsg: '无法定位原文，请稍后重试',
+    ...options,
+  });
+}
+
 export function translatePodcastTranscript(episodeId, sourceKind, options = {}) {
   return request(`/reader/ai/podcasts/${enc(episodeId)}/translate-transcript`, {
     method: 'POST',

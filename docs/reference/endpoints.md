@@ -132,3 +132,12 @@
 - `GET /api/admin/source-visibility` + `POST /api/admin/source-visibility/{source_id}` — 读者面源可见性(管理面隐藏节点):隐藏名单存 KV `reader_hidden_source_ids`(`services/source_visibility.py`,无新表),按 `source_id` 生效。语义=「读者面临时下架」(观察期故障/文章缺陷即时止损,不改代码)。**内容交付全量排除**:文章列表与单条详情(非 admin 会话)、收藏列表、聚合 feed(dfeed/dsub)、MCP/问答检索范围——范围收窄的单一咽喉是 `feed_service.resolve_subscribed_source_ids` 默认减隐藏(`include_hidden=True` 取原始并集,供目录/subscribe 响应/播种幂等判定)。**目录呈现分订阅态**(2026-07-27 拍板,替代初版「已订阅者也整体消失」——静默消失像数据丢失):未订阅者完全不可见(发现页不出现,新订阅 404);已订阅者源栏保留条目、`/api/reader/sources` 标 `hidden:true` → 前端灰显+「暂不可用」细签,点击短路成空态(不发列表请求,admin/读者同观感),读者可退订也可留着等恢复;既有订阅与归档原样保留、恢复即回归。admin 会话内容不受影响(知识台账/管理员令牌仍见全档)。开关在节点管理检视器(「在读者面隐藏」+ 节点卡「已隐藏」徽记),操作入审计
 - `GET`/`POST /api/llm/config` + `POST /api/llm/config/test` — global model config (shared by Daily Brief + reader AI; edited from 运维管理)
 - `POST /api/auth/preferences` — 任意登录账户写自己的偏好(目前仅 `default_surface`,管理员登录落地界面)
+
+
+### 问答参考位置（#254）
+
+| 方法 | 路径 | 语义 |
+| --- | --- | --- |
+| GET | `/api/podcasts/episodes/{episode_id}/reference-context?token=...` | 读者/游客只读；token来自问答sources.reference_locations，签名绑定原稿与范围，读取时重新验权/验当前发布。返回before/focus/after（600/800/600字符上限）及has_before/has_after；private,no-store。无问答额度/模型费用；无效签名400、来源不可读404、原稿变更409、原稿无法投影422。 |
+
+`POST /reader/ai/ask`额外返回`refinement_questions`（最多3个已有子问题，正常回答为空）；每个有定位资料的source可带最多4个`reference_locations`，其`origin=selected`表示模型选段，`excerpt_start`表示参考片段开头，均不代表语义核验。建议需用户编辑/发送，不触发自动再问。

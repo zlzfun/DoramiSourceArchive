@@ -91,3 +91,11 @@ test('long reference previews are explicit excerpts and retain access to the exa
   assert.ok(result.text.length <= 800);
   assert.deepEqual(qaExcerptPreview('  原文\n未修改。  '), { text: '  原文\n未修改。  ', truncated: false });
 });
+
+
+test('a narrowed question starts a separate history for subsequent follow-ups too', () => {
+  const turns = [{ q: 'broad', a: 'partial', answerMode: 'partial' },
+    { q: 'narrow', a: 'focused', historyReset: true }, { q: 'follow-up', a: 'follow-up answer' }];
+  assert.deepEqual(qaHistory(turns).map((item) => item.content), ['narrow', 'focused', 'follow-up', 'follow-up answer']);
+  assert.deepEqual(qaHistory([...turns, { q: 'another', a: 'failed', historyReset: true, answerMode: 'references_only' }]), []);
+});
