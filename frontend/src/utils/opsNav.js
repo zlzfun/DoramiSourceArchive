@@ -1,4 +1,4 @@
-// 运维管理信息架构(issue #114):首页即目录 → 8 个满幅功能页;页内板块可深链。
+// 运维管理信息架构(issue #114):首页即目录 → 9 个满幅功能页(#261 加节点同步);页内板块可深链。
 // 本文件是页 / 板块的单一注册表 + 路由解析,纯函数、无 React 依赖(frontend/test/opsNav.test.mjs)。
 // 归属规则见 docs/architecture/admin-ops.md「板块归属规则」:先按「这是谁的事」归页,页内按 观测 → 策略 → 台账 排序。
 
@@ -28,6 +28,11 @@ export const OPS_PAGES = [
   {
     id: 'external', name: '存储与外部资源', icon: 'hard-drive', usesDays: false,
     blocks: [['storage', '存储与备份'], ['media', '媒体库'], ['xapi', 'X API']],
+  },
+  {
+    // 节点同步(issue #261):本机作为接收端从其它 server 拉取的同步控制台
+    id: 'sync', name: '节点同步', icon: 'waypoints', usesDays: false,
+    blocks: [['streams', '逐流状态'], ['runs', '运行记录'], ['link', '连接与定时']],
   },
   {
     id: 'user-sources', name: '自定源与收录', icon: 'rss', usesDays: false,

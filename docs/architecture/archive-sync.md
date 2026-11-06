@@ -2,6 +2,7 @@
 
 > 状态:耐久参考(快照 2026-10-21)。自 `CLAUDE.md`「Key Design Decisions」**原文迁出**(2026-10-21,文档整理波 issue #210),内容按域归档、未改写;现状以代码为准。本域不变量变化时更新对应节,并在 `docs/version-history.md` 记一行。
 > 相关:契约全文 [`contracts/archive_sync.md`](../contracts/archive_sync.md) · [`ops/aliyun-dual-node-deployment.md`](../ops/aliyun-dual-node-deployment.md)
+> 观测与管理:运维 → 节点同步(`#/admin/sync`,issue #261)——流水线看各流进度 / 失败流与页,运行记录,单流重置与重放分析;只读本机、不探测远端,计数来自外网 manifest 的附加字段(见契约「Issue #261」段)。
 
 ## Archive Sync v2 endpoint / v3 transaction protocol (external → internal, v3.46)
 

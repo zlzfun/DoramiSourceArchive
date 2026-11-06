@@ -1388,6 +1388,17 @@ export function fetchRemoteSyncStatus() {
   return request('/admin/remote-sync/status', { errorMsg: '获取远程同步状态失败' });
 }
 
+// 节点同步控制台(issue #261):本机各类同步内容条数(只读聚合,打开页面与任务结束时取,不随进度轮询)
+export function fetchRemoteSyncInventory() {
+  return request('/admin/remote-sync/inventory', { errorMsg: '获取本机同步盘点失败' });
+}
+
+// 重置当前目标的一条流(清 checkpoint + 该 authority 的逐行记账,下次整流重拉);重放分析流 = analyses。
+// 有排队 / 运行中的同步任务时后端 409,detail 原样透传。
+export function resetRemoteSyncStream(stream) {
+  return request(`/admin/remote-sync/streams/${encodeURIComponent(stream)}/reset`, { method: 'POST', errorMsg: '重置同步流失败' });
+}
+
 // 定时同步(v3.19.2):凭据只写不回显——GET 永不含 password,仅 password_set;
 // POST 的 password 传空串表示保留已存密码。
 export function fetchRemoteSyncSchedule() {

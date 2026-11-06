@@ -30,8 +30,10 @@ AppSettingRecord KV(`remote_sync:schedule`),**只写不回显**。读取端点
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import json
 import logging
+import threading
 from typing import Any, Callable, Dict, List, Optional, Sequence
 from urllib.parse import urlparse
 
@@ -115,6 +117,70 @@ _MAX_RETRIES = 3
 
 class RemoteSyncError(Exception):
     """远端不可达 / 登录失败 / 契约不符等,消息面向管理员界面直接展示。"""
+
+
+_CONTROL_LOCKS: Dict[Any, threading.Lock] = {}
+_CONTROL_LOCKS_GUARD = threading.Lock()
+
+
+def sync_control_lock(engine) -> threading.Lock:
+    """同一库上「启动同步任务」与「重置单流」的互斥(issue #261 检视 R1 #1)。
+
+    两者都是「先查有没有排队 / 运行中的任务,再改同步状态」;不串行时,重置可能夹在
+    启动的检查与任务读 checkpoint 之间,被随后增量写回的 checkpoint 抵消。部署为单进程 +
+    进程内 APScheduler(既有「只允许一个同步任务」检查同一假设),按 engine 的进程内锁即可。
+    """
+
+    with _CONTROL_LOCKS_GUARD:
+        return _CONTROL_LOCKS.setdefault(engine, threading.Lock())
+
+
+def record_v2_run_success(engine, *, base_url: str, synced_at: str) -> None:
+    """整次 v2 同步(全部协商流)成功的时间;逐流推进的 ``last_synced_at`` 不代表整次成功。"""
+
+    with Session(engine) as session:
+        record = session.get(AppSettingRecord, REMOTE_SYNC_STATE_KEY)
+        state = _decode_sync_state_record(record)
+        target = dict(state["targets"].get(base_url) or {})
+        target["v2_last_success_at"] = synced_at
+        state["targets"][base_url] = target
+        value = json.dumps(state, ensure_ascii=False)
+        if record is None:
+            record = AppSettingRecord(key=REMOTE_SYNC_STATE_KEY, value=value)
+        else:
+            record.value = value
+        session.add(record)
+        session.commit()
+
+
+def _utc_now_iso() -> str:
+    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+
+
+def _manifest_int(value: Any) -> Optional[int]:
+    """manifest 附加计数(issue #261)只认非负整数;老生产端缺省或异常值一律当未知。"""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _manifest_counts(value: Any) -> Optional[Dict[str, int]]:
+    if not isinstance(value, dict):
+        return None
+    counts = {
+        str(name): count
+        for name, count in ((name, _manifest_int(raw)) for name, raw in value.items())
+        if name in V2_STREAM_ORDER and count is not None
+    }
+    return counts or None
+
+
+# 已完成流在进度里留的摘要字段(控制台逐流 / 运行抽屉;失败任务没有 result,只能读进度)。
+_STREAM_DONE_FIELDS = (
+    "pages", "count", "inserted", "updated", "deleted", "pruned", "skipped",
+    "deferred", "reused_bytes", "downloaded_bytes", "pending", "started_at",
+    "completed_at",
+)
 
 
 def _decode_sync_state_record(record: AppSettingRecord | None) -> Dict[str, Any]:
@@ -767,9 +833,15 @@ async def probe(
     password: str,
     *,
     protocol: str = "v2",
+    since: str = "",
     transport: Optional[httpx.AsyncBaseTransport] = None,
 ) -> Dict[str, Any]:
-    """「测试连接」探针:登录 → 版本 → 契约可用性 → 总量(尽力而为)。"""
+    """「测试连接」探针:登录 → 版本 → 契约可用性 → 总量(尽力而为)。
+
+    ``since`` 是目标 sources 流已完成的 checkpoint(每次同步本就发出的翻页参数);带上它,
+    新版生产端在 sources 首页 manifest 里回 ``pending_by_stream``,控制台据此显示「待同步」
+    (issue #261)。不改变请求种类,也不多带内网信息。
+    """
     base = normalize_base_url(base_url)
     async with _make_client(transport) as client:
         cookie_header = await _login(client, base, username, password)
@@ -785,23 +857,44 @@ async def probe(
             pass  # 版本只是展示信息,拿不到不阻断
 
         protocol = (protocol or "v2").strip().lower()
+        producer_snapshot = ""
+        pending: Optional[Dict[str, int]] = None
+        probe_since = ""
         if protocol == "v2":
-            sample_text = await _fetch_v2_page(
-                client,
-                base,
-                cookie_header,
-                stream="sources",
-                snapshot="",
-                since="",
-                after="",
-                limit=1,
-            )
+            probe_since = str(since or "").strip()
+            try:
+                sample_text = await _fetch_v2_page(
+                    client,
+                    base,
+                    cookie_header,
+                    stream="sources",
+                    snapshot="",
+                    since=probe_since,
+                    after="",
+                    limit=1,
+                )
+            except RemoteSyncError:
+                if not probe_since:
+                    raise
+                # 本机 checkpoint 超出生产端当前修订(如生产端回滚)时不让「测试连接」因计数失败;
+                # 退回原来的全量首页,待同步显示为未知。
+                probe_since = ""
+                sample_text = await _fetch_v2_page(
+                    client,
+                    base,
+                    cookie_header,
+                    stream="sources",
+                    snapshot="",
+                    since="",
+                    after="",
+                    limit=1,
+                )
             try:
                 manifest, rows = archive_sync_v2.parse_page(
                     sample_text,
                     expected_stream="sources",
                     requested_snapshot="",
-                    requested_since="",
+                    requested_since=probe_since,
                     requested_after="",
                 )
                 archive_sync_v2.require_transaction_revision_capability(manifest)
@@ -811,6 +904,11 @@ async def probe(
             capabilities = list(manifest.get("capabilities") or [])
             sample_count = len(rows)
             authority_id = str(manifest["authority_id"])
+            producer_snapshot = str(manifest.get("snapshot") or "")
+            pending = _manifest_counts(manifest.get("pending_by_stream"))
+            sources_pending = _manifest_int(manifest.get("pending"))
+            if pending is not None and sources_pending is not None:
+                pending["sources"] = sources_pending
             taxonomy_text = await _fetch_v2_page(
                 client,
                 base,
@@ -898,6 +996,9 @@ async def probe(
         "taxonomy_ready": taxonomy_ready,
         "article_total": article_total,
         "sample_count": sample_count,
+        "snapshot": producer_snapshot,
+        "pending": pending,
+        "pending_since": probe_since,
     }
 
 
@@ -1065,6 +1166,9 @@ async def run_pull_v2(
     processed = 0
     generation_snapshot = ""
     negotiated_stream_order: Optional[tuple[str, ...]] = None
+    # 控制台观测(issue #261):只读本次运行的进度,不参与任何 checkpoint 推进。
+    streams_done: Dict[str, Dict[str, Any]] = {}
+    run_pending: Optional[Dict[str, int]] = None
     async with _make_client(transport) as client:
         cookie_header = await _login(client, base, username, password)
         for stream in V2_STREAM_ORDER:
@@ -1096,6 +1200,9 @@ async def run_pull_v2(
                 "downloaded_bytes": 0,
             }
             stream_processed = 0
+            stream_page = 0
+            stream_total: Optional[int] = None
+            stream_started_at = _utc_now_iso()
 
             def report_progress():
                 if on_progress is not None:
@@ -1106,6 +1213,18 @@ async def run_pull_v2(
                         "downloaded": stats["media_downloaded"] + stats["podcast_audio_downloaded"],
                         "reused_bytes": stats["reused_bytes"],
                         "downloaded_bytes": stats["downloaded_bytes"],
+                        "order": (
+                            list(negotiated_stream_order)
+                            if negotiated_stream_order is not None
+                            else None
+                        ),
+                        "stream_total": stream_total,
+                        "page": stream_page,
+                        "stream_started_at": stream_started_at,
+                        "streams_done": {
+                            name: dict(summary) for name, summary in streams_done.items()
+                        },
+                        "run_pending": dict(run_pending) if run_pending else None,
                     })
 
             def advance(count, *, reused=None, size=0):
@@ -1127,6 +1246,8 @@ async def run_pull_v2(
                     if stream == "podcast_texts"
                     else page_size
                 )
+                stream_page += 1
+                report_progress()
                 raw_text = await _fetch_v2_page(
                     client,
                     base,
@@ -1201,6 +1322,19 @@ async def run_pull_v2(
                 snapshot = str(manifest.get("snapshot") or "")
                 if stream == "sources":
                     generation_snapshot = snapshot
+                if stream_page == 1:
+                    stream_total = _manifest_int(manifest.get("pending"))
+                    if stream == "sources":
+                        counted = _manifest_counts(manifest.get("pending_by_stream"))
+                        # pending_by_stream 全按 sources 的 since 计;只有起始 checkpoint 与它相同的流
+                        # 才是真实待处理量(重置 / 上次中途失败的流各自首页到达前未知,检视 R1 #3)。
+                        run_pending = {
+                            name: count
+                            for name, count in (counted or {}).items()
+                            if str((checkpoints.get(name) or {}).get("snapshot") or "") == since
+                        } or None
+                    # 分母与协商结果先落进度,首页导入失败时终态也保留(检视 R1 #6)。
+                    report_progress()
                 try:
                     applied = await asyncio.to_thread(
                         archive_sync_v2.import_page,
@@ -1251,11 +1385,18 @@ async def run_pull_v2(
                             install = archive_sync_v2.install_podcast_audio_bytes
                             fetch = _fetch_v2_podcast_audio_bytes
                             max_bytes = int(podcast_artifact_store.max_bytes)
-                        reused = await asyncio.to_thread(reuse, *args, **options)
-                        if not reused:
-                            body = await fetch(client, base, cookie_header, key,
-                                expected_size=expected_size, max_bytes=max_bytes)
-                            await asyncio.to_thread(install, *args, body, **options)
+                        try:
+                            reused = await asyncio.to_thread(reuse, *args, **options)
+                            if not reused:
+                                body = await fetch(client, base, cookie_header, key,
+                                    expected_size=expected_size, max_bytes=max_bytes)
+                                await asyncio.to_thread(install, *args, body, **options)
+                        except archive_sync_v2.SyncV2MediaRejected as exc:
+                            # 校验和对上但不是图片:该行已记 failed,单条跳过(issue #264)。
+                            _logger.warning("v2 media %s 拒收并跳过:%s", key, exc)
+                            stats["skipped"] += 1
+                            advance(1)
+                            continue
                         # Count only after verification, durable installation and
                         # metadata publication; never also count the page below.
                         advance(1, reused=reused, size=expected_size)
@@ -1312,14 +1453,31 @@ async def run_pull_v2(
                         "cursor": after,
                         "completed_at": "",  # caller stamps its local clock
                         **stats,
+                        "pending": stream_total,
+                        "started_at": stream_started_at,
                     }
                     if stream in archive_sync_v2.SOURCE_PROJECTED_STREAMS:
                         checkpoint["source_projection"] = result.get(
                             "source_projection", archive_sync_v2.SOURCE_PROJECTION_LEGACY
                         )
-                    result["streams"][stream] = checkpoint
+                    finished_at = _utc_now_iso()
+                    summary = {**stats, "pending": stream_total,
+                               "started_at": stream_started_at,
+                               "completed_at": finished_at}
+                    summary["downloaded"] = (
+                        stats["media_downloaded"] + stats["podcast_audio_downloaded"]
+                    )
+                    summary["reused"] = stats["media_reused"] + stats["podcast_audio_reused"]
+                    streams_done[stream] = {
+                        key: summary[key]
+                        for key in (*_STREAM_DONE_FIELDS, "downloaded", "reused")
+                        if key in summary
+                    }
+                    result["streams"][stream] = {**checkpoint, "completed_at": finished_at}
                     if on_stream_complete is not None:
                         on_stream_complete(stream, checkpoint)
+                    # checkpoint 落定后才把本流记为完成,进度不能跑在复制状态前面。
+                    report_progress()
                     break
             else:
                 raise RemoteSyncError(f"v2 {stream} 翻页超过安全上限 {MAX_PAGES}")
@@ -1329,6 +1487,7 @@ async def run_pull_v2(
                 "pages": 0,
                 "inserted": 0,
                 "skipped": 0,
+                "started_at": _utc_now_iso(),
             }
             try:
                 after = ""
@@ -1373,10 +1532,15 @@ async def run_pull_v2(
                 else:
                     raise RemoteSyncError("Candidate 证据分页超过安全上限")
             except Exception as exc:  # Candidate is an auxiliary reverse channel.
-                evidence_result = {"status": "failed", "error": str(exc)[:500]}
+                evidence_result = {
+                    "status": "failed",
+                    "error": str(exc)[:500],
+                    "started_at": evidence_result.get("started_at", ""),
+                }
                 _logger.warning(
                     "Candidate evidence upload failed after main v2 streams: %s", exc
                 )
+            evidence_result["completed_at"] = _utc_now_iso()
             result["candidate_evidence"] = evidence_result
     result["authority_id"] = expected_authority
     return result

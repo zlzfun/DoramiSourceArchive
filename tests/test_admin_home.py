@@ -192,6 +192,8 @@ def test_home_endpoint_shape_and_gating(monkeypatch, tmp_path):
     assert [row["source_id"] for row in body["reads"]["by_source"]] == ["src-a", "src-b"]
     assert all(row["name"] for row in body["reads"]["by_source"])
     assert body["backfills"] == {"active": 0, "unresolved_failed": 0, "latest": None}
+    # 节点同步磁贴(issue #261):没接入远端 = none。
+    assert body["sync"]["configured"] is False and body["sync"]["status"] == "none"
 
     # days 越界收口,与其它运维端点一致。
     assert client.get("/api/admin/home?days=0").json()["days"] == 30

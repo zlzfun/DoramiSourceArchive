@@ -3430,12 +3430,16 @@ async def execute_remote_sync_job():
         protocol = schedule.get("protocol") or "v2"
         v2_probe = None
         if protocol == "v2":
+            from services import sync_console
+
             v2_probe = await remote_sync_service.probe(
                 schedule["base_url"],
                 schedule["username"],
                 schedule["password"],
                 protocol="v2",
+                since=sync_console.sync_checkpoint_since(engine, normalized_base),
             )
+            sync_console.record_probe(engine, v2_probe, probed_at=_now_iso())
         remote_sync_router.launch_remote_sync_job(
             engine,
             base_url=schedule["base_url"],

@@ -5,6 +5,14 @@
 > `docs/frontend/conventions.md` / `docs/sources/curation_policy.md` 等活跃文档。
 > 按「故事」分组索引;文内常含 ☐/☑ 进度符,均为当时状态。
 
+## 媒体流坏图解卡(2026-11,issue #264)
+
+- [issue-264-media-sync-sniff.md](./issue-264-media-sync-sniff.md) — Archive Sync 媒体流被一张坏图卡死整流的根因实证(网易订阅 CDN 的 data URL 文本被据响应头缓存成 PNG)、三层修(入缓存只认内容 / 导出端 `media_export_verdict` 自检 / 接收端单条拒收)、判定表与恢复路径(§2.2)、部署顺序与混版本窗口(§3)、真实数据自测(§4)、Codex 两轮检视与协商(§7);PR #266 合入、待发布;生产只读统计待授权。
+
+## 节点同步控制台(2026-11,issue #261)
+
+- [issue-261-sync-console.md](./issue-261-sync-console.md) — Archive Sync 从设置迁到运维「节点同步」页(样页方向 A 流水线:9 流 + 回传阶段线 · 运行记录 · 连接与定时 · 逐流 / 运行 / 高危抽屉);外网首页 manifest 附 `pending` / `pending_by_stream`、进度带页与分母、单流重置与重放分析、出网不扩大(§3);拍板(§1,含目检追问「节点不分角色」)、接口契约(§4)、Codex 两轮交叉检视(§6);PR #265 合入、待发布;协议放开另议 #263。
+
 ## 运维管理信息架构(2026-11,issue #114)
 
 - [issue-114-admin-ia.md](./issue-114-admin-ia.md) — 五档 segmented 平铺 → 首页即目录(12 列不等大 bento,样页 v4「A 精修」)+ 8 个满幅功能页、面包屑横切与板块深链;只读聚合端点 `GET /api/admin/home`;拍板记录与默认处理表(§1)、Codex 两轮交叉检视(§9);PR #260 合入、待发布;归属规则已回流 `architecture/admin-ops.md`。
