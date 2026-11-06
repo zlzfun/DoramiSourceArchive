@@ -600,3 +600,26 @@ def test_node_catalog_digest_and_event_meta_are_unchanged_by_reconcile(tmp_path)
     for source_id in source_catalog.registry_source_ids():
         assert after[1][source_id] == before[1][source_id], source_id
         assert after[2][source_id] == before[2][source_id], source_id
+
+
+def test_default_subscription_domain_is_unchanged_by_reconcile(tmp_path):
+    """真实库副本对拍发现:墓碑 / 回填 / 系统 / 临时源有了行以后不能混进默认订阅候选与合法域。"""
+    from fetchers.registry import fetcher_registry
+    from services import reader_defaults, source_rows
+
+    sink = _sink(tmp_path, "defaults.db")
+    _seed_article(sink.engine, "manual_1", "manual", content_type="manual_entry")
+    registry_meta = {meta["id"]: meta for meta in fetcher_registry.get_all_metadata()}
+    with Session(sink.engine) as session:
+        before = reader_defaults.candidate_sources(session, registry_meta)
+    _reconcile(sink.engine)
+    with Session(sink.engine) as session:
+        source_rows.ensure_source_row(session, "web_pushed", origin="agent", admission_status="provisional")
+        session.commit()
+        after = reader_defaults.candidate_sources(session, registry_meta)
+        unknown = reader_defaults.unknown_source_ids(
+            session, ["manual", "x_openrouter", "web_pushed", "rss_simonwillison", "dorami_daily_brief"],
+            registry_meta,
+        )
+    assert after == before
+    assert unknown == ["manual", "x_openrouter", "web_pushed"]

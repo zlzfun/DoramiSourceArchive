@@ -87,6 +87,24 @@ def set_default_source_ids(session: Session, source_ids: Optional[Iterable[Any]]
     return normalized
 
 
+def _defaultable_config_row(row: SourceConfigRecord) -> bool:
+    """可进默认订阅名单的公共配置行。
+
+    issue #262 R1c 起源表是全集:已下线源墓碑、只在归档 / 订阅里出现的回填行(``legacy``)、
+    公共日报系统行与 Agent 收录建的临时源也都有行——它们以前「查不到行」所以被拒,现在要显式排除,
+    合法域与重构前相同(公共日报另行放行)。
+    """
+    if row.owner_username or row.source_id.startswith(PRIVATE_SOURCE_PREFIX):
+        return False
+    if row.retired_at:
+        return False
+    if (row.origin or "") in {"legacy", "system"}:
+        return False
+    if (row.admission_status or "") == "provisional":
+        return False
+    return True
+
+
 def unknown_source_ids(
     session: Session, source_ids: Iterable[str], registry_meta: Dict[str, Dict[str, Any]]
 ) -> List[str]:
@@ -103,7 +121,7 @@ def unknown_source_ids(
         for row in session.exec(
             select(SourceConfigRecord).where(SourceConfigRecord.source_id.in_(ids))
         ).all()
-        if not row.owner_username
+        if _defaultable_config_row(row)
     }
     unknown: List[str] = []
     for source_id in ids:
@@ -140,7 +158,7 @@ def candidate_sources(
         seen.add(source_id)
         items.append({"source_id": source_id, "name": str(meta.get("name") or source_id)})
     for row in session.exec(select(SourceConfigRecord).order_by(SourceConfigRecord.source_id)).all():
-        if row.owner_username or row.source_id.startswith(PRIVATE_SOURCE_PREFIX) or row.source_id in seen:
+        if not _defaultable_config_row(row) or row.source_id in seen:
             continue
         seen.add(row.source_id)
         items.append({"source_id": row.source_id, "name": str(row.name or row.source_id)})
