@@ -273,7 +273,7 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
                           ) : (
                             <>
                               {item.admission_status === 'provisional' && !item.hidden && (
-                                <button type="button" className="rowact-btn" title={`列入 ${item.name}(进入发现目录,观察期)`} onClick={() => handleSourceAction(item, 'admit', `已列入 ${item.name}`)}>
+                                <button type="button" className="rowact-btn" title={`列入 ${item.name}(读者发现页可见,观察期)`} onClick={() => handleSourceAction(item, 'admit', `已列入 ${item.name} · 读者发现页可见`)}>
                                   <ListPlus />
                                 </button>
                               )}

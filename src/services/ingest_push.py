@@ -63,6 +63,10 @@ SHAPE_BY_KIND = {
 _SHAPE_LABEL = {"article": "文章源", "social": "社交源", "podcast": "播客源"}
 _KIND_LABEL = {"article": "文章", "social_post": "社交帖", "podcast_episode": "播客单集"}
 
+# 社交平台主机只收社交帖:x.com/<账号>/status/… 若按 kind=article 推进来,会在该账号的社交源旁边
+# 另建一个网页临时源(目检发现的 web_x_com_openai),同一出处两个源;要求调用方按 social_post 推。
+SOCIAL_ONLY_HOSTS = frozenset({"x.com", "twitter.com", "mobile.twitter.com"})
+
 # 多租户主机:一个主机上住着许多互不相干的作者,按「主机 + 首段路径」建源(github.com/openai)。
 # 一作者一子域的平台(substack、blogspot 等)按主机即可,不在名单里。
 MULTI_TENANT_HOSTS = frozenset({
@@ -221,6 +225,11 @@ def _host(url: str) -> str:
     except ValueError:
         return ""
     return host
+
+
+def _social_only_host(url: str) -> bool:
+    host = _host(url)
+    return (host[4:] if host.startswith("www.") else host) in SOCIAL_ONLY_HOSTS
 
 
 def _site_key(url: str) -> str:
@@ -449,6 +458,10 @@ def _unique_new_id(ctx: BatchContext, base: str) -> str:
 
 
 def resolve_source(ctx: BatchContext, kind: str, source: dict[str, Any], *, item_url: str = "") -> ResolvedSource:
+    if kind != "social_post":
+        for candidate in (item_url, source.get("url"), source.get("site"), source.get("feed_url")):
+            if _social_only_host(str(candidate or "")):
+                raise IngestRejected("x.com / twitter.com 的链接只收社交帖,请按 kind=social_post 推送")
     explicit = str(source.get("source_id") or "").strip()
     if explicit:
         view = source_catalog.get(ctx.session, explicit)

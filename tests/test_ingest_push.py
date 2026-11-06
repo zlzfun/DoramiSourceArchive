@@ -601,7 +601,7 @@ def test_push_kind_must_match_target_source_shape(monkeypatch, tmp_path):
              "author": {"handle": "someone"}, "source": {"source_id": "web_anthropic_news"}},
             {"kind": "podcast_episode", "title": "EP", "guid": "ep-x", "audio_url": "https://cdn.t/ep.mp3",
              "source": {"source_id": "rss_anil_dash"}},
-            # x.com 账号下的链接以文章推送:不落进该账号的社交源。
+            # x.com 账号下的链接以文章推送:既不落进该账号的社交源,也不另建网页临时源——直接拒收。
             {"kind": "article", "url": "https://x.com/OpenAI/status/1990000000000000102", "title": "转成文章"},
             # 播客单集给了文章 RSS 的 feed:不落进 RSS 源,另建临时播客源。
             {"kind": "podcast_episode", "title": "EP2", "guid": "ep-2", "audio_url": "https://cdn.t/ep2.mp3",
@@ -614,8 +614,8 @@ def test_push_kind_must_match_target_source_shape(monkeypatch, tmp_path):
     assert results[0]["reason"] == "该来源是社交源,不收文章"
     assert results[1]["reason"] == "该来源是文章源,不收社交帖"
     assert results[2]["reason"] == "该来源是文章源,不收播客单集"
-    assert results[3]["status"] == "created" and results[3]["source_id"] != "x_openai"
-    assert _row(sink.engine, SourceConfigRecord, results[3]["source_id"]).shape == "article"
+    assert results[3]["status"] == "rejected" and "社交帖" in results[3]["reason"], results[3]
+    assert _row(sink.engine, SourceConfigRecord, "web_x_com_openai") is None
     assert results[4]["status"] == "created" and results[4]["source_id"].startswith("podcast_")
     assert (results[5]["status"], results[5]["source_id"]) == ("created", "x_openai")
 

@@ -69,8 +69,9 @@
 2. 社交:身份键 `x:user_id:…` 优先、`x:handle:…`(小写)次之——命中预设(如 `Kimi_Moonshot` →
    `x_moonshot_ai`)、配置源或此前建的临时源;都不中则建 `x_<handle>`。
 3. 网页:`feed_url` 规范地址 → 已有 RSS 源;条目 / 站点链接按「主机 + 路径前缀」匹配已有源
-   (`anthropic.com/news/*` → `web_anthropic_news`);形态不同的源不算命中、继续往下找(`x.com/<账号>/…`
-   的文章不落进该账号的社交源);前缀不中时,该主机上恰好一个形态相同的已有源就认它(策展源常登记
+   (`anthropic.com/news/*` → `web_anthropic_news`);形态不同的源不算命中、继续往下找;x.com /
+   twitter.com 的链接只收 `social_post`,按文章推直接拒收(不另建网页临时源,避免同一账号两个源);
+   前缀不中时,该主机上恰好一个形态相同的已有源就认它(策展源常登记
    分类页或 feed 地址,如 `openai.com/news/rss.xml`,文章链接不在前缀下;多个候选、单页文档类源、
    多租户主机不兜底);都不中则按站点建 `web_<host>`。多租户主机
    (github.com、medium.com、huggingface.co、youtube.com、arxiv.org 等)按「主机 + 首段路径」建

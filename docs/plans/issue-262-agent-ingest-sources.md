@@ -265,7 +265,7 @@
 - 推送端点 `POST /api/public/ingest/v1/items`(放在 `/api/public/*` 下,沿用令牌鉴权、免会话的既有门控);契约全文 [`docs/contracts/ingest_push.md`](../contracts/ingest_push.md)。
 - 收录令牌 `ding_`(HMAC hash、actor、日额度);管理面「运维 → 自定源与收录 → 收录」签发 / 吊销,收录源列表与 列入 / 下架 / 恢复 / 改名;推送与管理操作都入审计(推送记在 `ingest:<actor>` 名下)。临时源生命周期到此为止,不设绑定采集(用户 2026-11-06 拍板,见 §5.2)。
 - 身份解析:显式 id → X 身份键(`user_id` 优先)→ feed 规范地址 → 主机 + 路径前缀;都不中建临时源(`origin=ingest`、`admission_status=provisional`),多租户主机按「主机 + 首段路径」。身份键表 `source_identity_keys` 由 R1c 迁移建出。
-- 条目 id 与抓取器同一公式;先推后抓时抓取器公式不同的,存储层按「同源同链接的收录条目」合流(补检 A,见重构方案 §12);目标源形态须与 `kind` 一致(补检 B);跨源 URL 去重返回 `duplicate_url` 并写收录记录 `article_picks`;条目来路 `articles.ingest_channel / ingest_actor`(push / manual / import;迁移 `e2a9c4f7b183`,不随同步导出)。
+- 条目 id 与抓取器同一公式;先推后抓时抓取器公式不同的,存储层按「同源同链接的收录条目」合流(补检 A,见重构方案 §12);目标源形态须与 `kind` 一致(补检 B;目检后补:x.com / twitter.com 链接只收社交帖,按文章推拒收,不另建网页临时源);跨源 URL 去重返回 `duplicate_url` 并写收录记录 `article_picks`;条目来路 `articles.ingest_channel / ingest_actor`(push / manual / import;迁移 `e2a9c4f7b183`,不随同步导出)。
 - 临时源的下游策略:发现目录与批量订阅不列(`listing=unlisted`,源栏「收录」组);早报重大事件多源印证、榜单「必读」来源数、事件榜发布主体数不计入;公共日报候选池默认排除;播客全文处理(付费 ASR)自动入队排除,读者点播随之挡住。
 - 没做:`kind_hint` 来自服务端规则——推送的 `content_type` 由 `kind` 决定(`web_article` / `social_post` / `podcast_episode`),调用方不可写,等价于此;「收录」读者视图(§5.3 可选)与别名合并(波 3)留待后续。
 
