@@ -397,6 +397,41 @@ def test_non_image_response_fails_with_cooling(tmp_path, monkeypatch):
         assert "不是图片" in record.last_error
 
 
+@pytest.mark.parametrize("body", [
+    # issue #264 实拍:网易订阅 CDN 以 image/png 头返回 194 字节 data URL 文本
+    b"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+    b"<html><body>404</body></html>",
+])
+def test_image_content_type_header_alone_never_caches(tmp_path, monkeypatch, body):
+    """入缓存只认文件内容(issue #264):响应头说 image/* 而内容认不出 → 负缓存,不落盘。"""
+    monkeypatch.setattr(ms, "_resolve_is_public", _public_ok)
+    engine = _sink(tmp_path).engine
+    calls = []
+    store = _store(engine, tmp_path, _counting_transport(calls, body=body, content_type="image/png"))
+    url = "http://dingyue.ws.126.net/2026/0710/a85abdb0j00thyd5g001qd000u000bwm.jpg"
+
+    assert asyncio.run(store.get_or_fetch(url)) is None
+    with Session(engine) as session:
+        record = session.get(MediaAssetRecord, url_hash_of(url))
+        assert record.status == "failed" and "不是图片" in record.last_error
+    assert not any(store.root.rglob("*.png"))
+
+
+def test_content_decides_mime_even_when_header_disagrees(tmp_path, monkeypatch):
+    """真图配错头照样缓存,MIME / 扩展名取内容嗅探结果——与同步接收端同一口径。"""
+    monkeypatch.setattr(ms, "_resolve_is_public", _public_ok)
+    engine = _sink(tmp_path).engine
+    calls = []
+    store = _store(engine, tmp_path, _counting_transport(calls, content_type="application/octet-stream"))
+
+    record = asyncio.run(store.get_or_fetch("https://cdn.example.com/a.jpg"))
+    assert record is not None and record.mime == "image/png" and record.ext == ".png"
+    body = store.file_path_for(record).read_bytes()
+    assert ms.validate_synced_image(
+        body, declared_mime=record.mime, declared_ext=record.ext, max_bytes=len(body),
+    ) == ("image/png", ".png")
+
+
 def test_http_error_and_size_cap_fail(tmp_path, monkeypatch):
     monkeypatch.setattr(ms, "_resolve_is_public", _public_ok)
     engine = _sink(tmp_path).engine

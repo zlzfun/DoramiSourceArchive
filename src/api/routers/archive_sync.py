@@ -13,6 +13,7 @@ deps.get_db_sink()。
 from api.storage_response import StorageFileResponse
 import hashlib
 import hmac
+import functools
 import importlib
 import json
 import logging
@@ -441,10 +442,26 @@ def export_archive_v2_jsonl(
             podcast_text_page_max_bytes=_podcast_config().text_sync_page_max_bytes,
             podcast_text_page_max_rows=_podcast_config().text_sync_page_max_rows,
             podcast_text_requested_page_max_bytes=page_max_bytes,
+            media_check=_media_export_check() if stream == "media" else None,
         )
     except archive_sync_v2.SyncV2Error as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return Response(content=body, media_type="application/x-ndjson; charset=utf-8")
+
+
+def _media_export_check():
+    """manifest 只列二进制端点供得出、且接收端会认的图片(issue #264)。
+
+    媒体库关闭时二进制端点一律 404,列出来只会让接收端整流失败,故全部跳过。
+    """
+    store = getattr(importlib.import_module("api.app"), "media_store", None)
+    if store is None:
+        return lambda _record: archive_sync_v2.MEDIA_EXPORT_UNAVAILABLE
+    return functools.partial(
+        archive_sync_v2.media_export_verdict,
+        media_root=store.root,
+        object_storage=getattr(store, "object_storage", None),
+    )
 
 
 @router.post("/api/archive/v2/candidate-evidence.jsonl")

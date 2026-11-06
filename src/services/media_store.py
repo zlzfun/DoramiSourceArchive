@@ -166,8 +166,19 @@ def extract_image_urls(
     return list(dict.fromkeys(resolved for u in seen if (resolved := resolve_image_url(u, source_url))))
 
 
-def _sniff_image_mime(head: bytes, content_type: str) -> Optional[str]:
-    """魔数优先判定图片 MIME；魔数不识时信任 image/* 响应头；都不是则 None。"""
+# 缓存与同步共用的嗅探窗口：本地入缓存与接收端校验必须看同样多的字节，判定才一致。
+SNIFF_HEAD_BYTES = 512
+
+
+def _sniff_image_mime(head: bytes) -> Optional[str]:
+    """只凭文件内容判定图片 MIME；认不出即 None。
+
+    不信任响应头（issue #264）：网易订阅 CDN 曾以 ``Content-Type: image/png`` 返回
+    194 字节的 ``data:image/png;base64,…`` 文本，旧逻辑据头入缓存，读者看到裂图，
+    同步接收端（只认内容）拒收，整条媒体流卡死。入缓存口径 = 同步接收口径。
+    本函数同时是同步接收端的判定，**只能收紧不能放宽**：导出端按它自检，
+    一旦比旧版接收端宽松，混版本窗口里旧接收端又会被卡住。
+    """
     for magic, mime in _MAGIC_SNIFF:
         if head.startswith(magic):
             return mime
@@ -178,9 +189,6 @@ def _sniff_image_mime(head: bytes, content_type: str) -> Optional[str]:
     stripped = head.lstrip()[:64].lower()
     if stripped.startswith((b"<?xml", b"<svg")):
         return "image/svg+xml"
-    normalized = (content_type or "").split(";")[0].strip().lower()
-    if normalized.startswith("image/"):
-        return normalized
     return None
 
 
@@ -195,7 +203,7 @@ def validate_synced_image(
 
     if not body or len(body) > max(1, int(max_bytes)):
         raise ValueError("同步媒体为空或超过大小上限")
-    sniffed = _sniff_image_mime(body[:512], "")
+    sniffed = _sniff_image_mime(body[:SNIFF_HEAD_BYTES])
     if sniffed is None:
         raise ValueError("同步媒体不是可识别的图片")
     normalized_mime = (declared_mime or "").split(";", 1)[0].strip().lower()
@@ -548,7 +556,7 @@ class MediaStore:
                             return await asyncio.to_thread(self._mark_failed, url, key, "超出大小上限")
                         chunks.append(chunk)
                     body = b"".join(chunks)
-                    mime = _sniff_image_mime(body[:64], response.headers.get("content-type", ""))
+                    mime = _sniff_image_mime(body[:SNIFF_HEAD_BYTES])
             if browser_fallback:
                 if not await asyncio.to_thread(self._is_article_image, url):
                     return await asyncio.to_thread(self._mark_failed, url, key, "HTTP 403；图片未被文章引用")
@@ -564,7 +572,7 @@ class MediaStore:
                     return await asyncio.to_thread(self._mark_failed, url, key, "HTTP 403；浏览器取图未成功")
                 if len(body) > self.max_bytes:
                     return await asyncio.to_thread(self._mark_failed, url, key, "超出大小上限")
-                mime = _sniff_image_mime(body[:64], "")
+                mime = _sniff_image_mime(body[:SNIFF_HEAD_BYTES])
             if not body or mime is None:
                 return await asyncio.to_thread(self._mark_failed, url, key, "响应不是图片")
         except httpx.HTTPError as exc:

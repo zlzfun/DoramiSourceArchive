@@ -11,6 +11,8 @@
 
 ## 年表(一行一波;自 `CLAUDE.md` 迁入 2026-10-21,**新波次在此加一行**,L0 不再逐波改)
 
+- **媒体流坏图解卡(issue #264,2026-11-06,开发版 3.67.5-alpha,待检视)**:网易订阅 CDN 以 `image/png` 头返回的 194 字节 data URL 文本曾被下载器据响应头缓存成 PNG,同步接收端只认内容而拒收,整条 media 流及其后三条流反复卡在同一页。三层修:入缓存只认内容(与接收端同一 512 字节嗅探)、导出端 `media_export_verdict` 自检(内容不符标 failed 跳过、字节供不出只跳过)、接收端校验和对上但非图片时单条拒收记 failed 并计「跳过」。协议零变化,任一端单独升级都能解卡。[方案](plans/issue-264-media-sync-sniff.md)。
+
 - **节点同步控制台(issue #261,2026-11-05,开发版 3.67.5-alpha,PR #265 合入、待发布)**:Archive Sync 从「设置 → 数据同步」迁到运维新页「节点同步」(`#/admin/sync`,样页方向 A 流水线):9 流 + 回传分组阶段线(当前流进度 / 失败流与页)· 运行记录 · 连接与定时 · 逐流 / 运行 / 高危抽屉(重置单流、重放分析流、v1 兼容导入导出)、首页 S 磁贴;外网每流首页 manifest 附 `pending`、`sources` 首页附 `pending_by_stream`(附加字段,老接收端忽略),接收端进度带 `stream_total` / `page` / `streams_done`;新增 `GET /api/admin/remote-sync/inventory`、`POST /api/admin/remote-sync/streams/{stream}/reset`,status 带 `console` 块。只读本机、页面不探测远端,出网请求种类与字段不变。[方案](archive/issue-261-sync-console.md)。
 
 - **运维管理信息架构重设计(issue #114,PR #260,2026-11-04 目检放行、已合入待发布)**:五档 segmented 平铺 → **首页即目录**(不等大 bento 磁贴,样页 v4「A 精修」)+ **8 个满幅功能页**(面包屑横切、`#/admin/<页>/<板块>` 深链落位);新增只读聚合端点 `GET /api/admin/home`(逐日活跃账户 / 窗口内各源阅读 / 回填失败汇总,用户拍板突破原「不改后端」边界);`AdminOpsTab.jsx` 1603 行拆成外壳 + `admin/pages/*`;顺修 AI 用途缺「事件·归并」、播客 `<strong>` 字重 900、开关板标签折行、X API 超预算数字不变红。样页 `docs/design/issue-114-admin-ia/`,方案 `docs/archive/issue-114-admin-ia.md`。
@@ -704,3 +706,12 @@ Buzzsprout 的单词级 JSON 原先每个词单独换行并重复说话人。阅
 **后端**:`archive_sync_v2.export_page` 首页(`after` 为空)附 `pending` = `(since, snapshot]` 内将导出的行数(非媒体流按实体状态计,tombstone 也是一行;media 为候选数),`sources` 首页另附 `pending_by_stream`(不含 taxonomy / media——媒体计数要全量扫公共正文引用)。`remote_sync.run_pull_v2` 进度多报 `order` / `stream_total` / `page` / `stream_started_at` / `streams_done`(checkpoint 落定后才记完成)/ `run_pending`,`result.streams[*]` 带起止时间与分母;失败任务没有 result,失败流与页从进度读。测试连接以目标 sources checkpoint 为 `since`(每次同步本就发出的翻页参数;生产端回滚导致 since 超前时退回空 since),结果落 KV `remote_sync:probes` 供页头常驻显示。新模块 `services/sync_console.py`:status 的 `console` 块、本机条数 inventory、单流重置(与 #178 自动重放分析流同一做法推广到任一流:清 checkpoint + 该 authority 的逐行记账,taxonomy 只清 checkpoint;运行中 409;入审计)、首页摘要。实现方 Claude Code(Opus 5.5;后端主会话、前端子代理),检视方 Codex(见方案 §6)。
 
 **目检追问**:用户问「如何确定某端是接收端还是发送端」,本意是节点不分角色。代码本无角色配置(每台都开导出、配了来源的那台在拉),页面去掉「接收端 / 生产端」措辞;首次 v2 同步与启用 v2 定时会让本机进入 consumer 模式(公共源采集与分析停止、界面不可撤回),补确认框 / 二次确认。「被拉取」视图维持不做;协议层「中转 / 互拉 / 多来源」另议 #263,联调发现的坏图导出另开 #264。
+
+## 媒体流坏图解卡(issue #264,2026-11-06 起,版本号以实际发版为准)
+
+**为什么**:#261 双栈联调(开发副本 → 空库)图片流第 1 页报「同步媒体不是可识别的图片」,之后每次同步都卡在这里,`podcast_texts` / `podcast_audio` / `source_states` 跟着饿死。开发副本 16 条坏图全是网易订阅 CDN 2026-07-20 四秒内入库、共用一个 194 字节 CAS 文件,内容是 `data:image/png;base64,…` 文本、响应头 `image/png`:下载器魔数认不出时信任 `image/*` 头,接收端只认内容。1759 条 cached 里靠响应头兜底入缓存的只有这 16 条。
+
+**设计取舍**:① 下载器去掉响应头兜底,与接收端同一 `SNIFF_HEAD_BYTES = 512` 窗口;判定函数只能收紧不能放宽(导出端按它自检,放宽会在混版本窗口卡旧接收端)。② 导出端逐候选判 `ok / invalid / unavailable`:内容不符或不能安全寻址 → 跳过并条件更新本地行为 failed(读者端随之回源、冷却后按新口径重下);缺文件且无 OSS / 大小不符 / 媒体库关闭 → 只跳过不改行;OSS 冷副本信任不验头。凑满 limit 才停,游标取最后导出行,无「空且未完」页。③ 接收端评估后认定与「一页一事务」不冲突(事务只含元数据,二进制本就逐条在事务外装、checkpoint 等全部二进制处理完才前进):只在校验和 / 大小已对上而内容非图片时单条拒收(`SyncV2MediaRejected`),同 revision 重放直接判拒不重下,权威改版照常重发;校验和不符、超本机上限、他人权威、音频流仍整页失败。不写存量修复脚本,生产只读统计待用户授权。
+
+**自测**:新 `tests/test_media_sync_export_check.py` 9 例 + `test_sync_binary_reuse` / `test_media_store` 增改,三组反向对照在旧代码上失败;开发副本真实数据:导出首轮 1722 候选 → 1706 导出、16 标 failed,次轮 1706 / 1706(约 0.5 s);进程内整流拉取新导出端 9 流全完成、1706 cached;混版本(无检查导出端 → 新接收端)9 流全完成、16 条拒收计跳过。实现方 Claude Code(Opus 5.5),检视方 Codex(见方案 §7)。
+
