@@ -11,7 +11,14 @@ import {
 import { useConfirm } from '../../hooks/useConfirm';
 
 const fmtNum = (n) => Number(n || 0).toLocaleString();
-const fmtTime = (value) => (value ? String(value).slice(0, 16).replace('T', ' ') : '–');
+// 令牌时间存的是带时区的 UTC(…+00:00),条目入库时间是不带时区的本地时间;统一按本地时间显示。
+const pad2 = (n) => String(n).padStart(2, '0');
+const fmtTime = (value) => {
+  if (!value) return '–';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 16).replace('T', ' ');
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+};
 const SHAPE_LABEL = { article: '文章', social: '社交', podcast: '播客' };
 
 /**
