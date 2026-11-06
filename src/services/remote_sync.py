@@ -1459,10 +1459,12 @@ def record_v2_stream_success(
     target.update(
         {"username": username, "last_synced_at": synced_at, "v2_streams": streams}
     )
-    if (
+    if stream == "sources" and checkpoint.get("source_projection") != archive_sync_v2.SOURCE_PROJECTION_CATALOG:
+        # 这一轮实际按 legacy 完成(外网中途回滚等):撤销就绪,下轮准备必然重放(检视复检 #2)。
+        target.pop("v2_source_catalog_ready_at", None)
+    elif (
         stream == "sources"
         and target.get("v2_source_projection") == archive_sync_v2.SOURCE_PROJECTION_CATALOG
-        and checkpoint.get("source_projection") == archive_sync_v2.SOURCE_PROJECTION_CATALOG
         and not target.get("v2_source_catalog_ready_at")
     ):
         # 切换后的第一次 sources 流完成 = catalog-v1 全量重放完成。

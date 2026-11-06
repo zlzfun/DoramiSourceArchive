@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import math
 import hmac
 import json
 import re
@@ -374,9 +375,11 @@ def _check_target(ctx: BatchContext, source_id: str) -> None:
 def _unique_new_id(ctx: BatchContext, base: str) -> str:
     candidate = base
     suffix = 2
+    planned_ids = {resolved.source_id for resolved in ctx.planned.values()}
     while (
         ctx.session.get(SourceConfigRecord, candidate) is not None
         or source_catalog.registry_view(candidate) is not None
+        or candidate in planned_ids
     ):
         candidate = f"{base}_{suffix}"
         suffix += 1
@@ -404,7 +407,14 @@ def resolve_source(ctx: BatchContext, kind: str, source: dict[str, Any], *, item
         handle_conflict = False
         for key in keys:
             if key in ctx.planned:
-                return ctx.planned[key]
+                planned = ctx.planned[key]
+                planned_users = {
+                    k for k in planned.hint.get("identity_keys", []) if ":user_id:" in k
+                }
+                if user_key and key != user_key and planned_users - {user_key}:
+                    handle_conflict = True  # 同批里同 handle、不同稳定 user_id(检视复检 #5)
+                    continue
+                return planned
             hit = ctx.x_index.get(key) if platform == "x" else _existing_identity(ctx.session, key)
             if hit and user_key and key != user_key and _known_user_ids(ctx, platform, hit) - {user_key}:
                 # handle 命中的源登记过另一个稳定 user_id:账号改名后旧 handle 被他人接手,
@@ -420,6 +430,7 @@ def resolve_source(ctx: BatchContext, kind: str, source: dict[str, Any], *, item
         derived_exists = (
             ctx.session.get(SourceConfigRecord, derived) is not None
             or source_catalog.registry_view(derived) is not None
+            or derived in {resolved.source_id for resolved in ctx.planned.values()}
         )
         if derived_exists and handle_conflict:
             derived = _unique_new_id(ctx, derived)
@@ -522,9 +533,11 @@ def item_id_for(kind: str, source_id: str, item: dict[str, Any], *, prefix: str 
             raise IngestRejected("社交帖需要 post_id")
         return f"{prefix}_{post_id}"
     if kind == "podcast_episode":
-        stable = str(item.get("guid") or item.get("audio_url") or "").strip()
+        # 与 podcast_rss_fetcher._entry_id 同序:feed 条目 id / guid,其次单集链接。两样都没有时
+        # 抓取器改用「音频地址 + 发布时间」组合,推送复刻不稳,所以要求二者给一(检视复检 #6)。
+        stable = str(item.get("guid") or item.get("url") or "").strip()
         if not stable:
-            raise IngestRejected("播客单集需要 guid 或音频地址")
+            raise IngestRejected("播客单集需要 guid 或单集链接")
         return f"{prefix}_{_sha16(stable)}"
     stable = str(item.get("guid") or item.get("url") or "").strip()
     if not stable:
@@ -554,7 +567,13 @@ def _extensions(kind: str, raw: Any) -> dict[str, Any]:
                 raise IngestRejected(f"extensions.{key} 必须是字符串列表")
             out[key] = [str(v).strip() for v in value if str(v).strip()][:50]
         elif key in _INT_EXTENSION_KEYS:
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value < 0
+                or value > 1_000_000
+            ):
                 raise IngestRejected(f"extensions.{key} 必须是非负整数")
             out[key] = int(value)
         else:

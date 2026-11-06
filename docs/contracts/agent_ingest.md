@@ -75,8 +75,10 @@
 ## 条目 id 与去重
 
 - 与抓取器同一公式:社交 `{source_id}_{post_id}`;文章 `{source_id}_{sha1(guid 或 url)[:16]}`;
-  播客 `{source_id}_{sha1(guid 或 audio_url)[:16]}`。Agent 先推、抓取器后抓(或反之)天然合流。
-- 同一链接已在**别的源**里:不新建,返回 `duplicate_url` 与已有条目 id,只记一条收录记录。
+  播客 `{前缀}_{sha1(guid 或单集链接 url)[:16]}`(前缀 = 收养过的播客源的 `entry_id_namespace`,否则
+  `source_id`;**feed 里有 guid 就带上**,两样都没有的单集拒收)。Agent 先推、抓取器后抓(或反之)天然合流。
+- 文章与社交帖:同一链接已在**别的源**里 → 不新建,返回 `duplicate_url` 与已有条目 id,只记一条收录记录;
+  同一个源里已有同链接的条目(id 公式不同)→ 返回 `duplicate`。播客单集常共用节目页链接,不按链接去重。
 
 ## 回执
 

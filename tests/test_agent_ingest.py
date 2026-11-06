@@ -422,3 +422,61 @@ def test_review_fixes_identity_dedupe_and_payload(monkeypatch, tmp_path):
         pod = json.loads(session.get(ArticleRecord, results[7]["id"]).extensions_json)
         assert (pod["episode"], pod["season"]) == (9, 2)
         assert session.exec(select(ArticleRecord).where(ArticleRecord.source_id == "podcast_adopted")).all()[0].id == adopted_id
+
+
+def test_rereview_fixes_batch_identity_podcast_ids_and_numbers(monkeypatch, tmp_path):
+    """检视复检:批内同 handle 不同 user_id、播客与抓取器同公式、同节目页不并单集、溢出数值。"""
+    import hashlib
+
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as client:
+        _login(client)
+        token = _issue_token(client)
+        results = _push(client, token, [
+            {"kind": "social_post", "post_id": "1", "author": {"handle": "sharedname", "user_id": "222"}},
+            {"kind": "social_post", "post_id": "2", "author": {"handle": "sharedname", "user_id": "333"}},
+            {"kind": "podcast_episode", "guid": "g-1", "url": "https://show.example.com/",
+             "audio_url": "https://cdn.show.example.com/1.mp3", "source": {"feed_url": "https://show.example.com/feed"}},
+            {"kind": "podcast_episode", "guid": "g-2", "url": "https://show.example.com/",
+             "audio_url": "https://cdn.show.example.com/2.mp3", "source": {"feed_url": "https://show.example.com/feed"}},
+            {"kind": "podcast_episode", "audio_url": "https://cdn.show.example.com/3.mp3",
+             "source": {"feed_url": "https://show.example.com/feed"}},
+        ]).json()["results"]
+        # 合法 JSON 数值 1e309 解析成 inf:单条拒收,整批照常回执(TestClient 的编码器发不出 inf,直接发原文)。
+        overflow = client.post(
+            "/api/public/ingest/v1/items",
+            content='{"items":[{"kind":"podcast_episode","guid":"g-9","audio_url":"https://c/9.mp3",'
+                    '"source":{"feed_url":"https://show.example.com/feed"},"extensions":{"episode":1e309}},'
+                    '{"kind":"article","url":"https://n.example.com/ok"}]}',
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        )
+        assert overflow.status_code == 200
+        assert [r["status"] for r in overflow.json()["results"]] == ["rejected", "created"]
+    s = [(r["status"], r.get("source_id")) for r in results]
+    assert s[0][0] == s[1][0] == "created" and s[0][1] != s[1][1]
+    assert s[2][0] == s[3][0] == "created" and results[2]["id"] != results[3]["id"]
+    # 与 podcast_rss_fetcher._entry_id 同公式:guid 优先。
+    assert results[2]["id"] == f"{s[2][1]}_" + hashlib.sha1(b"g-1").hexdigest()[:16]
+    assert s[4][0] == "rejected" and "guid" in results[4]["reason"]
+
+
+def test_ready_is_revoked_when_a_later_sources_run_is_legacy(tmp_path):
+    from services import archive_sync_v2, remote_sync
+    from storage.impl.db_storage import DatabaseStorage
+
+    consumer = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'revoke.db'}")
+    base_url = "https://authority.test"
+    caps = [*archive_sync_v2.REQUIRED_CAPABILITIES, archive_sync_v2.SOURCE_CATALOG_CAPABILITY]
+    with Session(consumer.engine) as session:
+        remote_sync.prepare_transaction_revision_consumer(
+            session, base_url=base_url, username="sync", authority_id="authority-1",
+            schema_version=archive_sync_v2.SCHEMA_VERSION, prepared_at=_NOW, capabilities=caps,
+        )
+        session.commit()
+    for projection, expected in (("catalog-v1", True), ("legacy", False)):
+        remote_sync.record_v2_stream_success(
+            consumer.engine, base_url=base_url, username="sync", stream="sources",
+            checkpoint={"snapshot": "9", "authority_id": "authority-1", "source_projection": projection},
+            synced_at=_NOW,
+        )
+        assert remote_sync.source_catalog_ready(consumer.engine) is expected

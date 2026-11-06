@@ -148,7 +148,7 @@ async def push_items(batch: IngestBatch, request: Request):
             content = agent_ingest.build_content(
                 item.kind, resolved.source_id, payload, id_prefix=id_prefix
             )
-        except (agent_ingest.IngestRejected, ValueError, TypeError) as exc:
+        except (agent_ingest.IngestRejected, ValueError, TypeError, OverflowError) as exc:
             # 单条载荷问题只拒收这一条;整批照常回执、末尾审计照常执行(实现检视 R1 #12)。
             results.append({**base, "status": "rejected", "reason": str(exc), "source_id": resolved.source_id})
             continue
@@ -160,7 +160,9 @@ async def push_items(batch: IngestBatch, request: Request):
         with Session(db_sink.engine) as session:
             existing = session.get(ArticleRecord, content.id)
             duplicate = None
-            if existing is None:
+            # 链接即身份只对文章与社交帖成立;播客单集常共用节目页链接,只认单集身份(guid / 单集
+            # 链接 → 条目 id),否则会把同节目的不同单集并成一条(检视复检新 P1)。
+            if existing is None and item.kind != "podcast_episode":
                 duplicate = agent_ingest.existing_article_by_url(session, content.source_url)
             if duplicate is not None:
                 # 同一链接已在库里:别的源 → duplicate_url;同一个源但条目 id 公式不同(抓取器按
