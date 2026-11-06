@@ -14,7 +14,7 @@ import { askReaderAi, fetchAskProgress } from '../api';
 import { displayTitle } from '../utils/titleDisplay';
 import { useTitlePreference } from '../hooks/useTitlePreference';
 import { podcastOf } from '../utils/podcast';
-import { qaBasisLabel, qaEvidence } from '../utils/qaEvidence';
+import { qaBasisLabel, qaEvidence, qaExcerptPreview, qaHistory, qaReferenceGroups } from '../utils/qaEvidence';
 
 // 阅读器 AI 问答浮层(v3.32 方案 A 重设计,样页 docs/design/dorami-ask-quiet.html):
 // 常态收起于右下角 FAB,点击展开。读者问句保留右缘 wash 胶囊,哆啦美的回答**去框化**
@@ -176,19 +176,35 @@ function PendingBlock({ scope, progress, podcast }) {
   );
 }
 
-function SourceEvidence({ source }) {
+function EvidenceExcerpt({ item }) {
+  const [expanded, setExpanded] = useState(false);
+  const preview = qaExcerptPreview(item.text, 240);
+  return (
+    <>
+      <blockquote>{expanded ? item.text : preview.text}</blockquote>
+      {preview.truncated && (
+        <button type="button" className="reader-ai-evidence-toggle tiny-meta" aria-expanded={expanded}
+          onClick={() => setExpanded(!expanded)}>
+          {expanded ? '收起原文' : '预览未显示全部，展开余下原文'}
+        </button>
+      )}
+    </>
+  );
+}
+
+function SourceEvidence({ source, initiallyOpen = false }) {
   const evidence = qaEvidence(source);
   const basis = qaBasisLabel(source);
   if (!evidence.length) {
     return basis ? <div className="reader-ai-evidence-basis tiny-meta">依据：{basis}</div> : null;
   }
   return (
-    <details className="reader-ai-evidence">
-      <summary className="tiny-meta">查看依据{basis ? `（${basis}）` : ''}</summary>
+    <details className="reader-ai-evidence" open={initiallyOpen || undefined}>
+      <summary className="tiny-meta">查看参考原文{basis ? `（${basis}）` : ''}</summary>
       {evidence.map((item, index) => (
         <div className="reader-ai-evidence-item" key={index}>
           <div className="tiny-meta">{item.label}{evidence.length > 1 ? ` · 片段 ${index + 1}` : ''}</div>
-          <blockquote>{item.text}</blockquote>
+          <EvidenceExcerpt item={item} />
         </div>
       ))}
     </details>
@@ -196,9 +212,7 @@ function SourceEvidence({ source }) {
 }
 
 // 单轮回答:去框正文 + 行内引用 + 末尾出处列表(sources 确定性渲染)。
-// 出处列表只列**回答里真正引用过**的文章(行内 [n] 标记为准,保留原编号与 chip 对应):
-// 检索是宽召回,注入上下文的不等于支撑了回答,弱相关文章照单全列会稀释出处的可信度;
-// 回答通篇无标记时退回列全量(此时「参考」而非「引用」,文案随之切换)。
+// 引用与补充参考分开呈现；未引用来源仍可展开，不能假装支持了答案。
 function AnswerBlock({ turn, onOpenRef }) {
   // 引用标题随「默认显示中文标题」(issue #218):出处带 title_zh 时按偏好选,缺字段即原题
   const { preferChinese } = useTitlePreference();
@@ -211,45 +225,38 @@ function AnswerBlock({ turn, onOpenRef }) {
       onCite: (n) => onOpenRef(sources[n - 1]),
     };
   }, [sources, onOpenRef, preferChinese]);
-  const listed = useMemo(() => {
-    const rows = sources.map((s, i) => ({ s, num: i + 1 }));
-    if (!rows.length) return { rows, cited: false };
-    const citedNums = new Set();
-    const re = /\[(\d{1,2})\](?!\()/g;
-    let match;
-    while ((match = re.exec(turn.a || '')) !== null) {
-      const n = Number(match[1]);
-      if (n >= 1 && n <= sources.length) citedNums.add(n);
-    }
-    if (!citedNums.size) return { rows, cited: false };
-    return { rows: rows.filter(({ num }) => citedNums.has(num)), cited: true };
-  }, [turn.a, sources]);
+  const listed = useMemo(() => qaReferenceGroups(turn.a, sources), [turn.a, sources]);
+  const referenceRow = ({ source: s, num }, index, preview = false) => (
+    <div key={num}>
+      <button type="button" className="reader-ai-ref-row" onClick={() => onOpenRef(s)}
+        title={s.id ? '在阅读器中打开' : '打开原文'}>
+        <span className="reader-ai-ref-num">{num}</span>
+        <span className="reader-ai-ref-title">{displayTitle(s, preferChinese, '') || s.source_id}</span>
+        <span className="reader-ai-ref-meta">
+          {[s.source_name, (s.publish_date || '').slice(5)].filter(Boolean).join(' · ')}
+        </span>
+      </button>
+      <SourceEvidence source={s} initiallyOpen={preview && index === 0} />
+    </div>
+  );
   return (
     <div className="reader-ai-a">
       <div className="reader-ai-a-id"><Sparkles className="h-3 w-3" /> <span className="ai-grad-text">哆啦美</span></div>
       <div className="reader-ai-a-body markdown-body">
         <ReaderMarkdown citations={citations}>{markdown}</ReaderMarkdown>
       </div>
-      {listed.rows.length > 0 && (
+      {listed.primary.length > 0 && (
         <div className="reader-ai-refs">
-          <div className="reader-ai-refs-label">{listed.cited ? '本次回答引用' : '本次回答参考'}</div>
-          {listed.rows.map(({ s, num }) => (
-            <div key={num}>
-              <button
-                type="button"
-                className="reader-ai-ref-row"
-                onClick={() => onOpenRef(s)}
-                title={s.id ? '在阅读器中打开' : '打开原文'}
-              >
-                <span className="reader-ai-ref-num">{num}</span>
-                <span className="reader-ai-ref-title">{displayTitle(s, preferChinese, '') || s.source_id}</span>
-                <span className="reader-ai-ref-meta">
-                  {[s.source_name, (s.publish_date || '').slice(5)].filter(Boolean).join(' · ')}
-                </span>
-              </button>
-              <SourceEvidence source={s} />
-            </div>
-          ))}
+          <div className="reader-ai-refs-label">{listed.cited ? '本次回答引用' : '可查看的参考资料'}</div>
+          {turn.answerMode === 'partial' && <p className="tiny-meta">有些问题暂无法确认，可展开原文对照。</p>}
+          {listed.primary.map((row, index) => referenceRow(row, index, turn.answerMode === 'references_only'))}
+          {listed.more.length > 0 && (
+            <details className="reader-ai-more-refs">
+              <summary className="tiny-meta">更多参考（{listed.more.length}）</summary>
+              <p className="tiny-meta">本次检索的其他资料，可继续查看原文。</p>
+              {listed.more.map((row, index) => referenceRow(row, index))}
+            </details>
+          )}
         </div>
       )}
     </div>
@@ -302,9 +309,7 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
     const articleId = activeArticle?.id || null;
     if (scope === 'article' && !articleId) { showToast('请先从中间选择一篇文章', 'error'); return; }
     // 多轮:把此前已完成的问答展开成 user/assistant 历史(不含本轮,未完成/出错的轮次跳过)
-    const history = qaThread
-      .filter((m) => m.a && !m.error && !m.pending)
-      .flatMap((m) => [{ role: 'user', content: m.q }, { role: 'assistant', content: m.a }]);
+    const history = qaHistory(qaThread);
     const askId = genAskId();
     setQaLoading(true);
     setQaProgress(null);
@@ -331,7 +336,7 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
     try {
       const data = await askReaderAi({ question: q, scope, articleId, history, askId });
       setQaThread((prev) => prev.map((m, i) => (
-        i === prev.length - 1 ? { q, a: data.answer, sources: data.sources || [], scope } : m
+        i === prev.length - 1 ? { q, a: data.answer, sources: data.sources || [], answerMode: data.answer_mode, scope } : m
       )));
     } catch (error) {
       setQaThread((prev) => prev.map((m, i) => (

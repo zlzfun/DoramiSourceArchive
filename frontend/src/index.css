@@ -14795,16 +14795,22 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
     margin: 2px 0 10px 24px;
     color: var(--dorami-muted);
   }
-  .reader-ai-evidence summary {
+  .reader-ai-evidence summary,
+  .reader-ai-more-refs summary,
+  .reader-ai-evidence-toggle {
     width: fit-content;
-    padding: 3px 0;
+    padding: 8px 0;
+    min-height: 44px;
     cursor: pointer;
     border-radius: var(--r-sm);
   }
   @media (hover: hover) {
-    .reader-ai-evidence summary:hover { color: var(--dorami-ink); }
+    .reader-ai-evidence summary:hover,
+    .reader-ai-more-refs summary:hover,
+    .reader-ai-evidence-toggle:hover { color: var(--dorami-ink); }
   }
-  .reader-ai-evidence summary:focus-visible {
+  .reader-ai-evidence summary:focus-visible,
+  .reader-ai-more-refs summary:focus-visible {
     outline: 2px solid var(--dorami-accent);
     outline-offset: 3px;
   }
@@ -14813,6 +14819,9 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
     padding-left: 10px;
     border-left: 2px solid var(--dorami-border);
   }
+  .reader-ai-more-refs { margin-top: 8px; color: var(--dorami-muted); }
+  .reader-ai-evidence-toggle { color: var(--dorami-muted); text-align: left; }
+  .reader-ai-refs .reader-ai-ref-row { min-height: 44px; }
   .reader-ai-evidence blockquote {
     margin: 4px 0 0;
     font-size: 14px;

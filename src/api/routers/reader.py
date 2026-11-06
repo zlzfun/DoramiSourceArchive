@@ -2305,6 +2305,7 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
     scope = params.scope if params.scope in ("article", "articles", "subscription", "all") else "article"
     ask_id = _valid_ask_id(params.ask_id)
     from services.qa_contract import QAState
+    from services.qa_evidence import fingerprint
     from services import qa_diagnostics
 
     if not params.question.strip():
@@ -2396,6 +2397,8 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
         with_image_notes = reader_ai_service.sources_have_image_notes(sources)
         sources = reader_ai_service.public_sources(sources)
         _validate_sources(sources)
+        source_snapshot = fingerprint([qa_state.sources, sources])
+        answer_mode = "answer"
         history = [{"role": t.role, "content": t.content} for t in (params.history or [])]
         try:
             answer = await reader_ai_service.answer_question(
@@ -2407,18 +2410,33 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
             )
             _validate_sources(sources)
             qa_state.outcome = "returned"
-        except reader_ai_service.ReaderAIError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=str(exc))
-        except LLMError as exc:
+            if any(part["status"] != "answered" for part in qa_state.checked_parts):
+                answer_mode = "partial"
+        except (reader_ai_service.ReaderAIError, LLMError) as exc:
             qa_state.outcome = getattr(exc, "code", type(exc).__name__)
-            raise HTTPException(status_code=502, detail="本次回答未能完整生成或确认依据，请稍后重试") from exc
+            if isinstance(exc, reader_ai_service.ReaderAIError) and exc.status_code != 502:
+                raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+            # Keep the model failure visible in diagnostics. Only independently
+            # authorized sources survive; no part of the rejected draft is used.
+            if (not sources or qa_state.intent == "chat"
+                    or qa_state.outcome in ("qa_catalog_changed", "qa_source_invalid")
+                    or fingerprint([qa_state.sources, sources]) != source_snapshot):
+                raise HTTPException(status_code=502, detail="本次回答未能完整生成或确认依据，请稍后重试") from exc
+            _validate_sources(sources)  # revocation/update still blocks ALL content
+            answer_mode = "references_only"
+            answer = "这次未能生成可用的回答。你可以先查看下方参考资料，或稍后重新提问。"
+        qa_state.stages["delivery"] = answer_mode
     finally:
         if qa_state.outcome == "in_progress":
             qa_state.outcome = "not_returned"
         qa_diagnostics.record(qa_state)
         if ask_id:
             _ASK_PROGRESS.pop(ask_id, None)
-    with Session(db_sink.engine) as session:
-        accounts_service.record_ai_usage(session, username, "ask")
-    return {"status": "success", "answer": answer, "sources": sources, "scope": scope,
+    # Provider token usage is already recorded, including failed generations.
+    # A sources-only fallback does not consume a completed-answer daily quota.
+    if answer_mode != "references_only":
+        with Session(db_sink.engine) as session:
+            accounts_service.record_ai_usage(session, username, "ask")
+    return {"status": "references_only" if answer_mode == "references_only" else "success",
+            "answer_mode": answer_mode, "answer": answer, "sources": sources, "scope": scope,
             "trace_id": qa_state.trace_id}

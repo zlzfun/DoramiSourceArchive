@@ -82,7 +82,7 @@
 - `GET /api/reader/ai/translation-jobs/events?article_id=…&preview_cursor=…` — 同权限 SSE `snapshot`，支持 Last-Event-ID；流内重验 cookie/权限，终态后关闭；普通 GET 可兜底
 - `POST /api/auth/preferences` — 可选 patch `default_surface` / `prefer_chinese_titles`，只更新明确字段；中文标题默认 true，游客仅浏览器本地偏好
 - `POST /api/reader/ai/social/{article_id}/translate` — 推文(主推 + 引用推)一次调用译为中文,返回 `{text, quoted, cached}`,缓存 `extensions_json.translation_zh_social`(issue #84)
-- `POST /api/reader/ai/ask` — multi-turn QA,scope 四档 `article|articles|subscription|all`(v3.32:显式名单 vs 检索圈定;检索档走「LLM 计划检索 + FTS5」两段式);响应 `sources` 与上下文编号 [n] 同源同序(行内引用锚);可带 `ask_id` 登记阶段进度；响应含 `trace_id` 对应根管理员诊断，截断/结构或引用检查失败不返回半截答案
+- `POST /api/reader/ai/ask` — multi-turn QA,scope 四档 `article|articles|subscription|all`(v3.32:显式名单 vs 检索圈定;检索档走「LLM 计划检索 + FTS5」两段式);响应 `sources` 与上下文编号 [n] 同源同序(行内引用锚);可带 `ask_id` 登记阶段进度，`trace_id` 对应根管理员诊断。`answer_mode=answer|partial|references_only`：前两者`status=success`，partial仅反映模型子项声明缺口，不是语义评估；作答失败且资料复核仍有效时HTTP200、`status=references_only`，仅返回程序固定失败说明及本轮参考来源，不含被拒草稿、不算已完成问答日额度，供应商token照常计量。空来源/绑定变更不降级，权限变化或撤稿仍按403/404/409拒绝所有内容
 - `GET /api/reader/ai/ask/progress?ask_id=` — ask 阶段进度轮询(plan→search→select→answer,内存瞬时态,完成即清;阶段化等待态数据源)
 - `POST /api/reader/ai/podcasts/{episode_id}/ondemand`、`POST /api/reader/ai/articles/{article_id}/ondemand` — 读者点播精品导读 / 文章精简旁白，共用每日额度。总闸 `GET`/`POST /api/admin/reader-ondemand`（KV `reader_ondemand_enabled`，缺省开）在运维管理 → 内容；关闭只收读者入口并 403 新请求，已有音频与排队不动。能不能跑不由这个开关改：`/api/runtime` 的 `ondemand.podcast` / `ondemand.article` 还要求 LLM、TTS 和默认音色，播客侧另要求处理阶段授权。缺阶段时读者只看到「当前部署未开启播客点播」，缺什么列在管理面 `blockers`。
 
