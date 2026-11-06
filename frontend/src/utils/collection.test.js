@@ -10,7 +10,7 @@ test('collection feedback reports queued analysis work', () => {
       analysis_queued_count: 3,
       failed_count: 0,
     }, 2),
-    '批量抓取完成：完成 2 个节点，新增 5 条，已入队分析 3 篇',
+    '批量抓取完成：完成 2 个源，新增 5 条，已入队分析 3 篇',
   );
 });
 

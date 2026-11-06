@@ -81,7 +81,7 @@ frontend/src/
     │   ├── charts/         # DashboardCharts.jsx (token 化 recharts 包装件 + ThemedTooltip) + chartUtils.js (配色常量 + fillDailySeries 零填充)
     │   └── admin/          # adminUtils.js + MediaHeatmap.jsx (媒体逐日热点图 53×7 格阵 + 当日明细抽屉 + 单篇定点重抓;手写 CSS grid,不用图表库) + AdminAuditPanel.jsx (操作审计列表,v3.19)
     ├── DataTab.jsx          # 知识台账: article list, filters, CRUD; admin-facing (hidden for `user`); 总账条=三格收录量看板(v3.31 向量列/自动向量化开关随 RAG 退役移除)
-    ├── FetchTab.jsx         # 节点管理: fetcher catalog/triggers (collector)
+    ├── FetchTab.jsx         # 源管理(原「节点管理」): 全部源的目录 / 触发 / 治理 (collector)
     ├── FetchRunsTab.jsx     # 任务与运行: scheduled tasks + fetch-run history (collector)
     ├── DailyBriefTab.jsx    # AI 日报页签 (原「接入集成」页签瘦身改名 v3.9; tab id 已更名 'brief', 历史书签 #/mcp 由 hashToRoute 归一兼容; gating collector): DailyBriefPanel + 只读模型 chip; 交付通道内容 (MCP/聚合接口/技能包) 已并入设置柜
     ├── DailyBriefPanel.jsx   # 每日 AI 资讯日报: config + manual generate + run history (admin-managed)

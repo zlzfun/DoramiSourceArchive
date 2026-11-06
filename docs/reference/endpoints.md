@@ -45,7 +45,7 @@
 - (retired: `/api/node-groups*`, `/api/tasks*`, `/api/collection-jobs/migrate-legacy-tasks` — 实体简化阶段 2; existing data auto-migrated by Alembic `8f6d93196258`)
 
 **Fetchers**
-- `GET /api/fetchers` — list all discovered fetchers with parameter schemas
+- `GET /api/fetchers` — 源管理目录(issue #262 第三波):全部公共源,不只是有采集绑定的——每条带 `bound`(有绑定才能运行 / 编入任务)、`origin`、`listing`、`retired`;`?include_retired=true` 连退役源一起列。`POST /api/collection-jobs` / `PUT` 收到无绑定的源 id 回 400
 - `POST /api/fetch/{fetcher_id}` — trigger a specific fetcher (also writes `FetchRunRecord` and updates `SourceStateRecord`)
 
 **Source Configs** (user-defined source definitions, advanced extension surface)
@@ -63,7 +63,7 @@
 - `POST /api/source-builder/preview` — body = proposed config; trial-run `generic_web`/`generic_rss` and return sample entries (no persist). Save via `POST /api/source-configs`.
 
 **Monitoring & Observability**
-- `GET /api/source-health` — per-fetcher health summary (derived from `SourceStateRecord`, falls back to `FetchRunRecord` aggregation); sorted by name; rows carry `admission_status`
+- `GET /api/source-health` — per-source health summary (derived from `SourceStateRecord`, falls back to `FetchRunRecord` aggregation); sorted by name; rows carry `admission_status`; 无采集绑定的源也有一行(只有累计条目数,运行史恒为空)
 - `GET /api/source-states` — raw `SourceStateRecord` rows (filterable by `status`, `fetcher_id`)
 - `GET /api/fetch-runs` — paginated fetch run history
 - `GET /api/fetch-runs/{run_id}` — single run detail

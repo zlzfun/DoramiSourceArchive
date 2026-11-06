@@ -304,3 +304,22 @@
 
 **来路增量检视(R2,2026-11-09,`gpt-6-astra` / `ultra` / 只读,只看提交 e9367ff0)**:2 P2 全部接受修复——① 删掉最后一条收录内容后来路分面面板消失、筛选无处解除 → 面板在「带着来路筛选 ∨ 有非抓取通道」时出现;② 从源页跳来看「收录文章」残留旧来路筛选 → `pendingFilter` 重置加 `ingest_channel`。另补读者看单条详情不带 `ingest_actor`、未知来路值回空的用例。组件级 UI 状态无单测基础设施,以沙箱手工验证为准(观察期)。表态见 `.review/response-r2-provenance.md`。
 
+
+## 12. 源管理列全部源 + 「节点」改名(第三个叠分支 PR,2026-11-06)
+
+**起因**:用户目检首个 PR,在收录面板点「列入」后到「节点管理」找变化,看不到——临时源没有采集绑定,本就不在那里。用户拍板:原「节点管理」页(本波改名「源管理」)统一展示所有源,不管是读者 RSS 自定的、目录硬编码的、还是收录推送建的;没有抓取器的只是不能一次性抓取或配定时任务。同时「节点」与「源」口径分开:「节点」只指部署意义(外网 / 内网节点、节点同步)。
+
+**后端**:
+- `services/collection_nodes.py`:`collection_node_catalog`(有绑定 ∧ 未退役,抓取 / 采集任务 / 对拍测试用)不动;新增 `source_management_catalog(session, include_retired=)` = 采集节点目录 + 全部无绑定的公共源行(`unbound_source_metadata`,形态 / 名称 / 来路取自 `source_catalog.view_from_row`),每条带 `bound` / `origin` / `listing` / `retired`;`unbound_source_ids` 给采集任务校验。
+- `GET /api/fetchers` 改用源管理目录(`?include_retired=true` 连退役源);`GET /api/source-health` 同口径(无绑定源只有累计条目数、运行史为空);`POST / PUT /api/collection-jobs` 收到无绑定 id 回 400「源 X 没有采集绑定,不能编入采集任务」(前端隐藏之外的第二道闸)。
+- 采集意义的「节点」文案改「源」:`/api/fetch/batch` 400、采集任务 400、`resolve_collection_node` 未知 id、运行 / 审计摘要(「批量触发采集 N 个源」「源·配置 / 源·详情」)、播客目录安装日志。`ingest_push` 的「本节点未开启采集面」是部署意义,保留。
+
+**前端**:
+- `FetchTab.jsx`:页签「源管理」(导轨短名「来源」),标题 / 分段 / 批量条 / 空态 / 分组计数 / 检视器全部「节点」→「源」;目录 = `/api/fetchers` ∪ 自定源(源健康补入)∪ 按需的退役源(页头「含已退役」);无绑定的源行上标「无采集」(临时源另标「临时」,退役标「已退役」),最近一列显示「无采集 · 累计 N 篇」,行上没有运行 / 试抓,收录临时源行上有「列入」;检视器对无绑定源只有来路、累计条目、读者面隐藏(收录源的隐藏即「下架」——同时拒收后续推送),收录源另有「列入」「改名」(结果以本页 patches 即时覆盖,不等 App 重取);批量选择、组头全选、「批量运行」只认有绑定的源;系统源归「系统」组(`sourceRoleOf` 认 `origin=system`,读者目录从不含它)。
+- `FetchRunsTab.jsx`:采集任务点名册只列 `bound !== false` 的源;文案改「源」。`RunningWidget` / `utils/collection.js` / `ArticleDetailModal` / `adminUtils` 审计标签 / `CustomNodeBuilder`(入口仍关闭)/ 台账来源分面「全部来源」同改。
+- 运维「收录」板块改名「收录令牌」,`IngestPanel` 只剩令牌签发 / 吊销(源列表与列入 / 下架 / 改名搬到源管理)。
+- 样式:`.provisional-pill`(与观察期同色系)、`.unbound-pill`(静默灰),都是 token 色。
+
+**测试**:`tests/test_source_management.py`(目录含全部来路与标志、退役按需、`unbound_source_ids`、源健康含无绑定源、采集任务 create / update 对无绑定 id 回 400);`test_data_lifecycle` 审计摘要与源健康打桩名随改;前端 `sourceRoles.test.mjs` 加系统组、`collection.test.js` 文案随改。
+
+**有意不做**:系统源(公共日报)与存量回填源没有任何行动作;读者自定源仍由源健康补入、治理在运维「自定源」;`#/fetch` 路由与 `FetchTab` / `board-node-*` 等标识符不改名。

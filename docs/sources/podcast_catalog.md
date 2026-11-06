@@ -22,7 +22,7 @@ Megaphone、小宇宙和 Buzzsprout 等平台各写一个抓取器。原 36 源�
 
 ## 导入与上线
 
-应用启动时会幂等安装全部 37 个条目，使全新部署的节点管理不再缺少 Podcast。公共播客与
+应用启动时会幂等安装全部 37 个条目，使全新部署的源管理不再缺少 Podcast。公共播客与
 内置文章节点一样始终可供采集任务选择，不再设源级“启用采集”开关；只有加入启用的采集任务后
 才按任务 Cron 运行。安装不会自动订阅给任何用户，也不会直接触发 ASR 或 TTS。重复启动只补充
 目录新增项，不覆盖管理员对已有节点的名称和配置；Feed 健康状态只用于源审查。
@@ -53,7 +53,7 @@ PYTHONPATH=src uv run python scripts/import_podcast_catalog.py --apply
 - `GET /api/source-configs/podcast-catalog`：目录、验证与当前安装状态；
 - `POST /api/source-configs/podcast-catalog/import`：按 ID 幂等导入。
 
-自动安装和手动导入默认都是 `update_existing=false`。目录中的所有源都会进入节点管理；
+自动安装和手动导入默认都是 `update_existing=false`。目录中的所有源都会进入源管理；
 `ingest_status` 只报告 Feed 健康，不作为准入门槛。所有新源以准入状态 `admission_status = "incubating"` 建行（issue #178 起独立于已退役的 `category`；目录重新导入不改写，管理员转正后保持正式），可先立即抓取
 检查标题、日期、show notes、封面、时长与重复率，再扩大采集。可在「采集任务」中像博客节点
 一样选择多个节目、分别设置单次上限，并由任务的统一 Cron 定时运行。任务保存逻辑播客源 ID，

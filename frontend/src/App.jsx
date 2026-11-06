@@ -793,7 +793,8 @@ export default function App() {
     // short = 导轨图标下的常显微标签(可发现性波 v3.45,两字短名);label 全名留 tooltip 与页头
     { id: 'reader', icon: BookOpen, label: '阅读器', short: '阅读', onlyReader: true },
     { id: 'data', icon: Database, label: '知识台账', short: '台账', hideForReader: true },
-    { id: 'fetch', icon: CloudDownload, label: '节点管理', short: '节点', surface: 'collector' },
+    // 「节点」只留给部署意义(外网 / 内网节点、节点同步);采集这一侧统一叫「源」(issue #262 第三波)
+    { id: 'fetch', icon: CloudDownload, label: '源管理', short: '来源', surface: 'collector' },
     { id: 'runs', icon: History, label: '任务与运行', short: '运行', surface: 'collector' },
     // 「接入集成」页签已并入设置柜(交付通道三卡→设置·接入集成组);页签瘦身改名「AI 日报」
     // (只剩日报运营面),id 改为 'brief'(历史 hash #/mcp 由 hashToRoute 归一兼容)。

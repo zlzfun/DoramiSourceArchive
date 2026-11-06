@@ -4,7 +4,7 @@ import { RefreshCw, ChevronRight } from 'lucide-react';
 const AUTO_COLLAPSE_MS = 4000; // 出现/新增任务后先完整展示,随后缩为迷你脉搏
 const HOVER_LEAVE_MS = 200;    // 离开缓冲,防边缘抖动
 
-// 「N 个节点正在抓取」浮窗(App 级,全页常驻):
+// 「N 个源正在抓取」浮窗(App 级,全页常驻):
 // 出现时展开完整任务列表,短暂延迟后缩小为仅表示运转状态的迷你件(旋转图标+计数),
 // hover/键盘聚焦时展开详情;运行中任务数增加时重新展开提示一次。
 // 点击(任一形态)跳转运行历史。embedded 变体保持原状(选择条内嵌场景)。
@@ -41,7 +41,7 @@ export default function RunningWidget({ runningIds, fetchProgress, fetchersById,
       <RefreshCw className="running-widget-icon animate-spin" />
       <div className="running-widget-body">
         <div className="running-widget-headline">
-          <span>{runningIds.size} 个节点正在抓取</span>
+          <span>{runningIds.size} 个源正在抓取</span>
           <ChevronRight className="running-widget-chevron" />
         </div>
         <div className="running-widget-list">
@@ -94,10 +94,10 @@ export default function RunningWidget({ runningIds, fetchProgress, fetchersById,
         type="button"
         onClick={() => onViewRunning?.()}
         className={`running-mini ${open ? 'dock-hidden' : ''}`}
-        title={`${runningIds.size} 个节点正在抓取 · 查看运行历史`}
+        title={`${runningIds.size} 个源正在抓取 · 查看运行历史`}
         tabIndex={open ? -1 : 0}
         aria-hidden={open}
-        aria-label={`${runningIds.size} 个节点正在抓取`}
+        aria-label={`${runningIds.size} 个源正在抓取`}
       >
         <RefreshCw className="running-mini-icon animate-spin" />
         <span className="running-mini-n">{runningIds.size}</span>

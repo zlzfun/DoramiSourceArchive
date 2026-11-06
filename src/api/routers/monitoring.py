@@ -22,7 +22,7 @@ from api import deps
 from api.sources import configured_source_content_type, row_shape
 from models.db import ArticleRecord, FetchRunRecord, SourceStateRecord
 from pipeline.progress import get_all_progress
-from services.collection_nodes import collection_node_catalog
+from services.collection_nodes import source_management_catalog
 
 router = APIRouter(tags=["monitoring"])
 
@@ -115,7 +115,8 @@ def build_fetcher_health_from_state(fetcher_metadata: Dict[str, Any], state: Sou
 
 @router.get("/api/source-health")
 def get_source_health(session: Session = Depends(deps.get_session)):
-    fetchers = collection_node_catalog(session)
+    # 源管理目录(issue #262 第三波):没有采集绑定的源也进汇总——它们只有累计条目数,运行史恒为空。
+    fetchers = source_management_catalog(session)
 
     # 用户自定源(v3.40)以 fetcher-like 形状并入健康汇总:节点管理信号条的「自定源」
     # 角色档由此有数据可看(设计 §5 承诺的筛选可见)。抓取经 generic_rss 执行,

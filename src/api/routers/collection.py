@@ -38,6 +38,7 @@ from models.db import (
     FetchRunRecord,
 )
 from services import jobs
+from services.collection_nodes import unbound_source_ids
 
 router = APIRouter(tags=["collection"])
 
@@ -142,13 +143,25 @@ def get_collection_jobs(is_active: Optional[bool] = None, session: Session = Dep
     return [serialize_collection_job(record) for record in session.exec(query).all()]
 
 
+def _reject_unbound(session: Session, fetcher_ids) -> None:
+    """没有采集绑定的源(收录临时源 / 存量 / 退役)不能编入采集任务(issue #262 第三波):源管理列全部源,
+    这里是前端隐藏之外的第二道闸。"""
+    unbound = unbound_source_ids(session, normalize_fetcher_ids(fetcher_ids))
+    if unbound:
+        raise HTTPException(
+            status_code=400,
+            detail=f"源 {', '.join(unbound)} 没有采集绑定,不能编入采集任务",
+        )
+
+
 @router.post("/api/collection-jobs")
 def create_collection_job(data: CollectionJobCreate, session: Session = Depends(deps.get_session)):
     name = data.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="采集任务名称不能为空")
     if not normalize_fetcher_ids(data.fetcher_ids):
-        raise HTTPException(status_code=400, detail="采集任务至少需要一个节点")
+        raise HTTPException(status_code=400, detail="采集任务至少需要一个源")
+    _reject_unbound(session, data.fetcher_ids)
     cron_expr = data.cron_expr.strip()
     if cron_expr and parse_cron_expr(cron_expr) is None:
         # commit 前拒绝:坏 cron 一旦入库,热重载与下次启动都会撞上它(issue #82 PR-0)
@@ -192,6 +205,7 @@ def update_collection_job(job_id: int, data: CollectionJobUpdate, session: Sessi
     if "description" in update_data:
         record.description = (update_data["description"] or "").strip()
     if "fetcher_ids" in update_data:
+        _reject_unbound(session, update_data["fetcher_ids"])
         record.fetcher_ids_json = _json_dumps(normalize_fetcher_ids(update_data["fetcher_ids"]))
     if "params" in update_data:
         record.params_json = _json_dumps(update_data["params"])
@@ -234,7 +248,7 @@ async def run_collection_job_now(job_id: int, test_limit: Optional[int] = None, 
         raise HTTPException(status_code=404, detail="采集任务不存在")
     items = build_collection_job_items(job)
     if not items:
-        raise HTTPException(status_code=400, detail="采集任务没有可执行节点")
+        raise HTTPException(status_code=400, detail="采集任务没有可执行的源")
     job_name = job.name
     items = apply_run_param_overrides(items, test_run_overrides(test_limit))
 

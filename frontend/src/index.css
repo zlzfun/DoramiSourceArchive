@@ -5616,6 +5616,20 @@ input[type="radio"] {
     background: var(--dorami-soft);
   }
 
+  /* 临时源徽标(issue #262):收录时自动建、未列入目录——与观察期同一警示色系,语义是「待处置」 */
+  .provisional-pill {
+    color: #b45309;
+    border-color: rgba(180, 83, 9, 0.35);
+    background: rgba(245, 158, 11, 0.10);
+  }
+
+  /* 无采集绑定徽标(issue #262 第三波):源管理列全部源,没有绑定的不能运行——静默灰系,非异常 */
+  .unbound-pill {
+    color: var(--dorami-muted);
+    border-color: var(--dorami-border);
+    background: var(--dorami-soft);
+  }
+
   /* ── 日报源范围:自定名单多选清单(配置卡内,定高滚动) ── */
   .brief-scope-list {
     margin-top: 6px;

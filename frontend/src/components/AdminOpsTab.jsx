@@ -187,7 +187,7 @@ export default function AdminOpsTab({
           <section id={opsBlockId('user-sources', 'sources')} className="ops-block" tabIndex={-1} aria-label="自定源">
             <UserSourcesPanel showToast={showToast} refreshTick={refreshTick} />
           </section>
-          <section id={opsBlockId('user-sources', 'ingest')} className="ops-block" tabIndex={-1} aria-label="收录">
+          <section id={opsBlockId('user-sources', 'ingest')} className="ops-block" tabIndex={-1} aria-label="收录令牌">
             <IngestPanel showToast={showToast} refreshTick={refreshTick} />
           </section>
         </div>

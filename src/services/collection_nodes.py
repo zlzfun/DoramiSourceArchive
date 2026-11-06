@@ -145,7 +145,7 @@ def resolve_collection_node(
 
     source = session.get(SourceConfigRecord, clean_id)
     if source is None:
-        raise ValueError(f"未知的采集节点: {clean_id}")
+        raise ValueError(f"未知的源: {clean_id}")
     if source.retired_at:
         # 退役(含「被引用的源删除改退役」,issue #262 R1c)先于播客「始终可采集」的豁免。
         raise ValueError(f"数据源 {clean_id} 已退役，拒绝采集")
@@ -228,3 +228,114 @@ def collection_node_catalog(
         and resolve_source_fetcher_id(record)
     )
     return metadata
+
+
+# ── 源管理目录(issue #262 第三波):全部公共源,不只是有采集绑定的 ──────────────
+
+_ALL_SOURCE_TYPES = frozenset({"rss", "atom", "web", "webpage"}) | PODCAST_SOURCE_TYPES | X_SOURCE_TYPES
+
+
+def is_bound(record: SourceConfigRecord) -> bool:
+    """有采集绑定:能解析到注册表里存在的抓取器,且未退役。"""
+    if record.retired_at:
+        return False
+    fetcher_id = resolve_source_fetcher_id(record)
+    return bool(fetcher_id and fetcher_registry.get_class(fetcher_id))
+
+
+def _listing_of(admission_status: str) -> str:
+    return "unlisted" if (admission_status or "").strip().lower() == "provisional" else "listed"
+
+
+def unbound_source_metadata(record: SourceConfigRecord) -> Dict[str, Any]:
+    """没有采集绑定的公共源(收录临时源 / 存量回填 / 系统源 / 退役)在源管理目录里的形状。
+
+    字段与 ``configured_source_metadata`` 对齐;前端按 ``bound=False`` 隐藏运行 / 试抓 / 编入任务,
+    按 ``origin`` 决定可做的治理动作(收录源:列入 / 改名;其余只有读者面隐藏)。
+    """
+    from services import source_catalog
+
+    view = source_catalog.view_from_row(record)
+    content_type = view.content_type or {
+        "podcast": "podcast_episode", "social": "social_post",
+    }.get(view.shape, "web_article")
+    raw_status = (record.admission_status or "").strip().lower() or view.admission_status
+    return {
+        "id": record.source_id,
+        "name": view.name or record.source_id,
+        "icon": view.icon,
+        "desc": view.description or view.homepage_url,
+        "admission_status": raw_status,
+        "content_type": content_type,
+        "shape": view.shape,
+        "is_template": False,
+        "source_config_node": True,
+        "source_type": view.source_type,
+        "execution_fetcher_id": "",
+        "bound": False,
+        "origin": view.origin,
+        "listing": _listing_of(raw_status),
+        "platform": view.platform,
+        "avatar_url": view.avatar_url,
+        "homepage_url": view.homepage_url,
+        "feed_url": record.url or "",
+        "base_url": view.homepage_url or view.base_url or record.url or "",
+        "source_owner": view.source_owner,
+        "source_brand": view.source_brand,
+        "source_scope": view.source_scope,
+        "source_channel": view.source_channel,
+        "provenance_tier": view.provenance_tier,
+        "signal_strength": view.signal_strength,
+        "noise_risk": view.noise_risk,
+        "fetch_reliability": view.fetch_reliability,
+        "ai_analysis_enabled": view.ai_analysis_enabled,
+        "retired": bool(record.retired_at),
+        "retired_at": record.retired_at or "",
+        "parameters": [],
+    }
+
+
+def source_management_catalog(session: Session, *, include_retired: bool = False) -> list[Dict[str, Any]]:
+    """源管理页的目录 = 采集节点目录(有绑定)+ 没有绑定的公共源行。
+
+    用户拍板(2026-11-06):源管理列全部源——目录预设、配置源、收录临时源、存量、系统源都可见,
+    只是没有采集绑定的不能运行 / 试抓 / 编入采集任务。退役源默认不列(``include_retired`` 时带
+    ``retired=True`` 列出)。读者私有源(``owner_username`` 非空)仍由源健康汇总并入,不在这里。
+    每个条目都带 ``bound`` / ``origin`` / ``listing`` / ``retired``。
+    """
+    nodes = [
+        {**item, "bound": True, "origin": item.get("origin") or "catalog",
+         "listing": _listing_of(str(item.get("admission_status") or "")), "retired": False}
+        for item in collection_node_catalog(session, source_types=_ALL_SOURCE_TYPES)
+    ]
+    known = {item["id"]: item for item in nodes}
+    rows_by_id = {
+        row.source_id: row
+        for row in session.exec(
+            select(SourceConfigRecord).where(SourceConfigRecord.owner_username == "")
+        ).all()
+    }
+    for source_id, item in known.items():
+        row = rows_by_id.get(source_id)
+        if row is not None and item.get("source_config_node"):
+            item["origin"] = (row.origin or "").strip().lower() or "admin"
+    for source_id, row in sorted(rows_by_id.items()):
+        if source_id in known:
+            continue
+        if row.retired_at and not include_retired:
+            continue
+        nodes.append(unbound_source_metadata(row))
+    return nodes
+
+
+def unbound_source_ids(session: Session, node_ids: Iterable[str]) -> list[str]:
+    """给定逻辑 id 里没有采集绑定(或已退役)的公共源——编入采集任务前拒绝;未知 id 留给运行时报错。"""
+    missing: list[str] = []
+    for node_id in node_ids:
+        clean = str(node_id or "").strip()
+        if not clean or fetcher_registry.get_class(clean):
+            continue
+        row = session.get(SourceConfigRecord, clean)
+        if row is not None and not is_bound(row):
+            missing.append(clean)
+    return missing

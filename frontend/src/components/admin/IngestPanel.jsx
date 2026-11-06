@@ -1,17 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Ban, Check, Copy, EyeOff, Eye, KeyRound, ListPlus, Loader2, Pencil, X } from 'lucide-react';
-import {
-  createIngestToken,
-  fetchIngestSources,
-  fetchIngestTokens,
-  ingestSourceAction,
-  renameIngestSource,
-  revokeIngestToken,
-} from '../../api';
+import { Ban, Copy, KeyRound, Loader2, X } from 'lucide-react';
+import { createIngestToken, fetchIngestTokens, revokeIngestToken } from '../../api';
 import { useConfirm } from '../../hooks/useConfirm';
 
 const fmtNum = (n) => Number(n || 0).toLocaleString();
-// 令牌时间存的是带时区的 UTC(…+00:00),条目入库时间是不带时区的本地时间;统一按本地时间显示。
+// 令牌时间存的是带时区的 UTC(…+00:00);统一按本地时间显示。
 const pad2 = (n) => String(n).padStart(2, '0');
 const fmtTime = (value) => {
   if (!value) return '–';
@@ -19,32 +12,27 @@ const fmtTime = (value) => {
   if (Number.isNaN(date.getTime())) return String(value).slice(0, 16).replace('T', ' ');
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
 };
-const SHAPE_LABEL = { article: '文章', social: '社交', podcast: '播客' };
 
 /**
- * 收录(issue #262 波 1,运维 → 自定源与收录)。调用方可以是 Agent、自动化流程或人。
+ * 收录令牌(issue #262 波 1,运维 → 自定源与收录)。调用方可以是 Agent、自动化流程或人。
  *
- * 收录令牌:签发(明文只回显这一次)/ 吊销;收录源:推送时遇到未登记出处自动建的临时源,
- * 行动作 列入(→ 观察期,进入发现目录与日报候选)、下架 / 恢复(隐藏并拒收后续推送)、改名。
+ * 签发(明文只回显这一次)/ 吊销。收录建的临时源与其它源一起在「源管理」里治理
+ * (列入 / 改名 / 读者面隐藏;issue #262 第三波把这里的源列表搬了过去)。
  */
 export default function IngestPanel({ showToast, refreshTick = 0 }) {
   const confirm = useConfirm();
   const [tokens, setTokens] = useState(null);
-  const [sources, setSources] = useState(null);
   const [actor, setActor] = useState('');
   const [issued, setIssued] = useState(null); // { actor, token }
   const [busy, setBusy] = useState('');
-  const [editing, setEditing] = useState(null); // { source_id, name }
 
   const load = useCallback(async () => {
     try {
-      const [tokenRes, sourceRes] = await Promise.all([fetchIngestTokens(), fetchIngestSources()]);
+      const tokenRes = await fetchIngestTokens();
       setTokens(tokenRes.items || []);
-      setSources(sourceRes.items || []);
     } catch (error) {
-      showToast(error.message || '获取收录数据失败', 'error');
+      showToast(error.message || '获取收录令牌失败', 'error');
       setTokens((prev) => prev ?? []);
-      setSources((prev) => prev ?? []);
     }
   }, [showToast]);
 
@@ -93,38 +81,10 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
     }
   };
 
-  const handleSourceAction = async (item, action, done) => {
-    setBusy(`source:${item.source_id}`);
-    try {
-      await ingestSourceAction(item.source_id, action);
-      showToast(done, 'success');
-      load();
-    } catch (error) {
-      showToast(error.message || '操作失败', 'error');
-    } finally {
-      setBusy('');
-    }
-  };
-
-  const handleRename = async () => {
-    const name = (editing?.name || '').trim();
-    if (!name) return;
-    setBusy(`source:${editing.source_id}`);
-    try {
-      await renameIngestSource(editing.source_id, name);
-      setEditing(null);
-      load();
-    } catch (error) {
-      showToast(error.message || '改名失败', 'error');
-    } finally {
-      setBusy('');
-    }
-  };
-
   return (
     <>
       <div className="zone-head" style={{ marginTop: 18 }}>
-        <span className="zone-title">收录</span>
+        <span className="zone-title">收录令牌</span>
       </div>
 
       <section className="surface-card ai-switchboard rounded-[var(--r-card)] mb-3">
@@ -157,8 +117,16 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
         )}
       </section>
 
-      {tokens !== null && tokens.length > 0 && (
-        <section className="surface-card rounded-[var(--r-card)] overflow-hidden mb-3" aria-label="收录令牌">
+      {tokens === null ? (
+        <p className="surface-card card-pad rounded-[var(--r-card)] text-center tiny-meta">
+          <Loader2 className="mx-auto mb-1 h-4 w-4 animate-spin text-slate-500" /> 正在加载收录令牌…
+        </p>
+      ) : tokens.length === 0 ? (
+        <section className="surface-card card-pad rounded-[var(--r-card)]">
+          <p className="tiny-meta">还没有签发过收录令牌。</p>
+        </section>
+      ) : (
+        <section className="surface-card rounded-[var(--r-card)] overflow-hidden" aria-label="收录令牌列表">
           <div className="acct-scroll">
             <table className="acct-table is-fixed">
               <thead>
@@ -198,104 +166,6 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
                     </td>
                   </tr>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
-
-      {sources === null ? (
-        <p className="surface-card card-pad rounded-[var(--r-card)] text-center tiny-meta">
-          <Loader2 className="mx-auto mb-1 h-4 w-4 animate-spin text-slate-500" /> 正在加载收录源…
-        </p>
-      ) : sources.length === 0 ? (
-        <section className="surface-card card-pad rounded-[var(--r-card)]">
-          <p className="tiny-meta">还没有收录源。</p>
-        </section>
-      ) : (
-        <section className="surface-card rounded-[var(--r-card)] overflow-hidden" aria-label="收录源">
-          <div className="acct-scroll">
-            <table className="acct-table is-fixed">
-              <thead>
-                <tr>
-                  <th className="acct-th" style={{ width: 240 }}>源</th>
-                  <th className="acct-th" style={{ width: 70 }}>形态</th>
-                  <th className="acct-th" style={{ width: 72 }}>条目</th>
-                  <th className="acct-th" style={{ width: 130 }}>最近收录</th>
-                  <th className="acct-th" style={{ width: 150 }}>收录者</th>
-                  <th className="acct-th" style={{ width: 96 }}>状态</th>
-                  <th className="acct-th" aria-label="操作" style={{ width: 104 }} />
-                </tr>
-              </thead>
-              <tbody>
-                {sources.map((item) => {
-                  const rowBusy = busy === `source:${item.source_id}`;
-                  const isEditing = editing?.source_id === item.source_id;
-                  return (
-                    <tr key={item.source_id} className="acct-row is-static">
-                      <td>
-                        {isEditing ? (
-                          <span className="flex items-center gap-1">
-                            <input
-                              type="text"
-                              value={editing.name}
-                              onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-                              onKeyDown={(e) => { if (e.key === 'Enter') handleRename(); if (e.key === 'Escape') setEditing(null); }}
-                              aria-label="源名称"
-                              maxLength={120}
-                              className="form-input form-input-inline"
-                              autoFocus
-                            />
-                            <button type="button" className="rowact-btn" title="保存" onClick={handleRename}><Check /></button>
-                          </span>
-                        ) : (
-                          <span className="block truncate">
-                            <span className="acct-name" title={item.name}>{item.name}</span>
-                            <span className="acct-mono block truncate" title={item.homepage_url || item.source_id}>{item.source_id}</span>
-                          </span>
-                        )}
-                      </td>
-                      <td><span className="tiny-meta">{SHAPE_LABEL[item.shape] || item.shape}</span></td>
-                      <td className="acct-n">{fmtNum(item.count)}</td>
-                      <td><span className="acct-mono">{fmtTime(item.last_fetched)}</span></td>
-                      <td><span className="tiny-meta truncate" title={(item.actors || []).join('、')}>{(item.actors || []).join('、') || '—'}</span></td>
-                      <td>
-                        {item.hidden
-                          ? <span className="stamp stamp-idle">已下架</span>
-                          : item.admission_status === 'provisional'
-                            ? <span className="stamp stamp-warn">临时</span>
-                            : <span className="stamp stamp-ok">已列入</span>}
-                      </td>
-                      <td>
-                        <span className="rowacts">
-                          {rowBusy ? (
-                            <span className="rowact-btn" aria-hidden="true"><Loader2 className="animate-spin" /></span>
-                          ) : (
-                            <>
-                              {item.admission_status === 'provisional' && !item.hidden && (
-                                <button type="button" className="rowact-btn" title={`列入 ${item.name}(读者发现页可见,观察期)`} onClick={() => handleSourceAction(item, 'admit', `已列入 ${item.name} · 读者发现页可见`)}>
-                                  <ListPlus />
-                                </button>
-                              )}
-                              <button type="button" className="rowact-btn" title={`改名 ${item.name}`} onClick={() => setEditing({ source_id: item.source_id, name: item.name })}>
-                                <Pencil />
-                              </button>
-                              {item.hidden ? (
-                                <button type="button" className="rowact-btn" title={`恢复 ${item.name}`} onClick={() => handleSourceAction(item, 'unhide', `已恢复 ${item.name}`)}>
-                                  <Eye />
-                                </button>
-                              ) : (
-                                <button type="button" className="rowact-btn is-danger" title={`下架 ${item.name}(读者面隐藏,拒收后续推送)`} onClick={() => handleSourceAction(item, 'hide', `已下架 ${item.name}`)}>
-                                  <EyeOff />
-                                </button>
-                              )}
-                            </>
-                          )}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
               </tbody>
             </table>
           </div>
