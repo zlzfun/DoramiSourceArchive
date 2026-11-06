@@ -17,14 +17,13 @@ import importlib
 import json
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import and_, case, exists, false, func, or_, text
 from sqlmodel import Session, select
 
 from api import deps
 from api.articles_view import (
-    GenericContent,
     apply_article_query_filters,
     article_recency_order,
     article_to_markdown,
@@ -58,7 +57,6 @@ from models.db import (
 )
 from services import article_analysis as article_analysis_service
 from services import content_classification
-from services import ingest_policy
 from services.source_naming import friendly_source_names
 from services.article_display_tags import (
     article_ids_for_canonical_projection, article_ids_for_flexible_label, load_display_tags,
@@ -810,64 +808,14 @@ async def get_article(article_id: str, request: Request):
 
 
 @router.post("/api/articles")
-async def create_article_manual(request: Request, params: dict = Body(...)):
-    """接收前端传来的手工录入数据并入库"""
-    source_id = str(params.get("source_id", "manual") or "manual").strip() or "manual"
-    reserved = ingest_policy.reserved_source_id_reason(source_id, allow_daily_brief=True)
-    if reserved:
-        raise HTTPException(status_code=400, detail=reserved)
-    with Session(deps.get_db_sink().engine) as session:
-        _require_local_article_governance(session, source_id)
-    # 扩展字段经 extra_extensions 通道随 serialize_to_metadata 落库。既有契约:坏扩展整体忽略、
-    # 录入照常;issue #262 B10 起接受对象形式,并在回执里如实报告被忽略的原因(不再静默)。
-    warnings: list[str] = []
-    try:
-        extensions = ingest_policy.parse_extensions_param(params.get("extensions_json"))
-    except ValueError as exc:
-        extensions = {}
-        warnings.append(str(exc))
-    # 调用方给的 id 原样保留(既有契约);跨源覆写由存储层 id_conflict 拦下(issue #262 B3)。
-    # 没给 id 时按链接生成本源命名空间下的稳定 id。
-    article_id = str(params.get("id") or "").strip()
-    if not article_id:
-        try:
-            article_id = ingest_policy.namespaced_item_id(
-                source_id, stable_value=str(params.get("source_url") or "")
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc))
-    content_obj = GenericContent(
-        id=article_id,
-        title=params.get("title", "未命名"),
-        source_url=params.get("source_url", ""),
-        publish_date=params.get("publish_date", ""),
-        content=params.get("content", ""),
-        has_content=True if params.get("content") else False
+async def create_article_manual():
+    """手工录入已并入收录(issue #262 推送入口统一波):调用方自定 id / content_type / 任意扩展
+    这三个后门随之取消。运维「单条收录」与外部调用方一律走 ``POST /api/public/ingest/v1/items``
+    (管理员会话或收录令牌),由服务端决定 id、类型与来路。"""
+    raise HTTPException(
+        status_code=410,
+        detail="手工录入已并入收录:请用 POST /api/public/ingest/v1/items(管理员会话或收录令牌)",
     )
-    content_obj.content_type = params.get("content_type", "manual_entry")
-    content_obj.source_id = source_id
-    if extensions:
-        content_obj.extra_extensions = extensions
-    # 未登记的来源在同一事务里建成临时源(不进发现目录,管理面「收录源」可列入,issue #262)。
-    content_obj._source_hint = {
-        "origin": "ingest",
-        "admission_status": "provisional",
-        "name": str(params.get("source_name") or "").strip(),
-    }
-    content_obj._ingest_channel = "manual"
-    content_obj._ingest_actor = _app().current_username(request) or ""
-
-    outcome = await deps.get_db_sink().save_with_outcome(content_obj)
-    error = ingest_policy.outcome_error(outcome)
-    if error is not None:
-        status_code, detail = error
-        raise HTTPException(status_code=status_code, detail=detail)
-
-    _app().queue_article_analysis_after_commit([content_obj.id])
-    result = {"status": "success", "id": content_obj.id, "outcome": outcome}
-    if warnings:
-        result["warnings"] = warnings
-    return result
 
 
 def _maybe_rewind_daily_brief_cursor(record) -> None:

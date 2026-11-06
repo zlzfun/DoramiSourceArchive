@@ -425,7 +425,6 @@ COLLECTOR_API_PREFIXES = (
     "/api/archive/v2/candidate-evidence.jsonl",
     "/api/source-configs",
     "/api/source-builder",
-    "/api/import/social-posts",
     "/api/collection-jobs",
     "/api/collection-job-runs",
     # 每日聚合统计(运行页点阵/台账与节点 sparkline)——采集面只读。
@@ -2276,8 +2275,6 @@ async def require_admin_session(request: Request, call_next):
     audit_rule_needs_body = (
         (normalized_method == "POST" and path == "/api/accounts")
         or (normalized_method == "POST" and path == "/api/accounts/batch")
-        or (normalized_method == "POST" and path == "/api/articles")
-        or (normalized_method == "POST" and path == "/api/import/social-posts")
         or (normalized_method == "POST" and path == "/api/admin/ingest/tokens")
         or (normalized_method == "POST" and path == "/api/articles/batch-delete")
         or (normalized_method == "POST" and path == "/api/fetch/batch")
@@ -3581,7 +3578,7 @@ def reload_user_rss_schedule():
 
 
 # FetchBatchItem / FetchBatchParams 已迁至 api/routers/fetchers.py（下方 import re-export）。
-# SocialPostImport* 请求模型已迁出至 api/routers/ingest.py。
+# SocialPostImport* 请求模型随 /api/import/social-posts 退役(issue #262 推送入口统一波)。
 
 
 # SubscriptionFilters / SubscriptionDeliveryPolicy / SubscriptionCreate /
@@ -3593,7 +3590,7 @@ def reload_user_rss_schedule():
 # api/routers/source_configs.py（下方 import re-export）。
 
 
-# normalize_social_source_id / build_social_post_content 已迁出至 api/routers/ingest.py。
+# normalize_social_source_id / build_social_post_content 随社交导入退役(issue #262)。
 
 
 def resolve_state_source_id(fetcher_id: str, params: Optional[Dict[str, Any]], result: Any = None) -> str:
@@ -4180,8 +4177,8 @@ def ensure_guest_identity() -> bool:
 
 
 # ==================== 数据接入（source-builder / import）====================
-# /api/source-builder/* 与 /api/import/social-posts 已迁出至 api/routers/ingest.py
-# （见 app.include_router）。collector 网关仍由中间件统一强制。
+# /api/source-builder/* 已迁出至 api/routers/ingest.py（见 app.include_router）;
+# /api/import/social-posts 已退役(issue #262)。collector 网关仍由中间件统一强制。
 
 
 # /api/archive/export|import/articles.jsonl 已迁出至 api/routers/archive_sync.py

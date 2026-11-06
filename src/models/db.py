@@ -1450,6 +1450,23 @@ class ArticlePickRecord(SQLModel, table=True):
     picked_at: str = Field(index=True, description="收录时间")
 
 
+class ArticleFingerprintRecord(SQLModel, table=True):
+    """正文指纹(issue #262 同源内容判重):只在推送到已有源时、对目标源现场补齐;不进 Archive Sync。"""
+
+    __tablename__ = "article_fingerprints"
+    __table_args__ = (
+        Index("ix_article_fingerprints_source_hash", "source_id", "content_hash"),
+    )
+
+    article_id: str = Field(primary_key=True, description="条目 id")
+    source_id: str = Field(index=True, description="条目所属源")
+    content_hash: str = Field(default="", description="规范化正文 sha1;短正文为空")
+    simhash: str = Field(default="", description="64 位 SimHash(16 位十六进制);短正文为空")
+    length: int = Field(default=0, description="规范化正文字数")
+    revision: str = Field(default="", description="算指纹时条目的 archive_updated_at;变了即重算")
+    updated_at: str = Field(default="", description="指纹计算时间")
+
+
 class SourceMigrationLedgerRecord(SQLModel, table=True):
     """源模型迁移台账(issue #262 R1c F12):本步新建 / 改写的每一行记 id 与前像。
 

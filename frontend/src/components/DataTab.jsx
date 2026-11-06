@@ -3,7 +3,7 @@ import { RefreshCw, Search, Plus, Trash2, Edit2, ChevronDown } from 'lucide-reac
 import DateRangePicker from './DateRangePicker';
 import ArticleDetailModal from './ArticleDetailModal';
 import ArticleDetailDrawer from './ArticleDetailDrawer';
-import ManualAddModal from './ManualAddModal';
+import IngestItemModal from './IngestItemModal';
 import {
   fetchArticles as apiFetchArticles,
   fetchArticle,
@@ -12,7 +12,7 @@ import {
   batchDeleteArticles,
   deleteArticle,
   updateArticle,
-  createArticle,
+  ingestItems,
   forcePodcastFullAnalysis,
 } from '../api';
 import Sparkline from './charts/Sparkline';
@@ -155,8 +155,7 @@ export default function DataTab({
     return () => window.removeEventListener('resize', measure);
   }, [facets, fetchersById]);
 
-  // 手工录入的 datalist 选项：类型/来源同样吃 facets（全量目录），并入已注册 fetcher。
-  const manualContentTypes = useMemo(() => (facets?.content_types ?? []).map(c => c.value), [facets]);
+  // 单条收录的来源 datalist:吃 facets(全量目录),并入已注册 fetcher;留空 = 按链接自动认。
   const uniqueSourceIds = useMemo(() => [...new Set([
     ...availableFetchers.map(f => f.id).filter(Boolean),
     ...(facets?.source_ids ?? []).map(s => s.value),
@@ -391,25 +390,20 @@ export default function DataTab({
     });
   };
 
-  const handleManualAddSubmit = async (formData) => {
-    const payload = {
-      id: `manual_${Date.now()}`,
-      title: formData.title,
-      source_url: formData.source_url,
-      publish_date: formData.publish_date || new Date().toISOString(),
-      content_type: formData.content_type,
-      source_id: formData.source_id,
-      content: formData.content,
-      extensions_json: formData.extensions_json || '{}',
-    };
-    await runAction(() => createArticle(payload), {
-      showToast,
-      success: '已录入文章',
-      onSuccess: () => {
-        setManualAddModal(false);
+  // 单条收录:回执留在弹窗里(新建 / 已有 / 新建临时源),新建或补全时刷新台账。
+  const handleIngestSubmit = async (item) => {
+    try {
+      const res = await ingestItems([item]);
+      const result = res?.results?.[0] || null;
+      if (result && ['created', 'refreshed'].includes(result.status)) {
+        showToast(result.source_created ? `已收录 · 新建临时源 ${result.source_id}` : `已收录 ${item.title || result.id}`, 'success');
         refreshAfterMutation();
-      },
-    });
+      }
+      return result;
+    } catch (error) {
+      showToast(error.message || '收录失败', 'error');
+      return null;
+    }
   };
 
   // 行点击 → 打开详情抽屉并拉取全文（竞态由 runDetail 兜底）。
@@ -529,7 +523,7 @@ export default function DataTab({
         <div className="page-head-actions">
           {canManageArticles && (
             <button onClick={() => setManualAddModal(true)} className="action-button action-button-primary min-h-[32px] px-3 text-xs">
-              <Plus /> 手工录入
+              <Plus /> 单条收录
             </button>
           )}
           <button onClick={refreshArticles} disabled={loading} className="action-button action-button-secondary min-h-[32px] px-3 text-xs">
@@ -937,12 +931,11 @@ export default function DataTab({
         onTemporaryTagSearch={handleTemporaryTagSearch}
       />
 
-      <ManualAddModal
+      <IngestItemModal
         isOpen={manualAddModal}
-        uniqueContentTypes={manualContentTypes}
-        uniqueSourceIds={uniqueSourceIds}
+        sourceIds={uniqueSourceIds}
         onClose={() => setManualAddModal(false)}
-        onSubmit={handleManualAddSubmit}
+        onSubmit={handleIngestSubmit}
       />
     </div>
   );

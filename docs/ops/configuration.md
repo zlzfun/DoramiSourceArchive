@@ -350,7 +350,7 @@ secret = change-me-to-a-long-random-string
 
 - admin 账号：超级用户，可访问全部采集与分发能力；在 reader 面检索时不受个人订阅范围限制。
 - user 账号：受限读者，登录后是一个“阅读器”（仅阅读已订阅来源，左栏增删订阅）外加“接入集成”（聚合接口令牌、MCP、Skill）；检索、阅读与下游分发均硬限定在个人订阅范围内。
-- 内容台账读取对两类账号开放；手工录入、编辑、删除、离线归档导入等归档写操作只对 admin 账号开放。
+- 内容台账读取对两类账号开放；单条收录、编辑、删除、离线归档导入等归档写操作只对 admin 账号开放。
 - （仅分离部署）账号角色会再和 `[runtime] role` 取交集：`role = collector` / `reader` 时，部署角色作为外层硬限制叠加在账号角色之上。
 
 账户增删改在前端「运维管理 → 用户」即时生效、无需重启；但 `[auth]` 各项（`cookie_name`、`session_seconds`、`secret`、`cookie_secure`）只在后端进程启动时读取，修改这些后需要重启后端(`docker compose restart backend`;dev 裸起则重启进程)。

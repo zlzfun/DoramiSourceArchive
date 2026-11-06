@@ -549,8 +549,9 @@ export function updateArticle(id, data) {
   return request(`/articles/${enc(id)}`, { method: 'PUT', body: data, errorMsg: '更新失败' });
 }
 
-export function createArticle(payload) {
-  return request('/articles', { method: 'POST', body: payload, errorMsg: '录入失败' });
+// 单条收录(issue #262):与外部推送同一端点,管理员会话直接调;条目 id / 类型 / 来路由服务端决定。
+export function ingestItems(items) {
+  return request('/public/ingest/v1/items', { method: 'POST', body: { items }, errorMsg: '收录失败' });
 }
 
 // ==================== 运行参数 ====================
