@@ -13,7 +13,7 @@ from models.db import (
     next_article_archive_revision,
 )
 from services.podcast_metadata import merge_podcast_publisher_metadata
-from services import source_catalog, source_rows, sync_consumer_policy
+from services import item_url_identity, source_catalog, source_rows, sync_consumer_policy
 from services.title_cache import extensions as title_extensions, preserve_title_receipt
 from services.collection_nodes import PODCAST_SOURCE_TYPES, is_public_podcast_source
 from services.podcast_stage_policy import PodcastStageDenied, require_stage as require_podcast_stage
@@ -278,6 +278,19 @@ class DatabaseStorage(BaseStorage):
                 except PodcastStageDenied:
                     return SAVE_REJECTED_PODCAST_STAGE
             existing = session.get(ArticleRecord, item.id)
+            if existing is None and item.source_id and item.source_url:
+                # 先推后抓合流(issue #262):同一个源里已有同链接的收录条目(推送 / 手工 / 导入,
+                # 条目 id 公式可能与抓取器不同)时按同一条处理——补正文 / 修元数据 / 幂等跳过与 id
+                # 命中同一口径。改写 item.id 让管线把后续分析与媒体预取挂到已有行上。
+                alias = item_url_identity.ingested_row_for(
+                    session,
+                    item.source_id,
+                    item.source_url,
+                    getattr(item, "content_type", "") or "",
+                )
+                if alias is not None:
+                    item.id = alias.id
+                    existing = alias
             if existing:
                 if (existing.source_id or "") != (item.source_id or ""):
                     # Item ids are only unique per source by convention.  A row

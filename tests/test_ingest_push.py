@@ -480,3 +480,175 @@ def test_ready_is_revoked_when_a_later_sources_run_is_legacy(tmp_path):
             synced_at=_NOW,
         )
         assert remote_sync.source_catalog_ready(consumer.engine) is expected
+
+
+def _fetched(sid, item_id, url, *, content="抓取全文", content_type="web_article", title="抓取标题"):
+    """模拟抓取器入库的条目(条目 id 用抓取器自己的公式,与推送的不同)。"""
+    from api.articles_view import GenericContent
+
+    item = GenericContent(
+        id=item_id, title=title, source_url=url, publish_date=_NOW,
+        content=content, has_content=bool(content),
+    )
+    item.source_id = sid
+    item.content_type = content_type
+    return item
+
+
+def test_push_then_fetch_merges_into_one_row_only_for_url_identity_sources(monkeypatch, tmp_path):
+    """先推后抓合流(补检 A):抓取器条目 id 公式不同(RSS guid ≠ link、列表页另算哈希)时,
+    同源同链接的收录条目就是同一条;单页文档 / 共用链接的源不合流,普通抓取条目之间行为不变。"""
+    import asyncio
+
+    from models.db import ArticleRecord
+    from storage.impl import db_storage
+
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as client:
+        _login(client)
+        token = _issue_token(client)
+        results = _push(client, token, [
+            # 列表页源,推送只带摘要:抓取到全文后补进同一行。
+            {"kind": "article", "url": "https://www.anthropic.com/news/claude-y", "title": "Claude Y",
+             "summary": "推送摘要"},
+            # RSS 源,feed 的 guid 是 ?p=123 一类、推送方没带 guid。
+            {"kind": "article", "url": "https://anildash.com/2026/11/06/post", "title": "Anil",
+             "content": "推送正文", "source": {"source_id": "rss_anil_dash"}},
+            # 单页文档(changelog):多个条目共用页面链接,不能按链接合流。
+            {"kind": "article", "url": "https://code.claude.com/docs/en/changelog", "title": "整页",
+             "content": "推送正文", "source": {"source_id": "docs_claude_code_changelog"}},
+            {"kind": "article", "url": "https://seed.bytedance.com/en/research", "title": "整页",
+             "content": "推送正文", "source": {"source_id": "web_bytedance_seed_research"}},
+        ]).json()["results"]
+    assert [r["status"] for r in results] == ["created"] * 4, results
+    pushed_news, pushed_rss = results[0]["id"], results[1]["id"]
+
+    def save(item):
+        return asyncio.run(sink.save_with_outcome(item))
+
+    news = _fetched("web_anthropic_news", "web_anthropic_news_fetcherhash", "https://www.anthropic.com/news/claude-y/")
+    assert save(news) == db_storage.SAVE_CONTENT_FILLED
+    assert news.id == pushed_news  # 管线后续分析 / 媒体预取挂到已有行
+    filled = _row(sink.engine, ArticleRecord, pushed_news)
+    assert filled.has_content and filled.content == "抓取全文" and filled.ingest_channel == "push"
+    rss = _fetched("rss_anil_dash", "rss_anil_dash_guidhash", "https://anildash.com/2026/11/06/post",
+                   content_type="rss_article")
+    assert save(rss) == db_storage.SAVE_DUPLICATE
+    assert _row(sink.engine, ArticleRecord, "rss_anil_dash_guidhash") is None
+    # 共用页面链接的源:带锚点与不带锚点的抓取条目都照常新建。
+    for item in (
+        _fetched("docs_claude_code_changelog", "docs_claude_code_changelog_a", "https://code.claude.com/docs/en/changelog#2-1-0"),
+        _fetched("docs_claude_code_changelog", "docs_claude_code_changelog_b", "https://code.claude.com/docs/en/changelog"),
+        _fetched("web_bytedance_seed_research", "web_bytedance_seed_research_a", "https://seed.bytedance.com/en/research"),
+    ):
+        assert save(item) == db_storage.SAVE_CREATED, item.id
+    # 普通抓取条目之间不按链接合流(行为不变)。
+    for item_id in ("rss_anil_dash_one", "rss_anil_dash_two"):
+        assert save(_fetched("rss_anil_dash", item_id, "https://anildash.com/shared", content_type="rss_article")) \
+            == db_storage.SAVE_CREATED
+    with Session(sink.engine) as session:
+        rows = session.exec(select(ArticleRecord).where(
+            ArticleRecord.source_url.in_([
+                "https://www.anthropic.com/news/claude-y", "https://www.anthropic.com/news/claude-y/",
+                "https://anildash.com/2026/11/06/post",
+            ])
+        )).all()
+    assert sorted(row.id for row in rows) == sorted([pushed_news, pushed_rss])
+
+
+def test_url_identity_guards_shared_links_fragments_and_podcasts(tmp_path):
+    from sqlmodel import SQLModel, create_engine
+
+    from models.db import ArticleRecord
+    from services import item_url_identity
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'guard.db'}")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        for item_id, url, channel in (
+            ("rss_x_pushed", "https://example.com/a", "push"),
+            ("rss_x_fetched", "https://example.com/a", ""),  # 同源已有同链接的抓取条目
+            ("rss_y_pushed", "https://example.com/b#part", "manual"),
+        ):
+            session.add(ArticleRecord(
+                id=item_id, title="t", content_type="rss_article", source_id=item_id.rsplit("_", 1)[0],
+                source_url=url, publish_date=_NOW, fetched_date=_NOW, ingest_channel=channel,
+            ))
+        session.commit()
+        # 同源里已有同链接的抓取条目 → 这个源共用链接,不合流。
+        assert item_url_identity.ingested_row_for(session, "rss_x", "https://example.com/a", "rss_article") is None
+        # 带锚点只认原样。
+        assert item_url_identity.ingested_row_for(session, "rss_y", "https://example.com/b", "rss_article") is None
+        assert item_url_identity.ingested_row_for(
+            session, "rss_y", "https://example.com/b#part", "rss_article"
+        ).id == "rss_y_pushed"
+        assert not item_url_identity.url_is_item_identity(session, "podcast_any", "podcast_episode")
+        assert not item_url_identity.url_is_item_identity(session, "github_openclaw_releases", "github_release")
+
+
+def test_push_kind_must_match_target_source_shape(monkeypatch, tmp_path):
+    """推送类型与目标源形态(补检 B):显式 id 形态不符拒收;前缀 / feed 匹配跳过形态不同的源。"""
+    from models.db import SourceConfigRecord
+
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as client:
+        _login(client)
+        token = _issue_token(client)
+        results = _push(client, token, [
+            {"kind": "article", "url": "https://openai.com/index/x", "title": "文章",
+             "source": {"source_id": "x_openai"}},
+            {"kind": "social_post", "post_id": "1990000000000000101", "content": "帖子",
+             "author": {"handle": "someone"}, "source": {"source_id": "web_anthropic_news"}},
+            {"kind": "podcast_episode", "title": "EP", "guid": "ep-x", "audio_url": "https://cdn.t/ep.mp3",
+             "source": {"source_id": "rss_anil_dash"}},
+            # x.com 账号下的链接以文章推送:不落进该账号的社交源。
+            {"kind": "article", "url": "https://x.com/OpenAI/status/1990000000000000102", "title": "转成文章"},
+            # 播客单集给了文章 RSS 的 feed:不落进 RSS 源,另建临时播客源。
+            {"kind": "podcast_episode", "title": "EP2", "guid": "ep-2", "audio_url": "https://cdn.t/ep2.mp3",
+             "source": {"feed_url": "https://anildash.com/feed.xml", "name": "误给的 feed"}},
+            # 形态一致照常命中。
+            {"kind": "social_post", "post_id": "1990000000000000103", "content": "官方帖",
+             "author": {"handle": "OpenAI"}},
+        ]).json()["results"]
+    assert [r["status"] for r in results[:3]] == ["rejected"] * 3, results
+    assert results[0]["reason"] == "该来源是社交源,不收文章"
+    assert results[1]["reason"] == "该来源是文章源,不收社交帖"
+    assert results[2]["reason"] == "该来源是文章源,不收播客单集"
+    assert results[3]["status"] == "created" and results[3]["source_id"] != "x_openai"
+    assert _row(sink.engine, SourceConfigRecord, results[3]["source_id"]).shape == "article"
+    assert results[4]["status"] == "created" and results[4]["source_id"].startswith("podcast_")
+    assert (results[5]["status"], results[5]["source_id"]) == ("created", "x_openai")
+
+
+def test_article_links_fall_back_to_the_only_curated_source_on_the_host(monkeypatch, tmp_path):
+    """主机兜底(沙箱端到端发现):策展源登记的是分类页 / feed 地址时,文章链接落不进前缀;
+    该主机上恰好一个同形态源就认它,不另建临时源。有歧义、单页文档类、多租户主机不兜底。"""
+    from models.db import SourceConfigRecord
+
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    with Session(sink.engine) as session:
+        for sid, home in (("rss_twin_a", "https://twin.example/a"), ("rss_twin_b", "https://twin.example/b")):
+            session.add(SourceConfigRecord(
+                source_id=sid, name=sid, source_type="rss", url=f"{home}/feed.xml",
+                homepage_url=home, origin="admin", admission_status="admitted",
+                created_at=_NOW, updated_at=_NOW,
+            ))
+        session.commit()
+    with TestClient(app_module.app) as client:
+        _login(client)
+        token = _issue_token(client)
+        results = _push(client, token, [
+            # rss_openai_news 登记的是 openai.com/news/rss.xml,文章在 /index/…
+            {"kind": "article", "url": "https://openai.com/index/some-new-post/", "title": "OpenAI 新文"},
+            # 主机上只有 Codex changelog(单页文档类):不兜底,另建临时源。
+            {"kind": "article", "url": "https://developers.openai.com/api/docs/guides/x", "title": "文档页"},
+            # 同主机两个源、前缀都不中:有歧义,另建临时源;前缀命中的照常。
+            {"kind": "article", "url": "https://twin.example/c/post", "title": "歧义"},
+            {"kind": "article", "url": "https://twin.example/a/post", "title": "前缀"},
+        ]).json()["results"]
+    assert [r["status"] for r in results] == ["created"] * 4, results
+    assert [r["source_id"] for r in results] == [
+        "rss_openai_news", "web_developers_openai_com", "web_twin_example", "rss_twin_a",
+    ]
+    assert [r["source_created"] for r in results] == [False, True, True, False]
+    assert _row(sink.engine, SourceConfigRecord, "web_developers_openai_com").admission_status == "provisional"

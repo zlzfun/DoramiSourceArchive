@@ -64,11 +64,15 @@
 ## 身份解析(认出已有源)
 
 1. 显式 `source_id`:校验存在、非保留(读者自定源 `user_rss_*`、抓取模板 `generic_*`、公共日报、
-   已下线源)、非同步行、未退役、未下架。
+   已下线源)、非同步行、未退役、未下架,且源形态与 `kind` 一致(文章源只收 `article`、社交源只收
+   `social_post`、播客源只收 `podcast_episode`;不符拒收,例如「该来源是社交源,不收文章」)。
 2. 社交:身份键 `x:user_id:…` 优先、`x:handle:…`(小写)次之——命中预设(如 `Kimi_Moonshot` →
    `x_moonshot_ai`)、配置源或此前建的临时源;都不中则建 `x_<handle>`。
 3. 网页:`feed_url` 规范地址 → 已有 RSS 源;条目 / 站点链接按「主机 + 路径前缀」匹配已有源
-   (`anthropic.com/news/*` → `web_anthropic_news`);都不中则按站点建 `web_<host>`。多租户主机
+   (`anthropic.com/news/*` → `web_anthropic_news`);形态不同的源不算命中、继续往下找(`x.com/<账号>/…`
+   的文章不落进该账号的社交源);前缀不中时,该主机上恰好一个形态相同的已有源就认它(策展源常登记
+   分类页或 feed 地址,如 `openai.com/news/rss.xml`,文章链接不在前缀下;多个候选、单页文档类源、
+   多租户主机不兜底);都不中则按站点建 `web_<host>`。多租户主机
    (github.com、medium.com、huggingface.co、youtube.com、arxiv.org 等)按「主机 + 首段路径」建
    (`web_github_com_openai`)。
 4. 播客:按节目 `feed_url` 认;都不中则建 `podcast_<host>_<hash6>` 临时播客源(只到元数据与简介
@@ -78,7 +82,13 @@
 
 - 与抓取器同一公式:社交 `{source_id}_{post_id}`;文章 `{source_id}_{sha1(guid 或 url)[:16]}`;
   播客 `{前缀}_{sha1(guid 或单集链接 url)[:16]}`(前缀 = 收养过的播客源的 `entry_id_namespace`,否则
-  `source_id`;**feed 里有 guid 就带上**,两样都没有的单集拒收)。先推后抓(或反之)天然合流。
+  `source_id`;**feed 里有 guid 就带上**,两样都没有的单集拒收)。
+- 先抓后推:同一链接已在库里 → 见下一条,不新建。
+- 先推后抓:社交帖与带 guid 的播客单集 id 公式与抓取器一致,天然合流;文章的抓取器 id 公式常不同
+  (RSS 取 `entry.id`、列表页另算哈希),由存储层按链接合流——抓取入库新条目时,同一个源里已有同链接
+  (原样 / 规范形 / 带尾斜杠;带锚点只认原样)的**收录条目**就按同一条处理(补正文 / 幂等跳过),不另建。
+  多个条目共用页面链接的源不按链接合流:单页文档(changelog / release notes)、`docs_*` / `github_*`、
+  播客单集,以及同源里已有同链接抓取条目的源。普通抓取条目之间的行为不变。
 - 文章与社交帖:同一链接已在**别的源**里 → 不新建,返回 `duplicate_url` 与已有条目 id,只记一条收录记录;
   同一个源里已有同链接的条目(id 公式不同)→ 返回 `duplicate`。播客单集常共用节目页链接,不按链接去重。
 

@@ -345,7 +345,7 @@ shape = "article"
 
 | # | 级 | 问题 | 修订 |
 |---|---|---|---|
-| 1 | P1 | 系统行 / 回填行有了源级形态,绕过榜单对 daily_brief / release 的内容类型排除 | 榜单与文章列表的源级形态表跳过 `system / legacy / agent` 来路与退役行(对拍时另发现墓碑行同样问题,一并修) |
+| 1 | P1 | 系统行 / 回填行有了源级形态,绕过榜单对 daily_brief / release 的内容类型排除 | 榜单与文章列表的源级形态表跳过 `system / legacy / ingest` 来路与退役行(对拍时另发现墓碑行同样问题,一并修) |
 | 2 | P1 | 预检看到新外网、实际整轮 legacy 时,顶层仍记 catalog-v1,再升级不重放 | 改为「未就绪即重放」:就绪只认实际按 catalog-v1 完成的 sources 流 |
 | 3 | P1 | 跨源 URL 去重能探出私有条目 id 并吞掉公开推送 | 去重只在可公开交付的条目里查 |
 | 4 | P1 | feed 规范化删掉 query,不同 feed 串源 | 统一用保留 query 的 `canonical_feed_url` |
@@ -367,4 +367,14 @@ shape = "article"
 | 6 | 无 GUID 播客先推后抓仍落两行 | 播客条目 id 与 `podcast_rss_fetcher` 同序取 guid → 单集链接;两样都没有拒收(契约写明「有 guid 就带上」) |
 | 12 | `1e309` 解析成 inf 后 `int()` 溢出、整批异常 | 数值扩展检查有限性与上限;路由兜底 `OverflowError` |
 | 新 P1 | 同源 URL 去重把共用节目页链接的不同单集并成一条 | 按链接去重只用于文章与社交帖,播客单集只认单集身份 |
+
+**补检:推送命中已有源(2026-11-06,用户拍板并入首个 PR)**:分叉会话读代码发现 A / B 两处缺口,按推荐修;C 是修完后沙箱真实抓取(`rss_nvidia_genai`,feed guid 为 `?p=…`)时发现的同类缺口,按 A / B 同一目标(认回已有源、同一篇只落一行)一并修。只影响今后的新入库,历史条目不动。
+
+沙箱实测(真实 feed):先推两篇(一篇只带摘要、一篇带正文)再跑一次 `rss_nvidia_genai` 抓取——抓到 18 条,新建 6、补正文 1(只带摘要那篇补进 9954 字全文)、合流跳过 1、已有 10;两篇各只有一行,来路仍是 `push`。
+
+| # | 问题 | 修订 |
+|---|---|---|
+| A | 先推后抓同源落两行:抓取入库只按 id 去重,62 个预设里 X 7 个与推送同公式,其余(RSS 28 个取 `entry.id`、列表页 11 个、单页文档 / GitHub / HF / trending 16 个)常对不上 | `services/item_url_identity.py`:抓取入库新条目前,同源里已有同链接的收录条目(`ingest_channel` ∈ push / manual / import)按同一条处理,复用 id 命中的补正文 / 修元数据 / 幂等跳过,并把 `item.id` 改成已有行让管线后续分析挂对。不合流:播客单集、`docs_*` / `github_*` 与 GitHub 内容类型、绑定单页文档类的源(`web_bytedance_seed_research` 等共用页面链接)、带锚点链接只认原样、同源已有同链接抓取条目。代价:这类条目每轮仍会被抓取器当新条目取一次正文,直到滑出列表窗口 |
+| B | `kind` 不校验目标源形态:显式 id 往 X 源推文章、往博客源推社交帖照收;`x.com/<账号>/…` 的文章按前缀落进 X 源 | 显式 id / 身份键 / 已有同名 id 命中后比对形态(`article→article`、`social_post→social`、`podcast_episode→podcast`),不符拒收;feed 与前缀匹配跳过形态不同的源、继续往下解析 |
+| C | 沙箱端到端发现:策展源登记的是分类页或 feed 地址(`rss_openai_news` → `openai.com/news/rss.xml`、`rss_nvidia_genai` → `blogs.nvidia.com/blog/category/generative-ai/`),只给文章链接的推送认不回,另建临时源,抓取器随后把同一篇收进策展源,落成跨源两行 | 前缀不中时按主机兜底:该主机上恰好一个形态相同、链接即条目身份的已有源就认它;多个候选、多租户主机、单页文档 / `docs_*` / `github_*` 不兜底(`developers.openai.com` 只有 Codex changelog,仍建临时源) |
 

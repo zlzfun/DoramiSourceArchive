@@ -25,7 +25,7 @@ import json
 import re
 import secrets
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 from urllib.parse import urlsplit
 
 from sqlalchemy import func
@@ -39,7 +39,7 @@ from models.db import (
     SourceConfigRecord,
     SourceIdentityKeyRecord,
 )
-from services import ingest_policy, source_catalog, source_identity
+from services import ingest_policy, item_url_identity, source_catalog, source_identity
 from services.source_visibility import hidden_source_ids
 
 
@@ -54,6 +54,14 @@ CONTENT_TYPE_BY_KIND = {
     "social_post": "social_post",
     "podcast_episode": "podcast_episode",
 }
+# 推送类型 → 目标源形态(三容器互斥):社交源不收文章,文章源不收社交帖,播客单集只进播客源。
+SHAPE_BY_KIND = {
+    "article": "article",
+    "social_post": "social",
+    "podcast_episode": "podcast",
+}
+_SHAPE_LABEL = {"article": "文章源", "social": "社交源", "podcast": "播客源"}
+_KIND_LABEL = {"article": "文章", "social_post": "社交帖", "podcast_episode": "播客单集"}
 
 # 多租户主机:一个主机上住着许多互不相干的作者,按「主机 + 首段路径」建源(github.com/openai)。
 # 一作者一子域的平台(substack、blogspot 等)按主机即可,不在名单里。
@@ -293,7 +301,10 @@ def re_slash(path: str) -> str:
     return path.rstrip("/") or "/"
 
 
-def _match_prefix(index: _WebIndex, url: str) -> Optional[str]:
+def _match_prefix(
+    index: _WebIndex, url: str, accept: Optional[Callable[[str], bool]] = None
+) -> Optional[str]:
+    """按「主机 + 路径前缀」认已有源(长前缀优先);``accept`` 过滤掉不收该类型的源后继续往下找。"""
     try:
         parts = urlsplit(str(url or "").strip())
     except ValueError:
@@ -305,8 +316,43 @@ def _match_prefix(index: _WebIndex, url: str) -> Optional[str]:
         if prefix_host != host:
             continue
         if prefix_path == "/" or path == prefix_path or path.startswith(prefix_path + "/"):
+            if accept is not None and not accept(source_id):
+                continue
             return source_id
     return None
+
+
+def _match_host(ctx: BatchContext, url: str, kind: str) -> Optional[str]:
+    """前缀都没命中时的主机兜底:该主机上恰好一个形态相同、链接即条目身份的已有源就认它。
+
+    策展源登记的常是分类页或 feed 地址(``openai.com/news/rss.xml``、``blogs.nvidia.com/blog/category/…``),
+    文章链接不在前缀下;不兜底就会为同一个发布方另建临时源,抓取器随后把同一篇收进策展源,落成跨源两行。
+    多租户主机、多个候选(有歧义)、共用页面链接的源(单页文档 / ``docs_*`` / ``github_*``)不兜底。
+    """
+    try:
+        host = (urlsplit(str(url or "").strip()).hostname or "").casefold()
+    except ValueError:
+        return None
+    host = host[4:] if host.startswith("www.") else host
+    if not host or host in MULTI_TENANT_HOSTS or f"www.{host}" in MULTI_TENANT_HOSTS:
+        return None
+    content_type = CONTENT_TYPE_BY_KIND.get(kind, "")
+    candidates = {
+        source_id
+        for prefix_host, _path, source_id in ctx.web_index.prefixes
+        if prefix_host == host and source_id not in ctx.hidden
+    }
+    usable = []
+    for source_id in sorted(candidates):
+        view = source_catalog.get(ctx.session, source_id)
+        if view.retired or view.is_private or view.synced:
+            continue
+        if _shape_mismatch(ctx, source_id, kind) is not None:
+            continue
+        if not item_url_identity.url_is_item_identity(ctx.session, source_id, content_type):
+            continue
+        usable.append(source_id)
+    return usable[0] if len(usable) == 1 else None
 
 
 @dataclass
@@ -356,11 +402,27 @@ def _known_user_ids(ctx: BatchContext, platform: str, source_id: str) -> set[str
     return known
 
 
-def _check_target(ctx: BatchContext, source_id: str) -> None:
-    """已有源能否接受推送。"""
+def _shape_mismatch(ctx: BatchContext, source_id: str, kind: str) -> Optional[str]:
+    """推送类型与目标源形态不符时给拒收原因。"""
+    want = SHAPE_BY_KIND.get(kind)
+    shape = source_catalog.get(ctx.session, source_id).shape
+    if not want or not shape or shape == want:
+        return None
+    return f"该来源是{_SHAPE_LABEL.get(shape, shape)},不收{_KIND_LABEL.get(kind, kind)}"
+
+
+def _accepts_kind(ctx: BatchContext, kind: str) -> Callable[[str], bool]:
+    return lambda source_id: _shape_mismatch(ctx, source_id, kind) is None
+
+
+def _check_target(ctx: BatchContext, source_id: str, kind: str) -> None:
+    """已有源能否接受这一类推送。"""
     reserved = ingest_policy.reserved_source_id_reason(source_id)
     if reserved:
         raise IngestRejected(reserved)
+    mismatch = _shape_mismatch(ctx, source_id, kind)
+    if mismatch:
+        raise IngestRejected(mismatch)
     view = source_catalog.get(ctx.session, source_id)
     if view.is_private:
         raise IngestRejected("读者自定源不接受推送")
@@ -392,7 +454,7 @@ def resolve_source(ctx: BatchContext, kind: str, source: dict[str, Any], *, item
         view = source_catalog.get(ctx.session, explicit)
         if not view.known:
             raise IngestRejected("source_id 不存在;未登记的出处请给平台账号或站点链接")
-        _check_target(ctx, explicit)
+        _check_target(ctx, explicit, kind)
         return ResolvedSource(source_id=explicit)
 
     name = str(source.get("name") or "").strip()
@@ -422,7 +484,7 @@ def resolve_source(ctx: BatchContext, kind: str, source: dict[str, Any], *, item
                 handle_conflict = True
                 continue
             if hit:
-                _check_target(ctx, hit)
+                _check_target(ctx, hit, kind)
                 return ResolvedSource(source_id=hit)
         if not source_identity.normalize_handle(handle):
             raise IngestRejected("社交帖需要作者 handle")
@@ -436,7 +498,7 @@ def resolve_source(ctx: BatchContext, kind: str, source: dict[str, Any], *, item
             derived = _unique_new_id(ctx, derived)
         elif derived_exists:
             # 同名 id 已存在但身份键没对上(例如旧导入行):沿用,不再造一个平行源。
-            _check_target(ctx, derived)
+            _check_target(ctx, derived, kind)
             return ResolvedSource(source_id=derived)
         display = name or handle.lstrip("@")
         resolved = ResolvedSource(source_id=derived, created=True, hint={
@@ -456,14 +518,20 @@ def resolve_source(ctx: BatchContext, kind: str, source: dict[str, Any], *, item
     site = str(source.get("url") or source.get("site") or "").strip()
     if feed_url:
         hit = ctx.web_index.feeds.get(canonical_feed(feed_url))
-        if hit:
-            _check_target(ctx, hit)
+        # 形态不同的源(例如往文章 RSS 的 feed 推播客单集)不算命中,继续往下解析。
+        if hit and _shape_mismatch(ctx, hit, kind) is None:
+            _check_target(ctx, hit, kind)
             return ResolvedSource(source_id=hit)
     lookup_url = site or item_url
     if lookup_url and kind != "podcast_episode":
-        hit = _match_prefix(ctx.web_index, lookup_url)
+        # x.com/<账号>/… 的文章不落进该账号的社交源:前缀匹配跳过形态不同的源。
+        hit = _match_prefix(ctx.web_index, lookup_url, accept=_accepts_kind(ctx, kind))
         if hit:
-            _check_target(ctx, hit)
+            _check_target(ctx, hit, kind)
+            return ResolvedSource(source_id=hit)
+        hit = _match_host(ctx, lookup_url, kind)
+        if hit:
+            _check_target(ctx, hit, kind)
             return ResolvedSource(source_id=hit)
     anchor = feed_url or lookup_url
     if not anchor:
@@ -482,7 +550,7 @@ def resolve_source(ctx: BatchContext, kind: str, source: dict[str, Any], *, item
         return ctx.planned[key]
     existing = _existing_identity(ctx.session, key)
     if existing:
-        _check_target(ctx, existing)
+        _check_target(ctx, existing, kind)
         return ResolvedSource(source_id=existing)
     source_id = _unique_new_id(ctx, base)
     homepage = site or (f"https://{_host(lookup_url or feed_url)}" if (lookup_url or feed_url) else "")
@@ -668,14 +736,12 @@ def existing_article_by_url(session: Session, url: str) -> Optional[ArticleRecor
     """
     from services.user_sources import source_is_credentialed
 
-    raw = str(url or "").strip()
-    if not raw:
+    candidates = item_url_identity.url_candidates(url)
+    if not candidates:
         return None
-    canonical = canonical_url(raw)
-    candidates = {raw, canonical, canonical + "/"} - {""}
     rows = session.exec(
         select(ArticleRecord)
-        .where(ArticleRecord.source_url.in_(sorted(candidates)))
+        .where(ArticleRecord.source_url.in_(candidates))
         .where(~ArticleRecord.source_id.startswith(source_catalog.USER_SOURCE_PREFIX, autoescape=True))
         .limit(20)
     ).all()
