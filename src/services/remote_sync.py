@@ -1285,11 +1285,18 @@ async def run_pull_v2(
                             install = archive_sync_v2.install_podcast_audio_bytes
                             fetch = _fetch_v2_podcast_audio_bytes
                             max_bytes = int(podcast_artifact_store.max_bytes)
-                        reused = await asyncio.to_thread(reuse, *args, **options)
-                        if not reused:
-                            body = await fetch(client, base, cookie_header, key,
-                                expected_size=expected_size, max_bytes=max_bytes)
-                            await asyncio.to_thread(install, *args, body, **options)
+                        try:
+                            reused = await asyncio.to_thread(reuse, *args, **options)
+                            if not reused:
+                                body = await fetch(client, base, cookie_header, key,
+                                    expected_size=expected_size, max_bytes=max_bytes)
+                                await asyncio.to_thread(install, *args, body, **options)
+                        except archive_sync_v2.SyncV2MediaRejected as exc:
+                            # 校验和对上但不是图片:该行已记 failed,单条跳过(issue #264)。
+                            _logger.warning("v2 media %s 拒收并跳过:%s", key, exc)
+                            stats["skipped"] += 1
+                            advance(1)
+                            continue
                         # Count only after verification, durable installation and
                         # metadata publication; never also count the page below.
                         advance(1, reused=reused, size=expected_size)

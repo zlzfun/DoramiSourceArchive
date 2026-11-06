@@ -272,7 +272,8 @@ whole-page rollback remain mandatory for invalid incoming upserts.
 transaction-revision snapshot, so publishing terminal readiness cannot outrun
 the matching article, analysis, or media generation. A stream checkpoint advances
 only after its terminal page has committed; the media checkpoint additionally
-waits for every declared binary to pass byte-size and SHA-256 verification.
+waits for every declared binary to pass byte-size and SHA-256 verification, or to
+be recorded as rejected (see "Media and Candidate evidence").
 
 Before requesting an image or generated Podcast audio binary, the receiver checks
 the manifest's content-addressed local file: regular file, exact size, full
@@ -443,6 +444,31 @@ exact size, content hash, image magic, declared MIME and extension before atomic
 installation. Media responses use `X-Content-Type-Options: nosniff`; a newer
 manifest revision can replace an already cached binary without using the receiver
 clock as its authority revision.
+
+The producer vets each cached image before listing it (issue #264), using the
+receiver's own rule (`validate_synced_image` on the first 512 bytes: content
+signature, declared MIME and extension agree). Content that is not the declared
+image, or a row that cannot be addressed safely, is skipped and its local cache row
+becomes `failed`. A working copy that is missing or has the wrong size is served
+from object storage only when a matching registration exists (size, MIME, bucket,
+region; cold copies are not header-checked). Without any registration such a row is
+skipped without changing it: the next reader access or media backfill re-downloads
+it, which advances its revision so the next incremental page lists it; after
+restoring files by hand, reset the receiver's media stream. States that can heal
+without a database write fail the page instead, keeping the checkpoint: filesystem
+errors other than absence, a registration that exists but does not match (or object
+storage disabled), and a disabled media store while candidates exist (with no
+candidates the page is empty and complete). The first-page `pending` remains the
+candidate count and may exceed the rows actually listed. Image caching itself
+trusts content only, never the response `Content-Type`, and treats a wrong-sized
+working copy as a miss, so the two sides cannot diverge.
+
+A receiver that downloads bytes matching the declared size and SHA-256 that still
+fail image validation records the row `failed`, counts it under the stream's
+`skipped`, and continues: the bytes are exactly the authority's, so a retry cannot
+succeed. Replaying the same revision re-rejects without downloading; a later
+revision is applied normally. Checksum/size mismatches, the local size limit,
+foreign authority, and every Podcast audio failure still fail the page.
 
 ### Podcast artifact extension (Issue #7 baseline)
 

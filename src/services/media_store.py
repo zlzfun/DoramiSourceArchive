@@ -166,8 +166,19 @@ def extract_image_urls(
     return list(dict.fromkeys(resolved for u in seen if (resolved := resolve_image_url(u, source_url))))
 
 
-def _sniff_image_mime(head: bytes, content_type: str) -> Optional[str]:
-    """魔数优先判定图片 MIME；魔数不识时信任 image/* 响应头；都不是则 None。"""
+# 缓存与同步共用的嗅探窗口：本地入缓存与接收端校验必须看同样多的字节，判定才一致。
+SNIFF_HEAD_BYTES = 512
+
+
+def _sniff_image_mime(head: bytes) -> Optional[str]:
+    """只凭文件内容判定图片 MIME；认不出即 None。
+
+    不信任响应头（issue #264）：网易订阅 CDN 曾以 ``Content-Type: image/png`` 返回
+    194 字节的 ``data:image/png;base64,…`` 文本，旧逻辑据头入缓存，读者看到裂图，
+    同步接收端（只认内容）拒收，整条媒体流卡死。入缓存口径 = 同步接收口径。
+    本函数同时是同步接收端的判定，**只能收紧不能放宽**：导出端按它自检，
+    一旦比旧版接收端宽松，混版本窗口里旧接收端又会被卡住。
+    """
     for magic, mime in _MAGIC_SNIFF:
         if head.startswith(magic):
             return mime
@@ -178,9 +189,6 @@ def _sniff_image_mime(head: bytes, content_type: str) -> Optional[str]:
     stripped = head.lstrip()[:64].lower()
     if stripped.startswith((b"<?xml", b"<svg")):
         return "image/svg+xml"
-    normalized = (content_type or "").split(";")[0].strip().lower()
-    if normalized.startswith("image/"):
-        return normalized
     return None
 
 
@@ -195,7 +203,7 @@ def validate_synced_image(
 
     if not body or len(body) > max(1, int(max_bytes)):
         raise ValueError("同步媒体为空或超过大小上限")
-    sniffed = _sniff_image_mime(body[:512], "")
+    sniffed = _sniff_image_mime(body[:SNIFF_HEAD_BYTES])
     if sniffed is None:
         raise ValueError("同步媒体不是可识别的图片")
     normalized_mime = (declared_mime or "").split(";", 1)[0].strip().lower()
@@ -205,6 +213,37 @@ def validate_synced_image(
     if not expected_ext or (declared_ext or "").lower() != expected_ext:
         raise ValueError("同步媒体扩展名与文件内容不一致")
     return sniffed, expected_ext
+
+
+def mark_cached_failed(engine, records: Iterable[MediaAssetRecord], reason: str) -> int:
+    """把内容已不可用的本地缓存行改成失败负缓存(Archive Sync 导出自检用,issue #264)。
+
+    条件更新:只动仍是同一份 cached 字节、且不归同步权威的行,并发重下或同步交接不被覆盖。
+    时间戳用本模块的 ``_now()``,冷却计算与其它写入同一格式。返回实际改动的行数。
+    """
+    now = _now()
+    changed = 0
+    with Session(engine) as session:
+        for record in records:
+            result = session.exec(
+                update(MediaAssetRecord)
+                .where(
+                    MediaAssetRecord.url_hash == record.url_hash,
+                    MediaAssetRecord.status == "cached",
+                    MediaAssetRecord.content_hash == record.content_hash,
+                    MediaAssetRecord.sync_authority_id == "",
+                )
+                .values(
+                    status="failed",
+                    fail_count=func.coalesce(MediaAssetRecord.fail_count, 0) + 1,
+                    last_error=reason[:500],
+                    updated_at=now,
+                )
+                .execution_options(synchronize_session=False)
+            )
+            changed += max(int(getattr(result, "rowcount", 0) or 0), 0)
+        session.commit()
+    return changed
 
 
 # Clash/Surge 等本机代理的 fake-ip DNS 段：开代理时**所有**域名都解析到这里，
@@ -334,9 +373,17 @@ class MediaStore:
             return handle.read(limit)
 
     async def _restore_cached(self, record: MediaAssetRecord) -> bool:
+        def readable() -> bool:
+            path = self.readable_path(record)
+            # 大小也要对上:截断 / 损坏的本地副本当作缺失,走重下而不是当命中回给读者
+            # (issue #264 检视 R1;OSS 启用时 materialize 已按大小判,这里兜无 OSS 的路径)。
+            try:
+                return path.is_file() and path.stat().st_size == int(record.size_bytes or 0)
+            except OSError:
+                return False
+
         try:
-            path = await asyncio.to_thread(self.readable_path, record)
-            return path.is_file()
+            return await asyncio.to_thread(readable)
         except ObjectStorageError as exc:
             logger.warning("媒体对象读取失败: %s", exc)
             return False
@@ -381,7 +428,8 @@ class MediaStore:
             updated = datetime.datetime.fromisoformat(record.updated_at)
         except (ValueError, TypeError):
             return False
-        elapsed = (datetime.datetime.now() - updated).total_seconds()
+        # 兼容带时区的历史写入(同步接收行的 updated_at 可能来自 _now_iso),与 _upload_still_cooling 同口径
+        elapsed = (datetime.datetime.now(updated.tzinfo) - updated).total_seconds()
         return elapsed < self._retry_window(record.fail_count)
 
     @staticmethod
@@ -548,7 +596,7 @@ class MediaStore:
                             return await asyncio.to_thread(self._mark_failed, url, key, "超出大小上限")
                         chunks.append(chunk)
                     body = b"".join(chunks)
-                    mime = _sniff_image_mime(body[:64], response.headers.get("content-type", ""))
+                    mime = _sniff_image_mime(body[:SNIFF_HEAD_BYTES])
             if browser_fallback:
                 if not await asyncio.to_thread(self._is_article_image, url):
                     return await asyncio.to_thread(self._mark_failed, url, key, "HTTP 403；图片未被文章引用")
@@ -564,7 +612,7 @@ class MediaStore:
                     return await asyncio.to_thread(self._mark_failed, url, key, "HTTP 403；浏览器取图未成功")
                 if len(body) > self.max_bytes:
                     return await asyncio.to_thread(self._mark_failed, url, key, "超出大小上限")
-                mime = _sniff_image_mime(body[:64], "")
+                mime = _sniff_image_mime(body[:SNIFF_HEAD_BYTES])
             if not body or mime is None:
                 return await asyncio.to_thread(self._mark_failed, url, key, "响应不是图片")
         except httpx.HTTPError as exc:
@@ -573,7 +621,8 @@ class MediaStore:
         content_hash = hashlib.sha256(body).hexdigest()
         ext = _MIME_EXT.get(mime, ".bin")
         target = self.root / content_hash[:2] / f"{content_hash}{ext}"
-        if not target.is_file():
+        # 既有 CAS 文件大小不符(截断 / 损坏)时原子覆写,否则重下修不好它(issue #264 检视 R1)
+        if not (target.is_file() and target.stat().st_size == len(body)):
             target.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(dir=target.parent, suffix=".part", delete=False) as stream:
                 tmp = Path(stream.name)
