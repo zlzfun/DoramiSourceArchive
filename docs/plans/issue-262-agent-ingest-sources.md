@@ -284,5 +284,18 @@
 
 **测试**:`tests/test_ingest_unify.py`(同源换链接同正文 / 近似 → `duplicate_content`;跨源、新建临时源、单页文档类、短文本 → `created`;社交帖不比;SimHash 全撞时 Jaccard 复核挡住;条目改过即重算;管理员会话的通道 / 收录者 / 审计与读者 403、令牌优先);`tests/test_manual_entry_extensions.py` 按新契约重写(服务端决定 id / 类型 / 扩展,旧入口 410,手工日报拒收;列表轻取数契约保留);`frontend/test/ingestForm.test.mjs`。反向核验:关掉判重、关掉 Jaccard 复核,对应用例都失败。
 
+**实现检视 R1(2026-11-06)**:检视方 Codex CLI,`gpt-6-astra`,`model_reasoning_effort=ultra`,只读沙箱;实现方 Claude Code(Opus 5.5)。6 条 P2 + 1 条 P3 全部接受、无分歧,另加实现方自查 1 条:
+
+| # | 级 | 问题 | 修订 |
+|---|---|---|---|
+| 1 | P2 | 两个请求同时首次补齐同一源,`session.merge` 撞主键,整批 500 | 原子 UPSERT(`ON CONFLICT DO UPDATE`),旧版本写赢下次按版本号自愈;判重调用出错按未命中继续。回归用屏障固定交错,旧代码 3/3 复现 IntegrityError |
+| 2 | P2 | 自定源绑 `generic_github_releases`,源 id 不带 `github_`,推送的 `web_article` 看不出真实类型,发布说明被判重 | 资格看目标源注册表类 / 绑定类的 `content_type`;候选条目再按自身类型过滤 |
+| 3 | P2 | `runtime.role=reader` 节点上管理员会话可经新入口写入(旧入口 403) | 会话分支要求 `collector_role_enabled`;令牌分支一并要求采集面开启 |
+| 4 | P2 | 精确匹配只取一行,命中孤儿指纹后转入截断的近似分支,漏判仍存在的同正文条目 | 精确与近似查询都 JOIN 当前条目(同源、有正文、类型不禁比);同步时删孤儿指纹 |
+| 5 | P2 | 额度按 actor 统计不分通道,管理员手工收录消耗同名令牌额度 | `picks_today` 只数 `channel=push` |
+| 6 | P2 | 旧请求的迟到回执覆盖重开后的新表单,`finally` 提前解除新请求忙态 | 弹窗请求代次守卫:关闭 / 换类型 / 再收一条都作废在途请求 |
+| 7 | P3 | 忙态只换 spinner;Toast 用间隔号连句 | 「收录中…」;「已收录并新建临时源 …」 |
+| 8 | P3 | (自查)持有连接时再解析会话,嵌套借连接 | 路由先解析会话(缓存在 request.state)再借连接 |
+
 **有意不做 / 触发**:跨源内容去重(明确不做,见 decisions);先推后抓同源换链接两行(backlog,发现真实例子再评估);手工补录日报的入口(backlog)。
 

@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
@@ -21,6 +22,7 @@ from storage.impl import db_storage
 
 
 CHANNEL_MANUAL = "manual"
+_logger = logging.getLogger("dorami.ingest_batch")
 
 
 @dataclass
@@ -115,13 +117,17 @@ async def ingest(
         if existing is None and duplicate is None and not resolved.created and kind == "article":
             # 同源内容判重:同一个源里换了链接的同一篇(只在推送时、只比同源)。目标源第一次被推送时
             # 要现场补齐指纹(上千条约数秒),放到工作线程里,不阻塞事件循环。
-            duplicate = await asyncio.to_thread(
-                content_fingerprint.find_same_source_duplicate_id,
-                db_sink.engine,
-                resolved.source_id,
-                content.content or "",
-                content.content_type,
-            )
+            try:
+                duplicate = await asyncio.to_thread(
+                    content_fingerprint.find_same_source_duplicate_id,
+                    db_sink.engine,
+                    resolved.source_id,
+                    content.content or "",
+                    content.content_type,
+                )
+            except Exception:  # noqa: BLE001 - 判重是附加能力:出错按未命中继续,不让整批失败(检视 R1 #1)
+                _logger.warning("同源内容判重失败,按未命中继续: %s", resolved.source_id, exc_info=True)
+                duplicate = None
             status = "duplicate_content" if duplicate is not None else ""
         with Session(db_sink.engine) as session:
             if duplicate is not None:

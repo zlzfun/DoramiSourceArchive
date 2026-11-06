@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Inbox, Loader2, X } from 'lucide-react';
 import Modal from './Modal';
 import { buildIngestItem, describeReceipt, parseStatusLink } from '../utils/ingestForm';
@@ -34,9 +34,13 @@ export default function IngestItemModal({ isOpen, sourceIds = [], onClose, onSub
   const [form, setForm] = useState(EMPTY);
   const [busy, setBusy] = useState(false);
   const [receipt, setReceipt] = useState(null);
+  // 请求代次:关闭 / 换类型 / 再收一条都让在途请求作废,迟到的回执与 finally 不碰当前表单(检视 R1 #6)。
+  const generation = useRef(0);
+  const invalidate = () => { generation.current += 1; setBusy(false); };
 
   useEffect(() => {
     if (!isOpen) {
+      generation.current += 1;
       setKind('article'); setForm(EMPTY); setBusy(false); setReceipt(null);
     }
   }, [isOpen]);
@@ -46,16 +50,17 @@ export default function IngestItemModal({ isOpen, sourceIds = [], onClose, onSub
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    const mine = ++generation.current;
     setBusy(true);
     try {
       const result = await onSubmit(buildIngestItem(kind, form));
-      setReceipt(result || null);
+      if (generation.current === mine) setReceipt(result || null);
     } finally {
-      setBusy(false);
+      if (generation.current === mine) setBusy(false);
     }
   };
 
-  const restart = () => { setForm(EMPTY); setReceipt(null); };
+  const restart = () => { invalidate(); setForm(EMPTY); setReceipt(null); };
   const info = describeReceipt(receipt);
   const stored = receipt && receipt.status !== 'rejected';
 
@@ -74,7 +79,7 @@ export default function IngestItemModal({ isOpen, sourceIds = [], onClose, onSub
             <button
               key={value}
               type="button"
-              onClick={() => { setKind(value); setReceipt(null); }}
+              onClick={() => { invalidate(); setKind(value); setReceipt(null); }}
               className={`mini-seg-btn ${kind === value ? 'is-on' : ''}`}
               aria-pressed={kind === value}
             >
@@ -182,7 +187,9 @@ export default function IngestItemModal({ isOpen, sourceIds = [], onClose, onSub
           <>
             <button type="button" onClick={onClose} className="action-button action-button-quiet min-h-[32px] px-3 text-xs">取消</button>
             <button type="submit" disabled={busy} className="action-button action-button-primary min-h-[32px] px-3 text-xs">
-              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Inbox className="h-3.5 w-3.5" />} 收录{KINDS.find(([v]) => v === kind)[1]}
+              {busy
+                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> 收录中…</>
+                : <><Inbox className="h-3.5 w-3.5" /> 收录{KINDS.find(([v]) => v === kind)[1]}</>}
             </button>
           </>
         )}

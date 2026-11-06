@@ -93,10 +93,16 @@ def _caller(request: Request, session: Session) -> tuple[ingest_batch.IngestCall
         record = ingest_push.authenticate(session, raw)
         if record is None:
             raise HTTPException(status_code=401, detail="收录令牌无效或已吊销")
+        if not _app().runtime_collector_enabled():
+            # 收录写的是归档:采集面关闭的节点(runtime role = reader)不接受,与旧入口经中间件的
+            # collector 门控一致(检视 R1 #3)。
+            raise HTTPException(status_code=403, detail="本节点未开启采集面,不接受收录")
         remaining = max(0, int(record.daily_limit or 0) - ingest_push.picks_today(session, record.actor))
         return ingest_batch.IngestCaller(actor=record.actor, remaining=remaining), record
     auth = _app().current_auth_session(request)
     if auth and auth.get("role") == "admin" and not _app().is_guest_session(auth):
+        if not _app().collector_role_enabled(auth):
+            raise HTTPException(status_code=403, detail="本节点未开启采集面,不接受收录")
         return ingest_batch.IngestCaller(
             actor=str(auth.get("sub") or ""), channel=ingest_batch.CHANNEL_MANUAL
         ), None
@@ -117,6 +123,8 @@ def _after_created(ids: list[str]) -> None:
 async def push_items(batch: IngestBatch, request: Request):
     """收录一批条目(≤ 100);逐条返回 created / duplicate / duplicate_url / duplicate_content / refreshed / rejected。"""
     db_sink = deps.get_db_sink()
+    # 先解析会话再借连接:结果缓存在 request.state,免得持有连接时再借一条(current_auth_session 注释)。
+    _app().current_auth_session(request)
     with Session(db_sink.engine) as session:
         caller, token = _caller(request, session)
         if sync_consumer_policy.v2_consumer_mode_active(session):

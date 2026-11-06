@@ -396,7 +396,7 @@ export default function DataTab({
       const res = await ingestItems([item]);
       const result = res?.results?.[0] || null;
       if (result && ['created', 'refreshed'].includes(result.status)) {
-        showToast(result.source_created ? `已收录 · 新建临时源 ${result.source_id}` : `已收录 ${item.title || result.id}`, 'success');
+        showToast(result.source_created ? `已收录并新建临时源 ${result.source_id}` : `已收录 ${item.title || result.id}`, 'success');
         refreshAfterMutation();
       }
       return result;

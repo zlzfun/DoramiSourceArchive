@@ -211,3 +211,146 @@ def test_admin_session_uses_the_same_entry_as_manual_channel(monkeypatch, tmp_pa
             AdminAuditRecord.path == "/api/public/ingest/v1/items"
         )).one()
         assert audit.username == "admin" and audit.summary.startswith("单条收录(admin)")
+
+
+# ── 检视 R1 修复回归 ─────────────────────────────────────────────────────────
+
+
+def test_concurrent_first_sync_of_one_source_does_not_collide(monkeypatch, tmp_path):
+    """两个请求同时首次补齐同一个源:原子 UPSERT,不撞主键(R1 #1)。
+
+    屏障把交错固定下来:两个线程都读完「已有指纹」、开始算第一条之后才继续写入。
+    """
+    import threading
+
+    from sqlmodel import SQLModel, create_engine
+
+    from models.db import ArticleFingerprintRecord, ArticleRecord
+    from services import content_fingerprint
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'race.db'}", connect_args={"timeout": 30})
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        for i in range(200):
+            session.add(ArticleRecord(
+                id=f"rss_race_{i}", title="t", content_type="rss_article", source_id="rss_race",
+                source_url=f"https://race.test/{i}", publish_date=_NOW, fetched_date=_NOW,
+                archive_updated_at="r1", has_content=True, content=_text(100 + i, chars=400),
+            ))
+        session.commit()
+    barrier, errors = threading.Barrier(2), []
+    first_compute = threading.Barrier(2, timeout=10)
+    seen = set()
+    original = content_fingerprint._fingerprint_values
+
+    def synchronized(text):
+        me = threading.get_ident()
+        if me not in seen:
+            seen.add(me)
+            try:
+                first_compute.wait()
+            except threading.BrokenBarrierError:
+                pass
+        return original(text)
+
+    monkeypatch.setattr(content_fingerprint, "_fingerprint_values", synchronized)
+
+    def worker():
+        try:
+            with Session(engine) as session:
+                barrier.wait()
+                content_fingerprint.sync_source(session, "rss_race")
+        except Exception as exc:  # noqa: BLE001 - 收集给断言
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+    with Session(engine) as session:
+        assert len(session.exec(select(ArticleFingerprintRecord)).all()) == 200
+
+
+def test_custom_source_bound_to_a_github_fetcher_is_not_compared(monkeypatch, tmp_path):
+    """按目标源的真实类型判资格:自定源绑 GitHub releases 抓取器,同正文不同链接不判重(R1 #2)。"""
+    from models.db import SourceConfigRecord
+
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    with Session(sink.engine) as session:
+        session.add(SourceConfigRecord(
+            source_id="custom_release", name="custom", source_type="github_releases",
+            fetcher_id="generic_github_releases", url="https://github.com/acme/tool",
+            origin="admin", admission_status="admitted", created_at=_NOW, updated_at=_NOW,
+        ))
+        session.commit()
+    body = _text(7)
+    _fetched(sink, "custom_release", "custom_release_preview", "https://github.com/acme/tool/releases/tag/preview",
+             body, content_type="github_release")
+    with TestClient(app_module.app) as client:
+        _login(client)
+        token = _issue_token(client)
+        results = _push(client, [
+            {"kind": "article", "url": "https://github.com/acme/tool/releases/tag/nightly", "title": "nightly",
+             "content": body, "source": {"source_id": "custom_release"}},
+        ], token).json()["results"]
+    assert results[0]["status"] == "created", results
+
+
+def test_reader_runtime_nodes_refuse_ingest_for_sessions_and_tokens(monkeypatch, tmp_path):
+    """采集面关闭的节点(runtime role = reader)不接受收录(R1 #3)。"""
+    from config import RuntimeConfig
+
+    app_module, _sink = _setup(monkeypatch, tmp_path)
+    item = {"kind": "article", "url": "https://blog.example.com/p/r", "title": "t", "content": "x"}
+    with TestClient(app_module.app) as client:
+        _login(client)
+        token = _issue_token(client)
+        monkeypatch.setattr(
+            app_module, "settings", replace(app_module.settings, runtime=RuntimeConfig(role="reader"))
+        )
+        assert _push(client, [item]).status_code == 403
+        assert _push(client, [item], token).status_code == 403
+
+
+def test_orphan_fingerprints_do_not_hide_a_live_duplicate(monkeypatch, tmp_path):
+    """删掉的条目留下的指纹不挤掉仍存在的同正文条目(R1 #4)。"""
+    from models.db import ArticleFingerprintRecord, ArticleRecord
+
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    body = _text(8)
+    for i in range(11):
+        _fetched(sink, "rss_anil_dash", f"rss_anil_dash_a{i:02d}", f"https://anildash.com/2026/a{i}", body)
+    with TestClient(app_module.app) as client:
+        _login(client)
+        token = _issue_token(client)
+        first = _push(client, [
+            {"kind": "article", "url": "https://anildash.com/mirror/x", "title": "x", "content": body,
+             "source": {"source_id": "rss_anil_dash"}},
+        ], token).json()["results"][0]
+        assert first["status"] == "duplicate_content"
+        with Session(sink.engine) as session:
+            for i in range(10):
+                session.delete(session.get(ArticleRecord, f"rss_anil_dash_a{i:02d}"))
+            session.commit()
+        again = _push(client, [
+            {"kind": "article", "url": "https://anildash.com/mirror/y", "title": "y", "content": body,
+             "source": {"source_id": "rss_anil_dash"}},
+        ], token).json()["results"][0]
+    assert (again["status"], again["id"]) == ("duplicate_content", "rss_anil_dash_a10")
+    with Session(sink.engine) as session:
+        assert {fp.article_id for fp in session.exec(select(ArticleFingerprintRecord)).all()} == {"rss_anil_dash_a10"}
+
+
+def test_manual_ingest_does_not_spend_a_same_named_token_quota(monkeypatch, tmp_path):
+    """管理员手工收录不占同名令牌的额度(R1 #5)。"""
+    app_module, _sink = _setup(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as client:
+        _login(client)
+        response = client.post("/api/admin/ingest/tokens", json={"actor": "admin", "daily_limit": 1})
+        token = response.json()["token"]
+        manual = _push(client, [{"kind": "article", "url": "https://blog.example.com/p/m", "title": "m", "content": "x"}])
+        assert manual.json()["results"][0]["status"] == "created"
+        pushed = _push(client, [{"kind": "article", "url": "https://blog.example.com/p/t", "title": "t", "content": "x"}], token)
+    assert pushed.json()["results"][0]["status"] == "created", pushed.json()

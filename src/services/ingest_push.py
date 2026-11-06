@@ -192,10 +192,12 @@ def serialize_token(record: IngestTokenRecord) -> dict[str, Any]:
 
 
 def picks_today(session: Session, actor: str) -> int:
+    """令牌今日已用额度:只数推送通道(管理员同名手工收录不占令牌额度,检视 R1 #5)。"""
     day = dt.datetime.now(dt.timezone.utc).date().isoformat()
     return int(session.exec(
         select(func.count()).select_from(ArticlePickRecord).where(
             ArticlePickRecord.actor == actor,
+            ArticlePickRecord.channel == CHANNEL_PUSH,
             ArticlePickRecord.picked_at >= day,
         )
     ).one() or 0)

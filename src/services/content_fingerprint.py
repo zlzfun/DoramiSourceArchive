@@ -22,9 +22,11 @@ import re
 import unicodedata
 from typing import Optional
 
+from sqlalchemy import delete
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlmodel import Session, select
 
-from models.db import ArticleFingerprintRecord, ArticleRecord
+from models.db import ArticleFingerprintRecord, ArticleRecord, SourceConfigRecord
 from services import item_url_identity
 
 
@@ -80,12 +82,36 @@ def jaccard(a: str, b: str, k: int = 5) -> float:
     return len(left & right) / max(1, len(left | right))
 
 
+def _source_content_types(session: Session, source_id: str) -> set[str]:
+    """目标源的真实条目类型:注册表类与行上绑定类的 ``content_type``(推送的文章一律是 web_article,
+    看不出源本身是不是 GitHub release 一类;检视 R1 #2)。"""
+    types: set[str] = set()
+    try:
+        from fetchers.registry import fetcher_registry
+    except Exception:  # noqa: BLE001
+        return types
+    row = session.get(SourceConfigRecord, source_id)
+    for fetcher_id in (source_id, (row.fetcher_id if row is not None else "") or ""):
+        cls = fetcher_registry.get_class(fetcher_id) if fetcher_id else None
+        value = str(getattr(cls, "content_type", "") or "") if cls is not None else ""
+        if value:
+            types.add(value)
+    return types
+
+
+def _excluded_types() -> frozenset[str]:
+    from services.event_assignment import URL_DIRECT_EXCLUDED_CONTENT_TYPES
+
+    return _EXCLUDED_CONTENT_TYPES | URL_DIRECT_EXCLUDED_CONTENT_TYPES
+
+
 def eligible(session: Session, source_id: str, content_type: str) -> bool:
     """该源能否做同源内容判重(共用页面链接 / 模板化的源、模型卡、trending 不做)。"""
     sid = str(source_id or "").strip()
     if not sid or sid.startswith(_EXCLUDED_SOURCE_PREFIXES):
         return False
-    if (content_type or "") in _EXCLUDED_CONTENT_TYPES:
+    excluded = _excluded_types()
+    if (content_type or "") in excluded or _source_content_types(session, sid) & excluded:
         return False
     return item_url_identity.url_is_item_identity(session, sid, content_type)
 
@@ -104,37 +130,73 @@ def _fingerprint_values(text: str) -> tuple[int, str, str]:
 def sync_source(session: Session, source_id: str) -> int:
     """现场补齐该源缺的 / 过期的指纹(条目 ``archive_updated_at`` 变了即重算);返回重算条数。
 
-    短正文也落一行(``length`` < 300、哈希为空),免得每次推送都重新规范化一遍。
+    - 短正文也落一行(``length`` < 300、哈希为空),免得每次收录都重新规范化一遍;
+    - 写入用 SQLite 原子 UPSERT:两个请求同时首次补齐同一个源不会撞主键(检视 R1 #1);旧版本偶尔
+      写赢时,下次同步按版本号不一致自愈重算;
+    - 已删除 / 换了源 / 不再有正文的条目留下的孤儿指纹顺手删掉(检视 R1 #4)。
     """
-    articles = session.exec(
-        select(ArticleRecord.id, ArticleRecord.archive_updated_at)
-        .where(ArticleRecord.source_id == source_id)
-        .where(ArticleRecord.has_content == True)  # noqa: E712 - SQL 表达式
-    ).all()
-    if not articles:
-        return 0
-    known = {
-        row.article_id: row.revision
-        for row in session.exec(
-            select(ArticleFingerprintRecord).where(ArticleFingerprintRecord.source_id == source_id)
+    live = {
+        article_id: revision or ""
+        for article_id, revision in session.exec(
+            select(ArticleRecord.id, ArticleRecord.archive_updated_at)
+            .where(ArticleRecord.source_id == source_id)
+            .where(ArticleRecord.has_content == True)  # noqa: E712 - SQL 表达式
         ).all()
     }
-    stale = [article_id for article_id, revision in articles if known.get(article_id) != (revision or "")]
+    known = {
+        article_id: revision
+        for article_id, revision in session.exec(
+            select(ArticleFingerprintRecord.article_id, ArticleFingerprintRecord.revision)
+            .where(ArticleFingerprintRecord.source_id == source_id)
+        ).all()
+    }
+    orphans = [article_id for article_id in known if article_id not in live]
+    for start in range(0, len(orphans), 500):
+        session.exec(delete(ArticleFingerprintRecord).where(
+            ArticleFingerprintRecord.article_id.in_(orphans[start:start + 500]),
+            ArticleFingerprintRecord.source_id == source_id,
+        ))
+    stale = [article_id for article_id, revision in live.items() if known.get(article_id) != revision]
     for start in range(0, len(stale), 200):
-        chunk = stale[start:start + 200]
-        for record in session.exec(select(ArticleRecord).where(ArticleRecord.id.in_(chunk))).all():
+        rows = []
+        for record in session.exec(
+            select(ArticleRecord).where(ArticleRecord.id.in_(stale[start:start + 200]))
+        ).all():
             length, digest, sim = _fingerprint_values(record.content or "")
-            session.merge(ArticleFingerprintRecord(
-                article_id=record.id,
-                source_id=record.source_id,
-                content_hash=digest,
-                simhash=sim,
-                length=length,
-                revision=record.archive_updated_at or "",
-                updated_at=_now(),
+            rows.append({
+                "article_id": record.id,
+                "source_id": record.source_id,
+                "content_hash": digest,
+                "simhash": sim,
+                "length": length,
+                "revision": record.archive_updated_at or "",
+                "updated_at": _now(),
+            })
+        if rows:
+            statement = sqlite_insert(ArticleFingerprintRecord).values(rows)
+            session.exec(statement.on_conflict_do_update(
+                index_elements=["article_id"],
+                set_={
+                    key: getattr(statement.excluded, key)
+                    for key in ("source_id", "content_hash", "simhash", "length", "revision", "updated_at")
+                },
             ))
         session.commit()
+    if orphans and not stale:
+        session.commit()
     return len(stale)
+
+
+def _live_fingerprints(source_id: str):
+    """该源存活条目的指纹(JOIN 当前 articles:同源、仍有正文、类型不在禁比名单)。"""
+    return (
+        select(ArticleFingerprintRecord.article_id, ArticleFingerprintRecord.simhash)
+        .join(ArticleRecord, ArticleRecord.id == ArticleFingerprintRecord.article_id)
+        .where(ArticleFingerprintRecord.source_id == source_id)
+        .where(ArticleRecord.source_id == source_id)
+        .where(ArticleRecord.has_content == True)  # noqa: E712 - SQL 表达式
+        .where(ArticleRecord.content_type.not_in(sorted(_excluded_types())))
+    )
 
 
 def find_same_source_duplicate(
@@ -145,32 +207,24 @@ def find_same_source_duplicate(
     if len(normalized) < MIN_CHARS or not eligible(session, source_id, content_type):
         return None
     sync_source(session, source_id)
-    digest = content_hash(normalized)
     exact = session.exec(
-        select(ArticleFingerprintRecord.article_id)
-        .where(ArticleFingerprintRecord.source_id == source_id)
-        .where(ArticleFingerprintRecord.content_hash == digest)
+        _live_fingerprints(source_id)
+        .where(ArticleFingerprintRecord.content_hash == content_hash(normalized))
         .limit(1)
     ).first()
     if exact:
-        row = session.get(ArticleRecord, exact)
-        if row is not None and row.source_id == source_id:
-            return row
+        return session.get(ArticleRecord, exact[0])
     target = simhash(normalized)
     candidates = []
     for article_id, sim in session.exec(
-        select(ArticleFingerprintRecord.article_id, ArticleFingerprintRecord.simhash)
-        .where(ArticleFingerprintRecord.source_id == source_id)
-        .where(ArticleFingerprintRecord.simhash != "")
+        _live_fingerprints(source_id).where(ArticleFingerprintRecord.simhash != "")
     ).all():
         distance = bin(int(sim, 16) ^ target).count("1")
         if distance <= MAX_DISTANCE:
             candidates.append((distance, article_id))
     for _distance, article_id in sorted(candidates)[:10]:
         row = session.get(ArticleRecord, article_id)
-        if row is None or row.source_id != source_id:
-            continue
-        if jaccard(normalized, normalize(row.content or "")) >= MIN_JACCARD:
+        if row is not None and jaccard(normalized, normalize(row.content or "")) >= MIN_JACCARD:
             return row
     return None
 
