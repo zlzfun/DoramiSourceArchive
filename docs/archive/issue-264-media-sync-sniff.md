@@ -1,6 +1,7 @@
 # Archive Sync 媒体流坏图:入缓存只认内容 + 导出端自检 + 接收端单条拒收(issue #264)
 
-> 状态:进行中(2026-11-06 实现与自测完成,Codex 两轮交叉检视通过;生产只读统计待用户授权)
+> **归档于 2026-11-06(issue #264,PR #266,开发版 3.67.5-alpha,检视与 CI 通过、纯后端机制修复按例外直接合入、待发布)**:现状以 docs/architecture/(`media-and-storage.md`、`archive-sync.md`)、`docs/contracts/archive_sync.md` 与代码为准,文中路径与状态为当时记录。
+> 状态:已落地待发布(2026-11-06 开工;Codex 两轮交叉检视通过,CI 通过后 PR #266 squash 合入 main;生产只读统计待用户授权)。
 
 > 实现方:Claude Code(Opus 5.5);检视方:Codex(见 §7)。分支 `feat/issue-264-media-sync-sniff`。
 > 上接 #261 双栈沙箱联调:开发副本 → 空库,图片流第 1 页报「同步媒体不是可识别的图片」,之后每次同步都卡在这一页。

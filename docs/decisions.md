@@ -401,7 +401,7 @@
 - 触发:需要任意节点「既收又发」(中转 / 互拉 / 多来源,改「外网唯一写者」不变量)→ [#263](https://github.com/zlzfun/DoramiSourceArchive/issues/263);导出端外传内容不可识别的缓存图片致接收端媒体流反复失败 → [#264](https://github.com/zlzfun/DoramiSourceArchive/issues/264) — §6
 - 触发:本机条数的译文计数在外网规模下拖慢页面 → 改缓存或专用计数 — backlog
 
-### 媒体流坏图解卡(issue #264,2026-11-06) — [方案](plans/issue-264-media-sync-sniff.md)
+### 媒体流坏图解卡(issue #264,2026-11-06) — [方案](archive/issue-264-media-sync-sniff.md)
 
 - 决策:图片入缓存只认文件内容、不信响应头,与同步接收端同一嗅探与窗口;该判定只能收紧不能放宽(放宽会在混版本窗口卡旧接收端) — §2.1
 - 决策:media manifest 只列二进制端点供得出且接收端会认的图片;内容不符标本地 failed 并跳过;缺文件 / 大小不符且无 OSS 登记只跳过不改行(重下推进 revision 补发,手工恢复后重置单流);读盘错误、OSS 登记对不上、媒体库关闭且有候选则整页失败保留 checkpoint;有效登记的冷副本信任不验头 — §2.2
