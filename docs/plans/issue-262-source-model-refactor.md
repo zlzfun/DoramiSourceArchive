@@ -39,7 +39,7 @@
                                    抓取器 1 ──── 0..N 采集绑定
 ```
 
-- **0 个绑定**:Agent 推送的临时源、手工导入源、内网上的同步源(同步不带绑定,接收端还会清空 `fetcher_id` / `params_json`,`archive_sync_v2.py:2059-2060`)、`dorami_daily_brief`。
+- **0 个绑定**:收录推送建的临时源(不设绑定,2026-11-06 拍板)、手工导入源、内网上的同步源(同步不带绑定,接收端还会清空 `fetcher_id` / `params_json`,`archive_sync_v2.py:2059-2060`)、`dorami_daily_brief`。
 - **「有绑定」≠「本机可以执行」**:后者由 `sync_consumer_policy.local_source_operation_allowed` 决定(内网只允许本地自定 RSS);节点枚举、执行、内网权限统一按「有绑定 ∧ 本机允许」。
 - **为什么 0..1**:现在没有一个源需要两种定时抓法。出现「同一源两条抓取通道」再拆 `source_bindings` 表(E2)。
 - **前提**:今天空 `fetcher_id` 并不表示无绑定——`resolve_source_fetcher_id` 会按 `source_type` 推导模板,模型默认类型还是 `rss`(`collection_nodes.py:39-51`)。R1b 先把隐式绑定写实,之后空值才表示无绑定。
