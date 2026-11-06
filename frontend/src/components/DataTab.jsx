@@ -20,6 +20,7 @@ import { runAction } from '../utils/runAction';
 import { excerptOf } from '../utils/readerText';
 import { SCORE_DISCLAIMER, analysisStatusMeta, analysisTagSearch, podcastLedgerProcessingMeta, primaryAnalysisLabel, qualityScoreText, scoreTierClass } from '../utils/analysis';
 import { podcastProcessingSuccessMessage } from '../utils/podcastProcessing';
+import { describeProvenance } from '../utils/ingestForm';
 import { useConfirm } from '../hooks/useConfirm';
 import { useAbortableLoad } from '../hooks/useAbortableLoad';
 
@@ -96,6 +97,7 @@ export default function DataTab({
   const [filters, setFilters] = useState({
     content_types: '', // CSV：类型归组分面下发的多类型筛选（单类型组也走 CSV）
     source_id: '',
+    ingest_channel: '', // '' 不限 | fetch 抓取 | push 推送 | manual 手工 | import 导入(退役通道的存量)
     has_content: '', // '' 不限 | 'true' 仅有正文 | 'false' 仅无正文
     publish_date_start: '',
     publish_date_end: '',
@@ -598,6 +600,33 @@ export default function DataTab({
             </div>
           </div>
 
+          {/* 来路(issue #262):只在有收录条目时出现——全是抓取的库里这一栏没有信息量 */}
+          {(facets?.ingest_channels ?? []).some((row) => row.value !== 'fetch') && (
+            <div className="ledger-facet">
+              <h3 className="micro-label ledger-facet-title">来路</h3>
+              <div className="ledger-facet-list">
+                <button
+                  type="button"
+                  onClick={() => setFilters(prev => ({ ...prev, ingest_channel: '' }))}
+                  className={`ledger-facet-item ${!filters.ingest_channel ? 'is-on' : ''}`}
+                >
+                  全部来路
+                </button>
+                {(facets?.ingest_channels ?? []).map((row) => (
+                  <button
+                    key={row.value}
+                    type="button"
+                    onClick={() => setFilters(prev => ({ ...prev, ingest_channel: row.value }))}
+                    className={`ledger-facet-item ${filters.ingest_channel === row.value ? 'is-on' : ''}`}
+                  >
+                    <span className="ledger-facet-name">{row.label || row.value}</span>
+                    <span className="n">{row.count.toLocaleString()}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="ledger-facet">
             <h3 className="micro-label ledger-facet-title">新闻价值</h3>
             <div className="ledger-facet-list">
@@ -794,6 +823,10 @@ export default function DataTab({
                               {/* 读者自定源 / 配置源:名称之下留原始 id 小字,排查时仍能对上号 */}
                               {name !== article.source_id && !fetchersById[article.source_id] && (
                                 <span className="ledger-source-id">{article.source_id}</span>
+                              )}
+                              {/* 来路(issue #262):推送 / 手工收录的条目标出通道与收录者;抓取条目不标 */}
+                              {article.ingest_channel && (
+                                <span className="ledger-source-id">{describeProvenance(article)}</span>
                               )}
                             </button>
                           );

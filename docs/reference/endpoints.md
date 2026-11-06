@@ -4,7 +4,8 @@
 > 相关:[`architecture/overview.md`](../architecture/overview.md) · 契约 [`contracts/`](../contracts/)
 
 **Articles**
-- `GET /api/articles` — list/query (filters: `content_type`, `source_id`, `has_content`, `search`(FTS5 全文,标题+正文), `publish_date_start/end`, `fetched_date_start/end`, `subscribed_scope` = `off`|`only`|`prioritize`, `skip`, `limit`)
+- `GET /api/articles` — list/query (filters: `content_type`, `source_id`, `has_content`, `search`(FTS5 全文,标题+正文), `publish_date_start/end`, `fetched_date_start/end`, `ingest_channel` = `fetch`|`push`|`manual`|`import`(来路,issue #262;`fetch` = 抓取器入库、无来路), `subscribed_scope` = `off`|`only`|`prioritize`, `skip`, `limit`);条目带 `ingest_channel` / `ingest_channel_label`,`ingest_actor` 只对管理员透出
+- `GET /api/articles/facets` — 分面计数 `content_types` / `source_ids` / `ingest_channels`(含伪值 `fetch`)
   - `podcast_guide=any|readable|listenable`：播客已发布中文导读的任一/文字/音频能力；省略则不限，非法值 422。与其它范围条件相交，在计数和分页前生效；任务就绪标记、未发布或已撤下产物不计入。
 - `POST /api/articles` — retired (410, issue #262): manual entry now goes through `POST /api/public/ingest/v1/items` (admin session = 「单条收录」, channel `manual`)
 - `PUT /api/articles/{id}` — update

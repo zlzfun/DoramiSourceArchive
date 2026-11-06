@@ -1,8 +1,19 @@
 // 单条收录表单的纯逻辑(issue #262 推送入口统一):链接解析、载荷组装、回执文案。
 // 载荷与推送接口同一形状(契约 docs/contracts/ingest_push.md)。
 
+// 条目来路(与后端 articles_view.INGEST_CHANNEL_LABELS 同一词表):抓取器入库的条目没有 ingest_channel。
+export const INGEST_CHANNEL_LABELS = { fetch: '抓取', push: '推送', manual: '手工', import: '导入' };
+
+/** 台账行 / 详情里的来路一句:「抓取」「推送 · research-agent」「手工 · admin」。 */
+export function describeProvenance(article) {
+  const channel = String(article?.ingest_channel || '').trim() || 'fetch';
+  const label = article?.ingest_channel_label || INGEST_CHANNEL_LABELS[channel] || channel;
+  const actor = String(article?.ingest_actor || '').trim();
+  return actor ? `${label} · ${actor}` : label;
+}
+
 // x.com / twitter.com 的帖子链接里直接带着作者与帖子 id。
-const X_STATUS = /^https?:\/\/(?:www\.|mobile\.)?(?:x|twitter)\.com\/([A-Za-z0-9_]{1,15})\/status\/(\d+)/i;
+const X_STATUS =/^https?:\/\/(?:www\.|mobile\.)?(?:x|twitter)\.com\/([A-Za-z0-9_]{1,15})\/status\/(\d+)/i;
 
 export function parseStatusLink(url) {
   const match = X_STATUS.exec(String(url || '').trim());

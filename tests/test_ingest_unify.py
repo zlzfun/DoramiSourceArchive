@@ -354,3 +354,36 @@ def test_manual_ingest_does_not_spend_a_same_named_token_quota(monkeypatch, tmp_
         assert manual.json()["results"][0]["status"] == "created"
         pushed = _push(client, [{"kind": "article", "url": "https://blog.example.com/p/t", "title": "t", "content": "x"}], token)
     assert pushed.json()["results"][0]["status"] == "created", pushed.json()
+
+
+def test_ledger_exposes_provenance_as_filter_facet_and_fields(monkeypatch, tmp_path):
+    """台账来路(目检后补):列表 / 分面按 ingest_channel 区分抓取 / 推送 / 手工;收录者只对管理员透出。"""
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    _fetched(sink, "rss_anil_dash", "rss_anil_dash_prov1", "https://anildash.com/p/1", _text(1))
+    with TestClient(app_module.app) as client:
+        _login(client)
+        token = _issue_token(client, actor="research-agent")
+        pushed = _push(client, [
+            {"kind": "article", "url": "https://blog.example.com/p/pushed", "title": "推", "content": "正文"},
+        ], token).json()["results"][0]
+        manual = _push(client, [
+            {"kind": "article", "url": "https://blog.example.com/p/manual", "title": "手", "content": "正文"},
+        ]).json()["results"][0]
+        assert (pushed["status"], manual["status"]) == ("created", "created"), (pushed, manual)
+        facets = client.get("/api/articles/facets").json()
+        channels = {row["value"]: (row["count"], row["label"]) for row in facets["ingest_channels"]}
+        assert channels == {"fetch": (1, "抓取"), "push": (1, "推送"), "manual": (1, "手工")}
+        rows = client.get("/api/articles", params={"ingest_channel": "push", "include_content": "false"}).json()
+        assert [(r["id"], r["ingest_channel"], r["ingest_channel_label"], r["ingest_actor"]) for r in rows] == [
+            (pushed["id"], "push", "推送", "research-agent"),
+        ]
+        rows = client.get("/api/articles", params={"ingest_channel": "fetch", "include_content": "false"}).json()
+        assert [(r["id"], r["ingest_channel"], r["ingest_channel_label"], r["ingest_actor"]) for r in rows] == [
+            ("rss_anil_dash_prov1", "", "抓取", ""),
+        ]
+        client.post("/api/auth/logout")
+        _login(client, "reader")
+        rows = client.get("/api/articles", params={"ingest_channel": "manual", "include_content": "false"}).json()
+        assert [r["id"] for r in rows] == [manual["id"]]
+        # 读者看得到通道,看不到收录者是谁。
+        assert rows[0]["ingest_channel"] == "manual" and "ingest_actor" not in rows[0]

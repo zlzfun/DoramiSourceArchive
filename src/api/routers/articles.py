@@ -24,9 +24,11 @@ from sqlmodel import Session, select
 
 from api import deps
 from api.articles_view import (
+    INGEST_CHANNEL_FETCH,
     apply_article_query_filters,
     article_recency_order,
     article_to_markdown,
+    ingest_channel_label,
     serialize_article_list_item,
     serialize_feed_article,
 )
@@ -310,6 +312,7 @@ def get_articles(
         content_types: Optional[str] = None,  # CSV:多类型筛选(类型归组分面用),与 feed 契约对齐
         source_id: Optional[str] = None,
         exclude_source_ids: Optional[str] = None,  # CSV：从结果中排除的来源（如知识台账排除日报源）
+        ingest_channel: Optional[str] = None,  # 来路:push | manual | import | fetch(抓取器入库,无来路)
         job_id: Optional[int] = None,
         job_run_id: Optional[int] = None,
         fetch_run_id: Optional[int] = None,
@@ -374,6 +377,7 @@ def get_articles(
         "content_types": content_types,
         "source_id": source_id,
         "exclude_source_ids": exclude_source_ids,
+        "ingest_channel": ingest_channel,
         "job_id": job_id,
         "job_run_id": job_run_id,
         "fetch_run_id": fetch_run_id,
@@ -577,6 +581,7 @@ def get_articles(
             digest_audio=digest_audios.get(record.id),
             include_podcast_diagnostics=is_admin,
             source_kinds=source_kinds,
+            include_ingest_actor=is_admin,
         )
         for record in records
     ]
@@ -679,12 +684,21 @@ def get_article_facets(
     source_labels = friendly_source_names([row["value"] for row in source_facets], session)
     for row in source_facets:
         row["label"] = source_labels.get(row["value"], row["value"])
+    total = int(session.exec(total_q).one() or 0)
+    # 来路分面(issue #262):抓取器入库的条目没有 ingest_channel,用总数减收录条目得出,记为伪值 fetch。
+    channel_facets = _facet(ArticleRecord.ingest_channel, ingest_channel_label)
+    fetched = total - sum(row["count"] for row in channel_facets)
+    if fetched > 0:
+        channel_facets.insert(0, {
+            "value": INGEST_CHANNEL_FETCH, "count": fetched, "label": ingest_channel_label(INGEST_CHANNEL_FETCH),
+        })
     return {
-        "total": int(session.exec(total_q).one() or 0),
+        "total": total,
         "content_types": _facet(
             ArticleRecord.content_type, content_classification.content_type_label
         ),
         "source_ids": source_facets,
+        "ingest_channels": channel_facets,
     }
 
 

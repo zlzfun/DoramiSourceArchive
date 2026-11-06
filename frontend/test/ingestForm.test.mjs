@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildIngestItem, describeReceipt, parseStatusLink } from '../src/utils/ingestForm.js';
+import { buildIngestItem, describeProvenance, describeReceipt, parseStatusLink } from '../src/utils/ingestForm.js';
+
+test('来路一句:抓取条目无来路,收录条目带通道与收录者', () => {
+  assert.equal(describeProvenance({}), '抓取');
+  assert.equal(describeProvenance({ ingest_channel: '', ingest_channel_label: '抓取' }), '抓取');
+  assert.equal(describeProvenance({ ingest_channel: 'push', ingest_actor: 'research-agent' }), '推送 · research-agent');
+  assert.equal(describeProvenance({ ingest_channel: 'manual' }), '手工');
+  // 读者看不到收录者,只剩通道。
+  assert.equal(describeProvenance({ ingest_channel: 'push', ingest_channel_label: '推送' }), '推送');
+});
 
 const blank = {
   url: '', title: '', content: '', summary: '', source_id: '', publish_date: '', note: '',

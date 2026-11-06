@@ -279,6 +279,7 @@
 - `POST /api/articles` 创建回 410 并指向收录端点(保留路由,旧调用拿到明确说明而不是 405);`/api/import/social-posts` 删除(端点与模型、collector 前缀、审计规则、`audit_rule_needs_body` 条目、测试)。原先这两个入口的回归由新入口上的测试覆盖。
 - 同源内容判重 `services/content_fingerprint.py` + 旁表 `article_fingerprints`(迁移 `f3b8d1c6a925`):规范化 / sha1 / SimHash / Jaccard 口径与分叉会话对本机 09-17 开发库的扫描一致(同源且距离 ≤ 3 的 31 对全是真重复;唯一误判 qwen-code preview / nightly 发布说明属 GitHub 类,已在排除名单里;扫描脚本未入库)。排除名单 = `item_url_identity` 的共用页面链接名单 + 模型卡 `hf_*` / `hf_model` + `github_trending`。命中回 `duplicate_content`,只记收录。
 - 前端 `IngestItemModal.jsx`(form-sheet 语法,三类各自字段;社交帖贴 `x.com/…/status/…` 链接自动补 handle 与帖子 id;回执留在弹窗里:已新建 / 新建临时源 / 已存在 ×3 / 已更新 / 未收录),纯逻辑在 `utils/ingestForm.js` 并有单测。
+- 台账来路(目检后补,用户要求「ingest 推送的内容也应该在台账中可见」):条目序列化带 `ingest_channel` / `ingest_channel_label`,`ingest_actor` 只对管理员透出;`GET /api/articles?ingest_channel=fetch|push|manual|import`(`fetch` = 抓取器入库、列无来路的伪值),分面 `ingest_channels`(抓取数 = 总数 − 收录数)。前端:来源列名下标「推送 · 调用方」/「手工 · 用户名」(抓取条目不标),详情「来路」行,左栏「来路」分面只在库里有收录条目时出现。
 
 **相对拍板的一处调整(更简单且等价)**:指纹**不在入库 / 补正文时写**,而是收录前对目标源现场补齐「缺的 + 条目 `archive_updated_at` 变了的」。理由:①「抓取路径完全不动」字面成立,抓取入库不多一次计算;② 版本号比对同样覆盖补正文后的重算;③ 测得指纹每篇约 3.4 ms(SimHash 只取规范化正文前 2 万字,10 万字长文约 10 ms),上千条的源第一次被收录时现场补齐约数秒,放 `asyncio.to_thread` 不阻塞事件循环。短正文也落一行(`length` < 300、哈希为空),免得每次收录重新规范化。
 
