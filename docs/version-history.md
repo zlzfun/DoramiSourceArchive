@@ -11,7 +11,7 @@
 
 ## 年表(一行一波;自 `CLAUDE.md` 迁入 2026-10-21,**新波次在此加一行**,L0 不再逐波改)
 
-- **媒体流坏图解卡(issue #264,2026-11-06,开发版 3.67.5-alpha,待检视)**:网易订阅 CDN 以 `image/png` 头返回的 194 字节 data URL 文本曾被下载器据响应头缓存成 PNG,同步接收端只认内容而拒收,整条 media 流及其后三条流反复卡在同一页。三层修:入缓存只认内容(与接收端同一 512 字节嗅探)、导出端 `media_export_verdict` 自检(内容不符标 failed 跳过、字节供不出只跳过)、接收端校验和对上但非图片时单条拒收记 failed 并计「跳过」。协议零变化,任一端单独升级都能解卡。[方案](plans/issue-264-media-sync-sniff.md)。
+- **媒体流坏图解卡(issue #264,2026-11-06,开发版 3.67.5-alpha,Codex 两轮检视通过)**:网易订阅 CDN 以 `image/png` 头返回的 194 字节 data URL 文本曾被下载器据响应头缓存成 PNG,同步接收端只认内容而拒收,整条 media 流及其后三条流反复卡在同一页。三层修:入缓存只认内容(与接收端同一 512 字节嗅探)、导出端 `media_export_verdict` 自检(内容不符标 failed 跳过、字节供不出只跳过)、接收端校验和对上但非图片时单条拒收记 failed 并计「跳过」。协议零变化,任一端单独升级都能解卡。[方案](plans/issue-264-media-sync-sniff.md)。
 
 - **节点同步控制台(issue #261,2026-11-05,开发版 3.67.5-alpha,PR #265 合入、待发布)**:Archive Sync 从「设置 → 数据同步」迁到运维新页「节点同步」(`#/admin/sync`,样页方向 A 流水线):9 流 + 回传分组阶段线(当前流进度 / 失败流与页)· 运行记录 · 连接与定时 · 逐流 / 运行 / 高危抽屉(重置单流、重放分析流、v1 兼容导入导出)、首页 S 磁贴;外网每流首页 manifest 附 `pending`、`sources` 首页附 `pending_by_stream`(附加字段,老接收端忽略),接收端进度带 `stream_total` / `page` / `streams_done`;新增 `GET /api/admin/remote-sync/inventory`、`POST /api/admin/remote-sync/streams/{stream}/reset`,status 带 `console` 块。只读本机、页面不探测远端,出网请求种类与字段不变。[方案](archive/issue-261-sync-console.md)。
 
