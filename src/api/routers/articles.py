@@ -263,6 +263,10 @@ def _source_ids_by_shape(session: Optional[Session] = None) -> dict[str, set[str
         for record in records:
             if record.source_id in registered_ids:
                 continue  # registry 是源级形态的第一事实源
+            if (record.origin or "") in {"system", "legacy", "agent"} or record.retired_at:
+                # 源表全集(issue #262 R1c)之前这些 id 没有行:按条目 content_type 逐篇判形态,
+                # 不给源级标记(与榜单同口径,实现检视 R1 #1)。
+                continue
             result[row_shape(record)].add(
                 record.source_id
             )

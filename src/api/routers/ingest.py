@@ -57,7 +57,8 @@ async def source_builder_analyze(
     """输入一个列表页 URL → 判类型 + 分析 + (LLM) 生成抓取节点配置建议。"""
     from services import source_builder
 
-    existing = {row.source_id for row in session.exec(select(SourceConfigRecord.source_id)).all()}
+    # select 单列返回字符串;旧写法 row.source_id 在有配置行时抛 AttributeError(源表全集后必然触发)。
+    existing = {str(source_id) for source_id in session.exec(select(SourceConfigRecord.source_id)).all()}
     existing |= set(fetcher_registry._fetchers.keys())
     try:
         result = await source_builder.analyze_url(

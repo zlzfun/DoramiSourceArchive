@@ -380,13 +380,19 @@ def update_source_config(
 
     if requested_type in {"podcast", "podcast_rss"}:
         record.source_type = "podcast"
+    previous_fetcher_id = record.fetcher_id or ""
     if (
         "fetcher_id" not in update_data
         and requested_type != previous_type
-        and (record.fetcher_id or "") in {"", default_fetcher_id_for_source_type(previous_type)}
+        and previous_fetcher_id in {"", default_fetcher_id_for_source_type(previous_type)}
     ):
         # 改类型时跟着换默认绑定(R1b 后绑定是写实的,不会再按新类型自动推导)。
         record.fetcher_id = default_fetcher_id_for_source_type(record.source_type or requested_type)
+    if requested_type != previous_type or "fetcher_id" in update_data:
+        # 显式形态 / 平台是由类型与绑定派生的(R1c 迁移回填):类型或绑定变了就清空,回到按
+        # 绑定 / 类型推导,不让旧值残留(实现检视 R1 #10)。
+        record.shape = ""
+        record.platform = ""
     if requested_type in {"podcast", "podcast_rss"}:
         if not record.owner_username:
             record.is_active = True

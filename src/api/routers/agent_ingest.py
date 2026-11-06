@@ -143,8 +143,13 @@ async def push_items(batch: IngestBatch, request: Request):
             continue
         try:
             payload = item.model_dump()
-            content = agent_ingest.build_content(item.kind, resolved.source_id, payload)
-        except agent_ingest.IngestRejected as exc:
+            with Session(db_sink.engine) as session:
+                id_prefix = agent_ingest.item_id_prefix(session, resolved.source_id)
+            content = agent_ingest.build_content(
+                item.kind, resolved.source_id, payload, id_prefix=id_prefix
+            )
+        except (agent_ingest.IngestRejected, ValueError, TypeError) as exc:
+            # 单条载荷问题只拒收这一条;整批照常回执、末尾审计照常执行(实现检视 R1 #12)。
             results.append({**base, "status": "rejected", "reason": str(exc), "source_id": resolved.source_id})
             continue
         content._ingest_actor = actor
@@ -157,11 +162,15 @@ async def push_items(batch: IngestBatch, request: Request):
             duplicate = None
             if existing is None:
                 duplicate = agent_ingest.existing_article_by_url(session, content.source_url)
-            if duplicate is not None and duplicate.source_id != resolved.source_id:
+            if duplicate is not None:
+                # 同一链接已在库里:别的源 → duplicate_url;同一个源但条目 id 公式不同(抓取器按
+                # guid、推送按链接等)→ duplicate。都只记收录,不新建(实现检视 R1 #6)。
                 agent_ingest.record_pick(session, duplicate.id, actor, item.note)
                 session.commit()
                 results.append({
-                    **base, "status": "duplicate_url", "id": duplicate.id,
+                    **base,
+                    "status": "duplicate_url" if duplicate.source_id != resolved.source_id else "duplicate",
+                    "id": duplicate.id,
                     "source_id": duplicate.source_id,
                 })
                 continue

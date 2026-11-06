@@ -42,6 +42,7 @@ SAVE_ID_CONFLICT = "id_conflict"
 SAVE_REJECTED_AUTHORITY = "rejected_authority"
 SAVE_REJECTED_PODCAST_SOURCE = "rejected_podcast_source"
 SAVE_REJECTED_PODCAST_STAGE = "rejected_podcast_stage"
+SAVE_REJECTED_RETIRED = "rejected_retired"
 SAVE_STORED_OUTCOMES = frozenset({SAVE_CREATED, SAVE_CONTENT_FILLED, SAVE_METADATA_REPAIRED})
 SAVE_OUTCOMES = SAVE_STORED_OUTCOMES | {
     SAVE_DUPLICATE,
@@ -50,6 +51,7 @@ SAVE_OUTCOMES = SAVE_STORED_OUTCOMES | {
     SAVE_REJECTED_AUTHORITY,
     SAVE_REJECTED_PODCAST_SOURCE,
     SAVE_REJECTED_PODCAST_STAGE,
+    SAVE_REJECTED_RETIRED,
 }
 
 
@@ -255,6 +257,10 @@ class DatabaseStorage(BaseStorage):
                 # A fetch that started before an Archive Sync authority handoff
                 # or v2 consumer activation must not commit afterwards.
                 return SAVE_REJECTED_AUTHORITY
+            source_row = session.get(SourceConfigRecord, item.source_id) if item.source_id else None
+            if source_row is not None and source_row.retired_at:
+                # 退役源停止新增(删除改退役后不再有物理删除挡住它),历史条目照旧可读。
+                return SAVE_REJECTED_RETIRED
             if getattr(item, "content_type", "") == "podcast_episode":
                 source = session.get(SourceConfigRecord, item.source_id)
                 if (

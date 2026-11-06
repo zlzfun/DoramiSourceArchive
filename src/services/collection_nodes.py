@@ -146,6 +146,9 @@ def resolve_collection_node(
     source = session.get(SourceConfigRecord, clean_id)
     if source is None:
         raise ValueError(f"未知的采集节点: {clean_id}")
+    if source.retired_at:
+        # 退役(含「被引用的源删除改退役」,issue #262 R1c)先于播客「始终可采集」的豁免。
+        raise ValueError(f"数据源 {clean_id} 已退役，拒绝采集")
     if not source.is_active and not is_public_podcast_source(source):
         raise ValueError(f"数据源 {clean_id} 未启用，拒绝采集")
     fetcher_id = resolve_source_fetcher_id(source)

@@ -194,6 +194,18 @@ def canonical_url(value: str) -> str:
     return _canonical(value)
 
 
+def canonical_feed(value: str) -> str:
+    """feed 地址的规范形:保留 query(hnrss、`feed?source=alice` 这类以参数区分内容的 feed),
+    与读者自定源同一口径(``user_sources.canonical_feed_url``);非 http(s) 时退回原串。"""
+    from services.user_sources import canonical_feed_url
+
+    raw = str(value or "").strip()
+    try:
+        return canonical_feed_url(raw)
+    except ValueError:
+        return raw
+
+
 def _host(url: str) -> str:
     try:
         host = (urlsplit(str(url or "").strip()).hostname or "").casefold()
@@ -256,7 +268,7 @@ def _web_index(session: Session) -> _WebIndex:
             cls = None
         feed = str(getattr(cls, "feed_url", "") or "") if cls is not None else ""
         if feed:
-            index.feeds.setdefault(canonical_url(feed), source_id)
+            index.feeds.setdefault(canonical_feed(feed), source_id)
         for url in (view.base_url if view else "", getattr(cls, "listing_url", "") if cls else ""):
             if url:
                 add_prefix(str(url), source_id)
@@ -266,7 +278,7 @@ def _web_index(session: Session) -> _WebIndex:
         if row.retired_at:
             continue
         if (row.source_type or "").strip().lower() in {"rss", "atom", "podcast", "podcast_rss"} and row.url:
-            index.feeds.setdefault(canonical_url(row.url), row.source_id)
+            index.feeds.setdefault(canonical_feed(row.url), row.source_id)
         for url in (row.homepage_url, row.base_url, row.url if (row.source_type or "") in {"web", "webpage"} else ""):
             if url:
                 add_prefix(url, row.source_id)
@@ -328,6 +340,21 @@ def _existing_identity(session: Session, key: str) -> Optional[str]:
     return row.source_id if row is not None else None
 
 
+def _known_user_ids(ctx: BatchContext, platform: str, source_id: str) -> set[str]:
+    """某个源已登记的稳定 user_id 身份键(注册表预设、配置行、身份键表)。"""
+    prefix = f"{platform}:user_id:"
+    known = {key for key, sid in ctx.x_index.items() if sid == source_id and key.startswith(prefix)}
+    known.update(
+        row.key for row in ctx.session.exec(
+            select(SourceIdentityKeyRecord).where(
+                SourceIdentityKeyRecord.source_id == source_id,
+                SourceIdentityKeyRecord.key.startswith(prefix),
+            )
+        ).all()
+    )
+    return known
+
+
 def _check_target(ctx: BatchContext, source_id: str) -> None:
     """已有源能否接受推送。"""
     reserved = ingest_policy.reserved_source_id_reason(source_id)
@@ -373,17 +400,30 @@ def resolve_source(ctx: BatchContext, kind: str, source: dict[str, Any], *, item
         handle = str(source.get("handle") or "").strip()
         user_id = str(source.get("user_id") or "").strip()
         keys = source_identity.social_identity_keys(platform, handle=handle, user_id=user_id)
+        user_key = source_identity.identity_key(platform, "user_id", user_id) if user_id else ""
+        handle_conflict = False
         for key in keys:
             if key in ctx.planned:
                 return ctx.planned[key]
             hit = ctx.x_index.get(key) if platform == "x" else _existing_identity(ctx.session, key)
+            if hit and user_key and key != user_key and _known_user_ids(ctx, platform, hit) - {user_key}:
+                # handle 命中的源登记过另一个稳定 user_id:账号改名后旧 handle 被他人接手,
+                # 不能按 handle 把新账号的内容塞进原账号的源(实现检视 R1 #5)。
+                handle_conflict = True
+                continue
             if hit:
                 _check_target(ctx, hit)
                 return ResolvedSource(source_id=hit)
         if not source_identity.normalize_handle(handle):
             raise IngestRejected("社交帖需要作者 handle")
         derived = source_identity.derive_social_source_id(platform, handle)
-        if ctx.session.get(SourceConfigRecord, derived) is not None or source_catalog.registry_view(derived):
+        derived_exists = (
+            ctx.session.get(SourceConfigRecord, derived) is not None
+            or source_catalog.registry_view(derived) is not None
+        )
+        if derived_exists and handle_conflict:
+            derived = _unique_new_id(ctx, derived)
+        elif derived_exists:
             # 同名 id 已存在但身份键没对上(例如旧导入行):沿用,不再造一个平行源。
             _check_target(ctx, derived)
             return ResolvedSource(source_id=derived)
@@ -404,7 +444,7 @@ def resolve_source(ctx: BatchContext, kind: str, source: dict[str, Any], *, item
     feed_url = str(source.get("feed_url") or "").strip()
     site = str(source.get("url") or source.get("site") or "").strip()
     if feed_url:
-        hit = ctx.web_index.feeds.get(canonical_url(feed_url))
+        hit = ctx.web_index.feeds.get(canonical_feed(feed_url))
         if hit:
             _check_target(ctx, hit)
             return ResolvedSource(source_id=hit)
@@ -420,9 +460,9 @@ def resolve_source(ctx: BatchContext, kind: str, source: dict[str, Any], *, item
     if kind == "podcast_episode":
         if not feed_url:
             raise IngestRejected("播客单集需要节目 feed 地址")
-        key = source_identity.identity_key("podcast", "feed", canonical_url(feed_url))
+        key = source_identity.identity_key("podcast", "feed", canonical_feed(feed_url))
         base = f"podcast_{_UNSAFE_ID.sub('_', _site_key(feed_url).replace('.', '_'))}"[:60].rstrip("_")
-        base = f"{base}_{hashlib.sha1(canonical_url(feed_url).encode('utf-8')).hexdigest()[:6]}"
+        base = f"{base}_{hashlib.sha1(canonical_feed(feed_url).encode('utf-8')).hexdigest()[:6]}"
     else:
         site_key = _site_key(lookup_url or feed_url)
         key = source_identity.identity_key("web", "site", site_key)
@@ -456,32 +496,76 @@ def _sha16(value: str) -> str:
     return hashlib.sha1(str(value).encode("utf-8")).hexdigest()[:16]
 
 
-def item_id_for(kind: str, source_id: str, item: dict[str, Any]) -> str:
+def item_id_prefix(session: Session, source_id: str) -> str:
+    """条目 id 前缀:与绑定抓取器同一身份策略。
+
+    收养过的播客保留 ``entry_id_namespace``(旧自定源 id),抓取器继续用它生成条目 id
+    (``podcast_rss_fetcher``);推送必须用同一前缀,否则同一集落两行(实现检视 R1 #6)。
+    """
+    row = session.get(SourceConfigRecord, source_id)
+    if row is not None:
+        try:
+            params = json.loads(row.params_json or "{}")
+        except (TypeError, json.JSONDecodeError):
+            params = {}
+        namespace = str((params or {}).get("entry_id_namespace") or "").strip() if isinstance(params, dict) else ""
+        if namespace:
+            return namespace
+    return source_id
+
+
+def item_id_for(kind: str, source_id: str, item: dict[str, Any], *, prefix: str = "") -> str:
+    prefix = prefix or source_id
     if kind == "social_post":
         post_id = str(item.get("post_id") or "").strip()
         if not post_id:
             raise IngestRejected("社交帖需要 post_id")
-        return f"{source_id}_{post_id}"
+        return f"{prefix}_{post_id}"
     if kind == "podcast_episode":
         stable = str(item.get("guid") or item.get("audio_url") or "").strip()
         if not stable:
             raise IngestRejected("播客单集需要 guid 或音频地址")
-        return f"{source_id}_{_sha16(stable)}"
+        return f"{prefix}_{_sha16(stable)}"
     stable = str(item.get("guid") or item.get("url") or "").strip()
     if not stable:
         raise IngestRejected("文章需要链接")
-    return f"{source_id}_{_sha16(stable)}"
+    return f"{prefix}_{_sha16(stable)}"
+
+
+_LIST_EXTENSION_KEYS = frozenset({"tags", "media_urls"})
+_INT_EXTENSION_KEYS = frozenset({"episode", "season"})
 
 
 def _extensions(kind: str, raw: Any) -> dict[str, Any]:
-    if not isinstance(raw, dict):
+    """按 kind 的白名单取扩展键,并规整类型;值不合法时拒收该条(实现检视 R1 #12)。"""
+    if raw is None:
         return {}
+    if not isinstance(raw, dict):
+        raise IngestRejected("extensions 必须是对象")
     allowed = EXTENSION_KEYS[kind]
-    return {key: value for key, value in raw.items() if key in allowed}
+    out: dict[str, Any] = {}
+    for key, value in raw.items():
+        if key not in allowed or value is None:
+            continue
+        if key in _LIST_EXTENSION_KEYS:
+            if isinstance(value, str):
+                value = [value]
+            if not isinstance(value, list) or not all(isinstance(v, (str, int, float)) for v in value):
+                raise IngestRejected(f"extensions.{key} 必须是字符串列表")
+            out[key] = [str(v).strip() for v in value if str(v).strip()][:50]
+        elif key in _INT_EXTENSION_KEYS:
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+                raise IngestRejected(f"extensions.{key} 必须是非负整数")
+            out[key] = int(value)
+        else:
+            if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+                raise IngestRejected(f"extensions.{key} 必须是字符串")
+            out[key] = str(value).strip()[:2000]
+    return out
 
 
-def build_content(kind: str, source_id: str, item: dict[str, Any]) -> BaseContent:
-    item_id = item_id_for(kind, source_id, item)
+def build_content(kind: str, source_id: str, item: dict[str, Any], *, id_prefix: str = "") -> BaseContent:
+    item_id = item_id_for(kind, source_id, item, prefix=id_prefix)
     url = str(item.get("url") or "").strip()
     publish_date = str(item.get("publish_date") or "").strip() or _now()
     text = str(item.get("content") or item.get("text") or "")
@@ -529,6 +613,8 @@ def build_content(kind: str, source_id: str, item: dict[str, Any]) -> BaseConten
             image_url=str(extensions.get("image_url") or ""),
             author=str(extensions.get("author") or ""),
             tags=list(extensions.get("tags") or []),
+            episode=extensions.get("episode"),
+            season=extensions.get("season"),
         )
     else:
         if not url:
@@ -544,21 +630,42 @@ def build_content(kind: str, source_id: str, item: dict[str, Any]) -> BaseConten
             summary=str(item.get("summary") or extensions.get("summary") or ""),
             tags=list(extensions.get("tags") or []),
         )
+    # 白名单里模型没有字段的键(文章 author / language / image_url,播客 episode / season)
+    # 经 extra_extensions 落进 extensions_json(实现检视 R1 #11)。
+    model_fields = set(getattr(type(content), "__dataclass_fields__", {}))
+    extra = {key: value for key, value in extensions.items() if key not in model_fields}
+    if extra:
+        content.extra_extensions = extra
     content.source_id = source_id
     content._ingest_channel = CHANNEL_PUSH
     return content
 
 
 def existing_article_by_url(session: Session, url: str) -> Optional[ArticleRecord]:
-    """跨源 URL 去重:原样、规范形与带尾斜杠三种写法任一命中即算同一篇。"""
+    """跨源 URL 去重:原样、规范形与带尾斜杠三种写法任一命中即算同一篇。
+
+    只在可公开交付的条目里查(实现检视 R1 #3):读者私有源(``user_rss_`` 前缀、带 owner)与
+    带凭证的源不参与——否则推送方能凭一个链接探出私有条目的 id 与源,公开内容也会被吞掉。
+    """
+    from services.user_sources import source_is_credentialed
+
     raw = str(url or "").strip()
     if not raw:
         return None
     canonical = canonical_url(raw)
     candidates = {raw, canonical, canonical + "/"} - {""}
-    return session.exec(
-        select(ArticleRecord).where(ArticleRecord.source_url.in_(sorted(candidates))).limit(1)
-    ).first()
+    rows = session.exec(
+        select(ArticleRecord)
+        .where(ArticleRecord.source_url.in_(sorted(candidates)))
+        .where(~ArticleRecord.source_id.startswith(source_catalog.USER_SOURCE_PREFIX, autoescape=True))
+        .limit(20)
+    ).all()
+    for row in rows:
+        source = session.get(SourceConfigRecord, row.source_id)
+        if source is not None and ((source.owner_username or "").strip() or source_is_credentialed(source)):
+            continue
+        return row
+    return None
 
 
 def record_pick(session: Session, article_id: str, actor: str, note: str = "") -> bool:

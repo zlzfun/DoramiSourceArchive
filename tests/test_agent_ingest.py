@@ -337,3 +337,88 @@ def test_provisional_podcast_episodes_never_enter_paid_full_processing(tmp_path)
         session.commit()
         ids, _cursor = landing.scan_new_candidates(session, landing.EMPTY_CURSOR)
     assert ids == ["podcast_vetted_ep"]
+
+
+# ── 实现检视 R1 返修(#3–#6、#11、#12) ───────────────────────────────────────
+
+
+def _seed_source(engine, source_id, **fields):
+    from models.db import SourceConfigRecord
+
+    with Session(engine) as session:
+        session.add(SourceConfigRecord(source_id=source_id, name=fields.pop("name", source_id),
+                                       created_at=_NOW, updated_at=_NOW, **fields))
+        session.commit()
+
+
+def _seed_row(engine, article_id, source_id, url, content_type="rss_article"):
+    from models.db import ArticleRecord
+
+    with Session(engine) as session:
+        session.add(ArticleRecord(
+            id=article_id, title=article_id, content_type=content_type, source_id=source_id,
+            source_url=url, publish_date=_NOW, fetched_date=_NOW, archive_updated_at=_NOW,
+            has_content=True, content="x", extensions_json="{}",
+        ))
+        session.commit()
+
+
+def test_review_fixes_identity_dedupe_and_payload(monkeypatch, tmp_path):
+    from models.db import ArticleRecord
+
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    engine = sink.engine
+    # #3 私有条目不参与跨源去重
+    _seed_source(engine, "user_rss_secret00000", source_type="rss", owner_username="alice", url="https://p.test/f")
+    _seed_row(engine, "user_rss_secret00000_1", "user_rss_secret00000", "https://shared.example.com/post")
+    # #4 feed 以 query 区分
+    _seed_source(engine, "rss_alice_feed", source_type="rss", url="https://feeds.example.com/feed?source=alice",
+                 fetcher_id="generic_rss", origin="admin")
+    # #5 handle 被他人接手
+    _seed_source(engine, "x_oldhandle", source_type="x_timeline", fetcher_id="generic_x_timeline", origin="admin",
+                 params_json=json.dumps({"handle": "oldhandle", "user_id": "111"}))
+    # #6 收养过的播客保留 entry_id_namespace;同源同链接
+    _seed_source(engine, "podcast_adopted", source_type="podcast", url="https://pod.test/feed.xml",
+                 fetcher_id="generic_podcast_rss", origin="catalog",
+                 params_json=json.dumps({"entry_id_namespace": "user_rss_old000000"}))
+    import hashlib
+
+    adopted_id = "user_rss_old000000_" + hashlib.sha1(b"ep-1").hexdigest()[:16]
+    _seed_row(engine, adopted_id, "podcast_adopted", "https://pod.test/ep1", content_type="podcast_episode")
+    _seed_source(engine, "web_samesite", source_type="web", url="https://same.example.org/",
+                 fetcher_id="generic_web", origin="admin", base_url="https://same.example.org")
+    _seed_row(engine, "web_samesite_byguid", "web_samesite", "https://same.example.org/a")
+    with TestClient(app_module.app) as client:
+        _login(client)
+        token = _issue_token(client)
+        results = _push(client, token, [
+            {"kind": "article", "url": "https://shared.example.com/post", "title": "public copy"},
+            {"kind": "article", "url": "https://x.test/b1", "source": {"feed_url": "https://feeds.example.com/feed?source=bob"}},
+            {"kind": "social_post", "post_id": "9", "author": {"handle": "oldhandle", "user_id": "222"}},
+            {"kind": "podcast_episode", "guid": "ep-1", "audio_url": "https://pod.test/ep1.mp3", "title": "EP1",
+             "source": {"source_id": "podcast_adopted"}},
+            {"kind": "article", "url": "https://same.example.org/a", "title": "same"},
+            {"kind": "article", "url": "https://ext.example.net/e", "title": "ext",
+             "extensions": {"author": "Ann", "language": "en", "image_url": "https://img/x.png"}},
+            {"kind": "article", "url": "https://ext.example.net/bad", "extensions": {"tags": 7}},
+            {"kind": "podcast_episode", "guid": "ep-9", "audio_url": "https://pod2.test/9.mp3", "title": "EP9",
+             "source": {"feed_url": "https://pod2.test/feed.xml"}, "extensions": {"episode": 9, "season": 2}},
+        ]).json()["results"]
+    status = [(r["status"], r.get("source_id")) for r in results]
+    assert status[0][0] == "created" and status[0][1] != "user_rss_secret00000"
+    assert "user_rss_secret00000" not in json.dumps(results)
+    assert status[1][0] == "created" and status[1][1] != "rss_alice_feed"
+    assert status[2][0] == "created" and status[2][1] not in {"x_oldhandle"}
+    # 同一集(id 前缀沿用 entry_id_namespace):走播客元数据刷新,不新建。
+    assert status[3] in {("duplicate", "podcast_adopted"), ("refreshed", "podcast_adopted")}
+    assert results[3]["id"] == adopted_id
+    assert status[4] == ("duplicate", "web_samesite") and results[4]["id"] == "web_samesite_byguid"
+    assert status[5][0] == "created"
+    assert status[6][0] == "rejected" and "tags" in results[6]["reason"]
+    assert status[7][0] == "created"
+    with Session(engine) as session:
+        ext = json.loads(session.get(ArticleRecord, results[5]["id"]).extensions_json)
+        assert (ext["author"], ext["language"], ext["image_url"]) == ("Ann", "en", "https://img/x.png")
+        pod = json.loads(session.get(ArticleRecord, results[7]["id"]).extensions_json)
+        assert (pod["episode"], pod["season"]) == (9, 2)
+        assert session.exec(select(ArticleRecord).where(ArticleRecord.source_id == "podcast_adopted")).all()[0].id == adopted_id

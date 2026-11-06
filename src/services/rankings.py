@@ -147,6 +147,12 @@ def _source_shapes(session: Session) -> dict[str, str]:
     for source in session.exec(select(SourceConfigRecord)).all():
         if source.source_id in result:
             continue
+        if (source.origin or "") in {"system", "legacy", "agent"} or source.retired_at:
+            # 系统行(公共日报)、R1c 回填行、注入通道建的源与退役行(含已下线墓碑)不是在用的
+            # 「配置源」:它们在源表全集之前
+            # 根本没有行,榜单按条目 content_type 逐篇判定(含 daily_brief / release 排除);
+            # 给它们源级形态会绕过这些排除(issue #262 实现检视 R1 #1)。
+            continue
         # 配置源(如绑定 generic_github_releases 的公共源)没有来源先验,按它预期产出的
         # 数据结构求默认类型——否则会以 article 形态绕过下方 _content_shape 的数据结构排除。
         kind = content_classification.source_kind_prior(

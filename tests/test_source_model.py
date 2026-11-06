@@ -623,3 +623,131 @@ def test_default_subscription_domain_is_unchanged_by_reconcile(tmp_path):
         )
     assert after == before
     assert unknown == ["manual", "x_openrouter", "web_pushed"]
+
+
+# ── 实现检视 R1 返修(#1、#2、#7、#9、#10) ────────────────────────────────────
+
+
+def test_rankings_source_shapes_are_unchanged_by_reconcile(tmp_path):
+    from services.rankings import _source_shapes
+
+    sink = _sink(tmp_path, "rank.db")
+    _seed_article(sink.engine, "brief_1", "dorami_daily_brief", content_type="daily_brief")
+    _seed_article(sink.engine, "orphan_rel_1", "github_orphan_releases", content_type="github_release")
+    with Session(sink.engine) as session:
+        before = _source_shapes(session)
+    _reconcile(sink.engine)
+    with Session(sink.engine) as session:
+        after = _source_shapes(session)
+    assert after == before
+    assert "dorami_daily_brief" not in after and "github_orphan_releases" not in after
+
+
+def test_projection_replays_until_catalog_actually_completes(tmp_path):
+    from models.db import AppSettingRecord, ArchiveSyncEntityStateRecord
+    from services import archive_sync_v2, remote_sync
+
+    consumer = _sink(tmp_path, "consumer-ready.db")
+    base_url = "https://authority.test"
+    caps = [*archive_sync_v2.REQUIRED_CAPABILITIES, archive_sync_v2.SOURCE_CATALOG_CAPABILITY]
+
+    def prepare():
+        with Session(consumer.engine) as session:
+            remote_sync.prepare_transaction_revision_consumer(
+                session, base_url=base_url, username="sync", authority_id="authority-1",
+                schema_version=archive_sync_v2.SCHEMA_VERSION, prepared_at=_NOW, capabilities=caps,
+            )
+            session.commit()
+
+    def add_ledger():
+        with Session(consumer.engine) as session:
+            session.add(ArchiveSyncEntityStateRecord(
+                stream="sources", identity="x", authority_id="authority-1", revision=3, operation="tombstone",
+            ))
+            session.commit()
+
+    def ledger_rows():
+        with Session(consumer.engine) as session:
+            return len(session.exec(select(ArchiveSyncEntityStateRecord)).all())
+
+    prepare()  # 首次 rebase
+    # 预检看到新外网、正式拉取时外网已回滚:整轮实际 legacy 完成 sources。
+    add_ledger()
+    remote_sync.record_v2_stream_success(
+        consumer.engine, base_url=base_url, username="sync", stream="sources",
+        checkpoint={"snapshot": "5", "authority_id": "authority-1", "source_projection": "legacy"},
+        synced_at=_NOW,
+    )
+    assert remote_sync.source_catalog_ready(consumer.engine) is False
+    prepare()  # 外网再次广播 catalog-v1:未就绪 → 必须重放
+    assert ledger_rows() == 0
+    with Session(consumer.engine) as session:
+        target = json.loads(session.get(AppSettingRecord, remote_sync.REMOTE_SYNC_STATE_KEY).value)["targets"][base_url]
+    assert "sources" not in target["v2_streams"]
+    remote_sync.record_v2_stream_success(
+        consumer.engine, base_url=base_url, username="sync", stream="sources",
+        checkpoint={"snapshot": "9", "authority_id": "authority-1", "source_projection": "catalog-v1"},
+        synced_at=_NOW,
+    )
+    assert remote_sync.source_catalog_ready(consumer.engine) is True
+    add_ledger()
+    prepare()  # 已就绪:不再重放
+    assert ledger_rows() == 1
+
+
+def test_retired_sources_are_neither_collected_nor_stored(tmp_path):
+    import pytest
+
+    from api.articles_view import GenericContent
+    from models.db import SourceConfigRecord
+    from services.collection_nodes import resolve_collection_node
+    from storage.impl.db_storage import SAVE_REJECTED_RETIRED
+
+    sink = _sink(tmp_path, "retired.db")
+    with Session(sink.engine) as session:
+        session.add(_admin_source("podcast_gone", source_type="podcast", fetcher_id="generic_podcast_rss",
+                                  retired_at="2026-11-06T00:00:00", is_active=False))
+        session.commit()
+        with pytest.raises(ValueError, match="退役"):
+            resolve_collection_node(session, "podcast_gone")
+    item = GenericContent(id="podcast_gone_1", title="t", source_url="https://p.test/1", publish_date=_NOW,
+                          content="x", has_content=True)
+    item.source_id = "podcast_gone"
+    item.content_type = "rss_article"
+    assert asyncio.run(sink.save_with_outcome(item)) == SAVE_REJECTED_RETIRED
+    with Session(sink.engine) as session:
+        assert session.get(SourceConfigRecord, "podcast_gone").retired_at
+
+
+def test_source_builder_existing_ids_and_type_change_clear_derived_shape(monkeypatch, tmp_path):
+    from api.routers import ingest as ingest_router
+    from api.routers.source_configs import SourceConfigUpdate, update_source_config
+    from models.db import SourceConfigRecord
+    from services import source_builder
+
+    sink = _sink(tmp_path, "builder.db")
+    with Session(sink.engine) as session:
+        session.add(_admin_source("x_configured", source_type="x_timeline", fetcher_id="generic_x_timeline",
+                                  shape="social", platform="x"))
+        session.commit()
+    captured = {}
+
+    async def fake_analyze(url, **kwargs):
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(source_builder, "analyze_url", fake_analyze)
+    monkeypatch.setattr(ingest_router, "_app", lambda: type("A", (), {"current_username": staticmethod(lambda r: "admin")}))
+    with Session(sink.engine) as session:
+        asyncio.run(ingest_router.source_builder_analyze(
+            ingest_router.SourceBuilderAnalyzeRequest(url="https://e.test"), request=None, session=session,
+        ))
+    assert "x_configured" in captured["existing_ids"]
+
+    with Session(sink.engine) as session:
+        update_source_config("x_configured", SourceConfigUpdate(source_type="rss"), session=session, auth=None)
+        row = session.get(SourceConfigRecord, "x_configured")
+        assert (row.shape, row.platform, row.fetcher_id) == ("", "", "generic_rss")
+        from api.sources import row_shape
+
+        assert row_shape(row) == "article"

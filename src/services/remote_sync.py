@@ -189,31 +189,31 @@ def _switch_source_projection(
     capabilities: Optional[List[str]],
     prepared_at: str,
 ) -> bool:
-    """按生产者能力决定 sources / source_states 的有效投影;切到 catalog-v1 时重放两流。
+    """按生产者能力决定 sources / source_states 的有效投影;未就绪时每轮重放两流。
 
     投影从 legacy 切到 catalog-v1 是协议变化(issue #262 R1c,方案 §3.4-5):沿分析代次的做法,
     在同一事务里清掉两流 checkpoint **和**本机对这个权威的逐行应用记账——否则同一 revision
-    会被当成「已应用」跳过,旧投影下应用成 tombstone 的行永远拿不到新载荷。生产者不再广播
-    (外网回滚)时记回 legacy,不重放:旧载荷只是少了新字段,已应用的新字段保持不动。
-    返回是否触发了重放。
+    会被当成「已应用」跳过,legacy 下应用成 tombstone 的行永远拿不到新载荷。
+
+    「是否已切换」不看准备阶段记下的期望值,只看 ``v2_source_catalog_ready_at``:它只在 sources
+    流**实际按 catalog-v1 回显**完成时置上(``record_v2_stream_success``)。所以预检看到新外网、
+    正式拉取时外网已回滚(整轮实际 legacy)的情形,下一轮准备仍会重放(实现检视 R1 #2)。两流行数
+    只有数百,未就绪期间每轮重放的代价可以忽略。生产者不再广播(外网回滚)时清掉就绪标记、不重放:
+    旧载荷只是少了新字段,已应用的新字段保持不动,等它再次广播时重放。返回是否触发了重放。
     """
 
     if capabilities is None:
         return False
-    desired = (
+    catalog = archive_sync_v2.SOURCE_CATALOG_CAPABILITY in capabilities
+    target["v2_source_projection"] = (
         archive_sync_v2.SOURCE_PROJECTION_CATALOG
-        if archive_sync_v2.SOURCE_CATALOG_CAPABILITY in capabilities
+        if catalog
         else archive_sync_v2.SOURCE_PROJECTION_LEGACY
     )
-    recorded = str(
-        target.get("v2_source_projection") or archive_sync_v2.SOURCE_PROJECTION_LEGACY
-    )
-    if desired == recorded:
+    if not catalog:
+        target.pop("v2_source_catalog_ready_at", None)
         return False
-    target["v2_source_projection"] = desired
-    target["v2_source_projection_changed_at"] = prepared_at
-    target.pop("v2_source_catalog_ready_at", None)
-    if desired != archive_sync_v2.SOURCE_PROJECTION_CATALOG:
+    if target.get("v2_source_catalog_ready_at"):
         return False
     streams = dict(target.get("v2_streams") or {})
     for stream in _SOURCE_PROJECTED_STREAMS:
@@ -225,10 +225,11 @@ def _switch_source_projection(
             ArchiveSyncEntityStateRecord.authority_id == authority_id,
         )
     )
+    target["v2_source_projection_changed_at"] = prepared_at
     _logger.info(
-        "remote sync %s: source projection switched to %s, replaying sources/source_states",
+        "remote sync %s: source catalog not ready, replaying sources/source_states under %s",
         base_url,
-        desired,
+        archive_sync_v2.SOURCE_PROJECTION_CATALOG,
     )
     return True
 
