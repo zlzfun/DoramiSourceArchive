@@ -171,7 +171,7 @@ def social_source_hint(post: SocialPostImportItem) -> dict:
     homepage = f"https://x.com/{post.author_handle.strip().lstrip('@')}" if platform == "x" and handle else ""
     display = (post.author_name or "").strip() or (post.author_handle or "").strip().lstrip("@")
     return {
-        "origin": "agent",
+        "origin": "ingest",
         "admission_status": "provisional",
         "name": f"X · {display}" if platform == "x" and display else display,
         "platform": platform,

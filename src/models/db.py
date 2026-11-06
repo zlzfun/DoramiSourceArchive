@@ -37,7 +37,7 @@ class ArticleRecord(SQLModel, table=True):
     # （阅读器源栏、feed 交付、热点图逐源统计）走复合索引即可命中，免二次排序。
     __table_args__ = (
         Index("ix_articles_source_id_fetched_date", "source_id", "fetched_date"),
-        # Agent 收录的跨源同链接去重按 source_url 精确查(issue #262 波 1)。
+        # 收录推送的跨源同链接去重按 source_url 精确查(issue #262 波 1)。
         Index("ix_articles_source_url", "source_url"),
     )
 
@@ -87,7 +87,7 @@ class ArticleRecord(SQLModel, table=True):
     read_count: int = Field(default=0, description="全站累计阅读次数")
 
     # 条目来路(issue #262 波 1):这一条经哪条通道、由谁送进来。服务端写,调用方不可控。
-    # 空串 = 抓取(或来路字段出现之前的存量);push = Agent 推送;manual = 管理员手工录入;
+    # 空串 = 抓取(或来路字段出现之前的存量);push = 收录推送;manual = 管理员手工录入;
     # import = 外部社交动态导入。不随 Archive Sync 导出。
     ingest_channel: str = Field(
         default="",
@@ -1354,13 +1354,13 @@ class SourceConfigRecord(SQLModel, table=True):
     params_json: str = Field(default="{}", description="抓取参数 JSON")
 
     # ── 源模型重构(issue #262 R1c):源表成为全集,属性显式而不是靠「查不到」推导 ──
-    # 来路:catalog 策展目录 / admin 管理员 / reader 读者自定 / agent 注入通道 / legacy 重构前只在
+    # 来路:catalog 策展目录 / admin 管理员 / reader 读者自定 / ingest 收录通道 / legacy 重构前只在
     # articles 里出现的 id / system 系统源;空串 = R1c 之前的存量行或同步来的行(按配置源处理)。
     origin: str = Field(
         default="",
         index=True,
         sa_column_kwargs={"server_default": text("''")},
-        description="源行来路:catalog/admin/reader/agent/legacy/system;空=存量或同步行",
+        description="源行来路:catalog/admin/reader/ingest/legacy/system;空=存量或同步行",
     )
     shape: str = Field(
         default="",
@@ -1417,7 +1417,7 @@ class SourceIdentityKeyRecord(SQLModel, table=True):
 
 
 class IngestTokenRecord(SQLModel, table=True):
-    """Agent 收录令牌(issue #262 波 1):``ding_`` 前缀,与 ``dsub_`` 同法只存 HMAC hash。
+    """收录令牌(issue #262 波 1):``ding_`` 前缀,与 ``dsub_`` 同法只存 HMAC hash。
 
     作用域只放行推送端点;绑定一个 actor 名,写进条目来路与审计;日额度为软上限(条)。
     """

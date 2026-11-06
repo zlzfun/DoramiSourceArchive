@@ -1,4 +1,4 @@
-"""注入通道(手工录入 / 社交导入 / Agent 推送)共用的校验(issue #262)。
+"""收录通道(手工录入 / 社交导入 / 推送)共用的校验(issue #262)。
 
 抓取路径有「血统覆写」约束(``BaseFetcher.fetch`` 统一写 ``source_id`` /
 ``content_type``),注入路径没有——这里补上同一层的服务端约束:
@@ -49,7 +49,7 @@ def _decommissioned_ids() -> frozenset[str]:
 def reserved_source_id_reason(source_id: str, *, allow_daily_brief: bool = False) -> str | None:
     """注入通道不得写入的 source_id;返回拒绝原因,可写时返回 None。
 
-    ``allow_daily_brief``:管理员手工录入保留「手工补一期日报」的既有用法;Agent 推送不放行。
+    ``allow_daily_brief``:管理员手工录入保留「手工补一期日报」的既有用法;推送不放行。
     """
     sid = str(source_id or "").strip()
     if not sid:

@@ -40,12 +40,12 @@ PODCAST_SOURCE_TYPES = frozenset({"podcast", "podcast_rss"})
 ORIGIN_CATALOG = "catalog"      # 策展目录(预设类镜像行、播客目录;R2 起来自目录文件)
 ORIGIN_ADMIN = "admin"          # 管理员配置源
 ORIGIN_READER = "reader"        # 读者自定源(user_rss_)
-ORIGIN_AGENT = "agent"          # 注入通道建的源(Agent 推送 / 手工录入 / 社交导入)
+ORIGIN_INGEST = "ingest"        # 收录通道遇到未登记出处自动建的源(推送 / 手工录入 / 社交导入)
 ORIGIN_LEGACY = "legacy"        # R1c 回填:重构前只在 articles 里出现的公共 id
 ORIGIN_SYSTEM = "system"        # 系统源(公共日报)
 ORIGIN_ARCHIVE = "archive"      # 没有行也没有注册表类:只读占位,从不落库
 ORIGINS = (
-    ORIGIN_CATALOG, ORIGIN_ADMIN, ORIGIN_READER, ORIGIN_AGENT,
+    ORIGIN_CATALOG, ORIGIN_ADMIN, ORIGIN_READER, ORIGIN_INGEST,
     ORIGIN_LEGACY, ORIGIN_SYSTEM,
 )
 

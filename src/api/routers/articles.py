@@ -263,7 +263,7 @@ def _source_ids_by_shape(session: Optional[Session] = None) -> dict[str, set[str
         for record in records:
             if record.source_id in registered_ids:
                 continue  # registry 是源级形态的第一事实源
-            if (record.origin or "") in {"system", "legacy", "agent"} or record.retired_at:
+            if (record.origin or "") in {"system", "legacy", "ingest"} or record.retired_at:
                 # 源表全集(issue #262 R1c)之前这些 id 没有行:按条目 content_type 逐篇判形态,
                 # 不给源级标记(与榜单同口径,实现检视 R1 #1)。
                 continue
@@ -850,7 +850,7 @@ async def create_article_manual(request: Request, params: dict = Body(...)):
         content_obj.extra_extensions = extensions
     # 未登记的来源在同一事务里建成临时源(不进发现目录,管理面「收录源」可列入,issue #262)。
     content_obj._source_hint = {
-        "origin": "agent",
+        "origin": "ingest",
         "admission_status": "provisional",
         "name": str(params.get("source_name") or "").strip(),
     }

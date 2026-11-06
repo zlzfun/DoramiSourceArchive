@@ -195,7 +195,7 @@ export default function DiscoverPage({
     const q = query.trim().toLowerCase();
     const buckets = {};
     for (const s of sources) {
-      // 临时源(Agent 收录建的,issue #262)不进发现目录;已订阅的照常列出,便于管理。
+      // 临时源(收录通道建的,issue #262)不进发现目录;已订阅的照常列出,便于管理。
       if (s.listing === 'unlisted' && !subscribedIds.has(s.source_id)) continue;
       const sShape = readerShapeOf(s);
       if (activeShape !== 'all' && sShape !== activeShape) continue;

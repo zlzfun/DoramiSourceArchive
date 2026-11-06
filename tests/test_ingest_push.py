@@ -1,4 +1,4 @@
-"""Agent 收录推送通道(issue #262 波 1)。"""
+"""收录推送通道(issue #262 波 1)。"""
 
 import json
 import os
@@ -106,7 +106,7 @@ def test_social_posts_resolve_presets_and_create_provisional_sources(monkeypatch
     assert again[0]["status"] == "duplicate"
     engine = sink.engine
     source = _row(engine, SourceConfigRecord, "x_new_lab")
-    assert (source.origin, source.admission_status, source.name) == ("agent", "provisional", "X · New Lab")
+    assert (source.origin, source.admission_status, source.name) == ("ingest", "provisional", "X · New Lab")
     assert (source.shape, source.platform, source.avatar_url) == ("social", "x", "https://img.test/a.jpg")
     assert source.fetcher_id == "" and source.legacy_export is False
     assert _row(engine, SourceIdentityKeyRecord, "x:user_id:9001").source_id == "x_new_lab"
@@ -247,7 +247,7 @@ def test_admin_ingest_sources_list_admit_and_hide(monkeypatch, tmp_path):
         audits = session.exec(select(AdminAuditRecord).order_by(AdminAuditRecord.id)).all()
     pushes = [a for a in audits if a.path == "/api/public/ingest/v1/items"]
     assert pushes and pushes[0].username == "ingest:research-agent"
-    assert "Agent 收录(research-agent)" in pushes[0].summary and "新建临时源 1 个" in pushes[0].summary
+    assert "收录推送(research-agent)" in pushes[0].summary and "新建临时源 1 个" in pushes[0].summary
     summaries = {a.summary for a in audits}
     assert "签发收录令牌 research-agent" in summaries
     assert "列入收录源 web_news_example_net" in summaries
@@ -272,7 +272,7 @@ def test_provisional_sources_do_not_corroborate_breaking_events():
 
     pair = [candidate("a1", "web_aiera", 9.2), candidate("a2", "web_pushed_blog", 8.7)]
     assert [s.article_id for s in select_breaking_events(pair)] == ["a1"]
-    # 同一件事,另一家只是 Agent 推送建的临时源:不构成「两家来源同时报道」。
+    # 同一件事,另一家只是收录推送建的临时源:不构成「两家来源同时报道」。
     assert select_breaking_events(pair, uncorroborating_source_ids={"web_pushed_blog"}) == []
 
 
@@ -287,7 +287,7 @@ def test_provisional_sources_stay_out_of_the_daily_brief_pool_until_admitted(tmp
     sink = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'brief.db'}")
     for article_id, source_id, hint in (
         ("vetted_1", "web_vetted", None),
-        ("pushed_1", "web_pushed", {"origin": "agent", "admission_status": "provisional"}),
+        ("pushed_1", "web_pushed", {"origin": "ingest", "admission_status": "provisional"}),
     ):
         item = GenericContent(id=article_id, title=article_id, source_url=f"https://e.test/{article_id}",
                               publish_date=_NOW, content="body", has_content=True)
@@ -317,7 +317,7 @@ def test_provisional_podcast_episodes_never_enter_paid_full_processing(tmp_path)
         for source_id, admission in (("podcast_vetted", "incubating"), ("podcast_pushed", "provisional")):
             session.add(SourceConfigRecord(
                 source_id=source_id, name=source_id, source_type="podcast", url=f"https://{source_id}.test/f",
-                origin="agent" if admission == "provisional" else "catalog",
+                origin="ingest" if admission == "provisional" else "catalog",
                 admission_status=admission, created_at=_NOW, updated_at=_NOW,
             ))
             episode_id = f"{source_id}_ep"

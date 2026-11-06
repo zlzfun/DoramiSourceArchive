@@ -280,7 +280,7 @@ Since the source-model refactor the producer's `source_configs` is the full set 
 sources: 62 preset mirror rows (`origin=catalog`), the public daily-brief system row,
 decommissioned tombstones (retired), backfilled ids that previously existed only in
 `articles` (`origin=legacy`), and sources created by ingest channels
-(`origin=agent`, `admission_status=provisional`). Older receivers must not see a
+(`origin=ingest`, `admission_status=provisional`). Older receivers must not see a
 different `sources` export, so the producer **projects per request**:
 
 - Receivers send `receiver_capabilities=source-catalog-v1` (comma-separated query

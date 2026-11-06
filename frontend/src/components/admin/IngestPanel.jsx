@@ -15,7 +15,7 @@ const fmtTime = (value) => (value ? String(value).slice(0, 16).replace('T', ' ')
 const SHAPE_LABEL = { article: '文章', social: '社交', podcast: '播客' };
 
 /**
- * Agent 收录(issue #262 波 1,运维 → 自定源与收录)。
+ * 收录(issue #262 波 1,运维 → 自定源与收录)。调用方可以是 Agent、自动化流程或人。
  *
  * 收录令牌:签发(明文只回显这一次)/ 吊销;收录源:推送时遇到未登记出处自动建的临时源,
  * 行动作 列入(→ 观察期,进入发现目录与日报候选)、下架 / 恢复(隐藏并拒收后续推送)、改名。
@@ -73,7 +73,7 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
   };
 
   const handleRevoke = async (token) => {
-    if (!(await confirm(`确认吊销「${token.actor}」的收录令牌？使用它的 Agent 将立即无法推送。`))) return;
+    if (!(await confirm(`确认吊销「${token.actor}」的收录令牌？使用它的调用方将立即无法推送。`))) return;
     setBusy(`token:${token.id}`);
     try {
       await revokeIngestToken(token.id);
@@ -117,7 +117,7 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
   return (
     <>
       <div className="zone-head" style={{ marginTop: 18 }}>
-        <span className="zone-title">Agent 收录</span>
+        <span className="zone-title">收录</span>
       </div>
 
       <section className="surface-card ai-switchboard rounded-[var(--r-card)] mb-3">
@@ -127,8 +127,8 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
           value={actor}
           onChange={(e) => setActor(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') handleIssue(); }}
-          placeholder="Agent 名称"
-          aria-label="Agent 名称"
+          placeholder="调用方"
+          aria-label="调用方"
           maxLength={60}
           className="form-input form-input-inline"
         />
@@ -156,7 +156,7 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
             <table className="acct-table is-fixed">
               <thead>
                 <tr>
-                  <th className="acct-th" style={{ width: 180 }}>Agent</th>
+                  <th className="acct-th" style={{ width: 180 }}>调用方</th>
                   <th className="acct-th" style={{ width: 110 }}>令牌</th>
                   <th className="acct-th" style={{ width: 90 }}>日额度</th>
                   <th className="acct-th" style={{ width: 130 }}>签发</th>

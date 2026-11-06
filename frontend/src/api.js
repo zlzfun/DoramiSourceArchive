@@ -1194,7 +1194,7 @@ export function retryFullAnalysisBackfill(jobId) {
   return request(`/admin/analysis/backfills/${enc(jobId)}/retry-failed`, { method: 'POST', errorMsg: '重试失败文章失败' });
 }
 
-// ── Agent 收录(issue #262 波 1):收录令牌与收录源 ──
+// ── 收录(issue #262 波 1):收录令牌与收录源 ──
 export function fetchIngestTokens() {
   return request('/admin/ingest/tokens', { errorMsg: '获取收录令牌失败' });
 }

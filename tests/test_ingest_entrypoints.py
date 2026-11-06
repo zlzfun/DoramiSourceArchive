@@ -60,7 +60,7 @@ def test_manual_entry_keeps_caller_id_and_reports_precise_errors(monkeypatch, tm
         created = client.post("/api/articles", json={
             "id": "manual_1",
             "source_id": "web_agent_example",
-            "title": "Agent 收录的一篇",
+            "title": "收录的一篇",
             "source_url": "https://example.com/a",
             "content": "正文",
             "extensions_json": {"note": "对象形式也接受"},

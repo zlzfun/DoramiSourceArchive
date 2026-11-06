@@ -147,7 +147,7 @@ def _source_shapes(session: Session) -> dict[str, str]:
     for source in session.exec(select(SourceConfigRecord)).all():
         if source.source_id in result:
             continue
-        if (source.origin or "") in {"system", "legacy", "agent"} or source.retired_at:
+        if (source.origin or "") in {"system", "legacy", "ingest"} or source.retired_at:
             # 系统行(公共日报)、R1c 回填行、注入通道建的源与退役行(含已下线墓碑)不是在用的
             # 「配置源」:它们在源表全集之前
             # 根本没有行,榜单按条目 content_type 逐篇判定(含 daily_brief / release 排除);

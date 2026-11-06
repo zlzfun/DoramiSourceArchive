@@ -74,7 +74,7 @@ from api.routers import admin as admin_router
 from api.routers import daily_brief as daily_brief_router
 from api.routers import reader as reader_router
 from api.routers import ingest as ingest_router
-from api.routers import agent_ingest as agent_ingest_router
+from api.routers import ingest_push as ingest_push_router
 from api.routers import subscriptions as subscriptions_router
 from api.routers import interests as interests_router
 from api.routers import personal_briefs as personal_briefs_router
@@ -1829,7 +1829,7 @@ app.include_router(admin_router.router)
 app.include_router(daily_brief_router.router)
 app.include_router(reader_router.router)
 app.include_router(ingest_router.router)
-app.include_router(agent_ingest_router.router)
+app.include_router(ingest_push_router.router)
 app.include_router(subscriptions_router.router)
 app.include_router(interests_router.router)
 app.include_router(personal_briefs_router.router)

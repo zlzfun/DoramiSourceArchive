@@ -91,7 +91,7 @@ def _defaultable_config_row(row: SourceConfigRecord) -> bool:
     """可进默认订阅名单的公共配置行。
 
     issue #262 R1c 起源表是全集:已下线源墓碑、只在归档 / 订阅里出现的回填行(``legacy``)、
-    公共日报系统行与 Agent 收录建的临时源也都有行——它们以前「查不到行」所以被拒,现在要显式排除,
+    公共日报系统行与收录通道建的临时源也都有行——它们以前「查不到行」所以被拒,现在要显式排除,
     合法域与重构前相同(公共日报另行放行)。
     """
     if row.owner_username or row.source_id.startswith(PRIVATE_SOURCE_PREFIX):

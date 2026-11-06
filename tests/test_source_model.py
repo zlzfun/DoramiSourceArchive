@@ -277,7 +277,7 @@ def test_save_ensures_a_source_row_in_the_same_transaction(tmp_path):
 
     assert asyncio.run(sink.save(item("fetched_1", "rss_unconfigured"))) is True
     assert asyncio.run(sink.save(item("pushed_1", "web_pushed", hint={
-        "origin": "agent", "admission_status": "provisional", "name": "推来的站点",
+        "origin": "ingest", "admission_status": "provisional", "name": "推来的站点",
     }))) is True
     assert asyncio.run(sink.save(item("preset_1", "rss_simonwillison"))) is True
     assert asyncio.run(sink.save(item("tpl_1", "generic_rss"))) is True
@@ -285,7 +285,7 @@ def test_save_ensures_a_source_row_in_the_same_transaction(tmp_path):
         fetched = session.get(SourceConfigRecord, "rss_unconfigured")
         assert (fetched.origin, fetched.admission_status) == ("legacy", "admitted")
         pushed = session.get(SourceConfigRecord, "web_pushed")
-        assert (pushed.origin, pushed.admission_status, pushed.name) == ("agent", "provisional", "推来的站点")
+        assert (pushed.origin, pushed.admission_status, pushed.name) == ("ingest", "provisional", "推来的站点")
         assert pushed.legacy_export is False
         assert session.get(SourceConfigRecord, "rss_simonwillison").origin == "catalog"
         # 模板 id 是血统缺陷,不建源行掩盖。
@@ -388,7 +388,7 @@ def test_legacy_projection_matches_pre_refactor_export(tmp_path):
     _reconcile(producer.engine)
     with Session(producer.engine) as session:
         session.add(_admin_source("rss_admin"))
-        session.add(_admin_source("web_provisional", origin="agent", admission_status="provisional",
+        session.add(_admin_source("web_provisional", origin="ingest", admission_status="provisional",
                                   legacy_export=True))
         session.add(SourceStateRecord(source_id="rss_simonwillison", fetcher_id="rss_simonwillison",
                                       status="healthy", updated_at=_NOW))
@@ -614,7 +614,7 @@ def test_default_subscription_domain_is_unchanged_by_reconcile(tmp_path):
         before = reader_defaults.candidate_sources(session, registry_meta)
     _reconcile(sink.engine)
     with Session(sink.engine) as session:
-        source_rows.ensure_source_row(session, "web_pushed", origin="agent", admission_status="provisional")
+        source_rows.ensure_source_row(session, "web_pushed", origin="ingest", admission_status="provisional")
         session.commit()
         after = reader_defaults.candidate_sources(session, registry_meta)
         unknown = reader_defaults.unknown_source_ids(

@@ -146,7 +146,7 @@
 
 核心不变量:**每个出现在 `articles.source_id` 里的值,源目录里都恰有一行**;所有消费方只读这一张表上的显式属性,删除一切「查不到即 X」的兜底。
 
-源目录新增 / 显式化的列:`origin`(catalog / admin / reader / agent / sync)、`shape`、`platform`、`icon`、`avatar_url`、`homepage_url`、`default_kind`、`language`;`admission_status` 取值扩为 `provisional | incubating | admitted`(另有 `retired_at` 表退役)。
+源目录新增 / 显式化的列:`origin`(catalog / admin / reader / ingest / sync;实现时 2026-11-06 由 agent 改名为 ingest)、`shape`、`platform`、`icon`、`avatar_url`、`homepage_url`、`default_kind`、`language`;`admission_status` 取值扩为 `provisional | incubating | admitted`(另有 `retired_at` 表退役)。
 
 ### 5.2 临时源(provisional)的生命周期
 
@@ -188,7 +188,7 @@
 - **条目 id**:服务端按对应抓取能力的**同一公式**生成(X `{sid}_{post_id}`;网页 `{sid}_{sha1(规范 URL)[:16]}`),于是 Agent 先推、抓取器后抓(或反之)天然幂等合流。调用方给的 id 一律不用。
 - **跨源 URL 去重**:插入前按规范 URL 查已有条目;命中他源 → 不新建,返回 `duplicate_url` + 已有 id,并(若 D4 选是)写一条收录记录。
 - **逐条结果**:`created | duplicate | duplicate_url | refreshed | rejected(reason)`,取代现在「ID 已存在」一种报错。
-- **Agent 收录视图**(可选):有了 `ingest_channel` / `article_picks`,读者面可加一个「收录」筛选或合集式入口——这正是 `source_collections.py` 文首写下的触发条件「出现非代码路径的策展者」。是否做、放哪里留到波 1 样页再定。
+- **收录视图**(可选):有了 `ingest_channel` / `article_picks`,读者面可加一个「收录」筛选或合集式入口——这正是 `source_collections.py` 文首写下的触发条件「出现非代码路径的策展者」。是否做、放哪里留到波 1 样页再定。
 
 ### 5.4 取缔「一个源 = 一个类」
 
@@ -258,9 +258,9 @@
 
 **波 1**:
 
-- 推送端点 `POST /api/public/ingest/v1/items`(放在 `/api/public/*` 下,沿用令牌鉴权、免会话的既有门控);契约全文 [`docs/contracts/agent_ingest.md`](../contracts/agent_ingest.md)。
-- 收录令牌 `ding_`(HMAC hash、actor、日额度);管理面「运维 → 自定源与收录 → Agent 收录」签发 / 吊销,收录源列表与 列入 / 下架 / 恢复 / 改名;推送与管理操作都入审计(推送记在 `ingest:<actor>` 名下)。
-- 身份解析:显式 id → X 身份键(`user_id` 优先)→ feed 规范地址 → 主机 + 路径前缀;都不中建临时源(`origin=agent`、`admission_status=provisional`),多租户主机按「主机 + 首段路径」。身份键表 `source_identity_keys` 由 R1c 迁移建出。
+- 推送端点 `POST /api/public/ingest/v1/items`(放在 `/api/public/*` 下,沿用令牌鉴权、免会话的既有门控);契约全文 [`docs/contracts/ingest_push.md`](../contracts/ingest_push.md)。
+- 收录令牌 `ding_`(HMAC hash、actor、日额度);管理面「运维 → 自定源与收录 → 收录」签发 / 吊销,收录源列表与 列入 / 下架 / 恢复 / 改名;推送与管理操作都入审计(推送记在 `ingest:<actor>` 名下)。
+- 身份解析:显式 id → X 身份键(`user_id` 优先)→ feed 规范地址 → 主机 + 路径前缀;都不中建临时源(`origin=ingest`、`admission_status=provisional`),多租户主机按「主机 + 首段路径」。身份键表 `source_identity_keys` 由 R1c 迁移建出。
 - 条目 id 与抓取器同一公式;跨源 URL 去重返回 `duplicate_url` 并写收录记录 `article_picks`;条目来路 `articles.ingest_channel / ingest_actor`(push / manual / import;迁移 `e2a9c4f7b183`,不随同步导出)。
 - 临时源的下游策略:发现目录与批量订阅不列(`listing=unlisted`,源栏「收录」组);早报重大事件多源印证、榜单「必读」来源数、事件榜发布主体数不计入;公共日报候选池默认排除;播客全文处理(付费 ASR)自动入队排除,读者点播随之挡住。
 - 没做:`kind_hint` 来自服务端规则——推送的 `content_type` 由 `kind` 决定(`web_article` / `social_post` / `podcast_episode`),调用方不可写,等价于此;「收录」读者视图(§5.3 可选)与别名合并(波 3)留待后续。

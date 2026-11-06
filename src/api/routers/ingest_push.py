@@ -1,4 +1,4 @@
-"""Agent 收录 Router(issue #262 波 1)。
+"""收录推送 Router(issue #262 波 1)。
 
 - ``POST /api/public/ingest/v1/items``:收录令牌(``Authorization: Bearer ding_…``)推送一批条目;
   ``/api/public/*`` 免会话、按令牌鉴权(与订阅 / 聚合令牌同一门控)。
@@ -22,13 +22,13 @@ from api import deps
 from api.tokens import read_bearer_or_query_token
 from models.db import ArticlePickRecord, ArticleRecord, IngestTokenRecord, SourceConfigRecord
 from services import admin_audit as admin_audit_service
-from services import agent_ingest
+from services import ingest_push
 from services import source_catalog, source_visibility, sync_consumer_policy
 from storage.impl import db_storage
 
 
-router = APIRouter(tags=["agent-ingest"])
-_logger = logging.getLogger("dorami.agent_ingest")
+router = APIRouter(tags=["ingest-push"])
+_logger = logging.getLogger("dorami.ingest_push")
 
 
 def _app():
@@ -79,13 +79,13 @@ class IngestItem(BaseModel):
 
 
 class IngestBatch(BaseModel):
-    items: List[IngestItem] = PydanticField(default_factory=list, max_length=agent_ingest.MAX_BATCH)
+    items: List[IngestItem] = PydanticField(default_factory=list, max_length=ingest_push.MAX_BATCH)
 
 
 def _authenticate(request: Request, session: Session) -> IngestTokenRecord:
     token = request.headers.get("authorization", "")
     raw = token[7:].strip() if token.lower().startswith("bearer ") else read_bearer_or_query_token(request)
-    record = agent_ingest.authenticate(session, raw)
+    record = ingest_push.authenticate(session, raw)
     if record is None:
         raise HTTPException(status_code=401, detail="收录令牌无效或已吊销")
     return record
@@ -110,7 +110,7 @@ def _social_source(item: IngestItem) -> dict[str, Any]:
 
 @router.post("/api/public/ingest/v1/items")
 async def push_items(batch: IngestBatch, request: Request):
-    """Agent 推送一批条目(≤ 100);逐条返回 created / duplicate / duplicate_url / refreshed / rejected。"""
+    """推送一批条目(≤ 100);逐条返回 created / duplicate / duplicate_url / refreshed / rejected。"""
     db_sink = deps.get_db_sink()
     results: list[dict[str, Any]] = []
     created_ids: list[str] = []
@@ -119,20 +119,20 @@ async def push_items(batch: IngestBatch, request: Request):
         if sync_consumer_policy.v2_consumer_mode_active(session):
             raise HTTPException(status_code=409, detail="接收端节点不接受推送,请推送到外网 authority")
         actor = token.actor
-        remaining = max(0, int(token.daily_limit or 0) - agent_ingest.picks_today(session, actor))
-        ctx = agent_ingest.new_context(session, actor)
-        prepared: list[tuple[int, IngestItem, Optional[agent_ingest.ResolvedSource], Optional[str]]] = []
+        remaining = max(0, int(token.daily_limit or 0) - ingest_push.picks_today(session, actor))
+        ctx = ingest_push.new_context(session, actor)
+        prepared: list[tuple[int, IngestItem, Optional[ingest_push.ResolvedSource], Optional[str]]] = []
         for index, item in enumerate(batch.items):
             if index >= remaining:
                 prepared.append((index, item, None, "超出今日收录额度"))
                 continue
             source = _social_source(item) if item.kind == "social_post" else item.source.model_dump()
             try:
-                resolved = agent_ingest.resolve_source(ctx, item.kind, source, item_url=item.url)
+                resolved = ingest_push.resolve_source(ctx, item.kind, source, item_url=item.url)
                 prepared.append((index, item, resolved, None))
-            except agent_ingest.IngestRejected as exc:
+            except ingest_push.IngestRejected as exc:
                 prepared.append((index, item, None, str(exc)))
-        token.last_used_at = agent_ingest._now()
+        token.last_used_at = ingest_push._now()
         session.add(token)
         session.commit()
 
@@ -144,11 +144,11 @@ async def push_items(batch: IngestBatch, request: Request):
         try:
             payload = item.model_dump()
             with Session(db_sink.engine) as session:
-                id_prefix = agent_ingest.item_id_prefix(session, resolved.source_id)
-            content = agent_ingest.build_content(
+                id_prefix = ingest_push.item_id_prefix(session, resolved.source_id)
+            content = ingest_push.build_content(
                 item.kind, resolved.source_id, payload, id_prefix=id_prefix
             )
-        except (agent_ingest.IngestRejected, ValueError, TypeError, OverflowError) as exc:
+        except (ingest_push.IngestRejected, ValueError, TypeError, OverflowError) as exc:
             # 单条载荷问题只拒收这一条;整批照常回执、末尾审计照常执行(实现检视 R1 #12)。
             results.append({**base, "status": "rejected", "reason": str(exc), "source_id": resolved.source_id})
             continue
@@ -163,11 +163,11 @@ async def push_items(batch: IngestBatch, request: Request):
             # 链接即身份只对文章与社交帖成立;播客单集常共用节目页链接,只认单集身份(guid / 单集
             # 链接 → 条目 id),否则会把同节目的不同单集并成一条(检视复检新 P1)。
             if existing is None and item.kind != "podcast_episode":
-                duplicate = agent_ingest.existing_article_by_url(session, content.source_url)
+                duplicate = ingest_push.existing_article_by_url(session, content.source_url)
             if duplicate is not None:
                 # 同一链接已在库里:别的源 → duplicate_url;同一个源但条目 id 公式不同(抓取器按
                 # guid、推送按链接等)→ duplicate。都只记收录,不新建(实现检视 R1 #6)。
-                agent_ingest.record_pick(session, duplicate.id, actor, item.note)
+                ingest_push.record_pick(session, duplicate.id, actor, item.note)
                 session.commit()
                 results.append({
                     **base,
@@ -177,14 +177,14 @@ async def push_items(batch: IngestBatch, request: Request):
                 })
                 continue
             if item.kind == "podcast_episode" and resolved.created:
-                agent_ingest.ensure_podcast_source(session, resolved)
+                ingest_push.ensure_podcast_source(session, resolved)
                 session.commit()
         outcome = await db_sink.save_with_outcome(content)
         with Session(db_sink.engine) as session:
             if outcome in db_storage.SAVE_STORED_OUTCOMES or outcome in {
                 db_storage.SAVE_DUPLICATE, db_storage.SAVE_REFRESHED,
             }:
-                agent_ingest.record_pick(session, content.id, actor, item.note)
+                ingest_push.record_pick(session, content.id, actor, item.note)
                 session.commit()
         if outcome == db_storage.SAVE_CREATED:
             created_ids.append(content.id)
@@ -195,7 +195,7 @@ async def push_items(batch: IngestBatch, request: Request):
         elif outcome == db_storage.SAVE_DUPLICATE:
             status = "duplicate"
         else:
-            _code, detail = agent_ingest.ingest_policy.outcome_error(outcome) or (400, outcome)
+            _code, detail = ingest_push.ingest_policy.outcome_error(outcome) or (400, outcome)
             results.append({**base, "status": "rejected", "reason": detail, "source_id": resolved.source_id})
             continue
         results.append({
@@ -209,7 +209,7 @@ async def push_items(batch: IngestBatch, request: Request):
             _app().schedule_media_prefetch(created_ids)
         except Exception:  # noqa: BLE001 - 入库已提交;分析补偿扫描与按需缓存兜底
             _logger.warning("推送入库后的分析入队 / 媒体预取失败", exc_info=True)
-    body = agent_ingest.audit_body(results, actor=actor)
+    body = ingest_push.audit_body(results, actor=actor)
     try:
         admin_audit_service.record_audit(
             db_sink.engine,
@@ -224,7 +224,7 @@ async def push_items(batch: IngestBatch, request: Request):
     return {
         "status": "success",
         "actor": actor,
-        "counts": agent_ingest.summarize(results),
+        "counts": ingest_push.summarize(results),
         "results": results,
     }
 
@@ -234,7 +234,7 @@ async def push_items(batch: IngestBatch, request: Request):
 
 class TokenCreate(BaseModel):
     actor: str
-    daily_limit: int = agent_ingest.DEFAULT_DAILY_LIMIT
+    daily_limit: int = ingest_push.DEFAULT_DAILY_LIMIT
 
 
 class IngestSourceUpdate(BaseModel):
@@ -244,7 +244,7 @@ class IngestSourceUpdate(BaseModel):
 @router.get("/api/admin/ingest/tokens")
 def list_tokens(session: Session = Depends(deps.get_session)):
     rows = session.exec(select(IngestTokenRecord).order_by(IngestTokenRecord.id.desc())).all()
-    return {"items": [agent_ingest.serialize_token(row) for row in rows]}
+    return {"items": [ingest_push.serialize_token(row) for row in rows]}
 
 
 @router.post("/api/admin/ingest/tokens")
@@ -252,7 +252,7 @@ def create_token(params: TokenCreate, request: Request, session: Session = Depen
     if sync_consumer_policy.v2_consumer_mode_active(session):
         raise HTTPException(status_code=409, detail="接收端节点不签发收录令牌")
     try:
-        record, token = agent_ingest.create_token(
+        record, token = ingest_push.create_token(
             session,
             actor=params.actor,
             created_by=_app().current_username(request) or "",
@@ -261,22 +261,22 @@ def create_token(params: TokenCreate, request: Request, session: Session = Depen
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     # 明文只在签发这一次回显;库里只有 hash。
-    return {**agent_ingest.serialize_token(record), "token": token}
+    return {**ingest_push.serialize_token(record), "token": token}
 
 
 @router.post("/api/admin/ingest/tokens/{token_id}/revoke")
 def revoke_token(token_id: int, session: Session = Depends(deps.get_session)):
-    record = agent_ingest.revoke_token(session, token_id)
+    record = ingest_push.revoke_token(session, token_id)
     if record is None:
         raise HTTPException(status_code=404, detail="令牌不存在")
-    return agent_ingest.serialize_token(record)
+    return ingest_push.serialize_token(record)
 
 
 def _ingest_source_rows(session: Session) -> list[SourceConfigRecord]:
     return list(session.exec(
         select(SourceConfigRecord)
         .where(
-            (SourceConfigRecord.origin == source_catalog.ORIGIN_AGENT)
+            (SourceConfigRecord.origin == source_catalog.ORIGIN_INGEST)
             | (SourceConfigRecord.admission_status == source_catalog.ADMISSION_PROVISIONAL)
         )
         .order_by(SourceConfigRecord.created_at.desc())
@@ -331,7 +331,7 @@ def list_ingest_sources(session: Session = Depends(deps.get_session)):
 def _ingest_source_or_404(session: Session, source_id: str) -> SourceConfigRecord:
     row = session.get(SourceConfigRecord, source_id)
     if row is None or not (
-        row.origin == source_catalog.ORIGIN_AGENT
+        row.origin == source_catalog.ORIGIN_INGEST
         or row.admission_status == source_catalog.ADMISSION_PROVISIONAL
     ):
         raise HTTPException(status_code=404, detail="收录源不存在")
@@ -346,7 +346,7 @@ def admit_ingest_source(source_id: str, session: Session = Depends(deps.get_sess
     row = _ingest_source_or_404(session, source_id)
     if row.admission_status == source_catalog.ADMISSION_PROVISIONAL:
         row.admission_status = "incubating"
-        row.updated_at = agent_ingest._now()
+        row.updated_at = ingest_push._now()
         session.add(row)
         session.commit()
     return {"status": "success", "source_id": source_id, "admission_status": row.admission_status}
@@ -377,7 +377,7 @@ def update_ingest_source(
         if not name:
             raise HTTPException(status_code=400, detail="名称不能为空")
         row.name = name
-        row.updated_at = agent_ingest._now()
+        row.updated_at = ingest_push._now()
         session.add(row)
         session.commit()
     return {"status": "success", "source_id": source_id, "name": row.name}

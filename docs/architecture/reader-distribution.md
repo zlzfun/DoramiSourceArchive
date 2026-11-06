@@ -9,7 +9,7 @@ Reader accounts build a personalized subscription scope over already-archived re
 
 ## 目录列出状态与临时源(issue #262)
 
-`GET /api/reader/sources` 的每个条目带服务端算好的 `origin` 与 `listing`。Agent 收录建的临时源 `listing=unlisted`:发现页与「订阅全部 X 源」不列,条目上的来源名仍可进源页单独订阅,订阅者源栏归「收录」组;退役源(含已下线墓碑)与主人不可考的 `user_rss_` 孤儿只对订阅者保留退订入口。隐藏源全量排除于交付,公共日报候选池与 `/api/feed/articles[.md]` 也不例外。临时源的多源印证 / 日报 / 付费处理口径见 [`contracts/agent_ingest.md`](../contracts/agent_ingest.md)。
+`GET /api/reader/sources` 的每个条目带服务端算好的 `origin` 与 `listing`。收录通道建的临时源 `listing=unlisted`:发现页与「订阅全部 X 源」不列,条目上的来源名仍可进源页单独订阅,订阅者源栏归「收录」组;退役源(含已下线墓碑)与主人不可考的 `user_rss_` 孤儿只对订阅者保留退订入口。隐藏源全量排除于交付,公共日报候选池与 `/api/feed/articles[.md]` 也不例外。临时源的多源印证 / 日报 / 付费处理口径见 [`contracts/ingest_push.md`](../contracts/ingest_push.md)。
 
 ## Downloadable Claude skill
 

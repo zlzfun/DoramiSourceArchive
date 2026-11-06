@@ -48,7 +48,7 @@ def _app():
 
 
 # 不经「配置源」入口管理的来路(issue #262 R1c)。
-NON_CONFIG_ORIGINS = frozenset({"legacy", "system", "agent"})
+NON_CONFIG_ORIGINS = frozenset({"legacy", "system", "ingest"})
 
 
 def _require_config_managed(record: SourceConfigRecord) -> None:

@@ -175,13 +175,13 @@ def _id_target(
     return f"{action}{noun} {target}", target
 
 
-def _agent_ingest_summary(body: dict | None) -> str:
+def _ingest_push_summary(body: dict | None) -> str:
     try:
-        from services.agent_ingest import audit_summary_text
+        from services.ingest_push import audit_summary_text
 
         return audit_summary_text(body or {})
     except Exception:  # noqa: BLE001 - 摘要失败不影响审计落库
-        return "Agent 收录"
+        return "收录推送"
 
 
 def _social_import_summary(body: dict | None) -> RenderResult:
@@ -419,11 +419,11 @@ AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
         re.compile(r"^/api/import/social-posts$"),
         lambda _m, body: _social_import_summary(body),
     ),
-    # issue #262 波 1:Agent 收录推送(令牌鉴权,端点自行记账)与收录管理。
+    # issue #262 波 1:收录推送(令牌鉴权,端点自行记账)与收录管理。
     (
         "POST",
         re.compile(r"^/api/public/ingest/v1/items$"),
-        lambda _m, body: (_agent_ingest_summary(body), str((body or {}).get("actor") or "") or None),
+        lambda _m, body: (_ingest_push_summary(body), str((body or {}).get("actor") or "") or None),
     ),
     (
         "POST",

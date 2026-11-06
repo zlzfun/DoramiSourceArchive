@@ -1,6 +1,6 @@
-"""Agent 收录推送通道(issue #262 波 1)。
+"""收录推送通道(issue #262 波 1)。
 
-外部主动式 Agent 自己发现文章 / 推文 / 播客单集,推进平台。它常常来自平台从未定义过的出处,
+调用方(Agent、自动化流程或人)把发现的文章 / 推文 / 播客单集推进平台。它们常常来自平台从未定义过的出处,
 所以这条通道的职责是:**认出已有源,认不出就建临时源**,并且由服务端决定一切会影响下游判定的
 字段(条目 id、``content_type``、系统扩展键、来路)。
 
@@ -8,11 +8,11 @@
 - 身份解析:显式 ``source_id`` → 身份键(X 的 ``user_id`` / ``handle``)→ feed 地址 → 主机 + 路径前缀;
   都不中则建 ``provisional`` 临时源(不进发现目录、不计入多源印证、默认不进公共日报);
 - 条目 id 与抓取器同一公式:X ``{sid}_{post_id}``;网页 / RSS ``{sid}_{sha1(guid 或链接)[:16]}``;
-  播客 ``{sid}_{sha1(guid 或音频地址)[:16]}``——Agent 先推、抓取器后抓(或反之)天然幂等合流;
+  播客 ``{前缀}_{sha1(guid 或单集链接)[:16]}``(前缀沿用 ``entry_id_namespace``)——先推后抓(或反之)天然幂等合流;
 - 跨源 URL 去重:同一链接已在别的源里 → 不新建,返回 ``duplicate_url``,只记一条收录记录;
 - 逐条结果:``created | duplicate | duplicate_url | refreshed | rejected``。
 
-接收端(内网 replica)直接拒绝:Agent 只推外网 authority。
+接收端(内网 replica)直接拒绝:只推外网 authority。
 """
 
 from __future__ import annotations
@@ -440,7 +440,7 @@ def resolve_source(ctx: BatchContext, kind: str, source: dict[str, Any], *, item
             return ResolvedSource(source_id=derived)
         display = name or handle.lstrip("@")
         resolved = ResolvedSource(source_id=derived, created=True, hint={
-            "origin": source_catalog.ORIGIN_AGENT,
+            "origin": source_catalog.ORIGIN_INGEST,
             "admission_status": source_catalog.ADMISSION_PROVISIONAL,
             "name": f"X · {display}" if platform == "x" else display,
             "platform": platform,
@@ -487,7 +487,7 @@ def resolve_source(ctx: BatchContext, kind: str, source: dict[str, Any], *, item
     source_id = _unique_new_id(ctx, base)
     homepage = site or (f"https://{_host(lookup_url or feed_url)}" if (lookup_url or feed_url) else "")
     resolved = ResolvedSource(source_id=source_id, created=True, hint={
-        "origin": source_catalog.ORIGIN_AGENT,
+        "origin": source_catalog.ORIGIN_INGEST,
         "admission_status": source_catalog.ADMISSION_PROVISIONAL,
         "name": name or _site_key(lookup_url or feed_url),
         "avatar_url": avatar,
@@ -745,7 +745,7 @@ def audit_summary_text(body: dict[str, Any]) -> str:
     parts = [f"{key} {value}" for key, value in sorted(counts.items())]
     created = body.get("created_sources") or []
     suffix = f";新建临时源 {len(created)} 个" if created else ""
-    return f"Agent 收录({body.get('actor')}):" + ("、".join(parts) or "空批次") + suffix
+    return f"收录推送({body.get('actor')}):" + ("、".join(parts) or "空批次") + suffix
 
 
 def dumps(value: Any) -> str:

@@ -1377,7 +1377,7 @@ def _reader_sources_catalog(
                 **_source_kind_fields(source_id, resolved_type),
                 "platform": meta.get("platform") or "",
                 # 源栏优先使用 400x400 头像；同时保留原始 URL 供降级/调试。
-                # 没有抓取器缓存的源(Agent 推送建的临时源)用源行上记下的头像(issue #262)。
+                # 没有抓取器缓存的源(收录通道建的临时源)用源行上记下的头像(issue #262)。
                 "avatar_url": cached_profile.get("author_avatar_url_large")
                 or cached_profile.get("author_avatar_url")
                 or configured_meta.get(source_id, {}).get("avatar_url") or "",

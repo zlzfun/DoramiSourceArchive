@@ -5,10 +5,10 @@
 
 ## 源模型:源 / 采集绑定 / 抓取器(issue #262,现行)
 
-- **源**是 `source_configs` 里的一行(沿用表名、加列):`origin`(catalog / admin / reader / agent / legacy / system;空 = R1c 之前的存量行或同步行)、显式 `shape` / `platform` / `icon` / `avatar_url` / `homepage_url` / `default_kind` / `language` / `daily` / `legacy_export`。**每个 `articles.source_id` 恰有一行**:外网启动对账(`services/source_rows.py`)为 62 个预设类生成镜像行(`origin=catalog`,X 预设 `source_type=x_timeline`、其余 `preset`,绑定 = 自身类 id,`daily` = 注册表非观察期)、公共日报系统行、已下线源墓碑(退役),并回填只在 `articles` / 订阅里出现的 id(公共 → `legacy`,`user_rss_*` → 私有隔离行);`DatabaseStorage.save` 与日报直写在同一事务补建缺行。被文章引用的源删除改退役。内网 replica 从不本地写公共源行。
-- **采集绑定**是行上的 `fetcher_id` + `params_json`(0..1 个):迁移 `c5e1a7b3d9f2` 已把隐式绑定写实,`agent` / `legacy` / `system` 来路与退役行不再按 `source_type` 推导绑定;节点目录只列「有绑定 ∧ 未退役」的配置行。推送、手工录入、同步是通道,不是绑定;条目来路记在 `articles.ingest_channel` / `ingest_actor`。
+- **源**是 `source_configs` 里的一行(沿用表名、加列):`origin`(catalog / admin / reader / ingest / legacy / system;空 = R1c 之前的存量行或同步行)、显式 `shape` / `platform` / `icon` / `avatar_url` / `homepage_url` / `default_kind` / `language` / `daily` / `legacy_export`。**每个 `articles.source_id` 恰有一行**:外网启动对账(`services/source_rows.py`)为 62 个预设类生成镜像行(`origin=catalog`,X 预设 `source_type=x_timeline`、其余 `preset`,绑定 = 自身类 id,`daily` = 注册表非观察期)、公共日报系统行、已下线源墓碑(退役),并回填只在 `articles` / 订阅里出现的 id(公共 → `legacy`,`user_rss_*` → 私有隔离行);`DatabaseStorage.save` 与日报直写在同一事务补建缺行。被文章引用的源删除改退役。内网 replica 从不本地写公共源行。
+- **采集绑定**是行上的 `fetcher_id` + `params_json`(0..1 个):迁移 `c5e1a7b3d9f2` 已把隐式绑定写实,`ingest` / `legacy` / `system` 来路与退役行不再按 `source_type` 推导绑定;节点目录只列「有绑定 ∧ 未退役」的配置行。推送、手工录入、同步是通道,不是绑定;条目来路记在 `articles.ingest_channel` / `ingest_actor`。
 - **读源**统一经 `services/source_catalog.py`(`describe` → `SourceView`),形态判定 `api.sources.row_shape`(显式列 > 绑定类 > 类型);`[sources] model = compat | full` 是读法开关(默认 compat)。
-- **Agent 收录**建的临时源(`origin=agent`、`admission_status=provisional`)见 [`contracts/agent_ingest.md`](../contracts/agent_ingest.md)。
+- **收录推送**建的临时源(`origin=ingest`、`admission_status=provisional`)见 [`contracts/ingest_push.md`](../contracts/ingest_push.md)。
 - 设计、分步与后续 R2(目录文件)/ R3(抓取器去身份)见 [`plans/issue-262-source-model-refactor.md`](../plans/issue-262-source-model-refactor.md)。
 
 ## Plugin-based fetcher discovery

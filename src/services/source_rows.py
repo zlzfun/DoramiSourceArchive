@@ -9,7 +9,7 @@ authority 上成立并保持:
 - **墓碑**:已下线源(``DECOMMISSIONED_FETCHER_IDS``)保留身份、标退役;
 - **回填**:只在 ``articles`` / 订阅里出现的 id——公共 id 记 ``origin=legacy``(照旧列出,存量
   不变);``user_rss_*`` 孤儿记私有隔离行(不分析、按「带凭证」处理、不列出、不外发);
-- **写入时补建**:注入通道遇到未登记的 id,在同一事务里补一行(``origin=agent``,
+- **写入时补建**:注入通道遇到未登记的 id,在同一事务里补一行(``origin=ingest``,
   ``admission_status=provisional``:不进发现目录,方案 D2)。
 
 接收端(v2 replica)从不在本地写公共源行(不变量 6):它们只经 Archive Sync 到达。本模块的所有
@@ -449,7 +449,7 @@ def ensure_source_row(
     source_id: str,
     *,
     content_type: str = "",
-    origin: str = source_catalog.ORIGIN_AGENT,
+    origin: str = source_catalog.ORIGIN_INGEST,
     admission_status: str = source_catalog.ADMISSION_PROVISIONAL,
     name: str = "",
     platform: str = "",

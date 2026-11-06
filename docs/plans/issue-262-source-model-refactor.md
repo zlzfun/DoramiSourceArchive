@@ -312,7 +312,7 @@ shape = "article"
 
 **首个 PR(#262 波 0 + R0 + R1b + R1c + R4 最小闭环 + 波 1)已落地的形状**:
 
-- R1b:迁移 `c5e1a7b3d9f2` 写实空 `fetcher_id`(跳过同步行);新建与改类型时写实默认绑定;`resolve_source_fetcher_id` 对 `agent / legacy / system` 来路与退役行不再按 `source_type` 推导。
+- R1b:迁移 `c5e1a7b3d9f2` 写实空 `fetcher_id`(跳过同步行);新建与改类型时写实默认绑定;`resolve_source_fetcher_id` 对 `ingest / legacy / system` 来路与退役行不再按 `source_type` 推导。
 - R1c:迁移 `d7f3b9e2a614` 加列与两张表(身份键、迁移台账);外网启动对账 `services/source_rows.py`(镜像行 `source_type=preset`、系统行、墓碑、播客目录来路、孤儿回填三类);写入闸在 `DatabaseStorage.save` 与日报直写里同事务补建;被引用的配置源删除改退役;配置源列表与改删入口排除镜像 / 系统 / 回填 / 临时源;读法开关 `[sources] model = compat | full`(默认 compat)。
 - R1a:新服务 `services/source_catalog.py`(`SourceView` + 批量 `describe`);本 PR 只把形态判定收成 `api.sources.row_shape`(显式列 > 绑定类 > 类型)并改了 7 个消费方,其余消费方迁移随 R2。
 - R4 最小闭环:目录条目带 `origin` / `listing`;临时源 `unlisted`(发现页与批量订阅不列,源栏归「收录」组);退役行与 `user_rss_` 孤儿只对订阅者可见。

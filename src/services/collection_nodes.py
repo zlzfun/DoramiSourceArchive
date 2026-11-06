@@ -54,9 +54,9 @@ def default_fetcher_id_for_source_type(source_type: str) -> str:
     return ""
 
 
-# 没有采集通道的来路:注入通道建的临时源、R1c 回填的存量 id、系统源。它们的 source_type
+# 没有采集通道的来路:收录通道建的临时源、R1c 回填的存量 id、系统源。它们的 source_type
 # 只描述形态(x / podcast / archive),不能再被推导成「绑定了某个模板」(issue #262 F7)。
-_UNBOUND_ORIGINS = frozenset({"agent", "legacy", "system"})
+_UNBOUND_ORIGINS = frozenset({"ingest", "legacy", "system"})
 
 
 def resolve_source_fetcher_id(source_config: SourceConfigRecord) -> str:
