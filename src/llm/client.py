@@ -205,11 +205,13 @@ async def chat_completion(
     - http_client：可选的共享连接（见 client_session）；传入时本函数不负责其生命周期。
     - require_complete：翻译等完整输出任务使用，仅接受 finish_reason=stop；
       已返回的非空截断响应先计量再抛错，其它消费方默认保留旧行为。
-    - response_meta：可选出参，成功时提供有界的供应商自报 served_model；
-      不证明底层模型身份，也不改变配置。每次调用先清除旧 served_model。
+    - response_meta：可选出参；有界的调用次数、降级、结束原因和 token 数，
+      成功时额外提供供应商自报 served_model（不证明底层身份）。不含消息或密钥。
     """
     if response_meta is not None:
         response_meta.pop("served_model", None)
+        response_meta.update(http_attempts=0, json_downgraded=False, thinking_downgraded=False,
+                             finish_reason=None, usage={})
     if not config.configured:
         raise LLMNotConfigured("LLM 未配置（需 base_url / api_key / model）")
 
@@ -278,6 +280,8 @@ async def _chat_completion_on(
     attempt = 0
     while True:
         attempt += 1
+        if response_meta is not None:
+            response_meta["http_attempts"] += 1
         try:
             resp = await client.post(url, headers=headers, json=_build_payload(want_json, want_thinking))
         except httpx.HTTPError as exc:
@@ -296,6 +300,17 @@ async def _chat_completion_on(
             except ValueError:
                 data = {}
             usage = data.get("usage", {}) if isinstance(data, dict) else {}
+            if response_meta is not None:
+                # Only bounded numeric billing fields; never arbitrary provider data.
+                response_meta["usage"] = {
+                    key: value for key, value in (usage.items() if isinstance(usage, dict) else [])
+                    if key in ("prompt_tokens", "completion_tokens", "total_tokens",
+                               "prompt_cache_hit_tokens", "prompt_cache_miss_tokens")
+                    and type(value) is int and 0 <= value <= 10**9
+                }
+                choices = data.get("choices") if isinstance(data, dict) else None
+                reason = choices[0].get("finish_reason") if isinstance(choices, list) and choices and isinstance(choices[0], dict) else None
+                response_meta["finish_reason"] = reason if reason in ("stop", "length", "content_filter", "tool_calls", "function_call") else "unknown"
             _maybe_record_usage(usage_meta, usage if isinstance(usage, dict) else {}, config.model)
             content, usage, finish_reason = _extract_content_and_usage(resp)
             normalized_reason = finish_reason.strip().lower() if finish_reason is not None else None
@@ -307,7 +322,7 @@ async def _chat_completion_on(
                                finish_reason[:80] if finish_reason is not None else None,
                                config.base_url, config.model)
                 raise LLMIncompleteOutput(
-                    "模型未确认完整输出，译文未保存；请缩短输入或调整模型输出上限后重试"
+                    "模型未确认完整输出，本次结果未采用；请缩短输入或调整模型输出上限后重试"
                 )
             if response_meta is not None:
                 served = _served_model(data, config)
@@ -332,6 +347,8 @@ async def _chat_completion_on(
             logger.info("端点疑似不支持 response_format，降级为普通模式重试 [%s | %s]",
                         config.base_url, config.model)
             want_json = False
+            if response_meta is not None:
+                response_meta["json_downgraded"] = True
             attempt -= 1
             continue
 
@@ -340,6 +357,8 @@ async def _chat_completion_on(
             logger.warning("端点疑似不支持思考模式参数(thinking/reasoning_effort)，去掉后重试 [%s | %s]",
                            config.base_url, config.model)
             want_thinking = False
+            if response_meta is not None:
+                response_meta["thinking_downgraded"] = True
             attempt -= 1
             continue
 

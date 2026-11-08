@@ -14795,16 +14795,25 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
     margin: 2px 0 10px 24px;
     color: var(--dorami-muted);
   }
-  .reader-ai-evidence summary {
+  .reader-ai-evidence summary,
+  .reader-ai-more-refs summary,
+  .reader-ai-narrow summary,
+  .reader-ai-context-toggle,
+  .reader-ai-evidence-toggle {
     width: fit-content;
-    padding: 3px 0;
+    padding: 8px 0;
+    min-height: 44px;
     cursor: pointer;
     border-radius: var(--r-sm);
   }
   @media (hover: hover) {
-    .reader-ai-evidence summary:hover { color: var(--dorami-ink); }
+    .reader-ai-evidence summary:hover,
+    .reader-ai-more-refs summary:hover,
+    .reader-ai-evidence-toggle:hover { color: var(--dorami-ink); }
   }
-  .reader-ai-evidence summary:focus-visible {
+  .reader-ai-evidence summary:focus-visible,
+  .reader-ai-narrow summary:focus-visible,
+  .reader-ai-more-refs summary:focus-visible {
     outline: 2px solid var(--dorami-accent);
     outline-offset: 3px;
   }
@@ -14813,6 +14822,26 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
     padding-left: 10px;
     border-left: 2px solid var(--dorami-border);
   }
+  .reader-ai-more-refs { margin-top: 8px; color: var(--dorami-muted); }
+  .reader-ai-evidence-toggle { color: var(--dorami-muted); text-align: left; }
+  .reader-ai-refs .reader-ai-ref-row { min-height: 44px; }
+  .reader-ai-context { margin-top: 8px; }
+  .reader-ai-context-copy {
+    max-height: 320px;
+    overflow: auto;
+    position: relative;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--dorami-ink-2);
+  }
+  .reader-ai-context-copy:focus-visible { outline: 2px solid var(--dorami-accent); outline-offset: 2px; }
+  .reader-ai-context-focus { margin: 8px 0; padding: 8px; border-left: 2px solid var(--dorami-accent); background: var(--dorami-wash); }
+  .reader-ai-context-nav { display: flex; gap: 12px; align-items: center; }
+  .reader-ai-context-nav button { min-height: 44px; }
+  .reader-ai-narrow { margin-top: 12px; color: var(--dorami-muted); }
+  .reader-ai-narrow-option { display: block; min-height: 44px; padding: 8px 0; text-align: left; color: var(--dorami-ink-2); font-size: 14px; overflow-wrap: anywhere; }
   .reader-ai-evidence blockquote {
     margin: 4px 0 0;
     font-size: 14px;

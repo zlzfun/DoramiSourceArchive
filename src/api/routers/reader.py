@@ -2304,6 +2304,13 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
     db_sink = deps.get_db_sink()
     scope = params.scope if params.scope in ("article", "articles", "subscription", "all") else "article"
     ask_id = _valid_ask_id(params.ask_id)
+    from services.qa_contract import QAState
+    from services.qa_evidence import fingerprint
+    from services import qa_diagnostics
+
+    if not params.question.strip():
+        raise HTTPException(status_code=400, detail="请输入你的问题")
+    qa_state = QAState(params.question)
 
     # 用户源文章的动作级授权(检视返修 F3):显式名单档把正文送入外部 LLM,
     # 非订阅者的私有源文章按不存在处理(subscription/all 档的检索域天然不含)。
@@ -2362,6 +2369,7 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
             # 与作答侧同一份多轮历史:规划器据此还原追问/指代(v3.34)。
             history=params.history,
             source_ids_fetch=_current_source_ids,
+            qa_state=qa_state,
         )
 
     try:
@@ -2378,15 +2386,19 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
                 llm_config=llm_config,
                 usage_meta=UsageMeta(purpose="image_insight", username=username),
                 history=params.history,
+                qa_state=qa_state,
             )
         except reader_ai_service.ReaderAIError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc))
 
         _ask_progress_update(ask_id, "answer", {"articles": len(sources)})
+        qa_state.stages["injected"] = len(sources)
         # 内部控制位只在服务端用一次,对外 sources 形状与 main 一致(读者面无「配图已识别」标记)
         with_image_notes = reader_ai_service.sources_have_image_notes(sources)
         sources = reader_ai_service.public_sources(sources)
         _validate_sources(sources)
+        source_snapshot = fingerprint([qa_state.sources, sources])
+        answer_mode = "answer"
         history = [{"role": t.role, "content": t.content} for t in (params.history or [])]
         try:
             answer = await reader_ai_service.answer_question(
@@ -2394,15 +2406,41 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
                 usage_meta=UsageMeta(purpose="ask", username=username),
                 # 图片说明使用边界只在上下文真的带了说明时追加(sources 的显式布尔元数据,不嗅探正文)
                 with_image_notes=with_image_notes,
+                qa_state=qa_state, source_count=len(sources),
             )
             _validate_sources(sources)
-        except reader_ai_service.ReaderAIError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=str(exc))
-        except LLMError as exc:
-            raise HTTPException(status_code=502, detail=f"提问失败：{exc}")
+            qa_state.outcome = "returned"
+            if any(part["status"] != "answered" for part in qa_state.checked_parts):
+                answer_mode = "partial"
+        except (reader_ai_service.ReaderAIError, LLMError) as exc:
+            qa_state.outcome = getattr(exc, "code", type(exc).__name__)
+            if isinstance(exc, reader_ai_service.ReaderAIError) and exc.status_code != 502:
+                raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+            # Keep the model failure visible in diagnostics. Only independently
+            # authorized sources survive; no part of the rejected draft is used.
+            if (not sources or qa_state.intent == "chat"
+                    or qa_state.outcome in ("qa_catalog_changed", "qa_source_invalid")
+                    or fingerprint([qa_state.sources, sources]) != source_snapshot):
+                raise HTTPException(status_code=502, detail="本次回答未能完整生成或确认依据，请稍后重试") from exc
+            _validate_sources(sources)  # revocation/update still blocks ALL content
+            answer_mode = "references_only"
+            answer = "这次未能生成可用的回答。你可以先查看下方参考资料，或稍后重新提问。"
+        qa_state.stages["delivery"] = answer_mode
     finally:
+        if qa_state.outcome == "in_progress":
+            qa_state.outcome = "not_returned"
+        qa_diagnostics.record(qa_state)
         if ask_id:
             _ASK_PROGRESS.pop(ask_id, None)
-    with Session(db_sink.engine) as session:
-        accounts_service.record_ai_usage(session, username, "ask")
-    return {"status": "success", "answer": answer, "sources": sources, "scope": scope}
+    # Provider token usage is already recorded, including failed generations.
+    # A sources-only fallback does not consume a completed-answer daily quota.
+    if answer_mode != "references_only":
+        with Session(db_sink.engine) as session:
+            accounts_service.record_ai_usage(session, username, "ask")
+    from services.qa_reference import reference_sources, refinement_questions
+    sources = reference_sources(sources, qa_state, secret=AUTH_SECRET,
+                                accepted=answer_mode != "references_only")
+    return {"status": "references_only" if answer_mode == "references_only" else "success",
+            "answer_mode": answer_mode, "answer": answer, "sources": sources, "scope": scope,
+            "refinement_questions": refinement_questions(qa_state, answer_mode),
+            "trace_id": qa_state.trace_id}
