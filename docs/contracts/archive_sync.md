@@ -272,7 +272,8 @@ whole-page rollback remain mandatory for invalid incoming upserts.
 transaction-revision snapshot, so publishing terminal readiness cannot outrun
 the matching article, analysis, or media generation. A stream checkpoint advances
 only after its terminal page has committed; the media checkpoint additionally
-waits for every declared binary to pass byte-size and SHA-256 verification.
+waits for every declared binary to pass byte-size and SHA-256 verification, or to
+be recorded as rejected (see "Media and Candidate evidence").
 
 Before requesting an image or generated Podcast audio binary, the receiver checks
 the manifest's content-addressed local file: regular file, exact size, full
@@ -300,6 +301,48 @@ Counters are per attempt; stream file/byte counters reset at stage transitions.
 Stream results retain `media_reused`/`podcast_audio_reused`, the corresponding
 `*_downloaded` counts and `reused_bytes`/`downloaded_bytes` for the final summary.
 Progress is observational and never advances a replication checkpoint.
+
+Issue #261 (sync console) adds observational counts and progress fields; none of
+them changes request kinds, request fields or checkpoint semantics:
+
+- **Producer.** The first page (`after` empty) of every non-Taxonomy stream adds
+  `pending`: a first-page estimate of the rows that stream will export in
+  `(since, snapshot]` (tombstones included; for `media`, the candidate count of the
+  media manifest). For a static stream it equals the receiver's final
+  `stream_processed`; an entity modified again while the stream is being paged moves
+  beyond the fixed snapshot and arrives in the next incremental pull, so the
+  processed count is at most `pending`. The
+  first `sources` page additionally adds `pending_by_stream` for every stream
+  except `taxonomy` and `media` (media would require scanning every public body),
+  computed with that request's `since`. Both fields are additive: older receivers
+  ignore unknown manifest keys, and receivers treat a missing or non-integer value
+  as unknown.
+- **Receiver progress.** `progress` also carries `order` (negotiated order, null
+  before the first `sources` page), `stream_total` (the current stream's `pending`,
+  null until its first page or from older producers), `page` (1-based page being
+  fetched or applied; 0 before the first request), `stream_started_at`,
+  `streams_done` (summaries of streams whose checkpoint has already been recorded)
+  and `run_pending` (the first `sources` page's `pending_by_stream`, restricted to
+  streams whose starting checkpoint equals the `sources` `since`; the others are
+  unknown until their own first page). Progress is also published right after a
+  first page's manifest is validated, before it is imported. A failed job
+  has no `result`; its failing stream and page are `progress.stream` / `progress.page`.
+  `result.streams[*]` adds `pending`, `started_at` and `completed_at`.
+- **Probe.** The connection probe sends the target's completed `sources` snapshot
+  as `since` (the same pagination parameter every pull sends). If the producer
+  rejects it (for example after a producer rollback) the probe retries with an
+  empty `since` and reports `pending_since=""`. The probe result, without
+  credentials, is stored locally in KV `remote_sync:probes`.
+- **Stream reset.** `POST /api/admin/remote-sync/streams/{stream}/reset` clears
+  that stream's checkpoint and the receiver's entity states for the target
+  authority (Taxonomy: checkpoint only), exactly as the automatic analyses replay
+  does. The next pull downloads the stream from the beginning, reapplies every row
+  and finishes with the usual presence-confirmed prune. It is rejected while a
+  remote-sync job is queued or running; the check-and-reset and the job launch's
+  check-and-enqueue share one per-database lock, so a reset can never interleave
+  with a launch reading the old checkpoint. Replaying analyses is `stream=analyses`.
+  A run that completes every negotiated stream records `v2_last_success_at`;
+  per-stream `last_synced_at` alone is not a whole-run success.
 
 Endpoints:
 
@@ -401,6 +444,31 @@ exact size, content hash, image magic, declared MIME and extension before atomic
 installation. Media responses use `X-Content-Type-Options: nosniff`; a newer
 manifest revision can replace an already cached binary without using the receiver
 clock as its authority revision.
+
+The producer vets each cached image before listing it (issue #264), using the
+receiver's own rule (`validate_synced_image` on the first 512 bytes: content
+signature, declared MIME and extension agree). Content that is not the declared
+image, or a row that cannot be addressed safely, is skipped and its local cache row
+becomes `failed`. A working copy that is missing or has the wrong size is served
+from object storage only when a matching registration exists (size, MIME, bucket,
+region; cold copies are not header-checked). Without any registration such a row is
+skipped without changing it: the next reader access or media backfill re-downloads
+it, which advances its revision so the next incremental page lists it; after
+restoring files by hand, reset the receiver's media stream. States that can heal
+without a database write fail the page instead, keeping the checkpoint: filesystem
+errors other than absence, a registration that exists but does not match (or object
+storage disabled), and a disabled media store while candidates exist (with no
+candidates the page is empty and complete). The first-page `pending` remains the
+candidate count and may exceed the rows actually listed. Image caching itself
+trusts content only, never the response `Content-Type`, and treats a wrong-sized
+working copy as a miss, so the two sides cannot diverge.
+
+A receiver that downloads bytes matching the declared size and SHA-256 that still
+fail image validation records the row `failed`, counts it under the stream's
+`skipped`, and continues: the bytes are exactly the authority's, so a retry cannot
+succeed. Replaying the same revision re-rejects without downloading; a later
+revision is applied normally. Checksum/size mismatches, the local size limit,
+foreign authority, and every Podcast audio failure still fail the page.
 
 ### Podcast artifact extension (Issue #7 baseline)
 

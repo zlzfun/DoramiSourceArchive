@@ -7,8 +7,8 @@ import {
 } from '../src/utils/opsNav.js';
 import { PURPOSE_LABELS } from '../src/components/admin/adminUtils.js';
 
-test('运维 8 页按重要度排序:账户 > 阅读与榜单 > 其它,页 id 与板块 id 不重复', () => {
-  assert.deepEqual(OPS_PAGES.map((p) => p.id), ['accounts', 'reading', 'reader', 'podcast', 'analysis', 'external', 'user-sources', 'inbox']);
+test('运维 9 页按重要度排序:账户 > 阅读与榜单 > 其它;节点同步在存储与外部资源之后(issue #261);页 id 与板块 id 不重复', () => {
+  assert.deepEqual(OPS_PAGES.map((p) => p.id), ['accounts', 'reading', 'reader', 'podcast', 'analysis', 'external', 'sync', 'user-sources', 'inbox']);
   for (const page of OPS_PAGES) {
     const ids = page.blocks.map(([id]) => id);
     assert.equal(new Set(ids).size, ids.length, page.id);
@@ -64,7 +64,7 @@ test('根专属板块只对根管理员列出', () => {
 test('每个注册的板块在源码里都有落位锚点(opsBlockId 调用)', () => {
   const files = [
     'components/AdminOpsTab.jsx', 'components/admin/pages/AccountsPage.jsx', 'components/admin/pages/ReaderPage.jsx',
-    'components/admin/pages/ReadingPage.jsx', 'components/admin/pages/ExternalPage.jsx',
+    'components/admin/pages/ReadingPage.jsx', 'components/admin/pages/ExternalPage.jsx', 'components/admin/pages/SyncPage.jsx',
     'components/admin/PodcastZone.jsx', 'components/admin/AdminTaxonomyPanel.jsx',
   ].map((f) => readFileSync(new URL(`../src/${f}`, import.meta.url), 'utf8')).join('\n');
   for (const page of OPS_PAGES) {

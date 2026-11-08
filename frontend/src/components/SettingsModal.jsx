@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowDownUp, BookOpenText, FileText, Info, KeyRound, Lock, MessageSquare, Package, Palette, Plug2, Rss, User, X } from 'lucide-react';
+import { ArrowDownUp, BookOpenText, Info, KeyRound, Lock, MessageSquare, Package, Palette, Plug2, Rss, User, X } from 'lucide-react';
 import Modal from './Modal';
 import { markFeedbackSeen } from '../api';
 import AccountSection from './settings/AccountSection';
@@ -8,7 +8,6 @@ import ReadingSection from './settings/ReadingSection';
 import FeedTokenSection from './settings/FeedTokenSection';
 import McpAccessSection from './settings/McpAccessSection';
 import SkillSection from './settings/SkillSection';
-import DataSyncSection from './settings/DataSyncSection';
 import CredentialsSection from './settings/CredentialsSection';
 import FeedbackSection from './settings/FeedbackSection';
 import AboutSection from './settings/AboutSection';
@@ -18,7 +17,7 @@ import { GUEST_LOCKED_SECTIONS } from '../utils/guestCopy';
 
 // 设置面板(弹窗波→并入设置波):控制柜——左导航(分组灰签 + wash 块选中,全站轨语言)+ 右内容。
 // 「接入集成」组(聚合接口/MCP 接入/技能包)自原接入集成页签并入,两种角色同享。
-// 内容门控按「当前界面」而非仅账号角色(v3.19.2 排查拍板):管理能力(MCP 开关/数据同步/
+// 内容门控按「当前界面」而非仅账号角色(v3.19.2 排查拍板):管理能力(MCP 开关/凭据/
 // 管理员文案)只在**管理台界面**出现——admin 经轨底切换进入阅读器时,设置柜与读者同观感,
 // 不露管理面细节;「反馈与建议」只给读者账号(admin 不向自己反馈,两界面均不显)。
 // initialSection 供深链(读者轨底/头像入口直落对应分区)。
@@ -32,15 +31,13 @@ const HINTS = {
   feed: '一枚 dfeed_ 令牌与聚合拉取接口', // 角色差异(订阅范围/全库)在分区文案内分支
   mcp: '把内容接进你的 Agent 工具',
   skill: '装进 Agent 的每日资讯技能',
-  sync: '部署端之间搬运文章归档',
   credentials: '对外访问机密的单点保管与编辑',
   feedback: '把想法与问题告诉管理员',
   about: '产品与账户信息',
 };
 
-export default function SettingsModal({ open, initialSection, onClose, theme, onThemeChange, runtimeInfo, readerSurface = false, username, avatar, onUserUpdated, onLogout, showToast, onArticlesChanged, feedbackUnread = 0, onFeedbackSeen, onOpenAdminPodcast, onGuestLogin }) {
+export default function SettingsModal({ open, initialSection, onClose, theme, onThemeChange, runtimeInfo, readerSurface = false, username, avatar, onUserUpdated, onLogout, showToast, feedbackUnread = 0, onFeedbackSeen, onOpenAdminPodcast, onOpenAdminSync, onGuestLogin }) {
   const collectorEnabled = Boolean(runtimeInfo?.collector_enabled);
-  const readerEnabled = Boolean(runtimeInfo?.reader_enabled);
   const accountRole = runtimeInfo?.account_role;
   const isAdmin = accountRole === 'admin';
   const isGuest = accountRole === 'guest';
@@ -80,13 +77,13 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
       label: '管理',
       items: [
         // 管理组只在管理台界面出现;admin 在阅读器界面时设置柜与读者同观感。
-        { id: 'sync', label: '数据同步', icon: FileText, show: adminConsole && (collectorEnabled || readerEnabled) },
+        // 「数据同步」区已迁到 运维管理 → 节点同步(issue #261)。
         // 凭据整合台(v3.27 拍板 B):外部凭据单点编辑;消费页 chip 深链至此。
         { id: 'credentials', label: '凭据', icon: KeyRound, show: adminConsole },
       ],
     },
   ].map(group => ({ ...group, items: group.items.filter(item => item.show !== false) }))
-    .filter(group => group.items.length > 0), [adminConsole, collectorEnabled, isAdmin, readerEnabled]);
+    .filter(group => group.items.length > 0), [adminConsole, isAdmin]);
 
   const aboutItem = useMemo(() => ({ id: 'about', label: '关于', icon: Info }), []);
   const sections = useMemo(
@@ -187,16 +184,8 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
             {activeSection.id === 'skill' && !isGuest && (
               <SkillSection />
             )}
-            {activeSection.id === 'sync' && adminConsole && (collectorEnabled || readerEnabled) && (
-              <DataSyncSection
-                showToast={showToast}
-                canExport={collectorEnabled}
-                canImport={readerEnabled}
-                onArticlesChanged={onArticlesChanged}
-              />
-            )}
             {activeSection.id === 'credentials' && adminConsole && (
-              <CredentialsSection showToast={showToast} onNavigate={setActive} onOpenAdminPodcast={onOpenAdminPodcast} />
+              <CredentialsSection showToast={showToast} onOpenAdminPodcast={onOpenAdminPodcast} onOpenAdminSync={onOpenAdminSync} />
             )}
             {activeSection.id === 'feedback' && !isGuest && (
               <FeedbackSection showToast={showToast} />

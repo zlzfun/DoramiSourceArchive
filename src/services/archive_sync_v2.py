@@ -15,16 +15,17 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import os
 import re
 import stat
 import uuid
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 from urllib.parse import urlsplit
 
-from sqlalchemy import String, and_, cast, delete, exists, or_, update
+from sqlalchemy import String, and_, cast, delete, exists, func, or_, update
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
@@ -61,7 +62,12 @@ from models.db import (
     TaxonomyVersionRecord,
 )
 from services.article_analysis import compute_content_hash
-from services.media_store import extract_image_urls, validate_synced_image
+from services.media_store import (
+    SNIFF_HEAD_BYTES,
+    extract_image_urls,
+    mark_cached_failed,
+    validate_synced_image,
+)
 from services.podcast_artifacts import withdraw_digest_audio_for_script_change
 from services.podcast_text_limits import (
     PodcastTextLimitExceeded,
@@ -153,8 +159,21 @@ _EVENT_MEMBER_WIRE_FIELDS = (
 _EVENT_REDIRECT_WIRE_FIELDS = ("old_event_id", "reason", "created_at")
 
 
+logger = logging.getLogger(__name__)
+
+
 class SyncV2Error(ValueError):
     """The page cannot be safely applied; its checkpoint must not advance."""
+
+
+class SyncV2MediaRejected(SyncV2Error):
+    """One media binary matched its declared checksum but is not a valid image.
+
+    The bytes are exactly what the authority holds, so retrying can never
+    succeed for this revision. The receiver records the row as ``failed`` and
+    moves on instead of blocking the media stream and every later stream
+    (issue #264). A later authority revision re-sends the row.
+    """
 
 
 def _canonical(data: Any) -> str:
@@ -235,6 +254,7 @@ def _manifest(
     *,
     complete: bool,
     since: str = "",
+    extra: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     next_cursor = after
     if rows:
@@ -253,7 +273,47 @@ def _manifest(
         "generated_at": _now_iso(),
         "capabilities": list(ADVERTISED_CAPABILITIES),
     }
+    if extra:
+        # 附加、可缺省的观测字段(issue #261 计数):老接收端忽略未知 manifest 键。
+        manifest.update(extra)
     return manifest
+
+
+# 首页计数(issue #261):媒体计数要全量扫公共正文引用,只在 media 自己的首页给。
+PENDING_BY_STREAM_STREAMS = tuple(s for s in STREAMS if s not in {"taxonomy", "media"})
+
+
+def pending_state_counts(
+    session: Session,
+    streams: Iterable[str],
+    *,
+    since_revision: int,
+    snapshot_revision: int,
+) -> dict[str, int]:
+    """``(since, snapshot]`` 内本机(authority 为空)各流将导出的实体数。
+
+    非媒体流每个实体状态恰好导出一行(upsert 取不到载荷时退成 tombstone),所以这就是
+    接收端该流的处理量分母;走 ``(stream, authority_id, revision)`` 索引。
+    """
+
+    names = list(dict.fromkeys(streams))
+    counts = {name: 0 for name in names}
+    if not names:
+        return counts
+    query = select(
+        ArchiveSyncEntityStateRecord.stream, func.count()
+    ).where(
+        ArchiveSyncEntityStateRecord.stream.in_(names),
+        ArchiveSyncEntityStateRecord.authority_id == "",
+        ArchiveSyncEntityStateRecord.revision <= snapshot_revision,
+    )
+    if since_revision >= 0:
+        query = query.where(ArchiveSyncEntityStateRecord.revision > since_revision)
+    for name, count in session.exec(
+        query.group_by(ArchiveSyncEntityStateRecord.stream)
+    ).all():
+        counts[str(name)] = int(count)
+    return counts
 
 
 def encode_page(manifest: dict[str, Any], rows: Iterable[dict[str, Any]]) -> str:
@@ -1124,6 +1184,115 @@ def _state_after_filter(
     return query
 
 
+MEDIA_EXPORT_OK = "ok"
+MEDIA_EXPORT_INVALID = "invalid"
+MEDIA_EXPORT_UNAVAILABLE = "unavailable"
+MediaExportCheck = Callable[[MediaAssetRecord], str]
+
+
+def _cold_copy_state(storage, digest: str, ext: str, size: int, mime: str) -> str:
+    """OSS 登记状态:``none`` 无登记 / ``valid`` 可由冷副本供出 / ``unusable`` 有登记但对不上。
+
+    ``unusable``(OSS 已关、大小 / MIME / bucket / region 不符)时 ``materialize`` 会失败,
+    而读者路径见有登记又禁止回源重下——调用方不能把它当「缺文件」静默跳过。
+    """
+    if storage is None:
+        return "none"
+    location = storage.location(digest, ext)
+    if location is None:
+        return "none"
+    config = getattr(storage, "config", None)
+    if (
+        storage.enabled
+        and location.size_bytes == size
+        and location.mime == mime.split(";", 1)[0].strip().lower()
+        and location.bucket == getattr(config, "bucket", None)
+        and location.region == getattr(config, "region", None)
+    ):
+        return "valid"
+    return "unusable"
+
+
+def media_export_verdict(
+    record: MediaAssetRecord, media_root: Path, *, object_storage=None,
+) -> str:
+    """Whether one cached image may enter a media manifest (issue #264).
+
+    The manifest must list only binaries a receiver can install, judged by the
+    receiver's own rules (``validate_synced_image``: MIME, extension and content
+    agree). Otherwise one bad row fails its page on every run, the checkpoint
+    never advances, and every later stream is starved.
+
+    - ``ok``: a full-size local working copy passes validation, or the working
+      copy is missing / wrong-sized but a matching OSS registration lets the
+      binary endpoint restore it (cold copies are not header-checked).
+    - ``invalid``: the local copy is not the declared image, or the row cannot
+      be addressed safely. Permanent — the caller marks the row ``failed``; a
+      later content-sniffed re-download may repair it.
+    - ``unavailable``: working copy missing or wrong-sized and no OSS
+      registration at all. Skipped without touching the row. Recovery is a
+      re-download (reader access or media backfill: the cached row lacks a
+      usable file, so it is fetched again, which updates the row and advances its
+      revision), or, after restoring files by hand, resetting the receiver's
+      media stream.
+
+    Raises ``SyncV2Error`` (the page fails and the checkpoint stays) when the
+    state may heal without any database write: a filesystem error other than
+    absence, or an OSS registration that exists but is unusable.
+    """
+
+    digest = str(record.content_hash or "")
+    ext = str(record.ext or "")
+    if re.fullmatch(r"[0-9a-f]{64}", digest) is None or _SAFE_MEDIA_EXT.fullmatch(ext) is None:
+        return MEDIA_EXPORT_INVALID
+    size = int(record.size_bytes or 0)
+    # 与二进制端点 MediaStore.file_path_for 同一寻址(扩展名原样)。
+    target = Path(media_root) / digest[:2] / f"{digest}{ext}"
+    try:
+        info = target.lstat()
+    except FileNotFoundError:
+        info = None
+    except OSError as exc:
+        raise SyncV2Error(f"media file unreadable on producer: {type(exc).__name__}") from exc
+    if info is not None and stat.S_ISREG(info.st_mode) and info.st_size == size:
+        try:
+            with target.open("rb") as handle:
+                header = handle.read(SNIFF_HEAD_BYTES)
+        except OSError as exc:
+            raise SyncV2Error(f"media file unreadable on producer: {type(exc).__name__}") from exc
+        try:
+            validate_synced_image(
+                header,
+                declared_mime=str(record.mime or ""),
+                declared_ext=ext,
+                max_bytes=SNIFF_HEAD_BYTES,
+            )
+        except ValueError:
+            return MEDIA_EXPORT_INVALID
+        return MEDIA_EXPORT_OK
+    state = _cold_copy_state(object_storage, digest, ext, size, str(record.mime or ""))
+    if state == "valid":
+        return MEDIA_EXPORT_OK
+    if state == "unusable":
+        raise SyncV2Error("media cold copy registration does not match the cached record")
+    return MEDIA_EXPORT_UNAVAILABLE
+
+
+def _mark_media_export_invalid(engine: Engine, records: list[MediaAssetRecord]) -> int:
+    """Best-effort: stop serving locally cached bytes that are not the declared image.
+
+    Failure only means the row is checked (and skipped) again on the next page.
+    """
+
+    if not records:
+        return 0
+    try:
+        return mark_cached_failed(engine, records, "缓存内容不是声明的图片(同步导出自检)")
+    except Exception:  # noqa: BLE001 - 导出页已成形,标记失败只影响下次重检
+        logger.warning("同步导出自检:标记坏图失败", exc_info=True)
+        return 0
+
+
 def _export_media_rows(
     session: Session,
     *,
@@ -1132,10 +1301,12 @@ def _export_media_rows(
     cursor_revision: int,
     cursor_id: str,
     limit: int,
-) -> tuple[list[dict[str, Any]], bool]:
+    media_check: Optional[MediaExportCheck] = None,
+    invalid_out: Optional[list[MediaAssetRecord]] = None,
+) -> tuple[list[dict[str, Any]], bool, int]:
     references = _media_references(session, snapshot)
     if not references:
-        return [], True
+        return [], True, 0
     media_records = session.exec(
         select(MediaAssetRecord, ArchiveSyncEntityStateRecord)
         .join(
@@ -1166,9 +1337,25 @@ def _export_media_rows(
             continue
         candidates.append((revision, record.url_hash, record))
     candidates.sort(key=lambda item: (item[0], item[1]))
-    complete = len(candidates) <= limit
+    complete = True
     rows = []
-    for revision, identity, record in candidates[:limit]:
+    invalid = unavailable = 0
+    for revision, identity, record in candidates:
+        if len(rows) >= limit:
+            complete = False
+            break
+        if media_check is not None:
+            verdict = media_check(record)
+            if verdict != MEDIA_EXPORT_OK:
+                # 凑满 limit 才停、停前不再判下一行,所以被跳过的行一定落在
+                # 最后一条导出行之前(或本页已 complete),游标不会漏掉待判行。
+                if verdict == MEDIA_EXPORT_INVALID:
+                    invalid += 1
+                    if invalid_out is not None:
+                        invalid_out.append(record)
+                else:
+                    unavailable += 1
+                continue
         payload = {
             "url_hash": record.url_hash,
             "url": record.url,
@@ -1180,7 +1367,13 @@ def _export_media_rows(
             "updated_at": record.updated_at,
         }
         rows.append(_line("media", payload, revision=str(revision), identity=identity))
-    return rows, complete
+    if invalid or unavailable:
+        logger.warning(
+            "同步导出自检:媒体页跳过 %d 条内容不符、%d 条字节不可用", invalid, unavailable,
+        )
+    # 首页(无游标)时 candidates 即本次快照内全部待导出项,长度就是 media 的分母
+    # (含自检将跳过的行:首页不逐个读盘,分母可能略大于实际导出数)。
+    return rows, complete, len(candidates)
 
 
 def export_page(
@@ -1197,8 +1390,14 @@ def export_page(
     podcast_text_page_max_bytes: int = DEFAULT_PODCAST_TEXT_SYNC_PAGE_MAX_BYTES,
     podcast_text_page_max_rows: int = DEFAULT_PODCAST_TEXT_SYNC_PAGE_MAX_ROWS,
     podcast_text_requested_page_max_bytes: Optional[int] = None,
+    media_check: Optional[MediaExportCheck] = None,
 ) -> str:
-    """Export one commit-ordered snapshot/keyset page for a v3-capable peer."""
+    """Export one commit-ordered snapshot/keyset page for a v3-capable peer.
+
+    ``media_check`` vets each cached image before it enters a media manifest
+    (see ``media_export_verdict``). HTTP routes must pass it; ``None`` keeps the
+    unchecked listing for callers that have no media store (unit fixtures).
+    """
 
     if stream not in STREAMS:
         raise SyncV2Error(f"unsupported stream: {stream}")
@@ -1226,6 +1425,7 @@ def export_page(
         cursor_raw, field="cursor revision", allow_empty=True
     )
     since_revision = _canonical_revision(since, field="since", allow_empty=True)
+    invalid_media: list[MediaAssetRecord] = []
 
     with Session(engine) as session:
         if stream == "taxonomy":
@@ -1282,15 +1482,34 @@ def export_page(
         if cursor_revision > snapshot_revision:
             raise SyncV2Error("cursor revision cannot exceed snapshot")
 
+        extra: dict[str, Any] = {}
+        if not after and stream != "media":
+            extra["pending"] = pending_state_counts(
+                session,
+                (stream,),
+                since_revision=since_revision,
+                snapshot_revision=snapshot_revision,
+            )[stream]
+            if stream == "sources":
+                extra["pending_by_stream"] = pending_state_counts(
+                    session,
+                    PENDING_BY_STREAM_STREAMS,
+                    since_revision=since_revision,
+                    snapshot_revision=snapshot_revision,
+                )
         if stream == "media":
-            rows, complete = _export_media_rows(
+            rows, complete, media_total = _export_media_rows(
                 session,
                 snapshot=snapshot_revision,
                 since_revision=since_revision,
                 cursor_revision=cursor_revision,
                 cursor_id=cursor_id,
                 limit=limit,
+                media_check=media_check,
+                invalid_out=invalid_media,
             )
+            if not after:
+                extra["pending"] = media_total
         else:
             query = select(ArchiveSyncEntityStateRecord).where(
                 ArchiveSyncEntityStateRecord.stream == stream,
@@ -1361,6 +1580,7 @@ def export_page(
                         rows,
                         complete=False,
                         since=since,
+                        extra=extra,
                     )
                     try:
                         row_size = len(_canonical(rows[-1]).encode("utf-8")) + 1
@@ -1384,6 +1604,9 @@ def export_page(
                         break
                     podcast_rows_size += row_size
 
+    # 读会话已关:坏图标记是独立的短写事务,不与导出快照读交错(issue #264)。
+    _mark_media_export_invalid(engine, invalid_media)
+
     if stream == "podcast_texts":
         # Each artifact is bounded independently above, but a page can contain
         # many legal artifacts. Shrink the keyset page until its encoded NDJSON
@@ -1398,6 +1621,7 @@ def export_page(
                 rows,
                 complete=complete,
                 since=since,
+                extra=extra,
             )
             encoded = encode_page(manifest, rows)
             try:
@@ -1419,7 +1643,7 @@ def export_page(
         while True:
             encoded = encode_page(_manifest(
                 stream, authority_id, effective_snapshot, after, rows,
-                complete=complete, since=since,
+                complete=complete, since=since, extra=extra,
             ), rows)
             if len(encoded.encode("utf-8")) <= article_page_max_bytes or len(rows) <= 1:
                 return encoded
@@ -1436,6 +1660,7 @@ def export_page(
         rows,
         complete=complete,
         since=since,
+        extra=extra,
         ),
         rows,
     )
@@ -3805,11 +4030,7 @@ def _registered_cold_copy(storage, target: Path, digest: str, ext: str,
         return False
     else:
         return False
-    location = storage.location(digest, ext)
-    return bool(location and location.size_bytes == size
-                and location.mime == mime.split(";", 1)[0].strip().lower()
-                and location.bucket == storage.config.bucket
-                and location.region == storage.config.region)
+    return _cold_copy_state(storage, digest, ext, size, mime) == "valid"
 
 
 def _atomic_install(target: Path, body: bytes) -> None:
@@ -3866,6 +4087,11 @@ def _install_media_file(
 ):
     with Session(engine) as session:
         record = session.get(MediaAssetRecord, url_hash)
+        if record is not None and record.status == "failed" and record.sync_authority_id:
+            # 同一 revision 重放(import 按 revision 跳过、行仍 failed):声明与上次拒收的
+            # 字节一致,结论不变,不再重下(issue #264)。
+            _check_binary_declaration(record, declaration, authority_id)
+            raise SyncV2MediaRejected(record.last_error or "同步媒体此前已拒收")
         if record is None or record.status not in {"pending_sync", "cached"}:
             raise SyncV2Error("media asset was not declared by a v2 manifest")
         _check_binary_declaration(record, declaration, authority_id)
@@ -3901,7 +4127,13 @@ def _install_media_file(
                 _commit_binary_state(engine, MediaAssetRecord, expected,
                                      {"status": "pending_sync", "fetched_at": None})
                 return None
-            raise SyncV2Error(str(exc)) from exc
+            # 校验和已对上:这就是权威手里的字节,重试永远过不了。记成 failed
+            # 并单条跳过,不让一张坏图卡住整条流(issue #264);权威改版会重发。
+            _commit_binary_state(engine, MediaAssetRecord, expected, {
+                "status": "failed", "fetched_at": None,
+                "last_error": f"同步拒收:{exc}"[:500],
+            })
+            raise SyncV2MediaRejected(str(exc)) from exc
         if body is not None:
             _atomic_install(target, body)
         if object_storage:

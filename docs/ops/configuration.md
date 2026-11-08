@@ -296,7 +296,7 @@ deployment = replica
 落地时，普通公共源的本地采集与分析也已经停止。该围栏不写伪造的 authority，用户
 自定 RSS 仍由内网采集；其中普通自定源可分析，签名/凭据源只采集、不调用 MaaS。
 升级前遗留的定时配置若没有 `protocol` 且带 `source_ids`，会以
-`migration_required=true` 安全停用，管理员必须在「数据同步」明确保存 v1 或 v2；
+`migration_required=true` 安全停用，管理员必须在「运维管理 → 节点同步」的定时设置里明确保存 v1 或 v2；
 系统不会替管理员猜测范围。v1 只作为显式兼容模式运行。
 
 生产双节点最小示例：

@@ -271,14 +271,14 @@ docker compose ps
 docker compose logs --tail=200 backend
 ```
 
-在内网“设置 → 数据同步”中：
+在内网“运维管理 → 节点同步”（`#/admin/sync`，issue #261 起；此前在“设置 → 数据同步”）中：
 
-1. 填写外网 HTTPS base URL、专用同步管理员账号和密码。
+1. 在接入卡填写外网 HTTPS base URL、专用同步管理员账号和密码。
 2. 协议选择 v2（Archive Sync v3 transaction protocol）。
 3. 先“测试连接”，核对 schema、capabilities 和外网 authority ID。
-4. 手动执行首次全量拉取；确认八流 checkpoint 都已完成。
-5. 立即再执行一次；无新数据时八流 `count` 应全为 0。
-6. 再开启定时同步，观察至少一个调度周期。
+4. 手动执行首次全量拉取（会先确认：本机此后进入 consumer 模式，只采集与分析自定 RSS，公共源停止，界面不可撤回——**外网节点不要点**）；流水线各站都显示完成即各流 checkpoint 已落定。
+5. 立即再执行一次；无新数据时各站条数应全为 0。
+6. 再在页头定时胶囊里开启定时同步，观察至少一个调度周期。
 
 以上命令以 Docker 部署为例。如果当前阿里云测试机沿用裸机/PM2 部署，配置
 替换项保持不变：分别设置各节点 `[server] port`，确保 `[nginx] backend_proxy_port`

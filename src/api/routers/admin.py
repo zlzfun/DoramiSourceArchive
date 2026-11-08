@@ -38,6 +38,7 @@ from models.db import (
 )
 from services import accounts as accounts_service
 from services import admin_home as admin_home_service
+from services import sync_console
 from services import guest_access as guest_access_service
 from services import ai_usage as ai_usage_service
 from services import article_share as article_share_service
@@ -203,6 +204,8 @@ def admin_home(days: int = 30, top: int = 8, session: Session = Depends(deps.get
             "by_source": [{"source_id": sid, "name": _name(sid), "reads": n} for sid, n in ranked],
         },
         "backfills": admin_home_service.backfill_summary(session),
+        # 节点同步磁贴(issue #261):只读本机 KV 与任务表,不探测远端。
+        "sync": sync_console.home_summary(deps.get_db_sink().engine),
     }
 
 
