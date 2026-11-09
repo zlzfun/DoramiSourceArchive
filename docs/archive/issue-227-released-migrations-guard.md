@@ -15,7 +15,7 @@ v3.66.0 → v3.67.0 有 4 个既有迁移文件被改动:#211 文档整理波改
 `alembic/versions` 的任何 M / D 一律拒绝、没有放行开关(`docs/archive/auto-deploy-plan.md` 第 7 条)。规则没错——已发布的迁移
 是历史,改了就说不清生产库到底是按哪个版本演进的;错的是**只在发版那天才知道**。本波用 `--baseline v3.66.0` 跑新守卫,精确复现这 4 个文件。
 
-### 1.2 手工路径:`bad-json` 87 次的真因是探针打到了 TLS 边缘
+### 1.2 手工路径:`bad-json` 87 次,推测是探针打到了 TLS 边缘
 
 issue 里的推测是「6 个迁移在 790 MB 库上执行期间 nginx 回 502,预算在站点就绪前耗尽」。两处对不上:
 
@@ -112,4 +112,7 @@ v3.67.1 流水线通过只说明 worker 探的是 conf 里的 `127.0.0.1:8080`,�
   「`up -d` 启动 nginx 前等 backend healthy」的前提并认可宽限放在 healthcheck 上。
 - **表态**(`.review/response-r1.md`):全部接受、无分歧;F1 / F2 按其建议改形为「以 `docker compose config --format json` 的解析结果为准」,
   删掉 `deploy_dotenv_value`;F7 的 curl 桩顺手修,响应体上限与信号清理记观察期(backlog)。
-- **R2**:待补。
+- **R2**(对提交 `7bb54dce`,只对照 `.review/fixlist-r1.md`):F1–F7 全部落实、定向验证对得上,**未发现新引入的 P1**,结论「可合入」。
+  三条非阻塞观察当场修掉:`deploy-lib.sh` 注释与本节标题两处「实为 / 真因」→「推测」;`up` 失败用例断言锁死新文案;compose 返回 IPv6
+  `host_ip` 时 URL 加方括号(加 lib 用例)。它在只读沙箱里实跑了新 helper 13 项定向检查、`mktemp` 故障注入、curl 桩三种退出路径、Bash 语法与
+  文档守卫;依赖临时目录的 pytest 与 Docker 未能独立复现,全量绿以实现方记录为准(见 §6)。

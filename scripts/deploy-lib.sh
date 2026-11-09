@@ -136,7 +136,7 @@ print("ok" if not bad else "mismatch " + ",".join(f"{k}={got.get(k)}" for k in b
 # 在时间预算内轮询 <url>,五项全对即返回 0;否则返回 1。预算由调用方传入(Docker 路径默认 180 s,次数默认预算 / 2)。
 # 每次 curl 都带连接 / 总超时:连接建立后后端不答也不能吃掉整个预算;次数只作额外上限。
 # 不用 curl -f(issue #227):3xx / 4xx / 5xx 也要拿到状态码与响应体,否则只剩一个 `bad-json` 看不出谁在回什么——
-# v3.67.0 手工部署的 87 次 `bad-json` 实为探针打到了 TLS 边缘的 301 页。只有 2xx 才交给五项核对,其它状态码判定记作 `http-<code>`。
+# v3.67.0 手工部署的 87 次 `bad-json` 推测是探针打到了 TLS 边缘的 301 页。只有 2xx 才交给五项核对,其它状态码判定记作 `http-<code>`。
 # 结果变量:DEPLOY_HEALTH_ATTEMPT(已尝试次数)、DEPLOY_HEALTH_LAST_VERDICT(最后一次非 ok 的判定,始终无响应时为空)、
 # DEPLOY_HEALTH_LAST_HTTP(最后一次拿到的状态码,始终无响应时为空)、DEPLOY_HEALTH_BODY(最后一次响应体,含非 2xx)。
 deploy_wait_healthy() {
@@ -207,6 +207,8 @@ for p in ((cfg.get("services") or {}).get(service) or {}).get("ports") or []:
         host = str(p.get("host_ip") or "").strip()
         if host in ("", "0.0.0.0", "::", "[::]"):
             host = "127.0.0.1"
+        elif ":" in host and not host.startswith("["):
+            host = "[" + host + "]"   # IPv6 字面量进 URL 要加方括号(codex R2 观察)
         print(host + ":" + published); sys.exit(0)
 sys.exit(1)
 ' "$1" "$2"

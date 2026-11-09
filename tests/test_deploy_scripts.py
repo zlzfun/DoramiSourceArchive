@@ -1519,6 +1519,8 @@ def test_compose_up_failure_explains_grace_and_dumps_state(real: Env):
     r = _run_deploy(real, "v9.9.9")
     assert r.returncode != 0
     assert "docker compose up 失败(backend 健康检查宽限 60s)" in r.stderr and "不自动回滚" in r.stderr, r.stderr
+    assert "nginx 可能尚未启动" in r.stderr and "判断迁移仍在执行还是已失败" in r.stderr, "codex R1 F3:不再许诺「会自行完成 / nginx 未重建」"
+    assert "自行完成" not in r.stderr and "未被重建" not in r.stderr
     assert "DORAMI_DEPLOY_META health=" not in r.stdout, "没走到健康验证,不写 health 元数据"
     calls = real.calls()
     assert "compose ps" in calls and "compose logs --tail 50 backend" in calls

@@ -196,6 +196,8 @@ def test_compose_helpers_read_published_port_and_start_period(tmp_path):
     assert run(compose([{"target": 80, "published": "80"}], "1h2m3s")) == "[127.0.0.1:80] [3723]"
     assert run(compose([{"target": 80, "published": 8080}], "90s")) == "[127.0.0.1:8080] [90]"
     assert run(compose([{"target": 80, "published": "8080"}], "20m")) == "[127.0.0.1:8080] [1200]"
+    assert run(compose([{"target": 80, "published": "8080", "host_ip": "::1"}], "1m0s")) == "[[::1]:8080] [60]", "IPv6 字面量进 URL 要加方括号"
+    assert run(compose([{"target": 80, "published": "8080", "host_ip": "::"}], "1m0s")) == "[127.0.0.1:8080] [60]"
     assert run(compose([{"target": 443, "published": "8443"}], "")) == "[rc=1] [rc=1]"
     assert run({"services": {"backend": {}, "nginx": {}}}) == "[rc=1] [rc=1]"
     assert run(compose([{"target": 80, "published": "8080"}], "45")) == "[127.0.0.1:8080] [rc=1]", "没有单位的时长不猜"

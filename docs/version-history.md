@@ -98,7 +98,7 @@
 - **有意不做**:不给 worker 第 7 道门加放行开关;不回改 v3.66.0 → v3.67.0 那 4 个文件(已随 v3.67.x 发布,现在它们就是基线);不改 `deploy.yml` 公网复核那段 `curl -f`(它看的是公网 https);裸机路径不动(迁移在 `pm2 start` 之前显式跑,健康门不经历迁移期);不做「迁移完成后再起算」的日志探测(`up -d` 本身就等到 healthy)。
 - **第 3 项核对**:手工切换后 worker 下次从容器读基线——2026-10-27 发 v3.67.1 流水线实测基线 bb4870a、迁移文件 0/0/0,行为正确,无需改。
 - **测试**:`tests/test_released_migrations_guard.py`(15 例:一致 / 新增 / 改写 / 模式 / 删除 / 改名 / 类型 / 版本号排序 / 显式基线 / 离线 / rc 2 三种 / 浅克隆 / 真实仓冒烟);`tests/test_ci_workflow.py` +1 守卫 +3 反向对照;`tests/test_deploy_lib.py` +2(compose 助手:端口归一 / 时长折秒 / 失败回退,宽限公式与旋钮);`tests/test_deploy_scripts.py` +5(301 边缘实况、`.env` 带引号注释、显式空值按 compose、解析失败回退;HTTP 码 + 200 字节 + 提示;宽限随迁移数 / conf / shell 与 `.env` 显式值 / 上限;`up` 失败;`mktemp` 失败仍报告);curl 桩支持 `-o` / `-w` / 状态码,docker 桩模拟 `compose config --format json`。CI 形态真实远端核验:GitHub `--depth 1 --no-tags` 克隆 4.9 s 内只取 v3.67.4 一个 tag、保持浅、88 个一致。
-- **检视**:实现 Claude Code(Fable 5.1);检视 Codex gpt-6-astra(ultra)本地协商式——R1 0 P1 / 4 P2(探针自解析 `.env` 与 compose 不等价;`.env` 里显式宽限被覆盖;`up` 失败文案误导;`mktemp` 失败撞 `set -u`)/ 3 P3(301 只写推测;归纳前提;观察项),全部接受,F1 / F2 改形为以 compose 解析结果为准;R2 对照清单复检(待补)。方案 [`archive/issue-227-released-migrations-guard.md`](archive/issue-227-released-migrations-guard.md)。
+- **检视**:实现 Claude Code(Fable 5.1);检视 Codex gpt-6-astra(ultra)本地协商式——R1 0 P1 / 4 P2(探针自解析 `.env` 与 compose 不等价;`.env` 里显式宽限被覆盖;`up` 失败文案误导;`mktemp` 失败撞 `set -u`)/ 3 P3(301 只写推测;归纳前提;观察项),全部接受,F1 / F2 改形为以 compose 解析结果为准;R2 对照清单复检无新 P1、「可合入」,三条观察(两处措辞、F3 断言、IPv6 方括号)当场修。方案 [`archive/issue-227-released-migrations-guard.md`](archive/issue-227-released-migrations-guard.md)。
 
 ## issue #251 并发首访懒建已读水位撞唯一约束(PR #274,分支 `feat/issue-251-cursor-upsert`,开发版 3.68.0-alpha,待发布,版本号以实际发版为准)
 
