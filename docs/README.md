@@ -80,7 +80,6 @@
 
 ## plans/ —— 活跃方案(☐ 进行中 / 排队中;落地后归档)
 
-- ☐ [plans/issue-203-launcher-snapshot-test.md](./plans/issue-203-launcher-snapshot-test.md) — **部署 launcher 快照用例去时序竞争(issue #203)**:固定 0.3 s 覆写窗口在 CI runner 上常被错过(rc=5 / rc=6),改为 PATH 前置 python3 垫片在 state_snapshot 读取返回后再覆写(读取触发屏障),收两条「恢复二次读取 rc 必败」反向对照;只改测试,launcher 不动。
 - ☐ [plans/issue-254-qa-coverage.md](./plans/issue-254-qa-coverage.md) — 问答逐项覆盖、关键 ASR 歧义依据与冻结输入对照评测；语义验收进行中。
 - ☐ [plans/issue-121-event-layer-research.md](./plans/issue-121-event-layer-research.md) — **issue #121 方向调研报告(2026-10-23)**:48 天本机语料 + 三轮精修金标上实测规则 / 词面召回 + 模型 / 向量召回 + 模型 / 纯向量 / LLM 签名 / 日报复用六条路线与产品供给、热度、事件链模拟;结论已回写方案 R2。
 - ☐ [plans/issue-121-event-layer.md](./plans/issue-121-event-layer.md) — **多源事件层:同事件归并、热点榜与早报去重共用一份归属(issue #121 + #103,R1 路径)**:平台级持久事件层、机械召回 + 辅助模型归属、48h/24h 半衰热度、四波(回放 → 事件层 + 榜 → 早报去重 → Agent 查询);2026-10-23 拍板主路线 = FTS5 召回 + 辅助模型(不引入 embedding),排队中。
@@ -98,6 +97,7 @@
 
 ## archive/ —— 已完结方案与执行记录(⊘ 归档;索引 [archive/README.md](./archive/README.md))
 
+- ⊘ [archive/issue-203-launcher-snapshot-test.md](./archive/issue-203-launcher-snapshot-test.md) — **部署 launcher 快照用例去时序竞争(issue #203,PR #275,待发布)**:固定 0.3 s 覆写窗口在 CI runner 上常被错过(rc=5 / rc=6),改为 PATH 前置 python3 垫片在 state_snapshot 读取返回后再覆写(读取触发屏障),收两条「恢复二次读取 rc 必败」反向对照;只改测试,launcher 不动;Codex 两轮检视。
 - ⊘ [archive/issue-245-reader-summary.md](./archive/issue-245-reader-summary.md) — 播客读者语义、导读能力图标与搜索筛选；用户目检通过，含单元/API/端到端矩阵与检视记录。
 
 - ⊘ [issue-248-podcast-qa.md](archive/issue-248-podcast-qa.md) — 播客原稿片段检索、可核对引用、权限与发布复核；实现完成，真实点播与单集深题 13/13 已核对，PR #252 代码检视与 CI 通过；新增一次 ASR 成功，三期 ASR 六题思考对照 28.5/30、仍有细节遗漏、用户验收待完成，未合入发布。

@@ -8,6 +8,9 @@
 ## 并发首访懒建已读水位(2026-11,issue #251)
 
 - [issue-251-cursor-upsert.md](./issue-251-cursor-upsert.md) — 同一账号两处同时首次拉 `unread-counts`、`ensure_cursors()` 先读后插撞 `reader_read_cursors` 主键返回 500 的根因与锁语义实证(§1 / §2)、`INSERT … ON CONFLICT DO NOTHING` + commit 后重读的修法、同类盘点与有意不改的理由(§3)、确定性交错 / 双线程现场用例与反向对照(§4)、Codex 两轮检视(§6);PR #274、待发布。
+## 部署测试去时序竞争(2026-11,issue #203)
+
+- [issue-203-launcher-snapshot-test.md](./issue-203-launcher-snapshot-test.md) — launcher 快照用例 CI 偶发 rc=5 的归因(固定 0.3 s 覆写窗口 vs runner 上的进程起动 / python3 冷启动)、注入延迟稳定复现(rc=5 / rc=6)、读取触发屏障(`DEPLOY_PATH` 前置 python3 垫片在 state_snapshot 返回后覆写)、两条反向对照、被否方案(扩 sleep / launcher 加输出 / ps / sitecustomize)、Codex 两轮检视(§6);PR #275 合入、待发布。
 
 ## 媒体流坏图解卡(2026-11,issue #264)
 
