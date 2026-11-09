@@ -40,7 +40,7 @@
   - `test_unread_counts_concurrent_first_visit_both_succeed`:**现场复刻**——同一账号经 `/api/subscriptions` 高级路径订两源(不播种水位),两个线程 `Barrier` 同步后同时 `GET /api/reader/unread-counts`;断言都 200、口径一致、每源一行。
 - 反向对照:把 `origin/main` 的 `reader_state.py` 换回去跑,两条用例都抛 `sqlite3.IntegrityError: UNIQUE constraint failed: reader_read_cursors.owner_username, reader_read_cursors.source_id`(线程版也稳定复现,不是偶发);换回修复版 17 条全过。
 - 端点并发用例连跑 15 次零失败(TestClient 内两线程经 anyio portal 并发,服务端走真实 SQLite 文件 + WAL + NullPool)。
-- 全量套件(`-n 4 --dist worksteal`)结果见 §6 前。
+- 全量套件 `.venv/bin/python -m pytest tests/ -n 4 --dist worksteal`(2026-11-09,提交 b2e676e6 前的工作树):3654 通过、1 跳过、0 失败,7 分 19 秒。
 - 无前端改动,`npm` 三件与 Playwright 沙箱不适用(无可目检界面);#230 e2e 当时的绕法(issue 正文所述)与本修无关,本波不动。
 
 ## 5. 遗留
