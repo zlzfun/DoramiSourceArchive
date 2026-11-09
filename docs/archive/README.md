@@ -5,6 +5,10 @@
 > `docs/frontend/conventions.md` / `docs/sources/curation_policy.md` 等活跃文档。
 > 按「故事」分组索引;文内常含 ☐/☑ 进度符,均为当时状态。
 
+## 已发布迁移文件守卫与部署健康验证(2026-11,issue #227)
+
+- [issue-227-released-migrations-guard.md](./issue-227-released-migrations-guard.md) — v3.67.0 发版两处失败的根因与修法:流水线 worker 第 7 道门拒绝 4 个被改的旧迁移 → CI 守卫 `scripts/check_released_migrations.py`(对最新正式 tag 逐字节比对,新增允许);手工路径 87 次 `bad-json` 实为探针打到 TLS 边缘的 301 页(§1.2)→ 探针地址与 compose 同口径读 `.env`、失败打 HTTP 状态码 + 响应前 200 字节;backend healthcheck 宽限随待执行迁移数 × 库 GiB 加宽(§2);有意不做(§3)、worker 基线核对(§4)、混版本(§5)、Codex 检视(§7)。
+
 ## 早报播客导读入口（2026-11，issue #269）
 
 - [issue-269-brief-podcast-guide.md](./issue-269-brief-podcast-guide.md) — 所有早报播客的生成/播放入口、实时状态和点播门控；350项前端、23项相关后端、六组浏览器与真实音频验收，用户放行及Claude Code交叉检视返修记录。

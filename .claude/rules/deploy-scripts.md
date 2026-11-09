@@ -18,3 +18,4 @@ paths:
 - 守卫:`tests/test_deploy_scripts.py` / `tests/test_deploy_baremetal.py` / `tests/test_ci_workflow.py`(CI 两 job 划分逐字同源、汇总门不可被 skip);改 `ci.yml` 必跑后者。
 - 镜像依赖以 `docker/requirements*.txt`(`uv export` 产物)为版本事实来源;改依赖后必须重导出(`tests/test_docker_requirements.py`)。
 - nginx 镜像拷入静态文件后统一 `chmod a+rX`(#192);部署后核对公网 `/fonts/*`、`/manifest.webmanifest` 200,不能只看 `/api/health`。
+- 健康探针地址与显式宽限都取 compose 自己的解析结果(`deploy_compose_published_hostport` / `deploy_compose_healthcheck_start_period_seconds`,不自己解析 `.env`),失败一律打 HTTP 状态码 + 响应前 200 字节(不用 `curl -f`);迁移期的等待放 backend healthcheck `start_period`(`deploy_migration_grace_seconds`),不放 `up -d` 之后的轮询(#227)。

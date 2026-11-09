@@ -218,6 +218,25 @@ def _assert_gate(text: str) -> None:
         assert _job_level(_job_block(text, job)).get("name") == f"{job} (pytest)"
 
 
+def _assert_released_migrations_guard(text: str) -> None:
+    """issue #227:`scripts/check_released_migrations.py` 必须作为 backend-deploy 的一个无条件 step 出现(汇总门 needs 它),
+    不能挂 if / continue-on-error——否则已发布迁移文件被改写只会在发版那天由生产机 worker 的第 7 道门发现。"""
+    block = _job_block(text, DEPLOY)
+    lines = block.splitlines()
+    hits = [i for i, line in enumerate(lines) if re.match(r"^\s+run:\s*python3 scripts/check_released_migrations\.py\s*$", line)]
+    assert len(hits) == 1, "backend-deploy 里必须恰好有一步 `run: python3 scripts/check_released_migrations.py`"
+    # 该 step 的块:从上一个 `- ` 开头的行到下一个 `- ` 开头的行
+    start = max(i for i in range(hits[0] + 1) if lines[i].lstrip().startswith("- "))
+    end = next((i for i in range(hits[0] + 1, len(lines)) if lines[i].lstrip().startswith("- ")), len(lines))
+    step = "\n".join(lines[start:end])
+    assert not re.search(r"^\s+if:", step, re.M), "迁移文件守卫 step 不得挂 if"
+    assert "continue-on-error" not in step, "迁移文件守卫 step 不得 continue-on-error"
+
+
+def test_released_migrations_guard_runs_unconditionally_in_backend_deploy():
+    _assert_released_migrations_guard(CI.read_text(encoding="utf-8"))
+
+
 def test_partition_is_shared_and_covers_every_test_file():
     _assert_partition(CI.read_text(encoding="utf-8"))
 
@@ -260,6 +279,11 @@ MUTATIONS = {
     "gate_success_check_replaced_by_echo": (lambda t: _mutate(t, _GATE_CHECK, 'echo "done"', count=1), _assert_gate, None),
     "gate_always_removed": (lambda t: _mutate(t, "    if: always()\n", "", count=1), _assert_gate, None),
     "gate_needs_only_one_job": (lambda t: _mutate(t, "    needs: [backend-unit, backend-deploy]\n", "    needs: [backend-unit]\n", count=1), _assert_gate, None),
+    "released_migrations_guard_dropped": (lambda t: _mutate(t, "        run: python3 scripts/check_released_migrations.py\n", "        run: echo skip\n", count=1), _assert_released_migrations_guard, None),
+    "released_migrations_guard_soft_failed": (lambda t: _mutate(t, "        run: python3 scripts/check_released_migrations.py\n",
+                                                             "        continue-on-error: true\n        run: python3 scripts/check_released_migrations.py\n", count=1), _assert_released_migrations_guard, None),
+    "released_migrations_guard_conditional": (lambda t: _mutate(t, "        run: python3 scripts/check_released_migrations.py\n",
+                                                             "        if: github.event_name == 'push'\n        run: python3 scripts/check_released_migrations.py\n", count=1), _assert_released_migrations_guard, None),
 }
 
 

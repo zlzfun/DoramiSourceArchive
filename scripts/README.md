@@ -51,6 +51,13 @@
 
 已移除被完整 release smoke 取代且没有调用方的 `smoke_analysis_personal_digest.py`；持久化指标继续由管理 API 和 `services.analysis_observability` 提供，不保留两个含义重叠的命令入口。
 
+## 合入与发布守卫
+
+| 脚本 | 用途 | 数据边界 |
+|---|---|---|
+| [`check_docs.py`](./check_docs.py) | 文档守卫:索引覆盖 / 断链 / 状态词表 / L0 体量 / `plans/` 文件名;每波收口本地跑。 | 只读仓库文件。 |
+| [`check_released_migrations.py`](./check_released_migrations.py) | 已发布迁移文件逐字节守卫(issue #227):对远端最新正式 tag 比对 `alembic/versions/*`,新增允许、改写 / 删除 / 改名红,取不到基线也红;CI `backend-deploy` 每次 PR 跑,本地 `--offline` / `--baseline`。 | 只读;本地没有基线 tag 时只 fetch 那一个 tag。 |
+
 ## 关于导出产物
 
 `export_shendeng_daily_news.py` 默认在**当前工作目录**生成：

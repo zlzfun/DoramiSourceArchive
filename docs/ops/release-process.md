@@ -94,6 +94,16 @@ in-progress 事务、方向与单调护栏、首装门),worker 再跑目标 tag 
 **设置 → 关于** 显示「构建:发布版 v3.56.0 · abc1234」或「非发布版 v3.56.0-3-gdef5678」。
 生产上有人手改代码或用 `--here` 部署过,这一行会如实暴露。
 
+**手工路径的健康验证**(issue #227):探针地址直接取 `docker compose config` 解析出的 nginx 发布端口(shell 环境 > `.env` > 80 等规则都是
+compose 自己的),日志打「探针 … 来源:compose 解析」,不用再手动 `export`;解析不到才回退环境变量 / 80 并提醒;`/etc/dorami-deploy.conf`
+里的值与实际发布端口不一致时提醒(流水线按 conf 探测)。生产 80 是 TLS 边缘(301 → https),v3.67.0 手工部署的 87 次 `bad-json` 推测是探错了
+端口。失败时打出最后一次响应的 HTTP 状态码与前 200 字节(3xx = 探到边缘、502 = 容器 nginx 连不上 backend)。迁移多、库大时
+`docker compose up -d` 启动 nginx 前要等 backend healthy:脚本按「待执行迁移数 × 每迁移秒数 × 库 GiB」加宽 healthcheck 的 `start_period`
+(conf `DORAMI_DEPLOY_HEALTH_PER_MIGRATION_SECONDS` 默认 60、封顶 `DORAMI_DEPLOY_HEALTH_MIGRATION_GRACE_MAX_SECONDS` 默认 1200;shell 或
+`.env` 里显式设了 `DORAMI_BACKEND_HEALTH_START_PERIOD` 则照旧);`up` 被判 unhealthy 中止时 nginx 可能尚未启动,看 `docker compose ps` /
+`logs backend` 判断迁移仍在执行还是已失败——仍在执行就等它结束后重跑,已失败按下节恢复。已发布迁移文件被改会让流水线第 7 道门拒绝——
+CI 的 `scripts/check_released_migrations.py` 在 PR 阶段就红(见 `docs/dev/migrations.md`)。
+
 ## 回滚
 
 代码回滚是一句话:`./deploy-docker.sh v3.55.0`。但 **Alembic 迁移不一定可逆**(已有不可逆的
