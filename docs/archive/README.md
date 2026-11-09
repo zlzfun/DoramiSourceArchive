@@ -5,6 +5,10 @@
 > `docs/frontend/conventions.md` / `docs/sources/curation_policy.md` 等活跃文档。
 > 按「故事」分组索引;文内常含 ☐/☑ 进度符,均为当时状态。
 
+## 并发首访懒建已读水位(2026-11,issue #251)
+
+- [issue-251-cursor-upsert.md](./issue-251-cursor-upsert.md) — 同一账号两处同时首次拉 `unread-counts`、`ensure_cursors()` 先读后插撞 `reader_read_cursors` 主键返回 500 的根因与锁语义实证(§1 / §2)、`INSERT … ON CONFLICT DO NOTHING` + commit 后重读的修法、同类盘点与有意不改的理由(§3)、确定性交错 / 双线程现场用例与反向对照(§4)、Codex 两轮检视(§6);PR #274、待发布。
+
 ## 媒体流坏图解卡(2026-11,issue #264)
 
 - [issue-264-media-sync-sniff.md](./issue-264-media-sync-sniff.md) — Archive Sync 媒体流被一张坏图卡死整流的根因实证(网易订阅 CDN 的 data URL 文本被据响应头缓存成 PNG)、三层修(入缓存只认内容 / 导出端 `media_export_verdict` 自检 / 接收端单条拒收)、判定表与恢复路径(§2.2)、部署顺序与混版本窗口(§3)、真实数据自测(§4)、Codex 两轮检视与协商(§7);PR #266 合入、待发布;生产只读统计待授权。
