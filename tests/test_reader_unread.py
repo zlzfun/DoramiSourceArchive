@@ -432,6 +432,95 @@ def test_manual_mark_missing_article_404_and_no_metering(monkeypatch, tmp_path):
         assert session.exec(select(ReaderReadRecord)).all() == []  # 无计量行
 
 
+# ==================== 并发首访懒建(issue #251) ====================
+
+def test_ensure_cursors_concurrent_first_visit_keeps_first_writer(monkeypatch, tmp_path):
+    """确定性交错复刻 #251:请求 A 查到「缺水位」之后、插行之前,请求 B 完整跑完 ensure_cursors
+    并提交。修前 A 的 INSERT 撞 (owner, source) 主键抛 IntegrityError → 端点 500;
+    修后 A 静默跳过并重读,拿到 B 落下的水位,库里只有一行。"""
+    from models.db import ReaderReadCursorRecord
+    from services import reader_state
+
+    app_module, sink = _make_app(monkeypatch, tmp_path, "interleave.db")
+    _seed_article(sink.engine, "a1", "src_a")
+    original = reader_state._backlog_watermark
+    fired: list = []
+    b_watermark = "2001-01-01T00:00:00"  # B 独有的水位,便于断言「以先到者为准」
+
+    with Session(sink.engine) as session_a, Session(sink.engine) as session_b:
+        def interleaved(session, source_id):
+            if session is session_b:
+                return b_watermark
+            if not fired:
+                fired.append(source_id)
+                # A 已查到「缺」、尚未插行:B 在此刻整段跑完并 commit
+                reader_state.ensure_cursors(session_b, username="user", source_ids=[source_id])
+            return original(session, source_id)
+
+        monkeypatch.setattr(reader_state, "_backlog_watermark", interleaved)
+        cursors = reader_state.ensure_cursors(session_a, username="user", source_ids=["src_a"])
+
+    assert fired == ["src_a"]
+    assert cursors == {"src_a": b_watermark}
+    with Session(sink.engine) as session:
+        rows = session.exec(
+            select(ReaderReadCursorRecord).where(ReaderReadCursorRecord.owner_username == "user")
+        ).all()
+        assert [(r.source_id, r.mark_read_before) for r in rows] == [("src_a", b_watermark)]
+
+
+def test_unread_counts_concurrent_first_visit_both_succeed(monkeypatch, tmp_path):
+    """#251 现场:同一账号两处同时挂载阅读器(两标签页 / 两台设备)首次拉 unread-counts。
+    两个请求都 200、口径一致,每源只有一行水位。交错与否由调度决定,本例只保证「都不 500」,
+    竞态窗口本身由上一条确定性用例覆盖。"""
+    import threading
+
+    from models.db import ReaderReadCursorRecord
+    from services.reader_state import INIT_UNREAD_BACKLOG
+
+    app_module, sink = _make_app(monkeypatch, tmp_path, "race.db")
+    _seed_backlog(sink.engine, "src_a", INIT_UNREAD_BACKLOG + 5)
+    _seed_backlog(sink.engine, "src_b", 3, prefix="b")
+    barrier = threading.Barrier(2, timeout=10)
+    responses, errors = [], []
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        for sid in ("src_a", "src_b"):
+            # 高级路径建订阅不播种水位 → 首访即懒建
+            created = client.post(
+                "/api/subscriptions", json={"name": sid, "filters": {"source_id": sid}}
+            )
+            assert created.status_code == 200
+
+        def worker():
+            try:
+                barrier.wait()
+                responses.append(client.get("/api/reader/unread-counts"))
+            except Exception as exc:  # noqa: BLE001 - 收集给断言
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+    assert errors == []
+    assert [r.status_code for r in responses] == [200, 200]
+    bodies = [r.json() for r in responses]
+    assert bodies[0] == bodies[1]
+    assert bodies[0]["total"] == INIT_UNREAD_BACKLOG + 3
+    with Session(sink.engine) as session:
+        rows = session.exec(
+            select(ReaderReadCursorRecord).where(ReaderReadCursorRecord.owner_username == "user")
+        ).all()
+        # 新账号另有默认订阅源也在首访一并懒建;主键保证无重复行,这里只认两源都落了且各一行
+        landed = [r.source_id for r in rows]
+        assert {"src_a", "src_b"} <= set(landed)
+        assert len(landed) == len(set(landed))
+
+
 # ==================== 门禁 ====================
 
 def test_unread_endpoints_require_login(monkeypatch, tmp_path):

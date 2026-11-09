@@ -147,6 +147,12 @@
 - 不做:兴趣页不展示篇数 / 热度等数字;兴趣页不做混形态阅读面 — §设计过程一稿
 - 触发:问答先验 / 隐式建议关注 / 准入加分数下限等更多消费方,看数据再定 — §明确不做 / 后续
 
+### 并发首访懒建已读水位(issue #251,2026-11-09) — [方案](plans/issue-251-cursor-upsert.md)
+
+- 决策:`ensure_cursors` 懒建水位行用 `INSERT … ON CONFLICT DO NOTHING` + commit 后重读,以库里实际落下的行为准(先到者的 backlog 水位),调用方契约不变 — 方案 §2
+- 不做(本波):同文件 `_set_read_state` / `reset_cursor` 的 get-then-add 不改——`/read` 吞异常、手动标读是单点动作、订阅路径在用户锁内,暴露面低 — 方案 §3
+- 触发:日志出现 `reader_article_read_state` / `reader_read_cursors` 唯一约束实例 → 照 `mark_ids_read` 的 `on_conflict_do_update` 翻译 — 方案 §3
+
 ## 检索、翻译与读者 AI
 
 ### 深度问答覆盖（issue #254，2026-11-08 更新） — [方案](plans/issue-254-qa-coverage.md)
