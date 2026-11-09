@@ -323,3 +323,5 @@
 **测试**:`tests/test_source_management.py`(目录含全部来路与标志、退役按需、`unbound_source_ids`、源健康含无绑定源、采集任务 create / update 对无绑定 id 回 400);`test_data_lifecycle` 审计摘要与源健康打桩名随改;前端 `sourceRoles.test.mjs` 加系统组、`collection.test.js` 文案随改。
 
 **有意不做**:系统源(公共日报)与存量回填源没有任何行动作;读者自定源仍由源健康补入、治理在运维「自定源」;`#/fetch` 路由与 `FetchTab` / `board-node-*` 等标识符不改名。
+
+**实现检视(R1,2026-11-09,Codex `gpt-6-astra` / `ultra` / 只读,只看提交 678ae37d)**:6 P2 + 1 P3,全部接受修复——① 登录后新建的收录源不进源管理 → `FetchTab` 自己随健康刷新重取公共源目录(`liveCatalog`),退役与否改为前端过滤;② `bound` 与实际绑定检查不一致 → 全部公共行逐行 `is_bound`(抓取器类必须存在),不再借采集节点目录的类型白名单;③ 旧任务里的无绑定源无法从界面移除 → 采集任务编外区按可采集目录判断;④ 配置 X 源被归入文章栏 → `configured_source_metadata` 形态 / 类型 / 平台由源视图推导;⑤ 无绑定存量源继承历史失败告警 → 源健康对无绑定源不看快照与运行记录;⑥ 退役源历史条目数显示 0 → 源健康连退役源一起枚举;⑦ 三处「节点」文案漏改。既有边界(不计本波,观察期):`generic_rss` + `params.source_id=<无绑定源>` 的模板参数路径未做绑定检查,模板在 UI 隐藏、接口仅管理员可达。表态与修复清单见 `.review/response-r1.md`。
