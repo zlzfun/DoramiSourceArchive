@@ -176,7 +176,9 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 60s
+      # 宽限期内探测失败不计数:迁移在 entrypoint 里先跑、uvicorn 还没监听。deploy-docker.sh 按「待执行迁移数 × 每迁移秒数 × 库 GiB」
+      # 加宽后导出(issue #227);手工 compose up 不设变量则 60s
+      start_period: ${DORAMI_BACKEND_HEALTH_START_PERIOD:-60s}
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }

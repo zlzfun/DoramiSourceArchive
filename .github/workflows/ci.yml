@@ -68,6 +68,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # issue #227:已发布(进过正式 tag)的迁移文件一字不改——生产机 worker 第 7 道门向前部署时对 alembic/versions 的任何
+      # M / D 一律 fail closed、没有放行开关(v3.67.0 就被 #211 的 docstring 路径与 #220 的收养守卫卡住,只能走手工路径)。
+      # 这里把同一条规则前移到 PR:checkout 是 depth 1、无 tag,脚本自己 ls-remote 取最新 vX.Y.Z 并只 fetch 那一个 tag;
+      # 新增允许,改写 / 删除 / 改名 fail;取不到基线同样是红(rc 2),不会静默放行。只用 git + 标准库,放在装依赖之前先红先知道。
+      - name: Released migration files are byte-identical to the latest tag
+        run: python3 scripts/check_released_migrations.py
+
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:

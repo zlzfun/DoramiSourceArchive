@@ -208,21 +208,48 @@ if [ "$ORIGIN" != "pipeline" ]; then
     # 手工越过切换点:同一锁内先让流水线的 last-success 失效(worker 下次从容器读基线、不回放)
     note_manual_switch "$DORAMI_BUILD_REF" "$DORAMI_BUILD_SHA"
 fi
-docker compose up -d --remove-orphans
+# backend healthcheck 的宽限期(compose `start_period`,docker-compose.yml 以 ${DORAMI_BACKEND_HEALTH_START_PERIOD:-60s} 插值):
+# 迁移在容器启动时执行、uvicorn 还没监听,宽限期内探测失败不计数;默认 60 s 只够零迁移。`up -d` 要等 backend healthy
+# 才重建 nginx,宽限不够会把正在迁移的容器判成 unhealthy、up 中止(issue #227:预算与迁移数 / 库大小相称)。
+# 基础 60 s + 迁移宽限(待执行迁移数 × 每迁移秒数 × 库 GiB,deploy_migration_grace_seconds);显式设置过的照旧。
+GRACE="$(deploy_migration_grace_seconds "${plan_pending:-0}" "$(sqlite_path_from_ini "$CONFIG_FILE")")"
+if [ -z "${DORAMI_BACKEND_HEALTH_START_PERIOD:-}" ]; then
+    export DORAMI_BACKEND_HEALTH_START_PERIOD="$((60 + GRACE))s"
+fi
+echo "    backend 健康检查宽限 ${DORAMI_BACKEND_HEALTH_START_PERIOD}(基础 60s + 迁移宽限 ${GRACE}s,待执行迁移 ${plan_pending:-0} 个)"
+if ! docker compose up -d --remove-orphans; then
+    echo "docker compose up 失败(backend 健康检查宽限 ${DORAMI_BACKEND_HEALTH_START_PERIOD}):若报「dependency failed to start … unhealthy」,backend 多半还在跑迁移、会自行完成,nginx 未被重建、仍指向新 backend;看 docker compose logs backend,迁移结束后重跑本脚本或 docker compose up -d 即可。当前容器状态:" >&2
+    docker compose ps >&2
+    docker compose logs --tail 50 backend >&2
+    fail "容器启动未完成(不自动回滚:流水线来源下 in-progress 事务保留,可重试或按 docs/ops/release-process.md 恢复)"
+fi
 
 # ── [7/7] 健康 + 版本核对 ──
 echo "[7/7] 健康验证(/api/health 五项核对)..."
-# DORAMI_HTTP_LISTEN 可以是纯端口(80)或绑定形式(127.0.0.1:8080),探针地址随之推导
-LISTEN="${DORAMI_HTTP_LISTEN:-80}"
+# 探针地址 = 容器 nginx 的宿主端口,与 compose 对 ${DORAMI_HTTP_LISTEN:-80} 的插值同一优先级:shell 环境 > 项目 .env > 80
+#(纯端口 80 或绑定形式 127.0.0.1:8080)。以前只看环境变量:worker 从 /etc/dorami-deploy.conf 导出所以没事,手工 shell 没导出
+# 就退到 80——生产 80 是 TLS 边缘(301 → https),v3.67.0 手工部署 87 次 `bad-json` 即此(issue #227)。
+# conf 里的值与本次实际绑定不一致时提醒(流水线会按 conf 探测),不采用。
+LISTEN_SRC="环境变量"; LISTEN="${DORAMI_HTTP_LISTEN:-}"
+if [ -z "$LISTEN" ]; then
+    LISTEN="$(deploy_dotenv_value DORAMI_HTTP_LISTEN .env)"
+    if [ -n "$LISTEN" ]; then LISTEN_SRC=".env"; else LISTEN=80; LISTEN_SRC="默认"; fi
+fi
+CONF_LISTEN="$(deploy_conf_value DORAMI_HTTP_LISTEN "")"
+if [ -n "$CONF_LISTEN" ] && [ "$CONF_LISTEN" != "$LISTEN" ]; then
+    echo "    ⚠️  /etc/dorami-deploy.conf 的 DORAMI_HTTP_LISTEN=${CONF_LISTEN} 与本次实际绑定 ${LISTEN}(来源:${LISTEN_SRC})不一致:流水线会按 conf 探测,请对齐 conf 与 .env" >&2
+fi
 case "$LISTEN" in
     *:*) PROBE="http://${LISTEN}" ;;
     *)   PROBE="http://127.0.0.1:${LISTEN}" ;;
 esac
+echo "    探针 ${PROBE}/api/health(DORAMI_HTTP_LISTEN 来源:${LISTEN_SRC})"
 EXPECT_VERSION="$(_deploy_lib_source_version)"
 # 时间预算(默认 180s:1.6GB 机冷启动带 Chromium 的容器不一定 90 秒就绪);每次 curl 都带连接 / 总超时,
-# 连接建立后后端不答也不能吃掉整个预算(容器 nginx 的 upstream 读超时是 300s)。次数只作额外上限。
+# 连接建立后后端不答也不能吃掉整个预算(容器 nginx 的 upstream 读超时是 300s)。次数默认预算 / 2(每轮至少 2 s),只作额外上限。
+# 迁移期的等待不在这里:上一步 up -d 已等到 backend healthy(宽限见上),这里只等 nginx 起来并做五项核对。
 BUDGET="${DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS:-180}"
-ATTEMPTS="${DORAMI_DEPLOY_HEALTH_ATTEMPTS:-90}"
+ATTEMPTS="${DORAMI_DEPLOY_HEALTH_ATTEMPTS:-$(( BUDGET / 2 > 0 ? BUDGET / 2 : 1 ))}"
 # 判定与轮询在 scripts/deploy-lib.sh(deploy_wait_healthy,裸机路径的后端身份门共用同一段);预算仍由这里传入。
 health_ok=""
 if deploy_wait_healthy "${PROBE}/api/health" "$EXPECT_VERSION" "$DORAMI_BUILD_REF" "$DORAMI_BUILD_SHA" "$BUDGET" "$ATTEMPTS"; then
@@ -245,7 +272,18 @@ if [ -n "$health_ok" ]; then
 fi
 
 deploy_meta health failed
-echo "健康检查未通过(预算 ${BUDGET}s,尝试 ${attempt} 次):${last_verdict:-无响应};当前容器状态:" >&2
+{
+    echo "健康检查未通过(预算 ${BUDGET}s,尝试 ${attempt} 次):${last_verdict:-无响应};探针 ${PROBE}/api/health(DORAMI_HTTP_LISTEN 来源:${LISTEN_SRC})"
+    if [ -n "${DEPLOY_HEALTH_LAST_HTTP:-}" ]; then
+        # 最后一次非 JSON / 非 2xx 响应长什么样:是 301 页、502 页还是维护页,一行看出(issue #227)
+        echo "  最后一次响应 HTTP ${DEPLOY_HEALTH_LAST_HTTP},前 200 字节:$(deploy_health_body_excerpt 200)"
+        case "$DEPLOY_HEALTH_LAST_HTTP" in
+            3[0-9][0-9]) echo "  提示:拿到的是跳转页——探针多半打到了 TLS 边缘(80 → https)而不是容器 nginx;核对 .env 的 DORAMI_HTTP_LISTEN(生产 127.0.0.1:8080)" ;;
+            502|503|504) echo "  提示:容器 nginx 连不上 backend(还在启动 / 迁移,或已退出):docker compose ps / logs backend" ;;
+        esac
+    fi
+    echo "  当前容器状态:"
+} >&2
 docker compose ps >&2
 docker compose logs --tail 50 backend >&2
 fail "部署未通过健康验证(不自动回滚:流水线来源下 in-progress 事务保留,可重试或按 docs/ops/release-process.md 恢复)"

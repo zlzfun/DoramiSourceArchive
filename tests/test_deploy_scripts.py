@@ -42,6 +42,7 @@ extra = ""
 if args[:2] == ["compose", "up"]:
     mark = os.environ.get("DORAMI_DEPLOY_SWITCH_MARK", "")
     extra = " switch_mark_present=" + ("1" if mark and os.path.exists(mark) else "0")
+    extra += " start_period=" + os.environ.get("DORAMI_BACKEND_HEALTH_START_PERIOD", "-")   # issue #227:up 时导出的 healthcheck 宽限
 with open(os.path.join(d, "calls.log"), "a") as f:
     f.write(" ".join(args) + extra + "\n")
 if args[:2] == ["compose", "version"]:
@@ -119,11 +120,42 @@ sys.exit(1)
 '''
 
 FAKE_CURL = r'''#!/usr/bin/env python3
+"""curl 桩:/api/health → FAKE_HEALTH_FILE(200 JSON)或 FAKE_HEALTH_RAW + FAKE_HEALTH_CODE(任意状态码 / 文本);缺则连不上(rc 7)。
+FAKE_HEALTH_301_ON=host:port 时,打到该地址的请求一律回 TLS 边缘式的 301 页(issue #227 实况)。
+支持 -o / -w '%{http_code}' / -f(4xx+ 时 rc 22、不输出体):新旧两版 deploy-lib 的调用形态都走这里。"""
 import os, sys
+args = sys.argv[1:]
+out, fmt, url, fail_on_error = None, "", "", False
+i = 0
+while i < len(args):
+    a = args[i]
+    if a == "-o": out = args[i + 1]; i += 2; continue
+    if a == "-w": fmt = args[i + 1]; i += 2; continue
+    if a in ("-H", "--connect-timeout", "--max-time"): i += 2; continue
+    if a.startswith("-"):
+        if not a.startswith("--") and "f" in a: fail_on_error = True
+        i += 1; continue
+    url = a; i += 1
+hostport = url.split("://", 1)[-1].split("/", 1)[0]
+raw = os.environ.get("FAKE_HEALTH_RAW")
 p = os.environ.get("FAKE_HEALTH_FILE", "")
-if p and os.path.exists(p):
-    sys.stdout.write(open(p).read()); sys.exit(0)
-sys.exit(7)
+if os.environ.get("FAKE_HEALTH_301_ON") and hostport == os.environ["FAKE_HEALTH_301_ON"]:
+    code, body = "301", b"<html>\r\n<head><title>301 Moved Permanently</title></head>\r\n<body>\r\n<center><h1>301 Moved Permanently</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n"
+elif raw is not None:
+    code, body = os.environ.get("FAKE_HEALTH_CODE", "200"), raw.encode()
+elif p and os.path.exists(p):
+    code, body = "200", open(p, "rb").read()
+else:
+    sys.exit(7)
+if fail_on_error and int(code) >= 400:
+    sys.exit(22)
+if out:
+    open(out, "wb").write(body)
+else:
+    sys.stdout.buffer.write(body)
+if fmt:
+    sys.stdout.write(fmt.replace("%{http_code}", code))
+sys.exit(0)
 '''
 
 FAKE_DF = r'''#!/usr/bin/env python3
@@ -591,7 +623,7 @@ def test_deploy_docker_manual_happy_path_runs_steps_in_order(real: Env):
         "compose config -q", "compose build",
         "compose run --rm --no-deps -T backend python docker/entrypoint.py --check-config",
         "compose run --rm --no-deps -T backend python docker/entrypoint.py --plan-migrations",
-        "compose up -d --remove-orphans switch_mark_present=0",
+        "compose up -d --remove-orphans switch_mark_present=0 start_period=60s",
     ]
     backups = list((real.repo.clone / "backups").glob("cms_data.db.*"))
     assert len(backups) == 1, "手工来源做备份"
@@ -620,7 +652,7 @@ def test_deploy_docker_pipeline_origin_skips_backup_touches_switch_mark_and_chec
     assert r.returncode == 0, r.stdout + r.stderr
     assert not list((real.repo.clone / "backups").glob("cms_data.db.*")), "流水线来源不自做备份"
     assert "DORAMI_DEPLOY_META db_backup=worker" in r.stdout
-    assert any(c.endswith("switch_mark_present=1") for c in real.calls())
+    assert any("switch_mark_present=1" in c for c in real.calls())
     # expected sha 不一致 → 构建之前失败
     (real.fake / "calls.log").unlink()
     r = _run_deploy_as_worker(real, "v9.9.9", DORAMI_EXPECTED_SHA=real.repo.sha_of("v9.9.8"), DORAMI_DEPLOY_SWITCH_MARK=str(mark))
@@ -733,7 +765,7 @@ def test_success_path_prunes_build_cache_with_conf_limit(real: Env):
     calls = real.calls()
     prunes = [i for i, c in enumerate(calls) if c == "builder prune -f --keep-storage=3G"]
     # 每次部署开头无条件压一次(在 build 之前),成功后再压一次(在 up 之后)
-    assert len(prunes) == 2 and prunes[0] < calls.index("compose build") < calls.index("compose up -d --remove-orphans switch_mark_present=0") < prunes[1]
+    assert len(prunes) == 2 and prunes[0] < calls.index("compose build") < calls.index("compose up -d --remove-orphans switch_mark_present=0 start_period=60s") < prunes[1]
     assert "构建缓存回收(上限 3 GB)" in r.stdout
     # 健康验证失败时不动构建缓存(失败路径只保留现场)
     (real.fake / "calls.log").unlink()
@@ -1351,10 +1383,11 @@ def test_container_without_build_identity_makes_last_success_unverifiable(env: E
 # ══════════════ issue #126 裸机回滚波的 Docker 等价守卫(docs/archive/baremetal-rollback-plan.md §4.14 / §6.6)══════════════
 
 def test_deploy_docker_default_health_budget_unchanged():
-    """健康轮询抽到 deploy-lib 共用后,Docker 路径的默认预算仍是 180 s / 90 次,由本脚本传入(不在库里定默认)。"""
+    """健康轮询抽到 deploy-lib 共用后,Docker 路径的默认预算仍是 180 s,次数默认预算 / 2(= 90,issue #227 起随预算走),
+    都由本脚本传入(不在库里定默认)。"""
     text = (ROOT / "deploy-docker.sh").read_text(encoding="utf-8")
     assert 'BUDGET="${DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS:-180}"' in text
-    assert 'ATTEMPTS="${DORAMI_DEPLOY_HEALTH_ATTEMPTS:-90}"' in text
+    assert 'ATTEMPTS="${DORAMI_DEPLOY_HEALTH_ATTEMPTS:-$(( BUDGET / 2 > 0 ? BUDGET / 2 : 1 ))}"' in text
     assert "deploy_wait_healthy" in text
     lib = (ROOT / "scripts" / "deploy-lib.sh").read_text(encoding="utf-8")
     assert "HEALTH_BUDGET_SECONDS:-" not in lib, "预算默认值只能在调用方"
@@ -1367,3 +1400,65 @@ def test_deploy_docker_rejects_baremetal_only_arguments(real: Env, arg: str):
     r = _run_deploy(real, arg)
     assert r.returncode != 0 and "未知参数" in r.stderr
     assert not real.calls(), "参数错误须在任何 docker 调用之前"
+
+
+# ══════════════ issue #227:健康验证的探针地址、失败诊断与迁移宽限 ══════════════
+
+def test_health_probe_follows_dotenv_like_compose_when_env_is_unset(real: Env):
+    """v3.67.0 手工部署的实况:shell 没导出 DORAMI_HTTP_LISTEN,探针退到 80 撞上 TLS 边缘的 301 页(87 次 `bad-json`);
+    .env 里写了 127.0.0.1:8080(compose 实际绑定)就该探 8080。"""
+    _health(real, "v9.9.9")
+    edge = dict(FAKE_HEALTH_301_ON="127.0.0.1:80", DORAMI_HTTP_LISTEN="")
+    r = _run_deploy(real, "v9.9.9", **edge)
+    assert r.returncode != 0
+    assert "探针 http://127.0.0.1:80/api/health(DORAMI_HTTP_LISTEN 来源:默认)" in r.stdout
+    assert "http-301" in r.stderr and "HTTP 301" in r.stderr and "301 Moved Permanently" in r.stderr and "TLS 边缘" in r.stderr, r.stderr
+    assert "bad-json" not in r.stderr, "3xx 不再被当成 JSON 去解析"
+    assert "与本次实际绑定 80" in r.stderr, "conf 里的 8080 与实际绑定不一致要提醒"
+    (real.repo.clone / ".env").write_text("# compose 读这个\nDORAMI_PODCAST_INSTALLATION=external\nDORAMI_HTTP_LISTEN=127.0.0.1:8080  # 收进环回\n", encoding="utf-8")
+    r = _run_deploy(real, "v9.9.9", **edge)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "探针 http://127.0.0.1:8080/api/health(DORAMI_HTTP_LISTEN 来源:.env)" in r.stdout and "DORAMI_DEPLOY_META health=ok" in r.stdout
+    assert "不一致" not in r.stderr
+
+
+def test_health_failure_reports_status_and_body_excerpt(real: Env):
+    r = _run_deploy(real, "v9.9.9", FAKE_HEALTH_RAW="<!doctype html><title>维护中</title>\n" + "x" * 500, FAKE_HEALTH_CODE="200")
+    assert r.returncode != 0 and "DORAMI_DEPLOY_META health=failed" in r.stdout
+    assert "bad-json" in r.stderr and "最后一次响应 HTTP 200,前 200 字节:<!doctype html><title>维护中</title> xxx" in r.stderr, r.stderr
+    assert "x" * 200 not in r.stderr and "…" in r.stderr, "只打前 200 字节,截断有标记"
+    r = _run_deploy(real, "v9.9.9", FAKE_HEALTH_RAW="<html>502 Bad Gateway</html>", FAKE_HEALTH_CODE="502")
+    assert r.returncode != 0 and "http-502" in r.stderr and "HTTP 502" in r.stderr and "连不上 backend" in r.stderr, r.stderr
+    r = _run_deploy(real, "v9.9.9", DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS="3")   # 从未连上:仍是「无响应」,不打响应行
+    assert r.returncode != 0 and "无响应" in r.stderr and "最后一次响应" not in r.stderr
+
+
+def test_backend_health_start_period_scales_with_pending_migrations(real: Env):
+    _health(real, "v9.9.9")
+    real.fake_write("plan.json", json.dumps({"status": "compatible", "pending": ["a"] * 6, "pending_count": 6}))
+    r = _run_deploy(real, "v9.9.9")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "backend 健康检查宽限 420s(基础 60s + 迁移宽限 360s,待执行迁移 6 个)" in r.stdout
+    ups = [c for c in real.calls() if c.startswith("compose up")]
+    assert ups and ups[-1].endswith("start_period=420s"), ups
+    # conf 调每迁移秒数;显式 start_period 照旧;上限 1200
+    with open(real.conf, "a", encoding="utf-8") as fh:
+        fh.write("DORAMI_DEPLOY_HEALTH_PER_MIGRATION_SECONDS=10\n")
+    r = _run_deploy(real, "v9.9.9")
+    assert r.returncode == 0 and "宽限 120s(基础 60s + 迁移宽限 60s" in r.stdout, r.stdout + r.stderr
+    r = _run_deploy(real, "v9.9.9", DORAMI_BACKEND_HEALTH_START_PERIOD="999s")
+    assert r.returncode == 0 and "宽限 999s" in r.stdout and [c for c in real.calls() if c.startswith("compose up")][-1].endswith("start_period=999s")
+    real.fake_write("plan.json", json.dumps({"status": "compatible", "pending": ["a"] * 500, "pending_count": 500}))
+    r = _run_deploy(real, "v9.9.9", DORAMI_DEPLOY_HEALTH_PER_MIGRATION_SECONDS="60")
+    assert r.returncode == 0 and "宽限 1260s(基础 60s + 迁移宽限 1200s" in r.stdout, r.stdout + r.stderr
+
+
+def test_compose_up_failure_explains_grace_and_dumps_state(real: Env):
+    _health(real, "v9.9.9")
+    real.fake_write("up_rc", "1")
+    r = _run_deploy(real, "v9.9.9")
+    assert r.returncode != 0
+    assert "docker compose up 失败(backend 健康检查宽限 60s)" in r.stderr and "不自动回滚" in r.stderr, r.stderr
+    assert "DORAMI_DEPLOY_META health=" not in r.stdout, "没走到健康验证,不写 health 元数据"
+    calls = real.calls()
+    assert "compose ps" in calls and "compose logs --tail 50 backend" in calls

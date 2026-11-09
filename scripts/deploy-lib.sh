@@ -133,32 +133,98 @@ print("ok" if not bad else "mismatch " + ",".join(f"{k}={got.get(k)}" for k in b
 }
 
 # deploy_wait_healthy <url> <version> <ref> <sha> <budget_seconds> <max_attempts> [curl 额外参数…]
-# 在时间预算内轮询 <url>,五项全对即返回 0;否则返回 1。预算由调用方传入(Docker 路径 180 s / 90 次不变)。
+# 在时间预算内轮询 <url>,五项全对即返回 0;否则返回 1。预算由调用方传入(Docker 路径默认 180 s,次数默认预算 / 2)。
 # 每次 curl 都带连接 / 总超时:连接建立后后端不答也不能吃掉整个预算;次数只作额外上限。
-# 结果变量:DEPLOY_HEALTH_ATTEMPT(已尝试次数)、DEPLOY_HEALTH_LAST_VERDICT(最后一次非 ok 的判定,无响应时为空)、
-# DEPLOY_HEALTH_BODY(最后一次响应体)。
+# 不用 curl -f(issue #227):3xx / 4xx / 5xx 也要拿到状态码与响应体,否则只剩一个 `bad-json` 看不出谁在回什么——
+# v3.67.0 手工部署的 87 次 `bad-json` 实为探针打到了 TLS 边缘的 301 页。只有 2xx 才交给五项核对,其它状态码判定记作 `http-<code>`。
+# 结果变量:DEPLOY_HEALTH_ATTEMPT(已尝试次数)、DEPLOY_HEALTH_LAST_VERDICT(最后一次非 ok 的判定,始终无响应时为空)、
+# DEPLOY_HEALTH_LAST_HTTP(最后一次拿到的状态码,始终无响应时为空)、DEPLOY_HEALTH_BODY(最后一次响应体,含非 2xx)。
 deploy_wait_healthy() {
     local url="$1" want_version="$2" want_ref="$3" want_sha="$4" budget="$5" attempts="$6"
     shift 6
-    local deadline remaining max_time body verdict
+    local deadline remaining max_time code verdict tmp
+    tmp="$(mktemp "${TMPDIR:-/tmp}/dorami-health.XXXXXX")" || return 1
     deadline=$(( $(date +%s) + budget ))
-    DEPLOY_HEALTH_ATTEMPT=0; DEPLOY_HEALTH_LAST_VERDICT=""; DEPLOY_HEALTH_BODY=""
+    DEPLOY_HEALTH_ATTEMPT=0; DEPLOY_HEALTH_LAST_VERDICT=""; DEPLOY_HEALTH_LAST_HTTP=""; DEPLOY_HEALTH_BODY=""
     while [ "$DEPLOY_HEALTH_ATTEMPT" -lt "$attempts" ]; do
         DEPLOY_HEALTH_ATTEMPT=$((DEPLOY_HEALTH_ATTEMPT + 1))
         remaining=$(( deadline - $(date +%s) ))
         [ "$remaining" -gt 0 ] || break
         max_time=$(( remaining < 15 ? remaining : 15 ))
-        body="$(curl -fsS --connect-timeout 5 --max-time "$max_time" -H 'Cache-Control: no-cache' "$@" "${url}?_=$(date +%s)" 2>/dev/null || true)"
-        if [ -n "$body" ]; then
-            DEPLOY_HEALTH_BODY="$body"
-            verdict="$(printf '%s' "$body" | deploy_health_verdict "$want_version" "$want_ref" "$want_sha")"
-            [ "$verdict" = "ok" ] && return 0
-            DEPLOY_HEALTH_LAST_VERDICT="$verdict"
-        fi
+        : > "$tmp"
+        code="$(curl -sS -o "$tmp" -w '%{http_code}' --connect-timeout 5 --max-time "$max_time" -H 'Cache-Control: no-cache' "$@" "${url}?_=$(date +%s)" 2>/dev/null || true)"
+        case "$code" in
+            [1-5][0-9][0-9])
+                DEPLOY_HEALTH_LAST_HTTP="$code"
+                DEPLOY_HEALTH_BODY="$(cat "$tmp")"
+                case "$code" in
+                    2[0-9][0-9])
+                        verdict="$(printf '%s' "$DEPLOY_HEALTH_BODY" | deploy_health_verdict "$want_version" "$want_ref" "$want_sha")"
+                        if [ "$verdict" = "ok" ]; then rm -f "$tmp"; return 0; fi ;;
+                    *) verdict="http-${code}" ;;
+                esac
+                DEPLOY_HEALTH_LAST_VERDICT="$verdict" ;;
+            *) ;;   # 连不上 / 超时(curl 非零,code 为 000 或空):不记判定,报告里仍是「无响应」
+        esac
         [ $(( deadline - $(date +%s) )) -gt 2 ] || break
         sleep 2
     done
+    rm -f "$tmp"
     return 1
+}
+
+# deploy_health_body_excerpt [n]:把 DEPLOY_HEALTH_BODY 的前 n(默认 200)字节压成一行可打印文本(控制字符 → 空格,
+# 非 UTF-8 → U+FFFD,超出部分以 … 标记),给失败报告用——一眼看出是 301 页、502 页还是维护页。
+deploy_health_body_excerpt() {
+    printf '%s' "${DEPLOY_HEALTH_BODY:-}" | python3 -c '
+import sys
+n = int(sys.argv[1]); raw = sys.stdin.buffer.read()
+text = raw[:n].decode("utf-8", "replace")
+sys.stdout.write("".join(ch if ch.isprintable() else " " for ch in text) + ("…" if len(raw) > n else ""))
+' "${1:-200}"
+}
+
+# deploy_dotenv_value <KEY> [file=.env]:compose 读的 .env 里 KEY 的值(同名多行以最后一行为准;去掉成对引号;未加引号时
+# 去掉 ` #` 起的行尾注释);文件缺 / 键缺输出空。compose 的插值优先级是 shell 环境 > .env > 默认,部署脚本推导探针地址时
+# 要和它一致(issue #227:手工 shell 没导出 DORAMI_HTTP_LISTEN,探针退到 80 撞上 TLS 边缘)。
+deploy_dotenv_value() {
+    local key="$1" file="${2:-.env}"
+    [ -r "$file" ] || return 0
+    python3 - "$key" "$file" <<'PY_DOTENV'
+import re, sys
+key, path = sys.argv[1], sys.argv[2]
+value = ""
+for line in open(path, encoding="utf-8", errors="replace"):
+    m = re.match(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$", line.rstrip("\r\n"))
+    if not m or m.group(1) != key:
+        continue
+    v = m.group(2).strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+        v = v[1:-1]
+    else:
+        v = re.split(r"\s+#", v, 1)[0].rstrip()
+    value = v
+sys.stdout.write(value)
+PY_DOTENV
+}
+
+# deploy_migration_grace_seconds <pending> <db_path>:容器启动期迁移的健康检查宽限秒数 = 待执行迁移数 × 每迁移秒数
+# (DORAMI_DEPLOY_HEALTH_PER_MIGRATION_SECONDS,默认 60)× max(1, ceil(库 GiB)),封顶 DORAMI_DEPLOY_HEALTH_MIGRATION_GRACE_MAX_SECONDS
+# (默认 1200;deploy.yml 整个 job 40 min,构建还要占一截)。pending 不是数字或为 0 → 0;库文件不存在按 1 GiB 以内算。
+deploy_migration_grace_seconds() {
+    local pending="$1" db="${2:-}" each max bytes gib grace
+    [[ "$pending" =~ ^[0-9]+$ ]] || pending=0
+    [ "$pending" -gt 0 ] || { echo 0; return 0; }
+    each="$(deploy_conf_value DORAMI_DEPLOY_HEALTH_PER_MIGRATION_SECONDS 60)"; [[ "$each" =~ ^[0-9]+$ ]] || each=60
+    max="$(deploy_conf_value DORAMI_DEPLOY_HEALTH_MIGRATION_GRACE_MAX_SECONDS 1200)"; [[ "$max" =~ ^[0-9]+$ ]] || max=1200
+    bytes=0
+    if [ -n "$db" ] && [ -f "$db" ]; then bytes="$(wc -c < "$db" | tr -d '[:space:]')"; fi
+    [[ "$bytes" =~ ^[0-9]+$ ]] || bytes=0
+    gib=$(( (bytes + 1073741823) / 1073741824 ))
+    [ "$gib" -ge 1 ] || gib=1
+    grace=$(( pending * each * gib ))
+    [ "$grace" -le "$max" ] || grace="$max"
+    echo "$grace"
 }
 
 # ── JSON / 原子写助手(与 docker/dorami-deploy-worker.example 同法:同目录 tmp → fsync → rename → 父目录 fsync)──

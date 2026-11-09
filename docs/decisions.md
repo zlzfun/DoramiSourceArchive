@@ -611,6 +611,14 @@
 - 决策(issue #232,2026-10-27):部署预检「先回收再判定」——不足时自动做悬空镜像 / 构建缓存上限 / 备份计数三件安全回收并复测,仍不足才 fail;构建缓存自此有上限 `DORAMI_DEPLOY_BUILD_CACHE_KEEP_GB`(默认 2 GB;每次部署开头先压一次,成功后再压一次——v3.67.2 实测成功后那次为 0,旧镜像要等 worker 清理),放弃「不跑 builder prune 保层缓存」的旧口径;带 tag 的镜像与 `data/` 预检永不碰 — 再评估触发:扩盘后仍在预检失败
 - 决策(issue #236,2026-10-27):备份清单外部对象条目只带恢复需要的七个字段,清单原始 JSON 上限 64 MiB(创建与恢复同一常量);不做分页 / 独立成员 — 再评估触发:OSS 对象逼近 20 万个
 
+### 已发布迁移文件守卫与部署健康验证(issue #227,2026-11-09) — [方案](archive/issue-227-released-migrations-guard.md)
+
+- 决策:已发布(进过正式 tag)的迁移文件一字不改,CI 对最新正式 tag 逐字节比对 `alembic/versions/*`(新增允许,改写 / 删除 / 改名 / 模式变化红,取不到基线也红);要改历史行为加新 revision 或改 `alembic/env.py` 收养逻辑,docstring / 路径不回改 — §2
+- 决策:手工 `./deploy-docker.sh` 的探针地址与 compose 同口径(环境变量 > `.env` > 80),conf 不参与推导只做一致性提醒;健康失败一律打 HTTP 状态码 + 响应前 200 字节,轮询不再用 `curl -f` — §2
+- 决策:迁移期的预算放在 backend healthcheck 的 `start_period`(60 s + 待执行迁移数 × 每迁移秒数 × 库 GiB,封顶 1200),不放在 `up -d` 之后的轮询(那时迁移已结束) — §1.2 / §2
+- 不做:worker 第 7 道门放行开关;回改已发布的 4 个文件;改 `deploy.yml` 公网复核的 `curl -f`;裸机路径宽限 — §3
+- 触发:带多个迁移的发版在 `up -d` 阶段仍被判 unhealthy → 调 `DORAMI_DEPLOY_HEALTH_PER_MIGRATION_SECONDS`,或改 compose healthcheck 的 `interval` / `retries` — §3
+
 
 ## 导读与模型配置（2026-10-31，#238 / #242 / #243 / #244，验收后集成）
 

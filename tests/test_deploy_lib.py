@@ -152,3 +152,39 @@ def test_backup_sqlite_db_keeps_ten(tmp_path):
     assert 1 <= len(backups) <= 10
     with sqlite3.connect(backups[-1]) as conn:
         assert conn.execute("select x from t").fetchone() == (1,)
+
+
+# ── issue #227:探针地址读 .env、迁移宽限公式 ──
+
+def _lib_run(cwd, script, env):
+    return subprocess.run(["bash", "-c", f'set -euo pipefail; cd "{cwd}"; source "{LIB}"; {script}'],
+                          capture_output=True, text=True, env=env)
+
+
+def test_dotenv_value_follows_compose_rules(tmp_path):
+    (tmp_path / ".env").write_text(
+        "# comment\nexport DORAMI_HTTP_LISTEN=127.0.0.1:8080  # 收进环回\nQUOTED=\"a b # not comment\"\nSINGLE='x'\n"
+        "DORAMI_HTTP_LISTEN=127.0.0.1:9090\nEMPTY=\n", encoding="utf-8")
+    script = ('for k in DORAMI_HTTP_LISTEN QUOTED SINGLE EMPTY MISSING; do printf "%s=[%s]\\n" "$k" "$(deploy_dotenv_value "$k" .env)"; done; '
+              'printf "nofile=[%s]\\n" "$(deploy_dotenv_value X nope.env)"')
+    out = _lib_run(tmp_path, script, {**os.environ})
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.splitlines() == ["DORAMI_HTTP_LISTEN=[127.0.0.1:9090]", "QUOTED=[a b # not comment]", "SINGLE=[x]", "EMPTY=[]", "MISSING=[]", "nofile=[]"]
+
+
+def test_migration_grace_seconds_formula_cap_and_knobs(tmp_path):
+    (tmp_path / "small.db").write_bytes(b"x" * 1024)
+    with open(tmp_path / "big.db", "wb") as fh:
+        fh.truncate(int(1.5 * 1024 ** 3))   # 稀疏文件,不占盘:ceil(1.5 GiB) = 2
+    conf = tmp_path / "deploy.conf"; conf.write_text("DORAMI_DEPLOY_HEALTH_PER_MIGRATION_SECONDS=10\n", encoding="utf-8")
+    script = ('for args in "0 small.db" "abc small.db" "6 small.db" "6 big.db" "6 missing.db" "500 small.db"; do '
+              'set -- $args; printf "%s %s=%s\\n" "$1" "$2" "$(deploy_migration_grace_seconds "$1" "$2")"; done')
+    clean = {k: v for k, v in os.environ.items() if not k.startswith("DORAMI_DEPLOY_")}
+    out = _lib_run(tmp_path, script, {**clean, "DORAMI_DEPLOY_CONF": str(tmp_path / "absent.conf")})
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.splitlines() == ["0 small.db=0", "abc small.db=0", "6 small.db=360", "6 big.db=720", "6 missing.db=360", "500 small.db=1200"]
+    out = _lib_run(tmp_path, script, {**clean, "DORAMI_DEPLOY_CONF": str(conf)})
+    assert out.returncode == 0 and "6 small.db=60" in out.stdout and "6 big.db=120" in out.stdout, out.stdout + out.stderr
+    out = _lib_run(tmp_path, script, {**clean, "DORAMI_DEPLOY_CONF": str(conf), "DORAMI_DEPLOY_HEALTH_PER_MIGRATION_SECONDS": "100",
+                                      "DORAMI_DEPLOY_HEALTH_MIGRATION_GRACE_MAX_SECONDS": "250"})
+    assert out.returncode == 0 and "6 small.db=250" in out.stdout and "6 big.db=250" in out.stdout, "环境变量 > conf;上限也可调"

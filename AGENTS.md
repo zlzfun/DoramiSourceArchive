@@ -25,7 +25,7 @@ python3 scripts/check_docs.py             # 文档守卫(索引覆盖 / 断链 /
 
 ## 硬规则(违反即事故;链接给完整语义)
 
-1. **模型改动必配 Alembic 迁移**:`create_all()`(= metadata)必须等于 `alembic upgrade heads`(`tests/test_migrations.py` drift 测试强制);口径一律 `heads`,收养路径勿加「stamp head」捷径;Taxonomy 启动姿态 `[taxonomy] deployment` 必须显式 `authority` / `replica` / `manual` → `docs/dev/migrations.md`、`docs/ops/taxonomy-v1-deployment.md`。
+1. **模型改动必配 Alembic 迁移**:`create_all()`(= metadata)必须等于 `alembic upgrade heads`(`tests/test_migrations.py` drift 测试强制);口径一律 `heads`,收养路径勿加「stamp head」捷径;**已发布(进过正式 tag)的迁移文件一字不改**——流水线 worker 向前部署按字节 fail closed、无放行开关,CI `scripts/check_released_migrations.py` 对最新 tag 比对(新增允许),改历史行为加新 revision 或改 `alembic/env.py`,docstring / 路径也不回改旧文件;Taxonomy 启动姿态 `[taxonomy] deployment` 必须显式 `authority` / `replica` / `manual` → `docs/dev/migrations.md`、`docs/ops/taxonomy-v1-deployment.md`。
 2. **改前端先读 `docs/frontend/conventions.md`**:token / 角色类单一事实来源 = `frontend/src/index.css`,不手写 `text-[Npx]` / `rounded-[Npx]` / hex;新增动效不写 OS 媒体查询(应用内开关 `<html data-motion>`);读者面文案不漏内部架构词(归档 / 采集 / 分发 / 层);遮罩关闭只用 `<Modal closeOnOverlay>`;口径统一叫「兴趣」不叫「关注」。
 3. **版本只在发版时改**:`src/version.py` 单一事实来源,开发版 `X.Y.Z-alpha`,**PR 不 bump**;`scripts/release.sh X.Y.Z` 发版打 annotated tag,两条部署脚本只认 tag(`--here` 显式例外)→ `docs/ops/release-process.md`。
 4. **`uv.lock` 入库但本机镜像改写永不提交**:改依赖走 `env -u UV_INDEX_URL -u UV_DEFAULT_INDEX uv lock` 并重导出 `docker/requirements*.txt`(守卫 `tests/test_uv_lock.py` / `tests/test_docker_requirements.py`);提交一律显式列文件,永不 `git commit -a` → `docs/dev/dependencies.md`。
