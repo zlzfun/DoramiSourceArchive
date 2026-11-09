@@ -336,6 +336,7 @@ export default function DataTab({
       ...prev,
       content_types: '',
       source_id: pendingFilter.source_id ?? prev.source_id,
+      ingest_channel: '', // 从源页跳来看「收录文章」,不能带着上次的来路筛选(检视 R2 #2)
       has_content: '',
       publish_date_start: '',
       publish_date_end: '',
@@ -600,8 +601,9 @@ export default function DataTab({
             </div>
           </div>
 
-          {/* 来路(issue #262):只在有收录条目时出现——全是抓取的库里这一栏没有信息量 */}
-          {(facets?.ingest_channels ?? []).some((row) => row.value !== 'fetch') && (
+          {/* 来路(issue #262):只在有收录条目时出现——全是抓取的库里这一栏没有信息量;
+              但当前带着来路筛选时必须留着,否则删掉最后一条收录内容后筛选无处解除(检视 R2 #1) */}
+          {(filters.ingest_channel || (facets?.ingest_channels ?? []).some((row) => row.value !== 'fetch')) && (
             <div className="ledger-facet">
               <h3 className="micro-label ledger-facet-title">来路</h3>
               <div className="ledger-facet-list">

@@ -385,5 +385,9 @@ def test_ledger_exposes_provenance_as_filter_facet_and_fields(monkeypatch, tmp_p
         _login(client, "reader")
         rows = client.get("/api/articles", params={"ingest_channel": "manual", "include_content": "false"}).json()
         assert [r["id"] for r in rows] == [manual["id"]]
-        # 读者看得到通道,看不到收录者是谁。
+        # 读者看得到通道,看不到收录者是谁;单条详情同样不带收录者(检视 R2 建议补)。
         assert rows[0]["ingest_channel"] == "manual" and "ingest_actor" not in rows[0]
+        detail = client.get(f"/api/articles/{manual['id']}").json()
+        assert detail["ingest_channel"] == "manual" and "ingest_actor" not in detail
+        # 未知来路值不报错、不漏放:空结果。
+        assert client.get("/api/articles", params={"ingest_channel": "foo", "include_content": "false"}).json() == []
