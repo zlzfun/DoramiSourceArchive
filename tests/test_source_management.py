@@ -31,7 +31,7 @@ def _setup(monkeypatch, tmp_path, name="sources.db"):
 
 def _seed_rows(engine):
     """一个收录临时源、一个存量回填源、系统源、一个退役源、一个有绑定的配置播客源。"""
-    from models.db import ArticleRecord, SourceConfigRecord
+    from models.db import ArticleRecord, SourceConfigRecord, SourceStateRecord
     from services import source_rows
 
     with Session(engine) as session:
@@ -54,6 +54,30 @@ def _seed_rows(engine):
             source_id="podcast_cfg", name="Cfg Pod", source_type="podcast_rss", url="https://pod.test/feed",
             fetcher_id="generic_podcast_rss", admission_status="admitted", created_at=_NOW, updated_at=_NOW,
         ))
+        # 检视 R1 #2 / #4:绑定了不存在的抓取器 = 无绑定;类型不在模板白名单但 fetcher_id 有效 = 有绑定;
+        # X 配置源形态是社交。
+        session.add(SourceConfigRecord(
+            source_id="rss_broken", name="Broken", source_type="rss", url="https://broken.test/feed",
+            fetcher_id="missing_fetcher", admission_status="admitted", created_at=_NOW, updated_at=_NOW,
+        ))
+        session.add(SourceConfigRecord(
+            source_id="odd_bound", name="Odd", source_type="wechat", url="https://odd.test/feed",
+            fetcher_id="generic_rss", admission_status="admitted", created_at=_NOW, updated_at=_NOW,
+        ))
+        session.add(SourceConfigRecord(
+            source_id="x_cfg", name="Someone on X", source_type="x", url="https://x.com/someone",
+            fetcher_id="generic_x_timeline", admission_status="admitted", created_at=_NOW, updated_at=_NOW,
+        ))
+        # 检视 R1 #5 / #6:存量源带着多年前的失败快照;退役源还有历史条目。
+        session.add(SourceStateRecord(
+            source_id="manual", fetcher_id="generic_rss", status="failing",
+            consecutive_failures=3, failed_runs=3, total_runs=3, updated_at=_NOW,
+        ))
+        session.add(ArticleRecord(
+            id="rss_gone_1", title="gone", content_type="rss_article", source_id="rss_gone",
+            source_url="https://gone.test/1", publish_date=_NOW, fetched_date=_NOW, has_content=True,
+            content="x", extensions_json="{}",
+        ))
         session.add(ArticleRecord(
             id="web_pushed_site_1", title="pushed", content_type="web_article", source_id="web_pushed_site",
             source_url="https://pushed.test/1", publish_date=_NOW, fetched_date=_NOW, has_content=True,
@@ -75,7 +99,8 @@ def test_source_management_catalog_lists_every_public_source_with_binding_flags(
         with_retired = {item["id"]: item for item in source_management_catalog(session, include_retired=True)}
         bound_only = {item["id"] for item in collection_node_catalog(session)}
         unbound = unbound_source_ids(
-            session, ["x_openai", "web_pushed_site", "manual", "rss_gone", "podcast_cfg", "nope_missing"],
+            session, ["x_openai", "web_pushed_site", "manual", "rss_gone", "podcast_cfg",
+                      "rss_broken", "odd_bound", "x_cfg", "nope_missing"],
         )
 
     # 注册表预设:有绑定、来路目录。
@@ -95,7 +120,11 @@ def test_source_management_catalog_lists_every_public_source_with_binding_flags(
     assert with_retired["rss_gone"]["retired"] is True and with_retired["rss_gone"]["bound"] is False
     assert bound_only >= {"x_openai", "podcast_cfg"}
     assert not bound_only & {"web_pushed_site", "manual", "dorami_daily_brief", "rss_gone"}
-    assert unbound == ["web_pushed_site", "manual", "rss_gone"]
+    # bound 与实际绑定检查同一口径(R1 #2):坏绑定 = 无;白名单外但有效 = 有。X 配置源形态是社交(R1 #4)。
+    assert nodes["rss_broken"]["bound"] is False and nodes["rss_broken"]["execution_fetcher_id"] == ""
+    assert nodes["odd_bound"]["bound"] is True
+    assert (nodes["x_cfg"]["bound"], nodes["x_cfg"]["shape"], nodes["x_cfg"]["content_type"]) == (True, "social", "social_post")
+    assert unbound == ["web_pushed_site", "manual", "rss_gone", "rss_broken"]
 
 
 def test_unbound_sources_are_visible_but_cannot_be_run_or_scheduled(monkeypatch, tmp_path):
@@ -111,6 +140,11 @@ def test_unbound_sources_are_visible_but_cannot_be_run_or_scheduled(monkeypatch,
         health = {item["fetcher_id"]: item for item in client.get("/api/source-health").json()}
         assert health["web_pushed_site"]["total_articles"] == 1
         assert health["web_pushed_site"]["health_status"] == "never_run"
+        assert health["web_pushed_site"]["bound"] is False
+        # 存量源的旧失败快照不算今天的告警(R1 #5);退役源也有健康行,带真实历史条目数(R1 #6)。
+        assert health["manual"]["health_status"] == "never_run" and not health["manual"].get("consecutive_failures")
+        assert health["rss_gone"]["retired"] is True and health["rss_gone"]["total_articles"] == 1
+        assert catalog["rss_broken"]["bound"] is False
         # 采集任务不接受无绑定的源(前端隐藏之外的第二道闸)。
         bad = client.post("/api/collection-jobs", json={
             "name": "j", "fetcher_ids": ["x_openai", "web_pushed_site"], "cron_expr": "",

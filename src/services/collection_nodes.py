@@ -168,9 +168,17 @@ def _configured_limit(record: SourceConfigRecord, default: int = 20) -> int:
 def configured_source_metadata(record: SourceConfigRecord) -> Dict[str, Any]:
     """Project a public SourceConfig into the registry node shape."""
 
+    from services import source_catalog
+
     source_type = (record.source_type or "").strip().lower()
-    shape = "podcast" if source_type in PODCAST_SOURCE_TYPES else "article"
-    content_type = "podcast_episode" if shape == "podcast" else "rss_article"
+    # 形态与内容类型按源视图推导(显式 shape 列 > 绑定的抓取器类 > source_type):X / 网页配置源不再
+    # 一律落成「文章 / rss_article」(检视 R1 #4)。
+    view = source_catalog.view_from_row(record)
+    shape = view.shape or ("podcast" if source_type in PODCAST_SOURCE_TYPES else "article")
+    content_type = view.content_type or {
+        "podcast": "podcast_episode",
+        "social": "social_post",
+    }.get(shape, "web_article" if source_type in {"web", "webpage"} else "rss_article")
     return {
         "id": record.source_id,
         "name": record.name,
@@ -179,6 +187,7 @@ def configured_source_metadata(record: SourceConfigRecord) -> Dict[str, Any]:
         "admission_status": admission_status_of(record.admission_status),
         "content_type": content_type,
         "shape": shape,
+        "platform": view.platform,
         "is_template": False,
         "source_config_node": True,
         "source_type": source_type,
@@ -231,8 +240,6 @@ def collection_node_catalog(
 
 
 # ── 源管理目录(issue #262 第三波):全部公共源,不只是有采集绑定的 ──────────────
-
-_ALL_SOURCE_TYPES = frozenset({"rss", "atom", "web", "webpage"}) | PODCAST_SOURCE_TYPES | X_SOURCE_TYPES
 
 
 def is_bound(record: SourceConfigRecord) -> bool:
@@ -304,27 +311,34 @@ def source_management_catalog(session: Session, *, include_retired: bool = False
     每个条目都带 ``bound`` / ``origin`` / ``listing`` / ``retired``。
     """
     nodes = [
-        {**item, "bound": True, "origin": item.get("origin") or "catalog",
+        {**item, "bound": True, "origin": "catalog",
          "listing": _listing_of(str(item.get("admission_status") or "")), "retired": False}
-        for item in collection_node_catalog(session, source_types=_ALL_SOURCE_TYPES)
+        for item in fetcher_registry.get_all_metadata()
     ]
-    known = {item["id"]: item for item in nodes}
-    rows_by_id = {
-        row.source_id: row
-        for row in session.exec(
-            select(SourceConfigRecord).where(SourceConfigRecord.owner_username == "")
-        ).all()
-    }
-    for source_id, item in known.items():
-        row = rows_by_id.get(source_id)
-        if row is not None and item.get("source_config_node"):
-            item["origin"] = (row.origin or "").strip().lower() or "admin"
-    for source_id, row in sorted(rows_by_id.items()):
-        if source_id in known:
-            continue
+    known = {item["id"] for item in nodes}
+    rows = session.exec(
+        select(SourceConfigRecord)
+        .where(SourceConfigRecord.owner_username == "")
+        .order_by(SourceConfigRecord.name)
+    ).all()
+    for row in rows:
+        if row.source_id in known:
+            continue  # 预设镜像行:注册表条目已代表它
         if row.retired_at and not include_retired:
             continue
-        nodes.append(unbound_source_metadata(row))
+        # 全部公共行统一按 is_bound 分流(检视 R1 #2):绑定了不存在的抓取器 = 无绑定;
+        # source_type 不在模板白名单但 fetcher_id 有效 = 有绑定。
+        if is_bound(row):
+            item = configured_source_metadata(row)
+            item.update({
+                "bound": True,
+                "origin": (row.origin or "").strip().lower() or "admin",
+                "listing": _listing_of(row.admission_status or ""),
+                "retired": False,
+            })
+            nodes.append(item)
+        else:
+            nodes.append(unbound_source_metadata(row))
     return nodes
 
 

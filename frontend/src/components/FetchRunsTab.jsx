@@ -347,6 +347,7 @@ export default function FetchRunsTab({
   const draftFetcherIds = useMemo(() => jobDraft.fetcher_ids || [], [jobDraft.fetcher_ids]);
   // 只有有采集绑定的源能编入采集任务(issue #262 第三波:源目录里也列出收录临时源 / 存量等无绑定的源)。
   const jobCatalog = useMemo(() => availableFetchers.filter(fetcher => fetcher.bound !== false), [availableFetchers]);
+  const jobCatalogById = useMemo(() => Object.fromEntries(jobCatalog.map(fetcher => [fetcher.id, fetcher])), [jobCatalog]);
   const filteredModalFetchers = useMemo(() => {
     const query = jobSearch.trim().toLowerCase();
     if (!query) return jobCatalog;
@@ -1379,12 +1380,12 @@ export default function FetchRunsTab({
             })}
           </div>
 
-          {/* 编外兜底:已编入但不在目录的节点(改名/退役的化石引用)——可见、可移除,
-              否则只出现在计数里没法清理 */}
-          {draftFetcherIds.some(id => !fetchersById[id]) && (
+          {/* 编外兜底:已编入但不能采集的源(改名 / 退役的化石引用,或没有采集绑定的源)——可见、可移除,
+              否则只出现在计数里没法清理,保存还会被后端 400 拒绝(检视 R1 #3) */}
+          {draftFetcherIds.some(id => !jobCatalogById[id]) && (
             <div className="jr-list" style={{ flex: 'none', overflow: 'visible' }}>
-              <div className="jr-group-head">不在目录(已改名或退役,建议移出)</div>
-              {draftFetcherIds.filter(id => !fetchersById[id]).map(id => (
+              <div className="jr-group-head">不能采集(已改名、退役或没有采集绑定,建议移出)</div>
+              {draftFetcherIds.filter(id => !jobCatalogById[id]).map(id => (
                 <div
                   key={id}
                   role="checkbox"

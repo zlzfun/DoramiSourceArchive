@@ -53,7 +53,7 @@ async def trigger_fetch_batch(
         params: FetchBatchParams,
         test_limit: Optional[int] = None,
 ):
-    """临时批量触发多个抓取节点：提交持久化后台任务并立即返回 job_id（不再占满长请求）。
+    """临时批量触发多个源的抓取：提交持久化后台任务并立即返回 job_id（不再占满长请求）。
 
     校验（items 为空 → 400）同步完成；实际 run_collection_items 收进后台任务，它仍写
     CollectionJobRunRecord 聚合记录，聚合结果作 job.result 落库，前端轮询

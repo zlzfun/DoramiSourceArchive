@@ -182,19 +182,23 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
   const [inspectorRunsLoading, setInspectorRunsLoading] = useState(false);
   const [previewByNode, setPreviewByNode] = useState({});
 
-  // 退役源按需列出(默认不列);本页内列入 / 改名的结果以 patches 即时覆盖目录,不等 App 重取。
+  // 公共源目录由本页自己刷新(连退役源一起取):App 登录时取的 availableFetchers 只是首屏兜底,
+  // 之后推送新建的收录临时源要随健康刷新 / 轮询出现,不能等整页刷新(检视 R1 #1);
+  // 退役源默认不列(「含已退役」切换只是前端过滤)。本页内列入 / 改名的结果以 patches 即时覆盖,
+  // 服务端值与之一致,重取不会把它们冲掉。
+  const [liveCatalog, setLiveCatalog] = useState(null);
   const [showRetired, setShowRetired] = useState(false);
-  const [retiredNodes, setRetiredNodes] = useState([]);
   const [patches, setPatches] = useState({});
   const [renaming, setRenaming] = useState(null); // { id, name }
-  useEffect(() => {
-    if (!showRetired) return undefined;
-    let cancelled = false;
-    fetchFetchers({ includeRetired: true })
-      .then(list => { if (!cancelled) setRetiredNodes((list || []).filter(node => node.retired)); })
-      .catch(e => { if (!cancelled) showToast?.(e.message || '获取退役源失败', 'error'); });
-    return () => { cancelled = true; };
-  }, [showRetired, showToast]);
+  const loadCatalog = useCallback(async () => {
+    try {
+      const list = await fetchFetchers({ includeRetired: true });
+      if (Array.isArray(list)) setLiveCatalog(list);
+    } catch (e) {
+      console.error(e); // 目录刷新失败静默降级:沿用上一份(或 App 的首屏目录)
+    }
+  }, []);
+  useEffect(() => { loadCatalog(); }, [loadCatalog]);
 
   useEffect(() => {
     const overrides = loadStoredConfigOverrides();
@@ -272,6 +276,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
   }, [hiddenSourceIds, showToast]);
 
   const loadSourceHealth = useCallback(async () => {
+    loadCatalog(); // 目录与健康一起刷新:挂载 / 轮询 / 手动刷新 / 抓取完成都会带出新建的收录源
     try {
       const healthItems = await fetchSourceHealth();
       setHealthByFetcher(Object.fromEntries(healthItems.map(item => [item.fetcher_id, item])));
@@ -314,7 +319,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
       });
       setTrendBySource({ days: stats.days, bySource });
     } catch { setTrendBySource(null); }
-  }, []);
+  }, [loadCatalog]);
 
   useEffect(() => {
     loadSourceHealth();
@@ -380,11 +385,12 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
   const matchesShape = useCallback((f) => contentShapeOf(f) === shapeFilter, [shapeFilter]);
   const matchesRole = useCallback((f) => roleFilter === 'all' || sourceRoleOf(f) === roleFilter, [roleFilter]);
 
-  // 目录全量 = 公共源目录(有无采集绑定都在)∪ 用户自定源 ∪(按需)退役源;列入 / 改名的结果以 patches 覆盖。
+  // 目录全量 = 公共源目录(本页刷新的 liveCatalog,首屏兜底 App 的 availableFetchers;有无采集绑定都在,
+  // 退役源按「含已退役」过滤)∪ 用户自定源;列入 / 改名的结果以 patches 覆盖。
   const allNodes = useMemo(() => (
-    [...availableFetchers, ...customNodes, ...(showRetired ? retiredNodes : [])]
+    [...(liveCatalog ?? availableFetchers).filter(node => showRetired || !node.retired), ...customNodes]
       .map(node => (patches[node.id] ? { ...node, ...patches[node.id] } : node))
-  ), [availableFetchers, customNodes, retiredNodes, showRetired, patches]);
+  ), [liveCatalog, availableFetchers, customNodes, showRetired, patches]);
 
   // 内容形态是一级 Tab；健康和角色是当前 Tab 内的两个联动筛选轴。
   // 每个筛选轴的数字都排除自身、纳入另一轴，避免展示一个实际点进去却为空的全局数字。

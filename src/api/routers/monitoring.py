@@ -115,8 +115,9 @@ def build_fetcher_health_from_state(fetcher_metadata: Dict[str, Any], state: Sou
 
 @router.get("/api/source-health")
 def get_source_health(session: Session = Depends(deps.get_session)):
-    # 源管理目录(issue #262 第三波):没有采集绑定的源也进汇总——它们只有累计条目数,运行史恒为空。
-    fetchers = source_management_catalog(session)
+    # 源管理目录(issue #262 第三波):没有采集绑定的源也进汇总——它们只有累计条目数,运行史恒为空;
+    # 退役源也带上,源管理「含已退役」时才有真实的历史条目数(检视 R1 #6)。
+    fetchers = source_management_catalog(session, include_retired=True)
 
     # 用户自定源(v3.40)以 fetcher-like 形状并入健康汇总:节点管理信号条的「自定源」
     # 角色档由此有数据可看(设计 §5 承诺的筛选可见)。抓取经 generic_rss 执行,
@@ -171,14 +172,21 @@ def get_source_health(session: Session = Depends(deps.get_session)):
 
     health_items = []
     for fetcher in fetchers:
-        item = (
-            build_fetcher_health_from_state(fetcher, states_by_source[fetcher["id"]])
-            if fetcher["id"] in states_by_source
-            else build_fetcher_health(
-                fetcher,
-                runs_by_fetcher.get(fetcher["id"], []),
+        if fetcher.get("bound") is False:
+            # 无采集绑定的源(收录临时源 / 存量回填 / 系统 / 退役):不看历史快照与运行记录——存量源可能
+            # 带着多年前的失败快照,不能算进今天的采集告警(检视 R1 #5)。
+            item = build_fetcher_health(fetcher, [])
+        else:
+            item = (
+                build_fetcher_health_from_state(fetcher, states_by_source[fetcher["id"]])
+                if fetcher["id"] in states_by_source
+                else build_fetcher_health(
+                    fetcher,
+                    runs_by_fetcher.get(fetcher["id"], []),
+                )
             )
-        )
+        item["bound"] = fetcher.get("bound", True)
+        item["retired"] = bool(fetcher.get("retired"))
         item["total_articles"] = article_count_by_source.get(fetcher["id"], 0)
         if fetcher.get("user_source"):
             # builder 是白名单字段,用户源的身份标记在此透传(前端节点行/筛选依赖)。

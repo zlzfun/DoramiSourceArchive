@@ -387,9 +387,9 @@ def _ensure_ai_native_dev_collection_job(session: Session, *, now: str) -> None:
         try:
             source_ids = json.loads(record.fetcher_ids_json or "[]")
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise ValueError("Tessl 采集任务节点列表损坏，停止目录导入") from exc
+            raise ValueError("Tessl 采集任务的源列表损坏，停止目录导入") from exc
         if not isinstance(source_ids, list):
-            raise ValueError("Tessl 采集任务节点列表不是数组，停止目录导入")
+            raise ValueError("Tessl 采集任务的源列表不是数组，停止目录导入")
         source_ids = list(dict.fromkeys([*source_ids, AI_NATIVE_DEV_SOURCE_ID]))
         record.fetcher_ids_json = json.dumps(source_ids, ensure_ascii=False, sort_keys=True)
         record.updated_at = now
