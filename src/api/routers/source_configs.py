@@ -433,7 +433,7 @@ def toggle_source_config(
     if is_public_podcast_source(record):
         raise HTTPException(
             status_code=400,
-            detail="公共 Podcast 节点始终可采集，请在采集任务中控制运行节奏",
+            detail="公共 Podcast 源始终可采集，请在采集任务中控制运行节奏",
         )
     record.is_active = is_active
     record.updated_at = _now_iso()

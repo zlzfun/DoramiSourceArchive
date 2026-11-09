@@ -345,15 +345,18 @@ export default function FetchRunsTab({
   );
 
   const draftFetcherIds = useMemo(() => jobDraft.fetcher_ids || [], [jobDraft.fetcher_ids]);
+  // 只有有采集绑定的源能编入采集任务(issue #262 第三波:源目录里也列出收录临时源 / 存量等无绑定的源)。
+  const jobCatalog = useMemo(() => availableFetchers.filter(fetcher => fetcher.bound !== false), [availableFetchers]);
+  const jobCatalogById = useMemo(() => Object.fromEntries(jobCatalog.map(fetcher => [fetcher.id, fetcher])), [jobCatalog]);
   const filteredModalFetchers = useMemo(() => {
     const query = jobSearch.trim().toLowerCase();
-    if (!query) return availableFetchers;
-    return availableFetchers.filter(fetcher =>
+    if (!query) return jobCatalog;
+    return jobCatalog.filter(fetcher =>
       [fetcher.name, fetcher.id, fetcher.desc].filter(Boolean).join(' ').toLowerCase().includes(query)
     );
-  }, [availableFetchers, jobSearch]);
+  }, [jobCatalog, jobSearch]);
 
-  // 目录同款分组(节点页 groupByRole):信息角色 → 节点(组内按公司名聚拢)。
+  // 目录同款分组(源管理页 groupByRole):信息角色 → 源(组内按公司名聚拢)。
   const groupedCatalog = useMemo(() => groupByRole(filteredModalFetchers), [filteredModalFetchers]);
 
   // 点名册组全选/清空:整组编入(补默认参数)或整组移出;已改参数保留(重勾恢复,防误触丢配置)。
@@ -588,7 +591,7 @@ export default function FetchRunsTab({
         key: `c-${run.id}`,
         rowType: 'collection',
         title,
-        subtitle: run.job_id ? `任务 #${run.job_id} · ${run.node_count || 0} 节点` : `${scopeLabel(run.run_scope)} · ${run.node_count || 0} 节点`,
+        subtitle: run.job_id ? `任务 #${run.job_id} · ${run.node_count || 0} 源` : `${scopeLabel(run.run_scope)} · ${run.node_count || 0} 源`,
         ...run,
       });
     });
@@ -597,7 +600,7 @@ export default function FetchRunsTab({
         key: `f-${run.id}`,
         rowType: 'fetch',
         title: getFetcherName(run.fetcher_id),
-        subtitle: `${run.fetcher_id} · 单节点`,
+        subtitle: `${run.fetcher_id} · 单源`,
         ...run,
       });
     });
@@ -752,7 +755,7 @@ export default function FetchRunsTab({
     const name = jobDraft.name.trim();
     const fetcherIds = normalizeIds(jobDraft.fetcher_ids);
     if (!name) { showToast('采集任务名称不能为空', 'error'); return; }
-    if (fetcherIds.length === 0) { showToast('采集任务至少需要选择一个节点', 'error'); return; }
+    if (fetcherIds.length === 0) { showToast('采集任务至少需要选择一个源', 'error'); return; }
     const payload = {
       ...jobDraft,
       name,
@@ -762,7 +765,7 @@ export default function FetchRunsTab({
     await runAction(() => (editingJobId ? updateCollectionJob(editingJobId, payload) : createCollectionJob(payload)), {
       showToast,
       success: editingJobId ? `已保存 ${name}` : `已新建 ${name}`,
-      error: '保存采集任务失败,请检查名称与节点后重试',
+      error: '保存采集任务失败,请检查名称与所选的源后重试',
       onSuccess: () => { setJobModalOpen(false); loadAll(); },
     });
   };
@@ -885,8 +888,8 @@ export default function FetchRunsTab({
           </div>
           <div className="tt-row-mid">
             {entry.kind === 'adhoc'
-              ? <>由节点管理直接发起 <span className="tt-cron">不定时</span></>
-              : <>{entry.nodeCount} 节点 <span className="tt-cron">{entry.cron || '手动触发'}</span></>}
+              ? <>由源管理直接发起 <span className="tt-cron">不定时</span></>
+              : <>{entry.nodeCount} 源 <span className="tt-cron">{entry.cron || '手动触发'}</span></>}
           </div>
           <div className="tt-row-bot">
             <span className="tt-dots" title="近 7 日结果">
@@ -1065,7 +1068,7 @@ export default function FetchRunsTab({
                       <td colSpan={8}>
                         <div className="flow-empty">
                           当前筛选下暂无运行记录<br />
-                          去左侧时刻表选一个任务立即运行,或在节点管理发起一次临时抓取
+                          去左侧时刻表选一个任务立即运行,或在源管理发起一次临时抓取
                         </div>
                       </td>
                     </tr>
@@ -1112,7 +1115,7 @@ export default function FetchRunsTab({
                                           <span className="run-progress-track">
                                             <span className="run-progress-fill" style={{ width: `${Math.round((terminalChildren / nodeCount) * 100)}%` }} />
                                           </span>
-                                          <span className="run-progress-n">{terminalChildren}/{nodeCount} 节点</span>
+                                          <span className="run-progress-n">{terminalChildren}/{nodeCount} 源</span>
                                         </div>
                                       ) : (
                                         <div className="run-obj-sub">{run.subtitle}</div>
@@ -1291,19 +1294,19 @@ export default function FetchRunsTab({
               <input
                 value={jobSearch}
                 onChange={event => setJobSearch(event.target.value)}
-                placeholder="搜索节点名或 ID"
-                aria-label="搜索节点"
+                placeholder="搜索源名或 ID"
+                aria-label="搜索源"
               />
             </div>
             <span className="jr-count">
-              已编入 <b>{draftFetcherIds.length}</b> / {availableFetchers.length} · 改动 <b>{paramChangeCount}</b>
+              已编入 <b>{draftFetcherIds.length}</b> / {jobCatalog.length} · 改动 <b>{paramChangeCount}</b>
             </span>
           </div>
 
           {/* ── 点名册:勾选与定额同一行(勾中行尾浮现上限;默认值 muted、改动 ink 加粗) ── */}
           <div className="jr-list">
             {groupedCatalog.length === 0 ? (
-              <div className="jr-empty">没有匹配「{jobSearch.trim()}」的节点,换个关键词试试</div>
+              <div className="jr-empty">没有匹配「{jobSearch.trim()}」的源,换个关键词试试</div>
             ) : groupedCatalog.map(section => {
               const sectionFetchers = section.fetchers;
               const allIn = sectionFetchers.every(f => draftFetcherIds.includes(f.id));
@@ -1377,12 +1380,12 @@ export default function FetchRunsTab({
             })}
           </div>
 
-          {/* 编外兜底:已编入但不在目录的节点(改名/退役的化石引用)——可见、可移除,
-              否则只出现在计数里没法清理 */}
-          {draftFetcherIds.some(id => !fetchersById[id]) && (
+          {/* 编外兜底:已编入但不能采集的源(改名 / 退役的化石引用,或没有采集绑定的源)——可见、可移除,
+              否则只出现在计数里没法清理,保存还会被后端 400 拒绝(检视 R1 #3) */}
+          {draftFetcherIds.some(id => !jobCatalogById[id]) && (
             <div className="jr-list" style={{ flex: 'none', overflow: 'visible' }}>
-              <div className="jr-group-head">不在目录(已改名或退役,建议移出)</div>
-              {draftFetcherIds.filter(id => !fetchersById[id]).map(id => (
+              <div className="jr-group-head">不能采集(已改名、退役或没有采集绑定,建议移出)</div>
+              {draftFetcherIds.filter(id => !jobCatalogById[id]).map(id => (
                 <div
                   key={id}
                   role="checkbox"

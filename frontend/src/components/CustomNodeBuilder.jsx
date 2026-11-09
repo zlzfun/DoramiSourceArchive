@@ -141,7 +141,7 @@ export default function CustomNodeBuilder({ showToast }) {
     setSaving(true);
     try {
       await createSourceConfig(toPayload(form));
-      showToast?.(`已保存节点：${form.name}`, 'success');
+      showToast?.(`已保存源：${form.name}`, 'success');
       setAnalysis(null);
       setForm(null);
       setPreview(null);
@@ -171,7 +171,7 @@ export default function CustomNodeBuilder({ showToast }) {
   };
 
   const onDelete = async (row) => {
-    if (!window.confirm(`删除节点「${row.name}」？该操作不可撤销。`)) return;
+    if (!window.confirm(`删除源「${row.name}」？该操作不可撤销。`)) return;
     try {
       await deleteSourceConfig(row.source_id);
       loadSaved();
@@ -185,8 +185,8 @@ export default function CustomNodeBuilder({ showToast }) {
         <div className="flex items-center gap-2 mb-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-[var(--r-control)] bg-violet-50 text-violet-600"><Wand2 className="h-5 w-5" /></div>
           <div>
-            <div className="font-semibold text-slate-800">AI 自定义节点</div>
-            <div className="text-xs text-slate-500">输入一个内容源 URL，自动判断类型、分析结构并生成可抓取的节点配置。</div>
+            <div className="font-semibold text-slate-800">AI 自定义源</div>
+            <div className="text-xs text-slate-500">输入一个内容源 URL，自动判断类型、分析结构并生成可抓取的源配置。</div>
           </div>
         </div>
         <div className="flex gap-2">
@@ -218,7 +218,7 @@ export default function CustomNodeBuilder({ showToast }) {
         <div className="surface-card rounded-[var(--r-overlay)] p-5 space-y-4">
           <div className="font-semibold text-slate-800">配置（可编辑）</div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Field label="节点名称"><input className={inputCls} value={form.name} onChange={e => set('name', e.target.value)} /></Field>
+            <Field label="源名称"><input className={inputCls} value={form.name} onChange={e => set('name', e.target.value)} /></Field>
             <Field label="数据源 ID"><input className={inputCls} value={form.source_id} onChange={e => set('source_id', e.target.value)} /></Field>
             <Field label="类型">
               <select className={inputCls} value={form.source_type} onChange={e => set('source_type', e.target.value)}>
@@ -261,7 +261,7 @@ export default function CustomNodeBuilder({ showToast }) {
               {previewing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />} 试抓预览
             </button>
             <button onClick={onSave} disabled={saving} className="btn-primary inline-flex items-center gap-2">
-              <Save className="h-4 w-4" /> 保存为节点
+              <Save className="h-4 w-4" /> 保存为源
             </button>
           </div>
 

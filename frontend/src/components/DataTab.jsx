@@ -584,7 +584,7 @@ export default function DataTab({
                 onClick={() => setFilters(prev => ({ ...prev, source_id: '' }))}
                 className={`ledger-facet-item ${!filters.source_id ? 'is-on' : ''}`}
               >
-                全部节点
+                全部来源
               </button>
               {sourceFacets.map(s => (
                 <button

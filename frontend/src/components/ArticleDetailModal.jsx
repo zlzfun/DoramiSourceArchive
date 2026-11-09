@@ -73,7 +73,7 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
               )}
             </div>
             <div>
-              <label className="form-label flex items-center"><Calendar className="w-3.5 h-3.5 mr-1" /> 来源节点与收录时间</label>
+              <label className="form-label flex items-center"><Calendar className="w-3.5 h-3.5 mr-1" /> 来源与收录时间</label>
               <div className="text-sm text-slate-700 flex items-center space-x-2">
                 <span className="bg-[var(--dorami-soft)] px-2 py-0.5 rounded text-slate-500">{getFetcherName(data.source_id)}</span>
                 <span className="text-slate-500">|</span>

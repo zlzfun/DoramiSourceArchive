@@ -595,7 +595,7 @@ def test_audit_summary_edge_cases(tmp_path):
     )
     assert "数量未知" in _summary_of("POST", "/api/accounts/batch", None)
     assert "数量未知" in _summary_of("POST", "/api/articles/batch-delete", None)
-    assert _summary_of("POST", "/api/fetch/batch", {"items": [{}, {}]}) == "批量触发采集 2 个节点"
+    assert _summary_of("POST", "/api/fetch/batch", {"items": [{}, {}]}) == "批量触发采集 2 个源"
     assert _summary_of("DELETE", "/api/articles/abc/def", None) == "删除文章 abc/def"
 
 
@@ -699,8 +699,8 @@ def test_source_health_state_path_and_fallback(tmp_path, monkeypatch):
     ]
     monkeypatch.setattr(
         monitoring,
-        "collection_node_catalog",
-        lambda _session: [dict(f) for f in fetchers],
+        "source_management_catalog",
+        lambda _session, **_kw: [dict(f) for f in fetchers],
     )
     now = _iso_days_ago(0)
     with Session(engine) as session:

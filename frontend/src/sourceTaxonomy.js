@@ -56,7 +56,7 @@ export const COMPANY_REGISTRY = {
   qbitai: { name: '量子位', en: 'QbitAI', accent: '#E8392E', domain: 'qbitai.com', monogram: '量', logoPath: '/source-logos/qbitai.png' },
   ycombinator: { name: 'Hacker News', en: 'Y Combinator', accent: '#FF6600', domain: 'news.ycombinator.com', monogram: 'Y', logoPath: '/source-logos/ycombinator.png' },
   dorami: { name: '哆啦美', en: 'Dorami', accent: '#5B54E8', domain: '', monogram: '美', mark: 'dorami' },
-  [CUSTOM_COMPANY_KEY]: { name: '通用能力节点', en: 'Custom', accent: '#64748B', domain: '', monogram: '⚙' },
+  [CUSTOM_COMPANY_KEY]: { name: '通用能力', en: 'Custom', accent: '#64748B', domain: '', monogram: '⚙' },
 };
 
 /* ──────────────────────────────────────────────────────────
@@ -225,6 +225,9 @@ export const SOURCE_ROLES = [
   /* 收录(issue #262):收录通道遇到未登记出处自动建的临时源——没进策展目录,不属于角色轴;
      发现页不列,只在订阅了它的读者源栏里出现。后端评分与早报仍按「媒体」档处理。 */
   { key: 'collected', label: '收录', tone: 'slate', accent: '#64748b', blurb: '收录时遇到的、尚未列入目录的来源' },
+  /* 系统(issue #262 第三波):平台自身的产出(公共日报)也是一个源行,只在源管理里可见、没有动作;
+     读者目录从不含它,所以阅读器源栏不会出现这一组。 */
+  { key: 'system', label: '系统', tone: 'slate', accent: '#64748b', blurb: '平台自身的产出,如公共日报' },
 ];
 
 const ROLE_LABEL = Object.fromEntries(SOURCE_ROLES.map((r) => [r.key, r.label]));

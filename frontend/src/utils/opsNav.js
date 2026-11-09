@@ -36,7 +36,7 @@ export const OPS_PAGES = [
   },
   {
     id: 'user-sources', name: '自定源与收录', icon: 'rss', usesDays: false,
-    blocks: [['sources', '自定源'], ['ingest', '收录']],
+    blocks: [['sources', '自定源'], ['ingest', '收录令牌']],
   },
   {
     id: 'inbox', name: '反馈与公告', icon: 'message', usesDays: false,

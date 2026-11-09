@@ -443,15 +443,15 @@ AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
         "POST",
         re.compile(r"^/api/fetch/batch$"),
         lambda _m, body: (
-            "批量触发采集（节点数未知，请求体未采集）" if body is None
-            else f"批量触发采集 {len(body.get('items') or [])} 个节点",
+            "批量触发采集（源数未知，请求体未采集）" if body is None
+            else f"批量触发采集 {len(body.get('items') or [])} 个源",
             None,
         ),
     ),
     (
         "POST",
         re.compile(r"^/api/fetch/(?P<target>[^/]+)$"),
-        lambda match, body: _id_target(match, body, noun="采集节点", action="手动触发"),
+        lambda match, body: _id_target(match, body, noun="源", action="手动触发"),
     ),
     (
         "POST",

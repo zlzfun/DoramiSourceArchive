@@ -12,3 +12,8 @@ test('自定源与收录临时源各自成组,不混进策展角色轴', () => {
   assert.equal(sourceRoleOf({ source_id: 'user_rss_abc' }), 'custom');
   assert.equal(sourceRoleOf({ source_id: 'web_pushed', listing: 'unlisted' }), 'collected');
 });
+
+test('系统源(公共日报)单独成组,只在源管理里出现', () => {
+  assert.equal(sourceRoleOf({ source_id: 'dorami_daily_brief', origin: 'system' }), 'system');
+  assert.equal(sourceRoleOf({ source_id: 'web_legacy', origin: 'legacy' }), 'media');
+});

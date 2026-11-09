@@ -20,7 +20,7 @@ from sqlmodel import Session
 from api import deps
 from api.collection_planning import test_run_overrides
 from services import jobs
-from services.collection_nodes import collection_node_catalog
+from services.collection_nodes import source_management_catalog
 
 router = APIRouter(tags=["fetchers"])
 
@@ -40,8 +40,12 @@ class FetchBatchParams(BaseModel):
 
 
 @router.get("/api/fetchers")
-async def get_available_fetchers(session: Session = Depends(deps.get_session)):
-    return collection_node_catalog(session)
+async def get_available_fetchers(
+        include_retired: bool = False,
+        session: Session = Depends(deps.get_session),
+):
+    """源管理目录:全部公共源(issue #262 第三波),每条带 ``bound``(有采集绑定才能运行 / 编入任务)。"""
+    return source_management_catalog(session, include_retired=include_retired)
 
 
 @router.post("/api/fetch/batch")
@@ -49,7 +53,7 @@ async def trigger_fetch_batch(
         params: FetchBatchParams,
         test_limit: Optional[int] = None,
 ):
-    """临时批量触发多个抓取节点：提交持久化后台任务并立即返回 job_id（不再占满长请求）。
+    """临时批量触发多个源的抓取：提交持久化后台任务并立即返回 job_id（不再占满长请求）。
 
     校验（items 为空 → 400）同步完成；实际 run_collection_items 收进后台任务，它仍写
     CollectionJobRunRecord 聚合记录，聚合结果作 job.result 落库，前端轮询
@@ -63,7 +67,7 @@ async def trigger_fetch_batch(
         for item in params.items
     ]
     if not items:
-        raise HTTPException(status_code=400, detail="至少需要一个抓取节点")
+        raise HTTPException(status_code=400, detail="至少需要一个源")
 
     async def _work(bg) -> Dict[str, Any]:
         return await _app().run_collection_items(

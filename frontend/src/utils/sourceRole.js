@@ -21,6 +21,7 @@ const MEDIA_SCOPES = new Set(['ai_media', 'tech_media']);
    归「媒体」——官方待遇只给身份可考的策展源(issue #262 B7:此前前端回落「官方」)。 */
 export const sourceRoleOf = (source) => {
   if (source?.user_source || String(source?.source_id || '').startsWith('user_rss_')) return 'custom';
+  if (source?.origin === 'system') return 'system';
   if (source?.listing === 'unlisted') return 'collected';
   const scope = source?.source_scope || '';
   const tier = source?.provenance_tier || '';

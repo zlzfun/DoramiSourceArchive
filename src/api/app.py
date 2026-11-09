@@ -749,7 +749,7 @@ if accounts_service.seed_root_admin_if_empty(db_sink.engine):
 _podcast_bootstrap = podcast_catalog_service.ensure_default_podcast_sources(db_sink.engine)
 if _podcast_bootstrap["created"]:
     logging.getLogger("dorami.sources").info(
-        "🎙️ 已安装 %d 个默认播客采集节点",
+        "🎙️ 已安装 %d 个默认播客源",
         len(_podcast_bootstrap["created"]),
     )
 # 源表成为全集(issue #262 R1c):外网 authority 启动时把预设抓取器镜像成源行、补系统行与
@@ -2865,7 +2865,7 @@ async def execute_collection_job(job_id: int):
         items = build_collection_job_items(job)
         job_name = job.name
 
-    print(f"⏰ 采集任务触发: {job_name} ({len(items)} 个节点)")
+    print(f"⏰ 采集任务触发: {job_name} ({len(items)} 个源)")
     await run_collection_items(
         items,
         name=job_name,
@@ -3804,7 +3804,7 @@ async def run_fetcher_with_tracking(
     mark_source_state_started(execution_fetcher_id, params, run_id)
     fetcher_class = fetcher_registry.get_class(execution_fetcher_id)
     if not fetcher_class:
-        message = f"未知的抓取器节点: {logical_node_id}"
+        message = f"未知的源: {logical_node_id}"
         finish_fetch_run(run_id, status="failed", error_message=message)
         mark_source_state_finished(execution_fetcher_id, params, run_id, status="failed", error=message)
         raise ValueError(message)
@@ -3968,7 +3968,7 @@ async def run_collection_items(
         fetcher_id = str(item.get("fetcher_id", "")).strip()
         params = item.get("params") or {}
         if not fetcher_id:
-            return {"fetcher_id": fetcher_id, "status": "failed", "error": "空节点 ID"}
+            return {"fetcher_id": fetcher_id, "status": "failed", "error": "空源 ID"}
         try:
             async with semaphore:
                 return await run_fetcher_with_tracking(

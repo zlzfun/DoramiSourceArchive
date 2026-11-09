@@ -503,8 +503,9 @@ export function fetchAskProgress(askId) {
 }
 
 // ==================== 抓取器 / 数据源健康 ====================
-export function fetchFetchers() {
-  return request('/fetchers', { errorMsg: '获取抓取器注册表失败' });
+// 源管理目录(issue #262 第三波):全部公共源,每条带 bound(有采集绑定才能运行 / 编入任务);退役源按需带上。
+export function fetchFetchers({ includeRetired = false } = {}) {
+  return request(includeRetired ? '/fetchers?include_retired=true' : '/fetchers', { errorMsg: '获取源目录失败' });
 }
 
 export function fetchSourceHealth() {

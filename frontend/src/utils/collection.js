@@ -9,13 +9,13 @@ export function normalizeIds(ids) {
 }
 
 // 采集/批量运行结果的统一提示文案。
-// successCount 省略时不含「完成 N 个节点」前缀（供 FetchRunsTab 的采集任务运行复用，
-// 输出与其原实现逐字一致）；传入时（FetchTab 批量抓取）补上节点完成数。
+// successCount 省略时不含「完成 N 个源」前缀（供 FetchRunsTab 的采集任务运行复用，
+// 输出与其原实现逐字一致）；传入时（FetchTab 批量抓取）补上源完成数。
 export function collectionRunMessage(prefix, result, successCount = null) {
   const failed = result?.failed_count || 0;
   const saved = result?.saved_count || 0;
   const analysisQueued = result?.analysis_queued_count || 0;
-  const okText = successCount === null ? '' : `完成 ${successCount} 个节点，`;
+  const okText = successCount === null ? '' : `完成 ${successCount} 个源，`;
   const analysisText = analysisQueued ? `，已入队分析 ${analysisQueued} 篇` : '';
   const failureText = failed ? `，失败 ${failed} 个${result.error_message ? `：${result.error_message}` : ''}` : '';
   return `${prefix}：${okText}新增 ${saved} 条${analysisText}${failureText}`;
