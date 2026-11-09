@@ -12,7 +12,6 @@
 ## 年表(一行一波;自 `CLAUDE.md` 迁入 2026-10-21,**新波次在此加一行**,L0 不再逐波改)
 
 - **已发布迁移文件守卫 + 部署健康验证诊断(issue #227,开发版 3.68.0-alpha,2026-11-09,待发布)**:CI `scripts/check_released_migrations.py` 对最新正式 tag 逐字节比对 `alembic/versions/*`(新增允许,改写 / 删除 / 改名红);手工 `./deploy-docker.sh` 探针地址取 compose 解析出的 nginx 发布端口(v3.67.0 手工部署 87 次 `bad-json` 推测是探到了 80 端口 TLS 边缘的 301 页),健康失败打 HTTP 状态码 + 响应前 200 字节 + 提示;backend healthcheck `start_period` 按「待执行迁移数 × 每迁移秒数 × 库 GiB」加宽;`compose up` 失败单独报。见 [方案](archive/issue-227-released-migrations-guard.md)。
-- **已发布迁移文件守卫 + 部署健康验证诊断(issue #227,开发版 3.68.0-alpha,2026-11-09,待发布)**:CI `scripts/check_released_migrations.py` 对最新正式 tag 逐字节比对 `alembic/versions/*`(新增允许,改写 / 删除 / 改名红);手工 `./deploy-docker.sh` 探针地址与 compose 同口径读 `.env`(v3.67.0 手工部署 87 次 `bad-json` 的真因是探到了 80 端口 TLS 边缘的 301 页),健康失败打 HTTP 状态码 + 响应前 200 字节 + 提示;backend healthcheck `start_period` 按「待执行迁移数 × 每迁移秒数 × 库 GiB」加宽;`compose up` 失败单独报。见 [方案](archive/issue-227-released-migrations-guard.md)。
 - **早报播客导读入口（#269，2026-11-09，已获准合入 PR #273）**：所有播客信息栏增加生成/播放按钮，独立刷新当前导读状态，接入既有点播与播放器；交互回归不触发付费，另复用 #268 已授权生成的真实音频验证播放，PR #273 获准合入，待正式发布。
 
 - **并发首访懒建已读水位撞唯一约束修复(issue #251,PR #274,2026-11-09,开发版 3.68.0-alpha,Codex 两轮检视通过、纯后端按例外合入、待发布)**:同一账号两处同时首次挂载阅读器拉 `/api/reader/unread-counts`,`ensure_cursors()` 先读后插同建一行、后到者撞 `reader_read_cursors` 主键返回 500;改一条 `INSERT … ON CONFLICT DO NOTHING` + commit 后重读,两请求都拿先到者的 backlog 水位;补确定性交错与双线程现场两条用例,反向对照旧码两条都撞约束。同文件 `_set_read_state` / `reset_cursor` 同类写法暴露面低、记观察期。见 [方案](archive/issue-251-cursor-upsert.md)。
