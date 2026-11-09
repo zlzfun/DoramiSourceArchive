@@ -292,6 +292,7 @@
 .bp-sheet.is-mobile .bp-item-sum { margin: 6px 0 0; font-size: var(--m-fs-md); line-height: 1.7; }
 .bp-sheet.is-mobile .bp-item-meta { gap: 4px 6px; min-height: 22px; margin-top: 8px; font-size: var(--m-fs-xs); }
 .bp-sheet.is-mobile .bp-item-meta .bp-src { gap: 6px; }
+.bp-sheet.is-mobile .bp-guide { min-height: 44px; padding: 0 6px; font-size: var(--m-fs-sm); }
 .bp-sheet.is-mobile .bp-item-meta .bp-src-name { font-size: var(--m-fs-sm); }
 .bp-sheet.is-mobile .bp-meta > .bp-time::before,
 .bp-sheet.is-mobile .bp-meta > .bp-why::before,

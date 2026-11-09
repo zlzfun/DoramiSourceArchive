@@ -12,6 +12,7 @@ import { flushPendingInterestSaves } from '../utils/interestSaveQueue';
 import { rebuildToast } from '../utils/briefRebuild';
 import { guestEdition } from '../utils/guestCopy';
 import LogoMark from './LogoMark';
+import BriefPodcastGuide from './BriefPodcastGuide';
 import BriefHistoryCalendar, { BriefHistorySheet } from './BriefHistoryCalendar';
 import { GlassBtn, HeadTitle, MobileHeader } from './mobile/MobileHeader';
 import { useLongPress } from '../hooks/useLongPress';
@@ -234,7 +235,7 @@ function FavoriteButton({ articleId, favoriteIds, onToggleFavorite, label = fals
 
 // 板块条目。手机档(issue #230 批 3b,样页拍板 13 / 14):不带英文原标题与收藏星(收藏走长按动作单与正文页),
 // 分数挪到元信息行尾;整卡可点(标题按钮 ::after 拉伸)、可长按(press = useLongPress 的绑定),anchored = 动作单正指着它
-function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds, onToggleFavorite, mobile = false, press = null, anchored = false }) {
+function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds, onToggleFavorite, guideProps, mobile = false, press = null, anchored = false }) {
   const { preferChinese } = useTitlePreference();
   const view = viewOf(item, source, preferChinese);
   const { snapshot } = view;
@@ -264,6 +265,7 @@ function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds
         )}
         {!mobile && score}
         <WhyMark why={view.why} />
+        <BriefPodcastGuide item={item} source={source} {...guideProps} />
         <RelatedChip links={related} open={showRelated} onToggle={() => setShowRelated((value) => !value)} />
         {mobile ? score : <FavoriteButton articleId={item.article_id} favoriteIds={favoriteIds} onToggleFavorite={onToggleFavorite} />}
       </div>
@@ -275,7 +277,7 @@ function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds
 // 手机档头条(issue #230 批 3b,样页第 1 轮返修第 2 条):整块可点——标题按钮的 ::after 铺满头条块,按下整块压暗一档、缩到 0.99;
 // 摘要下只有文字级「全文 ›」提示(没有实底「阅读全文」与收藏钮,收藏走长按);英文原标题保留(拍板 14 只撤板块条目的);
 // 评分栏在可点块之外。可长按(press),anchored = 动作单正指着它。
-function MobileHeadline({ item, kicker, source, flash, onOpen, onSubscribeSource, press = null, anchored = false }) {
+function MobileHeadline({ item, kicker, source, flash, onOpen, onSubscribeSource, guideProps, press = null, anchored = false }) {
   const { preferChinese } = useTitlePreference();
   const view = viewOf(item, source, preferChinese);
   const { snapshot } = view;
@@ -299,6 +301,7 @@ function MobileHeadline({ item, kicker, source, flash, onOpen, onSubscribeSource
             <span className="bp-time" title={formatDateTime(snapshot.publish_date)}>{formatRelativeTime(snapshot.publish_date, '')}</span>
           )}
           {view.why.cls === 'is-interest' && <WhyMark why={view.why} />}
+          <BriefPodcastGuide item={item} source={source} {...guideProps} />
           <RelatedChip links={related} open={showRelated} onToggle={() => setShowRelated((value) => !value)} />
         </p>
         {view.summary && <p className="bp-sum">{view.summary}</p>}
@@ -338,7 +341,7 @@ export function BriefPeek({ item, source = null }) {
   );
 }
 
-function Headline({ item, kicker, source, flash, restCount, onOpen, onSubscribeSource, favoriteIds, onToggleFavorite }) {
+function Headline({ item, kicker, source, flash, restCount, onOpen, onSubscribeSource, favoriteIds, onToggleFavorite, guideProps }) {
   const { preferChinese } = useTitlePreference();
   const view = viewOf(item, source, preferChinese);
   const { snapshot } = view;
@@ -363,6 +366,7 @@ function Headline({ item, kicker, source, flash, restCount, onOpen, onSubscribeS
               <span className="bp-time" title={formatDateTime(snapshot.publish_date)}>{formatRelativeTime(snapshot.publish_date, '')}</span>
             )}
             {view.why.cls === 'is-interest' && <WhyMark why={view.why} />}
+            <BriefPodcastGuide item={item} source={source} {...guideProps} />
             <RelatedChip links={related} open={showRelated} onToggle={() => setShowRelated((value) => !value)} />
           </p>
           {view.summary && <p className="bp-sum">{view.summary}</p>}
@@ -443,6 +447,7 @@ export default function PersonalBriefPage({
   onItemMenu = null,
   menuAnchorKey = null,
 }) {
+  const guideProps = { guest, showToast };
   const restoreRef = useRef(restore);
   const [flashId, setFlashId] = useState(null);
   const [history, setHistory] = useState([]);
@@ -932,6 +937,7 @@ export default function PersonalBriefPage({
     posterBody = (
       <MobileHeadline
         item={headline}
+        guideProps={guideProps}
         kicker={headline.selection_lane === 'breaking' ? `头条 · ${headWhy.text}` : `头条 · ${headSection}`}
         source={sourceMap[headline.snapshot?.source_id]}
         flash={flashId != null && (headline.id ?? headline.position) === flashId}
@@ -946,6 +952,7 @@ export default function PersonalBriefPage({
     posterBody = (
       <Headline
         item={headline}
+        guideProps={guideProps}
         kicker={headline.selection_lane === 'breaking' ? `头条 · ${headWhy.text}` : `头条 · ${headSection}`}
         source={sourceMap[headline.snapshot?.source_id]}
         flash={flashId != null && (headline.id ?? headline.position) === flashId}
@@ -1193,6 +1200,7 @@ export default function PersonalBriefPage({
                 <BriefItem
                   key={item.id || item.position}
                   item={item}
+                  guideProps={guideProps}
                   source={sourceMap[item.snapshot?.source_id]}
                   flash={flashId != null && (item.id ?? item.position) === flashId}
                   onOpen={openItem}
