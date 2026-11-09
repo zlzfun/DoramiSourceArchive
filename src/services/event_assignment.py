@@ -38,7 +38,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy import literal_column, text, tuple_
 from sqlalchemy.engine import Engine
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from config import LLMConfig
 from llm.client import ChatMessage, UsageMeta, chat_completion
@@ -359,23 +359,45 @@ def load_source_meta(session: Session, source_ids: Iterable[str]) -> dict[str, S
             select(SourceConfigRecord).where(SourceConfigRecord.source_id.in_(list(chunk)))
         ).all():
             configs[row.source_id] = row
+    classes = {source_id: _registry_class(source_id) for source_id in wanted}
+    # 既无配置行也无注册表类的源(只在归档里出现):形态按其条目的 content_type 判定,
+    # 与事件榜展示、早报同口径——此前一律当 article,推文可被选成代表稿(issue #262 B8)。
+    unregistered = [sid for sid in wanted if sid not in configs and classes.get(sid) is None]
+    fallback_shapes: dict[str, str] = {}
+    if unregistered:
+        from api.sources import source_shape
+
+        counts: dict[str, dict[str, int]] = {}
+        for chunk in _chunks(unregistered):
+            for sid, content_type, count in session.exec(
+                select(ArticleRecord.source_id, ArticleRecord.content_type, func.count())
+                .where(ArticleRecord.source_id.in_(list(chunk)))
+                .group_by(ArticleRecord.source_id, ArticleRecord.content_type)
+            ).all():
+                shape = source_shape(sid, content_type, {})
+                bucket = counts.setdefault(sid, {})
+                bucket[shape] = bucket.get(shape, 0) + int(count or 0)
+        for sid, bucket in counts.items():
+            # 取条目数最多的形态,平局按 article(与阅读器目录「主导 content_type」同口径)。
+            fallback_shapes[sid] = max(
+                bucket.items(), key=lambda item: (item[1], item[0] == "article")
+            )[0]
     result: dict[str, SourceMeta] = {}
     for source_id in wanted:
         config = configs.get(source_id)
-        cls = _registry_class(source_id)
+        cls = classes.get(source_id)
         if config is not None:
             role = source_role(
                 source_id,
                 source_scope=config.source_scope or "",
                 provenance_tier=config.provenance_tier or "",
             )
-            source_type = str(config.source_type or "").strip().lower()
-            config_shape = "social" if source_type in {"x", "x_timeline"} else (
-                "podcast" if user_sources.source_content_kind(config) == "podcast" else "article"
-            )
+            from api.sources import row_shape
+
+            config_shape = row_shape(config)
         else:
             role = source_role(source_id)
-            config_shape = "article"
+            config_shape = fallback_shapes.get(source_id, "article")
         shape = str(getattr(cls, "content_shape", "") or "").strip() if cls is not None else ""
         owner = str(getattr(cls, "source_owner", "") or "").strip() if cls is not None else ""
         if not owner and config is not None:

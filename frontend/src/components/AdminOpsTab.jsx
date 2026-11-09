@@ -15,6 +15,7 @@ import AnnouncementsPanel from './admin/AnnouncementsPanel';
 import AdminTaxonomyPanel from './admin/AdminTaxonomyPanel';
 import PodcastZone from './admin/PodcastZone';
 import UserSourcesPanel from './admin/UserSourcesPanel';
+import IngestPanel from './admin/IngestPanel';
 import OpsHome from './admin/OpsHome';
 import AccountsPage from './admin/pages/AccountsPage';
 import ReaderPage from './admin/pages/ReaderPage';
@@ -182,9 +183,14 @@ export default function AdminOpsTab({
         <SyncPage crumb={<OpsCrumb page={page} onGo={go} />} showToast={showToast} refreshTick={refreshTick} onArticlesChanged={onArticlesChanged} />
       )}
       {page?.id === 'user-sources' && (
-        <section id={opsBlockId('user-sources', 'sources')} className="ops-block" tabIndex={-1} aria-label="自定源">
-          <UserSourcesPanel showToast={showToast} refreshTick={refreshTick} />
-        </section>
+        <div className="grid gap-4">
+          <section id={opsBlockId('user-sources', 'sources')} className="ops-block" tabIndex={-1} aria-label="自定源">
+            <UserSourcesPanel showToast={showToast} refreshTick={refreshTick} />
+          </section>
+          <section id={opsBlockId('user-sources', 'ingest')} className="ops-block" tabIndex={-1} aria-label="收录">
+            <IngestPanel showToast={showToast} refreshTick={refreshTick} />
+          </section>
+        </div>
       )}
       {page?.id === 'inbox' && (
         <div className="grid gap-4">

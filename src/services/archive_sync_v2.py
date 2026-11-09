@@ -89,6 +89,13 @@ PODCAST_TEXT_PUBLICATIONS_CAPABILITY = "podcast-text-publications-v1"
 PODCAST_AUDIO_PUBLICATIONS_CAPABILITY = "podcast-audio-publications-v1"
 # 事件层(issue #121):按能力协商的可选流,旧版接收端缺它就跳过 events 流。
 EVENTS_CAPABILITY = "events_v1"
+# 源目录(issue #262 R1c):接收端在拉取请求里声明 ``receiver_capabilities=source-catalog-v1``,
+# 生产者对 sources / source_states 两流按请求投影——声明了的拿到完整源目录(镜像行、存量回填行、
+# 临时源、退役 = 带 retired_at 的 upsert),没声明的(旧接收端)拿到与重构前相同的导出。
+SOURCE_CATALOG_CAPABILITY = "source-catalog-v1"
+SOURCE_PROJECTION_LEGACY = "legacy"
+SOURCE_PROJECTION_CATALOG = "catalog-v1"
+SOURCE_PROJECTED_STREAMS = frozenset({"sources", "source_states"})
 REQUIRED_CAPABILITIES = (
     TRANSACTION_REVISION_CAPABILITY,
     AUTHORITATIVE_PRESENCE_CAPABILITY,
@@ -98,6 +105,7 @@ ADVERTISED_CAPABILITIES = (
     PODCAST_TEXT_PUBLICATIONS_CAPABILITY,
     PODCAST_AUDIO_PUBLICATIONS_CAPABILITY,
     EVENTS_CAPABILITY,
+    SOURCE_CATALOG_CAPABILITY,
 )
 # Compatibility alias for integrations that display the producer's advertised
 # feature set. Capability validation must use REQUIRED_CAPABILITIES instead.
@@ -254,6 +262,7 @@ def _manifest(
     *,
     complete: bool,
     since: str = "",
+    source_projection: str = "",
     extra: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     next_cursor = after
@@ -273,6 +282,9 @@ def _manifest(
         "generated_at": _now_iso(),
         "capabilities": list(ADVERTISED_CAPABILITIES),
     }
+    if stream in SOURCE_PROJECTED_STREAMS and source_projection:
+        # 回显本页实际使用的投影:接收端据此记账,旧生产者不回显 = legacy。
+        manifest["source_projection"] = source_projection
     if extra:
         # 附加、可缺省的观测字段(issue #261 计数):老接收端忽略未知 manifest 键。
         manifest.update(extra)
@@ -350,14 +362,59 @@ _SOURCE_FIELDS = (
 )
 
 
+# source-catalog-v1 投影额外携带的源目录字段(issue #262 R1c)。旧接收端只遍历自己的
+# _SOURCE_FIELDS,不会收到也不会误用它们。
+_CATALOG_SOURCE_FIELDS = (
+    "origin",
+    "shape",
+    "platform",
+    "icon",
+    "avatar_url",
+    "homepage_url",
+    "default_kind",
+    "language",
+    "daily",
+    "retired_at",
+)
+# 旧接收端的准入取值只有 admitted / incubating,且未知值会被当成 admitted
+# (registry.admission_status_of)——legacy 投影把新值折回旧端安全的取值。
+_LEGACY_ADMISSION = {"provisional": "incubating"}
+
+
 def _source_payload(row: SourceConfigRecord) -> dict[str, Any]:
     # No fetcher/cron/params: the receiving all-role node must not start collecting
     # platform sources, and params may contain producer-only credentials.
     payload = {field: getattr(row, field) for field in _SOURCE_FIELDS}
+    payload["admission_status"] = _LEGACY_ADMISSION.get(
+        str(row.admission_status or ""), row.admission_status
+    )
     # 线路兼容键(issue #178):旧版接收端只认 category,据此保留观察期,升级时迁移再映射成
     # admission_status。值由准入状态派生,不读退役列;不再支持旧版本对端后可删(见 docs/backlog.md)。
-    payload["category"] = _LEGACY_INCUBATING if row.admission_status == _LEGACY_INCUBATING else ""
+    payload["category"] = (
+        _LEGACY_INCUBATING if payload["admission_status"] == _LEGACY_INCUBATING else ""
+    )
     return payload
+
+
+def _catalog_source_payload(row: SourceConfigRecord) -> dict[str, Any]:
+    payload = {field: getattr(row, field) for field in _SOURCE_FIELDS}
+    payload["category"] = _LEGACY_INCUBATING if row.admission_status == _LEGACY_INCUBATING else ""
+    for field in _CATALOG_SOURCE_FIELDS:
+        payload[field] = getattr(row, field)
+    return payload
+
+
+def source_projection_for(receiver_capabilities: Iterable[str] | str | None) -> str:
+    """接收端声明 → 本次请求的有效投影(只有 legacy / catalog-v1 两种)。"""
+    if isinstance(receiver_capabilities, str):
+        values = {part.strip() for part in receiver_capabilities.split(",")}
+    else:
+        values = {str(part).strip() for part in (receiver_capabilities or ())}
+    return (
+        SOURCE_PROJECTION_CATALOG
+        if SOURCE_CATALOG_CAPABILITY in values
+        else SOURCE_PROJECTION_LEGACY
+    )
 
 
 def _article_payload(row: ArticleRecord, authority_id: str) -> dict[str, Any]:
@@ -1030,10 +1087,18 @@ def _upsert_payload(
     *,
     podcast_text_max_bytes: int = DEFAULT_PODCAST_TEXT_ARTIFACT_MAX_BYTES,
     podcast_text_max_chars: int = DEFAULT_PODCAST_TEXT_ARTIFACT_MAX_CHARS,
+    source_projection: str = SOURCE_PROJECTION_LEGACY,
 ) -> Optional[dict[str, Any]]:
     if stream == "sources":
         record = session.get(SourceConfigRecord, identity)
         if record is None or record.owner_username or record.collection_authority_id:
+            return None
+        if source_projection == SOURCE_PROJECTION_CATALOG:
+            return _catalog_source_payload(record)
+        # legacy 投影:成员资格由持久列 legacy_export 固定(镜像行 / 存量回填 / 临时源不发——
+        # 旧接收端收到的是它本来就没有的 id 的 tombstone,应用时是空操作);退役 = tombstone,
+        # 与重构前「物理删除」对旧端的效果相同。
+        if not getattr(record, "legacy_export", True) or record.retired_at:
             return None
         return _source_payload(record)
     if stream == "articles":
@@ -1084,6 +1149,14 @@ def _upsert_payload(
         if source is not None and (
             source.owner_username or source.collection_authority_id
         ):
+            return None
+        if (
+            source_projection == SOURCE_PROJECTION_LEGACY
+            and source is not None
+            and source.retired_at
+        ):
+            # legacy 退役 = 源 tombstone + 状态 tombstone:否则后置的状态 upsert 会在旧接收端
+            # 把已删源的状态重新建出来(方案 §3.4-2)。
             return None
         return _source_state_payload(record)
     if stream == "podcast_texts":
@@ -1390,6 +1463,7 @@ def export_page(
     podcast_text_page_max_bytes: int = DEFAULT_PODCAST_TEXT_SYNC_PAGE_MAX_BYTES,
     podcast_text_page_max_rows: int = DEFAULT_PODCAST_TEXT_SYNC_PAGE_MAX_ROWS,
     podcast_text_requested_page_max_bytes: Optional[int] = None,
+    receiver_capabilities: Iterable[str] | str | None = None,
     media_check: Optional[MediaExportCheck] = None,
 ) -> str:
     """Export one commit-ordered snapshot/keyset page for a v3-capable peer.
@@ -1401,6 +1475,7 @@ def export_page(
 
     if stream not in STREAMS:
         raise SyncV2Error(f"unsupported stream: {stream}")
+    source_projection = source_projection_for(receiver_capabilities)
     if after and not snapshot:
         raise SyncV2Error("snapshot is required when continuing a page")
     authority_id = producer_authority_id(engine)
@@ -1543,6 +1618,7 @@ def export_page(
                         authority_id,
                         podcast_text_max_bytes=podcast_text_max_bytes,
                         podcast_text_max_chars=podcast_text_max_chars,
+                        source_projection=source_projection,
                     )
                     if payload is None:
                         operation = "tombstone"
@@ -1660,6 +1736,7 @@ def export_page(
         rows,
         complete=complete,
         since=since,
+        source_projection=source_projection,
         extra=extra,
         ),
         rows,
@@ -2258,6 +2335,17 @@ def _apply_sources(
         for field in _SOURCE_FIELDS:
             if field != "source_id" and field in data:
                 setattr(existing, field, data[field])
+        # source-catalog-v1 投影带来的源目录字段(issue #262 R1c);legacy 载荷里没有,保持不动。
+        for field in _CATALOG_SOURCE_FIELDS:
+            if field in data:
+                value = data[field]
+                if field == "daily":
+                    value = bool(value)
+                elif field == "retired_at":
+                    value = str(value) if value else None
+                else:
+                    value = str(value or "")
+                setattr(existing, field, value)
         if "admission_status" not in data and "category" in data:
             # 旧版生产者只发 category(issue #178 前):按它推导准入状态,混部期间观察期不丢
             existing.admission_status = (

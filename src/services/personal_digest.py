@@ -65,7 +65,7 @@ from models.db import (
     TaxonomyVersionRecord,
     UserInterestTagRecord,
 )
-from services import source_visibility
+from services import source_catalog, source_visibility
 from services.article_display_tags import load_display_tags
 from services.article_time import in_time_window
 from services.collection_nodes import is_public_podcast_source
@@ -991,10 +991,11 @@ def _source_role_and_shape(
                 source_scope=config.source_scope or "",
                 provenance_tier=config.provenance_tier or "",
             )
-            source_type = str(config.source_type or "").strip().lower()
-            shape = "social" if source_type in {"x", "x_timeline"} else (
-                "podcast" if source_type in {"podcast", "podcast_rss"} else "article"
-            )
+            from api.sources import row_shape
+
+            # 显式形态列 > 绑定的抓取器类 > source_type(issue #262 R1c:预设镜像行的
+            # source_type 是 preset,只看类型会把 X 预设判成 article)。
+            shape = row_shape(config)
         elif fetcher_class is not None:
             role = source_role(source_id)
             shape = str(getattr(fetcher_class, "content_shape", "article") or "article")
@@ -2240,6 +2241,8 @@ def generate_personal_digest(
                     session,
                     sorted({candidate.source_id for candidate in breaking_candidates}),
                 ),
+                # 临时源(issue #262)不计入多源印证:同一件事用两个 id 推送不能凭空造出「两家报道」。
+                uncorroborating_source_ids=source_catalog.provisional_source_ids(session),
             )
 
     # 订阅域里已选中的文章若成为头条代表,从精选里提级到头条位(不重复出现,也不算降级);

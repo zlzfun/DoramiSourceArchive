@@ -15,6 +15,7 @@
  */
 
 import { avatarHue, avatarInitial } from './utils/avatarColor';
+import { sourceRoleOf } from './utils/sourceRole';
 
 /* ──────────────────────────────────────────────────────────
  * 1. owner 归一化：把同义/同司的 source_owner 收敛为单一 company key
@@ -221,39 +222,18 @@ export const SOURCE_ROLES = [
      防止无策展元数据的用户源回落进「官方」稀释组语义;仅订阅者的目录里出现。
      后端 source_role 无需镜像本档:用户源被日报机械排除,权威层吃不到。 */
   { key: 'custom', label: '自定源', tone: 'slate', accent: '#64748b', blurb: '你自己添加、目录未收录的来源' },
+  /* 收录(issue #262):收录通道遇到未登记出处自动建的临时源——没进策展目录,不属于角色轴;
+     发现页不列,只在订阅了它的读者源栏里出现。后端评分与早报仍按「媒体」档处理。 */
+  { key: 'collected', label: '收录', tone: 'slate', accent: '#64748b', blurb: '收录时遇到的、尚未列入目录的来源' },
 ];
 
 const ROLE_LABEL = Object.fromEntries(SOURCE_ROLES.map((r) => [r.key, r.label]));
 const ROLE_TONE = Object.fromEntries(SOURCE_ROLES.map((r) => [r.key, r.tone]));
 
-// ⚠️ 三个 scope 集合与 sourceRoleOf 的判定序在后端有镜像
-// (src/services/source_naming.py source_role,v3.35 日报权威机械层),改一处必须同步另一处。
-// expert_newsletter:专家自营 newsletter(Import AI = Jack Clark 个人执笔),
-// 此前因 tier1_curated 被判成「媒体」,但它没有编辑部,归「个人」才对。
-const PERSONAL_SCOPES = new Set([
-  'personal_commentary', 'expert_commentary', 'executive_commentary', 'expert_newsletter',
-]);
-// 基准评测榜(Arena 排行榜更新 / Artificial Analysis):此前 Arena 因 tier0 被判「官方」、
-// AA 因 tier1 被判「媒体」——两个同类源分居两组。它们产出的是排序信号,归「榜单」。
-const LEADERBOARD_SCOPES = new Set([
-  'community', 'developer_community', 'research_community', 'forum',
-  'ai_benchmark_platform', 'ai_benchmark_analysis',
-]);
-const MEDIA_SCOPES = new Set(['ai_media', 'tech_media']);
+// 角色判定在 utils/sourceRole.js(纯函数,单测直接导入);这里转出,调用方照旧从本模块取。
+export { sourceRoleOf };
 
-/* 源 → 信息角色 key。仅看策展元数据(provenance_tier / source_scope),不看形态。
-   用户自定源(user_rss_ 前缀/user_source 标记)最先短路进「自定」组——它们没有策展
-   元数据,不判定会全部回落「官方」。 */
-export const sourceRoleOf = (source) => {
-  if (source?.user_source || String(source?.source_id || '').startsWith('user_rss_')) return 'custom';
-  const scope = source?.source_scope || '';
-  if (source?.provenance_tier === 'tier2_personal_social' || PERSONAL_SCOPES.has(scope)) return 'personal';
-  if (LEADERBOARD_SCOPES.has(scope)) return 'leaderboard';
-  if (MEDIA_SCOPES.has(scope) || source?.provenance_tier === 'tier1_curated') return 'media';
-  return 'official';
-};
-
-export const roleLabelOf = (source) => ROLE_LABEL[sourceRoleOf(source)] || '官方';
+export const roleLabelOf = (source) => ROLE_LABEL[sourceRoleOf(source)] || '媒体';
 export const roleToneOf = (source) => ROLE_TONE[sourceRoleOf(source)] || 'slate';
 
 /* ── 社交平台标签(shape=social 的源)──

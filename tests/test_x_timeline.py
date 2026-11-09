@@ -501,3 +501,37 @@ def test_source_config_routes_handle_to_generic_x_template(tmp_path):
         "/2/users/by/username/configured_ai",
         "/2/users/77/tweets",
     ]
+
+
+def test_template_fetch_keeps_configured_source_identity(tmp_path):
+    """公开 fetch() 路径:血统覆写后条目仍属配置源,而不是模板 id(issue #262 B4)。"""
+
+    def handler(request: httpx.Request):
+        if request.url.path.endswith("/users/by/username/tester"):
+            return httpx.Response(
+                200, json={"data": {"id": "1", "username": "tester", "name": "Test User"}}
+            )
+        return httpx.Response(200, json=_timeline_payload())
+
+    fetcher = XTimelineFetcher(
+        x_config=_x_config(), runtime_engine=_sink(tmp_path).engine, max_retries=1
+    )
+
+    async def collect():
+        original = httpx.AsyncClient
+
+        def patched(*args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return original(*args, **kwargs)
+
+        httpx.AsyncClient = patched
+        try:
+            return [item async for item in fetcher.fetch(source_id="x_configured", handle="tester")]
+        finally:
+            httpx.AsyncClient = original
+
+    items = asyncio.run(collect())
+    assert items, "mock timeline should yield posts"
+    assert {item.source_id for item in items} == {"x_configured"}
+    assert all(item.id.startswith("x_configured_") for item in items)
+    assert all(item.content_type == "social_post" for item in items)

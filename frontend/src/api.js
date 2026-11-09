@@ -1201,6 +1201,31 @@ export function retryFullAnalysisBackfill(jobId) {
   return request(`/admin/analysis/backfills/${enc(jobId)}/retry-failed`, { method: 'POST', errorMsg: '重试失败文章失败' });
 }
 
+// ── 收录(issue #262 波 1):收录令牌与收录源 ──
+export function fetchIngestTokens() {
+  return request('/admin/ingest/tokens', { errorMsg: '获取收录令牌失败' });
+}
+
+export function createIngestToken(payload) {
+  return request('/admin/ingest/tokens', { method: 'POST', body: payload, errorMsg: '签发收录令牌失败' });
+}
+
+export function revokeIngestToken(tokenId) {
+  return request(`/admin/ingest/tokens/${encodeURIComponent(tokenId)}/revoke`, { method: 'POST', errorMsg: '吊销失败' });
+}
+
+export function fetchIngestSources() {
+  return request('/admin/ingest/sources', { errorMsg: '获取收录源失败' });
+}
+
+export function ingestSourceAction(sourceId, action) {
+  return request(`/admin/ingest/sources/${encodeURIComponent(sourceId)}/${action}`, { method: 'POST', errorMsg: '操作失败' });
+}
+
+export function renameIngestSource(sourceId, name) {
+  return request(`/admin/ingest/sources/${encodeURIComponent(sourceId)}`, { method: 'PATCH', body: { name }, errorMsg: '改名失败' });
+}
+
 export function fetchAdminUserSources() {
   return request('/admin/user-sources', { errorMsg: '获取用户自定源失败' });
 }

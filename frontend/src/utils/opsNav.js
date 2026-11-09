@@ -35,8 +35,8 @@ export const OPS_PAGES = [
     blocks: [['streams', '逐流状态'], ['runs', '运行记录'], ['link', '连接与定时']],
   },
   {
-    id: 'user-sources', name: '自定源', icon: 'rss', usesDays: false,
-    blocks: [['sources', '自定源']],
+    id: 'user-sources', name: '自定源与收录', icon: 'rss', usesDays: false,
+    blocks: [['sources', '自定源'], ['ingest', '收录']],
   },
   {
     id: 'inbox', name: '反馈与公告', icon: 'message', usesDays: false,

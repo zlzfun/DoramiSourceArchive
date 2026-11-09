@@ -20,7 +20,7 @@ from sqlmodel import Session, select
 from api.sources import (
     VALID_CONTENT_SHAPES,
     configured_source_content_type,
-    configured_source_shape,
+    row_shape,
     registry_source_ids_for_shape,
 )
 from models.db import (
@@ -36,7 +36,7 @@ from models.db import (
 )
 from services.article_time import SHANGHAI, parse_article_time
 from services.title_cache import cached_title
-from services import content_classification, source_visibility, user_sources
+from services import content_classification, source_catalog, source_visibility, user_sources
 
 
 AXES = ("topic", "industry", "entity")
@@ -147,6 +147,12 @@ def _source_shapes(session: Session) -> dict[str, str]:
     for source in session.exec(select(SourceConfigRecord)).all():
         if source.source_id in result:
             continue
+        if (source.origin or "") in {"system", "legacy", "ingest"} or source.retired_at:
+            # 系统行(公共日报)、R1c 回填行、注入通道建的源与退役行(含已下线墓碑)不是在用的
+            # 「配置源」:它们在源表全集之前
+            # 根本没有行,榜单按条目 content_type 逐篇判定(含 daily_brief / release 排除);
+            # 给它们源级形态会绕过这些排除(issue #262 实现检视 R1 #1)。
+            continue
         # 配置源(如绑定 generic_github_releases 的公共源)没有来源先验,按它预期产出的
         # 数据结构求默认类型——否则会以 article 形态绕过下方 _content_shape 的数据结构排除。
         kind = content_classification.source_kind_prior(
@@ -156,7 +162,7 @@ def _source_shapes(session: Session) -> dict[str, str]:
         )
         result[source.source_id] = (
             "excluded" if kind in RANKING_EXCLUDED_KINDS
-            else configured_source_shape(source.source_type, source.fetcher_id)
+            else row_shape(source)
         )
     return result
 
@@ -422,6 +428,7 @@ def _build_snapshot_unlocked(
             if tag.id is not None
         }
         content_rows: list[RankingContentItemRecord] = []
+        provisional_ids = source_catalog.provisional_source_ids(session)
         top_memberships: dict[
             tuple[str, str], dict[tuple[str, int], set[str]]
         ] = defaultdict(lambda: defaultdict(set))
@@ -457,7 +464,11 @@ def _build_snapshot_unlocked(
                     ))
                     ordered_facts = sorted(bucket.facts, key=_content_order)
                     root_id = _root_tag_id(int(bucket.tag.id or 0), parent_by_id)
-                    bucket_sources = {fact.article.source_id for fact in bucket.facts}
+                    # 临时源不计入「必读」的独立来源数(issue #262)。
+                    bucket_sources = {
+                        fact.article.source_id for fact in bucket.facts
+                        if fact.article.source_id not in provisional_ids
+                    }
                     for content_rank, fact in enumerate(ordered_facts, start=1):
                         row = RankingContentItemRecord(
                             snapshot_id=snapshot.id,
@@ -841,6 +852,7 @@ def read_rankings(
     ).all()
     rows = _visible_rows(session, snapshot.id, shape)
     axes, selected_rows = _visible_tag_model(tag_items, rows)
+    provisional_ids = source_catalog.provisional_source_ids(session)
 
     # Rebuild Top-10 memberships after today's visibility filter.  This keeps
     # must-read honest when a source is hidden after snapshot generation.
@@ -865,6 +877,8 @@ def read_rankings(
             supporting_sources = {
                 article.source_id
                 for _, article in selected_rows.get(tag.tag_code, [])
+                # 临时源不计入「必读」的独立来源数(issue #262)。
+                if article.source_id not in provisional_ids
             }
             for item, article in visible:
                 memberships[article.id][(axis, root)].update(supporting_sources)

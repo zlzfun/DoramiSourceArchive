@@ -57,7 +57,8 @@
 
 - [contracts/feed_delivery.md](./contracts/feed_delivery.md) — `/api/feed/*` JSON + Markdown 批量交付(过滤参数 / 记录形状 / extensions 展开)。
 - [contracts/reader_subscription.md](./contracts/reader_subscription.md) — 读者订阅体系:一键订阅、dsub_/dfeed_ 令牌签发与轮换、`/api/public/*` 拉取端点。
-- [contracts/archive_sync.md](./contracts/archive_sync.md) — collector → reader 的六流同步协议与合并规则(身份 / 血缘 / 校验和 / 墓碑)。
+- [contracts/archive_sync.md](./contracts/archive_sync.md) — collector → reader 的六流同步协议与合并规则(身份 / 血缘 / 校验和 / 墓碑;源目录按接收端能力投影 `source-catalog-v1`)。
+- [contracts/ingest_push.md](./contracts/ingest_push.md) — 收录推送接口 `POST /api/public/ingest/v1/items`(调用方可以是 Agent、自动化流程或人):收录令牌、出处描述与身份解析、条目 id 公式、跨源去重、逐条回执、临时源在各环节的行为。
 - [contracts/podcast_provider_ports.md](./contracts/podcast_provider_ports.md) — Podcast ASR / TTS provider-neutral ports、adapter 责任边界、新增供应商验收清单。
 
 ## frontend/ —— 前端纪律(◉ 现行)
@@ -83,6 +84,8 @@
 - ☐ [plans/issue-121-event-layer-research.md](./plans/issue-121-event-layer-research.md) — **issue #121 方向调研报告(2026-10-23)**:48 天本机语料 + 三轮精修金标上实测规则 / 词面召回 + 模型 / 向量召回 + 模型 / 纯向量 / LLM 签名 / 日报复用六条路线与产品供给、热度、事件链模拟;结论已回写方案 R2。
 - ☐ [plans/issue-121-event-layer.md](./plans/issue-121-event-layer.md) — **多源事件层:同事件归并、热点榜与早报去重共用一份归属(issue #121 + #103,R1 路径)**:平台级持久事件层、机械召回 + 辅助模型归属、48h/24h 半衰热度、四波(回放 → 事件层 + 榜 → 早报去重 → Agent 查询);2026-10-23 拍板主路线 = FTS5 召回 + 辅助模型(不引入 embedding),排队中。
 - ☐ [plans/issue-178-content-classification.md](./plans/issue-178-content-classification.md) — **内容分类与双评分(issue #178)**:第一波 / 第一波补 / 第二波 / 3a 已上线(v3.64),3b 播客提示词拆分与 3c 新闻尺子收紧排队,分区空板率与论文名额观察期。
+- ☐ [plans/issue-262-agent-ingest-sources.md](./plans/issue-262-agent-ingest-sources.md) — **外部 Agent 主动收录:无源 / 临时源的语义审视与「源目录数据化」设计(issue #262,D1–D8 已拍板,波 0 / 波 1 实施中)**:「源」一身五职与「缺失即属性」的兜底矛盾、逐环节缺陷(波 0)、临时源生命周期与推送通道(波 1)、目录文件 + 能力化取缔「一源一类」(波 2)、别名合并(波 3);D1–D8 待拍板。
+- ☐ [plans/issue-262-source-model-refactor.md](./plans/issue-262-source-model-refactor.md) — **源模型重构:源 / 采集绑定 / 抓取器三层分离(issue #262 配套,E1–E7 已拍板,R1c / R4 实施中、R2 / R3 后续)**:69 个抓取器类反射分档(A 30 / B 15 / C 17)、目录文件(只在外网对账)、内网声明能力 + 外网按请求投影、卡片 = 资格 + 展示状态、94 处源表读写按语义审计、R0–R4 分步与部署顺序;已过 Codex R1 检视,E1–E7 待拍板。
 - ☐ [plans/issue-82-node-watchdog-layer1.md](./plans/issue-82-node-watchdog-layer1.md) — **节点看护第一层:抓取失败判定升级(issue #82)**:R2 稿已拍板,PR-0 已修调度重载 bug,PR-A / B / C(产出轴 `yield_status`、收据先行、看护页)未动工;生产回放校准结论在此。
 - ☐ [plans/issue-97-podcast-cost-and-scoring.md](./plans/issue-97-podcast-cost-and-scoring.md) — **Podcast 成本门控与评分标定(issue #97)**:P0 门控已上线;P1 六组 32 输入黄金集与提示词调整未启动。
 - ☐ [plans/issue-132-intelligent-butler.md](./plans/issue-132-intelligent-butler.md) — **智能管家(issue #132,Clowder AI,R1 设计稿)**:Mac mini 常驻 agent、运行日报 / 主动预警 / 投递回执 / 反馈归并 / 自愈;排队中,未部署。

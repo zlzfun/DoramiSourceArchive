@@ -115,6 +115,16 @@ class RuntimeConfig:
 
 
 @dataclass(frozen=True)
+class SourcesConfig:
+    """源模型读法(issue #262 R1c):compat = 注册表类压源行(重构前口径);full = 源行为准。
+
+    R1c 之后两者结果相同(镜像行与类属性逐字段相等);正常回退 = 切回 compat、保留数据。
+    """
+
+    model: str = "compat"
+
+
+@dataclass(frozen=True)
 class TaxonomyDeploymentConfig:
     """Explicit taxonomy deployment posture; never inferred from runtime role."""
 
@@ -895,6 +905,7 @@ class AppConfig:
     bailian_speech: BailianSpeechConfig = field(default_factory=BailianSpeechConfig)
     oss: OssConfig = field(default_factory=OssConfig)
     backup: BackupConfig = field(default_factory=BackupConfig)
+    sources: SourcesConfig = field(default_factory=SourcesConfig)
 
     def apply_process_environment(self) -> None:
         if self.network.disable_ca_bundle:
@@ -959,6 +970,13 @@ def _environment_boolean(name: str) -> bool | None:
     if normalized in {"0", "false", "no", "off"}:
         return False
     raise ValueError(f"Invalid boolean value for {name}")
+
+
+def _sources_model(value: str) -> str:
+    model = str(value or "").strip().lower() or "compat"
+    if model not in {"compat", "full"}:
+        raise ValueError(f"Invalid [sources] model: {value!r} (expected compat or full)")
+    return model
 
 
 def load_config() -> AppConfig:
@@ -1082,6 +1100,11 @@ def load_config() -> AppConfig:
         ),
         runtime=RuntimeConfig(
             role=_runtime_role(runtime_role),
+        ),
+        sources=SourcesConfig(
+            model=_sources_model(
+                os.getenv("DORAMI_SOURCES_MODEL") or parser.get("sources", "model", fallback="compat")
+            ),
         ),
         taxonomy=TaxonomyDeploymentConfig(
             mode=_taxonomy_deployment_mode(

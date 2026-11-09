@@ -74,6 +74,7 @@ from api.routers import admin as admin_router
 from api.routers import daily_brief as daily_brief_router
 from api.routers import reader as reader_router
 from api.routers import ingest as ingest_router
+from api.routers import ingest_push as ingest_push_router
 from api.routers import subscriptions as subscriptions_router
 from api.routers import interests as interests_router
 from api.routers import personal_briefs as personal_briefs_router
@@ -117,6 +118,8 @@ from services import guest_access as guest_access_service
 from api import guest_policy
 from services import auth_policy
 from services import admin_audit as admin_audit_service
+from services import source_catalog as source_catalog_service
+from services import source_rows as source_rows_service
 from services.collection_nodes import PODCAST_SOURCE_TYPES, resolve_collection_node
 from services import reader_state as reader_state_service
 from services import ai_usage as ai_usage_service
@@ -750,6 +753,13 @@ if _podcast_bootstrap["created"]:
         "🎙️ 已安装 %d 个默认播客采集节点",
         len(_podcast_bootstrap["created"]),
     )
+# 源表成为全集(issue #262 R1c):外网 authority 启动时把预设抓取器镜像成源行、补系统行与
+# 墓碑、回填只在 articles / 订阅里出现的 id;接收端跳过(公共源行只经 Archive Sync 到达)。
+source_catalog_service.configure(model=settings.sources.model)
+try:
+    source_rows_service.run_startup_reconcile(db_sink.engine)
+except Exception:  # noqa: BLE001 - 对账失败不阻断启动;读服务对缺行仍有只读兼容视图
+    logging.getLogger("dorami.sources").exception("源表对账失败,本次启动按兼容视图运行")
 pipeline = DataPipeline(storages=[db_sink])
 
 # 媒体库（图床）：[media] enabled = false 时为 None，代理端点 302 回源、抓取后不预取，
@@ -1819,6 +1829,7 @@ app.include_router(admin_router.router)
 app.include_router(daily_brief_router.router)
 app.include_router(reader_router.router)
 app.include_router(ingest_router.router)
+app.include_router(ingest_push_router.router)
 app.include_router(subscriptions_router.router)
 app.include_router(interests_router.router)
 app.include_router(personal_briefs_router.router)
@@ -2266,6 +2277,8 @@ async def require_admin_session(request: Request, call_next):
         (normalized_method == "POST" and path == "/api/accounts")
         or (normalized_method == "POST" and path == "/api/accounts/batch")
         or (normalized_method == "POST" and path == "/api/articles")
+        or (normalized_method == "POST" and path == "/api/import/social-posts")
+        or (normalized_method == "POST" and path == "/api/admin/ingest/tokens")
         or (normalized_method == "POST" and path == "/api/articles/batch-delete")
         or (normalized_method == "POST" and path == "/api/fetch/batch")
         or (normalized_method == "PUT" and path == "/api/admin/analysis/config")

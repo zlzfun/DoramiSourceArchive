@@ -81,3 +81,9 @@ test('超时后轮询服务端状态，确认事务结束才刷新', async () =>
   );
   assert.equal(stillRunning, false);
 });
+
+test('临时源(listing=unlisted)不进批量订阅(issue #262)', () => {
+  const withProvisional = [...sources, { source_id: 'web_pushed', shape: 'article', listing: 'unlisted' }];
+  const model = bulkSubscribeModel('article', withProvisional, new Set(['article_a']));
+  assert.equal(model.remainingCount, 1);
+});

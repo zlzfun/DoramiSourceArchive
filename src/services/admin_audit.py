@@ -31,6 +31,8 @@ AUDIT_PATH_PREFIXES = (
     "/api/articles",
     "/api/fetch",
     "/api/archive/import",
+    # issue #262 B9:外部社交动态导入同样改写全站归档。
+    "/api/import/social-posts",
 )
 # /api/reader/* 与 /api/auth/* 刻意豁免：管理员自己的阅读、订阅与自助改密
 # 属于个人操作，不是需要管理员互相审阅的“管理操作”。
@@ -171,6 +173,30 @@ def _id_target(
 ) -> RenderResult:
     target = unquote(match.group("target"))
     return f"{action}{noun} {target}", target
+
+
+def _ingest_push_summary(body: dict | None) -> str:
+    try:
+        from services.ingest_push import audit_summary_text
+
+        return audit_summary_text(body or {})
+    except Exception:  # noqa: BLE001 - 摘要失败不影响审计落库
+        return "收录推送"
+
+
+def _social_import_summary(body: dict | None) -> RenderResult:
+    if body is None:
+        return "导入社交动态（数量未知，请求体未采集）", None
+    posts = body.get("posts") if isinstance(body.get("posts"), list) else []
+    handles = []
+    for post in posts:
+        if not isinstance(post, dict):
+            continue
+        handle = str(post.get("source_id") or post.get("author_handle") or "").strip().lstrip("@")
+        if handle and handle not in handles:
+            handles.append(handle)
+    head = "、".join(handles[:3]) + ("…" if len(handles) > 3 else "")
+    return f"导入社交动态 {len(posts)} 条{'（' + head + '）' if head else ''}", None
 
 
 # 语义摘要注册表：顺序即优先级，首个 (method, path regex) 命中即停止。
@@ -379,11 +405,58 @@ AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
     (
         "POST",
         re.compile(r"^/api/articles$"),
-        # 正文可能超 body 采集上限(body=None),标题尽力而为。
+        # 正文可能超 body 采集上限(body=None),标题尽力而为;来源随摘要入审计(issue #262 B9)。
         lambda _m, body: (
-            f"手工录入文章 {str((body or {}).get('title') or '')[:30]}".rstrip(),
-            None,
+            (
+                f"手工录入文章 {str((body or {}).get('title') or '')[:30]}".rstrip()
+                + f"(来源 {str((body or {}).get('source_id') or 'manual')[:60]})"
+            ) if body is not None else "手工录入文章（请求体未采集）",
+            str((body or {}).get("source_id") or "manual")[:120] if body is not None else None,
         ),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/import/social-posts$"),
+        lambda _m, body: _social_import_summary(body),
+    ),
+    # issue #262 波 1:收录推送(令牌鉴权,端点自行记账)与收录管理。
+    (
+        "POST",
+        re.compile(r"^/api/public/ingest/v1/items$"),
+        lambda _m, body: (_ingest_push_summary(body), str((body or {}).get("actor") or "") or None),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/ingest/tokens$"),
+        lambda _m, body: (
+            f"签发收录令牌 {str((body or {}).get('actor') or '')[:60]}".rstrip(),
+            str((body or {}).get("actor") or "") or None,
+        ),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/ingest/tokens/(?P<target>[^/]+)/revoke$"),
+        lambda match, body: _id_target(match, body, noun="收录令牌", action="吊销"),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/ingest/sources/(?P<target>[^/]+)/admit$"),
+        lambda match, body: _id_target(match, body, noun="收录源", action="列入"),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/ingest/sources/(?P<target>[^/]+)/hide$"),
+        lambda match, body: _id_target(match, body, noun="收录源", action="下架"),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/ingest/sources/(?P<target>[^/]+)/unhide$"),
+        lambda match, body: _id_target(match, body, noun="收录源", action="恢复"),
+    ),
+    (
+        "PATCH",
+        re.compile(r"^/api/admin/ingest/sources/(?P<target>[^/]+)$"),
+        lambda match, body: _id_target(match, body, noun="收录源", action="改名"),
     ),
     # 文章路由是 {article_id:path}(手工录入 ID 可含斜杠),规则须吞完整剩余路径,
     # 否则含 / 的合法 ID 退化为空摘要(v3.43.2 codex 检视)。

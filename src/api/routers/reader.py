@@ -49,7 +49,7 @@ from api.sources import (
     _source_category,
     configured_source_content_type,
     configured_source_platform,
-    configured_source_shape,
+    row_shape,
     normalize_shape,
     source_shape,
     subscription_source_ids,
@@ -212,20 +212,29 @@ def _configured_source_meta(session: Session) -> Dict[str, Dict[str, Any]]:
     """SourceConfig 的读者目录元数据；尤其覆盖尚无产出的配置源形态。"""
     result: Dict[str, Dict[str, Any]] = {}
     for record in session.exec(select(SourceConfigRecord)).all():
+        if (record.origin or "") == "system":
+            # 系统源(公共日报)有自己的目录元数据(DAILY_BRIEF_SOURCE_META),系统行只为满足
+            # 「每个 source_id 都有一行」的不变量,不覆盖它(issue #262 R1c)。
+            continue
         result[record.source_id] = {
             "id": record.source_id,
             "name": record.name,
             "desc": record.description,
-            "icon": "𝕏" if configured_source_shape(record.source_type, record.fetcher_id) == "social" else "",
+            "icon": "𝕏" if row_shape(record) == "social" else "",
             "content_type": configured_source_content_type(record.source_type, record.fetcher_id),
-            "shape": configured_source_shape(record.source_type, record.fetcher_id),
-            "platform": configured_source_platform(record.source_type, record.fetcher_id),
+            "shape": row_shape(record),
+            "platform": (record.platform or "").strip().lower()
+            or configured_source_platform(record.source_type, record.fetcher_id),
             "source_owner": record.source_owner,
             "source_brand": record.source_brand,
             "source_scope": record.source_scope,
             "source_channel": record.source_channel,
             "provenance_tier": record.provenance_tier,
             "base_url": record.base_url or record.url,
+            "retired": bool(record.retired_at),
+            "admission_status": record.admission_status or "admitted",
+            "origin": record.origin or "",
+            "avatar_url": record.avatar_url or "",
         }
     return result
 
@@ -1368,15 +1377,27 @@ def _reader_sources_catalog(
                 **_source_kind_fields(source_id, resolved_type),
                 "platform": meta.get("platform") or "",
                 # 源栏优先使用 400x400 头像；同时保留原始 URL 供降级/调试。
+                # 没有抓取器缓存的源(收录通道建的临时源)用源行上记下的头像(issue #262)。
                 "avatar_url": cached_profile.get("author_avatar_url_large")
-                or cached_profile.get("author_avatar_url") or "",
-                "avatar_url_original": cached_profile.get("author_avatar_url") or "",
+                or cached_profile.get("author_avatar_url")
+                or configured_meta.get(source_id, {}).get("avatar_url") or "",
+                "avatar_url_original": cached_profile.get("author_avatar_url")
+                or configured_meta.get(source_id, {}).get("avatar_url") or "",
                 "count": 0,
                 "last_fetched": "",
                 "subscriber_count": subscriber_counts.get(source_id, 0),
                 "subscribed": source_id in subscribed_ids,
                 "registered": source_id in registry_meta,
                 "configured": source_id in configured_meta,
+                # 来路与列出状态由服务端算好(issue #262 R4):临时源 unlisted——不进发现目录与批量
+                # 订阅,条目上的来源名仍可点进源页单独订阅。
+                "origin": configured_meta.get(source_id, {}).get("origin")
+                or ("catalog" if source_id in registry_meta else ""),
+                "listing": (
+                    "unlisted"
+                    if configured_meta.get(source_id, {}).get("admission_status") == "provisional"
+                    else "listed"
+                ),
                 "_primary_count": -1,
             }
             by_source[source_id] = entry
@@ -1392,7 +1413,14 @@ def _reader_sources_catalog(
         _ensure_entry(source_id)
 
     # 1b. 所有 SourceConfig 源：即使尚未产出，也携带正确形态进入可订阅目录。
+    #     退役行(含已下线源墓碑,issue #262 R1c 起它们也有行)与已下线节点同口径:
+    #     只对已订阅者保留(退订入口),不回流目录。
+    retired_ids = {
+        source_id for source_id, meta in configured_meta.items() if meta.get("retired")
+    } | set(DECOMMISSIONED_FETCHER_IDS)
     for source_id in configured_meta:
+        if source_id in retired_ids and source_id not in subscribed_ids:
+            continue
         _ensure_entry(source_id)
 
     # 1c. 日报特殊源：即使尚未生成过日报也预先出现，便于提前订阅。
@@ -1404,7 +1432,7 @@ def _reader_sources_catalog(
     for source_id, content_type, count, last_fetched in rows:
         if not source_id:
             continue
-        if source_id in DECOMMISSIONED_FETCHER_IDS and source_id not in subscribed_ids:
+        if source_id in retired_ids and source_id not in subscribed_ids:
             continue
         entry = _ensure_entry(source_id, content_type)
         entry["count"] += int(count or 0)
@@ -1428,7 +1456,10 @@ def _reader_sources_catalog(
     unavailable_ids = source_visibility_service.reader_unavailable_source_ids(session)
     # 用户自定源(v3.40 私有):仅订阅者可见——非订阅者的目录/发现页完全不出现
     # (添加即订阅、移除即退订,故「我的自定源」恒在 subscribed_ids 内)。
-    all_user_source_ids = user_sources_service.user_source_ids(session)
+    # user_rss_ 前缀是结构性规则:主人不可考的孤儿私有源(R1c 隔离行)同样只对订阅者可见。
+    all_user_source_ids = user_sources_service.user_source_ids(session) | {
+        source_id for source_id in by_source if source_id.startswith("user_rss_")
+    }
     sources = sorted(
         (
             {
@@ -1510,6 +1541,8 @@ def subscribe_sources_by_shape(
             if source.get("hidden"):
                 unavailable.append(source_id)
                 continue
+            if source.get("listing") == "unlisted":
+                continue  # 临时源不进批量订阅(issue #262 D2)
             if source_id in existing:
                 already_subscribed.append(source_id)
                 continue

@@ -40,7 +40,7 @@ from api.sources import (
     PODCAST_CONTENT_TYPES,
     SOCIAL_CONTENT_TYPES,
     VALID_CONTENT_SHAPES,
-    configured_source_shape,
+    row_shape,
     normalize_shape,
     registry_source_ids_for_shape,
 )
@@ -58,6 +58,7 @@ from models.db import (
 )
 from services import article_analysis as article_analysis_service
 from services import content_classification
+from services import ingest_policy
 from services.source_naming import friendly_source_names
 from services.article_display_tags import (
     article_ids_for_canonical_projection, article_ids_for_flexible_label, load_display_tags,
@@ -262,7 +263,11 @@ def _source_ids_by_shape(session: Optional[Session] = None) -> dict[str, set[str
         for record in records:
             if record.source_id in registered_ids:
                 continue  # registry 是源级形态的第一事实源
-            result[configured_source_shape(record.source_type, record.fetcher_id)].add(
+            if (record.origin or "") in {"system", "legacy", "ingest"} or record.retired_at:
+                # 源表全集(issue #262 R1c)之前这些 id 没有行:按条目 content_type 逐篇判形态,
+                # 不给源级标记(与榜单同口径,实现检视 R1 #1)。
+                continue
+            result[row_shape(record)].add(
                 record.source_id
             )
     return result
@@ -805,13 +810,34 @@ async def get_article(article_id: str, request: Request):
 
 
 @router.post("/api/articles")
-async def create_article_manual(params: dict = Body(...)):
+async def create_article_manual(request: Request, params: dict = Body(...)):
     """接收前端传来的手工录入数据并入库"""
-    source_id = str(params.get("source_id", "manual") or "manual")
+    source_id = str(params.get("source_id", "manual") or "manual").strip() or "manual"
+    reserved = ingest_policy.reserved_source_id_reason(source_id, allow_daily_brief=True)
+    if reserved:
+        raise HTTPException(status_code=400, detail=reserved)
     with Session(deps.get_db_sink().engine) as session:
         _require_local_article_governance(session, source_id)
+    # 扩展字段经 extra_extensions 通道随 serialize_to_metadata 落库。既有契约:坏扩展整体忽略、
+    # 录入照常;issue #262 B10 起接受对象形式,并在回执里如实报告被忽略的原因(不再静默)。
+    warnings: list[str] = []
+    try:
+        extensions = ingest_policy.parse_extensions_param(params.get("extensions_json"))
+    except ValueError as exc:
+        extensions = {}
+        warnings.append(str(exc))
+    # 调用方给的 id 原样保留(既有契约);跨源覆写由存储层 id_conflict 拦下(issue #262 B3)。
+    # 没给 id 时按链接生成本源命名空间下的稳定 id。
+    article_id = str(params.get("id") or "").strip()
+    if not article_id:
+        try:
+            article_id = ingest_policy.namespaced_item_id(
+                source_id, stable_value=str(params.get("source_url") or "")
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
     content_obj = GenericContent(
-        id=params.get("id"),
+        id=article_id,
         title=params.get("title", "未命名"),
         source_url=params.get("source_url", ""),
         publish_date=params.get("publish_date", ""),
@@ -820,22 +846,28 @@ async def create_article_manual(params: dict = Body(...)):
     )
     content_obj.content_type = params.get("content_type", "manual_entry")
     content_obj.source_id = source_id
+    if extensions:
+        content_obj.extra_extensions = extensions
+    # 未登记的来源在同一事务里建成临时源(不进发现目录,管理面「收录源」可列入,issue #262)。
+    content_obj._source_hint = {
+        "origin": "ingest",
+        "admission_status": "provisional",
+        "name": str(params.get("source_name") or "").strip(),
+    }
+    content_obj._ingest_channel = "manual"
+    content_obj._ingest_actor = _app().current_username(request) or ""
 
-    # 扩展字段经 extra_extensions 通道随 serialize_to_metadata 落库——
-    # 旧写法逐键 setattr 不进 dataclass fields(),extensions_json 静默丢失
-    try:
-        extensions = json.loads(params.get("extensions_json", "{}"))
-        if isinstance(extensions, dict) and extensions:
-            content_obj.extra_extensions = extensions
-    except Exception:
-        pass
-
-    success = await deps.get_db_sink().save(content_obj)
-    if not success:
-        raise HTTPException(status_code=400, detail="该条目 ID 已存在，请避免重复录入")
+    outcome = await deps.get_db_sink().save_with_outcome(content_obj)
+    error = ingest_policy.outcome_error(outcome)
+    if error is not None:
+        status_code, detail = error
+        raise HTTPException(status_code=status_code, detail=detail)
 
     _app().queue_article_analysis_after_commit([content_obj.id])
-    return {"status": "success"}
+    result = {"status": "success", "id": content_obj.id, "outcome": outcome}
+    if warnings:
+        result["warnings"] = warnings
+    return result
 
 
 def _maybe_rewind_daily_brief_cursor(record) -> None:
@@ -945,6 +977,18 @@ async def update_article(article_id: str, params: ArticleUpdateParams):
 
 
 # ==================== 投递视图（/api/feed/articles[.md]）====================
+
+
+def _exclude_hidden_delivery_sources(session: Session, query):
+    """隐藏源全量排除于交付(issue #262 B6):投递视图无 viewer,管理员会话也不例外。"""
+    hidden = source_visibility_service.reader_unavailable_source_ids(session)
+    if not hidden:
+        return query
+    return query.where(or_(
+        ArticleRecord.source_id.is_(None),
+        ArticleRecord.source_id.notin_(sorted(hidden)),
+    ))
+
 # 下游 LLM 消费者推荐契约：按采集投递作用域（source/job）过滤后的档案视图。
 # （?group_id= 作用域随节点组退役移除——实体简化阶段 2。）
 
@@ -996,6 +1040,7 @@ def get_feed_articles(
     user_cond = user_sources_service.exclude_user_sources_condition(session)
     if user_cond is not None:
         query = query.where(user_cond)
+    query = _exclude_hidden_delivery_sources(session, query)
     records = session.exec(
         query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(safe_limit)
     ).all()
@@ -1056,6 +1101,7 @@ def export_feed_articles_markdown(
     user_cond = user_sources_service.exclude_user_sources_condition(session)
     if user_cond is not None:
         query = query.where(user_cond)
+    query = _exclude_hidden_delivery_sources(session, query)
     records = session.exec(
         query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(safe_limit)
     ).all()

@@ -275,6 +275,51 @@ only after its terminal page has committed; the media checkpoint additionally
 waits for every declared binary to pass byte-size and SHA-256 verification, or to
 be recorded as rejected (see "Media and Candidate evidence").
 
+### Source catalog projection (`source-catalog-v1`, issue #262 R1c)
+
+Since the source-model refactor the producer's `source_configs` is the full set of
+sources: 62 preset mirror rows (`origin=catalog`), the public daily-brief system row,
+decommissioned tombstones (retired), backfilled ids that previously existed only in
+`articles` (`origin=legacy`), and sources created by ingest channels
+(`origin=ingest`, `admission_status=provisional`). Older receivers must not see a
+different `sources` export, so the producer **projects per request**:
+
+- Receivers send `receiver_capabilities=source-catalog-v1` (comma-separated query
+  parameter) on every export request; older producers ignore the parameter. Producers
+  that understand it advertise `source-catalog-v1` in manifest capabilities and echo
+  `source_projection` (`legacy` | `catalog-v1`) on `sources` / `source_states` pages.
+  The projection is fixed for a whole run; the receiver rejects a page whose echo
+  disagrees with the advertised capability.
+- `catalog-v1`: every public row is exported with the extra fields `origin`, `shape`,
+  `platform`, `icon`, `avatar_url`, `homepage_url`, `default_kind`, `language`,
+  `daily`, `retired_at`; retirement is an **upsert** carrying `retired_at`; states
+  export as before. Binding fields (`fetcher_id`, `params_json`) are never exported.
+- `legacy`: membership is the persisted column `legacy_export` (true for rows that
+  existed before R1c and for admin-created rows; false for mirror, backfilled and
+  ingest-channel rows, and never changed by promotion). Non-members and retired rows
+  are emitted as tombstones — a no-op for a receiver that never had the row, and the
+  same effect as the pre-refactor physical delete otherwise. A retired source's
+  `source_states` row is also projected as a tombstone so a later state upsert cannot
+  resurrect it. `provisional` is folded to `incubating` (old receivers map unknown
+  admission values to `admitted`). No page is filtered, so the keyset pagination
+  contract (limit+1 raw rows, cursor = last output row, no empty non-final page) is
+  unchanged.
+- Switching a target from `legacy` to `catalog-v1` is a protocol change handled like
+  the analysis payload generation: sync preparation clears, in one transaction, the
+  `sources` / `source_states` checkpoints **and** that authority's entity states for
+  both streams, then the run replays them fully. The receiver records
+  `v2_source_projection` and, after the first complete `sources` stream under
+  `catalog-v1`, `v2_source_catalog_ready_at` (local bookkeeping, not wire fields).
+  If the producer stops advertising the capability (rollback), the target is recorded
+  as `legacy` without replay: legacy payloads simply omit the catalog fields, which
+  receivers leave untouched.
+- Receivers never create public source rows locally; sources and source states still
+  do not take part in authoritative presence.
+
+Deployment order: any order is safe (new producer + old receiver → legacy projection,
+identical to the old export; old producer + new receiver → legacy bookkeeping and the
+receiver's read-only compatibility view).
+
 Before requesting an image or generated Podcast audio binary, the receiver checks
 the manifest's content-addressed local file: regular file, exact size, full
 SHA-256, and matching MIME/signature and extension. A matching file is reused

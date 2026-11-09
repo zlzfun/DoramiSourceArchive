@@ -306,6 +306,9 @@ class XTimelineFetcher(BaseFetcher):
 
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         runtime_source_id = str(kwargs.get("source_id") or self.source_id).strip()
+        # BaseFetcher.fetch 在 yield 后统一写入 self.source_id;与 RSS / 播客 / 网页模板一样
+        # 先把实例身份切到具体配置源,否则配置源条目会被打成模板 id(issue #262 B4)。
+        self.source_id = runtime_source_id
         handle = str(kwargs.get("handle") or self.handle).strip().lstrip("@")
         user_id = str(kwargs.get("user_id") or self.user_id).strip()
         quota = self._quota()

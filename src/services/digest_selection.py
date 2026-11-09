@@ -746,8 +746,13 @@ def select_breaking_events(
     excluded_article_ids: Iterable[str] = (),
     subscribed_source_ids: Iterable[str] = (),
     source_display_names: Mapping[str, str] | None = None,
+    uncorroborating_source_ids: Iterable[str] = (),
 ) -> list[DigestSelectionDTO]:
     """Pick at most ``policy.max_items`` cross-subscription headline events.
+
+    ``uncorroborating_source_ids``: sources that never count toward the
+    multi-source corroboration threshold (provisional sources created by ingest
+    channels, issue #262 — their ids are chosen by whoever pushes).
 
     Candidates are expected to span every reader-visible source (the caller applies
     hidden/private-source filtering).  Reader interests play no part here(v3.56:
@@ -761,6 +766,7 @@ def select_breaking_events(
         return []
     excluded = set(excluded_article_ids)
     subscribed = set(subscribed_source_ids)
+    uncorroborating = set(uncorroborating_source_ids)
     floor = policy.min_score - policy.corroboration_slack
     eligible = [
         candidate for candidate in candidates
@@ -777,7 +783,9 @@ def select_breaking_events(
             item.source_role == "official" and item.quality_score >= policy.min_score - 1e-9
             for item in members
         )
-        source_count = len({item.source_id for item in members})
+        source_count = len({
+            item.source_id for item in members if item.source_id not in uncorroborating
+        })
         corroborated = (
             source_count >= policy.corroboration_sources
             and top >= policy.min_score - 1e-9

@@ -427,8 +427,13 @@ def export_archive_v2_jsonl(
     after: str = "",
     limit: int = 1000,
     page_max_bytes: Optional[int] = None,
+    receiver_capabilities: str = "",
 ):
-    """按共享事务 revision snapshot 导出 keyset 页；不使用 offset。"""
+    """按共享事务 revision snapshot 导出 keyset 页；不使用 offset。
+
+    ``receiver_capabilities``(逗号分隔)是接收端的能力声明:含 ``source-catalog-v1`` 时
+    sources / source_states 两流按源目录投影导出(issue #262 R1c),否则与重构前相同。
+    """
     try:
         body = archive_sync_v2.export_page(
             deps.get_db_sink().engine,
@@ -442,6 +447,7 @@ def export_archive_v2_jsonl(
             podcast_text_page_max_bytes=_podcast_config().text_sync_page_max_bytes,
             podcast_text_page_max_rows=_podcast_config().text_sync_page_max_rows,
             podcast_text_requested_page_max_bytes=page_max_bytes,
+            receiver_capabilities=receiver_capabilities,
             media_check=_media_export_check() if stream == "media" else None,
         )
     except archive_sync_v2.SyncV2Error as exc:

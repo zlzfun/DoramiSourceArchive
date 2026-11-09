@@ -36,10 +36,13 @@ def parse_json_object(raw_json: str) -> Dict[str, Any]:
         return {}
 
 
-def resolve_source_fetcher_id(source_config: SourceConfigRecord) -> str:
-    if source_config.fetcher_id:
-        return source_config.fetcher_id
-    source_type = (source_config.source_type or "").strip().lower()
+def default_fetcher_id_for_source_type(source_type: str) -> str:
+    """``source_type`` → 默认采集绑定的模板 id;没有对应模板返回空串。
+
+    创建 / 改类型时用它把绑定写实(issue #262 R1b:迁移 c5e1a7b3d9f2 已把存量行写实),
+    使「``fetcher_id`` 为空 = 没有采集绑定」逐步成立。
+    """
+    source_type = (source_type or "").strip().lower()
     if source_type in PODCAST_SOURCE_TYPES:
         return "generic_podcast_rss"
     if source_type in {"rss", "atom"}:
@@ -49,6 +52,21 @@ def resolve_source_fetcher_id(source_config: SourceConfigRecord) -> str:
     if source_type in X_SOURCE_TYPES:
         return "generic_x_timeline"
     return ""
+
+
+# 没有采集通道的来路:收录通道建的临时源、R1c 回填的存量 id、系统源。它们的 source_type
+# 只描述形态(x / podcast / archive),不能再被推导成「绑定了某个模板」(issue #262 F7)。
+_UNBOUND_ORIGINS = frozenset({"ingest", "legacy", "system"})
+
+
+def resolve_source_fetcher_id(source_config: SourceConfigRecord) -> str:
+    if source_config.fetcher_id:
+        return source_config.fetcher_id
+    if str(getattr(source_config, "origin", "") or "").strip().lower() in _UNBOUND_ORIGINS:
+        return ""
+    if getattr(source_config, "retired_at", None):
+        return ""
+    return default_fetcher_id_for_source_type(source_config.source_type or "")
 
 
 def _configured_x_handle(source_config: SourceConfigRecord, params: Dict[str, Any]) -> str:
@@ -128,6 +146,9 @@ def resolve_collection_node(
     source = session.get(SourceConfigRecord, clean_id)
     if source is None:
         raise ValueError(f"未知的采集节点: {clean_id}")
+    if source.retired_at:
+        # 退役(含「被引用的源删除改退役」,issue #262 R1c)先于播客「始终可采集」的豁免。
+        raise ValueError(f"数据源 {clean_id} 已退役，拒绝采集")
     if not source.is_active and not is_public_podcast_source(source):
         raise ValueError(f"数据源 {clean_id} 未启用，拒绝采集")
     fetcher_id = resolve_source_fetcher_id(source)
@@ -201,6 +222,9 @@ def collection_node_catalog(
     metadata.extend(
         configured_source_metadata(record)
         for record in records
+        # 节点 = 有绑定 ∧ 未退役(issue #262 R1c):注入通道建的播客临时源没有采集通道。
         if record.source_id not in existing_ids
+        and not record.retired_at
+        and resolve_source_fetcher_id(record)
     )
     return metadata
