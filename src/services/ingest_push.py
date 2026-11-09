@@ -10,7 +10,10 @@
 - 条目 id 与抓取器同一公式:X ``{sid}_{post_id}``;网页 / RSS ``{sid}_{sha1(guid 或链接)[:16]}``;
   播客 ``{前缀}_{sha1(guid 或单集链接)[:16]}``(前缀沿用 ``entry_id_namespace``)——先推后抓(或反之)天然幂等合流;
 - 跨源 URL 去重:同一链接已在别的源里 → 不新建,返回 ``duplicate_url``,只记一条收录记录;
-- 逐条结果:``created | duplicate | duplicate_url | refreshed | rejected``。
+- 同源内容判重:认到已有源的文章,与该源已有条目正文相同或近似 → ``duplicate_content``(``content_fingerprint``);
+- 逐条结果:``created | duplicate | duplicate_url | duplicate_content | refreshed | rejected``。
+
+批处理主循环在 ``services/ingest_batch.py``(推送令牌与管理员「单条收录」共用)。
 
 接收端(内网 replica)直接拒绝:只推外网 authority。
 """
@@ -189,10 +192,12 @@ def serialize_token(record: IngestTokenRecord) -> dict[str, Any]:
 
 
 def picks_today(session: Session, actor: str) -> int:
+    """令牌今日已用额度:只数推送通道(管理员同名手工收录不占令牌额度,检视 R1 #5)。"""
     day = dt.datetime.now(dt.timezone.utc).date().isoformat()
     return int(session.exec(
         select(func.count()).select_from(ArticlePickRecord).where(
             ArticlePickRecord.actor == actor,
+            ArticlePickRecord.channel == CHANNEL_PUSH,
             ArticlePickRecord.picked_at >= day,
         )
     ).one() or 0)
@@ -664,7 +669,9 @@ def _extensions(kind: str, raw: Any) -> dict[str, Any]:
     return out
 
 
-def build_content(kind: str, source_id: str, item: dict[str, Any], *, id_prefix: str = "") -> BaseContent:
+def build_content(
+    kind: str, source_id: str, item: dict[str, Any], *, id_prefix: str = "", channel: str = CHANNEL_PUSH
+) -> BaseContent:
     item_id = item_id_for(kind, source_id, item, prefix=id_prefix)
     url = str(item.get("url") or "").strip()
     publish_date = str(item.get("publish_date") or "").strip() or _now()
@@ -737,7 +744,7 @@ def build_content(kind: str, source_id: str, item: dict[str, Any], *, id_prefix:
     if extra:
         content.extra_extensions = extra
     content.source_id = source_id
-    content._ingest_channel = CHANNEL_PUSH
+    content._ingest_channel = channel
     return content
 
 
@@ -766,7 +773,9 @@ def existing_article_by_url(session: Session, url: str) -> Optional[ArticleRecor
     return None
 
 
-def record_pick(session: Session, article_id: str, actor: str, note: str = "") -> bool:
+def record_pick(
+    session: Session, article_id: str, actor: str, note: str = "", *, channel: str = CHANNEL_PUSH
+) -> bool:
     existing = session.exec(
         select(ArticlePickRecord).where(
             ArticlePickRecord.article_id == article_id,
@@ -778,7 +787,7 @@ def record_pick(session: Session, article_id: str, actor: str, note: str = "") -
     session.add(ArticlePickRecord(
         article_id=article_id,
         actor=actor,
-        channel=CHANNEL_PUSH,
+        channel=channel,
         note=str(note or "")[:500],
         picked_at=_now(),
     ))
@@ -809,10 +818,11 @@ def summarize(results: Iterable[dict[str, Any]]) -> dict[str, int]:
     return counts
 
 
-def audit_body(results: list[dict[str, Any]], *, actor: str) -> dict[str, Any]:
+def audit_body(results: list[dict[str, Any]], *, actor: str, channel: str = CHANNEL_PUSH) -> dict[str, Any]:
     created_sources = sorted({r["source_id"] for r in results if r.get("source_created")})
     return {
         "actor": actor,
+        "channel": channel,
         "counts": summarize(results),
         "created_sources": created_sources[:20],
         "rejected": [r.get("reason") for r in results if r["status"] == "rejected"][:10],
@@ -824,7 +834,8 @@ def audit_summary_text(body: dict[str, Any]) -> str:
     parts = [f"{key} {value}" for key, value in sorted(counts.items())]
     created = body.get("created_sources") or []
     suffix = f";新建临时源 {len(created)} 个" if created else ""
-    return f"收录推送({body.get('actor')}):" + ("、".join(parts) or "空批次") + suffix
+    label = "单条收录" if body.get("channel") == "manual" else "收录推送"
+    return f"{label}({body.get('actor')}):" + ("、".join(parts) or "空批次") + suffix
 
 
 def dumps(value: Any) -> str:

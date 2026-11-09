@@ -4,9 +4,10 @@
 > 相关:[`architecture/overview.md`](../architecture/overview.md) · 契约 [`contracts/`](../contracts/)
 
 **Articles**
-- `GET /api/articles` — list/query (filters: `content_type`, `source_id`, `has_content`, `search`(FTS5 全文,标题+正文), `publish_date_start/end`, `fetched_date_start/end`, `subscribed_scope` = `off`|`only`|`prioritize`, `skip`, `limit`)
+- `GET /api/articles` — list/query (filters: `content_type`, `source_id`, `has_content`, `search`(FTS5 全文,标题+正文), `publish_date_start/end`, `fetched_date_start/end`, `ingest_channel` = `fetch`|`push`|`manual`|`import`(来路,issue #262;`fetch` = 抓取器入库、无来路), `subscribed_scope` = `off`|`only`|`prioritize`, `skip`, `limit`);条目带 `ingest_channel` / `ingest_channel_label`,`ingest_actor` 只对管理员透出
+- `GET /api/articles/facets` — 分面计数 `content_types` / `source_ids` / `ingest_channels`(含伪值 `fetch`)
   - `podcast_guide=any|readable|listenable`：播客已发布中文导读的任一/文字/音频能力；省略则不限，非法值 422。与其它范围条件相交，在计数和分页前生效；任务就绪标记、未发布或已撤下产物不计入。
-- `POST /api/articles` — manual entry
+- `POST /api/articles` — retired (410, issue #262): manual entry now goes through `POST /api/public/ingest/v1/items` (admin session = 「单条收录」, channel `manual`)
 - `PUT /api/articles/{id}` — update
 - `DELETE /api/articles/{id}` — delete(必要时回退日报游标)
 - `POST /api/articles/batch-delete`
@@ -21,8 +22,10 @@
 - `GET /api/feed/articles` — delivery-shaped JSON with `metadata.extensions` parsed; supports `content_types` (CSV), `source_ids` (CSV), `has_content`, `include_content`; `limit` capped at 500
 - `GET /api/feed/articles.md` — same filtered records as a Markdown batch; capped at 200 records
 
-**Import Bridge**
-- `POST /api/import/social-posts` — ingest external social posts (X/Twitter, etc.) as `social_post` content; idempotent by `source_id + post_id`
+**Ingest**(issue #262,契约 [`contracts/ingest_push.md`](../contracts/ingest_push.md))
+- `POST /api/public/ingest/v1/items` — 收录:`ding_` 令牌推送(通道 `push`)或管理员会话「单条收录」(通道 `manual`);`/api/public/*` 免会话门控,会话由路由自己核对(只认 admin)
+- `/api/admin/ingest/*` — 收录令牌签发 / 吊销,收录源列入 / 下架 / 恢复 / 改名
+- `POST /api/import/social-posts` — 已退役(issue #262):外部社交内容按 `kind=social_post` 推送
 
 **Archive Sync** (collector → reader, see [Archive Sync](../architecture/archive-sync.md))
 - `GET /api/archive/export/articles.jsonl` — collector exports archive records as JSON Lines

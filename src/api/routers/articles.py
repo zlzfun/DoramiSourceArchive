@@ -17,17 +17,18 @@ import importlib
 import json
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import and_, case, exists, false, func, or_, text
 from sqlmodel import Session, select
 
 from api import deps
 from api.articles_view import (
-    GenericContent,
+    INGEST_CHANNEL_FETCH,
     apply_article_query_filters,
     article_recency_order,
     article_to_markdown,
+    ingest_channel_label,
     serialize_article_list_item,
     serialize_feed_article,
 )
@@ -58,7 +59,6 @@ from models.db import (
 )
 from services import article_analysis as article_analysis_service
 from services import content_classification
-from services import ingest_policy
 from services.source_naming import friendly_source_names
 from services.article_display_tags import (
     article_ids_for_canonical_projection, article_ids_for_flexible_label, load_display_tags,
@@ -312,6 +312,7 @@ def get_articles(
         content_types: Optional[str] = None,  # CSV:多类型筛选(类型归组分面用),与 feed 契约对齐
         source_id: Optional[str] = None,
         exclude_source_ids: Optional[str] = None,  # CSV：从结果中排除的来源（如知识台账排除日报源）
+        ingest_channel: Optional[str] = None,  # 来路:push | manual | import | fetch(抓取器入库,无来路)
         job_id: Optional[int] = None,
         job_run_id: Optional[int] = None,
         fetch_run_id: Optional[int] = None,
@@ -376,6 +377,7 @@ def get_articles(
         "content_types": content_types,
         "source_id": source_id,
         "exclude_source_ids": exclude_source_ids,
+        "ingest_channel": ingest_channel,
         "job_id": job_id,
         "job_run_id": job_run_id,
         "fetch_run_id": fetch_run_id,
@@ -579,6 +581,7 @@ def get_articles(
             digest_audio=digest_audios.get(record.id),
             include_podcast_diagnostics=is_admin,
             source_kinds=source_kinds,
+            include_ingest_actor=is_admin,
         )
         for record in records
     ]
@@ -681,12 +684,21 @@ def get_article_facets(
     source_labels = friendly_source_names([row["value"] for row in source_facets], session)
     for row in source_facets:
         row["label"] = source_labels.get(row["value"], row["value"])
+    total = int(session.exec(total_q).one() or 0)
+    # 来路分面(issue #262):抓取器入库的条目没有 ingest_channel,用总数减收录条目得出,记为伪值 fetch。
+    channel_facets = _facet(ArticleRecord.ingest_channel, ingest_channel_label)
+    fetched = total - sum(row["count"] for row in channel_facets)
+    if fetched > 0:
+        channel_facets.insert(0, {
+            "value": INGEST_CHANNEL_FETCH, "count": fetched, "label": ingest_channel_label(INGEST_CHANNEL_FETCH),
+        })
     return {
-        "total": int(session.exec(total_q).one() or 0),
+        "total": total,
         "content_types": _facet(
             ArticleRecord.content_type, content_classification.content_type_label
         ),
         "source_ids": source_facets,
+        "ingest_channels": channel_facets,
     }
 
 
@@ -810,64 +822,14 @@ async def get_article(article_id: str, request: Request):
 
 
 @router.post("/api/articles")
-async def create_article_manual(request: Request, params: dict = Body(...)):
-    """接收前端传来的手工录入数据并入库"""
-    source_id = str(params.get("source_id", "manual") or "manual").strip() or "manual"
-    reserved = ingest_policy.reserved_source_id_reason(source_id, allow_daily_brief=True)
-    if reserved:
-        raise HTTPException(status_code=400, detail=reserved)
-    with Session(deps.get_db_sink().engine) as session:
-        _require_local_article_governance(session, source_id)
-    # 扩展字段经 extra_extensions 通道随 serialize_to_metadata 落库。既有契约:坏扩展整体忽略、
-    # 录入照常;issue #262 B10 起接受对象形式,并在回执里如实报告被忽略的原因(不再静默)。
-    warnings: list[str] = []
-    try:
-        extensions = ingest_policy.parse_extensions_param(params.get("extensions_json"))
-    except ValueError as exc:
-        extensions = {}
-        warnings.append(str(exc))
-    # 调用方给的 id 原样保留(既有契约);跨源覆写由存储层 id_conflict 拦下(issue #262 B3)。
-    # 没给 id 时按链接生成本源命名空间下的稳定 id。
-    article_id = str(params.get("id") or "").strip()
-    if not article_id:
-        try:
-            article_id = ingest_policy.namespaced_item_id(
-                source_id, stable_value=str(params.get("source_url") or "")
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc))
-    content_obj = GenericContent(
-        id=article_id,
-        title=params.get("title", "未命名"),
-        source_url=params.get("source_url", ""),
-        publish_date=params.get("publish_date", ""),
-        content=params.get("content", ""),
-        has_content=True if params.get("content") else False
+async def create_article_manual():
+    """手工录入已并入收录(issue #262 推送入口统一波):调用方自定 id / content_type / 任意扩展
+    这三个后门随之取消。运维「单条收录」与外部调用方一律走 ``POST /api/public/ingest/v1/items``
+    (管理员会话或收录令牌),由服务端决定 id、类型与来路。"""
+    raise HTTPException(
+        status_code=410,
+        detail="手工录入已并入收录:请用 POST /api/public/ingest/v1/items(管理员会话或收录令牌)",
     )
-    content_obj.content_type = params.get("content_type", "manual_entry")
-    content_obj.source_id = source_id
-    if extensions:
-        content_obj.extra_extensions = extensions
-    # 未登记的来源在同一事务里建成临时源(不进发现目录,管理面「收录源」可列入,issue #262)。
-    content_obj._source_hint = {
-        "origin": "ingest",
-        "admission_status": "provisional",
-        "name": str(params.get("source_name") or "").strip(),
-    }
-    content_obj._ingest_channel = "manual"
-    content_obj._ingest_actor = _app().current_username(request) or ""
-
-    outcome = await deps.get_db_sink().save_with_outcome(content_obj)
-    error = ingest_policy.outcome_error(outcome)
-    if error is not None:
-        status_code, detail = error
-        raise HTTPException(status_code=status_code, detail=detail)
-
-    _app().queue_article_analysis_after_commit([content_obj.id])
-    result = {"status": "success", "id": content_obj.id, "outcome": outcome}
-    if warnings:
-        result["warnings"] = warnings
-    return result
 
 
 def _maybe_rewind_daily_brief_cursor(record) -> None:

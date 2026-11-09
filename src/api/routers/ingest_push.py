@@ -1,14 +1,14 @@
 """收录推送 Router(issue #262 波 1)。
 
-- ``POST /api/public/ingest/v1/items``:收录令牌(``Authorization: Bearer ding_…``)推送一批条目;
-  ``/api/public/*`` 免会话、按令牌鉴权(与订阅 / 聚合令牌同一门控)。
+- ``POST /api/public/ingest/v1/items``:收录令牌(``Authorization: Bearer ding_…``)推送一批条目,
+  或管理员会话做「单条收录」(通道 ``manual``);``/api/public/*`` 免会话、按令牌鉴权(与订阅 /
+  聚合令牌同一门控),会话由本路由自己核对。批处理主循环在 ``services/ingest_batch.py``。
 - ``/api/admin/ingest/*``:令牌签发 / 吊销、收录源列表与「列入 / 下架 / 恢复 / 改名」;管理前缀,
   仅管理员,写操作入审计。
 """
 
 from __future__ import annotations
 
-import datetime as dt
 import importlib
 import logging
 from typing import Any, Dict, List, Literal, Optional
@@ -22,9 +22,8 @@ from api import deps
 from api.tokens import read_bearer_or_query_token
 from models.db import ArticlePickRecord, ArticleRecord, IngestTokenRecord, SourceConfigRecord
 from services import admin_audit as admin_audit_service
-from services import ingest_push
+from services import ingest_batch, ingest_push
 from services import source_catalog, source_visibility, sync_consumer_policy
-from storage.impl import db_storage
 
 
 router = APIRouter(tags=["ingest-push"])
@@ -82,138 +81,68 @@ class IngestBatch(BaseModel):
     items: List[IngestItem] = PydanticField(default_factory=list, max_length=ingest_push.MAX_BATCH)
 
 
-def _authenticate(request: Request, session: Session) -> IngestTokenRecord:
-    token = request.headers.get("authorization", "")
-    raw = token[7:].strip() if token.lower().startswith("bearer ") else read_bearer_or_query_token(request)
-    record = ingest_push.authenticate(session, raw)
-    if record is None:
-        raise HTTPException(status_code=401, detail="收录令牌无效或已吊销")
-    return record
+def _caller(request: Request, session: Session) -> tuple[ingest_batch.IngestCaller, Optional[IngestTokenRecord]]:
+    """收录令牌优先;没带令牌时认管理员会话(运维「单条收录」,通道 manual,不计令牌额度)。
+
+    ``/api/public/*`` 在中间件里免会话,这里自己核对:只认 role=admin 的会话,游客与读者一律拒绝。
+    会话 Cookie 是 SameSite=Lax,跨站 POST 带不上,与其它管理写接口同一水平。
+    """
+    header = request.headers.get("authorization", "")
+    raw = header[7:].strip() if header.lower().startswith("bearer ") else read_bearer_or_query_token(request)
+    if raw:
+        record = ingest_push.authenticate(session, raw)
+        if record is None:
+            raise HTTPException(status_code=401, detail="收录令牌无效或已吊销")
+        if not _app().runtime_collector_enabled():
+            # 收录写的是归档:采集面关闭的节点(runtime role = reader)不接受,与旧入口经中间件的
+            # collector 门控一致(检视 R1 #3)。
+            raise HTTPException(status_code=403, detail="本节点未开启采集面,不接受收录")
+        remaining = max(0, int(record.daily_limit or 0) - ingest_push.picks_today(session, record.actor))
+        return ingest_batch.IngestCaller(actor=record.actor, remaining=remaining), record
+    auth = _app().current_auth_session(request)
+    if auth and auth.get("role") == "admin" and not _app().is_guest_session(auth):
+        if not _app().collector_role_enabled(auth):
+            raise HTTPException(status_code=403, detail="本节点未开启采集面,不接受收录")
+        return ingest_batch.IngestCaller(
+            actor=str(auth.get("sub") or ""), channel=ingest_batch.CHANNEL_MANUAL
+        ), None
+    if auth:
+        raise HTTPException(status_code=403, detail="该操作需要管理员账号或收录令牌")
+    raise HTTPException(status_code=401, detail="收录令牌无效或已吊销")
 
 
-def _social_source(item: IngestItem) -> dict[str, Any]:
-    source = item.source.model_dump()
-    # 社交帖的出处默认就是作者:没给 source 时用 author 填。
-    if not (source.get("source_id") or source.get("handle") or source.get("user_id")):
-        source.update({
-            "platform": item.platform or "x",
-            "handle": item.author.handle,
-            "user_id": item.author.user_id,
-            "name": source.get("name") or item.author.name,
-            "avatar_url": source.get("avatar_url") or item.author.avatar_url,
-        })
-    source.setdefault("platform", item.platform or "x")
-    if not source.get("platform"):
-        source["platform"] = item.platform or "x"
-    return source
+def _after_created(ids: list[str]) -> None:
+    try:
+        _app().queue_article_analysis_after_commit(ids)
+        _app().schedule_media_prefetch(ids)
+    except Exception:  # noqa: BLE001 - 入库已提交;分析补偿扫描与按需缓存兜底
+        _logger.warning("收录入库后的分析入队 / 媒体预取失败", exc_info=True)
 
 
 @router.post("/api/public/ingest/v1/items")
 async def push_items(batch: IngestBatch, request: Request):
-    """推送一批条目(≤ 100);逐条返回 created / duplicate / duplicate_url / refreshed / rejected。"""
+    """收录一批条目(≤ 100);逐条返回 created / duplicate / duplicate_url / duplicate_content / refreshed / rejected。"""
     db_sink = deps.get_db_sink()
-    results: list[dict[str, Any]] = []
-    created_ids: list[str] = []
+    # 先解析会话再借连接:结果缓存在 request.state,免得持有连接时再借一条(current_auth_session 注释)。
+    _app().current_auth_session(request)
     with Session(db_sink.engine) as session:
-        token = _authenticate(request, session)
+        caller, token = _caller(request, session)
         if sync_consumer_policy.v2_consumer_mode_active(session):
-            raise HTTPException(status_code=409, detail="接收端节点不接受推送,请推送到外网 authority")
-        actor = token.actor
-        remaining = max(0, int(token.daily_limit or 0) - ingest_push.picks_today(session, actor))
-        ctx = ingest_push.new_context(session, actor)
-        prepared: list[tuple[int, IngestItem, Optional[ingest_push.ResolvedSource], Optional[str]]] = []
-        for index, item in enumerate(batch.items):
-            if index >= remaining:
-                prepared.append((index, item, None, "超出今日收录额度"))
-                continue
-            source = _social_source(item) if item.kind == "social_post" else item.source.model_dump()
-            try:
-                resolved = ingest_push.resolve_source(ctx, item.kind, source, item_url=item.url)
-                prepared.append((index, item, resolved, None))
-            except ingest_push.IngestRejected as exc:
-                prepared.append((index, item, None, str(exc)))
-        token.last_used_at = ingest_push._now()
-        session.add(token)
-        session.commit()
+            raise HTTPException(status_code=409, detail="接收端节点不接受收录,请推送到外网 authority")
+        if token is not None:
+            token.last_used_at = ingest_push._now()
+            session.add(token)
+            session.commit()
 
-    for index, item, resolved, reason in prepared:
-        base = {"index": index, "kind": item.kind}
-        if resolved is None:
-            results.append({**base, "status": "rejected", "reason": reason})
-            continue
-        try:
-            payload = item.model_dump()
-            with Session(db_sink.engine) as session:
-                id_prefix = ingest_push.item_id_prefix(session, resolved.source_id)
-            content = ingest_push.build_content(
-                item.kind, resolved.source_id, payload, id_prefix=id_prefix
-            )
-        except (ingest_push.IngestRejected, ValueError, TypeError, OverflowError) as exc:
-            # 单条载荷问题只拒收这一条;整批照常回执、末尾审计照常执行(实现检视 R1 #12)。
-            results.append({**base, "status": "rejected", "reason": str(exc), "source_id": resolved.source_id})
-            continue
-        content._ingest_actor = actor
-        if resolved.created:
-            hint = dict(resolved.hint)
-            hint.pop("podcast_feed_url", None)
-            content._source_hint = hint
-        with Session(db_sink.engine) as session:
-            existing = session.get(ArticleRecord, content.id)
-            duplicate = None
-            # 链接即身份只对文章与社交帖成立;播客单集常共用节目页链接,只认单集身份(guid / 单集
-            # 链接 → 条目 id),否则会把同节目的不同单集并成一条(检视复检新 P1)。
-            if existing is None and item.kind != "podcast_episode":
-                duplicate = ingest_push.existing_article_by_url(session, content.source_url)
-            if duplicate is not None:
-                # 同一链接已在库里:别的源 → duplicate_url;同一个源但条目 id 公式不同(抓取器按
-                # guid、推送按链接等)→ duplicate。都只记收录,不新建(实现检视 R1 #6)。
-                ingest_push.record_pick(session, duplicate.id, actor, item.note)
-                session.commit()
-                results.append({
-                    **base,
-                    "status": "duplicate_url" if duplicate.source_id != resolved.source_id else "duplicate",
-                    "id": duplicate.id,
-                    "source_id": duplicate.source_id,
-                })
-                continue
-            if item.kind == "podcast_episode" and resolved.created:
-                ingest_push.ensure_podcast_source(session, resolved)
-                session.commit()
-        outcome = await db_sink.save_with_outcome(content)
-        with Session(db_sink.engine) as session:
-            if outcome in db_storage.SAVE_STORED_OUTCOMES or outcome in {
-                db_storage.SAVE_DUPLICATE, db_storage.SAVE_REFRESHED,
-            }:
-                ingest_push.record_pick(session, content.id, actor, item.note)
-                session.commit()
-        if outcome == db_storage.SAVE_CREATED:
-            created_ids.append(content.id)
-            status = "created"
-        elif outcome in {db_storage.SAVE_CONTENT_FILLED, db_storage.SAVE_METADATA_REPAIRED,
-                         db_storage.SAVE_REFRESHED}:
-            status = "refreshed"
-        elif outcome == db_storage.SAVE_DUPLICATE:
-            status = "duplicate"
-        else:
-            _code, detail = ingest_push.ingest_policy.outcome_error(outcome) or (400, outcome)
-            results.append({**base, "status": "rejected", "reason": detail, "source_id": resolved.source_id})
-            continue
-        results.append({
-            **base, "status": status, "id": content.id, "source_id": resolved.source_id,
-            "source_created": bool(resolved.created and status == "created"),
-        })
-
-    if created_ids:
-        try:
-            _app().queue_article_analysis_after_commit(created_ids)
-            _app().schedule_media_prefetch(created_ids)
-        except Exception:  # noqa: BLE001 - 入库已提交;分析补偿扫描与按需缓存兜底
-            _logger.warning("推送入库后的分析入队 / 媒体预取失败", exc_info=True)
-    body = ingest_push.audit_body(results, actor=actor)
+    results = await ingest_batch.ingest(
+        db_sink, [item.model_dump() for item in batch.items], caller, on_created=_after_created
+    )
+    body = ingest_push.audit_body(results, actor=caller.actor, channel=caller.channel)
     try:
         admin_audit_service.record_audit(
             db_sink.engine,
-            username=f"ingest:{actor}",
+            # 令牌调用记在 ingest:<actor> 名下;管理员会话记在本人名下。
+            username=f"ingest:{caller.actor}" if token is not None else caller.actor,
             method="POST",
             path="/api/public/ingest/v1/items",
             status_code=200,
@@ -223,7 +152,7 @@ async def push_items(batch: IngestBatch, request: Request):
         _logger.debug("收录审计写入失败", exc_info=True)
     return {
         "status": "success",
-        "actor": actor,
+        "actor": caller.actor,
         "counts": ingest_push.summarize(results),
         "results": results,
     }

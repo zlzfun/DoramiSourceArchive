@@ -569,12 +569,11 @@ def test_v2_consumer_fence_blocks_public_source_and_article_crud_before_first_sy
         )
         assert custom_update.status_code == 200
 
-        assert client.post("/api/articles", json={
-            "id": "manual-public",
-            "title": "Manual public",
-            "source_id": "manual",
+        # 手工录入已并入收录(issue #262):接收端的收录端点同样拒绝本机写公共内容。
+        assert client.post("/api/public/ingest/v1/items", json={"items": [{
+            "kind": "article", "url": "https://example.com/manual-public", "title": "Manual public",
             "content": "body",
-        }).status_code == 409
+        }]}).status_code == 409
         assert client.put(
             "/api/articles/article-a", json={"title": "Changed"}
         ).status_code == 409

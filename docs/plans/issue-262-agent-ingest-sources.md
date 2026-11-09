@@ -1,6 +1,6 @@
 # issue #262 外部 Agent 主动收录:无源 / 临时源内容的语义审视与「源目录数据化」设计(R1)
 
-> 状态:进行中(2026-11-06 起实施;§7 拍板项 D1–D8 已于 2026-11-06 由用户按推荐拍板;波 0 与波 1 随首个 PR 落地,实施记录见 §10;源目录数据化的后续步骤见 [源模型重构方案](./issue-262-source-model-refactor.md) §12)。
+> 状态:进行中(2026-11-06 起实施;§7 拍板项 D1–D8 已于 2026-11-06 由用户按推荐拍板;波 0 与波 1 随首个 PR 落地,实施记录见 §10;推送入口统一与同源内容判重随叠分支 PR,见 §11;源目录数据化的后续步骤见 [源模型重构方案](./issue-262-source-model-refactor.md) §12)。
 > 执行:主代理 Claude Code(Opus 5.5)+ 4 个只读子代理分域盘点(源定义层 / 入库与分析 / 读者分发 / 同步·鉴权·运维·治理);标「高」的问题由主代理逐条回源核实,未实跑的标「静态确认」。
 > 基线:`main` @ `454f90da`(v3.67.4)。文中 `file:line` 均对此版本。
 
@@ -258,7 +258,7 @@
 
 **拍板(2026-11-06)**:D1–D8 按推荐——D1 按出处建临时源;D2 不进发现目录、源页可单独订阅;D3 默认不进公共日报、不计入多源印证,「列入」后参与;D4 已存在的内容只记收录记录;D5 带作用域的收录令牌,旧入口保留并统一校验;D6 目录文件 + 数据库运行时(按重构方案 R0–R3);D7 改目录文件走 PR;D8 角色兜底统一为媒体。
 
-**波 0(B1–B12)**:社交导入按作者身份认回已有源、去掉 `import_social_posts` 默认值;存储层 `save_with_outcome` 报告确切结果、同 id 被他源占用不改写(`id_conflict`);X 模板在 `_run` 内切换实例身份;接收端社交导入 409;隐藏源排除于 `/api/feed/articles[.md]` 与公共日报候选池;前端未登记源角色归媒体;事件归并对未登记源按 content_type 多数判形态;社交导入入审计、手工录入审计记来源;`extensions_json` 接受对象、坏 JSON 回执带 `warnings`(既有「整体忽略」契约保留);两个入口补测试;文档数字。B3 的落法相对 §4.1 收窄:手工录入的调用方 id 原样保留(既有契约,`tests/test_manual_entry_extensions.py` 钉住),跨源覆写由存储层闸拦下,不给 id 时才由服务端生成。
+**波 0(B1–B12)**:社交导入按作者身份认回已有源、去掉 `import_social_posts` 默认值;存储层 `save_with_outcome` 报告确切结果、同 id 被他源占用不改写(`id_conflict`);X 模板在 `_run` 内切换实例身份;接收端社交导入 409;隐藏源排除于 `/api/feed/articles[.md]` 与公共日报候选池;前端未登记源角色归媒体;事件归并对未登记源按 content_type 多数判形态;社交导入入审计、手工录入审计记来源;`extensions_json` 接受对象、坏 JSON 回执带 `warnings`(既有「整体忽略」契约保留);两个入口补测试;文档数字。B3 的落法相对 §4.1 收窄:手工录入的调用方 id 原样保留(既有契约,`tests/test_manual_entry_extensions.py` 钉住),跨源覆写由存储层闸拦下,不给 id 时才由服务端生成。→ 已被推送入口统一波(§11)取代:手工录入并入收录,条目 id 一律由服务端决定。
 
 **波 1**:
 
@@ -268,4 +268,39 @@
 - 条目 id 与抓取器同一公式;先推后抓时抓取器公式不同的,存储层按「同源同链接的收录条目」合流(补检 A,见重构方案 §12);目标源形态须与 `kind` 一致(补检 B;目检后补:x.com / twitter.com 链接只收社交帖,按文章推拒收,不另建网页临时源);跨源 URL 去重返回 `duplicate_url` 并写收录记录 `article_picks`;条目来路 `articles.ingest_channel / ingest_actor`(push / manual / import;迁移 `e2a9c4f7b183`,不随同步导出)。
 - 临时源的下游策略:发现目录与批量订阅不列(`listing=unlisted`,源栏「收录」组);早报重大事件多源印证、榜单「必读」来源数、事件榜发布主体数不计入;公共日报候选池默认排除;播客全文处理(付费 ASR)自动入队排除,读者点播随之挡住。
 - 没做:`kind_hint` 来自服务端规则——推送的 `content_type` 由 `kind` 决定(`web_article` / `social_post` / `podcast_episode`),调用方不可写,等价于此;「收录」读者视图(§5.3 可选)与别名合并(波 3)留待后续。
+
+## 11. 推送入口统一与同源内容判重(叠分支 PR,2026-11-06)
+
+**拍板(用户在分叉会话里定,2026-11-06)**:① 手工录入去掉三个后门(自由 `content_type`、任意扩展 JSON、调用方自定 id),一律走推送逻辑;通用录入不再提供手工日报。② 存量手工条目不迁移。③ `/api/import/social-posts` 直接退役。④ 从推送路由抽出核心收录服务;通用端点同时接受 `ding_` 令牌与管理员会话;台账页「手工录入」改「单条收录」;载荷保持扁平,不改同步契约。另:**收录时同源内容判重**,范围严格限定——只在收录时、只比同一个 `source_id`,跨源一律不比(「抓取层做来源内容的还原,不同源不能去重」),抓取路径完全不动;此前设想的「分析跳过重复、事件层直接归并、多源印证只算一次」全部撤回。
+
+**落地形状**:
+
+- 核心服务 `services/ingest_batch.py`:两段式(整批先解析出处,再逐条入库),`IngestCaller(actor, channel, remaining)`;推送路由只剩鉴权(令牌优先,否则认 role=admin 的会话)、接收端 409、令牌 `last_used_at` 与审计。单条收录通道 `manual`、收录者为管理员本人、不计令牌额度,审计摘要「单条收录(<用户名>)」。
+- `POST /api/articles` 创建回 410 并指向收录端点(保留路由,旧调用拿到明确说明而不是 405);`/api/import/social-posts` 删除(端点与模型、collector 前缀、审计规则、`audit_rule_needs_body` 条目、测试)。原先这两个入口的回归由新入口上的测试覆盖。
+- 同源内容判重 `services/content_fingerprint.py` + 旁表 `article_fingerprints`(迁移 `f3b8d1c6a925`):规范化 / sha1 / SimHash / Jaccard 口径与分叉会话对本机 09-17 开发库的扫描一致(同源且距离 ≤ 3 的 31 对全是真重复;唯一误判 qwen-code preview / nightly 发布说明属 GitHub 类,已在排除名单里;扫描脚本未入库)。排除名单 = `item_url_identity` 的共用页面链接名单 + 模型卡 `hf_*` / `hf_model` + `github_trending`。命中回 `duplicate_content`,只记收录。
+- 前端 `IngestItemModal.jsx`(form-sheet 语法,三类各自字段;社交帖贴 `x.com/…/status/…` 链接自动补 handle 与帖子 id;回执留在弹窗里:已新建 / 新建临时源 / 已存在 ×3 / 已更新 / 未收录),纯逻辑在 `utils/ingestForm.js` 并有单测。
+- 台账来路(目检后补,用户要求「ingest 推送的内容也应该在台账中可见」):条目序列化带 `ingest_channel` / `ingest_channel_label`,`ingest_actor` 只对管理员透出;`GET /api/articles?ingest_channel=fetch|push|manual|import`(`fetch` = 抓取器入库、列无来路的伪值),分面 `ingest_channels`(抓取数 = 总数 − 收录数)。前端:来源列名下标「推送 · 调用方」/「手工 · 用户名」(抓取条目不标),详情「来路」行,左栏「来路」分面只在库里有收录条目时出现。
+
+**相对拍板的一处调整(更简单且等价)**:指纹**不在入库 / 补正文时写**,而是收录前对目标源现场补齐「缺的 + 条目 `archive_updated_at` 变了的」。理由:①「抓取路径完全不动」字面成立,抓取入库不多一次计算;② 版本号比对同样覆盖补正文后的重算;③ 测得指纹每篇约 3.4 ms(SimHash 只取规范化正文前 2 万字,10 万字长文约 10 ms),上千条的源第一次被收录时现场补齐约数秒,放 `asyncio.to_thread` 不阻塞事件循环。短正文也落一行(`length` < 300、哈希为空),免得每次收录重新规范化。
+
+**测试**:`tests/test_ingest_unify.py`(同源换链接同正文 / 近似 → `duplicate_content`;跨源、新建临时源、单页文档类、短文本 → `created`;社交帖不比;SimHash 全撞时 Jaccard 复核挡住;条目改过即重算;管理员会话的通道 / 收录者 / 审计与读者 403、令牌优先);`tests/test_manual_entry_extensions.py` 按新契约重写(服务端决定 id / 类型 / 扩展,旧入口 410,手工日报拒收;列表轻取数契约保留);`frontend/test/ingestForm.test.mjs`。反向核验:关掉判重、关掉 Jaccard 复核,对应用例都失败。
+
+**实现检视 R1(2026-11-06)**:检视方 Codex CLI,`gpt-6-astra`,`model_reasoning_effort=ultra`,只读沙箱;实现方 Claude Code(Opus 5.5)。6 条 P2 + 1 条 P3 全部接受、无分歧,另加实现方自查 1 条:
+
+| # | 级 | 问题 | 修订 |
+|---|---|---|---|
+| 1 | P2 | 两个请求同时首次补齐同一源,`session.merge` 撞主键,整批 500 | 原子 UPSERT(`ON CONFLICT DO UPDATE`),旧版本写赢下次按版本号自愈;判重调用出错按未命中继续。回归用屏障固定交错,旧代码 3/3 复现 IntegrityError |
+| 2 | P2 | 自定源绑 `generic_github_releases`,源 id 不带 `github_`,推送的 `web_article` 看不出真实类型,发布说明被判重 | 资格看目标源注册表类 / 绑定类的 `content_type`;候选条目再按自身类型过滤 |
+| 3 | P2 | `runtime.role=reader` 节点上管理员会话可经新入口写入(旧入口 403) | 会话分支要求 `collector_role_enabled`;令牌分支一并要求采集面开启 |
+| 4 | P2 | 精确匹配只取一行,命中孤儿指纹后转入截断的近似分支,漏判仍存在的同正文条目 | 精确与近似查询都 JOIN 当前条目(同源、有正文、类型不禁比);同步时删孤儿指纹 |
+| 5 | P2 | 额度按 actor 统计不分通道,管理员手工收录消耗同名令牌额度 | `picks_today` 只数 `channel=push` |
+| 6 | P2 | 旧请求的迟到回执覆盖重开后的新表单,`finally` 提前解除新请求忙态 | 弹窗请求代次守卫:关闭 / 换类型 / 再收一条都作废在途请求 |
+| 7 | P3 | 忙态只换 spinner;Toast 用间隔号连句 | 「收录中…」;「已收录并新建临时源 …」 |
+| 8 | P3 | (自查)持有连接时再解析会话,嵌套借连接 | 路由先解析会话(缓存在 request.state)再借连接 |
+
+**复检(最后一轮)**:同一会话 resume,`gpt-6-astra` / `ultra` / 只读。8 条逐条判「够」,未发现修复新引入的 P1,无新增观察期事项。
+
+**有意不做 / 触发**:跨源内容去重(明确不做,见 decisions);先推后抓同源换链接两行(backlog,发现真实例子再评估);手工补录日报的入口(backlog)。
+
+**来路增量检视(R2,2026-11-09,`gpt-6-astra` / `ultra` / 只读,只看提交 e9367ff0)**:2 P2 全部接受修复——① 删掉最后一条收录内容后来路分面面板消失、筛选无处解除 → 面板在「带着来路筛选 ∨ 有非抓取通道」时出现;② 从源页跳来看「收录文章」残留旧来路筛选 → `pendingFilter` 重置加 `ingest_channel`。另补读者看单条详情不带 `ingest_actor`、未知来路值回空的用例。组件级 UI 状态无单测基础设施,以沙箱手工验证为准(观察期)。表态见 `.review/response-r2-provenance.md`。
 

@@ -3,7 +3,7 @@ import { RefreshCw, Search, Plus, Trash2, Edit2, ChevronDown } from 'lucide-reac
 import DateRangePicker from './DateRangePicker';
 import ArticleDetailModal from './ArticleDetailModal';
 import ArticleDetailDrawer from './ArticleDetailDrawer';
-import ManualAddModal from './ManualAddModal';
+import IngestItemModal from './IngestItemModal';
 import {
   fetchArticles as apiFetchArticles,
   fetchArticle,
@@ -12,7 +12,7 @@ import {
   batchDeleteArticles,
   deleteArticle,
   updateArticle,
-  createArticle,
+  ingestItems,
   forcePodcastFullAnalysis,
 } from '../api';
 import Sparkline from './charts/Sparkline';
@@ -20,6 +20,7 @@ import { runAction } from '../utils/runAction';
 import { excerptOf } from '../utils/readerText';
 import { SCORE_DISCLAIMER, analysisStatusMeta, analysisTagSearch, podcastLedgerProcessingMeta, primaryAnalysisLabel, qualityScoreText, scoreTierClass } from '../utils/analysis';
 import { podcastProcessingSuccessMessage } from '../utils/podcastProcessing';
+import { describeProvenance } from '../utils/ingestForm';
 import { useConfirm } from '../hooks/useConfirm';
 import { useAbortableLoad } from '../hooks/useAbortableLoad';
 
@@ -96,6 +97,7 @@ export default function DataTab({
   const [filters, setFilters] = useState({
     content_types: '', // CSV：类型归组分面下发的多类型筛选（单类型组也走 CSV）
     source_id: '',
+    ingest_channel: '', // '' 不限 | fetch 抓取 | push 推送 | manual 手工 | import 导入(退役通道的存量)
     has_content: '', // '' 不限 | 'true' 仅有正文 | 'false' 仅无正文
     publish_date_start: '',
     publish_date_end: '',
@@ -155,8 +157,7 @@ export default function DataTab({
     return () => window.removeEventListener('resize', measure);
   }, [facets, fetchersById]);
 
-  // 手工录入的 datalist 选项：类型/来源同样吃 facets（全量目录），并入已注册 fetcher。
-  const manualContentTypes = useMemo(() => (facets?.content_types ?? []).map(c => c.value), [facets]);
+  // 单条收录的来源 datalist:吃 facets(全量目录),并入已注册 fetcher;留空 = 按链接自动认。
   const uniqueSourceIds = useMemo(() => [...new Set([
     ...availableFetchers.map(f => f.id).filter(Boolean),
     ...(facets?.source_ids ?? []).map(s => s.value),
@@ -335,6 +336,7 @@ export default function DataTab({
       ...prev,
       content_types: '',
       source_id: pendingFilter.source_id ?? prev.source_id,
+      ingest_channel: '', // 从源页跳来看「收录文章」,不能带着上次的来路筛选(检视 R2 #2)
       has_content: '',
       publish_date_start: '',
       publish_date_end: '',
@@ -391,25 +393,20 @@ export default function DataTab({
     });
   };
 
-  const handleManualAddSubmit = async (formData) => {
-    const payload = {
-      id: `manual_${Date.now()}`,
-      title: formData.title,
-      source_url: formData.source_url,
-      publish_date: formData.publish_date || new Date().toISOString(),
-      content_type: formData.content_type,
-      source_id: formData.source_id,
-      content: formData.content,
-      extensions_json: formData.extensions_json || '{}',
-    };
-    await runAction(() => createArticle(payload), {
-      showToast,
-      success: '已录入文章',
-      onSuccess: () => {
-        setManualAddModal(false);
+  // 单条收录:回执留在弹窗里(新建 / 已有 / 新建临时源),新建或补全时刷新台账。
+  const handleIngestSubmit = async (item) => {
+    try {
+      const res = await ingestItems([item]);
+      const result = res?.results?.[0] || null;
+      if (result && ['created', 'refreshed'].includes(result.status)) {
+        showToast(result.source_created ? `已收录并新建临时源 ${result.source_id}` : `已收录 ${item.title || result.id}`, 'success');
         refreshAfterMutation();
-      },
-    });
+      }
+      return result;
+    } catch (error) {
+      showToast(error.message || '收录失败', 'error');
+      return null;
+    }
   };
 
   // 行点击 → 打开详情抽屉并拉取全文（竞态由 runDetail 兜底）。
@@ -529,7 +526,7 @@ export default function DataTab({
         <div className="page-head-actions">
           {canManageArticles && (
             <button onClick={() => setManualAddModal(true)} className="action-button action-button-primary min-h-[32px] px-3 text-xs">
-              <Plus /> 手工录入
+              <Plus /> 单条收录
             </button>
           )}
           <button onClick={refreshArticles} disabled={loading} className="action-button action-button-secondary min-h-[32px] px-3 text-xs">
@@ -603,6 +600,34 @@ export default function DataTab({
               ))}
             </div>
           </div>
+
+          {/* 来路(issue #262):只在有收录条目时出现——全是抓取的库里这一栏没有信息量;
+              但当前带着来路筛选时必须留着,否则删掉最后一条收录内容后筛选无处解除(检视 R2 #1) */}
+          {(filters.ingest_channel || (facets?.ingest_channels ?? []).some((row) => row.value !== 'fetch')) && (
+            <div className="ledger-facet">
+              <h3 className="micro-label ledger-facet-title">来路</h3>
+              <div className="ledger-facet-list">
+                <button
+                  type="button"
+                  onClick={() => setFilters(prev => ({ ...prev, ingest_channel: '' }))}
+                  className={`ledger-facet-item ${!filters.ingest_channel ? 'is-on' : ''}`}
+                >
+                  全部来路
+                </button>
+                {(facets?.ingest_channels ?? []).map((row) => (
+                  <button
+                    key={row.value}
+                    type="button"
+                    onClick={() => setFilters(prev => ({ ...prev, ingest_channel: row.value }))}
+                    className={`ledger-facet-item ${filters.ingest_channel === row.value ? 'is-on' : ''}`}
+                  >
+                    <span className="ledger-facet-name">{row.label || row.value}</span>
+                    <span className="n">{row.count.toLocaleString()}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="ledger-facet">
             <h3 className="micro-label ledger-facet-title">新闻价值</h3>
@@ -801,6 +826,10 @@ export default function DataTab({
                               {name !== article.source_id && !fetchersById[article.source_id] && (
                                 <span className="ledger-source-id">{article.source_id}</span>
                               )}
+                              {/* 来路(issue #262):推送 / 手工收录的条目标出通道与收录者;抓取条目不标 */}
+                              {article.ingest_channel && (
+                                <span className="ledger-source-id">{describeProvenance(article)}</span>
+                              )}
                             </button>
                           );
                         })()}
@@ -937,12 +966,11 @@ export default function DataTab({
         onTemporaryTagSearch={handleTemporaryTagSearch}
       />
 
-      <ManualAddModal
+      <IngestItemModal
         isOpen={manualAddModal}
-        uniqueContentTypes={manualContentTypes}
-        uniqueSourceIds={uniqueSourceIds}
+        sourceIds={uniqueSourceIds}
         onClose={() => setManualAddModal(false)}
-        onSubmit={handleManualAddSubmit}
+        onSubmit={handleIngestSubmit}
       />
     </div>
   );

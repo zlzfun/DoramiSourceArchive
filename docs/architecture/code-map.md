@@ -88,7 +88,7 @@ frontend/src/
     ├── DailyBriefFlow.jsx    # Animated map-reduce stage visualization for the daily-brief generation progress
     ├── SettingsModal.jsx    # 设置柜 (880×576, v3.9 「接入集成并入设置」; v3.19.2 整备): 分组左导航 通用(账户/外观/反馈与建议 — 反馈仅读者账号)/接入集成(聚合接口/MCP 接入/Agent 技能包 — 两角色同享)/管理(数据同步/凭据 — v3.27 凭据整合台)/关于; wash 块选中 (轨语言); initialSection 深链。**内容门控按「当前界面」而非仅角色**(v3.19.2): App 下传 readerSurface, adminConsole = admin 账号 × 管理台界面 —— MCP 启停 switch/「管理员令牌拉走全库」文案/数据同步组/归档中枢产品名只在 adminConsole 出现, admin 切阅读器后设置柜与读者同观感。分区组件在 components/settings/ (FeedTokenSection/McpAccessSection — adminConsole 含 MCP 启停 switch + 向量统计行, 取数范围说明分管理版/读者版/SkillSection/AccountSection/AppearanceSection/DataSyncSection — v3.19.2 重设计为单列整幅实线卡(根治 datetime 截断), 含 RemoteSyncCard 远程同步块(测连/范围三选/进度轮询)与 RemoteSyncScheduleCard 定时同步卡(开关+只写不回显凭据+频率预设)/CredentialsSection — v3.27 凭据整合台:LLM/X 编辑卡+只读回指行,onNavigate 柜内跳数据同步/FeedbackSection — v3.18 读者反馈入口/AboutSection)
     ├── SecretField.jsx      # 统一凭据输入件(v3.26): 只写不回显契约的表单半边——掩码预览即占位(无预览时「已设置」), 空值起步 留空=保留/输入=覆盖, 语义挂 title; X/LLM/定时同步三处共用
-    ├── ManualAddModal.jsx   # Manual article entry form
+    ├── IngestItemModal.jsx  # 单条收录(issue #262):与外部推送同一端点;纯逻辑在 utils/ingestForm.js
     ├── ArticleDetailModal.jsx
     ├── DateRangePicker.jsx
     └── Toast.jsx
