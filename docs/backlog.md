@@ -6,7 +6,7 @@
 
 ## 进行中
 
-- ◇ **issue #251 并发首访懒建已读水位 500**(2026-11-09 开工,分支 `feat/issue-251-cursor-upsert`,检视中;纯后端无目检面,按 2026-09-19 例外路径合入):`ensure_cursors()` 改 `INSERT … ON CONFLICT DO NOTHING` + commit 后重读,两请求都拿先到者水位;补确定性交错与双线程现场用例,反向对照旧码两条都撞约束。有意不改(观察期):同文件 `_set_read_state` / `reset_cursor` 同类 get-then-add,暴露面低(吞异常 / 单点动作 / 用户锁内),触发 = 日志出现唯一约束实例。方案 [plans/issue-251-cursor-upsert.md](plans/issue-251-cursor-upsert.md)。
+- ◇ **issue #251 并发首访懒建已读水位 500**(2026-11-09 开工,分支 `feat/issue-251-cursor-upsert`,Codex 第 1 轮可合入、三条 P3 文档口径已修、复检中;纯后端无目检面,按 2026-09-19 例外路径合入):`ensure_cursors()` 改 `INSERT … ON CONFLICT DO NOTHING` + commit 后重读,两请求都拿先到者水位;补确定性交错与双线程现场用例,反向对照旧码两条都撞约束。有意不改(观察期):同文件 `_set_read_state` / `reset_cursor` 同类 get-then-add,暴露面低(`/read` 吞异常不记日志 / 手动标读单点动作、后到者可重试 / 挂守卫的订阅入口进程内互斥),触发 = 用户报告手动标读失败或日志出现唯一约束实例。方案 [plans/issue-251-cursor-upsert.md](plans/issue-251-cursor-upsert.md)。
 
 - ◇ **issue #262 源模型重构与收录推送**(2026-11-06 起实施,开发版 3.68.0-alpha):首个 PR = 波 0 缺陷修复 + R0 / R1b / R1c / R4 最小闭环 + 波 1 推送通道(令牌、身份解析、临时源、跨源去重、收录记录、管理面「收录」);同步按接收端能力投影(`source-catalog-v1`),两种混版本窗口都安全。已完成:Codex 两轮交叉检视(首轮 12 条全部接受并修复,复检余项直接修)、真实库副本存量对拍、跨版本实测;待:用户沙箱目检、PR / CI。后续 PR:R1a 其余消费方迁到 `source_catalog`、R2 目录文件(含播客目录差异报告与前像)、R3a 注册键与执行上下文原子切换、R3b A 档 30 个类删除。有意不做:「收录」读者视图、别名合并(收录方案波 3)、Agent 写入 MCP。观察:临时源身份解析误判(多租户主机名单不全、同一出处多个 handle)、跨源同链接去重只认原样 / 规范形 / 尾斜杠三种写法(抓取侧存的若是重定向后地址会漏判)。见 [重构方案](plans/issue-262-source-model-refactor.md) §12、[收录方案](plans/issue-262-agent-ingest-sources.md) §10。
 

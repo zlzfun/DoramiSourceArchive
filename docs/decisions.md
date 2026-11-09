@@ -150,8 +150,8 @@
 ### 并发首访懒建已读水位(issue #251,2026-11-09) — [方案](plans/issue-251-cursor-upsert.md)
 
 - 决策:`ensure_cursors` 懒建水位行用 `INSERT … ON CONFLICT DO NOTHING` + commit 后重读,以库里实际落下的行为准(先到者的 backlog 水位),调用方契约不变 — 方案 §2
-- 不做(本波):同文件 `_set_read_state` / `reset_cursor` 的 get-then-add 不改——`/read` 吞异常、手动标读是单点动作、订阅路径在用户锁内,暴露面低 — 方案 §3
-- 触发:日志出现 `reader_article_read_state` / `reader_read_cursors` 唯一约束实例 → 照 `mark_ids_read` 的 `on_conflict_do_update` 翻译 — 方案 §3
+- 不做(本波):同文件 `_set_read_state` / `reset_cursor` 的 get-then-add 不改——`/read` 吞异常不阻断阅读、手动标读是单点动作(后到者可能失败、可重试)、挂守卫的订阅入口有进程内用户级互斥,触发概率 × 影响不足以扩本波 — 方案 §3
+- 触发:用户报告手动标读 / 标未读失败,或日志出现 `reader_article_read_states` / `reader_read_cursors` 唯一约束实例 → 照 `mark_ids_read` 的 `on_conflict_do_update` 翻译 — 方案 §3
 
 ## 检索、翻译与读者 AI
 

@@ -88,9 +88,9 @@
 ## issue #251 并发首访懒建已读水位撞唯一约束(分支 `feat/issue-251-cursor-upsert`,开发版 3.68.0-alpha,版本号以实际发版为准)
 
 - **来由**:#230 手机端 e2e 四种屏宽并行共用一个读者账号稳定复现 500;e2e 改为每屏宽一个读者绕开,生产代码未动,方案批 4b 登记观察项并开 issue(2026-10-31)。
-- **根因**:`reader_state.ensure_cursors()` 先 `load_cursors()` 再逐源 `session.add` + `commit`;两个请求同时查到「缺」同插 `(owner_username, source_id)`,WAL 下后写者等完 `busy_timeout` 再撞主键,`IntegrityError` 冒到端点。「幂等」只对串行成立,而 `unread-counts` 是「挂载即校准」入口,并发首访是正常路径。
+- **根因**:`reader_state.ensure_cursors()` 先 `load_cursors()` 再逐源 `session.add` + `commit`;两个请求同时查到「缺」同插 `(owner_username, source_id)`,WAL 下后写者等先写者提交(`busy_timeout` 只是等待上限)后继续执行、撞主键,`IntegrityError` 冒到端点。「幂等」只对串行成立,而 `unread-counts` 是「挂载即校准」入口,并发首访是正常路径。
 - **修法**:一条 `INSERT … ON CONFLICT DO NOTHING`(同文件 `mark_ids_read` 先例),commit 后 `load_cursors()` 重读、以库里实际落下的行为准;`source_ids` 顺手去重;返回值契约不变。无迁移、不涉同步流。
-- **同类盘点(有意不改)**:`_set_read_state`(`/read` 吞异常;手动标读是单点动作)与 `reset_cursor`(订阅路径在用户锁内;全部标读时行一般已校准建好)记观察期,触发 = 日志出现唯一约束实例。
+- **同类盘点(有意不改)**:`_set_read_state`(`/read` 吞异常不记日志;手动标读是单点动作,后到者可能失败可重试)与 `reset_cursor`(挂守卫的订阅入口有进程内用户级互斥;全部标读时行一般已校准建好)记观察期,触发 = 用户报告手动标读失败或日志出现唯一约束实例。
 - **自测**:确定性交错用例(monkeypatch `_backlog_watermark`,让请求 B 在 A 的读写窗口内整段跑完)+ 双线程 `Barrier` 现场复刻;反向对照旧码两条都抛 `UNIQUE constraint failed`;端点用例连跑 15 次零失败;全量套件 `-n 4 --dist worksteal` 绿。无前端改动,沙箱 Playwright 不适用。
 - **实现方 / 检视方**:Claude Code(Fable 5.1)/ Codex(检视记录在方案 §6)。
 
