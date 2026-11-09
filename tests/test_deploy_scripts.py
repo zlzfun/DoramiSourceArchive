@@ -1247,16 +1247,22 @@ exit $rc
     return {"marker": marker, "shim_log": shim_log}
 
 
+def _snapshot_diag(r: subprocess.CompletedProcess, race: dict[str, Path]) -> str:
+    """失败诊断:launcher 的 stdout / stderr + 垫片收到的每次 python3 调用(一眼看出 launcher 读 state 的调用形是否变了)。"""
+    shim_log = race["shim_log"].read_text() if race["shim_log"].exists() else "(空)"
+    return f"--- stdout ---\n{r.stdout}--- stderr ---\n{r.stderr}--- python3 垫片日志 ---\n{shim_log}"
+
+
 def test_launcher_final_rc_comes_from_the_same_snapshot(env: Env, tmp_path: Path):
     """假 worker 写本轮 complete/rc=7;launcher 取到快照**之后**state 才被覆写成另一轮的 complete/rc=0(读取触发,见上);
     launcher 必须报 7——run_id / phase / rc 只能来自同一份快照,之后不得再读全局 state。"""
     race = _install_snapshot_race(env, tmp_path)
     r = env.launch(env.cmd("v1.1.0"))
-    assert r.returncode == 7, r.stdout + r.stderr
-    shim_log = race["shim_log"].read_text() if race["shim_log"].exists() else "(空)"
-    assert race["marker"].exists(), "前置:垫片没有触发(launcher 读快照的方式变了?)垫片日志:\n" + shim_log
-    assert env.state_json("state.json")["run_id"] == OTHER_RUN, "前置:state 确实已被另一轮覆盖"
-    assert f"worker 退出码 7(run {race['marker'].read_text()})" in r.stdout, r.stdout
+    diag = _snapshot_diag(r, race)
+    assert r.returncode == 7, diag
+    assert race["marker"].exists(), "前置:垫片没有触发(launcher 读快照的方式变了?)\n" + diag
+    assert env.state_json("state.json")["run_id"] == OTHER_RUN, "前置:state 确实已被另一轮覆盖\n" + diag
+    assert f"worker 退出码 7(run {race['marker'].read_text()})" in r.stdout, diag
 
 
 # 反向对照:把 launcher 改回「二次读取 rc」的旧错误(首版脚本检视前的写法),同一夹具必须让它报出另一轮的 rc=0 而非 7
@@ -1276,8 +1282,9 @@ def test_snapshot_race_harness_catches_second_read(env: Env, tmp_path: Path, nam
     mutated.write_text(text.replace(old, new), encoding="utf-8"); mutated.chmod(0o755)
     race = _install_snapshot_race(env, tmp_path)
     r = env.launch(env.cmd("v1.1.0"), launcher=mutated)
-    assert race["marker"].exists(), "前置:垫片没有触发"
-    assert r.returncode == 0, f"突变 {name} 本应读到另一轮的 rc=0:\n" + r.stdout + r.stderr
+    diag = _snapshot_diag(r, race)
+    assert race["marker"].exists(), "前置:垫片没有触发\n" + diag
+    assert r.returncode == 0, f"突变 {name} 本应读到另一轮的 rc=0:\n" + diag
 
 
 def test_normal_exit_with_lingering_descendants_is_not_success(env: Env):

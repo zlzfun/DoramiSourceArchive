@@ -810,4 +810,4 @@ Buzzsprout 的单词级 JSON 原先每个词单独换行并重复说话人。阅
 
 **设计取舍**:不扩大 sleep,也不改仓外安装的生产 launcher(加一行输出就要生产机人工重装,且挡不住放在输出前的二次读取)。改为**读取触发**:`DEPLOY_PATH` 前置一个 `python3` 垫片,原样转发;当调用恰为 launcher 的 state_snapshot(`python3 - <state.json>`)且读到本轮 complete,在真解释器返回之后把 state 覆写成另一轮 `complete/rc=0` 并落标记(内容 = 本轮 run_id);假 worker 只写快照、等标记、退出。launcher 拿到的快照必是本轮,之后任何再读都是另一轮——「同一份快照」成为确定可判的事实。断言补到四条:rc=7、垫片触发过(否则附垫片日志报「读快照方式变了?」)、state 已是另一轮、stdout 的 run 等于标记内容。**反向对照**收进仓库:`test_snapshot_race_harness_catches_second_read[reread_rc_in_loop|reread_rc_at_exit]` 把 launcher 文本改回二次读取 rc,同一夹具必报 0。
 
-**自测**:3 例 6.3 s;循环 10 遍 0 失败;注入 0.6 s / 2 s / 0.4 s / 1.5 s 延迟的 launcher 副本上新夹具全过;部署分组 CI 同形(`-n 4 --dist worksteal`)216 passed / 4 min 02 s。检视记录见[方案](plans/issue-203-launcher-snapshot-test.md) §6。实现方 Claude Code(Fable 5.1),检视方 Codex;纯测试修复、无目检界面,按 2026-09-19 例外在检视 + CI 绿后直接合入。
+**自测**:3 例 6.3 s;循环 10 遍 0 失败;注入 0.6 s / 2 s / 0.4 s / 1.5 s 延迟的 launcher 副本上新夹具全过;部署分组 CI 同形(`-n 4 --dist worksteal`)216 passed / 4 min 02 s。检视记录见[方案](plans/issue-203-launcher-snapshot-test.md) §6。实现方 Claude Code(Fable 5.1),检视方 Codex;纯测试修复、无目检界面,按 2026-09-19 例外在检视通过 + 全量套件绿 + CI 绿后直接合入。

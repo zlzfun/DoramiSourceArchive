@@ -47,4 +47,4 @@ launcher 读 state 全靠 PATH 上的 `python3`:`json_get` 是 `python3 - <file>
 
 - 新 3 例单跑 6.3 s 通过;循环 10 遍 0 失败;在注入 0.6 s / 2 s(等 run_id 前)与 0.4 s / 1.5 s(取快照前)延迟的 launcher 副本上,新夹具 4 例全部通过(原用例在 0.6 s / 0.4 s 下分别 rc=5 / rc=6)。
 - 部署分组 CI 同形(`tests/test_deploy_*.py tests/test_migrations.py -n 4 --dist worksteal`):216 passed,4 min 02 s(2026-11-09 本机);`python3 scripts/check_docs.py` 0 问题。
-- 检视:待填。
+- 检视(Codex,gpt-6-astra / effort ultra,只读沙箱,`.review/`):**R1** 无 P1 / P2;1 条 P3「失败诊断没把垫片日志附全」→ 接受,新增 `_snapshot_diag` 让六条断言共用 stdout / stderr / 垫片日志;观察项「第三条突变(复核 run_id 后再读 rc)不必收」同意不加,「波次史合入条件写全」接受。检视方核过:调用形匹配(json_get 与假 worker 均 4 参、snapshot 2 参、uuid 的 `$1=-c`)、两锚点各恰一次、bash 3.2 语法、路径全在 tmp_path、文档一致、check_docs 0 问题;其沙箱不能起 pytest,216 passed 未独立复验(CI 会跑)。**R2** 复检:待填。
