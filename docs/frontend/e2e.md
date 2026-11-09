@@ -1,6 +1,6 @@
 # 阅读器端到端测试
 
-[Issue #90](https://github.com/zlzfun/DoramiSourceArchive/issues/90) 的首个切片：移动读者主链路，兼顾 [#86](https://github.com/zlzfun/DoramiSourceArchive/issues/86) 响应式导航和 [#2](https://github.com/zlzfun/DoramiSourceArchive/issues/2) 登录门深链回归，并覆盖 [#85 PWA 安装层](./pwa.md) 和 [#93 标签检索](../archive/issue-93-tag-search-plan.md)。使用已有 Python Playwright；管理端、个人早报和 CI 集成留在 #90 后续范围。
+[Issue #90](https://github.com/zlzfun/DoramiSourceArchive/issues/90) 的首个切片：移动读者主链路，兼顾 [#86](https://github.com/zlzfun/DoramiSourceArchive/issues/86) 响应式导航和 [#2](https://github.com/zlzfun/DoramiSourceArchive/issues/2) 登录门深链回归，并覆盖 [#85 PWA 安装层](./pwa.md) 和 [#93 标签检索](../archive/issue-93-tag-search-plan.md)。使用已有 Python Playwright；管理端和 CI 集成留在 #90 后续范围，个人早报见下方 #230/#269 流程。
 
 ## 一条命令
 
@@ -17,9 +17,11 @@ cd frontend
 npm run test:e2e
 ```
 
-可选 `npm run test:e2e -- --headed` 显示浏览器，或 `--channel chrome` 使用已安装的 Google Chrome。`--flows mobile,pwa,focus,tags,guards,podcasts` 选择流程子集（默认全跑；例如只回归标签与聚焦环：`--flows tags,focus`；只跑手机守卫：`--flows guards`，约 15 秒），沙箱、构建与清理不变。当前进程组清理按 macOS/Linux 实现；Windows 未验证。
+可选 `npm run test:e2e -- --headed` 显示浏览器，或 `--channel chrome` 使用已安装的 Google Chrome。`--flows mobile,pwa,focus,tags,guards,podcasts,brief-guides` 选择流程子集（默认全跑；例如只回归标签与聚焦环：`--flows tags,focus`；只跑手机守卫：`--flows guards`，约 15 秒），沙箱、构建与清理不变。当前进程组清理按 macOS/Linux 实现；Windows 未验证。
 
 ## 测什么
+
+早报播客导读（#269）：`npm run test:e2e -- --flows brief-guides`，检查桌面/手机头条与所有分区的生成/播放入口、真实已发布测试音频播放、后端拒绝反馈、防重复提交、轮询就绪、读取故障恢复、游客门控、键盘焦点及44px命中。早报/音频读取走真实服务，**生成接受/完成与读取异常用例通过浏览器替换响应**；不调用付费服务。临时设置 `pointer-events:none` 验证命中守卫能够拒绝不可点的按钮。
 
 播客标签与导读筛选（#245）：`npm run test:e2e -- --flows podcasts --channel chrome`，覆盖五组桌面/手机、读者/游客、亮暗场景；20 组标签组合、书本/耳机图标、评分说明、真实合成音频播放、导读过滤与关键词/分页/取消搜索。使用额外隔离合成数据，业务请求仍走真实 API，远程 favicon 替换为本地空图；不调用模型或语音服务。完整用例见 [测试矩阵](../archive/issue-245-reader-summary.md)。
 
@@ -45,11 +47,11 @@ PWA 安装事件、上述 UA 输入与独立显示模式由浏览器脚本模拟
 
 ## 隔离与结果
 
-[`scripts/check_mobile_reader_e2e.py`](../../scripts/check_mobile_reader_e2e.py) 每次新建临时配置和数据库，运行迁移并播种两个来源、63 篇合成文章和一个普通读者。以实际 `src/main.py` 启动 FastAPI，前端重新构建到独立临时目录，通过 `vite preview` 同源代理访问后端。业务 API 不替换响应；网络故障用例把浏览器网络临时设为离线，安装故障用例模拟拒绝的系统安装事件。
+[`scripts/check_mobile_reader_e2e.py`](../../scripts/check_mobile_reader_e2e.py) 每次新建临时配置和数据库，运行迁移并播种两个来源、63 篇合成文章和一个普通读者。以实际 `src/main.py` 启动 FastAPI，前端重新构建到独立临时目录，通过 `vite preview` 同源代理访问后端。除 `brief-guides` 的生成状态和故障注入外，业务 API 不替换响应；网络故障用例把浏览器网络临时设为离线，安装故障用例模拟拒绝的系统安装事件。
 
 选择 `guards` 流程时另播种：一个 210 篇的长列表来源丙，以及四档各一个读者（订阅甲 / 乙 / 丙，各带一份今日个人早报）；个人早报是全局开关，`guards` 只在自己运行期间于 SQLite 里打开、结束即复原；构建目录里另写一个 0.5 秒静音 WAV 供会话恢复的播放器指向（不播放）。
 
-选择 `podcasts` 流程时，在其它流程全部结束后另播种 55 期合成播客及已发布文字/音频，订阅到测试读者和游客，避免影响原有来源数量断言。音频为沙箱内生成的 12 秒静音 WAV，通过正式产物接口读取并断言播放进度前进。播客流程最后运行。
+选择 `podcasts` 流程时，在其它流程全部结束后另播种 55 期合成播客及已发布文字/音频，订阅到测试读者和游客，避免影响原有来源数量断言。音频为沙箱内生成的 12 秒静音 WAV，通过正式产物接口读取并断言播放进度前进。播客数据在两类播客流程前只播种一次；`brief-guides` 最后运行并恢复早报开关。
 
 仅选择 `tags` 流程时，合成文章会增加低相关度正式指派、高置信非正式标签、仅由名称解析为正式 chip 的文章及正文提词噪声；未选择时沿用原播种数据。桌面/移动直接点击没有指派记录的正式 chip，检查 `display_tag_id` 同时返回指派与投影命中的两篇文章，核对形态并确认检索不增加指派记录。
 

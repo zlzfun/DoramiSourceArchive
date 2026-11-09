@@ -13753,6 +13753,28 @@ input[type="radio"] {
   font-weight: 400;
   color: var(--dorami-faint);
 }
+/* 早报导读入口独立于整卡打开层,常显且保持同一按钮承接各状态。 */
+.bp-guide {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--r-control);
+  background: none;
+  color: var(--dorami-accent-ink);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.bp-guide svg { width: 15px; height: 15px; flex-shrink: 0; }
+.bp-guide.is-current { background: var(--dorami-wash); }
+.bp-guide[aria-disabled="true"] { color: var(--dorami-faint); cursor: default; }
+@media (hover: hover) {
+  .bp-guide:not([aria-disabled="true"]):hover { background: var(--dorami-wash); }
+}
 .bp-sum { margin: 0; max-width: 42em; font-size: 16.5px; line-height: 1.85; color: var(--dorami-ink-2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .bp-head.is-note .bp-sum { display: block; margin-top: 16px; }
 .bp-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 30px; }
