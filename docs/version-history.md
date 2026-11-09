@@ -11,6 +11,7 @@
 
 ## 年表(一行一波;自 `CLAUDE.md` 迁入 2026-10-21,**新波次在此加一行**,L0 不再逐波改)
 
+- **并发首访懒建已读水位撞唯一约束修复(issue #251,PR #274,2026-11-09,开发版 3.68.0-alpha,Codex 两轮检视通过、纯后端按例外合入、待发布)**:同一账号两处同时首次挂载阅读器拉 `/api/reader/unread-counts`,`ensure_cursors()` 先读后插同建一行、后到者撞 `reader_read_cursors` 主键返回 500;改一条 `INSERT … ON CONFLICT DO NOTHING` + commit 后重读,两请求都拿先到者的 backlog 水位;补确定性交错与双线程现场两条用例,反向对照旧码两条都撞约束。同文件 `_set_read_state` / `reset_cursor` 同类写法暴露面低、记观察期。见 [方案](archive/issue-251-cursor-upsert.md)。
 - **源模型重构与收录推送(issue #262,开发版 3.68.0-alpha,2026-11-06 起,实施中)**:源 / 采集绑定 / 抓取器三层;源表成为全集(预设镜像行、系统行、墓碑、孤儿回填,写入闸同事务补建,删除改退役);Archive Sync 按接收端能力投影 `source-catalog-v1`,两种混版本窗口都安全;收录推送接口 `POST /api/public/ingest/v1/items`(调用方可以是 Agent、自动化流程或人) + 收录令牌 `ding_`,认不出的出处建临时源(不进发现目录、不计入多源印证、默认不进日报与付费处理),运维「自定源与收录 → 收录」管理;另修注入入口 12 项缺陷(波 0)。见 [重构方案](plans/issue-262-source-model-refactor.md) §12、[收录方案](plans/issue-262-agent-ingest-sources.md) §10。叠分支 PR:收录入口统一 + 同源内容判重 + 台账来路(§11);源管理列全部源 + 「节点」改名「源」(§12)。
 - **问答真实验收与工程兜底提交（#254，2026-11-08，用户授权 PR）**：正式文章/中英文播客与实际阅读器问答验证，复杂问题仍有协议失败，原文参考和单次缩问可用；提交工程保护与阅读入口，语义可靠性继续跟踪，未合入发布。
 - **问答原文定位与缩小问题（#254，2026-11-06，离线与交互验证完成）**：播客签名位置按需读取前后文，权限与发布状态重验；缺口问题先填入编辑框，单独提问不自动发送，不增加模型调用。
@@ -83,6 +84,15 @@
 - **3.58–3.60(2026-09-15–19)**:运维面播客与分析标签重构(#76)/ 移动端读者 E2E(#91)/ 同步修复(#96 / #99)/ PWA 主屏幕安装(#100)/ 弹窗遮罩关闭判定(#104)/ OSS 持久存储与自动备份(#109)/ 聚焦环入 base 层(#108)/ 发现页按形态批量订阅(#113)/ **GitHub Release 自动部署流水线(#102,v3.60.0 首发、v3.60.1 闭环)**:tag 推上去 → 自动建 Release → 串联 `deploy.yml` 停在 Environment `production` 等批准 → SSH forced command 触发生产机仓库外 launcher/worker → 目标 tag 的 `./deploy-docker.sh` → 公网 `/api/health` 核对;上线抓到两坑(checkout 改写 tag 引用 / Environment secrets 须 `secrets: inherit`),见 `docs/archive/auto-deploy-plan.md` §7。
 - **裸机部署回滚(issue #126,2026-09-21,待发布)**:裸机路径改「运行副本版本化」release 形态 + 锁内事务 + 两级健康门告警(不自动回滚)+ `./deploy.sh --rollback`(树外固化执行体,DB 按目标上下文迁移计划分流,`--restore-db` 显式恢复,只回一代)+ 收养 + `--code` / `--status` / `--discard-txn`;extras 钉版 `docker/requirements-crawl4ai.txt`;方案 `docs/archive/baremetal-rollback-plan.md`(codex 四轮设计检视 + §9 实现记录),手册 `docs/ops/deploy-baremetal.md`,桩测试 `tests/test_deploy_baremetal.py`。
 - **Podcast(issue #7 P0–P0.2)**:`source_type=podcast` → `generic_podcast_rss`,单集复用 `ArticleRecord` + `extensions_json`,只解析 enclosure 元数据不下载音频;36 节目策展目录 `services.podcast_catalog` 启动幂等安装、进普通采集任务不设源级开关;边界与后续见 `docs/archive/podcast-wave-plan.md`。
+
+## issue #251 并发首访懒建已读水位撞唯一约束(PR #274,分支 `feat/issue-251-cursor-upsert`,开发版 3.68.0-alpha,待发布,版本号以实际发版为准)
+
+- **来由**:#230 手机端 e2e 四种屏宽并行共用一个读者账号稳定复现 500;e2e 改为每屏宽一个读者绕开,生产代码未动,方案批 4b 登记观察项并开 issue(2026-10-31)。
+- **根因**:`reader_state.ensure_cursors()` 先 `load_cursors()` 再逐源 `session.add` + `commit`;两个请求同时查到「缺」同插 `(owner_username, source_id)`,WAL 下后写者等先写者提交(`busy_timeout` 只是等待上限)后继续执行、撞主键,`IntegrityError` 冒到端点。「幂等」只对串行成立,而 `unread-counts` 是「挂载即校准」入口,并发首访是正常路径。
+- **修法**:一条 `INSERT … ON CONFLICT DO NOTHING`(同文件 `mark_ids_read` 先例),commit 后 `load_cursors()` 重读、以库里实际落下的行为准;`source_ids` 顺手去重;返回值契约不变。无迁移、不涉同步流。
+- **同类盘点(有意不改)**:`_set_read_state`(`/read` 吞异常不记日志;手动标读是单点动作,后到者可能失败可重试)与 `reset_cursor`(挂守卫的订阅入口有进程内用户级互斥;全部标读时行一般已校准建好)记观察期,触发 = 用户报告手动标读失败或日志出现唯一约束实例。
+- **自测**:确定性交错用例(monkeypatch `_backlog_watermark`,让请求 B 在 A 的读写窗口内整段跑完)+ 双线程 `Barrier` 现场复刻;反向对照旧码两条都抛 `UNIQUE constraint failed`;端点用例连跑 15 次零失败;全量套件 `-n 4 --dist worksteal` 绿。无前端改动,沙箱 Playwright 不适用。
+- **交叉检视**:Codex(`gpt-6-astra` ultra,本地 `codex exec` 只读沙箱)两轮——第 1 轮「可合入」、无 P1 / P2,三条 P3 全是文档口径(`busy_timeout` 表述 / 同类盘点「不丢数据」与触发范围 / 订阅互斥引用错位)全部接受并修;第 2 轮 `resume` 复检六项全已修、无新 P1。实现方 Claude Code(Fable 5.1)。记录在 [方案 §6](archive/issue-251-cursor-upsert.md)。
 
 ## issue #262 源模型重构与收录推送(开发版 3.68.0-alpha,实施中,版本号以实际发版为准)
 
