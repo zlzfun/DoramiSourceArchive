@@ -350,8 +350,8 @@ export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs
       syncChrome();
       if (prev.form !== 'none' && input === 'key') {
         // 关闭回到这一期的入口(在场的话),焦点不掉进 body
-        const back = document.querySelector(`.listen-entry[data-listen-key="${CSS.escape(pending?.key || prev.key)}"]`)
-          || document.querySelector('.listen-entry');
+        const back = document.querySelector(`:is(.listen-entry, .bp-guide)[data-listen-key="${CSS.escape(pending?.key || prev.key)}"]`)
+          || document.querySelector('.listen-entry, .bp-guide[data-listen-key]');
         back?.focus({ preventScroll: true });
       }
       return;

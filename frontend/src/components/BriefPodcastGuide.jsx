@@ -23,6 +23,7 @@ function GuideButton({ articleId, sourceName, guest, showToast }) {
     let controller = null;
     let pending = null;
     let nextRead = 0;
+    let retryAutomatically = true;
     const load = () => {
       if (pending) return pending;
       const readVersion = version.current;
@@ -32,10 +33,13 @@ function GuideButton({ articleId, sourceName, guest, showToast }) {
         setArticle(fresh);
         setError('');
         setAccepted(false);
+        retryAutomatically = true;
         nextRead = Date.now() + (briefGuideActive(fresh) ? 4000 : 30000);
       }).catch((err) => {
         if (stopped || readVersion !== version.current) return;
         setError(err?.message || '导读状态加载失败，请重试');
+        // Frozen editions can outlive an article's visibility. Retry 404 only on demand.
+        retryAutomatically = err?.status !== 404;
         nextRead = Date.now() + 8000;
       }).finally(() => { pending = null; });
       return pending;
@@ -48,7 +52,7 @@ function GuideButton({ articleId, sourceName, guest, showToast }) {
     refresh.current = reload;
     void load();
     const poll = () => {
-      if (!document.hidden && !requestInFlight.current && Date.now() >= nextRead) void load();
+      if (retryAutomatically && !document.hidden && !requestInFlight.current && Date.now() >= nextRead) void load();
     };
     const focus = () => { nextRead = 0; poll(); };
     const timer = window.setInterval(poll, 4000);

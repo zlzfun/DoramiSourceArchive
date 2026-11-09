@@ -60,11 +60,13 @@ def run_brief_guide_flows(browser, base_url, database, artifacts, result):
                'generation_mocked': True, 'status': 'failed'}
         checks.append(row)
         page.on('pageerror', lambda error: row['page_errors'].append(str(error)))
-        stage = {'value': None, 'reject': True, 'load_error': False}
+        stage = {'value': None, 'reject': True, 'load_error': False, 'article_reads': 0}
 
         def route_request(route):
             req = route.request
             path = urlsplit(req.url).path
+            if req.method == 'GET' and path == f'/api/articles/{ids[1]}':
+                stage['article_reads'] += 1
             if urlsplit(req.url).netloc != urlsplit(base_url).netloc:
                 route.abort()
             elif req.method == 'POST' and '/ai/' in path:
@@ -77,7 +79,7 @@ def run_brief_guide_flows(browser, base_url, database, artifacts, result):
                     route.fulfill(json={'outcome': 'queued', 'guide_status': 'queued', 'started': True})
             elif path == f'/api/articles/{ids[1]}' and (stage['value'] or stage['load_error']):
                 if stage['load_error']:
-                    route.fulfill(status=503, json={'detail': '导读状态暂时无法读取，请重试'})
+                    route.fulfill(status=stage['load_error'], json={'detail': '导读状态暂时无法读取，请重试'})
                     return
                 data = route.fetch().json()
                 data['podcast']['premium_guide']['status'] = stage['value']
@@ -108,6 +110,13 @@ def run_brief_guide_flows(browser, base_url, database, artifacts, result):
             expect(headline).to_have_attribute('aria-pressed', 'true')
             headline.click()
             expect(headline).to_have_attribute('aria-pressed', 'false')
+            if width == 1280:
+                # Keyboard closing returns focus to the actual early-brief entry.
+                close = page.get_by_role('button', name='关闭播放条（停止播放）', exact=True)
+                close.focus()
+                close.press('Enter')
+                expect(headline).to_be_focused()
+                row['keyboard_close_restores_entry'] = True
             assert page.locator('.bp-sheet').is_visible(), 'playing must not navigate to article'
             row['published_audio_played'] = True
             with page.expect_response(lambda response: '/ondemand' in response.url) as denied:
@@ -127,7 +136,7 @@ def run_brief_guide_flows(browser, base_url, database, artifacts, result):
             page.wait_for_function("[...document.querySelectorAll('audio')].some(a => !a.paused && a.currentTime > 0)")
             expect(target).to_have_attribute('aria-pressed', 'true')
             target.click()
-            stage['load_error'] = True
+            stage['load_error'] = 503
             page.evaluate("window.dispatchEvent(new Event('focus'))")
             expect(target).to_have_text('重试加载导读')
             assert row['generation_requests'] == 2
@@ -135,6 +144,24 @@ def run_brief_guide_flows(browser, base_url, database, artifacts, result):
             target.click()
             expect(target).to_have_text('播放导读')
             assert row['generation_requests'] == 2
+            if width == 1280 and theme == 'light':
+                stage['load_error'] = 404
+                page.evaluate("window.dispatchEvent(new Event('focus'))")
+                expect(target).to_have_text('重试加载导读')
+                failed_reads = stage['article_reads']
+                page.evaluate("window.dispatchEvent(new Event('focus'))")
+                # Advance past the retry deadline; neither timer nor focus may retry 404.
+                page.wait_for_timeout(12500)
+                assert stage['article_reads'] == failed_reads
+                stage['load_error'] = False
+                target.click()
+                expect(target).to_have_text('播放导读')
+                assert stage['article_reads'] == failed_reads + 1
+                with page.expect_response(lambda response: urlsplit(response.url).path == f'/api/articles/{ids[1]}'):
+                    page.evaluate("window.dispatchEvent(new Event('focus'))")
+                assert stage['article_reads'] == failed_reads + 2
+                assert row['generation_requests'] == 2
+                row['missing_article_manual_retry_only'] = True
             page.keyboard.press("Tab")
             target.focus()
             assert target.evaluate("el => getComputedStyle(el).outlineStyle") != 'none'

@@ -5,6 +5,10 @@
 > `docs/frontend/conventions.md` / `docs/sources/curation_policy.md` 等活跃文档。
 > 按「故事」分组索引;文内常含 ☐/☑ 进度符,均为当时状态。
 
+## 早报播客导读入口（2026-11，issue #269）
+
+- [issue-269-brief-podcast-guide.md](./issue-269-brief-podcast-guide.md) — 所有早报播客的生成/播放入口、实时状态和点播门控；350项前端、23项相关后端、六组浏览器与真实音频验收，用户放行及Claude Code交叉检视返修记录。
+
 ## 并发首访懒建已读水位(2026-11,issue #251)
 
 - [issue-251-cursor-upsert.md](./issue-251-cursor-upsert.md) — 同一账号两处同时首次拉 `unread-counts`、`ensure_cursors()` 先读后插撞 `reader_read_cursors` 主键返回 500 的根因与锁语义实证(§1 / §2)、`INSERT … ON CONFLICT DO NOTHING` + commit 后重读的修法、同类盘点与有意不改的理由(§3)、确定性交错 / 双线程现场用例与反向对照(§4)、Codex 两轮检视(§6);PR #274、待发布。
