@@ -97,6 +97,7 @@
 
 ## archive/ —— 已完结方案与执行记录(⊘ 归档;索引 [archive/README.md](./archive/README.md))
 
+- ⊘ [archive/issue-203-launcher-snapshot-test.md](./archive/issue-203-launcher-snapshot-test.md) — **部署 launcher 快照用例去时序竞争(issue #203,PR #275,待发布)**:固定 0.3 s 覆写窗口在 CI runner 上常被错过(rc=5 / rc=6),改为 PATH 前置 python3 垫片在 state_snapshot 读取返回后再覆写(读取触发屏障),收两条「恢复二次读取 rc 必败」反向对照;只改测试,launcher 不动;Codex 两轮检视。
 - ⊘ [archive/issue-245-reader-summary.md](./archive/issue-245-reader-summary.md) — 播客读者语义、导读能力图标与搜索筛选；用户目检通过，含单元/API/端到端矩阵与检视记录。
 
 - ⊘ [issue-248-podcast-qa.md](archive/issue-248-podcast-qa.md) — 播客原稿片段检索、可核对引用、权限与发布复核；实现完成，真实点播与单集深题 13/13 已核对，PR #252 代码检视与 CI 通过；新增一次 ASR 成功，三期 ASR 六题思考对照 28.5/30、仍有细节遗漏、用户验收待完成，未合入发布。
