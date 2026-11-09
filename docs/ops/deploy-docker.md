@@ -76,7 +76,7 @@ docker compose down                 # 停站(数据在宿主目录,安全)
 (`127.0.0.1:8080`,配合外层 TLS 反代);时区默认
 `Asia/Shanghai`(影响采集任务/日报的 cron 语义),`TZ` 环境变量可覆盖。
 反代头信任面由 `DORAMI_FORWARDED_ALLOW_IPS` 控制(见下方「HTTPS」节)。
-`./deploy-docker.sh` 的健康探针按同一顺序(环境变量 > `.env` > 80)推导地址并打出来源(issue #227);
+`./deploy-docker.sh` 的健康探针直接取 compose 解析出的 nginx 发布端口并打出来源(issue #227),不用再手动 `export`;
 `/etc/dorami-deploy.conf` 的同名值须与 `.env` 一致(流水线按 conf 探测)。
 
 ## ini 在容器内的语义差异

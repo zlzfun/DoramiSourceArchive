@@ -614,7 +614,7 @@
 ### 已发布迁移文件守卫与部署健康验证(issue #227,2026-11-09) — [方案](archive/issue-227-released-migrations-guard.md)
 
 - 决策:已发布(进过正式 tag)的迁移文件一字不改,CI 对最新正式 tag 逐字节比对 `alembic/versions/*`(新增允许,改写 / 删除 / 改名 / 模式变化红,取不到基线也红);要改历史行为加新 revision 或改 `alembic/env.py` 收养逻辑,docstring / 路径不回改 — §2
-- 决策:手工 `./deploy-docker.sh` 的探针地址与 compose 同口径(环境变量 > `.env` > 80),conf 不参与推导只做一致性提醒;健康失败一律打 HTTP 状态码 + 响应前 200 字节,轮询不再用 `curl -f` — §2
+- 决策:手工 `./deploy-docker.sh` 的探针地址与显式宽限都取 `docker compose config --format json` 的解析结果(不自己解析 `.env`,Codex R1 F1 / F2),conf 不参与推导只做一致性提醒;健康失败一律打 HTTP 状态码 + 响应前 200 字节,轮询不再用 `curl -f` — §2
 - 决策:迁移期的预算放在 backend healthcheck 的 `start_period`(60 s + 待执行迁移数 × 每迁移秒数 × 库 GiB,封顶 1200),不放在 `up -d` 之后的轮询(那时迁移已结束) — §1.2 / §2
 - 不做:worker 第 7 道门放行开关;回改已发布的 4 个文件;改 `deploy.yml` 公网复核的 `curl -f`;裸机路径宽限 — §3
 - 触发:带多个迁移的发版在 `up -d` 阶段仍被判 unhealthy → 调 `DORAMI_DEPLOY_HEALTH_PER_MIGRATION_SECONDS`,或改 compose healthcheck 的 `interval` / `retries` — §3

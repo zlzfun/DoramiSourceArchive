@@ -40,7 +40,7 @@ DORAMI_DEPLOY_BACKUP_KEEP=10
 DORAMI_DEPLOY_BUILD_CACHE_KEEP_GB=2
 
 # 部署脚本健康核对的本机入口(经容器 nginx;生产 .env 里 DORAMI_HTTP_LISTEN=127.0.0.1:8080 即此)。
-# 必须与项目 .env 一致:compose 按 .env 绑端口,worker 按这里探测;手工跑 ./deploy-docker.sh 时脚本会自己读 .env(issue #227)
+# 必须与项目 .env 一致:compose 按 .env 绑端口,worker 按这里探测;手工跑 ./deploy-docker.sh 时脚本以 compose 的解析结果为准(issue #227)
 DORAMI_HTTP_LISTEN=127.0.0.1:8080
 
 # 健康验证(issue #227):容器启动时先跑迁移、uvicorn 还没监听,backend healthcheck 的宽限期 = 60 s + 待执行迁移数 × 每迁移秒数 ×

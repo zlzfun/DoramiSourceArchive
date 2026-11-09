@@ -8,7 +8,9 @@
 (`docker/dorami-deploy-worker.example` step_migration_diff)。v3.67.0 发版时 4 个既有迁移被改过(#211 改两处
 docstring 里的文档路径、#220 给两个旧 revision 加收养守卫),流水线拒绝、只能走手工路径。这里把同一条规则前移到
 CI:PR 一开就红,不等发版那天。只比最新 tag 即可——每个 tag 都经过了对上一个 tag 的核对,归纳下来任何曾发布的
-文件都不会变。
+文件都不会变。**归纳成立的前提**(本仓发布纪律,`docs/ops/release-process.md`):正式版本号单调递增、tag 打在 main 上且
+不移动、每次发版前该提交已对上一个正式版通过本守卫(CI 合入门禁)。直接推 main 绕过 CI 后打 tag、在非 main 提交打更大的 tag、
+force 移动 tag 都会破坏前提——全新 CI 检出没有旧引用,检测不出历史上的 tag 移动。
 
 用法(仓库根目录):
   python3 scripts/check_released_migrations.py                    # git ls-remote origin 取最新 vX.Y.Z,本地没有就只 fetch 那一个 tag

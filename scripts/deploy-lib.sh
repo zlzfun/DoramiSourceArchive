@@ -143,9 +143,13 @@ deploy_wait_healthy() {
     local url="$1" want_version="$2" want_ref="$3" want_sha="$4" budget="$5" attempts="$6"
     shift 6
     local deadline remaining max_time code verdict tmp
-    tmp="$(mktemp "${TMPDIR:-/tmp}/dorami-health.XXXXXX")" || return 1
-    deadline=$(( $(date +%s) + budget ))
     DEPLOY_HEALTH_ATTEMPT=0; DEPLOY_HEALTH_LAST_VERDICT=""; DEPLOY_HEALTH_LAST_HTTP=""; DEPLOY_HEALTH_BODY=""
+    # 结果变量先初始化再碰磁盘:mktemp 失败(临时目录不可写 / 盘满)也要让调用方打出完整的失败报告,而不是撞 set -u(codex R1 F4)
+    if ! tmp="$(mktemp "${TMPDIR:-/tmp}/dorami-health.XXXXXX" 2>/dev/null)" || [ -z "$tmp" ]; then
+        DEPLOY_HEALTH_LAST_VERDICT="tmpfile-error: 无法在 ${TMPDIR:-/tmp} 创建临时文件"
+        return 1
+    fi
+    deadline=$(( $(date +%s) + budget ))
     while [ "$DEPLOY_HEALTH_ATTEMPT" -lt "$attempts" ]; do
         DEPLOY_HEALTH_ATTEMPT=$((DEPLOY_HEALTH_ATTEMPT + 1))
         remaining=$(( deadline - $(date +%s) ))
@@ -184,28 +188,47 @@ sys.stdout.write("".join(ch if ch.isprintable() else " " for ch in text) + ("…
 ' "${1:-200}"
 }
 
-# deploy_dotenv_value <KEY> [file=.env]:compose 读的 .env 里 KEY 的值(同名多行以最后一行为准;去掉成对引号;未加引号时
-# 去掉 ` #` 起的行尾注释);文件缺 / 键缺输出空。compose 的插值优先级是 shell 环境 > .env > 默认,部署脚本推导探针地址时
-# 要和它一致(issue #227:手工 shell 没导出 DORAMI_HTTP_LISTEN,探针退到 80 撞上 TLS 边缘)。
-deploy_dotenv_value() {
-    local key="$1" file="${2:-.env}"
-    [ -r "$file" ] || return 0
-    python3 - "$key" "$file" <<'PY_DOTENV'
-import re, sys
-key, path = sys.argv[1], sys.argv[2]
-value = ""
-for line in open(path, encoding="utf-8", errors="replace"):
-    m = re.match(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$", line.rstrip("\r\n"))
-    if not m or m.group(1) != key:
-        continue
-    v = m.group(2).strip()
-    if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
-        v = v[1:-1]
-    else:
-        v = re.split(r"\s+#", v, 1)[0].rstrip()
-    value = v
-sys.stdout.write(value)
-PY_DOTENV
+# ── 以 compose 自己的解析结果为准(issue #227,codex R1 F1 / F2)──
+# 部署脚本不自己解析 .env:shell 环境 > .env > 默认、显式空值取默认(${VAR:-x})、引号 / 行尾注释、${VAR} 展开都是 compose 的语义,
+# 自己写一份必然有出入。`docker compose config --format json` 给出最终配置,python 只取需要的字段、不回显其它内容(compose 配置里有密钥)。
+# 两个函数失败(compose 不可用 / 字段缺)都输出空并返回 1,调用方自行回退。
+# deploy_compose_published_hostport <service> <container_port>:该服务把容器端口发布到宿主的 host:port(host_ip 空 / 0.0.0.0 → 127.0.0.1)
+deploy_compose_published_hostport() {
+    docker compose config --format json 2>/dev/null | python3 -c '
+import json, sys
+service, target = sys.argv[1], int(sys.argv[2])
+try:
+    cfg = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+for p in ((cfg.get("services") or {}).get(service) or {}).get("ports") or []:
+    if isinstance(p, dict) and str(p.get("target") or "") == str(target) and p.get("published"):
+        published = str(p["published"]).split("-", 1)[0]
+        host = str(p.get("host_ip") or "").strip()
+        if host in ("", "0.0.0.0", "::", "[::]"):
+            host = "127.0.0.1"
+        print(host + ":" + published); sys.exit(0)
+sys.exit(1)
+' "$1" "$2"
+}
+
+# deploy_compose_healthcheck_start_period_seconds <service>:该服务 healthcheck.start_period 折成整秒(compose 输出 Go 时长串,如 1m0s / 20m0s;
+# 原样 20m / 90s 也认)
+deploy_compose_healthcheck_start_period_seconds() {
+    docker compose config --format json 2>/dev/null | python3 -c '
+import json, re, sys
+service = sys.argv[1]
+try:
+    cfg = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+raw = str((((cfg.get("services") or {}).get(service) or {}).get("healthcheck") or {}).get("start_period") or "").strip()
+m = re.fullmatch(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?(?:(\d+)ms)?", raw)
+if not raw or not m or not any(m.groups()):
+    sys.exit(1)
+h, mi, s, ms = m.groups()
+print(int(round(int(h or 0) * 3600 + int(mi or 0) * 60 + float(s or 0) + int(ms or 0) / 1000)))
+' "$1"
 }
 
 # deploy_migration_grace_seconds <pending> <db_path>:容器启动期迁移的健康检查宽限秒数 = 待执行迁移数 × 每迁移秒数

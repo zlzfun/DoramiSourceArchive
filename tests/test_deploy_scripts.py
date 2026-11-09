@@ -49,6 +49,38 @@ if args[:2] == ["compose", "version"]:
     sys.exit(0)
 if args[:1] == ["info"]:
     print(rd("docker_root", "/var/lib/docker").strip() or "/var/lib/docker"); sys.exit(0)
+if args[:2] == ["compose", "config"] and "--format" in args:
+    # issue #227:模拟 compose 的最终解析——shell 环境(非空)> .env(引号 / 行尾注释)> 默认;FAKE 文件 compose_json_rc 模拟解析失败
+    if rc("compose_json_rc"):
+        sys.stderr.write("fake compose config --format json failure\n"); sys.exit(rc("compose_json_rc"))
+    def dotenv(key):
+        if not os.path.exists(".env"):
+            return None
+        val = None
+        for line in open(".env", encoding="utf-8"):
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            if k.strip() != key:
+                continue
+            v = v.strip()
+            if v[:1] in ("'", '"'):
+                end = v.find(v[0], 1); val = v[1:end] if end > 0 else v[1:]
+            else:
+                val = v.split(" #", 1)[0].strip()
+        return val
+    def resolve(key, default):
+        # compose:shell 环境里**存在**的键(哪怕是空串)压过 .env;再按 ${VAR:-default} 对空值取默认——显式空值不会回落到 .env
+        v = os.environ[key] if key in os.environ else (dotenv(key) or "")
+        return v if v else default
+    listen = resolve("DORAMI_HTTP_LISTEN", "80")
+    host, _, port = listen.rpartition(":")
+    ports = [{"mode": "ingress", "target": 80, "published": port, "protocol": "tcp", **({"host_ip": host} if host else {})}]
+    import json as _json
+    sys.stdout.write(_json.dumps({"services": {"backend": {"healthcheck": {"start_period": resolve("DORAMI_BACKEND_HEALTH_START_PERIOD", "1m0s")}},
+                                               "nginx": {"ports": ports}}}))
+    sys.exit(0)
 if args[:2] == ["compose", "config"]:
     code = rc("config_rc")
     if code:
@@ -146,8 +178,12 @@ elif raw is not None:
 elif p and os.path.exists(p):
     code, body = "200", open(p, "rb").read()
 else:
+    if fmt:
+        sys.stdout.write(fmt.replace("%{http_code}", "000"))
     sys.exit(7)
 if fail_on_error and int(code) >= 400:
+    if fmt:
+        sys.stdout.write(fmt.replace("%{http_code}", code))
     sys.exit(22)
 if out:
     open(out, "wb").write(body)
@@ -608,7 +644,10 @@ def _run_deploy(e: Env, *args: str, timeout: int = 120, **extra: str) -> subproc
     defaults = dict(DORAMI_DEPLOY_LOCK_FILE=str(e.lock), DORAMI_DEPLOY_HEALTH_ATTEMPTS="2",
                     FAKE_HEALTH_FILE=str(e.fake / "health.json"), DORAMI_HTTP_LISTEN="127.0.0.1:8080")
     defaults.update(extra)
-    env = e.base_env(**defaults)
+    env = e.base_env(**{k: v for k, v in defaults.items() if v is not None})
+    for k, v in defaults.items():     # 值为 None = 真正从环境里拿掉(模拟手工 shell 没导出)
+        if v is None:
+            env.pop(k, None)
     return subprocess.run(["./deploy-docker.sh", *args], cwd=str(e.repo.clone), env=env, capture_output=True,
                           text=True, errors="replace", timeout=timeout)
 
@@ -623,7 +662,9 @@ def test_deploy_docker_manual_happy_path_runs_steps_in_order(real: Env):
         "compose config -q", "compose build",
         "compose run --rm --no-deps -T backend python docker/entrypoint.py --check-config",
         "compose run --rm --no-deps -T backend python docker/entrypoint.py --plan-migrations",
+        "compose config --format json",   # 读 compose 解析出的 backend start_period(显式与否)
         "compose up -d --remove-orphans switch_mark_present=0 start_period=60s",
+        "compose config --format json",   # 读 nginx 发布端口定探针地址
     ]
     backups = list((real.repo.clone / "backups").glob("cms_data.db.*"))
     assert len(backups) == 1, "手工来源做备份"
@@ -1404,22 +1445,34 @@ def test_deploy_docker_rejects_baremetal_only_arguments(real: Env, arg: str):
 
 # ══════════════ issue #227:健康验证的探针地址、失败诊断与迁移宽限 ══════════════
 
-def test_health_probe_follows_dotenv_like_compose_when_env_is_unset(real: Env):
-    """v3.67.0 手工部署的实况:shell 没导出 DORAMI_HTTP_LISTEN,探针退到 80 撞上 TLS 边缘的 301 页(87 次 `bad-json`);
-    .env 里写了 127.0.0.1:8080(compose 实际绑定)就该探 8080。"""
+def test_health_probe_follows_compose_resolution(real: Env):
+    """v3.67.0 手工部署的实况(推测):shell 没导出 DORAMI_HTTP_LISTEN,探针退到 80 撞上 TLS 边缘的 301 页(87 次 `bad-json`)。
+    探针地址以 compose 自己的解析为准:.env 里写了 127.0.0.1:8080 就探 8080(含引号 + 行尾注释);显式空的环境变量按 compose 的
+    ${VAR:-80} 语义仍是 80;compose 解析不到才回退环境变量 / 80 并提醒(codex R1 F1)。"""
     _health(real, "v9.9.9")
-    edge = dict(FAKE_HEALTH_301_ON="127.0.0.1:80", DORAMI_HTTP_LISTEN="")
+    edge = dict(FAKE_HEALTH_301_ON="127.0.0.1:80", DORAMI_HTTP_LISTEN=None)
     r = _run_deploy(real, "v9.9.9", **edge)
     assert r.returncode != 0
-    assert "探针 http://127.0.0.1:80/api/health(DORAMI_HTTP_LISTEN 来源:默认)" in r.stdout
+    assert "探针 http://127.0.0.1:80/api/health(来源:compose 解析)" in r.stdout
     assert "http-301" in r.stderr and "HTTP 301" in r.stderr and "301 Moved Permanently" in r.stderr and "TLS 边缘" in r.stderr, r.stderr
     assert "bad-json" not in r.stderr, "3xx 不再被当成 JSON 去解析"
-    assert "与本次实际绑定 80" in r.stderr, "conf 里的 8080 与实际绑定不一致要提醒"
-    (real.repo.clone / ".env").write_text("# compose 读这个\nDORAMI_PODCAST_INSTALLATION=external\nDORAMI_HTTP_LISTEN=127.0.0.1:8080  # 收进环回\n", encoding="utf-8")
+    assert "与本次实际发布端口 127.0.0.1:80 不一致" in r.stderr, "conf 里的 8080 与实际发布端口不一致要提醒"
+    dotenv = real.repo.clone / ".env"
+    dotenv.write_text('# compose 读这个\nDORAMI_PODCAST_INSTALLATION=external\nDORAMI_HTTP_LISTEN="127.0.0.1:8080" # 收进环回\n', encoding="utf-8")
     r = _run_deploy(real, "v9.9.9", **edge)
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "探针 http://127.0.0.1:8080/api/health(DORAMI_HTTP_LISTEN 来源:.env)" in r.stdout and "DORAMI_DEPLOY_META health=ok" in r.stdout
+    assert "探针 http://127.0.0.1:8080/api/health(来源:compose 解析)" in r.stdout and "DORAMI_DEPLOY_META health=ok" in r.stdout
     assert "不一致" not in r.stderr
+    # 显式空值:compose 的 ${DORAMI_HTTP_LISTEN:-80} 取默认 80,脚本跟它一致(不能自己回读 .env 的 8080)
+    r = _run_deploy(real, "v9.9.9", FAKE_HEALTH_301_ON="127.0.0.1:80", DORAMI_HTTP_LISTEN="")
+    assert r.returncode != 0 and "探针 http://127.0.0.1:80/api/health(来源:compose 解析)" in r.stdout and "http-301" in r.stderr, r.stdout + r.stderr
+    # compose 解析失败:回退环境变量 / 80 并提醒
+    real.fake_write("compose_json_rc", "1")
+    r = _run_deploy(real, "v9.9.9", FAKE_HEALTH_301_ON="127.0.0.1:80", DORAMI_HTTP_LISTEN="127.0.0.1:8080")
+    assert r.returncode == 0 and "来源:回退" in r.stdout and "解析不到 nginx 的发布端口" in r.stderr, r.stdout + r.stderr
+    real.fake_write("compose_json_rc", "0")
+    r = _run_deploy(real, "v9.9.9", FAKE_HEALTH_301_ON="127.0.0.1:80", DORAMI_HTTP_LISTEN=None, DORAMI_DEPLOY_CONF=str(real.tmp / "no-such.conf"))
+    assert r.returncode == 0 and "不一致" not in r.stderr, "conf 不存在就没有一致性提醒"
 
 
 def test_health_failure_reports_status_and_body_excerpt(real: Env):
@@ -1447,7 +1500,14 @@ def test_backend_health_start_period_scales_with_pending_migrations(real: Env):
     r = _run_deploy(real, "v9.9.9")
     assert r.returncode == 0 and "宽限 120s(基础 60s + 迁移宽限 60s" in r.stdout, r.stdout + r.stderr
     r = _run_deploy(real, "v9.9.9", DORAMI_BACKEND_HEALTH_START_PERIOD="999s")
-    assert r.returncode == 0 and "宽限 999s" in r.stdout and [c for c in real.calls() if c.startswith("compose up")][-1].endswith("start_period=999s")
+    assert r.returncode == 0 and "宽限 999s(compose 配置里显式设置" in r.stdout, r.stdout + r.stderr
+    assert [c for c in real.calls() if c.startswith("compose up")][-1].endswith("start_period=999s")
+    # .env 里显式设的也算显式(compose 解析得到 20m → 1200 s):脚本不导出、不覆盖(codex R1 F2)
+    (real.repo.clone / ".env").write_text("DORAMI_BACKEND_HEALTH_START_PERIOD=20m\n", encoding="utf-8")
+    r = _run_deploy(real, "v9.9.9")
+    assert r.returncode == 0 and "宽限 1200s(compose 配置里显式设置" in r.stdout, r.stdout + r.stderr
+    assert [c for c in real.calls() if c.startswith("compose up")][-1].endswith("start_period=-"), "不导出,交给 compose 读 .env"
+    (real.repo.clone / ".env").unlink()
     real.fake_write("plan.json", json.dumps({"status": "compatible", "pending": ["a"] * 500, "pending_count": 500}))
     r = _run_deploy(real, "v9.9.9", DORAMI_DEPLOY_HEALTH_PER_MIGRATION_SECONDS="60")
     assert r.returncode == 0 and "宽限 1260s(基础 60s + 迁移宽限 1200s" in r.stdout, r.stdout + r.stderr
@@ -1462,3 +1522,14 @@ def test_compose_up_failure_explains_grace_and_dumps_state(real: Env):
     assert "DORAMI_DEPLOY_META health=" not in r.stdout, "没走到健康验证,不写 health 元数据"
     calls = real.calls()
     assert "compose ps" in calls and "compose logs --tail 50 backend" in calls
+
+
+def test_health_report_survives_mktemp_failure(real: Env):
+    """codex R1 F4:临时目录不可写时 deploy_wait_healthy 的结果变量已初始化,调用方仍打出完整的健康失败报告,不撞 set -u。"""
+    fake = real.fakebin / "mktemp"
+    fake.write_text('#!/bin/bash\ncase "$*" in *dorami-health*) echo "fake mktemp: No space left" >&2; exit 1 ;; esac\nexec /usr/bin/mktemp "$@"\n')
+    fake.chmod(0o755)
+    _health(real, "v9.9.9")
+    r = _run_deploy(real, "v9.9.9")
+    assert r.returncode != 0 and "unbound variable" not in r.stderr, r.stderr
+    assert "健康检查未通过(预算 180s,尝试 0 次):tmpfile-error" in r.stderr and "DORAMI_DEPLOY_META health=failed" in r.stdout, r.stderr

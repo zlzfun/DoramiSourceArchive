@@ -161,15 +161,45 @@ def _lib_run(cwd, script, env):
                           capture_output=True, text=True, env=env)
 
 
-def test_dotenv_value_follows_compose_rules(tmp_path):
-    (tmp_path / ".env").write_text(
-        "# comment\nexport DORAMI_HTTP_LISTEN=127.0.0.1:8080  # 收进环回\nQUOTED=\"a b # not comment\"\nSINGLE='x'\n"
-        "DORAMI_HTTP_LISTEN=127.0.0.1:9090\nEMPTY=\n", encoding="utf-8")
-    script = ('for k in DORAMI_HTTP_LISTEN QUOTED SINGLE EMPTY MISSING; do printf "%s=[%s]\\n" "$k" "$(deploy_dotenv_value "$k" .env)"; done; '
-              'printf "nofile=[%s]\\n" "$(deploy_dotenv_value X nope.env)"')
-    out = _lib_run(tmp_path, script, {**os.environ})
-    assert out.returncode == 0, out.stderr
-    assert out.stdout.splitlines() == ["DORAMI_HTTP_LISTEN=[127.0.0.1:9090]", "QUOTED=[a b # not comment]", "SINGLE=[x]", "EMPTY=[]", "MISSING=[]", "nofile=[]"]
+FAKE_DOCKER_CONFIG = """#!/usr/bin/env python3
+import os, sys
+if os.environ.get("FAKE_DOCKER_FAIL"):
+    sys.exit(1)
+sys.stdout.write(open(os.environ["FAKE_COMPOSE_JSON"]).read())
+"""
+
+
+def test_compose_helpers_read_published_port_and_start_period(tmp_path):
+    """探针端口与 healthcheck 宽限都从 `docker compose config --format json` 取(codex R1 F1 / F2):host_ip 空 / 0.0.0.0 → 127.0.0.1、
+    published 范围取首个、只认 target 80;Go 时长串折秒;缺字段 / docker 失败 → 空输出 + 返回 1。"""
+    import json
+    fakebin = tmp_path / "bin"; fakebin.mkdir()
+    (fakebin / "docker").write_text(FAKE_DOCKER_CONFIG); (fakebin / "docker").chmod(0o755)
+    cfg = tmp_path / "cfg.json"
+    script = ('p="$(deploy_compose_published_hostport nginx 80 || echo "rc=$?")"; s="$(deploy_compose_healthcheck_start_period_seconds backend || echo "rc=$?")"; '
+              'printf "[%s] [%s]\\n" "$p" "$s"')
+
+    def run(obj, fail=False):
+        cfg.write_text(json.dumps(obj))
+        env = {**os.environ, "PATH": f"{fakebin}:{os.environ['PATH']}", "FAKE_COMPOSE_JSON": str(cfg)}
+        if fail:
+            env["FAKE_DOCKER_FAIL"] = "1"
+        out = _lib_run(tmp_path, script, env)
+        assert out.returncode == 0, out.stderr
+        return out.stdout.strip()
+
+    def compose(ports, start_period):
+        return {"services": {"backend": {"healthcheck": {"start_period": start_period}}, "nginx": {"ports": ports}}}
+
+    assert run(compose([{"target": 80, "published": "8080", "host_ip": "127.0.0.1"}], "1m0s")) == "[127.0.0.1:8080] [60]"
+    assert run(compose([{"target": 443, "published": "8443"}, {"target": 80, "published": "8080-8081", "host_ip": "0.0.0.0"}], "20m0s")) == "[127.0.0.1:8080] [1200]"
+    assert run(compose([{"target": 80, "published": "80"}], "1h2m3s")) == "[127.0.0.1:80] [3723]"
+    assert run(compose([{"target": 80, "published": 8080}], "90s")) == "[127.0.0.1:8080] [90]"
+    assert run(compose([{"target": 80, "published": "8080"}], "20m")) == "[127.0.0.1:8080] [1200]"
+    assert run(compose([{"target": 443, "published": "8443"}], "")) == "[rc=1] [rc=1]"
+    assert run({"services": {"backend": {}, "nginx": {}}}) == "[rc=1] [rc=1]"
+    assert run(compose([{"target": 80, "published": "8080"}], "45")) == "[127.0.0.1:8080] [rc=1]", "没有单位的时长不猜"
+    assert run(compose([{"target": 80, "published": "8080"}], "1m0s"), fail=True) == "[rc=1] [rc=1]"
 
 
 def test_migration_grace_seconds_formula_cap_and_knobs(tmp_path):
