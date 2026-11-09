@@ -12,6 +12,7 @@
 ## 年表(一行一波;自 `CLAUDE.md` 迁入 2026-10-21,**新波次在此加一行**,L0 不再逐波改)
 
 - **并发首访懒建已读水位撞唯一约束修复(issue #251,PR #274,2026-11-09,开发版 3.68.0-alpha,Codex 两轮检视通过、纯后端按例外合入、待发布)**:同一账号两处同时首次挂载阅读器拉 `/api/reader/unread-counts`,`ensure_cursors()` 先读后插同建一行、后到者撞 `reader_read_cursors` 主键返回 500;改一条 `INSERT … ON CONFLICT DO NOTHING` + commit 后重读,两请求都拿先到者的 backlog 水位;补确定性交错与双线程现场两条用例,反向对照旧码两条都撞约束。同文件 `_set_read_state` / `reset_cursor` 同类写法暴露面低、记观察期。见 [方案](archive/issue-251-cursor-upsert.md)。
+- **部署 launcher 快照用例去时序竞争(issue #203,2026-11-09,纯测试修复)**:`test_launcher_final_rc_comes_from_the_same_snapshot` 原靠假 worker 写出快照后固定 0.3 s 再覆写,CI runner 上进程起动 + python3 冷启动常错过窗口(PR #201 CI 偶发 rc=5)。改为 `DEPLOY_PATH` 前置 python3 垫片:launcher 的 state_snapshot 读取返回之后才覆写成另一轮(读取触发屏障),假 worker 只写本轮快照并等标记;新增两条反向对照(把 launcher 改回二次读取 rc 必报 0)。launcher 一字不改。[方案](plans/issue-203-launcher-snapshot-test.md)。
 - **源模型重构与收录推送(issue #262,开发版 3.68.0-alpha,2026-11-06 起,实施中)**:源 / 采集绑定 / 抓取器三层;源表成为全集(预设镜像行、系统行、墓碑、孤儿回填,写入闸同事务补建,删除改退役);Archive Sync 按接收端能力投影 `source-catalog-v1`,两种混版本窗口都安全;收录推送接口 `POST /api/public/ingest/v1/items`(调用方可以是 Agent、自动化流程或人) + 收录令牌 `ding_`,认不出的出处建临时源(不进发现目录、不计入多源印证、默认不进日报与付费处理),运维「自定源与收录 → 收录」管理;另修注入入口 12 项缺陷(波 0)。见 [重构方案](plans/issue-262-source-model-refactor.md) §12、[收录方案](plans/issue-262-agent-ingest-sources.md) §10。叠分支 PR:收录入口统一 + 同源内容判重 + 台账来路(§11);源管理列全部源 + 「节点」改名「源」(§12)。
 - **问答真实验收与工程兜底提交（#254，2026-11-08，用户授权 PR）**：正式文章/中英文播客与实际阅读器问答验证，复杂问题仍有协议失败，原文参考和单次缩问可用；提交工程保护与阅读入口，语义可靠性继续跟踪，未合入发布。
 - **问答原文定位与缩小问题（#254，2026-11-06，离线与交互验证完成）**：播客签名位置按需读取前后文，权限与发布状态重验；缺口问题先填入编辑框，单独提问不自动发送，不增加模型调用。
@@ -803,3 +804,10 @@ Buzzsprout 的单词级 JSON 原先每个词单独换行并重复说话人。阅
 
 **自测**:新 `tests/test_media_sync_export_check.py` 17 例(含真实 `ObjectStorage` 登记与回填 / 重置单流恢复链路) + `test_sync_binary_reuse` / `test_media_store` 增改,三组反向对照在旧代码上失败;开发副本真实数据:导出首轮 1722 候选 → 1706 导出、16 标 failed,次轮 1706 / 1706(约 0.5 s);进程内整流拉取新导出端 9 流全完成、1706 cached;混版本(无检查导出端 → 新接收端)9 流全完成、16 条拒收计跳过。实现方 Claude Code(Opus 5.5),检视方 Codex(见方案 §7);纯后端机制修复,检视 + 全量 + CI 绿后按 2026-09-19 例外直接 squash 合入(PR #266)。
 
+## issue #203 部署 launcher 快照用例去时序竞争(2026-11-09,纯测试修复)
+
+**为什么**:PR #201 完整 CI 里 `test_launcher_final_rc_comes_from_the_same_snapshot` 偶发失败(期望 rc=7 实际 rc=5「worker 30 秒内未写出本次状态」),与改动无关、本机单跑 2.3 s 通过。用例让假 worker 写出本轮 `complete/rc=7` 后**固定 0.3 s** 就覆写成另一轮;launcher 要在这 0.3 s 内完成起 worker、每 0.2 s 一次 python3 冷启动的 run_id 轮询、再两次 python3 读取。本机给 launcher 副本注入延迟即稳定复现:轮询前 0.6 s → rc=5(CI 形态),取快照前 0.4 s → rc=6——都发生在用例想验的「取到快照后被覆写」之前。
+
+**设计取舍**:不扩大 sleep,也不改仓外安装的生产 launcher(加一行输出就要生产机人工重装,且挡不住放在输出前的二次读取)。改为**读取触发**:`DEPLOY_PATH` 前置一个 `python3` 垫片,原样转发;当调用恰为 launcher 的 state_snapshot(`python3 - <state.json>`)且读到本轮 complete,在真解释器返回之后把 state 覆写成另一轮 `complete/rc=0` 并落标记(内容 = 本轮 run_id);假 worker 只写快照、等标记、退出。launcher 拿到的快照必是本轮,之后任何再读都是另一轮——「同一份快照」成为确定可判的事实。断言补到四条:rc=7、垫片触发过(否则附垫片日志报「读快照方式变了?」)、state 已是另一轮、stdout 的 run 等于标记内容。**反向对照**收进仓库:`test_snapshot_race_harness_catches_second_read[reread_rc_in_loop|reread_rc_at_exit]` 把 launcher 文本改回二次读取 rc,同一夹具必报 0。
+
+**自测**:3 例 6.3 s;循环 10 遍 0 失败;注入 0.6 s / 2 s / 0.4 s / 1.5 s 延迟的 launcher 副本上新夹具全过;部署分组 CI 同形(`-n 4 --dist worksteal`)216 passed / 4 min 02 s。检视记录见[方案](plans/issue-203-launcher-snapshot-test.md) §6。实现方 Claude Code(Fable 5.1),检视方 Codex;纯测试修复、无目检界面,按 2026-09-19 例外在检视 + CI 绿后直接合入。

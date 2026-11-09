@@ -287,8 +287,8 @@ class Env:
     def cmd(self, tag: str, downgrade: int = 0, redeploy: int = 0) -> str:
         return f"{tag} {self.repo.sha_of(tag)} downgrade={downgrade} redeploy={redeploy}"
 
-    def launch(self, cmd: str, timeout: int = 90, **extra: str) -> subprocess.CompletedProcess:
-        r = subprocess.run([str(LAUNCHER), cmd], env=self.base_env(**extra), capture_output=True,
+    def launch(self, cmd: str, timeout: int = 90, *, launcher: Path | None = None, **extra: str) -> subprocess.CompletedProcess:
+        r = subprocess.run([str(launcher or LAUNCHER), cmd], env=self.base_env(**extra), capture_output=True,
                            text=True, errors="replace", timeout=timeout)
         if r.returncode == 0 and (self.fake / "ps_backend").exists():
             # 成功部署后容器已是目标版本(真实系统里 up 之后容器 env 的构建 sha 就是目标):假容器同步
@@ -1190,33 +1190,94 @@ def test_compose_error_output_is_not_echoed_into_logs(env: Env):
     assert "unterminated quoted value" in log and "原文不回显" in log
 
 
-def test_launcher_final_rc_comes_from_the_same_snapshot(env: Env, tmp_path: Path):
-    """假 worker:先写本轮 complete/rc=7,0.3 秒后把 state 覆盖成另一 run 的 rc=0(落在 launcher 取到快照后的等待窗口里);
-    launcher 必须报 7。"""
+# ── issue #203:「最终退出码只能来自同一份快照」改为读取触发的确定性夹具 ──
+# 旧用例让假 worker 写出本轮 complete/rc=7 后固定 0.3 s 就覆写成另一轮;launcher 要在这 0.3 s 内完成进程起动、「等 run_id」
+# 轮询与两次 python3 冷启动,CI runner 上常错过——错过在前是 rc=5(等不到本轮 run_id),错过在后是 rc=6(快照已是另一轮),
+# 都不是用例想验的阶段。现在 DEPLOY_PATH 前置一个 python3 垫片:launcher 的 state_snapshot(`python3 - <state.json>`,一次读
+# 三字段)**返回之后**才由垫片覆写 state——「覆写发生在取快照后」成为确定事件,不靠 sleep 对齐;launcher 本身一字不改。
+
+OTHER_RUN = "ffffffffffffffff"
+
+
+def _install_snapshot_race(env: Env, tmp_path: Path) -> dict[str, Path]:
+    """装配假 worker(写本轮 complete/rc=7 后只等覆写标记)与 python3 垫片(快照读取返回后覆写、落标记);返回标记与垫片日志路径。"""
+    state = env.state / "state.json"
+    marker = tmp_path / "overwritten.mark"
+    shim_log = tmp_path / "python3-shim.log"
+    fake_log = env.logs / "fake.log"
     fake_worker = tmp_path / "fake-worker"
     fake_worker.write_text(f'''#!/bin/bash
-# $1=run $2=tag $3=sha $4=dg $5=rd $6=run_id
+# $1=run $2=tag $3=sha $4=dg $5=rd $6=run_id —— 一上来就写本轮 complete/rc=7;之后只等垫片覆写(标记出现)再退出,自己不按时间覆写
 mkdir -p "{env.state}" "{env.logs}"
-LOG="{env.logs}/fake.log"; : > "$LOG"
-python3 - "$6" "$$" "$(ps -o lstart= -p $$ | tr -s ' ' | sed 's/^ *//;s/ *$//')" "$LOG" <<'PY'
+: > "{fake_log}"
+python3 - "$6" "$$" "$(ps -o lstart= -p $$ | tr -s ' ' | sed 's/^ *//;s/ *$//')" <<'PY'
 import json, sys
 json.dump({{"run_id": sys.argv[1], "tag": "v1.1.0", "target_sha": "x", "worker_pid": int(sys.argv[2]), "worker_start_id": sys.argv[3],
-           "phase": "complete", "rc": 7, "log": sys.argv[4]}}, open("{env.state}/state.json", "w"))
+           "phase": "complete", "rc": 7, "log": "{fake_log}"}}, open("{state}", "w"))
 PY
-sleep 0.3
-python3 - <<'PY'
-import json
-json.dump({{"run_id": "ffffffffffffffff", "phase": "complete", "rc": 0, "worker_pid": 1, "worker_start_id": "x", "log": "{env.logs}/fake.log"}},
-          open("{env.state}/state.json", "w"))
-PY
-sleep 1
+for _ in $(seq 1 300); do [ -f "{marker}" ] && exit 0; sleep 0.1; done
+exit 0
 ''')
     fake_worker.chmod(0o755)
-    env.conf.write_text(env.conf.read_text().replace(f"DEPLOY_WORKER={WORKER}", f"DEPLOY_WORKER={fake_worker}"))
+    shimbin = tmp_path / "shimbin"; shimbin.mkdir()
+    shim = shimbin / "python3"
+    shim.write_text(f'''#!/bin/bash
+# python3 垫片(仅本夹具):原样转发给真解释器;当调用形如 `python3 - <state.json>`(launcher 的 state_snapshot 一次性读取)
+# 且读到的是本轮 complete,在该次读取**返回之后**把 state 覆写成另一轮的 complete/rc=0 并落标记。只触发一次。
+printf '%s\\n' "$*" >> "{shim_log}"
+"{sys.executable}" "$@"; rc=$?
+if [ $# -eq 2 ] && [ "$1" = "-" ] && [ "$2" = "{state}" ] && [ ! -f "{marker}" ]; then
+    "{sys.executable}" - "{state}" "{marker}" "{fake_log}" <<'PY'
+import json, sys
+state, marker, log = sys.argv[1:4]
+d = json.load(open(state, encoding="utf-8"))
+if d.get("phase") == "complete" and d.get("run_id") != "{OTHER_RUN}":
+    json.dump({{"run_id": "{OTHER_RUN}", "phase": "complete", "rc": 0, "worker_pid": 1, "worker_start_id": "x", "log": log}},
+              open(state, "w", encoding="utf-8"))
+    open(marker, "w", encoding="utf-8").write(d["run_id"])
+PY
+fi
+exit $rc
+''')
+    shim.chmod(0o755)
+    conf = env.conf.read_text()
+    assert f"DEPLOY_WORKER={WORKER}" in conf and f"DEPLOY_PATH={env.path}" in conf
+    env.conf.write_text(conf.replace(f"DEPLOY_WORKER={WORKER}", f"DEPLOY_WORKER={fake_worker}")
+                            .replace(f"DEPLOY_PATH={env.path}", f"DEPLOY_PATH={shimbin}:{env.path}"))
+    return {"marker": marker, "shim_log": shim_log}
+
+
+def test_launcher_final_rc_comes_from_the_same_snapshot(env: Env, tmp_path: Path):
+    """假 worker 写本轮 complete/rc=7;launcher 取到快照**之后**state 才被覆写成另一轮的 complete/rc=0(读取触发,见上);
+    launcher 必须报 7——run_id / phase / rc 只能来自同一份快照,之后不得再读全局 state。"""
+    race = _install_snapshot_race(env, tmp_path)
     r = env.launch(env.cmd("v1.1.0"))
     assert r.returncode == 7, r.stdout + r.stderr
-    assert env.state_json("state.json")["run_id"] == "ffffffffffffffff", "前置:state 确实已被另一轮覆盖"
-    assert "worker 退出码 7(run " in r.stdout
+    shim_log = race["shim_log"].read_text() if race["shim_log"].exists() else "(空)"
+    assert race["marker"].exists(), "前置:垫片没有触发(launcher 读快照的方式变了?)垫片日志:\n" + shim_log
+    assert env.state_json("state.json")["run_id"] == OTHER_RUN, "前置:state 确实已被另一轮覆盖"
+    assert f"worker 退出码 7(run {race['marker'].read_text()})" in r.stdout, r.stdout
+
+
+# 反向对照:把 launcher 改回「二次读取 rc」的旧错误(首版脚本检视前的写法),同一夹具必须让它报出另一轮的 rc=0 而非 7
+_SNAPSHOT_MUTATIONS = {
+    "reread_rc_in_loop": ('\n        FINAL_RC="$snap_rc"; break\n', '\n        FINAL_RC="$(json_get "$STATE" rc "")"; break\n'),
+    "reread_rc_at_exit": ('\n    exit "$FINAL_RC"\n', '\n    exit "$(json_get "$STATE" rc 6)"\n'),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_SNAPSHOT_MUTATIONS))
+def test_snapshot_race_harness_catches_second_read(env: Env, tmp_path: Path, name: str):
+    """反向对照:改坏的 launcher 副本在同一夹具下必须报出另一轮的 rc=0——证明夹具会咬人,而不是碰巧放行。"""
+    old, new = _SNAPSHOT_MUTATIONS[name]
+    text = LAUNCHER.read_text(encoding="utf-8")
+    assert text.count(old) == 1, f"突变锚点 {old!r} 出现 {text.count(old)} 次"
+    mutated = tmp_path / "mutated-launcher"
+    mutated.write_text(text.replace(old, new), encoding="utf-8"); mutated.chmod(0o755)
+    race = _install_snapshot_race(env, tmp_path)
+    r = env.launch(env.cmd("v1.1.0"), launcher=mutated)
+    assert race["marker"].exists(), "前置:垫片没有触发"
+    assert r.returncode == 0, f"突变 {name} 本应读到另一轮的 rc=0:\n" + r.stdout + r.stderr
 
 
 def test_normal_exit_with_lingering_descendants_is_not_success(env: Env):
