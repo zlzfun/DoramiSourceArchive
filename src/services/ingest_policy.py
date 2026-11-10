@@ -107,7 +107,7 @@ SAVE_OUTCOME_ERRORS: dict[str, tuple[int, str]] = {
     db_storage.SAVE_DUPLICATE: (409, "该条目已存在"),
     db_storage.SAVE_REFRESHED: (409, "该条目已存在(已刷新元数据)"),
     db_storage.SAVE_ID_CONFLICT: (409, "条目 ID 已被其它来源占用"),
-    db_storage.SAVE_REJECTED_AUTHORITY: (409, "该来源由远端权威节点管理,本机不能写入"),
+    db_storage.SAVE_REJECTED_AUTHORITY: (409, "该自定源未启用或自定源功能已关闭,本机不写入"),
     db_storage.SAVE_REJECTED_PODCAST_SOURCE: (400, "播客单集需要一个已启用的播客源"),
     db_storage.SAVE_REJECTED_PODCAST_STAGE: (409, "播客采集阶段当前已关闭"),
     db_storage.SAVE_REJECTED_RETIRED: (409, "该来源已退役,不再接收新条目"),

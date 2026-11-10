@@ -190,9 +190,10 @@ def test_podcast_episode_creates_a_provisional_podcast_source(monkeypatch, tmp_p
     assert episode.content_type == "podcast_episode"
 
 
-def test_push_rejects_reserved_hidden_and_quota_and_receivers(monkeypatch, tmp_path):
+def test_push_rejects_reserved_hidden_and_quota_but_not_nodes_with_an_upstream(monkeypatch, tmp_path):
+    from models.db import AppSettingRecord
+    from services import remote_sync
     from services.source_visibility import set_source_hidden
-    from services.sync_consumer_policy import activate_v2_consumer_mode
 
     app_module, sink = _setup(monkeypatch, tmp_path)
     with TestClient(app_module.app) as client:
@@ -214,9 +215,15 @@ def test_push_rejects_reserved_hidden_and_quota_and_receivers(monkeypatch, tmp_p
             {"kind": "article", "url": "https://q.test/3"},
         ]).json()["results"]
         assert [r["status"] for r in ok] == ["created", "created", "rejected"]
+        # 拉取别人不改变本机能做什么(issue #263):有上游的节点照常接受收录、签发令牌。
         with Session(sink.engine) as session:
-            activate_v2_consumer_mode(session, reason="test")
-        assert _push(client, token, []).status_code == 409
+            session.add(AppSettingRecord(
+                key=remote_sync.REMOTE_SYNC_STATE_KEY,
+                value=json.dumps({"targets": {"http://producer.test": {"v2_authority_id": "producer-a"}}}),
+            ))
+            session.commit()
+        assert _push(client, token, []).status_code == 200
+        assert _issue_token(client, daily_limit=1)
 
 
 def test_admin_ingest_sources_list_admit_and_hide(monkeypatch, tmp_path):
@@ -652,3 +659,36 @@ def test_article_links_fall_back_to_the_only_curated_source_on_the_host(monkeypa
     ]
     assert [r["source_created"] for r in results] == [False, True, True, False]
     assert _row(sink.engine, SourceConfigRecord, "web_developers_openai_com").admission_status == "provisional"
+
+
+def test_sources_the_upstream_also_has_still_accept_pushes(monkeypatch, tmp_path):
+    """issue #263:源上的同步印记只是「上游也有这个源」的簿记。有上游的节点上几乎所有公共源都带它,
+    收录照常落进这些源(指名 / 前缀命中 / 主机兜底都一样),不另建临时源、不拒收;写进去的是本机版本。"""
+    from models.db import ArticleRecord, SourceConfigRecord
+
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    with Session(sink.engine) as session:
+        session.add(SourceConfigRecord(
+            source_id="rss_synced_site", name="Synced site", source_type="rss",
+            url="https://synced.example/blog/feed.xml", homepage_url="https://synced.example/blog",
+            origin="admin", admission_status="admitted", collection_authority_id="producer-a",
+            created_at=_NOW, updated_at=_NOW,
+        ))
+        session.commit()
+    with TestClient(app_module.app) as client:
+        _login(client)
+        token = _issue_token(client)
+        results = _push(client, token, [
+            {"kind": "article", "url": "https://synced.example/blog/post-1", "title": "前缀命中"},
+            {"kind": "article", "url": "https://synced.example/elsewhere/post-2", "title": "主机兜底"},
+            {"kind": "article", "url": "https://other.example/post-3", "title": "指名",
+             "source": {"source_id": "rss_synced_site"}},
+        ]).json()["results"]
+    assert [r["status"] for r in results] == ["created"] * 3, results
+    assert [r["source_id"] for r in results] == ["rss_synced_site"] * 3
+    assert [r["source_created"] for r in results] == [False] * 3
+    with Session(sink.engine) as session:
+        rows = session.exec(select(ArticleRecord).where(ArticleRecord.source_id == "rss_synced_site")).all()
+        assert len(rows) == 3 and {row.analysis_authority_id for row in rows} == {""}
+        assert session.get(SourceConfigRecord, "rss_synced_site").collection_authority_id == "producer-a"
+

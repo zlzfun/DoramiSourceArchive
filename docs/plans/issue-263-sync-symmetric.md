@@ -30,10 +30,10 @@
 
 | 对象 | 身份 | 同步到达时 | 本机能否处理 |
 |---|---|---|---|
-| 文章 | `id`(= 源 id + 条目 guid / 链接哈希,与节点无关) | 库里没有 → 写入;库里是同步写入的版本 → 更新;库里是**本机写入的版本** → 来者修订号严格更新才替换,否则保留本机版本 | 当前版本是本机写入的 → 按本机各自既有的开关处理(源的分析开关、自动标题翻译、论文全文、播客阶段开关);当前版本是同步写入的 → 等上游的结果,不重复付费 |
+| 文章 | `id`(= 源 id + 条目 guid / 链接哈希,与节点无关) | 库里没有 → 写入;库里是同步写入的版本 → 更新;库里是**本机写入的版本** → 本机修订号严格更新才保留本机版本,否则(更旧或相等)由来者替换 | 当前版本是本机写入的 → 按本机各自既有的开关处理(源的分析开关、自动标题翻译、论文全文、播客阶段开关);当前版本是同步写入的 → 等上游的结果,不重复付费 |
 | 分析 | `article_id` | 跟随文章:文章当前版本来自同步 → 应用;文章是本机版本 → 跳过 | 同上 |
 | 源 | `source_id` | 没有 → 建行,**分析关**,不编入任何采集任务(= 采集关);已有 → 只更新目录字段,不碰本机的分析开关与采集绑定;**本机在用的源**不接受上游的删除、退役与停用 | 分析开关与绑定是本机的;采集由采集任务点名或手动运行决定 |
-| 源状态 | `source_id` | 本机自己跑过且不比来者旧 → 保留本机的;否则应用 | 本机运行即改写为本机状态 |
+| 源状态 | `source_id` | 本机自己跑过且严格新于来者 → 保留本机的;否则应用 | 本机运行即改写为本机状态 |
 | 图片 / 播客产物 | 链接哈希 / 产物 id | 同今天;撞上本机自己产出的播客文稿 → 保留本机的,跳过 | — |
 | 事件 | 事件 id(本机自增) | 本机没有自己的事件 → 同今天;本机有自己的事件 → 整条 events 流不拉 | 用着上游事件的节点不做本地归并(§3.6) |
 | 删除 | — | 删除标记只删「当前版本由同步写入」的行;本机版本不动。整流全量后不再核对存在性、不再清理 | — |
@@ -55,8 +55,8 @@
 ### 3.1 拆掉的
 
 - **整机 consumer 模式**:删 `remote_sync:v2_consumer_mode` KV、`activate_v2_consumer_mode` 与三处激活(`api/routers/remote_sync.py:173`、`services/remote_sync.py:1760` / `:1770-1782`)、`v2_consumer_mode_active` 的全部判定。
-- **按源围栏**:`SourceConfigRecord.collection_authority_id` 不再拦本机的采集、分析与管理;它保留为簿记,含义是「这个源上游也有」(个人早报的 readiness 靠它判断该不该等上游的源状态,`personal_digest.py:455`;对账靠它把目录字段让给上游,`source_rows.py:193`;批量抓取入口靠它避开同步来的源,`source_configs.py:530 / 577`)。`_apply_sources` 不再「接管」:不改写同源文章、不删本机源状态、不清空 `fetcher_id` / `params_json`。状态表触发器里凡是「源带印记即不算本机公共」的条件一律去掉(§3.4),否则本机在一个上游也有的源下自己抓到的文章不会被记账、也就导不出去。
-- **源级策略函数** `sync_consumer_policy.local_source_operation_allowed`:**保留函数与约 30 处调用点**,只去掉里面的 consumer 模式与源归属两个分支。公共源恒为真;私有 RSS 的规则(源须启用、功能总闸须开、凭据源与关了分析的源不经 MaaS,`sync_consumer_policy.py:137-157`)原样留下,并从「只在 consumer 模式下」变为对所有节点生效。采集运行路径的清理分支(私有源被删 / 退役、播客撤销)不动。
+- **按源围栏**:`SourceConfigRecord.collection_authority_id` 不再拦本机的采集、分析与管理;它保留为簿记,含义是「这个源上游也有」(个人早报的 readiness 靠它判断该不该等上游的源状态,`personal_digest.py:455`;对账靠它把目录字段让给上游,`source_rows.py:193`)。批量抓取入口(`source_configs.py` 的 `fetch-active-rss` / `fetch-active-web`)与收录通道(`ingest_push._check_target`、主机兜底)**不再看它**:有上游的节点上几乎所有公共源都带这个印记,再按它排除 / 拒收就等于换了个名字的围栏(实施期补,§12)。`_apply_sources` 不再「接管」:不改写同源文章、不删本机源状态、不清空 `fetcher_id` / `params_json`。状态表触发器里凡是「源带印记即不算本机公共」的条件一律去掉(§3.4),否则本机在一个上游也有的源下自己抓到的文章不会被记账、也就导不出去。
+- **源级策略函数** `sync_consumer_policy.local_source_operation_allowed`:**保留函数与约 30 处调用点**,只去掉里面的 consumer 模式与源归属两个分支。公共源恒为真;私有 RSS 的规则(源须启用、功能总闸须开、凭据源与关了分析的源不经 MaaS,`sync_consumer_policy.py:137-157`)原样留下,生效范围从「consumer 模式下」换成「**已与某上游建立 v2 同步的节点**」(`upstream_established`,读 `remote_sync:state` 里有 `v2_authority_id` 的目标)——两类节点的行为与改动前逐一相同。原稿写的是「对所有节点生效」,实施时撤回:没有上游的节点上这组规则由 `user_sources` / `article_analysis` 各自的路径把关,其中带凭据的源还要走候选证据清除,统一到策略函数会绕开那条清除路径(§12)。统一这组规则记 backlog。采集运行路径的清理分支(私有源被删 / 退役、播客撤销)不动。
 - **首次同步的破坏性准备**:`prepare_transaction_revision_consumer` 不再把本机全部公共源置为停用、不再删本机源状态(`services/remote_sync.py:411-435`);重基线只把「该上游写入的实体状态」的接收修订置 0(§3.4),不删行。
 - **整流全量后的存在性核对与清理**:拉取循环不再调 `full_authority_stale_identities` / presence / `finalize_full_authority_stream`(`services/remote_sync.py:1407-1445`),两个函数删除。生产端的 presence 端点保留给旧版本接收端。
 
@@ -78,11 +78,11 @@
 
 `import_page` 的页级原子性、校验与流顺序不变。变化:
 
-- **articles**(`_apply_articles`):库里没有 → 写入并盖印记;库里有且已盖印记 → 照今天更新;库里有且**无印记**(本机版本)→ 比 `archive_updated_at`,来者**严格更新**才接管(盖印记、`_supersede_local_analysis`),否则跳过并计 `skipped`。相等不接管。导入时清空 `fetch_run_id` / `job_id` / `job_run_id` / `source_group_id`:它们是产生节点的本地整数关联,原样照抄会和本机的运行串号(`api/articles_view.py:276` 按整数筛)。`preserve_local_translations` 只放宽「印记须相等」这一条前提,身份、正文 / 社交输入指纹、缓存版本校验不变(它本来就不保留标题回执)。源行存在与否不再影响文章导入。
-- **修订号比较规则**(文章与源状态共用):两侧都解析为时间点;无时区的值按本机时区解释,带时区的值直接换算,统一到 UTC 比较;某一侧解析失败则视为最旧;相等视为「不更新」。
+- **articles**(`_apply_articles`):库里没有 → 写入并盖印记;库里有且已盖印记 → 照今天更新;库里有且**无印记**(本机版本)→ 比 `archive_updated_at`,本机**严格更新**才保留本机版本(跳过并计 `skipped`),否则由来者接管(盖印记、`_supersede_local_analysis`)。相等时上游胜:从 v1 归档导入或库副本起步的节点,已有文章的修订号与上游完全相同,它们就是上游的那一版,应当接上后续更新与分析(既有用例 `test_stale_brief_analysis_does_not_block_score_sync` 覆盖这条路径)。导入时清空 `fetch_run_id` / `job_id` / `job_run_id` / `source_group_id`:它们是产生节点的本地整数关联,原样照抄会和本机的运行串号(`api/articles_view.py:276` 按整数筛)。`preserve_local_translations` 不改(仍要求印记相等):本机版本被接管的那一次不带走本机缓存的正文译文,读者下次打开时按需重译。原稿想放宽这条前提,实施时撤回——「换了上游不继承前任缓存」是既有不变量且有用例守着(§12)。源行存在与否不再影响文章导入。
+- **修订号比较规则**(文章与源状态共用):两侧都解析为时间点;无时区的值按本机时区解释,带时区的值直接换算,统一到 UTC 比较;某一侧解析失败则视为最旧;只有本机严格更新才算本机胜。
 - **analyses**(`_apply_analyses`):文章缺失、或文章是本机版本 → 跳过并计数(今天是整页失败)。文章印记匹配 → 照今天应用;`content_hash` 不符仍整页失败(同一快照内文章先到,不符即数据错误)。
-- **sources**(`_apply_sources`):没有 → 建行并盖源印记,`ai_analysis_enabled = False`、`fetcher_id` / `params_json` 留空,其余字段照来者(含 `is_active`,它是早报范围与 readiness 的目录字段,`personal_digest.py:361 / 428`,不能动);已有 → 盖源印记、覆盖目录字段,不碰 `ai_analysis_enabled` 与绑定;已有且**本机在用** → 另外不接受来者的 `is_active` 与 `retired_at`。读者自定源同 id 仍整页失败。
-- **source_states**(`_apply_source_states`):本机状态行无印记且 `updated_at` 不早于来者 → 跳过;否则应用并盖印记。覆盖已有行时不清空本机游标字段(只在新建时置空)。
+- **sources**(`_apply_sources`):没有 → 建行并盖源印记,`ai_analysis_enabled = False`、`fetcher_id` / `params_json` 留空,其余字段照来者(含 `is_active`,它是早报范围与 readiness 的目录字段,`personal_digest.py:361 / 428`,不能动);已有 → 盖源印记、覆盖目录字段,不碰 `ai_analysis_enabled` 与绑定;已有且**本机在用** → 另外不接受来者的 `is_active` 与 `retired_at`;已有、本机没在用、且**这是上游印记第一次落上来** → 分析一并置关(新节点启动对账会先建出预设行,随后才接入上游;不补这条它们会停在「开」,与同步建出来的源口径不一,沙箱自查发现,§12)。读者自定源同 id 仍整页失败。
+- **source_states**(`_apply_source_states`):本机状态行无印记且 `updated_at` 严格新于来者 → 跳过;否则应用并盖印记。覆盖已有行时不清空本机游标字段(只在新建时置空)。
 - **media**:不变。
 - **podcast_texts / podcast_audio**:单集文章是本机版本、文稿槽位已被本机产物占用、或 `(episode_id, kind, version)` 撞上本机产物 → 跳过该行并计数(今天是整页失败);依赖的讲稿被跳过时对应音频行同样跳过;其余不变。
 - **events**:成员文章是本机版本时,不再只是跳过计数,而是和「文章还没到」一样进 `event_member_backlog`;文章之后被接管时由既有的 backlog 重放补回(`replay_event_member_backlog` 对「文章在、但还不是该上游版本」的行改为保留等待而不是丢弃,仍受 30 天上限)。事件行本身已记账,整流重放补不回成员,所以走 backlog。页内另有原子门禁,见 §3.6。
@@ -116,7 +116,7 @@
 - **分析**:`ai_analysis_enabled`,含义与今天完全一致(评分分析及依赖它的播客处理)。同步建行时置 `False`,之后同步不再覆盖它。它只对**本机版本**的文章起作用;同步写入的文章不在本机分析(§7-2)。标题翻译、论文全文不归这个开关管,按各自既有的开关运行,且同样只对本机版本。
 - **入口**:配置源已有编辑接口;预设镜像行今天没有任何开关入口(`_require_config_managed` 拒绝)。新增 `POST /api/admin/sources/{source_id}/analysis`(`{enabled}`,公共源行通用,入审计),源管理检视器加一个「本机分析」开关,样式与同页「在读者面隐藏」一致。
 - **有上游的节点上新出现的源**:启动对账(`source_rows.reconcile_source_rows`,现改为每台都跑)与孤儿回填在「已与某上游建立 v2 同步」的节点上新建行时分析默认关,避免对账先于同步建行而漏掉默认值。`local_public_writes_allowed` 删除;`_reconcile_mirror` 对已有行只动目录字段的行为不变。
-- 收录推送、新建公共源、签发收录令牌在任何节点都可用(`ingest_push.py:130 / 181 / 267`、`source_configs.py:73` 的拒绝删除)。
+- 收录推送、新建公共源、签发收录令牌在任何节点都可用(`ingest_push.py:130 / 181 / 267`、`source_configs.py:73` 的拒绝删除);推送落进上游也有的源同样接受,写进去的是本机版本。
 
 ### 3.6 事件:一个节点一个 id 空间
 
@@ -186,7 +186,7 @@
 
 **pytest**
 - 迁移:`local_revision` 回填;无同步写入行时时钟不动;源印记保留;同步写入文章的本地关联字段清空;接收节点矩阵(全部公共源分析关、含公共源的任务停用、纯私有任务不动、日报关、KV 删除);本波 head 的升级 / 降级 / 再升级;drift;历史 downgrade 守卫不变。
-- 合并:同步写入的版本被更新;本机版本遇到更旧 / 相等 / 更新的来者;时间比较覆盖无时区、带时区、两者混合、坏值;接管时按指纹保留本机正文译文;本机抓取改动已盖印记的行后清印记;印记行上的 ORM 批注不推进修订号;导入清空本地关联字段(两节点运行 id 相同时按运行筛选不串)。
+- 合并:同步写入的版本被更新;本机版本遇到更旧 / 相等 / 更新的来者;时间比较覆盖无时区、带时区、两者混合、坏值;接管时不继承本机缓存的正文译文(既有用例不改);本机抓取改动已盖印记的行后清印记;印记行上的 ORM 批注不推进修订号;导入清空本地关联字段(两节点运行 id 相同时按运行筛选不串)。
 - 逐流跳过不卡流(都走完整拉取循环):分析、播客文稿、播客音频(含二进制阶段)、`(episode, kind, version)` 撞本机产物;源状态本机较新者保留;tombstone 不删本机版本、目标不存在也记账。
 - 依赖补回:先因本机版本跳过分析 / 文稿 / 音频,之后仅文章变化并被接管 → 待重放标记落库,整流重放补回;接管提交后本轮中断 → 下一轮仍重放;流完成才清标记。
 - 源:同步建行分析默认关、`is_active` 照来者;更新不碰分析开关与绑定;本机在用的源(跑过 / 被任务点名 / 存过绑定三种)不接受删除 / 退役 / 停用;只有源印记、还没有源状态的同步源在迁移后与首次拉取后仍进 readiness(`tests/test_personal_digest.py:298` 既有用例不改);本机在上游也有的源下抓到的文章能导出;没在用的源 tombstone 有文章置退役、无文章删行;旧生产端 legacy 投影的 tombstone;有上游的节点对账新建行分析默认关;`POST /api/admin/sources/{id}/analysis`;个人早报范围与 readiness 在迁移前后一致。
@@ -195,7 +195,7 @@
 - 重放:单流重置、分析代次补拉、投影切换之后,中转节点对新下游的全量导出仍包含这些行;重放完成后内容正确。
 - 三节点链(进程内三个 sink):B 拉 A、C 拉 B → C 有 A 与 B 的文章、分析、源;A 删一篇 → B、C 依次删除;B 自己采的源 C 也拿到;B 首次同步不停用本机源、不删本机数据;任何一步都没有 presence 请求。
 - 事件:首次接入与在途归并交错(归并已过入口检查、落库前上游事件到达 → 本机放弃;反过来本机事件先落库 → 导入整页跳过);成员文章是本机版本 → 进 backlog,文章被接管后补回;先有本机事件的节点接入上游 → events 流被跳过、其余流正常;用着上游事件的节点 `assign_pending` 不建事件(两个入口);已接入带 events 能力的上游但事件表还空的节点不建本地事件。
-- 拆 consumer:首次同步与启用定时不再写 KV;有上游的节点可新建公共源、签发收录令牌、跑对账;taxonomy 只读仍由 KV 决定;私有 RSS 规则(停用源、功能总闸、凭据源)在非接收节点上同样生效。
+- 拆 consumer:首次同步与启用定时不再写 KV;有上游的节点可新建公共源、签发收录令牌、跑对账;taxonomy 只读仍由 KV 决定;私有 RSS 规则(停用源、功能总闸、凭据源)在有上游的节点上照旧生效、在没有上游的节点上行为不变;上游也有的源照常接受收录与批量抓取。
 - 跨版本实测两组(§4-5)。
 
 **沙箱目检(用户)**:两个隔离栈,B 以真实库副本为底、C 空库拉 B。
@@ -213,18 +213,20 @@
 | 2 | 同步写入的文章不在本机分析,即使打开了该源的「本机分析」;开关只对本机自己抓到的文章生效 | 上游的分析结果会随同步到达;否则两边各付一次费。这是在「按源的普通开关」之上额外加的一条限制 |
 | 3 | 事件二选一:用着上游事件的节点不做本地归并(自己采的文章不进热点事件榜);先有本机事件的节点不收上游事件 | 事件 id 是本机自增整数,两个来源同表必然相撞(§3.6) |
 | 4 | 抓取遇到已在库的文章仍只补正文 / 修占位,不改写已归档内容 | 「忠实归档」是既有产品规则,本波不动 |
-| 5 | 两台都采同一个源时,各自保留自己抓到的较新版本并各自负责分析 | 「新者胜」的直接结果;相等时不接管 |
+| 5 | 两台都采同一个源时,本机抓到的版本只有比上游的严格更新才保留并由本机负责分析;更旧或相等都换成上游的 | 「新者胜」的直接结果;相等时上游胜,v1 归档或库副本起步的节点才能接上上游 |
 | 6 | 迁移在接收节点上把全部公共源的分析置关、停用含公共源的采集任务、关掉日报定时 | 它们今天被围栏挡着本就不跑;静默恢复会让内网突然开始抓公网、调模型 |
 | 7 | 本波只保证单上游的链式转发;互拉、多来源不承诺、不验证 | 逐行印记仍按「同一个上游」校验;taxonomy 治理与同步控制台也都是单上游 |
 | 8 | 「同步建出的源默认关采集」落为「不编入任何采集任务」,不改源的启用状态 | 启用状态同时决定个人早报的范围,关掉会把同步来的源全部踢出早报 |
 | 9 | 回滚靠备份,不支持旧代码直接跑在升级后的库上 | 仓内既有规则 |
+| 10 | 本机在上游文章上做的产物(分析、播客文稿 / 音频)不转发给下游;本机版本被接管时不带走本机缓存的正文译文 | 导出范围仍以「文章是本机版本」为界;译文缓存不跨上游继承是既有不变量 |
 
 ## 8. 风险与观察
 
 - `archive_updated_at` 是无时区的本机墙上时钟(`models/db.py:255`)。「新者胜」只在本机版本与来者之间比较;两台时区口径不一致时,同采一个源的胜负会偏向时区靠前的一方。只同步不自采的节点不受影响。
 - 本机版本一旦比上游新,就不再接收上游对这篇的更新与分析,直到上游出现更新的版本并触发接管与依赖流重放。只发生在两台都采同一个源时。
+- 相等时上游胜意味着:若有人误把节点指向自己的下游(成环),本机的文章会被绕回来的同一版「接管」,在途的本机分析会被取消。本波只支持单上游的链,运维文档写明不要成环;旧版本在这种误配下会让整机停采,后果更重。
 - 依赖流整流重放的代价(分析流全量下载)只在发生接管的那一轮付出;若某节点长期与上游同采大量源,重放会变频繁——观察 `skipped` 与接管计数。
-- 私有 RSS 规则从「只在 consumer 模式下」变为所有节点生效:外网上被停用的自定源、功能总闸关闭时,其文章不再被采集与分析。外网无真实读者,预期无可见变化。
+- 私有 RSS 规则的生效范围从「consumer 模式」换成「有上游的节点」:一台节点只要配置过 v2 同步目标(哪怕后来不再拉),这组规则就一直由策略函数把关。两类节点今天的行为都不变;代价是规则仍分两处实现(记 backlog)。
 - 内网恢复「可以自己采」后产生的失败运行记录、源状态会随导出流向它的下游(今天没有下游)。
 
 ## 9. 不做
@@ -236,10 +238,10 @@
 
 ## 10. 影响面
 
-- 后端:`services/archive_sync_v2.py`、`services/remote_sync.py`、`services/sync_consumer_policy.py`(去 consumer 模式与源归属,留私有 RSS 规则与 v1 兼容判定)、`services/sync_console.py`、`services/source_rows.py`、`services/translation_sync.py`、`services/event_assignment.py`、`storage/archive_sync_revision.py`、`storage/impl/db_storage.py`、`models/db.py`、`alembic/versions/<new>.py`;consumer 判定的直接调用点:`api/app.py`、`api/routers/{remote_sync,archive_sync,source_configs,ingest_push,taxonomy,admin}.py`、`services/taxonomy.py`;只读核对不改:`services/personal_digest.py`。
+- 后端:`services/archive_sync_v2.py`、`services/remote_sync.py`、`services/sync_consumer_policy.py`(去 consumer 模式与源归属,留私有 RSS 规则与 v1 兼容判定)、`services/sync_console.py`、`services/source_rows.py`、`services/event_assignment.py`、`services/ingest_push.py` / `ingest_policy.py`(不再按源印记拒收)、`services/collection_nodes.py`(目录带出分析开关)、`services/admin_audit.py`、`storage/archive_sync_revision.py`、`storage/impl/db_storage.py`、`models/db.py`、`alembic/versions/<new>.py`;consumer 判定的直接调用点:`api/app.py`、`api/routers/{remote_sync,archive_sync,source_configs,ingest_push,taxonomy,admin}.py`、`services/taxonomy.py`;只读核对不改:`services/personal_digest.py`。
 - 前端:`components/admin/sync/{SyncConnect,SyncPops,SyncLink,SyncDrawers}.jsx`、`pages/SyncPage.jsx`、`FetchTab.jsx`(开关)、`api.js`。
 - 文档:`contracts/archive_sync.md`、`architecture/archive-sync.md`、`architecture/overview.md`、`AGENTS.md` 架构表 Archive Sync 行、`ops/{aliyun-dual-node-deployment,configuration,taxonomy-v1-deployment,runbook}.md`、`reference/endpoints.md`、`plans/issue-262-source-model-refactor.md`(不变量 6 注)、`version-history` / `backlog` / `decisions`。
-- 测试:`tests/test_sync_consumer_policy.py`(重写)、`test_archive_sync_v2.py`、`test_remote_sync.py`、`test_migrations.py`、`test_ingest_push.py`、`test_source_model.py`、`test_sync_console.py` 及引用源级围栏的其它用例;前端 `frontend/test/*.test.mjs`。
+- 测试:`tests/test_sync_consumer_policy.py`(重写)、`test_archive_sync_v2.py`、`test_remote_sync.py`、`test_migrations.py`、`test_ingest_push.py`、`test_source_model.py`、`test_sync_console.py`、新增 `test_archive_sync_chain.py`(三节点链 / 文件就绪顺序 / 依赖流重放 / 音频跳过)及引用源级围栏的其它用例;前端 `frontend/test/*.test.mjs`。
 
 ## 11. 检视
 
@@ -277,7 +279,30 @@
 
 ## 12. 实施记录
 
-(待实现。)
+实现方 Claude Code(Fable 5.2),2026-11-10。与方案的偏差(都已回写到上面对应小节):
+
+| 偏差 | 原稿 | 实现 | 原因 |
+|---|---|---|---|
+| 私有 RSS 规则的生效范围 | 所有节点 | 只在已接入上游的节点(`upstream_established`) | 统一后 `test_article_analysis.py` 5 个用例行为改变,且带凭据的源绕开了候选证据清除路径;本波目标是拆围栏,不是改自定源规则 |
+| 接管时的正文译文 | 放宽「印记须相等」后按指纹保留 | 不保留,按需重译 | 「换上游不继承前任缓存」有既有用例守着;只在两台同采一个源时发生 |
+| 收录通道与批量抓取 | 未提及 | 不再按源印记拒收 / 排除 | 新用例发现:有上游的节点上公共源几乎都带印记,保留这两处等于围栏还在 |
+| 相等修订号 | 初版实现「相等不接管」 | 相等时上游胜 | v1 归档 / 库副本起步的节点才能接上上游(§3.3,既有用例覆盖) |
+| 审计 | 新端点入审计 | 另把该路径加进审计中间件的「需要请求体」名单 | 否则摘要永远写成「关闭」(新用例抓到) |
+| 先对账后接入的预设源 | 只规定「同步建出来的源」分析关 | 上游印记首次落到本机没在用的已有源时也置关 | 沙箱:全新节点接入上游后 107 个预设源的「本机分析」仍是开 |
+
+沿用旧名、未改的内部原因码:`v2_consumer_quiesced` / `consumer_quiesced`(分析回填与内容价值补评在「本机无执行权」时的结算原因)——现在只在读者自定源被停用 / 功能总闸关闭且节点有上游时出现;改名会波及持久化的任务明细,不值得。
+
+新增测试文件 `tests/test_archive_sync_chain.py`;做过变异检查:去掉文件就绪触发器、屏蔽待重放标记后对应用例失败。
+
+**沙箱与跨版本实测(2026-11-10,本机隔离栈,LLM 指向死地址、采集任务全停)**
+
+| 项 | 做法 | 结果 |
+|---|---|---|
+| 迁移 | 本机库副本(7,194 篇、43 源,`d4e8a1b7c603`)升到 heads | 8,520 行状态 `local_revision = revision`,时钟不动,无接收节点处置(符合「不拉任何人的节点」) |
+| 新 × 新 | 空库 C 拉 B(库副本) | 首次全量 4,407 篇 / 270 分析 / 1,706 图 / 88 源状态,约 2 分半;B 新建源并收录一篇后 C 增量 +1 源 +1 篇;B 收到 0 次 presence |
+| 新接收端 × 旧生产端 | 新版空库拉 v3.67.4(legacy 源投影) | 首次全量与「一改一删一增」增量都成功;同步建出的源分析关、无绑定;0 次 presence |
+| 旧接收端 × 新中转节点 | v3.67.4 空库拉「拉了旧生产端、自己又收录一篇」的新版节点 | 转发行与中转节点本机行一并到达;源头的修改与删除经中转传到旧接收端;中转节点对转发行的 presence 查询回答「在」 |
+| 界面 | Playwright,亮 / 暗 | 接入卡点「开始首次同步」直接开跑、无确认框;节点同步页无围栏文案与「本地采集」行;源管理「本机分析」开关可切换;console error 0 |
 
 ## 13. 方向演变(备查)
 

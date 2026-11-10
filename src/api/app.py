@@ -578,14 +578,6 @@ async def lifespan(app: FastAPI):
     # 故调度器在任何角色下都启动,抓取类任务(load_tasks/远程同步/自定源刷新)
     # 仍只在 collector 角色注册。
     collector_on = runtime_collector_enabled()
-    if collector_on:
-        # Upgrade fence must be restored before saved collector jobs are loaded:
-        # an explicitly enabled v2 schedule makes this node a receiver even if
-        # its first authority snapshot has not completed yet.
-        remote_sync_service.activate_consumer_for_enabled_v2_schedule(
-            db_sink.engine,
-            reason="v2_schedule_startup",
-        )
     reconcile_orphaned_runs()
     if collector_on:
         load_tasks_to_scheduler()
@@ -2302,6 +2294,12 @@ async def require_admin_session(request: Request, call_next):
             normalized_method == "POST"
             and path.startswith("/api/admin/source-visibility/")
         )
+        or (
+            # 源的「本机分析」开关(issue #263):摘要要写开还是关
+            normalized_method == "POST"
+            and path.startswith("/api/admin/sources/")
+            and path.endswith("/analysis")
+        )
     )
     if (auth_session or {}).get("role") == "admin" and audit_rule_needs_body:
         try:
@@ -2960,7 +2958,7 @@ def load_tasks_to_scheduler():
     # 每日 AI 资讯日报(独立于采集任务):启用即幂等注册,停用即摘除。
     reload_daily_brief_schedule()
     # 当前双节点部署均为 runtime.role=all：文章分析与个人早报和采集共用调度器；
-    # 远端权威文章另由持久化 authority 围栏排除本地分析。
+    # 同步写入的文章(带同步印记)不在本机分析,用上游同步来的结果。
     # 两个 worker 都在执行时读取数据库 feature flag，默认关闭且支持热切换。
     _ensure_interval_job(
         "article_analysis",
@@ -3031,7 +3029,8 @@ async def execute_article_analysis_job():
 
     def _activate_candidates():
         with Session(db_sink.engine) as session:
-            if not sync_consumer_policy.v2_consumer_mode_active(session):
+            # 同步来的词表只读:自动激活只在自己治理 taxonomy 的节点上跑。
+            if not sync_consumer_policy.taxonomy_governed_remotely(session):
                 taxonomy_service.run_auto_activation_cycle(session)
 
     try:
@@ -3639,6 +3638,23 @@ def _user_source_collection_blocked(
     )
 
 
+def _claim_local_source_state(state: SourceStateRecord) -> None:
+    """本机开始自己跑这个源:源状态从此是本机的(issue #263)。
+
+    行上若还是上游同步来的状态,清掉同步印记并把运行计数归零——那些计数是上游的运行史,
+    不和本机的混在一起。之后上游的状态只有在比本机更新时才会覆盖回来。
+    """
+
+    if not (state.authority_id or "").strip():
+        return
+    state.authority_id = ""
+    state.authority_revision = ""
+    state.total_runs = 0
+    state.success_runs = 0
+    state.failed_runs = 0
+    state.consecutive_failures = 0
+
+
 def mark_source_state_started(fetcher_id: str, params: Dict[str, Any], run_id: int):
     source_id = resolve_state_source_id(fetcher_id, params)
     now = _now_iso()
@@ -3660,6 +3676,7 @@ def mark_source_state_started(fetcher_id: str, params: Dict[str, Any], run_id: i
                 updated_at=now
             )
         else:
+            _claim_local_source_state(state)
             state.fetcher_id = fetcher_id
             state.status = "running"
             state.last_started_at = now
@@ -3696,6 +3713,7 @@ def mark_source_state_finished(
                 updated_at=now
             )
 
+        _claim_local_source_state(state)
         state.fetcher_id = fetcher_id
         state.last_run_id = run_id
         state.last_completed_at = now
@@ -3772,13 +3790,9 @@ async def run_fetcher_with_tracking(
         if not sync_consumer_policy.local_source_operation_allowed(
             authority_session, source_id, operation="collection"
         ):
-            reason = (
-                "由远端权威节点采集"
-                if source is not None and (source.collection_authority_id or "").strip()
-                else "已进入 v2 接收端采集围栏"
-            )
+            # issue #263 起只剩读者自定源的规则(源须启用且功能总闸开着);公共源恒放行。
             raise ValueError(
-                f"数据源 {source_id} {reason}，本机 role=all 也不得重复抓取"
+                f"自定源 {source_id} 未启用或自定源功能已关闭，本机不抓取"
             )
         if is_podcast_run:
             if (
@@ -3857,7 +3871,8 @@ async def run_fetcher_with_tracking(
                 )
                 cleanup_session.commit()
             reason = (
-                f"数据源 {source_id} 已由远端权威接管"
+                # issue #263 起这条只对读者自定源成立(运行途中被停用 / 功能总闸被关)
+                f"自定源 {source_id} 已停用或自定源功能已关闭"
                 if authority_taken
                 else (
                     f"用户自定源 {source_id} 已移除或退役"

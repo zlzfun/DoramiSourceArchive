@@ -16,6 +16,7 @@ from sqlmodel import Session, select
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from models.db import (  # noqa: E402
+    ArchiveSyncClockRecord,
     ArchiveSyncEntityStateRecord,
     ArticleRecord,
     EventMemberBacklogRecord,
@@ -384,11 +385,13 @@ def test_event_pages_paginate_by_keyset_verify_checksums_and_apply_idempotently(
         singleton_member = session.get(EventMemberRecord, (singleton_id, "a-3"))
         assert singleton_member.assigned_by == "singleton"
         assert singleton_member.confidence is None
-    # 接收端记的是远端状态,不会把同步来的事件再当成本机待导出
+    # 接收端记账里的接收修订仍是上游的;导出修订是本机时钟,同步来的事件会随本机的导出转发给
+    # 下游(issue #263:拉来的也导出)。
     assert _state(consumer.engine, launch_id).authority_id == authority
-    assert archive_sync_v2.parse_page(
+    forwarded = archive_sync_v2.parse_page(
         archive_sync_v2.export_page(consumer.engine, "events"), expected_stream="events"
-    )[1] == []
+    )[1]
+    assert sorted(row["identity"] for row in forwarded) == sorted([str(launch_id), str(singleton_id)])
 
     replay = archive_sync_v2.import_page(consumer.engine, first_raw, expected_stream="events")
     assert replay["inserted"] == replay["updated"] == replay["deleted"] == 0
@@ -801,7 +804,9 @@ def test_receiver_guard_blocks_local_members_in_authority_events(tmp_path):
     assert _state(consumer.engine, local_id).authority_id == ""
 
 
-def test_local_event_under_a_synced_id_fails_the_page_closed(tmp_path):
+def test_node_with_its_own_events_skips_incoming_event_pages(tmp_path):
+    """事件 id 是产生节点的本机自增整数:本机已有自己的事件时,上游的 events 页整页跳过、不记账
+    (issue #263)。本机事件原样保留,同步不会卡在这一页。"""
     producer = _sink(tmp_path, "producer-collision.db")
     consumer = _sink(tmp_path, "consumer-collision.db")
     launch_id, singleton_id = _seed_producer(producer)
@@ -810,29 +815,52 @@ def test_local_event_under_a_synced_id_fails_the_page_closed(tmp_path):
     with Session(consumer.engine) as session:
         session.add_all([_event(title="Local A"), _event(title="Local B")])
         session.commit()
-    with Session(consumer.engine) as session:
-        session.delete(session.get(EventRecord, launch_id))
-        session.commit()
 
     raw = archive_sync_v2.export_page(producer.engine, "events")
-    with pytest.raises(archive_sync_v2.SyncV2Error, match="belongs to another authority"):
-        archive_sync_v2.import_page(consumer.engine, raw, expected_stream="events")
+    applied = archive_sync_v2.import_page(consumer.engine, raw, expected_stream="events")
 
+    assert (applied["inserted"], applied["updated"], applied["deleted"]) == (0, 0, 0)
+    assert applied["skipped"] == 2
+    assert applied["skipped_identities"] == sorted([str(launch_id), str(singleton_id)])
+    authority = archive_sync_v2.producer_authority_id(producer.engine)
     with Session(consumer.engine) as session:
-        assert session.get(EventRecord, launch_id) is None  # 整页回滚,第一条也没留下
-        local = session.get(EventRecord, singleton_id)
-        assert local.title == "Local B" and local.authority_id == ""
-        authority = archive_sync_v2.producer_authority_id(producer.engine)
+        titles = sorted(event.title for event in session.exec(select(EventRecord)).all())
+        assert titles == ["Local A", "Local B"]
+        assert all(not event.authority_id for event in session.exec(select(EventRecord)).all())
         assert session.exec(
             select(ArchiveSyncEntityStateRecord).where(
                 ArchiveSyncEntityStateRecord.stream == "events",
                 ArchiveSyncEntityStateRecord.authority_id == authority,
             )
         ).all() == []
+        assert session.exec(select(EventMemberBacklogRecord)).all() == []
+
+
+def test_pull_skips_the_events_stream_when_told_to_and_still_completes(tmp_path):
+    """本机有自己的事件 → 拉取时不请求 events 流,其余流照常完成、各自落 checkpoint。"""
+    producer = _sink(tmp_path, "producer-skip-events.db")
+    consumer = _sink(tmp_path, "consumer-skip-events.db")
+    _seed_producer(producer)
+    with Session(consumer.engine) as session:
+        session.add(_event(title="Mine"))
+        session.commit()
+        assert archive_sync_v2.local_events_present(session) is True
+    remote = _Remote(producer)
+
+    result = _pull(consumer, remote, tmp_path, local_skip_streams=["events"])
+
+    assert "events" not in remote.requested_streams
+    assert "events" not in result["streams"]
+    assert result["skipped_streams"] == ["events"]
+    assert {"sources", "articles", "analyses", "source_states"} <= set(result["streams"])
+    with Session(consumer.engine) as session:
+        assert [event.title for event in session.exec(select(EventRecord)).all()] == ["Mine"]
 
 
 @pytest.mark.parametrize("existing_authority", ["", "third-authority"], ids=["local-event", "third-authority"])
-def test_tombstone_colliding_with_a_foreign_event_fails_the_page_closed(tmp_path, existing_authority):
+def test_tombstone_colliding_with_a_foreign_event_never_touches_it(tmp_path, existing_authority):
+    """同 id 的事件属于另一上游 → 整页失败(只支持单上游);是本机事件 → 整页跳过。两种情况下
+    那个事件都原样保留,它的同步状态不会被盖成远端 tombstone。"""
     producer = _sink(tmp_path, "producer-tombstone-collision.db")
     consumer = _sink(tmp_path, "consumer-tombstone-collision.db")
     launch_id, singleton_id = _seed_producer(producer)
@@ -858,8 +886,12 @@ def test_tombstone_colliding_with_a_foreign_event_fails_the_page_closed(tmp_path
     raw = archive_sync_v2.export_page(producer.engine, "events", since=full_snapshot)
     assert [row["operation"] for row in archive_sync_v2.parse_page(raw, expected_stream="events")[1]] == ["tombstone"]
 
-    with pytest.raises(archive_sync_v2.SyncV2Error, match="belongs to another authority"):
-        archive_sync_v2.import_page(consumer.engine, raw, expected_stream="events")
+    if existing_authority:
+        with pytest.raises(archive_sync_v2.SyncV2Error, match="belongs to another authority"):
+            archive_sync_v2.import_page(consumer.engine, raw, expected_stream="events")
+    else:
+        applied = archive_sync_v2.import_page(consumer.engine, raw, expected_stream="events")
+        assert applied["deleted"] == 0 and applied["skipped"] == 1
 
     producer_authority = archive_sync_v2.producer_authority_id(producer.engine)
     with Session(consumer.engine) as session:
@@ -869,29 +901,42 @@ def test_tombstone_colliding_with_a_foreign_event_fails_the_page_closed(tmp_path
         assert state is None or state.authority_id != producer_authority
         assert session.get(EventRecord, singleton_id).authority_id == producer_authority
     if not existing_authority:
-        # 本地事件仍在本节点自己的导出流里
+        # 本地事件仍在本节点自己的导出流里(另一条同步来的事件照常转发)
         _manifest, rows = archive_sync_v2.parse_page(
             archive_sync_v2.export_page(consumer.engine, "events"), expected_stream="events"
         )
-        assert [row["identity"] for row in rows] == [str(launch_id)]
+        assert sorted(row["identity"] for row in rows) == sorted([str(launch_id), str(singleton_id)])
 
 
-def test_first_full_pull_prunes_authority_events_absent_from_producer(tmp_path):
+def test_full_pull_no_longer_prunes_rows_absent_from_producer(tmp_path):
+    """issue #263 用户拍板:放弃「上游没有就删」。整流全量之后不向上游核对存在性,上游没有的行
+    (哪怕带着该上游的印记)留在本机;删除只走删除标记。"""
     producer = _sink(tmp_path, "producer-prune.db")
     consumer = _sink(tmp_path, "consumer-prune.db")
     launch_id, singleton_id = _seed_producer(producer)
     authority = archive_sync_v2.producer_authority_id(producer.engine)
     with Session(consumer.engine) as session:
-        session.add(_event(id=998, title="Local survives"))
         session.add(_event(id=999, title="Stale authority copy", authority_id=authority))
+        session.add(_article("receiver-only", analysis_authority_id=authority))
         session.commit()
+    remote = _Remote(producer)
+    presence_calls = []
+    original_handler = remote.handler
 
-    result = _pull(consumer, _Remote(producer), tmp_path)
+    def recording_handler(request):
+        if request.url.path == "/api/archive/v2/presence":
+            presence_calls.append(request.url.path)
+        return original_handler(request)
 
-    assert result["streams"]["events"]["pruned"] == 1
+    remote.handler = recording_handler
+
+    result = _pull(consumer, remote, tmp_path)
+
+    assert presence_calls == []
+    assert all(stream.get("pruned", 0) == 0 for stream in result["streams"].values())
     with Session(consumer.engine) as session:
-        assert session.get(EventRecord, 999) is None
-        assert session.get(EventRecord, 998).title == "Local survives"
+        assert session.get(EventRecord, 999).title == "Stale authority copy"
+        assert session.get(ArticleRecord, "receiver-only") is not None
         assert session.get(EventRecord, launch_id).authority_id == authority
         assert session.get(EventRecord, singleton_id).authority_id == authority
 
@@ -1154,19 +1199,32 @@ def test_member_and_redirect_changes_mark_the_owning_event_and_delete_is_tombsto
     }
 
 
-def test_synced_events_never_enter_the_receiver_export_stream(tmp_path):
-    producer = _sink(tmp_path, "producer-no-reexport.db")
-    consumer = _sink(tmp_path, "consumer-no-reexport.db")
-    launch_id, _singleton_id = _seed_producer(producer)
+def test_synced_events_are_forwarded_under_the_receiver_clock(tmp_path):
+    """拉来的也导出(issue #263):接收端记账里接收修订是上游的,导出修订是本机时钟;下游从它这里
+    拉到的事件带的是它的时钟,成员照抄。"""
+    producer = _sink(tmp_path, "producer-forward.db")
+    hub = _sink(tmp_path, "hub-forward.db")
+    leaf = _sink(tmp_path, "leaf-forward.db")
+    launch_id, singleton_id = _seed_producer(producer)
     for stream in ("sources", "articles", "events"):
-        _copy(producer, consumer, stream)
-    with Session(consumer.engine) as session:
+        _copy(producer, hub, stream)
+    with Session(hub.engine) as session:
         state = session.get(ArchiveSyncEntityStateRecord, ("events", str(launch_id)))
         assert state.authority_id == archive_sync_v2.producer_authority_id(producer.engine)
-    _manifest, rows = archive_sync_v2.parse_page(
-        archive_sync_v2.export_page(consumer.engine, "events"), expected_stream="events"
+        clock = session.get(ArchiveSyncClockRecord, 1).revision
+        assert 0 < state.local_revision <= clock
+    manifest, rows = archive_sync_v2.parse_page(
+        archive_sync_v2.export_page(hub.engine, "events"), expected_stream="events"
     )
-    assert rows == []
+    assert manifest["authority_id"] == archive_sync_v2.producer_authority_id(hub.engine)
+    assert sorted(row["identity"] for row in rows) == sorted([str(launch_id), str(singleton_id)])
+    assert {int(row["revision"]) for row in rows} == {state.local_revision}
+
+    for stream in ("sources", "articles", "events"):
+        _copy(hub, leaf, stream)
+    assert _member_ids(leaf.engine, launch_id) == ["a-1", "a-2"]
+    with Session(leaf.engine) as session:
+        assert session.get(EventRecord, launch_id).authority_id == archive_sync_v2.producer_authority_id(hub.engine)
 
 
 # ── 迁移 ───────────────────────────────────────────────────────────────────────
@@ -1230,6 +1288,11 @@ def test_backlog_versioning_migration_keeps_the_newest_whole_row_per_article(tmp
             kept = rows[0]
             assert json.loads(kept.payload_json)["publisher_key"] == "new-owner"
             assert kept.first_seen_at == kept.updated_at  # 同一旧行的 first_seen / updated
+
+        # 本机有自己的事件(E3)时不再接收上游的 events 页(issue #263);它只用于上面的迁移日志断言,
+        # 这里拿掉,后面的导入步骤才会被应用。
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM events WHERE id = 3"))
 
         # 文章到达 → 重放落入新归属 E2
         with Session(engine) as session:

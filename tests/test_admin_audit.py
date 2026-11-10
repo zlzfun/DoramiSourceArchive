@@ -279,3 +279,65 @@ def test_middleware_body_preread_is_replayed_to_handler(monkeypatch, tmp_path):
         assert accounts_service.verify_password(
             "body-replay-password", record.password_hash
         )
+
+
+def test_source_analysis_switch_is_admin_only_audited_and_shown_in_the_catalog(monkeypatch, tmp_path):
+    """issue #263 的「本机分析」开关:同步建出来的源默认关,管理员打开后目录里看得到;写入审计;
+    读者自定源不走这里;非管理员不可达。"""
+    from models.db import SourceConfigRecord
+
+    app_module = _setup_app(monkeypatch, tmp_path)
+    engine = app_module.db_sink.engine
+    stamp = "2026-11-01T00:00:00+00:00"
+    with Session(engine) as session:
+        session.add_all([
+            SourceConfigRecord(
+                source_id="rss_synced", name="Synced", source_type="rss", url="https://example.test/feed",
+                fetcher_id="generic_rss", ai_analysis_enabled=False, collection_authority_id="upstream-a",
+                created_at=stamp, updated_at=stamp,
+            ),
+            SourceConfigRecord(
+                source_id="user_rss_private", name="Private", source_type="rss",
+                url="https://example.test/private", owner_username="user", ai_analysis_enabled=False,
+                created_at=stamp, updated_at=stamp,
+            ),
+        ])
+        session.commit()
+
+    with TestClient(app_module.app) as client:
+        _login(client, "user", "user")
+        assert client.post(
+            "/api/admin/sources/rss_synced/analysis", json={"enabled": True}
+        ).status_code == 403
+        _login(client)
+        catalog = {row["id"]: row for row in client.get("/api/fetchers").json()}
+        assert catalog["rss_synced"]["ai_analysis_enabled"] is False
+
+        opened = client.post("/api/admin/sources/rss_synced/analysis", json={"enabled": True})
+        assert opened.status_code == 200
+        assert opened.json() == {"source_id": "rss_synced", "ai_analysis_enabled": True}
+        catalog = {row["id"]: row for row in client.get("/api/fetchers").json()}
+        assert catalog["rss_synced"]["ai_analysis_enabled"] is True
+
+        assert client.post(
+            "/api/admin/sources/user_rss_private/analysis", json={"enabled": True}
+        ).status_code == 400
+        assert client.post(
+            "/api/admin/sources/no-such-source/analysis", json={"enabled": True}
+        ).status_code == 404
+        closed = client.post("/api/admin/sources/rss_synced/analysis", json={"enabled": False})
+        assert closed.json()["ai_analysis_enabled"] is False
+
+    with Session(engine) as session:
+        synced = session.get(SourceConfigRecord, "rss_synced")
+        # 开关只动分析;「上游也有这个源」的簿记印记不受影响
+        assert (synced.ai_analysis_enabled, synced.collection_authority_id) == (False, "upstream-a")
+        assert session.get(SourceConfigRecord, "user_rss_private").ai_analysis_enabled is False
+    summaries = [
+        (row.status_code, row.summary, row.target)
+        for row in _audit_rows(engine)
+        if row.path.endswith("/analysis")
+    ]
+    assert (200, "开启源的本机分析 rss_synced", "rss_synced") in summaries
+    assert (200, "关闭源的本机分析 rss_synced", "rss_synced") in summaries
+

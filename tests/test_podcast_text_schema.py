@@ -325,15 +325,16 @@ def test_source_scope_and_authority_changes_revise_podcast_text_state(tmp_path):
         assert public.revision > private_revision
         public_revision = public.revision
 
+        # issue #263:源上的归属印记只是簿记(上游也有这个源),不再让本机产物退出导出范围。
         source = session.get(SourceConfigRecord, "podcast_public")
         source.collection_authority_id = "remote-producer"
         session.add(source)
         session.commit()
-        handed_off = session.get(
+        marked = session.get(
             ArchiveSyncEntityStateRecord, ("podcast_texts", identity)
         )
-        assert handed_off.operation == "tombstone"
-        assert handed_off.revision > public_revision
+        assert marked.operation == "upsert"
+        assert marked.revision == public_revision
 
 
 def test_late_private_source_insert_tombstones_prior_podcast_text_upsert(tmp_path):

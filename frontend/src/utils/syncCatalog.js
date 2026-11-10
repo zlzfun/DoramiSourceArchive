@@ -395,11 +395,15 @@ export function remainingOf(run) {
 
 // ── 流水线站点:状态标记 + 关键数 + 小字 + 用时(组件只管排版) ──
 // 返回 { k, num, small, tone: '' | 'faint' | 'run' | 'bad', sub: string[], dur }
-export function stationOf(run, sid, { configured = true, now = new Date(), durations = null, order = null } = {}) {
+export function stationOf(run, sid, { configured = true, now = new Date(), durations = null, order = null, localSkip = null } = {}) {
   const k = configured ? streamStateIn(run, sid, order) : 'todo';
   const out = { k, num: '—', small: '', tone: 'faint', sub: [], dur: '' };
   if (!configured) { out.sub = ['首次整流']; return out; }
-  if (k === 'skip') { out.num = '未协商'; out.sub = ['对端未广播']; return out; }
+  if (k === 'skip') {
+    // 本机已有自己的事件时不拉对端的事件流(事件号是各节点自己的自增号,两边会相撞)。
+    if (Array.isArray(localSkip) && localSkip.includes(sid)) { out.num = '不同步'; out.sub = ['本机已有事件']; return out; }
+    out.num = '未协商'; out.sub = ['对端未广播']; return out;
+  }
   if (sid === EVIDENCE_ID) {
     if (k === 'done') {
       out.num = fmt(run.evidence.inserted); out.small = '新增'; out.tone = '';

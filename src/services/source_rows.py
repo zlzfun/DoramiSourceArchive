@@ -70,9 +70,14 @@ def _now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
 
 
-def local_public_writes_allowed(session: Session) -> bool:
-    """本机能否写公共源行:v2 接收端(或已有接收状态的节点)一律不能。"""
-    return not sync_consumer_policy.v2_receiver_state_present(session)
+def new_source_analysis_default(session: Session) -> bool:
+    """对账 / 回填新建公共源行时,分析开关的默认值(issue #263)。
+
+    没有上游的节点默认开(与此前一致);已与某个上游建立 v2 同步的节点默认关——这些源多半
+    上游也有,分析结果会同步过来,管理员想自己采再打开。每台节点都跑对账,不再有「接收端不写
+    公共源行」的限制。
+    """
+    return not sync_consumer_policy.upstream_established(session)
 
 
 def _row_snapshot(row: SourceConfigRecord) -> dict[str, Any]:
@@ -169,7 +174,13 @@ def is_mirror_row(row: SourceConfigRecord) -> bool:
     return view is not None and not view.is_template
 
 
-def _reconcile_mirror(session: Session, view: source_catalog.SourceView, *, now: str) -> str:
+def _reconcile_mirror(
+    session: Session,
+    view: source_catalog.SourceView,
+    *,
+    now: str,
+    analysis_default: bool = True,
+) -> str:
     row = session.get(SourceConfigRecord, view.source_id)
     values = _catalog_values(view)
     if row is None:
@@ -181,7 +192,7 @@ def _reconcile_mirror(session: Session, view: source_catalog.SourceView, *, now:
             origin=source_catalog.ORIGIN_CATALOG,
             legacy_export=False,
             is_active=True,
-            ai_analysis_enabled=True,
+            ai_analysis_enabled=analysis_default,
             created_at=now,
             updated_at=now,
             **values,
@@ -190,9 +201,12 @@ def _reconcile_mirror(session: Session, view: source_catalog.SourceView, *, now:
         _ledger(session, view.source_id, "created", now=now)
         _register_identity_keys(session, view.source_id, _preset_identity_keys(view.source_id), now=now)
         return "created"
-    if (row.owner_username or "").strip() or (row.collection_authority_id or "").strip():
-        # 与预设同 id 的读者源 / 同步行:不碰(身份冲突交管理员处理)。
-        _logger.warning("源 %s 与预设抓取器同 id 但不是本机公共行,跳过镜像", view.source_id)
+    if (row.collection_authority_id or "").strip() and not (row.owner_username or "").strip():
+        # 上游也有的源:目录字段以上游同步来的为准,对账不碰(每台节点都跑对账后这是常态,不告警)。
+        return "skipped"
+    if (row.owner_username or "").strip():
+        # 与预设同 id 的读者源:不碰(身份冲突交管理员处理)。
+        _logger.warning("源 %s 与预设抓取器同 id 但是读者自定源,跳过镜像", view.source_id)
         return "skipped"
     changed = {key: value for key, value in values.items() if getattr(row, key) != value}
     adopting = row.origin != source_catalog.ORIGIN_CATALOG
@@ -213,7 +227,7 @@ def _reconcile_mirror(session: Session, view: source_catalog.SourceView, *, now:
     return "adopted" if adopting else "updated"
 
 
-def _ensure_system_row(session: Session, *, now: str) -> str:
+def _ensure_system_row(session: Session, *, now: str, analysis_default: bool = True) -> str:
     view = source_catalog._builtin_view(source_catalog.DAILY_BRIEF_SOURCE_ID)
     row = session.get(SourceConfigRecord, source_catalog.DAILY_BRIEF_SOURCE_ID)
     if row is not None:
@@ -235,7 +249,7 @@ def _ensure_system_row(session: Session, *, now: str) -> str:
         provenance_tier=view.provenance_tier,
         legacy_export=False,
         is_active=True,
-        ai_analysis_enabled=True,
+        ai_analysis_enabled=analysis_default,
         created_at=now,
         updated_at=now,
     ))
@@ -344,6 +358,7 @@ def _legacy_row(
     *,
     now: str,
     retired: bool = False,
+    analysis_default: bool = True,
 ) -> SourceConfigRecord:
     shape = source_catalog.shape_from_content_type(content_type)
     platform = "x" if shape == "social" and source_id.startswith("x_") else ""
@@ -358,7 +373,7 @@ def _legacy_row(
         platform=platform,
         legacy_export=False,
         is_active=not retired,
-        ai_analysis_enabled=True,
+        ai_analysis_enabled=analysis_default,
         retired_at=now if retired else None,
         created_at=now,
         updated_at=now,
@@ -377,7 +392,12 @@ def _subscription_source_ids(session: Session) -> set[str]:
     return ids
 
 
-def backfill_orphan_sources(session: Session, *, now: Optional[str] = None) -> dict[str, int]:
+def backfill_orphan_sources(
+    session: Session,
+    *,
+    now: Optional[str] = None,
+    analysis_default: bool = True,
+) -> dict[str, int]:
     """为没有行的 id 回填源行;注册表类不在这里(由镜像行负责)。"""
     now = now or _now()
     known = set(session.exec(select(SourceConfigRecord.source_id)).all())
@@ -393,7 +413,10 @@ def backfill_orphan_sources(session: Session, *, now: Optional[str] = None) -> d
             session.add(_quarantine_row(source_id, now=now))
             result["quarantined"] += 1
         else:
-            session.add(_legacy_row(source_id, content_types.get(source_id, ""), now=now))
+            session.add(_legacy_row(
+                source_id, content_types.get(source_id, ""), now=now,
+                analysis_default=analysis_default,
+            ))
             result["legacy"] += 1
         _ledger(session, source_id, "created", now=now)
     subscription_only = sorted(
@@ -405,29 +428,35 @@ def backfill_orphan_sources(session: Session, *, now: Optional[str] = None) -> d
         else:
             # 订阅了、却既无内容也无登记:已不存在的源。保留身份并退役——订阅者保有退订入口,
             # 发现页不列(方案 §4.2)。
-            session.add(_legacy_row(source_id, "", now=now, retired=True))
+            session.add(_legacy_row(
+                source_id, "", now=now, retired=True, analysis_default=analysis_default,
+            ))
         _ledger(session, source_id, "created", now=now)
         result["subscription_only"] += 1
     return result
 
 
 def reconcile_source_rows(session: Session, *, now: Optional[str] = None) -> dict[str, Any]:
-    """外网启动对账(幂等):镜像行 → 系统行 → 墓碑 → 播客目录来路 → 孤儿回填。不提交。"""
-    if not local_public_writes_allowed(session):
-        return {"skipped": "receiver"}
+    """启动对账(幂等,每台节点都跑):镜像行 → 系统行 → 墓碑 → 播客目录来路 → 孤儿回填。不提交。
+
+    上游也有的源(带源印记)目录字段不碰;有上游的节点上新建的行分析默认关。
+    """
     now = now or _now()
+    analysis_default = new_source_analysis_default(session)
     summary: dict[str, Any] = {"mirror": {}, "system": "", "tombstones": 0, "podcast_catalog": 0}
     for source_id in source_catalog.registry_source_ids():
         view = source_catalog.registry_view(source_id)
         if view is None:
             continue
-        outcome = _reconcile_mirror(session, view, now=now)
+        outcome = _reconcile_mirror(session, view, now=now, analysis_default=analysis_default)
         summary["mirror"][outcome] = summary["mirror"].get(outcome, 0) + 1
-    summary["system"] = _ensure_system_row(session, now=now)
+    summary["system"] = _ensure_system_row(session, now=now, analysis_default=analysis_default)
     summary["tombstones"] = _ensure_tombstone_rows(session, now=now)
     summary["podcast_catalog"] = _mark_podcast_catalog_rows(session, now=now)
     session.flush()
-    summary["backfill"] = backfill_orphan_sources(session, now=now)
+    summary["backfill"] = backfill_orphan_sources(
+        session, now=now, analysis_default=analysis_default
+    )
     return summary
 
 
@@ -459,7 +488,7 @@ def ensure_source_row(
     identity_keys: Iterable[str] = (),
     now: Optional[str] = None,
 ) -> Optional[SourceConfigRecord]:
-    """保证 ``source_id`` 有一行源;已有行原样返回。接收端返回 None(不本地建公共行)。
+    """保证 ``source_id`` 有一行源;已有行原样返回。
 
     与文章写入同一事务(调用方提交)。注册表类走镜像行;其余按注入通道建临时源。
     """
@@ -469,8 +498,6 @@ def ensure_source_row(
     row = session.get(SourceConfigRecord, sid)
     if row is not None:
         return row
-    if not local_public_writes_allowed(session):
-        return None
     now = now or _now()
     registry = source_catalog.registry_view(sid)
     if registry is not None and registry.is_template:

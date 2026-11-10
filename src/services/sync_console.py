@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Optional
 
-from sqlalchemy import delete, func, or_
+from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
 from models.db import (
@@ -132,17 +132,6 @@ def sync_checkpoint_since(engine, base_url: str) -> str:
     return str(checkpoint.get("snapshot") or "") if isinstance(checkpoint, dict) else ""
 
 
-def _consumer_fence(session: Session) -> Optional[Dict[str, Any]]:
-    value = _load_json_kv(session, sync_consumer_policy.V2_CONSUMER_MODE_KEY)
-    if not value:
-        return None
-    return {
-        "active": bool(value.get("active")),
-        "activated_at": str(value.get("activated_at") or ""),
-        "reason": str(value.get("reason") or ""),
-    }
-
-
 def console_status(
     engine,
     *,
@@ -162,7 +151,12 @@ def console_status(
         else list(remote_sync.V2_STREAM_ORDER)
     )
     with Session(engine) as session:
-        fence = _consumer_fence(session)
+        # v1 归档导入在本机持有 v2 同步写入的数据后被锁(后端 409);不再有整机围栏(issue #263)。
+        legacy_import_locked = sync_consumer_policy.v2_receiver_state_present(session)
+        # 本机已有自己的事件时不拉上游的 events 流(事件 id 是产生节点的本机自增整数)。
+        local_events = archive_sync_v2.local_events_present(session)
+    if local_events:
+        order = [stream for stream in order if stream != "events"]
     generation = target.get("v2_analysis_payload_generation")
     # 控制台是 v2 流水线:只有已与该目标建立 v2 同步(有 authority)才算接入;只有 v1 兼容记录的老目标
     # 显示接入卡(预填地址 / 账号),运行记录照常列出(issue #261)。
@@ -186,7 +180,8 @@ def console_status(
             for stream, checkpoint in (target.get("v2_streams") or {}).items()
             if isinstance(checkpoint, dict)
         },
-        "consumer_fence": fence,
+        "legacy_import_locked": legacy_import_locked,
+        "local_skip_streams": ["events"] if local_events else [],
         "local_stores": {"media": bool(media_store_ready), "podcast": bool(podcast_store_ready)},
         "probe": load_probe(engine, base_url) if base_url else None,
         "resets": dict(target.get("v2_stream_resets") or {}),
@@ -344,11 +339,12 @@ class SyncConsoleError(Exception):
 
 
 def reset_stream(engine, stream: str, *, by: str, at: str) -> Dict[str, Any]:
-    """清掉当前目标某条流的 checkpoint 与本机对该 authority 的逐行应用记账。
+    """清掉当前目标某条流的 checkpoint,并让该上游写入的行下次全部重新应用。
 
     与 ``remote_sync._refetch_outdated_analysis_payloads`` 同一做法、推广到任一流:下次同步该流
-    从头整流重拉、逐行覆盖并重建记账,收尾按协议只删经生产者 presence 确认不存在的行
-    (articles / analyses / events / 两条播客流)。taxonomy 没有逐行记账,只清 checkpoint。
+    从头整流重拉、逐行覆盖。只失效「接收修订」,不删状态行——它同时是本机向下游导出的索引
+    (issue #263)。整流后不再核对存在性、不清理「上游没有」的行。taxonomy 没有逐行记账,只清
+    checkpoint。
     """
 
     if stream not in remote_sync.V2_STREAM_ORDER:
@@ -380,12 +376,7 @@ def reset_stream(engine, stream: str, *, by: str, at: str) -> Dict[str, Any]:
             streams.pop(stream, None)
             target["v2_streams"] = streams
             if stream != "taxonomy":
-                session.exec(
-                    delete(ArchiveSyncEntityStateRecord).where(
-                        ArchiveSyncEntityStateRecord.stream == stream,
-                        ArchiveSyncEntityStateRecord.authority_id == authority,
-                    )
-                )
+                remote_sync.invalidate_received_revisions(session, authority, (stream,))
             resets = dict(target.get("v2_stream_resets") or {})
             resets[stream] = {"at": at, "by": by}
             target["v2_stream_resets"] = resets

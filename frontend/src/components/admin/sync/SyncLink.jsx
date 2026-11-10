@@ -8,7 +8,6 @@ export default function SyncLink({ con, sched, onSched }) {
   const order = con?.stream_order || STREAM_ORDER;
   const user = con?.username || sched?.username || '';
   const savedPw = Boolean(sched?.password_set && (!sched?.base_url || sched.base_url === con?.target));
-  const fence = con?.consumer_fence;
   const on = Boolean(sched?.enabled);
   const next = on ? nextCronRun(sched?.cron) : null;
   const dash = '—';
@@ -24,8 +23,6 @@ export default function SyncLink({ con, sched, onSched }) {
             <dt>协议</dt><dd>{configured ? `v2 · ${con.schema_version || '—'}` : dash}</dd>
             <dt>能力</dt><dd title={caps.join('\n') || undefined}>{configured && caps.length ? `${caps.length} 项 · ${order.length} / ${STREAM_ORDER.length} 流` : dash}</dd>
             <dt>authority</dt><dd className="sync-kv-mono" title={con?.authority_id || undefined}>{configured && con.authority_id ? con.authority_id : dash}</dd>
-            <dt>本地采集</dt>
-            <dd title={fence?.active && fence.reason ? fence.reason : undefined}>{fence?.active ? ['仅自定 RSS', fence.activated_at ? `${fmtDay(fence.activated_at)} 起` : ''].filter(Boolean).join(' · ') : '照常'}</dd>
           </dl>
         </section>
         <section>

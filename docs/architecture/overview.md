@@ -40,7 +40,7 @@ Fetcher ──► DataPipeline ──► DatabaseStorage ◄── 阅读器 / �
 
 ## 6. 部署拓扑与同步
 
-- 单节点 `all` 是默认;生产是**外网节点(authority)+ 内网节点(replica)**,两端都 `role=all`,靠拓扑权威而非运行角色分工:外网采集并分析公共源,内网经 Archive Sync 六流(sources → taxonomy → articles → analyses → media → source_states)拉取并服务,内网自定 RSS 本地采集分析。→ [`archive-sync.md`](./archive-sync.md)、[`../ops/aliyun-dual-node-deployment.md`](../ops/aliyun-dual-node-deployment.md)
+- 单节点 `all` 是默认;生产是**外网节点(authority)+ 内网节点(replica)**,两端都 `role=all`,分工是部署约定而非协议限制(issue #263 起节点不分角色:拉取不改变本机能做什么,拉来的也导出):外网采集并分析公共源,内网经 Archive Sync 九流(sources → taxonomy → articles → analyses → events → media → podcast_texts → podcast_audio → source_states)拉取并服务,内网自定 RSS 本地采集分析。→ [`archive-sync.md`](./archive-sync.md)、[`../ops/aliyun-dual-node-deployment.md`](../ops/aliyun-dual-node-deployment.md)
 - 两条官方部署路径:Docker 双容器(推荐,流水线按 tag 部署)与裸机 PM2(运行副本版本化 + 手动回滚)。→ [`../ops/README.md`](../ops/README.md)
 
 ## 7. 调度、任务与社交源

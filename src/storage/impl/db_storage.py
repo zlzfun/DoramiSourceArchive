@@ -7,6 +7,7 @@ from sqlmodel import Session, create_engine, select
 from storage.base import BaseStorage
 from models.content import BaseContent, serialize_to_metadata
 from models.db import (
+    ArticleAnalysisRecord,
     ArticleRecord,
     SQLModel,
     SourceConfigRecord,
@@ -239,6 +240,23 @@ class DatabaseStorage(BaseStorage):
                     if column_name not in source_config_columns:
                         conn.execute(text(f"ALTER TABLE source_configs ADD COLUMN {column_name} {column_sql}"))
 
+    @staticmethod
+    def _claim_local_version(session: Session, article: ArticleRecord) -> None:
+        """本机抓取 / 收录改动了一篇同步写入的文章:它从此是本机版本(issue #263)。
+
+        清掉文章与其分析行上的同步印记——印记只表示「当前版本是同步写进来的」。之后本机按自己的
+        开关处理它;上游若出现修订号更新的版本,同步时再接管回去。
+        """
+
+        if not (article.analysis_authority_id or "").strip():
+            return
+        article.analysis_authority_id = ""
+        analysis = session.get(ArticleAnalysisRecord, article.id)
+        if analysis is not None and (analysis.authority_id or "").strip():
+            analysis.authority_id = ""
+            analysis.authority_revision = ""
+            session.add(analysis)
+
     async def save(self, item: BaseContent) -> bool:
         """Pipeline insertion signal: true only when a row was created or filled."""
         return (await self.save_with_outcome(item)) in SAVE_STORED_OUTCOMES
@@ -308,6 +326,7 @@ class DatabaseStorage(BaseStorage):
                         raw_metadata.get("extensions", {}),
                     ):
                         return SAVE_DUPLICATE
+                    self._claim_local_version(session, existing)
                     existing.archive_updated_at = next_article_archive_revision(
                         existing.archive_updated_at
                     )
@@ -323,6 +342,7 @@ class DatabaseStorage(BaseStorage):
                     existing.source_url = item.source_url
                     existing.publish_date = item.publish_date
                     existing.fetched_date = item.fetched_date
+                    self._claim_local_version(session, existing)
                     existing.archive_updated_at = next_article_archive_revision(
                         existing.archive_updated_at
                     )
@@ -363,6 +383,7 @@ class DatabaseStorage(BaseStorage):
                         existing.publish_date = item.publish_date
                     if source_url_changed:
                         existing.source_url = item.source_url
+                    self._claim_local_version(session, existing)
                     existing.archive_updated_at = next_article_archive_revision(
                         existing.archive_updated_at
                     )

@@ -291,10 +291,12 @@ deployment = replica
 相同则启动 no-op；receipt 或现存数据冲突时 fail closed。人工发布步骤和恢复说明见
 [`taxonomy-v1-deployment.md`](./taxonomy-v1-deployment.md)。
 
-内网管理员启用 v2 定时同步或手动启动第一次 v2 拉取时，系统会先持久化
-`remote_sync:v2_consumer_mode` 围栏，再创建网络任务；因此第一次 authority 全量尚未
-落地时，普通公共源的本地采集与分析也已经停止。该围栏不写伪造的 authority，用户
-自定 RSS 仍由内网采集；其中普通自定源可分析，签名/凭据源只采集、不调用 MaaS。
+issue #263 起没有 `remote_sync:v2_consumer_mode` 围栏：启用 v2 定时同步或手动拉取不会
+停掉本机的公共源采集与分析。同步建出来的源默认关「本机分析」且不进任何采集任务；想让本机
+自己采，就把源编入采集任务（或手动运行），需要本机分析再到源管理打开该源的开关。同步写入的
+文章不在本机分析。用户自定 RSS 仍由本机采集；其中普通自定源可分析，签名/凭据源只采集、不调用
+MaaS。从旧版本升级的接收节点，迁移会把全部公共源的分析置关、停用含公共源的采集任务、关掉公共
+日报定时（它们此前被围栏挡着本就不跑），处置摘要记在 KV `archive_sync:issue_263_migration`。
 升级前遗留的定时配置若没有 `protocol` 且带 `source_ids`，会以
 `migration_required=true` 安全停用，管理员必须在「运维管理 → 节点同步」的定时设置里明确保存 v1 或 v2；
 系统不会替管理员猜测范围。v1 只作为显式兼容模式运行。

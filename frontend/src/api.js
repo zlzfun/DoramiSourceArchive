@@ -435,6 +435,13 @@ export function setSourceVisibility(sourceId, hidden) {
   });
 }
 
+// ── 公共源的「本机分析」开关(issue #263):同步建出来的源默认关,管理员想自己采再打开 ──
+export function setSourceAnalysis(sourceId, enabled) {
+  return request(`/admin/sources/${enc(sourceId)}/analysis`, {
+    method: 'POST', body: { enabled }, errorMsg: '更新本机分析开关失败',
+  });
+}
+
 export function getAiBetaGlobal() {
   return request('/admin/ai-beta/global', { errorMsg: '获取 AI 全局开关失败' });
 }

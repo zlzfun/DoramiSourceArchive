@@ -245,19 +245,51 @@ def test_backfill_covers_public_orphans_private_orphans_and_subscription_only_id
         assert resolve_source_fetcher_id(manual) == "" and resolve_source_fetcher_id(social) == ""
 
 
-def test_receiver_never_writes_public_source_rows(tmp_path):
-    from models.db import SourceConfigRecord
-    from services import source_rows
-    from services.sync_consumer_policy import activate_v2_consumer_mode
+def test_node_with_an_upstream_reconciles_with_analysis_off_and_leaves_synced_rows_alone(tmp_path):
+    """issue #263:每台节点都跑对账。已与某上游建立 v2 同步的节点上,新建的源行分析默认关
+    (上游的分析会同步过来);上游也有的源(带源印记)目录字段不碰;写入时补建照常。"""
+    from models.db import AppSettingRecord, SourceConfigRecord
+    from services import remote_sync, source_catalog, source_rows
 
-    sink = _sink(tmp_path, "receiver.db")
+    sink = _sink(tmp_path, "with-upstream.db")
+    preset_id = sorted(source_catalog.registry_source_ids())[0]
     with Session(sink.engine) as session:
-        activate_v2_consumer_mode(session, reason="test")
+        session.add(AppSettingRecord(
+            key=remote_sync.REMOTE_SYNC_STATE_KEY,
+            value=json.dumps({"targets": {"https://authority.test": {"v2_authority_id": "authority-1"}}}),
+        ))
+        session.add(SourceConfigRecord(
+            source_id=preset_id, name="Upstream wording", source_type="preset",
+            collection_authority_id="authority-1", ai_analysis_enabled=False,
+            created_at=_NOW, updated_at=_NOW,
+        ))
+        session.commit()
     _seed_article(sink.engine, "manual_1", "manual")
-    assert _reconcile(sink.engine) == {"skipped": "receiver"}
+
+    summary = _reconcile(sink.engine)
+
+    assert summary["mirror"].get("skipped") == 1 and summary["mirror"].get("created", 0) >= 1
     with Session(sink.engine) as session:
-        assert source_rows.ensure_source_row(session, "web_new") is None
-        assert session.exec(select(SourceConfigRecord)).all() == []
+        synced = session.get(SourceConfigRecord, preset_id)
+        assert synced.name == "Upstream wording" and synced.collection_authority_id == "authority-1"
+        created = [
+            row for row in session.exec(select(SourceConfigRecord)).all()
+            if row.source_id != preset_id and not row.retired_at
+        ]
+        assert created and all(row.ai_analysis_enabled is False for row in created)
+        assert session.get(SourceConfigRecord, "manual") is not None  # 孤儿回填照常
+        ensured = source_rows.ensure_source_row(session, "web_new")
+        assert ensured is not None and ensured.source_id == "web_new"
+
+
+def test_standalone_node_reconciles_with_analysis_on(tmp_path):
+    from models.db import SourceConfigRecord
+
+    sink = _sink(tmp_path, "standalone.db")
+    _reconcile(sink.engine)
+    with Session(sink.engine) as session:
+        live = [row for row in session.exec(select(SourceConfigRecord)).all() if not row.retired_at]
+        assert live and all(row.ai_analysis_enabled is True for row in live)
 
 
 def test_save_ensures_a_source_row_in_the_same_transaction(tmp_path):
@@ -504,8 +536,12 @@ def test_projection_switch_replays_sources_and_states(tmp_path):
             "targets"][base_url]
         assert target["v2_source_projection"] == "catalog-v1"
         assert set(target["v2_streams"]) == {"articles"}
-        remaining = {row.stream for row in session.exec(select(ArchiveSyncEntityStateRecord)).all()}
-        assert remaining == {"articles"}
+        # 重放只失效两流的接收修订(置 0),状态行保留(issue #263:它同时是向下游导出的索引)。
+        revisions = {
+            row.stream: row.revision
+            for row in session.exec(select(ArchiveSyncEntityStateRecord)).all()
+        }
+        assert revisions == {"sources": 0, "source_states": 0, "articles": 3}
     assert remote_sync.source_catalog_ready(consumer.engine) is False
     # 生产者实际回显 legacy(例如中途回滚)完成的 sources 流不算就绪。
     remote_sync.record_v2_stream_success(
@@ -666,9 +702,9 @@ def test_projection_replays_until_catalog_actually_completes(tmp_path):
             ))
             session.commit()
 
-    def ledger_rows():
+    def ledger_revision():
         with Session(consumer.engine) as session:
-            return len(session.exec(select(ArchiveSyncEntityStateRecord)).all())
+            return session.exec(select(ArchiveSyncEntityStateRecord)).one().revision
 
     prepare()  # 首次 rebase
     # 预检看到新外网、正式拉取时外网已回滚:整轮实际 legacy 完成 sources。
@@ -679,8 +715,8 @@ def test_projection_replays_until_catalog_actually_completes(tmp_path):
         synced_at=_NOW,
     )
     assert remote_sync.source_catalog_ready(consumer.engine) is False
-    prepare()  # 外网再次广播 catalog-v1:未就绪 → 必须重放
-    assert ledger_rows() == 0
+    prepare()  # 外网再次广播 catalog-v1:未就绪 → 必须重放(接收修订置 0,行保留)
+    assert ledger_revision() == 0
     with Session(consumer.engine) as session:
         target = json.loads(session.get(AppSettingRecord, remote_sync.REMOTE_SYNC_STATE_KEY).value)["targets"][base_url]
     assert "sources" not in target["v2_streams"]
@@ -690,9 +726,13 @@ def test_projection_replays_until_catalog_actually_completes(tmp_path):
         synced_at=_NOW,
     )
     assert remote_sync.source_catalog_ready(consumer.engine) is True
-    add_ledger()
+    with Session(consumer.engine) as session:
+        row = session.exec(select(ArchiveSyncEntityStateRecord)).one()
+        row.revision = 11
+        session.add(row)
+        session.commit()
     prepare()  # 已就绪:不再重放
-    assert ledger_rows() == 1
+    assert ledger_revision() == 11
 
 
 def test_retired_sources_are_neither_collected_nor_stored(tmp_path):

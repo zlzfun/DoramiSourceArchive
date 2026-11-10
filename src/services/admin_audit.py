@@ -354,6 +354,15 @@ AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
             unquote(match.group("target")),
         ),
     ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/sources/(?P<target>[^/]+)/analysis$"),
+        lambda match, body: (
+            f"{'开启' if (body or {}).get('enabled') else '关闭'}源的本机分析 "
+            f"{unquote(match.group('target'))}",
+            unquote(match.group("target")),
+        ),
+    ),
     ("POST", re.compile(r"^/api/llm/config$"), lambda _m, _b: ("更新 LLM 配置", None)),
     # ── 事件层管理修正(issue #121):合并 / 摘出都改写稳定事件 ID 的归属,全入审计 ──
     (

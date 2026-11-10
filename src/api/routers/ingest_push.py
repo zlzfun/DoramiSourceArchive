@@ -23,7 +23,7 @@ from api.tokens import read_bearer_or_query_token
 from models.db import ArticlePickRecord, ArticleRecord, IngestTokenRecord, SourceConfigRecord
 from services import admin_audit as admin_audit_service
 from services import ingest_batch, ingest_push
-from services import source_catalog, source_visibility, sync_consumer_policy
+from services import source_catalog, source_visibility
 
 
 router = APIRouter(tags=["ingest-push"])
@@ -127,8 +127,6 @@ async def push_items(batch: IngestBatch, request: Request):
     _app().current_auth_session(request)
     with Session(db_sink.engine) as session:
         caller, token = _caller(request, session)
-        if sync_consumer_policy.v2_consumer_mode_active(session):
-            raise HTTPException(status_code=409, detail="接收端节点不接受收录,请推送到外网 authority")
         if token is not None:
             token.last_used_at = ingest_push._now()
             session.add(token)
@@ -178,8 +176,6 @@ def list_tokens(session: Session = Depends(deps.get_session)):
 
 @router.post("/api/admin/ingest/tokens")
 def create_token(params: TokenCreate, request: Request, session: Session = Depends(deps.get_session)):
-    if sync_consumer_policy.v2_consumer_mode_active(session):
-        raise HTTPException(status_code=409, detail="接收端节点不签发收录令牌")
     try:
         record, token = ingest_push.create_token(
             session,
@@ -264,8 +260,6 @@ def _ingest_source_or_404(session: Session, source_id: str) -> SourceConfigRecor
         or row.admission_status == source_catalog.ADMISSION_PROVISIONAL
     ):
         raise HTTPException(status_code=404, detail="收录源不存在")
-    if (row.collection_authority_id or "").strip() or sync_consumer_policy.v2_consumer_mode_active(session):
-        raise HTTPException(status_code=409, detail="该来源由远端权威节点管理")
     return row
 
 
