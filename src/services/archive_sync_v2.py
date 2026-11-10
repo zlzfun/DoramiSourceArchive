@@ -2061,26 +2061,29 @@ class _PageOutcome:
         self.skipped: set[str] = set()
         self.taken_over = 0
         self._scheduled: Optional[set[str]] = None
-        self._auto_bindings: Optional[tuple[set[str], set[str]]] = None
+        self._presets: Optional[set[str]] = None
 
-    def binding_is_auto_generated(self, source_id: str, fetcher_id: str) -> bool:
-        """这条采集绑定是不是程序自己装的(预设镜像行 = 同名预设抓取器;播客目录自动安装的行)。
+    def binding_is_auto_generated(self, source: SourceConfigRecord) -> bool:
+        """这条采集绑定是不是程序自己装的、管理员没动过。
 
-        只按「绑定长什么样」判断,不看 ``origin``:那是目录字段,会被同步覆盖成上游的值
-        (检视 R1 #2)。
+        - 预设镜像行:绑定 = 同名预设抓取器,且没有参数(预设行没有管理员改参数的入口,带了参数
+          就按存过算);
+        - 播客目录行:地址、抓取器、参数都还是目录安装时的样子。
+
+        只看绑定本身,不看 ``origin``(目录字段,会被同步覆盖成上游的值),也不只凭目录 id
+        (管理员可以在目录源上存自己的 feed / 上限)——实现检视 R1 #2、R2 #2。
         """
 
-        if self._auto_bindings is None:
-            from services import podcast_catalog, source_catalog
+        fetcher_id = (source.fetcher_id or "").strip()
+        if self._presets is None:
+            from services import source_catalog
 
-            self._auto_bindings = (
-                set(source_catalog.registry_source_ids()),
-                set(podcast_catalog.catalog_by_id()),
-            )
-        presets, podcasts = self._auto_bindings
-        if fetcher_id == source_id and source_id in presets:
-            return True
-        return source_id in podcasts and fetcher_id == "generic_podcast_rss"
+            self._presets = set(source_catalog.registry_source_ids())
+        if fetcher_id == source.source_id and source.source_id in self._presets:
+            return _json_object(source.params_json, {}) == {}
+        from services import podcast_catalog
+
+        return podcast_catalog.binding_is_catalog_default(source)
 
     def scheduled_source_ids(self, session: Session) -> set[str]:
         """被任一采集任务点名的源(启用与否都算:点名即管理员表达过「本机要采」)。"""
@@ -2148,8 +2151,7 @@ def source_in_local_use(
         return True
     if source.source_id in outcome.scheduled_source_ids(session):
         return True
-    fetcher_id = (source.fetcher_id or "").strip()
-    return bool(fetcher_id) and not outcome.binding_is_auto_generated(source.source_id, fetcher_id)
+    return bool((source.fetcher_id or "").strip()) and not outcome.binding_is_auto_generated(source)
 
 
 def _dependency_replay_marks(row: Optional[AppSettingRecord]) -> dict[str, int]:

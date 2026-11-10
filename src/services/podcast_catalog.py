@@ -200,6 +200,40 @@ def _record_params(
     }
 
 
+# 目录安装写进 params_json 的键(``entry_id_namespace`` 是收养旧自定源时带上的);值里只有
+# ``limit`` 是管理员常改的,``max_response_bytes`` 随运行配置变、不作判据。
+_CATALOG_DEFAULT_PARAM_KEYS = frozenset({
+    "catalog", "catalog_verified_at", "credentialed_private", "language", "launch_tier",
+    "limit", "max_response_bytes", "entry_id_namespace",
+})
+
+
+def binding_is_catalog_default(record: SourceConfigRecord) -> bool:
+    """这条目录播客源的采集绑定是否仍是自动安装时的样子——管理员没有存过自己的配置。
+
+    Archive Sync 用它区分「程序装的默认绑定」与「管理员存的本机绑定」(issue #263 实现检视
+    R2 #2):只凭目录 id 和抓取器名分不出来,管理员改过 feed、单次上限或加过参数的行必须算
+    本机在用。拿不准一律按「不是默认」处理(多保护一条,不会误删)。
+    """
+
+    source = catalog_by_id().get(record.source_id)
+    if source is None:
+        return False
+    if (record.fetcher_id or "").strip() != "generic_podcast_rss":
+        return False
+    if (record.url or "") != source.feed_url:
+        return False
+    try:
+        params = json.loads(record.params_json or "{}")
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(params, dict) or set(params) - _CATALOG_DEFAULT_PARAM_KEYS:
+        return False
+    if "limit" in params and params["limit"] != DEFAULT_FETCH_LIMIT:
+        return False
+    return params.get("credentialed_private") in (None, False)
+
+
 def _apply_catalog_fields(
     record: SourceConfigRecord,
     source: PodcastCatalogSource,

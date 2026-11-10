@@ -179,7 +179,7 @@ def test_first_upstream_marker_turns_analysis_off_only_for_sources_not_in_local_
         for source_id in (idle_id, in_job_id):
             row = session.get(SourceConfigRecord, source_id) or _source(source_id)
             row.fetcher_id, row.origin, row.ai_analysis_enabled = source_id, "catalog", True
-            row.collection_authority_id = ""
+            row.params_json, row.collection_authority_id = "{}", ""
             session.add(row)
         session.add(CollectionJobRecord(
             name="mine", fetcher_ids_json=json.dumps([in_job_id]), is_active=True,
@@ -256,18 +256,82 @@ def test_admin_saved_binding_stays_protected_after_sync_overwrites_the_origin_fi
         assert row is not None and row.is_active and row.fetcher_id == "generic_rss"
 
 
-def test_auto_installed_bindings_do_not_count_as_local_use():
-    """预设镜像行(绑定 = 同名预设抓取器)与播客目录自动安装的行不算管理员存的绑定;判断只看绑定
-    本身,不看可被同步覆盖的 origin。"""
+def test_auto_installed_bindings_do_not_count_as_local_use(tmp_path):
+    """预设镜像行与播客目录自动安装的行不算管理员存的绑定;判断只看绑定本身——不看可被同步覆盖的
+    origin,也不只凭目录 id(管理员在目录源上存了自己的参数就算在用)。"""
     from services import podcast_catalog, source_catalog
 
-    outcome = archive_sync_v2._PageOutcome()  # noqa: SLF001
-    preset = source_catalog.registry_source_ids()[0]
-    podcast = next(iter(podcast_catalog.catalog_by_id()))
-    assert outcome.binding_is_auto_generated(preset, preset) is True
-    assert outcome.binding_is_auto_generated(podcast, "generic_podcast_rss") is True
-    assert outcome.binding_is_auto_generated(preset, "generic_rss") is False       # 管理员改绑
-    assert outcome.binding_is_auto_generated("rss_my_feed", "generic_rss") is False
+    sink = _sink(tmp_path, "auto-bindings.db")
+    with Session(sink.engine) as session:
+        podcast_catalog.import_podcast_catalog(session)
+        session.commit()
+        outcome = archive_sync_v2._PageOutcome()  # noqa: SLF001
+        preset_id = source_catalog.registry_source_ids()[0]
+        preset = _source(preset_id, fetcher_id=preset_id, params_json="{}", origin="admin")
+        podcast = session.get(SourceConfigRecord, next(
+            source_id for source_id in podcast_catalog.catalog_by_id()
+            if source_id != podcast_catalog.AI_NATIVE_DEV_SOURCE_ID      # 这一个被默认采集任务点名
+        ))
+
+        assert outcome.binding_is_auto_generated(preset) is True          # origin 不参与判断
+        assert outcome.binding_is_auto_generated(podcast) is True
+        assert archive_sync_v2.source_in_local_use(session, podcast, outcome) is False
+
+        preset.fetcher_id = "generic_rss"                                 # 管理员改绑
+        assert outcome.binding_is_auto_generated(preset) is False
+        assert outcome.binding_is_auto_generated(_source("rss_my_feed")) is False
+
+        # 管理员在目录播客源上存了自己的 feed 地址与单次上限(检视 R2 #2 的复现)
+        params = json.loads(podcast.params_json)
+        params.update({"feed_url": "https://mirror.example.test/feed.xml", "limit": 17})
+        podcast.params_json = json.dumps(params)
+        assert outcome.binding_is_auto_generated(podcast) is False
+        assert archive_sync_v2.source_in_local_use(session, podcast, outcome) is True
+        params.pop("feed_url")
+        podcast.params_json = json.dumps(params)                          # 只改上限也算
+        assert outcome.binding_is_auto_generated(podcast) is False
+        params["limit"] = podcast_catalog.DEFAULT_FETCH_LIMIT
+        podcast.params_json = json.dumps(params)
+        podcast.url = "https://moved.example.test/feed.xml"               # 换了地址也算
+        assert outcome.binding_is_auto_generated(podcast) is False
+
+
+def test_admin_configured_catalog_podcast_survives_an_upstream_tombstone(tmp_path):
+    """检视 R2 #2 的完整路径:目录自动安装的播客源,管理员存了本机配置(还没跑、没进任务)→ 同步
+    上游的这个源、再收到它的 tombstone,本机源行与配置都在。没改过配置的那个照常跟着上游走。"""
+    from services import podcast_catalog
+
+    producer = _sink(tmp_path, "producer-podcast-binding.db")
+    consumer = _sink(tmp_path, "consumer-podcast-binding.db")
+    kept_id, plain_id = [
+        source_id for source_id in podcast_catalog.catalog_by_id()
+        if source_id != podcast_catalog.AI_NATIVE_DEV_SOURCE_ID
+    ][:2]
+    for sink in (producer, consumer):
+        with Session(sink.engine) as session:
+            podcast_catalog.import_podcast_catalog(session)
+            session.commit()
+    with Session(consumer.engine) as session:
+        row = session.get(SourceConfigRecord, kept_id)
+        params = json.loads(row.params_json)
+        params.update({"feed_url": "https://mirror.example.test/feed.xml", "limit": 17})
+        row.params_json = json.dumps(params, sort_keys=True)
+        session.add(row)
+        session.commit()
+
+    _copy_stream(producer, consumer, "sources")
+    with Session(producer.engine) as session:
+        for source_id in (kept_id, plain_id):
+            session.delete(session.get(SourceConfigRecord, source_id))
+        session.commit()
+    _raw, applied = _copy_stream(producer, consumer, "sources")
+
+    with Session(consumer.engine) as session:
+        kept = session.get(SourceConfigRecord, kept_id)
+        assert kept is not None and kept.retired_at is None and kept.is_active
+        assert json.loads(kept.params_json)["limit"] == 17
+        assert session.get(SourceConfigRecord, plain_id) is None      # 没在用、也没有文章:随上游删除
+    assert applied["deleted"] == 1
 
 
 def test_import_takes_the_write_lock_before_comparing_with_the_local_version(tmp_path, monkeypatch):
