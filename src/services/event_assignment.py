@@ -1783,6 +1783,11 @@ def _process_batch(session: Session, rows: Sequence[tuple[EventAssignmentLedgerR
 
     # 5. 单事务落库(直连 / 单例的决定不依赖模型,模型失败时照常落)。
     outcome = apply_assignments(session, decisions, now=now, llm_titles=llm_titles, meta=meta)
+    if outcome.get("blocked"):
+        # 落库前复核发现上游事件已经到了:本批作废,并让外层立刻收工——否则同一批 pending 行会被
+        # 反复读出来、反复送模型(检视 R1 #7)。
+        stats["blocked"] = True
+        return False
     stats["new_events"] += int(outcome["new_events"])
     for key in ("invalid_target", "retargeted", "serial_split", "isolated_failures"):
         stats[key] += int(outcome[key])
@@ -1799,6 +1804,10 @@ def _assign_pending_locked(engine: Engine, llm_config: LLMConfig, *, now: dt.dat
         stats["scanned"] = scan_pending(session, now=now)
         stats["skipped"] += _sweep_expired_pending(session, now=now)
         for _ in range(MAX_BATCHES_PER_RUN):
+            if local_assignment_blocked(session):
+                # 两批之间上游事件到了:后面的批不再调模型。
+                stats["blocked"] = True
+                break
             rows = _load_due_batch(session, now=now, batch_size=batch_size)
             if not rows:
                 break

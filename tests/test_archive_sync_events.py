@@ -984,6 +984,42 @@ def test_member_whose_article_arrives_in_the_next_pull_is_recovered_from_the_bac
         assert member.publisher_key == "google" and member.assigned_by == "llm"
 
 
+def test_member_restored_from_the_backlog_is_forwarded_to_a_downstream_node(tmp_path):
+    """检视 R1 #5:A → B → C。B 先收到缺一名成员的事件(那篇文章晚一轮才到)并已转给 C;B 补齐
+    成员时要推进这个事件的导出修订,否则 C 的增量里永远没有它。"""
+    a = _sink(tmp_path, "chain-events-a.db")
+    b = _sink(tmp_path, "chain-events-b.db")
+    c = _sink(tmp_path, "chain-events-c.db")
+    launch_id, _singleton_id = _seed_producer(a)
+    remote_a, remote_b = _Remote(a), _Remote(b)
+
+    def refresh_a2():
+        with Session(a.engine) as session:
+            article = session.get(ArticleRecord, "a-2")
+            article.content = "refreshed body"
+            article.archive_updated_at = _iso(0)
+            session.add(article)
+            session.commit()
+
+    remote_a.hooks["sources"] = refresh_a2
+    first_b = _pull(b, remote_a, tmp_path)
+    assert first_b["streams"]["events"]["deferred"] == 1
+    first_c = _pull(c, remote_b, tmp_path)
+    assert _member_ids(c.engine, launch_id) == ["a-1"]
+    exported_before = _state(b.engine, launch_id).local_revision
+
+    second_b = _pull(b, remote_a, tmp_path, checkpoints=first_b["streams"])
+    assert second_b["streams"]["articles"]["backlog_replay"]["installed"] == 1
+    assert _member_ids(b.engine, launch_id) == ["a-1", "a-2"]
+    state = _state(b.engine, launch_id)
+    assert state.local_revision > exported_before          # 导出修订推进了
+    assert state.authority_id == first_b["authority_id"]   # 仍是同步来的事件,接收修订不动
+
+    second_c = _pull(c, remote_b, tmp_path, checkpoints=first_c["streams"])
+    assert second_c["streams"]["events"]["count"] == 1
+    assert _member_ids(c.engine, launch_id) == ["a-1", "a-2"]
+
+
 def test_backlog_replay_expires_stale_rows_and_never_overrides_newer_attributions(tmp_path):
     consumer = _sink(tmp_path, "consumer-backlog-replay.db")
     authority = "producer-x"

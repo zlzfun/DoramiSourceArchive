@@ -163,43 +163,196 @@ def test_first_upstream_marker_turns_analysis_off_only_for_sources_not_in_local_
     """新节点启动对账先建了预设行(分析默认开),随后才接入上游:上游印记第一次落上去时,本机没在用
     的源与「同步建出来的源」同一口径——分析关;本机在用的源不动。之后管理员打开的开关,同步不再碰。"""
     from models.db import CollectionJobRecord
+    from services import source_catalog
 
+    idle_id, in_job_id = source_catalog.registry_source_ids()[:2]
     producer = _sink(tmp_path, "producer-first-marker.db")
     consumer = _sink(tmp_path, "consumer-first-marker.db")
     with Session(producer.engine) as session:
-        session.add(_source("rss_idle"))
-        session.add(_source("rss_in_job"))
+        for source_id in (idle_id, in_job_id):
+            row = session.get(SourceConfigRecord, source_id) or _source(source_id)
+            row.owner_username = ""
+            session.add(row)
         session.commit()
     with Session(consumer.engine) as session:
-        # 预设镜像行的样子:自带目录绑定(origin = catalog),本机没跑过、没被任务点名
-        session.add(_source("rss_idle", origin="catalog"))
-        session.add(_source("rss_in_job", origin="catalog"))
+        # 预设镜像行的样子:绑定 = 同名预设抓取器;本机没跑过、没被任务点名
+        for source_id in (idle_id, in_job_id):
+            row = session.get(SourceConfigRecord, source_id) or _source(source_id)
+            row.fetcher_id, row.origin, row.ai_analysis_enabled = source_id, "catalog", True
+            row.collection_authority_id = ""
+            session.add(row)
         session.add(CollectionJobRecord(
-            name="mine", fetcher_ids_json='["rss_in_job"]', is_active=True,
+            name="mine", fetcher_ids_json=json.dumps([in_job_id]), is_active=True,
             created_at="2026-09-01T00:00:00+00:00", updated_at="2026-09-01T00:00:00+00:00",
         ))
         session.commit()
     authority = archive_sync_v2.producer_authority_id(producer.engine)
     _copy_stream(producer, consumer, "sources")
     with Session(consumer.engine) as session:
-        idle = session.get(SourceConfigRecord, "rss_idle")
-        in_job = session.get(SourceConfigRecord, "rss_in_job")
+        idle = session.get(SourceConfigRecord, idle_id)
+        in_job = session.get(SourceConfigRecord, in_job_id)
         assert (idle.ai_analysis_enabled, idle.collection_authority_id) == (False, authority)
         assert (in_job.ai_analysis_enabled, in_job.collection_authority_id) == (True, authority)
-        assert idle.fetcher_id == "generic_rss"      # 本机的绑定不动
+        assert idle.fetcher_id == idle_id            # 本机的绑定不动
         idle.ai_analysis_enabled = True               # 管理员之后打开
         session.add(idle)
         session.commit()
 
     with Session(producer.engine) as session:
-        row = session.get(SourceConfigRecord, "rss_idle")
+        row = session.get(SourceConfigRecord, idle_id)
         row.name = "Renamed upstream"
         session.add(row)
         session.commit()
     _copy_stream(producer, consumer, "sources")
     with Session(consumer.engine) as session:
-        idle = session.get(SourceConfigRecord, "rss_idle")
+        idle = session.get(SourceConfigRecord, idle_id)
         assert (idle.name, idle.ai_analysis_enabled) == ("Renamed upstream", True)
+
+
+def test_admin_saved_binding_stays_protected_after_sync_overwrites_the_origin_field(tmp_path):
+    """检视 R1 #2:本机存过采集绑定、还没跑过也没进任务的源算「在用」。第一次同步会把目录字段
+    ``origin`` 盖成上游的值(catalog);保护不能因此在第二次同步时失效。"""
+    producer = _sink(tmp_path, "producer-origin.db")
+    consumer = _sink(tmp_path, "consumer-origin.db")
+    with Session(producer.engine) as session:
+        session.add(_source("rss_shared", origin="catalog", fetcher_id="rss_shared"))
+        session.commit()
+    with Session(consumer.engine) as session:
+        session.add(_source("rss_shared", origin="admin", name="My own binding"))   # 绑定 generic_rss
+        session.commit()
+
+    def sync_sources():
+        # 目录投影(新版本两端的常态):载荷里带 origin 等目录字段
+        raw = archive_sync_v2.export_page(
+            producer.engine, "sources", receiver_capabilities=archive_sync_v2.SOURCE_CATALOG_CAPABILITY
+        )
+        return archive_sync_v2.import_page(consumer.engine, raw, expected_stream="sources")
+
+    sync_sources()
+    with Session(consumer.engine) as session:
+        row = session.get(SourceConfigRecord, "rss_shared")
+        assert (row.origin, row.fetcher_id, row.is_active, row.ai_analysis_enabled) == (
+            "catalog", "generic_rss", True, True
+        )
+        assert archive_sync_v2.source_in_local_use(session, row, archive_sync_v2._PageOutcome())  # noqa: SLF001
+
+    with Session(producer.engine) as session:
+        row = session.get(SourceConfigRecord, "rss_shared")
+        row.is_active = False
+        row.retired_at = "2026-11-01T00:00:00+00:00"
+        session.add(row)
+        session.commit()
+    sync_sources()
+    with Session(consumer.engine) as session:
+        row = session.get(SourceConfigRecord, "rss_shared")
+        assert (row.is_active, row.retired_at) == (True, None)
+
+    with Session(producer.engine) as session:
+        session.delete(session.get(SourceConfigRecord, "rss_shared"))
+        session.commit()
+    sync_sources()
+    with Session(consumer.engine) as session:
+        row = session.get(SourceConfigRecord, "rss_shared")
+        assert row is not None and row.is_active and row.fetcher_id == "generic_rss"
+
+
+def test_auto_installed_bindings_do_not_count_as_local_use():
+    """预设镜像行(绑定 = 同名预设抓取器)与播客目录自动安装的行不算管理员存的绑定;判断只看绑定
+    本身,不看可被同步覆盖的 origin。"""
+    from services import podcast_catalog, source_catalog
+
+    outcome = archive_sync_v2._PageOutcome()  # noqa: SLF001
+    preset = source_catalog.registry_source_ids()[0]
+    podcast = next(iter(podcast_catalog.catalog_by_id()))
+    assert outcome.binding_is_auto_generated(preset, preset) is True
+    assert outcome.binding_is_auto_generated(podcast, "generic_podcast_rss") is True
+    assert outcome.binding_is_auto_generated(preset, "generic_rss") is False       # 管理员改绑
+    assert outcome.binding_is_auto_generated("rss_my_feed", "generic_rss") is False
+
+
+def test_import_takes_the_write_lock_before_comparing_with_the_local_version(tmp_path, monkeypatch):
+    """检视 R1 #1:「读本机版本 → 比较 → 覆盖」之间不能让本机写事务插进来。导入一页先取写锁;
+    比较发生时,别的连接上的写必须在等锁,而不是已经提交。"""
+    producer = _sink(tmp_path, "producer-race.db")
+    consumer = _sink(tmp_path, "consumer-race.db")
+    with Session(producer.engine) as session:
+        session.add(_source())
+        session.add(_article(content="Upstream body"))
+        session.commit()
+    with Session(consumer.engine) as session:
+        session.add(_source())
+        session.add(_article(content="Local body", archive_updated_at="2026-09-01T00:00:00+00:00"))
+        session.commit()
+    _copy_stream(producer, consumer, "sources")
+
+    observed = {}
+    real_compare = archive_sync_v2.revision_newer
+
+    def local_fetch_commits_a_newer_version():
+        try:
+            with Session(consumer.engine) as session:
+                row = session.get(ArticleRecord, "article-1")
+                row.content = "Local newer body"
+                row.archive_updated_at = "2026-12-01T00:00:00+00:00"
+                session.add(row)
+                session.commit()
+            observed["writer"] = "committed"
+        except Exception as exc:  # noqa: BLE001 - 只记录结果
+            observed["writer"] = type(exc).__name__
+
+    def compare_while_a_local_writer_races(candidate, other):
+        if "blocked_during_compare" not in observed:
+            writer = threading.Thread(target=local_fetch_commits_a_newer_version)
+            writer.start()
+            writer.join(timeout=0.6)
+            observed["blocked_during_compare"] = writer.is_alive()
+            observed["thread"] = writer
+        return real_compare(candidate, other)
+
+    monkeypatch.setattr(archive_sync_v2, "revision_newer", compare_while_a_local_writer_races)
+    _raw, applied = _copy_stream(producer, consumer, "articles")
+    observed["thread"].join(timeout=10)
+
+    assert observed["blocked_during_compare"] is True       # 比较时本机写事务在等锁,没有插进来
+    assert applied["taken_over"] == 1                        # 导入按它读到的本机版本做了决定
+    assert observed["writer"] == "committed"                 # 导入提交后它才写进去
+
+
+def test_fetch_rechecks_under_the_write_lock_before_rewriting_an_existing_row(tmp_path, monkeypatch):
+    """检视 R1 #1 的另一半:抓取读到「本机版本、没有正文」之后、写回之前,同步把这篇换成了上游的
+    版本。抓取取锁后重读、按最新的行重新判定——不会留下「上游的印记 + 本机的正文」。"""
+    from api.articles_view import GenericContent
+
+    consumer = _sink(tmp_path, "consumer-fetch-race.db")
+    with Session(consumer.engine) as session:
+        session.add(_source())
+        session.add(_article(has_content=False, content=""))
+        session.commit()
+
+    real_lock = DatabaseStorage._lock_existing_for_rewrite  # noqa: SLF001
+
+    def sync_lands_first(session, existing):
+        with Session(consumer.engine) as other:
+            row = other.get(ArticleRecord, "article-1")
+            row.has_content, row.content = True, "Upstream body"
+            row.analysis_authority_id = "upstream-a"
+            other.add(row)
+            other.commit()
+        return real_lock(session, existing)
+
+    monkeypatch.setattr(DatabaseStorage, "_lock_existing_for_rewrite", staticmethod(sync_lands_first))
+    item = GenericContent(
+        id="article-1", title="Article", source_url="https://example.test/a",
+        publish_date="2026-09-01T00:00:00+00:00", content="Local fetched body", has_content=True,
+    )
+    item.source_id = "rss_platform"
+    item.content_type = "rss_article"
+    outcome = asyncio.run(consumer.save_with_outcome(item))
+
+    assert outcome == "duplicate"
+    with Session(consumer.engine) as session:
+        row = session.get(ArticleRecord, "article-1")
+        assert (row.content, row.analysis_authority_id) == ("Upstream body", "upstream-a")
 
 
 @pytest.mark.parametrize("usage", ["saved_binding", "scheduled", "ran_locally"])

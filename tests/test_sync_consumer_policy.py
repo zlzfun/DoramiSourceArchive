@@ -898,3 +898,76 @@ def test_local_fetch_that_changes_a_synced_article_claims_it_as_the_local_versio
         assert (analysis.authority_id, analysis.authority_revision) == ("", "")
         state = session.get(ArchiveSyncEntityStateRecord, ("articles", "stub"))
         assert state.authority_id == "" and state.local_revision == state.revision
+
+
+def test_source_analysis_switch_also_gates_podcast_full_processing(tmp_path):
+    """检视 R1 #4:公共源关了「本机分析」,已经排上的播客全文处理(付费逐字稿 / 全文分析)也要停;
+    同步写入的单集照旧归上游;只请求逐字稿以外目标时不受这道门影响。"""
+    from services import podcast_processing
+
+    sink = _sink(tmp_path)
+    stamp = "2026-11-01T00:00:00+00:00"
+    with Session(sink.engine) as session:
+        session.add(SourceConfigRecord(
+            source_id="podcast_public", name="Show", source_type="podcast", url="https://p.test/feed.xml",
+            ai_analysis_enabled=True, is_active=True, created_at=stamp, updated_at=stamp,
+        ))
+        episode = ArticleRecord(
+            id="episode-1", title="Episode", content_type="podcast_episode", source_id="podcast_public",
+            source_url="https://p.test/1", publish_date=stamp, fetched_date=stamp, has_content=True,
+            content="notes", extensions_json="{}",
+        )
+        session.add(episode)
+        session.commit()
+
+        def verdict(target="full_analysis"):
+            return podcast_processing._evaluate_full_analysis_authority(  # noqa: SLF001
+                session, session.get(ArticleRecord, "episode-1"), requested_target=target
+            )[0]
+
+        assert verdict() == "eligible"
+        source = session.get(SourceConfigRecord, "podcast_public")
+        source.ai_analysis_enabled = False
+        session.add(source)
+        session.commit()
+        assert verdict() == "blocked_source"
+        assert verdict("transcript") == "eligible"        # 这道门只管全文分析这一目标
+        source.ai_analysis_enabled = True
+        episode.analysis_authority_id = "upstream-a"
+        session.add_all([source, episode])
+        session.commit()
+        assert verdict() == "blocked_source"              # 同步写入的单集:上游负责
+
+
+def test_dependency_replay_marker_is_cleared_only_for_the_generation_that_was_replayed(tmp_path):
+    """检视 R1 #8:重放期间若又登记了新的待重放(并发的导入入口),流完成时不能把新的也清掉。"""
+    from services import archive_sync_v2
+
+    sink = _sink(tmp_path)
+    assert archive_sync_v2.dependency_replay_marks(sink.engine) == {}
+    with Session(sink.engine) as session:
+        archive_sync_v2.mark_dependency_replay(session)
+        session.commit()
+    started = archive_sync_v2.dependency_replay_marks(sink.engine)
+    assert set(started) == set(archive_sync_v2.DEPENDENCY_REPLAY_STREAMS)
+    with Session(sink.engine) as session:                       # 重放途中又有一次接管
+        archive_sync_v2.mark_dependency_replay(session)
+        session.commit()
+
+    archive_sync_v2.clear_dependency_replay(sink.engine, "analyses", started["analyses"])
+    assert "analyses" in archive_sync_v2.pending_dependency_replay(sink.engine)     # 旧代次:不清
+    current = archive_sync_v2.dependency_replay_marks(sink.engine)
+    assert current["analyses"] > started["analyses"]
+    archive_sync_v2.clear_dependency_replay(sink.engine, "analyses", current["analyses"])
+    assert archive_sync_v2.pending_dependency_replay(sink.engine) == {"podcast_texts", "podcast_audio"}
+
+    # 早期格式(只有流名的列表)按代次 0 读,照常能清
+    with Session(sink.engine) as session:
+        row = session.get(AppSettingRecord, archive_sync_v2.DEPENDENCY_REPLAY_KEY)
+        row.value = json.dumps(["analyses", "bogus"])
+        session.add(row)
+        session.commit()
+    assert archive_sync_v2.dependency_replay_marks(sink.engine) == {"analyses": 0}
+    archive_sync_v2.clear_dependency_replay(sink.engine, "analyses", 0)
+    assert archive_sync_v2.pending_dependency_replay(sink.engine) == set()
+

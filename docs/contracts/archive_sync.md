@@ -229,17 +229,21 @@ collection run clears the source-state stamp.
 |---|---|
 | `articles` | Absent → insert and stamp. Stamped → update as before. Local version (no stamp) → the local version is kept only when its `archive_updated_at` is **strictly newer**; older or equal is replaced by the incoming version (ties go to the upstream so that nodes seeded from a V1 archive or a database copy attach to it). Both values are compared as instants (naive values are read in the node's time zone; an unparsable value counts as oldest). Producer-local run links (`fetch_run_id`, `job_id`, `job_run_id`, `source_group_id`) are cleared on import. |
 | `analyses`, `podcast_texts`, `podcast_audio` | A row whose article / episode is a local version, or whose slot is held by a local product, is **skipped and not recorded** instead of failing the page. Hash mismatches against a synced article still roll the page back. |
-| `sources` | Created with `ai_analysis_enabled = false` and no fetcher binding; `is_active` and the catalog fields follow the upstream. Existing rows keep their analysis switch and binding. The first time the upstream marker lands on an existing row that is not in local use, its analysis switch is turned off as well. A source **in local use** (it has a local source state, is named by a collection job, or carries an admin-saved binding) ignores upstream delete, retirement and `is_active`. |
+| `sources` | Created with `ai_analysis_enabled = false` and no fetcher binding; `is_active` and the catalog fields follow the upstream. Existing rows keep their analysis switch and binding. The first time the upstream marker lands on an existing row that is not in local use, its analysis switch is turned off as well. A source **in local use** (it has a local source state, is named by a collection job, or carries an admin-saved binding — any binding other than the auto-installed preset mirror or podcast-catalog one; `origin` is not consulted because sync overwrites it) ignores upstream delete, retirement and `is_active`. |
 | `source_states` | A local state that is strictly newer is kept; otherwise applied. Local cursors survive an overwrite. |
 | `events` | See below. Members whose article is a local version go to `event_member_backlog` and are restored when the article is taken over. |
 | tombstones | Delete only rows stamped by that upstream. Sources: in local use → ignored; otherwise retired when the node has articles of that source, deleted when it has none. A tombstone for a row the node never had counts as applied. |
 
-Skipped rows are returned to the pull loop (`skipped_identities`) so the binary stage
-does not look for them. When a local article version is taken over, the same
+Every import page takes the SQLite write lock **before** it reads local state, so the
+comparison with a local version cannot race a local writer; the fetch path likewise
+re-reads an existing row under the lock before rewriting it. Skipped rows are returned
+to the pull loop (`skipped_identities`) so the binary stage does not look for them. When a local article version is taken over, the same
 transaction persists a replay marker (KV `archive_sync:v2:dependency_replay`) for
 `analyses`, `podcast_texts` and `podcast_audio`; the pull loop then fetches each of
 those streams with an empty `since`, and clears the marker only after the stream
-completes, so an interrupted run replays again.
+completes, so an interrupted run replays again. The marker carries a generation per
+stream and is cleared only for the generation that was replayed; resetting the
+`articles` stream schedules the same replay.
 
 **No presence, no prune.** A receiver at or above issue #263 never calls
 `/api/archive/v2/presence` and deletes nothing after a full stream; a row disappears
@@ -269,7 +273,9 @@ local events does not request the `events` stream (the console shows it as not
 synced); a node that holds upstream events — or has none yet but is connected to an
 upstream advertising `events_v1` — does not assign events locally. Both writers take
 the same write gate and re-check inside the transaction, so an assignment that was
-waiting for the model when the first upstream events arrived is dropped.
+waiting for the model when the first upstream events arrived is dropped (and the run
+stops instead of re-sending the batch). When the backlog later restores a member of
+a synced event, that event's export revision advances so downstream nodes receive it.
 
 **Supported topology.** Single-upstream chains (A → B → C). Loops and multiple
 upstreams are not supported: a row stamped by one upstream is rejected from another.

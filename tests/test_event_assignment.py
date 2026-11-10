@@ -1144,3 +1144,37 @@ def test_isolated_replay_applies_serial_rule_against_committed_group_members(tmp
     assert _member(engine, "g4").event_id == group_event          # 组键映射保留给不冲突的后续篇
     assert _event(engine, group_event).member_count == 2
     assert _member(engine, "g2") is None and _ledger(engine, "g2").attempts == 1
+
+
+def test_a_gate_refusal_stops_the_run_instead_of_re_sending_the_same_batch_to_the_model(tmp_path, monkeypatch):
+    """检视 R1 #7:归并等模型期间上游事件到了,落库前复核作废本批。外层必须立刻收工——pending 行还
+    在,继续循环就是把同一批文章一遍遍送去模型。"""
+    engine = _sink(tmp_path).engine
+    _seed(engine, "f1", "Anthropic ships Claude Opus 5", entities=("entity.anthropic",), source_id="rss_a")
+    _seed(engine, "f2", "Claude Opus 5 发布:上下文翻倍", entities=("entity.anthropic",), source_id="rss_b")
+    calls: list[dict] = []
+    stamp = _iso(NOW)
+
+    async def upstream_events_arrive_while_the_model_thinks(**kwargs):
+        calls.append(kwargs)
+        with Session(engine) as session:
+            session.add(EventRecord(
+                status="open", title="from upstream", title_source="", member_count=0, publisher_count=0,
+                first_seen_at=stamp, last_member_at=stamp, assignment_version="v", authority_id="remote-1",
+                created_at=stamp, updated_at=stamp,
+            ))
+            session.commit()
+        return _reply([])
+
+    monkeypatch.setattr(ea, "chat_completion", upstream_events_arrive_while_the_model_thinks)
+    stats = ea.assign_pending(engine, LLM, now=NOW)
+
+    assert len(calls) == 1 and stats["llm_calls"] == 1
+    assert stats["blocked"] is True and stats["new_events"] == 0
+    with Session(engine) as session:
+        assert [event.authority_id for event in session.exec(select(EventRecord)).all()] == ["remote-1"]
+    assert _member(engine, "f1") is None and _member(engine, "f2") is None
+    # 下一轮在入口就被挡住,不再调模型
+    again = ea.assign_pending(engine, LLM, now=NOW + dt.timedelta(minutes=10))
+    assert again["blocked"] is True and len(calls) == 1
+

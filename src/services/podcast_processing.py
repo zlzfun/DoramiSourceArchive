@@ -273,6 +273,18 @@ def _evaluate_full_analysis_authority(
         return "blocked_source", [
             "Podcast source analysis is not owned by this installation"
         ]
+    # 公共源的「本机分析」开关同样管全文处理(逐字稿 / 全文分析都要付费):只靠「简介分析不再
+    # 产生新结果」挡不住已经排上的处理(issue #263 检视 R1 #4)。读者自定源的规则在上面的策略
+    # 函数里,这里不重复。
+    source = session.get(SourceConfigRecord, article.source_id) if article.source_id else None
+    if (
+        source is not None
+        and not (source.owner_username or "").strip()
+        and not source.ai_analysis_enabled
+    ):
+        return "blocked_source", [
+            "Podcast source analysis is switched off on this installation"
+        ]
     return "eligible", []
 
 

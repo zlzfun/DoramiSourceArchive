@@ -3029,9 +3029,31 @@ def _seed_issue_263_receiver(engine, *, with_marker: bool) -> None:
                 archive_updated_at=stamp, has_content=True, content="body", extensions_json="{}",
                 fetch_run_id=7, job_id=8, job_run_id=9, source_group_id=10,
             ),
+            ArticleRecord(
+                id="private-article", title="p", content_type="rss_article", source_id="user_rss_mine",
+                source_url="https://c.test/1", publish_date=stamp, fetched_date=stamp,
+                archive_updated_at=stamp, has_content=True, content="body", extensions_json="{}",
+            ),
         ])
         session.commit()
     with engine.begin() as conn:
+        # 旧围栏挡着、还没做完的本机自动任务:标题翻译(排队 / 在跑)与论文全文(排队 / 处理中)
+        for article_id, title_status, paper_status in (
+            ("local-article", "pending", "processing"),
+            ("private-article", "pending", "pending"),
+            ("synced-article", "running", "pending"),
+        ):
+            conn.execute(text(
+                "INSERT OR REPLACE INTO title_translation_jobs "
+                "(article_id, title_fp, status, attempts, retry_at, updated_at, error) "
+                "VALUES (:id, 'fp', :status, 1, 9999999999, 0, '')"
+            ), {"id": article_id, "status": title_status})
+            conn.execute(text(
+                "INSERT OR REPLACE INTO paper_fulltext_jobs "
+                "(article_id, arxiv_id, abstract, original_body_hash, status, attempts, retry_at, "
+                "lease_token, lease_until, last_error, updated_at) "
+                "VALUES (:id, '2401.00001', 'abs', 'hash', :status, 0, 0, 'tok', 0, '', :t)"
+            ), {"id": article_id, "status": paper_status, "t": stamp})
         conn.execute(text(
             "INSERT INTO collection_jobs (name, description, fetcher_ids_json, params_json, "
             "per_fetcher_params_json, cron_expr, is_active, downstream_policy_json, created_at, updated_at) "
@@ -3102,7 +3124,28 @@ def test_issue_263_migration_backfills_export_revisions_and_keeps_a_receiver_qui
                     "SELECT id, fetch_run_id, job_id, job_run_id, source_group_id FROM articles"
                 )).all()
             )
-            assert runs == {"synced-article": (None, None, None, None), "local-article": (7, 8, 9, 10)}
+            assert runs == {
+                "synced-article": (None, None, None, None),
+                "local-article": (7, 8, 9, 10),
+                "private-article": (None, None, None, None),
+            }
+            # 检视 R1 #3:公共源下本机文章上没做完的标题翻译 / 论文全文任务停放;读者自定源的
+            # 与同步写入文章的(worker 本来就不碰)不动
+            title_jobs = dict(conn.execute(text("SELECT article_id, status FROM title_translation_jobs")).all())
+            assert title_jobs == {
+                "local-article": "skipped", "private-article": "pending", "synced-article": "running",
+            }
+            paper_jobs = {
+                article_id: (status, last_error, lease_token)
+                for article_id, status, last_error, lease_token in conn.execute(text(
+                    "SELECT article_id, status, last_error, lease_token FROM paper_fulltext_jobs"
+                )).all()
+            }
+            assert paper_jobs == {
+                "local-article": ("skipped", "issue_263_receiver_parked", ""),
+                "private-article": ("pending", "", "tok"),
+                "synced-article": ("pending", "", "tok"),
+            }
             jobs = dict(conn.execute(text("SELECT name, is_active FROM collection_jobs")).all())
             assert jobs == {"public job": 0, "private job": 1}
             settings = dict(conn.execute(text("SELECT key, value FROM app_settings")).all())
@@ -3110,6 +3153,7 @@ def test_issue_263_migration_backfills_export_revisions_and_keeps_a_receiver_qui
             assert "remote_sync:v2_consumer_mode" not in settings
             summary = json.loads(settings["archive_sync:issue_263_migration"])
             assert summary["sources_analysis_off"] == 2 and summary["daily_brief_disabled"] is True
+            assert (summary["title_jobs_parked"], summary["paper_jobs_parked"]) == (1, 1)
             assert [job["name"] for job in summary["jobs_disabled"]] == ["public job"]
             triggers = {
                 row[0] for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type = 'trigger'")).all()
@@ -3195,6 +3239,12 @@ def test_issue_263_migration_leaves_a_node_that_pulls_nobody_untouched(tmp_path)
             settings = dict(conn.execute(text("SELECT key, value FROM app_settings")).all())
             assert settings["daily_brief_enabled"] == "true"
             assert "archive_sync:issue_263_migration" not in settings
+            assert {status for (status,) in conn.execute(text(
+                "SELECT status FROM title_translation_jobs"
+            )).all()} == {"pending", "running"}
+            assert {status for (status,) in conn.execute(text(
+                "SELECT status FROM paper_fulltext_jobs"
+            )).all()} == {"pending", "processing"}
             assert conn.execute(text(
                 "SELECT fetch_run_id FROM articles WHERE id = 'synced-article'"
             )).scalar_one() == 3

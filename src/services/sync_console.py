@@ -377,6 +377,10 @@ def reset_stream(engine, stream: str, *, by: str, at: str) -> Dict[str, Any]:
             target["v2_streams"] = streams
             if stream != "taxonomy":
                 remote_sync.invalidate_received_revisions(session, authority, (stream,))
+            if stream == "articles":
+                # 重放文章流可能把此前「本机版本胜出、后来又被删掉」的文章按新建补回来;当初随它
+                # 跳过的分析 / 播客行没有记账,一并安排依赖流重放(检视 R1 #6)。
+                archive_sync_v2.mark_dependency_replay(session)
             resets = dict(target.get("v2_stream_resets") or {})
             resets[stream] = {"at": at, "by": by}
             target["v2_stream_resets"] = resets

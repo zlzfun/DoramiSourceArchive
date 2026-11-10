@@ -3,6 +3,7 @@ import os
 from typing import Optional, Dict, Any, Iterable
 from sqlalchemy import inspect, text, event
 from sqlalchemy.pool import NullPool
+from sqlalchemy.exc import InvalidRequestError
 from sqlmodel import Session, create_engine, select
 from storage.base import BaseStorage
 from models.content import BaseContent, serialize_to_metadata
@@ -257,6 +258,27 @@ class DatabaseStorage(BaseStorage):
             analysis.authority_revision = ""
             session.add(analysis)
 
+    @staticmethod
+    def _lock_existing_for_rewrite(session: Session, existing: ArticleRecord) -> bool:
+        """改写一篇已有文章之前:先取写锁,再把这一行重读成最新已提交的样子(issue #263)。
+
+        ``existing`` 是在事务外读到的(pysqlite 到第一条写语句才开事务)。节点既抓取又同步之后,
+        「读到本机版本 → 决定补正文 / 修元数据 → 写回」之间,同步可能已经把这篇换成了上游的版本;
+        拿旧对象写回会得到「上游的印记 + 本机的正文」——上游的分析随后因哈希不符整页失败。
+        取锁后重读,调用方按最新的行重新判定。内存里尚未落库的改动一并丢弃。返回 False =
+        这一行在等锁期间已经不在了(被删除),调用方按「本轮不处理」收工,下一轮按新条目入库。
+        """
+
+        session.expire(existing)
+        session.connection().exec_driver_sql(
+            "UPDATE archive_sync_clock SET revision = revision WHERE id = 1"
+        )
+        try:
+            session.refresh(existing)
+        except InvalidRequestError:
+            return False
+        return True
+
     async def save(self, item: BaseContent) -> bool:
         """Pipeline insertion signal: true only when a row was created or filled."""
         return (await self.save_with_outcome(item)) in SAVE_STORED_OUTCOMES
@@ -326,6 +348,15 @@ class DatabaseStorage(BaseStorage):
                         raw_metadata.get("extensions", {}),
                     ):
                         return SAVE_DUPLICATE
+                    # 有东西要并:取锁重读,在最新的行上再并一次(上面那次改的可能是过时的对象)。
+                    if not self._lock_existing_for_rewrite(session, existing):
+                        return SAVE_DUPLICATE
+                    if not merge_podcast_publisher_metadata(
+                        existing,
+                        item,
+                        serialize_to_metadata(item).get("extensions", {}),
+                    ):
+                        return SAVE_DUPLICATE
                     self._claim_local_version(session, existing)
                     existing.archive_updated_at = next_article_archive_revision(
                         existing.archive_updated_at
@@ -337,6 +368,9 @@ class DatabaseStorage(BaseStorage):
                     # persisted, but must not inflate saved_count/saved_content_ids.
                     return SAVE_REFRESHED
                 if not existing.has_content and item.has_content and item.content:
+                    if not self._lock_existing_for_rewrite(session, existing) or existing.has_content:
+                        # 等锁期间正文已经被补上(同步或另一轮抓取):按重复处理。
+                        return SAVE_DUPLICATE
                     raw_metadata = serialize_to_metadata(item)
                     existing.title = item.title
                     existing.source_url = item.source_url
@@ -357,26 +391,35 @@ class DatabaseStorage(BaseStorage):
                 # 两条极窄的元数据自愈路径：① 旧标题明确是 CTA/占位文案；
                 # ② 抓取器显式声明官方元数据权威。普通源默认仍幂等跳过，
                 # 绝不因上游改标题而改写忠实归档；两路都不覆盖正文。
-                placeholder_repair = (
-                    _is_placeholder_article_title(existing.title)
-                    and not _is_placeholder_article_title(item.title)
-                )
-                authoritative_refresh = bool(
-                    getattr(item, "_refresh_existing_metadata", False)
-                )
-                title_changed = bool(item.title) and existing.title != item.title
-                publish_date_changed = (
-                    bool(item.publish_date)
-                    and existing.publish_date != item.publish_date
-                )
-                source_url_changed = (
-                    bool(item.source_url)
-                    and existing.source_url != item.source_url
-                )
-                if (
-                    (placeholder_repair or authoritative_refresh)
-                    and (title_changed or publish_date_changed or source_url_changed)
-                ):
+                def repair_plan() -> tuple[bool, bool, bool, bool]:
+                    placeholder_repair = (
+                        _is_placeholder_article_title(existing.title)
+                        and not _is_placeholder_article_title(item.title)
+                    )
+                    authoritative_refresh = bool(
+                        getattr(item, "_refresh_existing_metadata", False)
+                    )
+                    title_changed = bool(item.title) and existing.title != item.title
+                    publish_date_changed = (
+                        bool(item.publish_date)
+                        and existing.publish_date != item.publish_date
+                    )
+                    source_url_changed = (
+                        bool(item.source_url)
+                        and existing.source_url != item.source_url
+                    )
+                    wanted = (placeholder_repair or authoritative_refresh) and (
+                        title_changed or publish_date_changed or source_url_changed
+                    )
+                    return wanted, title_changed, publish_date_changed, source_url_changed
+
+                wanted, title_changed, publish_date_changed, source_url_changed = repair_plan()
+                if wanted:
+                    # 取锁重读后按最新的行重新判定一次。
+                    if not self._lock_existing_for_rewrite(session, existing):
+                        return SAVE_DUPLICATE
+                    wanted, title_changed, publish_date_changed, source_url_changed = repair_plan()
+                if wanted:
                     if title_changed:
                         existing.title = item.title
                     if publish_date_changed:

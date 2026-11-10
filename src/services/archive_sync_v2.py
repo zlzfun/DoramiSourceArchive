@@ -2061,6 +2061,26 @@ class _PageOutcome:
         self.skipped: set[str] = set()
         self.taken_over = 0
         self._scheduled: Optional[set[str]] = None
+        self._auto_bindings: Optional[tuple[set[str], set[str]]] = None
+
+    def binding_is_auto_generated(self, source_id: str, fetcher_id: str) -> bool:
+        """这条采集绑定是不是程序自己装的(预设镜像行 = 同名预设抓取器;播客目录自动安装的行)。
+
+        只按「绑定长什么样」判断,不看 ``origin``:那是目录字段,会被同步覆盖成上游的值
+        (检视 R1 #2)。
+        """
+
+        if self._auto_bindings is None:
+            from services import podcast_catalog, source_catalog
+
+            self._auto_bindings = (
+                set(source_catalog.registry_source_ids()),
+                set(podcast_catalog.catalog_by_id()),
+            )
+        presets, podcasts = self._auto_bindings
+        if fetcher_id == source_id and source_id in presets:
+            return True
+        return source_id in podcasts and fetcher_id == "generic_podcast_rss"
 
     def scheduled_source_ids(self, session: Session) -> set[str]:
         """被任一采集任务点名的源(启用与否都算:点名即管理员表达过「本机要采」)。"""
@@ -2119,8 +2139,8 @@ def source_in_local_use(
 ) -> bool:
     """本机在用的源:本机跑过、被采集任务点名、或管理员在本机存过采集绑定。
 
-    这类源不接受上游的删除、退役与停用(方案检视 R1 #2 / R2 #2)。预设镜像行自带的绑定
-    (``origin = catalog``)不算管理员存的。
+    这类源不接受上游的删除、退役与停用(方案检视 R1 #2 / R2 #2)。预设镜像行与播客目录自动
+    安装的行自带的绑定不算管理员存的。
     """
 
     state = session.get(SourceStateRecord, source.source_id)
@@ -2128,15 +2148,42 @@ def source_in_local_use(
         return True
     if source.source_id in outcome.scheduled_source_ids(session):
         return True
-    origin = str(getattr(source, "origin", "") or "").strip().lower()
-    return bool((source.fetcher_id or "").strip()) and origin != "catalog"
+    fetcher_id = (source.fetcher_id or "").strip()
+    return bool(fetcher_id) and not outcome.binding_is_auto_generated(source.source_id, fetcher_id)
 
 
-def _mark_dependency_replay(session: Session) -> None:
-    """接管本机版本的同一事务里登记「依赖流待重放」:中途失败 / 中断也不会丢。"""
+def _dependency_replay_marks(row: Optional[AppSettingRecord]) -> dict[str, int]:
+    """KV 里的待重放标记:``{流名: 代次}``。早期格式是只有流名的列表,按代次 0 读。"""
+
+    try:
+        value = json.loads(row.value) if row is not None and row.value else {}
+    except (TypeError, ValueError):
+        value = {}
+    if isinstance(value, list):
+        value = {str(item): 0 for item in value}
+    if not isinstance(value, dict):
+        return {}
+    marks: dict[str, int] = {}
+    for stream, generation in value.items():
+        if str(stream) not in DEPENDENCY_REPLAY_STREAMS:
+            continue
+        try:
+            marks[str(stream)] = int(generation)
+        except (TypeError, ValueError):
+            marks[str(stream)] = 0
+    return marks
+
+
+def mark_dependency_replay(session: Session) -> None:
+    """登记「依赖流待重放」,与触发它的写入同事务:中途失败 / 中断也不会丢。
+
+    每次登记把代次 +1;拉取循环清标记时带上它开始重放时读到的代次,期间若又有新的登记
+    (并发的导入入口),代次对不上就不清,留给下一轮(检视 R1 #8)。
+    """
 
     row = session.get(AppSettingRecord, DEPENDENCY_REPLAY_KEY)
-    value = json.dumps(sorted(DEPENDENCY_REPLAY_STREAMS))
+    generation = max(_dependency_replay_marks(row).values(), default=0) + 1
+    value = json.dumps({stream: generation for stream in sorted(DEPENDENCY_REPLAY_STREAMS)})
     if row is None:
         row = AppSettingRecord(key=DEPENDENCY_REPLAY_KEY, value=value)
     else:
@@ -2144,30 +2191,32 @@ def _mark_dependency_replay(session: Session) -> None:
     session.add(row)
 
 
+def dependency_replay_marks(engine: Engine) -> dict[str, int]:
+    with Session(engine) as session:
+        return _dependency_replay_marks(session.get(AppSettingRecord, DEPENDENCY_REPLAY_KEY))
+
+
 def pending_dependency_replay(engine: Engine) -> set[str]:
-    with Session(engine) as session:
-        row = session.get(AppSettingRecord, DEPENDENCY_REPLAY_KEY)
-    try:
-        values = json.loads(row.value) if row is not None and row.value else []
-    except (TypeError, ValueError):
-        values = []
-    return {str(value) for value in values if str(value) in DEPENDENCY_REPLAY_STREAMS}
+    return set(dependency_replay_marks(engine))
 
 
-def clear_dependency_replay(engine: Engine, stream: str) -> None:
-    """某条依赖流整流重放完成后清掉它的标记(流完成才清,失败的那一轮保留)。"""
+def clear_dependency_replay(engine: Engine, stream: str, generation: Optional[int] = None) -> None:
+    """某条依赖流整流重放完成后清掉它的标记(流完成才清,失败的那一轮保留)。
+
+    ``generation`` 是这次重放开始时读到的代次;给了就只在代次没变时清。
+    """
 
     with Session(engine) as session:
+        acquire_write_gate(session)  # 与并发的登记串行:读到的就是最新代次
         row = session.get(AppSettingRecord, DEPENDENCY_REPLAY_KEY)
-        if row is None:
+        marks = _dependency_replay_marks(row)
+        if row is None or stream not in marks:
             return
-        try:
-            values = json.loads(row.value) if row.value else []
-        except (TypeError, ValueError):
-            values = []
-        remaining = sorted({str(value) for value in values} - {stream})
-        if remaining:
-            row.value = json.dumps(remaining)
+        if generation is not None and marks[stream] != generation:
+            return
+        del marks[stream]
+        if marks:
+            row.value = json.dumps(marks, sort_keys=True)
             session.add(row)
         else:
             session.delete(row)
@@ -2925,7 +2974,7 @@ def _apply_articles(
         updated += 1
     if outcome.taken_over:
         # 被接管的文章此前让依赖流的行被跳过且没有记账:登记整流重放,和接管同一事务。
-        _mark_dependency_replay(session)
+        mark_dependency_replay(session)
     return inserted, updated
 
 
@@ -3406,15 +3455,23 @@ def _is_local_public_version(session: Session, article: Optional[ArticleRecord])
     return source is None or not (source.owner_username or "").strip()
 
 
-def acquire_event_write_gate(session: Session) -> None:
-    """事件写事务的共同门禁:先对同步时钟做一次空写取得 SQLite 写锁,再做存在性复核。
+def acquire_write_gate(session: Session) -> None:
+    """对同步时钟做一次空写,在本事务读任何东西之前先取得 SQLite 写锁。
 
-    本机归并的落库与上游 events 页的导入都调用它,保证「检查 → 写入」之间对方插不进来。
+    「读出本机现状 → 比较 → 写入」必须不被别的写事务插进来:同步导入一页、抓取改写一篇已有
+    文章、本机事件落库都先过这道门。pysqlite 默认到第一条写语句才开事务,不这样做的话,比较
+    用的那次读根本不在事务里(检视 R1 #1)。
     """
 
     session.connection().exec_driver_sql(
         "UPDATE archive_sync_clock SET revision = revision WHERE id = 1"
     )
+
+
+def acquire_event_write_gate(session: Session) -> None:
+    """事件写事务的共同门禁(本机归并的落库与上游 events 页的导入):取写锁后再做存在性复核。"""
+
+    acquire_write_gate(session)
 
 
 def local_events_present(session: Session) -> bool:
@@ -3624,6 +3681,29 @@ def _applied_event_revision(session: Session, authority_id: str, event_id: int) 
     return int(state.revision)
 
 
+def _republish_synced_events(session: Session, event_ids: set[int]) -> None:
+    """同步来的事件在本机补上 / 挪走了成员:推进它们的导出修订,下游才会再拿到(检视 R1 #5)。
+
+    成员触发器只给本机事件记账;同步来的事件由导入方记账,补成员发生在导入之后,不推进的话
+    已经拉过这个事件的下游永远缺这名成员。接收修订(``revision``)不动。
+    """
+
+    if not event_ids:
+        return
+    session.flush()
+    connection = session.connection()
+    connection.exec_driver_sql(
+        "UPDATE archive_sync_clock SET revision = revision + 1 WHERE id = 1"
+    )
+    for event_id in sorted(event_ids):
+        connection.exec_driver_sql(
+            "UPDATE archive_sync_entity_states "
+            "SET local_revision = (SELECT revision FROM archive_sync_clock WHERE id = 1) "
+            "WHERE stream = 'events' AND identity = ? AND authority_id <> ''",
+            (str(event_id),),
+        )
+
+
 def replay_event_member_backlog(
     engine: Engine,
     *,
@@ -3646,7 +3726,9 @@ def replay_event_member_backlog(
     except ValueError as exc:
         raise SyncV2Error("backlog replay clock must be ISO-8601") from exc
     installed = pending = expired = dropped = superseded = 0
+    touched_events: set[int] = set()
     with Session(engine) as session:
+        acquire_write_gate(session)
         rows = session.exec(
             select(EventMemberBacklogRecord).order_by(
                 EventMemberBacklogRecord.authority_id, EventMemberBacklogRecord.article_id
@@ -3715,6 +3797,7 @@ def replay_event_member_backlog(
                     session.delete(row)
                     superseded += 1
                     continue
+                touched_events.add(int(current.event_id))
                 session.delete(current)
                 session.flush()
             session.add(
@@ -3723,8 +3806,10 @@ def replay_event_member_backlog(
                     **{field: member[field] for field in _EVENT_MEMBER_WIRE_FIELDS},
                 )
             )
+            touched_events.add(int(row.event_id))
             session.delete(row)
             installed += 1
+        _republish_synced_events(session, touched_events)
         session.commit()
     return {
         "installed": installed,
@@ -3851,6 +3936,9 @@ def import_page(
     outcome = _PageOutcome()
     with Session(engine) as session:
         try:
+            # 先取写锁再读:本页对本机现状的每一次判断(本机版本是否更新、源是否在用、印记是否
+            # 属于该上游)到提交之前都不会被别的写事务改掉。
+            acquire_write_gate(session)
             deleted = skipped = deferred = 0
             if stream == "taxonomy":
                 apply_taxonomy = _taxonomy_import_is_newer(session, manifest, rows)

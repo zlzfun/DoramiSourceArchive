@@ -1133,13 +1133,14 @@ async def run_pull_v2(
             since = str(previous.get("snapshot") or "")
             # 依赖流待重放(issue #263):某篇本机版本的文章被上游接管后,此前因它而跳过的分析 /
             # 播客行没有记账,增量拉不回来。标记在接管事务里落库,这里整流重放、流完成才清。
-            replaying_dependencies = (
-                stream in archive_sync_v2.DEPENDENCY_REPLAY_STREAMS
-                and stream
-                in await asyncio.to_thread(
-                    archive_sync_v2.pending_dependency_replay, engine
-                )
+            replay_generation = (
+                (
+                    await asyncio.to_thread(archive_sync_v2.dependency_replay_marks, engine)
+                ).get(stream)
+                if stream in archive_sync_v2.DEPENDENCY_REPLAY_STREAMS
+                else None
             )
+            replaying_dependencies = replay_generation is not None
             if replaying_dependencies:
                 since = ""
             snapshot = "" if stream == "taxonomy" else generation_snapshot
@@ -1414,8 +1415,12 @@ async def run_pull_v2(
                     if on_stream_complete is not None:
                         on_stream_complete(stream, checkpoint)
                     if replaying_dependencies:
+                        # 只清它开始时读到的那一代:重放期间若又登记了新的,留给下一轮。
                         await asyncio.to_thread(
-                            archive_sync_v2.clear_dependency_replay, engine, stream
+                            archive_sync_v2.clear_dependency_replay,
+                            engine,
+                            stream,
+                            replay_generation,
                         )
                     # checkpoint 落定后才把本流记为完成,进度不能跑在复制状态前面。
                     report_progress()

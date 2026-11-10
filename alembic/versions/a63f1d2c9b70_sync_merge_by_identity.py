@@ -111,7 +111,13 @@ def _backfill_local_revision(bind) -> None:
 def _quiesce_receiver(bind, tables: set[str]) -> dict:
     """接收节点保持现状:旧围栏挡着的公共源分析、公共采集任务、公共日报继续不跑。"""
 
-    summary: dict = {"sources_analysis_off": 0, "jobs_disabled": [], "daily_brief_disabled": False}
+    summary: dict = {
+        "sources_analysis_off": 0,
+        "jobs_disabled": [],
+        "daily_brief_disabled": False,
+        "title_jobs_parked": 0,
+        "paper_jobs_parked": 0,
+    }
     result = bind.execute(sa.text(
         "UPDATE source_configs SET ai_analysis_enabled = 0 "
         "WHERE owner_username = '' AND ai_analysis_enabled <> 0 "
@@ -152,6 +158,28 @@ def _quiesce_receiver(bind, tables: set[str]) -> dict:
         "WHERE key = 'daily_brief_enabled' AND lower(value) = 'true'"
     ))
     summary["daily_brief_disabled"] = bool(result.rowcount)
+    # 标题翻译与论文全文不看源的分析开关。旧围栏挡着的是「公共源下、没有同步印记的本机文章」上
+    # 还没做完的任务(排队 / 延期 / 等重试);围栏一拆它们会被 worker 接着做——付费的模型调用与
+    # 公网下载。停放掉(读者自定源的任务不动);之后新产生的任务按各自的开关走。
+    local_public_articles = (
+        "SELECT a.id FROM articles a WHERE a.analysis_authority_id = '' "
+        "AND a.source_id NOT LIKE 'user\\_rss\\_%' ESCAPE '\\' "
+        "AND NOT EXISTS (SELECT 1 FROM source_configs sc "
+        "WHERE sc.source_id = a.source_id AND sc.owner_username <> '')"
+    )
+    if "title_translation_jobs" in tables:
+        result = bind.execute(sa.text(
+            "UPDATE title_translation_jobs SET status = 'skipped' "
+            f"WHERE status IN ('pending', 'running') AND article_id IN ({local_public_articles})"
+        ))
+        summary["title_jobs_parked"] = max(int(result.rowcount or 0), 0)
+    if "paper_fulltext_jobs" in tables:
+        result = bind.execute(sa.text(
+            "UPDATE paper_fulltext_jobs "
+            "SET status = 'skipped', last_error = 'issue_263_receiver_parked', lease_token = '' "
+            f"WHERE status IN ('pending', 'processing') AND article_id IN ({local_public_articles})"
+        ))
+        summary["paper_jobs_parked"] = max(int(result.rowcount or 0), 0)
     bind.execute(sa.text("DELETE FROM app_settings WHERE key = :key"), {"key": _CONSUMER_KEY})
     return summary
 
