@@ -1,0 +1,649 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>#263 改动图解</title>
+<style>
+:root{
+  --bg:#f6f6f3; --surface:#ffffff; --surface-2:#f1f1ec; --ink:#1c1c1f; --ink-2:#4d4d55; --ink-3:#8a8a92;
+  --line:#e3e3dd; --line-2:#cdcdc6;
+  --a:#2360c4; --a-soft:#e8f0ff; --a-line:#a9c3f0;
+  --b:#a8660a; --b-soft:#fcf1de; --b-line:#e8c98f;
+  --c:#6f45c4; --c-soft:#f0e9fd; --c-line:#c9b4ef;
+  --ok:#1d7f46; --ok-soft:#e3f4ea; --bad:#bd3a30; --bad-soft:#fbe8e6; --bad-line:#eeb0aa;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Noto Sans SC","Microsoft YaHei",sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#131315; --surface:#1c1c1f; --surface-2:#242428; --ink:#ececef; --ink-2:#b7b7be; --ink-3:#83838c;
+    --line:#2d2d32; --line-2:#3c3c42;
+    --a:#7aa5ff; --a-soft:#1b2843; --a-line:#36507f;
+    --b:#e6aa52; --b-soft:#33270f; --b-line:#6b5222;
+    --c:#ae90f2; --c-soft:#2a2240; --c-line:#54447f;
+    --ok:#52c57f; --ok-soft:#173226; --bad:#f07067; --bad-soft:#3a1c1a; --bad-line:#7a3631;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#131315; --surface:#1c1c1f; --surface-2:#242428; --ink:#ececef; --ink-2:#b7b7be; --ink-3:#83838c;
+  --line:#2d2d32; --line-2:#3c3c42;
+  --a:#7aa5ff; --a-soft:#1b2843; --a-line:#36507f;
+  --b:#e6aa52; --b-soft:#33270f; --b-line:#6b5222;
+  --c:#ae90f2; --c-soft:#2a2240; --c-line:#54447f;
+  --ok:#52c57f; --ok-soft:#173226; --bad:#f07067; --bad-soft:#3a1c1a; --bad-line:#7a3631;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.7 var(--sans);-webkit-font-smoothing:antialiased}
+.wrap{max-width:1000px;margin:0 auto;padding:36px 16px 96px}
+h1{font-size:27px;line-height:1.3;margin:0 0 6px;letter-spacing:.01em}
+h2{font-size:20px;line-height:1.4;margin:0 0 2px}
+h3{font-size:15px;margin:0 0 8px}
+p{margin:8px 0}
+code,.mono{font-family:var(--mono);font-size:.85em}
+.k{background:var(--surface-2);padding:1px 5px;border-radius:4px;border:1px solid var(--line)}
+.sub{color:var(--ink-3);font-size:13px;margin:0}
+.legend{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 0}
+.nd{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;padding:2px 10px 2px 4px;border-radius:999px;border:1px solid}
+.nd i{font-style:normal;font-weight:700;width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font-size:11.5px;color:#fff}
+.nd-a{color:var(--a);border-color:var(--a-line);background:var(--a-soft)} .nd-a i{background:var(--a)}
+.nd-b{color:var(--b);border-color:var(--b-line);background:var(--b-soft)} .nd-b i{background:var(--b)}
+.nd-c{color:var(--c);border-color:var(--c-line);background:var(--c-soft)} .nd-c i{background:var(--c)}
+:root[data-theme="dark"] .nd i, :root:not([data-theme="light"]) .nd i{color:var(--bg)}
+nav.toc{position:sticky;top:0;z-index:5;background:var(--bg);display:flex;flex-wrap:wrap;gap:6px;padding:12px 0;margin-top:18px;border-bottom:1px solid var(--line)}
+nav.toc a{font-size:12.5px;padding:3px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink-2);text-decoration:none;white-space:nowrap}
+nav.toc a:hover{border-color:var(--line-2);color:var(--ink)}
+section{margin-top:44px;scroll-margin-top:70px}
+.lead{color:var(--ink-2);max-width:48em;margin:6px 0 14px}
+figure{margin:14px 0;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px}
+figure > .ft{font-size:12px;color:var(--ink-3);letter-spacing:.06em;margin:0 0 12px}
+figcaption{font-size:13px;color:var(--ink-3);margin-top:12px;line-height:1.6}
+.callout{border-left:3px solid var(--line-2);background:var(--surface);padding:12px 16px;border-radius:0 10px 10px 0;margin:14px 0;font-size:14px;color:var(--ink-2)}
+.callout b{color:var(--ink)}
+.callout.key{border-left-color:var(--ok)}
+.callout.risk{border-left-color:var(--bad)}
+.callout.fix{border-left-color:var(--c)}
+.ta{color:var(--a);font-weight:700} .tb{color:var(--b);font-weight:700} .tc{color:var(--c);font-weight:700}
+.bad{color:var(--bad)} .ok{color:var(--ok)}
+.muted{color:var(--ink-3)}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:600;color:var(--ink-2);font-size:12.5px;background:var(--surface-2)}
+tr:last-child td{border-bottom:none}
+.tbl{border:1px solid var(--line);border-radius:10px;overflow:hidden;overflow-x:auto}
+
+/* 1.1 盖章示意 */
+.stamp-flow{display:grid;grid-template-columns:minmax(0,1.05fr) 64px minmax(0,1.3fr) 64px minmax(0,.9fr);align-items:center;gap:0}
+.box{border:1px solid var(--line-2);border-radius:10px;padding:12px 14px;background:var(--surface)}
+.box .tag{font-size:11.5px;color:var(--ink-3);letter-spacing:.05em}
+.box .nm{font-weight:600;font-size:15px;margin:2px 0 6px}
+.box .fld{font-size:12.5px}
+.box .hint{font-size:12px;color:var(--ink-3);margin-top:6px}
+.box-a{border-color:var(--a-line);background:var(--a-soft)}
+.box-b{border-color:var(--b-line);background:var(--b-soft)}
+.arr{text-align:center;font-size:11.5px;color:var(--ink-3);line-height:1.3}
+.arr::before{content:"";display:block;height:2px;background:var(--line-2);margin:0 6px 6px;position:relative}
+.arr span{display:block}
+.arts{display:flex;flex-direction:column;gap:6px}
+.art{font-size:12.5px;border:1px solid var(--a-line);background:var(--surface);border-radius:8px;padding:5px 10px}
+.art.more{border-style:dashed;color:var(--ink-3)}
+.deps{display:flex;flex-direction:column;gap:6px}
+.dep{font-size:12.5px;border:1px dashed var(--line-2);border-radius:8px;padding:5px 10px;color:var(--ink-2)}
+
+/* chips */
+.cs{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:1px 8px;border-radius:6px;border:1px solid;white-space:nowrap;line-height:1.6}
+.cs-a{color:var(--a);border-color:var(--a-line);background:var(--a-soft)}
+.cs-b{color:var(--b);border-color:var(--b-line);background:var(--b-soft)}
+.cs-c{color:var(--c);border-color:var(--c-line);background:var(--c-soft)}
+.cs-x{color:var(--ink-3);border-color:var(--line-2);background:var(--surface-2);text-decoration:line-through}
+.cs-frozen{color:var(--b);border-color:var(--b-line);background:repeating-linear-gradient(135deg,var(--b-soft) 0 6px,var(--surface) 6px 12px)}
+.chips{display:flex;flex-wrap:wrap;gap:5px}
+
+/* 1.2 三入口 */
+.entries{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.entry{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--surface);display:flex;flex-direction:column;gap:8px}
+.entry h4{margin:0;font-size:14px}
+.entry .when{font-size:12px;color:var(--ink-3);margin-top:-6px}
+.entry .lab{font-size:11px;color:var(--ink-3);letter-spacing:.06em;margin-bottom:3px}
+.entry .ev{font-size:12.5px;padding:6px 10px;border-radius:8px;background:var(--surface-2);border:1px solid var(--line)}
+.entry .res{font-size:12.5px;color:var(--ink-2)}
+.entry .code{font-family:var(--mono);font-size:11px;color:var(--ink-3)}
+.verdict{font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;display:inline-block}
+.v-ok{color:var(--ok);background:var(--ok-soft)}
+.v-warn{color:var(--b);background:var(--b-soft)}
+.v-bad{color:var(--bad);background:var(--bad-soft)}
+
+/* 2 源管理 mock */
+.cmp{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.cmp > div > .h{font-size:13px;font-weight:600;margin:0 0 8px;display:flex;align-items:center;gap:8px}
+.mock{border:1px solid var(--line-2);border-radius:10px;background:var(--surface);overflow:hidden}
+.mock-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line);background:var(--surface-2);font-size:12px;color:var(--ink-2)}
+.mock-bar .ttl{font-weight:600;color:var(--ink);margin-right:auto}
+.seg{display:inline-flex;border:1px solid var(--line-2);border-radius:7px;overflow:hidden;background:var(--surface)}
+.seg span{padding:2px 9px;border-right:1px solid var(--line-2)}
+.seg span:last-child{border-right:none}
+.seg span.on{background:var(--ink);color:var(--bg)}
+.seg.new{outline:2px solid var(--c);outline-offset:2px}
+.btn-q{border:1px solid var(--line-2);border-radius:7px;padding:2px 9px;background:var(--surface)}
+.grp{padding:7px 12px 3px;font-size:11.5px;color:var(--ink-3);letter-spacing:.06em}
+.node{display:grid;grid-template-columns:8px minmax(0,1fr) 40px 70px 56px;gap:10px;align-items:center;padding:8px 12px;border-top:1px solid var(--line);font-size:13px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ok)}
+.dot.idle{background:var(--line-2)}
+.nm2 b{font-weight:600}
+.sid{display:block;font-family:var(--mono);font-size:10.5px;color:var(--ink-3)}
+.pill{font-size:10.5px;padding:0 6px;border-radius:999px;margin-left:6px;border:1px solid;vertical-align:1px;white-space:nowrap}
+.pill-remote{color:var(--a);border-color:var(--a-line);background:var(--a-soft)}
+.pill-new{outline:2px solid var(--c);outline-offset:1px}
+.shape{font-size:10.5px;padding:1px 0;border-radius:5px;background:var(--surface-2);color:var(--ink-2);text-align:center}
+.last{font-size:11px;color:var(--ink-3);line-height:1.35}
+.acts{display:flex;gap:4px;justify-content:flex-end}
+.act{width:24px;height:24px;border-radius:6px;border:1px solid var(--line-2);display:grid;place-items:center;font-size:10px;color:var(--ink-2);background:var(--surface)}
+.act.off{opacity:.3}
+.act.hot{border-color:var(--bad);color:var(--bad);box-shadow:0 0 0 2px var(--bad-soft)}
+.anno{font-size:11.5px;padding:0 12px 8px 30px;line-height:1.5}
+.anno.bad{color:var(--bad)} .anno.ok{color:var(--ok)} .anno.mu{color:var(--ink-3)}
+.mock-foot{font-size:12px;color:var(--ink-3);padding:9px 12px;border-top:1px solid var(--line);background:var(--surface-2)}
+.toast{margin:0 12px 10px 30px;font-size:11.5px;color:var(--bad);background:var(--bad-soft);border:1px solid var(--bad-line);border-radius:7px;padding:4px 9px;display:inline-block}
+.kvbar{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.kv{border:1px solid var(--line-2);border-radius:10px;background:var(--surface);padding:10px 14px;font-size:13px;display:grid;grid-template-columns:96px 1fr;row-gap:4px}
+.kv dt{color:var(--ink-3)} .kv dd{margin:0}
+.kv .hl{outline:2px solid var(--c);outline-offset:2px;border-radius:3px}
+
+/* 3 状态机 */
+.sm{display:flex;flex-wrap:wrap;align-items:stretch;gap:0}
+.st{border:1px solid var(--line-2);border-radius:10px;padding:10px 14px;background:var(--surface);min-width:150px}
+.st .s{font-weight:600}
+.st ul{margin:6px 0 0;padding-left:18px;font-size:12.5px;color:var(--ink-2)}
+.st.lock{border-color:var(--bad-line);background:var(--bad-soft)}
+.st.loc{border-color:var(--b-line);background:var(--b-soft)}
+.st.rem{border-color:var(--a-line);background:var(--a-soft)}
+.edge{display:flex;flex-direction:column;justify-content:center;align-items:center;min-width:120px;padding:0 8px;font-size:11.5px;color:var(--ink-3);text-align:center;line-height:1.35}
+.edge .ln{width:100%;height:2px;background:var(--line-2);position:relative;margin:6px 0}
+.edge .ln::after{content:"";position:absolute;right:-1px;top:-4px;border:5px solid transparent;border-left:7px solid var(--line-2);border-right:0}
+.edge.back .ln::after{right:auto;left:-1px;border-left:0;border-right:7px solid var(--line-2)}
+.edge.dash .ln{background:repeating-linear-gradient(90deg,var(--line-2) 0 5px,transparent 5px 9px)}
+.edge.none{color:var(--bad)}
+.edge.none .ln{background:repeating-linear-gradient(90deg,var(--bad) 0 5px,transparent 5px 9px)}
+.edge.none .ln::after{border-left-color:var(--bad)}
+.sm-row{display:flex;flex-direction:column;gap:12px}
+.sm-sub{font-size:12.5px;color:var(--ink-2);margin:2px 0 10px}
+
+/* 4 拓扑 */
+.topo{display:grid;grid-template-columns:minmax(0,1fr) 74px minmax(0,1fr) 74px minmax(0,1fr);gap:0;align-items:start}
+.tnode{border:1px solid var(--line-2);border-radius:10px;background:var(--surface);overflow:hidden}
+.tnode .th{padding:6px 10px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px}
+.tnode.a .th{background:var(--a-soft);color:var(--a)}
+.tnode.b .th{background:var(--b-soft);color:var(--b)}
+.tnode.c .th{background:var(--c-soft);color:var(--c)}
+.tnode .tb2{padding:8px 10px;display:flex;flex-direction:column;gap:8px}
+.tnode .lab{font-size:11px;color:var(--ink-3);letter-spacing:.05em}
+.exp{border-top:1px dashed var(--line-2);padding-top:8px}
+.tarr{align-self:center;text-align:center;font-size:11.5px;color:var(--ink-3);line-height:1.35;padding:0 6px}
+.tarr .ln{height:2px;background:var(--line-2);margin:6px 0;position:relative}
+.tarr .ln::after{content:"";position:absolute;right:-1px;top:-4px;border:5px solid transparent;border-left:7px solid var(--line-2);border-right:0}
+.tarr.badln{color:var(--bad)}
+.tarr.badln .ln{background:repeating-linear-gradient(90deg,var(--bad) 0 5px,transparent 5px 9px)}
+.tarr.badln .ln::after{border-left-color:var(--bad)}
+.hop{font-size:10.5px;color:var(--ink-3);font-family:var(--mono)}
+pre{margin:0;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;overflow-x:auto;font:12px/1.6 var(--mono);color:var(--ink-2)}
+pre .hl{color:var(--c);font-weight:600}
+.never{display:flex;flex-wrap:wrap;gap:6px}
+.never span{font-size:12.5px;padding:2px 10px;border-radius:999px;border:1px solid var(--bad-line);background:var(--bad-soft);color:var(--bad)}
+
+/* 5 时钟表 */
+.newcol{background:var(--c-soft)}
+th.newcol{color:var(--c)}
+
+/* 6 SVG */
+svg text{font-family:var(--sans)}
+.sv-a{fill:var(--a-soft);stroke:var(--a)}
+.sv-b{fill:var(--b-soft);stroke:var(--b)}
+.sv-frz{fill:var(--surface-2);stroke:var(--line-2)}
+.sv-t{fill:var(--ink);font-size:13px}
+.sv-t2{fill:var(--ink-2);font-size:12px}
+.sv-t3{fill:var(--ink-3);font-size:11.5px}
+.sv-ta{fill:var(--a);font-size:13px;font-weight:700}
+.sv-tb{fill:var(--b);font-size:13px;font-weight:700}
+.sv-bad{fill:var(--bad);font-size:13px;font-weight:600}
+.sv-ln{stroke:var(--line-2);stroke-width:2;fill:none}
+.sv-lna{stroke:var(--a);stroke-width:2;fill:none}
+.sv-lnb{stroke:var(--b);stroke-width:2;fill:none}
+.sv-grid{stroke:var(--line);stroke-width:1;stroke-dasharray:3 4}
+.sv-badln{stroke:var(--bad);stroke-width:2;stroke-dasharray:5 4;fill:none}
+
+/* 8 拍板 */
+ol.dec{margin:0;padding-left:22px}
+ol.dec li{margin:8px 0}
+ol.dec .rec{display:inline-block;font-size:11.5px;padding:0 7px;border-radius:5px;background:var(--ok-soft);color:var(--ok);margin-left:6px;vertical-align:1px}
+ol.dec a{color:var(--a)}
+
+@media (max-width:820px){
+  .cmp,.kvbar{grid-template-columns:1fr}
+  .entries{grid-template-columns:1fr}
+  .stamp-flow{grid-template-columns:1fr}
+  .stamp-flow .arr{padding:6px 0}
+  .stamp-flow .arr::before{width:2px;height:16px;margin:0 auto 4px}
+  .topo{grid-template-columns:1fr}
+  .tarr{padding:8px 0}
+  .tarr .ln{width:2px;height:18px;margin:0 auto 4px}
+  .tarr .ln::after{right:-4px;top:auto;bottom:-6px;border:5px solid transparent;border-top:7px solid var(--line-2);border-bottom:0}
+  .tarr.badln .ln::after{border-top-color:var(--bad)}
+  .sm{flex-direction:column}
+  .edge{min-width:0;padding:6px 0}
+}
+@media (max-width:560px){
+  .node{grid-template-columns:8px minmax(0,1fr) 56px}
+  .node .shape,.node .last{display:none}
+  .kv{grid-template-columns:84px 1fr}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>#263 改动图解</h1>
+  <p class="sub">配合方案稿 <code>docs/plans/issue-263-sync-symmetric.md</code> 阅读 · 2026-11-10 · 图中源名、篇数、revision 均为示意</p>
+  <div class="legend">
+    <span class="nd nd-a"><i>A</i>外网 · 上游</span>
+    <span class="nd nd-b"><i>B</i>内网 · 本机</span>
+    <span class="nd nd-c"><i>C</i>B 的下游(未来形态)</span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="目录">
+  <a href="#s1">① 为什么按源看</a>
+  <a href="#s2">② 源管理页</a>
+  <a href="#s3">③ 去掉整机开关</a>
+  <a href="#s4">④ 转发</a>
+  <a href="#s5">⑤ 本机时钟</a>
+  <a href="#s6">⑥ 为什么不做互拉</a>
+  <a href="#s7">⑦ 上线顺序</a>
+  <a href="#s8">⑧ 待拍板</a>
+</nav>
+
+<!-- ① -->
+<section id="s1">
+  <h2>① 「来自上游」为什么按源看</h2>
+  <p class="lead">每篇文章上确实有一列记着「这篇归谁」。但这一列是写入时盖上去的章,决定它的是源:谁采集一个源,谁就是这个源下所有文章的写者。</p>
+
+  <figure>
+    <p class="ft">图 1-1 · 在内网 B 上看同一个源</p>
+    <div class="stamp-flow">
+      <div class="box box-a">
+        <div class="tag">源 · 一行</div>
+        <div class="nm">机器之心</div>
+        <div class="fld"><code>collection_authority_id</code> = <span class="ta">A</span></div>
+        <div class="hint">决定发生在这里:这个源由 A 采集</div>
+      </div>
+      <div class="arr"><span>写入时</span><span>盖章</span></div>
+      <div class="arts">
+        <div class="art">文章 · <code>analysis_authority_id</code> = <span class="ta">A</span></div>
+        <div class="art">文章 · <code>analysis_authority_id</code> = <span class="ta">A</span></div>
+        <div class="art">文章 · <code>analysis_authority_id</code> = <span class="ta">A</span></div>
+        <div class="art more">…… 共 1,204 篇,章都一样</div>
+      </div>
+      <div class="arr"><span>跟着</span><span>文章走</span></div>
+      <div class="deps">
+        <div class="dep">分析结果</div>
+        <div class="dep">图片缓存</div>
+        <div class="dep">播客产物</div>
+        <div class="dep">事件成员</div>
+      </div>
+    </div>
+    <figcaption>源上一个值,文章上一千多份副本。副本存在的理由是方便:分析、翻译这些代码手里拿着的是一篇文章,查本行比回查源表便宜。</figcaption>
+  </figure>
+
+  <figure>
+    <p class="ft">图 1-2 · 文章的章是怎么盖上的:三个入口</p>
+    <div class="entries">
+      <div class="entry">
+        <h4>常态 · 源行先到</h4>
+        <div class="when">每次同步 sources 流第一个跑</div>
+        <div><div class="lab">之前</div><div class="chips"><span class="cs cs-b">源 S · 本机</span><span class="cs cs-b">文 1</span><span class="cs cs-b">文 2</span><span class="cs cs-b">文 3</span></div></div>
+        <div class="ev">A 发来 S 的源行</div>
+        <div><div class="lab">之后</div><div class="chips"><span class="cs cs-a">源 S · 归 A</span><span class="cs cs-a">文 1</span><span class="cs cs-a">文 2</span><span class="cs cs-a">文 3</span></div></div>
+        <div class="res">S 下已有的本机文章<b>一起改章</b>,本机分析让位。</div>
+        <div><span class="verdict v-ok">源与文章一致</span></div>
+        <div class="code">archive_sync_v2._apply_sources</div>
+      </div>
+      <div class="entry">
+        <h4>兜底 · 文章先到</h4>
+        <div class="when">上游没发这个源的源行时</div>
+        <div><div class="lab">之前</div><div class="chips"><span class="cs cs-b">源 S · 本机</span><span class="cs cs-b">文 1</span><span class="cs cs-b">文 2</span><span class="cs cs-b">文 3</span></div></div>
+        <div class="ev">A 发来 S 下的一篇文 4</div>
+        <div><div class="lab">之后</div><div class="chips"><span class="cs cs-a">源 S · 归 A</span><span class="cs cs-frozen">文 1</span><span class="cs cs-frozen">文 2</span><span class="cs cs-frozen">文 3</span><span class="cs cs-a">文 4</span></div></div>
+        <div class="res">只改源和文 4。文 1–3 还盖着「本机」,但源已归 A,它们<b>冻结</b>:可读,不分析、不导出;下次整流全量时按上游核对,被同 id 的上游行覆盖或删掉。</div>
+        <div><span class="verdict v-warn">短暂不一致,源列说了算</span></div>
+        <div class="code">archive_sync_v2._apply_articles</div>
+      </div>
+      <div class="entry">
+        <h4>本机想往 S 写</h4>
+        <div class="when">本机抓取器、收录推送</div>
+        <div><div class="lab">状态</div><div class="chips"><span class="cs cs-a">源 S · 归 A</span></div></div>
+        <div class="ev">本机抓到 S 的一篇新文章</div>
+        <div><div class="lab">结果</div><div class="chips"><span class="cs cs-x">新文章</span></div></div>
+        <div class="res">写入闸查<b>源列</b>,拒绝落库。</div>
+        <div><span class="verdict v-bad">拒绝</span></div>
+        <div class="code">DatabaseStorage.save_with_outcome</div>
+      </div>
+    </div>
+    <figcaption>上一条回答说「不会出现混合状态」说满了:兜底入口会短暂留下盖着「本机」章的旧文章。这不改变结论,因为下面这张表里,能决定「本机能不能处理」的永远有源列。</figcaption>
+  </figure>
+
+  <figure>
+    <p class="ft">图 1-3 · 代码判断「本机能不能处理这篇」时查哪一列</p>
+    <div class="tbl"><table>
+      <thead><tr><th>判断点</th><th>查哪一列</th><th>位置</th></tr></thead>
+      <tbody>
+        <tr><td>抓取写入、收录推送</td><td>源</td><td><code>db_storage.py</code> 写入闸、<code>ingest_push</code></td></tr>
+        <tr><td>分析入队、认领、回填</td><td>源</td><td><code>article_analysis.py</code>、<code>analysis_backfill.py</code></td></tr>
+        <tr><td>标题翻译、论文全文、手动重抓</td><td>文章 <b>且</b> 源</td><td><code>title_translation.py:98</code>、<code>paper_fulltext.py:40</code>、<code>routers/articles.py:111</code></td></tr>
+        <tr><td>导出给下游</td><td>文章 <b>且</b> 源</td><td><code>archive_sync_v2._upsert_payload</code></td></tr>
+        <tr><td>管理员的开关:采集任务、启停、分析开关、改删</td><td>源</td><td>源管理页</td></tr>
+      </tbody>
+    </table></div>
+  </figure>
+
+  <div class="callout key"><b>所以标记放在源管理页。</b>决定在源上发生,管理员能拨的开关也全在源上。文章面上没有需要「远端」来门控的按钮:删除与重新分析对上游文章今天已经拒绝。</div>
+</section>
+
+<!-- ② -->
+<section id="s2">
+  <h2>② 源管理页:今天 vs #263 之后</h2>
+  <p class="lead">今天内网的整机开关一开,所有公共源一起停,页面不用区分。去掉整机开关后,同一张表里有两种行:归上游的冻结,本机的照常。表上必须看得出来。</p>
+
+  <figure>
+    <p class="ft">图 2-1 · 内网 B 的「源管理」</p>
+    <div class="cmp">
+      <div>
+        <div class="h">今天</div>
+        <div class="mock">
+          <div class="mock-bar"><span class="ttl">源管理</span><span class="btn-q">含已退役</span></div>
+          <div class="grp">媒体</div>
+          <div class="node"><span class="dot"></span><span class="nm2"><b>机器之心</b><span class="sid">jiqizhixin</span></span><span class="shape">文章</span><span class="last">累计 1,204 篇</span><span class="acts"><span class="act hot">▶</span><span class="act">⋯</span></span></div>
+          <div class="toast">数据源由远端权威节点管理,本机不能修改、删除或抓取</div>
+          <div class="node"><span class="dot"></span><span class="nm2"><b>Hugging Face 每日论文</b><span class="sid">hf_daily_papers</span></span><span class="shape">文章</span><span class="last">累计 3,310 篇</span><span class="acts"><span class="act">▶</span><span class="act">⋯</span></span></div>
+          <div class="anno mu">按钮都在,点了才知道不能动</div>
+          <div class="grp">官方</div>
+          <div class="node"><span class="dot idle"></span><span class="nm2"><b>团队技术周刊</b><span class="sid">team_weekly</span></span><span class="shape">文章</span><span class="last">累计 86 篇</span><span class="acts"><span class="act">▶</span><span class="act">⋯</span></span></div>
+          <div class="anno bad">这个源上游没有,也被整机开关一起挡住</div>
+          <div class="mock-foot">看不出哪行归上游;整页公共源都不能动</div>
+        </div>
+      </div>
+      <div>
+        <div class="h">#263 之后</div>
+        <div class="mock">
+          <div class="mock-bar"><span class="ttl">源管理</span><span class="seg new"><span class="on">全部 118</span><span>本机 6</span><span>远端 112</span></span><span class="btn-q">含已退役</span></div>
+          <div class="grp">媒体</div>
+          <div class="node"><span class="dot"></span><span class="nm2"><b>机器之心</b><span class="pill pill-remote pill-new">远端</span><span class="sid">jiqizhixin</span></span><span class="shape">文章</span><span class="last">累计 1,204 篇</span><span class="acts"><span class="act off">▶</span><span class="act">⋯</span></span></div>
+          <div class="anno mu">悬停:由上游采集与分析,本机只读</div>
+          <div class="node"><span class="dot"></span><span class="nm2"><b>Hugging Face 每日论文</b><span class="pill pill-remote pill-new">远端</span><span class="sid">hf_daily_papers</span></span><span class="shape">文章</span><span class="last">累计 3,310 篇</span><span class="acts"><span class="act off">▶</span><span class="act">⋯</span></span></div>
+          <div class="grp">官方</div>
+          <div class="node"><span class="dot"></span><span class="nm2"><b>团队技术周刊</b><span class="sid">team_weekly</span></span><span class="shape">文章</span><span class="last">2 小时前 · 成功</span><span class="acts"><span class="act">▶</span><span class="act">⋯</span></span></div>
+          <div class="anno ok">不归上游:可运行、可编入采集任务、可开关分析</div>
+          <div class="mock-foot">远端行的运行、试抓、编入任务、分析开关、改删禁用;读者面「隐藏」保留,它只改本机读者看到什么</div>
+        </div>
+      </div>
+    </div>
+    <figcaption>紫框是新增:一枚「远端」小标,一个三档筛选。筛选只在有远端源的节点上出现,外网看不到它。</figcaption>
+  </figure>
+
+  <figure>
+    <p class="ft">图 2-2 · 点「本机」= 上线前的盘点清单</p>
+    <div class="mock">
+      <div class="mock-bar"><span class="ttl">源管理</span><span class="seg"><span>全部 118</span><span class="on">本机 6</span><span>远端 112</span></span><span class="btn-q">含已退役</span></div>
+      <div class="node"><span class="dot idle"></span><span class="nm2"><b>团队技术周刊</b><span class="sid">team_weekly</span></span><span class="shape">文章</span><span class="last">采集任务 · 开</span><span class="acts"><span class="act">▶</span><span class="act">⋯</span></span></div>
+      <div class="node"><span class="dot idle"></span><span class="nm2"><b>某公网博客</b><span class="sid">some_public_blog</span></span><span class="shape">文章</span><span class="last">采集任务 · 开</span><span class="acts"><span class="act">▶</span><span class="act">⋯</span></span></div>
+      <div class="anno bad">内网连不上公网:上线后会开始产生失败记录 → 在这里关掉它的采集</div>
+      <div class="node"><span class="dot idle"></span><span class="nm2"><b>预设类 · 上游没有</b><span class="sid">preset_x</span></span><span class="shape">播客</span><span class="last">采集任务 · 关</span><span class="acts"><span class="act">▶</span><span class="act">⋯</span></span></div>
+      <div class="mock-foot">…… 共 6 个。它们不归上游,今天被整机开关一起停着;#263 上线后按各自的采集任务恢复运行</div>
+    </div>
+    <figcaption>issue 评论里要求「上线前盘点上游没有、采集任务开着的公共源」,这个集合恰好就是「本机」筛选。时序上有个实话:筛选只在新版本里有。升级前要看清单得查库(方案 §5 的 SQL);也可以先升级、立刻在这里关掉不要的,中间最多多跑一两轮失败的抓取,没有数据风险。</figcaption>
+  </figure>
+
+  <figure>
+    <p class="ft">图 2-3 · 节点同步页的连接栏</p>
+    <div class="kvbar">
+      <div><div class="h" style="font-size:13px;font-weight:600;margin-bottom:8px">今天</div>
+        <dl class="kv"><dt>远端地址</dt><dd class="mono">https://外网主机</dd><dt>authority</dt><dd class="mono">dorami-3f2a…</dd><dt>本地采集</dt><dd>仅自定 RSS · 11-05 起</dd></dl>
+      </div>
+      <div><div class="h" style="font-size:13px;font-weight:600;margin-bottom:8px">#263 之后</div>
+        <dl class="kv"><dt>远端地址</dt><dd class="mono">https://外网主机</dd><dt>authority</dt><dd class="mono">dorami-3f2a…</dd><dt>归远端的源</dt><dd><span class="hl">112 个</span></dd></dl>
+      </div>
+    </div>
+    <figcaption>与源管理「远端」筛选是同一个数。「本地采集 仅自定 RSS」这一行随整机开关一起消失。</figcaption>
+  </figure>
+</section>
+
+<!-- ③ -->
+<section id="s3">
+  <h2>③ 去掉整机开关:节点不再有「模式」</h2>
+  <p class="lead">今天是整台机器一个开关,拉一次就切过去、撤不回来。之后没有节点级的状态,只剩每个源各自的归属。</p>
+
+  <figure>
+    <p class="ft">图 3-1 · 今天:整机 consumer 模式</p>
+    <div class="sm">
+      <div class="st"><div class="s">未接入</div><ul><li>公共源照常采、析</li></ul></div>
+      <div class="edge"><span>点「开始首次同步」</span><span>或启用 v2 定时</span><div class="ln"></div><span>先过确认框</span></div>
+      <div class="st lock"><div class="s">consumer 模式 · 整台机器</div><ul>
+        <li>公共源采集与分析全停,上游没有的也停</li>
+        <li>首次同步时把本机全部公共源置为「停用」</li>
+        <li>不能新建公共源、不签发收录令牌</li>
+        <li>不跑源目录对账</li>
+      </ul></div>
+      <div class="edge none"><span>回去的路</span><div class="ln"></div><span>没有 · 界面撤不回</span></div>
+    </div>
+  </figure>
+
+  <figure>
+    <p class="ft">图 3-2 · #263 之后:每个源一条状态</p>
+    <div class="sm">
+      <div class="st loc"><div class="s">本机的源</div><ul><li>采不采、析不析看普通开关</li><li>随时可改、可撤</li></ul></div>
+      <div class="edge"><span>上游发来</span><span>同 id 的源</span><div class="ln"></div><span>自动交接</span></div>
+      <div class="st rem"><div class="s">归上游的源 · 冻结</div><ul><li>可读;本机不采、不析、不改</li><li>上游的更新照常同步进来</li></ul></div>
+      <div class="edge dash"><span>唯一回程:</span><span>上游物理删除这个源</span><div class="ln"></div><span>实际上几乎走不到</span></div>
+      <div class="st" style="opacity:.6"><div class="s">本机重新接手</div><ul><li>本机重建源行后可采</li></ul></div>
+    </div>
+    <p class="sm-sub" style="margin-top:12px">同步只管一件事:<b>上游发来的源归上游</b>,一源一写者。确认框、定时弹层里的红字警示随之删除;新建公共源、收录令牌、源目录对账在有上游的节点上也照常可用。</p>
+    <div class="callout risk" style="margin:12px 0 0"><b>回程为什么几乎走不到。</b>#262 之后,上游对有文章的源只做「退役」不做删除。退役的源到了本机仍然归上游、仍然冻结。所以一个源一旦归了上游,即使后来断开同步,本机也收不回来。要能收回,就得做「手动解除归属」,这正是待拍板第 2 项要您决定的。</div>
+  </figure>
+
+  <div class="callout">这条按源归属的约束今天就存在(<code>collection_authority_id</code> 非空即不准本机采析),和整机开关无关。整机开关只多管了两件事:上游没有的源也不准采,以及首次全量到达前的空窗。去掉它,16 处调用点的语义自动收窄成按源判定,调用处不用改。</div>
+</section>
+
+<!-- ④ -->
+<section id="s4">
+  <h2>④ 转发:拉来的也导出</h2>
+  <p class="lead">今天每台节点只导出自己产生的数据。之后导出本机持有的全部公开数据,每行带上原产地。</p>
+
+  <figure>
+    <p class="ft">图 4-1 · 今天:到 B 就停</p>
+    <div class="topo">
+      <div class="tnode a"><div class="th">A 外网</div><div class="tb2">
+        <div><div class="lab">持有</div><div class="chips"><span class="cs cs-a">a1</span><span class="cs cs-a">a2</span></div></div>
+        <div class="exp"><div class="lab">导出</div><div class="chips"><span class="cs cs-a">a1</span><span class="cs cs-a">a2</span></div></div>
+      </div></div>
+      <div class="tarr"><span>B 拉 A</span><div class="ln"></div></div>
+      <div class="tnode b"><div class="th">B 内网</div><div class="tb2">
+        <div><div class="lab">持有</div><div class="chips"><span class="cs cs-a">a1</span><span class="cs cs-a">a2</span><span class="cs cs-b">b1</span><span class="cs cs-b">b2</span></div></div>
+        <div class="exp"><div class="lab">导出(只取本机产生的)</div><div class="chips"><span class="cs cs-x">a1</span><span class="cs cs-x">a2</span><span class="cs cs-b">b1</span><span class="cs cs-b">b2</span></div></div>
+      </div></div>
+      <div class="tarr"><span>C 拉 B</span><div class="ln"></div></div>
+      <div class="tnode c"><div class="th">C 下游</div><div class="tb2">
+        <div><div class="lab">持有</div><div class="chips"><span class="cs cs-b">b1</span><span class="cs cs-b">b2</span></div></div>
+        <div class="muted" style="font-size:12px">拿不到 A 的任何数据</div>
+      </div></div>
+    </div>
+    <figcaption>而且今天 B 一拉 A 就进了整机模式,b1、b2 这类本机数据基本也不再产生。</figcaption>
+  </figure>
+
+  <figure>
+    <p class="ft">图 4-2 · #263 之后:沿树往下传,原产地随行</p>
+    <div class="topo">
+      <div class="tnode a"><div class="th">A 外网</div><div class="tb2">
+        <div><div class="lab">持有</div><div class="chips"><span class="cs cs-a">a1</span><span class="cs cs-a">a2</span></div></div>
+        <div class="exp"><div class="lab">导出</div><div class="chips"><span class="cs cs-a">a1</span><span class="cs cs-a">a2</span></div><div class="hop" style="margin-top:4px">不带原产地键 = 线格式不变</div></div>
+      </div></div>
+      <div class="tarr"><span>B 拉 A</span><div class="ln"></div></div>
+      <div class="tnode b"><div class="th">B 内网</div><div class="tb2">
+        <div><div class="lab">持有</div><div class="chips"><span class="cs cs-a">a1</span><span class="cs cs-a">a2</span><span class="cs cs-b">b1</span><span class="cs cs-b">b2</span></div></div>
+        <div class="exp"><div class="lab">导出(本机持有的全部公开数据)</div><div class="chips"><span class="cs cs-a">a1 · 原产 A</span><span class="cs cs-a">a2 · 原产 A</span><span class="cs cs-b">b1</span><span class="cs cs-b">b2</span></div></div>
+      </div></div>
+      <div class="tarr"><span>C 拉 B</span><div class="ln"></div></div>
+      <div class="tnode c"><div class="th">C 下游</div><div class="tb2">
+        <div><div class="lab">持有</div><div class="chips"><span class="cs cs-a">a1</span><span class="cs cs-a">a2</span><span class="cs cs-b">b1</span><span class="cs cs-b">b2</span></div></div>
+        <div class="hop">上一跳都记 B;原产地 A / B 分开记</div>
+      </div></div>
+    </div>
+    <figcaption>C 的逐行归属列仍然只写「上一跳 B」:「不是我的别碰」「只从一个上游收」「整流收尾按上游盘点」这些判定全部不改。原产地只多存在一张记账表上。</figcaption>
+  </figure>
+
+  <figure>
+    <p class="ft">图 4-3 · B 发给 C 的一页里,两种行的样子</p>
+<pre>{"kind":"manifest","stream":"articles","authority_id":"B", ...}
+{"kind":"article","identity":"b1","revision":"815","payload":{...}}
+{"kind":"article","identity":"a1","revision":"816","payload":{...},<span class="hl">"origin_authority_id":"A"</span>}</pre>
+    <p style="font-size:13px;color:var(--ink-2);margin-top:10px">本机行不带新键;只有转发行多一个可选键。老接收端不校验它,会直接忽略。</p>
+    <div style="margin-top:10px"><div class="lab" style="font-size:11px;color:var(--ink-3);margin-bottom:6px">不论数据从哪来,永远不外传</div>
+      <div class="never"><span>读者数据(账户、订阅、兴趣、早报)</span><span>自定 RSS</span><span>带凭据的源</span><span>本机译文缓存</span><span>人工叠加标签</span></div>
+    </div>
+  </figure>
+
+  <figure>
+    <p class="ft">图 4-4 · 防环:误配成环时在连接那一步拦下</p>
+    <svg viewBox="0 0 900 250" width="100%" role="img" aria-label="误配成环时在测试连接拦下">
+      <defs>
+        <marker id="mh2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--line-2)"/></marker>
+        <marker id="mhb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--bad)"/></marker>
+      </defs>
+      <rect x="40" y="26" width="220" height="70" rx="10" style="fill:var(--a-soft);stroke:var(--a)"/>
+      <text x="150" y="54" text-anchor="middle" class="sv-ta">A 外网</text>
+      <text x="150" y="78" text-anchor="middle" class="sv-t3">根节点 · taxonomy 自产</text>
+      <rect x="340" y="26" width="220" height="70" rx="10" style="fill:var(--b-soft);stroke:var(--b)"/>
+      <text x="450" y="54" text-anchor="middle" class="sv-tb">B 内网</text>
+      <text x="450" y="78" text-anchor="middle" class="sv-t3">taxonomy 来自 A</text>
+      <rect x="640" y="26" width="220" height="70" rx="10" style="fill:var(--c-soft);stroke:var(--c)"/>
+      <text x="750" y="54" text-anchor="middle" style="fill:var(--c);font-size:13px;font-weight:700">C 下游</text>
+      <text x="750" y="78" text-anchor="middle" class="sv-t3">报出的 taxonomy 原产地 = A</text>
+      <path class="sv-ln" d="M264 61 L334 61" marker-end="url(#mh2)"/>
+      <text x="299" y="50" text-anchor="middle" class="sv-t3">B 拉 A</text>
+      <path class="sv-ln" d="M564 61 L634 61" marker-end="url(#mh2)"/>
+      <text x="599" y="50" text-anchor="middle" class="sv-t3">C 拉 B</text>
+      <path class="sv-badln" d="M750 100 C750 196, 150 196, 150 104" marker-end="url(#mhb)"/>
+      <text x="450" y="166" text-anchor="middle" class="sv-bad">管理员误配:让 A 去拉 C</text>
+      <text x="450" y="226" text-anchor="middle" class="sv-t2">A 测试连接时读到 C 的 taxonomy 原产地是 A 自己 → 报错「目标在本机的下游」,在任何写入之前拒绝</text>
+    </svg>
+    <figcaption>测试连接本来就要读目标的 taxonomy 快照,不新增请求。单一上游又不支持更换远端,成环只可能是「没有上游的根节点去接自己的后代」这一种情形,而后代报出的 taxonomy 原产地一定是这个根,所以这一条检查就够。逐行跳过「原产地是本机」的行留作第二道防线。</figcaption>
+  </figure>
+
+  <div class="callout fix"><b>画这张图时修正了方案稿的一处漏洞。</b>方案稿让 B 用「本机记的 taxonomy 来源」充当原产地,但 C 记的来源是上一跳 B,传到第二跳就丢了树根。改为接收端另存一份 taxonomy 原产地,每跳原样往下传。方案 §3.3、§3.4 已同步修改。</div>
+
+  <div class="callout risk"><b>本波最大的数据风险在这里。</b>下游整流全量收尾时会问上游「这批还在吗」,上游答「不在」的就删。这个存在性核对的口径必须和导出一起扩大,否则 C 会把 A 原产的行当成「B 没有」全部删掉。方案要求两处共用一个判定函数,并加一条守卫测试。</div>
+</section>
+
+<!-- ⑤ -->
+<section id="s5">
+  <h2>⑤ 本机时钟:为什么加两列而不是改一列</h2>
+  <p class="lead">导出按「事务修订号」翻页。今天这张记账表里本就混着两种时钟,转发要求再加一种用法。</p>
+
+  <figure>
+    <p class="ft">图 5-1 · B 的 <code>archive_sync_entity_states</code>(节选)</p>
+    <div class="tbl"><table>
+      <thead><tr><th>流</th><th>实体</th><th>上一跳</th><th>revision</th><th class="newcol">local_revision 新</th><th class="newcol">origin 新</th></tr></thead>
+      <tbody>
+        <tr><td>articles</td><td class="mono">b1</td><td><span class="tb">本机</span></td><td class="mono">815 <span class="muted">B 的时钟</span></td><td class="mono newcol">815</td><td class="newcol muted">—</td></tr>
+        <tr><td>articles</td><td class="mono">a1</td><td><span class="ta">A</span></td><td class="mono">40213 <span class="muted">A 的时钟</span></td><td class="mono newcol">816</td><td class="newcol"><span class="ta">A</span></td></tr>
+        <tr><td>articles</td><td class="mono">a2</td><td><span class="ta">A</span></td><td class="mono">40220 <span class="muted">A 的时钟</span></td><td class="mono newcol">816</td><td class="newcol"><span class="ta">A</span></td></tr>
+        <tr><td>analyses</td><td class="mono">b1</td><td><span class="tb">本机</span></td><td class="mono">817 <span class="muted">B 的时钟</span></td><td class="mono newcol">817</td><td class="newcol muted">—</td></tr>
+      </tbody>
+    </table></div>
+    <figcaption>今天:本机行的 revision 是本机时钟(给下游翻页用),拉来的行的 revision 是上游时钟(判断「这一行我应用过没有」)。转发要按本机时钟给下游翻页,所以新增 local_revision;同一页拉来的行共用一个本机时钟值,再按实体 id 排序。origin 记原产地。</figcaption>
+  </figure>
+
+  <div class="cmp">
+    <div class="callout key" style="margin:0"><b>选:加新列。</b>旧代码完全不认识 local_revision 与 origin。新版本回滚到旧版本时,新列被无视,旧逻辑照旧工作。</div>
+    <div class="callout risk" style="margin:0"><b>不选:把 revision 改成本机时钟、另存上游值。</b>改动更少,但回滚到旧代码后,旧代码会拿本机时钟和上游 revision 比大小,可能把真正的上游更新当成「已应用」跳过,数据静默过期。</div>
+  </div>
+</section>
+
+<!-- ⑥ -->
+<section id="s6">
+  <h2>⑥ 为什么不做互拉(A↔B)</h2>
+  <p class="lead">互拉是一个 2 环,和「单一上游 → 树」矛盾。即使靠防环跳过本机行,两边同时首拉时有一个接收端无法察觉的竞态。</p>
+
+  <figure>
+    <p class="ft">图 6-1 · A、B 本来都在采同一个源 S</p>
+    <svg viewBox="0 0 900 290" width="100%" role="img" aria-label="互拉对称交接竞态时间线">
+      <defs>
+        <marker id="mh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--line-2)"/></marker>
+      </defs>
+      <line class="sv-grid" x1="240" y1="40" x2="240" y2="270"/>
+      <line class="sv-grid" x1="430" y1="40" x2="430" y2="270"/>
+      <line class="sv-grid" x1="625" y1="40" x2="625" y2="270"/>
+      <text class="sv-t3" x="150" y="26" text-anchor="middle">t0 各自采集 S</text>
+      <text class="sv-t3" x="335" y="26" text-anchor="middle">t1 同时拉对方的快照</text>
+      <text class="sv-t3" x="527" y="26" text-anchor="middle">t2 各自应用</text>
+      <text class="sv-t3" x="760" y="26" text-anchor="middle">t3 之后</text>
+
+      <circle cx="30" cy="88" r="13" fill="var(--a)"/><text x="30" y="92.5" text-anchor="middle" style="fill:var(--surface);font-size:12px;font-weight:700">A</text>
+      <circle cx="30" cy="218" r="13" fill="var(--b)"/><text x="30" y="222.5" text-anchor="middle" style="fill:var(--surface);font-size:12px;font-weight:700">B</text>
+
+      <rect class="sv-a" x="70" y="64" width="160" height="48" rx="9"/><text class="sv-t" x="150" y="93" text-anchor="middle">S · 本机采集</text>
+      <rect class="sv-b" x="70" y="194" width="160" height="48" rx="9"/><text class="sv-t" x="150" y="223" text-anchor="middle">S · 本机采集</text>
+
+      <path class="sv-ln" d="M262 194 L406 114" marker-end="url(#mh)"/>
+      <path class="sv-ln" d="M262 112 L406 192" marker-end="url(#mh)"/>
+      <text class="sv-t2" x="335" y="76" text-anchor="middle">A 看到:S 在 B 是本机的</text>
+      <text class="sv-t2" x="335" y="262" text-anchor="middle">B 看到:S 在 A 是本机的</text>
+
+      <rect class="sv-b" x="450" y="64" width="155" height="48" rx="9"/><text class="sv-t" x="527" y="93" text-anchor="middle">S 交给 B</text>
+      <rect class="sv-a" x="450" y="194" width="155" height="48" rx="9"/><text class="sv-t" x="527" y="223" text-anchor="middle">S 交给 A</text>
+
+      <rect class="sv-frz" x="645" y="64" width="230" height="48" rx="9"/><text class="sv-t2" x="760" y="86" text-anchor="middle">A:S 冻结,等 B 采</text><text class="sv-t3" x="760" y="103" text-anchor="middle">B 转发来的 S 原产地是 A → 跳过</text>
+      <rect class="sv-frz" x="645" y="194" width="230" height="48" rx="9"/><text class="sv-t2" x="760" y="216" text-anchor="middle">B:S 冻结,等 A 采</text><text class="sv-t3" x="760" y="233" text-anchor="middle">A 转发来的 S 原产地是 B → 跳过</text>
+      <text class="sv-bad" x="760" y="158" text-anchor="middle">S 从此没人采集</text>
+    </svg>
+    <figcaption>两边的快照都拍在对方交接之前,所以各自都以为对方才是 S 的写者。接收端只能看到上游一侧,判断不出对方此刻也在交接。树形下每台只有一个上游,不会出现这种对称。多来源同理不做:要重做逐行围栏、checkpoint、存在性核对三件事。</figcaption>
+  </figure>
+</section>
+
+<!-- ⑦ -->
+<section id="s7">
+  <h2>⑦ 上线顺序与混版本</h2>
+  <p class="lead">外网按 tag 先上,内网经 master 晚几天,外网也可能回滚。两个窗口都安全,出网请求零变化。</p>
+  <figure>
+    <div class="tbl"><table>
+      <thead><tr><th>窗口</th><th>会怎样</th><th>结论</th></tr></thead>
+      <tbody>
+        <tr><td>新外网 + 旧内网<br><span class="muted">默认窗口</span></td><td>外网不拉任何人,没有转发行,导出内容与格式不变。taxonomy 首页多一个可选键,旧内网忽略。旧内网保留整机开关,行为与今天一致。</td><td class="ok">安全</td></tr>
+        <tr><td>旧外网 + 新内网<br><span class="muted">内网先上或外网回滚</span></td><td>读不到新键,原产地按上一跳算,与今天等价。整机开关被迁移删除,内网「上游没有且采集任务开着」的公共源恢复采集,即图 2-2 的清单。</td><td class="ok">安全;盘点后关掉不要的</td></tr>
+        <tr><td>新版本回滚到旧版本</td><td>新列旧代码不读。旧代码下次定时拉取会重建整机开关,行为回到旧版。</td><td class="ok">无数据风险</td></tr>
+      </tbody>
+    </table></div>
+    <figcaption>合入前做两组跨版本实测:旧 tag 接收端 × 新生产端,新接收端 × 旧 tag 生产端;再加一条 A→B→C 三节点链实测。</figcaption>
+  </figure>
+</section>
+
+<!-- ⑧ -->
+<section id="s8">
+  <h2>⑧ 待拍板</h2>
+  <figure>
+    <ol class="dec">
+      <li>互拉与多来源不做,防环只为误配。<span class="rec">建议不做</span> <a href="#s6">见 ⑥</a></li>
+      <li>「本机要自己采须先解除归属」本波不做手动解除。代价是一个源归了上游就收不回来,断开同步后也一样冻结。<span class="rec">建议不做,等真实需要</span> <a href="#s3">见 ③</a></li>
+      <li>源管理页加「远端」小标和本机 / 远端筛选,兼作盘点清单。<span class="rec">建议做</span> <a href="#s2">见 ②</a></li>
+      <li>凭据自定源不经外部模型分析,从「只在整机模式下」改为全局规则。外网无读者,实际无行为变化。<span class="rec">建议改全局</span></li>
+      <li>策略模块 <code>sync_consumer_policy</code> 保留文件名,只删三个函数、更名一个。<span class="rec">建议保留</span></li>
+      <li>新的中转节点对旧版本下游在误配成环时不防,写进运维手册。连接时的拦环检查在新版本里生效。<span class="rec">建议接受</span> <a href="#s4">见 ④</a></li>
+    </ol>
+  </figure>
+</section>
+
+</div>
+</body>
+</html>
