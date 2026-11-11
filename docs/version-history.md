@@ -11,6 +11,7 @@
 
 ## 年表(一行一波;自 `CLAUDE.md` 迁入 2026-10-21,**新波次在此加一行**,L0 不再逐波改)
 
+- **推荐口径修订（#178，2026-11-11，开发中）**：播客精选只接受全文终评，公共日报新增独立深读 / 播客推荐与理由、可靠时长；旧新闻导出契约不变。新评分尺子仍待 #97 黄金集。见 [方案 §6](plans/issue-178-content-classification.md)。
 - **已发布迁移文件守卫 + 部署健康验证诊断(issue #227,开发版 3.68.0-alpha,2026-11-09,待发布)**:CI `scripts/check_released_migrations.py` 对最新正式 tag 逐字节比对 `alembic/versions/*`(新增允许,改写 / 删除 / 改名红);手工 `./deploy-docker.sh` 探针地址取 compose 解析出的 nginx 发布端口(v3.67.0 手工部署 87 次 `bad-json` 推测是探到了 80 端口 TLS 边缘的 301 页),健康失败打 HTTP 状态码 + 响应前 200 字节 + 提示;backend healthcheck `start_period` 按「待执行迁移数 × 每迁移秒数 × 库 GiB」加宽;`compose up` 失败单独报。见 [方案](archive/issue-227-released-migrations-guard.md)。
 - **早报播客导读入口（#269，2026-11-09，已获准合入 PR #273）**：所有播客信息栏增加生成/播放按钮，独立刷新当前导读状态，接入既有点播与播放器；交互回归不触发付费，另复用 #268 已授权生成的真实音频验证播放，PR #273 获准合入，待正式发布。
 
@@ -828,3 +829,7 @@ Buzzsprout 的单词级 JSON 原先每个词单独换行并重复说话人。阅
 **设计取舍**:不扩大 sleep,也不改仓外安装的生产 launcher(加一行输出就要生产机人工重装,且挡不住放在输出前的二次读取)。改为**读取触发**:`DEPLOY_PATH` 前置一个 `python3` 垫片,原样转发;当调用恰为 launcher 的 state_snapshot(`python3 - <state.json>`)且读到本轮 complete,在真解释器返回之后把 state 覆写成另一轮 `complete/rc=0` 并落标记(内容 = 本轮 run_id);假 worker 只写快照、等标记、退出。launcher 拿到的快照必是本轮,之后任何再读都是另一轮——「同一份快照」成为确定可判的事实。断言补到四条:rc=7、垫片触发过(否则附垫片日志报「读快照方式变了?」)、state 已是另一轮、stdout 的 run 等于标记内容。**反向对照**收进仓库:`test_snapshot_race_harness_catches_second_read[reread_rc_in_loop|reread_rc_at_exit]` 把 launcher 文本改回二次读取 rc,同一夹具必报 0。
 
 **自测**:3 例 6.3 s;循环 10 遍 0 失败;注入 0.6 s / 2 s / 0.4 s / 1.5 s 延迟的 launcher 副本上新夹具全过;部署分组 CI 同形(`-n 4 --dist worksteal`)216 passed / 4 min 02 s。检视记录见[方案](archive/issue-203-launcher-snapshot-test.md) §6。实现方 Claude Code(Fable 5.1),检视方 Codex;纯测试修复、无目检界面,按 2026-09-19 例外在检视通过 + 全量套件绿 + CI 绿后直接合入。
+
+## 推荐口径修订（issue #178，2026-11-11）
+
+用户确认播客形态不等于深度，整期推荐与事件新闻分开。个人早报 / 榜单「播客精选」统一全文终评；公共日报不再按播客分将整期混入新闻，新增独立于新闻游标的近7天深度阅读 / 播客推荐。推荐快照单独扩展键，旧新闻 `items`、收录计数与新闻热度不变；已发布日报正文可供旧阅读器展示。只复用现有分析与可靠时长，不改提示词、不触发 ASR/TTS、不重评历史。沿用 3.68.0-alpha；后端全量3689通过/1跳过、推荐专项9通过、前端350通过及lint/build通过，与v3.67.4双向同步实测和桌面/窄屏自查完成；交叉检视两条P2已修复/文档化并复检通过，修后相关171项回归通过；待用户目检，未合入发布，见方案 §6。
