@@ -1,0 +1,62 @@
+{
+  "tts_model": "qwen3-tts-flash",
+  "tts_new_requests": 7,
+  "tts_usage_characters": 5452,
+  "tts_local_cost_minor": 44,
+  "tts_monthly_budget_minor": 3000,
+  "tts_per_run_budget_minor": 100,
+  "tts_ledger_total_minor": 85,
+  "previous_tts_ledger_preserved": true,
+  "idempotent_replay_new_calls": 0,
+  "asr_calls": 0,
+  "llm_requests": 1,
+  "llm_model": "deepseek-flash",
+  "llm_tokens": 36881,
+  "audio": {
+    "channels": 1,
+    "sample_rate": 24000,
+    "sample_width": 2,
+    "duration": 603.68,
+    "peak": 20863,
+    "rms": 2047.83
+  },
+  "baseline_edition_67_unchanged": true,
+  "production_budget_status": "deferred_by_user_local_only",
+  "news_status": "one_real_model_draft_reviewed_locally_not_published",
+  "screenshots": [
+    "assets/goodfire-current-reader.jpg",
+    "assets/real-news-sample-desktop.jpg",
+    "assets/real-before-podcast.jpg",
+    "assets/real-after-podcast.jpg",
+    "assets/audio-diff-annotated.jpg"
+  ],
+  "browser_playback": {
+    "real_app_current_time_seconds": 100.338502,
+    "real_app_duration_seconds": 603.68,
+    "ready_state": 4,
+    "media_error": null,
+    "sample_page_playback_seconds": 108.23463
+  },
+  "layout_checks": {
+    "desktop_width": 1280,
+    "mobile_width": 390,
+    "mobile_document_width": 390,
+    "parent_reader_link_verified": true
+  },
+  "screenshots_original_dimensions": {
+    "before": [
+      1440,
+      1000
+    ],
+    "after": [
+      1440,
+      1000
+    ],
+    "comparison": [
+      1280,
+      1956
+    ]
+  },
+  "production_config_changed": false,
+  "artifact_scope": "Repository review copy; audio and private receipts retained locally only."
+}

@@ -1614,6 +1614,8 @@ def _seed_valued(
         quality_score=news,
         score_reason=f"reason {number}",
         summary=f"summary {number}",
+        analysis_basis="publisher_transcript" if content_type == "podcast_episode" else "article_body",
+        podcast_final_score=news if content_type == "podcast_episode" else None,
         content_genre=genre,
         content_kind=content_kind,
         content_value=content_value,

@@ -11,6 +11,9 @@
 
 ## 年表(一行一波;自 `CLAUDE.md` 迁入 2026-10-21,**新波次在此加一行**,L0 不再逐波改)
 
+- **播客文字新闻真实样稿（#178 / #268，2026-11-12，本地验收）**：Goodfire真实全文提炼1次、人工纠正指标与评分；Cisco7段TTS成功并实际播放，新增本地计量¥0.44，原早报14条不变。详见[方案§11](plans/issue-178-podcast-news-extraction.md#11-真实样稿验收2026-11-12未上线)。
+- **播客文字新闻设计与预算核对（#178 / #268，2026-11-12，初稿）**：用真实 Cisco 原稿说明事件提炼/否定指代/日期核验，交付四视图 HTML；追溯生产预算最近记录 ¥20/月、¥2/次。无功能上线、无新增付费请求。见 [初稿](plans/issue-178-podcast-news-extraction.md)。
+- **推荐口径修订（#178，2026-11-11，开发中）**：播客精选只接受全文终评，公共日报新增独立深读 / 播客推荐与理由、可靠时长；旧新闻导出契约不变。新评分尺子仍待 #97 黄金集。见 [方案 §6](plans/issue-178-content-classification.md)。
 - **已发布迁移文件守卫 + 部署健康验证诊断(issue #227,开发版 3.68.0-alpha,2026-11-09,待发布)**:CI `scripts/check_released_migrations.py` 对最新正式 tag 逐字节比对 `alembic/versions/*`(新增允许,改写 / 删除 / 改名红);手工 `./deploy-docker.sh` 探针地址取 compose 解析出的 nginx 发布端口(v3.67.0 手工部署 87 次 `bad-json` 推测是探到了 80 端口 TLS 边缘的 301 页),健康失败打 HTTP 状态码 + 响应前 200 字节 + 提示;backend healthcheck `start_period` 按「待执行迁移数 × 每迁移秒数 × 库 GiB」加宽;`compose up` 失败单独报。见 [方案](archive/issue-227-released-migrations-guard.md)。
 - **早报播客导读入口（#269，2026-11-09，已获准合入 PR #273）**：所有播客信息栏增加生成/播放按钮，独立刷新当前导读状态，接入既有点播与播放器；交互回归不触发付费，另复用 #268 已授权生成的真实音频验证播放，PR #273 获准合入，待正式发布。
 
@@ -88,6 +91,12 @@
 - **3.58–3.60(2026-09-15–19)**:运维面播客与分析标签重构(#76)/ 移动端读者 E2E(#91)/ 同步修复(#96 / #99)/ PWA 主屏幕安装(#100)/ 弹窗遮罩关闭判定(#104)/ OSS 持久存储与自动备份(#109)/ 聚焦环入 base 层(#108)/ 发现页按形态批量订阅(#113)/ **GitHub Release 自动部署流水线(#102,v3.60.0 首发、v3.60.1 闭环)**:tag 推上去 → 自动建 Release → 串联 `deploy.yml` 停在 Environment `production` 等批准 → SSH forced command 触发生产机仓库外 launcher/worker → 目标 tag 的 `./deploy-docker.sh` → 公网 `/api/health` 核对;上线抓到两坑(checkout 改写 tag 引用 / Environment secrets 须 `secrets: inherit`),见 `docs/archive/auto-deploy-plan.md` §7。
 - **裸机部署回滚(issue #126,2026-09-21,待发布)**:裸机路径改「运行副本版本化」release 形态 + 锁内事务 + 两级健康门告警(不自动回滚)+ `./deploy.sh --rollback`(树外固化执行体,DB 按目标上下文迁移计划分流,`--restore-db` 显式恢复,只回一代)+ 收养 + `--code` / `--status` / `--discard-txn`;extras 钉版 `docker/requirements-crawl4ai.txt`;方案 `docs/archive/baremetal-rollback-plan.md`(codex 四轮设计检视 + §9 实现记录),手册 `docs/ops/deploy-baremetal.md`,桩测试 `tests/test_deploy_baremetal.py`。
 - **Podcast(issue #7 P0–P0.2)**:`source_type=podcast` → `generic_podcast_rss`,单集复用 `ArticleRecord` + `extensions_json`,只解析 enclosure 元数据不下载音频;36 节目策展目录 `services.podcast_catalog` 启动幂等安装、进普通采集任务不设源级开关;边界与后续见 `docs/archive/podcast-wave-plan.md`。
+
+## issue #178 播客文字新闻设计与 TTS 预算核对（2026-11-12，初稿，未实施）
+
+用户要求新闻提炼有设计与布局初稿，并追溯本地/现网预算。基于当前原稿、新闻/推荐/事件代码形成 [方案](plans/issue-178-podcast-news-extraction.md)：新闻按事件价值入既有版块，整期保持全文内容推荐；两阶段提炼与核验、人工审核、原稿血缘去重、权限撤回与混版本单独设计。Cisco 原稿明确前两个协议已推出、第三个验证协议尚未发布，首次发布日期仍待核验；HTML 提供个人/公共/审核/预算四视图及原文依据路径，所有未发布样例持续标注。
+
+GitHub #268 的 11 月 9 日生产记录为 ¥20/月、¥2/次，当日 17:14 占用 ¥17.42（历史预留 ¥12.09 + 本批计量 ¥5.33），不能用旧交接的 ¥22/月替代，也不冒充当前余额。当前本地预览关闭新语音生成，月/次预算 0；生产实时 API 未暴露 TTS 预算字段。未调整生产预算、账本或已暂停的补生成批次。本轮仅文档与离线样稿，运行文档守卫和浏览器交互/响应式检查，不宣称模型评测或产品实现完成。
 
 ## issue #227 已发布迁移文件守卫 + 部署健康验证诊断(分支 `feat/issue-227-migration-byte-guard`,开发版 3.68.0-alpha,待发布)
 
@@ -828,3 +837,12 @@ Buzzsprout 的单词级 JSON 原先每个词单独换行并重复说话人。阅
 **设计取舍**:不扩大 sleep,也不改仓外安装的生产 launcher(加一行输出就要生产机人工重装,且挡不住放在输出前的二次读取)。改为**读取触发**:`DEPLOY_PATH` 前置一个 `python3` 垫片,原样转发;当调用恰为 launcher 的 state_snapshot(`python3 - <state.json>`)且读到本轮 complete,在真解释器返回之后把 state 覆写成另一轮 `complete/rc=0` 并落标记(内容 = 本轮 run_id);假 worker 只写快照、等标记、退出。launcher 拿到的快照必是本轮,之后任何再读都是另一轮——「同一份快照」成为确定可判的事实。断言补到四条:rc=7、垫片触发过(否则附垫片日志报「读快照方式变了?」)、state 已是另一轮、stdout 的 run 等于标记内容。**反向对照**收进仓库:`test_snapshot_race_harness_catches_second_read[reread_rc_in_loop|reread_rc_at_exit]` 把 launcher 文本改回二次读取 rc,同一夹具必报 0。
 
 **自测**:3 例 6.3 s;循环 10 遍 0 失败;注入 0.6 s / 2 s / 0.4 s / 1.5 s 延迟的 launcher 副本上新夹具全过;部署分组 CI 同形(`-n 4 --dist worksteal`)216 passed / 4 min 02 s。检视记录见[方案](archive/issue-203-launcher-snapshot-test.md) §6。实现方 Claude Code(Fable 5.1),检视方 Codex;纯测试修复、无目检界面,按 2026-09-19 例外在检视通过 + 全量套件绿 + CI 绿后直接合入。
+
+## 推荐口径修订（issue #178，2026-11-11）
+
+用户确认播客形态不等于深度，整期推荐与事件新闻分开。个人早报 / 榜单「播客精选」统一全文终评；公共日报不再按播客分将整期混入新闻，新增独立于新闻游标的近7天深度阅读 / 播客推荐。推荐快照单独扩展键，旧新闻 `items`、收录计数与新闻热度不变；已发布日报正文可供旧阅读器展示。只复用现有分析与可靠时长，不改提示词、不触发 ASR/TTS、不重评历史。沿用 3.68.0-alpha；后端全量3689通过/1跳过、推荐专项9通过、前端350通过及lint/build通过，与v3.67.4双向同步实测和桌面/窄屏自查完成；交叉检视两条P2已修复/文档化并复检通过，修后相关171项回归通过；用户已于2026-11-12目检并要求提交 PR，未合入发布，见方案 §6。
+
+
+## issue #178 / #268 真实样稿与导读验收（2026-11-12，未上线）
+
+从原“待核验Cisco候选”转为两个已核实样本：Cisco已存在10月版本，保留深度推荐；Goodfire11月10日论文及图谱形成真实文字候选。模型混合74%指标口径、常规论文初评6.2，经审核删除歧义数字并按现行尺复核为5.5；整期内容分8.2不变。实际TTS7段成功、10分03秒、¥0.44本地计量，重放零新增调用；导入本地真实服务并播放到100.34秒，前后截图和三视图HTML留在工作区outputs。月上限本地已30元；生产调额已授权且RAM登录已恢复，但终端权限/SSH认证阻断；已准备并在隔离DB副本验证单项KV调额脚本，生产未执行，随后用户明确仅做本地、现网调额暂缓；真实样稿与标注截图已纳入仓库审阅材料。详见[方案与审计](plans/issue-178-podcast-news-extraction.md#11-真实样稿验收2026-11-12未上线)。

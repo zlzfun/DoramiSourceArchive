@@ -51,7 +51,7 @@ def _item(
     version=CONTENT_VALUE_SCORING_VERSION,
     status="succeeded",
     analyzed=True,
-    basis="",
+    basis=None,
 ):
     stamp = _iso(hours_ago)
     session.add(ArticleRecord(
@@ -62,7 +62,7 @@ def _item(
     session.flush()
     session.add(ArticleAnalysisRecord(
         article_id=article_id, status=status, quality_score=news, summary=f"Summary {article_id}",
-        analyzed_at=stamp if analyzed else None, analysis_basis=basis,
+        analyzed_at=stamp if analyzed else None, analysis_basis=basis if basis is not None else ("publisher_transcript" if content_type == "podcast_episode" else "article_body"),
         content_genre="industry_news", content_kind=kind, content_value=value,
         content_value_reason="reason" if value is not None else "",
         content_value_version=version if value is not None else "",
@@ -175,7 +175,7 @@ def test_picks_keep_prior_authoritative_result_while_reanalysis_runs_or_fails(tm
 
 
 def test_podcast_picks_carry_public_full_analysis_fact(tmp_path):
-    """检视 R1 #3:播客评分依据(仅基于节目简介 / 基于整期内容)要给前端;文章条目不带这个字段。"""
+    """#178:简介不足以推荐整期;精选只保留全文终评,文章条目不带播客依据。"""
 
     sink = _sink(tmp_path, "basis.db")
     with Session(sink.engine) as session:
@@ -186,7 +186,7 @@ def test_podcast_picks_carry_public_full_analysis_fact(tmp_path):
         listens = ranking_picks.read_picks(session, shape="podcast", now=NOW)
         reads = ranking_picks.read_picks(session, shape="article", now=NOW)
 
-    assert {item["id"]: item["full_analysis_ready"] for item in listens["items"]} == {"ep-full": True, "ep-notes": False}
+    assert {item["id"]: item["full_analysis_ready"] for item in listens["items"]} == {"ep-full": True}
     assert "full_analysis_ready" not in reads["items"][0]
 
 
