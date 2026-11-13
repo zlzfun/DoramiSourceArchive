@@ -202,7 +202,6 @@ export default function BriefHistoryCalendar({
 
   return (
     <div ref={panelRef} className="bp-pop bp-cal" role="dialog" aria-label="往期早报" tabIndex={-1} onBlur={handleBlur}>
-      <p className="bp-cal-title">往期早报</p>
       <div className="bp-cal-head">
         <p className="bp-cal-month" aria-live="polite">{monthLabel(nav.month)}</p>
         <MonthButtons nav={nav} className="bp-cal-nav" />

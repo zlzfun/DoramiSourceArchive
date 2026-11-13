@@ -953,7 +953,7 @@ export default function PersonalBriefPage({
       <Headline
         item={headline}
         guideProps={guideProps}
-        kicker={headline.selection_lane === 'breaking' ? `头条 · ${headWhy.text}` : `头条 · ${headSection}`}
+        kicker={headline.selection_lane === 'breaking' ? headWhy.text : headSection}
         source={sourceMap[headline.snapshot?.source_id]}
         flash={flashId != null && (headline.id ?? headline.position) === flashId}
         restCount={items.length - 1}
@@ -1000,7 +1000,6 @@ export default function PersonalBriefPage({
     ? [
       edition.generated_at ? `${clockOf(edition.generated_at)} 编排` : null,
       multiRev && edition.revision ? `第 ${edition.revision} 版` : null,
-      items.length > 0 ? `${items.length} 条` : null,
     ].filter(Boolean).join(' · ')
     : '';
   const pastDays = days.filter((day) => day.key !== selDate).slice(0, PAST_CHIPS);

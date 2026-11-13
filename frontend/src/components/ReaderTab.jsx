@@ -5,6 +5,8 @@ import {
   X,
   Minus,
   Plus,
+  ArrowLeft,
+  ArrowRight,
   ExternalLink,
   Loader2,
   Inbox,
@@ -486,7 +488,7 @@ export default function ReaderTab({
     activeArticle, activeBody, activeBodyLoading, selectArticle, openArticleById, refreshActiveArticle, supersedePendingOpen,
     schedulePrefetch, cancelPrefetch,
     activeIndex, prevArticle, nextArticle,
-    crumbSource, crumbName, displayBody, displayTranslatedBody, bodyStats,
+    crumbSource, displayBody, displayTranslatedBody, bodyStats,
     // 收藏
     favoriteIds, favTogglingId, handleToggleFavorite,
     // 分享
@@ -1049,6 +1051,7 @@ export default function ReaderTab({
       {/* ── 发现页:占据 条目列+阅读窗 的整片区域(源栏保持在场,订阅结果即时可见) ── */}
       {!pageOpen && discover && (
         <DiscoverPage
+          showHint={false}
           sources={discoverSources}
           subscribedIds={subscribedIds}
           loading={sourcesLoading}
@@ -1270,7 +1273,7 @@ export default function ReaderTab({
           {/* 新内容提示条:轮询发现未读正增量时出现,点击刷新——不自动插入打断阅读 */}
           {!favOnly && scope.axis === 'subscribed' && !articlesLoading && freshCount > 0 && (
             <button type="button" className="reader-fresh-pill" onClick={handleRefreshFresh}>
-              <RefreshCw className="h-3 w-3" />
+              <RefreshCw className="h-3.5 w-3.5" />
               {podcastView ? `载入 ${freshCount} 期新播客` : `载入 ${freshCount} 篇新文章`}
             </button>
           )}
@@ -1454,7 +1457,7 @@ export default function ReaderTab({
                 {crumbSource ? (
                   <LogoMark company={resolveCompany(crumbSource)} size="s17" emoji={crumbSource.icon} />
                 ) : null}
-                <span className="reader-crumb-name">{crumbName}</span>
+                <span className="reader-crumb-name">{sourceNameMap[activeArticle.source_id] || activeArticle.source_id}</span>
               </div>
               <button
                 type="button"
@@ -1514,8 +1517,7 @@ export default function ReaderTab({
                 (论文 / 版本更新…),资讯写事件类型(模型发布…),与条目行的类型签同一件事。 */}
             <header className="reader-pane-head">
               <div className="reader-kicker">
-                {(sourceNameMap[activeArticle.source_id] || activeArticle.source_id)}
-                {kindKickerLabel(activeArticle) ? ` · ${kindKickerLabel(activeArticle)}` : ''}
+                {kindKickerLabel(activeArticle) || ''}
                 {/* 全站范围里读到订阅外的文章:眉头挂一枚「+ 订阅」胶囊(源被收窄预览时列头已有横幅,不重复) */}
                 {!activeUnsubscribed && !subscribedIds.has(activeArticle.source_id) && !sourceMap[activeArticle.source_id]?.hidden && (
                   <button
@@ -1525,8 +1527,8 @@ export default function ReaderTab({
                     onClick={() => onRowSubscribeSource(activeArticle.source_id)}
                   >
                     {pinningId === activeArticle.source_id
-                      ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
-                      : <Plus className="h-3 w-3" aria-hidden="true" />}
+                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                      : <Plus className="h-3.5 w-3.5" aria-hidden="true" />}
                     订阅{sourceNameMap[activeArticle.source_id] ? ` ${sourceNameMap[activeArticle.source_id]}` : ''}
                   </button>
                 )}
@@ -1546,8 +1548,8 @@ export default function ReaderTab({
                 )}
                 {/* 字数与时长信息冗余(时长即由字数换算),只留时长;
                     阅读量 = 全站累计阅读次数(跨读者;含本次打开,由 /read 响应回填) */}
-                {bodyStats && (
-                  <span>{podcastView ? '简介阅读约' : '阅读约'} {bodyStats.minutes} 分钟</span>
+                {bodyStats && !podcastView && (
+                  <span>阅读约 {bodyStats.minutes} 分钟</span>
                 )}
                 {podcastView && !durationOnEntry && formatPodcastDuration(activeArticle.podcast?.duration_seconds) && (
                   <span>原节目 {formatPodcastDuration(activeArticle.podcast.duration_seconds)}</span>
@@ -1614,6 +1616,7 @@ export default function ReaderTab({
               {podcastView ? (
                 <PodcastExperiencePanel
                   article={activeArticle}
+                  showViewNote={false}
                   showTranslation={translationReady}
                   showNotesHead={!activeBodyLoading && Boolean(activeBody)}
                 >
@@ -1641,8 +1644,9 @@ export default function ReaderTab({
                   className="reader-pager-btn"
                   disabled={!prevArticle}
                   onClick={() => prevArticle && selectArticle(prevArticle)}
+                  aria-label={prevArticle ? `上一篇:${displayTitle(prevArticle, preferChinese)}` : '已是最新一篇'}
                 >
-                  <span className="reader-pager-dir">← 上一篇</span>
+                  <ArrowLeft aria-hidden="true" />
                   <span className="reader-pager-title">{prevArticle ? displayTitle(prevArticle, preferChinese) : '已是最新一篇'}</span>
                 </button>
                 <button
@@ -1650,9 +1654,10 @@ export default function ReaderTab({
                   className="reader-pager-btn reader-pager-next"
                   disabled={!nextArticle}
                   onClick={() => nextArticle && selectArticle(nextArticle)}
+                  aria-label={nextArticle ? `下一篇:${displayTitle(nextArticle, preferChinese)}` : '已到列表末尾'}
                 >
-                  <span className="reader-pager-dir">下一篇 →</span>
                   <span className="reader-pager-title">{nextArticle ? displayTitle(nextArticle, preferChinese) : '已到列表末尾'}</span>
+                  <ArrowRight aria-hidden="true" />
                 </button>
               </nav>
             )}

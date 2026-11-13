@@ -27,7 +27,8 @@ function writeView(view) {
 /**
  * children = 节目简介正文(阅读窗的正文容器,带翻译作用域);导读稿与逐字稿同一次请求取回。
  */
-export default function PodcastExperiencePanel({ article, showTranslation = false, showNotesHead = true, children }) {
+// showViewNote:页签右端的「中文 · AI 整理 / 来源方提供」。桌面不写(页签上的 ✦ 已标明,issue #279),手机壳照旧
+export default function PodcastExperiencePanel({ article, showTranslation = false, showNotesHead = true, showViewNote = true, children }) {
   const [view, setView] = useState(readView);
   const podcast = podcastOf(article);
   if (!podcast) return null;
@@ -61,7 +62,7 @@ export default function PodcastExperiencePanel({ article, showTranslation = fals
               <span>导读稿</span>
             </button>
           </div>
-          <span className="podcast-view-note">{guideOn ? '中文 · AI 整理' : '来源方提供'}</span>
+          {showViewNote && <span className="podcast-view-note">{guideOn ? '中文 · AI 整理' : '来源方提供'}</span>}
         </div>
       ) : showNotesHead && (
         <div className="podcast-show-notes-head">
