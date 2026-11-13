@@ -192,9 +192,15 @@ test('榜单页结构:三段分段、无标签三轴 / 30 日趋势 / 全局高�
   assert.equal((page.match(/className="rk-card-head"/g) || []).length, 2);
   assert.equal((page.match(/className="rk-card-time"/g) || []).length, 2);
   // 代表报道整卡可点(命中钮给焦点与读屏名,点击由卡接住);卡底外链不冒泡,不会顺带打开站内原文
-  const repCard = page.slice(page.indexOf('className="rk-rep"'), page.indexOf('{latest && ('));
+  const repStart = page.indexOf('className="rk-rep"');
+  const repEnd = page.indexOf('{latest && latestCard && (');
+  assert.ok(repStart > 0 && repEnd > repStart, '代表报道的截取边界应当存在');
+  const repCard = page.slice(repStart, repEnd);
   assert.match(repCard, /<button type="button" className="rk-hit"/);
   assert.match(repCard, /onClick=\{\(event\) => event\.stopPropagation\(\)\}/);
+  // 桌面事件页两栏:时间线第一条就是最新进展,不再另放一张卡、也不写「时间线 · N 篇」;手机壳两样都留着
+  assert.match(page, /timelineHead = true, latestCard = true/);
+  assert.match(page, /timelineHead=\{mobile\} latestCard=\{mobile\}/);
   // 点进站内原文带上「从哪来」,返回时由 restore 交回
   assert.match(page, /from: 'rankings', segment: seg/);
   assert.match(page, /from: 'rankings', segment: 'events'/);

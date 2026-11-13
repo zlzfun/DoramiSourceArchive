@@ -734,8 +734,8 @@ export default function ReaderTab({
           )}
         </div>
 
-        {/* 榜单打开时源列表保持在场(入口在视图轨,2026-11-04 目检由源栏顶挪过去)。点源、标签或「发现更多来源」会先关掉榜单再进入，
-            与视图轨文章/播客/发现按钮同一套 setRankingsOpen(false)。 */}
+        {/* 来源栏只挂在文章 / 播客两个容器与社交页的页边(#279 第二批起榜单、发现不挂)。点源、标签或「发现更多来源」
+            仍先 setRankingsOpen(false)——与视图轨文章 / 播客 / 发现按钮同一套,从任何入口进来都落在干净的状态上。 */}
         <div className="reader-source-scroll">
           {sourcesLoading ? (
             <SourceRowsSkeleton />

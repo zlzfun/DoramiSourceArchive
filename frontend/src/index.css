@@ -13381,6 +13381,8 @@ input[type="radio"] {
 .reader-page-wrap .rk-row:nth-child(n + 4) .rk-num { color: var(--dorami-faint); }
 .reader-page-wrap .rk-main { gap: 0; }
 .reader-page-wrap .rk-title { max-width: 36em; font-family: var(--font-serif); font-size: 20px; line-height: 1.45; }
+/* 语言标记在内层 span 上:字体要在那一层重新声明,[lang="en"] 换的西文衬线才生效(继承来的 font-family 不会重算) */
+.reader-page-wrap .rk-title > span { font-family: var(--font-serif); }
 /* 摘要两行,末行渐隐(不用省略号,同条目行) */
 .reader-page-wrap .rk-sum {
   margin-top: 6px; max-width: 52em; max-height: 3.4em; font-size: 14px; line-height: 1.7; white-space: normal;
@@ -13447,6 +13449,8 @@ input[type="radio"] {
 .reader-shell > .reader-disc .reader-disc-grp-label { font-family: var(--font-serif); font-size: 20px; font-weight: 600; line-height: 1.3; letter-spacing: 0; color: var(--dorami-ink); }
 .reader-shell > .reader-disc .reader-disc-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 40px; }
 .reader-shell > .reader-disc .reader-disc-card { padding: 20px 0; border-radius: 0; background: none; box-shadow: none; border-bottom: 1px solid var(--dorami-border-soft); }
+/* 键盘焦点:上一行把卡片的投影清掉了(层内的焦点环也是投影),这里按目录行的样子写回来 */
+.reader-shell > .reader-disc .reader-disc-card:has(.reader-disc-open:focus-visible) { outline: 2px solid var(--dorami-focus); outline-offset: 6px; border-radius: var(--r-sm); }
 .reader-shell > .reader-disc .reader-disc-name { font-size: 15px; }
 .reader-shell > .reader-disc .reader-disc-desc { font-size: 13px; }
 
@@ -13457,8 +13461,14 @@ input[type="radio"] {
 .reader-social.is-page .reader-social-split { display: grid; grid-template-columns: minmax(0, 640px) 248px; justify-content: space-between; gap: 0 48px; }
 .reader-social.is-page .reader-social-col { max-width: none; margin: 0; padding: 0; }
 .reader-social.is-page .reader-social-day { margin: 0; padding: 24px 0 4px; position: static; background: none; }
-.reader-social.is-page .reader-social-side { position: sticky; top: 24px; align-self: start; padding-top: 8px; }
-.reader-social.is-page .reader-social-side .reader-sources-inner { width: auto; }
+/* 页边吸顶时自己限高:账号多过一屏就在页边里滚,不必把整条动态流滚到底才看得到后面的账号与「发现更多来源」 */
+.reader-social.is-page .reader-social-side {
+  position: sticky; top: 24px; align-self: start; padding-top: 8px;
+  display: flex; flex-direction: column;
+  max-height: calc(var(--vh-full) - var(--app-top) - 24px - max(24px, var(--player-clear-end, 0px)));
+}
+.reader-social.is-page .reader-social-side .reader-sources-inner { flex: 0 1 auto; width: auto; height: auto; }
+.reader-social.is-page .reader-social-side .reader-source-scroll { padding-bottom: 12px; }   /* 播放条的留白已经算在页边的限高里 */
 .reader-social.is-page .reader-social-side .reader-src-head { display: none; }   /* 页名已经写了「社交媒体」 */
 
 .reader-ann-band {
