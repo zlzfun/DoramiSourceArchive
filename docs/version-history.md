@@ -11,6 +11,7 @@
 
 ## 年表(一行一波;自 `CLAUDE.md` 迁入 2026-10-21,**新波次在此加一行**,L0 不再逐波改)
 
+- **前端纪律:界面不靠说明文字解释自己(issue #278,2026-11-13,纯文档)**:用户定的规则 *Avoid unnecessary secondary labels and description, let the layout do the explaining* 写进 `AGENTS.md` 硬规则 2、`conventions.md` §1 首条(默认不写什么 / 判据 / 不在此列)与自检清单、`.claude/rules/frontend.md`;现网已有说明文字的删改不在本条,随 issue #279 做。
 - **播客文字新闻真实样稿（#178 / #268，2026-11-12，本地验收）**：Goodfire真实全文提炼1次、人工纠正指标与评分；Cisco7段TTS成功并实际播放，新增本地计量¥0.44，原早报14条不变。详见[方案§11](plans/issue-178-podcast-news-extraction.md#11-真实样稿验收2026-11-12未上线)。
 - **播客文字新闻设计与预算核对（#178 / #268，2026-11-12，初稿）**：用真实 Cisco 原稿说明事件提炼/否定指代/日期核验，交付四视图 HTML；追溯生产预算最近记录 ¥20/月、¥2/次。无功能上线、无新增付费请求。见 [初稿](plans/issue-178-podcast-news-extraction.md)。
 - **推荐口径修订（#178，2026-11-11，开发中）**：播客精选只接受全文终评，公共日报新增独立深读 / 播客推荐与理由、可靠时长；旧新闻导出契约不变。新评分尺子仍待 #97 黄金集。见 [方案 §6](plans/issue-178-content-classification.md)。
@@ -91,6 +92,18 @@
 - **3.58–3.60(2026-09-15–19)**:运维面播客与分析标签重构(#76)/ 移动端读者 E2E(#91)/ 同步修复(#96 / #99)/ PWA 主屏幕安装(#100)/ 弹窗遮罩关闭判定(#104)/ OSS 持久存储与自动备份(#109)/ 聚焦环入 base 层(#108)/ 发现页按形态批量订阅(#113)/ **GitHub Release 自动部署流水线(#102,v3.60.0 首发、v3.60.1 闭环)**:tag 推上去 → 自动建 Release → 串联 `deploy.yml` 停在 Environment `production` 等批准 → SSH forced command 触发生产机仓库外 launcher/worker → 目标 tag 的 `./deploy-docker.sh` → 公网 `/api/health` 核对;上线抓到两坑(checkout 改写 tag 引用 / Environment secrets 须 `secrets: inherit`),见 `docs/archive/auto-deploy-plan.md` §7。
 - **裸机部署回滚(issue #126,2026-09-21,待发布)**:裸机路径改「运行副本版本化」release 形态 + 锁内事务 + 两级健康门告警(不自动回滚)+ `./deploy.sh --rollback`(树外固化执行体,DB 按目标上下文迁移计划分流,`--restore-db` 显式恢复,只回一代)+ 收养 + `--code` / `--status` / `--discard-txn`;extras 钉版 `docker/requirements-crawl4ai.txt`;方案 `docs/archive/baremetal-rollback-plan.md`(codex 四轮设计检视 + §9 实现记录),手册 `docs/ops/deploy-baremetal.md`,桩测试 `tests/test_deploy_baremetal.py`。
 - **Podcast(issue #7 P0–P0.2)**:`source_type=podcast` → `generic_podcast_rss`,单集复用 `ArticleRecord` + `extensions_json`,只解析 enclosure 元数据不下载音频;36 节目策展目录 `services.podcast_catalog` 启动幂等安装、进普通采集任务不设源级开关;边界与后续见 `docs/archive/podcast-wave-plan.md`。
+
+## issue #278 前端纪律:界面不靠说明文字解释自己(2026-11-13,纯文档)
+
+**由来**:前端整体审视(样页在分支 `design/frontend-review`,未入库)的讨论里,用户给了一条规则并要求写进 `AGENTS.md`——*Avoid unnecessary secondary labels and description, let the layout do the explaining.* 理由是 AI 生成的页面常带冗余的引导性文字和口号式文案,页面因此显得复杂,而这类引导都可以通过更好的设计避免;把时间花在 UI / UX 的思考上,不是所有含糊的问题都靠加一句说明解决。
+
+**落点**:`AGENTS.md` 硬规则 2 加一句(英文原句 + 中文展开);`docs/frontend/conventions.md` §1 加首条——默认不写什么(页头副标题与口号、分区说明句、把控件名再说一遍的解释、引导标签、讲系统怎么运作的规则说明、空态里复述标题的原因句)、判据(删掉这句读者会不会做错;会就先找版面解法,确实不行才留一处;同一语义的信息不在一屏里冗余重复,导航、定位、消歧需要的重复保留)、不在此列的(数据、动作名、条件性状态、图标钮提示、不可逆操作的后果说明、游客登录提示)——并在自检清单加一项;`.claude/rules/frontend.md` 加一条指针。管理面 §8.x「零描述 / 引导句」是同一条纪律,这次推到读者面与一切新页面。
+
+**边界**:只立规则。按这条规则在样页上数出的现网说明文字(12 处:榜单与发现的页头副标题、早报眉题的「头条」、事件页的「时间线 · N 篇」等)随前端重构 issue #279 的第一批删改(`docs/backlog.md` 已登记)。「默认不写 / 判据 / 不在此列」三段是实现方的展开,不是用户原话。
+
+**自测**:`python3 scripts/check_docs.py` 0 个问题;`tests/test_docs_index.py` 7 例通过。
+
+**实现方 / 检视方**:实现 Claude Code(Fable 5.2);检视 Codex(gpt-6-astra,ultra)首轮 2 条 P2 + 1 条 P3 全部接受——「同一个名称或数字一屏只出现一次」超出用户原意、可能让后来的 Agent 误删导航与内容区各自需要的来源名或计数,改为「同一语义的信息不冗余重复,导航 / 定位 / 消歧需要的重复保留」;留给后续的 12 处文案补进 backlog 并挂到 #279;本段补自测与双方信息。复检结论见 PR。
 
 ## issue #178 播客文字新闻设计与 TTS 预算核对（2026-11-12，初稿，未实施）
 
