@@ -15,14 +15,19 @@ function between(source, start, end) {
   return source.slice(from, to);
 }
 
+// 源栏内容是一个常量(issue #279 第二批):文章 / 播客容器里挂在左栏,社交页挂在页边
 const sidebar = between(
   desktop,
-  '{/* ── 源栏 · 我的订阅 ── */}',
-  '{/* ── 我的早报',
+  '/* ── 源栏 · 我的订阅 ──',
+  '/* ── 源栏结束 ── */',
 );
 
-test('rankings keep the desktop subscription list mounted', () => {
-  assert.doesNotMatch(sidebar, /!rankingsOpen\s*&&/);
+// issue #279 第二批(2026-11-13):整幅页面(早报 / 榜单 / 发现 / 社交)不挂来源栏——它是文章与播客两个容器的东西,与这些页面无关。
+// 取代 2026-11-04(#221 目检)「榜单打开时源列表保持在场」。社交页把同一份账号列表挂到页边
+test('wide pages (brief / rankings / discover / social) drop the desktop source column; social hangs the same list in its margin', () => {
+  assert.match(desktop, /const widePage = pageOpen \|\| discover \|\| socialView;/);
+  assert.match(desktop, /\{!widePage && <aside className="reader-col reader-col-sources">\{sourcesPanel\}<\/aside>\}/);
+  assert.match(desktop, /<SocialFlow\s+side=\{sourcesPanel\}/);
   assert.match(sidebar, /<div className="reader-source-scroll">/);
 });
 
