@@ -212,6 +212,6 @@
 
 自测:`npm run lint` 通过;`npm test` 352 例通过;`npm run build` 通过。
 
-**复检**:待补。
+**复检(Codex,同一会话,最后一轮)**:八条逐项核对均已修复,未发现修复新引入的 P1,结论「可进入用户目检」。对留值形状的回答:87 条留值的原值、层级、紧邻位置机械核对一致,`:where()` 不增加特异性,原有手机覆盖与原子类仍按原层叠关系生效;容器查询保留了原上下文;四种容器覆盖当前主界面、整页、正文与底部层。它提醒这个模板不能无条件推广——选择器列表要逐项加前缀、暗色祖先规则要保留祖先顺序(生成脚本对这两种情况有处理,本批没有遇到);翻页卡新增的布局声明没有留值,因为只有桌面在用。另指出 `version-history.md` 两处仍写「只留 6 / 10、按钮不用胶囊」,已改成与规范一致的表述。
 
 **工具与基线**(不入库,在 worktree `.review/b1-tools/`):`fx/`(夹具录制 / 回放 / 回放服务 + `guest.json`)、`b1/snap.py`(逐屏截图 + 样式指纹)、`b1/diff.py` `b1/mdiff.py`(对拍)、`b1/summ.py`(普查汇总)、`b1/mkeep.py`(生成留值)、`b1/before` `b1/before-m`(改前基线)、`b1/a4`(返修前的桌面改后快照)。目检环境 = `python .review/b1-tools/fx/serve.py .review/b1-tools/fx/guest.json 8189` + `cd frontend && VITE_PROXY_TARGET=http://127.0.0.1:8189 npx vite --port 5184 --strictPort`。
