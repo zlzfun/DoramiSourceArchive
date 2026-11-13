@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light" data-weight="on">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>哆啦美 · 重构样页 · 规格与状态</title>
+<link rel="icon" href="../../../frontend/public/brand/dorami-logo-32.png">
+<link rel="stylesheet" href="../../../frontend/public/fonts/dorami-serif-v1/dorami-serif.css">
+<link rel="stylesheet" href="../../../frontend/public/fonts/dorami-latin-v1/dorami-latin.css">
+<link rel="stylesheet" href="assets/proto.css?v=1113c">
+<style>
+/* 本页自己的版式(样张之外的东西);样张全部用 proto.css 的类,和原型是同一份样式 */
+html, body { height: auto; }
+body { overflow: auto; background: var(--dorami-surface); }
+#lab { position: sticky; top: 0; z-index: 50; }
+.sp { max-width: 1168px; margin: 0 auto; padding: 0 32px 120px; }
+.sp > header { padding: 56px 0 8px; }
+.sp > header h1 { font: 600 30px/1.3 var(--font-serif); }
+.sp > header p { margin-top: 8px; max-width: 46em; font-size: 14px; line-height: 1.7; color: var(--dorami-muted); }
+.sp section { padding: 48px 0 0; }
+.sp section > h2 { font: 600 20px/1.45 var(--font-serif); padding-bottom: 10px; border-bottom: 1px solid var(--dorami-border); margin-bottom: 20px; }
+.sp section > h2 small { margin-left: 10px; font: 400 13px var(--font-sans); color: var(--dorami-faint); }
+.cap { font-size: 12px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.sw { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+.sw div { font-size: 12px; line-height: 1.5; color: var(--dorami-muted); }
+.sw i { display: block; height: 48px; border-radius: var(--r-control); box-shadow: inset 0 0 0 1px var(--dorami-border); margin-bottom: 6px; }
+.sw b { display: block; font-weight: 600; color: var(--dorami-ink); }
+.ty { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 14px 24px; align-items: baseline; }
+.ty .cap { text-align: right; }
+.rowx { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; }
+.rowx + .rowx { margin-top: 16px; }
+.rowx > .cap:first-child { width: 96px; flex: none; text-align: right; margin-right: 8px; }
+.rowx.tipdemo { margin-bottom: 36px; }
+.cols { display: grid; grid-template-columns: 372px minmax(0, 1fr); gap: 40px; align-items: start; }
+.box { border-radius: var(--r-card); box-shadow: 0 0 0 1px var(--dorami-border); overflow: hidden; background: var(--dorami-surface); }
+.box .list-b { overflow: visible; border-top: 0; padding-bottom: 6px; }
+.holder { position: relative; }
+.holder .pop, .holder .toast { position: relative; inset: auto; left: auto; top: auto; right: auto; bottom: auto; transform: none; animation: none; }
+.paneX { container-type: inline-size; border-radius: var(--r-card); box-shadow: 0 0 0 1px var(--dorami-border); }
+.paneX .doc { padding: 24px 32px 28px; }
+.paneX .doc > .side { position: static; }
+.tipdemo [data-tip]::after { opacity: 1; transform: translate(-50%, 0); }
+</style>
+</head>
+<body>
+<div id="lab">
+  <b>规格与状态</b>
+  <span class="lab-t">明暗</span><div class="lab-g"><button data-set="theme:light" class="on">亮</button><button data-set="theme:dark">暗</button></div>
+  <span class="lab-t">中性色</span><div class="lab-g"><button data-set="palette:" class="on">瓷</button><button data-set="palette:graphite">墨</button><button data-set="palette:paper">宣</button></div>
+  <span class="lab-n">样张与原型共用 assets/proto.css，token 取自现网 index.css</span>
+  <a href="app.html">可点原型</a><a href="index.html">总览与说明</a>
+</div>
+
+<div class="sp">
+<header><h1>规格与状态</h1><p>原型里用到的每一种原语都在这里摆一遍，连同它的各个状态。切上面的开关，看它们在亮、暗与三套中性色下是否都站得住。右下角的小字是实测值。</p></header>
+
+<section><h2>颜色<small>全部是现网 token，没有新增</small></h2>
+  <div class="sw" id="sw"></div>
+</section>
+
+<section><h2>字号<small>十级；宋体只上「一篇东西的名字」与页名</small></h2>
+  <div class="ty">
+    <span class="cap">73 · 宋 900 · 1.15</span><div style="font: 900 73px/1.15 var(--font-serif); letter-spacing: -0.012em">深夜掀桌</div>
+    <span class="cap">44 · 分数</span><div><span class="sc t4" style="font-size:44px;line-height:1">9.2</span><i style="display:inline-block;width:1em"></i><span class="sc t3" style="font-size:44px;line-height:1">8.7</span><i style="display:inline-block;width:1em"></i><span class="sc t2" style="font-size:44px;line-height:1">7.4</span><i style="display:inline-block;width:1em"></i><span class="sc t1" style="font-size:44px;line-height:1">6.5</span><i style="display:inline-block;width:1em"></i><span class="sc t0" style="font-size:44px;line-height:1">4.6</span></div>
+    <span class="cap">30 · 宋 600 · 1.3</span><div style="font: 600 30px/1.3 var(--font-serif)">8 天从零搓出操作系统：篇名与页名</div>
+    <span class="cap">24 · 宋 600</span><div style="font: 600 24px/1.3 var(--font-serif)">模型发布<i style="display:inline-block;width:1em"></i>板块名与榜首</div>
+    <span class="cap">20 · 宋 600 · 1.45</span><div style="font: 600 20px/1.45 var(--font-serif)">美团龙猫开源 LongCat-2.5 模型：早报条目、榜单条目、正文小节</div>
+    <span class="cap">17 · 黑 400 · 1.85</span><div style="font-size:17px;line-height:1.85">长文正文。两款模型基于同一底层模型，前者面向普通用户并内置网络安全与生物安全防护。</div>
+    <span class="cap">15 · 黑 600 / 400</span><div><b style="font-size:15px;font-weight:600">列表条目名、栏头、来源名</b><i style="display:inline-block;width:1em"></i><span style="font-size:15px;color:var(--dorami-ink-2)">速读与社交正文</span></div>
+    <span class="cap">14 · 黑 400</span><div style="font-size:14px">界面默认、页签、早报条目摘要</div>
+    <span class="cap">13 · 黑 400 / 600</span><div style="font-size:13px"><span style="color:var(--dorami-muted)">列表摘要、署名行、按钮</span><i style="display:inline-block;width:1em"></i><b class="kick" style="display:inline-flex">眉头 · 模型发布</b></div>
+    <span class="cap">12 · 黑 400 / 600</span><div style="font-size:12px"><span style="color:var(--dorami-faint)">IT之家 AI · 3 小时前</span><i style="display:inline-block;width:1em"></i><span class="lab">眉标 新闻价值</span><i style="display:inline-block;width:1em"></i><span class="badge">徽标签</span></div>
+  </div>
+</section>
+
+<section><h2>按钮与控件<small>高度只有 28 / 32 / 40；图标钮只有 32</small></h2>
+  <div class="rowx"><span class="cap">L · 40</span><button class="btn lg primary">阅读全文<svg class="ic" data-i="arrow" width="16" height="16"></svg></button><button class="btn lg"><svg class="ic" data-i="star" width="16" height="16"></svg>收藏</button></div>
+  <div class="rowx"><span class="cap">M · 32</span><button class="btn primary"><svg class="ic" data-i="play" width="14" height="14"></svg>收听原节目<em>27 分钟</em></button><button class="btn"><svg class="ic" data-i="plus" width="14" height="14"></svg>添加文章源</button><button class="btn quiet">静默</button><button class="btn" disabled>不可用</button><button class="btn"><i class="spin"></i>生成中</button></div>
+  <div class="rowx"><span class="cap">S · 28</span><button class="btn sm"><svg class="ic" data-i="plus" width="14" height="14"></svg>订阅</button><button class="btn sm sub on"><svg class="ic" data-i="check" width="14" height="14"></svg><span class="t-on">已订阅</span><span class="t-off">取消订阅</span></button><button class="btn sm quiet"><svg class="ic" data-i="translate" width="14" height="14"></svg>译为中文</button><span class="cap">已订阅：悬停翻成「取消订阅」</span></div>
+  <div class="rowx tipdemo"><span class="cap">图标钮 · 32</span><button class="tool"><svg class="ic" data-i="star" width="18" height="18"></svg></button><button class="tool on"><svg class="ic" data-i="star" width="18" height="18"></svg></button><button class="tool faved"><svg class="ic" data-i="star" width="18" height="18"></svg></button><button class="tool" data-tip="全部标为已读" style="margin-left:40px"><svg class="ic" data-i="checks" width="18" height="18"></svg></button><span class="cap" style="margin-left:40px">常态 / 选中 / 已收藏 / 提示</span></div>
+  <div class="rowx"><span class="cap">分段 · 32 / 26</span><div class="seg"><button class="on">全部</button><button>未读</button></div><div class="seg mini"><button class="on">本周</button><button>近 2 天</button></div><span class="cap">换口径：同一批内容的过滤</span></div>
+  <div class="rowx"><span class="cap">页签 · 40</span><div class="tabs" style="border-bottom:1px solid var(--dorami-border)"><button class="on">热点事件</button><button>深度阅读</button><button>播客精选</button></div><span class="cap">换内容：去到另一份东西</span></div>
+  <div class="rowx"><span class="cap">搜索框 · 32</span><label class="find"><svg class="ic" data-i="search" width="16" height="16"></svg><input placeholder="筛选来源名称或简介…"></label><span class="cap">聚焦：白底 + 细线 + 3px 光环</span></div>
+  <div class="rowx"><span class="cap">徽标签</span><span class="badge">优质播客</span><span class="badge">近 2 天</span><span class="badge">新上榜</span><span class="cap">只有这一种画法</span></div>
+</section>
+
+<section><h2>条目行<small>读态只靠字重；分值决定篇幅</small></h2>
+  <div class="cols">
+    <div class="box"><div class="list-b">
+      <div class="day">今天 · 11月10日</div>
+      <article class="row"><div class="row-meta"><span class="row-src">量子位</span><i class="dotsep">·</i><span>4 小时前</span></div><span class="sc t4">9.2</span><h3>未读 · 8 分以上：标题 600，两行摘要</h3><p class="row-sum fade">Anthropic 发布 Claude Fable 5.2 与 Mythos 5.2，宣称 1000 个 Agent 集群可在 8 天内从零编写出可开机的完整操作系统，并在 30 小时内完成费马大定理的形式化证明。</p></article>
+      <article class="row read"><div class="row-meta"><span class="row-src">IT之家 AI</span><i class="dotsep">·</i><span>3 小时前</span></div><span class="sc t3">8.7</span><h3>已读：标题 400、次墨色，摘要退一档</h3><p class="row-sum fade">Anthropic 于 11 月 9 日发布 Claude Fable 5.2 与 Claude Mythos 5.2，两者基于同一底层模型：Fable 5.2 面向普通用户并内置网络安全与生物安全防护。</p></article>
+      <article class="row on read"><div class="row-meta"><span class="row-src">The Decoder</span><i class="dotsep">·</i><span>观点</span><i class="dotsep">·</i><span>5 小时前</span></div><span class="sc t3">8.6</span><h3>选中：中性加深一档，不用强调色</h3><p class="row-sum fade">Anthropic 在 IPO 前发布 Claude Fable 5.2 与 Mythos 5.2 两款旗舰模型，二者共享底座，Fable 面向所有用户并内置安全防护。</p></article>
+      <article class="row mid"><div class="row-meta"><span class="row-src">TestingCatalog</span><i class="dotsep">·</i><span>4 小时前</span></div><span class="sc t2">7.6</span><h3>6–8 分：一行摘要</h3><p class="row-sum fade">Meta 发布其最小、最高效的模型 Muse Ember，面向低成本的智能体任务与端侧部署场景。</p></article>
+      <article class="row low"><div class="row-meta"><span class="row-src">GitHub Trending 日榜</span><i class="dotsep">·</i><span>项目</span><i class="dotsep">·</i><span>4 小时前</span></div><span class="sc t0">3.2</span><h3>6 分以下：只留标题一行</h3></article>
+    </div></div>
+    <div>
+      <div class="rowx"><span class="cap">空态</span><div class="box" style="flex:1"><div class="empty" style="padding:40px 24px"><b>都读完了</b><button class="btn">显示全部</button></div></div></div>
+      <div class="rowx"><span class="cap">操作提示</span><div class="holder"><div class="toast"><span>已订阅「The Decoder」</span><button>撤销</button></div></div></div>
+      <div class="rowx"><span class="cap">加载</span><div style="flex:1;display:grid;gap:8px"><i class="skel" style="height:14px;width:40%"></i><i class="skel" style="height:18px;width:92%"></i><i class="skel" style="height:14px;width:76%"></i></div></div>
+      <div class="rowx"><span class="cap">菜单</span><div class="holder"><div class="pop menu"><button><svg class="ic" data-i="link" width="16" height="16"></svg>复制站内链接</button></div></div></div>
+      <div class="rowx"><span class="cap">说明条</span><p class="note" style="margin:0;flex:1">这篇的正文没有随样页打包。</p></div>
+    </div>
+  </div>
+</section>
+
+<section><h2>AI 速读<small>同一张卡的两种摆法，由阅读窗的宽度决定</small></h2>
+  <p class="cap" style="margin-bottom:10px">阅读窗窄于 992（1440 屏、来源栏展开）：分数进卡头，标签进卡脚</p>
+  <div class="paneX" style="max-width:772px"><div class="doc">
+    <section class="ai" style="margin:0">
+      <header><span class="ai-h"><span class="spark"><svg class="ic" data-i="spark" width="14" height="14"></svg></span>AI 速读</span><span class="grow"></span><button class="ai-scores" aria-expanded="true"><span>新闻价值</span><span class="sc t3">8.7</span><span>内容价值</span><span class="sc t1">6.3</span><svg class="ic" data-i="down" width="14" height="14"></svg></button><button class="btn sm"><svg class="ic" data-i="head" width="14" height="14"></svg>听导读</button></header>
+      <div class="ai-why"><div><div class="lab">新闻价值</div><p>Anthropic 旗舰新模型发布并降价，属头部厂商重大发布</p></div><div><div class="lab">内容价值</div><p>转述官方发布，含定价、速度与测试结果，但缺一手细节</p></div></div>
+      <div class="ai-body"><p>Anthropic 于 11 月 9 日发布 Claude Fable 5.2 与 Claude Mythos 5.2，两者基于同一底层模型。</p><p>Fable 5.2 定价为每百万 Token 输入 8 美元、输出 40 美元，较 5.1 下降 20%。</p><p>Fable 5.2 已在 AWS、Google Cloud 和 Microsoft Azure 开放。</p></div>
+      <footer class="ai-foot"><div class="tags"><a href="#">Claude</a><a href="#">Anthropic</a><a href="#">AI 智能体</a><a href="#" class="soft">AWS</a></div></footer>
+    </section>
+  </div></div>
+  <p class="cap" style="margin:24px 0 10px">阅读窗不窄于 992（收起来源栏，或 1920 屏）：卡里只有速读，其余在页边</p>
+  <div class="paneX"><div class="doc">
+    <section class="ai" style="margin:0">
+      <header><span class="ai-h"><span class="spark"><svg class="ic" data-i="spark" width="14" height="14"></svg></span>AI 速读</span><span class="grow"></span><button class="btn sm"><svg class="ic" data-i="head" width="14" height="14"></svg>听导读</button></header>
+      <div class="ai-body"><p>Anthropic 于 11 月 9 日发布 Claude Fable 5.2 与 Claude Mythos 5.2，两者基于同一底层模型。</p><p>Fable 5.2 定价为每百万 Token 输入 8 美元、输出 40 美元，较 5.1 下降 20%。</p><p>Fable 5.2 已在 AWS、Google Cloud 和 Microsoft Azure 开放。</p></div>
+    </section>
+    <aside class="side">
+      <div class="side-blk"><div class="lab">新闻价值</div><div class="side-score"><span class="sc t3">8.7</span></div><p>Anthropic 旗舰新模型发布并降价，属头部厂商重大发布</p></div>
+      <div class="side-blk minor"><div class="lab">内容价值<span class="sc t1">6.3</span></div><p>转述官方发布，含定价、速度与测试结果，但缺一手细节</p></div>
+      <div class="side-blk"><div class="tags"><a href="#">Claude</a><a href="#">Anthropic</a><a href="#">AI 智能体</a><a href="#" class="soft">AWS</a></div></div>
+    </aside>
+  </div></div>
+</section>
+</div>
+
+<script>
+(() => {
+  const P = {
+    star: '<path d="M11.53 2.3a.53.53 0 0 1 .95 0l2.3 4.68a2.12 2.12 0 0 0 1.6 1.16l5.16.75a.53.53 0 0 1 .3.9l-3.74 3.64a2.12 2.12 0 0 0-.61 1.88l.88 5.14a.53.53 0 0 1-.77.56l-4.62-2.43a2.12 2.12 0 0 0-1.97 0L6.4 21.01a.53.53 0 0 1-.77-.56l.88-5.14a2.12 2.12 0 0 0-.61-1.88L2.16 9.8a.53.53 0 0 1 .3-.91l5.16-.75a2.12 2.12 0 0 0 1.6-1.16z"/>',
+    arrow: '<path d="M5 12h14M12 5l7 7-7 7"/>', plus: '<path d="M5 12h14M12 5v14"/>', check: '<path d="M20 6 9 17l-5-5"/>', down: '<path d="m6 9 6 6 6-6"/>',
+    checks: '<path d="M18 6 7 17l-5-5M22 10l-7.5 7.5L13 16"/>', search: '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
+    play: '<path d="M6 4.5v15a1 1 0 0 0 1.5.86l13-7.5a1 1 0 0 0 0-1.72l-13-7.5A1 1 0 0 0 6 4.5Z" fill="currentColor" stroke="none"/>',
+    spark: '<path d="M9.94 15.5A2 2 0 0 0 8.5 14.06l-6.14-1.58a.5.5 0 0 1 0-.96L8.5 9.94A2 2 0 0 0 9.94 8.5l1.58-6.14a.5.5 0 0 1 .96 0L14.06 8.5A2 2 0 0 0 15.5 9.94l6.14 1.58a.5.5 0 0 1 0 .96L15.5 14.06a2 2 0 0 0-1.44 1.44l-1.58 6.14a.5.5 0 0 1-.96 0z" fill="currentColor" stroke="none"/>',
+    head: '<path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"/>',
+    translate: '<path d="m5 8 6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/>',
+    link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  };
+  document.querySelectorAll('svg[data-i]').forEach((s) => { s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('fill', 'none'); s.setAttribute('stroke', 'currentColor'); s.setAttribute('stroke-width', '1.75'); s.setAttribute('stroke-linecap', 'round'); s.setAttribute('stroke-linejoin', 'round'); s.innerHTML = P[s.dataset.i] || ''; });
+  const TOK = [['canvas', '外框'], ['surface', '内容面'], ['well', '凹陷'], ['raised', '抬起'], ['select', '选中'], ['hover', '悬停'], ['ink', '墨'], ['ink-2', '次墨'], ['muted', '弱'], ['faint', '最弱'], ['accent', '强调'], ['accent-ink', '强调字'], ['wash', '强调淡底'], ['border', '线'], ['border-strong', '强线'], ['border-soft', '软线']];
+  const probe = document.createElement('i'); probe.style.cssText = 'position:absolute;width:0;height:0'; document.body.appendChild(probe);
+  const rgb = (v) => { probe.style.color = v; const m = getComputedStyle(probe).color.match(/[\d.]+/g).map(Number); return m; };
+  const lum = (c) => { const f = (x) => { x /= 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
+  function swatches() {
+    const cs = getComputedStyle(document.documentElement); const surf = rgb(cs.getPropertyValue('--dorami-surface'));
+    document.getElementById('sw').innerHTML = TOK.map(([k, n]) => {
+      const raw = cs.getPropertyValue('--dorami-' + k).trim(); const c = rgb(`var(--dorami-${k})`); let extra = '';
+      if (['ink', 'ink-2', 'muted', 'faint', 'accent-ink'].includes(k)) { const a = lum(c), b = lum(surf); extra = ` · ${((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)).toFixed(2)} : 1`; }
+      return `<div><i style="background:var(--dorami-${k})"></i><b>${n}</b>--dorami-${k}<br>${raw.length < 26 ? raw : ''}${extra}</div>`;
+    }).join('') + '<div><i style="background:var(--grad-ai)"></i><b>AI 渐变</b>--grad-ai<br>只上 ✦ 与分数</div>';
+  }
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-set]'); if (!b) return;
+    const [k, v] = b.dataset.set.split(':'); const root = document.documentElement;
+    if (v) root.dataset[k] = v; else delete root.dataset[k];
+    b.parentElement.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b)); swatches();
+  });
+  swatches();
+})();
+</script>
+</body>
+</html>

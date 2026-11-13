@@ -11,6 +11,7 @@
 
 ## 年表(一行一波;自 `CLAUDE.md` 迁入 2026-10-21,**新波次在此加一行**,L0 不再逐波改)
 
+- **读者面桌面阅读器重构立项(issue #279,2026-11-13,样页与方案入库,实施中)**:整站前端审视两轮样页(用户选 B「夜航 · 续」)入库 `docs/design/issue-279-frontend-refactor/`;现网实测字号 17 级 / 图标 8 种尺寸 / 页名横坐标 6 个,样页收到 10 级 / 3 种 / 1 个,颜色零新增;分五批落地(并档 / 版框与页头 / 阅读窗 / 列表与早报 / 排印)。见 [方案](plans/issue-279-frontend-refactor.md)。
 - **前端纪律:界面不靠说明文字解释自己(issue #278,2026-11-13,纯文档)**:用户定的规则 *Avoid unnecessary secondary labels and description, let the layout do the explaining* 写进 `AGENTS.md` 硬规则 2、`conventions.md` §1 首条(默认不写什么 / 判据 / 不在此列)与自检清单、`.claude/rules/frontend.md`;现网已有说明文字的删改不在本条,随 issue #279 做。
 - **播客文字新闻真实样稿（#178 / #268，2026-11-12，本地验收）**：Goodfire真实全文提炼1次、人工纠正指标与评分；Cisco7段TTS成功并实际播放，新增本地计量¥0.44，原早报14条不变。详见[方案§11](plans/issue-178-podcast-news-extraction.md#11-真实样稿验收2026-11-12未上线)。
 - **播客文字新闻设计与预算核对（#178 / #268，2026-11-12，初稿）**：用真实 Cisco 原稿说明事件提炼/否定指代/日期核验，交付四视图 HTML；追溯生产预算最近记录 ¥20/月、¥2/次。无功能上线、无新增付费请求。见 [初稿](plans/issue-178-podcast-news-extraction.md)。
