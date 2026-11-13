@@ -716,6 +716,127 @@ export default function ReaderTab({
   const shellRef = useRef(null);
   useTouchHoldMenu(shellRef, '.reader-entry, .reader-source-row, .social-post');
 
+  // 整幅页面:占满导轨右边的全部宽度,不挂来源栏(早报 / 榜单 / 发现 / 社交)
+  const widePage = pageOpen || discover || socialView;
+
+  /* ── 源栏 · 我的订阅 ──
+     内容提成一个常量:文章 / 播客容器里它是左栏;社交是整幅页面,同一份账号列表挂到页边(issue #279 第二批)。 */
+  const sourcesPanel = (
+        <div className="reader-sources-inner">
+        {/* 栏头 = 容器名 + 轴切换(issue #27 五稿):左栏是一根轴,栏头二选一决定其下列源还是列标签。
+            社交容器没有标签(推文不打标),不出轴切换,只列账号。 */}
+        <div className={`reader-src-head ${showAxisSeg ? 'is-axis' : ''}`}>
+          <span className="reader-src-title">
+            {socialView ? '社交媒体' : podcastView ? '播客' : '文章'}
+          </span>
+          {showAxisSeg && (
+            <AxisSeg axis={scope.axis} onChange={(axis) => { leaveBriefTrail(); setAxis(axis); }} />
+          )}
+        </div>
+
+        {/* 榜单打开时源列表保持在场(入口在视图轨,2026-11-04 目检由源栏顶挪过去)。点源、标签或「发现更多来源」会先关掉榜单再进入，
+            与视图轨文章/播客/发现按钮同一套 setRankingsOpen(false)。 */}
+        <div className="reader-source-scroll">
+          {sourcesLoading ? (
+            <SourceRowsSkeleton />
+          ) : (
+            <>
+              {/* 预览锚点行(Folo):正在预览的未订阅源浮现在源栏顶部,交代「你在哪」 */}
+              {activeUnsubscribed && (
+                <div className="reader-subs">
+                  <div className="reader-source-row reader-source-row-active">
+                    <LogoMark company={resolveCompany(activeUnsubscribed)} size="s20" emoji={activeUnsubscribed.icon} />
+                    <p className="reader-source-name min-w-0 flex-1">{activeUnsubscribed.name || activeUnsubscribed.source_id}</p>
+                    <span className="reader-src-preview-tag">预览</span>
+                  </div>
+                </div>
+              )}
+
+              {/* 兴趣轴:其下列关注的标签(与源行同一形制);点一行 = 收窄到该标签 */}
+              {!showSourceRows && (
+                <TagRows
+                  groups={interestGroups}
+                  activeTagId={activeTagId}
+                  onPick={(id) => { setRankingsOpen(false); leaveBriefTrail(); goTag(id); }}
+                  hasInterests={hasInterests}
+                  onOpenInterests={openInterests}
+                />
+              )}
+
+              {/* 订阅轴:来源按编辑分层分组(样页):官方·一手信息 / 媒体·观察 / 个人·洞见 / 榜单·动态。
+                  源栏跟随容器(层级化):文章容器只列文章形源,动态容器只列榜单·动态。
+                  组头=样页 .src-label 细字距灰签。退订钮浮层化:绝对定位悬停现,不占布局。
+                  (预览未订源时临时在来源轴上,故也按此列) */}
+              {showSourceRows && sidebarGroups.map(({ key, label, list }) => (
+                <section className="reader-subs" key={key}>
+                  <div className="reader-src-label">{label}</div>
+                  <div className="reader-group-body">
+                  {list.map((source) => {
+                    const active = activeSourceId === source.source_id;
+                    const unread = unreadBySource[source.source_id] || 0;
+                    return (
+                      <div
+                        key={source.source_id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => { setRankingsOpen(false); leaveBriefTrail(); goSource(source.source_id); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setRankingsOpen(false); leaveBriefTrail(); goSource(source.source_id); } }}
+                        onContextMenu={(e) => onRowContextMenu(e, source, 'source')}
+                        className={`reader-source-row ${active ? 'reader-source-row-active' : ''} ${unread > 0 ? 'has-unread' : ''} ${source.hidden ? 'is-unavailable' : ''} ${ctxMenu?.anchorKey === `source:${source.source_id}` ? 'is-ctx-anchor' : ''}`}
+                      >
+                        {/* 社交源用真实头像(它们在 LogoMark 品牌表里没有条目,
+                            否则整列会退化成同一个平台图标);图经媒体库代理 */}
+                        {source.avatar_url ? (
+                          <img className="reader-src-avatar" src={mediaProxyUrl(source.avatar_url)} alt="" loading="lazy" decoding="async" />
+                        ) : (
+                          <LogoMark company={resolveCompany(source)} size="s20" emoji={source.icon} />
+                        )}
+                        {/* 不显示每源未读数(issue #199,conventions §3):有无未读只靠行加粗(has-unread),
+                            读屏补一句「有未读」与之对等。退订钮浮层化,不占布局。 */}
+                        <p className="reader-source-name min-w-0 flex-1">{source.name || source.source_id}</p>
+                        {unread > 0 && <span className="sr-only">，有未读</span>}
+                        {/* 临时隐藏的已订阅源:条目保留但内容停发,标记说明状态;悬停退订钮照常浮出 */}
+                        {source.hidden && <span className="reader-src-off">暂不可用</span>}
+                        <button
+                          type="button"
+                          title="取消订阅"
+                          onClick={(e) => { e.stopPropagation(); handleUnsubscribe(source); }}
+                          disabled={pinningId === source.source_id}
+                          className="reader-pin reader-pin-on"
+                        >
+                          {pinningId === source.source_id
+                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            : <Minus className="h-3.5 w-3.5" />}
+                        </button>
+                      </div>
+                    );
+                  })}
+                  </div>
+                </section>
+              ))}
+
+              {showSourceRows && hasNoSubscriptions && (
+                <p className="reader-side-hint">还没有订阅任何来源，在「发现」页挑选并添加。</p>
+              )}
+
+              {/* 「发现更多来源」内联子列表已退役——发现升格为整页视图(视图轨 Compass 钮) */}
+              {showSourceRows && !hasNoSubscriptions && (
+                <button
+                  type="button"
+                  onClick={() => { setRankingsOpen(false); openDiscoverSources(); }}
+                  className="reader-src-more"
+                >
+                  <Compass className="h-3.5 w-3.5" />
+                  <span>发现更多来源</span>
+                </button>
+              )}
+            </>
+          )}
+        </div>
+        </div>
+  );
+  /* ── 源栏结束 ── */
+
   return (
     <div className="reader-shell" ref={shellRef}>
       {/* ── 管理员公告横幅(v3.18):无公告时渲染 null,:has 不命中,四带布局逐像素不变 ── */}
@@ -881,121 +1002,9 @@ export default function ReaderTab({
         )}
       </nav>
 
-      {/* ── 源栏 · 我的订阅 ── */}
-      {!briefOpen && <aside className="reader-col reader-col-sources">
-        <div className="reader-sources-inner">
-        {/* 栏头 = 容器名 + 轴切换(issue #27 五稿):左栏是一根轴,栏头二选一决定其下列源还是列标签。
-            社交容器没有标签(推文不打标),不出轴切换,只列账号。 */}
-        <div className={`reader-src-head ${showAxisSeg ? 'is-axis' : ''}`}>
-          <span className="reader-src-title">
-            {socialView ? '社交媒体' : podcastView ? '播客' : '文章'}
-          </span>
-          {showAxisSeg && (
-            <AxisSeg axis={scope.axis} onChange={(axis) => { leaveBriefTrail(); setAxis(axis); }} />
-          )}
-        </div>
-
-        {/* 榜单打开时源列表保持在场(入口在视图轨,2026-11-04 目检由源栏顶挪过去)。点源、标签或「发现更多来源」会先关掉榜单再进入，
-            与视图轨文章/播客/发现按钮同一套 setRankingsOpen(false)。 */}
-        <div className="reader-source-scroll">
-          {sourcesLoading ? (
-            <SourceRowsSkeleton />
-          ) : (
-            <>
-              {/* 预览锚点行(Folo):正在预览的未订阅源浮现在源栏顶部,交代「你在哪」 */}
-              {activeUnsubscribed && (
-                <div className="reader-subs">
-                  <div className="reader-source-row reader-source-row-active">
-                    <LogoMark company={resolveCompany(activeUnsubscribed)} size="s20" emoji={activeUnsubscribed.icon} />
-                    <p className="reader-source-name min-w-0 flex-1">{activeUnsubscribed.name || activeUnsubscribed.source_id}</p>
-                    <span className="reader-src-preview-tag">预览</span>
-                  </div>
-                </div>
-              )}
-
-              {/* 兴趣轴:其下列关注的标签(与源行同一形制);点一行 = 收窄到该标签 */}
-              {!showSourceRows && (
-                <TagRows
-                  groups={interestGroups}
-                  activeTagId={activeTagId}
-                  onPick={(id) => { setRankingsOpen(false); leaveBriefTrail(); goTag(id); }}
-                  hasInterests={hasInterests}
-                  onOpenInterests={openInterests}
-                />
-              )}
-
-              {/* 订阅轴:来源按编辑分层分组(样页):官方·一手信息 / 媒体·观察 / 个人·洞见 / 榜单·动态。
-                  源栏跟随容器(层级化):文章容器只列文章形源,动态容器只列榜单·动态。
-                  组头=样页 .src-label 细字距灰签。退订钮浮层化:绝对定位悬停现,不占布局。
-                  (预览未订源时临时在来源轴上,故也按此列) */}
-              {showSourceRows && sidebarGroups.map(({ key, label, list }) => (
-                <section className="reader-subs" key={key}>
-                  <div className="reader-src-label">{label}</div>
-                  <div className="reader-group-body">
-                  {list.map((source) => {
-                    const active = activeSourceId === source.source_id;
-                    const unread = unreadBySource[source.source_id] || 0;
-                    return (
-                      <div
-                        key={source.source_id}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => { setRankingsOpen(false); leaveBriefTrail(); goSource(source.source_id); }}
-                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setRankingsOpen(false); leaveBriefTrail(); goSource(source.source_id); } }}
-                        onContextMenu={(e) => onRowContextMenu(e, source, 'source')}
-                        className={`reader-source-row ${active ? 'reader-source-row-active' : ''} ${unread > 0 ? 'has-unread' : ''} ${source.hidden ? 'is-unavailable' : ''} ${ctxMenu?.anchorKey === `source:${source.source_id}` ? 'is-ctx-anchor' : ''}`}
-                      >
-                        {/* 社交源用真实头像(它们在 LogoMark 品牌表里没有条目,
-                            否则整列会退化成同一个平台图标);图经媒体库代理 */}
-                        {source.avatar_url ? (
-                          <img className="reader-src-avatar" src={mediaProxyUrl(source.avatar_url)} alt="" loading="lazy" decoding="async" />
-                        ) : (
-                          <LogoMark company={resolveCompany(source)} size="s20" emoji={source.icon} />
-                        )}
-                        {/* 不显示每源未读数(issue #199,conventions §3):有无未读只靠行加粗(has-unread),
-                            读屏补一句「有未读」与之对等。退订钮浮层化,不占布局。 */}
-                        <p className="reader-source-name min-w-0 flex-1">{source.name || source.source_id}</p>
-                        {unread > 0 && <span className="sr-only">，有未读</span>}
-                        {/* 临时隐藏的已订阅源:条目保留但内容停发,标记说明状态;悬停退订钮照常浮出 */}
-                        {source.hidden && <span className="reader-src-off">暂不可用</span>}
-                        <button
-                          type="button"
-                          title="取消订阅"
-                          onClick={(e) => { e.stopPropagation(); handleUnsubscribe(source); }}
-                          disabled={pinningId === source.source_id}
-                          className="reader-pin reader-pin-on"
-                        >
-                          {pinningId === source.source_id
-                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            : <Minus className="h-3.5 w-3.5" />}
-                        </button>
-                      </div>
-                    );
-                  })}
-                  </div>
-                </section>
-              ))}
-
-              {showSourceRows && hasNoSubscriptions && (
-                <p className="reader-side-hint">还没有订阅任何来源，在「发现」页挑选并添加。</p>
-              )}
-
-              {/* 「发现更多来源」内联子列表已退役——发现升格为整页视图(视图轨 Compass 钮) */}
-              {showSourceRows && !hasNoSubscriptions && (
-                <button
-                  type="button"
-                  onClick={() => { setRankingsOpen(false); openDiscoverSources(); }}
-                  className="reader-src-more"
-                >
-                  <Compass className="h-3.5 w-3.5" />
-                  <span>发现更多来源</span>
-                </button>
-              )}
-            </>
-          )}
-        </div>
-        </div>
-      </aside>}
+      {/* 整幅页面(早报 / 榜单 / 发现 / 社交)不挂来源栏:它是文章与播客两个容器的东西,与这些页面无关(issue #279 第二批,
+          取代 2026-11-04「榜单打开时源列表保持在场」) */}
+      {!widePage && <aside className="reader-col reader-col-sources">{sourcesPanel}</aside>}
 
       {/* ── 我的早报(issue #23 重做):日期栏顶替源栏槽位 + 报纸面占条目列/阅读窗整幅;
              点卡片 = openArticleById 跳站内原文(切到所在容器并选中,早报页退场) ── */}
@@ -1104,6 +1113,7 @@ export default function ReaderTab({
       {/* ── 社交媒体流(第三容器):占「条目列 + 阅读窗」整幅,取代四带式 ── */}
       {!pageOpen && !discover && socialView && (
         <SocialFlow
+          side={sourcesPanel}
           articles={articles}
           sourceMap={sourceMap}
           sourceNameMap={sourceNameMap}

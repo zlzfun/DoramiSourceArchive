@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowUpRight, ChevronLeft, FileText, Flame, Headphones, Loader2 } from 'lucide-react';
+import { ArrowUpRight, ChevronLeft, Loader2 } from 'lucide-react';
 import { fetchReaderEvent, fetchReaderEvents, fetchReaderPicks } from '../api';
 import {
   EVENT_RANGES,
@@ -44,7 +44,6 @@ import Sheet from './layer/Sheet';
 // 段与热点事件的时间范围由外层持有(ReaderWorkspace 的 view:关掉再打开回到上次的段,桌面 ⇄ 手机互切也不丢);
 // 手机:页头标题位转盘就是三段切换(MobileReader),这里只画范围说明(页头下第一块)与列表(夜航卡面)。
 
-const SEGMENT_ICONS = { events: Flame, reads: FileText, listens: Headphones };
 const ROLE_LABEL = Object.fromEntries(SOURCE_ROLES.map((role) => [role.key, role.label]));
 
 // 来源徽标:目录里有这个源用它的品牌标识;没有(未订阅 / 目录未载入)按源名派生字母徽标,与早报同一兜底
@@ -247,7 +246,8 @@ function EventDetailHead({ detail, titleRef = null, rankOnly = false }) {
 // (按北京时间分日,左侧纵线串起每一篇)。「来源」节取消:谁报道了在时间线里逐篇可见,家数在抬头。
 // 三节同一种小节标题(左上,卡外);两张卡首行同一种写法:来源在左、时间在右;两张卡都整卡可点进站内原文。
 // 代表报道卡的命中钮铺满整卡(给焦点与读屏名,点击由卡接住,同 RankRow);卡底只留外链「官方原文 ↗」,压在命中钮之上、不冒泡
-function EventDetailBody({ detail, sourceMap, preferChinese, onOpenArticle, timelineHead = true }) {
+// latestCard:「最新进展」卡。桌面两栏事件页不出(它与右栏时间线的第一条是同一篇,同屏出现两次),手机底部层照旧
+function EventDetailBody({ detail, sourceMap, preferChinese, onOpenArticle, timelineHead = true, latestCard = true }) {
   const timelineId = useId();
   if (detail.status === 'loading') {
     return <p className="rk-sec-state"><Loader2 className="animate-spin" aria-hidden="true" />详情加载中…</p>;
@@ -307,7 +307,7 @@ function EventDetailBody({ detail, sourceMap, preferChinese, onOpenArticle, time
         </section>
       )}
 
-      {latest && (
+      {latest && latestCard && (
         <section className="rk-sec" aria-label="最新进展">
           <h3 className="drawer-sec-title">最新进展</h3>
           <button
@@ -567,7 +567,7 @@ export default function RankingsPage({
   const range_ = seg === 'events' ? <RangeSwitch range={rng} onChange={onRangeChange} mobile={mobile} /> : null;
 
   const detailBody = detail ? (
-    <EventDetailBody detail={detail} sourceMap={sourceMap} preferChinese={preferChinese} onOpenArticle={openFromEvent} timelineHead={mobile} />
+    <EventDetailBody detail={detail} sourceMap={sourceMap} preferChinese={preferChinese} onOpenArticle={openFromEvent} timelineHead={mobile} latestCard={mobile} />
   ) : null;
   const detailTitle = (detail?.data || detail?.item)?.title || '';
 
@@ -580,38 +580,38 @@ export default function RankingsPage({
           {body}
         </>
       ) : pageOpen ? (
-        <article className="rk-wrap rk-event" aria-label="热点事件详情">
-          <button type="button" className="rk-back" onClick={closeEvent}>
-            <ChevronLeft aria-hidden="true" />返回榜单
-          </button>
+        <article className="reader-page-wrap rk-wrap rk-event" aria-label="热点事件详情">
+          <div className="rk-backrow">
+            <button type="button" className="rk-back" onClick={closeEvent}>
+              <ChevronLeft aria-hidden="true" />返回榜单
+            </button>
+          </div>
           <EventDetailHead detail={detail} titleRef={titleRef} rankOnly />
           <div className="rk-ebody">{detailBody}</div>
         </article>
       ) : (
-        <div className="rk-wrap">
-          <header className="ranking-head rk-head">
-            <div className="rk-head-l">
-              <span className="reader-disc-title">榜单</span>
-            </div>
-            <div className="reader-seg" role="group" aria-label="榜单分段">
-              {RANKING_SEGMENTS.map(([value, label]) => {
-                const Icon = SEGMENT_ICONS[value];
-                return (
-                  <button
-                    key={value}
-                    type="button"
-                    className={`reader-seg-btn ${seg === value ? 'is-on' : ''}`}
-                    aria-pressed={seg === value}
-                    onClick={() => { if (seg !== value) onSegmentChange?.(value); }}
-                  >
-                    <Icon aria-hidden="true" />{label}
-                  </button>
-                );
-              })}
-            </div>
+        <div className="reader-page-wrap rk-wrap">
+          {/* 整幅页面的统一页头(issue #279 第二批):宋体页名 + 页签行;页签切内容,右端的分段切时间窗 */}
+          <header className="reader-page-head ranking-head">
+            <h1 className="reader-page-title">榜单</h1>
           </header>
-          {/* 排序依据只写一次:事件榜看右栏「N 家报道」,深度阅读 / 播客精选在分数列上方写「内容价值」 */}
-          {range_ || <p className="rk-colhead">内容价值</p>}
+          <div className="reader-page-bar">
+            <div className="reader-tabs" role="group" aria-label="榜单分段">
+              {RANKING_SEGMENTS.map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={`reader-tab ${seg === value ? 'is-on' : ''}`}
+                  aria-pressed={seg === value}
+                  onClick={() => { if (seg !== value) onSegmentChange?.(value); }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {/* 排序依据只写一次:事件榜看右栏「N 家报道」,深度阅读 / 播客精选在分数列上方写「内容价值」 */}
+            {range_ || <span className="rk-colhead">内容价值</span>}
+          </div>
           {body}
         </div>
       )}

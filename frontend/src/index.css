@@ -10537,11 +10537,12 @@ input[type="radio"] {
   .rk-back:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: 1px; }
   .rk-dh { flex: 1; min-width: 0; }
   .rk-kicker { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
-  .rk-dtitle { margin: 0; font-size: 18px; font-weight: 600; line-height: 1.4; color: var(--dorami-ink); overflow-wrap: anywhere; }
+  .rk-dtitle { margin: 0; font-size: 20px; font-weight: 600; line-height: 1.4; color: var(--dorami-ink); overflow-wrap: anywhere; }
+  :where(.m-shell, .m-page, .m-read, .m-sheet) .rk-dtitle { font-size: 18px; } /* m-keep #279-b2 */
   .rk-dtitle:focus { outline: none; }   /* 进事件页时程序把焦点放在标题上(读屏先读到这件事),标题本身不可操作 */
   .rk-dmeta { margin: 6px 0 0; font-size: 12px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
   .rk-event .rk-kicker { font-size: 13px; }
-  .rk-event .rk-dtitle { font-size: 22px; line-height: 1.38; }
+  .rk-event .rk-dtitle { font-family: var(--font-serif); font-size: 30px; line-height: 1.3; }   /* .rk-event = 桌面事件页;事件标题与文章标题同一种写法(issue #279 第二批) */
   .rk-event .rk-dmeta { margin-top: 8px; font-size: 13px; }
   .rk-ebody { display: flex; flex-direction: column; gap: 22px; margin-top: 22px; }
   .rk-sec-state { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; color: var(--dorami-muted); }
@@ -10571,7 +10572,7 @@ input[type="radio"] {
   .rk-rep-orig { margin: 2px 0 0; font-family: var(--font-serif-latin); font-style: italic; font-weight: 400; font-size: 13px; color: var(--dorami-muted); overflow-wrap: anywhere; }
   .rk-rep-sum { margin: 8px 0 0; font-size: 13px; line-height: 1.65; color: var(--dorami-ink-2); overflow-wrap: anywhere; }
   .rk-event :is(.rk-rep, .rk-latest) { padding: 16px 20px; }
-  .rk-event .rk-rep-title { font-size: 16px; }
+  .rk-event .rk-rep-title { font-family: var(--font-serif); font-size: 20px; line-height: 1.45; }
   .rk-event .rk-rep-sum { font-size: 14px; line-height: 1.7; }
   .rk-link { white-space: nowrap; display: inline-flex; align-items: center; gap: 3px; font-size: 13px; color: var(--dorami-muted); text-decoration: none; }
   .rk-link svg { width: 14px; height: 14px; }
@@ -13329,6 +13330,136 @@ input[type="radio"] {
 /* 共用组件里用原子类写了尺寸的图标(手机壳也渲染同一份 JSX,原子类不动),在桌面壳里并到 14 / 16 */
 .reader-shell :is(.social-repost, .reader-axis-btn, .reader-disc-back, .reader-disc-search, .reader-disc-add, .reader-disc-sub) svg { width: 14px; height: 14px; }
 .reader-shell :is(.social-act, .reader-entry-fav) svg { width: 16px; height: 16px; }
+
+/* ════════════════════════════════════════════════════════════════════
+   整幅页面的统一版框与页头(issue #279 第二批;样页 docs/design/issue-279-frontend-refactor/)
+   榜单 / 事件页 / 发现 / 社交与早报同一种写法:不挂来源栏,版框 1200(两侧 48,1440 屏上页名落在 x = 200),
+   宋体页名,页签行。只作用桌面壳:选择器都锚在 .reader-shell、桌面分支才有的 .reader-page-wrap,
+   或桌面才给的 .is-page 上——手机壳渲染的同一批类不受影响。
+   ════════════════════════════════════════════════════════════════════ */
+.reader-shell > .rankings-page,
+.reader-shell > .reader-disc,
+.reader-shell > .reader-social.is-page { grid-column: 2 / -1; background: var(--dorami-surface); }
+
+.reader-page-wrap { width: auto; max-width: 1200px; margin: 0 auto; padding: 0 48px 120px; }
+.reader-page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; height: 124px; padding-bottom: 20px; }
+.reader-page-title { margin: 0; font-family: var(--font-serif); font-size: 30px; font-weight: 600; line-height: 1.2; color: var(--dorami-ink); }
+.reader-page-bar {
+  position: sticky; top: 0; z-index: 3;
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  height: 41px; border-bottom: 1px solid var(--dorami-border); background: var(--dorami-surface);
+}
+/* 页签:切内容(榜单的三段、发现的来源 / 合集 / 兴趣)。与分段分工——分段切视图与范围,有拇指;页签切内容,只有一条底线 */
+.reader-tabs { display: flex; align-self: stretch; gap: 24px; }
+.reader-tab {
+  position: relative; display: inline-flex; align-items: center; padding: 0; border: 0; background: none;
+  font: inherit; font-size: 14px; font-weight: 400; color: var(--dorami-muted); white-space: nowrap; cursor: pointer;
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+@media (hover: hover) { .reader-tab:hover { color: var(--dorami-ink); } }
+.reader-tab.is-on { color: var(--dorami-ink); font-weight: 600; }
+.reader-tab.is-on::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--dorami-ink); }
+.reader-tab:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: 4px; border-radius: 2px; }
+
+/* ── 榜单 ── */
+.reader-shell > .rankings-page { padding: 0 0 max(0px, var(--player-clear-end, 0px)); }
+.reader-page-bar .rk-range { margin: 0; }
+.reader-page-bar .rk-colhead { margin: 0; }
+.reader-page-wrap .rk-list { margin: 0; }
+.reader-page-wrap .rk-row {
+  grid-template-columns: 56px minmax(0, 1fr) 148px; column-gap: 24px;
+  padding: 24px 0; border-radius: 0; border-bottom: 1px solid var(--dorami-border-soft);
+}
+.reader-page-wrap .rk-row + .rk-row::before { content: none; }
+@media (hover: hover) {
+  .reader-page-wrap .rk-row:hover { background: none; }
+  .reader-page-wrap .rk-row:hover .rk-title { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 5px; text-decoration-color: var(--dorami-border-strong); }
+}
+.reader-page-wrap .rk-hit:focus-visible { outline-offset: 2px; border-radius: var(--r-sm); }
+.reader-page-wrap .rk-rank { align-items: flex-start; gap: 6px; padding-top: 0; }
+.reader-page-wrap .rk-num { font-size: 24px; line-height: 1; color: var(--dorami-ink-2); }
+.reader-page-wrap .rk-row:nth-child(n + 4) .rk-num { color: var(--dorami-faint); }
+.reader-page-wrap .rk-main { gap: 0; }
+.reader-page-wrap .rk-title { max-width: 36em; font-family: var(--font-serif); font-size: 20px; line-height: 1.45; }
+/* 摘要两行,末行渐隐(不用省略号,同条目行) */
+.reader-page-wrap .rk-sum {
+  margin-top: 6px; max-width: 52em; max-height: 3.4em; font-size: 14px; line-height: 1.7; white-space: normal;
+  -webkit-mask: linear-gradient(to right, #000 calc(100% - 5em), transparent) 0 100% / 100% 1.7em no-repeat, linear-gradient(#000, #000) 0 0 / 100% calc(100% - 1.7em) no-repeat;
+  mask: linear-gradient(to right, #000 calc(100% - 5em), transparent) 0 100% / 100% 1.7em no-repeat, linear-gradient(#000, #000) 0 0 / 100% calc(100% - 1.7em) no-repeat;
+}
+.reader-page-wrap .rk-meta { margin-top: 10px; }
+.reader-page-wrap .rk-side { gap: 8px; padding-top: 3px; }
+.reader-page-wrap .rk-logos .logo-mark + .logo-mark { margin-left: 4px; }   /* 不叠放:三枚徽标并排才认得出是谁 */
+.reader-page-wrap .rk-score { font-size: 24px; }
+/* 榜首 */
+.reader-page-wrap .rk-row:first-child .rk-num { font-size: 44px; color: var(--dorami-ink); }
+.reader-page-wrap .rk-row:first-child .rk-title { font-size: 24px; line-height: 1.3; }
+.reader-page-wrap .rk-row:first-child .rk-sum { margin-top: 10px; max-width: 48em; max-height: 5.1em; font-size: 15px; color: var(--dorami-ink-2); }
+
+/* ── 事件页:两栏——左代表报道(滚动时吸住),右时间线 ── */
+.reader-page-wrap .rk-backrow { display: flex; align-items: flex-end; height: 56px; }
+.reader-page-wrap .rk-back { margin: 0 0 0 -6px; }
+.reader-page-wrap.rk-event .rk-dh { padding: 12px 0 24px; border-bottom: 1px solid var(--dorami-border); }
+.reader-page-wrap.rk-event .rk-kicker { margin: 0; font-size: 13px; color: var(--dorami-accent-ink); }
+.reader-page-wrap.rk-event .rk-dtitle { margin: 10px 0 12px; max-width: 26em; text-wrap: balance; }
+.reader-page-wrap.rk-event .rk-dmeta { margin: 0; font-size: 13px; color: var(--dorami-muted); }
+.reader-page-wrap.rk-event .rk-ebody { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 56px; align-items: start; margin-top: 0; padding-top: 28px; }
+.reader-page-wrap.rk-event .rk-sec:first-child { position: sticky; top: 24px; }
+.reader-page-wrap.rk-event .rk-sec > .drawer-sec-title { margin: 0 0 12px; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; color: var(--dorami-faint); }
+.reader-page-wrap.rk-event .rk-rep { padding: 0; border-radius: 0; background: none; }
+@media (hover: hover) {
+  .reader-page-wrap.rk-event .rk-rep:hover { box-shadow: none; }
+  .reader-page-wrap.rk-event .rk-rep:hover .rk-rep-title { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 5px; text-decoration-color: var(--dorami-border-strong); }
+}
+.reader-page-wrap.rk-event .rk-rep-sum { margin-top: 10px; font-size: 14px; line-height: 1.7; }
+.reader-page-wrap.rk-event .rk-tl-day:first-child .rk-tl-daylabel { padding-top: 0; }
+
+/* ── 发现:标记不动(手机壳渲染同一份),桌面靠网格重排——页名与搜索 / 添加在页头,目录页签与形态筛选在页签行 ── */
+.reader-shell > .reader-disc { display: block; overflow-y: auto; padding-bottom: var(--player-clear-end, 0px); }
+.reader-shell > .reader-disc > .reader-disc-head { position: sticky; top: -124px; z-index: 3; padding: 0; border-bottom: 0; background: var(--dorami-surface); }
+.reader-shell > .reader-disc .reader-disc-head-inner {
+  max-width: 1200px; margin: 0 auto; padding: 0 48px;
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; grid-template-rows: 124px 41px; column-gap: 8px; align-items: center;
+}
+.reader-shell > .reader-disc .reader-disc-head-inner::after { content: ""; grid-column: 1 / -1; grid-row: 2; align-self: end; border-bottom: 1px solid var(--dorami-border); }
+.reader-shell > .reader-disc .reader-disc-title-row { grid-column: 1; grid-row: 1; align-self: end; padding-bottom: 20px; }
+.reader-shell > .reader-disc .reader-disc-title { font-family: var(--font-serif); font-size: 30px; font-weight: 600; line-height: 1.2; }
+.reader-shell > .reader-disc .reader-disc-tools { display: contents; }
+.reader-shell > .reader-disc .reader-disc-search { grid-column: 3; grid-row: 1; align-self: end; margin: 0 0 20px; width: 248px; max-width: none; height: 32px; padding: 0 10px; }
+.reader-shell > .reader-disc .reader-disc-head-inner:not(:has(.reader-disc-add)) .reader-disc-search { grid-column: 3 / -1; justify-self: end; }
+.reader-shell > .reader-disc .reader-disc-add { grid-column: 4; grid-row: 1; align-self: end; margin: 0 0 20px; height: 32px; padding: 0 12px; font-size: 13px; font-weight: 400; }
+.reader-shell > .reader-disc .reader-disc-bulk-sub { grid-column: 5; }
+.reader-shell > .reader-disc .reader-disc-viewseg { grid-column: 1 / 3; grid-row: 2; justify-self: start; align-self: stretch; display: flex; gap: 24px; padding: 0; border-radius: 0; background: none; }
+.reader-shell > .reader-disc .reader-disc-viewseg .reader-seg-btn {
+  position: relative; display: inline-flex; align-items: center; padding: 0; border-radius: 0; background: none; box-shadow: none;
+  font-size: 14px; color: var(--dorami-muted);
+}
+@media (hover: hover) { .reader-shell > .reader-disc .reader-disc-viewseg .reader-seg-btn:hover { color: var(--dorami-ink); } }
+.reader-shell > .reader-disc .reader-disc-viewseg .reader-seg-btn.is-on { color: var(--dorami-ink); font-weight: 600; }
+.reader-shell > .reader-disc .reader-disc-viewseg .reader-seg-btn.is-on::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--dorami-ink); }
+.reader-shell > .reader-disc .reader-disc-seg { grid-column: 3 / 5; grid-row: 2; justify-self: end; margin: 0; }
+.reader-shell > .reader-disc .reader-disc-sort { grid-column: 5; grid-row: 2; justify-self: end; }
+.reader-shell > .reader-disc .reader-disc-coll-dethead { grid-column: 1 / -1; grid-row: 1 / -1; }
+.reader-shell > .reader-disc .reader-disc-scroll { overflow: visible; padding: 0; }
+.reader-shell > .reader-disc .reader-disc-body { max-width: 1200px; margin: 0 auto; padding: 0 48px 120px; }
+/* 目录行:分组名宋体,来源一行三个,行间细线,不画卡片 */
+.reader-shell > .reader-disc .reader-disc-grp { margin: 40px 0 0; gap: 10px; }
+.reader-shell > .reader-disc .reader-disc-grp-label { font-family: var(--font-serif); font-size: 20px; font-weight: 600; line-height: 1.3; letter-spacing: 0; color: var(--dorami-ink); }
+.reader-shell > .reader-disc .reader-disc-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 40px; }
+.reader-shell > .reader-disc .reader-disc-card { padding: 20px 0; border-radius: 0; background: none; box-shadow: none; border-bottom: 1px solid var(--dorami-border-soft); }
+.reader-shell > .reader-disc .reader-disc-name { font-size: 15px; }
+.reader-shell > .reader-disc .reader-disc-desc { font-size: 13px; }
+
+/* ── 社交:页头随页面滚走;正文一栏(640)加页边(账号列表),与阅读窗同一种分法 ── */
+.reader-social.is-page .reader-social-scroll { padding-bottom: var(--player-clear-end, 0px); }
+.reader-social.is-page .reader-social-head { height: 124px; align-items: flex-end; padding: 0 0 20px; border-bottom: 1px solid var(--dorami-border); }
+.reader-social.is-page .reader-social-title { font-family: var(--font-serif); font-size: 30px; font-weight: 600; line-height: 1.2; letter-spacing: 0; color: var(--dorami-ink); }
+.reader-social.is-page .reader-social-split { display: grid; grid-template-columns: minmax(0, 640px) 248px; justify-content: space-between; gap: 0 48px; }
+.reader-social.is-page .reader-social-col { max-width: none; margin: 0; padding: 0; }
+.reader-social.is-page .reader-social-day { margin: 0; padding: 24px 0 4px; position: static; background: none; }
+.reader-social.is-page .reader-social-side { position: sticky; top: 24px; align-self: start; padding-top: 8px; }
+.reader-social.is-page .reader-social-side .reader-sources-inner { width: auto; }
+.reader-social.is-page .reader-social-side .reader-src-head { display: none; }   /* 页名已经写了「社交媒体」 */
 
 .reader-ann-band {
   position: absolute;

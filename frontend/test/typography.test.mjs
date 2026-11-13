@@ -134,10 +134,7 @@ const MOBILE_KEEP = /^:where\(\.m-shell\b/;                          // 手机�
 const ADMIN_OWNED = /\.reader-analysis-|\.guest-entry-/;             // 管理台文章详情 / 游客区,不属读者面桌面
 const READER_DISPLAY = /^\.bp-title(\.|$|\s)/;                       // 早报海报头条:展示字号,刻度之外
 const READER_SCALE_PENDING = new Map([
-  // 第二批(版框与页头):事件页标题改宋体、兴趣页报头并入统一页头
-  ['.rk-dtitle', [18]],
-  ['.rk-event .rk-dtitle', [22]],
-  ['.rk-event .rk-rep-title', [16]],
+  // 兴趣页(游客看不到,没有随第二批改;报头并入统一页头时收口)
   ['.brief-mast-title', [32]],
   ['.interest-body .brief-mast-title', [32]],
   ['.interest-pick-name', [12.5]],

@@ -174,7 +174,7 @@ test('榜单页结构:三段分段、无标签三轴 / 30 日趋势 / 全局高�
   assert.match(page, /fetchReaderPicks\(/);
   // 详情:桌面在榜单页内原地换成事件页(2026-11-04 目检由右侧抽屉改来)、手机走层原语 Sheet
   assert.ok(!page.includes('<Drawer'), '桌面事件详情不再是抽屉');
-  assert.match(page, /className="rk-wrap rk-event"/);
+  assert.match(page, /className="reader-page-wrap rk-wrap rk-event"/);   // issue #279 第二批:事件页用整幅页面的统一版框
   assert.match(page, /返回榜单/);
   assert.match(page, /<Sheet[\s\S]*?className="rk-sheet"/);
   // 详情正文:代表报道 → 最新进展(卡片)→ 时间线;「来源」节取消,「阅读全文」不用实心主按钮

@@ -433,6 +433,8 @@ export default function SocialFlow({
   // 移动壳(v3.29 Wave3):头部控件(seg/标读/搜索)由移动顶栏承担,本组件只出卡片流;
   // 自绘浮层滚动条一并关闭——它解决的是桌面 macOS gutter 占位,移动端原生即 overlay。
   headless = false,
+  // 桌面整幅页面形态(issue #279 第二批):给了它(页边的账号列表)就按「页头随页面滚走 + 正文列与页边并排」渲染;手机壳不传
+  side = null,
   // 手机壳列表顶一行(issue #230:只看未读 / 当前筛选),放在滚动区最上面;桌面不传
   topSlot = null,
 }) {
@@ -460,9 +462,9 @@ export default function SocialFlow({
     return () => io.disconnect();
   }, [hasMore, loadingMore, loading, onLoadMore]);
 
-  return (
-    <section className="reader-col reader-social" aria-label="社交媒体">
-      {!headless && (
+  // 页头与正文列提成常量:手机壳与桌面旧形态下页头在滚动区外;桌面整幅页面(side = 页边的账号列表,issue #279 第二批)里
+  // 页头随页面滚走,正文列与页边并排。两种形态渲染同一份标记。
+  const headEl = headless ? null : (
       <header className="reader-social-head">
         {/* 标题常显(搜索靠右展开、已不与标题冲突,故不再隐藏);副标「N 个账号 · M 未读」
             已撤(减噪);收藏筛选时标题仅「收藏」二字。 */}
@@ -542,11 +544,8 @@ export default function SocialFlow({
           </button>
         </div>
       </header>
-      )}
-
-      <div className="reader-scrollwrap">
-      <div className="reader-social-scroll" ref={socialScrollRef}>
-        {topSlot}
+  );
+  const colEl = (
         <div className="reader-social-col">
           {loading ? (
             <SocialCardsSkeleton count={3} />
@@ -606,6 +605,24 @@ export default function SocialFlow({
             </>
           )}
         </div>
+  );
+
+  return (
+    <section className={`reader-col reader-social ${side ? 'is-page' : ''}`.trim()} aria-label="社交媒体">
+      {!side && headEl}
+
+      <div className="reader-scrollwrap">
+      <div className="reader-social-scroll" ref={socialScrollRef}>
+        {topSlot}
+        {side ? (
+          <div className="reader-page-wrap">
+            {headEl}
+            <div className="reader-social-split">
+              {colEl}
+              <aside className="reader-social-side" aria-label="订阅的账号">{side}</aside>
+            </div>
+          </div>
+        ) : colEl}
       </div>
       <div ref={socialThumbRef} className="ovl-thumb" aria-hidden="true" />
       </div>
