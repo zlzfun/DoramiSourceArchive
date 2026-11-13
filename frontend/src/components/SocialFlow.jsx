@@ -288,7 +288,7 @@ const SocialPost = memo(function SocialPost({
       {unread && <span className="sr-only">未读</span>}
       {reposted && (
         <p className="social-repost">
-          <Repeat2 className="h-3.5 w-3.5" aria-hidden="true" />
+          <Repeat2 className="h-[13px] w-[13px]" aria-hidden="true" />
           {sourceName || article.source_id} 转推
         </p>
       )}
@@ -337,8 +337,8 @@ const SocialPost = memo(function SocialPost({
                 onClick={() => onToggleFavorite?.(article)}
               >
                 {favPending
-                  ? <Loader2 className="h-4 w-4 animate-spin" />
-                  : <Star className="h-4 w-4" fill={favorite ? 'currentColor' : 'none'} />}
+                  ? <Loader2 className="h-[15px] w-[15px] animate-spin" />
+                  : <Star className="h-[15px] w-[15px]" fill={favorite ? 'currentColor' : 'none'} />}
               </button>
               <button
                 type="button"
@@ -349,10 +349,10 @@ const SocialPost = memo(function SocialPost({
                 onClick={() => onToggleRead?.(article, unread)}
               >
                 {readPending
-                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                  ? <Loader2 className="h-[15px] w-[15px] animate-spin" />
                   : unread
-                    ? <Check className="h-4 w-4" />
-                    : <Circle className="h-4 w-4" />}
+                    ? <Check className="h-[15px] w-[15px]" />
+                    : <Circle className="h-[15px] w-[15px]" />}
               </button>
             </span>
           </div>

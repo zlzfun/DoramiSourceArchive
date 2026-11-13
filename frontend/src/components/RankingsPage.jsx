@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowUpRight, ChevronLeft, FileText, Flame, Headphones, Loader2 } from 'lucide-react';
 import { fetchReaderEvent, fetchReaderEvents, fetchReaderPicks } from '../api';
 import {
@@ -248,6 +248,7 @@ function EventDetailHead({ detail, titleRef = null, rankOnly = false }) {
 // 三节同一种小节标题(左上,卡外);两张卡首行同一种写法:来源在左、时间在右;两张卡都整卡可点进站内原文。
 // 代表报道卡的命中钮铺满整卡(给焦点与读屏名,点击由卡接住,同 RankRow);卡底只留外链「官方原文 ↗」,压在命中钮之上、不冒泡
 function EventDetailBody({ detail, sourceMap, preferChinese, onOpenArticle, timelineHead = true }) {
+  const timelineId = useId();
   if (detail.status === 'loading') {
     return <p className="rk-sec-state"><Loader2 className="animate-spin" aria-hidden="true" />详情加载中…</p>;
   }
@@ -329,8 +330,11 @@ function EventDetailBody({ detail, sourceMap, preferChinese, onOpenArticle, time
       )}
 
       {days.length > 0 && (
-        <section className="rk-sec">
-          {timelineHead && <h3 className="drawer-sec-title">时间线 · {Number(data.member_count) || members.length} 篇</h3>}
+        <section className="rk-sec" aria-labelledby={timelineId}>
+          {/* 桌面不显示这行标题(带时刻与竖线的列表就是时间线,篇数页头已有),但读屏仍按它定位分区 */}
+          {timelineHead
+            ? <h3 id={timelineId} className="drawer-sec-title">时间线 · {Number(data.member_count) || members.length} 篇</h3>
+            : <h3 id={timelineId} className="sr-only">时间线</h3>}
           <ol className="rk-tl">
             {days.map((day) => (
               <li key={day.key} className="rk-tl-day">

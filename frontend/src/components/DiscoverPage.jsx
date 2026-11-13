@@ -110,7 +110,7 @@ function SourceCard({ source, subbed, pinning, query, showArticleChip, onSubscri
             onBlur={() => setConfirming(false)}
           >
             {pinning
-              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ? <Loader2 className="h-3 w-3 animate-spin" />
               : subbed
                 ? <><span className="t-on"><Check aria-hidden="true" />已订阅</span><span className="t-off">取消订阅</span></>
                 : <><Plus aria-hidden="true" />订阅</>}
@@ -277,7 +277,7 @@ export default function DiscoverPage({
         onClick={(e) => { e.stopPropagation(); handleCollectionButton(c); }}
       >
         {pinning
-          ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ? <Loader2 className="h-3 w-3 animate-spin" />
           : total === 0
             ? '暂不可用'
             : confirming
@@ -319,7 +319,7 @@ export default function DiscoverPage({
                 className="reader-disc-back"
                 onClick={() => { disarmConfirm(); onCloseCollection?.(); }}
               >
-                <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                <ArrowLeft className="h-[13px] w-[13px]" aria-hidden="true" />
                 合集
               </button>
               <div className="reader-disc-coll-detmain">
@@ -374,7 +374,7 @@ export default function DiscoverPage({
                 {/* 三段共用头部搜索框(v3.52.3 目检:兴趣段此前把搜索放在 chip 行之下,与另两段不同形);
                     兴趣段的检索词经 externalQuery 注入 InterestPage,由它按标签名/别名过滤 */}
                 <label className="reader-disc-search">
-                  <Search className="h-3.5 w-3.5" aria-hidden="true" />
+                  <Search className="h-[13px] w-[13px]" aria-hidden="true" />
                   <input
                     type="search"
                     value={query}
@@ -392,7 +392,7 @@ export default function DiscoverPage({
                         title="贴入 RSS/Atom 地址,添加只有你可见的自定源"
                         onClick={() => (guest ? requestLogin('addsrc') : setAddOpen(true))}
                       >
-                        <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                        <Plus className="h-[13px] w-[13px]" aria-hidden="true" />
                         {addSourceKind === 'article' ? '添加文章源' : addSourceKind === 'podcast' ? '添加播客' : '添加源'}
                       </button>
                     )}
@@ -403,7 +403,7 @@ export default function DiscoverPage({
                         disabled={bulkSubscribe.disabled}
                         onClick={() => onSubscribeShape(bulkSubscribe.shape)}
                       >
-                        {bulkSubscribe.busy && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
+                        {bulkSubscribe.busy && <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />}
                         {bulkSubscribe.text}
                       </button>
                     )}

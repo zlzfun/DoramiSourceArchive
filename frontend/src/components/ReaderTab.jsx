@@ -192,7 +192,7 @@ export function AxisSeg({ axis, onChange, className = '' }) {
             onClick={() => onChange(key)}
             className={`reader-axis-btn ${on ? 'is-on' : ''}`}
           >
-            <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+            <Icon className="h-3 w-3" aria-hidden="true" />
             <span>{label}</span>
           </button>
         );
@@ -299,7 +299,7 @@ export const ArticleRow = memo(function ArticleRow({
     ) : null)
     : (
       <span aria-hidden="true" title={isFav ? '取消收藏' : '收藏'} className={`reader-entry-fav ${isFav ? 'is-on' : ''}`}>
-        <Star className="h-4 w-4" fill={isFav ? 'currentColor' : 'none'} />
+        <Star className="h-[15px] w-[15px]" fill={isFav ? 'currentColor' : 'none'} />
       </span>
     );
   const onRowClick = (e) => {

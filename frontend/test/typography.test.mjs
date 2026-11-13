@@ -47,12 +47,18 @@ function declarations(css) {
     buf = '';
     if (!match) return;
     const prop = match[1].toLowerCase();
-    const value = match[2];
-    const where = { selector: stack.filter((p) => !p.startsWith('@')).at(-1) || stack.at(-1) || '', exempt: isExempt(stack), line };
+    const value = match[2].replace(/\s*!important\s*$/i, '');   // !important 不改变它是哪个字号
+    // 嵌套规则(.a { &.on { … } } / .a { .b { … } })折叠成完整选择器,护栏按完整选择器判断归属
+    const styleStack = stack.filter((p) => !p.startsWith('@'));
+    const folded = styleStack.reduce((outer, inner) => (outer == null ? inner : splitSelectors(inner)
+      .flatMap((sel) => splitSelectors(outer).map((parent) => (sel.includes('&') ? sel.replaceAll('&', parent) : `${parent} ${sel}`)))
+      .join(', ')), null);
+    const where = { selector: folded || stack.at(-1) || '', exempt: isExempt(stack), line };
     if (prop === 'font-weight' && /^\d{3}$/.test(value)) out.push({ kind: 'weight', value: Number(value), ...where });
     if (prop === 'font-size') {
       const px = /^(\d+(?:\.\d+)?)px$/.exec(value);
       if (px) out.push({ kind: 'size', value: Number(px[1]), ...where });
+      else out.push({ kind: 'size-expr', value, ...where });   // calc / clamp / var / em…:交给读者面刻度护栏按精确例外核
     }
     if (prop === 'font') {
       const tokens = value.split(/\s+/);
@@ -120,9 +126,13 @@ test('字号不小于 12px', () => {
 // 读者面桌面的字号刻度(issue #279 第一批「并档」):index.css 里读者面的类只取 12 / 13 / 14 / 15 / 17 / 20 / 24 / 30 / 44。
 // 现网实测曾有 17 级(12.5 / 13.5 / 16 / 16.5 / 21 / 22 / 23…),同级的东西好几个尺寸;刻度见 docs/frontend/conventions.md §3。
 // READER_SCALE_PENDING 是棘轮:还没并档的在册例外,后续批次收口时从这里删;清单里的条目必须仍然存在,删了规则就得删清单。
-// 手机壳(mobile.css)有自己的刻度(--m-fs-*),不在此列;早报海报头条是展示字号,单列。
+// 不在此列:手机壳(mobile.css 有自己的刻度 --m-fs-*;index.css 里以 :where(.m-shell… 开头的是手机壳留值)、
+// 早报海报头条(展示字号)、名字带 reader- / guest- 但其实是管理面在用的类。
 const READER_SCALE = new Set([12, 13, 14, 15, 17, 20, 24, 30, 44]);
 const READER_SELECTOR = /\.(reader-|bp-|rk-|social-|player-|listen-|podcast-|ranking-|markdown-body|guest-|brief-mast|interest-)/;
+const MOBILE_KEEP = /^:where\(\.m-shell\b/;                          // 手机壳留值(紧跟被改的原规则,issue #279)
+const ADMIN_OWNED = /\.reader-analysis-|\.guest-entry-/;             // 管理台文章详情 / 游客区,不属读者面桌面
+const READER_DISPLAY = /^\.bp-title(\.|$|\s)/;                       // 早报海报头条:展示字号,刻度之外
 const READER_SCALE_PENDING = new Map([
   // 第二批(版框与页头):事件页标题改宋体、兴趣页报头并入统一页头
   ['.rk-dtitle', [18]],
@@ -136,30 +146,63 @@ const READER_SCALE_PENDING = new Map([
   ['.interest-btn', [12.5]],
   ['.interest-onb-text', [12.5]],
 ]);
-// 展示字号(刻度之外,样页定值):早报海报头条
-const READER_DISPLAY = /^\.bp-title(\.|$|\s)/;
+// 认不出的字号写法(calc / clamp / var / em…)一律要逐条登记:护栏算不出它落在哪一级,不登记就等于放行
+const READER_SIZE_EXPR = new Map([
+  ['.markdown-body code', ['0.9em']],                         // 行内代码跟随所在段落
+  ['.listen-note', ['var(--text-xs)']],                       // 12px 的 token
+  ['.bp-state-title', ['clamp(24px, 2.6cqi, 32px)']],         // 早报空态 / 失败态的标题:随容器伸缩的展示字号,上限 32 待并到 30
+]);
+const MOBILE_TOKEN = /var\(--m-fs-/;                            // 手机壳刻度的 token(播放器的手机形态写在 index.css 里)
 
-test('读者面桌面字号只取刻度上的值(在册例外逐批收口)', () => {
+function readerScaleViolations(css) {
   const bad = [];
   const seen = new Map();
-  for (const decl of declarations(SHEETS['index.css'])) {
-    if (decl.kind !== 'size' || decl.exempt) continue;
-    const selectors = splitSelectors(decl.selector).filter((sel) => READER_SELECTOR.test(sel));
-    if (!selectors.length || READER_SCALE.has(decl.value)) continue;
-    for (const sel of selectors) {
-      if (READER_DISPLAY.test(sel)) continue;
-      const pending = READER_SCALE_PENDING.get(sel);
-      if (pending && pending.includes(decl.value)) { seen.set(sel, (seen.get(sel) || new Set()).add(decl.value)); continue; }
-      bad.push(`index.css:${decl.line} ${sel} → ${decl.value}px`);
+  const mark = (key, value) => seen.set(key, (seen.get(key) || new Set()).add(value));
+  for (const decl of declarations(css)) {
+    if ((decl.kind !== 'size' && decl.kind !== 'size-expr') || decl.exempt) continue;
+    for (const sel of splitSelectors(decl.selector)) {
+      if (!READER_SELECTOR.test(sel) || MOBILE_KEEP.test(sel) || ADMIN_OWNED.test(sel) || READER_DISPLAY.test(sel)) continue;
+      if (decl.kind === 'size') {
+        if (READER_SCALE.has(decl.value)) continue;
+        if (READER_SCALE_PENDING.get(sel)?.includes(decl.value)) { mark(`px ${sel}`, decl.value); continue; }
+        bad.push(`${decl.line} ${sel} → ${decl.value}px`);
+      } else {
+        if (decl.value === 'inherit' || MOBILE_TOKEN.test(decl.value)) continue;
+        if (READER_SIZE_EXPR.get(sel)?.includes(decl.value)) { mark(`expr ${sel}`, decl.value); continue; }
+        bad.push(`${decl.line} ${sel} → ${decl.value}`);
+      }
     }
   }
+  return { bad, seen };
+}
+
+test('读者面桌面字号只取刻度上的值(在册例外逐批收口)', () => {
+  const { bad, seen } = readerScaleViolations(SHEETS['index.css']);
   assert.deepEqual(bad, []);
   // 棘轮:清单里的例外都还在(收口后忘了删清单会在这里红)
   const stale = [];
-  for (const [sel, values] of READER_SCALE_PENDING) {
-    for (const value of values) if (!seen.get(sel)?.has(value)) stale.push(`${sel} → ${value}px`);
-  }
+  for (const [sel, values] of READER_SCALE_PENDING) for (const value of values) if (!seen.get(`px ${sel}`)?.has(value)) stale.push(`${sel} → ${value}px`);
+  for (const [sel, values] of READER_SIZE_EXPR) for (const value of values) if (!seen.get(`expr ${sel}`)?.has(value)) stale.push(`${sel} → ${value}`);
   assert.deepEqual(stale, []);
+});
+
+test('读者面字号护栏自检:!important、嵌套、表达式都拦得住,手机壳留值与管理面的类不误伤', () => {
+  const bad = (css) => readerScaleViolations(css).bad.map((line) => line.replace(/^\d+ /, ''));
+  assert.deepEqual(bad('.reader-x { font-size: 13.5px; }'), ['.reader-x → 13.5px']);
+  assert.deepEqual(bad('.reader-x { font-size: 13.5px !important; }'), ['.reader-x → 13.5px']);
+  assert.deepEqual(bad('.reader-x { &.is-on { font-size: 13.5px; } }'), ['.reader-x.is-on → 13.5px']);
+  assert.deepEqual(bad('.reader-x { .inner { font: 600 16px/1.4 sans-serif; } }'), ['.reader-x .inner → 16px']);
+  assert.deepEqual(bad('@container (max-width: 680px) { .bp-x { font-size: 19px; } }'), ['.bp-x → 19px']);
+  assert.deepEqual(bad('.reader-x { font-size: calc(13.5px); }'), ['.reader-x → calc(13.5px)']);
+  assert.deepEqual(bad('.reader-x { font-size: clamp(24px, 2.6cqi, 32px); }'), ['.reader-x → clamp(24px, 2.6cqi, 32px)']);
+  assert.deepEqual(bad('.reader-x { font-size: var(--some-size); }'), ['.reader-x → var(--some-size)']);
+  assert.deepEqual(bad('.reader-x, .acct-y { font-size: 13.5px; }'), ['.reader-x → 13.5px']);
+  // 不误伤
+  assert.deepEqual(bad('.reader-x { font-size: 13px; } .reader-y { font-size: inherit; }'), []);
+  assert.deepEqual(bad(':where(.m-shell, .m-page, .m-read, .m-sheet) .reader-x { font-size: 12.5px; }'), []);
+  assert.deepEqual(bad('.reader-analysis-score strong { font-size: 22px; } .guest-entry-head { font-size: 12.5px; }'), []);
+  assert.deepEqual(bad('.bp-title { font-size: 73px; } .acct-table { font-size: 12.5px; }'), []);
+  assert.deepEqual(bad('.player-layer.is-mobile .player-sub { font-size: var(--m-fs-xs); }'), []);
 });
 
 test('未分层的 button / input { font: inherit } 不回潮', () => {
