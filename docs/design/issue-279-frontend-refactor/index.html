@@ -229,7 +229,7 @@ footer { margin-top: 80px; padding: 28px 0 56px; border-top: 1px solid var(--lin
 
 <section id="copy">
   <h2>说明文字 · 删改 35 处</h2>
-  <p class="sub">按你 11 月 13 日定的规则把样页逐屏过了一遍：<i lang="en">Avoid unnecessary secondary labels and description, let the layout do the explaining.</i> 其中 12 处现网本来就有，23 处是我在样页里加的。</p>
+  <p class="sub">按你 11 月 13 日定的规则把样页逐屏过了一遍：<i lang="en">Avoid unnecessary secondary labels and description, let the layout do the explaining.</i> 其中 13 处现网本来就有，22 处是我在样页里加的。</p>
   <table class="copy">
     <tr><th>在哪</th><th>原来写着</th><th>来自</th><th>现在</th></tr>
     <tr class="grp"><th colspan="4">页头下的一句话</th></tr>
@@ -238,7 +238,7 @@ footer { margin-top: 80px; padding: 28px 0 56px; border-top: 1px solid var(--lin
     <tr><td>社交</td><td>「订阅账号的发言，新的在前」</td><td class="src">样页</td><td>删</td></tr>
     <tr><td>兴趣</td><td>「按你选的主题，从全站挑文章」</td><td class="src">样页</td><td>删</td></tr>
     <tr class="grp"><th colspan="4">讲系统怎么运作</th></tr>
-    <tr><td>早报页脚</td><td>「本期编排」一整块：编排时间、入选理由、头条规则</td><td class="src">样页</td><td>整块删。头条为什么是它，眉题「重大事件 · 5 家来源」已经说了</td></tr>
+    <tr><td>早报页脚</td><td>「本期编排」一整块：编排时间、入选理由、头条规则</td><td class="src">现网</td><td>样页里整块删了。现网登录读者有这一块（游客看不到，当时没核到），是有意设计的编排说明，第一批没有动，删不删等你定</td></tr>
     <tr><td>早报目录右端</td><td>「订阅范围内近 36 小时 60 篇候选，合并同一事件…」</td><td class="src">样页</td><td>删</td></tr>
     <tr><td>问答面板</td><td>标题旁「在订阅范围内检索作答」，以及「它会做什么」一段</td><td class="src">样页</td><td>删。范围写进输入框的占位：「问问你订阅的内容…」，现网就是这么写的</td></tr>
     <tr><td>问答输入框下</td><td>「回答由 AI 生成，请以原文为准」</td><td class="src">样页</td><td>删。✦ 是 AI 的标记，回答每句带出处编号</td></tr>
@@ -369,7 +369,7 @@ footer { margin-top: 80px; padding: 28px 0 56px; border-top: 1px solid var(--lin
   <p class="sub">按风险从小到大排，彼此不挡路。</p>
   <table>
     <tr><th>波</th><th>内容</th><th>动到哪</th><th>风险</th></tr>
-    <tr><td>一 · 并档</td><td>字号、行高、字距、圆角、按钮与图标钮高度、图标尺寸、日期写法、徽标签，名次的红色；「说明文字」一节里现网已有的 12 处</td><td>主要是 <code>index.css</code> 与两三个时间函数；删文字要动几处组件里的文案</td><td>小。每一处都是把一个值改成旁边已有的值。</td></tr>
+    <tr><td>一 · 并档</td><td>字号、行高、字距、圆角、按钮与图标钮高度、图标尺寸、日期写法、徽标签，名次的红色；「说明文字」一节里现网已有的说明文字（「本期编排」除外）</td><td>主要是 <code>index.css</code> 与两三个时间函数；删文字要动几处组件里的文案</td><td>小。每一处都是把一个值改成旁边已有的值。</td></tr>
     <tr><td>二 · 版框与页头</td><td>榜单、发现、社交、事件页去来源栏，统一页头，页签原语，事件页两栏，发现页目录行</td><td><code>RankingsPage</code> <code>DiscoverPage</code> <code>SocialFlow</code> 与外壳的栏位</td><td>中。改规范「页头三族」。</td></tr>
     <tr><td>三 · 阅读窗</td><td>吸顶栏收动作，速读卡三处改动，页边，来源栏收起与栏头，返回与预览的两条色带</td><td><code>ReaderTab</code> <code>AiReadingCard</code> 与播客标题区</td><td>中。动的是读得最多的一屏，需要你用几天。</td></tr>
     <tr><td>四 · 列表与早报</td><td>列表按分值收放；早报条目两栏；导轨标签常驻；问答进导轨</td><td>条目行、<code>PersonalBriefPage</code>、导轨</td><td>中。列表密度是口味，建议带开关上线。</td></tr>

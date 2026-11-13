@@ -2039,3 +2039,27 @@ body:has(> .m-sheet-layer:not(.is-leaving)) .m-root .toast-pop { top: calc(var(-
 [data-theme="dark"] .m-shell .social-skel { box-shadow: inset 0 1px 0 var(--dorami-edge); }
 .m-shell .social-skel-avatar { width: 36px; height: 36px; border-radius: var(--r-pill); }   /* 圆头像(全局 .skeleton 的 --r-sm 原先压过了它) */
 /* ════ 批 4c 结束 ════ */
+
+/* ── issue #279 第一批(桌面并档)留值:桌面改了刻度、手机壳又共用的类,在这里钉回手机壳定稿(issue #230)时的取值,
+   手机壳各页前后零差异(样式指纹对拍)。手机壳自己的并档另案;删改这一段前先对拍手机壳各页。
+   前缀覆盖手机壳的四种容器:壳内、整页层、正文页、底部层;早报是 .bp-sheet.is-mobile。 ── */
+:is(.m-shell, .m-page, .m-read, .m-sheet) .reader-ai-score-btn { font-size: 22px; }
+:is(.m-shell, .m-page, .m-read, .m-sheet) .reader-ai-layer-text { line-height: 1.8; }
+:is(.m-shell, .m-page, .m-read, .m-sheet) .social-more { font-size: 12.5px; }
+:is(.m-shell, .m-page, .m-read, .m-sheet) .listen-entry { border-radius: var(--r-pill); }
+:is(.m-shell, .m-page, .m-read, .m-sheet) .podcast-premium-badge { border-radius: var(--r-pill); }
+:is(.m-shell, .m-page, .m-read, .m-sheet) .guest-chip { border-radius: var(--r-pill); }
+:is(.m-shell, .m-page, .m-read, .m-sheet) .rk-move.is-up { color: var(--state-ok); font-weight: inherit; }
+:is(.m-shell, .m-page, .m-read, .m-sheet) .rk-move.is-down { color: var(--state-bad); }
+.bp-sheet.is-mobile .bp-verdict-label { letter-spacing: 0.18em; }
+/* 图标尺寸:桌面并到 14 / 16 / 18,手机壳留原值 */
+:is(.m-shell, .m-page, .m-read, .m-sheet) .listen-ico { width: 12px; height: 12px; }
+:is(.m-shell, .m-page, .m-read, .m-sheet) .listen-ico svg { width: 11px; height: 11px; }
+:is(.m-shell, .m-page, .m-read, .m-sheet) .listen-ico .player-spark { width: 13px; height: 13px; }
+:is(.m-shell, .m-page, .m-read, .m-sheet) .social-tr-btn svg { width: 12px; height: 12px; }
+:is(.m-shell, .m-page, .m-read, .m-sheet) .reader-podcast-availability svg { width: 12px; height: 12px; }
+:is(.m-shell, .m-page, .m-read, .m-sheet) .rk-link svg { width: 13px; height: 13px; }
+:is(.m-shell, .m-page, .m-read, .m-sheet) .social-repost svg { width: 13px; height: 13px; }
+:is(.m-shell, .m-page, .m-read, .m-sheet) .social-act svg { width: 15px; height: 15px; }
+:is(.m-shell, .m-page, .m-read, .m-sheet) .reader-entry-fav svg { width: 15px; height: 15px; }
+:is(.m-shell, .m-page, .m-read, .m-sheet) .reader-axis-btn svg { width: 12px; height: 12px; }

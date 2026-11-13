@@ -221,6 +221,13 @@ export function eventKicker(range, rank) {
   return `热点事件 · ${normalizeEventRange(range) === 'recent' ? '近 2 天' : '本周'}第 ${n} 件`;
 }
 
+// 桌面事件页的眉头:只写名次(「返回榜单」已说明这是热点事件);不在榜上不写
+export function eventRankNote(range, rank) {
+  const n = Number(rank);
+  if (rank == null || rank === '' || !Number.isInteger(n) || n < 1) return '';
+  return `${normalizeEventRange(range) === 'recent' ? '近 2 天' : '本周'}第 ${n} 件`;
+}
+
 // 详情元信息「N 家报道 · M 篇 · 首报 10月31日 17:32」
 export function eventMetaParts(detail, now = Date.now()) {
   const parts = [];

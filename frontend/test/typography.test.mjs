@@ -117,6 +117,51 @@ test('字号不小于 12px', () => {
   assert.deepEqual(bad, []);
 });
 
+// 读者面桌面的字号刻度(issue #279 第一批「并档」):index.css 里读者面的类只取 12 / 13 / 14 / 15 / 17 / 20 / 24 / 30 / 44。
+// 现网实测曾有 17 级(12.5 / 13.5 / 16 / 16.5 / 21 / 22 / 23…),同级的东西好几个尺寸;刻度见 docs/frontend/conventions.md §3。
+// READER_SCALE_PENDING 是棘轮:还没并档的在册例外,后续批次收口时从这里删;清单里的条目必须仍然存在,删了规则就得删清单。
+// 手机壳(mobile.css)有自己的刻度(--m-fs-*),不在此列;早报海报头条是展示字号,单列。
+const READER_SCALE = new Set([12, 13, 14, 15, 17, 20, 24, 30, 44]);
+const READER_SELECTOR = /\.(reader-|bp-|rk-|social-|player-|listen-|podcast-|ranking-|markdown-body|guest-|brief-mast|interest-)/;
+const READER_SCALE_PENDING = new Map([
+  // 第二批(版框与页头):事件页标题改宋体、兴趣页报头并入统一页头
+  ['.rk-dtitle', [18]],
+  ['.rk-event .rk-dtitle', [22]],
+  ['.rk-event .rk-rep-title', [16]],
+  ['.brief-mast-title', [32]],
+  ['.interest-body .brief-mast-title', [32]],
+  ['.interest-pick-name', [12.5]],
+  ['.interest-search input', [12.5]],
+  ['.interest-card-name', [13.5]],
+  ['.interest-btn', [12.5]],
+  ['.interest-onb-text', [12.5]],
+]);
+// 展示字号(刻度之外,样页定值):早报海报头条
+const READER_DISPLAY = /^\.bp-title(\.|$|\s)/;
+
+test('读者面桌面字号只取刻度上的值(在册例外逐批收口)', () => {
+  const bad = [];
+  const seen = new Map();
+  for (const decl of declarations(SHEETS['index.css'])) {
+    if (decl.kind !== 'size' || decl.exempt) continue;
+    const selectors = splitSelectors(decl.selector).filter((sel) => READER_SELECTOR.test(sel));
+    if (!selectors.length || READER_SCALE.has(decl.value)) continue;
+    for (const sel of selectors) {
+      if (READER_DISPLAY.test(sel)) continue;
+      const pending = READER_SCALE_PENDING.get(sel);
+      if (pending && pending.includes(decl.value)) { seen.set(sel, (seen.get(sel) || new Set()).add(decl.value)); continue; }
+      bad.push(`index.css:${decl.line} ${sel} → ${decl.value}px`);
+    }
+  }
+  assert.deepEqual(bad, []);
+  // 棘轮:清单里的例外都还在(收口后忘了删清单会在这里红)
+  const stale = [];
+  for (const [sel, values] of READER_SCALE_PENDING) {
+    for (const value of values) if (!seen.get(sel)?.has(value)) stale.push(`${sel} → ${value}px`);
+  }
+  assert.deepEqual(stale, []);
+});
+
 test('未分层的 button / input { font: inherit } 不回潮', () => {
   // preflight 在 @layer base 里已有同一条;未分层的那条会压过层内组件规则与原子类
   assert.doesNotMatch(SHEETS['index.css'], /^button,\s*\ninput,\s*\nselect,\s*\ntextarea\s*\{\s*\n\s*font:\s*inherit;/m);
