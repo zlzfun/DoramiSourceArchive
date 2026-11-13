@@ -58,3 +58,25 @@ export function hostOf(url) {
 export function excerptOf(content, maxLen = 140) {
   return stripMarkdown(content).slice(0, maxLen);
 }
+
+// AI 速读一句一段(issue #279 第三批):只在句末标点处断开,不改一个字。几句话各讲一件事,排成一整块时
+// 第三句以后很少有人读。太短的句子并回上一段(「同时开源。」不值得单占一行);原文自带换行的按换行先分。
+// 只认全角句末标点——半角句点可能是小数点、版本号或缩写。
+export function splitSentences(text) {
+  const out = [];
+  for (const block of String(text || '').split(/\n+/)) {
+    const trimmed = block.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.match(/[^。！？]+[。！？]+[”’」』）》]*|[^。！？]+$/g) || [trimmed];
+    let first = true;
+    for (const part of parts) {
+      const piece = part.trim();
+      if (!piece) continue;
+      const last = out.length - 1;
+      if (!first && (piece.length < 12 || out[last].length < 16)) out[last] += piece;
+      else out.push(piece);
+      first = false;
+    }
+  }
+  return out;
+}
