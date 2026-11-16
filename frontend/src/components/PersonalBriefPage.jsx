@@ -716,15 +716,6 @@ export default function PersonalBriefPage({
   const acts = useMemo(() => grouped
     .map((group) => ({ ...group, items: group.items.filter((item) => item !== headline) }))
     .filter((group) => group.items.length > 0), [grouped, headline]);
-  // 目录不等第一次滚动:版面就绪、换期、板块变化时先同步一次(短海报下第一个板块一开始就在视口里)
-  const actKeys = acts.map((group) => group.key).join('|');
-  useEffect(() => {
-    if (mobile || !actKeys) return undefined;
-    window.clearTimeout(tocPinRef.current);
-    tocPinRef.current = 0;
-    const id = requestAnimationFrame(syncToc);
-    return () => cancelAnimationFrame(id);
-  }, [mobile, actKeys, syncToc]);
   const headSection = headline ? (grouped.find((group) => group.items.includes(headline))?.key || '') : '';
 
   // 社交条目(codex 检视 P2):社交容器是整幅卡片流,没有「选中一条」的落点——openArticleById
@@ -802,6 +793,16 @@ export default function PersonalBriefPage({
   const showEdition = !loading && !detailLoading && !live && !(error && isToday)
     && !(isToday && todayStatus === 'empty_subscriptions') && !(!usesToday && detail.error)
     && status !== 'failed' && !!edition;
+  // 目录不等第一次滚动:板块真的画出来了(showEdition)、换期(viewKey)、板块变化时先同步一次——
+  // 短海报下第一个板块一开始就在视口里;往期详情先到而今天那份还在加载时,板块要等 loading 结束才出现
+  const actKeys = acts.map((group) => group.key).join('|');
+  useEffect(() => {
+    if (mobile || !showEdition || !actKeys) return undefined;
+    window.clearTimeout(tocPinRef.current);
+    tocPinRef.current = 0;
+    const id = requestAnimationFrame(syncToc);
+    return () => cancelAnimationFrame(id);
+  }, [mobile, showEdition, viewKey, actKeys, syncToc]);
 
   const n = (value) => <b>{value}</b>;
   const valueText = valueCount > 0 && (

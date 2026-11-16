@@ -67,5 +67,8 @@ test('检视返修:月历开着时海报抬到目录之上;问答收起动画中
   assert.match(brief, /sheet\.scrollTop \+ sheet\.clientHeight >= sheet\.scrollHeight - 2\) current = acts\[acts\.length - 1\]/);
   assert.match(brief, /setActiveAct\(key\);\s*window\.clearTimeout\(tocPinRef\.current\);\s*tocPinRef\.current = window\.setTimeout\(/);
   assert.match(brief, /const id = requestAnimationFrame\(syncToc\);/);
+  // 首次同步要等板块真的画出来,换期也要重来
+  assert.match(brief, /if \(mobile \|\| !showEdition \|\| !actKeys\) return undefined;/);
+  assert.match(brief, /\}, \[mobile, showEdition, viewKey, actKeys, syncToc\]\);/);
 });
 
