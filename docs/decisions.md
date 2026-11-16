@@ -708,6 +708,18 @@
 
 - #269 合入放行及 #268 后续（2026-11-09）：早报入口可合入；近期历史失败导读先盘点与估算，复用有效文本，未知调用先对账，补生成受批次预算约束。当前仅记录到 #268，不自动发起生产付费补跑。
 
+## CI 按改动面选 job、本地 / CI 分工(2026-11-16,issue #288) — [方案](archive/issue-288-ci-scope.md)
+
+- 落地:本波 PR;关联 issue:#288(后续 #289);用户 2026-11-16 口径「按你的构想做」
+- 决策:PR 的**全部**改动路径都在 `frontend/` `docs/` `docs-site/` 与仓根 `*.md` 内才跳过重型后端 job、改跑 `backend-light`;任一路径在外、空改动、看不准、push 到 main 一律全量——白名单是「可以跳过」,判定偏向全量 — 方案 §3.1 / §3.2
+- 决策:汇总门 `backend (pytest)` 名字不变,只在改动面判定成功且明确 `backend=false` 时接受重型 job 的 skipped,且此时必须 `backend-light` 成功;判定出错(output 为空)不放行 — 方案 §3.3
+- 决策:「跳过不丢覆盖」靠执行不靠记——`tests/conftest.py` 读取审计:不在 `ci_scope.LIGHT_TESTS` 里的后端测试读了白名单路径即失败;`SKIP_SAFE_DIRS` / `LIGHT_TESTS` 只在 `scripts/ci_scope.py` 定义一次 — 方案 §3.4
+- 决策:本地只跑受影响的测试文件 + 快守卫,全量由 CI 跑一次;无目检界面 PR 的直接合入口径改为「检视通过 + CI 绿」(取代 2026-09-19 口径里的「全量套件绿」一项);改部署脚本 / 迁移本地仍跑 deploy 侧 — 方案 §4
+- 决策:一轮返修连同文档收尾只推一次,PR 号回填不单独推;等 CI 用 `gh pr checks --watch` 放后台,不轮询 — 方案 §4
+- 不做:裁掉 push 到 main 的全量(它是兜底);按改动面跳过前端 / docs-site / actionlint(都不到 1 分钟);引第三方 paths-filter action;把 `.claude/` 放进白名单;替所有者开启分支保护 / auto-merge — 方案 §6
+- 触发:PR 绿而合入后 main 上全量红 → 查读取审计为何没拦并登记 `LIGHT_TESTS`;要给白名单加目录 → 先证明没有后端测试读它;所有者开启分支保护 → required 只勾 `backend (pytest)` 与 `frontend (lint + build)`
+
+
 ## 部署测试时序:launcher 快照用例(2026-11-09,issue #203) — [方案](archive/issue-203-launcher-snapshot-test.md)
 
 - 落地:PR #275;关联 issue:#203(源自 PR #201 的 CI 偶发红,用例来自 #102 / PR #111)

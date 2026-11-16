@@ -26,7 +26,7 @@
 ## 2. 实现与自测
 
 - 改动按 issue 范围做全:「所有同类处」要独立盘点,不只信 issue 清单。
-- 前端 `npm run lint` / `npm test` / `npm run build`;后端 `pytest`;测试命令一律 `cmd > log 2>&1; rc=$?`,不在链里用管道截尾(PR #37 / #80 都因 `| tail` 吞退出码带红用例推送)。
+- 前端 `npm run lint` / `npm test` / `npm run build`;后端 `pytest` **只跑受影响的测试文件**(改到的模块对应的 `tests/test_*.py` 与新写的用例)加快守卫(`scripts/check_docs.py`;改 `ci.yml` 时 `tests/test_ci_workflow.py` `tests/test_ci_scope.py`)。**全量由 CI 跑一次,本地不再先跑一遍**(issue #288:39 次已结束的 CI 运行 0 失败,双全量只是把等待翻倍;CI 还覆盖本机测不到的 Linux / 真实 DNS / 浅克隆)。两个例外:改部署脚本 / 迁移时本地跑 deploy 侧(`tests/test_deploy_*.py` `tests/test_migrations.py`,bash 3.2 只有 macOS 本机测得到);改动面宽到说不清影响哪些文件(公共夹具、`conftest.py`、`models/db.py`)时本地先跑全量——CI 红一次的往返比本机几分钟贵。测试命令一律 `cmd > log 2>&1; rc=$?`,不在链里用管道截尾(PR #37 / #80 都因 `| tail` 吞退出码带红用例推送)。
 - 有条件就补自动化守卫:前端纯函数 → `node --test`(`frontend/test/*.test.mjs`),交互 / 样式 → `e2e/` 流程接入 `scripts/check_mobile_reader_e2e.py`;**守卫要做一次反向对照证明它会咬人**。
 - 改「系统记录」的语义(日报记录、分析行、同步流字段)前先 grep 谁在消费它的派生行(个人早报、readiness、内网流水线)。
 - 带 `\uXXXX` 转义的源码不要经会解码转义的编辑工具写入(见各 Agent 附注),写完扫不可见字符。
@@ -60,12 +60,15 @@
 - 「检视先于实现」的审计式用法:双方各自独立写报告(不读对方文件防锚定),再逐条表态 + 分歧对齐。
 - 设计稿也值得复检(只对照清单,分钟级);跨切面状态机每改一处都可能牵动别处。
 - 记录:实现方 / 检视方 / 模型、分歧与结论写进方案文档的检视节。
+- **一轮返修只推一次**(issue #288):PR 开出后,每轮检视返修连同文档收尾(检视结论、version-history、PR 号回填)在本地攒齐再一次 `git push`。每次推送都会取消在跑的 CI 并从头计时——实测几乎每个 PR 都有一次晚 2–5 分钟的纯文档尾巴,白等一轮。PR 号回填不单独推:随下一次本来要推的提交带上,赶不上就不写(squash 提交标题自带 `(#N)`)。
 
 ## 7. PR 与合入
 
-- push → `gh pr create`,正文 `Closes #N` + 验证摘要 + 署名行;等 CI 绿(`ci.yml`:后端两 job 并行 + 汇总门,前端 lint / build)。
+- push → `gh pr create`,正文 `Closes #N` + 验证摘要 + 署名行;等 CI 绿(`ci.yml`:改动面判定 + 后端两 job 并行 + 汇总门,前端 lint / build)。
+- **CI 按改动面选 job**(issue #288,`scripts/ci_scope.py`):PR 的全部改动路径都在 `frontend/` `docs/` `docs-site/` 与仓根 `*.md` 之内时,跳过两个重型后端 job、改跑 `backend-light`(约 1 分钟出结果);其余照常全量(约 10 分钟);push 到 main 永远全量。后端测试要读这些路径下的文件,须登记进 `ci_scope.LIGHT_TESTS`(`tests/conftest.py` 的读取审计强制,见 [`testing.md`](./testing.md))。
+- **等 CI 不轮询**:`gh pr checks <N> --watch --fail-fast > log 2>&1; rc=$?` 放后台(Claude Code 用 `run_in_background`,其它 Agent 用等价的非阻塞方式),结束时自动唤醒再读结果;不前台阻塞(全量 CI 比前台命令 10 分钟上限长)、不写 sleep 循环。
 - **合入前必须用户本地端到端验收 + 目检放行**,检视通过也不例外;用户放行后 `gh pr merge --squash`,再清 worktree;issue 随 PR 关闭。
-- 例外口径(2026-09-19 用户表态):没有可目检界面的纯后端机制修复、纯文档 PR,在检视通过 + 全量套件绿 + CI 绿后可由执行者直接 squash 合入;有前端 / 交互面的仍走目检。合入后不擅自打 tag。
+- 例外口径(2026-09-19 用户表态):没有可目检界面的纯后端机制修复、纯文档 PR,在检视通过 + CI 绿后可由执行者直接 squash 合入(CI 按改动面跑这次改动需要的那一套,动到后端即全量;2026-11-16 issue #288 起不再要求本地另跑一遍全量);有前端 / 交互面的仍走目检。合入后不擅自打 tag。
 - `gh pr merge` 报冲突时先看输出再做下一步;合入与打 tag 用 `&&` 串起来,tag 前核对 `git log -1 origin/main` 是自己的 squash 提交。
 
 ## 8. 发版与部署(独立于合入)

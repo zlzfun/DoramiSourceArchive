@@ -11,6 +11,7 @@
 
 ## 年表(一行一波;自 `CLAUDE.md` 迁入 2026-10-21,**新波次在此加一行**,L0 不再逐波改)
 
+- **CI 提速(一):按改动面选 job + 流程口径(issue #288,2026-11-16,CI / 测试 / 文档,无运行时代码)**:实测 PR 一次 CI 约 10.5 分钟、全由 `backend-unit` 决定,而最近 12 个合入 PR 有 8 个只动前端 / 文档。`ci.yml` 新增 `changes` job 跑 `scripts/ci_scope.py`:PR 的全部改动路径都在 `frontend/` `docs/` `docs-site/` 与仓根 `*.md` 内时跳过两个重型后端 job、改跑 `backend-light`(约 1 分钟),其余与 push 到 main 照常全量;汇总门 `backend (pytest)` 只在判定成功且明确 `backend=false` 时接受 skipped。`tests/conftest.py` 读取审计保证「跳过不丢覆盖」。流程口径:一轮返修只推一次、本地只跑受影响文件(全量交给 CI)、直接合入改为「检视通过 + CI 绿」、等 CI 放后台不轮询。[方案](archive/issue-288-ci-scope.md);`backend-unit` 自身的 10 分钟在 #289。
 - **读者面桌面阅读器重构(issue #279,2026-11-13 立项;第一批「并档」PR #281、第二批「版框与页头」PR #282、第三批「阅读窗」PR #283、第四批「列表与早报」PR #284、第五批「排印」PR #285 已合入,五批齐;目检后补 PR #286、#287;2026-11-16 用户本地目检通过,issue 关闭、方案归档,待发布)**:整站前端审视两轮样页(用户选 B「夜航 · 续」)入库 `docs/design/issue-279-frontend-refactor/`,分五批落地。第一批只改样式值与文案:桌面 14 屏普查字号 18 级 → 10 级、图标 7 种尺寸 → 3 种(线宽 1.75)、图标钮 28 / 30 / 32 → 32、同级控件圆角向 6 / 10 收、按钮从胶囊改 10px(问答面板等还有在册例外,随所在批次收),并按 #278 删掉现网说明文字十余处;手机壳 22 屏样式指纹对主干零差异。第二批把榜单、事件页、发现、社交改成与早报同一种写法的整幅页面(不挂来源栏、版框 1200、宋体页名、页签行),页头由「三族」改「两族」。第三批改阅读窗:动作收进吸顶栏、标题区四行变三行、AI 速读一句一段且两个维度的分与依据点开可见、宽窗出页边、来源栏可收起。第四批:条目行按分值收放(留「一律等高」开关)、早报条目两栏加吸顶目录、导轨标签常驻、问答入口进导轨。第五批:中西文自动间隙、大标题标点挤压、标题按词断行(浏览器分词加合并规则,没有动后端)。第五批补(PR #286,用户指出早报头条在逗号后面甩下一个词):标题折在哪儿由前端量宽度后自己挑——优先停顿处、尽量不甩词,行数不增加。第二批补(PR #287,用户指出发现页右上角违和):页头右侧分两组各自贴右,整组订阅挪到形态筛选旁边。见 [方案](archive/issue-279-frontend-refactor.md)。
 - **前端纪律:界面不靠说明文字解释自己(issue #278,2026-11-13,纯文档)**:用户定的规则 *Avoid unnecessary secondary labels and description, let the layout do the explaining* 写进 `AGENTS.md` 硬规则 2、`conventions.md` §1 首条(默认不写什么 / 判据 / 不在此列)与自检清单、`.claude/rules/frontend.md`;现网已有说明文字的删改不在本条,随 issue #279 做。
 - **播客文字新闻真实样稿（#178 / #268，2026-11-12，本地验收）**：Goodfire真实全文提炼1次、人工纠正指标与评分；Cisco7段TTS成功并实际播放，新增本地计量¥0.44，原早报14条不变。详见[方案§11](plans/issue-178-podcast-news-extraction.md#11-真实样稿验收2026-11-12未上线)。
@@ -94,6 +95,16 @@
 - **3.58–3.60(2026-09-15–19)**:运维面播客与分析标签重构(#76)/ 移动端读者 E2E(#91)/ 同步修复(#96 / #99)/ PWA 主屏幕安装(#100)/ 弹窗遮罩关闭判定(#104)/ OSS 持久存储与自动备份(#109)/ 聚焦环入 base 层(#108)/ 发现页按形态批量订阅(#113)/ **GitHub Release 自动部署流水线(#102,v3.60.0 首发、v3.60.1 闭环)**:tag 推上去 → 自动建 Release → 串联 `deploy.yml` 停在 Environment `production` 等批准 → SSH forced command 触发生产机仓库外 launcher/worker → 目标 tag 的 `./deploy-docker.sh` → 公网 `/api/health` 核对;上线抓到两坑(checkout 改写 tag 引用 / Environment secrets 须 `secrets: inherit`),见 `docs/archive/auto-deploy-plan.md` §7。
 - **裸机部署回滚(issue #126,2026-09-21,待发布)**:裸机路径改「运行副本版本化」release 形态 + 锁内事务 + 两级健康门告警(不自动回滚)+ `./deploy.sh --rollback`(树外固化执行体,DB 按目标上下文迁移计划分流,`--restore-db` 显式恢复,只回一代)+ 收养 + `--code` / `--status` / `--discard-txn`;extras 钉版 `docker/requirements-crawl4ai.txt`;方案 `docs/archive/baremetal-rollback-plan.md`(codex 四轮设计检视 + §9 实现记录),手册 `docs/ops/deploy-baremetal.md`,桩测试 `tests/test_deploy_baremetal.py`。
 - **Podcast(issue #7 P0–P0.2)**:`source_type=podcast` → `generic_podcast_rss`,单集复用 `ArticleRecord` + `extensions_json`,只解析 enclosure 元数据不下载音频;36 节目策展目录 `services.podcast_catalog` 启动幂等安装、进普通采集任务不设源级开关;边界与后续见 `docs/archive/podcast-wave-plan.md`。
+
+## issue #288 CI 提速(一):按改动面选 job、一轮返修一次推送、本地 / CI 分工(2026-11-16,CI / 测试 / 文档)
+
+**为什么**:用户提出「每次推送都跑 CI、推送前本地又跑一遍,重复且拖慢迭代」。先量:最近 40 次 CI 运行里 PR 一次约 10.5 分钟,由 `backend-unit` 一个 job 决定(约 3470 个用例,CI 上 `-n 4` 要 10 分 12 秒,本机同一条命令 3 分 27 秒);最近 12 个合入 PR 有 8 个只动 `frontend/` 与 `docs/`;每个 PR 通常触发 2–3 次 CI,最后一次常是晚 2–5 分钟的纯文档提交把在跑的那次取消重来;39 次已结束的运行 0 失败。最大的浪费不在「本地一遍、CI 一遍」,而在 CI 不看改动面、且一个 PR 被重复触发。
+
+**设计取舍**:判定只有一条规则且偏向全量——PR 的**每一个**改动路径都在白名单(`frontend/` `docs/` `docs-site/`、仓根 `*.md`)内才跳过重型后端 job,任一路径在外、空改动、看不准、非 PR 事件都全量;判错成全量只是多等,判错成轻量会放过后端回归。改动路径取 `refs/pull/N/merge` 合并提交相对第一父提交的 diff(`fetch-depth: 2`、`--no-renames`),脚本先确认 HEAD 确是这个 PR 的合并提交(两个父提交、第二父 = 事件里的 PR head),否则 `HEAD^1..HEAD` 只是最后一个提交的改动。不引第三方 paths-filter action:判定要能在仓内被测试。汇总门仍叫 `backend (pytest)`,真值表 1024 种组合只放行 5 种;`changes` 出错时 output 为空串,不落进任何一条放行路径。「跳过不丢覆盖」靠执行:`tests/conftest.py` 用进程级审计钩子记下落在白名单路径上的 `open` / `listdir` / `scandir`,不在 `LIGHT_TESTS` 里的测试读了就判失败——新增这样的测试必然改 `tests/`、那次 PR 走全量、当场就红。push 到 main 的全量不裁,是兜底。
+
+**流程口径**(`docs/dev/workflow.md` §2 / §6 / §7、`docs/dev/testing.md`、`AGENTS.md`、`dorami-issue-loop` 技能):一轮返修连同文档收尾只推一次;本地只跑受影响的测试文件 + 快守卫,全量交给 CI 跑一次(改部署脚本 / 迁移本地仍跑 deploy 侧,改动面说不清时本地先全量);无目检界面 PR 的直接合入口径由「检视通过 + 全量套件绿 + CI 绿」改为「检视通过 + CI 绿」;等 CI 用 `gh pr checks --watch` 放后台,不轮询。
+
+**自测**:`tests/test_ci_scope.py` 60 例(判定表、按 CI 形态造的临时 git 仓端到端、读取审计的反向对照)+ `tests/test_ci_workflow.py` 65 例(汇总门真值表、接线、51 条突变)全过;unit 侧全量 3567 passed、deploy 侧全量 223 passed(读取审计不增加可测的耗时,无误报)。检视(Codex `gpt-6-astra` ultra,两轮,[方案](archive/issue-288-ci-scope.md) §7):R1 无 P1、4 × P2 + 1 × P3 全部接受——读取审计补上类收集期与「读完再 skip / xfail」两个漏口,守卫钉住「job 成功 = 用例通过」(汇总门那一步与三个 pytest 步骤的形状白名单、不许 `PYTEST_ADDOPTS`、不许串接),一处把 required 检查与被跳过 job 的关系说反的文档更正;R2 确认全部修到。实现方 Claude Code(Fable 5.2)。无目检界面,按「检视通过 + CI 绿」直接合入。顺带核实:`main` 当前未开启分支保护(文档里写的是应有设置),记入 backlog 待所有者决定。
 
 ## issue #279 读者面桌面阅读器重构:第二批补「发现页页头右侧」(PR #287,版本号以实际发版为准)
 

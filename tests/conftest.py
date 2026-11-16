@@ -110,3 +110,122 @@ def idle_automatic_title_worker(monkeypatch):
         await asyncio.Event().wait()
 
     monkeypatch.setattr(title_translation, "worker_loop", idle)
+
+
+# ── 读取审计(issue #288):「CI 跳过重型后端 job」不丢覆盖 ──
+# PR 只动 frontend/ docs/ docs-site/ 与仓根 *.md 时,CI 不跑 backend-unit / backend-deploy,只跑 scripts/ci_scope.py 的
+# LIGHT_TESTS。这成立的前提是:除了那几条,没有别的后端测试依赖这些路径下的文件。前提靠人记会烂——新写的测试读了
+# docs/ 或 frontend/ 却没登记,以后一次纯文档 / 纯前端 PR 就能带着绿灯把它改红。所以这里把前提变成被执行的:
+# 进程级审计钩子记下每次落在这些路径上的 open / listdir / scandir,归到当前收集的模块 / 类或当前用例的阶段;
+# 所在测试文件不在 LIGHT_TESTS 里,这一阶段就判失败(通过、跳过、xfail 都算)。新增这样的测试必然改 tests/,那次 PR 走全量,当场就红。
+# 看不见的两类:子进程里的读取(用例起的脚本自己去读)——现有这类用例都在临时仓里跑,不读真实仓的这些路径;
+# 只判存在不打开(Path.exists / os.stat 不产生审计事件)。两类都由 push 到 main 的全量兜底。
+import importlib.util
+
+_REPO_ROOT = os.path.realpath(os.path.join(os.path.dirname(__file__), ".."))
+_scope_spec = importlib.util.spec_from_file_location("ci_scope", os.path.join(_REPO_ROOT, "scripts", "ci_scope.py"))
+ci_scope = importlib.util.module_from_spec(_scope_spec)
+_scope_spec.loader.exec_module(ci_scope)
+
+_SCOPE_EVENTS = frozenset({"open", "os.listdir", "os.scandir"})
+_SCOPE_DIRS = tuple(d.rstrip("/") for d in ci_scope.SKIP_SAFE_DIRS)
+# 审计钩子装上就卸不掉。本文件若在同一进程里被执行不止一次(换一个模块名再导入、`-p conftest` 与 `tests.conftest` 并存),
+# 各装一个钩子、各记各的列表就乱了——所以读取记录与「已安装」标记挂在进程级(sys)上:共用一个列表、钩子只装一次。
+_scope_reads: list[str] = sys.__dict__.setdefault("_dorami_scope_reads", [])
+
+
+def scope_guarded_path(target) -> str | None:
+    """`target` 落在 CI 会据以跳过重型 job 的路径上时,返回它的仓根相对路径;否则 None。
+
+    相对路径按当前工作目录解析(用例常 chdir);先用字符串做一次便宜的预筛,只有像是这些路径的才付 realpath 的代价——
+    钩子对进程里每一次 open 都会被调用。
+    """
+    if target is None:
+        target = os.getcwd()
+    elif isinstance(target, int):
+        return None  # 文件描述符:路径在打开它的那一次已经审计过
+    target = os.fsdecode(os.fspath(target))
+    if not os.path.isabs(target):
+        target = os.path.join(os.getcwd(), target)
+    if not (target.endswith(".md") or any(name in target for name in _SCOPE_DIRS)):
+        return None
+    rel = os.path.relpath(os.path.realpath(target), _REPO_ROOT).replace(os.sep, "/")
+    return rel if rel in _SCOPE_DIRS or ci_scope.is_skip_safe(rel) else None
+
+
+def _scope_audit_hook(event, args):
+    if event not in _SCOPE_EVENTS:
+        return
+    try:
+        rel = scope_guarded_path(args[0] if args else None)
+    except Exception:  # noqa: BLE001 — 审计钩子里抛异常会变成被审计的那次 open 抛异常
+        return
+    if rel is not None:
+        _scope_reads.append(rel)
+
+
+def _scope_take() -> list[str]:
+    reads = sorted(set(_scope_reads))
+    del _scope_reads[:]
+    return reads
+
+
+def _scope_listed(path) -> bool:
+    rel = os.path.relpath(os.path.realpath(str(path)), _REPO_ROOT).replace(os.sep, "/")
+    return rel in ci_scope.LIGHT_TESTS
+
+
+def _scope_message(where: str, reads: list[str]) -> str:
+    return (
+        f"{where} 读了 {', '.join(reads)}。\n"
+        "PR 只改这些路径时 CI 会跳过 backend-unit / backend-deploy(scripts/ci_scope.py 的 SKIP_SAFE_DIRS 与仓根 *.md),"
+        "只跑 LIGHT_TESTS——这条测试不在其中,届时不会运行。\n"
+        "把所在测试文件登记进 scripts/ci_scope.py 的 LIGHT_TESTS(并同步 .github/workflows/ci.yml 里 backend-light 的命令),"
+        "或者改成不读这些文件。"
+    )
+
+
+def _scope_flag(report, where: str, reads: list[str]) -> None:
+    """把这一阶段判失败——除非它本来就失败(保留原来的失败原因;用例修好后这里照样会再拦)。
+
+    通过、跳过、xfail / xpass 一视同仁:读了文件再按内容 `pytest.skip()` / `pytest.xfail()` 同样是依赖,
+    以后那份文件一改,它就可能走进失败分支,而轻量 CI 不会运行它(Codex R1-2)。
+    """
+    if report.outcome == "failed":
+        return
+    report.outcome = "failed"
+    report.longrepr = _scope_message(where, reads)
+    if hasattr(report, "wasxfail"):
+        del report.wasxfail  # 否则终端仍把它记成 xfailed / xpassed
+
+
+def pytest_runtest_logstart(nodeid, location):
+    del _scope_reads[:]
+
+
+# tryfirst:做最外层的包装,yield 之后最后一个执行——那时内置的 skip / xfail 处理已经把报告改完了。
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    reads = _scope_take()
+    if not reads or _scope_listed(item.path):
+        return
+    _scope_flag(outcome.get_result(), item.nodeid, reads)
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_make_collect_report(collector):
+    del _scope_reads[:]
+    outcome = yield
+    reads = _scope_take()
+    # 归到所在的测试文件:模块本身(顶层语句、模块级参数生成)与它下面的类(类里的参数生成在收集类时才跑,Codex R1-1)
+    # 的 path 都是那个 .py;目录 / 会话级收集器的 path 是目录,那里的读取归不到哪个测试文件,不管。
+    path = getattr(collector, "path", None)
+    if not reads or path is None or not path.is_file() or _scope_listed(path):
+        return
+    _scope_flag(outcome.get_result(), collector.nodeid, reads)
+
+
+if not getattr(sys, "_dorami_scope_audit_installed", False):
+    sys.addaudithook(_scope_audit_hook)
+    sys._dorami_scope_audit_installed = True
