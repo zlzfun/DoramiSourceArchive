@@ -1687,7 +1687,7 @@ export default function ReaderTab({
               </div>
               {/* 标题语言(issue #218):只看「默认显示中文标题」偏好,与正文语言无关;用了中文译名时
                   原标题降为其下一行小字(沿用 v3.45 译文态的位置与西文衬线斜体),原文随时可见 */}
-              <h1 className="reader-pane-title" lang={latinLang(paneTitle.title)}><DisplayTitle text={paneTitle.title} /></h1>
+              <h1 className="reader-pane-title" lang={latinLang(paneTitle.title)}><DisplayTitle text={paneTitle.title} squeeze={!podcastView} /></h1>
               {paneTitle.orig && (
                 <div className="reader-pane-title-orig" lang={latinLang(paneTitle.orig)}>{paneTitle.orig}</div>
               )}

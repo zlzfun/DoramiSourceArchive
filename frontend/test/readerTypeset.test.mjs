@@ -18,8 +18,11 @@ test('标点挤压:拆成文字 / 收尾标点 / 起首标点,拼回去与原文
 
 test('标点挤压:句末的收尾标点不收;句首的起首标点照收;连续标点各自成段', () => {
   assert.deepEqual(punctParts('全球解禁！'), [{ text: '全球解禁！', kind: '' }]);
-  assert.deepEqual(punctParts('「碳」全球解禁').slice(0, 2), [{ text: '「', kind: 'open' }, { text: '碳」全球解禁', kind: '' }]);
+  assert.deepEqual(punctParts('「碳」全球解禁').slice(0, 3), [{ text: '「', kind: 'open' }, { text: '碳', kind: '' }, { text: '」', kind: 'close' }]);
   assert.deepEqual(punctParts('他说：「好」').filter((p) => p.kind).map((p) => p.kind), ['close', 'open']);
+  // 成对标点两侧对称:句中的收尾一侧也收;落在句末的那个按 keepTail 不收
+  assert.deepEqual(punctParts('宣布「开源」模型').filter((p) => p.kind).map((p) => [p.text, p.kind]), [['「', 'open'], ['」', 'close']]);
+  assert.deepEqual(punctParts('《新规》（试行）发布').filter((p) => p.kind).map((p) => p.text), ['《', '》', '（', '）']);
 });
 
 test('标点挤压:西文标题、空值原样', () => {
@@ -29,7 +32,10 @@ test('标点挤压:西文标题、空值原样', () => {
 });
 
 test('DisplayTitle 只用在桌面的标题上;中西文间隙只开在桌面壳上', () => {
-  assert.match(read('../src/components/ReaderTab.jsx'), /className="reader-pane-title"[^>]*><DisplayTitle text=\{paneTitle\.title\} \/>/);
+  // 播客标题 24px:只按词断行,不挤压
+  assert.match(read('../src/components/ReaderTab.jsx'), /className="reader-pane-title"[^>]*><DisplayTitle text=\{paneTitle\.title\} squeeze=\{!podcastView\} \/>/);
+  // 西文标题不分块也不挤压
+  assert.match(read('../src/components/DisplayTitle.jsx'), /if \(latinLang\(text\)\) return text;/);
   assert.match(read('../src/components/RankingsPage.jsx'), /\{rankOnly \? <DisplayTitle text=\{shown\.title\} \/> : shown\.title\}/);
   const brief = read('../src/components/PersonalBriefPage.jsx');
   // 早报:桌面头条(挤压 + 按词断行)与桌面条目标题(只按词断行);手机分支仍是纯文本

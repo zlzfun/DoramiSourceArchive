@@ -1,5 +1,5 @@
 import { Fragment } from 'react';
-import { punctParts } from '../utils/readerText';
+import { latinLang, punctParts } from '../utils/readerText';
 import { needsGap, titleChunks } from '../utils/wordBreak';
 
 /**
@@ -22,6 +22,8 @@ function squeezed(text, keepTail, keyBase) {
 
 export default function DisplayTitle({ text, squeeze = true }) {
   if (!text) return null;
+  // 西文标题原样输出:它走西文字体,弯引号本来就窄,挤压反而会压到前后的字(样页的 T() 也是先放过西文)
+  if (latinLang(text)) return text;
   const chunks = titleChunks(text);
   if (!chunks) return squeeze ? squeezed(text, true, 's') : text;
   return (

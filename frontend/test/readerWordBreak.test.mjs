@@ -52,3 +52,14 @@ test('块边界上汉字贴着字母数字才补间隙;分块后只有最后一�
   assert.deepEqual(punctParts('解禁！', { keepTail: false }), [{ text: '解禁', kind: '' }, { text: '！', kind: 'close' }]);
   assert.deepEqual(punctParts('解禁！'), [{ text: '解禁！', kind: '' }]);
 });
+
+test('检视返修:开括号带着后面的内容;连续起首标点并在一块;连接符与前置符号不产生可折点', () => {
+  assert.deepEqual(merge('发布/新/模型/(/GPT/-/5/)/加速/落地'), ['发布', '新模型', '(GPT-5)', '加速', '落地']);
+  assert.deepEqual(merge('模型/（/「/超级/智能/」/）/正式/上线'), ['模型', '（「超级', '智能」）', '正式', '上线']);
+  assert.deepEqual(merge('宝座/，/$/ANT/ /IPO/ /路/演/启动'), ['宝座，', '$ANT ', 'IPO ', '路演', '启动']);
+  assert.deepEqual(merge('关注/#/人工/智能/话题'), ['关注', '#人工', '智能', '话题']);
+  assert.deepEqual(merge('A/./I/./ /公司/发布'), ['A.I. ', '公司', '发布']);
+  // 有空格隔开的不粘
+  assert.deepEqual(merge('AI/:/ /AM/节目'), ['AI: ', 'AM', '节目']);
+});
+
