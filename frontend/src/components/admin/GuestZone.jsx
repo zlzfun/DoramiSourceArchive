@@ -36,10 +36,11 @@ const LIMIT_MAX = 100000;
 
 // 四类用途:键与后端 GUEST_AI_LIMIT_KEYS 同序
 const LIMIT_ROWS = [
-  ['translate', '翻译'],
-  ['ask', '问答'],
-  ['summarize', '速读'],
-  ['ondemand', '点播'],
+  // 第三项 = 这个数字数的是什么(单位,不是说明):翻译按调用计,长文分片翻译一篇会扣好几次;点播按新开一次生成计,不是播放次数
+  ['translate', '翻译', '次调用'],
+  ['ask', '问答', '次提问'],
+  ['summarize', '速读', '次生成'],
+  ['ondemand', '点播', '次新生成'],
 ];
 
 // 入口:后端 ENTRIES;回访是中性槽
@@ -309,16 +310,16 @@ export default function GuestZone({ days = 30, showToast, refreshTick = 0 }) {
           <div>
             {/* 「0 = 不限」留着:不写会有人填 0 想关掉。缺省值在输入框的占位里(读者的额度) */}
             <div className="drawer-sec-title">每位游客的 AI 日额度(0 = 不限)</div>
-            {LIMIT_ROWS.map(([key, label]) => (
+            {LIMIT_ROWS.map(([key, label, unit]) => (
               <label key={key} className="guest-limit-row">
-                <span>{label}</span>
+                <span>{label}<small>{unit} / 日</small></span>
                 <input
                   className="guest-limit-input"
                   inputMode="numeric"
                   value={drafts[key] ?? ''}
                   placeholder={readerLimits[key] != null ? String(readerLimits[key]) : ''}
                   onChange={(e) => setDrafts((prev) => ({ ...prev, [key]: e.target.value }))}
-                  aria-label={`${label}每日上限`}
+                  aria-label={`${label}每日上限（${unit}）`}
                 />
               </label>
             ))}

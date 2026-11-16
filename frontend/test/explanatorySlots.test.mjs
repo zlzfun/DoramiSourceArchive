@@ -30,6 +30,7 @@ export const RETIRED = [
   'sett-head-hint', 'sett-nav-foot', 'sett-file-hint', 'sett-pal-tone', 'm-sett-hint', 'pwa-intro', 'card-desc',
   'reader-disc-hint', 'ranking-head-note', 'interest-sec-hint', 'interest-picks-empty', 'interest-ledger-empty', 'm-int-empty',
   'csrc-sub', 'inspector-persist-note', 'tt-foot', 'jr-foot-note', 'guest-defsrc-note',
+  'm-int-lede', 'inspector-preview-item', 'auth-card-eyebrow', 'auth-card-sub',
 ];
 
 // 在册表:类名 → 允许的使用次数。行尾注释写的是这个位置现在装什么;没写的是存量,尚未逐个清点。
@@ -64,7 +65,6 @@ export const SLOTS = {
   'listen-note': 1,
   'm-flow-sub': 1,
   'm-hint': 1,
-  'm-int-lede': 1, // 手机壳兴趣页:只装「保存中 / 已保存」回执(状态)
   'm-note': 2,
   'm-profile-sub': 2, // 手机设置资料卡:已订阅数 / 角色;游客是一句登录提示(豁免)
   'm-subs-hint': 1,

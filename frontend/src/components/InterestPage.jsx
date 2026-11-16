@@ -394,8 +394,9 @@ export default function InterestPage({
             {saveStateNode}
           </div>
         )}
-        {/* 还没选的时候不出这一行(issue #291:原先留一个「我的兴趣」+ 一句「点击下方标签加入兴趣」;整页就是一墙可点的标签) */}
-        {catalog && (!picksEmpty || (externalQuery != null && saveStateNode)) && (
+        {/* 这一行常在:没选时只有行名(issue #291 删掉了「点击下方标签加入兴趣」)。保存回执住在行的右端,
+            行不随有没有兴趣 / 有没有回执出现消失——否则下面的标签墙会上下跳(检视首轮 P2) */}
+        {catalog && (
           <div className="interest-picks" aria-label="我的兴趣">
             <span className="interest-picks-label">我的兴趣</span>
             {picks.follow.map((t) => pickChip(t))}
@@ -458,7 +459,6 @@ export default function InterestPage({
       return (
         <div className="interest-m is-embedded is-rows" aria-label="我的兴趣">
           {onboardingBanner}
-          {saveStateNode && <p className="m-int-lede">{saveStateNode}</p>}
           {stateNode}
           {catalog && (
             <section aria-label="我的兴趣">
@@ -489,7 +489,8 @@ export default function InterestPage({
               </div>
               </>
               )}
-              <p className="m-group-label">全部标签 · {catalogTotal}</p>
+              {/* 保存回执住在这一行的右端:这一行常在,回执出现消失不挤动列表(检视首轮 P2) */}
+              <p className="m-group-label m-int-total">全部标签 · {catalogTotal}{saveStateNode}</p>
               {searchNode}
             </section>
           )}
@@ -510,9 +511,10 @@ export default function InterestPage({
           {externalQuery == null && searchNode}
           {catalog && (
             <div className="interest-m-row">
-              <button type="button" className="interest-mpicks" aria-expanded={picksOpen} onClick={() => setPicksOpen((v) => !v)}>
+              {/* 没选兴趣时没有可展开的内容:钮禁用、不画箭头(检视首轮 P3) */}
+              <button type="button" className="interest-mpicks" aria-expanded={picksOpen && !picksEmpty} disabled={picksEmpty} onClick={() => setPicksOpen((v) => !v)}>
                 兴趣 <b>{picks.follow.length}</b>
-                <ChevronDown aria-hidden="true" />
+                {!picksEmpty && <ChevronDown aria-hidden="true" />}
               </button>
               {saveStateNode}
               <span className="interest-m-sp" />
