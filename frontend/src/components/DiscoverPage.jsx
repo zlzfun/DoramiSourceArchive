@@ -377,31 +377,36 @@ export default function DiscoverPage({
                     </button>
                   ))}
                 </span>
-                {/* 三段共用头部搜索框(v3.52.3 目检:兴趣段此前把搜索放在 chip 行之下,与另两段不同形);
-                    兴趣段的检索词经 externalQuery 注入 InterestPage,由它按标签名/别名过滤 */}
-                <label className="reader-disc-search">
-                  <Search className="h-[13px] w-[13px]" aria-hidden="true" />
-                  <input
-                    type="search"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder={activeTab === 'collections' ? '筛选合集…' : activeTab === 'interests' ? '搜索标签…' : '筛选来源名称或简介…'}
-                    aria-label={activeTab === 'collections' ? '筛选合集' : activeTab === 'interests' ? '搜索标签' : '筛选来源'}
-                  />
-                </label>
+                {/* 桌面:这一组排在页名那一行的右端(搜索 + 添加)。手机壳里这层与下面的 .reader-disc-filters 都不成盒
+                    (display: contents),子项照旧直接排在 .reader-disc-tools 里 */}
+                <div className="reader-disc-acts">
+                  {/* 三段共用头部搜索框(v3.52.3 目检:兴趣段此前把搜索放在 chip 行之下,与另两段不同形);
+                      兴趣段的检索词经 externalQuery 注入 InterestPage,由它按标签名/别名过滤 */}
+                  <label className="reader-disc-search">
+                    <Search className="h-[13px] w-[13px]" aria-hidden="true" />
+                    <input
+                      type="search"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      placeholder={activeTab === 'collections' ? '筛选合集…' : activeTab === 'interests' ? '搜索标签…' : '筛选来源名称或简介…'}
+                      aria-label={activeTab === 'collections' ? '筛选合集' : activeTab === 'interests' ? '搜索标签' : '筛选来源'}
+                    />
+                  </label>
+                  {activeTab === 'sources' && userSourcesEnabled && onAddCustomSource && (
+                    <button
+                      type="button"
+                      className="reader-disc-add"
+                      title="贴入 RSS/Atom 地址,添加只有你可见的自定源"
+                      onClick={() => (guest ? requestLogin('addsrc') : setAddOpen(true))}
+                    >
+                      <Plus className="h-[13px] w-[13px]" aria-hidden="true" />
+                      {addSourceKind === 'article' ? '添加文章源' : addSourceKind === 'podcast' ? '添加播客' : '添加源'}
+                    </button>
+                  )}
+                </div>
                 {activeTab === 'sources' && (
-                  <>
-                    {userSourcesEnabled && onAddCustomSource && (
-                      <button
-                        type="button"
-                        className="reader-disc-add"
-                        title="贴入 RSS/Atom 地址,添加只有你可见的自定源"
-                        onClick={() => (guest ? requestLogin('addsrc') : setAddOpen(true))}
-                      >
-                        <Plus className="h-[13px] w-[13px]" aria-hidden="true" />
-                        {addSourceKind === 'article' ? '添加文章源' : addSourceKind === 'podcast' ? '添加播客' : '添加源'}
-                      </button>
-                    )}
+                  /* 桌面:这一组排在页签行的右端——整组订阅跟着它作用的形态筛选,排序收在最右 */
+                  <div className="reader-disc-filters">
                     {bulkSubscribe && onSubscribeShape && (
                       <button
                         type="button"
@@ -437,7 +442,7 @@ export default function DiscoverPage({
                     >
                       <ArrowDownWideNarrow className="h-[14px] w-[14px]" aria-hidden="true" />
                     </button>
-                  </>
+                  </div>
                 )}
               </div>
             </>
