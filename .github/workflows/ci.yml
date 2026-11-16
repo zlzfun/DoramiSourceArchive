@@ -5,14 +5,22 @@
 #
 # 后端测试(issue #150)拆成两个 job 各占一台 runner 并行,每个 job 内再用 pytest-xdist 开 4 个 worker
 # (public 仓库的 ubuntu-latest 是 4 vCPU):
-#   backend-unit   —— tests/ 里除部署脚本 / 迁移之外的全部用例(约 2200 个,0.3 s 一个,CPU 密集,4 worker ≈ 2 min)
-#   backend-deploy —— tests/test_deploy_*.py + tests/test_migrations.py(约 200 个,单个 10~26 s:每个用例真起
-#                     deploy.sh,一次运行几百次进程 spawn,等待为主;4 worker ≈ 4~5 min)
+#   backend-unit   —— tests/ 里除部署脚本 / 迁移之外的全部用例(2026-11-16 实测约 3470 个,4 worker ≈ 10 min,
+#                     是 PR 等待时间的决定项;本机同一条命令 3.5 min。拆片与用例开销见 issue #289)
+#   backend-deploy —— tests/test_deploy_*.py + tests/test_migrations.py(约 220 个,单个 10~26 s:每个用例真起
+#                     deploy.sh,一次运行几百次进程 spawn,等待为主;4 worker ≈ 4~6 min)
 # 两边对 tests/ 的划分由 tests/test_ci_workflow.py 守卫(互斥、覆盖全部文件、并行参数不退回串行)。
 # `--dist worksteal` 不是可选项:默认 load 调度按连续块分发,收集顺序里连成一片的部署用例会整块落到
 # 单个 worker、其余三个空转(2026-09-23 本地实测 13 min vs 5:50)。
-# `backend (pytest)` 现在是汇总门 job,只为让分支保护里既有的 required check 名继续有效;
+# `backend (pytest)` 是汇总门 job,只为让分支保护里既有的 required check 名继续有效;
 # `if: always()` + 逐项核对上游结果——不这样写,上游失败时它会被 skip,而 skip 在分支保护眼里等于通过。
+#
+# 按改动面选 job(issue #288):`changes` job 跑 scripts/ci_scope.py。PR 的**全部**改动路径都落在 frontend/ docs/ docs-site/
+# 与仓根 *.md 之内时,两个重型后端 job 跳过,改跑 backend-light——只含「读这些路径的后端守卫」(清单 = ci_scope.LIGHT_TESTS,
+# 不到一分钟);任一路径在外、没有改动路径、看不准、以及 push 到 main,一律照常全量。偏向全量是有意的:
+# 判错成「全量」只是多等几分钟,判错成「轻量」会让后端回归带着绿灯合入。push 到 main 永远全量,是这条裁剪的兜底。
+# 「重型 job 被跳过不丢覆盖」由 tests/conftest.py 的读取审计强制(不在 LIGHT_TESTS 里的测试读了上述路径即失败);
+# 汇总门只在 `changes` 成功且明确给出 backend=false 时才接受上游 skipped,此时必须 backend-light 成功。
 name: CI
 
 on:
@@ -26,8 +34,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # 改动面判定(见文件头)。fetch-depth: 2 = 合并提交 + 它的两个父提交,脚本靠这两个父提交认出「这是 PR 的合并提交」
+  # 并算出相对 base 的改动路径;深度退回 1 时脚本看不到父提交、一律按全量(安全,但裁剪悄悄失效——守卫测试钉住这个值)。
+  # 判定只由脚本写 $GITHUB_OUTPUT,工作流里不另写。
+  changes:
+    name: changes (scope)
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.scope.outputs.backend }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Decide which backend jobs this change needs
+        id: scope
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/ci_scope.py
+
   backend-unit:
     name: backend-unit (pytest)
+    needs: [changes]
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -64,6 +93,8 @@ jobs:
 
   backend-deploy:
     name: backend-deploy (pytest)
+    needs: [changes]
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -89,20 +120,56 @@ jobs:
       - name: Run tests
         run: .venv/bin/python -m pytest tests/test_deploy_*.py tests/test_migrations.py -q -p no:cacheprovider -n 4 --dist worksteal --durations=25
 
-  # 汇总门:分支保护里 required 的是这个名字(见文件头注释)
+  # 重型 job 被跳过时的替身(issue #288):只跑读前端 / 文档文件的后端守卫。文件清单与 scripts/ci_scope.py 的 LIGHT_TESTS
+  # 逐字一致(守卫测试比对);命令写成一行,守卫按行解析。这几条不探测 ffmpeg,不装它。
+  backend-light:
+    name: backend-light (pytest)
+    needs: [changes]
+    if: needs.changes.outputs.backend == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/bin/python -r docker/requirements.txt pytest pytest-xdist
+
+      - name: Run tests
+        run: .venv/bin/python -m pytest tests/test_docs_index.py tests/test_pwa_support.py -q -p no:cacheprovider
+
+  # 汇总门:分支保护里 required 的是这个名字(见文件头注释)。两条通过路径,其余全拒:
+  #   backend=true  → backend-unit 与 backend-deploy 都 success;
+  #   backend=false → 两个重型 job 都是 skipped 且 backend-light success。
+  # `changes` 没成功时它的 output 是空串,落进最后的 else——判定本身出错不能变成放行。
   backend:
     name: backend (pytest)
-    needs: [backend-unit, backend-deploy]
+    needs: [changes, backend-unit, backend-deploy, backend-light]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Require both backend jobs to succeed
+      - name: Require the backend jobs this change needs
         env:
+          CHANGES: ${{ needs.changes.result }}
+          BACKEND: ${{ needs.changes.outputs.backend }}
           UNIT: ${{ needs.backend-unit.result }}
           DEPLOY: ${{ needs.backend-deploy.result }}
+          LIGHT: ${{ needs.backend-light.result }}
         run: |
-          echo "backend-unit=$UNIT backend-deploy=$DEPLOY"
-          [ "$UNIT" = "success" ] && [ "$DEPLOY" = "success" ]
+          echo "changes=$CHANGES backend=$BACKEND backend-unit=$UNIT backend-deploy=$DEPLOY backend-light=$LIGHT"
+          [ "$CHANGES" = "success" ] || exit 1
+          if [ "$BACKEND" = "true" ]; then
+            [ "$UNIT" = "success" ] && [ "$DEPLOY" = "success" ]
+          elif [ "$BACKEND" = "false" ]; then
+            [ "$UNIT" = "skipped" ] && [ "$DEPLOY" = "skipped" ] && [ "$LIGHT" = "success" ]
+          else
+            exit 1
+          fi
 
   workflows:
     name: workflows (actionlint)

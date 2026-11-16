@@ -110,3 +110,106 @@ def idle_automatic_title_worker(monkeypatch):
         await asyncio.Event().wait()
 
     monkeypatch.setattr(title_translation, "worker_loop", idle)
+
+
+# ── 读取审计(issue #288):「CI 跳过重型后端 job」不丢覆盖 ──
+# PR 只动 frontend/ docs/ docs-site/ 与仓根 *.md 时,CI 不跑 backend-unit / backend-deploy,只跑 scripts/ci_scope.py 的
+# LIGHT_TESTS。这成立的前提是:除了那几条,没有别的后端测试依赖这些路径下的文件。前提靠人记会烂——新写的测试读了
+# docs/ 或 frontend/ 却没登记,以后一次纯文档 / 纯前端 PR 就能带着绿灯把它改红。所以这里把前提变成被执行的:
+# 进程级审计钩子记下每次落在这些路径上的 open / listdir / scandir,归到当前收集的模块或当前用例的阶段;
+# 所在测试文件不在 LIGHT_TESTS 里,这一阶段就判失败。新增这样的测试必然改 tests/,那次 PR 走全量,当场就红。
+# 看不见的两类:子进程里的读取(用例起的脚本自己去读)——现有这类用例都在临时仓里跑,不读真实仓的这些路径;
+# 只判存在不打开(Path.exists / os.stat 不产生审计事件)。两类都由 push 到 main 的全量兜底。
+import importlib.util
+
+_REPO_ROOT = os.path.realpath(os.path.join(os.path.dirname(__file__), ".."))
+_scope_spec = importlib.util.spec_from_file_location("ci_scope", os.path.join(_REPO_ROOT, "scripts", "ci_scope.py"))
+ci_scope = importlib.util.module_from_spec(_scope_spec)
+_scope_spec.loader.exec_module(ci_scope)
+
+_SCOPE_EVENTS = frozenset({"open", "os.listdir", "os.scandir"})
+_SCOPE_DIRS = tuple(d.rstrip("/") for d in ci_scope.SKIP_SAFE_DIRS)
+_scope_reads: list[str] = []
+
+
+def scope_guarded_path(target) -> str | None:
+    """`target` 落在 CI 会据以跳过重型 job 的路径上时,返回它的仓根相对路径;否则 None。
+
+    相对路径按当前工作目录解析(用例常 chdir);先用字符串做一次便宜的预筛,只有像是这些路径的才付 realpath 的代价——
+    钩子对进程里每一次 open 都会被调用。
+    """
+    if target is None:
+        target = os.getcwd()
+    elif isinstance(target, int):
+        return None  # 文件描述符:路径在打开它的那一次已经审计过
+    target = os.fsdecode(os.fspath(target))
+    if not os.path.isabs(target):
+        target = os.path.join(os.getcwd(), target)
+    if not (target.endswith(".md") or any(name in target for name in _SCOPE_DIRS)):
+        return None
+    rel = os.path.relpath(os.path.realpath(target), _REPO_ROOT).replace(os.sep, "/")
+    return rel if rel in _SCOPE_DIRS or ci_scope.is_skip_safe(rel) else None
+
+
+def _scope_audit_hook(event, args):
+    if event not in _SCOPE_EVENTS:
+        return
+    try:
+        rel = scope_guarded_path(args[0] if args else None)
+    except Exception:  # noqa: BLE001 — 审计钩子里抛异常会变成被审计的那次 open 抛异常
+        return
+    if rel is not None:
+        _scope_reads.append(rel)
+
+
+def _scope_take() -> list[str]:
+    reads = sorted(set(_scope_reads))
+    del _scope_reads[:]
+    return reads
+
+
+def _scope_listed(path) -> bool:
+    rel = os.path.relpath(os.path.realpath(str(path)), _REPO_ROOT).replace(os.sep, "/")
+    return rel in ci_scope.LIGHT_TESTS
+
+
+def _scope_message(where: str, reads: list[str]) -> str:
+    return (
+        f"{where} 读了 {', '.join(reads)}。\n"
+        "PR 只改这些路径时 CI 会跳过 backend-unit / backend-deploy(scripts/ci_scope.py 的 SKIP_SAFE_DIRS 与仓根 *.md),"
+        "只跑 LIGHT_TESTS——这条测试不在其中,届时不会运行。\n"
+        "把所在测试文件登记进 scripts/ci_scope.py 的 LIGHT_TESTS(并同步 .github/workflows/ci.yml 里 backend-light 的命令),"
+        "或者改成不读这些文件。"
+    )
+
+
+def pytest_runtest_logstart(nodeid, location):
+    del _scope_reads[:]
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    reads = _scope_take()
+    if not reads or _scope_listed(item.path):
+        return
+    report = outcome.get_result()
+    if report.outcome == "passed":
+        report.outcome = "failed"
+        report.longrepr = _scope_message(item.nodeid, reads)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_make_collect_report(collector):
+    del _scope_reads[:]
+    outcome = yield
+    reads = _scope_take()
+    if not reads or not isinstance(collector, pytest.Module) or _scope_listed(collector.path):
+        return
+    report = outcome.get_result()
+    if report.outcome == "passed":
+        report.outcome = "failed"
+        report.longrepr = _scope_message(collector.nodeid, reads)
+
+
+sys.addaudithook(_scope_audit_hook)

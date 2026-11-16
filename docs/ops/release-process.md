@@ -137,10 +137,12 @@ cp backups/cms_data.db.20260914-110000 data/cms_data.db && rm -f data/cms_data.d
 
 ## 分支保护(GitHub 仓库设置,手动开一次)
 
+> 2026-11-16 用 GitHub API 核实:`main` 当前**没有**开启分支保护,也没有 rulesets,仓库的 auto-merge 开关是关的——下面是应有的设置,开不开由仓库所有者决定(见 `docs/backlog.md` issue #288 条目)。没开时这些检查靠流程自觉,`backend (pytest)` 仍是 PR 页上看结论的那一个。
+
 Settings → Branches → Add rule for `main`:
 
 - Require a pull request before merging(禁止直推;两人一视同仁);
-- Require status checks to pass:勾 `backend (pytest)` 与 `frontend (lint + build)`(CI 跑过一次后才会出现在列表里)。issue #150 起 `backend (pytest)` 是汇总门 job:`needs` 真跑测试的 `backend-unit (pytest)` / `backend-deploy (pytest)`,`if: always()` 逐项核对结果——required 只勾它一个即可,两个真 job 不必也勾,将来再拆分时规则不用改;
+- Require status checks to pass:勾 `backend (pytest)` 与 `frontend (lint + build)`(CI 跑过一次后才会出现在列表里)。issue #150 起 `backend (pytest)` 是汇总门 job:`needs` 真跑测试的 `backend-unit (pytest)` / `backend-deploy (pytest)`,`if: always()` 逐项核对结果——required 只勾它一个即可,两个真 job 不必也勾,将来再拆分时规则不用改;issue #288 起它还 `needs` 改动面判定 `changes (scope)` 与 `backend-light (pytest)`:PR 只动前端 / 文档时两个重型 job 是 skipped、由 backend-light 顶上,汇总门照样给出结论——**不要去勾会被跳过的那三个**(被跳过的 required 检查会一直挂着);
 - Do not allow force pushes / deletions。
 
 tag 不设保护(2026-09-14 拍板:任何人可打 tag);`release.yml` 的核对负责把不合格的 tag 标红。

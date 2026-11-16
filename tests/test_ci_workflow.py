@@ -6,9 +6,13 @@
    分别算出文件集合,交集为空、并集等于全部 `tests/test_*.py`;两边的模式字符串还要逐字相同,新增 `tests/test_deploy_*.py` 自动落 deploy 侧;
 2. 两个 job 都带恰好一次 `-n <workers>` 与 `--dist worksteal`(pytest 对重复选项取后值,所以重复即拒绝)——默认 load 调度会把
    连成一片的部署用例整块塞给单 worker(实测 13 min vs 5:50),worksteal 不是可选项;
-3. 汇总门 job `backend (pytest)`(分支保护 required 的名字)在 **job 层** `needs` 两个真 job 且 `if: always()`,step 层不得再挂条件,
-   `env` 把两个上游结果传进 shell,并且真跑那段 shell:success / failure / cancelled / skipped 的 16 种组合只有 success/success 通过——
-   否则上游失败时它被 skip 或被吞成功,而 skip 在分支保护眼里等于通过。
+3. 汇总门 job `backend (pytest)`(分支保护 required 的名字)在 **job 层** `needs` 全部上游且 `if: always()`,step 层不得再挂条件,
+   `env` 把上游结果与改动面判定传进 shell,并且真跑那段 shell——否则上游失败时它被 skip 或被吞成功,而 skip 在分支保护眼里等于通过;
+4. 按改动面选 job(issue #288):`changes` job 无条件运行、只由 `scripts/ci_scope.py` 给出 `backend`,两个重型 job 只在
+   `backend == 'true'` 时跑,`backend-light` 只在 `== 'false'` 时跑且命令与 `ci_scope.LIGHT_TESTS` 逐字一致;汇总门的真值表
+   (changes 结果 × backend 取值 × 三个 job 结果,共 1024 种)只放行两条路径:`true` 且两个重型 job 都 success,
+   或 `false` 且两个重型 job 都 skipped 且 backend-light success——判定出错(output 为空)与一切其它组合都拒。
+   判定脚本自身与「跳过不丢覆盖」的读取审计在 tests/test_ci_scope.py。
 每条守卫都以工作流文本为输入,配一组**反向对照**(对 ci.yml 做突变,必须被拒);另守 conftest 的按 worker 沙箱规则(子进程 `runpy` 执行
 conftest 顶层,四种环境组合)与双 worker 端到端。不引入 PyYAML(钉版清单里没有):pytest 命令在 ci.yml 里刻意写成一行,这里按行解析。
 (codex R1 检视:守卫首版对这三种退化只挡住了最直接的形态——`always()` 挪到 step / 成功判定换 `echo` / glob 改 `--ignore=` / 末尾追加 `-n 0`
@@ -16,12 +20,15 @@ conftest 顶层,四种环境组合)与双 worker 端到端。不引入 PyYAML(�
 """
 import fnmatch
 import glob
+import importlib.util
+import itertools
 import json
 import os
 import re
 import shlex
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -29,8 +36,26 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 CI = ROOT / ".github" / "workflows" / "ci.yml"
 UNIT, DEPLOY, GATE = "backend-unit", "backend-deploy", "backend"
+CHANGES, LIGHT = "changes", "backend-light"
 RESULTS = ("success", "failure", "cancelled", "skipped")
+# changes 没成功时它的 output 是空串;大小写不同的值也不是放行
+BACKEND_VALUES = ("true", "false", "", "TRUE")
 _OPTS_WITH_VALUE = {"-n", "-p", "--dist", "-k", "-m", "-o", "-c"}
+# 汇总门 shell 变量 → 工作流表达式
+_GATE_ENV = {
+    "CHANGES": "needs.changes.result",
+    "BACKEND": "needs.changes.outputs.backend",
+    "UNIT": "needs.backend-unit.result",
+    "DEPLOY": "needs.backend-deploy.result",
+    "LIGHT": "needs.backend-light.result",
+}
+
+
+def _ci_scope():
+    spec = importlib.util.spec_from_file_location("ci_scope_for_workflow_guard", ROOT / "scripts" / "ci_scope.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 # ── 工作流文本解析(受控格式:job 头两空格缩进、job 层键四空格、pytest 命令单行)──
@@ -70,6 +95,11 @@ def _job_level(block: str) -> dict[str, str]:
         if m:
             out[m.group(1)] = m.group(2).strip()
     return out
+
+
+def _code(block: str) -> str:
+    """去掉整行注释(job 之间的说明注释按文本位置归在上一个 job 的块里,不该参与结构判断)。"""
+    return "\n".join(line for line in block.splitlines() if not line.lstrip().startswith("#")) + "\n"
 
 
 def _run_block(block: str) -> str:
@@ -190,37 +220,103 @@ def _assert_parallel(text: str, job: str) -> None:
     assert any(a == "-p" and b == "no:cacheprovider" for a, b in zip(argv, argv[1:])), f"{job} 应带 -p no:cacheprovider"
 
 
+def _gate_should_pass(changes: str, backend: str, unit: str, deploy: str, light: str) -> bool:
+    """汇总门的真值表,独立于 ci.yml 里那段 shell 重述一遍。"""
+    if changes != "success":
+        return False
+    if backend == "true":
+        return unit == "success" and deploy == "success"
+    if backend == "false":
+        return unit == "skipped" and deploy == "skipped" and light == "success"
+    return False
+
+
 def _assert_gate(text: str) -> None:
-    block = _job_block(text, GATE)
+    block = _code(_job_block(text, GATE))
     top = _job_level(block)
     assert top.get("name") == "backend (pytest)", "汇总门 job 的显示名必须仍是 `backend (pytest)`(分支保护 required)"
     needs = re.fullmatch(r"\[(.*)\]", top.get("needs", ""))
-    assert needs and {s.strip() for s in needs.group(1).split(",")} == {UNIT, DEPLOY}, "汇总门必须在 job 层 needs 两个真 job"
+    assert needs and {s.strip() for s in needs.group(1).split(",")} == {CHANGES, UNIT, DEPLOY, LIGHT}, (
+        "汇总门必须在 job 层 needs 改动面判定与三个后端 job"
+    )
     assert top.get("if") == "always()", "汇总门必须在 job 层 if: always(),否则上游失败时被 skip(skip 在分支保护眼里等于通过)"
     assert "    steps:" in block, "汇总门没有 steps"
     steps = block.split("    steps:", 1)[1]
     assert not re.search(r"^\s+if:", steps, re.M), "汇总门的 step 不得再挂 if(step 条件救不回被 skip 的 job,却能让核对步骤被跳过)"
     assert "continue-on-error" not in block, "汇总门不得 continue-on-error"
-    for job, var in ((UNIT, "UNIT"), (DEPLOY, "DEPLOY")):
-        assert re.search(rf"^\s+{var}:\s*\$\{{\{{\s*needs\.{re.escape(job)}\.result\s*\}}\}}\s*$", block, re.M), (
-            f"汇总门的 env 必须把 needs.{job}.result 传进 shell 的 ${var}"
+    for var, expr in _GATE_ENV.items():
+        assert re.search(rf"^\s+{var}:\s*\$\{{\{{\s*{re.escape(expr)}\s*\}}\}}\s*$", block, re.M), (
+            f"汇总门的 env 必须把 {expr} 传进 shell 的 ${var}(写死成常量等于让门禁恒走某一条路径)"
         )
     script = _run_block(block)
-    for unit_result in RESULTS:
-        for deploy_result in RESULTS:
-            r = subprocess.run(["bash", "-e", "-c", script], env={**os.environ, "UNIT": unit_result, "DEPLOY": deploy_result},
-                               capture_output=True, text=True, timeout=30)
-            expect_pass = (unit_result, deploy_result) == ("success", "success")
-            assert (r.returncode == 0) == expect_pass, (
-                f"UNIT={unit_result} DEPLOY={deploy_result} rc={r.returncode}(应{'通过' if expect_pass else '失败'}):{r.stdout}{r.stderr}"
-            )
-    for job in (UNIT, DEPLOY):
+    combos = list(itertools.product(RESULTS, BACKEND_VALUES, RESULTS, RESULTS, RESULTS))
+
+    def run(combo: tuple[str, ...]) -> str | None:
+        env = {**os.environ, **dict(zip(_GATE_ENV, combo))}
+        r = subprocess.run(["bash", "-e", "-c", script], env=env, capture_output=True, text=True, timeout=30)
+        expect_pass = _gate_should_pass(*combo)
+        if (r.returncode == 0) == expect_pass:
+            return None
+        return f"{dict(zip(_GATE_ENV, combo))} rc={r.returncode}(应{'通过' if expect_pass else '失败'})"
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        wrong = [w for w in pool.map(run, combos) if w]
+    assert not wrong, f"汇总门有 {len(wrong)} 种组合判错,如:{wrong[:3]}"
+    assert sum(_gate_should_pass(*c) for c in combos) == len(RESULTS) + 1, "真值表应恰有 4(全量,light 任意)+ 1(轻量)种放行组合"
+    for job in (UNIT, DEPLOY, LIGHT):
         assert _job_level(_job_block(text, job)).get("name") == f"{job} (pytest)"
+
+
+def _assert_scope(text: str) -> None:
+    """改动面判定的接线:判定只来自脚本,重型 / 轻量 job 各按它的一个取值运行,轻量命令与 LIGHT_TESTS 同源。"""
+    block = _code(_job_block(text, CHANGES))
+    top = _job_level(block)
+    assert "if" not in top and "needs" not in top, "changes job 必须无条件运行(被跳过时 output 为空,所有 PR 都会卡在汇总门)"
+    assert "continue-on-error" not in block, "changes job 不得 continue-on-error"
+    assert re.search(r"^      backend:\s*\$\{\{\s*steps\.scope\.outputs\.backend\s*\}\}\s*$", block, re.M), (
+        "changes 的 outputs.backend 必须来自 steps.scope(写死等于关掉判定)"
+    )
+    assert re.search(r"^\s+id:\s*scope\s*$", block, re.M), "判定步骤的 id 必须是 scope"
+    runs = [m.strip() for m in re.findall(r"^\s+(?:- )?run:\s*(.*)$", block, re.M)]
+    assert runs == ["python3 scripts/ci_scope.py"], f"changes job 只能有一条命令:运行判定脚本(实得 {runs})"
+    assert "GITHUB_OUTPUT" not in block, "判定只由脚本写 $GITHUB_OUTPUT,工作流里不另写"
+    assert re.search(r"^\s+fetch-depth:\s*2\s*$", block, re.M), (
+        "changes 的检出必须 fetch-depth: 2(合并提交 + 两个父提交);退回默认深度时脚本一律判全量,裁剪悄悄失效"
+    )
+    assert re.search(r"^\s+PR_HEAD_SHA:\s*\$\{\{\s*github\.event\.pull_request\.head\.sha\s*\}\}\s*$", block, re.M), (
+        "判定步骤必须把 PR head 传给脚本(脚本靠它认出合并提交)"
+    )
+    for job in (UNIT, DEPLOY):
+        level = _job_level(_code(_job_block(text, job)))
+        assert level.get("needs") == "[changes]" and level.get("if") == "needs.changes.outputs.backend == 'true'", (
+            f"{job} 必须 needs: [changes] 且只在 backend == 'true' 时运行"
+        )
+    level = _job_level(_code(_job_block(text, LIGHT)))
+    assert level.get("needs") == "[changes]" and level.get("if") == "needs.changes.outputs.backend == 'false'", (
+        f"{LIGHT} 必须 needs: [changes] 且只在 backend == 'false' 时运行"
+    )
+    cmds = _pytest_commands(text)
+    assert LIGHT in cmds, f"{LIGHT} 里没有 pytest 命令"
+    argv = cmds[LIGHT]
+    pos, ignores = _split_argv(argv)
+    light_tests = _ci_scope().LIGHT_TESTS
+    assert tuple(pos) == tuple(light_tests), f"{LIGHT} 的文件清单必须与 ci_scope.LIGHT_TESTS 逐字一致:{pos} vs {list(light_tests)}"
+    options = argv[argv.index("pytest") + 1:]  # `python -m pytest` 里的 -m 不是筛选项
+    assert not ignores and not any(a in ("-k", "-m", "--deselect") or a.startswith("--deselect=") for a in options), (
+        f"{LIGHT} 不得再排除或筛选用例"
+    )
+    assert any(a == "-p" and b == "no:cacheprovider" for a, b in zip(argv, argv[1:])), f"{LIGHT} 应带 -p no:cacheprovider"
+    # 全量时这几条由 backend-unit 跑(轻量 job 只是它被跳过时的替身),所以必须都在 unit 侧
+    _, unit_ign = _split_argv(cmds[UNIT])
+    all_files = _all_test_files()
+    assert set(pos) <= all_files - _pytest_ignored(all_files, unit_ign), "LIGHT_TESTS 必须都落在 backend-unit 的划分里"
 
 
 def _assert_released_migrations_guard(text: str) -> None:
     """issue #227:`scripts/check_released_migrations.py` 必须作为 backend-deploy 的一个无条件 step 出现(汇总门 needs 它),
-    不能挂 if / continue-on-error——否则已发布迁移文件被改写只会在发版那天由生产机 worker 的第 7 道门发现。"""
+    不能挂 if / continue-on-error——否则已发布迁移文件被改写只会在发版那天由生产机 worker 的第 7 道门发现。
+    (issue #288 起 backend-deploy 这个 job 在 PR 只动前端 / 文档时整体跳过:那种 PR 改不到 `alembic/versions`,
+    `alembic/` 不在 `ci_scope.SKIP_SAFE_DIRS` 里——由 tests/test_ci_scope.py 的判定表钉住。)"""
     block = _job_block(text, DEPLOY)
     lines = block.splitlines()
     hits = [i for i, line in enumerate(lines) if re.match(r"^\s+run:\s*python3 scripts/check_released_migrations\.py\s*$", line)]
@@ -250,6 +346,10 @@ def test_gate_job_keeps_required_check_name_and_cannot_be_skipped():
     _assert_gate(CI.read_text(encoding="utf-8"))
 
 
+def test_scope_job_decides_and_backend_jobs_follow_it():
+    _assert_scope(CI.read_text(encoding="utf-8"))
+
+
 # ── 反向对照:对 ci.yml 做突变,对应守卫必须拒绝(每种突变都要真的改到了文本)──
 
 def _mutate(text: str, old: str, new: str, count: int | None = None) -> str:
@@ -262,7 +362,14 @@ def _mutate(text: str, old: str, new: str, count: int | None = None) -> str:
 
 _UNIT_CMD_TAIL = "--ignore-glob='tests/test_deploy_*.py' --ignore=tests/test_migrations.py"
 _DEPLOY_CMD_HEAD = "pytest tests/test_deploy_*.py tests/test_migrations.py"
-_GATE_CHECK = '[ "$UNIT" = "success" ] && [ "$DEPLOY" = "success" ]'
+_GATE_STEP = "      - name: Require the backend jobs this change needs\n"
+_GATE_NEEDS = "    needs: [changes, backend-unit, backend-deploy, backend-light]\n"
+_GATE_FULL = '[ "$UNIT" = "success" ] && [ "$DEPLOY" = "success" ]'
+_GATE_LIGHT = '[ "$UNIT" = "skipped" ] && [ "$DEPLOY" = "skipped" ] && [ "$LIGHT" = "success" ]'
+_HEAVY_IF = "    if: needs.changes.outputs.backend == 'true'\n"
+_LIGHT_IF = "    if: needs.changes.outputs.backend == 'false'\n"
+_LIGHT_CMD = "pytest tests/test_docs_index.py tests/test_pwa_support.py -q"
+_SCOPE_RUN = "        run: python3 scripts/ci_scope.py\n"
 
 MUTATIONS = {
     "drop_worksteal": (lambda t: _mutate(t, " --dist worksteal", "", count=2), _assert_parallel, UNIT),
@@ -272,13 +379,33 @@ MUTATIONS = {
     "drop_migrations_exclusion": (lambda t: _mutate(t, " --ignore=tests/test_migrations.py", "", count=1), _assert_partition, None),
     "deploy_list_diverges": (lambda t: _mutate(t, _DEPLOY_CMD_HEAD, "pytest tests/test_deploy_*.py", count=1), _assert_partition, None),
     "gate_always_moved_to_step": (lambda t: _mutate(_mutate(t, "    if: always()\n", "", count=1),
-                                                   "      - name: Require both backend jobs to succeed\n",
-                                                   "      - name: Require both backend jobs to succeed\n        if: always()\n", count=1), _assert_gate, None),
-    "gate_step_gets_its_own_condition": (lambda t: _mutate(t, "      - name: Require both backend jobs to succeed\n",
-                                                       "      - name: Require both backend jobs to succeed\n        if: success()\n", count=1), _assert_gate, None),
-    "gate_success_check_replaced_by_echo": (lambda t: _mutate(t, _GATE_CHECK, 'echo "done"', count=1), _assert_gate, None),
+                                                   _GATE_STEP, _GATE_STEP + "        if: always()\n", count=1), _assert_gate, None),
+    "gate_step_gets_its_own_condition": (lambda t: _mutate(t, _GATE_STEP, _GATE_STEP + "        if: success()\n", count=1), _assert_gate, None),
+    "gate_success_check_replaced_by_echo": (lambda t: _mutate(t, _GATE_FULL, 'echo "done"', count=1), _assert_gate, None),
     "gate_always_removed": (lambda t: _mutate(t, "    if: always()\n", "", count=1), _assert_gate, None),
-    "gate_needs_only_one_job": (lambda t: _mutate(t, "    needs: [backend-unit, backend-deploy]\n", "    needs: [backend-unit]\n", count=1), _assert_gate, None),
+    "gate_needs_only_one_job": (lambda t: _mutate(t, _GATE_NEEDS, "    needs: [changes, backend-unit, backend-light]\n", count=1), _assert_gate, None),
+    # ── issue #288:按改动面选 job ──
+    # 判定 job 失败(output 为空)时不能放行
+    "gate_ignores_changes_result": (lambda t: _mutate(t, '          [ "$CHANGES" = "success" ] || exit 1\n', "", count=1), _assert_gate, None),
+    # 「不是 true」不等于「是 false」:空串 / 意外取值不能走轻量路径
+    "gate_treats_unknown_backend_as_light": (lambda t: _mutate(t, 'elif [ "$BACKEND" = "false" ]; then', 'elif [ "$BACKEND" != "true" ]; then', count=1), _assert_gate, None),
+    "gate_light_path_does_not_require_light_job": (lambda t: _mutate(t, _GATE_LIGHT, '[ "$UNIT" = "skipped" ] && [ "$DEPLOY" = "skipped" ]', count=1), _assert_gate, None),
+    "gate_light_path_accepts_any_heavy_result": (lambda t: _mutate(t, _GATE_LIGHT, '[ "$LIGHT" = "success" ]', count=1), _assert_gate, None),
+    "gate_full_path_accepts_skipped": (lambda t: _mutate(t, _GATE_FULL, '[ "$UNIT" != "failure" ] && [ "$DEPLOY" != "failure" ]', count=1), _assert_gate, None),
+    "gate_backend_hardwired": (lambda t: _mutate(t, "          BACKEND: ${{ needs.changes.outputs.backend }}\n", "          BACKEND: 'false'\n", count=1), _assert_gate, None),
+    "gate_needs_drop_changes": (lambda t: _mutate(t, _GATE_NEEDS, "    needs: [backend-unit, backend-deploy, backend-light]\n", count=1), _assert_gate, None),
+    "scope_output_hardwired": (lambda t: _mutate(t, "      backend: ${{ steps.scope.outputs.backend }}\n", "      backend: 'false'\n", count=1), _assert_scope, None),
+    "scope_step_replaced_by_constant": (lambda t: _mutate(t, _SCOPE_RUN, '        run: echo "backend=false" >> "$GITHUB_OUTPUT"\n', count=1), _assert_scope, None),
+    "scope_extra_step_writes_output": (lambda t: _mutate(t, _SCOPE_RUN, _SCOPE_RUN + '      - run: echo "backend=false" >> "$GITHUB_OUTPUT"\n', count=1), _assert_scope, None),
+    "scope_job_made_conditional": (lambda t: _mutate(t, "    name: changes (scope)\n", "    name: changes (scope)\n    if: github.event_name == 'pull_request'\n", count=1), _assert_scope, None),
+    "scope_fetch_depth_dropped": (lambda t: _mutate(t, "        with:\n          fetch-depth: 2\n", "", count=1), _assert_scope, None),
+    "scope_pr_head_not_passed": (lambda t: _mutate(t, "          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}\n", "          PR_HEAD_SHA: ''\n", count=1), _assert_scope, None),
+    "heavy_jobs_run_unconditionally": (lambda t: _mutate(t, _HEAVY_IF, "", count=2), _assert_scope, None),
+    "heavy_job_condition_loosened": (lambda t: _mutate(t, _HEAVY_IF, "    if: needs.changes.outputs.backend != 'false'\n", count=2), _assert_scope, None),
+    "light_condition_inverted": (lambda t: _mutate(t, _LIGHT_IF, _HEAVY_IF, count=1), _assert_scope, None),
+    "light_list_drops_a_guard": (lambda t: _mutate(t, _LIGHT_CMD, "pytest tests/test_docs_index.py -q", count=1), _assert_scope, None),
+    "light_list_adds_unlisted_file": (lambda t: _mutate(t, _LIGHT_CMD, "pytest tests/test_docs_index.py tests/test_pwa_support.py tests/test_admin_ops.py -q", count=1), _assert_scope, None),
+    "light_deselects_everything": (lambda t: _mutate(t, _LIGHT_CMD, "pytest tests/test_docs_index.py tests/test_pwa_support.py -k nothing -q", count=1), _assert_scope, None),
     "released_migrations_guard_dropped": (lambda t: _mutate(t, "        run: python3 scripts/check_released_migrations.py\n", "        run: echo skip\n", count=1), _assert_released_migrations_guard, None),
     "released_migrations_guard_soft_failed": (lambda t: _mutate(t, "        run: python3 scripts/check_released_migrations.py\n",
                                                              "        continue-on-error: true\n        run: python3 scripts/check_released_migrations.py\n", count=1), _assert_released_migrations_guard, None),

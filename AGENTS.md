@@ -18,7 +18,7 @@
 uv sync                                  # 依赖(dev 全量:uv sync --extra crawl4ai);改依赖的完整流程见 docs/dev/dependencies.md
 python src/main.py                       # 后端 http://127.0.0.1:8088(热重载;启动先 ensure_migrated + taxonomy reconcile);API 文档 /docs
 cd frontend && npm install && npm run dev   # 前端 5173,/api 代理到后端;npm run lint / npm test / npm run build
-.venv/bin/python -m pytest tests/         # 全量(本地并行 -n 4 --dist worksteal,CI 即此形态);单文件直接给路径
+.venv/bin/python -m pytest tests/test_x.py   # 本地跑受影响的文件;全量 = tests -n 4 --dist worksteal,平时交给 CI(docs/dev/testing.md)
 .venv/bin/alembic upgrade heads           # 升级到全部 head;revision --autogenerate -m "desc" 生成迁移;check 看漂移
 python3 scripts/check_docs.py             # 文档守卫(索引覆盖 / 断链 / 状态词表 / L0 体量)
 ```
@@ -45,7 +45,7 @@ python3 scripts/check_docs.py             # 文档守卫(索引覆盖 / 断链 /
   收到意见先逐条表态(接受 / 分歧 + 论据),分歧点与检视方讨论到一致——**一致之前不改代码**;修复成批做完再请复检,
   复检只对照修复清单不重新开放全面检视。轮次由执行者控制,原则是两人合作检视、协商,避免「乒乓球」式来回传球与发散;
   再有新面先判严重性,非严重记观察期。分歧与结论写进方案文档的检视节。
-- **合入前必须用户本地端到端验收 + 目检放行**,codex 通过也不例外;拍板后 squash 合入 main。例外(2026-09-19 用户口径):**没有可目检界面**的纯后端机制修复与纯文档 PR,在检视通过 + 全量套件绿 + CI 绿后可由执行者直接 squash 合入;纯文档 / 截图改动另有用户指定的轻量路径(先建 issue、直接提交 main、`refs #N`),见 `docs/dev/workflow.md` §10。
+- **合入前必须用户本地端到端验收 + 目检放行**,codex 通过也不例外;拍板后 squash 合入 main。例外(2026-09-19 用户口径):**没有可目检界面**的纯后端机制修复与纯文档 PR,在检视通过 + CI 绿后可由执行者直接 squash 合入;纯文档 / 截图改动另有用户指定的轻量路径(先建 issue、直接提交 main、`refs #N`),见 `docs/dev/workflow.md` §10。
 - **开发版使用 alpha(2026-09-24 拍板)**:从最新正式 tag 开始新一波开发时,立即把
   `src/version.py` / `pyproject.toml` / `uv.lock` 根包行同步改为下一版本的 `X.Y.Z-alpha`；
   同一开发波内后续特性沿用这个 alpha 版本,不为每个 PR 另抢版本号、不打 alpha tag。
