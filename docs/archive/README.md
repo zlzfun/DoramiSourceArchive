@@ -9,6 +9,10 @@
 
 - [issue-263-sync-symmetric.md](./issue-263-sync-symmetric.md) — Archive Sync 拆掉整机 consumer 模式与按源围栏:拍板三问(§1)、规则一览(§2:文章按 id 合并、本机版本只有修订号严格更新才保留;同步建出来的源默认关分析、不进采集任务;「本机在用」的源不接受上游的删除 / 停用;接收端不再做 presence 清理)、机制(§3:逐行同步印记降为内部簿记、`local_revision` 本机导出修订与链式转发、文件就绪触发器、依赖流重放、事件二选一与写门)、部署顺序与混版本(§4)、上线说明(§5)、需要用户知情的取舍(§7)、Codex 方案检视与实现检视各两轮(§11)、与方案的偏差及沙箱 / v3.67.4 跨版本实测(§12)、第一稿(保留按源归属 + 原产地)为何作废(§13)。
 
+## 读者面桌面阅读器重构(2026-11,issue #279)
+
+- [issue-279-frontend-refactor.md](./issue-279-frontend-refactor.md) — 整站前端审视后按 B「夜航 · 续」样页分五批落地:现网实测对照(§1)、五批范围与各批实际落地(§2:并档 / 版框与页头 / 阅读窗 / 列表与早报 / 排印,含目检后的两个补丁——标题挑折行点、发现页页头右侧)、规范修订对照(§3)、拍板记录(§4)、手机壳零差异的做法(§5)、逐批 Codex 检视记录(§8)、收口(§9);PR #281–#287,纯前端,待发布。样页 [design/issue-279-frontend-refactor/](../design/issue-279-frontend-refactor/README.md)。
+
 ## 已发布迁移文件守卫与部署健康验证(2026-11,issue #227)
 
 - [issue-227-released-migrations-guard.md](./issue-227-released-migrations-guard.md) — v3.67.0 发版两处失败的根因与修法:流水线 worker 第 7 道门拒绝 4 个被改的旧迁移 → CI 守卫 `scripts/check_released_migrations.py`(对最新正式 tag 逐字节比对,新增允许);手工路径 87 次 `bad-json` 实为探针打到 TLS 边缘的 301 页(§1.2)→ 探针地址与 compose 同口径读 `.env`、失败打 HTTP 状态码 + 响应前 200 字节;backend healthcheck 宽限随待执行迁移数 × 库 GiB 加宽(§2);有意不做(§3)、worker 基线核对(§4)、混版本(§5)、Codex 检视(§7)。
