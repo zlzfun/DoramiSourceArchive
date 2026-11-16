@@ -136,4 +136,5 @@ Codex 核实后确认的边界(不改,记录):重跑旧运行保持原 SHA,不�
 
 ## 8. 合入后验证
 
-(合入后用一条只改文档的 PR 走一遍轻量路径,把实际运行与耗时记在这里。)
+- **全量路径**(PR #292 自身,改了 `ci.yml` 与 `tests/`):运行 43838773702,`changes` 判 `backend=true`(「18 个改动路径里有 9 个在前端 / 文档之外,如 .claude/rules/deploy-scripts.md」),`backend-unit` 8 分 39 秒、`backend-deploy` 4 分 07 秒、`backend-light` skipped,汇总门与 actionlint 通过。
+- **轻量路径**:用只改本节的这条纯文档 PR 实测(结果随它的第二次推送补在下面——证据来自它自己的运行,这是「一轮只推一次」的例外)。
