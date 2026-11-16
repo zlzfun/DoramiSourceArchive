@@ -18,7 +18,7 @@ function feedEndpoint(suffix = '') {
 const FEED_PARAMS = [
   ['publish_date_start / _end', '发布时间窗口（YYYY-MM-DD），生成日报最常用'],
   ['content_types', '逗号分隔的内容类型，如 rss_article,web_article'],
-  ['source_ids', '逗号分隔的来源；仅取与你已订阅来源的交集'],
+  ['source_ids', '逗号分隔的来源；仅取与你已订阅来源的交集', '逗号分隔的来源'],   // 第三项 = 管理员令牌的说法(不受订阅限制)
   ['search', '标题关键词过滤'],
   ['include_content', '是否下发正文，默认 true；传 false 仅取元数据'],
   ['skip / limit', '分页偏移与条数，limit 上限 500'],
@@ -29,10 +29,13 @@ const FEED_PARAMS = [
  * 适合 RSS 工具与脚本。前身是接入集成页签的 FeedAccessSection 卡（并入设置波），
  * 令牌 get/rotate 逻辑原样内聚；MCP 工具调用与这里的 HTTP 拉取共用同一枚令牌。
  */
-export default function FeedTokenSection({ showToast }) {
+export default function FeedTokenSection({ showToast, adminScope = false }) {
   const confirm = useConfirm();
   const [feedToken, setFeedToken] = useState(null);
   const [loading, setLoading] = useState(true);
+  // 读取失败 ≠ 未签发:不知道有没有令牌时不给直接签发的入口,只给重试——否则已有令牌的人一点就把旧的换掉了(检视首轮 P2)
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const [plainToken, setPlainToken] = useState('');   // 明文仅本次生成后可见
   const [revealed, setRevealed] = useState(false);
   const [rotating, setRotating] = useState(false);
@@ -41,11 +44,15 @@ export default function FeedTokenSection({ showToast }) {
   useEffect(() => {
     let mounted = true;
     fetchFeedToken()
-      .then(data => { if (mounted) setFeedToken(data); })
-      .catch(error => showToast?.(error.message || '获取聚合接口令牌失败', 'error'))
+      .then(data => { if (mounted) { setFeedToken(data); setLoadFailed(false); } })
+      .catch(error => {
+        if (mounted) setLoadFailed(true);
+        showToast?.(error.message || '获取聚合接口令牌失败', 'error');
+      })
       .finally(() => { if (mounted) setLoading(false); });
     return () => { mounted = false; };
-  }, [showToast]);
+  }, [showToast, reloadKey]);
+  const retryLoad = () => { setLoading(true); setReloadKey((key) => key + 1); };
 
   const copy = (text, key, label) => runAction(() => copyText(text), {
     showToast,
@@ -61,8 +68,10 @@ export default function FeedTokenSection({ showToast }) {
     onSuccess: (result) => {
       setPlainToken(result.token);
       setRevealed(true);
-      // 签发日期:接口只在首次签发时记 created_at、轮换不改,这里与之同口径(首次签发补上今天,轮换沿用原值)
-      setFeedToken(prev => ({ ...(prev || {}), exists: true, token_preview: result.token_preview, created_at: prev?.created_at || new Date().toISOString() }));
+      setFeedToken(prev => ({ ...(prev || {}), exists: true, token_preview: result.token_preview }));
+      setLoadFailed(false);
+      // 签发日期以服务器记的为准(首次签发才记、轮换不改;服务器存的是它的本地时间,前端自己补会差一天),签发后重读一次状态
+      fetchFeedToken().then(data => setFeedToken(data)).catch(() => {});
     },
   });
 
@@ -77,7 +86,9 @@ export default function FeedTokenSection({ showToast }) {
   const issuedAt = feedToken?.created_at ? String(feedToken.created_at).slice(0, 10) : '';
   // 还没签发:令牌槽的位置只放一枚「签发令牌」。原先是胶囊「未签发」+ 槽里「尚未签发」+ 一句指路,
   // 同一件事写三遍,第一次签发的按钮还叫「重新生成」(issue #291)。
-  const unissued = !loading && !exists && !plainToken;
+  // 只有成功读到「没有令牌」才算未签发;读取失败是另一种状态(下面的 unknown),给重试。
+  const unissued = !loading && !loadFailed && feedToken?.exists === false && !plainToken;
+  const unknown = !loading && loadFailed && !plainToken;
   // 已有令牌时再生成会让旧的失效:后果在点下去的那一刻确认,不常驻在令牌下方。
   const requestRotate = async () => {
     if (exists && !(await confirm('重新生成后，旧令牌立即失效。继续？'))) return;
@@ -106,12 +117,19 @@ export default function FeedTokenSection({ showToast }) {
     <div>
       <div className="card-head">
         <span className="sett-lbl">个人聚合令牌</span>
+        {/* 这枚令牌能取到什么(数据,不是说明):管理员的不受订阅限制。按真实账号角色,不按当前在哪个界面 */}
+        <span className="target-chip">{adminScope ? '全站公开内容' : '已订阅来源'}</span>
       </div>
 
       {unissued ? (
         <button type="button" className="action-button action-button-primary min-h-[32px] px-3 text-xs" onClick={handleRotate} disabled={rotating}>
           {rotating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />} 签发令牌
         </button>
+      ) : unknown ? (
+        <div className="token-row">
+          <span className="token-val">读取失败</span>
+          <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={retryLoad}>重试</button>
+        </div>
       ) : (
       <div className="token-row">
         <span className="token-val" title={revealed && plainToken ? plainToken : undefined}>{displayVal}</span>
@@ -121,7 +139,7 @@ export default function FeedTokenSection({ showToast }) {
         <button type="button" className="copybtn" title="复制令牌" onClick={handleCopyToken} disabled={!exists && !plainToken}>
           {copiedKey === 'feed-token' ? <Check /> : <Copy />}
         </button>
-        <button type="button" className="copybtn" title="重新生成（旧令牌立即失效）" onClick={requestRotate} disabled={rotating}>
+        <button type="button" className="copybtn" title="重新生成（旧令牌立即失效）" onClick={requestRotate} disabled={rotating || loading}>
           {rotating ? <Loader2 className="animate-spin" /> : <RotateCw />}
         </button>
       </div>
@@ -152,8 +170,8 @@ export default function FeedTokenSection({ showToast }) {
 
       <details className="scope-note">
         <summary>接口参数</summary>
-        {FEED_PARAMS.map(([name, desc]) => (
-          <p key={name}><code className="font-mono">{name}</code>：{desc}</p>
+        {FEED_PARAMS.map(([name, desc, adminDesc]) => (
+          <p key={name}><code className="font-mono">{name}</code>：{adminScope && adminDesc ? adminDesc : desc}</p>
         ))}
       </details>
     </div>

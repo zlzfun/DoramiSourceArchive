@@ -230,7 +230,7 @@ export default function OpmlSection({ showToast }) {
     let cancelled = false;
     fetchOpmlSummary()
       .then((data) => { if (!cancelled) setSummary(data); })
-      .catch(() => { if (!cancelled) setSummary(null); });
+      .catch(() => { if (!cancelled) setSummary(false); });   // false = 读过、没读到;null = 还在读
     return () => { cancelled = true; };
   }, [reloadKey]);
 
@@ -245,7 +245,13 @@ export default function OpmlSection({ showToast }) {
         ? `，另有 ${result.skipped} 个非 RSS 来源未写入`
         : '';
       showToast(`已导出 ${result.exportable} 个 RSS 订阅${skipped}`, 'success');
-      setSummary((prev) => ({ ...(prev || {}), exportable_count: result.exportable, skipped_count: result.skipped }));
+      // 三个数都取这次导出响应带的:统计接口此前读失败过的话,这里补齐,不让「带凭据」那一段漏掉(检视首轮 P2)。
+      // 旧后端没有凭据计数的头时沿用此前读到的;读不到就是未知,不显示成 0。
+      setSummary((prev) => ({
+        exportable_count: result.exportable,
+        skipped_count: result.skipped,
+        credentialed_count: result.credentialed ?? prev?.credentialed_count,
+      }));
     } catch (error) {
       showToast(error.message || '导出订阅失败', 'error');
     } finally {
@@ -318,7 +324,7 @@ export default function OpmlSection({ showToast }) {
                 {skipped > 0 && <> · {skipped} 个非 RSS 不含</>}
                 {credentialed > 0 && <> · {credentialed} 个地址带凭据</>}
               </>
-            ) : '正在统计…'}
+            ) : summary === null ? '正在统计…' : null}
           </div>
         </span>
         <span className="sett-ctl">

@@ -267,6 +267,7 @@ def test_export_contains_only_the_readers_own_rss(monkeypatch, tmp_path):
         assert int(exported.headers["x-dorami-opml-skipped"]) == summary.json()["skipped_count"]
         assert summary.json()["exportable_count"] == len(urls)
         assert summary.json()["credentialed_count"] == 0
+        assert int(exported.headers["x-dorami-opml-credentialed"]) == 0
         assert int(exported.headers["x-dorami-opml-skipped"]) >= 1
 
         assert _ALICE_FEED in urls
@@ -653,6 +654,7 @@ def test_export_keeps_credentialed_feed_urls(monkeypatch, tmp_path):
         assert "alice:s3cret@" in exported.text
         # 设置页据此写「N 个地址带凭据」(issue #291):带 token 的与带 userinfo 的都算
         assert client.get("/api/reader/sources/opml").json()["credentialed_count"] == 2
+        assert int(exported.headers["x-dorami-opml-credentialed"]) == 2
 
 
 def test_confirm_import_conflicts_with_subscription_mutation(monkeypatch, tmp_path):

@@ -1617,6 +1617,7 @@ def export_reader_opml(request: Request, session: Session = Depends(deps.get_ses
             "Content-Disposition": 'attachment; filename="dorami-subscriptions.opml"',
             "X-Dorami-Opml-Exportable": str(plan["exportable_count"]),
             "X-Dorami-Opml-Skipped": str(plan["skipped_count"]),
+            "X-Dorami-Opml-Credentialed": str(plan["credentialed_count"]),
             "Cache-Control": "private, no-store",
         },
     )

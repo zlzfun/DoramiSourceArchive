@@ -981,6 +981,10 @@ export async function downloadSubscriptionOpml() {
     filename: 'dorami-subscriptions.opml',
     exportable: Number(res.headers.get('X-Dorami-Opml-Exportable') || 0),
     skipped: Number(res.headers.get('X-Dorami-Opml-Skipped') || 0),
+    // 这一份文件里带凭证的地址数;旧后端没有这个头时是 null(未知,不当成 0)
+    credentialed: res.headers.get('X-Dorami-Opml-Credentialed') == null
+      ? null
+      : Number(res.headers.get('X-Dorami-Opml-Credentialed')),
   };
 }
 

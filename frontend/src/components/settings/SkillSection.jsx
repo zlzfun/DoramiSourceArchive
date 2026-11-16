@@ -10,7 +10,7 @@ const SKILL_DIRS = [['Claude Code', '~/.claude/skills/']];
 /**
  * Agent 技能包（设置柜·接入集成组）：模板化日报技能的下载,和解压到哪儿。
  * 前身是接入集成页签的技能包卡（并入设置波）。
- * issue #291 起不写安装说明:一枚下载钮 + 一行可复制的目录(原先是一段介绍 + 三步文字,「下载技能包」在一屏里出现两次)。
+ * issue #291 起不写安装说明:一枚下载钮 + 一行「解压到 <目录>」(原先是一段介绍 + 三步文字,「下载技能包」在一屏里出现两次)。
  */
 export default function SkillSection({ showToast }) {
   const [copiedKey, setCopiedKey] = useState('');
@@ -42,8 +42,9 @@ export default function SkillSection({ showToast }) {
       </div>
       {SKILL_DIRS.map(([tool, dir]) => (
         <div key={tool} className="endpoint mt-3">
-          <span className="endpoint-method">{tool}</span>
+          <span className="endpoint-method">解压到</span>
           <span className="endpoint-url" title={dir}>{dir}</span>
+          <span className="target-chip">{tool}</span>
           <button type="button" className="copybtn" title="复制目录" onClick={() => copy(dir, tool)}>
             {copiedKey === tool ? <Check /> : <Copy />}
           </button>

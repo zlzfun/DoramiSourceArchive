@@ -4651,15 +4651,15 @@ input[type="radio"] {
      收放 = 三行高矮不一(第一行带两条摘要线、第二行一条、第三行只有标题),等高 = 三行一样高、各带一条。
      线条取当前主题的墨色与描边色,不随所选排法变化。 */
   .sett-rowopt-sw {
-    display: grid; height: 46px; border-radius: 6px; overflow: hidden;
+    display: grid; height: 46px; border-radius: var(--r-sm); overflow: hidden;
     background: var(--dorami-surface); box-shadow: inset 0 0 0 1px var(--dorami-border);
   }
   .sett-rowopt[data-rows="fit"] .sett-rowopt-sw { grid-template-rows: 20fr 15fr 9fr; }
   .sett-rowopt[data-rows="even"] .sett-rowopt-sw { grid-template-rows: repeat(3, 1fr); }
   .sett-rowopt-sw i { display: block; position: relative; }
   .sett-rowopt-sw i + i { border-top: 1px solid var(--dorami-border); }
-  .sett-rowopt-sw i::before { content: ""; position: absolute; left: 7px; right: 26px; top: 4px; height: 3px; border-radius: 2px; background: var(--dorami-ink-2); }
-  .sett-rowopt-sw i::after { content: ""; position: absolute; left: 7px; right: 12px; top: 10px; height: 2px; border-radius: 2px; background: var(--dorami-border-strong); }
+  .sett-rowopt-sw i::before { content: ""; position: absolute; left: 7px; right: 26px; top: 4px; height: 3px; border-radius: var(--r-pill); background: var(--dorami-ink-2); }
+  .sett-rowopt-sw i::after { content: ""; position: absolute; left: 7px; right: 12px; top: 10px; height: 2px; border-radius: var(--r-pill); background: var(--dorami-border-strong); }
   .sett-rowopt[data-rows="fit"] .sett-rowopt-sw i:first-child::after { box-shadow: 0 5px 0 var(--dorami-border-strong); }
   .sett-rowopt[data-rows="fit"] .sett-rowopt-sw i:last-child::after { content: none; }
   .sett-pal[data-pal="porcelain"] { --pal-chrome: #f4f6f9; --pal-surface: #ffffff; --pal-ink: #161922; --pal-muted: #a9acb3; }

@@ -107,42 +107,50 @@ export const SLOTS = {
   'zone-hint': 6, // 管理面区头小字:时间窗是数据,口径解释待第二批清
 };
 
-// className 属性里出现的类名(字面量 / 模板串 / 表达式里的字符串),一次属性里同名只计一次出现
+// className 属性里出现的类名(字面量 / 模板串 / 表达式里的字符串)。同一个属性里同名只计一次——
+// `on ? 'sett-sub active' : 'sett-sub'` 是一处使用,不是两处;`className = "x"` 这种等号两边带空格的写法也认(检视首轮 P2)。
 export function classTokens(code) {
   const out = [];
-  // 模板串里 ${cond ? 'a-hint' : ''} 这样的插值:把插值里的字符串字面量也拆出来数
-  const push = (text) => {
-    const inner = [];
-    const plain = text.replace(/\$\{([^}]*)\}/g, (_, expr) => {
-      for (const q of expr.matchAll(/(['"])((?:(?!\1).)*)\1/g)) inner.push(q[2]);
-      return ' ';
-    });
-    for (const tok of [plain, ...inner].join(' ').split(/\s+/)) if (tok) out.push(tok);
-  };
-  const re = /className=/g;
+  const re = /className\s*=\s*/g;
   let m;
   while ((m = re.exec(code))) {
+    const seen = new Set();
+    // 模板串里 ${cond ? 'a-hint' : ''} 这样的插值:把插值里的字符串字面量也拆出来
+    const push = (text) => {
+      const inner = [];
+      const plain = text.replace(/\$\{([^}]*)\}/g, (_, expr) => {
+        for (const q of expr.matchAll(/(['"])((?:(?!\1).)*)\1/g)) inner.push(q[2]);
+        return ' ';
+      });
+      for (const tok of [plain, ...inner].join(' ').split(/\s+/)) if (tok) seen.add(tok);
+    };
     let i = m.index + m[0].length;
     const open = code[i];
     if (open === '"' || open === "'") {
       const end = code.indexOf(open, i + 1);
       if (end !== -1) push(code.slice(i + 1, end));
-      continue;
+    } else if (open === '{') {
+      let depth = 0;
+      for (; i < code.length; i += 1) {
+        const ch = code[i];
+        if (ch === '"' || ch === "'" || ch === '`') {
+          let j = i + 1;
+          while (j < code.length && code[j] !== ch) j += code[j] === '\\' ? 2 : 1;
+          push(code.slice(i + 1, j));
+          i = j;
+        } else if (ch === '{') depth += 1;
+        else if (ch === '}') { depth -= 1; if (depth === 0) break; }
+      }
     }
-    if (open !== '{') continue;
-    let depth = 0;
-    for (; i < code.length; i += 1) {
-      const ch = code[i];
-      if (ch === '"' || ch === "'" || ch === '`') {
-        let j = i + 1;
-        while (j < code.length && code[j] !== ch) j += code[j] === '\\' ? 2 : 1;
-        push(code.slice(i + 1, j));
-        i = j;
-      } else if (ch === '{') depth += 1;
-      else if (ch === '}') { depth -= 1; if (depth === 0) break; }
-    }
+    out.push(...seen);
   }
   return out;
+}
+
+// 样式表里有没有这个类的规则:只看类名末尾的边界——`card-desc` 要命中 `p.card-desc`、`.surface-card.card-desc`,
+// 不命中 `.interest-card-desc`、`.card-desc-x`(检视首轮 P2:原先点号前还有一个后顾,把复合选择器漏掉了)
+export function cssHasClass(css, name) {
+  return new RegExp(`\\.${name}(?![\\w-])`).test(css);
 }
 
 function jsxFiles(dir, out = []) {
@@ -170,10 +178,22 @@ test('classTokens 认得字面量、模板串与三元里的类名', () => {
     '<i className={`row ${on ? "is-on" : ""} zone-hint`} />',
     "<b className={open ? 'reader-disc-hint' : ''} />",
     '{/* className="sett-sub" 写在注释里也算——守卫宁可多报 */}',
+    '<u className = "new-hint" />',
+    "<s className={on ? 'sett-sub active' : 'sett-sub'} />",
   ].join('\n');
   const tokens = classTokens(code);
-  assert.equal(tokens.filter((t) => t === 'sett-sub').length, 2);
+  // 三处使用:字面量、注释里那一处、三元那一处(两个分支同名只计一次)
+  assert.equal(tokens.filter((t) => t === 'sett-sub').length, 3);
   assert.ok(tokens.includes('zone-hint') && tokens.includes('reader-disc-hint') && tokens.includes('is-on'));
+  assert.ok(tokens.includes('new-hint'), '等号两边带空格的写法也要数到');
+});
+
+test('cssHasClass 认得复合选择器,不误报更长的类名', () => {
+  assert.ok(cssHasClass('.card-desc { color: red }', 'card-desc'));
+  assert.ok(cssHasClass('p.card-desc { color: red }', 'card-desc'));
+  assert.ok(cssHasClass('.surface-card.card-desc:hover { color: red }', 'card-desc'));
+  assert.ok(!cssHasClass('.interest-card-desc { color: red }', 'card-desc'));
+  assert.ok(!cssHasClass('.card-desc-x { color: red }', 'card-desc'));
 });
 
 test('说明位类名的使用次数只许减不许增,新类名要在册', () => {
@@ -200,7 +220,7 @@ test('已退役的说明位不再出现在 JSX 与样式表里', () => {
   const css = ['index.css', 'mobile.css'].map((name) => readFileSync(path.join(src, name), 'utf8')).join('\n');
   for (const name of RETIRED) {
     assert.ok(!jsx.includes(name), `${name} 已退役,JSX 里不应再用`);
-    assert.ok(!new RegExp(`(?<![\\w-])\\.${name}(?![\\w-])`).test(css), `${name} 已退役,样式表里不应再有规则`);
+    assert.ok(!cssHasClass(css, name), `${name} 已退役,样式表里不应再有规则`);
   }
 });
 
