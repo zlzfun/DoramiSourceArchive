@@ -890,3 +890,46 @@ def test_test_and_start_reuse_saved_schedule_password_only_for_same_target(monke
             assert res.status_code == 400
     assert len(seen) == 1
     assert "stored-secret" not in json.dumps(ok.json())
+
+
+def test_first_v2_launch_parks_default_podcast_job_and_unschedules_it(monkeypatch, tmp_path):
+    """本机第一次接入上游:原封未动的默认播客采集任务停用,它在调度器里的注册同时摘掉
+    (issue #263 合入后补)。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    from api.routers import remote_sync as remote_sync_router
+    from models.db import CollectionJobRecord, SourceConfigRecord
+    from services import podcast_catalog
+    from sqlmodel import Session, select
+
+    engine = app_module.db_sink.engine
+    podcast_catalog.ensure_default_podcast_sources(engine)
+    with Session(engine) as session:
+        job_id = session.exec(select(CollectionJobRecord.id).where(
+            CollectionJobRecord.name == podcast_catalog.AI_NATIVE_DEV_COLLECTION_JOB_NAME
+        )).one()
+
+    class _Registered:
+        def __init__(self, id):
+            self.id = id
+
+    class _Scheduler(_FakeScheduler):
+        def get_jobs(self):
+            return [_Registered(id) for id in self.jobs]
+
+    fake = _Scheduler()
+    monkeypatch.setattr(app_module, "scheduler", fake)
+    with Session(engine) as session:
+        app_module.sync_collection_job_schedules(session)
+    schedule_id = f"{app_module.COLLECTION_JOB_ID_PREFIX}{job_id}"
+    assert fake.get_job(schedule_id) is not None
+
+    monkeypatch.setattr(remote_sync_router.jobs, "launch", lambda *args, **kwargs: "launched")
+    assert remote_sync_router.launch_remote_sync_job(
+        engine, base_url="http://remote.test", username="admin", password="secret",
+        v2_probe=_v2_probe(),
+    ) == "launched"
+    with Session(engine) as session:
+        assert session.get(CollectionJobRecord, job_id).is_active is False
+        source = session.get(SourceConfigRecord, podcast_catalog.AI_NATIVE_DEV_SOURCE_ID)
+        assert source.ai_analysis_enabled is False
+    assert fake.get_job(schedule_id) is None

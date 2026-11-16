@@ -15,7 +15,7 @@ from typing import Any, Iterable, Sequence
 
 from sqlmodel import Session, select
 
-from models.db import CollectionJobRecord, SourceConfigRecord
+from models.db import ArchiveSyncEntityStateRecord, CollectionJobRecord, SourceConfigRecord
 from services.podcast_source_adoption import (
     adopt_custom_podcast_source,
     find_custom_podcast_for_feed,
@@ -308,6 +308,7 @@ def import_podcast_catalog(
     created: list[str] = []
     updated: list[str] = []
     skipped_existing: list[str] = []
+    skipped_upstream_deleted: list[str] = []
     adopted: list[dict[str, Any]] = []
     now = datetime.now().isoformat()
 
@@ -324,7 +325,10 @@ def import_podcast_catalog(
             if record is not None and not update_existing:
                 skipped_existing.append(source.source_id)
                 if record.source_type in {"podcast", "podcast_rss"} and not record.owner_username:
-                    record.is_active = True
+                    # 上游也有的源(带同步印记)启用状态照上游,不在每次启动时改回来——否则上游的
+                    # 停用在本机重启后失效,还会作为一次本机改动导出给下游。
+                    if not (record.collection_authority_id or "").strip():
+                        record.is_active = True
                     try:
                         existing_params = json.loads(record.params_json or "{}")
                     except (TypeError, ValueError, json.JSONDecodeError):
@@ -342,6 +346,9 @@ def import_podcast_catalog(
                         )
                     record.updated_at = now
                     session.add(record)
+                continue
+            if record is None and not requested and _deleted_by_upstream(session, source.source_id):
+                skipped_upstream_deleted.append(source.source_id)
                 continue
             if record is None:
                 record = SourceConfigRecord(
@@ -373,7 +380,10 @@ def import_podcast_catalog(
                 )
                 adopted.append(asdict(result))
 
-        if any(source.source_id == AI_NATIVE_DEV_SOURCE_ID for source in selected):
+        if (
+            any(source.source_id == AI_NATIVE_DEV_SOURCE_ID for source in selected)
+            and AI_NATIVE_DEV_SOURCE_ID not in skipped_upstream_deleted
+        ):
             _ensure_ai_native_dev_collection_job(session, now=now)
         session.commit()
     except Exception:
@@ -384,9 +394,25 @@ def import_podcast_catalog(
         "created": created,
         "updated": updated,
         "skipped_existing": skipped_existing,
+        "skipped_upstream_deleted": skipped_upstream_deleted,
         "adopted": adopted,
         "update_existing": update_existing,
     }
+
+
+def _deleted_by_upstream(session: Session, source_id: str) -> bool:
+    """上游发来过这个源的删除、本机也照做了。
+
+    默认安装(启动时那一次)不把这样的源装回来:装回来的行没有同步印记,会被当成本机新建的源
+    导出给下游,上游的删除就此失效。管理员按 id 点名导入时照常安装。
+    """
+
+    state = session.get(ArchiveSyncEntityStateRecord, ("sources", source_id))
+    return bool(
+        state is not None
+        and state.operation == "tombstone"
+        and (state.authority_id or "").strip()
+    )
 
 
 def _ensure_ai_native_dev_collection_job(session: Session, *, now: str) -> None:
@@ -428,6 +454,70 @@ def _ensure_ai_native_dev_collection_job(session: Session, *, now: str) -> None:
         record.fetcher_ids_json = json.dumps(source_ids, ensure_ascii=False, sort_keys=True)
         record.updated_at = now
     session.add(record)
+
+
+def collection_job_is_installed_default(record: CollectionJobRecord) -> bool:
+    """这个采集任务是否仍是程序安装时的样子——管理员没改过它采哪些源、什么节奏、带什么参数。
+
+    Archive Sync 用它区分「程序装的默认任务」与「管理员排的任务」(issue #263 合入后补)。
+    启用与否不在判定里;拿不准一律按「动过」处理(多留一个任务,不会误停)。
+    """
+
+    if record.name != AI_NATIVE_DEV_COLLECTION_JOB_NAME:
+        return False
+    if (record.cron_expr or "") != AI_NATIVE_DEV_COLLECTION_CRON:
+        return False
+    try:
+        source_ids = json.loads(record.fetcher_ids_json or "[]")
+        params = json.loads(record.params_json or "{}")
+        per_source = json.loads(record.per_fetcher_params_json or "{}")
+    except (TypeError, ValueError):
+        return False
+    return source_ids == [AI_NATIVE_DEV_SOURCE_ID] and params == {} and per_source == {}
+
+
+def park_installed_default_job(session: Session) -> bool:
+    """本机第一次接入上游时,停掉原封未动的默认采集任务,并关掉它那个源的本机分析。
+
+    上游已经在采这档播客,单集与分析都会同步过来;任务和分析开关留着只是两台各做一遍。
+    任务或源的采集绑定被管理员动过就整套不碰;管理员另排了任务采这个源时只停默认任务、
+    不关分析。之后想让本机自己采:重新启用任务、打开源的分析开关。调用方负责提交;返回是否
+    改了什么。
+    """
+
+    job = session.exec(
+        select(CollectionJobRecord).where(
+            CollectionJobRecord.name == AI_NATIVE_DEV_COLLECTION_JOB_NAME
+        )
+    ).first()
+    if job is None or not collection_job_is_installed_default(job):
+        return False
+    source = session.get(SourceConfigRecord, AI_NATIVE_DEV_SOURCE_ID)
+    if source is not None and not binding_is_catalog_default(source):
+        return False
+    now = datetime.now().isoformat()
+    changed = False
+    if job.is_active:
+        job.is_active = False
+        job.updated_at = now
+        session.add(job)
+        changed = True
+    # 管理员另排了任务采这个源(启用与否都算表达过「本机要采」):默认任务照停,分析开关不动。
+    for other in session.exec(
+        select(CollectionJobRecord).where(CollectionJobRecord.id != job.id)
+    ).all():
+        try:
+            named = json.loads(other.fetcher_ids_json or "[]")
+        except (TypeError, ValueError):
+            named = []
+        if isinstance(named, list) and AI_NATIVE_DEV_SOURCE_ID in named:
+            return changed
+    if source is not None and source.ai_analysis_enabled:
+        source.ai_analysis_enabled = False
+        source.updated_at = now
+        session.add(source)
+        changed = True
+    return changed
 
 
 def ensure_default_podcast_sources(engine: Any) -> dict[str, Any]:

@@ -55,6 +55,7 @@ from models.db import (
 )
 from services import credentials
 from services import archive_sync_v2
+from services import podcast_catalog
 
 _logger = logging.getLogger("dorami.remote_sync")
 
@@ -426,6 +427,16 @@ def prepare_transaction_revision_consumer(
     # authority wrote earlier keep their export state; only their received revision is
     # invalidated so the replay re-applies them.
     invalidate_received_revisions(session, authority_id)
+
+    # 唯一的例外是程序自己装的那套默认采集:本机第一次接入上游时,原封未动的默认播客任务
+    # 停用、它那个源的本机分析关掉(上游已经在采,留着只是两台各做一遍);管理员动过的不碰。
+    # 以后再接别的目标不重复处置——那时任务是开是关已经是管理员的选择。
+    first_upstream = not any(
+        isinstance(other, dict) and str(other.get("v2_authority_id") or "").strip()
+        for other in targets.values()
+    )
+    if first_upstream and podcast_catalog.park_installed_default_job(session):
+        _logger.info("首次接入上游 %s:已停用默认播客采集任务并关闭其源的本机分析", base_url)
 
     target.update(
         {

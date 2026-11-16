@@ -2086,13 +2086,21 @@ class _PageOutcome:
         return podcast_catalog.binding_is_catalog_default(source)
 
     def scheduled_source_ids(self, session: Session) -> set[str]:
-        """被任一采集任务点名的源(启用与否都算:点名即管理员表达过「本机要采」)。"""
+        """被任一采集任务点名的源(启用与否都算:点名即管理员表达过「本机要采」)。
+
+        例外是程序装的默认任务:原封未动且停用着的不算——它不是管理员排的,接入上游时已被
+        停掉(``podcast_catalog.park_installed_default_job``);管理员重新启用后照常算。
+        """
 
         if self._scheduled is None:
+            from services import podcast_catalog
+
             scheduled: set[str] = set()
-            for raw in session.exec(select(CollectionJobRecord.fetcher_ids_json)).all():
+            for job in session.exec(select(CollectionJobRecord)).all():
+                if not job.is_active and podcast_catalog.collection_job_is_installed_default(job):
+                    continue
                 try:
-                    values = json.loads(raw or "[]")
+                    values = json.loads(job.fetcher_ids_json or "[]")
                 except (TypeError, ValueError):
                     values = []
                 if isinstance(values, list):

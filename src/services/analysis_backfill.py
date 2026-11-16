@@ -576,6 +576,11 @@ def reconcile_full_analysis_backfill(
                 # 补评被撤销(源开关关闭等)或被别的路径收尾而没写内容价值,且已无在途工作(codex R1-3)。
                 item.status = "skipped"
                 item.last_error = analysis.last_error or "content_value_fill_revoked"
+            elif not source_allows_analysis(session, article.source_id):
+                # 目标未完成而源的本机分析已关(管理员关掉,或首次接入上游时程序关掉默认播客源):
+                # worker 会撤销排队并恢复旧结果,不会再为它排队——没有可等待的本地任务。
+                item.status = "skipped"
+                item.last_error = "source_ai_analysis_disabled"
             else:
                 continue
         item.completed_at = stamp if item.status in {"succeeded", "failed", "skipped"} else None
