@@ -59,6 +59,10 @@ def test_light_tests_exist_and_are_plain_test_files():
         assert (ROOT / rel).is_file(), f"LIGHT_TESTS 里的 {rel} 不存在"
         assert Path(rel).parent.as_posix() == "tests" and Path(rel).name.startswith("test_")
     assert all(d.endswith("/") and "/" not in d[:-1] for d in ci_scope.SKIP_SAFE_DIRS), "SKIP_SAFE_DIRS 只按首段目录匹配"
+    # issue #289:不分片单独跑的工作流守卫——本文件是其中之一
+    assert Path(__file__).resolve().relative_to(ROOT).as_posix() in ci_scope.GUARD_TESTS
+    for rel in ci_scope.GUARD_TESTS:
+        assert (ROOT / rel).is_file(), f"GUARD_TESTS 里的 {rel} 不存在"
 
 
 @pytest.mark.parametrize("event", ["push", "workflow_dispatch", "merge_group", "pull_request_target", ""])

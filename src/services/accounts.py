@@ -157,10 +157,16 @@ def _guard_root_admin(session: Session, record: UserRecord, action: str) -> None
 
 
 # ==================== 密码哈希（PBKDF2-HMAC-SHA256） ====================
-def hash_password(plain: str, *, iterations: int = _PBKDF2_ITERATIONS) -> str:
-    """返回编码串 pbkdf2_sha256$<iters>$<salt_b64>$<hash_b64>。"""
+def hash_password(plain: str, *, iterations: int | None = None) -> str:
+    """返回编码串 pbkdf2_sha256$<iters>$<salt_b64>$<hash_b64>。
+
+    `iterations` 缺省时在**调用期**读 `_PBKDF2_ITERATIONS`:测试会话把这个常量调低(`tests/conftest.py`),
+    写成默认参数会在函数定义时就绑死 20 万轮。校验按编码串里记的轮数算,新旧轮数的哈希并存无碍。
+    """
     if not plain:
         raise AccountError("密码不能为空")
+    if iterations is None:
+        iterations = _PBKDF2_ITERATIONS
     salt = secrets.token_bytes(_PBKDF2_SALT_BYTES)
     digest = hashlib.pbkdf2_hmac("sha256", plain.encode("utf-8"), salt, iterations)
     return "{}${}${}${}".format(

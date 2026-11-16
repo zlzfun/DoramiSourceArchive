@@ -14,5 +14,6 @@ paths:
 - 新增 `tests/test_deploy_*.py` 自动落 CI 的 `backend-deploy` job,其余落 `backend-unit`(`tests/test_ci_workflow.py` 守卫划分)。
 - 后端测试读 `frontend/` `docs/` `docs-site/` 或仓根 `*.md` → 把测试文件登记进 `scripts/ci_scope.py` 的 `LIGHT_TESTS` 并同步 `ci.yml` 的 `backend-light` 命令(PR 只动这些路径时 CI 跳过重型后端 job;`conftest.py` 读取审计强制,守卫 `tests/test_ci_scope.py`)。
 - 本地默认只跑受影响的测试文件,全量交给 CI;改部署脚本 / 迁移本地跑 deploy 侧。
+- CI 按 `--shard I/N` 分片(用例函数 nodeid 的 CRC32;`ci.yml` 矩阵 + 命令分母两处,守卫 `tests/test_ci_workflow.py`,它与 `tests/test_ci_scope.py` 另由不分片的 `backend-guards` 单独跑):用例不得依赖同文件其它用例先跑过。测试会话里 PBKDF2 缺省 1000 轮(`fast_password_hashing`),要真轮数显式传 `iterations=`。
 - 测试命令 `cmd > log 2>&1; rc=$?`,不在链里用管道截尾;全量要跑到底,别 `-x`。
 - 守卫类测试要做反向对照(把检视方的突变脚本收进仓库)。

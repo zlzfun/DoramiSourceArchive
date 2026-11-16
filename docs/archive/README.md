@@ -5,6 +5,10 @@
 > `docs/frontend/conventions.md` / `docs/sources/curation_policy.md` 等活跃文档。
 > 按「故事」分组索引;文内常含 ☐/☑ 进度符,均为当时状态。
 
+## 后端 CI job 分片并行(2026-11,issue #289)
+
+- [issue-289-ci-shards.md](./issue-289-ci-shards.md) — 本机插桩看 unit 的时间花在哪(§1)、`--shard I/N` 按用例函数哈希定片与 `ci.yml` 矩阵(§2.1 / §2.2,实测整条 CI 约 4 分钟)、少一片的三层守卫与不分片的 `backend-guards`(§2.3)、测试会话调低 PBKDF2 轮数(§3.1)、tmpfs 的 CI 同片对比与不采用(§3.2)、建库模板试验与延后理由(§3.3)、97 条突变(§4)、取舍与不做(§5)、Codex 两轮检视(§6,两条 P1 都是守卫的漏检路径)。
+
 ## CI 按改动面选 job、本地 / CI 分工(2026-11,issue #288)
 
 - [issue-288-ci-scope.md](./issue-288-ci-scope.md) — CI 等待的实测(PR 一次约 10.5 分钟、12 个合入 PR 里 8 个只动前端 / 文档、几乎每个 PR 被文档尾巴重复触发,§1)、`scripts/ci_scope.py` 的判定规则与合并提交认定(§3.1 / §3.2)、`backend-light` 与汇总门真值表(§3.3)、conftest 读取审计让「跳过不丢覆盖」被执行(§3.4)、一轮返修一次推送 / 本地只跑受影响文件 / 直接合入口径 / 等 CI 不轮询(§4)、守卫与 51 条突变(§5)、取舍与不做(§6)、Codex 两轮检视(§7);`backend-unit` 自身的 10 分钟在 issue #289。

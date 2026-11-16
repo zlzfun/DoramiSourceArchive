@@ -11,6 +11,7 @@
 
 ## 年表(一行一波;自 `CLAUDE.md` 迁入 2026-10-21,**新波次在此加一行**,L0 不再逐波改)
 
+- **CI 提速(二):后端 job 分片并行(issue #289,2026-11-16,CI / 测试,运行时代码只动一处默认参数)**:动到后端的 PR 整条 CI 从 8.7–10.5 分钟降到约 4 分钟。`tests/conftest.py` 加 `--shard I/N`(按用例函数 nodeid 的 CRC32 定片,每条用例恰好一片),`ci.yml` 把 `backend-unit` 拆 3 片、`backend-deploy` 拆 2 片;检查分片的守卫另由不分片的 `backend-guards` 单独跑,汇总门全量路径多要求它成功。测试会话把 PBKDF2 缺省轮数调到 1000(`hash_password` 改为调用期读缺省值,生产仍是 20 万)。tmpfs 临时目录实测收益不明显、不采用;建库模板试验可行但延后。[方案](archive/issue-289-ci-shards.md)。
 - **CI 提速(一):按改动面选 job + 流程口径(issue #288,2026-11-16,CI / 测试 / 文档,无运行时代码)**:实测 PR 一次 CI 约 10.5 分钟、全由 `backend-unit` 决定,而最近 12 个合入 PR 有 8 个只动前端 / 文档。`ci.yml` 新增 `changes` job 跑 `scripts/ci_scope.py`:PR 的全部改动路径都在 `frontend/` `docs/` `docs-site/` 与仓根 `*.md` 内时跳过两个重型后端 job、改跑 `backend-light`(约 1 分钟),其余与 push 到 main 照常全量;汇总门 `backend (pytest)` 只在判定成功且明确 `backend=false` 时接受 skipped。`tests/conftest.py` 读取审计保证「跳过不丢覆盖」。流程口径:一轮返修只推一次、本地只跑受影响文件(全量交给 CI)、直接合入改为「检视通过 + CI 绿」、等 CI 放后台不轮询。[方案](archive/issue-288-ci-scope.md);`backend-unit` 自身的 10 分钟在 #289。
 - **读者面桌面阅读器重构(issue #279,2026-11-13 立项;第一批「并档」PR #281、第二批「版框与页头」PR #282、第三批「阅读窗」PR #283、第四批「列表与早报」PR #284、第五批「排印」PR #285 已合入,五批齐;目检后补 PR #286、#287;2026-11-16 用户本地目检通过,issue 关闭、方案归档,待发布)**:整站前端审视两轮样页(用户选 B「夜航 · 续」)入库 `docs/design/issue-279-frontend-refactor/`,分五批落地。第一批只改样式值与文案:桌面 14 屏普查字号 18 级 → 10 级、图标 7 种尺寸 → 3 种(线宽 1.75)、图标钮 28 / 30 / 32 → 32、同级控件圆角向 6 / 10 收、按钮从胶囊改 10px(问答面板等还有在册例外,随所在批次收),并按 #278 删掉现网说明文字十余处;手机壳 22 屏样式指纹对主干零差异。第二批把榜单、事件页、发现、社交改成与早报同一种写法的整幅页面(不挂来源栏、版框 1200、宋体页名、页签行),页头由「三族」改「两族」。第三批改阅读窗:动作收进吸顶栏、标题区四行变三行、AI 速读一句一段且两个维度的分与依据点开可见、宽窗出页边、来源栏可收起。第四批:条目行按分值收放(留「一律等高」开关)、早报条目两栏加吸顶目录、导轨标签常驻、问答入口进导轨。第五批:中西文自动间隙、大标题标点挤压、标题按词断行(浏览器分词加合并规则,没有动后端)。第五批补(PR #286,用户指出早报头条在逗号后面甩下一个词):标题折在哪儿由前端量宽度后自己挑——优先停顿处、尽量不甩词,行数不增加。第二批补(PR #287,用户指出发现页右上角违和):页头右侧分两组各自贴右,整组订阅挪到形态筛选旁边。见 [方案](archive/issue-279-frontend-refactor.md)。
 - **前端纪律:界面不靠说明文字解释自己(issue #278,2026-11-13,纯文档)**:用户定的规则 *Avoid unnecessary secondary labels and description, let the layout do the explaining* 写进 `AGENTS.md` 硬规则 2、`conventions.md` §1 首条(默认不写什么 / 判据 / 不在此列)与自检清单、`.claude/rules/frontend.md`;现网已有说明文字的删改不在本条,随 issue #279 做。
@@ -95,6 +96,16 @@
 - **3.58–3.60(2026-09-15–19)**:运维面播客与分析标签重构(#76)/ 移动端读者 E2E(#91)/ 同步修复(#96 / #99)/ PWA 主屏幕安装(#100)/ 弹窗遮罩关闭判定(#104)/ OSS 持久存储与自动备份(#109)/ 聚焦环入 base 层(#108)/ 发现页按形态批量订阅(#113)/ **GitHub Release 自动部署流水线(#102,v3.60.0 首发、v3.60.1 闭环)**:tag 推上去 → 自动建 Release → 串联 `deploy.yml` 停在 Environment `production` 等批准 → SSH forced command 触发生产机仓库外 launcher/worker → 目标 tag 的 `./deploy-docker.sh` → 公网 `/api/health` 核对;上线抓到两坑(checkout 改写 tag 引用 / Environment secrets 须 `secrets: inherit`),见 `docs/archive/auto-deploy-plan.md` §7。
 - **裸机部署回滚(issue #126,2026-09-21,待发布)**:裸机路径改「运行副本版本化」release 形态 + 锁内事务 + 两级健康门告警(不自动回滚)+ `./deploy.sh --rollback`(树外固化执行体,DB 按目标上下文迁移计划分流,`--restore-db` 显式恢复,只回一代)+ 收养 + `--code` / `--status` / `--discard-txn`;extras 钉版 `docker/requirements-crawl4ai.txt`;方案 `docs/archive/baremetal-rollback-plan.md`(codex 四轮设计检视 + §9 实现记录),手册 `docs/ops/deploy-baremetal.md`,桩测试 `tests/test_deploy_baremetal.py`。
 - **Podcast(issue #7 P0–P0.2)**:`source_type=podcast` → `generic_podcast_rss`,单集复用 `ArticleRecord` + `extensions_json`,只解析 enclosure 元数据不下载音频;36 节目策展目录 `services.podcast_catalog` 启动幂等安装、进普通采集任务不设源级开关;边界与后续见 `docs/archive/podcast-wave-plan.md`。
+
+## issue #289 CI 提速(二):后端 job 分片并行、降低用例开销(2026-11-16,CI / 测试)
+
+**为什么**:#288 之后只动前端 / 文档的 PR 约 1 分钟出结果(实测 46 秒),动到后端的仍要等 `backend-unit` 的 8–10 分钟。本机插桩一次 unit 全量(worker 时间合计 801 s):`create_all` 21%、PBKDF2 7%、TestClient 启动 7%、Alembic 6%,其余六成散在三千多个用例里——没有哪一项占多数,所以主手段是并行。
+
+**设计取舍**:片号 = `crc32(用例函数的 nodeid) % N + 1`,纯函数,「每条用例恰好落在一片里」是构造出来的;参数 id 不参与哈希(个别来自对象 repr),同一函数的参数化落在同一片;按用例而不是按文件分(deploy 侧只有 6 个文件)。`ci.yml` 用矩阵,unit 3 片、deploy 2 片,每片仍是 4 个 worker;汇总门读的是矩阵 job 的汇总结果。少一片的后果是那一片的用例谁都不跑而 CI 照样绿,所以守卫三层:`strategy` 块只认三行受控格式、矩阵值代入真实命令真跑 collect-only 证明是一个划分、以及**检查分片的用例不放在被分片的 job 里**——另起不分片的 `backend-guards`(首轮检视指出:配置写错时三个 job 可能全跑第一片,而守卫自己正落在没人跑的那两片)。用例开销只做了最便宜的一项:测试会话把 PBKDF2 缺省轮数调到 1000(`hash_password` 的缺省值改为调用期读取,生产行为不变)。tmpfs 临时目录在 CI 上做了同片对比(unit 152 s → 124 s,deploy 113 s → 121 s),差距在 runner 波动之内且有撑满内存盘的风险,不采用;建库模板试验可行(`DatabaseStorage()` 初始化 152 ms,模板拷贝 1.9 ms)但「模板何时陈旧」说不干净,延后。
+
+**实测**(PR #294):整条 CI 4.0 分钟;unit 三片 3.7 / 3.0 / 2.9 分钟,deploy 两片 2.1 / 2.4 分钟。本机三片 85 / 72 / 73 秒(不分片 210 秒)。
+
+**自测与检视**:两份守卫 183 例、97 条突变全部被拒,汇总门真值表 4096 种组合;模拟把片数改成 4 / 3,测试文件不用改。检视(Codex `gpt-6-astra` ultra,[方案](archive/issue-289-ci-shards.md) §6):R1 两条 P1 都是守卫的漏检路径(错误分片能把守卫自己排除;矩阵解析遇空行即停、不认带引号的键),连同 1 × P2、2 × P3 全部接受;R2 确认全部修到,两条观察项(守卫 job 没拦 `--collect-only`、一句旧措辞)顺手收掉——pytest 命令改为选项白名单。实现方 Claude Code(Fable 5.2)。无目检界面,按「检视通过 + CI 绿」直接合入。顺带:`gh pr checks --watch` 会被一次网络瞬断带着非零码打断,流程文档补了「退出后再查一遍是否还有 pending」。
 
 ## issue #288 CI 提速(一):按改动面选 job、一轮返修一次推送、本地 / CI 分工(2026-11-16,CI / 测试 / 文档)
 
