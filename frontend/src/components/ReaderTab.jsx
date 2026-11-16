@@ -68,6 +68,7 @@ import AnalysisTagChip from './AnalysisTagChip';
 import { excerptOf, hostOf, latinLang } from '../utils/readerText';
 import { displayTitle, titleView } from '../utils/titleDisplay';
 import { useTitlePreference } from '../hooks/useTitlePreference';
+import { useEvenRows } from '../hooks/useEvenRows';
 import { highlightMatch } from '../utils/highlight';
 import { dayLabelOf } from '../utils/readerTime';
 import { buildListPlan } from '../utils/listPlan';
@@ -81,6 +82,7 @@ import {
   primaryScoreOf,
   scoreDisclaimer,
   scoreTierClass,
+  rowTierOf,
   shouldShowAiReadingCard,
 } from '../utils/analysis';
 import AiReadingCard, { ScoreMargin } from './AiReadingCard';
@@ -272,6 +274,7 @@ export const ArticleRow = memo(function ArticleRow({
   const title = displayTitle(article, preferChinese);
   // 版本更新用紧凑行(单行标题、无摘要),由条目的内容类型决定(issue #178,取代「动态」容器)
   const compact = !entryPodcast && isCompactKind(article);
+  const evenRows = useEvenRows();
   const excerpt = compact
     ? ''
     : excerptOf(article.summary_zh || article.content_preview || article.content);
@@ -283,6 +286,9 @@ export const ArticleRow = memo(function ArticleRow({
   const primaryScore = primaryScoreOf(article);
   const score = primaryScore?.text || '';
   const scoreTier = scoreTierClass(primaryScore?.value);   // issue #54:按分值分档着色
+  // 按分值收放(issue #279 第四批,桌面):分高的多给一行摘要,分低的只留标题。搜索时摘要里可能有命中,一律两行;
+  // 手机卡片(card)、播客、紧凑行不参与;读者可在设置里改成一律等高
+  const rowTier = card || entryPodcast || compact || evenRows || searchQuery ? 'full' : rowTierOf(primaryScore?.value);
   const scoreTitle = primaryScore ? `${primaryScore.label} ${score}。${scoreDisclaimer(primaryScore.key)}` : '';
   const analysisStatus = analysisStatusMeta(article, { podcast: entryPodcast });
   const podcastBasis = entryPodcast ? podcastReaderBasisText(article) : '';
@@ -329,7 +335,7 @@ export const ArticleRow = memo(function ArticleRow({
         onMouseEnter={() => onPrefetchEnter(article)}
         onMouseLeave={onPrefetchLeave}
         onContextMenu={(e) => onContextMenu(e, article, 'article')}
-        className={`reader-entry ${compact ? 'is-compact' : ''} ${entryPodcast ? 'is-podcast' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'} ${isFav ? 'is-fav' : ''} ${ctxAnchor ? 'is-ctx-anchor' : ''}${favIndicator ? ' has-fav-mark' : ''}${card ? ' is-card' : ''}`}
+        className={`reader-entry ${compact ? 'is-compact' : ''} ${entryPodcast ? 'is-podcast' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'} ${isFav ? 'is-fav' : ''} ${ctxAnchor ? 'is-ctx-anchor' : ''}${favIndicator ? ' has-fav-mark' : ''}${card ? ' is-card' : ''}${rowTier === 'full' ? '' : ` is-${rowTier}`}`}
       >
         {/* 读态只由标题字重与墨色表达(is-read),不另画未读点(issue #199);读屏补一句「未读」与之对等 */}
         {isUnread && <span className="sr-only">未读，</span>}
@@ -415,7 +421,7 @@ export const ArticleRow = memo(function ArticleRow({
               {!favIndicator && favoriteControl}
             </span>
             {/* 摘要行:AI 要点摘要(summary_zh)优先——正文截断对英文长文几乎无信息量 */}
-            {excerpt && <span className="reader-entry-excerpt">{searchQuery ? highlightMatch(excerpt, searchQuery) : excerpt}</span>}
+            {excerpt && rowTier !== 'low' && <span className="reader-entry-excerpt">{searchQuery ? highlightMatch(excerpt, searchQuery) : excerpt}</span>}
           </>
         )}
       </button>
@@ -792,6 +798,9 @@ export default function ReaderTab({
     try { return window.localStorage.getItem(SRC_FOLD_KEY) === '1'; } catch { return false; }
   });
   const [srcPop, setSrcPop] = useState(false);
+  // 问答面板的开合(入口在导轨):每点一次信号加一,面板自己决定开还是收
+  const [qaSignal, setQaSignal] = useState(0);
+  const [qaOpen, setQaOpen] = useState(false);
   const srcPopRef = useRef(null);
   const scopeBtnRef = useRef(null);
   // 键盘收起(Escape、在某一行上按 Enter / 空格)时把焦点还给范围名按钮——浮层卸载后焦点不能掉到 body 上
@@ -1064,6 +1073,23 @@ export default function ReaderTab({
         {standalone && (
           <>
             <div className="reader-vrail-spring" />
+            {/* 问答(issue #279 第四批):全站唯一一个脱离布局的悬浮入口收进导轨,和别的入口一样有名字 */}
+            {aiEnabled && (
+              <>
+                <button
+                  type="button"
+                  className={`reader-vrail-btn reader-vrail-qa ${qaOpen ? 'is-on' : ''}`}
+                  aria-label="问问哆啦美"
+                  aria-pressed={qaOpen}
+                  onClick={() => setQaSignal((n) => n + 1)}
+                >
+                  <Sparkles />
+                  <span className="reader-vrail-label">问答</span>
+                  <span className="reader-vrail-tip">问问哆啦美</span>
+                </button>
+                <span className="reader-vrail-divider" aria-hidden="true" />
+              </>
+            )}
             {/* 返回管理台(v3.19):与应用导轨轨底「进入阅读器」对称的隐藏切换钮,仅 admin 有 */}
             {onExitReader && (
               <button
@@ -1798,16 +1824,18 @@ export default function ReaderTab({
       </section>
       )}
 
-      {!pageOpen && !discover && (
-        <ReaderAiPanel
+      {/* 问答面板:入口在导轨(issue #279 第四批,此前是右下角的悬浮圆钮,只在文章 / 播客 / 社交出现)。
+          整幅页面上没有「当前这篇」,面板自己落到订阅范围 */}
+      <ReaderAiPanel
+          openSignal={qaSignal}
+          onOpenChange={setQaOpen}
           aiEnabled={aiEnabled}
-          activeArticle={activeArticle}
+          activeArticle={widePage ? null : activeArticle}
           showToast={showToast}
           onOpenArticle={openArticleById}
           guest={rs.isGuest}
           onGuestLogin={() => onGuestLogin?.()}
         />
-      )}
 
       {/* 右键上下文菜单(单例,portal 到 body):关闭即 ctxMenu 置空,锚定态随之消失 */}
       {ctxMenu && (

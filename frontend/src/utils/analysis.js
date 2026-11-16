@@ -428,3 +428,16 @@ export function scoreDimensions(article) {
 export function primaryScoreOf(article) {
   return scoreDimensions(article)[0] || null;
 }
+
+/**
+ * 条目行的篇幅档位(issue #279 第四批,桌面列表):分值决定这一行占多少地方——
+ * 'full' 两行摘要(8 分及以上,以及还没有分数的)、'mid' 一行摘要(6–8 分)、'low' 只留标题(6 分以下)。
+ * 没有分数不等于低分:分析还没跑完的条目照常给两行。
+ */
+export function rowTierOf(value) {
+  const score = Number(value);
+  if (value == null || value === '' || !Number.isFinite(score)) return 'full';
+  if (score >= 8) return 'full';
+  return score >= 6 ? 'mid' : 'low';
+}
+

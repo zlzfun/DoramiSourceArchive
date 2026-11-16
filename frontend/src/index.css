@@ -11502,14 +11502,6 @@ input[type="radio"] {
     text-align: center;
   }
   .reader-ai-empty > svg { stroke: url(#ai-grad) var(--dorami-accent); margin-bottom: 2px; }
-  .reader-ai-empty-title {
-    font-family: var(--font-serif);
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--dorami-ink);
-  }
-  :where(.m-shell, .m-page, .m-read, .m-sheet) .reader-ai-empty-title { font-size: 14.5px; } /* m-keep #279-b1 */
-  .reader-ai-empty-sub { font-size: 12px; color: var(--dorami-faint); margin-bottom: 10px; }
   /* 建议问题(v3.32.1 重设计):居中、无框线、引号包裹的轻文本行;整组随
      SuggestRotator 定时轮换——.is-leaving 相整组淡出下沉,换词后回到常态浮现
      (transition-delay 由 JSX 逐行 50ms 递进,形成错落)。悬停醒目:accent + wash 胶囊。 */
@@ -13604,6 +13596,60 @@ input[type="radio"] {
 .reader-pane-side .reader-pane-tags { flex-direction: column; align-items: flex-start; gap: 6px 0; }
 .reader-pane-side .reader-pane-tags .reader-tag-chip + .reader-tag-chip::before { content: none; }
 .reader-side-score { margin: 8px 0 10px; font-family: var(--font-score); font-size: 44px; font-weight: 600; line-height: 1; letter-spacing: -0.02em; font-variant-numeric: lining-nums tabular-nums; }
+/* ════════════════════════════════════════════════════════════════════
+   列表与早报(issue #279 第四批):条目行按分值收放、四周对称内边距;早报条目两栏 + 吸顶目录;
+   导轨标签常驻。全部锚在桌面壳上(.reader-shell / .reader-vrail),手机壳共用的规则不动。
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ── 条目行:四周对称内边距(文字左缘仍在 16,右缘也是 16);选中 / 悬停的底块不再贴着栏边 ── */
+.reader-shell .reader-list-scroll { padding-left: 6px; padding-right: 6px; }
+.reader-shell .reader-entry { padding: 12px 10px 14px; }
+.reader-shell .reader-entry.is-compact { padding-top: 7px; padding-bottom: 7px; }
+.reader-shell .reader-entry.is-podcast { padding: 10px; }
+.reader-shell .reader-entry + .reader-entry::before { left: 10px; right: 10px; }
+.reader-shell .reader-date-label { margin: 0 -6px; padding-left: 16px; padding-right: 16px; }
+/* 按分值收放:6–8 分一行摘要(末端渐隐);6 分以下不出摘要(标记里就没有),标题退成一行 */
+.reader-shell .reader-entry.is-mid .reader-entry-excerpt {
+  max-height: 1.55em;
+  -webkit-mask: linear-gradient(to right, #000 calc(100% - 40px), transparent);
+  mask: linear-gradient(to right, #000 calc(100% - 40px), transparent);
+}
+.reader-shell .reader-entry.is-low { padding-top: 9px; padding-bottom: 10px; contain-intrinsic-size: auto 58px; }
+.reader-shell .reader-entry.is-low .reader-entry-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── 早报:吸顶目录;板块名一列、条目两栏 ── */
+.bp-toc {
+  position: sticky; top: 0; z-index: 4; display: flex; align-items: stretch; gap: 24px; height: 44px; margin-top: 8px;
+  border-top: 1px solid var(--dorami-border-soft); border-bottom: 1px solid var(--dorami-border-soft); background: var(--dorami-surface);
+}
+.bp-toc-link {
+  display: inline-flex; align-items: baseline; align-self: center; gap: 6px; padding: 0; border: 0; background: none;
+  font-size: 13px; color: var(--dorami-muted); cursor: pointer; transition: color var(--motion-fast) var(--motion-ease);
+}
+.bp-toc-link b { font-size: 12px; font-weight: 400; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.bp-toc-link.is-on { color: var(--dorami-ink); font-weight: 600; }
+@media (hover: hover) { .bp-toc-link:hover { color: var(--dorami-ink); } }
+.reader-shell .bp-act { grid-template-columns: 180px minmax(0, 1fr); gap: 0 40px; padding: 40px 0 8px; scroll-margin-top: 44px; }
+.reader-shell .bp-toc + .bp-act { box-shadow: none; }   /* 目录条自己有底线 */
+.reader-shell .bp-act-head { top: 76px; }
+.reader-shell .bp-items { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 48px; align-items: start; }
+.reader-shell .bp-item { padding-bottom: 32px; }
+.reader-shell .bp-item-title { font-size: 20px; }
+.reader-shell .bp-item-orig { margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.reader-shell .bp-item-sum { margin-top: 8px; font-size: 14px; -webkit-line-clamp: 3; }
+.reader-shell .bp-item-meta { margin-top: 12px; font-size: 12px; }
+.reader-shell .bp-item-open::after { inset: -10px -12px 14px; }
+/* 版框窄(阅读器窗口不到约 1000)时条目退回一栏,两栏的行长会短到一行十来个字 */
+@container (max-width: 880px) {
+  .reader-shell .bp-items { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ── 导轨标签常驻(取代 v3.45「轨面悬停整体揭示」):新读者一眼读得出页面组织,不必先把鼠标挪上去 ── */
+.reader-vrail .reader-vrail-btn > svg,
+.reader-vrail .reader-vrail-btn .vrail-btn-dot { transform: translateY(-7px); transition: none; }
+.reader-vrail .reader-vrail-label { opacity: 1; transform: none; transition: none; letter-spacing: 0; }
+.reader-vrail .reader-vrail-btn.is-on .reader-vrail-label { font-weight: 600; }
+
 /* 阅读列很窄(1100 屏来源栏展开时只有 432):留白收一档;再窄「查看原文」只留图标 */
 @container reader-read (max-width: 560px) {
   .reader-col-read .reader-pane { padding-left: 24px; padding-right: 24px; }
