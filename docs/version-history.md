@@ -104,7 +104,7 @@
 
 **流程口径**(`docs/dev/workflow.md` §2 / §6 / §7、`docs/dev/testing.md`、`AGENTS.md`、`dorami-issue-loop` 技能):一轮返修连同文档收尾只推一次;本地只跑受影响的测试文件 + 快守卫,全量交给 CI 跑一次(改部署脚本 / 迁移本地仍跑 deploy 侧,改动面说不清时本地先全量);无目检界面 PR 的直接合入口径由「检视通过 + 全量套件绿 + CI 绿」改为「检视通过 + CI 绿」;等 CI 用 `gh pr checks --watch` 放后台,不轮询。
 
-**自测**:`tests/test_ci_scope.py` 56 例(判定表、按 CI 形态造的临时 git 仓端到端、读取审计的反向对照)+ `tests/test_ci_workflow.py` 44 例(汇总门真值表、接线、31 条突变)全过;unit 侧全量 3544 passed(207 s,带审计与不带时相同,无误报)。检视记录见[方案](plans/issue-288-ci-scope.md) §7。实现方 Claude Code(Fable 5.2),检视方 Codex。顺带核实:`main` 当前未开启分支保护(文档里写的是应有设置),记入 backlog 待所有者决定。
+**自测**:`tests/test_ci_scope.py` 60 例(判定表、按 CI 形态造的临时 git 仓端到端、读取审计的反向对照)+ `tests/test_ci_workflow.py` 63 例(汇总门真值表、接线、49 条突变)全过;unit 侧全量 3567 passed、deploy 侧全量 223 passed(读取审计不增加可测的耗时,无误报)。检视记录见[方案](plans/issue-288-ci-scope.md) §7。实现方 Claude Code(Fable 5.2),检视方 Codex。顺带核实:`main` 当前未开启分支保护(文档里写的是应有设置),记入 backlog 待所有者决定。
 
 ## issue #279 读者面桌面阅读器重构:第二批补「发现页页头右侧」(PR #287,版本号以实际发版为准)
 

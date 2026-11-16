@@ -68,7 +68,7 @@
 - **CI 按改动面选 job**(issue #288,`scripts/ci_scope.py`):PR 的全部改动路径都在 `frontend/` `docs/` `docs-site/` 与仓根 `*.md` 之内时,跳过两个重型后端 job、改跑 `backend-light`(约 1 分钟出结果);其余照常全量(约 10 分钟);push 到 main 永远全量。后端测试要读这些路径下的文件,须登记进 `ci_scope.LIGHT_TESTS`(`tests/conftest.py` 的读取审计强制,见 [`testing.md`](./testing.md))。
 - **等 CI 不轮询**:`gh pr checks <N> --watch --fail-fast > log 2>&1; rc=$?` 放后台(Claude Code 用 `run_in_background`,其它 Agent 用等价的非阻塞方式),结束时自动唤醒再读结果;不前台阻塞(全量 CI 比前台命令 10 分钟上限长)、不写 sleep 循环。
 - **合入前必须用户本地端到端验收 + 目检放行**,检视通过也不例外;用户放行后 `gh pr merge --squash`,再清 worktree;issue 随 PR 关闭。
-- 例外口径(2026-09-19 用户表态):没有可目检界面的纯后端机制修复、纯文档 PR,在检视通过 + CI 绿后可由执行者直接 squash 合入(CI 即全量;2026-11-16 issue #288 起不再要求本地另跑一遍全量);有前端 / 交互面的仍走目检。合入后不擅自打 tag。
+- 例外口径(2026-09-19 用户表态):没有可目检界面的纯后端机制修复、纯文档 PR,在检视通过 + CI 绿后可由执行者直接 squash 合入(CI 按改动面跑这次改动需要的那一套,动到后端即全量;2026-11-16 issue #288 起不再要求本地另跑一遍全量);有前端 / 交互面的仍走目检。合入后不擅自打 tag。
 - `gh pr merge` 报冲突时先看输出再做下一步;合入与打 tag 用 `&&` 串起来,tag 前核对 `git log -1 origin/main` 是自己的 squash 提交。
 
 ## 8. 发版与部署(独立于合入)

@@ -276,6 +276,84 @@ def test_nothing():
 '''
 
 
+# 读了之后不让结果是「通过」的几种写法——都得判失败(Codex R1-2);已经失败的用例保留它自己的失败原因
+_PROBE_NOT_PASSING = '''
+from pathlib import Path
+
+import pytest
+
+ROOT = Path({root!r})
+
+
+def _title():
+    return (ROOT / "docs" / "README.md").read_text(encoding="utf-8").splitlines()[0]
+
+
+def test_skips_depending_on_what_it_read():
+    if _title():
+        pytest.skip("文档长这样就不测")
+
+
+def test_xfails_imperatively_after_reading():
+    if _title():
+        pytest.xfail("文档长这样就算预期失败")
+
+
+@pytest.mark.xfail(reason="预期失败")
+def test_marked_xfail_and_fails_after_reading():
+    assert not _title()
+
+
+@pytest.mark.xfail(reason="预期失败却通过")
+def test_marked_xfail_but_passes_after_reading():
+    assert _title()
+
+
+@pytest.fixture
+def skipping_fixture():
+    if _title():
+        pytest.skip("夹具里读完就跳过")
+
+
+def test_skipped_from_a_fixture_that_read(skipping_fixture):
+    pass
+
+
+def test_fails_on_its_own_after_reading():
+    assert _title() == "boom-this-is-the-tests-own-failure"
+'''
+
+# 类里的参数生成在收集「类」时才跑,不在收集模块时(Codex R1-1)
+_PROBE_CLASS_PARAMS = '''
+from pathlib import Path
+
+ROOT = Path({root!r})
+
+
+def pytest_generate_tests(metafunc):
+    if "title" in metafunc.fixturenames:
+        metafunc.parametrize("title", [(ROOT / "docs" / "README.md").read_text(encoding="utf-8").splitlines()[0]])
+
+
+class TestTitle:
+    def test_title(self, title):
+        assert title
+'''
+
+_PROBE_MODULE_SKIP = '''
+from pathlib import Path
+
+import pytest
+
+if (Path({root!r}) / "frontend" / "package.json").read_text(encoding="utf-8"):
+    pytest.skip("读完前端配置就整个模块跳过", allow_module_level=True)
+
+
+def test_nothing():
+    pass
+'''
+
+
 def _run_probe(tmp_path: Path, source: str) -> subprocess.CompletedProcess:
     """在仓外的临时目录里跑一个探针测试文件,把 tests/conftest.py 当插件载入(`-p conftest`)——探针不在 LIGHT_TESTS 里。"""
     probe = tmp_path / "probe" / "test_scope_probe.py"
@@ -312,6 +390,52 @@ def test_audit_fails_collection_when_a_module_reads_skip_safe_paths_at_import(tm
     out = r.stdout + r.stderr
     assert r.returncode != 0, out[-3000:]
     assert "读了 docs-site/package.json" in out and "error" in out, out[-3000:]
+
+
+def test_audit_fails_tests_that_read_and_then_skip_or_xfail(tmp_path):
+    r = _run_probe(tmp_path, _PROBE_NOT_PASSING)
+    out = r.stdout + r.stderr
+    assert r.returncode == 1, out[-3000:]
+    for fragment in ("5 failed", "1 error"):  # 夹具里跳过的那条在 setup 阶段判失败,pytest 记为 error
+        assert fragment in out, (fragment, out[-3000:])
+    for word in ("skipped", "xfailed", "xpassed"):
+        assert word not in out.splitlines()[-1], (word, out[-3000:])
+    for name in ("test_skips_depending_on_what_it_read", "test_xfails_imperatively_after_reading",
+                 "test_marked_xfail_and_fails_after_reading", "test_marked_xfail_but_passes_after_reading",
+                 "test_skipped_from_a_fixture_that_read"):
+        assert f"{name} 读了 docs/README.md" in out, (name, out[-3000:])
+    # 本来就失败的那条:保留它自己的断言失败,不被审计信息盖掉
+    assert "boom-this-is-the-tests-own-failure" in out
+    assert "test_fails_on_its_own_after_reading 读了" not in out
+
+
+@pytest.mark.parametrize("source, path", [(_PROBE_CLASS_PARAMS, "docs/README.md"), (_PROBE_MODULE_SKIP, "frontend/package.json")],
+                         ids=["class-level-parametrize", "module-level-skip"])
+def test_audit_fails_collection_for_reads_outside_plain_module_import(tmp_path, source, path):
+    r = _run_probe(tmp_path, source)
+    out = r.stdout + r.stderr
+    assert r.returncode != 0, out[-3000:]
+    assert f"读了 {path}" in out and "error" in out and "passed" not in out.splitlines()[-1], out[-3000:]
+
+
+def test_conftest_executed_twice_in_one_process_shares_one_audit():
+    """conftest 在同一进程里被执行两遍(换模块名再导入时会这样):读取记录必须是同一个列表,钩子只装一次——
+    两遍之后读一次 docs/README.md,列表里只多一条而不是两条。放在子进程里做:再执行一遍 conftest 会重铸沙箱环境变量。"""
+    code = (
+        "import runpy, sys\n"
+        "first = runpy.run_path(sys.argv[1])\n"
+        "second = runpy.run_path(sys.argv[1])\n"
+        "assert first['_scope_reads'] is second['_scope_reads'] is sys._dorami_scope_reads\n"
+        "del sys._dorami_scope_reads[:]\n"
+        "open(sys.argv[2], encoding='utf-8').close()\n"
+        "print(len(sys._dorami_scope_reads), sys._dorami_scope_reads)\n"
+    )
+    dropped = ("PYTEST_XDIST_WORKER", "PYTEST_CURRENT_TEST", "DORAMI_CONFIG_FILE", "DORAMI_TEST_SANDBOX")
+    env = {k: v for k, v in os.environ.items() if k not in dropped}
+    r = subprocess.run([sys.executable, "-c", code, str(ROOT / "tests" / "conftest.py"), str(ROOT / "docs" / "README.md")],
+                       env=env, capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.strip().splitlines()[-1] == "1 ['docs/README.md']", r.stdout
 
 
 def test_listed_light_tests_are_allowed_to_read_them(pytestconfig):
