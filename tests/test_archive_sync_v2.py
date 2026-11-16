@@ -296,6 +296,218 @@ def test_auto_installed_bindings_do_not_count_as_local_use(tmp_path):
         assert outcome.binding_is_auto_generated(podcast) is False
 
 
+def _connect_upstream(session, *, base_url="http://upstream.test", authority_id="producer-a"):
+    return remote_sync_service.prepare_transaction_revision_consumer(
+        session,
+        base_url=base_url,
+        username="admin",
+        authority_id=authority_id,
+        schema_version=archive_sync_v2.SCHEMA_VERSION,
+        prepared_at="2026-09-05T00:00:00+00:00",
+        capabilities=list(archive_sync_v2.REQUIRED_CAPABILITIES),
+    )
+
+
+def _default_podcast_job(session):
+    from models.db import CollectionJobRecord
+    from services import podcast_catalog
+
+    return session.exec(select(CollectionJobRecord).where(
+        CollectionJobRecord.name == podcast_catalog.AI_NATIVE_DEV_COLLECTION_JOB_NAME
+    )).one()
+
+
+def test_first_upstream_parks_the_untouched_default_podcast_job(tmp_path):
+    """新节点自带的默认播客采集任务没人动过:第一次接入上游时任务停用、它那个源的本机分析关掉,
+    这个源从此与别的同步源同一口径(接受上游的停用)。管理员重新启用任务后又算本机在用,以后再接
+    别的目标也不会被再停一次。"""
+    from services import podcast_catalog
+
+    tessl = podcast_catalog.AI_NATIVE_DEV_SOURCE_ID
+    other = next(source_id for source_id in podcast_catalog.catalog_by_id() if source_id != tessl)
+    producer = _sink(tmp_path, "producer-default-job.db")
+    consumer = _sink(tmp_path, "consumer-default-job.db")
+    for sink in (producer, consumer):
+        with Session(sink.engine) as session:
+            podcast_catalog.import_podcast_catalog(session)
+    with Session(consumer.engine) as session:
+        assert _default_podcast_job(session).is_active is True
+        assert session.get(SourceConfigRecord, tessl).ai_analysis_enabled is True
+
+        assert _connect_upstream(session) is True
+        session.commit()
+        assert _default_podcast_job(session).is_active is False
+        assert session.get(SourceConfigRecord, tessl).ai_analysis_enabled is False
+        assert session.get(SourceConfigRecord, other).ai_analysis_enabled is True   # 别的源等印记落下才关
+        assert archive_sync_v2.source_in_local_use(
+            session, session.get(SourceConfigRecord, tessl), archive_sync_v2._PageOutcome()  # noqa: SLF001
+        ) is False
+
+    podcast_catalog.ensure_default_podcast_sources(consumer.engine)   # 重启时的目录安装不会把它们开回来
+    with Session(consumer.engine) as session:
+        assert _default_podcast_job(session).is_active is False
+        assert session.get(SourceConfigRecord, tessl).ai_analysis_enabled is False
+
+    with Session(producer.engine) as session:
+        row = session.get(SourceConfigRecord, tessl)
+        row.is_active = False                                   # 上游停用这个源
+        session.add(row)
+        session.commit()
+    _copy_stream(producer, consumer, "sources")
+    with Session(consumer.engine) as session:
+        assert session.get(SourceConfigRecord, tessl).is_active is False   # 本机没在用,照单接受
+        assert session.get(SourceConfigRecord, other).ai_analysis_enabled is False
+
+        job = _default_podcast_job(session)
+        job.is_active = True                                    # 管理员决定本机自己采
+        session.add(job)
+        session.commit()
+        assert archive_sync_v2.source_in_local_use(
+            session, session.get(SourceConfigRecord, tessl), archive_sync_v2._PageOutcome()  # noqa: SLF001
+        ) is True
+        assert _connect_upstream(session, base_url="http://second.test") is True
+        session.commit()
+        assert _default_podcast_job(session).is_active is True
+
+
+@pytest.mark.parametrize("touched", ["job_sources", "job_cron", "job_params", "source_binding"])
+def test_first_upstream_leaves_an_admin_edited_default_job_alone(tmp_path, touched):
+    """默认任务或它那个源的采集绑定被管理员动过,就是管理员排的采集:接入上游时整套不碰。"""
+    from services import podcast_catalog
+
+    tessl = podcast_catalog.AI_NATIVE_DEV_SOURCE_ID
+    consumer = _sink(tmp_path, f"consumer-default-job-{touched}.db")
+    with Session(consumer.engine) as session:
+        podcast_catalog.import_podcast_catalog(session)
+        job = _default_podcast_job(session)
+        source = session.get(SourceConfigRecord, tessl)
+        if touched == "job_sources":
+            other = next(sid for sid in podcast_catalog.catalog_by_id() if sid != tessl)
+            job.fetcher_ids_json = json.dumps([tessl, other])
+        elif touched == "job_cron":
+            job.cron_expr = "5 3 * * *"
+        elif touched == "job_params":
+            job.per_fetcher_params_json = json.dumps({tessl: {"limit": 3}})
+        else:
+            params = json.loads(source.params_json)
+            params["limit"] = 17
+            source.params_json = json.dumps(params)
+        session.add(job)
+        session.add(source)
+        session.commit()
+
+        assert _connect_upstream(session) is True
+        session.commit()
+        assert _default_podcast_job(session).is_active is True
+        assert session.get(SourceConfigRecord, tessl).ai_analysis_enabled is True
+        assert archive_sync_v2.source_in_local_use(
+            session, session.get(SourceConfigRecord, tessl), archive_sync_v2._PageOutcome()  # noqa: SLF001
+        ) is True
+
+
+def test_first_upstream_keeps_analysis_when_an_admin_job_also_collects_the_default_source(tmp_path):
+    """默认任务原封未动,但管理员另排了任务采同一个源:默认任务照停,分析开关不动(检视 R1 #2)。"""
+    from models.db import CollectionJobRecord
+    from services import podcast_catalog
+
+    tessl = podcast_catalog.AI_NATIVE_DEV_SOURCE_ID
+    consumer = _sink(tmp_path, "consumer-default-job-admin-job.db")
+    podcast_catalog.ensure_default_podcast_sources(consumer.engine)
+    with Session(consumer.engine) as session:
+        session.add(CollectionJobRecord(
+            name="mine", fetcher_ids_json=json.dumps([tessl]), is_active=True, cron_expr="0 * * * *",
+            created_at="2026-09-01T00:00:00+00:00", updated_at="2026-09-01T00:00:00+00:00",
+        ))
+        session.commit()
+        assert _connect_upstream(session) is True
+        session.commit()
+        assert _default_podcast_job(session).is_active is False
+        source = session.get(SourceConfigRecord, tessl)
+        assert source.ai_analysis_enabled is True
+        assert archive_sync_v2.source_in_local_use(
+            session, source, archive_sync_v2._PageOutcome()  # noqa: SLF001
+        ) is True
+
+
+def test_first_upstream_parking_rolls_back_with_the_connection_and_is_not_repeated(tmp_path):
+    """停用与接入同一事务:接入没落库就一并撤回,校验失败不处置;同一目标重入不重复处置。"""
+    from services import podcast_catalog
+
+    consumer = _sink(tmp_path, "consumer-default-job-rollback.db")
+    podcast_catalog.ensure_default_podcast_sources(consumer.engine)
+    with Session(consumer.engine) as session:
+        assert _connect_upstream(session) is True
+        session.rollback()
+        assert _default_podcast_job(session).is_active is True
+        assert session.get(AppSettingRecord, remote_sync_service.REMOTE_SYNC_STATE_KEY) is None
+
+        with pytest.raises(remote_sync_service.RemoteSyncError):
+            remote_sync_service.prepare_transaction_revision_consumer(
+                session, base_url="http://upstream.test", username="admin",
+                authority_id="producer-a", schema_version="archive-sync-v0",
+                prepared_at="2026-09-05T00:00:00+00:00",
+            )
+        session.rollback()
+        assert _default_podcast_job(session).is_active is True
+
+        assert _connect_upstream(session) is True
+        session.commit()
+        job = _default_podcast_job(session)
+        assert job.is_active is False
+        job.is_active = True                                    # 管理员重新启用
+        session.add(job)
+        session.commit()
+        assert _connect_upstream(session) is False              # 同一目标重入
+        session.commit()
+        assert _default_podcast_job(session).is_active is True
+
+
+def test_catalog_install_on_restart_keeps_an_upstream_stop_and_delete(tmp_path):
+    """A → B → C:上游停用一个目录播客源、删除另一个,B 照做;B 重启(目录安装再跑一遍)不把它们
+    改回来,C 从 B 拿到的也是停用与删除。管理员按 id 点名导入时照常装回(检视 R1 #1)。"""
+    from services import podcast_catalog
+
+    tessl = podcast_catalog.AI_NATIVE_DEV_SOURCE_ID
+    gone = next(source_id for source_id in podcast_catalog.catalog_by_id() if source_id != tessl)
+    node_a, node_b, node_c = (_sink(tmp_path, f"{name}-catalog-restart.db") for name in "abc")
+    for sink in (node_a, node_b, node_c):
+        podcast_catalog.ensure_default_podcast_sources(sink.engine)
+    for sink, upstream, base_url in ((node_b, node_a, "http://a.test"), (node_c, node_b, "http://b.test")):
+        with Session(sink.engine) as session:
+            assert _connect_upstream(
+                session, base_url=base_url,
+                authority_id=archive_sync_v2.producer_authority_id(upstream.engine),
+            ) is True
+            session.commit()
+    _copy_stream(node_a, node_b, "sources")
+    _copy_stream(node_b, node_c, "sources")
+
+    with Session(node_a.engine) as session:
+        row = session.get(SourceConfigRecord, tessl)
+        row.is_active = False
+        session.add(row)
+        session.delete(session.get(SourceConfigRecord, gone))
+        session.commit()
+    _copy_stream(node_a, node_b, "sources")
+    with Session(node_b.engine) as session:
+        assert session.get(SourceConfigRecord, tessl).is_active is False
+        assert session.get(SourceConfigRecord, gone) is None
+
+    result = podcast_catalog.ensure_default_podcast_sources(node_b.engine)   # B 重启
+    assert result["skipped_upstream_deleted"] == [gone]
+    with Session(node_b.engine) as session:
+        assert session.get(SourceConfigRecord, tessl).is_active is False
+        assert session.get(SourceConfigRecord, gone) is None
+
+    _copy_stream(node_b, node_c, "sources")
+    with Session(node_c.engine) as session:
+        assert session.get(SourceConfigRecord, tessl).is_active is False
+        assert session.get(SourceConfigRecord, gone) is None
+
+    with Session(node_b.engine) as session:
+        assert podcast_catalog.import_podcast_catalog(session, source_ids=[gone])["created"] == [gone]
+
+
 def test_admin_configured_catalog_podcast_survives_an_upstream_tombstone(tmp_path):
     """检视 R2 #2 的完整路径:目录自动安装的播客源,管理员存了本机配置(还没跑、没进任务)→ 同步
     上游的这个源、再收到它的 tombstone,本机源行与配置都在。没改过配置的那个照常跟着上游走。"""

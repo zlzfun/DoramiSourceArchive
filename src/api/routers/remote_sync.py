@@ -9,6 +9,7 @@ GET /api/archive/export/articles.jsonl → 本地 import_archive_sync_jsonl 幂�
 """
 
 import importlib
+import logging
 from typing import Any, Dict, List, Optional
 
 from apscheduler.triggers.cron import CronTrigger
@@ -26,6 +27,9 @@ from services.remote_sync import REMOTE_SYNC_JOB_TYPE, RemoteSyncError
 from models.db import JobRecord
 
 router = APIRouter(tags=["remote-sync"])
+
+
+_logger = logging.getLogger("dorami.remote_sync")
 
 
 def _app():
@@ -171,7 +175,7 @@ def launch_remote_sync_job(
             # transition before the background job becomes visible. Pulling does not
             # change what this node may collect or analyse (issue #263).
             with Session(engine) as session:
-                remote_sync_service.prepare_transaction_revision_consumer(
+                rebased = remote_sync_service.prepare_transaction_revision_consumer(
                     session,
                     base_url=base_url,
                     username=username,
@@ -181,6 +185,14 @@ def launch_remote_sync_job(
                     capabilities=list((v2_probe or {}).get("capabilities") or []),
                 )
                 session.commit()
+            if rebased:
+                # 首次接入可能停用了默认采集任务:让调度器摘掉它的注册。任务执行时本来就会
+                # 复核 is_active,所以这里失败不挡同步。
+                try:
+                    with Session(engine) as session:
+                        _app().sync_collection_job_schedules(session)
+                except Exception:
+                    _logger.warning("首次接入后协调采集调度失败,下次重启时生效", exc_info=True)
 
         async def _work(job: jobs.Job) -> Dict[str, Any]:
             if protocol == "v2":
