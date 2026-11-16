@@ -235,7 +235,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
     try {
       const r = await generateDailyBrief({});
       if (r.status === 'empty') showToast('暂无新增内容可生成日报', 'info');
-      else showToast(`已生成 日报 ${r.report_date} · 收录 ${r.articles_count} 条`, 'success');
+      else showToast(`已生成 日报 ${r.report_date} · 收录 ${r.articles_count} 条${r.content_recommendations_count ? ` · 推荐 ${r.content_recommendations_count} 条` : ''}`, 'success');
       loadBrief();
       loadHistory(1);
     } catch (error) {
@@ -423,7 +423,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
 
         <details className="scope-note">
           <summary>取材与去重口径</summary>
-          <p>候选取自上次成功生成之后新入库的文章（游标不回退）；同日同事件聚类合并，汇编前对照近几日日报条目做跨天查重，正文由系统确定性排版。生成在后台任务中执行，可离开本页。</p>
+          <p>新闻候选取自上次成功生成之后新入库的文章；同日同事件合并，并对照近期日报查重。深度阅读与播客另从近 7 天已有评分的内容中推荐：深读至少 7.0 分、最多 3 篇；播客需全文终评至少 7.5 分、最多 2 集；各分区每源最多 1 条。推荐不自动生成导读音频。生成在后台执行，可离开本页。</p>
         </details>
 
         {history !== null && history.length === 0 && (
@@ -437,6 +437,8 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
           const body = bodyCache[record.id];
           const metaBits = [
             typeof meta.articles_count === 'number' ? `收录 ${meta.articles_count} 条` : null,
+            Array.isArray(meta.content_recommendations) && meta.content_recommendations.length
+              ? `推荐 ${meta.content_recommendations.length} 条` : null,
             meta.llm_model || null,
           ].filter(Boolean);
           return (

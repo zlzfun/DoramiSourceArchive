@@ -168,7 +168,7 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
             {activeSection.id === 'appearance' && (
               <AppearanceSection theme={theme} onThemeChange={onThemeChange} />
             )}
-            {activeSection.id === 'reading' && <ReadingSection />}
+            {activeSection.id === 'reading' && <ReadingSection desktop />}
             {activeSection.id === 'opml' && !isGuest && (
               <OpmlSection showToast={showToast} />
             )}

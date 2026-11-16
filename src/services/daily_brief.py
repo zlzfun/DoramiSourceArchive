@@ -97,6 +97,7 @@ from models.db import (
 )
 from services import credentials
 from services import image_insights as image_insights_service
+from services import public_content_recommendations as content_recommendations
 from services.article_analysis import (
     AnalysisInput,
     analysis_input_from_article,
@@ -607,6 +608,9 @@ def _collect_candidate_batch(session, *, cursor, max_total=120, per_source_cap=D
                    DailyBriefCandidateRecord.status)
         .outerjoin(DailyBriefCandidateRecord, DailyBriefCandidateRecord.article_id == ArticleRecord.id)
         .where(ArticleRecord.source_id != DAILY_BRIEF_SOURCE_ID)
+        # Episode value is not event importance. Episodes have their own read-only
+        # recommendation pool, independent of this news cursor and inline scoring.
+        .where(or_(ArticleRecord.content_type.is_(None), ArticleRecord.content_type != "podcast_episode"))
         .where(~ArticleRecord.source_id.startswith(USER_SOURCE_PREFIX, autoescape=True)))
     if source_ids:
         base = base.where(ArticleRecord.source_id.in_(list(source_ids)))
@@ -1340,8 +1344,10 @@ def fetch_recent_brief_items(
     for row in session.exec(statement).all():
         titles: List[str] = []
         hints: List[str] = []
+        has_items_contract = False
         try:
             ext = json.loads(row.extensions_json or "{}")
+            has_items_contract = isinstance(ext, dict) and "items" in ext
             items = ext.get("items") if isinstance(ext, dict) else None
             for it in items or []:
                 if isinstance(it, dict):
@@ -1357,7 +1363,9 @@ def fetch_recent_brief_items(
                         hints.append(first.replace("**", "").strip()[:_RECENT_HINT_CHARS])
         except (ValueError, TypeError):
             pass
-        if not titles and row.content:
+        # Only pre-items reports need the Markdown fallback. An explicit empty
+        # news list may have read/listen headings, which must not suppress news.
+        if not has_items_contract and not titles and row.content:
             titles = [m.strip() for m in _BRIEF_HEADING_RE.findall(row.content) if m.strip()]
             hints = [""] * len(titles)
         if titles:
@@ -1473,6 +1481,7 @@ def render_brief_markdown(
     *,
     report_date: str,
     backfilled: int = 0,
+    recommendations: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """把择优条目确定性渲染成日报 markdown（分节/条目格式忠实沿用原 reduce 契约）。
 
@@ -1484,10 +1493,20 @@ def render_brief_markdown(
         label = prompts.classification_label(item.classification, item.candidate.content_type)
         sections.setdefault(label, []).append(item)
 
+    recommendation_summary = "、".join(
+        f"{count} {unit}{label}" for lane, label, unit in (("read", "深度阅读", "篇"), ("listen", "播客", "集"))
+        if (count := sum(entry.get("selection_lane") == lane for entry in recommendations or []))
+    )
+    news_count = len(selected) + len(title_only)
+    lead = f"> 共收录 {news_count} 条资讯，涵盖 {len(sections)} 个分类"
+    if not news_count and recommendation_summary:
+        lead = f"> 本期推荐 {recommendation_summary}"
+    elif recommendation_summary:
+        lead += f"；另推荐 {recommendation_summary}"
     parts: List[str] = [
         f"# 🤖 哆啦美 AI 资讯日报 · {report_date}",
         "",
-        f"> 共收录 {len(selected) + len(title_only)} 条资讯，涵盖 {len(sections)} 个分类",
+        lead,
     ]
     if backfilled > 0:
         parts.append(f"> 今日过线内容不足，按新闻价值分补足 {backfilled} 条")
@@ -1512,6 +1531,7 @@ def render_brief_markdown(
         parts.append("")
         parts.append("---")
         parts.append("")
+    parts.extend(content_recommendations.render_sections(recommendations or []))
     parts.append("*由哆啦美·归档中枢生成*")
     return "\n".join(parts)
 
@@ -1594,6 +1614,8 @@ def load_existing_brief_state(
             # 历史日报无 id 键:items 与 included_article_ids 前段同源同序,按位兜底
             article_id = included[i] if i < len(included) else f"legacy_{report_date}_{i}"
         item = _scored_item_from_stored(entry, article_id)
+        if item.candidate.content_type == "podcast_episode":
+            continue
         items.append(item)
         if "content_kind" not in entry:
             legacy_kind.append(item)
@@ -1604,6 +1626,8 @@ def load_existing_brief_state(
     for article_id in included[len(raw_items):]:
         art = session.get(ArticleRecord, article_id)
         if art is None:
+            continue
+        if art.content_type == "podcast_episode":
             continue
         title_only.append(
             BriefCandidate(
@@ -1793,6 +1817,12 @@ async def _generate_daily_brief(
             session, cursor=cursor_before, max_total=max_total,
             per_source_cap=per_source_cap, source_ids=source_scope,
         )
+        recommendation_pool = content_recommendations.load_pool(
+            session, report_date=report_date, source_ids=source_scope,
+        )
+        initial_recommendations = content_recommendations.select_recommendations(
+            session, recommendation_pool, report_date=report_date,
+        )
     scanned_total = len(scanned_rows)
     n_body = sum(1 for c in candidates if c.has_content)
     logger.info(
@@ -1801,7 +1831,7 @@ async def _generate_daily_brief(
     )
 
     # 3. 空日报：不写库、不推进游标
-    if not candidates:
+    if not candidates and not initial_recommendations:
         logger.info("日报[%s]：无新增候选，跳过生成", report_date)
         set_progress("empty", "暂无新增内容")
         result = {
@@ -2082,8 +2112,17 @@ async def _generate_daily_brief(
         )
     # 补足稿计数在同日合并**之后**算:早间批补进的条目随 items 的 backfilled 标记回来
     backfilled_in_brief = sum(1 for it in selected if it.backfilled)
+    with Session(engine) as session:
+        recommendations = content_recommendations.select_recommendations(
+            session, recommendation_pool, report_date=report_date,
+            excluded_ids={
+                *(it.candidate.id for it in selected), *(c.id for c in title_only),
+                *(mid for it in selected for mid in it.merged_ids),
+            },
+        )
     markdown = render_brief_markdown(
         selected, title_only, report_date=report_date, backfilled=backfilled_in_brief,
+        recommendations=recommendations,
     )
 
     if dry_run:
@@ -2092,6 +2131,7 @@ async def _generate_daily_brief(
             "status": "dry_run",
             "report_date": report_date,
             "articles_count": len(selected) + len(title_only),
+            "content_recommendations_count": len(recommendations),
             "markdown": markdown,
         }
 
@@ -2113,6 +2153,7 @@ async def _generate_daily_brief(
         categories_count=len(categories),
         included_article_ids=included_ids,
         items=[it.to_reduce_dict() for it in selected],
+        content_recommendations=recommendations,
         cursor_before=cursor_before,
         cursor_after=max_fetched_seen,
         llm_model=cfg.model,
@@ -2165,6 +2206,9 @@ async def _generate_daily_brief(
             "paper_candidates": paper_candidates,
             "paper_qualified": paper_qualified,
             "paper_selected": sum(1 for it in selected if _is_paper(it)),
+            "content_recommendations_count": len(recommendations),
+            "read_selected": sum(entry["selection_lane"] == "read" for entry in recommendations),
+            "listen_selected": sum(entry["selection_lane"] == "listen" for entry in recommendations),
         }
         _stage_setting(session, KEY_LAST_RUN, json.dumps(last_run, ensure_ascii=False))
         session.commit()
@@ -2179,6 +2223,7 @@ async def _generate_daily_brief(
         "article_id": article_id,
         "articles_count": content_obj.articles_count,
         "categories_count": content_obj.categories_count,
+        "content_recommendations_count": len(recommendations),
         "trigger": trigger,
     }
 

@@ -555,13 +555,14 @@ def _value_reason(
     source_display_names: Mapping[str, str],
 ) -> str:
     source_name = source_display_names.get(candidate.source_id, candidate.source_id)
+    value_label = "全文内容价值" if candidate.content_shape == PODCAST_SHAPE else "内容价值"
     if matched_codes:
         code = matched_codes[0]
         display_name = tag_display_names.get(code, code)
         if not candidate.subscribed:
-            return f"命中你的兴趣「{display_name}」，来自你未订阅的「{source_name}」，按内容价值入选。"
-        return f"命中你的兴趣「{display_name}」，来自你订阅的「{source_name}」，按内容价值入选。"
-    return f"来自你订阅的「{source_name}」，按内容价值入选。"
+            return f"命中你的兴趣「{display_name}」，来自你未订阅的「{source_name}」，按{value_label}入选。"
+        return f"命中你的兴趣「{display_name}」，来自你订阅的「{source_name}」，按{value_label}入选。"
+    return f"来自你订阅的「{source_name}」，按{value_label}入选。"
 
 
 def select_value_lane(

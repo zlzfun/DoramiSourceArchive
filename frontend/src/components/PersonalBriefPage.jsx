@@ -25,6 +25,8 @@ import { fmtDayKey, WEEKDAY_CHARS } from '../utils/readerTime';
 import { latinLang } from '../utils/readerText';
 import { titleView } from '../utils/titleDisplay';
 import { useTitlePreference } from '../hooks/useTitlePreference';
+import { scrollBehavior } from '../motion';
+import DisplayTitle from './DisplayTitle';
 import { qualityScoreText, scoreTierClass, scoreDisclaimer, SCORE_DIMENSION_LABELS } from '../utils/analysis';
 import { scoreDimensionOf, scoreOf } from '../utils/briefScore';
 
@@ -250,7 +252,7 @@ function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds
     <article className={`bp-item ${flash ? 'is-just-read' : ''}${anchored ? ' is-ctx-anchor' : ''}`} {...(press || {})}>
       {/* 标题按钮是唯一的「打开」控件:::after 拉伸覆盖整条,点条目任意处即打开;收藏与「+ 订阅」浮在覆盖层之上 */}
       <h3 className="bp-item-title" lang={latinLang(view.title)}>
-        <button type="button" className="bp-item-open" onClick={() => onOpen(item)}>{view.title}</button>
+        <button type="button" className="bp-item-open" onClick={() => onOpen(item)}>{mobile ? view.title : <DisplayTitle text={view.title} squeeze={false} />}</button>
       </h3>
       {!mobile && view.titleOrig && <p className="bp-item-orig" lang={latinLang(view.titleOrig)}>{view.titleOrig}</p>}
       {view.summary && <p className="bp-item-sum">{view.summary}</p>}
@@ -352,7 +354,7 @@ function Headline({ item, kicker, source, flash, restCount, onOpen, onSubscribeS
     <div className={`bp-head ${flash ? 'is-just-read' : ''}`}>
       <p className="bp-kicker">{kicker}</p>
       {/* 标题可点(鼠标的直觉);键盘与读屏走下方「阅读全文」,标题本身不重复成第二个按钮 */}
-      <h1 className="bp-title" lang={latinLang(view.title)} onClick={() => onOpen(item)}>{view.title}</h1>
+      <h1 className="bp-title" lang={latinLang(view.title)} onClick={() => onOpen(item)}><DisplayTitle text={view.title} /></h1>
       {view.titleOrig && <p className="bp-orig" lang={latinLang(view.titleOrig)}>{view.titleOrig}</p>}
       <div className={`bp-lower ${view.score ? '' : 'is-solo'}`}>
         <div className="bp-lower-main">
@@ -466,6 +468,31 @@ export default function PersonalBriefPage({
   const histTriggerRef = useRef(null);
   const cacheRef = useRef(new Map()); // 终态 edition 不可变,按 date#revision 缓存
   const sheetRef = useRef(null);
+  // 吸顶目录(issue #279 第四批,桌面):读到哪一个板块,目录上那一项点亮;点目录跳到那个板块
+  const [activeAct, setActiveAct] = useState('');
+  const tocPinRef = useRef(0);   // 点了目录之后的一小段时间(平滑滚动中)不让滚动事件改写点亮项;存的是解除它的计时器
+  const syncToc = useCallback(() => {
+    const sheet = sheetRef.current;
+    if (!sheet || tocPinRef.current) return;
+    const line = sheet.getBoundingClientRect().top + 44 + 56;   // 目录条的高度,加一点余量
+    const acts = [...sheet.querySelectorAll('.bp-act')];
+    let current = '';
+    acts.forEach((el) => { if (el.getBoundingClientRect().top <= line) current = el.dataset.act || ''; });
+    // 还没有哪个板块滚到目录条下面、但第一个板块已经进了视口:读的就是它
+    if (!current && acts[0] && acts[0].getBoundingClientRect().top < sheet.getBoundingClientRect().bottom - 120) current = acts[0].dataset.act || '';
+    // 滚到底了:最后一个板块短的话,它的顶够不到目录条下面——读的就是它
+    if (acts.length && sheet.scrollTop + sheet.clientHeight >= sheet.scrollHeight - 2) current = acts[acts.length - 1].dataset.act || current;
+    setActiveAct(current);
+  }, []);
+  const jumpToAct = useCallback((key) => {
+    const target = [...(sheetRef.current?.querySelectorAll('.bp-act') || [])].find((el) => el.dataset.act === key);
+    if (!target) return;
+    // 被点的那一项立刻点亮;末尾的短板块滚不到阈值,不能等滚动事件来判
+    setActiveAct(key);
+    window.clearTimeout(tocPinRef.current);
+    tocPinRef.current = window.setTimeout(() => { tocPinRef.current = 0; }, 900);
+    target.scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
+  }, []);
 
   const loadHistory = useCallback(() => (
     fetchPersonalBriefs(HISTORY_LIMIT)
@@ -767,6 +794,16 @@ export default function PersonalBriefPage({
   const showEdition = !loading && !detailLoading && !live && !(error && isToday)
     && !(isToday && todayStatus === 'empty_subscriptions') && !(!usesToday && detail.error)
     && status !== 'failed' && !!edition;
+  // 目录不等第一次滚动:板块真的画出来了(showEdition)、换期(viewKey)、板块变化时先同步一次——
+  // 短海报下第一个板块一开始就在视口里;往期详情先到而今天那份还在加载时,板块要等 loading 结束才出现
+  const actKeys = acts.map((group) => group.key).join('|');
+  useEffect(() => {
+    if (mobile || !showEdition || !actKeys) return undefined;
+    window.clearTimeout(tocPinRef.current);
+    tocPinRef.current = 0;
+    const id = requestAnimationFrame(syncToc);
+    return () => cancelAnimationFrame(id);
+  }, [mobile, showEdition, viewKey, actKeys, syncToc]);
 
   const n = (value) => <b>{value}</b>;
   const valueText = valueCount > 0 && (
@@ -953,7 +990,7 @@ export default function PersonalBriefPage({
       <Headline
         item={headline}
         guideProps={guideProps}
-        kicker={headline.selection_lane === 'breaking' ? `头条 · ${headWhy.text}` : `头条 · ${headSection}`}
+        kicker={headline.selection_lane === 'breaking' ? headWhy.text : headSection}
         source={sourceMap[headline.snapshot?.source_id]}
         flash={flashId != null && (headline.id ?? headline.position) === flashId}
         restCount={items.length - 1}
@@ -1000,7 +1037,6 @@ export default function PersonalBriefPage({
     ? [
       edition.generated_at ? `${clockOf(edition.generated_at)} 编排` : null,
       multiRev && edition.revision ? `第 ${edition.revision} 版` : null,
-      items.length > 0 ? `${items.length} 条` : null,
     ].filter(Boolean).join(' · ')
     : '';
   const pastDays = days.filter((day) => day.key !== selDate).slice(0, PAST_CHIPS);
@@ -1186,14 +1222,35 @@ export default function PersonalBriefPage({
   return (
     <>
     {mobileHead}
-    <section className={`bp-sheet ${mobile ? 'is-mobile' : ''}`} aria-label="我的早报" ref={sheetRef} onScroll={recordProgress}>
+    <section
+      className={`bp-sheet ${mobile ? 'is-mobile' : ''}`}
+      aria-label="我的早报"
+      ref={sheetRef}
+      onScroll={mobile ? recordProgress : (event) => { recordProgress(event); syncToc(); }}
+    >
       {poster}
       <div className="bp-wrap">
+        {/* 吸顶目录(桌面):板块名 + 条数。条数只写在这里,板块头不再重复 */}
+        {!mobile && showEdition && acts.length > 1 && (
+          <nav className="bp-toc" aria-label="本期板块">
+            {acts.map((group) => (
+              <button
+                key={group.key}
+                type="button"
+                className={`bp-toc-link ${activeAct === group.key ? 'is-on' : ''}`}
+                aria-current={activeAct === group.key ? 'true' : undefined}
+                onClick={() => jumpToAct(group.key)}
+              >
+                {group.key}<b>{group.items.length}</b>
+              </button>
+            ))}
+          </nav>
+        )}
         {showEdition && acts.map((group) => (
-          <section key={group.key} className="bp-act" aria-label={group.key}>
+          <section key={group.key} className="bp-act" aria-label={group.key} data-act={group.key}>
             <div className="bp-act-head">
               <h2 className="bp-act-name">{group.key}</h2>
-              <p className="bp-act-count">{group.items.length} 条</p>
+              {(mobile || acts.length <= 1) && <p className="bp-act-count">{group.items.length} 条</p>}
             </div>
             <div className="bp-items">
               {group.items.map((item) => (

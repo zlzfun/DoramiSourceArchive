@@ -1,7 +1,7 @@
 """榜单页「深度阅读」「播客精选」(issue #221):全站近 7 天按内容价值挑选的前 10。
 
 与个人早报同名分区同一把尺子、同一道门槛(``digest_selection.READ_KINDS`` / 内容价值当前版本 ≥ 7.0;
-播客单集按播客分 = 内容价值投影 ≥ 7.5),区别只在范围:早报从读者订阅里挑,这里是全站、与订阅无关。
+播客单集只按全文终评 ≥ 7.5),区别只在范围:早报从读者订阅里挑,这里是全站、与订阅无关。
 
 - 深度阅读 = 非播客、推导出的内容类型为论文 / 教程 / 观点 / 汇编;同一事件只留内容价值最高的一篇,
   热点事件 7 天榜上已有的事件整件不出现(读者在热点事件里已经看到它)。
@@ -24,7 +24,9 @@ from models.analysis_contracts import PERSONAL_DIGEST_LISTEN_MIN_VALUE, PERSONAL
 from models.db import ArticleAnalysisRecord, ArticleRecord, EventMemberRecord
 from services import event_board
 from services.article_time import in_time_window, parse_article_time
-from services.content_classification import ITEM_KIND_LABELS, classify_item, score_projection, source_default_kinds
+from services.content_classification import ITEM_KIND_LABELS, classify_item, source_default_kinds
+from services.content_recommendations import recommendation_value
+from services.podcast_premium import TRANSCRIPT_BASES
 from services.digest_selection import READ_KINDS
 from services.reader_defaults import PRIVATE_SOURCE_PREFIX
 from services.title_cache import cached_title
@@ -79,7 +81,8 @@ def _candidate_rows(
     if shape == "podcast":
         query = query.where(
             ArticleRecord.content_type == PODCAST_CONTENT_TYPE,
-            ArticleAnalysisRecord.quality_score >= min_value,
+            ArticleAnalysisRecord.analysis_basis.in_(sorted(TRANSCRIPT_BASES)),
+            func.coalesce(ArticleAnalysisRecord.podcast_final_score, ArticleAnalysisRecord.quality_score) >= min_value,
         )
     else:
         query = query.where(
@@ -142,7 +145,7 @@ def read_picks(
         ).kind or ""
         if shape == "article" and kind not in READ_KINDS:
             continue
-        value = score_projection(content_type=article.content_type, kind=kind, analysis=analysis)["content_value"]
+        value = recommendation_value(article.content_type, analysis)
         if value is None or value < MIN_VALUE[shape] - 1e-9:
             continue
         scored.append((article, analysis, kind, float(value)))

@@ -80,10 +80,12 @@
 
 ## plans/ —— 活跃方案(☐ 进行中 / 排队中;落地后归档)
 
+- ☐ [plans/issue-279-frontend-refactor.md](./plans/issue-279-frontend-refactor.md) — **读者面桌面阅读器重构(issue #279,B 方向,第一批实施中)**:现网实测对照、五批范围(并档 / 版框与页头 / 阅读窗 / 列表与早报 / 排印)、规范修订对照、拍板记录;样页 [design/issue-279-frontend-refactor/](./design/issue-279-frontend-refactor/README.md)。
 - ☐ [plans/issue-254-qa-coverage.md](./plans/issue-254-qa-coverage.md) — 问答逐项覆盖、关键 ASR 歧义依据与冻结输入对照评测；语义验收进行中。
 - ☐ [plans/issue-121-event-layer-research.md](./plans/issue-121-event-layer-research.md) — **issue #121 方向调研报告(2026-10-23)**:48 天本机语料 + 三轮精修金标上实测规则 / 词面召回 + 模型 / 向量召回 + 模型 / 纯向量 / LLM 签名 / 日报复用六条路线与产品供给、热度、事件链模拟;结论已回写方案 R2。
 - ☐ [plans/issue-121-event-layer.md](./plans/issue-121-event-layer.md) — **多源事件层:同事件归并、热点榜与早报去重共用一份归属(issue #121 + #103,R1 路径)**:平台级持久事件层、机械召回 + 辅助模型归属、48h/24h 半衰热度、四波(回放 → 事件层 + 榜 → 早报去重 → Agent 查询);2026-10-23 拍板主路线 = FTS5 召回 + 辅助模型(不引入 embedding),排队中。
 - ☐ [plans/issue-178-content-classification.md](./plans/issue-178-content-classification.md) — **内容分类与双评分(issue #178)**:第一波 / 第一波补 / 第二波 / 3a 已上线(v3.64),3b 播客提示词拆分与 3c 新闻尺子收紧排队,分区空板率与论文名额观察期。
+- ☐ [plans/issue-178-podcast-news-extraction.md](./plans/issue-178-podcast-news-extraction.md) — **播客提炼文字新闻初稿(2026-11-12)**：原稿证据、事件日期、新闻/整期两种推荐、人工审核与评测、混版本设计；附 [布局样稿](./design/issue-178-podcast-news/index.html) 和 #268 生产 TTS 预算记录核对，尚未实施。
 - ☐ [plans/issue-262-agent-ingest-sources.md](./plans/issue-262-agent-ingest-sources.md) — **外部 Agent 主动收录:无源 / 临时源的语义审视与「源目录数据化」设计(issue #262,D1–D8 已拍板,波 0 / 波 1 实施中)**:「源」一身五职与「缺失即属性」的兜底矛盾、逐环节缺陷(波 0)、临时源生命周期与推送通道(波 1)、目录文件 + 能力化取缔「一源一类」(波 2)、别名合并(波 3);D1–D8 待拍板。
 - ☐ [plans/issue-262-source-model-refactor.md](./plans/issue-262-source-model-refactor.md) — **源模型重构:源 / 采集绑定 / 抓取器三层分离(issue #262 配套,E1–E7 已拍板,R1c / R4 实施中、R2 / R3 后续)**:69 个抓取器类反射分档(A 30 / B 15 / C 17)、目录文件(只在外网对账)、内网声明能力 + 外网按请求投影、卡片 = 资格 + 展示状态、94 处源表读写按语义审计、R0–R4 分步与部署顺序;已过 Codex R1 检视,E1–E7 待拍板。
 - ☐ [plans/issue-263-sync-symmetric.md](./plans/issue-263-sync-symmetric.md) — **Archive Sync 节点不分角色:按身份合并、新者胜、普通开关(issue #263,2026-11-10 用户拍板三问后重写,实施中)**:拆整机 consumer 模式与按源归属;文章按 id 合并、修订号新者胜;同步建出的源默认关采集关分析;拉来的也导出(实体状态加本机时钟 `local_revision`);不再做「上游没有就删」;逐行同步印记降级为内部簿记;线格式零变化、两种混版本窗口都安全。

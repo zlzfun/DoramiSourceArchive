@@ -279,7 +279,9 @@ function AnswerBlock({ turn, onOpenRef, onNarrow, disabled }) {
 
 // guest(issue #213):检索范围说「默认订阅」;当天试用用完(429 guest_quota_exhausted)时这一问下面给一行
 // 说明 +「登录后继续使用」(api.js 同时已弹登录提示,这里是关掉提示后仍看得见的入口)。
-export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onOpenArticle, guest = false, onGuestLogin = null }) {
+// openSignal / onOpenChange(issue #279 第四批):入口从右下浮钮挪进导轨——导轨上的「问答」钮每点一次 openSignal 加一,
+// 面板据此开合;开合状态经 onOpenChange 回给导轨画选中态。
+export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onOpenArticle, guest = false, onGuestLogin = null, openSignal = 0, onOpenChange = null }) {
   const activePodcast = Boolean(podcastOf(activeArticle));
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [aiPanelClosing, setAiPanelClosing] = useState(false);
@@ -408,16 +410,36 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
 
   // 关闭面板:先播放退场动画,动画结束再卸载(与 CSS .is-closing 的 200ms 对齐);
   // 函数式 set 防重入——点外关闭与关闭钮可能连发,重复 setTimeout 会闪帧
+  const closeTimerRef = useRef(0);
   const closeAiPanel = useCallback(() => {
     setAiPanelClosing((closing) => {
       if (closing) return closing;
-      window.setTimeout(() => {
+      closeTimerRef.current = window.setTimeout(() => {
+        closeTimerRef.current = 0;
         setAiPanelOpen(false);
         setAiPanelClosing(false);
       }, 200);
       return true;
     });
   }, []);
+  // 收起动画进行中又要打开:取消这次收起,面板留在打开态(否则这一下点击被防重入吞掉,导轨钮却已经显示未选中)
+  const openAiPanel = useCallback(() => {
+    if (closeTimerRef.current) { window.clearTimeout(closeTimerRef.current); closeTimerRef.current = 0; }
+    setAiPanelClosing(false);
+    setAiPanelOpen(true);
+  }, []);
+  useEffect(() => () => { if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current); }, []);
+
+  // 导轨上的「问答」钮:点一次开,再点一次收(首次渲染不算一次点击)
+  const seenSignal = useRef(openSignal);
+  const panelShownRef = useRef(false);   // 开着且不在收起动画里
+  useEffect(() => { panelShownRef.current = aiPanelOpen && !aiPanelClosing; }, [aiPanelOpen, aiPanelClosing]);
+  useEffect(() => {
+    if (seenSignal.current === openSignal) return;
+    seenSignal.current = openSignal;
+    if (panelShownRef.current) closeAiPanel(); else openAiPanel();
+  }, [openSignal, closeAiPanel, openAiPanel]);
+  useEffect(() => { onOpenChange?.(aiPanelOpen && !aiPanelClosing); }, [aiPanelOpen, aiPanelClosing, onOpenChange]);
 
   // 点击面板外任意处自动收起(目检拍板);正文图灯箱是 body 级 portal,点它不算「外」;
   // 叠在上面的弹窗同理(游客额度用尽时弹的登录提示,issue #213):关掉提示后面板与那行说明仍在
@@ -427,7 +449,8 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
     // 回答用的 Markdown 渲染器按需加载(issue #230 M-14):面板一打开就拉,等读者打完问题早已就绪
     loadReaderMarkdownView().catch(() => {});
     const onPointerDown = (e) => {
-      if (e.target.closest?.('.reader-lightbox, [data-modal-layer]')) return;
+      // 导轨上的问答钮自己负责开合:这里再收一次,紧跟着的 click 会把面板又打开
+      if (e.target.closest?.('.reader-lightbox, [data-modal-layer], .reader-vrail-qa')) return;
       if (panelRef.current && !panelRef.current.contains(e.target)) closeAiPanel();
     };
     document.addEventListener('mousedown', onPointerDown);
@@ -438,17 +461,6 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
 
   return (
     <>
-      {!aiPanelOpen && (
-        <button
-          type="button"
-          className="reader-ai-fab"
-          onClick={() => setAiPanelOpen(true)}
-          aria-label="问问哆啦美"
-        >
-          <Sparkles className="h-4 w-4" />
-          <span className="reader-ai-fab-label">问问哆啦美</span>
-        </button>
-      )}
       {aiPanelOpen && (
         <aside ref={panelRef} className={`reader-ai-panel ${aiPanelLarge ? 'is-large' : ''} ${aiPanelClosing ? 'is-closing' : ''}`} role="dialog" aria-label="问问哆啦美">
           <header className="reader-ai-head">
@@ -494,10 +506,6 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
             {qaThread.length === 0 && (
               <div className="reader-ai-empty">
                 <Sparkles className="h-5 w-5" />
-                <div className="reader-ai-empty-title">问问哆啦美</div>
-                <div className="reader-ai-empty-sub">
-                  {qaScope === 'article' ? (activePodcast ? '基于本期播客的可用资料作答，回答附原文依据' : '基于当前打开的这篇文章作答') : `在${guest ? '默认订阅' : '你订阅'}的内容里检索相关资料后作答`}
-                </div>
                 <SuggestRotator
                   scope={qaScope === 'article' && activePodcast ? 'podcast' : qaScope}
                   onPick={(text) => {

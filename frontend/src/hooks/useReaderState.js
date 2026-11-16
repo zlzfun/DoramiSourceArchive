@@ -97,15 +97,6 @@ function writeStoredScope(username, mode, scope) {
 }
 // 列表请求参数的拼装(buildListFilters)与列表实例本身在 utils/articleList.js / hooks/useArticleList.js(issue #230 批 3a 拆出)
 const UNREAD_POLL_MS = 60000; // 未读轻轮询间隔（标签页可见时才真正请求）
-// crumb 的「源名 · 域名」域名段(样页:Simon Willison · simonwillison.net)
-const hostOf = (url) => {
-  if (!url) return '';
-  try {
-    return new URL(url).hostname.replace(/^www\./, '');
-  } catch {
-    return '';
-  }
-};
 
 /**
  * 阅读器数据层 hook(移动波 Wave1 抽取,原逻辑整段来自 ReaderTab.jsx)。
@@ -1426,10 +1417,6 @@ export function useReaderState({
 
   // ── 阅读窗 crumb ──
   const crumbSource = activeArticle ? sourceMap[activeArticle.source_id] : null;
-  const crumbHost = activeArticle ? hostOf(activeArticle.source_url) : '';
-  const crumbName = activeArticle
-    ? `${sourceNameMap[activeArticle.source_id] || activeArticle.source_id}${crumbHost ? ` · ${crumbHost}` : ''}`
-    : '';
   // 阅读窗已用 reader-pane-title 画了标题,正文首行若是同名标题(哆啦美日报的
   // 「# 🤖 哆啦美 AI 资讯日报 · 日期」是典型)就会连看两遍——渲染侧剥离。
   // 只动阅读窗:归档正文原样保留,导出/同步的独立 markdown 首行标题仍是正确的。
@@ -1522,7 +1509,7 @@ export function useReaderState({
     activeArticle, activeBody, activeBodyLoading, selectArticle, openArticleById, refreshActiveArticle, supersedePendingOpen,
     schedulePrefetch, cancelPrefetch,
     activeIndex, prevArticle, nextArticle,
-    crumbSource, crumbHost, crumbName, displayBody, displayTranslatedBody, bodyStats,
+    crumbSource, displayBody, displayTranslatedBody, bodyStats,
     // 收藏
     favoriteIds, favTogglingId, handleToggleFavorite,
     // 分享

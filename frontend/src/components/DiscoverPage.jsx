@@ -11,7 +11,8 @@ import { bulkSubscribeModel } from '../utils/bulkSubscribe';
 import { readerShapeOf } from '../utils/readerShape';
 
 // last_fetched(ISO)→ 人话:今日 / 昨日 / MM-DD;空值不显示
-function lastLabel(lastFetched) {
+// relative(桌面,issue #279 第三批):更早的写「N 天前更新」,读者面不出现连字符日期;手机壳仍是「最近 MM-DD」
+function lastLabel(lastFetched, relative = false) {
   const day = String(lastFetched || '').slice(0, 10);
   if (!day) return '';
   const today = new Date();
@@ -20,6 +21,10 @@ function lastLabel(lastFetched) {
   const yesterday = new Date(today);
   yesterday.setDate(today.getDate() - 1);
   if (day === fmt(yesterday)) return '昨日更新';
+  if (relative) {
+    const days = Math.round((new Date(fmt(today)).getTime() - new Date(day).getTime()) / 86400000);
+    if (Number.isFinite(days) && days > 1) return days < 60 ? `${days} 天前更新` : `${Math.round(days / 30)} 个月前更新`;
+  }
   return `最近 ${day.slice(5)}`;
 }
 
@@ -38,7 +43,7 @@ function nameCarriesPlatform(source) {
 // 鼠标与键盘照旧一下即退。
 const CONFIRM_MS = 4000;
 
-function SourceCard({ source, subbed, pinning, query, showArticleChip, onSubscribe, onUnsubscribe, onPreview }) {
+function SourceCard({ source, subbed, pinning, query, showArticleChip, onSubscribe, onUnsubscribe, onPreview, relativeFresh = false }) {
   const q = (query || '').trim();
   const [confirming, setConfirming] = useState(false);
   const pointerRef = useRef('');
@@ -97,7 +102,7 @@ function SourceCard({ source, subbed, pinning, query, showArticleChip, onSubscri
             {(source.subscriber_count || 0) > 0
               ? `${(source.subscriber_count || 0).toLocaleString()} 人订阅`
               : '暂无订阅'}
-            {source.last_fetched ? ` · ${lastLabel(source.last_fetched)}` : ''}
+            {source.last_fetched ? ` · ${lastLabel(source.last_fetched, relativeFresh)}` : ''}
           </p>
         </div>
         <div className="reader-disc-card-side">
@@ -138,6 +143,8 @@ function SourceCard({ source, subbed, pinning, query, showArticleChip, onSubscri
  * join 不到的成员自然不渲染,与后端批量端点的 unavailable 口径一致)。
  */
 export default function DiscoverPage({
+  showHint = true, // 页名旁的一句说明。桌面不写(issue #279:界面不靠说明文字解释自己),手机壳照旧
+  relativeFresh = false, // 来源「最近更新」写相对时间(桌面,issue #279 第三批)
   sources,
   subscribedIds,
   loading = false,
@@ -341,13 +348,13 @@ export default function DiscoverPage({
             <>
               <div className="reader-disc-title-row">
                 <span className="reader-disc-title">发现</span>
-                <span className="reader-disc-hint">
+                {showHint && <span className="reader-disc-hint">
                   {activeTab === 'collections'
                     ? '按主题策展的来源合集,一键整组订阅'
                     : activeTab === 'interests'
                       ? '兴趣决定早报和阅读器优先呈现什么'
                       : '浏览全站收录的来源,一键订阅到你的阅读器'}
-                </span>
+                </span>}
               </div>
               <div className="reader-disc-tools">
                 {/* 目录视图切换:平铺源目录 ⇄ 策展合集 */}
@@ -455,6 +462,7 @@ export default function DiscoverPage({
               <div className="reader-disc-grid">
                 {activeCollection.members.map((source) => (
                   <SourceCard
+                    relativeFresh={relativeFresh}
                     key={source.source_id}
                     source={source}
                     subbed={subscribedIds.has(source.source_id)}
@@ -517,6 +525,7 @@ export default function DiscoverPage({
                 <div className="reader-disc-grid">
                   {list.map((source) => (
                     <SourceCard
+                    relativeFresh={relativeFresh}
                       key={source.source_id}
                       source={source}
                       subbed={subscribedIds.has(source.source_id)}

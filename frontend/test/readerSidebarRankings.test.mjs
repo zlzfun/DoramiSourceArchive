@@ -15,14 +15,21 @@ function between(source, start, end) {
   return source.slice(from, to);
 }
 
+// 源栏内容是一个常量(issue #279 第二批):文章 / 播客容器里挂在左栏,社交页挂在页边
 const sidebar = between(
   desktop,
-  '{/* ── 源栏 · 我的订阅 ── */}',
-  '{/* ── 我的早报',
+  '/* ── 源栏 · 我的订阅 ──',
+  '/* ── 源栏结束 ── */',
 );
 
-test('rankings keep the desktop subscription list mounted', () => {
-  assert.doesNotMatch(sidebar, /!rankingsOpen\s*&&/);
+// issue #279 第二批(2026-11-13):整幅页面(早报 / 榜单 / 发现 / 社交)不挂来源栏——它是文章与播客两个容器的东西,与这些页面无关。
+// 取代 2026-11-04(#221 目检)「榜单打开时源列表保持在场」。社交页把同一份账号列表挂到页边
+test('wide pages (brief / rankings / discover / social) drop the desktop source column; social hangs the same list in its margin', () => {
+  assert.match(desktop, /const widePage = pageOpen \|\| discover \|\| socialView;/);
+  // 第三批:来源栏可收起(收起后同一份列表从列表栏头的范围名下拉出来)
+  assert.match(desktop, /\{!widePage && !srcFolded && <aside className="reader-col reader-col-sources">\{sourcesPanel\}<\/aside>\}/);
+  assert.match(desktop, /\{srcFolded && srcPop && \(\s*<div\s+className="reader-srcpop"/);
+  assert.match(desktop, /<SocialFlow\s+side=\{sourcesPanel\}/);
   assert.match(sidebar, /<div className="reader-source-scroll">/);
 });
 
@@ -104,13 +111,16 @@ test('opening an article from rankings leaves a return trail that reopens rankin
   assert.match(page, /restore=\{rankingRestore\}/);
   assert.match(page, /onOpenArticle=\{async \(articleId, ctx\) =>/);
   assert.match(page, /setBriefReturn\(ctx \|\| null\)/);
-  const trail = between(desktop, "{briefReturn?.from === 'rankings' && (", '</nav>');
+  // issue #279 第三批:返回不再是阅读窗顶上的一条色带,并入吸顶栏左端(占掉来源名的位置)
+  const trail = between(desktop, "const paneBack = !briefReturn ? null : briefReturn.from === 'rankings' ? (", '</nav>');
   assert.match(trail, /setRankingRestore\(briefReturn\)/);
   assert.match(trail, /setBriefReturn\(null\)/);
   assert.match(trail, /setRankingsOpen\(true\)/);
   assert.match(trail, /返回热点事件/);
-  // 早报那条带不给榜单的 ctx 画「早报下一条」
-  assert.match(desktop, /\{briefReturn && briefReturn\.from !== 'rankings' && \(\(\) => \{/);
+  // 「下一条」只给早报那一程:榜单的 ctx 没有序列
+  assert.match(desktop, /const briefNext = briefReturn && briefReturn\.from !== 'rankings' \?/);
+  assert.match(desktop, /\{paneBack \|\| \(\s*<div className="reader-crumb">/);
+  assert.doesNotMatch(desktop, /reader-brief-trail/);
   const openRankings = between(desktop, 'const openRankings = useCallback(() => {', '}, [');
   assert.match(openRankings, /setRankingRestore\(null\)/);
 

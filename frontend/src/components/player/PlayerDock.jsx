@@ -48,7 +48,14 @@ import { motionReduced } from '../../motion';
 
 const SCROLLERS = [
   '.reader-pane', '.reader-list-scroll', '.reader-source-scroll', '.reader-social-scroll', '.reader-disc-scroll',
+  '.reader-shell > .reader-disc',   // 桌面发现页整页滚(issue #279 第二批);手机壳仍是 .reader-disc-scroll
   '.rankings-page', '.bp-sheet', '.m-list', '.m-read-scroll', '.m-page-scroll', '.m-subs-scroll',
+].join(', ');
+// 桌面整幅页面里的吸顶件(发现页头、页签行、社交页边、事件页的代表报道):滚动位置变了它们也可能没动,
+// 收起补偿不能照搬父块的位移,要按它们自己真正移动的量算。
+const PINNED = [
+  '.reader-shell > .reader-disc > .reader-disc-head', '.reader-page-bar',
+  '.reader-social.is-page .reader-social-side', '.reader-page-wrap.rk-event .rk-sec:first-child',
 ].join(', ');
 const FX_OVERRIDE_KEY = 'dorami-player-fx';
 const FX_LITE_KEY = 'dorami-player-lite';
@@ -207,13 +214,23 @@ export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs
       ? [...host.querySelectorAll(SCROLLERS)].filter((el) => el.offsetParent && el.scrollHeight > el.clientHeight)
       : [];
     const tops = scrollers.map((el) => el.scrollTop);
+    const pinned = scrollers.map((el) => [...el.querySelectorAll(PINNED)].map((node) => [node, node.getBoundingClientRect().top]));
     if (next) host.setAttribute('data-player', next); else host.removeAttribute('data-player');
     if (!shrinking || motionReduced()) return;
+    const slide = (node, from) => {
+      if (Math.abs(from) < 0.5) return;
+      node.animate([{ transform: `translateY(${from}px)` }, { transform: 'none' }], { duration: 300, easing: easings.settle });
+    };
     scrollers.forEach((el, i) => {
       const d = tops[i] - el.scrollTop;
       if (d < 0.5) return;
+      // 吸顶件各自移动了多少(吸住的是 0,没吸住的跟内容一样是 d)
+      const moved = new Map(pinned[i].map(([node, top]) => [node, node.getBoundingClientRect().top - top]));
       [...el.children].slice(0, 60).forEach((child) => {
-        child.animate([{ transform: `translateY(${-d}px)` }, { transform: 'none' }], { duration: 300, easing: easings.settle });
+        if (moved.has(child)) { slide(child, -moved.get(child)); return; }
+        slide(child, -d);
+        // 父块从 -d 滑回来,里面的吸顶件要抵掉多出来的那一截
+        moved.forEach((own, node) => { if (child.contains(node)) slide(node, d - own); });
       });
     });
   }, [easings, hostRef]);
