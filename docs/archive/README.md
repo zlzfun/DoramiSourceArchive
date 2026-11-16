@@ -5,6 +5,10 @@
 > `docs/frontend/conventions.md` / `docs/sources/curation_policy.md` 等活跃文档。
 > 按「故事」分组索引;文内常含 ☐/☑ 进度符,均为当时状态。
 
+## 读者面桌面阅读器重构(2026-11,issue #279)
+
+- [issue-279-frontend-refactor.md](./issue-279-frontend-refactor.md) — 整站前端审视后按 B「夜航 · 续」样页分五批落地:现网实测对照(§1)、五批范围与各批实际落地(§2:并档 / 版框与页头 / 阅读窗 / 列表与早报 / 排印,含目检后的两个补丁——标题挑折行点、发现页页头右侧)、规范修订对照(§3)、拍板记录(§4)、手机壳零差异的做法(§5)、逐批 Codex 检视记录(§8)、收口(§9);PR #281–#287,纯前端,待发布。样页 [design/issue-279-frontend-refactor/](../design/issue-279-frontend-refactor/README.md)。
+
 ## 已发布迁移文件守卫与部署健康验证(2026-11,issue #227)
 
 - [issue-227-released-migrations-guard.md](./issue-227-released-migrations-guard.md) — v3.67.0 发版两处失败的根因与修法:流水线 worker 第 7 道门拒绝 4 个被改的旧迁移 → CI 守卫 `scripts/check_released_migrations.py`(对最新正式 tag 逐字节比对,新增允许);手工路径 87 次 `bad-json` 实为探针打到 TLS 边缘的 301 页(§1.2)→ 探针地址与 compose 同口径读 `.env`、失败打 HTTP 状态码 + 响应前 200 字节;backend healthcheck 宽限随待执行迁移数 × 库 GiB 加宽(§2);有意不做(§3)、worker 基线核对(§4)、混版本(§5)、Codex 检视(§7)。
