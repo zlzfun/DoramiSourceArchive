@@ -10699,6 +10699,8 @@ input[type="radio"] {
   .reader-disc-hint { font-size: 12px; color: var(--dorami-faint); }
 
   .reader-disc-tools { display: flex; align-items: center; gap: 10px; margin: 14px 0; }
+  /* 两层分组只给桌面的页头用(.reader-shell > .reader-disc 那一段):默认不成盒,子项直接排在 .reader-disc-tools 里 */
+  .reader-disc-acts, .reader-disc-filters { display: contents; }
 
   .reader-disc-search {
     flex: 1;
@@ -13408,22 +13410,23 @@ input[type="radio"] {
 .reader-page-wrap.rk-event .rk-rep-sum { margin-top: 10px; font-size: 14px; line-height: 1.7; }
 .reader-page-wrap.rk-event .rk-tl-day:first-child .rk-tl-daylabel { padding-top: 0; }
 
-/* ── 发现:标记不动(手机壳渲染同一份),桌面靠网格重排——页名与搜索 / 添加在页头,目录页签与形态筛选在页签行 ── */
+/* ── 发现:手机壳渲染同一份标记,桌面靠网格重排——两行两列:页名 | 搜索 + 添加;目录页签 | 整组订阅 + 形态筛选 + 排序。
+   右边两组各是一只弹性盒(.reader-disc-acts / .reader-disc-filters),各自贴右,互不牵连——早先六个控件摊在同一张五列网格里,
+   上一行多出「订阅全部」时会把下一行的形态筛选和排序撑开(用户 2026-11-16 指出) ── */
 .reader-shell > .reader-disc { display: block; overflow-y: auto; padding-bottom: var(--player-clear-end, 0px); }
 .reader-shell > .reader-disc > .reader-disc-head { position: sticky; top: -124px; z-index: 3; padding: 0; border-bottom: 0; background: var(--dorami-surface); }
 .reader-shell > .reader-disc .reader-disc-head-inner {
   max-width: 1200px; margin: 0 auto; padding: 0 48px;
-  display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; grid-template-rows: 124px 41px; column-gap: 8px; align-items: center;
+  display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: 124px 41px; column-gap: 24px; align-items: center;
 }
 .reader-shell > .reader-disc .reader-disc-head-inner::after { content: ""; grid-column: 1 / -1; grid-row: 2; align-self: end; border-bottom: 1px solid var(--dorami-border); }
 .reader-shell > .reader-disc .reader-disc-title-row { grid-column: 1; grid-row: 1; align-self: end; padding-bottom: 20px; }
 .reader-shell > .reader-disc .reader-disc-title { font-family: var(--font-serif); font-size: 30px; font-weight: 600; line-height: 1.2; }
 .reader-shell > .reader-disc .reader-disc-tools { display: contents; }
-.reader-shell > .reader-disc .reader-disc-search { grid-column: 3; grid-row: 1; align-self: end; margin: 0 0 20px; width: 248px; max-width: none; height: 32px; padding: 0 10px; }
-.reader-shell > .reader-disc .reader-disc-head-inner:not(:has(.reader-disc-add)) .reader-disc-search { grid-column: 3 / -1; justify-self: end; }
-.reader-shell > .reader-disc .reader-disc-add { grid-column: 4; grid-row: 1; align-self: end; margin: 0 0 20px; height: 32px; padding: 0 12px; font-size: 13px; font-weight: 400; }
-.reader-shell > .reader-disc .reader-disc-bulk-sub { grid-column: 5; }
-.reader-shell > .reader-disc .reader-disc-viewseg { grid-column: 1 / 3; grid-row: 2; justify-self: start; align-self: stretch; display: flex; gap: 24px; padding: 0; border-radius: 0; background: none; }
+.reader-shell > .reader-disc .reader-disc-acts { grid-column: 2; grid-row: 1; justify-self: end; align-self: end; margin-bottom: 20px; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.reader-shell > .reader-disc .reader-disc-search { flex: none; width: 248px; max-width: none; height: 32px; padding: 0 10px; }
+.reader-shell > .reader-disc .reader-disc-add { height: 32px; padding: 0 12px; font-size: 13px; font-weight: 400; }
+.reader-shell > .reader-disc .reader-disc-viewseg { grid-column: 1; grid-row: 2; justify-self: start; align-self: stretch; display: flex; gap: 24px; padding: 0; border-radius: 0; background: none; }
 .reader-shell > .reader-disc .reader-disc-viewseg .reader-seg-btn {
   position: relative; display: inline-flex; align-items: center; padding: 0; border-radius: 0; background: none; box-shadow: none;
   font-size: 14px; color: var(--dorami-muted);
@@ -13431,8 +13434,11 @@ input[type="radio"] {
 @media (hover: hover) { .reader-shell > .reader-disc .reader-disc-viewseg .reader-seg-btn:hover { color: var(--dorami-ink); } }
 .reader-shell > .reader-disc .reader-disc-viewseg .reader-seg-btn.is-on { color: var(--dorami-ink); font-weight: 600; }
 .reader-shell > .reader-disc .reader-disc-viewseg .reader-seg-btn.is-on::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--dorami-ink); }
-.reader-shell > .reader-disc .reader-disc-seg { grid-column: 3 / 5; grid-row: 2; justify-self: end; margin: 0; }
-.reader-shell > .reader-disc .reader-disc-sort { grid-column: 5; grid-row: 2; justify-self: end; }
+.reader-shell > .reader-disc .reader-disc-filters { grid-column: 2; grid-row: 2; justify-self: end; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.reader-shell > .reader-disc .reader-disc-seg { margin: 0; }
+/* 整组订阅在页签行里是一句话的分量:不画框,强调色文字 */
+.reader-shell > .reader-disc .reader-disc-bulk-sub { padding: 0 8px; border-color: transparent; color: var(--dorami-accent-ink); white-space: nowrap; }
+.reader-shell > .reader-disc .reader-disc-bulk-sub:disabled { color: var(--dorami-faint); }   /* 「已全部订阅」:照旧是淡的 */
 .reader-shell > .reader-disc .reader-disc-coll-dethead { grid-column: 1 / -1; grid-row: 1 / -1; }
 .reader-shell > .reader-disc .reader-disc-scroll { overflow: visible; padding: 0; }
 .reader-shell > .reader-disc .reader-disc-body { max-width: 1200px; margin: 0 auto; padding: 0 48px 120px; }
