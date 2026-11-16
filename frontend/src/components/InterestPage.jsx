@@ -32,10 +32,11 @@ import { scrollBehavior } from '../motion';
    「兴趣内容将在早报中优先呈现」,「去发现」链撤除(冗余、刻意)。③台账行:分面名右对齐,悬停同位置
    换成 ×,不再右留空槽。 */
 
+// 分面只有名字(issue #291:原先每个分面名旁边跟一句「技术方向与长期议题」之类的副标签,下面的标签自己就是答案)
 const KIND_META = {
-  topic: { label: '主题', hint: '技术方向与长期议题' },
-  industry: { label: '行业', hint: '应用领域与产业方向' },
-  entity: { label: '实体', hint: '组织、产品、模型、协议与开源项目' },
+  topic: { label: '主题' },
+  industry: { label: '行业' },
+  entity: { label: '实体' },
 };
 const KINDS = Object.keys(KIND_META);
 const ENTITY_TYPE = { organization: '组织', product: '产品', model: '模型', project: '项目', protocol: '协议' };
@@ -297,8 +298,9 @@ export default function InterestPage({
   // 页头规则(2026-09-06 拍板):**「我的」页用报头,容器与目录页用工具头**——早报与兴趣都以读者本人为
   // 主语、同从视图轨下半区进入、同占源栏槽位 + 整幅右栏,共享等宽 kicker + 衬线标题的报头家族;
   // 文章/社交/发现是内容容器与站内目录,用 14/600 栏名工具头。差异是「不同类」而非「不一致」。
-  const kicker = onboarding ? '初始设置 · 欢迎来到哆啦美' : KINDS.map((k) => KIND_META[k].label).join(' / ');
-  const hint = '兴趣决定早报和阅读器优先呈现什么。';
+  const kicker = onboarding ? '初始设置' : KINDS.map((k) => KIND_META[k].label).join(' / ');
+  // 定位句只在首登引导时出现(issue #291):原先常驻在报头——2026-09-06 目检拍过「收成一句」,这一次再收进引导里。
+  const hint = onboarding ? '兴趣决定早报和阅读器优先呈现什么。' : '';
   const saveStateNode = saveState !== 'idle' && (
     <span className={`interest-save-state ${saveState === 'error' ? 'is-error' : ''}`} role="status" aria-live="polite">
       {saveState === 'saving' ? '保存中…' : saveState === 'saved' ? '已保存' : '保存失败'}
@@ -347,7 +349,6 @@ export default function InterestPage({
   const onboardingBanner = onboarding && catalog && (
     <div className="interest-onb" role="region" aria-label="初始设置">
       <div className="interest-onb-main">
-        <div className="brief-mast-kicker">欢迎来到哆啦美</div>
         <p className="interest-onb-text">
           选几个<b>感兴趣的方向</b>，早报和阅读器会优先呈现相关内容。
         </p>
@@ -363,7 +364,6 @@ export default function InterestPage({
         <div className="brief-sec-head">
           <span className="brief-sec-title">{KIND_META[kind].label}</span>
           <span className="brief-sec-count">{needle ? `${sec.filtered.length} / ${sec.all.length}` : sec.all.length}</span>
-          <span className="interest-sec-hint">{KIND_META[kind].hint}</span>
           <span className="brief-sec-rule" />
         </div>
         <div className="interest-grid">
@@ -394,12 +394,12 @@ export default function InterestPage({
             {saveStateNode}
           </div>
         )}
+        {/* 这一行常在:没选时只有行名(issue #291 删掉了「点击下方标签加入兴趣」)。保存回执住在行的右端,
+            行不随有没有兴趣 / 有没有回执出现消失——否则下面的标签墙会上下跳(检视首轮 P2) */}
         {catalog && (
           <div className="interest-picks" aria-label="我的兴趣">
             <span className="interest-picks-label">我的兴趣</span>
-            {picksEmpty
-              ? <span className="interest-picks-empty">点击下方标签加入兴趣。</span>
-              : picks.follow.map((t) => pickChip(t))}
+            {picks.follow.map((t) => pickChip(t))}
             {externalQuery != null && saveStateNode}
           </div>
         )}
@@ -459,13 +459,11 @@ export default function InterestPage({
       return (
         <div className="interest-m is-embedded is-rows" aria-label="我的兴趣">
           {onboardingBanner}
-          <p className="m-int-lede">
-            <span>兴趣内容将在早报中优先呈现</span>
-            {saveStateNode}
-          </p>
           {stateNode}
           {catalog && (
             <section aria-label="我的兴趣">
+              {picks.follow.length > 0 && (
+              <>
               <p className="m-group-label">我的兴趣 · {picks.follow.length}</p>
               <div className="m-group">
                 {picks.follow.length > 0 && onReadAll && (
@@ -488,9 +486,11 @@ export default function InterestPage({
                     </button>
                   </div>
                 ))}
-                {picks.follow.length === 0 && <p className="m-int-empty">点击下方标签加入兴趣。</p>}
               </div>
-              <p className="m-group-label">全部标签 · {catalogTotal}</p>
+              </>
+              )}
+              {/* 保存回执住在这一行的右端:这一行常在,回执出现消失不挤动列表(检视首轮 P2) */}
+              <p className="m-group-label m-int-total">全部标签 · {catalogTotal}{saveStateNode}</p>
               {searchNode}
             </section>
           )}
@@ -504,27 +504,26 @@ export default function InterestPage({
           {embedded ? onboardingBanner : (
             <>
               <div className="brief-mast-kicker">{kicker}</div>
-              <p className="brief-mast-sub">{hint}</p>
+              {hint && <p className="brief-mast-sub">{hint}</p>}
             </>
           )}
           {/* 发现页头部已承担搜索(externalQuery 注入)时不画本地搜索框——否则两框并存且下框失效(codex P2) */}
           {externalQuery == null && searchNode}
           {catalog && (
             <div className="interest-m-row">
-              <button type="button" className="interest-mpicks" aria-expanded={picksOpen} onClick={() => setPicksOpen((v) => !v)}>
+              {/* 没选兴趣时没有可展开的内容:钮禁用、不画箭头(检视首轮 P3) */}
+              <button type="button" className="interest-mpicks" aria-expanded={picksOpen && !picksEmpty} disabled={picksEmpty} onClick={() => setPicksOpen((v) => !v)}>
                 兴趣 <b>{picks.follow.length}</b>
-                <ChevronDown aria-hidden="true" />
+                {!picksEmpty && <ChevronDown aria-hidden="true" />}
               </button>
               {saveStateNode}
               <span className="interest-m-sp" />
               {!embedded && onboardingBtn}
             </div>
           )}
-          {picksOpen && catalog && (
+          {picksOpen && catalog && picks.follow.length > 0 && (
             <div className="interest-mpicks-list">
-              {picks.follow.length === 0
-                ? <div className="interest-ledger-empty">点击下方标签加入兴趣。</div>
-                : picks.follow.map((t) => pickRow(t))}
+              {picks.follow.map((t) => pickRow(t))}
             </div>
           )}
         </div>
@@ -550,9 +549,7 @@ export default function InterestPage({
           {catalog && (
             <>
               <div className="reader-src-label">兴趣<b>{picks.follow.length}</b></div>
-              {picks.follow.length === 0
-                ? <div className="interest-ledger-empty">点击右侧标签加入兴趣。</div>
-                : picks.follow.map((t) => pickRow(t))}
+              {picks.follow.map((t) => pickRow(t))}
             </>
           )}
         </div>
@@ -564,7 +561,7 @@ export default function InterestPage({
             <div className="brief-mast-main">
               <div className="brief-mast-kicker">{kicker}</div>
               <h1 className="brief-mast-title">我的兴趣</h1>
-              <p className="brief-mast-sub">{hint}</p>
+              {hint && <p className="brief-mast-sub">{hint}</p>}
             </div>
             <div className="interest-mast-actions">{searchNode}{onboardingBtn}</div>
           </header>
@@ -577,7 +574,6 @@ export default function InterestPage({
                 <div className="brief-sec-head">
                   <span className="brief-sec-title">{KIND_META[kind].label}</span>
                   <span className="brief-sec-count">{needle ? `${sec.filtered.length} / ${sec.all.length}` : sec.all.length}</span>
-                  <span className="interest-sec-hint">{KIND_META[kind].hint}</span>
                   <span className="brief-sec-rule" />
                 </div>
                 <div className="interest-grid">

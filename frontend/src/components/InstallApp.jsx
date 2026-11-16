@@ -16,7 +16,6 @@ function InstallDetails({ error }) {
   const guide = GUIDES[platform];
   return (
     <div className="pwa-guide">
-      <p className="pwa-intro">把哆啦美放到桌面，下次从图标开始阅读。</p>
       {error && <p role="status" className="pwa-note">暂未完成安装，可以按下面的步骤手动添加。</p>}
       <ol className="pwa-steps">{guide.steps.map((step) => <li key={step}>{step}</li>)}</ol>
       <p className="pwa-note">{guide.note}</p>
@@ -52,7 +51,7 @@ export default function InstallApp({ settings = false }) {
     <>
       {settings ? (
         <div className="sett-row">
-          <span className="sett-id"><span className="sett-lbl">添加到主屏幕</span><span className="sett-sub block">从桌面图标开始阅读</span></span>
+          <span className="sett-id"><span className="sett-lbl">添加到主屏幕</span></span>
           <span className="sett-ctl"><button type="button" className="action-button action-button-secondary min-h-[44px] px-3 text-xs" disabled={busy} onClick={activate} aria-expanded={open}>{busy ? '正在打开…' : canPrompt ? '添加应用' : open ? '收起步骤' : '查看步骤'}</button></span>
         </div>
       ) : (

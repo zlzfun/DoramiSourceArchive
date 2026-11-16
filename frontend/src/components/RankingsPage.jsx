@@ -20,7 +20,6 @@ import {
   picksShapeOf,
   rankingDataKey,
   rankingEmptyText,
-  rankingScopeNote,
   representativeOf,
   showRecentFlag,
   timelineDays,
@@ -528,7 +527,6 @@ export default function RankingsPage({
       label: (detail.data || detail.item)?.title || '', listScroll: listScrollRef.current, pageScroll: box?.scrollTop || 0,
     });
   };
-  const note = rankingScopeNote(seg, rng);
   const shape = picksShapeOf(seg);
 
   let body;
@@ -576,7 +574,6 @@ export default function RankingsPage({
     <main ref={mainRef} className={`rankings-page rk-page ${mobile ? 'is-mobile' : ''}`.trim()} aria-label="榜单">
       {mobile ? (
         <>
-          <p className="ranking-head-note">{note}</p>
           {range_}
           {body}
         </>

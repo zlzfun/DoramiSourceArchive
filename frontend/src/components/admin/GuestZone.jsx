@@ -36,10 +36,11 @@ const LIMIT_MAX = 100000;
 
 // 四类用途:键与后端 GUEST_AI_LIMIT_KEYS 同序
 const LIMIT_ROWS = [
-  ['translate', '翻译', '文章 / 社交 / 逐字稿 / 长文后台翻译，按调用计'],
-  ['ask', '问答', '按提问计'],
-  ['summarize', '速读', '按生成计'],
-  ['ondemand', '点播', '播客导读 + 文章旁白，按新开一次生成计'],
+  // 第三项 = 这个数字数的是什么(单位,不是说明):翻译按调用计,长文分片翻译一篇会扣好几次;点播按新开一次生成计,不是播放次数
+  ['translate', '翻译', '次调用'],
+  ['ask', '问答', '次提问'],
+  ['summarize', '速读', '次生成'],
+  ['ondemand', '点播', '次新生成'],
 ];
 
 // 入口:后端 ENTRIES;回访是中性槽
@@ -144,7 +145,6 @@ export default function GuestZone({ days = 30, showToast, refreshTick = 0 }) {
   const entries = stats?.entries || {};
   const entryTotal = ENTRY_ROWS.reduce((acc, [key]) => acc + (entries[key] || 0), 0);
   const readerLimits = settings?.reader_ai_limits || {};
-  const limitsAsReader = LIMIT_ROWS.every(([key]) => settings?.ai_limits?.[key] === readerLimits[key]);
 
   // 写回:响应带的是近 30 天统计,只取设置与名单,统计保持当前窗口
   const applySettings = (res) => setData((prev) => (prev
@@ -199,21 +199,13 @@ export default function GuestZone({ days = 30, showToast, refreshTick = 0 }) {
     if (ok) setDrawerOpen(false);
   };
 
-  const meta = !settings
-    ? '正在读取…'
-    : !settings.enabled
-      ? '已关闭：未登录打开站内链接回到登录页，在线游客会话立即失效'
-      : settings.ai_enabled
-        ? `未登录打开站内链接直接以游客浏览 · 每位游客的 AI 日额度${limitsAsReader ? '与读者相同' : '见游客设置'}`
-        : '游客照常浏览；AI 入口对游客隐藏';
-
   const sources = data?.default_sources || [];
 
   return (
     <>
       <div className="zone-head">
         <span className="zone-title">游客</span>
-        <span className="zone-hint">近 {shownDays} 天 · 不计入上方账户口径</span>
+        <span className="zone-hint" title="不计入上方账户口径">近 {shownDays} 天</span>
         {stats && <StaleNotice status={error ? 'error' : 'ok'} error={error} onRetry={load} label="游客统计" />}
         <span className="guest-zone-acts">
           <button type="button" className="rowact-btn" title="游客设置" aria-label="游客设置" onClick={openDrawer} disabled={!settings}>
@@ -245,8 +237,8 @@ export default function GuestZone({ days = 30, showToast, refreshTick = 0 }) {
           onClick={toggleAi}
           className={`ledger-switch ${settings?.ai_enabled ? 'is-on' : ''}`}
         />
-        <span className="ai-divider" />
-        <span className="tiny-meta">{meta}</span>
+        {/* 两枚开关旁原先常驻一句解释开关的话(issue #291);开关名上有悬停提示,这里只留读取中的状态 */}
+        {!settings && <><span className="ai-divider" /><span className="tiny-meta">正在读取…</span></>}
       </section>
 
       {!stats ? (
@@ -281,7 +273,7 @@ export default function GuestZone({ days = 30, showToast, refreshTick = 0 }) {
               <span><i className="is-dot" style={{ background: C_CONVERSION }} />当日登录（转化）</span>
             </div>
             <div className="guest-entry">
-              <div className="guest-entry-head">入口<span className="zone-hint">按访客当天首个入口</span></div>
+              <div className="guest-entry-head" title="按访客当天首个入口">入口</div>
               <div className="guest-entry-bar" role="img" aria-label={ENTRY_ROWS.map(([key, label]) => `${label} ${pct(entries[key] || 0, entryTotal)}`).join('，')}>
                 {entryTotal > 0 && ENTRY_ROWS.map(([key, , color]) => (entries[key] || 0) > 0 && (
                   <span key={key} style={{ width: `${((entries[key] || 0) / entryTotal) * 100}%`, background: color }} />
@@ -311,23 +303,23 @@ export default function GuestZone({ days = 30, showToast, refreshTick = 0 }) {
         <div className="ledger-drawer-head">
           <span className="ledger-drawer-title">
             游客设置
-            <small className="drawer-title-sub">每位游客各自计数，按服务端日期零点重置</small>
           </span>
           <button type="button" className="icon-button shrink-0" onClick={closeDrawer} aria-label="关闭"><X className="h-5 w-5" /></button>
         </div>
         <div className="ledger-drawer-body">
           <div>
-            <div className="drawer-sec-title">每位游客的 AI 日额度 · 缺省与读者相同，0 = 不限</div>
-            {LIMIT_ROWS.map(([key, label, sub]) => (
+            {/* 「0 = 不限」留着:不写会有人填 0 想关掉。缺省值在输入框的占位里(读者的额度) */}
+            <div className="drawer-sec-title">每位游客的 AI 日额度(0 = 不限)</div>
+            {LIMIT_ROWS.map(([key, label, unit]) => (
               <label key={key} className="guest-limit-row">
-                <span>{label}<small>{sub}</small></span>
+                <span>{label}<small>{unit} / 日</small></span>
                 <input
                   className="guest-limit-input"
                   inputMode="numeric"
                   value={drafts[key] ?? ''}
                   placeholder={readerLimits[key] != null ? String(readerLimits[key]) : ''}
                   onChange={(e) => setDrafts((prev) => ({ ...prev, [key]: e.target.value }))}
-                  aria-label={`${label}每日上限`}
+                  aria-label={`${label}每日上限（${unit}）`}
                 />
               </label>
             ))}
@@ -337,7 +329,7 @@ export default function GuestZone({ days = 30, showToast, refreshTick = 0 }) {
             <div className="guest-defsrc">
               {sources.map((s) => <span key={s.source_id}>{s.name}</span>)}
             </div>
-            <p className="tiny-meta guest-defsrc-note">在「内容」子页的「新账号默认订阅」里改，游客与此后新建的账号同时生效；改动当天游客早报会自动重编。</p>
+            <a className="sett-link guest-defsrc-link" href="#/admin/reader/defaults">改默认订阅</a>
           </div>
         </div>
         <div className="ledger-drawer-foot">

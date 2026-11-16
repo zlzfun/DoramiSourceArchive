@@ -108,7 +108,7 @@ export default function AccountGrowth({ growth, days = 30, height = 200 }) {
     <>
       <div className="zone-head">
         <span className="zone-title">账户增长</span>
-        <span className="zone-hint">{fmt(total)} 个 · 近 {days} 天新增 {fmt(windowNew)} · 现存账户按加入日回溯,已删除不计</span>
+        <span className="zone-hint" title="现存账户按加入日回溯,已删除不计">{fmt(total)} 个 · 近 {days} 天新增 {fmt(windowNew)}</span>
       </div>
       <section className="surface-card card-pad rounded-[var(--r-card)]" aria-label="账户增长">
         <div style={{ height }}>

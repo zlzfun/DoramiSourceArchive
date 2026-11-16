@@ -56,7 +56,8 @@
 | 脚本 | 用途 | 数据边界 |
 |---|---|---|
 | [`check_docs.py`](./check_docs.py) | 文档守卫:索引覆盖 / 断链 / 状态词表 / L0 体量 / `plans/` 文件名;每波收口本地跑。 | 只读仓库文件。 |
-| [`check_released_migrations.py`](./check_released_migrations.py) | 已发布迁移文件逐字节守卫(issue #227):对远端最新正式 tag 比对 `alembic/versions/*`,新增允许、改写 / 删除 / 改名红,取不到基线也红;CI `backend-deploy` 每次 PR 跑,本地 `--offline` / `--baseline`。 | 只读;本地没有基线 tag 时只 fetch 那一个 tag。 |
+| [`check_released_migrations.py`](./check_released_migrations.py) | 已发布迁移文件逐字节守卫(issue #227):对远端最新正式 tag 比对 `alembic/versions/*`,新增允许、改写 / 删除 / 改名红,取不到基线也红;CI `backend-deploy` 在每次含后端改动的 PR 与 push 到 main 时跑(只动前端 / 文档的 PR 改不到迁移文件,该 job 跳过,issue #288),本地 `--offline` / `--baseline`。 | 只读;本地没有基线 tag 时只 fetch 那一个 tag。 |
+| [`ci_scope.py`](./ci_scope.py) | CI 改动面判定(issue #288):PR 的全部改动路径都在 `frontend/` `docs/` `docs-site/` 与仓根 `*.md` 内时输出 `backend=false`(跳过两个重型后端 job,只跑 `LIGHT_TESTS`),其余一律 `true`;`SKIP_SAFE_DIRS` / `LIGHT_TESTS` 是 `ci.yml` 与 `tests/conftest.py` 读取审计的单一事实来源;`GUARD_TESTS` 是不分片的 `backend-guards` job 跑的工作流守卫清单(issue #289)。 | 只读 git;CI 里写 `$GITHUB_OUTPUT`,本地运行只打印。 |
 
 ## 关于导出产物
 

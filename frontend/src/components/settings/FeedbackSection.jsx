@@ -70,10 +70,7 @@ export default function FeedbackSection({ showToast }) {
   return (
     <div>
       <form className="sett-row is-block" onSubmit={handleSubmit}>
-        <span className="sett-lbl">告诉我们你的想法</span>
-        <p className="sett-sub">想看到新的内容、遇到了问题,或有功能上的建议,都可以写在这里。</p>
-
-        <div className="mini-seg mt-3" role="group" aria-label="反馈类型">
+        <div className="mini-seg" role="group" aria-label="反馈类型">
           {CATEGORIES.map(([value, label]) => (
             <button
               key={value}
@@ -109,16 +106,11 @@ export default function FeedbackSection({ showToast }) {
         </div>
       </form>
 
+      {/* 提过反馈才出这一节:空的时候原先留一个标题 + 一句「有想法时随时写给我们」(issue #291) */}
+      {items && items.length > 0 && (
       <div className="sett-row is-block">
         <span className="sett-lbl">我的反馈</span>
 
-        {items === null ? (
-          <p className="flex items-center justify-center gap-2 py-8 tiny-meta">
-            <Loader2 className="h-4 w-4 animate-spin" /> 加载中…
-          </p>
-        ) : items.length === 0 ? (
-          <p className="py-8 text-center tiny-meta">还没有反馈,有想法时随时写给我们</p>
-        ) : (
           <div className="mt-1">
             {items.map((item) => {
               const status = STATUS_META[item.status] || STATUS_META.open;
@@ -158,8 +150,8 @@ export default function FeedbackSection({ showToast }) {
               );
             })}
           </div>
-        )}
       </div>
+      )}
     </div>
   );
 }

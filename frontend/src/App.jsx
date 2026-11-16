@@ -373,6 +373,15 @@ export default function App() {
     });
   }, [jumpWithFocus]);
 
+  // 设置柜「凭据 → X API」回指(issue #291):配额与本月开销在运维 · 存储与外部资源的「X API」板块
+  const openAdminXQuota = useCallback(() => {
+    setSettingsOpen(false);
+    jumpWithFocus('admin', 'external/xapi', {
+      tab: 'admin',
+      payload: { page: 'external', block: 'xapi' },
+    });
+  }, [jumpWithFocus]);
+
   const setFetchView = useCallback((v) => goView('fetch', v), [goView]);
   const setAdminView = useCallback((v) => goView('admin', v), [goView]);
 
@@ -1086,6 +1095,7 @@ export default function App() {
           onFeedbackSeen={handleFeedbackSeen}
           onOpenAdminPodcast={openAdminPodcastQuota}
           onOpenAdminSync={openAdminSyncLink}
+          onOpenAdminXQuota={openAdminXQuota}
           onGuestLogin={() => { setSettingsOpen(false); openGuestLogin(); }}
         />
       </Suspense>

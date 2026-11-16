@@ -159,7 +159,6 @@ export default function AccountSection({ username, avatar, accountRoleLabel, isA
         <div className="sett-row">
           <span className="sett-id">
             <span className="sett-lbl">登录后先看到</span>
-            <div className="sett-sub">下次登录生效;本次会话随时可用导轨底部按钮切换</div>
           </span>
           <span className="sett-ctl">
             <span className="sett-seg" role="group" aria-label="默认落地界面">
@@ -186,7 +185,6 @@ export default function AccountSection({ username, avatar, accountRoleLabel, isA
       <form className="sett-row is-block" onSubmit={handleChangePassword}>
         <span className="sett-id">
           <span className="sett-lbl">修改密码</span>
-          <div className="sett-sub">改密后当前会话保持有效,下次登录使用新密码</div>
         </span>
         <div className="sett-pw-grid">
           <input
@@ -224,16 +222,11 @@ export default function AccountSection({ username, avatar, accountRoleLabel, isA
       </form>
       )}
 
+      {/* 只有一枚按钮:行名、说明、按钮原先是同一个词说三遍(issue #291) */}
       <div className="sett-row">
-        <span className="sett-id">
-          <span className="sett-lbl">退出登录</span>
-          <div className="sett-sub">仅退出本浏览器的会话</div>
-        </span>
-        <span className="sett-ctl">
-          <button type="button" onClick={onLogout} className="action-button action-button-danger min-h-[32px] px-3 text-xs">
-            退出登录
-          </button>
-        </span>
+        <button type="button" onClick={onLogout} className="action-button action-button-danger min-h-[32px] px-3 text-xs">
+          退出登录
+        </button>
       </div>
     </div>
   );

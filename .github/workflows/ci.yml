@@ -5,14 +5,30 @@
 #
 # 后端测试(issue #150)拆成两个 job 各占一台 runner 并行,每个 job 内再用 pytest-xdist 开 4 个 worker
 # (public 仓库的 ubuntu-latest 是 4 vCPU):
-#   backend-unit   —— tests/ 里除部署脚本 / 迁移之外的全部用例(约 2200 个,0.3 s 一个,CPU 密集,4 worker ≈ 2 min)
-#   backend-deploy —— tests/test_deploy_*.py + tests/test_migrations.py(约 200 个,单个 10~26 s:每个用例真起
-#                     deploy.sh,一次运行几百次进程 spawn,等待为主;4 worker ≈ 4~5 min)
+#   backend-unit   —— tests/ 里除部署脚本 / 迁移之外的全部用例(2026-11-16 实测约 3470 个;不分片时 4 worker ≈ 10 min,
+#                     曾是 PR 等待时间的决定项,本机同一条命令 3.5 min)
+#   backend-deploy —— tests/test_deploy_*.py + tests/test_migrations.py(约 220 个,单个 10~26 s:每个用例真起
+#                     deploy.sh,一次运行几百次进程 spawn,等待为主;4 worker ≈ 4~6 min)
 # 两边对 tests/ 的划分由 tests/test_ci_workflow.py 守卫(互斥、覆盖全部文件、并行参数不退回串行)。
+# 分片(issue #289):两个 job 各用矩阵再拆成 N 个 job 并行(unit 3 片、deploy 2 片;public 仓库 runner 免费),每片仍是 4 个 worker。
+# 命令只差 `--shard I/N`:tests/conftest.py 按用例函数 nodeid 的 CRC32 决定它属于哪一片,纯函数、每条用例恰好一片。
+# 2026-11-16 实测:整条 CI 从 8.7~10.5 min 降到约 4 min(unit 三片 2.9~3.7 min,deploy 两片 2.1~2.4 min)。
+# 矩阵取值必须恰是 1..N、分母必须等于 N、命令里必须用矩阵变量——少一片的后果是那一片的用例哪个 job 都不跑而 CI 照样绿。
+# 守这件事的用例不能只待在被分片的 job 里(分片一旦写错,它们自己可能正好落在没人跑的那一片):所以另有不分片的
+# backend-guards job 单独跑 tests/test_ci_workflow.py 与 tests/test_ci_scope.py(清单 = ci_scope.GUARD_TESTS),汇总门要求它成功。
+# 汇总门读的 `needs.<job>.result` 对矩阵 job 是各片的汇总:按官方文档,任一片失败即 failure、job 级 `if` 为假时整体 skipped。
+# (社区有未经官方确认的报告称「某一片因分不到 runner 被取消」时汇总仍可能是 success;记观察期,见 docs/backlog.md。)
 # `--dist worksteal` 不是可选项:默认 load 调度按连续块分发,收集顺序里连成一片的部署用例会整块落到
 # 单个 worker、其余三个空转(2026-09-23 本地实测 13 min vs 5:50)。
-# `backend (pytest)` 现在是汇总门 job,只为让分支保护里既有的 required check 名继续有效;
+# `backend (pytest)` 是汇总门 job,只为让分支保护里既有的 required check 名继续有效;
 # `if: always()` + 逐项核对上游结果——不这样写,上游失败时它会被 skip,而 skip 在分支保护眼里等于通过。
+#
+# 按改动面选 job(issue #288):`changes` job 跑 scripts/ci_scope.py。PR 的**全部**改动路径都落在 frontend/ docs/ docs-site/
+# 与仓根 *.md 之内时,两个重型后端 job 跳过,改跑 backend-light——只含「读这些路径的后端守卫」(清单 = ci_scope.LIGHT_TESTS,
+# 不到一分钟);任一路径在外、没有改动路径、看不准、以及 push 到 main,一律照常全量。偏向全量是有意的:
+# 判错成「全量」只是多等几分钟,判错成「轻量」会让后端回归带着绿灯合入。push 到 main 永远全量,是这条裁剪的兜底。
+# 「重型 job 被跳过不丢覆盖」由 tests/conftest.py 的读取审计强制(不在 LIGHT_TESTS 里的测试读了上述路径即失败);
+# 汇总门只在 `changes` 成功且明确给出 backend=false 时才接受上游 skipped,此时必须 backend-light 成功。
 name: CI
 
 on:
@@ -26,9 +42,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # 改动面判定(见文件头)。fetch-depth: 2 = 合并提交 + 它的两个父提交,脚本靠这两个父提交认出「这是 PR 的合并提交」
+  # 并算出相对 base 的改动路径;深度退回 1 时脚本看不到父提交、一律按全量(安全,但裁剪悄悄失效——守卫测试钉住这个值)。
+  # 判定只由脚本写 $GITHUB_OUTPUT,工作流里不另写。
+  changes:
+    name: changes (scope)
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.scope.outputs.backend }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Decide which backend jobs this change needs
+        id: scope
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/ci_scope.py
+
   backend-unit:
     name: backend-unit (pytest)
+    needs: [changes]
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
 
@@ -60,11 +101,17 @@ jobs:
       # 划分模式与 backend-deploy 的正向列表逐字相同(守卫测试比对);命令写成一行,守卫按行解析。
       # --ignore-glob 的值加引号:它要原样交给 pytest 去 fnmatch,不能让 shell 先展开(zsh 会直接报 no matches)
       - name: Run tests
-        run: .venv/bin/python -m pytest tests -q -p no:cacheprovider -n 4 --dist worksteal --durations=25 --ignore-glob='tests/test_deploy_*.py' --ignore=tests/test_migrations.py
+        run: .venv/bin/python -m pytest tests -q -p no:cacheprovider -n 4 --dist worksteal --durations=25 --shard ${{matrix.shard}}/3 --ignore-glob='tests/test_deploy_*.py' --ignore=tests/test_migrations.py
 
   backend-deploy:
     name: backend-deploy (pytest)
+    needs: [changes]
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v4
 
@@ -87,22 +134,83 @@ jobs:
 
       # 位置参数不加引号:pytest 不展开 glob,靠 runner 的 bash 展开;无匹配时 bash 原样传递、pytest 报文件不存在,CI 会红而不是静默漏跑
       - name: Run tests
-        run: .venv/bin/python -m pytest tests/test_deploy_*.py tests/test_migrations.py -q -p no:cacheprovider -n 4 --dist worksteal --durations=25
+        run: .venv/bin/python -m pytest tests/test_deploy_*.py tests/test_migrations.py -q -p no:cacheprovider -n 4 --dist worksteal --durations=25 --shard ${{matrix.shard}}/2
 
-  # 汇总门:分支保护里 required 的是这个名字(见文件头注释)
+  # 重型 job 被跳过时的替身(issue #288):只跑读前端 / 文档文件的后端守卫。文件清单与 scripts/ci_scope.py 的 LIGHT_TESTS
+  # 逐字一致(守卫测试比对);命令写成一行,守卫按行解析。这几条不探测 ffmpeg,不装它。
+  backend-light:
+    name: backend-light (pytest)
+    needs: [changes]
+    if: needs.changes.outputs.backend == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/bin/python -r docker/requirements.txt pytest pytest-xdist
+
+      - name: Run tests
+        run: .venv/bin/python -m pytest tests/test_docs_index.py tests/test_pwa_support.py -q -p no:cacheprovider
+
+  # 守卫工作流自己的测试,不分片、单独跑(issue #289,Codex R1-1,见文件头)。它们同时仍在 unit 的某一片里各跑一遍:
+  # 两边互为对照——unit 的命令被改坏了这里会红,这个 job 的命令被改坏了 unit 那边会红。只动前端 / 文档的 PR 改不到
+  # 工作流与测试,不必跑它。文件清单与 scripts/ci_scope.py 的 GUARD_TESTS 逐字一致;命令不带 --shard。
+  backend-guards:
+    name: backend-guards (pytest)
+    needs: [changes]
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/bin/python -r docker/requirements.txt pytest pytest-xdist
+
+      - name: Run tests
+        run: .venv/bin/python -m pytest tests/test_ci_workflow.py tests/test_ci_scope.py -q -p no:cacheprovider
+
+  # 汇总门:分支保护里 required 的是这个名字(见文件头注释)。两条通过路径,其余全拒:
+  #   backend=true  → backend-unit、backend-deploy、backend-guards 都 success;
+  #   backend=false → 这三个都是 skipped 且 backend-light success。
+  # `changes` 没成功时它的 output 是空串,落进最后的 else——判定本身出错不能变成放行。
   backend:
     name: backend (pytest)
-    needs: [backend-unit, backend-deploy]
+    needs: [changes, backend-unit, backend-deploy, backend-light, backend-guards]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Require both backend jobs to succeed
+      - name: Require the backend jobs this change needs
         env:
+          CHANGES: ${{ needs.changes.result }}
+          BACKEND: ${{ needs.changes.outputs.backend }}
           UNIT: ${{ needs.backend-unit.result }}
           DEPLOY: ${{ needs.backend-deploy.result }}
+          LIGHT: ${{ needs.backend-light.result }}
+          GUARDS: ${{ needs.backend-guards.result }}
         run: |
-          echo "backend-unit=$UNIT backend-deploy=$DEPLOY"
-          [ "$UNIT" = "success" ] && [ "$DEPLOY" = "success" ]
+          echo "changes=$CHANGES backend=$BACKEND backend-unit=$UNIT backend-deploy=$DEPLOY backend-light=$LIGHT backend-guards=$GUARDS"
+          [ "$CHANGES" = "success" ] || exit 1
+          if [ "$BACKEND" = "true" ]; then
+            [ "$UNIT" = "success" ] && [ "$DEPLOY" = "success" ] && [ "$GUARDS" = "success" ]
+          elif [ "$BACKEND" = "false" ]; then
+            [ "$UNIT" = "skipped" ] && [ "$DEPLOY" = "skipped" ] && [ "$GUARDS" = "skipped" ] && [ "$LIGHT" = "success" ]
+          else
+            exit 1
+          fi
 
   workflows:
     name: workflows (actionlint)

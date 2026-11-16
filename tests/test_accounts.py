@@ -31,6 +31,19 @@ def test_password_hash_roundtrip():
     assert encoded != accounts_service.hash_password("s3cret-pw")
 
 
+def test_default_iterations_are_read_at_call_time_and_production_stays_strong(fast_password_hashing):
+    """issue #289:测试会话把缺省轮数调低(conftest 的会话夹具),生产缺省仍是 20 万;显式传入的轮数照用,新旧轮数的哈希都能校验。"""
+    from services import accounts
+    from tests.conftest import TEST_PBKDF2_ITERATIONS
+
+    assert fast_password_hashing >= 200_000, "夹具交回的是生产缺省轮数"
+    assert accounts.hash_password("pw").split("$")[1] == str(TEST_PBKDF2_ITERATIONS)
+    strong = accounts.hash_password("pw", iterations=fast_password_hashing)
+    assert strong.split("$")[1] == str(fast_password_hashing)
+    assert accounts.verify_password("pw", strong) and not accounts.verify_password("px", strong)
+    assert accounts.verify_password("pw", accounts.hash_password("pw", iterations=7))
+
+
 def test_verify_password_rejects_malformed_encoding():
     from services import accounts as accounts_service
 

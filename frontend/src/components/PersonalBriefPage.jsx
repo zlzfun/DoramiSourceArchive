@@ -1008,9 +1008,6 @@ export default function PersonalBriefPage({
         <h1 className="bp-title is-note">
           {`${dayWord}${interestOnly ? '没有命中你兴趣的新内容' : ratioUnfillable ? '缺少用于补齐的非兴趣内容' : '没有达到入选标准的内容'}`}
         </h1>
-        <p className="bp-sum">
-          {ownItems.length > 0 ? `下面是${guest ? '默认订阅' : '你订阅'}来源的最新更新，不计入正式精选` : '下面是按内容价值入选的阅读与收听'}
-        </p>
       </div>
     );
   }
@@ -1020,10 +1017,7 @@ export default function PersonalBriefPage({
   const onboardingBanner = onboarding && (
     <div className="interest-onb brief-onb" role="region" aria-label="初始设置">
       <div className="interest-onb-main">
-        <div className="brief-mast-kicker">欢迎来到哆啦美</div>
-        <p className="interest-onb-text">
-          这是你的第一份早报。<b>设置兴趣</b>，早报会更懂你。
-        </p>
+        <p className="interest-onb-text">这是你的第一份早报。</p>
       </div>
       <div className="brief-onb-acts">
         <button type="button" className="interest-btn" disabled={skipping} onClick={handleSkipOnboarding}>稍后再说</button>
@@ -1135,17 +1129,6 @@ export default function PersonalBriefPage({
                   <ArrowUpRight aria-hidden="true" />
                 </button>
               )}
-            </dd>
-          </>
-        )}
-        {showEdition && headline && (
-          <>
-            <dt>头条</dt>
-            <dd>
-              {VALUE_LANES.has(headline.selection_lane)
-                ? '本期没有新闻入选，取深度阅读与播客精选里内容价值最高的一条'
-                : '有重大事件时取重大事件，否则取本期新闻价值最高的一条'}
-              ；其余按板块排列，板块内按分数
             </dd>
           </>
         )}

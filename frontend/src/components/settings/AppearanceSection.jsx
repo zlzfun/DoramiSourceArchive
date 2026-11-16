@@ -11,6 +11,7 @@ const PALETTE_OPTIONS = [
   { id: 'graphite', name: '墨', tone: '中性' },
   { id: 'paper', name: '宣', tone: '暖调' },
 ];
+// tone 只进读屏名与悬停提示:卡上只写一个名字,冷暖由色卡本身呈现(issue #291)。
 
 // 外观(弹窗波,设置行范式):主题三态,白拇指分段(复用 .segmented-control)。
 // 减少动效(issue #73)与中性色(issue #184)都是应用内偏好,自持于 hook(motion.js / palette.js),
@@ -42,7 +43,6 @@ export default function AppearanceSection({ theme, onThemeChange }) {
       <div className="sett-row">
         <span className="sett-id">
           <span className="sett-lbl">主题</span>
-          <div className="sett-sub">跟随系统时,随操作系统亮暗自动切换</div>
         </span>
         <span className="sett-ctl">
           <span className="sett-seg" role="group" aria-label="主题">
@@ -62,7 +62,6 @@ export default function AppearanceSection({ theme, onThemeChange }) {
       <div className="sett-row is-pals">
         <span className="sett-id">
           <span className="sett-lbl">中性色</span>
-          <div className="sett-sub">界面底色与文字的色调,亮色和暗色下都生效</div>
         </span>
         <span className="sett-ctl">
           <span className="sett-pals" role="radiogroup" aria-label="中性色">
@@ -74,6 +73,7 @@ export default function AppearanceSection({ theme, onThemeChange }) {
                 role="radio"
                 aria-checked={palette === opt.id}
                 aria-label={`${opt.name} · ${opt.tone}`}
+                title={opt.tone}
                 tabIndex={palette === opt.id ? 0 : -1}
                 onClick={() => setPalette(opt.id)}
                 onKeyDown={(event) => onPaletteKey(event, index)}
@@ -81,10 +81,7 @@ export default function AppearanceSection({ theme, onThemeChange }) {
                 data-pal={opt.id}
               >
                 <span className="sett-pal-sw" aria-hidden="true"><i /><i /></span>
-                <span className="sett-pal-name">
-                  <span>{opt.name}</span>
-                  <span className="sett-pal-tone">{opt.tone}</span>
-                </span>
+                <span className="sett-pal-name">{opt.name}</span>
               </button>
             ))}
           </span>
@@ -93,7 +90,6 @@ export default function AppearanceSection({ theme, onThemeChange }) {
       <div className="sett-row">
         <span className="sett-id">
           <span className="sett-lbl">减少动效</span>
-          <div className="sett-sub">开启后界面过渡与循环提示即时完成,不播放动画</div>
         </span>
         <span className="sett-ctl">
           <button

@@ -39,7 +39,7 @@ function CredStamp({ ok }) {
   return <span className={`stamp ${ok ? 'stamp-ok' : 'stamp-idle'}`}>{ok ? '已配置' : '未配置'}</span>;
 }
 
-export default function CredentialsSection({ showToast, onOpenAdminPodcast, onOpenAdminSync }) {
+export default function CredentialsSection({ showToast, onOpenAdminPodcast, onOpenAdminSync, onOpenAdminXQuota }) {
   // ── 大模型 ──
   const [llmStatus, setLlmStatus] = useState(null);
   const [llmForm, setLlmForm] = useState({ base_url: '', model: '', api_key: '', temperature: 0.3, max_tokens: 4096, thinking_mode: '', aux_model: '', vision_model: '' });
@@ -203,7 +203,6 @@ export default function CredentialsSection({ showToast, onOpenAdminPodcast, onOp
             <CredStamp ok={Boolean(llmStatus?.configured)} />
           </div>
         </div>
-        <p className="cred-sub">日报生成、读者翻译/问答共用的 OpenAI 兼容接口</p>
         <div className="cred-fields">
           <label className="sett-field cred-field-wide">
             <span className="sett-field-lbl">base_url <SrcBadge source={llmStatus?.field_sources?.base_url} /></span>
@@ -259,7 +258,6 @@ export default function CredentialsSection({ showToast, onOpenAdminPodcast, onOp
           </div>
         )}
         <div className="sett-sync-foot">
-          <span className="cred-ref-meta" role="status">当前生效：{llmStatus?.model || '未配置'} · {SRC_LABELS[llmStatus?.field_sources?.model] || '来源待读取'}</span>
           <div className="ml-auto flex items-center gap-2">
             <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={handleTestLlm} disabled={testingLlm || savingLlm || !canTestLlm || !llmStatus}>
               {testingLlm ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />} 保存并测试（计费）
@@ -281,9 +279,6 @@ export default function CredentialsSection({ showToast, onOpenAdminPodcast, onOp
             <CredStamp ok={Boolean(xStatus?.configured)} />
           </div>
         </div>
-        <p className="cred-sub">
-          社交源采集的应用级 Bearer Token。计费按<b>实际返回的资源</b>而非请求次数——「单次上限」调大不增开销,只降低积压漏抓风险;达到月度预算后发出请求前即停抓。
-        </p>
         <div className="cred-fields">
           <label className="sett-field cred-field-wide">
             <span className="sett-field-lbl">
@@ -313,10 +308,13 @@ export default function CredentialsSection({ showToast, onOpenAdminPodcast, onOp
           </label>
         </div>
         <div className="sett-sync-foot">
-          <span className="cred-ref-meta">配额与本月开销见 运维管理 → 存储与外部资源 · 测试约 $0.005,当日已见资源为 $0</span>
+          {/* 一枚直达的链接,不写「见 运维管理 → …」(issue #291);测试的费用写在按钮上 */}
+          <button type="button" className="sett-link inline-flex items-center gap-0.5" onClick={() => onOpenAdminXQuota?.()}>
+            配额与本月开销 <ChevronRight className="h-3.5 w-3.5" />
+          </button>
           <div className="ml-auto flex items-center gap-2">
             <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={handleTestX} disabled={testingX || savingX || !xTokenReady}>
-              {testingX ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />} 测试连通
+              {testingX ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />} 测试连通（约 $0.005）
             </button>
             <button type="button" className="action-button action-button-primary min-h-[32px] px-3 text-xs" onClick={handleSaveX} disabled={savingX}>
               {savingX ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} 保存
@@ -335,7 +333,6 @@ export default function CredentialsSection({ showToast, onOpenAdminPodcast, onOp
             <CredStamp ok={Boolean(asrQuota?.configured)} />
           </div>
         </div>
-        <p className="cred-sub">供应商身份与连接配置从环境变量或配置文件读取；每日总额度和单集上限属于内容生产策略。</p>
         <div className="sett-sync-foot">
           <span className="cred-ref-meta">
             {asrQuota
@@ -358,7 +355,7 @@ export default function CredentialsSection({ showToast, onOpenAdminPodcast, onOp
             <span className="cred-ref-meta">
               {scheduleConfigured
                 ? <>远端 <b>{schedule?.base_url || '—'}</b> · 账号 <b>{schedule?.username || '—'}</b></>
-                : '尚未保存远端凭据'}
+                : null}
             </span>
             <span className="cred-ref-act">
               <button type="button" className="sett-link inline-flex items-center gap-0.5" onClick={() => onOpenAdminSync?.()}>
@@ -369,7 +366,7 @@ export default function CredentialsSection({ showToast, onOpenAdminPodcast, onOp
           <div className="cred-ref-row">
             <CredStamp ok={Boolean(overview?.github_token_set)} />
             <span className="cred-ref-name">GitHub Token</span>
-            <span className="cred-ref-meta">仓库抓取限速放宽 · 仅环境变量 <b>GITHUB_TOKEN</b>,无面板编辑</span>
+            <span className="cred-ref-meta">环境变量 <b>GITHUB_TOKEN</b></span>
           </div>
         </div>
       </div>
