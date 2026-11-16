@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Check, Copy, Eye, EyeOff, Loader2, RotateCw } from 'lucide-react';
+import { Check, Copy, Eye, EyeOff, KeyRound, Loader2, RotateCw } from 'lucide-react';
 import { API_BASE_URL } from '../../config';
 import { fetchFeedToken, rotateFeedToken } from '../../api';
 import { copyText } from '../../utils/clipboard';
 import { runAction } from '../../utils/runAction';
+import { useConfirm } from '../../hooks/useConfirm';
 
 function apiRoot() {
   const base = API_BASE_URL.startsWith('http') ? API_BASE_URL : `${window.location.origin}${API_BASE_URL}`;
@@ -28,7 +29,8 @@ const FEED_PARAMS = [
  * 适合 RSS 工具与脚本。前身是接入集成页签的 FeedAccessSection 卡（并入设置波），
  * 令牌 get/rotate 逻辑原样内聚；MCP 工具调用与这里的 HTTP 拉取共用同一枚令牌。
  */
-export default function FeedTokenSection({ showToast, isAdmin = false }) {
+export default function FeedTokenSection({ showToast }) {
+  const confirm = useConfirm();
   const [feedToken, setFeedToken] = useState(null);
   const [loading, setLoading] = useState(true);
   const [plainToken, setPlainToken] = useState('');   // 明文仅本次生成后可见
@@ -59,7 +61,8 @@ export default function FeedTokenSection({ showToast, isAdmin = false }) {
     onSuccess: (result) => {
       setPlainToken(result.token);
       setRevealed(true);
-      setFeedToken(prev => ({ ...(prev || {}), exists: true, token_preview: result.token_preview }));
+      // 签发日期:接口只在首次签发时记 created_at、轮换不改,这里与之同口径(首次签发补上今天,轮换沿用原值)
+      setFeedToken(prev => ({ ...(prev || {}), exists: true, token_preview: result.token_preview, created_at: prev?.created_at || new Date().toISOString() }));
     },
   });
 
@@ -70,8 +73,16 @@ export default function FeedTokenSection({ showToast, isAdmin = false }) {
       ? plainToken
       : exists
         ? feedToken.token_preview
-        : '尚未签发';
+        : '';
   const issuedAt = feedToken?.created_at ? String(feedToken.created_at).slice(0, 10) : '';
+  // 还没签发:令牌槽的位置只放一枚「签发令牌」。原先是胶囊「未签发」+ 槽里「尚未签发」+ 一句指路,
+  // 同一件事写三遍,第一次签发的按钮还叫「重新生成」(issue #291)。
+  const unissued = !loading && !exists && !plainToken;
+  // 已有令牌时再生成会让旧的失效:后果在点下去的那一刻确认,不常驻在令牌下方。
+  const requestRotate = async () => {
+    if (exists && !(await confirm('重新生成后，旧令牌立即失效。继续？'))) return;
+    handleRotate();
+  };
 
   const handleReveal = () => {
     if (!plainToken) {
@@ -95,12 +106,13 @@ export default function FeedTokenSection({ showToast, isAdmin = false }) {
     <div>
       <div className="card-head">
         <span className="sett-lbl">个人聚合令牌</span>
-        <span className={`stamp ${exists ? 'stamp-ok' : 'stamp-idle'}`}>{exists ? '已签发' : '未签发'}</span>
       </div>
-      <p className="card-desc">{isAdmin
-        ? '管理员令牌不受订阅限制，一个令牌拉走全库内容，适合 RSS 工具与脚本；MCP 工具调用也共用它。'
-        : '一个令牌拉走你订阅的全部来源，适合 RSS 工具与脚本；MCP 工具调用也共用它。'}</p>
 
+      {unissued ? (
+        <button type="button" className="action-button action-button-primary min-h-[32px] px-3 text-xs" onClick={handleRotate} disabled={rotating}>
+          {rotating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />} 签发令牌
+        </button>
+      ) : (
       <div className="token-row">
         <span className="token-val" title={revealed && plainToken ? plainToken : undefined}>{displayVal}</span>
         <button type="button" className="copybtn" title={revealed ? '隐藏' : '显示'} onClick={handleReveal} disabled={!exists && !plainToken}>
@@ -109,15 +121,12 @@ export default function FeedTokenSection({ showToast, isAdmin = false }) {
         <button type="button" className="copybtn" title="复制令牌" onClick={handleCopyToken} disabled={!exists && !plainToken}>
           {copiedKey === 'feed-token' ? <Check /> : <Copy />}
         </button>
-        <button type="button" className="copybtn" title="重新生成（旧令牌立即失效）" onClick={handleRotate} disabled={rotating}>
+        <button type="button" className="copybtn" title="重新生成（旧令牌立即失效）" onClick={requestRotate} disabled={rotating}>
           {rotating ? <Loader2 className="animate-spin" /> : <RotateCw />}
         </button>
       </div>
-      <div className="token-meta">
-        {exists
-          ? `${issuedAt ? `签发于 ${issuedAt}，` : ''}重新生成会让旧令牌立即失效`
-          : '尚未签发，点上方「重新生成」创建你的第一个令牌'}
-      </div>
+      )}
+      {exists && issuedAt && <div className="token-meta">签发于 {issuedAt}</div>}
 
       <div className="endpoint">
         <span className="endpoint-method">GET</span>
@@ -140,7 +149,6 @@ export default function FeedTokenSection({ showToast, isAdmin = false }) {
           {copiedKey === 'feed-curl' ? <Check /> : <Copy />}
         </button>
       </div>
-      <p className="tiny-meta mt-2">把 <code className="font-mono">$DORAMI_TOKEN</code> 换成上方 dfeed_ 令牌；{isAdmin ? '管理员令牌不限订阅，返回全库内容。' : '只返回你已订阅来源的内容。'}</p>
 
       <details className="scope-note">
         <summary>接口参数</summary>

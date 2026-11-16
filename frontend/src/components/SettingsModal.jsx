@@ -23,20 +23,9 @@ import { GUEST_LOCKED_SECTIONS } from '../utils/guestCopy';
 // initialSection 供深链(读者轨底/头像入口直落对应分区)。
 // 外壳(遮罩关闭判定 / Esc / 焦点陷阱 / 滚动锁 / 退场动画)走共用 Modal(issue #104)。
 // 游客(issue #213):「账户」换游客卡 + 登录;OPML / 反馈 / 接入集成挂小锁,分区内容换登录入口,不发请求。
-const HINTS = {
-  account: '身份、头像与登录凭据',
-  appearance: '主题与动效',
-  reading: '标题语言等阅读偏好',
-  opml: '用 OPML 在哆啦美与其他阅读器之间迁移订阅',
-  feed: '一枚 dfeed_ 令牌与聚合拉取接口', // 角色差异(订阅范围/全库)在分区文案内分支
-  mcp: '把内容接进你的 Agent 工具',
-  skill: '装进 Agent 的每日资讯技能',
-  credentials: '对外访问机密的单点保管与编辑',
-  feedback: '把想法与问题告诉管理员',
-  about: '产品与账户信息',
-};
+// 页头只写分区名(issue #291):原先每个分区名后面跟一句副标题,十句都只是把分区名展开说一遍。
 
-export default function SettingsModal({ open, initialSection, onClose, theme, onThemeChange, runtimeInfo, readerSurface = false, username, avatar, onUserUpdated, onLogout, showToast, feedbackUnread = 0, onFeedbackSeen, onOpenAdminPodcast, onOpenAdminSync, onGuestLogin }) {
+export default function SettingsModal({ open, initialSection, onClose, theme, onThemeChange, runtimeInfo, readerSurface = false, username, avatar, onUserUpdated, onLogout, showToast, feedbackUnread = 0, onFeedbackSeen, onOpenAdminPodcast, onOpenAdminSync, onOpenAdminXQuota, onGuestLogin }) {
   const collectorEnabled = Boolean(runtimeInfo?.collector_enabled);
   const accountRole = runtimeInfo?.account_role;
   const isAdmin = accountRole === 'admin';
@@ -108,7 +97,6 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
 
   const activeSection = sections.find(s => s.id === active) || sections[0];
   const guestLocked = (id) => isGuest && Boolean(GUEST_LOCKED_SECTIONS[id]);
-  const headHint = isGuest && activeSection.id === 'account' ? '当前以游客身份浏览' : HINTS[activeSection.id];
 
   const navButton = (section) => (
     <button
@@ -138,13 +126,11 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
           ))}
           <div className="sett-nav-spacer" />
           {navButton(aboutItem)}
-          <div className="sett-nav-foot">{adminConsole ? '哆啦美 · 归档中枢' : '哆啦美 · AI 资讯阅读器'}</div>
         </nav>
 
         <div className="sett-body">
           <div className="sett-head">
             <span className="sett-head-title">{activeSection.label}</span>
-            <span className="sett-head-hint">{headHint}</span>
             <button onClick={onClose} className="icon-button ml-auto h-8 w-8" aria-label="关闭设置">
               <X className="h-4 w-4" />
             </button>
@@ -173,19 +159,20 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
               <OpmlSection showToast={showToast} />
             )}
             {activeSection.id === 'feed' && !isGuest && (
-              <FeedTokenSection showToast={showToast} isAdmin={adminConsole} />
+              <FeedTokenSection showToast={showToast} />
             )}
             {activeSection.id === 'mcp' && !isGuest && (
               <McpAccessSection
                 showToast={showToast}
                 canManage={adminConsole && collectorEnabled}
+                onOpenFeed={() => setActive('feed')}
               />
             )}
             {activeSection.id === 'skill' && !isGuest && (
-              <SkillSection />
+              <SkillSection showToast={showToast} />
             )}
             {activeSection.id === 'credentials' && adminConsole && (
-              <CredentialsSection showToast={showToast} onOpenAdminPodcast={onOpenAdminPodcast} onOpenAdminSync={onOpenAdminSync} />
+              <CredentialsSection showToast={showToast} onOpenAdminPodcast={onOpenAdminPodcast} onOpenAdminSync={onOpenAdminSync} onOpenAdminXQuota={onOpenAdminXQuota} />
             )}
             {activeSection.id === 'feedback' && !isGuest && (
               <FeedbackSection showToast={showToast} />

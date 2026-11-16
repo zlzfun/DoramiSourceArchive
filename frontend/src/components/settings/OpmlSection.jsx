@@ -245,7 +245,7 @@ export default function OpmlSection({ showToast }) {
         ? `，另有 ${result.skipped} 个非 RSS 来源未写入`
         : '';
       showToast(`已导出 ${result.exportable} 个 RSS 订阅${skipped}`, 'success');
-      setSummary({ exportable_count: result.exportable, skipped_count: result.skipped });
+      setSummary((prev) => ({ ...(prev || {}), exportable_count: result.exportable, skipped_count: result.skipped }));
     } catch (error) {
       showToast(error.message || '导出订阅失败', 'error');
     } finally {
@@ -303,25 +303,22 @@ export default function OpmlSection({ showToast }) {
 
   const exportable = summary?.exportable_count;
   const skipped = summary?.skipped_count;
+  const credentialed = summary?.credentialed_count || 0;
 
   return (
     <div className="opml-home">
       <div className="sett-row">
         <span className="sett-id">
           <span className="sett-lbl">导出我的订阅</span>
+          {/* 只留数字(issue #291):能导出几个、几个非 RSS 写不进去、几个地址里带凭据(导出文件里是明文) */}
           <div className="sett-sub">
-            生成 .opml 文件，可导入 Feedly、Reeder、Folo 等阅读器。文件含订阅地址，请妥善保管。
-            {summary && (
+            {summary ? (
               <>
-                <br />
-                <span className="sett-stat">{exportable} 个 RSS 源</span>
-                {' '}将导出
-                {skipped > 0 && (
-                  <>；X / 网页抓取等 {skipped} 个非 RSS 来源无法写入 OPML，已跳过</>
-                )}
+                <span className="sett-stat">{exportable} 个可导出</span>
+                {skipped > 0 && <> · {skipped} 个非 RSS 不含</>}
+                {credentialed > 0 && <> · {credentialed} 个地址带凭据</>}
               </>
-            )}
-            {!summary && <><br />正在统计可导出的订阅</>}
+            ) : '正在统计…'}
           </div>
         </span>
         <span className="sett-ctl">
@@ -337,10 +334,7 @@ export default function OpmlSection({ showToast }) {
         </span>
       </div>
       <div className="sett-row is-block">
-        <div className="sett-lbl">从 OPML 导入</div>
-        <div className="sett-sub opml-import-sub">
-          先预览每一条的处理结果，确认后才会订阅。已收录的来源直接订阅，新地址添加为只有你可见的自定源，内容随后自动抓取
-        </div>
+        <div className="sett-lbl opml-import-lbl">从 OPML 导入</div>
         <button
           type="button"
           className="sett-file"
@@ -351,9 +345,6 @@ export default function OpmlSection({ showToast }) {
           {previewing ? <Loader2 className="animate-spin" /> : <FileText />}
           <span className="min-w-0">
             <span className="sett-file-name">{previewing ? '正在核对每条地址' : '选择 OPML 文件'}</span>
-            <span className="sett-file-hint">
-              {previewing ? '确认前不会写入' : '支持 .opml / .xml，单次最多 200 条'}
-            </span>
           </span>
         </button>
         <input

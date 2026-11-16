@@ -1122,14 +1122,6 @@
 }
 .m-sett.is-scrolled .m-veil { opacity: 1; }
 .m-sett-list { padding: var(--m-head-clear) var(--m-gutter) calc(24px + var(--sab)); }
-/* 分区行说明(HINTS):右对齐灰签,放不下按省略截断,不挤压标签 */
-.m-sett-hint {
-  max-width: 46%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: right;
-}
 .m-row-badge {
   flex: none;
   min-width: 22px;
