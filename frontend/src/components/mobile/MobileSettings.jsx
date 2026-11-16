@@ -24,12 +24,6 @@ import { HeadBack, HeadTitle, MobileHeader } from './MobileHeader';
 // 门控按移动面口径:移动壳恒为阅读器界面,管理组(数据同步 / 凭据)不出现;反馈仅读者账号(同柜)。
 // 游客(issue #213)同桌面柜:资料卡换游客卡 + 登录,需要账号的分区挂小锁、进去是登录入口。
 // 反馈回复不外露(拍板 29):数字角标只在「反馈与建议」这一行,头像不挂点。
-const HINTS = {
-  account: '身份、头像与登录凭据',
-  reading: '标题语言等阅读偏好',
-  feedback: '把想法与问题告诉管理员',
-  about: '产品与账户信息',
-};
 const THEME_LABEL = { light: '亮色', dark: '暗色', system: '跟随系统' };
 
 export default function MobileSettings({
@@ -121,10 +115,11 @@ export default function MobileSettings({
     if (await confirm('确定退出登录？')) onLogout?.();
   };
 
-  const hintOf = (item) => {
+  // 行尾只放当前值(issue #291):外观 = 现在的主题,关于 = 版本号;其余行原先各有一句说明,删了。
+  const metaOf = (item) => {
     if (item.id === 'appearance') return THEME_LABEL[theme] || '';
-    if (isGuest && item.id === 'account') return '当前以游客身份浏览';
-    return HINTS[item.id] || '';
+    if (item.id === 'about') return runtimeInfo?.version || '';
+    return '';
   };
 
   const profile = isGuest ? (
@@ -223,7 +218,7 @@ export default function MobileSettings({
                           {feedbackUnread > 99 ? '99+' : feedbackUnread}
                         </span>
                       )}
-                      <span className="m-row-meta m-sett-hint">{hintOf(item)}</span>
+                      {metaOf(item) && <span className="m-row-meta">{metaOf(item)}</span>}
                       {guestLocked(item.id) && <Lock className="m-row-lock" aria-label="需要登录" />}
                       <span className="m-row-chev" aria-hidden="true"><ChevronRight /></span>
                     </button>

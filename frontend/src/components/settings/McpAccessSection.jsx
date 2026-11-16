@@ -15,7 +15,7 @@ const TOOLS = [
   },
   {
     name: 'browse_articles',
-    desc: '按来源 / 类型 / 日期区间条件过滤浏览，传入 dfeed_ 后限定到你的订阅范围。',
+    desc: '按来源 / 类型 / 日期区间条件过滤浏览。',
     params: 'source_id?, content_type?, publish_date_start?, publish_date_end?, has_content?, limit?, skip?, subscription_token?',
   },
   {
@@ -44,7 +44,7 @@ const FORMAT_TARGETS = {
   claude: ['Claude Code', 'Claude Desktop', 'Cursor', 'Windsurf', 'Cline'],
   opencode: ['OpenCode'],
   codex: ['Codex CLI'],
-  url: ['Claude.ai Projects', 'Coze'],
+  url: ['Claude.ai Projects', 'Coze', 'streamable-HTTP 客户端'],
 };
 
 /** 复制小钮：图标随复制状态在 Copy / Check 间切换。 */
@@ -68,7 +68,7 @@ function CopyBtn({ text, label, copiedKey, itemKey, onCopy, title }) {
  * canManage（管理台界面的 admin）时头部渲染启停 switch（switch 即状态，替代状态章）。
  * 读者观感（含 admin 在阅读器界面）：无开关、无管理面文案，「启停与取数范围」走读者版说明。
  */
-export default function McpAccessSection({ showToast, canManage = false }) {
+export default function McpAccessSection({ showToast, canManage = false, onOpenFeed }) {
   const [status, setStatus] = useState(null);
   const [codeKind, setCodeKind] = useState('claude');   // claude | opencode | codex | url
   const [stoppedConfigOpen, setStoppedConfigOpen] = useState(false);  // 停止时接入配置默认折叠
@@ -177,15 +177,6 @@ export default function McpAccessSection({ showToast, canManage = false }) {
           {...copyProps}
         />
       </div>
-      {codeKind === 'codex' ? (
-        <p className="tiny-meta mt-2">
-          <code className="font-mono">bearer_token_env_var</code> 填的是<b>环境变量名</b>：把「聚合接口」页的 dfeed_ 令牌 export 到该变量即可，令牌值不落配置文件。
-        </p>
-      ) : codeKind !== 'url' && (
-        <p className="tiny-meta mt-2">
-          把 <code className="font-mono">Authorization</code> 里的 <code className="font-mono">dfeed_你的令牌</code> 换成「聚合接口」页的 dfeed_ 令牌（或单订阅 <code className="font-mono">dsub_</code>）；连接后按你的订阅范围自动过滤。字段名随客户端而异，请以其文档为准。
-        </p>
-      )}
     </>
   );
 
@@ -222,7 +213,6 @@ export default function McpAccessSection({ showToast, canManage = false }) {
           </span>
         )}
       </div>
-      <p className="card-desc">标准 Model Context Protocol 端点，Agent 直接调用内容的检索与浏览工具。</p>
 
       {enabled ? configBlock : (
         <>
@@ -242,16 +232,19 @@ export default function McpAccessSection({ showToast, canManage = false }) {
       )}
 
       {/* 适用面随所选格式联动(mcpServers JSON ≠ 万能:Codex 走 TOML、OpenCode 自成一格) */}
+      {/* 这一格式能用在哪些客户端(数据);令牌在「聚合接口」分区,给一枚直达的链接,不写一句话指路(issue #291) */}
       <div className="targets">
-        {codeKind === 'url' ? '在线接入' : '本格式适用'}
         {(FORMAT_TARGETS[codeKind] || FORMAT_TARGETS.claude).map(t => <span key={t} className="target-chip">{t}</span>)}
-        {codeKind === 'url' && <>· 及任何支持 streamable-HTTP 的 MCP 客户端</>}
+        {onOpenFeed && (
+          <button type="button" className="sett-link inline-flex items-center gap-0.5" style={{ marginLeft: 'auto' }} onClick={onOpenFeed}>
+            聚合接口令牌 <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
 
       <div className="tools-head">
         <span className="tools-title">可用工具</span>
         <span className="tools-n">{TOOLS.length}</span>
-        <span className="zone-hint" style={{ marginLeft: 'auto' }}>传入 dfeed_ 令牌即限定到订阅范围</span>
       </div>
       <div className="tools">
         {TOOLS.map(tool => (

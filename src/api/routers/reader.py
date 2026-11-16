@@ -1593,12 +1593,13 @@ def _reader_opml_plan(request: Request, session: Session):
 
 @router.get("/sources/opml")
 def reader_opml_summary(request: Request, session: Session = Depends(deps.get_session)):
-    """当前读者可导出的 RSS 数量,以及无法写入 OPML 的非 RSS 订阅数。"""
+    """当前读者可导出的 RSS 数量、无法写入 OPML 的非 RSS 订阅数,以及导出地址里带凭证的条数。"""
     plan = _reader_opml_plan(request, session)
     return JSONResponse(
         {
             "exportable_count": plan["exportable_count"],
             "skipped_count": plan["skipped_count"],
+            "credentialed_count": plan["credentialed_count"],
         },
         headers={"Cache-Control": "private, no-store"},
     )
@@ -1616,6 +1617,7 @@ def export_reader_opml(request: Request, session: Session = Depends(deps.get_ses
             "Content-Disposition": 'attachment; filename="dorami-subscriptions.opml"',
             "X-Dorami-Opml-Exportable": str(plan["exportable_count"]),
             "X-Dorami-Opml-Skipped": str(plan["skipped_count"]),
+            "X-Dorami-Opml-Credentialed": str(plan["credentialed_count"]),
             "Cache-Control": "private, no-store",
         },
     )
