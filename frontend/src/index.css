@@ -13471,6 +13471,158 @@ input[type="radio"] {
 .reader-social.is-page .reader-social-side .reader-source-scroll { padding-bottom: 12px; }   /* 播放条的留白已经算在页边的限高里 */
 .reader-social.is-page .reader-social-side .reader-src-head { display: none; }   /* 页名已经写了「社交媒体」 */
 
+/* ════════════════════════════════════════════════════════════════════
+   阅读窗(issue #279 第三批):吸顶栏收动作、标题区三行、AI 速读卡两种摆法与页边、来源栏可收起。
+   全部锚在桌面壳才有的容器上(.reader-shell / .reader-col-read / .reader-col-list / .reader-sources-inner),
+   手机壳共用的 .reader-pane-* / .reader-ai-* 规则一条没动。
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ── 来源栏:栏头一行(栏名 + 小号轴分段 + 收起钮),52px,与列表栏头同高 ── */
+.reader-shell.is-src-folded { grid-template-columns: var(--vrail) var(--col-m) minmax(0, 1fr); }
+.reader-sources-inner > .reader-src-head,
+.reader-sources-inner > .reader-src-head.is-axis { flex: none; flex-direction: row; align-items: center; gap: 4px; height: 52px; padding: 0 6px 0 16px; }
+.reader-sources-inner > .reader-src-head .reader-src-title { flex: 1; min-width: 0; font-size: 15px; letter-spacing: 0; }
+/* 轴分段并入栏名行:与列表栏头的「全部 | 未读」同一档(只写字,不带图标) */
+.reader-sources-inner > .reader-src-head .reader-axis { flex: none; background: var(--dorami-well); }
+.reader-sources-inner > .reader-src-head .reader-axis-btn { flex: none; height: 22px; padding: 0 8px; }
+.reader-sources-inner > .reader-src-head .reader-axis-btn svg { display: none; }
+.reader-src-fold {
+  flex: none; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--r-control);
+  background: none; color: var(--dorami-muted); cursor: pointer; transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+}
+.reader-src-fold svg { width: 18px; height: 18px; }
+@media (hover: hover) { .reader-src-fold:hover { background: var(--dorami-hover); color: var(--dorami-ink); } }
+/* 首行「全部订阅 / 全部兴趣」:与来源行同一种画法,图标占徽标的位置 */
+.reader-src-allico { flex: none; display: grid; place-items: center; width: 20px; height: 20px; color: var(--dorami-muted); }
+.reader-src-allico svg { width: 16px; height: 16px; }
+.reader-source-row-active .reader-src-allico { color: var(--dorami-ink-2); }
+
+/* ── 列表栏头:范围名 15/600;来源栏收起时它是下拉 ── */
+.reader-col-list .reader-list-inner { position: relative; }
+.reader-col-list .reader-list-title { font-size: 15px; }
+.reader-scope-btn {
+  flex: 0 1 auto; display: inline-flex; align-items: center; gap: 4px; height: 32px; margin: 0 auto 0 -8px; padding: 0 6px 0 8px;
+  border: 0; border-radius: var(--r-control); background: none; cursor: pointer; text-align: left;
+  transition: background var(--motion-fast) var(--motion-ease);
+}
+.reader-scope-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reader-scope-btn svg { flex: none; width: 16px; height: 16px; color: var(--dorami-muted); transition: transform var(--motion-fast) var(--motion-ease); }
+.reader-scope-btn[aria-expanded="true"] { background: var(--dorami-hover); }
+.reader-scope-btn[aria-expanded="true"] svg { transform: rotate(180deg); }
+@media (hover: hover) { .reader-scope-btn:hover { background: var(--dorami-hover); } }
+.reader-srcpop {
+  position: absolute; z-index: 30; top: 48px; left: 8px; width: 272px; max-height: min(calc(var(--vh-full) * 0.7), 560px);
+  display: flex; flex-direction: column; overflow: hidden; border-radius: var(--r-card); background: var(--dorami-surface); box-shadow: var(--sh-3);
+}
+[data-theme="dark"] .reader-srcpop { background: var(--dorami-raised); }
+.reader-srcpop .reader-sources-inner { flex: 0 1 auto; width: auto; height: auto; }
+.reader-srcpop .reader-source-scroll { padding: 0 6px 8px; }
+/* 预览未订阅的来源:栏头下一枚小钮 */
+.reader-list-sub { flex: none; padding: 0 16px 12px; }
+.reader-shell .reader-pane-sub { height: 28px; margin-left: 0; padding: 0 10px 0 8px; border-radius: var(--r-control); font-size: 13px; }
+
+/* ── 吸顶栏:左来源名或「返回」,右是关于这篇的全部动作 ── */
+.reader-col-read { container: reader-read / inline-size; }
+/* 整栏允许折行:阅读列窄、左端又是「返回 / 下一条」时,右侧的动作组整体落到第二行(右对齐),不互相压住 */
+.reader-col-read .reader-pane-bar { flex: none; flex-wrap: wrap; height: auto; min-height: 52px; gap: 0 2px; padding: 0 12px 0 20px; }
+.reader-pane-acts { flex: none; display: flex; align-items: center; gap: 2px; min-height: 40px; margin-left: auto; }
+.reader-pane-trail { flex: 1 0 auto; display: flex; align-items: center; gap: 2px; min-height: 40px; margin-left: -10px; }   /* 不收缩:放不下就让动作组换行 */
+.reader-pane-back,
+.reader-pane-next {
+  display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 10px 0 6px; border: 0; border-radius: var(--r-control);
+  background: none; font-size: 13px; color: var(--dorami-ink-2); white-space: nowrap; cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+}
+.reader-pane-next { padding: 0 6px 0 10px; color: var(--dorami-muted); }
+.reader-pane-next small { font-size: 12px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.reader-pane-back svg, .reader-pane-next svg { flex: none; width: 16px; height: 16px; }
+@media (hover: hover) { .reader-pane-back:hover, .reader-pane-next:hover { background: var(--dorami-hover); color: var(--dorami-ink); } }
+.reader-col-read .reader-pane-bar .reader-tr-seg { flex: none; margin-right: 6px; font-size: 12px; font-weight: 600; }
+.reader-col-read .reader-pane-bar .reader-pane-act {
+  flex: none; height: 32px; gap: 4px; margin-right: 2px; padding: 0 10px; border-radius: var(--r-control);
+  font-size: 13px; font-weight: 400; color: var(--dorami-ink-2); white-space: nowrap;
+  transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+}
+.reader-col-read .reader-pane-bar .reader-pane-act svg { width: 14px; height: 14px; }
+@media (hover: hover) { .reader-col-read .reader-pane-bar .reader-pane-act:hover { background: var(--dorami-hover); color: var(--dorami-ink); text-decoration: none; } }
+
+/* ── 正文一栏 664;标题区三行,与速读卡之间不再画线 ── */
+.reader-col-read .reader-pane { padding: 40px 40px max(120px, var(--player-clear-end, 0px)); }
+.reader-col-read .reader-doc { max-width: 664px; margin: 0 auto; }
+.reader-col-read .reader-pane-head { max-width: none; margin: 0; padding-bottom: 0; border-bottom: 0; }
+.reader-col-read .reader-kicker { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+.reader-col-read .reader-kicker .podcast-premium-badge { letter-spacing: 0; }
+.reader-col-read .reader-pane-title { line-height: 1.3; }
+.reader-col-read .reader-pane-body { max-width: none; margin: 0; }
+.reader-col-read .reader-pane-body > :first-child:not(.reader-ai-summary) { margin-top: 28px; }
+.reader-col-read .reader-pager { max-width: none; margin: 40px 0 0; padding-top: 24px; border-top-color: var(--dorami-border-soft); }
+.reader-pane-listen { margin-top: 20px; }
+.reader-pane-tags-solo { margin: 16px 0 0; }
+.reader-pane-tags-solo .reader-pane-tags, .reader-ai-foot .reader-pane-tags, .reader-side-blk .reader-pane-tags { margin-top: 0; }
+/* 播客:封面在标题左边,收听入口另起一行 */
+.reader-col-read .reader-pane-head.is-podcast:has(.reader-pane-cover) { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 0 20px; }
+.reader-col-read .reader-pane-head.is-podcast:has(.reader-pane-cover) > * { grid-column: 2; min-width: 0; }
+.reader-col-read .reader-pane-head.is-podcast > .reader-pane-cover { grid-column: 1; grid-row: 1 / span 4; width: 96px; height: 96px; border-radius: var(--r-card); overflow: hidden; }
+.reader-col-read .reader-pane-head.is-podcast > .reader-pane-listen { grid-column: 1 / -1; }
+.reader-col-read .reader-pane-head.is-podcast .reader-pane-title { margin-top: 6px; font-size: 24px; line-height: 1.45; }
+
+/* ── AI 速读卡(桌面):一句一段;卡头并排两个维度,点开看依据;标签住卡脚 ── */
+.reader-ai-summary.is-page { margin: 20px 0 32px; padding: 12px 20px 16px; }
+.reader-ai-summary.is-page .reader-ai-card-head { flex-wrap: wrap; gap: 4px 8px; min-height: 28px; margin: 0 0 6px; }   /* 窄列放不下时「听导读」折到第二行右端 */
+.reader-ai-grow { flex: 1; }
+.reader-ai-dims {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 6px 0 8px; border: 0; border-radius: var(--r-control);
+  background: none; font-size: 12px; color: var(--dorami-muted); cursor: pointer; transition: background var(--motion-fast) var(--motion-ease);
+}
+.reader-ai-dims:disabled { cursor: default; }
+.reader-ai-dims[aria-expanded="true"] { background: var(--dorami-hover); }
+@media (hover: hover) { .reader-ai-dims:not(:disabled):hover { background: var(--dorami-hover); } }
+.reader-ai-dim { display: inline-flex; align-items: baseline; gap: 6px; margin-right: 6px; }
+.reader-ai-dim-v, .reader-side-minor { font-family: var(--font-score); font-size: 17px; font-weight: 600; line-height: 1; font-variant-numeric: lining-nums tabular-nums; }
+.reader-ai-dims svg { width: 14px; height: 14px; color: var(--dorami-faint); transition: transform var(--motion-fast) var(--motion-ease); }
+.reader-ai-dims[aria-expanded="true"] svg { transform: rotate(180deg); }
+.reader-ai-why { display: flex; flex-wrap: wrap; gap: 0 24px; margin: 0 0 12px; padding: 0 0 12px; border-bottom: 1px solid var(--dorami-border-soft); }
+.reader-ai-why-item { flex: 1 1 0; min-width: 0; }
+.reader-ai-why-k, .reader-side-k { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; color: var(--dorami-faint); }
+.reader-ai-summary .reader-ai-why p, .reader-pane-side .reader-side-blk p { margin: 4px 0 0; font-size: 13px; line-height: 1.7; color: var(--dorami-muted); }
+.reader-ai-summary .reader-ai-why p.reader-ai-why-basis { flex: 1 0 100%; }
+.reader-ai-summary .reader-ai-why p.reader-ai-why-basis, .reader-pane-side .reader-side-blk p.reader-ai-why-basis { color: var(--dorami-faint); }
+.reader-ai-summary.is-page .reader-ai-summary-main { margin-top: 0; }
+.reader-ai-summary.is-page .reader-ai-layer { gap: 5px; }
+.reader-ai-summary.is-page .reader-ai-layer-text { text-wrap: pretty; }
+.reader-ai-summary.is-page .listen-entries { flex: 0 1 auto; min-width: 0; margin-left: auto; flex-wrap: nowrap; flex-direction: row-reverse; }
+.reader-ai-summary.is-page .listen-note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reader-ai-foot { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--dorami-border-soft); }
+
+/* ── 页边:阅读窗够宽(正文 664 + 页边 200 + 留白)才出;出了以后分数、依据、标签都在这里,卡里只剩速读 ── */
+.reader-pane-side { display: none; }
+.reader-side-blk { margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--dorami-border-soft); }
+.reader-side-blk:last-child { margin-bottom: 0; padding-bottom: 0; border-bottom: 0; }
+.reader-side-k { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.reader-side-minor { letter-spacing: 0; }
+/* 页边窄:标签一行一个,不用行内的中点分隔(折行后中点会落在行首) */
+.reader-pane-side .reader-pane-tags { flex-direction: column; align-items: flex-start; gap: 6px 0; }
+.reader-pane-side .reader-pane-tags .reader-tag-chip + .reader-tag-chip::before { content: none; }
+.reader-side-score { margin: 8px 0 10px; font-family: var(--font-score); font-size: 44px; font-weight: 600; line-height: 1; letter-spacing: -0.02em; font-variant-numeric: lining-nums tabular-nums; }
+/* 阅读列很窄(1100 屏来源栏展开时只有 432):留白收一档;再窄「查看原文」只留图标 */
+@container reader-read (max-width: 560px) {
+  .reader-col-read .reader-pane { padding-left: 24px; padding-right: 24px; }
+}
+@container reader-read (max-width: 400px) {
+  .reader-col-read .reader-pane-bar .reader-pane-act { width: 32px; padding: 0; justify-content: center; }
+  .reader-col-read .reader-pane-bar .reader-pane-act span { display: none; }
+}
+@container reader-read (min-width: 992px) {
+  .reader-col-read .reader-doc { display: grid; grid-template-columns: minmax(0, 664px) 200px; gap: 0 48px; max-width: 912px; }
+  .reader-doc > * { grid-column: 1; min-width: 0; }
+  .reader-doc > .reader-pane-side { display: block; grid-column: 2; grid-row: 1 / span 4; align-self: start; position: sticky; top: 0; padding-top: 4px; }
+  .reader-ai-summary.is-page .reader-ai-dims,
+  .reader-ai-summary.is-page .reader-ai-why,
+  .reader-ai-summary.is-page .reader-ai-foot,
+  .reader-ai-summary.is-page.is-bare,
+  .reader-pane-tags-solo { display: none; }
+}
+
 .reader-ann-band {
   position: absolute;
   top: 14px;
@@ -14317,44 +14469,6 @@ input[type="radio"] {
 .brief-state.is-error { color: var(--state-bad); }
 .brief-state .action-button { margin-top: 6px; }
 
-/* ── 早报外出返回带(阅读窗顶部,issue #23 三稿)──
-   wash 底 + accent-ink 字:这一程是从早报出来的;左返回、右下一条,字号写容器(button{font:inherit}(#184 已退役))。 */
-.reader-brief-trail {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  height: 34px;
-  padding: 0 14px;
-  border-bottom: 1px solid var(--dorami-border-soft);
-  background: var(--dorami-wash);
-  color: var(--dorami-accent-ink);
-  font-size: 12px;
-  font-weight: 400;
-}
-.reader-brief-trail-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  height: 26px;
-  padding: 0 8px;
-  border-radius: var(--r-control);
-  color: inherit;
-  transition: background var(--motion-fast) ease;
-}
-.reader-brief-trail-btn:hover { background: color-mix(in srgb, var(--dorami-accent) 12%, transparent); }
-.reader-brief-trail-btn svg { flex: none; width: 14px; height: 14px; }
-.reader-brief-trail-btn small { font-size: 12px; font-weight: 400; color: var(--dorami-muted); font-variant-numeric: tabular-nums; }
-.reader-brief-trail-btn.is-next small { margin-left: 2px; }
-.reader-brief-trail-end { font-size: 12px; font-weight: 400; color: var(--dorami-faint); }
-/* 从榜单返回(issue #221):只有左侧一枚,标签可能是一整句事件标题——按钮可占满整条,标签单行截断 */
-.reader-brief-trail-btn.is-wide { max-width: 100%; }
-.reader-brief-trail-btn.is-wide > span { flex: none; }
-.reader-brief-trail-btn.is-wide small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 阅读进度线锚在栏顶;有返回带时压到带下缘 */
-.reader-brief-trail + .reader-progress { top: 34px; }
 /* ≤1024 时 ReaderWorkspace 经 useCompactLayout 换成移动壳(MobileReader),桌面阅读器壳不渲染;
    这条只在桌面壳被强行渲染(窄窗口调试)时兜底:单列网格里 .bp-sheet 的 2/-1 会挤出隐式列,故取消跨列 */
 @variant bp-shell {

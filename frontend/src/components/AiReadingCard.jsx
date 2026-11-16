@@ -1,10 +1,12 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { ChevronDown } from 'lucide-react';
 import {
   podcastReaderBasisText,
   scoreDimensions,
   scoreDisclaimer,
   scoreTierClass,
 } from '../utils/analysis';
+import { splitSentences } from '../utils/readerText';
 import { motionReduced } from '../motion';
 
 /**
@@ -27,8 +29,139 @@ import { motionReduced } from '../motion';
  * 翻面看评分依据」的交互随之退役。正文区承接速读、骨架与生成入口。桌面与移动壳共用。
  *
  * 文章听导读与 AI 速读同卡呈现,音轨仍使用全局播放条(issue #238)。
+ *
+ * 桌面阅读窗(issue #279 第三批)传 page:速读一句一段;卡头并排写两个维度的分,点一下展开两句依据(不再靠悬停);
+ * 标签住卡脚。阅读窗够宽时分数、依据、标签改排在正文右边的页边(ScoreMargin),卡里只剩速读——两种摆法由
+ * 容器宽度在 CSS 里切换,两份标记都在。手机壳不传 page,仍是上面那张卡。
  */
-export default function AiReadingCard({
+export default function AiReadingCard(props) {
+  return props.page ? <PageCard {...props} /> : <ClassicCard {...props} />;
+}
+
+const WHY_KEY = 'dorami-reader-score-why';
+const readWhy = () => { try { return window.localStorage.getItem(WHY_KEY) === '1'; } catch { return false; } };
+const writeWhy = (open) => { try { window.localStorage.setItem(WHY_KEY, open ? '1' : ''); } catch { /* 隐私模式:本次会话内有效 */ } };
+
+/** 两个维度各一句依据;免责句是悬停提示(原先在分数的悬停浮层里),播客另写一行评分基于什么。 */
+function ScoreReasons({ dims, basis, id, className }) {
+  return (
+    <div className={className} id={id}>
+      {dims.map((dim) => (
+        <div key={dim.key} className="reader-ai-why-item">
+          <div className="reader-ai-why-k" title={scoreDisclaimer(dim.key)}>{dim.label}</div>
+          {dim.reason && <p>{dim.reason}</p>}
+        </div>
+      ))}
+      {basis && <p className="reader-ai-why-basis">{basis}</p>}
+    </div>
+  );
+}
+
+function PageCard({
+  article,
+  summary,
+  summarizing,
+  canGenerate,
+  onGenerate,
+  podcast = false,
+  listen = null,
+  tags = null,
+}) {
+  const dims = scoreDimensions(article);
+  const reason = (article?.score_reason || '').trim();
+  const basis = podcast ? podcastReaderBasisText(article) : '';
+  // 同步来的权威初评理论上包含摘要,但即使旧 / 异常数据只有分数理由,也不能把理由藏掉(同 ClassicCard)。
+  const primaryText = summary || (podcast ? reason : '');
+  const primaryTitle = !summary && podcast && reason ? '评分参考' : 'AI 速读';
+  // 播客无摘要时理由已作正文,依据里不再重复
+  const shownDims = podcast && !summary ? dims.map((dim) => ({ ...dim, reason: '' })) : dims;
+  const hasWhy = shownDims.some((dim) => dim.reason) || Boolean(basis);
+  const [why, setWhy] = useState(readWhy);
+  const whyId = useId();
+  const paragraphs = primaryText ? splitSentences(primaryText) : [];
+  const bare = !primaryText && !summarizing && !canGenerate && !listen;
+  return (
+    <div className={`reader-ai-summary is-page ${bare ? 'is-bare' : ''}`}>
+      <div className="reader-ai-card-head">
+        <span className="reader-ai-layer-title">{primaryTitle}</span>
+        <span className="reader-ai-grow" />
+        {dims.length > 0 && (
+          <button
+            type="button"
+            className="reader-ai-dims"
+            aria-expanded={hasWhy ? why : undefined}
+            aria-controls={hasWhy && why ? whyId : undefined}
+            disabled={!hasWhy}
+            onClick={() => { const next = !why; setWhy(next); writeWhy(next); }}
+          >
+            {dims.map((dim) => (
+              <span key={dim.key} className="reader-ai-dim">
+                <span className="reader-ai-dim-k">{dim.label}</span>
+                <span className={`reader-ai-dim-v ai-grad-text ${scoreTierClass(dim.value)}`}>{dim.text}</span>
+              </span>
+            ))}
+            {hasWhy && <ChevronDown aria-hidden="true" />}
+          </button>
+        )}
+        {listen}
+      </div>
+      {why && hasWhy && <ScoreReasons dims={shownDims} basis={basis} id={whyId} className="reader-ai-why" />}
+      <div className="reader-ai-summary-main">
+        {paragraphs.length > 0 ? (
+          <div className="reader-ai-layer reader-ai-layer-summary">
+            {paragraphs.map((text, index) => <p key={index} className="reader-ai-layer-text">{text}</p>)}
+          </div>
+        ) : summarizing ? (
+          <div className="reader-ai-summary-skel" role="status" aria-label="正在生成速读">
+            <span className="skeleton" /><span className="skeleton" /><span className="skeleton" />
+          </div>
+        ) : canGenerate ? (
+          <button type="button" onClick={onGenerate} className="reader-ai-summary-generate">
+            {podcast ? '生成本期要点速读' : '生成本文要点速读'}
+          </button>
+        ) : null}
+      </div>
+      {tags && <div className="reader-ai-foot">{tags}</div>}
+    </div>
+  );
+}
+
+/**
+ * 页边(issue #279 第三批):关于这篇的话——主分(44px,里程表入场)与依据、另一个维度、标签。
+ * 只在阅读窗够宽时出现(容器查询,见 index.css「阅读窗页边」),窄时这些内容在速读卡的卡头与卡脚。
+ */
+export function ScoreMargin({ article, podcast = false, tags = null }) {
+  const dims = scoreDimensions(article);
+  const [first, second] = dims;
+  const basis = podcast ? podcastReaderBasisText(article) : '';
+  if (!first && !tags) return null;
+  return (
+    <aside className="reader-pane-side" aria-label="评分与标签">
+      {first && (
+        <div className="reader-side-blk">
+          <div className="reader-side-k" title={scoreDisclaimer(first.key)}>{first.label}</div>
+          <div className="reader-side-score" role="img" aria-label={`${first.label} ${first.text}`}>
+            <Odometer key={article.id} score={first.text} tierClass={scoreTierClass(first.value)} />
+          </div>
+          {first.reason && <p>{first.reason}</p>}
+          {basis && <p className="reader-ai-why-basis">{basis}</p>}
+        </div>
+      )}
+      {second && (
+        <div className="reader-side-blk is-minor">
+          <div className="reader-side-k" title={scoreDisclaimer(second.key)}>
+            {second.label}
+            <span className={`reader-side-minor ai-grad-text ${scoreTierClass(second.value)}`}>{second.text}</span>
+          </div>
+          {second.reason && <p>{second.reason}</p>}
+        </div>
+      )}
+      {tags && <div className="reader-side-blk">{tags}</div>}
+    </aside>
+  );
+}
+
+function ClassicCard({
   article,
   summary,
   summarizing,
@@ -140,6 +273,21 @@ const DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
 
 /** 衬线渐变大数字:里程表式入场(每位数字在定宽格内滑到位),有两个分时点按切换维度(数字滑到另一个值)。 */
 function ScoreFigure({ score, tierClass = '', interactive, label, describedBy, onToggle }) {
+  return (
+    <button
+      type="button"
+      className={`reader-ai-score-btn ${interactive ? 'is-interactive' : ''}`}
+      aria-label={label}
+      aria-describedby={describedBy}
+      onClick={() => { if (interactive) onToggle?.(); }}
+    >
+      <Odometer score={score} tierClass={tierClass} />
+    </button>
+  );
+}
+
+/** 里程表数字本体(不带按钮):速读卡的分数钮与桌面页边的主分共用。 */
+function Odometer({ score, tierClass = '' }) {
   const reduced = motionReduced();
   // 先以 0 挂载,下一帧再落到目标值,让 CSS transition 接管滑动;减少动画时直落。
   const [armed, setArmed] = useState(reduced);
@@ -151,13 +299,6 @@ function ScoreFigure({ score, tierClass = '', interactive, label, describedBy, o
 
   const chars = String(score);
   return (
-    <button
-      type="button"
-      className={`reader-ai-score-btn ${interactive ? 'is-interactive' : ''}`}
-      aria-label={label}
-      aria-describedby={describedBy}
-      onClick={() => { if (interactive) onToggle?.(); }}
-    >
       <span className="reader-ai-odo" aria-hidden="true">
         {chars.split('').map((ch, i) => {
           if (ch === '.') return <span key={i} className={`reader-ai-odo-dot ai-grad-text ${tierClass}`}>.</span>;
@@ -175,6 +316,5 @@ function ScoreFigure({ score, tierClass = '', interactive, label, describedBy, o
           );
         })}
       </span>
-    </button>
   );
 }

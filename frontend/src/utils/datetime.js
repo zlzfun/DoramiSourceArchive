@@ -44,8 +44,23 @@ export function formatPublishDate(value, fallback = '') {
   return formatLocal(raw, false);
 }
 
+// 读者面桌面的日期写法(issue #279 第三批):「11月10日 07:14」,跨年才带年份;没有真实时刻的只写到日。
+// 连字符写法是给台账看的;读者面桌面逐处往这个写法收(社交流 / 早报 / 榜单还没收)。withYear 用于悬停提示(总是带年份)。
+export function formatReaderDate(value, { withYear = false, fallback = '' } = {}) {
+  if (!value) return fallback;
+  const raw = String(value);
+  const bare = lacksRealTime(raw);
+  // 没有真实时刻的值按字面日期取,不过时区(同 formatPublishDate:换算会把日期推到前一天)
+  const d = bare ? new Date(`${raw.substring(0, 10)}T00:00:00`) : new Date(Date.parse(raw));
+  if (Number.isNaN(d.getTime())) return raw.substring(0, 10) || fallback;
+  const year = withYear || d.getFullYear() !== new Date().getFullYear() ? `${d.getFullYear()}年` : '';
+  const day = `${year}${d.getMonth() + 1}月${d.getDate()}日`;
+  return bare ? day : `${day} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
 // ISO 字符串 → 相对时间（刚刚 / N 分钟前 / N 小时前 / N 天前 / MM-DD / YYYY-MM-DD）。
-export function formatRelativeTime(value, fallback = '从未运行') {
+// cn:七天以外写「11月3日」/「2025年11月3日」(读者面桌面,issue #279 第三批);缺省仍是连字符写法(管理面、手机壳)。
+export function formatRelativeTime(value, fallback = '从未运行', { cn = false } = {}) {
   if (!value) return fallback;
   const ts = Date.parse(value);
   if (Number.isNaN(ts)) return formatDateTime(value, fallback);
@@ -55,6 +70,7 @@ export function formatRelativeTime(value, fallback = '从未运行') {
   if (diffSec < 86400) return `${Math.floor(diffSec / 3600)} 小时前`;
   if (diffSec < 86400 * 7) return `${Math.floor(diffSec / 86400)} 天前`;
   const d = new Date(ts);
+  if (cn) return `${d.getFullYear() === new Date().getFullYear() ? '' : `${d.getFullYear()}年`}${d.getMonth() + 1}月${d.getDate()}日`;
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const dd = String(d.getDate()).padStart(2, '0');
   if (d.getFullYear() === new Date().getFullYear()) return `${mm}-${dd}`;
