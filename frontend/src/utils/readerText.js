@@ -99,3 +99,27 @@ export function splitSentences(text) {
   }
   return out;
 }
+
+// 大字标题的标点挤压(issue #279 第五批):全角标点的字面只占半个字宽,另一半是空的——正文里这半个字的空是呼吸,
+// 放到 30px 以上的标题里就是一个洞(「掀桌！从 0 造」中间像空了一格)。把标题拆成「文字 / 收尾标点 / 起首标点」三种片段,
+// 由显示层给标点收掉空的那一半。只拆不改:片段拼回去与原文逐字相等。句末的收尾标点不收(后面没有字,收了右缘会缺一块)。
+const PUNCT_CLOSE = '，。、；：！？」』）》”’';   // 成对标点的收尾一侧也收,两侧才对称
+const PUNCT_OPEN = '「『（《“‘';
+
+// keepTail:文本末尾的收尾标点不收(缺省)。标题被切成块分别处理时,只有最后一块才需要保留。
+export function punctParts(text, { keepTail = true } = {}) {
+  const src = String(text || '');
+  const parts = [];
+  let buf = '';
+  const flush = () => { if (buf) { parts.push({ text: buf, kind: '' }); buf = ''; } };
+  for (let i = 0; i < src.length; i += 1) {
+    const ch = src[i];
+    const kind = PUNCT_CLOSE.includes(ch) ? 'close' : PUNCT_OPEN.includes(ch) ? 'open' : '';
+    if (!kind || (keepTail && kind === 'close' && i === src.length - 1)) { buf += ch; continue; }
+    flush();
+    parts.push({ text: ch, kind });
+  }
+  flush();
+  return parts;
+}
+

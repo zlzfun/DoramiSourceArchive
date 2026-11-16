@@ -29,6 +29,7 @@ import { displayTitle, titleView } from '../utils/titleDisplay';
 import { useTitlePreference } from '../hooks/useTitlePreference';
 import { podcastReaderBasisText, qualityScoreText, scoreTierClass } from '../utils/analysis';
 import { latinLang } from '../utils/readerText';
+import DisplayTitle from './DisplayTitle';
 import { formatPublishDateTime, formatRelativeTime } from '../utils/datetime';
 import { SOURCE_ROLES, resolveCompany } from '../sourceTaxonomy';
 import LogoMark from './LogoMark';
@@ -236,7 +237,7 @@ function EventDetailHead({ detail, titleRef = null, rankOnly = false }) {
       {(rankOnly ? eventRankNote(detail.range, rank) : eventKicker(detail.range, rank)) && (
         <p className="rk-kicker">{rankOnly ? eventRankNote(detail.range, rank) : eventKicker(detail.range, rank)}</p>
       )}
-      <h2 className="rk-dtitle" lang={latinLang(shown.title)} ref={titleRef} tabIndex={titleRef ? -1 : undefined}>{shown.title}</h2>
+      <h2 className="rk-dtitle" lang={latinLang(shown.title)} ref={titleRef} tabIndex={titleRef ? -1 : undefined}>{rankOnly ? <DisplayTitle text={shown.title} /> : shown.title}</h2>
       {meta.length > 0 && <p className="rk-dmeta">{meta.join(' · ')}</p>}
     </div>
   );
