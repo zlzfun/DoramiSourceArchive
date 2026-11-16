@@ -5,9 +5,11 @@ import { bondAfter, pickBreaks, stopAfter } from '../utils/titleFit';
 //
 // 量法:把标题那一截(.ts-kw)克隆一份,绝对定位、不折行地排成一行,读每一块(.ts-w)的左右边——
 // 这样标点挤压的负边距、中西文间隙、字距都按浏览器实际排出来的算。克隆在同一次同步代码里插入又移除,不会画出来。
-// 行宽:标题所在的块级盒(最近的非行内祖先)的内容宽。盒子若是「随内容收缩」的(行内块、flex 子项),指定折点之后它会
-// 缩到最长一行那么宽——所以读行宽之前先把标题临时放回自动折行(.is-probe),读到的才是真正能用的宽度;
-// 之后盒宽只要还落在「最长一行 ~ 上次的行宽」之间就不重算,不会自己把自己越算越窄。
+// 行宽:标题所在的那只盒(最近的非行内祖先)的内容宽。这只盒可能是「随内容收缩」的——早报条目标题外面的 <button>
+// 写的是 display: inline,浏览器按行内块排——指定折点之后它会缩到最长一行那么宽,自己的尺寸不再跟着栏宽变。所以:
+//   · 每次都先把标题临时放回自动折行(.is-probe)再读宽度,读到的才是真正能用的行宽;行宽和字号都没变就不重算
+//     (不会自己把自己越算越窄,也不会因为盒子缩了而反复重算);
+//   · 除了这只盒,还观察它外面第一个块级祖先——栏宽变了一定会通知到。
 
 /** 最近的非行内祖先:标题文字就是在它的行盒里折行的。 */
 function lineBoxOf(node) {
@@ -23,6 +25,17 @@ function lineBoxOf(node) {
 function contentWidth(box) {
   const style = getComputedStyle(box);
   return box.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+}
+
+/** box 外面(含自身)第一个块级的盒:它的宽度由版面定,不随标题内容收缩。 */
+function blockAnchorOf(box) {
+  let el = box;
+  while (el) {
+    const display = getComputedStyle(el).display;
+    if (!display.startsWith('inline') && display !== 'contents') return el;
+    el = el.parentElement;
+  }
+  return box;
 }
 
 /** 这一行最多能排多宽:已经指定折点的标题先临时放开再读。 */
@@ -53,14 +66,6 @@ function measure(kw, box) {
   return { starts, ends };
 }
 
-/** 按 heads 分行后最长一行的宽度。 */
-function longestLine(starts, ends, heads) {
-  let longest = 0;
-  const edges = [0, ...heads, starts.length];
-  for (let k = 0; k + 1 < edges.length; k += 1) longest = Math.max(longest, ends[edges[k + 1] - 1] - starts[edges[k]]);
-  return longest;
-}
-
 /**
  * @param ref 指向 .ts-kw
  * @param units utils/titleFit 的 titleUnits(同一标题同一数组);.ts-kw 里每片一个 .ts-w,顺序一致
@@ -68,9 +73,9 @@ function longestLine(starts, ends, heads) {
  */
 export function useTitleFit(ref, units) {
   const [fit, setFit] = useState(null);          // { units, heads }
-  const seen = useRef({ units: null, font: '', limit: 0, longest: 0 });
+  const seen = useRef({ units: null, font: '', limit: 0 });
   const marks = useMemo(() => ({
-    stops: units.map((unit, index) => stopAfter(unit.text, units[index + 1]?.text)),
+    stops: units.map((unit, index) => stopAfter(unit.text, units[index + 1]?.text, Boolean(units[index + 1]?.glued))),
     bonds: units.map((unit, index) => bondAfter(unit.text, units[index + 1]?.text)),
     glued: units.map((unit) => unit.glued),
   }), [units]);
@@ -80,15 +85,12 @@ export function useTitleFit(ref, units) {
     const box = kw && lineBoxOf(kw);
     if (!box) return;
     const font = getComputedStyle(kw).fontSize;
-    const last = seen.current;
-    if (!force && last.units === units && last.font === font) {
-      // 没变宽、现有的几行也还排得下:不动(随内容收缩的盒子在指定折点之后就落在这个区间里)
-      const width = contentWidth(box);
-      if (width <= last.limit + 0.5 && width >= last.longest - 1) return;
-    }
     const limit = availableWidth(kw, box);
     const em = parseFloat(font);
     if (!(limit > 0) || !(em > 0)) return;       // 还没排版(藏着的面板):等它有了宽度再算
+    const last = seen.current;
+    // 行宽、字号、标题都没变:不动
+    if (!force && last.units === units && last.font === font && Math.abs(limit - last.limit) < 0.5) return;
     const { starts, ends } = measure(kw, box);
     if (starts.length !== units.length) return;
     // 行宽的取法沿用标题原来的折行风格(均衡 / 铺满):这里只改折在哪儿
@@ -96,7 +98,7 @@ export function useTitleFit(ref, units) {
     const balance = (boxStyle.textWrapStyle || boxStyle.textWrap || '').includes('balance');
     // 留 1px 余量:量出来的宽度与真正排版之间差个亚像素,不值得为它多折一行(指定折点之后行内不再折,差这一点也只是贴边)
     const heads = pickBreaks({ starts, ends, ...marks, limit: limit + 1, em, balance });
-    seen.current = { units, font, limit, longest: heads ? longestLine(starts, ends, heads) : 0 };
+    seen.current = { units, font, limit };
     setFit((prev) => {
       const same = prev && prev.units === units && (prev.heads === null) === (heads === null) && String(prev.heads) === String(heads);
       return same ? prev : { units, heads };
@@ -114,6 +116,8 @@ export function useTitleFit(ref, units) {
     let alive = true;
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => { if (alive) refit(); });
     observer?.observe(box);
+    const anchor = blockAnchorOf(box);
+    if (anchor !== box) observer?.observe(anchor);
     const onFonts = () => { if (alive) refit(true); };
     const fonts = document.fonts;
     fonts?.addEventListener?.('loadingdone', onFonts);

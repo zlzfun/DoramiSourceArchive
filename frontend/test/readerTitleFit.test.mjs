@@ -17,7 +17,7 @@ function lay(texts, widths, { gaps = [], glued = [], ...rest } = {}) {
   widths.forEach((w, i) => { x += gaps[i] || 0; starts.push(x); x += w; ends.push(x); });
   return {
     starts, ends, em: 1, glued,
-    stops: texts.map((t, i) => stopAfter(t, texts[i + 1])),
+    stops: texts.map((t, i) => stopAfter(t, texts[i + 1], Boolean(glued[i + 1]))),
     bonds: texts.map((t, i) => bondAfter(t, texts[i + 1])),
     ...rest,
   };
@@ -33,6 +33,8 @@ test('停顿级别:全角停顿、带空格的半角停顿、破折号两侧、�
   assert.equal(stopAfter('战略', '——'), 2);
   assert.equal(stopAfter('——', '对话'), 2);
   assert.equal(stopAfter('发布会 ', '新品'), 2);
+  assert.equal(stopAfter('与 ', '中国', true), 0, '块里面的空格是粘连的一部分,不当逗号用');
+  assert.equal(stopAfter('职务， ', '市值', true), 2, '块里面的逗号仍是停顿');
   assert.equal(stopAfter('掀桌！」', '从'), 2, '引号里的叹号仍是强停顿');
   assert.equal(stopAfter('「碳」', '全球'), 1);
   assert.equal(stopAfter('漏洞、', '扫描'), 1);
@@ -56,6 +58,8 @@ test('折开要罚的地方:数字与单位、连着的西文词、行首的「�
   assert.ok(bondAfter('AI ', '之名') > 0);
   assert.ok(bondAfter('Anthropic ', '的 ') > 0);
   assert.ok(bondAfter('结果如何', '改变') > 0);
+  // 人名里的间隔号:两侧都不折
+  assert.ok(bondAfter('马特 ', '· ') > 0 && bondAfter('· ', '伍德：') > 0 && bondAfter('安东·', '莱希特') > 0);
   assert.equal(bondAfter('1.4 ', '万亿'), 0 + bondAfter('x ', '万亿'), '隔了空格的数字不算数字加单位');
   assert.equal(bondAfter('蒸发', '1.4'), 0);
   // 版本号后面的正文不是「数字 + 单位」
@@ -160,6 +164,14 @@ test('数字与单位、连着的西文词不折开;块里面的空格只在保�
   assert.equal(lines.length, 2);
 });
 
+test('检视返修:块里面的空格不拿停顿的奖励——「与 中国」不在空格处折开', () => {
+  // 真实分块:「与 中国」是一块(前置的「与」带着后一段走),按空格切成两片,后一片 glued
+  const texts = ['全球', '科技', '巨头', '苹果', '与 ', '中国', '团队', '共同', '发布', '全新', '模型'];
+  const glued = texts.map((t) => t === '中国');
+  const lines = split(texts, pickBreaks(lay(texts, [2, 2, 2, 2, 1.25, 2, 2, 2, 2, 2, 2], { limit: 15, glued }))).split(' / ');
+  assert.deepEqual(lines, ['全球科技巨头苹果与 中国', '团队共同发布全新模型']);
+});
+
 test('行宽风格:均衡的各行等宽;铺满的先排满前面的行,但末行不留得太短', () => {
   const texts = ['一一', '二二', '三三', '四四', '五五', '六六'];
   const widths = [2, 2, 2, 2, 2, 2];
@@ -182,7 +194,10 @@ test('显示层:折点不进文本、只在桌面的标题组件里用;手机壳
   assert.match(css, /\.ts-ruler :is\(wbr, \.ts-nl\), \.ts-kw\.is-probe \.ts-nl \{ display: none; \}/);
   const hook = read('../src/hooks/useTitleFit.js');
   assert.match(hook, /ruler\.remove\(\);/, '量宽度的克隆当场移除');
-  assert.match(hook, /width <= last\.limit \+ 0\.5 && width >= last\.longest - 1/, '盒宽还落在「最长一行 ~ 上次行宽」之间不重算');
+  // 检视返修:行宽每次都按「放开后」读(随内容收缩的盒子指定折点后自己的宽度不再跟着栏宽变);连块级祖先一起观察
+  assert.match(hook, /const limit = availableWidth\(kw, box\);[\s\S]*Math\.abs\(limit - last\.limit\) < 0\.5\) return;/);
+  assert.match(hook, /const anchor = blockAnchorOf\(box\);\n\s*if \(anchor !== box\) observer\?\.observe\(anchor\);/);
+  assert.match(hook, /if \(fitted\) kw\.classList\.replace\('is-fit', 'is-probe'\);[\s\S]*if \(fitted\) kw\.classList\.replace\('is-probe', 'is-fit'\);/, '放开与还原成对');
   assert.ok(!hook.includes('flushSync'), '观察回调里不同步改排版(否则触发 ResizeObserver 回环)');
   // 只有 DisplayTitle 用这只钩子;手机壳的样式与组件里没有这些标记
   const srcDir = path.join(here, '../src');

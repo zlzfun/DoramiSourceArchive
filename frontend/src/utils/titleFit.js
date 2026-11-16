@@ -8,7 +8,7 @@
 //   · 折在停顿处有奖励:逗号、冒号、分号、问号叹号、破折号、竖线、两段汉字之间的空格(强);引号括号的外侧、顿号(弱);
 //   · 把一个分句折开时,折点离分句任一端太近要罚(行尾甩一个词、行首只剩一个词);
 //   · 有些地方折开要罚:数字与紧跟的量词单位之间(1.4 | 万亿)、连着的西文词之间(Gemini 4 | Hydrogen,多半是一个名字)、
-//     把「如何」「是否」「以及」这类引出下文的词留在行尾。
+//     人名里的间隔号两侧(马特 · 伍德)、行首的「的」「之」、把「如何」「是否」「以及」这类引出下文的词留在行尾。
 // 可折的位置比分块多一种:块里面的空格(「让 Anthropic 的」是一块,但浏览器在空格处照样能折)。这里把块按空格再切成「片」,
 // 片与片之间也能折,只是要罚——否则算出来的最少行数会比浏览器多一行。
 // 纯函数,不碰 DOM;宽度由显示层(components/DisplayTitle + hooks/useTitleFit)量好传进来。
@@ -48,8 +48,11 @@ export function titleUnits(chunks) {
   return units;
 }
 
-/** 片 chunk 后面(下一片是 next)的停顿级别:2 强、1 弱、0 没有。 */
-export function stopAfter(chunk, next = '') {
+/**
+ * 片 chunk 后面(下一片是 next)的停顿级别:2 强、1 弱、0 没有。
+ * inside = 这个折点在块里面(下一片 glued):块里面的空格是粘连的一部分(「与 中国」),不当逗号用。
+ */
+export function stopAfter(chunk, next = '', inside = false) {
   const body = chunk.trimEnd();
   const spaced = body.length < chunk.length;
   let core = body;
@@ -57,7 +60,7 @@ export function stopAfter(chunk, next = '') {
   const tail = core[core.length - 1] || '';
   if (within(STRONG_WIDE, tail) || within(DASHES, tail) || within(DASHES, next[0] || '')) return 2;
   if (spaced && (within(STRONG_ASCII, tail) || tail === '-')) return 2;
-  if (spaced && CJK.test(tail) && CJK.test(next[0] || '')) return 2;   // 两段汉字之间的空格:标题里当逗号用
+  if (spaced && !inside && CJK.test(tail) && CJK.test(next[0] || '')) return 2;   // 两段汉字之间的空格:标题里当逗号用
   if (core.length < body.length) return 1;                              // 收尾的引号、括号
   if (tail === '、') return 1;
   if (within(OPENERS, next[0] || '')) return 1;                         // 后一片以引号、括号起头
@@ -66,6 +69,8 @@ export function stopAfter(chunk, next = '') {
 
 const NUMBER = 12;     // 数字与紧跟的量词、单位之间折开(中间没有空格:1.4 | 万亿)
 const LATIN = 10;      // 连着的西文词之间折开(Gemini 4 | Hydrogen)
+const NAME_DOT = 10;   // 间隔号两侧折开(马特 · 伍德、安东·莱希特:一个人名)
+const DOTS = '·・‧';
 const TAIL_WORD = 3;   // 把引出下文的词留在行尾
 const HEAD_PARTICLE = 6;   // 行首是「的」「之」(之名、的 AI):它们该跟着前面
 const ALNUM = /[A-Za-z0-9]/;
@@ -80,6 +85,7 @@ export function bondAfter(chunk, next = '') {
   const tail = body[body.length - 1] || '';
   if (!spaced && NUMBER_TAIL.test(body) && UNIT_HEAD.test(next)) return NUMBER;
   if (spaced && ALNUM.test(tail) && ALNUM.test(next[0])) return LATIN;
+  if (within(DOTS, tail) || within(DOTS, next.trimStart()[0] || '')) return NAME_DOT;
   if ('的之'.includes(next[0])) return HEAD_PARTICLE;
   if (TAIL_WORDS.some((word) => body.endsWith(word))) return TAIL_WORD;
   return 0;
@@ -128,11 +134,12 @@ export function pickBreaks({ starts, ends, stops, bonds = [], glued = [], limit,
   for (let b = n - 2; b >= 0; b -= 1) clauseEnd[b] = stops[b] === 2 ? b + 1 : clauseEnd[b + 1];
   const breakCost = new Array(n).fill(0);
   for (let b = 1; b < n; b += 1) {
-    if (stops[b - 1] === 2) { breakCost[b] = -STOP_STRONG; continue; }
+    const extra = (bonds[b - 1] || 0) + (glued[b] ? GLUE : 0);   // 这两项与停顿无关:停顿处也照罚
+    if (stops[b - 1] === 2) { breakCost[b] = extra - STOP_STRONG; continue; }
     const before = width(clauseStart[b - 1], b);
     const after = width(b, clauseEnd[b]);
     const near = Math.max(0, 1 - Math.min(before, after) / reach);
-    breakCost[b] = STRAND * near * near - (stops[b - 1] === 1 ? STOP_WEAK : 0) + (bonds[b - 1] || 0) + (glued[b] ? GLUE : 0);
+    breakCost[b] = STRAND * near * near - (stops[b - 1] === 1 ? STOP_WEAK : 0) + extra;
   }
 
   // 动态规划:best[k][j] = 前 j 片排成 k 行的最小代价
