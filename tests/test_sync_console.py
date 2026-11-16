@@ -246,7 +246,14 @@ def test_reset_stream_forces_full_repull_of_only_that_stream(tmp_path):
     assert "analyses" not in target["v2_streams"] and "articles" in target["v2_streams"]
     assert target["v2_stream_resets"]["analyses"] == {"at": NOW, "by": "admin"}
     assert (target["v2_analysis_refetch_at"], target["v2_analysis_refetch_by"]) == (NOW, "admin")
-    assert _entity_states(consumer.engine, "analyses") == []
+    # 重置只失效接收修订(置 0),状态行保留:它同时是本机向下游导出的索引(issue #263)。
+    reset_states = _entity_states(consumer.engine, "analyses")
+    assert len(reset_states) == 2 and {row.revision for row in reset_states} == {0}
+    assert all(row.local_revision > 0 and row.operation == "upsert" for row in reset_states)
+    still_exported = archive_sync_v2.parse_page(
+        archive_sync_v2.export_page(consumer.engine, "analyses"), expected_stream="analyses"
+    )[1]
+    assert len(still_exported) == 2
 
     remote.requested_params.clear()
     result = _prepare_and_pull(consumer, producer, remote, tmp_path, label="after-reset")
@@ -255,12 +262,43 @@ def test_reset_stream_forces_full_repull_of_only_that_stream(tmp_path):
     assert result["streams"]["analyses"]["count"] == 2
     assert result["streams"]["articles"]["count"] == 0
     assert {(row.identity, row.revision) for row in _entity_states(consumer.engine, "articles")} == articles_before
-    assert len(_entity_states(consumer.engine, "analyses")) == 2
+    replayed = _entity_states(consumer.engine, "analyses")
+    assert len(replayed) == 2 and all(row.revision > 0 for row in replayed)
 
     # taxonomy 没有逐行记账,只清 checkpoint
     sync_console.reset_stream(consumer.engine, "taxonomy", by="admin", at=NOW)
     target = remote_sync_service.load_sync_state(consumer.engine)["targets"][BASE_URL]
     assert "taxonomy" not in target["v2_streams"]
+
+
+def test_resetting_articles_also_replays_the_dependency_streams(tmp_path):
+    """检视 R1 #6:本机版本胜出的文章连同它的分析被跳过(检查点照常前进);管理员删掉这篇本机
+    文章后只重置 articles 流——文章按新建补回来,分析也要跟着补,不能停在「检查点已越过」。"""
+    producer = _sink(tmp_path, "producer.db")
+    consumer = _sink(tmp_path, "consumer.db")
+    _seed_producer(producer, articles=1)
+    with Session(consumer.engine) as session:
+        session.add(_source())
+        session.add(_article("article-0", content="Local body", archive_updated_at="2026-12-01T00:00:00+00:00"))
+        session.commit()
+    remote = _V2Remote(producer)
+    first = _prepare_and_pull(consumer, producer, remote, tmp_path, label="first")
+    assert first["streams"]["articles"]["skipped"] == 1
+    with Session(consumer.engine) as session:
+        assert session.get(ArticleAnalysisRecord, "article-0") is None
+        session.delete(session.get(ArticleRecord, "article-0"))
+        session.commit()
+
+    sync_console.reset_stream(consumer.engine, "articles", by="admin", at=NOW)
+    assert archive_sync_v2.pending_dependency_replay(consumer.engine) == set(
+        archive_sync_v2.DEPENDENCY_REPLAY_STREAMS
+    )
+    second = _prepare_and_pull(consumer, producer, remote, tmp_path, label="after-reset")
+    assert second["streams"]["articles"]["inserted"] == 1
+    with Session(consumer.engine) as session:
+        assert session.get(ArticleRecord, "article-0").content == "Body 0"
+        assert session.get(ArticleAnalysisRecord, "article-0").quality_score == 5.0
+    assert archive_sync_v2.pending_dependency_replay(consumer.engine) == set()
 
 
 def test_reset_stream_rejects_running_job_and_unconfigured_target(tmp_path):
@@ -330,6 +368,37 @@ def test_console_status_inventory_and_home_summary(tmp_path):
     assert home["failed"]["stream"] == "analyses" and home["failed"]["page"] == 37
     assert home["last_success_at"]
     assert sync_console.job_creators(consumer.engine, ["job-ok"]) == {"job-ok": None}
+
+
+def test_console_status_reports_v1_lock_and_streams_this_node_does_not_take(tmp_path):
+    """issue #263:控制台不再有「接收端围栏」;只报两件事实——库里有了同步写入的数据(v1 归档
+    导入因此不可用),以及本机已有自己的事件(事件流因此不同步,从流水线里拿掉)。"""
+    from models.db import EventRecord
+
+    producer = _sink(tmp_path, "producer-facts.db")
+    consumer = _sink(tmp_path, "consumer-facts.db")
+    _seed_producer(producer, articles=1)
+    before = sync_console.console_status(consumer.engine, media_store_ready=True, podcast_store_ready=True)
+    assert before["legacy_import_locked"] is False and before["local_skip_streams"] == []
+    assert "consumer_fence" not in before
+
+    _prepare_and_pull(consumer, producer, _V2Remote(producer), tmp_path, label="facts")
+    status = sync_console.console_status(consumer.engine, media_store_ready=True, podcast_store_ready=True)
+    assert status["legacy_import_locked"] is True
+    assert status["local_skip_streams"] == []
+    assert "events" in status["stream_order"]
+    assert "consumer_fence" not in status
+
+    with Session(consumer.engine) as session:
+        session.add(EventRecord(
+            status="open", title="local event", title_source="", member_count=0, publisher_count=0,
+            first_seen_at=NOW, last_member_at=NOW, assignment_version="v", authority_id="",
+            created_at=NOW, updated_at=NOW,
+        ))
+        session.commit()
+    status = sync_console.console_status(consumer.engine, media_store_ready=True, podcast_store_ready=True)
+    assert status["local_skip_streams"] == ["events"]
+    assert "events" not in status["stream_order"]
 
 
 def test_status_target_prefers_schedule_then_latest_synced():

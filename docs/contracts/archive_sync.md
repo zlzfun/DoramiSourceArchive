@@ -174,12 +174,18 @@ important because the internal database owns users, subscriptions, interests,
 manual/rule tags, and personal briefs; those records must never be overwritten
 by the external deployment.
 
-Once a node has installed the V2 consumer fence or received any V2 authority-owned
-row, the legacy V1 import endpoint and V1 scheduler are rejected with HTTP 409.
-This prevents an old article-only writer from bypassing V2 authority and tombstone
-semantics.
+Once a node holds any row written by V2 sync (a stamped article, analysis, source,
+source state or media row, or a synced Taxonomy), the legacy V1 import endpoint and
+V1 scheduler are rejected with HTTP 409. This prevents an old article-only writer
+from bypassing the V2 merge rules and tombstones. Before issue #263 a node-level
+"consumer fence" also triggered this; that mode no longer exists.
 
 ### Direction and authority
+
+The bullets below describe the **production topology** (the external node collects,
+the internal node pulls). Since issue #263 the protocol itself is symmetric: a node
+that pulls keeps every local capability and re-exports what it holds — see
+"Symmetric nodes" below.
 
 - Platform/public sources are collected and analysed by the external Dorami.
 - User-added RSS is collected and analysed by the internal Dorami, which may call
@@ -189,16 +195,97 @@ semantics.
   `DORAMI_ARCHIVE_AUTHORITY_ID`), not a runtime `collector/reader/all` role or a
   hostname. A changed authority ID requires an operator-approved checkpoint reset.
 - Imported articles carry `analysis_authority_id`; every queue, backfill, claim,
-  manual fetch and worker-commit boundary rejects non-local authority. Thus two
-  deployments may both remain `role=all` without analysing a public article twice.
-- The receiver persists a separate v2-consumer fence before its first manual or
-  scheduled pull is queued. This closes the pre-authority upgrade window without
-  inventing an authority ID: public collection/analysis is quiesced immediately,
-  while internal custom RSS remains locally collected (credentialed feeds remain
-  excluded from MaaS analysis).
+  title-translation, paper-fulltext and worker-commit boundary skips a row whose
+  current version was written by sync. Thus two deployments may both remain
+  `role=all` without analysing a public article twice.
+- There is **no node-level consumer mode** (removed by issue #263). Pulling does not
+  quiesce local public collection or analysis, and the first sync needs no
+  confirmation. Reader-added RSS keeps its own rules on a node that has an
+  upstream: the source must be enabled, the feature switch on, and credentialed
+  feeds are never sent to MaaS.
 - A legacy schedule with `source_ids` but no `protocol` is exposed as
   `migration_required` and is effectively disabled until an administrator
   explicitly saves v1 or v2. V1 is never inferred as an active compatibility mode.
+
+### Symmetric nodes: merge by identity (issue #263)
+
+Nodes have no roles. Any node may collect, analyse, accept ingest pushes and create
+public sources while it also pulls from an upstream, and its export contains **all
+public data it holds**, including rows it received by sync. The wire format did not
+change: no new keys, streams or request parameters.
+
+**Row stamps.** `analysis_authority_id` (articles), `authority_id` (analyses, source
+states, podcast rows, events) and `sync_authority_id` (media) now mean "the current
+version of this row was written by sync", not "this row belongs to another node".
+The value is still the id of the previous hop. `source_configs.collection_authority_id`
+is pure bookkeeping ("the upstream also has this source"): it no longer blocks local
+collection, analysis, management, ingest or batch fetch. A local fetch or ingest that
+changes a stamped article clears the stamp (the row becomes a local version); a local
+collection run clears the source-state stamp.
+
+**Import rules.**
+
+| Stream | Rule |
+|---|---|
+| `articles` | Absent → insert and stamp. Stamped → update as before. Local version (no stamp) → the local version is kept only when its `archive_updated_at` is **strictly newer**; older or equal is replaced by the incoming version (ties go to the upstream so that nodes seeded from a V1 archive or a database copy attach to it). Both values are compared as instants (naive values are read in the node's time zone; an unparsable value counts as oldest). Producer-local run links (`fetch_run_id`, `job_id`, `job_run_id`, `source_group_id`) are cleared on import. |
+| `analyses`, `podcast_texts`, `podcast_audio` | A row whose article / episode is a local version, or whose slot is held by a local product, is **skipped and not recorded** instead of failing the page. Hash mismatches against a synced article still roll the page back. |
+| `sources` | Created with `ai_analysis_enabled = false` and no fetcher binding; `is_active` and the catalog fields follow the upstream. Existing rows keep their analysis switch and binding. The first time the upstream marker lands on an existing row that is not in local use, its analysis switch is turned off as well. A source **in local use** (it has a local source state, is named by a collection job, or carries an admin-saved binding — any binding other than an untouched auto-installed one: a preset mirror row bound to its own fetcher with no parameters, or a podcast-catalog row whose feed address and parameters are still the catalog defaults; `origin` is not consulted because sync overwrites it) ignores upstream delete, retirement and `is_active`. |
+| `source_states` | A local state that is strictly newer is kept; otherwise applied. Local cursors survive an overwrite. |
+| `events` | See below. Members whose article is a local version go to `event_member_backlog` and are restored when the article is taken over. |
+| tombstones | Delete only rows stamped by that upstream. Sources: in local use → ignored; otherwise retired when the node has articles of that source, deleted when it has none. A tombstone for a row the node never had counts as applied. |
+
+Every import page takes the SQLite write lock **before** it reads local state, so the
+comparison with a local version cannot race a local writer; the fetch path likewise
+re-reads an existing row under the lock before rewriting it. Skipped rows are returned
+to the pull loop (`skipped_identities`) so the binary stage does not look for them. When a local article version is taken over, the same
+transaction persists a replay marker (KV `archive_sync:v2:dependency_replay`) for
+`analyses`, `podcast_texts` and `podcast_audio`; the pull loop then fetches each of
+those streams with an empty `since`, and clears the marker only after the stream
+completes, so an interrupted run replays again. The marker carries a generation per
+stream and is cleared only for the generation that was replayed; resetting the
+`articles` stream schedules the same replay.
+
+**No presence, no prune.** A receiver at or above issue #263 never calls
+`/api/archive/v2/presence` and deletes nothing after a full stream; a row disappears
+only through a tombstone. The producer still serves `/presence` for older receivers
+and answers for every public row it holds, forwarded rows included.
+
+**Export and forwarding.** `archive_sync_entity_states` gained `local_revision`, the
+node's own export revision. Local rows mirror `revision` into it through two triggers;
+rows applied by sync get the node clock, advanced once per imported page. Export pages
+filter, order and paginate by `local_revision` and put it in the envelope `revision`,
+so a downstream receiver sees one consistent clock. `revision` on a synced row keeps
+meaning "the upstream revision that was applied". A node that pulls nobody has
+`local_revision = revision` everywhere and exports byte-identical pages. Because
+synced media and podcast audio are written in two steps (metadata, then file), a
+status change on such a row advances the clock and its `local_revision`: a downstream
+node that pulled between the two steps still receives the file later. Replays (stream
+reset, analysis generation replay, projection switch, rebase) zero the received
+`revision` instead of deleting the state rows, which also index the export.
+
+Not forwarded: products a node made on top of an upstream's article (a local analysis
+or podcast text for a synced article stays local), reader data, reader-added RSS and
+credentialed sources.
+
+**Events: one id space per node.** `events.id` is a per-node integer, so a node never
+holds its own events and an upstream's at the same time. A node that already has
+local events does not request the `events` stream (the console shows it as not
+synced); a node that holds upstream events — or has none yet but is connected to an
+upstream advertising `events_v1` — does not assign events locally. Both writers take
+the same write gate and re-check inside the transaction, so an assignment that was
+waiting for the model when the first upstream events arrived is dropped (and the run
+stops instead of re-sending the batch). When the backlog later restores a member of
+a synced event, that event's export revision advances so downstream nodes receive it.
+
+**Supported topology.** Single-upstream chains (A → B → C). Loops and multiple
+upstreams are not supported: a row stamped by one upstream is rejected from another.
+
+**Mixed versions.** New producer + old receiver: a node without synced rows exports
+exactly what it did before. Old producer + new receiver: the legacy source projection
+is applied with the rules above. New relay + old receiver: forwarded rows look like
+the relay's own rows and its presence answers include them. Any deployment order is
+safe. Rollback is by restoring the pre-upgrade backup; older code refuses to start on
+a database carrying this migration.
 
 ### Streams and readiness fence
 
@@ -252,8 +339,9 @@ paper abstract hashes; 2 introduced content-value fields). When the recorded gen
 preparation clears, in one transaction, the `analyses` checkpoint and that
 authority's `analyses` entity states (otherwise every same-revision row would be
 skipped as not newer), so the run re-pulls the full analyses stream through the
-existing full-stream path: rows are overwritten, entity states rebuilt, and only
-presence-confirmed absent rows are pruned. Other streams stay incremental. A run
+existing full-stream path: rows are overwritten and entity states rebuilt. Since
+issue #263 the preparation zeroes the received revisions instead of deleting the
+state rows, and nothing is pruned afterwards. Other streams stay incremental. A run
 that fails before the analyses stream completes leaves its checkpoint empty: the
 next run downloads the stream from the beginning again, and the entity states
 rebuilt so far make it skip already-applied, unchanged revisions, applying only
@@ -313,8 +401,8 @@ different `sources` export, so the producer **projects per request**:
   If the producer stops advertising the capability (rollback), the target is recorded
   as `legacy` without replay: legacy payloads simply omit the catalog fields, which
   receivers leave untouched.
-- Receivers never create public source rows locally; sources and source states still
-  do not take part in authoritative presence.
+- Superseded by issue #263: any node may create public source rows locally
+  (reconcile, ingest, admin), and receivers no longer use presence at all.
 
 Deployment order: any order is safe (new producer + old receiver → legacy projection,
 identical to the old export; old producer + new receiver → legacy bookkeeping and the
@@ -379,10 +467,11 @@ them changes request kinds, request fields or checkpoint semantics:
   empty `since` and reports `pending_since=""`. The probe result, without
   credentials, is stored locally in KV `remote_sync:probes`.
 - **Stream reset.** `POST /api/admin/remote-sync/streams/{stream}/reset` clears
-  that stream's checkpoint and the receiver's entity states for the target
-  authority (Taxonomy: checkpoint only), exactly as the automatic analyses replay
-  does. The next pull downloads the stream from the beginning, reapplies every row
-  and finishes with the usual presence-confirmed prune. It is rejected while a
+  that stream's checkpoint and zeroes the received revision of the receiver's
+  entity states for the target authority (Taxonomy: checkpoint only; the rows are
+  kept because they also index this node's own export), exactly as the automatic
+  analyses replay does. The next pull downloads the stream from the beginning and
+  reapplies every row; nothing is pruned (issue #263). It is rejected while a
   remote-sync job is queued or running; the check-and-reset and the job launch's
   check-and-enqueue share one per-database lock, so a reset can never interleave
   with a launch reading the old checkpoint. Replaying analyses is `stream=analyses`.
@@ -415,23 +504,18 @@ entity state, and LLM assignment changes advance Analysis. Pages use numeric
 `(revision, identity)` ordering and every continuation repeats the fixed snapshot.
 
 Every manifest advertises `transaction-revision-tombstone-v1` and
-`authoritative-presence-v1`. Before installing its consumer fence or rebasing any
-data, the receiver verifies the exact schema, complete capability set, authority,
-a published Taxonomy version, and an enabled local Media store.
+`authoritative-presence-v1`. Before its first write the receiver verifies the exact
+schema, complete capability set, authority, a published Taxonomy version, and an
+enabled local Media store.
 On the first v3 launch it atomically discards incomparable timestamp checkpoints and
-performs an authority-scoped rebase: eligible public Sources become temporarily
-inactive, their SourceState readiness is cleared, and prior entity-state revisions
-are discarded. Articles, Analyses, reader counters, local manual/rule assignments,
-and Media remain intact while the first authoritative snapshot is fetched. This
-keeps a failed first pull from destroying a still-readable local archive.
-After the terminal full Article and Analysis pages, applied upsert states identify
-receiver-only candidates. The receiver sends only those identities to the authority's
-bounded `/presence` endpoint, validates every chunk, and then prunes only identities
-confirmed absent in one local transaction. This protects an existing row whose
-revision moved beyond the fixed page snapshot during pagination; the next incremental
-run imports its newer value. Any presence failure leaves all candidates and the
-checkpoint untouched. Matching/present rows retain reader-local counters and manual
-tag overlays.
+zeroes the received revisions recorded for that authority. Since issue #263 it no
+longer deactivates local public Sources or clears their SourceState: Sources,
+Articles, Analyses, reader counters, local manual/rule assignments and Media all
+stay as they are while the first snapshot is fetched.
+`/presence` remains a producer endpoint for receivers older than issue #263, which
+after a terminal full page send receiver-only candidates to it and prune the
+identities confirmed absent. Current receivers never call it and never prune;
+matching rows retain reader-local counters and manual tag overlays.
 The same protocol epoch is idempotent; an authority change fails closed for manual
 operator review. Deploy the external producer first, then the internal receiver.
 Only one remote-sync job may be queued or running on a receiver at a time. A receiver
@@ -621,13 +705,13 @@ receiver copies the id verbatim and fences the row with `authority_id`. Payload:
   `tombstone` after its cascades. A source config insert, or a change to its
   `owner_username` / `collection_authority_id` / `url` / `params_json`, and an
   Article's `source_id` / `analysis_authority_id` change re-mark the events of
-  its members, so the export above re-projects or withdraws them. Only local
-  events (`authority_id=''`) emit states. Receiver guard trigger: an authority-owned event accepts only member
+  its members, so the export above re-projects or withdraws them. Local events
+  emit states through these triggers; synced events are recorded by the importer
+  and forwarded under the node's own export revision (issue #263). Receiver guard trigger: an authority-owned event accepts only member
   Articles owned by that same authority, so local assignment can never add a
   member to a synced event.
-- First full pulls use the same presence / prune path as Articles: authority
-  owned events without an applied upsert state are confirmed against the
-  producer's local events and pruned only when absent.
+- Since issue #263 there is no presence / prune path, and a node never mixes its
+  own events with an upstream's; see "Symmetric nodes" above.
 - Not synchronized: `event_rank_snapshots` (the receiver rebuilds its daily
   ranking from local visibility, hidden sources differ per node),
   `event_assignment_ledger` (node-local assignment bookkeeping) and

@@ -46,7 +46,7 @@ Docker、裸机 `deploy.sh` 和开发入口 `python src/main.py` 都执行同一
 6. 内网 `replica` 之后通过 Archive Sync 接收已经发布的 Taxonomy。
 
 Archive Sync v3 的连接预检会读取 Taxonomy 原子快照并要求
-`taxonomy_version > 0`。因此第 5 步没有完成时，内网不会安装 consumer fence、
+`taxonomy_version > 0`。因此第 5 步没有完成时，内网不会开始同步（issue #263 起已无 consumer fence）、
 不会执行一次性 rebase，也不会推进任何 checkpoint。
 
 首次 authority 启动日志状态为 `installed_awaiting_publish`，只会导入标签、Alias、层级、

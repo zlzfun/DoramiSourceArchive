@@ -30,6 +30,7 @@ from sqlmodel import Session, select  # noqa: E402
 from tests.conftest import add_on_current_schema  # noqa: E402
 from models.db import (  # noqa: E402
     ArticleRecord,
+    SourceConfigRecord,
     PodcastArtifactRecord,
     PodcastBudgetReservationRecord,
     PodcastProcessingRecord,
@@ -47,6 +48,10 @@ from storage.migrations import (  # noqa: E402
     main_chain_heads,
     make_alembic_config,
 )
+
+
+_LAST_REVISION_BEFORE_ISSUE_263 = "f3b8d1c6a925"
+_ISSUE_263_REVISION = "a63f1d2c9b70"
 
 
 def _head_revision() -> str:
@@ -2426,7 +2431,9 @@ def test_archive_sync_v2_migration_fences_only_explicit_v2_schedule(
     finally:
         engine.dispose()
 
-    command.upgrade(cfg, "heads")
+    # 这条用例守的是当年引入 v2 的那次迁移的行为。issue #263 的迁移(a63f1d2c9b70)会删掉这条
+    # 标记——整机 consumer 模式已不存在——所以升到它之前的 revision 为止;新迁移另有用例。
+    command.upgrade(cfg, _LAST_REVISION_BEFORE_ISSUE_263)
     engine = create_engine(db_url)
     try:
         with engine.connect() as conn:
@@ -2984,3 +2991,263 @@ def test_event_rank_snapshot_window_migration_keeps_rows_as_48h_and_round_trips(
     finally:
         engine.dispose()
     command.upgrade(cfg, "heads")
+
+
+# ── issue #263:按身份合并、导出修订 ─────────────────────────────────────────────
+
+
+def _seed_issue_263_receiver(engine, *, with_marker: bool) -> None:
+    """f3b8 版本的库里摆出一台内网接收节点的典型存量(或一台不拉任何人的节点)。"""
+
+    stamp = "2026-11-01T00:00:00+00:00"
+    with Session(engine) as session:
+        session.add_all([
+            SourceConfigRecord(
+                source_id="synced_public", name="Synced", source_type="rss", url="https://a.test/f",
+                collection_authority_id="producer-a" if with_marker else "",
+                ai_analysis_enabled=True, is_active=True, created_at=stamp, updated_at=stamp,
+            ),
+            SourceConfigRecord(
+                source_id="local_public", name="Local", source_type="rss", url="https://b.test/f",
+                ai_analysis_enabled=True, is_active=True, created_at=stamp, updated_at=stamp,
+            ),
+            SourceConfigRecord(
+                source_id="user_rss_mine", name="Mine", source_type="rss", url="https://c.test/f",
+                owner_username="alice", ai_analysis_enabled=True, is_active=True,
+                created_at=stamp, updated_at=stamp,
+            ),
+            ArticleRecord(
+                id="synced-article", title="s", content_type="rss_article", source_id="synced_public",
+                source_url="https://a.test/1", publish_date=stamp, fetched_date=stamp,
+                archive_updated_at=stamp, has_content=True, content="body", extensions_json="{}",
+                analysis_authority_id="producer-a" if with_marker else "",
+                fetch_run_id=3, job_id=4, job_run_id=5, source_group_id=6,
+            ),
+            ArticleRecord(
+                id="local-article", title="l", content_type="rss_article", source_id="local_public",
+                source_url="https://b.test/1", publish_date=stamp, fetched_date=stamp,
+                archive_updated_at=stamp, has_content=True, content="body", extensions_json="{}",
+                fetch_run_id=7, job_id=8, job_run_id=9, source_group_id=10,
+            ),
+            ArticleRecord(
+                id="private-article", title="p", content_type="rss_article", source_id="user_rss_mine",
+                source_url="https://c.test/1", publish_date=stamp, fetched_date=stamp,
+                archive_updated_at=stamp, has_content=True, content="body", extensions_json="{}",
+            ),
+        ])
+        session.commit()
+    with engine.begin() as conn:
+        # 旧围栏挡着、还没做完的本机自动任务:标题翻译(排队 / 在跑)与论文全文(排队 / 处理中)
+        for article_id, title_status, paper_status in (
+            ("local-article", "pending", "processing"),
+            ("private-article", "pending", "pending"),
+            ("synced-article", "running", "pending"),
+        ):
+            conn.execute(text(
+                "INSERT OR REPLACE INTO title_translation_jobs "
+                "(article_id, title_fp, status, attempts, retry_at, updated_at, error) "
+                "VALUES (:id, 'fp', :status, 1, 9999999999, 0, '')"
+            ), {"id": article_id, "status": title_status})
+            conn.execute(text(
+                "INSERT OR REPLACE INTO paper_fulltext_jobs "
+                "(article_id, arxiv_id, abstract, original_body_hash, status, attempts, retry_at, "
+                "lease_token, lease_until, last_error, updated_at) "
+                "VALUES (:id, '2401.00001', 'abs', 'hash', :status, 0, 0, 'tok', 0, '', :t)"
+            ), {"id": article_id, "status": paper_status, "t": stamp})
+        conn.execute(text(
+            "INSERT INTO collection_jobs (name, description, fetcher_ids_json, params_json, "
+            "per_fetcher_params_json, cron_expr, is_active, downstream_policy_json, created_at, updated_at) "
+            "VALUES ('public job', '', :public, '{}', '{}', '0 3 * * *', 1, '{}', :t, :t), "
+            "('private job', '', :private, '{}', '{}', '0 4 * * *', 1, '{}', :t, :t)"
+        ), {"public": '["user_rss_mine", "local_public"]', "private": '["user_rss_mine"]', "t": stamp})
+        conn.execute(text(
+            "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('daily_brief_enabled', 'true')"
+        ))
+        if with_marker:
+            conn.execute(
+                text("INSERT INTO app_settings (key, value) VALUES (:key, :value)"),
+                {"key": "remote_sync:v2_consumer_mode", "value": json.dumps({"active": True})},
+            )
+            conn.execute(text(
+                "INSERT OR REPLACE INTO archive_sync_entity_states "
+                "(stream, identity, authority_id, revision, operation, updated_at) "
+                "VALUES ('articles', 'synced-article', 'producer-a', 90210, 'upsert', :t)"
+            ), {"t": stamp})
+
+
+def test_issue_263_migration_backfills_export_revisions_and_keeps_a_receiver_quiet(tmp_path):
+    """内网接收节点升级:同步写入的行拿到本机导出修订;旧围栏挡着的公共源分析、公共采集任务、
+    公共日报保持不跑(由管理员按需重新打开);consumer 标记删除;源印记保留为簿记。"""
+    db_url = f"sqlite:///{tmp_path / 'issue-263-receiver.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, _LAST_REVISION_BEFORE_ISSUE_263)
+    engine = create_engine(db_url)
+    try:
+        _seed_issue_263_receiver(engine, with_marker=True)
+        with engine.connect() as conn:
+            clock_before = conn.execute(text("SELECT revision FROM archive_sync_clock WHERE id = 1")).scalar_one()
+            local_before = dict(conn.execute(text(
+                "SELECT stream || ':' || identity, revision FROM archive_sync_entity_states WHERE authority_id = ''"
+            )).all())
+        assert local_before  # 本机行由触发器记账
+    finally:
+        engine.dispose()
+
+    command.upgrade(cfg, "heads")
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            states = {
+                f"{stream}:{identity}": (authority, revision, local_revision)
+                for stream, identity, authority, revision, local_revision in conn.execute(text(
+                    "SELECT stream, identity, authority_id, revision, local_revision FROM archive_sync_entity_states"
+                )).all()
+            }
+            for key, revision in local_before.items():
+                assert states[key] == ("", revision, revision)
+            assert states["articles:synced-article"] == ("producer-a", 90210, clock_before + 1)
+            assert conn.execute(text("SELECT revision FROM archive_sync_clock WHERE id = 1")).scalar_one() == clock_before + 1
+            sources = {
+                source_id: (authority, bool(analysis), bool(active))
+                for source_id, authority, analysis, active in conn.execute(text(
+                    "SELECT source_id, collection_authority_id, ai_analysis_enabled, is_active FROM source_configs"
+                )).all()
+            }
+            assert sources == {
+                "synced_public": ("producer-a", False, True),   # 源印记保留;分析关;启用状态不动
+                "local_public": ("", False, True),              # 旧围栏挡着接收节点上所有公共源的分析
+                "user_rss_mine": ("", True, True),              # 读者自定源不动
+            }
+            runs = dict(
+                (article_id, (fetch_run_id, job_id, job_run_id, source_group_id))
+                for article_id, fetch_run_id, job_id, job_run_id, source_group_id in conn.execute(text(
+                    "SELECT id, fetch_run_id, job_id, job_run_id, source_group_id FROM articles"
+                )).all()
+            )
+            assert runs == {
+                "synced-article": (None, None, None, None),
+                "local-article": (7, 8, 9, 10),
+                "private-article": (None, None, None, None),
+            }
+            # 检视 R1 #3:公共源下本机文章上没做完的标题翻译 / 论文全文任务停放;读者自定源的
+            # 与同步写入文章的(worker 本来就不碰)不动
+            title_jobs = dict(conn.execute(text("SELECT article_id, status FROM title_translation_jobs")).all())
+            assert title_jobs == {
+                "local-article": "skipped", "private-article": "pending", "synced-article": "running",
+            }
+            paper_jobs = {
+                article_id: (status, last_error, lease_token)
+                for article_id, status, last_error, lease_token in conn.execute(text(
+                    "SELECT article_id, status, last_error, lease_token FROM paper_fulltext_jobs"
+                )).all()
+            }
+            assert paper_jobs == {
+                "local-article": ("skipped", "issue_263_receiver_parked", ""),
+                "private-article": ("pending", "", "tok"),
+                "synced-article": ("pending", "", "tok"),
+            }
+            jobs = dict(conn.execute(text("SELECT name, is_active FROM collection_jobs")).all())
+            assert jobs == {"public job": 0, "private job": 1}
+            settings = dict(conn.execute(text("SELECT key, value FROM app_settings")).all())
+            assert settings["daily_brief_enabled"] == "false"
+            assert "remote_sync:v2_consumer_mode" not in settings
+            summary = json.loads(settings["archive_sync:issue_263_migration"])
+            assert summary["sources_analysis_off"] == 2 and summary["daily_brief_disabled"] is True
+            assert (summary["title_jobs_parked"], summary["paper_jobs_parked"]) == (1, 1)
+            assert [job["name"] for job in summary["jobs_disabled"]] == ["public job"]
+            triggers = {
+                row[0] for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type = 'trigger'")).all()
+            }
+            assert {
+                "archive_sync_state_local_revision_insert",
+                "archive_sync_state_local_revision_update",
+                "archive_sync_media_remote_publish",
+            } <= triggers
+            assert "archive_sync_source_remote_handoff" not in triggers
+        # 升级后的库:本机在上游也有的源下写入的文章会被记账,导出修订与本机时钟一致
+        with Session(engine) as session:
+            session.add(ArticleRecord(
+                id="fetched-here", title="f", content_type="rss_article", source_id="synced_public",
+                source_url="https://a.test/2", publish_date="2026-11-02", fetched_date="2026-11-02",
+                archive_updated_at="2026-11-02T00:00:00", has_content=True, content="b", extensions_json="{}",
+            ))
+            session.commit()
+        with engine.connect() as conn:
+            authority, revision, local_revision = conn.execute(text(
+                "SELECT authority_id, revision, local_revision FROM archive_sync_entity_states "
+                "WHERE stream = 'articles' AND identity = 'fetched-here'"
+            )).one()
+            assert authority == "" and revision == local_revision > clock_before + 1
+    finally:
+        engine.dispose()
+
+    # 降级只回退结构;再升级仍然可用(回滚靠备份,不靠 downgrade)。
+    command.downgrade(cfg, _LAST_REVISION_BEFORE_ISSUE_263)
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            columns = {column["name"] for column in inspect(conn).get_columns("archive_sync_entity_states")}
+            assert "local_revision" not in columns
+            triggers = {
+                row[0] for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type = 'trigger'")).all()
+            }
+            assert "archive_sync_state_local_revision_insert" not in triggers
+            assert "archive_sync_article_insert" in triggers
+    finally:
+        engine.dispose()
+    command.upgrade(cfg, "heads")
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            assert conn.execute(text(
+                "SELECT COUNT(*) FROM archive_sync_entity_states "
+                "WHERE authority_id = '' AND local_revision <> revision"
+            )).scalar_one() == 0
+            assert set(MigrationContext.configure(conn).get_current_heads()) == _script_heads()
+    finally:
+        engine.dispose()
+
+
+def test_issue_263_migration_leaves_a_node_that_pulls_nobody_untouched(tmp_path):
+    """不拉任何人的节点(外网):时钟不动(导出的 snapshot 不变),源的开关、采集任务、日报定时
+    都不动;本机行的导出修订等于原修订。"""
+    db_url = f"sqlite:///{tmp_path / 'issue-263-standalone.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, _LAST_REVISION_BEFORE_ISSUE_263)
+    engine = create_engine(db_url)
+    try:
+        _seed_issue_263_receiver(engine, with_marker=False)
+        with engine.connect() as conn:
+            clock_before = conn.execute(text("SELECT revision FROM archive_sync_clock WHERE id = 1")).scalar_one()
+    finally:
+        engine.dispose()
+
+    command.upgrade(cfg, "heads")
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT revision FROM archive_sync_clock WHERE id = 1")).scalar_one() == clock_before
+            assert conn.execute(text(
+                "SELECT COUNT(*) FROM archive_sync_entity_states WHERE local_revision <> revision"
+            )).scalar_one() == 0
+            assert {bool(value) for (value,) in conn.execute(text(
+                "SELECT ai_analysis_enabled FROM source_configs"
+            )).all()} == {True}
+            assert dict(conn.execute(text("SELECT name, is_active FROM collection_jobs")).all()) == {
+                "public job": 1, "private job": 1,
+            }
+            settings = dict(conn.execute(text("SELECT key, value FROM app_settings")).all())
+            assert settings["daily_brief_enabled"] == "true"
+            assert "archive_sync:issue_263_migration" not in settings
+            assert {status for (status,) in conn.execute(text(
+                "SELECT status FROM title_translation_jobs"
+            )).all()} == {"pending", "running"}
+            assert {status for (status,) in conn.execute(text(
+                "SELECT status FROM paper_fulltext_jobs"
+            )).all()} == {"pending", "processing"}
+            assert conn.execute(text(
+                "SELECT fetch_run_id FROM articles WHERE id = 'synced-article'"
+            )).scalar_one() == 3
+    finally:
+        engine.dispose()
+

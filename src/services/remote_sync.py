@@ -38,7 +38,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 from urllib.parse import urlparse
 
 import httpx
-from sqlalchemy import delete
+from sqlalchemy import update
 from sqlmodel import Session, select
 
 from config import (
@@ -195,6 +195,27 @@ def _decode_sync_state_record(record: AppSettingRecord | None) -> Dict[str, Any]
     return state
 
 
+def invalidate_received_revisions(
+    session: Session,
+    authority_id: str,
+    streams: Optional[Sequence[str]] = None,
+) -> None:
+    """让某个上游写入的行在下一次拉取时全部重新应用——只失效「接收修订」,不删状态行。
+
+    状态行同时是本机向下游导出的索引(``local_revision`` / ``operation``,issue #263):删掉它
+    等于让下游在重放完成前看不到这些实体。把 ``revision`` 置 0 即可:之后任何来者都算更新。
+    """
+
+    statement = (
+        update(ArchiveSyncEntityStateRecord)
+        .where(ArchiveSyncEntityStateRecord.authority_id == authority_id)
+        .values(revision=0)
+    )
+    if streams is not None:
+        statement = statement.where(ArchiveSyncEntityStateRecord.stream.in_(tuple(streams)))
+    session.exec(statement)
+
+
 def _refetch_outdated_analysis_payloads(
     session: Session,
     target: Dict[str, Any],
@@ -225,12 +246,7 @@ def _refetch_outdated_analysis_payloads(
     streams = dict(target.get("v2_streams") or {})
     dropped = streams.pop("analyses", None) is not None
     target["v2_streams"] = streams
-    session.exec(
-        delete(ArchiveSyncEntityStateRecord).where(
-            ArchiveSyncEntityStateRecord.stream == "analyses",
-            ArchiveSyncEntityStateRecord.authority_id == authority_id,
-        )
-    )
+    invalidate_received_revisions(session, authority_id, ("analyses",))
     target["v2_analysis_payload_generation"] = current
     target["v2_analysis_refetch_at"] = prepared_at
     _logger.info(
@@ -285,12 +301,7 @@ def _switch_source_projection(
     for stream in _SOURCE_PROJECTED_STREAMS:
         streams.pop(stream, None)
     target["v2_streams"] = streams
-    session.exec(
-        delete(ArchiveSyncEntityStateRecord).where(
-            ArchiveSyncEntityStateRecord.stream.in_(_SOURCE_PROJECTED_STREAMS),
-            ArchiveSyncEntityStateRecord.authority_id == authority_id,
-        )
-    )
+    invalidate_received_revisions(session, authority_id, _SOURCE_PROJECTED_STREAMS)
     target["v2_source_projection_changed_at"] = prepared_at
     _logger.info(
         "remote sync %s: source catalog not ready, replaying sources/source_states under %s",
@@ -408,36 +419,13 @@ def prepare_transaction_revision_consumer(
             "旧 checkpoint 的 authority_id 与当前 producer 不一致，拒绝自动 rebase"
         )
 
-    # Timestamp checkpoints cannot be compared to integer revisions. Preserve
-    # Articles/Analyses so read counters and local manual overlays survive a
-    # failed first pull; authoritative upserts and presence-confirmed absence
-    # reconcile them. Source metadata becomes inactive until its full upsert,
-    # readiness is cleared, and Media remains for reference-based local GC.
-    eligible_sources = session.exec(
-        select(SourceConfigRecord).where(
-            ~SourceConfigRecord.source_id.startswith("user_rss_", autoescape=True),
-            SourceConfigRecord.owner_username == "",
-            SourceConfigRecord.collection_authority_id.in_(("", authority_id)),
-        )
-    ).all()
-    for source in eligible_sources:
-        source.is_active = False
-        session.add(source)
-    eligible_source_ids = {source.source_id for source in eligible_sources}
-    for state_row in session.exec(
-        select(SourceStateRecord).where(
-            ~SourceStateRecord.source_id.startswith("user_rss_", autoescape=True),
-            SourceStateRecord.authority_id.in_(("", authority_id)),
-        )
-    ).all():
-        source = session.get(SourceConfigRecord, state_row.source_id)
-        if source is None or state_row.source_id in eligible_source_ids:
-            session.delete(state_row)
-    session.exec(
-        delete(ArchiveSyncEntityStateRecord).where(
-            ArchiveSyncEntityStateRecord.authority_id == authority_id
-        )
-    )
+    # Timestamp checkpoints cannot be compared to integer revisions, so the first
+    # transaction-revision run replays every stream from the beginning. Nothing local is
+    # touched here (issue #263): no source is deactivated and no local source state is
+    # deleted — pulling does not change what this node may collect or analyse. Rows this
+    # authority wrote earlier keep their export state; only their received revision is
+    # invalidated so the replay re-applies them.
+    invalidate_received_revisions(session, authority_id)
 
     target.update(
         {
@@ -672,54 +660,6 @@ async def _fetch_v2_page(
             if attempt < _MAX_RETRIES:
                 await asyncio.sleep(min(2**attempt, 8))
     raise RemoteSyncError(f"请求远端失败(已重试 {_MAX_RETRIES} 次): {last_error}")
-
-
-async def _fetch_v2_presence(
-    client: httpx.AsyncClient,
-    base_url: str,
-    cookie_header: str,
-    *,
-    stream: str,
-    identities: list[str],
-    authority_id: str,
-) -> set[str]:
-    """Confirm one bounded candidate batch before any receiver-side prune."""
-
-    response = await _request_with_retry(
-        client,
-        "POST",
-        f"{base_url}/api/archive/v2/presence",
-        headers={"Cookie": cookie_header},
-        json={"stream": stream, "identities": identities},
-    )
-    if response.status_code in {401, 403}:
-        raise RemoteSyncError(
-            f"远端拒绝 v2 {stream} presence 查询(HTTP {response.status_code})"
-        )
-    if response.status_code != 200:
-        raise RemoteSyncError(
-            f"远端 v2 {stream} presence 查询异常:HTTP {response.status_code}"
-        )
-    try:
-        payload = response.json()
-    except json.JSONDecodeError as exc:
-        raise RemoteSyncError(f"远端 v2 {stream} presence 响应不是 JSON") from exc
-    if (
-        payload.get("schema_version") != archive_sync_v2.SCHEMA_VERSION
-        or payload.get("capability")
-        != archive_sync_v2.AUTHORITATIVE_PRESENCE_CAPABILITY
-        or payload.get("authority_id") != authority_id
-        or payload.get("stream") != stream
-        or payload.get("requested") != identities
-        or not isinstance(payload.get("present"), list)
-    ):
-        raise RemoteSyncError(f"远端 v2 {stream} presence 响应契约不匹配")
-    present = payload["present"]
-    if any(not isinstance(value, str) for value in present) or not set(present) <= set(
-        identities
-    ):
-        raise RemoteSyncError(f"远端 v2 {stream} presence 返回了未请求的 identity")
-    return set(present)
 
 
 async def _fetch_v2_media_bytes(
@@ -1129,8 +1069,14 @@ async def run_pull_v2(
     podcast_text_max_chars: int = DEFAULT_PODCAST_TEXT_ARTIFACT_MAX_CHARS,
     podcast_text_page_max_bytes: int = DEFAULT_PODCAST_TEXT_SYNC_PAGE_MAX_BYTES,
     podcast_text_page_max_rows: int = DEFAULT_PODCAST_TEXT_SYNC_PAGE_MAX_ROWS,
+    local_skip_streams: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
     """Pull every v2 stream with independently checkpointed keyset pages.
+
+    ``local_skip_streams``: streams this node chooses not to pull although the
+    producer offers them (issue #263: a node that already has its own events never
+    imports upstream events — event ids are per-node integers). They are neither
+    requested nor checkpointed.
 
     A page is validated and committed atomically by ``archive_sync_v2``.  A
     stream checkpoint is published only after its terminal page (and, for media,
@@ -1169,6 +1115,8 @@ async def run_pull_v2(
     # 控制台观测(issue #261):只读本次运行的进度,不参与任何 checkpoint 推进。
     streams_done: Dict[str, Dict[str, Any]] = {}
     run_pending: Optional[Dict[str, int]] = None
+    skip_locally = {str(name) for name in (local_skip_streams or ())}
+    result["skipped_streams"] = sorted(skip_locally)
     async with _make_client(transport) as client:
         cookie_header = await _login(client, base, username, password)
         for stream in V2_STREAM_ORDER:
@@ -1177,10 +1125,24 @@ async def run_pull_v2(
                 and stream not in negotiated_stream_order
             ):
                 continue
+            if stream in skip_locally:
+                continue
             previous = checkpoints.get(stream) or {}
             # A completed prior snapshot is the exclusive lower watermark for
             # the next run. `after` is only for pages within the new snapshot.
             since = str(previous.get("snapshot") or "")
+            # 依赖流待重放(issue #263):某篇本机版本的文章被上游接管后,此前因它而跳过的分析 /
+            # 播客行没有记账,增量拉不回来。标记在接管事务里落库,这里整流重放、流完成才清。
+            replay_generation = (
+                (
+                    await asyncio.to_thread(archive_sync_v2.dependency_replay_marks, engine)
+                ).get(stream)
+                if stream in archive_sync_v2.DEPENDENCY_REPLAY_STREAMS
+                else None
+            )
+            replaying_dependencies = replay_generation is not None
+            if replaying_dependencies:
+                since = ""
             snapshot = "" if stream == "taxonomy" else generation_snapshot
             after = ""
             stats = {
@@ -1213,8 +1175,13 @@ async def run_pull_v2(
                         "downloaded": stats["media_downloaded"] + stats["podcast_audio_downloaded"],
                         "reused_bytes": stats["reused_bytes"],
                         "downloaded_bytes": stats["downloaded_bytes"],
+                        # 本机选择不拉的流(本机已有自己的事件时的 events)不算在本次的顺序里。
                         "order": (
-                            list(negotiated_stream_order)
+                            [
+                                name
+                                for name in negotiated_stream_order
+                                if name not in skip_locally
+                            ]
                             if negotiated_stream_order is not None
                             else None
                         ),
@@ -1362,8 +1329,14 @@ async def run_pull_v2(
                         raise RemoteSyncError("本地媒体库未配置，不能完成 v2 media stream")
                     if stream == "podcast_audio" and podcast_artifact_store is None:
                         raise RemoteSyncError("本地 Podcast artifact store 未配置，不能完成音频同步")
+                    locally_kept = set(applied.get("skipped_identities") or ())
                     for item in rows:
                         if item.get("operation") == "tombstone":
+                            advance(1)
+                            continue
+                        if str(item["identity"]) in locally_kept:
+                            # 本机版本胜出、元数据没有应用:不为它下载文件。因接收去重而没有
+                            # 重复应用的行不在此列,它们仍要走复用 / 下载(覆盖失败重试)。
                             advance(1)
                             continue
                         payload = item["payload"]
@@ -1404,43 +1377,8 @@ async def run_pull_v2(
                     advance(int(applied["count"]))
                 after = str(manifest.get("next_cursor") or after)
                 if bool(manifest.get("complete")):
-                    if not since and stream in {
-                        "articles",
-                        "analyses",
-                        "events",
-                        "podcast_texts",
-                        "podcast_audio",
-                    }:
-                        candidates = await asyncio.to_thread(
-                            archive_sync_v2.full_authority_stale_identities,
-                            engine,
-                            stream,
-                            authority,
-                        )
-                        present: set[str] = set()
-                        for start in range(0, len(candidates), 1000):
-                            present.update(
-                                await _fetch_v2_presence(
-                                    client,
-                                    base,
-                                    cookie_header,
-                                    stream=stream,
-                                    identities=candidates[start : start + 1000],
-                                    authority_id=authority,
-                                )
-                            )
-                        confirmed_absent = [
-                            identity
-                            for identity in candidates
-                            if identity not in present
-                        ]
-                        stats["pruned"] += await asyncio.to_thread(
-                            archive_sync_v2.finalize_full_authority_stream,
-                            engine,
-                            stream,
-                            authority,
-                            absent_identities=confirmed_absent,
-                        )
+                    # 整流全量后不再向上游核对存在性、也不清理「上游没有」的行(issue #263
+                    # 用户拍板):本机可以有上游没有的数据。删除只走删除标记。
                     if stream == "articles":
                         # 上一轮事件流里文章还没到的成员(event_member_backlog):文章本轮到了就补回,
                         # 不依赖事件再次变更重发(issue #121 检视 R1 #4)。
@@ -1476,6 +1414,14 @@ async def run_pull_v2(
                     result["streams"][stream] = {**checkpoint, "completed_at": finished_at}
                     if on_stream_complete is not None:
                         on_stream_complete(stream, checkpoint)
+                    if replaying_dependencies:
+                        # 只清它开始时读到的那一代:重放期间若又登记了新的,留给下一轮。
+                        await asyncio.to_thread(
+                            archive_sync_v2.clear_dependency_replay,
+                            engine,
+                            stream,
+                            replay_generation,
+                        )
                     # checkpoint 落定后才把本流记为完成,进度不能跑在复制状态前面。
                     report_progress()
                     break
@@ -1742,7 +1688,7 @@ def save_schedule(
 
             if sync_consumer_policy.v2_receiver_state_present(session):
                 raise RemoteSyncError(
-                    "本机已进入 v2 consumer 模式，不能降级为 v1；"
+                    "本机已做过 v2 同步，不能降级为 v1；"
                     "如需回退请先停止 worker 并恢复升级前备份"
                 )
         record = session.get(AppSettingRecord, REMOTE_SYNC_SCHEDULE_KEY)
@@ -1752,31 +1698,5 @@ def save_schedule(
         else:
             record.value = value
         session.add(record)
-        if merged["enabled"] and merged["protocol"] == "v2":
-            from services import sync_consumer_policy
-
-            # Schedule intent and receiver fence share one transaction, so no
-            # public writer can slip between two commits.
-            sync_consumer_policy.activate_v2_consumer_mode(
-                session,
-                reason="v2_schedule",
-                activated_at=updated_at,
-                commit=False,
-            )
         session.commit()
     return load_schedule(engine, include_secret=False)
-
-
-def activate_consumer_for_enabled_v2_schedule(engine, *, reason: str) -> bool:
-    """Restore the v2 receiver fence before registering collector schedules."""
-
-    schedule = load_schedule(engine)
-    if not (schedule.get("enabled") and schedule.get("protocol") == "v2"):
-        return False
-    from services import sync_consumer_policy
-
-    with Session(engine) as session:
-        return sync_consumer_policy.activate_v2_consumer_mode(
-            session,
-            reason=reason,
-        )

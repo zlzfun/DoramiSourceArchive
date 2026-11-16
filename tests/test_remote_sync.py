@@ -633,22 +633,16 @@ def test_legacy_filtered_schedule_api_requires_explicit_protocol(monkeypatch, tm
         assert response.json()["migration_required"] is False
 
 
-def test_v2_schedule_probes_capability_before_persisting_consumer_fence(
+def test_v2_schedule_probes_capability_and_writes_no_node_level_marker(
     monkeypatch, tmp_path
 ):
+    """启用 v2 定时仍先探测对端能力;保存后不留任何整机围栏标记(issue #263)。"""
     app_module = _setup_app(monkeypatch, tmp_path)
     monkeypatch.setattr(app_module, "reload_remote_sync_schedule", lambda: None)
     observed = {}
 
     async def _compatible_peer(*_args, **_kwargs):
-        from models.db import AppSettingRecord
-        from sqlmodel import Session
-
-        with Session(app_module.db_sink.engine) as session:
-            observed["marker_before_probe"] = session.get(
-                AppSettingRecord,
-                "remote_sync:v2_consumer_mode",
-            )
+        observed["probed"] = True
         return _v2_probe("compatible-producer")
 
     monkeypatch.setattr(remote_sync_service, "probe", _compatible_peer)
@@ -665,12 +659,16 @@ def test_v2_schedule_probes_capability_before_persisting_consumer_fence(
         })
 
     assert response.status_code == 200
-    assert observed == {"marker_before_probe": None}
+    assert observed == {"probed": True}
+    from models.db import AppSettingRecord
     from services import sync_consumer_policy
     from sqlmodel import Session
 
     with Session(app_module.db_sink.engine) as session:
-        assert sync_consumer_policy.v2_consumer_mode_active(session)
+        assert session.get(AppSettingRecord, sync_consumer_policy.V2_CONSUMER_MODE_KEY) is None
+        assert sync_consumer_policy.local_source_operation_allowed(
+            session, "any_public_source", operation="collection"
+        )
 
 
 def test_schedule_endpoints_admin_gated(monkeypatch, tmp_path):

@@ -67,14 +67,13 @@ def _require_local_source_governance(
     session: Session,
     record: SourceConfigRecord | None = None,
 ) -> None:
-    """Block public-source mutations as soon as this node becomes a v2 receiver."""
+    """本机管理入口的统一检查点。
+
+    issue #263 起,拉取别人不再限制本机新建、修改或抓取公共源;这里只剩策略函数对读者自定源
+    的规则(管理类操作恒放行),保留调用点便于今后收口。
+    """
 
     if record is None:
-        if sync_consumer_policy.v2_consumer_mode_active(session):
-            raise HTTPException(
-                status_code=409,
-                detail="v2 接收端不能创建本地公共数据源；请使用用户自定义 RSS",
-            )
         return
     if not sync_consumer_policy.local_source_operation_allowed(
         session,
@@ -83,7 +82,7 @@ def _require_local_source_governance(
     ):
         raise HTTPException(
             status_code=409,
-            detail="数据源由远端权威节点管理，本机不能修改、删除或抓取",
+            detail="数据源当前不允许在本机修改、删除或抓取",
         )
 
 
@@ -502,7 +501,7 @@ async def fetch_source_config(
     ):
         raise HTTPException(
             status_code=409,
-            detail="该数据源由远端权威节点采集，本机仅同步使用",
+            detail="该自定源未启用或自定源功能已关闭，本机不抓取",
         )
     if not resolve_source_fetcher_id(record):
         raise HTTPException(status_code=400, detail="该数据源未绑定可用抓取器")
@@ -527,7 +526,6 @@ async def fetch_active_rss_sources(
     records = session.exec(
         select(SourceConfigRecord)
         .where(SourceConfigRecord.is_active == True)  # noqa: E712
-        .where(SourceConfigRecord.collection_authority_id == "")
         .where(SourceConfigRecord.source_type.in_(["rss", "atom"]))
         .order_by(SourceConfigRecord.name)
     ).all()
@@ -574,7 +572,6 @@ async def fetch_active_web_sources(
     records = session.exec(
         select(SourceConfigRecord)
         .where(SourceConfigRecord.is_active == True)  # noqa: E712
-        .where(SourceConfigRecord.collection_authority_id == "")
         .where(SourceConfigRecord.source_type.in_(["web", "webpage"]))
         .order_by(SourceConfigRecord.name)
     ).all()

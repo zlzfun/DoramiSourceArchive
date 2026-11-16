@@ -70,7 +70,7 @@ python3 scripts/check_docs.py             # 文档守卫(索引覆盖 / 断链 /
 | LLM 与读者 AI | `chat_completion` 永不打日志 api_key;三档模型 main / aux / vision;翻译 / 问答受「全局总闸 ∧ 账户开关 ∧ LLM 已配置」门控,日额度软上限 | [`llm-and-ai.md`](docs/architecture/llm-and-ai.md) |
 | 社交(X) | 一账号一 `source_id`;按**返回资源**计费的配额守卫;不展示互动数字 | [`social-x.md`](docs/architecture/social-x.md) |
 | 调度与任务 | `CollectionJobRecord` 是唯一采集调度实体;`load_tasks_to_scheduler()` 只差量协调自己的命名空间;长任务 = 持久 `JobRecord` + 轮询 | [`jobs-and-scheduling.md`](docs/architecture/jobs-and-scheduling.md) |
-| Archive Sync | 外网 authority 唯一写者,内网 replica 只读公共数据(`authority_id` 围栏);六流独立 checkpoint | [`archive-sync.md`](docs/architecture/archive-sync.md)、[契约](docs/contracts/archive_sync.md) |
+| Archive Sync | 节点不分角色:拉取不改变本机能做什么,导出本机持有的全部公开数据(可链式转发);逐行同步印记只表示「当前版本由同步写入」,本机版本严格更新才胜;不做「上游没有就删」;只支持单上游的链;九流独立 checkpoint | [`archive-sync.md`](docs/architecture/archive-sync.md)、[契约](docs/contracts/archive_sync.md) |
 | 运维面 | 管理面纪律:列头即操作、零说明句、高危入抽屉;三类计量(AI 用量 / 阅读 / 登录)落聚合表 | [`admin-ops.md`](docs/architecture/admin-ops.md) |
 
 ## 找什么去哪

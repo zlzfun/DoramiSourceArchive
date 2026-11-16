@@ -401,7 +401,7 @@ async def import_archive_articles_jsonl(request: Request):
         if sync_consumer_policy.v2_receiver_state_present(session):
             raise HTTPException(
                 status_code=409,
-                detail="本机已进入 v2 consumer 模式，禁止 legacy v1 归档导入",
+                detail="本机已有 v2 同步写入的数据，禁止 legacy v1 归档导入",
             )
     raw_text = (await request.body()).decode("utf-8")
     if not raw_text.strip():

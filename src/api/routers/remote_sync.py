@@ -153,7 +153,7 @@ def launch_remote_sync_job(
         with Session(engine) as session:
             if sync_consumer_policy.v2_receiver_state_present(session):
                 raise RemoteSyncError(
-                    "本机已进入 v2 consumer 模式，不能降级启动 v1 同步"
+                    "本机已做过 v2 同步，不能降级启动 v1 同步"
                 )
     # 「查活动任务 → 准备 v2 状态 → 落 queued 任务」与单流重置串行(issue #261 检视 R1 #1)。
     with remote_sync_service.sync_control_lock(engine):
@@ -167,14 +167,10 @@ def launch_remote_sync_job(
             if active:
                 raise RemoteSyncError("已有同步任务运行中；单一 authority 同步必须串行")
         if protocol == "v2":
-            # The writer fence, old-checkpoint reset and authority-scoped rebase are
-            # one durable transition before the background job becomes visible.
+            # Old-checkpoint reset and authority-scoped rebase are one durable
+            # transition before the background job becomes visible. Pulling does not
+            # change what this node may collect or analyse (issue #263).
             with Session(engine) as session:
-                sync_consumer_policy.activate_v2_consumer_mode(
-                    session,
-                    reason="v2_pull",
-                    commit=False,
-                )
                 remote_sync_service.prepare_transaction_revision_consumer(
                     session,
                     base_url=base_url,
@@ -193,6 +189,14 @@ def launch_remote_sync_job(
                 podcast_store = getattr(app_module, "podcast_artifact_store", None)
                 state = remote_sync_service.load_sync_state(engine)
                 target = (state.get("targets") or {}).get(base_url) or {}
+                # 事件 id 是产生节点的本机自增整数:本机已有自己的事件就不拉上游的 events 流
+                # (issue #263;导入事务里另有原子复核)。
+                with Session(engine) as session:
+                    local_skip_streams = (
+                        ["events"]
+                        if remote_sync_service.archive_sync_v2.local_events_present(session)
+                        else []
+                    )
 
                 def _record_stream(stream: str, checkpoint: Dict[str, Any]) -> None:
                     remote_sync_service.record_v2_stream_success(
@@ -231,6 +235,7 @@ def launch_remote_sync_job(
                     ),
                     on_progress=job.set_progress,
                     on_stream_complete=_record_stream,
+                    local_skip_streams=local_skip_streams,
                 )
                 remote_sync_service.record_v2_run_success(
                     engine, base_url=base_url, synced_at=_now_iso()
@@ -416,10 +421,6 @@ async def set_remote_sync_schedule(params: RemoteSyncScheduleParams):
         )
     except RemoteSyncError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    remote_sync_service.activate_consumer_for_enabled_v2_schedule(
-        engine,
-        reason="v2_schedule",
-    )
     _app().reload_remote_sync_schedule()
     return saved
 

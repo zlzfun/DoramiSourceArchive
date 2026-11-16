@@ -18,6 +18,7 @@ import {
   Play,
   RefreshCw,
   Save,
+  ScanSearch,
   Wand2,
   X,
 } from 'lucide-react';
@@ -29,6 +30,7 @@ import {
   fetchSourceHealth,
   fetchSourceConfigNow,
   fetchSourceVisibility,
+  setSourceAnalysis,
   ingestSourceAction,
   renameIngestSource,
   setSourceVisibility,
@@ -274,6 +276,25 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
       setVisibilityBusyId(null);
     }
   }, [hiddenSourceIds, showToast]);
+
+  // 「本机分析」开关(issue #263):同步建出来的源默认关。只对本机自己抓到的条目起作用——
+  // 同步来的条目用上游的分析结果,不在本机重复分析。目录没带这个字段(旧后端)时按开着渲染。
+  const [analysisBusyId, setAnalysisBusyId] = useState(null);
+  const analysisEnabledOf = (fetcher) => fetcher.ai_analysis_enabled !== false;
+  const toggleSourceAnalysis = useCallback(async (fetcher) => {
+    const next = fetcher.ai_analysis_enabled === false;
+    setAnalysisBusyId(fetcher.id);
+    try {
+      const data = await setSourceAnalysis(fetcher.id, next);
+      const enabled = data?.ai_analysis_enabled !== false;
+      setPatches(prev => ({ ...prev, [fetcher.id]: { ...(prev[fetcher.id] || {}), ai_analysis_enabled: enabled } }));
+      showToast(enabled ? `已开启「${fetcher.name}」的本机分析` : `已关闭「${fetcher.name}」的本机分析`, 'success');
+    } catch (e) {
+      showToast(e.message || '更新本机分析开关失败', 'error');
+    } finally {
+      setAnalysisBusyId(null);
+    }
+  }, [showToast]);
 
   const loadSourceHealth = useCallback(async () => {
     loadCatalog(); // 目录与健康一起刷新:挂载 / 轮询 / 手动刷新 / 抓取完成都会带出新建的收录源
@@ -1208,6 +1229,28 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
               onClick={() => toggleSourceHidden(fetcher)}
             >
               <span className={`ledger-switch ${hiddenSourceIds.has(fetcher.id) ? 'is-on' : ''}`} aria-hidden="true" />
+            </button>
+          </div>
+
+          {/* 本机分析:同步建出来的源默认关;打开后本机自己抓到的条目在本机分析 */}
+          <div className="inspector-visibility">
+            <ScanSearch className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            <div className="inspector-visibility-text">
+              <span className="inspector-visibility-title">本机分析</span>
+              <span className="inspector-visibility-hint">
+                只分析本机自己抓到的条目；同步来的条目用上游的分析结果。
+              </span>
+            </div>
+            <button
+              type="button"
+              className="inspector-visibility-toggle"
+              role="switch"
+              aria-checked={analysisEnabledOf(fetcher)}
+              aria-label={`本机分析 ${fetcher.name}`}
+              disabled={analysisBusyId === fetcher.id}
+              onClick={() => toggleSourceAnalysis(fetcher)}
+            >
+              <span className={`ledger-switch ${analysisEnabledOf(fetcher) ? 'is-on' : ''}`} aria-hidden="true" />
             </button>
           </div>
 

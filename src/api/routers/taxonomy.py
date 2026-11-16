@@ -24,7 +24,6 @@ from models.db import (
     RemoteCandidateEvidenceRecord,
 )
 from services import taxonomy as taxonomy_service
-from services import sync_consumer_policy
 
 
 def _require_local_taxonomy_authority(
@@ -39,7 +38,6 @@ def _require_local_taxonomy_authority(
     if (
         settings.taxonomy.mode == "replica"
         or (authority is not None and (authority.value or "").strip())
-        or sync_consumer_policy.v2_consumer_mode_active(session)
     ):
         raise HTTPException(
             status_code=409,

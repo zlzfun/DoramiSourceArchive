@@ -1342,7 +1342,7 @@ def run_auto_activation_cycle(
 
     if (
         settings.taxonomy.mode == "replica"
-        or sync_consumer_policy.v2_consumer_mode_active(session)
+        or sync_consumer_policy.taxonomy_governed_remotely(session)
     ):
         return []
 

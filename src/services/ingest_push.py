@@ -359,7 +359,7 @@ def _match_host(ctx: BatchContext, url: str, kind: str) -> Optional[str]:
     usable = []
     for source_id in sorted(candidates):
         view = source_catalog.get(ctx.session, source_id)
-        if view.retired or view.is_private or view.synced:
+        if view.retired or view.is_private:
             continue
         if _shape_mismatch(ctx, source_id, kind) is not None:
             continue
@@ -440,8 +440,6 @@ def _check_target(ctx: BatchContext, source_id: str, kind: str) -> None:
     view = source_catalog.get(ctx.session, source_id)
     if view.is_private:
         raise IngestRejected("读者自定源不接受推送")
-    if view.synced:
-        raise IngestRejected("该来源由远端权威节点管理")
     if view.retired:
         raise IngestRejected("该来源已下线")
     if source_id in ctx.hidden:

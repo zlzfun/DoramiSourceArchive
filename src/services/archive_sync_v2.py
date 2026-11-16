@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 from urllib.parse import urlsplit
 
-from sqlalchemy import String, and_, cast, delete, exists, func, or_, update
+from sqlalchemy import and_, delete, func, or_, update
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
@@ -47,6 +47,7 @@ from models.db import (
     CmsTagCandidateEvidenceRecord,
     CmsTagCandidateRecord,
     CmsTagRecord,
+    CollectionJobRecord,
     EventMemberBacklogRecord,
     EventMemberRecord,
     EventRecord,
@@ -302,10 +303,11 @@ def pending_state_counts(
     since_revision: int,
     snapshot_revision: int,
 ) -> dict[str, int]:
-    """``(since, snapshot]`` 内本机(authority 为空)各流将导出的实体数。
+    """``(since, snapshot]`` 内本机持有的各流将导出的实体数(按导出修订 ``local_revision``)。
 
     非媒体流每个实体状态恰好导出一行(upsert 取不到载荷时退成 tombstone),所以这就是
-    接收端该流的处理量分母;走 ``(stream, authority_id, revision)`` 索引。
+    接收端该流的处理量分母;走 ``(stream, local_revision, identity)`` 索引。本机产生的行与
+    同步写入的行都在内(issue #263:拉来的也导出)。
     """
 
     names = list(dict.fromkeys(streams))
@@ -316,11 +318,10 @@ def pending_state_counts(
         ArchiveSyncEntityStateRecord.stream, func.count()
     ).where(
         ArchiveSyncEntityStateRecord.stream.in_(names),
-        ArchiveSyncEntityStateRecord.authority_id == "",
-        ArchiveSyncEntityStateRecord.revision <= snapshot_revision,
+        ArchiveSyncEntityStateRecord.local_revision <= snapshot_revision,
     )
     if since_revision >= 0:
-        query = query.where(ArchiveSyncEntityStateRecord.revision > since_revision)
+        query = query.where(ArchiveSyncEntityStateRecord.local_revision > since_revision)
     for name, count in session.exec(
         query.group_by(ArchiveSyncEntityStateRecord.stream)
     ).all():
@@ -538,11 +539,11 @@ def _analysis_payload(session: Session, row: ArticleAnalysisRecord) -> dict[str,
 
 
 def _media_references(session: Session, snapshot: int) -> dict[str, int]:
-    """Map current public image URLs to their article transaction revision."""
+    """Map current public image URLs to their article export revision."""
 
     urls: dict[str, int] = {}
     articles = session.exec(
-        select(ArticleRecord, ArchiveSyncEntityStateRecord.revision)
+        select(ArticleRecord, ArchiveSyncEntityStateRecord.local_revision)
         .join(
             ArchiveSyncEntityStateRecord,
             and_(
@@ -554,18 +555,12 @@ def _media_references(session: Session, snapshot: int) -> dict[str, int]:
             SourceConfigRecord, SourceConfigRecord.source_id == ArticleRecord.source_id
         )
         .where(
-            ArchiveSyncEntityStateRecord.authority_id == "",
             ArchiveSyncEntityStateRecord.operation == "upsert",
-            ArchiveSyncEntityStateRecord.revision <= snapshot,
+            ArchiveSyncEntityStateRecord.local_revision <= snapshot,
             ~ArticleRecord.source_id.startswith(_USER_SOURCE_PREFIX, autoescape=True),
-            ArticleRecord.analysis_authority_id == "",
             or_(
                 SourceConfigRecord.source_id.is_(None),
                 SourceConfigRecord.owner_username == "",
-            ),
-            or_(
-                SourceConfigRecord.source_id.is_(None),
-                SourceConfigRecord.collection_authority_id == "",
             ),
         )
     ).all()
@@ -604,14 +599,9 @@ def is_public_media_reference(session: Session, url: str) -> bool:
                 ~ArticleRecord.source_id.startswith(
                     _USER_SOURCE_PREFIX, autoescape=True
                 ),
-                ArticleRecord.analysis_authority_id == "",
                 or_(
                     SourceConfigRecord.source_id.is_(None),
                     SourceConfigRecord.owner_username == "",
-                ),
-                or_(
-                    SourceConfigRecord.source_id.is_(None),
-                    SourceConfigRecord.collection_authority_id == "",
                 ),
                 or_(
                     ArticleRecord.content.contains(candidate_text, autoescape=True),
@@ -792,7 +782,7 @@ def _validated_podcast_audio_payload(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _article_is_public(session: Session, article: Optional[ArticleRecord]) -> bool:
-    """导出口径的「公共文章」:本机分析、非 user_rss_、源配置既非私有 / 远端也非凭据源。
+    """导出口径的「公共文章」:非 user_rss_、源配置既非私有也非凭据源(与印记无关,issue #263)。
 
     凭据源判定沿用 ``user_sources.source_is_credentialed``(显式分类 + URL 推断),与 MaaS / 读者
     面的「内容可否离开本部署」同一口径(检视 R1 #2)。
@@ -800,14 +790,10 @@ def _article_is_public(session: Session, article: Optional[ArticleRecord]) -> bo
 
     from services.user_sources import source_is_credentialed
 
-    if (
-        article is None
-        or article.analysis_authority_id
-        or not _public_source(article.source_id)
-    ):
+    if article is None or not _public_source(article.source_id):
         return False
     source = session.get(SourceConfigRecord, article.source_id)
-    if source is not None and (source.owner_username or source.collection_authority_id):
+    if source is not None and source.owner_username:
         return False
     return not source_is_credentialed(source)
 
@@ -1089,9 +1075,11 @@ def _upsert_payload(
     podcast_text_max_chars: int = DEFAULT_PODCAST_TEXT_ARTIFACT_MAX_CHARS,
     source_projection: str = SOURCE_PROJECTION_LEGACY,
 ) -> Optional[dict[str, Any]]:
+    # issue #263:导出本机持有的全部公开数据。各分支只留数据范围条件(读者自定源、凭据、
+    # legacy 投影成员资格、分析与正文是否匹配);行上的同步印记不再决定导不导。
     if stream == "sources":
         record = session.get(SourceConfigRecord, identity)
-        if record is None or record.owner_username or record.collection_authority_id:
+        if record is None or record.owner_username:
             return None
         if source_projection == SOURCE_PROJECTION_CATALOG:
             return _catalog_source_payload(record)
@@ -1103,16 +1091,10 @@ def _upsert_payload(
         return _source_payload(record)
     if stream == "articles":
         record = session.get(ArticleRecord, identity)
-        if (
-            record is None
-            or record.analysis_authority_id
-            or not _public_source(record.source_id)
-        ):
+        if record is None or not _public_source(record.source_id):
             return None
         source = session.get(SourceConfigRecord, record.source_id)
-        if source is not None and (
-            source.owner_username or source.collection_authority_id
-        ):
+        if source is not None and source.owner_username:
             return None
         return _article_payload(record, authority_id)
     if stream == "analyses":
@@ -1121,15 +1103,11 @@ def _upsert_payload(
         if (
             record is None
             or article is None
-            or record.authority_id
-            or article.analysis_authority_id
             or not _public_source(article.source_id)
         ):
             return None
         source = session.get(SourceConfigRecord, article.source_id)
-        if source is not None and (
-            source.owner_username or source.collection_authority_id
-        ):
+        if source is not None and source.owner_username:
             return None
         # Article updates can precede re-analysis (or re-analysis may be
         # disabled). Withdraw the old result through the existing tombstone
@@ -1139,16 +1117,10 @@ def _upsert_payload(
         return _analysis_payload(session, record)
     if stream == "source_states":
         record = session.get(SourceStateRecord, identity)
-        if (
-            record is None
-            or record.authority_id
-            or not _public_source(record.source_id)
-        ):
+        if record is None or not _public_source(record.source_id):
             return None
         source = session.get(SourceConfigRecord, record.source_id)
-        if source is not None and (
-            source.owner_username or source.collection_authority_id
-        ):
+        if source is not None and source.owner_username:
             return None
         if (
             source_projection == SOURCE_PROJECTION_LEGACY
@@ -1163,7 +1135,6 @@ def _upsert_payload(
         publication = session.get(PodcastTextPublicationRecord, identity)
         if (
             publication is None
-            or publication.authority_id
             or publication.status != "published"
             or not publication.published_at
         ):
@@ -1172,19 +1143,15 @@ def _upsert_payload(
         article = session.get(ArticleRecord, publication.episode_id)
         if (
             artifact is None
-            or artifact.authority_id
             or artifact.episode_id != publication.episode_id
             or artifact.kind != publication.kind
             or article is None
             or article.content_type != "podcast_episode"
-            or article.analysis_authority_id
             or not _public_source(article.source_id)
         ):
             return None
         source = session.get(SourceConfigRecord, article.source_id)
-        if source is not None and (
-            source.owner_username or source.collection_authority_id
-        ):
+        if source is not None and source.owner_username:
             return None
         payload = _podcast_text_payload(publication, artifact)
         _validated_podcast_text_payload(
@@ -1199,7 +1166,6 @@ def _upsert_payload(
             record is None
             or record.kind != "digest_audio_zh"
             or record.status != "published"
-            or record.authority_id
             or not record.published_at
         ):
             return None
@@ -1208,7 +1174,6 @@ def _upsert_payload(
         if (
             article is None
             or article.content_type != "podcast_episode"
-            or article.analysis_authority_id
             or not _public_source(article.source_id)
             or narration is None
             or narration.episode_id != record.episode_id
@@ -1217,9 +1182,7 @@ def _upsert_payload(
         ):
             return None
         source = session.get(SourceConfigRecord, article.source_id)
-        if source is not None and (
-            source.owner_username or source.collection_authority_id
-        ):
+        if source is not None and source.owner_username:
             return None
         return _validated_podcast_audio_payload(_podcast_audio_payload(record))
     if stream == "events":
@@ -1228,7 +1191,7 @@ def _upsert_payload(
         except SyncV2Error:
             return None
         record = session.get(EventRecord, event_id)
-        if record is None or record.authority_id:
+        if record is None:
             return None
         payload = _event_payload(session, record)
         # 一个可导出成员都没有(成员全是私有 / 凭据源,或被管理员全部摘出)→ 以 tombstone 导出让
@@ -1245,15 +1208,15 @@ def _state_after_filter(
     if cursor_revision >= 0:
         return query.where(
             or_(
-            ArchiveSyncEntityStateRecord.revision > cursor_revision,
+            ArchiveSyncEntityStateRecord.local_revision > cursor_revision,
             and_(
-                ArchiveSyncEntityStateRecord.revision == cursor_revision,
+                ArchiveSyncEntityStateRecord.local_revision == cursor_revision,
                 ArchiveSyncEntityStateRecord.identity > cursor_id,
             ),
             )
         )
     if since_revision >= 0:
-        return query.where(ArchiveSyncEntityStateRecord.revision > since_revision)
+        return query.where(ArchiveSyncEntityStateRecord.local_revision > since_revision)
     return query
 
 
@@ -1390,16 +1353,15 @@ def _export_media_rows(
             ),
         )
         .where(
-            ArchiveSyncEntityStateRecord.authority_id == "",
             ArchiveSyncEntityStateRecord.operation == "upsert",
-            MediaAssetRecord.sync_authority_id == "",
             MediaAssetRecord.status == "cached",
             MediaAssetRecord.url.in_(list(references)),
         )
     ).all()
     candidates: list[tuple[int, str, MediaAssetRecord]] = []
     for record, state in media_records:
-        revision = max(int(state.revision), int(references.get(record.url, 0)))
+        # 两边都取导出修订:同步写入的图片在文件装好时会推进它(issue #263)。
+        revision = max(int(state.local_revision), int(references.get(record.url, 0)))
         key = (revision, record.url_hash)
         if revision > snapshot:
             continue
@@ -1586,10 +1548,10 @@ def export_page(
             if not after:
                 extra["pending"] = media_total
         else:
+            # 本机持有的全部公开数据:本机产生的行与同步写入的行一起按导出修订分页(issue #263)。
             query = select(ArchiveSyncEntityStateRecord).where(
                 ArchiveSyncEntityStateRecord.stream == stream,
-                ArchiveSyncEntityStateRecord.authority_id == "",
-                ArchiveSyncEntityStateRecord.revision <= snapshot_revision,
+                ArchiveSyncEntityStateRecord.local_revision <= snapshot_revision,
             )
             query = _state_after_filter(
                 query,
@@ -1599,7 +1561,7 @@ def export_page(
             )
             states = session.exec(
                 query.order_by(
-                    ArchiveSyncEntityStateRecord.revision.asc(),
+                    ArchiveSyncEntityStateRecord.local_revision.asc(),
                     ArchiveSyncEntityStateRecord.identity.asc(),
                 ).limit(limit + 1)
             ).all()
@@ -1630,7 +1592,7 @@ def export_page(
                     _line(
                     stream,
                     payload or {},
-                    revision=str(state.revision),
+                    revision=str(state.local_revision),
                     identity=state.identity,
                     operation=operation,
                     )
@@ -2082,6 +2044,187 @@ def _validated_podcast_text_payload(
     return artifact
 
 
+DEPENDENCY_REPLAY_KEY = "archive_sync:v2:dependency_replay"
+# 文章被接管后需要整流重放的依赖流:它们此前因「文章是本机版本」被跳过、没有记账。
+# 事件成员走 event_member_backlog,不在此列。
+DEPENDENCY_REPLAY_STREAMS = ("analyses", "podcast_texts", "podcast_audio")
+
+
+class _PageOutcome:
+    """一页导入里与「本机版本」有关的结果(issue #263)。
+
+    ``skipped`` 是因本机版本胜出而没有应用的行:不记账(否则会把本机行的导出状态盖成远端的),
+    二进制阶段也不为它们下载文件。``taken_over`` 是被来者接管的本机版本文章数。
+    """
+
+    def __init__(self) -> None:
+        self.skipped: set[str] = set()
+        self.taken_over = 0
+        self._scheduled: Optional[set[str]] = None
+        self._presets: Optional[set[str]] = None
+
+    def binding_is_auto_generated(self, source: SourceConfigRecord) -> bool:
+        """这条采集绑定是不是程序自己装的、管理员没动过。
+
+        - 预设镜像行:绑定 = 同名预设抓取器,且没有参数(预设行没有管理员改参数的入口,带了参数
+          就按存过算);
+        - 播客目录行:地址、抓取器、参数都还是目录安装时的样子。
+
+        只看绑定本身,不看 ``origin``(目录字段,会被同步覆盖成上游的值),也不只凭目录 id
+        (管理员可以在目录源上存自己的 feed / 上限)——实现检视 R1 #2、R2 #2。
+        """
+
+        fetcher_id = (source.fetcher_id or "").strip()
+        if self._presets is None:
+            from services import source_catalog
+
+            self._presets = set(source_catalog.registry_source_ids())
+        if fetcher_id == source.source_id and source.source_id in self._presets:
+            return _json_object(source.params_json, {}) == {}
+        from services import podcast_catalog
+
+        return podcast_catalog.binding_is_catalog_default(source)
+
+    def scheduled_source_ids(self, session: Session) -> set[str]:
+        """被任一采集任务点名的源(启用与否都算:点名即管理员表达过「本机要采」)。"""
+
+        if self._scheduled is None:
+            scheduled: set[str] = set()
+            for raw in session.exec(select(CollectionJobRecord.fetcher_ids_json)).all():
+                try:
+                    values = json.loads(raw or "[]")
+                except (TypeError, ValueError):
+                    values = []
+                if isinstance(values, list):
+                    scheduled.update(str(value).strip() for value in values if str(value).strip())
+            self._scheduled = scheduled
+        return self._scheduled
+
+
+def revision_instant(value: Any):
+    """把修订时间解析成 UTC 时间点;无时区的值按本机时区解释;解析不了返回 None(视为最旧)。"""
+
+    import datetime
+
+    text_value = str(value or "").strip()
+    if not text_value:
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(text_value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    try:
+        # naive → astimezone() 按本机时区解释;aware → 直接换算。
+        return parsed.astimezone(datetime.timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def revision_newer(candidate: Any, other: Any) -> bool:
+    """``candidate`` 是否**严格**新于 ``other``(解析不了的一侧视为最旧;两侧相等返回 False)。
+
+    修订号新者胜的用法是 ``revision_newer(本机, 来者)``:只有本机版本严格更新时才保留本机的;
+    相等时上游胜——从 v1 归档导入或库副本起步的节点,已有文章的修订号与上游完全相同,它们就是
+    上游的那一版,应当接上上游的后续更新与分析。
+    """
+
+    candidate_at = revision_instant(candidate)
+    if candidate_at is None:
+        return False
+    other_at = revision_instant(other)
+    if other_at is None:
+        return True
+    return candidate_at > other_at
+
+
+def source_in_local_use(
+    session: Session, source: SourceConfigRecord, outcome: "_PageOutcome"
+) -> bool:
+    """本机在用的源:本机跑过、被采集任务点名、或管理员在本机存过采集绑定。
+
+    这类源不接受上游的删除、退役与停用(方案检视 R1 #2 / R2 #2)。预设镜像行与播客目录自动
+    安装的行自带的绑定不算管理员存的。
+    """
+
+    state = session.get(SourceStateRecord, source.source_id)
+    if state is not None and not (state.authority_id or "").strip():
+        return True
+    if source.source_id in outcome.scheduled_source_ids(session):
+        return True
+    return bool((source.fetcher_id or "").strip()) and not outcome.binding_is_auto_generated(source)
+
+
+def _dependency_replay_marks(row: Optional[AppSettingRecord]) -> dict[str, int]:
+    """KV 里的待重放标记:``{流名: 代次}``。早期格式是只有流名的列表,按代次 0 读。"""
+
+    try:
+        value = json.loads(row.value) if row is not None and row.value else {}
+    except (TypeError, ValueError):
+        value = {}
+    if isinstance(value, list):
+        value = {str(item): 0 for item in value}
+    if not isinstance(value, dict):
+        return {}
+    marks: dict[str, int] = {}
+    for stream, generation in value.items():
+        if str(stream) not in DEPENDENCY_REPLAY_STREAMS:
+            continue
+        try:
+            marks[str(stream)] = int(generation)
+        except (TypeError, ValueError):
+            marks[str(stream)] = 0
+    return marks
+
+
+def mark_dependency_replay(session: Session) -> None:
+    """登记「依赖流待重放」,与触发它的写入同事务:中途失败 / 中断也不会丢。
+
+    每次登记把代次 +1;拉取循环清标记时带上它开始重放时读到的代次,期间若又有新的登记
+    (并发的导入入口),代次对不上就不清,留给下一轮(检视 R1 #8)。
+    """
+
+    row = session.get(AppSettingRecord, DEPENDENCY_REPLAY_KEY)
+    generation = max(_dependency_replay_marks(row).values(), default=0) + 1
+    value = json.dumps({stream: generation for stream in sorted(DEPENDENCY_REPLAY_STREAMS)})
+    if row is None:
+        row = AppSettingRecord(key=DEPENDENCY_REPLAY_KEY, value=value)
+    else:
+        row.value = value
+    session.add(row)
+
+
+def dependency_replay_marks(engine: Engine) -> dict[str, int]:
+    with Session(engine) as session:
+        return _dependency_replay_marks(session.get(AppSettingRecord, DEPENDENCY_REPLAY_KEY))
+
+
+def pending_dependency_replay(engine: Engine) -> set[str]:
+    return set(dependency_replay_marks(engine))
+
+
+def clear_dependency_replay(engine: Engine, stream: str, generation: Optional[int] = None) -> None:
+    """某条依赖流整流重放完成后清掉它的标记(流完成才清,失败的那一轮保留)。
+
+    ``generation`` 是这次重放开始时读到的代次;给了就只在代次没变时清。
+    """
+
+    with Session(engine) as session:
+        acquire_write_gate(session)  # 与并发的登记串行:读到的就是最新代次
+        row = session.get(AppSettingRecord, DEPENDENCY_REPLAY_KEY)
+        marks = _dependency_replay_marks(row)
+        if row is None or stream not in marks:
+            return
+        if generation is not None and marks[stream] != generation:
+            return
+        del marks[stream]
+        if marks:
+            row.value = json.dumps(marks, sort_keys=True)
+            session.add(row)
+        else:
+            session.delete(row)
+        session.commit()
+
+
 def _accepted_remote_rows(
     session: Session,
     stream: str,
@@ -2114,15 +2257,44 @@ def _save_remote_entity_states(
     stream: str,
     rows: list[dict[str, Any]],
     authority_id: str,
+    *,
+    skipped: Optional[set[str]] = None,
 ) -> None:
+    """给成功应用的行记账:接收修订(上游的)+ 导出修订(本机时钟)。
+
+    因本机版本而跳过的行不记:否则会把本机行的导出状态盖成远端的(甚至盖成 tombstone)。
+    目标本来就不存在的 tombstone 算成功应用,照常记账,这样删除能继续往下游转发。
+    一页共用一个本机时钟值,导出按 ``(local_revision, identity)`` 分页。
+    """
+
+    skipped = skipped or set()
+    saved = [item for item in rows if str(item["identity"]) not in skipped]
+    if not saved:
+        return
+    # 先把本页的业务写入落到连接上(触发器给本机行记的状态随之写好),再推进时钟、落远端记账。
+    session.flush()
+    connection = session.connection()
+    connection.exec_driver_sql(
+        "UPDATE archive_sync_clock SET revision = revision + 1 WHERE id = 1"
+    )
+    local_revision = int(
+        connection.exec_driver_sql(
+            "SELECT revision FROM archive_sync_clock WHERE id = 1"
+        ).scalar()
+        or 0
+    )
     now = _now_iso()
-    for item in rows:
+    for item in saved:
         identity = str(item["identity"])
         state = session.get(ArchiveSyncEntityStateRecord, (stream, identity))
         if state is None:
             state = ArchiveSyncEntityStateRecord(stream=stream, identity=identity)
+        else:
+            # 触发器可能刚改过这一行(本机行状态),ORM 身份映射里的是旧值。
+            session.refresh(state)
         state.authority_id = authority_id
         state.revision = _canonical_revision(item["revision"], field="remote revision")
+        state.local_revision = local_revision
         state.operation = str(item.get("operation") or "upsert")
         state.updated_at = now
         session.add(state)
@@ -2149,7 +2321,14 @@ def _apply_tombstones(
     stream: str,
     rows: list[dict[str, Any]],
     authority_id: str,
+    outcome: Optional[_PageOutcome] = None,
 ) -> int:
+    """应用删除标记:只动「当前版本由该上游写入」的行;本机版本不动、也不记账。
+
+    目标本来就不存在的删除标记算成功应用(调用方照常记账,删除才能继续往下游转发)。
+    """
+
+    outcome = outcome or _PageOutcome()
     deleted = 0
     for item in rows:
         if item.get("operation") != "tombstone":
@@ -2157,23 +2336,59 @@ def _apply_tombstones(
         identity = str(item["identity"])
         if stream == "sources":
             record = session.get(SourceConfigRecord, identity)
-            if record is not None and record.collection_authority_id == authority_id:
-                source_state = session.get(SourceStateRecord, identity)
-                if (
-                    source_state is not None
-                    and source_state.authority_id == authority_id
-                ):
-                    session.delete(source_state)
+            if record is None:
+                continue
+            if (record.owner_username or "").strip() or (
+                (record.collection_authority_id or "").strip()
+                and record.collection_authority_id != authority_id
+            ):
+                # 读者自定源 / 另一上游的源:不归这条删除标记管。
+                outcome.skipped.add(identity)
+                continue
+            if source_in_local_use(session, record, outcome):
+                # 本机在用:上游删了它不影响本机继续采;只摘掉「上游也有」的簿记。
+                record.collection_authority_id = ""
+                session.add(record)
+                outcome.skipped.add(identity)
+                continue
+            source_state = session.get(SourceStateRecord, identity)
+            if source_state is not None and source_state.authority_id == authority_id:
+                session.delete(source_state)
+            has_articles = session.exec(
+                select(ArticleRecord.id).where(ArticleRecord.source_id == identity).limit(1)
+            ).first() is not None
+            if has_articles:
+                # 被文章引用的源不物理删,保留身份并退役(与 issue #262 一致)。
+                if not record.retired_at:
+                    record.retired_at = _now_iso()
+                    record.updated_at = record.retired_at
+                    session.add(record)
+            else:
                 session.delete(record)
-                deleted += 1
+            deleted += 1
         elif stream == "articles":
             record = session.get(ArticleRecord, identity)
-            if record is not None and record.analysis_authority_id == authority_id:
+            if record is None:
+                continue
+            if record.analysis_authority_id == authority_id:
                 session.delete(record)
                 deleted += 1
+            else:
+                outcome.skipped.add(identity)
         elif stream == "analyses":
             record = session.get(ArticleAnalysisRecord, identity)
-            if record is not None and record.authority_id == authority_id:
+            article = session.get(ArticleRecord, identity)
+            # 文章的当前版本由该上游写入时,上游说「这篇没有有效分析」就以它为准:连同接管时留下的
+            # 本机旧分析(无印记、已被置为待定)一起撤掉。文章是本机版本则不动本机的分析。
+            upstream_article = bool(
+                article is not None and article.analysis_authority_id == authority_id
+            )
+            if record is not None and not upstream_article and record.authority_id != authority_id:
+                outcome.skipped.add(identity)
+            if record is not None and (
+                record.authority_id == authority_id
+                or (upstream_article and not (record.authority_id or "").strip())
+            ):
                 session.exec(
                     delete(ArticleTagAssignmentRecord).where(
                     ArticleTagAssignmentRecord.article_id == identity,
@@ -2184,11 +2399,19 @@ def _apply_tombstones(
                 deleted += 1
         elif stream == "source_states":
             record = session.get(SourceStateRecord, identity)
-            if record is not None and record.authority_id == authority_id:
+            if record is None:
+                continue
+            if record.authority_id == authority_id:
                 session.delete(record)
                 deleted += 1
+            else:
+                outcome.skipped.add(identity)
         elif stream == "podcast_texts":
             record = session.get(PodcastTextPublicationRecord, identity)
+            if record is not None and not (record.authority_id or "").strip():
+                # 槽位是本机自己的产物:上游撤稿不动它。
+                outcome.skipped.add(identity)
+                continue
             if record is not None:
                 _require_podcast_publication_authority(record, authority_id)
                 if record.kind == "narration_script_zh":
@@ -2204,6 +2427,9 @@ def _apply_tombstones(
                 deleted += 1
         elif stream == "podcast_audio":
             record = session.get(PodcastArtifactRecord, identity)
+            if record is not None and not (record.authority_id or "").strip():
+                outcome.skipped.add(identity)
+                continue
             if record is not None:
                 if record.authority_id != authority_id:
                     raise SyncV2Error(
@@ -2295,11 +2521,26 @@ def _supersede_local_analysis(
     session.add(record)
 
 
+# 同步不覆盖的源字段(issue #263)。分析开关是本机的普通开关:同步建行时默认关,之后不碰;
+# 抓取间隔同为本机运行参数。is_active 不在此列——它是个人早报范围与 readiness 的目录字段。
+_NODE_LOCAL_SOURCE_FIELDS = frozenset({"ai_analysis_enabled", "fetch_interval_minutes"})
+# 本机在用的源另外不接受上游的停用与退役。
+_IN_USE_PROTECTED_SOURCE_FIELDS = frozenset({"is_active", "retired_at"})
+
+
 def _apply_sources(
     session: Session,
     rows: list[dict[str, Any]],
     authority_id: str,
+    outcome: Optional[_PageOutcome] = None,
 ) -> tuple[int, int]:
+    """按身份合并源:没有就建(分析默认关、不带采集绑定),已有只更新目录字段。
+
+    源上的 ``collection_authority_id`` 只是簿记(「这个源上游也有」),不再表示接管:不改写
+    同源文章、不删本机源状态、不清空本机的采集绑定。
+    """
+
+    outcome = outcome or _PageOutcome()
     inserted = updated = 0
     for item in rows:
         data = item["payload"]
@@ -2307,16 +2548,19 @@ def _apply_sources(
         if not source_id or not _public_source(source_id):
             raise SyncV2Error("invalid platform source")
         existing = session.get(SourceConfigRecord, source_id)
-        taking_authority = existing is not None and not bool(
-            existing.collection_authority_id
-        )
-        if existing is None:
+        creating = existing is None
+        protected: frozenset[str] = frozenset()
+        if creating:
             existing = SourceConfigRecord(
                 source_id=source_id,
                 name=str(data.get("name") or source_id),
                 source_type=str(data.get("source_type") or "rss"),
                 owner_username="",
                 collection_authority_id=authority_id,
+                # 同步建出来的源默认关分析;采集靠采集任务点名,同步不会把它编入任何任务。
+                ai_analysis_enabled=False,
+                fetcher_id="",
+                params_json="{}",
                 created_at=str(data.get("created_at") or _now_iso()),
                 updated_at=str(data.get("updated_at") or _now_iso()),
             )
@@ -2331,13 +2575,26 @@ def _apply_sources(
                 and existing.collection_authority_id != authority_id
             ):
                 raise SyncV2Error(f"source {source_id} belongs to another authority")
+            if source_in_local_use(session, existing, outcome):
+                protected = _IN_USE_PROTECTED_SOURCE_FIELDS
+            elif not (existing.collection_authority_id or "").strip():
+                # 上游印记第一次落到一个本机没在用的源上(典型:新节点启动对账先建了预设行,随后
+                # 才接入上游):与同步建出来的源同一口径,分析默认关。之后的同步不再碰这个开关。
+                existing.ai_analysis_enabled = False
             updated += 1
         for field in _SOURCE_FIELDS:
-            if field != "source_id" and field in data:
-                setattr(existing, field, data[field])
+            if (
+                field == "source_id"
+                or field not in data
+                or field in protected
+                or (field in _NODE_LOCAL_SOURCE_FIELDS and not creating)
+                or (field == "ai_analysis_enabled")
+            ):
+                continue
+            setattr(existing, field, data[field])
         # source-catalog-v1 投影带来的源目录字段(issue #262 R1c);legacy 载荷里没有,保持不动。
         for field in _CATALOG_SOURCE_FIELDS:
-            if field in data:
+            if field in data and field not in protected:
                 value = data[field]
                 if field == "daily":
                     value = bool(value)
@@ -2351,26 +2608,7 @@ def _apply_sources(
             existing.admission_status = (
                 "incubating" if data.get("category") == _LEGACY_INCUBATING else "admitted"
             )
-        if taking_authority:
-            local_state = session.get(SourceStateRecord, source_id)
-            if local_state is not None:
-                session.delete(local_state)
-            handoff_now = _now_iso()
-            for article in session.exec(
-                select(ArticleRecord).where(ArticleRecord.source_id == source_id)
-            ).all():
-                article.analysis_authority_id = authority_id
-                _supersede_local_analysis(
-                    session,
-                    article.id,
-                    now=handoff_now,
-                    preserve_result=True,
-                    authority_id=authority_id,
-                )
-                session.add(article)
         existing.collection_authority_id = authority_id
-        existing.fetcher_id = ""
-        existing.params_json = "{}"
         session.add(existing)
     return inserted, updated
 
@@ -2634,14 +2872,26 @@ def _taxonomy_import_is_newer(
     return False
 
 
+# 产生节点的本地整数关联:原样照抄会和本机恢复采集后的运行串号(方案检视 R1 #13)。
+_NODE_LOCAL_ARTICLE_FIELDS = ("fetch_run_id", "job_id", "job_run_id", "source_group_id")
+
+
 def _apply_articles(
     session: Session,
     rows: list[dict[str, Any]],
     authority_id: str,
+    outcome: Optional[_PageOutcome] = None,
 ) -> tuple[int, int]:
+    """按 id 合并文章:修订号新者胜。
+
+    库里没有 → 写入并盖印记;库里是该上游写入的版本 → 更新;库里是本机写入的版本(无印记)→
+    本机的 ``archive_updated_at`` 严格新于来者才保留本机版本(跳过且不记账),否则由来者接管。
+    """
+
     from api.routers.archive_sync import build_import_article_record
     from services.translation_sync import preserve_local_translations
 
+    outcome = outcome or _PageOutcome()
     inserted = updated = 0
     for item in rows:
         incoming = build_import_article_record(item["payload"])
@@ -2649,6 +2899,8 @@ def _apply_articles(
             raise SyncV2Error(
                 "custom RSS cannot enter external-to-internal article stream"
             )
+        for field in _NODE_LOCAL_ARTICLE_FIELDS:
+            setattr(incoming, field, None)
         source = session.get(SourceConfigRecord, incoming.source_id)
         # The sources stream is authoritative and runs first. Historical
         # Articles may legitimately outlive a physically deleted Source config,
@@ -2665,11 +2917,8 @@ def _apply_articles(
             raise SyncV2Error(
                 f"source {incoming.source_id} belongs to another authority"
             )
-        elif source is not None:
-            if not source.collection_authority_id:
-                local_state = session.get(SourceStateRecord, incoming.source_id)
-                if local_state is not None:
-                    session.delete(local_state)
+        elif source is not None and not source.collection_authority_id:
+            # 簿记:这个源上游也有(个人早报的 readiness 据此等上游的源状态)。不动本机源状态。
             source.collection_authority_id = authority_id
             session.add(source)
 
@@ -2684,8 +2933,14 @@ def _apply_articles(
             and existing.analysis_authority_id != authority_id
         ):
             raise SyncV2Error(f"article {incoming.id} belongs to another authority")
-        incoming.extensions_json = preserve_local_translations(existing, incoming, authority_id)
         taking_authority = not bool(existing.analysis_authority_id)
+        if taking_authority and revision_newer(
+            existing.archive_updated_at, incoming.archive_updated_at
+        ):
+            # 本机版本严格更新:保留本机版本(修订号新者胜)。相等时上游胜。
+            outcome.skipped.add(str(incoming.id))
+            continue
+        incoming.extensions_json = preserve_local_translations(existing, incoming, authority_id)
         previous_content_hash = compute_content_hash(existing)
         existing.analysis_authority_id = authority_id
         for field in (
@@ -2715,21 +2970,33 @@ def _apply_articles(
                 preserve_result=content_unchanged,
                 authority_id=authority_id,
             )
+        if taking_authority:
+            outcome.taken_over += 1
         session.add(existing)
         updated += 1
+    if outcome.taken_over:
+        # 被接管的文章此前让依赖流的行被跳过且没有记账:登记整流重放,和接管同一事务。
+        mark_dependency_replay(session)
     return inserted, updated
 
 
 def _apply_analyses(
-    session: Session, rows: list[dict[str, Any]], authority_id: str
+    session: Session,
+    rows: list[dict[str, Any]],
+    authority_id: str,
+    outcome: Optional[_PageOutcome] = None,
 ) -> tuple[int, int]:
+    outcome = outcome or _PageOutcome()
     inserted = updated = 0
     for item in rows:
         data = item["payload"]
         article_id = str(data.get("article_id") or "")
         article = session.get(ArticleRecord, article_id)
-        if article is None:
-            raise SyncV2Error(f"analysis article missing: {article_id}")
+        if article is None or not (article.analysis_authority_id or "").strip():
+            # 文章不在(本机删过),或文章是本机版本:上游的分析不适用,跳过且不记账。
+            # 文章之后被接管时由依赖流重放补回。
+            outcome.skipped.add(str(item["identity"]))
+            continue
         if article.analysis_authority_id != authority_id:
             raise SyncV2Error(f"analysis authority mismatch: {article_id}")
         if str(data.get("content_hash") or "") != compute_content_hash(article):
@@ -2950,9 +3217,11 @@ def _apply_podcast_texts(
     *,
     podcast_text_max_bytes: int = DEFAULT_PODCAST_TEXT_ARTIFACT_MAX_BYTES,
     podcast_text_max_chars: int = DEFAULT_PODCAST_TEXT_ARTIFACT_MAX_CHARS,
+    outcome: Optional[_PageOutcome] = None,
 ) -> tuple[int, int]:
     """Install immutable text values and move their authority-owned pointers."""
 
+    outcome = outcome or _PageOutcome()
     inserted = updated = 0
     for item in rows:
         data = item["payload"]
@@ -2969,6 +3238,10 @@ def _apply_podcast_texts(
         episode = session.get(ArticleRecord, episode_id)
         if episode is None or episode.content_type != "podcast_episode":
             raise SyncV2Error(f"podcast text episode {episode_id} is missing")
+        if not (episode.analysis_authority_id or "").strip():
+            # 单集是本机版本:上游的文稿不适用,跳过(单集被接管后由依赖流重放补回)。
+            outcome.skipped.add(identity)
+            continue
         if episode.analysis_authority_id != authority_id:
             raise SyncV2Error(
                 f"podcast text episode {episode_id} belongs to another authority"
@@ -2976,6 +3249,10 @@ def _apply_podcast_texts(
 
         publication = session.get(PodcastTextPublicationRecord, identity)
         if publication is not None:
+            if not (publication.authority_id or "").strip():
+                # 槽位已被本机自己的产物占用:保留本机的。
+                outcome.skipped.add(identity)
+                continue
             _require_podcast_publication_authority(publication, authority_id)
             if publication.episode_id != episode_id or publication.kind != kind:
                 raise SyncV2Error("podcast text publication identity is immutable")
@@ -2989,6 +3266,10 @@ def _apply_podcast_texts(
                     PodcastTextArtifactRecord.version == int(artifact_data["version"]),
                 )
             ).first()
+            if version_owner is not None and not (version_owner.authority_id or "").strip():
+                # (episode, kind, version) 已是本机产物(可能尚未发布):不覆盖,跳过。
+                outcome.skipped.add(identity)
+                continue
             if version_owner is not None:
                 raise SyncV2Error(
                     "podcast text artifact version belongs to another immutable value"
@@ -3002,6 +3283,9 @@ def _apply_podcast_texts(
             )
             session.add(artifact)
         else:
+            if not (artifact.authority_id or "").strip():
+                outcome.skipped.add(identity)
+                continue
             if artifact.authority_id != authority_id:
                 raise SyncV2Error(
                     f"podcast text artifact {artifact_id} belongs to another authority"
@@ -3064,16 +3348,27 @@ def _apply_podcast_audio(
     session: Session,
     rows: list[dict[str, Any]],
     authority_id: str,
+    outcome: Optional[_PageOutcome] = None,
 ) -> tuple[int, int]:
     """Install published digest-audio metadata; bytes are installed afterward."""
 
+    outcome = outcome or _PageOutcome()
     inserted = updated = 0
     for item in rows:
         data = _validated_podcast_audio_payload(item["payload"])
+        identity = str(item["identity"])
         episode = session.get(ArticleRecord, data["episode_id"])
         narration = session.get(
             PodcastTextArtifactRecord, data["narration_artifact_id"]
         )
+        if (
+            episode is not None
+            and episode.content_type == "podcast_episode"
+            and not (episode.analysis_authority_id or "").strip()
+        ):
+            # 单集是本机版本:上游的音频不适用,跳过;二进制阶段也不为它下载。
+            outcome.skipped.add(identity)
+            continue
         if (
             episode is None
             or episode.content_type != "podcast_episode"
@@ -3082,9 +3377,12 @@ def _apply_podcast_audio(
             raise SyncV2Error(
                 f"podcast audio episode {data['episode_id']} is missing or belongs to another authority"
             )
+        if narration is None or not (narration.authority_id or "").strip():
+            # 讲稿没从这个上游装进来(槽位被本机产物占用而被跳过):音频跟着跳过。
+            outcome.skipped.add(identity)
+            continue
         if (
-            narration is None
-            or narration.authority_id != authority_id
+            narration.authority_id != authority_id
             or narration.episode_id != data["episode_id"]
             or narration.kind != "narration_script_zh"
             or narration.content_hash != data["narration_content_hash"]
@@ -3117,6 +3415,9 @@ def _apply_podcast_audio(
             session.add(record)
             inserted += 1
             continue
+        if not (record.authority_id or "").strip():
+            outcome.skipped.add(identity)
+            continue
         if record.authority_id != authority_id:
             raise SyncV2Error(f"podcast audio {record.id} belongs to another authority")
         for field in _PODCAST_AUDIO_IMMUTABLE_FIELDS:
@@ -3142,10 +3443,62 @@ def _owned_event_id(session: Session, value: Any, authority_id: str) -> Optional
     return record.id
 
 
+def _is_local_public_version(session: Session, article: Optional[ArticleRecord]) -> bool:
+    """本机写入的公共文章(无印记、非读者自定源):之后可能被上游的更新版本接管。
+
+    读者自定源下撞了同一 id 的私有文章不算——它和上游的那一篇不是同一篇,永远不会被接管。
+    """
+
+    if article is None or (article.analysis_authority_id or "").strip():
+        return False
+    if not _public_source(article.source_id):
+        return False
+    source = session.get(SourceConfigRecord, article.source_id)
+    return source is None or not (source.owner_username or "").strip()
+
+
+def acquire_write_gate(session: Session) -> None:
+    """对同步时钟做一次空写,在本事务读任何东西之前先取得 SQLite 写锁。
+
+    「读出本机现状 → 比较 → 写入」必须不被别的写事务插进来:同步导入一页、抓取改写一篇已有
+    文章、本机事件落库都先过这道门。pysqlite 默认到第一条写语句才开事务,不这样做的话,比较
+    用的那次读根本不在事务里(检视 R1 #1)。
+    """
+
+    session.connection().exec_driver_sql(
+        "UPDATE archive_sync_clock SET revision = revision WHERE id = 1"
+    )
+
+
+def acquire_event_write_gate(session: Session) -> None:
+    """事件写事务的共同门禁(本机归并的落库与上游 events 页的导入):取写锁后再做存在性复核。"""
+
+    acquire_write_gate(session)
+
+
+def local_events_present(session: Session) -> bool:
+    return (
+        session.exec(
+            select(EventRecord.id).where(EventRecord.authority_id == "").limit(1)
+        ).first()
+        is not None
+    )
+
+
+def remote_events_present(session: Session) -> bool:
+    return (
+        session.exec(
+            select(EventRecord.id).where(EventRecord.authority_id != "").limit(1)
+        ).first()
+        is not None
+    )
+
+
 def _apply_events(
     session: Session,
     rows: list[dict[str, Any]],
     authority_id: str,
+    outcome: Optional[_PageOutcome] = None,
 ) -> tuple[int, int, int, int]:
     """Upsert whole events: the row first, then its member set, then cross-event links.
 
@@ -3159,6 +3512,7 @@ def _apply_events(
     一律 fail-closed:整页回滚、checkpoint 不前移,交人工处理。
     """
 
+    outcome = outcome or _PageOutcome()
     inserted = updated = skipped = deferred = 0
     now = _now_iso()
     links: list[tuple[int, Any, Any]] = []
@@ -3229,7 +3583,9 @@ def _apply_events(
                 deferred += 1
                 continue
             article = session.get(ArticleRecord, article_id)
-            if article is None:
+            if article is None or _is_local_public_version(session, article):
+                # 文章还没到,或文章是本机版本:成员先进待补账。事件行本身已记账,整流重放
+                # 补不回成员;文章到达 / 被接管后由 replay_event_member_backlog 落成员。
                 payload_json = _canonical(
                     {field: member[field] for field in _EVENT_MEMBER_WIRE_FIELDS}
                 )
@@ -3327,6 +3683,29 @@ def _applied_event_revision(session: Session, authority_id: str, event_id: int) 
     return int(state.revision)
 
 
+def _republish_synced_events(session: Session, event_ids: set[int]) -> None:
+    """同步来的事件在本机补上 / 挪走了成员:推进它们的导出修订,下游才会再拿到(检视 R1 #5)。
+
+    成员触发器只给本机事件记账;同步来的事件由导入方记账,补成员发生在导入之后,不推进的话
+    已经拉过这个事件的下游永远缺这名成员。接收修订(``revision``)不动。
+    """
+
+    if not event_ids:
+        return
+    session.flush()
+    connection = session.connection()
+    connection.exec_driver_sql(
+        "UPDATE archive_sync_clock SET revision = revision + 1 WHERE id = 1"
+    )
+    for event_id in sorted(event_ids):
+        connection.exec_driver_sql(
+            "UPDATE archive_sync_entity_states "
+            "SET local_revision = (SELECT revision FROM archive_sync_clock WHERE id = 1) "
+            "WHERE stream = 'events' AND identity = ? AND authority_id <> ''",
+            (str(event_id),),
+        )
+
+
 def replay_event_member_backlog(
     engine: Engine,
     *,
@@ -3349,7 +3728,9 @@ def replay_event_member_backlog(
     except ValueError as exc:
         raise SyncV2Error("backlog replay clock must be ISO-8601") from exc
     installed = pending = expired = dropped = superseded = 0
+    touched_events: set[int] = set()
     with Session(engine) as session:
+        acquire_write_gate(session)
         rows = session.exec(
             select(EventMemberBacklogRecord).order_by(
                 EventMemberBacklogRecord.authority_id, EventMemberBacklogRecord.article_id
@@ -3383,6 +3764,21 @@ def replay_event_member_backlog(
                     pending += 1
                 continue
             member = _json_object(row.payload_json, {})
+            if _is_local_public_version(session, article):
+                # 文章在,但还是本机版本:保留等待(之后被接管即可落成员),同样受时限约束。
+                try:
+                    seen = datetime.datetime.fromisoformat(row.first_seen_at)
+                except ValueError:
+                    seen = None
+                if seen is None or seen < cutoff:
+                    session.delete(row)
+                    expired += 1
+                else:
+                    row.attempts = int(row.attempts or 0) + 1
+                    row.updated_at = stamp
+                    session.add(row)
+                    pending += 1
+                continue
             if (
                 article.analysis_authority_id != row.authority_id
                 or str(member.get("article_id") or "") != row.article_id
@@ -3403,6 +3799,7 @@ def replay_event_member_backlog(
                     session.delete(row)
                     superseded += 1
                     continue
+                touched_events.add(int(current.event_id))
                 session.delete(current)
                 session.flush()
             session.add(
@@ -3411,8 +3808,10 @@ def replay_event_member_backlog(
                     **{field: member[field] for field in _EVENT_MEMBER_WIRE_FIELDS},
                 )
             )
+            touched_events.add(int(row.event_id))
             session.delete(row)
             installed += 1
+        _republish_synced_events(session, touched_events)
         session.commit()
     return {
         "installed": installed,
@@ -3427,9 +3826,14 @@ def _apply_source_states(
     session: Session,
     rows: list[dict[str, Any]],
     authority_id: str,
+    outcome: Optional[_PageOutcome] = None,
 ) -> tuple[int, int]:
-    """Publish producer terminal state only after all data streams completed."""
+    """Publish producer terminal state only after all data streams completed.
 
+    本机自己跑过这个源(状态行无印记)且严格新于来者 → 保留本机状态、跳过;否则应用并盖印记。
+    """
+
+    outcome = outcome or _PageOutcome()
     inserted = updated = 0
     fields = (
         "fetcher_id",
@@ -3464,7 +3868,8 @@ def _apply_source_states(
             and source.collection_authority_id != authority_id
         ):
             raise SyncV2Error(f"source {source_id} belongs to another authority")
-        elif source is not None:
+        elif source is not None and not source.collection_authority_id:
+            # 簿记:这个源上游也有。不动本机的任何配置。
             source.collection_authority_id = authority_id
             session.add(source)
         state = session.get(SourceStateRecord, source_id)
@@ -3474,7 +3879,14 @@ def _apply_source_states(
                 raise SyncV2Error(
                     f"source state {source_id} belongs to another authority"
                 )
-        if state is None:
+            if not (state.authority_id or "").strip() and revision_newer(
+                state.updated_at, data.get("updated_at")
+            ):
+                # 本机自己跑出来的状态严格更新:保留本机的。
+                outcome.skipped.add(str(item["identity"]))
+                continue
+        creating = state is None
+        if creating:
             state = SourceStateRecord(
                 source_id=source_id,
                 fetcher_id=str(data.get("fetcher_id") or source_id),
@@ -3488,11 +3900,13 @@ def _apply_source_states(
                 setattr(state, field, data[field])
         state.authority_id = authority_id
         state.authority_revision = revision
-        # Cross-database run IDs/cursors are intentionally not meaningful locally.
-        state.last_run_id = None
-        state.last_cursor_value = ""
-        state.last_cursor_date = ""
-        state.last_content_id = ""
+        if creating:
+            # Cross-database run IDs/cursors are intentionally not meaningful locally.
+            # 已有行(本机跑过)的游标与运行 id 留给本机下一次采集,不清。
+            state.last_run_id = None
+            state.last_cursor_value = ""
+            state.last_cursor_date = ""
+            state.last_content_id = ""
         session.add(state)
     return inserted, updated
 
@@ -3521,8 +3935,12 @@ def import_page(
     )
     stream = str(manifest["stream"])
     authority_id = str(manifest["authority_id"])
+    outcome = _PageOutcome()
     with Session(engine) as session:
         try:
+            # 先取写锁再读:本页对本机现状的每一次判断(本机版本是否更新、源是否在用、印记是否
+            # 属于该上游)到提交之前都不会被别的写事务改掉。
+            acquire_write_gate(session)
             deleted = skipped = deferred = 0
             if stream == "taxonomy":
                 apply_taxonomy = _taxonomy_import_is_newer(session, manifest, rows)
@@ -3593,12 +4011,19 @@ def import_page(
                 tombstones = [
                     item for item in accepted if item.get("operation") == "tombstone"
                 ]
+                events_page_skipped = False
                 if stream == "sources":
-                    inserted, updated = _apply_sources(session, upserts, authority_id)
+                    inserted, updated = _apply_sources(
+                        session, upserts, authority_id, outcome
+                    )
                 elif stream == "articles":
-                    inserted, updated = _apply_articles(session, upserts, authority_id)
+                    inserted, updated = _apply_articles(
+                        session, upserts, authority_id, outcome
+                    )
                 elif stream == "analyses":
-                    inserted, updated = _apply_analyses(session, upserts, authority_id)
+                    inserted, updated = _apply_analyses(
+                        session, upserts, authority_id, outcome
+                    )
                 elif stream == "media":
                     inserted, updated = _apply_media(session, upserts, authority_id)
                 elif stream == "podcast_texts":
@@ -3608,21 +4033,38 @@ def import_page(
                         authority_id,
                         podcast_text_max_bytes=podcast_text_max_bytes,
                         podcast_text_max_chars=podcast_text_max_chars,
+                        outcome=outcome,
                     )
                 elif stream == "podcast_audio":
                     inserted, updated = _apply_podcast_audio(
-                        session, upserts, authority_id
+                        session, upserts, authority_id, outcome
                     )
                 elif stream == "events":
-                    inserted, updated, skipped, deferred = _apply_events(
-                        session, upserts, authority_id
-                    )
+                    if accepted:
+                        # 整页(含删除标记)与本机归并的落库互斥:库里已有本机事件就整页不动。
+                        acquire_event_write_gate(session)
+                        events_page_skipped = local_events_present(session)
+                    if events_page_skipped:
+                        outcome.skipped.update(str(item["identity"]) for item in accepted)
+                        inserted = updated = deferred = 0
+                        skipped = len(accepted)
+                    else:
+                        inserted, updated, skipped, deferred = _apply_events(
+                            session, upserts, authority_id, outcome
+                        )
                 else:
                     inserted, updated = _apply_source_states(
-                        session, upserts, authority_id
+                        session, upserts, authority_id, outcome
                 )
-                deleted = _apply_tombstones(session, stream, tombstones, authority_id)
-                _save_remote_entity_states(session, stream, accepted, authority_id)
+                if not events_page_skipped:
+                    deleted = _apply_tombstones(
+                        session, stream, tombstones, authority_id, outcome
+                    )
+                if stream != "events":
+                    skipped += len(outcome.skipped)
+                _save_remote_entity_states(
+                    session, stream, accepted, authority_id, skipped=outcome.skipped
+                )
             session.commit()
         except Exception:
             session.rollback()
@@ -3649,163 +4091,14 @@ def import_page(
         "inserted": inserted,
         "updated": updated,
         "deleted": deleted,
-        # 只有 events 流会非零:skipped = 成员文章在本地却不归该 authority(不允许接收)而跳过;
-        # deferred = 成员文章尚未到本地,进 event_member_backlog 等下一轮 articles 流后补回。
+        # skipped:本机版本胜出而没有应用的行(各流);events 流里另含成员文章归另一上游而跳过的成员。
+        # deferred:事件成员的文章还没到、或还是本机版本,进 event_member_backlog 等之后补回。
         "skipped": skipped,
         "deferred": deferred,
+        # 因本机版本而跳过的身份:二进制阶段不为它们下载文件(方案检视 R1 #4)。
+        "skipped_identities": sorted(outcome.skipped),
+        "taken_over": outcome.taken_over,
     }
-
-
-def _authority_scope_predicates(stream: str, authority_id: str):
-    identity_column = (
-        ArticleRecord.id if stream == "articles" else ArticleAnalysisRecord.article_id
-    )
-    remote_upsert = exists(
-        select(ArchiveSyncEntityStateRecord.identity).where(
-            ArchiveSyncEntityStateRecord.stream == stream,
-            ArchiveSyncEntityStateRecord.identity == identity_column,
-            ArchiveSyncEntityStateRecord.authority_id == authority_id,
-            ArchiveSyncEntityStateRecord.operation == "upsert",
-        )
-    )
-    source_is_eligible = or_(
-        ~exists(
-            select(SourceConfigRecord.source_id).where(
-            SourceConfigRecord.source_id == ArticleRecord.source_id
-            )
-        ),
-        exists(
-            select(SourceConfigRecord.source_id).where(
-            SourceConfigRecord.source_id == ArticleRecord.source_id,
-            SourceConfigRecord.owner_username == "",
-            SourceConfigRecord.collection_authority_id.in_(("", authority_id)),
-            )
-        ),
-    )
-    article_is_eligible = and_(
-        ~ArticleRecord.source_id.startswith(_USER_SOURCE_PREFIX, autoescape=True),
-        ArticleRecord.analysis_authority_id.in_(("", authority_id)),
-        source_is_eligible,
-    )
-    return identity_column, remote_upsert, article_is_eligible
-
-
-def _event_remote_upsert(authority_id: str):
-    """该 authority 对某事件已应用 upsert 状态(identity 是 events.id 的文本形式)。"""
-
-    return exists(
-        select(ArchiveSyncEntityStateRecord.identity).where(
-            ArchiveSyncEntityStateRecord.stream == "events",
-            ArchiveSyncEntityStateRecord.identity == cast(EventRecord.id, String),
-            ArchiveSyncEntityStateRecord.authority_id == authority_id,
-            ArchiveSyncEntityStateRecord.operation == "upsert",
-        )
-    )
-
-
-def full_authority_stale_identities(
-    engine: Engine,
-    stream: str,
-    authority_id: str,
-) -> list[str]:
-    """Return receiver rows that need an authoritative absence check."""
-
-    authority_id = str(authority_id or "").strip()
-    if (
-        stream not in {"articles", "analyses", "podcast_texts", "podcast_audio", "events"}
-        or not authority_id
-    ):
-        raise SyncV2Error(
-            "full authority finalization supports articles/analyses/podcast_texts/podcast_audio/events only"
-        )
-    if stream == "events":
-        with Session(engine) as session:
-            return [
-                str(identity)
-                for identity in session.exec(
-                    select(EventRecord.id)
-                    .where(
-                        EventRecord.authority_id == authority_id,
-                        ~_event_remote_upsert(authority_id),
-                    )
-                    .order_by(EventRecord.id)
-                ).all()
-            ]
-    if stream == "podcast_audio":
-        with Session(engine) as session:
-            return [
-                str(identity)
-                for identity in session.exec(
-                    select(PodcastArtifactRecord.id)
-                    .join(
-                        ArticleRecord,
-                        ArticleRecord.id == PodcastArtifactRecord.episode_id,
-                    )
-                    .where(
-                        PodcastArtifactRecord.kind == "digest_audio_zh",
-                        PodcastArtifactRecord.status == "published",
-                        PodcastArtifactRecord.authority_id == authority_id,
-                        ArticleRecord.content_type == "podcast_episode",
-                        ~exists(
-                            select(ArchiveSyncEntityStateRecord.identity).where(
-                                ArchiveSyncEntityStateRecord.stream == "podcast_audio",
-                                ArchiveSyncEntityStateRecord.identity
-                                == PodcastArtifactRecord.id,
-                                ArchiveSyncEntityStateRecord.authority_id
-                                == authority_id,
-                                ArchiveSyncEntityStateRecord.operation == "upsert",
-        )
-                        ),
-                    )
-                    .order_by(PodcastArtifactRecord.id)
-                ).all()
-            ]
-    if stream == "podcast_texts":
-        _, _, article_is_eligible = _authority_scope_predicates(
-            "articles", authority_id
-        )
-        with Session(engine) as session:
-            return [
-                str(identity)
-                for identity in session.exec(
-                select(PodcastTextPublicationRecord.identity)
-                .join(
-                    ArticleRecord,
-                    ArticleRecord.id == PodcastTextPublicationRecord.episode_id,
-                )
-                .where(
-                        PodcastTextPublicationRecord.authority_id.in_(
-                            ("", authority_id)
-                        ),
-                    PodcastTextPublicationRecord.status == "published",
-                    ArticleRecord.content_type == "podcast_episode",
-                    article_is_eligible,
-                    ~exists(
-                        select(ArchiveSyncEntityStateRecord.identity).where(
-                            ArchiveSyncEntityStateRecord.stream == "podcast_texts",
-                            ArchiveSyncEntityStateRecord.identity
-                            == PodcastTextPublicationRecord.identity,
-                                ArchiveSyncEntityStateRecord.authority_id
-                                == authority_id,
-                            ArchiveSyncEntityStateRecord.operation == "upsert",
-                        )
-                    ),
-                )
-                .order_by(PodcastTextPublicationRecord.identity)
-                ).all()
-            ]
-    identity_column, remote_upsert, article_is_eligible = _authority_scope_predicates(
-        stream, authority_id
-    )
-    query = select(identity_column)
-    if stream == "analyses":
-        query = query.join(
-            ArticleRecord, ArticleRecord.id == ArticleAnalysisRecord.article_id
-        )
-        query = query.where(ArticleAnalysisRecord.authority_id.in_(("", authority_id)))
-    query = query.where(article_is_eligible, ~remote_upsert).order_by(identity_column)
-    with Session(engine) as session:
-        return [str(identity) for identity in session.exec(query).all()]
 
 
 def authority_present_identities(
@@ -3813,7 +4106,11 @@ def authority_present_identities(
     stream: str,
     identities: Iterable[str],
 ) -> list[str]:
-    """Confirm which candidate identities currently exist in public authority scope."""
+    """Confirm which candidate identities this node currently exports.
+
+    口径与导出一致(issue #263):本机持有的公开数据都算在,不问印记。新版本接收端不再发
+    presence 请求;端点留给旧版本接收端的整流收尾,口径放开后它不会误删转发来的行。
+    """
 
     if stream not in {"articles", "analyses", "podcast_texts", "podcast_audio", "events"}:
         raise SyncV2Error(
@@ -3833,10 +4130,7 @@ def authority_present_identities(
             if not wanted:
                 return []
             present_ids = session.exec(
-                select(EventRecord.id).where(
-                    EventRecord.id.in_(list(wanted)),
-                    EventRecord.authority_id == "",
-                )
+                select(EventRecord.id).where(EventRecord.id.in_(list(wanted)))
             ).all()
             return sorted(wanted[int(value)] for value in present_ids)
         if stream == "podcast_audio":
@@ -3858,19 +4152,14 @@ def authority_present_identities(
                 )
                 .where(
                     PodcastTextPublicationRecord.identity.in_(requested),
-                    PodcastTextPublicationRecord.authority_id == "",
                     PodcastTextPublicationRecord.status == "published",
                     ArticleRecord.content_type == "podcast_episode",
-                    ArticleRecord.analysis_authority_id == "",
                     ~ArticleRecord.source_id.startswith(
                         _USER_SOURCE_PREFIX, autoescape=True
                     ),
                     or_(
                         SourceConfigRecord.source_id.is_(None),
-                        and_(
-                            SourceConfigRecord.owner_username == "",
-                            SourceConfigRecord.collection_authority_id == "",
-                        ),
+                        SourceConfigRecord.owner_username == "",
                     ),
                 )
             ).all()
@@ -3886,13 +4175,9 @@ def authority_present_identities(
                 ~ArticleRecord.source_id.startswith(
                     _USER_SOURCE_PREFIX, autoescape=True
                 ),
-                ArticleRecord.analysis_authority_id == "",
                 or_(
                     SourceConfigRecord.source_id.is_(None),
-                    and_(
-                        SourceConfigRecord.owner_username == "",
-                        SourceConfigRecord.collection_authority_id == "",
-                    ),
+                    SourceConfigRecord.owner_username == "",
                 ),
             )
         ).all()
@@ -3902,7 +4187,6 @@ def authority_present_identities(
             analyses = session.exec(
                 select(ArticleAnalysisRecord).where(
                     ArticleAnalysisRecord.article_id.in_(present),
-                    ArticleAnalysisRecord.authority_id == "",
                 )
             ).all()
             # Presence must agree with export eligibility, including when a
@@ -3914,156 +4198,6 @@ def authority_present_identities(
                 == compute_content_hash(articles_by_id[row.article_id])
             }
     return sorted(present)
-
-
-def finalize_full_authority_stream(
-    engine: Engine,
-    stream: str,
-    authority_id: str,
-    *,
-    absent_identities: Iterable[str],
-) -> int:
-    """Prune receiver leftovers absent from a completed full snapshot.
-
-    Source handoff keeps matching local rows until their authoritative upsert so
-    reader-local columns and manual overlays survive. Once a first full Article
-    or Analysis stream completes, its applied entity states are the exact remote
-    inventory and any authority-owned row without an upsert state is stale.
-    """
-
-    authority_id = str(authority_id or "").strip()
-    if (
-        stream not in {"articles", "analyses", "podcast_texts", "podcast_audio", "events"}
-        or not authority_id
-    ):
-        raise SyncV2Error(
-            "full authority finalization supports articles/analyses/podcast_texts/podcast_audio/events only"
-        )
-    confirmed_absent = list(
-        dict.fromkeys(str(value or "").strip() for value in absent_identities)
-        )
-    if not confirmed_absent:
-        return 0
-    if stream == "events":
-        event_ids: list[int] = []
-        for value in confirmed_absent:
-            try:
-                event_ids.append(_canonical_event_id(value, field="event identity"))
-            except SyncV2Error:
-                continue
-        with Session(engine) as session:
-            pruned = 0
-            for start in range(0, len(event_ids), 900):
-                batch = event_ids[start:start + 900]
-                result = session.exec(
-                    delete(EventRecord).where(
-                        EventRecord.id.in_(batch),
-                        EventRecord.authority_id == authority_id,
-                        ~_event_remote_upsert(authority_id),
-                    )
-                )
-                pruned += max(int(getattr(result, "rowcount", 0) or 0), 0)
-            session.commit()
-            return pruned
-    if stream == "podcast_audio":
-        now = _now_iso()
-        with Session(engine) as session:
-            rows = session.exec(
-                select(PodcastArtifactRecord).where(
-                    PodcastArtifactRecord.id.in_(confirmed_absent),
-                    PodcastArtifactRecord.authority_id == authority_id,
-                    PodcastArtifactRecord.status == "published",
-                )
-            ).all()
-            for row in rows:
-                row.status = "withdrawn"
-                row.withdrawn_at = now
-                row.updated_at = now
-                session.add(row)
-            session.commit()
-            return len(rows)
-    if stream == "podcast_texts":
-        now = _now_iso()
-        with Session(engine) as session:
-            pruned = 0
-            for start in range(0, len(confirmed_absent), 900):
-                batch = confirmed_absent[start:start + 900]
-                rows = session.exec(
-                    select(PodcastTextPublicationRecord).where(
-                        PodcastTextPublicationRecord.identity.in_(batch),
-                        PodcastTextPublicationRecord.authority_id.in_(
-                            ("", authority_id)
-                        ),
-                        PodcastTextPublicationRecord.status == "published",
-                        ~exists(
-                            select(ArchiveSyncEntityStateRecord.identity).where(
-                                ArchiveSyncEntityStateRecord.stream == "podcast_texts",
-                                ArchiveSyncEntityStateRecord.identity
-                                == PodcastTextPublicationRecord.identity,
-                                ArchiveSyncEntityStateRecord.authority_id
-                                == authority_id,
-                                ArchiveSyncEntityStateRecord.operation == "upsert",
-                            )
-                        ),
-                    )
-                ).all()
-                for row in rows:
-                    if row.kind == "narration_script_zh":
-                        withdraw_digest_audio_for_script_change(
-                            session,
-                            episode_id=row.episode_id,
-                            current_artifact_id=None,
-                        )
-                    row.status = "unpublished"
-                    row.unpublished_at = now
-                    row.updated_at = now
-                    session.add(row)
-                    pruned += 1
-            session.commit()
-            return pruned
-    identity_column, remote_upsert, article_is_eligible = _authority_scope_predicates(
-        stream, authority_id
-    )
-    with Session(engine) as session:
-        pruned = 0
-        for start in range(0, len(confirmed_absent), 900):
-            batch = confirmed_absent[start:start + 900]
-            if stream == "articles":
-                result = session.exec(
-                    delete(ArticleRecord).where(
-                    ArticleRecord.id.in_(batch),
-                    article_is_eligible,
-                    ~remote_upsert,
-                    )
-                )
-            else:
-                stale_ids = (
-                    select(ArticleAnalysisRecord.article_id)
-                    .join(
-                    ArticleRecord,
-                    ArticleRecord.id == ArticleAnalysisRecord.article_id,
-                    )
-                    .where(
-                    ArticleAnalysisRecord.article_id.in_(batch),
-                    article_is_eligible,
-                    ArticleAnalysisRecord.authority_id.in_(("", authority_id)),
-                    ~remote_upsert,
-                )
-                )
-                session.exec(
-                    delete(ArticleTagAssignmentRecord).where(
-                    ArticleTagAssignmentRecord.article_id.in_(stale_ids),
-                    ArticleTagAssignmentRecord.assignment_source == "llm",
-                    )
-                )
-                result = session.exec(
-                    delete(ArticleAnalysisRecord).where(
-                    ArticleAnalysisRecord.article_id.in_(stale_ids)
-                    )
-                )
-            pruned += max(int(getattr(result, "rowcount", 0) or 0), 0)
-        session.commit()
-        return pruned
 
 
 def _binary_target(root: Path, content_hash: str, ext: str) -> Path:
@@ -4255,7 +4389,6 @@ def is_public_podcast_audio_reference(session: Session, artifact_id: str) -> boo
         record is None
         or record.kind != "digest_audio_zh"
         or record.status != "published"
-        or record.authority_id
         or not record.published_at
     ):
         return False
@@ -4263,14 +4396,11 @@ def is_public_podcast_audio_reference(session: Session, artifact_id: str) -> boo
     if (
         article is None
         or article.content_type != "podcast_episode"
-        or article.analysis_authority_id
         or not _public_source(article.source_id)
     ):
         return False
     source = session.get(SourceConfigRecord, article.source_id)
-    return source is None or not (
-        source.owner_username or source.collection_authority_id
-    )
+    return source is None or not source.owner_username
 
 
 def _install_podcast_audio_file(

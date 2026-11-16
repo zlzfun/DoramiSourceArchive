@@ -127,6 +127,16 @@ test('未协商的流显示「未协商」(旧版对端只广播必需能力)', 
   assert.equal(streamStateIn(run, 'media'), 'done');
 });
 
+test('本机已有自己的事件:事件站显示「不同步 · 本机已有事件」,不说对端未广播', () => {
+  const order = STREAM_ORDER.filter((sid) => sid !== 'events');
+  const run = runOf({ status: 'succeeded', progress: { order }, result: { streams: Object.fromEntries(order.map((s) => [s, doneStats(1)])) } });
+  assert.equal(streamStateIn(run, 'events'), 'skip');
+  const local = stationOf(run, 'events', { localSkip: ['events'] });
+  assert.deepEqual([local.num, local.sub], ['不同步', ['本机已有事件']]);
+  assert.equal(stationOf(run, 'events').num, '未协商');
+  assert.equal(streamStateIn(run, 'media'), 'done');
+});
+
 test('未配置:各站一律待跑 · 首次整流', () => {
   const st = stationOf(null, 'articles', { configured: false });
   assert.equal(st.k, 'todo');

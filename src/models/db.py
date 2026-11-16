@@ -2988,6 +2988,12 @@ class ArchiveSyncEntityStateRecord(SQLModel, table=True):
             "revision",
             "identity",
         ),
+        Index(
+            "ix_archive_sync_entity_states_stream_local_revision_identity",
+            "stream",
+            "local_revision",
+            "identity",
+        ),
         CheckConstraint(
                 "stream IN ('sources','articles','analyses','media','source_states',"
                 "'podcast_texts','podcast_audio','events')",
@@ -3003,7 +3009,16 @@ class ArchiveSyncEntityStateRecord(SQLModel, table=True):
     stream: str = Field(primary_key=True)
     identity: str = Field(primary_key=True)
     authority_id: str = Field(default="", index=True)
+    # 本机行(authority_id 为空):本机事务时钟。同步写入的行:上游的修订,只用于判断「这一行
+    # 应用过没有」与事件成员先后;重放时置 0。
     revision: int = Field(default=0, index=True, ge=0)
+    # 导出修订(issue #263):本机事务时钟下「下游需要看到这一行」的版本。本机行由状态表上的镜像
+    # 触发器保持等于 revision;同步写入的行在应用、文件就绪时由本机时钟推进。导出只按这一列分页。
+    local_revision: int = Field(
+        default=0,
+        ge=0,
+        sa_column_kwargs={"server_default": text("0")},
+    )
     operation: str = Field(default="upsert")
     updated_at: str = Field(default="")
 

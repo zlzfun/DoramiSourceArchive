@@ -120,29 +120,30 @@ def test_article_jsonl_preserves_unicode_line_separators(tmp_path, separator, ne
         assert session.exec(select(ArticleRecord)).all() == []
 
 
-def test_sources_remain_reader_visible_but_become_remote_managed(tmp_path, monkeypatch):
+def test_synced_source_is_created_with_analysis_off_and_no_binding(tmp_path):
+    """issue #263:同步建出来的源默认关分析、不带采集绑定;启用状态等目录字段照上游。"""
     producer = _sink(tmp_path, "producer-source.db")
     consumer = _sink(tmp_path, "consumer-source.db")
     with Session(producer.engine) as session:
         session.add(_source())
-        session.commit()
-    with Session(consumer.engine) as session:
-        session.add(_source(
-            updated_at="2026-09-01T00:00:00+00:00",
-            ai_analysis_enabled=False,
-        ))
         session.commit()
 
     _copy_stream(producer, consumer, "sources")
     authority = archive_sync_v2.producer_authority_id(producer.engine)
     with Session(consumer.engine) as session:
         row = session.get(SourceConfigRecord, "rss_platform")
-        assert row.is_active is True  # reader-visible metadata is not disabled
-        assert row.collection_authority_id == authority
-        assert row.ai_analysis_enabled is True
+        assert row.is_active is True  # 目录字段:个人早报的范围与 readiness 靠它
+        assert row.collection_authority_id == authority  # 簿记:这个源上游也有
+        assert row.ai_analysis_enabled is False
+        assert (row.fetcher_id, row.params_json) == ("", "{}")
+        # 管理员在本机打开分析:之后的同步不再覆盖这个开关
+        row.ai_analysis_enabled = True
+        session.add(row)
+        session.commit()
 
     with Session(producer.engine) as session:
         row = session.get(SourceConfigRecord, "rss_platform")
+        row.name = "Renamed upstream"
         row.is_active = False
         row.ai_analysis_enabled = False
         row.fetch_interval_minutes = 99
@@ -152,32 +153,360 @@ def test_sources_remain_reader_visible_but_become_remote_managed(tmp_path, monke
     _copy_stream(producer, consumer, "sources")
     with Session(consumer.engine) as session:
         row = session.get(SourceConfigRecord, "rss_platform")
-        assert row.is_active is False
-        assert row.ai_analysis_enabled is False
-        assert row.fetch_interval_minutes == 99
+        assert row.name == "Renamed upstream"
+        assert row.is_active is False  # 本机没在用这个源:停用照上游
+        assert row.ai_analysis_enabled is True  # 本机的开关不被同步覆盖
+        assert row.fetch_interval_minutes == 60  # 本机运行参数,只在建行时取上游的
 
-    import api.app as app_module
-    monkeypatch.setattr(app_module, "db_sink", consumer)
-    with pytest.raises(ValueError, match="(远端权威节点|v2 接收端采集围栏)"):
-        asyncio.run(app_module.run_fetcher_with_tracking(
-            "generic_rss", {"source_id": "rss_platform"}
+
+def test_first_upstream_marker_turns_analysis_off_only_for_sources_not_in_local_use(tmp_path):
+    """新节点启动对账先建了预设行(分析默认开),随后才接入上游:上游印记第一次落上去时,本机没在用
+    的源与「同步建出来的源」同一口径——分析关;本机在用的源不动。之后管理员打开的开关,同步不再碰。"""
+    from models.db import CollectionJobRecord
+    from services import source_catalog
+
+    idle_id, in_job_id = source_catalog.registry_source_ids()[:2]
+    producer = _sink(tmp_path, "producer-first-marker.db")
+    consumer = _sink(tmp_path, "consumer-first-marker.db")
+    with Session(producer.engine) as session:
+        for source_id in (idle_id, in_job_id):
+            row = session.get(SourceConfigRecord, source_id) or _source(source_id)
+            row.owner_username = ""
+            session.add(row)
+        session.commit()
+    with Session(consumer.engine) as session:
+        # 预设镜像行的样子:绑定 = 同名预设抓取器;本机没跑过、没被任务点名
+        for source_id in (idle_id, in_job_id):
+            row = session.get(SourceConfigRecord, source_id) or _source(source_id)
+            row.fetcher_id, row.origin, row.ai_analysis_enabled = source_id, "catalog", True
+            row.params_json, row.collection_authority_id = "{}", ""
+            session.add(row)
+        session.add(CollectionJobRecord(
+            name="mine", fetcher_ids_json=json.dumps([in_job_id]), is_active=True,
+            created_at="2026-09-01T00:00:00+00:00", updated_at="2026-09-01T00:00:00+00:00",
+        ))
+        session.commit()
+    authority = archive_sync_v2.producer_authority_id(producer.engine)
+    _copy_stream(producer, consumer, "sources")
+    with Session(consumer.engine) as session:
+        idle = session.get(SourceConfigRecord, idle_id)
+        in_job = session.get(SourceConfigRecord, in_job_id)
+        assert (idle.ai_analysis_enabled, idle.collection_authority_id) == (False, authority)
+        assert (in_job.ai_analysis_enabled, in_job.collection_authority_id) == (True, authority)
+        assert idle.fetcher_id == idle_id            # 本机的绑定不动
+        idle.ai_analysis_enabled = True               # 管理员之后打开
+        session.add(idle)
+        session.commit()
+
+    with Session(producer.engine) as session:
+        row = session.get(SourceConfigRecord, idle_id)
+        row.name = "Renamed upstream"
+        session.add(row)
+        session.commit()
+    _copy_stream(producer, consumer, "sources")
+    with Session(consumer.engine) as session:
+        idle = session.get(SourceConfigRecord, idle_id)
+        assert (idle.name, idle.ai_analysis_enabled) == ("Renamed upstream", True)
+
+
+def test_admin_saved_binding_stays_protected_after_sync_overwrites_the_origin_field(tmp_path):
+    """检视 R1 #2:本机存过采集绑定、还没跑过也没进任务的源算「在用」。第一次同步会把目录字段
+    ``origin`` 盖成上游的值(catalog);保护不能因此在第二次同步时失效。"""
+    producer = _sink(tmp_path, "producer-origin.db")
+    consumer = _sink(tmp_path, "consumer-origin.db")
+    with Session(producer.engine) as session:
+        session.add(_source("rss_shared", origin="catalog", fetcher_id="rss_shared"))
+        session.commit()
+    with Session(consumer.engine) as session:
+        session.add(_source("rss_shared", origin="admin", name="My own binding"))   # 绑定 generic_rss
+        session.commit()
+
+    def sync_sources():
+        # 目录投影(新版本两端的常态):载荷里带 origin 等目录字段
+        raw = archive_sync_v2.export_page(
+            producer.engine, "sources", receiver_capabilities=archive_sync_v2.SOURCE_CATALOG_CAPABILITY
+        )
+        return archive_sync_v2.import_page(consumer.engine, raw, expected_stream="sources")
+
+    sync_sources()
+    with Session(consumer.engine) as session:
+        row = session.get(SourceConfigRecord, "rss_shared")
+        assert (row.origin, row.fetcher_id, row.is_active, row.ai_analysis_enabled) == (
+            "catalog", "generic_rss", True, True
+        )
+        assert archive_sync_v2.source_in_local_use(session, row, archive_sync_v2._PageOutcome())  # noqa: SLF001
+
+    with Session(producer.engine) as session:
+        row = session.get(SourceConfigRecord, "rss_shared")
+        row.is_active = False
+        row.retired_at = "2026-11-01T00:00:00+00:00"
+        session.add(row)
+        session.commit()
+    sync_sources()
+    with Session(consumer.engine) as session:
+        row = session.get(SourceConfigRecord, "rss_shared")
+        assert (row.is_active, row.retired_at) == (True, None)
+
+    with Session(producer.engine) as session:
+        session.delete(session.get(SourceConfigRecord, "rss_shared"))
+        session.commit()
+    sync_sources()
+    with Session(consumer.engine) as session:
+        row = session.get(SourceConfigRecord, "rss_shared")
+        assert row is not None and row.is_active and row.fetcher_id == "generic_rss"
+
+
+def test_auto_installed_bindings_do_not_count_as_local_use(tmp_path):
+    """预设镜像行与播客目录自动安装的行不算管理员存的绑定;判断只看绑定本身——不看可被同步覆盖的
+    origin,也不只凭目录 id(管理员在目录源上存了自己的参数就算在用)。"""
+    from services import podcast_catalog, source_catalog
+
+    sink = _sink(tmp_path, "auto-bindings.db")
+    with Session(sink.engine) as session:
+        podcast_catalog.import_podcast_catalog(session)
+        session.commit()
+        outcome = archive_sync_v2._PageOutcome()  # noqa: SLF001
+        preset_id = source_catalog.registry_source_ids()[0]
+        preset = _source(preset_id, fetcher_id=preset_id, params_json="{}", origin="admin")
+        podcast = session.get(SourceConfigRecord, next(
+            source_id for source_id in podcast_catalog.catalog_by_id()
+            if source_id != podcast_catalog.AI_NATIVE_DEV_SOURCE_ID      # 这一个被默认采集任务点名
         ))
 
+        assert outcome.binding_is_auto_generated(preset) is True          # origin 不参与判断
+        assert outcome.binding_is_auto_generated(podcast) is True
+        assert archive_sync_v2.source_in_local_use(session, podcast, outcome) is False
 
-def test_source_physical_delete_tombstone_removes_receiver_config(tmp_path):
-    producer = _sink(tmp_path, "producer-source-delete.db")
-    consumer = _sink(tmp_path, "consumer-source-delete.db")
+        preset.fetcher_id = "generic_rss"                                 # 管理员改绑
+        assert outcome.binding_is_auto_generated(preset) is False
+        assert outcome.binding_is_auto_generated(_source("rss_my_feed")) is False
+
+        # 管理员在目录播客源上存了自己的 feed 地址与单次上限(检视 R2 #2 的复现)
+        params = json.loads(podcast.params_json)
+        params.update({"feed_url": "https://mirror.example.test/feed.xml", "limit": 17})
+        podcast.params_json = json.dumps(params)
+        assert outcome.binding_is_auto_generated(podcast) is False
+        assert archive_sync_v2.source_in_local_use(session, podcast, outcome) is True
+        params.pop("feed_url")
+        podcast.params_json = json.dumps(params)                          # 只改上限也算
+        assert outcome.binding_is_auto_generated(podcast) is False
+        params["limit"] = podcast_catalog.DEFAULT_FETCH_LIMIT
+        podcast.params_json = json.dumps(params)
+        podcast.url = "https://moved.example.test/feed.xml"               # 换了地址也算
+        assert outcome.binding_is_auto_generated(podcast) is False
+
+
+def test_admin_configured_catalog_podcast_survives_an_upstream_tombstone(tmp_path):
+    """检视 R2 #2 的完整路径:目录自动安装的播客源,管理员存了本机配置(还没跑、没进任务)→ 同步
+    上游的这个源、再收到它的 tombstone,本机源行与配置都在。没改过配置的那个照常跟着上游走。"""
+    from services import podcast_catalog
+
+    producer = _sink(tmp_path, "producer-podcast-binding.db")
+    consumer = _sink(tmp_path, "consumer-podcast-binding.db")
+    kept_id, plain_id = [
+        source_id for source_id in podcast_catalog.catalog_by_id()
+        if source_id != podcast_catalog.AI_NATIVE_DEV_SOURCE_ID
+    ][:2]
+    for sink in (producer, consumer):
+        with Session(sink.engine) as session:
+            podcast_catalog.import_podcast_catalog(session)
+            session.commit()
+    with Session(consumer.engine) as session:
+        row = session.get(SourceConfigRecord, kept_id)
+        params = json.loads(row.params_json)
+        params.update({"feed_url": "https://mirror.example.test/feed.xml", "limit": 17})
+        row.params_json = json.dumps(params, sort_keys=True)
+        session.add(row)
+        session.commit()
+
+    _copy_stream(producer, consumer, "sources")
     with Session(producer.engine) as session:
-        session.add_all([
-            _source(),
-            _article(),
-            SourceStateRecord(
-                source_id="rss_platform",
-                fetcher_id="rss_platform",
-                status="healthy",
-                updated_at="2026-09-01T00:00:00+00:00",
-            ),
-        ])
+        for source_id in (kept_id, plain_id):
+            session.delete(session.get(SourceConfigRecord, source_id))
+        session.commit()
+    _raw, applied = _copy_stream(producer, consumer, "sources")
+
+    with Session(consumer.engine) as session:
+        kept = session.get(SourceConfigRecord, kept_id)
+        assert kept is not None and kept.retired_at is None and kept.is_active
+        assert json.loads(kept.params_json)["limit"] == 17
+        assert session.get(SourceConfigRecord, plain_id) is None      # 没在用、也没有文章:随上游删除
+    assert applied["deleted"] == 1
+
+
+def test_import_takes_the_write_lock_before_comparing_with_the_local_version(tmp_path, monkeypatch):
+    """检视 R1 #1:「读本机版本 → 比较 → 覆盖」之间不能让本机写事务插进来。导入一页先取写锁;
+    比较发生时,别的连接上的写必须在等锁,而不是已经提交。"""
+    producer = _sink(tmp_path, "producer-race.db")
+    consumer = _sink(tmp_path, "consumer-race.db")
+    with Session(producer.engine) as session:
+        session.add(_source())
+        session.add(_article(content="Upstream body"))
+        session.commit()
+    with Session(consumer.engine) as session:
+        session.add(_source())
+        session.add(_article(content="Local body", archive_updated_at="2026-09-01T00:00:00+00:00"))
+        session.commit()
+    _copy_stream(producer, consumer, "sources")
+
+    observed = {}
+    real_compare = archive_sync_v2.revision_newer
+
+    def local_fetch_commits_a_newer_version():
+        try:
+            with Session(consumer.engine) as session:
+                row = session.get(ArticleRecord, "article-1")
+                row.content = "Local newer body"
+                row.archive_updated_at = "2026-12-01T00:00:00+00:00"
+                session.add(row)
+                session.commit()
+            observed["writer"] = "committed"
+        except Exception as exc:  # noqa: BLE001 - 只记录结果
+            observed["writer"] = type(exc).__name__
+
+    def compare_while_a_local_writer_races(candidate, other):
+        if "blocked_during_compare" not in observed:
+            writer = threading.Thread(target=local_fetch_commits_a_newer_version)
+            writer.start()
+            writer.join(timeout=0.6)
+            observed["blocked_during_compare"] = writer.is_alive()
+            observed["thread"] = writer
+        return real_compare(candidate, other)
+
+    monkeypatch.setattr(archive_sync_v2, "revision_newer", compare_while_a_local_writer_races)
+    _raw, applied = _copy_stream(producer, consumer, "articles")
+    observed["thread"].join(timeout=10)
+
+    assert observed["blocked_during_compare"] is True       # 比较时本机写事务在等锁,没有插进来
+    assert applied["taken_over"] == 1                        # 导入按它读到的本机版本做了决定
+    assert observed["writer"] == "committed"                 # 导入提交后它才写进去
+
+
+def test_fetch_rechecks_under_the_write_lock_before_rewriting_an_existing_row(tmp_path, monkeypatch):
+    """检视 R1 #1 的另一半:抓取读到「本机版本、没有正文」之后、写回之前,同步把这篇换成了上游的
+    版本。抓取取锁后重读、按最新的行重新判定——不会留下「上游的印记 + 本机的正文」。"""
+    from api.articles_view import GenericContent
+
+    consumer = _sink(tmp_path, "consumer-fetch-race.db")
+    with Session(consumer.engine) as session:
+        session.add(_source())
+        session.add(_article(has_content=False, content=""))
+        session.commit()
+
+    real_lock = DatabaseStorage._lock_existing_for_rewrite  # noqa: SLF001
+
+    def sync_lands_first(session, existing):
+        with Session(consumer.engine) as other:
+            row = other.get(ArticleRecord, "article-1")
+            row.has_content, row.content = True, "Upstream body"
+            row.analysis_authority_id = "upstream-a"
+            other.add(row)
+            other.commit()
+        return real_lock(session, existing)
+
+    monkeypatch.setattr(DatabaseStorage, "_lock_existing_for_rewrite", staticmethod(sync_lands_first))
+    item = GenericContent(
+        id="article-1", title="Article", source_url="https://example.test/a",
+        publish_date="2026-09-01T00:00:00+00:00", content="Local fetched body", has_content=True,
+    )
+    item.source_id = "rss_platform"
+    item.content_type = "rss_article"
+    outcome = asyncio.run(consumer.save_with_outcome(item))
+
+    assert outcome == "duplicate"
+    with Session(consumer.engine) as session:
+        row = session.get(ArticleRecord, "article-1")
+        assert (row.content, row.analysis_authority_id) == ("Upstream body", "upstream-a")
+
+
+@pytest.mark.parametrize("usage", ["saved_binding", "scheduled", "ran_locally"])
+def test_source_in_local_use_ignores_upstream_stop_retire_and_delete(tmp_path, usage):
+    """本机在用的源(存过绑定 / 被采集任务点名 / 本机跑过)不接受上游的停用、退役与删除;
+    目录字段照常更新,本机的分析开关与绑定原样保留。"""
+    from models.db import CollectionJobRecord
+
+    producer = _sink(tmp_path, f"producer-in-use-{usage}.db")
+    consumer = _sink(tmp_path, f"consumer-in-use-{usage}.db")
+    with Session(producer.engine) as session:
+        session.add(_source())
+        session.commit()
+    with Session(consumer.engine) as session:
+        local = _source(ai_analysis_enabled=True, name="Local name")
+        if usage != "saved_binding":
+            local.fetcher_id = ""
+            local.params_json = "{}"
+        session.add(local)
+        if usage == "scheduled":
+            session.add(CollectionJobRecord(
+                name="mine", fetcher_ids_json='["rss_platform"]', is_active=False,
+                created_at="2026-09-01T00:00:00", updated_at="2026-09-01T00:00:00",
+            ))
+        if usage == "ran_locally":
+            session.add(SourceStateRecord(
+                source_id="rss_platform", fetcher_id="generic_rss", status="healthy",
+                total_runs=3, updated_at="2026-09-05T00:00:00+00:00",
+            ))
+        session.commit()
+        binding_before = (local.fetcher_id, local.params_json)
+
+    first = archive_sync_v2.export_page(producer.engine, "sources")
+    since = archive_sync_v2.parse_page(first, expected_stream="sources")[0]["snapshot"]
+    archive_sync_v2.import_page(consumer.engine, first, expected_stream="sources")
+    with Session(producer.engine) as session:
+        row = session.get(SourceConfigRecord, "rss_platform")
+        row.name = "Upstream name"
+        row.is_active = False
+        row.retired_at = "2026-09-04T00:00:00+00:00"
+        row.updated_at = "2026-09-04T00:00:00+00:00"
+        session.add(row)
+        session.commit()
+    archive_sync_v2.import_page(
+        consumer.engine,
+        archive_sync_v2.export_page(
+            producer.engine, "sources", since=since,
+            receiver_capabilities=[archive_sync_v2.SOURCE_CATALOG_CAPABILITY],
+        ),
+        expected_stream="sources",
+    )
+    with Session(consumer.engine) as session:
+        row = session.get(SourceConfigRecord, "rss_platform")
+        assert row.name == "Upstream name"
+        assert row.is_active is True and row.retired_at is None
+        assert row.ai_analysis_enabled is True
+        assert (row.fetcher_id, row.params_json) == binding_before
+
+    # 上游把它物理删了:本机继续用,只摘掉「上游也有」的簿记
+    with Session(producer.engine) as session:
+        latest = archive_sync_v2.parse_page(
+            archive_sync_v2.export_page(producer.engine, "sources"), expected_stream="sources"
+        )[0]["snapshot"]
+        session.delete(session.get(SourceConfigRecord, "rss_platform"))
+        session.commit()
+    delta = archive_sync_v2.export_page(producer.engine, "sources", since=latest)
+    assert [row["operation"] for row in archive_sync_v2.parse_page(delta)[1]] == ["tombstone"]
+    applied = archive_sync_v2.import_page(consumer.engine, delta, expected_stream="sources")
+    assert applied["deleted"] == 0 and applied["skipped"] == 1
+    with Session(consumer.engine) as session:
+        row = session.get(SourceConfigRecord, "rss_platform")
+        assert row is not None and row.retired_at is None
+        assert row.collection_authority_id == ""
+
+
+@pytest.mark.parametrize("has_articles", [True, False], ids=["referenced", "unreferenced"])
+def test_upstream_source_delete_retires_or_removes_an_unused_receiver_copy(tmp_path, has_articles):
+    """本机没在用的同步源:上游删除后,本机有它的文章就保留身份并退役,没有文章才删行。"""
+    producer = _sink(tmp_path, f"producer-source-delete-{has_articles}.db")
+    consumer = _sink(tmp_path, f"consumer-source-delete-{has_articles}.db")
+    with Session(producer.engine) as session:
+        session.add(_source())
+        if has_articles:
+            session.add(_article())
+        session.add(SourceStateRecord(
+            source_id="rss_platform",
+            fetcher_id="rss_platform",
+            status="healthy",
+            updated_at="2026-09-01T00:00:00+00:00",
+        ))
         session.commit()
 
     checkpoints = {}
@@ -195,10 +524,11 @@ def test_source_physical_delete_tombstone_removes_receiver_config(tmp_path):
     with Session(producer.engine) as session:
         session.delete(session.get(SourceConfigRecord, "rss_platform"))
         session.commit()
-        article = session.get(ArticleRecord, "article-1")
-        article.content = "updated after source delete"
-        session.add(article)
-        session.commit()
+        if has_articles:
+            article = session.get(ArticleRecord, "article-1")
+            article.content = "updated after source delete"
+            session.add(article)
+            session.commit()
 
     for stream in ("sources", "articles", "source_states"):
         delta = archive_sync_v2.export_page(
@@ -207,20 +537,30 @@ def test_source_physical_delete_tombstone_removes_receiver_config(tmp_path):
         _manifest, rows = archive_sync_v2.parse_page(delta, expected_stream=stream)
         if stream in {"sources", "source_states"}:
             assert len(rows) == 1 and rows[0]["operation"] == "tombstone"
-        result = archive_sync_v2.import_page(
-            consumer.engine, delta, expected_stream=stream
-        )
-        if stream in {"sources", "source_states"}:
-            assert result["deleted"] in {0, 1}
+        archive_sync_v2.import_page(consumer.engine, delta, expected_stream=stream)
     with Session(consumer.engine) as session:
-        assert session.get(SourceConfigRecord, "rss_platform") is None
+        source = session.get(SourceConfigRecord, "rss_platform")
         assert session.get(SourceStateRecord, "rss_platform") is None
-        article = session.get(ArticleRecord, "article-1")
-        assert article is not None and article.content == "updated after source delete"
+        if has_articles:
+            assert source is not None and source.retired_at
+            article = session.get(ArticleRecord, "article-1")
+            assert article is not None and article.content == "updated after source delete"
+        else:
+            assert source is None
+        # 删除继续往下游转发:接收端自己的导出里这是一条 tombstone
+        forwarded = archive_sync_v2.parse_page(
+            archive_sync_v2.export_page(consumer.engine, "source_states"),
+            expected_stream="source_states",
+        )[1]
+        assert [(row["identity"], row["operation"]) for row in forwarded] == [
+            ("rss_platform", "tombstone")
+        ]
 
 
-def test_midflight_authority_takeover_fails_runs_and_removes_only_new_local_rows(tmp_path, monkeypatch):
-    consumer = _sink(tmp_path, "midflight-takeover.db")
+def test_upstream_marker_on_a_source_does_not_abort_local_collection(tmp_path, monkeypatch):
+    """源上的同步印记只是簿记(上游也有这个源):本机采集途中它被盖上,本次采集照常完成,
+    抓到的文章是本机版本。"""
+    consumer = _sink(tmp_path, "midflight-marker.db")
     with Session(consumer.engine) as session:
         session.add(_source())
         session.add(_article("preexisting"))
@@ -228,6 +568,8 @@ def test_midflight_authority_takeover_fails_runs_and_removes_only_new_local_rows
 
     import api.app as app_module
     monkeypatch.setattr(app_module, "db_sink", consumer)
+    monkeypatch.setattr(app_module, "queue_article_analysis_after_commit", lambda _ids: 0)
+    monkeypatch.setattr(app_module, "schedule_media_prefetch", lambda _ids: None)
 
     async def fake_run_task(_fetcher, *, lineage, **_params):
         with Session(consumer.engine) as session:
@@ -242,18 +584,26 @@ def test_midflight_authority_takeover_fails_runs_and_removes_only_new_local_rows
         )
 
     monkeypatch.setattr(app_module.pipeline, "run_task", fake_run_task)
-    with pytest.raises(RuntimeError, match="远端权威接管"):
-        asyncio.run(app_module.run_single_fetch_as_collection(
-            "generic_rss", {"source_id": "rss_platform"}, "race"
-        ))
+    asyncio.run(app_module.run_single_fetch_as_collection(
+        "generic_rss", {"source_id": "rss_platform"}, "no-race"
+    ))
     with Session(consumer.engine) as session:
-        assert session.get(ArticleRecord, "created-midflight") is None
+        created = session.get(ArticleRecord, "created-midflight")
+        assert created is not None and created.analysis_authority_id == ""
         assert session.get(ArticleRecord, "preexisting") is not None
-        assert session.exec(select(FetchRunRecord)).one().status == "failed"
-        assert session.exec(select(CollectionJobRunRecord)).one().status == "failed"
+        assert session.exec(select(FetchRunRecord)).one().status == "success"
+        state = session.get(SourceStateRecord, "rss_platform")
+        assert state.authority_id == "" and state.total_runs == 1
+        # 上游也有的源下,本机自己抓到的文章照样进本机的导出
+        exported = archive_sync_v2.parse_page(
+            archive_sync_v2.export_page(consumer.engine, "articles"), expected_stream="articles"
+        )[1]
+        assert {row["identity"] for row in exported} == {"created-midflight", "preexisting"}
 
 
-def test_remote_managed_source_and_article_admin_mutations_are_fenced(tmp_path, monkeypatch):
+def test_synced_source_is_locally_manageable_but_synced_articles_stay_read_only(tmp_path, monkeypatch):
+    """拉取别人不再限制本机管理公共源(issue #263);同步写入的文章仍不能在本机改写或删除——
+    它的当前版本是上游的,改了也会被下一次同步覆盖。"""
     sink = _sink(tmp_path, "admin-authority-fence.db")
     with Session(sink.engine) as session:
         session.add(_source(collection_authority_id="external"))
@@ -266,17 +616,12 @@ def test_remote_managed_source_and_article_admin_mutations_are_fenced(tmp_path, 
     from api.schemas import BatchOpParams
 
     with Session(sink.engine) as session:
-        with pytest.raises(HTTPException) as update_source:
-            sources_router.update_source_config(
-                "rss_platform", sources_router.SourceConfigUpdate(name="changed"), session
-            )
-        assert update_source.value.status_code == 409
-        with pytest.raises(HTTPException) as toggle_source:
-            sources_router.toggle_source_config("rss_platform", False, session)
-        assert toggle_source.value.status_code == 409
-        with pytest.raises(HTTPException) as delete_source:
-            sources_router.delete_source_config("rss_platform", session)
-        assert delete_source.value.status_code == 409
+        updated = sources_router.update_source_config(
+            "rss_platform", sources_router.SourceConfigUpdate(name="changed"), session
+        )
+        assert updated["name"] == "changed"
+        toggled = sources_router.toggle_source_config("rss_platform", False, session)
+        assert toggled["is_active"] is False
 
     monkeypatch.setattr(articles_router.deps, "get_db_sink", lambda: sink)
     monkeypatch.setattr(
@@ -354,14 +699,27 @@ def test_article_handoff_keeps_same_content_result_until_remote_revision_arrives
         assert record.analyzed_at == now
 
 
-def test_external_authority_wins_first_handoff_even_when_local_clock_is_newer(tmp_path):
-    producer = _sink(tmp_path, "producer-authority-wins.db")
-    consumer = _sink(tmp_path, "consumer-authority-wins.db")
+def test_local_version_strictly_newer_than_upstream_is_kept(tmp_path):
+    """修订号新者胜(issue #263 用户拍板):本机自己写入的版本严格新于上游的,就保留本机的——
+    文章、它的分析、本机跑出来的源状态都不动,也不把本机行的导出状态改成远端的。"""
+    producer = _sink(tmp_path, "producer-newer-wins.db")
+    consumer = _sink(tmp_path, "consumer-newer-wins.db")
     with Session(producer.engine) as session:
         session.add(_source(updated_at="2026-09-01T00:00:00+00:00", name="External"))
-        session.add(_article(
+        article = _article(
             archive_updated_at="2026-09-01T01:00:00+00:00",
             content="External body A",
+        )
+        session.add(article)
+        session.flush()
+        session.add(ArticleAnalysisRecord(
+            article_id=article.id, status="succeeded", tagging_status="succeeded",
+            quality_score=4.0, content_hash=compute_content_hash(article),
+            created_at="2026-09-01T01:00:00+00:00", updated_at="2026-09-01T01:00:00+00:00",
+        ))
+        session.add(SourceStateRecord(
+            source_id="rss_platform", fetcher_id="rss_platform", status="failing",
+            updated_at="2026-09-02T00:00:00+00:00",
         ))
         session.commit()
     with Session(consumer.engine) as session:
@@ -393,16 +751,75 @@ def test_external_authority_wins_first_handoff_even_when_local_clock_is_newer(tm
     _copy_stream(producer, consumer, "sources")
     with Session(consumer.engine) as session:
         source = session.get(SourceConfigRecord, "rss_platform")
-        assert source.name == "External"
-        assert session.get(SourceStateRecord, "rss_platform") is None
-    _copy_stream(producer, consumer, "articles")
+        assert source.name == "External"  # 目录字段照上游
+        assert session.get(SourceStateRecord, "rss_platform").status == "healthy"  # 本机状态不被删
+    _raw, articles = _copy_stream(producer, consumer, "articles")
+    assert (articles["inserted"], articles["updated"], articles["skipped"]) == (0, 0, 1)
+    assert articles["skipped_identities"] == ["article-1"] and articles["taken_over"] == 0
+    _raw, analyses = _copy_stream(producer, consumer, "analyses")
+    assert analyses["skipped"] == 1
+    _raw, states = _copy_stream(producer, consumer, "source_states")
+    assert states["skipped"] == 1
     with Session(consumer.engine) as session:
         article = session.get(ArticleRecord, "article-1")
         analysis = session.get(ArticleAnalysisRecord, "article-1")
-        assert article.content == "External body A"
-        assert article.archive_updated_at == "2026-09-01T01:00:00+00:00"
-        assert analysis.status == "pending"
-        assert analysis.quality_score is None
+        assert article.content == "Local body B"
+        assert article.analysis_authority_id == ""
+        assert article.archive_updated_at == "2026-09-03T01:00:00+00:00"
+        assert (analysis.status, analysis.quality_score, analysis.authority_id) == ("succeeded", 9.0, "")
+        state = session.get(SourceStateRecord, "rss_platform")
+        assert (state.status, state.authority_id) == ("healthy", "")
+        for stream in ("articles", "analyses"):
+            entity = session.get(ArchiveSyncEntityStateRecord, (stream, "article-1"))
+            assert entity.authority_id == "" and entity.operation == "upsert"
+        assert archive_sync_v2.pending_dependency_replay(consumer.engine) == set()
+
+
+@pytest.mark.parametrize(
+    ("local_revision", "kept_local"),
+    [
+        ("2026-09-02T01:00:00+00:00", False),          # 相等:上游胜
+        ("2026-09-02T09:00:00+08:00", False),          # 同一时刻的另一种时区写法:仍是相等
+        ("2026-09-02T01:00:00.000001+00:00", True),    # 本机严格更新
+        ("not-a-timestamp", False),                    # 坏值视为最旧
+    ],
+)
+def test_revision_comparison_handles_ties_timezones_and_bad_values(tmp_path, local_revision, kept_local):
+    producer = _sink(tmp_path, "producer-revision.db")
+    consumer = _sink(tmp_path, "consumer-revision.db")
+    with Session(producer.engine) as session:
+        session.add(_article(content="Upstream"))  # archive_updated_at = 2026-09-02T01:00:00+00:00
+        session.commit()
+    with Session(consumer.engine) as session:
+        session.add(_article(content="Local", archive_updated_at=local_revision))
+        session.commit()
+    _raw, applied = _copy_stream(producer, consumer, "articles")
+    with Session(consumer.engine) as session:
+        article = session.get(ArticleRecord, "article-1")
+        if kept_local:
+            assert (article.content, article.analysis_authority_id) == ("Local", "")
+            assert applied["skipped"] == 1
+        else:
+            assert article.content == "Upstream" and article.analysis_authority_id
+            assert applied["taken_over"] == 1
+            assert archive_sync_v2.pending_dependency_replay(consumer.engine) == set(
+                archive_sync_v2.DEPENDENCY_REPLAY_STREAMS
+            )
+
+
+def test_naive_revisions_are_read_in_the_node_timezone():
+    import datetime
+
+    naive = archive_sync_v2.revision_instant("2026-09-02T01:00:00")
+    aware = archive_sync_v2.revision_instant(
+        datetime.datetime(2026, 9, 2, 1, 0, 0).astimezone().isoformat()
+    )
+    assert naive == aware
+    assert archive_sync_v2.revision_instant("") is None
+    assert archive_sync_v2.revision_instant("garbage") is None
+    assert archive_sync_v2.revision_newer("2026-09-02T01:00:00+00:00", "garbage") is True
+    assert archive_sync_v2.revision_newer("garbage", "2026-09-02T01:00:00+00:00") is False
+    assert archive_sync_v2.revision_newer("garbage", "also-garbage") is False
 
 
 def test_analysis_maps_tags_by_code_and_preserves_manual_overlay(tmp_path):
@@ -932,7 +1349,9 @@ def test_parse_page_rejects_manifest_type_and_request_echo_tampering(tmp_path):
         archive_sync_v2.parse_page(raw, expected_stream="sources", requested_since="unexpected")
 
 
-def test_export_does_not_launder_remote_or_legacy_user_source_rows(tmp_path, monkeypatch):
+def test_export_includes_synced_rows_but_never_private_ones(tmp_path, monkeypatch):
+    """拉来的也导出(issue #263):行上的同步印记不再决定导不导;读者自定源的文章、分析、
+    源状态与图片照旧永不外传。"""
     producer = _sink(tmp_path, "no-launder.db")
     private_url = "https://img.test/legacy-private.png"
     with Session(producer.engine) as session:
@@ -971,8 +1390,8 @@ def test_export_does_not_launder_remote_or_legacy_user_source_rows(tmp_path, mon
     _, state_rows = archive_sync_v2.parse_page(
         archive_sync_v2.export_page(producer.engine, "source_states"), expected_stream="source_states"
     )
-    assert [row["identity"] for row in article_rows] == ["owned-local"]
-    assert state_rows == []
+    assert sorted(row["identity"] for row in article_rows) == ["orphan-local", "owned-local"]
+    assert [row["identity"] for row in state_rows] == ["remote-source"]
     _, analysis_rows = archive_sync_v2.parse_page(
         archive_sync_v2.export_page(producer.engine, "analyses"),
         expected_stream="analyses",
@@ -1066,7 +1485,8 @@ def test_media_refresh_replaces_cached_manifest_and_public_scope_is_enforced(tmp
         session.commit()
         assert archive_sync_v2.is_public_media_reference(session, public_url) is True
         assert archive_sync_v2.is_public_media_reference(session, private_url) is False
-        assert archive_sync_v2.is_public_media_reference(session, downstream_url) is False
+        # 同步写入的文章引用的图片同样可以转发给下游(issue #263)
+        assert archive_sync_v2.is_public_media_reference(session, downstream_url) is True
 
     payload = {
         "url_hash": public_key,
@@ -1317,6 +1737,7 @@ class _V2Remote:
         self.fail_stream = fail_stream
         self.requested_streams = []
         self.requested_params = []
+        self.presence_requests = 0
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -1353,6 +1774,8 @@ class _V2Remote:
                 ),
             )
         if path == "/api/archive/v2/presence":
+            # 新版本接收端不再发这个请求(issue #263);端点留给旧版本接收端。
+            self.presence_requests += 1
             payload = json.loads(request.content)
             identities = payload["identities"]
             return httpx.Response(200, json={
@@ -1922,15 +2345,23 @@ def test_remote_pull_v2_end_to_end_and_terminal_state_is_last(tmp_path):
         for stream in ("articles", "analyses", "media", "source_states")
     )
     assert result["candidate_evidence"]["status"] == "success"
+    assert remote.presence_requests == 0
     with Session(consumer.engine) as session:
-        assert session.get(ArticleRecord, "article-1").analysis_authority_id == result["authority_id"]
-        assert session.get(ArticleAnalysisRecord, "article-1") is None
-        assert session.get(ArticleRecord, "receiver-only") is None
-        assert session.get(ArticleRecord, "legacy-orphan") is None
-        assert session.get(ArticleAnalysisRecord, "legacy-orphan") is None
+        # 修订号相等:上游胜,v1 归档 / 库副本起步的文章接上上游的版本
+        taken = session.get(ArticleRecord, "article-1")
+        assert taken.analysis_authority_id == result["authority_id"]
+        assert taken.content == "Full body"
+        # 正文换了,本机旧分析作废待定;上游没有这篇的分析,所以不会有结果
+        superseded = session.get(ArticleAnalysisRecord, "article-1")
+        assert (superseded.status, superseded.quality_score) == ("pending", None)
+        # 不再做「上游没有就删」:本机独有的文章与分析原样保留
+        assert session.get(ArticleRecord, "receiver-only").analysis_authority_id == ""
+        assert session.get(ArticleRecord, "legacy-orphan") is not None
+        assert session.get(ArticleAnalysisRecord, "legacy-orphan").quality_score == 2.0
         assert session.get(SourceStateRecord, "rss_platform").status == "healthy"
-    assert result["streams"]["articles"]["pruned"] == 2
-    assert result["streams"]["analyses"]["pruned"] == 1
+    assert all(stream["pruned"] == 0 for stream in result["streams"].values())
+    # 接管触发的依赖流重放已在同一轮完成并清掉标记
+    assert archive_sync_v2.pending_dependency_replay(consumer.engine) == set()
 
     # Independent completed snapshots become exclusive lower watermarks; an
     # unchanged second run is genuinely incremental, not a hidden full replay.

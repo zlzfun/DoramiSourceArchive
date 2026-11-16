@@ -282,7 +282,7 @@ export function RunDrawer({ open, onClose, run, order, now, onRetry, retryBusy =
   );
 }
 
-/* ── v1 文章归档(兼容):导出常可用;本机做过 v2 同步(consumer 模式)后导入禁用(后端会 409) ── */
+/* ── v1 文章归档(兼容):导出常可用;本机持有 v2 同步写入的数据后导入禁用(后端会 409) ── */
 function todayRange() {
   const now = new Date();
   const p = (n) => String(n).padStart(2, '0');
@@ -429,7 +429,7 @@ export function DangerDrawer({ open, onClose, con, pick, setPick, locked = false
           </section>
         </>
       )}
-      <V1Section importLocked={Boolean(con?.consumer_fence?.active)} showToast={showToast} onArticlesChanged={onArticlesChanged} />
+      <V1Section importLocked={Boolean(con?.legacy_import_locked)} showToast={showToast} onArticlesChanged={onArticlesChanged} />
     </SyncDrawerShell>
   );
 }

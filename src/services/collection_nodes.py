@@ -315,7 +315,7 @@ def source_management_catalog(session: Session, *, include_retired: bool = False
          "listing": _listing_of(str(item.get("admission_status") or "")), "retired": False}
         for item in fetcher_registry.get_all_metadata()
     ]
-    known = {item["id"] for item in nodes}
+    known = {item["id"]: item for item in nodes}
     rows = session.exec(
         select(SourceConfigRecord)
         .where(SourceConfigRecord.owner_username == "")
@@ -323,7 +323,9 @@ def source_management_catalog(session: Session, *, include_retired: bool = False
     ).all()
     for row in rows:
         if row.source_id in known:
-            continue  # 预设镜像行:注册表条目已代表它
+            # 预设镜像行:注册表条目已代表它;只把本机的分析开关带出去(issue #263 的「本机分析」)。
+            known[row.source_id]["ai_analysis_enabled"] = bool(row.ai_analysis_enabled)
+            continue
         if row.retired_at and not include_retired:
             continue
         # 全部公共行统一按 is_bound 分流(检视 R1 #2):绑定了不存在的抓取器 = 无绑定;

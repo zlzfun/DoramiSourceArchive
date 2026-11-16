@@ -262,7 +262,7 @@ export default function SyncPage({ crumb, showToast, refreshTick = 0, onArticles
             onTest={testProbe}
           />
         )}
-        schedPop={<SchedPop open={pop === 'sched'} onClose={() => setPop('')} sched={sched} target={con?.target || ''} fenceActive={Boolean(con?.consumer_fence?.active)} onSave={saveSched} />}
+        schedPop={<SchedPop open={pop === 'sched'} onClose={() => setPop('')} sched={sched} target={con?.target || ''} onSave={saveSched} />}
         credPop={<CredPop open={pop === 'cred'} onClose={() => setPop('')} savedUser={savedUser} message={credMsg} onStart={startWithCred} />}
       />
       {statusErr && (

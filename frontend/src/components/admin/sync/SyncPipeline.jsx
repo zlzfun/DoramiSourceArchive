@@ -154,7 +154,7 @@ export default function SyncPipeline({ con, run, configured, now, selected = '',
   const showPend = configured && !run?.active;
   const probedAt = con?.probe?.probed_at;
   const pendTitle = `截至测试连接时${probedAt ? ` · ${fmtDay(probedAt)}` : ''};修订晚于本机 checkpoint 的条目(含更新)`;
-  const ctx = { configured, now, durations, order: order.length ? order : null };
+  const ctx = { configured, now, durations, order: order.length ? order : null, localSkip: con?.local_skip_streams || null };
 
   return (
     <section className={`surface-card card-pad${configured ? '' : ' sync-dimmed'}`}>

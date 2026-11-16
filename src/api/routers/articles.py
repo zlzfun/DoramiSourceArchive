@@ -115,7 +115,7 @@ def _require_local_article_governance(
     ):
         raise HTTPException(
             status_code=409,
-            detail="v2 接收端的公共文章由远端权威节点管理，本机不能新增、修改或删除",
+            detail="这篇文章的当前版本由同步写入，本机不能修改或删除",
         )
 
 
