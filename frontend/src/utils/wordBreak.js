@@ -4,6 +4,7 @@
 // 分词用浏览器自带的 Intl.Segmenter(不加依赖、不走后端)。它的词典对科技标题偏碎——人名、公司名、新词
 // 常被切成单字(「谷 / 歌」「英伟 / 达」「黄 / 仁 / 勋」)——所以再过一遍合并规则:
 //   · 连续的单字并成一块(2–4 个;更长的一串多半是整句被切碎,不合并,回到逐字可折,只有头一个字照落单的规则走);
+//     这一串紧跟在一个词后面、头一个字又是常见的名词后缀(技术|官、工程|师、智能|体、准确|率)时,头一个字归前一块,剩下的再并;
 //   · 落单的单字接到前一块后面(后缀、助词:「英伟|达」「漏洞|的」),除非它是前缀或虚词(「超|740 亿」「与|团队」),那就带着后一段走;
 //   · 收尾标点跟前一块(行首不放标点),起首标点带着后一段走(行尾不留开引号、开括号),连续的起首标点并在一起;
 //   · 字母数字之间的连接符不产生可折点(GPT-5);写在前面的符号($、#、@)带着后面的内容走。
@@ -13,7 +14,9 @@ const OPENERS = '「『（《“‘〈【［([{$¥€£#@';   // 起首标点,�
 const JOINERS = "-‑–.·/'’+&_:";              // 字母数字之间的连接符(GPT-5、A.I.、v2/v3):后面不是可折点
 const ALNUM_TAIL = /[A-Za-z0-9]$/;
 const PUNCT_ONLY = /^[\p{P}\p{S}]+$/u;
-const LEADING = new Set('超新最大小全非反多跨再不可已将被让向从在与和为因并及或而是要还也都就才又很更太把对以给仅便曾正刚只能你我他她它这那其');
+const LEADING = new Set('超新最大小全非反多跨再不可已将被让向从在与和为因并及或而是要还也都就才又很更太把对以给仅便曾正刚只能你我他她它这那其谈');
+// 常见的名词后缀:一串单字的头一个是它、前面又紧挨着一个词时,多半是那个词的后缀(技术官、工程师、智能体、准确率)
+const SUFFIX = new Set('官师员者家长体器机性化型式版级率量度力感商方界业部局院所站网库链端层类群圈们');
 const MAX_RUN = 4;
 
 const isSingle = (seg) => seg.length === 1 && CJK.test(seg);
@@ -26,7 +29,12 @@ export function mergeSegments(segments) {
     if (!isSingle(segments[i])) { tokens.push({ text: segments[i], kind: 'word' }); continue; }
     let j = i;
     while (j + 1 < segments.length && isSingle(segments[j + 1])) j += 1;
-    const run = segments.slice(i, j + 1);
+    let run = segments.slice(i, j + 1);
+    const prev = tokens[tokens.length - 1];
+    if (run.length > 1 && run.length <= MAX_RUN && SUFFIX.has(run[0]) && prev && prev.kind === 'word' && CJK.test(prev.text.slice(-1))) {
+      tokens.push({ text: run[0], kind: 'lone' });   // 后缀:按落单的字处理,下一遍接到前一块后面
+      run = run.slice(1);
+    }
     if (run.length === 1) tokens.push({ text: run[0], kind: 'lone' });
     else if (run.length <= MAX_RUN) tokens.push({ text: run.join(''), kind: 'word' });
     else run.forEach((ch, index) => tokens.push({ text: ch, kind: index === 0 ? 'lone' : 'free' }));   // 头一个字仍按落单处理(多半是前一个词的后缀:「智能|体组团上岗」)
