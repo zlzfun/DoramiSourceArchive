@@ -81,7 +81,6 @@ export default function AddCustomSourceModal({ open, onClose, onAdd, expectedKin
 
       <div className="csrc-head">
         <h3 className="csrc-title">{title}</h3>
-        <p className="csrc-sub">贴入 RSS/Atom 地址，系统会自动识别文章或播客</p>
       </div>
 
       <div className={`csrc-urlbox ${error ? 'is-bad' : ''}`}>

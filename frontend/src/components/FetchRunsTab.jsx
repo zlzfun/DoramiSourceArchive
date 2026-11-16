@@ -979,7 +979,6 @@ export default function FetchRunsTab({
                 </>
               )}
             </div>
-            <div className="tt-foot">按下次触发时间排序;点任务过滤右侧流水</div>
           </aside>
 
           {/* ════ 右区:运行流水 ════ */}
@@ -1411,7 +1410,6 @@ export default function FetchRunsTab({
 
           {/* ── 脚:注记 + 唯一 primary CTA ── */}
           <footer className="jr-foot">
-            <span className="jr-foot-note">保存后时刻表立即更新;运行中的批次不受影响</span>
             <button onClick={() => setJobModalOpen(false)} className="action-button action-button-quiet min-h-[32px] px-3 text-xs ml-auto">取消</button>
             <button onClick={handleSaveJob} className="action-button action-button-primary min-h-[32px] px-3 text-xs"><Save /> 保存任务</button>
           </footer>

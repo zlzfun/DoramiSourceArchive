@@ -20,7 +20,6 @@ import {
   normalizeRankingSegment,
   rankingDataKey,
   rankingEmptyText,
-  rankingScopeNote,
   representativeOf,
   showRecentFlag,
   timelineDays,
@@ -44,18 +43,6 @@ test('热点事件:本周 = 168 小时(默认),近 2 天 = 48 小时;两档各�
   assert.equal(rankingDataKey('events', 'week'), 'events:week');
   assert.equal(rankingDataKey('events', 'recent'), 'events:recent');
   assert.equal(rankingDataKey('reads', 'recent'), 'reads');
-});
-
-test('范围说明:三段都写明全站与时间窗;不写排序依据、同事件留一篇与「与个人订阅无关」(2026-11-04 目检删去)', () => {
-  for (const [seg] of RANKING_SEGMENTS) {
-    const note = rankingScopeNote(seg, 'week');
-    assert.match(note, /^全站近 7 天/);
-    assert.doesNotMatch(note, /个人订阅|排序|只留一篇|标签|归档|采集|分发/);
-  }
-  assert.equal(rankingScopeNote('events', 'week'), '全站近 7 天被两家以上报道的事件');
-  assert.equal(rankingScopeNote('events', 'recent'), '全站近 2 天被两家以上报道的事件');
-  assert.equal(rankingScopeNote('reads'), '全站近 7 天按内容价值挑选的论文、教程、观点与汇编');
-  assert.equal(rankingScopeNote('listens'), '全站近 7 天按内容价值挑选的单集');
 });
 
 test('空榜各一句话', () => {

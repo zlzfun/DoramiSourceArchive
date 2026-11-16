@@ -86,7 +86,6 @@
   overflow-y: auto;
   overscroll-behavior: contain;
 }
-.rankings-page.is-mobile > .ranking-head-note { width: auto; margin: 4px 8px 2px; padding: 0; font-size: var(--m-fs-xs); line-height: 1.6; color: var(--dorami-faint); }
 /* 宽分段:磨砂槽 + 镜片拇指,拇指只按第几项定位(--i / --n 由 RankingsPage 写),弹簧滑动;字重恒 400,选中只换墨色 */
 .rankings-page.is-mobile .ranking-axis {
   position: relative;
@@ -1521,7 +1520,6 @@
 .m-int-main:active { background: var(--dorami-hover); }
 .m-int-x { flex: none; display: grid; place-items: center; width: var(--tap); height: var(--tap); margin-right: 4px; border-radius: var(--r-pill); color: var(--dorami-faint); }
 .m-int-x svg { width: 16px; height: 16px; }
-.m-int-empty { margin: 0; padding: 14px 16px; font-size: var(--m-fs-sm); color: var(--dorami-faint); }
 /* 搜索标签:镀层胶囊,输入 16px(iOS 聚焦不放大整页,审计 M-06) */
 .interest-m.is-rows .interest-search {
   display: flex;
@@ -1746,7 +1744,6 @@
 .m-disc .m-page-scroll::before { content: ""; display: block; height: var(--m-head-clear); }
 .m-page-scroll .reader-disc-head { padding-top: 0; }
 .m-page-scroll .reader-disc-title-row > .reader-disc-title { display: none; }
-.m-page-scroll .reader-disc-hint { font-size: var(--m-fs-sm); line-height: 1.6; }
 .m-page-scroll .reader-disc-tools { gap: 6px 8px; margin: 10px 0 12px; }
 .m-page-scroll .reader-disc-viewseg,
 .m-page-scroll .reader-disc-seg { display: flex; padding: 0; border-radius: var(--r-pill); }

@@ -372,17 +372,12 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
               )}
             </div>
           )}
-          <p className="tiny-meta mt-1">
-            {scopeMode === 'custom'
-              ? `候选只取名单内来源(已选 ${scopeIds.size} 个);新增来源默认不进名单`
-              : '候选取全部来源(新增来源自动纳入)'}
-          </p>
+          {scopeMode === 'custom' && <p className="tiny-meta mt-1">已选 {scopeIds.size} 个</p>}
         </div>
 
         {/* 表尾保存:统一提交上方 cron/条数/源范围 三项编辑(hairline 分隔标明辖区) */}
         <div className="brief-save-row">
           <button onClick={handleSaveSettings} className="action-button action-button-secondary min-h-[32px] px-3 text-xs w-full justify-center">保存配置</button>
-          <p className="tiny-meta">cron、每期条数与源范围的改动,保存后生效</p>
         </div>
 
         <div className="brief-cursor-row">

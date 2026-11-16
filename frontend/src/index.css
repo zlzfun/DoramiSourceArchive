@@ -4062,10 +4062,6 @@ input[type="radio"] {
   .tt-act-btn:hover { background: var(--dorami-hover); color: var(--dorami-ink); }
   .tt-act-btn.is-danger:hover { background: var(--state-bad-bg); color: var(--state-bad); }
 
-  .tt-foot { flex: none; display: flex; align-items: center; min-height: 47px;
-    padding: 9px 16px; border-top: 1px solid var(--dorami-border);
-    background: var(--dorami-soft); font-size: 12px; font-weight: 400; color: var(--dorami-faint); }
-
   /* ════════ 右区:运行流水 ════════ */
   .flow { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
 
@@ -4548,7 +4544,6 @@ input[type="radio"] {
 
   .jr-foot { flex: none; display: flex; align-items: center; gap: 8px; padding: 12px 18px;
     background: var(--dorami-soft); border-top: 1px solid var(--dorami-border); }
-  .jr-foot-note { font-size: 12px; font-weight: 400; color: var(--dorami-faint); }
 
   /* ── 设置面板 静默仪器(弹窗波→并入设置波):控制柜 ──
      全局快速面 = 居中模态;左导航(分组灰签,wash 块选中=全站轨语言)+ 右内容;共用「设置行范式」
@@ -7346,6 +7341,8 @@ input[type="radio"] {
   .inspector-facts dt { font-size: 12px; font-weight: 600; color: var(--dorami-faint); }
   .inspector-facts dd { font-size: 12px; font-weight: 600; color: var(--dorami-ink-2); }
   .inspector-hint { font-size: 12px; font-weight: 400; line-height: 1.6; color: var(--dorami-faint); }
+  /* 检视栏里指向别处的链接(issue #291:原先是一句「…在 运维管理 → 自定源」) */
+  .inspector-link { display: inline-block; font-size: 12px; }
 
   .inspector-metabtn {
     display: inline-flex;
@@ -7432,12 +7429,6 @@ input[type="radio"] {
     display: flex;
     align-items: baseline;
     gap: 8px;
-  }
-
-  .inspector-persist-note {
-    font-size: 12px;
-    font-weight: 400;
-    color: var(--dorami-faint);
   }
 
   .inspector-params {
@@ -10358,11 +10349,6 @@ input[type="radio"] {
     gap: 20px;
   }
   .rk-head-l { min-width: 0; }
-  .ranking-head-note {
-    margin-top: 5px;
-    color: var(--dorami-muted);
-    font-size: 12px;
-  }
   .ranking-head .reader-seg { flex: none; }
   .ranking-head .reader-seg-btn { display: inline-flex; align-items: center; gap: 5px; }
   .ranking-head .reader-seg-btn svg { width: 14px; height: 14px; }
@@ -10695,7 +10681,6 @@ input[type="radio"] {
   .reader-disc-body { max-width: 920px; margin: 0 auto; }
 
   .reader-disc-title-row { display: flex; align-items: baseline; gap: 12px; }
-  .reader-disc-hint { font-size: 12px; color: var(--dorami-faint); }
 
   .reader-disc-tools { display: flex; align-items: center; gap: 10px; margin: 14px 0; }
   /* 两层分组只给桌面的页头用(.reader-shell > .reader-disc 那一段):默认不成盒,子项直接排在 .reader-disc-tools 里 */
@@ -10811,7 +10796,6 @@ input[type="radio"] {
   .csrc-close { position: absolute; top: 14px; right: 14px; width: 30px; height: 30px; }
   .csrc-head { margin-bottom: 18px; padding-right: 32px; }
   .csrc-title { font-size: 16px; font-weight: 600; color: var(--dorami-ink); letter-spacing: -0.01em; }
-  .csrc-sub { margin-top: 4px; font-size: 12px; font-weight: 400; color: var(--dorami-faint); }
 
   .csrc-urlbox {
     display: flex;
@@ -14599,7 +14583,6 @@ input[type="radio"] {
 .interest-ledger-head { justify-content: space-between; gap: 8px; }
 .interest-save-state { flex: none; font-size: 12px; font-weight: 400; color: var(--dorami-faint); letter-spacing: 0.02em; }
 .interest-save-state.is-error { color: var(--state-warn); }
-.interest-ledger-empty { padding: 6px 10px 2px; font-size: 12px; line-height: 1.6; color: var(--dorami-faint); }
 
 .interest-sheet {
   grid-column: 3 / -1;
@@ -14627,7 +14610,6 @@ input[type="radio"] {
 
 .interest-sec { margin-top: 30px; }
 .interest-sec .brief-sec-head { margin-bottom: 12px; }
-.interest-sec-hint { font-size: 12px; color: var(--dorami-faint); margin-left: 2px; }
 .interest-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
 .interest-card {
   position: relative;
@@ -14941,7 +14923,6 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 /* 我的兴趣 chip 行(顶替左槽台账):accent 实点,悬停浮出 × */
 .interest-picks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 0 4px; }
 .interest-picks-label { font-size: 12px; letter-spacing: 0.12em; color: var(--dorami-faint); margin-right: 4px; }
-.interest-picks-empty { font-size: 12px; color: var(--dorami-faint); }
 .interest-picks .interest-save-state { margin-left: auto; }
 .interest-chip {
   display: inline-flex;
@@ -15235,7 +15216,6 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
     color: var(--dorami-ink-2);
   }
   .guest-limit-row:last-child { border-bottom: 0; }
-  .guest-limit-row small { display: block; font-size: 12px; color: var(--dorami-faint); }
   .guest-limit-input {
     width: 100%;
     height: 30px;
@@ -15251,7 +15231,7 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
   .guest-limit-input::placeholder { color: var(--dorami-faint); }
   .guest-defsrc { display: flex; flex-wrap: wrap; gap: 6px; }
   .guest-defsrc span { padding: 2px 8px; border-radius: var(--r-pill); background: var(--dorami-well); color: var(--dorami-ink-2); font-size: 12px; }
-  .guest-defsrc-note { margin-top: 10px; }
+  .guest-defsrc-link { display: inline-block; margin-top: 10px; font-size: 12px; }
 }
 
 /* issue #248: answer evidence, quoted verbatim below the existing episode link. */

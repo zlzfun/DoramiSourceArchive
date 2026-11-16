@@ -186,7 +186,6 @@ export default function CustomNodeBuilder({ showToast }) {
           <div className="flex h-9 w-9 items-center justify-center rounded-[var(--r-control)] bg-violet-50 text-violet-600"><Wand2 className="h-5 w-5" /></div>
           <div>
             <div className="font-semibold text-slate-800">AI 自定义源</div>
-            <div className="text-xs text-slate-500">输入一个内容源 URL，自动判断类型、分析结构并生成可抓取的源配置。</div>
           </div>
         </div>
         <div className="flex gap-2">
