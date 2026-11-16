@@ -45,7 +45,7 @@ export function formatPublishDate(value, fallback = '') {
 }
 
 // 读者面桌面的日期写法(issue #279 第三批):「11月10日 07:14」,跨年才带年份;没有真实时刻的只写到日。
-// 读者面不出现连字符日期——连字符写法是给台账看的。withYear 用于悬停提示(总是带年份)。
+// 连字符写法是给台账看的;读者面桌面逐处往这个写法收(社交流 / 早报 / 榜单还没收)。withYear 用于悬停提示(总是带年份)。
 export function formatReaderDate(value, { withYear = false, fallback = '' } = {}) {
   if (!value) return fallback;
   const raw = String(value);

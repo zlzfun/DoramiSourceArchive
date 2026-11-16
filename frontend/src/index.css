@@ -13523,8 +13523,10 @@ input[type="radio"] {
 
 /* ── 吸顶栏:左来源名或「返回」,右是关于这篇的全部动作 ── */
 .reader-col-read { container: reader-read / inline-size; }
-.reader-col-read .reader-pane-bar { flex: none; height: 52px; gap: 2px; padding: 0 12px 0 20px; }
-.reader-pane-trail { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; margin-left: -10px; }
+/* 整栏允许折行:阅读列窄、左端又是「返回 / 下一条」时,右侧的动作组整体落到第二行(右对齐),不互相压住 */
+.reader-col-read .reader-pane-bar { flex: none; flex-wrap: wrap; height: auto; min-height: 52px; gap: 0 2px; padding: 0 12px 0 20px; }
+.reader-pane-acts { flex: none; display: flex; align-items: center; gap: 2px; min-height: 40px; margin-left: auto; }
+.reader-pane-trail { flex: 1 0 auto; display: flex; align-items: center; gap: 2px; min-height: 40px; margin-left: -10px; }   /* 不收缩:放不下就让动作组换行 */
 .reader-pane-back,
 .reader-pane-next {
   display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 10px 0 6px; border: 0; border-radius: var(--r-control);
@@ -13566,7 +13568,7 @@ input[type="radio"] {
 
 /* ── AI 速读卡(桌面):一句一段;卡头并排两个维度,点开看依据;标签住卡脚 ── */
 .reader-ai-summary.is-page { margin: 20px 0 32px; padding: 12px 20px 16px; }
-.reader-ai-summary.is-page .reader-ai-card-head { gap: 8px; min-height: 28px; margin: 0 0 6px; }
+.reader-ai-summary.is-page .reader-ai-card-head { flex-wrap: wrap; gap: 4px 8px; min-height: 28px; margin: 0 0 6px; }   /* 窄列放不下时「听导读」折到第二行右端 */
 .reader-ai-grow { flex: 1; }
 .reader-ai-dims {
   flex: none; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 6px 0 8px; border: 0; border-radius: var(--r-control);
@@ -13588,7 +13590,7 @@ input[type="radio"] {
 .reader-ai-summary.is-page .reader-ai-summary-main { margin-top: 0; }
 .reader-ai-summary.is-page .reader-ai-layer { gap: 5px; }
 .reader-ai-summary.is-page .reader-ai-layer-text { text-wrap: pretty; }
-.reader-ai-summary.is-page .listen-entries { flex: 0 1 auto; min-width: 0; flex-wrap: nowrap; flex-direction: row-reverse; }
+.reader-ai-summary.is-page .listen-entries { flex: 0 1 auto; min-width: 0; margin-left: auto; flex-wrap: nowrap; flex-direction: row-reverse; }
 .reader-ai-summary.is-page .listen-note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .reader-ai-foot { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--dorami-border-soft); }
 
@@ -13602,6 +13604,14 @@ input[type="radio"] {
 .reader-pane-side .reader-pane-tags { flex-direction: column; align-items: flex-start; gap: 6px 0; }
 .reader-pane-side .reader-pane-tags .reader-tag-chip + .reader-tag-chip::before { content: none; }
 .reader-side-score { margin: 8px 0 10px; font-family: var(--font-score); font-size: 44px; font-weight: 600; line-height: 1; letter-spacing: -0.02em; font-variant-numeric: lining-nums tabular-nums; }
+/* 阅读列很窄(1100 屏来源栏展开时只有 432):留白收一档;再窄「查看原文」只留图标 */
+@container reader-read (max-width: 560px) {
+  .reader-col-read .reader-pane { padding-left: 24px; padding-right: 24px; }
+}
+@container reader-read (max-width: 400px) {
+  .reader-col-read .reader-pane-bar .reader-pane-act { width: 32px; padding: 0; justify-content: center; }
+  .reader-col-read .reader-pane-bar .reader-pane-act span { display: none; }
+}
 @container reader-read (min-width: 992px) {
   .reader-col-read .reader-doc { display: grid; grid-template-columns: minmax(0, 664px) 200px; gap: 0 48px; max-width: 912px; }
   .reader-doc > * { grid-column: 1; min-width: 0; }

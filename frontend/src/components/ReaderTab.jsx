@@ -635,8 +635,10 @@ export default function ReaderTab({
           target="_blank"
           rel="noreferrer"
           className="reader-pane-act"
+          aria-label="查看原文"
+          title="查看原文"
         >
-          查看原文
+          <span>查看原文</span>
           <ExternalLink aria-hidden="true" />
         </a>
       )}
@@ -791,6 +793,12 @@ export default function ReaderTab({
   });
   const [srcPop, setSrcPop] = useState(false);
   const srcPopRef = useRef(null);
+  const scopeBtnRef = useRef(null);
+  // 键盘收起(Escape、在某一行上按 Enter / 空格)时把焦点还给范围名按钮——浮层卸载后焦点不能掉到 body 上
+  const closeSrcPop = (refocus = false) => {
+    setSrcPop(false);
+    if (refocus) scopeBtnRef.current?.focus();
+  };
   const toggleSrcFold = () => {
     const next = !srcFolded;
     setSrcFolded(next);
@@ -803,7 +811,11 @@ export default function ReaderTab({
       const pop = srcPopRef.current;
       if (pop && !pop.contains(event.target) && !event.target.closest?.('.reader-scope-btn')) setSrcPop(false);
     };
-    const onKey = (event) => { if (event.key === 'Escape') setSrcPop(false); };
+    const onKey = (event) => {
+      if (event.key !== 'Escape') return;
+      setSrcPop(false);
+      scopeBtnRef.current?.focus();
+    };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
@@ -1299,6 +1311,7 @@ export default function ReaderTab({
             srcFolded ? (
               <button
                 type="button"
+                ref={scopeBtnRef}
                 className="reader-list-title reader-scope-btn"
                 aria-haspopup="dialog"
                 aria-expanded={srcPop}
@@ -1381,7 +1394,11 @@ export default function ReaderTab({
             role="dialog"
             aria-label="来源"
             ref={srcPopRef}
-            onClick={(event) => { if (event.target.closest('.reader-source-row, .reader-src-more, .reader-axis-empty-link')) setSrcPop(false); }}
+            onClick={(event) => { if (event.target.closest('.reader-source-row, .reader-src-more, .reader-axis-empty-link')) closeSrcPop(); }}
+            onKeyDown={(event) => {
+              // 行是 div[role=button]:Enter / 空格只走它自己的 onKeyDown,不会冒出 click——这里接住,选完即收并回焦
+              if ((event.key === 'Enter' || event.key === ' ') && event.target.closest('.reader-source-row')) closeSrcPop(true);
+            }}
           >
             {sourcesPanel}
           </div>
@@ -1559,6 +1576,8 @@ export default function ReaderTab({
                   <span className="reader-crumb-name">{sourceNameMap[activeArticle.source_id] || activeArticle.source_id}</span>
                 </div>
               )}
+              {/* 动作成一组:阅读列窄、左端又是「返回 / 下一条」时,这一组整体折到第二行 */}
+              <div className="reader-pane-acts">
               {paneTools}
               <button
                 type="button"
@@ -1607,6 +1626,7 @@ export default function ReaderTab({
                     guestAccessEnabled={guestAccessEnabled}
                   />
                 )}
+              </div>
               </div>
             </div>
 

@@ -29,3 +29,17 @@ test('没有句末标点的文本(英文摘要)整段保留;原文自带换行�
   assert.deepEqual(splitSentences(''), []);
   assert.deepEqual(splitSentences(null), []);
 });
+
+test('句末后面的半角闭合符跟着上一句;半角引号只有成对时才算闭合;段首独立的标点不丢', () => {
+  const closing = '发布会上他说了一句"这是今年最重要的一次模型更新。"随后团队演示了完整的端到端工作流程。';
+  assert.deepEqual(splitSentences(closing), ['发布会上他说了一句"这是今年最重要的一次模型更新。"', '随后团队演示了完整的端到端工作流程。']);
+  const paren = '新模型已经对全部付费用户开放(含团队版与企业版。)免费用户要等到下个月才能用上。';
+  assert.deepEqual(splitSentences(paren), ['新模型已经对全部付费用户开放(含团队版与企业版。)', '免费用户要等到下个月才能用上。']);
+  // 句末后面是下一句的开引号(这一句里没有未闭合的引号):不抢过来
+  const opening = '公司公布了新一代模型的全部技术细节。"我们用了三年时间"是负责人的原话,他没有回避延期。';
+  assert.equal(splitSentences(opening)[0], '公司公布了新一代模型的全部技术细节。');
+  for (const text of [closing, paren, opening, '！开头就是一个感叹号的句子也要完整保留下来。后面还有第二句话跟着它。', '连续的句末标点?!！？都跟着上一句走,不单独成段。然后是下一句的内容。']) {
+    assert.equal(splitSentences(text).join(''), text, text.slice(0, 12));
+  }
+});
+

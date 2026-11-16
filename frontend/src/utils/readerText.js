@@ -61,15 +61,34 @@ export function excerptOf(content, maxLen = 140) {
 
 // AI 速读一句一段(issue #279 第三批):只在句末标点处断开,不改一个字。几句话各讲一件事,排成一整块时
 // 第三句以后很少有人读。太短的句子并回上一段(「同时开源。」不值得单占一行);原文自带换行的按换行先分。
-// 只认全角句末标点——半角句点可能是小数点、版本号或缩写。
+// 只认全角句末标点——半角句点可能是小数点、版本号或缩写。逐字扫描,每个字符都落在某一段里:
+// 句末标点后面连着的句末标点与闭合符(引号、括号,含半角)跟着上一句走;半角引号开合同形,
+// 只有这一句里有没闭合的同一种引号时才算闭合符。
+const SENTENCE_END = '。！？';
+const SENTENCE_CLOSE = '”’」』）》】〕)]';
+const SENTENCE_QUOTE = '"\'';
+
+function cutSentences(block) {
+  const parts = [];
+  let buf = '';
+  const closes = (ch) => SENTENCE_END.includes(ch) || SENTENCE_CLOSE.includes(ch)
+    || (SENTENCE_QUOTE.includes(ch) && buf.split(ch).length % 2 === 0);
+  for (let i = 0; i < block.length; i += 1) {
+    buf += block[i];
+    if (!SENTENCE_END.includes(block[i])) continue;
+    while (i + 1 < block.length && closes(block[i + 1])) { i += 1; buf += block[i]; }
+    parts.push(buf);
+    buf = '';
+  }
+  if (buf) parts.push(buf);
+  return parts;
+}
+
 export function splitSentences(text) {
   const out = [];
   for (const block of String(text || '').split(/\n+/)) {
-    const trimmed = block.trim();
-    if (!trimmed) continue;
-    const parts = trimmed.match(/[^。！？]+[。！？]+[”’」』）》]*|[^。！？]+$/g) || [trimmed];
     let first = true;
-    for (const part of parts) {
+    for (const part of cutSentences(block.trim())) {
       const piece = part.trim();
       if (!piece) continue;
       const last = out.length - 1;
