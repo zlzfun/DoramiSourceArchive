@@ -63,3 +63,29 @@ test('检视返修:开括号带着后面的内容;连续起首标点并在一块
   assert.deepEqual(merge('AI/:/ /AM/节目'), ['AI: ', 'AM', '节目']);
 });
 
+
+test('第五批补:一串单字紧跟在词后面、头一个是名词后缀时归前一块;落单的「谈」带着后一段走', () => {
+  assert.deepEqual(merge('优秀/的/工程/师/要/爱上/问题'), ['优秀的', '工程师', '要爱上', '问题']);
+  assert.deepEqual(merge('百万/智能/体/组/团/上线'), ['百万', '智能体', '组团', '上线']);
+  assert.deepEqual(merge('准确/率/直/升'), ['准确率', '直升']);
+  // 两个单字、头一个是后缀:整串并进前一块(少一个可折点,不会切错);第二个字是前缀、虚词时照旧带着后一段走
+  assert.deepEqual(merge('安全/机/甲/上线'), ['安全机甲', '上线']);
+  assert.deepEqual(merge('防御/方/也/需要'), ['防御方', '也需要']);
+  // 检视返修:拿不准的后缀(官、力、端……)后面还有两个字以上时,整串并进前一块,不在它后面新增可折点——「官宣」不能被拆成「官 | 宣」
+  assert.deepEqual(merge('苹果/官/宣/新/产品'), ['苹果官宣新', '产品']);
+  assert.deepEqual(merge('微软/官/宣/新/计划'), ['微软官宣新', '计划']);
+  assert.deepEqual(merge('技术/官/马/特/表示'), ['技术官马特', '表示']);
+  for (const text of ['苹果/官/宣/新/产品', '微软/官/宣/新/计划', '发布/力/推/新/品']) {
+    const parts = text.split('/');
+    const chunks = merge(text);
+    assert.equal(chunks.join(''), parts.join(''));
+    assert.ok(!chunks.some((chunk) => chunk.endsWith(parts[1]) && chunk.length > 1 && chunks[chunks.indexOf(chunk) + 1]?.startsWith(parts[2])), `${chunks.join(' | ')}:后缀后面不该有可折点`);
+  }
+  // 句首、标点后面、西文后面的一串单字不算后缀
+  assert.deepEqual(merge('体/验/全面/升级'), ['体验', '全面', '升级']);
+  assert.deepEqual(merge('发布/，/机/构/回应'), ['发布，', '机构', '回应']);
+  assert.deepEqual(merge('OpenAI/官/宣/新品'), ['OpenAI', '官宣', '新品']);
+  // 头一个不是后缀:照旧并成一块
+  assert.deepEqual(merge('发布/谷/歌/回应'), ['发布', '谷歌', '回应']);
+  assert.deepEqual(merge('Tigges/ /谈/智能/体/可/解释'), ['Tigges ', '谈智能体', '可解释']);
+});

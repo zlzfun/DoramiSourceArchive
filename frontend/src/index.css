@@ -13669,6 +13669,13 @@ input[type="radio"] {
 /* 按词断行:标题切成块(utils/wordBreak),块之间是 <wbr>;keep-all 让汉字之间不再处处可折,行只落在块之间。
    一整块比一行还长时 overflow-wrap 兜底,照旧从中间折。 */
 .ts-kw { word-break: keep-all; overflow-wrap: anywhere; }
+/* 挑好折行点的标题(hooks/useTitleFit):折点是 .ts-nl 伪元素里的换行(不进文本,复制出来仍是一行),其余地方不再自动折
+   ——这时块之间也不再放 <wbr>:它在 nowrap 里照样是可折点 */
+.ts-kw.is-fit { white-space: nowrap; }
+.ts-nl::before { content: "\A"; white-space: pre; }
+/* 量宽度用的克隆:排成一行(<wbr> 与已有的折点都收掉)、不画出来、不占位 */
+.ts-kw.ts-ruler { position: absolute; left: 0; top: 0; visibility: hidden; white-space: nowrap; pointer-events: none; }
+.ts-ruler :is(wbr, .ts-nl), .ts-kw.is-probe .ts-nl { display: none; }   /* .is-probe:读行宽的那一瞬临时放回自动折行 */
 /* <wbr> 处浏览器的中西文自动间隙失效,补同样的一小截(八分之一字宽);不支持自动间隙的浏览器别处也没有,这里也不补 */
 .ts-as { display: none; }
 @supports (text-autospace: normal) { .ts-as { display: inline-block; width: 0.125em; } }
