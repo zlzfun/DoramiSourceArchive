@@ -467,9 +467,8 @@ export default function LoginScreen({
                   返回继续逛逛
                 </button>
               )}
-              <p className="auth-card-eyebrow" style={{ '--i': 0 }} lang="en">ACCOUNT ACCESS</p>
+              {/* 卡上只有标题(issue #291:原先标题上面一行眉题「ACCOUNT ACCESS」、下面一行副标题,都只是把「登录」再说一遍) */}
               <h2 className="auth-card-title" style={{ '--i': 1 }}>欢迎回来</h2>
-              <p className="auth-card-sub" style={{ '--i': 2 }}>登录账号，继续浏览你的 AI 资讯。</p>
 
               <label className={`auth-field${focus === 'user' ? ' is-focus' : ''}`} style={{ '--i': 3 }}>
                 <span className="auth-field-label">账号</span>

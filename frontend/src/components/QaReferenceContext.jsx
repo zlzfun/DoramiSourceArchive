@@ -36,9 +36,6 @@ export default function QaReferenceContext({ source }) {
         setRetry((current) => current + 1);
       }}>{open ? '收起前后文' : '查看前后文'}</button>
       {open && <>
-        <p className="tiny-meta">{locations[index]?.origin === 'selected'
-          ? '定位回答选用的片段，可结合前后文核对。'
-          : '从参考片段开头定位，可继续查看完整原文。'}</p>
         {locations.length > 1 && <div className="reader-ai-context-nav tiny-meta">
           <button type="button" disabled={index === 0 || state.loading} onClick={() => { setState({ loading: true }); setIndex(index - 1); }}>上一处</button>
           <span>{index + 1} / {locations.length}</span>
@@ -52,7 +49,7 @@ export default function QaReferenceContext({ source }) {
           <div>{state.data.before}</div>
           <div className="reader-ai-context-focus" ref={focusRef}><span className="tiny-meta">相关片段</span><div>{state.data.focus}</div></div>
           <div>{state.data.after}</div>
-          {state.data.has_after && <p className="tiny-meta">后面还有内容，可打开完整原文继续阅读</p>}
+          {state.data.has_after && <p className="tiny-meta">后面还有内容</p>}
         </div>}
       </>}
     </div>

@@ -86,7 +86,6 @@
   overflow-y: auto;
   overscroll-behavior: contain;
 }
-.rankings-page.is-mobile > .ranking-head-note { width: auto; margin: 4px 8px 2px; padding: 0; font-size: var(--m-fs-xs); line-height: 1.6; color: var(--dorami-faint); }
 /* 宽分段:磨砂槽 + 镜片拇指,拇指只按第几项定位(--i / --n 由 RankingsPage 写),弹簧滑动;字重恒 400,选中只换墨色 */
 .rankings-page.is-mobile .ranking-axis {
   position: relative;
@@ -238,7 +237,6 @@
 .bp-sheet.is-mobile .bp-meta { gap: 4px 6px; margin: 16px 0 0; font-size: var(--m-fs-sm); color: var(--dorami-faint); }
 .bp-sheet.is-mobile .bp-meta .bp-src { gap: 6px; }
 .bp-sheet.is-mobile .bp-sum { margin: 10px 0 0; max-width: none; font-size: var(--m-fs-lg); line-height: 1.8; -webkit-line-clamp: 4; text-wrap: pretty; }
-.bp-sheet.is-mobile .bp-head.is-note .bp-sum { margin-top: 12px; }
 .bp-sheet.is-mobile .bp-title.is-note { font-size: var(--m-fs-display); line-height: 1.3; }
 .bp-sheet.is-mobile .bp-more { display: inline-flex; align-items: center; gap: 2px; margin-top: 12px; font-size: var(--m-fs-sm); color: var(--dorami-muted); }
 .bp-sheet.is-mobile .bp-more svg { width: 14px; height: 14px; }
@@ -1504,8 +1502,9 @@
 .m-shell:has(> .m-page, > .m-read) .reader-ann-band { visibility: hidden; }
 
 /* ── 兴趣段(InterestPage 手机嵌入档的「我的兴趣」行):一句定位 + 保存回执 · 我的兴趣(每行读它的条目流,行尾 × 移出)· 全部标签 ── */
-.m-int-lede { display: flex; align-items: baseline; gap: 8px; margin: 0 8px; font-size: var(--m-fs-sm); color: var(--dorami-muted); }
-.m-int-lede .interest-save-state { margin-left: auto; font-size: var(--m-fs-xs); }
+/* 兴趣页「全部标签 · N」一行的右端放保存回执(issue #291:这一行常在,回执出现消失不挤动列表) */
+.m-int-total { display: flex; align-items: baseline; gap: 8px; }
+.m-int-total .interest-save-state { margin-left: auto; font-size: var(--m-fs-xs); font-weight: 400; letter-spacing: 0; }
 .m-int-row { position: relative; display: flex; align-items: center; }
 .m-row.is-plain + .m-int-row::before,
 .m-int-row + .m-int-row::before {
@@ -1521,7 +1520,6 @@
 .m-int-main:active { background: var(--dorami-hover); }
 .m-int-x { flex: none; display: grid; place-items: center; width: var(--tap); height: var(--tap); margin-right: 4px; border-radius: var(--r-pill); color: var(--dorami-faint); }
 .m-int-x svg { width: 16px; height: 16px; }
-.m-int-empty { margin: 0; padding: 14px 16px; font-size: var(--m-fs-sm); color: var(--dorami-faint); }
 /* 搜索标签:镀层胶囊,输入 16px(iOS 聚焦不放大整页,审计 M-06) */
 .interest-m.is-rows .interest-search {
   display: flex;
@@ -1746,7 +1744,6 @@
 .m-disc .m-page-scroll::before { content: ""; display: block; height: var(--m-head-clear); }
 .m-page-scroll .reader-disc-head { padding-top: 0; }
 .m-page-scroll .reader-disc-title-row > .reader-disc-title { display: none; }
-.m-page-scroll .reader-disc-hint { font-size: var(--m-fs-sm); line-height: 1.6; }
 .m-page-scroll .reader-disc-tools { gap: 6px 8px; margin: 10px 0 12px; }
 .m-page-scroll .reader-disc-viewseg,
 .m-page-scroll .reader-disc-seg { display: flex; padding: 0; border-radius: var(--r-pill); }

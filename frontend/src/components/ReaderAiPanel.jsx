@@ -218,11 +218,9 @@ function SourceEvidence({ source, initiallyOpen = false }) {
 function NarrowQuestion({ turn, onPick, disabled }) {
   return <details className="reader-ai-narrow">
     <summary className="tiny-meta">缩小问题</summary>
-    <p className="tiny-meta">先选一个具体问题，可修改后发送。</p>
     {(turn.refinementQuestions || []).map((question) => <button type="button" className="reader-ai-narrow-option" key={question}
       disabled={disabled} onClick={() => onPick(turn, question)}>{question}</button>)}
     <button type="button" className="reader-ai-evidence-toggle tiny-meta" disabled={disabled} onClick={() => onPick(turn, turn.q)}>编辑原问题</button>
-    <p className="tiny-meta">可以限定一个对象、一个时间段，或只问一个结论及其依据。</p>
   </details>;
 }
 
@@ -266,7 +264,6 @@ function AnswerBlock({ turn, onOpenRef, onNarrow, disabled }) {
           {listed.more.length > 0 && (
             <details className="reader-ai-more-refs">
               <summary className="tiny-meta">更多参考（{listed.more.length}）</summary>
-              <p className="tiny-meta">本次检索的其他资料，可继续查看原文。</p>
               {listed.more.map((row, index) => referenceRow(row, index))}
             </details>
           )}
@@ -538,7 +535,7 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
           </div>
 
           <div className="reader-ai-composer">
-            {qaFreshQuestion && <p className="tiny-meta" role="status">可修改后发送，将单独回答这个问题</p>}
+            {qaFreshQuestion && <p className="tiny-meta" role="status">将单独回答这个问题</p>}
             <textarea
               className="reader-ai-input"
               ref={inputRef}

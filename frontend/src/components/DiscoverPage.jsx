@@ -143,7 +143,6 @@ function SourceCard({ source, subbed, pinning, query, showArticleChip, onSubscri
  * join 不到的成员自然不渲染,与后端批量端点的 unavailable 口径一致)。
  */
 export default function DiscoverPage({
-  showHint = true, // 页名旁的一句说明。桌面不写(issue #279:界面不靠说明文字解释自己),手机壳照旧
   relativeFresh = false, // 来源「最近更新」写相对时间(桌面,issue #279 第三批)
   sources,
   subscribedIds,
@@ -348,13 +347,6 @@ export default function DiscoverPage({
             <>
               <div className="reader-disc-title-row">
                 <span className="reader-disc-title">发现</span>
-                {showHint && <span className="reader-disc-hint">
-                  {activeTab === 'collections'
-                    ? '按主题策展的来源合集,一键整组订阅'
-                    : activeTab === 'interests'
-                      ? '兴趣决定早报和阅读器优先呈现什么'
-                      : '浏览全站收录的来源,一键订阅到你的阅读器'}
-                </span>}
               </div>
               <div className="reader-disc-tools">
                 {/* 目录视图切换:平铺源目录 ⇄ 策展合集 */}

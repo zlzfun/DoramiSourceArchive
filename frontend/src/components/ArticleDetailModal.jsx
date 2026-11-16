@@ -1,4 +1,4 @@
-import { FileText, Link as LinkIcon, Calendar, Database, Box, ExternalLink, Edit2, Save, X, AlertCircle } from 'lucide-react';
+import { FileText, Link as LinkIcon, Calendar, Database, Box, ExternalLink, Edit2, Save, X } from 'lucide-react';
 import Modal from './Modal';
 import {
   analysisStatusMeta,
@@ -83,7 +83,7 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
           </div>
 
           <div>
-            <label className="form-label flex items-center"><Database className="w-3.5 h-3.5 mr-1" /> 正文核心/摘要 (用于向量检索)</label>
+            <label className="form-label flex items-center"><Database className="w-3.5 h-3.5 mr-1" /> 正文</label>
             {isEditing ? (
               <textarea defaultValue={data.content} id="edit-content" rows="8" className="form-input leading-relaxed" />
             ) : <div className="text-sm bg-[var(--dorami-soft)] p-4 rounded-[var(--r-card)] border border-[var(--dorami-border)] whitespace-pre-wrap leading-relaxed text-slate-700 shadow-inner max-h-64 overflow-y-auto">{isLoading ? '正在加载全文…' : (data.content || '无正文内容')}</div>}
@@ -133,7 +133,6 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
 
         {isEditing && (
           <div className="p-4 bg-[var(--dorami-soft)] border-t border-[var(--dorami-border)] flex justify-end space-x-3">
-            <span className="text-xs text-amber-600 flex items-center mr-auto px-2"><AlertCircle className="w-3.5 h-3.5 mr-1" /> 修改内容后系统将自动抹除旧的向量索引，需重新构建。</span>
             <button onClick={onToggleEdit} className="action-button action-button-quiet min-h-[32px] px-3 text-xs">取消</button>
             <button onClick={handleSave} className="action-button action-button-primary min-h-[32px] px-3 text-xs">
               <Save /> 确认保存修改

@@ -955,7 +955,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
         <div className="inspector-empty">
           <Inbox className="h-7 w-7" />
           <p>从左侧调度板选择一个源</p>
-          <span>查看描述、运行参数、试抓预览与近期运行</span>
         </div>
       );
     }
@@ -1024,9 +1023,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
               <EyeOff className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               <div className="inspector-visibility-text">
                 <span className="inspector-visibility-title">在读者面隐藏</span>
-                <span className="inspector-visibility-hint">
-                  隐藏后发现页与阅读器不再出现该源；订阅与归档保留，恢复可见即回归。
-                </span>
               </div>
               <button
                 type="button"
@@ -1047,9 +1043,8 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
               <div><dt>累计运行</dt><dd className="tabular-nums">{health?.total_runs ?? 0}</dd></div>
             </dl>
 
-            <p className="inspector-hint">
-              订阅人数、停用与删除等治理动作在 运维管理 → 自定源。
-            </p>
+            {/* 治理动作在运维页:给一枚直达的链接,不写一句话指路(issue #291) */}
+            <a className="sett-link inspector-link" href="#/admin/user-sources">运维 · 自定源</a>
           </div>
         </>
       );
@@ -1116,11 +1111,8 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                 <EyeOff className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                 <div className="inspector-visibility-text">
                   <span className="inspector-visibility-title">在读者面隐藏</span>
-                  <span className="inspector-visibility-hint">
-                    {isIngest
-                      ? '隐藏后发现页与阅读器不再出现该源,并拒收后续推送;恢复可见即回归。'
-                      : '隐藏后发现页与阅读器不再出现该源；订阅与归档保留，恢复可见即回归。'}
-                  </span>
+                  {/* 只留开关名看不出来的那一条后果(issue #291):收录源隐藏期间推送会被拒收 */}
+                  {isIngest && <span className="inspector-visibility-hint">隐藏期间拒收推送</span>}
                 </div>
                 <button
                   type="button"
@@ -1156,9 +1148,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
             )}
 
             <p className="inspector-hint">
-              {fetcher.retired
-                ? '已退役:不再采集,历史条目保留。'
-                : '没有采集绑定:条目只经收录进来,不能运行或编入采集任务;要定期跟踪这个出处,请新增策展源。'}
+              {fetcher.retired ? '已退役' : '没有采集绑定'}
             </p>
           </div>
         </>
@@ -1215,9 +1205,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
             <EyeOff className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
             <div className="inspector-visibility-text">
               <span className="inspector-visibility-title">在读者面隐藏</span>
-              <span className="inspector-visibility-hint">
-                隐藏后发现页与阅读器不再出现该源；订阅与归档保留，恢复可见即回归。
-              </span>
             </div>
             <button
               type="button"
@@ -1257,7 +1244,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           <div className="inspector-section">
             <div className="inspector-section-head">
               <h3 className="micro-label">运行参数</h3>
-              {params.length > 0 && <span className="inspector-persist-note">改动即存草稿，下次自动带出</span>}
             </div>
             {params.length === 0 ? (
               <div className="inspector-empty-mini">该源无需抓取参数</div>
@@ -1316,9 +1302,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                 <>
                   <div className="inspector-preview-head">
                     试抓完成:新增 {preview.saved ?? 0} 条{preview.failed ? `，失败 ${preview.failed}` : ''}
-                  </div>
-                  <div className="inspector-preview-item">
-                    以当前参数试抓 1 条并写入台账；如需批量入库请用「立即运行」。
                   </div>
                 </>
               )}

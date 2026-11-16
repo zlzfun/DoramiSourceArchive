@@ -23,13 +23,19 @@ export const SLOT_NAME = /-(hint|sub|desc|note|lede|intro|tip|caption|eyebrow|ki
 // 已退役的说明位(issue #291 第一批):JSX 与样式表里都不许再出现。
 //   sett-head-hint 设置分区页头副标题 · sett-nav-foot 设置导航栏底的品牌行 · sett-file-hint OPML 选择文件下的格式说明
 //   sett-pal-tone 中性色卡的第二个名字 · m-sett-hint 手机设置行尾的说明 · pwa-intro 安装指引的引言 · card-desc 接入集成各卡标题下的介绍
-export const RETIRED = ['sett-head-hint', 'sett-nav-foot', 'sett-file-hint', 'sett-pal-tone', 'm-sett-hint', 'pwa-intro', 'card-desc'];
+// 第二批:reader-disc-hint 发现页页名旁的说明 · ranking-head-note 榜单页头说明 · interest-sec-hint 兴趣页分面副标签
+//   interest-picks-empty / interest-ledger-empty / m-int-empty 兴趣为空时的「点击…标签加入兴趣」 · csrc-sub 添加自定源弹窗副标题
+//   inspector-persist-note 源管理「改动即存草稿」 · tt-foot 时刻表脚注 · jr-foot-note 采集任务编辑器脚注 · guest-defsrc-note 游客设置里的指路句
+export const RETIRED = [
+  'sett-head-hint', 'sett-nav-foot', 'sett-file-hint', 'sett-pal-tone', 'm-sett-hint', 'pwa-intro', 'card-desc',
+  'reader-disc-hint', 'ranking-head-note', 'interest-sec-hint', 'interest-picks-empty', 'interest-ledger-empty', 'm-int-empty',
+  'csrc-sub', 'inspector-persist-note', 'tt-foot', 'jr-foot-note', 'guest-defsrc-note',
+  'm-int-lede', 'inspector-preview-item', 'auth-card-eyebrow', 'auth-card-sub',
+];
 
 // 在册表:类名 → 允许的使用次数。行尾注释写的是这个位置现在装什么;没写的是存量,尚未逐个清点。
 export const SLOTS = {
   'acct-sub': 3,
-  'auth-card-eyebrow': 1, // 登录卡眉题,待第二批清
-  'auth-card-sub': 1, // 登录卡副标题,待第二批清
   'auth-eyebrow': 1,
   'auth-hint': 1,
   'auth-lede': 1, // 登录页口号(品牌页,留)
@@ -37,34 +43,28 @@ export const SLOTS = {
   'bp-kicker': 3,
   'bp-skel-kicker': 1,
   'bp-top-note': 1,
-  'brief-mast-kicker': 4,
-  'brief-mast-sub': 2, // 兴趣页报头句,待第二批收进首登引导
+  'brief-mast-kicker': 2,
+  'brief-mast-sub': 2, // 兴趣页报头句:只在首登引导时渲染(条件状态)
   'cred-sub': 1, // 凭据卡:只剩 DeepSeek 模型改名的条件提示
   'csrc-kind-note': 1,
-  'csrc-sub': 1, // 添加自定源弹窗副标题,待第二批清
-  'drawer-title-sub': 4, // 抽屉标题旁:三处是 id(数据),游客设置那一句待第二批清
+  'drawer-title-sub': 3, // 抽屉标题旁的 id(数据)
   'flow-stat-sub': 6,
-  'guest-defsrc-note': 1, // 待第二批清
   'guest-gate-sub': 1, // 游客看到的「登录后可用」下一句(登录提示,豁免)
   'has-tip': 1, // 状态修饰类(这一格有悬停提示),不是说明位
   'heat-empty-hint': 1,
   'heat-note': 1,
   'heat-tip': 1,
   'inspector-desc': 3,
-  'inspector-hint': 2, // 待第二批清
+  'inspector-hint': 1, // 没有采集绑定 / 已退役的状态词(条件状态)
   'inspector-param-hint': 1,
-  'inspector-persist-note': 1, // 待第二批清
-  'inspector-visibility-hint': 4, // 待第二批清
+  'inspector-visibility-hint': 2, // 收录源「隐藏期间拒收推送」(开关名看不出的后果,只在收录源出现);「本机分析」下的一句(issue #263 新加,未动)
   'interest-card-desc': 2,
-  'interest-sec-hint': 2, // 兴趣页分面副标签,待第二批清
   'is-note': 2,
-  'jr-foot-note': 1, // 待第二批清
   'jr-kicker': 1,
   'kpi-sub': 1,
   'listen-note': 1,
   'm-flow-sub': 1,
   'm-hint': 1,
-  'm-int-lede': 1, // 手机壳兴趣页报头句,待第二批清
   'm-note': 2,
   'm-profile-sub': 2, // 手机设置资料卡:已订阅数 / 角色;游客是一句登录提示(豁免)
   'm-subs-hint': 1,
@@ -79,7 +79,6 @@ export const SLOTS = {
   'player-sub': 2,
   'podcast-view-note': 1,
   'pwa-note': 2, // 安装指引里的条件提示
-  'ranking-head-note': 1, // 榜单页头:桌面不出,手机壳待第二批清
   'reader-ai-layer-note': 2,
   'reader-ai-score-tip': 1,
   'reader-disc-bulk-sub': 1,
@@ -87,7 +86,6 @@ export const SLOTS = {
   'reader-disc-coll-note': 2,
   'reader-disc-coll-sub': 1,
   'reader-disc-desc': 2,
-  'reader-disc-hint': 1, // 发现页页名旁:桌面不出,手机壳待第二批清
   'reader-disc-sub': 2,
   'reader-kicker': 2,
   'reader-list-sub': 1,
@@ -102,9 +100,8 @@ export const SLOTS = {
   'shared-empty-hint': 2,
   'shared-kicker': 1,
   'social-tr-note': 2,
-  'tt-foot': 1, // 采集任务时刻表脚注(类名不以说明位后缀结尾,单独在册),待第二批清
   'tool-desc': 1, // MCP 工具表的说明(参考资料)
-  'zone-hint': 6, // 管理面区头小字:时间窗是数据,口径解释待第二批清
+  'zone-hint': 5, // 管理面区头小字:时间窗与计数(数据);口径解释在悬停提示里
 };
 
 // className 属性里出现的类名(字面量 / 模板串 / 表达式里的字符串)。同一个属性里同名只计一次——

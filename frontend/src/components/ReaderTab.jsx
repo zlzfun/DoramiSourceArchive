@@ -1221,7 +1221,6 @@ export default function ReaderTab({
       {/* ── 发现页:占据 条目列+阅读窗 的整片区域(源栏保持在场,订阅结果即时可见) ── */}
       {!pageOpen && discover && (
         <DiscoverPage
-          showHint={false}
           relativeFresh
           sources={discoverSources}
           subscribedIds={subscribedIds}

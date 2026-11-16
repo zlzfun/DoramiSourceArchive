@@ -1843,28 +1843,13 @@ input[type="radio"] {
     animation-delay: calc(560ms + var(--i, 6) * 70ms);
   }
 
-  .auth-card-eyebrow {
-    font-family: "Dorami Login Mono", var(--mono);
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.3em;
-    color: var(--auth-accent);
-  }
-
+  /* 卡上只有标题(issue #291 删掉了眉题与副标题);标题到第一个输入框的间距原先由副标题的下边距撑着,现在归标题 */
   .auth-card-title {
-    margin-top: 12px;
+    margin-bottom: 26px;
     font-size: 26px;
     font-weight: 600;
     letter-spacing: 0.01em;
     color: var(--auth-ink);
-  }
-
-  .auth-card-sub {
-    margin-top: 6px;
-    margin-bottom: 26px;
-    font-size: 13.5px;
-    line-height: 1.6;
-    color: var(--auth-mute);
   }
 
   .auth-field {
@@ -2246,18 +2231,12 @@ input[type="radio"] {
       }
 
       /* 底页里的表单:去掉桌面的眉题与页脚,字段名只留给读屏(图标 + 占位已说明),控件 52 高 */
-      .auth-card-eyebrow,
       .auth-foot {
         display: none;
       }
       .auth-card-title {
-        margin-top: 0;
-        font-size: 20px;
-      }
-      .auth-card-sub {
-        margin-top: 4px;
         margin-bottom: 16px;
-        font-size: 13px;
+        font-size: 20px;
       }
       .auth-field {
         margin-bottom: 12px;
@@ -2316,9 +2295,6 @@ input[type="radio"] {
         }
       }
       @media (max-height: 580px) {
-        .auth-card-sub {
-          display: none;
-        }
         .auth-card-title {
           margin-bottom: 14px;
         }
@@ -2339,14 +2315,12 @@ input[type="radio"] {
       /* 收起用「脱离文档流 + 隐身」而不是 display:none——后者会让标题逐字显影 / 品牌凝聚 / 条目就位的动画在展开时重播 */
       .auth-hero > :not(.auth-brandrow),
       .auth-wordmark,
-      .auth-card-title,
-      .auth-card-sub {
+      .auth-card-title {
         transition: opacity 360ms var(--auth-ease) 140ms;
       }
       .is-kbd .auth-hero > :not(.auth-brandrow),
       .is-kbd .auth-wordmark,
-      .is-kbd .auth-card-title,
-      .is-kbd .auth-card-sub {
+      .is-kbd .auth-card-title {
         position: absolute;
         visibility: hidden;
         opacity: 0;
@@ -2423,8 +2397,6 @@ input[type="radio"] {
     .auth-eyebrow,
     .auth-lede,
     .auth-feats,
-    .auth-card-eyebrow,
-    .auth-card-sub,
     .auth-foot {
       display: none;
     }
@@ -4062,10 +4034,6 @@ input[type="radio"] {
   .tt-act-btn:hover { background: var(--dorami-hover); color: var(--dorami-ink); }
   .tt-act-btn.is-danger:hover { background: var(--state-bad-bg); color: var(--state-bad); }
 
-  .tt-foot { flex: none; display: flex; align-items: center; min-height: 47px;
-    padding: 9px 16px; border-top: 1px solid var(--dorami-border);
-    background: var(--dorami-soft); font-size: 12px; font-weight: 400; color: var(--dorami-faint); }
-
   /* ════════ 右区:运行流水 ════════ */
   .flow { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
 
@@ -4548,7 +4516,6 @@ input[type="radio"] {
 
   .jr-foot { flex: none; display: flex; align-items: center; gap: 8px; padding: 12px 18px;
     background: var(--dorami-soft); border-top: 1px solid var(--dorami-border); }
-  .jr-foot-note { font-size: 12px; font-weight: 400; color: var(--dorami-faint); }
 
   /* ── 设置面板 静默仪器(弹窗波→并入设置波):控制柜 ──
      全局快速面 = 居中模态;左导航(分组灰签,wash 块选中=全站轨语言)+ 右内容;共用「设置行范式」
@@ -7193,13 +7160,6 @@ input[type="radio"] {
     color: var(--dorami-muted);
   }
 
-  .inspector-empty span {
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 1.6;
-    max-width: 26ch;
-  }
-
   .inspector-empty-mini {
     border: 1px dashed var(--dorami-border-strong);
     border-radius: var(--r-sm);
@@ -7346,6 +7306,8 @@ input[type="radio"] {
   .inspector-facts dt { font-size: 12px; font-weight: 600; color: var(--dorami-faint); }
   .inspector-facts dd { font-size: 12px; font-weight: 600; color: var(--dorami-ink-2); }
   .inspector-hint { font-size: 12px; font-weight: 400; line-height: 1.6; color: var(--dorami-faint); }
+  /* 检视栏里指向别处的链接(issue #291:原先是一句「…在 运维管理 → 自定源」) */
+  .inspector-link { display: inline-block; font-size: 12px; }
 
   .inspector-metabtn {
     display: inline-flex;
@@ -7432,12 +7394,6 @@ input[type="radio"] {
     display: flex;
     align-items: baseline;
     gap: 8px;
-  }
-
-  .inspector-persist-note {
-    font-size: 12px;
-    font-weight: 400;
-    color: var(--dorami-faint);
   }
 
   .inspector-params {
@@ -7540,15 +7496,6 @@ input[type="radio"] {
 
   .inspector-preview-head.is-bad {
     color: #b91c1c;
-  }
-
-  .inspector-preview-item {
-    padding: 8px 12px;
-    border-top: 1px solid var(--dorami-border);
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 1.5;
-    color: var(--dorami-ink-2);
   }
 
   .inspector-spin {
@@ -10358,11 +10305,6 @@ input[type="radio"] {
     gap: 20px;
   }
   .rk-head-l { min-width: 0; }
-  .ranking-head-note {
-    margin-top: 5px;
-    color: var(--dorami-muted);
-    font-size: 12px;
-  }
   .ranking-head .reader-seg { flex: none; }
   .ranking-head .reader-seg-btn { display: inline-flex; align-items: center; gap: 5px; }
   .ranking-head .reader-seg-btn svg { width: 14px; height: 14px; }
@@ -10695,7 +10637,6 @@ input[type="radio"] {
   .reader-disc-body { max-width: 920px; margin: 0 auto; }
 
   .reader-disc-title-row { display: flex; align-items: baseline; gap: 12px; }
-  .reader-disc-hint { font-size: 12px; color: var(--dorami-faint); }
 
   .reader-disc-tools { display: flex; align-items: center; gap: 10px; margin: 14px 0; }
   /* 两层分组只给桌面的页头用(.reader-shell > .reader-disc 那一段):默认不成盒,子项直接排在 .reader-disc-tools 里 */
@@ -10811,7 +10752,6 @@ input[type="radio"] {
   .csrc-close { position: absolute; top: 14px; right: 14px; width: 30px; height: 30px; }
   .csrc-head { margin-bottom: 18px; padding-right: 32px; }
   .csrc-title { font-size: 16px; font-weight: 600; color: var(--dorami-ink); letter-spacing: -0.01em; }
-  .csrc-sub { margin-top: 4px; font-size: 12px; font-weight: 400; color: var(--dorami-faint); }
 
   .csrc-urlbox {
     display: flex;
@@ -14225,7 +14165,6 @@ input[type="radio"] {
 }
 .bp-sum { margin: 0; max-width: 42em; font-size: 17px; line-height: 1.85; color: var(--dorami-ink-2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 :where(.m-shell, .m-page, .m-read, .m-sheet) .bp-sum { font-size: 16.5px; } /* m-keep #279-b1 */
-.bp-head.is-note .bp-sum { display: block; margin-top: 16px; }
 .bp-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 30px; }
 .bp-btn {
   display: inline-flex;
@@ -14599,7 +14538,6 @@ input[type="radio"] {
 .interest-ledger-head { justify-content: space-between; gap: 8px; }
 .interest-save-state { flex: none; font-size: 12px; font-weight: 400; color: var(--dorami-faint); letter-spacing: 0.02em; }
 .interest-save-state.is-error { color: var(--state-warn); }
-.interest-ledger-empty { padding: 6px 10px 2px; font-size: 12px; line-height: 1.6; color: var(--dorami-faint); }
 
 .interest-sheet {
   grid-column: 3 / -1;
@@ -14627,7 +14565,6 @@ input[type="radio"] {
 
 .interest-sec { margin-top: 30px; }
 .interest-sec .brief-sec-head { margin-bottom: 12px; }
-.interest-sec-hint { font-size: 12px; color: var(--dorami-faint); margin-left: 2px; }
 .interest-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
 .interest-card {
   position: relative;
@@ -14939,9 +14876,9 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 .interest-embed .interest-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 @variant bp-desktop-m { .interest-embed .interest-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 /* 我的兴趣 chip 行(顶替左槽台账):accent 实点,悬停浮出 × */
-.interest-picks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 0 4px; }
+/* min-height = 一行标签的高度(26)+ 上下留白:没选时只有行名,选入第一个标签时下面的标签墙不跳 */
+.interest-picks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 40px; padding: 10px 0 4px; }
 .interest-picks-label { font-size: 12px; letter-spacing: 0.12em; color: var(--dorami-faint); margin-right: 4px; }
-.interest-picks-empty { font-size: 12px; color: var(--dorami-faint); }
 .interest-picks .interest-save-state { margin-left: auto; }
 .interest-chip {
   display: inline-flex;
@@ -15235,7 +15172,7 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
     color: var(--dorami-ink-2);
   }
   .guest-limit-row:last-child { border-bottom: 0; }
-  .guest-limit-row small { display: block; font-size: 12px; color: var(--dorami-faint); }
+  .guest-limit-row small { margin-left: 8px; font-size: 12px; font-weight: 400; color: var(--dorami-faint); }
   .guest-limit-input {
     width: 100%;
     height: 30px;
@@ -15251,7 +15188,7 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
   .guest-limit-input::placeholder { color: var(--dorami-faint); }
   .guest-defsrc { display: flex; flex-wrap: wrap; gap: 6px; }
   .guest-defsrc span { padding: 2px 8px; border-radius: var(--r-pill); background: var(--dorami-well); color: var(--dorami-ink-2); font-size: 12px; }
-  .guest-defsrc-note { margin-top: 10px; }
+  .guest-defsrc-link { display: inline-block; margin-top: 10px; font-size: 12px; }
 }
 
 /* issue #248: answer evidence, quoted verbatim below the existing episode link. */

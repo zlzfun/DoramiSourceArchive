@@ -38,15 +38,8 @@ export function rankingDataKey(segment, range) {
   return seg === 'events' ? `events:${normalizeEventRange(range)}` : seg;
 }
 
-// 页头下的范围说明一句(只出现一次;写明「全站」与时间窗、收什么。2026-11-04 目检:排序依据、同事件留一篇、
-// 「与个人订阅无关」三句删去——卡片右栏的度量已经说明排序,深度阅读 / 播客精选与早报分区同名同尺子)
-export function rankingScopeNote(segment, range) {
-  const seg = normalizeRankingSegment(segment);
-  if (seg === 'reads') return '全站近 7 天按内容价值挑选的论文、教程、观点与汇编';
-  if (seg === 'listens') return '全站近 7 天按内容价值挑选的单集';
-  const days = normalizeEventRange(range) === 'recent' ? '2' : '7';
-  return `全站近 ${days} 天被两家以上报道的事件`;
-}
+// 页头下原先有一句范围说明(「全站近 7 天…」):桌面随 issue #279 删,手机壳随 issue #291 删,函数一并退役。
+// 时间窗看那一格的分段,排序依据看分数列。
 
 export function rankingEmptyText(segment, range) {
   const seg = normalizeRankingSegment(segment);

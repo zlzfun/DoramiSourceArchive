@@ -336,7 +336,6 @@ export default function ReaderPage({ showToast, days, refreshTick = 0, rootAdmin
               {publicShare === null
                 ? '正在读取…'
                 : `当前有效 ${publicShare.live_count} 条 · 累计签发 ${publicShare.total_count} 条`}
-              {' · '}读者可为单篇内容生成免登录只读链接，可设有效期并随时撤销
             </span>
           </section>
           <section className="surface-card ai-switchboard is-wrap rounded-[var(--r-card)] mb-4">
@@ -357,11 +356,9 @@ export default function ReaderPage({ showToast, days, refreshTick = 0, rootAdmin
             <span className="tiny-meta">
               {ondemand === null
                 ? '正在读取…'
-                : !ondemand.enabled
-                  ? '已关闭：读者不再看到点播入口，已生成的音频照常播放'
-                  : (ondemand.blockers || []).length === 0
-                    ? '读者可按需生成播客精品导读与文章精简旁白（两者共用每日额度池）'
-                    : `${ondemand.article_available ? '仅文章精简旁白可点播' : '本部署当前跑不了点播'}，入口不对读者露出 · 缺：${ondemand.blockers.join('；')}`}
+                : !ondemand.enabled || (ondemand.blockers || []).length === 0
+                  ? ''
+                  : `${ondemand.article_available ? '仅文章精简旁白可点播' : '本部署当前跑不了点播'}，入口不对读者露出 · 缺：${ondemand.blockers.join('；')}`}
             </span>
           </section>
       </section>
