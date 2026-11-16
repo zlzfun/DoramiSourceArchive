@@ -13654,6 +13654,25 @@ input[type="radio"] {
 .reader-vrail .reader-vrail-label { opacity: 1; transform: none; transition: none; letter-spacing: 0; }
 .reader-vrail .reader-vrail-btn.is-on .reader-vrail-label { font-weight: 600; }
 
+/* ════════════════════════════════════════════════════════════════════
+   排印(issue #279 第五批,桌面):中西文之间自动留间隙;大字标题的标点收掉空的半个字宽。
+   ════════════════════════════════════════════════════════════════════ */
+/* 中西文之间自动留四分之一字宽,不靠编辑手敲空格(「Fable 5.2深夜」「从0造」)。已经敲了空格的地方不会再加。
+   Chrome 140、Safari 18.4 起支持;不支持的浏览器(Firefox 等)这一行不生效,与改动前一样。
+   代码、键盘输入、表单控件里不加——那里的字符间距要保持原样。 */
+.reader-shell { text-autospace: normal; }
+.reader-shell :is(pre, code, kbd, samp, input, textarea, .reader-ai-odo) { text-autospace: no-autospace; }
+/* 标点挤压:只包在 30px 以上的标题里(components/DisplayTitle)。收尾标点收右半,起首标点收左半;
+   行首的起首标点因此向左探出半个字宽,笔画与版心左缘对齐。 */
+.ts-pz { margin-right: -0.42em; }
+.ts-pzh { margin-left: -0.42em; }
+/* 按词断行:标题切成块(utils/wordBreak),块之间是 <wbr>;keep-all 让汉字之间不再处处可折,行只落在块之间。
+   一整块比一行还长时 overflow-wrap 兜底,照旧从中间折。 */
+.ts-kw { word-break: keep-all; overflow-wrap: anywhere; }
+/* <wbr> 处浏览器的中西文自动间隙失效,补同样的一小截(八分之一字宽);不支持自动间隙的浏览器别处也没有,这里也不补 */
+.ts-as { display: none; }
+@supports (text-autospace: normal) { .ts-as { display: inline-block; width: 0.125em; } }
+
 /* 阅读列很窄(1100 屏来源栏展开时只有 432):留白收一档;再窄「查看原文」只留图标 */
 @container reader-read (max-width: 560px) {
   .reader-col-read .reader-pane { padding-left: 24px; padding-right: 24px; }

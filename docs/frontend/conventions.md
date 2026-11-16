@@ -235,6 +235,11 @@
   社交流、早报、榜单里七天以外的时间**仍是连字符写法**(与手机壳共用组件,backlog 已登记)——这几处收口之前,不能说读者面桌面已经没有连字符日期。
 标签是中点分隔的文字(规范标签 muted、灵活标签 faint;可点检索时悬停变墨色加下划线,类名 `.reader-tag-chip` 与可访问名「检索「…」」不变)。
 两种字体(黑体 + 宋体),饱和色只在眉头,渐变留给 ✦ 与分数;往标题区加东西先问它归哪一行。
+**排印三条(桌面,issue #279 第五批)**:①中西文之间自动留间隙——`.reader-shell { text-autospace: normal; }`,不靠编辑手敲空格;代码与表单控件排除;
+不支持的浏览器无变化。②**标点挤压只给 30px 以上的标题**(阅读窗标题、早报头条、事件标题):经 `components/DisplayTitle` 把全角标点收掉空的半个字宽;
+正文与列表里那半个字的空是呼吸,不收。③**标题按词断行**:`utils/wordBreak.titleChunks`(浏览器 `Intl.Segmenter` + 合并规则)把标题切成不该从中间折开的块,
+`DisplayTitle` 在块之间放 `<wbr>`、外层 `.ts-kw`(`word-break: keep-all`);块边界上汉字贴着字母数字时补 `.ts-as`(`<wbr>` 会让自动间隙失效)。
+新的桌面大标题一律经 `DisplayTitle` 输出,不要手写 `<wbr>` 或给标题直接上 `keep-all`(没有块标记时 keep-all 会让整行不折)。手机壳没有接这三条。
 **长文正文**:17px/1.85 黑体(与界面同一条栈),小节标题宋体(h2 21px),引文线中性 2px,图片一圈最弱细线,粗体 600,链接 accent-ink 下划线退淡。
 **AI 速读卡 = 细线卡(issue #184)**:外框色 `--dorami-canvas` 底 + `--dorami-border-soft` 细环;卡头「✦ AI 速读」(✦ 用 `--grad-ai`);正文 15/400。不再铺 `--grad-ai-wash` 渐变底。
 桌面(issue #279 第三批,`<AiReadingCard page>`):速读**一句一段**(`utils/readerText.splitSentences`,只在全角句末标点处断开,不改字);

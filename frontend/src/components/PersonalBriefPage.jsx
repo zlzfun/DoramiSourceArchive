@@ -26,6 +26,7 @@ import { latinLang } from '../utils/readerText';
 import { titleView } from '../utils/titleDisplay';
 import { useTitlePreference } from '../hooks/useTitlePreference';
 import { scrollBehavior } from '../motion';
+import DisplayTitle from './DisplayTitle';
 import { qualityScoreText, scoreTierClass, scoreDisclaimer, SCORE_DIMENSION_LABELS } from '../utils/analysis';
 import { scoreDimensionOf, scoreOf } from '../utils/briefScore';
 
@@ -251,7 +252,7 @@ function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds
     <article className={`bp-item ${flash ? 'is-just-read' : ''}${anchored ? ' is-ctx-anchor' : ''}`} {...(press || {})}>
       {/* 标题按钮是唯一的「打开」控件:::after 拉伸覆盖整条,点条目任意处即打开;收藏与「+ 订阅」浮在覆盖层之上 */}
       <h3 className="bp-item-title" lang={latinLang(view.title)}>
-        <button type="button" className="bp-item-open" onClick={() => onOpen(item)}>{view.title}</button>
+        <button type="button" className="bp-item-open" onClick={() => onOpen(item)}>{mobile ? view.title : <DisplayTitle text={view.title} squeeze={false} />}</button>
       </h3>
       {!mobile && view.titleOrig && <p className="bp-item-orig" lang={latinLang(view.titleOrig)}>{view.titleOrig}</p>}
       {view.summary && <p className="bp-item-sum">{view.summary}</p>}
@@ -353,7 +354,7 @@ function Headline({ item, kicker, source, flash, restCount, onOpen, onSubscribeS
     <div className={`bp-head ${flash ? 'is-just-read' : ''}`}>
       <p className="bp-kicker">{kicker}</p>
       {/* 标题可点(鼠标的直觉);键盘与读屏走下方「阅读全文」,标题本身不重复成第二个按钮 */}
-      <h1 className="bp-title" lang={latinLang(view.title)} onClick={() => onOpen(item)}>{view.title}</h1>
+      <h1 className="bp-title" lang={latinLang(view.title)} onClick={() => onOpen(item)}><DisplayTitle text={view.title} /></h1>
       {view.titleOrig && <p className="bp-orig" lang={latinLang(view.titleOrig)}>{view.titleOrig}</p>}
       <div className={`bp-lower ${view.score ? '' : 'is-solo'}`}>
         <div className="bp-lower-main">
