@@ -5,6 +5,10 @@
 > `docs/frontend/conventions.md` / `docs/sources/curation_policy.md` 等活跃文档。
 > 按「故事」分组索引;文内常含 ☐/☑ 进度符,均为当时状态。
 
+## 节点不分角色:按身份合并(2026-11,issue #263)
+
+- [issue-263-sync-symmetric.md](./issue-263-sync-symmetric.md) — Archive Sync 拆掉整机 consumer 模式与按源围栏:拍板三问(§1)、规则一览(§2:文章按 id 合并、本机版本只有修订号严格更新才保留;同步建出来的源默认关分析、不进采集任务;「本机在用」的源不接受上游的删除 / 停用;接收端不再做 presence 清理)、机制(§3:逐行同步印记降为内部簿记、`local_revision` 本机导出修订与链式转发、文件就绪触发器、依赖流重放、事件二选一与写门)、部署顺序与混版本(§4)、上线说明(§5)、需要用户知情的取舍(§7)、Codex 方案检视与实现检视各两轮(§11)、与方案的偏差及沙箱 / v3.67.4 跨版本实测(§12)、第一稿(保留按源归属 + 原产地)为何作废(§13)。
+
 ## 已发布迁移文件守卫与部署健康验证(2026-11,issue #227)
 
 - [issue-227-released-migrations-guard.md](./issue-227-released-migrations-guard.md) — v3.67.0 发版两处失败的根因与修法:流水线 worker 第 7 道门拒绝 4 个被改的旧迁移 → CI 守卫 `scripts/check_released_migrations.py`(对最新正式 tag 逐字节比对,新增允许);手工路径 87 次 `bad-json` 实为探针打到 TLS 边缘的 301 页(§1.2)→ 探针地址与 compose 同口径读 `.env`、失败打 HTTP 状态码 + 响应前 200 字节;backend healthcheck 宽限随待执行迁移数 × 库 GiB 加宽(§2);有意不做(§3)、worker 基线核对(§4)、混版本(§5)、Codex 检视(§7)。

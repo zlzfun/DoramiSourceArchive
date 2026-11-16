@@ -1,7 +1,8 @@
 # issue #263 Archive Sync 节点不分角色:按身份合并、新者胜、普通开关
 
-> 状态:进行中(2026-11-10 方向重估并由用户拍板三问后重写;待 Codex 方案检视 → 实现)。分支 `feat/issue-263-sync-symmetric`,开发版 3.68.0-alpha(不 bump)。
-> 相关:[issue #263](https://github.com/zlzfun/DoramiSourceArchive/issues/263) · 契约 [`../contracts/archive_sync.md`](../contracts/archive_sync.md) · 架构 [`../architecture/archive-sync.md`](../architecture/archive-sync.md) · 前波 [#261 节点同步控制台](../archive/issue-261-sync-console.md)(归档)· 并行 [#262 源模型重构](issue-262-source-model-refactor.md)(不变量 6 由本波改写)
+> **归档于 2026-11-16(issue #263,PR #290,开发版 3.68.0-alpha,用户目检放行、待发布)**:现状以 docs/architecture/(`archive-sync.md`)、`docs/contracts/archive_sync.md` 与代码为准,文中路径与状态为当时记录。
+> 状态:已落地待发布(2026-11-10 用户拍板三问后重写并实现;Codex 方案检视两轮 + 实现检视两轮;2026-11-16 用户沙箱目检放行,CI 通过后 PR #290 squash 合入 main)。分支 `feat/issue-263-sync-symmetric`,开发版 3.68.0-alpha(不 bump)。
+> 相关:[issue #263](https://github.com/zlzfun/DoramiSourceArchive/issues/263) · 契约 [`../contracts/archive_sync.md`](../contracts/archive_sync.md) · 架构 [`../architecture/archive-sync.md`](../architecture/archive-sync.md) · 前波 [#261 节点同步控制台](../archive/issue-261-sync-console.md)(归档)· 并行 [#262 源模型重构](../plans/issue-262-source-model-refactor.md)(不变量 6 由本波改写)
 > 实现方:Claude Code(Fable 5.2)· 检视方:Codex(见 §11)
 > 行号按 `efc8b32e`(main,2026-11-10)核对。第一稿(保留按源归属 + 原产地转发)已作废,演变见 §13。
 
@@ -326,6 +327,7 @@
 | 旧接收端 × 新中转节点 | v3.67.4 空库拉「拉了旧生产端、自己又收录一篇」的新版节点 | 转发行与中转节点本机行一并到达;源头的修改与删除经中转传到旧接收端;中转节点对转发行的 presence 查询回答「在」 |
 | 界面 | Playwright,亮 / 暗 | 接入卡点「开始首次同步」直接开跑、无确认框;节点同步页无围栏文案与「本地采集」行;源管理「本机分析」开关可切换;console error 0 |
 | 最终代码复验 | 两轮检视修复后重启全部沙箱节点,空库重建 C 再拉 B | 首次全量 4,409 篇 / 270 分析 / 1,706 图约 2 分半;同步后 C 上只有被默认播客任务点名的 `podcast_ai_native_dev` 分析为开,其余预设与同步建出来的源全为关;界面复查 console error 0 |
+| 目检与并入主干(2026-11-16) | 用户在沙箱目检通过;并入 origin/main(#277 – #286,只有 `docs/version-history.md` 一处文本冲突,无新迁移)后复跑 | 后端全量 3,723 通过 / 1 跳过(另 1 例 `tests/test_deploy_baremetal.py` 的夹具本地 `git clone` 在 4 worker 并行下偶发出错,单跑通过,与改动无关);前端 lint / 393 例测试 / 构建通过;文档守卫 0 问题 |
 
 ## 13. 方向演变(备查)
 
