@@ -1,7 +1,7 @@
 # CI 提速(二):后端 job 分片并行、降低用例开销(issue #289)
 
-> 状态:进行中(2026-11-16 开工;分片与守卫已实现,CI 实测与交叉检视待做)。
-> 实现方:Claude Code(Fable 5.2);检视方:Codex(见 §6)。分支 `feat/issue-289-ci-shards`(叠在 #288 之上,#288 合入后变基到 main)。
+> 状态:进行中(2026-11-16 开工;分片与守卫已实现并在 CI 上实测,首轮检视返修完成,复检中)。
+> 实现方:Claude Code(Fable 5.2);检视方:Codex(见 §6)。分支 `feat/issue-289-ci-shards`。
 > 关联:[issue #289](https://github.com/zlzfun/DoramiSourceArchive/issues/289);前一波 [issue #288](https://github.com/zlzfun/DoramiSourceArchive/issues/288)(按改动面选 job,[方案](../archive/issue-288-ci-scope.md))。
 
 ## 1. 现状与目标
@@ -37,16 +37,21 @@
 
 `backend-unit` 用矩阵 `shard: [1, 2, 3]`,`backend-deploy` 用 `shard: [1, 2]`,命令各加 `--shard ${{matrix.shard}}/N`,每片仍是 `-n 4 --dist worksteal`。`fail-fast: false`:一片红了别的片照样跑完,一次看全。
 
-汇总门不用改:`needs.<job>.result` 对矩阵 job 是汇总结果(全部成功才是 `success`),job 被 `if` 跳过时仍是 `skipped`——#288 的两条放行路径原样成立。
+汇总门对这两个 job 的读法不用改:`needs.<job>.result` 对矩阵 job 是各片的汇总——按官方文档,任一片失败即 `failure`,job 级 `if` 在矩阵展开之前判断、为假时整体 `skipped`,`fail-fast: false` 不会因一片失败取消其余片。#288 的两条放行路径原样成立(只多要求一个 `backend-guards`,见 §2.3)。
+
+实测(PR #294,运行 43841904357):整条 CI **4.0 分钟**(此前 8.7–10.5 分钟)。unit 三片 3.7 / 3.0 / 2.9 分钟(测试步骤 152 / 150 / 128 秒),deploy 两片 2.1 / 2.4 分钟(113 / 133 秒)。
 
 ### 2.3 少一片的后果与守卫
 
-少一片(矩阵写成 `[1, 2]` 而分母是 3、分母漂成 4、命令里把矩阵变量写死成 `1/3`)的后果是:那一片的用例哪个 job 都不跑,而 CI 照样是绿的。`tests/test_ci_workflow.py` 新增 `_assert_shards`:
+少一片(矩阵写成 `[1, 2]` 而分母是 3、分母漂成 4、命令里把矩阵变量写死成 `1/3`、矩阵被 `exclude` 掉一个取值)的后果是:那一片的用例哪个 job 都不跑,而 CI 照样是绿的。三层守卫:
 
-- 矩阵只有 `shard` 一维、不许 `include` / `exclude`、取值恰是 `1..N`;
-- 命令里 `--shard` 恰好出现一次,值恰是 `${{matrix.shard}}/N`,N 等于矩阵长度。
+1. **结构**(`_assert_shards`):`strategy` 块只认恰好三行受控格式——`fail-fast: false` / `matrix:` / `shard: [1, …, N]`,多出任何一行都拒(`include` / `exclude` 带不带引号、前面隔不隔空行,第二个维度,`max-parallel`,多行列表,带引号的 `"strategy"`);矩阵取值恰是 `1..N`;命令里 `--shard` 恰好出现一次,值恰是 `${{matrix.shard}}/N`。看不懂的写法不放行,而不是尽量去解析。
+2. **端到端**(`_assert_shards_partition`):把矩阵的每个取值代入**真实命令里的全部分片参数**,真跑 `--collect-only`,各片互不相交、并集等于不分片时的全集,同一函数的参数化不跨片。只读矩阵长度再自己拼 `--shard I/N` 是不够的——命令末尾多一个写死的 `--shard 1/3` 把矩阵值盖掉时,那样的检查照样通过。
+3. **守卫自己不在被分片的 job 里**:分片配置一旦写错,检查分片的用例可能正好落在没人跑的那一片(首轮检视的现场:追加 `--shard 1/3` 后三个 job 全跑第一片,而结构检查在第三片、突变用例在第二片)。所以另起一个**不分片**的 `backend-guards` job,单独跑 `tests/test_ci_workflow.py` 与 `tests/test_ci_scope.py`(清单 = `ci_scope.GUARD_TESTS`,命令不带 `--shard`),汇总门的全量路径要求它成功。这两份守卫同时仍留在 unit 的划分里:两边互为对照——unit 的命令被改坏了 guards 会红,guards 的命令被改坏了 unit 那边会红。只动前端 / 文档的 PR 改不到工作流与测试,不跑它,轻量路径仍是约 1 分钟。
 
-外加一条端到端:按 `ci.yml` 里的片数真跑 `--collect-only --shard I/N`,各片互不相交、并集等于不分片时的全集,同一函数的参数化不跨片。
+汇总门因此是六个变量:`changes` 结果、`backend` 取值、unit / deploy / light / guards 四个结果,真值表 4096 种组合仍只放行 5 种(全量:unit、deploy、guards 都 `success`;轻量:三者都 `skipped` 且 light `success`)。
+
+调整片数只改 `ci.yml` 的两处(矩阵与命令分母),守卫与突变都按当前片数生成,测试不用跟着改——模拟过 unit 4 片 / deploy 3 片:全部守卫通过、91 条突变照样全部被拒。
 
 ## 3. 用例开销
 
@@ -62,7 +67,14 @@
 
 同一条 unit 命令本机 3.5 分钟、runner 上 10 分钟。一个假设是 SQLite 的 fsync:macOS 的 `fsync` 不真正落盘,runner 的 ext4 会,而几千个用例各自提交多次。把 pytest 的临时目录(`tmp_path` 与 conftest 沙箱都跟 `TMPDIR` 走)指到 `/dev/shm` 是一行的改动,但它只在 runner 上有意义,本机量不出来——所以在本 PR 里放一个**临时工作流**(`ci-exp-289.yml`,合入前删除),用与 `ci.yml` 第 1 片逐字相同的命令、只多一个 `TMPDIR=/dev/shm`,和同一次运行里 `ci.yml` 的第 1 片比耗时。
 
-(待填:实测数字与取舍。)
+实测(PR #294 的第一次推送,`ci.yml` 运行 43841904357 与实验运行 43841904730;同一片用例、同一条命令):
+
+| 测试步骤耗时 | 磁盘(`ci.yml` 的那一片) | tmpfs(`TMPDIR=/dev/shm`) |
+|---|---|---|
+| unit 第 1 片 | 152 s | 124 s |
+| deploy 第 1 片 | 113 s | 121 s |
+
+**不采用。** unit 快了 28 秒(18%),deploy 没有变快;这是单次样本,而同一次运行里用例数相近的 unit 第 2、3 片之间就差 22 秒(150 s / 128 s),差距落在 runner 之间的自然波动里。结论只能是:fsync 不是「runner 比本机慢 3 倍」的主因(否则不会只差这么点),更像是 runner 的 vCPU 本身慢。另一头是风险:pytest 默认保留整个会话的 `tmp_path`,一片一千多条用例各建约 2 MB 的库,全压在内存盘上(`/dev/shm` 上限是内存的一半)。收益不确定、失败方式难看。实验工作流已从本 PR 删除。
 
 ### 3.3 建库模板:试验可行,这一波不做
 
@@ -78,9 +90,9 @@
 
 ## 4. 守卫与自测
 
-- `tests/test_ci_workflow.py`:`_assert_shards`(矩阵只有 `shard` 一维、无 `include` / `exclude`、取值恰是 1..N;命令里 `--shard` 恰一次且值恰是 `${{matrix.shard}}/N`);端到端 `test_shards_cover_every_test_exactly_once`(按 `ci.yml` 的片数真跑 `--collect-only --shard I/N`,互不相交、并集等于全集、同一函数的参数化不跨片);畸形 `--shard` 七种写法都是用法错误;新增 13 条突变(矩阵缺片 / 从 0 起 / 重复 / 被 `exclude` / 多一维 / 整个删掉,分母漂移,分子写死,选项丢失或被后一个覆盖,轻量 job 被加矩阵)。#288 的结构白名单对分片的两个 job 多认一个 `strategy` 键。
+- `tests/test_ci_workflow.py`(117 例,91 条突变):§2.3 的三层;畸形 `--shard` 七种写法都是用法错误;分片突变按当前片数生成,两个 job 各 15 种(矩阵缺片 / 从 0 起 / 重复 / `exclude` 三种写法 / `include` / 多一维 / `max-parallel` / 多行列表 / 带引号的 `strategy` / 整块删掉,分母漂移,分子写死,选项丢失),外加「后一个 `--shard` 覆盖」的结构与端到端两条、轻量 job 被加矩阵、job 层带引号的键;`backend-guards` 七条(汇总门不要求它 / 不 `needs` 它,被分片、被筛选、清单少一份、只在轻量模式跑、吞失败)。汇总门真值表 4096 种组合真跑 shell。job 层的键改为严格读取(四空格缩进的有效行必须是不带引号的 `key:`)。
 - `tests/test_accounts.py`:缺省轮数在调用期读取、显式轮数照用、新旧轮数的哈希都能校验、夹具交回的生产缺省不低于 20 万。
-- 自测(本机):(待填)。
+- 自测(本机,`-n 4 --dist worksteal`):unit 三片(85 / 72 / 73 秒)与 deploy 两片(125 / 167 秒)各自通过;检视返修后 unit 侧全量 3653 passed / 1 skipped、deploy 侧全量 225 passed,`backend-guards` 的同款命令(不分片、不并行)177 passed / 38 秒;`scripts/check_docs.py` 0 个问题。CI:PR #294 首次推送全绿(数字见 §2.2)。
 
 ## 5. 取舍与不做
 
@@ -88,8 +100,26 @@
 - **不按耗时做装箱分片**(pytest-split 一类):要入库一份耗时表并持续更新,哈希分片实测已经够匀(本机三片 85 / 72 / 73 秒)。
 - **不拆 `-n 4`**:每片仍是 4 个 worker,和不分片时一样吃满一台 runner。
 - **不做建库模板**:§3.3。
+- **不把临时目录放 tmpfs**:§3.2。
+- **不去核对矩阵各片的逐片结果**:汇总门只读 `needs.<job>.result` 的汇总值。社区有未经官方确认的报告称「某一片因分不到 runner 被取消」时汇总仍可能是 `success`;要防它得让汇总门去调 API 数各片的结论,给合入门禁加一个网络依赖,为一个没复现的现象不值——记观察期。
 - **不动 Alembic 迁移类用例**(75 次 `upgrade`,每次 631 ms):它们测的就是迁移本身。
 
 ## 6. 交叉检视
+
+实现方 Claude Code(Fable 5.2);检视方 Codex(`gpt-6-astra`,effort ultra,只读沙箱)。任务书、报告、表态与修复清单在 worktree `.review/`。
+
+### R1(2026-11-16)
+
+结论:2 × P1 + 1 × P2 + 2 × P3,「修完 P1 后可合入」。当前配置没有漏跑;两条 P1 都是「守卫有可复现的漏检路径」。nodeid / xdist 收集一致性、参数化归片、与 `-k` / `--ignore` / 读取审计的相互作用、空片退出码、密码哈希行为均未发现问题;静态盘点 208 个测试模块没有找到依赖执行顺序的写法。五条全部接受,无分歧。
+
+| # | 级别 | 意见 | 修法 |
+|---|---|---|---|
+| 1 | P1 | 错误的分片配置能把守卫自己排除:unit 命令末尾追加 `--shard 1/3`(pytest 取后值)后三个 job 全跑第一片,而检查分片的用例在第三片、突变用例在第二片;第一片里的端到端只读矩阵长度、自己拼参数,照样通过 | 另起不分片的 `backend-guards` job 单独跑两份工作流守卫,汇总门全量路径要求它成功(真值表扩到六个变量);端到端改为把矩阵值代入真实命令的全部分片参数;补这个现场的结构与端到端两条回归 |
+| 2 | P1 | 矩阵解析遇空行就停、不认带引号的键:`shard: [1, 2, 3]` 后隔一个空行写 `exclude`,或写 `"exclude"`,实际只剩两片而守卫仍读到三片 | `strategy` 块严格解析:取到缩进回到 job 层为止的全部有效行,只认恰好三行,其余一律拒;同类处一并收紧——job 层的键改严格读取(带引号的 `"continue-on-error"` 之前同样看不见);补空行 / 带引号 / `include` / `max-parallel` / 多行列表等突变 |
+| 3 | P2 | 文档总账没同步:方案说建库模板延后并记入 backlog,backlog 仍把它列为本波内容;version-history / decisions 没更新 | 三件套补齐(本波、决策、遗留与触发条件) |
+| 4 | P3 | 「片数只写在一处」不准确:还写在命令分母与突变锚点里,正确改成四片后有 9 条突变因锚点失效而失败 | 突变按 `ci.yml` 当前片数生成;文档改为「矩阵与命令分母两处,测试不用改」;模拟 4 片 / 3 片验证 |
+| 5 | P3 | 「矩阵全部成功才 success」说得太绝对:有未经官方确认的社区报告,矩阵某一片因分不到 runner 被取消时汇总仍为 success | `ci.yml` 注释改为引用官方文档的限定说法,记观察期(backlog) |
+
+### R2(复检)
 
 (待填。)

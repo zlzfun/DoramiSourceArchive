@@ -14,7 +14,7 @@
 
 - `tests/conftest.py` 的读取审计按它们判定——不在 `LIGHT_TESTS` 里的测试读了 `SKIP_SAFE` 路径即失败,
   所以「跳过重型 job 不丢覆盖」是被执行的,不靠人记;
-- `tests/test_ci_workflow.py` 守 `ci.yml` 里 `backend-light` 的命令与 `LIGHT_TESTS` 逐字一致。
+- `tests/test_ci_workflow.py` 守 `ci.yml` 里 `backend-light` 的命令与 `LIGHT_TESTS`、`backend-guards` 的命令与 `GUARD_TESTS` 逐字一致。
 
 只用标准库:runner 的系统 `python3` 直接跑,不装依赖。
 """
@@ -28,6 +28,8 @@ import sys
 SKIP_SAFE_DIRS = ("frontend/", "docs/", "docs-site/")
 # 读上述路径的后端测试:重型 job 被跳过时由 `backend-light` 跑这几条。
 LIGHT_TESTS = ("tests/test_docs_index.py", "tests/test_pwa_support.py")
+# 守卫工作流自身的测试(issue #289):全量时由不分片的 `backend-guards` 单独跑——检查分片配置的用例不能只待在被分片的 job 里。
+GUARD_TESTS = ("tests/test_ci_workflow.py", "tests/test_ci_scope.py")
 
 
 def is_skip_safe(path: str) -> bool:

@@ -142,7 +142,7 @@ cp backups/cms_data.db.20260914-110000 data/cms_data.db && rm -f data/cms_data.d
 Settings → Branches → Add rule for `main`:
 
 - Require a pull request before merging(禁止直推;两人一视同仁);
-- Require status checks to pass:勾 `backend (pytest)` 与 `frontend (lint + build)`(CI 跑过一次后才会出现在列表里)。issue #150 起 `backend (pytest)` 是汇总门 job:`needs` 真跑测试的 `backend-unit (pytest)` / `backend-deploy (pytest)`,`if: always()` 逐项核对结果——required 只勾它一个即可,两个真 job 不必也勾,将来再拆分时规则不用改;issue #288 起它还 `needs` 改动面判定 `changes (scope)` 与 `backend-light (pytest)`:PR 只动前端 / 文档时两个重型 job 是 skipped、由 backend-light 顶上,汇总门照样给出结论——**不必去勾会被跳过的那三个**:job 被 `if` 跳过时在分支保护眼里算通过(一直挂着不放的是整条 workflow 被路径过滤掉、根本没运行的情形,这里不是),勾了挡不住任何东西,只会在以后拆分 job 时多改一处规则;
+- Require status checks to pass:勾 `backend (pytest)` 与 `frontend (lint + build)`(CI 跑过一次后才会出现在列表里)。issue #150 起 `backend (pytest)` 是汇总门 job:`needs` 真跑测试的 `backend-unit (pytest)` / `backend-deploy (pytest)`,`if: always()` 逐项核对结果——required 只勾它一个即可,两个真 job 不必也勾,将来再拆分时规则不用改;issue #288 起它还 `needs` 改动面判定 `changes (scope)` 与 `backend-light (pytest)`,issue #289 起再加不分片的 `backend-guards (pytest)`(两个重型 job 同时改成矩阵分片,检查名带 `(1)` `(2)` 后缀):PR 只动前端 / 文档时重型 job 与 guards 是 skipped、由 backend-light 顶上,汇总门照样给出结论——**不必去勾会被跳过的那三个**:job 被 `if` 跳过时在分支保护眼里算通过(一直挂着不放的是整条 workflow 被路径过滤掉、根本没运行的情形,这里不是),勾了挡不住任何东西,只会在以后拆分 job 时多改一处规则;
 - Do not allow force pushes / deletions。
 
 tag 不设保护(2026-09-14 拍板:任何人可打 tag);`release.yml` 的核对负责把不合格的 tag 标红。
@@ -165,4 +165,4 @@ Environment(一次性,自动部署用,见 `docs/archive/auto-deploy-plan.md` §4
 - 不做「部署即打 tag」:发布决定属于人,脚本只执行。
 - 自动部署只覆盖外网 Docker 节点(issue #102,2026-09-16 拍板翻案);裸机路径仍由人跑 `./deploy.sh`。
   流水线只部署宣告了部署协议的 tag;不自动回滚;不引入第二种 tag——防误触的边界是 Environment 的批准人,不是 tag 名。
-- CI 的后端全量约 10 分钟(2026-11-16 实测,由 `backend-unit` 决定);issue #288 起 PR 只动前端 / 文档时走约 1 分钟的轻量路径,`backend-unit` 的分片与用例开销在 issue #289。
+- CI 的后端全量:不分片时约 10 分钟(由 `backend-unit` 决定),issue #289 分片后整条约 4 分钟(2026-11-16 实测);issue #288 起 PR 只动前端 / 文档时走约 1 分钟的轻量路径。
