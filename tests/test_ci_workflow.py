@@ -43,7 +43,7 @@ CHANGES, LIGHT = "changes", "backend-light"
 RESULTS = ("success", "failure", "cancelled", "skipped")
 # changes 没成功时它的 output 是空串;大小写不同的值也不是放行
 BACKEND_VALUES = ("true", "false", "", "TRUE")
-_OPTS_WITH_VALUE = {"-n", "-p", "--dist", "-k", "-m", "-o", "-c"}
+_OPTS_WITH_VALUE = {"-n", "-p", "--dist", "-k", "-m", "-o", "-c", "--shard"}
 # 汇总门 shell 变量 → 工作流表达式
 _GATE_ENV = {
     "CHANGES": "needs.changes.result",
@@ -107,6 +107,8 @@ def _code(block: str) -> str:
 
 # 后端各 job 在 job 层只认这几个键:env / continue-on-error / defaults 之类都会改变「job 成功」的含义
 _JOB_KEYS = {"name", "needs", "if", "runs-on", "steps"}
+# 分片的两个 job 多一个 strategy(issue #289;矩阵本身的形状由 _assert_shards 守)
+_SHARDED = {"backend-unit", "backend-deploy"}
 
 
 def _steps(block: str) -> list[list[str]]:
@@ -352,7 +354,7 @@ def _assert_plain_pytest_step(text: str, job: str) -> None:
     把命令折行接 `|| true`——每一种都让「job 成功」不再等于「用例通过」,而命令文本看起来原封不动。"""
     assert "PYTEST_ADDOPTS" not in _code(text), "ci.yml 不得设置 PYTEST_ADDOPTS(一句 --collect-only 就让所有用例只收集不执行)"
     block = _job_block(text, job)
-    extra = set(_job_level(_code(block))) - _JOB_KEYS
+    extra = set(_job_level(_code(block))) - _JOB_KEYS - ({"strategy"} if job in _SHARDED else set())
     assert not extra, f"{job} 的 job 层出现了守卫不认识的键 {sorted(extra)}"
     hits = [step for step in _steps(block) if any(re.search(r"python -m pytest ", line) for line in step)]
     assert len(hits) == 1, f"{job} 里应恰有一步跑 pytest(实得 {len(hits)})"
@@ -363,6 +365,33 @@ def _assert_plain_pytest_step(text: str, job: str) -> None:
     # 看原始命令串而不是分词结果:`…cacheprovider||true` 不带空格时 shlex 不会把 `||` 拆成独立的词(Codex R2 观察项)
     command = step[1].split("run: ", 1)[1]
     assert not re.search(r"[|&;<>`]|\$\(", command), f"{job} 的 pytest 命令里不得串接、重定向或嵌入别的命令:{command!r}"
+
+
+def _shard_matrix(text: str, job: str) -> list[int]:
+    """job 的 `strategy.matrix.shard` 取值(受控格式:行内列表)。"""
+    block = _code(_job_block(text, job))
+    m = re.search(r"^    strategy:\n((?:      .*\n)+)", block, re.M)
+    assert m, f"{job} 没有 strategy(分片靠矩阵)"
+    strategy = m.group(1)
+    assert not re.search(r"^\s+(include|exclude):", strategy, re.M), f"{job} 的矩阵不得用 include / exclude 增减片"
+    keys = re.findall(r"^        ([A-Za-z0-9_-]+):", strategy, re.M)
+    assert keys == ["shard"], f"{job} 的矩阵只能有 shard 一维(多一维会把每片再乘一遍),实得 {keys}"
+    values = re.search(r"^        shard:\s*\[([0-9, ]+)\]\s*$", strategy, re.M)
+    assert values, f"{job} 的 matrix.shard 须写成行内整数列表"
+    return [int(v) for v in values.group(1).split(",")]
+
+
+def _assert_shards(text: str, job: str) -> None:
+    """issue #289:矩阵取值恰是 1..N,命令里恰有一次 `--shard ${{matrix.shard}}/N`——少一片 = 那一片的用例谁都不跑而 CI 仍绿。"""
+    values = _shard_matrix(text, job)
+    total = len(values)
+    assert total >= 2 and values == list(range(1, total + 1)), f"{job} 的 matrix.shard 必须恰是 1..N(实得 {values})"
+    argv = _pytest_commands(text)[job]
+    assert argv.count("--shard") == 1 and not any(a.startswith("--shard=") for a in argv), f"{job}:--shard 须恰好出现一次(空格分隔)"
+    spec = argv[argv.index("--shard") + 1]
+    assert spec == "${{matrix.shard}}/" + str(total), (
+        f"{job} 的 --shard 必须是 `${{{{matrix.shard}}}}/{total}`(分子取矩阵变量、分母等于片数),实得 {spec!r}"
+    )
 
 
 def _assert_released_migrations_guard(text: str) -> None:
@@ -408,6 +437,44 @@ def test_pytest_step_cannot_be_skipped_or_have_its_failure_swallowed(job):
     _assert_plain_pytest_step(CI.read_text(encoding="utf-8"), job)
 
 
+@pytest.mark.parametrize("job", [UNIT, DEPLOY])
+def test_backend_jobs_are_sharded_by_a_complete_matrix(job):
+    _assert_shards(CI.read_text(encoding="utf-8"), job)
+
+
+def _collected(*args: str) -> set[str]:
+    r = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", *args],
+                       cwd=str(ROOT), capture_output=True, text=True, timeout=300)
+    assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
+    return {line.strip() for line in r.stdout.splitlines() if "::" in line}
+
+
+@pytest.mark.parametrize("job", [UNIT, DEPLOY])
+def test_shards_cover_every_test_exactly_once(job):
+    """端到端:按 ci.yml 里该 job 的片数,真跑 `--collect-only --shard I/N`,各片互不相交、并集等于不分片时的全集。
+    样本取参数化多、类里有用例、文件各异的几个测试文件(整仓收集一次 4~5 s,这里不必)。"""
+    total = len(_shard_matrix(CI.read_text(encoding="utf-8"), job))
+    sample = ["tests/test_ci_scope.py", "tests/test_content_classification.py", "tests/test_docs_index.py", "tests/test_deploy_lib.py"]
+    with ThreadPoolExecutor(max_workers=total + 1) as pool:
+        whole = pool.submit(_collected, *sample)
+        parts = [pool.submit(_collected, *sample, "--shard", f"{i}/{total}") for i in range(1, total + 1)]
+        whole, parts = whole.result(), [p.result() for p in parts]
+    assert len(whole) > 50
+    assert all(parts), "样本下每一片都应有用例"
+    assert sum(len(p) for p in parts) == len(whole) and set().union(*parts) == whole, "各片必须互不相交且并集等于全集"
+    # 同一个测试函数的参数化不拆到不同片
+    for part in parts:
+        functions = {nodeid.split("[", 1)[0] for nodeid in part}
+        assert all(nodeid.split("[", 1)[0] not in functions for other in parts if other is not part for nodeid in other)
+
+
+@pytest.mark.parametrize("spec", ["0/3", "4/3", "1", "1/0", "a/b", "1/3/5", "-1/3"])
+def test_malformed_shard_spec_is_a_usage_error_not_a_silent_full_or_empty_run(spec):
+    r = subprocess.run([sys.executable, "-m", "pytest", "tests/test_docs_index.py", "--collect-only", "-q", "-p", "no:cacheprovider", f"--shard={spec}"],
+                       cwd=str(ROOT), capture_output=True, text=True, timeout=120)
+    assert r.returncode == 4 and "--shard" in r.stderr, (r.returncode, r.stdout[-500:], r.stderr[-500:])
+
+
 # ── 反向对照:对 ci.yml 做突变,对应守卫必须拒绝(每种突变都要真的改到了文本)──
 
 def _mutate(text: str, old: str, new: str, count: int | None = None) -> str:
@@ -431,6 +498,7 @@ _SCOPE_RUN = "        run: python3 scripts/ci_scope.py\n"
 _LIGHT_RUN = "        run: .venv/bin/python -m pytest tests/test_docs_index.py tests/test_pwa_support.py -q -p no:cacheprovider\n"
 _UNIT_RUN_HEAD = "        run: .venv/bin/python -m pytest tests -q"
 _GATE_UNIT_ENV = "          UNIT: ${{ needs.backend-unit.result }}\n"
+_UNIT_SHARD = " --shard ${{matrix.shard}}/3"
 
 MUTATIONS = {
     "drop_worksteal": (lambda t: _mutate(t, " --dist worksteal", "", count=2), _assert_parallel, UNIT),
@@ -486,8 +554,22 @@ MUTATIONS = {
     "light_job_continue_on_error": (lambda t: _mutate(t, _LIGHT_IF, _LIGHT_IF + "    continue-on-error: true\n", count=1), _assert_plain_pytest_step, LIGHT),
     "unit_step_swallows_failure": (lambda t: _mutate(t, _UNIT_RUN_HEAD, "        continue-on-error: true\n" + _UNIT_RUN_HEAD, count=1), _assert_plain_pytest_step, UNIT),
     "unit_command_chained_or_true": (lambda t: _mutate(t, _UNIT_CMD_TAIL, _UNIT_CMD_TAIL + " || true", count=1), _assert_plain_pytest_step, UNIT),
-    "deploy_command_folded_or_true": (lambda t: _mutate(t, "--durations=25\n", "--durations=25\n          || true\n", count=1), _assert_plain_pytest_step, DEPLOY),
+    "deploy_command_folded_or_true": (lambda t: _mutate(t, " --shard ${{matrix.shard}}/2\n", " --shard ${{matrix.shard}}/2\n          || true\n", count=1), _assert_plain_pytest_step, DEPLOY),
     "addopts_set_anywhere": (lambda t: _mutate(t, "concurrency:\n", "env:\n  PYTEST_ADDOPTS: --collect-only\n\nconcurrency:\n", count=1), _assert_plain_pytest_step, UNIT),
+    # ── issue #289:矩阵分片 ──
+    "unit_matrix_misses_a_shard": (lambda t: _mutate(t, "        shard: [1, 2, 3]\n", "        shard: [1, 2]\n", count=1), _assert_shards, UNIT),
+    "unit_matrix_starts_at_zero": (lambda t: _mutate(t, "        shard: [1, 2, 3]\n", "        shard: [0, 1, 2]\n", count=1), _assert_shards, UNIT),
+    "unit_matrix_repeats_a_shard": (lambda t: _mutate(t, "        shard: [1, 2, 3]\n", "        shard: [1, 2, 2]\n", count=1), _assert_shards, UNIT),
+    "unit_shard_denominator_drifts": (lambda t: _mutate(t, _UNIT_SHARD, " --shard ${{matrix.shard}}/4", count=1), _assert_shards, UNIT),
+    "unit_shard_hardwired": (lambda t: _mutate(t, _UNIT_SHARD, " --shard 1/3", count=1), _assert_shards, UNIT),
+    "unit_shard_option_dropped": (lambda t: _mutate(t, _UNIT_SHARD, "", count=1), _assert_shards, UNIT),
+    "unit_shard_overridden_later": (lambda t: _mutate(t, _UNIT_CMD_TAIL, _UNIT_CMD_TAIL + " --shard 1/1", count=1), _assert_shards, UNIT),
+    "unit_matrix_excludes_a_shard": (lambda t: _mutate(t, "        shard: [1, 2, 3]\n", "        shard: [1, 2, 3]\n        exclude:\n          - shard: 3\n", count=1), _assert_shards, UNIT),
+    "unit_matrix_gains_a_dimension": (lambda t: _mutate(t, "        shard: [1, 2, 3]\n", "        shard: [1, 2, 3]\n        os: [a, b]\n", count=1), _assert_shards, UNIT),
+    "unit_matrix_removed": (lambda t: _mutate(t, "    strategy:\n      fail-fast: false\n      matrix:\n        shard: [1, 2, 3]\n", "", count=1), _assert_shards, UNIT),
+    "deploy_matrix_misses_a_shard": (lambda t: _mutate(t, "        shard: [1, 2]\n", "        shard: [1]\n", count=1), _assert_shards, DEPLOY),
+    "deploy_shard_option_dropped": (lambda t: _mutate(t, " --shard ${{matrix.shard}}/2", "", count=1), _assert_shards, DEPLOY),
+    "light_job_gets_a_matrix": (lambda t: _mutate(t, _LIGHT_IF, _LIGHT_IF + "    strategy:\n      matrix:\n        shard: [1, 2]\n", count=1), _assert_plain_pytest_step, LIGHT),
     "released_migrations_guard_dropped": (lambda t: _mutate(t, "        run: python3 scripts/check_released_migrations.py\n", "        run: echo skip\n", count=1), _assert_released_migrations_guard, None),
     "released_migrations_guard_soft_failed": (lambda t: _mutate(t, "        run: python3 scripts/check_released_migrations.py\n",
                                                              "        continue-on-error: true\n        run: python3 scripts/check_released_migrations.py\n", count=1), _assert_released_migrations_guard, None),

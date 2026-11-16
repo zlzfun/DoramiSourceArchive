@@ -16,6 +16,8 @@ Unit tests live directly under `tests/` as `test_*.py`. Fetcher/extraction: `rss
 - **本地**:受影响的测试文件 + 快守卫(`scripts/check_docs.py`;改 `ci.yml` 时 `tests/test_ci_workflow.py` `tests/test_ci_scope.py`)。全量交给 CI 跑一次,不在推送前本地再跑一遍。例外:改部署脚本 / 迁移 → 本地跑 deploy 侧(bash 3.2 只有 macOS 本机测得到);改公共夹具、`conftest.py`、`models/db.py` 这类说不清影响面的 → 本地先跑全量(本机约 3.5 分钟,比 CI 红一次的往返便宜)。
 - **CI 按改动面选 job**:`changes` job 跑 `scripts/ci_scope.py`。PR 的**全部**改动路径都在 `frontend/` `docs/` `docs-site/` 与仓根 `*.md` 之内 → 跳过 `backend-unit` / `backend-deploy`,只跑 `backend-light`(`ci_scope.LIGHT_TESTS`);其余、看不准、push 到 main → 全量。汇总门 `backend (pytest)` 只在判定成功且明确 `backend=false` 时接受重型 job 的 skipped。
 - **后端测试读 `frontend/` `docs/` `docs-site/` 或仓根 `*.md` 的,必须登记**:把所在测试文件加进 `scripts/ci_scope.py` 的 `LIGHT_TESTS`,并同步 `ci.yml` 里 `backend-light` 的命令(`tests/test_ci_workflow.py` 比对两者逐字一致)。不登记的话,纯前端 / 纯文档 PR 不会运行它。这条由 `tests/conftest.py` 的**读取审计**强制:进程级审计钩子记下落在这些路径上的 `open` / `listdir` / `scandir`,所在测试文件不在 `LIGHT_TESTS` 里就把那一阶段判失败(模块顶层的读取判收集失败)。审计看不见子进程里的读取——用例起脚本去读真实仓的这些路径时同样要登记。给白名单加目录之前,先证明没有后端测试读它。
+- **CI 分片(issue #289)**:`backend-unit` 拆 3 片、`backend-deploy` 拆 2 片,各占一台 runner 并行,命令只差 `--shard I/N`。`tests/conftest.py` 按**用例函数 nodeid 的 CRC32** 定片——纯函数,每条用例恰好落在一片里;同一个测试函数的全部参数化落在同一片。片数只写在 `ci.yml` 的矩阵里,`tests/test_ci_workflow.py` 守「矩阵恰是 1..N、分母等于 N、命令用矩阵变量」(少一片 = 那一片的用例谁都不跑而 CI 仍绿)。写新测试不需要做任何事,只是别依赖「同文件的另一条用例先跑过」——分片后它们可能不在同一个 job 里(xdist 下本来也不保证)。本地复现某一片:在全量命令后加 `--shard 2/3`。
+- **测试里的密码哈希是 1000 轮**(issue #289):会话夹具 `fast_password_hashing` 把 PBKDF2 缺省轮数从生产的 20 万调低(一轮 unit 要哈希 / 校验约 2400 次);要测真轮数的用例显式传 `iterations=`。夹具同时断言生产常量不低于 20 万。
 
 `pyproject.toml` does not configure pytest, so discovery uses pytest defaults; pass an explicit path/`-k` filter when targeting a subset.
 

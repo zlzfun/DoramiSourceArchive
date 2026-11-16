@@ -5,11 +5,15 @@
 #
 # 后端测试(issue #150)拆成两个 job 各占一台 runner 并行,每个 job 内再用 pytest-xdist 开 4 个 worker
 # (public 仓库的 ubuntu-latest 是 4 vCPU):
-#   backend-unit   —— tests/ 里除部署脚本 / 迁移之外的全部用例(2026-11-16 实测约 3470 个,4 worker ≈ 10 min,
-#                     是 PR 等待时间的决定项;本机同一条命令 3.5 min。拆片与用例开销见 issue #289)
+#   backend-unit   —— tests/ 里除部署脚本 / 迁移之外的全部用例(2026-11-16 实测约 3470 个;不分片时 4 worker ≈ 10 min,
+#                     曾是 PR 等待时间的决定项,本机同一条命令 3.5 min)
 #   backend-deploy —— tests/test_deploy_*.py + tests/test_migrations.py(约 220 个,单个 10~26 s:每个用例真起
 #                     deploy.sh,一次运行几百次进程 spawn,等待为主;4 worker ≈ 4~6 min)
 # 两边对 tests/ 的划分由 tests/test_ci_workflow.py 守卫(互斥、覆盖全部文件、并行参数不退回串行)。
+# 分片(issue #289):两个 job 各用矩阵再拆成 N 个 job 并行(unit 3 片、deploy 2 片;public 仓库 runner 免费),每片仍是 4 个 worker。
+# 命令只差 `--shard I/N`:tests/conftest.py 按用例函数 nodeid 的 CRC32 决定它属于哪一片,纯函数、每条用例恰好一片。
+# 矩阵取值必须恰是 1..N、分母必须等于 N、命令里必须用矩阵变量——少一片的后果是那一片的用例哪个 job 都不跑而 CI 照样绿,
+# 由 tests/test_ci_workflow.py 守卫。`needs.<job>.result` 对矩阵 job 是汇总结果(全部成功才是 success),汇总门不用改。
 # `--dist worksteal` 不是可选项:默认 load 调度按连续块分发,收集顺序里连成一片的部署用例会整块落到
 # 单个 worker、其余三个空转(2026-09-23 本地实测 13 min vs 5:50)。
 # `backend (pytest)` 是汇总门 job,只为让分支保护里既有的 required check 名继续有效;
@@ -58,6 +62,10 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
 
@@ -89,13 +97,17 @@ jobs:
       # 划分模式与 backend-deploy 的正向列表逐字相同(守卫测试比对);命令写成一行,守卫按行解析。
       # --ignore-glob 的值加引号:它要原样交给 pytest 去 fnmatch,不能让 shell 先展开(zsh 会直接报 no matches)
       - name: Run tests
-        run: .venv/bin/python -m pytest tests -q -p no:cacheprovider -n 4 --dist worksteal --durations=25 --ignore-glob='tests/test_deploy_*.py' --ignore=tests/test_migrations.py
+        run: .venv/bin/python -m pytest tests -q -p no:cacheprovider -n 4 --dist worksteal --durations=25 --shard ${{matrix.shard}}/3 --ignore-glob='tests/test_deploy_*.py' --ignore=tests/test_migrations.py
 
   backend-deploy:
     name: backend-deploy (pytest)
     needs: [changes]
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v4
 
@@ -118,7 +130,7 @@ jobs:
 
       # 位置参数不加引号:pytest 不展开 glob,靠 runner 的 bash 展开;无匹配时 bash 原样传递、pytest 报文件不存在,CI 会红而不是静默漏跑
       - name: Run tests
-        run: .venv/bin/python -m pytest tests/test_deploy_*.py tests/test_migrations.py -q -p no:cacheprovider -n 4 --dist worksteal --durations=25
+        run: .venv/bin/python -m pytest tests/test_deploy_*.py tests/test_migrations.py -q -p no:cacheprovider -n 4 --dist worksteal --durations=25 --shard ${{matrix.shard}}/2
 
   # 重型 job 被跳过时的替身(issue #288):只跑读前端 / 文档文件的后端守卫。文件清单与 scripts/ci_scope.py 的 LIGHT_TESTS
   # 逐字一致(守卫测试比对);命令写成一行,守卫按行解析。这几条不探测 ffmpeg,不装它。

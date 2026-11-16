@@ -112,6 +112,23 @@ def idle_automatic_title_worker(monkeypatch):
     monkeypatch.setattr(title_translation, "worker_loop", idle)
 
 
+# 测试里的密码哈希(issue #289):生产是 PBKDF2 20 万轮(单次约 25~70 ms),而 unit 套件一轮要哈希 / 校验约 2400 次,
+# 占 worker 时间约 7%。测试只关心「能登录 / 口令对不对」,不关心轮数——整个会话把缺省轮数调到 1000;
+# 需要真轮数的用例显式传 `iterations=`。夹具顺带钉住生产缺省不被调低。
+TEST_PBKDF2_ITERATIONS = 1_000
+
+
+@pytest.fixture(autouse=True, scope="session")
+def fast_password_hashing():
+    from services import accounts
+
+    production = accounts._PBKDF2_ITERATIONS
+    assert production >= 200_000, f"生产缺省轮数是 {production}:低于 20 万——快哈希只该来自这个夹具,不该改生产常量"
+    accounts._PBKDF2_ITERATIONS = TEST_PBKDF2_ITERATIONS
+    yield production
+    accounts._PBKDF2_ITERATIONS = production
+
+
 # ── 读取审计(issue #288):「CI 跳过重型后端 job」不丢覆盖 ──
 # PR 只动 frontend/ docs/ docs-site/ 与仓根 *.md 时,CI 不跑 backend-unit / backend-deploy,只跑 scripts/ci_scope.py 的
 # LIGHT_TESTS。这成立的前提是:除了那几条,没有别的后端测试依赖这些路径下的文件。前提靠人记会烂——新写的测试读了
@@ -229,3 +246,49 @@ def pytest_make_collect_report(collector):
 if not getattr(sys, "_dorami_scope_audit_installed", False):
     sys.addaudithook(_scope_audit_hook)
     sys._dorami_scope_audit_installed = True
+
+
+# ── 分片(issue #289):`--shard I/N` 只跑落在第 I 片的用例 ──
+# CI 把 backend-unit / backend-deploy 各拆成 N 个 job(矩阵)并行,每个 job 带同一条命令、只差 I。划分必须满足:
+# 每条用例恰好落在一片里——漏掉的用例哪个 job 都不跑,而 CI 照样是绿的。所以划分是纯函数(用例函数的 nodeid 做 CRC32),
+# 不依赖收集顺序、不依赖别的片跑了什么;同一个测试函数的全部参数化落在同一片(参数 id 不参与哈希:个别 id 来自对象
+# repr,不能指望它跨进程稳定)。xdist 下每个 worker 各自收集、各自按同一函数筛,结果一致。
+# ci.yml 里矩阵取值与分母的一致性由 tests/test_ci_workflow.py 守卫。
+import re
+import zlib
+
+
+def shard_of(nodeid: str, total: int) -> int:
+    """用例属于第几片(1 起)。"""
+    return zlib.crc32(nodeid.split("[", 1)[0].encode("utf-8")) % total + 1
+
+
+def parse_shard(spec: str) -> tuple[int, int] | None:
+    """`I/N` → (I, N);空串 = 不分片。形状不对直接报用法错误,不能默默退回全量或空集。"""
+    if not spec:
+        return None
+    m = re.fullmatch(r"([1-9][0-9]*)/([1-9][0-9]*)", spec)
+    if not m or int(m.group(1)) > int(m.group(2)):
+        raise pytest.UsageError(f"--shard 须为 I/N 且 1 <= I <= N,实得 {spec!r}")
+    return int(m.group(1)), int(m.group(2))
+
+
+def pytest_addoption(parser):
+    parser.addoption("--shard", default="", metavar="I/N",
+                     help="只跑按用例函数哈希落在第 I 片(共 N 片,I 从 1 起)的用例;CI 用它把一个 job 拆成 N 个并行")
+
+
+def pytest_configure(config):
+    parse_shard(config.getoption("--shard"))  # 形状错在收集前就报
+
+
+def pytest_collection_modifyitems(config, items):
+    shard = parse_shard(config.getoption("--shard"))
+    if shard is None:
+        return
+    index, total = shard
+    kept = [item for item in items if shard_of(item.nodeid, total) == index]
+    dropped = [item for item in items if shard_of(item.nodeid, total) != index]
+    if dropped:
+        config.hook.pytest_deselected(items=dropped)
+        items[:] = kept
