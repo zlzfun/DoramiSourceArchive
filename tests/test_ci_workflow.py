@@ -360,8 +360,9 @@ def _assert_plain_pytest_step(text: str, job: str) -> None:
     assert len(step) == 2 and re.fullmatch(r"      - name: .+", step[0]) and re.fullmatch(r"        run: \S*python -m pytest .+", step[1]), (
         f"{job} 跑 pytest 的那一步只能有 name 与单行 run,实得 {step}"
     )
-    argv = _pytest_commands(text)[job]
-    assert not any(tok in ("||", "&&", "|", "&", ";") or tok.endswith(";") for tok in argv), f"{job} 的 pytest 命令里不得串接别的命令"
+    # 看原始命令串而不是分词结果:`…cacheprovider||true` 不带空格时 shlex 不会把 `||` 拆成独立的词(Codex R2 观察项)
+    command = step[1].split("run: ", 1)[1]
+    assert not re.search(r"[|&;<>`]|\$\(", command), f"{job} 的 pytest 命令里不得串接、重定向或嵌入别的命令:{command!r}"
 
 
 def _assert_released_migrations_guard(text: str) -> None:
@@ -479,6 +480,8 @@ MUTATIONS = {
     "light_step_collect_only_via_env": (lambda t: _mutate(t, _LIGHT_RUN, "        env:\n          PYTEST_ADDOPTS: --collect-only\n" + _LIGHT_RUN, count=1), _assert_plain_pytest_step, LIGHT),
     "light_command_folded_or_true": (lambda t: _mutate(t, _LIGHT_RUN, _LIGHT_RUN + "          || true\n", count=1), _assert_plain_pytest_step, LIGHT),
     "light_command_chained_or_true": (lambda t: _mutate(t, _LIGHT_RUN, _LIGHT_RUN[:-1] + " || true\n", count=1), _assert_plain_pytest_step, LIGHT),
+    "light_command_chained_without_spaces": (lambda t: _mutate(t, _LIGHT_RUN, _LIGHT_RUN[:-1] + "||true\n", count=1), _assert_plain_pytest_step, LIGHT),
+    "light_command_backgrounded": (lambda t: _mutate(t, _LIGHT_RUN, _LIGHT_RUN[:-1] + "&\n", count=1), _assert_plain_pytest_step, LIGHT),
     "light_job_level_env": (lambda t: _mutate(t, _LIGHT_IF, _LIGHT_IF + "    env:\n      PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'\n", count=1), _assert_plain_pytest_step, LIGHT),
     "light_job_continue_on_error": (lambda t: _mutate(t, _LIGHT_IF, _LIGHT_IF + "    continue-on-error: true\n", count=1), _assert_plain_pytest_step, LIGHT),
     "unit_step_swallows_failure": (lambda t: _mutate(t, _UNIT_RUN_HEAD, "        continue-on-error: true\n" + _UNIT_RUN_HEAD, count=1), _assert_plain_pytest_step, UNIT),

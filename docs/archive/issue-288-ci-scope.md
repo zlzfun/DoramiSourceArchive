@@ -1,6 +1,7 @@
 # CI 提速(一):按改动面选 job、一轮返修一次推送、本地 / CI 分工(issue #288)
 
-> 状态:进行中(2026-11-16 开工;实现、自测与首轮检视返修完成,复检中)。
+> **归档于 2026-11-16(issue #288,开发版 3.68.0-alpha,CI / 测试 / 文档、无运行时代码;Codex 两轮检视通过,无目检界面,按「检视通过 + CI 绿」直接合入)**:现状以 `.github/workflows/ci.yml`、`scripts/ci_scope.py`、`tests/conftest.py` 与 `docs/dev/testing.md` 为准,文中路径与状态为当时记录。
+> 状态:已落地(2026-11-16 开工并当日收口;合入后用一条纯文档 PR 实测轻量路径,见 §8)。
 > 实现方:Claude Code(Fable 5.2);检视方:Codex(见 §7)。分支 `feat/issue-288-ci-scope`。
 > 关联:[issue #288](https://github.com/zlzfun/DoramiSourceArchive/issues/288);后续 [issue #289](https://github.com/zlzfun/DoramiSourceArchive/issues/289)(`backend-unit` 分片与用例开销);CI 两 job 拆分来自 issue #150。
 
@@ -95,8 +96,8 @@ frontend / docs-site / workflows:不变,每次都跑(都不到 1 分钟)
   - 汇总门真值表从 16 种扩到 1024 种(`changes` 结果 4 × `backend` 取值 4 × 三个 job 结果各 4),真跑 `ci.yml` 里那段 shell,与独立重述的真值表逐项比对,恰有 5 种放行;
   - 新增 `_assert_scope`:`changes` 无条件运行、唯一命令是判定脚本、`outputs.backend` 与汇总门的 `BACKEND` 都接自它、`fetch-depth: 2`、`PR_HEAD_SHA` 接线;重型 / 轻量 job 的 `needs` 与 `if` 逐字;轻量命令的文件清单与 `LIGHT_TESTS` 逐字一致、不带筛选项、都落在 unit 侧;
   - 「job 成功」等于「用例通过」(检视返修):汇总门那一步的形状恰是 name + env(五个变量各一次)+ `run: |`、job 层没有 env;三个后端 job 里跑 pytest 的那一步只能是 name + 单行 run,job 层只认 name / needs / if / runs-on / steps;`ci.yml` 任何位置不得设置 `PYTEST_ADDOPTS`;
-  - 反向对照共 49 条突变:原有 14 条按新文本更新;首版新增 19 条(门禁忽略 `changes` 结果、把未知取值当轻量、轻量路径不要求 light 成功 / 接受任意重型结果、全量路径接受 skipped、`BACKEND` 或 output 写死、判定步骤换成常量 / 另加一步写 output、判定 job 挂条件、深度 / PR head 接线丢失、重型 job 条件去掉或放宽、轻量条件反转、轻量清单缺 / 多 / 被 `-k` 筛空);检视返修新增 16 条(汇总门那一步以 `- if:` 开头被跳过、job 层 env + step 层同名常量、同名 env 写两次、多一步、改 shell;pytest 步骤挂条件 / `continue-on-error` / `PYTEST_ADDOPTS`、命令折行或同行接 `|| true`、job 层 env / `continue-on-error`)。
-- 自测(本机,`-n 4 --dist worksteal`):上述两文件 123 例通过;unit 侧全量 3567 passed / 1 skipped(约 3.5 分钟;首版实测带读取审计 207 s,与不带时相同,无误报);deploy 侧全量 223 passed(4–5 分钟);`scripts/check_docs.py` 0 个问题。`ci.yml` 经 YAML 解析核对 job 结构;actionlint 本机没有,由 CI 的 `workflows` job 查。
+  - 反向对照共 51 条突变:原有 14 条按新文本更新;首版新增 19 条(门禁忽略 `changes` 结果、把未知取值当轻量、轻量路径不要求 light 成功 / 接受任意重型结果、全量路径接受 skipped、`BACKEND` 或 output 写死、判定步骤换成常量 / 另加一步写 output、判定 job 挂条件、深度 / PR head 接线丢失、重型 job 条件去掉或放宽、轻量条件反转、轻量清单缺 / 多 / 被 `-k` 筛空);检视返修新增 18 条(汇总门那一步以 `- if:` 开头被跳过、job 层 env + step 层同名常量、同名 env 写两次、多一步、改 shell;pytest 步骤挂条件 / `continue-on-error` / `PYTEST_ADDOPTS`、命令折行或同行接 `|| true`(带不带空格)、命令末尾 `&`、job 层 env / `continue-on-error`)。
+- 自测(本机,`-n 4 --dist worksteal`):上述两文件 125 例通过;unit 侧全量 3567 passed / 1 skipped(约 3.5 分钟;首版实测带读取审计 207 s,与不带时相同,无误报);deploy 侧全量 223 passed(4–5 分钟);`scripts/check_docs.py` 0 个问题。`ci.yml` 经 YAML 解析核对 job 结构;actionlint 本机没有,由 CI 的 `workflows` job 查。
 
 ## 6. 取舍与不做
 
@@ -127,6 +128,12 @@ frontend / docs-site / workflows:不变,每次都跑(都不到 1 分钟)
 
 Codex 核实后确认的边界(不改,记录):重跑旧运行保持原 SHA,不追随后来的 merge ref;`pull_request` 的 `edited`(只改 base)不在触发类型里,是既有配置;审计对「列仓根目录只取文件名」与「上一条用例的后台线程读取算到下一条头上」无能为力,现有用例没有落在这两处的。
 
-### R2(复检)
+### R2(复检,只对照修复清单)
 
-(待填。)
+结论:F1–F6 全部修到,未发现新增 P1,「可合入」。Codex 实测:`tryfirst=True` 的执行顺序有效,读后 skip / xfail / xpass 均改判失败并移除 `wasxfail`,setup 阶段改判后 call 不运行、teardown 照常;49 条突变全部被拒、汇总门 1024 种组合验证通过;步骤改名、空行与独立注释、增加准备步骤、调整 env 变量顺序都没有被形状白名单误拒。受只读沙箱限制它没有复跑完整套件(实现方本机:unit 3567 passed、deploy 223 passed)。
+
+观察项一条:不带空格的 shell 串接符(`…cacheprovider||true`)绕过 argv 检查——分词不会把 `||` 拆成独立的词。一行可修,复检后顺手收紧:改看原始命令串,不许出现 `| & ; < >` 反引号与 `$(`,补两条突变(共 51 条)。这一处改动在复检之后,未再送检。
+
+## 8. 合入后验证
+
+(合入后用一条只改文档的 PR 走一遍轻量路径,把实际运行与耗时记在这里。)
