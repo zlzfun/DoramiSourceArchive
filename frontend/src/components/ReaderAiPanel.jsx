@@ -410,26 +410,35 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
 
   // 关闭面板:先播放退场动画,动画结束再卸载(与 CSS .is-closing 的 200ms 对齐);
   // 函数式 set 防重入——点外关闭与关闭钮可能连发,重复 setTimeout 会闪帧
+  const closeTimerRef = useRef(0);
   const closeAiPanel = useCallback(() => {
     setAiPanelClosing((closing) => {
       if (closing) return closing;
-      window.setTimeout(() => {
+      closeTimerRef.current = window.setTimeout(() => {
+        closeTimerRef.current = 0;
         setAiPanelOpen(false);
         setAiPanelClosing(false);
       }, 200);
       return true;
     });
   }, []);
+  // 收起动画进行中又要打开:取消这次收起,面板留在打开态(否则这一下点击被防重入吞掉,导轨钮却已经显示未选中)
+  const openAiPanel = useCallback(() => {
+    if (closeTimerRef.current) { window.clearTimeout(closeTimerRef.current); closeTimerRef.current = 0; }
+    setAiPanelClosing(false);
+    setAiPanelOpen(true);
+  }, []);
+  useEffect(() => () => { if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current); }, []);
 
   // 导轨上的「问答」钮:点一次开,再点一次收(首次渲染不算一次点击)
   const seenSignal = useRef(openSignal);
-  const panelOpenRef = useRef(aiPanelOpen);
-  useEffect(() => { panelOpenRef.current = aiPanelOpen; }, [aiPanelOpen]);
+  const panelShownRef = useRef(false);   // 开着且不在收起动画里
+  useEffect(() => { panelShownRef.current = aiPanelOpen && !aiPanelClosing; }, [aiPanelOpen, aiPanelClosing]);
   useEffect(() => {
     if (seenSignal.current === openSignal) return;
     seenSignal.current = openSignal;
-    if (panelOpenRef.current) closeAiPanel(); else setAiPanelOpen(true);
-  }, [openSignal, closeAiPanel]);
+    if (panelShownRef.current) closeAiPanel(); else openAiPanel();
+  }, [openSignal, closeAiPanel, openAiPanel]);
   useEffect(() => { onOpenChange?.(aiPanelOpen && !aiPanelClosing); }, [aiPanelOpen, aiPanelClosing, onOpenChange]);
 
   // 点击面板外任意处自动收起(目检拍板);正文图灯箱是 body 级 portal,点它不算「外」;

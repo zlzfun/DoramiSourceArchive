@@ -59,3 +59,13 @@ test('导轨标签常驻:只作用读者面的视图轨,管理面的应用导轨
   assert.match(css, /\n\.reader-vrail \.reader-vrail-label \{ opacity: 1; transform: none; transition: none;/);
   assert.ok(!/\n\.app-rail \.reader-vrail-label \{ opacity: 1/.test(css));
 });
+
+test('检视返修:月历开着时海报抬到目录之上;问答收起动画中再点是重开;目录点了就亮、到底亮最后一个、就绪时先同步', () => {
+  assert.match(css, /\n\.reader-shell \.bp-poster:has\(\.bp-pop\) \{ z-index: 5; \}/);
+  assert.match(panel, /if \(panelShownRef\.current\) closeAiPanel\(\); else openAiPanel\(\);/);
+  assert.match(panel, /window\.clearTimeout\(closeTimerRef\.current\); closeTimerRef\.current = 0; \}\s*setAiPanelClosing\(false\);/);
+  assert.match(brief, /sheet\.scrollTop \+ sheet\.clientHeight >= sheet\.scrollHeight - 2\) current = acts\[acts\.length - 1\]/);
+  assert.match(brief, /setActiveAct\(key\);\s*window\.clearTimeout\(tocPinRef\.current\);\s*tocPinRef\.current = window\.setTimeout\(/);
+  assert.match(brief, /const id = requestAnimationFrame\(syncToc\);/);
+});
+

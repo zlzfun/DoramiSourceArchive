@@ -13631,6 +13631,9 @@ input[type="radio"] {
 @media (hover: hover) { .bp-toc-link:hover { color: var(--dorami-ink); } }
 .reader-shell .bp-act { grid-template-columns: 180px minmax(0, 1fr); gap: 0 40px; padding: 40px 0 8px; scroll-margin-top: 44px; }
 .reader-shell .bp-toc + .bp-act { box-shadow: none; }   /* 目录条自己有底线 */
+/* 往期月历开着时把海报抬到目录之上:海报自成层叠上下文(z-index 2),浮层越不过目录(4);
+   目录自己不能降——条目里的「+ 订阅」「另见」是 1,它要压在上面 */
+.reader-shell .bp-poster:has(.bp-pop) { z-index: 5; }
 .reader-shell .bp-act-head { top: 76px; }
 .reader-shell .bp-items { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 48px; align-items: start; }
 .reader-shell .bp-item { padding-bottom: 32px; }
@@ -13639,8 +13642,9 @@ input[type="radio"] {
 .reader-shell .bp-item-sum { margin-top: 8px; font-size: 14px; -webkit-line-clamp: 3; }
 .reader-shell .bp-item-meta { margin-top: 12px; font-size: 12px; }
 .reader-shell .bp-item-open::after { inset: -10px -12px 14px; }
-/* 版框窄(阅读器窗口不到约 1000)时条目退回一栏,两栏的行长会短到一行十来个字 */
-@container (max-width: 880px) {
+/* 版框窄(阅读器窗口约 1100 以下)时条目退回一栏,两栏的行长会短到一行十来个字。
+   桌面壳里版框不会窄于 961(1025 起才是桌面壳),所以阈值得落在这之上 */
+@container (max-width: 1040px) {
   .reader-shell .bp-items { grid-template-columns: minmax(0, 1fr); }
 }
 

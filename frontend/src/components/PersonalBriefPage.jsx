@@ -469,20 +469,28 @@ export default function PersonalBriefPage({
   const sheetRef = useRef(null);
   // 吸顶目录(issue #279 第四批,桌面):读到哪一个板块,目录上那一项点亮;点目录跳到那个板块
   const [activeAct, setActiveAct] = useState('');
+  const tocPinRef = useRef(0);   // 点了目录之后的一小段时间(平滑滚动中)不让滚动事件改写点亮项;存的是解除它的计时器
   const syncToc = useCallback(() => {
     const sheet = sheetRef.current;
-    if (!sheet) return;
+    if (!sheet || tocPinRef.current) return;
     const line = sheet.getBoundingClientRect().top + 44 + 56;   // 目录条的高度,加一点余量
     const acts = [...sheet.querySelectorAll('.bp-act')];
     let current = '';
     acts.forEach((el) => { if (el.getBoundingClientRect().top <= line) current = el.dataset.act || ''; });
     // 还没有哪个板块滚到目录条下面、但第一个板块已经进了视口:读的就是它
     if (!current && acts[0] && acts[0].getBoundingClientRect().top < sheet.getBoundingClientRect().bottom - 120) current = acts[0].dataset.act || '';
+    // 滚到底了:最后一个板块短的话,它的顶够不到目录条下面——读的就是它
+    if (acts.length && sheet.scrollTop + sheet.clientHeight >= sheet.scrollHeight - 2) current = acts[acts.length - 1].dataset.act || current;
     setActiveAct(current);
   }, []);
   const jumpToAct = useCallback((key) => {
     const target = [...(sheetRef.current?.querySelectorAll('.bp-act') || [])].find((el) => el.dataset.act === key);
-    target?.scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
+    if (!target) return;
+    // 被点的那一项立刻点亮;末尾的短板块滚不到阈值,不能等滚动事件来判
+    setActiveAct(key);
+    window.clearTimeout(tocPinRef.current);
+    tocPinRef.current = window.setTimeout(() => { tocPinRef.current = 0; }, 900);
+    target.scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
   }, []);
 
   const loadHistory = useCallback(() => (
@@ -708,6 +716,15 @@ export default function PersonalBriefPage({
   const acts = useMemo(() => grouped
     .map((group) => ({ ...group, items: group.items.filter((item) => item !== headline) }))
     .filter((group) => group.items.length > 0), [grouped, headline]);
+  // 目录不等第一次滚动:版面就绪、换期、板块变化时先同步一次(短海报下第一个板块一开始就在视口里)
+  const actKeys = acts.map((group) => group.key).join('|');
+  useEffect(() => {
+    if (mobile || !actKeys) return undefined;
+    window.clearTimeout(tocPinRef.current);
+    tocPinRef.current = 0;
+    const id = requestAnimationFrame(syncToc);
+    return () => cancelAnimationFrame(id);
+  }, [mobile, actKeys, syncToc]);
   const headSection = headline ? (grouped.find((group) => group.items.includes(headline))?.key || '') : '';
 
   // 社交条目(codex 检视 P2):社交容器是整幅卡片流,没有「选中一条」的落点——openArticleById
