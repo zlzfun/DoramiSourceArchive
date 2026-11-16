@@ -229,10 +229,28 @@ collection run clears the source-state stamp.
 |---|---|
 | `articles` | Absent → insert and stamp. Stamped → update as before. Local version (no stamp) → the local version is kept only when its `archive_updated_at` is **strictly newer**; older or equal is replaced by the incoming version (ties go to the upstream so that nodes seeded from a V1 archive or a database copy attach to it). Both values are compared as instants (naive values are read in the node's time zone; an unparsable value counts as oldest). Producer-local run links (`fetch_run_id`, `job_id`, `job_run_id`, `source_group_id`) are cleared on import. |
 | `analyses`, `podcast_texts`, `podcast_audio` | A row whose article / episode is a local version, or whose slot is held by a local product, is **skipped and not recorded** instead of failing the page. Hash mismatches against a synced article still roll the page back. |
-| `sources` | Created with `ai_analysis_enabled = false` and no fetcher binding; `is_active` and the catalog fields follow the upstream. Existing rows keep their analysis switch and binding. The first time the upstream marker lands on an existing row that is not in local use, its analysis switch is turned off as well. A source **in local use** (it has a local source state, is named by a collection job, or carries an admin-saved binding — any binding other than an untouched auto-installed one: a preset mirror row bound to its own fetcher with no parameters, or a podcast-catalog row whose feed address and parameters are still the catalog defaults; `origin` is not consulted because sync overwrites it) ignores upstream delete, retirement and `is_active`. |
+| `sources` | Created with `ai_analysis_enabled = false` and no fetcher binding; `is_active` and the catalog fields follow the upstream. Existing rows keep their analysis switch and binding. The first time the upstream marker lands on an existing row that is not in local use, its analysis switch is turned off as well. A source **in local use** (it has a local source state, is named by a collection job (the program-installed default job does not count while it is untouched and disabled), or carries an admin-saved binding — any binding other than an untouched auto-installed one: a preset mirror row bound to its own fetcher with no parameters, or a podcast-catalog row whose feed address and parameters are still the catalog defaults; `origin` is not consulted because sync overwrites it) ignores upstream delete, retirement and `is_active`. |
 | `source_states` | A local state that is strictly newer is kept; otherwise applied. Local cursors survive an overwrite. |
 | `events` | See below. Members whose article is a local version go to `event_member_backlog` and are restored when the article is taken over. |
 | tombstones | Delete only rows stamped by that upstream. Sources: in local use → ignored; otherwise retired when the node has articles of that source, deleted when it has none. A tombstone for a row the node never had counts as applied. |
+
+**First upstream.** Establishing a node's first upstream changes exactly one piece of
+local configuration. The program-installed default collection job (the podcast-catalog
+observation job that names only `podcast_ai_native_dev`) is disabled and the analysis
+switch of that source is turned off, because the upstream already collects it — but
+only when neither the job (its source list, schedule, parameters) nor the binding of
+that source was edited by an admin. When another job also names that source, the
+default job is still disabled but the analysis switch is left on. Admin-made jobs and
+every other source are left alone, adding further targets later does not repeat it,
+and a restart does not turn either back on. An admin who wants the node to collect it
+re-enables the job (it then counts as local use again) and the analysis switch.
+
+**Program-installed catalog rows.** The podcast-catalog install that runs at startup
+respects what sync applied: a catalog row that carries the upstream marker keeps the
+`is_active` it has (only unmarked rows are normalised to active), and a source for
+which the `sources` stream holds an upstream tombstone is not reinstalled. Otherwise a
+restart would undo an upstream stop or delete and export the revived row downstream
+as a local change. An admin importing a catalog entry by id still installs it.
 
 Every import page takes the SQLite write lock **before** it reads local state, so the
 comparison with a local version cannot race a local writer; the fetch path likewise
