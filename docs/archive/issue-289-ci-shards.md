@@ -1,8 +1,9 @@
 # CI 提速(二):后端 job 分片并行、降低用例开销(issue #289)
 
-> 状态:进行中(2026-11-16 开工;分片与守卫已实现并在 CI 上实测,首轮检视返修完成,复检中)。
+> **归档于 2026-11-16(issue #289,PR #294,开发版 3.68.0-alpha,CI / 测试,运行时代码只动 `hash_password` 一处默认参数;Codex 两轮检视通过,无目检界面,按「检视通过 + CI 绿」直接合入)**:现状以 `.github/workflows/ci.yml`、`tests/conftest.py`、`tests/test_ci_workflow.py` 与 `docs/dev/testing.md` 为准,文中路径与状态为当时记录。
+> 状态:已落地(2026-11-16 开工并当日收口)。
 > 实现方:Claude Code(Fable 5.2);检视方:Codex(见 §6)。分支 `feat/issue-289-ci-shards`。
-> 关联:[issue #289](https://github.com/zlzfun/DoramiSourceArchive/issues/289);前一波 [issue #288](https://github.com/zlzfun/DoramiSourceArchive/issues/288)(按改动面选 job,[方案](../archive/issue-288-ci-scope.md))。
+> 关联:[issue #289](https://github.com/zlzfun/DoramiSourceArchive/issues/289);前一波 [issue #288](https://github.com/zlzfun/DoramiSourceArchive/issues/288)(按改动面选 job,[方案](./issue-288-ci-scope.md))。
 
 ## 1. 现状与目标
 
@@ -90,13 +91,13 @@
 
 ## 4. 守卫与自测
 
-- `tests/test_ci_workflow.py`(117 例,91 条突变):§2.3 的三层;畸形 `--shard` 七种写法都是用法错误;分片突变按当前片数生成,两个 job 各 15 种(矩阵缺片 / 从 0 起 / 重复 / `exclude` 三种写法 / `include` / 多一维 / `max-parallel` / 多行列表 / 带引号的 `strategy` / 整块删掉,分母漂移,分子写死,选项丢失),外加「后一个 `--shard` 覆盖」的结构与端到端两条、轻量 job 被加矩阵、job 层带引号的键;`backend-guards` 七条(汇总门不要求它 / 不 `needs` 它,被分片、被筛选、清单少一份、只在轻量模式跑、吞失败)。汇总门真值表 4096 种组合真跑 shell。job 层的键改为严格读取(四空格缩进的有效行必须是不带引号的 `key:`)。
+- `tests/test_ci_workflow.py`(123 例,97 条突变):§2.3 的三层;畸形 `--shard` 七种写法都是用法错误;分片突变按当前片数生成,两个 job 各 15 种(矩阵缺片 / 从 0 起 / 重复 / `exclude` 三种写法 / `include` / 多一维 / `max-parallel` / 多行列表 / 带引号的 `strategy` / 整块删掉,分母漂移,分子写死,选项丢失),外加「后一个 `--shard` 覆盖」的结构与端到端两条、轻量 job 被加矩阵、job 层带引号的键;`backend-guards` 七条(汇总门不要求它 / 不 `needs` 它,被分片、被筛选、清单少一份、只在轻量模式跑、吞失败)。汇总门真值表 4096 种组合真跑 shell。job 层的键改为严格读取(四空格缩进的有效行必须是不带引号的 `key:`)。
 - `tests/test_accounts.py`:缺省轮数在调用期读取、显式轮数照用、新旧轮数的哈希都能校验、夹具交回的生产缺省不低于 20 万。
-- 自测(本机,`-n 4 --dist worksteal`):unit 三片(85 / 72 / 73 秒)与 deploy 两片(125 / 167 秒)各自通过;检视返修后 unit 侧全量 3653 passed / 1 skipped、deploy 侧全量 225 passed,`backend-guards` 的同款命令(不分片、不并行)177 passed / 38 秒;`scripts/check_docs.py` 0 个问题。CI:PR #294 首次推送全绿(数字见 §2.2)。
+- 自测(本机,`-n 4 --dist worksteal`):unit 三片(85 / 72 / 73 秒)与 deploy 两片(125 / 167 秒)各自通过;检视返修后 unit 侧全量 3653 passed / 1 skipped、deploy 侧全量 225 passed,`backend-guards` 的同款命令(不分片、不并行)177 passed / 38 秒(复检后再加 6 条突变,共 183 例);`scripts/check_docs.py` 0 个问题。CI:PR #294 首次推送全绿(数字见 §2.2)。
 
 ## 5. 取舍与不做
 
-- **片数**:unit 3 片、deploy 2 片。再多,每片的固定开销(检出、装依赖、装 ffmpeg、收集,约 45 秒)占比上升,收益递减;片数写在 `ci.yml` 一处,守卫跟着矩阵长度走,以后调整不用改测试。
+- **片数**:unit 3 片、deploy 2 片。再多,每片的固定开销(检出、装依赖、装 ffmpeg、收集,约 45 秒)占比上升,收益递减;片数写在 `ci.yml` 的两处(矩阵与命令分母,守卫保证两者一致),守卫与突变都按当前片数生成,以后调整不用改测试。
 - **不按耗时做装箱分片**(pytest-split 一类):要入库一份耗时表并持续更新,哈希分片实测已经够匀(本机三片 85 / 72 / 73 秒)。
 - **不拆 `-n 4`**:每片仍是 4 个 worker,和不分片时一样吃满一台 runner。
 - **不做建库模板**:§3.3。
@@ -120,6 +121,11 @@
 | 4 | P3 | 「片数只写在一处」不准确:还写在命令分母与突变锚点里,正确改成四片后有 9 条突变因锚点失效而失败 | 突变按 `ci.yml` 当前片数生成;文档改为「矩阵与命令分母两处,测试不用改」;模拟 4 片 / 3 片验证 |
 | 5 | P3 | 「矩阵全部成功才 success」说得太绝对:有未经官方确认的社区报告,矩阵某一片因分不到 runner 被取消时汇总仍为 success | `ci.yml` 注释改为引用官方文档的限定说法,记观察期(backlog) |
 
-### R2(复检)
+### R2(复检,只对照修复清单)
 
-(待填。)
+结论:F1–F7 全部修到,未发现新引入的 P1,「可合入」。Codex 用 R1 的两个现场直接验证:追加 `--shard 1/3` 被结构守卫拒绝、集合检查也能识别「重复跑第一片」;「空行后加 `exclude`」与带引号的 `"exclude"` 在 unit、deploy 两侧均被拒。`backend-guards` 被分片、删名单、改条件、吞失败时,留在 unit 划分里的守卫副本都能拦住(互为对照成立)。当前配置及模拟的四片 / 三片配置各执行 89 条非收集突变,全部被拒。四文件样本不是全仓证明,但分片函数未改、参数受控,未发现样本外的具体问题。
+
+两条观察项,复检后顺手收掉(未再送检):
+
+- `backend-guards` 的参数检查没有拒绝 `--collect-only` / `--co`——改为**选项白名单**,四个后端 job 的 pytest 命令只许 `-q`、`-p no:cacheprovider`、`-n`、`--dist`、`--shard`、`--durations=`、`--ignore=`、`--ignore-glob=`,其余一律拒(`-x`、`--maxfail`、`-k`、`-p no:xdist` 同理);补 6 条突变(共 97 条)。
+- 方案 §5 残留「片数写在 `ci.yml` 一处」的旧措辞——改为两处。

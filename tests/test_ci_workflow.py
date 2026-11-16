@@ -114,6 +114,9 @@ def _code(block: str) -> str:
 _JOB_KEYS = {"name", "needs", "if", "runs-on", "steps"}
 # 分片的两个 job 多一个 strategy(issue #289;矩阵本身的形状由 _assert_shards 守)
 _SHARDED = {"backend-unit", "backend-deploy"}
+# CI 的 pytest 命令只许出现这些选项(各自的取值另有守卫:-n / --dist 见 _assert_parallel,--shard 见 _assert_shards)
+_PYTEST_OPTS_WITH_VALUE = {"-p", "-n", "--dist", "--shard"}
+_PYTEST_PLAIN_OPTS = re.compile(r"-q|--durations=[0-9]+|--ignore=[^-]\S*|--ignore-glob=[^-]\S*")
 
 
 def _job_keys(text: str, job: str) -> dict[str, str]:
@@ -407,6 +410,20 @@ def _assert_plain_pytest_step(text: str, job: str) -> None:
     # 看原始命令串而不是分词结果:`…cacheprovider||true` 不带空格时 shlex 不会把 `||` 拆成独立的词(Codex R2 观察项)
     command = step[1].split("run: ", 1)[1]
     assert not re.search(r"[|&;<>`]|\$\(", command), f"{job} 的 pytest 命令里不得串接、重定向或嵌入别的命令:{command!r}"
+    # 选项白名单(Codex #289 R2 观察项):`--collect-only` 只收集不执行、`-x` 见红就停、`-k` / `-m` 筛掉用例——
+    # 命令照样成功,测的东西却少了。认得的才放行,不去枚举坏选项。
+    argv = shlex.split(command)
+    options, i = argv[argv.index("pytest") + 1:], 0
+    while i < len(options):
+        tok = options[i]
+        if tok in _PYTEST_OPTS_WITH_VALUE:
+            assert i + 1 < len(options), f"{job}:{tok} 缺取值"
+            if tok == "-p":
+                assert options[i + 1] == "no:cacheprovider", f"{job}:-p 只许 no:cacheprovider(实得 {options[i + 1]!r})"
+            i += 2
+            continue
+        assert not tok.startswith("-") or _PYTEST_PLAIN_OPTS.fullmatch(tok), f"{job} 的 pytest 命令里出现了守卫不认的选项 {tok!r}"
+        i += 1
 
 
 def _strategy_lines(text: str, job: str) -> list[str]:
@@ -714,6 +731,13 @@ MUTATIONS = {
     "guards_filtered": (lambda t: _mutate(t, _GUARDS_RUN, _GUARDS_RUN[:-1] + " -k nothing\n", count=1), _assert_scope, None),
     "guards_run_only_in_light_mode": (lambda t: _in_job(t, GUARDS, _HEAVY_IF, _LIGHT_IF), _assert_scope, None),
     "guards_step_swallows_failure": (lambda t: _mutate(t, _GUARDS_RUN, "        continue-on-error: true\n" + _GUARDS_RUN, count=1), _assert_plain_pytest_step, GUARDS),
+    # ── Codex #289 R2 观察项:命令成功但没真测 ──
+    "guards_collect_only": (lambda t: _mutate(t, _GUARDS_RUN, _GUARDS_RUN[:-1] + " --collect-only\n", count=1), _assert_plain_pytest_step, GUARDS),
+    "light_collect_only_short": (lambda t: _mutate(t, _LIGHT_RUN, _LIGHT_RUN[:-1] + " --co\n", count=1), _assert_plain_pytest_step, LIGHT),
+    "unit_stops_at_first_failure": (lambda t: _mutate(t, _UNIT_CMD_TAIL, _UNIT_CMD_TAIL + " -x", count=1), _assert_plain_pytest_step, UNIT),
+    "unit_maxfail": (lambda t: _mutate(t, _UNIT_CMD_TAIL, _UNIT_CMD_TAIL + " --maxfail=1", count=1), _assert_plain_pytest_step, UNIT),
+    "deploy_filtered_by_keyword": (lambda t: _in_job(t, DEPLOY, " --durations=25", " --durations=25 -k migrations"), _assert_plain_pytest_step, DEPLOY),
+    "unit_plugin_disabled": (lambda t: _in_job(t, UNIT, " -p no:cacheprovider", " -p no:cacheprovider -p no:xdist"), _assert_plain_pytest_step, UNIT),
 }
 
 
