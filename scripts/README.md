@@ -40,8 +40,9 @@
 
 | 脚本 | 用途 | 数据边界 |
 |---|---|---|
-| [`check_mobile_reader_e2e.py`](./check_mobile_reader_e2e.py) | #90 / #86 移动读者真实端到端测试(+ #108 聚焦环回归:全局环须在 `@layer base`、容器画环的输入框无内框;+ #230 手机守卫 `guards`:四档返回键矩阵、长按、触控 / 输入字号抽样、长列表 DOM 上限),入口 `cd frontend && npm run test:e2e`，见 [说明](../docs/frontend/e2e.md)。原 `check_mobile_navigation.py`(合成 API 移动导航回归)已于 #230 批 4b 退役并入此处。 | 自建临时 FastAPI/SQLite + 构建预览；不接外部服务，不改开发库，结束清理所属进程。 |
+| [`check_mobile_reader_e2e.py`](./check_mobile_reader_e2e.py) | #90 / #86 移动读者真实端到端测试(+ #108 聚焦环回归:全局环须在 `@layer base`、容器画环的输入框无内框;+ #230 手机守卫 `guards`:四档返回键矩阵、长按、触控 / 输入字号抽样、长列表 DOM 上限),+ #269 `brief-guides` 早报生成/播放入口（生成状态模拟、真实产物播放），入口 `cd frontend && npm run test:e2e`，见 [说明](../docs/frontend/e2e.md)。原 `check_mobile_navigation.py`(合成 API 移动导航回归)已于 #230 批 4b 退役并入此处。 | 自建临时 FastAPI/SQLite + 构建预览；不接外部服务，不改开发库，结束清理所属进程。 |
 | [`check_listen_guide_e2e.py`](./check_listen_guide_e2e.py) | #238 文章听导读的真实 React 浏览器回归：提交、暂时回读失败、重复请求及切篇隔离。 | 隔离 FastAPI/SQLite + 新构建前端；生成/状态/WAV 为显式桩，不调用付费供应商，结束清理所属进程与临时库。 |
+| [`eval_qa_coverage.py`](./eval_qa_coverage.py) | #254 冻结问答输入与评分表、新旧提示词及 `--contract` 子问题/短号证据协议对照（后者不测规划/检索）；显式提供资料头，旧协议/目录不匹配在HTTP前拒绝，v3请求绑定在模型await前捕获。语义需人工评分，见 [方案](../docs/plans/issue-254-qa-coverage.md)。 | `prepare` 离线，`run` 显式付费并限制实际 HTTP 次数/估算费用；只写新目录，不启动业务库、ASR/TTS，保留失败回执。 |
 | [`smoke_analysis_release.py`](./smoke_analysis_release.py) | 真实/合成 RSS、可选真实 LLM、租约重启恢复、SQLite 并发和个人早报 15 分钟降级。 | 强制使用非生产文件型 SQLite。 |
 | [`smoke_full_analysis_backfill.py`](./smoke_full_analysis_backfill.py) | 估算并可选调用真实模型执行小批量 `full_analysis`。 | 拒绝当前配置库并限制最大文章数。 |
 | [`replay_event_assignment.py`](./replay_event_assignment.py) | 事件层(issue #121)回放:从库只读导出日期窗 JSONL,或在临时库里按批重放「召回 + 辅助模型 + 规则 + 落库」,输出每日事件数 / ≥ 2 主体事件数 / 规模直方图 / 多成员事件成员标题 / 调用与 token;`--dry-run` 只做召回统计。 | 源库只读;只写临时目录;真实模型配置从 `--llm-from` 指向的库只读解析(ini / env + 该库 `app_settings` 覆盖;`--database-url` 模式默认同一库),不打印密钥。 |
@@ -49,6 +50,14 @@
 | [`verify_podcast_all_all_e2e.py`](./verify_podcast_all_all_e2e.py) | 启动外网/内网两个隔离的 `role=all` 后端，验证 Podcast 外网处理/内网只同步姿态、已发布转录与中文稿、精华音频、Reader 读取、重启及 checkpoint 幂等。 | 使用本地合成音频且剥离供应商密钥，不产生真实 ASR/TTS 调用；只写临时目录。 |
 
 已移除被完整 release smoke 取代且没有调用方的 `smoke_analysis_personal_digest.py`；持久化指标继续由管理 API 和 `services.analysis_observability` 提供，不保留两个含义重叠的命令入口。
+
+## 合入与发布守卫
+
+| 脚本 | 用途 | 数据边界 |
+|---|---|---|
+| [`check_docs.py`](./check_docs.py) | 文档守卫:索引覆盖 / 断链 / 状态词表 / L0 体量 / `plans/` 文件名;每波收口本地跑。 | 只读仓库文件。 |
+| [`check_released_migrations.py`](./check_released_migrations.py) | 已发布迁移文件逐字节守卫(issue #227):对远端最新正式 tag 比对 `alembic/versions/*`,新增允许、改写 / 删除 / 改名红,取不到基线也红;CI `backend-deploy` 在每次含后端改动的 PR 与 push 到 main 时跑(只动前端 / 文档的 PR 改不到迁移文件,该 job 跳过,issue #288),本地 `--offline` / `--baseline`。 | 只读;本地没有基线 tag 时只 fetch 那一个 tag。 |
+| [`ci_scope.py`](./ci_scope.py) | CI 改动面判定(issue #288):PR 的全部改动路径都在 `frontend/` `docs/` `docs-site/` 与仓根 `*.md` 内时输出 `backend=false`(跳过两个重型后端 job,只跑 `LIGHT_TESTS`),其余一律 `true`;`SKIP_SAFE_DIRS` / `LIGHT_TESTS` 是 `ci.yml` 与 `tests/conftest.py` 读取审计的单一事实来源;`GUARD_TESTS` 是不分片的 `backend-guards` job 跑的工作流守卫清单(issue #289)。 | 只读 git;CI 里写 `$GITHUB_OUTPUT`,本地运行只打印。 |
 
 ## 关于导出产物
 

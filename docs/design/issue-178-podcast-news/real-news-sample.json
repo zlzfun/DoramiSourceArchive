@@ -1,0 +1,26 @@
+{
+  "headline": "Goodfire 发布神经元可解释性研究与图谱",
+  "summary": "11月10日，Goodfire 发布《Neurons as an Interpretable Basis》及 Neuron Atlas。团队以 Qwen3.6-35B-A3B 为对象，用智能体实验生成并检验神经元的功能描述。论文报告：每次前向计算中屏蔽最弱的92.2% MoE神经元激活，语言建模损失上升2.9%。这指动态屏蔽激活，不是永久删除参数；结果仍限于所研究模型与实验条件。",
+  "event_date": "2026-11-10",
+  "event_status": "官方论文已发布，未经独立复现",
+  "news_value": 5.5,
+  "news_value_reason": "有一手发布和具体实验依据；本次未核实广泛复现、开源SOTA或广泛行业影响，按现行常规论文4.0—5.5档复核。",
+  "section": "研究",
+  "model_news_value": 6.2,
+  "review_status": "reviewed_local_sample",
+  "review_changes": [
+    "删除混在论文结果中的访谈74%指标，不用它冒充论文73%指标或模型理解率。",
+    "精确92.2%和2.9%绑定官方论文，原稿片段仅作方法背景。",
+    "新闻分6.2复核为5.5，整期内容分8.2不变。"
+  ],
+  "parent_episode_id": "podcast_cognitive_revolution_b357bebd9bda79ab",
+  "parent_content_value": 8.2,
+  "original_duration_seconds": 6902.7,
+  "publication_status": "local_editorial_sample_not_published",
+  "baseline_edition_id": 67,
+  "baseline_items": 14,
+  "official_sources": [
+    "https://www.goodfire.com/research/neurons-as-an-interpretable-basis",
+    "https://www.goodfire.com/research"
+  ]
+}

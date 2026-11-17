@@ -17,6 +17,7 @@ from sqlmodel import Session
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+from tests.conftest import add_on_current_schema  # noqa: E402
 from models.db import (  # noqa: E402
     ArticleRecord,
     ArchiveSyncClockRecord,
@@ -324,15 +325,16 @@ def test_source_scope_and_authority_changes_revise_podcast_text_state(tmp_path):
         assert public.revision > private_revision
         public_revision = public.revision
 
+        # issue #263:源上的归属印记只是簿记(上游也有这个源),不再让本机产物退出导出范围。
         source = session.get(SourceConfigRecord, "podcast_public")
         source.collection_authority_id = "remote-producer"
         session.add(source)
         session.commit()
-        handed_off = session.get(
+        marked = session.get(
             ArchiveSyncEntityStateRecord, ("podcast_texts", identity)
         )
-        assert handed_off.operation == "tombstone"
-        assert handed_off.revision > public_revision
+        assert marked.operation == "upsert"
+        assert marked.revision == public_revision
 
 
 def test_late_private_source_insert_tombstones_prior_podcast_text_upsert(tmp_path):
@@ -512,7 +514,7 @@ def test_podcast_text_migration_preserves_local_publication(tmp_path):
     engine = create_engine(db_url)
     try:
         with Session(engine) as session:
-            session.add(_episode())
+            add_on_current_schema(session, _episode())  # 库停在旧版本
             session.commit()
             session.exec(text(
                 "INSERT INTO podcast_text_artifacts "
@@ -559,7 +561,7 @@ def test_narration_dependency_migration_withdraws_unprovable_legacy_audio(tmp_pa
     engine = create_engine(db_url)
     try:
         with Session(engine) as session:
-            session.add(_episode())
+            add_on_current_schema(session, _episode())  # 库停在旧版本
             session.commit()
             session.exec(text(
                 "INSERT INTO podcast_artifacts "
@@ -603,7 +605,7 @@ def test_audio_dependency_downgrade_refuses_lossy_digest_binding(tmp_path):
             text="需要保留的口播稿。",
         )
         with Session(engine) as session:
-            session.add(_episode())
+            add_on_current_schema(session, _episode())  # 库停在旧版本
             session.commit()
             session.add(script)
             session.add(_publication(
@@ -651,7 +653,7 @@ def test_podcast_text_migration_refuses_remote_authority_downgrade(tmp_path):
     engine = create_engine(db_url)
     try:
         with Session(engine) as session:
-            session.add(_episode())
+            add_on_current_schema(session, _episode())  # 库停在旧版本
             session.commit()
             session.add(_artifact(authority_id="external-producer"))
             session.add(_publication(authority_id="external-producer"))

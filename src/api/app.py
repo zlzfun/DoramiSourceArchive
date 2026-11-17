@@ -74,6 +74,7 @@ from api.routers import admin as admin_router
 from api.routers import daily_brief as daily_brief_router
 from api.routers import reader as reader_router
 from api.routers import ingest as ingest_router
+from api.routers import ingest_push as ingest_push_router
 from api.routers import subscriptions as subscriptions_router
 from api.routers import interests as interests_router
 from api.routers import personal_briefs as personal_briefs_router
@@ -117,6 +118,8 @@ from services import guest_access as guest_access_service
 from api import guest_policy
 from services import auth_policy
 from services import admin_audit as admin_audit_service
+from services import source_catalog as source_catalog_service
+from services import source_rows as source_rows_service
 from services.collection_nodes import PODCAST_SOURCE_TYPES, resolve_collection_node
 from services import reader_state as reader_state_service
 from services import ai_usage as ai_usage_service
@@ -422,7 +425,6 @@ COLLECTOR_API_PREFIXES = (
     "/api/archive/v2/candidate-evidence.jsonl",
     "/api/source-configs",
     "/api/source-builder",
-    "/api/import/social-posts",
     "/api/collection-jobs",
     "/api/collection-job-runs",
     # 每日聚合统计(运行页点阵/台账与节点 sparkline)——采集面只读。
@@ -576,14 +578,6 @@ async def lifespan(app: FastAPI):
     # 故调度器在任何角色下都启动,抓取类任务(load_tasks/远程同步/自定源刷新)
     # 仍只在 collector 角色注册。
     collector_on = runtime_collector_enabled()
-    if collector_on:
-        # Upgrade fence must be restored before saved collector jobs are loaded:
-        # an explicitly enabled v2 schedule makes this node a receiver even if
-        # its first authority snapshot has not completed yet.
-        remote_sync_service.activate_consumer_for_enabled_v2_schedule(
-            db_sink.engine,
-            reason="v2_schedule_startup",
-        )
     reconcile_orphaned_runs()
     if collector_on:
         load_tasks_to_scheduler()
@@ -747,9 +741,16 @@ if accounts_service.seed_root_admin_if_empty(db_sink.engine):
 _podcast_bootstrap = podcast_catalog_service.ensure_default_podcast_sources(db_sink.engine)
 if _podcast_bootstrap["created"]:
     logging.getLogger("dorami.sources").info(
-        "🎙️ 已安装 %d 个默认播客采集节点",
+        "🎙️ 已安装 %d 个默认播客源",
         len(_podcast_bootstrap["created"]),
     )
+# 源表成为全集(issue #262 R1c):外网 authority 启动时把预设抓取器镜像成源行、补系统行与
+# 墓碑、回填只在 articles / 订阅里出现的 id;接收端跳过(公共源行只经 Archive Sync 到达)。
+source_catalog_service.configure(model=settings.sources.model)
+try:
+    source_rows_service.run_startup_reconcile(db_sink.engine)
+except Exception:  # noqa: BLE001 - 对账失败不阻断启动;读服务对缺行仍有只读兼容视图
+    logging.getLogger("dorami.sources").exception("源表对账失败,本次启动按兼容视图运行")
 pipeline = DataPipeline(storages=[db_sink])
 
 # 媒体库（图床）：[media] enabled = false 时为 None，代理端点 302 回源、抓取后不预取，
@@ -1819,6 +1820,7 @@ app.include_router(admin_router.router)
 app.include_router(daily_brief_router.router)
 app.include_router(reader_router.router)
 app.include_router(ingest_router.router)
+app.include_router(ingest_push_router.router)
 app.include_router(subscriptions_router.router)
 app.include_router(interests_router.router)
 app.include_router(personal_briefs_router.router)
@@ -2265,7 +2267,7 @@ async def require_admin_session(request: Request, call_next):
     audit_rule_needs_body = (
         (normalized_method == "POST" and path == "/api/accounts")
         or (normalized_method == "POST" and path == "/api/accounts/batch")
-        or (normalized_method == "POST" and path == "/api/articles")
+        or (normalized_method == "POST" and path == "/api/admin/ingest/tokens")
         or (normalized_method == "POST" and path == "/api/articles/batch-delete")
         or (normalized_method == "POST" and path == "/api/fetch/batch")
         or (normalized_method == "PUT" and path == "/api/admin/analysis/config")
@@ -2291,6 +2293,12 @@ async def require_admin_session(request: Request, call_next):
         or (
             normalized_method == "POST"
             and path.startswith("/api/admin/source-visibility/")
+        )
+        or (
+            # 源的「本机分析」开关(issue #263):摘要要写开还是关
+            normalized_method == "POST"
+            and path.startswith("/api/admin/sources/")
+            and path.endswith("/analysis")
         )
     )
     if (auth_session or {}).get("role") == "admin" and audit_rule_needs_body:
@@ -2855,7 +2863,7 @@ async def execute_collection_job(job_id: int):
         items = build_collection_job_items(job)
         job_name = job.name
 
-    print(f"⏰ 采集任务触发: {job_name} ({len(items)} 个节点)")
+    print(f"⏰ 采集任务触发: {job_name} ({len(items)} 个源)")
     await run_collection_items(
         items,
         name=job_name,
@@ -2950,7 +2958,7 @@ def load_tasks_to_scheduler():
     # 每日 AI 资讯日报(独立于采集任务):启用即幂等注册,停用即摘除。
     reload_daily_brief_schedule()
     # 当前双节点部署均为 runtime.role=all：文章分析与个人早报和采集共用调度器；
-    # 远端权威文章另由持久化 authority 围栏排除本地分析。
+    # 同步写入的文章(带同步印记)不在本机分析,用上游同步来的结果。
     # 两个 worker 都在执行时读取数据库 feature flag，默认关闭且支持热切换。
     _ensure_interval_job(
         "article_analysis",
@@ -3021,7 +3029,8 @@ async def execute_article_analysis_job():
 
     def _activate_candidates():
         with Session(db_sink.engine) as session:
-            if not sync_consumer_policy.v2_consumer_mode_active(session):
+            # 同步来的词表只读:自动激活只在自己治理 taxonomy 的节点上跑。
+            if not sync_consumer_policy.taxonomy_governed_remotely(session):
                 taxonomy_service.run_auto_activation_cycle(session)
 
     try:
@@ -3417,12 +3426,16 @@ async def execute_remote_sync_job():
         protocol = schedule.get("protocol") or "v2"
         v2_probe = None
         if protocol == "v2":
+            from services import sync_console
+
             v2_probe = await remote_sync_service.probe(
                 schedule["base_url"],
                 schedule["username"],
                 schedule["password"],
                 protocol="v2",
+                since=sync_console.sync_checkpoint_since(engine, normalized_base),
             )
+            sync_console.record_probe(engine, v2_probe, probed_at=_now_iso())
         remote_sync_router.launch_remote_sync_job(
             engine,
             base_url=schedule["base_url"],
@@ -3564,7 +3577,7 @@ def reload_user_rss_schedule():
 
 
 # FetchBatchItem / FetchBatchParams 已迁至 api/routers/fetchers.py（下方 import re-export）。
-# SocialPostImport* 请求模型已迁出至 api/routers/ingest.py。
+# SocialPostImport* 请求模型随 /api/import/social-posts 退役(issue #262 推送入口统一波)。
 
 
 # SubscriptionFilters / SubscriptionDeliveryPolicy / SubscriptionCreate /
@@ -3576,7 +3589,7 @@ def reload_user_rss_schedule():
 # api/routers/source_configs.py（下方 import re-export）。
 
 
-# normalize_social_source_id / build_social_post_content 已迁出至 api/routers/ingest.py。
+# normalize_social_source_id / build_social_post_content 随社交导入退役(issue #262)。
 
 
 def resolve_state_source_id(fetcher_id: str, params: Optional[Dict[str, Any]], result: Any = None) -> str:
@@ -3625,6 +3638,23 @@ def _user_source_collection_blocked(
     )
 
 
+def _claim_local_source_state(state: SourceStateRecord) -> None:
+    """本机开始自己跑这个源:源状态从此是本机的(issue #263)。
+
+    行上若还是上游同步来的状态,清掉同步印记并把运行计数归零——那些计数是上游的运行史,
+    不和本机的混在一起。之后上游的状态只有在比本机更新时才会覆盖回来。
+    """
+
+    if not (state.authority_id or "").strip():
+        return
+    state.authority_id = ""
+    state.authority_revision = ""
+    state.total_runs = 0
+    state.success_runs = 0
+    state.failed_runs = 0
+    state.consecutive_failures = 0
+
+
 def mark_source_state_started(fetcher_id: str, params: Dict[str, Any], run_id: int):
     source_id = resolve_state_source_id(fetcher_id, params)
     now = _now_iso()
@@ -3646,6 +3676,7 @@ def mark_source_state_started(fetcher_id: str, params: Dict[str, Any], run_id: i
                 updated_at=now
             )
         else:
+            _claim_local_source_state(state)
             state.fetcher_id = fetcher_id
             state.status = "running"
             state.last_started_at = now
@@ -3682,6 +3713,7 @@ def mark_source_state_finished(
                 updated_at=now
             )
 
+        _claim_local_source_state(state)
         state.fetcher_id = fetcher_id
         state.last_run_id = run_id
         state.last_completed_at = now
@@ -3758,13 +3790,9 @@ async def run_fetcher_with_tracking(
         if not sync_consumer_policy.local_source_operation_allowed(
             authority_session, source_id, operation="collection"
         ):
-            reason = (
-                "由远端权威节点采集"
-                if source is not None and (source.collection_authority_id or "").strip()
-                else "已进入 v2 接收端采集围栏"
-            )
+            # issue #263 起只剩读者自定源的规则(源须启用且功能总闸开着);公共源恒放行。
             raise ValueError(
-                f"数据源 {source_id} {reason}，本机 role=all 也不得重复抓取"
+                f"自定源 {source_id} 未启用或自定源功能已关闭，本机不抓取"
             )
         if is_podcast_run:
             if (
@@ -3790,7 +3818,7 @@ async def run_fetcher_with_tracking(
     mark_source_state_started(execution_fetcher_id, params, run_id)
     fetcher_class = fetcher_registry.get_class(execution_fetcher_id)
     if not fetcher_class:
-        message = f"未知的抓取器节点: {logical_node_id}"
+        message = f"未知的源: {logical_node_id}"
         finish_fetch_run(run_id, status="failed", error_message=message)
         mark_source_state_finished(execution_fetcher_id, params, run_id, status="failed", error=message)
         raise ValueError(message)
@@ -3843,7 +3871,8 @@ async def run_fetcher_with_tracking(
                 )
                 cleanup_session.commit()
             reason = (
-                f"数据源 {source_id} 已由远端权威接管"
+                # issue #263 起这条只对读者自定源成立(运行途中被停用 / 功能总闸被关)
+                f"自定源 {source_id} 已停用或自定源功能已关闭"
                 if authority_taken
                 else (
                     f"用户自定源 {source_id} 已移除或退役"
@@ -3954,7 +3983,7 @@ async def run_collection_items(
         fetcher_id = str(item.get("fetcher_id", "")).strip()
         params = item.get("params") or {}
         if not fetcher_id:
-            return {"fetcher_id": fetcher_id, "status": "failed", "error": "空节点 ID"}
+            return {"fetcher_id": fetcher_id, "status": "failed", "error": "空源 ID"}
         try:
             async with semaphore:
                 return await run_fetcher_with_tracking(
@@ -4163,8 +4192,8 @@ def ensure_guest_identity() -> bool:
 
 
 # ==================== 数据接入（source-builder / import）====================
-# /api/source-builder/* 与 /api/import/social-posts 已迁出至 api/routers/ingest.py
-# （见 app.include_router）。collector 网关仍由中间件统一强制。
+# /api/source-builder/* 已迁出至 api/routers/ingest.py（见 app.include_router）;
+# /api/import/social-posts 已退役(issue #262)。collector 网关仍由中间件统一强制。
 
 
 # /api/archive/export|import/articles.jsonl 已迁出至 api/routers/archive_sync.py

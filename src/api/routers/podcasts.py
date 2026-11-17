@@ -347,6 +347,30 @@ def read_episode_texts(
         return error(400, "podcast_text_bad_request", str(exc))
 
 
+@router.get("/api/podcasts/episodes/{episode_id}/reference-context")
+def read_qa_reference_context(
+    episode_id: str,
+    token: str = Query(..., min_length=1, max_length=4096),
+    auth_session: dict = Depends(deps.require_reader),
+    session: Session = Depends(deps.get_session),
+):
+    """Read bounded neighbors of a signed QA anchor, with fresh authorization."""
+    from services import qa_reference
+    headers = {"Cache-Control": "private, no-store", "Vary": "Cookie"}
+    try:
+        result = qa_reference.read_reference_context(
+            session, episode_id=episode_id, token=token,
+            username=str(auth_session.get("sub") or ""), config=_app().settings.podcast,
+            secret=AUTH_SECRET,
+        )
+        return JSONResponse(result, headers=headers)
+    except (podcast_text_reader_service.PodcastTextReaderError, qa_reference.ReferenceChanged) as exc:
+        status = (409 if isinstance(exc, qa_reference.ReferenceChanged) else
+                  404 if isinstance(exc, podcast_text_reader_service.PodcastTextReaderNotFound) else
+                  422 if isinstance(exc, podcast_text_reader_service.PodcastTextReaderMalformed) else 400)
+        return JSONResponse({"message": str(exc)}, status_code=status, headers=headers)
+
+
 def _as_http_error(exc: PodcastArtifactError) -> HTTPException:
     if isinstance(exc, PodcastArtifactStorageFull):
         return HTTPException(status_code=507, detail=str(exc))

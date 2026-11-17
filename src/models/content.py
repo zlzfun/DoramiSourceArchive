@@ -339,6 +339,7 @@ class DailyBriefContent(BaseContent):
     categories_count: int = field(default=0, metadata={"description": "覆盖的分类数"})
     included_article_ids: List[str] = field(default_factory=list, metadata={"description": "纳入的 article id 列表"})
     items: List[Dict[str, Any]] = field(default_factory=list, metadata={"description": "各条目结构化概括 (Dify schema + score)"})
+    content_recommendations: List[Dict[str, Any]] = field(default_factory=list, metadata={"description": "独立的深度阅读与播客推荐快照，不混入新闻 items 契约"})
     cursor_before: str = field(default="", metadata={"description": "本次纳入前的 fetched_date 游标"})
     cursor_after: str = field(default="", metadata={"description": "本次推进后的 fetched_date 游标"})
     llm_model: str = field(default="", metadata={"description": "生成所用模型"})

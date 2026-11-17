@@ -1,6 +1,8 @@
 // 运维首页(issue #114)的纯数据推导:窗口切片、读者 / 系统用途拆分、播客阶段构成、待处理清单、全站开关点。
 // 输入是各接口的原样响应(未加载 = null / undefined),输出给 OpsHome 渲染;无 React 依赖(frontend/test/opsHome.test.mjs)。
 
+import { syncPendingItem } from './syncCatalog.js';
+
 // 读者面 AI 日预算只计这几类用途,与 src/services/accounts.READER_AI_BUDGET_PURPOSES 同步(测试读后端源码比对)。
 export const READER_AI_PURPOSES = ['translate', 'ask', 'summarize', 'podcast_ondemand', 'article_ondemand'];
 
@@ -84,6 +86,9 @@ const pct = (x) => `${Math.round(x * 100)}%`;
 export function pendingItems(snap = {}) {
   const items = [];
   const push = (tone, key, name, value, page, block) => items.push({ tone, key, name, value, page, block });
+  // 节点同步失败(issue #261):告警只在「状态」磁贴出现一次,排在最前,点了落到节点同步 · 运行记录
+  const sync = syncPendingItem(snap.home?.sync);
+  if (sync) items.push(sync);
   if (snap.storage?.backup?.status === 'failed') push('bad', 'backup', '备份未完成', '', 'external', 'storage');
   const podFailed = Number(snap.podTasks?.breakdown?.stage?.failed) || 0;
   if (podFailed) push('bad', 'podcast-failed', '播客失败', podFailed, 'podcast', 'tasks');

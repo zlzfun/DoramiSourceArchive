@@ -80,7 +80,7 @@ def normalize_shape(shape: Optional[str]) -> str:
     return value if value in VALID_CONTENT_SHAPES else ""
 
 
-X_SOURCE_TYPES = frozenset({"x", "x_timeline"})
+X_SOURCE_TYPES = frozenset({"x", "twitter", "x_timeline"})
 PODCAST_SOURCE_TYPES = frozenset({"podcast", "podcast_rss"})
 
 
@@ -111,11 +111,22 @@ def configured_source_shape(source_type: str, fetcher_id: str = "") -> str:
             shape = normalize_shape(str(getattr(fetcher_class, "content_shape", "article")))
             if shape:
                 return shape
-    if (source_type or "").strip().lower() in X_SOURCE_TYPES:
+    if (source_type or "").strip().lower() in X_SOURCE_TYPES | {"social"}:
         return "social"
     if (source_type or "").strip().lower() in PODCAST_SOURCE_TYPES:
         return "podcast"
     return "article"
+
+
+def row_shape(record: Any) -> str:
+    """源行的形态:显式 ``shape`` 列(issue #262 R1c)> 绑定的抓取器类 > ``source_type``。"""
+    explicit = normalize_shape(str(getattr(record, "shape", "") or ""))
+    if explicit:
+        return explicit
+    return configured_source_shape(
+        str(getattr(record, "source_type", "") or ""),
+        str(getattr(record, "fetcher_id", "") or ""),
+    )
 
 
 def configured_source_content_type(source_type: str, fetcher_id: str = "") -> str:
@@ -125,7 +136,7 @@ def configured_source_content_type(source_type: str, fetcher_id: str = "") -> st
         if fetcher_class is not None:
             return str(getattr(fetcher_class, "content_type", "") or "")
     source_type_value = (source_type or "").strip().lower()
-    if source_type_value in X_SOURCE_TYPES:
+    if source_type_value in X_SOURCE_TYPES | {"social"}:
         return "social_post"
     if source_type_value in PODCAST_SOURCE_TYPES:
         return "podcast_episode"

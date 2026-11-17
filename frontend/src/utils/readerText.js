@@ -58,3 +58,68 @@ export function hostOf(url) {
 export function excerptOf(content, maxLen = 140) {
   return stripMarkdown(content).slice(0, maxLen);
 }
+
+// AI 速读一句一段(issue #279 第三批):只在句末标点处断开,不改一个字。几句话各讲一件事,排成一整块时
+// 第三句以后很少有人读。太短的句子并回上一段(「同时开源。」不值得单占一行);原文自带换行的按换行先分。
+// 只认全角句末标点——半角句点可能是小数点、版本号或缩写。逐字扫描,每个字符都落在某一段里:
+// 句末标点后面连着的句末标点与闭合符(引号、括号,含半角)跟着上一句走;半角引号开合同形,
+// 只有这一句里有没闭合的同一种引号时才算闭合符。
+const SENTENCE_END = '。！？';
+const SENTENCE_CLOSE = '”’」』）》】〕)]';
+const SENTENCE_QUOTE = '"\'';
+
+function cutSentences(block) {
+  const parts = [];
+  let buf = '';
+  const closes = (ch) => SENTENCE_END.includes(ch) || SENTENCE_CLOSE.includes(ch)
+    || (SENTENCE_QUOTE.includes(ch) && buf.split(ch).length % 2 === 0);
+  for (let i = 0; i < block.length; i += 1) {
+    buf += block[i];
+    if (!SENTENCE_END.includes(block[i])) continue;
+    while (i + 1 < block.length && closes(block[i + 1])) { i += 1; buf += block[i]; }
+    parts.push(buf);
+    buf = '';
+  }
+  if (buf) parts.push(buf);
+  return parts;
+}
+
+export function splitSentences(text) {
+  const out = [];
+  for (const block of String(text || '').split(/\n+/)) {
+    let first = true;
+    for (const part of cutSentences(block.trim())) {
+      const piece = part.trim();
+      if (!piece) continue;
+      const last = out.length - 1;
+      if (!first && (piece.length < 12 || out[last].length < 16)) out[last] += piece;
+      else out.push(piece);
+      first = false;
+    }
+  }
+  return out;
+}
+
+// 大字标题的标点挤压(issue #279 第五批):全角标点的字面只占半个字宽,另一半是空的——正文里这半个字的空是呼吸,
+// 放到 30px 以上的标题里就是一个洞(「掀桌！从 0 造」中间像空了一格)。把标题拆成「文字 / 收尾标点 / 起首标点」三种片段,
+// 由显示层给标点收掉空的那一半。只拆不改:片段拼回去与原文逐字相等。句末的收尾标点不收(后面没有字,收了右缘会缺一块)。
+const PUNCT_CLOSE = '，。、；：！？」』）》”’';   // 成对标点的收尾一侧也收,两侧才对称
+const PUNCT_OPEN = '「『（《“‘';
+
+// keepTail:文本末尾的收尾标点不收(缺省)。标题被切成块分别处理时,只有最后一块才需要保留。
+export function punctParts(text, { keepTail = true } = {}) {
+  const src = String(text || '');
+  const parts = [];
+  let buf = '';
+  const flush = () => { if (buf) { parts.push({ text: buf, kind: '' }); buf = ''; } };
+  for (let i = 0; i < src.length; i += 1) {
+    const ch = src[i];
+    const kind = PUNCT_CLOSE.includes(ch) ? 'close' : PUNCT_OPEN.includes(ch) ? 'open' : '';
+    if (!kind || (keepTail && kind === 'close' && i === src.length - 1)) { buf += ch; continue; }
+    flush();
+    parts.push({ text: ch, kind });
+  }
+  flush();
+  return parts;
+}
+

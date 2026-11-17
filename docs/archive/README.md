@@ -5,6 +5,49 @@
 > `docs/frontend/conventions.md` / `docs/sources/curation_policy.md` 等活跃文档。
 > 按「故事」分组索引;文内常含 ☐/☑ 进度符,均为当时状态。
 
+## 界面说明文字第二轮清理(2026-11,issue #291)
+
+- [issue-291-explanatory-text.md](./issue-291-explanatory-text.md) — 按 #278 的规则复查全站的做法(§1)、72 条清单与逐条判定(§2)、另行处置的 9 处(§3)、第一批「设置」的模板改动与逐项做法(§4)、说明位守卫(§5)、第二批「读者面 / 手机壳 / 管理面」与没有照清单原话做的几处(§7)、两批的 Codex 检视记录(§8)。
+
+## 后端 CI job 分片并行(2026-11,issue #289)
+
+- [issue-289-ci-shards.md](./issue-289-ci-shards.md) — 本机插桩看 unit 的时间花在哪(§1)、`--shard I/N` 按用例函数哈希定片与 `ci.yml` 矩阵(§2.1 / §2.2,实测整条 CI 约 4 分钟)、少一片的三层守卫与不分片的 `backend-guards`(§2.3)、测试会话调低 PBKDF2 轮数(§3.1)、tmpfs 的 CI 同片对比与不采用(§3.2)、建库模板试验与延后理由(§3.3)、97 条突变(§4)、取舍与不做(§5)、Codex 两轮检视(§6,两条 P1 都是守卫的漏检路径)。
+
+## CI 按改动面选 job、本地 / CI 分工(2026-11,issue #288)
+
+- [issue-288-ci-scope.md](./issue-288-ci-scope.md) — CI 等待的实测(PR 一次约 10.5 分钟、12 个合入 PR 里 8 个只动前端 / 文档、几乎每个 PR 被文档尾巴重复触发,§1)、`scripts/ci_scope.py` 的判定规则与合并提交认定(§3.1 / §3.2)、`backend-light` 与汇总门真值表(§3.3)、conftest 读取审计让「跳过不丢覆盖」被执行(§3.4)、一轮返修一次推送 / 本地只跑受影响文件 / 直接合入口径 / 等 CI 不轮询(§4)、守卫与 51 条突变(§5)、取舍与不做(§6)、Codex 两轮检视(§7);`backend-unit` 自身的 10 分钟在 issue #289。
+
+## 节点不分角色:按身份合并(2026-11,issue #263)
+
+- [issue-263-sync-symmetric.md](./issue-263-sync-symmetric.md) — Archive Sync 拆掉整机 consumer 模式与按源围栏:拍板三问(§1)、规则一览(§2:文章按 id 合并、本机版本只有修订号严格更新才保留;同步建出来的源默认关分析、不进采集任务;「本机在用」的源不接受上游的删除 / 停用;接收端不再做 presence 清理)、机制(§3:逐行同步印记降为内部簿记、`local_revision` 本机导出修订与链式转发、文件就绪触发器、依赖流重放、事件二选一与写门)、部署顺序与混版本(§4)、上线说明(§5)、需要用户知情的取舍(§7)、Codex 方案检视与实现检视各两轮(§11)、与方案的偏差及沙箱 / v3.67.4 跨版本实测(§12)、第一稿(保留按源归属 + 原产地)为何作废(§13)。
+
+## 读者面桌面阅读器重构(2026-11,issue #279)
+
+- [issue-279-frontend-refactor.md](./issue-279-frontend-refactor.md) — 整站前端审视后按 B「夜航 · 续」样页分五批落地:现网实测对照(§1)、五批范围与各批实际落地(§2:并档 / 版框与页头 / 阅读窗 / 列表与早报 / 排印,含目检后的两个补丁——标题挑折行点、发现页页头右侧)、规范修订对照(§3)、拍板记录(§4)、手机壳零差异的做法(§5)、逐批 Codex 检视记录(§8)、收口(§9);PR #281–#287,纯前端,待发布。样页 [design/issue-279-frontend-refactor/](../design/issue-279-frontend-refactor/README.md)。
+
+## 已发布迁移文件守卫与部署健康验证(2026-11,issue #227)
+
+- [issue-227-released-migrations-guard.md](./issue-227-released-migrations-guard.md) — v3.67.0 发版两处失败的根因与修法:流水线 worker 第 7 道门拒绝 4 个被改的旧迁移 → CI 守卫 `scripts/check_released_migrations.py`(对最新正式 tag 逐字节比对,新增允许);手工路径 87 次 `bad-json` 实为探针打到 TLS 边缘的 301 页(§1.2)→ 探针地址与 compose 同口径读 `.env`、失败打 HTTP 状态码 + 响应前 200 字节;backend healthcheck 宽限随待执行迁移数 × 库 GiB 加宽(§2);有意不做(§3)、worker 基线核对(§4)、混版本(§5)、Codex 检视(§7)。
+
+## 早报播客导读入口（2026-11，issue #269）
+
+- [issue-269-brief-podcast-guide.md](./issue-269-brief-podcast-guide.md) — 所有早报播客的生成/播放入口、实时状态和点播门控；350项前端、23项相关后端、六组浏览器与真实音频验收，用户放行及Claude Code交叉检视返修记录。
+
+## 并发首访懒建已读水位(2026-11,issue #251)
+
+- [issue-251-cursor-upsert.md](./issue-251-cursor-upsert.md) — 同一账号两处同时首次拉 `unread-counts`、`ensure_cursors()` 先读后插撞 `reader_read_cursors` 主键返回 500 的根因与锁语义实证(§1 / §2)、`INSERT … ON CONFLICT DO NOTHING` + commit 后重读的修法、同类盘点与有意不改的理由(§3)、确定性交错 / 双线程现场用例与反向对照(§4)、Codex 两轮检视(§6);PR #274、待发布。
+## 部署测试去时序竞争(2026-11,issue #203)
+
+- [issue-203-launcher-snapshot-test.md](./issue-203-launcher-snapshot-test.md) — launcher 快照用例 CI 偶发 rc=5 的归因(固定 0.3 s 覆写窗口 vs runner 上的进程起动 / python3 冷启动)、注入延迟稳定复现(rc=5 / rc=6)、读取触发屏障(`DEPLOY_PATH` 前置 python3 垫片在 state_snapshot 返回后覆写)、两条反向对照、被否方案(扩 sleep / launcher 加输出 / ps / sitecustomize)、Codex 两轮检视(§6);PR #275 合入、待发布。
+
+## 媒体流坏图解卡(2026-11,issue #264)
+
+- [issue-264-media-sync-sniff.md](./issue-264-media-sync-sniff.md) — Archive Sync 媒体流被一张坏图卡死整流的根因实证(网易订阅 CDN 的 data URL 文本被据响应头缓存成 PNG)、三层修(入缓存只认内容 / 导出端 `media_export_verdict` 自检 / 接收端单条拒收)、判定表与恢复路径(§2.2)、部署顺序与混版本窗口(§3)、真实数据自测(§4)、Codex 两轮检视与协商(§7);PR #266 合入、待发布;生产只读统计待授权。
+
+## 节点同步控制台(2026-11,issue #261)
+
+- [issue-261-sync-console.md](./issue-261-sync-console.md) — Archive Sync 从设置迁到运维「节点同步」页(样页方向 A 流水线:9 流 + 回传阶段线 · 运行记录 · 连接与定时 · 逐流 / 运行 / 高危抽屉);外网首页 manifest 附 `pending` / `pending_by_stream`、进度带页与分母、单流重置与重放分析、出网不扩大(§3);拍板(§1,含目检追问「节点不分角色」)、接口契约(§4)、Codex 两轮交叉检视(§6);PR #265 合入、待发布;协议放开另议 #263。
+
 ## 运维管理信息架构(2026-11,issue #114)
 
 - [issue-114-admin-ia.md](./issue-114-admin-ia.md) — 五档 segmented 平铺 → 首页即目录(12 列不等大 bento,样页 v4「A 精修」)+ 8 个满幅功能页、面包屑横切与板块深链;只读聚合端点 `GET /api/admin/home`;拍板记录与默认处理表(§1)、Codex 两轮交叉检视(§9);PR #260 合入、待发布;归属规则已回流 `architecture/admin-ops.md`。

@@ -165,8 +165,9 @@ def test_source_authority_and_credentials_are_fenced(store):
         session.add_all([secret,article("replica",analysis_authority_id="outer")]);session.commit()
         assert session.get(Job,"private") is None and session.get(Job,"replica") is None
     seed(store,article())
+    # 入队之后、派发之前这篇被同步接管(issue #263:不再有整机接收端模式,围栏只看文章自己)
     with Session(store.engine) as session:
-        service.sync_consumer_policy.activate_v2_consumer_mode(session,reason="test")
+        taken=session.get(ArticleRecord,"a");taken.analysis_authority_id="outer";session.add(taken);session.commit()
     assert asyncio.run(service.run_once(store.engine))
     with Session(store.engine) as session:
         assert session.get(Job,"a").status=="skipped"

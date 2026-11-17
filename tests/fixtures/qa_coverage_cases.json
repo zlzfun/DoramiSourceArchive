@@ -1,0 +1,73 @@
+[
+  {
+    "id": "open_model_business", "kind": "synthetic_regression", "source_count": 1,
+    "question": "开放模型如何扩大用途，又如何赚钱？这是否意味着闭源收入消失？请说明具体机制及结论的限制。",
+    "context": "[1] 合成节目：模型生态\n【ASR 逐字稿｜全文】\nSPEAKER_0: My view is that open weights let people adapt a model to more tasks. A provider could sell inference, post-training environments, or a trusted enterprise deployment. These are possible business models, not revenue we have measured. Closed frontier models might still earn substantial revenue. More uses are not proof that every company benefits.",
+    "rubric": [
+      {"id": "uses", "check": "开放权重可适配更多用途，属于说话者观点；不声称所有公司已受益。"},
+      {"id": "mechanisms", "check": "包括推理、后训练环境、可信企业部署三种机制，不能只说卖服务。"},
+      {"id": "limits", "check": "未测收入；不能推出闭源收入消失。"}
+    ]
+  },
+  {
+    "id": "coding_and_downgrade", "kind": "synthetic_regression", "source_count": 1,
+    "question": "嘉宾能否确认新版模型编码最强？为什么便宜模型不一定给企业带来同样收益？请结合评测范围、安全降档的具体例子与项目条件。",
+    "context": "[1] 合成节目：企业工具\n【ASR 逐字稿｜全文】\nSPEAKER_0: We compared older models on some coding tasks. We have not run enough internal coding comparisons of the new version. Knowledge work results are not a universal ranking.\nSPEAKER_1: What stops a cheaper model from delivering the same benefits?\nSPEAKER_0: Requests to write permissions or access-control code can trigger a safety downgrade to a less capable model. That does not mean the access-control code itself became unsafe. Teams also need their data and workflows connected. We did not measure the outcome for teams missing these conditions.",
+    "rubric": [
+      {"id": "new_version", "check": "明确新版内部编码比较不足；不把旧版或知识工作结果推成新版排名。"},
+      {"id": "example", "check": "权限/访问控制代码请求触发模型安全降档，不能说权限代码变得不安全。"},
+      {"id": "conditions", "check": "便宜不保证可用能力、数据和流程接入，缺条件团队的收益未测。"}
+    ]
+  },
+  {
+    "id": "asr_name_number", "kind": "synthetic_challenge", "source_count": 1,
+    "question": "他们用了哪个模型？提到的二十是百分比、人数还是价格？这个数字能证明新方案好多少吗？",
+    "context": "[1] 合成节目：模糊口述\n【ASR 逐字稿｜相关片段】\nSPEAKER_2: We tried Orin four, or O ring for, I cannot remember the exact name. The number was twenty, I think. I do not recall the unit. It was an example, not a benchmark result.",
+    "rubric": [
+      {"id": "name", "check": "保留型号不确定性；引用短原句，不擅自改成熟悉产品。"},
+      {"id": "unit", "check": "数字单位无法确定，附短原句依据。"},
+      {"id": "measurement", "check": "是假设例子，不计算提升幅度。"}
+    ]
+  },
+  {
+    "id": "asr_conflict_speakers", "kind": "synthetic_challenge", "source_count": 1,
+    "question": "谁说试验失败了？能确认客户数据泄漏了吗？",
+    "context": "[1] 合成节目：相互矛盾的断句\n【ASR 逐字稿｜相关片段】\nSPEAKER_0: Did the trial fail?\nSPEAKER_1: No customer data leaked. Customer data leaked, no, the test data. The transcript may have lost my correction.\nSPEAKER_2: The trial failed our timing requirement; that is what I meant by failed. We have not established which data the other speaker meant.",
+    "rubric": [
+      {"id": "attribution", "check": "SPEAKER_0 在提问，SPEAKER_2 说时间要求失败；不编姓名或混淆观点。"},
+      {"id": "contradiction", "check": "短引矛盾原句，无法确认客户泄漏；也不能确定断言绝无客户泄漏。"}
+    ]
+  },
+  {
+    "id": "missing_evidence", "kind": "synthetic_challenge", "source_count": 1,
+    "question": "介绍了哪两种用途？各自赚了多少钱？整期节目是否从未讨论风险？",
+    "context": "[1] 合成节目：有限片段\n【来源逐字稿｜相关片段】\nThe tool helps with invoice sorting and drafting internal reports. This excerpt provides no revenue figures.",
+    "rubric": [
+      {"id": "known", "check": "明确发票分类与内部报告起草两项，不被总括资料不足吞掉。"},
+      {"id": "unknown", "check": "逐项说明收入数字未提供，不编数字。"},
+      {"id": "partial", "check": "只有片段，不能判断整期是否从未讨论风险。"}
+    ]
+  },
+  {
+    "id": "counterfactual", "kind": "synthetic_challenge", "source_count": 2,
+    "question": "如果推理成本降到原来十分之一，是否就能裁掉一半审核人员，同时保证所有任务更快且更安全？",
+    "context": "[1] 合成节目：成本\n【来源逐字稿｜全文】\nThe pilot reduced inference costs but kept human reviewers. It did not measure staffing reductions.\n[2] 合成节目：速度\n【来源逐字稿｜全文】\nSmall drafts finished faster. We did not test security-sensitive tasks. These observations do not establish a universal speedup.",
+    "rubric": [
+      {"id": "premise", "check": "成本十分之一是题设，不能写成实测。"},
+      {"id": "separate", "check": "裁员、安全、全任务速度分别缺证据；成本降低不能推出其他维度。"},
+      {"id": "sources", "check": "成本/审核依据引用[1]，速度/安全限制引用[2]，不能只看引用编号合法。"}
+    ]
+  },
+  {
+    "id": "followup", "kind": "synthetic_challenge", "source_count": 1,
+    "history": [{"role":"user","content":"节目给的两个难点是什么？"},{"role":"assistant","content":"一是数据接入，二是人工审核。"}],
+    "question": "第二点能完全省掉吗？",
+    "context": "[1] 合成节目：人工审核\n【来源逐字稿｜全文】\nReviewers still validate the output. We have no evidence that review can be removed.",
+    "rubric": [{"id":"reference","check":"第二点指人工审核；明确没有完全省掉的依据，简短回答并引用。"}]
+  },
+  {
+    "id": "greeting", "kind": "synthetic_challenge", "source_count": 0,
+    "question": "你好，谢谢你！", "context": "",
+    "rubric": [{"id":"brief","check":"自然简短回应，不展开覆盖清单、资料不足、引用或内部规则。"}]
+  }
+]

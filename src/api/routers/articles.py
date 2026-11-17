@@ -17,17 +17,18 @@ import importlib
 import json
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import and_, case, exists, false, func, or_, text
 from sqlmodel import Session, select
 
 from api import deps
 from api.articles_view import (
-    GenericContent,
+    INGEST_CHANNEL_FETCH,
     apply_article_query_filters,
     article_recency_order,
     article_to_markdown,
+    ingest_channel_label,
     serialize_article_list_item,
     serialize_feed_article,
 )
@@ -40,7 +41,7 @@ from api.sources import (
     PODCAST_CONTENT_TYPES,
     SOCIAL_CONTENT_TYPES,
     VALID_CONTENT_SHAPES,
-    configured_source_shape,
+    row_shape,
     normalize_shape,
     registry_source_ids_for_shape,
 )
@@ -114,7 +115,7 @@ def _require_local_article_governance(
     ):
         raise HTTPException(
             status_code=409,
-            detail="v2 接收端的公共文章由远端权威节点管理，本机不能新增、修改或删除",
+            detail="这篇文章的当前版本由同步写入，本机不能修改或删除",
         )
 
 
@@ -262,7 +263,11 @@ def _source_ids_by_shape(session: Optional[Session] = None) -> dict[str, set[str
         for record in records:
             if record.source_id in registered_ids:
                 continue  # registry 是源级形态的第一事实源
-            result[configured_source_shape(record.source_type, record.fetcher_id)].add(
+            if (record.origin or "") in {"system", "legacy", "ingest"} or record.retired_at:
+                # 源表全集(issue #262 R1c)之前这些 id 没有行:按条目 content_type 逐篇判形态,
+                # 不给源级标记(与榜单同口径,实现检视 R1 #1)。
+                continue
+            result[row_shape(record)].add(
                 record.source_id
             )
     return result
@@ -307,6 +312,7 @@ def get_articles(
         content_types: Optional[str] = None,  # CSV:多类型筛选(类型归组分面用),与 feed 契约对齐
         source_id: Optional[str] = None,
         exclude_source_ids: Optional[str] = None,  # CSV：从结果中排除的来源（如知识台账排除日报源）
+        ingest_channel: Optional[str] = None,  # 来路:push | manual | import | fetch(抓取器入库,无来路)
         job_id: Optional[int] = None,
         job_run_id: Optional[int] = None,
         fetch_run_id: Optional[int] = None,
@@ -371,6 +377,7 @@ def get_articles(
         "content_types": content_types,
         "source_id": source_id,
         "exclude_source_ids": exclude_source_ids,
+        "ingest_channel": ingest_channel,
         "job_id": job_id,
         "job_run_id": job_run_id,
         "fetch_run_id": fetch_run_id,
@@ -574,6 +581,7 @@ def get_articles(
             digest_audio=digest_audios.get(record.id),
             include_podcast_diagnostics=is_admin,
             source_kinds=source_kinds,
+            include_ingest_actor=is_admin,
         )
         for record in records
     ]
@@ -676,12 +684,21 @@ def get_article_facets(
     source_labels = friendly_source_names([row["value"] for row in source_facets], session)
     for row in source_facets:
         row["label"] = source_labels.get(row["value"], row["value"])
+    total = int(session.exec(total_q).one() or 0)
+    # 来路分面(issue #262):抓取器入库的条目没有 ingest_channel,用总数减收录条目得出,记为伪值 fetch。
+    channel_facets = _facet(ArticleRecord.ingest_channel, ingest_channel_label)
+    fetched = total - sum(row["count"] for row in channel_facets)
+    if fetched > 0:
+        channel_facets.insert(0, {
+            "value": INGEST_CHANNEL_FETCH, "count": fetched, "label": ingest_channel_label(INGEST_CHANNEL_FETCH),
+        })
     return {
-        "total": int(session.exec(total_q).one() or 0),
+        "total": total,
         "content_types": _facet(
             ArticleRecord.content_type, content_classification.content_type_label
         ),
         "source_ids": source_facets,
+        "ingest_channels": channel_facets,
     }
 
 
@@ -805,37 +822,14 @@ async def get_article(article_id: str, request: Request):
 
 
 @router.post("/api/articles")
-async def create_article_manual(params: dict = Body(...)):
-    """接收前端传来的手工录入数据并入库"""
-    source_id = str(params.get("source_id", "manual") or "manual")
-    with Session(deps.get_db_sink().engine) as session:
-        _require_local_article_governance(session, source_id)
-    content_obj = GenericContent(
-        id=params.get("id"),
-        title=params.get("title", "未命名"),
-        source_url=params.get("source_url", ""),
-        publish_date=params.get("publish_date", ""),
-        content=params.get("content", ""),
-        has_content=True if params.get("content") else False
+async def create_article_manual():
+    """手工录入已并入收录(issue #262 推送入口统一波):调用方自定 id / content_type / 任意扩展
+    这三个后门随之取消。运维「单条收录」与外部调用方一律走 ``POST /api/public/ingest/v1/items``
+    (管理员会话或收录令牌),由服务端决定 id、类型与来路。"""
+    raise HTTPException(
+        status_code=410,
+        detail="手工录入已并入收录:请用 POST /api/public/ingest/v1/items(管理员会话或收录令牌)",
     )
-    content_obj.content_type = params.get("content_type", "manual_entry")
-    content_obj.source_id = source_id
-
-    # 扩展字段经 extra_extensions 通道随 serialize_to_metadata 落库——
-    # 旧写法逐键 setattr 不进 dataclass fields(),extensions_json 静默丢失
-    try:
-        extensions = json.loads(params.get("extensions_json", "{}"))
-        if isinstance(extensions, dict) and extensions:
-            content_obj.extra_extensions = extensions
-    except Exception:
-        pass
-
-    success = await deps.get_db_sink().save(content_obj)
-    if not success:
-        raise HTTPException(status_code=400, detail="该条目 ID 已存在，请避免重复录入")
-
-    _app().queue_article_analysis_after_commit([content_obj.id])
-    return {"status": "success"}
 
 
 def _maybe_rewind_daily_brief_cursor(record) -> None:
@@ -945,6 +939,18 @@ async def update_article(article_id: str, params: ArticleUpdateParams):
 
 
 # ==================== 投递视图（/api/feed/articles[.md]）====================
+
+
+def _exclude_hidden_delivery_sources(session: Session, query):
+    """隐藏源全量排除于交付(issue #262 B6):投递视图无 viewer,管理员会话也不例外。"""
+    hidden = source_visibility_service.reader_unavailable_source_ids(session)
+    if not hidden:
+        return query
+    return query.where(or_(
+        ArticleRecord.source_id.is_(None),
+        ArticleRecord.source_id.notin_(sorted(hidden)),
+    ))
+
 # 下游 LLM 消费者推荐契约：按采集投递作用域（source/job）过滤后的档案视图。
 # （?group_id= 作用域随节点组退役移除——实体简化阶段 2。）
 
@@ -996,6 +1002,7 @@ def get_feed_articles(
     user_cond = user_sources_service.exclude_user_sources_condition(session)
     if user_cond is not None:
         query = query.where(user_cond)
+    query = _exclude_hidden_delivery_sources(session, query)
     records = session.exec(
         query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(safe_limit)
     ).all()
@@ -1056,6 +1063,7 @@ def export_feed_articles_markdown(
     user_cond = user_sources_service.exclude_user_sources_condition(session)
     if user_cond is not None:
         query = query.where(user_cond)
+    query = _exclude_hidden_delivery_sources(session, query)
     records = session.exec(
         query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(safe_limit)
     ).all()

@@ -13,6 +13,7 @@ deps.get_db_sink()。
 from api.storage_response import StorageFileResponse
 import hashlib
 import hmac
+import functools
 import importlib
 import json
 import logging
@@ -400,7 +401,7 @@ async def import_archive_articles_jsonl(request: Request):
         if sync_consumer_policy.v2_receiver_state_present(session):
             raise HTTPException(
                 status_code=409,
-                detail="本机已进入 v2 consumer 模式，禁止 legacy v1 归档导入",
+                detail="本机已有 v2 同步写入的数据，禁止 legacy v1 归档导入",
             )
     raw_text = (await request.body()).decode("utf-8")
     if not raw_text.strip():
@@ -426,8 +427,13 @@ def export_archive_v2_jsonl(
     after: str = "",
     limit: int = 1000,
     page_max_bytes: Optional[int] = None,
+    receiver_capabilities: str = "",
 ):
-    """按共享事务 revision snapshot 导出 keyset 页；不使用 offset。"""
+    """按共享事务 revision snapshot 导出 keyset 页；不使用 offset。
+
+    ``receiver_capabilities``(逗号分隔)是接收端的能力声明:含 ``source-catalog-v1`` 时
+    sources / source_states 两流按源目录投影导出(issue #262 R1c),否则与重构前相同。
+    """
     try:
         body = archive_sync_v2.export_page(
             deps.get_db_sink().engine,
@@ -441,10 +447,30 @@ def export_archive_v2_jsonl(
             podcast_text_page_max_bytes=_podcast_config().text_sync_page_max_bytes,
             podcast_text_page_max_rows=_podcast_config().text_sync_page_max_rows,
             podcast_text_requested_page_max_bytes=page_max_bytes,
+            receiver_capabilities=receiver_capabilities,
+            media_check=_media_export_check() if stream == "media" else None,
         )
     except archive_sync_v2.SyncV2Error as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return Response(content=body, media_type="application/x-ndjson; charset=utf-8")
+
+
+def _media_store_disabled(_record):
+    # 有候选却供不出字节:整页失败、checkpoint 不动,重开媒体库后同一游标重导出;
+    # 若静默跳过,增量会永久越过这些图(issue #264 检视 R1)。没有候选时不会被调用。
+    raise archive_sync_v2.SyncV2Error("producer media store is disabled; cannot serve media binaries")
+
+
+def _media_export_check():
+    """manifest 只列二进制端点供得出、且接收端会认的图片(issue #264)。"""
+    store = getattr(importlib.import_module("api.app"), "media_store", None)
+    if store is None:
+        return _media_store_disabled
+    return functools.partial(
+        archive_sync_v2.media_export_verdict,
+        media_root=store.root,
+        object_storage=getattr(store, "object_storage", None),
+    )
 
 
 @router.post("/api/archive/v2/candidate-evidence.jsonl")

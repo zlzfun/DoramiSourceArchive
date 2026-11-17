@@ -24,7 +24,7 @@ from sqlalchemy import delete, update
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
-from api.sources import configured_source_shape, normalize_shape, source_shape
+from api.sources import normalize_shape, row_shape, source_shape
 from models.db import (
     ArticleAnalysisRecord,
     ArticleRecord,
@@ -117,6 +117,7 @@ class _SourceInfo:
     role: str
     shape: str
     visible: bool
+    provisional: bool = False           # 临时源(issue #262):不计入发布主体数
 
 
 def _source_infos(
@@ -162,7 +163,7 @@ def _source_infos(
                 source_scope=config.source_scope or "",
                 provenance_tier=config.provenance_tier or "",
             )
-            shape = configured_source_shape(config.source_type or "", config.fetcher_id or "")
+            shape = row_shape(config)
         elif fetcher_class is not None:
             role = source_role(source_id)
             shape = normalize_shape(str(getattr(fetcher_class, "content_shape", "article") or "")) or "article"
@@ -183,6 +184,7 @@ def _source_infos(
             role=role,
             shape=shape,
             visible=visible,
+            provisional=bool(config is not None and config.admission_status == "provisional"),
         )
     return infos
 
@@ -413,6 +415,8 @@ def _build_view(
     representative = ordered[0]
     groups: dict[str, list[_MemberView]] = {}
     for view in ordered:
+        if view.info.provisional:
+            continue  # 临时源仍是成员,但不算一家独立发布主体(issue #262)
         groups.setdefault(view.publisher_key, []).append(view)
     publishers = [
         _Publisher(

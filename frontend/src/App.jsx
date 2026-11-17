@@ -364,6 +364,24 @@ export default function App() {
     });
   }, [jumpWithFocus]);
 
+  // 设置柜「凭据 → 定时同步」回指(issue #261):数据同步区已迁到运维 · 节点同步,落到「连接与定时」板块
+  const openAdminSyncLink = useCallback(() => {
+    setSettingsOpen(false);
+    jumpWithFocus('admin', 'sync/link', {
+      tab: 'admin',
+      payload: { page: 'sync', block: 'link' },
+    });
+  }, [jumpWithFocus]);
+
+  // 设置柜「凭据 → X API」回指(issue #291):配额与本月开销在运维 · 存储与外部资源的「X API」板块
+  const openAdminXQuota = useCallback(() => {
+    setSettingsOpen(false);
+    jumpWithFocus('admin', 'external/xapi', {
+      tab: 'admin',
+      payload: { page: 'external', block: 'xapi' },
+    });
+  }, [jumpWithFocus]);
+
   const setFetchView = useCallback((v) => goView('fetch', v), [goView]);
   const setAdminView = useCallback((v) => goView('admin', v), [goView]);
 
@@ -784,7 +802,8 @@ export default function App() {
     // short = 导轨图标下的常显微标签(可发现性波 v3.45,两字短名);label 全名留 tooltip 与页头
     { id: 'reader', icon: BookOpen, label: '阅读器', short: '阅读', onlyReader: true },
     { id: 'data', icon: Database, label: '知识台账', short: '台账', hideForReader: true },
-    { id: 'fetch', icon: CloudDownload, label: '节点管理', short: '节点', surface: 'collector' },
+    // 「节点」只留给部署意义(外网 / 内网节点、节点同步);采集这一侧统一叫「源」(issue #262 第三波)
+    { id: 'fetch', icon: CloudDownload, label: '源管理', short: '来源', surface: 'collector' },
     { id: 'runs', icon: History, label: '任务与运行', short: '运行', surface: 'collector' },
     // 「接入集成」页签已并入设置柜(交付通道三卡→设置·接入集成组);页签瘦身改名「AI 日报」
     // (只剩日报运营面),id 改为 'brief'(历史 hash #/mcp 由 hashToRoute 归一兼容)。
@@ -1075,6 +1094,8 @@ export default function App() {
           feedbackUnread={feedbackUnread}
           onFeedbackSeen={handleFeedbackSeen}
           onOpenAdminPodcast={openAdminPodcastQuota}
+          onOpenAdminSync={openAdminSyncLink}
+          onOpenAdminXQuota={openAdminXQuota}
           onGuestLogin={() => { setSettingsOpen(false); openGuestLogin(); }}
         />
       </Suspense>
@@ -1201,6 +1222,7 @@ export default function App() {
                   pendingFocus={pendingFocus?.tab === 'admin' ? pendingFocus.payload : null}
                   onPendingFocusApplied={clearPendingFocus}
                   onOpenCredentials={() => openSettings('credentials')}
+                  onArticlesChanged={markArticlesDirty}
                 />
               </TabBoundary>
             </div>

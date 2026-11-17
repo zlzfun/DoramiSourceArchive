@@ -1,7 +1,7 @@
 /**
  * 运维首页(issue #114,样页 v4「A 精修」):首页即目录。12 列不等大 bento——
- * 行 1 = 账户 L(7)+ 阅读与榜单 L(5);行 2 = 读者功能 / 播客 / 分析与标签 M(各 3)+ 状态(3,纵跨两行);
- * 行 3 = 存储与外部资源 / 自定源 / 反馈与公告 S(各 3)。整块磁贴是入口(页名链接的 ::after 铺满),图表点进对应板块。
+ * 行 1 = 账户 L(7)+ 阅读与榜单 L(5);行 2 = 读者功能 / 播客 / 分析与标签 M(各 3)+ 状态(3);
+ * 行 3 = 存储与外部资源 / 自定源 / 反馈与公告 / 节点同步 S(各 3;issue #261 起状态磁贴收成只占行 2)。整块磁贴是入口(页名链接的 ::after 铺满),图表点进对应板块。
  * 首页零说明句:每块只留 1 个主角数字(L 另有 ≤ 3 个次级数字)+ 1 张图,被削的数进 hover 浮层。
  * 告警只在「状态」磁贴出现一次;其它磁贴有待处理时只给一个状态点。
  * 数据:各接口独立加载、各自代次守卫,一条失败只让那一块显示「—」(conventions §8.x loader 纪律)。
@@ -19,6 +19,7 @@ import {
   aiReaderSplit, budgetRatio, bytesParts, growthWindow, pageMarks, pendingItems, readTop, stageParts, switchDots, windowDays,
 } from '../../utils/opsHome';
 import { rankingSnapshotStatusMeta } from '../../utils/rankingAdmin';
+import { syncTileView } from '../../utils/syncCatalog';
 import { OpsIcon } from './opsIcons';
 import { BarList, DailyBars, Donut, OpsTipProvider, RollNumber, ScoreHistogram, StepLine } from './OpsCharts';
 import { useAnchorTip } from './opsChartKit';
@@ -278,6 +279,16 @@ export default function OpsHome({ days, refreshTick, onGo }) {
     ],
   }), [s.feedback, s.notices]);
 
+  /* 节点同步 S(issue #261):空闲 = 绿点 + 上次同步;运行中 = 呼吸蓝点 + 同步中 k / n;失败 = 红菱 + 上次成功(告警进状态磁贴);未接入 = 灰字 */
+  const sync = useMemo(() => syncTileView(s.home?.sync), [s.home]);
+  const syncDot = sync.mark === 'run'
+    ? <span className="ops-tile-dot" title={sync.title} aria-label={sync.title}><i className="ops-okdot is-run is-pulse" style={{ margin: 0 }} /></span>
+    : sync.mark === 'bad'
+      ? <span className="ops-tile-dot" title={sync.title} aria-label={sync.title}><i className="ops-mark is-bad" /></span>
+      : sync.mark === 'ok'
+        ? <span className="ops-tile-dot" title={sync.title} aria-label={sync.title}><span className="ai-light" /></span>
+        : null;
+
   const backupDot = s.storage
     ? (backupFailed
       ? <span className="ops-tile-dot" title="自动备份未完成" aria-label="自动备份未完成"><i className="ops-mark is-bad" /></span>
@@ -357,6 +368,10 @@ export default function OpsHome({ days, refreshTick, onGo }) {
         <section className="surface-card ops-tile is-s t-inbox" aria-label="反馈与公告">
           <TileHead page="inbox" onGo={onGo} tipBuild={inboxTip} />
           <div className="ops-srt"><Num hero label="待处理" value={fbOpen === null ? DASH : fmt(fbOpen)} tone={fbOpen ? 'is-warn' : ''} /></div>
+        </section>
+        <section className="surface-card ops-tile is-s t-sync" aria-label="节点同步">
+          <TileHead page="sync" onGo={onGo} meta={syncDot} />
+          <div className="ops-srt"><Num hero label={sync.label} value={sync.num} tone={sync.tone} /></div>
         </section>
       </nav>
     </OpsTipProvider>

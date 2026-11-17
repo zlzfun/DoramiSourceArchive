@@ -36,6 +36,7 @@ GUEST_ALLOWED_ROUTES: FrozenSet[Tuple[str, str]] = frozenset({
     ("GET", "/api/reader/interests"),            # 同上
     ("GET", "/api/reader/interests/catalog"),
     ("GET", "/api/podcasts/episodes/{episode_id}/texts"),
+    ("GET", "/api/podcasts/episodes/{episode_id}/reference-context"),
     ("GET", "/api/reader/articles/{article_id}/listen-audio"),
     ("GET", "/api/reader/podcast-artifacts/{artifact_id}/audio"),
     ("GET", "/api/media/proxy"),                 # 游客只取已缓存图片(routers/media.py)

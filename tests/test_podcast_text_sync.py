@@ -671,7 +671,9 @@ def test_podcast_text_sync_page_limits_bound_rows_bytes_and_paginate(tmp_path):
         assert session.exec(select(PodcastTextArtifactRecord)).all() == []
 
 
-def test_podcast_text_authority_fence_and_presence_pruning(tmp_path):
+def test_podcast_text_slot_owned_locally_is_kept_and_another_authority_is_rejected(tmp_path):
+    """issue #263:文稿槽位已被本机自己的产物占用 → 上游的同槽位文稿跳过(不卡流、不记账),本机的
+    原样保留;槽位属于另一个上游 → 仍整页拒绝(只支持单上游)。整流后不再做存在性清理。"""
     producer = _sink(tmp_path, "producer-authority.db")
     consumer = _sink(tmp_path, "consumer-authority.db")
     with Session(producer.engine) as session:
@@ -686,31 +688,8 @@ def test_podcast_text_authority_fence_and_presence_pruning(tmp_path):
         session.add(_artifact("local-text"))
         session.add(_publication("local-text"))
         session.commit()
-    stale = archive_sync_v2.full_authority_stale_identities(
-        consumer.engine, "podcast_texts", authority
-    )
-    assert stale == ["episode-1:transcript_zh"]
-    assert (
-        archive_sync_v2.authority_present_identities(
-            producer.engine, "podcast_texts", stale
-        )
-        == []
-    )
-    assert (
-        archive_sync_v2.finalize_full_authority_stream(
-            consumer.engine,
-            "podcast_texts",
-            authority,
-            absent_identities=stale,
-        )
-        == 1
-    )
-    with Session(consumer.engine) as session:
-        publication = session.get(
-            PodcastTextPublicationRecord, "episode-1:transcript_zh"
-        )
-        assert publication.status == "unpublished"
-        assert publication.authority_id == ""
+    assert not hasattr(archive_sync_v2, "full_authority_stale_identities")
+    assert not hasattr(archive_sync_v2, "finalize_full_authority_stream")
 
     artifact = _artifact("incoming-text")
     publication_data = archive_sync_v2._podcast_text_payload(  # noqa: SLF001
@@ -726,20 +705,48 @@ def test_podcast_text_authority_fence_and_presence_pruning(tmp_path):
         "podcast_texts", authority, "999", "", [row], complete=True
     )
     encoded = archive_sync_v2.encode_page(manifest, [row])
-    with pytest.raises(
-        archive_sync_v2.SyncV2Error,
-        match=r"authority mismatch: existing '<local>'",
-    ):
-        archive_sync_v2.import_page(
-            consumer.engine,
-            encoded,
-            expected_stream="podcast_texts",
+    kept = archive_sync_v2.import_page(
+        consumer.engine,
+        encoded,
+        expected_stream="podcast_texts",
+    )
+    assert (kept["inserted"], kept["updated"], kept["skipped"]) == (0, 0, 1)
+    assert kept["skipped_identities"] == ["episode-1:transcript_zh"]
+    with Session(consumer.engine) as session:
+        local_publication = session.get(
+            PodcastTextPublicationRecord, "episode-1:transcript_zh"
         )
+        assert (local_publication.status, local_publication.authority_id, local_publication.artifact_id) == (
+            "published", "", "local-text"
+        )
+        assert session.get(PodcastTextArtifactRecord, "incoming-text") is None
+        state = session.get(
+            archive_sync_v2.ArchiveSyncEntityStateRecord, ("podcast_texts", "episode-1:transcript_zh")
+        )
+        assert state is None  # 跳过的行不记账:下次整流重放还会再判一次
+
+    # 上游撤稿同样不动本机的槽位
+    local_tombstone = archive_sync_v2._line(  # noqa: SLF001
+        "podcast_texts", {"identity": "episode-1:transcript_zh", "tombstone": True},
+        revision="1000", identity="episode-1:transcript_zh", operation="tombstone",
+    )
+    withdrawn = archive_sync_v2.import_page(
+        consumer.engine,
+        archive_sync_v2.encode_page(
+            archive_sync_v2._manifest(  # noqa: SLF001
+                "podcast_texts", authority, "1000", "", [local_tombstone], complete=True
+            ),
+            [local_tombstone],
+        ),
+        expected_stream="podcast_texts",
+    )
+    assert withdrawn["deleted"] == 0 and withdrawn["skipped"] == 1
 
     with Session(consumer.engine) as session:
         local_publication = session.get(
             PodcastTextPublicationRecord, "episode-1:transcript_zh"
         )
+        assert local_publication.status == "published"
         session.delete(local_publication)
         session.commit()
         session.add(
@@ -792,7 +799,8 @@ def test_podcast_text_authority_fence_and_presence_pruning(tmp_path):
         )
 
 
-def test_podcast_text_presence_prune_preserves_remote_authority(tmp_path):
+def test_full_podcast_text_stream_leaves_rows_the_producer_no_longer_has(tmp_path):
+    """放弃「上游没有就删」(issue #263):整流全量之后,上游已经没有的文稿仍留在本机。"""
     producer = _sink(tmp_path, "producer-remote-stale.db")
     consumer = _sink(tmp_path, "consumer-remote-stale.db")
     with Session(producer.engine) as session:
@@ -807,25 +815,14 @@ def test_podcast_text_presence_prune_preserves_remote_authority(tmp_path):
         session.add(_artifact("remote-stale", authority_id=authority))
         session.add(_publication("remote-stale", authority_id=authority))
         session.commit()
-    stale = archive_sync_v2.full_authority_stale_identities(
-        consumer.engine, "podcast_texts", authority
-    )
-    assert stale == ["episode-1:transcript_zh"]
-    assert (
-        archive_sync_v2.finalize_full_authority_stream(
-            consumer.engine,
-            "podcast_texts",
-            authority,
-            absent_identities=stale,
-        )
-        == 1
-    )
+    _raw, applied = _copy(producer, consumer, "podcast_texts")
+    assert applied["count"] == 0
 
     with Session(consumer.engine) as session:
         publication = session.get(
             PodcastTextPublicationRecord, "episode-1:transcript_zh"
         )
-        assert publication.status == "unpublished"
+        assert publication.status == "published"
         assert publication.authority_id == authority
 
 

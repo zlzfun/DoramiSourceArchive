@@ -361,7 +361,7 @@ def test_restart_recovers_expired_lease_without_accepting_old_result(storage):
     assert pf.finish(storage.engine, second, extraction=extracted(), now=301)
 
 
-@pytest.mark.parametrize("mutation", ["edit", "authority", "consumer", "paper_identity"])
+@pytest.mark.parametrize("mutation", ["edit", "authority", "paper_identity"])
 def test_manual_edit_or_receiver_fence_wins_over_inflight_download(storage, mutation):
     seed(storage)
     task = pf.claim_one(storage.engine, now=100)
@@ -371,13 +371,10 @@ def test_manual_edit_or_receiver_fence_wins_over_inflight_download(storage, muta
             article.content = "Editor correction"
         elif mutation == "authority":
             article.analysis_authority_id = "remote"
-        elif mutation == "paper_identity":
+        else:
             ext = metadata(article)
             ext["raw_data"]["arxiv_id"] = "2408.09869v5"
             article.extensions_json = json.dumps(ext)
-        else:
-            from services.sync_consumer_policy import activate_v2_consumer_mode
-            activate_v2_consumer_mode(session, reason="test", commit=False)
         session.add(article)
         session.commit()
     assert not pf.finish(storage.engine, task, extraction=extracted(), now=101)

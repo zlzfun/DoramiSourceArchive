@@ -291,12 +291,14 @@ deployment = replica
 相同则启动 no-op；receipt 或现存数据冲突时 fail closed。人工发布步骤和恢复说明见
 [`taxonomy-v1-deployment.md`](./taxonomy-v1-deployment.md)。
 
-内网管理员启用 v2 定时同步或手动启动第一次 v2 拉取时，系统会先持久化
-`remote_sync:v2_consumer_mode` 围栏，再创建网络任务；因此第一次 authority 全量尚未
-落地时，普通公共源的本地采集与分析也已经停止。该围栏不写伪造的 authority，用户
-自定 RSS 仍由内网采集；其中普通自定源可分析，签名/凭据源只采集、不调用 MaaS。
+issue #263 起没有 `remote_sync:v2_consumer_mode` 围栏：启用 v2 定时同步或手动拉取不会
+停掉本机的公共源采集与分析。同步建出来的源默认关「本机分析」且不进任何采集任务；想让本机
+自己采，就把源编入采集任务（或手动运行），需要本机分析再到源管理打开该源的开关。同步写入的
+文章不在本机分析。用户自定 RSS 仍由本机采集；其中普通自定源可分析，签名/凭据源只采集、不调用
+MaaS。从旧版本升级的接收节点，迁移会把全部公共源的分析置关、停用含公共源的采集任务、关掉公共
+日报定时，并停放公共源下本机文章上未完成的标题翻译 / 论文全文任务（它们此前被围栏挡着本就不跑），处置摘要记在 KV `archive_sync:issue_263_migration`。
 升级前遗留的定时配置若没有 `protocol` 且带 `source_ids`，会以
-`migration_required=true` 安全停用，管理员必须在「数据同步」明确保存 v1 或 v2；
+`migration_required=true` 安全停用，管理员必须在「运维管理 → 节点同步」的定时设置里明确保存 v1 或 v2；
 系统不会替管理员猜测范围。v1 只作为显式兼容模式运行。
 
 生产双节点最小示例：
@@ -350,7 +352,7 @@ secret = change-me-to-a-long-random-string
 
 - admin 账号：超级用户，可访问全部采集与分发能力；在 reader 面检索时不受个人订阅范围限制。
 - user 账号：受限读者，登录后是一个“阅读器”（仅阅读已订阅来源，左栏增删订阅）外加“接入集成”（聚合接口令牌、MCP、Skill）；检索、阅读与下游分发均硬限定在个人订阅范围内。
-- 内容台账读取对两类账号开放；手工录入、编辑、删除、离线归档导入等归档写操作只对 admin 账号开放。
+- 内容台账读取对两类账号开放；单条收录、编辑、删除、离线归档导入等归档写操作只对 admin 账号开放。
 - （仅分离部署）账号角色会再和 `[runtime] role` 取交集：`role = collector` / `reader` 时，部署角色作为外层硬限制叠加在账号角色之上。
 
 账户增删改在前端「运维管理 → 用户」即时生效、无需重启；但 `[auth]` 各项（`cookie_name`、`session_seconds`、`secret`、`cookie_secure`）只在后端进程启动时读取，修改这些后需要重启后端(`docker compose restart backend`;dev 裸起则重启进程)。

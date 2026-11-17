@@ -1,19 +1,18 @@
-"""数据接入 Router（collector/admin）：AI 节点构建 + 社交动态导入。
+"""数据接入 Router（collector/admin）：AI 节点构建。
 
-阶段1 从 app.py 迁出的「把内容/源接进来」的 collector 端点：
-- /api/source-builder/analyze|preview —— 由列表页 URL 生成配置节点建议 + 试抓预览；
-- /api/import/social-posts —— 外部社交动态批量入库（幂等）。
+阶段1 从 app.py 迁出的「把源接进来」的 collector 端点：
+- /api/source-builder/analyze|preview —— 由列表页 URL 生成配置节点建议 + 试抓预览。
+
+社交动态导入 /api/import/social-posts 已于 issue #262 推送入口统一波退役:外部内容一律经
+收录推送 ``POST /api/public/ingest/v1/items``(``services/ingest_batch.py``)进来。
 
 说明：路径不变；collector 网关仍由中间件统一强制（COLLECTOR_API_PREFIXES 含
-/api/source-builder、/api/import/social-posts）。数据访问经 Depends(deps.get_session)/
-deps.get_db_sink()；current_username 经 _app() 延迟动态调用（避免导入环）。
-本域专用的请求模型与社交内容构建助手随迁入本文件。
+/api/source-builder）。数据访问经 Depends(deps.get_session)/deps.get_db_sink()；
+current_username 经 _app() 延迟动态调用（避免导入环）。
 """
 
-import datetime
 import importlib
-import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field as PydanticField
@@ -21,9 +20,7 @@ from sqlmodel import Session, select
 
 from api import deps
 from fetchers.registry import fetcher_registry
-from models.content import SocialPostContent
 from models.db import SourceConfigRecord
-from services import article_analysis as article_analysis_service
 from services.media_store import SSRFError
 
 router = APIRouter(tags=["ingest"])
@@ -55,7 +52,8 @@ async def source_builder_analyze(
     """输入一个列表页 URL → 判类型 + 分析 + (LLM) 生成抓取节点配置建议。"""
     from services import source_builder
 
-    existing = {row.source_id for row in session.exec(select(SourceConfigRecord.source_id)).all()}
+    # select 单列返回字符串;旧写法 row.source_id 在有配置行时抛 AttributeError(源表全集后必然触发)。
+    existing = {str(source_id) for source_id in session.exec(select(SourceConfigRecord.source_id)).all()}
     existing |= set(fetcher_registry._fetchers.keys())
     try:
         result = await source_builder.analyze_url(
@@ -84,148 +82,3 @@ async def source_builder_preview(req: SourceBuilderPreviewRequest):
 
 
 # ==================== 社交动态导入 ====================
-
-class SocialPostReference(BaseModel):
-    """跨平台引用/转载帖摘要，与 SocialPostContent extensions 契约一致。"""
-    author_name: str = ""
-    author_handle: str = ""
-    author_avatar_url: str = ""
-    author_avatar_url_large: str = ""
-    text: str = ""
-    url: str = ""
-    media_urls: List[str] = PydanticField(default_factory=list)
-
-
-class SocialPostImportItem(BaseModel):
-    platform: str = "x"
-    post_id: str
-    source_id: str = ""
-    author_id: str = ""
-    author_handle: str = ""
-    author_name: str = ""
-    author_avatar_url: str = ""
-    author_avatar_url_large: str = ""
-    text: str = ""
-    title: str = ""
-    source_url: str = ""
-    publish_date: str = ""
-    conversation_id: str = ""
-    in_reply_to_id: str = ""
-    quoted_post_id: str = ""
-    reposted_post_id: str = ""
-    lang: str = ""
-    tags: List[str] = PydanticField(default_factory=list)
-    media_urls: List[str] = PydanticField(default_factory=list)
-    metrics: Dict[str, Any] = PydanticField(default_factory=dict)
-    quoted: Optional[SocialPostReference] = None
-    reposted: Optional[SocialPostReference] = None
-    raw_data: Dict[str, Any] = PydanticField(default_factory=dict)
-
-
-class SocialPostImportParams(BaseModel):
-    source_id: str = "import_social_posts"
-    posts: List[SocialPostImportItem]
-
-
-def normalize_social_source_id(platform: str, author_handle: str, fallback: str) -> str:
-    if fallback:
-        return fallback.strip()
-    safe_platform = (platform or "social").strip().lower().replace("/", "_")
-    safe_handle = (author_handle or "unknown").strip().lower().lstrip("@").replace("/", "_")
-    return f"{safe_platform}_{safe_handle}"
-
-
-def build_social_post_content(post: SocialPostImportItem, batch_source_id: str) -> SocialPostContent:
-    platform = post.platform.strip() or "x"
-    post_id = post.post_id.strip()
-    if not post_id:
-        raise ValueError("post_id 不能为空")
-
-    source_id = normalize_social_source_id(platform, post.author_handle, post.source_id or batch_source_id)
-    title = post.title.strip() or (post.text.strip()[:80] if post.text else f"{platform} post {post_id}")
-    source_url = post.source_url.strip()
-    if not source_url and post.author_handle:
-        source_url = f"https://x.com/{post.author_handle.lstrip('@')}/status/{post_id}"
-
-    publish_date = post.publish_date.strip() or datetime.datetime.now().isoformat()
-    raw_data = dict(post.raw_data or {})
-    raw_data.setdefault("import_source_id", batch_source_id)
-
-    return SocialPostContent(
-        id=f"{source_id}_{post_id}",
-        title=title,
-        source_url=source_url,
-        publish_date=publish_date,
-        source_id=source_id,
-        content=post.text,
-        has_content=bool(post.text),
-        platform=platform,
-        author_id=post.author_id,
-        author_handle=post.author_handle,
-        author_name=post.author_name,
-        author_avatar_url=post.author_avatar_url,
-        author_avatar_url_large=post.author_avatar_url_large,
-        post_id=post_id,
-        conversation_id=post.conversation_id,
-        in_reply_to_id=post.in_reply_to_id,
-        quoted_post_id=post.quoted_post_id,
-        reposted_post_id=post.reposted_post_id,
-        lang=post.lang,
-        tags=post.tags,
-        media_urls=post.media_urls,
-        metrics=post.metrics,
-        quoted=post.quoted.model_dump() if post.quoted else None,
-        reposted=post.reposted.model_dump() if post.reposted else None,
-        raw_data=raw_data,
-    )
-
-
-@router.post("/api/import/social-posts")
-async def import_social_posts(params: SocialPostImportParams):
-    """外部社交动态批量入库（按 source_id + post_id 幂等）。"""
-    db_sink = deps.get_db_sink()
-    saved_count = 0
-    skipped_count = 0
-    errors = []
-    saved_ids: list[str] = []
-
-    for index, post in enumerate(params.posts):
-        try:
-            content = build_social_post_content(post, params.source_id)
-            if await db_sink.save(content):
-                saved_count += 1
-                saved_ids.append(content.id)
-            else:
-                skipped_count += 1
-        except Exception as e:  # noqa: BLE001 - 单条失败不阻断整批，收集进 errors
-            errors.append({
-                "index": index,
-                "post_id": post.post_id,
-                "error": str(e),
-            })
-
-    if saved_ids:
-        try:
-            with Session(db_sink.engine) as session:
-                if article_analysis_service.read_feature_flag(
-                    session,
-                    article_analysis_service.ARTICLE_ANALYSIS_ENABLED_KEY,
-                    default=False,
-                ):
-                    for article_id in saved_ids:
-                        article_analysis_service.queue_article_analysis(session, article_id)
-                    session.commit()
-        except Exception as exc:  # noqa: BLE001 - imported posts are already committed
-            logging.getLogger("dorami.article_analysis").warning(
-                "社交导入后的分析入队失败，将由补偿扫描恢复: %s",
-                article_analysis_service.sanitize_error(exc),
-            )
-
-    return {
-        "status": "partial_success" if errors else "success",
-        "received_count": len(params.posts),
-        "saved_count": saved_count,
-        "skipped_count": skipped_count,
-        "error_count": len(errors),
-        "errors": errors,
-    }

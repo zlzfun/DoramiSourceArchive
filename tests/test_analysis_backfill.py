@@ -564,6 +564,74 @@ def test_cancel_revokes_outdated_dispatched_analysis_and_preserves_old_asset(sto
     assert calls == []
 
 
+def test_dispatched_backfill_settles_when_source_analysis_is_switched_off(storage):
+    """已派发的历史回填遇上源的「本机分析」被关(管理员关掉,或首次接入上游时程序关掉默认播客源):
+    worker 撤销排队、恢复旧结果后,这一项记为跳过,回填收尾而不是一直停在 running
+    (issue #263 补,检视 R1 #3)。"""
+    with Session(storage.engine) as session:
+        _seed_taxonomy(session)
+        session.add(
+            SourceConfigRecord(
+                source_id="public", name="Public", created_at=NOW_ISO, updated_at=NOW_ISO
+            )
+        )
+        old = _article("switch-off", age_days=30)
+        session.add(old)
+        session.flush()
+        _seed_current_analysis(session, old)
+        seeded = session.get(ArticleAnalysisRecord, old.id)
+        seeded.prompt_version = "article-analysis-v0"
+        seeded.scoring_version = "quality-score-v0"
+        session.add(seeded)
+        session.commit()
+        job = create_full_analysis_backfill(
+            session,
+            days=None,
+            selection="all",
+            actor_id="admin",
+            confirmation=FULL_ANALYSIS_CONFIRMATION,
+            now=NOW,
+        )
+        claimed = claim_full_analysis_backfill(session, lease_owner="first-worker", now=NOW)
+        assert dispatch_full_analysis_backfill(
+            session, claimed, lease_owner="first-worker", limit=1, now=NOW
+        ) == 1
+        assert session.get(ArticleAnalysisRecord, old.id).status == "pending"
+        source = session.get(SourceConfigRecord, "public")
+        source.ai_analysis_enabled = False
+        session.add(source)
+        session.commit()
+        job_id = int(job.id)
+
+    calls = []
+
+    async def analyzer(*_args):
+        calls.append("called")
+        return _payload()
+
+    for minutes in (10, 11):                     # 租约过期后由常规 worker 接手,跑两轮
+        asyncio.run(
+            run_analysis_cycle(
+                storage.engine,
+                worker_id="runtime-all",
+                llm_config=LLM_CONFIG,
+                analyzer=analyzer,
+                enabled=True,
+                candidate_enabled=False,
+                now_fn=lambda minutes=minutes: NOW + dt.timedelta(minutes=minutes),
+            )
+        )
+    assert calls == []
+    with Session(storage.engine) as session:
+        analysis = session.get(ArticleAnalysisRecord, "switch-off")
+        assert (analysis.status, analysis.summary) == ("succeeded", "old summary")
+        item = session.exec(select(TagRetagJobItemRecord)).one()
+        assert (item.status, item.last_error) == ("skipped", "source_ai_analysis_disabled")
+        state = serialize_full_analysis_backfill(session, session.get(TagRetagJobRecord, job_id))
+        assert state["status"] == "succeeded"
+        assert state["counts"]["skipped"] == 1
+
+
 def test_admin_backfill_api_estimate_create_and_lifecycle(monkeypatch, tmp_path):
     import api.app as app_module
     from api.routers import analysis_ops

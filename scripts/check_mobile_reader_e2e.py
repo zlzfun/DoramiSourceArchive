@@ -32,10 +32,11 @@ from e2e.focus_ring import run_focus_flows  # noqa: E402
 from e2e.pwa import run_pwa_flows  # noqa: E402
 from e2e.tag_search import run_tag_search_flows  # noqa: E402
 from e2e.podcast_reader import run_podcast_flows  # noqa: E402
+from e2e.brief_guides import run_brief_guide_flows  # noqa: E402
 from e2e.mobile_guards import run_guard_flows  # noqa: E402
 
-# guards runs last: it switches the global personal-brief setting on for its own duration (issue #230 M-18).
-FLOWS = ("mobile", "pwa", "focus", "tags", "guards", "podcasts")
+# The brief-related flows restore their global feature switch after their checks.
+FLOWS = ("mobile", "pwa", "focus", "tags", "guards", "podcasts", "brief-guides")
 
 
 def write_silence(path: Path) -> None:
@@ -153,8 +154,8 @@ def run(args) -> int:
     if unknown or not flows:
         raise SystemExit(f"--flows accepts a comma-separated subset of {','.join(FLOWS)}; got {args.flows!r}")
     result = {"status": "failed", "started_at": datetime.now(timezone.utc).isoformat(),
-              "browser": args.channel or "chromium", "issues": [85, 86, 90, 93, 108, 230, 245], "flows": flows,
-              "scope": "Built frontend + real FastAPI + disposable SQLite; no API response mocks.",
+              "browser": args.channel or "chromium", "issues": [85, 86, 90, 93, 108, 230, 245, 269], "flows": flows,
+              "scope": "Built frontend + real FastAPI + disposable SQLite; brief-guides mocks generation transitions only; no paid calls.",
               "artifacts": str(artifacts)}
     started = time.monotonic()
     sandbox = None
@@ -176,7 +177,7 @@ def run(args) -> int:
                         env, ROOT / "frontend", artifacts / "build.log", timeout=90)
             # Fresh build, isolated output: never replace the user's running dist preview.
             result["build_index_sha256"] = hashlib.sha256((sandbox / "site/index.html").read_bytes()).hexdigest()
-            if "guards" in flows or "podcasts" in flows:
+            if any(flow in flows for flow in ("guards", "podcasts", "brief-guides")):
                 write_silence(sandbox / "site/e2e-silence.wav")
             backend = start_process(stack, [sys.executable, "src/main.py"], env, ROOT, artifacts / "backend.log")
             wait_ready(f"http://127.0.0.1:{backend_port}/api/auth/session", backend,
@@ -209,10 +210,13 @@ def run(args) -> int:
                         # Four phone sizes in parallel, one browser per thread (the sync API is per-thread).
                         run_guard_flows({"channel": args.channel, "headless": not args.headed}, base_url,
                                         sandbox / "reader.db", artifacts, result)
-                    if "podcasts" in flows:
+                    if "podcasts" in flows or "brief-guides" in flows:
                         run_command([sys.executable, "e2e/podcast_fixture.py", str(sandbox)], env, ROOT,
                                     artifacts / "podcast-seed.log", timeout=60)
+                    if "podcasts" in flows:
                         run_podcast_flows(browser, base_url, sandbox / "reader.db", artifacts, result)
+                    if "brief-guides" in flows:
+                        run_brief_guide_flows(browser, base_url, sandbox / "reader.db", artifacts, result)
                 finally:
                     browser.close()
         result["status"] = "passed"

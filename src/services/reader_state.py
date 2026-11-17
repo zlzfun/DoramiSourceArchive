@@ -15,7 +15,8 @@ Folo 式——订阅/升级后立刻有可读的未读积压，而不是一片�
 - 订阅成功 → `init_cursor_with_backlog`（水位 = 该源第 K+1 新文章的
   fetched_date；不足 K+1 篇则空水位 = 全部未读）；
 - 退订 → `drop_cursor` 清行（再订阅即重新起算 backlog）；
-- 存量订阅无水位行（升级前就订着）→ `ensure_cursors` 懒初始化，同上;
+- 存量订阅无水位行（升级前就订着）→ `ensure_cursors` 懒初始化，同上;写入走
+  `INSERT … ON CONFLICT DO NOTHING`,同一账号两处同时首访只落一行(issue #251);
 - 全部标读 → `mark_all_read` 推进水位到当下并清掉被覆盖的逐篇状态行
   （防表膨胀；显式未读行同样被覆盖清除——「全部」就是全部）。
 
@@ -136,26 +137,33 @@ def ensure_cursors(
     username: str,
     source_ids: Iterable[str],
 ) -> Dict[str, str]:
-    """给缺水位行的源懒初始化（backlog 语义），返回补齐后的水位映射。
+    """给缺水位行的源懒初始化（backlog 语义），返回补齐后的水位映射（该用户全部水位行）。
 
-    幂等：已有行不动。新建行在本函数内 commit 落库。
+    并发安全（issue #251）:同一账号首次并发请求 unread-counts(两标签页 / 两台设备同时挂载
+    阅读器)会让两个请求同时查到「缺」并同插一行。写入用 ``INSERT … ON CONFLICT DO NOTHING``:
+    后到者撞上 ``(owner_username, source_id)`` 主键时静默跳过,随后按库里实际落下的行重读,
+    两个请求都拿到先到者的 backlog 水位。已有行永不改动;新建行在本函数内 commit 落库。
     """
     username = (username or "").strip()
     if not username:
         return {}
     cursors = load_cursors(session, username=username)
-    missing = [sid for sid in source_ids if sid and sid not in cursors]
-    if missing:
-        now = _now_iso()
-        for sid in missing:
-            wm = _backlog_watermark(session, sid)
-            session.add(ReaderReadCursorRecord(
-                owner_username=username, source_id=sid,
-                mark_read_before=wm, updated_at=now,
-            ))
-            cursors[sid] = wm
-        session.commit()
-    return cursors
+    missing = list(dict.fromkeys(sid for sid in source_ids if sid and sid not in cursors))
+    if not missing:
+        return cursors
+    now = _now_iso()
+    table = ReaderReadCursorRecord.__table__
+    stmt = sqlite_insert(table).values([
+        {
+            "owner_username": username, "source_id": sid,
+            "mark_read_before": _backlog_watermark(session, sid), "updated_at": now,
+        }
+        for sid in missing
+    ]).on_conflict_do_nothing(index_elements=[table.c.owner_username, table.c.source_id])
+    session.execute(stmt)
+    session.commit()
+    # 以库里实际落下的水位为准:并发首访时自己这行可能没插进去,要返回先到者的。
+    return load_cursors(session, username=username)
 
 
 def init_cursor_with_backlog(session: Session, *, username: str, source_id: str) -> None:

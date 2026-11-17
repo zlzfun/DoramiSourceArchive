@@ -38,7 +38,8 @@ export function bulkSubscribeModel(shape, sources, subscribedIds, busyShape = nu
   if (!sourceLabel || loading) return null;
 
   const sourceIds = (sources || [])
-    .filter((source) => !source.hidden && readerShapeOf(source) === shape)
+    // 临时源(listing=unlisted,issue #262)不进批量订阅:「一篇被收录」不等于「值得长期订阅」。
+    .filter((source) => !source.hidden && source.listing !== 'unlisted' && readerShapeOf(source) === shape)
     .map((source) => source.source_id);
   if (sourceIds.length === 0) return null;
   const remainingCount = sourceIds.filter((sourceId) => !subscribedIds.has(sourceId)).length;

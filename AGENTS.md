@@ -24,15 +24,15 @@
 uv sync                                  # 依赖(dev 全量:uv sync --extra crawl4ai);改依赖的完整流程见 docs/dev/dependencies.md
 python src/main.py                       # 后端 http://127.0.0.1:8088(热重载;启动先 ensure_migrated + taxonomy reconcile);API 文档 /docs
 cd frontend && npm install && npm run dev   # 前端 5173,/api 代理到后端;npm run lint / npm test / npm run build
-.venv/bin/python -m pytest tests/         # 全量(本地并行 -n 4 --dist worksteal,CI 即此形态);单文件直接给路径
+.venv/bin/python -m pytest tests/test_x.py   # 本地跑受影响的文件;全量 = tests -n 4 --dist worksteal,平时交给 CI(docs/dev/testing.md)
 .venv/bin/alembic upgrade heads           # 升级到全部 head;revision --autogenerate -m "desc" 生成迁移;check 看漂移
 python3 scripts/check_docs.py             # 文档守卫(索引覆盖 / 断链 / 状态词表 / L0 体量)
 ```
 
 ## 硬规则(违反即事故;链接给完整语义)
 
-1. **模型改动必配 Alembic 迁移**:`create_all()`(= metadata)必须等于 `alembic upgrade heads`(`tests/test_migrations.py` drift 测试强制);口径一律 `heads`,收养路径勿加「stamp head」捷径;Taxonomy 启动姿态 `[taxonomy] deployment` 必须显式 `authority` / `replica` / `manual` → `docs/dev/migrations.md`、`docs/ops/taxonomy-v1-deployment.md`。
-2. **改前端先读 `docs/frontend/conventions.md`**:token / 角色类单一事实来源 = `frontend/src/index.css`,不手写 `text-[Npx]` / `rounded-[Npx]` / hex;新增动效不写 OS 媒体查询(应用内开关 `<html data-motion>`);读者面文案不漏内部架构词(归档 / 采集 / 分发 / 层);遮罩关闭只用 `<Modal closeOnOverlay>`;口径统一叫「兴趣」不叫「关注」。
+1. **模型改动必配 Alembic 迁移**:`create_all()`(= metadata)必须等于 `alembic upgrade heads`(`tests/test_migrations.py` drift 测试强制);口径一律 `heads`,收养路径勿加「stamp head」捷径;**已发布(进过正式 tag)的迁移文件一字不改**——流水线 worker 向前部署按字节 fail closed、无放行开关,CI `scripts/check_released_migrations.py` 对最新 tag 比对(新增允许),改历史行为加新 revision 或改 `alembic/env.py`,docstring / 路径也不回改旧文件;Taxonomy 启动姿态 `[taxonomy] deployment` 必须显式 `authority` / `replica` / `manual` → `docs/dev/migrations.md`、`docs/ops/taxonomy-v1-deployment.md`。
+2. **改前端先读 `docs/frontend/conventions.md`**:token / 角色类单一事实来源 = `frontend/src/index.css`,不手写 `text-[Npx]` / `rounded-[Npx]` / hex;新增动效不写 OS 媒体查询(应用内开关 `<html data-motion>`);读者面文案不漏内部架构词(归档 / 采集 / 分发 / 层);遮罩关闭只用 `<Modal closeOnOverlay>`;口径统一叫「兴趣」不叫「关注」;**界面不靠说明文字解释自己**(用户 2026-11-13 原话:*Avoid unnecessary secondary labels and description, let the layout do the explaining.*)——副标题 / 引导句 / 口号式文案默认不写,含糊处先改版面与交互,不靠加一句说明解决。
 3. **版本只在发版时改**:`src/version.py` 单一事实来源,开发版 `X.Y.Z-alpha`,**PR 不 bump**;`scripts/release.sh X.Y.Z` 发版打 annotated tag,两条部署脚本只认 tag(`--here` 显式例外)→ `docs/ops/release-process.md`。
 4. **`uv.lock` 入库但本机镜像改写永不提交**:改依赖走 `env -u UV_INDEX_URL -u UV_DEFAULT_INDEX uv lock` 并重导出 `docker/requirements*.txt`(守卫 `tests/test_uv_lock.py` / `tests/test_docker_requirements.py`);提交一律显式列文件,永不 `git commit -a` → `docs/dev/dependencies.md`。
 5. **主仓不离开 `main`**:一波一分支 `feat/issue-<N>-<slug>` 自最新 `origin/main` 拉出,在 worktree 里实现;内网适配(含看似通用的 src 改动)只进 `master`,master 永不合回 main。
@@ -42,6 +42,7 @@ python3 scripts/check_docs.py             # 文档守卫(索引覆盖 / 断链 /
 9. **测试**:造数据用相对时间(滚动窗 + 固定日期 = 时间炸弹);涉及 DNS 公网性判定的用例一律打桩(开发机 fake-ip 代理会掩盖);测试命令 `cmd > log 2>&1; rc=$?` 不走管道;新 TestClient 测试显式建 tmp sink → `docs/dev/testing.md`。
 10. **改「系统记录」的语义前先 grep 消费方**:日报记录的分析行被个人早报与 readiness 消费;给 Archive Sync 分析流加字段时 `archive_sync_v2.ANALYSIS_PAYLOAD_GENERATION` +1;`ScoredItem.to_reduce_dict` 字段被内网神灯流水线消费(只读 `extensions.items`)。
 11. **文档同波**:每波改 `docs/version-history.md`(年表加一行 + 详细一段)、`docs/backlog.md`(有意不做的遗留)、`docs/decisions.md`(拍板 / 不做 / 触发各一行);方案落地后 `git mv` 到 `docs/archive/` 并加归档注;新方案文件名 `docs/plans/issue-<N>-<slug>.md`。跑 `scripts/check_docs.py`。
+12. **跨节点改动先写「部署顺序与混版本」**:外网按 tag 先上,内网经 `master` 同步再手工部署、常晚几天,外网也可能回滚;Archive Sync 是内网拉取,外网看不到内网版本。凡改同步流字段 / 枚举取值 / 导出范围 / 删除语义,方案须写清「新外网 + 旧内网」「旧外网 + 新内网」各会怎样——旧端对未知枚举值不安全(`admission_status_of` 未知即 admitted),对未知键也只在部分流里安全(sources 忽略,candidate evidence 拒绝);不能双向兼容就写明接收端先升级或外网先上时先显式关开关,合入前做跨版本实测 → `docs/dev/workflow.md` §0。
 
 ## 协作流程(分支 / 检视 / 合入;全文与「为什么」在 `docs/dev/workflow.md`)
 
@@ -50,7 +51,7 @@ python3 scripts/check_docs.py             # 文档守卫(索引覆盖 / 断链 /
   收到意见先逐条表态(接受 / 分歧 + 论据),分歧点与检视方讨论到一致——**一致之前不改代码**;修复成批做完再请复检,
   复检只对照修复清单不重新开放全面检视。轮次由执行者控制,原则是两人合作检视、协商,避免「乒乓球」式来回传球与发散;
   再有新面先判严重性,非严重记观察期。分歧与结论写进方案文档的检视节。
-- **合入前必须用户本地端到端验收 + 目检放行**,codex 通过也不例外;拍板后 squash 合入 main。例外(2026-09-19 用户口径):**没有可目检界面**的纯后端机制修复与纯文档 PR,在检视通过 + 全量套件绿 + CI 绿后可由执行者直接 squash 合入;纯文档 / 截图改动另有用户指定的轻量路径(先建 issue、直接提交 main、`refs #N`),见 `docs/dev/workflow.md` §10。
+- **合入前必须用户本地端到端验收 + 目检放行**,codex 通过也不例外;拍板后 squash 合入 main。例外(2026-09-19 用户口径):**没有可目检界面**的纯后端机制修复与纯文档 PR,在检视通过 + CI 绿后可由执行者直接 squash 合入;纯文档 / 截图改动另有用户指定的轻量路径(先建 issue、直接提交 main、`refs #N`),见 `docs/dev/workflow.md` §10。
 - **开发版使用 alpha(2026-09-24 拍板)**:从最新正式 tag 开始新一波开发时,立即把
   `src/version.py` / `pyproject.toml` / `uv.lock` 根包行同步改为下一版本的 `X.Y.Z-alpha`；
   同一开发波内后续特性沿用这个 alpha 版本,不为每个 PR 另抢版本号、不打 alpha tag。
@@ -75,7 +76,7 @@ python3 scripts/check_docs.py             # 文档守卫(索引覆盖 / 断链 /
 | LLM 与读者 AI | `chat_completion` 永不打日志 api_key;三档模型 main / aux / vision;翻译 / 问答受「全局总闸 ∧ 账户开关 ∧ LLM 已配置」门控,日额度软上限 | [`llm-and-ai.md`](docs/architecture/llm-and-ai.md) |
 | 社交(X) | 一账号一 `source_id`;按**返回资源**计费的配额守卫;不展示互动数字 | [`social-x.md`](docs/architecture/social-x.md) |
 | 调度与任务 | `CollectionJobRecord` 是唯一采集调度实体;`load_tasks_to_scheduler()` 只差量协调自己的命名空间;长任务 = 持久 `JobRecord` + 轮询 | [`jobs-and-scheduling.md`](docs/architecture/jobs-and-scheduling.md) |
-| Archive Sync | 外网 authority 唯一写者,内网 replica 只读公共数据(`authority_id` 围栏);六流独立 checkpoint | [`archive-sync.md`](docs/architecture/archive-sync.md)、[契约](docs/contracts/archive_sync.md) |
+| Archive Sync | 节点不分角色:拉取不改变本机能做什么,导出本机持有的全部公开数据(可链式转发);逐行同步印记只表示「当前版本由同步写入」,本机版本严格更新才胜;不做「上游没有就删」;只支持单上游的链;九流独立 checkpoint | [`archive-sync.md`](docs/architecture/archive-sync.md)、[契约](docs/contracts/archive_sync.md) |
 | 运维面 | 管理面纪律:列头即操作、零说明句、高危入抽屉;三类计量(AI 用量 / 阅读 / 登录)落聚合表 | [`admin-ops.md`](docs/architecture/admin-ops.md) |
 
 ## 找什么去哪

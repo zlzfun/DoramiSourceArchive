@@ -4,9 +4,10 @@
 > 相关:[`architecture/overview.md`](../architecture/overview.md) · 契约 [`contracts/`](../contracts/)
 
 **Articles**
-- `GET /api/articles` — list/query (filters: `content_type`, `source_id`, `has_content`, `search`(FTS5 全文,标题+正文), `publish_date_start/end`, `fetched_date_start/end`, `subscribed_scope` = `off`|`only`|`prioritize`, `skip`, `limit`)
+- `GET /api/articles` — list/query (filters: `content_type`, `source_id`, `has_content`, `search`(FTS5 全文,标题+正文), `publish_date_start/end`, `fetched_date_start/end`, `ingest_channel` = `fetch`|`push`|`manual`|`import`(来路,issue #262;`fetch` = 抓取器入库、无来路), `subscribed_scope` = `off`|`only`|`prioritize`, `skip`, `limit`);条目带 `ingest_channel` / `ingest_channel_label`,`ingest_actor` 只对管理员透出
+- `GET /api/articles/facets` — 分面计数 `content_types` / `source_ids` / `ingest_channels`(含伪值 `fetch`)
   - `podcast_guide=any|readable|listenable`：播客已发布中文导读的任一/文字/音频能力；省略则不限，非法值 422。与其它范围条件相交，在计数和分页前生效；任务就绪标记、未发布或已撤下产物不计入。
-- `POST /api/articles` — manual entry
+- `POST /api/articles` — retired (410, issue #262): manual entry now goes through `POST /api/public/ingest/v1/items` (admin session = 「单条收录」, channel `manual`)
 - `PUT /api/articles/{id}` — update
 - `DELETE /api/articles/{id}` — delete(必要时回退日报游标)
 - `POST /api/articles/batch-delete`
@@ -21,8 +22,10 @@
 - `GET /api/feed/articles` — delivery-shaped JSON with `metadata.extensions` parsed; supports `content_types` (CSV), `source_ids` (CSV), `has_content`, `include_content`; `limit` capped at 500
 - `GET /api/feed/articles.md` — same filtered records as a Markdown batch; capped at 200 records
 
-**Import Bridge**
-- `POST /api/import/social-posts` — ingest external social posts (X/Twitter, etc.) as `social_post` content; idempotent by `source_id + post_id`
+**Ingest**(issue #262,契约 [`contracts/ingest_push.md`](../contracts/ingest_push.md))
+- `POST /api/public/ingest/v1/items` — 收录:`ding_` 令牌推送(通道 `push`)或管理员会话「单条收录」(通道 `manual`);`/api/public/*` 免会话门控,会话由路由自己核对(只认 admin)
+- `/api/admin/ingest/*` — 收录令牌签发 / 吊销,收录源列入 / 下架 / 恢复 / 改名
+- `POST /api/import/social-posts` — 已退役(issue #262):外部社交内容按 `kind=social_post` 推送
 
 **Archive Sync** (collector → reader, see [Archive Sync](../architecture/archive-sync.md))
 - `GET /api/archive/export/articles.jsonl` — collector exports archive records as JSON Lines
@@ -42,7 +45,7 @@
 - (retired: `/api/node-groups*`, `/api/tasks*`, `/api/collection-jobs/migrate-legacy-tasks` — 实体简化阶段 2; existing data auto-migrated by Alembic `8f6d93196258`)
 
 **Fetchers**
-- `GET /api/fetchers` — list all discovered fetchers with parameter schemas
+- `GET /api/fetchers` — 源管理目录(issue #262 第三波):全部公共源,不只是有采集绑定的——每条带 `bound`(有绑定才能运行 / 编入任务)、`origin`、`listing`、`retired`;`?include_retired=true` 连退役源一起列。`POST /api/collection-jobs` / `PUT` 收到无绑定的源 id 回 400
 - `POST /api/fetch/{fetcher_id}` — trigger a specific fetcher (also writes `FetchRunRecord` and updates `SourceStateRecord`)
 
 **Source Configs** (user-defined source definitions, advanced extension surface)
@@ -60,7 +63,7 @@
 - `POST /api/source-builder/preview` — body = proposed config; trial-run `generic_web`/`generic_rss` and return sample entries (no persist). Save via `POST /api/source-configs`.
 
 **Monitoring & Observability**
-- `GET /api/source-health` — per-fetcher health summary (derived from `SourceStateRecord`, falls back to `FetchRunRecord` aggregation); sorted by name; rows carry `admission_status`
+- `GET /api/source-health` — per-source health summary (derived from `SourceStateRecord`, falls back to `FetchRunRecord` aggregation); sorted by name; rows carry `admission_status`; 无采集绑定的源也有一行(只有累计条目数,运行史恒为空)
 - `GET /api/source-states` — raw `SourceStateRecord` rows (filterable by `status`, `fetcher_id`)
 - `GET /api/fetch-runs` — paginated fetch run history
 - `GET /api/fetch-runs/{run_id}` — single run detail
@@ -82,7 +85,7 @@
 - `GET /api/reader/ai/translation-jobs/events?article_id=…&preview_cursor=…` — 同权限 SSE `snapshot`，支持 Last-Event-ID；流内重验 cookie/权限，终态后关闭；普通 GET 可兜底
 - `POST /api/auth/preferences` — 可选 patch `default_surface` / `prefer_chinese_titles`，只更新明确字段；中文标题默认 true，游客仅浏览器本地偏好
 - `POST /api/reader/ai/social/{article_id}/translate` — 推文(主推 + 引用推)一次调用译为中文,返回 `{text, quoted, cached}`,缓存 `extensions_json.translation_zh_social`(issue #84)
-- `POST /api/reader/ai/ask` — multi-turn QA,scope 四档 `article|articles|subscription|all`(v3.32:显式名单 vs 检索圈定;检索档走「LLM 计划检索 + FTS5」两段式);响应 `sources` 与上下文编号 [n] 同源同序(行内引用锚);可带 `ask_id` 登记阶段进度
+- `POST /api/reader/ai/ask` — multi-turn QA,scope 四档 `article|articles|subscription|all`(v3.32:显式名单 vs 检索圈定;检索档走「LLM 计划检索 + FTS5」两段式);响应 `sources` 与上下文编号 [n] 同源同序(行内引用锚);可带 `ask_id` 登记阶段进度，`trace_id` 对应根管理员诊断。`answer_mode=answer|partial|references_only`：前两者`status=success`，partial仅反映模型子项声明缺口，不是语义评估；作答失败且资料复核仍有效时HTTP200、`status=references_only`，仅返回程序固定失败说明及本轮参考来源，不含被拒草稿、不算已完成问答日额度，供应商token照常计量。空来源/绑定变更不降级，权限变化或撤稿仍按403/404/409拒绝所有内容
 - `GET /api/reader/ai/ask/progress?ask_id=` — ask 阶段进度轮询(plan→search→select→answer,内存瞬时态,完成即清;阶段化等待态数据源)
 - `POST /api/reader/ai/podcasts/{episode_id}/ondemand`、`POST /api/reader/ai/articles/{article_id}/ondemand` — 读者点播精品导读 / 文章精简旁白，共用每日额度。总闸 `GET`/`POST /api/admin/reader-ondemand`（KV `reader_ondemand_enabled`，缺省开）在运维管理 → 内容；关闭只收读者入口并 403 新请求，已有音频与排队不动。能不能跑不由这个开关改：`/api/runtime` 的 `ondemand.podcast` / `ondemand.article` 还要求 LLM、TTS 和默认音色，播客侧另要求处理阶段授权。缺阶段时读者只看到「当前部署未开启播客点播」，缺什么列在管理面 `blockers`。
 
@@ -105,6 +108,7 @@
 - `GET/POST/PUT/DELETE /api/admin/announcements`(+`/{id}/toggle`,GET 含 dismiss_count 触达计数)— 公告管理;`GET /api/reader/announcements` + `POST /api/reader/announcements/{id}/dismiss` — 读者取未关闭的 active 公告 / 逐条一次性关闭(`announcement_dismissals` 复合主键落库,跨设备一致;删除公告级联清 dismissal)
 - `POST /api/admin/remote-sync/test|start` + `GET /api/admin/remote-sync/status` — 远程内容同步(接收方拉取):`services/remote_sync.py` 登录远端(Set-Cookie 手工抽取显式回传,兼容远端 cookie_secure)→ 分页拉 `GET /api/archive/export/articles.jsonl` → 本地 `import_archive_sync_jsonl` 幂等导入,跑 `remote_archive_sync` 后台 job;成功后把最大 `fetched_date` 记入 KV `remote_sync:state`(按 base_url 分目标)支撑「增量自上次」;**手动同步凭据只进任务内存,job payload 与 KV 游标绝不含密码**;带过滤时不设进度 total(远端全库总量会误导进度条)
 - `GET`/`POST /api/admin/remote-sync/schedule` — 定时同步(v3.19.2):无人值守到点自动增量拉取。**凭据存 KV `remote_sync:schedule`,只写不回显**(定时任务必须持久化凭据——有意的契约例外,沿 X API token 范式:GET 只给 `password_set`,POST 空密码=保留已存;日志/审计摘要绝不碰密码);cron 经 `CronTrigger.from_crontab` 校验,保存即 `reload_remote_sync_schedule()` 热生效 APScheduler job `remote_sync`;`execute_remote_sync_job` 以该远端 KV 游标为起点增量、上轮 job 未完则跳过本轮(防重叠),经 `launch_remote_sync_job`(与手动 start 同构)提交,`created_by="system"` 与手动运行同列
+- `GET /api/admin/remote-sync/status` 的 `console` 块 + `GET /api/admin/remote-sync/inventory` + `POST /api/admin/remote-sync/streams/{stream}/reset` — 节点同步控制台(issue #261,运维 → 节点同步):`console` = 当前目标(定时配置优先,否则最近同步过的)、协商流序、各流 checkpoint、`legacy_import_locked`(库里已有同步写入的数据 → v1 导入不可用)与 `local_skip_streams`(本机已有事件 → 不同步 events;issue #263 起不再有接收端围栏)、本机库就绪、上次测试连接(KV `remote_sync:probes`,不含凭据)、单流重置记录;`jobs[*].created_by`(定时 = `system`);inventory 是本机各类同步内容条数(按需取,不随轮询);reset 清该流 checkpoint、把该 authority 逐行记账的接收修订置 0(不删行)、下次整流重拉(重放分析流 = `analyses`;有排队 / 运行中任务时 409;入审计)。**均只读本机、不探测远端**;测试连接以目标 sources checkpoint 为 `since`,外网 manifest 回 `pending` / `pending_by_stream` 计数(契约 `docs/contracts/archive_sync.md`)
 
 **分享波(v3.25):把一篇内容发给同事**(两档并列,深浅分明;设计取舍见 `services/article_share.py` 模块注释)
 - **站内深链**(零后端):`#/reader/a/{article_id}`,纯前端 URL、不落库、不外泄,收到的人登录后直达该篇。拼装与解析在 `frontend/src/utils/shareLink.js`;`App.jsx` 在 `commitNav` 初始播种 replace 掉 hash **之前**就地取走 id(晚一步就读不到),admin 带深链进来一律 `enterReader()`——压过 `default_surface` 与本 tab 会话的界面记忆,否则链接会开在看不见的隐藏阅读器里;ReaderTab 深链落地用 `deepLinkKeepRef` 通知作用域清场 effect **保留右栏**——深链要「切作用域+选中该篇」一次完成,而清场 effect(切源即 setActiveArticle(null))会把刚选中的文章抹掉,v3.25 首版即栽在这上
@@ -124,10 +128,21 @@
 - `GET /api/admin/home?days=&top=` — 运维首页聚合(issue #114,全体管理员可见,纯聚合不含逐账户明细):`active`(逐日活跃账户 `series[{day,accounts}]` 补零 + 窗口去重合计 `accounts`;活跃 = 当天登录或阅读,排除 `guest:*` / `deleted:*`)、`reads`(窗口内各源阅读 `total` + 排行 `by_source[{source_id,name,reads}]` 取前 `top`,含游客,与 `/admin/content` 同口径只多时间窗)、`backfills`(全量分析回填:`active` 进行中数、`unresolved_failed` 最近一次成功之后的失败任务数、`latest` 最近一条)
 - `GET /api/admin/accounts?days=` — account list enriched with `subscription_count` + **窗口指标** (`reads`, `logins`, `ai_calls`/`ai_tokens` over the last `days`, `logged_in_window`) + 埋点 fields
 - `GET /api/admin/accounts/{username}/activity?days=` — per-reader activity detail: windowed AI usage (`ai_usage.summarize_user`) + reads (`reader_activity.summarize_user_reads`) + logins (`accounts.summarize_user_logins`: count/by_day/recent) + `source_engagement` (per-source reads ∪ favorites, friendly-named) + `favorites_total` + account/subscription snapshot
+- `GET /api/admin/qa-diagnostics` — 仅根管理员；最近最多 100 条/1 小时的进程内问答诊断（来源指纹/范围、结构检查、调用配置/结束状态/token/耗时，无提问/正文/答案；不代表语义正确）。重启清空，多进程各自窗口。
 - `GET /api/admin/ai-usage?days=` — AI usage dashboard (calls + tokens by 用途/用户/日期)
 - `GET /api/admin/audit-log?days=&limit=` — 管理操作审计(v3.19):中间件落行的管理写操作,按时间倒序(见 [Admin audit log](../architecture/accounts-and-access.md))
 - `GET`/`POST /api/admin/ai-beta/global` — read/set the AI Beta global master switch
 - `GET /api/admin/credentials` — 设置柜凭据区只读补充:部署级 env-only 机密的存在性(`github_token_set`,只回布尔绝不回值;LLM/X 状态走各自 config 端点)
-- `GET /api/admin/source-visibility` + `POST /api/admin/source-visibility/{source_id}` — 读者面源可见性(管理面隐藏节点):隐藏名单存 KV `reader_hidden_source_ids`(`services/source_visibility.py`,无新表),按 `source_id` 生效。语义=「读者面临时下架」(观察期故障/文章缺陷即时止损,不改代码)。**内容交付全量排除**:文章列表与单条详情(非 admin 会话)、收藏列表、聚合 feed(dfeed/dsub)、MCP/问答检索范围——范围收窄的单一咽喉是 `feed_service.resolve_subscribed_source_ids` 默认减隐藏(`include_hidden=True` 取原始并集,供目录/subscribe 响应/播种幂等判定)。**目录呈现分订阅态**(2026-07-27 拍板,替代初版「已订阅者也整体消失」——静默消失像数据丢失):未订阅者完全不可见(发现页不出现,新订阅 404);已订阅者源栏保留条目、`/api/reader/sources` 标 `hidden:true` → 前端灰显+「暂不可用」细签,点击短路成空态(不发列表请求,admin/读者同观感),读者可退订也可留着等恢复;既有订阅与归档原样保留、恢复即回归。admin 会话内容不受影响(知识台账/管理员令牌仍见全档)。开关在节点管理检视器(「在读者面隐藏」+ 节点卡「已隐藏」徽记),操作入审计
+- `POST /api/admin/sources/{source_id}/analysis` — 公共源的「本机分析」开关(issue #263;body `{enabled}`,入审计):同步建出来的源默认关,只对本机自己抓到的条目起作用(同步写入的文章用上游的分析结果);读者自定源 400(走运维 → 自定源)。`GET /api/fetchers` 每条带 `ai_analysis_enabled`。
+- `GET /api/admin/source-visibility` + `POST /api/admin/source-visibility/{source_id}` — 读者面源可见性(管理面隐藏源):隐藏名单存 KV `reader_hidden_source_ids`(`services/source_visibility.py`,无新表),按 `source_id` 生效。语义=「读者面临时下架」(观察期故障/文章缺陷即时止损,不改代码)。**内容交付全量排除**:文章列表与单条详情(非 admin 会话)、收藏列表、聚合 feed(dfeed/dsub)、MCP/问答检索范围——范围收窄的单一咽喉是 `feed_service.resolve_subscribed_source_ids` 默认减隐藏(`include_hidden=True` 取原始并集,供目录/subscribe 响应/播种幂等判定)。**目录呈现分订阅态**(2026-07-27 拍板,替代初版「已订阅者也整体消失」——静默消失像数据丢失):未订阅者完全不可见(发现页不出现,新订阅 404);已订阅者源栏保留条目、`/api/reader/sources` 标 `hidden:true` → 前端灰显+「暂不可用」细签,点击短路成空态(不发列表请求,admin/读者同观感),读者可退订也可留着等恢复;既有订阅与归档原样保留、恢复即回归。admin 会话内容不受影响(知识台账/管理员令牌仍见全档)。开关在源管理检视器(「在读者面隐藏」+ 源卡「已隐藏」徽记;对收录临时源即「下架」,同时拒收后续推送),操作入审计
 - `GET`/`POST /api/llm/config` + `POST /api/llm/config/test` — global model config (shared by Daily Brief + reader AI; edited from 运维管理)
 - `POST /api/auth/preferences` — 任意登录账户写自己的偏好(目前仅 `default_surface`,管理员登录落地界面)
+
+
+### 问答参考位置（#254）
+
+| 方法 | 路径 | 语义 |
+| --- | --- | --- |
+| GET | `/api/podcasts/episodes/{episode_id}/reference-context?token=...` | 读者/游客只读；token来自问答sources.reference_locations，签名绑定原稿与范围，读取时重新验权/验当前发布。返回before/focus/after（600/800/600字符上限）及has_before/has_after；private,no-store。无问答额度/模型费用；无效签名400、来源不可读404、原稿变更409、原稿无法投影422。 |
+
+`POST /reader/ai/ask`额外返回`refinement_questions`（最多3个已有子问题，正常回答为空）；每个有定位资料的source可带最多4个`reference_locations`，其`origin=selected`表示模型选段，`excerpt_start`表示参考片段开头，均不代表语义核验。建议需用户编辑/发送，不触发自动再问。

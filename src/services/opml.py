@@ -210,6 +210,9 @@ def export_plan(session: Session, source_ids: List[str]) -> Dict[str, Any]:
 
     调用方传入的名单含已隐藏的订阅(与源栏保留「暂不可用」条目同一口径)。
     这里仍导出其中的真实 feed,文件本身不标注隐藏或停用。
+
+    ``credentialed_count`` = 导出地址里带凭证(token / 签名 / userinfo)的条数:这些地址在文件里是明文
+    (见 ``_export_feed_url``),设置页据此把「文件里有私密地址」写成一个数字(issue #291)。
     """
     outlines: List[Dict[str, Any]] = []
     seen: Set[str] = set()
@@ -227,6 +230,9 @@ def export_plan(session: Session, source_ids: List[str]) -> Dict[str, Any]:
     return {
         "exportable_count": len(outlines),
         "skipped_count": skipped,
+        "credentialed_count": sum(
+            1 for item in outlines if user_sources.feed_url_has_credentials(item["xml_url"])
+        ),
         "outlines": outlines,
     }
 

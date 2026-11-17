@@ -11,7 +11,8 @@ import { bulkSubscribeModel } from '../utils/bulkSubscribe';
 import { readerShapeOf } from '../utils/readerShape';
 
 // last_fetched(ISO)→ 人话:今日 / 昨日 / MM-DD;空值不显示
-function lastLabel(lastFetched) {
+// relative(桌面,issue #279 第三批):更早的写「N 天前更新」,读者面不出现连字符日期;手机壳仍是「最近 MM-DD」
+function lastLabel(lastFetched, relative = false) {
   const day = String(lastFetched || '').slice(0, 10);
   if (!day) return '';
   const today = new Date();
@@ -20,6 +21,10 @@ function lastLabel(lastFetched) {
   const yesterday = new Date(today);
   yesterday.setDate(today.getDate() - 1);
   if (day === fmt(yesterday)) return '昨日更新';
+  if (relative) {
+    const days = Math.round((new Date(fmt(today)).getTime() - new Date(day).getTime()) / 86400000);
+    if (Number.isFinite(days) && days > 1) return days < 60 ? `${days} 天前更新` : `${Math.round(days / 30)} 个月前更新`;
+  }
   return `最近 ${day.slice(5)}`;
 }
 
@@ -38,7 +43,7 @@ function nameCarriesPlatform(source) {
 // 鼠标与键盘照旧一下即退。
 const CONFIRM_MS = 4000;
 
-function SourceCard({ source, subbed, pinning, query, showArticleChip, onSubscribe, onUnsubscribe, onPreview }) {
+function SourceCard({ source, subbed, pinning, query, showArticleChip, onSubscribe, onUnsubscribe, onPreview, relativeFresh = false }) {
   const q = (query || '').trim();
   const [confirming, setConfirming] = useState(false);
   const pointerRef = useRef('');
@@ -97,7 +102,7 @@ function SourceCard({ source, subbed, pinning, query, showArticleChip, onSubscri
             {(source.subscriber_count || 0) > 0
               ? `${(source.subscriber_count || 0).toLocaleString()} 人订阅`
               : '暂无订阅'}
-            {source.last_fetched ? ` · ${lastLabel(source.last_fetched)}` : ''}
+            {source.last_fetched ? ` · ${lastLabel(source.last_fetched, relativeFresh)}` : ''}
           </p>
         </div>
         <div className="reader-disc-card-side">
@@ -138,6 +143,7 @@ function SourceCard({ source, subbed, pinning, query, showArticleChip, onSubscri
  * join 不到的成员自然不渲染,与后端批量端点的 unavailable 口径一致)。
  */
 export default function DiscoverPage({
+  relativeFresh = false, // 来源「最近更新」写相对时间(桌面,issue #279 第三批)
   sources,
   subscribedIds,
   loading = false,
@@ -195,6 +201,8 @@ export default function DiscoverPage({
     const q = query.trim().toLowerCase();
     const buckets = {};
     for (const s of sources) {
+      // 临时源(收录通道建的,issue #262)不进发现目录;已订阅的照常列出,便于管理。
+      if (s.listing === 'unlisted' && !subscribedIds.has(s.source_id)) continue;
       const sShape = readerShapeOf(s);
       if (activeShape !== 'all' && sShape !== activeShape) continue;
       if (q && !`${s.name || ''} ${s.description || ''} ${s.source_id}`.toLowerCase().includes(q)) continue;
@@ -208,7 +216,7 @@ export default function DiscoverPage({
     return SOURCE_ROLES
       .map((r) => ({ ...r, list: buckets[r.key] || [] }))
       .filter((g) => g.list.length > 0);
-  }, [sources, activeShape, query, sortBySubs]);
+  }, [sources, subscribedIds, activeShape, query, sortBySubs]);
 
   // 合集视图模型:成员与订阅计数由 sources 目录 join(隐藏源上游已滤,join 不到即不渲染)
   const sourceById = useMemo(() => {
@@ -339,13 +347,6 @@ export default function DiscoverPage({
             <>
               <div className="reader-disc-title-row">
                 <span className="reader-disc-title">发现</span>
-                <span className="reader-disc-hint">
-                  {activeTab === 'collections'
-                    ? '按主题策展的来源合集,一键整组订阅'
-                    : activeTab === 'interests'
-                      ? '兴趣决定早报和阅读器优先呈现什么'
-                      : '浏览全站收录的来源,一键订阅到你的阅读器'}
-                </span>
               </div>
               <div className="reader-disc-tools">
                 {/* 目录视图切换:平铺源目录 ⇄ 策展合集 */}
@@ -368,31 +369,36 @@ export default function DiscoverPage({
                     </button>
                   ))}
                 </span>
-                {/* 三段共用头部搜索框(v3.52.3 目检:兴趣段此前把搜索放在 chip 行之下,与另两段不同形);
-                    兴趣段的检索词经 externalQuery 注入 InterestPage,由它按标签名/别名过滤 */}
-                <label className="reader-disc-search">
-                  <Search className="h-[13px] w-[13px]" aria-hidden="true" />
-                  <input
-                    type="search"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder={activeTab === 'collections' ? '筛选合集…' : activeTab === 'interests' ? '搜索标签…' : '筛选来源名称或简介…'}
-                    aria-label={activeTab === 'collections' ? '筛选合集' : activeTab === 'interests' ? '搜索标签' : '筛选来源'}
-                  />
-                </label>
+                {/* 桌面:这一组排在页名那一行的右端(搜索 + 添加)。手机壳里这层与下面的 .reader-disc-filters 都不成盒
+                    (display: contents),子项照旧直接排在 .reader-disc-tools 里 */}
+                <div className="reader-disc-acts">
+                  {/* 三段共用头部搜索框(v3.52.3 目检:兴趣段此前把搜索放在 chip 行之下,与另两段不同形);
+                      兴趣段的检索词经 externalQuery 注入 InterestPage,由它按标签名/别名过滤 */}
+                  <label className="reader-disc-search">
+                    <Search className="h-[13px] w-[13px]" aria-hidden="true" />
+                    <input
+                      type="search"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      placeholder={activeTab === 'collections' ? '筛选合集…' : activeTab === 'interests' ? '搜索标签…' : '筛选来源名称或简介…'}
+                      aria-label={activeTab === 'collections' ? '筛选合集' : activeTab === 'interests' ? '搜索标签' : '筛选来源'}
+                    />
+                  </label>
+                  {activeTab === 'sources' && userSourcesEnabled && onAddCustomSource && (
+                    <button
+                      type="button"
+                      className="reader-disc-add"
+                      title="贴入 RSS/Atom 地址,添加只有你可见的自定源"
+                      onClick={() => (guest ? requestLogin('addsrc') : setAddOpen(true))}
+                    >
+                      <Plus className="h-[13px] w-[13px]" aria-hidden="true" />
+                      {addSourceKind === 'article' ? '添加文章源' : addSourceKind === 'podcast' ? '添加播客' : '添加源'}
+                    </button>
+                  )}
+                </div>
                 {activeTab === 'sources' && (
-                  <>
-                    {userSourcesEnabled && onAddCustomSource && (
-                      <button
-                        type="button"
-                        className="reader-disc-add"
-                        title="贴入 RSS/Atom 地址,添加只有你可见的自定源"
-                        onClick={() => (guest ? requestLogin('addsrc') : setAddOpen(true))}
-                      >
-                        <Plus className="h-[13px] w-[13px]" aria-hidden="true" />
-                        {addSourceKind === 'article' ? '添加文章源' : addSourceKind === 'podcast' ? '添加播客' : '添加源'}
-                      </button>
-                    )}
+                  /* 桌面:这一组排在页签行的右端——整组订阅跟着它作用的形态筛选,排序收在最右 */
+                  <div className="reader-disc-filters">
                     {bulkSubscribe && onSubscribeShape && (
                       <button
                         type="button"
@@ -428,7 +434,7 @@ export default function DiscoverPage({
                     >
                       <ArrowDownWideNarrow className="h-[14px] w-[14px]" aria-hidden="true" />
                     </button>
-                  </>
+                  </div>
                 )}
               </div>
             </>
@@ -453,6 +459,7 @@ export default function DiscoverPage({
               <div className="reader-disc-grid">
                 {activeCollection.members.map((source) => (
                   <SourceCard
+                    relativeFresh={relativeFresh}
                     key={source.source_id}
                     source={source}
                     subbed={subscribedIds.has(source.source_id)}
@@ -515,6 +522,7 @@ export default function DiscoverPage({
                 <div className="reader-disc-grid">
                   {list.map((source) => (
                     <SourceCard
+                    relativeFresh={relativeFresh}
                       key={source.source_id}
                       source={source}
                       subbed={subscribedIds.has(source.source_id)}

@@ -208,21 +208,58 @@ if [ "$ORIGIN" != "pipeline" ]; then
     # 手工越过切换点:同一锁内先让流水线的 last-success 失效(worker 下次从容器读基线、不回放)
     note_manual_switch "$DORAMI_BUILD_REF" "$DORAMI_BUILD_SHA"
 fi
-docker compose up -d --remove-orphans
+# backend healthcheck 的宽限期(compose `start_period`,docker-compose.yml 以 ${DORAMI_BACKEND_HEALTH_START_PERIOD:-60s} 插值):
+# 迁移在容器启动时执行、uvicorn 还没监听,宽限期内探测失败不计数;默认 60 s 只够零迁移。`up -d` 启动 nginx 前要等 backend healthy,
+# 宽限不够会把正在迁移的容器判成 unhealthy、up 中止(issue #227:预算与迁移数 / 库大小相称)。
+# 显式设过的照旧——以 compose 自己解析出的值为准(shell 环境或 .env 里设的都算,codex R1 F2),不等于默认 60 s 即视为显式;
+# 否则导出 60 s + 迁移宽限(待执行迁移数 × 每迁移秒数 × 库 GiB,deploy_migration_grace_seconds)。
+GRACE="$(deploy_migration_grace_seconds "${plan_pending:-0}" "$(sqlite_path_from_ini "$CONFIG_FILE")")"
+START_PERIOD_RESOLVED="$(deploy_compose_healthcheck_start_period_seconds backend || true)"
+if [ -n "$START_PERIOD_RESOLVED" ] && [ "$START_PERIOD_RESOLVED" != "60" ]; then
+    START_PERIOD_SHOW="${START_PERIOD_RESOLVED}s"
+    echo "    backend 健康检查宽限 ${START_PERIOD_SHOW}(compose 配置里显式设置,照旧;自动值会是 $((60 + GRACE))s)"
+else
+    export DORAMI_BACKEND_HEALTH_START_PERIOD="$((60 + GRACE))s"
+    START_PERIOD_SHOW="$DORAMI_BACKEND_HEALTH_START_PERIOD"
+    echo "    backend 健康检查宽限 ${START_PERIOD_SHOW}(基础 60s + 迁移宽限 ${GRACE}s,待执行迁移 ${plan_pending:-0} 个)"
+fi
+if ! docker compose up -d --remove-orphans; then
+    echo "docker compose up 失败(backend 健康检查宽限 ${START_PERIOD_SHOW}):若报「dependency failed to start … unhealthy」,是 backend 在宽限 + 3 次探测内没有 healthy,nginx 可能尚未启动、站点可能不可达;先 docker compose ps / logs backend 判断迁移仍在执行还是已失败——仍在执行就等它结束后重跑本脚本,已失败按 docs/ops/release-process.md 恢复。当前容器状态:" >&2
+    docker compose ps >&2
+    docker compose logs --tail 50 backend >&2
+    fail "容器启动未完成(不自动回滚:流水线来源下 in-progress 事务保留,可重试或按 docs/ops/release-process.md 恢复)"
+fi
 
 # ── [7/7] 健康 + 版本核对 ──
 echo "[7/7] 健康验证(/api/health 五项核对)..."
-# DORAMI_HTTP_LISTEN 可以是纯端口(80)或绑定形式(127.0.0.1:8080),探针地址随之推导
-LISTEN="${DORAMI_HTTP_LISTEN:-80}"
-case "$LISTEN" in
-    *:*) PROBE="http://${LISTEN}" ;;
-    *)   PROBE="http://127.0.0.1:${LISTEN}" ;;
-esac
+# 探针地址 = 容器 nginx 发布到宿主的端口,直接取 compose 自己解析出的 ports(shell 环境 > .env > 默认、显式空值、引号 / 注释、
+# ${VAR} 展开都由 compose 处理,codex R1 F1);compose 解析不到才回退「环境变量 > 80」并提醒。以前只看环境变量:worker 从
+# /etc/dorami-deploy.conf 导出所以没事,手工 shell 没导出就退到 80——生产 80 是 TLS 边缘(301 → https),v3.67.0 手工部署的
+# 87 次 `bad-json` 推测即此(issue #227)。conf 里的值与实际发布端口不一致时提醒(流水线会按 conf 探测),不采用。
+PROBE_HOSTPORT="$(deploy_compose_published_hostport nginx 80 || true)"
+if [ -n "$PROBE_HOSTPORT" ]; then
+    LISTEN_SRC="compose 解析"
+else
+    case "${DORAMI_HTTP_LISTEN:-80}" in
+        *:*) PROBE_HOSTPORT="${DORAMI_HTTP_LISTEN}" ;;
+        *)   PROBE_HOSTPORT="127.0.0.1:${DORAMI_HTTP_LISTEN:-80}" ;;
+    esac
+    LISTEN_SRC="回退:环境变量 / 默认 80"
+    echo "    ⚠️  docker compose config 解析不到 nginx 的发布端口,探针回退 ${PROBE_HOSTPORT}" >&2
+fi
+CONF_LISTEN="$(deploy_conf_value DORAMI_HTTP_LISTEN "")"
+case "$CONF_LISTEN" in ""|*:*) CONF_HOSTPORT="$CONF_LISTEN" ;; *) CONF_HOSTPORT="127.0.0.1:${CONF_LISTEN}" ;; esac
+if [ -n "$CONF_HOSTPORT" ] && [ "$CONF_HOSTPORT" != "$PROBE_HOSTPORT" ]; then
+    echo "    ⚠️  /etc/dorami-deploy.conf 的 DORAMI_HTTP_LISTEN=${CONF_LISTEN} 与本次实际发布端口 ${PROBE_HOSTPORT} 不一致:流水线会按 conf 探测,请对齐 conf 与 .env" >&2
+fi
+PROBE="http://${PROBE_HOSTPORT}"
+echo "    探针 ${PROBE}/api/health(来源:${LISTEN_SRC})"
 EXPECT_VERSION="$(_deploy_lib_source_version)"
 # 时间预算(默认 180s:1.6GB 机冷启动带 Chromium 的容器不一定 90 秒就绪);每次 curl 都带连接 / 总超时,
-# 连接建立后后端不答也不能吃掉整个预算(容器 nginx 的 upstream 读超时是 300s)。次数只作额外上限。
+# 连接建立后后端不答也不能吃掉整个预算(容器 nginx 的 upstream 读超时是 300s)。次数默认预算 / 2(每轮至少 2 s),只作额外上限。
+# 迁移期的等待不在这里:上一步 up -d 已等到 backend healthy(宽限见上),这里只等 nginx 起来并做五项核对。
 BUDGET="${DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS:-180}"
-ATTEMPTS="${DORAMI_DEPLOY_HEALTH_ATTEMPTS:-90}"
+ATTEMPTS="${DORAMI_DEPLOY_HEALTH_ATTEMPTS:-$(( BUDGET / 2 > 0 ? BUDGET / 2 : 1 ))}"
 # 判定与轮询在 scripts/deploy-lib.sh(deploy_wait_healthy,裸机路径的后端身份门共用同一段);预算仍由这里传入。
 health_ok=""
 if deploy_wait_healthy "${PROBE}/api/health" "$EXPECT_VERSION" "$DORAMI_BUILD_REF" "$DORAMI_BUILD_SHA" "$BUDGET" "$ATTEMPTS"; then
@@ -245,7 +282,18 @@ if [ -n "$health_ok" ]; then
 fi
 
 deploy_meta health failed
-echo "健康检查未通过(预算 ${BUDGET}s,尝试 ${attempt} 次):${last_verdict:-无响应};当前容器状态:" >&2
+{
+    echo "健康检查未通过(预算 ${BUDGET}s,尝试 ${attempt} 次):${last_verdict:-无响应};探针 ${PROBE}/api/health(来源:${LISTEN_SRC})"
+    if [ -n "${DEPLOY_HEALTH_LAST_HTTP:-}" ]; then
+        # 最后一次非 JSON / 非 2xx 响应长什么样:是 301 页、502 页还是维护页,一行看出(issue #227)
+        echo "  最后一次响应 HTTP ${DEPLOY_HEALTH_LAST_HTTP},前 200 字节:$(deploy_health_body_excerpt 200)"
+        case "$DEPLOY_HEALTH_LAST_HTTP" in
+            3[0-9][0-9]) echo "  提示:拿到的是跳转页——探针多半打到了 TLS 边缘(80 → https)而不是容器 nginx;核对 .env 的 DORAMI_HTTP_LISTEN(生产 127.0.0.1:8080)" ;;
+            502|503|504) echo "  提示:容器 nginx 连不上 backend(还在启动 / 迁移,或已退出):docker compose ps / logs backend" ;;
+        esac
+    fi
+    echo "  当前容器状态:"
+} >&2
 docker compose ps >&2
 docker compose logs --tail 50 backend >&2
 fail "部署未通过健康验证(不自动回滚:流水线来源下 in-progress 事务保留,可重试或按 docs/ops/release-process.md 恢复)"

@@ -13,7 +13,7 @@ import importlib
 import os
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlmodel import Session, func, select
 
@@ -38,6 +38,7 @@ from models.db import (
 )
 from services import accounts as accounts_service
 from services import admin_home as admin_home_service
+from services import sync_console
 from services import guest_access as guest_access_service
 from services import ai_usage as ai_usage_service
 from services import article_share as article_share_service
@@ -153,8 +154,51 @@ def set_source_visibility(
     }
 
 
+class SourceAnalysisParams(BaseModel):
+    enabled: bool
+
+
+@router.post("/sources/{source_id}/analysis")
+def set_source_analysis(
+    source_id: str,
+    params: SourceAnalysisParams,
+    session: Session = Depends(deps.get_session),
+):
+    """公共源的「本机分析」开关(issue #263)。
+
+    同步建出来的源默认关;管理员想让本机自己采、自己分析就打开。只对本机自己抓到的文章起作用:
+    同步写进来的文章用上游的分析结果,不在本机重复分析。预设镜像行、配置源、收录源都走这里;
+    读者自定源另有自己的开关(运维 → 自定源)。
+    """
+    source_id = (source_id or "").strip()
+    record = session.get(SourceConfigRecord, source_id) if source_id else None
+    if record is None:
+        raise HTTPException(status_code=404, detail="源不存在")
+    if (record.owner_username or "").strip() or user_sources_service.is_user_source(source_id):
+        raise HTTPException(status_code=400, detail="读者自定源请在 运维管理 → 自定源 里调整")
+    record.ai_analysis_enabled = bool(params.enabled)
+    record.updated_at = datetime.datetime.now().isoformat()
+    session.add(record)
+    session.commit()
+    return {"source_id": source_id, "ai_analysis_enabled": record.ai_analysis_enabled}
+
+
 def _is_root_admin(session: Session, auth: Optional[Dict[str, Any]]) -> bool:
     return bool(auth) and accounts_service.is_root_admin(session, auth.get("sub"))
+
+
+@router.get("/qa-diagnostics")
+def admin_qa_diagnostics(
+    response: Response,
+    session: Session = Depends(deps.get_session),
+    auth: Optional[Dict[str, Any]] = Depends(deps.get_current_session),
+):
+    """Root-only, bounded diagnostics: source IDs can reveal private reading interests."""
+    if not _is_root_admin(session, auth):
+        raise HTTPException(status_code=403, detail="仅根管理员可查看问答诊断")
+    response.headers["Cache-Control"] = "no-store"
+    from services import qa_diagnostics
+    return qa_diagnostics.recent()
 
 
 @router.get("/account-growth")
@@ -189,6 +233,8 @@ def admin_home(days: int = 30, top: int = 8, session: Session = Depends(deps.get
             "by_source": [{"source_id": sid, "name": _name(sid), "reads": n} for sid, n in ranked],
         },
         "backfills": admin_home_service.backfill_summary(session),
+        # 节点同步磁贴(issue #261):只读本机 KV 与任务表,不探测远端。
+        "sync": sync_console.home_summary(deps.get_db_sink().engine),
     }
 
 

@@ -400,7 +400,7 @@ def search_episodes(engine, *, keywords, source_ids, date_gte=None, date_lte=Non
         return [_pack(records[aid], evidence, 10000, keywords, session=session) for aid, evidence in list(grouped.items())[:limit]]
 
 
-def prepare_records(engine, records, *, keywords, per_episode_chars=10000, username=None):
+def prepare_records(engine, records, *, keywords, per_episode_chars=10000, username=None, qa_state=None):
     """Replace only Podcast records with bounded current evidence dictionaries."""
     podcasts = [r for r in records if _get(r, "content_type") == "podcast_episode"]
     if not podcasts:
@@ -418,11 +418,19 @@ def prepare_records(engine, records, *, keywords, per_episode_chars=10000, usern
             if current is None or current.source_id not in sources or current.content_type != "podcast_episode":
                 continue
             rows = _search_chunks(session, source_ids=sources, episode_ids=[current.id], keywords=keywords, limit=64) if keywords else []
+            matched = bool(rows)
             if not rows:
                 # No relevant match: sample across the whole text, not only its
                 # beginning. The context clearly labels these as excerpts.
                 rows = _sample_chunks(session, sources, current.id)
             prepared[current.id] = _pack(current, [_evidence(row) for row in rows], per_episode_chars, keywords, session=session)
+            if qa_state is not None:
+                qa_state.stages.setdefault("passages", []).append({
+                    "episode_id": current.id, "mode": "matched" if matched else "sampled",
+                    "retrieved": [{"artifact_id": row[0].artifact_id,
+                                   "range_start": row[0].range_start, "range_end": row[0].range_end,
+                                   "lexical_part_hits": qa_state.lexical_hits(row[0].content)} for row in rows],
+                })
     return [prepared[_get(r, "id")] if _get(r, "content_type") == "podcast_episode" else r
             for r in records if _get(r, "content_type") != "podcast_episode" or _get(r, "id") in prepared]
 

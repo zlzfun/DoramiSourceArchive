@@ -94,6 +94,16 @@ in-progress 事务、方向与单调护栏、首装门),worker 再跑目标 tag 
 **设置 → 关于** 显示「构建:发布版 v3.56.0 · abc1234」或「非发布版 v3.56.0-3-gdef5678」。
 生产上有人手改代码或用 `--here` 部署过,这一行会如实暴露。
 
+**手工路径的健康验证**(issue #227):探针地址直接取 `docker compose config` 解析出的 nginx 发布端口(shell 环境 > `.env` > 80 等规则都是
+compose 自己的),日志打「探针 … 来源:compose 解析」,不用再手动 `export`;解析不到才回退环境变量 / 80 并提醒;`/etc/dorami-deploy.conf`
+里的值与实际发布端口不一致时提醒(流水线按 conf 探测)。生产 80 是 TLS 边缘(301 → https),v3.67.0 手工部署的 87 次 `bad-json` 推测是探错了
+端口。失败时打出最后一次响应的 HTTP 状态码与前 200 字节(3xx = 探到边缘、502 = 容器 nginx 连不上 backend)。迁移多、库大时
+`docker compose up -d` 启动 nginx 前要等 backend healthy:脚本按「待执行迁移数 × 每迁移秒数 × 库 GiB」加宽 healthcheck 的 `start_period`
+(conf `DORAMI_DEPLOY_HEALTH_PER_MIGRATION_SECONDS` 默认 60、封顶 `DORAMI_DEPLOY_HEALTH_MIGRATION_GRACE_MAX_SECONDS` 默认 1200;shell 或
+`.env` 里显式设了 `DORAMI_BACKEND_HEALTH_START_PERIOD` 则照旧);`up` 被判 unhealthy 中止时 nginx 可能尚未启动,看 `docker compose ps` /
+`logs backend` 判断迁移仍在执行还是已失败——仍在执行就等它结束后重跑,已失败按下节恢复。已发布迁移文件被改会让流水线第 7 道门拒绝——
+CI 的 `scripts/check_released_migrations.py` 在 PR 阶段就红(见 `docs/dev/migrations.md`)。
+
 ## 回滚
 
 代码回滚是一句话:`./deploy-docker.sh v3.55.0`。但 **Alembic 迁移不一定可逆**(已有不可逆的
@@ -127,10 +137,12 @@ cp backups/cms_data.db.20260914-110000 data/cms_data.db && rm -f data/cms_data.d
 
 ## 分支保护(GitHub 仓库设置,手动开一次)
 
+> 2026-11-16 用 GitHub API 核实:`main` 当前**没有**开启分支保护,也没有 rulesets,仓库的 auto-merge 开关是关的——下面是应有的设置,开不开由仓库所有者决定(见 `docs/backlog.md` issue #288 条目)。没开时这些检查靠流程自觉,`backend (pytest)` 仍是 PR 页上看结论的那一个。
+
 Settings → Branches → Add rule for `main`:
 
 - Require a pull request before merging(禁止直推;两人一视同仁);
-- Require status checks to pass:勾 `backend (pytest)` 与 `frontend (lint + build)`(CI 跑过一次后才会出现在列表里)。issue #150 起 `backend (pytest)` 是汇总门 job:`needs` 真跑测试的 `backend-unit (pytest)` / `backend-deploy (pytest)`,`if: always()` 逐项核对结果——required 只勾它一个即可,两个真 job 不必也勾,将来再拆分时规则不用改;
+- Require status checks to pass:勾 `backend (pytest)` 与 `frontend (lint + build)`(CI 跑过一次后才会出现在列表里)。issue #150 起 `backend (pytest)` 是汇总门 job:`needs` 真跑测试的 `backend-unit (pytest)` / `backend-deploy (pytest)`,`if: always()` 逐项核对结果——required 只勾它一个即可,两个真 job 不必也勾,将来再拆分时规则不用改;issue #288 起它还 `needs` 改动面判定 `changes (scope)` 与 `backend-light (pytest)`,issue #289 起再加不分片的 `backend-guards (pytest)`(两个重型 job 同时改成矩阵分片,检查名带 `(1)` `(2)` 后缀):PR 只动前端 / 文档时重型 job 与 guards 是 skipped、由 backend-light 顶上,汇总门照样给出结论——**不必去勾会被跳过的那三个**:job 被 `if` 跳过时在分支保护眼里算通过(一直挂着不放的是整条 workflow 被路径过滤掉、根本没运行的情形,这里不是),勾了挡不住任何东西,只会在以后拆分 job 时多改一处规则;
 - Do not allow force pushes / deletions。
 
 tag 不设保护(2026-09-14 拍板:任何人可打 tag);`release.yml` 的核对负责把不合格的 tag 标红。
@@ -153,4 +165,4 @@ Environment(一次性,自动部署用,见 `docs/archive/auto-deploy-plan.md` §4
 - 不做「部署即打 tag」:发布决定属于人,脚本只执行。
 - 自动部署只覆盖外网 Docker 节点(issue #102,2026-09-16 拍板翻案);裸机路径仍由人跑 `./deploy.sh`。
   流水线只部署宣告了部署协议的 tag;不自动回滚;不引入第二种 tag——防误触的边界是 Environment 的批准人,不是 tag 名。
-- CI 跑全量 pytest 约 5 分钟;真变慢再拆快慢两档。
+- CI 的后端全量:不分片时约 10 分钟(由 `backend-unit` 决定),issue #289 分片后整条约 4 分钟(2026-11-16 实测);issue #288 起 PR 只动前端 / 文档时走约 1 分钟的轻量路径。

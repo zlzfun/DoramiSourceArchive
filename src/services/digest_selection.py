@@ -555,13 +555,14 @@ def _value_reason(
     source_display_names: Mapping[str, str],
 ) -> str:
     source_name = source_display_names.get(candidate.source_id, candidate.source_id)
+    value_label = "全文内容价值" if candidate.content_shape == PODCAST_SHAPE else "内容价值"
     if matched_codes:
         code = matched_codes[0]
         display_name = tag_display_names.get(code, code)
         if not candidate.subscribed:
-            return f"命中你的兴趣「{display_name}」，来自你未订阅的「{source_name}」，按内容价值入选。"
-        return f"命中你的兴趣「{display_name}」，来自你订阅的「{source_name}」，按内容价值入选。"
-    return f"来自你订阅的「{source_name}」，按内容价值入选。"
+            return f"命中你的兴趣「{display_name}」，来自你未订阅的「{source_name}」，按{value_label}入选。"
+        return f"命中你的兴趣「{display_name}」，来自你订阅的「{source_name}」，按{value_label}入选。"
+    return f"来自你订阅的「{source_name}」，按{value_label}入选。"
 
 
 def select_value_lane(
@@ -746,8 +747,13 @@ def select_breaking_events(
     excluded_article_ids: Iterable[str] = (),
     subscribed_source_ids: Iterable[str] = (),
     source_display_names: Mapping[str, str] | None = None,
+    uncorroborating_source_ids: Iterable[str] = (),
 ) -> list[DigestSelectionDTO]:
     """Pick at most ``policy.max_items`` cross-subscription headline events.
+
+    ``uncorroborating_source_ids``: sources that never count toward the
+    multi-source corroboration threshold (provisional sources created by ingest
+    channels, issue #262 — their ids are chosen by whoever pushes).
 
     Candidates are expected to span every reader-visible source (the caller applies
     hidden/private-source filtering).  Reader interests play no part here(v3.56:
@@ -761,6 +767,7 @@ def select_breaking_events(
         return []
     excluded = set(excluded_article_ids)
     subscribed = set(subscribed_source_ids)
+    uncorroborating = set(uncorroborating_source_ids)
     floor = policy.min_score - policy.corroboration_slack
     eligible = [
         candidate for candidate in candidates
@@ -777,7 +784,9 @@ def select_breaking_events(
             item.source_role == "official" and item.quality_score >= policy.min_score - 1e-9
             for item in members
         )
-        source_count = len({item.source_id for item in members})
+        source_count = len({
+            item.source_id for item in members if item.source_id not in uncorroborating
+        })
         corroborated = (
             source_count >= policy.corroboration_sources
             and top >= policy.min_score - 1e-9

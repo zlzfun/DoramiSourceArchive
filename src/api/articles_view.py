@@ -10,7 +10,7 @@ import json
 from collections.abc import Collection
 from typing import Any, Dict, Optional
 
-from sqlalchemy import literal_column
+from sqlalchemy import literal_column, or_
 
 from api.textutils import _date_end_value, _json_loads, _split_csv
 from models.content import BaseContent
@@ -222,6 +222,16 @@ def _record_to_content(record: ArticleRecord) -> GenericContent:
     return obj
 
 
+# 条目来路的展示名(issue #262):抓取器入库的条目没有 ingest_channel,对外用伪值 fetch。
+INGEST_CHANNEL_FETCH = "fetch"
+INGEST_CHANNEL_LABELS = {INGEST_CHANNEL_FETCH: "抓取", "push": "推送", "manual": "手工", "import": "导入"}
+
+
+def ingest_channel_label(value: Optional[str]) -> str:
+    key = (value or "").strip().lower() or INGEST_CHANNEL_FETCH
+    return INGEST_CHANNEL_LABELS.get(key, key)
+
+
 def apply_article_query_filters(
         query,
         content_type: Optional[str] = None,
@@ -239,10 +249,17 @@ def apply_article_query_filters(
         publish_date_end: Optional[str] = None,
         fetched_date_start: Optional[str] = None,
         fetched_date_end: Optional[str] = None,
+        ingest_channel: Optional[str] = None,
         session=None,
 ):
     if content_type:
         query = query.where(ArticleRecord.content_type == content_type)
+    # 来路(issue #262):抓取器入库的条目没有 ingest_channel,台账用伪值 fetch 筛它们。
+    channel = (ingest_channel or "").strip().lower()
+    if channel == INGEST_CHANNEL_FETCH:
+        query = query.where(or_(ArticleRecord.ingest_channel.is_(None), ArticleRecord.ingest_channel == ""))
+    elif channel:
+        query = query.where(ArticleRecord.ingest_channel == channel)
     content_type_list = _split_csv(content_types)
     if content_type_list:
         query = query.where(ArticleRecord.content_type.in_(content_type_list))
@@ -338,6 +355,7 @@ def serialize_article_list_item(
     digest_audio: Any = None,
     include_podcast_diagnostics: bool = False,
     source_kinds: Optional[Dict[str, str]] = None,
+    include_ingest_actor: bool = False,
 ) -> Dict[str, Any]:
     content = record.content or ""
     # AI 要点摘要(extensions_json.summary_zh)作为轻字段随条目透出:
@@ -398,6 +416,10 @@ def serialize_article_list_item(
         "content_preview": strip_layout_markers(content)[:280],
         "summary_zh": summary,
         "read_count": record.read_count or 0,
+        # 来路(issue #262):抓取条目为空串;收录者(令牌调用方 / 管理员名)只对管理员透出。
+        "ingest_channel": record.ingest_channel or "",
+        "ingest_channel_label": ingest_channel_label(record.ingest_channel),
+        **({"ingest_actor": record.ingest_actor or ""} if include_ingest_actor else {}),
         "analysis_status": getattr(analysis, "status", None),
         "tagging_status": getattr(analysis, "tagging_status", None),
         "analysis_has_result": analysis_has_result,

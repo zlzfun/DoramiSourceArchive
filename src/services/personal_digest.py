@@ -65,9 +65,10 @@ from models.db import (
     TaxonomyVersionRecord,
     UserInterestTagRecord,
 )
-from services import source_visibility
+from services import source_catalog, source_visibility
 from services.article_display_tags import load_display_tags
 from services.article_time import in_time_window
+from services.content_recommendations import recommendation_value
 from services.collection_nodes import is_public_podcast_source
 from services.content_classification import (
     CONTENT_VALUE_SCORING_VERSION,
@@ -870,6 +871,7 @@ def _query_candidate_rows(
     content_types: Sequence[str] | None = None,
     exclude_content_types: Sequence[str] = (),
     min_content_value: float | None = None,
+    min_podcast_value: float | None = None,
 ) -> list[tuple[ArticleRecord, ArticleAnalysisRecord]]:
     """Shared window query.  ``source_ids=None`` means every non-private source.
 
@@ -928,6 +930,16 @@ def _query_candidate_rows(
             ArticleAnalysisRecord.content_value.is_not(None),
             ArticleAnalysisRecord.content_value >= min_content_value,
             ArticleAnalysisRecord.content_value_version == CONTENT_VALUE_SCORING_VERSION,
+        )
+    if min_podcast_value is not None:
+        from services.podcast_premium import TRANSCRIPT_BASES
+
+        query = query.where(
+            ArticleRecord.content_type == PODCAST_CONTENT_TYPE,
+            ArticleAnalysisRecord.analysis_basis.in_(sorted(TRANSCRIPT_BASES)),
+            func.coalesce(
+                ArticleAnalysisRecord.podcast_final_score, ArticleAnalysisRecord.quality_score,
+            ) >= min_podcast_value,
         )
     if interest_tag_codes is not None:
         codes = sorted({str(code) for code in interest_tag_codes if code})
@@ -991,10 +1003,11 @@ def _source_role_and_shape(
                 source_scope=config.source_scope or "",
                 provenance_tier=config.provenance_tier or "",
             )
-            source_type = str(config.source_type or "").strip().lower()
-            shape = "social" if source_type in {"x", "x_timeline"} else (
-                "podcast" if source_type in {"podcast", "podcast_rss"} else "article"
-            )
+            from api.sources import row_shape
+
+            # 显式形态列 > 绑定的抓取器类 > source_type(issue #262 R1c:预设镜像行的
+            # source_type 是 preset,只看类型会把 X 预设判成 article)。
+            shape = row_shape(config)
         elif fetcher_class is not None:
             role = source_role(source_id)
             shape = str(getattr(fetcher_class, "content_shape", "article") or "article")
@@ -1099,6 +1112,31 @@ def load_interest_candidates(
     return _candidates_from_rows(session, rows, source_meta=meta, followed_codes=codes, subscribed=False)
 
 
+def _value_filters(lane: SelectionLane | str, policy: ValueLanePolicy) -> dict[str, object]:
+    if str(getattr(lane, "value", lane)) == SelectionLane.LISTEN.value:
+        return {"content_types": (PODCAST_CONTENT_TYPE,), "min_podcast_value": policy.min_value}
+    return {"exclude_content_types": (PODCAST_CONTENT_TYPE,), "min_content_value": policy.min_value}
+
+
+def load_public_value_candidates(
+    session: Session, *, lane: SelectionLane, source_ids: Sequence[str] | None,
+    cutoff_at: dt.datetime, policy: ValueLanePolicy,
+) -> list[DigestArticleCandidateDTO]:
+    """Public brief uses the same evidence/window rules, without reader interests."""
+    rows = _query_candidate_rows(
+        session, source_ids=source_ids, cutoff_at=cutoff_at,
+        window_hours=policy.window_days * 24, **_value_filters(lane, policy),
+    )
+    provisional = source_catalog.provisional_source_ids(session)
+    rows = [
+        row for row in _reader_visible_rows(session, rows)
+        if not (row[0].source_id or "").startswith(PRIVATE_SOURCE_PREFIX)
+        and row[0].source_id not in provisional
+        and (row[0].has_content or row[0].content_type == PODCAST_CONTENT_TYPE)
+    ]
+    return [c for c in _candidates_from_rows(session, rows) if value_lane_accepts(c, lane)]
+
+
 def load_value_candidates(
     session: Session,
     *,
@@ -1111,22 +1149,13 @@ def load_value_candidates(
     """「深度阅读」「播客精选」的候选池(issue #178 第三波):订阅池 ∪ 订阅外兴趣池,窗口按天。
 
     深度阅读 = 非播客、当前版本内容价值过线,再按推导出的内容类型留下论文 / 教程 / 观点 / 汇编;
-    播客精选 = 播客单集,内容价值即现有播客分(第二波投影),按 ``quality_score`` 过线。订阅外候选
+    播客精选只接受逐字稿终评,按全文内容价值过线;简介初评不作整期推荐。订阅外候选
     与新闻通道同一套可见性过滤(私有源、隐藏源、公共日报记录一律不进)。
     """
 
     lane_value = str(getattr(lane, "value", lane))
     window_hours = policy.window_days * 24
-    if lane_value == SelectionLane.LISTEN.value:
-        filters: dict[str, object] = {
-            "content_types": (PODCAST_CONTENT_TYPE,),
-            "min_score": policy.min_value,
-        }
-    else:
-        filters = {
-            "exclude_content_types": (PODCAST_CONTENT_TYPE,),
-            "min_content_value": policy.min_value,
-        }
+    filters = _value_filters(lane_value, policy)
     pool: list[DigestArticleCandidateDTO] = []
     codes = sorted({str(code) for code in followed_codes if code})
     if source_ids:
@@ -1226,9 +1255,7 @@ def _candidates_from_rows(
         if article.content_type == "social_post":
             shape = "social"   # 社交帖的数据形状是文章级事实,源元数据缺失或不一致时以它为准
         kind = _item_kind(article, analysis, source_kinds)
-        content_value = score_projection(
-            content_type=article.content_type, kind=kind, analysis=analysis
-        )["content_value"]
+        content_value = recommendation_value(article.content_type, analysis)
         candidates.append(DigestArticleCandidateDTO(
             article_id=article.id,
             source_id=article.source_id,
@@ -1502,6 +1529,8 @@ def _snapshot(
         content_type=article.content_type, kind=content_kind, analysis=analysis
     )
     is_podcast = (article.content_type or "") == PODCAST_CONTENT_TYPE
+    if is_podcast and score_dimension == "content":
+        projection["content_value"] = recommendation_value(article.content_type, analysis)
     dimension = score_dimension or ("content" if is_podcast else "news")
     return {
         "article_id": article.id,
@@ -1528,6 +1557,7 @@ def _snapshot(
         "content_value": projection["content_value"],
         "content_value_reason": projection["content_value_reason"] or "",
         "score_dimension": dimension,
+        "analysis_basis": analysis.analysis_basis if analysis else None,
         # issue #103:所属事件与编排时可见的同事件其它报道(「另见 N 篇」),不可变快照;
         # 历史快照无这两键,页面按缺省处理。
         "event_id": event_id,
@@ -2240,6 +2270,8 @@ def generate_personal_digest(
                     session,
                     sorted({candidate.source_id for candidate in breaking_candidates}),
                 ),
+                # 临时源(issue #262)不计入多源印证:同一件事用两个 id 推送不能凭空造出「两家报道」。
+                uncorroborating_source_ids=source_catalog.provisional_source_ids(session),
             )
 
     # 订阅域里已选中的文章若成为头条代表,从精选里提级到头条位(不重复出现,也不算降级);

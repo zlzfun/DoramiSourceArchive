@@ -152,3 +152,71 @@ def test_backup_sqlite_db_keeps_ten(tmp_path):
     assert 1 <= len(backups) <= 10
     with sqlite3.connect(backups[-1]) as conn:
         assert conn.execute("select x from t").fetchone() == (1,)
+
+
+# ── issue #227:探针地址读 .env、迁移宽限公式 ──
+
+def _lib_run(cwd, script, env):
+    return subprocess.run(["bash", "-c", f'set -euo pipefail; cd "{cwd}"; source "{LIB}"; {script}'],
+                          capture_output=True, text=True, env=env)
+
+
+FAKE_DOCKER_CONFIG = """#!/usr/bin/env python3
+import os, sys
+if os.environ.get("FAKE_DOCKER_FAIL"):
+    sys.exit(1)
+sys.stdout.write(open(os.environ["FAKE_COMPOSE_JSON"]).read())
+"""
+
+
+def test_compose_helpers_read_published_port_and_start_period(tmp_path):
+    """探针端口与 healthcheck 宽限都从 `docker compose config --format json` 取(codex R1 F1 / F2):host_ip 空 / 0.0.0.0 → 127.0.0.1、
+    published 范围取首个、只认 target 80;Go 时长串折秒;缺字段 / docker 失败 → 空输出 + 返回 1。"""
+    import json
+    fakebin = tmp_path / "bin"; fakebin.mkdir()
+    (fakebin / "docker").write_text(FAKE_DOCKER_CONFIG); (fakebin / "docker").chmod(0o755)
+    cfg = tmp_path / "cfg.json"
+    script = ('p="$(deploy_compose_published_hostport nginx 80 || echo "rc=$?")"; s="$(deploy_compose_healthcheck_start_period_seconds backend || echo "rc=$?")"; '
+              'printf "[%s] [%s]\\n" "$p" "$s"')
+
+    def run(obj, fail=False):
+        cfg.write_text(json.dumps(obj))
+        env = {**os.environ, "PATH": f"{fakebin}:{os.environ['PATH']}", "FAKE_COMPOSE_JSON": str(cfg)}
+        if fail:
+            env["FAKE_DOCKER_FAIL"] = "1"
+        out = _lib_run(tmp_path, script, env)
+        assert out.returncode == 0, out.stderr
+        return out.stdout.strip()
+
+    def compose(ports, start_period):
+        return {"services": {"backend": {"healthcheck": {"start_period": start_period}}, "nginx": {"ports": ports}}}
+
+    assert run(compose([{"target": 80, "published": "8080", "host_ip": "127.0.0.1"}], "1m0s")) == "[127.0.0.1:8080] [60]"
+    assert run(compose([{"target": 443, "published": "8443"}, {"target": 80, "published": "8080-8081", "host_ip": "0.0.0.0"}], "20m0s")) == "[127.0.0.1:8080] [1200]"
+    assert run(compose([{"target": 80, "published": "80"}], "1h2m3s")) == "[127.0.0.1:80] [3723]"
+    assert run(compose([{"target": 80, "published": 8080}], "90s")) == "[127.0.0.1:8080] [90]"
+    assert run(compose([{"target": 80, "published": "8080"}], "20m")) == "[127.0.0.1:8080] [1200]"
+    assert run(compose([{"target": 80, "published": "8080", "host_ip": "::1"}], "1m0s")) == "[[::1]:8080] [60]", "IPv6 字面量进 URL 要加方括号"
+    assert run(compose([{"target": 80, "published": "8080", "host_ip": "::"}], "1m0s")) == "[127.0.0.1:8080] [60]"
+    assert run(compose([{"target": 443, "published": "8443"}], "")) == "[rc=1] [rc=1]"
+    assert run({"services": {"backend": {}, "nginx": {}}}) == "[rc=1] [rc=1]"
+    assert run(compose([{"target": 80, "published": "8080"}], "45")) == "[127.0.0.1:8080] [rc=1]", "没有单位的时长不猜"
+    assert run(compose([{"target": 80, "published": "8080"}], "1m0s"), fail=True) == "[rc=1] [rc=1]"
+
+
+def test_migration_grace_seconds_formula_cap_and_knobs(tmp_path):
+    (tmp_path / "small.db").write_bytes(b"x" * 1024)
+    with open(tmp_path / "big.db", "wb") as fh:
+        fh.truncate(int(1.5 * 1024 ** 3))   # 稀疏文件,不占盘:ceil(1.5 GiB) = 2
+    conf = tmp_path / "deploy.conf"; conf.write_text("DORAMI_DEPLOY_HEALTH_PER_MIGRATION_SECONDS=10\n", encoding="utf-8")
+    script = ('for args in "0 small.db" "abc small.db" "6 small.db" "6 big.db" "6 missing.db" "500 small.db"; do '
+              'set -- $args; printf "%s %s=%s\\n" "$1" "$2" "$(deploy_migration_grace_seconds "$1" "$2")"; done')
+    clean = {k: v for k, v in os.environ.items() if not k.startswith("DORAMI_DEPLOY_")}
+    out = _lib_run(tmp_path, script, {**clean, "DORAMI_DEPLOY_CONF": str(tmp_path / "absent.conf")})
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.splitlines() == ["0 small.db=0", "abc small.db=0", "6 small.db=360", "6 big.db=720", "6 missing.db=360", "500 small.db=1200"]
+    out = _lib_run(tmp_path, script, {**clean, "DORAMI_DEPLOY_CONF": str(conf)})
+    assert out.returncode == 0 and "6 small.db=60" in out.stdout and "6 big.db=120" in out.stdout, out.stdout + out.stderr
+    out = _lib_run(tmp_path, script, {**clean, "DORAMI_DEPLOY_CONF": str(conf), "DORAMI_DEPLOY_HEALTH_PER_MIGRATION_SECONDS": "100",
+                                      "DORAMI_DEPLOY_HEALTH_MIGRATION_GRACE_MAX_SECONDS": "250"})
+    assert out.returncode == 0 and "6 small.db=250" in out.stdout and "6 big.db=250" in out.stdout, "环境变量 > conf;上限也可调"

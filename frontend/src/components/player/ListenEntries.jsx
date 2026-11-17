@@ -32,6 +32,9 @@ export default function ListenEntries({
   sourceName = '',
   showToast,
   onRefresh,
+  // 桌面速读卡(issue #279 第三批):不写把控件名再说一遍的说明句(「把本文要点讲给你听」「导读已就绪」),
+  // 只留条件性状态(生成中 / 失败 / 连接中断)。手机壳不传
+  quiet = false,
 }) {
   const { state, api } = usePlayer();
   const [submitting, setSubmitting] = useState(false);
@@ -83,10 +86,10 @@ export default function ListenEntries({
   const entries = podcast ? podcastListenEntries(article, opts) : articleListenEntries(displayedArticle, opts);
   const note = podcast ? '' : refreshFailed ? '状态更新暂时中断，正在重新连接…'
     : narrating ? '完成后可在这里收听，也可以先继续阅读'
-      : article?.listen_guide?.audio_ready ? '导读已就绪'
+      : article?.listen_guide?.audio_ready ? (quiet ? '' : '导读已就绪')
         : article?.listen_guide?.status === 'failed'
           ? (aiEnabled && ondemand.article === true ? '导读生成未完成，请稍后重试' : '暂时无法重试，可以继续阅读')
-          : '把本文要点讲给你听';
+          : (quiet ? '' : '把本文要点讲给你听');
   if (!entries.length) return null;
 
   const request = async () => {

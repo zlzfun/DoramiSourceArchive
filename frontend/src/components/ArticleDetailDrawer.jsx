@@ -1,5 +1,6 @@
 import { X, Edit2, FileAudio2, Trash2, ExternalLink, RotateCcw } from 'lucide-react';
 import { excerptOf } from '../utils/readerText';
+import { describeProvenance } from '../utils/ingestForm';
 import {
   analysisStatusMeta,
   displayAnalysisTags,
@@ -130,6 +131,8 @@ export default function ArticleDetailDrawer({
                 <dd className="ledger-kv-mono">{fmtTime(article.publish_date)}</dd>
                 <dt>收录时间</dt>
                 <dd className="ledger-kv-mono">{fmtTime(article.fetched_date)}</dd>
+                <dt>来路</dt>
+                <dd>{describeProvenance(article)}</dd>
                 <dt>原文链接</dt>
                 <dd className="ledger-kv-mono break-all">
                   {article.source_url ? (

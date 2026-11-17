@@ -49,7 +49,7 @@ from api.sources import (
     _source_category,
     configured_source_content_type,
     configured_source_platform,
-    configured_source_shape,
+    row_shape,
     normalize_shape,
     source_shape,
     subscription_source_ids,
@@ -212,20 +212,29 @@ def _configured_source_meta(session: Session) -> Dict[str, Dict[str, Any]]:
     """SourceConfig 的读者目录元数据；尤其覆盖尚无产出的配置源形态。"""
     result: Dict[str, Dict[str, Any]] = {}
     for record in session.exec(select(SourceConfigRecord)).all():
+        if (record.origin or "") == "system":
+            # 系统源(公共日报)有自己的目录元数据(DAILY_BRIEF_SOURCE_META),系统行只为满足
+            # 「每个 source_id 都有一行」的不变量,不覆盖它(issue #262 R1c)。
+            continue
         result[record.source_id] = {
             "id": record.source_id,
             "name": record.name,
             "desc": record.description,
-            "icon": "𝕏" if configured_source_shape(record.source_type, record.fetcher_id) == "social" else "",
+            "icon": "𝕏" if row_shape(record) == "social" else "",
             "content_type": configured_source_content_type(record.source_type, record.fetcher_id),
-            "shape": configured_source_shape(record.source_type, record.fetcher_id),
-            "platform": configured_source_platform(record.source_type, record.fetcher_id),
+            "shape": row_shape(record),
+            "platform": (record.platform or "").strip().lower()
+            or configured_source_platform(record.source_type, record.fetcher_id),
             "source_owner": record.source_owner,
             "source_brand": record.source_brand,
             "source_scope": record.source_scope,
             "source_channel": record.source_channel,
             "provenance_tier": record.provenance_tier,
             "base_url": record.base_url or record.url,
+            "retired": bool(record.retired_at),
+            "admission_status": record.admission_status or "admitted",
+            "origin": record.origin or "",
+            "avatar_url": record.avatar_url or "",
         }
     return result
 
@@ -1368,15 +1377,27 @@ def _reader_sources_catalog(
                 **_source_kind_fields(source_id, resolved_type),
                 "platform": meta.get("platform") or "",
                 # 源栏优先使用 400x400 头像；同时保留原始 URL 供降级/调试。
+                # 没有抓取器缓存的源(收录通道建的临时源)用源行上记下的头像(issue #262)。
                 "avatar_url": cached_profile.get("author_avatar_url_large")
-                or cached_profile.get("author_avatar_url") or "",
-                "avatar_url_original": cached_profile.get("author_avatar_url") or "",
+                or cached_profile.get("author_avatar_url")
+                or configured_meta.get(source_id, {}).get("avatar_url") or "",
+                "avatar_url_original": cached_profile.get("author_avatar_url")
+                or configured_meta.get(source_id, {}).get("avatar_url") or "",
                 "count": 0,
                 "last_fetched": "",
                 "subscriber_count": subscriber_counts.get(source_id, 0),
                 "subscribed": source_id in subscribed_ids,
                 "registered": source_id in registry_meta,
                 "configured": source_id in configured_meta,
+                # 来路与列出状态由服务端算好(issue #262 R4):临时源 unlisted——不进发现目录与批量
+                # 订阅,条目上的来源名仍可点进源页单独订阅。
+                "origin": configured_meta.get(source_id, {}).get("origin")
+                or ("catalog" if source_id in registry_meta else ""),
+                "listing": (
+                    "unlisted"
+                    if configured_meta.get(source_id, {}).get("admission_status") == "provisional"
+                    else "listed"
+                ),
                 "_primary_count": -1,
             }
             by_source[source_id] = entry
@@ -1392,7 +1413,14 @@ def _reader_sources_catalog(
         _ensure_entry(source_id)
 
     # 1b. 所有 SourceConfig 源：即使尚未产出，也携带正确形态进入可订阅目录。
+    #     退役行(含已下线源墓碑,issue #262 R1c 起它们也有行)与已下线节点同口径:
+    #     只对已订阅者保留(退订入口),不回流目录。
+    retired_ids = {
+        source_id for source_id, meta in configured_meta.items() if meta.get("retired")
+    } | set(DECOMMISSIONED_FETCHER_IDS)
     for source_id in configured_meta:
+        if source_id in retired_ids and source_id not in subscribed_ids:
+            continue
         _ensure_entry(source_id)
 
     # 1c. 日报特殊源：即使尚未生成过日报也预先出现，便于提前订阅。
@@ -1404,7 +1432,7 @@ def _reader_sources_catalog(
     for source_id, content_type, count, last_fetched in rows:
         if not source_id:
             continue
-        if source_id in DECOMMISSIONED_FETCHER_IDS and source_id not in subscribed_ids:
+        if source_id in retired_ids and source_id not in subscribed_ids:
             continue
         entry = _ensure_entry(source_id, content_type)
         entry["count"] += int(count or 0)
@@ -1428,7 +1456,10 @@ def _reader_sources_catalog(
     unavailable_ids = source_visibility_service.reader_unavailable_source_ids(session)
     # 用户自定源(v3.40 私有):仅订阅者可见——非订阅者的目录/发现页完全不出现
     # (添加即订阅、移除即退订,故「我的自定源」恒在 subscribed_ids 内)。
-    all_user_source_ids = user_sources_service.user_source_ids(session)
+    # user_rss_ 前缀是结构性规则:主人不可考的孤儿私有源(R1c 隔离行)同样只对订阅者可见。
+    all_user_source_ids = user_sources_service.user_source_ids(session) | {
+        source_id for source_id in by_source if source_id.startswith("user_rss_")
+    }
     sources = sorted(
         (
             {
@@ -1510,6 +1541,8 @@ def subscribe_sources_by_shape(
             if source.get("hidden"):
                 unavailable.append(source_id)
                 continue
+            if source.get("listing") == "unlisted":
+                continue  # 临时源不进批量订阅(issue #262 D2)
             if source_id in existing:
                 already_subscribed.append(source_id)
                 continue
@@ -1560,12 +1593,13 @@ def _reader_opml_plan(request: Request, session: Session):
 
 @router.get("/sources/opml")
 def reader_opml_summary(request: Request, session: Session = Depends(deps.get_session)):
-    """当前读者可导出的 RSS 数量,以及无法写入 OPML 的非 RSS 订阅数。"""
+    """当前读者可导出的 RSS 数量、无法写入 OPML 的非 RSS 订阅数,以及导出地址里带凭证的条数。"""
     plan = _reader_opml_plan(request, session)
     return JSONResponse(
         {
             "exportable_count": plan["exportable_count"],
             "skipped_count": plan["skipped_count"],
+            "credentialed_count": plan["credentialed_count"],
         },
         headers={"Cache-Control": "private, no-store"},
     )
@@ -1583,6 +1617,7 @@ def export_reader_opml(request: Request, session: Session = Depends(deps.get_ses
             "Content-Disposition": 'attachment; filename="dorami-subscriptions.opml"',
             "X-Dorami-Opml-Exportable": str(plan["exportable_count"]),
             "X-Dorami-Opml-Skipped": str(plan["skipped_count"]),
+            "X-Dorami-Opml-Credentialed": str(plan["credentialed_count"]),
             "Cache-Control": "private, no-store",
         },
     )
@@ -2304,6 +2339,13 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
     db_sink = deps.get_db_sink()
     scope = params.scope if params.scope in ("article", "articles", "subscription", "all") else "article"
     ask_id = _valid_ask_id(params.ask_id)
+    from services.qa_contract import QAState
+    from services.qa_evidence import fingerprint
+    from services import qa_diagnostics
+
+    if not params.question.strip():
+        raise HTTPException(status_code=400, detail="请输入你的问题")
+    qa_state = QAState(params.question)
 
     # 用户源文章的动作级授权(检视返修 F3):显式名单档把正文送入外部 LLM,
     # 非订阅者的私有源文章按不存在处理(subscription/all 档的检索域天然不含)。
@@ -2362,6 +2404,7 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
             # 与作答侧同一份多轮历史:规划器据此还原追问/指代(v3.34)。
             history=params.history,
             source_ids_fetch=_current_source_ids,
+            qa_state=qa_state,
         )
 
     try:
@@ -2378,15 +2421,19 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
                 llm_config=llm_config,
                 usage_meta=UsageMeta(purpose="image_insight", username=username),
                 history=params.history,
+                qa_state=qa_state,
             )
         except reader_ai_service.ReaderAIError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc))
 
         _ask_progress_update(ask_id, "answer", {"articles": len(sources)})
+        qa_state.stages["injected"] = len(sources)
         # 内部控制位只在服务端用一次,对外 sources 形状与 main 一致(读者面无「配图已识别」标记)
         with_image_notes = reader_ai_service.sources_have_image_notes(sources)
         sources = reader_ai_service.public_sources(sources)
         _validate_sources(sources)
+        source_snapshot = fingerprint([qa_state.sources, sources])
+        answer_mode = "answer"
         history = [{"role": t.role, "content": t.content} for t in (params.history or [])]
         try:
             answer = await reader_ai_service.answer_question(
@@ -2394,15 +2441,41 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
                 usage_meta=UsageMeta(purpose="ask", username=username),
                 # 图片说明使用边界只在上下文真的带了说明时追加(sources 的显式布尔元数据,不嗅探正文)
                 with_image_notes=with_image_notes,
+                qa_state=qa_state, source_count=len(sources),
             )
             _validate_sources(sources)
-        except reader_ai_service.ReaderAIError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=str(exc))
-        except LLMError as exc:
-            raise HTTPException(status_code=502, detail=f"提问失败：{exc}")
+            qa_state.outcome = "returned"
+            if any(part["status"] != "answered" for part in qa_state.checked_parts):
+                answer_mode = "partial"
+        except (reader_ai_service.ReaderAIError, LLMError) as exc:
+            qa_state.outcome = getattr(exc, "code", type(exc).__name__)
+            if isinstance(exc, reader_ai_service.ReaderAIError) and exc.status_code != 502:
+                raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+            # Keep the model failure visible in diagnostics. Only independently
+            # authorized sources survive; no part of the rejected draft is used.
+            if (not sources or qa_state.intent == "chat"
+                    or qa_state.outcome in ("qa_catalog_changed", "qa_source_invalid")
+                    or fingerprint([qa_state.sources, sources]) != source_snapshot):
+                raise HTTPException(status_code=502, detail="本次回答未能完整生成或确认依据，请稍后重试") from exc
+            _validate_sources(sources)  # revocation/update still blocks ALL content
+            answer_mode = "references_only"
+            answer = "这次未能生成可用的回答。你可以先查看下方参考资料，或稍后重新提问。"
+        qa_state.stages["delivery"] = answer_mode
     finally:
+        if qa_state.outcome == "in_progress":
+            qa_state.outcome = "not_returned"
+        qa_diagnostics.record(qa_state)
         if ask_id:
             _ASK_PROGRESS.pop(ask_id, None)
-    with Session(db_sink.engine) as session:
-        accounts_service.record_ai_usage(session, username, "ask")
-    return {"status": "success", "answer": answer, "sources": sources, "scope": scope}
+    # Provider token usage is already recorded, including failed generations.
+    # A sources-only fallback does not consume a completed-answer daily quota.
+    if answer_mode != "references_only":
+        with Session(db_sink.engine) as session:
+            accounts_service.record_ai_usage(session, username, "ask")
+    from services.qa_reference import reference_sources, refinement_questions
+    sources = reference_sources(sources, qa_state, secret=AUTH_SECRET,
+                                accepted=answer_mode != "references_only")
+    return {"status": "references_only" if answer_mode == "references_only" else "success",
+            "answer_mode": answer_mode, "answer": answer, "sources": sources, "scope": scope,
+            "refinement_questions": refinement_questions(qa_state, answer_mode),
+            "trace_id": qa_state.trace_id}

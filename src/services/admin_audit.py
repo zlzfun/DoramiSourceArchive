@@ -173,6 +173,15 @@ def _id_target(
     return f"{action}{noun} {target}", target
 
 
+def _ingest_push_summary(body: dict | None) -> str:
+    try:
+        from services.ingest_push import audit_summary_text
+
+        return audit_summary_text(body or {})
+    except Exception:  # noqa: BLE001 - 摘要失败不影响审计落库
+        return "收录推送"
+
+
 # 语义摘要注册表：顺序即优先级，首个 (method, path regex) 命中即停止。
 AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
     (
@@ -345,6 +354,15 @@ AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
             unquote(match.group("target")),
         ),
     ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/sources/(?P<target>[^/]+)/analysis$"),
+        lambda match, body: (
+            f"{'开启' if (body or {}).get('enabled') else '关闭'}源的本机分析 "
+            f"{unquote(match.group('target'))}",
+            unquote(match.group("target")),
+        ),
+    ),
     ("POST", re.compile(r"^/api/llm/config$"), lambda _m, _b: ("更新 LLM 配置", None)),
     # ── 事件层管理修正(issue #121):合并 / 摘出都改写稳定事件 ID 的归属,全入审计 ──
     (
@@ -376,14 +394,45 @@ AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
             None,
         ),
     ),
+    # issue #262:收录(令牌推送与管理员「单条收录」同一端点,端点自行记账)与收录管理。
+    # 手工录入 POST /api/articles 与社交导入 /api/import/social-posts 已于推送入口统一波退役。
     (
         "POST",
-        re.compile(r"^/api/articles$"),
-        # 正文可能超 body 采集上限(body=None),标题尽力而为。
+        re.compile(r"^/api/public/ingest/v1/items$"),
+        lambda _m, body: (_ingest_push_summary(body), str((body or {}).get("actor") or "") or None),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/ingest/tokens$"),
         lambda _m, body: (
-            f"手工录入文章 {str((body or {}).get('title') or '')[:30]}".rstrip(),
-            None,
+            f"签发收录令牌 {str((body or {}).get('actor') or '')[:60]}".rstrip(),
+            str((body or {}).get("actor") or "") or None,
         ),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/ingest/tokens/(?P<target>[^/]+)/revoke$"),
+        lambda match, body: _id_target(match, body, noun="收录令牌", action="吊销"),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/ingest/sources/(?P<target>[^/]+)/admit$"),
+        lambda match, body: _id_target(match, body, noun="收录源", action="列入"),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/ingest/sources/(?P<target>[^/]+)/hide$"),
+        lambda match, body: _id_target(match, body, noun="收录源", action="下架"),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/ingest/sources/(?P<target>[^/]+)/unhide$"),
+        lambda match, body: _id_target(match, body, noun="收录源", action="恢复"),
+    ),
+    (
+        "PATCH",
+        re.compile(r"^/api/admin/ingest/sources/(?P<target>[^/]+)$"),
+        lambda match, body: _id_target(match, body, noun="收录源", action="改名"),
     ),
     # 文章路由是 {article_id:path}(手工录入 ID 可含斜杠),规则须吞完整剩余路径,
     # 否则含 / 的合法 ID 退化为空摘要(v3.43.2 codex 检视)。
@@ -403,20 +452,30 @@ AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
         "POST",
         re.compile(r"^/api/fetch/batch$"),
         lambda _m, body: (
-            "批量触发采集（节点数未知，请求体未采集）" if body is None
-            else f"批量触发采集 {len(body.get('items') or [])} 个节点",
+            "批量触发采集（源数未知，请求体未采集）" if body is None
+            else f"批量触发采集 {len(body.get('items') or [])} 个源",
             None,
         ),
     ),
     (
         "POST",
         re.compile(r"^/api/fetch/(?P<target>[^/]+)$"),
-        lambda match, body: _id_target(match, body, noun="采集节点", action="手动触发"),
+        lambda match, body: _id_target(match, body, noun="源", action="手动触发"),
     ),
     (
         "POST",
         re.compile(r"^/api/archive/import/"),
         lambda _m, _b: ("归档导入（archive sync）", None),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/remote-sync/streams/(?P<stream>[a-z_]+)/reset$"),
+        lambda match, _b: (
+            "重放分析同步流"
+            if match.group("stream") == "analyses"
+            else f"重置同步流 {match.group('stream')}",
+            match.group("stream"),
+        ),
     ),
     (
         "POST",

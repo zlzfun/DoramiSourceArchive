@@ -265,9 +265,11 @@ def test_response_meta_is_optional_and_does_not_reuse_stale_model(monkeypatch):
     meta = {"served_model": "stale", "caller_marker": "keep"}
     kwargs = dict(messages=[ChatMessage("user", "hi")], config=CONFIGURED, http_client=shared)
     assert asyncio.run(chat_completion(**kwargs, response_meta=meta)) == "one"
-    assert meta == {"served_model": "org/model:v1", "caller_marker": "keep"}
+    assert meta["served_model"] == "org/model:v1" and meta["caller_marker"] == "keep"
+    assert meta["http_attempts"] == 1
     assert asyncio.run(chat_completion(**kwargs, response_meta=meta)) == "two"
-    assert meta == {"caller_marker": "keep"}
+    assert "served_model" not in meta and meta["caller_marker"] == "keep"
+    assert meta["http_attempts"] == 1  # not accumulated across calls
     assert asyncio.run(chat_completion(**kwargs)) == "three"
     assert len(shared.calls) == 3
 
@@ -284,4 +286,5 @@ def test_failed_completion_does_not_publish_served_model(monkeypatch, content, f
     with pytest.raises(LLMError):
         asyncio.run(chat_completion(messages=[ChatMessage("user", "hi")], config=CONFIGURED,
                                     require_complete=require_complete, response_meta=meta))
-    assert meta == {}
+    assert "served_model" not in meta
+    assert meta["finish_reason"] == finish_reason and meta["http_attempts"] == 1

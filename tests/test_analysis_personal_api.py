@@ -444,15 +444,28 @@ def test_synced_taxonomy_is_read_only_on_internal_node(monkeypatch, tmp_path):
         assert "远端权威节点" in response.json()["detail"]
 
 
-def test_v2_consumer_fence_makes_taxonomy_read_only_before_first_sync(
+def _establish_upstream(session):
+    """本机已与一个上游建立 v2 同步(只是配置事实,issue #263 起不改变本机能做什么)。"""
+    import json
+
+    session.add(AppSettingRecord(
+        key="remote_sync:state",
+        value=json.dumps({"targets": {"https://upstream.test": {
+            "v2_authority_id": "upstream-a", "v2_capabilities": [],
+        }}}),
+    ))
+    session.commit()
+
+
+def test_upstream_alone_locks_nothing_and_synced_taxonomy_is_read_only(
     monkeypatch,
     tmp_path,
 ):
-    from services import sync_consumer_policy
-
+    """issue #263:接入上游本身不锁任何东西;词表只有真的同步过来之后才只读,v1 归档导入只有
+    库里有了同步写入的数据之后才拒绝。"""
     app_module, sink, _tag_id = _setup(monkeypatch, tmp_path)
     with Session(sink.engine) as session:
-        sync_consumer_policy.activate_v2_consumer_mode(session, reason="manual_v2")
+        _establish_upstream(session)
         assert session.get(AppSettingRecord, "taxonomy:authority_id") is None
 
     with TestClient(app_module.app) as client:
@@ -463,12 +476,32 @@ def test_v2_consumer_fence_makes_taxonomy_read_only_before_first_sync(
             content=b"",
             headers={"content-type": "application/x-ndjson"},
         )
+        assert legacy_import.status_code == 400  # 没被挡,只是内容为空
+        created = client.post(
+            "/api/admin/cms-tags",
+            json={
+                "code": "local-before-first-sync",
+                "kind": "topic",
+                "name_en": "Local before first sync",
+            },
+        )
+        assert created.status_code != 409, created.text
+
+        with Session(sink.engine) as session:
+            session.add(AppSettingRecord(key="taxonomy:authority_id", value="upstream-a"))
+            session.commit()
+
+        legacy_import = client.post(
+            "/api/archive/import/articles.jsonl",
+            content=b"",
+            headers={"content-type": "application/x-ndjson"},
+        )
         assert legacy_import.status_code == 409
         assert "禁止 legacy v1" in legacy_import.json()["detail"]
         response = client.post(
             "/api/admin/cms-tags",
             json={
-                "code": "blocked-before-first-sync",
+                "code": "blocked-after-sync",
                 "kind": "topic",
                 "name_en": "Blocked",
             },
@@ -505,12 +538,12 @@ def test_replica_deployment_makes_taxonomy_read_only_before_first_sync(
         assert "远端权威节点" in response.json()["detail"]
 
 
-def test_v2_consumer_fence_blocks_public_source_and_article_crud_before_first_sync(
+def test_node_with_an_upstream_keeps_source_crud_and_only_synced_articles_are_read_only(
     monkeypatch,
     tmp_path,
 ):
-    from services import sync_consumer_policy
-
+    """issue #263:拉取别人不再限制本机——公共源照常新建 / 修改 / 启停 / 删除,收录照常写入;
+    只有「当前版本由同步写入」的那篇文章本机不能改、不能删(下次同步会把它盖回去)。"""
     app_module, sink, _tag_id = _setup(monkeypatch, tmp_path)
     now = dt.datetime.now(dt.timezone.utc).isoformat()
     with Session(sink.engine) as session:
@@ -521,6 +554,16 @@ def test_v2_consumer_fence_blocks_public_source_and_article_crud_before_first_sy
                 source_type="rss",
                 url="https://example.test/feed",
                 is_active=True,
+                created_at=now,
+                updated_at=now,
+            ),
+            SourceConfigRecord(
+                source_id="synced-platform",
+                name="Synced platform",
+                source_type="rss",
+                url="https://example.test/synced",
+                is_active=True,
+                collection_authority_id="upstream-a",  # 上游也有这个源:只是簿记
                 created_at=now,
                 updated_at=now,
             ),
@@ -546,35 +589,42 @@ def test_v2_consumer_fence_blocks_public_source_and_article_crud_before_first_sy
                 content="body",
             ),
         ])
+        synced = session.get(ArticleRecord, "article-a")
+        synced.analysis_authority_id = "upstream-a"
+        session.add(synced)
         session.commit()
-        sync_consumer_policy.activate_v2_consumer_mode(session, reason="manual_v2")
+        _establish_upstream(session)
 
     with TestClient(app_module.app) as client:
         _login(client, "admin")
         assert client.post("/api/source-configs", json={
             "source_id": "new-platform",
             "name": "New platform",
-        }).status_code == 409
-        assert client.put(
-            "/api/source-configs/platform", json={"name": "Changed"}
-        ).status_code == 409
-        assert client.post(
-            "/api/source-configs/platform/toggle", json={"is_active": False}
-        ).status_code == 409
-        assert client.post("/api/source-configs/platform/fetch").status_code == 409
-        assert client.delete("/api/source-configs/platform").status_code == 409
+        }).status_code == 200
+        for source_id in ("platform", "synced-platform"):
+            assert client.put(
+                f"/api/source-configs/{source_id}", json={"name": "Changed"}
+            ).status_code == 200
+            assert client.post(
+                f"/api/source-configs/{source_id}/toggle", json={"is_active": False}
+            ).status_code == 200
+            # 停用的源抓取被拒是普通的 400,不再是「由远端节点采集」的 409
+            assert client.post(f"/api/source-configs/{source_id}/fetch").status_code == 400
+            assert client.delete(f"/api/source-configs/{source_id}").status_code == 200
 
         custom_update = client.put(
             "/api/source-configs/legacy-custom", json={"name": "Still local"}
         )
         assert custom_update.status_code == 200
 
-        assert client.post("/api/articles", json={
-            "id": "manual-public",
-            "title": "Manual public",
-            "source_id": "manual",
+        ingested = client.post("/api/public/ingest/v1/items", json={"items": [{
+            "kind": "article", "url": "https://example.com/manual-public", "title": "Manual public",
             "content": "body",
-        }).status_code == 409
+        }]})
+        assert ingested.status_code == 200, ingested.text
+        assert [row["status"] for row in ingested.json()["results"]] == ["created"]
+
+        # 同步写入的那一篇只读
         assert client.put(
             "/api/articles/article-a", json={"title": "Changed"}
         ).status_code == 409
@@ -582,6 +632,11 @@ def test_v2_consumer_fence_blocks_public_source_and_article_crud_before_first_sy
         assert client.post(
             "/api/articles/batch-delete", json={"ids": ["article-a"]}
         ).status_code == 409
+        # 本机自己的公共文章照常可改可删
+        assert client.put(
+            "/api/articles/article-b", json={"title": "Changed locally"}
+        ).status_code == 200
+        assert client.delete("/api/articles/article-b").status_code == 200
 
         assert client.put(
             "/api/articles/custom-article", json={"title": "Changed locally"}

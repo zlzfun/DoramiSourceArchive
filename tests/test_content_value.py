@@ -736,16 +736,33 @@ def test_eval_report_as_paper_is_checked_on_every_run():
 
 # ── codex R2-1:目标已完成 → 本机执行权 → 等待 / 入队 ─────────────────────────────
 
-def test_missing_job_settles_when_consumer_mode_starts_before_dispatch(storage):
-    from services import sync_consumer_policy
+def _custom_source_on_node_with_upstream(session):
+    """读者自定源 + 已接入上游的节点:issue #263 之后唯一还会让本机「失去分析执行权」而文章
+    又没被同步接管的情形(功能总闸关掉 / 源被停用),原因码沿用 v2_consumer_quiesced。"""
+    from models.db import AppSettingRecord
+
+    session.add(SourceConfigRecord(
+        source_id="plain_blog", name="plain_blog", owner_username="alice", is_active=True,
+        ai_analysis_enabled=True, created_at=NOW_ISO, updated_at=NOW_ISO,
+    ))
+    session.add(AppSettingRecord(
+        key="remote_sync:state",
+        value=json.dumps({"targets": {"https://upstream.test": {
+            "v2_authority_id": "upstream-a", "v2_capabilities": [],
+        }}}),
+    ))
+
+
+def test_missing_job_settles_when_local_execution_stops_before_dispatch(storage):
+    from services import user_sources
 
     later = NOW + dt.timedelta(hours=1)
     with Session(storage.engine) as session:
-        _plain_source(session)
+        _custom_source_on_node_with_upstream(session)
         session.add(_article("no-row"))
         session.commit()
         job_id = _new_job(session, "missing", later)
-        sync_consumer_policy.activate_v2_consumer_mode(session, reason="test")
+        user_sources.set_feature_enabled(session, False)
         session.commit()
         job = analysis_backfill.get_full_analysis_backfill(session, job_id)
         analysis_backfill.dispatch_full_analysis_backfill(session, job, lease_owner="w", now=later)
@@ -755,23 +772,23 @@ def test_missing_job_settles_when_consumer_mode_starts_before_dispatch(storage):
         assert job.status == "succeeded"
 
 
-def test_content_value_job_settles_when_consumer_mode_hides_behind_full_retry(storage):
-    from services import sync_consumer_policy
+def test_content_value_job_settles_when_stopped_execution_hides_behind_full_retry(storage):
+    from services import user_sources
 
     later = NOW + dt.timedelta(hours=1)
     with Session(storage.engine) as session:
-        _plain_source(session)
+        _custom_source_on_node_with_upstream(session)
         article = _article("retrying", fetched_date=OLD_ISO)
         session.add(article)
         session.flush()
         _seed_v6_result(session, article)
         session.commit()
         job_id = _new_job(session, "content_value", later)
-        # 快照之后:完整刷新失败、还有重试排期;随后进入接收端停写
+        # 快照之后:完整刷新失败、还有重试排期;随后本机停止分析这个源
         record = session.get(ArticleAnalysisRecord, "retrying")
         record.status, record.next_attempt_at, record.attempt_count = "failed", NOW_ISO, 1
         session.add(record)
-        sync_consumer_policy.activate_v2_consumer_mode(session, reason="test")
+        user_sources.set_feature_enabled(session, False)
         session.commit()
         assert queue_content_value_fill(session, "retrying", now=later) == "consumer_quiesced"
         job = analysis_backfill.get_full_analysis_backfill(session, job_id)

@@ -39,6 +39,7 @@ from sqlalchemy import update
 from services import image_insights as image_insights_service
 from services import user_sources as user_sources_service
 from services.paper_content import paper_metadata, strip_layout_markers
+from services.qa_contract import QAState, part_keywords, render_structured_answer, traced_completion, validate_citations
 from services.translation_markdown import (
     TranslationStructureError, plan_translation, translation_units, restore_translation_units,
 )
@@ -719,6 +720,7 @@ def build_numbered_context(
     keep_empty: bool = False,
     notes_by_id: Optional[dict] = None,
     notes_chars: int = _NOTES_PER_ARTICLE_CHARS,
+    qa_state: Optional[QAState] = None,
 ) -> tuple:
     """多篇文章 → 编号上下文，返回 ``(context, included)``。
 
@@ -781,6 +783,8 @@ def build_numbered_context(
             break
         blocks.append(block)
         included.append(art)
+        if qa_state is not None:
+            qa_state.capture_source(art, body, header=header)
         used += len(block)
     return "\n\n".join(blocks), included
 
@@ -788,6 +792,7 @@ def build_numbered_context(
 def assemble_articles_context(
     records: List[Any], *, total_chars: Optional[int] = None,
     notes_by_id: Optional[dict] = None,
+    qa_state: Optional[QAState] = None,
 ) -> tuple:
     """显式名单的上下文组装：单篇预算按篇数摊分（n=1 独享全额），返回 (context, sources)。"""
     if total_chars is None:
@@ -797,6 +802,7 @@ def assemble_articles_context(
     context, included = build_numbered_context(
         records, per_article_chars=per_article, total_chars=total_chars,
         keep_empty=(len(records) == 1), notes_by_id=notes_by_id,
+        qa_state=qa_state,
     )
     return context, build_sources_payload(included, notes_by_id=notes_by_id)
 
@@ -820,6 +826,7 @@ async def _explicit_image_notes(
 
 async def _prepare_explicit_podcasts(
     records, *, question, history, db_sink, username, llm_config,
+    qa_state=None,
 ):
     """Search the entire published transcript even for an explicitly opened episode."""
     if not any(_art_field(r, "content_type") == "podcast_episode" for r in records):
@@ -836,12 +843,18 @@ async def _prepare_explicit_podcasts(
             f"当前指定内容：{titles}\n读者问题：{question}", llm_config.for_aux(),
             UsageMeta(purpose="ask", username=username),
             history_text=reader_search._history_text(history),
+            **({"qa_state": qa_state} if qa_state is not None else {}),
         )
+        if qa_state is not None:
+            qa_state.apply_plan(plan)
+            if qa_state.intent == "chat":
+                return []
         if plan is not None:
-            keywords = plan.get("passage_keywords") or plan["keywords"]
+            keywords = (part_keywords(qa_state.parts) if qa_state is not None else []) or plan.get("passage_keywords") or plan["keywords"]
     prepared = podcast_qa.prepare_records(
         engine, records, keywords=keywords, username=username,
         per_episode_chars=max(_LIST_PER_ARTICLE_CHARS, podcast_qa.CONTEXT_CHARS // len(records)),
+        qa_state=qa_state,
     )
     return podcast_qa.revalidate_records(engine, prepared)
 
@@ -858,6 +871,7 @@ async def assemble_reader_context(
     llm_config: Optional[LLMConfig] = None,
     usage_meta: Optional[UsageMeta] = None,
     history: Optional[List[Any]] = None,
+    qa_state: Optional[QAState] = None,
 ) -> tuple:
     """按 scope 组装 reader 问答上下文，返回 ``(context, sources)``。
 
@@ -882,12 +896,15 @@ async def assemble_reader_context(
         if record is None:
             raise ReaderAIError("文章不存在", status_code=404)
         _ensure_articles_exportable(db_sink, [record])
+        if qa_state is not None and qa_state.intent == "chat":
+            return "", []
         records = await _prepare_explicit_podcasts(
             [record], question=question, history=history, db_sink=db_sink,
             username=username, llm_config=llm_config,
+            qa_state=qa_state,
         )
         notes = await _explicit_image_notes(records, llm_config, usage_meta)
-        return assemble_articles_context(records, notes_by_id=notes)
+        return assemble_articles_context(records, notes_by_id=notes, qa_state=qa_state)
 
     if scope == "articles":
         ids: List[str] = []
@@ -905,12 +922,15 @@ async def assemble_reader_context(
         if not records:
             raise ReaderAIError("文章不存在", status_code=404)
         _ensure_articles_exportable(db_sink, records)
+        if qa_state is not None and qa_state.intent == "chat":
+            return "", []
         records = await _prepare_explicit_podcasts(
             records, question=question, history=history, db_sink=db_sink,
             username=username, llm_config=llm_config,
+            qa_state=qa_state,
         )
         notes = await _explicit_image_notes(records, llm_config, usage_meta)
-        return assemble_articles_context(records, notes_by_id=notes)
+        return assemble_articles_context(records, notes_by_id=notes, qa_state=qa_state)
 
     return await search_fetch(question, username)
 
@@ -945,27 +965,30 @@ def _sanitize_history(history: Optional[List[Any]]) -> List[ChatMessage]:
     return cleaned[-MAX_HISTORY_MESSAGES:]
 
 
-async def answer_question(
+def build_qa_messages(
     question: str,
     context: str,
     *,
     scope: str,
-    llm_config: LLMConfig,
     history: Optional[List[Any]] = None,
-    usage_meta: Optional[UsageMeta] = None,
     with_image_notes: bool = False,
-) -> str:
-    """基于给定上下文 + 多轮历史回答提问。上下文为空时仍调用，由提示词约束模型如实说明资料不足。
-
-    消息结构：system → 历史轮次（纯文本问答）→ 当前问题（附本轮参考资料）。
-    历史让模型支持「追问/指代」，参考资料只随当前问题刷新，token 预算可控。
-    ``with_image_notes``(issue #69)由调用方按 sources 的显式布尔元数据给出(见
-    :func:`sources_have_image_notes`),为 True 时 system 追加图片说明使用边界;不嗅探 context。
-    """
+    today: Optional[str] = None,
+    qa_state: Optional[QAState] = None,
+) -> List[ChatMessage]:
+    """运行时与离线评测共用输入构造；评测可冻结日期，不调用模型或改写资料。"""
     question = (question or "").strip()
     if not question:
         raise ReaderAIError("请输入你的问题", status_code=400)
+    if qa_state is not None and qa_state.intent == "chat":
+        return [ChatMessage(role="system", content=prompts.QA_CHAT_SYSTEM_PROMPT),
+                *_sanitize_history(history), ChatMessage(role="user", content=question)]
     system_prompt = prompts.QA_SYSTEM_PROMPT
+    structured = qa_state is not None and len(qa_state.parts) > 1
+    if structured:
+        system_prompt += prompts.QA_STRUCTURED_RULE
+        context = qa_state.prepare_evidence()
+        if qa_state.context_notice:
+            context = f"{qa_state.context_notice}\n\n{context}"
     if with_image_notes:
         system_prompt = system_prompt + prompts.IMAGE_NOTES_UNTRUSTED_RULE
     messages = [ChatMessage(role="system", content=system_prompt)]
@@ -977,12 +1000,46 @@ async def answer_question(
             # 资料头部的发布日期甄别新旧(检索规划侧同样拿到 today)。
             content=prompts.build_qa_user_prompt(
                 question, context, scope=scope,
-                today=datetime.now().strftime("%Y-%m-%d"),
+                today=today if today is not None else datetime.now().strftime("%Y-%m-%d"),
             ),
         )
     )
-    raw = await chat_completion(messages=messages, config=llm_config, usage_meta=usage_meta)
+    if structured:
+        messages[-1].content += "\n\n【待回答子问题】\n" + json.dumps(qa_state.parts, ensure_ascii=False)
+    return messages
+
+
+async def answer_question(
+    question: str,
+    context: str,
+    *,
+    scope: str,
+    llm_config: LLMConfig,
+    history: Optional[List[Any]] = None,
+    usage_meta: Optional[UsageMeta] = None,
+    with_image_notes: bool = False,
+    qa_state: Optional[QAState] = None,
+    source_count: Optional[int] = None,
+) -> str:
+    """一次作答调用；上下文为空时仍由模型说明缺口，不额外启动核对循环。
+
+    图片说明边界由 sources 的显式元数据控制，不嗅探 context。
+    历史仅供理解追问，本轮参考资料随当前问题刷新。
+    """
+    messages = build_qa_messages(
+        question, context, scope=scope, history=history, with_image_notes=with_image_notes,
+        qa_state=qa_state,
+    )
+    structured = qa_state is not None and qa_state.intent != "chat" and len(qa_state.parts) > 1
+    binding = qa_state.answer_binding() if structured else ""
+    raw = await traced_completion(chat_completion, state=qa_state, stage="answer",
+                                  messages=messages, config=llm_config, usage_meta=usage_meta,
+                                  response_json=structured)
+    if structured:
+        return render_structured_answer(raw, qa_state, expected_binding=binding)
     answer = raw.strip()
     if not answer:
         raise ReaderAIError("AI 暂时没有返回内容，请稍后重试", status_code=502)
+    if source_count is not None:
+        validate_citations(answer, source_count)
     return answer

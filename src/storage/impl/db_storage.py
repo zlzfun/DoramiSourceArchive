@@ -3,17 +3,19 @@ import os
 from typing import Optional, Dict, Any, Iterable
 from sqlalchemy import inspect, text, event
 from sqlalchemy.pool import NullPool
+from sqlalchemy.exc import InvalidRequestError
 from sqlmodel import Session, create_engine, select
 from storage.base import BaseStorage
 from models.content import BaseContent, serialize_to_metadata
 from models.db import (
+    ArticleAnalysisRecord,
     ArticleRecord,
     SQLModel,
     SourceConfigRecord,
     next_article_archive_revision,
 )
 from services.podcast_metadata import merge_podcast_publisher_metadata
-from services import sync_consumer_policy
+from services import item_url_identity, source_catalog, source_rows, sync_consumer_policy
 from services.title_cache import extensions as title_extensions, preserve_title_receipt
 from services.collection_nodes import PODCAST_SOURCE_TYPES, is_public_podcast_source
 from services.podcast_stage_policy import PodcastStageDenied, require_stage as require_podcast_stage
@@ -29,6 +31,30 @@ _PLACEHOLDER_ARTICLE_TITLES = {
 
 def _is_placeholder_article_title(value: str) -> bool:
     return (value or "").strip().casefold() in _PLACEHOLDER_ARTICLE_TITLES
+
+
+# ``save_with_outcome`` results.  Only the first three count as "stored" for the
+# fetch pipeline's saved_count / downstream queues (historic ``save() -> True``).
+SAVE_CREATED = "created"
+SAVE_CONTENT_FILLED = "content_filled"
+SAVE_METADATA_REPAIRED = "metadata_repaired"
+SAVE_DUPLICATE = "duplicate"
+SAVE_REFRESHED = "refreshed"
+SAVE_ID_CONFLICT = "id_conflict"
+SAVE_REJECTED_AUTHORITY = "rejected_authority"
+SAVE_REJECTED_PODCAST_SOURCE = "rejected_podcast_source"
+SAVE_REJECTED_PODCAST_STAGE = "rejected_podcast_stage"
+SAVE_REJECTED_RETIRED = "rejected_retired"
+SAVE_STORED_OUTCOMES = frozenset({SAVE_CREATED, SAVE_CONTENT_FILLED, SAVE_METADATA_REPAIRED})
+SAVE_OUTCOMES = SAVE_STORED_OUTCOMES | {
+    SAVE_DUPLICATE,
+    SAVE_REFRESHED,
+    SAVE_ID_CONFLICT,
+    SAVE_REJECTED_AUTHORITY,
+    SAVE_REJECTED_PODCAST_SOURCE,
+    SAVE_REJECTED_PODCAST_STAGE,
+    SAVE_REJECTED_RETIRED,
+}
 
 
 class DatabaseStorage(BaseStorage):
@@ -215,14 +241,66 @@ class DatabaseStorage(BaseStorage):
                     if column_name not in source_config_columns:
                         conn.execute(text(f"ALTER TABLE source_configs ADD COLUMN {column_name} {column_sql}"))
 
+    @staticmethod
+    def _claim_local_version(session: Session, article: ArticleRecord) -> None:
+        """本机抓取 / 收录改动了一篇同步写入的文章:它从此是本机版本(issue #263)。
+
+        清掉文章与其分析行上的同步印记——印记只表示「当前版本是同步写进来的」。之后本机按自己的
+        开关处理它;上游若出现修订号更新的版本,同步时再接管回去。
+        """
+
+        if not (article.analysis_authority_id or "").strip():
+            return
+        article.analysis_authority_id = ""
+        analysis = session.get(ArticleAnalysisRecord, article.id)
+        if analysis is not None and (analysis.authority_id or "").strip():
+            analysis.authority_id = ""
+            analysis.authority_revision = ""
+            session.add(analysis)
+
+    @staticmethod
+    def _lock_existing_for_rewrite(session: Session, existing: ArticleRecord) -> bool:
+        """改写一篇已有文章之前:先取写锁,再把这一行重读成最新已提交的样子(issue #263)。
+
+        ``existing`` 是在事务外读到的(pysqlite 到第一条写语句才开事务)。节点既抓取又同步之后,
+        「读到本机版本 → 决定补正文 / 修元数据 → 写回」之间,同步可能已经把这篇换成了上游的版本;
+        拿旧对象写回会得到「上游的印记 + 本机的正文」——上游的分析随后因哈希不符整页失败。
+        取锁后重读,调用方按最新的行重新判定。内存里尚未落库的改动一并丢弃。返回 False =
+        这一行在等锁期间已经不在了(被删除),调用方按「本轮不处理」收工,下一轮按新条目入库。
+        """
+
+        session.expire(existing)
+        session.connection().exec_driver_sql(
+            "UPDATE archive_sync_clock SET revision = revision WHERE id = 1"
+        )
+        try:
+            session.refresh(existing)
+        except InvalidRequestError:
+            return False
+        return True
+
     async def save(self, item: BaseContent) -> bool:
+        """Pipeline insertion signal: true only when a row was created or filled."""
+        return (await self.save_with_outcome(item)) in SAVE_STORED_OUTCOMES
+
+    async def save_with_outcome(self, item: BaseContent) -> str:
+        """Persist one item and report why it was (not) stored.
+
+        Outcomes are listed in ``SAVE_OUTCOMES``; ``save()`` keeps the historic
+        boolean contract for the fetch pipeline, while ingest endpoints map the
+        string to a precise error instead of a blanket "ID already exists".
+        """
         with Session(self.engine) as session:
             if not sync_consumer_policy.local_source_operation_allowed(
                 session, item.source_id, operation="collection"
             ):
                 # A fetch that started before an Archive Sync authority handoff
                 # or v2 consumer activation must not commit afterwards.
-                return False
+                return SAVE_REJECTED_AUTHORITY
+            source_row = session.get(SourceConfigRecord, item.source_id) if item.source_id else None
+            if source_row is not None and source_row.retired_at:
+                # 退役源停止新增(删除改退役后不再有物理删除挡住它),历史条目照旧可读。
+                return SAVE_REJECTED_RETIRED
             if getattr(item, "content_type", "") == "podcast_episode":
                 source = session.get(SourceConfigRecord, item.source_id)
                 if (
@@ -234,13 +312,31 @@ class DatabaseStorage(BaseStorage):
                     # Podcast episode becomes durable.  False tells the pipeline
                     # that no item was committed and keeps it out of downstream
                     # analysis/media queues.
-                    return False
+                    return SAVE_REJECTED_PODCAST_SOURCE
                 try:
                     require_podcast_stage("fetch", boundary="commit")
                 except PodcastStageDenied:
-                    return False
+                    return SAVE_REJECTED_PODCAST_STAGE
             existing = session.get(ArticleRecord, item.id)
+            if existing is None and item.source_id and item.source_url:
+                # 先推后抓合流(issue #262):同一个源里已有同链接的收录条目(推送 / 手工 / 导入,
+                # 条目 id 公式可能与抓取器不同)时按同一条处理——补正文 / 修元数据 / 幂等跳过与 id
+                # 命中同一口径。改写 item.id 让管线把后续分析与媒体预取挂到已有行上。
+                alias = item_url_identity.ingested_row_for(
+                    session,
+                    item.source_id,
+                    item.source_url,
+                    getattr(item, "content_type", "") or "",
+                )
+                if alias is not None:
+                    item.id = alias.id
+                    existing = alias
             if existing:
+                if (existing.source_id or "") != (item.source_id or ""):
+                    # Item ids are only unique per source by convention.  A row
+                    # owned by another source is never rewritten in place (that
+                    # would move a faithful archive entry under a foreign body).
+                    return SAVE_ID_CONFLICT
                 if (
                     existing.content_type == "podcast_episode"
                     and getattr(item, "content_type", "") == "podcast_episode"
@@ -251,7 +347,17 @@ class DatabaseStorage(BaseStorage):
                         item,
                         raw_metadata.get("extensions", {}),
                     ):
-                        return False
+                        return SAVE_DUPLICATE
+                    # 有东西要并:取锁重读,在最新的行上再并一次(上面那次改的可能是过时的对象)。
+                    if not self._lock_existing_for_rewrite(session, existing):
+                        return SAVE_DUPLICATE
+                    if not merge_podcast_publisher_metadata(
+                        existing,
+                        item,
+                        serialize_to_metadata(item).get("extensions", {}),
+                    ):
+                        return SAVE_DUPLICATE
+                    self._claim_local_version(session, existing)
                     existing.archive_updated_at = next_article_archive_revision(
                         existing.archive_updated_at
                     )
@@ -260,13 +366,17 @@ class DatabaseStorage(BaseStorage):
                     self._queue_refreshed_podcast_analysis(existing.id)
                     # ``save`` is the pipeline's insertion signal.  The refresh was
                     # persisted, but must not inflate saved_count/saved_content_ids.
-                    return False
+                    return SAVE_REFRESHED
                 if not existing.has_content and item.has_content and item.content:
+                    if not self._lock_existing_for_rewrite(session, existing) or existing.has_content:
+                        # 等锁期间正文已经被补上(同步或另一轮抓取):按重复处理。
+                        return SAVE_DUPLICATE
                     raw_metadata = serialize_to_metadata(item)
                     existing.title = item.title
                     existing.source_url = item.source_url
                     existing.publish_date = item.publish_date
                     existing.fetched_date = item.fetched_date
+                    self._claim_local_version(session, existing)
                     existing.archive_updated_at = next_article_archive_revision(
                         existing.archive_updated_at
                     )
@@ -277,44 +387,69 @@ class DatabaseStorage(BaseStorage):
                     ), ensure_ascii=False)
                     session.add(existing)
                     session.commit()
-                    return True
+                    return SAVE_CONTENT_FILLED
                 # 两条极窄的元数据自愈路径：① 旧标题明确是 CTA/占位文案；
                 # ② 抓取器显式声明官方元数据权威。普通源默认仍幂等跳过，
                 # 绝不因上游改标题而改写忠实归档；两路都不覆盖正文。
-                placeholder_repair = (
-                    _is_placeholder_article_title(existing.title)
-                    and not _is_placeholder_article_title(item.title)
-                )
-                authoritative_refresh = bool(
-                    getattr(item, "_refresh_existing_metadata", False)
-                )
-                title_changed = bool(item.title) and existing.title != item.title
-                publish_date_changed = (
-                    bool(item.publish_date)
-                    and existing.publish_date != item.publish_date
-                )
-                source_url_changed = (
-                    bool(item.source_url)
-                    and existing.source_url != item.source_url
-                )
-                if (
-                    (placeholder_repair or authoritative_refresh)
-                    and (title_changed or publish_date_changed or source_url_changed)
-                ):
+                def repair_plan() -> tuple[bool, bool, bool, bool]:
+                    placeholder_repair = (
+                        _is_placeholder_article_title(existing.title)
+                        and not _is_placeholder_article_title(item.title)
+                    )
+                    authoritative_refresh = bool(
+                        getattr(item, "_refresh_existing_metadata", False)
+                    )
+                    title_changed = bool(item.title) and existing.title != item.title
+                    publish_date_changed = (
+                        bool(item.publish_date)
+                        and existing.publish_date != item.publish_date
+                    )
+                    source_url_changed = (
+                        bool(item.source_url)
+                        and existing.source_url != item.source_url
+                    )
+                    wanted = (placeholder_repair or authoritative_refresh) and (
+                        title_changed or publish_date_changed or source_url_changed
+                    )
+                    return wanted, title_changed, publish_date_changed, source_url_changed
+
+                wanted, title_changed, publish_date_changed, source_url_changed = repair_plan()
+                if wanted:
+                    # 取锁重读后按最新的行重新判定一次。
+                    if not self._lock_existing_for_rewrite(session, existing):
+                        return SAVE_DUPLICATE
+                    wanted, title_changed, publish_date_changed, source_url_changed = repair_plan()
+                if wanted:
                     if title_changed:
                         existing.title = item.title
                     if publish_date_changed:
                         existing.publish_date = item.publish_date
                     if source_url_changed:
                         existing.source_url = item.source_url
+                    self._claim_local_version(session, existing)
                     existing.archive_updated_at = next_article_archive_revision(
                         existing.archive_updated_at
                     )
                     session.add(existing)
                     session.commit()
-                    return True
-                return False
+                    return SAVE_METADATA_REPAIRED
+                return SAVE_DUPLICATE
 
+            # 源表全集不变量(issue #262 R1c):新条目入库前在同一事务里确保源行存在。注入通道
+            # 经 ``_source_hint`` 带出处描述(名称 / 头像 / 平台 / 来路);抓取路径不带,未登记的
+            # id 按存量口径记 legacy(与今天「只在 articles 里出现的源」同样列出)。接收端不建。
+            hint = dict(getattr(item, "_source_hint", None) or {})
+            if not hint:
+                hint = {
+                    "origin": source_catalog.ORIGIN_LEGACY,
+                    "admission_status": "admitted",
+                }
+            source_rows.ensure_source_row(
+                session,
+                item.source_id,
+                content_type=getattr(item, "content_type", "") or "",
+                **hint,
+            )
             raw_metadata = serialize_to_metadata(item)
             extensions = raw_metadata.get("extensions", {})
             actual_content = item.content if item.content else extensions.get("summary")
@@ -337,6 +472,9 @@ class DatabaseStorage(BaseStorage):
                 has_content=item.has_content,
                 content=actual_content,
                 extensions_json=json.dumps(extensions, ensure_ascii=False),
+                # 条目来路(issue #262 波 1):只由服务端注入通道挂在实例上,不进 extensions。
+                ingest_channel=str(getattr(item, "_ingest_channel", "") or "")[:20],
+                ingest_actor=str(getattr(item, "_ingest_actor", "") or "")[:80],
             )
             session.add(record)
             # Persist the optional paper task in the same transaction as the
@@ -344,7 +482,7 @@ class DatabaseStorage(BaseStorage):
             from services.paper_fulltext import enqueue as enqueue_paper_fulltext
             enqueue_paper_fulltext(session, record)
             session.commit()
-            return True
+            return SAVE_CREATED
 
     async def existing_content_flags(self, item_ids: Iterable[str]) -> Dict[str, bool]:
         """批量查询给定 id 是否已入库及是否已有正文。

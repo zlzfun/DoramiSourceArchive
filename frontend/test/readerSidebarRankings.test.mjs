@@ -15,14 +15,21 @@ function between(source, start, end) {
   return source.slice(from, to);
 }
 
+// 源栏内容是一个常量(issue #279 第二批):文章 / 播客容器里挂在左栏,社交页挂在页边
 const sidebar = between(
   desktop,
-  '{/* ── 源栏 · 我的订阅 ── */}',
-  '{/* ── 我的早报',
+  '/* ── 源栏 · 我的订阅 ──',
+  '/* ── 源栏结束 ── */',
 );
 
-test('rankings keep the desktop subscription list mounted', () => {
-  assert.doesNotMatch(sidebar, /!rankingsOpen\s*&&/);
+// issue #279 第二批(2026-11-13):整幅页面(早报 / 榜单 / 发现 / 社交)不挂来源栏——它是文章与播客两个容器的东西,与这些页面无关。
+// 取代 2026-11-04(#221 目检)「榜单打开时源列表保持在场」。社交页把同一份账号列表挂到页边
+test('wide pages (brief / rankings / discover / social) drop the desktop source column; social hangs the same list in its margin', () => {
+  assert.match(desktop, /const widePage = pageOpen \|\| discover \|\| socialView;/);
+  // 第三批:来源栏可收起(收起后同一份列表从列表栏头的范围名下拉出来)
+  assert.match(desktop, /\{!widePage && !srcFolded && <aside className="reader-col reader-col-sources">\{sourcesPanel\}<\/aside>\}/);
+  assert.match(desktop, /\{srcFolded && srcPop && \(\s*<div\s+className="reader-srcpop"/);
+  assert.match(desktop, /<SocialFlow\s+side=\{sourcesPanel\}/);
   assert.match(sidebar, /<div className="reader-source-scroll">/);
 });
 
@@ -104,13 +111,16 @@ test('opening an article from rankings leaves a return trail that reopens rankin
   assert.match(page, /restore=\{rankingRestore\}/);
   assert.match(page, /onOpenArticle=\{async \(articleId, ctx\) =>/);
   assert.match(page, /setBriefReturn\(ctx \|\| null\)/);
-  const trail = between(desktop, "{briefReturn?.from === 'rankings' && (", '</nav>');
+  // issue #279 第三批:返回不再是阅读窗顶上的一条色带,并入吸顶栏左端(占掉来源名的位置)
+  const trail = between(desktop, "const paneBack = !briefReturn ? null : briefReturn.from === 'rankings' ? (", '</nav>');
   assert.match(trail, /setRankingRestore\(briefReturn\)/);
   assert.match(trail, /setBriefReturn\(null\)/);
   assert.match(trail, /setRankingsOpen\(true\)/);
   assert.match(trail, /返回热点事件/);
-  // 早报那条带不给榜单的 ctx 画「早报下一条」
-  assert.match(desktop, /\{briefReturn && briefReturn\.from !== 'rankings' && \(\(\) => \{/);
+  // 「下一条」只给早报那一程:榜单的 ctx 没有序列
+  assert.match(desktop, /const briefNext = briefReturn && briefReturn\.from !== 'rankings' \?/);
+  assert.match(desktop, /\{paneBack \|\| \(\s*<div className="reader-crumb">/);
+  assert.doesNotMatch(desktop, /reader-brief-trail/);
   const openRankings = between(desktop, 'const openRankings = useCallback(() => {', '}, [');
   assert.match(openRankings, /setRankingRestore\(null\)/);
 
@@ -122,4 +132,34 @@ test('opening an article from rankings leaves a return trail that reopens rankin
   assert.match(mobilePage, /restore=\{rankingRestore\}/);
   assert.match(mobilePage, /setBriefReturn\(ctx \|\| null\)/);
   assert.match(mobile, /if \(t === 'rankings'\) setRankingRestore\(null\)/);
+});
+
+// issue #279 第二批补(2026-11-16,用户指出发现页右上角违和):页头右侧的控件分两组各自贴右——
+// 早先六个控件摊在同一张五列网格里,上一行多出「订阅全部」时会把下一行的形态筛选和排序撑开。
+test('discover header: the two right-hand groups are separate flex boxes, each flush right; mobile keeps the flat order', () => {
+  const discover = readFileSync(new URL('../src/components/DiscoverPage.jsx', import.meta.url), 'utf8');
+  const tools = between(discover, '<div className="reader-disc-tools">', '<div className="reader-disc-scroll">');
+  const acts = between(tools, '<div className="reader-disc-acts">', '<div className="reader-disc-filters">');
+  const filters = tools.slice(tools.indexOf('<div className="reader-disc-filters">'));
+  // 页名那一行:搜索 + 添加;页签行:整组订阅 + 形态筛选 + 排序(整组订阅挨着它作用的筛选)
+  assert.ok(acts.includes('className="reader-disc-search"') && acts.includes('className="reader-disc-add"'));
+  assert.ok(!acts.includes('reader-disc-bulk-sub') && !acts.includes('reader-disc-seg') && !acts.includes('reader-disc-sort'));
+  const order = ['reader-disc-bulk-sub', 'reader-seg reader-disc-seg', 'reader-disc-sort '].map((name) => filters.indexOf(name));
+  assert.ok(order.every((at) => at >= 0) && order[0] < order[1] && order[1] < order[2], `页签行右侧的顺序 ${order}`);
+  // 拍平后的顺序与改前一致(手机壳里两层分组不成盒):页签、搜索、添加、整组订阅、形态筛选、排序
+  const flat = ['reader-disc-viewseg', 'className="reader-disc-search"', 'className="reader-disc-add"', 'reader-disc-bulk-sub', 'reader-seg reader-disc-seg', 'reader-disc-sort '].map((name) => tools.indexOf(name));
+  assert.deepEqual([...flat].sort((a, b) => a - b), flat);
+
+  const css = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
+  assert.match(css, /\n  \.reader-disc-acts, \.reader-disc-filters \{ display: contents; \}/, '默认不成盒');
+  const head = between(css, '.reader-shell > .reader-disc .reader-disc-head-inner {', '.reader-shell > .reader-disc .reader-disc-coll-dethead');
+  assert.match(head, /grid-template-columns: auto minmax\(0, 1fr\); grid-template-rows: 124px 41px;/);
+  assert.match(head, /\.reader-disc-acts \{ grid-column: 2; grid-row: 1; justify-self: end; [^}]*display: flex;/);
+  assert.match(head, /\.reader-disc-filters \{ grid-column: 2; grid-row: 2; justify-self: end; display: flex;/);
+  // 单个控件不再各占一列
+  for (const name of ['search', 'add', 'bulk-sub', 'seg', 'sort']) {
+    assert.doesNotMatch(head, new RegExp(`\\.reader-disc-${name} \\{[^}]*grid-column`), `.reader-disc-${name} 不该再指定网格列`);
+  }
+  const mobileCss = readFileSync(new URL('../src/mobile.css', import.meta.url), 'utf8');
+  assert.ok(!mobileCss.includes('reader-disc-acts') && !mobileCss.includes('reader-disc-filters'));
 });

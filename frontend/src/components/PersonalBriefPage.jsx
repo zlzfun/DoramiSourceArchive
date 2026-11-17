@@ -12,6 +12,7 @@ import { flushPendingInterestSaves } from '../utils/interestSaveQueue';
 import { rebuildToast } from '../utils/briefRebuild';
 import { guestEdition } from '../utils/guestCopy';
 import LogoMark from './LogoMark';
+import BriefPodcastGuide from './BriefPodcastGuide';
 import BriefHistoryCalendar, { BriefHistorySheet } from './BriefHistoryCalendar';
 import { GlassBtn, HeadTitle, MobileHeader } from './mobile/MobileHeader';
 import { useLongPress } from '../hooks/useLongPress';
@@ -24,6 +25,8 @@ import { fmtDayKey, WEEKDAY_CHARS } from '../utils/readerTime';
 import { latinLang } from '../utils/readerText';
 import { titleView } from '../utils/titleDisplay';
 import { useTitlePreference } from '../hooks/useTitlePreference';
+import { scrollBehavior } from '../motion';
+import DisplayTitle from './DisplayTitle';
 import { qualityScoreText, scoreTierClass, scoreDisclaimer, SCORE_DIMENSION_LABELS } from '../utils/analysis';
 import { scoreDimensionOf, scoreOf } from '../utils/briefScore';
 
@@ -234,7 +237,7 @@ function FavoriteButton({ articleId, favoriteIds, onToggleFavorite, label = fals
 
 // 板块条目。手机档(issue #230 批 3b,样页拍板 13 / 14):不带英文原标题与收藏星(收藏走长按动作单与正文页),
 // 分数挪到元信息行尾;整卡可点(标题按钮 ::after 拉伸)、可长按(press = useLongPress 的绑定),anchored = 动作单正指着它
-function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds, onToggleFavorite, mobile = false, press = null, anchored = false }) {
+function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds, onToggleFavorite, guideProps, mobile = false, press = null, anchored = false }) {
   const { preferChinese } = useTitlePreference();
   const view = viewOf(item, source, preferChinese);
   const { snapshot } = view;
@@ -249,7 +252,7 @@ function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds
     <article className={`bp-item ${flash ? 'is-just-read' : ''}${anchored ? ' is-ctx-anchor' : ''}`} {...(press || {})}>
       {/* 标题按钮是唯一的「打开」控件:::after 拉伸覆盖整条,点条目任意处即打开;收藏与「+ 订阅」浮在覆盖层之上 */}
       <h3 className="bp-item-title" lang={latinLang(view.title)}>
-        <button type="button" className="bp-item-open" onClick={() => onOpen(item)}>{view.title}</button>
+        <button type="button" className="bp-item-open" onClick={() => onOpen(item)}>{mobile ? view.title : <DisplayTitle text={view.title} squeeze={false} />}</button>
       </h3>
       {!mobile && view.titleOrig && <p className="bp-item-orig" lang={latinLang(view.titleOrig)}>{view.titleOrig}</p>}
       {view.summary && <p className="bp-item-sum">{view.summary}</p>}
@@ -264,6 +267,7 @@ function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds
         )}
         {!mobile && score}
         <WhyMark why={view.why} />
+        <BriefPodcastGuide item={item} source={source} {...guideProps} />
         <RelatedChip links={related} open={showRelated} onToggle={() => setShowRelated((value) => !value)} />
         {mobile ? score : <FavoriteButton articleId={item.article_id} favoriteIds={favoriteIds} onToggleFavorite={onToggleFavorite} />}
       </div>
@@ -275,7 +279,7 @@ function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds
 // 手机档头条(issue #230 批 3b,样页第 1 轮返修第 2 条):整块可点——标题按钮的 ::after 铺满头条块,按下整块压暗一档、缩到 0.99;
 // 摘要下只有文字级「全文 ›」提示(没有实底「阅读全文」与收藏钮,收藏走长按);英文原标题保留(拍板 14 只撤板块条目的);
 // 评分栏在可点块之外。可长按(press),anchored = 动作单正指着它。
-function MobileHeadline({ item, kicker, source, flash, onOpen, onSubscribeSource, press = null, anchored = false }) {
+function MobileHeadline({ item, kicker, source, flash, onOpen, onSubscribeSource, guideProps, press = null, anchored = false }) {
   const { preferChinese } = useTitlePreference();
   const view = viewOf(item, source, preferChinese);
   const { snapshot } = view;
@@ -299,6 +303,7 @@ function MobileHeadline({ item, kicker, source, flash, onOpen, onSubscribeSource
             <span className="bp-time" title={formatDateTime(snapshot.publish_date)}>{formatRelativeTime(snapshot.publish_date, '')}</span>
           )}
           {view.why.cls === 'is-interest' && <WhyMark why={view.why} />}
+          <BriefPodcastGuide item={item} source={source} {...guideProps} />
           <RelatedChip links={related} open={showRelated} onToggle={() => setShowRelated((value) => !value)} />
         </p>
         {view.summary && <p className="bp-sum">{view.summary}</p>}
@@ -338,7 +343,7 @@ export function BriefPeek({ item, source = null }) {
   );
 }
 
-function Headline({ item, kicker, source, flash, restCount, onOpen, onSubscribeSource, favoriteIds, onToggleFavorite }) {
+function Headline({ item, kicker, source, flash, restCount, onOpen, onSubscribeSource, favoriteIds, onToggleFavorite, guideProps }) {
   const { preferChinese } = useTitlePreference();
   const view = viewOf(item, source, preferChinese);
   const { snapshot } = view;
@@ -349,7 +354,7 @@ function Headline({ item, kicker, source, flash, restCount, onOpen, onSubscribeS
     <div className={`bp-head ${flash ? 'is-just-read' : ''}`}>
       <p className="bp-kicker">{kicker}</p>
       {/* 标题可点(鼠标的直觉);键盘与读屏走下方「阅读全文」,标题本身不重复成第二个按钮 */}
-      <h1 className="bp-title" lang={latinLang(view.title)} onClick={() => onOpen(item)}>{view.title}</h1>
+      <h1 className="bp-title" lang={latinLang(view.title)} onClick={() => onOpen(item)}><DisplayTitle text={view.title} /></h1>
       {view.titleOrig && <p className="bp-orig" lang={latinLang(view.titleOrig)}>{view.titleOrig}</p>}
       <div className={`bp-lower ${view.score ? '' : 'is-solo'}`}>
         <div className="bp-lower-main">
@@ -363,6 +368,7 @@ function Headline({ item, kicker, source, flash, restCount, onOpen, onSubscribeS
               <span className="bp-time" title={formatDateTime(snapshot.publish_date)}>{formatRelativeTime(snapshot.publish_date, '')}</span>
             )}
             {view.why.cls === 'is-interest' && <WhyMark why={view.why} />}
+            <BriefPodcastGuide item={item} source={source} {...guideProps} />
             <RelatedChip links={related} open={showRelated} onToggle={() => setShowRelated((value) => !value)} />
           </p>
           {view.summary && <p className="bp-sum">{view.summary}</p>}
@@ -443,6 +449,7 @@ export default function PersonalBriefPage({
   onItemMenu = null,
   menuAnchorKey = null,
 }) {
+  const guideProps = { guest, showToast };
   const restoreRef = useRef(restore);
   const [flashId, setFlashId] = useState(null);
   const [history, setHistory] = useState([]);
@@ -461,6 +468,31 @@ export default function PersonalBriefPage({
   const histTriggerRef = useRef(null);
   const cacheRef = useRef(new Map()); // 终态 edition 不可变,按 date#revision 缓存
   const sheetRef = useRef(null);
+  // 吸顶目录(issue #279 第四批,桌面):读到哪一个板块,目录上那一项点亮;点目录跳到那个板块
+  const [activeAct, setActiveAct] = useState('');
+  const tocPinRef = useRef(0);   // 点了目录之后的一小段时间(平滑滚动中)不让滚动事件改写点亮项;存的是解除它的计时器
+  const syncToc = useCallback(() => {
+    const sheet = sheetRef.current;
+    if (!sheet || tocPinRef.current) return;
+    const line = sheet.getBoundingClientRect().top + 44 + 56;   // 目录条的高度,加一点余量
+    const acts = [...sheet.querySelectorAll('.bp-act')];
+    let current = '';
+    acts.forEach((el) => { if (el.getBoundingClientRect().top <= line) current = el.dataset.act || ''; });
+    // 还没有哪个板块滚到目录条下面、但第一个板块已经进了视口:读的就是它
+    if (!current && acts[0] && acts[0].getBoundingClientRect().top < sheet.getBoundingClientRect().bottom - 120) current = acts[0].dataset.act || '';
+    // 滚到底了:最后一个板块短的话,它的顶够不到目录条下面——读的就是它
+    if (acts.length && sheet.scrollTop + sheet.clientHeight >= sheet.scrollHeight - 2) current = acts[acts.length - 1].dataset.act || current;
+    setActiveAct(current);
+  }, []);
+  const jumpToAct = useCallback((key) => {
+    const target = [...(sheetRef.current?.querySelectorAll('.bp-act') || [])].find((el) => el.dataset.act === key);
+    if (!target) return;
+    // 被点的那一项立刻点亮;末尾的短板块滚不到阈值,不能等滚动事件来判
+    setActiveAct(key);
+    window.clearTimeout(tocPinRef.current);
+    tocPinRef.current = window.setTimeout(() => { tocPinRef.current = 0; }, 900);
+    target.scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
+  }, []);
 
   const loadHistory = useCallback(() => (
     fetchPersonalBriefs(HISTORY_LIMIT)
@@ -762,6 +794,16 @@ export default function PersonalBriefPage({
   const showEdition = !loading && !detailLoading && !live && !(error && isToday)
     && !(isToday && todayStatus === 'empty_subscriptions') && !(!usesToday && detail.error)
     && status !== 'failed' && !!edition;
+  // 目录不等第一次滚动:板块真的画出来了(showEdition)、换期(viewKey)、板块变化时先同步一次——
+  // 短海报下第一个板块一开始就在视口里;往期详情先到而今天那份还在加载时,板块要等 loading 结束才出现
+  const actKeys = acts.map((group) => group.key).join('|');
+  useEffect(() => {
+    if (mobile || !showEdition || !actKeys) return undefined;
+    window.clearTimeout(tocPinRef.current);
+    tocPinRef.current = 0;
+    const id = requestAnimationFrame(syncToc);
+    return () => cancelAnimationFrame(id);
+  }, [mobile, showEdition, viewKey, actKeys, syncToc]);
 
   const n = (value) => <b>{value}</b>;
   const valueText = valueCount > 0 && (
@@ -932,6 +974,7 @@ export default function PersonalBriefPage({
     posterBody = (
       <MobileHeadline
         item={headline}
+        guideProps={guideProps}
         kicker={headline.selection_lane === 'breaking' ? `头条 · ${headWhy.text}` : `头条 · ${headSection}`}
         source={sourceMap[headline.snapshot?.source_id]}
         flash={flashId != null && (headline.id ?? headline.position) === flashId}
@@ -946,7 +989,8 @@ export default function PersonalBriefPage({
     posterBody = (
       <Headline
         item={headline}
-        kicker={headline.selection_lane === 'breaking' ? `头条 · ${headWhy.text}` : `头条 · ${headSection}`}
+        guideProps={guideProps}
+        kicker={headline.selection_lane === 'breaking' ? headWhy.text : headSection}
         source={sourceMap[headline.snapshot?.source_id]}
         flash={flashId != null && (headline.id ?? headline.position) === flashId}
         restCount={items.length - 1}
@@ -964,9 +1008,6 @@ export default function PersonalBriefPage({
         <h1 className="bp-title is-note">
           {`${dayWord}${interestOnly ? '没有命中你兴趣的新内容' : ratioUnfillable ? '缺少用于补齐的非兴趣内容' : '没有达到入选标准的内容'}`}
         </h1>
-        <p className="bp-sum">
-          {ownItems.length > 0 ? `下面是${guest ? '默认订阅' : '你订阅'}来源的最新更新，不计入正式精选` : '下面是按内容价值入选的阅读与收听'}
-        </p>
       </div>
     );
   }
@@ -976,10 +1017,7 @@ export default function PersonalBriefPage({
   const onboardingBanner = onboarding && (
     <div className="interest-onb brief-onb" role="region" aria-label="初始设置">
       <div className="interest-onb-main">
-        <div className="brief-mast-kicker">欢迎来到哆啦美</div>
-        <p className="interest-onb-text">
-          这是你的第一份早报。<b>设置兴趣</b>，早报会更懂你。
-        </p>
+        <p className="interest-onb-text">这是你的第一份早报。</p>
       </div>
       <div className="brief-onb-acts">
         <button type="button" className="interest-btn" disabled={skipping} onClick={handleSkipOnboarding}>稍后再说</button>
@@ -993,7 +1031,6 @@ export default function PersonalBriefPage({
     ? [
       edition.generated_at ? `${clockOf(edition.generated_at)} 编排` : null,
       multiRev && edition.revision ? `第 ${edition.revision} 版` : null,
-      items.length > 0 ? `${items.length} 条` : null,
     ].filter(Boolean).join(' · ')
     : '';
   const pastDays = days.filter((day) => day.key !== selDate).slice(0, PAST_CHIPS);
@@ -1095,17 +1132,6 @@ export default function PersonalBriefPage({
             </dd>
           </>
         )}
-        {showEdition && headline && (
-          <>
-            <dt>头条</dt>
-            <dd>
-              {VALUE_LANES.has(headline.selection_lane)
-                ? '本期没有新闻入选，取深度阅读与播客精选里内容价值最高的一条'
-                : '有重大事件时取重大事件，否则取本期新闻价值最高的一条'}
-              ；其余按板块排列，板块内按分数
-            </dd>
-          </>
-        )}
         {pastDays.length > 0 && (
           <>
             <dt>往期</dt>
@@ -1179,20 +1205,42 @@ export default function PersonalBriefPage({
   return (
     <>
     {mobileHead}
-    <section className={`bp-sheet ${mobile ? 'is-mobile' : ''}`} aria-label="我的早报" ref={sheetRef} onScroll={recordProgress}>
+    <section
+      className={`bp-sheet ${mobile ? 'is-mobile' : ''}`}
+      aria-label="我的早报"
+      ref={sheetRef}
+      onScroll={mobile ? recordProgress : (event) => { recordProgress(event); syncToc(); }}
+    >
       {poster}
       <div className="bp-wrap">
+        {/* 吸顶目录(桌面):板块名 + 条数。条数只写在这里,板块头不再重复 */}
+        {!mobile && showEdition && acts.length > 1 && (
+          <nav className="bp-toc" aria-label="本期板块">
+            {acts.map((group) => (
+              <button
+                key={group.key}
+                type="button"
+                className={`bp-toc-link ${activeAct === group.key ? 'is-on' : ''}`}
+                aria-current={activeAct === group.key ? 'true' : undefined}
+                onClick={() => jumpToAct(group.key)}
+              >
+                {group.key}<b>{group.items.length}</b>
+              </button>
+            ))}
+          </nav>
+        )}
         {showEdition && acts.map((group) => (
-          <section key={group.key} className="bp-act" aria-label={group.key}>
+          <section key={group.key} className="bp-act" aria-label={group.key} data-act={group.key}>
             <div className="bp-act-head">
               <h2 className="bp-act-name">{group.key}</h2>
-              <p className="bp-act-count">{group.items.length} 条</p>
+              {(mobile || acts.length <= 1) && <p className="bp-act-count">{group.items.length} 条</p>}
             </div>
             <div className="bp-items">
               {group.items.map((item) => (
                 <BriefItem
                   key={item.id || item.position}
                   item={item}
+                  guideProps={guideProps}
                   source={sourceMap[item.snapshot?.source_id]}
                   flash={flashId != null && (item.id ?? item.position) === flashId}
                   onOpen={openItem}

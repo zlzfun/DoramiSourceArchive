@@ -38,7 +38,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy import literal_column, text, tuple_
 from sqlalchemy.engine import Engine
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from config import LLMConfig
 from llm.client import ChatMessage, UsageMeta, chat_completion
@@ -359,23 +359,45 @@ def load_source_meta(session: Session, source_ids: Iterable[str]) -> dict[str, S
             select(SourceConfigRecord).where(SourceConfigRecord.source_id.in_(list(chunk)))
         ).all():
             configs[row.source_id] = row
+    classes = {source_id: _registry_class(source_id) for source_id in wanted}
+    # 既无配置行也无注册表类的源(只在归档里出现):形态按其条目的 content_type 判定,
+    # 与事件榜展示、早报同口径——此前一律当 article,推文可被选成代表稿(issue #262 B8)。
+    unregistered = [sid for sid in wanted if sid not in configs and classes.get(sid) is None]
+    fallback_shapes: dict[str, str] = {}
+    if unregistered:
+        from api.sources import source_shape
+
+        counts: dict[str, dict[str, int]] = {}
+        for chunk in _chunks(unregistered):
+            for sid, content_type, count in session.exec(
+                select(ArticleRecord.source_id, ArticleRecord.content_type, func.count())
+                .where(ArticleRecord.source_id.in_(list(chunk)))
+                .group_by(ArticleRecord.source_id, ArticleRecord.content_type)
+            ).all():
+                shape = source_shape(sid, content_type, {})
+                bucket = counts.setdefault(sid, {})
+                bucket[shape] = bucket.get(shape, 0) + int(count or 0)
+        for sid, bucket in counts.items():
+            # 取条目数最多的形态,平局按 article(与阅读器目录「主导 content_type」同口径)。
+            fallback_shapes[sid] = max(
+                bucket.items(), key=lambda item: (item[1], item[0] == "article")
+            )[0]
     result: dict[str, SourceMeta] = {}
     for source_id in wanted:
         config = configs.get(source_id)
-        cls = _registry_class(source_id)
+        cls = classes.get(source_id)
         if config is not None:
             role = source_role(
                 source_id,
                 source_scope=config.source_scope or "",
                 provenance_tier=config.provenance_tier or "",
             )
-            source_type = str(config.source_type or "").strip().lower()
-            config_shape = "social" if source_type in {"x", "x_timeline"} else (
-                "podcast" if user_sources.source_content_kind(config) == "podcast" else "article"
-            )
+            from api.sources import row_shape
+
+            config_shape = row_shape(config)
         else:
             role = source_role(source_id)
-            config_shape = "article"
+            config_shape = fallback_shapes.get(source_id, "article")
         shape = str(getattr(cls, "content_shape", "") or "").strip() if cls is not None else ""
         owner = str(getattr(cls, "source_owner", "") or "").strip() if cls is not None else ""
         if not owner and config is not None:
@@ -1227,6 +1249,40 @@ def _validate_decisions(session: Session, decisions: Sequence[AssignmentDecision
     return validated, counts
 
 
+def local_assignment_blocked(session: Session) -> bool:
+    """本机是否不该自己归并事件(issue #263:本机事件与上游事件二选一)。
+
+    事件 id 是产生节点的本机自增整数,同步时原样照抄,两种事件同表必然相撞。所以由库里已有的
+    事件决定用谁的:已有本机事件 → 本机继续归并(拉取时跳过 events 流);只有上游事件 → 不归并;
+    一个事件都没有、但已接入带 events 能力的上游 → 等上游的,不归并。
+    """
+
+    if session.exec(
+        select(EventRecord.id).where(EventRecord.authority_id == "").limit(1)
+    ).first() is not None:
+        return False
+    if session.exec(
+        select(EventRecord.id).where(EventRecord.authority_id != "").limit(1)
+    ).first() is not None:
+        return True
+    from services import sync_consumer_policy
+
+    return sync_consumer_policy.upstream_provides_events(session)
+
+
+def _event_write_gate_blocks(session: Session) -> bool:
+    """本机事件落库前的原子复核:先取 SQLite 写锁,再看能不能写。
+
+    入口检查挡不住「检查通过 → 等模型 → 上游事件已导入 → 本机事件才落库」的交错;上游 events 页的
+    导入事务取的是同一把锁(``archive_sync_v2.acquire_event_write_gate``),两边因此串行。
+    """
+
+    session.connection().exec_driver_sql(
+        "UPDATE archive_sync_clock SET revision = revision WHERE id = 1"
+    )
+    return local_assignment_blocked(session)
+
+
 def _apply_batch(session: Session, decisions: Sequence[AssignmentDecision], *, now: dt.datetime,
                  articles: Mapping[str, ArticleRecord], meta: Mapping[str, SourceMeta],
                  llm_titles: Mapping[str, str], key_events: dict[str, int],
@@ -1310,6 +1366,10 @@ def _apply_isolated(session: Session, decision: AssignmentDecision, *, now: dt.d
                     llm_titles: Mapping[str, str], key_events: dict[str, int],
                     key_titles: dict[int, str]) -> tuple[int, set[int], dict[str, int]]:
     """隔离重放的一篇:在本篇自己的事务里重新校验目标后写入并提交。异常原样抛出,由调用方回滚并退避。"""
+    if _event_write_gate_blocks(session):
+        # 等模型期间上游事件到了:本机不再建事件,这一篇留在 ledger 里(入口检查会让它停住)。
+        session.rollback()
+        return 0, set(), {"invalid_target": 0, "retargeted": 0, "serial_split": 0}
     validated, counts = _validate_decisions(session, [decision], articles, now=now, key_events=key_events)
     one_assigned, one_touched = _apply_batch(
         session, validated, now=now, articles=articles, meta=meta,
@@ -1336,6 +1396,10 @@ def apply_assignments(session: Session, decisions: Sequence[AssignmentDecision],
     }
     if not decisions:
         return empty
+    if _event_write_gate_blocks(session):
+        # 落库前复核(issue #263):此刻库里已是上游的事件,本批决定作废、不写任何事件。
+        session.rollback()
+        return {**empty, "blocked": True}
     article_ids = [decision.article_id for decision in decisions]
     articles: dict[str, ArticleRecord] = {}
     for chunk in _chunks(article_ids):
@@ -1415,7 +1479,7 @@ def _new_stats() -> dict[str, Any]:
         "scanned": 0, "direct": 0, "singleton": 0, "llm_assigned": 0, "new_events": 0,
         "failed": 0, "echo_mismatch": 0, "skipped": 0, "closed": 0, "batches": 0,
         "llm_calls": 0, "llm_items": 0, "illegal_target": 0, "low_confidence": 0, "empty_fact": 0,
-        "llm_unconfigured": False, "busy": False, "echo_samples": [],
+        "llm_unconfigured": False, "busy": False, "blocked": False, "echo_samples": [],
         "invalid_target": 0, "retargeted": 0, "serial_split": 0, "isolated_failures": 0,
         "recall": {
             "articles": 0, "with_candidates": 0, "candidates_total": 0, "batch_similar": 0,
@@ -1719,6 +1783,11 @@ def _process_batch(session: Session, rows: Sequence[tuple[EventAssignmentLedgerR
 
     # 5. 单事务落库(直连 / 单例的决定不依赖模型,模型失败时照常落)。
     outcome = apply_assignments(session, decisions, now=now, llm_titles=llm_titles, meta=meta)
+    if outcome.get("blocked"):
+        # 落库前复核发现上游事件已经到了:本批作废,并让外层立刻收工——否则同一批 pending 行会被
+        # 反复读出来、反复送模型(检视 R1 #7)。
+        stats["blocked"] = True
+        return False
     stats["new_events"] += int(outcome["new_events"])
     for key in ("invalid_target", "retargeted", "serial_split", "isolated_failures"):
         stats[key] += int(outcome[key])
@@ -1735,6 +1804,10 @@ def _assign_pending_locked(engine: Engine, llm_config: LLMConfig, *, now: dt.dat
         stats["scanned"] = scan_pending(session, now=now)
         stats["skipped"] += _sweep_expired_pending(session, now=now)
         for _ in range(MAX_BATCHES_PER_RUN):
+            if local_assignment_blocked(session):
+                # 两批之间上游事件到了:后面的批不再调模型。
+                stats["blocked"] = True
+                break
             rows = _load_due_batch(session, now=now, batch_size=batch_size)
             if not rows:
                 break
@@ -1758,6 +1831,11 @@ def assign_pending(engine: Engine, llm_config: LLMConfig, *, now: Optional[dt.da
         stats["busy"] = True
         return stats
     try:
+        with Session(engine) as session:
+            if local_assignment_blocked(session):
+                # 用着上游事件(或在等上游的事件):本机不归并,也不调模型。
+                stats["blocked"] = True
+                return stats
         return _assign_pending_locked(
             engine, llm_config, now=_as_utc(now), batch_size=max(1, int(batch_size)), stats=stats,
         )

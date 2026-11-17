@@ -253,7 +253,8 @@ def test_bad_response_cannot_publish_or_count_a_corrupt_local_file(env, response
         assert row.status == ("pending_sync" if env.stream == "media" else "ready")
 
 
-def test_matching_hash_still_requires_real_image_or_audio_format(env):
+def _poison_producer_bytes(env):
+    """Authority declares checksum-correct bytes that are not a real image / audio."""
     model = MediaAssetRecord if env.stream == "media" else PodcastArtifactRecord
     with Session(env.producer.engine) as session:
         for key, body in env.bodies.items():
@@ -263,9 +264,56 @@ def test_matching_hash_still_requires_real_image_or_audio_format(env):
             env.bodies[key] = bad
             _write(env.path(bad), bad)
         session.commit()
-    with pytest.raises(sync.SyncV2Error):
-        env.pull()
-    assert env.stream not in env.checkpoints
+
+
+def test_matching_hash_still_requires_real_image_or_audio_format(env):
+    _poison_producer_bytes(env)
+    if env.stream == "podcast_audio":
+        with pytest.raises(sync.SyncV2Error):
+            env.pull()
+        assert env.stream not in env.checkpoints
+        return
+    # 图片:单条拒收记 failed 后跳过,整流照常完成,排在后面的流不再被饿死(issue #264)。
+    env.pull(on_progress=lambda p: env.progress.append(p.copy()))
+    assert env.checkpoints["media"]["skipped"] == len(env.bodies)
+    assert "source_states" in env.checkpoints
+    assert env.progress[-1]["streams_done"]["media"]["skipped"] == len(env.bodies)
+    with Session(env.consumer.engine) as session:
+        for key, body in env.bodies.items():
+            row = session.get(MediaAssetRecord, key)
+            assert row.status == "failed" and "同步拒收" in row.last_error
+            assert row.fetched_at is None
+    assert sorted(env.downloads) == sorted(env.bodies)  # 先校本地副本,不认才下载、下载后仍拒
+
+
+def test_rejected_media_is_resent_after_authority_repair(env):
+    if env.stream != "media":
+        pytest.skip("音频拒收仍整页失败;单条跳过只对图片")
+    _poison_producer_bytes(env)
+    env.pull()
+    # 同一 revision 全量重放:仍 failed、仍不阻塞,且不再重下已拒收的字节
+    env.checkpoints.clear()
+    env.downloads.clear()
+    env.pull()
+    assert env.checkpoints["media"]["skipped"] == len(env.bodies)
+    assert env.downloads == []
+    # 权威修好一张(新字节 → 新 revision),增量同步重发并装上
+    key = sorted(env.bodies)[0]
+    good = b"\xff\xd8\xffrepaired"
+    with Session(env.producer.engine) as session:
+        row = session.get(MediaAssetRecord, key)
+        row.content_hash = hashlib.sha256(good).hexdigest()
+        row.size_bytes = len(good)
+        row.updated_at = "2026-10-01"
+        session.add(row)
+        session.commit()
+    env.bodies[key] = good
+    env.pull()
+    with Session(env.consumer.engine) as session:
+        repaired = session.get(MediaAssetRecord, key)
+        assert repaired.status == "cached"
+        assert repaired.content_hash == hashlib.sha256(good).hexdigest()
+        assert env.path(good).read_bytes() == good
 
 
 def test_existing_files_do_not_override_another_authority(env):

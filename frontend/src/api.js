@@ -296,6 +296,13 @@ export function fetchPodcastEpisodeTexts(episodeId, filters = {}, options = {}) 
   });
 }
 
+export function fetchQaReferenceContext(episodeId, token, options = {}) {
+  return request(`/podcasts/episodes/${enc(episodeId)}/reference-context?token=${enc(token)}`, {
+    errorMsg: '无法定位原文，请稍后重试',
+    ...options,
+  });
+}
+
 export function translatePodcastTranscript(episodeId, sourceKind, options = {}) {
   return request(`/reader/ai/podcasts/${enc(episodeId)}/translate-transcript`, {
     method: 'POST',
@@ -428,6 +435,13 @@ export function setSourceVisibility(sourceId, hidden) {
   });
 }
 
+// ── 公共源的「本机分析」开关(issue #263):同步建出来的源默认关,管理员想自己采再打开 ──
+export function setSourceAnalysis(sourceId, enabled) {
+  return request(`/admin/sources/${enc(sourceId)}/analysis`, {
+    method: 'POST', body: { enabled }, errorMsg: '更新本机分析开关失败',
+  });
+}
+
 export function getAiBetaGlobal() {
   return request('/admin/ai-beta/global', { errorMsg: '获取 AI 全局开关失败' });
 }
@@ -496,8 +510,9 @@ export function fetchAskProgress(askId) {
 }
 
 // ==================== 抓取器 / 数据源健康 ====================
-export function fetchFetchers() {
-  return request('/fetchers', { errorMsg: '获取抓取器注册表失败' });
+// 源管理目录(issue #262 第三波):全部公共源,每条带 bound(有采集绑定才能运行 / 编入任务);退役源按需带上。
+export function fetchFetchers({ includeRetired = false } = {}) {
+  return request(includeRetired ? '/fetchers?include_retired=true' : '/fetchers', { errorMsg: '获取源目录失败' });
 }
 
 export function fetchSourceHealth() {
@@ -542,8 +557,9 @@ export function updateArticle(id, data) {
   return request(`/articles/${enc(id)}`, { method: 'PUT', body: data, errorMsg: '更新失败' });
 }
 
-export function createArticle(payload) {
-  return request('/articles', { method: 'POST', body: payload, errorMsg: '录入失败' });
+// 单条收录(issue #262):与外部推送同一端点,管理员会话直接调;条目 id / 类型 / 来路由服务端决定。
+export function ingestItems(items) {
+  return request('/public/ingest/v1/items', { method: 'POST', body: { items }, errorMsg: '收录失败' });
 }
 
 // ==================== 运行参数 ====================
@@ -965,6 +981,10 @@ export async function downloadSubscriptionOpml() {
     filename: 'dorami-subscriptions.opml',
     exportable: Number(res.headers.get('X-Dorami-Opml-Exportable') || 0),
     skipped: Number(res.headers.get('X-Dorami-Opml-Skipped') || 0),
+    // 这一份文件里带凭证的地址数;旧后端没有这个头时是 null(未知,不当成 0)
+    credentialed: res.headers.get('X-Dorami-Opml-Credentialed') == null
+      ? null
+      : Number(res.headers.get('X-Dorami-Opml-Credentialed')),
   };
 }
 
@@ -1194,6 +1214,31 @@ export function retryFullAnalysisBackfill(jobId) {
   return request(`/admin/analysis/backfills/${enc(jobId)}/retry-failed`, { method: 'POST', errorMsg: '重试失败文章失败' });
 }
 
+// ── 收录(issue #262 波 1):收录令牌与收录源 ──
+export function fetchIngestTokens() {
+  return request('/admin/ingest/tokens', { errorMsg: '获取收录令牌失败' });
+}
+
+export function createIngestToken(payload) {
+  return request('/admin/ingest/tokens', { method: 'POST', body: payload, errorMsg: '签发收录令牌失败' });
+}
+
+export function revokeIngestToken(tokenId) {
+  return request(`/admin/ingest/tokens/${encodeURIComponent(tokenId)}/revoke`, { method: 'POST', errorMsg: '吊销失败' });
+}
+
+export function fetchIngestSources() {
+  return request('/admin/ingest/sources', { errorMsg: '获取收录源失败' });
+}
+
+export function ingestSourceAction(sourceId, action) {
+  return request(`/admin/ingest/sources/${encodeURIComponent(sourceId)}/${action}`, { method: 'POST', errorMsg: '操作失败' });
+}
+
+export function renameIngestSource(sourceId, name) {
+  return request(`/admin/ingest/sources/${encodeURIComponent(sourceId)}`, { method: 'PATCH', body: { name }, errorMsg: '改名失败' });
+}
+
 export function fetchAdminUserSources() {
   return request('/admin/user-sources', { errorMsg: '获取用户自定源失败' });
 }
@@ -1361,6 +1406,17 @@ export function startRemoteSync(baseUrl, username, password, options = {}) {
 
 export function fetchRemoteSyncStatus() {
   return request('/admin/remote-sync/status', { errorMsg: '获取远程同步状态失败' });
+}
+
+// 节点同步控制台(issue #261):本机各类同步内容条数(只读聚合,打开页面与任务结束时取,不随进度轮询)
+export function fetchRemoteSyncInventory() {
+  return request('/admin/remote-sync/inventory', { errorMsg: '获取本机同步盘点失败' });
+}
+
+// 重置当前目标的一条流(清 checkpoint + 该 authority 的逐行记账,下次整流重拉);重放分析流 = analyses。
+// 有排队 / 运行中的同步任务时后端 409,detail 原样透传。
+export function resetRemoteSyncStream(stream) {
+  return request(`/admin/remote-sync/streams/${encodeURIComponent(stream)}/reset`, { method: 'POST', errorMsg: '重置同步流失败' });
 }
 
 // 定时同步(v3.19.2):凭据只写不回显——GET 永不含 password,仅 password_set;

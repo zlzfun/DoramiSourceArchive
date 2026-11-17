@@ -18,7 +18,9 @@ _CLOCK_INIT = "INSERT OR IGNORE INTO archive_sync_clock (id, revision) VALUES (1
 
 
 def _public_source(alias: str) -> str:
-    return f"{alias}.owner_username = '' AND {alias}.collection_authority_id = ''"
+    # issue #263:源上的 collection_authority_id 降级为簿记(「上游也有」),不再决定一行算不算
+    # 本机公共——否则本机在一个上游也有的源下自己抓到的文章不会被记账,也就导不出去。
+    return f"{alias}.owner_username = ''"
 
 
 def _public_article(alias: str) -> str:
@@ -29,7 +31,7 @@ def _public_article(alias: str) -> str:
         f"WHERE sc.source_id = {alias}.source_id) OR EXISTS ("
         "SELECT 1 FROM source_configs sc "
         f"WHERE sc.source_id = {alias}.source_id "
-        "AND sc.owner_username = '' AND sc.collection_authority_id = ''))"
+        "AND sc.owner_username = ''))"
     )
 
 
@@ -129,23 +131,7 @@ def _trigger_sql(
         "archive_sync_source_nonpublic_insert",
         """
         CREATE TRIGGER archive_sync_source_nonpublic_insert AFTER INSERT ON source_configs
-        WHEN NEW.owner_username <> '' OR NEW.collection_authority_id <> ''
-        BEGIN
-          DELETE FROM archive_sync_entity_states
-          WHERE authority_id = '' AND (
-            (stream IN ('sources','source_states') AND identity = NEW.source_id) OR
-            (stream IN ('articles','analyses') AND identity IN (
-              SELECT id FROM articles WHERE source_id = NEW.source_id
-            ))
-          );
-        END
-    """,
-    )
-    yield (
-        "archive_sync_source_remote_handoff",
-        """
-        CREATE TRIGGER archive_sync_source_remote_handoff AFTER UPDATE ON source_configs
-        WHEN NEW.collection_authority_id <> ''
+        WHEN NEW.owner_username <> ''
         BEGIN
           DELETE FROM archive_sync_entity_states
           WHERE authority_id = '' AND (
@@ -162,7 +148,6 @@ def _trigger_sql(
         f"""
         CREATE TRIGGER archive_sync_source_scope_exit AFTER UPDATE ON source_configs
         WHEN {_public_source("OLD")} AND NEW.owner_username <> ''
-          AND NEW.collection_authority_id = ''
         BEGIN
           {tick}
           {_state_values("sources", "NEW.source_id", "tombstone", clock, now)}
@@ -428,7 +413,7 @@ def _trigger_sql(
         "NEW.authority_id = '' AND NEW.source_id NOT LIKE 'user\\_rss\\_%' ESCAPE '\\' "
         "AND (NOT EXISTS (SELECT 1 FROM source_configs sc WHERE sc.source_id = NEW.source_id) "
         "OR EXISTS (SELECT 1 FROM source_configs sc WHERE sc.source_id = NEW.source_id "
-        "AND sc.owner_username = '' AND sc.collection_authority_id = ''))"
+        "AND sc.owner_username = ''))"
     )
     state_public_old = state_public_new.replace("NEW.", "OLD.")
     for suffix, action in (("insert", "INSERT"), ("update", "UPDATE")):
@@ -1071,6 +1056,58 @@ def _trigger_sql(
         )
 
 
+    # ── 导出修订(issue #263)──────────────────────────────────────────────────
+    # 状态表一列两用拆开:revision 对同步写入的行是「上游修订」(接收去重),local_revision 才是
+    # 「下游需要看到的本机修订」。本机行由下面两个镜像触发器保持 local_revision = revision,现有
+    # 写状态的业务触发器因此一字不改;同步写入的行由导入端在应用时写本机时钟。
+    for suffix, action in (
+        ("insert", "INSERT"),
+        ("update", "UPDATE OF revision, authority_id"),
+    ):
+        yield (
+            f"archive_sync_state_local_revision_{suffix}",
+            f"""
+            CREATE TRIGGER archive_sync_state_local_revision_{suffix}
+            AFTER {action} ON archive_sync_entity_states
+            WHEN NEW.authority_id = '' AND NEW.local_revision IS NOT NEW.revision
+            BEGIN
+              UPDATE archive_sync_entity_states SET local_revision = NEW.revision
+              WHERE stream = NEW.stream AND identity = NEW.identity;
+            END
+        """,
+        )
+    # 同步写入的图片 / 播客音频是「先落元数据、后装文件」:导出只认装好的行,所以文件就绪(以及
+    # 撤回、恢复)本身就是一次对下游的发布,必须推进导出修订——否则下游若恰好在两个阶段之间拉取,
+    # 文件装好后没有新修订通知它(方案检视 R1 #5)。本机行的状态变化已由上面的业务触发器覆盖。
+    yield (
+        "archive_sync_media_remote_publish",
+        f"""
+        CREATE TRIGGER archive_sync_media_remote_publish
+        AFTER UPDATE OF status ON media_assets
+        WHEN NEW.sync_authority_id <> '' AND NEW.status IS NOT OLD.status
+        BEGIN
+          {tick}
+          UPDATE archive_sync_entity_states SET local_revision = {clock}
+          WHERE stream = 'media' AND identity = NEW.url_hash AND authority_id <> '';
+        END
+    """,
+    )
+    yield (
+        "archive_sync_podcast_audio_remote_publish",
+        f"""
+        CREATE TRIGGER archive_sync_podcast_audio_remote_publish
+        AFTER UPDATE OF status ON podcast_artifacts
+        WHEN NEW.authority_id <> '' AND NEW.kind = 'digest_audio_zh'
+          AND NEW.status IS NOT OLD.status
+        BEGIN
+          {tick}
+          UPDATE archive_sync_entity_states SET local_revision = {clock}
+          WHERE stream = 'podcast_audio' AND identity = NEW.id AND authority_id <> '';
+        END
+    """,
+    )
+
+
 _EVENT_TABLES = frozenset({"events", "event_members", "event_redirects"})
 
 _EVENT_TRIGGER_NAMES = frozenset(
@@ -1091,6 +1128,25 @@ _EVENT_TRIGGER_NAMES = frozenset(
         "event_member_authority_guard_update",
     }
 )
+
+
+# 依赖 archive_sync_entity_states.local_revision 的触发器(issue #263)。历史迁移会调用当前的
+# 安装器,列还不存在时不能装:它们一触发就会报 no such column。
+_LOCAL_REVISION_TRIGGER_NAMES = frozenset(
+    {
+        "archive_sync_state_local_revision_insert",
+        "archive_sync_state_local_revision_update",
+        "archive_sync_media_remote_publish",
+        "archive_sync_podcast_audio_remote_publish",
+    }
+)
+
+
+def _local_revision_ready(connection: Connection) -> bool:
+    rows = connection.exec_driver_sql(
+        "PRAGMA table_info('archive_sync_entity_states')"
+    ).fetchall()
+    return any(str(row[1]) == "local_revision" for row in rows)
 
 
 def _event_schema_ready(connection: Connection, tables: set[str]) -> bool:
@@ -1133,6 +1189,7 @@ _PODCAST_TRIGGER_NAMES = frozenset(
         "archive_sync_podcast_audio_source_scope_enter",
         "archive_sync_podcast_audio_article_scope_exit",
         "archive_sync_podcast_audio_article_scope_enter",
+        "archive_sync_podcast_audio_remote_publish",
     }
 )
 
@@ -1147,8 +1204,20 @@ _PODCAST_AUDIO_TRIGGER_NAMES = frozenset(
         "archive_sync_podcast_audio_source_scope_enter",
         "archive_sync_podcast_audio_article_scope_exit",
         "archive_sync_podcast_audio_article_scope_enter",
+        "archive_sync_podcast_audio_remote_publish",
     }
 )
+
+
+# 已退役、不再由生成器产出的触发器:旧库里还留着,安装与清理时都要显式 DROP。
+# archive_sync_source_remote_handoff(issue #263):源一带归属印记就删它和它名下文章的本机状态——
+# 源印记降级为簿记后,这会把本机在该源下自己抓到的文章的导出状态删掉。
+_RETIRED_TRIGGER_NAMES = ("archive_sync_source_remote_handoff",)
+
+
+def _drop_retired_triggers(connection: Connection) -> None:
+    for name in _RETIRED_TRIGGER_NAMES:
+        connection.exec_driver_sql(f'DROP TRIGGER IF EXISTS "{name}"')
 
 
 def drop_archive_sync_revision_triggers(connection: Connection) -> None:
@@ -1156,6 +1225,7 @@ def drop_archive_sync_revision_triggers(connection: Connection) -> None:
 
     if connection.dialect.name != "sqlite":
         return
+    _drop_retired_triggers(connection)
     for name, _statement in _trigger_sql():
         connection.exec_driver_sql(f'DROP TRIGGER IF EXISTS "{name}"')
 
@@ -1171,6 +1241,7 @@ def install_archive_sync_revision_triggers(
     if connection.dialect.name != "sqlite":
         return
     connection.exec_driver_sql(_CLOCK_INIT)
+    _drop_retired_triggers(connection)
     tables = set(inspect(connection).get_table_names())
     podcast_text_schema_ready = {
         "podcast_text_artifacts",
@@ -1178,6 +1249,7 @@ def install_archive_sync_revision_triggers(
         "podcast_artifacts",
     } <= tables
     event_schema_ready = _event_schema_ready(connection, tables)
+    local_revision_ready = _local_revision_ready(connection)
     for name, statement in _trigger_sql(
         include_podcast_integrity=include_podcast_integrity
     ):
@@ -1185,6 +1257,8 @@ def install_archive_sync_revision_triggers(
         if name in _PODCAST_TRIGGER_NAMES and not podcast_text_schema_ready:
             continue
         if name in _EVENT_TRIGGER_NAMES and not event_schema_ready:
+            continue
+        if name in _LOCAL_REVISION_TRIGGER_NAMES and not local_revision_ready:
             continue
         # Historical migrations rebuild podcast_artifacts. Only the final audio
         # stream migration, or a fresh create_all schema, may install triggers

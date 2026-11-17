@@ -37,6 +37,7 @@ from services import image_insights as image_insights_service
 from services import user_sources as user_sources_service
 from services import podcast_qa
 from services import source_visibility
+from services.qa_contract import QAState, clean_parts, part_keywords, traced_completion
 from storage.fts import fts_search_ranked
 
 logger = logging.getLogger(__name__)
@@ -89,7 +90,9 @@ def _history_text(history: Optional[List[Any]]) -> str:
     lines: List[str] = []
     for turn in turns:
         speaker = "读者" if turn.role == "user" else "哆啦美"
-        content = turn.content if len(turn.content) <= 300 else turn.content[:300] + "…"
+        # Keep the same sanitized turns as the answerer: a reference to a late
+        # numbered point must not disappear merely because it follows char 300.
+        content = turn.content
         lines.append(f"{speaker}: {content}")
     return "\n".join(lines)
 
@@ -105,6 +108,7 @@ async def plan_query(
     usage_meta: Optional[UsageMeta] = None,
     *,
     history_text: str = "",
+    qa_state: Optional[QAState] = None,
 ) -> Optional[Dict[str, Any]]:
     """把自然语言问题规划成检索计划;任何失败返回 None(降级为原词检索)。
 
@@ -115,7 +119,7 @@ async def plan_query(
     """
     today = datetime.now().strftime("%Y-%m-%d")
     try:
-        raw = await chat_completion(
+        raw = await traced_completion(chat_completion, state=qa_state, stage="plan",
             messages=[
                 ChatMessage(role="system", content=prompts.SEARCH_PLAN_SYSTEM_PROMPT),
                 ChatMessage(role="user", content=prompts.build_search_plan_user_prompt(
@@ -148,7 +152,7 @@ async def plan_query(
         "date_lte": _date("date_lte"),
         "temporal": bool(data.get("temporal")),
         "use_brief": bool(data.get("use_brief")),
-        "chat": bool(data.get("chat")),
+        "chat": data.get("chat") is True,
         "single_episode": data.get("single_episode") is True,
     }
     # Episode discovery and locating an argument inside a long transcript need
@@ -159,6 +163,7 @@ async def plan_query(
             k.strip() for k in passage_keywords
             if isinstance(k, str) and 2 <= len(k.strip()) <= 80
         ))[:12]
+    result["subquestions"] = clean_parts(data.get("subquestions"), question)
     return result
 
 
@@ -353,7 +358,7 @@ async def select_articles(
     candidates: List[ArticleRecord],
     llm_config: LLMConfig,
     usage_meta: Optional[UsageMeta] = None,
-    *, keywords=(), single_episode: bool = False,
+    *, keywords=(), single_episode: bool = False, qa_state: Optional[QAState] = None,
 ) -> List[ArticleRecord]:
     """让 LLM 从候选中挑最相关的若干篇;广泛检索候选不多时跳过调用。
 
@@ -376,7 +381,7 @@ async def select_articles(
             "没有充分证据则返回空数组，不用其他仅沾边的节目补充。"
         )
     try:
-        raw = await chat_completion(
+        raw = await traced_completion(chat_completion, state=qa_state, stage="select",
             messages=[
                 ChatMessage(role="system", content=prompts.SEARCH_SELECT_SYSTEM_PROMPT),
                 ChatMessage(role="user", content=prompts.build_search_select_user_prompt(
@@ -438,6 +443,7 @@ async def subscription_context(
     corpus_label: str = "读者订阅内容",
     history: Optional[List[Any]] = None,
     source_ids_fetch: Optional[Any] = None,
+    qa_state: Optional[QAState] = None,
 ) -> tuple:
     """检索圈定型问答(scope=subscription/all)的上下文组装,返回 ``(context, sources)``。
 
@@ -452,18 +458,23 @@ async def subscription_context(
     规划与选篇是轻量结构化调用,走辅助轻模型档(llm_config.for_aux(),未配置
     aux_model 时即主模型)。
     """
+    if qa_state is not None and qa_state.intent == "chat":
+        return "", []
     source_ids = _exportable_source_ids(engine, source_ids)
     if not source_ids:
         return "", []
     aux_config = llm_config.for_aux()
 
     _notify(progress, "plan")
-    plan = await plan_query(question, aux_config, usage_meta, history_text=_history_text(history))
+    plan = await plan_query(question, aux_config, usage_meta, history_text=_history_text(history),
+                            **({"qa_state": qa_state} if qa_state is not None else {}))
+    if qa_state is not None:
+        qa_state.apply_plan(plan)
     if source_ids_fetch is not None:
         source_ids = _exportable_source_ids(engine, source_ids_fetch())
         if not source_ids:
             return "", []
-    if plan is not None and plan.get("chat"):
+    if plan is not None and plan.get("chat") is True:
         # 闲聊/对话元问题(v3.32 二轮返修):与资讯内容无关,不检索不注入,纯对话作答
         # ——等待态由此从「理解问题」直接跳到「组织回答」,不画未发生的检索阶段。
         return "", []
@@ -517,12 +528,17 @@ async def subscription_context(
                 "发布日期见各条标注。若其中没有能回答问题的内容,请如实说明,不要强行关联。)"
             )
     if not candidates:
+        if qa_state is not None:
+            qa_state.stages["retrieved"] = 0
         return "", []
 
     # Recheck after retrieval so a source reclassified during query planning
     # cannot leak its lead text into the selection prompt.
     candidates = _exportable_articles(engine, candidates)
     candidates = podcast_qa.revalidate_records(engine, candidates)
+    if qa_state is not None:
+        qa_state.stages["retrieved"] = len(candidates)
+        qa_state.stages["candidate_ids"] = [str(_art_field(r, "id")) for r in candidates[:CANDIDATE_LIMIT]]
     if not candidates:
         return "", []
 
@@ -533,20 +549,25 @@ async def subscription_context(
     chosen = await select_articles(
         question, candidates, aux_config, usage_meta, keywords=selection_keywords,
         single_episode=bool(plan and plan.get("single_episode") is True),
+        qa_state=qa_state,
     )
     if source_ids_fetch is not None:
         current_ids = set(source_ids_fetch())
         chosen = [r for r in chosen if _art_field(r, "source_id") in current_ids]
     # Recheck once more before constructing the answer context.
     chosen = _exportable_articles(engine, chosen)
+    if qa_state is not None:
+        qa_state.stages["selected"] = len(chosen)
+        qa_state.stages["selected_ids"] = [str(_art_field(r, "id")) for r in chosen]
     # 上下文与 sources 必须同源同序(编号 [n] 即引用锚,见 reader_ai 核心层)。
     # 单篇预算按选中篇数摊分(下限保底):选中少时长文能带出更多正文,
     # 不再固定每篇 2000 字符只喂开头(v3.34)。
     total_chars = podcast_qa.CONTEXT_CHARS if any(_art_field(r, "content_type") == "podcast_episode" for r in chosen) else _CONTEXT_TOTAL
     per_article = max(_CONTEXT_PER_ARTICLE, total_chars // max(1, len(chosen)))
-    keywords = (plan.get("passage_keywords") or plan["keywords"]) if plan else [question.strip()]
+    keywords = ((part_keywords(qa_state.parts) if qa_state is not None else [])
+                or ((plan.get("passage_keywords") or plan["keywords"]) if plan else [question.strip()]))
     chosen = podcast_qa.prepare_records(
-        engine, chosen, keywords=keywords, per_episode_chars=per_article,
+        engine, chosen, keywords=keywords, per_episode_chars=per_article, qa_state=qa_state,
     )
     chosen = podcast_qa.revalidate_records(engine, _exportable_articles(engine, chosen))
     # 配图说明(issue #69)只读缓存:检索档 ≤8 篇不在请求路径上发起识别(最坏 32 次视觉调用)。
@@ -557,7 +578,10 @@ async def subscription_context(
     context, included = build_numbered_context(
         chosen, per_article_chars=per_article, total_chars=total_chars,
         notes_by_id=notes_by_id,
+        qa_state=qa_state,
     )
+    if qa_state is not None:
+        qa_state.context_notice = notice
     if notice:
         context = f"{notice}\n\n{context}" if context else notice
     return context, build_sources_payload(included, notes_by_id=notes_by_id)

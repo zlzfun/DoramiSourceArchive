@@ -853,8 +853,10 @@ def test_new_group_serial_members_are_split(tmp_path, monkeypatch):
     assert _member(engine, "x2").assigned_by == "singleton"
 
 
-def test_authority_events_are_not_candidates(tmp_path):
-    """R1 #7:同步来的 authority 事件不进候选池;同题本地文章另立事件,ledger 正常收口,远端事件不被碰。"""
+def test_node_using_upstream_events_does_not_assign_locally(tmp_path):
+    """issue #263:事件 id 是产生节点的本机自增整数,本机事件与上游事件不能同表共存。库里只有
+    同步来的事件时,本机不归并(不调模型、不建事件、不动 ledger),上游的事件原样不动;它们也不进
+    本机的候选池。"""
     engine = _sink(tmp_path).engine
     title = "Anthropic launches Claude Opus 5"
     _seed(engine, "r1", title, source_id="rss_remote", authority="remote-1", publish=NOW - dt.timedelta(hours=1))
@@ -873,14 +875,67 @@ def test_authority_events_are_not_candidates(tmp_path):
         ))
         session.commit()
         remote_id = int(remote.id)
+        assert ea.local_assignment_blocked(session) is True
     _seed(engine, "l1", title, source_id="rss_local", entities=("entity.anthropic",))
-    stats = ea.assign_pending(engine, UNCONFIGURED, now=NOW)
-    assert stats["direct"] == 0 and stats["singleton"] == 1 and stats["isolated_failures"] == 0
-    assert _member(engine, "l1").event_id != remote_id and _ledger(engine, "l1").status == "assigned"
-    assert _event(engine, remote_id).member_count == 1
+    stats = ea.assign_pending(engine, LLM, now=NOW)
+    assert stats["blocked"] is True and stats["llm_calls"] == 0 and stats["scanned"] == 0
     with Session(engine) as session:
+        assert [int(event.id) for event in session.exec(select(EventRecord)).all()] == [remote_id]
+        assert session.exec(select(EventMemberRecord).where(EventMemberRecord.article_id == "l1")).first() is None
         hits = {c.event_id for c in ea.recall_candidates(session, session.get(ArticleRecord, "l1"), now=NOW)}
     assert remote_id not in hits
+    assert _event(engine, remote_id).member_count == 1
+
+
+def test_local_assignment_gate_follows_the_events_already_in_the_table(tmp_path):
+    """有本机事件 → 照常归并;一个事件都没有、但已接入带 events 能力的上游 → 等上游的;
+    没有上游 → 照常归并。"""
+    import json as _json
+
+    from models.db import AppSettingRecord
+
+    engine = _sink(tmp_path).engine
+    with Session(engine) as session:
+        assert ea.local_assignment_blocked(session) is False  # 空库、没有上游
+        session.add(AppSettingRecord(
+            key="remote_sync:state",
+            value=_json.dumps({"targets": {"https://up.test": {
+                "v2_authority_id": "up-1", "v2_capabilities": ["events_v1"],
+            }}}),
+        ))
+        session.commit()
+        assert ea.local_assignment_blocked(session) is True   # 等上游的事件
+        stamp = _iso(NOW)
+        session.add(EventRecord(
+            status="open", title="mine", title_source="", member_count=0, publisher_count=0,
+            first_seen_at=stamp, last_member_at=stamp, assignment_version="v", authority_id="",
+            created_at=stamp, updated_at=stamp,
+        ))
+        session.commit()
+        assert ea.local_assignment_blocked(session) is False  # 本机已有自己的事件:继续自己归并
+
+
+def test_decisions_are_dropped_when_upstream_events_arrive_before_the_write(tmp_path):
+    """首次接入与在途归并交错:归并已过入口检查、等模型期间上游事件导入了 → 落库前复核,本批作废,
+    不建任何本机事件(否则同一个整数 id 迟早相撞)。"""
+    engine = _sink(tmp_path).engine
+    _seed(engine, "l1", "Some local story", source_id="rss_local")
+    stamp = _iso(NOW)
+    with Session(engine) as session:
+        session.add(EventRecord(
+            status="open", title="from upstream", title_source="", member_count=0, publisher_count=0,
+            first_seen_at=stamp, last_member_at=stamp, assignment_version="v", authority_id="remote-1",
+            created_at=stamp, updated_at=stamp,
+        ))
+        session.commit()
+        outcome = ea.apply_assignments(
+            session,
+            [ea.AssignmentDecision(article_id="l1", event_id=None, assigned_by="singleton")],
+            now=NOW,
+        )
+        assert outcome["blocked"] is True and outcome["assigned"] == 0 and outcome["new_events"] == 0
+        assert [event.authority_id for event in session.exec(select(EventRecord)).all()] == ["remote-1"]
+
 
 
 def test_scan_pending_pages_past_old_backlog(tmp_path):
@@ -1089,3 +1144,37 @@ def test_isolated_replay_applies_serial_rule_against_committed_group_members(tmp
     assert _member(engine, "g4").event_id == group_event          # 组键映射保留给不冲突的后续篇
     assert _event(engine, group_event).member_count == 2
     assert _member(engine, "g2") is None and _ledger(engine, "g2").attempts == 1
+
+
+def test_a_gate_refusal_stops_the_run_instead_of_re_sending_the_same_batch_to_the_model(tmp_path, monkeypatch):
+    """检视 R1 #7:归并等模型期间上游事件到了,落库前复核作废本批。外层必须立刻收工——pending 行还
+    在,继续循环就是把同一批文章一遍遍送去模型。"""
+    engine = _sink(tmp_path).engine
+    _seed(engine, "f1", "Anthropic ships Claude Opus 5", entities=("entity.anthropic",), source_id="rss_a")
+    _seed(engine, "f2", "Claude Opus 5 发布:上下文翻倍", entities=("entity.anthropic",), source_id="rss_b")
+    calls: list[dict] = []
+    stamp = _iso(NOW)
+
+    async def upstream_events_arrive_while_the_model_thinks(**kwargs):
+        calls.append(kwargs)
+        with Session(engine) as session:
+            session.add(EventRecord(
+                status="open", title="from upstream", title_source="", member_count=0, publisher_count=0,
+                first_seen_at=stamp, last_member_at=stamp, assignment_version="v", authority_id="remote-1",
+                created_at=stamp, updated_at=stamp,
+            ))
+            session.commit()
+        return _reply([])
+
+    monkeypatch.setattr(ea, "chat_completion", upstream_events_arrive_while_the_model_thinks)
+    stats = ea.assign_pending(engine, LLM, now=NOW)
+
+    assert len(calls) == 1 and stats["llm_calls"] == 1
+    assert stats["blocked"] is True and stats["new_events"] == 0
+    with Session(engine) as session:
+        assert [event.authority_id for event in session.exec(select(EventRecord)).all()] == ["remote-1"]
+    assert _member(engine, "f1") is None and _member(engine, "f2") is None
+    # 下一轮在入口就被挡住,不再调模型
+    again = ea.assign_pending(engine, LLM, now=NOW + dt.timedelta(minutes=10))
+    assert again["blocked"] is True and len(calls) == 1
+

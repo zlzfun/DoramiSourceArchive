@@ -342,11 +342,21 @@ def test_endpoints_admin_gated(monkeypatch, tmp_path):
         assert client.get("/api/admin/remote-sync/status").status_code == 403
         assert client.post("/api/admin/remote-sync/test", json={}).status_code == 403
         assert client.post("/api/admin/remote-sync/start", json={}).status_code == 403
+        assert client.get("/api/admin/remote-sync/inventory").status_code == 403
+        assert client.post("/api/admin/remote-sync/streams/articles/reset").status_code == 403
     with TestClient(app_module.app) as client:
         _login(client, "admin", "admin")
         res = client.get("/api/admin/remote-sync/status")
         assert res.status_code == 200
-        assert res.json() == {"state": {"targets": {}}, "jobs": []}
+        body = res.json()
+        assert body["state"] == {"targets": {}} and body["jobs"] == []
+        # 控制台块(issue #261):空库 = 未接入,只读本机。
+        assert body["console"]["configured"] is False
+        assert body["console"]["target"] is None
+        assert body["console"]["all_streams"] == list(remote_sync_service.V2_STREAM_ORDER)
+        assert client.get("/api/admin/remote-sync/inventory").json()["items"] == {}
+        assert client.post("/api/admin/remote-sync/streams/articles/reset").status_code == 409
+        assert client.post("/api/admin/remote-sync/streams/nope/reset").status_code == 404
         # 参数校验:坏地址/空凭据 400。
         assert client.post(
             "/api/admin/remote-sync/test",
@@ -623,22 +633,16 @@ def test_legacy_filtered_schedule_api_requires_explicit_protocol(monkeypatch, tm
         assert response.json()["migration_required"] is False
 
 
-def test_v2_schedule_probes_capability_before_persisting_consumer_fence(
+def test_v2_schedule_probes_capability_and_writes_no_node_level_marker(
     monkeypatch, tmp_path
 ):
+    """启用 v2 定时仍先探测对端能力;保存后不留任何整机围栏标记(issue #263)。"""
     app_module = _setup_app(monkeypatch, tmp_path)
     monkeypatch.setattr(app_module, "reload_remote_sync_schedule", lambda: None)
     observed = {}
 
     async def _compatible_peer(*_args, **_kwargs):
-        from models.db import AppSettingRecord
-        from sqlmodel import Session
-
-        with Session(app_module.db_sink.engine) as session:
-            observed["marker_before_probe"] = session.get(
-                AppSettingRecord,
-                "remote_sync:v2_consumer_mode",
-            )
+        observed["probed"] = True
         return _v2_probe("compatible-producer")
 
     monkeypatch.setattr(remote_sync_service, "probe", _compatible_peer)
@@ -655,12 +659,16 @@ def test_v2_schedule_probes_capability_before_persisting_consumer_fence(
         })
 
     assert response.status_code == 200
-    assert observed == {"marker_before_probe": None}
+    assert observed == {"probed": True}
+    from models.db import AppSettingRecord
     from services import sync_consumer_policy
     from sqlmodel import Session
 
     with Session(app_module.db_sink.engine) as session:
-        assert sync_consumer_policy.v2_consumer_mode_active(session)
+        assert session.get(AppSettingRecord, sync_consumer_policy.V2_CONSUMER_MODE_KEY) is None
+        assert sync_consumer_policy.local_source_operation_allowed(
+            session, "any_public_source", operation="collection"
+        )
 
 
 def test_schedule_endpoints_admin_gated(monkeypatch, tmp_path):
@@ -824,3 +832,104 @@ def test_reload_remote_sync_schedule_registers_and_removes(monkeypatch, tmp_path
     )
     app_module.reload_remote_sync_schedule()
     assert fake.get_job("remote_sync") is None
+
+
+def test_status_jobs_carry_creator_and_console_block(monkeypatch, tmp_path):
+    """issue #261:任务列表补发起人(定时 = system),控制台块只读本机。"""
+    import time as _time
+
+    from models.db import JobRecord
+    from sqlmodel import Session
+
+    app_module = _setup_app(monkeypatch, tmp_path)
+    with Session(app_module.db_sink.engine) as session:
+        session.add(JobRecord(
+            id="job-manual", type=remote_sync_service.REMOTE_SYNC_JOB_TYPE, status="succeeded",
+            created_by="admin", created_at=_time.time() - 10,
+        ))
+        session.add(JobRecord(
+            id="job-timer", type=remote_sync_service.REMOTE_SYNC_JOB_TYPE, status="failed",
+            created_by="system", created_at=_time.time(),
+        ))
+        session.commit()
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        body = client.get("/api/admin/remote-sync/status").json()
+    assert [(job["job_id"], job["created_by"]) for job in body["jobs"]] == [
+        ("job-timer", "system"), ("job-manual", "admin"),
+    ]
+    assert set(body["console"]["local_stores"]) == {"media", "podcast"}
+
+
+def test_test_and_start_reuse_saved_schedule_password_only_for_same_target(monkeypatch, tmp_path):
+    """issue #261:控制台拿不到只写不回显的密码;地址与账号都与定时配置一致时服务端复用已存密码。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    remote_sync_service.save_schedule(app_module.db_sink.engine, {
+        "enabled": False, "cron": "0 3 * * *", "base_url": "https://remote.test",
+        "username": "sync", "password": "stored-secret", "source_ids": [], "protocol": "v2",
+    }, updated_at="2026-11-05T00:00:00+00:00")
+    seen = []
+
+    async def fake_probe(base_url, username, password, **kwargs):
+        seen.append((base_url, username, password))
+        return {"ok": True, "base_url": base_url, "protocol": "v1"}
+
+    monkeypatch.setattr(remote_sync_service, "probe", fake_probe)
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        ok = client.post("/api/admin/remote-sync/test", json={
+            "base_url": "https://remote.test/", "username": "sync", "password": "", "protocol": "v1",
+        })
+        assert ok.status_code == 200
+        assert seen[-1] == ("https://remote.test", "sync", "stored-secret")
+        for other in (
+            {"base_url": "https://other.test", "username": "sync"},
+            {"base_url": "https://remote.test", "username": "someone-else"},
+        ):
+            res = client.post("/api/admin/remote-sync/test", json={**other, "password": "", "protocol": "v1"})
+            assert res.status_code == 400
+    assert len(seen) == 1
+    assert "stored-secret" not in json.dumps(ok.json())
+
+
+def test_first_v2_launch_parks_default_podcast_job_and_unschedules_it(monkeypatch, tmp_path):
+    """本机第一次接入上游:原封未动的默认播客采集任务停用,它在调度器里的注册同时摘掉
+    (issue #263 合入后补)。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    from api.routers import remote_sync as remote_sync_router
+    from models.db import CollectionJobRecord, SourceConfigRecord
+    from services import podcast_catalog
+    from sqlmodel import Session, select
+
+    engine = app_module.db_sink.engine
+    podcast_catalog.ensure_default_podcast_sources(engine)
+    with Session(engine) as session:
+        job_id = session.exec(select(CollectionJobRecord.id).where(
+            CollectionJobRecord.name == podcast_catalog.AI_NATIVE_DEV_COLLECTION_JOB_NAME
+        )).one()
+
+    class _Registered:
+        def __init__(self, id):
+            self.id = id
+
+    class _Scheduler(_FakeScheduler):
+        def get_jobs(self):
+            return [_Registered(id) for id in self.jobs]
+
+    fake = _Scheduler()
+    monkeypatch.setattr(app_module, "scheduler", fake)
+    with Session(engine) as session:
+        app_module.sync_collection_job_schedules(session)
+    schedule_id = f"{app_module.COLLECTION_JOB_ID_PREFIX}{job_id}"
+    assert fake.get_job(schedule_id) is not None
+
+    monkeypatch.setattr(remote_sync_router.jobs, "launch", lambda *args, **kwargs: "launched")
+    assert remote_sync_router.launch_remote_sync_job(
+        engine, base_url="http://remote.test", username="admin", password="secret",
+        v2_probe=_v2_probe(),
+    ) == "launched"
+    with Session(engine) as session:
+        assert session.get(CollectionJobRecord, job_id).is_active is False
+        source = session.get(SourceConfigRecord, podcast_catalog.AI_NATIVE_DEV_SOURCE_ID)
+        assert source.ai_analysis_enabled is False
+    assert fake.get_job(schedule_id) is None

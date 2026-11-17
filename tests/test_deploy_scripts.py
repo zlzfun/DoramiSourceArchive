@@ -42,12 +42,45 @@ extra = ""
 if args[:2] == ["compose", "up"]:
     mark = os.environ.get("DORAMI_DEPLOY_SWITCH_MARK", "")
     extra = " switch_mark_present=" + ("1" if mark and os.path.exists(mark) else "0")
+    extra += " start_period=" + os.environ.get("DORAMI_BACKEND_HEALTH_START_PERIOD", "-")   # issue #227:up 时导出的 healthcheck 宽限
 with open(os.path.join(d, "calls.log"), "a") as f:
     f.write(" ".join(args) + extra + "\n")
 if args[:2] == ["compose", "version"]:
     sys.exit(0)
 if args[:1] == ["info"]:
     print(rd("docker_root", "/var/lib/docker").strip() or "/var/lib/docker"); sys.exit(0)
+if args[:2] == ["compose", "config"] and "--format" in args:
+    # issue #227:模拟 compose 的最终解析——shell 环境(非空)> .env(引号 / 行尾注释)> 默认;FAKE 文件 compose_json_rc 模拟解析失败
+    if rc("compose_json_rc"):
+        sys.stderr.write("fake compose config --format json failure\n"); sys.exit(rc("compose_json_rc"))
+    def dotenv(key):
+        if not os.path.exists(".env"):
+            return None
+        val = None
+        for line in open(".env", encoding="utf-8"):
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            if k.strip() != key:
+                continue
+            v = v.strip()
+            if v[:1] in ("'", '"'):
+                end = v.find(v[0], 1); val = v[1:end] if end > 0 else v[1:]
+            else:
+                val = v.split(" #", 1)[0].strip()
+        return val
+    def resolve(key, default):
+        # compose:shell 环境里**存在**的键(哪怕是空串)压过 .env;再按 ${VAR:-default} 对空值取默认——显式空值不会回落到 .env
+        v = os.environ[key] if key in os.environ else (dotenv(key) or "")
+        return v if v else default
+    listen = resolve("DORAMI_HTTP_LISTEN", "80")
+    host, _, port = listen.rpartition(":")
+    ports = [{"mode": "ingress", "target": 80, "published": port, "protocol": "tcp", **({"host_ip": host} if host else {})}]
+    import json as _json
+    sys.stdout.write(_json.dumps({"services": {"backend": {"healthcheck": {"start_period": resolve("DORAMI_BACKEND_HEALTH_START_PERIOD", "1m0s")}},
+                                               "nginx": {"ports": ports}}}))
+    sys.exit(0)
 if args[:2] == ["compose", "config"]:
     code = rc("config_rc")
     if code:
@@ -119,11 +152,46 @@ sys.exit(1)
 '''
 
 FAKE_CURL = r'''#!/usr/bin/env python3
+"""curl 桩:/api/health → FAKE_HEALTH_FILE(200 JSON)或 FAKE_HEALTH_RAW + FAKE_HEALTH_CODE(任意状态码 / 文本);缺则连不上(rc 7)。
+FAKE_HEALTH_301_ON=host:port 时,打到该地址的请求一律回 TLS 边缘式的 301 页(issue #227 实况)。
+支持 -o / -w '%{http_code}' / -f(4xx+ 时 rc 22、不输出体):新旧两版 deploy-lib 的调用形态都走这里。"""
 import os, sys
+args = sys.argv[1:]
+out, fmt, url, fail_on_error = None, "", "", False
+i = 0
+while i < len(args):
+    a = args[i]
+    if a == "-o": out = args[i + 1]; i += 2; continue
+    if a == "-w": fmt = args[i + 1]; i += 2; continue
+    if a in ("-H", "--connect-timeout", "--max-time"): i += 2; continue
+    if a.startswith("-"):
+        if not a.startswith("--") and "f" in a: fail_on_error = True
+        i += 1; continue
+    url = a; i += 1
+hostport = url.split("://", 1)[-1].split("/", 1)[0]
+raw = os.environ.get("FAKE_HEALTH_RAW")
 p = os.environ.get("FAKE_HEALTH_FILE", "")
-if p and os.path.exists(p):
-    sys.stdout.write(open(p).read()); sys.exit(0)
-sys.exit(7)
+if os.environ.get("FAKE_HEALTH_301_ON") and hostport == os.environ["FAKE_HEALTH_301_ON"]:
+    code, body = "301", b"<html>\r\n<head><title>301 Moved Permanently</title></head>\r\n<body>\r\n<center><h1>301 Moved Permanently</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n"
+elif raw is not None:
+    code, body = os.environ.get("FAKE_HEALTH_CODE", "200"), raw.encode()
+elif p and os.path.exists(p):
+    code, body = "200", open(p, "rb").read()
+else:
+    if fmt:
+        sys.stdout.write(fmt.replace("%{http_code}", "000"))
+    sys.exit(7)
+if fail_on_error and int(code) >= 400:
+    if fmt:
+        sys.stdout.write(fmt.replace("%{http_code}", code))
+    sys.exit(22)
+if out:
+    open(out, "wb").write(body)
+else:
+    sys.stdout.buffer.write(body)
+if fmt:
+    sys.stdout.write(fmt.replace("%{http_code}", code))
+sys.exit(0)
 '''
 
 FAKE_DF = r'''#!/usr/bin/env python3
@@ -287,8 +355,8 @@ class Env:
     def cmd(self, tag: str, downgrade: int = 0, redeploy: int = 0) -> str:
         return f"{tag} {self.repo.sha_of(tag)} downgrade={downgrade} redeploy={redeploy}"
 
-    def launch(self, cmd: str, timeout: int = 90, **extra: str) -> subprocess.CompletedProcess:
-        r = subprocess.run([str(LAUNCHER), cmd], env=self.base_env(**extra), capture_output=True,
+    def launch(self, cmd: str, timeout: int = 90, *, launcher: Path | None = None, **extra: str) -> subprocess.CompletedProcess:
+        r = subprocess.run([str(launcher or LAUNCHER), cmd], env=self.base_env(**extra), capture_output=True,
                            text=True, errors="replace", timeout=timeout)
         if r.returncode == 0 and (self.fake / "ps_backend").exists():
             # 成功部署后容器已是目标版本(真实系统里 up 之后容器 env 的构建 sha 就是目标):假容器同步
@@ -576,7 +644,10 @@ def _run_deploy(e: Env, *args: str, timeout: int = 120, **extra: str) -> subproc
     defaults = dict(DORAMI_DEPLOY_LOCK_FILE=str(e.lock), DORAMI_DEPLOY_HEALTH_ATTEMPTS="2",
                     FAKE_HEALTH_FILE=str(e.fake / "health.json"), DORAMI_HTTP_LISTEN="127.0.0.1:8080")
     defaults.update(extra)
-    env = e.base_env(**defaults)
+    env = e.base_env(**{k: v for k, v in defaults.items() if v is not None})
+    for k, v in defaults.items():     # 值为 None = 真正从环境里拿掉(模拟手工 shell 没导出)
+        if v is None:
+            env.pop(k, None)
     return subprocess.run(["./deploy-docker.sh", *args], cwd=str(e.repo.clone), env=env, capture_output=True,
                           text=True, errors="replace", timeout=timeout)
 
@@ -591,7 +662,9 @@ def test_deploy_docker_manual_happy_path_runs_steps_in_order(real: Env):
         "compose config -q", "compose build",
         "compose run --rm --no-deps -T backend python docker/entrypoint.py --check-config",
         "compose run --rm --no-deps -T backend python docker/entrypoint.py --plan-migrations",
-        "compose up -d --remove-orphans switch_mark_present=0",
+        "compose config --format json",   # 读 compose 解析出的 backend start_period(显式与否)
+        "compose up -d --remove-orphans switch_mark_present=0 start_period=60s",
+        "compose config --format json",   # 读 nginx 发布端口定探针地址
     ]
     backups = list((real.repo.clone / "backups").glob("cms_data.db.*"))
     assert len(backups) == 1, "手工来源做备份"
@@ -620,7 +693,7 @@ def test_deploy_docker_pipeline_origin_skips_backup_touches_switch_mark_and_chec
     assert r.returncode == 0, r.stdout + r.stderr
     assert not list((real.repo.clone / "backups").glob("cms_data.db.*")), "流水线来源不自做备份"
     assert "DORAMI_DEPLOY_META db_backup=worker" in r.stdout
-    assert any(c.endswith("switch_mark_present=1") for c in real.calls())
+    assert any("switch_mark_present=1" in c for c in real.calls())
     # expected sha 不一致 → 构建之前失败
     (real.fake / "calls.log").unlink()
     r = _run_deploy_as_worker(real, "v9.9.9", DORAMI_EXPECTED_SHA=real.repo.sha_of("v9.9.8"), DORAMI_DEPLOY_SWITCH_MARK=str(mark))
@@ -733,7 +806,7 @@ def test_success_path_prunes_build_cache_with_conf_limit(real: Env):
     calls = real.calls()
     prunes = [i for i, c in enumerate(calls) if c == "builder prune -f --keep-storage=3G"]
     # 每次部署开头无条件压一次(在 build 之前),成功后再压一次(在 up 之后)
-    assert len(prunes) == 2 and prunes[0] < calls.index("compose build") < calls.index("compose up -d --remove-orphans switch_mark_present=0") < prunes[1]
+    assert len(prunes) == 2 and prunes[0] < calls.index("compose build") < calls.index("compose up -d --remove-orphans switch_mark_present=0 start_period=60s") < prunes[1]
     assert "构建缓存回收(上限 3 GB)" in r.stdout
     # 健康验证失败时不动构建缓存(失败路径只保留现场)
     (real.fake / "calls.log").unlink()
@@ -1190,33 +1263,101 @@ def test_compose_error_output_is_not_echoed_into_logs(env: Env):
     assert "unterminated quoted value" in log and "原文不回显" in log
 
 
-def test_launcher_final_rc_comes_from_the_same_snapshot(env: Env, tmp_path: Path):
-    """假 worker:先写本轮 complete/rc=7,0.3 秒后把 state 覆盖成另一 run 的 rc=0(落在 launcher 取到快照后的等待窗口里);
-    launcher 必须报 7。"""
+# ── issue #203:「最终退出码只能来自同一份快照」改为读取触发的确定性夹具 ──
+# 旧用例让假 worker 写出本轮 complete/rc=7 后固定 0.3 s 就覆写成另一轮;launcher 要在这 0.3 s 内完成进程起动、「等 run_id」
+# 轮询与两次 python3 冷启动,CI runner 上常错过——错过在前是 rc=5(等不到本轮 run_id),错过在后是 rc=6(快照已是另一轮),
+# 都不是用例想验的阶段。现在 DEPLOY_PATH 前置一个 python3 垫片:launcher 的 state_snapshot(`python3 - <state.json>`,一次读
+# 三字段)**返回之后**才由垫片覆写 state——「覆写发生在取快照后」成为确定事件,不靠 sleep 对齐;launcher 本身一字不改。
+
+OTHER_RUN = "ffffffffffffffff"
+
+
+def _install_snapshot_race(env: Env, tmp_path: Path) -> dict[str, Path]:
+    """装配假 worker(写本轮 complete/rc=7 后只等覆写标记)与 python3 垫片(快照读取返回后覆写、落标记);返回标记与垫片日志路径。"""
+    state = env.state / "state.json"
+    marker = tmp_path / "overwritten.mark"
+    shim_log = tmp_path / "python3-shim.log"
+    fake_log = env.logs / "fake.log"
     fake_worker = tmp_path / "fake-worker"
     fake_worker.write_text(f'''#!/bin/bash
-# $1=run $2=tag $3=sha $4=dg $5=rd $6=run_id
+# $1=run $2=tag $3=sha $4=dg $5=rd $6=run_id —— 一上来就写本轮 complete/rc=7;之后只等垫片覆写(标记出现)再退出,自己不按时间覆写
 mkdir -p "{env.state}" "{env.logs}"
-LOG="{env.logs}/fake.log"; : > "$LOG"
-python3 - "$6" "$$" "$(ps -o lstart= -p $$ | tr -s ' ' | sed 's/^ *//;s/ *$//')" "$LOG" <<'PY'
+: > "{fake_log}"
+python3 - "$6" "$$" "$(ps -o lstart= -p $$ | tr -s ' ' | sed 's/^ *//;s/ *$//')" <<'PY'
 import json, sys
 json.dump({{"run_id": sys.argv[1], "tag": "v1.1.0", "target_sha": "x", "worker_pid": int(sys.argv[2]), "worker_start_id": sys.argv[3],
-           "phase": "complete", "rc": 7, "log": sys.argv[4]}}, open("{env.state}/state.json", "w"))
+           "phase": "complete", "rc": 7, "log": "{fake_log}"}}, open("{state}", "w"))
 PY
-sleep 0.3
-python3 - <<'PY'
-import json
-json.dump({{"run_id": "ffffffffffffffff", "phase": "complete", "rc": 0, "worker_pid": 1, "worker_start_id": "x", "log": "{env.logs}/fake.log"}},
-          open("{env.state}/state.json", "w"))
-PY
-sleep 1
+for _ in $(seq 1 300); do [ -f "{marker}" ] && exit 0; sleep 0.1; done
+exit 0
 ''')
     fake_worker.chmod(0o755)
-    env.conf.write_text(env.conf.read_text().replace(f"DEPLOY_WORKER={WORKER}", f"DEPLOY_WORKER={fake_worker}"))
+    shimbin = tmp_path / "shimbin"; shimbin.mkdir()
+    shim = shimbin / "python3"
+    shim.write_text(f'''#!/bin/bash
+# python3 垫片(仅本夹具):原样转发给真解释器;当调用形如 `python3 - <state.json>`(launcher 的 state_snapshot 一次性读取)
+# 且读到的是本轮 complete,在该次读取**返回之后**把 state 覆写成另一轮的 complete/rc=0 并落标记。只触发一次。
+printf '%s\\n' "$*" >> "{shim_log}"
+"{sys.executable}" "$@"; rc=$?
+if [ $# -eq 2 ] && [ "$1" = "-" ] && [ "$2" = "{state}" ] && [ ! -f "{marker}" ]; then
+    "{sys.executable}" - "{state}" "{marker}" "{fake_log}" <<'PY'
+import json, sys
+state, marker, log = sys.argv[1:4]
+d = json.load(open(state, encoding="utf-8"))
+if d.get("phase") == "complete" and d.get("run_id") != "{OTHER_RUN}":
+    json.dump({{"run_id": "{OTHER_RUN}", "phase": "complete", "rc": 0, "worker_pid": 1, "worker_start_id": "x", "log": log}},
+              open(state, "w", encoding="utf-8"))
+    open(marker, "w", encoding="utf-8").write(d["run_id"])
+PY
+fi
+exit $rc
+''')
+    shim.chmod(0o755)
+    conf = env.conf.read_text()
+    assert f"DEPLOY_WORKER={WORKER}" in conf and f"DEPLOY_PATH={env.path}" in conf
+    env.conf.write_text(conf.replace(f"DEPLOY_WORKER={WORKER}", f"DEPLOY_WORKER={fake_worker}")
+                            .replace(f"DEPLOY_PATH={env.path}", f"DEPLOY_PATH={shimbin}:{env.path}"))
+    return {"marker": marker, "shim_log": shim_log}
+
+
+def _snapshot_diag(r: subprocess.CompletedProcess, race: dict[str, Path]) -> str:
+    """失败诊断:launcher 的 stdout / stderr + 垫片收到的每次 python3 调用(一眼看出 launcher 读 state 的调用形是否变了)。"""
+    shim_log = race["shim_log"].read_text() if race["shim_log"].exists() else "(空)"
+    return f"--- stdout ---\n{r.stdout}--- stderr ---\n{r.stderr}--- python3 垫片日志 ---\n{shim_log}"
+
+
+def test_launcher_final_rc_comes_from_the_same_snapshot(env: Env, tmp_path: Path):
+    """假 worker 写本轮 complete/rc=7;launcher 取到快照**之后**state 才被覆写成另一轮的 complete/rc=0(读取触发,见上);
+    launcher 必须报 7——run_id / phase / rc 只能来自同一份快照,之后不得再读全局 state。"""
+    race = _install_snapshot_race(env, tmp_path)
     r = env.launch(env.cmd("v1.1.0"))
-    assert r.returncode == 7, r.stdout + r.stderr
-    assert env.state_json("state.json")["run_id"] == "ffffffffffffffff", "前置:state 确实已被另一轮覆盖"
-    assert "worker 退出码 7(run " in r.stdout
+    diag = _snapshot_diag(r, race)
+    assert r.returncode == 7, diag
+    assert race["marker"].exists(), "前置:垫片没有触发(launcher 读快照的方式变了?)\n" + diag
+    assert env.state_json("state.json")["run_id"] == OTHER_RUN, "前置:state 确实已被另一轮覆盖\n" + diag
+    assert f"worker 退出码 7(run {race['marker'].read_text()})" in r.stdout, diag
+
+
+# 反向对照:把 launcher 改回「二次读取 rc」的旧错误(首版脚本检视前的写法),同一夹具必须让它报出另一轮的 rc=0 而非 7
+_SNAPSHOT_MUTATIONS = {
+    "reread_rc_in_loop": ('\n        FINAL_RC="$snap_rc"; break\n', '\n        FINAL_RC="$(json_get "$STATE" rc "")"; break\n'),
+    "reread_rc_at_exit": ('\n    exit "$FINAL_RC"\n', '\n    exit "$(json_get "$STATE" rc 6)"\n'),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_SNAPSHOT_MUTATIONS))
+def test_snapshot_race_harness_catches_second_read(env: Env, tmp_path: Path, name: str):
+    """反向对照:改坏的 launcher 副本在同一夹具下必须报出另一轮的 rc=0——证明夹具会咬人,而不是碰巧放行。"""
+    old, new = _SNAPSHOT_MUTATIONS[name]
+    text = LAUNCHER.read_text(encoding="utf-8")
+    assert text.count(old) == 1, f"突变锚点 {old!r} 出现 {text.count(old)} 次"
+    mutated = tmp_path / "mutated-launcher"
+    mutated.write_text(text.replace(old, new), encoding="utf-8"); mutated.chmod(0o755)
+    race = _install_snapshot_race(env, tmp_path)
+    r = env.launch(env.cmd("v1.1.0"), launcher=mutated)
+    diag = _snapshot_diag(r, race)
+    assert race["marker"].exists(), "前置:垫片没有触发\n" + diag
+    assert r.returncode == 0, f"突变 {name} 本应读到另一轮的 rc=0:\n" + diag
 
 
 def test_normal_exit_with_lingering_descendants_is_not_success(env: Env):
@@ -1283,10 +1424,11 @@ def test_container_without_build_identity_makes_last_success_unverifiable(env: E
 # ══════════════ issue #126 裸机回滚波的 Docker 等价守卫(docs/archive/baremetal-rollback-plan.md §4.14 / §6.6)══════════════
 
 def test_deploy_docker_default_health_budget_unchanged():
-    """健康轮询抽到 deploy-lib 共用后,Docker 路径的默认预算仍是 180 s / 90 次,由本脚本传入(不在库里定默认)。"""
+    """健康轮询抽到 deploy-lib 共用后,Docker 路径的默认预算仍是 180 s,次数默认预算 / 2(= 90,issue #227 起随预算走),
+    都由本脚本传入(不在库里定默认)。"""
     text = (ROOT / "deploy-docker.sh").read_text(encoding="utf-8")
     assert 'BUDGET="${DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS:-180}"' in text
-    assert 'ATTEMPTS="${DORAMI_DEPLOY_HEALTH_ATTEMPTS:-90}"' in text
+    assert 'ATTEMPTS="${DORAMI_DEPLOY_HEALTH_ATTEMPTS:-$(( BUDGET / 2 > 0 ? BUDGET / 2 : 1 ))}"' in text
     assert "deploy_wait_healthy" in text
     lib = (ROOT / "scripts" / "deploy-lib.sh").read_text(encoding="utf-8")
     assert "HEALTH_BUDGET_SECONDS:-" not in lib, "预算默认值只能在调用方"
@@ -1299,3 +1441,97 @@ def test_deploy_docker_rejects_baremetal_only_arguments(real: Env, arg: str):
     r = _run_deploy(real, arg)
     assert r.returncode != 0 and "未知参数" in r.stderr
     assert not real.calls(), "参数错误须在任何 docker 调用之前"
+
+
+# ══════════════ issue #227:健康验证的探针地址、失败诊断与迁移宽限 ══════════════
+
+def test_health_probe_follows_compose_resolution(real: Env):
+    """v3.67.0 手工部署的实况(推测):shell 没导出 DORAMI_HTTP_LISTEN,探针退到 80 撞上 TLS 边缘的 301 页(87 次 `bad-json`)。
+    探针地址以 compose 自己的解析为准:.env 里写了 127.0.0.1:8080 就探 8080(含引号 + 行尾注释);显式空的环境变量按 compose 的
+    ${VAR:-80} 语义仍是 80;compose 解析不到才回退环境变量 / 80 并提醒(codex R1 F1)。"""
+    _health(real, "v9.9.9")
+    edge = dict(FAKE_HEALTH_301_ON="127.0.0.1:80", DORAMI_HTTP_LISTEN=None)
+    r = _run_deploy(real, "v9.9.9", **edge)
+    assert r.returncode != 0
+    assert "探针 http://127.0.0.1:80/api/health(来源:compose 解析)" in r.stdout
+    assert "http-301" in r.stderr and "HTTP 301" in r.stderr and "301 Moved Permanently" in r.stderr and "TLS 边缘" in r.stderr, r.stderr
+    assert "bad-json" not in r.stderr, "3xx 不再被当成 JSON 去解析"
+    assert "与本次实际发布端口 127.0.0.1:80 不一致" in r.stderr, "conf 里的 8080 与实际发布端口不一致要提醒"
+    dotenv = real.repo.clone / ".env"
+    dotenv.write_text('# compose 读这个\nDORAMI_PODCAST_INSTALLATION=external\nDORAMI_HTTP_LISTEN="127.0.0.1:8080" # 收进环回\n', encoding="utf-8")
+    r = _run_deploy(real, "v9.9.9", **edge)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "探针 http://127.0.0.1:8080/api/health(来源:compose 解析)" in r.stdout and "DORAMI_DEPLOY_META health=ok" in r.stdout
+    assert "不一致" not in r.stderr
+    # 显式空值:compose 的 ${DORAMI_HTTP_LISTEN:-80} 取默认 80,脚本跟它一致(不能自己回读 .env 的 8080)
+    r = _run_deploy(real, "v9.9.9", FAKE_HEALTH_301_ON="127.0.0.1:80", DORAMI_HTTP_LISTEN="")
+    assert r.returncode != 0 and "探针 http://127.0.0.1:80/api/health(来源:compose 解析)" in r.stdout and "http-301" in r.stderr, r.stdout + r.stderr
+    # compose 解析失败:回退环境变量 / 80 并提醒
+    real.fake_write("compose_json_rc", "1")
+    r = _run_deploy(real, "v9.9.9", FAKE_HEALTH_301_ON="127.0.0.1:80", DORAMI_HTTP_LISTEN="127.0.0.1:8080")
+    assert r.returncode == 0 and "来源:回退" in r.stdout and "解析不到 nginx 的发布端口" in r.stderr, r.stdout + r.stderr
+    real.fake_write("compose_json_rc", "0")
+    r = _run_deploy(real, "v9.9.9", FAKE_HEALTH_301_ON="127.0.0.1:80", DORAMI_HTTP_LISTEN=None, DORAMI_DEPLOY_CONF=str(real.tmp / "no-such.conf"))
+    assert r.returncode == 0 and "不一致" not in r.stderr, "conf 不存在就没有一致性提醒"
+
+
+def test_health_failure_reports_status_and_body_excerpt(real: Env):
+    r = _run_deploy(real, "v9.9.9", FAKE_HEALTH_RAW="<!doctype html><title>维护中</title>\n" + "x" * 500, FAKE_HEALTH_CODE="200")
+    assert r.returncode != 0 and "DORAMI_DEPLOY_META health=failed" in r.stdout
+    assert "bad-json" in r.stderr and "最后一次响应 HTTP 200,前 200 字节:<!doctype html><title>维护中</title> xxx" in r.stderr, r.stderr
+    assert "x" * 200 not in r.stderr and "…" in r.stderr, "只打前 200 字节,截断有标记"
+    r = _run_deploy(real, "v9.9.9", FAKE_HEALTH_RAW="<html>502 Bad Gateway</html>", FAKE_HEALTH_CODE="502")
+    assert r.returncode != 0 and "http-502" in r.stderr and "HTTP 502" in r.stderr and "连不上 backend" in r.stderr, r.stderr
+    r = _run_deploy(real, "v9.9.9", DORAMI_DEPLOY_HEALTH_BUDGET_SECONDS="3")   # 从未连上:仍是「无响应」,不打响应行
+    assert r.returncode != 0 and "无响应" in r.stderr and "最后一次响应" not in r.stderr
+
+
+def test_backend_health_start_period_scales_with_pending_migrations(real: Env):
+    _health(real, "v9.9.9")
+    real.fake_write("plan.json", json.dumps({"status": "compatible", "pending": ["a"] * 6, "pending_count": 6}))
+    r = _run_deploy(real, "v9.9.9")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "backend 健康检查宽限 420s(基础 60s + 迁移宽限 360s,待执行迁移 6 个)" in r.stdout
+    ups = [c for c in real.calls() if c.startswith("compose up")]
+    assert ups and ups[-1].endswith("start_period=420s"), ups
+    # conf 调每迁移秒数;显式 start_period 照旧;上限 1200
+    with open(real.conf, "a", encoding="utf-8") as fh:
+        fh.write("DORAMI_DEPLOY_HEALTH_PER_MIGRATION_SECONDS=10\n")
+    r = _run_deploy(real, "v9.9.9")
+    assert r.returncode == 0 and "宽限 120s(基础 60s + 迁移宽限 60s" in r.stdout, r.stdout + r.stderr
+    r = _run_deploy(real, "v9.9.9", DORAMI_BACKEND_HEALTH_START_PERIOD="999s")
+    assert r.returncode == 0 and "宽限 999s(compose 配置里显式设置" in r.stdout, r.stdout + r.stderr
+    assert [c for c in real.calls() if c.startswith("compose up")][-1].endswith("start_period=999s")
+    # .env 里显式设的也算显式(compose 解析得到 20m → 1200 s):脚本不导出、不覆盖(codex R1 F2)
+    (real.repo.clone / ".env").write_text("DORAMI_BACKEND_HEALTH_START_PERIOD=20m\n", encoding="utf-8")
+    r = _run_deploy(real, "v9.9.9")
+    assert r.returncode == 0 and "宽限 1200s(compose 配置里显式设置" in r.stdout, r.stdout + r.stderr
+    assert [c for c in real.calls() if c.startswith("compose up")][-1].endswith("start_period=-"), "不导出,交给 compose 读 .env"
+    (real.repo.clone / ".env").unlink()
+    real.fake_write("plan.json", json.dumps({"status": "compatible", "pending": ["a"] * 500, "pending_count": 500}))
+    r = _run_deploy(real, "v9.9.9", DORAMI_DEPLOY_HEALTH_PER_MIGRATION_SECONDS="60")
+    assert r.returncode == 0 and "宽限 1260s(基础 60s + 迁移宽限 1200s" in r.stdout, r.stdout + r.stderr
+
+
+def test_compose_up_failure_explains_grace_and_dumps_state(real: Env):
+    _health(real, "v9.9.9")
+    real.fake_write("up_rc", "1")
+    r = _run_deploy(real, "v9.9.9")
+    assert r.returncode != 0
+    assert "docker compose up 失败(backend 健康检查宽限 60s)" in r.stderr and "不自动回滚" in r.stderr, r.stderr
+    assert "nginx 可能尚未启动" in r.stderr and "判断迁移仍在执行还是已失败" in r.stderr, "codex R1 F3:不再许诺「会自行完成 / nginx 未重建」"
+    assert "自行完成" not in r.stderr and "未被重建" not in r.stderr
+    assert "DORAMI_DEPLOY_META health=" not in r.stdout, "没走到健康验证,不写 health 元数据"
+    calls = real.calls()
+    assert "compose ps" in calls and "compose logs --tail 50 backend" in calls
+
+
+def test_health_report_survives_mktemp_failure(real: Env):
+    """codex R1 F4:临时目录不可写时 deploy_wait_healthy 的结果变量已初始化,调用方仍打出完整的健康失败报告,不撞 set -u。"""
+    fake = real.fakebin / "mktemp"
+    fake.write_text('#!/bin/bash\ncase "$*" in *dorami-health*) echo "fake mktemp: No space left" >&2; exit 1 ;; esac\nexec /usr/bin/mktemp "$@"\n')
+    fake.chmod(0o755)
+    _health(real, "v9.9.9")
+    r = _run_deploy(real, "v9.9.9")
+    assert r.returncode != 0 and "unbound variable" not in r.stderr, r.stderr
+    assert "健康检查未通过(预算 180s,尝试 0 次):tmpfile-error" in r.stderr and "DORAMI_DEPLOY_META health=failed" in r.stdout, r.stderr
