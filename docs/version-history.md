@@ -11,6 +11,7 @@
 
 ## 年表(一行一波;自 `CLAUDE.md` 迁入 2026-10-21,**新波次在此加一行**,L0 不再逐波改)
 
+- **图片同步公开引用查询（#299，v3.68.1）**：发送端使用生成清单时记录的候选文章 ID 复核公开引用；旧接收端沿用原协议。
 - **Archive Sync 接入上游时停用默认播客采集任务(issue #263 补,PR #297,开发版 3.68.0-alpha,2026-11-16,待发布)**:新节点自带的默认播客采集任务(只点名 `podcast_ai_native_dev`)原封未动时,本机第一次接入上游即停用,该源的本机分析同时置关;管理员动过的任务不碰,停用着的默认任务不再让这个源算「本机在用」。线格式与迁移零变化。详见下文「issue #263 补」段。
 - **界面说明文字第二轮清理(issue #291,2026-11-16;第一批「设置」PR #295、第二批「读者面 / 手机壳 / 管理面」均已合入;用户本地目检放行,issue 关闭、方案归档,待发布)**:按 #278 的规则复查全站,还有 72 处说明文字(设置 35 / 读者面桌面 15 / 手机壳 4 / 管理面 18),上一轮只照游客截图清了 12 处。第一批做设置:分区页头副标题十句、行名下的灰字、导航栏底的品牌行全部拿掉;「列表条目一律等高」改成画出样子的二选一小卡;聚合令牌没签发时只放一枚「签发令牌」,重新生成前加确认;技能包收成一枚下载钮 + 一行目录;手机壳设置首页行尾只放当前值。新增守卫 `frontend/test/explanatorySlots.test.mjs`(说明位类名的使用次数只许减不许增)。第二批清其余三块:兴趣页的分面副标签与空态引导句、首登横幅的口号、早报页脚的规则行、问答里的引导句、登录卡的眉题与副标题;手机壳的发现页与榜单页头说明;管理面的开关解释、脚注与指路句(指路句换成链接),台账编辑弹窗里已经过时的「向量索引」字样。方案 [archive/issue-291-explanatory-text.md](archive/issue-291-explanatory-text.md)。
 - **CI 提速(二):后端 job 分片并行(issue #289,2026-11-16,CI / 测试,运行时代码只动一处默认参数)**:动到后端的 PR 整条 CI 从 8.7–10.5 分钟降到约 4 分钟。`tests/conftest.py` 加 `--shard I/N`(按用例函数 nodeid 的 CRC32 定片,每条用例恰好一片),`ci.yml` 把 `backend-unit` 拆 3 片、`backend-deploy` 拆 2 片;检查分片的守卫另由不分片的 `backend-guards` 单独跑,汇总门全量路径多要求它成功。测试会话把 PBKDF2 缺省轮数调到 1000(`hash_password` 改为调用期读缺省值,生产仍是 20 万)。tmpfs 临时目录实测收益不明显、不采用;建库模板试验可行但延后。[方案](archive/issue-289-ci-shards.md)。
@@ -98,6 +99,12 @@
 - **3.58–3.60(2026-09-15–19)**:运维面播客与分析标签重构(#76)/ 移动端读者 E2E(#91)/ 同步修复(#96 / #99)/ PWA 主屏幕安装(#100)/ 弹窗遮罩关闭判定(#104)/ OSS 持久存储与自动备份(#109)/ 聚焦环入 base 层(#108)/ 发现页按形态批量订阅(#113)/ **GitHub Release 自动部署流水线(#102,v3.60.0 首发、v3.60.1 闭环)**:tag 推上去 → 自动建 Release → 串联 `deploy.yml` 停在 Environment `production` 等批准 → SSH forced command 触发生产机仓库外 launcher/worker → 目标 tag 的 `./deploy-docker.sh` → 公网 `/api/health` 核对;上线抓到两坑(checkout 改写 tag 引用 / Environment secrets 须 `secrets: inherit`),见 `docs/archive/auto-deploy-plan.md` §7。
 - **裸机部署回滚(issue #126,2026-09-21,待发布)**:裸机路径改「运行副本版本化」release 形态 + 锁内事务 + 两级健康门告警(不自动回滚)+ `./deploy.sh --rollback`(树外固化执行体,DB 按目标上下文迁移计划分流,`--restore-db` 显式恢复,只回一代)+ 收养 + `--code` / `--status` / `--discard-txn`;extras 钉版 `docker/requirements-crawl4ai.txt`;方案 `docs/archive/baremetal-rollback-plan.md`(codex 四轮设计检视 + §9 实现记录),手册 `docs/ops/deploy-baremetal.md`,桩测试 `tests/test_deploy_baremetal.py`。
 - **Podcast(issue #7 P0–P0.2)**:`source_type=podcast` → `generic_podcast_rss`,单集复用 `ArticleRecord` + `extensions_json`,只解析 enclosure 元数据不下载音频;36 节目策展目录 `services.podcast_catalog` 启动幂等安装、进普通采集任务不设源级开关;边界与后续见 `docs/archive/podcast-wave-plan.md`。
+
+
+## 图片同步公开引用查询（#299，v3.68.1）
+
+生成媒体页时分批读取文章正文，把本页图片对应的候选文章 ID 留在发送进程中。二进制请求先按主键核对当前公开范围和图链；未命中或失效时走原扫描。清单字段、导出修订、水位、下载并发和定时触发均不变。旧页在进程重启后仍可下载。#299 的定时内容更新问题继续跟踪。
+
 
 ## issue #263 补:接入上游时停用默认播客采集任务(PR #297,分支 `feat/issue-263-connect-default-job`,开发版 3.68.0-alpha,待发布,版本号以实际发版为准)
 

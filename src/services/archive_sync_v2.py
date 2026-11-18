@@ -20,8 +20,10 @@ import os
 import re
 import stat
 import uuid
+from collections import OrderedDict
 from contextlib import nullcontext
 from pathlib import Path
+from threading import Lock
 from typing import Any, Callable, Iterable, Optional
 from urllib.parse import urlsplit
 
@@ -538,12 +540,29 @@ def _analysis_payload(session: Session, row: ArticleAnalysisRecord) -> dict[str,
     return payload
 
 
-def _media_references(session: Session, snapshot: int) -> dict[str, int]:
-    """Map current public image URLs to their article export revision."""
+# Hints only: never cache an allow/deny result or hold a Session/ORM object.
+# Bounded across pages and concurrent receivers; a cold/missing hint is harmless.
+_MEDIA_HINT_LIMIT = 8192
+_media_hints: OrderedDict[str, str] = OrderedDict()
+_media_hint_lock = Lock()
 
-    urls: dict[str, int] = {}
+
+def _remember_media_hints(hints: Iterable[tuple[str, str]]) -> None:
+    with _media_hint_lock:
+        for key, article_id in hints:
+            _media_hints[key] = article_id
+            _media_hints.move_to_end(key)
+            if len(_media_hints) > _MEDIA_HINT_LIMIT:
+                _media_hints.popitem(last=False)
+
+
+def _media_references(session: Session, snapshot: int) -> dict[str, tuple[int, str]]:
+    """Map each public URL to its latest article revision and one referring ID."""
+
+    urls: dict[str, tuple[int, str]] = {}
     articles = session.exec(
-        select(ArticleRecord, ArchiveSyncEntityStateRecord.local_revision)
+        select(ArticleRecord.id, ArticleRecord.content, ArticleRecord.extensions_json,
+               ArticleRecord.source_url, ArchiveSyncEntityStateRecord.local_revision)
         .join(
             ArchiveSyncEntityStateRecord,
             and_(
@@ -563,15 +582,17 @@ def _media_references(session: Session, snapshot: int) -> dict[str, int]:
                 SourceConfigRecord.owner_username == "",
             ),
         )
-    ).all()
-    for article, revision in articles:
-        for url in extract_image_urls(article.content, article.extensions_json, article.source_url):
-            urls[url] = max(urls.get(url, 0), int(revision))
+        .execution_options(yield_per=128)
+    )
+    for article_id, content, extensions, source_url, revision in articles:
+        for url in extract_image_urls(content, extensions, source_url):
+            if url not in urls or revision > urls[url][0]:
+                urls[url] = (revision, article_id)
     return urls
 
 
 def is_public_media_reference(session: Session, url: str) -> bool:
-    """Whether a cached URL belongs to the public article replication scope."""
+    """Check live public references; an ID hint only narrows the existing query."""
 
     target = str(url or "").strip()
     if not target:
@@ -580,45 +601,43 @@ def is_public_media_reference(session: Session, url: str) -> bool:
         filename = urlsplit(target).path.rsplit("/", 1)[-1]
     except ValueError:
         return False
-    # Relative references do not contain the full target. Narrow by filename,
-    # then resolve against each article URL and compare exactly below.
     candidate_text = filename or target
-    # Narrow in SQLite first instead of loading/parsing every article body for
-    # every binary request. Exact extraction on the tiny candidate set keeps
-    # the allow decision faithful while avoiding O(M × N) Python memory churn.
+    # Both paths use the same eligibility and exact URL matching, including
+    # relative links. Read scalar columns so an ORM identity map cannot mask edits.
+    candidates = (
+        select(ArticleRecord.id, ArticleRecord.content, ArticleRecord.extensions_json,
+               ArticleRecord.source_url)
+        .outerjoin(SourceConfigRecord, SourceConfigRecord.source_id == ArticleRecord.source_id)
+        .where(
+            ArticleRecord.id > "",
+            ~ArticleRecord.source_id.startswith(_USER_SOURCE_PREFIX, autoescape=True),
+            or_(SourceConfigRecord.source_id.is_(None), SourceConfigRecord.owner_username == ""),
+            or_(ArticleRecord.content.contains(candidate_text, autoescape=True),
+                ArticleRecord.extensions_json.contains(candidate_text, autoescape=True)),
+        )
+    )
+    key = hashlib.sha256(target.encode("utf-8")).hexdigest()
+    with _media_hint_lock:
+        hint = _media_hints.get(key)
+    if hint is not None:
+        row = session.exec(candidates.where(ArticleRecord.id == hint)).first()
+        if row and target in extract_image_urls(row.content, row.extensions_json, row.source_url):
+            return True
+
+    # Pre-upgrade pages, eviction, or a moved/withdrawn reference: use the
+    # original paginated lookup. Never let a stale hint hide another public ref.
     cursor_id = ""
     while True:
-        candidates = session.exec(
-            select(ArticleRecord)
-            .outerjoin(
-                SourceConfigRecord,
-                SourceConfigRecord.source_id == ArticleRecord.source_id,
-            )
-            .where(
-                ArticleRecord.id > cursor_id,
-                ~ArticleRecord.source_id.startswith(
-                    _USER_SOURCE_PREFIX, autoescape=True
-                ),
-                or_(
-                    SourceConfigRecord.source_id.is_(None),
-                    SourceConfigRecord.owner_username == "",
-                ),
-                or_(
-                    ArticleRecord.content.contains(candidate_text, autoescape=True),
-                    ArticleRecord.extensions_json.contains(candidate_text, autoescape=True),
-                ),
-            )
-            .order_by(ArticleRecord.id)
-            .limit(200)
+        page = session.exec(
+            candidates.where(ArticleRecord.id > cursor_id).order_by(ArticleRecord.id).limit(200)
         ).all()
-        if any(
-            target in extract_image_urls(row.content, row.extensions_json, row.source_url)
-            for row in candidates
-        ):
-            return True
-        if len(candidates) < 200:
+        for row in page:
+            if target in extract_image_urls(row.content, row.extensions_json, row.source_url):
+                _remember_media_hints([(key, row.id)])
+                return True
+        if len(page) < 200:
             return False
-        cursor_id = candidates[-1].id
+        cursor_id = page[-1].id
 
 
 def _canonical_revision(value: Any, *, field: str, allow_empty: bool = False) -> int:
@@ -1361,7 +1380,7 @@ def _export_media_rows(
     candidates: list[tuple[int, str, MediaAssetRecord]] = []
     for record, state in media_records:
         # 两边都取导出修订:同步写入的图片在文件装好时会推进它(issue #263)。
-        revision = max(int(state.local_revision), int(references.get(record.url, 0)))
+        revision = max(int(state.local_revision), references[record.url][0])
         key = (revision, record.url_hash)
         if revision > snapshot:
             continue
@@ -1402,6 +1421,7 @@ def _export_media_rows(
             "updated_at": record.updated_at,
         }
         rows.append(_line("media", payload, revision=str(revision), identity=identity))
+    _remember_media_hints((row["identity"], references[row["payload"]["url"]][1]) for row in rows)
     if invalid or unavailable:
         logger.warning(
             "同步导出自检:媒体页跳过 %d 条内容不符、%d 条字节不可用", invalid, unavailable,

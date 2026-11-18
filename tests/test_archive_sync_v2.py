@@ -1734,6 +1734,54 @@ def test_media_refresh_replaces_cached_manifest_and_public_scope_is_enforced(tmp
     assert installed.updated_at == payload["updated_at"]
 
 
+def test_media_manifest_hint_is_a_live_point_lookup_and_survives_reference_move(tmp_path):
+    from sqlalchemy import event
+
+    sink = _sink(tmp_path, "hint.db")
+    url = "https://img.test/moved-hint.jpg"
+    key = hashlib.sha256(url.encode()).hexdigest()
+    stamp = dt.datetime.now(dt.timezone.utc).isoformat()
+    with Session(sink.engine) as session:
+        session.add(_source())
+        session.add(_article("original", content=f"![image]({url})"))
+        session.add(MediaAssetRecord(url_hash=key, url=url, status="cached",
+            content_hash="a" * 64, mime="image/jpeg", ext=".jpg",
+            size_bytes=10, created_at=stamp, updated_at=stamp))
+        session.commit()
+
+    wire = archive_sync_v2.export_page(sink.engine, "media")
+    _, exported = archive_sync_v2.parse_page(wire, expected_stream="media")
+    assert [row["identity"] for row in exported] == [key]
+
+    def traced_check():
+        queries = []
+        def trace(conn, cursor, statement, params, context, executemany):
+            if "FROM articles " in statement:
+                queries.append(statement)
+        event.listen(sink.engine, "before_cursor_execute", trace)
+        try:
+            with Session(sink.engine) as session:
+                result = archive_sync_v2.is_public_media_reference(session, url)
+        finally:
+            event.remove(sink.engine, "before_cursor_execute", trace)
+        return result, queries
+
+    ok, sql = traced_check()
+    assert ok and len(sql) == 1 and "articles.id = ?" in sql[0]
+    with Session(sink.engine) as session:
+        session.get(ArticleRecord, "original").content = "image removed"
+        session.add(_article("replacement", content=f"![image]({url})"))
+        session.commit()
+    ok, sql = traced_check()
+    assert ok and len(sql) >= 2  # stale hint: look for a different public article
+    ok, sql = traced_check()
+    assert ok and len(sql) == 1 and "articles.id = ?" in sql[0]
+    with Session(sink.engine) as session:
+        session.get(SourceConfigRecord, "rss_platform").owner_username = "alice"
+        session.commit()
+    assert traced_check()[0] is False
+
+
 def test_public_media_reference_scans_past_substring_false_positives(tmp_path):
     sink = _sink(tmp_path, "media-reference-pagination.db")
     url = "https://img.test/late-real-image.png"
