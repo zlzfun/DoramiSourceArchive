@@ -5,6 +5,10 @@
 > `docs/frontend/conventions.md` / `docs/sources/curation_policy.md` 等活跃文档。
 > 按「故事」分组索引;文内常含 ☐/☑ 进度符,均为当时状态。
 
+## 图片同步引用查询（2026-11，issue #299）
+
+- [issue-299-media-lookup.md](./issue-299-media-lookup.md) — 查询提示、旧页回退及混版本边界。
+
 ## 界面说明文字第二轮清理(2026-11,issue #291)
 
 - [issue-291-explanatory-text.md](./issue-291-explanatory-text.md) — 按 #278 的规则复查全站的做法(§1)、72 条清单与逐条判定(§2)、另行处置的 9 处(§3)、第一批「设置」的模板改动与逐项做法(§4)、说明位守卫(§5)、第二批「读者面 / 手机壳 / 管理面」与没有照清单原话做的几处(§7)、两批的 Codex 检视记录(§8)。
