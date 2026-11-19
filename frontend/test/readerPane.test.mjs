@@ -15,8 +15,12 @@ const mobileDir = path.join(here, '../src/components/mobile');
 const mobile = readdirSync(mobileDir).filter((name) => name.endsWith('.jsx')).map((name) => readFileSync(path.join(mobileDir, name), 'utf8')).join('\n');
 
 test('吸顶栏:语言二段与查看原文排在收藏之前;标题区不再有尾行', () => {
-  const bar = desktop.slice(desktop.indexOf('<div className="reader-pane-bar">'), desktop.indexOf('<article className="reader-pane reader-enter"'));
-  assert.ok(bar.indexOf('{paneTools}') > 0 && bar.indexOf('{paneTools}') < bar.indexOf('handleToggleFavorite'), '正文动作在收藏钮之前');
+  // 截取吸顶栏那一段:到阅读窗的 <article> 为止(issue #301 第二批起它不再带 reader-enter 类;收藏钮的处理函数改名 onPaneFavorite)
+  const barStart = desktop.indexOf('<div className="reader-pane-bar">');
+  const barEnd = desktop.indexOf('<article className="reader-pane"', barStart);
+  assert.ok(barStart > 0 && barEnd > barStart, '找得到吸顶栏与阅读窗的起止');
+  const bar = desktop.slice(barStart, barEnd);
+  assert.ok(bar.indexOf('{paneTools}') > 0 && bar.indexOf('{paneTools}') < bar.indexOf('onClick={onPaneFavorite}'), '正文动作在收藏钮之前');
   const head = desktop.slice(desktop.indexOf('<header className={`reader-pane-head'), desktop.indexOf('</header>', desktop.indexOf('<header className={`reader-pane-head')));
   for (const gone of ['reader-pane-foot', 'reader-pane-byline', 'paneActions', 'reader-pane-tags']) {
     assert.ok(!head.includes(gone), `标题区不应再有 ${gone}`);
@@ -29,7 +33,8 @@ test('吸顶栏:语言二段与查看原文排在收藏之前;标题区不再有
 test('速读卡:桌面版式经 page 打开,手机壳不传;页边与卡脚用同一份标签', () => {
   assert.match(card, /return props\.page \? <PageCard \{\.\.\.props\} \/> : <ClassicCard \{\.\.\.props\} \/>;/);
   assert.match(desktop, /<AiReadingCard\s+page\s+tags=\{paneTagsEl\}/);
-  assert.match(desktop, /<ScoreMargin article=\{activeArticle\} podcast=\{podcastView\} tags=\{paneTagsEl\} \/>/);
+  // 页边与卡脚收同一份标签;其后允许再带别的属性(issue #301 起多了一个 motionIntent)
+  assert.match(desktop, /<ScoreMargin article=\{activeArticle\} podcast=\{podcastView\} tags=\{paneTagsEl\}[^>]*\/>/);
   assert.ok(!/<AiReadingCard[^>]*\bpage\b/.test(mobile), '手机壳的速读卡不走桌面版式');
   assert.ok(!/<ListenEntries[^>]*\bquiet\b/.test(mobile), '手机壳的收听入口保留原说明');
   // 依据是点开的,不是悬停:卡头的分数钮带 aria-expanded

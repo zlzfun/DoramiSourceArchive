@@ -52,8 +52,12 @@ export function useTheme() {
 
   const setTheme = useCallback((next) => setThemeState(next), []);
   // 顶栏快捷：在 亮 ↔ 暗 之间切换（基于当前生效主题，结果落为显式 light/dark）
+  // 生效主题当场写到 <html>(不等 effect):读者面的明暗交叉淡化(utils/readerMotion.themeFade)要在同一个同步回调里拿到新界面。
+  // 上面那条 effect 随后会再写一次同样的值。
   const toggleTheme = useCallback(() => {
-    setThemeState((prev) => (resolveEffective(prev) === 'dark' ? 'light' : 'dark'));
+    const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    applyEffective(next);
+    setThemeState(next);
   }, []);
 
   return { theme, setTheme, toggleTheme, effective: resolveEffective(theme) };

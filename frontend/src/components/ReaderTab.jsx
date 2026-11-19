@@ -1,5 +1,5 @@
 import PodcastGuideFilter from './PodcastGuideFilter';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Search,
   X,
@@ -91,6 +91,7 @@ import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
 import { articleListenEntries, podcastListenEntries } from '../utils/listenEntries';
 import { nowPlayingFor } from '../utils/playerCore';
 import { mediaProxyUrl } from '../api';
+import { armReadCascade, currentIntent, enterPane, enterPop, enterStage, exitGhost, holdIntent, motionIntent, popStar, releaseIntent, themeFade } from '../utils/readerMotion';
 
 // ReaderWorkspace 持有共享数据与阅读位置；这里仅负责桌面四栏与鼠标交互。
 // 条目、正文等内容组件继续供移动视图复用。
@@ -697,7 +698,9 @@ export default function ReaderTab({
           className="reader-pane-next"
           title={displayTitle(briefNext, preferChinese, '') || undefined}
           onClick={async () => {
+            const intent = holdIntent();
             const opened = await openArticleById(briefNext.article_id, { silent: true });
+            if (!opened) releaseIntent(intent);
             if (opened) setBriefReturn((prev) => (prev ? { ...prev, index: prev.index + 1, itemId: briefNext.id } : prev));
             // 站内取不到(源被隐藏 / 退订)与点卡同款回退:序列带着快照原链;await 之后用户激活可能已过期,当前页跳转
             else if (opened === false) {
@@ -790,6 +793,72 @@ export default function ReaderTab({
   const shellRef = useRef(null);
   useTouchHoldMenu(shellRef, '.reader-entry, .reader-source-row, .social-post');
 
+  // 动效(issue #301 第二批,conventions §7):打开一篇文章——阅读窗按文章 id 重挂载,挂上那一刻标题区淡入上移 6px、
+  // 其余一起淡入;切视图——内容直接换,导轨右边各栏 100ms 淡入。键盘触发的不动、减少动效只留淡入,都在 utils/readerMotion 里判。
+  // 同一个节点只播一次:StrictMode 开发态会把 ref 回调多调一遍,第二遍时挂起的触发方式已经放下,不能按「此刻」再判一次
+  const paneMountedRef = useRef(false);
+  const paneEnteredRef = useRef(null);
+  const paneEnterRef = useCallback((node) => {
+    if (!node || paneEnteredRef.current === node) return;
+    paneEnteredRef.current = node;
+    enterPane(node);
+    paneMountedRef.current = true;
+  }, []);
+  const stageKey = briefOpen ? 'brief' : rankingsOpen ? 'rankings' : railActive;
+  const stageSeenRef = useRef(stageKey);
+  useLayoutEffect(() => {
+    if (stageSeenRef.current === stageKey) return;
+    stageSeenRef.current = stageKey;
+    const shell = shellRef.current;
+    if (shell) enterStage(shell.querySelectorAll(':scope > :is(.reader-col, .bp-sheet, .rankings-page, .reader-disc)'));
+  }, [stageKey]);
+  // 请求回来才换内容的路径(从早报 / 榜单 / 「下一条」/ 播放条打开文章):入口处挂起触发方式(holdIntent),阅读窗挂上的那次提交里放下。
+  // 放在布局阶段、排在上面两段之后:这次提交里的阅读窗入场与工作区淡入都已按挂起的那一份判过;
+  // 不能放到提交之后的被动副作用里——那样会和「等请求回来再挂一次」抢先后,把刚挂上的那一份放掉。
+  const paneArticleId = activeArticle?.id ?? null;
+  useLayoutEffect(() => {
+    if (!paneMountedRef.current) return;
+    paneMountedRef.current = false;
+    releaseIntent();
+  });
+  // 这篇文章是怎么打开的:文章一换就记下(渲染期间按「上一次渲染的值」校正状态的写法),传给会晚挂载的块——
+  // 速读卡要等正文回来才挂上,那时再看「最近一次输入」已经不是打开它的那一下了。
+  const [paneIntent, setPaneIntent] = useState(() => ({ id: paneArticleId, how: 'pointer' }));
+  if (paneIntent.id !== paneArticleId) setPaneIntent({ id: paneArticleId, how: currentIntent() });
+  // 收藏:请求期间钮里是转圈,请求成功、星标回来的那一刻弹一下。只认这颗钮自己点出来的那一次,
+  // 并且钮上还是那一篇(data-fav)——请求没回来就换了篇、或请求失败回滚,都不播。
+  const favBtnRef = useRef(null);
+  const favPopRef = useRef(null);
+  const tryFavPop = useCallback(() => {
+    const want = favPopRef.current;
+    const btn = favBtnRef.current;
+    if (!want || !btn) return;
+    if (btn.dataset.fav !== String(want.id)) { favPopRef.current = null; return; }
+    const icon = btn.querySelector('svg:not(.animate-spin)');
+    if (!icon) return;   // 还在转圈:等它换回星标的那次提交
+    favPopRef.current = null;
+    popStar(icon, want.on, want.how);
+  }, []);
+  const paneFavBusy = Boolean(activeArticle) && favTogglingId === activeArticle.id;
+  useLayoutEffect(() => { tryFavPop(); }, [paneFavBusy, paneArticleId, tryFavPop]);
+  const onPaneFavorite = (event) => {
+    const article = activeArticle;
+    const how = motionIntent();
+    Promise.resolve(handleToggleFavorite(article, event)).then((on) => {
+      if (on == null) return;   // 没发出去(游客 / 重复点)或失败回滚
+      favPopRef.current = { id: article.id, on, how };
+      tryFavPop();
+    });
+  };
+  // 全部标读:点下去时给看得见的未读行排好先后(--read-delay),请求回来、行换成已读之后再撤掉
+  const readCascadeRef = useRef(null);
+  useEffect(() => {
+    if (markingRead || !readCascadeRef.current) return undefined;
+    const disarm = readCascadeRef.current;
+    const timer = setTimeout(() => { disarm(); if (readCascadeRef.current === disarm) readCascadeRef.current = null; }, 600);
+    return () => clearTimeout(timer);
+  }, [markingRead]);
+
   // 整幅页面:占满导轨右边的全部宽度,不挂来源栏(早报 / 榜单 / 发现 / 社交)
   const widePage = pageOpen || discover || socialView;
 
@@ -803,6 +872,13 @@ export default function ReaderTab({
   const [qaSignal, setQaSignal] = useState(0);
   const [qaOpen, setQaOpen] = useState(false);
   const srcPopRef = useRef(null);
+  // 来源下拉的开合动效(issue #301):挂上时对准范围名那颗钮 0.96 → 1,卸下前留一个替身 100ms 淡出(ref 清理在节点移出文档之前跑)
+  const srcPopMotionRef = useCallback((node) => {
+    srcPopRef.current = node;
+    if (!node) return undefined;
+    const origin = enterPop(node, shellRef.current?.querySelector('.reader-scope-btn') || null);
+    return () => { exitGhost(node, origin); srcPopRef.current = null; };
+  }, []);
   const scopeBtnRef = useRef(null);
   // 键盘收起(Escape、在某一行上按 Enter / 空格)时把焦点还给范围名按钮——浮层卸载后焦点不能掉到 body 上
   const closeSrcPop = (refocus = false) => {
@@ -1106,7 +1182,7 @@ export default function ReaderTab({
             )}
             <button
               type="button"
-              onClick={() => onToggleTheme?.()}
+              onClick={() => { if (onToggleTheme) themeFade(onToggleTheme); }}
               className="reader-vrail-btn"
               aria-label={themeDark ? '切换到亮色' : '切换到暗色'}
             >
@@ -1190,8 +1266,10 @@ export default function ReaderTab({
           onGuestLogin={() => onGuestLogin?.()}
           onOpenArticle={async (articleId, ctx) => {
             // 结果回传早报页:false=不在库(早报页退到原链),null=被更晚的点击盖过(不动)
+            const intent = holdIntent();
             const opened = await openArticleById(articleId, { silent: true });
-            if (!opened) return opened;
+            if (!opened) { releaseIntent(intent); return opened; }
+            holdIntent(intent.how);   // 阅读窗在下面这次提交才挂上:按点下去那一刻的触发方式播
             setBriefOpen(false);
             setBriefReturn(ctx && ctx.sequence?.length ? ctx : null);
             return true;
@@ -1209,8 +1287,10 @@ export default function ReaderTab({
           onRangeChange={setRankingRange}
           restore={rankingRestore}
           onOpenArticle={async (articleId, ctx) => {
+            const intent = holdIntent();
             const opened = await openArticleById(articleId, { silent: true });
-            if (!opened) return;
+            if (!opened) { releaseIntent(intent); return; }
+            holdIntent(intent.how);
             setRankingsOpen(false);
             setBriefReturn(ctx || null);   // 与早报同一条外出返回带:阅读窗顶「返回热点事件 / 返回榜单」
           }}
@@ -1389,7 +1469,7 @@ export default function ReaderTab({
               {!kindFilter && !podcastGuideFilter && (
                 <button
                   type="button"
-                  onClick={handleMarkAllRead}
+                  onClick={() => { readCascadeRef.current?.(); readCascadeRef.current = armReadCascade(listRef.current); handleMarkAllRead(); }}
                   disabled={markingRead}
                   aria-label={markAllLabel}
                   title={markAllLabel}
@@ -1419,7 +1499,7 @@ export default function ReaderTab({
             className="reader-srcpop"
             role="dialog"
             aria-label="来源"
-            ref={srcPopRef}
+            ref={srcPopMotionRef}
             onClick={(event) => { if (event.target.closest('.reader-source-row, .reader-src-more, .reader-axis-empty-link')) closeSrcPop(); }}
             onKeyDown={(event) => {
               // 行是 div[role=button]:Enter / 空格只走它自己的 onKeyDown,不会冒出 click——这里接住,选完即收并回焦
@@ -1607,7 +1687,9 @@ export default function ReaderTab({
               {paneTools}
               <button
                 type="button"
-                onClick={(e) => handleToggleFavorite(activeArticle, e)}
+                ref={favBtnRef}
+                data-fav={activeArticle.id}
+                onClick={onPaneFavorite}
                 disabled={favTogglingId === activeArticle.id}
                 title={favoriteIds.has(activeArticle.id) ? '取消收藏' : '收藏'}
                 aria-label={favoriteIds.has(activeArticle.id) ? '取消收藏' : '收藏'}
@@ -1656,8 +1738,8 @@ export default function ReaderTab({
               </div>
             </div>
 
-          {/* key 按文章 id 重挂载,触发 reader-enter 淡入+轻上移(体验二波 A1) */}
-          <article className="reader-pane reader-enter" key={activeArticle.id}>
+          {/* key 按文章 id 重挂载;挂上时由 paneEnterRef 播入场(issue #301:指针触发才动,键盘触发直接换) */}
+          <article className="reader-pane" key={activeArticle.id} ref={paneEnterRef}>
             {/* 标题区三行(issue #279 第三批;此前四行):眉题(类别;非资讯写内容类型,资讯写事件类型,issue #178)/
                 衬线标题 / 署名行(只放事实:日期 · 时长 · 阅读量 · 分析状态)。原先的尾行拆走了:动作进吸顶栏,
                 标签进速读卡脚或页边。播客另有一行收听入口(这一屏唯一的实心钮),封面在标题左边。 */}
@@ -1731,6 +1813,7 @@ export default function ReaderTab({
                 <AiReadingCard
                   page
                   tags={paneTagsEl}
+                  motionIntent={paneIntent.how}
                   article={activeArticle}
                   summary={activeSummary}
                   summarizing={summarizing}
@@ -1804,7 +1887,7 @@ export default function ReaderTab({
               </nav>
             )}
             {/* 页边:阅读窗够宽才出(容器查询);DOM 顺序在正文之后,读屏先读正文 */}
-            <ScoreMargin article={activeArticle} podcast={podcastView} tags={paneTagsEl} />
+            <ScoreMargin article={activeArticle} podcast={podcastView} tags={paneTagsEl} motionIntent={paneIntent.how} />
             </div>
           </article>
           </>
