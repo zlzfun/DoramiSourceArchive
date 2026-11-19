@@ -11,6 +11,10 @@ Reader accounts build a personalized subscription scope over already-archived re
 
 `GET /api/reader/sources` 的每个条目带服务端算好的 `origin` 与 `listing`。收录通道建的临时源 `listing=unlisted`:发现页与「订阅全部 X 源」不列,条目上的来源名仍可进源页单独订阅,订阅者源栏归「收录」组;退役源(含已下线墓碑)与主人不可考的 `user_rss_` 孤儿只对订阅者保留退订入口。隐藏源全量排除于交付,公共日报候选池与 `/api/feed/articles[.md]` 也不例外。临时源的多源印证 / 日报 / 付费处理口径见 [`contracts/ingest_push.md`](../contracts/ingest_push.md)。
 
+## 热点事件榜的令牌化交付(issue #310)
+
+`GET /api/public/feed/events[/{event_id}]` 用 `dfeed_` 个人聚合令牌拉榜单页「热点事件」那份数据,路由在 `src/api/routers/events.py`,与读者面 `/api/reader/events` 同调 `services/event_board`。榜单是全站口径:令牌只决定能不能拿,不按订阅范围裁剪(读者面本来就对所有读者与游客开放);隐藏 / 私有 / 凭据源成员照旧在读取时剔除。`dsub_` 单订阅令牌与登录会话都不是这里的凭据。读者面榜单载荷的键自此也是对外契约(只加不改不删),契约见 [`contracts/reader_subscription.md`](../contracts/reader_subscription.md)「Hot Events Board」。
+
 ## Downloadable Claude skill
 
 `src/api/skill_router.py` zips `src/skill_templates/dorami-daily-brief/` on the fly (templating `{BASE_URL}` into the live host) and serves it at `GET /api/skill/daily-brief`, so a user can install a ready-made Claude skill that talks to this deployment's feed/MCP endpoints.

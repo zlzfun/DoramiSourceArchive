@@ -631,6 +631,9 @@ def _item_payload(
     now: dt.datetime,
     follows: dict[int, _EventView],
 ) -> dict[str, Any]:
+    # 这里的键(连同 ``_member_payload`` / ``_latest_payload`` / ``_representative_payload``)同时是对外交付契约:
+    # ``/api/public/feed/events`` 原样下发(issue #310)。只加不改不删;动之前对照
+    # ``docs/contracts/reader_subscription.md``「Hot Events Board」与 ``tests/test_events_api.py`` 的键集。
     event = view.event
     first_seen_ts = _ts(event.first_seen_at)
     age = now.timestamp() - first_seen_ts
@@ -673,24 +676,31 @@ def read_board(
     *,
     window_hours: int = READER_WINDOW_HOURS,
     limit: int = BOARD_LIMIT,
+    include_members: bool = False,
     now: dt.datetime | None = None,
 ) -> dict[str, Any]:
-    """热点事件榜(方案 §5.0 契约,issue #221 默认 7 天):最多 ``limit`` 件,不足不填;空榜 ``empty_reason="no_events"``。"""
+    """热点事件榜(方案 §5.0 契约,issue #221 默认 7 天):最多 ``limit`` 件,不足不填;空榜 ``empty_reason="no_events"``。
+
+    ``include_members=True`` 时每件事多带 ``members``(与详情同形同序),给令牌化交付一次拿全(issue #310);
+    读者面不传,返回字段不变。成员视图在算榜时已经载入,带上它不多查库。
+    """
 
     current = _utcnow(now)
     views = _board_entries(session, window_hours=window_hours, limit=limit, now=current)
     snapshot_date, previous_ranks = _previous_snapshot(session, window_hours=window_hours, now=current)
     follows = _related_views(session, (view.event.follows_event_id for view in views))
-    items = [
-        _item_payload(
+    items = []
+    for rank, view in enumerate(views, start=1):
+        item = _item_payload(
             view,
             rank=rank,
             previous_rank=previous_ranks.get(int(view.event.id or 0)),
             now=current,
             follows=follows,
         )
-        for rank, view in enumerate(views, start=1)
-    ]
+        if include_members:
+            item["members"] = _members_payload(view)
+        items.append(item)
     return {
         "generated_at": _iso(current),
         "window_hours": int(window_hours),
@@ -736,6 +746,14 @@ def _member_payload(view: _MemberView, *, representative_id: str) -> dict[str, A
     }
 
 
+def _members_payload(view: _EventView) -> list[dict[str, Any]]:
+    """事件的可见成员清单(``report_at`` 倒序):详情与带成员的榜单同形同序。"""
+
+    representative_id = view.representative.article.id
+    ordered = sorted(view.members, key=lambda item: (-item.report_ts, item.article.id))
+    return [_member_payload(item, representative_id=representative_id) for item in ordered]
+
+
 def read_event(
     session: Session,
     event_id: int,
@@ -768,14 +786,7 @@ def read_event(
         now=current,
         follows=follows,
     )
-    ordered_members = sorted(
-        view.members,
-        key=lambda item: (-item.report_ts, item.article.id),
-    )
-    representative_id = view.representative.article.id
-    payload["members"] = [
-        _member_payload(item, representative_id=representative_id) for item in ordered_members
-    ]
+    payload["members"] = _members_payload(view)
     followups = _visible_views(session, session.exec(
         select(EventRecord).where(
             EventRecord.follows_event_id == resolved_id,

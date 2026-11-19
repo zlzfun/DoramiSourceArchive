@@ -75,6 +75,7 @@
 - `GET/POST/PUT/DELETE /api/subscriptions` + `POST /api/subscriptions/{id}/rotate-token` — subscription lifecycle (owner-scoped); REST-only advanced/custom path
 - `GET /api/reader/feed-token` + `POST /api/reader/feed-token/rotate` — the per-user aggregated feed token (`dfeed_`)
 - `GET /api/public/feed/articles[.md]` — token-auth aggregated pull across all the user's subscribed sources (filters: `publish_date_start/end`, `content_types`, `source_ids`, `search`, `include_content`); per-subscription pulls at `GET /api/public/subscriptions/{id}/articles` and `POST .../vector/search`(路径留存,v3.31 起 FTS5 全文检索芯)
+- `GET /api/public/feed/events` + `GET /api/public/feed/events/{event_id}` — token-auth (`dfeed_` only) pull of the site-wide hot events board and one event's detail; same data as `GET /api/reader/events[/{event_id}]` (session / guest), not subscription-scoped; `window_hours` (default 168, 1–336), `limit` (1–10), `include_members` (list: attach each event's reports). Contract: [`contracts/reader_subscription.md`](../contracts/reader_subscription.md) § Hot Events Board
 
 **MCP** (reader surface)
 - `/mcp` — FastMCP streamable-HTTP server (`build_mcp_app`); tools accept an optional `subscription_token` (`dsub_` or `dfeed_`) to scope results to that subscription / the user's whole subscription union
