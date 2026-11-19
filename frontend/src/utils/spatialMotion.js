@@ -58,7 +58,8 @@ export function enterBrief(sheet, rail) {
 }
 
 // ── 订阅一个来源(入场清单之一):徽标沿弧线飞到导轨上对应形态的图标,落点弹一下;订阅钮自己也弹一下 ──
-// 与发现页组件解耦:捕获阶段记下「点了哪张卡的订阅钮」,等那颗钮真的变成「已订阅」(请求成功)才飞;失败、游客被拦都不飞。
+// 与发现页组件解耦:捕获阶段记下「点了哪张卡的订阅钮」,等那颗钮真的翻过来(请求成功)才演;失败、游客被拦都不演。
+// 订阅:钮弹一下 + 徽标飞;退订:只有钮弹一下。
 const RAIL_LABEL = { article: '文章', podcast: '播客', social: '社交媒体' };
 const FLY_MS = 520;
 const FLY_WAIT_MS = 8000;
@@ -109,20 +110,21 @@ export function mountSubscribeFly(shell) {
   };
   const onClick = (event) => {
     const btn = event.target.closest?.('.reader-disc-card .reader-disc-sub');
-    if (!btn || !shell.contains(btn) || btn.classList.contains('is-subbed')) return;
+    if (!btn || !shell.contains(btn)) return;
+    const was = btn.classList.contains('is-subbed');   // 点之前是不是已订阅:等它翻过来(订阅成功 / 退订成功)
     const card = btn.closest('.reader-disc-card');
     clear(card);
     const intent = motionIntent();
     const observer = new MutationObserver(() => {
       if (!card.isConnected) { clear(card); return; }
       const now = card.querySelector('.reader-disc-sub');
-      if (!now || !now.classList.contains('is-subbed') || now.querySelector('.animate-spin')) return;
+      if (!now || now.classList.contains('is-subbed') === was || now.querySelector('.animate-spin')) return;
       clear(card);
       const mode = pointerMotion(intent);
       if (mode === 'none') return;
       if (mode === 'fade') { fadeIn(now, 120); return; }
       springTo(now, [{ transform: 'scale(0.9)', opacity: 0.4 }, { transform: 'scale(1)', opacity: 1 }], 'pop');
-      flyLogo(shell, card);
+      if (!was) flyLogo(shell, card);   // 退订只有钮自己弹一下,没有东西飞
     });
     observer.observe(card, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
     pending.set(card, { observer, timer: setTimeout(() => clear(card), FLY_WAIT_MS) });

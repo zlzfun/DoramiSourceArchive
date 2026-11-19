@@ -33,7 +33,7 @@ import { formatPublishDateTime, formatRelativeTime } from '../utils/datetime';
 import { SOURCE_ROLES, resolveCompany } from '../sourceTaxonomy';
 import LogoMark from './LogoMark';
 import Sheet from './layer/Sheet';
-import { fadeIn, inViewport, riseIn, shareTitle, viewTransit } from '../utils/readerMotion';
+import { fadeIn, inViewport, riseIn, shareTitle, springTo, viewTransit } from '../utils/readerMotion';
 
 // ── 榜单(issue #221 收敛版,2026-11-03 拍板;设计稿 docs/design/issue-221-rankings/converge.html 第 2 节「收敛后」)──
 // 三段 热点事件 · 深度阅读 · 播客精选,三段同一套卡片语法(方案 §3):名次列(宋体齐线数字 + 下方变化)·
@@ -466,11 +466,16 @@ export default function RankingsPage({
         name(page, 'rk-card');
         const h = page.querySelector('.rk-dtitle');
         if (title.taken && inViewport(h)) { name(h, 'rk-title'); title.give(h); }   // 旧标题取到了才共享:否则新标题跟着卡面走
-        // 页里其余的块晚一点升上来(标题由卡里那一个接着走,不在其列)
-        for (const el of page.querySelectorAll(title.taken ? '.rk-backrow, .rk-dh > :not(.rk-dtitle), .rk-ebody' : '.rk-backrow, .rk-dh, .rk-ebody')) riseIn(el, { duration: 320, dist: 12, delay: 60 });
+        // 页里其余的块晚一点升上来,与卡面窗口同一条弹簧、同拍收尾(标题由卡里那一个接着走,不在其列)
+        for (const el of page.querySelectorAll(title.taken ? '.rk-backrow, .rk-dh > :not(.rk-dtitle), .rk-ebody' : '.rk-backrow, .rk-dh, .rk-ebody')) {
+          springTo(el, [{ opacity: 0, transform: 'translateY(12px)' }, { opacity: 1, transform: 'none' }], 'settle', { delay: 60, fill: 'backwards' });
+        }
       },
-      // 起不了共享元素转场(减少动效、浏览器不支持):新页已同步挂上,淡入一下
-      fallback() { fadeIn(main?.querySelector('.rk-event'), 100); },
+      // 起不了共享元素转场:新页已同步挂上。浏览器不支持时按精密的写法淡入 + 上移 6px;减少动效只淡入
+      fallback(mode) {
+        const el = main?.querySelector('.rk-event');
+        if (mode === 'full') riseIn(el, { duration: 160, dist: 6 }); else fadeIn(el, 100);
+      },
     });
     if (shared) { const settle = () => { if (grown) grown.style.minHeight = ''; }; shared.finished.then(settle, settle); }
   }, [rng, mobile]);

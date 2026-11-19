@@ -323,6 +323,61 @@ export function slideSourcesAway(shell, apply) {
   slide.finished.then(done, done);
 }
 
+// ── 页内换内容的两层(listFlip 的滑到新位置、swapMotion 的新内容进场)共用的一把锁 ──
+// 同一时刻只有一件在等新内容。点到它们管的任何一颗控件(不论这一下演不演),先把还在等的那件撤掉——
+// 否则旧任务会把新操作换上来的内容当成自己的:换了范围、没等到新榜又去切页签,行会按上一次的意图滑。
+const swapJobs = new Set();
+let swapEvent = null;
+
+/** 这一下点击点到了「会换内容」的控件。每次点击只清一次(两层各有一个监听,同一个事件会来两遍)。 */
+export function beginContentSwap(event) {
+  if (event && event === swapEvent) return;
+  swapEvent = event || null;
+  for (const cancel of [...swapJobs]) cancel();
+  swapJobs.clear();
+}
+
+/** 登记一件正在等新内容的任务;返回注销函数(任务自己结束时调用)。 */
+export function holdContentSwap(cancel) {
+  swapJobs.add(cancel);
+  return () => swapJobs.delete(cancel);
+}
+
+/** 离 el 最近的那个滚动容器(自己是就返回自己;找不到返回 null)。 */
+export function scrollerOf(el) {
+  for (let node = el; node && node !== document.documentElement; node = node.parentElement) {
+    const flow = getComputedStyle(node).overflowY;
+    if (flow === 'auto' || flow === 'scroll') return node;
+  }
+  return null;
+}
+
+/**
+ * 行高折叠(速读卡的「依据」):fold 是 display: grid 的外层,它唯一的子元素是 min-height: 0 / overflow: hidden 的内层。
+ * 展开:行高 0fr → 1fr 220ms,内容同时淡入;收起:内容 120ms 淡出、行高 160ms 收回,末帧保持,调用方等它的 finished 再卸载。
+ * 上一段还在跑(连点、演到一半反向)时,新的一段从此刻看得见的高度与明度接着走,不跳回端点。返回行高那条动画(起不了时返回 null)。
+ */
+export function foldRows(fold, open) {
+  const inner = fold?.firstElementChild;
+  if (!fold || !inner || !fold.animate) return null;
+  let rows = open ? 0 : 1;      // 起点:占内容高度的几成
+  let alpha = open ? 0 : 1;
+  const running = [...fold.getAnimations(), ...inner.getAnimations()];
+  if (running.length) {
+    const full = inner.scrollHeight;
+    if (full > 0) rows = Math.max(0, Math.min(1, fold.getBoundingClientRect().height / full));
+    alpha = Math.max(0, Math.min(1, Number(getComputedStyle(inner).opacity)));
+    for (const anim of running) anim.cancel();
+  }
+  const from = { gridTemplateRows: `${Number(rows.toFixed(3))}fr` };
+  if (open) {
+    inner.animate([{ opacity: alpha }, { opacity: 1 }], { duration: 220, easing: 'linear' });
+    return fold.animate([from, { gridTemplateRows: '1fr' }], { duration: 220, easing: MOTION.easeDrawer });
+  }
+  inner.animate([{ opacity: alpha }, { opacity: 0 }], { duration: 120, easing: 'linear', fill: 'forwards' });
+  return fold.animate([from, { gridTemplateRows: '0fr' }], { duration: 160, easing: MOTION.easeDrawer, fill: 'forwards' });
+}
+
 /** 来源栏展开的退路(浏览器没有 View Transitions 时):栅格第二列从 0 长到来源栏的宽度,来源栏从导轨下面滑出来。apply 之后调用。 */
 export function slideSourcesIn(shell) {
   const aside = shell?.querySelector(':scope > .reader-col-sources');

@@ -95,6 +95,7 @@ import { mountGlideIndicators } from '../utils/glideIndicators';
 import { mountListFlip } from '../utils/listFlip';
 import { endArrival, mountSubscribeFly, mountTitleDock } from '../utils/spatialMotion';
 import { mountImmersiveRead } from '../utils/immersiveRead';
+import { mountSwapMotion } from '../utils/swapMotion';
 import { armReadCascade, currentIntent, enterPane, enterPop, enterStage, exitGhost, holdIntent, motionIntent, popStar, releaseIntent, releaseIntentSoon, slideSourcesAway, slideSourcesIn, themeFade, viewTransit } from '../utils/readerMotion';
 
 // ReaderWorkspace 持有共享数据与阅读位置；这里仅负责桌面四栏与鼠标交互。
@@ -818,6 +819,8 @@ export default function ReaderTab({
   useEffect(() => mountTitleDock(shellRef.current), []);
   // 沉浸阅读(issue #301 第六批):正文往下读过一屏,导轨、来源栏、条目列退后;一碰就回
   useEffect(() => mountImmersiveRead(shellRef.current), []);
+  // 页内换内容时新内容的进场(issue #301 第七批):榜单 / 发现页换页签、播客阅读窗换正文
+  useEffect(() => mountSwapMotion(shellRef.current), []);
   // 早报到场只认「载入时就落在早报」的那一次:落在别的视图,或早报出内容之前就切走了,这次载入不再播
   useEffect(() => { if (!briefOpen) endArrival(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   const stageKey = briefOpen ? 'brief' : rankingsOpen ? 'rankings' : railActive;
