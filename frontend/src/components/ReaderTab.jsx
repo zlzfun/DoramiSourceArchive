@@ -1,5 +1,5 @@
 import PodcastGuideFilter from './PodcastGuideFilter';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Search,
   X,
@@ -91,6 +91,7 @@ import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
 import { articleListenEntries, podcastListenEntries } from '../utils/listenEntries';
 import { nowPlayingFor } from '../utils/playerCore';
 import { mediaProxyUrl } from '../api';
+import { enterPane, enterStage } from '../utils/readerMotion';
 
 // ReaderWorkspace 持有共享数据与阅读位置；这里仅负责桌面四栏与鼠标交互。
 // 条目、正文等内容组件继续供移动视图复用。
@@ -789,6 +790,18 @@ export default function ReaderTab({
   // 触屏长按 = 右键菜单(iPad 横屏等 ≥ 1025 的触屏走桌面四栏,审计 M-15;issue #230 批 4a):条目行、源行、社交卡
   const shellRef = useRef(null);
   useTouchHoldMenu(shellRef, '.reader-entry, .reader-source-row, .social-post');
+
+  // 动效(issue #301 第二批,conventions §7):打开一篇文章——阅读窗按文章 id 重挂载,挂上那一刻标题区淡入上移 6px、
+  // 其余一起淡入;切视图——内容直接换,导轨右边各栏 100ms 淡入。键盘触发的不动、减少动效只留淡入,都在 utils/readerMotion 里判。
+  const paneEnterRef = useCallback((node) => { if (node) enterPane(node); }, []);
+  const stageKey = briefOpen ? 'brief' : rankingsOpen ? 'rankings' : railActive;
+  const stageSeenRef = useRef(stageKey);
+  useLayoutEffect(() => {
+    if (stageSeenRef.current === stageKey) return;
+    stageSeenRef.current = stageKey;
+    const shell = shellRef.current;
+    if (shell) enterStage(shell.querySelectorAll(':scope > :is(.reader-col, .bp-sheet, .rankings-page, .reader-disc)'));
+  }, [stageKey]);
 
   // 整幅页面:占满导轨右边的全部宽度,不挂来源栏(早报 / 榜单 / 发现 / 社交)
   const widePage = pageOpen || discover || socialView;
@@ -1656,8 +1669,8 @@ export default function ReaderTab({
               </div>
             </div>
 
-          {/* key 按文章 id 重挂载,触发 reader-enter 淡入+轻上移(体验二波 A1) */}
-          <article className="reader-pane reader-enter" key={activeArticle.id}>
+          {/* key 按文章 id 重挂载;挂上时由 paneEnterRef 播入场(issue #301:指针触发才动,键盘触发直接换) */}
+          <article className="reader-pane" key={activeArticle.id} ref={paneEnterRef}>
             {/* 标题区三行(issue #279 第三批;此前四行):眉题(类别;非资讯写内容类型,资讯写事件类型,issue #178)/
                 衬线标题 / 署名行(只放事实:日期 · 时长 · 阅读量 · 分析状态)。原先的尾行拆走了:动作进吸顶栏,
                 标签进速读卡脚或页边。播客另有一行收听入口(这一屏唯一的实心钮),封面在标题左边。 */}
