@@ -15989,7 +15989,7 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 /* ══ 问答的光(第五批)══
    光——玻璃、由虚到实、极光——只许出现在问答面板上(conventions §7)。现网的问答是右下角的浮窗,光就落在浮窗上;
    面板打开时导轨上的问答钮泛一次光晕,是光唯一落在面板之外的地方(它是面板的来处)。
-   护栏:模糊只落在面板这一块有边界的东西上且不超过 300ms;循环动画只有等待时的那一行流光;减少动效时极光与流光不出现。 */
+   护栏:模糊只落在面板这一块有边界的东西上且不超过 300ms;本批新增的循环动画只有等待时的那一行流光;减少动效时极光与流光不出现。 */
 @property --ai-ang { syntax: "<angle>"; inherits: false; initial-value: 0deg; }    /* 极光在边框上的位置 */
 @property --ai-ring { syntax: "<number>"; inherits: false; initial-value: 0; }     /* 极光过后整圈的余辉 */
 
@@ -16046,7 +16046,7 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 
 /* 导轨上的问答钮:面板由指针打开时泛一次光晕——在 utils/qaMotion.haloQaButton 里(一次性的、要看触发方式的,不放在样式里) */
 
-/* 等待:正在做的那一步是一行流光(全站唯一的循环动画),出现时淡入;圆点不再自己跳。
+/* 等待:正在做的那一步是一行流光(循环;登记在案的例外见 conventions §7),出现时淡入;圆点不再自己跳。
    做完的那几步不带动画——一步做完时它从「正在做」换成「做完了」,若还挂着入场动画,动画名一变就会重播一遍 */
 .reader-shell .reader-ai-wait-row { animation: none; }
 .reader-shell .reader-ai-wait-row.is-active {

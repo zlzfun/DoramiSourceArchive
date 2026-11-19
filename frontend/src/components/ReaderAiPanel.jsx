@@ -96,16 +96,21 @@ function SuggestRotator({ scope, onPick }) {
   }, [pool]);
 
   useEffect(() => {
+    let swap = 0;   // 淡出之后换词的那一下;切范围、卸载时一并清掉——否则旧范围留下的这一下会去推新范围的起点,还把它标成「轮换过」
     const timer = setInterval(() => {
       if (hoverRef.current) return;
       setLeaving(true);
-      window.setTimeout(() => {
+      swap = window.setTimeout(() => {
+        swap = 0;
         setOffset((prev) => (prev + SUGGEST_VISIBLE) % pool.length);
         setLeaving(false);
         setRotated(true);
       }, SUGGEST_FADE_MS);
     }, SUGGEST_ROTATE_MS);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      if (swap) window.clearTimeout(swap);
+    };
   }, [pool]);
 
   const visible = Array.from({ length: SUGGEST_VISIBLE }, (_, i) => pool[(offset + i) % pool.length]);
