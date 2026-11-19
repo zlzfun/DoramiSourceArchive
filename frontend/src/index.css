@@ -15985,3 +15985,66 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 .reader-shell[data-src-sliding] > .reader-col-sources { overflow: hidden; min-width: 0; }
 .reader-shell .reader-src-ghost { position: absolute; z-index: 3; overflow: hidden; pointer-events: none; }
 .reader-shell .reader-src-ghost > * { width: 100%; height: 100%; }
+
+/* ══ 问答的光(第五批)══
+   光——玻璃、由虚到实、极光——只许出现在问答面板上(conventions §7)。现网的问答是右下角的浮窗,光就落在浮窗上;
+   面板打开时导轨上的问答钮泛一次光晕,是光唯一落在面板之外的地方(它是面板的来处)。
+   护栏:模糊只落在面板这一块有边界的东西上且不超过 300ms;循环动画只有等待时的那一行流光;减少动效时极光与流光不出现。 */
+@property --ai-ang { syntax: "<angle>"; inherits: false; initial-value: 0deg; }    /* 极光在边框上的位置 */
+@property --ai-ring { syntax: "<number>"; inherits: false; initial-value: 0; }     /* 极光过后整圈的余辉 */
+
+/* 面板:玻璃(--glass-bg 不支持 backdrop-filter 时自己退到近实色);由虚到实 260ms,退场虚化 160ms */
+.reader-shell .reader-ai-panel {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(22px) saturate(1.35);
+  backdrop-filter: blur(22px) saturate(1.35);
+  transform-origin: center;
+  animation: reader-ai-focus-in 260ms var(--motion-ease-focus) both;
+}
+.reader-shell .reader-ai-panel.is-closing { animation: reader-ai-focus-out 160ms ease-out forwards; }
+@keyframes reader-ai-focus-in { from { opacity: 0; filter: blur(8px); transform: scale(0.985); } to { opacity: 1; filter: blur(0); transform: none; } }
+@keyframes reader-ai-focus-out { from { opacity: 1; filter: blur(0); } to { opacity: 0; filter: blur(6px); } }
+/* 键盘开合:不动。是不是键盘,看面板自己身上的 is-still(开 / 合的那一刻由组件记下),不看 <html data-input>——
+   面板开着的时候人换了输入方式,动画名跟着变,入场会被重播一遍 */
+.reader-shell .reader-ai-panel.is-still { animation: none; }
+.reader-shell .reader-ai-panel.is-still.is-closing { animation: none; opacity: 0; }
+/* 面板里几块原来各自铺实底的,让出来给玻璃 */
+.reader-shell .reader-ai-panel :is(.reader-ai-head, .reader-ai-thread, .reader-ai-composer) { background: transparent; }
+
+/* 极光:沿边走一圈,过后留一瞬整圈的余辉。打开时一次,每次提问再一次(元素按序号重挂载) */
+.reader-shell .reader-ai-aurora {
+  position: absolute; inset: 0; z-index: 2; border-radius: inherit; padding: 1.5px; pointer-events: none; opacity: 0;
+  background:
+    conic-gradient(from var(--ai-ang), transparent 0deg, transparent 205deg, color-mix(in srgb, var(--ai-g1) 80%, transparent) 280deg, var(--ai-g2) 338deg, color-mix(in srgb, white 62%, var(--ai-g2)) 357deg, transparent 360deg),
+    linear-gradient(118deg, color-mix(in srgb, var(--ai-g1) calc(var(--ai-ring) * 100%), transparent), color-mix(in srgb, var(--ai-g2) calc(var(--ai-ring) * 100%), transparent));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  animation: reader-ai-sweep 1150ms cubic-bezier(0.45, 0, 0.25, 1) both;
+}
+@keyframes reader-ai-sweep {
+  0% { --ai-ang: -75deg; --ai-ring: 0; opacity: 0; }
+  12% { opacity: 1; }
+  58% { --ai-ring: 0.42; }
+  84% { opacity: 1; }
+  100% { --ai-ang: 285deg; --ai-ring: 0; opacity: 0; }
+}
+/* 键盘打开时那一圈不演;提问的那一圈照常(提问多半就是回车发出的,它回应的是「开始想了」) */
+.reader-shell .reader-ai-panel.is-still .reader-ai-aurora:not(.is-ask) { animation: none; }
+:root[data-motion="reduce"] .reader-shell .reader-ai-aurora { animation: none; opacity: 0; }
+
+/* 导轨上的问答钮:面板由指针打开时泛一次光晕——在 utils/qaMotion.haloQaButton 里(一次性的、要看触发方式的,不放在样式里) */
+
+/* 等待:正在做的那一步是一行流光(全站唯一的循环动画);圆点不再自己跳 */
+.reader-shell .reader-ai-wait-row.is-active {
+  width: fit-content; color: transparent;
+  background: linear-gradient(100deg, var(--dorami-faint) 30%, var(--ai-g1) 44%, var(--ai-g2) 56%, var(--dorami-faint) 70%) 0 0 / 240% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  animation: reader-ai-shimmer 1.15s linear infinite;
+}
+.reader-shell .reader-ai-wait-row.is-active .reader-ai-wait-dot { animation: none; }
+@keyframes reader-ai-shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+:root[data-motion="reduce"] .reader-shell .reader-ai-wait-row.is-active { animation: none; background: none; color: inherit; }
+
+/* 回答:整块不再自己淡入上移——到达时各段依次由虚到实(utils/qaMotion.revealAnswer),重新挂载的旧回答直接在 */
+.reader-shell .reader-ai-a { animation: none; }
