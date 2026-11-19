@@ -10,7 +10,7 @@
 // 新内容迟迟不来(超过 HOLD_MS)就让替身淡出、把骨架露出来,回到原来的换法。
 // 键盘触发、减少动效不做(readerMotion.pointerMotion)。
 // 与页面组件解耦:挂在桌面读者面的外壳上,靠事件与 MutationObserver 自己跟,条目上只需要一个能认出「同一条」的属性。
-import { MOTION, fadeIn, motionIntent, pointerMotion } from './readerMotion.js';
+import { MOTION, beginContentSwap, fadeIn, holdContentSwap, motionIntent, pointerMotion, scrollerOf } from './readerMotion.js';
 import { motionSpring } from './spring.js';
 
 const LAYER = 'reader-flip-layer';
@@ -21,7 +21,10 @@ const HOLD_MS = 700;    // 新内容超过这么久没到:替身让位给骨架
 //   host   重拉期间不会被换掉的容器,替身层挂在它里面;
 //   area   替身层盖住的那一块(缺省 = host 整个)。给了的话替身层是它的一份空壳(类名跟着,条目的样式才对得上);
 //   cover  替身层要不要垫底色:要回服务端重拉的垫(把骨架 /「加载中」挡在下面),当场就换的不垫;
-//   atRest 只在这个条件下做(滚到中间时两份内容对不上位置)。
+//   atRest 只在这个条件下做(滚到中间时两份内容对不上位置;榜单还有吸顶的页签栏,滚下去之后替身层会盖住它、
+//          「加载中」又让版面变矮把它顶出去)。滚下去之后的换法见 swapMotion;
+//   keepOrder 条目的样子取决于它排第几(榜首的大字号是 :first-child 给的):所有条目都克隆、留下的那些只藏不撤,
+//          替身之间的兄弟次序才与原来一致。
 export const FLIP_ZONES = [
   {
     name: 'list',   // 条目列:未读 / 只看收藏 / 内容类型 / 换来源
@@ -51,8 +54,9 @@ export const FLIP_ZONES = [
     row: '.rk-row[data-row]',
     idOf: (el) => el.dataset.row,
     empty: '.rk-empty, .ranking-state.is-error',
-    atRest: () => true,
+    atRest: (host) => (scrollerOf(host)?.scrollTop || 0) < 2,
     cover: true,
+    keepOrder: true,
   },
   {
     name: 'discover',   // 发现页:形态筛选(停在页顶时;滚下去之后改为各组淡入上移,见 swapMotion)
@@ -77,11 +81,18 @@ function boxIn(host, el) {
 
 // 看得见的范围(视口坐标):host 自己是滚动容器就是它的盒子,否则是最近的那个滚动祖先
 function clipRect(host) {
-  for (let el = host; el && el !== document.documentElement; el = el.parentElement) {
-    const flow = getComputedStyle(el).overflowY;
-    if (flow === 'auto' || flow === 'scroll') return el.getBoundingClientRect();
-  }
-  return { top: 0, bottom: window.innerHeight };
+  const scroller = scrollerOf(host);
+  return scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+}
+// 组头的键:文字 + 第几次出现(日期乱序时同名的组头可能出现两次,按出现次序一一配对)
+function labelKeys(labels) {
+  const seen = new Map();
+  return labels.map((el) => {
+    const text = el.textContent.trim();
+    const nth = seen.get(text) || 0;
+    seen.set(text, nth + 1);
+    return `${text}#${nth}`;
+  });
 }
 const within = (rect, clip) => rect.bottom > clip.top && rect.top < clip.bottom;
 
@@ -102,8 +113,9 @@ export function mountListFlip(shell) {
 
   const finish = (fade = false) => {
     if (!job) return;
-    const { layer, observer, timer } = job;
+    const { layer, observer, timer, release } = job;
     job = null;
+    release();
     clearTimeout(timer);
     observer.disconnect();
     if (fade && layer.isConnected) {
@@ -139,10 +151,10 @@ export function mountListFlip(shell) {
     }
     // 组头:同名的滑到新位置,新出现的淡入
     if (zone.label) {
-      for (const el of host.querySelectorAll(zone.label)) {
-        if (!outside(el)) continue;
-        const key = el.textContent.trim();
-        const old = labels.get(key);
+      const fresh = [...host.querySelectorAll(zone.label)].filter(outside);
+      const keys = labelKeys(fresh);
+      for (const [i, el] of fresh.entries()) {
+        const old = labels.get(keys[i]);
         if (old && within(el.getBoundingClientRect(), clip)) {
           el.animate(slide(old.box, boxIn(host, el)), timing);
           old.ghost.remove();
@@ -155,10 +167,14 @@ export function mountListFlip(shell) {
     if (zone.empty) for (const el of host.querySelectorAll(zone.empty)) if (outside(el)) fadeIn(el, MOTION.fast);
     // 替身:留下来的那些当场撤掉(真条目已经在同一个位置接手),走了的原地淡出
     layer.style.background = 'transparent';
-    for (const [id, ghost] of ghosts) if (seen.has(id)) ghost.remove();
+    for (const [id, ghost] of ghosts) {
+      if (!seen.has(id)) continue;
+      if (zone.keepOrder) ghost.style.visibility = 'hidden'; else ghost.remove();
+    }
     for (const ghost of layer.children) ghost.animate([{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(0.98)' }], { duration: MOTION.fast, easing: 'linear', fill: 'forwards' });
-    const { observer, timer } = job;
+    const { observer, timer, release } = job;
     job = null;
+    release();
     clearTimeout(timer);
     observer.disconnect();
     setTimeout(() => layer.remove(), MOTION.fast + 20);
@@ -212,7 +228,7 @@ export function mountListFlip(shell) {
     const ghosts = new Map();
     const labels = new Map();
     for (const row of first) {
-      if (!within(row.getBoundingClientRect(), clip)) continue;
+      if (!zone.keepOrder && !within(row.getBoundingClientRect(), clip)) continue;
       const id = zone.idOf(row);
       const box = boxIn(host, row);
       rects.set(id, box);
@@ -221,11 +237,13 @@ export function mountListFlip(shell) {
       layer.appendChild(ghost);
     }
     if (zone.label) {
-      for (const label of host.querySelectorAll(zone.label)) {
+      const all = [...host.querySelectorAll(zone.label)];
+      const keys = labelKeys(all);
+      for (const [i, label] of all.entries()) {
         if (!within(label.getBoundingClientRect(), clip)) continue;
         const box = boxIn(host, label);
         const ghost = ghostOf(label, box, origin);
-        labels.set(label.textContent.trim(), { box, ghost });
+        labels.set(keys[i], { box, ghost });
         layer.appendChild(ghost);
       }
     }
@@ -238,7 +256,7 @@ export function mountListFlip(shell) {
     }
     const observer = new MutationObserver(onMutate);
     const activeId = zone.active ? (host.querySelector(zone.active)?.dataset.flipId || null) : null;
-    job = { zone, host, rects, ghosts, labels, layer, observer, first, intent, waiting: false, activeId, timer: setTimeout(() => finish(), IDLE_MS) };
+    job = { zone, host, rects, ghosts, labels, layer, observer, first, intent, waiting: false, activeId, timer: setTimeout(() => finish(), IDLE_MS), release: holdContentSwap(() => finish()) };
     host.appendChild(layer);
     observer.observe(host, { childList: true, subtree: true });
   };
@@ -246,6 +264,7 @@ export function mountListFlip(shell) {
   const onClick = (event) => {
     const zone = FLIP_ZONES.find((z) => event.target.closest?.(z.triggers));
     if (!zone || !shell.contains(event.target)) return;
+    beginContentSwap(event);   // 这一下会换内容:还在等上一批新内容的任务(这一层或 swapMotion 那一层的)先撤掉
     const host = shell.querySelector(zone.host);
     // 触发方式取这一下自己的(不看别的请求挂起的那一份:指针点了「下一条」还没回来时,用键盘切筛选仍算键盘),并记进这次任务
     const intent = motionIntent();

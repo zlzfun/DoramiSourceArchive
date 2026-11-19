@@ -440,7 +440,10 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
   const closeAiPanel = useCallback(() => {
     if (closingRef.current) return;
     closingRef.current = true;
-    setAiPanelStill(motionIntent() === 'key');
+    const still = motionIntent() === 'key';
+    setAiPanelStill(still);
+    // 键盘收起(关闭钮、从引用回车打开文章)时焦点还在面板里:面板一卸载焦点就掉到文档上。还给导轨上的问答钮——它是面板的来处,再按一次回车就回来
+    if (still && document.activeElement?.closest?.('.reader-ai-panel')) document.querySelector('.reader-shell .reader-vrail .reader-vrail-qa')?.focus();
     setAiPanelClosing((closing) => {
       if (closing) return closing;
       closeTimerRef.current = window.setTimeout(() => {

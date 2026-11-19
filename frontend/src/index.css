@@ -15837,6 +15837,14 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
   .reader-shell .bp-fav:hover { transition-duration: var(--motion-spring-snappy-dur), var(--motion-fast), var(--motion-hover-in), var(--motion-hover-in); }
 }
 :root:not([data-input="key"]) .reader-shell .bp-fav:active { transform: scale(0.97); transition-duration: var(--motion-press), var(--motion-fast), var(--motion-hover-in), var(--motion-hover-in); transition-timing-function: var(--motion-ease), var(--motion-ease), ease, ease; }
+/* 早报条目、发现页的来源卡:标题那颗钮的 ::after 铺满整块,整块可点——按在它上面时整块缩 0.985(同条目行)。
+   次动作(收藏星、订阅钮)叠在它上层,按它们时这条不命中。合集卡自己就是整块的钮,按里面的订阅钮时不缩。
+   两类各有一条原有的过渡(条目的明度、卡片的阴影),简写里一并带上 */
+.reader-shell .bp-item { transition: transform var(--motion-spring-snappy-dur) var(--motion-spring-snappy), opacity var(--motion-medium) var(--motion-ease); }
+.reader-shell .reader-disc-card { transition: transform var(--motion-spring-snappy-dur) var(--motion-spring-snappy), box-shadow var(--motion-fast) var(--motion-ease); }
+:root:not([data-input="key"]) .reader-shell .bp-item:has(.bp-item-open:active) { transform: scale(0.985); transition-duration: var(--motion-press), var(--motion-medium); transition-timing-function: var(--motion-ease), var(--motion-ease); }
+:root:not([data-input="key"]) .reader-shell .reader-disc-card:has(.reader-disc-open:active),
+:root:not([data-input="key"]) .reader-shell .reader-disc-coll-card:active:not(:has(.reader-disc-sub:active)) { transform: scale(0.985); transition-duration: var(--motion-press), var(--motion-fast); transition-timing-function: var(--motion-ease), var(--motion-ease); }
 /* 右键菜单挂在 body 上(portal),不在 .reader-shell 里;它只有桌面读者面在用 */
 .ctx-menu .ctx-item { transition: transform var(--motion-spring-snappy-dur) var(--motion-spring-snappy), background-color var(--motion-hover-out) ease, color var(--motion-hover-out) ease; }
 @media (hover: hover) {
