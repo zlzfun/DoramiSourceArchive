@@ -15771,6 +15771,7 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 /* ── 反馈层(第二批)· 悬停与按下 ──
    小件按下缩到 0.97,松手用 snappy 弹簧回去;悬停底色「进快出慢」(进 100ms、出 180ms)。
    整行面积大,只缩到 0.985(榜单行更宽,0.99);行里的钮被按下时行自己不跟着缩。
+   悬停一律包在 @media (hover: hover) 里(守卫 hoverGuard.test.mjs;触屏没有「移开」,不该停在进场时长上)。
    导轨:块不动,只缩图标,松手带一点回弹。 */
 .reader-shell :is(.reader-seg-btn, .reader-tr-seg-btn, .reader-axis-btn, .reader-kind-chip, .reader-tab,
     .reader-unread-icon, .reader-search-icon, .reader-fav-icon, .reader-pane-iconbtn, .reader-src-fold,
@@ -15786,14 +15787,16 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
     border-color var(--motion-hover-out) ease,
     box-shadow var(--motion-hover-out) ease;
 }
-.reader-shell :is(.reader-seg-btn, .reader-tr-seg-btn, .reader-axis-btn, .reader-kind-chip, .reader-tab,
-    .reader-unread-icon, .reader-search-icon, .reader-fav-icon, .reader-pane-iconbtn, .reader-src-fold,
-    .reader-source-row, .reader-scope-btn, .reader-src-more,
-    .reader-pane-back, .reader-pane-next, .reader-pane-act, .reader-pane-sub, .reader-ai-dims,
-    .reader-load-more, .reader-pager-btn, .reader-ai-summary-generate,
-    .reader-disc-sub, .reader-disc-sort, .reader-disc-add, .reader-disc-back,
-    .bp-btn, .bp-hist, .bp-lbtn, .bp-chip, .bp-cal-nav, .bp-cal-day, .rk-back, .rk-latest):hover {
-  transition-duration: var(--motion-spring-snappy-dur), var(--motion-hover-in), var(--motion-hover-in), var(--motion-hover-in), var(--motion-hover-in);
+@media (hover: hover) {
+  .reader-shell :is(.reader-seg-btn, .reader-tr-seg-btn, .reader-axis-btn, .reader-kind-chip, .reader-tab,
+      .reader-unread-icon, .reader-search-icon, .reader-fav-icon, .reader-pane-iconbtn, .reader-src-fold,
+      .reader-source-row, .reader-scope-btn, .reader-src-more,
+      .reader-pane-back, .reader-pane-next, .reader-pane-act, .reader-pane-sub, .reader-ai-dims,
+      .reader-load-more, .reader-pager-btn, .reader-ai-summary-generate,
+      .reader-disc-sub, .reader-disc-sort, .reader-disc-add, .reader-disc-back,
+      .bp-btn, .bp-hist, .bp-lbtn, .bp-chip, .bp-cal-nav, .bp-cal-day, .rk-back, .rk-latest):hover {
+    transition-duration: var(--motion-spring-snappy-dur), var(--motion-hover-in), var(--motion-hover-in), var(--motion-hover-in), var(--motion-hover-in);
+  }
 }
 .reader-shell :is(.reader-seg-btn, .reader-tr-seg-btn, .reader-axis-btn, .reader-kind-chip, .reader-tab,
     .reader-unread-icon, .reader-search-icon, .reader-fav-icon, .reader-pane-iconbtn, .reader-src-fold,
@@ -15810,20 +15813,28 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 .reader-shell :is(.reader-entry, .rk-row) {
   transition: transform var(--motion-spring-snappy-dur) var(--motion-spring-snappy), background-color var(--motion-hover-out) ease, box-shadow var(--motion-hover-out) ease;
 }
-.reader-shell :is(.reader-entry, .rk-row):hover { transition-duration: var(--motion-spring-snappy-dur), var(--motion-hover-in), var(--motion-hover-in); }
+@media (hover: hover) {
+  .reader-shell :is(.reader-entry, .rk-row):hover { transition-duration: var(--motion-spring-snappy-dur), var(--motion-hover-in), var(--motion-hover-in); }
+}
 .reader-shell .reader-entry:active:not(:has(:is(button, a):active)) { transform: scale(0.985); transition-duration: var(--motion-press), var(--motion-hover-in), var(--motion-hover-in); transition-timing-function: var(--motion-ease), ease, ease; }
 .reader-shell .rk-row:active:not(:has(:is(button, a):active)) { transform: scale(0.99); transition-duration: var(--motion-press), var(--motion-hover-in), var(--motion-hover-in); transition-timing-function: var(--motion-ease), ease, ease; }
 /* 吸顶栏里的文字动作:原规则挂在 .reader-col-read .reader-pane-bar 下,特异性高一档,单独点名 */
 .reader-shell .reader-col-read .reader-pane-bar .reader-pane-act {
   transition: transform var(--motion-spring-snappy-dur) var(--motion-spring-snappy), background-color var(--motion-hover-out) ease, color var(--motion-hover-out) ease;
 }
-.reader-shell .reader-col-read .reader-pane-bar .reader-pane-act:hover { transition-duration: var(--motion-spring-snappy-dur), var(--motion-hover-in), var(--motion-hover-in); }
+@media (hover: hover) {
+  .reader-shell .reader-col-read .reader-pane-bar .reader-pane-act:hover { transition-duration: var(--motion-spring-snappy-dur), var(--motion-hover-in), var(--motion-hover-in); }
+}
 .reader-shell .reader-col-read .reader-pane-bar .reader-pane-act:active { transform: scale(0.97); transition-duration: var(--motion-press), var(--motion-hover-in), var(--motion-hover-in); transition-timing-function: var(--motion-ease), ease, ease; }
 .reader-shell .reader-entry + .reader-entry::before { transition: opacity var(--motion-hover-out) ease; }
-.reader-shell .reader-entry:hover::before, .reader-shell .reader-entry:hover + .reader-entry::before { transition-duration: var(--motion-hover-in); }
+@media (hover: hover) {
+  .reader-shell .reader-entry:hover::before, .reader-shell .reader-entry:hover + .reader-entry::before { transition-duration: var(--motion-hover-in); }
+}
 /* 导轨(图标常态上移 7px 给标签让位,按下时在这个位置上缩) */
 .reader-shell .reader-vrail-btn { transition: background-color var(--motion-hover-out) ease, color var(--motion-hover-out) ease; }
-.reader-shell .reader-vrail-btn:hover { transition-duration: var(--motion-hover-in); }
+@media (hover: hover) {
+  .reader-shell .reader-vrail-btn:hover { transition-duration: var(--motion-hover-in); }
+}
 .reader-shell .reader-vrail-btn:active { transform: none; }
 .reader-shell .reader-vrail .reader-vrail-btn > svg { transition: transform var(--motion-spring-pop-dur) var(--motion-spring-pop); }
 .reader-shell .reader-vrail .reader-vrail-btn:active > svg { transform: translateY(-7px) scale(0.86); transition: transform var(--motion-press) var(--motion-ease); }
