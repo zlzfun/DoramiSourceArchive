@@ -5,6 +5,8 @@
 //   键盘触发的一律不动(回车 / 空格激活条目行、导轨钮时内容直接换);
 //   减少动效时去掉位移与缩放,只留不超过 200ms 的明度淡入;
 //   没有 WAAPI 的环境直接落终态。
+// 「怎么触发的」按触发那一刻算,不按动画开播那一刻算:同步路径两者是同一刻;请求回来才换内容的路径(从早报 / 榜单打开文章、
+// 收藏)在入口处 motionIntent() / holdIntent() 记下,带到播放处——否则回车发起、等待时点了一下空白,回来就会被当成指针触发。
 // 取值是 index.css 里那套 token 的 JS 镜像(WAAPI 不读 CSS 变量),守卫 test/motionTokens.test.mjs 逐项比对。
 import { flushSync } from 'react-dom';
 import { motionReduced } from '../motion.js';
@@ -23,10 +25,33 @@ export const MOTION = Object.freeze({
   drawer: 360,    // --motion-drawer
 });
 
-/** 这一次交互该怎么动:'full'(指针触发、完整)/ 'fade'(减少动效:只淡入)/ 'none'(键盘触发或环境不支持)。 */
-export function pointerMotion() {
+/** 此刻的触发方式:'key'(最近一次输入是键盘)/ 'pointer'。在交互入口调用,异步回来时把它传给编排函数。 */
+export function motionIntent() {
+  return lastInputWasKeyboard() ? 'key' : 'pointer';
+}
+
+// 挂起的触发方式:请求发出到内容换上之间,没有显式带 intent 的编排(阅读窗挂载、工作区淡入、分数滚动)都按它判。
+let held = null;
+
+/** 入口处挂起触发方式,返回凭据;内容换上(或请求失败 / 被盖过)之后 releaseIntent。how 缺省取此刻的。 */
+export function holdIntent(how = motionIntent()) {
+  held = { how };
+  return held;
+}
+
+/** 放下挂起的触发方式。带凭据时只在它仍是当前那一份时才放(被更晚的一次盖过就不动);不带则无条件放。 */
+export function releaseIntent(token) {
+  if (!token || held === token) held = null;
+}
+
+/**
+ * 这一次交互该怎么动:'full'(指针触发、完整)/ 'fade'(减少动效:只淡入)/ 'none'(键盘触发或环境不支持)。
+ * intent 是入口处记下的触发方式;不给就看挂起的那一份,再没有才看此刻的最近输入。减少动效一律按播放这一刻的偏好。
+ */
+export function pointerMotion(intent) {
   if (typeof Element === 'undefined' || !Element.prototype.animate) return 'none';
-  if (lastInputWasKeyboard()) return 'none';
+  const how = intent || (held ? held.how : motionIntent());
+  if (how === 'key') return 'none';
   return motionReduced() ? 'fade' : 'full';
 }
 
@@ -70,18 +95,18 @@ export function enterStage(els) {
 }
 
 /** 收藏(精密):点亮时星标从 0.6 弹到 1(pop 弹簧);取消只闪一下明度。减少动效时两种都只走明度。 */
-export function popStar(icon, on) {
-  const mode = pointerMotion();
+export function popStar(icon, on, intent) {
+  const mode = pointerMotion(intent);
   if (mode === 'none' || !icon) return;
   if (on && mode === 'full') springTo(icon, [{ transform: 'scale(0.6)' }, { transform: 'scale(1)' }], 'pop');
   else animate(icon, [{ opacity: 0.35 }, { opacity: 1 }], { duration: 120, easing: 'linear' });
 }
 
 const CASCADE_STEP = 20;
-const CASCADE_MAX = 8;
+const CASCADE_MAX = 8;   // 第 9 行起不再更晚:最多晚 160ms
 
 /**
- * 全部标读(精密):看得见的未读行自上而下每行晚 20ms 换成已读,至多 8 档——是「这一下扫过去了」的因果,不是入场。
+ * 全部标读(精密):看得见的未读行自上而下每行晚 20ms 换成已读,最多晚 160ms——是「这一下扫过去了」的因果,不是入场。
  * 这里只给每行写 --read-delay;换色本身是样式表里标题的 color 过渡(粗细在同一刻直接换)。返回撤掉这些变量的函数。
  */
 export function armReadCascade(list) {
@@ -134,12 +159,15 @@ export function enterPop(pop, trigger) {
 /**
  * 离场替身(精密:有入场就有离场,更短、原路返回):在节点被移出文档之前调用——克隆一份,等节点真的走了再把替身放回原位,
  * 100ms 淡出并缩到 0.98。键盘触发不留替身。节点其实没走(StrictMode 开发态多跑的那次清理)就什么都不做。
+ * 起点取节点此刻的明度与变形:入场走到一半就被关掉时,替身从那一半接着退,不先跳到完整状态。
  */
 export function exitGhost(el, origin) {
   const mode = pointerMotion();
   if (mode === 'none' || !el || !el.isConnected) return;
   const parent = el.parentNode;
   const next = el.nextSibling;
+  const now = getComputedStyle(el);
+  const from = { opacity: now.opacity, transform: now.transform === 'none' ? 'none' : now.transform };
   const ghost = el.cloneNode(true);
   for (const attr of ['id', 'role', 'aria-label', 'aria-modal', 'tabindex']) ghost.removeAttribute(attr);
   ghost.querySelectorAll('[id]').forEach((node) => node.removeAttribute('id'));
@@ -154,8 +182,8 @@ export function exitGhost(el, origin) {
     const copies = [ghost, ...ghost.querySelectorAll('*')];
     for (const [i, top] of scrolled) if (copies[i]) copies[i].scrollTop = top;
     const keyframes = mode === 'full'
-      ? [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(0.98)' }]
-      : [{ opacity: 1 }, { opacity: 0 }];
+      ? [from, { opacity: 0, transform: 'scale(0.98)' }]
+      : [{ opacity: from.opacity }, { opacity: 0 }];
     const drop = () => ghost.remove();
     const anim = ghost.animate(keyframes, { duration: 100, easing: MOTION.ease, fill: 'forwards' });
     anim.finished.then(drop, drop);

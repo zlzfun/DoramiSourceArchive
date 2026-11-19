@@ -91,7 +91,7 @@ import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
 import { articleListenEntries, podcastListenEntries } from '../utils/listenEntries';
 import { nowPlayingFor } from '../utils/playerCore';
 import { mediaProxyUrl } from '../api';
-import { armReadCascade, enterPane, enterPop, enterStage, exitGhost, popStar, themeFade } from '../utils/readerMotion';
+import { armReadCascade, enterPane, enterPop, enterStage, exitGhost, holdIntent, motionIntent, popStar, releaseIntent, themeFade } from '../utils/readerMotion';
 
 // ReaderWorkspace 持有共享数据与阅读位置；这里仅负责桌面四栏与鼠标交互。
 // 条目、正文等内容组件继续供移动视图复用。
@@ -698,7 +698,9 @@ export default function ReaderTab({
           className="reader-pane-next"
           title={displayTitle(briefNext, preferChinese, '') || undefined}
           onClick={async () => {
+            const intent = holdIntent();
             const opened = await openArticleById(briefNext.article_id, { silent: true });
+            if (!opened) releaseIntent(intent);
             if (opened) setBriefReturn((prev) => (prev ? { ...prev, index: prev.index + 1, itemId: briefNext.id } : prev));
             // 站内取不到(源被隐藏 / 退订)与点卡同款回退:序列带着快照原链;await 之后用户激活可能已过期,当前页跳转
             else if (opened === false) {
@@ -802,16 +804,35 @@ export default function ReaderTab({
     const shell = shellRef.current;
     if (shell) enterStage(shell.querySelectorAll(':scope > :is(.reader-col, .bp-sheet, .rankings-page, .reader-disc)'));
   }, [stageKey]);
-  // 收藏:请求期间钮里是转圈,星标回来的那一刻弹一下(只认这颗钮自己点出来的那一次)
+  // 请求回来才换内容的路径(从早报 / 榜单 / 「下一条」打开文章):入口处挂起触发方式,内容换上的那次提交之后放下。
+  // 这里无条件放:挂起的那一份要么已经被这次挂载用掉,要么对应的请求早被这次换内容盖过了。
+  const paneArticleId = activeArticle?.id ?? null;
+  useEffect(() => { releaseIntent(); }, [paneArticleId, stageKey]);
+  // 收藏:请求期间钮里是转圈,请求成功、星标回来的那一刻弹一下。只认这颗钮自己点出来的那一次,
+  // 并且钮上还是那一篇(data-fav)——请求没回来就换了篇、或请求失败回滚,都不播。
   const favBtnRef = useRef(null);
-  const favPendingRef = useRef(false);
-  const paneFav = activeArticle ? favoriteIds.has(activeArticle.id) : false;
+  const favPopRef = useRef(null);
+  const tryFavPop = useCallback(() => {
+    const want = favPopRef.current;
+    const btn = favBtnRef.current;
+    if (!want || !btn) return;
+    if (btn.dataset.fav !== String(want.id)) { favPopRef.current = null; return; }
+    const icon = btn.querySelector('svg:not(.animate-spin)');
+    if (!icon) return;   // 还在转圈:等它换回星标的那次提交
+    favPopRef.current = null;
+    popStar(icon, want.on, want.how);
+  }, []);
   const paneFavBusy = Boolean(activeArticle) && favTogglingId === activeArticle.id;
-  useLayoutEffect(() => {
-    if (paneFavBusy || !favPendingRef.current) return;
-    favPendingRef.current = false;
-    popStar(favBtnRef.current?.querySelector('svg'), paneFav);
-  }, [paneFavBusy, paneFav]);
+  useLayoutEffect(() => { tryFavPop(); }, [paneFavBusy, paneArticleId, tryFavPop]);
+  const onPaneFavorite = (event) => {
+    const article = activeArticle;
+    const how = motionIntent();
+    Promise.resolve(handleToggleFavorite(article, event)).then((on) => {
+      if (on == null) return;   // 没发出去(游客 / 重复点)或失败回滚
+      favPopRef.current = { id: article.id, on, how };
+      tryFavPop();
+    });
+  };
   // 全部标读:点下去时给看得见的未读行排好先后(--read-delay),请求回来、行换成已读之后再撤掉
   const readCascadeRef = useRef(null);
   useEffect(() => {
@@ -1228,8 +1249,10 @@ export default function ReaderTab({
           onGuestLogin={() => onGuestLogin?.()}
           onOpenArticle={async (articleId, ctx) => {
             // 结果回传早报页:false=不在库(早报页退到原链),null=被更晚的点击盖过(不动)
+            const intent = holdIntent();
             const opened = await openArticleById(articleId, { silent: true });
-            if (!opened) return opened;
+            if (!opened) { releaseIntent(intent); return opened; }
+            holdIntent(intent.how);   // 阅读窗在下面这次提交才挂上:按点下去那一刻的触发方式播
             setBriefOpen(false);
             setBriefReturn(ctx && ctx.sequence?.length ? ctx : null);
             return true;
@@ -1247,8 +1270,10 @@ export default function ReaderTab({
           onRangeChange={setRankingRange}
           restore={rankingRestore}
           onOpenArticle={async (articleId, ctx) => {
+            const intent = holdIntent();
             const opened = await openArticleById(articleId, { silent: true });
-            if (!opened) return;
+            if (!opened) { releaseIntent(intent); return; }
+            holdIntent(intent.how);
             setRankingsOpen(false);
             setBriefReturn(ctx || null);   // 与早报同一条外出返回带:阅读窗顶「返回热点事件 / 返回榜单」
           }}
@@ -1646,7 +1671,8 @@ export default function ReaderTab({
               <button
                 type="button"
                 ref={favBtnRef}
-                onClick={(e) => { favPendingRef.current = true; handleToggleFavorite(activeArticle, e); }}
+                data-fav={activeArticle.id}
+                onClick={onPaneFavorite}
                 disabled={favTogglingId === activeArticle.id}
                 title={favoriteIds.has(activeArticle.id) ? '取消收藏' : '收藏'}
                 aria-label={favoriteIds.has(activeArticle.id) ? '取消收藏' : '收藏'}
