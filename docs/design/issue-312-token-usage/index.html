@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>令牌交付计量 · 样页</title>
+<link rel="stylesheet" href="assets/index.css?v=1">
+</head>
+<body>
+<main>
+  <header>
+    <h1>令牌交付计量 <span>issue #312 · 样页</span></h1>
+    <a class="open" href="app.html?dir=b" target="_blank" rel="noopener">打开原型</a>
+  </header>
+
+  <section>
+    <h2>账户页</h2>
+    <div class="pair">
+      <figure>
+        <figcaption><b>A</b> 并入现有 <a href="app.html?dir=a&focus=top&top=api" target="_blank" rel="noopener">打开</a></figcaption>
+        <div class="shot" data-src="app.html?dir=a&bare" data-crop="0,0,1440,236"></div>
+        <div class="shot" data-src="app.html?dir=a&focus=top&top=api&bare" data-crop="0,0,1440,760"></div>
+      </figure>
+      <figure>
+        <figcaption><b>B</b> A + 新板块「接口调用」 <a href="app.html?dir=b&focus=api" target="_blank" rel="noopener">打开</a></figcaption>
+        <div class="shot" data-src="app.html?dir=b&bare" data-crop="0,0,1440,236"></div>
+        <div class="shot" data-src="app.html?dir=b&focus=api&bare" data-crop="0,0,1440,760"></div>
+      </figure>
+    </div>
+  </section>
+
+  <section>
+    <h2>账户抽屉</h2>
+    <div class="trio">
+      <figure>
+        <figcaption>重新生成过令牌 <a href="app.html?dir=b&view=drawer&user=brief-pipeline" target="_blank" rel="noopener">打开</a></figcaption>
+        <div class="shot" data-src="app.html?dir=b&view=drawer&user=brief-pipeline&bare" data-crop="954,0,480,900"></div>
+      </figure>
+      <figure>
+        <figcaption>只走 MCP <a href="app.html?dir=b&view=drawer&user=newsroom-bot" target="_blank" rel="noopener">打开</a></figcaption>
+        <div class="shot" data-src="app.html?dir=b&view=drawer&user=newsroom-bot&bare" data-crop="954,0,480,900"></div>
+      </figure>
+      <figure>
+        <figcaption>签了没用过 <a href="app.html?dir=b&view=drawer&user=wu.tong" target="_blank" rel="noopener">打开</a></figcaption>
+        <div class="shot" data-src="app.html?dir=b&view=drawer&user=wu.tong&bare" data-crop="954,0,480,900"></div>
+      </figure>
+    </div>
+  </section>
+
+  <section>
+    <h2>设置 → 聚合接口</h2>
+    <div class="trio wide">
+      <figure>
+        <figcaption>现网</figcaption>
+        <div class="shot" data-src="app.html?view=settings&card=now&bare" data-crop="270,91,890,586"></div>
+      </figure>
+      <figure>
+        <figcaption><b>A</b> 令牌下加一行 <a href="app.html?view=settings&card=a" target="_blank" rel="noopener">打开</a></figcaption>
+        <div class="shot" data-src="app.html?view=settings&card=a&bare" data-crop="270,91,890,586"></div>
+      </figure>
+      <figure>
+        <figcaption><b>B</b> 逐接口计数,并列出热点事件地址 <a href="app.html?view=settings&card=b" target="_blank" rel="noopener">打开</a></figcaption>
+        <div class="shot" data-src="app.html?view=settings&card=b&bare" data-crop="270,91,890,586"></div>
+      </figure>
+    </div>
+  </section>
+
+  <section>
+    <h2>记什么</h2>
+    <table>
+      <thead><tr><th>一组</th><th>接口</th><th>一次调用</th><th>条数</th></tr></thead>
+      <tbody>
+        <tr><td>文章</td><td><code>feed/articles</code> <code>feed/articles.md</code> <code>feed/articles.xml</code></td><td rowspan="3">令牌有效、成功返回的一次请求</td><td>返回的文章数</td></tr>
+        <tr><td>热点事件</td><td><code>feed/events</code> <code>feed/events/{id}</code></td><td>返回的事件数;详情记 1</td></tr>
+        <tr><td>单订阅</td><td><code>subscriptions/{id}/articles</code> <code>subscriptions/{id}/vector/search</code></td><td>返回的文章数 / 结果数</td></tr>
+        <tr><td>MCP</td><td><code>browse_articles</code> <code>get_article</code> <code>search_articles</code> <code>get_rag_context</code></td><td>带令牌的一次工具调用</td><td>返回的结果数;取文记 1</td></tr>
+      </tbody>
+    </table>
+    <dl>
+      <dt>一行</dt><dd>日 × 账号 × 令牌 × 接口 → 调用次数、返回条数、最近一次时间</dd>
+      <dt>不记</dt><dd>认不出的令牌(不知道是谁的);MCP 的 <code>list_sources</code>(不需要令牌);阅读器里的阅读(已有阅读计量)</dd>
+      <dt>节点</dt><dd>各记各的,不随 Archive Sync 传;升级前的调用没有记录</dd>
+    </dl>
+  </section>
+
+  <section>
+    <h2>待拍板</h2>
+    <ol class="asks">
+      <li><b>账户页</b><span>A 并入现有</span><span class="rec">B 加令牌台账</span></li>
+      <li><b>接口的叫法</b><span class="rec">真实路径 <code>feed/articles</code>、<code>mcp · search_articles</code></span><span>起中文名</span></li>
+      <li><b>重新生成令牌之后</b><span class="rec">旧令牌的记录留在它自己名下,标「已作废」</span><span>并进新令牌</span></li>
+      <li><b>已作废的令牌还被调</b><span class="rec">在旧令牌名下记一个数</span><span>不记</span></li>
+      <li><b>订阅令牌</b><span class="rec">只列调过的(每个订阅都自带一枚,平时没人用)</span><span>全列</span></li>
+      <li><b>谁能看</b><span class="rec">KPI 与每日走势:全体管理员;台账、抽屉:根管理员</span><span>全部只给根管理员</span></li>
+      <li><b>留存</b><span class="rec">365 天(同登录、游客计量)</span><span>其它</span></li>
+      <li><b>设置卡</b><span>不动</span><span class="rec">A</span><span>B(顺带把 #310 留下的事件榜地址放进卡里)</span></li>
+      <li><b>首页磁贴</b><span class="rec">本波不动</span><span>账户磁贴加一个数</span></li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>样页的边界</h2>
+    <ul class="notes">
+      <li>底页是 v3.69.0「运维 → 账户」与设置弹窗的现网 DOM 与样式;新增的只有:KPI 第六格、活跃榜「按接口」、账户表「接口」列、板块「接口调用」、抽屉「接口调用」区、设置卡的两种改法。</li>
+      <li>数字全部是示意,账号是虚构的;同一份示意数据生成各处的数,彼此对得上。</li>
+      <li>抽屉里原有的「各源阅读 / 每日 AI 用量」两块对每个账号都是同一份快照。</li>
+      <li>时间窗、账户搜索、角色 / 状态筛选、勾选批量这些现有控件没有接;新加的排序、筛选、调用 / 条数切换、点台账行开抽屉是接了的。</li>
+      <li>只画了桌面。</li>
+    </ul>
+  </section>
+</main>
+<script src="assets/index.js?v=1"></script>
+</body>
+</html>
