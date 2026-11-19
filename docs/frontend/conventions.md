@@ -431,8 +431,8 @@
 ## 7. 动效（区分场景）
 
 - **桌面读者面的动效语言(issue #301,2026-11-19 拍板;样页 [`docs/design/issue-301-motion-language/`](../design/issue-301-motion-language/README.md))**:
-  三句话——**精密做底、连续管空间、光只给问答**。下面是规则;分六批落地,落到哪一批、哪些交互还是旧写法,
-  见[方案](../plans/issue-301-motion-language.md) §2 的进度表。范围只是桌面读者面:管理面与其余工作区仍按下一条的白名单,
+  三句话——**精密做底、连续管空间、光只给问答**。下面是规则;已全部落地(PR #302–#308),各类交互的做法与当时没照样页做的地方
+  见[方案](../archive/issue-301-motion-language.md) §2。范围只是桌面读者面:管理面与其余工作区仍按下一条的白名单,
   手机壳按 §10 与「移动弹簧」例外。
   - **能不能动**:键盘触发的一律不动(焦点在条目行、导轨钮、主题钮上按回车或空格,Esc 关浮层:内容直接换、浮层直接开合、
     指示器直接落位)。判定与减少动效的降级收在 `utils/readerMotion.js` 的 `pointerMotion()`,JS 编排一律经它;触发方式按触发那一刻算,
@@ -461,7 +461,8 @@
   - **取值只用 token**(`frontend/src/index.css`,守卫 `frontend/test/motionTokens.test.mjs`):
     曲线三条 `--motion-ease`(出入场、位移收尾)/ `--motion-ease-drawer`(整块滑动)/ `--motion-ease-focus`(由虚到实,只给问答面板);
     时长 `--motion-press`(120)/ `--motion-hover-in`(100)/ `--motion-hover-out`(180,进快出慢)/ `--motion-fast`(150)/
-    `--motion-base`(200)/ `--motion-drawer`(360)/ `--motion-recede`(600,配 `--motion-recede-wait` 240:沉浸阅读的退后);
+    `--motion-base`(200)/ `--motion-drawer`(360)/ `--motion-recede`(600,配 `--motion-recede-wait` 240:沉浸阅读的退后)。
+    就地写、不进档位的只有两类场景自己的取值:共享元素转场内部的交叉淡化时序、问答的光(由虚到实 260 / 160、极光 1150、压暗 240 / 140);
     常规交互不超过 300ms(来源栏、位移弹簧与沉浸阅读的退后除外),界面一出现就能点。
     弹簧五档 `--motion-spring-<snappy|glide|move|settle|pop>` 配各自的 `-dur`(落定时长,曲线必须配它用),
     JS 里用 `utils/spring.js` 的 `motionSpring('<档>')`;五档的参数表 `MOTION_SPRINGS` 是唯一来源,不另起参数。
