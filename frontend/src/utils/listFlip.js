@@ -109,13 +109,14 @@ const slide = (from, to) => [{ transform: `translate(${(from.x - to.x).toFixed(1
 /** 在 shell(桌面读者面的 .reader-shell)上挂起这座桥,返回卸载函数。 */
 export function mountListFlip(shell) {
   if (!shell || typeof MutationObserver === 'undefined') return () => {};
-  let job = null;   // { zone, host, rects, ghosts, labels, layer, observer, timer, first, intent, waiting, activeId }
+  let job = null;   // { zone, host, rects, ghosts, labels, layer, observer, timer, first, intent, waiting, activeId, release, unwatch }
 
   const finish = (fade = false) => {
     if (!job) return;
-    const { layer, observer, timer, release } = job;
+    const { layer, observer, timer, release, unwatch } = job;
     job = null;
     release();
+    unwatch();
     clearTimeout(timer);
     observer.disconnect();
     if (fade && layer.isConnected) {
@@ -172,9 +173,10 @@ export function mountListFlip(shell) {
       if (zone.keepOrder) ghost.style.visibility = 'hidden'; else ghost.remove();
     }
     for (const ghost of layer.children) ghost.animate([{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(0.98)' }], { duration: MOTION.fast, easing: 'linear', fill: 'forwards' });
-    const { observer, timer, release } = job;
+    const { observer, timer, release, unwatch } = job;
     job = null;
     release();
+    unwatch();
     clearTimeout(timer);
     observer.disconnect();
     setTimeout(() => layer.remove(), MOTION.fast + 20);
@@ -256,7 +258,12 @@ export function mountListFlip(shell) {
     }
     const observer = new MutationObserver(onMutate);
     const activeId = zone.active ? (host.querySelector(zone.active)?.dataset.flipId || null) : null;
-    job = { zone, host, rects, ghosts, labels, layer, observer, first, intent, waiting: false, activeId, timer: setTimeout(() => finish(), IDLE_MS), release: holdContentSwap(() => finish()) };
+    // 等新内容的这段时间里人往下滚了:不再「停在顶上」,替身层当场撤掉(它会盖住吸顶的栏,两份内容的位置也对不上了)
+    const scroller = scrollerOf(host);
+    const onScroll = () => { if (job && !zone.atRest(host)) finish(); };
+    scroller?.addEventListener('scroll', onScroll, { passive: true });
+    const unwatch = () => scroller?.removeEventListener('scroll', onScroll);
+    job = { zone, host, rects, ghosts, labels, layer, observer, first, intent, waiting: false, activeId, timer: setTimeout(() => finish(), IDLE_MS), release: holdContentSwap(() => finish()), unwatch };
     host.appendChild(layer);
     observer.observe(host, { childList: true, subtree: true });
   };
