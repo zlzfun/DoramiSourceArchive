@@ -91,7 +91,7 @@ import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
 import { articleListenEntries, podcastListenEntries } from '../utils/listenEntries';
 import { nowPlayingFor } from '../utils/playerCore';
 import { mediaProxyUrl } from '../api';
-import { enterPane, enterStage } from '../utils/readerMotion';
+import { armReadCascade, enterPane, enterStage, popStar, themeFade } from '../utils/readerMotion';
 
 // ReaderWorkspace 持有共享数据与阅读位置；这里仅负责桌面四栏与鼠标交互。
 // 条目、正文等内容组件继续供移动视图复用。
@@ -802,6 +802,24 @@ export default function ReaderTab({
     const shell = shellRef.current;
     if (shell) enterStage(shell.querySelectorAll(':scope > :is(.reader-col, .bp-sheet, .rankings-page, .reader-disc)'));
   }, [stageKey]);
+  // 收藏:请求期间钮里是转圈,星标回来的那一刻弹一下(只认这颗钮自己点出来的那一次)
+  const favBtnRef = useRef(null);
+  const favPendingRef = useRef(false);
+  const paneFav = activeArticle ? favoriteIds.has(activeArticle.id) : false;
+  const paneFavBusy = Boolean(activeArticle) && favTogglingId === activeArticle.id;
+  useLayoutEffect(() => {
+    if (paneFavBusy || !favPendingRef.current) return;
+    favPendingRef.current = false;
+    popStar(favBtnRef.current?.querySelector('svg'), paneFav);
+  }, [paneFavBusy, paneFav]);
+  // 全部标读:点下去时给看得见的未读行排好先后(--read-delay),请求回来、行换成已读之后再撤掉
+  const readCascadeRef = useRef(null);
+  useEffect(() => {
+    if (markingRead || !readCascadeRef.current) return undefined;
+    const disarm = readCascadeRef.current;
+    const timer = setTimeout(() => { disarm(); if (readCascadeRef.current === disarm) readCascadeRef.current = null; }, 600);
+    return () => clearTimeout(timer);
+  }, [markingRead]);
 
   // 整幅页面:占满导轨右边的全部宽度,不挂来源栏(早报 / 榜单 / 发现 / 社交)
   const widePage = pageOpen || discover || socialView;
@@ -1119,7 +1137,7 @@ export default function ReaderTab({
             )}
             <button
               type="button"
-              onClick={() => onToggleTheme?.()}
+              onClick={() => { if (onToggleTheme) themeFade(onToggleTheme); }}
               className="reader-vrail-btn"
               aria-label={themeDark ? '切换到亮色' : '切换到暗色'}
             >
@@ -1402,7 +1420,7 @@ export default function ReaderTab({
               {!kindFilter && !podcastGuideFilter && (
                 <button
                   type="button"
-                  onClick={handleMarkAllRead}
+                  onClick={() => { readCascadeRef.current?.(); readCascadeRef.current = armReadCascade(listRef.current); handleMarkAllRead(); }}
                   disabled={markingRead}
                   aria-label={markAllLabel}
                   title={markAllLabel}
@@ -1620,7 +1638,8 @@ export default function ReaderTab({
               {paneTools}
               <button
                 type="button"
-                onClick={(e) => handleToggleFavorite(activeArticle, e)}
+                ref={favBtnRef}
+                onClick={(e) => { favPendingRef.current = true; handleToggleFavorite(activeArticle, e); }}
                 disabled={favTogglingId === activeArticle.id}
                 title={favoriteIds.has(activeArticle.id) ? '取消收藏' : '收藏'}
                 aria-label={favoriteIds.has(activeArticle.id) ? '取消收藏' : '收藏'}

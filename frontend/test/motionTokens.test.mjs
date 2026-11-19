@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 
 import { MOTION_SPRINGS, SPRING_FALLBACK, motionSpring, spring, springCurve, springEasing, springSamples } from '../src/utils/spring.js';
 import * as playerSpring from '../src/utils/playerSpring.js';
+import { MOTION } from '../src/utils/readerMotion.js';
 
 const css = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
 const FALLBACK_AT = '@supports not (transition-timing-function: linear(0, 1))';
@@ -105,6 +106,23 @@ test('守卫会咬人:改错取值、挪进别的选择器、注释掉、后面�
   assert.deepEqual(problems(`${css}\n:root { --motion-press: 300ms; }\n`), [':root 的 --motion-press 声明了 2 次']);
   // ⑤ 降级块整个不在
   assert.equal(problems(css.replace(FALLBACK_AT, '@supports (display: grid)')).length, 5);
+});
+
+test('utils/readerMotion 的 MOTION 是 CSS token 的镜像(WAAPI 不读 CSS 变量):逐项相等', () => {
+  const { root } = motionCss(css);
+  const one = (name) => root.get(name)?.[0];
+  const ms = (name) => Number.parseInt(one(name), 10);
+  assert.deepEqual({ ...MOTION }, {
+    ease: one('--motion-ease'),
+    easeDrawer: one('--motion-ease-drawer'),
+    easeFocus: one('--motion-ease-focus'),
+    press: ms('--motion-press'),
+    hoverIn: ms('--motion-hover-in'),
+    hoverOut: ms('--motion-hover-out'),
+    fast: ms('--motion-fast'),
+    base: ms('--motion-base'),
+    drawer: ms('--motion-drawer'),
+  });
 });
 
 test('springCurve:临界阻尼不过冲、带回弹的会过冲,末点恒为 1,落定时长随参数变', () => {

@@ -15846,3 +15846,13 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 .reader-shell .reader-ai-odo.is-inline .reader-ai-odo-cell,
 .reader-shell .reader-ai-odo.is-inline .reader-ai-odo-dot { width: auto; height: 1em; line-height: 1; }
 .reader-shell .reader-ai-odo.is-inline .reader-ai-odo-digit { height: 1em; line-height: 1; }
+
+/* ── 反馈层 · 行读态换色 ──
+   标题颜色 200ms 过渡;粗细直接换(两种字重交叉淡化会出重影)。全部标读时各行按 --read-delay 依次换(utils/readerMotion.armReadCascade)。 */
+.reader-shell .reader-entry .reader-entry-title {
+  transition: color var(--motion-base) ease var(--read-delay, 0ms), font-weight 0s linear var(--read-delay, 0ms);
+}
+
+/* ── 反馈层 · 明暗切换 ── 整页交叉淡化 180ms(utils/readerMotion.themeFade 在过渡期间挂 .theme-fading) */
+:root.theme-fading::view-transition-old(root),
+:root.theme-fading::view-transition-new(root) { animation-duration: 180ms; animation-timing-function: linear; }

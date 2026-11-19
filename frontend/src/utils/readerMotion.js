@@ -6,6 +6,7 @@
 //   减少动效时去掉位移与缩放,只留不超过 200ms 的明度淡入;
 //   没有 WAAPI 的环境直接落终态。
 // 取值是 index.css 里那套 token 的 JS 镜像(WAAPI 不读 CSS 变量),守卫 test/motionTokens.test.mjs 逐项比对。
+import { flushSync } from 'react-dom';
 import { motionReduced } from '../motion.js';
 import { lastInputWasKeyboard } from './inputModality.js';
 import { motionSpring } from './spring.js';
@@ -66,4 +67,47 @@ export function enterPane(pane) {
 export function enterStage(els) {
   if (pointerMotion() === 'none') return;
   for (const el of els) fadeIn(el, MOTION.hoverIn);
+}
+
+/** 收藏(精密):点亮时星标从 0.6 弹到 1(pop 弹簧);取消只闪一下明度。减少动效时两种都只走明度。 */
+export function popStar(icon, on) {
+  const mode = pointerMotion();
+  if (mode === 'none' || !icon) return;
+  if (on && mode === 'full') springTo(icon, [{ transform: 'scale(0.6)' }, { transform: 'scale(1)' }], 'pop');
+  else animate(icon, [{ opacity: 0.35 }, { opacity: 1 }], { duration: 120, easing: 'linear' });
+}
+
+const CASCADE_STEP = 20;
+const CASCADE_MAX = 8;
+
+/**
+ * 全部标读(精密):看得见的未读行自上而下每行晚 20ms 换成已读,至多 8 档——是「这一下扫过去了」的因果,不是入场。
+ * 这里只给每行写 --read-delay;换色本身是样式表里标题的 color 过渡(粗细在同一刻直接换)。返回撤掉这些变量的函数。
+ */
+export function armReadCascade(list) {
+  if (!list || pointerMotion() !== 'full') return () => {};
+  const box = list.getBoundingClientRect();
+  const rows = [...list.querySelectorAll('.reader-entry:not(.is-read)')].filter((row) => {
+    const r = row.getBoundingClientRect();
+    return r.bottom > box.top && r.top < box.bottom;
+  });
+  rows.forEach((row, i) => row.style.setProperty('--read-delay', `${Math.min(i, CASCADE_MAX) * CASCADE_STEP}ms`));
+  return () => rows.forEach((row) => row.style.removeProperty('--read-delay'));
+}
+
+/**
+ * 明暗切换(精密):整页交叉淡化 180ms(View Transitions;时长在 index.css 的 .theme-fading 规则里)。
+ * 键盘触发、浏览器不支持时直接换。toggle 必须同步把 <html data-theme> 改掉(theme.js 的 toggleTheme 如此)。
+ */
+export function themeFade(toggle) {
+  if (pointerMotion() === 'none' || typeof document === 'undefined' || !document.startViewTransition) { toggle(); return; }
+  const root = document.documentElement;
+  root.classList.add('theme-fading');
+  const done = () => root.classList.remove('theme-fading');
+  try {
+    document.startViewTransition(() => { flushSync(toggle); }).finished.then(done, done);
+  } catch {
+    done();
+    toggle();
+  }
 }
