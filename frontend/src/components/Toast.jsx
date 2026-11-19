@@ -1,5 +1,7 @@
+import { useCallback } from 'react';
 import { AlertCircle, CheckCircle2, Info, X } from 'lucide-react';
 import { useModalTransition } from '../hooks/useModalTransition';
+import { lastInputWasKeyboard } from '../utils/inputModality';
 
 const STYLES = {
   error: { bg: 'bg-rose-500', Icon: AlertCircle },
@@ -12,6 +14,9 @@ const STYLES = {
 export default function Toast({ show, message, type = 'info', onClose, action = null }) {
   // 退出时保持挂载 260ms 播放离场动画，避免「瞬间消失」的生硬感。
   const { mounted, closing } = useModalTransition(show, 260);
+  // 这条提示出现的那一刻,最近一次输入是键盘还是指针,记在它自己身上(issue #301):桌面读者面的样式按它选入场与离场那一组。
+  // 不直接看 <html data-input>——提示在场的两三秒里人换了输入方式,动画名跟着变,入场会被重播一遍
+  const stampInput = useCallback((el) => { if (el) el.dataset.input = lastInputWasKeyboard() ? 'key' : 'pointer'; }, []);
   if (!mounted) return null;
 
   const { bg, Icon } = STYLES[type] || STYLES.info;
@@ -20,6 +25,7 @@ export default function Toast({ show, message, type = 'info', onClose, action = 
   // w-max:fixed + left-1/2 的收缩宽度只有半个视口,手机上短句会被挤成竖排;按内容取宽、由 90vw 封顶(issue #213)
   return (
     <div
+      ref={stampInput}
       className={`toast-pop ${closing ? 'is-leaving' : ''} fixed left-1/2 z-[200] flex w-max max-w-[90vw] items-center gap-3 rounded-[var(--r-card)] py-3.5 pl-5 pr-3 text-white shadow-2xl ${bg}`}
       role="status"
       data-layer-keep="always"

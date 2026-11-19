@@ -15870,7 +15870,9 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 /* ── 反馈层 · 提示 ──
    自下弹入(glide 弹簧)+ 120ms 淡入,原路退出 180ms。提示是全站共用的一个元素(App 根上),
    用「页面里有正在显示的桌面读者面」限定:手机壳与管理面仍是原来那组 toast-in / toast-out。管理员从阅读器回到管理面时
-   阅读器仍挂着、只是所在的 .tab-panel 带 is-off,所以要把它排除掉。键盘触发出来的提示不位移,只淡入淡出。 */
+   阅读器仍挂着、只是所在的 .tab-panel 带 is-off,所以要把它排除掉。键盘触发出来的提示不位移,只淡入淡出——
+   是键盘还是指针,看提示自己身上的 data-input(Toast 在出现的那一刻记下),不看 <html data-input>:
+   提示在场的两三秒里人换了输入方式,动画名跟着变,入场会被重播一遍。 */
 @keyframes reader-toast-in { from { transform: translate(-50%, calc(100% + 24px)); } to { transform: translate(-50%, 0); } }
 @keyframes reader-toast-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes reader-toast-out { from { opacity: 1; transform: translate(-50%, 0); } to { opacity: 0; transform: translate(-50%, calc(100% + 24px)); } }
@@ -15879,5 +15881,5 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 @keyframes reader-toast-still-out { from { opacity: 1; transform: translate(-50%, 0); } to { opacity: 0; transform: translate(-50%, 0); } }
 :root:has(.reader-shell):not(:has(.tab-panel.is-off .reader-shell)) .toast-pop { animation: reader-toast-still-in 120ms linear both; }
 :root:has(.reader-shell):not(:has(.tab-panel.is-off .reader-shell)) .toast-pop.is-leaving { animation: reader-toast-still-out var(--motion-hover-out) linear both; }
-:root:not([data-input="key"]):has(.reader-shell):not(:has(.tab-panel.is-off .reader-shell)) .toast-pop { animation: reader-toast-in var(--motion-spring-glide-dur) var(--motion-spring-glide) both, reader-toast-fade 120ms linear both; }
-:root:not([data-input="key"]):has(.reader-shell):not(:has(.tab-panel.is-off .reader-shell)) .toast-pop.is-leaving { animation: reader-toast-out var(--motion-hover-out) var(--motion-ease) both; }
+:root:has(.reader-shell):not(:has(.tab-panel.is-off .reader-shell)) .toast-pop:not([data-input="key"]) { animation: reader-toast-in var(--motion-spring-glide-dur) var(--motion-spring-glide) both, reader-toast-fade 120ms linear both; }
+:root:has(.reader-shell):not(:has(.tab-panel.is-off .reader-shell)) .toast-pop.is-leaving:not([data-input="key"]) { animation: reader-toast-out var(--motion-hover-out) var(--motion-ease) both; }
