@@ -324,10 +324,14 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
   useEffect(() => stopPolling, [stopPolling]); // 卸载时清轮询
 
   // 引用跳转:有 id 走站内(深链落地同路,切作用域+选中一次完成),否则退外链
+  // 从引用打开站内文章:面板退场(issue #301 对拍补差,样页「合并时定的几处」)——工作区正被面板压着暗,人要去读那一篇了。
+  // 对话留着,再点导轨的问答钮就回来。原文链接是在新标签页开的,面板不动。
+  const closeForRef = useRef(null);
   const handleOpenRef = useCallback((source) => {
     if (!source) return;
     if (source.id && onOpenArticle) {
       onOpenArticle(source.id);
+      closeForRef.current?.();
       return;
     }
     if (source.source_url) window.open(source.source_url, '_blank', 'noopener');
@@ -461,6 +465,7 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
     if (!still) haloQaButton();   // 导轨上的问答钮泛一次光晕:面板的来处
   }, []);
   useEffect(() => () => { if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current); }, []);
+  useEffect(() => { closeForRef.current = closeAiPanel; }, [closeAiPanel]);
 
   // 导轨上的「问答」钮:点一次开,再点一次收(首次渲染不算一次点击)
   const seenSignal = useRef(openSignal);

@@ -15783,7 +15783,8 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
     .reader-pane-back, .reader-pane-next, .reader-pane-act, .reader-pane-sub, .reader-ai-dims,
     .reader-load-more, .reader-pager-btn, .reader-ai-summary-generate,
     .reader-disc-sub, .reader-disc-sort, .reader-disc-add, .reader-disc-back,
-    .bp-btn, .bp-hist, .bp-lbtn, .bp-chip, .bp-cal-nav, .bp-cal-day, .rk-back, .rk-latest) {
+    .bp-btn, .bp-hist, .bp-lbtn, .bp-chip, .bp-cal-nav, .bp-cal-day, .rk-back, .rk-latest,
+    .mini-seg-btn, .share-primary, .share-menu-close, .reader-ai-head-btn, .reader-ai-send, .reader-ai-seg-btn, .reader-ai-ref-row) {
   transition:
     transform var(--motion-spring-snappy-dur) var(--motion-spring-snappy),
     background-color var(--motion-hover-out) ease,
@@ -15798,7 +15799,8 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
       .reader-pane-back, .reader-pane-next, .reader-pane-act, .reader-pane-sub, .reader-ai-dims,
       .reader-load-more, .reader-pager-btn, .reader-ai-summary-generate,
       .reader-disc-sub, .reader-disc-sort, .reader-disc-add, .reader-disc-back,
-      .bp-btn, .bp-hist, .bp-lbtn, .bp-chip, .bp-cal-nav, .bp-cal-day, .rk-back, .rk-latest):hover {
+      .bp-btn, .bp-hist, .bp-lbtn, .bp-chip, .bp-cal-nav, .bp-cal-day, .rk-back, .rk-latest,
+      .mini-seg-btn, .share-primary, .share-menu-close, .reader-ai-head-btn, .reader-ai-send, .reader-ai-seg-btn, .reader-ai-ref-row):hover {
     transition-duration: var(--motion-spring-snappy-dur), var(--motion-hover-in), var(--motion-hover-in), var(--motion-hover-in), var(--motion-hover-in);
   }
 }
@@ -15810,20 +15812,37 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
     .reader-pane-back, .reader-pane-next, .reader-pane-act, .reader-pane-sub, .reader-ai-dims,
     .reader-load-more, .reader-pager-btn, .reader-ai-summary-generate,
     .reader-disc-sub, .reader-disc-sort, .reader-disc-add, .reader-disc-back,
-    .bp-btn, .bp-hist, .bp-lbtn, .bp-chip, .bp-cal-nav, .bp-cal-day, .rk-back, .rk-latest):active:not(:disabled) {
+    .bp-btn, .bp-hist, .bp-lbtn, .bp-chip, .bp-cal-nav, .bp-cal-day, .rk-back, .rk-latest,
+    .mini-seg-btn, .share-primary, .share-menu-close, .reader-ai-head-btn, .reader-ai-send, .reader-ai-seg-btn, .reader-ai-ref-row):active:not(:disabled) {
   transform: scale(0.97);
   transition-duration: var(--motion-press), var(--motion-hover-in), var(--motion-hover-in), var(--motion-hover-in), var(--motion-hover-in);
   transition-timing-function: var(--motion-ease), ease, ease, ease, ease;
 }
 /* 整行 */
-.reader-shell :is(.reader-entry, .rk-row) {
+.reader-shell :is(.reader-entry, .rk-row, .rk-tl-item) {
   transition: transform var(--motion-spring-snappy-dur) var(--motion-spring-snappy), background-color var(--motion-hover-out) ease, box-shadow var(--motion-hover-out) ease;
 }
 @media (hover: hover) {
-  .reader-shell :is(.reader-entry, .rk-row):hover { transition-duration: var(--motion-spring-snappy-dur), var(--motion-hover-in), var(--motion-hover-in); }
+  .reader-shell :is(.reader-entry, .rk-row, .rk-tl-item):hover { transition-duration: var(--motion-spring-snappy-dur), var(--motion-hover-in), var(--motion-hover-in); }
 }
 :root:not([data-input="key"]) .reader-shell .reader-entry:active:not(:has(:is(.reader-entry-fav, .reader-entry-unsub):active)) { transform: scale(0.985); transition-duration: var(--motion-press), var(--motion-hover-in), var(--motion-hover-in); transition-timing-function: var(--motion-ease), ease, ease; }
 :root:not([data-input="key"]) .reader-shell .rk-row:active:not(:has(:is(a, button:not(.rk-hit)):active)) { transform: scale(0.99); transition-duration: var(--motion-press), var(--motion-hover-in), var(--motion-hover-in); transition-timing-function: var(--motion-ease), ease, ease; }
+/* 事件页时间线的条目是整块可点的一行,同条目行 */
+:root:not([data-input="key"]) .reader-shell .rk-tl-item:active { transform: scale(0.985); transition-duration: var(--motion-press), var(--motion-hover-in), var(--motion-hover-in); transition-timing-function: var(--motion-ease), ease, ease; }
+/* 早报条目里的收藏星:它自己还有一条「悬停才浮出」的明度过渡,单独写,别被上面那条简写盖掉 */
+.reader-shell .bp-fav {
+  transition: transform var(--motion-spring-snappy-dur) var(--motion-spring-snappy), opacity var(--motion-fast) var(--motion-ease), background-color var(--motion-hover-out) ease, color var(--motion-hover-out) ease;
+}
+@media (hover: hover) {
+  .reader-shell .bp-fav:hover { transition-duration: var(--motion-spring-snappy-dur), var(--motion-fast), var(--motion-hover-in), var(--motion-hover-in); }
+}
+:root:not([data-input="key"]) .reader-shell .bp-fav:active { transform: scale(0.97); transition-duration: var(--motion-press), var(--motion-fast), var(--motion-hover-in), var(--motion-hover-in); transition-timing-function: var(--motion-ease), var(--motion-ease), ease, ease; }
+/* 右键菜单挂在 body 上(portal),不在 .reader-shell 里;它只有桌面读者面在用 */
+.ctx-menu .ctx-item { transition: transform var(--motion-spring-snappy-dur) var(--motion-spring-snappy), background-color var(--motion-hover-out) ease, color var(--motion-hover-out) ease; }
+@media (hover: hover) {
+  .ctx-menu .ctx-item:hover { transition-duration: var(--motion-spring-snappy-dur), var(--motion-hover-in), var(--motion-hover-in); }
+}
+:root:not([data-input="key"]) .ctx-menu .ctx-item:active:not(:disabled) { transform: scale(0.97); transition-duration: var(--motion-press), var(--motion-hover-in), var(--motion-hover-in); transition-timing-function: var(--motion-ease), ease, ease; }
 /* 吸顶栏里的文字动作:原规则挂在 .reader-col-read .reader-pane-bar 下,特异性高一档,单独点名 */
 .reader-shell .reader-col-read .reader-pane-bar .reader-pane-act {
   transition: transform var(--motion-spring-snappy-dur) var(--motion-spring-snappy), background-color var(--motion-hover-out) ease, color var(--motion-hover-out) ease;
@@ -15875,6 +15894,9 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
    阅读器仍挂着、只是所在的 .tab-panel 带 is-off,所以要把它排除掉。键盘触发出来的提示不位移,只淡入淡出——
    是键盘还是指针,看提示自己身上的 data-input(Toast 在出现的那一刻记下),不看 <html data-input>:
    提示在场的两三秒里人换了输入方式,动画名跟着变,入场会被重播一遍。 */
+/* 提示里的钮(动作钮、关闭钮)同小件:按下 0.97 */
+:root:has(.reader-shell):not(:has(.tab-panel.is-off .reader-shell)) .toast-pop button { transition: transform var(--motion-spring-snappy-dur) var(--motion-spring-snappy), background-color var(--motion-hover-out) ease, color var(--motion-hover-out) ease; }
+:root:not([data-input="key"]):has(.reader-shell):not(:has(.tab-panel.is-off .reader-shell)) .toast-pop button:active { transform: scale(0.97); transition-duration: var(--motion-press), var(--motion-hover-in), var(--motion-hover-in); transition-timing-function: var(--motion-ease), ease, ease; }
 @keyframes reader-toast-in { from { transform: translate(-50%, calc(100% + 24px)); } to { transform: translate(-50%, 0); } }
 @keyframes reader-toast-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes reader-toast-out { from { opacity: 1; transform: translate(-50%, 0); } to { opacity: 0; transform: translate(-50%, calc(100% + 24px)); } }
@@ -15908,7 +15930,7 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 
 /* ── 指示器与列表 · 筛选后留下的行滑到新位置 ──
    替身层(utils/listFlip.js):筛选重拉期间盖在列表上、把旧行留在原位。选中行的替身自己带选中底(真指示器被这一层挡在下面)。 */
-.reader-shell .reader-list-scroll:has(> .reader-flip-layer) { position: relative; }
+.reader-shell :is(.reader-list-scroll, .rk-wrap, .reader-disc):has(> .reader-flip-layer) { position: relative; }
 .reader-shell .reader-flip-layer { position: absolute; left: 0; top: 0; right: 0; z-index: 5; pointer-events: none; overflow: hidden; }
 .reader-shell .reader-list-scroll .reader-flip-layer .reader-entry.is-active,
 .reader-shell .reader-list-scroll.has-ind .reader-flip-layer .reader-entry.is-active { background: var(--dorami-select); }
@@ -15975,7 +15997,7 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 :root[data-vt="src-unfold"]::view-transition-group(src-bar) { z-index: 2; }
 :root[data-vt="src-unfold"]::view-transition-old(src-bar), :root[data-vt="src-unfold"]::view-transition-new(src-bar),
 :root[data-vt="src-unfold"]::view-transition-new(src-pane) { block-size: 100%; object-fit: none; object-position: left top; }
-:root[data-vt="src-unfold"]::view-transition-image-pair(src-bar) { background: var(--dorami-surface); }
+:root[data-vt="src-unfold"]::view-transition-image-pair(src-bar) { background: var(--dorami-canvas); }   /* 垫来源栏自己的底色(画布色),不是面色 */
 :root[data-vt="src-unfold"]::view-transition-old(src-bar) { animation: vt-fade-out 120ms linear both; }
 :root[data-vt="src-unfold"]::view-transition-new(src-bar) { animation: vt-fade-in 200ms 80ms linear both; }
 :root[data-vt="src-unfold"]::view-transition-old(src-list), :root[data-vt="src-unfold"]::view-transition-old(src-pane) { animation: none; opacity: 0; }
@@ -16087,3 +16109,21 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 .reader-shell[data-reading] > .reader-vrail::after { opacity: 0.7; transition: opacity var(--motion-recede) ease-in-out var(--motion-recede-wait); }
 :root[data-motion="reduce"] .reader-shell[data-reading] > :is(.reader-col-sources, .reader-col-list) { opacity: 1; }
 :root[data-motion="reduce"] .reader-shell[data-reading] > .reader-vrail::after { opacity: 0; }
+
+/* ══ 对拍补差(第七批)══ 对着样页选定稿逐场景核对后补上的几件 */
+/* 「依据」展开 / 收起:行高 0fr ⇄ 1fr(编排在 readerMotion.foldRows;这里只给容器)。
+   「依据」块自己的下外边距 12px 留在内层里面(页面卡里下面的正文块没有上外边距,间距与改动前相同),收到 0 时一起收掉、卸载前后不跳 */
+.reader-shell .reader-ai-fold { display: grid; grid-template-rows: 1fr; }
+.reader-shell .reader-ai-fold > .reader-ai-fold-in { min-height: 0; overflow: hidden; }
+
+/* 吸顶栏下缘的阴影:正文一开始往下滚就渐渐出来(0 → 72px),回到顶上原路退——进度就是滚动位置,没有时间轴。
+   用的是阅读进度线那一条时间线(--reader-scroll,阅读窗的滚动);不支持滚动驱动动画的浏览器没有这条阴影 */
+.reader-shell .reader-col-read .reader-pane-bar { position: relative; }
+.reader-shell .reader-col-read .reader-pane-bar::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 14px; pointer-events: none; opacity: 0;
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--dorami-ink) 7%, transparent), transparent);
+}
+@supports (animation-timeline: scroll()) and (timeline-scope: --x) {
+  .reader-shell .reader-col-read .reader-pane-bar::after { animation: reader-bar-shade linear both; animation-timeline: --reader-scroll; animation-range: 0px 72px; }
+}
+@keyframes reader-bar-shade { from { opacity: 0; } to { opacity: 1; } }

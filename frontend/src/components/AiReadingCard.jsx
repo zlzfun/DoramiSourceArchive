@@ -8,7 +8,7 @@ import {
 } from '../utils/analysis';
 import { splitSentences } from '../utils/readerText';
 import { motionReduced } from '../motion';
-import { pointerMotion, springTo } from '../utils/readerMotion';
+import { foldRows, motionIntent as inputIntent, pointerMotion, springTo } from '../utils/readerMotion';   // PageCard 有个同名属性 motionIntent(文章的触发方式),这里要的是「此刻的输入方式」
 
 /**
  * 哆啦美速读卡(issue #13 五轮;issue #184 改细线卡):外框色底 + 最弱细线,卡头渐变 ✦ 与分数是卡的身份。
@@ -82,6 +82,36 @@ function PageCard({
   const shownDims = podcast && !summary ? dims.map((dim) => ({ ...dim, reason: '' })) : dims;
   const hasWhy = shownDims.some((dim) => dim.reason) || Boolean(basis);
   const [why, setWhy] = useState(readWhy);
+  // 「依据」展开 / 收起带行高过渡(issue #301 对拍补差;指针触发才动):收起时等离场演完才卸载,所以「在不在文档里」另记一份。
+  // 卡挂上时本来就展开着的不演;宽窗口下这一块不显示(评分依据在页边),也不演。
+  const [whyShown, setWhyShown] = useState(why);
+  const whyRef = useRef(why);
+  const foldRef = useRef(null);
+  const foldOpenRef = useRef(false);   // 这次挂上要不要演展开(点下去那一刻定)
+  const toggleWhy = () => {
+    const next = !why;
+    const full = pointerMotion(inputIntent()) === 'full';
+    whyRef.current = next;
+    setWhy(next);
+    writeWhy(next);
+    const fold = foldRef.current;
+    if (next) {
+      if (fold) { if (full) foldRows(fold, true); else for (const anim of [...fold.getAnimations(), ...(fold.firstElementChild?.getAnimations() || [])]) anim.cancel(); }   // 收到一半又点开
+      else foldOpenRef.current = full;
+      setWhyShown(true);
+      return;
+    }
+    const closing = full && fold && fold.offsetParent !== null && fold.offsetHeight > 0 ? foldRows(fold, false) : null;
+    if (!closing) { setWhyShown(false); return; }
+    const done = () => { if (!whyRef.current) setWhyShown(false); };
+    closing.finished.then(done, () => {});   // 被新的一段撤掉(又点开了):不卸载
+  };
+  useLayoutEffect(() => {
+    if (!whyShown || !foldOpenRef.current) return;
+    foldOpenRef.current = false;
+    const fold = foldRef.current;
+    if (fold && fold.offsetParent !== null) foldRows(fold, true);
+  }, [whyShown]);
   const whyId = useId();
   const paragraphs = primaryText ? splitSentences(primaryText) : [];
   const bare = !primaryText && !summarizing && !canGenerate && !listen;
@@ -97,7 +127,7 @@ function PageCard({
             aria-expanded={hasWhy ? why : undefined}
             aria-controls={hasWhy && why ? whyId : undefined}
             disabled={!hasWhy}
-            onClick={() => { const next = !why; setWhy(next); writeWhy(next); }}
+            onClick={toggleWhy}
           >
             {dims.map((dim, index) => (
               <span key={dim.key} className="reader-ai-dim">
@@ -117,7 +147,13 @@ function PageCard({
         )}
         {listen}
       </div>
-      {why && hasWhy && <ScoreReasons dims={shownDims} basis={basis} id={whyId} className="reader-ai-why" />}
+      {whyShown && hasWhy && (
+        <div className="reader-ai-fold" ref={foldRef}>
+          <div className="reader-ai-fold-in">
+            <ScoreReasons dims={shownDims} basis={basis} id={whyId} className="reader-ai-why" />
+          </div>
+        </div>
+      )}
       <div className="reader-ai-summary-main">
         {paragraphs.length > 0 ? (
           <div className="reader-ai-layer reader-ai-layer-summary">

@@ -323,6 +323,23 @@ export function slideSourcesAway(shell, apply) {
   slide.finished.then(done, done);
 }
 
+/**
+ * 行高折叠(速读卡的「依据」):fold 是 display: grid 的外层,它唯一的子元素是 min-height: 0 / overflow: hidden 的内层。
+ * 展开:行高 0fr → 1fr 220ms,内容同时淡入;收起:内容 120ms 淡出、行高 160ms 收回,末帧保持,调用方等它的 finished 再卸载。
+ * 连点时先撤掉上一段。返回行高那条动画(起不了时返回 null)。
+ */
+export function foldRows(fold, open) {
+  const inner = fold?.firstElementChild;
+  if (!fold || !inner || !fold.animate) return null;
+  for (const anim of [...fold.getAnimations(), ...inner.getAnimations()]) anim.cancel();
+  if (open) {
+    inner.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 220, easing: 'linear' });
+    return fold.animate([{ gridTemplateRows: '0fr' }, { gridTemplateRows: '1fr' }], { duration: 220, easing: MOTION.easeDrawer });
+  }
+  inner.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 120, easing: 'linear', fill: 'forwards' });
+  return fold.animate([{ gridTemplateRows: '1fr' }, { gridTemplateRows: '0fr' }], { duration: 160, easing: MOTION.easeDrawer, fill: 'forwards' });
+}
+
 /** 来源栏展开的退路(浏览器没有 View Transitions 时):栅格第二列从 0 长到来源栏的宽度,来源栏从导轨下面滑出来。apply 之后调用。 */
 export function slideSourcesIn(shell) {
   const aside = shell?.querySelector(':scope > .reader-col-sources');
