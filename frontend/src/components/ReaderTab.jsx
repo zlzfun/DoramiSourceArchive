@@ -91,7 +91,7 @@ import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
 import { articleListenEntries, podcastListenEntries } from '../utils/listenEntries';
 import { nowPlayingFor } from '../utils/playerCore';
 import { mediaProxyUrl } from '../api';
-import { armReadCascade, enterPane, enterStage, popStar, themeFade } from '../utils/readerMotion';
+import { armReadCascade, enterPane, enterPop, enterStage, exitGhost, popStar, themeFade } from '../utils/readerMotion';
 
 // ReaderWorkspace 持有共享数据与阅读位置；这里仅负责桌面四栏与鼠标交互。
 // 条目、正文等内容组件继续供移动视图复用。
@@ -834,6 +834,13 @@ export default function ReaderTab({
   const [qaSignal, setQaSignal] = useState(0);
   const [qaOpen, setQaOpen] = useState(false);
   const srcPopRef = useRef(null);
+  // 来源下拉的开合动效(issue #301):挂上时对准范围名那颗钮 0.96 → 1,卸下前留一个替身 100ms 淡出(ref 清理在节点移出文档之前跑)
+  const srcPopMotionRef = useCallback((node) => {
+    srcPopRef.current = node;
+    if (!node) return undefined;
+    const origin = enterPop(node, shellRef.current?.querySelector('.reader-scope-btn') || null);
+    return () => { exitGhost(node, origin); srcPopRef.current = null; };
+  }, []);
   const scopeBtnRef = useRef(null);
   // 键盘收起(Escape、在某一行上按 Enter / 空格)时把焦点还给范围名按钮——浮层卸载后焦点不能掉到 body 上
   const closeSrcPop = (refocus = false) => {
@@ -1450,7 +1457,7 @@ export default function ReaderTab({
             className="reader-srcpop"
             role="dialog"
             aria-label="来源"
-            ref={srcPopRef}
+            ref={srcPopMotionRef}
             onClick={(event) => { if (event.target.closest('.reader-source-row, .reader-src-more, .reader-axis-empty-link')) closeSrcPop(); }}
             onKeyDown={(event) => {
               // 行是 div[role=button]:Enter / 空格只走它自己的 onKeyDown,不会冒出 click——这里接住,选完即收并回焦

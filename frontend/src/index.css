@@ -15856,3 +15856,18 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 /* ── 反馈层 · 明暗切换 ── 整页交叉淡化 180ms(utils/readerMotion.themeFade 在过渡期间挂 .theme-fading) */
 :root.theme-fading::view-transition-old(root),
 :root.theme-fading::view-transition-new(root) { animation-duration: 180ms; animation-timing-function: linear; }
+
+/* ── 反馈层 · 浮层开合 ──
+   往期日历、分享、右键菜单的入场改由 WAAPI 编排(hooks/usePopMotion:对准触发钮 0.96 → 1,150ms;离场 100ms 替身),
+   样式表里原来那条 dorami-popover-in / share-menu-in 在桌面读者面关掉,免得叠两次。来源下拉原来没有动画。
+   右键菜单 portal 在 body 下,只有桌面读者面在用(手机壳是动作单)。 */
+.reader-shell :is(.bp-pop, .share-menu), .ctx-menu { animation: none; }
+
+/* ── 反馈层 · 提示 ──
+   自下弹入(glide 弹簧)+ 120ms 淡入,原路退出 180ms。提示是全站共用的一个元素(App 根上),
+   用「页面里有桌面读者面」限定:手机壳与管理面仍是原来那组 toast-in / toast-out。 */
+@keyframes reader-toast-in { from { transform: translate(-50%, calc(100% + 24px)); } to { transform: translate(-50%, 0); } }
+@keyframes reader-toast-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes reader-toast-out { from { opacity: 1; transform: translate(-50%, 0); } to { opacity: 0; transform: translate(-50%, calc(100% + 24px)); } }
+:root:has(.reader-shell) .toast-pop { animation: reader-toast-in var(--motion-spring-glide-dur) var(--motion-spring-glide) both, reader-toast-fade 120ms linear both; }
+:root:has(.reader-shell) .toast-pop.is-leaving { animation: reader-toast-out var(--motion-hover-out) var(--motion-ease) both; }

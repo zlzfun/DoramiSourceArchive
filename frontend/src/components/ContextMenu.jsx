@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { usePopMotion } from '../hooks/usePopMotion';
 import { useModalA11y } from '../hooks/useModalA11y';
 
 // 右键上下文菜单(v3.28,设计样页 docs/design/dorami-context-menu-quiet.html)。
@@ -16,6 +17,7 @@ export default function ContextMenu({ x, y, items, onClose }) {
   const [pos, setPos] = useState(null);
   // Esc(捕获阶段)+ 焦点移入/关闭归还 + Tab 内循环,复用模态的 a11y 原语(§8)。
   useModalA11y(true, onClose, panelRef);
+  usePopMotion(panelRef, { origin: 'keep' });
 
   useLayoutEffect(() => {
     const el = panelRef.current;

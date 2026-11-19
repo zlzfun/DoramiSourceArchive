@@ -111,3 +111,53 @@ export function themeFade(toggle) {
     toggle();
   }
 }
+
+/** 浮层的变形原点:对准触发钮的水平中心(夹在浮层两端各留 12px 之内),纵向取贴着触发钮的那条边。 */
+export function popOrigin(pop, trigger) {
+  if (!pop || !trigger || !trigger.isConnected) return '50% 0px';
+  const b = pop.getBoundingClientRect();
+  const t = trigger.getBoundingClientRect();
+  const x = Math.round(Math.max(12, Math.min(b.width - 12, t.left + t.width / 2 - b.left)));
+  return `${x}px ${t.top + t.height / 2 > b.top + b.height / 2 ? '100%' : '0px'}`;
+}
+
+/** 浮层入场(精密):对准触发钮 0.96 → 1,150ms。trigger 传 'keep' 时沿用样式表里的原点。返回原点,离场时用同一个。 */
+export function enterPop(pop, trigger) {
+  const origin = trigger === 'keep' ? getComputedStyle(pop).transformOrigin : popOrigin(pop, trigger);
+  if (trigger !== 'keep') pop.style.transformOrigin = origin;
+  const mode = pointerMotion();
+  if (mode === 'full') animate(pop, [{ opacity: 0, transform: 'scale(0.96)' }, { opacity: 1, transform: 'none' }], { duration: MOTION.fast, easing: MOTION.ease });
+  else if (mode === 'fade') fadeIn(pop, 120);
+  return origin;
+}
+
+/**
+ * 离场替身(精密:有入场就有离场,更短、原路返回):在节点被移出文档之前调用——克隆一份,等节点真的走了再把替身放回原位,
+ * 100ms 淡出并缩到 0.98。键盘触发不留替身。节点其实没走(StrictMode 开发态多跑的那次清理)就什么都不做。
+ */
+export function exitGhost(el, origin) {
+  const mode = pointerMotion();
+  if (mode === 'none' || !el || !el.isConnected) return;
+  const parent = el.parentNode;
+  const next = el.nextSibling;
+  const ghost = el.cloneNode(true);
+  for (const attr of ['id', 'role', 'aria-label', 'aria-modal', 'tabindex']) ghost.removeAttribute(attr);
+  ghost.querySelectorAll('[id]').forEach((node) => node.removeAttribute('id'));
+  ghost.setAttribute('aria-hidden', 'true');
+  ghost.setAttribute('inert', '');
+  Object.assign(ghost.style, { pointerEvents: 'none', animation: 'none', transformOrigin: origin || '' });
+  // 滚动位置跟着替身走(来源下拉滚过之后关掉,不该跳回顶)
+  const scrolled = [el, ...el.querySelectorAll('*')].map((node, i) => [i, node.scrollTop]).filter(([, top]) => top > 0);
+  queueMicrotask(() => {
+    if (el.isConnected || !parent.isConnected) return;
+    parent.insertBefore(ghost, next && next.parentNode === parent ? next : null);
+    const copies = [ghost, ...ghost.querySelectorAll('*')];
+    for (const [i, top] of scrolled) if (copies[i]) copies[i].scrollTop = top;
+    const keyframes = mode === 'full'
+      ? [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(0.98)' }]
+      : [{ opacity: 1 }, { opacity: 0 }];
+    const drop = () => ghost.remove();
+    const anim = ghost.animate(keyframes, { duration: 100, easing: MOTION.ease, fill: 'forwards' });
+    anim.finished.then(drop, drop);
+  });
+}
