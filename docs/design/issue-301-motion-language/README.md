@@ -1,6 +1,6 @@
 # issue #301 动效重构 · 调研与样页（2026-11）
 
-> 状态：耐久参考。两轮样页（2026-11-17 调研与四方向，11-18 逐场景选定，11-19 把「切换视图」「AI 速读卡」改为精密后放行）。拍板依据，实现后不再更新；落地见 [方案](../../plans/issue-301-motion-language.md) 与 [issue #301](https://github.com/zlzfun/DoramiSourceArchive/issues/301)。
+> 状态：耐久参考。两轮样页（2026-11-17 调研与四方向，11-18 逐场景选定，11-19 把「切换视图」「AI 速读卡」改为精密后放行）。拍板依据，实现后不再更新；落地见 [方案](../../archive/issue-301-motion-language.md) 与 [issue #301](https://github.com/zlzfun/DoramiSourceArchive/issues/301)。
 > 第一轮：2026-11-17 由 Claude Code（Fable 5.2）应用户要求做：先调研动效方面的优秀实践（技能、组件库、平台能力），再用样页呈现可能的方向。用户说明本轮可以改规范里的动效约束，也可以动版式（包括元素常态隐藏、悬停或点击时再出现）。
 
 ## 怎么看
