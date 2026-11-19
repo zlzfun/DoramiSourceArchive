@@ -94,7 +94,7 @@ import { mediaProxyUrl } from '../api';
 import { mountGlideIndicators } from '../utils/glideIndicators';
 import { mountListFlip } from '../utils/listFlip';
 import { endArrival, mountSubscribeFly, mountTitleDock } from '../utils/spatialMotion';
-import { armReadCascade, currentIntent, enterPane, enterPop, enterStage, exitGhost, holdIntent, motionIntent, popStar, releaseIntent, releaseIntentSoon, themeFade } from '../utils/readerMotion';
+import { armReadCascade, currentIntent, enterPane, enterPop, enterStage, exitGhost, holdIntent, motionIntent, popStar, releaseIntent, releaseIntentSoon, slideSourcesAway, slideSourcesIn, themeFade, viewTransit } from '../utils/readerMotion';
 
 // ReaderWorkspace 持有共享数据与阅读位置；这里仅负责桌面四栏与鼠标交互。
 // 条目、正文等内容组件继续供移动视图复用。
@@ -886,12 +886,13 @@ export default function ReaderTab({
   const [qaSignal, setQaSignal] = useState(0);
   const [qaOpen, setQaOpen] = useState(false);
   const srcPopRef = useRef(null);
+  const srcPopMorphRef = useRef(false);   // 这一次关闭是「变成来源栏」:浮层由共享元素转场接手,不留离场替身
   // 来源下拉的开合动效(issue #301):挂上时对准范围名那颗钮 0.96 → 1,卸下前留一个替身 100ms 淡出(ref 清理在节点移出文档之前跑)
   const srcPopMotionRef = useCallback((node) => {
     srcPopRef.current = node;
     if (!node) return undefined;
     const origin = enterPop(node, shellRef.current?.querySelector('.reader-scope-btn') || null);
-    return () => { exitGhost(node, origin); srcPopRef.current = null; };
+    return () => { if (!srcPopMorphRef.current) exitGhost(node, origin); srcPopRef.current = null; };
   }, []);
   const scopeBtnRef = useRef(null);
   // 键盘收起(Escape、在某一行上按 Enter / 空格)时把焦点还给范围名按钮——浮层卸载后焦点不能掉到 body 上
@@ -899,11 +900,27 @@ export default function ReaderTab({
     setSrcPop(false);
     if (refocus) scopeBtnRef.current?.focus();
   };
+  // 来源栏收起与展开(issue #301 第四批,连续):收起时整块滑到导轨下面;展开只会从来源下拉里的「固定来源栏」点出来,
+  // 那时浮层变形成来源栏(View Transitions;不支持时退回从导轨下面滑出)。键盘触发、减少动效都直接换。
   const toggleSrcFold = () => {
     const next = !srcFolded;
-    setSrcFolded(next);
-    setSrcPop(false);
-    try { window.localStorage.setItem(SRC_FOLD_KEY, next ? '1' : ''); } catch { /* 隐私模式:本次会话内有效 */ }
+    const apply = () => {
+      setSrcFolded(next);
+      setSrcPop(false);
+      try { window.localStorage.setItem(SRC_FOLD_KEY, next ? '1' : ''); } catch { /* 隐私模式:本次会话内有效 */ }
+    };
+    const shell = shellRef.current;
+    if (next) { slideSourcesAway(shell, apply); return; }
+    const pop = srcPopRef.current;
+    const cols = () => [shell?.querySelector(':scope > .reader-col-list'), shell?.querySelector(':scope > .reader-col-read')];
+    srcPopMorphRef.current = Boolean(pop);
+    const morphed = pop && viewTransit('src-unfold', apply, {
+      before(name) { const [list, read] = cols(); name(pop, 'src-bar'); name(list, 'src-list'); name(read, 'src-pane'); },
+      after(name) { const [list, read] = cols(); name(shell.querySelector(':scope > .reader-col-sources'), 'src-bar'); name(list, 'src-list'); name(read, 'src-pane'); },
+    });
+    if (!pop) apply();
+    const settle = () => { srcPopMorphRef.current = false; };
+    if (!morphed) { settle(); slideSourcesIn(shell); } else morphed.finished.then(settle, settle);
   };
   useEffect(() => {
     if (!srcPop) return undefined;

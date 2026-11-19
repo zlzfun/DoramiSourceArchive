@@ -33,6 +33,7 @@ import { formatPublishDateTime, formatRelativeTime } from '../utils/datetime';
 import { SOURCE_ROLES, resolveCompany } from '../sourceTaxonomy';
 import LogoMark from './LogoMark';
 import Sheet from './layer/Sheet';
+import { fadeIn, inViewport, riseIn, shareTitle, viewTransit } from '../utils/readerMotion';
 
 // ── 榜单(issue #221 收敛版,2026-11-03 拍板;设计稿 docs/design/issue-221-rankings/converge.html 第 2 节「收敛后」)──
 // 三段 热点事件 · 深度阅读 · 播客精选,三段同一套卡片语法(方案 §3):名次列(宋体齐线数字 + 下方变化)·
@@ -435,14 +436,65 @@ export default function RankingsPage({
   const pendingListRef = useRef(restore && !(restore.event && !mobile)
     ? { scroll: restore.listScroll || 0, row: restore.event ? restore.event.event_id : restore.row }
     : null);
+  // 榜单卡 ⇄ 事件页(issue #301 第四批,连续):桌面上卡面展开成页、标题是同一个,返回时收回卡里(View Transitions)。
+  // 键盘触发、减少动效、浏览器不支持时 viewTransit 直接换;返回时那张卡已不在视口,就整页交叉淡化。手机壳是底部层,不走这里。
   const openEvent = useCallback((item) => {
-    seqRef.current += 1;
-    listScrollRef.current = mainRef.current?.scrollTop || 0;
-    returnRowRef.current = item.event_id;
-    setDetail({ seq: seqRef.current, id: item.event_id, range: rng, item, status: 'loading', data: null, error: '' });
-    setDetailOpen(true);
-  }, [rng]);
-  const closeEvent = useCallback(() => setDetailOpen(false), []);
+    const main = mainRef.current;
+    const apply = () => {
+      seqRef.current += 1;
+      listScrollRef.current = main?.scrollTop || 0;
+      returnRowRef.current = item.event_id;
+      setDetail({ seq: seqRef.current, id: item.event_id, range: rng, item, status: 'loading', data: null, error: '' });
+      setDetailOpen(true);
+    };
+    const row = mobile ? null : main?.querySelector(`.rk-row[data-row="${CSS.escape(String(item.event_id))}"]`);
+    if (!row) { apply(); return; }
+    const title = shareTitle();
+    const shared = viewTransit('rk-open', apply, {
+      before(name) {
+        name(row, 'rk-card');
+        const h = row.querySelector('.rk-title');
+        if (inViewport(h)) { name(h, 'rk-title'); title.take(h); }
+      },
+      after(name) {
+        const page = main.querySelector('.rk-event');
+        name(page, 'rk-card');
+        const h = page?.querySelector('.rk-dtitle');
+        if (inViewport(h)) { name(h, 'rk-title'); title.give(h); }
+        // 页里其余的块晚一点升上来(标题由卡里那一个接着走,不在其列)
+        for (const el of page?.querySelectorAll('.rk-backrow, .rk-dh > :not(.rk-dtitle), .rk-ebody') || []) riseIn(el, { duration: 320, dist: 12, delay: 60 });
+      },
+    });
+    if (!shared) fadeIn(main?.querySelector('.rk-event'), 100);
+  }, [rng, mobile]);
+  const closeEvent = useCallback(() => {
+    const main = mainRef.current;
+    const page = mobile ? null : main?.querySelector('.rk-event');
+    const apply = () => setDetailOpen(false);
+    if (!page) { apply(); return; }
+    const backTo = returnRowRef.current;
+    const title = shareTitle();
+    const shared = viewTransit('rk-back', apply, {
+      before(name) {
+        name(page, 'rk-card');
+        const h = page.querySelector('.rk-dtitle');
+        if (inViewport(h)) { name(h, 'rk-title'); title.take(h); }
+      },
+      after(name) {
+        const row = backTo == null ? null : main.querySelector(`.rk-row[data-row="${CSS.escape(String(backTo))}"]`);
+        if (inViewport(row)) {
+          name(row, 'rk-card');
+          const h = row.querySelector('.rk-title');
+          if (inViewport(h)) { name(h, 'rk-title'); title.give(h); }
+        } else {
+          // 卡已经滚出视口(或这一期榜单里没有它了):没有去处可收,整页交叉淡化
+          document.documentElement.dataset.vt = 'rk-swap';
+          name(main, 'rk-stage');
+        }
+      },
+    });
+    if (!shared) fadeIn(main?.querySelector('.rk-wrap'), 100);
+  }, [mobile]);
   const detailSeq = detail?.seq;
   const detailId = detail?.id;
   const detailRange = detail?.range;
