@@ -63,7 +63,7 @@ function motionCss(text) {
   return { root, fallback };
 }
 
-const DURATIONS = { '--motion-press': '120ms', '--motion-hover-in': '100ms', '--motion-hover-out': '180ms', '--motion-fast': '150ms', '--motion-base': '200ms', '--motion-medium': '240ms', '--motion-slow': '300ms', '--motion-drawer': '360ms' };
+const DURATIONS = { '--motion-press': '120ms', '--motion-recede': '600ms', '--motion-recede-wait': '240ms', '--motion-hover-in': '100ms', '--motion-hover-out': '180ms', '--motion-fast': '150ms', '--motion-base': '200ms', '--motion-medium': '240ms', '--motion-slow': '300ms', '--motion-drawer': '360ms' };
 const CURVES = { '--motion-ease': 'cubic-bezier(0.22, 1, 0.36, 1)', '--motion-ease-drawer': 'cubic-bezier(0.32, 0.72, 0, 1)', '--motion-ease-focus': 'cubic-bezier(0.2, 0.8, 0.2, 1)' };
 
 /** 全部期望值逐条核对,返回问题清单(空 = 通过)。 */
