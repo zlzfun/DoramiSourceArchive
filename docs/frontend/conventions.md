@@ -458,11 +458,16 @@
   - **取值只用 token**(`frontend/src/index.css`,守卫 `frontend/test/motionTokens.test.mjs`):
     曲线三条 `--motion-ease`(出入场、位移收尾)/ `--motion-ease-drawer`(整块滑动)/ `--motion-ease-focus`(由虚到实,只给问答面板);
     时长 `--motion-press`(120)/ `--motion-hover-in`(100)/ `--motion-hover-out`(180,进快出慢)/ `--motion-fast`(150)/
-    `--motion-base`(200)/ `--motion-drawer`(360);常规交互不超过 300ms(来源栏与位移弹簧除外),界面一出现就能点。
+    `--motion-base`(200)/ `--motion-drawer`(360)/ `--motion-recede`(600,配 `--motion-recede-wait` 240:沉浸阅读的退后);
+    常规交互不超过 300ms(来源栏、位移弹簧与沉浸阅读的退后除外),界面一出现就能点。
     弹簧五档 `--motion-spring-<snappy|glide|move|settle|pop>` 配各自的 `-dur`(落定时长,曲线必须配它用),
     JS 里用 `utils/spring.js` 的 `motionSpring('<档>')`;五档的参数表 `MOTION_SPRINGS` 是唯一来源,不另起参数。
   - **可动的属性**:`transform`、`opacity`、`clip-path`。`filter: blur` 只在问答面板上且不超过 300ms(上面那一次导轨光晕不在此限)。
     会引起重排的过渡只有两处:来源栏的列宽、速读卡「依据」展开的行高(`grid-template-rows` 0fr ⇄ 1fr,220ms)。
+  - **在场与退场**:只有一项——沉浸阅读(`utils/immersiveRead.js`):正文往下读过一屏,导轨、来源栏、条目列退后到 30%;
+    指针碰到、往回滚、按键(滚动键除外)、焦点进来、换了一篇,立刻回来。规矩:退场的只能是当前这件事用不到的东西;
+    只降明度,不动版式、不藏入口、不拦点击;退得慢、回得快;减少动效时不退。它跟随阅读位置,不是按键的反馈,键盘往下读也照常退后。
+    行内动作、来源栏探出、吸顶栏收放三项拍板不做,增加退场项要拍板。
   - **可打断**:连点、反复开合、动画中途切视图不能坏。View Transitions 只给榜单卡成页、浮层变来源栏、明暗三处;
     切视图、打开文章这类高频的换内容与紧跟提示的操作不用(过渡进行中页面不响应点击,也不能中途改向)。
     浏览器不支持时直接换,不报错(完整效果 Chrome / Edge 115;111–114 滚动停靠退回脚本实现)。

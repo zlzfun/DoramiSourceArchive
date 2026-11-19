@@ -94,6 +94,7 @@ import { mediaProxyUrl } from '../api';
 import { mountGlideIndicators } from '../utils/glideIndicators';
 import { mountListFlip } from '../utils/listFlip';
 import { endArrival, mountSubscribeFly, mountTitleDock } from '../utils/spatialMotion';
+import { mountImmersiveRead } from '../utils/immersiveRead';
 import { armReadCascade, currentIntent, enterPane, enterPop, enterStage, exitGhost, holdIntent, motionIntent, popStar, releaseIntent, releaseIntentSoon, slideSourcesAway, slideSourcesIn, themeFade, viewTransit } from '../utils/readerMotion';
 
 // ReaderWorkspace 持有共享数据与阅读位置；这里仅负责桌面四栏与鼠标交互。
@@ -815,6 +816,8 @@ export default function ReaderTab({
   // 空间转场(第四批)里同样独立成层的两件:订阅成功时徽标飞到导轨;标题滚动停靠的脚本退路(支持滚动驱动动画的浏览器不挂)
   useEffect(() => mountSubscribeFly(shellRef.current), []);
   useEffect(() => mountTitleDock(shellRef.current), []);
+  // 沉浸阅读(issue #301 第六批):正文往下读过一屏,导轨、来源栏、条目列退后;一碰就回
+  useEffect(() => mountImmersiveRead(shellRef.current), []);
   // 早报到场只认「载入时就落在早报」的那一次:落在别的视图,或早报出内容之前就切走了,这次载入不再播
   useEffect(() => { if (!briefOpen) endArrival(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   const stageKey = briefOpen ? 'brief' : rankingsOpen ? 'rankings' : railActive;
@@ -1774,8 +1777,9 @@ export default function ReaderTab({
               </div>
             </div>
 
-          {/* key 按文章 id 重挂载;挂上时由 paneEnterRef 播入场(issue #301:指针触发才动,键盘触发直接换) */}
-          <article className="reader-pane" key={activeArticle.id} ref={paneEnterRef}>
+          {/* key 按文章 id 重挂载;挂上时由 paneEnterRef 播入场(issue #301:指针触发才动,键盘触发直接换)。
+              data-immersive:只有文章的阅读窗参与沉浸阅读(utils/immersiveRead.js);播客详情共用这个容器,但不退 */}
+          <article className="reader-pane" key={activeArticle.id} ref={paneEnterRef} data-immersive={podcastView ? undefined : ''}>
             {/* 标题区三行(issue #279 第三批;此前四行):眉题(类别;非资讯写内容类型,资讯写事件类型,issue #178)/
                 衬线标题 / 署名行(只放事实:日期 · 时长 · 阅读量 · 分析状态)。原先的尾行拆走了:动作进吸顶栏,
                 标签进速读卡脚或页边。播客另有一行收听入口(这一屏唯一的实心钮),封面在标题左边。 */}

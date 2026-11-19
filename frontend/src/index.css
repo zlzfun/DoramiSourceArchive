@@ -276,6 +276,8 @@
   --motion-hover-out: 180ms;  /* 悬停底色:出 */
   --motion-base: 200ms;       /* 行状态换色这类常规过渡 */
   --motion-drawer: 360ms;     /* 来源栏整块滑入 / 滑出 */
+  --motion-recede: 600ms;     /* 沉浸阅读:导轨 / 来源栏 / 条目列退后——慢,不抢注意;回来用 --motion-fast,一碰就回 */
+  --motion-recede-wait: 240ms; /* 退后之前先等这么久:滚动中途顿一下不至于来回闪 */
   /* snappy(0.28s · 回弹 0):松手回弹 */
   --motion-spring-snappy: linear(0, 0.0538, 0.17, 0.3049, 0.4358, 0.5523, 0.6507, 0.731, 0.7951, 0.8453, 0.884, 0.9136, 0.936, 0.9528, 0.9653, 0.9746, 0.9815, 0.9865, 0.9902, 0.9929, 0.9949, 0.9963, 0.9973, 0.9981, 0.9986, 1);
   --motion-spring-snappy-dur: 413ms;
@@ -16067,3 +16069,21 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
    提问的那一刻问句由虚到实、回答到达时各段依次由虚到实,都在 utils/qaMotion 里,各只演一次;重新挂载的旧问答直接在 */
 .reader-shell .reader-ai-turn,
 .reader-shell .reader-ai-a { animation: none; }
+
+/* ══ 沉浸阅读(第六批)══
+   正文往下读过一屏,导轨、来源栏、条目列退后到 30%(utils/immersiveRead.js 在外壳上写 data-reading);
+   指针碰到、往回滚、按键、焦点进来、换了一篇,立刻回来。只降明度:不动版式、不藏入口、不拦点击。
+   退得慢(600ms,先等 240ms)、回得快(150ms)。减少动效时不退。
+   来源栏与条目列直接降自己的明度。导轨不能这样做:明度小于 1 的元素自成层叠上下文,导轨上的悬停浮签(.reader-vrail-tip)
+   要盖在旁边一栏之上,会被困在导轨里(回场的 150ms 里浮签被来源栏盖住,到 100% 才跳出来)——
+   所以导轨是盖一层同底色、70% 的罩(与内容降到 30% 是同一个结果),浮签的层级在罩之上。 */
+.reader-shell > :is(.reader-col-sources, .reader-col-list) { transition: opacity var(--motion-fast) var(--motion-ease); }
+.reader-shell[data-reading] > :is(.reader-col-sources, .reader-col-list) { opacity: 0.3; transition: opacity var(--motion-recede) ease-in-out var(--motion-recede-wait); }
+.reader-shell > .reader-vrail { position: relative; }
+.reader-shell > .reader-vrail::after {
+  content: ""; position: absolute; inset: 0; z-index: 2; pointer-events: none;
+  background: var(--dorami-canvas); opacity: 0; transition: opacity var(--motion-fast) var(--motion-ease);
+}
+.reader-shell[data-reading] > .reader-vrail::after { opacity: 0.7; transition: opacity var(--motion-recede) ease-in-out var(--motion-recede-wait); }
+:root[data-motion="reduce"] .reader-shell[data-reading] > :is(.reader-col-sources, .reader-col-list) { opacity: 1; }
+:root[data-motion="reduce"] .reader-shell[data-reading] > .reader-vrail::after { opacity: 0; }
