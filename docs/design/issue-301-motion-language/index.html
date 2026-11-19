@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>哆啦美 · 动效重构 · 选定稿与样页</title>
+<link rel="stylesheet" href="../../../frontend/public/fonts/dorami-serif-v1/dorami-serif.css">
+<link rel="stylesheet" href="../../../frontend/public/fonts/dorami-latin-v1/dorami-latin.css">
+<link rel="stylesheet" href="assets/base.css?v=1119c">
+<link rel="stylesheet" href="assets/index.css?v=1119c">
+</head>
+<body>
+<header class="top">
+  <b>哆啦美 · 动效</b>
+  <nav>
+    <a href="#final">选定稿</a><a href="#rules">规则定稿</a><a href="#plan">落地</a><a href="#open">拍板</a><i></i><a href="#dirs">四种语言</a><a href="#cmp">逐场景对照</a><a href="#presence">在场与退场</a><a href="#research">调研</a><a href="#now">现状</a>
+  </nav>
+  <span class="grow"></span>
+  <div class="seg mini" id="theme-seg"><button data-theme="dark">暗</button><button data-theme="light">亮</button></div>
+  <a class="btn primary" href="app.html?dir=s">整机原型</a>
+</header>
+
+<main class="wrap">
+
+<section id="final">
+  <h2>选定稿</h2>
+  <table class="lang">
+    <tbody>
+      <tr><td><b>精密做底</b></td><td>悬停与按下、浮层、打开文章、切换视图、AI 速读卡、收藏与提示、明暗</td><td>短、准、可打断。弹簧、对准触发点的缩放,键盘触发的一律不动</td></tr>
+      <tr><td><b>连续管空间</b></td><td>指示器与筛选、来源栏、早报到场、滚动停靠、榜单进事件、订阅</td><td>东西有来处、有去处。指示器滑过去;卡面展开成页;徽标飞到它去的地方</td></tr>
+      <tr><td><b>光只给问答</b></td><td>问答面板</td><td>玻璃、由虚到实、极光沿边一圈。别处不发光、不做玻璃</td></tr>
+      <tr><td><b>退场</b></td><td>沉浸阅读</td><td>正文往下读过一屏,导轨、来源栏、列表降到 30%;指针碰到、回滚、按键即回</td></tr>
+    </tbody>
+  </table>
+  <div class="cmp-tools" style="margin: 18px 0 0"><a class="btn primary" href="app.html?dir=s">在整机原型里用选定稿</a></div>
+  <div id="final-rows" class="final-grid"></div>
+
+  <h3>合并时定的几处</h3>
+  <table>
+    <thead><tr><th>交界</th><th>定成</th><th>依据</th></tr></thead>
+    <tbody>
+      <tr><td>列表选中块怎么滑</td><td>弹簧滑动,不拉伸;筛选时与行同拍</td><td>它出现在「打开一篇文章」一行(精密)。分段、页签、类型签、导轨、来源栏的指示器按「指示器与筛选」一行(连续):前缘先到、后缘跟上</td></tr>
+      <tr><td>打开文章时的速读卡</td><td>卡体随正文 120ms 淡入;分数逐位滚动约 580ms</td><td>「AI 速读卡」一行(精密)。右边一位先动、往左每位晚 60ms,数字没变的那一位不动;键盘换篇不滚</td></tr>
+      <tr><td>换视图(点导轨、从早报或榜单打开文章、返回)</td><td>内容直接换,工作区 100ms 淡入;打开文章时标题区另上移 6px</td><td>「切换视图」「打开一篇文章」两行都是精密,不带方向</td></tr>
+      <tr><td>切视图时导轨上的指示器</td><td>前缘先到、后缘跟上</td><td>「指示器与筛选」一行(连续)。切视图时全页只有它在位移</td></tr>
+      <tr><td>来源栏浮层点「固定为来源栏」</td><td>浮层变形成来源栏</td><td>「来源栏收起与展开」一行(连续);浮层本身的开合按精密</td></tr>
+      <tr><td>不是从榜单卡进事件页</td><td>淡入 + 上移 6px</td><td>文章里的事件链接没有卡面可接,退回精密的写法</td></tr>
+      <tr><td>「依据」展开</td><td>行高过渡 220ms</td><td>没有出现在任何一格里,取精密</td></tr>
+      <tr><td>从问答的引用打开文章</td><td>面板虚化退场 160ms</td><td>面板是光的件,退场跟它自己的入场</td></tr>
+      <tr><td>问答打开时导轨上的问答钮</td><td>泛一次光晕 600ms</td><td>光唯一落在面板之外的地方:它是面板的来处</td></tr>
+      <tr><td>弹簧并档</td><td>五档:snappy、glide、move、settle、pop</td><td>提示的弹簧(0.35s · 0.2)并进 glide(0.32s · 0.12),订阅钮(0.30s · 0.3)并进 pop,分数滚动(0.40s · 0)并进 move,位移差在 1px 以内</td></tr>
+      <tr><td>View Transitions</td><td>只剩两处转场 + 明暗</td><td>榜单卡成页、浮层变来源栏。切视图、打开文章与浮层选了精密,不用它</td></tr>
+      <tr><td>D 刊物</td><td>整套不进</td><td>没有一行选它</td></tr>
+    </tbody>
+  </table>
+
+  <h3>取值</h3>
+  <div id="final-tokens"></div>
+</section>
+
+<section id="rules">
+  <h2>规则定稿</h2>
+  <table>
+    <thead><tr><th>条目</th><th>现行 §7</th><th>改成</th></tr></thead>
+    <tbody>
+      <tr><td>总纲</td><td>工作区只做反馈,白名单之外不加;例外逐条具名登记</td><td>三句话:精密做底、连续管空间、光只给问答。白名单换成下面的分级、材料与清单</td></tr>
+      <tr><td>能不能动</td><td>白名单</td><td>键盘触发的不动(j / k 换篇的 180ms 入场去掉)。指针触发的要说得出用途:反馈、空间一致、状态指示、避免突变之一</td></tr>
+      <tr><td>材料</td><td>没有成文</td><td>精密:弹簧、对准触发点的缩放、6px 以内的位移。连续:滑动的指示器、FLIP、整块滑动、容器变形、沿弧线飞到去处的件。光:模糊对焦、极光、玻璃,只许出现在问答面板</td></tr>
+      <tr><td>空间</td><td>没有成文</td><td>来源栏整块滑到导轨下面。榜单卡展开成事件页,返回收回卡里。订阅的徽标飞到导轨上对应的图标。切视图、打开文章这类换内容不带方向:直接换,工作区 100ms 淡入</td></tr>
+      <tr><td>入场编排</td><td>工作区不做</td><td>仍不做,除清单里的三处:早报到场(三拍)、问答面板打开与回答、订阅成功(徽标飞到导轨)。清单进规范,增删要拍板</td></tr>
+      <tr><td>离场</td><td>没有要求</td><td>有入场就有离场,更短(浮层 150 入 / 100 出,提示弹入 / 180 出),原路返回</td></tr>
+      <tr><td>曲线</td><td>一条 <code>--motion-ease</code></td><td>三条:ease-out、drawer、focus(focus 只给问答面板)</td></tr>
+      <tr><td>时长</td><td>150 / 240 / 300</td><td>按下 120、悬停进 100 出 180、快 150、常 200、来源栏 360。常规交互不超过 300ms(来源栏与位移弹簧除外),界面一出现就能点</td></tr>
+      <tr><td>弹簧</td><td>只在两个具名例外里</td><td>五档 token,桌面与手机壳共用一个取样工具:snappy、glide、move、settle、pop</td></tr>
+      <tr><td>可动的属性</td><td>播放条例外里写过</td><td>全站:transform、opacity、clip-path。filter 只在问答面板上且不超过 300ms。列宽过渡只有来源栏一处</td></tr>
+      <tr><td>可打断</td><td>没有成文</td><td>连点、反复开合、动画中途切视图不能坏。View Transitions 只给榜单卡成页、浮层变来源栏、明暗三处;切视图、打开文章这类高频的换内容与紧跟提示的操作不用</td></tr>
+      <tr><td>编排上限</td><td>没有成文</td><td>一个容器只有一层入场;错峰不等距、不超过 5 件;循环动画为零(问答等待时的流光除外)</td></tr>
+      <tr><td>减少动效</td><td>应用内开关,全局压到 1ms</td><td>开关不变。降级改成:位移、缩放、极光不出现,指示器直接落位,明度变化保留</td></tr>
+      <tr><td>验收</td><td>build 通过 + 目检</td><td>每个新增动效附连拍图(正常与减少动效各一),连点与中途打断各试一次,进 PR</td></tr>
+      <tr><td>具名例外·分数里程表</td><td>2.2s,v3.45.1 拍板保留</td><td>保留,缩短:换篇时分数逐位滚动约 580ms,右边一位先动、每位晚 60ms,数字没变的那一位不动;键盘换篇与减少动效下不滚</td></tr>
+      <tr><td>具名例外·轨面标签揭示</td><td>管理面应用导轨</td><td>不动</td></tr>
+      <tr><td>具名例外·播放条形变、移动弹簧</td><td>各自登记</td><td>观感不动;弹簧取样工具与 token 命名并到同一套</td></tr>
+      <tr><td>登录与品牌、运维首页数字滚动</td><td>各自成文</td><td>不动</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="plan">
+  <h2>落地</h2>
+  <ol class="steps">
+    <li><b>规则与 token</b>§7 按上表改写;三条曲线、时长档、五档弹簧落进 <code>index.css</code>,弹簧取样从 <code>utils/playerSpring.js</code> 抽成共用;桌面读者面写死的时长并档。不改观感</li>
+    <li><b>反馈层</b>按下与悬停、浮层原点缩放与离场、提示弹入与退出、星标、行状态换色、明暗交叉淡化;切视图与打开文章的换法(直接换 + 100ms 淡入,标题区上移 6px);速读卡分数逐位滚动;键盘换篇不再入场</li>
+    <li><b>指示器与列表</b>滑动指示器(分段、页签、类型签、导轨、来源栏、列表选中块);筛选后行滑到新位置</li>
+    <li><b>空间转场</b>榜单卡展开成页、来源栏整块滑动与浮层变形、标题滚动停靠、早报到场三拍、订阅飞入</li>
+    <li><b>问答的光</b>问答面板(现网是右下角浮窗,玻璃与极光落在浮窗上)、等待时的流光、回答逐段对焦、引用角标依次亮</li>
+    <li><b>沉浸阅读</b>动版式,单独目检</li>
+  </ol>
+</section>
+
+<section id="open">
+  <h2>拍板</h2>
+  <table>
+    <thead><tr><th>事项</th><th>定成</th><th>日期</th></tr></thead>
+    <tbody>
+      <tr><td>选定稿</td><td>放行,开工。切换视图与 AI 速读卡由连续、光改为精密,其余按逐场景选择</td><td>11-19</td></tr>
+      <tr><td>React 19.2.5 → 19.3</td><td>先不升:由状态驱动的转场只剩榜单卡成页、浮层变来源栏两处,用原生接口加 <code>flushSync</code> 手写。第四批里对不齐重画时机再升(已获许可)</td><td>11-19</td></tr>
+      <tr><td>浏览器下限</td><td>完整效果 Chrome / Edge 115;111–114 滚动停靠退回脚本实现;低于 111 的两处转场与明暗直接换,不报错。内网读者的浏览器版本未知</td><td>11-19</td></tr>
+      <tr><td>分数里程表</td><td>保留为具名例外,2.2s 缩成约 580ms 的逐位滚动</td><td>11-19</td></tr>
+      <tr><td>键盘换篇</td><td>不再入场。现网 j / k 换篇带 180ms 入场</td><td>11-19</td></tr>
+      <tr><td>范围</td><td>本波只做桌面读者面;token 落在全站层,手机壳与管理面观感不动</td><td>11-19</td></tr>
+      <tr><td>Motion 等动效库</td><td>不引。CSS、WAAPI 与浏览器原生的 View Transitions 够用</td><td>11-19</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<div class="divider"><span>第一轮</span></div>
+
+<section id="dirs">
+  <h2>四种语言</h2>
+  <table class="dirs">
+    <thead><tr>
+      <th></th>
+      <th>现网<span>工作区只做反馈,入场一律淡入</span></th>
+      <th>A 精密<span>件有质量与阻尼,短、准、可打断</span></th>
+      <th>B 连续<span>东西从哪来、回哪去</span></th>
+      <th>C 光<span>不位移,只亮起、对焦、熄灭</span></th>
+      <th>D 刊物<span>动的是排印</span></th>
+    </tr></thead>
+    <tbody>
+      <tr><td>材料</td><td>淡入、上移 6px</td><td>弹簧、滑动的指示器、对准触发点的缩放</td><td>共享元素、容器变形、有方向的位移</td><td>焦点、辉光与光标照明、极光</td><td>行遮罩、画线、翻牌、硬切</td></tr>
+      <tr><td>位移</td><td>≤ 18px</td><td>≤ 24px</td><td>整件飞到新位置</td><td>≤ 4px</td><td>一行高</td></tr>
+      <tr><td>时长</td><td>130–300ms;分数里程表 2.2s</td><td>100–280ms;分数滚动约 590ms</td><td>明度 180ms;位移弹簧落定 440–640ms</td><td>对焦 260ms;点亮 600–700ms;极光一圈 1.15s;破晓 1.4s</td><td>硬切 80ms;字行 520ms;翻牌约 450ms;开版约 1.2s</td></tr>
+      <tr><td>签名时刻</td><td>登录深空剧场、播放条形变(都在工作区之外或是具名例外)</td><td>不设。它的签名是没有多余的</td><td>打开文章、问答从钮里长出、圆形换主题、榜单卡展开成页</td><td>早报「破晓」、AI 极光边、明暗「晨昏线」</td><td>早报「开版」、分数翻牌、明暗「翻页」</td></tr>
+      <tr><td>实现</td><td>CSS</td><td>CSS 过渡 + WAAPI</td><td>View Transitions(React 19.3 的 <code>&lt;ViewTransition&gt;</code>)+ FLIP</td><td>CSS(filter、mask、渐变)+ 少量脚本</td><td>CSS + 分行、翻牌两件小工具</td></tr>
+      <tr><td>新依赖</td><td>—</td><td>无</td><td>无;React 19.2.5 → 19.3</td><td>无</td><td>无</td></tr>
+      <tr><td>最大的风险</td><td>—</td><td>稳,但不惊艳</td><td>过渡不能中途改向;每个中间帧都要调</td><td>模糊拖帧;用过头就俗</td><td>用过头成打字机,拖慢阅读</td></tr>
+      <tr><td>学自</td><td>—</td><td>Emil Kowalski、Linear、Raycast</td><td>Apple Fluid Interfaces、Material 容器变形、Arc</td><td>visionOS、Liquid Glass、Vercel</td><td>报刊排印、航班翻牌屏</td></tr>
+    </tbody>
+  </table>
+  <div id="tokens"></div>
+</section>
+
+<section id="cmp">
+  <h2>逐场景对照</h2>
+  <div class="cmp-tools">
+    <span>整列选用</span>
+    <div class="seg mini"><button data-pickall="0">现网</button><button data-pickall="a">A</button><button data-pickall="b">B</button><button data-pickall="c">C</button><button data-pickall="d">D</button></div>
+    <button class="btn sm" id="pick-rec">按我的建议预选</button>
+  </div>
+  <div id="cmp-rows"></div>
+</section>
+
+<section id="presence">
+  <h2>在场与退场</h2>
+  <table style="max-width: 900px">
+    <tbody>
+      <tr><td>能退场的</td><td>当前这件事用不到的东西:读正文时的导轨与列表、没碰到的行上的动作、收起后的来源栏</td></tr>
+      <tr><td>不能退场的</td><td>入口本身、状态(已收藏、未读、正在播放)、正在读的内容</td></tr>
+      <tr><td>叫回来的路</td><td>指针碰到、键盘焦点落入、往回滚;三条都得通。触屏上没有悬停,退场项在触屏一律常显</td></tr>
+      <tr><td>快慢</td><td>退场慢(600ms,不抢注意),回场快(100–160ms,一碰就在)</td></tr>
+    </tbody>
+  </table>
+  <div id="p-rows"></div>
+</section>
+
+<section id="research">
+  <h2>调研</h2>
+
+  <h3>各家都同意的</h3>
+  <table>
+    <thead><tr><th>主张</th><th>内容</th><th>出处</th></tr></thead>
+    <tbody>
+      <tr><td>先问该不该动</td><td>按使用频率分四级(下表)。键盘触发的一律不做,这不是斟酌项</td><td>Emil Kowalski <code>animate</code> <code>find-animation-opportunities</code></td></tr>
+      <tr><td>说得出用途</td><td>反馈、空间一致、状态指示、避免突变、解释、惊喜(只给低频)。六个词里挑不出一个就不做</td><td>同上</td></tr>
+      <tr><td>时长</td><td>按下 100–160,提示 125–200,下拉 150–250,模态与抽屉 200–500;常规界面 ≤ 300ms。另一套四档:100–150 即时反馈、150–300 状态变化、300–500 布局与转场、500–800 精心编排的焦点入场</td><td>Emil <code>animate</code>;impeccable <code>animate</code></td></tr>
+      <tr><td>曲线</td><td>入场离场用强 ease-out <code>cubic-bezier(0.23, 1, 0.32, 1)</code>,屏内移动用 ease-in-out,界面上不用 ease-in;手势与可打断的用弹簧,回弹 0.1–0.3</td><td>Emil <code>animate</code></td></tr>
+      <tr><td>位移与明度分开计时</td><td>弹簧分两族:spatial(位置、尺寸,可过冲)与 effects(颜色、透明度,不过冲),各三档</td><td>Material 3 Expressive</td></tr>
+      <tr><td>编排</td><td>一个容器只有一层入场;高频界面不错峰;错峰 30–80ms、不等距、总长 ≤ 300ms;离场同时、更短、原路返回</td><td>Emil <code>choreograph</code></td></tr>
+      <tr><td>焦点时刻</td><td>全产品挑一处精心编排,必须出自产品自己的世界。通用的淡入上移、悬停抬升、视差、滚动揭示不算主张</td><td>impeccable <code>animate</code></td></tr>
+      <tr><td>材料按含义选</td><td>连续性用共享元素、FLIP、View Transitions;景深用有边界的模糊与光影;揭示用遮罩与 clip-path</td><td>impeccable <code>animate</code></td></tr>
+      <tr><td>实现次序</td><td>CSS → WAAPI → 脚本库;只动 transform 与 opacity;可打断;原点对准触发处;不写 <code>transition: all</code></td><td>Vercel Web Interface Guidelines</td></tr>
+      <tr><td>减少动效</td><td>是更少、更轻,不是全关:去掉位移,留下传达状态的明度变化</td><td>Emil、impeccable、Vercel 三家一致</td></tr>
+    </tbody>
+  </table>
+  <div class="tiers" style="margin-top: 18px">
+    <div><b>每天百次以上</b><em>键盘 j / k、核心导航、命令面板</em><span>不做</span></div>
+    <div><b>每天几十次</b><em>悬停、列表里换篇、开关</em><span>几乎察觉不到:快、小,或者没有</span></div>
+    <div><b>偶尔</b><em>浮层、抽屉、模态、提示</em><span>标准动效,有入有出</span></div>
+    <div><b>每天一次或头一回</b><em>到场、成功、空状态</em><span>惊喜的预算放在这里</span></div>
+  </div>
+
+  <h3>可用的手段(2026-11)</h3>
+  <table>
+    <thead><tr><th>手段</th><th>现状</th><th>结论</th><th></th></tr></thead>
+    <tbody>
+      <tr><td><code>@starting-style</code> + <code>allow-discrete</code></td><td>三家浏览器都有(Baseline 2024)。本仓 0 处</td><td><span class="verdict y">用</span></td><td>入场不写 keyframes,能中途改向;浮层的离场也能纯 CSS 做</td></tr>
+      <tr><td><code>linear()</code> 弹簧曲线</td><td>Baseline(2023 年底)。本仓 2 处:播放条、手机壳</td><td><span class="verdict y">用</span></td><td>把弹簧收成 token,桌面也用</td></tr>
+      <tr><td>View Transitions(同文档)</td><td>Chrome 111、Safari 18、Firefox 144(2025-10 起 Baseline 新可用)。React 19.3(2026-09)<code>&lt;ViewTransition&gt;</code> 转为稳定;本仓 React 19.2.5、0 处</td><td><span class="verdict y">用</span></td><td>只给低频大转场。后一个过渡会把前一个打到终态,高频处不能用</td></tr>
+      <tr><td>滚动驱动动画</td><td>Chrome 115、Safari 26、Firefox 159(2026-10 起 Baseline 新可用)。本仓 8 处</td><td><span class="verdict y">用</span></td><td>进度线、标题停靠进吸顶栏</td></tr>
+      <tr><td><code>interpolate-size</code></td><td>只有 Chromium(129 起)</td><td><span class="verdict y">用</span></td><td>渐进增强:展开到自适应高度;别家直接到位</td></tr>
+      <tr><td>Motion 14(原 Framer Motion)</td><td>MIT。完整组件约 34–43 KB,LazyMotion 约 5 KB;布局动画、共享元素、离场、弹簧、手势</td><td><span class="verdict n">暂不</span></td><td>CSS + WAAPI + React 自带的过渡够本轮用;列表重排与手势多到手写不划算时再引</td></tr>
+      <tr><td>GSAP 3.15</td><td>2025 年起全部插件免费,许可是自有的 no charge 条款(不是开源许可,带限制条款)</td><td><span class="verdict n">不引</span></td><td>时间线编排的强项本产品用不上,许可多一层要读</td></tr>
+      <tr><td>NumberFlow、Sonner、Vaul</td><td>MIT。数字过渡、提示、抽屉的范本实现</td><td><span class="verdict n">参考</span></td><td>学手感,不换组件;数字滚动本仓已有 <code>RollNumber</code></td></tr>
+      <tr><td>React Bits、Magic UI、Aceternity UI、Motion Primitives</td><td>复制粘贴式特效组件(★ 5.2 万 / 2.3 万 / — / 0.7 万),面向营销页</td><td><span class="verdict n">借单件</span></td><td>流光文字、边框光束、聚光卡、数字滚动四种手法已在 C 方向里重写,不整库引入</td></tr>
+      <tr><td>平滑滚动(Lenis 等)、Rive、Lottie</td><td>—</td><td><span class="verdict n">不用</span></td><td>阅读器里劫持滚动得不偿失;没有设计师产出的动画资产</td></tr>
+    </tbody>
+  </table>
+
+  <h3>可装的技能</h3>
+  <table>
+    <thead><tr><th>技能</th><th>管什么</th><th>怎么用</th></tr></thead>
+    <tbody>
+      <tr><td><a class="ln" href="https://github.com/emilkowalski/skills">emilkowalski/skills</a></td><td>20 个技能(MIT,★ 5.7 万),9 个直接管网页动效:该不该动、怎么做、怎么编排、检视、清理、性能、手势</td><td>实现阶段装上;<code>review-animations</code> 的标准表当合入前的检视清单</td></tr>
+      <tr><td><a class="ln" href="https://github.com/pbakaus/impeccable">pbakaus/impeccable</a></td><td>设计词表(Apache-2.0,★ 11 万)。<code>animate</code> 一节要求先写动效主张,自带连拍取证与独立的动效检视</td><td>借流程:主张 → 连拍 → 独立检视。本样页的 <code>tools/film.py</code> 是同一思路</td></tr>
+      <tr><td><a class="ln" href="https://github.com/vercel-labs/agent-skills">vercel-labs/agent-skills</a> 的 <code>react-view-transitions</code></td><td>React <code>&lt;ViewTransition&gt;</code> 的用法与坑</td><td>选了 B 的场景落地时用</td></tr>
+      <tr><td><a class="ln" href="https://github.com/ibelick/ui-skills">ibelick/ui-skills</a> 的 <code>fixing-motion-performance</code></td><td>掉帧排查</td><td>性能自查</td></tr>
+      <tr><td><a class="ln" href="https://github.com/vercel-labs/web-interface-guidelines">vercel-labs/web-interface-guidelines</a></td><td>界面准则(MIT),动效 10 条</td><td>并进仓内 <code>conventions.md</code> 的检视清单</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="now">
+  <h2>现状</h2>
+  <div class="stats">
+    <div><b class="num">79</b><span>个 keyframes:登录与品牌 26、读者面 23、手机壳 9、通用与管理面 21</span></div>
+    <div><b class="num">267</b><span>处过渡声明;同一条曲线 <code>--motion-ease</code> 被引用 344 次</span></div>
+    <div><b class="num">53</b><span>种写死的时长(token 只有 150 / 240 / 300 三档)</span></div>
+    <div><b class="num">12</b><span>种写死的贝塞尔曲线</span></div>
+    <div><b class="num">9</b><span>条桌面的按下反馈(<code>:active</code>);手机壳 19 条。桌面多数可按的件按下没有回应</span></div>
+    <div><b class="num">0</b><span>处 View Transitions、<code>@starting-style</code></span></div>
+  </div>
+  <table>
+    <thead><tr><th>发现</th><th>细节</th></tr></thead>
+    <tbody>
+      <tr><td>桌面与手机是两套语言</td><td>手机壳有弹簧(<code>--motion-sheet</code>)、正文从卡片里长出来(<code>utils/readTransition.js</code>)、推入页带离场替身;桌面同样的动作只有 180ms 淡入上移。B 方向等于把手机壳已有的做法带到桌面</td></tr>
+      <tr><td>有入场,没有离场</td><td>浮层、分享菜单没有离场动画;问答面板、提示、模态有。指示器(分段、页签、导轨、选中行)全部瞬移</td></tr>
+      <tr><td>高频路径带着动效</td><td>键盘 j / k 换篇同样触发 180ms 入场(按文章 id 重挂载)。按调研的共识,这一条应该去掉</td></tr>
+      <tr><td>一条曲线管所有事</td><td><code>cubic-bezier(0.22, 1, 0.36, 1)</code> 同时用于入场、位移、变色;没有 ease-in-out,没有可复用的弹簧(弹簧只在两个具名例外里)</td></tr>
+      <tr><td>工作区没有焦点时刻</td><td>规范 §7 把工作区定为只做反馈,例外逐条具名登记(轨面标签、分数里程表、播放条形变、移动弹簧)。早报每天第一次打开与任何一次切页没有区别</td></tr>
+      <tr><td>最长的一条在最高频处</td><td>AI 速读分数里程表 2.2s,每换一篇播一次</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="limits">
+  <h2>样页与平台现状的出入</h2>
+  <ul class="plain">
+    <li>底稿是 issue #279 的可点原型(香草脚本,整段重画),不是现网的 React 代码。观感与现网一致,但实现手法要在落地时换成 React 的写法</li>
+    <li>「现网」一列的取值逐条取自 <code>frontend/src/index.css</code> 与 <code>ReaderTab.jsx</code>(2026-11-17 的 main);来源栏列宽 240ms 一条取自原型,现网对应处没有核实。现网的问答面板是右下角浮起的小窗,样页里画成了 #279 的侧栏形制,只移植了它的曲线与时长</li>
+    <li>问答的回答是用早报前三条拼的,分段出现是模拟的流式;现网的问答是轮询,不是流式</li>
+    <li>数据是 2026-11-10 生产站游客接口的只读快照,不联网</li>
+    <li>只在 Chromium 147 上看过。Windows、Safari、Firefox 没有实机看;C 方向的模糊与 B 方向的共享元素最需要在低端显卡上复核</li>
+    <li>没有画手机壳与管理面;播放条沿用现网已拍板的形变,没有重做</li>
+  </ul>
+</section>
+
+</main>
+
+<div class="picks"><span>已选 <b id="pick-n">0 / 18</b></span><button id="pick-copy">复制选择</button><button class="quiet" id="pick-clear">清空</button></div>
+
+<dialog id="lb">
+  <div class="lb-h"><b id="lb-title"></b><div class="seg mini" id="lb-dirs"></div><span class="lab-t">速度</span><div class="seg mini" id="lb-speed"><button data-s="1">1×</button><button data-s="0.5">½</button><button data-s="0.25">¼</button><button data-s="0.1">⅒</button></div><span class="grow"></span><a class="btn sm" id="lb-open" target="_blank" rel="noreferrer">在整机原型里打开</a><button class="tool" id="lb-close" aria-label="关闭"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+  <div class="lb-vp"></div>
+  <div class="lb-f" id="lb-note"></div>
+</dialog>
+
+<script src="assets/motion-core.js?v=1119c"></script>
+<script src="assets/dir-0.js?v=1119c"></script>
+<script src="assets/dir-a.js?v=1119c"></script>
+<script src="assets/dir-b.js?v=1119c"></script>
+<script src="assets/dir-c.js?v=1119c"></script>
+<script src="assets/dir-d.js?v=1119c"></script>
+<script src="assets/dir-s.js?v=1119c"></script>
+<script src="assets/presence.js?v=1119c"></script>
+<script src="assets/index.js?v=1119c"></script>
+</body>
+</html>
