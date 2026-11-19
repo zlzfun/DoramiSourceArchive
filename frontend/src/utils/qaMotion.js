@@ -7,7 +7,7 @@ import { motionReduced } from '../motion.js';
 import { MOTION, fadeIn } from './readerMotion.js';
 
 const PARA_STAGGER = 140;   // 段与段之间
-const PARA_MAX = 8;         // 至多错开这么多段,其余与最后一段同时
+const PARA_MAX = 8;         // 至多错开这么多段(第 8 段起同时出)
 const CITE_STAGGER = 150;   // 引用角标之间
 const REVEAL_WAIT_MS = 4000; // 正文迟迟不挂上:不等了(之后挂上就直接在)
 
@@ -18,22 +18,21 @@ const accent = (alpha) => {
 
 /**
  * 回答到达:各段依次由虚到实(220ms,模糊 6px → 0),随后来源条淡入,引用角标依次亮一下、对应的来源行跟着亮。
- * block 是这一轮回答的 .reader-ai-a。
+ * block 是这一轮回答的 .reader-ai-a。late:正文是晚一拍才挂上的——来源条那些已经显示着,不再把它们藏回去重新淡入。
  */
-export function revealAnswer(block) {
+export function revealAnswer(block, { late = false } = {}) {
   if (!block || typeof Element === 'undefined' || !Element.prototype.animate) return;
   const reduced = motionReduced();
   const body = block.querySelector('.reader-ai-a-body');
-  // 段落在 Markdown 渲染出来的那一层:正文容器只有一个子元素时再往里取一层
-  let parts = body ? [...body.children] : [];
-  if (parts.length === 1 && parts[0].children.length > 1 && !parts[0].matches('p, ul, ol, pre, blockquote, table, h1, h2, h3, h4')) parts = [...parts[0].children];
+  // 一段 = 正文容器的一个直接子元素(Markdown 渲染出来的块:标题、段落、列表、引用、代码、表格各算一段)
+  const parts = body ? [...body.children] : [];
   parts.forEach((part, i) => {
-    const delay = Math.min(i, PARA_MAX) * (reduced ? 60 : PARA_STAGGER);
+    const delay = Math.min(i, PARA_MAX - 1) * (reduced ? 60 : PARA_STAGGER);
     if (reduced) fadeIn(part, 160, delay);
     else part.animate([{ opacity: 0, filter: 'blur(6px)' }, { opacity: 1, filter: 'blur(0px)' }], { duration: 220, delay, easing: MOTION.easeFocus, fill: 'backwards' });
   });
-  const after = Math.min(parts.length, PARA_MAX + 1) * (reduced ? 60 : PARA_STAGGER) + 60;
-  for (const el of block.querySelectorAll(':scope > :not(.reader-ai-a-id, .reader-ai-a-body)')) fadeIn(el, reduced ? 160 : 220, after);
+  const after = Math.min(parts.length, PARA_MAX) * (reduced ? 60 : PARA_STAGGER) + 60;
+  if (!late) for (const el of block.querySelectorAll(':scope > :not(.reader-ai-a-id, .reader-ai-a-body)')) fadeIn(el, reduced ? 160 : 220, after);
   if (reduced) return;
   const dark = document.documentElement.dataset.theme === 'dark';
   const rows = [...block.querySelectorAll('.reader-ai-ref-row')];
@@ -97,7 +96,7 @@ export function revealOnce(turn, block) {
       if (!body.children.length) return;
       observer.disconnect();
       clearTimeout(timer);
-      if (block.isConnected) revealAnswer(block);
+      if (block.isConnected) revealAnswer(block, { late: true });
     });
     observer.observe(body, { childList: true });
     timer = setTimeout(() => observer.disconnect(), REVEAL_WAIT_MS);

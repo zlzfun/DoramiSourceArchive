@@ -16041,7 +16041,7 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
   100% { --ai-ang: 285deg; --ai-ring: 0; opacity: 0; }
 }
 /* 键盘打开时那一圈不演;提问的那一圈照常(提问多半就是回车发出的,它回应的是「开始想了」) */
-.reader-shell .reader-ai-panel.is-still .reader-ai-aurora:not(.is-ask) { animation: none; }
+.reader-shell .reader-ai-aurora.is-quiet { animation: none; }
 :root[data-motion="reduce"] .reader-shell .reader-ai-aurora { animation: none; opacity: 0; }
 
 /* 导轨上的问答钮:面板由指针打开时泛一次光晕——在 utils/qaMotion.haloQaButton 里(一次性的、要看触发方式的,不放在样式里) */
@@ -16060,6 +16060,9 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 @keyframes reader-ai-shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
 :root[data-motion="reduce"] .reader-shell .reader-ai-wait-row.is-active { animation: none; background: none; color: inherit; }
 
+/* 空态的三行建议:面板打开、切范围时直接在(面板自己有入场,不叠第二层;键盘打开也不该动)。
+   定时轮换(4.5 秒一换,2026 年目检三轮定下的氛围动效)保留——换上来的那一批才以浮现相进场(组件在第一次轮换后加 is-rotated) */
+.reader-shell .reader-ai-suggest:not(.is-rotated) .reader-ai-suggest-btn { animation: none; }
 /* 一轮问答:整块不再自己淡入上移(面板重新打开时旧的几轮会跟着面板再入场一遍,一个容器两层入场)。
    提问的那一刻问句由虚到实、回答到达时各段依次由虚到实,都在 utils/qaMotion 里,各只演一次;重新挂载的旧问答直接在 */
 .reader-shell .reader-ai-turn,

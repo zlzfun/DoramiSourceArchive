@@ -83,12 +83,16 @@ function SuggestRotator({ scope, onPick }) {
   const pool = SUGGEST_POOL[scope] || SUGGEST_POOL.subscription;
   const [offset, setOffset] = useState(() => Math.floor(Math.random() * pool.length));
   const [leaving, setLeaving] = useState(false);
+  // 轮换过了没有(issue #301 第五批):桌面读者面上,面板打开、切范围时这三行直接在(面板自己有入场,不叠第二层),
+  // 只有定时轮换换上来的才以浮现相进场(样式表按 is-rotated 判)
+  const [rotated, setRotated] = useState(false);
   const hoverRef = useRef(false);
 
   useEffect(() => {
     // 切范围换池:重掷起点,直接以浮现相进场
     setOffset(Math.floor(Math.random() * pool.length));
     setLeaving(false);
+    setRotated(false);
   }, [pool]);
 
   useEffect(() => {
@@ -98,6 +102,7 @@ function SuggestRotator({ scope, onPick }) {
       window.setTimeout(() => {
         setOffset((prev) => (prev + SUGGEST_VISIBLE) % pool.length);
         setLeaving(false);
+        setRotated(true);
       }, SUGGEST_FADE_MS);
     }, SUGGEST_ROTATE_MS);
     return () => clearInterval(timer);
@@ -106,7 +111,7 @@ function SuggestRotator({ scope, onPick }) {
   const visible = Array.from({ length: SUGGEST_VISIBLE }, (_, i) => pool[(offset + i) % pool.length]);
   return (
     <div
-      className={`reader-ai-suggest ${leaving ? 'is-leaving' : ''}`}
+      className={`reader-ai-suggest ${leaving ? 'is-leaving' : ''} ${rotated ? 'is-rotated' : ''}`}
       onMouseEnter={() => { hoverRef.current = true; }}
       onMouseLeave={() => { hoverRef.current = false; }}
     >
@@ -421,12 +426,17 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
   // 这一次开 / 合是不是键盘触发的(键盘触发的不动)。记在面板自己身上,不在样式里看 <html data-input>:
   // 面板开着的时候人换了输入方式,动画名跟着变,入场会被重播一遍
   const [aiPanelStill, setAiPanelStill] = useState(false);
+  const [auroraQuiet, setAuroraQuiet] = useState(false);
+  const closingRef = useRef(false);   // 已经在收起:后面再来的收起不算,也不改这一次收起的方式(否则已经隐去的面板会闪回来)
   const closeAiPanel = useCallback(() => {
+    if (closingRef.current) return;
+    closingRef.current = true;
     setAiPanelStill(motionIntent() === 'key');
     setAiPanelClosing((closing) => {
       if (closing) return closing;
       closeTimerRef.current = window.setTimeout(() => {
         closeTimerRef.current = 0;
+        closingRef.current = false;
         setAiPanelOpen(false);
         setAiPanelClosing(false);
       }, 200);
@@ -437,9 +447,11 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
   const openAiPanel = useCallback(() => {
     if (closeTimerRef.current) { window.clearTimeout(closeTimerRef.current); closeTimerRef.current = 0; }
     setAiPanelClosing(false);
+    closingRef.current = false;
     const still = motionIntent() === 'key';
     setAiPanelStill(still);
-    setSweepSeq(0);   // 打开时的那一圈不算「提问」(键盘打开时不演,见样式表)
+    setAuroraQuiet(still);   // 打开的那一圈演不演,只看打开那一下(之后怎么收起与它无关)
+    setSweepSeq(0);   // 打开时的那一圈不算「提问」
     setAiPanelOpen(true);
     if (!still) haloQaButton();   // 导轨上的问答钮泛一次光晕:面板的来处
   }, []);
@@ -481,7 +493,7 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
       {aiPanelOpen && (
         <aside ref={panelRef} className={`reader-ai-panel ${aiPanelLarge ? 'is-large' : ''} ${aiPanelClosing ? 'is-closing' : ''} ${aiPanelStill ? 'is-still' : ''}`} role="dialog" aria-label="问问哆啦美">
           {/* 极光沿边一圈(issue #301 第五批):面板打开时一次,每次提问再一次——按序号重挂载来重播 */}
-          <i className={`reader-ai-aurora ${sweepSeq > 0 ? 'is-ask' : ''}`} key={sweepSeq} aria-hidden="true" />
+          <i className={`reader-ai-aurora ${sweepSeq > 0 ? 'is-ask' : auroraQuiet ? 'is-quiet' : ''}`} key={sweepSeq} aria-hidden="true" />
           <header className="reader-ai-head">
             <span className="reader-ai-title">
               <Sparkles className="h-4 w-4" /> 问问哆啦美

@@ -111,5 +111,30 @@ test('回答先到、正文晚一拍才挂上(渲染器按需加载):等正文�
   observers[0].cb();
   assert.ok(observers[0].off, '演过就撤掉观察器');
   assert.deepEqual(paras.map((p) => p.played.length), [1, 1, 1]);
+  assert.equal(a.refs.played.length, 0, '来源条那时已经显示着:不藏回去重新淡入');
+  assert.ok(a.cites.every((c) => c.played.length === 1), '引用照常依次亮');
   delete globalThis.MutationObserver;
+});
+
+test('长回答:至多错开 8 段,第 8 段起同时出;来源条排在其后', async () => {
+  stubDom();
+  const { revealAnswer } = await import(`../src/utils/qaMotion.js?long=${Date.now()}`);
+  const paras = Array.from({ length: 11 }, () => el('p'));
+  const refs = el('reader-ai-refs');
+  const block = el('reader-ai-a', [el('reader-ai-a-id'), el('reader-ai-a-body', paras), refs]);
+  revealAnswer(block);
+  assert.deepEqual(paras.map((p) => p.played[0].opts.delay), [0, 140, 280, 420, 560, 700, 840, 980, 980, 980, 980]);
+  assert.equal(new Set(paras.map((p) => p.played[0].opts.delay)).size, 8);
+  assert.equal(refs.played[0].opts.delay, 8 * 140 + 60);
+});
+
+test('取段只看正文容器的直接子元素:单个标题里的行内元素不被拆开', async () => {
+  stubDom();
+  const { revealAnswer } = await import(`../src/utils/qaMotion.js?h5=${Date.now()}`);
+  const strong = el('strong'); const em = el('em');
+  const h5 = el('h5', [strong, em]);
+  const block = el('reader-ai-a', [el('reader-ai-a-id'), el('reader-ai-a-body', [h5])]);
+  revealAnswer(block);
+  assert.equal(h5.played.length, 1);
+  assert.equal(strong.played.length + em.played.length, 0);
 });
