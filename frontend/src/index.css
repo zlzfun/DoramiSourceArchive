@@ -15946,27 +15946,28 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 @keyframes vt-fade-out { from { opacity: 1; } to { opacity: 0; } }
 
 /* 榜单卡 ⇄ 事件页:窗口从卡的位置长到整页(settle 弹簧),窗里的内容不缩放、锚在左上 */
-:root[data-vt^="rk-"]::view-transition-group(rk-title) { z-index: 3; }
-:root[data-vt^="rk-"]::view-transition-group(rk-card) { z-index: 2; }
-:root[data-vt^="rk-"]::view-transition-group(rk-card), :root[data-vt^="rk-"]::view-transition-group(rk-title) { animation-duration: var(--motion-spring-settle-dur); animation-timing-function: var(--motion-spring-settle); }
-:root[data-vt^="rk-"]::view-transition-old(rk-card), :root[data-vt^="rk-"]::view-transition-new(rk-card) { block-size: 100%; object-fit: none; object-position: left top; }
+:root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-group(rk-title) { z-index: 3; }
+:root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-group(rk-card) { z-index: 2; }
+:root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-group(rk-card), :root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-group(rk-title) { animation-duration: var(--motion-spring-settle-dur); animation-timing-function: var(--motion-spring-settle); }
+:root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-old(rk-card), :root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-new(rk-card) { block-size: 100%; object-fit: none; object-position: left top; }
 /* 窗口自己垫面色:展开时盖住下面的旧榜单,收拢时盖住已经回来的榜单——窗口里只见两份内容交替,不叠字 */
-:root[data-vt^="rk-"]::view-transition-image-pair(rk-card) { background: var(--dorami-surface); }
+:root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-image-pair(rk-card) { background: var(--dorami-surface); }
 :root[data-vt="rk-open"]::view-transition-old(rk-card) { animation: vt-fade-out 140ms linear both; }
 :root[data-vt="rk-open"]::view-transition-new(rk-card) { animation: vt-fade-in 200ms 60ms linear both; }
 :root[data-vt="rk-back"]::view-transition-old(rk-card) { animation: vt-fade-out 260ms linear both; }
 :root[data-vt="rk-back"]::view-transition-new(rk-card) { animation: vt-fade-in 220ms 140ms linear both; }
 /* 共享标题:两头字号不同。旧字从自身字号放大到新字号、新字从旧字号长到自身字号,全程两张图里的字一样大,只在前段交叉淡化 */
-:root[data-vt^="rk-"]::view-transition-old(rk-title), :root[data-vt^="rk-"]::view-transition-new(rk-title) { block-size: auto; transform-origin: left top; }
-:root[data-vt^="rk-"]::view-transition-old(rk-title) { inline-size: var(--vt-title-ow, auto); animation: vt-title-old var(--motion-spring-settle-dur) var(--motion-spring-settle) both, vt-x-out var(--motion-spring-settle-dur) linear both; }
-:root[data-vt^="rk-"]::view-transition-new(rk-title) { inline-size: var(--vt-title-nw, auto); animation: vt-title-new var(--motion-spring-settle-dur) var(--motion-spring-settle) both, vt-x-in var(--motion-spring-settle-dur) linear both; }
+:root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-old(rk-title), :root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-new(rk-title) { block-size: auto; transform-origin: left top; }
+:root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-old(rk-title) { inline-size: var(--vt-title-ow, auto); animation: vt-title-old var(--motion-spring-settle-dur) var(--motion-spring-settle) both, vt-x-out var(--motion-spring-settle-dur) linear both; }
+:root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-new(rk-title) { inline-size: var(--vt-title-nw, auto); animation: vt-title-new var(--motion-spring-settle-dur) var(--motion-spring-settle) both, vt-x-in var(--motion-spring-settle-dur) linear both; }
 @keyframes vt-title-old { from { transform: scale(1); } to { transform: scale(var(--vt-title-ratio, 1)); } }
 @keyframes vt-title-new { from { transform: scale(calc(1 / var(--vt-title-ratio, 1))); } to { transform: scale(1); } }
 @keyframes vt-x-out { 0%, 8% { opacity: 1; } 34%, 100% { opacity: 0; } }
 @keyframes vt-x-in { 0%, 6% { opacity: 0; } 36%, 100% { opacity: 1; } }
-/* 返回时那张卡已不在视口:整页交叉淡化 */
-:root[data-vt="rk-swap"]::view-transition-old(rk-stage) { animation: vt-fade-out 120ms linear both; }
-:root[data-vt="rk-swap"]::view-transition-new(rk-stage) { animation: vt-fade-in 180ms linear both; }
+/* 返回时那张卡已不在视口(类型在转场中途换成 rk-swap):旧页与旧标题没有同名的新端接手,各自原地淡出,榜单在下面淡入;
+   上面那组卡面 / 标题的缩放规则只认 rk-open 与 rk-back,不会落到这里 */
+:root[data-vt="rk-swap"]::view-transition-old(rk-card), :root[data-vt="rk-swap"]::view-transition-old(rk-title) { animation: vt-fade-out 120ms linear both; }
+:root[data-vt="rk-swap"]::view-transition-new(root) { animation: vt-fade-in 180ms linear both; }
 
 /* 来源下拉变成来源栏(从「固定来源栏」展开):浮层的窗口长成来源栏,条目列与阅读窗跟着让出位置(位置与尺寸走 move 弹簧) */
 :root[data-vt="src-unfold"]::view-transition-group(src-bar) { z-index: 2; }

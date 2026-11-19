@@ -450,6 +450,7 @@ export default function RankingsPage({
     const row = mobile ? null : main?.querySelector(`.rk-row[data-row="${CSS.escape(String(item.event_id))}"]`);
     if (!row) { apply(); return; }
     const title = shareTitle();
+    let grown = null;
     const shared = viewTransit('rk-open', apply, {
       before(name) {
         name(row, 'rk-card');
@@ -458,14 +459,20 @@ export default function RankingsPage({
       },
       after(name) {
         const page = main.querySelector('.rk-event');
+        if (!page) return;
+        // 详情还在加载时页面只有一小截:转场期间把它撑到至少一屏高,窗口长到底时把下面的旧榜单整个盖住,不等到末帧才突然撤掉
+        grown = page;
+        page.style.minHeight = `${main.clientHeight}px`;
         name(page, 'rk-card');
-        const h = page?.querySelector('.rk-dtitle');
-        if (inViewport(h)) { name(h, 'rk-title'); title.give(h); }
+        const h = page.querySelector('.rk-dtitle');
+        if (title.taken && inViewport(h)) { name(h, 'rk-title'); title.give(h); }   // 旧标题取到了才共享:否则新标题跟着卡面走
         // 页里其余的块晚一点升上来(标题由卡里那一个接着走,不在其列)
-        for (const el of page?.querySelectorAll('.rk-backrow, .rk-dh > :not(.rk-dtitle), .rk-ebody') || []) riseIn(el, { duration: 320, dist: 12, delay: 60 });
+        for (const el of page.querySelectorAll(title.taken ? '.rk-backrow, .rk-dh > :not(.rk-dtitle), .rk-ebody' : '.rk-backrow, .rk-dh, .rk-ebody')) riseIn(el, { duration: 320, dist: 12, delay: 60 });
       },
+      // 起不了共享元素转场(减少动效、浏览器不支持):新页已同步挂上,淡入一下
+      fallback() { fadeIn(main?.querySelector('.rk-event'), 100); },
     });
-    if (!shared) fadeIn(main?.querySelector('.rk-event'), 100);
+    if (shared) { const settle = () => { if (grown) grown.style.minHeight = ''; }; shared.finished.then(settle, settle); }
   }, [rng, mobile]);
   const closeEvent = useCallback(() => {
     const main = mainRef.current;
@@ -474,7 +481,7 @@ export default function RankingsPage({
     if (!page) { apply(); return; }
     const backTo = returnRowRef.current;
     const title = shareTitle();
-    const shared = viewTransit('rk-back', apply, {
+    viewTransit('rk-back', apply, {
       before(name) {
         name(page, 'rk-card');
         const h = page.querySelector('.rk-dtitle');
@@ -485,15 +492,15 @@ export default function RankingsPage({
         if (inViewport(row)) {
           name(row, 'rk-card');
           const h = row.querySelector('.rk-title');
-          if (inViewport(h)) { name(h, 'rk-title'); title.give(h); }
-        } else {
-          // 卡已经滚出视口(或这一期榜单里没有它了):没有去处可收,整页交叉淡化
-          document.documentElement.dataset.vt = 'rk-swap';
-          name(main, 'rk-stage');
+          if (title.taken && inViewport(h)) { name(h, 'rk-title'); title.give(h); }
+          return;
         }
+        // 那张卡不在视口(滚走了,或重拉后的榜单里已经没有它):没有去处可收。旧页与旧标题已经各自拍下、新界面里没有同名的接手,
+        // 把类型换成 rk-swap——样式表让旧的原地淡出、榜单淡入,不再走卡面与标题的缩放
+        document.documentElement.dataset.vt = 'rk-swap';
       },
+      fallback() { fadeIn(main?.querySelector('.rk-wrap'), 100); },
     });
-    if (!shared) fadeIn(main?.querySelector('.rk-wrap'), 100);
   }, [mobile]);
   const detailSeq = detail?.seq;
   const detailId = detail?.id;

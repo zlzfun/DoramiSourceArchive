@@ -913,14 +913,16 @@ export default function ReaderTab({
     if (next) { slideSourcesAway(shell, apply); return; }
     const pop = srcPopRef.current;
     const cols = () => [shell?.querySelector(':scope > .reader-col-list'), shell?.querySelector(':scope > .reader-col-read')];
-    srcPopMorphRef.current = Boolean(pop);
-    const morphed = pop && viewTransit('src-unfold', apply, {
+    if (!pop) { apply(); return; }
+    const settle = () => { srcPopMorphRef.current = false; };
+    srcPopMorphRef.current = true;
+    const morphed = viewTransit('src-unfold', apply, {
       before(name) { const [list, read] = cols(); name(pop, 'src-bar'); name(list, 'src-list'); name(read, 'src-pane'); },
       after(name) { const [list, read] = cols(); name(shell.querySelector(':scope > .reader-col-sources'), 'src-bar'); name(list, 'src-list'); name(read, 'src-pane'); },
+      // 起不了共享元素转场:来源栏已同步挂上,退回从导轨下面滑出来(减少动效时 slideSourcesIn 自己不动)
+      fallback() { slideSourcesIn(shell); },
     });
-    if (!pop) apply();
-    const settle = () => { srcPopMorphRef.current = false; };
-    if (!morphed) { settle(); slideSourcesIn(shell); } else morphed.finished.then(settle, settle);
+    if (morphed) morphed.finished.then(settle, settle); else settle();
   };
   useEffect(() => {
     if (!srcPop) return undefined;

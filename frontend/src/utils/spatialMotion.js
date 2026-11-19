@@ -9,6 +9,8 @@ import { motionSpring } from './spring.js';
 // 「到场」只有一次:页面载入(或登录抵达)后早报第一次有内容的那一刻。之后在视图之间来回、换日期都不算
 // ——那是切视图,按精密的换法。载入时落在别的视图、或早报还没出内容人就走开了,这一次也就作废。
 let arrival = true;
+let waiting = false;              // 正在等品牌抵达幕走完
+const CURTAIN_WAIT_MS = 6000;     // 幕布迟迟不走的兜底
 
 /** 这次载入不会再有「到场」了(落地不在早报,或早报出内容之前已经切走)。 */
 export function endArrival() {
@@ -20,9 +22,21 @@ export function endArrival() {
  * 到场不是哪一下点击触发的,不看输入方式;减少动效时各拍只淡入、不上升。
  */
 export function enterBrief(sheet, rail) {
-  if (!arrival || !sheet) return;
+  if (!arrival || !sheet || waiting) return;
+  if (typeof Element === 'undefined' || !Element.prototype.animate) { arrival = false; return; }
+  // 登录抵达时品牌的抵达幕(.app-arrive)与主界面显影(.app-arriving)还在场:等它们走完再播,否则前几拍被幕布挡住、后半段与显影叠在一起。
+  // 一次性标记到真正开播时才消费——等待期间人切走了(endArrival),这次也就不播了。
+  const curtain = () => document.querySelector('.app-arrive, .app-arriving');
+  if (curtain()) {
+    waiting = true;
+    const go = () => { observer.disconnect(); clearTimeout(timer); waiting = false; enterBrief(sheet, rail); };
+    const observer = new MutationObserver(() => { if (!curtain()) go(); });
+    observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
+    const timer = setTimeout(go, CURTAIN_WAIT_MS);
+    return;
+  }
+  if (!sheet.isConnected) { arrival = false; return; }
   arrival = false;
-  if (typeof Element === 'undefined' || !Element.prototype.animate) return;
   const reduced = motionReduced();
   const settle = motionSpring('settle');
   const pick = (selector) => sheet.querySelector(selector);
@@ -38,7 +52,7 @@ export function enterBrief(sheet, rail) {
       else el.animate([{ opacity: 0, transform: 'translateY(16px)' }, { opacity: 1, transform: 'none' }], { duration: settle.duration, easing: settle.easing, delay, fill: 'backwards' });
     }
   }
-  fadeIn(rail, 240);
+  fadeIn(rail, reduced ? 160 : 240);
   const light = pick('.bp-light');
   if (light && !reduced) light.animate([{ opacity: 0 }, { opacity: getComputedStyle(light).opacity }], { duration: 600, easing: 'linear' });
 }
@@ -85,23 +99,25 @@ function flyLogo(shell, card) {
 
 export function mountSubscribeFly(shell) {
   if (!shell || typeof MutationObserver === 'undefined') return () => {};
-  let pending = null;   // { card, intent, observer, timer }
-  const clear = () => {
-    if (!pending) return;
-    pending.observer.disconnect();
-    clearTimeout(pending.timer);
-    pending = null;
+  const pending = new Map();   // card → { observer, timer }:每张卡各等各的,连着订阅几个来源各有各的反馈
+  const clear = (card) => {
+    const job = pending.get(card);
+    if (!job) return;
+    job.observer.disconnect();
+    clearTimeout(job.timer);
+    pending.delete(card);
   };
   const onClick = (event) => {
     const btn = event.target.closest?.('.reader-disc-card .reader-disc-sub');
     if (!btn || !shell.contains(btn) || btn.classList.contains('is-subbed')) return;
-    clear();
     const card = btn.closest('.reader-disc-card');
+    clear(card);
     const intent = motionIntent();
     const observer = new MutationObserver(() => {
+      if (!card.isConnected) { clear(card); return; }
       const now = card.querySelector('.reader-disc-sub');
       if (!now || !now.classList.contains('is-subbed') || now.querySelector('.animate-spin')) return;
-      clear();
+      clear(card);
       const mode = pointerMotion(intent);
       if (mode === 'none') return;
       if (mode === 'fade') { fadeIn(now, 120); return; }
@@ -109,12 +125,12 @@ export function mountSubscribeFly(shell) {
       flyLogo(shell, card);
     });
     observer.observe(card, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
-    pending = { card, intent, observer, timer: setTimeout(clear, FLY_WAIT_MS) };
+    pending.set(card, { observer, timer: setTimeout(() => clear(card), FLY_WAIT_MS) });
   };
   shell.addEventListener('click', onClick, true);
   return () => {
     shell.removeEventListener('click', onClick, true);
-    clear();
+    for (const card of [...pending.keys()]) clear(card);
   };
 }
 
@@ -136,6 +152,20 @@ export function mountTitleDock(shell) {
     docked.style.opacity = progress.toFixed(3);
     docked.style.transform = motionReduced() ? 'none' : `translateY(${((1 - progress) * 12).toFixed(1)}px)`;
   };
+  // 换了一篇(阅读窗按文章 id 重挂载,从顶上开始,不会自己发 scroll):吸顶栏的小标题是沿用的那一个,把上一篇留下的显现状态复位
+  const observer = typeof MutationObserver === 'undefined' ? null : new MutationObserver((records) => {
+    for (const m of records) {
+      for (const node of m.addedNodes) {
+        if (node.nodeType !== 1 || !node.matches('.reader-pane')) continue;
+        const docked = node.parentElement?.querySelector('.reader-bar-title');
+        if (docked) { docked.style.opacity = '0'; docked.style.transform = ''; }
+      }
+    }
+  });
+  observer?.observe(shell, { subtree: true, childList: true });
   shell.addEventListener('scroll', onScroll, true);
-  return () => shell.removeEventListener('scroll', onScroll, true);
+  return () => {
+    shell.removeEventListener('scroll', onScroll, true);
+    observer?.disconnect();
+  };
 }
