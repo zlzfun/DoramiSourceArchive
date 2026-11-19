@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Loader2,
   Sparkles,
@@ -16,6 +16,8 @@ import { displayTitle } from '../utils/titleDisplay';
 import { useTitlePreference } from '../hooks/useTitlePreference';
 import { podcastOf } from '../utils/podcast';
 import { qaBasisLabel, qaEvidence, qaExcerptPreview, qaHistory, qaReferenceGroups } from '../utils/qaEvidence';
+import { focusQuestionOnce, haloQaButton, revealOnce } from '../utils/qaMotion';
+import { motionIntent } from '../utils/readerMotion';
 
 // 阅读器 AI 问答浮层(v3.32 方案 A 重设计,样页 docs/design/dorami-ask-quiet.html):
 // 常态收起于右下角 FAB,点击展开。读者问句保留右缘 wash 胶囊,哆啦美的回答**去框化**
@@ -81,30 +83,40 @@ function SuggestRotator({ scope, onPick }) {
   const pool = SUGGEST_POOL[scope] || SUGGEST_POOL.subscription;
   const [offset, setOffset] = useState(() => Math.floor(Math.random() * pool.length));
   const [leaving, setLeaving] = useState(false);
+  // 轮换过了没有(issue #301 第五批):桌面读者面上,面板打开、切范围时这三行直接在(面板自己有入场,不叠第二层),
+  // 只有定时轮换换上来的才以浮现相进场(样式表按 is-rotated 判)
+  const [rotated, setRotated] = useState(false);
   const hoverRef = useRef(false);
 
   useEffect(() => {
     // 切范围换池:重掷起点,直接以浮现相进场
     setOffset(Math.floor(Math.random() * pool.length));
     setLeaving(false);
+    setRotated(false);
   }, [pool]);
 
   useEffect(() => {
+    let swap = 0;   // 淡出之后换词的那一下;切范围、卸载时一并清掉——否则旧范围留下的这一下会去推新范围的起点,还把它标成「轮换过」
     const timer = setInterval(() => {
       if (hoverRef.current) return;
       setLeaving(true);
-      window.setTimeout(() => {
+      swap = window.setTimeout(() => {
+        swap = 0;
         setOffset((prev) => (prev + SUGGEST_VISIBLE) % pool.length);
         setLeaving(false);
+        setRotated(true);
       }, SUGGEST_FADE_MS);
     }, SUGGEST_ROTATE_MS);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      if (swap) window.clearTimeout(swap);
+    };
   }, [pool]);
 
   const visible = Array.from({ length: SUGGEST_VISIBLE }, (_, i) => pool[(offset + i) % pool.length]);
   return (
     <div
-      className={`reader-ai-suggest ${leaving ? 'is-leaving' : ''}`}
+      className={`reader-ai-suggest ${leaving ? 'is-leaving' : ''} ${rotated ? 'is-rotated' : ''}`}
       onMouseEnter={() => { hoverRef.current = true; }}
       onMouseLeave={() => { hoverRef.current = false; }}
     >
@@ -150,10 +162,13 @@ const SEARCH_STAGE_TEXT = {
 };
 
 // 等待态:检索型 scope 画动态阶段清单,显式名单 scope(article/articles)只有作答一步
-function PendingBlock({ scope, progress, podcast }) {
+function PendingBlock({ turn, scope, progress, podcast }) {
+  // 提问发出的那一刻:问句由虚到实(issue #301 第五批)。只演一次——面板收起再打开,等待中的这一轮重新挂载不重演
+  const waitRef = useRef(null);
+  useLayoutEffect(() => { focusQuestionOnce(turn, waitRef.current?.previousElementSibling); }, [turn]);
   if (scope !== 'subscription' && scope !== 'all') {
     return (
-      <div className="reader-ai-wait">
+      <div className="reader-ai-wait" ref={waitRef}>
         <div className="reader-ai-wait-row is-active"><span className="reader-ai-wait-dot" />{podcast ? '正在查阅本期播客资料并组织回答…' : '正在阅读文章并组织回答…'}</div>
       </div>
     );
@@ -163,7 +178,7 @@ function PendingBlock({ scope, progress, podcast }) {
   const by = progress?.byStage || {};
   const current = ordered[ordered.length - 1];
   return (
-    <div className="reader-ai-wait">
+    <div className="reader-ai-wait" ref={waitRef}>
       {ordered.map((stage) => {
         const active = stage === current;
         const text = SEARCH_STAGE_TEXT[stage];
@@ -237,6 +252,9 @@ function AnswerBlock({ turn, onOpenRef, onNarrow, disabled }) {
     };
   }, [sources, onOpenRef, preferChinese]);
   const listed = useMemo(() => qaReferenceGroups(turn.a, sources), [turn.a, sources]);
+  // 回答到达(issue #301 第五批):各段依次由虚到实,引用角标依次亮。只在这一轮刚到的那一次演(turn.fresh + 一次性标记)
+  const blockRef = useRef(null);
+  useLayoutEffect(() => { revealOnce(turn, blockRef.current); }, [turn]);
   const referenceRow = ({ source: s, num }, index, preview = false) => (
     <div key={num}>
       <button type="button" className="reader-ai-ref-row" onClick={() => onOpenRef(s)}
@@ -251,7 +269,7 @@ function AnswerBlock({ turn, onOpenRef, onNarrow, disabled }) {
     </div>
   );
   return (
-    <div className="reader-ai-a">
+    <div className="reader-ai-a" ref={blockRef}>
       <div className="reader-ai-a-id"><Sparkles className="h-3 w-3" /> <span className="ai-grad-text">哆啦美</span></div>
       <div className="reader-ai-a-body markdown-body">
         <ReaderMarkdown citations={citations}>{markdown}</ReaderMarkdown>
@@ -341,6 +359,7 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
     const askId = genAskId();
     setQaLoading(true);
     setQaProgress(null);
+    setSweepSeq((n) => n + 1);   // 提问时极光再绕边一圈
     setQaThread((prev) => [...prev, { q, a: null, sources: [], pending: true, scope, historyReset, podcast: activePodcast }]);
     setQaInput('');
     setQaFreshQuestion(false);
@@ -366,7 +385,7 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
       const data = await askReaderAi({ question: q, scope, articleId, history, askId });
       setQaThread((prev) => prev.map((m, i) => (
         i === prev.length - 1 ? { q, a: data.answer, sources: data.sources || [], answerMode: data.answer_mode,
-          refinementQuestions: data.refinement_questions || [], scope, articleId, historyReset } : m
+          refinementQuestions: data.refinement_questions || [], scope, articleId, historyReset, fresh: true } : m
       )));
     } catch (error) {
       setQaThread((prev) => prev.map((m, i) => (
@@ -408,11 +427,21 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
   // 关闭面板:先播放退场动画,动画结束再卸载(与 CSS .is-closing 的 200ms 对齐);
   // 函数式 set 防重入——点外关闭与关闭钮可能连发,重复 setTimeout 会闪帧
   const closeTimerRef = useRef(0);
+  const [sweepSeq, setSweepSeq] = useState(0);
+  // 这一次开 / 合是不是键盘触发的(键盘触发的不动)。记在面板自己身上,不在样式里看 <html data-input>:
+  // 面板开着的时候人换了输入方式,动画名跟着变,入场会被重播一遍
+  const [aiPanelStill, setAiPanelStill] = useState(false);
+  const [auroraQuiet, setAuroraQuiet] = useState(false);
+  const closingRef = useRef(false);   // 已经在收起:后面再来的收起不算,也不改这一次收起的方式(否则已经隐去的面板会闪回来)
   const closeAiPanel = useCallback(() => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    setAiPanelStill(motionIntent() === 'key');
     setAiPanelClosing((closing) => {
       if (closing) return closing;
       closeTimerRef.current = window.setTimeout(() => {
         closeTimerRef.current = 0;
+        closingRef.current = false;
         setAiPanelOpen(false);
         setAiPanelClosing(false);
       }, 200);
@@ -423,7 +452,13 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
   const openAiPanel = useCallback(() => {
     if (closeTimerRef.current) { window.clearTimeout(closeTimerRef.current); closeTimerRef.current = 0; }
     setAiPanelClosing(false);
+    closingRef.current = false;
+    const still = motionIntent() === 'key';
+    setAiPanelStill(still);
+    setAuroraQuiet(still);   // 打开的那一圈演不演,只看打开那一下(之后怎么收起与它无关)
+    setSweepSeq(0);   // 打开时的那一圈不算「提问」
     setAiPanelOpen(true);
+    if (!still) haloQaButton();   // 导轨上的问答钮泛一次光晕:面板的来处
   }, []);
   useEffect(() => () => { if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current); }, []);
 
@@ -458,8 +493,12 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
 
   return (
     <>
+      {/* 压暗(issue #301 第五批):面板开着时工作区退后一步;不拦点击(点面板外任意处本来就是收起) */}
+      {aiPanelOpen && <i className={`reader-ai-scrim ${aiPanelClosing ? 'is-off' : ''} ${aiPanelStill ? 'is-still' : ''}`} aria-hidden="true" />}
       {aiPanelOpen && (
-        <aside ref={panelRef} className={`reader-ai-panel ${aiPanelLarge ? 'is-large' : ''} ${aiPanelClosing ? 'is-closing' : ''}`} role="dialog" aria-label="问问哆啦美">
+        <aside ref={panelRef} className={`reader-ai-panel ${aiPanelLarge ? 'is-large' : ''} ${aiPanelClosing ? 'is-closing' : ''} ${aiPanelStill ? 'is-still' : ''}`} role="dialog" aria-label="问问哆啦美">
+          {/* 极光沿边一圈(issue #301 第五批):面板打开时一次,每次提问再一次——按序号重挂载来重播 */}
+          <i className={`reader-ai-aurora ${sweepSeq > 0 ? 'is-ask' : auroraQuiet ? 'is-quiet' : ''}`} key={sweepSeq} aria-hidden="true" />
           <header className="reader-ai-head">
             <span className="reader-ai-title">
               <Sparkles className="h-4 w-4" /> 问问哆啦美
@@ -516,7 +555,7 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
               <div key={i} className="reader-ai-turn">
                 <div className="reader-ai-q">{m.q}</div>
                 {m.pending ? (
-                  <PendingBlock scope={m.scope} progress={qaProgress} podcast={m.podcast} />
+                  <PendingBlock turn={m} scope={m.scope} progress={qaProgress} podcast={m.podcast} />
                 ) : m.error ? (
                   <div className="reader-ai-a-error">
                     {m.errorCode === 'guest_quota_exhausted' ? (

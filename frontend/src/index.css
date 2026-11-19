@@ -15985,3 +15985,85 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 .reader-shell[data-src-sliding] > .reader-col-sources { overflow: hidden; min-width: 0; }
 .reader-shell .reader-src-ghost { position: absolute; z-index: 3; overflow: hidden; pointer-events: none; }
 .reader-shell .reader-src-ghost > * { width: 100%; height: 100%; }
+
+/* ══ 问答的光(第五批)══
+   光——玻璃、由虚到实、极光——只许出现在问答面板上(conventions §7)。现网的问答是右下角的浮窗,光就落在浮窗上;
+   面板打开时导轨上的问答钮泛一次光晕,是光唯一落在面板之外的地方(它是面板的来处)。
+   护栏:模糊只落在面板这一块有边界的东西上且不超过 300ms;本批新增的循环动画只有等待时的那一行流光;减少动效时极光与流光不出现。 */
+@property --ai-ang { syntax: "<angle>"; inherits: false; initial-value: 0deg; }    /* 极光在边框上的位置 */
+@property --ai-ring { syntax: "<number>"; inherits: false; initial-value: 0; }     /* 极光过后整圈的余辉 */
+
+/* 面板:玻璃,用站内镀层那一组 token(--glass-bg / --glass-blur / --glass-edge;不支持 backdrop-filter 时 --glass-bg 自己退到近实色);
+   由虚到实 260ms,退场虚化 160ms */
+.reader-shell .reader-ai-panel {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--dorami-shadow), var(--glass-edge);
+  transform-origin: center;
+  animation: reader-ai-focus-in 260ms var(--motion-ease-focus) both;
+}
+.reader-shell .reader-ai-panel.is-closing { animation: reader-ai-focus-out 160ms ease-out forwards; }
+@keyframes reader-ai-focus-in { from { opacity: 0; filter: blur(8px); transform: scale(0.985); } to { opacity: 1; filter: blur(0); transform: none; } }
+@keyframes reader-ai-focus-out { from { opacity: 1; filter: blur(0); } to { opacity: 0; filter: blur(6px); } }
+/* 键盘开合:不动。是不是键盘,看面板自己身上的 is-still(开 / 合的那一刻由组件记下),不看 <html data-input>——
+   面板开着的时候人换了输入方式,动画名跟着变,入场会被重播一遍 */
+.reader-shell .reader-ai-panel.is-still { animation: none; }
+.reader-shell .reader-ai-panel.is-still.is-closing { animation: none; opacity: 0; }
+/* 压暗:面板开着时工作区退后一步(导轨不压——问答钮在那儿亮着)。不拦点击 */
+.reader-shell { --qa-scrim: color-mix(in srgb, var(--dorami-ink) 7%, transparent); }
+[data-theme="dark"] .reader-shell { --qa-scrim: rgb(0 0 0 / 0.34); }
+.reader-shell .reader-ai-scrim { position: absolute; inset: 0 0 0 var(--vrail); z-index: 30; pointer-events: none; background: var(--qa-scrim); animation: reader-ai-scrim-in 240ms ease-out both; }
+.reader-shell .reader-ai-scrim.is-off { animation: reader-ai-scrim-out 140ms ease-out forwards; }
+.reader-shell .reader-ai-scrim.is-still { animation: none; }
+.reader-shell .reader-ai-scrim.is-still.is-off { animation: none; opacity: 0; }
+@keyframes reader-ai-scrim-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes reader-ai-scrim-out { from { opacity: 1; } to { opacity: 0; } }
+/* 面板里几块原来各自铺实底的,让出来给玻璃 */
+.reader-shell .reader-ai-panel :is(.reader-ai-head, .reader-ai-thread, .reader-ai-composer) { background: transparent; }
+
+/* 极光:沿边走一圈,过后留一瞬整圈的余辉。打开时一次,每次提问再一次(元素按序号重挂载) */
+.reader-shell .reader-ai-aurora {
+  position: absolute; inset: 0; z-index: 2; border-radius: inherit; padding: 1.5px; pointer-events: none; opacity: 0;
+  background:
+    conic-gradient(from var(--ai-ang), transparent 0deg, transparent 205deg, color-mix(in srgb, var(--ai-g1) 80%, transparent) 280deg, var(--ai-g2) 338deg, color-mix(in srgb, white 62%, var(--ai-g2)) 357deg, transparent 360deg),
+    linear-gradient(118deg, color-mix(in srgb, var(--ai-g1) calc(var(--ai-ring) * 100%), transparent), color-mix(in srgb, var(--ai-g2) calc(var(--ai-ring) * 100%), transparent));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  animation: reader-ai-sweep 1150ms cubic-bezier(0.45, 0, 0.25, 1) both;
+}
+@keyframes reader-ai-sweep {
+  0% { --ai-ang: -75deg; --ai-ring: 0; opacity: 0; }
+  12% { opacity: 1; }
+  58% { --ai-ring: 0.42; }
+  84% { opacity: 1; }
+  100% { --ai-ang: 285deg; --ai-ring: 0; opacity: 0; }
+}
+/* 键盘打开时那一圈不演;提问的那一圈照常(提问多半就是回车发出的,它回应的是「开始想了」) */
+.reader-shell .reader-ai-aurora.is-quiet { animation: none; }
+:root[data-motion="reduce"] .reader-shell .reader-ai-aurora { animation: none; opacity: 0; }
+
+/* 导轨上的问答钮:面板由指针打开时泛一次光晕——在 utils/qaMotion.haloQaButton 里(一次性的、要看触发方式的,不放在样式里) */
+
+/* 等待:正在做的那一步是一行流光(循环;登记在案的例外见 conventions §7),出现时淡入;圆点不再自己跳。
+   做完的那几步不带动画——一步做完时它从「正在做」换成「做完了」,若还挂着入场动画,动画名一变就会重播一遍 */
+.reader-shell .reader-ai-wait-row { animation: none; }
+.reader-shell .reader-ai-wait-row.is-active {
+  width: fit-content; color: transparent;
+  background: linear-gradient(100deg, var(--dorami-faint) 30%, var(--ai-g1) 44%, var(--ai-g2) 56%, var(--dorami-faint) 70%) 0 0 / 240% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  animation: reader-ai-shimmer 1.15s linear infinite, reader-ai-wait-in 180ms ease-out 120ms both;
+}
+@keyframes reader-ai-wait-in { from { opacity: 0; } to { opacity: 1; } }
+.reader-shell .reader-ai-wait-row.is-active .reader-ai-wait-dot { animation: none; }
+@keyframes reader-ai-shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+:root[data-motion="reduce"] .reader-shell .reader-ai-wait-row.is-active { animation: none; background: none; color: inherit; }
+
+/* 空态的三行建议:面板打开、切范围时直接在(面板自己有入场,不叠第二层;键盘打开也不该动)。
+   定时轮换(4.5 秒一换,2026 年目检三轮定下的氛围动效)保留——换上来的那一批才以浮现相进场(组件在第一次轮换后加 is-rotated) */
+.reader-shell .reader-ai-suggest:not(.is-rotated) .reader-ai-suggest-btn { animation: none; }
+/* 一轮问答:整块不再自己淡入上移(面板重新打开时旧的几轮会跟着面板再入场一遍,一个容器两层入场)。
+   提问的那一刻问句由虚到实、回答到达时各段依次由虚到实,都在 utils/qaMotion 里,各只演一次;重新挂载的旧问答直接在 */
+.reader-shell .reader-ai-turn,
+.reader-shell .reader-ai-a { animation: none; }
