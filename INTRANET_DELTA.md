@@ -9,12 +9,19 @@
 
 | 字段 | 值 |
 |---|---|
-| `UPSTREAM_BASE` | `v3.68.1` / main `bb66fa43ff87bfbddd0c06a0d21a0353d9803166`(2026-11-18 正式发布,自动同步合入,见下) |
-| 本清单最近核对 | 2026-11-18(GitHub 侧 master;内网托管仓独有差异仍待内网 Agent 补登,见 §4) |
+| `UPSTREAM_BASE` | `v3.69.0` / main `f4387bef3529ef594ebd026013e76703ff1e362e`(2026-11-19 正式发布,自动同步合入,见下) |
+| 本清单最近核对 | 2026-11-19(GitHub 侧 master;内网托管仓独有差异仍待内网 Agent 补登,见 §4) |
 | 同步方式 | GitHub `Sync main → master` 工作流,**按 main 的版本 tag(`v*`)触发**,`--no-ff` 合并;冲突时任务失败、人工处理 |
 
 每次合入上游版本后:更新 `UPSTREAM_BASE`,逐条复核 §2/§3 里「冲突原则」栏是否仍成立,
 被上游吸收的条目移到 §5「已上游化」。
+
+2026-11-19 正式版 `v3.69.0` 已自动无冲突合入(`4fd1e3b7`)。本版两块:读者面桌面动效重构(issue #301,纯前端,31 个前端文件,`App.jsx` / `SettingsModal.jsx` 未动)
+与热点事件榜的令牌化交付口(issue #310:`GET /api/public/feed/events`、`GET /api/public/feed/events/{event_id}`,凭 `dfeed_` 个人聚合令牌,契约见 `docs/contracts/reader_subscription.md`)。
+后端只动 `src/api/routers/events.py` 与 `src/services/event_board.py`,不涉 §2.1 的 8 个适配文件,也没有新增 httpx client;相对上一版,内网源码和迁移差异保持一致。
+本版无新迁移、无同步协议或接收端进度变更,部署脚本未动。内网接手注意:① 新端点要等内网部署本版后才有,此前这两条路径回 404;
+② 榜单由各节点按本机数据现算,名次快照 `event_rank_snapshots` 不随 Archive Sync 传,内网与外网的名次 / `previous_rank` 不保证一致;
+③ 内网手动部署(`./deploy.sh --here`);重启 PM2 仍会中断正在运行的同步,若需保留同一任务,应待其结束再切换。
 
 2026-11-18 正式版 `v3.68.1` 已自动合入（`664e30f1`）。发送端加速图片公开引用核验；相对上一版，内网源码和迁移差异保持一致。本版无新迁移、无同步协议或接收端进度变更。内网手动部署；重启 PM2 仍会中断正在运行的同步，若需保留同一任务，应待其结束再切换。
 
