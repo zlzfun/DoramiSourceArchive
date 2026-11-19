@@ -11,7 +11,7 @@
 
 ## 年表(一行一波;自 `CLAUDE.md` 迁入 2026-10-21,**新波次在此加一行**,L0 不再逐波改)
 
-- **热点事件榜的令牌化交付口(issue #310,2026-11-19,纯后端 + 契约文档,开发版 3.69.0-alpha,待发布)**:榜单页「热点事件」的数据原先只有会话接口,脚本要先登录或走游客。新增 `GET /api/public/feed/events`(`window_hours` / `limit` / `include_members`)与 `GET /api/public/feed/events/{event_id}`,用 `dfeed_` 个人聚合令牌鉴权,与读者面同调 `services/event_board`、全站口径不按订阅裁剪;读者面榜单载荷的键自此也是对外契约,键集由测试钉住。无迁移、不涉同步流。详见下文 issue #310 段。
+- **热点事件榜的令牌化交付口(issue #310,PR #311,2026-11-19,纯后端 + 契约文档,开发版 3.69.0-alpha,Codex 两轮检视通过、按例外合入,待发布)**:榜单页「热点事件」的数据原先只有会话接口,脚本要先登录或走游客。新增 `GET /api/public/feed/events`(`window_hours` / `limit` / `include_members`)与 `GET /api/public/feed/events/{event_id}`,用 `dfeed_` 个人聚合令牌鉴权,与读者面同调 `services/event_board`、全站口径不按订阅裁剪;读者面榜单载荷的键自此也是对外契约,键集由测试钉住。无迁移、不涉同步流。详见下文 issue #310 段。
 - **读者面桌面动效重构(issue #301,PR #302–#308,开发版 3.69.0-alpha,待发布)**:两轮样页后用户逐场景选定——精密做底(按下、浮层、打开文章、切视图、AI 速读卡、提示、明暗)、连续管空间(指示器与筛选、来源栏、早报到场、滚动停靠、榜单卡进事件页、订阅)、光只给问答面板,另加沉浸阅读。分六批落地(规则与 token / 反馈层 / 指示器与列表 / 空间转场 / 问答的光 / 沉浸阅读),合入后对样页逐场景对拍又补了一批;第二至四批用户逐批目检放行,第五至七批按用户授权由执行者合入、目检待补。第一批(规则与 token):conventions §7 加「桌面读者面的动效语言」;`index.css` 加曲线两条、时长五档、弹簧五档 token;弹簧取样抽成共用 `utils/spring.js`(播放条曲线逐点不变);守卫 `motionTokens.test.mjs`。样式表其余部分零改动、观感零变化。详见下文 issue #301 段与 [方案](archive/issue-301-motion-language.md)。
 - **图片同步公开引用查询（#299，v3.68.1）**：发送端使用生成清单时记录的候选文章 ID 复核公开引用；旧接收端沿用原协议。
 - **Archive Sync 接入上游时停用默认播客采集任务(issue #263 补,PR #297,开发版 3.68.0-alpha,2026-11-16,待发布)**:新节点自带的默认播客采集任务(只点名 `podcast_ai_native_dev`)原封未动时,本机第一次接入上游即停用,该源的本机分析同时置关;管理员动过的任务不碰,停用着的默认任务不再让这个源算「本机在用」。线格式与迁移零变化。详见下文「issue #263 补」段。
@@ -103,7 +103,7 @@
 - **Podcast(issue #7 P0–P0.2)**:`source_type=podcast` → `generic_podcast_rss`,单集复用 `ArticleRecord` + `extensions_json`,只解析 enclosure 元数据不下载音频;36 节目策展目录 `services.podcast_catalog` 启动幂等安装、进普通采集任务不设源级开关;边界与后续见 `docs/archive/podcast-wave-plan.md`。
 
 
-## issue #310 热点事件榜的令牌化交付口(分支 `feat/issue-310-events-feed`,开发版 3.69.0-alpha,待发布,版本号以实际发版为准)
+## issue #310 热点事件榜的令牌化交付口(PR #311,分支 `feat/issue-310-events-feed`,开发版 3.69.0-alpha,待发布,版本号以实际发版为准)
 
 - **来由**:用户的同事想用脚本长期拉榜单页「热点事件」的数据;现成的只有 `GET /api/reader/events`,要登录或游客 cookie,游客会话还会记进游客访问统计。站内的令牌化交付(`dfeed_` 拉文章、MCP)不含事件榜。
 - **做法**:`src/api/routers/events.py` 加对外交付面两条——`GET /api/public/feed/events` 与 `GET /api/public/feed/events/{event_id}`,令牌走 `/api/public/feed/articles` 的同一个解析口,数据直接调 `event_board.read_board` / `read_event`,列表外包 feed 家族的 `status` / `count`、详情是 `{status, event}`。服务层只给 `read_board` 加了 `include_members`(成员视图算榜时已载入,不多查库),成员清单的排序抽成 `_members_payload` 与详情共用。`/api/public/feed` 已在读者面前缀表里,运行面门控零改动;无迁移。
@@ -111,7 +111,7 @@
 - **部署与混版本**:不碰同步流,外网内网谁先上都行;开着读者面的旧版本节点上路径不存在回 404(`role=collector` 的节点不论版本都是 403);两个节点的名次不保证一致(各按自己的可见源与 07:00 快照算)。
 - **本波不做**:设置页「聚合接口」列出这条地址(要重想那张卡的范围表达,要目检)、MCP 工具、Markdown / Atom 变体。用户手册 `docs-site/features/integrations.md` 写了用法。
 - **自测**:`tests/test_events_api.py` 四条(与读者面逐字段相等 / 令牌门 / 运行面门 / 隐藏源不外流)+ `tests/test_event_board.py` 一条(带成员不多查库、与详情同形);反向对照把令牌校验改成恒通过,令牌门用例红。合成 400 件事件、1559 篇成员:不带成员 43 ms / 27 KB,带成员 44 ms / 225 KB。本机没有带事件数据的库,真实数据量没法量。
-- **交叉检视**:见 [方案 §7](archive/issue-310-events-feed.md)。
+- **交叉检视**:实现 Claude Code(Fable 5.2);检视 Codex `gpt-6-astra`(ultra,本地 `codex exec` 只读沙箱)两轮——第 1 轮「修后可合入」,0 P1 / 2 P2,鉴权、数据外流、读者面回归、混版本判断与七条取舍无异议,两条 P2 都是契约与实现对不上(掉榜事件的 `previous_rank` 并不为空;成员按归组时间 `report_at` 而不是发布时间排),全部接受,实现不动、契约改写并各补一处断言(变异对照两条都红);第 2 轮对照修复清单四项全已修、无新 P1。它的沙箱跑不了 pytest,测试以本机与 CI 为准。记录在 [方案 §7](archive/issue-310-events-feed.md)。
 
 ## 图片同步公开引用查询（#299，v3.68.1）
 

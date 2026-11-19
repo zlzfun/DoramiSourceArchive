@@ -288,7 +288,7 @@ A member carries three different times, and the list is ordered by the second on
 | Field | Meaning |
 | --- | --- |
 | `publish_date` | Publish time as archived from the source, unmodified. It can be missing, unparseable, or later than the time the report was ingested. |
-| `report_at` | Grouping time: `publish_date` clamped into the 72 hours before the report was first seen (the first-seen time when `publish_date` is missing). `members` is sorted by this. |
+| `report_at` | Grouping time: `publish_date` clamped into the 72 hours before the report was first seen (the first-seen time when `publish_date` is missing). `members` is sorted by this; a stored `report_at` that cannot be parsed falls back to `publish_date` for ordering. |
 | `published_at` | Display publish time: `publish_date` when it parses and is not later than the report's first-seen time, otherwise `report_at`. The item's `first_report_at` and `latest` are picked by this. |
 
 Because `report_at` is clamped, a report published long ago but ingested recently sorts as

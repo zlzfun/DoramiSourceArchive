@@ -7,7 +7,7 @@
 
 ## 热点事件榜的令牌化交付(2026-11,issue #310)
 
-- [issue-310-events-feed.md](./issue-310-events-feed.md) — `dfeed_` 令牌拉热点事件榜(`/api/public/feed/events[/{event_id}]`):来由(§1)、做法与落点(§2)、七条取舍(沿用 `dfeed_` / 全站口径不裁订阅 / 不收 `dsub_` / 读者面载荷原样下发并用键集测试钉住 / `include_members` / 令牌先于参数校验,§3)、部署顺序与混版本(§4)、本波不做(设置页入口、MCP 工具、Markdown / Atom,§5)、自测与规模自查(§6)、Codex 检视(§7)。
+- [issue-310-events-feed.md](./issue-310-events-feed.md) — `dfeed_` 令牌拉热点事件榜(`/api/public/feed/events[/{event_id}]`):来由(§1)、做法与落点(§2)、七条取舍(沿用 `dfeed_` / 全站口径不裁订阅 / 不收 `dsub_` / 读者面载荷原样下发并用键集测试钉住 / `include_members` / 令牌先于参数校验,§3)、部署顺序与混版本(§4)、本波不做(设置页入口、MCP 工具、Markdown / Atom,§5)、自测与规模自查(§6)、Codex 两轮检视(§7);PR #311,待发布。
 
 ## 读者面桌面动效重构(2026-11,issue #301)
 
