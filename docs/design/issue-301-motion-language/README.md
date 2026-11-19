@@ -29,6 +29,7 @@ python3 -m http.server 8765 --bind 127.0.0.1
 | `assets/base.css` | #279 原型的样式表原样复制（token 名与取值逐字取自 `frontend/src/index.css`） |
 | `tools/SPEC.md` | 接口约定与四个方向的规格 |
 | `tools/film.py` | 自查工具：冒烟（每个场景跑一遍、收集控制台报错）与连拍（按动画时间均匀取帧拼成一张图）。连拍用的是页面截图，View Transitions 进行中截图会被阻塞，拍不到中间帧 |
+| `tools/census.py` | 样式表动效普查(写死的时长与曲线、token 引用次数;方案 §1 的数字出自它,收口时再跑) |
 | `tools/cast.py` | 录帧连拍（CDP screencast）：拍得到 View Transitions 的中间帧，B 方向与各方向的明暗切换用它看 |
 
 ## 做法

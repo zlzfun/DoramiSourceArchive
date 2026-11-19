@@ -1047,6 +1047,6 @@ Buzzsprout 的单词级 JSON 原先每个词单独换行并重复说话人。阅
 
 **取舍**。用户的选择与执行者第一轮的建议出入不小(建议里 D 的早报「开版」、C 的明暗「晨昏线」、B 的打开文章共享元素都没被选):高频路径要快而准,有来处去处的东西才动,发光只留给问答面板——这是执行者从选择里读出来的,不是用户原话。D 刊物零选中,整套不进。切视图改成精密之后 View Transitions 只剩榜单卡成页、浮层变来源栏、明暗三处,React 因此先不升(用户已许可需要时升)。
 
-**第一批(规则与 token)**。只打地基:`index.css` `:root` 加 `--motion-ease-drawer` / `--motion-ease-focus`、时长 `--motion-press` / `--motion-hover-in` / `--motion-hover-out` / `--motion-base` / `--motion-drawer`、弹簧 `--motion-spring-<snappy|glide|move|settle|pop>` 与各自的落定时长;弹簧取样从 `utils/playerSpring.js` 抽到共用的 `utils/spring.js`,加「感知时长 + 回弹」的写法与五档参数表 `MOTION_SPRINGS`;conventions §7 加「桌面读者面的动效语言」一条。与样页落地表的三处出入:token 名并入现有的 `--motion-*` 命名空间(样页拟名是 `--ease-*` / `--dur-*`);`--motion-ease` 取值不动(与样页的曲线全程最大偏差 1.1%,241 处既有引用零差异);读者面写死时长的并档不单独做,随各批改到的交互一起换。
+**第一批(规则与 token)**。只打地基:`index.css` `:root` 加 `--motion-ease-drawer` / `--motion-ease-focus`、时长 `--motion-press` / `--motion-hover-in` / `--motion-hover-out` / `--motion-base` / `--motion-drawer`、弹簧 `--motion-spring-<snappy|glide|move|settle|pop>` 与各自的落定时长;弹簧取样从 `utils/playerSpring.js` 抽到共用的 `utils/spring.js`,加「感知时长 + 回弹」的写法与五档参数表 `MOTION_SPRINGS`;conventions §7 加「桌面读者面的动效语言」一条。与样页落地表的三处出入:token 名并入现有的 `--motion-*` 命名空间(样页拟名是 `--ease-*` / `--dur-*`);`--motion-ease` 取值不动(与样页的曲线全程最大偏差 1.1%,既有的 344 处引用零差异);读者面写死时长的并档不单独做,随各批改到的交互一起换。
 
-**自测**。`npm run lint` / `npm test` / `npm run build` 过;守卫 `motionTokens.test.mjs` 六条(CSS 弹簧与取样逐字一致、降级块、曲线与时长档、取样性质、抽取前后播放条十条缓动逐字相同),反向对照改错一个落定时长守卫报红。样式表除新增的自定义属性外零改动。
+**自测**。`npm run lint` / `npm test` / `npm run build` 过;守卫 `motionTokens.test.mjs` 五条(CSS 里的 token 只认顶层 `:root` 的声明、同名声明两次即报错,弹簧与取样逐字一致、降级块齐全、曲线与时长档;取样性质;抽取前后播放条十条缓动逐字相同),反向用例五种(改错取值、挪进别的选择器、注释掉、后面再覆盖、降级块不在)都报红。样式表除新增的自定义属性外零改动。
