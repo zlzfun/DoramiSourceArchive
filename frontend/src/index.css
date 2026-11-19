@@ -15910,3 +15910,78 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 .reader-shell .reader-flip-layer { position: absolute; left: 0; top: 0; right: 0; z-index: 5; pointer-events: none; overflow: hidden; }
 .reader-shell .reader-list-scroll .reader-flip-layer .reader-entry.is-active,
 .reader-shell .reader-list-scroll.has-ind .reader-flip-layer .reader-entry.is-active { background: var(--dorami-select); }
+
+/* ── 空间转场(第四批)· 标题滚动停靠 ──
+   大标题滚出阅读窗顶时,吸顶栏里它的小字版随滚动位置连续地浮进来,往回滚原路退——没有时间轴,进度就是滚动位置。
+   吸顶栏在滚动容器外面,时间线由大标题在滚动容器里声明、经 timeline-scope 提到两者共同的祖先上。
+   不支持滚动驱动动画的浏览器走 utils/spatialMotion.mountTitleDock 的脚本退路(同样的明度与位移)。 */
+.reader-shell .reader-bar-title {
+  flex: 1 1 0; min-width: 0; margin: 0 12px 0 10px; padding-left: 12px; font-size: 13px; font-weight: 600; line-height: 20px;
+  color: var(--dorami-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  box-shadow: inset 1px 0 0 var(--dorami-border); opacity: 0;
+}
+@keyframes reader-dock { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@keyframes reader-dock-fade { from { opacity: 0; } to { opacity: 1; } }
+@supports (animation-timeline: view()) and (timeline-scope: --x) {
+  /* 这一栏上原本就挂着阅读进度线的时间线(--reader-scroll);timeline-scope 不是叠加的,两条要写在一起,否则进度线失效 */
+  .reader-shell .reader-col-read { timeline-scope: --reader-scroll, --reader-h1; }
+  .reader-shell .reader-pane .reader-pane-title { view-timeline: --reader-h1 block; }
+  .reader-shell .reader-bar-title { animation: reader-dock linear both; animation-timeline: --reader-h1; animation-range: exit 0% exit 100%; }
+  :root[data-motion="reduce"] .reader-shell .reader-bar-title { animation-name: reader-dock-fade; }
+}
+
+/* ── 空间转场(第四批)· View Transitions ──
+   只有两处用:榜单卡展开成事件页(rk-open / rk-back)、来源下拉变成来源栏(src-unfold)。编排在 utils/readerMotion.viewTransit:
+   过渡期间 <html data-vt="类型">,参与的元素临时带 view-transition-name。明暗切换另有一条(.theme-fading),不经这里。
+   命名元素被单独拍走后,所在的面上会留一个洞;洞里垫面色,免得中途露出画布色。 */
+:root[data-vt]::view-transition { background: var(--dorami-surface); }
+:root[data-vt]::view-transition-group(*) { animation-duration: var(--motion-spring-move-dur); animation-timing-function: var(--motion-spring-move); }
+:root[data-vt]::view-transition-old(*), :root[data-vt]::view-transition-new(*) { mix-blend-mode: normal; }
+/* 根:新界面直接垫底,动的只有命名的那几件(卡面展开除外:旧榜单留在下面,新页从卡里长出来) */
+:root[data-vt]::view-transition-old(root) { animation: none; opacity: 0; }
+:root[data-vt]::view-transition-new(root) { animation: none; opacity: 1; }
+:root[data-vt="rk-open"]::view-transition-old(root) { opacity: 1; }
+:root[data-vt="rk-open"]::view-transition-new(root) { opacity: 0; }
+@keyframes vt-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes vt-fade-out { from { opacity: 1; } to { opacity: 0; } }
+
+/* 榜单卡 ⇄ 事件页:窗口从卡的位置长到整页(settle 弹簧),窗里的内容不缩放、锚在左上 */
+:root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-group(rk-title) { z-index: 3; }
+:root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-group(rk-card) { z-index: 2; }
+:root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-group(rk-card), :root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-group(rk-title) { animation-duration: var(--motion-spring-settle-dur); animation-timing-function: var(--motion-spring-settle); }
+:root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-old(rk-card), :root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-new(rk-card) { block-size: 100%; object-fit: none; object-position: left top; }
+/* 窗口自己垫面色:展开时盖住下面的旧榜单,收拢时盖住已经回来的榜单——窗口里只见两份内容交替,不叠字 */
+:root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-image-pair(rk-card) { background: var(--dorami-surface); }
+:root[data-vt="rk-open"]::view-transition-old(rk-card) { animation: vt-fade-out 140ms linear both; }
+:root[data-vt="rk-open"]::view-transition-new(rk-card) { animation: vt-fade-in 200ms 60ms linear both; }
+:root[data-vt="rk-back"]::view-transition-old(rk-card) { animation: vt-fade-out 260ms linear both; }
+:root[data-vt="rk-back"]::view-transition-new(rk-card) { animation: vt-fade-in 220ms 140ms linear both; }
+/* 共享标题:两头字号不同。旧字从自身字号放大到新字号、新字从旧字号长到自身字号,全程两张图里的字一样大,只在前段交叉淡化 */
+:root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-old(rk-title), :root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-new(rk-title) { block-size: auto; transform-origin: left top; }
+:root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-old(rk-title) { inline-size: var(--vt-title-ow, auto); animation: vt-title-old var(--motion-spring-settle-dur) var(--motion-spring-settle) both, vt-x-out var(--motion-spring-settle-dur) linear both; }
+:root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-new(rk-title) { inline-size: var(--vt-title-nw, auto); animation: vt-title-new var(--motion-spring-settle-dur) var(--motion-spring-settle) both, vt-x-in var(--motion-spring-settle-dur) linear both; }
+@keyframes vt-title-old { from { transform: scale(1); } to { transform: scale(var(--vt-title-ratio, 1)); } }
+@keyframes vt-title-new { from { transform: scale(calc(1 / var(--vt-title-ratio, 1))); } to { transform: scale(1); } }
+@keyframes vt-x-out { 0%, 8% { opacity: 1; } 34%, 100% { opacity: 0; } }
+@keyframes vt-x-in { 0%, 6% { opacity: 0; } 36%, 100% { opacity: 1; } }
+/* 返回时那张卡已不在视口(类型在转场中途换成 rk-swap):旧页与旧标题没有同名的新端接手,各自原地淡出,榜单在下面淡入;
+   上面那组卡面 / 标题的缩放规则只认 rk-open 与 rk-back,不会落到这里 */
+:root[data-vt="rk-swap"]::view-transition-old(rk-card), :root[data-vt="rk-swap"]::view-transition-old(rk-title) { animation: vt-fade-out 120ms linear both; }
+:root[data-vt="rk-swap"]::view-transition-new(root) { animation: vt-fade-in 180ms linear both; }
+
+/* 来源下拉变成来源栏(从「固定来源栏」展开):浮层的窗口长成来源栏,条目列与阅读窗跟着让出位置(位置与尺寸走 move 弹簧) */
+:root[data-vt="src-unfold"]::view-transition-group(src-bar) { z-index: 2; }
+:root[data-vt="src-unfold"]::view-transition-old(src-bar), :root[data-vt="src-unfold"]::view-transition-new(src-bar),
+:root[data-vt="src-unfold"]::view-transition-new(src-pane) { block-size: 100%; object-fit: none; object-position: left top; }
+:root[data-vt="src-unfold"]::view-transition-image-pair(src-bar) { background: var(--dorami-surface); }
+:root[data-vt="src-unfold"]::view-transition-old(src-bar) { animation: vt-fade-out 120ms linear both; }
+:root[data-vt="src-unfold"]::view-transition-new(src-bar) { animation: vt-fade-in 200ms 80ms linear both; }
+:root[data-vt="src-unfold"]::view-transition-old(src-list), :root[data-vt="src-unfold"]::view-transition-old(src-pane) { animation: none; opacity: 0; }
+:root[data-vt="src-unfold"]::view-transition-new(src-list), :root[data-vt="src-unfold"]::view-transition-new(src-pane) { animation: none; opacity: 1; }
+
+/* 来源栏收起 / 滑出(utils/readerMotion.slideSourcesAway / slideSourcesIn):栅格列宽在动的这一小段里,导轨自己仍按原宽靠左;
+   替身的裁切框与来源栏同位同大,替身往左滑出时被它的左边切掉——看上去就是滑到导轨下面 */
+.reader-shell[data-src-sliding] > .reader-vrail { width: var(--vrail); justify-self: start; }
+.reader-shell[data-src-sliding] > .reader-col-sources { overflow: hidden; min-width: 0; }
+.reader-shell .reader-src-ghost { position: absolute; z-index: 3; overflow: hidden; pointer-events: none; }
+.reader-shell .reader-src-ghost > * { width: 100%; height: 100%; }

@@ -87,3 +87,69 @@ test('减少动效:按播放那一刻的偏好算,触发方式是指针也只留
   attrs.delete('data-motion');
   assert.equal(m.pointerMotion(), 'full');
 });
+
+test('viewTransit:键盘触发直接 update,不调 fallback;指针触发但起不了转场时同步提交再调 fallback', async () => {
+  const m = await import('../src/utils/readerMotion.js');
+  const calls = [];
+  // 没有 startViewTransition 的环境
+  key();
+  assert.equal(m.viewTransit('t', () => calls.push('update'), { fallback: (mode) => calls.push(`fallback:${mode}`) }), false);
+  assert.deepEqual(calls.splice(0), ['update'], '键盘:与没有这层时相同');
+  pointer();
+  assert.equal(m.viewTransit('t', () => calls.push('update'), { fallback: (mode) => calls.push(`fallback:${mode}`) }), false);
+  assert.deepEqual(calls.splice(0), ['update', 'fallback:full'], '指针 + 不支持:新界面提交之后再走退路');
+  attrs.set('data-motion', 'reduce');
+  m.viewTransit('t', () => calls.push('update'), { fallback: (mode) => calls.push(`fallback:${mode}`) });
+  assert.deepEqual(calls.splice(0), ['update', 'fallback:fade'], '减少动效:退路里只许淡入');
+  attrs.delete('data-motion');
+});
+
+test('viewTransit:同步入口用这一下自己的触发方式,不继承别的请求挂起的指针意图', async () => {
+  const m = await import('../src/utils/readerMotion.js');
+  const calls = [];
+  pointer();
+  m.holdIntent();              // 指针打开了一篇报道,请求还没回来
+  key();                       // 按 Esc 返回
+  m.viewTransit('t', () => calls.push('update'), { fallback: () => calls.push('fallback') });
+  assert.deepEqual(calls, ['update'], '按键盘判:不起转场、不走退路');
+  m.releaseIntent();
+});
+
+test('viewTransit:支持时起一场转场,过程中带 data-vt,结束后摘掉名字与类型;上一场没完时不叠', async () => {
+  const m = await import('../src/utils/readerMotion.js');
+  pointer();
+  let finish;
+  const root = globalThis.document.documentElement;
+  root.dataset = {};
+  globalThis.document.startViewTransition = (cb) => { cb(); return { finished: new Promise((resolve) => { finish = resolve; }), ready: Promise.resolve() }; };
+  const el = { style: {} };
+  const order = [];
+  const t = m.viewTransit('rk-open', () => order.push('update'), { before: (name) => { name(el, 'rk-card'); order.push('before'); }, after: () => order.push(`after:${el.style.viewTransitionName}`) });
+  assert.ok(t);
+  assert.deepEqual(order, ['before', 'update', 'after:'], 'update 之后、after 之前旧名字已摘掉');
+  assert.equal(root.dataset.vt, 'rk-open');
+  const again = [];
+  assert.equal(m.viewTransit('rk-back', () => again.push('update'), { fallback: (mode) => again.push(mode) }), false);
+  assert.deepEqual(again, ['update', 'full'], '上一场没完:直接换并走退路');
+  finish();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(root.dataset.vt, undefined);
+  delete globalThis.document.startViewTransition;
+});
+
+test('shareTitle:每一场先清掉上一场的尺寸;旧端没取到时 taken 为假、give 不写', async () => {
+  const m = await import('../src/utils/readerMotion.js');
+  const props = new Map();
+  globalThis.document.documentElement.style = { setProperty: (k, v) => props.set(k, v), removeProperty: (k) => props.delete(k) };
+  globalThis.getComputedStyle = () => ({ fontSize: '20px' });
+  const el = { getBoundingClientRect: () => ({ width: 300 }) };
+  const first = m.shareTitle();
+  first.take(el); first.give(el);
+  assert.equal(first.taken, true);
+  assert.equal(props.get('--vt-title-ratio'), '1.0000');
+  const second = m.shareTitle();
+  assert.equal(props.size, 0, '新的一场从干净的开始');
+  assert.equal(second.taken, false);
+  second.give(el);
+  assert.equal(props.size, 0);
+});
