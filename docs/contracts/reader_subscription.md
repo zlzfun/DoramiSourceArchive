@@ -256,7 +256,8 @@ List response — the reader board payload plus the feed family's `status` / `co
 | `generated_at` | When this response was computed (UTC). The board is computed on request, not cached. |
 | `snapshot_date` | Date of the daily snapshot `previous_rank` is compared against: the most recent one for the same window generated before now. `null` when none exists yet. |
 | `empty_reason` | `"no_events"` when `items` is empty, otherwise `null`. |
-| `rank` / `previous_rank` | Position on this window's board now / on that snapshot. `previous_rank` is `null` for an event that was not on it. |
+| `rank` | Position on this window's board right now. Always set in the list; in the detail response it is `null` when the event is not currently on the board. |
+| `previous_rank` | Position on the snapshot named by `snapshot_date`. `null` when the event was not on that snapshot, or when no snapshot exists. Looked up independently of `rank`. |
 | `title` / `title_lang` | Display title computed from visible members; `title_lang` is `zh` or `en`. |
 | `summary` | Analysis summary of the representative report; may be empty. |
 | `publisher_count` / `member_count` | Distinct visible publishers / visible reports. Several channels of one owner count as one publisher; provisional (push-ingested) sources are members but not publishers. |
@@ -268,7 +269,7 @@ List response — the reader board payload plus the feed family's `status` / `co
 | `story` | The earlier event this one follows, when that event has visible members; otherwise both fields are `null`. |
 
 With `include_members=true`, and always in the detail response, `members` lists the visible
-reports newest first:
+reports ordered by `report_at` descending, ties broken by `article_id` ascending:
 
 ```json
 {
@@ -282,6 +283,18 @@ reports newest first:
 `content_shape` is `article`, `social` or `podcast`; `title_zh` is the cached translated
 title when there is one. Timestamps are ISO-8601 strings as archived.
 
+A member carries three different times, and the list is ordered by the second one:
+
+| Field | Meaning |
+| --- | --- |
+| `publish_date` | Publish time as archived from the source, unmodified. It can be missing, unparseable, or later than the time the report was ingested. |
+| `report_at` | Grouping time: `publish_date` clamped into the 72 hours before the report was first seen (the first-seen time when `publish_date` is missing). `members` is sorted by this. |
+| `published_at` | Display publish time: `publish_date` when it parses and is not later than the report's first-seen time, otherwise `report_at`. The item's `first_report_at` and `latest` are picked by this. |
+
+Because `report_at` is clamped, a report published long ago but ingested recently sorts as
+recent. Do not read `members[0]` as the most recently published report: use the item's
+`latest`, or sort `members` by `published_at`.
+
 Detail response:
 
 ```json
@@ -290,10 +303,15 @@ Detail response:
 
 `event` carries every list item field plus `members`, `followups`
 (`[{event_id, title, first_seen_at}]`, later events that follow this one) and `merged_into`.
-`rank` / `previous_rank` refer to the `window_hours` board and are `null` for an event not on
-it — a single-publisher event can be fetched by id but never ranks. An id that was merged
-away returns the surviving event with `merged_into` set to its id. An unknown id, or an
-event with no visible member, returns `404`.
+`rank` refers to the `window_hours` board and is `null` for an event not currently on it — a
+single-publisher event can be fetched by id but never ranks. `previous_rank` is looked up
+separately in the same window's snapshot, so an event that ranked on that snapshot and has
+since dropped off the board returns `rank: null` with a non-null `previous_rank`. An id that
+was merged away returns the surviving event with `merged_into` set to its id. An unknown id,
+or an event with no visible member, returns `404`.
+
+A deployment that predates these endpoints answers `404`; a node running with
+`[runtime] role=collector` answers `403` regardless of version.
 
 **Stability.** These field sets are a delivery contract: additive changes only. They are
 pinned by `tests/test_events_api.py` (`ITEM_KEYS`, `MEMBER_KEYS`, `DETAIL_KEYS`,

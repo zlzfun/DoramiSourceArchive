@@ -108,7 +108,7 @@
 - **来由**:用户的同事想用脚本长期拉榜单页「热点事件」的数据;现成的只有 `GET /api/reader/events`,要登录或游客 cookie,游客会话还会记进游客访问统计。站内的令牌化交付(`dfeed_` 拉文章、MCP)不含事件榜。
 - **做法**:`src/api/routers/events.py` 加对外交付面两条——`GET /api/public/feed/events` 与 `GET /api/public/feed/events/{event_id}`,令牌走 `/api/public/feed/articles` 的同一个解析口,数据直接调 `event_board.read_board` / `read_event`,列表外包 feed 家族的 `status` / `count`、详情是 `{status, event}`。服务层只给 `read_board` 加了 `include_members`(成员视图算榜时已载入,不多查库),成员清单的排序抽成 `_members_payload` 与详情共用。`/api/public/feed` 已在读者面前缀表里,运行面门控零改动;无迁移。
 - **取舍**:沿用 `dfeed_` 不新开令牌族;榜单全站口径、令牌只决定能不能拿(按订阅裁会让同一件事主体数与名次因令牌而异,且与页面对不上);不收 `dsub_`、登录会话不顶替令牌;读者面载荷原样下发而不另写交付视图,代价是这些键成了对外契约,用键集测试钉住;令牌校验先于参数取值校验。
-- **部署与混版本**:不碰同步流,外网内网谁先上都行;旧版本节点上路径不存在回 404;两个节点的名次不保证一致(各按自己的可见源与 07:00 快照算)。
+- **部署与混版本**:不碰同步流,外网内网谁先上都行;开着读者面的旧版本节点上路径不存在回 404(`role=collector` 的节点不论版本都是 403);两个节点的名次不保证一致(各按自己的可见源与 07:00 快照算)。
 - **本波不做**:设置页「聚合接口」列出这条地址(要重想那张卡的范围表达,要目检)、MCP 工具、Markdown / Atom 变体。用户手册 `docs-site/features/integrations.md` 写了用法。
 - **自测**:`tests/test_events_api.py` 四条(与读者面逐字段相等 / 令牌门 / 运行面门 / 隐藏源不外流)+ `tests/test_event_board.py` 一条(带成员不多查库、与详情同形);反向对照把令牌校验改成恒通过,令牌门用例红。合成 400 件事件、1559 篇成员:不带成员 43 ms / 27 KB,带成员 44 ms / 225 KB。本机没有带事件数据的库,真实数据量没法量。
 - **交叉检视**:见 [方案 §7](archive/issue-310-events-feed.md)。
