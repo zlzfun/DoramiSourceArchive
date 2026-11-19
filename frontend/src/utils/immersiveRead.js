@@ -10,7 +10,8 @@ export const IMMERSIVE = Object.freeze({
   wakeTop: 120,     // 回到顶上附近:回来
   wakeUp: 24,       // 或往回滚了这么多:回来
 });
-const PANE = '.reader-pane';
+// 只认带标记的阅读窗:文章。播客详情与文章共用 .reader-pane 这个容器,但它是收听的界面,不在这一项的范围里(ReaderTab 不给它标记)
+const PANE = '.reader-pane[data-immersive]';
 const REGIONS = '.reader-vrail, .reader-col-sources, .reader-col-list';
 // 用键盘往下读(焦点不在那三块里):这几个键只是滚动,回不回来由滚动方向管——否则每按一下空格三栏就亮一次
 const SCROLL_KEYS = new Set([' ', 'Spacebar', 'PageDown', 'PageUp', 'ArrowDown', 'ArrowUp', 'Home', 'End']);

@@ -18,7 +18,7 @@ function harness() {
     setAttribute: (name, value) => attrs.set(name, value),
     removeAttribute: (name) => attrs.delete(name),
   };
-  const pane = () => ({ scrollTop: 0, isConnected: true, matches: (sel) => sel === '.reader-pane' });
+  const pane = (marked = true) => ({ scrollTop: 0, isConnected: true, matches: (sel) => sel === '.reader-pane' || (marked && sel === '.reader-pane[data-immersive]') });
   const inside = { closest: () => ({}) };     // 在三栏里的元素
   const outside = { closest: () => null };    // 在阅读窗里的元素
   const scrollTo = (el, top) => { el.scrollTop = top; listeners.shell.scroll({ target: el }); };
@@ -89,4 +89,20 @@ test('换了一篇:旧阅读窗不在了就退出;新阅读窗从头算', async 
   unmount();
   assert.equal(h.reading(), false, '卸载时清掉状态');
   assert.deepEqual([Object.keys(h.listeners.shell).length, Object.keys(h.listeners.window).length, h.observers[0].off], [0, 0, true]);
+});
+
+test('只认带标记的阅读窗:播客详情共用同一个容器但没有标记,滚多远都不进入', async () => {
+  const h = harness();
+  const { mountImmersiveRead } = await import(`../src/utils/immersiveRead.js?e=${Date.now()}`);
+  mountImmersiveRead(h.shell);
+  const podcast = h.pane(false);
+  h.scrollTo(podcast, 0); h.scrollTo(podcast, 400); h.scrollTo(podcast, 900);
+  assert.equal(h.reading(), false);
+  // 从文章(沉浸中)切到播客:文章的阅读窗不在了 → 退出;播客的滚动不再进入
+  const article = h.pane();
+  h.scrollTo(article, 0); h.scrollTo(article, 300); h.scrollTo(article, 600);
+  assert.equal(h.reading(), true);
+  article.isConnected = false; h.observers[0].cb();
+  h.scrollTo(podcast, 1200); h.scrollTo(podcast, 1600);
+  assert.equal(h.reading(), false);
 });

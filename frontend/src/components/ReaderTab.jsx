@@ -1777,8 +1777,9 @@ export default function ReaderTab({
               </div>
             </div>
 
-          {/* key 按文章 id 重挂载;挂上时由 paneEnterRef 播入场(issue #301:指针触发才动,键盘触发直接换) */}
-          <article className="reader-pane" key={activeArticle.id} ref={paneEnterRef}>
+          {/* key 按文章 id 重挂载;挂上时由 paneEnterRef 播入场(issue #301:指针触发才动,键盘触发直接换)。
+              data-immersive:只有文章的阅读窗参与沉浸阅读(utils/immersiveRead.js);播客详情共用这个容器,但不退 */}
+          <article className="reader-pane" key={activeArticle.id} ref={paneEnterRef} data-immersive={podcastView ? undefined : ''}>
             {/* 标题区三行(issue #279 第三批;此前四行):眉题(类别;非资讯写内容类型,资讯写事件类型,issue #178)/
                 衬线标题 / 署名行(只放事实:日期 · 时长 · 阅读量 · 分析状态)。原先的尾行拆走了:动作进吸顶栏,
                 标签进速读卡脚或页边。播客另有一行收听入口(这一屏唯一的实心钮),封面在标题左边。 */}

@@ -304,6 +304,8 @@ export function slideSourcesAway(shell, apply) {
   ghost.querySelectorAll('[id]').forEach((node) => node.removeAttribute('id'));
   ghost.querySelectorAll('.reader-ind').forEach((node) => { node.style.animation = 'none'; });
   const scrolled = [...aside.querySelectorAll('*')].map((node, i) => [i, node.scrollTop]).filter(([, top]) => top > 0);
+  // 沉浸阅读刚被这一下点击唤回、来源栏还在淡回来的途中:替身进了裁切框就不再吃那条明度规则,记下此刻的明度让它接着淡完,免得亮跳一下
+  const dim = Number(getComputedStyle(aside).opacity);
   clip.appendChild(ghost);
   flushSync(apply);
   const tracks = getComputedStyle(shell).gridTemplateColumns.split(' ');   // 收起之后:导轨 / 条目列 / 阅读窗
@@ -316,6 +318,7 @@ export function slideSourcesAway(shell, apply) {
   const rest = `${tracks[1]} minmax(0px, 1fr)`;
   const slide = shell.animate([{ gridTemplateColumns: `${railWidth + box.width}px ${rest}` }, { gridTemplateColumns: `${tracks[0]} ${rest}` }], timing);
   ghost.animate([{ transform: 'none' }, { transform: 'translateX(-100%)' }], { ...timing, fill: 'forwards' });
+  if (dim < 1) ghost.animate([{ opacity: dim }, { opacity: 1 }], { duration: MOTION.fast, easing: MOTION.ease });
   const done = () => { clip.remove(); delete shell.dataset.srcSliding; };
   slide.finished.then(done, done);
 }
