@@ -192,7 +192,9 @@ export function mountGlideIndicators(root) {
     const live = new Set();
     for (const cfg of GLIDE_HOSTS) {
       for (const host of root.querySelectorAll(cfg.host)) {
-        if (host.closest('[inert]')) continue;   // 替身里克隆出来的宿主(来源栏收起时的替身、筛选的替身层):它带着自己那份指示器,不再补一份
+        // 替身里克隆出来的宿主(来源栏收起时的替身、筛选的替身层)带着自己那份指示器,不再补一份。
+        // 只认这两种替身,不按 inert 判:模态层打开时下层整片都是 inert,那时指示器照常留着
+        if (host.closest('.reader-src-ghost, .reader-flip-layer')) continue;
         live.add(host);
         syncHost(host, cfg, settle);
       }
