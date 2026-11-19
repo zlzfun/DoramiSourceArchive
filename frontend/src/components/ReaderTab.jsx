@@ -91,7 +91,9 @@ import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
 import { articleListenEntries, podcastListenEntries } from '../utils/listenEntries';
 import { nowPlayingFor } from '../utils/playerCore';
 import { mediaProxyUrl } from '../api';
-import { armReadCascade, currentIntent, enterPane, enterPop, enterStage, exitGhost, holdIntent, motionIntent, popStar, releaseIntent, themeFade } from '../utils/readerMotion';
+import { mountGlideIndicators } from '../utils/glideIndicators';
+import { mountListFlip } from '../utils/listFlip';
+import { armReadCascade, currentIntent, enterPane, enterPop, enterStage, exitGhost, holdIntent, motionIntent, popStar, releaseIntent, releaseIntentSoon, themeFade } from '../utils/readerMotion';
 
 // ReaderWorkspace 持有共享数据与阅读位置；这里仅负责桌面四栏与鼠标交互。
 // 条目、正文等内容组件继续供移动视图复用。
@@ -337,6 +339,7 @@ export const ArticleRow = memo(function ArticleRow({
         onMouseEnter={() => onPrefetchEnter(article)}
         onMouseLeave={onPrefetchLeave}
         onContextMenu={(e) => onContextMenu(e, article, 'article')}
+        data-flip-id={article.id}
         className={`reader-entry ${compact ? 'is-compact' : ''} ${entryPodcast ? 'is-podcast' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'} ${isFav ? 'is-fav' : ''} ${ctxAnchor ? 'is-ctx-anchor' : ''}${favIndicator ? ' has-fav-mark' : ''}${card ? ' is-card' : ''}${rowTier === 'full' ? '' : ` is-${rowTier}`}`}
       >
         {/* 读态只由标题字重与墨色表达(is-read),不另画未读点(issue #199);读屏补一句「未读」与之对等 */}
@@ -804,6 +807,10 @@ export default function ReaderTab({
     enterPane(node);
     paneMountedRef.current = true;
   }, []);
+  // 滑动指示器(issue #301 第三批):独立的一层,挂在外壳上自己盯着选中项的变化,各页面组件不用接线
+  useEffect(() => mountGlideIndicators(shellRef.current), []);
+  // 筛选后留下的行滑到新位置(同批):也是独立的一层,靠行上的 data-flip-id 认行
+  useEffect(() => mountListFlip(shellRef.current), []);
   const stageKey = briefOpen ? 'brief' : rankingsOpen ? 'rankings' : railActive;
   const stageSeenRef = useRef(stageKey);
   useLayoutEffect(() => {
@@ -819,7 +826,7 @@ export default function ReaderTab({
   useLayoutEffect(() => {
     if (!paneMountedRef.current) return;
     paneMountedRef.current = false;
-    releaseIntent();
+    releaseIntentSoon();   // 等这一轮微任务跑完:导轨的指示器在提交之后才判触发方式
   });
   // 这篇文章是怎么打开的:文章一换就记下(渲染期间按「上一次渲染的值」校正状态的写法),传给会晚挂载的块——
   // 速读卡要等正文回来才挂上,那时再看「最近一次输入」已经不是打开它的那一下了。

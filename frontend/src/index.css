@@ -15883,3 +15883,30 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 :root:has(.reader-shell):not(:has(.tab-panel.is-off .reader-shell)) .toast-pop.is-leaving { animation: reader-toast-still-out var(--motion-hover-out) linear both; }
 :root:has(.reader-shell):not(:has(.tab-panel.is-off .reader-shell)) .toast-pop:not([data-input="key"]) { animation: reader-toast-in var(--motion-spring-glide-dur) var(--motion-spring-glide) both, reader-toast-fade 120ms linear both; }
 :root:has(.reader-shell):not(:has(.tab-panel.is-off .reader-shell)) .toast-pop.is-leaving:not([data-input="key"]) { animation: reader-toast-out var(--motion-hover-out) var(--motion-ease) both; }
+
+/* ── 指示器与列表(第三批)· 滑动指示器 ──
+   选中项的底色 / 底线由每个宿主里的一块 .reader-ind 来画(utils/glideIndicators.js 摆位与滑动),宿主带 .has-ind 时各项自己的让出来;
+   这一层没挂上时各项照旧自己着色。指示器垫在各项下面:一般宿主用 z-index: -1 + isolation;导轨不能自成层叠上下文
+   (它的浮签要压在右边各栏之上),改为把指示器放在最前、不设层级。 */
+.reader-shell :is(.reader-seg, .reader-axis, .mini-seg, .reader-tabs, .reader-kind-band, .reader-source-scroll, .reader-list-scroll).has-ind { position: relative; isolation: isolate; }
+.reader-shell .reader-vrail.has-ind { position: relative; }
+.reader-shell .reader-ind { position: absolute; left: 0; top: 0; z-index: -1; pointer-events: none; transform-origin: 0 0; will-change: transform; }
+.reader-shell .reader-ind.is-front { z-index: auto; }
+.reader-shell .reader-ind.is-seg { background: var(--dorami-surface); box-shadow: var(--sh-1); }
+.reader-shell .reader-ind.is-select { background: var(--dorami-select); }
+.reader-shell .reader-ind.is-line { background: var(--dorami-ink); }
+/* 各项自己的选中底让出来 */
+.reader-shell .reader-vrail.has-ind .reader-vrail-btn.is-on:not(.reader-vrail-qa) { background: transparent; }
+.reader-shell :is(.reader-seg, .reader-axis, .mini-seg).has-ind > .is-on { background: transparent; box-shadow: none; }
+.reader-shell .reader-kind-band.has-ind > .reader-kind-chip.is-on { background: transparent; }
+.reader-shell .reader-tabs.has-ind > .reader-tab.is-on::after,
+.reader-shell > .reader-disc .reader-disc-viewseg.has-ind .reader-seg-btn.is-on::after { content: none; }
+.reader-shell .reader-source-scroll.has-ind .reader-source-row-active,
+.reader-shell .reader-list-scroll.has-ind .reader-entry.is-active { background: transparent; }
+
+/* ── 指示器与列表 · 筛选后留下的行滑到新位置 ──
+   替身层(utils/listFlip.js):筛选重拉期间盖在列表上、把旧行留在原位。选中行的替身自己带选中底(真指示器被这一层挡在下面)。 */
+.reader-shell .reader-list-scroll:has(> .reader-flip-layer) { position: relative; }
+.reader-shell .reader-flip-layer { position: absolute; left: 0; top: 0; right: 0; z-index: 5; pointer-events: none; overflow: hidden; }
+.reader-shell .reader-list-scroll .reader-flip-layer .reader-entry.is-active,
+.reader-shell .reader-list-scroll.has-ind .reader-flip-layer .reader-entry.is-active { background: var(--dorami-select); }

@@ -49,6 +49,15 @@ export function releaseIntent(token) {
   if (!token || held === token) held = null;
 }
 
+/**
+ * 这一轮微任务跑完再放下此刻挂起的那一份。内容换上的那次提交用它:提交里的布局副作用已经按它判过了,
+ * 但滑动指示器那一层是在提交之后的微任务里(MutationObserver)才判的,当场放下会让它看不到。
+ */
+export function releaseIntentSoon() {
+  const token = held;
+  if (token) queueMicrotask(() => { if (held === token) held = null; });
+}
+
 /** 这一刻该按哪种触发方式算:有挂起的就是它,否则是此刻的最近输入。要把它绑到「这篇文章」上、留给晚挂载的块用时取这个。 */
 export function currentIntent() {
   return heldHow() || motionIntent();
