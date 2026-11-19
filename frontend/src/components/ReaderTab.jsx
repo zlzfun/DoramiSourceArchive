@@ -93,6 +93,7 @@ import { nowPlayingFor } from '../utils/playerCore';
 import { mediaProxyUrl } from '../api';
 import { mountGlideIndicators } from '../utils/glideIndicators';
 import { mountListFlip } from '../utils/listFlip';
+import { endArrival, mountSubscribeFly, mountTitleDock } from '../utils/spatialMotion';
 import { armReadCascade, currentIntent, enterPane, enterPop, enterStage, exitGhost, holdIntent, motionIntent, popStar, releaseIntent, releaseIntentSoon, themeFade } from '../utils/readerMotion';
 
 // ReaderWorkspace 持有共享数据与阅读位置；这里仅负责桌面四栏与鼠标交互。
@@ -811,11 +812,17 @@ export default function ReaderTab({
   useEffect(() => mountGlideIndicators(shellRef.current), []);
   // 筛选后留下的行滑到新位置(同批):也是独立的一层,靠行上的 data-flip-id 认行
   useEffect(() => mountListFlip(shellRef.current), []);
+  // 空间转场(第四批)里同样独立成层的两件:订阅成功时徽标飞到导轨;标题滚动停靠的脚本退路(支持滚动驱动动画的浏览器不挂)
+  useEffect(() => mountSubscribeFly(shellRef.current), []);
+  useEffect(() => mountTitleDock(shellRef.current), []);
+  // 早报到场只认「载入时就落在早报」的那一次:落在别的视图,或早报出内容之前就切走了,这次载入不再播
+  useEffect(() => { if (!briefOpen) endArrival(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   const stageKey = briefOpen ? 'brief' : rankingsOpen ? 'rankings' : railActive;
   const stageSeenRef = useRef(stageKey);
   useLayoutEffect(() => {
     if (stageSeenRef.current === stageKey) return;
     stageSeenRef.current = stageKey;
+    endArrival();
     const shell = shellRef.current;
     if (shell) enterStage(shell.querySelectorAll(':scope > :is(.reader-col, .bp-sheet, .rankings-page, .reader-disc)'));
   }, [stageKey]);
@@ -1689,6 +1696,9 @@ export default function ReaderTab({
                   <span className="reader-crumb-name">{sourceNameMap[activeArticle.source_id] || activeArticle.source_id}</span>
                 </div>
               )}
+              {/* 标题滚动停靠(issue #301 第四批):大标题滚出阅读窗顶时,它的小字版随滚动位置连续地浮进吸顶栏(样式表里的滚动驱动动画)。
+                  左端被「返回 / 下一条」占着的时候不放,免得把动作组挤到第二行 */}
+              {!paneBack && <span className="reader-bar-title" aria-hidden="true">{paneTitle?.title}</span>}
               {/* 动作成一组:阅读列窄、左端又是「返回 / 下一条」时,这一组整体折到第二行 */}
               <div className="reader-pane-acts">
               {paneTools}

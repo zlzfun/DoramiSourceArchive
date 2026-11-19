@@ -15910,3 +15910,21 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 .reader-shell .reader-flip-layer { position: absolute; left: 0; top: 0; right: 0; z-index: 5; pointer-events: none; overflow: hidden; }
 .reader-shell .reader-list-scroll .reader-flip-layer .reader-entry.is-active,
 .reader-shell .reader-list-scroll.has-ind .reader-flip-layer .reader-entry.is-active { background: var(--dorami-select); }
+
+/* ── 空间转场(第四批)· 标题滚动停靠 ──
+   大标题滚出阅读窗顶时,吸顶栏里它的小字版随滚动位置连续地浮进来,往回滚原路退——没有时间轴,进度就是滚动位置。
+   吸顶栏在滚动容器外面,时间线由大标题在滚动容器里声明、经 timeline-scope 提到两者共同的祖先上。
+   不支持滚动驱动动画的浏览器走 utils/spatialMotion.mountTitleDock 的脚本退路(同样的明度与位移)。 */
+.reader-shell .reader-bar-title {
+  flex: 1 1 0; min-width: 0; margin: 0 12px 0 10px; padding-left: 12px; font-size: 13px; font-weight: 600; line-height: 20px;
+  color: var(--dorami-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  box-shadow: inset 1px 0 0 var(--dorami-border); opacity: 0;
+}
+@keyframes reader-dock { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@keyframes reader-dock-fade { from { opacity: 0; } to { opacity: 1; } }
+@supports (animation-timeline: view()) and (timeline-scope: --x) {
+  .reader-shell .reader-col-read { timeline-scope: --reader-h1; }
+  .reader-shell .reader-pane .reader-pane-title { view-timeline: --reader-h1 block; }
+  .reader-shell .reader-bar-title { animation: reader-dock linear both; animation-timeline: --reader-h1; animation-range: exit 0% exit 100%; }
+  :root[data-motion="reduce"] .reader-shell .reader-bar-title { animation-name: reader-dock-fade; }
+}
