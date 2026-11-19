@@ -15838,3 +15838,11 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
 .reader-shell .reader-vrail-btn:active { transform: none; }
 .reader-shell .reader-vrail .reader-vrail-btn > svg { transition: transform var(--motion-spring-pop-dur) var(--motion-spring-pop); }
 .reader-shell .reader-vrail .reader-vrail-btn:active > svg { transform: translateY(-7px) scale(0.86); transition: transform var(--motion-press) var(--motion-ease); }
+
+/* ── 反馈层 · 速读卡分数逐位滚动 ──
+   结构沿用里程表的格子与竖条(.reader-ai-odo-*);过渡交给 WAAPI(AiReadingCard.ScoreRoll),样式表里那条 2.2s 的过渡在这里关掉。
+   卡头的分数是行内小字:格宽跟数字自己走(齐线等宽数字,与旁边静态的那个维度同宽),不用页边大数字的定宽格。 */
+.reader-shell .reader-ai-odo.is-roll .reader-ai-odo-strip { transition: none; }
+.reader-shell .reader-ai-odo.is-inline .reader-ai-odo-cell,
+.reader-shell .reader-ai-odo.is-inline .reader-ai-odo-dot { width: auto; height: 1em; line-height: 1; }
+.reader-shell .reader-ai-odo.is-inline .reader-ai-odo-digit { height: 1em; line-height: 1; }
