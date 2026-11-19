@@ -73,18 +73,48 @@ export function slideKeyframes(p, r) {
 
 const same = (a, b) => a && b && Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5 && Math.abs(a.w - b.w) < 0.5 && Math.abs(a.h - b.h) < 0.5;
 
-function measure(host, target, cfg) {
+// el 在宿主内容坐标里的视觉矩形(含它自己和祖先的 transform;滚动容器加上滚动量)
+function visualBox(host, el, cfg) {
   const h = host.getBoundingClientRect();
-  const t = target.getBoundingClientRect();
-  const rect = {
+  const t = el.getBoundingClientRect();
+  return {
     x: t.left - h.left - host.clientLeft + (cfg.scroll ? host.scrollLeft : 0),
     y: t.top - h.top - host.clientTop + (cfg.scroll ? host.scrollTop : 0),
     w: t.width,
     h: t.height,
   };
-  if (cfg.look === 'line') return { x: rect.x, y: rect.y + rect.h - 1, w: rect.w, h: 2 };   // 底线:压在页签底边下 1px,与原来的 ::after 同位
-  return rect;
 }
+
+// el 的布局矩形(不含 transform):沿 offsetParent 一路加到宿主。宿主带 .has-ind 时是定位元素,链一定经过它;
+// 万一没经过,退回「视觉矩形的中心 + 布局尺寸」(按压缩放是绕中心的)。取值是整数像素,只在带着 transform 时临时用。
+function layoutBox(host, el, cfg) {
+  let x = 0;
+  let y = 0;
+  let node = el;
+  while (node && node !== host) {
+    x += node.offsetLeft;
+    y += node.offsetTop;
+    node = node.offsetParent;
+  }
+  if (node === host) return { x, y, w: el.offsetWidth, h: el.offsetHeight };
+  const v = visualBox(host, el, cfg);
+  return { x: v.x + (v.w - el.offsetWidth) / 2, y: v.y + (v.h - el.offsetHeight) / 2, w: el.offsetWidth, h: el.offsetHeight };
+}
+
+const TRANSFORMS = ['transform', 'scale', 'translate', 'rotate'];
+const movesBox = (anim) => (anim.transitionProperty ? TRANSFORMS.includes(anim.transitionProperty)
+  : Boolean(anim.effect?.getKeyframes?.().some((k) => TRANSFORMS.some((p) => p in k))));
+
+/** 选中项到宿主之间,正在改 transform 的动画 / 过渡(第二批的按压回弹、筛选时行的位移):此时视觉矩形是变了形的。 */
+function boxMovers(host, target) {
+  const out = [];
+  for (let el = target; el && el !== host; el = el.parentElement) {
+    for (const anim of el.getAnimations()) if (anim.playState !== 'finished' && anim.playState !== 'idle' && movesBox(anim)) out.push(anim);
+  }
+  return out;
+}
+
+const lineOf = (rect) => ({ x: rect.x, y: rect.y + rect.h - 1, w: rect.w, h: 2 });   // 底线:压在页签底边下 1px,与原来的 ::after 同位
 
 function place(ind, rect, radius) {
   const s = ind.style;
@@ -102,6 +132,7 @@ function place(ind, rect, radius) {
 export function mountGlideIndicators(root) {
   if (!root || typeof MutationObserver === 'undefined') return () => {};
   const states = new Map();   // host → { ind, target, rect, anim }
+  let resettle = 0;           // 等「带着 transform 的那几段」跑完再重摆一次的凭据
 
   const drop = (host) => {
     const st = states.get(host);
@@ -116,7 +147,15 @@ export function mountGlideIndicators(root) {
     const target = host.querySelector(cfg.item);
     let st = states.get(host);
     if (!target || target.getClientRects().length === 0) { drop(host); return; }
-    const rect = measure(host, target, cfg);
+    if (!host.classList.contains('has-ind')) host.classList.add('has-ind');   // 先让宿主成为定位元素,下面的布局矩形才量得到它头上
+    // 选中项正带着 transform(刚松手还在回弹、正跟着筛选滑):视觉矩形不能当终点,改用布局矩形;那几段跑完再按视觉矩形精确重摆一次
+    const movers = boxMovers(host, target);
+    const box = movers.length ? layoutBox(host, target, cfg) : visualBox(host, target, cfg);
+    const rect = cfg.look === 'line' ? lineOf(box) : box;
+    if (movers.length) {
+      const token = ++resettle;
+      Promise.allSettled(movers.map((anim) => anim.finished)).then(() => { if (token === resettle) sync(true); });
+    }
     const radius = cfg.look === 'line' ? null : getComputedStyle(target).borderRadius;
     if (!st || !st.ind.isConnected) {
       // 第一次出现(或宿主被重画过):直接落位
@@ -126,14 +165,14 @@ export function mountGlideIndicators(root) {
       ind.setAttribute('aria-hidden', 'true');
       place(ind, rect, radius);
       if (cfg.front) host.prepend(ind); else host.appendChild(ind);
-      host.classList.add('has-ind');
       states.set(host, { ind, target, rect, anim: null });
       return;
     }
     if (st.target === target && same(st.rect, rect)) return;
     // 选中项换了、上一个还在文档里(同一份列表里挪了位置)、且是指针触发:滑过去;其余情况(尺寸变了、列表重拉、键盘、减少动效)直接落位
     const glide = !settle && st.target !== target && st.target.isConnected && pointerMotion() === 'full';
-    const from = st.rect;
+    // 起点:上一段还没滑完(连点改了向)就从它此刻看得见的位置接着走,不先跳到上一次的终点
+    const from = st.anim && st.anim.playState === 'running' ? visualBox(host, st.ind, cfg) : st.rect;
     place(st.ind, rect, radius);
     st.anim?.cancel();
     st.anim = null;
@@ -160,11 +199,21 @@ export function mountGlideIndicators(root) {
     for (const host of [...states.keys()]) if (!live.has(host) || !host.isConnected) drop(host);
   };
 
-  const observer = new MutationObserver((records) => {
-    // 只是指示器自己被放进来 / 拿走的那一轮,不用再量
-    if (records.every((m) => m.type === 'childList' && [...m.addedNodes, ...m.removedNodes].every((n) => n.nodeType === 1 && n.classList.contains('reader-ind')))) return;
-    sync();
-  });
+  // 只有碰到宿主的变化才量:宿主里面换了选中态或增删了东西(指示器自己的增删不算),或者外面挂上 / 卸掉了含宿主的一块。
+  // 别处的变化不看——播放条每 240ms 改一次走时、正文与问答内容的更新都落在外壳里,不该每次都把十个宿主量一遍。
+  const anyHost = GLIDE_HOSTS.map((h) => h.host).join(', ');
+  const ownNode = (n) => n.nodeType === 1 && n.classList.contains('reader-ind');
+  const relevant = (m) => {
+    const el = m.target.nodeType === 1 ? m.target : m.target.parentElement;
+    if (!el) return false;
+    if (el === root) return true;
+    const inside = Boolean(el.closest(anyHost));
+    if (m.type === 'attributes') return inside;
+    const nodes = [...m.addedNodes, ...m.removedNodes];
+    if (inside) return nodes.some((n) => !ownNode(n));
+    return nodes.some((n) => n.nodeType === 1 && (n.matches(anyHost) || n.querySelector(anyHost)));
+  };
+  const observer = new MutationObserver((records) => { if (records.some(relevant)) sync(); });
   observer.observe(root, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
   // 尺寸变了(窗口、来源栏收放、字体晚到):重摆,不滑
   const resize = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => sync(true)) : null;

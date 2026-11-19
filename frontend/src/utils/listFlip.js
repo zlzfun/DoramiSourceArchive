@@ -10,7 +10,7 @@
 // 新列表迟迟不来(超过 HOLD_MS)就让替身淡出、把骨架露出来,回到原来的换法。
 // 只在列表停在顶上时做(滚到中间时两份列表对不上位置);键盘触发、减少动效不做(readerMotion.pointerMotion)。
 // 与页面组件解耦:挂在桌面读者面的外壳上,靠事件与 MutationObserver 自己跟,行上只需要一个 data-flip-id。
-import { MOTION, fadeIn, pointerMotion } from './readerMotion.js';
+import { MOTION, fadeIn, motionIntent, pointerMotion } from './readerMotion.js';
 import { motionSpring } from './spring.js';
 
 const TRIGGERS = [
@@ -62,6 +62,8 @@ export function mountListFlip(shell) {
   };
 
   const play = () => {
+    // 等待期间情况变了(另一个标签页打开了「减少动效」):撤掉替身,直接落位
+    if (pointerMotion(job.intent) !== 'full') { finish(); return; }
     const { list, rects, ghosts, layer, activeId } = job;
     const spring = motionSpring('move');
     const view = { top: list.scrollTop, bottom: list.scrollTop + list.clientHeight };
@@ -115,7 +117,7 @@ export function mountListFlip(shell) {
     if (changed) play();
   };
 
-  const arm = (list) => {
+  const arm = (list, intent) => {
     finish();
     const first = realRows(list);
     if (first.length === 0) return;
@@ -147,7 +149,7 @@ export function mountListFlip(shell) {
       if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') { layer.style.background = bg; break; }
     }
     const observer = new MutationObserver(onMutate);
-    job = { list, rects, ghosts, layer, observer, first, waiting: false, activeId: list.querySelector('.reader-entry.is-active')?.dataset.flipId || null, timer: setTimeout(() => finish(), IDLE_MS) };
+    job = { list, rects, ghosts, layer, observer, first, intent, waiting: false, activeId: list.querySelector('.reader-entry.is-active')?.dataset.flipId || null, timer: setTimeout(() => finish(), IDLE_MS) };
     list.appendChild(layer);
     observer.observe(list, { childList: true, subtree: true });
   };
@@ -156,8 +158,10 @@ export function mountListFlip(shell) {
     const hit = event.target.closest?.(TRIGGERS);
     if (!hit || !shell.contains(hit)) return;
     const list = shell.querySelector(LIST);
-    if (!list || list.scrollTop > 2 || pointerMotion() !== 'full') { finish(); return; }
-    arm(list);
+    // 触发方式取这一下自己的(不看别的请求挂起的那一份:指针点了「下一条」还没回来时,用键盘切筛选仍算键盘),并记进这次任务
+    const intent = motionIntent();
+    if (!list || list.scrollTop > 2 || pointerMotion(intent) !== 'full') { finish(); return; }
+    arm(list, intent);
   };
   shell.addEventListener('click', onClick, true);
 
