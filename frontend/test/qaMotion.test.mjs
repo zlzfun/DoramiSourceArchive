@@ -76,3 +76,21 @@ test('同一轮回答只演一次;没有 fresh 标记的(重新挂载的旧回�
   revealOnce({ a: '旧回答' }, old.block);
   assert.equal(old.paras[0].played.length, 0);
 });
+
+test('提问的那一刻问句由虚到实,同一轮只演一次;减少动效只淡入', async () => {
+  stubDom();
+  const full = await import(`../src/utils/qaMotion.js?ask=${Date.now()}`);
+  const turn = { pending: true };
+  const bubble = el('reader-ai-q');
+  full.focusQuestionOnce(turn, bubble);
+  full.focusQuestionOnce(turn, bubble);
+  assert.equal(bubble.played.length, 1);
+  assert.equal(bubble.played[0].opts.duration, 200);
+  assert.match(bubble.played[0].keyframes[0].filter, /blur\(4px\)/);
+  stubDom(true);
+  const reduced = await import(`../src/utils/qaMotion.js?ask-reduce=${Date.now()}`);
+  const calm = el('reader-ai-q');
+  reduced.focusQuestionOnce({ pending: true }, calm);
+  assert.equal(calm.played.length, 1);
+  assert.ok(calm.played[0].keyframes.every((k) => !('filter' in k)));
+});

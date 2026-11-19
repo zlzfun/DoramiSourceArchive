@@ -42,9 +42,10 @@ export function revealAnswer(block) {
   for (const cite of block.querySelectorAll('.reader-ai-cite')) {
     const delay = after + 180 + order * CITE_STAGGER;
     order += 1;
+    // 角标自己的底色在 0.3 处提亮一下,首尾不写——从它原来的底色出发、回到原来的底色
     cite.animate([
       { boxShadow: `0 0 0 0 ${accent(0)}`, offset: 0 },
-      { boxShadow: `0 0 0 2px ${accent(0.4)}, 0 0 12px 2px ${accent(dark ? 0.7 : 0.4)}`, offset: 0.3 },
+      { boxShadow: `0 0 0 2px ${accent(0.4)}, 0 0 12px 2px ${accent(dark ? 0.7 : 0.4)}`, backgroundColor: accent(dark ? 0.42 : 0.24), offset: 0.3 },
       { boxShadow: `0 0 0 0 ${accent(0)}`, offset: 1 },
     ], { duration: 620, delay, easing: 'ease-out' });
     const num = cite.textContent.replace(/\D/g, '');
@@ -65,13 +66,23 @@ export function haloQaButton() {
   if (!icon || !icon.animate) return;
   icon.animate([
     { filter: `drop-shadow(0 0 0 ${accent(0)})`, offset: 0 },
-    { filter: `drop-shadow(0 0 11px ${accent(0.7)})`, offset: 0.3 },
+    { filter: `drop-shadow(0 0 11px ${accent(document.documentElement.dataset.theme === 'dark' ? 0.95 : 0.6)})`, offset: 0.3 },
     { filter: `drop-shadow(0 0 0 ${accent(0)})`, offset: 1 },
   ], { duration: 600, easing: 'ease-out' });
 }
 
 // 只在回答刚到的那一次演:面板收起再打开、换范围重排时,同一轮回答重新挂载不重演
 const revealed = new WeakSet();
+const asked = new WeakSet();
+
+/** 提问发出的那一刻:问句由虚到实(200ms,模糊 4px → 0)。turn 是等待中的那一轮,同一个对象只演一次。 */
+export function focusQuestionOnce(turn, bubble) {
+  if (!turn || asked.has(turn)) return;
+  asked.add(turn);
+  if (!bubble || !bubble.animate) return;
+  if (motionReduced()) { fadeIn(bubble, 160); return; }
+  bubble.animate([{ opacity: 0, filter: 'blur(4px)' }, { opacity: 1, filter: 'blur(0px)' }], { duration: 200, easing: MOTION.easeFocus });
+}
 
 /** turn 是这一轮的数据对象(回答到达时带 fresh 标记);同一个对象只演一次。 */
 export function revealOnce(turn, block) {

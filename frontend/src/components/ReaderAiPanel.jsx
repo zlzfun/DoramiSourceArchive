@@ -16,7 +16,7 @@ import { displayTitle } from '../utils/titleDisplay';
 import { useTitlePreference } from '../hooks/useTitlePreference';
 import { podcastOf } from '../utils/podcast';
 import { qaBasisLabel, qaEvidence, qaExcerptPreview, qaHistory, qaReferenceGroups } from '../utils/qaEvidence';
-import { haloQaButton, revealOnce } from '../utils/qaMotion';
+import { focusQuestionOnce, haloQaButton, revealOnce } from '../utils/qaMotion';
 import { motionIntent } from '../utils/readerMotion';
 
 // 阅读器 AI 问答浮层(v3.32 方案 A 重设计,样页 docs/design/dorami-ask-quiet.html):
@@ -152,10 +152,13 @@ const SEARCH_STAGE_TEXT = {
 };
 
 // 等待态:检索型 scope 画动态阶段清单,显式名单 scope(article/articles)只有作答一步
-function PendingBlock({ scope, progress, podcast }) {
+function PendingBlock({ turn, scope, progress, podcast }) {
+  // 提问发出的那一刻:问句由虚到实(issue #301 第五批)。只演一次——面板收起再打开,等待中的这一轮重新挂载不重演
+  const waitRef = useRef(null);
+  useLayoutEffect(() => { focusQuestionOnce(turn, waitRef.current?.previousElementSibling); }, [turn]);
   if (scope !== 'subscription' && scope !== 'all') {
     return (
-      <div className="reader-ai-wait">
+      <div className="reader-ai-wait" ref={waitRef}>
         <div className="reader-ai-wait-row is-active"><span className="reader-ai-wait-dot" />{podcast ? '正在查阅本期播客资料并组织回答…' : '正在阅读文章并组织回答…'}</div>
       </div>
     );
@@ -165,7 +168,7 @@ function PendingBlock({ scope, progress, podcast }) {
   const by = progress?.byStage || {};
   const current = ordered[ordered.length - 1];
   return (
-    <div className="reader-ai-wait">
+    <div className="reader-ai-wait" ref={waitRef}>
       {ordered.map((stage) => {
         const active = stage === current;
         const text = SEARCH_STAGE_TEXT[stage];
@@ -473,6 +476,8 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
 
   return (
     <>
+      {/* 压暗(issue #301 第五批):面板开着时工作区退后一步;不拦点击(点面板外任意处本来就是收起) */}
+      {aiPanelOpen && <i className={`reader-ai-scrim ${aiPanelClosing ? 'is-off' : ''} ${aiPanelStill ? 'is-still' : ''}`} aria-hidden="true" />}
       {aiPanelOpen && (
         <aside ref={panelRef} className={`reader-ai-panel ${aiPanelLarge ? 'is-large' : ''} ${aiPanelClosing ? 'is-closing' : ''} ${aiPanelStill ? 'is-still' : ''}`} role="dialog" aria-label="问问哆啦美">
           {/* 极光沿边一圈(issue #301 第五批):面板打开时一次,每次提问再一次——按序号重挂载来重播 */}
@@ -533,7 +538,7 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast, onO
               <div key={i} className="reader-ai-turn">
                 <div className="reader-ai-q">{m.q}</div>
                 {m.pending ? (
-                  <PendingBlock scope={m.scope} progress={qaProgress} podcast={m.podcast} />
+                  <PendingBlock turn={m} scope={m.scope} progress={qaProgress} podcast={m.podcast} />
                 ) : m.error ? (
                   <div className="reader-ai-a-error">
                     {m.errorCode === 'guest_quota_exhausted' ? (
