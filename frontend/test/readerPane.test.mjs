@@ -33,7 +33,8 @@ test('吸顶栏:语言二段与查看原文排在收藏之前;标题区不再有
 test('速读卡:桌面版式经 page 打开,手机壳不传;页边与卡脚用同一份标签', () => {
   assert.match(card, /return props\.page \? <PageCard \{\.\.\.props\} \/> : <ClassicCard \{\.\.\.props\} \/>;/);
   assert.match(desktop, /<AiReadingCard\s+page\s+tags=\{paneTagsEl\}/);
-  assert.match(desktop, /<ScoreMargin article=\{activeArticle\} podcast=\{podcastView\} tags=\{paneTagsEl\} \/>/);
+  // 页边与卡脚收同一份标签;其后允许再带别的属性(issue #301 起多了一个 motionIntent)
+  assert.match(desktop, /<ScoreMargin article=\{activeArticle\} podcast=\{podcastView\} tags=\{paneTagsEl\}[^>]*\/>/);
   assert.ok(!/<AiReadingCard[^>]*\bpage\b/.test(mobile), '手机壳的速读卡不走桌面版式');
   assert.ok(!/<ListenEntries[^>]*\bquiet\b/.test(mobile), '手机壳的收听入口保留原说明');
   // 依据是点开的,不是悬停:卡头的分数钮带 aria-expanded

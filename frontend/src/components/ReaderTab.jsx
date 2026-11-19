@@ -91,7 +91,7 @@ import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
 import { articleListenEntries, podcastListenEntries } from '../utils/listenEntries';
 import { nowPlayingFor } from '../utils/playerCore';
 import { mediaProxyUrl } from '../api';
-import { armReadCascade, enterPane, enterPop, enterStage, exitGhost, holdIntent, motionIntent, popStar, releaseIntent, themeFade } from '../utils/readerMotion';
+import { armReadCascade, currentIntent, enterPane, enterPop, enterStage, exitGhost, holdIntent, motionIntent, popStar, releaseIntent, themeFade } from '../utils/readerMotion';
 
 // ReaderWorkspace 持有共享数据与阅读位置；这里仅负责桌面四栏与鼠标交互。
 // 条目、正文等内容组件继续供移动视图复用。
@@ -795,7 +795,15 @@ export default function ReaderTab({
 
   // 动效(issue #301 第二批,conventions §7):打开一篇文章——阅读窗按文章 id 重挂载,挂上那一刻标题区淡入上移 6px、
   // 其余一起淡入;切视图——内容直接换,导轨右边各栏 100ms 淡入。键盘触发的不动、减少动效只留淡入,都在 utils/readerMotion 里判。
-  const paneEnterRef = useCallback((node) => { if (node) enterPane(node); }, []);
+  // 同一个节点只播一次:StrictMode 开发态会把 ref 回调多调一遍,第二遍时挂起的触发方式已经放下,不能按「此刻」再判一次
+  const paneMountedRef = useRef(false);
+  const paneEnteredRef = useRef(null);
+  const paneEnterRef = useCallback((node) => {
+    if (!node || paneEnteredRef.current === node) return;
+    paneEnteredRef.current = node;
+    enterPane(node);
+    paneMountedRef.current = true;
+  }, []);
   const stageKey = briefOpen ? 'brief' : rankingsOpen ? 'rankings' : railActive;
   const stageSeenRef = useRef(stageKey);
   useLayoutEffect(() => {
@@ -804,10 +812,19 @@ export default function ReaderTab({
     const shell = shellRef.current;
     if (shell) enterStage(shell.querySelectorAll(':scope > :is(.reader-col, .bp-sheet, .rankings-page, .reader-disc)'));
   }, [stageKey]);
-  // 请求回来才换内容的路径(从早报 / 榜单 / 「下一条」打开文章):入口处挂起触发方式,内容换上的那次提交之后放下。
-  // 这里无条件放:挂起的那一份要么已经被这次挂载用掉,要么对应的请求早被这次换内容盖过了。
+  // 请求回来才换内容的路径(从早报 / 榜单 / 「下一条」/ 播放条打开文章):入口处挂起触发方式(holdIntent),阅读窗挂上的那次提交里放下。
+  // 放在布局阶段、排在上面两段之后:这次提交里的阅读窗入场与工作区淡入都已按挂起的那一份判过;
+  // 不能放到提交之后的被动副作用里——那样会和「等请求回来再挂一次」抢先后,把刚挂上的那一份放掉。
   const paneArticleId = activeArticle?.id ?? null;
-  useEffect(() => { releaseIntent(); }, [paneArticleId, stageKey]);
+  useLayoutEffect(() => {
+    if (!paneMountedRef.current) return;
+    paneMountedRef.current = false;
+    releaseIntent();
+  });
+  // 这篇文章是怎么打开的:文章一换就记下(渲染期间按「上一次渲染的值」校正状态的写法),传给会晚挂载的块——
+  // 速读卡要等正文回来才挂上,那时再看「最近一次输入」已经不是打开它的那一下了。
+  const [paneIntent, setPaneIntent] = useState(() => ({ id: paneArticleId, how: 'pointer' }));
+  if (paneIntent.id !== paneArticleId) setPaneIntent({ id: paneArticleId, how: currentIntent() });
   // 收藏:请求期间钮里是转圈,请求成功、星标回来的那一刻弹一下。只认这颗钮自己点出来的那一次,
   // 并且钮上还是那一篇(data-fav)——请求没回来就换了篇、或请求失败回滚,都不播。
   const favBtnRef = useRef(null);
@@ -1796,6 +1813,7 @@ export default function ReaderTab({
                 <AiReadingCard
                   page
                   tags={paneTagsEl}
+                  motionIntent={paneIntent.how}
                   article={activeArticle}
                   summary={activeSummary}
                   summarizing={summarizing}
@@ -1869,7 +1887,7 @@ export default function ReaderTab({
               </nav>
             )}
             {/* 页边:阅读窗够宽才出(容器查询);DOM 顺序在正文之后,读屏先读正文 */}
-            <ScoreMargin article={activeArticle} podcast={podcastView} tags={paneTagsEl} />
+            <ScoreMargin article={activeArticle} podcast={podcastView} tags={paneTagsEl} motionIntent={paneIntent.how} />
             </div>
           </article>
           </>

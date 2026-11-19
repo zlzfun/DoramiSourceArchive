@@ -70,6 +70,7 @@ function PageCard({
   podcast = false,
   listen = null,
   tags = null,
+  motionIntent = undefined,
 }) {
   const dims = scoreDimensions(article);
   const reason = (article?.score_reason || '').trim();
@@ -104,7 +105,7 @@ function PageCard({
                 {index === 0 ? (
                   <span className="reader-ai-dim-v">
                     <span className="sr-only">{dim.text}</span>
-                    <ScoreRoll slot="head" inline score={dim.text} tierClass={scoreTierClass(dim.value)} />
+                    <ScoreRoll slot="head" inline score={dim.text} tierClass={scoreTierClass(dim.value)} intent={motionIntent} />
                   </span>
                 ) : (
                   <span className={`reader-ai-dim-v ai-grad-text ${scoreTierClass(dim.value)}`}>{dim.text}</span>
@@ -141,7 +142,7 @@ function PageCard({
  * 页边(issue #279 第三批):关于这篇的话——主分(44px,换篇时逐位滚动)与依据、另一个维度、标签。
  * 只在阅读窗够宽时出现(容器查询,见 index.css「阅读窗页边」),窄时这些内容在速读卡的卡头与卡脚。
  */
-export function ScoreMargin({ article, podcast = false, tags = null }) {
+export function ScoreMargin({ article, podcast = false, tags = null, motionIntent = undefined }) {
   const dims = scoreDimensions(article);
   const [first, second] = dims;
   const basis = podcast ? podcastReaderBasisText(article) : '';
@@ -152,7 +153,7 @@ export function ScoreMargin({ article, podcast = false, tags = null }) {
         <div className="reader-side-blk">
           <div className="reader-side-k" title={scoreDisclaimer(first.key)}>{first.label}</div>
           <div className="reader-side-score" role="img" aria-label={`${first.label} ${first.text}`}>
-            <ScoreRoll slot="side" score={first.text} tierClass={scoreTierClass(first.value)} />
+            <ScoreRoll slot="side" score={first.text} tierClass={scoreTierClass(first.value)} intent={motionIntent} />
           </div>
           {first.reason && <p>{first.reason}</p>}
           {basis && <p className="reader-ai-why-basis">{basis}</p>}
@@ -301,17 +302,18 @@ function ScoreFigure({ score, tierClass = '', interactive, label, describedBy, o
 // 换篇时从上一篇的分值逐位滚到这一篇——右边一位先动、往左每位晚 60ms,数字没变的那一位不动;第一次出现时从 0 起。
 // 弹簧用 move 档(落定约 580ms)。键盘换篇、减少动效直落终值。结构沿用里程表的格子与竖条,过渡交给 WAAPI。
 // 上一次显示的分值按位置(页边 side / 卡头 head)记在模块里:阅读窗按文章 id 重挂载,组件自己留不住。
+// intent 是这篇文章被打开时的触发方式(ReaderTab 在文章一换时记下):卡头那份要等正文回来才挂上,不能看挂上那一刻的最近输入。
 const lastRolled = new Map();
 const ROLL_STAGGER = 60;
 
-function ScoreRoll({ score, tierClass = '', slot, inline = false }) {
+function ScoreRoll({ score, tierClass = '', slot, inline = false, intent = undefined }) {
   const ref = useRef(null);
   const text = String(score);
   useLayoutEffect(() => {
     const from = lastRolled.get(slot);
     lastRolled.set(slot, text);
     const root = ref.current;
-    if (!root || from === text || pointerMotion() !== 'full') return;
+    if (!root || from === text || pointerMotion(intent) !== 'full') return;
     const old = String(from ?? '').replace(/\D/g, '').split('').reverse();
     [...root.querySelectorAll('.reader-ai-odo-strip')].reverse().forEach((strip, j) => {
       const to = Number(strip.dataset.d);
@@ -320,7 +322,7 @@ function ScoreRoll({ score, tierClass = '', slot, inline = false }) {
         springTo(strip, [{ transform: `translateY(${-start * 10}%)` }, { transform: `translateY(${-to * 10}%)` }], 'move', { delay: j * ROLL_STAGGER });
       }
     });
-  }, [slot, text]);
+  }, [slot, text, intent]);
   return (
     <span ref={ref} className={`reader-ai-odo is-roll ${inline ? 'is-inline' : ''}`} aria-hidden="true">
       {text.split('').map((ch, i) => {

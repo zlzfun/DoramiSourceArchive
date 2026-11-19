@@ -30,12 +30,17 @@ export function motionIntent() {
   return lastInputWasKeyboard() ? 'key' : 'pointer';
 }
 
-// 挂起的触发方式:请求发出到内容换上之间,没有显式带 intent 的编排(阅读窗挂载、工作区淡入、分数滚动)都按它判。
+// 挂起的触发方式:请求发出到内容换上之间,没有显式带 intent 的编排(阅读窗挂载、工作区淡入)都按它判。
+// 放下的时机有三个:内容换上的那次提交(ReaderTab 在布局阶段放,同步、不与下一次挂起抢先后);请求失败或被盖过(按凭据放);
+// 兜底是 10 秒过期——内容其实没换(打开的就是正在看的那篇)时不会有「换上」,不能让它一直压着后面的交互。
 let held = null;
+const HOLD_TTL = 10000;
+const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+const heldHow = () => (held && nowMs() - held.at < HOLD_TTL ? held.how : null);
 
 /** 入口处挂起触发方式,返回凭据;内容换上(或请求失败 / 被盖过)之后 releaseIntent。how 缺省取此刻的。 */
 export function holdIntent(how = motionIntent()) {
-  held = { how };
+  held = { how, at: nowMs() };
   return held;
 }
 
@@ -44,13 +49,18 @@ export function releaseIntent(token) {
   if (!token || held === token) held = null;
 }
 
+/** 这一刻该按哪种触发方式算:有挂起的就是它,否则是此刻的最近输入。要把它绑到「这篇文章」上、留给晚挂载的块用时取这个。 */
+export function currentIntent() {
+  return heldHow() || motionIntent();
+}
+
 /**
  * 这一次交互该怎么动:'full'(指针触发、完整)/ 'fade'(减少动效:只淡入)/ 'none'(键盘触发或环境不支持)。
  * intent 是入口处记下的触发方式;不给就看挂起的那一份,再没有才看此刻的最近输入。减少动效一律按播放这一刻的偏好。
  */
 export function pointerMotion(intent) {
   if (typeof Element === 'undefined' || !Element.prototype.animate) return 'none';
-  const how = intent || (held ? held.how : motionIntent());
+  const how = intent || currentIntent();
   if (how === 'key') return 'none';
   return motionReduced() ? 'fade' : 'full';
 }
