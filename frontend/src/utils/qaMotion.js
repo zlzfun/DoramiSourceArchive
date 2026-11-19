@@ -9,6 +9,7 @@ import { MOTION, fadeIn } from './readerMotion.js';
 const PARA_STAGGER = 140;   // 段与段之间
 const PARA_MAX = 8;         // 至多错开这么多段,其余与最后一段同时
 const CITE_STAGGER = 150;   // 引用角标之间
+const REVEAL_WAIT_MS = 4000; // 正文迟迟不挂上:不等了(之后挂上就直接在)
 
 const accent = (alpha) => {
   const rgb = getComputedStyle(document.documentElement).getPropertyValue('--dorami-accent-rgb').trim() || '63, 123, 246';
@@ -88,5 +89,19 @@ export function focusQuestionOnce(turn, bubble) {
 export function revealOnce(turn, block) {
   if (!turn || !turn.fresh || revealed.has(turn)) return;
   revealed.add(turn);
+  // Markdown 渲染器是按需加载的:回答先到、正文晚一拍才挂上时(容器还是空的),等正文挂上再演——否则这一次机会白白用掉
+  const body = block?.querySelector('.reader-ai-a-body');
+  if (body && body.children.length === 0 && typeof MutationObserver !== 'undefined') {
+    let timer = 0;
+    const observer = new MutationObserver(() => {
+      if (!body.children.length) return;
+      observer.disconnect();
+      clearTimeout(timer);
+      if (block.isConnected) revealAnswer(block);
+    });
+    observer.observe(body, { childList: true });
+    timer = setTimeout(() => observer.disconnect(), REVEAL_WAIT_MS);
+    return;
+  }
   revealAnswer(block);
 }

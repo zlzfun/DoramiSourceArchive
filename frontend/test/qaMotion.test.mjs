@@ -94,3 +94,22 @@ test('提问的那一刻问句由虚到实,同一轮只演一次;减少动效只
   assert.equal(calm.played.length, 1);
   assert.ok(calm.played[0].keyframes.every((k) => !('filter' in k)));
 });
+
+test('回答先到、正文晚一拍才挂上(渲染器按需加载):等正文挂上再演', async () => {
+  stubDom();
+  const observers = [];
+  globalThis.MutationObserver = class { constructor(cb) { this.cb = cb; observers.push(this); } observe() {} disconnect() { this.off = true; } };
+  const { revealOnce } = await import(`../src/utils/qaMotion.js?late=${Date.now()}`);
+  const a = answer();
+  const body = a.block.children[1];
+  const paras = body.children.splice(0);   // 正文还没挂上
+  a.block.isConnected = true;
+  revealOnce({ fresh: true }, a.block);
+  assert.equal(observers.length, 1, '容器是空的:挂观察器等');
+  assert.ok(paras.every((p) => p.played.length === 0));
+  body.children.push(...paras);
+  observers[0].cb();
+  assert.ok(observers[0].off, '演过就撤掉观察器');
+  assert.deepEqual(paras.map((p) => p.played.length), [1, 1, 1]);
+  delete globalThis.MutationObserver;
+});
