@@ -1,6 +1,6 @@
 """事件热点榜读取侧(issue #121 wave 1;#221 默认 7 天 / 快照按窗口)服务层测试:可见性过滤、< 2 主体剔除、排序、
-is_new / is_recent、previous_rank(同窗口、今早 07:00)、标题优先级、redirect、日快照事务替换、管理员合并 / 摘出语义。
-造数据一律相对时间。"""
+is_new / is_recent、previous_rank(同窗口、今早 07:00)、标题优先级、redirect、日快照事务替换、管理员合并 / 摘出语义;
+带成员的榜单(issue #310,令牌化交付用)与详情同形、不多查库。造数据一律相对时间。"""
 
 from __future__ import annotations
 
@@ -772,3 +772,54 @@ def test_visible_member_links_lists_reader_visible_members_in_representative_ord
         assert rows[1]["title_zh"] == "媒体报道" and rows[0]["title_zh"] is None
         assert [row["article_id"] for row in event_board.visible_member_links(session, [event.id], limit=1)[event.id]] == ["official-1"]
         assert event_board.visible_member_links(session, []) == {}
+
+
+def test_board_with_members_matches_detail_and_adds_no_queries(tmp_path):
+    """issue #310:``include_members`` 只是把算榜时已载入的成员写出来——形状 / 次序同详情,SQL 条数不变,默认不带。"""
+
+    from sqlalchemy import event as sa_event
+
+    sink = _sink(tmp_path, "board-members.db")
+    with Session(sink.engine) as session:
+        first = _event(session, hours_ago=2)
+        for article_id, source, hours in (("a1", "src-a", 2), ("a2", "src-b", 4), ("a3", "src-c", 3)):
+            _article(session, article_id, source, hours_ago=hours)
+            _member(session, first, article_id, hours_ago=hours)
+        second = _event(session, hours_ago=5)
+        for article_id, source in (("b1", "src-a"), ("b2", "src-d")):
+            _article(session, article_id, source, hours_ago=5)
+            _member(session, second, article_id, hours_ago=5)
+        session.commit()
+        first_id, second_id = first.id, second.id
+
+    statements: list[str] = []
+
+    def _count(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    def _read(**kwargs):
+        with Session(sink.engine) as session:
+            statements.clear()
+            sa_event.listen(sink.engine, "before_cursor_execute", _count)
+            try:
+                board = event_board.read_board(session, now=NOW, **kwargs)
+            finally:
+                sa_event.remove(sink.engine, "before_cursor_execute", _count)
+            return board, len(statements)
+
+    plain, plain_queries = _read()
+    full, full_queries = _read(include_members=True)
+    assert plain_queries == full_queries and plain_queries > 0
+    assert [item["event_id"] for item in full["items"]] == [first_id, second_id]
+    assert all("members" not in item for item in plain["items"])
+    for item, bare in zip(full["items"], plain["items"]):
+        assert {key: value for key, value in item.items() if key != "members"} == bare
+
+    with Session(sink.engine) as session:
+        for item in full["items"]:
+            detail = event_board.read_event(session, item["event_id"], now=NOW)
+            assert item["members"] == detail["members"]
+    # report_at 倒序:a1(2h) → a3(3h) → a2(4h)。
+    assert [member["article_id"] for member in full["items"][0]["members"]] == ["a1", "a3", "a2"]
+    assert sum(member["is_representative"] for member in full["items"][0]["members"]) == 1
+
